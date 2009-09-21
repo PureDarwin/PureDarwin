@@ -1,0 +1,6 @@
+vim
+# I guess we need to add this guy
+emacs
+
+pico
+nano

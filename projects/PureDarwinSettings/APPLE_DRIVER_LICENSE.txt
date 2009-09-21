@@ -1,0 +1,131 @@
+
+APPLE COMPUTER, INC.
+APPLE BINARY DRIVER SOFTWARE LICENSE AGREEMENT
+
+PLEASE READ THIS SOFTWARE LICENSE AGREEMENT ("LICENSE") CAREFULLY BEFORE USING
+THE SOFTWARE.  BY USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY THE TERMS
+OF THIS LICENSE.  IF YOU DO NOT AGREE TO THE TERMS OF THIS LICENSE, DO NOT USE
+THE APPLE SOFTWARE.
+
+1. License.  The Apple driver software, kernel extension files, documentation
+and other materials accompanying this License, whether on disk, in read only
+memory, on any other media or in any other form (collectively, the "Apple
+Software") are licensed, not sold, to you by Apple Computer, Inc. ("Apple") for
+use only under the terms of this License, and Apple reserves all rights not
+expressly granted to you.  The rights granted herein are limited to Apple's
+intellectual property rights in the Apple Software and do not include any other
+patents or intellectual property rights.  You own the media (if any) on which
+the Apple Software is recorded but Apple retains ownership of the Apple
+Software itself.  The Apple Software in this package and any copies which this
+License authorizes you to make are subject to this License.  
+
+2. Permitted Uses and Restrictions.  Subject to the terms and conditions of
+this License:
+
+(a) you may, in connection with the installation and running of Apple's Darwin
+operating system ("Darwin OS"), use the Apple Software for personal use or
+internally within your business or organization, and you may make a reasonable
+number of copies of the Apple Software to the extent necessary to effect such
+internal use purposes; and
+
+(b) if you are redistributing the Darwin OS (or portions thereof) pursuant to
+the terms of the Apple Public Source License Versions 1.0, 1.1, 1.2, or 2.0
+(the "APSL"), you may reproduce and distribute copies of the Apple Software
+together with the Darwin OS for the sole purpose of enabling others to install
+and run the Darwin OS, provided that: (i) the Apple Software is distributed in
+its entirety, including all its component parts and related documentation (if
+any); (ii) the Apple Software is distributed under the terms of this License
+and a copy of this License accompanies such distribution; and (iii) your
+underlying Darwin OS redistribution is in accordance with the terms of the APSL
+and other applicable third party licensing terms. This License does not permit
+the Apple Software to be distributed on a standalone basis or in any manner
+other than as expressly permitted above.
+
+In all cases, you must reproduce the Apple copyright notice and any other
+proprietary legends that were on the original copy of the Apple Software on
+each copy of the Apple Software that you make.  Except as and only to the
+extent expressly permitted in this License or by applicable law, you may not
+decompile, reverse engineer, disassemble, modify, rent, lease, loan,
+sublicense, distribute or create derivative works based upon the Apple Software
+in whole or part or transmit the Apple Software over a network or from one
+computer to another.  Your rights under this License will terminate
+automatically without notice from Apple if you fail to comply with any term(s)
+of this License. In addition, Apple reserves the right to terminate this
+License if a new version of Apple's operating system software or the Apple
+Software is released which is incompatible with this version of the Apple
+Software.
+
+3. Disclaimer Of Warranty.  The Apple Software may be designated as alpha,
+beta, development, pre-release, untested, or not fully tested versions of the
+Apple Software.  Such Apple Software may contain errors that could cause
+failures or loss of data, and may be incomplete or contain inaccuracies.  YOU
+EXPRESSLY ACKNOWLEDGE AND AGREE THAT USE OF THE APPLE SOFTWARE IS AT YOUR SOLE
+RISK.  THE APPLE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OF ANY KIND
+AND APPLE AND APPLE'S LICENSORS (FOR THE PURPOSES OF SECTIONS 3 AND 4, APPLE
+AND APPLE'S LICENSORS SHALL BE COLLECTIVELY REFERRED TO AS "APPLE") EXPRESSLY
+DISCLAIM ALL WARRANTIES WITH RESPECT TO THE APPLE SOFTWARE, EXPRESS OR IMPLIED,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY, OF
+FITNESS FOR A PARTICULAR PURPOSE, OF ACCURACY, OR QUIET ENJOYMENT, AND OF NON-
+INFRINGEMENT OF THIRD PARTY RIGHTS.  APPLE DOES NOT WARRANT AGAINST
+INTERFERENCE WITH YOUR ENJOYMENT OF THE APPLE SOFTWARE, THAT THE FUNCTIONS
+CONTAINED IN THE APPLE SOFTWARE WILL MEET YOUR REQUIREMENTS, OR THAT THE
+OPERATION OF THE APPLE SOFTWARE WILL BE UNINTERRUPTED OR ERROR-FREE, OR THAT
+DEFECTS IN THE APPLE SOFTWARE WILL BE CORRECTED.  NO ORAL OR WRITTEN
+INFORMATION OR ADVICE GIVEN BY APPLE OR AN APPLE AUTHORIZED REPRESENTATIVE
+SHALL CREATE A WARRANTY.  SHOULD THE APPLE SOFTWARE PROVE DEFECTIVE, YOU ASSUME
+THE ENTIRE COST OF ALL NECESSARY SERVICING, REPAIR OR CORRECTION.  SOME
+JURISDICTIONS DO NOT ALLOW THE EXCLUSION OF IMPLIED WARRANTIES, SO THE ABOVE
+EXCLUSION MAY NOT APPLY TO YOU.
+
+4. Limitation Of Liability.  TO THE EXTENT NOT PROHIBITED BY LAW, IN NO EVENT
+SHALL APPLE BE LIABLE FOR ANY INCIDENTAL, SPECIAL, INDIRECT OR CONSEQUENTIAL
+DAMAGESWHATSOEVER, INCLUDING, WITHOUT LIMITATION, DAMAGES FOR LOSS OF PROFITS,
+LOSS OF DATA, BUSINESS INTERRUPTION OR ANY OTHER COMMERCIAL DAMAGES OR LOSSES,
+ARISING OUT OF OR RELATED TO YOUR USE OR INABILITY TO USE THE APPLE SOFTWARE,
+HOWEVER CAUSED, REGARDLESS OF THE THEORY OF LIABILITY (CONTRACT, TORT OR
+OTHERWISE) AND EVEN IF APPLE HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGES.  SOME JURISDICTIONS DO NOT ALLOW THE LIMITATION OR EXCLUSION OF
+LIABILITY FOR INCIDENTAL OR CONSEQUENTIAL DAMAGES SO THE ABOVE LIMITATION OR
+EXCLUSION MAY NOT APPLY TO YOU. In no event shall Apple's total liability to
+you for all damages, losses, and causes of action (whether in contract, tort
+(including negligence) or otherwise) exceed $50.
+
+5. Export Law Assurances.  You may not use or otherwise export or reexport the
+Apple Software except as authorized by United States law and the laws of the
+jurisdiction in which the Apple Software was obtained.  In particular, but
+without limitation, the Apple Software may not be exported or re-exported (a)
+into (or to a national or resident of) any U.S. embargoed countries (currently
+Cuba, Iran, Iraq, Libya, North Korea, Serbia, Sudan, Syria, or the Taliban
+Controlled areas of Afghanistan) or (b) to anyone on the U.S. Treasury
+Department's list of Specially Designated Nationals or the U.S. Department of
+Commerce Denied Person's List or Entity List.  By using the Apple Software, you
+represent and warrant that you are not located in, under control of, or a
+national or resident of any such country or on any such list.
+
+6. Government End Users. If the Apple Software is supplied to the United States
+Government, the Apple Software and related documentation are "Commercial
+Items", as that term is defined at 48 C.F.R. ¤2.101, consisting of "Commercial
+Computer Software" and "Commercial Computer Software Documentation", as such
+terms are used in 48 C.F.R. ¤12.212 or 48 C.F.R. ¤227.7202, as applicable.
+Consistent with 48 C.F.R. ¤12.212 or 48 C.F.R. ¤227.7202-1through 227.7202-4,
+as applicable, the Commercial Computer Software and Commercial Computer
+Software Documentation are being licensed to U.S. Government end users (a) only
+as Commercial Items and (b) with only those rights as are granted to all other
+end users pursuant to the terms and conditions herein.  Unpublished-rights
+reserved under the copyright laws of the United States.
+
+7. Controlling Law and Severability.   This License will be governed by and
+construed in accordance with the laws of the State of California, as applied to
+agreements entered into and to be performed entirely within California between
+California residents. This License shall not be governed by the United Nations
+Convention on Contracts for the International Sale of Goods, the application of
+which is expressly excluded. If for any reason a court of competent
+jurisdiction finds any provision, or portion thereof, to be unenforceable, the
+remainder of this License shall continue in full force and effect.  
+
+8. Complete Agreement.  This License constitutes the entire agreement between
+the parties with respect to the use of the Apple Software licensed hereunder
+and supersedes all prior or contemporaneous understandings regarding such
+subject matter.  No amendment to or modification of this License will be
+binding unless in writing and signed by Apple.
+						                                        92501
