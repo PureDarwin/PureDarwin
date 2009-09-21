@@ -1,0 +1,102 @@
+#!/bin/sh
+#
+# Copyright (c) 2007-2009 The PureDarwin Project.
+# All rights reserved.
+#
+# @LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# @LICENSE_HEADER_END@
+#
+
+#
+# probono <probono@puredarwin.org>
+# aladin   <aladin@puredarwin.org>
+#
+
+#
+# Tiny launchd replacement script
+#
+
+#
+# Changelog
+#
+# 20081209 - License header update - aladin
+# 20080925 - bash interactive mode fixed - aladin
+# 20080917 - zsh interactive - aladin
+# 20080524 - initial release - probono
+#
+
+# Redirecting stdin  (/dev/stdin  -> /dev/fd/0)
+exec 0</dev/console
+# Redirecting stdout (/dev/stdout -> /dev/fd/1)
+exec 1>/dev/console
+# Redirecting stderr (/dev/stderr -> /dev/fd/2)
+exec 2>/dev/console
+
+# File creation mask
+umask 022			# all files created are -rw-r--r--
+
+# Env
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/usr/libexec:/System/Library/CoreServices
+export MANPATH=/usr/share/man:/usr/local/man
+export EDITOR=/usr/bin/vi
+export TERM=vt100
+
+# Commented because awk is not present
+# Parsing sysctl.conf
+#if [ -f /etc/sysctl.conf ]; then
+#	awk '{ if (!index($1, "#") && index($1, "=")) print $1 }' < /etc/sysctl.conf | while read
+#	do
+#		sysctl -w ${REPLY}
+#	done
+#fi
+
+# Setting hostname
+sysctl -w kern.hostname="PureDarwin.local"
+
+# Populating /dev/fd/ with mount_fdesc
+/sbin/mount -t fdesc -o union stdin /dev
+
+# Cosmectic
+#/bin/sh /usr/local/sbin/pd_ascii_hexley_nano
+/usr/local/sbin/pd_xkp
+
+# Workaround read-write
+#/sbin/mount -uw /
+
+# bash interactive
+#/bin/bash -i 
+
+# zsh interactive
+/bin/zsh -i
+
+i=0
+while [ $i -lt 43 ]; do
+	printf "$i\r"
+	i=$[$i + 1]
+	sleep 1
+done
+echo
+echo "You escaped the dungeon."
+

@@ -1,0 +1,16 @@
+#!/bin/sh
+
+#
+# Tiny startx preliminaries script
+#
+
+sudo /sbin/kextload /System/Library/Extensions/IOGraphicsFamily.kext
+sudo /sbin/kextload /System/Library/Extensions/VMwareIOFramebuffer.kext
+
+# Below not needed with voodooPS2Controller
+#sudo /sbin/kextload /System/Library/Extensions/ApplePS2Controller.kext/Contents/PlugIns/ApplePS2Trackpad.kext
+#sudo /sbin/kextload /System/Library/Extensions/ApplePS2Controller.kext/Contents/PlugIns/ApplePS2Mouse.kext
+
+export DISPLAY=:0.0
+
+/usr/X11R6/bin/startx -- -nolisten tcp -size 1024 768

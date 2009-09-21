@@ -1,0 +1,186 @@
+#!/bin/sh
+#
+# Copyright (c) 2005, Apple Computer, Inc. All rights reserved.
+# Modifications (c) 2008 PureDarwin
+#
+# @APPLE_BSD_LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1.  Redistributions of source code must retain the above copyright
+#     notice, this list of conditions and the following disclaimer.
+# 2.  Redistributions in binary form must reproduce the above copyright
+#     notice, this list of conditions and the following disclaimer in the
+#     documentation and/or other materials provided with the distribution.
+# 3.  Neither the name of Apple Computer, Inc. ("Apple") nor the names of
+#     its contributors may be used to endorse or promote products derived
+#     from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL APPLE OR ITS CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+# IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
+# @APPLE_BSD_LICENSE_HEADER_END@
+#
+
+VERSION=20080526
+# Adaption for PureDarwin (removed non-i386 related parts, 
+# added bootefi for Intel Macs; added verbosity):
+# probono           <probono@puredarwin.org>
+# Based on darwinmaster.sh by:
+# Kevin Van Vechten <kvv@apple.com>
+# and buildcd.sh by:
+# Shantonu Sen      <ssen@opendarwin.org>
+# Felix Kronlage    <fkr@opendarwin.org>
+# Chuck Remes       <cremes@opendarwin.org>
+
+# Volume label of the target image
+VOLNAME="$3"
+
+# Path for where to find source files for the image
+SOURCE="$1"
+
+# Destination dmg
+CDDMG="$2" # .dmg gets added
+
+# Location for temporary auxiliary ISO
+ELTORITOISO=/tmp/eltorito.iso
+
+# be root
+if [ "$UID" -ne 0 ]
+then
+	echo "You must be root in order to use $(basename $0)"
+	exit 1
+fi
+
+
+# usage statement
+if [ "x$3" == "x" ]
+then
+        echo
+        echo "$(basename $0) $VERSION"
+        echo "generates a bootable dmg ('ISO') from the contents of a directory"
+        echo
+	echo "Usage:"
+        echo "$(basename $0) SourceTree DestinationImage VolumeName"
+	echo "Example:"
+        echo "$(basename $0) /Volumes/PureDarwinDisk /tmp/puredarwin.dmg PureDarwin"
+        echo
+	exit 1
+fi
+
+# fail on errors
+set -e
+
+# Path to mkisofs binary
+MKISOFS=mkisofs # this is not part of Leopard
+which mkisofs || ( echo "Please download mkisofs and put it in your \$PATH" ; exit 1 )
+
+chown -R root:wheel "$SOURCE/System/Library/Extensions/"
+chmod -R 755 "$SOURCE/System/Library/Extensions/"
+
+#
+# Check that needed files and direcories are there
+#
+
+ls "$SOURCE/System/Library/CoreServices" || ( echo "$SOURCE/System/Library/CoreServices is missing, but it is needed for EFI booting" ; exit 1 )
+ls "$SOURCE/usr/standalone/i386/cdboot" || ( echo "$SOURCE/usr/standalone/i386/cdboot is missing, but it is needed for BIOS booting" ; exit 1 )
+
+#
+# Generating Extentions.mkext
+#
+
+echo "Generating Extentions.mkext..."
+export TMPDIR="$SOURCE/private/tmp"
+if [ -z "$ARCH" ]; then
+    KEXTARCH="-a i386"
+else
+    KEXTARCH="-a $ARCH"
+fi
+kextcache $KEXTARCH -k -K "$SOURCE/mach_kernel" -m "$SOURCE/System/Library/Extensions.mkext" "$SOURCE/System/Library/Extensions"
+export -n TMPDIR
+
+# Size of the dmg to be created
+SIZE=$(du -h -d 0 "$SOURCE" | cut -f 1 | sed 's/M//'g) # without "M"
+SIZE=$(expr $SIZE + 20) # add some MB to be on the safe side
+SIZE=$SIZE"M" # with "M"
+echo "Size of the dmg to be created: $SIZE (based on size of $SOURCE)"
+
+#
+# Make an ISO that contains the boot-132 files and that has cdboot as its "El Torito" boot image; this is for BIOS booting
+#
+
+echo "Making an ISO that contains the boot-132 files and that has cdboot as its El Torito boot image at $ELTORITOISO..."
+mkdir -p /tmp/i386
+cp "$SOURCE"/usr/standalone/i386/* /tmp/i386/
+cd /tmp/i386
+ls cdboot # if it's not there, we should exit
+"$MKISOFS" -V "$VOLNAME" -no-emul-boot -boot-load-size 4 -c boot.cat -b cdboot -o "$ELTORITOISO" .
+sectors=$(du "$ELTORITOISO" | tail -1 | awk '{print $1}')
+echo $ELTORITOISO has $sectors sectors, contains the boot-132 files and that has cdboot as its El Torito boot image
+
+#
+# Create the dmg
+#
+
+echo "Creating $CDDMG.dmg..."
+# create a bootable image and remove any previous copies
+if [ -f "$CDDMG" -o -f "$CDDMG".dmg ]; then
+        rm -f "$CDDMG" "$CDDMG".dmg
+fi
+hdiutil create "$CDDMG".dmg -size $SIZE -layout NONE
+dev=$(hdid -nomount "$CDDMG".dmg | tail -1 | awk '{print $1}')
+echo dev $dev
+rdev=$(echo $dev | sed s/disk/rdisk/)
+echo rdev $rdev
+
+pdisk $rdev -initialize
+blocks=$(pdisk $rdev -dump | grep 2: | awk -F" " '{print $4}')
+echo $blocks blocks
+pdisk $rdev -dump
+
+# create the partition on the image
+pdisk $rdev -createPartition "$VOLNAME" Apple_HFS $sectors $(expr $blocks - $sectors)
+# figure out what slice the partition was created on
+slice=$(pdisk $rdev -dump | grep "$VOLNAME" | awk -F: '{print $1}' | awk -F" " '{print $1}')
+echo "Partition was created on slice $slice"
+
+# this is the tricky part
+echo "Copying $ELTORITOISO onto $rdev with dd..."
+dd if="$ELTORITOISO" of=$rdev skip=64 seek=64 bs=512
+
+echo "Initializing ${rdev}s${slice} as HFS Plus volume "$VOLNAME"..."
+newfs_hfs -v "$VOLNAME" ${rdev}s${slice}
+
+echo "Mounting  ${dev}s${slice}..."
+TMPMOUNTPOINT=/tmp/tmpmountpoint
+mkdir -p "$TMPMOUNTPOINT"
+mount -t hfs -o perm ${dev}s${slice} "$TMPMOUNTPOINT"
+
+echo "Copying the contents of "$SOURCE" to ${dev}s${slice} mounted at $TMPMOUNTPOINT..."
+ditto -rsrc "$SOURCE" "$TMPMOUNTPOINT"
+
+echo "Blessing for EFI systems..."
+"$TMPMOUNTPOINT/usr/sbin/bless" -verbose -folder "$TMPMOUNTPOINT/System/Library/CoreServices" -bootinfo -bootefi 
+
+echo "Unmounting  $TMPMOUNTPOINT..."
+sync
+sleep 3
+hdiutil unmount "$TMPMOUNTPOINT" # fixme, seems not to work reliably
+echo "Ejecting  $dev..."
+hdiutil eject $dev
+
+# clean up temporary files and folders
+echo "Cleaning up, deleting "$ELTORITOISO", /tmp/i386 and $TMPMOUNTPOINT"
+rm ELTORITOISO
+rm -r /tmp/i386
+rm -r $TMPMOUNTPOINT
