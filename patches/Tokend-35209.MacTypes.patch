@@ -1,0 +1,167 @@
+diff -ru ../Tokend-35209.orig/PIV/PIVDefines.h ./PIV/PIVDefines.h
+--- ../Tokend-35209.orig/PIV/PIVDefines.h	2008-10-02 15:03:39.000000000 -0700
++++ ./PIV/PIVDefines.h	2009-05-18 14:18:32.000000000 -0700
+@@ -29,6 +29,8 @@
+ #ifndef _PIVDEFINES_H_
+ #define _PIVDEFINES_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
++
+ /*
+ 	For the PIV tokend, refer to NIST Specical Publication 800-73-1, "Interfaces
+ 	for Personal Identity Verification". The define for CLA_STANDARD comes from 2.3.3.1.1. [SP800731]
+diff -ru ../Tokend-35209.orig/PIV/byte_string.h ./PIV/byte_string.h
+--- ../Tokend-35209.orig/PIV/byte_string.h	2008-10-02 15:03:39.000000000 -0700
++++ ./PIV/byte_string.h	2009-05-18 14:19:06.000000000 -0700
+@@ -23,6 +23,8 @@
+ 
+ #ifndef BYTE_STRING
+ #define BYTE_STRING
++
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <vector>
+ 
+ /** Utility definition and additional operators to make working with
+diff -ru ../Tokend-35209.orig/Tokend/Adornment.h ./Tokend/Adornment.h
+--- ../Tokend-35209.orig/Tokend/Adornment.h	2008-10-02 15:03:38.000000000 -0700
++++ ./Tokend/Adornment.h	2009-05-18 13:50:09.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_ADORNMENT_H_
+ #define _TOKEND_ADORNMENT_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_utilities/adornments.h>
+ #include <security_utilities/refcount.h>
+ #include <Security/SecCertificate.h>
+diff -ru ../Tokend-35209.orig/Tokend/Attribute.h ./Tokend/Attribute.h
+--- ../Tokend-35209.orig/Tokend/Attribute.h	2008-10-02 15:03:38.000000000 -0700
++++ ./Tokend/Attribute.h	2009-05-18 13:50:09.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_ATTRIBUTE_H_
+ #define _TOKEND_ATTRIBUTE_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <Security/cssmtype.h>
+ #include <security_cdsa_utilities/cssmdb.h>
+ #include <string>
+diff -ru ../Tokend-35209.orig/Tokend/AttributeCoder.h ./Tokend/AttributeCoder.h
+--- ../Tokend-35209.orig/Tokend/AttributeCoder.h	2008-10-02 15:03:39.000000000 -0700
++++ ./Tokend/AttributeCoder.h	2009-05-18 13:56:14.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_ATTRIBUTECODER_H_
+ #define _TOKEND_ATTRIBUTECODER_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_utilities/utilities.h>
+ #include <Security/cssmtype.h>
+ 
+diff -ru ../Tokend-35209.orig/Tokend/DbValue.h ./Tokend/DbValue.h
+--- ../Tokend-35209.orig/Tokend/DbValue.h	2008-10-02 15:03:39.000000000 -0700
++++ ./Tokend/DbValue.h	2009-05-18 13:50:09.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_DBVALUE_H_
+ #define _TOKEND_DBVALUE_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_cdsa_utilities/cssmdata.h>
+ #include <security_cdsa_utilities/cssmdb.h>
+ #include <Security/cssmerr.h>
+diff -ru ../Tokend-35209.orig/Tokend/MetaRecord.h ./Tokend/MetaRecord.h
+--- ../Tokend-35209.orig/Tokend/MetaRecord.h	2008-10-02 15:03:39.000000000 -0700
++++ ./Tokend/MetaRecord.h	2009-05-18 13:50:09.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_METARECORD_H_
+ #define _TOKEND_METARECORD_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_cdsa_utilities/cssmdata.h>
+ #include <map>
+ #include <string>
+diff -ru ../Tokend-35209.orig/Tokend/PKCS11Object.h ./Tokend/PKCS11Object.h
+--- ../Tokend-35209.orig/Tokend/PKCS11Object.h	2008-10-02 15:03:38.000000000 -0700
++++ ./Tokend/PKCS11Object.h	2009-05-18 13:57:46.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_PKCS11OBJECT_H_
+ #define _TOKEND_PKCS11OBJECT_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <stdint.h>
+ #include <map>
+ #include <security_utilities/debugging.h>
+diff -ru ../Tokend-35209.orig/Tokend/Record.h ./Tokend/Record.h
+--- ../Tokend-35209.orig/Tokend/Record.h	2008-10-02 15:03:38.000000000 -0700
++++ ./Tokend/Record.h	2009-05-18 13:50:09.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_RECORD_H_
+ #define _TOKEND_RECORD_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include "AttributeCoder.h"
+ #include "MetaRecord.h"
+ #include "Attribute.h"
+diff -ru ../Tokend-35209.orig/Tokend/RecordHandle.h ./Tokend/RecordHandle.h
+--- ../Tokend-35209.orig/Tokend/RecordHandle.h	2008-10-02 15:03:39.000000000 -0700
++++ ./Tokend/RecordHandle.h	2009-05-18 13:50:09.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_RECORDHANDLE_H_
+ #define _TOKEND_RECORDHANDLE_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_cdsa_utilities/handleobject.h>
+ #include <security_utilities/refcount.h>
+ #include <security_cdsa_utilities/cssmaclpod.h>
+diff -ru ../Tokend-35209.orig/Tokend/SCardError.h ./Tokend/SCardError.h
+--- ../Tokend-35209.orig/Tokend/SCardError.h	2008-10-02 15:03:38.000000000 -0700
++++ ./Tokend/SCardError.h	2009-05-18 13:49:37.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_SCARDERROR_H_
+ #define _TOKEND_SCARDERROR_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_utilities/debugging.h>
+ #include <security_utilities/errors.h>
+ 
+diff -ru ../Tokend-35209.orig/Tokend/Schema.h ./Tokend/Schema.h
+--- ../Tokend-35209.orig/Tokend/Schema.h	2008-10-02 15:03:39.000000000 -0700
++++ ./Tokend/Schema.h	2009-05-18 13:49:48.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_SCHEMA_H_
+ #define _TOKEND_SCHEMA_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_cdsa_utilities/cssmdata.h>
+ #include <security_cdsa_utilities/cssmdb.h>
+ #include <map>
+diff -ru ../Tokend-35209.orig/Tokend/SelectionPredicate.h ./Tokend/SelectionPredicate.h
+--- ../Tokend-35209.orig/Tokend/SelectionPredicate.h	2008-10-02 15:03:38.000000000 -0700
++++ ./Tokend/SelectionPredicate.h	2009-05-18 13:49:59.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_SELECTIONPREDICATE_H_
+ #define _TOKEND_SELECTIONPREDICATE_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_cdsa_utilities/cssmdata.h>
+ 
+ namespace Tokend
+diff -ru ../Tokend-35209.orig/Tokend/Token.h ./Tokend/Token.h
+--- ../Tokend-35209.orig/Tokend/Token.h	2008-10-02 15:03:38.000000000 -0700
++++ ./Tokend/Token.h	2009-05-18 13:53:04.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_TOKEN_H_
+ #define _TOKEND_TOKEN_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <SecurityTokend/SecTokend.h>
+ #include <security_utilities/osxcode.h>
+ #include <security_cdsa_utilities/context.h>
+diff -ru ../Tokend-35209.orig/Tokend/TokenContext.h ./Tokend/TokenContext.h
+--- ../Tokend-35209.orig/Tokend/TokenContext.h	2008-10-02 15:03:39.000000000 -0700
++++ ./Tokend/TokenContext.h	2009-05-18 13:53:22.000000000 -0700
+@@ -29,6 +29,7 @@
+ #ifndef _TOKEND_TOKENCONTEXT_H_
+ #define _TOKEND_TOKENCONTEXT_H_
+ 
++#include <CoreServices/../Frameworks/CarbonCore.framework/Headers/MacTypes.h>
+ #include <security_utilities/utilities.h>
+ 
+ namespace Tokend

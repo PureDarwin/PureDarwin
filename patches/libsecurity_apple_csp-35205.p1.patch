@@ -1,0 +1,30 @@
+diff -ru libsecurity_apple_csp-35205/libsecurity_apple_csp.xcodeproj/project.pbxproj libsecurity_apple_csp-35205.patch/libsecurity_apple_csp.xcodeproj/project.pbxproj
+--- libsecurity_apple_csp-35205/libsecurity_apple_csp.xcodeproj/project.pbxproj	2008-10-01 23:55:26.000000000 +0200
++++ libsecurity_apple_csp-35205.patch/libsecurity_apple_csp.xcodeproj/project.pbxproj	2009-06-09 20:59:25.000000000 +0200
+@@ -1512,8 +1512,6 @@
+ 				OTHER_ASFLAGS_profile = "-DNDEBUG $(OTHER_CFLAGS) -pg";
+ 				OTHER_CFLAGS = (
+ 					"-DALLOW_ZERO_PASSWORD",
+-					"-DCRYPTKIT_CSP_ENABLE",
+-					"-DASC_CSP_ENABLE",
+ 					"-DCK_SECURITY_BUILD",
+ 				);
+ 				OTHER_CFLAGS_debug = "$(OTHER_CFLAGS) -O0 -fno-inline";
+@@ -1567,8 +1565,6 @@
+ 				OTHER_ASFLAGS_profile = "-DNDEBUG $(OTHER_CFLAGS) -pg";
+ 				OTHER_CFLAGS = (
+ 					"-DALLOW_ZERO_PASSWORD",
+-					"-DCRYPTKIT_CSP_ENABLE",
+-					"-DASC_CSP_ENABLE",
+ 					"-DCK_SECURITY_BUILD",
+ 				);
+ 				OTHER_CFLAGS_debug = "$(OTHER_CFLAGS) -O0 -fno-inline";
+@@ -1669,8 +1665,6 @@
+ 				OTHER_ASFLAGS_profile = "-DNDEBUG $(OTHER_CFLAGS) -pg";
+ 				OTHER_CFLAGS = (
+ 					"-DALLOW_ZERO_PASSWORD",
+-					"-DCRYPTKIT_CSP_ENABLE",
+-					"-DASC_CSP_ENABLE",
+ 					"-DCK_SECURITY_BUILD",
+ 				);
+ 				OTHER_CFLAGS_debug = "$(OTHER_CFLAGS) -O0 -fno-inline";
