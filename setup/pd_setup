@@ -1,0 +1,1665 @@
+#!/bin/sh
+#
+# Copyright (c) 2007-2009 The PureDarwin Project.
+# All rights reserved.
+#
+# @LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# @LICENSE_HEADER_END@
+#
+
+#
+# Copyright (c) 2005, Apple Computer, Inc. All rights reserved.
+#
+# @APPLE_BSD_LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1.  Redistributions of source code must retain the above copyright
+#     notice, this list of conditions and the following disclaimer.
+# 2.  Redistributions in binary form must reproduce the above copyright
+#     notice, this list of conditions and the following disclaimer in the
+#     documentation and/or other materials provided with the distribution.
+# 3.  Neither the name of Apple Computer, Inc. ("Apple") nor the names of
+#     its contributors may be used to endorse or promote products derived
+#     from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL APPLE OR ITS CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+# STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+# IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
+# @APPLE_BSD_LICENSE_HEADER_END@
+#
+
+#
+# probono <probono@puredarwin.org>
+# aladin   <aladin@puredarwin.org>
+#
+
+#
+# Set up a basic PureDarwin system
+#
+# Usage: pd_setup /Volumes/PureDarwin PureDarwin
+#	 pd_setup /tmp/puredarwin.iso PureDarwin
+#        pd_setup puredarwin.vmwarevm PureDarwin
+#        pd_setup puredarwin.vmdk PureDarwin
+#
+# WARNING: this will destroy all data on the target!
+#
+# Based on darwinmaster.sh by
+#       Kevin Van Vechten <kvv@apple.com>
+# Based on buildcd.sh by
+#       Shantonu Sen      <ssen@opendarwin.org>
+#       Felix Kronlage    <fkr@opendarwin.org>
+#       Chuck Remes       <cremes@opendarwin.org>
+#
+
+#
+# Changelog
+#
+# 20090313 - See hg log (mercurial) and/or svn log from now - aladin
+# 20090310 - Enabled PureFoundation 
+#            pseudo network support - aladin
+# 20090208 - Enabled xnu-dev (voodoo Release 1.0 Rev A)
+#            Developer choice, minor fixes - aladin
+# 20081225 - Enabled xnu-dev (voodoo Release 1.0 Rev 1)
+#            Minor fixes about bootloader
+#            Provide startupfiletool, more WMs - aladin
+# 20081224 - PureDarwin Xmas released!
+# 20081219 - Added dtrace, keymaps (for X) in pd_roots
+#            Autoload X via launchd, minor fixes - aladin
+# 20081217 - Assimilated pd_makeiso setup script
+#            Add qemu-img and mkisofs binary tool
+#            Fixed guestOS in .vmx, minor fixes - aladin 
+# 20081212 - Fixed mount manually to $MOUNT - probono
+# 20081212 - Added zfs to pd_roots - fixed missingstuff - aladin 
+# 20081211 - We can't use missingstuff any more, need solve it
+#            Use entire disk, not just 256 MB - probono
+# 20081210 - Mount manually to $MOUNT - probono
+# 20081210 - Fixed experimental packages built with 9F33pd1.plist
+#            "nano" release uses launchd too, cosmetic updates - aladin
+# 20081209 - License header update, minor updates
+#            Assimilated "nano" setup script 
+#            Added autozone to pd_roots - aladin
+# 20081030 - Add patched CF, IOKitUser, objc4 and launchd
+#            Added pam to pd_roots (for login & co) - aladin
+# 20081022 - Fixed diskarbitrationd nag popup - probono
+# 20081002 - Cleaned again - aladin
+# 20080927 - Added .vmwarevm extension detection and support
+#            Minor fixes - aladin 
+# 20080926 - Many updates, umount fixed, vmware drivers cleaned 
+#            Merge of pd_setup and pd_makedmg - aladin
+# 20080925 - Fixed shell interactive mode in "nano"
+#            Minor updates, saving more spaces - aladin 
+# 20080921 - Added .zshrc, removed single user mode
+#            Added grep in pd_roots - aladin
+# 20080917 - Minor updates and fixes 
+#            Added zsh interactive mode (for "nano"), system_cmds (ps), 
+#            file_cmds (ls), diskdev_cmds (devfs), adv_cmds (ps),
+#            libutil (mount), text_cmds (cat), in pd_roots - aladin
+# 20080831 - Minor updates and fixes
+#            Added BootCache in pd_roots - aladin
+# 20080827 - Less missingstuf: PCSC.framework (replaced by pcsc-lite)
+#            Added (temporary) VMware-Drivers-OpenSource.zip
+#            Minor updates - aladin
+# 20080818 - Fixed minor errors
+#            Added vim in pd_roots
+#            Fake VMware guest OS detection
+#            Added pd_injectuser in pd_contrib/
+#            Added multi-user support - aladin
+# 20080806 - Added timezone support
+#            Fixed errors found with debug activated (/var/log/syslog)
+#            Fixed pd_binaryroots (forgot to add ipsec in the previous commit)
+#            Fixed (almost) hostname - aladin
+# 20080803 - Updating booter from v5.0.132_dfe_r28 to v5.0.132_dfe_r146
+#            Added IOBDStorageFamily in pd_drivers
+#            Changed missingstuff to override target existence test
+#            Less missingstuff: com.apple.securityd.plist, securityd,
+#                               libsecurity, Security.framework (9D34),
+#                               libipsec (9E17), libcrypto (openssl), ...  
+#            Launchd debug and verbose boot log via syslog
+#            DTrace support
+#            motd and hostname are back! - aladin
+# 20080527 - Fixed minor bugs - aladin
+# 20080525 - Fork for "nano" - probono
+# 20080523 - Using BinaryDrivers from DarwinBuild - probono
+# 20080522 - Changed missingstuff not to use "L" since that
+#            filled up the disk too quickly and removed
+#            some of the missingstuff that is now available - probono
+# 20080303 - Minor updates - aladin
+# 20080108 - Initial version - probono
+#
+
+echo
+echo "Set up a bootable PureDarwin system."
+echo
+
+#
+# Preventive tests ------------------------------------------------------------
+#
+
+# Be strict and fail on errors
+# FIXME: below commented because of error with var initialization (PARTITION=...), sometimes with kextcache
+#set -e
+
+# Ensure root exclusivity
+if [ "$UID" -ne 0 ]
+then
+	echo "You must be root in order to use $(basename $0)"
+	exit 1
+fi
+
+# Usage statement
+if [ $# -lt 2 ]; then
+	echo "Usage: $(basename $0) any_output_filename VolumeName"
+	echo
+	echo "       * Install to physical disk"
+	echo "       $(basename $0) /Volumes/PureDarwin PureDarwin"
+	echo
+	echo "       * Create an ISO 9660 image (.iso)"
+	echo "       $(basename $0) /tmp/puredarwin.iso PureDarwin"
+        echo
+	echo "       * Create a ready-to-run VMware virtual machine (.vmwarevm)"
+	echo "       $(basename $0) puredarwin.vmwarevm PureDarwin"
+        echo
+	echo "       * Create a ready-to-run VMware virtual disk (.vmdk)"
+	echo "       $(basename $0) puredarwin.vmdk PureDarwin"
+	echo
+	exit 1
+fi
+
+# Ensure "" is not used as "target"
+if [ "$1" = "" ]
+then
+	echo "$(basename $0): Empty output filename"
+	exit 1
+fi
+
+# Ensure / is not used as "target"
+if [ "$1" = "/" ]
+then
+	echo "Bad volume name: $1"
+	exit 1
+fi
+
+# Ensure "target" exists (for real hw)
+#if [ ! -e "$1" ]
+#then
+#	echo "Unknown volume name: $1"
+#	exit 1
+#fi
+
+#FIXME
+# Ensure we have a bootloader folder
+#if [ ! -d "$(cd $(dirname $0) && pwd)/pd_setup_files/boot/i386/" ]; then 
+#	echo "$(tput bold)Warning!$(tput reset) Required bootloader files are missing!"
+#	exit 1
+#fi
+
+#
+# Set up paths and variables --------------------------------------------------
+#
+
+# Reading global variables in pd_config file
+source pd_config
+
+# Default release
+RELEASE="PureDarwin"
+
+# Destination output filename (aka "target")
+CDDMG="$1"
+
+# In the contrary of .iso, when extension is dmg, hdiutil does not concat .dmg
+T_CDDMG_EXT=$(basename $CDDMG | awk -F '.' '{print $NF}')
+if [ $T_CDDMG_EXT = "dmg" ]; then
+	CDDMG=$(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1}')
+fi
+
+# Volume label of the target image (ie: PureDarwin)
+VOLNAME="$2"
+
+# Temporary pseudo PureDarwin Volume
+MOUNT=/Volumes/$VOLNAME
+
+# Default binaryroots list (pd_roots)
+BINARYROOTS_LIST="pd_roots"
+
+# Find out where this script lives
+DIRNAME=$(cd $(dirname $0) && pwd)
+
+# Thinned binary roots and drivers root folder
+PACKAGES=$DIRNAME/$DESTDIR
+
+# Add PureDarwin tools to $PATH
+export PATH=$DIRNAME/pd_setup_files/:$PATH
+
+# Location for temporary auxiliary ISO
+ELTORITOISO=/tmp/eltorito.iso
+
+# mkisofs binary path (note: it doesn't come from darwin nor macosx)
+MKISOFS_BIN="$DIRNAME/pd_setup_files/mkisofs"
+
+# qemu-img binary path (note: it doesn't come from darwin nor macosx)
+QEMUIMG_BIN="$DIRNAME/pd_setup_files/qemu-img"
+
+# Target detection (real disk or image/vm)
+EXT=`/usr/bin/basename $1 | awk -F "." '{print $2}'`
+
+# Needed for trap() function
+export DEVICE=""
+
+# Get device name
+PARTITION=$(df | grep "$1" | cut -d " " -f 1 )
+RPARTITION=${PARTITION/disk/rdisk}
+DEVICE=$(echo $PARTITION | grep -o -e /dev/disk\[0-9\]\* )
+RDEVICE=${DEVICE/disk/rdisk}
+
+#
+# Display information, license, etc.. -----------------------------------------
+#
+echo "Release    : $RELEASE"
+echo "Target     : $1"
+echo "Volume name: $2" #$VOLNAME
+echo
+
+#
+# Warnings --------------------------------------------------------------------
+#
+
+echo "$(tput bold)Warning!$(tput reset) this will $(tput bold)destroy$(tput reset) all data on $1"
+printf "Continue? (y/$(tput bold)n$(tput reset)) "
+read CONT
+if [ "$CONT" != "y" ]; then 
+	exit 1
+fi
+
+echo "$(tput bold)Warning!$(tput reset) Are you sure?"
+printf "Continue? (y/$(tput bold)n$(tput reset)) "
+read CONT
+if [ "$CONT" != "y" ]; then
+	exit 1
+fi
+
+# Ensure "target" does not exist
+if [ -e "$1" ]
+then
+	echo "$(tput bold)Warning!$(tput reset) \`$1' is going to be $(tput bold)rewritten$(tput reset)"
+	printf "Continue? (y/$(tput bold)n$(tput reset)) "
+	read CONT
+	if [ "$CONT" != "y" ]; then
+		echo "$(tput bold)Aborting!$(tput reset) \`$CONT' is not \`y'."
+		exit 1
+	fi
+	echo
+fi
+
+echo
+echo "OK, You have been warned.."
+
+#
+# Trap functions --------------------------------------------------------------
+#
+
+function mr_proper {
+	# clean up temporary files and folders
+	echo "Cleaning up"
+
+	if [ -e $ELTORITOISO ];then
+		rm $ELTORITOISO
+		echo " * $ELTORITOISO removed"
+	fi
+
+	if [ -e /tmp/i386 ];then
+		rm -r /tmp/i386
+		echo " * /tmp/i386 removed"
+	fi
+
+	# Unmounting $MOUNT
+	echo "$(tput bold)Warning!$(tput reset) \`$MOUNT is going to be $(tput bold)unmounted$(tput reset)"
+	printf "Continue? ($(tput bold)y$(tput reset)/n) "
+	read CONT
+	if [ "$CONT" != "n" ]; then
+		T_ERROR=`umount -f "$MOUNT" 2>&1`
+		if [ $? -eq 0 ]; then
+			echo " * $MOUNT unmounted"
+		else
+			echo " * umount failed (error: $T_ERROR)"
+		fi
+	fi	
+
+	# Ejecting $DEVICE
+	echo "$(tput bold)Warning!$(tput reset) \`$DEVICE is going to be $(tput bold)ejected$(tput reset)"
+	printf "Continue? ($(tput bold)y$(tput reset)/n) "
+	read CONT
+	if [ "$CONT" != "n" ]; then
+		T_ERROR=`hdiutil eject "$DEVICE" 2>&1`
+		if [ $? -eq 0 ]; then
+			echo " * $DEVICE ejected"
+		else
+			echo " * eject failed (error: $T_ERROR)"
+		fi
+	fi
+
+	# Removing $MOUNT
+	echo "$(tput bold)Warning!$(tput reset) \`$MOUNT is going to be $(tput bold)removed$(tput reset)"
+	printf "Continue? ($(tput bold)y$(tput reset)/n) "
+	read CONT
+	if [ "$CONT" != "n" ]; then
+		T_ERROR=`rmdir $MOUNT 2>&1`
+		if [ $? -eq 0 ]; then
+			echo " * $MOUNT removed"
+		else
+			echo " * rmdir failed: (error: $T_ERROR)"
+		fi
+	fi
+
+	# Remove any previous copies
+	#if [ -e $CDDMG.dmg ];then
+	#	rm -f "$CDDMG".dmg
+	#	echo " * $CDDMG.dmg removed"
+	#fi
+}
+
+# ^c (control-c) trapped
+function trap_handler {
+	echo 
+	echo " ^C trapped."
+	echo
+
+	# iso, vmwarevm, vmdk, dmg, etc..
+	if [ ! $EXT = "" ]; then
+		mr_proper
+	fi
+	echo
+	echo "Installation on ${MOUNT} $(tput bold)failed$(tput reset)."
+	echo
+	exit 1
+}
+
+# Trap ^c (control-c)
+trap trap_handler INT TERM
+
+#
+# Pre-configuration (interactive mode) ----------------------------------------
+#
+
+# Network support
+#echo "$(tput bold)Network $(tput reset) support"
+#printf "Enable network support ($(tput bold)y$(tput reset)/n) "
+#read CONT
+#if [ ! "$CONT" = "n" ]; then
+#	# enabling network support
+#fi
+
+echo
+echo "STAGE 1 / PRE-CONFIGURATION"
+echo "==========================="
+
+# FIXME at this time, the list of questions is still by chronological order of appearance of settings below in the script.
+#       some question can depend on the answer of a previous one, test will be added later.
+#       Question should probably be groupped by category.. but.. i have argue why not sometimes;)
+
+printf "Add X and other related binaryroots? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_X=$CONT
+
+# FIXME voodoo 9.7 kernel panic in qemu
+printf "Add Voodoo Xnu-dev kernel (Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_VOODOO_XNU=$CONT
+
+printf "Add PureFoundation enhancements? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_PUREFOUNDATION=$CONT
+
+printf "Add VoodooPS2Controller (VoodooPS2Controller, VoodooPS2Keyboard, VoodooPS2Mouse, VoodooPS2Trackpad)? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_VOODOO_PS2CONTROLLER=$CONT
+
+#printf "Add xnu-speedstep (Intel SpeedStep driver)? (y/$(tput bold)n$(tput reset)) "
+#read CONT
+#ADD_VOODOO_XNU_SPEEDSTEP=$CONT
+
+#printf "Add VoodooPower (Power Management support)? (y/$(tput bold)n$(tput reset)) "
+#read CONT
+#ADD_VOODOO_POWER=$CONT
+
+printf "Add David Elliott PS2 support (ACPIPS2Nub, ApplePS2Controller)? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_DFE_PS2CONTROLLER=$CONT
+
+printf "Add 640x480x32 framebuffer resolution? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_LITTLE_RES=$CONT
+
+printf "Add 800x600x32 framebuffer resolution? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_MEDIUM_RES=$CONT
+
+printf "Add 1024x768x32 framebuffer resolution? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_NORMAL_RES=$CONT
+
+printf "Add VMware support? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_VMWARE=$CONT
+
+printf "Add debug (verbose launchd and persistent logs in /var/log/syslog)? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_DEBUG=$CONT
+
+printf "Add Belge keymapping in X? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_KEYMAP_BELGE=$CONT
+
+printf "Add Deutsch keymapping in X? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_KEYMAP_DEUTSCH=$CONT
+
+printf "Add Francais keymapping in X? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_KEYMAP_FRANCAIS=$CONT
+
+printf "Add UK keymapping in X? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_KEYMAP_UK=$CONT
+
+printf "Add USA keymapping in X? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_KEYMAP_USA=$CONT
+
+printf "Add a default user account: toor (password: toor)? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_DEFAULT_USER=$CONT
+
+printf "Add WindowMaker (default window manager)? (y/$(tput bold)n$(tput reset)) "
+read CONT
+ADD_WMAKER=$CONT
+
+printf "Add /etc/zshrc? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_ZSHRC=$CONT
+
+printf "Do you want to keep developer headers and libraries? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_DEVELOPER=$CONT
+
+printf "Add VMware VMDK disk image (read-write support)? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_VMWARE_VMDK=$CONT
+
+printf "Add Chameleon bootloader? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_CHAMELEON=$CONT
+
+#printf "Add Chameleon bootloader themes? ($(tput bold)y$(tput reset)/n) "
+#read CONT
+#ADD_CHAMELEON_THEMES=$CONT
+
+# TODO: add the binary + code + tests
+#printf "Add GRUB2 bootloader (Vladimir Serbinenko Darwin booting implementation)? ($(tput bold)y$(tput reset)/n) "
+#read CONT
+#ADD_GRUB2=$CONT
+
+printf "Erase existing partition table on $CDDMG (instead of updating MBR) ? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_MBR_ERASE=$CONT
+
+# FIXME not fully fctl..
+printf "Erase existing disk image on $CDDMG? ($(tput bold)y$(tput reset)/n) "
+read CONT
+ADD_DISK_ERASE=$CONT
+
+#
+# Bootloader switch -----------------------------------------------------------
+#
+
+# Bootloader path 
+BOOTi386=""
+
+# Add Chameleon bootloader (default: yes)
+if [ ! "$ADD_CHAMELEON" = "n" ]; then
+	# Chameleon bootloader
+	#	Chameleon v1.0.11
+	#       Chameleon v2.0-RC1-r431
+	#       Chameleon v2.0-RC2-r640
+	#	Chameleon v2.0-RC3-r658
+	BOOTi386=$DIRNAME/pd_setup_files/boot.chameleon/i386/
+else
+	# DFE bootloader v5.0.132_dfe_r146 based on Apple boot-132
+	BOOTi386=$DIRNAME/pd_setup_files/boot/i386/
+fi
+
+BOOT0="boot0"   # MBR
+BOOT1H="boot1h" # Stage 1 bootsector of EFI partition 
+BOOT="boot"	# Stage 2 boot2 HFS+ startup file
+CDBOOT="cdboot" # CD-ROM, etc..
+
+#
+# Start and format drive ------------------------------------------------------
+#
+
+echo
+echo "PSEUDO STAGE 1 / PARTITIONING"
+echo "=============================="
+
+echo "Partitioning disk $RDEVICE, please wait..."
+# iso, vmwarevm, vmdk, dmg, etc..
+if [ ! $EXT = "" ]; then
+
+	#
+	# Preparing ingredients for iso, dmg, vmwarevm, etc.. -----------------
+	#
+	
+	#echo "Creating ISOs"
+	#echo "Making an ISO containing the boot-132 files and that has cdboot as its El Torito boot image at $ELTORITOISO..."
+	mkdir -p /tmp/i386
+
+	# Copy bootloader cdboot (but not only) for CD-ROMs
+	echo "Populating $BOOTi386 -> /tmp/i386"
+	cp $BOOTi386/* /tmp/i386/
+
+	cd /tmp/i386
+
+		if [ ! -e $CDBOOT ]; then
+			# if it's not there, we should exit
+			echo "$(tput bold)Aborting!$(tput reset) cdboot cannot be found and is mandatory."
+			mr_proper
+			exit 1
+		fi
+
+		# mkisofs 
+		#
+		#       -quiet          Less verbose
+		#       -V              Volume ID to be written into the master block
+		#       -no-emul-boot   The boot image used to create "El Torito" bootable CDs is a 'no emulation' image
+		#       -boot-load-size Specifies the number of "virtual" (512-byte) sectors to load in no-emulation mode.
+		#                               The default is to load the entire boot file (here it is "4").
+		#                               Some BIOSes may have problems if this is not
+		#       -c              Path and filename of the boot catalog to be used when making an "El Torito" bootable CD
+		#       -b              Eltorito_boot path and filename of the boot image to be used when making an "El Torito" bootable CD
+		#       -o              Target written image file
+		echo "Creating $ELTORITOISO"
+		"$MKISOFS_BIN" -quiet -V "$VOLNAME" -no-emul-boot -boot-load-size 4 -c boot.cat -b $CDBOOT -o "$ELTORITOISO" .
+
+		# Sector count
+		sectors=$(du "$ELTORITOISO" | tail -1 | awk '{print $1}')
+		size_mb=$(du -h "$ELTORITOISO" | tail -1 | awk '{print $1}')
+
+		#echo "$ELTORITOISO has $sectors sectors, contains the boot-132 files and that has cdboot as its El Torito boot image"
+		echo "created: $ELTORITOISO ($size_mb | $sectors sectors)"
+
+	cd - > /dev/null
+
+	#
+	# Create a bootable image ---------------------------------------------
+	#
+
+	# Remove any previous copies
+	#if [ -e "$CDDMG.dmg" ];then
+		#rm -f "$CDDMG.dmg"
+		#echo "removed: $CDDMG.dmg"
+	#fi
+
+	#if [ -e "$CDDMG" ];then
+		#rm -Rf "$CDDMG"
+		#echo "removed: $CDDMG"
+	#fi
+
+
+	# Create a bootable image
+
+	# Keep existing disk image (default: no) ------------------------------
+	#if [ ! "$ADD_DISK_ERASE" = "n" ]; then
+		echo "Reusing existing disk image" #FIXME check size
+		
+
+		# Size of the image to be created
+		#SIZE=$(du -h -d 0 "$SOURCE" | cut -f 1 | sed 's/M//'g) # without "M"
+		#SIZE=$(expr $SIZE + $(expr 255 - $SIZE)) # add some MB to be on the safe side
+		SIZE="1345M" # do no forget "M"
+		echo "Creating $CDDMG.dmg ($SIZE)"
+		# hdiutil: manipulate disk images (attach, verify, burn, etc)
+		#       create  new image of the given size
+		#       -fs     specify the filesystem (HFS+J <- HFS+ journalised) 
+		#       -o      the result written image
+		#       -size   specify the size of the image
+		#       -layout specify the partition layout of the image (which is "NONE" here)
+		#       -type   UDIF is the default disk image type
+		#       -nospotlight (Undocumented arg)
+		#               > strings /usr/bin/hdiutil| grep nospotlight
+		#               -nospotlight
+		#               > strings /usr/share/man/man1/hdiutil.1 | grep nospotlight
+		#               >
+		# FIXME Replace by `dd' to avoid hdiutil dependency.. (which is not available)
+		hdiutil create -ov -fs HFS+J -o "$CDDMG" -size $SIZE -layout NONE -type UDIF -nospotlight
+	#else
+	# nyi.
+	#fi
+
+	# Suppress automatic mounting of any filesystems in the image
+	# 	This will result in /dev entries being created and (for non-kernel-attached images)
+	# 	a process in the background, but no volumes will be mounted.
+	# FIXME Replace by `??' to avoid hdiutil dependency.. (which is not available)
+	export DEVICE=$(hdid -nomount "$CDDMG.dmg" | tail -1 | awk '{print $1}')
+
+	export RDEVICE=$(echo $DEVICE | sed s/disk/rdisk/)
+	echo "Automatic mounting of any FS in $CDDMG.dmg suppressed ($DEVICE entry kept)"
+
+	echo " * Initializing $RDEVICE"
+	# pdisk -initialise (Undocumented arg)
+	#       > strings /usr/sbin/pdisk | grep "\-initia"
+        #       -initialize
+	#       > strings /usr/share/man/man8/pdisk.8| grep "\-initia"
+	#       >
+	pdisk $RDEVICE -initialize
+
+	echo " * Partitioning $RDEVICE"
+	# pdisk -dump (Undocumented arg)
+	#       > strings /usr/sbin/pdisk | grep "\-dump"
+        #       -initialize
+	#       > strings /usr/share/man/man8/pdisk.8| grep "\-dump"
+	#       >
+	blocks=$(pdisk $RDEVICE -dump | grep 2: | awk -F" " '{print $4}')
+	# create the partition on the image
+	pdisk $RDEVICE -createPartition "$VOLNAME" Apple_HFS $sectors $(expr $blocks - $sectors) > /dev/null
+	# figure out what slice the partition was created on
+	slice=`pdisk $RDEVICE -dump | grep "$VOLNAME" | awk -F: '{print $1}' | awk -F" " '{print $1}'` 
+	echo " * Partition created on slice $slice ($blocks blocks)"
+
+	# this is the tricky part
+	echo " * ddying $ELTORITOISO to $RDEVICE"
+	dd if="$ELTORITOISO" of=$RDEVICE skip=64 seek=64 bs=512
+
+	echo
+	echo "Initializing ${RDEVICE}s${slice} (HFS+ volume)"
+	newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s${slice}
+	echo
+
+	echo "Mounting ${DEVICE}s${slice} on $MOUNT"
+	mkdir -p "$MOUNT"
+	mount -t hfs -o perm ${DEVICE}s${slice} "$MOUNT"
+
+# end of iso/dmg/vmware part
+else
+
+	#
+	# Preparing and partitionning the physical device ---------------------
+	#
+	
+	# FIXME Show the user a list of attached drives 
+	# FIXME ask to choose one
+	# FIXME Show the user a list of partitions on the chosen drive 
+	# FIXME ask to choose one or fall into fdisk (pdisk?)
+	# FIXME Reboot?
+	# FIXME disk is known:
+	# FIXME etc..
+
+	# Disable automounting in Finder and popping-up dialog boxed
+	launchctl unload /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+
+	export COMMAND_LINE_INSTALL=1
+	umount -f ${DEVICE}s1
+	#umount -f $PARTITION
+
+	# FIXME fix needed for time
+	sleep 3
+
+	#
+        # Bootloader ---------------------------------------------
+	#
+
+	# FIXME add grub2 binary + code + tests
+	# Grub2 bootloader (default: n)
+	#if [ "$ADD_GRUB2" = "y" ]; then
+		# install to the target
+		# grub-install --root-directory=/media/XXX/ /dev/sdX
+		#http://sites.google.com/a/puredarwin.org/puredarwin/developers/booting/grub2
+	#fi
+
+	# MBR initialisation with a template file (for BIOS) 
+	#       -i initialise the MBR sector and also erase partition table (exclusiv to u)
+	#       -u Update MBR code, preserving existing partition table (exclusiv to i)
+	#       -y Do not ask for confirmation before writing
+	#       -a Specify an automatic partitioning style (which is "hfs")
+	#       -f Specifies an alternate MBR template file (which is $BOOT0)
+	# Erase MBR (default: yes) --------------------------------------------
+	echo "Installing boot0 to the partition MBR"
+	if [ ! "$ADD_MBR_ERASE" = "n" ]; then
+		fdisk -i -y -a hfs -f $BOOTi386/$BOOT0 $RDEVICE
+	else
+		fdisk -u -y -a hfs -f $BOOTi386/$BOOT0 $RDEVICE
+	fi
+	
+	# Create an  HFS Plus file system
+	#       -s case-sensitive HFS Plus filesystem
+	#       -J journaled HFS+ volume (default journal size is 8MB)
+	#       -v volume name (which is the following arg)
+	/sbin/newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s1
+
+	# 
+	sleep 5 # FIXME fix needed for time / absolutely needed!
+
+	echo "Installing stage 1 booter (boot1h) to the partition bootsector"
+	dd if=$BOOTi386/$BOOT1H of=${RDEVICE}s1 
+
+	sleep 3 # FIXME fix needed for time
+
+	# Do this manually so we can be 100% sure it's mounted to $MOUNT...
+	# Need to do this BEFORE diskarbitrationd is launched again
+	mkdir -p ${MOUNT}
+	mount -t hfs ${DEVICE}s1 ${MOUNT}
+
+	# copying the boot2 HFS+ startup file 
+	echo "Installing stage 2 loader (boot) to the partition's root directory"
+
+	# Add Chameleon bootloader (default: yes)
+	if [ ! "$ADD_CHAMELEON" = "n" ]; then
+		# startupfiletool is not needed with Chameleon
+		cp $BOOTi386/$BOOT $MOUNT/
+
+		# EFI Partition ?
+	else
+		startupfiletool ${RDEVICE}s1 $BOOTi386/$BOOT
+	fi
+
+	/bin/sync
+
+	# FIXME Make disk bootable?
+	# ./fdisk -e /dev/rdiskX
+	# f 1
+	# w
+	# q
+
+
+
+	# FIXME fix needed for time / Waiting for volume 
+	echo "Waiting..."
+	sleep 7
+
+	# Enable "automounting in Finder and popping-up dialog boxed"
+	launchctl load /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+
+fi	
+
+# Disable Spotlight
+echo "Disable Spotlight"
+touch ${MOUNT}/.metadata_never_index
+
+# Adopts (activates) on-disk ownership
+echo "Adopting (Activating) on-disk ownership"
+vsdbutil -a ${MOUNT}
+
+# Ensure permissions are on
+vsdbutil -c ${MOUNT}
+
+#
+# Install packages (binary roots and drivers) ---------------------------------
+#
+
+echo
+echo "STAGE 2 / PACKAGES DEPLOYEMENT"
+echo "=============================="
+
+
+# -----------------------------------------------------------------------------
+# Moving to the PureDarwin racine (root /)
+#
+
+cd ${MOUNT}
+
+#FIXME replace this part by pdpd
+mkdir -p ./private/var/log/
+echo "Installing packages on '${MOUNT}'..."
+
+for f in `cat $DIRNAME/$BINARYROOTS_LIST $DIRNAME/pd_drivers` ; do
+	echo " * $(basename $f.root.tar.bz2)"
+	tar xjpfv $PACKAGES/$f.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+done
+
+# Add Chameleon themes (default: yes) -----------------------------------------
+#if [ ! "$ADD_CHAMELEON_THEMES" = "n" ]; then
+	# FIXME populate Extra folder, and custom plist + 
+	# FIXME adapt graphics resolution
+	# http://forum.voodooprojects.org/index.php/topic,388.0.html
+#fi
+
+# Voodoo kernel (xnu-dev) replacement (default: y) ----------------------------
+#
+# http://code.google.com/p/xnu-dev/
+if [ ! "$ADD_VOODOO_XNU" = "n" ]; then
+	echo " * voodoo_kernel.root.tar.bz2"
+	tar xjpfv $PACKAGES/voodoo_kernel.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	mv $MOUNT/mach_kernel $MOUNT/mach_kernel.origin
+	cp $MOUNT/mach_kernel.voodoo $MOUNT/mach_kernel
+	# $MOUNT/mach_kernel.voodoo.9.5 (Voodoo 1.0 Rev A / xnu-dev) <- default
+	# $MOUNT/mach_kernel.voodoo.9.7 (Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+fi
+
+# Xnu-speedstep support (default: n) -----------------------------------------
+if [ "$ADD_VOODOO_XNU_SPEEDSTEP" = "y" ]; then
+	# "A kernel extension for OS X to enable Intel SpeedStep and undervolting on any kernel"
+	# 
+	# Intel SpeedStep driver which extends the range of CPUs and motherboard support
+	# AppleIntelCPUPowerManagement kext
+	# http://code.google.com/p/xnu-speedstep
+	# v1.4.9
+
+	# 	 IntelEnhancedSpeedStep_1.4.9.zip
+	#cp -R IntelEnhancedSpeedStep.kext ${MOUNT}/System/Library/Extensions
+	#sudo chown -R root:wheel ${MOUNT}/System/Library/Extensions/IntelEnhancedSpeedStep.kext
+	#chmod -R 755 /System/Library/Extensions/IntelEnhancedSpeedStep.kext
+	#
+	# Note: It seems IntelEnhancedSpeedStep cannot affect cpu(s) in vmware
+	echo
+fi
+
+# VoodooPower (r.30) support (default: n) -------------------------------------
+if [ "$ADD_VOODOO_POWER" = "y" ]; then
+	# "OSX Alternative Power Management"
+	# 
+	# http://code.google.com/p/voodoo-power
+	# GenericCPUPMControl is deprecated
+	# FIXME
+	echo
+fi
+
+
+# VoodooPS2Controller 0.98 support (default: y) -------------------------------
+if [ ! "$ADD_VOODOO_PS2CONTROLLER" = "n" ]; then
+
+	# VoodooPS2Controller VoodooPS2Keyboard VoodooPS2Mouse  VoodooPS2Trackpad
+	# c.f. Contents/Plugins/VoodooPS2Trackpad.kext/Info.plist
+	# synapticsconfigload <- needed? functional?
+	# conflict with ACPIPS2Nub.
+	echo " * VoodooPS2Controller.root.tar.bz2"
+	tar xjpfv $PACKAGES/VoodooPS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	# in vmx?: keyboard.vusb.enable = "FALSE"
+fi
+
+# David Elliott PS2 support (default: n) --------------------------------------
+if [ "$ADD_DFE_PS2CONTROLLER" = "y" ]; then
+
+	# ACPIPS2Nub: PS2Controller for mouse matching a PNP device from David Elliott 
+	# org.tgwbd.driver.ACPIPS2Nub
+	# version 1.0.0d1
+	echo " * ACPIPS2Nub.root.tar.bz2 (Copyright David Elliott, 2007)"
+	tar xjpf $PACKAGES/ACPIPS2Nub.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+	# ?
+	echo " * ApplePS2Controller.root.tar.bz2"
+	tar xjpfv $PACKAGES/ApplePS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+fi
+
+# Prompt for VMware support (default: y) --------------------------------------
+if [ ! "$ADD_VMWARE" = "n" ]; then
+
+	# Fake easily guest OS detection (Mac OS X Server) in Fusion
+	# 	Template for a PureDarwin binary root:
+	# 	/System/Library/CoreServices/ServerVersion.plist
+	# 	/System/Library/CoreServices/SystemVersion.plist
+	# Info: http://code.google.com/p/puredarwin/issues/detail?id=3
+	# below deprecated, now files are taken from trunk/projects/System/Library/CoreServices/*
+	#########echo " * PureDarwin.root.tar.bz2 ({Server|System}Version.plist)"
+	#########tar xjpf $PACKAGES/PureDarwin.root.tar.bz2
+
+	#echo "Copying VMware-Drivers-OpenSource and VMwareIOFramebuffer.kext"
+	# LegacyAppleIntelPIIXATA and NullCPUPowerManagement KEXTs for use with VMware other than Fusion 
+	echo " * VMware-Drivers-OpenSource.zip"
+	unzip -q $DIRNAME/pd_setup_files/VMware-Drivers-OpenSource.zip -d ${MOUNT}/System/Library/Extensions
+	# Graphic drivers required for X display
+	echo " * VMwareIOFramebuffer.kext.zip"
+	unzip -q $DIRNAME/pd_setup_files/VMwareIOFramebuffer.kext.zip -d ${MOUNT}/System/Library/Extensions
+fi
+
+# PureFoundation enhancements (default: y) ------------------------------------
+if [ "$ADD_PUREFOUNDATION" != "n" ]; then
+	#echo "Installing PureFoundation enhancements"
+	#rm -rf $MOUNT/System/Library/Frameworks/CoreFoundation.framework
+	# PureFoundation 0.003.1 (svn rev 30)
+	# 	SHA1 Checksum: b0bc7432627a060874f28f04297a80c4a5fbd094
+	# 	CoreFoundation and ddistnoted
+	# 	PureFoundation-0.003.1.root.zip 
+	echo " * PureFoundation.root.tar.bz2 (Foundation, CoreFoundation and ddistnoted)"
+	tar xjpfv $PACKAGES/PureFoundation.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+	# ddistnoted content is provided in PureFoundation archive too
+	echo " * ddistnoted.root.tar.bz2"
+	tar xjpfv $PACKAGES/ddistnoted.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+	# Usefull for passwd (and dscl (and sudo?))
+	 #rm -R ${MOUNT}/System/Library/PrivateFrameworks/OpenDirectory.framework/Versions/A/Frameworks
+	mkdir -p ${MOUNT}/System/Library/PrivateFrameworks/OpenDirectory.framework/Versions/A/Frameworks
+	#unzip -o -q $DIRNAME/pd_setup_files/CFOpenDirectory.framework.zip -d ${MOUNT}/System/Library/PrivateFrameworks/OpenDirectory.framework/Versions/A/Frameworks
+	tar xjpfv $PACKAGES/CFOpenDirectory.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+
+	# configd stuff for network support 
+	# Source: https://sites.google.com/a/puredarwin.org/puredarwin/developers/network
+	#         on Mar 7, 2009 8:25 PM by stuart@echus.demon.co.uk (version 3 / earlier versions)
+	echo " * configd.root.tar.bz2"
+	tar xjpfv $PACKAGES/configd.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+	# Satisfy dependencies for bootp (bootp popuplate /System/Library/SystemConfiguration with IPConf.. & co)
+	# bootp is now added in pd_roots
+	echo " * NotApple80211.root.tar.bz2"
+	tar xjpf $PACKAGES/NotApple80211.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	
+	# CFNetwork.framework and CarbonCore.framework (only headers) wrapped inside CoreServices.framework
+	# Source: https://sites.google.com/a/puredarwin.org/puredarwin/developers/cfnetwork
+	#         on Feb 23, 2009 6:10 PM by stuart@echus.demon.co.uk (version 1)
+	echo " * CFNetwork.root.tar.bz2 (wrapped in CoreServices.framework)"
+	tar xjpf $PACKAGES/CFNetwork.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+	# configd_plugins-91.root (partially built)
+	#
+	# 	InterfaceNamer.bundle <- ?
+	#	KernelEventMonitor.bundle <- dhcp client (according to qemu user mode network stack
+	#	Kicker.bundle <- ???
+	#cp -R /Users/aladin/PureDarwin/darwinbuild/9J61/.build/buildroot.nfs/private/var/tmp/configd_plugins/configd_plugins-91.root/System/Library/SystemConfiguration/KernelEventMonitor.bundle $MOUNT/System/Library/SystemConfiguration/
+	echo " * configd_plugins.root.tar.gz (InterfaceNamer.bundle, KernelEventMonitor.bundle and Kicker.bundle)"
+	tar xjpf $PACKAGES/configd_plugins.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+	chown root:wheel $MOUNT/System/Library/LaunchDaemons/com.apple.configd.plist
+	chown root:wheel $MOUNT/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist
+	# + /Library/Preferences/SystemConfiguration/preferences.plist
+fi
+
+#
+# Login purposes --------------------------------------------------------------
+#
+
+# multi-user - temporary workaround mode (small PAM module for session)
+#
+# 	Source: https://sites.google.com/a/puredarwin.org/puredarwin/users/users
+#	        https://sites.google.com/a/puredarwin.org/puredarwin/downloads
+#
+#unzip -q $DIRNAME/pd_setup_files/pam_sessioncreate.so.zip -d ${MOUNT}/usr/lib/pam
+# FIXME should be integrated into "pam_modules" ?
+
+tar xjpfv $PACKAGES/pam_sessioncreate.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+
+# + cat >${MOUNT}/etc/pam.d/login<<EOOF
+
+# Needed to compile MacPorts.. FIXME ask..
+tar xjpfv $DIRNAME/$BINARYROOTS_DIR/mp/tcl-8.5.6_0+threads.i386.tbz2 >> ${MOUNT}/private/var/log/pd_setup.log
+
+#Containing:
+# 	- System/Library/Frameworks/PCSC.framework
+# 	- usr/sbin/pcscd
+echo " * PCSC.root.tar.bz2"
+tar xjpfv $PACKAGES/PCSC.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+# Add X and co (default: no)
+if [ "$ADD_X" = "y" ]; then
+	# Installing X binaryroots from macports (windowmaker, fluxbox, wmii, eterm, etc..)
+	for f in `ls $DIRNAME/$BINARYROOTS_DIR/X/*.tbz2` ; do
+		echo " * $(basename $f)"
+		tar xjpfv $f >> ${MOUNT}/private/var/log/pd_setup.log
+	done
+
+	# FIX for error: "Fontconfig error: Cannot load default config file" which "cycles" X
+	chroot ${MOUNT} /usr/X11R6/bin/fc-cache -v -f /usr/X11R6/lib/X11/fonts/
+
+fi
+
+## INSTALL (old stage 2)
+##		# mkdir -p ${MOUNT}/usr/local/sbin/
+##		# System/Library/LaunchDaemons/org.puredarwin.install.plist -> usr/local/sbin/pd_install_2
+##		echo " * PureDarwinInstall.root.tar.bz2"
+##		tar xjpfv $PACKAGES/PureDarwinInstall.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+
+cd - > /dev/null
+
+
+echo "Copying some settings file..."
+cp -fpRv  $DIRNAME/../projects/PureDarwinSettings/* ${MOUNT}/
+
+# FIXME remove .svn everywhere...
+echo
+echo "STAGE 2 / POST-CONFIGURATION"
+echo "============================"
+
+#
+# Install bootloader for EFI --------------------------------------------------
+#
+
+#sleep 2
+
+# Copy bootloader files for bless (usefull for pd_make_dmg)
+mkdir -p $MOUNT/usr/standalone/i386/ 
+cp $BOOTi386/* $MOUNT/usr/standalone/i386/
+
+if [ ! -e "$MOUNT/System/Library/CoreServices" ]; then
+	echo "$(tput bold)Warning!$(tput reset) $MOUNT/System/Library/CoreServices is missing, but it is needed for EFI booting."
+#	exit 1
+fi
+
+if [ ! -e "$MOUNT/usr/standalone/i386/cdboot" ]; then
+	echo "$(tput bold)Warning!$(tput reset) $MOUNT/usr/standalone/i386/cdboot is missing, but it is needed for BIOS booting."
+#	exit 1
+fi
+
+#${MOUNT}/usr/sbin/bless -verbose -folder "$MOUNT/System/Library/CoreServices" -bootinfo -bootefi 
+# --folder   Set this directory to be the Mac OS X/Darwin blessed directory, containing a BootX secondary loader for New World machines
+# --bootinfo Create a BootX file in the Darwin system folder using file as a source.
+#            If file is not provided, a default is used (see FILES), using a path relative
+#            to the mountpoint you are blessing.
+#            This attempts to ensure that a BootX is used that is compatible with the OS on the target volume.
+# --bootefi  Create a boot.efi file in the Mac OS X/Darwin system folder using file as a source
+#            [...]
+echo "Blessing $MOUNT/System/Library/CoreServices"
+${MOUNT}/usr/sbin/bless --folder "$MOUNT/System/Library/CoreServices" --bootinfo --bootefi --verbose
+#${MOUNT}/usr/sbin/bless --folder "$MOUNT/System/Library/CoreServices" --bootefi --verbose
+
+#mkdir -p ${MOUNT}/Library/Preferences/SystemConfiguration/
+
+# FIXME nyi
+# Use a little resolution (default: n)
+if [ "$ADD_LITTLE_RES" = "y" ]; then
+	GRAPHICS_MODE="\"Graphics Mode\"=\"640x480x32\""
+fi
+
+# Use a medium resolution (default: y)
+if [ ! "$ADD_MEDIUM_RES" = "n" ]; then
+	GRAPHICS_MODE="\"Graphics Mode\"=\"800x600x32\""
+fi
+
+# Use a normal resolution (default: n)
+if [ "$ADD_NORMAL_RES" = "y" ]; then
+	GRAPHICS_MODE="\"Graphics Mode\"=\"1024x768x32\""
+fi
+# FIXME e.g., for voodoo xnu-dev kernel, use: <string>-v -x cpus=1 busratio=12</string>
+# add in kernel flags: /Library/Preferences/SystemConfiguration/com.apple.Boot.plist
+
+#
+# Missing stuff ---------------------------------------------------------------
+#
+
+#echo "Fixing missing pieces (fixme)..."
+# This function hopefully goes away soon... # we keep it for posterity..
+# 
+# 	fixme: "until" is commented because missingstuff shouldn't miss stuff.
+# 	It happens (stuff is missed) if the target dir or file exists, even partially.
+# 	(e.g., CoreFoundation.framework)
+#	note: no missingstuff in "nano" release
+#
+missingstuff() {
+	if [ "$RELEASE" = "PureDarwin" ]; then
+	   #until [ -e ${MOUNT}/$1 ]; do 
+		echo "$(tput bold)$1$(tput reset) is missing. Do you want to copy it from your start volume? You will not be allowed to use the resulting installation anywhere else but on your Apple-labeled computer. Please check with the Mac OS X license first."
+		printf "Copy? (y/$(tput bold)n$(tput reset)) "
+		read CONT
+		if [ "$CONT" = "y" ]; then 
+			ditto -vV $1 ${MOUNT}/$1 #--rsrc --extattr 
+		fi
+	   #done
+	fi
+}	
+
+#
+# Other preparations ----------------------------------------------------------
+#
+
+# FIXME default one?
+# Setting GMT+1 timezone (instead of Pacific)
+rm ${MOUNT}/private/etc/localtime
+#chroot ${MOUNT} ln -s /usr/share/zoneinfo/Europe/Berlin /private/etc/localtime
+#chroot ${MOUNT} ln -s /usr/share/zoneinfo/Europe/London /private/etc/localtime
+chroot ${MOUNT} ln -fs /usr/share/zoneinfo/Europe/Paris /private/etc/localtime
+
+# Message of the day 
+echo "Welcome to $RELEASE!" > $MOUNT/private/etc/motd
+echo '' >> ${MOUNT}/private/etc/motd
+
+# Preparing /etc/hostconfig (deprecated?)
+echo "CRASHREPORTER=-NO-" >> $MOUNT/private/etc/hostconfig
+
+# Encrypting swap by default FIXME: it seems dynamic_pager lacks -E even with ENCRYPTSWAP=-YES
+echo "ENCRYPTSWAP=-YES-" >> $MOUNT/private/etc/hostconfig
+
+# Setting hostname
+echo "kern.hostname=PureDarwin.local" > $MOUNT/private/etc/sysctl.conf
+
+#
+# login prompt ----------------------------------------------------------------
+#
+
+# Disable login prompt
+#rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.getty.plist
+
+#
+# Fix more (minor) errors -----------------------------------------------------
+#
+
+echo "Fixing minor errors"
+
+# Avoid orphan link of /etc/resolv.conf
+touch ${MOUNT}/private/var/run/resolv.conf
+
+# dyld errors
+#
+# com.apple.dyld[76]: update_dyld_shared_cache[76] for arch=i386 failed: /var/db/dyld/shared_region_roots/ does not exist, errno=2
+mkdir -p ${MOUNT}/var/db/dyld/shared_region_roots
+# com.apple.dyld[50]: update_dyld_shared_cache: warning, no entries found in shared_region_roots
+echo "/bin/sh"   >  ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
+echo "/bin/bash" >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
+echo "/bin/zsh"  >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
+# com.apple.dyld[50]: update_dyld_shared_cache: warning, empty cache not generated for arch i386
+#   -root  specifies the root of an OS installation for which dyld's shared cache should be updated
+#   -arch  generates cache files for the specified one (i386)
+#   -force regenerated the shared cache files even if they appear to be already up-to-date
+update_prebinding -root ${MOUNT} -arch i386 -force
+#update_prebinding -root ${MOUNT} -arch i386 -debug -force
+# FIXME warning, could not bind /Volumes/PD/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation because realpath() failed on /Volumes/PD/Users/stuart/Library/Frameworks/Foundation.framework/Versions/C/Foundation
+
+
+
+# com.apple.launchd[1] (org.ntp.ntpd): Unknown key: SHAuthorizationRight
+#
+# 	A project at Apple is overloading the launchd configuration file   
+# 	schema to store non-launchd preferences. We hope to resolve this   
+# 	matter in the next major version of Mac OS X.
+#
+# 	Key (temporary) disabled to keep "Pure" log.
+#
+# cat >${MOUNT}/System/Library/LaunchDaemons/org.ntp.ntpd.plist<<EOOF
+
+# Problem: _CFGetHostUUIDString: unable to determine UUID for host. Error: 35
+#	Solution: A MAC address from an attached network interface should do the trick too.
+# 
+# 	21:04 < XSource> in puredarwin we don't use the AppleEFIRuntime kext and its PlugIn (AppleEFINVRAM kext)
+# 	21:05 < XSource> try to add this kext, and see what happens
+#
+# 	This fix will taint PureDarwin and will take away its "purity"
+#
+#missingstuff /System/Library/Extensions/AppleEFIRuntime.kext
+
+################################################################################
+# Add more debug
+################################################################################
+
+# Crank up the debug logging on launchd (default: yes). Credit: kvv for the tips.
+if [ ! "$ADD_DEBUG" = "n" ]; then
+	echo "log level debug" > ${MOUNT}/etc/launchd.conf
+	echo "*.debug /var/log/syslog" >> ${MOUNT}/etc/syslog.conf
+fi
+
+# DTrace facility
+#
+# 	DTrace is not present on http://src.macosforge.org/Roots/
+# 	Notice Foundation.framework and CoreFoundation.framework dependencies
+#
+# 	What about "Symbolication.framework"?
+#
+#missingstuff /usr/sbin/dtrace
+#missingstuff /System/Library/PrivateFrameworks/Symbolication.framework
+#missingstuff /usr/lib/libdtrace.dylib
+#missingstuff /usr/bin/dtruss
+#missingstuff /usr/bin/procsystime
+
+#
+# User management -------------------------------------------------------------
+#
+
+# multi-user - temporary workaround mode (securityd in single thread mode (it works with some threads))
+#
+# 	Source : https://sites.google.com/a/puredarwin.org/puredarwin/users/users
+#
+# + cat >${MOUNT}/System/Library/LaunchDaemons/com.apple.securityd.plist<<EOOF
+
+# Root account (disabled)
+#
+# 	Enabling root is dangerous and not recommended,
+#	we do not provide root password! `sudo' should be for 
+#       priviledge elevation purpose.
+#
+mkdir -p ${MOUNT}/var/db/dslocal/nodes/Default/users
+# + cat >${MOUNT}/var/db/dslocal/nodes/Default/users/root.plist<<EOOF
+
+#
+# launchd daemons and plists --------------------------------------------------
+#
+
+# Creating default user account (default: y)
+#       username: toor
+#       password: toor
+#
+if [ ! "$ADD_DEFAULT_USER" = "n" ]; then
+	echo "Creating default user (toor:toor)"
+	# pd_injectuser (salter SHA-1 digest by default, should work into single user mode)
+	# FIXME update pd_adduser..		
+	$DIRNAME/../scripts/pd_injectuser ${MOUNT} toor 
+	# pd_adduser must be run on Darwin/Mac OS X host, or in single user mode from PureDarwin
+	# $DIRNAME/../scripts/pd_adduser
+fi
+
+# FIXME should be choice for NANO!
+# Disable launchd plist to run a synthetic custom "shell" (pd_nanoshell)
+rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
+
+#
+# X display -------------------------------------------------------------------
+#
+
+cp $MOUNT/System/Library/Keyboards/USA.keymapping $MOUNT/System/Library/Keyboards/USA.keymapping.orig
+rm $MOUNT/System/Library/Keyboards/USA.keymapping
+
+# Belge keymapping (default: n)
+if [ "$ADD_KEYMAP_BELGE" = "y" ]; then
+	chroot $MOUNT ln -fs /System/Library/Keyboards/Belge.keymapping /System/Library/Keyboards/USA.keymapping
+fi
+# Deutsch keymapping (default: n)
+if [ "$ADD_KEYMAP_DEUTSCH" = "y" ]; then
+	chroot $MOUNT ln -fs /System/Library/Keyboards/Deutsch.keymapping /System/Library/Keyboards/USA.keymapping
+fi
+# Francais keymapping (default: n)
+if [ "$ADD_KEYMAP_FRANCAIS" = "y" ]; then
+	chroot $MOUNT ln -fs /System/Library/Keyboards/Francais.keymapping /System/Library/Keyboards/USA.keymapping
+fi
+# UK keymapping (default: n)
+if [ "$ADD_KEYMAP_UK" = "y" ]; then
+	chroot $MOUNT ln -fs /System/Library/Keyboards/UK.keymapping /System/Library/Keyboards/USA.keymapping
+fi
+# USA keymapping (default: y)
+if [ "$ADD_KEYMAP_USA" != "n" ]; then
+	mv $MOUNT/System/Library/Keyboards/USA.keymapping.orig $MOUNT/System/Library/Keyboards/USA.keymapping
+fi
+
+#
+# Window Manager(s) -----------------------------------------------------------
+#
+
+# WindowMaker (default: n)
+#
+if [ "$ADD_WMAKER" = "y" ]; then
+	chroot ${MOUNT} /opt/local/bin/wmaker.inst
+	cp $DIRNAME/pd_setup_files/*png $MOUNT/var/root/GNUstep/Library/WindowMaker/Backgrounds
+fi
+
+#FIXME: chaos wm..
+#echo "$(tput bold)Default wm?$(tput reset) Choose your default window manager:"
+#echo " 0 - WindowMaker 0.92"
+#echo " 1 - Fluxbox 1.1.0.1_0"
+#echo " 2 - wmii-3.1_0"
+
+#printf "Which one? ($(tput bold)windowmaker$(tput reset)/n) "
+#read CONT
+#WM_LIST="0 1 2 3"
+#case $CONT in $WM_LIST
+#	0)
+#		chroot ${MOUNT} /opt/local/bin/wmaker.inst
+#		echo "exec wmaker" > $MOUNT/var/root/.xinitrc
+#	;;
+#	1)
+#		FIXME: add binaryroots diffutils +with_default_names
+#		#tar xjvf /opt/local/var/macports/packages/darwin/i386/diffutils-2.8.1_3+with_default_names.i386.tbz2
+#		mkdir -p $MOUNT/var/root/.fluxbox/
+#		mkdir -p /opt/local/share/fluxbox/backgrounds/
+#		cp $DIRNAME/pd_setup_files/*png $MOUNT/var/root/.fluxbox/backgrounds
+#		cp $DIRNAME/pd_setup_files/*png $MOUNT/opt/local/share/fluxbox/backgrounds
+		# FIXME: links nor lynx available
+		#ln -s /opt/local/bin/cmp /usr/local/bin
+#		export DEFAULT_BROWSER=/usr/bin/true
+#		/opt/local/bin/fluxbox-generate-menu -B -su
+		#/opt/local/bin/fluxbox-generate_menu -b /usr/X11R6/bin/xterm -m PureDarwin -B -su
+		#rm /usr/local/bin/cmp
+#		echo "exec fluxbox" > $MOUNT/var/root/.xinitrc
+#	;;
+#	2)
+#		echo "exec wmii" > $MOUNT/var/root/.xinitrc
+#	;;
+#	*) 
+#		chroot ${MOUNT} /opt/local/bin/wmaker.inst
+#	;;
+#esac
+
+# Populate /var/root/.zshrc (default: y)
+if [ "$ADD_ZSHRC" = "n" ]; then
+	# Disable /var/root/.zshrc
+	rm ${MOUNT}/etc/zshrc
+fi
+
+# 
+# Copying utils, futils and inutils! ------------------------------------------
+#
+
+mkdir -p ${MOUNT}/usr/local/sbin/
+
+# Copy startupfiletool
+echo "Copying startupfiletool"
+cp $DIRNAME/pd_setup_files/startupfiletool ${MOUNT}/usr/local/sbin/
+
+# Copy some PureDarwin tools
+echo "Copying PureDarwin tools"
+cp $DIRNAME/../scripts/pd_*           ${MOUNT}/usr/local/sbin/
+
+#
+# Cleaning (mainly removing developer stuff) ----------------------------------
+#
+
+# Keep developer stuff (default: y)
+if [ "$ADD_DEVELOPER" = "n" ]; then
+	echo "Cleaning up unneeded developer files from ${MOUNT}..."
+	rm -rf ${MOUNT}/Developer      # saves little   (fixme, only if "Developer" has not been selected)
+	rm -rf ${MOUNT}/usr/include/   # saves > 150 MB (fixme, only if "Developer" has not been selected)
+	find ${MOUNT}/ -type f | grep "\.h$" | xargs -I {} rm -f {} # more header files (fixme, only if "Developer" has not been selected)
+	rm -rf ${MOUNT}/AppleInternal/ # (fixme, only if "Developer" has not been selected)
+fi
+
+#
+# Permissions -----------------------------------------------------------------
+#
+
+echo "Fixing permissions"
+chown root:wheel ${MOUNT}/sbin
+chown root:wheel ${MOUNT}/mach_kernel
+chown -R root:wheel ${MOUNT}/System/Library/Extensions/
+chmod -R 0644 $MOUNT/System/Library/Extensions/
+#chown root:wheel ${MOUNT}/sbin/launchd
+#chmod 755 ${MOUNT}/sbin/launchd
+chown -R root:wheel /var/empty # for sshd
+
+# zfs perms according to http://zfs.macosforge.org/trac/wiki/downloads
+chown -R root:wheel /System/Library/Extensions/zfs.kext
+chown -R root:wheel /System/Library/Filesystems/zfs.fs
+chown -R root:wheel /usr/sbin/zpool
+chown -R root:wheel /usr/sbin/zfs
+chown -R root:wheel /usr/lib/libzfs.dylib
+
+#
+# Cache and Extentions.mkext --------------------------------------------------
+#
+
+echo "Generating Extentions.mkext..."
+touch $MOUNT/System/Library/Extensions
+
+#if [ -z "$ARCH" ]; then
+#    KEXTARCH="-a i386"
+#else
+#    KEXTARCH="-a $ARCH"
+#fi
+
+mkdir -p $MOUNT/System/Library/Caches/com.apple.kernelcaches
+# Assure TMPDIR is set on $MOUNT volume
+export TMPDIR="$MOUNT/private/tmp"
+kextcache -a i386 -s -l -n -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.DEADBEEF" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+#kextcache -a i386 -s -l -n -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.DEADBEEF" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+#kextcache -a i386 -s -l -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.ABCDEF01" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+#kextcache -v 6 -a i386 -l -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.99C0FFEE" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+
+
+###?old?#kextcache -a i386 -l -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.4914BE18" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+# FIXME: kextcache: ??<??\a: couldn't get volume UUID
+# FIXME: cache stale - not creating %s
+#
+# Found in "kext_tools-59/kextcache_main.c"
+# 	struct timespec mod_time = extensions_stat_buf.st_mtimespec;
+#	if ((0 == stat(source_extensions, &extensions_stat_buf))
+#	  && ((mod_time.tv_sec != extensions_stat_buf.st_mtimespec.tv_sec)
+#	      || (mod_time.tv_nsec != extensions_stat_buf.st_mtimespec.tv_nsec)))
+#	{
+#	    fprintf(stderr, "cache stale - not creating %s\n", mkextFilename);
+#	    exit_code = 1;
+#	    goto finish;
+#	}
+
+#if [ ! $? -eq 0 ]; then
+#	sleep 1
+#	kextcache -v 6 i386 -l -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.4914BE18" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+#fi
+#export -n TMPDIR
+
+/bin/sync
+
+
+#
+# Detect image extension (iso|vmware|dmg|*) and act in consequences -----------
+#
+
+if [ ! $EXT = "" ]; then
+
+	T_CDDMG_EXT=$(basename $CDDMG | awk -F '.' '{print $NF}')
+	case $T_CDDMG_EXT in
+
+		# iso
+		#
+		iso)
+		T_MOUNT=$(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1".iso"}')
+		;;
+		
+		# VMware virtual disk (.vmdk) 
+		#
+		vmdk)
+		T_MOUNT=$(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1".iso"}')
+		# Not really restrictive permissions..
+		#chmod 775 $(dirname $CDDMG)/$CDDMG
+		# default finder user probably (so the vmdk is mounted directly in rw (and not in ro))
+		#chown 501:staff $(dirname $CDDMG)/$CDDMG
+		# Forced converting iso to VMware vmdk
+		echo "Converting image to VMware VMDK disk image, please wait..."
+		$QEMUIMG_BIN convert -O vmdk $CDDMG.dmg $(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')
+		# FIXME: crappy permission 777 <- chown & chgrp probably needed too
+		#chmod 777 $(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')
+		chmod 777 $CDDMG
+		chown -R 501:staff $CDDMG	
+		;;
+		
+		# VMware virtual machine package (.vmwarevm)
+		#
+		vmwarevm)
+		T_MOUNT=$CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".iso"}')
+		mkdir -p $CDDMG
+		cat > $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmx"}') <<EOOF
+.encoding = "UTF-8"
+bios.bootDelay = "5000"
+config.version = "8"
+displayName = "`/bin/date +"%y%m%d%H%M "`$RELEASE (`basename $T_MOUNT`)"
+ehci.present = "TRUE"
+ethernet0.linkStatePropagation.enable = "FALSE"
+ethernet0.present = "TRUE"
+ethernet0.virtualDev = "e1000"
+ethernet0.wakeOnPcktRcv = "FALSE"
+floppy0.present = "FALSE"
+ft.secondary0.enabled = "TRUE"
+guestOS = "darwin"
+ich7m.present = "TRUE"
+ide1:0.deviceType = "cdrom-image"
+ide1:0.fileName = "`basename $T_MOUNT`"
+ide1:0.present = "TRUE"
+keyboardAndMouseProfile = "macProfile"
+memsize = "128"
+nvram = "$VOLNAME.nvram"
+pciBridge0.present = "TRUE"
+pciBridge4.functions = "8"
+pciBridge4.present = "TRUE"
+pciBridge4.virtualDev = "pcieRootPort"
+pciBridge5.functions = "8"
+pciBridge5.present = "TRUE"
+pciBridge5.virtualDev = "pcieRootPort"
+pciBridge6.functions = "8"
+pciBridge6.present = "TRUE"
+pciBridge6.virtualDev = "pcieRootPort"
+pciBridge7.functions = "8"
+pciBridge7.present = "TRUE"
+pciBridge7.virtualDev = "pcieRootPort"
+powerType.powerOff = "soft"
+powerType.powerOn = "soft"
+powerType.reset = "soft"
+powerType.suspend = "soft"
+printers.enabled = "FALSE"
+roamingVM.exitBehavior = "go"
+scsi0.present = "TRUE"
+scsi0.virtualDev = "lsilogic"
+scsi0:0.fileName = ""
+scsi0:0.present = "FALSE"
+serial0.fileType = "thinprint"
+serial0.present = "FALSE"
+smc.present = "TRUE"
+tools.syncTime = "TRUE"
+tools.upgrade.policy = "upgradeAtPowerCycle"
+usb.present = "TRUE"
+virtualHW.productCompatibility = "hosted"
+virtualHW.version = "7"
+vmci0.present = "TRUE"
+EOOF
+
+		# Not really restrictive permissions..
+		chmod 775 $CDDMG
+		chmod +x $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmx"}')
+		# default finder user probably (so the vmdk is mounted directly in rw (and not in ro))
+		chown 501:staff $CDDMG
+		
+		#Convert to VMware VMDK disk image for read-write support? (default: y)
+		if [ ! "$ADD_VMWARE_VMDK" = "n" ]; then
+			# Converting iso to VMware vmdk
+			echo "Converting image to VMware VMDK disk image, please wait..."
+			$QEMUIMG_BIN convert -O vmdk $CDDMG.dmg $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')
+			# FIXME: crappy permission 777 <- chown & chgrp probably needed too
+			chmod 777 $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')
+			chown -R 501:staff $CDDMG	
+			
+			cat > $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmx"}') <<EOOF
+.encoding = "UTF-8"
+bios.bootDelay = "5000"
+config.version = "8"
+displayName = "`/bin/date +"%y%m%d%H%M "`$RELEASE (`basename $T_MOUNT`)"
+ehci.present = "TRUE"
+ethernet0.linkStatePropagation.enable = "FALSE"
+ethernet0.present = "TRUE"
+ethernet0.virtualDev = "e1000"
+ethernet0.wakeOnPcktRcv = "FALSE"
+floppy0.present = "FALSE"
+ft.secondary0.enabled = "TRUE"
+guestOS = "darwin"
+ich7m.present = "TRUE"
+ide0:0.fileName = "$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')"
+ide0:0.present = "TRUE"
+ide0:0.redo = ""
+ide0:1.autodetect = "TRUE"
+ide0:1.deviceType = "cdrom-raw"
+ide0:1.fileName = "auto detect"
+ide0:1.present = "TRUE"
+ide0:1.startConnected = "FALSE"
+ide1:0.deviceType = "cdrom-image"
+ide1:0.fileName = "`basename $T_MOUNT`"
+ide1:0.present = "FALSE"
+keyboardAndMouseProfile = "macProfile"
+memsize = "128"
+nvram = "$VOLNAME.nvram"
+pciBridge0.present = "TRUE"
+pciBridge4.functions = "8"
+pciBridge4.present = "TRUE"
+pciBridge4.virtualDev = "pcieRootPort"
+pciBridge5.functions = "8"
+pciBridge5.present = "TRUE"
+pciBridge5.virtualDev = "pcieRootPort"
+pciBridge6.functions = "8"
+pciBridge6.present = "TRUE"
+pciBridge6.virtualDev = "pcieRootPort"
+pciBridge7.functions = "8"
+pciBridge7.present = "TRUE"
+pciBridge7.virtualDev = "pcieRootPort"
+powerType.powerOff = "soft"
+powerType.powerOn = "soft"
+powerType.reset = "soft"
+powerType.suspend = "soft"
+printers.enabled = "FALSE"
+roamingVM.exitBehavior = "go"
+scsi0.present = "TRUE"
+scsi0.virtualDev = "lsilogic"
+scsi0:0.fileName = ""
+scsi0:0.present = "FALSE"
+serial0.fileType = "thinprint"
+serial0.present = "FALSE"
+smc.present = "TRUE"
+tools.syncTime = "TRUE"
+tools.upgrade.policy = "upgradeAtPowerCycle"
+usb.generic.autoconnect = "FALSE"
+usb.present = "TRUE"
+virtualHW.productCompatibility = "hosted"
+virtualHW.version = "7"
+vmci0.present = "TRUE"
+
+EOOF
+
+		fi
+		;;
+		
+		# dmg
+		#
+		dmg)
+		#T_MOUNT=$(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1".iso"}')
+		T_MOUNT=$CDDMG.dmg
+		T_EXT=".dmg"
+		;;
+		
+		# Default
+		#
+		*) 
+		T_MOUNT=$CDDMG
+		;;
+	esac
+
+	# Renaming
+	mv $CDDMG.dmg $T_MOUNT
+
+	# FIXME: crappy permission 777 <- chown & chgrp probably needed too
+	# 	Since the installation is done at root over a normal user, in finder
+	# 	in finder the image is open in read-only after clickclick.. owner/perms
+	# 	need to be changed for rw (or the image needs to be mount as root)
+	chmod 777 $T_MOUNT
+
+	# Last clean up (temporary files and folders).
+	mr_proper
+
+	echo "Installation on $(tput bold)$CDDMG$T_EXT$(tput reset) complete."
+else
+	/bin/sync
+	echo "Unmounting..."
+	diskutil unmount ${MOUNT}
+	echo "Mounting..."
+	diskutil mount ${DEVICE}s1
+
+	echo "Installation on $(tput bold)${MOUNT}$(tput reset) complete. "
+fi
+
+#
+# End. ------------------------------------------------------------------------
+#
+
+echo "The resulting system should be able to boot."
+echo
+echo "You can set up users with pd_adduser or pd_injectuser"
+

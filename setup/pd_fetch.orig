@@ -1,0 +1,300 @@
+#!/bin/sh
+#
+# Copyright (c) 2007-2009 The PureDarwin Project.
+# All rights reserved.
+#
+# @LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# @LICENSE_HEADER_END@
+#
+
+#
+# probono <probono@puredarwin.org>
+# aladin   <aladin@puredarwin.org>
+#
+
+#
+# Downloads and check "vital" BinaryRoots and BinaryDrivers from DarwinBuild website
+#
+
+#
+# Changelog
+#
+# 20090326 - Please, see `hg log' or `svn log' from now (Mercurial) - aladin
+# 20081219 - Added 9G55 and 9G55pd1 (experimental patched packages) - aladin
+# 20081210 - Added 9F33pd1 (experimental packages, our patched binaryroots) - aladin
+# 20081209 - License header update - aladin
+# 20081115 - Minor updates - aladin
+# 20080921 - SHA-1 checksum added - aladin
+# 20080831 - Minor updates and fixes - aladin
+# 20080606 - Cleaned up - aladin
+# 20080528 - Now used in order to download binary roots and drivers - aladin
+# 20080527 - Fixed download order, curl and minor bugs - aladin
+# 20080305 - Recursive {search|fetch} of binary files from DarwinBuild - aladin 
+# 20080107 - Initial release - probono
+#
+
+
+# Reading global variables in pd_config file
+source pd_config
+
+
+function thinfile {
+	if lipo "$2" -verify_arch "$1" 2>/dev/null ; then
+	    MODES=$(stat -f%p "$2" | cut -b3-6)
+
+	  #  if [ ! $VERBOSE = "" ]; then
+		#echo "   Thinning $(basename \"$2\") to \"$1\""
+		echo "   Thinning: $1($(basename $2))"
+	   # fi
+
+	    lipo "$2" -thin "$1" -output "$2" 2> /dev/null
+	    # we could even remove .o .a .h .c and other Developer files and put them in a -dev package
+	    chmod "$MODES" "$2"
+	fi
+}
+
+function thinPackage {
+
+	X="$1"
+
+	Y=$(basename $X .gz).bz2
+	if [ $X -nt $DESTDIR/$Y ]; then
+		#printf " $(tput bold)* $(basename $X)$(tput reset) ."
+		rm -rf "$DESTDIR/tmp"
+		mkdir -p "$DESTDIR/tmp"
+		tar xzf $X -C "$DESTDIR/tmp" .
+		if [ $? -eq 0 ]; then
+			#printf "."
+			for file in $(find "$DESTDIR/tmp/" -type f); do thinfile "$ARCH" "$file"; done
+			#printf "."
+			tar cjf "$DESTDIR/$Y" -C "$DESTDIR/tmp" .
+			#printf "."
+		else
+			# corrupted archive?
+			echo "   CORRUPTED!"
+			exit 1
+		fi
+	#else
+		# already thinned
+	fi
+}
+
+# Autorun
+if [ "$1" = "" ]; then
+	echo
+	echo "Fetch "vital" binary files (roots and drivers)."
+	echo
+	echo "Legend:"
+	echo " ? missing.root.tar.gz" 
+	echo " ! corrupt.root.tar.gz"
+	echo " * present.root.tar.gz"
+	echo " * $(tput bold)fetched.root.tar.gz$(tput reset)"
+	echo
+	echo "Retrieving binaryroots, please wait..."
+	echo
+
+	# Creating pd_tmp/....
+	#mkdir -p $BASE_DIR
+	#mkdir -p $BINARYDRIVERS_DIR
+
+	# FIXME test existence
+
+	if [ ! -e $BINARYROOTS_DIR ]; then
+		hg clone ../.. $BASE_DIR -r Roots --debug
+	
+	else
+		cd $BINARYROOTS_DIR
+			hg update -r Roots --debug
+		cd -
+	fi
+		
+	mkdir -p $DESTDIR
+	
+	# First fetch our specific binaryroots
+	# FIXME revove below, svn is not up to date nor used ..
+	#svn checkout http://puredarwin.googlecode.com/svn/Roots/pd 	$BINARYROOTS_DIR/pd
+	#svn checkout http://puredarwin.googlecode.com/svn/Roots/mp 	$BINARYROOTS_DIR/mp
+	#svn checkout http://puredarwin.googlecode.com/svn/Roots/X 	$BINARYROOTS_DIR/X
+	#svn checkout http://puredarwin.googlecode.com/svn/Roots/9J61pd1 $BINARYROOTS_DIR/9J61pd1
+	#svn checkout http://puredarwin.googlecode.com/svn/Roots/9G55pd1 $BINARYROOTS_DIR/9G55pd1
+	#svn checkout http://puredarwin.googlecode.com/svn/Roots/9F33pd1 $BINARYROOTS_DIR/9F33pd1
+
+	# Call himself
+	$0 0 $BINARYROOTS_DIR $BINARYROOTS_HTTP_PATH `cat pd_roots`
+	$0 0 $BINARYDRIVERS_DIR $BINARYDRIVERS_HTTP_PATH `cat pd_drivers`
+	exit 0
+fi
+
+#
+# Settings variables
+#
+
+# Recursive level found in arg1 (loop counter)
+LEVEL=$1
+# Default binary directory
+BINARY_DIR=$2
+# Default binary HTTP path
+BINARY_HTTP_PATH=$3
+# Current build version target taken in BINVERSION array from pd_config
+BUILD_VERSION=${BINVERSION[$LEVEL]}
+# Verbose mode (or not) for curl
+CURL_VERBOSE_FLAG="-s"
+#CURL_VERBOSE_FLAG="--progress-bar"
+#CURL_VERBOSE_FLAG=""
+
+# Eating args $1, $2 and $3
+#
+# 	Shifting LEVEL, BINARY_DIR and BINARY_HTTP_PATH, so
+#       $# (arg0..argn) is now the list of missing binary files (from pd_roots file)
+#
+#	At the beginning, all the files are missing
+#	At the end, no file should missing
+shift
+shift
+shift
+
+# Break condition: no more missing files found in args, success.
+if [ $# -eq 0 ]; then
+	echo
+	echo "Fetching binary files $(tput bold)complete$(tput reset)"
+	if [ "$BAD_SHA1_LIST" ]; then
+		echo "$(tput bold)Warning!$(tput reset) SHA-1 checksum failed on:$BAD_SHA1_LIST"
+	fi	
+	exit 0
+fi
+
+# Break condition: no more level to go in, end of array, some missing files could remain..
+if [ $LEVEL -gt $[${#BINVERSION[@]} - 1] ]; then
+	echo 
+	echo "Fetching binary files $(tput bold)uncomplete$(tput reset)"
+	echo "Missing: $*"
+	if [ "$BAD_SHA1_LIST" ]; then
+		echo "$(tput bold)Warning!$(tput reset) SHA-1 checksum failed on:$BAD_SHA1_LIST"
+	fi	
+	exit -1
+fi
+
+# Initialization, level 0 is the beginning
+if [ $LEVEL -eq 0 ]; then
+	echo
+	echo "Remote DarwinBuild dir: $BINARY_HTTP_PATH"
+	echo "Local Binary files dir: $BINARY_DIR/"
+
+	# Remote BuildVersion directories list (index.html)
+	rm -f $BINARY_DIR/index.html
+	curl -f $CURL_VERBOSE_FLAG --create-dir --output "$BINARY_DIR/index.html" -C -  "$BINARY_HTTP_PATH/"
+	if [ ! $? -eq 0 ]; then
+		echo
+		echo "Cannot fetch binary files list, using local list cache instead"
+	fi
+
+	# As `cat pd_roots | wc -l` (because all files are missing)
+	MISSING_LIST_INIT=$#
+	export BAD_SHA1_LIST=""
+fi
+
+# Test BuildVersion directory existence in the local BuildVersion directory list (index.html)
+grep "\"$BUILD_VERSION/\"" $BINARY_DIR/index.html > /dev/null 2> /dev/null || ls $BINARY_DIR/$BUILD_VERSION/  > /dev/null 2> /dev/null 
+if [ $? -eq 0 ]; then
+
+	echo
+	echo "BuildVersion: $BUILD_VERSION ( $[$MISSING_LIST_INIT - $#]/$MISSING_LIST_INIT files )"
+
+	# Remote binary files list (index.html) according to existent BuildVersion directory
+	rm -f $BINARY_DIR/$BUILD_VERSION/index.html
+	curl -f $CURL_VERBOSE_FLAG --create-dir --output "$BINARY_DIR/$BUILD_VERSION/index.html" -C -  "$BINARY_HTTP_PATH/$BUILD_VERSION/"
+
+	for x in $*; do
+		# Test missing binary file existence in the local target dir ($BINARY_DIR)
+		if [ -e "$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz" ]; then
+
+# beloz is disqbled 
+			# Verifying SHA1 checksum
+#			T_SHA1=`openssl dgst -sha1 $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz`
+#			grep "$T_SHA1" pd_sha1  > /dev/null 2> /dev/null
+#			
+#			if [ $? -eq 0 ]; then
+				# Found, kept and checked!
+#				echo " * ${x}.root.tar.gz"
+#			else
+				# Bad checksum or not up to date or unknow!
+#				echo " ! ${x}.root.tar.gz";
+				# Adding binary to bad SHA-1 binary list
+#				BAD_SHA1_LIST="$BAD_SHA1_LIST $x"
+#			fi
+
+				# Found, kept, (checked) and will be thinned!
+				echo " * ${x}.root.tar.gz "
+				thinPackage "$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz"
+		else
+			# Test missing binary file existence in the local binary file list (index.html)
+			grep "\"${x}.root.tar.gz\"" $BINARY_DIR/$BUILD_VERSION/index.html > /dev/null 2> /dev/null
+			if [ $? -eq 0 ]; then
+				# Fetching missing or corrupted binary file
+				curl -C -f --create-dir $CURL_VERBOSE_FLAG --output "$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz" -C - "$BINARY_HTTP_PATH/$BUILD_VERSION/${x}.root.tar.gz"
+				if [ $? -eq 0 ]; then
+#					# Verifying SHA1 checksum
+#					T_SHA1=`openssl dgst -sha1 $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz`
+#					grep "$T_SHA1" pd_sha1  > /dev/null 2> /dev/null
+#					if [ $? -eq 0 ]; then
+						# Found, kept and checked!
+						echo " * $(tput bold)${x}.root.tar.gz$(tput reset)"
+						thinPackage "$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz"
+						
+						# (in case) Removing old version since a new one has been fetch
+						T_LEVEL=$[$LEVEL + 1] 
+						while [ $T_LEVEL -lt $[${#BINVERSION[@]} - 1] ]; do
+							rm -f $BINARY_DIR/${BINVERSION[$T_LEVEL]}/${x}.root.tar.gz
+							T_LEVEL=$[$T_LEVEL + 1] 
+						done
+#					else
+						# Bad checksum!
+#						echo " ! $(tput bold)${x}.root.tar.gz$(tput reset)";
+						# Adding binary to bad SHA-1 binary list
+#						BAD_SHA1_LIST=$x
+#					fi
+				else
+					echo " ? ${x}.root.tar.gz";
+					rm -f $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz
+					# Adding missing binary to missing binary list
+					MISSING_LIST="${MISSING_LIST} ${x}"
+				fi
+			else
+				echo " ? ${x}.root.tar.gz";
+				# Adding missing binary to missing binary list
+				MISSING_LIST="${MISSING_LIST} ${x}"
+			fi
+		fi
+	done
+else
+	# Adding initial missing binary to missing binary list since no current BuildVersion directory has been found
+	MISSING_LIST="$*"
+fi
+
+# Recursive call + propagating MISSING_LIST_INIT in env
+MISSING_LIST_INIT="$MISSING_LIST_INIT" $0 $[$LEVEL + 1] $BINARY_DIR $BINARY_HTTP_PATH $MISSING_LIST
+
+# Unreachable
+exit -2

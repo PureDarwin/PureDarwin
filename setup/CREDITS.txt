@@ -1,0 +1,5 @@
+Draft.
+
+Should list License of present projects (e.g. content of the "pd_roots" binaryroots list file) and formal attitude.
+Should list *** CREDITS *** and unformal thanks.
+

@@ -1,0 +1,82 @@
+#!/bin/sh
+#
+# Copyright (c) 2007-2009 The PureDarwin Project.
+# All rights reserved.
+#
+# @LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# @LICENSE_HEADER_END@
+#
+
+#
+# aladin   <aladin@puredarwin.org>
+# probono <probono@puredarwin.org>
+#
+
+#
+# Hold configuration information needed by other scripts
+#
+
+#
+# Changelog
+#
+# 20090326 - Please, see `hg log' or `svn log' from now (Mercurial) - aladin
+# 20081219 - Added 9G55 and 9G55pd1 (experimental patched packages) - aladin
+# 20081210 - Added 9F33pd1 (experimental patched packages) - aladin
+# 20081209 - License header update - aladin
+# 20080921 - Added 9F33 version in BINVERSION - aladin
+# 20080803 - Added 9E17 and 9D34 versions in BINVERSION - aladin
+# 20080606 - Cleaned up - aladin
+# 20080528 - Minor updates - aladin
+# 20080522 - Cleaned up, removed Darwin 8, PureDarwin starts with Darwin 9
+#            releases - probono
+# 20080522 - Changed order of buildVersions used, newest first - probono
+# 20080305 - Initial release - aladin
+#
+
+# Processor architecture / mach-o format
+ARCH="i386"
+
+# Base dir
+BASE_DIR="pd_tmp"
+
+# Dir of binary roots 
+BINARYROOTS_DIR="$BASE_DIR/Roots"
+
+# Dir of binary drivers
+BINARYDRIVERS_DIR="$BASE_DIR/BinaryDrivers"
+
+# Binary roots repository url (if not found locally) 
+BINARYROOTS_HTTP_PATH="http://src.macosforge.org/Roots"
+
+# Binary drivers repository url 
+BINARYDRIVERS_HTTP_PATH="http://src.macosforge.org/BinaryDrivers"
+
+# Build versions array (FIXME: use plist)
+BINVERSION=(pd 9L30 9J61pd1 9J61 9G55pd1 9G55 9F33pd1 9F33 9E17 9D34 9C31 9B18 9A581)
+
+# Where fetched binary roots/drivers are (unpacked/thinned/)repacked (e.g., "./Packages_${ARCH}/")
+#DESTDIR="pd_setup_files/Packages_${ARCH}"
+DESTDIR="$BASE_DIR/Packages_${ARCH}"
+

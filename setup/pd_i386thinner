@@ -1,0 +1,140 @@
+#!/bin/sh
+#
+# Copyright (c) 2007-2009 The PureDarwin Project.
+# Copyright (c) 2005, Apple Computer, Inc. All rights reserved.
+# All rights reserved.
+#
+# @LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# @LICENSE_HEADER_END@
+#
+
+#
+# probono <probono@puredarwin.org>
+# aladin   <aladin@puredarwin.org>
+#
+
+#
+# Unpack, thin to i386 and pack "vital" BinaryRoots and BinaryDrivers
+#
+# 	Usage: pd_i386thinner
+#
+# This script runs in a directory containing binary roots 
+# produced by DarwinBuild. It will create a i386 subdirectory
+# which will contain tar.bz2 packages thinned to the i386 architecture.
+#
+# Based on thinPackages.sh by:
+#
+# Kevin Van Vechten <kvv@apple.com>
+#
+
+#
+# Changelog
+# 
+# 20090326 - Please, see `hg log' or `svn log' from now (Mercurial) - aladin
+# 20081209 - License header update - aladin
+# 20081115 - Minor updates - aladin
+# 20080831 - Minor updates - aladin
+# 20080803 - Loops merged (binary roots and drivers) - aladin
+# 20080522 - Cleanup, gave way too many errors - probono
+# 20080303 - Minor updates - aladin
+# 20080107 - Adoption and rewrite for PureDarwin - probono
+#
+
+# Reading global variables in pd_config file
+source pd_config
+
+# Find out where this script lives and go there (FIXME: does it really needed?)
+DIRNAME=$(cd $(dirname $0) && pwd)
+cd $DIRNAME
+
+# Ensure root exclusivity
+if [ "$UID" -ne 0 ]
+then
+	echo "You must be root in order to use $(basename $0)"
+	exit 1
+fi
+
+# More verbose
+if [ ! $1 = "" ]; then
+	VERBOSE="TRUE"
+fi	
+
+echo
+echo "Thin "vital" binary files (roots and drivers)."
+echo
+echo "Legend:"
+echo " ! corrupt.root.tar.gz"
+echo " * present.root.tar.gz"
+echo " * $(tput bold)thinned.root.tar.gz$(tput reset)"
+echo
+echo "Now thinning, please wait..."
+echo
+
+function thinfile {
+if lipo "$2" -verify_arch "$1" 2>/dev/null ; then
+    MODES=$(stat -f%p "$2" | cut -b3-6)
+
+    if [ ! $VERBOSE = "" ]; then
+    	echo "   Thinning $(basename \"$2\") to \"$1\""
+    fi
+
+    lipo "$2" -thin "$1" -output "$2" 2> /dev/null
+    # we could even remove .o .a .h .c and other Developer files and put them in a -dev package
+    chmod "$MODES" "$2"
+fi
+}
+
+mkdir -p $DESTDIR
+# FIXME The "pd" and "*pd1" binaryroots are first forced to be unpacked 
+# so they will probably not be overided (idem in pd_fetch)
+
+PREMIUM="$BINARYROOTS_DIR/9G55/DirectoryServiceDaemon.root.tar.gz $BINARYROOTS_DIR/9F33pd1/dtrace.root.tar.gz"
+
+
+for X in $PREMIUM $BINARYROOTS_DIR/pd/*.tar.gz $BINARYROOTS_DIR/*/*.tar.gz $BINARYDRIVERS_DIR/*/*.tar.gz ; do
+	Y=$(basename $X .gz).bz2
+	if [ $X -nt $DESTDIR/$Y ]; then
+		printf " $(tput bold)* $(basename $X)$(tput reset) ."
+		rm -rf "$DESTDIR/tmp"
+		mkdir -p "$DESTDIR/tmp"
+		tar xzf $X -C "$DESTDIR/tmp" .
+		if [ $? -eq 0 ]; then
+			printf "."
+			for file in $(find "$DESTDIR/tmp/" -type f); do thinfile "$ARCH" "$file"; done
+			echo "."
+			tar cjf "$DESTDIR/$Y" -C "$DESTDIR/tmp" .
+		else
+			echo " ! $DESTDIR/$Y (Corrupted archive)"
+			exit 1
+		fi
+	else
+		echo " * $Y (already existing)"
+	fi
+done
+rm -rf "$DESTDIR/tmp"
+
+echo
+echo "Thinning binary files $(tput bold)complete$(tput reset)"
+echo
