@@ -73,23 +73,19 @@ if [ "$1" = "" ]; then
 	echo "Retrieving binaryroots, please wait..."
 	echo
 
-	# Creating pd_tmp/....
-	#mkdir -p $BASE_DIR
-	#mkdir -p $BINARYDRIVERS_DIR
-
-	# FIXME test existence
-	# FIXME again..
-	#if [ ! -e $BINARYROOTS_DIR ]; then
-	#	hg clone ../.. $BASE_DIR -r Roots --debug
-	#
-	#else
-	#	cd $BINARYROOTS_DIR
-	#		hg update -r Roots --debug
-	#	cd -
-	#fi
+	if [ ! -e $BINARYROOTS_DIR ]; then
+		hg clone https://roots.puredarwin.googlecode.com/hg/ $BASE_DIR --debug
+	else
+		cd $BINARYROOTS_DIR
+			hg update -r Roots --debug
+		cd -
+	fi
 	
 	# First fetch our specific binaryroots
 	# FIXME revove below, svn is not up to date nor used ..
+	# Creating pd_tmp/....
+	#mkdir -p $BASE_DIR
+	#mkdir -p $BINARYDRIVERS_DIR
 	#svn checkout http://puredarwin.googlecode.com/svn/Roots/pd 	$BINARYROOTS_DIR/pd
 	#svn checkout http://puredarwin.googlecode.com/svn/Roots/mp 	$BINARYROOTS_DIR/mp
 	#svn checkout http://puredarwin.googlecode.com/svn/Roots/X 	$BINARYROOTS_DIR/X
