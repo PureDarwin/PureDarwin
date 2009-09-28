@@ -73,26 +73,17 @@ if [ "$1" = "" ]; then
 	echo "Retrieving binaryroots, please wait..."
 	echo
 
+	# Clone the PureDarwin binary roots repository
+	# Source: http://code.google.com/p/puredarwin/source/list?repo=roots
 	if [ ! -e $BINARYROOTS_DIR ]; then
-		hg clone https://roots.puredarwin.googlecode.com/hg/ $BASE_DIR --debug
+		hg clone https://roots.puredarwin.googlecode.com/hg/ $BASE_DIR #--debug
 	else
-		cd $BINARYROOTS_DIR
-			hg update -r Roots --debug
-		cd -
+		cd $BASE_DIR
+			hg pull
+			hg update #--debug
+		cd - > /dev/null
 	fi
 	
-	# First fetch our specific binaryroots
-	# FIXME revove below, svn is not up to date nor used ..
-	# Creating pd_tmp/....
-	#mkdir -p $BASE_DIR
-	#mkdir -p $BINARYDRIVERS_DIR
-	#svn checkout http://puredarwin.googlecode.com/svn/Roots/pd 	$BINARYROOTS_DIR/pd
-	#svn checkout http://puredarwin.googlecode.com/svn/Roots/mp 	$BINARYROOTS_DIR/mp
-	#svn checkout http://puredarwin.googlecode.com/svn/Roots/X 	$BINARYROOTS_DIR/X
-	#svn checkout http://puredarwin.googlecode.com/svn/Roots/9J61pd1 $BINARYROOTS_DIR/9J61pd1
-	#svn checkout http://puredarwin.googlecode.com/svn/Roots/9G55pd1 $BINARYROOTS_DIR/9G55pd1
-	#svn checkout http://puredarwin.googlecode.com/svn/Roots/9F33pd1 $BINARYROOTS_DIR/9F33pd1
-
 	# Call himself
 	$0 0 $BINARYROOTS_DIR $BINARYROOTS_HTTP_PATH `cat pd_roots`
 	$0 0 $BINARYDRIVERS_DIR $BINARYDRIVERS_HTTP_PATH `cat pd_drivers`
@@ -182,17 +173,17 @@ if [ $? -eq 0 ]; then
 		# Test missing binary file existence in the local target dir ($BINARY_DIR)
 		if [ -e "$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz" ]; then
 			# Verifying SHA1 checksum
-			T_SHA1=`openssl dgst -sha1 $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz`
-			grep "$T_SHA1" pd_sha1  > /dev/null 2> /dev/null
-			if [ $? -eq 0 ]; then
+			#T_SHA1=`openssl dgst -sha1 $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz`
+			#grep "$T_SHA1" pd_sha1  > /dev/null 2> /dev/null
+			#if [ $? -eq 0 ]; then
 				# Found, kept and checked!
 				echo " * ${x}.root.tar.gz"
-			else
+			#else
 				# Bad checksum or not up to date or unknow!
-				echo " ! ${x}.root.tar.gz";
+			#	echo " ! ${x}.root.tar.gz";
 				# Adding binary to bad SHA-1 binary list
-				BAD_SHA1_LIST="$BAD_SHA1_LIST $x"
-			fi
+			#	BAD_SHA1_LIST="$BAD_SHA1_LIST $x"
+			#fi
 		else
 			# Test missing binary file existence in the local binary file list (index.html)
 			grep "\"${x}.root.tar.gz\"" $BINARY_DIR/$BUILD_VERSION/index.html > /dev/null 2> /dev/null
@@ -201,9 +192,9 @@ if [ $? -eq 0 ]; then
 				curl -C -f --create-dir $CURL_VERBOSE_FLAG --output "$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz" -C - "$BINARY_HTTP_PATH/$BUILD_VERSION/${x}.root.tar.gz"
 				if [ $? -eq 0 ]; then
 					# Verifying SHA1 checksum
-					T_SHA1=`openssl dgst -sha1 $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz`
-					grep "$T_SHA1" pd_sha1  > /dev/null 2> /dev/null
-					if [ $? -eq 0 ]; then
+					#T_SHA1=`openssl dgst -sha1 $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz`
+					#grep "$T_SHA1" pd_sha1  > /dev/null 2> /dev/null
+					#if [ $? -eq 0 ]; then
 						# Found, kept and checked!
 						echo " * $(tput bold)${x}.root.tar.gz$(tput reset)"
 						# Removing old version since a new one has been fetch
@@ -212,12 +203,12 @@ if [ $? -eq 0 ]; then
 	#					#########rm -f $BINARY_DIR/${BINVERSION[$T_LEVEL]}/${x}.root.tar.gz
 							T_LEVEL=$[$T_LEVEL + 1] 
 						done
-					else
+					#else
 						# Bad checksum!
-						echo " ! $(tput bold)${x}.root.tar.gz$(tput reset)";
+					#	echo " ! $(tput bold)${x}.root.tar.gz$(tput reset)";
 						# Adding binary to bad SHA-1 binary list
-						BAD_SHA1_LIST=$x
-					fi
+					#	BAD_SHA1_LIST=$x
+					#fi
 				else
 					echo " ? ${x}.root.tar.gz";
 					rm -f $BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz
