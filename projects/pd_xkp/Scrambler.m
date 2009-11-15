@@ -143,7 +143,7 @@
 						canbe_randomized=16;
 					}
 
-					char * hex = malloc(sizeof(char) * 1);
+					char * hex = malloc(sizeof(char) * 4);
 					snprintf(hex, sizeof(hex), "%x", [self hexarandomize : canbe_randomized]); // 0 or 16
 					buf[j] = hex[0];
 					free(hex);

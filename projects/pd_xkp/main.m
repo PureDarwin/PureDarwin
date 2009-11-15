@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
 		int lines_count=sizeof(lines_panic) / sizeof(lines_panic[0]);
 
 		id scrambler = [[Scrambler alloc] init];
-		[scrambler draw : lines_count : lines_panic : 1 ]; // 1 <- randomization if '0' found
+		[scrambler draw : lines_count : lines_panic : 1 ]; // 1 <- enable randomization over '0' digit(s) 
 		[scrambler free];
 
 		//id crash = [[Crash alloc] init];
