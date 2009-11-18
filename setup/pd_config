@@ -55,28 +55,150 @@
 # 20080305 - Initial release - aladin
 #
 
+#
+# Darwin release (major version)
+#
+DARWIN_RELEASE="9"
+#DARWIN_RELEASE="10"
+
+#
+# PureDarwin release (flavor)
+#
+PUREDARWIN_RELEASE=""
+PUREDARWIN_RELEASE="nano"
+
+#
+# Binaryroot projects list local file
+#
+BINARYROOTS_LIST_FILE="pd_roots" 
+BINARYROOTS_LIST_FILE="pd_roots.nano"  
+
+#
 # Processor architecture / mach-o format
+#
 ARCH="i386"
 
-# Base dir
-BASE_DIR="pd_tmp"
+#
+# Temporary dir which will contain fetched and thinned binaryroots
+#
+TEMPDIR="pd_tmp"
 
-# Dir of binary roots 
-BINARYROOTS_DIR="$BASE_DIR/Roots"
-
-# Dir of binary drivers
-BINARYDRIVERS_DIR="$BASE_DIR/BinaryDrivers"
-
-# Binary roots repository url (if not found locally) 
-BINARYROOTS_HTTP_PATH="http://src.macosforge.org/Roots"
-
-# Binary drivers repository url 
-BINARYDRIVERS_HTTP_PATH="http://src.macosforge.org/BinaryDrivers"
-
-# Build versions array (FIXME: use plist)
-BINVERSION=(pd 9L30 9J61pd1 9J61 9G55pd1 9G55 9F33pd1 9F33 9E17 9D34 9C31 9B18 9A581)
-
+#
 # Where fetched binary roots/drivers are (unpacked/thinned/)repacked (e.g., "./Packages_${ARCH}/")
-#DESTDIR="pd_setup_files/Packages_${ARCH}"
-DESTDIR="$BASE_DIR/Packages_${ARCH}"
+#
+DESTDIR="$TEMPDIR/Packages_D${DARWIN_RELEASE}_${ARCH}" # ...D9_i386 or D10_i386
+
+# Default local binary roots dir
+BINARYROOTS_DEFAULT_DIR="$TEMPDIR/Roots"
+
+#
+# Additional local directories of binary roots and binary drivers
+#
+BINARYROOTS_DIR=(
+	"$TEMPDIR/BinaryDrivers"
+)
+
+#
+# Dir of darwinbuild build directories
+# FIXME: can sometimes be problematic and create conflicts between dependents and dependencies
+#
+DARWINBUILD_DIR="/Users/aladin/PureDarwin/darwinbuild"
+
+#
+# Binary roots, drivers and external repository url  (if not found locally)
+#
+BINARYROOTS_HTTP_PATH=(
+	"http://src.macosforge.org/BinaryDrivers"
+	"http://src.macosforge.org/Roots"
+)
+
+#
+# Build versions in Darwin 9 and Darwin 10
+#
+BINVERSION=(10C540 10B504 10A432 pd 9L30 9J61pd1 9J61 9G55pd1 9G55 9F33pd1 9F33 9E17 9D34 9C31 9B18 9A581)
+
+
+#
+# Default Darwin 9 full options
+#
+
+# FIXME: Exclusivity is not always obvious but exists.
+# FIXME: add separated version for PureFoundation
+# FIXME: add separated version for vanilla and voodoo xnu
+# FIXME: add separated version for chameleon
+# FIXME: add separated version for VoodooPS2Controller
+# etc..
+
+ADD_CHAMELEON="n"		# (default: y) Add Chameleon bootloader?
+#ADD_CHAMELEON_THEMES="y"	# (default: y) Add Chameleon bootloader themes?
+
+ADD_MBR_ERASE="y"		# (default: y) Erase existing partition table (instead of updating the MBR)?
+
+ADD_VOODOO_XNU="y"		# (default: y) Add Voodoo Xnu-dev kernel (Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)?
+ADD_PUREFOUNDATION="y"		# (default: y) Add PureFoundation enhancements?
+
+#ADD_VOODOO_XNU_SPEEDSTEP Add xnu-speedstep (Intel SpeedStep driver)? # FIXME
+#ADD_VOODOO_POWER Add VoodooPower (Power Management support)? # FIXME
+# FIXME Add switch for network support
+
+ADD_VOODOO_PS2CONTROLLER="y"	# (default: y) Add VoodooPS2Controller (VoodooPS2Controller, VoodooPS2Keyboard, VoodooPS2Mouse, VoodooPS2Trackpad)?
+ADD_DFE_PS2CONTROLLER="n"	# (default: n) Add David Elliott PS2 support (ACPIPS2Nub, ApplePS2Controller)?
+
+ADD_VMWARE="y"			# (default: y) Add VMware support (VMware-Drivers-OpenSource & VMwareIOFramebuffer.kext)? 
+
+ADD_640x480x32="n"		# (default: n) Add 640x480x32  framebuffer resolution?
+ADD_800x600x32="y"		# (default: y) Add 800x600x32  framebuffer resolution? 
+ADD_1024x768x32="n"		# (default: n) Add 1024x768x32 framebuffer resolution? 
+
+ADD_LOGIN="y"			# (default: y) Add multiuser login support (pamsessioncreate, pcsc) 
+ADD_DEFAULT_USER="y"		# (default: y) Add a default user account: toor (password: toor)?
+
+ADD_X="y"			# (default: n) Add X and other related binaryroots?
+
+ADD_KEYMAP_BELGE="n"		# (default: n) Add Belge keymapping in X?
+ADD_KEYMAP_DEUTSCH="n"		# (default: n) Add Deutsch keymapping in X? 
+ADD_KEYMAP_FRANCAIS="n"		# (default: n) Add Francais keymapping in X?
+ADD_KEYMAP_UK="n"		# (default: n) Add UK keymapping in X?
+ADD_KEYMAP_USA="y"		# (default: y) Add USA keymapping in X?
+
+ADD_WMAKER="n"			# (default: n) Add WindowMaker (default window manager)?
+
+ADD_DEBUG="y"			# (default: y) Add debug (verbose launchd and persistent logs in /var/log/syslog)?
+
+ADD_ZSHRC="y"			# (default: y) Add /etc/zshrc? 
+
+ADD_DEVELOPER="y"		# (default: y) Do you want to keep developer headers and libraries?
+
+ADD_MACPORTS="y"		# (default: y) Do you want to add MacPorts (including tcl)
+
+ADD_VMWARE_VMDK="y"		# (default: y) Add VMware VMDK disk image (read-write support)?
+
+ADD_RELEASE_NANO="n"		# (default: n) Build a nano release instead of a full one?
+
+# 
+# Darwin 10 full options
+#
+
+if [ "$DARWIN_RELEASE" = "10" ]; then
+	ADD_VOODOO_XNU="n"	# Not yet released for D10
+	ADD_PUREFOUNDATION="n"	# Not yet ready/built for D10
+fi
+
+#
+# Generic nano options
+#
+
+# RESET VAR FOR NANO.. based on above choices, not on default choices
+if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
+	ADD_RELEASE_NANO="y"	# Switch used in pd_setup
+	ADD_PUREFOUNDATION="n"
+	ADD_LOGIN="n"	      
+	ADD_DEFAULT_USER="n"
+	ADD_X="n"
+	ADD_DEBUG="n"
+	ADD_DEVELOPER="n"
+	ADD_MACPORTS="n"
+	ADD_VMWARE_VMDK="n"
+fi
+
 

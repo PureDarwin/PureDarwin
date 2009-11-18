@@ -26,7 +26,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 @LICENSE_HEADER_END@
 
-Updated on 20090925.
+Updated on 20091118.
 
 Preliminaries
 =============
@@ -36,7 +36,7 @@ Do not use any production machines.
 PLEASE DO NOT IGNORE THIS STEP!
 
 These instructions are only for technical persons anyway, so they are short.
-Developers and testers, please provide feedback to "contact@puredarwin.org". 
+Developers and testers, please provide feedback via the way you prefer. 
 
 Status
 ======
@@ -48,13 +48,11 @@ only few alternatives are missing in order to replace few binaries.
 Installation
 ============
 
-1. Get binary roots and binary drivers with `pd_fetch'
-   They will be stored respectively in:
-      - pd_tmp/pd_binaryroots/ 
-      - pd_tmp/pd_binarydrivers/
+0. Check and edit the `pd_config' configuration file to reflect your needs.
 
-2. Thin them with `pd_i386thinner'
-   Thinned result will be placed in pd_tmp/Packages_i386/
+1. Get binary roots and binary drivers with `pd_fetch'.
+
+2. Thin them with `pd_i386thinner'.
    
 3. Then see the usage of `pd_setup':
 
@@ -82,3 +80,4 @@ http://www.puredarwin.org
 http://puredarwin.googlecode.com
 
 #puredarwin on irc.freenode.net
+contact at puredarwin.org

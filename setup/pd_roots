@@ -1,3 +1,10 @@
+AppleACPIPlatform
+AppleRTC
+IOATABlockStorage
+IOBDStorageFamily
+IOSCSIArchitectureModelFamily
+efiboot
+
 Apple16X50Serial
 Apple3Com3C90x
 AppleAPIC
@@ -204,3 +211,4 @@ zfs
 zip
 zlib
 zsh
+

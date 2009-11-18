@@ -1,3 +1,10 @@
+AppleACPIPlatform
+AppleRTC
+IOATABlockStorage
+IOBDStorageFamily
+IOSCSIArchitectureModelFamily
+efiboot
+
 AppleAPIC
 AppleFileSystemDriver
 AppleIntelPIIXATA
