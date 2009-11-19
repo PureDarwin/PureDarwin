@@ -65,13 +65,13 @@ DARWIN_RELEASE="9"
 # PureDarwin release (flavor)
 #
 PUREDARWIN_RELEASE=""
-PUREDARWIN_RELEASE="nano"
+#PUREDARWIN_RELEASE="nano"
 
 #
 # Binaryroot projects list local file
 #
 BINARYROOTS_LIST_FILE="pd_roots" 
-BINARYROOTS_LIST_FILE="pd_roots.nano"  
+#BINARYROOTS_LIST_FILE="pd_roots.nano"  
 
 #
 # Processor architecture / mach-o format
@@ -102,7 +102,7 @@ BINARYROOTS_DIR=(
 # Dir of darwinbuild build directories
 # FIXME: can sometimes be problematic and create conflicts between dependents and dependencies
 #
-DARWINBUILD_DIR="/Users/aladin/PureDarwin/darwinbuild"
+#DARWINBUILD_DIR="/Users/aladin/PureDarwin/darwinbuild"
 
 #
 # Binary roots, drivers and external repository url  (if not found locally)
