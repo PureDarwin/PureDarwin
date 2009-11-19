@@ -739,13 +739,22 @@ echo
 #
 # http://code.google.com/p/xnu-dev/
 if [ ! "$ADD_VOODOO_XNU" = "n" ]; then
-	echo " * voodoo_kernel.root.tar.bz2"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/voodoo_kernel.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-#	tar xjpfv $PACKAGES/voodoo_kernel.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	echo " * Voodoo_kernel.root.tar.bz2"
+	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/Voodoo_kernel.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
+	#tar xjpfv $PACKAGES/Voodoo_kernel.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+
+	# Keeping the "vanilla" kernel
 	mv $MOUNT/mach_kernel $MOUNT/mach_kernel.origin
-	cp $MOUNT/mach_kernel.voodoo $MOUNT/mach_kernel
-	# $MOUNT/mach_kernel.voodoo.9.5 (Voodoo 1.0 Rev A / xnu-dev) <- default
-	# $MOUNT/mach_kernel.voodoo.9.7 (Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+
+	# mach_kernel.voodoo.9.5 (Voodoo 1.0 Rev A / xnu-dev) (default: y)
+	if [ ! "$ADD_VOODOO_XNU_9_5_0" = "n" ]; then
+		cp $MOUNT/mach_kernel.voodoo.9.5 $MOUNT/mach_kernel
+	fi
+
+	# mach_kernel.voodoo.9.7 (Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only) (default: n)
+	if [ "$ADD_VOODOO_XNU_9_7_0" = "y" ]; then
+		cp $MOUNT/mach_kernel.voodoo.9.7 $MOUNT/mach_kernel
+	fi
 fi
 
 # Xnu-speedstep support (default: n)

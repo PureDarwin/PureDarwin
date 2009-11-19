@@ -134,7 +134,10 @@ ADD_CHAMELEON="n"		# (default: y) Add Chameleon bootloader?
 
 ADD_MBR_ERASE="y"		# (default: y) Erase existing partition table (instead of updating the MBR)?
 
-ADD_VOODOO_XNU="y"		# (default: y) Add Voodoo Xnu-dev kernel (Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)?
+ADD_VOODOO_XNU="y"		# (default: y) Add Voodoo Xnu-dev kernels ?
+ADD_VOODOO_XNU_9_5_0="y"	# (default: y) Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
+ADD_VOODOO_XNU_9_7_0="n"	# (default: n) Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+
 ADD_PUREFOUNDATION="y"		# (default: y) Add PureFoundation enhancements?
 
 #ADD_VOODOO_XNU_SPEEDSTEP Add xnu-speedstep (Intel SpeedStep driver)? # FIXME
