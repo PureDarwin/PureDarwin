@@ -175,7 +175,7 @@ fi
 
 function thinfile {
 if lipo "$2" -verify_arch "$1" 2>/dev/null ; then
-    MODES=$(stat -f%p "$2" | cut -b3-6)
+    MODES=$(/usr/bin/stat -f%p "$2" | cut -b3-6)
 
     if [ ! $VERBOSE = "" ]; then
     	echo "   Thinning $(basename \"$2\") to \"$1\""
@@ -231,7 +231,7 @@ if [ "$DARWIN_RELEASE" =  "$MAJOR_BUILD_VERSION" ]; then
 				if [ -e "$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz" ]; then
 					#echo " . ${x}.root.tar.gz"
 					BINARYROOT_FOUND="$BINARY_DIR/$BUILD_VERSION/${x}.root.tar.gz"
-					break # FIXME while stop. / stop at first one found
+					break # FIXME: It stops at the first one found
 				fi	
 			z=$[$z + 1]
 			done # End of WHILE through BINARYROOTS_DIR
@@ -247,9 +247,8 @@ if [ "$DARWIN_RELEASE" =  "$MAJOR_BUILD_VERSION" ]; then
 				if [ -e "$DARWINBUILD_DIR/$DARWINBUILD_BUILD_DIR/.build/build" ]; then
 					DARWINBUILD_BUILD_DIR_BUILDVERSION=`cat $DARWINBUILD_DIR/$DARWINBUILD_BUILD_DIR/.build/build 2> /dev/null`
 					if [ "${BINVERSION[$LEVEL]}"  = "$DARWINBUILD_BUILD_DIR_BUILDVERSION" ]; then
-						# Take the first one # FIXME
 						DARWINBUILD_BUILD_DIR_FOUND=$DARWINBUILD_DIR/$DARWINBUILD_BUILD_DIR
-						break
+						break # FIXME: It stops at the first one found
 					fi
 				fi
 			done
