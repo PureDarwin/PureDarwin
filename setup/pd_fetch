@@ -73,7 +73,7 @@ if [ "$1" = "" ]; then
 	echo
 	echo "Legend:"
 	echo " . project.root.tar.gz\tThe archive has already been retrieved"
-	#echo " . $(tput bold)project.root.tar.gz$(tput reset)\tThe archive has already been retrieved"
+	#echo " . $(tput bold)project.root.tar.gz$(tput rmso)\tThe archive has already been retrieved"
 	echo " + project.root.tar.gz\tThe archive comes from a local darwinbuild package"
 	echo " * project.root.tar.gz\tThe archive comes from a remote repository"
 	echo " ? project.root.tar.gz\tThe archive is missing" 
@@ -128,9 +128,9 @@ shift
 # Break condition: no more missing files found in args, success.
 if [ $# -eq 0 ]; then
 	echo
-	echo "Fetching binary files $(tput bold)complete$(tput reset) ($MISSING_LIST_INIT files)" 
+	echo "Fetching binary files $(tput bold)complete$(tput rmso) ($MISSING_LIST_INIT files)" 
 	if [ "$BAD_SHA1_LIST" ]; then
-		echo "$(tput bold)Warning!$(tput reset) SHA-1 checksum failed on:$BAD_SHA1_LIST"
+		echo "$(tput bold)Warning!$(tput rmso) SHA-1 checksum failed on:$BAD_SHA1_LIST"
 	fi	
 	exit 0
 fi
@@ -138,10 +138,10 @@ fi
 # Break condition: no more level to go in, end of array, some missing files could remain..
 if [ $LEVEL -gt $[${#BINVERSION[@]} - 1] ]; then
 	echo 
-	echo "Fetching binary files $(tput bold)uncomplete$(tput reset)"
+	echo "Fetching binary files $(tput bold)uncomplete$(tput rmso)"
 	echo "Missing $[$MISSING_LIST_INIT - $[$MISSING_LIST_INIT - $#]] files: $*"
 	if [ "$BAD_SHA1_LIST" ]; then
-		echo "$(tput bold)Warning!$(tput reset) SHA-1 checksum failed on:$BAD_SHA1_LIST"
+		echo "$(tput bold)Warning!$(tput rmso) SHA-1 checksum failed on:$BAD_SHA1_LIST"
 	fi	
 	exit -1
 fi
@@ -288,7 +288,7 @@ if [ "$DARWIN_RELEASE" =  "$MAJOR_BUILD_VERSION" ]; then
 		#					done
 		#				else
 							# Bad checksum!
-		#					echo " ! $(tput bold)${x}.root.tar.gz$(tput reset)";
+		#					echo " ! $(tput bold)${x}.root.tar.gz$(tput rmso)";
 							# Adding binary to bad SHA-1 binary list
 		#					BAD_SHA1_LIST=$x
 						#fi
