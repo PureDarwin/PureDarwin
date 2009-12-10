@@ -55,7 +55,6 @@
 # 20080305 - Initial release - aladin
 #
 
-#
 # Darwin release (major version)
 #
 DARWIN_RELEASE="9"
@@ -66,17 +65,22 @@ DARWIN_RELEASE="9"
 #
 PUREDARWIN_RELEASE=""
 #PUREDARWIN_RELEASE="nano"
+#PUREDARWIN_RELEASE="bootstrap"
 
 #
 # Binaryroot projects list local file
 #
+# FIXME some project names have changed between D9 and D10
 BINARYROOTS_LIST_FILE="pd_roots" 
 #BINARYROOTS_LIST_FILE="pd_roots.nano"  
+#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"  
 
 #
 # Processor architecture / mach-o format
 #
 ARCH="i386"
+#ARCH="ppc"    # FIXME could work on D9 (need to check thin, OpenFirmware and bootloaders)
+#ARCH="x86_64" # FIXME does not (yet) work
 
 #
 # Temporary dir which will contain fetched and thinned binaryroots
@@ -100,9 +104,14 @@ BINARYROOTS_DIR=(
 
 #
 # Dir of darwinbuild build directories
-# FIXME: can sometimes be problematic and create conflicts between dependents and dependencies
 #
+# WARNING: The binaryroots built on your local computer can,
+# depending on the constellation of your buildroot resulting
+# in problematic relation between dependents and dependencies.
+#
+# First Roots/.DownloadCache/ is checked then Packages/ if nothing found
 #DARWINBUILD_DIR="/Users/aladin/PureDarwin/darwinbuild"
+
 
 #
 # Binary roots, drivers and external repository url  (if not found locally)
@@ -115,54 +124,52 @@ BINARYROOTS_HTTP_PATH=(
 #
 # Build versions in Darwin 9 and Darwin 10
 #
+BINVERSION=(pd 9G55pd1 9G55 9F33pd1 9F33 9E17 9D34 9C31 9B18 9A581)
 BINVERSION=(10C540 10B504 10A432 pd 9L30 9J61pd1 9J61 9G55pd1 9G55 9F33pd1 9F33 9E17 9D34 9C31 9B18 9A581)
 
 
 #
 # Default Darwin 9 full options
 #
+#
+# WARNING: Exclusivity is not always obvious but exists between choices.
 
-# FIXME: Exclusivity is not always obvious but exists.
-# FIXME: add separated version for PureFoundation
-# FIXME: add separated version for vanilla and voodoo xnu
-# FIXME: add separated version for chameleon
-# FIXME: add separated version for VoodooPS2Controller
-# etc..
-
-ADD_CHAMELEON="n"		# (default: y) Add Chameleon bootloader?
+ADD_CHAMELEON="n"		# (default: y) Add Chameleon bootloader (Chameleon v2.0-RC3-r658)?
 #ADD_CHAMELEON_THEMES="y"	# (default: y) Add Chameleon bootloader themes?
 
 ADD_MBR_ERASE="y"		# (default: y) Erase existing partition table (instead of updating the MBR)?
 
 ADD_VOODOO_XNU="y"		# (default: y) Add Voodoo Xnu-dev kernels ?
-ADD_VOODOO_XNU_9_5_0="y"	# (default: y) Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
-ADD_VOODOO_XNU_9_7_0="n"	# (default: n) Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+ADD_VOODOO_XNU_9_5_0="n"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
+ADD_VOODOO_XNU_9_7_0="y"	# (default: n) EXCLUSIVE Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+
+ADD_VOODOO_XNU_SPEEDSTEP="n"	# (default: n) Add xnu-speedstep (Intel SpeedStep driver)?
 
 ADD_PUREFOUNDATION="y"		# (default: y) Add PureFoundation enhancements?
 
-#ADD_VOODOO_XNU_SPEEDSTEP Add xnu-speedstep (Intel SpeedStep driver)? # FIXME
-#ADD_VOODOO_POWER Add VoodooPower (Power Management support)? # FIXME
+# FIXME ADD_VOODOO_POWER Add VoodooPower (Power Management support)?
 # FIXME Add switch for network support
 
-ADD_VOODOO_PS2CONTROLLER="y"	# (default: y) Add VoodooPS2Controller (VoodooPS2Controller, VoodooPS2Keyboard, VoodooPS2Mouse, VoodooPS2Trackpad)?
-ADD_DFE_PS2CONTROLLER="n"	# (default: n) Add David Elliott PS2 support (ACPIPS2Nub, ApplePS2Controller)?
+ADD_VOODOO_PS2CONTROLLER="y"	# (default: y) EXCLUSIVE Add VoodooPS2Controller (VoodooPS2Controller, VoodooPS2Keyboard, VoodooPS2Mouse, VoodooPS2Trackpad)?
+ADD_DFE_PS2CONTROLLER="n"	# (default: n) EXCLUSIVE Add David Elliott PS2 support (ACPIPS2Nub, ApplePS2Controller)?
 
 ADD_VMWARE="y"			# (default: y) Add VMware support (VMware-Drivers-OpenSource & VMwareIOFramebuffer.kext)? 
+ADD_VMWARE_VMDK="y"		# (default: y) Add VMware VMDK disk image (read-write support)?
+ADD_VMWARE_IDE_DRIVE="n" 	# (default: n) Additional IDE disk drive in the vmwarevm
 
-ADD_640x480x32="n"		# (default: n) Add 640x480x32  framebuffer resolution?
-ADD_800x600x32="y"		# (default: y) Add 800x600x32  framebuffer resolution? 
-ADD_1024x768x32="n"		# (default: n) Add 1024x768x32 framebuffer resolution? 
+ADD_FB_640x480x32="n"		# (default: n) EXCLUSIVE Add 640x480x32  framebuffer resolution?
+ADD_FB_800x600x32="y"		# (default: y) EXCLUSIVE Add 800x600x32  framebuffer resolution? 
+ADD_FB_1024x768x32="n"		# (default: n) EXCLUSIVE Add 1024x768x32 framebuffer resolution? 
 
 ADD_LOGIN="y"			# (default: y) Add multiuser login support (pamsessioncreate, pcsc) 
 ADD_DEFAULT_USER="y"		# (default: y) Add a default user account: toor (password: toor)?
 
 ADD_X="y"			# (default: n) Add X and other related binaryroots?
-
-ADD_KEYMAP_BELGE="n"		# (default: n) Add Belge keymapping in X?
-ADD_KEYMAP_DEUTSCH="n"		# (default: n) Add Deutsch keymapping in X? 
-ADD_KEYMAP_FRANCAIS="n"		# (default: n) Add Francais keymapping in X?
-ADD_KEYMAP_UK="n"		# (default: n) Add UK keymapping in X?
-ADD_KEYMAP_USA="y"		# (default: y) Add USA keymapping in X?
+ADD_KEYMAP_BELGE="n"		# (default: n) EXCLUSIVE Add X Belge keymapping?
+ADD_KEYMAP_DEUTSCH="n"		# (default: n) EXCLUSIVE Add X Deutsch keymapping? 
+ADD_KEYMAP_FRANCAIS="y"		# (default: n) EXCLUSIVE Add X Francais keymapping?
+ADD_KEYMAP_UK="n"		# (default: n) EXCLUSIVE Add X UK keymapping?
+ADD_KEYMAP_USA="n"		# (default: y) EXCLUSIVE Add X USA keymapping?
 
 ADD_WMAKER="n"			# (default: n) Add WindowMaker (default window manager)?
 
@@ -172,26 +179,26 @@ ADD_ZSHRC="y"			# (default: y) Add /etc/zshrc?
 
 ADD_DEVELOPER="y"		# (default: y) Do you want to keep developer headers and libraries?
 
-ADD_MACPORTS="y"		# (default: y) Do you want to add MacPorts (including tcl)
+ADD_MACPORTS_TCL="y"		# (default: y) Do you want to add TCL built with the MacPorts project?
 
-ADD_VMWARE_VMDK="y"		# (default: y) Add VMware VMDK disk image (read-write support)?
+ADD_SETTINGS_FILES="y"		# (default: y) Add all settings files from PureDarwinSettings
 
 ADD_RELEASE_NANO="n"		# (default: n) Build a nano release instead of a full one?
+
+ADD_CLONE="n"                   # (default: n) Add setup scripts & binaryroots to the target?
+
 
 # 
 # Darwin 10 full options
 #
-
 if [ "$DARWIN_RELEASE" = "10" ]; then
-	ADD_VOODOO_XNU="n"	# Not yet released for D10
-	ADD_PUREFOUNDATION="n"	# Not yet ready/built for D10
+	ADD_VOODOO_XNU="n"	# No because not yet released for D10
+	ADD_PUREFOUNDATION="n"	# No because not yet compiled for D10
 fi
 
 #
 # Generic nano options
 #
-
-# RESET VAR FOR NANO.. based on above choices, not on default choices
 if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
 	ADD_RELEASE_NANO="y"	# Switch used in pd_setup
 	ADD_PUREFOUNDATION="n"
@@ -200,8 +207,31 @@ if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
 	ADD_X="n"
 	ADD_DEBUG="n"
 	ADD_DEVELOPER="n"
-	ADD_MACPORTS="n"
+	ADD_MACPORTS_TCL="n"
 	ADD_VMWARE_VMDK="n"
+	ADD_SETTINGS_FILES="n"
 fi
 
+#
+# Generic bootstrap options (nano++)
+#
+if [ "$PUREDARWIN_RELEASE" = "bootstrap" ]; then
+	ADD_RELEASE_NANO="y"	# Switch used in pd_setup
+	ADD_PUREFOUNDATION="y"	#
+	ADD_LOGIN="n"	      
+	ADD_DEFAULT_USER="n"
+	ADD_X="n"
+	ADD_DEBUG="n"
+	ADD_DEVELOPER="n"
+	ADD_MACPORTS="n"
+	ADD_VMWARE_VMDK="n"
+	ADD_VMWARE_IDE_DRIVE="y" # (default: n) Additional IDE disk drive in the vmwarevm
+	ADD_SETTINGS_FILES="n"
+
+	ADD_CLONE="y"
+
+	# On 9.7, problems with disk0s1: ioctl(_IOW,'d',31,32) is unsupported
+	ADD_VOODOO_XNU_9_5_0="y"	# (default: y) Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
+	ADD_VOODOO_XNU_9_7_0="n"	# (default: n) Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+fi
 

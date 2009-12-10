@@ -26,7 +26,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 @LICENSE_HEADER_END@
 
-Updated on 20091118.
+Updated on 20091209.
 
 Preliminaries
 =============
@@ -37,13 +37,6 @@ PLEASE DO NOT IGNORE THIS STEP!
 
 These instructions are only for technical persons anyway, so they are short.
 Developers and testers, please provide feedback via the way you prefer. 
-
-Status
-======
-
-Installation process still needs a Mac in order to build or deploy PureDarwin.
-However most of these steps can be done on PureDarwin or even BSD and GNU/Linux,
-only few alternatives are missing in order to replace few binaries.
 
 Installation
 ============
@@ -62,6 +55,7 @@ Installation
 
        * Install to physical disk
        pd_setup /Volumes/PureDarwin PureDarwin
+       pd_setup /dev/diskX PureDarwin
 
        * Create an ISO 9660 image (.iso)
        pd_setup /tmp/puredarwin.iso PureDarwin
@@ -81,3 +75,27 @@ http://puredarwin.googlecode.com
 
 #puredarwin on irc.freenode.net
 contact at puredarwin.org
+
+Additional Licensing Information
+================================
+
+IMPORTANT LICENSING INFORMATION:  The Apple-developed portions of the
+Source Code and corresponding binary package folders are covered by the
+Apple Public Source License that can be found in the file /APPLE_LICENSE.txt.
+
+The Apple binary drivers and kernel extension files are covered by a separate
+Apple Binary Driver Software License Agreement that can be found in the file
+/APPLE_DRIVER_LICENSE.txt.
+
+The PureDarwin "work" is covered by the BSD License that can be found in the
+file /PUREDARWIN_LICENSE.txt.
+
+Other portions of Darwin may be covered by third party licenses.  Please
+read these licenses carefully before using any of this software, as your use
+of this software signifies that you have read the licenses and that you
+accept and agree to their respective terms. 
+Please see the respective projects for more information.
+
+Please read all these licenses carefully before using any of this software, 
+as your use of this software signifies that you have read the licenses and 
+that you accept and agree to their respective terms.
