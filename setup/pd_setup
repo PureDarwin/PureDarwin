@@ -389,7 +389,7 @@ function trap_handler {
 	# Resetting trap
 	trap - INT TERM EXIT
 
-	exit 1
+	exit 0 
 }
 
 # Trap ^c (control-c)
@@ -1313,10 +1313,10 @@ else
 	if [ "$ADD_LAUNCHD_INSTALLER" = "y" ]; then 
 		# A launchd plist (org.puredarwin.installer.plist) run a CLI installer (pd_installer)
 		chmod 644 ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
-		chmod +x ${MOUNT}/usr/local/sbin/pd_installer
+		chmod +x ${MOUNT}/usr/local/share/puredarwin/scripts/pd_installer
 
 		# not needed in this scenario..
-		rm \
+		rm -f \
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.SystemStarter.plist \
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.atrun.plist  \
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.bootlog.plist \
@@ -1327,7 +1327,8 @@ else
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.firmwaresyncd.plist \
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.hidd.plist\
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.kextd.plist \
-		${MOUNT}/System/Library/LaunchDaemons/com.apple.update.plist finger.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.update.plist\
+		${MOUNT}/System/Library/LaunchDaemons/finger.plist \
 		${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist \
 		
 	else	

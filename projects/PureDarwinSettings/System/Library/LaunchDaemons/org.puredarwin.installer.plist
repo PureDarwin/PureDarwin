@@ -19,7 +19,7 @@
 		<string>-f</string>
 		<string>/usr/share/sandbox/pd_installer.sb</string>
 -->
-		<string>/usr/local/sbin/pd_installer</string>
+		<string>/usr/local/share/puredarwin/scripts/pd_installer</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

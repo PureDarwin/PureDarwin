@@ -1,12 +1,54 @@
 #!/bin/sh
-# OpenDarwin install script
+#
+# Copyright (c) 2007-2009 The PureDarwin Project.
+# All rights reserved.
+#
+# @LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# @LICENSE_HEADER_END@
+#
+
+#
+# aladin   <aladin@puredarwin.org>
+#
+
+#
+# PureDarwin install (wrapper) script
+#
+#	Usage: pd_installer
+#
+# This script should not be run manually but by launchd via its respective plist.
+#
+# Based on the "OpenDarwin install script" by kvv
 # $Id: rc.cdrom,v 1.30 2005/04/28 20:06:46 kevin Exp $
 #
-#	Adapted by Aladin (Copyright (c) 2007-2009 The PureDarwin Project).
-#		v1.1 12/12/09 ..
-#	Hacked into the "PureDarwin Boot" installer by Stuart Crook
-#		v1.0 31/03/09 Initial release
-#
+# Based on the "PureDarwin boot installer" (pd_installer_1) by Stuart Crook
+#	v1.0 31/03/09 Initial release 
+
+###############################################################################
+# GLOBAL VARIABLES AND SETTINGS 
+###############################################################################
 
 # Redirecting stdin  (/dev/stdin  -> /dev/fd/0)
 exec 0</dev/console
@@ -33,46 +75,15 @@ sysctl -w kern.hostname="PureDarwin.local"
 # Workaround read-write
 #/sbin/mount -uw /
 
+# Find out where this script lives
+DIRNAME=$(cd $(dirname $0) && pwd)
 
-abort () {
-	echo "Aborting the installation"
-	echo "Press enter to reboot"
-	read REBOOT
-	reboot
-}
-
-umount_target_disk () {        
-	umount ${ROOTPART}
-}
+###############################################################################
+# FUNCTIONS 
+###############################################################################
 
 add_user () {
-	# No argument == targetting /
-	/usr/local/share/puredarwin/scripts/pd_injectuser
-}
-
-finishup () {
-
-	echo "Installation of the base system is now complete."
-	echo "You may: "
-	until [ ! : ]
-	do
-		echo "1) Add a user to the new system"
-		echo "2) Reboot"
-		echo "3) Spawn a shell"
-		echo -n "Your Choice: "
-		read CHOICE
-		case ${CHOICE} in
-			1) add_user 
-			   break;;
-			2) umount_target_disk
-			   reboot 
-			   break ;;
-			3) umount_target_disk
-			   /bin/sh
-			   break ;;
-		esac
-	done
-	
+	$DIRNAME/pd_injectuser # e.g., /usr/local/share/puredarwin/scripts/pd_injectuser
 }
 
 welcome() {
@@ -86,7 +97,6 @@ welcome() {
 	echo "  Purity (c) 2007-2009 The PureDarwin Project (www.puredarwin.org)"
 	echo
 
-
 	#if [ -f "/Release Notes.txt" ]; then
 	#	echo ""
 	#	echo "Welcome to the installation of" `grep 'Darwin [0-9.-]*' /Release\ Notes.txt | head -1 | awk '{print $1" "$2}'`
@@ -97,70 +107,97 @@ welcome() {
 	#fi
 }
 
-# answer to a question with 's' or 'x' allow the user a clean escape at any time
-shell_or_exit() {
-	if [ "$1" = "s" ]; then
-		exec /bin/zsh
-		exit
-	fi
-	
-	if [ "$1" = "x" ]; then
-		exit
-	fi
-}
+###############################################################################
+# INTRO 
+###############################################################################
 
-main() {
+welcome
 
-	welcome
+###############################################################################
+# TARGET 
+###############################################################################
 
-	echo
-	echo "Enter 's' for a shell (zsh), or 'x' to exit, at any time"
-	echo
+echo
+echo "Enter 's' to drop into a shell, at any time."
+echo
 
-	# Get the device the user wants to install onto.
-	INSTALLDEV="novalue"
-	until [[ ${INSTALLDEV} != "" && -b ${INSTALLDEV} ]]
+# Get the device the user wants to install onto.
+INSTALLDEV="novalue"
+until [[ ${INSTALLDEV} != "" && -b ${INSTALLDEV} ]]
+do
+	echo "The following devices are available for installation:"
+	until [[ ! -z "${FOO}" ]]
 	do
-		echo "The following devices are available for installation:"
-		until [[ ! -z "${FOO}" ]]
-		do
-			FOO=`/usr/local/share/puredarwin/setup/pd_setup_files/iofindwholemedia`
-		done
-		/usr/local/share/puredarwin/setup/pd_setup_files/iofindwholemedia
-		#echo "Enter 'shell' to drop into a shell"
-		printf "Which device would you like to install PureDarwin onto? "
-		read INSTALLDEV
-	
-		shell_or_exit $INSTALLDEV
-		#if [ "${INSTALLDEV}" == "shell" ]; then
-		#	exec /bin/sh
-		#fi
+		FOO=`$DIRNAME/../setup/pd_setup_files/iofindwholemedia`
+	done
+	$DIRNAME/../setup/pd_setup_files/iofindwholemedia
+	printf "Which device would you like to install PureDarwin onto? "
+	read INSTALLDEV
 
+	if [ "${INSTALLDEV}" == "s" ]; then
+		# Drop into a shell (resume at exit)
+		/bin/sh
+	else
+		# Check and retrieve the disk device node (e.g., /dev/disk1)
 		T_INSTALLDEV="$INSTALLDEV"
-		INSTALLDEV=`/usr/local/share/puredarwin/setup/pd_setup_files/iofindwholemedia ${INSTALLDEV}`
+		INSTALLDEV=`$DIRNAME/../setup/pd_setup_files/iofindwholemedia ${INSTALLDEV}`
 
 		if [ ! -b "${INSTALLDEV}" ]; then
 			echo ""
 			echo "${T_INSTALLDEV} doesn't exist, please enter one of the listed devices."
 			echo ""
 		fi
-	done
-	
-	RAWINSTDEV=`echo ${INSTALLDEV} | sed 's/disk/rdisk/'`
+	fi
+done
 
-	/usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin
+###############################################################################
+# SETUP BASE
+###############################################################################
 
+# FIXME add a way to extend or reduce releases (e.g. bootstrap->nano or bootstrap->full)
+/usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin
 
-	finishup	# yanked from below
+echo "Installation of the base system is now complete."
+echo ""
 
+###############################################################################
+# POST CONFIG 
+###############################################################################
+
+# Unpopulating /dev 
+/sbin/umount /dev
+
+until [ ! : ]
+do
+	echo "You may: "
+	# FIXME adduser will not work if the partition is unmounted
+	#echo "1. Add a user to the new system"
+	echo "2. Reboot"
+	echo "3. Spawn a shell"
+	echo -n "Your Choice: "
+	read CHOICE
 	echo
-	echo "Installation is now complete. Press 'enter' to restart"
-	echo
-	read RESTART
+	case ${CHOICE} in
+		#1) add_user 
+		#   break;;
+		2) reboot -q
+		   break ;;
+		3) /bin/sh
+		   break ;;
+	esac
+done
 
-}
 
-main
+###############################################################################
+# REBOOT 
+###############################################################################
+
+echo
+echo "Installation is now complete. Press 'enter' to restart"
+echo
+read RESTART
+echo ""
+reboot -q
 
 # bash interactive
 #/bin/bash -i 
@@ -168,4 +205,4 @@ main
 # zsh interactive
 #/bin/zsh -i
 
-exit
+
