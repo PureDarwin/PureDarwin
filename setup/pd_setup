@@ -163,8 +163,11 @@ echo
 # USAGE AND PREVENTIVE TESTS 
 ################################################################################
 
-# Be strict and fail on errors
+# Fail on return error code 
 #set -e
+
+# Fail on uninitialised variables
+#set -u 
 
 # Ensure root exclusivity
 if [ "$UID" -ne 0 ]
@@ -218,29 +221,21 @@ fi
 # PATHS AND VARIABLES
 ################################################################################
 
+# Find out where this script lives
+DIRNAME=$(cd $(dirname $0) && pwd)
+
 # Reading global variables in pd_config file
-source pd_config
+source "$DIRNAME"/pd_config
 
 # Destination output filename (aka "target")
-CDDMG="$1"
-
-# In the contrary of .iso, when extension is dmg, hdiutil does not concat .dmg
-T_CDDMG_EXT=$(basename $CDDMG | awk -F '.' '{print $NF}')
-if [ $T_CDDMG_EXT = "dmg" ]; then
-	CDDMG=$(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1}')
-fi
+TARGET="$1"
 
 # FIXME remove redundancies
 # Temporary pseudo PureDarwin Volume
 MOUNT="/Volumes/$2" 
 
-TARGET="$1"
-
 # Volume label of the target image (ie: PureDarwin)
 VOLNAME="$2"
-
-# Find out where this script lives
-DIRNAME=$(cd $(dirname $0) && pwd)
 
 # Thinned binary roots and drivers root folder
 PACKAGES=$DIRNAME/$DESTDIR
@@ -328,6 +323,9 @@ function mr_proper {
 		rm -r /tmp/i386
 	fi
 
+	CONT=""
+	T_ERROR=""
+
 	# Unmounting $MOUNT
 	echo "$(tput bold)Warning!$(tput rmso) \`$MOUNT is going to be $(tput bold)unmounted$(tput rmso)"
 	printf "Continue? ($(tput bold)y$(tput rmso)/n) "
@@ -371,30 +369,26 @@ function mr_proper {
 	launchctl load /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
 	
 	# Remove any previous copies
-	#if [ -e $CDDMG.dmg ];then
-	#	rm -f "$CDDMG".dmg
-	#	echo " * $CDDMG.dmg removed"
+	#if [ -e $TARGET ];then
+	#	rm -rf "$TARGET"
+	#	echo " * $TARGET removed"
 	#fi
 }
 
 # ^c (control-c) trapped
 function trap_handler {
 	echo 
-	echo " ^C trapped."
+	echo "Trap function."
 	echo
 
 	# iso, vmwarevm, vmdk, dmg, etc..
 	if [ ! $EXT = "" ]; then
 		mr_proper
 	fi
-	echo
-	echo "Installation on ${MOUNT} $(tput bold)failed$(tput rmso)."
-	echo
-	exit 1
 }
 
 # Trap ^c (control-c)
-trap trap_handler INT TERM
+trap trap_handler INT TERM EXIT
 
 ###############################################################################
 # BOOTLOADER SWITCH 
@@ -475,14 +469,9 @@ if [ ! $EXT = "" ]; then
 	#
 
 	# Remove any previous copies
-	#if [ -e "$CDDMG.dmg" ];then
-		#rm -f "$CDDMG.dmg"
-		#echo "removed: $CDDMG.dmg"
-	#fi
-
-	#if [ -e "$CDDMG" ];then
-		#rm -Rf "$CDDMG"
-		#echo "removed: $CDDMG"
+	#if [ -e "$TARGET" ];then
+		#rm -Rf "$TARGET"
+		#echo "removed: $TARGET"
 	#fi
 
 
@@ -494,11 +483,11 @@ if [ ! $EXT = "" ]; then
 	SIZE="1234"
 	if [ "$ADD_RELEASE_NANO" = "y" ]; then
 		#SIZE="256"
-		SIZE="1234"
+		SIZE="1111"
 	fi
 
 	# Create a bootable image
-	echo "Creating $CDDMG.dmg (${SIZE}M)"
+	echo "Creating $TARGET (${SIZE}M)"
 	# hdiutil: manipulate disk images (attach, verify, burn, etc)
 	#       create  new image of the given size
 	#       -fs     specify the filesystem (HFS+J <- HFS+ journalised) 
@@ -511,26 +500,31 @@ if [ ! $EXT = "" ]; then
 	#               -nospotlight
 	#               > strings /usr/share/man/man1/hdiutil.1 | grep nospotlight
 	#               >
-	#hdiutil create -ov -fs HFS+J -o "$CDDMG" -size ${SIZE}M -layout NONE -type UDIF -nospotlight
+	#hdiutil create -ov -fs HFS+J -o "$TARGET" -size ${SIZE}M -layout NONE -type UDIF -nospotlight
+	#mv $TARGET.dmg $TARGET
 
-	# Alternative via `dd'
-	dd if=/dev/zero of="$CDDMG.dmg"  bs=1024k count=$SIZE
+	dd if=/dev/zero of="$TARGET"  bs=1024k count=$SIZE
+
 
 	# Suppress automatic mounting of any filesystems in the image
 	# 	This will result in /dev entries being created and (for non-kernel-attached images)
 	# 	a process in the background, but no volumes will be mounted.
-	echo "Removing automatic mounting of any FS in $CDDMG.dmg ($DEVICE entry kept)"
 	# FIXME `hdid' is not buildable nor available in Darwin, consequently the next steps are failing!
-	export DEVICE=$(hdid -nomount "$CDDMG.dmg" | tail -1 | awk '{print $1}')
+	# FIXME `hdid' fails with unknown extension as .vmwarevm or .foobar
+	mv "$TARGET" "$TARGET.dmg"
+	#export DEVICE=$(hdid -nomount "$TARGET.dmg" |  tail -1 | awk '{print $1}')
+	export DEVICE=$(hdid -nomount "$TARGET.dmg" |  head -1 | awk '{print $1}')
 	export RDEVICE=$(echo $DEVICE | sed s/disk/rdisk/)
-
+	mv "$TARGET.dmg"  "$TARGET"
+	echo "Removed automatic mounting of any FS in $TARGET ($DEVICE entry kept)"
+	
 	# FIXME Alternative `nbdst' <- not available.
 
 	# FIXME Alternative via `vndevice' for Darwin land does not behave as a disk device node..
 	# but enable a /dev/{r}vn0 directly linked to the image via a shadow file.
 	#mount -uw /
 	#touch /shadowfile
-	#/usr/libexec/vndevice attach /dev/vn0 "$CDDMG.dmg"
+	#/usr/libexec/vndevice attach /dev/vn0 "$TARGET"
 	#/usr/libexec/vndevice shadow /dev/vn0 /shadowfile
 	#export DEVICE="/dev/vn0"
 	#export RDEVICE="/dev/rvn0"
@@ -673,15 +667,14 @@ fi
 echo "Disabling Spotlight indexation"
 touch ${MOUNT}/.metadata_never_index
 
-# Ensure permissions are on
-vsdbutil -c ${MOUNT}
-
 # Adopts (activates) on-disk ownership
+# FIXME deprecated.
 echo "Adopting (Activating) on-disk ownership"
 vsdbutil -a ${MOUNT}
 
 # Ensure permissions are on
-vsdbutil -c ${MOUNT}
+# FIXME seems to always fail and make the set -e strict mode also.
+#vsdbutil -c ${MOUNT}
 
 ###############################################################################
 # BINARYROOTS DEPLOYMENT 
@@ -908,7 +901,8 @@ if [ ! "$ADD_PUREFOUNDATION" = "n" ]; then
 	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/configd_plugins.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
 	#tar xjpf $PACKAGES/configd_plugins.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
-	chown root:wheel $MOUNT/System/Library/LaunchDaemons/com.apple.configd.plist
+	# FIXME FIXME add chown -R ..
+	#chown root:wheel $MOUNT/System/Library/LaunchDaemons/com.apple.configd.plist
 	chown root:wheel $MOUNT/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist
 	# + /Library/Preferences/SystemConfiguration/preferences.plist
 fi
@@ -998,6 +992,8 @@ if [ "$ADD_SETTINGS_FILES" = "n" ]; then
 
 	mkdir -p ${MOUNT}/System/Library/LaunchDaemons/
 	cp -fp $DIRNAME/../projects/PureDarwinSettings/System/Library/LaunchDaemons/com.apple.getty.plist ${MOUNT}/System/Library/LaunchDaemons/com.apple.getty.plist
+	cp -fp $DIRNAME/../projects/PureDarwinSettings/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
+	cp -fp $DIRNAME/../projects/PureDarwinSettings/System/Library/LaunchDaemons/org.puredarwin.installer.plist ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
 
 	mkdir -p ${MOUNT}/etc/
 	cp -fp $DIRNAME/../projects/PureDarwinSettings/etc/ttys ${MOUNT}/etc/ttys
@@ -1010,7 +1006,7 @@ if [ "$ADD_SETTINGS_FILES" = "n" ]; then
 
 	# APPLE_DRIVER_LICENSE.txt, APPLE_LICENSE.txt and PUREDARWIN_LICENSE.txt
 	# FIXME how to handle that correctly?
-	cp -fp $DIRNAME/../projects/PureDarwinSettings/*txt ${MOUNT}/
+	cp -fp $DIRNAME/../projects/PureDarwinSettings/*LICENSE.txt ${MOUNT}/
 else
 	# Copying all settings files
 	cp -fpR  $DIRNAME/../projects/PureDarwinSettings/* ${MOUNT}/
@@ -1140,12 +1136,15 @@ echo "/bin/zsh"  >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
 #
 # FIXME warning, could not bind /Volumes/PD/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation...
 # ...because realpath() failed on /Volumes/PD/Users/stuart/Library/Frameworks/Foundation.framework/Versions/C/Foundation
-if [ "$DARWIN_RELEASE" = "9" ]; then
-	${MOUNT} update_prebinding -root ${MOUNT} -arch i386 -force		# Available in Leopard
-	${MOUNT} update_prebinding -root ${MOUNT} -arch i386 -force -debug 
-else
-	${MOUNT} update_dyld_shared_cache -root ${MOUNT} -arch i386 -force	# Available in SnowLeopard
-fi
+
+# FIXME ./pd_setup: line 1138: /Volumes/bootstrap: is a directory
+
+#if [ "$DARWIN_RELEASE" = "9" ]; then
+	#${MOUNT} update_prebinding -root ${MOUNT} -arch i386 -force		# Available in Leopard
+	#${MOUNT} update_prebinding -root ${MOUNT} -arch i386 -force -debug 
+#else
+	#${MOUNT} update_dyld_shared_cache -root ${MOUNT} -arch i386 -force	# Available in SnowLeopard
+#fi
 
 # com.apple.launchd[1] (org.ntp.ntpd): Unknown key: SHAuthorizationRight
 #
@@ -1171,6 +1170,7 @@ if [ ! "$ADD_DEBUG" = "n" ]; then
 	echo "log level debug" > ${MOUNT}/etc/launchd.conf
 	echo "*.debug /var/log/syslog" >> ${MOUNT}/etc/syslog.conf
 fi
+
 
 # DTrace facility
 #
@@ -1285,31 +1285,49 @@ cp $DIRNAME/../scripts/pd_* ${MOUNT}/usr/local/sbin/
 # NANO LAUNCHD, DAEMONS AND PLISTS
 ###############################################################################
 
-# (default: no)
-if [ "$ADD_RELEASE_NANO" = "y" ]; then 
-	# A launchd plist (org.puredarwin.nanoshell.plist) run a synthetic custom "shell" (pd_nanoshell)
-	# FIXME readd it.
-
+# Add launchd (default: yes)
+if [ "$ADD_LAUNCHD" = "n" ]; then 
 	# Overwrite /sbin/launchd with a trivial shell script 
 	mkdir -p ${MOUNT}/sbin/
 	cp ${MOUNT}/usr/local/sbin/pd_nanoshell ${MOUNT}/sbin/launchd # FIXME triv
 	#cp $DIRNAME/../scripts/pd_nanoshell ${MOUNT}/sbin/launchd # FIXME triv
-	chmod +x ${MOUNT}/sbin/launchd
 	chown root:wheel ${MOUNT}/sbin/launchd
 	chmod 755 ${MOUNT}/sbin/launchd
+else
+	# Add a synthetic custom "shell" launched by launchd (default: no)
+	if [ "$ADD_LAUNCHD_NANOSHELL" = "y" ]; then 
+		# A launchd plist (org.puredarwin.nanoshell.plist) run a synthetic custom "shell" (pd_nanoshell)
+		chmod 644 ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
+		chmod +x ${MOUNT}/usr/local/sbin/pd_nanoshell
+	else	
+		# Disable launchd plist to run a synthetic custom "shell" (pd_nanoshell)
+		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
+	fi
 
-	# the Z shell
-	# FIXME add switch for bash or zsh
-	chroot ${MOUNT} ln -s /bin/zsh /bin/sh
+	# Add a tiny installer script launched by launchd (default: no)
+	if [ "$ADD_LAUNCHD_INSTALLER" = "y" ]; then 
+		# A launchd plist (org.puredarwin.installer.plist) run a CLI installer (pd_installer)
+		chmod 644 ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
+		chmod +x ${MOUNT}/usr/local/sbin/pd_installer
+	else	
+		# Disable launchd plist to run a synthetic custom "shell" (pd_installer)
+		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
+	fi
+fi
+
+# the Z shell
+# FIXME add switch for bash or zsh
+chroot ${MOUNT} ln -s /bin/zsh /bin/sh
+
+# (default: no)
+if [ "$ADD_RELEASE_NANO" = "y" ]; then 
 
 	#FIXME: below seems needed for network support!
 	rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.DirectoryServices.plist
 	rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.DirectoryServicesLocal.plist
 	rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.DirectoryServicesInstallDaemon.plist
-else
-	# Disable launchd plist to run a synthetic custom "shell" (pd_nanoshell)
-	rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
 fi
+
 
 ###############################################################################
 # REDUCING TARGET DISK SIZE
@@ -1393,39 +1411,43 @@ if [ ! $EXT = "" ]; then
 		T_GUESTOS="darwin"	# Darwin 9 and prior
 	fi	
 	
-	T_CDDMG_EXT=$(basename $CDDMG | awk -F '.' '{print $NF}')
-	case $T_CDDMG_EXT in
+	T_TARGET_EXT=$(basename $TARGET | awk -F '.' '{print $NF}')
+	case $T_TARGET_EXT in
 
 		###############################################################
 		# ISO 9660 CD-ROM filesystem (.iso)
 		###############################################################
 		iso)
-		T_MOUNT=$(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1".iso"}')
+		T_TARGET=$(dirname $TARGET)/$(basename $TARGET | awk -F '.' '{print $1".iso"}')
 		;;
 		
 		###############################################################
 		# VMware virtual disk (.vmdk) 
 		###############################################################
 		vmdk)
-		T_MOUNT=$(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1".iso"}')
+		T_TARGET=$(dirname $TARGET)/$(basename $TARGET | awk -F '.' '{print $1".iso"}')
 		# Forced converting iso to VMware vmdk
 		echo "Converting image to VMware VMDK disk image, please wait..."
-		$QEMUIMG_BIN convert -O vmdk $CDDMG.dmg $(dirname $CDDMG)/$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')
-		# FIXME too permissive
-		chmod -R 777 $CDDMG
+		$QEMUIMG_BIN convert -O vmdk $T_TARGET $(dirname $TARGET)/$(basename $TARGET | awk -F '.' '{print $1".vmdk"}')
 		;;
 		
 		###############################################################
 		# VMware virtual machine package (.vmwarevm)
 		###############################################################
 		vmwarevm)
-		T_MOUNT=$CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".iso"}')
-		mkdir -p $CDDMG
-		cat > $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmx"}') <<EOOF
+		T_TARGET="$(basename $TARGET | awk -F '.' '{print $1".iso"}')"
+		# Moving the .vmwarevm file to .iso
+		mv "$TARGET" "$T_TARGET"
+		# Creating the .vmwarevm directory
+		mkdir -p "$TARGET"
+		# Moving the .iso file to the .vmwarevm directory
+		mv "$T_TARGET" "$TARGET/$T_TARGET" 
+		
+		cat > $TARGET/$(basename $TARGET | awk -F '.' '{print $1".vmx"}') <<EOOF
 .encoding = "UTF-8"
 bios.bootDelay = "5000"
 config.version = "8"
-displayName = "`/bin/date +"%y%m%d%H%M "`${DARWIN_RELEASE} / ${ARCH} / $PUREDARWIN_RELEASE / `basename $T_MOUNT`"
+displayName = "`/bin/date +"%y%m%d%H%M "`${DARWIN_RELEASE} / ${ARCH} / $PUREDARWIN_RELEASE"
 ehci.present = "TRUE"
 ethernet0.linkStatePropagation.enable = "FALSE"
 ethernet0.present = "TRUE"
@@ -1436,7 +1458,7 @@ ft.secondary0.enabled = "TRUE"
 guestOS = "$T_GUESTOS"
 ich7m.present = "TRUE"
 ide1:0.deviceType = "cdrom-image"
-ide1:0.fileName = "`basename $T_MOUNT`"
+ide1:0.fileName = "`basename $T_TARGET`"
 ide1:0.present = "TRUE"
 keyboardAndMouseProfile = "macProfile"
 memsize = "128"
@@ -1475,24 +1497,17 @@ virtualHW.version = "7"
 vmci0.present = "TRUE"
 EOOF
 
-		# FIXME too permissive
-		chmod -R 775 $CDDMG
-		chmod +x $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmx"}')
-		
 		#Convert to VMware VMDK disk image for read-write support? (default: y)
 		if [ ! "$ADD_VMWARE_VMDK" = "n" ]; then
 			# Converting iso to VMware vmdk
 			echo "Converting image to VMware VMDK disk image, please wait..."
-			$QEMUIMG_BIN convert -O vmdk $CDDMG.dmg $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')
-			# FIXME too permissive
-			chmod 777 $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')
-			chown -R 501:staff $CDDMG	
+			$QEMUIMG_BIN convert -O vmdk $TARGET/$T_TARGET $TARGET/$(basename $TARGET | awk -F '.' '{print $1".vmdk"}')
 			
-			cat > $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmx"}') <<EOOF
+			cat > $TARGET/$(basename $TARGET | awk -F '.' '{print $1".vmx"}') <<EOOF
 .encoding = "UTF-8"
 bios.bootDelay = "5000"
 config.version = "8"
-displayName = "`/bin/date +"%y%m%d%H%M "`${DARWIN_RELEASE} / ${ARCH} / $PUREDARWIN_RELEASE / `basename $T_MOUNT`"
+displayName = "`/bin/date +"%y%m%d%H%M "`${DARWIN_RELEASE} / ${ARCH} / $PUREDARWIN_RELEASE"
 ehci.present = "TRUE"
 ethernet0.linkStatePropagation.enable = "FALSE"
 ethernet0.present = "TRUE"
@@ -1502,17 +1517,13 @@ floppy0.present = "FALSE"
 ft.secondary0.enabled = "TRUE"
 guestOS = "$T_GUESTOS"
 ich7m.present = "TRUE"
-ide0:0.fileName = "$(basename $CDDMG | awk -F '.' '{print $1".vmdk"}')"
+ide0:0.fileName = "$(basename $T_TARGET | awk -F '.' '{print $1".vmdk"}')"
 ide0:0.present = "TRUE"
 ide0:0.redo = ""
-ide0:1.autodetect = "TRUE"
-ide0:1.deviceType = "cdrom-raw"
-ide0:1.fileName = "auto detect"
-ide0:1.present = "TRUE"
-ide0:1.startConnected = "FALSE"
+ide1:0.autodetect = "TRUE"
 ide1:0.deviceType = "cdrom-image"
-ide1:0.fileName = "`basename $T_MOUNT`"
-ide1:0.present = "FALSE"
+ide1:0.fileName = "`basename $T_TARGET`"
+ide1:0.present = "TRUE"
 keyboardAndMouseProfile = "macProfile"
 memsize = "128"
 nvram = "$VOLNAME.nvram"
@@ -1552,49 +1563,44 @@ vmci0.present = "TRUE"
 EOOF
 		fi
 		
+
+
 		# Add an (additional) IDE disk device to the .vmwarevm? (default: n)
 		if [ "$ADD_VMWARE_IDE_DRIVE" = "y" ]; then
 			# Creating a (second) VMware4 disk image via qemu-img
 			# SIZE at least equal to "the parent" one (most of the time, the bootstrap one)
 			# FIXME add check on the size
-			qemu-img create -f vmdk $CDDMG/second.vmdk ${SIZE}M
+			qemu-img create -f vmdk $TARGET/second.vmdk ${SIZE}M
 
 			# Reflect the disk image in the .vmx file
-			cat >> $CDDMG/$(basename $CDDMG | awk -F '.' '{print $1".vmx"}') <<EOOF
-ide0:0.present = "TRUE"
-ide0:0.fileName = "second.vmdk"
-ide0:0.redo = ""
+			cat >> $TARGET/$(basename $TARGET | awk -F '.' '{print $1".vmx"}') <<EOOF
+ide0:1.present = "TRUE"
+ide0:1.fileName = "second.vmdk"
+ide0:1.redo = ""
 EOOF
 		fi
+
 		;;
 		
 		###############################################################
 		# VAX COFF executable (.dmg)
 		###############################################################
 		dmg)
-		T_MOUNT=$CDDMG.dmg
-		T_EXT=".dmg"
 		;;
 		
 		###############################################################
 		# Default (.*)
 		###############################################################
 		*) 
-		T_MOUNT=$CDDMG
 		;;
 	esac
-
-	# Renaming
-	mv $CDDMG.dmg $T_MOUNT
 
 	# FIXME too permissive 
 	# 	Since the installation is done at root over a normal user, 
 	# 	in finder the image is open in read-only after clickclick.. owner/perms
 	# 	need to be changed for rw (or the image needs to be mount as root)
-	chmod -R 777 $T_MOUNT
-
-	# Last clean up (temporary files and folders).
-	mr_proper
+	chmod -R 777 $TARGET
+	chown -R 501:staff $TARGET
 
 	echo "Installation on $(tput bold)${TARGET}$(tput rmso) complete."
 else

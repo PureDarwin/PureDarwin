@@ -59,8 +59,11 @@
 # GLOBAL VARIABLES
 ################################################################################
 
+# Find out where this script lives
+DIRNAME=$(cd $(dirname $0) && pwd)
+
 # Reading global variables in pd_config file
-source pd_config
+source "$DIRNAME"/pd_config
 
 ################################################################################
 # INITIAL CONDITION

@@ -67,13 +67,13 @@
 #
 
 #
-# Unpack, thin to i386 and pack "vital" BinaryRoots and BinaryDrivers
+# Unpack, thin and pack "vital" BinaryRoots and BinaryDrivers
 #
-# 	Usage: pd_i386thinner
+# 	Usage: pd_thinner
 #
 # This script runs in a directory containing binary roots 
-# produced by DarwinBuild. It will create a i386 subdirectory
-# which will contain tar.bz2 packages thinned to the i386 architecture.
+# produced by DarwinBuild. It will create a subdirectory
+# which will contain tar.bz2 packages thinned to the specified architecture.
 #
 # Based on thinPackages.sh by:
 #
@@ -97,8 +97,11 @@
 # GLOBAL VARIABLES
 ################################################################################
 
+# Find out where this script lives
+DIRNAME=$(cd $(dirname $0) && pwd)
+
 # Reading global variables in pd_config file
-source pd_config
+source "$DIRNAME"/pd_config
 
 ################################################################################
 # INITIAL CONDITION

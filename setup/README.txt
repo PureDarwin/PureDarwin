@@ -45,7 +45,7 @@ Installation
 
 1. Get binary roots and binary drivers with `pd_fetch'.
 
-2. Thin them with `pd_i386thinner'.
+2. Thin them with `pd_thinner'.
    
 3. Then see the usage of `pd_setup':
 

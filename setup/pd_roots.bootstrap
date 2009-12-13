@@ -31,9 +31,9 @@ adv_cmds
 autozone
 awk
 bless
+bsm
 bzip2
 cctools
-diskdev_cmds
 diskdev_cmds
 dyld
 file_cmds
@@ -42,6 +42,7 @@ gnutar
 gnuzip
 grep
 kext_tools
+launchd
 libgcc
 libiconv
 libresolv
@@ -49,6 +50,7 @@ libstdcxx
 libutil
 ncurses
 objc4
+pam
 pdisk
 shell_cmds
 system_cmds
