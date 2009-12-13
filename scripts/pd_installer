@@ -1,0 +1,168 @@
+#!/bin/sh
+# OpenDarwin install script
+# $Id: rc.cdrom,v 1.30 2005/04/28 20:06:46 kevin Exp $
+#
+#	Adapted by Aladin (Copyright (c) 2007-2009 The PureDarwin Project).
+#		v1.1 12/12/09 ..
+#	Hacked into the "PureDarwin Boot" installer by Stuart Crook
+#		v1.0 31/03/09 Initial release
+#
+
+# Redirecting stdin  (/dev/stdin  -> /dev/fd/0)
+exec 0</dev/console
+# Redirecting stdout (/dev/stdout -> /dev/fd/1)
+exec 1>/dev/console
+# Redirecting stderr (/dev/stderr -> /dev/fd/2)
+exec 2>/dev/console
+
+# File creation mask
+umask 022			# all files created are -rw-r--r--
+
+# Env
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/usr/libexec:/System/Library/CoreServices
+export MANPATH=/usr/share/man:/usr/local/man
+export EDITOR=/usr/bin/vi
+export TERM=vt100
+
+# Setting hostname
+sysctl -w kern.hostname="PureDarwin.local"
+
+# Populating /dev/fd/ with mount_fdesc
+/sbin/mount -t fdesc -o union stdin /dev
+
+# Workaround read-write
+#/sbin/mount -uw /
+
+
+abort () {
+	echo "Aborting the installation"
+	echo "Press enter to reboot"
+	read REBOOT
+	reboot
+}
+
+umount_target_disk () {        
+	umount ${ROOTPART}
+}
+
+finishup () {
+
+	echo "Installation of the base system is now complete."
+	echo "You may: "
+	until [ ! : ]
+	do
+		echo "1) Add a user to the new system"
+		echo "2) Reboot"
+		echo "3) Spawn a shell"
+		echo -n "Your Choice: "
+		read CHOICE
+		case ${CHOICE} in
+			1) add_user 
+			   break;;
+			2) umount_target_disk
+			   reboot 
+			   break ;;
+			3) umount_target_disk
+			   /bin/sh
+			   break ;;
+		esac
+	done
+	
+}
+
+add_user () {
+	# No argument == targetting /
+	/usr/local/share/puredarwin/scripts/pd_injectuser
+}
+
+welcome() {
+
+	echo
+	echo
+	echo "Welcome to PureDarwin"
+	echo "====================="
+	echo
+	echo "  Darwin (c) 1999-2009 Apple, Inc. (opensource.apple.com)"
+	echo "  Purity (c) 2007-2009 The PureDarwin Project (www.puredarwin.org)"
+	echo
+
+
+	#if [ -f "/Release Notes.txt" ]; then
+	#	echo ""
+	#	echo "Welcome to the installation of" `grep 'Darwin [0-9.-]*' /Release\ Notes.txt | head -1 | awk '{print $1" "$2}'`
+	#	echo ""
+	#fi
+	#if [ -f "/Important Notice.txt" ]; then
+	#	cat "/Important Notice.txt"
+	#fi
+}
+
+# answer to a question with 's' or 'x' allow the user a clean escape at any time
+shell_or_exit() {
+	if [ $1 == "s" ]; then
+		exec /bin/zsh
+		exit
+	elif [ $1 == "x" ]; then
+		exit
+	fi
+}
+
+main() {
+
+	welcome
+
+	echo
+	echo "Enter 's' for a shell (zsh), or 'x' to exit, at any time"
+	echo
+
+	# Get the device the user wants to install onto.
+	INSTALLDEV="novalue"
+	until [[ ${INSTALLDEV} != "" && -b ${INSTALLDEV} ]]
+	do
+		echo "The following devices are available for installation:"
+		until [[ ! -z "${FOO}" ]]
+		do
+			FOO=`/usr/local/share/puredarwin/setup/pd_setup_files/iofindwholemedia`
+		done
+		/usr/local/share/puredarwin/setup/pd_setup_files/iofindwholemedia
+		#echo "Enter 'shell' to drop into a shell"
+		echo "Which device would you like to install Darwin onto? \c"
+		read INSTALLDEV
+	
+		shell_or_exit $INSTALLDEV
+		#if [ "${INSTALLDEV}" == "shell" ]; then
+		#	exec /bin/sh
+		#fi
+	
+		INSTALLDEV=`/usr/local/share/puredarwin/setup/pd_setup_files/iofindwholemedia ${INSTALLDEV}`
+
+		if [ ! -b "${INSTALLDEV}" ]; then
+			echo ""
+			echo "${INSTALLDEV} doesn't exist, please enter one of the listed devices."
+			echo ""
+		fi
+	done
+	
+	RAWINSTDEV=`echo ${INSTALLDEV} | sed 's/disk/rdisk/'`
+
+	/usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin
+
+
+	#finishup	# yanked from below
+
+	echo
+	echo "Installation is now complete. Press 'enter' to restart"
+	echo
+	read RESTART
+
+}
+
+main
+
+# bash interactive
+#/bin/bash -i 
+
+# zsh interactive
+#/bin/zsh -i
+
+exit
