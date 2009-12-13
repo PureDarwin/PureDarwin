@@ -1109,12 +1109,6 @@ else
 	cp -fpv $DIRNAME/../projects/PureDarwinSettings/etc/zshrc ${MOUNT}/etc/zshrc
 fi
 
-# Enable login prompt
-# keep /System/Library/LaunchDaemons/com.apple.getty.plist
-
-# Disable login prompt
-#rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.getty.plist
-
 ###############################################################################
 # MINOR ERRORS FIXES
 ###############################################################################
@@ -1298,6 +1292,13 @@ if [ "$ADD_LAUNCHD" = "n" ]; then
 	chown root:wheel ${MOUNT}/sbin/launchd
 	chmod 755 ${MOUNT}/sbin/launchd
 else
+
+	# Add default login prompt (default: yes)
+	if [ "$ADD_LAUNCHD_GETTY" = "n" ]; then 
+		# Disable login prompt
+		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.getty.plist
+	fi
+
 	# Add a synthetic custom "shell" launched by launchd (default: no)
 	if [ "$ADD_LAUNCHD_NANOSHELL" = "y" ]; then 
 		# A launchd plist (org.puredarwin.nanoshell.plist) run a synthetic custom "shell" (pd_nanoshell)
@@ -1313,6 +1314,22 @@ else
 		# A launchd plist (org.puredarwin.installer.plist) run a CLI installer (pd_installer)
 		chmod 644 ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
 		chmod +x ${MOUNT}/usr/local/sbin/pd_installer
+
+		# not needed in this scenario..
+		rm \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.SystemStarter.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.atrun.plist  \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.bootlog.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.bsd.dirhelper.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.dyld.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.dynamic_pager.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.firmwaresyncd.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.hidd.plist\
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.kextd.plist \
+		${MOUNT}/System/Library/LaunchDaemons/com.apple.update.plist finger.plist \
+		${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist \
+		
 	else	
 		# Disable launchd plist to run a synthetic custom "shell" (pd_installer)
 		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
@@ -1461,9 +1478,9 @@ floppy0.present = "FALSE"
 ft.secondary0.enabled = "TRUE"
 guestOS = "$T_GUESTOS"
 ich7m.present = "TRUE"
-ide1:0.deviceType = "cdrom-image"
-ide1:0.fileName = "`basename $T_TARGET`"
-ide1:0.present = "TRUE"
+ide0:0.deviceType = "cdrom-image"
+ide0:0.fileName = "`basename $T_TARGET`"
+ide0:0.present = "TRUE"
 keyboardAndMouseProfile = "macProfile"
 memsize = "128"
 nvram = "$VOLNAME.nvram"
