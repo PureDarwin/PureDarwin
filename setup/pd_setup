@@ -385,6 +385,11 @@ function trap_handler {
 	if [ ! $EXT = "" ]; then
 		mr_proper
 	fi
+
+	# Resetting trap
+	trap - INT TERM EXIT
+
+	exit 1
 }
 
 # Trap ^c (control-c)
@@ -512,7 +517,6 @@ if [ ! $EXT = "" ]; then
 	# FIXME `hdid' is not buildable nor available in Darwin, consequently the next steps are failing!
 	# FIXME `hdid' fails with unknown extension as .vmwarevm or .foobar
 	mv "$TARGET" "$TARGET.dmg"
-	#export DEVICE=$(hdid -nomount "$TARGET.dmg" |  tail -1 | awk '{print $1}')
 	export DEVICE=$(hdid -nomount "$TARGET.dmg" |  head -1 | awk '{print $1}')
 	export RDEVICE=$(echo $DEVICE | sed s/disk/rdisk/)
 	mv "$TARGET.dmg"  "$TARGET"
