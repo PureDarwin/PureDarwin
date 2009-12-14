@@ -146,8 +146,9 @@ ADD_CHAMELEON="n"		# (default: y) Add Chameleon bootloader (Chameleon v2.0-RC3-r
 ADD_MBR_ERASE="y"		# (default: y) Erase existing partition table (instead of updating the MBR)?
 
 ADD_VOODOO_XNU="y"		# (default: y) Add Voodoo Xnu-dev kernels ?
-ADD_VOODOO_XNU_9_5_0="n"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
-ADD_VOODOO_XNU_9_7_0="y"	# (default: n) EXCLUSIVE Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+# On 9.7, problems with disk0s1: ioctl(_IOW,'d',31,32) is unsupported
+ADD_VOODOO_XNU_9_5_0="y"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
+ADD_VOODOO_XNU_9_7_0="n"	# (default: n) EXCLUSIVE Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
 
 ADD_VOODOO_XNU_SPEEDSTEP="n"	# (default: n) Add xnu-speedstep (Intel SpeedStep driver)?
 
@@ -174,9 +175,9 @@ ADD_DEFAULT_USER="y"		# (default: y) Add a default user account: toor (password:
 ADD_X="y"			# (default: n) Add X and other related binaryroots?
 ADD_KEYMAP_BELGE="n"		# (default: n) EXCLUSIVE Add X Belge keymapping?
 ADD_KEYMAP_DEUTSCH="n"		# (default: n) EXCLUSIVE Add X Deutsch keymapping? 
-ADD_KEYMAP_FRANCAIS="y"		# (default: n) EXCLUSIVE Add X Francais keymapping?
+ADD_KEYMAP_FRANCAIS="n"		# (default: n) EXCLUSIVE Add X Francais keymapping?
 ADD_KEYMAP_UK="n"		# (default: n) EXCLUSIVE Add X UK keymapping?
-ADD_KEYMAP_USA="n"		# (default: y) EXCLUSIVE Add X USA keymapping?
+ADD_KEYMAP_USA="y"		# (default: y) EXCLUSIVE Add X USA keymapping?
 
 ADD_WMAKER="n"			# (default: n) Add WindowMaker (default window manager)?
 

@@ -1223,9 +1223,10 @@ mkdir -p ${MOUNT}/usr/local/sbin/
 mkdir -p ${MOUNT}/usr/local/share/puredarwin/scripts
 mkdir -p ${MOUNT}/usr/local/share/puredarwin/setup/pd_setup_files/
 
+
 # Copy startupfiletool
 echo "Copying startupfiletool"
-cp $DIRNAME/pd_setup_files/startupfiletool ${MOUNT}/usr/local/share/puredarwin/pd_setup_files/
+cp $DIRNAME/pd_setup_files/startupfiletool ${MOUNT}/usr/local/share/puredarwin/setup/pd_setup_files/
 
 # Copy PureDarwin scripts 
 echo "Copying PureDarwin scripts"
@@ -1261,7 +1262,7 @@ if [ ! "$ADD_DEFAULT_USER" = "n" ]; then
 	echo "Creating default user (toor:toor)"
 	# pd_injectuser (salter SHA-1 digest by default, should work into single user mode)
 	# FIXME update pd_adduser..		
-	chroot $MOUNT $DIRNAME/../scripts/pd_injectuser ${MOUNT} toor 
+	chroot $MOUNT $DIRNAME/../scripts/pd_injectuser / toor 
 	# pd_adduser must be run on Darwin/Mac OS X host, or in single user mode from PureDarwin
 	# Note: `dscl' and `passwd' dependencies must be satistified.
 	# $DIRNAME/../scripts/pd_adduser
