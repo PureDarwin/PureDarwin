@@ -1,3 +1,11 @@
+# System-wide .bashrc file for interactive bash(1) shells.
+if [ -z "$PS1" ]; then
+   return
+fi
+
+PS1='\h:\W \u\$ '
+# Make bash check its window size after a process completes
+shopt -s checkwinsize
 
 # Specific to PureDarwin compilation environment (e.g., for building MacPorts)
 export CFLAGS=-I/opt/local/include
@@ -23,8 +31,3 @@ alias ll='ls -lh'
 # Colored tty
 TERM='xterm-color'
 
-# Prompt
-PS1='%n@%m:%~%# '
-
-# Enable ctrl+A ctrl+E ctrl+D.. shortcuts
-bindkey -e
