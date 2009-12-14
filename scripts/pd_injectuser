@@ -63,18 +63,28 @@ fi
 # Set up variables
 #
 
+OPENSSL="/usr/bin/openssl"
+GREP="/usr/bin/grep"
+HEAD="/usr/bin/head"
+SORT="/usr/bin/sort"
+XXD="/usr/bin/xxd"
+AWK="/usr/bin/awk"
+
+# Mount devfs (e.g., /dev/null, /dev/random, etc.. are needed)
+/sbin/mount_devfs devfs /dev
+
 # Default target volume
 MOUNT=/
 if [ "$1" != "" ]
 then
 	# Ensure "target" exists
-	if [ ! -e $1 ]
+	if [ ! -e "$1" ]
 	then
 		echo "Unknown volume name: $1"
 		exit -1
 	fi	
 	# Set new target
-	MOUNT=$1
+	MOUNT="$1"
 fi
 echo "Target volume name: $MOUNT"
 echo ""
@@ -144,15 +154,15 @@ fi
 # 	ie for user: e0d36085-8a80-238b-abfb-c537c7b36378
 # 	ie for root: FFFFEEEE-DDDD-CCCC-BBBB-AAAA00000000
 #
-T_UUID="`   openssl rand 4 | xxd -p -u`-`openssl rand 2 |
-xxd -p -u`-`openssl rand 2 | xxd -p -u`-`openssl rand 2 |
-xxd -p -u`-`openssl rand 6 | xxd -p -u`"
+T_UUID="`    $OPENSSL rand 4 | $XXD -p -u`-`$OPENSSL rand 2 |
+$XXD -p -u`-`$OPENSSL rand 2 | $XXD -p -u`-`$OPENSSL rand 2 |
+$XXD -p -u`-`$OPENSSL rand 6 | $XXD -p -u`"
 
 # Find max uid
 M_UID=`cat ${MOUNT}/var/db/dslocal/nodes/Default/users/*.plist |
-/usr/bin/grep -v generateduid | /usr/bin/grep -A2 uid  |
-/usr/bin/grep string | awk -F ">|<" ' {printf $3"\n"}' |
-sort -rg | head -n1`
+$GREP -v generateduid | $GREP -A2 uid  |
+$GREP string | $AWK -F ">|<" ' {printf $3"\n"}' |
+$SORT -rg | $HEAD -n1`
 
 if [ "$T_USERNAME" == "root" ]; then
 	# echo "Warning: Security consequences involved"
@@ -207,14 +217,14 @@ T_SHELL_DEFAULT=/bin/zsh
 if [ "$T_DEFAULT" = "" ]; then
 	# Prompt for default shell
 	echo "Available shells:"
-	echo "`cat $MOUNT/etc/shells | /usr/bin/grep bin`"
+	echo "`cat $MOUNT/etc/shells | $GREP bin`"
 	# Infinite loop until a valid shell is entered
 	while [ 1 ]; do
 		printf "Shell (default: $T_SHELL_DEFAULT): "
 		read T_SHELL;
 	
 		if [ ! "$T_SHELL" = "" ]; then
-			grep $T_SHELL $MOUNT/etc/shells  > /dev/null 2> /dev/null
+			$GREP $T_SHELL $MOUNT/etc/shells  > /dev/null 2> /dev/null
 			if [ $? -eq 0 ]; then
 				break
 			else
@@ -315,9 +325,9 @@ fi
 # Create user plist file
 #
 
-PLIST="${MOUNT}/var/db/dslocal/nodes/Default/users/${T_USERNAME}.plist"
+USER_PLIST="${MOUNT}/var/db/dslocal/nodes/Default/users/${T_USERNAME}.plist"
 
-cat >${PLIST}<<EOOF
+cat >$USER_PLIST<<EOOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -385,13 +395,13 @@ do
 done
 
 # Hexadecimal salt (ie: FC2B0C2E)
-T_HEX_SALT=`openssl rand 4 | xxd -p -u`
+T_HEX_SALT=`$OPENSSL rand 4 | $XXD -p -u`
 
 # Binary salt (reverted from hex, plain hexdump style)
-T_BIN_SALT=`printf ${T_HEX_SALT} | xxd -r -u -p`
+T_BIN_SALT=`printf ${T_HEX_SALT} | $XXD -r -u -p`
 
 # Generated sha1 hash with provided password and binary salt
-T_SHA1_HASH=`printf "%s%s" ${T_BIN_SALT} ${T_PASSWORD} | openssl dgst -sha1 | tr ' a-z' ' A-Z'`
+T_SHA1_HASH=`printf "%s%s" ${T_BIN_SALT} ${T_PASSWORD} | $OPENSSL dgst -sha1 | tr ' a-z' ' A-Z'`
 
 # 8 characters for the hexadecimal salt
 printf ${T_HEX_SALT} >> ${MOUNT}/private/var/db/shadow/hash/${T_UUID}
@@ -435,10 +445,14 @@ EOOF
 # Add to admin group
 if [ "$ADMIN_USER" = "1" ];
 then
-	grep "<string>${T_USERNAME}</string>" "${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist"
+	$GREP "<string>${T_USERNAME}</string>" "${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist"
 	if [ $? -eq 1 ];
 	then
-		perl -pi -e "s|<string>root</string>|<string>root</string>\n\t\t<string>${T_USERNAME}</string>|g" ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist
+		cp ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist.origin
+		cat ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist.origin |
+			sed "s/<string>root<\/string>/<string>root<\/string><string>${T_USERNAME}<\/string>" > ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist
+			# FIXME missing \n\t\t as ...>root</string>\n\t\t<string>${T_US...
+		#perl -pi -e "s|<string>root</string>|<string>root</string>\n\t\t<string>${T_USERNAME}</string>|g" ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist
 	else
 		echo "${T_USERNAME} is already found in admin group"
 	fi	
@@ -454,3 +468,6 @@ if [ "$MOUNT" = "/" ]; then
 fi
 
 echo "User ${T_USERNAME} created"
+
+# Symetry: restoring state 
+/sbin/umount -f /dev
