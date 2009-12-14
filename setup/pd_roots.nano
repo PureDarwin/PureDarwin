@@ -21,6 +21,7 @@ IOStorageFamily
 IOUSBFamily
 IOUSBMassStorageClass
 autozone
+bash
 Libm
 Libsystem
 bless

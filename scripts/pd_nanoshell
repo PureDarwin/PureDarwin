@@ -82,7 +82,7 @@ sysctl -w kern.hostname="PureDarwin.local"
 /sbin/mount -t fdesc -o union stdin /dev
 
 # Cosmectic
-/bin/sh /$DIRNAME/pd_ascii_hexley_nano
+/bin/sh /usr/local/share/puredarwin/scripts/pd_ascii_hexley_nano
 #/usr/local/sbin/pd_xkp
 
 # Workaround read-write
@@ -92,7 +92,10 @@ sysctl -w kern.hostname="PureDarwin.local"
 #/bin/bash -i 
 
 # zsh interactive
-/bin/zsh -i
+#/bin/zsh -i
+
+# sh interactive
+/bin/sh -i
 
 i=0
 while [ $i -lt 43 ]; do

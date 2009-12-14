@@ -154,6 +154,7 @@ done
 ###############################################################################
 
 # FIXME add a way to extend or reduce releases (e.g. bootstrap->nano or bootstrap->full)
+# At this time its hardcoded the parent release bootstrap->full.
 /usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin
 
 echo "Installation of the base system should now be complete."
@@ -193,7 +194,6 @@ done
 
 echo
 echo "Installation should now be complete. Press 'enter' to restart"
-echo
 read RESTART
 echo ""
 reboot

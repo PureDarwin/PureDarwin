@@ -183,7 +183,12 @@ ADD_WMAKER="n"			# (default: n) Add WindowMaker (default window manager)?
 
 ADD_DEBUG="y"			# (default: y) Add debug (verbose launchd and persistent logs in /var/log/syslog)?
 
+ADD_BASH="y"			# (default: y) EXCLUSIVE Add the Bash shell as default shell? 
+ADD_BASHRC="y"			# (default: y) Add /etc/bashrc? 
+				# (depends: ADD_BASH)
+ADD_ZSH="n"			# (default: n) EXCLUSIVE Add the Zsh shell as default shell? 
 ADD_ZSHRC="y"			# (default: y) Add /etc/zshrc? 
+				# (depends: ADD_ZSH)
 
 ADD_DEVELOPER="y"		# (default: y) Do you want to keep developer headers and libraries?
 

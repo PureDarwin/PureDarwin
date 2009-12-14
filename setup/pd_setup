@@ -921,7 +921,7 @@ if [ ! "$ADD_LOGIN" = "n" ]; then
 	#  - System/Library/Frameworks/PCSC.framework
 	#  - usr/sbin/pcscd
 	echo " * PCSC.root.tar.gz"
-	tar xjpfv $PACKAGES/PCSC.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/PCSC.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
 
 # FIXME add MacPorts sources & bin? 
@@ -1033,6 +1033,8 @@ if [ "$ADD_SETTINGS_FILES" = "n" ]; then
 
 	mkdir -p ${MOUNT}/etc/
 	cp -fp $DIRNAME/../projects/PureDarwinSettings/etc/ttys ${MOUNT}/etc/ttys
+	cp -fp $DIRNAME/../projects/PureDarwinSettings/etc/zshrc ${MOUNT}/etc/zshrc
+	cp -fp $DIRNAME/../projects/PureDarwinSettings/etc/bashrc ${MOUNT}/etc/bashrc
 
 	mkdir -p ${MOUNT}/System/Library/CoreServices/
 	touch ${MOUNT}/System/Library/CoreServices/ServerVersion.plist
@@ -1132,13 +1134,38 @@ echo "kern.hostname=PureDarwin.local" > $MOUNT/private/etc/sysctl.conf
 echo "Welcome to PureDarwin!" > $MOUNT/private/etc/motd
 echo '' >> ${MOUNT}/private/etc/motd
 
-# Populate /var/root/.zshrc (default: y)
+###############################################################################
+# SHELLS 
+###############################################################################
+
+# dyld errors
+#
+# com.apple.dyld[76]: update_dyld_shared_cache[76] for arch=i386 failed: /var/db/dyld/shared_region_roots/ does not exist, errno=2
+mkdir -p ${MOUNT}/var/db/dyld/shared_region_roots
+# com.apple.dyld[50]: update_dyld_shared_cache: warning, no entries found in shared_region_roots
+echo "/bin/sh"   >  ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
+
+# Add the Bash shell as default shell? (default: y)
+if [ ! "$ADD_BASH" = "n" ]; then
+	chroot ${MOUNT} ln -fs /bin/bash /bin/sh
+	echo "/bin/bash" >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
+	
+fi
+
+# Populate (or remove) /etc/bashrc (default: y)
+if [ "$ADD_BASHRC" = "n" ]; then
+	rm ${MOUNT}/etc/bashrc
+fi
+
+# Add the Z shell as default shell? (default: n)
+if [ "$ADD_ZSH" = "y" ]; then
+	chroot ${MOUNT} ln -fs /bin/zsh /bin/sh
+	echo "/bin/zsh"  >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
+fi
+
+# Populate (or remove) /etc/zshrc (default: y)
 if [ "$ADD_ZSHRC" = "n" ]; then
-	# Disable /var/root/.zshrc
 	rm ${MOUNT}/etc/zshrc
-else
-	# Be sure to have it (in case of "nano" release)
-	cp -fpv $DIRNAME/../projects/PureDarwinSettings/etc/zshrc ${MOUNT}/etc/zshrc
 fi
 
 ###############################################################################
@@ -1149,15 +1176,6 @@ echo "Fixing minor errors"
 
 # Avoid orphan link of /etc/resolv.conf
 touch ${MOUNT}/private/var/run/resolv.conf
-
-# dyld errors
-#
-# com.apple.dyld[76]: update_dyld_shared_cache[76] for arch=i386 failed: /var/db/dyld/shared_region_roots/ does not exist, errno=2
-mkdir -p ${MOUNT}/var/db/dyld/shared_region_roots
-# com.apple.dyld[50]: update_dyld_shared_cache: warning, no entries found in shared_region_roots
-echo "/bin/sh"   >  ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
-echo "/bin/bash" >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
-echo "/bin/zsh"  >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
 
 # com.apple.dyld[50]: update_dyld_shared_cache: warning, empty cache not generated for arch i386
 #   -root  specifies the root of an OS installation for which dyld's shared cache should be updated
@@ -1200,7 +1218,6 @@ if [ ! "$ADD_DEBUG" = "n" ]; then
 	echo "log level debug" > ${MOUNT}/etc/launchd.conf
 	echo "*.debug /var/log/syslog" >> ${MOUNT}/etc/syslog.conf
 fi
-
 
 # DTrace facility
 #
@@ -1262,7 +1279,7 @@ if [ ! "$ADD_DEFAULT_USER" = "n" ]; then
 	echo "Creating default user (toor:toor)"
 	# pd_injectuser (salter SHA-1 digest by default, should work into single user mode)
 	# FIXME update pd_adduser..		
-	chroot $MOUNT $DIRNAME/../scripts/pd_injectuser / toor 
+	chroot $MOUNT /usr/local/share/puredarwin/scripts/pd_injectuser / toor 
 	# pd_adduser must be run on Darwin/Mac OS X host, or in single user mode from PureDarwin
 	# Note: `dscl' and `passwd' dependencies must be satistified.
 	# $DIRNAME/../scripts/pd_adduser
@@ -1370,10 +1387,6 @@ else
 		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
 	fi
 fi
-
-# the Z shell
-# FIXME add switch for bash or zsh
-chroot ${MOUNT} ln -fs /bin/zsh /bin/sh
 
 # (default: no)
 if [ "$ADD_RELEASE_NANO" = "y" ]; then 
