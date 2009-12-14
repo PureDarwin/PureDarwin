@@ -274,15 +274,15 @@ echo
 # WARNINGS 
 ###############################################################################
 
-echo "$(tput bold)Warning!$(tput rmso) this will $(tput bold)destroy$(tput rmso) all data on $1"
-printf "Continue? (y/$(tput bold)n$(tput rmso)) "
+echo "WARNING! this will destroy all data on $1"
+printf "Continue? y[n] "
 read CONT
 if [ ! "$CONT" = "y" ]; then 
 	exit 1
 fi
 
-echo "$(tput bold)Warning!$(tput rmso) Are you sure?"
-printf "Continue? (y/$(tput bold)n$(tput rmso)) "
+echo "WARNING! Are you sure?"
+printf "Continue? y[n] "
 read CONT
 if [ ! "$CONT" = "y" ]; then
 	exit 1
@@ -291,11 +291,11 @@ fi
 # Ensure "target" does not exist
 if [ -e "$1" ]
 then
-	echo "$(tput bold)Warning!$(tput rmso) \`$1' is going to be $(tput bold)rewritten$(tput rmso)"
-	printf "Continue? (y/$(tput bold)n$(tput rmso)) "
+	echo "WARNING! \`$1' is going to be rewritten"
+	printf "Continue? y[n] "
 	read CONT
 	if [ ! "$CONT" = "y" ]; then
-		echo "$(tput bold)Aborting!$(tput rmso) \`$CONT' is not \`y'."
+		echo "Aborting! \`$CONT' is not \`y'."
 		exit 1
 	fi
 fi
@@ -326,8 +326,8 @@ function mr_proper {
 	T_ERROR=""
 
 	# Unmounting $MOUNT
-	echo "$(tput bold)Warning!$(tput rmso) \`$MOUNT is going to be $(tput bold)unmounted$(tput rmso)"
-	printf "Continue? ($(tput bold)y$(tput rmso)/n) "
+	echo "WARNING! \`$MOUNT is going to be unmounted"
+	printf "Continue? [y]n "
 	read CONT
 	if [ ! "$CONT" = "n" ]; then
 		T_ERROR=`umount -f "$MOUNT" 2>&1`
@@ -339,8 +339,8 @@ function mr_proper {
 	fi	
 
 	# Ejecting $DEVICE
-	echo "$(tput bold)Warning!$(tput rmso) \`$DEVICE is going to be $(tput bold)ejected$(tput rmso)"
-	printf "Continue? ($(tput bold)y$(tput rmso)/n) "
+	echo "WARNING! \`$DEVICE is going to be ejected"
+	printf "Continue? [y]n "
 	read CONT
 	if [ ! "$CONT" = "n" ]; then
 		T_ERROR=`hdiutil eject "$DEVICE" 2>&1`
@@ -352,8 +352,8 @@ function mr_proper {
 	fi
 
 	# Removing $MOUNT
-	echo "$(tput bold)Warning!$(tput rmso) \`$MOUNT is going to be $(tput bold)removed$(tput rmso)"
-	printf "Continue? ($(tput bold)y$(tput rmso)/n) "
+	echo "WARNING! \`$MOUNT is going to be removed"
+	printf "Continue? [y]n "
 	read CONT
 	if [ ! "$CONT" = "n" ]; then
 		T_ERROR=`rmdir $MOUNT 2>&1`
@@ -440,7 +440,7 @@ if [ ! $EXT = "" ]; then
 
 		if [ ! -e $CDBOOT ]; then
 			# if it's not there, we should exit
-			echo "$(tput bold)Aborting!$(tput rmso) cdboot cannot be found and is mandatory."
+			echo "Aborting! cdboot cannot be found and is mandatory."
 			mr_proper
 			exit 1
 		fi
@@ -721,8 +721,9 @@ echo
 
 missingstuff() {
 	until [ -e ${MOUNT}/$1 ]; do 
-		echo "$(tput bold)$1$(tput rmso) is missing. Do you want to copy it from your start volume? You will not be allowed to use the resulting installation anywhere else but on your Apple-labeled computer. Please check with the Mac OS X license first."
-		printf "Copy? (y/$(tput bold)n$(tput rmso)) "
+		echo "WARNING! $1 is missing. Do you want to copy it from your start volume?"
+		echo "You will not be allowed to use the resulting installation anywhere else but on your Apple-labeled computer. Please check with the Mac OS X license first."
+		printf "Copy? y[n] "
 		read CONT
 		if [ "$CONT" = "y" ]; then 
 			ditto -v $1 ${MOUNT}/$1 #--rsrc --extattr 
@@ -1056,12 +1057,12 @@ mkdir -p $MOUNT/usr/standalone/i386/
 cp $BOOTi386/* $MOUNT/usr/standalone/i386/
 
 if [ ! -e "$MOUNT/System/Library/CoreServices" ]; then
-	echo "$(tput bold)Warning!$(tput rmso) $MOUNT/System/Library/CoreServices is missing, but it is needed for EFI booting."
+	echo "WARNING! $MOUNT/System/Library/CoreServices is missing, but it is needed for EFI booting."
 	#exit 1
 fi
 
 if [ ! -e "$MOUNT/usr/standalone/i386/cdboot" ]; then
-	echo "$(tput bold)Warning!$(tput rmso) $MOUNT/usr/standalone/i386/cdboot is missing, but it is needed for BIOS booting."
+	echo "WARNING! $MOUNT/usr/standalone/i386/cdboot is missing, but it is needed for BIOS booting."
 	#exit 1
 fi
 
@@ -1214,6 +1215,25 @@ fi
 #missingstuff /usr/bin/dtruss
 #missingstuff /usr/bin/procsystime
 
+############################################################################### 
+# COPYING UTILS, FUTILS AND INUTILS! 
+###############################################################################
+
+mkdir -p ${MOUNT}/usr/local/sbin/
+mkdir -p ${MOUNT}/usr/local/share/puredarwin/scripts
+mkdir -p ${MOUNT}/usr/local/share/puredarwin/setup/pd_setup_files/
+
+# Copy startupfiletool
+echo "Copying startupfiletool"
+cp $DIRNAME/pd_setup_files/startupfiletool ${MOUNT}/usr/local/share/puredarwin/pd_setup_files/
+
+# Copy PureDarwin scripts 
+echo "Copying PureDarwin scripts"
+cp $DIRNAME/../scripts/pd_* ${MOUNT}/usr/local/share/puredarwin/scripts/
+
+# Moar futils
+#cp $DIRNAME/../projects/pd_xkp/pd_xkp ${MOUNT}/usr/local/sbin/
+
 ###############################################################################
 # USER MANAGEMENT
 ###############################################################################
@@ -1292,25 +1312,6 @@ fi
 #echo " 0 - WindowMaker 0.92"
 #echo " 1 - Fluxbox 1.1.0.1_0"
 #echo " 2 - wmii-3.1_0"
-
-############################################################################### 
-# COPYING UTILS, FUTILS AND INUTILS! 
-###############################################################################
-
-mkdir -p ${MOUNT}/usr/local/sbin/
-mkdir -p ${MOUNT}/usr/local/share/puredarwin/scripts
-mkdir -p ${MOUNT}/usr/local/share/puredarwin/setup/pd_setup_files/
-
-# Copy startupfiletool
-echo "Copying startupfiletool"
-cp $DIRNAME/pd_setup_files/startupfiletool ${MOUNT}/usr/local/share/puredarwin/pd_setup_files/
-
-# Copy PureDarwin scripts 
-echo "Copying PureDarwin scripts"
-cp $DIRNAME/../scripts/pd_* ${MOUNT}/usr/local/share/puredarwin/scripts/
-
-# Moar futils
-#cp $DIRNAME/../projects/pd_xkp/pd_xkp ${MOUNT}/usr/local/sbin/
 
 ###############################################################################
 # NANO LAUNCHD, DAEMONS AND PLISTS
@@ -1656,7 +1657,7 @@ EOOF
 	chmod -R 777 $TARGET
 	chown -R 501:staff $TARGET
 
-	echo "Installation on $(tput bold)${TARGET}$(tput rmso) complete."
+	echo "Installation on ${TARGET} complete."
 else
 	# Force completion of pending disk writes
 	/bin/sync
@@ -1665,5 +1666,5 @@ else
 	echo "Unmounting..."
 	umount -f ${MOUNT}
 
-	echo "Installation on $(tput bold)${TARGET}$(tput rmso) complete. "
+	echo "Installation on ${TARGET} complete. "
 fi

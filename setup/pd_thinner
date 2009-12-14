@@ -114,7 +114,7 @@ if [ "$1" = "" ]; then
 	echo
 	echo "Legend:"
 	echo " . project.root.tar.gz\tThe archive has already been thinned"
-	echo " * $(tput bold)project.root.tar.gz$(tput rmso)\tThe archive has just been thinned "
+	echo " * project.root.tar.gz\tThe archive has just been thinned "
 	echo " ? project.root.tar.gz\tThe archive is missing" 
 
 	echo
@@ -150,9 +150,9 @@ shift
 # Break condition: no more missing files found in args, success.
 if [ $# -eq 0 ]; then
 	echo
-	echo "Thinning binary files $(tput bold)complete$(tput rmso) ($MISSING_LIST_INIT files)" 
+	echo "Thinning binary files complete ($MISSING_LIST_INIT files)" 
 	if [ "$BAD_SHA1_LIST" ]; then
-		echo "$(tput bold)Warning!$(tput rmso) SHA-1 checksum failed on:$BAD_SHA1_LIST"
+		echo "WARNING! SHA-1 checksum failed on:$BAD_SHA1_LIST"
 	fi	
 	exit 0
 fi
@@ -160,10 +160,10 @@ fi
 # Break condition: no more level to go in, end of array, some missing files could remain..
 if [ $LEVEL -gt $[${#BINVERSION[@]} - 1] ]; then
 	echo 
-	echo "Thinning binary files $(tput bold)uncomplete$(tput rmso)"
+	echo "Thinning binary files uncomplete"
 	echo "Missing $[$MISSING_LIST_INIT - $[$MISSING_LIST_INIT - $#]] files: $*"
 	if [ "$BAD_SHA1_LIST" ]; then
-		echo "$(tput bold)Warning!$(tput rmso) SHA-1 checksum failed on:$BAD_SHA1_LIST"
+		echo "WARNING! SHA-1 checksum failed on:$BAD_SHA1_LIST"
 	fi	
 	exit -1
 fi
@@ -281,7 +281,7 @@ if [ "$DARWIN_RELEASE" =  "$MAJOR_BUILD_VERSION" ]; then
 			mkdir -p "$DESTDIR"
 				Y=$(basename $B_THIN_BINARYROOT .gz).bz2
 				if [ $B_THIN_BINARYROOT -nt $DESTDIR/$Y ]; then
-					printf " * $(tput bold)$(basename $B_THIN_BINARYROOT)$(tput rmso) ."
+					printf " * $(basename $B_THIN_BINARYROOT) ."
 					rm -rf "$DESTDIR/tmp"
 					printf "."
 					mkdir -p "$DESTDIR/tmp"
