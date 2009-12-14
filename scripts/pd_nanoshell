@@ -82,7 +82,7 @@ sysctl -w kern.hostname="PureDarwin.local"
 /sbin/mount -t fdesc -o union stdin /dev
 
 # Cosmectic
-/bin/sh /$DIRNAME/scripts/pd_ascii_hexley_nano
+/bin/sh /$DIRNAME/pd_ascii_hexley_nano
 #/usr/local/sbin/pd_xkp
 
 # Workaround read-write
