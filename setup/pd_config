@@ -61,26 +61,32 @@ DARWIN_RELEASE="9"
 #DARWIN_RELEASE="10"
 
 #
-# PureDarwin release (flavor)
-#
-PUREDARWIN_RELEASE=""
-#PUREDARWIN_RELEASE="nano"
-#PUREDARWIN_RELEASE="bootstrap"
-
-#
-# Binaryroot projects list local file
-#
-# FIXME some project names have changed between D9 and D10
-BINARYROOTS_LIST_FILE="pd_roots" 
-#BINARYROOTS_LIST_FILE="pd_roots.nano"  
-#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"  
-
-#
 # Processor architecture / mach-o format
 #
 ARCH="i386"
 #ARCH="ppc"    # FIXME could work on D9 (need to check thin, OpenFirmware and bootloaders)
 #ARCH="x86_64" # FIXME does not (yet) work
+
+#
+# PureDarwin release (flavor)
+#
+#PUREDARWIN_RELEASE=""
+#PUREDARWIN_RELEASE="nano"
+PUREDARWIN_RELEASE="bootstrap"
+
+#
+# Binaryroot projects list local file
+#
+# FIXME some project names have changed between D9 and D10
+#BINARYROOTS_LIST_FILE="pd_roots" 
+#BINARYROOTS_LIST_FILE="pd_roots.nano"  
+BINARYROOTS_LIST_FILE="pd_roots.bootstrap"  
+
+#
+# Extra Binaryroot projects list local file (e.g. PureFoundation)
+#
+# FIXME D9 and D10 separation
+BINARYROOTS_EXTRA_LIST_FILE="pd_roots.extra"  
 
 #
 # Temporary dir which will contain fetched and thinned binaryroots
@@ -186,7 +192,7 @@ ADD_SETTINGS_FILES="y"		# (default: y) Add all settings files from PureDarwinSet
 
 ADD_RELEASE_NANO="n"		# (default: n) Build a nano release instead of a full one?
 
-ADD_CLONE="n"                   # (default: n) Add setup scripts & binaryroots to the target?
+ADD_CLONE="n"                   # (default: n) Add setup scripts & binaryroots to the target (bootstrap -> full)?
 
 ADD_LAUNCHD="y"			# (default: y) Add launchd as the first process spawned by the kernel
 ADD_LAUNCHD_GETTY="y"		# (default: y) EXCLUSIVE Add default login prompt launched by launchd
@@ -205,13 +211,14 @@ fi
 # Generic nano options
 #
 if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
-	ADD_RELEASE_NANO="y"	# Switch used in pd_setup
+	ADD_RELEASE_NANO="y"		# Switch used in pd_setup
 	ADD_PUREFOUNDATION="n"
 	ADD_LOGIN="n"	      
 	ADD_DEFAULT_USER="n"
 	ADD_X="n"
 	ADD_DEBUG="n"
 	ADD_DEVELOPER="n"
+	ADD_MACPORTS="n"
 	ADD_MACPORTS_TCL="n"
 	ADD_VMWARE_VMDK="n"
 	ADD_SETTINGS_FILES="n"
@@ -219,32 +226,30 @@ if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
 	ADD_LAUNCHD="n"			# (default: y) Add launchd as the first process spawned by the kernel
 	ADD_LAUNCHD_GETTY="n"		# (default: y) EXCLUSIVE Add default login prompt launched by launchd
 	ADD_LAUNCHD_NANOSHELL="n"	# (default: n) EXCLUSIVE Add a synthetic custom "shell" launched by launchd
-	ADD_LAUNCHD_INSTALLER="n"	# (default: n) EXCLUSIVE Add a synthetic custom "shell" launched by launchd
-	
+	ADD_LAUNCHD_INSTALLER="n"	# (default: n) EXCLUSIVE Add a synthetic installer launched by launchd
+					# (depends: ADD_CLONE; ADD_LAUNCHD)
 fi
 
 #
-# Generic bootstrap options (nano++)
+# Generic bootstrap options (nano++) which deploy a full release
 #
 if [ "$PUREDARWIN_RELEASE" = "bootstrap" ]; then
 	ADD_RELEASE_NANO="y"		# Switch used in pd_setup
 	ADD_PUREFOUNDATION="y"	
-
 	ADD_LOGIN="n"			# (default: y) Add multiuser login support (pamsessioncreate, pcsc)
 	ADD_DEFAULT_USER="n"		# (default: y) Add a default user account: toor (password: toor)?
 	ADD_X="n"
-	
 	ADD_DEBUG="n"
-
 	ADD_DEVELOPER="n"
 	ADD_MACPORTS="n"
+	ADD_MACPORTS_TCL="n"
 	
 	ADD_VMWARE_VMDK="n"
 
 	ADD_VMWARE_IDE_DRIVE="y" 	# (default: n) Additional IDE disk drive in the vmwarevm
 	ADD_SETTINGS_FILES="n"
 
-	ADD_CLONE="y"
+	ADD_CLONE="y"			# (default: n) Add setup scripts & binaryroots to the target (bootstrap -> full)?
 
 	# On 9.7, problems with disk0s1: ioctl(_IOW,'d',31,32) is unsupported
 	ADD_VOODOO_XNU_9_5_0="y"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
@@ -254,7 +259,7 @@ if [ "$PUREDARWIN_RELEASE" = "bootstrap" ]; then
 
 	ADD_LAUNCHD_GETTY="n"		# (default: y) EXCLUSIVE Add default login prompt launched by launchd
 	ADD_LAUNCHD_NANOSHELL="n"	# (default: n) EXCLUSIVE Add a synthetic custom "shell" launched by launchd
-	ADD_LAUNCHD_INSTALLER="y"	# (default: n) EXCLUSIVE Add a synthetic custom "shell" launched by launchd
-
+	ADD_LAUNCHD_INSTALLER="y"	# (default: n) EXCLUSIVE Add a synthetic installer launched by launchd
+					# (depends: ADD_CLONE; ADD_LAUNCHD)
 fi
 
