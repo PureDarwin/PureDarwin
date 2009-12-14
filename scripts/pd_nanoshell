@@ -61,7 +61,10 @@ umask 022			# all files created are -rw-r--r--
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:/usr/libexec:/System/Library/CoreServices
 export MANPATH=/usr/share/man:/usr/local/man
 export EDITOR=/usr/bin/vi
-export TERM=vt100
+export TERM=xterm-color
+
+# Find out where this script lives
+DIRNAME=$(cd $(dirname $0) && pwd)
 
 # Commented because awk is not present
 # Parsing sysctl.conf
@@ -79,7 +82,7 @@ sysctl -w kern.hostname="PureDarwin.local"
 /sbin/mount -t fdesc -o union stdin /dev
 
 # Cosmectic
-/bin/sh /usr/local/sbin/pd_ascii_hexley_nano
+/bin/sh /$DIRNAME/scripts/pd_ascii_hexley_nano
 #/usr/local/sbin/pd_xkp
 
 # Workaround read-write

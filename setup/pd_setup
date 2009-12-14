@@ -298,7 +298,6 @@ then
 		echo "$(tput bold)Aborting!$(tput rmso) \`$CONT' is not \`y'."
 		exit 1
 	fi
-	echo
 fi
 
 echo
@@ -488,7 +487,7 @@ if [ ! $EXT = "" ]; then
 	SIZE="1234"
 	if [ "$ADD_RELEASE_NANO" = "y" ]; then
 		#SIZE="256"
-		SIZE="1111"
+		SIZE="650"
 	fi
 
 	# Create a bootable image
@@ -644,7 +643,7 @@ else
 	# Add Chameleon bootloader (default: yes)
 	if [ "$ADD_CHAMELEON" = "n" ]; then
 		# startupfiletool should not be needed with Chameleon
-		startupfiletool ${RDEVICE}s1 $BOOTi386/$BOOT
+		$DIRNAME/../scripts/startupfiletool ${RDEVICE}s1 $BOOTi386/$BOOT
 	fi
 
 	/bin/sync
@@ -690,24 +689,26 @@ cd ${MOUNT}
 mkdir -p ./private/var/log/
 echo "Installing packages on '${MOUNT}'..."
 
-for f in `cat $DIRNAME/$BINARYROOTS_LIST_FILE` ; do
-	echo " * $(basename $f.root.tar.bz2)"
+for PROJECT in `cat $DIRNAME/$BINARYROOTS_LIST_FILE` ; do
+	echo " * $(basename $PROJECT.root.tar.bz2)"
 
 	# (default: n)
 	if [ "$ADD_RELEASE_NANO" = "y" ]; then
-		tar xjpf $PACKAGES/$f.root.tar.bz2 \
+		tar xjpf $PACKAGES/$PROJECT.root.tar.bz2 \
 			--exclude '*svn*' \
 			--exclude '*/include/*' \
 			--exclude '/Developer' \
-			--exclude '/usr/local/lib/*' \
 			--exclude '/AppleInternal' \
 			--exclude '/usr/lib/libSystem.B_debug.dylib' \
 			--exclude '/usr/lib/libSystem.B_profile.dylib' \
+			--exclude '/usr/local/lib/*' \
 			--exclude '*.h' >> ${MOUNT}/private/var/log/pd_setup.log
 	else	
-		tar xjpf $PACKAGES/$f.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
-	fi	
+		tar xjpf $PACKAGES/$PROJECT.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+	fi
 done
+
+echo 
 
 ###############################################################################
 # MISSING STUFF (mainly vital binarydrivers of darwin 10)
@@ -753,8 +754,7 @@ if [ ! "$ADD_VOODOO_XNU" = "n" ]; then
 	# Sources: http://code.google.com/p/xnu-dev/
 	#
 	echo " * Voodoo_kernel.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/Voodoo_kernel.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/Voodoo_kernel.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/Voodoo_kernel.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# Keeping the "vanilla" kernel
 	mv $MOUNT/mach_kernel $MOUNT/mach_kernel.origin
@@ -779,7 +779,7 @@ if [ "$ADD_VOODOO_XNU_SPEEDSTEP" = "y" ]; then
 	# http://code.google.com/p/xnu-speedstep
 	# v1.4.9
 	echo " * VoodooIntelEnhancedSpeedStep.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/VoodooIntelEnhancedSpeedStep.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/VoodooIntelEnhancedSpeedStep.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	chown -R root:wheel ${MOUNT}/System/Library/Extensions/IntelEnhancedSpeedStep.kext
 	chmod -R 755 $MOUNT/System/Library/Extensions/IntelEnhancedSpeedStep.kext
@@ -813,8 +813,7 @@ if [ ! "$ADD_VOODOO_PS2CONTROLLER" = "n" ]; then
 	# FIXME synapticsconfigload <- needed? functional?
 	# FIXME in vmx? <- keyboard.vusb.enable = "FALSE"
 	echo " * VoodooPS2Controller.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/VoodooPS2Controller.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/VoodooPS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/VoodooPS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
 
 # David Elliott PS2 support (default: n)
@@ -823,12 +822,10 @@ if [ "$ADD_DFE_PS2CONTROLLER" = "y" ]; then
 	# org.tgwbd.driver.ACPIPS2Nub
 	# version 1.0.0d1
 	echo " * ACPIPS2Nub.root.tar.gz (Copyright David Elliott, 2007)"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/ACPIPS2Nub.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpf $PACKAGES/ACPIPS2Nub.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/ACPIPS2Nub.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	echo " * ApplePS2Controller.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/ApplePS2Controller.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/ApplePS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/ApplePS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
 
 # Prompt for VMware support (default: y)
@@ -839,6 +836,7 @@ if [ ! "$ADD_VMWARE" = "n" ]; then
 	# 	/System/Library/CoreServices/SystemVersion.plist
 	# Info: http://code.google.com/p/puredarwin/issues/detail?id=3
 
+	# FIXME repack or at least move the archive elsewhere than in pd_setup_files
 	# LegacyAppleIntelPIIXATA and NullCPUPowerManagement KEXTs for use with VMware other than Fusion 
 	echo " * VMware-Drivers-OpenSource.zip"
 	unzip -q $DIRNAME/pd_setup_files/VMware-Drivers-OpenSource.zip -d ${MOUNT}/System/Library/Extensions
@@ -860,40 +858,34 @@ if [ ! "$ADD_PUREFOUNDATION" = "n" ]; then
 	# 	CoreFoundation and ddistnoted
 	# 	PureFoundation-0.003.1.root.zip 
 	echo " * PureFoundation.root.tar.gz (Foundation, CoreFoundation and ddistnoted)"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/PureFoundation.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/PureFoundation.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/PureFoundation.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# ddistnoted content is provided in PureFoundation archive too
 	echo " * ddistnoted.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/ddistnoted.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/ddistnoted.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/ddistnoted.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# Usefull for passwd (and dscl (and sudo?))
 	#rm -R ${MOUNT}/System/Library/PrivateFrameworks/OpenDirectory.framework/Versions/A/Frameworks
 	echo " * CFOpenDirectory.root.tar.gz"
 	mkdir -p ${MOUNT}/System/Library/PrivateFrameworks/OpenDirectory.framework/Versions/A/Frameworks
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/CFOpenDirectory.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/CFOpenDirectory.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/CFOpenDirectory.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# configd stuff for network support 
 	# Source: https://sites.google.com/a/puredarwin.org/puredarwin/developers/network
 	#         on Mar 7, 2009 8:25 PM by stuart@echus.demon.co.uk (version 3 / earlier versions)
 	echo " * configd.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/configd.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/configd.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/configd.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# Satisfy dependencies for bootp (bootp popuplate /System/Library/SystemConfiguration with IPConf.. & co)
 	# bootp is now added in pd_roots
 	echo " * NotApple80211.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/NotApple80211.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpf $PACKAGES/NotApple80211.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/NotApple80211.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 	
 	# CFNetwork.framework and CarbonCore.framework (only headers) wrapped inside CoreServices.framework
 	# Source: https://sites.google.com/a/puredarwin.org/puredarwin/developers/cfnetwork
 	#         on Feb 23, 2009 6:10 PM by stuart@echus.demon.co.uk (version 1)
 	echo " * CFNetwork.root.tar.gz (wrapped in CoreServices.framework)"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/CFNetwork.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpf $PACKAGES/CFNetwork.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/CFNetwork.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# configd_plugins-91.root (partially built)
 	#
@@ -902,8 +894,7 @@ if [ ! "$ADD_PUREFOUNDATION" = "n" ]; then
 	#	Kicker.bundle <- ???
 	#cp -R /Users/aladin/PureDarwin/darwinbuild/9J61/.build/buildroot.nfs/private/var/tmp/configd_plugins/configd_plugins-91.root/System/Library/SystemConfiguration/KernelEventMonitor.bundle $MOUNT/System/Library/SystemConfiguration/
 	echo " * configd_plugins.root.tar.gz (InterfaceNamer.bundle, KernelEventMonitor.bundle and Kicker.bundle)"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/configd_plugins.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpf $PACKAGES/configd_plugins.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpf $PACKAGES/configd_plugins.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# FIXME FIXME add chown -R ..
 	#chown root:wheel $MOUNT/System/Library/LaunchDaemons/com.apple.configd.plist
@@ -919,9 +910,8 @@ if [ ! "$ADD_LOGIN" = "n" ]; then
 	#	        https://sites.google.com/a/puredarwin.org/puredarwin/downloads
 	#
 	echo " * pam_sessioncreate.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/pam_sessioncreate.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/pam_sessioncreate.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
-	# FIXME should be integrated into "pam_modules" ?
+	tar xjpf $PACKAGES/pam_sessioncreate.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	# FIXME should it be integrated into "pam_modules" ?
 	# FIXME + cat >${MOUNT}/etc/pam.d/login<<EOOF
 
 	# PC/SC stack
@@ -930,12 +920,13 @@ if [ ! "$ADD_LOGIN" = "n" ]; then
 	#  - System/Library/Frameworks/PCSC.framework
 	#  - usr/sbin/pcscd
 	echo " * PCSC.root.tar.gz"
-	tar xzpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/pd/PCSC.root.tar.gz >> ${MOUNT}/private/var/log/pd_setup.log 
-	#tar xjpfv $PACKAGES/PCSC.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
+	tar xjpfv $PACKAGES/PCSC.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
 
 # FIXME add MacPorts sources & bin? 
-
+# FIXME FIXME FIXME archive FIXME FIXME FIXME
+# FIXME FIXME FIXME archive FIXME FIXME FIXME
+# FIXME FIXME FIXME archive FIXME FIXME FIXME
 # Add MacPorts tcl requirements (default: y)
 if [ ! "$ADD_MACPORTS_TCL" = "n" ]; then
 	# Needed in order to be able to compile MacPorts and probably with it.
@@ -943,6 +934,9 @@ if [ ! "$ADD_MACPORTS_TCL" = "n" ]; then
 	tar xjpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/mp/tcl-8.5.6_0+threads.i386.tbz2 >> ${MOUNT}/private/var/log/pd_setup.log
 fi
 
+# FIXME FIXME FIXME archive FIXME FIXME FIXME
+# FIXME FIXME FIXME archive FIXME FIXME FIXME
+# FIXME FIXME FIXME archive FIXME FIXME FIXME
 # Add X and co (default: no)
 if [ "$ADD_X" = "y" ]; then
 	# Installing X binaryroots from macports (windowmaker, fluxbox, wmii, eterm, etc..)
@@ -966,14 +960,51 @@ cd - > /dev/null
 if [ "$ADD_CLONE" = "y" ]; then
 	# Clone the setup scripts repository - Kage bunshin no justu! (shadow clone technique)
 	echo "Copying setup files..."
-	mkdir -p ${MOUNT}/usr/local/share/
+	mkdir -p ${MOUNT}/usr/local/share/puredarwin/setup/$TEMPDIR
 	# Warning: read `hg help clone' (e.g. incompatible with mq)
 	# -l not supported on Darwin and Mac OS X
 	# -a not supported on Darwin..
-	cp -R $DIRNAME/.. ${MOUNT}/usr/local/share/puredarwin
+	#cp -Rfp $DIRNAME/.. ${MOUNT}/usr/local/share/puredarwin
+	cp -Rfp $DIRNAME/../APPLE_DRIVER_LICENSE.txt 	${MOUNT}/usr/local/share/puredarwin/
+	cp -Rfp $DIRNAME/../APPLE_LICENSE.txt		${MOUNT}/usr/local/share/puredarwin/
+	cp -Rfp $DIRNAME/../PUREDARWIN_LICENSE.txt	${MOUNT}/usr/local/share/puredarwin/
+	cp -Rfp $DIRNAME/../WELCOME			${MOUNT}/usr/local/share/puredarwin/
+	cp -Rfp $DIRNAME/../patches			${MOUNT}/usr/local/share/puredarwin/
+	cp -Rfp $DIRNAME/../plists			${MOUNT}/usr/local/share/puredarwin/
+	cp -Rfp $DIRNAME/../projects			${MOUNT}/usr/local/share/puredarwin/
+	cp -Rfp $DIRNAME/../scripts			${MOUNT}/usr/local/share/puredarwin/
+
+	cp -fp $DIRNAME/../setup/*			${MOUNT}/usr/local/share/puredarwin/setup/ 2> /dev/null
+	cp -Rfp $DIRNAME/../setup/$DESTDIR		${MOUNT}/usr/local/share/puredarwin/setup/$TEMPDIR/
+
+	# Specific for X roots
+	mkdir -p ${MOUNT}/usr/local/share/puredarwin/setup/$BINARYROOTS_DEFAULT_DIR
+	cp -Rfp $DIRNAME/../setup/$BINARYROOTS_DEFAULT_DIR/mp	${MOUNT}/usr/local/share/puredarwin/setup/$BINARYROOTS_DEFAULT_DIR/
+	cp -Rfp $DIRNAME/../setup/$BINARYROOTS_DEFAULT_DIR/X	${MOUNT}/usr/local/share/puredarwin/setup/$BINARYROOTS_DEFAULT_DIR/
+
+	cp -Rfp $DIRNAME/../setup/$DESTDIR		${MOUNT}/usr/local/share/puredarwin/setup/$TEMPDIR/
 	
+	# c.f. pd_config: DESTDIR="$TEMPDIR/Packages_D${DARWIN_RELEASE}_${ARCH}"
+	cp -Rfp $DIRNAME/../setup/pd_setup_files	${MOUNT}/usr/local/share/puredarwin/setup/
+
+	# Alterate the clone pd_config in order to not deploy another boostrap version but a full PureDarwin
+	# FIXME At this time, a pd_fetch & pd_thin against the desired target needs to be done manually
+	#       in order to satisfy the package dependencies requested by a full PureDarwin (c.f. pd_roots)
+	# egg vs chicken..
+	cat $DIRNAME/../setup/pd_config |
+		sed 's/BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/' |
+		sed 's/PUREDARWIN_RELEASE="bootstrap"/#PUREDARWIN_RELEASE="bootstrap"/' |
+		sed 's/#BINARYROOTS_LIST_FILE="pd_roots"/BINARYROOTS_LIST_FILE="pd_roots"/' |
+		sed 's/#PUREDARWIN_RELEASE=""/PUREDARWIN_RELEASE=""/' > ${MOUNT}/usr/local/share/puredarwin/setup/pd_config
+
+
+	# FIXME change archive to tar.gz so they can be thinned like other 
+	cp -Rfp $DIRNAME/$BINARYROOTS_DEFAULT_DIR/X ${MOUNT}/usr/local/share/puredarwin/setup/$BINARYROOTS_DEFAULT_DIR/
+	cp -Rfp $DIRNAME/$BINARYROOTS_DEFAULT_DIR/mp ${MOUNT}/usr/local/share/puredarwin/setup/$BINARYROOTS_DEFAULT_DIR/
+
 	# Alternative if a mercurial binary root is available (including its dependencies) 
 	#hg clone $DIRNAME/.. ${MOUNT}/usr/local/share/puredarwin
+	# Can take a lot of disk space
 	#hg clone $DIRNAME/$TEMPDIR ${MOUNT}/usr/local/share/puredarwin/$TEMPDIR
 
 	# FIXME below should disappear
@@ -1210,7 +1241,7 @@ if [ ! "$ADD_DEFAULT_USER" = "n" ]; then
 	echo "Creating default user (toor:toor)"
 	# pd_injectuser (salter SHA-1 digest by default, should work into single user mode)
 	# FIXME update pd_adduser..		
-	$DIRNAME/../scripts/pd_injectuser ${MOUNT} toor 
+	chroot $MOUNT $DIRNAME/../scripts/pd_injectuser ${MOUNT} toor 
 	# pd_adduser must be run on Darwin/Mac OS X host, or in single user mode from PureDarwin
 	# Note: `dscl' and `passwd' dependencies must be satistified.
 	# $DIRNAME/../scripts/pd_adduser
@@ -1267,14 +1298,16 @@ fi
 ###############################################################################
 
 mkdir -p ${MOUNT}/usr/local/sbin/
+mkdir -p ${MOUNT}/usr/local/share/puredarwin/scripts
+mkdir -p ${MOUNT}/usr/local/share/puredarwin/setup/pd_setup_files/
 
 # Copy startupfiletool
 echo "Copying startupfiletool"
-cp $DIRNAME/pd_setup_files/startupfiletool ${MOUNT}/usr/local/sbin/
+cp $DIRNAME/pd_setup_files/startupfiletool ${MOUNT}/usr/local/share/puredarwin/pd_setup_files/
 
 # Copy PureDarwin scripts 
 echo "Copying PureDarwin scripts"
-cp $DIRNAME/../scripts/pd_* ${MOUNT}/usr/local/sbin/
+cp $DIRNAME/../scripts/pd_* ${MOUNT}/usr/local/share/puredarwin/scripts/
 
 # Moar futils
 #cp $DIRNAME/../projects/pd_xkp/pd_xkp ${MOUNT}/usr/local/sbin/
@@ -1287,8 +1320,7 @@ cp $DIRNAME/../scripts/pd_* ${MOUNT}/usr/local/sbin/
 if [ "$ADD_LAUNCHD" = "n" ]; then 
 	# Overwrite /sbin/launchd with a trivial shell script 
 	mkdir -p ${MOUNT}/sbin/
-	cp ${MOUNT}/usr/local/sbin/pd_nanoshell ${MOUNT}/sbin/launchd # FIXME triv
-	#cp $DIRNAME/../scripts/pd_nanoshell ${MOUNT}/sbin/launchd # FIXME triv
+	cp $DIRNAME/../scripts/pd_nanoshell ${MOUNT}/sbin/launchd
 	chown root:wheel ${MOUNT}/sbin/launchd
 	chmod 755 ${MOUNT}/sbin/launchd
 else
@@ -1303,7 +1335,7 @@ else
 	if [ "$ADD_LAUNCHD_NANOSHELL" = "y" ]; then 
 		# A launchd plist (org.puredarwin.nanoshell.plist) run a synthetic custom "shell" (pd_nanoshell)
 		chmod 644 ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
-		chmod +x ${MOUNT}/usr/local/sbin/pd_nanoshell
+		chmod +x ${MOUNT}/usr/local/share/puredarwin/scripts/pd_nanoshell
 	else	
 		# Disable launchd plist to run a synthetic custom "shell" (pd_nanoshell)
 		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
@@ -1339,7 +1371,7 @@ fi
 
 # the Z shell
 # FIXME add switch for bash or zsh
-chroot ${MOUNT} ln -s /bin/zsh /bin/sh
+chroot ${MOUNT} ln -fs /bin/zsh /bin/sh
 
 # (default: no)
 if [ "$ADD_RELEASE_NANO" = "y" ]; then 
@@ -1592,7 +1624,7 @@ EOOF
 			# Creating a (second) VMware4 disk image via qemu-img
 			# SIZE at least equal to "the parent" one (most of the time, the bootstrap one)
 			# FIXME add check on the size
-			qemu-img create -f vmdk $TARGET/second.vmdk ${SIZE}M
+			qemu-img create -f vmdk $TARGET/second.vmdk 2048M
 
 			# Reflect the disk image in the .vmx file
 			cat >> $TARGET/$(basename $TARGET | awk -F '.' '{print $1".vmx"}') <<EOOF

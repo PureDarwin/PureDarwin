@@ -88,13 +88,12 @@ add_user () {
 
 welcome() {
 
+	clear
 	echo
+	echo "Welcome to PureDarwin!" # /etc/motd
 	echo
-	echo "Welcome to PureDarwin"
-	echo "====================="
-	echo
-	echo "  Darwin (c) 1999-2009 Apple, Inc. (opensource.apple.com)"
-	echo "  Purity (c) 2007-2009 The PureDarwin Project (www.puredarwin.org)"
+	echo " Darwin (c) 1999-2009 Apple, Inc. (opensource.apple.com)"
+	echo " Purity (c) 2007-2009 The PureDarwin Project (www.puredarwin.org)"
 	echo
 
 	#if [ -f "/Release Notes.txt" ]; then
@@ -118,7 +117,7 @@ welcome
 ###############################################################################
 
 echo
-echo "Enter 's' to drop into a shell, at any time."
+echo "Enter 's' to drop into a shell."
 echo
 
 # Get the device the user wants to install onto.
@@ -157,7 +156,7 @@ done
 # FIXME add a way to extend or reduce releases (e.g. bootstrap->nano or bootstrap->full)
 /usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin
 
-echo "Installation of the base system is now complete."
+echo "Installation of the base system should now be complete."
 echo ""
 
 ###############################################################################
@@ -180,7 +179,7 @@ do
 	case ${CHOICE} in
 		#1) add_user 
 		#   break;;
-		2) reboot -q
+		2) reboot
 		   break ;;
 		3) /bin/sh
 		   break ;;
@@ -193,11 +192,11 @@ done
 ###############################################################################
 
 echo
-echo "Installation is now complete. Press 'enter' to restart"
+echo "Installation should now be complete. Press 'enter' to restart"
 echo
 read RESTART
 echo ""
-reboot -q
+reboot
 
 # bash interactive
 #/bin/bash -i 

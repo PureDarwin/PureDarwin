@@ -19,8 +19,10 @@
 		<string>-f</string>
 		<string>/usr/share/sandbox/pd_nanoshell.sb</string>
 -->
-		<string>/usr/local/sbin/pd_nanoshell</string>
+		<string>/usr/local/share/puredarwin/scripts/pd_nanoshell</string>
     </array>
+    <key>RunAtLoad</key>
+    <true/>
 </dict>
 </plist>
 
