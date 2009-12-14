@@ -69,7 +69,7 @@
 #
 # Unpack, thin and pack "vital" BinaryRoots and BinaryDrivers
 #
-# 	Usage: pd_thinner
+# 	Usage: pd_thin
 #
 # This script runs in a directory containing binary roots 
 # produced by DarwinBuild. It will create a subdirectory
