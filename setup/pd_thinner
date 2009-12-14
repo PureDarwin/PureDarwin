@@ -121,7 +121,7 @@ if [ "$1" = "" ]; then
 	echo "Thinning binaryroots, please wait..."
 
 	# Recursive call of itself
-	$0 0 `cat $BINARYROOTS_LIST_FILE`
+	$0 0 `cat $BINARYROOTS_LIST_FILE $BINARYROOTS_EXTRA_LIST_FILE`
 	exit 0
 fi
 
