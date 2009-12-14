@@ -126,7 +126,7 @@ if [ -e ${MOUNT}/private/var/db/dslocal/nodes/Default/users/${T_USERNAME}.plist 
 	echo "${T_USERNAME} already exists"
 
 	if [ "$T_DEFAULT" = "" ]; then
-		printf "Overwrite (y/$(tput bold)n$(tput reset)): "
+		printf "Overwrite? y[n]: "
 		read CHOICE
 	else
 		echo "Overwrite forced by default mode"
@@ -260,7 +260,7 @@ fi
 
 # Prompt for admin group
 if [ "$T_DEFAULT" = "" ]; then
-	printf "Add ${T_USERNAME} to the admin group? ($(tput bold)y$(tput reset)/n): "
+	printf "Add ${T_USERNAME} to the admin group? [y]n: "
 	read CHOICE;
 	if [ ! "$CHOICE" = "n" ]; then
 		ADMIN_USER=1
@@ -314,7 +314,7 @@ echo "Home: ${T_HOMEDIR}"
 echo ""
 
 if [ "$T_DEFAULT" = "" ]; then
-	printf "Add ($(tput bold)y$(tput reset)/n): "
+	printf "Add [y]n: "
 	read CHOICE
 	if [ "$CHOICE" = "n" ]; then
 		echo "Aborted."
@@ -450,8 +450,9 @@ then
 	then
 		cp ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist.origin
 		cat ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist.origin |
-			sed "s/<string>root<\/string>/<string>root<\/string><string>${T_USERNAME}<\/string>" > ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist
+			sed "s/<string>root<\/string>/<string>root<\/string><string>${T_USERNAME}<\/string>/" > ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist
 			# FIXME missing \n\t\t as ...>root</string>\n\t\t<string>${T_US...
+		# Alternative
 		#perl -pi -e "s|<string>root</string>|<string>root</string>\n\t\t<string>${T_USERNAME}</string>|g" ${MOUNT}/private/var/db/dslocal/nodes/Default/groups/admin.plist
 	else
 		echo "${T_USERNAME} is already found in admin group"
