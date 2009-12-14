@@ -70,17 +70,17 @@ ARCH="i386"
 #
 # PureDarwin release (flavor)
 #
-#PUREDARWIN_RELEASE=""
+PUREDARWIN_RELEASE=""
 #PUREDARWIN_RELEASE="nano"
-PUREDARWIN_RELEASE="bootstrap"
+#PUREDARWIN_RELEASE="bootstrap"
 
 #
 # Binaryroot projects list local file
 #
 # FIXME some project names have changed between D9 and D10
-#BINARYROOTS_LIST_FILE="pd_roots" 
+BINARYROOTS_LIST_FILE="pd_roots" 
 #BINARYROOTS_LIST_FILE="pd_roots.nano"  
-BINARYROOTS_LIST_FILE="pd_roots.bootstrap"  
+#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"  
 
 #
 # Extra Binaryroot projects list local file (e.g. PureFoundation)
@@ -140,8 +140,12 @@ BINVERSION=(10C540 10B504 10A432 pd 9L30 9J61pd1 9J61 9G55pd1 9G55 9F33pd1 9F33 
 #
 # WARNING: Exclusivity is not always obvious but exists between choices.
 
-ADD_CHAMELEON="n"		# (default: y) Add Chameleon bootloader (Chameleon v2.0-RC3-r658)?
+ADD_CHAMELEON="y"		# (default: y) Add Chameleon bootloader?
 #ADD_CHAMELEON_THEMES="y"	# (default: y) Add Chameleon bootloader themes?
+ADD_CHAMELEON_RC1="n"		# (default: n) EXCLUSIVE Choose Chameleon 2.0-RC1-r431?
+ADD_CHAMELEON_RC2="n"		# (default: n) EXCLUSIVE Choose Chameleon 2.0-RC2-r640?
+ADD_CHAMELEON_RC3="n"		# (default: n) EXCLUSIVE Choose Chameleon 2.0-RC3-r658?
+ADD_CHAMELEON_RC4="y"		# (default: n) EXCLUSIVE Choose Chameleon 2.0-RC4-r684?
 
 ADD_MBR_ERASE="y"		# (default: y) Erase existing partition table (instead of updating the MBR)?
 

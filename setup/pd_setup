@@ -395,23 +395,42 @@ function trap_handler {
 trap trap_handler INT TERM EXIT
 
 ###############################################################################
-# BOOTLOADER SWITCH 
+# BOOTLOADER PATH 
 ###############################################################################
 
-# Bootloader path 
-BOOTi386=""
+# Default bootloader: DFE bootloader v5.0.132_dfe_r146 based on Apple boot-132
+BOOTi386=$DIRNAME/pd_setup_files/boot/i386/
 
 # Add Chameleon bootloader (default: yes)
 if [ ! "$ADD_CHAMELEON" = "n" ]; then
-	# Chameleon bootloader
-	#	Chameleon v1.0.11
-	#       Chameleon v2.0-RC1-r431
-	#       Chameleon v2.0-RC2-r640
-	#	Chameleon v2.0-RC3-r658
-	BOOTi386=$DIRNAME/pd_setup_files/boot.chameleon/i386/
-else
-	# DFE bootloader v5.0.132_dfe_r146 based on Apple boot-132
-	BOOTi386=$DIRNAME/pd_setup_files/boot/i386/
+	# The Chameleon bootloader 
+	# (Apple Public Source License)
+	# http://chameleon.osx86.hu
+	#	Chameleon 1.0.11 FIXME deprecated?
+	#       Chameleon 2.0-RC1-r431-bin
+	#       Chameleon 2.0-RC2-r640-bin
+	#	Chameleon 2.0-RC3-r658-bin
+	#	Chameleon-2.0-RC4-r684-bin
+
+	T_CHAMELEON_RELEASE=""
+	if [ "$ADD_CHAMELEON_RC1" = "y" ]; then
+		T_CHAMELEON_RELEASE="Chameleon-2.0-RC1-r431-bin"
+	fi
+	
+	if [ "$ADD_CHAMELEON_RC2" = "y" ]; then
+		T_CHAMELEON_RELEASE="Chameleon-2.0-RC2-r640-bin"
+	fi
+
+	if [ "$ADD_CHAMELEON_RC3" = "y" ]; then
+		T_CHAMELEON_RELEASE="Chameleon-2.0-RC3-r658-bin"
+	fi
+
+	if [ "$ADD_CHAMELEON_RC4" = "y" ]; then
+		T_CHAMELEON_RELEASE="Chameleon-2.0-RC4-r684-bin"
+	fi
+	echo "Extracting Chameleon bootloader ($T_CHAMELEON_RELEASE)"
+	tar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
+	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
 fi
 
 BOOT0="boot0"   # MBR
@@ -486,8 +505,8 @@ if [ ! $EXT = "" ]; then
 	#SIZE=$(expr $SIZE + $(expr 255 - $SIZE)) # add some MB to be on the safe side
 	SIZE="1234"
 	if [ "$ADD_RELEASE_NANO" = "y" ]; then
-		#SIZE="256"
-		SIZE="650"
+		SIZE="256"
+		#SIZE="650"
 	fi
 
 	# Create a bootable image
@@ -507,7 +526,7 @@ if [ ! $EXT = "" ]; then
 	#hdiutil create -ov -fs HFS+J -o "$TARGET" -size ${SIZE}M -layout NONE -type UDIF -nospotlight
 	#mv $TARGET.dmg $TARGET
 
-	dd if=/dev/zero of="$TARGET"  bs=1024k count=$SIZE
+	dd if=/dev/zero of="$TARGET" bs=1024k count=$SIZE
 
 
 	# Suppress automatic mounting of any filesystems in the image
@@ -645,6 +664,8 @@ else
 		# startupfiletool should not be needed with Chameleon
 		$DIRNAME/../scripts/startupfiletool ${RDEVICE}s1 $BOOTi386/$BOOT
 	fi
+
+	# TODO RAID Install
 
 	/bin/sync
 
@@ -926,8 +947,6 @@ fi
 
 # FIXME add MacPorts sources & bin? 
 # FIXME FIXME FIXME archive FIXME FIXME FIXME
-# FIXME FIXME FIXME archive FIXME FIXME FIXME
-# FIXME FIXME FIXME archive FIXME FIXME FIXME
 # Add MacPorts tcl requirements (default: y)
 if [ ! "$ADD_MACPORTS_TCL" = "n" ]; then
 	# Needed in order to be able to compile MacPorts and probably with it.
@@ -935,8 +954,6 @@ if [ ! "$ADD_MACPORTS_TCL" = "n" ]; then
 	tar xjpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/mp/tcl-8.5.6_0+threads.i386.tbz2 >> ${MOUNT}/private/var/log/pd_setup.log
 fi
 
-# FIXME FIXME FIXME archive FIXME FIXME FIXME
-# FIXME FIXME FIXME archive FIXME FIXME FIXME
 # FIXME FIXME FIXME archive FIXME FIXME FIXME
 # Add X and co (default: no)
 if [ "$ADD_X" = "y" ]; then
@@ -948,7 +965,6 @@ if [ "$ADD_X" = "y" ]; then
 
 	# Prevent error: "Fontconfig error: Cannot load default config file" which "cycles" X
 	chroot ${MOUNT} /usr/X11R6/bin/fc-cache -v -f /usr/X11R6/lib/X11/fonts/
-
 fi
 
 cd - > /dev/null
