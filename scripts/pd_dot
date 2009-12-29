@@ -1,0 +1,127 @@
+#!/bin/sh
+#
+# Copyright (c) 2007-2009 The PureDarwin Project.
+# All rights reserved.
+#
+# @LICENSE_HEADER_START@
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+# IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# @LICENSE_HEADER_END@
+#
+
+#
+# aladin <aladin@puredarwin.org>
+#
+
+#
+# Generate draw graph(s) from a DOT file
+#
+# 	Usage: pd_dot file.dot
+#
+
+#
+# Changelog
+#
+# 20091226 - See Mercurial history (`hg log') from now - aladin
+# 20091226 - Initial release - aladin 
+#
+
+###############################################################################
+# PREVENTIVE TESTS
+###############################################################################
+
+# Ensure "$1" is not empty
+if [ "$1" = "" ]; then
+	echo "Usage: $(basename $0) [FILE]"
+	exit 1
+fi
+
+# Ensure "target" exists (for real hw)
+if [ ! -e "$1" ]
+then
+	echo "$(basename $0): $1: No such file or directory"
+	exit 1
+fi
+
+# .dot detection (via pseudo content)
+grep digraph "$1" 2> /dev/null > /dev/null
+if [ $? -eq 0 ]; then
+	if [ `basename $0` = `basename $1` ]; then
+		echo "$(basename $0): $1: Not a graph file (that will not work)"
+		exit 1
+	fi
+else
+	echo "$(basename $0): $1: Not a graph file"
+	exit 1
+fi
+# Ensure graphviz is available (at least `dot' binary)
+#
+# `where' and `whereis' should be enough if `dot' is in $PATH but
+#     - `where' is a built-in command which is not available in /bin/sh (but present in zsh and bash)
+#     - `whereis' seems not reliable from return code
+# Consequently, hope `dot' is in $PATH and executable
+dot -V 2> /dev/null
+if [ ! $? -eq 0 ]; then
+	echo "$(basename $0): \`dot' is not executable or not in \$PATH."
+	echo "You should install the \"Graphviz layout programs\" (http://www.graphviz.org) in order to generate a graphic output."
+	exit 1
+fi
+
+###############################################################################
+# SETTINGS
+###############################################################################
+
+INPUT_FILENAME="$1"
+OUTPUT_FILENAME=`echo "$1" | awk -F ".dot" '{print $1}'`
+OUTPUT_FORMAT="png"
+
+###############################################################################
+# DRAWING GRAPHS
+###############################################################################
+
+# From `man dot':
+#       dot   - filter for drawing directed graphs
+#       neato - filter for drawing undirected graphs
+#       twopi - filter for radial layouts of graphs
+#       circo - filter for circular layout of graphs
+#       fdp   - filter for drawing undirected graphs
+#       sfdp  - filter for drawing large undirected graphs
+
+dot -T$OUTPUT_FORMAT -o "${OUTPUT_FILENAME}_dot.$OUTPUT_FORMAT" "$INPUT_FILENAME"
+echo "Generation of ${OUTPUT_FILENAME}_dot.${OUTPUT_FORMAT} complete."
+
+circo -T$OUTPUT_FORMAT -o "${OUTPUT_FILENAME}_circo.$OUTPUT_FORMAT" "$INPUT_FILENAME"
+echo "Generation of ${OUTPUT_FILENAME}_circo.${OUTPUT_FORMAT} complete."
+
+twopi -T$OUTPUT_FORMAT -o "${OUTPUT_FILENAME}_twopi.$OUTPUT_FORMAT" "$INPUT_FILENAME"
+echo "Generation of ${OUTPUT_FILENAME}_twopi.${OUTPUT_FORMAT} complete."
+
+neato -T$OUTPUT_FORMAT -o "${OUTPUT_FILENAME}_neato.$OUTPUT_FORMAT" "$INPUT_FILENAME"
+echo "Generation of ${OUTPUT_FILENAME}_neato.${OUTPUT_FORMAT} complete."
+
+fdp -T$OUTPUT_FORMAT -o "${OUTPUT_FILENAME}_fdp.$OUTPUT_FORMAT" "$INPUT_FILENAME"
+echo "Generation of ${OUTPUT_FILENAME}_fdp.${OUTPUT_FORMAT} complete."
+
+sfdp -T$OUTPUT_FORMAT -o "${OUTPUT_FILENAME}_sfdp.$OUTPUT_FORMAT" "$INPUT_FILENAME"
+echo "Generation of ${OUTPUT_FILENAME}_sfdp.${OUTPUT_FORMAT} complete."
+
