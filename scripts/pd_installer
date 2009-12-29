@@ -83,18 +83,26 @@ DIRNAME=$(cd $(dirname $0) && pwd)
 ###############################################################################
 
 add_user () {
-	$DIRNAME/pd_injectuser # e.g., /usr/local/share/puredarwin/scripts/pd_injectuser
+
+	T_VOLUME="/Volumes/PureDarwin" # This one should exist
+	/sbin/mount -t hfs $INSTALLDEV $T_VOLUME
+	chroot $MOUNT /usr/local/share/puredarwin/scripts/pd_injectuser /
+	/sbin/umount -f $T_VOLUME
 }
 
 welcome() {
 
 	clear
-	echo
-	echo "Welcome to PureDarwin!" # /etc/motd
-	echo
-	echo " Darwin (c) 1999-2009 Apple, Inc. (opensource.apple.com)"
-	echo " Purity (c) 2007-2009 The PureDarwin Project (www.puredarwin.org)"
-	echo
+
+	#echo
+	#echo "Welcome to PureDarwin!" # /etc/motd
+	#echo
+	#echo " Darwin (c) 1999-2009 Apple, Inc. (opensource.apple.com)"
+	#echo " Purity (c) 2007-2009 The PureDarwin Project (puredarwin.org)"
+	#echo
+
+	# Above replaced by `pd_xkp' built on PureDarwin (D9, i386) displaying the same message as above.
+	/usr/local/share/puredarwin/projects/pd_xkp/pd_xkp
 
 	#if [ -f "/Release Notes.txt" ]; then
 	#	echo ""
@@ -112,13 +120,13 @@ welcome() {
 
 welcome
 
-###############################################################################
-# TARGET 
-###############################################################################
-
 echo
 echo "Enter 's' to drop into a shell."
 echo
+
+###############################################################################
+# DISK DEVICE 
+###############################################################################
 
 # Get the device the user wants to install onto.
 INSTALLDEV="novalue"
@@ -153,9 +161,28 @@ done
 # SETUP BASE
 ###############################################################################
 
-# FIXME add a way to extend or reduce releases (e.g. bootstrap->nano or bootstrap->full)
-# At this time its hardcoded the parent release bootstrap->full.
-/usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin
+#PUREDARWIN_RELEASE=""
+#until [ ! : ]
+#do
+#	echo "The following flavors are available for installation: "
+#	echo "1. PureDarwin"
+#	echo "2. Puredarwin boostrap"
+#	echo "3. PureDarwin nano"
+#	printf "Which PureDarwin release would you like to deploy? "
+#	read CHOICE
+#	echo
+#	case ${CHOICE} in
+#		1) PUREDARWIN_RELEASE="default"
+#		   ;;
+#		2) PUREDARWIN_RELEASE="bootstrap"
+#		   ;;
+#		3) PUREDARWIN_RELEASE="nano"
+#		   ;;
+#	esac
+#done
+
+# Deploy a full release at this time.
+/usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin 
 
 echo "Installation of the base system should now be complete."
 echo ""
@@ -170,20 +197,19 @@ echo ""
 until [ ! : ]
 do
 	echo "You may: "
-	# FIXME adduser will not work if the partition is unmounted
-	#echo "1. Add a user to the new system"
-	echo "2. Reboot"
-	echo "3. Spawn a shell"
-	echo -n "Your Choice: "
+#	echo "1. Add a user to the new system"
+	echo "1. Reboot"
+	echo "2. Spawn a shell"
+	printf "Your Choice: "
 	read CHOICE
 	echo
 	case ${CHOICE} in
-		#1) add_user 
-		#   break;;
-		2) reboot
-		   break ;;
-		3) /bin/sh
-		   break ;;
+#		1) add_user
+#		   ;;
+		1) break
+		   ;;
+		2) /bin/sh
+		   ;;
 	esac
 done
 
@@ -192,7 +218,6 @@ done
 # REBOOT 
 ###############################################################################
 
-echo
 echo "Installation should now be complete. Press 'enter' to restart"
 read RESTART
 echo ""
