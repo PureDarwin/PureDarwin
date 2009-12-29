@@ -1,6 +1,6 @@
 PROGRAM	= pd_xkp 
 CC	= gcc
-ARCHS   = -arch i386 -arch ppc
+ARCHS   = -arch i386
 #ARCHS   = -arch i386 -arch x86_64 -arch ppc
 CFLAGS	= -g -fno-objc-gc -fno-replace-objc-classes -O3 $(ARCHS)
 LIBS	= -lobjc
