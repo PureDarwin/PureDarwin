@@ -230,7 +230,7 @@ source "$DIRNAME"/pd_config
 # Destination output filename (aka "target")
 TARGET="$1"
 
-# FIXME remove redundancies
+# FIXME remove redundancies btw TARGET and MOUNT
 # Temporary pseudo PureDarwin Volume
 MOUNT="/Volumes/$2" 
 
@@ -429,7 +429,11 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 		T_CHAMELEON_RELEASE="Chameleon-2.0-RC4-r684-bin"
 	fi
 	echo "Extracting Chameleon bootloader ($T_CHAMELEON_RELEASE)"
-	tar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
+	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X
+	#bsdtar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
+	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X
+	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards "*/i386" 
+
 	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
 fi
 
@@ -505,8 +509,9 @@ if [ ! $EXT = "" ]; then
 	#SIZE=$(expr $SIZE + $(expr 255 - $SIZE)) # add some MB to be on the safe side
 	SIZE="1234"
 	if [ "$ADD_RELEASE_NANO" = "y" ]; then
-		SIZE="256"
-		#SIZE="650"
+		if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
+			SIZE="150"
+		fi
 	fi
 
 	# Create a bootable image
@@ -574,7 +579,23 @@ if [ ! $EXT = "" ]; then
 	slice=`pdisk $RDEVICE -dump | grep "$VOLNAME" | awk -F: '{print $1}' | awk -F" " '{print $1}'` 
 	echo "Partition created on slice $slice ($blocks blocks)"
 
+
 	# this is the tricky part
+	# dd
+	#	skip=n   Skip n blocks from the beginning of the input before copying.
+	#	         On input which supports seeks, an lseek(2) operation is used.
+	#                Otherwise, input data is read and discarded.
+	#       seek=n   Seek n blocks from the beginning of the output before copying. 
+	#       bs=n     Set both input and output block size to n bytes, superseding the ibs and obs operands.
+	#
+	# Partition map (with 512 byte blocks) on 'VirtualMachines/full.vmwarevm/full.iso'
+	#  #:                type name    length   base    ( size )
+	#  1: Apple_partition_map Apple       63 @ 1      
+	#  2:          Apple_Free Extra     2664 @ 64      (  1.3M) <=== ELTORITOISO is "dd-ed" here!
+	#  3:           Apple_HFS full   2524440 @ 2728    (  1.2G)
+	#  4:          Apple_Free Extra       64 @ 2527168
+	# Device block size=512, Number of Blocks=2527232 (1.2G)
+	# DeviceType=0x0, DeviceId=0x0
 	echo "ddying $ELTORITOISO to $RDEVICE"
 	dd if="$ELTORITOISO" of=$RDEVICE skip=64 seek=64 bs=512
 
@@ -595,8 +616,7 @@ else
 	#
 
 	# /dev/diskX passed as $1 ($TARGET)
-	if [ `ls "$TARGET" | cut -b-9` = "/dev/disk" ]; then
-
+	if [ "`ls "$TARGET" | cut -b-9`" = "/dev/disk" ]; then
 		# Preventive check for disk device in /dev
 		if [ ! -e "$TARGET" ]; then
 			echo "ERROR: $TARGET does not exist."
@@ -606,15 +626,12 @@ else
 		# disk device node in $1 ($TARGET)
 		export DEVICE=`ls "$TARGET" | cut -b-10`
 		export RDEVICE=${DEVICE/disk/rdisk}
-
 	else
-
 		# Default disk device node linked to an existing volume (e.g. /Volumes/PureDarwin)
 		PARTITION=$(df | grep "$1" | cut -d " " -f 1 ) # e.g.: /dev/disk0s2
 		RPARTITION=${PARTITION/disk/rdisk}
 		export DEVICE=$(echo $PARTITION | grep -o -e /dev/disk\[0-9\]\* )
 		export RDEVICE=${DEVICE/disk/rdisk}
-
 	fi
 
 	# Disable automounting in Finder and popping-up dialog boxed
@@ -752,6 +769,8 @@ missingstuff() {
 	done
 }	
 
+# FIXME IOKitUser built in 9J61 lacks of symbol as _kextmanager* needed by kextload..
+
 #if [ "$DARWIN_RELEASE" = "10" ]; then
 	# Disabled for obvious reasons.
 #	missingstuff /System/Library/Extensions/AppleACPIPlatform.kext
@@ -759,8 +778,6 @@ missingstuff() {
 #	missingstuff /System/Library/Extensions/AppleRTC.kext
 #	missingstuff /System/Library/Extensions/IOATAFamily.kext
 #	missingstuff /System/Library/Extensions/IOPCIFamily.kext
-
-	# FIXME IOKitUser built in 9J61 lacks of symbol as _kextmanager* needed by kextload..
 
 #fi
 
@@ -775,7 +792,7 @@ if [ ! "$ADD_VOODOO_XNU" = "n" ]; then
 	#
 	# Sources: http://code.google.com/p/xnu-dev/
 	#
-	echo " * Voodoo_kernel.root.tar.gz"
+	echo " * Voodoo_kernel.root.tar.bz2"
 	tar xjpf $PACKAGES/Voodoo_kernel.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# Keeping the "vanilla" kernel
@@ -800,7 +817,7 @@ if [ "$ADD_VOODOO_XNU_SPEEDSTEP" = "y" ]; then
 	# AppleIntelCPUPowerManagement kext
 	# http://code.google.com/p/xnu-speedstep
 	# v1.4.9
-	echo " * VoodooIntelEnhancedSpeedStep.root.tar.gz"
+	echo " * VoodooIntelEnhancedSpeedStep.root.tar.bz2"
 	tar xjpf $PACKAGES/VoodooIntelEnhancedSpeedStep.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	chown -R root:wheel ${MOUNT}/System/Library/Extensions/IntelEnhancedSpeedStep.kext
@@ -834,7 +851,7 @@ if [ ! "$ADD_VOODOO_PS2CONTROLLER" = "n" ]; then
 	# 
 	# FIXME synapticsconfigload <- needed? functional?
 	# FIXME in vmx? <- keyboard.vusb.enable = "FALSE"
-	echo " * VoodooPS2Controller.root.tar.gz"
+	echo " * VoodooPS2Controller.root.tar.bz2"
 	tar xjpf $PACKAGES/VoodooPS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
 
@@ -843,10 +860,10 @@ if [ "$ADD_DFE_PS2CONTROLLER" = "y" ]; then
 	# ACPIPS2Nub: PS2Controller for mouse matching a PNP device from David Elliott 
 	# org.tgwbd.driver.ACPIPS2Nub
 	# version 1.0.0d1
-	echo " * ACPIPS2Nub.root.tar.gz (Copyright David Elliott, 2007)"
+	echo " * ACPIPS2Nub.root.tar.bz2 (Copyright David Elliott, 2007)"
 	tar xjpf $PACKAGES/ACPIPS2Nub.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
-	echo " * ApplePS2Controller.root.tar.gz"
+	echo " * ApplePS2Controller.root.tar.bz2"
 	tar xjpf $PACKAGES/ApplePS2Controller.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
 
@@ -879,34 +896,34 @@ if [ ! "$ADD_PUREFOUNDATION" = "n" ]; then
 	# 	SHA1 Checksum: b0bc7432627a060874f28f04297a80c4a5fbd094
 	# 	CoreFoundation and ddistnoted
 	# 	PureFoundation-0.003.1.root.zip 
-	echo " * PureFoundation.root.tar.gz (Foundation, CoreFoundation and ddistnoted)"
+	echo " * PureFoundation.root.tar.bz2 (Foundation, CoreFoundation and ddistnoted)"
 	tar xjpf $PACKAGES/PureFoundation.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# ddistnoted content is provided in PureFoundation archive too
-	echo " * ddistnoted.root.tar.gz"
+	echo " * ddistnoted.root.tar.bz2"
 	tar xjpf $PACKAGES/ddistnoted.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# Usefull for passwd (and dscl (and sudo?))
 	#rm -R ${MOUNT}/System/Library/PrivateFrameworks/OpenDirectory.framework/Versions/A/Frameworks
-	echo " * CFOpenDirectory.root.tar.gz"
+	echo " * CFOpenDirectory.root.tar.bz2"
 	mkdir -p ${MOUNT}/System/Library/PrivateFrameworks/OpenDirectory.framework/Versions/A/Frameworks
 	tar xjpf $PACKAGES/CFOpenDirectory.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# configd stuff for network support 
 	# Source: https://sites.google.com/a/puredarwin.org/puredarwin/developers/network
 	#         on Mar 7, 2009 8:25 PM by stuart@echus.demon.co.uk (version 3 / earlier versions)
-	echo " * configd.root.tar.gz"
+	echo " * configd.root.tar.bz2"
 	tar xjpf $PACKAGES/configd.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# Satisfy dependencies for bootp (bootp popuplate /System/Library/SystemConfiguration with IPConf.. & co)
 	# bootp is now added in pd_roots
-	echo " * NotApple80211.root.tar.gz"
+	echo " * NotApple80211.root.tar.bz2"
 	tar xjpf $PACKAGES/NotApple80211.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 	
 	# CFNetwork.framework and CarbonCore.framework (only headers) wrapped inside CoreServices.framework
 	# Source: https://sites.google.com/a/puredarwin.org/puredarwin/developers/cfnetwork
 	#         on Feb 23, 2009 6:10 PM by stuart@echus.demon.co.uk (version 1)
-	echo " * CFNetwork.root.tar.gz (wrapped in CoreServices.framework)"
+	echo " * CFNetwork.root.tar.bz2 (wrapped in CoreServices.framework)"
 	tar xjpf $PACKAGES/CFNetwork.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
 	# configd_plugins-91.root (partially built)
@@ -915,10 +932,10 @@ if [ ! "$ADD_PUREFOUNDATION" = "n" ]; then
 	#	KernelEventMonitor.bundle <- dhcp client (according to qemu user mode network stack
 	#	Kicker.bundle <- ???
 	#cp -R /Users/aladin/PureDarwin/darwinbuild/9J61/.build/buildroot.nfs/private/var/tmp/configd_plugins/configd_plugins-91.root/System/Library/SystemConfiguration/KernelEventMonitor.bundle $MOUNT/System/Library/SystemConfiguration/
-	echo " * configd_plugins.root.tar.gz (InterfaceNamer.bundle, KernelEventMonitor.bundle and Kicker.bundle)"
+	echo " * configd_plugins.root.tar.bz2 (InterfaceNamer.bundle, KernelEventMonitor.bundle and Kicker.bundle)"
 	tar xjpf $PACKAGES/configd_plugins.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
-	# FIXME FIXME add chown -R ..
+	# FIXME add chown -R ..
 	#chown root:wheel $MOUNT/System/Library/LaunchDaemons/com.apple.configd.plist
 	chown root:wheel $MOUNT/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist
 	# + /Library/Preferences/SystemConfiguration/preferences.plist
@@ -931,7 +948,7 @@ if [ ! "$ADD_LOGIN" = "n" ]; then
 	# 	Source: https://sites.google.com/a/puredarwin.org/puredarwin/users/users
 	#	        https://sites.google.com/a/puredarwin.org/puredarwin/downloads
 	#
-	echo " * pam_sessioncreate.root.tar.gz"
+	echo " * pam_sessioncreate.root.tar.bz2"
 	tar xjpf $PACKAGES/pam_sessioncreate.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 	# FIXME should it be integrated into "pam_modules" ?
 	# FIXME + cat >${MOUNT}/etc/pam.d/login<<EOOF
@@ -941,12 +958,11 @@ if [ ! "$ADD_LOGIN" = "n" ]; then
 	# Contain:
 	#  - System/Library/Frameworks/PCSC.framework
 	#  - usr/sbin/pcscd
-	echo " * PCSC.root.tar.gz"
+	echo " * PCSC.root.tar.bz2"
 	tar xjpf $PACKAGES/PCSC.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
 
-# FIXME add MacPorts sources & bin? 
-# FIXME FIXME FIXME archive FIXME FIXME FIXME
+# FIXME add MacPorts sources & bin? archive? 
 # Add MacPorts tcl requirements (default: y)
 if [ ! "$ADD_MACPORTS_TCL" = "n" ]; then
 	# Needed in order to be able to compile MacPorts and probably with it.
@@ -954,7 +970,7 @@ if [ ! "$ADD_MACPORTS_TCL" = "n" ]; then
 	tar xjpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/mp/tcl-8.5.6_0+threads.i386.tbz2 >> ${MOUNT}/private/var/log/pd_setup.log
 fi
 
-# FIXME FIXME FIXME archive FIXME FIXME FIXME
+# FIXME archive
 # Add X and co (default: no)
 if [ "$ADD_X" = "y" ]; then
 	# Installing X binaryroots from macports (windowmaker, fluxbox, wmii, eterm, etc..)
@@ -967,13 +983,33 @@ if [ "$ADD_X" = "y" ]; then
 	chroot ${MOUNT} /usr/X11R6/bin/fc-cache -v -f /usr/X11R6/lib/X11/fonts/
 fi
 
+
+# DTrace facility (default: n)
+#
+# 	DTrace is not present on http://src.macosforge.org/Roots/
+# 	Notice Foundation.framework and CoreFoundation.framework dependencies
+#
+# 	What about "Symbolication.framework"? (problem with 9J61 (not patched as 9F33pd1))
+#
+if [ "$ADD_DTRACE" ="y" ]; then
+
+	echo " * dtrace.root.tar.bz2"
+	tar xjpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/9F33pd1/dtrace.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+
+	#missingstuff /usr/sbin/dtrace
+	#missingstuff /System/Library/PrivateFrameworks/Symbolication.framework
+	#missingstuff /usr/lib/libdtrace.dylib
+	#missingstuff /usr/bin/dtruss
+	#missingstuff /usr/bin/procsystime
+fi
+
 cd - > /dev/null
 
 ###############################################################################
 # SELF DEPLOYMENT (bootstrap) 
 ###############################################################################
 
-# Add setup scripts & binaryroots to the target? (default: n)
+# Add setup scripts to the target? (default: n)
 if [ "$ADD_CLONE" = "y" ]; then
 	# Clone the setup scripts repository - Kage bunshin no justu! (shadow clone technique)
 	echo "Copying setup files..."
@@ -992,6 +1028,26 @@ if [ "$ADD_CLONE" = "y" ]; then
 	cp -Rfp $DIRNAME/../scripts			${MOUNT}/usr/local/share/puredarwin/
 
 	cp -fp $DIRNAME/../setup/*			${MOUNT}/usr/local/share/puredarwin/setup/ 2> /dev/null
+
+	# c.f. pd_config: DESTDIR="$TEMPDIR/Packages_D${DARWIN_RELEASE}_${ARCH}"
+	cp -Rfp $DIRNAME/../setup/pd_setup_files	${MOUNT}/usr/local/share/puredarwin/setup/
+
+	# Alterate the clone pd_config in order to not deploy another boostrap version but a full PureDarwin
+	# FIXME At this time, a pd_fetch & pd_thin against the desired target needs to be done manually
+	#       in order to satisfy the package dependencies requested by a full PureDarwin (c.f. pd_roots)
+	# (bootstrap -> full release) egg vs chicken..
+	cat $DIRNAME/../setup/pd_config |
+		sed 's/BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/' |
+		sed 's/PUREDARWIN_RELEASE="bootstrap"/#PUREDARWIN_RELEASE="bootstrap"/' |
+		sed 's/#BINARYROOTS_LIST_FILE="pd_roots"/BINARYROOTS_LIST_FILE="pd_roots"/' |
+		sed 's/#PUREDARWIN_RELEASE=""/PUREDARWIN_RELEASE=""/' > ${MOUNT}/usr/local/share/puredarwin/setup/pd_config
+
+fi
+
+# Add setup binaryroots to the target? (default: n)
+if [ "$ADD_CLONE_PACKAGES" = "y" ]; then
+
+	# e.g., DESTDIR="Packages_D9_i386" and TEMPDIR="pd_tmp"
 	cp -Rfp $DIRNAME/../setup/$DESTDIR		${MOUNT}/usr/local/share/puredarwin/setup/$TEMPDIR/
 
 	# Specific for X roots
@@ -1001,30 +1057,12 @@ if [ "$ADD_CLONE" = "y" ]; then
 
 	cp -Rfp $DIRNAME/../setup/$DESTDIR		${MOUNT}/usr/local/share/puredarwin/setup/$TEMPDIR/
 	
-	# c.f. pd_config: DESTDIR="$TEMPDIR/Packages_D${DARWIN_RELEASE}_${ARCH}"
-	cp -Rfp $DIRNAME/../setup/pd_setup_files	${MOUNT}/usr/local/share/puredarwin/setup/
-
-	# Alterate the clone pd_config in order to not deploy another boostrap version but a full PureDarwin
-	# FIXME At this time, a pd_fetch & pd_thin against the desired target needs to be done manually
-	#       in order to satisfy the package dependencies requested by a full PureDarwin (c.f. pd_roots)
-	# egg vs chicken..
-	cat $DIRNAME/../setup/pd_config |
-		sed 's/BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/' |
-		sed 's/PUREDARWIN_RELEASE="bootstrap"/#PUREDARWIN_RELEASE="bootstrap"/' |
-		sed 's/#BINARYROOTS_LIST_FILE="pd_roots"/BINARYROOTS_LIST_FILE="pd_roots"/' |
-		sed 's/#PUREDARWIN_RELEASE=""/PUREDARWIN_RELEASE=""/' > ${MOUNT}/usr/local/share/puredarwin/setup/pd_config
-
-
-	# FIXME change archive to tar.gz so they can be thinned like other 
-	cp -Rfp $DIRNAME/$BINARYROOTS_DEFAULT_DIR/X ${MOUNT}/usr/local/share/puredarwin/setup/$BINARYROOTS_DEFAULT_DIR/
-	cp -Rfp $DIRNAME/$BINARYROOTS_DEFAULT_DIR/mp ${MOUNT}/usr/local/share/puredarwin/setup/$BINARYROOTS_DEFAULT_DIR/
-
-	# Alternative if a mercurial binary root is available (including its dependencies) 
+	# Alternative if a mercurial binary root is available (including its dependencies..) 
 	#hg clone $DIRNAME/.. ${MOUNT}/usr/local/share/puredarwin
 	# Can take a lot of disk space
 	#hg clone $DIRNAME/$TEMPDIR ${MOUNT}/usr/local/share/puredarwin/$TEMPDIR
 
-	# FIXME below should disappear
+	# FIXME below should disappear (with deps)
 	# An arbitrary mountpoint potentially usefull on read-only mode
 	mkdir -p ${MOUNT}/Volumes/PureDarwin
 	# Idem
@@ -1235,19 +1273,6 @@ if [ ! "$ADD_DEBUG" = "n" ]; then
 	echo "*.debug /var/log/syslog" >> ${MOUNT}/etc/syslog.conf
 fi
 
-# DTrace facility
-#
-# 	DTrace is not present on http://src.macosforge.org/Roots/
-# 	Notice Foundation.framework and CoreFoundation.framework dependencies
-#
-# 	What about "Symbolication.framework"?
-#
-#missingstuff /usr/sbin/dtrace
-#missingstuff /System/Library/PrivateFrameworks/Symbolication.framework
-#missingstuff /usr/lib/libdtrace.dylib
-#missingstuff /usr/bin/dtruss
-#missingstuff /usr/bin/procsystime
-
 ############################################################################### 
 # COPYING UTILS, FUTILS AND INUTILS! 
 ###############################################################################
@@ -1366,6 +1391,24 @@ else
 		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.getty.plist
 	fi
 
+	# Add mDNSResponder (default: yes)
+	if [ "$ADD_LAUNCHD_MDNSRESPONDER" = "n" ]; then 
+		# Disable mDNSResponder
+		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.mDNSResponder.plist
+		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.mDNSResponderHelper.plist
+	fi
+
+	# Add portmap (default: yes)
+	if [ "$ADD_LAUNCHD_PORTMAP" = "n" ]; then 
+		# Disable portmap
+		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.portmap.plist
+	fi
+	# Add statd (default: yes)
+	if [ "$ADD_LAUNCHD_STATD" = "n" ]; then 
+		# Disable statd
+		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.statd.notify.plist
+	fi
+
 	# Add a synthetic custom "shell" launched by launchd (default: no)
 	if [ "$ADD_LAUNCHD_NANOSHELL" = "y" ]; then 
 		# A launchd plist (org.puredarwin.nanoshell.plist) run a synthetic custom "shell" (pd_nanoshell)
@@ -1397,7 +1440,6 @@ else
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.update.plist\
 		${MOUNT}/System/Library/LaunchDaemons/finger.plist \
 		${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist \
-		
 	else	
 		# Disable launchd plist to run a synthetic custom "shell" (pd_installer)
 		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
@@ -1406,7 +1448,6 @@ fi
 
 # (default: no)
 if [ "$ADD_RELEASE_NANO" = "y" ]; then 
-
 	#FIXME: below seems needed for network support!
 	rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.DirectoryServices.plist
 	rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.DirectoryServicesLocal.plist
@@ -1418,12 +1459,13 @@ fi
 # REDUCING TARGET DISK SIZE
 ###############################################################################
 
+
 # Keep developer stuff (default: y)
 if [ "$ADD_DEVELOPER" = "n" ]; then
 	echo "Cleaning up unneeded developer files from ${MOUNT}..."
 	rm -rf ${MOUNT}/Developer      # saves little   (fixme, only if "Developer" has not been selected)
 	rm -rf ${MOUNT}/usr/include/   # saves > 150 MB (fixme, only if "Developer" has not been selected)
-	find ${MOUNT}/ -type f | grep "\.h$" | xargs -I {} rm -f {} # more header files (fixme, only if "Developer" has not been selected)
+#	find ${MOUNT}/ -type f | grep "\.h$" | xargs -I {} rm -f {} # more header files (fixme, only if "Developer" has not been selected)
 	rm -rf ${MOUNT}/AppleInternal/ # (fixme, only if "Developer" has not been selected)
 	#rm -rf ${MOUNT}/usr/lib/libSystem.B_debug.dylib   # saves ~14M
 	#rm -rf ${MOUNT}/usr/lib/libSystem.B_profile.dylib # saves ~11M
