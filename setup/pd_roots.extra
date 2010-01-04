@@ -14,5 +14,6 @@ VoodooPS2Controller
 Voodoo_kernel
 configd
 configd_plugins
+dtrace
 ddistnoted
 pam_sessioncreate

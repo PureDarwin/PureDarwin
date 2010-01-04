@@ -118,7 +118,6 @@ developer_cmds
 diskdev_cmds
 disklabel
 doc_cmds
-dtrace
 dyld
 eap8021x
 file
