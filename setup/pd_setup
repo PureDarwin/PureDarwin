@@ -991,7 +991,7 @@ fi
 #
 # 	What about "Symbolication.framework"? (problem with 9J61 (not patched as 9F33pd1))
 #
-if [ "$ADD_DTRACE" ="y" ]; then
+if [ "$ADD_DTRACE" = "y" ]; then
 
 	echo " * dtrace.root.tar.bz2"
 	tar xjpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/9F33pd1/dtrace.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
@@ -1159,7 +1159,7 @@ fi
 
 # FIXME which one as default?
 # Setting GMT+1 timezone (instead of Pacific)
-rm ${MOUNT}/private/etc/localtime
+rm -f ${MOUNT}/private/etc/localtime
 #chroot ${MOUNT} ln -s /usr/share/zoneinfo/Europe/Berlin /private/etc/localtime
 # [...]
 #chroot ${MOUNT} ln -s /usr/share/zoneinfo/Europe/London /private/etc/localtime
@@ -1208,7 +1208,7 @@ fi
 
 # Populate (or remove) /etc/bashrc (default: y)
 if [ "$ADD_BASHRC" = "n" ]; then
-	rm ${MOUNT}/etc/bashrc
+	rm -f ${MOUNT}/etc/bashrc
 fi
 
 # Add the Z shell as default shell? (default: n)
@@ -1219,7 +1219,7 @@ fi
 
 # Populate (or remove) /etc/zshrc (default: y)
 if [ "$ADD_ZSHRC" = "n" ]; then
-	rm ${MOUNT}/etc/zshrc
+	rm -f ${MOUNT}/etc/zshrc
 fi
 
 ###############################################################################
@@ -1334,7 +1334,7 @@ fi
 if [ "$ADD_X" = "y" ]; then
 	# Default keymapping
 	cp $MOUNT/System/Library/Keyboards/USA.keymapping $MOUNT/System/Library/Keyboards/USA.keymapping.orig
-	rm $MOUNT/System/Library/Keyboards/USA.keymapping
+	rm -f $MOUNT/System/Library/Keyboards/USA.keymapping
 
 	# Belge keymapping (default: n)
 	if [ "$ADD_KEYMAP_BELGE" = "y" ]; then
@@ -1388,25 +1388,25 @@ else
 	# Add default login prompt (default: yes)
 	if [ "$ADD_LAUNCHD_GETTY" = "n" ]; then 
 		# Disable login prompt
-		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.getty.plist
+		rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.getty.plist
 	fi
 
 	# Add mDNSResponder (default: yes)
 	if [ "$ADD_LAUNCHD_MDNSRESPONDER" = "n" ]; then 
 		# Disable mDNSResponder
-		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.mDNSResponder.plist
-		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.mDNSResponderHelper.plist
+		rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.mDNSResponder.plist
+		rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.mDNSResponderHelper.plist
 	fi
 
 	# Add portmap (default: yes)
 	if [ "$ADD_LAUNCHD_PORTMAP" = "n" ]; then 
 		# Disable portmap
-		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.portmap.plist
+		rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.portmap.plist
 	fi
 	# Add statd (default: yes)
 	if [ "$ADD_LAUNCHD_STATD" = "n" ]; then 
 		# Disable statd
-		rm ${MOUNT}/System/Library/LaunchDaemons/com.apple.statd.notify.plist
+		rm -f ${MOUNT}/System/Library/LaunchDaemons/com.apple.statd.notify.plist
 	fi
 
 	# Add a synthetic custom "shell" launched by launchd (default: no)
@@ -1416,7 +1416,7 @@ else
 		chmod +x ${MOUNT}/usr/local/share/puredarwin/scripts/pd_nanoshell
 	else	
 		# Disable launchd plist to run a synthetic custom "shell" (pd_nanoshell)
-		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
+		rm -f ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.nanoshell.plist
 	fi
 
 	# Add a tiny installer script launched by launchd (default: no)
@@ -1442,7 +1442,7 @@ else
 		${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist \
 	else	
 		# Disable launchd plist to run a synthetic custom "shell" (pd_installer)
-		rm ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
+		rm -f ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
 	fi
 fi
 
