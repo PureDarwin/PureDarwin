@@ -1511,9 +1511,13 @@ echo "Set Extensions.mkext invocation"
 touch $MOUNT/System/Library/Extensions
 
 # Add creation of kext cache file (default: y)
-if [ "$ADD_DEVELOPER" = "n" ]; then
+if [ ! "$ADD_KEXTCACHE" = "n" ]; then
 	mkdir -p $MOUNT/System/Library/Caches/com.apple.kernelcaches
 	kextcache -a $ARCH -s -l -n -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.DEADBEEF" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+	# ...leads to:
+	#	Can't resolve dependencies amongst kexts for prelinked kernel.
+	#	Failed to generate prelinked kernel.
+
 fi
 
 # Force completion of pending disk writes
