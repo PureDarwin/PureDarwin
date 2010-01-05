@@ -218,6 +218,9 @@ ADD_LAUNCHD_PORTMAP="y"		# (default: y) Add portmap launched by launchd
 ADD_LAUNCHD_STATD="y"		# (default: y) Add statd launched by launchd
 
 ADD_DTRACE="y"			# (default: n) Add DTrace
+
+ADD_KEXTCACHE="y"		# (default: y) Add creation of kext cache file
+
 # 
 # Darwin 10 full options
 #

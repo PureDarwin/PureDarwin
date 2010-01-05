@@ -1510,16 +1510,11 @@ chown -R root:wheel $MOUNT/var/empty # for sshd
 echo "Set Extensions.mkext invocation"
 touch $MOUNT/System/Library/Extensions
 
-#if [ -z "$ARCH" ]; then
-#    KEXTARCH="-a i386"
-#else
-#    KEXTARCH="-a $ARCH"
-#fi
-
-#mkdir -p $MOUNT/System/Library/Caches/com.apple.kernelcaches
-# Assure TMPDIR is set on $MOUNT volume
-#export TMPDIR="$MOUNT/private/tmp"
-#kextcache -a i386 -s -l -n -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.DEADBEEF" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+# Add creation of kext cache file (default: y)
+if [ "$ADD_DEVELOPER" = "n" ]; then
+	mkdir -p $MOUNT/System/Library/Caches/com.apple.kernelcaches
+	kextcache -a $ARCH -s -l -n -c "$MOUNT/System/Library/Caches/com.apple.kernelcaches/kernelcache.DEADBEEF" -k -K "$MOUNT/mach_kernel" -m "$MOUNT/System/Library/Extensions.mkext" "$MOUNT/System/Library/Extensions"
+fi
 
 # Force completion of pending disk writes
 /bin/sync
