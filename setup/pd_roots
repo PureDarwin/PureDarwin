@@ -128,6 +128,7 @@ gcc_42
 gcc_os
 gcc_select
 gccfast
+gm4
 gnudiff
 gnumake
 gnutar
