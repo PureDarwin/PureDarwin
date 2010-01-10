@@ -1455,7 +1455,7 @@ else
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.kextd.plist \
 		${MOUNT}/System/Library/LaunchDaemons/com.apple.update.plist\
 		${MOUNT}/System/Library/LaunchDaemons/finger.plist \
-		${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist \
+		${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist
 	else	
 		# Disable launchd plist to run a synthetic custom "shell" (pd_installer)
 		rm -f ${MOUNT}/System/Library/LaunchDaemons/org.puredarwin.installer.plist
