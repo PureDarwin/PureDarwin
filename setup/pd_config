@@ -158,10 +158,10 @@ ADD_VOODOO_XNU_9_5_0="y"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Rel
 ADD_VOODOO_XNU_9_7_0="n"	# (default: n) EXCLUSIVE Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
 
 ADD_VOODOO_XNU_SPEEDSTEP="n"	# (default: n) Add xnu-speedstep (Intel SpeedStep driver)?
+ADD_VOODOO_POWER_MINI="n"	# (default: n) Add VoodooPowerMini Kext (v 1.2.4)?
 
 ADD_PUREFOUNDATION="y"		# (default: y) Add PureFoundation enhancements?
 
-# FIXME ADD_VOODOO_POWER Add VoodooPower (Power Management support)?
 # FIXME Add switch for network support
 
 ADD_VOODOO_PS2CONTROLLER="y"	# (default: y) EXCLUSIVE Add VoodooPS2Controller (VoodooPS2Controller, VoodooPS2Keyboard, VoodooPS2Mouse, VoodooPS2Trackpad)?
@@ -219,7 +219,7 @@ ADD_LAUNCHD_STATD="y"		# (default: y) Add statd launched by launchd
 
 ADD_DTRACE="y"			# (default: n) Add DTrace
 
-ADD_KEXTCACHE="y"		# (default: y) Add creation of kext cache file
+ADD_KEXTCACHE="n"		# (default: y) Add creation of kext cache file
 
 # 
 # Darwin 10 full options
@@ -245,13 +245,19 @@ if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
 	ADD_VMWARE_VMDK="n"
 	ADD_SETTINGS_FILES="n"		# (default: y) Add all settings files from PureDarwinSettings
 
+	ADD_CLONE="n"                   # (default: n) Add setup scripts to the target (bootstrap -> full)?
+	ADD_CLONE_PACKAGES="n"          # (default: n) Add setup binaryroots to the target (bootstrap -> full)?
+
 	ADD_LAUNCHD="n"			# (default: y) Add launchd as the first process spawned by the kernel
 	ADD_LAUNCHD_GETTY="n"		# (default: y) EXCLUSIVE Add default login prompt launched by launchd
 	ADD_LAUNCHD_NANOSHELL="n"	# (default: n) EXCLUSIVE Add a synthetic custom "shell" launched by launchd
 	ADD_LAUNCHD_INSTALLER="n"	# (default: n) EXCLUSIVE Add a synthetic installer launched by launchd
 					# (depends: ADD_CLONE; ADD_LAUNCHD)
-	ADD_CLONE="n"                   # (default: n) Add setup scripts to the target (bootstrap -> full)?
-	ADD_CLONE_PACKAGES="n"          # (default: n) Add setup binaryroots to the target (bootstrap -> full)?
+
+	ADD_LAUNCHD_MDNSRESPONDER="n"	# (default: y) Add mDNSResponder launched by launchd
+	ADD_LAUNCHD_PORTMAP="n"		# (default: y) Add portmap launched by launchd
+	ADD_LAUNCHD_STATD="n"		# (default: y) Add statd launched by launchd
+					
 	ADD_DTRACE="n"			# (default: n) Add DTrace
 fi
 
@@ -274,12 +280,16 @@ if [ "$PUREDARWIN_RELEASE" = "bootstrap" ]; then
 	ADD_VMWARE_IDE_DRIVE="y" 	# (default: n) Additional IDE disk drive in the vmwarevm
 	ADD_SETTINGS_FILES="n"		# (default: y) Add all settings files from PureDarwinSettings
 
-	ADD_CLONE="y"                   # (default: n) Add setup scripts to the target (bootstrap -> full)?
-	ADD_CLONE_PACKAGES="y"          # (default: n) Add setup binaryroots to the target (bootstrap -> full)?
+	ADD_CLONE="y"                   # (default: n) Add copy of setup scripts to the target
+	ADD_CLONE_PACKAGES="y"          # (default: n) Add copy of setup binaryroots to the target
 
 	# On 9.7, problems with disk0s1: ioctl(_IOW,'d',31,32) is unsupported
 	ADD_VOODOO_XNU_9_5_0="y"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
 	ADD_VOODOO_XNU_9_7_0="n"	# (default: n) EXCLUSIVE Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
+
+	ADD_VOODOO_XNU_SPEEDSTEP="n"	# (default: n) Add xnu-speedstep (Intel SpeedStep driver)?
+	ADD_VOODOO_POWER_MINI="n"	# (default: n) Add VoodooPowerMini Kext (v 1.2.4)?
+
 
 	ADD_LAUNCHD="y"			# (default: y) Add real launchd as the first process spawned by the kernel?
 

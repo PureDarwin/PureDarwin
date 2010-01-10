@@ -11,6 +11,7 @@ PCSC
 PureFoundation
 VoodooIntelEnhancedSpeedStep
 VoodooPS2Controller
+VoodooPowerMini
 Voodoo_kernel
 configd
 configd_plugins

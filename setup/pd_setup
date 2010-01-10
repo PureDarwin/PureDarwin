@@ -432,7 +432,7 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X
 	#bsdtar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
 	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X
-	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards "*/i386" 
+	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*' 
 
 	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
 fi
@@ -507,7 +507,7 @@ if [ ! $EXT = "" ]; then
 	# FIXME add size in pd_config
 	#SIZE=$(du -h -d 0 "$SOURCE" | cut -f 1 | sed 's/M//'g) # without "M"
 	#SIZE=$(expr $SIZE + $(expr 255 - $SIZE)) # add some MB to be on the safe side
-	SIZE="1234"
+	SIZE="1618"
 	if [ "$ADD_RELEASE_NANO" = "y" ]; then
 		if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
 			SIZE="150"
@@ -739,8 +739,8 @@ for PROJECT in `cat $DIRNAME/$BINARYROOTS_LIST_FILE` ; do
 			--exclude '/AppleInternal' \
 			--exclude '/usr/lib/libSystem.B_debug.dylib' \
 			--exclude '/usr/lib/libSystem.B_profile.dylib' \
-			--exclude '/usr/local/lib/*' \
-			--exclude '*.h' >> ${MOUNT}/private/var/log/pd_setup.log
+			#--exclude '/usr/local/lib/*' \
+ 			--exclude '*.h' >> ${MOUNT}/private/var/log/pd_setup.log
 	else	
 		tar xjpf $PACKAGES/$PROJECT.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
 	fi
@@ -770,6 +770,7 @@ missingstuff() {
 }	
 
 # FIXME IOKitUser built in 9J61 lacks of symbol as _kextmanager* needed by kextload..
+# The one from 9F33pd1/IOKitUser.root.tar.gz is OK!
 
 #if [ "$DARWIN_RELEASE" = "10" ]; then
 	# Disabled for obvious reasons.
@@ -827,15 +828,21 @@ if [ "$ADD_VOODOO_XNU_SPEEDSTEP" = "y" ]; then
 	# switch frequency               : sudo sysctl -w kern.cputhrottle_curfreq=YYYY
 fi
 
-# VoodooPower (r.30) support (default: n)
-if [ "$ADD_VOODOO_POWER" = "y" ]; then
+# VoodooPowerMini Kext (v 1.2.4) support (default: n)
+if [ "$ADD_VOODOO_POWER_MINI" = "y" ]; then
 	# "OSX Alternative Power Management"
 	# 
 	# http://code.google.com/p/voodoo-power
-	# GenericCPUPMControl is deprecated
-	# FIXME nyi
-	echo "nyi"
+	# http://www.superhai.com/darwin.html
+	echo " * VoodooPowerMini.root.tar.bz2"
+	tar xjpf $PACKAGES/VoodooPowerMini.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 fi
+# FIXME add choice for:
+#VoodooBattery.kext - To be used with vanilla ACPI and pm.bundle, 10.5.x
+#VoodooPower Kext
+#VoodooPower Command Line Interface Tool
+#VoodooUSBEHCI for 10.5.x see readme!
+
 
 
 # VoodooPS2Controller 0.98 support (default: y)
@@ -898,7 +905,16 @@ if [ ! "$ADD_PUREFOUNDATION" = "n" ]; then
 	# 	PureFoundation-0.003.1.root.zip 
 	echo " * PureFoundation.root.tar.bz2 (Foundation, CoreFoundation and ddistnoted)"
 	tar xjpf $PACKAGES/PureFoundation.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
-
+	# WORKAROUND
+	# FIXME remove workaround
+	# Because otool -L /Volumes/PureDarwin/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation 
+	#	/Volumes/PureDarwin/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation:
+	#	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 476.0.0)
+	#  ---> /Users/stuart/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 300.0.0)
+	#	/usr/lib/libicucore.A.dylib (compatibility version 1.0.0, current version 36.0.0)
+	mkdir -p "$MOUNT/Users/stuart/Library/Frameworks"
+	chroot "$MOUNT" ln -fs /System/Library/Frameworks/Foundation.framework /Users/stuart/Library/Frameworks/Foundation.framework
+	
 	# ddistnoted content is provided in PureFoundation archive too
 	echo " * ddistnoted.root.tar.bz2"
 	tar xjpf $PACKAGES/ddistnoted.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
@@ -935,10 +951,9 @@ if [ ! "$ADD_PUREFOUNDATION" = "n" ]; then
 	echo " * configd_plugins.root.tar.bz2 (InterfaceNamer.bundle, KernelEventMonitor.bundle and Kicker.bundle)"
 	tar xjpf $PACKAGES/configd_plugins.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log 
 
-	# FIXME add chown -R ..
-	#chown root:wheel $MOUNT/System/Library/LaunchDaemons/com.apple.configd.plist
-	chown root:wheel $MOUNT/System/Library/LaunchDaemons/org.puredarwin.ddistnoted.plist
-	# + /Library/Preferences/SystemConfiguration/preferences.plist
+	chown -R root:wheel $MOUNT/System/Library/LaunchDaemons/
+
+	# FIXME ? + /Library/Preferences/SystemConfiguration/preferences.plist
 fi
 
 # User login support (default: y)
@@ -963,6 +978,7 @@ if [ ! "$ADD_LOGIN" = "n" ]; then
 fi
 
 # FIXME add MacPorts sources & bin? archive? 
+
 # Add MacPorts tcl requirements (default: y)
 if [ ! "$ADD_MACPORTS_TCL" = "n" ]; then
 	# Needed in order to be able to compile MacPorts and probably with it.
@@ -983,7 +999,6 @@ if [ "$ADD_X" = "y" ]; then
 	chroot ${MOUNT} /usr/X11R6/bin/fc-cache -v -f /usr/X11R6/lib/X11/fonts/
 fi
 
-
 # DTrace facility (default: n)
 #
 # 	DTrace is not present on http://src.macosforge.org/Roots/
@@ -994,7 +1009,7 @@ fi
 if [ "$ADD_DTRACE" = "y" ]; then
 
 	echo " * dtrace.root.tar.bz2"
-	tar xjpf $DIRNAME/$BINARYROOTS_DEFAULT_DIR/9F33pd1/dtrace.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+	tar xjpf $PACKAGES/dtrace.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
 
 	#missingstuff /usr/sbin/dtrace
 	#missingstuff /System/Library/PrivateFrameworks/Symbolication.framework
@@ -1036,11 +1051,18 @@ if [ "$ADD_CLONE" = "y" ]; then
 	# FIXME At this time, a pd_fetch & pd_thin against the desired target needs to be done manually
 	#       in order to satisfy the package dependencies requested by a full PureDarwin (c.f. pd_roots)
 	# (bootstrap -> full release) egg vs chicken..
-	cat $DIRNAME/../setup/pd_config |
-		sed 's/BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/' |
-		sed 's/PUREDARWIN_RELEASE="bootstrap"/#PUREDARWIN_RELEASE="bootstrap"/' |
-		sed 's/#BINARYROOTS_LIST_FILE="pd_roots"/BINARYROOTS_LIST_FILE="pd_roots"/' |
-		sed 's/#PUREDARWIN_RELEASE=""/PUREDARWIN_RELEASE=""/' > ${MOUNT}/usr/local/share/puredarwin/setup/pd_config
+#	cat $DIRNAME/../setup/pd_config |
+#		sed 's/BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/' |
+#		sed 's/PUREDARWIN_RELEASE="bootstrap"/#PUREDARWIN_RELEASE="bootstrap"/' |
+#		sed 's/#BINARYROOTS_LIST_FILE="pd_roots"/BINARYROOTS_LIST_FILE="pd_roots"/' |
+#		sed 's/#PUREDARWIN_RELEASE=""/PUREDARWIN_RELEASE=""/' > ${MOUNT}/usr/local/share/puredarwin/setup/pd_config
+
+
+	# FIXME below should disappear (with deps)
+	# An arbitrary mountpoint potentially usefull on read-only mode
+	mkdir -p ${MOUNT}/Volumes/PureDarwin
+	# Idem
+	mkdir -p ${MOUNT}/tmp/i386
 
 fi
 
@@ -1061,12 +1083,6 @@ if [ "$ADD_CLONE_PACKAGES" = "y" ]; then
 	#hg clone $DIRNAME/.. ${MOUNT}/usr/local/share/puredarwin
 	# Can take a lot of disk space
 	#hg clone $DIRNAME/$TEMPDIR ${MOUNT}/usr/local/share/puredarwin/$TEMPDIR
-
-	# FIXME below should disappear (with deps)
-	# An arbitrary mountpoint potentially usefull on read-only mode
-	mkdir -p ${MOUNT}/Volumes/PureDarwin
-	# Idem
-	mkdir -p ${MOUNT}/tmp/i386
 fi
 
 ###############################################################################
