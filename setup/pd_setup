@@ -739,8 +739,8 @@ for PROJECT in `cat $DIRNAME/$BINARYROOTS_LIST_FILE` ; do
 			--exclude '/AppleInternal' \
 			--exclude '/usr/lib/libSystem.B_debug.dylib' \
 			--exclude '/usr/lib/libSystem.B_profile.dylib' \
-			#--exclude '/usr/local/lib/*' \
  			--exclude '*.h' >> ${MOUNT}/private/var/log/pd_setup.log
+			#--exclude '/usr/local/lib/*' \
 	else	
 		tar xjpf $PACKAGES/$PROJECT.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
 	fi
