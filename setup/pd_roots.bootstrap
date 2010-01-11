@@ -26,6 +26,8 @@ IOUSBFamily
 IOUSBMassStorageClass
 Libm
 Libsystem
+OpenSSL
+OpenSSL096
 Security
 adv_cmds
 autozone
