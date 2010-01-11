@@ -70,7 +70,10 @@ export TERM=xterm-color
 sysctl -w kern.hostname="PureDarwin.local"
 
 # Populating /dev/fd/ with mount_fdesc
-/sbin/mount -t fdesc -o union stdin /dev
+/bin/df | /usr/bin/grep fdesc
+if [ $? -eq 0 ]; then
+	/sbin/mount -t fdesc -o union stdin /dev
+fi
 
 # Workaround read-write
 #/sbin/mount -uw /
@@ -84,10 +87,18 @@ DIRNAME=$(cd $(dirname $0) && pwd)
 
 add_user () {
 
-	T_VOLUME="/Volumes/PureDarwin" # This one should exist
-	/sbin/mount -t hfs $INSTALLDEV $T_VOLUME
+	TARGET="$1"
+	MOUNT="/Volumes/$2"
+
+	# The mount point must exist (prior) without ramdisk
+	#mkdir -p "$MOUNT"
+	# FIXME s1 is static.
+	/sbin/mount -t hfs "${TARGET}s1" "$MOUNT"
+	
 	chroot $MOUNT /usr/local/share/puredarwin/scripts/pd_injectuser /
-	/sbin/umount -f $T_VOLUME
+	# Alternative: FIXME add dscl / pd_adduser
+
+	/sbin/umount -f $MOUNT
 }
 
 welcome() {
@@ -150,9 +161,9 @@ do
 		INSTALLDEV=`$DIRNAME/../setup/pd_setup_files/iofindwholemedia ${INSTALLDEV}`
 
 		if [ ! -b "${INSTALLDEV}" ]; then
-			echo ""
-			echo "${T_INSTALLDEV} doesn't exist, please enter one of the listed devices."
-			echo ""
+			echo
+			echo "\"${T_INSTALLDEV}\" doesn't exist, please enter one of the listed devices."
+			echo
 		fi
 	fi
 done
@@ -161,31 +172,37 @@ done
 # SETUP BASE
 ###############################################################################
 
-#PUREDARWIN_RELEASE=""
-#until [ ! : ]
-#do
-#	echo "The following flavors are available for installation: "
-#	echo "1. PureDarwin"
-#	echo "2. Puredarwin boostrap"
-#	echo "3. PureDarwin nano"
-#	printf "Which PureDarwin release would you like to deploy? "
-#	read CHOICE
-#	echo
-#	case ${CHOICE} in
-#		1) PUREDARWIN_RELEASE="default"
-#		   ;;
-#		2) PUREDARWIN_RELEASE="bootstrap"
-#		   ;;
-#		3) PUREDARWIN_RELEASE="nano"
-#		   ;;
-#	esac
-#done
-
-# Deploy a full release at this time.
-/usr/local/share/puredarwin/setup/pd_setup $INSTALLDEV PureDarwin 
+PUREDARWIN_RELEASE=""
+until [ ! : ]
+do
+	echo "The following releases are available for installation: "
+	echo "1. PureDarwin"
+	echo "2. Puredarwin boostrap"
+	echo "3. PureDarwin nano"
+	printf "Your Choice: "
+	read CHOICE
+	case ${CHOICE} in
+		s) /bin/sh
+		   ;;   
+		1) PUREDARWIN_RELEASE="" /usr/local/share/puredarwin/setup/pd_setup "$INSTALLDEV" PureDarwin
+		   break
+		   ;;
+		2) PUREDARWIN_RELEASE="bootstrap"
+		   PUREDARWIN_RELEASE="bootstrap" /usr/local/share/puredarwin/setup/pd_setup "$INSTALLDEV" PureDarwin
+		   break
+		   ;;
+		3) PUREDARWIN_RELEASE="nano"
+		   PUREDARWIN_RELEASE="nano" /usr/local/share/puredarwin/setup/pd_setup "$INSTALLDEV" PureDarwin
+		   break
+		   ;;
+		*) echo
+		   echo "\"${CHOICE}\" doesn't exist, please enter one of the listed releases."
+		   echo
+		   ;;
+	esac
+done
 
 echo "Installation of the base system should now be complete."
-echo ""
 
 ###############################################################################
 # POST CONFIG 
@@ -196,19 +213,27 @@ echo ""
 
 until [ ! : ]
 do
+	echo
 	echo "You may: "
-#	echo "1. Add a user to the new system"
-	echo "1. Reboot"
+	echo "1. Reboot" 
 	echo "2. Spawn a shell"
+	if [ "$PUREDARWIN_RELEASE" = "" ]; then
+		echo "3. Add a user"
+	fi	
 	printf "Your Choice: "
 	read CHOICE
-	echo
 	case ${CHOICE} in
-#		1) add_user
-#		   ;;
+		s) /bin/sh
+		   ;;   
 		1) break
 		   ;;
 		2) /bin/sh
+		   ;;
+		3) if [ "$PUREDARWIN_RELEASE" = "" ]; then
+			add_user "$INSTALLDEV" PureDarwin
+		   fi	
+		   ;;
+		*) echo "$0: No such choice: $CHOICE"   
 		   ;;
 	esac
 done
@@ -218,6 +243,7 @@ done
 # REBOOT 
 ###############################################################################
 
+echo
 echo "Installation should now be complete. Press 'enter' to restart"
 read RESTART
 echo ""
@@ -228,5 +254,4 @@ reboot
 
 # zsh interactive
 #/bin/zsh -i
-
 
