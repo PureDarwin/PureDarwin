@@ -71,7 +71,7 @@ sysctl -w kern.hostname="PureDarwin.local"
 
 # Populating /dev/fd/ with mount_fdesc
 /bin/df | /usr/bin/grep fdesc
-if [ $? -eq 0 ]; then
+if [ ! $? -eq 0 ]; then
 	/sbin/mount -t fdesc -o union stdin /dev
 fi
 
@@ -143,6 +143,7 @@ echo
 INSTALLDEV="novalue"
 until [[ ${INSTALLDEV} != "" && -b ${INSTALLDEV} ]]
 do
+	echo
 	echo "The following devices are available for installation:"
 	until [[ ! -z "${FOO}" ]]
 	do
@@ -163,7 +164,6 @@ do
 		if [ ! -b "${INSTALLDEV}" ]; then
 			echo
 			echo "\"${T_INSTALLDEV}\" doesn't exist, please enter one of the listed devices."
-			echo
 		fi
 	fi
 done
@@ -175,6 +175,7 @@ done
 PUREDARWIN_RELEASE=""
 until [ ! : ]
 do
+	echo
 	echo "The following releases are available for installation: "
 	echo "1. PureDarwin"
 	echo "2. Puredarwin boostrap"
@@ -197,19 +198,20 @@ do
 		   ;;
 		*) echo
 		   echo "\"${CHOICE}\" doesn't exist, please enter one of the listed releases."
-		   echo
 		   ;;
 	esac
 done
 
+echo
 echo "Installation of the base system should now be complete."
 
 ###############################################################################
 # POST CONFIG 
 ###############################################################################
 
+# FIXME: needed? where?
 # Unpopulating /dev 
-/sbin/umount /dev
+#/sbin/umount /dev
 
 until [ ! : ]
 do
@@ -222,6 +224,7 @@ do
 	fi	
 	printf "Your Choice: "
 	read CHOICE
+	echo
 	case ${CHOICE} in
 		s) /bin/sh
 		   ;;   
@@ -233,7 +236,7 @@ do
 			add_user "$INSTALLDEV" PureDarwin
 		   fi	
 		   ;;
-		*) echo "$0: No such choice: $CHOICE"   
+		*) echo "\"${CHOICE}\" doesn't exist, please enter one of the listed choice."
 		   ;;
 	esac
 done

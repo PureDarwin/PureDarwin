@@ -78,7 +78,6 @@ if [ "$PUREDARWIN_RELEASE" = "" ]; then
 	# FIXME add check(s)
 fi
 
-echo "PUREDARWIN_RELEASE: $PUREDARWIN_RELEASE"
 #
 # Binaryroot projects list local file
 #

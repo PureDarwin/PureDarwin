@@ -364,9 +364,12 @@ function mr_proper {
 		fi
 	fi
 
-	# Revert diskarbitrationd mode to on 
-	launchctl load /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
-	
+	# diskarbitrationd is not present nor needed in the "nano" and "bootstrap" releases.
+	if [ -e "/System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist" ]; then
+		# Revert diskarbitrationd mode to on 
+		launchctl load /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+	fi
+
 	# Remove any previous copies
 	#if [ -e $TARGET ];then
 	#	rm -rf "$TARGET"
@@ -432,7 +435,7 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X
 	#bsdtar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
 	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X
-	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*' 
+	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*' -u
 
 	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
 fi
@@ -636,8 +639,11 @@ else
 		export RDEVICE=${DEVICE/disk/rdisk}
 	fi
 
-	# Disable automounting in Finder and popping-up dialog boxed
-	launchctl unload /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+	# diskarbitrationd is not present nor needed in the "nano" and "bootstrap" releases.
+	if [ -e "/System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist" ]; then
+		# Disable automounting in Finder and popping-up dialog boxed
+		launchctl unload /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+	fi
 
 	export COMMAND_LINE_INSTALL=1
 	umount -f ${DEVICE}s1
@@ -702,8 +708,11 @@ else
 	# w
 	# q
 
-	# Enable "automounting in Finder and popping-up dialog boxed" on Mac OS X host
-	launchctl load /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+	# diskarbitrationd is not present nor needed in the "nano" and "bootstrap" releases.
+	if [ -e "/System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist" ]; then
+		# Enable "automounting in Finder and popping-up dialog boxed" on Mac OS X host
+		launchctl load /System/Library/LaunchDaemons/com.apple.diskarbitrationd.plist
+	fi	
 fi	
 
 # Disable Spotlight
