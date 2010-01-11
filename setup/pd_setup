@@ -507,10 +507,12 @@ if [ ! $EXT = "" ]; then
 	# FIXME add size in pd_config
 	#SIZE=$(du -h -d 0 "$SOURCE" | cut -f 1 | sed 's/M//'g) # without "M"
 	#SIZE=$(expr $SIZE + $(expr 255 - $SIZE)) # add some MB to be on the safe side
-	SIZE="1618"
+	SIZE="1618" # full
 	if [ "$ADD_RELEASE_NANO" = "y" ]; then
 		if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
-			SIZE="150"
+			SIZE="150" # nano
+		else
+			SIZE="640" # bootstrap
 		fi
 	fi
 
@@ -1046,17 +1048,6 @@ if [ "$ADD_CLONE" = "y" ]; then
 
 	# c.f. pd_config: DESTDIR="$TEMPDIR/Packages_D${DARWIN_RELEASE}_${ARCH}"
 	cp -Rfp $DIRNAME/../setup/pd_setup_files	${MOUNT}/usr/local/share/puredarwin/setup/
-
-	# Alterate the clone pd_config in order to not deploy another boostrap version but a full PureDarwin
-	# FIXME At this time, a pd_fetch & pd_thin against the desired target needs to be done manually
-	#       in order to satisfy the package dependencies requested by a full PureDarwin (c.f. pd_roots)
-	# (bootstrap -> full release) egg vs chicken..
-#	cat $DIRNAME/../setup/pd_config |
-#		sed 's/BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"/' |
-#		sed 's/PUREDARWIN_RELEASE="bootstrap"/#PUREDARWIN_RELEASE="bootstrap"/' |
-#		sed 's/#BINARYROOTS_LIST_FILE="pd_roots"/BINARYROOTS_LIST_FILE="pd_roots"/' |
-#		sed 's/#PUREDARWIN_RELEASE=""/PUREDARWIN_RELEASE=""/' > ${MOUNT}/usr/local/share/puredarwin/setup/pd_config
-
 
 	# FIXME below should disappear (with deps)
 	# An arbitrary mountpoint potentially usefull on read-only mode

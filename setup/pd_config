@@ -70,18 +70,35 @@ ARCH="i386"
 #
 # PureDarwin release (flavor)
 #
-PUREDARWIN_RELEASE=""
-#PUREDARWIN_RELEASE="bootstrap"
-#PUREDARWIN_RELEASE="nano"
+if [ "$PUREDARWIN_RELEASE" = "" ]; then
+	PUREDARWIN_RELEASE=""
+	#PUREDARWIN_RELEASE="bootstrap"
+	#PUREDARWIN_RELEASE="nano"
+# else
+	# FIXME add check(s)
+fi
 
+echo "PUREDARWIN_RELEASE: $PUREDARWIN_RELEASE"
 #
 # Binaryroot projects list local file
 #
-
 # FIXME some project names have changed between D9 and D10
-BINARYROOTS_LIST_FILE="pd_roots" 
-#BINARYROOTS_LIST_FILE="pd_roots.bootstrap"
-#BINARYROOTS_LIST_FILE="pd_roots.nano"  
+if [ "$BINARYROOTS_LIST_FILE" = "" ]; then
+
+	if [ "$PUREDARWIN_RELEASE" = "" ]; then
+		BINARYROOTS_LIST_FILE="pd_roots"
+	fi
+
+	if [ "$PUREDARWIN_RELEASE" = "bootstrap" ]; then
+		BINARYROOTS_LIST_FILE="pd_roots.bootstrap"
+	fi
+
+	if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
+		BINARYROOTS_LIST_FILE="pd_roots.nano"  
+	fi
+#else
+	# FIXME add check(s)
+fi
 
 #
 # Extra Binaryroot projects list local file (e.g. PureFoundation)
