@@ -1005,6 +1005,9 @@ if [ "$ADD_X" = "y" ]; then
 		echo " * $(basename $f)"
 		tar xjpf $f >> ${MOUNT}/private/var/log/pd_setup.log
 	done
+ 
+	# Removing MacPorts archive "noise" (+COMMENT +CONTENTS +DESC +PORTFILE and +STATE in /)
+	rm -f "${MOUNT}/+*"
 
 	# Prevent error: "Fontconfig error: Cannot load default config file" which "cycles" X
 	chroot ${MOUNT} /usr/X11R6/bin/fc-cache -v -f /usr/X11R6/lib/X11/fonts/
