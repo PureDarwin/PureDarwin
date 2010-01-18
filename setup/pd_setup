@@ -243,9 +243,6 @@ PACKAGES=$DIRNAME/$DESTDIR
 # Add PureDarwin binaries and scripts to $PATH
 export PATH=$DIRNAME/pd_setup_files/:$PATH
 
-# Location for temporary auxiliary ISO
-ELTORITOISO=/tmp/eltorito.iso
-
 # mkisofs binary path (note: it doesn't come from darwin nor macosx)
 MKISOFS_BIN="$DIRNAME/pd_setup_files/mkisofs"
 
@@ -312,10 +309,23 @@ function mr_proper {
 	# Clean up temporary files and folders
 	echo "Cleaning up"
 
-	if [ -e $ELTORITOISO ];then
-		echo "Removing $ELTORITOISO"
-		rm $ELTORITOISO
-	fi
+	#if [ -e $T_TARGET_P2 ];then
+	#	echo "Removing $T_TARGET_P2"
+	#	rm $T_TARGET_P2
+	#fi
+
+	#if [ -e $T_TARGET_P3 ];then
+	#	echo "Removing $T_TARGET_P3"
+	#	rm $T_TARGET_P3
+	#fi
+
+	# Detach all (vn)device nodes
+	echo "Detaching vndevice nodes"
+	
+	/usr/libexec/vndevice detach /dev/vn0
+	#/usr/libexec/vndevice detach /dev/vn1
+	#/usr/libexec/vndevice detach /dev/vn2
+	/usr/libexec/vndevice detach /dev/vn3
 
 	if [ -e /tmp/i386 ];then
 		echo "Removing /tmp/i386"
@@ -435,7 +445,7 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X
 	#bsdtar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
 	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X
-	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*' -u
+	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*'
 
 	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
 fi
@@ -456,9 +466,27 @@ if [ ! $EXT = "" ]; then
 	# Ingredients for iso, dmg, vmwarevm, etc.. 
 	#
 
+	# Arbitrary example on "nano":
+	#
+	#  Partition map (with 512 byte blocks) on 'PureDarwin_nano.iso' <-- $TARGET
+	#   #:                type name       length   base   ( size )
+	#   1: Apple_partition_map Apple          63 @ 1     
+	#   2:          Apple_Free Extra        2016 @ 64 <----------------- Eltorito   
+	#   3:           Apple_HFS PureDarwin 305056 @ 2080   (149.0M) <---- HFS
+	#   4:          Apple_Free Extra          64 @ 307136
+
+	T_TARGET=`/usr/bin/basename $TARGET | awk -F "." '{print $1}'`
+
+	#######################################################################
+	# CREATING PARTITION 2 ELTORITO ISO ($T_TARGET_P2)
+	#######################################################################
+
+	# Location for temporary auxiliary image
+	T_TARGET_P2=/tmp/${T_TARGET}_P2.iso
+	
 	# Copy bootloader cdboot (but not only) for CD-ROMs
 	echo "Populating /tmp/i386 with bootloader files"
-	#echo "Making an ISO containing the boot-132 files and that has cdboot as its El Torito boot image at $ELTORITOISO..."
+	#echo "Making an ISO containing the boot-132 files and that has cdboot as its El Torito boot image at $T_TARGET_P2..."
 	mkdir -p /tmp/i386
 	cp $BOOTi386/* /tmp/i386/
 
@@ -482,28 +510,27 @@ if [ ! $EXT = "" ]; then
 		#       -c              Path and filename of the boot catalog to be used when making an "El Torito" bootable CD
 		#       -b              Eltorito_boot path and filename of the boot image to be used when making an "El Torito" bootable CD
 		#       -o              Target written image file
-		echo "Creating $ELTORITOISO"
-		"$MKISOFS_BIN" -quiet -V "$VOLNAME" -no-emul-boot -boot-load-size 4 -c boot.cat -b $CDBOOT -o "$ELTORITOISO" .
+		echo "Creating $T_TARGET_P2 (El Torito image)"
+		"$MKISOFS_BIN" -quiet -V "$VOLNAME" -no-emul-boot -boot-load-size 4 -c boot.cat -b $CDBOOT -o "$T_TARGET_P2" .
 
 		# Sector count
-		sectors=$(du "$ELTORITOISO" | tail -1 | awk '{print $1}')
-		size_mb=$(du -h "$ELTORITOISO" | tail -1 | awk '{print $1}')
+		sectors=$(du "$T_TARGET_P2" | tail -1 | awk '{print $1}')
+		size_mb=$(du -h "$T_TARGET_P2" | tail -1 | awk '{print $1}')
 
-		#echo "$ELTORITOISO has $sectors sectors, contains the boot-132 files and that has cdboot as its El Torito boot image"
-		echo "created: $ELTORITOISO ($size_mb | $sectors sectors)"
+		#echo "$T_TARGET_P2 has $sectors sectors, contains the boot-132 files and that has cdboot as its El Torito boot image"
+		echo "created: $T_TARGET_P2 ($size_mb | $sectors sectors)"
 
 	cd - > /dev/null
 
-	#
-	# Create a bootable image 
-	#
+	#######################################################################
+	# TARGET 
+	#######################################################################
 
 	# Remove any previous copies
 	#if [ -e "$TARGET" ];then
 		#rm -Rf "$TARGET"
 		#echo "removed: $TARGET"
 	#fi
-
 
 	# Default size of the bootable image to be created in Megabyte
 	# FIXME check size < thinned binaryroots dir?
@@ -519,7 +546,10 @@ if [ ! $EXT = "" ]; then
 		fi
 	fi
 
-	# Create a bootable image
+	#######################################################################
+	# CREATING THE FINAL IMAGE FILE ($TARGET)
+	#######################################################################
+
 	echo "Creating $TARGET (${SIZE}M)"
 	# hdiutil: manipulate disk images (attach, verify, burn, etc)
 	#       create  new image of the given size
@@ -535,33 +565,47 @@ if [ ! $EXT = "" ]; then
 	#               >
 	#hdiutil create -ov -fs HFS+J -o "$TARGET" -size ${SIZE}M -layout NONE -type UDIF -nospotlight
 	#mv $TARGET.dmg $TARGET
+	
+	# Alternative via `dd'
+	dd if=/dev/zero of="$TARGET" bs=512k count=$(expr $SIZE '*' 2)
+	#dd if=/dev/zero of="$TARGET" bs=1024k count=$SIZE
 
-	dd if=/dev/zero of="$TARGET" bs=1024k count=$SIZE
+	#######################################################################
+	# ATTACHING THE FINAL IMAGE FILE
+	#######################################################################
 
-
+	# `mv' is needed because `hdid' fails with unknown extension as .vmwarevm or .foobar
+	#mv "$TARGET" "$TARGET.dmg"
+	# hdid - HDI driver backing store service
+	# 
+	# WARNING: hdid is a "blocker".
+	#
 	# Suppress automatic mounting of any filesystems in the image
 	# 	This will result in /dev entries being created and (for non-kernel-attached images)
 	# 	a process in the background, but no volumes will be mounted.
-	# FIXME `hdid' is not buildable nor available in Darwin, consequently the next steps are failing!
-	# FIXME `hdid' fails with unknown extension as .vmwarevm or .foobar
-	mv "$TARGET" "$TARGET.dmg"
-	export DEVICE=$(hdid -nomount "$TARGET.dmg" |  head -1 | awk '{print $1}')
-	export RDEVICE=$(echo $DEVICE | sed s/disk/rdisk/)
-	mv "$TARGET.dmg"  "$TARGET"
-	echo "Removed automatic mounting of any FS in $TARGET ($DEVICE entry kept)"
-	
-	# FIXME Alternative `nbdst' <- not available.
+	#export DEVICE=$(hdid -nomount "$TARGET.dmg" |  head -1 | awk '{print $1}')
+	#export RDEVICE=$(echo $DEVICE | sed s/disk/rdisk/)
+	#mv "$TARGET.dmg"  "$TARGET"
+	#echo "Removed automatic mounting of any FS in $TARGET ($DEVICE entry kept)"
 
-	# FIXME Alternative via `vndevice' for Darwin land does not behave as a disk device node..
-	# but enable a /dev/{r}vn0 directly linked to the image via a shadow file.
-	#mount -uw /
-	#touch /shadowfile
-	#/usr/libexec/vndevice attach /dev/vn0 "$TARGET"
-	#/usr/libexec/vndevice shadow /dev/vn0 /shadowfile
-	#export DEVICE="/dev/vn0"
-	#export RDEVICE="/dev/rvn0"
-	# [...]
-	#/usr/libexec/vndevice detach /dev/vn0
+	# Alternative via `nbdst'
+	# not available.
+	
+	# Alternative via `vndevice' 
+	# 
+	# WARNING: it does not behave as a real disk device node..
+	# ..but enable a /dev/{r}vn0 directly linked to the image (via a shadow file).
+	#
+	####mount -uw /
+	###touch /shadowfile0
+	/usr/libexec/vndevice attach /dev/vn0 "$TARGET"
+	###/usr/libexec/vndevice shadow /dev/vn0 /shadowfile0
+	export DEVICE="/dev/vn0"
+	export RDEVICE="/dev/rvn0"
+
+	#######################################################################
+	# PARTITIONING THE FINAL IMAGE FILE
+	#######################################################################
 
 	echo "Initializing $RDEVICE"
 	# pdisk -initialise (Undocumented arg)
@@ -582,34 +626,61 @@ if [ ! $EXT = "" ]; then
 	pdisk $RDEVICE -createPartition "$VOLNAME" Apple_HFS $sectors $(expr $blocks - $sectors) > /dev/null
 	# figure out what slice the partition was created on
 	slice=`pdisk $RDEVICE -dump | grep "$VOLNAME" | awk -F: '{print $1}' | awk -F" " '{print $1}'` 
-	echo "Partition created on slice $slice ($blocks blocks)"
+	echo "Partition created on slice $slice ($blocks blocks / $(expr $blocks '*' 512 / 1024 / 1024)MB )"
 
+	#######################################################################
+	# COPYING PARTITION 2 TO THE FINAL IMAGE FILE
+	#######################################################################
 
-	# this is the tricky part
-	# dd
+	# Migrating partition 2
+	# dd:
 	#	skip=n   Skip n blocks from the beginning of the input before copying.
 	#	         On input which supports seeks, an lseek(2) operation is used.
 	#                Otherwise, input data is read and discarded.
 	#       seek=n   Seek n blocks from the beginning of the output before copying. 
 	#       bs=n     Set both input and output block size to n bytes, superseding the ibs and obs operands.
-	#
-	# Partition map (with 512 byte blocks) on 'VirtualMachines/full.vmwarevm/full.iso'
-	#  #:                type name    length   base    ( size )
-	#  1: Apple_partition_map Apple       63 @ 1      
-	#  2:          Apple_Free Extra     2664 @ 64      (  1.3M) <=== ELTORITOISO is "dd-ed" here!
-	#  3:           Apple_HFS full   2524440 @ 2728    (  1.2G)
-	#  4:          Apple_Free Extra       64 @ 2527168
-	# Device block size=512, Number of Blocks=2527232 (1.2G)
-	# DeviceType=0x0, DeviceId=0x0
-	echo "ddying $ELTORITOISO to $RDEVICE"
-	dd if="$ELTORITOISO" of=$RDEVICE skip=64 seek=64 bs=512
+	# 
+	echo "ddying $T_TARGET_P2 to $RDEVICE"
+	dd if="$T_TARGET_P2" of=$RDEVICE skip=64 seek=64 bs=512
 
-	echo "Initializing ${RDEVICE}s${slice} (HFS+ volume)"
-	newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s${slice}
+	#######################################################################
+	# CREATING PARTITION 3 HFS ($T_TARGET_P3)
+	#######################################################################
 
-	echo "Mounting ${DEVICE}s${slice} on $MOUNT"
+	# Location for temporary auxiliary image
+	T_TARGET_P3=/tmp/${T_TARGET}_P3.iso
+
+	echo "Creating $T_TARGET_P3 (HFS)"
+	# FIXME FIXME FIXME FIXME SIZE !!!	
+	dd if=/dev/zero of="$T_TARGET_P3" bs=1024k count=`expr $SIZE - 5`
+	###touch /shadowfile3
+	/usr/libexec/vndevice attach /dev/vn3 "$T_TARGET_P3"
+	###/usr/libexec/vndevice shadow /dev/vn3 /shadowfile3
+	export DEVICE="/dev/vn3"
+	export RDEVICE="/dev/rvn3"
+	# [...]
+	#/usr/libexec/vndevice detach /dev/vn3
+
+	#######################################################################
+	# FORMATING PARTITION 3 HFS ($T_TARGET_P3)
+	#######################################################################
+
+	# Via hdid:
+	#echo "Initializing ${RDEVICE}s${slice} (HFS+ volume)"
+	#newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s${slice}
+
+	# Via vndevice:
+	echo "Initializing ${RDEVICE} (HFS+ volume)"
+	newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}
+
+	# Via hdid:
+	#echo "Mounting ${DEVICE}s${slice} on $MOUNT"
+	#mount -t hfs -o perm ${DEVICE}s${slice} "$MOUNT"
+
+	# Via vndevice
 	mkdir -p "$MOUNT"
-	mount -t hfs -o perm ${DEVICE}s${slice} "$MOUNT"
+	echo "Mounting ${DEVICE} on $MOUNT"
+	mount -t hfs -o perm ${DEVICE} "$MOUNT"
 
 	# copying the boot2 HFS+ startup file 
 	echo "Installing stage 2 loader (boot) to the partition's root directory"
@@ -1564,12 +1635,45 @@ if [ ! $EXT = "" ]; then
 		###############################################################
 		iso)
 		T_TARGET=$(dirname $TARGET)/$(basename $TARGET | awk -F '.' '{print $1".iso"}')
+
+
+		# This `fsck' will not report error, it's after `dd'
+ 		# /sbin/fsck_hfs -fy /dev/vn3
+
+		# Trying to avoid ressource busy..
+		sync 
+		
+		# Umount the HFS mounted image (partition 3)
+		umount -f "$MOUNT" 
+
+		# Detach the node attached to $T_TARGET_P3
+		/usr/libexec/vndevice detach /dev/vn3
+		
+		# Restoring var 
+		export RDEVICE="/dev/rvn0"
+		
+		# Migrating partition 3
+		echo "ddying $T_TARGET_P3 to $RDEVICE"
+		dd if="$T_TARGET_P3" of=$RDEVICE seek=$sectors bs=512
+
+		# Detach the final image file (vn)device node
+		/usr/libexec/vndevice detach /dev/vn0
+
+		# FIXME FIXME FIXME
+		# Missing fsck -fy on the HFS partition of the resulting final image
+		# leading to the same pb (how ironic), `hdid' or an equivalent is needed until
+		# somebody fix the volume headers of the HFS partition after `dd' (as `fsck' is doing)
+		# 
+		# Note: no pb on "nano" because diskarbitrationd is not launched, it seems..
+		# FIXME FIXME FIXME
 		;;
 		
 		###############################################################
 		# VMware virtual disk (.vmdk) 
 		###############################################################
 		vmdk)
+
+		# FIXME: dd + vndevice not handle here..
 		T_TARGET=$(dirname $TARGET)/$(basename $TARGET | awk -F '.' '{print $1".iso"}')
 		# Forced converting iso to VMware vmdk
 		echo "Converting image to VMware VMDK disk image, please wait..."
@@ -1581,6 +1685,37 @@ if [ ! $EXT = "" ]; then
 		###############################################################
 		vmwarevm)
 		T_TARGET="$(basename $TARGET | awk -F '.' '{print $1".iso"}')"
+
+		# This `fsck' will not report error, it's after `dd'
+ 		# /sbin/fsck_hfs -fy /dev/vn3
+
+		# Trying to avoid ressource busy..
+		sync 
+		
+		# Umount the HFS mounted image (partition 3)
+		umount -f "$MOUNT" 
+
+		# Detach the node attached to $T_TARGET_P3
+		/usr/libexec/vndevice detach /dev/vn3
+
+		# Restoring var 
+		export RDEVICE="/dev/rvn0"
+		
+		# Migrating partition 3
+		echo "ddying $T_TARGET_P3 to $RDEVICE"
+		dd if="$T_TARGET_P3" of=$RDEVICE seek=$sectors bs=512
+
+		# Detach the final image file (vn)device node
+		/usr/libexec/vndevice detach /dev/vn0
+
+		# FIXME FIXME FIXME
+		# Missing fsck -fy on the HFS partition of the resulting final image
+		# leading to the same pb (how ironic), `hdid' or an equivalent is needed until
+		# somebody fix the volume headers of the HFS partition after `dd' (as `fsck' is doing)
+		# 
+		# Note: no pb on "nano" because diskarbitrationd is not launched, it seems..
+		# FIXME FIXME FIXME
+
 		# Moving the .vmwarevm file to .iso
 		mv "$TARGET" "$T_TARGET"
 		# Creating the .vmwarevm directory
@@ -1715,7 +1850,7 @@ EOOF
 			# Creating a (second) VMware4 disk image via qemu-img
 			# SIZE at least equal to "the parent" one (most of the time, the bootstrap one)
 			# FIXME add check on the size
-			qemu-img create -f vmdk $TARGET/second.vmdk 2048M
+			qemu-img create -f vmdk $TARGET/second.vmdk 4096M
 
 			# Reflect the disk image in the .vmx file
 			cat >> $TARGET/$(basename $TARGET | awk -F '.' '{print $1".vmx"}') <<EOOF
