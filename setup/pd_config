@@ -168,6 +168,8 @@ ADD_CHAMELEON_RC4="y"		# (default: n) EXCLUSIVE Choose Chameleon 2.0-RC4-r684?
 
 ADD_MBR_ERASE="y"		# (default: y) Erase existing partition table (instead of updating the MBR)?
 
+ADD_HFS_JOURNAL="y"		# (default: y) Create a journaled HFS+ volume
+
 ADD_VOODOO_XNU="y"		# (default: y) Add Voodoo Xnu-dev kernels ?
 # On 9.7, problems with disk0s1: ioctl(_IOW,'d',31,32) is unsupported
 ADD_VOODOO_XNU_9_5_0="y"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
@@ -250,6 +252,9 @@ fi
 #
 if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
 	ADD_RELEASE_NANO="y"		# Switch used in pd_setup
+
+	ADD_HFS_JOURNAL="n"		# (default: y) Create a journaled HFS+ volume
+
 	ADD_PUREFOUNDATION="n"
 	ADD_LOGIN="n"	      
 	ADD_DEFAULT_USER="n"
@@ -282,6 +287,9 @@ fi
 #
 if [ "$PUREDARWIN_RELEASE" = "bootstrap" ]; then
 	ADD_RELEASE_NANO="y"		# Similar to nano with many switches used in `pd_setup'
+
+	ADD_HFS_JOURNAL="n"		# (default: y) Create a journaled HFS+ volume
+	
 	ADD_PUREFOUNDATION="y"	
 	ADD_LOGIN="n"			# (default: y) Add multiuser login support (pamsessioncreate, pcsc)
 	ADD_DEFAULT_USER="n"		# (default: y) Add a default user account: toor (password: toor)?

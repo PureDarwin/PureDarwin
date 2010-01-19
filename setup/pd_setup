@@ -435,7 +435,7 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X
 	#bsdtar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
 	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X
-	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*' -u
+	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*'
 
 	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
 fi
@@ -604,8 +604,14 @@ if [ ! $EXT = "" ]; then
 	echo "ddying $ELTORITOISO to $RDEVICE"
 	dd if="$ELTORITOISO" of=$RDEVICE skip=64 seek=64 bs=512
 
-	echo "Initializing ${RDEVICE}s${slice} (HFS+ volume)"
-	newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s${slice}
+	# journaled HFS+ volume (default: yes)
+	if [ ! "$ADD_HFS_JOURNAL" = "n" ]; then
+		echo "Initializing ${RDEVICE}s${slice} (Journaled HFS+ volume)"
+		newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s${slice}
+	else
+		echo "Initializing ${RDEVICE}s${slice} (HFS+ volume)"
+		newfs_hfs -s -v "$VOLNAME" ${RDEVICE}s${slice}
+	fi
 
 	echo "Mounting ${DEVICE}s${slice} on $MOUNT"
 	mkdir -p "$MOUNT"
@@ -674,8 +680,13 @@ else
 	#       -s case-sensitive HFS Plus filesystem
 	#       -J journaled HFS+ volume (default journal size is 8MB)
 	#       -v volume name (which is the following arg)
-	/sbin/newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s1
-
+	# journaled HFS+ volume (default: yes)
+	# FIXME "...s1" should not be hardcoded
+	if [ ! "$ADD_HFS_JOURNAL" = "n" ]; then
+		/sbin/newfs_hfs -s -J -v "$VOLNAME" ${RDEVICE}s1
+	else
+		/sbin/newfs_hfs -s -v "$VOLNAME" ${RDEVICE}s1
+	fi
 	# 
 	sleep 5 # FIXME fix needed for time / absolutely needed!
 
@@ -1031,6 +1042,38 @@ if [ "$ADD_DTRACE" = "y" ]; then
 	#missingstuff /usr/bin/dtruss
 	#missingstuff /usr/bin/procsystime
 fi
+
+
+# FIXME add respective var in pd_config + packages in pd_roots.extra
+# MacFUSE userland filesystem (default: n)
+#if [ "$ADD_MACFUSE" = "y" ]; then
+
+#	echo " * macfuse.root.tar.bz2"
+#	tar xjpf $PACKAGES/macfuse.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+
+#	cd "${MOUNT}" ; gunzip -c "MacFUSE.pkg/Contents/Resources/10.5/MacFUSE Core.pkg/Contents/Archive.pax.gz"  | pax -r
+#	chown -R root:wheel ${MOUNT}/Library/Filesystems/fusefs.fs/Support/fusefs.kext  
+#	chmod -R 755 ${MOUNT}/Library/Filesystems/fusefs.fs/Support/fusefs.kext
+
+	# sshfs in MacFUSE  (default: n)
+#	if [ "$ADD_MACFUSE_SSHFS" = "y" ]; then
+#		curl "http://macfuse.googlecode.com/svn/trunk/filesystems/sshfs/binary/sshfs-static-leopard" > ${MOUNT}/usr/sbin/mount_sshfs
+#		chmod a+x ${MOUNT}/usr/sbin/mount_sshfs
+#	fi
+
+	# FIXME could this "ramdisk" be used when booting on read-only medium as cd-rom?
+	# ramdisk in MacFUSE  (default: n)
+#	if [ "$ADD_MACFUSE_RAMDISK" = "y" ]; then
+#		svn co http://thebends.googlecode.com/svn/trunk/ramdisk/ ramdisk
+#		cd ramdisk/
+#		make
+#		cp ramdisk ${MOUNT}/usr/sbin/mount_ramdisk
+#		cd -
+#		rm -rf ramdisk/
+#	fi
+
+#fi
+
 
 cd - > /dev/null
 
