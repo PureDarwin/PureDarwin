@@ -1,6 +1,6 @@
 PROGRAM	= pd_xkp 
-CC	= gcc
-ARCHS   = -arch i386
+CC	= MACOSX_DEPLOYMENT_TARGET=10.5 gcc
+ARCHS   = -m32
 #ARCHS   = -arch i386 -arch x86_64 -arch ppc
 CFLAGS	= -g -fno-objc-gc -fno-replace-objc-classes -O3 $(ARCHS)
 LIBS	= -lobjc

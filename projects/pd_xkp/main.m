@@ -1,5 +1,5 @@
 /*
-# Copyright (c) 2007-2009 The PureDarwin Project.
+# Copyright (c) 2007-2010 The PureDarwin Project.
 # All rights reserved.
 #
 # @LICENSE_HEADER_START@
@@ -37,12 +37,16 @@
 int main(int argc, char **argv) {
 
 	if (argc < 2) {
-
-		int seed = 10000;
-		srand(seed);
-		sranddev();
-
-		const char *lines_panic[] = { "",
+		
+		const char *cBuffer[] = { "",
+			"Welcome to PureDarwin!                                 ",
+			"                                                       ",
+			"Darwin (c) 1999-2009 Apple, Inc. (opensource.apple.com)",
+			"Purity (c) 2007-2010 The PureDarwin Project (puredarwin.org)",
+			"",
+		};
+		/*
+		const char *cBuffer[] = { "",
 			"Debugger called: <panic>",
 			"Panic(CPU 0): Kernel trap at 0x00000000, type 00=unknown, registers:",
 			"CR0: 0x00000000, CR2: 0x00000000, CR3: 0x00000000, CR4: 0x00000000",
@@ -61,9 +65,9 @@ int main(int argc, char **argv) {
 			"BSD process name corresponding to current thread: kernel_task",
 			"",
 		};
-
+		*/
 		/*
-		const char *lines_panic[] = { "",
+		const char *cBuffer[] = { "",
 			"Welcome to PureDarwin nano",
 			"                          ",
 			"This is a proof-of-concept",
@@ -78,10 +82,12 @@ int main(int argc, char **argv) {
 		};
 		*/
 
-		int lines_count=sizeof(lines_panic) / sizeof(lines_panic[0]);
+		int lines_count=sizeof(cBuffer) / sizeof(cBuffer[0]);
 
 		id scrambler = [[Scrambler alloc] init];
-		[scrambler draw : lines_count : lines_panic : 1 ]; // 1 <- enable randomization over '0' digit(s) 
+#define RANDOMIZE_0_DIGITS 1		// 1 <- enable random final result over '0' digit(s)
+#define NOT_RANDOMIZE_0_DIGITS 0	// 0 <- do not random final result over '0' digit(s)
+		[scrambler draw : lines_count : cBuffer : NOT_RANDOMIZE_0_DIGITS ];  
 		[scrambler free];
 
 		//id crash = [[Crash alloc] init];
@@ -89,7 +95,6 @@ int main(int argc, char **argv) {
 		//[crash freed];
 		//[crash reallocate];
 		//[crash free];
-		
 		
 	} else {
 

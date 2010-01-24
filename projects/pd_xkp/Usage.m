@@ -1,5 +1,5 @@
 /*
-# Copyright (c) 2007-2009 The PureDarwin Project.
+# Copyright (c) 2007-2010 The PureDarwin Project.
 # All rights reserved.
 #
 # @LICENSE_HEADER_START@
@@ -60,10 +60,11 @@
 - showVersion
 {
 	const char *lines[] = { "",
-		"A fake scrambled xnu kernel panic",
-		"aladin@puredarwin.org",
+		""PROGRAM" 0.3",
+		"Copyright (c) 2009-2010 The PureDarwin Project",
 		"",
-		""PROGRAM" v0.2 / Copyright 1st April 2009, The PureDarwin Project",
+		"A fake scrambled xnu kernel panic, appeared a 1st April 2009.",
+		"aladin@puredarwin.org",
 		"",
 		"http://puredarwin.org",
 		"http://puredarwin.googlecode.com",
@@ -114,18 +115,7 @@
 
         int option_index = 0;
 
-    	while(1) {
 		int c = getopt_long(argc, argv, ":vh", long_options, &option_index);
-
-		if (c<0) {
-			break;
-		}
-		/*if (optind < argc) {
-             		printf ("Not an option: ");
-             		while (optind < argc)
-             			printf ("%s ", argv[optind++]);
-             		printf ("\n");
-           	}*/
 		switch(c) {
              		case 'v':
         			[self showVersion];
@@ -133,7 +123,6 @@
            		default:
 				[self showUsage];
         	}
-    	}
 	return self;
 }
 
