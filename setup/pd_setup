@@ -409,7 +409,6 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 	# The Chameleon bootloader 
 	# (Apple Public Source License)
 	# http://chameleon.osx86.hu
-	#	Chameleon 1.0.11 FIXME deprecated?
 	#       Chameleon 2.0-RC1-r431-bin
 	#       Chameleon 2.0-RC2-r640-bin
 	#	Chameleon 2.0-RC3-r658-bin
@@ -550,18 +549,10 @@ if [ ! $EXT = "" ]; then
 	mv "$TARGET.dmg"  "$TARGET"
 	echo "Removed automatic mounting of any FS in $TARGET ($DEVICE entry kept)"
 	
-	# FIXME Alternative `nbdst' <- not available.
+	# Alternative `nbdst' <- not available.
 
-	# FIXME Alternative via `vndevice' for Darwin land does not behave as a disk device node..
-	# but enable a /dev/{r}vn0 directly linked to the image via a shadow file.
-	#mount -uw /
-	#touch /shadowfile
-	#/usr/libexec/vndevice attach /dev/vn0 "$TARGET"
-	#/usr/libexec/vndevice shadow /dev/vn0 /shadowfile
-	#export DEVICE="/dev/vn0"
-	#export RDEVICE="/dev/rvn0"
-	# [...]
-	#/usr/libexec/vndevice detach /dev/vn0
+	# Alternative via `vndevice' works if
+	# fsck -fy has been run against the volume header of the HFS partition
 
 	echo "Initializing $RDEVICE"
 	# pdisk -initialise (Undocumented arg)
@@ -1043,36 +1034,31 @@ if [ "$ADD_DTRACE" = "y" ]; then
 	#missingstuff /usr/bin/procsystime
 fi
 
-
-# FIXME add respective var in pd_config + packages in pd_roots.extra
 # MacFUSE userland filesystem (default: n)
-#if [ "$ADD_MACFUSE" = "y" ]; then
+if [ "$ADD_MACFUSE" = "y" ]; then
 
-#	echo " * macfuse.root.tar.bz2"
-#	tar xjpf $PACKAGES/macfuse.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+	# MacFUSE 2.0 - Version 2.0.3.2 
+	echo " * MacFUSE.root.tar.bz2"
+	tar xjpf $PACKAGES/MacFUSE.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+	
+	chown -R root:wheel ${MOUNT}/Library/Filesystems/fusefs.fs 
+	chmod -R 755 ${MOUNT}/Library/Filesystems/fusefs.fs
 
-#	cd "${MOUNT}" ; gunzip -c "MacFUSE.pkg/Contents/Resources/10.5/MacFUSE Core.pkg/Contents/Archive.pax.gz"  | pax -r
-#	chown -R root:wheel ${MOUNT}/Library/Filesystems/fusefs.fs/Support/fusefs.kext  
-#	chmod -R 755 ${MOUNT}/Library/Filesystems/fusefs.fs/Support/fusefs.kext
-
+	# FIXME TODO add binaryroots to uncomment below
 	# sshfs in MacFUSE  (default: n)
 #	if [ "$ADD_MACFUSE_SSHFS" = "y" ]; then
+#		echo " * MacFUSE_sshfs.root.tar.bz2"
 #		curl "http://macfuse.googlecode.com/svn/trunk/filesystems/sshfs/binary/sshfs-static-leopard" > ${MOUNT}/usr/sbin/mount_sshfs
 #		chmod a+x ${MOUNT}/usr/sbin/mount_sshfs
 #	fi
 
-	# FIXME could this "ramdisk" be used when booting on read-only medium as cd-rom?
 	# ramdisk in MacFUSE  (default: n)
-#	if [ "$ADD_MACFUSE_RAMDISK" = "y" ]; then
-#		svn co http://thebends.googlecode.com/svn/trunk/ramdisk/ ramdisk
-#		cd ramdisk/
-#		make
-#		cp ramdisk ${MOUNT}/usr/sbin/mount_ramdisk
-#		cd -
-#		rm -rf ramdisk/
-#	fi
+	if [ "$ADD_MACFUSE_RAMDISK" = "y" ]; then
+		echo " * MacFUSE_ramdisk.root.tar.bz2"
+		tar xjpf $PACKAGES/MacFUSE_ramdisk.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+	fi
 
-#fi
+fi
 
 
 cd - > /dev/null
@@ -1081,9 +1067,8 @@ cd - > /dev/null
 # SELF DEPLOYMENT (bootstrap) 
 ###############################################################################
 
-# Add setup scripts to the target? (default: n)
+# Clone the setup scripts repository to the target? (default: n)
 if [ "$ADD_CLONE" = "y" ]; then
-	# Clone the setup scripts repository - Kage bunshin no justu! (shadow clone technique)
 	echo "Copying setup files..."
 	mkdir -p ${MOUNT}/usr/local/share/puredarwin/setup/$TEMPDIR
 	# Warning: read `hg help clone' (e.g. incompatible with mq)

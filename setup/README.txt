@@ -1,4 +1,4 @@
-Copyright (c) 2007-2009 The PureDarwin Project.
+Copyright (c) 2007-2010 The PureDarwin Project.
 All rights reserved.
 
 @LICENSE_HEADER_START@
@@ -26,14 +26,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 @LICENSE_HEADER_END@
 
-Updated on 20091209.
+Updated on 20100125.
 
 Preliminaries
 =============
 
 Before you start, make backups of all your data.
 Do not use any production machines.
-PLEASE DO NOT IGNORE THIS STEP!
+PLEASE DO NOT IGNORE THESE STEPS!
 
 These instructions are only for technical persons anyway, so they are short.
 Developers and testers, please provide feedback via the way you prefer. 
@@ -41,7 +41,7 @@ Developers and testers, please provide feedback via the way you prefer.
 Installation
 ============
 
-0. Check and edit the `pd_config' configuration file to reflect your needs.
+0. Check and edit the "pd_config" configuration file to reflect your needs.
 
 1. Get binary roots and binary drivers with `pd_fetch'.
 
@@ -65,6 +65,20 @@ Installation
 
        * Create a ready-to-run VMware virtual disk (.vmdk)
        pd_setup puredarwin.vmdk PureDarwin
+
+Note
+====
+
+Optionally, it is possible to override few variables present in "pd_config" 
+by exporting them to the environment, allowing some combination.
+
+By default, PUREDARWIN_RELEASE is set to "" (full release).
+
+The flow below results in a bootstrap release able to deploy a full release:
+
+PUREDARWIN_RELEASE="" ./pd_fetch
+PUREDARWIN_RELEASE="" ./pd_thin
+PUREDARWIN_RELEASE="bootstrap" ./pd_setup arg1 arg2
 
 Resources
 =========

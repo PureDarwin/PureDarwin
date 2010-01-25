@@ -193,6 +193,10 @@ ADD_FB_640x480x32="n"		# (default: n) EXCLUSIVE Add 640x480x32  framebuffer reso
 ADD_FB_800x600x32="y"		# (default: y) EXCLUSIVE Add 800x600x32  framebuffer resolution? 
 ADD_FB_1024x768x32="n"		# (default: n) EXCLUSIVE Add 1024x768x32 framebuffer resolution? 
 
+ADD_MACFUSE="y"			# (default: n) Add MacFUSE support (http://www.puredarwin.org/developers/macfuse)
+ADD_MACFUSE_RAMDISK="y"		# (default: n) Add ramdisk in MacFUSE (http://thebends.googlecode.com)
+ADD_MACFUSE_SSHFS="y"		# (default: n) Add sshfs in MacFUSE
+
 ADD_LOGIN="y"			# (default: y) Add multiuser login support (pamsessioncreate, pcsc)
 
 ADD_DEFAULT_USER="y"		# (default: y) Add a default user account: toor (password: toor)?
@@ -256,6 +260,11 @@ if [ "$PUREDARWIN_RELEASE" = "nano" ]; then
 	ADD_HFS_JOURNAL="n"		# (default: y) Create a journaled HFS+ volume
 
 	ADD_PUREFOUNDATION="n"
+
+	ADD_MACFUSE="n"			# (default: n) Add MacFUSE support (http://www.puredarwin.org/developers/macfuse)
+	ADD_MACFUSE_RAMDISK="n"		# (default: n) Add ramdisk in MacFUSE (http://thebends.googlecode.com)
+	ADD_MACFUSE_SSHFS="n"		# (default: n) Add sshfs in MacFUSE
+
 	ADD_LOGIN="n"	      
 	ADD_DEFAULT_USER="n"
 	ADD_X="n"
@@ -291,6 +300,11 @@ if [ "$PUREDARWIN_RELEASE" = "bootstrap" ]; then
 	ADD_HFS_JOURNAL="n"		# (default: y) Create a journaled HFS+ volume
 	
 	ADD_PUREFOUNDATION="y"	
+	
+	ADD_MACFUSE="y"			# (default: n) Add MacFUSE support (http://www.puredarwin.org/developers/macfuse)
+	ADD_MACFUSE_RAMDISK="y"		# (default: n) Add ramdisk in MacFUSE (http://thebends.googlecode.com)
+	ADD_MACFUSE_SSHFS="y"		# (default: n) Add sshfs in MacFUSE
+
 	ADD_LOGIN="n"			# (default: y) Add multiuser login support (pamsessioncreate, pcsc)
 	ADD_DEFAULT_USER="n"		# (default: y) Add a default user account: toor (password: toor)?
 	ADD_X="n"
