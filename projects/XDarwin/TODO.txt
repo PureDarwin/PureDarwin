@@ -1,0 +1,14 @@
+-Implement DPMS? (cf. xf86DPMS.c) (useful on XDarwin?) else: --disable-dpms
+-Problem with changing screen depth: IOFBGetDisplayModeInformation() gives a depth of 8, while dfb->depth=24!!!???
+-shadowInit()??? and don't forget dfb->framebuffer = dfb->shadowPtr; what is the use of shadow?? (It seems that pScreen->CreatePixmap() isn't defined!!)
+-In xfiokit.c: fix ev_unlock() + ev_lock() + manage tablets? + add other functionalities =) (look at X11Application.m)
+-Bug scrolling (in the web browser, the scrolling is strange (it looks like it is caused by the fact that the Delta is an integer (??) !!)
+-DarwinModeChangePointerControl: FIXME: We currently ignore the threshold in ctrl->threshold
+-DarwinModeChangePointerControl for DarwinTabletProc too?
+-Use a better way of storing cursor infos (not in DarwinFramebufferRec…)??
+-When launching XDarwin directly after powering up the computer, the trackpad "touch clic" doesn't work (we must clic physically)
+-Graphics accélération -> nautilus windows are ugly when moving them quickly =( (opengl, glx?)
+-GLX!
+-Screen bounds -> setting height and width in multi-screen
+-Add functionalities: computer sleep, brightness (keyboard too), sound keys, fans correctly managed by the kernel alone?
+-IOFB_ARBITRARY_SIZE_CURSOR ->for greater cursors in hardware mode!!
