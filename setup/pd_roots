@@ -5,6 +5,15 @@ IOBDStorageFamily
 IOSCSIArchitectureModelFamily
 efiboot
 
+BootX
+AppleMacRISC2PE
+AppleKeyLargo
+AppleMPIC
+AppleMacRiscPCI
+AppleKauaiATA
+AppleVIA
+AppleFlashNVRAM
+
 Apple16X50Serial
 Apple3Com3C90x
 AppleAPIC

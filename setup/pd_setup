@@ -768,7 +768,6 @@ echo
 # 	fixme: "until" is commented because missingstuff shouldn't miss stuff.
 # 	It happens (stuff is missed) if the target dir or file exists, even partially.
 # 	(e.g., CoreFoundation.framework)
-#	note: no missingstuff in "nano" release
 
 missingstuff() {
 	until [ -e ${MOUNT}/$1 ]; do 
@@ -794,6 +793,9 @@ missingstuff() {
 #	missingstuff /System/Library/Extensions/IOPCIFamily.kext
 
 #fi
+
+# FIXME make a patch for xnu for removing wait in getGMTTimeOfDay(), though we still miss an RTC then
+#missingstuff /System/Library/Extensions/ApplePMU.kext
 
 # Add Chameleon themes (default: yes)
 #if [ ! "$ADD_CHAMELEON_THEMES" = "n" ]; then
