@@ -1178,7 +1178,7 @@ fi
 # --bootefi  Create a boot.efi file in the Mac OS X/Darwin system folder using file as a source
 #            [...]
 echo "Blessing $MOUNT/System/Library/CoreServices"
-${MOUNT}/usr/sbin/bless --folder "$MOUNT/System/Library/CoreServices" --bootinfo --bootefi --verbose
+bless --folder "$MOUNT/System/Library/CoreServices" --bootinfo --bootefi --verbose
 #${MOUNT}/usr/sbin/bless --folder "$MOUNT/System/Library/CoreServices" --bootefi --verbose
 
 
@@ -1211,7 +1211,7 @@ rm -f ${MOUNT}/private/etc/localtime
 # [...]
 #chroot ${MOUNT} ln -s /usr/share/zoneinfo/Europe/London /private/etc/localtime
 # [...]
-chroot ${MOUNT} ln -fs /usr/share/zoneinfo/Europe/Paris /private/etc/localtime
+ln -fs /usr/share/zoneinfo/Europe/Paris ${MOUNT}/private/etc/localtime
 
 # Preparing /etc/hostconfig (deprecated?)
 echo "CRASHREPORTER=-NO-" >> $MOUNT/private/etc/hostconfig
@@ -1248,7 +1248,7 @@ echo "/bin/sh"   >  ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
 
 # Add the Bash shell as default shell? (default: y)
 if [ ! "$ADD_BASH" = "n" ]; then
-	chroot ${MOUNT} ln -fs /bin/bash /bin/sh
+	ln -fs /bin/bash ${MOUNT}/bin/sh
 	echo "/bin/bash" >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
 	
 fi
