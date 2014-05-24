@@ -63,8 +63,11 @@ DARWIN_RELEASE="9"
 #
 # Processor architecture / mach-o format
 #
-ARCH="i386"
-#ARCH="ppc"    # FIXME could work on D9 (need to check thin, OpenFirmware and bootloaders)
+#ARCH="i386"
+# D9 nano works FIXME bring drivers you miss, like adb; produce full image
+# replace remaining i386 only stuff (or remove from binaryroots, see output of pd_thin)
+# teach BootX to start kernel in verbose mode without help of boot-args env
+ARCH="ppc"    # FIXME could work on D9 (need to check thin, OpenFirmware and bootloaders)
 #ARCH="x86_64" # FIXME does not (yet) work
 
 #
@@ -159,7 +162,7 @@ BINVERSION=(10C540 10B504 10A432 pd 9J61pd1 9G55pd1 9F33pd1 9L30 9J61 9G55 9F33 
 #
 # WARNING: Exclusivity is not always obvious but exists between choices.
 
-ADD_CHAMELEON="y"		# (default: y) Add Chameleon bootloader?
+ADD_CHAMELEON="n"		# (default: y) Add Chameleon bootloader?
 #ADD_CHAMELEON_THEMES="y"	# (default: y) Add Chameleon bootloader themes?
 ADD_CHAMELEON_RC1="n"		# (default: n) EXCLUSIVE Choose Chameleon 2.0-RC1-r431?
 ADD_CHAMELEON_RC2="n"		# (default: n) EXCLUSIVE Choose Chameleon 2.0-RC2-r640?
@@ -170,7 +173,7 @@ ADD_MBR_ERASE="y"		# (default: y) Erase existing partition table (instead of upd
 
 ADD_HFS_JOURNAL="y"		# (default: y) Create a journaled HFS+ volume
 
-ADD_VOODOO_XNU="y"		# (default: y) Add Voodoo Xnu-dev kernels ?
+ADD_VOODOO_XNU="n"		# (default: y) Add Voodoo Xnu-dev kernels ?
 # On 9.7, problems with disk0s1: ioctl(_IOW,'d',31,32) is unsupported
 ADD_VOODOO_XNU_9_5_0="y"	# (default: y) EXCLUSIVE Choose Voodoo 9.5.0 Kernel Release 1.0 Package (Rev A)
 ADD_VOODOO_XNU_9_7_0="n"	# (default: n) EXCLUSIVE Choose Voodoo 2 -- alpha 3 -- (based on XNU 9.7.0, for Intel only)
@@ -182,10 +185,10 @@ ADD_PUREFOUNDATION="y"		# (default: y) Add PureFoundation enhancements?
 
 # FIXME Add switch for network support
 
-ADD_VOODOO_PS2CONTROLLER="y"	# (default: y) EXCLUSIVE Add VoodooPS2Controller (VoodooPS2Controller, VoodooPS2Keyboard, VoodooPS2Mouse, VoodooPS2Trackpad)?
+ADD_VOODOO_PS2CONTROLLER="n"	# (default: y) EXCLUSIVE Add VoodooPS2Controller (VoodooPS2Controller, VoodooPS2Keyboard, VoodooPS2Mouse, VoodooPS2Trackpad)?
 ADD_DFE_PS2CONTROLLER="n"	# (default: n) EXCLUSIVE Add David Elliott PS2 support (ACPIPS2Nub, ApplePS2Controller)?
 
-ADD_VMWARE="y"			# (default: y) Add VMware support (VMware-Drivers-OpenSource & VMwareIOFramebuffer.kext)?
+ADD_VMWARE="n"			# (default: y) Add VMware support (VMware-Drivers-OpenSource & VMwareIOFramebuffer.kext)?
 ADD_VMWARE_VMDK="y"		# (default: y) Add VMware VMDK disk image (read-write support)?
 ADD_VMWARE_IDE_DRIVE="n" 	# (default: n) Additional IDE disk drive in the vmwarevm
 

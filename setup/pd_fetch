@@ -88,7 +88,7 @@ if [ "$1" = "" ]; then
 	# Clone the PureDarwin binary roots repository (Mercurial)
 	# Source: http://code.google.com/p/puredarwin/source/list?repo=roots
 	if [ ! -e $BINARYROOTS_DIR ]; then
-		hg clone https://roots.puredarwin.googlecode.com/hg/ $TEMPDIR #--debug
+		hg clone https://roots.puredarwin.googlecode.com/hg/ -r ppc $TEMPDIR #--debug
 	else
 		cd $TEMPDIR
 			hg pull
