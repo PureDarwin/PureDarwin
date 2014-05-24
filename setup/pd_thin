@@ -177,18 +177,24 @@ fi
 
 
 function thinfile {
-if lipo "$2" -verify_arch "$1" 2>/dev/null ; then
+archs=`lipo -info "$2" 2>/dev/null | sed 's/.*://'`
+if [ "$archs" != "" ] ; then
+if [ "`echo $archs | grep "$1"`" == "" ] ; then
+	echo "Mismatched arch:" "$2"
+else
     MODES=$(/usr/bin/stat -f%p "$2" | cut -b3-6)
 
     if [ ! $VERBOSE = "" ]; then
     	echo "   Thinning $(basename \"$2\") to \"$1\""
     fi
 
-    lipo "$2" -thin "$1" -output "$2" 2> /dev/null
+    # FIXME Binary roots contain fat bins with ppc7400 arch too, not the only ppc one
+    lipo "$2" -thin "$1" -output "$2" 2> /dev/null || lipo "$2" -thin ppc7400 -output "$2" 2> /dev/null
     # we could even remove .o .a .h .c and other Developer files and put them in a -dev package
     chmod "$MODES" "$2"
 
     printf "."
+fi
 fi
 }
 
