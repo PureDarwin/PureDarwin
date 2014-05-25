@@ -431,9 +431,9 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 		T_CHAMELEON_RELEASE="Chameleon-2.0-RC4-r684-bin"
 	fi
 	echo "Extracting Chameleon bootloader ($T_CHAMELEON_RELEASE)"
-	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X FIXME but not in modern OS X
+	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X
 	#bsdtar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
-	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X
+	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X FIXME but not in modern OS X
 	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*'
 
 	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
@@ -795,7 +795,7 @@ missingstuff() {
 
 #        echo " * ICHSMBus.root.tar.bz2 (replacement for closed AppleSMBus* kexts)"
 #        tar xjpf $PACKAGES/ICHSMBus.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
-#        echo " * iTCOWatchdog.root.tar.bz2 (replacement for AppleTCOWatchdog and potentially for an AppleLPC kexts)"
+#        echo " * iTCOWatchdog.root.tar.bz2 (replacement for AppleTCOWatchdog and potentially for AppleLPC kexts)"
 #        tar xjpf $PACKAGES/iTCOWatchdog.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
 
 #fi
