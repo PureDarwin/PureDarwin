@@ -1,6 +1,8 @@
 PureDarwin
 ==========
 
+![](https://raw.github.com/wiki/PureDarwin/PureDarwin/images/PD-Opennow.jpg)
+
 PureDarwin, now on GitHub! (Fork of https://code.google.com/p/puredarwin/)
 
 Darwin is the Open Source operating system from Apple that forms the basis for Mac OS X, and PureDarwin is a community project to make Darwin more usable (some people think of it as the informal successor to OpenDarwin).
