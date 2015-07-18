@@ -1,5 +1,4 @@
-Preliminaries
-=============
+## Creating a bootable PureDarwin image
 
 Before you start, make backups of all your data. Do not use any production machines. *PLEASE DO NOT IGNORE THESE STEPS!*
 
