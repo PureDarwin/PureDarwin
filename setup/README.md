@@ -5,8 +5,7 @@ Before you start, make backups of all your data. Do not use any production machi
 
 These instructions are only for technical persons anyway, so they are short. Developers and testers, please provide feedback via the way you prefer. 
 
-Installation
-============
+## Installation
 
 * Check and edit the `pd_config` configuration file to reflect your needs.
 * Get binary roots and binary drivers with `pd_fetch`.
@@ -31,8 +30,7 @@ Installation
        pd_setup puredarwin.vmdk PureDarwin
 ```
 
-Note
-====
+## Note
 
 Optionally, it is possible to override few variables present in `pd_config` by exporting them to the environment, allowing some combination.
 
@@ -46,16 +44,15 @@ PUREDARWIN_RELEASE="" ./pd_thin
 PUREDARWIN_RELEASE="bootstrap" ./pd_setup arg1 arg2
 ```
 
-Resources
-=========
+## Resources
 
 * https://github.com/PureDarwin/PureDarwin
+* https://github.com/PureDarwin/PureDarwin/wiki
 * http://opensource.apple.com
 * http://www.puredarwin.org
 * #puredarwin on irc.freenode.net
 
-Additional Licensing Information
-================================
+## Additional Licensing Information
 
 IMPORTANT LICENSING INFORMATION:  The Apple-developed portions of the Source Code and corresponding binary package folders are covered by the Apple Public Source License that can be found in the file `/APPLE_LICENSE.txt`.
 
