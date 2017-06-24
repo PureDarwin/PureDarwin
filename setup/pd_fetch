@@ -272,7 +272,7 @@ if [ "$DARWIN_RELEASE" =  "$MAJOR_BUILD_VERSION" ]; then
 				grep "\"${x}.root.tar.gz\"" $PSEUDOCACHE_FILE > /dev/null 2> /dev/null
 				if [ $? -eq 0 ]; then
 					# Fetching missing or corrupted binary file into $BINARYROOTS_DEFAULT_DIR
-					curl -C -f --create-dir $CURL_VERBOSE_FLAG --output "$BINARYROOTS_DEFAULT_DIR/$BUILD_VERSION/${x}.root.tar.gz" -C - "$BINARY_HTTP_PATH/$BUILD_VERSION/${x}.root.tar.gz"
+					curl -f --create-dir $CURL_VERBOSE_FLAG --output "$BINARYROOTS_DEFAULT_DIR/$BUILD_VERSION/${x}.root.tar.gz" -C - "$BINARY_HTTP_PATH/$BUILD_VERSION/${x}.root.tar.gz"
 					if [ $? -eq 0 ]; then
 						# Found remote archive 
 

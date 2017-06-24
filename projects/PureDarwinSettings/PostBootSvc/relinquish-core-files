@@ -1,0 +1,1 @@
+chown -R root / && chgrp -R wheel /

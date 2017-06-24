@@ -433,7 +433,7 @@ if [ ! "$ADD_CHAMELEON" = "n" ]; then
 	echo "Extracting Chameleon bootloader ($T_CHAMELEON_RELEASE)"
 	# bsdtar 2.6.2 - libarchive 2.6.2 / Not in darwinbuild but present by default in Mac OS X
 	#bsdtar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --include "*/i386"
-	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X
+	# tar (GNU tar) 1.15.1 / Present in darwinbuild and in Mac OS X FIXME but not in modern OS X
 	gnutar xjf $PACKAGES/$T_CHAMELEON_RELEASE.root.tar.bz2 -C "$DIRNAME/pd_setup_files/" --wildcards '*/i386*'
 
 	BOOTi386=$DIRNAME/pd_setup_files/$T_CHAMELEON_RELEASE/i386/
@@ -792,6 +792,11 @@ missingstuff() {
 #	missingstuff /System/Library/Extensions/AppleRTC.kext
 #	missingstuff /System/Library/Extensions/IOATAFamily.kext
 #	missingstuff /System/Library/Extensions/IOPCIFamily.kext
+
+#        echo " * ICHSMBus.root.tar.bz2 (replacement for closed AppleSMBus* kexts)"
+#        tar xjpf $PACKAGES/ICHSMBus.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
+#        echo " * iTCOWatchdog.root.tar.bz2 (replacement for AppleTCOWatchdog and potentially for AppleLPC kexts)"
+#        tar xjpf $PACKAGES/iTCOWatchdog.root.tar.bz2 >> ${MOUNT}/private/var/log/pd_setup.log
 
 #fi
 
@@ -1211,7 +1216,7 @@ rm -f ${MOUNT}/private/etc/localtime
 # [...]
 #chroot ${MOUNT} ln -s /usr/share/zoneinfo/Europe/London /private/etc/localtime
 # [...]
-chroot ${MOUNT} ln -fs /usr/share/zoneinfo/Europe/Paris /private/etc/localtime
+ln -fs /usr/share/zoneinfo/Europe/Paris ${MOUNT}/private/etc/localtime
 
 # Preparing /etc/hostconfig (deprecated?)
 echo "CRASHREPORTER=-NO-" >> $MOUNT/private/etc/hostconfig
@@ -1248,7 +1253,7 @@ echo "/bin/sh"   >  ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
 
 # Add the Bash shell as default shell? (default: y)
 if [ ! "$ADD_BASH" = "n" ]; then
-	chroot ${MOUNT} ln -fs /bin/bash /bin/sh
+	ln -fs /bin/bash ${MOUNT}/bin/sh
 	echo "/bin/bash" >> ${MOUNT}/var/db/dyld/shared_region_roots/Applications.paths
 	
 fi
