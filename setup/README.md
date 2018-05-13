@@ -2,7 +2,7 @@
 
 Before you start, make backups of all your data. Do not use any production machines. **PLEASE DO NOT IGNORE THESE STEPS!**
 
-These instructions are only for technical persons anyway, so they are short. Developers and testers, please provide feedback via the way you prefer. 
+These instructions are only for technical persons anyway, so these Instuctions are short. Developers and testers, please provide feedback via the way you prefer. 
 
 ## Installation
 
