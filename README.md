@@ -3,9 +3,9 @@ PureDarwin [![Join the chat at https://gitter.im/PureDarwin/](https://img.shield
 
 ![](https://raw.github.com/wiki/PureDarwin/PureDarwin/images/PD-Opennow.jpg)
 
-PureDarwin, moved from https://code.google.com/p/puredarwin/
+PureDarwin moved from https://code.google.com/p/puredarwin/
 
-Darwin is the Open Source operating system from Apple that forms the basis for Mac OS X, and PureDarwin is a community project to make Darwin more usable (some people think of it as the informal successor to OpenDarwin).
+Darwin is the Open Source operating system from Apple that forms the basis for Mac OS X and PureDarwin. PureDarwin is a community project that aims to make Darwin more usable (some people think of it as the informal successor to OpenDarwin).
 
 One current goal of this project is to provide a useful bootable ISO/VM of Darwin 10.x
 
