@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>source_sites</key>
+	<array>
+		<string>https://opensource.apple.com/tarballs</string>
+	</array>
+
+	<key>build</key>
+	<string>PD17D4</string>
+	<key>darwin</key>
+	<string>Darwin 17.4</string>
+	<key>macosx</key>
+	<string>macOS 10.12.4</string>
+
+	<key>environment</key>
+	<dict>
+		<key>INSTALLED_PRODUCT_ASIDES</key>
+		<string>YES</string>
+		<key>MACOSX_DEPLOYMENT_TARGET</key>
+		<string>10.13</string>
+		<key>NEXT_ROOT</key>
+		<string></string>
+		<key>RC_ARCHS</key>
+		<string>x86_64</string>
+		<key>RC_JASPER</key>
+		<string>YES</string>
+		<key>RC_NONARCH_CFLAGS</key>
+		<string>-pipe -no-cpp-precomp</string>
+		<key>RC_OS</key>
+		<string>macosx</string>
+		<key>RC_PRIVATE</key>
+		<string>/private</string>
+		<key>RC_RELEASE</key>
+		<string>Sierra</string>
+		<key>RC_XBS</key>
+		<string>YES</string>
+		<key>SEPARATE_STRIP</key>
+		<string>YES</string>
+		<key>UNAME_RELEASE</key>
+		<string>16.5</string>
+		<key>UNAME_SYSNAME</key>
+		<string>Darwin</string>
+		<key>SYSTEM_LIBRARY_DIR</key>
+		<string>/System/Library</string>
+		<key>RC_TARGET_CONFIG</key>
+		<string>MacOSX</string>
+		<key>SDKROOT</key>
+		<string>macosx10.13</string>
+	</dict>
+
+	<key>groups</key>
+	<dict>
+		<key>boot</key>
+		<array>
+			<string>xnu AppleI386GenericPlatform corecrypto booter</string>
+		</array>
+	</dict>
+
+	<key>projects</key>
+	<dict>
+		<key>corecrypto</key>
+		<dict>
+			<key>version</key>
+			<string>2000</string>
+			<key>github</key>
+			<string>Andromeda-OS/corecrypto</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>libsyscall</key>
+		<dict>
+			<key>version</key>
+			<string>10.13</string>
+			<key>original</key>
+			<string>xnubuild</string>
+			<key>github</key>
+			<string>Andromeda-OS/xnubuild</string>
+		</dict>
+
+		<key>xnubuild</key>
+		<dict>
+			<key>version</key>
+			<string>10.13</string>
+			<key>github</key>
+			<string>Andromeda-OS/xnubuild</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
