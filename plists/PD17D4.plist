@@ -40,6 +40,14 @@
 
 	<key>projects</key>
 	<dict>
+		<key>Libsystem</key>
+		<dict>
+			<key>version</key>
+			<string>10</string>
+			<key>github</key>
+			<string>Andromeda-OS/libSystem</string>
+		</dict>
+
 		<key>corecrypto</key>
 		<dict>
 			<key>version</key>
@@ -53,14 +61,6 @@
 					<string>xnubuild</string>
 				</array>
 			</dict>
-		</dict>
-
-		<key>Libsystem</key>
-		<dict>
-			<key>version</key>
-			<string>10</string>
-			<key>github</key>
-			<string>Andromeda-OS/libSystem</string>
 		</dict>
 
 		<key>libplatform</key>
