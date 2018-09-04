@@ -85,6 +85,14 @@
 			<string>Andromeda-OS/xnubuild</string>
 		</dict>
 
+		<key>libxpc</key>
+		<dict>
+			<key>version</key>
+			<string>10</string>
+			<key>github</key>
+			<string>Andromeda-OS/launchd-and-libxpc</string>
+		</dict>
+
 		<key>xnubuild</key>
 		<dict>
 			<key>version</key>
