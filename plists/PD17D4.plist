@@ -20,30 +20,10 @@
 		<string>YES</string>
 		<key>MACOSX_DEPLOYMENT_TARGET</key>
 		<string>10.13</string>
-		<key>NEXT_ROOT</key>
-		<string></string>
-		<key>RC_ARCHS</key>
-		<string>x86_64</string>
-		<key>RC_JASPER</key>
-		<string>YES</string>
-		<key>RC_NONARCH_CFLAGS</key>
-		<string>-pipe -no-cpp-precomp</string>
-		<key>RC_OS</key>
-		<string>macosx</string>
-		<key>RC_PRIVATE</key>
-		<string>/private</string>
-		<key>RC_RELEASE</key>
-		<string>Sierra</string>
-		<key>RC_XBS</key>
-		<string>YES</string>
-		<key>SEPARATE_STRIP</key>
-		<string>YES</string>
 		<key>UNAME_RELEASE</key>
-		<string>16.5</string>
+		<string>17.4</string>
 		<key>UNAME_SYSNAME</key>
 		<string>Darwin</string>
-		<key>SYSTEM_LIBRARY_DIR</key>
-		<string>/System/Library</string>
 		<key>RC_TARGET_CONFIG</key>
 		<string>MacOSX</string>
 		<key>SDKROOT</key>
