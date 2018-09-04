@@ -70,7 +70,7 @@
 			<key>version</key>
 			<string>10</string>
 			<key>github</key>
-			<string>Andromeda-OS/launchd-and-libxpc</string>
+			<string>Andromeda-OS/libxpc</string>
 		</dict>
 
 		<key>xnubuild</key>
