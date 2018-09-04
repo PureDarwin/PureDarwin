@@ -4,7 +4,6 @@
 <dict>
 	<key>source_sites</key>
 	<array>
-		<string>https://opensource.apple.com/tarballs</string>
 	</array>
 
 	<key>build</key>
