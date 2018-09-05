@@ -44,7 +44,7 @@
 			<key>version</key>
 			<string>10</string>
 			<key>github</key>
-			<string>Andromeda-OS/libSystem</string>
+			<string>PureDarwin/libSystem</string>
 		</dict>
 
 		<key>corecrypto</key>
@@ -67,7 +67,7 @@
 			<key>version</key>
 			<string>161.1</string>
 			<key>github</key>
-			<string>Andromeda-OS/libplatform</string>
+			<string>PureDarwin/libplatform</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
@@ -82,7 +82,7 @@
 			<key>version</key>
 			<string>10</string>
 			<key>github</key>
-			<string>Andromeda-OS/libpthread</string>
+			<string>PureDarwin/libpthread</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
@@ -109,7 +109,12 @@
 			<key>version</key>
 			<string>10</string>
 			<key>github</key>
-			<string>Andromeda-OS/libxpc</string>
+			<dict>
+				<key>repo</key>
+				<string>PureDarwin/launchd-and-libxpc</string>
+				<key>tag</key>
+				<string>10</string>
+			</dict>
 		</dict>
 
 		<key>xnubuild</key>
