@@ -109,7 +109,7 @@
 			<key>version</key>
 			<string>10</string>
 			<key>github</key>
-			<string>PureDarwin/launchd-and-libxpc</string>
+			<string>PureDarwin/XPC</string>
 		</dict>
 
 		<key>xnubuild</key>
