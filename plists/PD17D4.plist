@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>source_sites</key>
+	<array>
+	</array>
+
+	<key>build</key>
+	<string>PD17D4</string>
+	<key>darwin</key>
+	<string>Darwin 17.4</string>
+	<key>macosx</key>
+	<string>macOS 10.12.4</string>
+
+	<key>environment</key>
+	<dict>
+		<key>INSTALLED_PRODUCT_ASIDES</key>
+		<string>YES</string>
+		<key>MACOSX_DEPLOYMENT_TARGET</key>
+		<string>10.13</string>
+		<key>UNAME_RELEASE</key>
+		<string>17.4</string>
+		<key>UNAME_SYSNAME</key>
+		<string>Darwin</string>
+		<key>RC_TARGET_CONFIG</key>
+		<string>MacOSX</string>
+		<key>SDKROOT</key>
+		<string>macosx10.13</string>
+	</dict>
+
+	<key>groups</key>
+	<dict>
+		<key>boot</key>
+		<array>
+			<string>xnu AppleI386GenericPlatform corecrypto booter</string>
+		</array>
+	</dict>
+
+	<key>projects</key>
+	<dict>
+		<key>Libsystem</key>
+		<dict>
+			<key>version</key>
+			<string>10</string>
+			<key>github</key>
+			<string>PureDarwin/libSystem</string>
+		</dict>
+
+		<key>corecrypto</key>
+		<dict>
+			<key>version</key>
+			<string>2000</string>
+			<key>github</key>
+			<string>Andromeda-OS/corecrypto</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>libplatform</key>
+		<dict>
+			<key>version</key>
+			<string>161.1</string>
+			<key>github</key>
+			<string>PureDarwin/libplatform</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>libpthread</key>
+		<dict>
+			<key>version</key>
+			<string>10</string>
+			<key>github</key>
+			<string>PureDarwin/libpthread</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>Libsystem</string>
+					<string>libplatform</string>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>libsyscall</key>
+		<dict>
+			<key>version</key>
+			<string>10.13</string>
+			<key>original</key>
+			<string>xnubuild</string>
+			<key>github</key>
+			<string>Andromeda-OS/xnubuild</string>
+		</dict>
+
+		<key>libxpc</key>
+		<dict>
+			<key>version</key>
+			<string>10</string>
+			<key>github</key>
+			<string>PureDarwin/launchd-and-libxpc</string>
+		</dict>
+
+		<key>xnubuild</key>
+		<dict>
+			<key>version</key>
+			<string>10.13</string>
+			<key>github</key>
+			<string>Andromeda-OS/xnubuild</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
