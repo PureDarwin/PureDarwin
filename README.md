@@ -9,6 +9,6 @@ Darwin is the Open Source operating system from Apple that forms the basis for M
 
 One current goal of this project is to provide a useful bootable ISO/VM of Darwin 10.x
 
-Come Join our forum over at https://pd-devs.org/ 
+Come join our forum over at https://pd-devs.org/ 
 
 See the [Wiki](https://github.com/PureDarwin/PureDarwin/wiki) for more information.
