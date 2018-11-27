@@ -52,7 +52,7 @@
 			<key>version</key>
 			<string>2000</string>
 			<key>github</key>
-			<string>Andromeda-OS/corecrypto</string>
+			<string>PureDarwin/corecrypto</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
@@ -107,7 +107,7 @@
 			<key>version</key>
 			<string>10.13.6</string>
 			<key>github</key>
-			<string>Andromeda-OS/xnubuild</string>
+			<string>PureDarwin/xnubuild</string>
 		</dict>
 	</dict>
 </dict>
