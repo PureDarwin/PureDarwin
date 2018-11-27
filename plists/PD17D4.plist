@@ -105,7 +105,7 @@
 		<key>xnubuild</key>
 		<dict>
 			<key>version</key>
-			<string>10.13.6pd1</string>
+			<string>10.13.6.1</string>
 			<key>github</key>
 			<string>PureDarwin/xnubuild</string>
 		</dict>
