@@ -97,7 +97,7 @@
 		<key>libsyscall</key>
 		<dict>
 			<key>version</key>
-			<string>10.13</string>
+			<string>10.13.6</string>
 			<key>original</key>
 			<string>xnubuild</string>
 			<key>github</key>
@@ -115,7 +115,7 @@
 		<key>xnubuild</key>
 		<dict>
 			<key>version</key>
-			<string>10.13</string>
+			<string>10.13.6</string>
 			<key>github</key>
 			<string>Andromeda-OS/xnubuild</string>
 		</dict>
