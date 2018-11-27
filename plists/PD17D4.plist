@@ -105,7 +105,7 @@
 		<key>libxpc</key>
 		<dict>
 			<key>version</key>
-			<string>10</string>
+			<string>10.1</string>
 			<key>github</key>
 			<string>PureDarwin/XPC</string>
 		</dict>
