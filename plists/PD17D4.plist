@@ -62,6 +62,14 @@
 			</dict>
 		</dict>
 
+		<key>libcoreservices</key>
+		<dict>
+			<key>version</key>
+			<string>10.1</string>
+			<key>github</key>
+			<string>PureDarwin/libcoreservices</string>
+		</dict>
+
 		<key>libplatform</key>
 		<dict>
 			<key>version</key>
