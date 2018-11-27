@@ -44,7 +44,7 @@
 			<key>version</key>
 			<string>10</string>
 			<key>github</key>
-			<string>PureDarwin/libSystem</string>
+			<string>PureDarwin/Libsystem</string>
 		</dict>
 
 		<key>corecrypto</key>
