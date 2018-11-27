@@ -26,7 +26,7 @@
 		<key>RC_TARGET_CONFIG</key>
 		<string>MacOSX</string>
 		<key>SDKROOT</key>
-		<string>macosx10.13</string>
+		<string>macosx</string>
 	</dict>
 
 	<key>groups</key>
