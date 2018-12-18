@@ -83,7 +83,7 @@
 		<key>Libsystem</key>
 		<dict>
 			<key>version</key>
-			<string>10.1</string>
+			<string>11</string>
 			<key>github</key>
 			<string>PureDarwin/Libsystem</string>
 		</dict>
