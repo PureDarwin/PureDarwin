@@ -1,0 +1,91 @@
+diff --git a/SETUP/config/Makefile b/SETUP/config/Makefile
+index 56032b4..1e73452 100644
+--- a/SETUP/config/Makefile
++++ b/SETUP/config/Makefile
+@@ -20,7 +20,7 @@ config: $(OBJS)
+ 	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
+ 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
+ 	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+-	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
++	$(_v)env $(HOST_CODESIGN) -s - $@
+ 
+ %.o: %.c
+ 	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"
+diff --git a/SETUP/decomment/Makefile b/SETUP/decomment/Makefile
+index 7018eb1..877ca15 100644
+--- a/SETUP/decomment/Makefile
++++ b/SETUP/decomment/Makefile
+@@ -18,7 +18,7 @@ decomment: $(OBJS)
+ 	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
+ 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
+ 	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+-	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
++	$(_v)env $(HOST_CODESIGN) -s - $@
+ 
+ %.o: %.c
+ 	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"
+diff --git a/SETUP/installfile/Makefile b/SETUP/installfile/Makefile
+index eb1f3af..a74b483 100644
+--- a/SETUP/installfile/Makefile
++++ b/SETUP/installfile/Makefile
+@@ -18,7 +18,7 @@ installfile: $(OBJS)
+ 	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
+ 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
+ 	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+-	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
++	$(_v)env $(HOST_CODESIGN) -s - $@
+ 
+ %.o: %.c
+ 	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"
+diff --git a/SETUP/json_compilation_db/Makefile b/SETUP/json_compilation_db/Makefile
+index 518644c..bf453c3 100644
+--- a/SETUP/json_compilation_db/Makefile
++++ b/SETUP/json_compilation_db/Makefile
+@@ -18,7 +18,7 @@ json_compilation_db: $(OBJS)
+ 	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
+ 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
+ 	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+-	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
++	$(_v)env $(HOST_CODESIGN) -s - $@
+ 
+ %.o: %.c
+ 	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"
+diff --git a/SETUP/kextsymboltool/Makefile b/SETUP/kextsymboltool/Makefile
+index af6cdca..e38782f 100644
+--- a/SETUP/kextsymboltool/Makefile
++++ b/SETUP/kextsymboltool/Makefile
+@@ -18,7 +18,7 @@ kextsymboltool: $(OBJS)
+ 	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
+ 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
+ 	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+-	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
++	$(_v)env $(HOST_CODESIGN) -s - $@
+ 
+ %.o: %.c
+ 	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"
+diff --git a/SETUP/replacecontents/Makefile b/SETUP/replacecontents/Makefile
+index e1e8484..44b81b9 100644
+--- a/SETUP/replacecontents/Makefile
++++ b/SETUP/replacecontents/Makefile
+@@ -18,7 +18,7 @@ replacecontents: $(OBJS)
+ 	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
+ 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
+ 	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+-	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
++	$(_v)env $(HOST_CODESIGN) -s - $@
+ 
+ %.o: %.c
+ 	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"
+diff --git a/SETUP/setsegname/Makefile b/SETUP/setsegname/Makefile
+index 7e9224e..c2ed335 100644
+--- a/SETUP/setsegname/Makefile
++++ b/SETUP/setsegname/Makefile
+@@ -18,7 +18,7 @@ setsegname: $(OBJS)
+ 	@echo "$(ColorH)HOST_LD$(Color0)       $(ColorF)$@$(Color0)"
+ 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
+ 	@echo "$(ColorH)HOST_CODESIGN$(Color0) $(ColorF)$@$(Color0)"
+-	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
++	$(_v)env $(HOST_CODESIGN) -s - $@
+ 
+ %.o: %.c
+ 	@echo "$(ColorH)HOST_CC$(Color0)       $(ColorF)$@$(Color0)"

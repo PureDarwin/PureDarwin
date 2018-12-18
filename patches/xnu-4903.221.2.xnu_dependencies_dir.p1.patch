@@ -1,0 +1,17 @@
+diff --git a/makedefs/MakeInc.cmd b/makedefs/MakeInc.cmd
+index a70a2d8..6e668a5 100644
+--- a/makedefs/MakeInc.cmd
++++ b/makedefs/MakeInc.cmd
+@@ -103,10 +103,10 @@ ifeq ($(DSYMUTIL),)
+ 	export DSYMUTIL := $(shell $(XCRUN) -sdk $(SDKROOT) -find dsymutil)
+ endif
+ ifeq ($(CTFCONVERT),)
+-	export CTFCONVERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctfconvert)
++	export CTFCONVERT := $(DEPENDENCIES_DIR)/usr/local/bin/ctfconvert
+ endif
+ ifeq ($(CTFMERGE),)
+-	export CTFMERGE :=  $(shell $(XCRUN) -sdk $(SDKROOT) -find ctfmerge)
++	export CTFMERGE :=  $(DEPENDENCIES_DIR)/usr/local/bin/ctfmerge
+ endif
+ ifeq ($(CTFINSERT),)
+ 	export CTFINSERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctf_insert)

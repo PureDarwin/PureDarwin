@@ -1,0 +1,260 @@
+diff --git a/libsyscall/Libsyscall.xcconfig b/libsyscall/Libsyscall.xcconfig
+index 737c410..349ff77 100644
+--- a/libsyscall/Libsyscall.xcconfig
++++ b/libsyscall/Libsyscall.xcconfig
+@@ -21,10 +19,10 @@ OTHER_CFLAGS[sdk=watchos*] = $(inherited) -DNO_SYSCALL_LEGACY
+ OTHER_CFLAGS[sdk=tvos*] = $(inherited) -DNO_SYSCALL_LEGACY
+ OTHER_CFLAGS[sdk=appletvos*] = $(inherited) -DNO_SYSCALL_LEGACY
+ OTHER_CFLAGS[sdk=bridgeos*] = $(inherited) -DNO_SYSCALL_LEGACY
+-GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0
+-HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
++GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0 __PUREDARWIN__=1
++HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(DEPENDENCIES_DIR)/System/Library/Frameworks/System.framework/PrivateHeaders
++FRAMEWORK_SEARCH_PATHS = $(DEPENDENCIES_DIR)/System/Library/Frameworks
+ WARNING_CFLAGS = -Wmost
+-GCC_TREAT_WARNINGS_AS_ERRORS = YES
+ GCC_WARN_ABOUT_MISSING_NEWLINE = YES
+ CODE_SIGN_IDENTITY = -
+ DYLIB_CURRENT_VERSION = $(RC_ProjectSourceVersion)
+diff --git a/libsyscall/Libsyscall.xcodeproj/project.pbxproj b/libsyscall/Libsyscall.xcodeproj/project.pbxproj
+index e138202..6d6515a 100644
+--- a/libsyscall/Libsyscall.xcodeproj/project.pbxproj
++++ b/libsyscall/Libsyscall.xcodeproj/project.pbxproj
+@@ -23,7 +23,7 @@
+ 			isa = PBXAggregateTarget;
+ 			buildConfigurationList = 249C61191194756B00ED73F3 /* Build configuration list for PBXAggregateTarget "Build" */;
+ 			buildPhases = (
+-				BAFE90DF1C3A4D7B0012084F /* CopyFiles */,
++				BAFE90DF1C3A4D7B0012084F /* Copy Files */,
+ 				BAFE90E11C3A4D9E0012084F /* CopyFiles */,
+ 				BAA2D2FB1C3B2CD90049DCBE /* CopyFiles */,
+ 			);
+@@ -145,7 +145,7 @@
+ 		9C6DA3D320A3D09F0090330B /* mach_sync_ipc.h in Headers */ = {isa = PBXBuildFile; fileRef = 9C6DA3D120A3D09F0090330B /* mach_sync_ipc.h */; };
+ 		9CCF28271E68E993002EE6CD /* pid_shutdown_networking.c in Sources */ = {isa = PBXBuildFile; fileRef = 9CCF28261E68E993002EE6CD /* pid_shutdown_networking.c */; };
+ 		A50845861DDA69AC0041C0E0 /* thread_self_restrict.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = A50BD52E1DDA548F006622C8 /* thread_self_restrict.h */; };
+-		A50845871DDA69C90041C0E0 /* thread_self_restrict.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = A50BD52E1DDA548F006622C8 /* thread_self_restrict.h */; };
++		A50845871DDA69C90041C0E0 /* thread_self_restrict.h in Copy Files */ = {isa = PBXBuildFile; fileRef = A50BD52E1DDA548F006622C8 /* thread_self_restrict.h */; };
+ 		A50BD52F1DDA548F006622C8 /* thread_self_restrict.h in Headers */ = {isa = PBXBuildFile; fileRef = A50BD52E1DDA548F006622C8 /* thread_self_restrict.h */; };
+ 		A50BD5301DDA5500006622C8 /* thread_self_restrict.h in Headers */ = {isa = PBXBuildFile; fileRef = A50BD52E1DDA548F006622C8 /* thread_self_restrict.h */; };
+ 		A59CB95616669EFB00B064B3 /* stack_logging_internal.h in Headers */ = {isa = PBXBuildFile; fileRef = A59CB95516669DB700B064B3 /* stack_logging_internal.h */; };
+@@ -153,7 +153,7 @@
+ 		BA0D9FB1199031AD007E8A73 /* kdebug_trace.c in Sources */ = {isa = PBXBuildFile; fileRef = BA0D9FB0199031AD007E8A73 /* kdebug_trace.c */; };
+ 		BA4414AA18336A5F00AAE813 /* mach in CopyFiles */ = {isa = PBXBuildFile; fileRef = BA4414A51833697C00AAE813 /* mach */; };
+ 		BA4414AB18336A6400AAE813 /* servers in CopyFiles */ = {isa = PBXBuildFile; fileRef = BA4414A6183369A100AAE813 /* servers */; };
+-		BA4414AD18336A9300AAE813 /* mach in CopyFiles */ = {isa = PBXBuildFile; fileRef = BA4414A7183369C100AAE813 /* mach */; };
++		BA4414AD18336A9300AAE813 /* mach in Copy Files */ = {isa = PBXBuildFile; fileRef = BA4414A7183369C100AAE813 /* mach */; };
+ 		BA4414B518336E3600AAE813 /* mach in Copy Files */ = {isa = PBXBuildFile; fileRef = BA4414A51833697C00AAE813 /* mach */; };
+ 		BA4414B618336E3A00AAE813 /* servers in Copy Files */ = {isa = PBXBuildFile; fileRef = BA4414A6183369A100AAE813 /* servers */; };
+ 		BA4414B818336E6F00AAE813 /* mach in CopyFiles */ = {isa = PBXBuildFile; fileRef = BA4414A7183369C100AAE813 /* mach */; };
+@@ -161,7 +161,7 @@
+ 		BAA2D2FC1C3B2CE90049DCBE /* libsystem_kernel.a in CopyFiles */ = {isa = PBXBuildFile; fileRef = D2AAC0630554660B00DB518D /* libsystem_kernel.a */; };
+ 		BABA36CB1A856C4700BBBCF7 /* host.c in Sources */ = {isa = PBXBuildFile; fileRef = BABA36CA1A856C4700BBBCF7 /* host.c */; };
+ 		BAFE90DE1C3A4D2D0012084F /* _libkernel_init.c in Sources */ = {isa = PBXBuildFile; fileRef = 247A08B311F8B05900E4693F /* _libkernel_init.c */; };
+-		BAFE90E01C3A4D960012084F /* libsystem_kernel.a in CopyFiles */ = {isa = PBXBuildFile; fileRef = D2AAC0630554660B00DB518D /* libsystem_kernel.a */; };
++		BAFE90E01C3A4D960012084F /* libsystem_kernel.a in Copy Files */ = {isa = PBXBuildFile; fileRef = D2AAC0630554660B00DB518D /* libsystem_kernel.a */; };
+ 		BAFE90E21C3A4DB00012084F /* libsystem_kernel.a in CopyFiles */ = {isa = PBXBuildFile; fileRef = D2AAC0630554660B00DB518D /* libsystem_kernel.a */; };
+ 		C639F0E51741C25800A39F47 /* gethostuuid.h in Headers */ = {isa = PBXBuildFile; fileRef = C639F0E41741C09A00A39F47 /* gethostuuid.h */; settings = {ATTRIBUTES = (Public, ); }; };
+ 		C6460B7C182025DF00F73CCA /* sfi.c in Sources */ = {isa = PBXBuildFile; fileRef = C6460B7B182025DF00F73CCA /* sfi.c */; };
+@@ -248,7 +248,7 @@
+ 		C9D9BD57114B00600000D8B9 /* task.defs in Sources */ = {isa = PBXBuildFile; fileRef = C9D9BD0F114B00600000D8B9 /* task.defs */; };
+ 		C9D9BD58114B00600000D8B9 /* thread_act.defs in Sources */ = {isa = PBXBuildFile; fileRef = C9D9BD10114B00600000D8B9 /* thread_act.defs */; };
+ 		C9D9BD59114B00600000D8B9 /* vm_map.defs in Sources */ = {isa = PBXBuildFile; fileRef = C9D9BD11114B00600000D8B9 /* vm_map.defs */; };
+-		C9FD8508166D6BD400963B73 /* tsd.h in CopyFiles */ = {isa = PBXBuildFile; fileRef = C9EE57F51669673D00337E4B /* tsd.h */; };
++		C9FD8508166D6BD400963B73 /* tsd.h in Copy Files */ = {isa = PBXBuildFile; fileRef = C9EE57F51669673D00337E4B /* tsd.h */; };
+ 		E214BDC81C2E358300CEE8A3 /* clonefile.c in Sources */ = {isa = PBXBuildFile; fileRef = E214BDC71C2E34E200CEE8A3 /* clonefile.c */; };
+ 		E2A0F3341C3B17D100A11F8A /* fs_snapshot.c in Sources */ = {isa = PBXBuildFile; fileRef = E2A0F3331C3B17D100A11F8A /* fs_snapshot.c */; };
+ 		E4216C311822D404006F2632 /* mach_voucher.defs in Sources */ = {isa = PBXBuildFile; fileRef = E4216C301822D404006F2632 /* mach_voucher.defs */; };
+@@ -327,14 +327,15 @@
+ 			);
+ 			runOnlyForDeploymentPostprocessing = 1;
+ 		};
+-		BA4414AC18336A7700AAE813 /* CopyFiles */ = {
++		BA4414AC18336A7700AAE813 /* Copy Files */ = {
+ 			isa = PBXCopyFilesBuildPhase;
+ 			buildActionMask = 8;
+ 			dstPath = "$(PRIVATE_HEADERS_FOLDER_PATH)";
+ 			dstSubfolderSpec = 0;
+ 			files = (
+-				BA4414AD18336A9300AAE813 /* mach in CopyFiles */,
++				BA4414AD18336A9300AAE813 /* mach in Copy Files */,
+ 			);
++			name = "Copy Files";
+ 			runOnlyForDeploymentPostprocessing = 1;
+ 		};
+ 		BA4414B418336E1A00AAE813 /* Copy Files */ = {
+@@ -370,14 +371,15 @@
+ 			);
+ 			runOnlyForDeploymentPostprocessing = 1;
+ 		};
+-		BAFE90DF1C3A4D7B0012084F /* CopyFiles */ = {
++		BAFE90DF1C3A4D7B0012084F /* Copy Files */ = {
+ 			isa = PBXCopyFilesBuildPhase;
+ 			buildActionMask = 8;
+ 			dstPath = /usr/local/lib/dyld_stub;
+ 			dstSubfolderSpec = 0;
+ 			files = (
+-				BAFE90E01C3A4D960012084F /* libsystem_kernel.a in CopyFiles */,
++				BAFE90E01C3A4D960012084F /* libsystem_kernel.a in Copy Files */,
+ 			);
++			name = "Copy Files";
+ 			runOnlyForDeploymentPostprocessing = 1;
+ 		};
+ 		BAFE90E11C3A4D9E0012084F /* CopyFiles */ = {
+@@ -390,15 +392,16 @@
+ 			);
+ 			runOnlyForDeploymentPostprocessing = 1;
+ 		};
+-		C63F480B1654203800A1F78F /* CopyFiles */ = {
++		C63F480B1654203800A1F78F /* Copy Files */ = {
+ 			isa = PBXCopyFilesBuildPhase;
+ 			buildActionMask = 8;
+ 			dstPath = "$(OS_PRIVATE_HEADERS_FOLDER_PATH)";
+ 			dstSubfolderSpec = 0;
+ 			files = (
+-				A50845871DDA69C90041C0E0 /* thread_self_restrict.h in CopyFiles */,
+-				C9FD8508166D6BD400963B73 /* tsd.h in CopyFiles */,
++				A50845871DDA69C90041C0E0 /* thread_self_restrict.h in Copy Files */,
++				C9FD8508166D6BD400963B73 /* tsd.h in Copy Files */,
+ 			);
++			name = "Copy Files";
+ 			runOnlyForDeploymentPostprocessing = 1;
+ 		};
+ 		C6D3EFCA16542C510052CF30 /* CopyFiles */ = {
+@@ -1204,9 +1207,9 @@
+ 			buildConfigurationList = 1DEB914A08733D8E0010E9CD /* Build configuration list for PBXNativeTarget "Libsyscall_static" */;
+ 			buildPhases = (
+ 				D2AAC0600554660B00DB518D /* Headers */,
+-				C63F480B1654203800A1F78F /* CopyFiles */,
++				C63F480B1654203800A1F78F /* Copy Files */,
+ 				BA4414A818336A1300AAE813 /* CopyFiles */,
+-				BA4414AC18336A7700AAE813 /* CopyFiles */,
++				BA4414AC18336A7700AAE813 /* Copy Files */,
+ 				D2AAC0610554660B00DB518D /* Sources */,
+ 				D289988505E68E00004EDB86 /* Frameworks */,
+ 			);
+diff --git a/libsyscall/mach/err_iokit.sub b/libsyscall/mach/err_iokit.sub
+index b5361b8..c638be6 100644
+--- a/libsyscall/mach/err_iokit.sub
++++ b/libsyscall/mach/err_iokit.sub
+@@ -29,7 +29,7 @@
+ 
+ #include <TargetConditionals.h>
+ #include <IOKit/IOReturn.h>
+-#if !TARGET_OS_EMBEDDED
++#if !TARGET_OS_EMBEDDED && !defined(__PUREDARWIN__)
+ #include <IOKit/usb/USB.h>
+ #include <IOKit/firewire/IOFireWireLib.h>
+ #endif
+@@ -97,7 +97,7 @@ static const char * const err_codes_iokit_common[] = {
+     "(iokit/common) data was not found",				// 0x2f0
+ };
+ 
+-#if !TARGET_OS_EMBEDDED
++#if !TARGET_OS_EMBEDDED && !defined(__PUREDARWIN__)
+ static const struct error_sparse_map err_codes_iokit_usb_map[] = {
+     err_code_map_entry(kIOUSBCRCErr, kIOUSBDataToggleErr),
+     err_code_map_entry(kIOUSBPIDCheckErr, kIOUSBWrongPIDErr),
+@@ -220,7 +220,7 @@ static const struct error_subsystem err_iokit_sub[] =
+ 	err_codes_iokit_common_map,
+ 	errlib_count(err_codes_iokit_common_map),
+     },
+-#if !TARGET_OS_EMBEDDED
++#if !TARGET_OS_EMBEDDED && !defined(__PUREDARWIN__)
+     /*  1 */ {
+ 	"(iokit/usb)",				// 0xe0004000
+ 	errlib_count(err_codes_iokit_usb),
+@@ -241,7 +241,7 @@ static const struct error_subsystem err_iokit_sub[] =
+     /*  5 */ { "(iokit/graphics)",   0 },	// 0xe0014000
+     /*  6 */ err_iokit_null_sub,		// 0xe0018000
+     /*  7 */ err_iokit_null_sub,		// 0xe001c000
+-#if !TARGET_OS_EMBEDDED
++#if !TARGET_OS_EMBEDDED && !defined(__PUREDARWIN__)
+     /*  8 */ {
+ 	"(iokit/bluetooth)",			// 0xe0020000
+ 	errlib_count(err_codes_iokit_bluetooth),
+diff --git a/libsyscall/mach/mach_error.c b/libsyscall/mach/mach_error.c
+index 4b95427..04037a4 100644
+--- a/libsyscall/mach/mach_error.c
++++ b/libsyscall/mach/mach_error.c
+@@ -60,6 +60,7 @@
+  *      or returns a descriptive string.
+  */
+ 
++#include <sys/reason.h>
+ #include <mach/mach_error.h>
+ #include <mach/boolean.h>
+ #include "errorlib.h"
+@@ -83,3 +84,13 @@ mach_error(const char *str, mach_error_t err)
+ 
+ 	fprintf_stderr("%s %s\n", str, err_str);
+ }
++
++void
++_mach_assert(const char *reason, kern_return_t kr)
++{
++	if (kr != KERN_SUCCESS)
++	{
++		// FIXME: What reason code should I use here instead of -1?
++		abort_with_reason(OS_REASON_LIBSYSTEM, -1, reason, OS_REASON_FLAG_GENERATE_CRASH_REPORT);
++	}
++}
+diff --git a/libsyscall/mach/mach_right.c b/libsyscall/mach/mach_right.c
+index c69133e..8c30f83 100644
+--- a/libsyscall/mach/mach_right.c
++++ b/libsyscall/mach/mach_right.c
+@@ -30,6 +30,8 @@
+ #include <mach/mach_port.h>
+ #include <mach/mach_right.h>
+ 
++// From <os/internal/crashlog.h>
++#define _os_set_crash_log_cause_and_message(ac, msg) ((void)(ac), (void)(msg))
+ 
+ #pragma mark Utilities
+ #define _assert_mach(__op, __kr) \
+diff --git a/libsyscall/wrappers/mach_bridge_remote_time.c b/libsyscall/wrappers/mach_bridge_remote_time.c
+index cc56a81..3ba73a2 100644
+--- a/libsyscall/wrappers/mach_bridge_remote_time.c
++++ b/libsyscall/wrappers/mach_bridge_remote_time.c
+@@ -20,6 +20,7 @@
+  *
+  * @APPLE_LICENSE_HEADER_END@
+  */
++#if TARGET_OS_BRIDGE && defined(__arm64__)
+ #include <sys/types.h>
+ #include <machine/cpu_capabilities.h>
+ #include <kern/remote_time.h>
+@@ -31,7 +32,6 @@
+ 
+ extern uint64_t __mach_bridge_remote_time(uint64_t local_time);
+ 
+-#if TARGET_OS_BRIDGE && defined(__arm64__)
+ static uint64_t
+ absolutetime_to_nanoseconds(uint64_t abs_time)
+ {
+diff --git a/libsyscall/wrappers/spawn/posix_spawn.c b/libsyscall/wrappers/spawn/posix_spawn.c
+index 2008380..04b2a2a 100644
+--- a/libsyscall/wrappers/spawn/posix_spawn.c
++++ b/libsyscall/wrappers/spawn/posix_spawn.c
+@@ -28,7 +28,7 @@
+ #define CONFIG_MEMORYSTATUS 1 // <rdar://problem/13604997>
+ #include <sys/types.h> /* for user_size_t */
+ #include <spawn.h>
+-#include <spawn_private.h>
++#include "spawn_private.h"
+ #include <sys/spawn_internal.h>
+ #include <sys/process_policy.h>
+ #include <stdlib.h>
+diff --git a/libsyscall/xcodescripts/compile-syscalls.pl b/libsyscall/xcodescripts/compile-syscalls.pl
+index f0c2691..8eddf43 100755
+--- a/libsyscall/xcodescripts/compile-syscalls.pl
++++ b/libsyscall/xcodescripts/compile-syscalls.pl
+@@ -63,7 +63,7 @@ my @CFLAGS = (
+ 	"-x assembler-with-cpp",
+ 	"-c",
+ 	"-isysroot", $ENV{'SDKROOT'} || "/",
+-	"-I".$ENV{"SDKROOT"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
++	"-I".$ENV{"DEPENDENCIES_DIR"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
+ );
+ 
+ chomp(my $LIBTOOL = `xcrun -sdk "$ENV{'SDKROOT'}" -find libtool`);
