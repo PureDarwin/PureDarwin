@@ -1,0 +1,12 @@
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..4ad38d4
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,6 @@
++# Barebones makefile for libplatform_xnu_headers
++# darwinbuild project, not to be used elsewhere.
++.PHONY : installhdrs
++installhdrs :
++	ditto $(SRCROOT)/include $(DSTROOT)/usr/local/include
++	ditto $(SRCROOT)/private $(DSTROOT)/usr/local/include
