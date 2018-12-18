@@ -51,7 +51,7 @@
 			<key>version</key>
 			<string>11.1</string>
 			<key>github</key>
-			<string>PureDarwin/Libsystem</string>
+			<string>PureDarwin/AppleI386GenericPlatform</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
