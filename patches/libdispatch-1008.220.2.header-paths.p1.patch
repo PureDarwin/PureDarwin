@@ -67,7 +67,7 @@ index c572f80..e69108f 100644
  // LLVM_LTO = YES
  PRIVATE_HEADERS_FOLDER_PATH = /usr/local/include/kernel/os
 -HEADER_SEARCH_PATHS = $(PROJECT_DIR) $(SDKROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders $(SDKROOT)/System/Library/Frameworks/Kernel.framework/Headers $(SDKROOT)/usr/local/include/os $(SDKROOT)/usr/local/include/firehose
-+HEADER_SEARCH_PATHS = $(PROJECT_DIR) $(SDKROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders $(DEPENDENCIES_DIR)/System/Library/Frameworks/Kernel.framework/PrivateHeaders $(DEPENDENCIES_DIR)/usr/local/include/os $(DEPENDENCIES_DIR)/usr/local/include/firehose $(SDKROOT)/usr/include
++HEADER_SEARCH_PATHS = $(PROJECT_DIR) $(SDKROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders $(DEPROOT)/System/Library/Frameworks/Kernel.framework/PrivateHeaders $(DEPROOT)/usr/local/include/os $(DEPROOT)/usr/local/include/firehose $(SDKROOT)/usr/include
  
  COPY_HEADERS_RUN_UNIFDEF = YES
  COPY_HEADERS_UNIFDEF_FLAGS = -DKERNEL=1 -DOS_FIREHOSE_SPI=1 -DOS_VOUCHER_ACTIVITY_SPI_TYPES=1 -UOS_VOUCHER_ACTIVITY_SPI
