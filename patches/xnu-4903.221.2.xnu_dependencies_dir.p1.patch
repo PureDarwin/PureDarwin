@@ -7,11 +7,11 @@ index a70a2d8..6e668a5 100644
  endif
  ifeq ($(CTFCONVERT),)
 -	export CTFCONVERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctfconvert)
-+	export CTFCONVERT := $(DEPENDENCIES_DIR)/usr/local/bin/ctfconvert
++	export CTFCONVERT := $(DEPROOT)/usr/local/bin/ctfconvert
  endif
  ifeq ($(CTFMERGE),)
 -	export CTFMERGE :=  $(shell $(XCRUN) -sdk $(SDKROOT) -find ctfmerge)
-+	export CTFMERGE :=  $(DEPENDENCIES_DIR)/usr/local/bin/ctfmerge
++	export CTFMERGE :=  $(DEPROOT)/usr/local/bin/ctfmerge
  endif
  ifeq ($(CTFINSERT),)
  	export CTFINSERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctf_insert)

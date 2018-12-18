@@ -9,8 +9,8 @@ index 737c410..349ff77 100644
 -GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0
 -HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
 +GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0 __PUREDARWIN__=1
-+HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(DEPENDENCIES_DIR)/System/Library/Frameworks/System.framework/PrivateHeaders
-+FRAMEWORK_SEARCH_PATHS = $(DEPENDENCIES_DIR)/System/Library/Frameworks
++HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(DEPROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
++FRAMEWORK_SEARCH_PATHS = $(DEPROOT)/System/Library/Frameworks
  WARNING_CFLAGS = -Wmost
 -GCC_TREAT_WARNINGS_AS_ERRORS = YES
  GCC_WARN_ABOUT_MISSING_NEWLINE = YES
@@ -254,7 +254,7 @@ index f0c2691..8eddf43 100755
  	"-c",
  	"-isysroot", $ENV{'SDKROOT'} || "/",
 -	"-I".$ENV{"SDKROOT"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
-+	"-I".$ENV{"DEPENDENCIES_DIR"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
++	"-I".$ENV{"DEPROOT"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
  );
  
  chomp(my $LIBTOOL = `xcrun -sdk "$ENV{'SDKROOT'}" -find libtool`);

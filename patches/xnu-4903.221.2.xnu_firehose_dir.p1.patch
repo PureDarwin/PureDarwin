@@ -7,7 +7,7 @@ index 73f7cdc..36b90c1 100644
  
  # LDFLAGS_KERNEL_SDK	= -L$(SDKROOT)/usr/local/lib/kernel -lfirehose_kernel
 -LDFLAGS_KERNEL_SDK	= -L$(SDKROOT)/usr/local/lib/kernel
-+LDFLAGS_KERNEL_SDK	= -L$(DEPENDENCIES_DIR)/usr/local/lib/kernel
++LDFLAGS_KERNEL_SDK	= -L$(DEPROOT)/usr/local/lib/kernel
  
  LDFLAGS_KERNEL_RELEASE	=
  LDFLAGS_KERNEL_DEVELOPMENT     =
@@ -16,7 +16,7 @@ index 73f7cdc..36b90c1 100644
  INCFLAGS_GEN	= -I$(SRCROOT)/$(COMPONENT) -I$(OBJROOT)/EXPORT_HDRS/$(COMPONENT)
  INCFLAGS_LOCAL	= -I.
 -INCFLAGS_SDK	= -I$(SDKROOT)/usr/local/include/kernel
-+INCFLAGS_SDK	= -I$(DEPENDENCIES_DIR)/usr/local/include/kernel
++INCFLAGS_SDK	= -I$(DEPROOT)/usr/local/include/kernel
  
  INCFLAGS	= $(INCFLAGS_LOCAL) $(INCFLAGS_GEN) $(INCFLAGS_IMPORT) $(INCFLAGS_EXTERN) $(INCFLAGS_MAKEFILE) $(INCFLAGS_SDK)
  

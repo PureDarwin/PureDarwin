@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>source_sites</key>
+	<array>
+		<string>https://opensource.apple.com/tarballs</string>
+	</array>
+
+	<key>patch_sites</key>
+	<array>
+		<string>https://github.com/PureDarwin/PureDarwin/raw/PD18.0/patches</string>
+	</array>
+
+	<key>build</key>
+	<string>PD18_0</string>
+	<key>darwin</key>
+	<string>Darwin 18.0</string>
+	<key>macosx</key>
+	<string>macOS 10.14</string>
+
+	<key>environment</key>
+	<dict>
+		<key>INSTALLED_PRODUCT_ASIDES</key>
+		<string>YES</string>
+		<key>MACOSX_DEPLOYMENT_TARGET</key>
+		<string>10.14</string>
+		<key>UNAME_RELEASE</key>
+		<string>17.4</string>
+		<key>UNAME_SYSNAME</key>
+		<string>Darwin</string>
+		<key>RC_TARGET_CONFIG</key>
+		<string>MacOSX</string>
+		<key>SDKROOT</key>
+		<string>macosx</string>
+	</dict>
+
+	<key>groups</key>
+	<dict>
+		<key>boot</key>
+		<array>
+			<string>xnu AppleI386GenericPlatform corecrypto</string>
+			<string>libpthread libcoreservices</string>
+		</array>
+	</dict>
+
+	<key>projects</key>
+	<dict>
+		<key>AppleI386GenericPlatform</key>
+		<dict>
+			<key>version</key>
+			<string>11.1</string>
+			<key>github</key>
+			<string>PureDarwin/Libsystem</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>Libsyscall</key>
+		<dict>
+			<key>original</key>
+			<string>xnu</string>
+			<key>version</key>
+			<string>4093.221.2</string>
+			<key>patchfiles</key>
+			<array>
+				<string>xnu-4903.221.2.bsd-xcconfig.p1.patch</string>
+			</array>
+		</dict>
+
+		<key>Libsystem</key>
+		<dict>
+			<key>version</key>
+			<string>10.1</string>
+			<key>github</key>
+			<string>PureDarwin/Libsystem</string>
+		</dict>
+
+		<key>corecrypto</key>
+		<dict>
+			<key>version</key>
+			<string>2000.1</string>
+			<key>github</key>
+			<string>PureDarwin/corecrypto</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>dtrace</key>
+		<array>
+			<key>version</key>
+			<string>284.200.15</string>
+		</array>
+
+		<key>dtrace_host</key>
+		<array>
+			<key>original</key>
+			<string>dtrace</string>
+			<key>version</key>
+			<string>284.200.15</string>
+			<key>target</key>
+			<string>dtrace_host</string>
+			<key>patchfiles</key>
+			<array>
+				<string>dtrace-284.400.15.host-tools.p1.patch</string>
+			</array>
+		</array>
+
+		<key>libcoreservices</key>
+		<dict>
+			<key>version</key>
+			<string>10.1</string>
+			<key>github</key>
+			<string>PureDarwin/libcoreservices</string>
+		</dict>
+
+		<key>libdispatch</key>
+		<dict>
+			<key>version</key>
+			<string>1008.220.2</string>
+		</dict>
+
+		<key>libfirehose_kernel</key>
+		<dict>
+			<key>original</key>
+			<string>libdispatch</string>
+			<key>version</key>
+			<string>1008.220.2</string>
+			<key>target</key>
+			<string>libfirehose_kernel</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
+			<key>patchfiles</key>
+			<array>
+				<string>libdispatch-1008.220.2.header-paths.p1.patch</string>
+				<string>libdispatch-1008.220.2.fix-build.p1.patch</string>
+			</array>
+		</dict>
+
+		<key>libplatform</key>
+		<dict>
+			<key>version</key>
+			<string>161.1</string>
+			<key>github</key>
+			<string>PureDarwin/libplatform</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>libpthread</key>
+		<dict>
+			<key>version</key>
+			<string>10</string>
+			<key>github</key>
+			<string>PureDarwin/libpthread</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>Libsystem</string>
+					<string>libplatform</string>
+					<string>xnubuild</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>libxpc</key>
+		<dict>
+			<key>version</key>
+			<string>10.2</string>
+			<key>github</key>
+			<string>PureDarwin/XPC</string>
+		</dict>
+
+		<key>xnu</key>
+		<dict>
+			<key>version</key>
+			<string>4903.221.2</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>AvailabilityVersions</string>
+					<string>dtrace_host</string>
+					<string>libfirehose_kernel</string>
+				</array>
+				<key>header</key>
+				<array>
+					<string>AvailabilityVersions</string>
+				</array>
+			</dict>
+			<key>patchfiles</key>
+			<array>
+				<string>xnu-4903.221.2.availability_versions.p1.patch</string>
+				<string>xnu-4903.221.2.fix_codesigning.p1.patch</string>
+				<string>xnu-4903.221.2.fix_system_framework.p1.patch</string>
+				<string>xnu-4903.221.2.xnu_dependencies_dir.p1.patch</string>
+			</array>
+		</dict>
+
+		<key>xnu_headers</key>
+		<dict>
+			<key>original</key>
+			<string>xnu</string>
+			<key>version</key>
+			<string>4903.221.2</string>
+			<key>patchfiles</key>
+			<array>
+				<string>xnu-4903.221.2.availability_versions.p1.patch</string>
+				<string>xnu-4903.221.2.fix_codesigning.p1.patch</string>
+				<string>xnu-4903.221.2.fix_system_framework.p1.patch</string>
+				<string>xnu-4903.221.2.xnu_dependencies_dir.p1.patch</string>
+			</array>
+		</dict>
+
+		<key>xnubuild</key>
+		<dict>
+			<key>version</key>
+			<string>10.14.1.1</string>
+			<key>github</key>
+			<string>PureDarwin/xnubuild</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
