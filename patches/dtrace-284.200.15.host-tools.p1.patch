@@ -1,0 +1,111 @@
+diff --git a/config/ctftools.xcconfig b/config/ctftools.xcconfig
+index 88fc9e0..dea38cb 100644
+--- a/config/ctftools.xcconfig
++++ b/config/ctftools.xcconfig
+@@ -1,3 +1,6 @@
+ // On OSX, binaries are not built fat.
+ VALID_ARCHS[sdk=macosx*] = $(ARCHS_STANDARD_64_BIT)
+ ARCHS[sdk=macosx*] = $(ARCHS_STANDARD_64_BIT)
++
++HEADER_SEARCH_PATHS = head lib/libelf lib/libdwarf compat/opensolaris/sys
++USE_HEADERMAPS = NO
+diff --git a/dtrace.xcodeproj/project.pbxproj b/dtrace.xcodeproj/project.pbxproj
+index b123feb..46f7fcf 100644
+--- a/dtrace.xcodeproj/project.pbxproj
++++ b/dtrace.xcodeproj/project.pbxproj
+@@ -13767,6 +13767,7 @@
+ 		};
+ 		6EBC9778099BFB530001019C /* Debug */ = {
+ 			isa = XCBuildConfiguration;
++			baseConfigurationReference = 45A48B3618194C410034E526 /* ctftools.xcconfig */;
+ 			buildSettings = {
+ 				COPY_PHASE_STRIP = NO;
+ 				DEBUG_INFORMATION_FORMAT = dwarf;
+@@ -13791,6 +13792,7 @@
+ 		};
+ 		6EBC9779099BFB530001019C /* Release */ = {
+ 			isa = XCBuildConfiguration;
++			baseConfigurationReference = 45A48B3618194C410034E526 /* ctftools.xcconfig */;
+ 			buildSettings = {
+ 				COPY_PHASE_STRIP = NO;
+ 				DEBUG_INFORMATION_FORMAT = dwarf;
+@@ -13814,6 +13816,7 @@
+ 		};
+ 		6EBC97E8099BFB850001019C /* Debug */ = {
+ 			isa = XCBuildConfiguration;
++			baseConfigurationReference = 45A48B3618194C410034E526 /* ctftools.xcconfig */;
+ 			buildSettings = {
+ 				COPY_PHASE_STRIP = NO;
+ 				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+@@ -13836,6 +13839,7 @@
+ 		};
+ 		6EBC97E9099BFB850001019C /* Release */ = {
+ 			isa = XCBuildConfiguration;
++			baseConfigurationReference = 45A48B3618194C410034E526 /* ctftools.xcconfig */;
+ 			buildSettings = {
+ 				COPY_PHASE_STRIP = NO;
+ 				DEBUG_INFORMATION_FORMAT = dwarf;
+@@ -14037,7 +14041,6 @@
+ 					"$(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders",
+ 					"compat/opensolaris/**",
+ 				);
+-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
+ 				OTHER_CFLAGS = (
+ 					"-D_INT64_TYPE",
+ 					"-D_LONGLONG_TYPE",
+@@ -14072,7 +14075,6 @@
+ 					"$(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders",
+ 					"compat/opensolaris/**",
+ 				);
+-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
+ 				OTHER_CFLAGS = (
+ 					"-D_INT64_TYPE",
+ 					"-D_LONGLONG_TYPE",
+@@ -14109,7 +14111,6 @@
+ 					"$(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders",
+ 					"compat/opensolaris/**",
+ 				);
+-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
+ 				OTHER_CFLAGS = (
+ 					"-D_INT64_TYPE",
+ 					"-D_LONGLONG_TYPE",
+@@ -14143,7 +14144,6 @@
+ 					"$(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders",
+ 					"compat/opensolaris/**",
+ 				);
+-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
+ 				OTHER_CFLAGS = (
+ 					"-D_INT64_TYPE",
+ 					"-D_LONGLONG_TYPE",
+@@ -14163,6 +14163,7 @@
+ 		};
+ 		D2DF085F0A68400000384A72 /* Debug */ = {
+ 			isa = XCBuildConfiguration;
++			baseConfigurationReference = 45A48B3618194C410034E526 /* ctftools.xcconfig */;
+ 			buildSettings = {
+ 				COPY_PHASE_STRIP = NO;
+ 				GCC_DYNAMIC_NO_PIC = NO;
+@@ -14180,6 +14181,7 @@
+ 		};
+ 		D2DF08600A68400000384A72 /* Release */ = {
+ 			isa = XCBuildConfiguration;
++			baseConfigurationReference = 45A48B3618194C410034E526 /* ctftools.xcconfig */;
+ 			buildSettings = {
+ 				COPY_PHASE_STRIP = NO;
+ 				DEBUG_INFORMATION_FORMAT = dwarf;
+@@ -14212,7 +14214,6 @@
+ 					"$(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders",
+ 					"compat/opensolaris/**",
+ 				);
+-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
+ 				OTHER_CFLAGS = (
+ 					"-D_INT64_TYPE",
+ 					"-D_LONGLONG_TYPE",
+@@ -14247,7 +14248,6 @@
+ 					"$(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders",
+ 					"compat/opensolaris/**",
+ 				);
+-				INSTALL_PATH = "$(DT_TOOLCHAIN_DIR)/usr/local/bin";
+ 				OTHER_CFLAGS = (
+ 					"-D_INT64_TYPE",
+ 					"-D_LONGLONG_TYPE",
