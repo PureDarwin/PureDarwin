@@ -1,26 +1,3 @@
-commit 860148384dbee82df190694ac7a0103f6d3ba704
-Author: William Kent <wjk@users.noreply.github.com>
-Date:   Tue Dec 11 15:04:28 2018 -0500
-
-    Apply patch
-
-diff --git a/xcodeconfig/BSD.xcconfig b/xcodeconfig/BSD.xcconfig
-new file mode 100644
-index 0000000..4348218
---- /dev/null
-+++ b/xcodeconfig/BSD.xcconfig
-@@ -0,0 +1,11 @@
-+ARCHS = $(ARCHS_STANDARD_32_64_BIT);
-+CODE_SIGN_IDENTITY = -;
-+CURRENT_PROJECT_VERSION = $(RC_ProjectSourceVersion);
-+DEAD_CODE_STRIPPING = YES;
-+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym;
-+PREBINDING = NO;
-+// Current Mac OS
-+SDKROOT = macosx;
-+//USE_HEADERMAP = NO;
-+VERSION_INFO_PREFIX = __attribute__((visibility("hidden"))) __
-+VERSIONING_SYSTEM = apple-generic;
 diff --git a/xcodeconfig/libdispatch.xcconfig b/xcodeconfig/libdispatch.xcconfig
 index 2c825f7..a06ee26 100644
 --- a/xcodeconfig/libdispatch.xcconfig
@@ -51,7 +28,7 @@ index 4c71199..418045d 100644
  INSTALL_PATH = /usr/local/lib/
  GCC_PREPROCESSOR_DEFINITIONS = $(inherited) FIREHOSE_SERVER=1 DISPATCH_USE_DTRACE=0
 diff --git a/xcodeconfig/libfirehose_kernel.xcconfig b/xcodeconfig/libfirehose_kernel.xcconfig
-index c572f80..e69108f 100644
+index c572f80..72f0549 100644
 --- a/xcodeconfig/libfirehose_kernel.xcconfig
 +++ b/xcodeconfig/libfirehose_kernel.xcconfig
 @@ -20,14 +20,14 @@

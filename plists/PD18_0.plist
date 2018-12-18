@@ -157,6 +157,7 @@
 			<array>
 				<string>libdispatch-1008.220.2.header-paths.p1.patch</string>
 				<string>libdispatch-1008.220.2.fix-build.p1.patch</string>
+				<string>libdispatch-1008.220.2-xcodeconfig_BSD.xcconfig.add</string>
 			</array>
 		</dict>
 
