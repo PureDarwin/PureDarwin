@@ -56,7 +56,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>xnubuild</string>
+					<string>xnu_headers</string>
 				</array>
 			</dict>
 		</dict>
@@ -98,7 +98,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>xnubuild</string>
+					<string>xnu_headers</string>
 				</array>
 			</dict>
 		</dict>
@@ -169,7 +169,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>xnubuild</string>
+					<string>xnu_headers</string>
 				</array>
 			</dict>
 		</dict>
@@ -198,7 +198,7 @@
 				<array>
 					<string>Libsystem</string>
 					<string>libplatform</string>
-					<string>xnubuild</string>
+					<string>xnu_headers</string>
 				</array>
 			</dict>
 		</dict>
