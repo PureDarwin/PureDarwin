@@ -13,11 +13,11 @@
 	</array>
 
 	<key>build</key>
-	<string>PD18_0</string>
+	<string>PD18_2</string>
 	<key>darwin</key>
-	<string>Darwin 18.0</string>
+	<string>Darwin 18.2</string>
 	<key>macosx</key>
-	<string>macOS 10.14</string>
+	<string>macOS 10.14.2</string>
 
 	<key>environment</key>
 	<dict>
