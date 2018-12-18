@@ -215,6 +215,11 @@
 		<dict>
 			<key>version</key>
 			<string>4903.221.2</string>
+			<key>environment</key>
+			<dict>
+				<key>KERNEL_CONFIGS</key>
+				<string>RELEASE</string>
+			</dict>
 			<key>dependencies</key>
 			<dict>
 				<key>build</key>
@@ -245,6 +250,11 @@
 			<string>xnu</string>
 			<key>version</key>
 			<string>4903.221.2</string>
+			<key>environment</key>
+			<dict>
+				<key>KERNEL_CONFIGS</key>
+				<string>RELEASE</string>
+			</dict>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
