@@ -270,14 +270,6 @@
 				<string>xnu-4903.221.2.xnu_dependencies_dir.p1.patch</string>
 			</array>
 		</dict>
-
-		<key>xnubuild</key>
-		<dict>
-			<key>version</key>
-			<string>10.14.1.1</string>
-			<key>github</key>
-			<string>PureDarwin/xnubuild</string>
-		</dict>
 	</dict>
 </dict>
 </plist>
