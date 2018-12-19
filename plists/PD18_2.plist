@@ -17,7 +17,7 @@
 	<key>darwin</key>
 	<string>Darwin 18.2</string>
 	<key>macosx</key>
-	<string>macOS 10.14.2</string>
+	<string>macOS 10.14.1</string>
 
 	<key>environment</key>
 	<dict>
@@ -26,7 +26,7 @@
 		<key>MACOSX_DEPLOYMENT_TARGET</key>
 		<string>10.14</string>
 		<key>UNAME_RELEASE</key>
-		<string>17.4</string>
+		<string>18.2</string>
 		<key>UNAME_SYSNAME</key>
 		<string>Darwin</string>
 		<key>RC_TARGET_CONFIG</key>
