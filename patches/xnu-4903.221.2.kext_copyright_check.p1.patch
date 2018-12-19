@@ -1,0 +1,22 @@
+diff --git a/libkern/kxld/kxld_copyright.c b/libkern/kxld/kxld_copyright.c
+index e1f13c2..8664226 100644
+--- a/libkern/kxld/kxld_copyright.c
++++ b/libkern/kxld/kxld_copyright.c
+@@ -49,6 +49,7 @@
+ 
+ #define kCopyrightToken "Copyright © "
+ #define kRightsToken " Apple Inc. All rights reserved."
++#define kRightsTokenPD " PureDarwin Project. All rights reserved."
+ 
+ /******************************************************************************
+ * Globals
+@@ -252,6 +253,9 @@ kxld_validate_copyright_string(const char *str)
+ 
+     copyright = kxld_strstr(str, kCopyrightToken);
+     rights = kxld_strstr(str, kRightsToken);
++    if (!rights) {
++        rights = kxld_strstr(str, kRightsTokenPD);
++    }
+ 
+     if (!copyright || !rights || copyright > rights) goto finish;
+ 

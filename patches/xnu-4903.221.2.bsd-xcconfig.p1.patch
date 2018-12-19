@@ -1,0 +1,20 @@
+diff --git a/libsyscall/Libsyscall.xcconfig b/libsyscall/Libsyscall.xcconfig
+index 09d1119..e668e49 100644
+--- a/libsyscall/Libsyscall.xcconfig
++++ b/libsyscall/Libsyscall.xcconfig
+@@ -1,4 +1,14 @@
+-#include "<DEVELOPER_DIR>/Makefiles/CoreOS/Xcode/BSD.xcconfig"
++// From BSD.xcconfig
++ARCHS = $(ARCHS_STANDARD);
++CODE_SIGN_IDENTITY = -;
++CURRENT_PROJECT_VERSION = $(RC_ProjectSourceVersion);
++DEAD_CODE_STRIPPING = YES;
++DEBUG_INFORMATION_FORMAT = dwarf-with-dsym;
++PREBINDING = NO;
++SDKROOT = macosx;
++VERSION_INFO_PREFIX = __;
++VERSIONING_SYSTEM = apple-generic;
++// End BSD.xcconfig
+ 
+ BUILD_VARIANTS = normal
+ SUPPORTED_PLATFORMS = macosx iphoneos iphoneosnano tvos appletvos watchos bridgeos
