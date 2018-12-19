@@ -9,7 +9,7 @@
 
 	<key>patch_sites</key>
 	<array>
-		<string>https://github.com/PureDarwin/PureDarwin/raw/PD18.0/patches</string>
+		<string>https://github.com/PureDarwin/PureDarwin/raw/master/patches</string>
 	</array>
 
 	<key>build</key>
