@@ -1,0 +1,12 @@
+--- a/osfmk/ipc/mach_msg.c
++++ b/osfmk/ipc/mach_msg.c
+@@ -776,3 +776,9 @@ msg_receive_error(
+ 	else 
+ 		return(MACH_MSG_SUCCESS);
+ }
++
++// Needed to fix weird dependency bug introduced by Xcode 10.2 migcom.
++void mach_msg_destroy_from_kernel(void *msg_head);
++void mach_msg_destroy_from_kernel(void *msg_head) {
++	(void)msg_head;
++}
