@@ -73,6 +73,13 @@
 			<string>xnu</string>
 			<key>version</key>
 			<string>4903.221.2</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
 			<key>patchfiles</key>
 			<array>
 				<string>xnu-4903.221.2.bsd-xcconfig.p1.patch</string>
