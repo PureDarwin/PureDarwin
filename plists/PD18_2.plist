@@ -171,11 +171,13 @@
 		<key>libplatform</key>
 		<dict>
 			<key>version</key>
-			<string>177.200.16</string>
+			<string>1000</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
 				<array>
+					<string>Libsyscall</string>
+					<string>libpthread</string>
 					<string>xnu_headers</string>
 				</array>
 			</dict>
@@ -186,11 +188,9 @@
 			<key>original</key>
 			<string>libplatform</string>
 			<key>version</key>
-			<string>177.200.16</string>
-			<key>patchfiles</key>
-			<array>
-				<string>libplatform-177-20.16.xnu-headers.p1.patch</string>
-			</array>
+			<string>1000</string>
+			<key>target</key>
+			<string>headers</string>
 		</dict>
 
 		<key>libpthread</key>
