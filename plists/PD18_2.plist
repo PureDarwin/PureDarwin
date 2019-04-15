@@ -49,7 +49,7 @@
 		<key>AppleI386GenericPlatform</key>
 		<dict>
 			<key>version</key>
-			<string>11.1</string>
+			<string>11.2</string>
 			<key>github</key>
 			<string>PureDarwin/AppleI386GenericPlatform</string>
 			<key>dependencies</key>
