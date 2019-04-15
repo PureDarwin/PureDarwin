@@ -72,7 +72,7 @@
 			<key>original</key>
 			<string>xnu</string>
 			<key>version</key>
-			<string>4093.221.2</string>
+			<string>4903.221.2</string>
 			<key>patchfiles</key>
 			<array>
 				<string>xnu-4903.221.2.bsd-xcconfig.p1.patch</string>
