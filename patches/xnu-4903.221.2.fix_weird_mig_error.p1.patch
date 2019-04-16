@@ -1,3 +1,15 @@
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -148,6 +148,7 @@ WARNFLAGS_STD := \
+ 	-Wno-format-non-iso \
+ 	-Wno-format-nonliteral \
+ 	-Wno-reserved-id-macro \
++	-Wno-implicit-function-declaration \
+ 	-Wno-language-extension-token \
+ 	-Wno-missing-variable-declarations \
+ 	-Wno-packed \
+diff --git a/osfmk/ipc/mach_msg.c b/osfmk/ipc/mach_msg.c
+index d17cb24..dd8a7c0 100644
 --- a/osfmk/ipc/mach_msg.c
 +++ b/osfmk/ipc/mach_msg.c
 @@ -776,3 +776,9 @@ msg_receive_error(
