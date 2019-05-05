@@ -271,6 +271,13 @@
 			<string>10.2</string>
 			<key>github</key>
 			<string>PureDarwin/XPC</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>CrashReporterClient</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>xnu</key>
