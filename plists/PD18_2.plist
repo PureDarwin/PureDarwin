@@ -67,6 +67,16 @@
 			<string>33.200.4</string>
 		</dict>
 
+		<key>CrashReporterClient</key>
+		<dict>
+			<key>original</key>
+			<string>libcoreservices</string>
+			<key>version</key>
+			<string>10.2</string>
+			<key>target</key>
+			<string>CrashReporterClient</string>
+		</dict>
+
 		<key>Libsyscall</key>
 		<dict>
 			<key>original</key>
@@ -133,7 +143,7 @@
 		<key>libcoreservices</key>
 		<dict>
 			<key>version</key>
-			<string>10.1</string>
+			<string>10.2</string>
 			<key>github</key>
 			<string>PureDarwin/libcoreservices</string>
 		</dict>
