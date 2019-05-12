@@ -276,7 +276,7 @@
 		<key>libxpc</key>
 		<dict>
 			<key>version</key>
-			<string>10.2</string>
+			<string>20</string>
 			<key>github</key>
 			<string>PureDarwin/XPC</string>
 			<key>dependencies</key>
