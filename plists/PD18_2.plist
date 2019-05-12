@@ -151,7 +151,19 @@
 		<key>libdispatch</key>
 		<dict>
 			<key>version</key>
-			<string>1008.220.2</string>
+			<string>2000</string>
+			<key>github</key>
+			<string>PureDarwin/libdispatch</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>Libsyscall</string>
+					<string>libplatform_headers</string>
+					<string>libpthread</string>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>libfirehose_kernel</key>
@@ -159,7 +171,9 @@
 			<key>original</key>
 			<string>libdispatch</string>
 			<key>version</key>
-			<string>1008.220.2</string>
+			<string>2000</string>
+			<key>github</key>
+			<string>PureDarwin/libdispatch</string>
 			<key>target</key>
 			<string>libfirehose_kernel</string>
 			<key>dependencies</key>
@@ -170,12 +184,6 @@
 					<string>xnu_headers</string>
 				</array>
 			</dict>
-			<key>patchfiles</key>
-			<array>
-				<string>libdispatch-1008.220.2.header-paths.p1.patch</string>
-				<string>libdispatch-1008.220.2.fix-build.p1.patch</string>
-				<string>libdispatch-1008.220.2-xcodeconfig_BSD.xcconfig.add</string>
-			</array>
 		</dict>
 
 		<key>libplatform</key>
