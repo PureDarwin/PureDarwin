@@ -190,6 +190,8 @@
 		<dict>
 			<key>version</key>
 			<string>1000</string>
+			<key>github</key>
+			<string>PureDarwin/libplatform</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
