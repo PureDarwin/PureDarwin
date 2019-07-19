@@ -132,7 +132,7 @@
 		<key>corecrypto</key>
 		<dict>
 			<key>version</key>
-			<string>2000.1</string>
+			<string>2000.1.1</string>
 			<key>github</key>
 			<string>PureDarwin/corecrypto</string>
 			<key>dependencies</key>
