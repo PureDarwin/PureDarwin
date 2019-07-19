@@ -109,6 +109,26 @@
 			<string>PureDarwin/Libsystem</string>
 		</dict>
 
+		<key>Libtrace</key>
+		<dict>
+			<key>version</key>
+			<string>10</string>
+			<key>github</key>
+			<string>PureDarwin/Libtrace</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>CrashReporterClient</string>
+				</array>
+				<key>header</key>
+				<array>
+					<string>libdispatch</string>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>corecrypto</key>
 		<dict>
 			<key>version</key>
@@ -206,6 +226,8 @@
 		<dict>
 			<key>version</key>
 			<string>1000</string>
+			<key>github</key>
+			<string>PureDarwin/libplatform</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
