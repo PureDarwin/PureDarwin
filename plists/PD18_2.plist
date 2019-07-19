@@ -54,6 +54,10 @@
 			<string>PureDarwin/AppleI386GenericPlatform</string>
 			<key>dependencies</key>
 			<dict>
+				<key>build</key>
+				<array>
+					<string>libkmod</string>
+				</array>
 				<key>header</key>
 				<array>
 					<string>xnu_headers</string>
@@ -184,6 +188,18 @@
 					<string>xnu_headers</string>
 				</array>
 			</dict>
+		</dict>
+
+		<key>libkmod</key>
+		<dict>
+			<key>original</key>
+			<string>xnu</string>
+			<key>version</key>
+			<string>4903.221.2</string>
+			<key>patchfiles</key>
+			<array>
+				<string>xnu-4903.221.2.libkmod.p1.patch</string>
+			</array>
 		</dict>
 
 		<key>libplatform</key>
