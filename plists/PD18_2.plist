@@ -129,6 +129,14 @@
 			</dict>
 		</dict>
 
+		<key>SQLite</key>
+		<dict>
+			<key>version</key>
+			<string>3.29.0.0.1</string>
+			<key>github</key>
+			<string>PureDarwin/SQLite</string>
+		</dict>
+
 		<key>corecrypto</key>
 		<dict>
 			<key>version</key>
@@ -324,6 +332,14 @@
 					<string>CrashReporterClient</string>
 				</array>
 			</dict>
+		</dict>
+
+		<key>pd_update</key>
+		<dict>
+			<key>version</key>
+			<string>1</string>
+			<key>github</key>
+			<string>PureDarwin/PureDarwin-System-Updater</string>
 		</dict>
 
 		<key>xnu</key>
