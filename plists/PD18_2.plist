@@ -234,7 +234,7 @@
 		<key>libplatform</key>
 		<dict>
 			<key>version</key>
-			<string>1000</string>
+			<string>1000.1.2</string>
 			<key>github</key>
 			<string>PureDarwin/libplatform</string>
 			<key>dependencies</key>
