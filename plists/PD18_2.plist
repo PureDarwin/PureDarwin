@@ -98,6 +98,7 @@
 			<array>
 				<string>xnu-4903.221.2.bsd-xcconfig.p1.patch</string>
 				<string>xnu-4903.221.2.libsyscall-build.p1.patch</string>
+				<string>xnu-4903.221.2.libsyscall-mig-flags.p1.patch</string>
 			</array>
 		</dict>
 
