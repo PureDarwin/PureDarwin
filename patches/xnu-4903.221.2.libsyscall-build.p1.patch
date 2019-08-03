@@ -1,14 +1,14 @@
 diff --git a/libsyscall/Libsyscall.xcconfig b/libsyscall/Libsyscall.xcconfig
-index 737c410..349ff77 100644
+index 737c410..41700b3 100644
 --- a/libsyscall/Libsyscall.xcconfig
 +++ b/libsyscall/Libsyscall.xcconfig
-@@ -21,10 +19,10 @@ OTHER_CFLAGS[sdk=watchos*] = $(inherited) -DNO_SYSCALL_LEGACY
+@@ -21,10 +21,10 @@ OTHER_CFLAGS[sdk=watchos*] = $(inherited) -DNO_SYSCALL_LEGACY
  OTHER_CFLAGS[sdk=tvos*] = $(inherited) -DNO_SYSCALL_LEGACY
  OTHER_CFLAGS[sdk=appletvos*] = $(inherited) -DNO_SYSCALL_LEGACY
  OTHER_CFLAGS[sdk=bridgeos*] = $(inherited) -DNO_SYSCALL_LEGACY
 -GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0
 -HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(SDKROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
-+GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0 __PUREDARWIN__=1
++GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0 __PUREDARWIN__=1 __cold=
 +HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(DEPROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
 +FRAMEWORK_SEARCH_PATHS = $(DEPROOT)/System/Library/Frameworks
  WARNING_CFLAGS = -Wmost
@@ -246,7 +246,7 @@ index 2008380..04b2a2a 100644
  #include <sys/process_policy.h>
  #include <stdlib.h>
 diff --git a/libsyscall/xcodescripts/compile-syscalls.pl b/libsyscall/xcodescripts/compile-syscalls.pl
-index f0c2691..8eddf43 100755
+index f0c2691..494d21e 100755
 --- a/libsyscall/xcodescripts/compile-syscalls.pl
 +++ b/libsyscall/xcodescripts/compile-syscalls.pl
 @@ -63,7 +63,7 @@ my @CFLAGS = (
