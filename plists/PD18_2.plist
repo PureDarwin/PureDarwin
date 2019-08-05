@@ -261,7 +261,7 @@
 		<key>libpthread</key>
 		<dict>
 			<key>version</key>
-			<string>20</string>
+			<string>21</string>
 			<key>github</key>
 			<string>PureDarwin/libpthread</string>
 			<key>dependencies</key>
@@ -281,7 +281,7 @@
 			<key>original</key>
 			<string>libpthread</string>
 			<key>version</key>
-			<string>20</string>
+			<string>21</string>
 			<key>target</key>
 			<string>libsystem_pthread introspection</string>
 			<key>github</key>
@@ -303,7 +303,7 @@
 			<key>original</key>
 			<string>libpthread</string>
 			<key>version</key>
-			<string>20</string>
+			<string>21</string>
 			<key>target</key>
 			<string>Kext</string>
 			<key>github</key>
