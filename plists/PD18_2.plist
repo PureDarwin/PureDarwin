@@ -353,6 +353,8 @@
 			<dict>
 				<key>KERNEL_CONFIGS</key>
 				<string>RELEASE</string>
+				<key>USE_WERROR</key>
+				<string>0</string>
 			</dict>
 			<key>dependencies</key>
 			<dict>
