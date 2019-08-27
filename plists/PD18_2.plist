@@ -352,7 +352,7 @@
 		<key>libxpc</key>
 		<dict>
 			<key>version</key>
-			<string>20.1</string>
+			<string>20.1.1</string>
 			<key>github</key>
 			<string>PureDarwin/XPC</string>
 			<key>dependencies</key>
@@ -360,6 +360,7 @@
 				<key>build</key>
 				<array>
 					<string>CrashReporterClient</string>
+					<string>libpthread</string>
 				</array>
 			</dict>
 		</dict>
