@@ -322,6 +322,33 @@
 			</dict>
 		</dict>
 
+		<key>libsystem_asl</key>
+		<dict>
+			<key>version</key>
+			<string>356.200.4</string>
+			<key>original</key>
+			<string>syslog</string>
+			<key>target</key>
+			<string>libasl</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>CrashReporterClient</string>
+					<string>libdispatch</string>
+					<string>libxpc</string>
+				</array>
+			</dict>
+			<key>patchfiles</key>
+			<array>
+				<string>syslog-356.200.4.remove-os_log.p1.patch</string>
+				<string>syslog-356.200.4.fix-xcconfig.p1.patch</string>
+				<string>syslog-356.200.4.remove-i386.p1.patch</string>
+				<string>syslog-356.200.4.remove-cache-delete.p1.patch</string>
+				<string>syslog-356.200.4.remove-quarantine.p1.patch</string>
+			</array>
+		</dict>
+
 		<key>libxpc</key>
 		<dict>
 			<key>version</key>
@@ -354,12 +381,17 @@
 				<key>build</key>
 				<array>
 					<string>CrashReporterClient</string>
+					<string>libdispatch</string>
+					<string>libxpc</string>
 				</array>
 			</dict>
 			<key>patchfiles</key>
 			<array>
 				<string>syslog-356.200.4.remove-os_log.p1.patch</string>
 				<string>syslog-356.200.4.fix-xcconfig.p1.patch</string>
+				<string>syslog-356.200.4.remove-i386.p1.patch</string>
+				<string>syslog-356.200.4.remove-cache-delete.p1.patch</string>
+				<string>syslog-356.200.4.remove-quarantine.p1.patch</string>
 			</array>
 		</dict>
 

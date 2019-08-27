@@ -1,16 +1,19 @@
-commit 2693dfa7ef46a184f38f632119c3430b78516658
+commit fa342f720d0e9a57e7fb775198d7f9ba685952bf
 Author: William Kent <wjk011@gmail.com>
 Date:   Tue Aug 27 13:59:02 2019 -0400
 
     Apply patch xcconfig
 
 diff --git a/xcodeconfig/base.xcconfig b/xcodeconfig/base.xcconfig
-index 74940e8..6d0ce2f 100644
+index 74940e8..60f866d 100644
 --- a/xcodeconfig/base.xcconfig
 +++ b/xcodeconfig/base.xcconfig
-@@ -1 +1 @@
+@@ -1 +1,4 @@
 -#include "<DEVELOPER_DIR>/Makefiles/CoreOS/Xcode/BSD.xcconfig"
-+GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO;
++#include "../darwinbuild.xcconfig"
++
++GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO
++GCC_PREPROCESSOR_DEFINITIONS = __cold=
 diff --git a/xcodeconfig/libasl.xcconfig b/xcodeconfig/libasl.xcconfig
 index d55394e..8b9e313 100644
 --- a/xcodeconfig/libasl.xcconfig
