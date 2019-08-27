@@ -345,6 +345,24 @@
 			<string>PureDarwin/PureDarwin-System-Updater</string>
 		</dict>
 
+		<key>syslog</key>
+		<dict>
+			<key>version</key>
+			<string>356.200.4</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>CrashReporterClient</string>
+				</array>
+			</dict>
+			<key>patchfiles</key>
+			<array>
+				<string>syslog-356.200.4.remove-os_log.p1.patch</string>
+				<string>syslog-356.200.4.fix-xcconfig.p1.patch</string>
+			</array>
+		</dict>
+
 		<key>xnu</key>
 		<dict>
 			<key>version</key>

@@ -1,0 +1,243 @@
+commit 42aedc2d537c87abf7c6a1e77a0e2c21a33ddc2f
+Author: William Kent <wjk011@gmail.com>
+Date:   Tue Aug 27 13:57:51 2019 -0400
+
+    Apply patch remove-os_log
+
+diff --git a/libsystem_asl.tproj/src/asl.c b/libsystem_asl.tproj/src/asl.c
+index b5298ce..d733910 100644
+--- a/libsystem_asl.tproj/src/asl.c
++++ b/libsystem_asl.tproj/src/asl.c
+@@ -52,8 +52,6 @@
+ #include <dispatch/dispatch.h>
+ #include <libkern/OSAtomic.h>
+ #include <os/activity.h>
+-#include <os/log.h>
+-#include <os/log_private.h>
+ #include <asl_ipc.h>
+ #include <asl_client.h>
+ #include <asl_core.h>
+@@ -62,6 +60,13 @@
+ #include <asl_store.h>
+ #include <asl_private.h>
+ 
++static __inline__ int os_log_shim_enabled(void *ptr) {
++	// This is a function and not a macro to avoid
++	// conditional-expression-is-constant warnings.
++	return 0;
++}
++
++
+ #define forever for(;;)
+ 
+ #define FETCH_BATCH	256
+@@ -87,17 +92,6 @@
+  */
+ #define SIZE_LIMIT_MSG "*** ASL MESSAGE SIZE (%u bytes) EXCEEDED MAXIMIMUM SIZE (%u bytes) ***"
+ 
+-static const os_log_type_t shim_asl_to_log_type[8] = {
+-	OS_LOG_TYPE_DEFAULT,    // ASL_LEVEL_EMERG
+-	OS_LOG_TYPE_DEFAULT,    // ASL_LEVEL_ALERT
+-	OS_LOG_TYPE_DEFAULT,    // ASL_LEVEL_CRIT
+-	OS_LOG_TYPE_DEFAULT,    // ASL_LEVEL_ERR
+-	OS_LOG_TYPE_DEFAULT,    // ASL_LEVEL_WARNING
+-	OS_LOG_TYPE_DEFAULT,    // ASL_LEVEL_NOTICE
+-	OS_LOG_TYPE_INFO,       // ASL_LEVEL_INFO
+-	OS_LOG_TYPE_DEBUG       // ASL_LEVEL_DEBUG
+-};
+-
+ /* forward */
+ static ASL_STATUS _asl_send_message(asl_object_t obj, uint32_t eval, asl_msg_t *msg, const char *mstring);
+ static ASL_STATUS _asl_send_message_text(asl_client_t *asl, asl_msg_t *sendmsg, asl_object_t obj, uint32_t eval, asl_msg_t *msg, const char *mstring, bool shimmed);
+@@ -1043,7 +1037,6 @@ asl_base_msg(asl_client_t *asl, uint32_t level, const struct timeval *tv, const
+ 	char aux_val[64];
+ 	asl_msg_t *aux;
+ 	int status;
+-	os_activity_id_t osaid;
+ 
+ 	aux = asl_msg_new(ASL_TYPE_MSG);
+ 	if (aux == NULL) return NULL;
+@@ -1068,14 +1061,6 @@ asl_base_msg(asl_client_t *asl, uint32_t level, const struct timeval *tv, const
+ 	snprintf(aux_val, sizeof(aux_val), "%u", getpid());
+ 	asl_msg_set_key_val(aux, ASL_KEY_PID, aux_val);
+ 
+-	/* OSActivityID */
+-	osaid = os_activity_get_identifier(OS_ACTIVITY_CURRENT, NULL);
+-	if (osaid)
+-	{
+-		snprintf(aux_val, sizeof(aux_val), "0x%016llx", osaid);
+-		asl_msg_set_key_val(aux, ASL_KEY_OS_ACTIVITY_ID, aux_val);
+-	}
+-
+ 	/* Sender */
+ 	if ((sstr == NULL) && (asl != NULL))
+ 	{
+@@ -1546,19 +1531,6 @@ _asl_send_message(asl_object_t obj, uint32_t eval, asl_msg_t *msg, const char *m
+ 	return outstatus;
+ }
+ 
+-static void
+-os_log_with_args_wrapper(void *addr, int level, const char *format, ...)
+-{
+-	va_list ap;
+-	if (level < ASL_LEVEL_EMERG) level = ASL_LEVEL_EMERG;
+-	if (level > ASL_LEVEL_DEBUG) level = ASL_LEVEL_DEBUG;
+-	os_log_type_t type = shim_asl_to_log_type[level];
+-
+-	va_start(ap, format);
+-	os_log_with_args(OS_LOG_DEFAULT, type, format, ap, addr);
+-	va_end(ap);
+-}
+-
+ /*
+  * asl_send: send a message
+  * This routine may be used instead of asl_log() or asl_vlog() if asl_set()
+@@ -1575,30 +1547,7 @@ asl_client_internal_send(asl_object_t obj, asl_object_t msg, void *addr)
+ 
+ 	const char *message = asl_msg_get_val_for_key((asl_msg_t *)msg, ASL_KEY_MSG);
+ 
+-	if ((eval & EVAL_SEND_TRACE) && message && message[0] && os_log_shim_enabled(addr))
+-	{
+-		int level = ASL_LEVEL_DEBUG;
+-		const char *lval = asl_msg_get_val_for_key((asl_msg_t *)msg, ASL_KEY_LEVEL);
+-		if (lval != NULL) level = atoi(lval);
+-
+-		/*
+-		 * If the return address and the format string are from different
+-		 * binaries, os_log_with_args will not record the return address.
+-		 * Work around this by passing a dynamic format string.
+-		 */
+-		char dynamic_format[] = "%s";
+-		os_log_with_args_wrapper(addr, level, dynamic_format, message);
+-
+-		if (eval & EVAL_TEXT_FILE)
+-		{
+-			status = _asl_send_message_text(NULL, NULL, obj, eval, (asl_msg_t *)msg, NULL, true);
+-		}
+-	}
+-	else if (eval & EVAL_ASL)
+-	{
+-		status = _asl_send_message(obj, eval, (asl_msg_t *)msg, NULL);
+-	}
+-
++	status = _asl_send_message(obj, eval, (asl_msg_t *)msg, NULL);
+ 	return status;
+ }
+ 
+diff --git a/libsystem_asl.tproj/src/syslog.c b/libsystem_asl.tproj/src/syslog.c
+index 6894d49..5aa9549 100644
+--- a/libsystem_asl.tproj/src/syslog.c
++++ b/libsystem_asl.tproj/src/syslog.c
+@@ -9,7 +9,7 @@
+  * compliance with the License. Please obtain a copy of the License at
+  * http://www.opensource.apple.com/apsl/ and read it before using this
+  * file.
+- * 
++ *
+  * The Original Code and all software distributed under the License are
+  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+@@ -17,7 +17,7 @@
+  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+  * Please see the License for the specific language governing rights and
+  * limitations under the License.
+- * 
++ *
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
+@@ -66,8 +66,6 @@
+ #include <asl.h>
+ #include <asl_msg.h>
+ #include <asl_private.h>
+-#include <os/log.h>
+-#include <os/log_private.h>
+ 
+ #define	LOG_NO_NOTIFY	0x1000
+ extern const char *asl_syslog_faciliy_num_to_name(int n);
+@@ -90,17 +88,6 @@ __private_extern__ int _sl_mask = 0;
+ 
+ #define EVAL_ASL (EVAL_SEND_ASL | EVAL_TEXT_FILE | EVAL_ASL_FILE)
+ 
+-static const os_log_type_t shim_syslog_to_log_type[8] = {
+-	OS_LOG_TYPE_DEFAULT,    // LOG_EMERG
+-	OS_LOG_TYPE_DEFAULT,    // LOG_ALERT
+-	OS_LOG_TYPE_DEFAULT,    // LOG_CRIT
+-	OS_LOG_TYPE_DEFAULT,    // LOG_ERR
+-	OS_LOG_TYPE_DEFAULT,    // LOG_WARNING
+-	OS_LOG_TYPE_DEFAULT,    // LOG_NOTICE
+-	OS_LOG_TYPE_INFO,       // LOG_INFO
+-	OS_LOG_TYPE_DEBUG       // LOG_DEBUG
+-};
+-
+ extern uint32_t _asl_evaluate_send(asl_object_t client, asl_object_t m, int slevel);
+ extern uint32_t _asl_lib_vlog(asl_object_t obj, uint32_t eval, asl_object_t msg, const char *format, va_list ap);
+ extern uint32_t _asl_lib_vlog_text(asl_object_t obj, uint32_t eval, asl_object_t msg, const char *format, va_list ap);
+@@ -121,46 +108,37 @@ _syslog_asl_client()
+ static void
+ _vsyslog(int pri, const char *fmt, va_list ap, void *addr, bool mirror)
+ {
+-	int level = pri & LOG_PRIMASK;
+-	int fac = pri & LOG_FACMASK;
+-	asl_object_t msg;
+-	uint32_t eval;
+-	bool trace;
+-
+-	_syslog_asl_client();
+-
+-	msg = asl_new(ASL_TYPE_MSG);
++	/* Copied from syslog-267/libsystem_asl.tproj/src/syslog.c:(122-152) */
++	int fac;
++	asl_msg_t *facmsg;
++	const char *facility;
+ 
++	facmsg = NULL;
++	fac = pri & LOG_FACMASK;
+ 	if (fac != 0)
+ 	{
+-		const char *facility = asl_syslog_faciliy_num_to_name(fac);
+-		if (facility != NULL) asl_set(msg, ASL_KEY_FACILITY, facility);
+-	}
+-
+-	eval = _asl_evaluate_send(_sl_asl, msg, level);
+-	trace = (eval & EVAL_SEND_TRACE) && os_log_shim_enabled(addr);
+-
+-	if (trace)
+-	{
+-		va_list ap_copy;
+-		os_log_type_t type = shim_syslog_to_log_type[level];
+-
+-		va_copy(ap_copy, ap);
+-		os_log_with_args(OS_LOG_DEFAULT, type, fmt, ap_copy, addr);
+-		va_end(ap_copy);
+-
+-		if ((eval & EVAL_TEXT_FILE) && !mirror)
++		facility = asl_syslog_faciliy_num_to_name(fac);
++		if (facility != NULL)
+ 		{
+-			_asl_lib_vlog_text(_sl_asl, eval, msg, fmt, ap);
++			facmsg = asl_msg_new(ASL_TYPE_MSG);
++			asl_msg_set_key_val(facmsg, ASL_KEY_FACILITY, facility);
+ 		}
+ 	}
+ 
+-	if ((eval & EVAL_ASL) && (mirror || !trace))
++	pthread_mutex_lock(&_sl_lock);
++
++	/* open syslog ASL client if required */
++	if (_sl_asl == NULL)
+ 	{
+-		_asl_lib_vlog(_sl_asl, eval, msg, fmt, ap);
++		_sl_asl = asl_open(NULL, NULL, ASL_OPT_SYSLOG_LEGACY);
++		_sl_mask = ASL_FILTER_MASK_UPTO(ASL_LEVEL_DEBUG);
++		asl_set_filter(_sl_asl, _sl_mask);
+ 	}
+ 
+-	asl_release(msg);
++	asl_vlog(_sl_asl, (aslmsg)facmsg, LOG_PRI(pri), fmt, ap);
++	pthread_mutex_unlock(&_sl_lock);
++
++	if (facmsg != NULL) asl_msg_release(facmsg);
+ }
+ 
+ #if TARGET_OS_OSX
