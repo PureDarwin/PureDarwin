@@ -1,0 +1,50 @@
+Only in shell_cmds-203.mod: .DS_Store
+diff -ruh shell_cmds-203/shell_cmds.xcodeproj/project.pbxproj shell_cmds-203.mod/shell_cmds.xcodeproj/project.pbxproj
+--- shell_cmds-203/shell_cmds.xcodeproj/project.pbxproj	2016-08-24 18:04:00.000000000 -0400
++++ shell_cmds-203.mod/shell_cmds.xcodeproj/project.pbxproj	2019-09-19 20:31:36.000000000 -0400
+@@ -1508,8 +1508,8 @@
+ 		FD155C741D6E37D7005A53CA /* CopyFiles */ = {
+ 			isa = PBXCopyFilesBuildPhase;
+ 			buildActionMask = 2147483647;
+-			dstPath = /AppleInternal/Tests/shell_cmds/test;
+-			dstSubfolderSpec = 0;
++			dstPath = shell_cmds/test;
++			dstSubfolderSpec = 16;
+ 			files = (
+ 				FD155C751D6E37E5005A53CA /* legacy_test.sh in CopyFiles */,
+ 			);
+@@ -1518,8 +1518,8 @@
+ 		FD155C881D6E38AB005A53CA /* CopyFiles */ = {
+ 			isa = PBXCopyFilesBuildPhase;
+ 			buildActionMask = 2147483647;
+-			dstPath = /AppleInternal/Tests/shell_cmds/printf;
+-			dstSubfolderSpec = 0;
++			dstPath = shell_cmds/printf;
++			dstSubfolderSpec = 16;
+ 			files = (
+ 				FD155C891D6E38C0005A53CA /* legacy_test.sh in CopyFiles */,
+ 				FD155C8A1D6E38C0005A53CA /* regress.b.out in CopyFiles */,
+@@ -3828,6 +3828,7 @@
+ 			developmentRegion = English;
+ 			hasScannedForEncodings = 0;
+ 			knownRegions = (
++				English,
+ 				en,
+ 			);
+ 			mainGroup = FC80BF5514A05A2F00C6F7F5;
+@@ -5045,6 +5046,7 @@
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
++				SDKROOT = macosx;
+ 			};
+ 			name = Release;
+ 		};
+@@ -5301,6 +5303,7 @@
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
++				SDKROOT = macosx;
+ 			};
+ 			name = Release;
+ 		};
