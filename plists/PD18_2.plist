@@ -428,6 +428,7 @@
 				<string>xnu-4903.221.2.xnu_dependencies_dir.p1.patch</string>
 				<string>xnu-4903.221.2.kext_copyright_check.p1.patch</string>
 				<string>xnu-4903.221.2.xnu_firehose_dir.p1.patch</string>
+				<string>xnu-4903.221.2.kext_load.p1.patch</string>
 			</array>
 		</dict>
 
