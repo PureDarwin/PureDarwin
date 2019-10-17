@@ -406,6 +406,8 @@
 				<string>RELEASE</string>
 				<key>BUILD_WERROR</key>
 				<string>0</string>
+				<key>BUILD_LTO</key>
+				<string>0</string>
 			</dict>
 			<key>dependencies</key>
 			<dict>
@@ -429,6 +431,7 @@
 				<string>xnu-4903.221.2.kext_copyright_check.p1.patch</string>
 				<string>xnu-4903.221.2.xnu_firehose_dir.p1.patch</string>
 				<string>xnu-4903.221.2.fix_weird_mig_error.p1.patch</string>
+				<string>xnu-4903.221.2.kext_load.p1.patch</string>
 			</array>
 		</dict>
 
