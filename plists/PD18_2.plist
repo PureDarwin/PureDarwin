@@ -39,7 +39,7 @@
 	<dict>
 		<key>boot</key>
 		<array>
-			<string>xnu AppleI386GenericPlatform corecrypto</string>
+			<string>xnu AppleI386GenericPlatform IOACPIFamily corecrypto</string>
 			<string>libpthread libcoreservices</string>
 		</array>
 	</dict>
@@ -79,6 +79,12 @@
 			<string>10.2</string>
 			<key>target</key>
 			<string>CrashReporterClient</string>
+		</dict>
+
+		<key>IOACPIFamily</key>
+		<dict>
+			<key>version</key>
+			<string>100</string>
 		</dict>
 
 		<key>Libsyscall</key>
