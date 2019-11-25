@@ -84,7 +84,7 @@
 		<key>IOACPIFamily</key>
 		<dict>
 			<key>version</key>
-			<string>100</string>
+			<string>100.0.1</string>
 		</dict>
 
 		<key>Libsyscall</key>
