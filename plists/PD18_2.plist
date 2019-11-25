@@ -85,6 +85,13 @@
 		<dict>
 			<key>version</key>
 			<string>100.0.1</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>Libsyscall</key>
