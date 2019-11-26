@@ -85,6 +85,8 @@
 		<dict>
 			<key>version</key>
 			<string>100.0.1</string>
+			<key>github</key>
+			<string>PureDarwin/IOACPIFamily</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
