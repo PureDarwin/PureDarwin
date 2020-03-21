@@ -199,7 +199,7 @@
 		<key>libdispatch</key>
 		<dict>
 			<key>version</key>
-			<string>2000.1.5</string>
+			<string>3000</string>
 			<key>github</key>
 			<string>PureDarwin/libdispatch</string>
 			<key>target</key>
@@ -221,7 +221,7 @@
 			<key>original</key>
 			<string>libdispatch</string>
 			<key>version</key>
-			<string>2000.1.5</string>
+			<string>3000</string>
 			<key>github</key>
 			<string>PureDarwin/libdispatch</string>
 			<key>target</key>
@@ -439,14 +439,13 @@
 			</dict>
 			<key>patchfiles</key>
 			<array>
-				<string>xnu-4903.221.2.availability_versions.p1.patch</string>
-				<string>xnu-4903.221.2.fix_codesigning.p1.patch</string>
-				<string>xnu-4903.221.2.fix_system_framework.p1.patch</string>
-				<string>xnu-4903.221.2.xnu_dependencies_dir.p1.patch</string>
-				<string>xnu-4903.221.2.kext_copyright_check.p1.patch</string>
-				<string>xnu-4903.221.2.xnu_firehose_dir.p1.patch</string>
-				<string>xnu-4903.221.2.fix_weird_mig_error.p1.patch</string>
-				<string>xnu-4903.221.2.kext_load.p1.patch</string>
+				<string>xnu-6153.11.26.availability_versions.p1.patch</string>
+				<string>xnu-6153.11.26.fix_codesigning.p1.patch</string>
+				<string>xnu-6153.11.26.fix_system_framework.p1.patch</string>
+				<string>xnu-6153.11.26.xnu_dependencies_dir.p1.patch</string>
+				<string>xnu-6153.11.26.kext_copyright_check.p1.patch</string>
+				<string>xnu-6153.11.26.xnu_firehose_dir.p1.patch</string>
+				<string>xnu-6153.11.26.kext_load.p1.patch</string>
 			</array>
 		</dict>
 
