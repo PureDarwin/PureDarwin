@@ -68,7 +68,7 @@
 		<key>AvailabilityVersions</key>
 		<dict>
 			<key>version</key>
-			<string>33.200.4</string>
+			<string>45</string>
 		</dict>
 
 		<key>CrashReporterClient</key>
@@ -171,7 +171,7 @@
 		<key>dtrace</key>
 		<dict>
 			<key>version</key>
-			<string>284.200.15</string>
+			<string>338.0.1</string>
 		</dict>
 
 		<key>dtrace_host</key>
@@ -179,7 +179,7 @@
 			<key>original</key>
 			<string>dtrace</string>
 			<key>version</key>
-			<string>284.200.15</string>
+			<string>338.0.1</string>
 			<key>target</key>
 			<string>dtrace_host</string>
 			<key>patchfiles</key>
@@ -414,7 +414,7 @@
 		<key>xnu</key>
 		<dict>
 			<key>version</key>
-			<string>4903.221.2</string>
+			<string>6153.11.26</string>
 			<key>environment</key>
 			<dict>
 				<key>KERNEL_CONFIGS</key>
