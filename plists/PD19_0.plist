@@ -455,7 +455,7 @@
 			<key>original</key>
 			<string>xnu</string>
 			<key>version</key>
-			<string>4903.221.2</string>
+			<string>6153.11.26</string>
 			<key>environment</key>
 			<dict>
 				<key>KERNEL_CONFIGS</key>
@@ -470,10 +470,10 @@
 			</dict>
 			<key>patchfiles</key>
 			<array>
-				<string>xnu-4903.221.2.availability_versions.p1.patch</string>
-				<string>xnu-4903.221.2.fix_codesigning.p1.patch</string>
-				<string>xnu-4903.221.2.fix_system_framework.p1.patch</string>
-				<string>xnu-4903.221.2.xnu_dependencies_dir.p1.patch</string>
+				<string>xnu-6153.11.26.availability_versions.p1.patch</string>
+				<string>xnu-6153.11.26.fix_codesigning.p1.patch</string>
+				<string>xnu-6153.11.26.fix_system_framework.p1.patch</string>
+				<string>xnu-6153.11.26.xnu_dependencies_dir.p1.patch</string>
 			</array>
 		</dict>
 	</dict>
