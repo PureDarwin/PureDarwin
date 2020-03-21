@@ -446,6 +446,10 @@
 				<string>xnu-6153.11.26.kext_copyright_check.p1.patch</string>
 				<string>xnu-6153.11.26.xnu_firehose_dir.p1.patch</string>
 				<string>xnu-6153.11.26.kext_load.p1.patch</string>
+				<string>xnu-6153.11.26.no_uncrustify.p1.patch</string>
+				<string>xnu-6153.11.26.remove_cfg_adr.p1.patch</string>
+				<string>xnu-6153.11.26.ipsec_nexus.p1.patch</string>
+				<string>xnu-6153.11.26.fix_dlil.p1.patch</string>
 			</array>
 		</dict>
 
