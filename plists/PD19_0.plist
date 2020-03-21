@@ -184,7 +184,7 @@
 			<string>dtrace_host</string>
 			<key>patchfiles</key>
 			<array>
-				<string>dtrace-284.200.15.host-tools.p1.patch</string>
+				<string>dtrace-338.0.1.dtrace_host.p1.patch</string>
 			</array>
 		</dict>
 
