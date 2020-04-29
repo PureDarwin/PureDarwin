@@ -116,6 +116,7 @@
 				<string>xnu-6153.11.26.libsyscall_build.p1.patch</string>
 				<string>xnu-6153.11.26.libsyscall_makefile.p1.patch</string>
 				<string>xnu-6153.11.26.fix_fork_asm.p1.patch</string>
+				<string>xnu-6153.11.26.fix_mig_includes.p1.patch</string>
 			</array>
 		</dict>
 

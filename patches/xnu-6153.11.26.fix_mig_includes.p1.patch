@@ -1,0 +1,56 @@
+commit 776a1696b75e434b1bf109198e503cce2b12deac
+Author: William Kent <wjk011@gmail.com>
+Date:   Wed Apr 29 17:05:42 2020 -0400
+
+    Apply patch fix_mig_includes
+
+diff --git a/libsyscall/Libsyscall.xcconfig b/libsyscall/Libsyscall.xcconfig
+index 8b897c4..c2a03ac 100644
+--- a/libsyscall/Libsyscall.xcconfig
++++ b/libsyscall/Libsyscall.xcconfig
+@@ -87,3 +87,6 @@ USE_HEADERMAP = NO
+ LINK_WITH_STANDARD_LIBRARIES = NO
+ ALWAYS_SEARCH_USER_PATHS = YES
+ IS_ZIPPERED = YES
++
++EXTRA_MIG_INCLUDES = -I$(DEPROOT)/usr/include
++OTHER_MIGFLAGS = $(EXTRA_MIG_INCLUDES) $(OTHER_MIGFLAGS)
+diff --git a/libsyscall/xcodescripts/mach_install_mig.sh b/libsyscall/xcodescripts/mach_install_mig.sh
+index 0761c11..8c23871 100755
+--- a/libsyscall/xcodescripts/mach_install_mig.sh
++++ b/libsyscall/xcodescripts/mach_install_mig.sh
+@@ -147,7 +147,7 @@ for hdr in $MACH_PRIVATE_HDRS; do
+ done
+ 
+ # special case because we only have one to do here
+-$MIG -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$SERVER_HEADER_DST/netname.h" $MIG_INCFLAGS $SRC/servers/netname.defs
++$MIG $EXTRA_MIG_INCLUDES -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$SERVER_HEADER_DST/netname.h" $MIG_INCFLAGS $SRC/servers/netname.defs
+ 
+ # install /usr/include/mach mig headers
+ 
+@@ -156,7 +156,7 @@ mkdir -p $MIG_HEADER_OBJ
+ 
+ for mig in $MIGS $MIGS_DUAL_PUBLIC_PRIVATE; do
+ 	MIG_NAME=`basename $mig .defs`
+-	$MIG -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_HEADER_OBJ/$MIG_NAME.h" $MIG_DEFINES $MIG_INCFLAGS $SRC/$mig
++	$MIG $EXTRA_MIG_INCLUDES -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_HEADER_OBJ/$MIG_NAME.h" $MIG_DEFINES $MIG_INCFLAGS $SRC/$mig
+ 	for filter in $MIG_FILTERS; do
+ 		$FILTER_MIG $SRC/$filter $MIG_HEADER_OBJ/$MIG_NAME.h > $MIG_HEADER_OBJ/$MIG_NAME.tmp.h
+ 		mv $MIG_HEADER_OBJ/$MIG_NAME.tmp.h $MIG_HEADER_OBJ/$MIG_NAME.h
+@@ -168,7 +168,7 @@ mkdir -p $MIG_PRIVATE_HEADER_DST
+ 
+ for mig in $MIGS_PRIVATE $MIGS_DUAL_PUBLIC_PRIVATE; do
+ 	MIG_NAME=`basename $mig .defs`
+-	$MIG -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_PRIVATE_HEADER_DST/$MIG_NAME.h" $MIG_DEFINES $MIG_INCFLAGS $MIG_PRIVATE_DEFS_INCFLAGS $SRC/$mig
++	$MIG $EXTRA_MIG_INCLUDES -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_PRIVATE_HEADER_DST/$MIG_NAME.h" $MIG_DEFINES $MIG_INCFLAGS $MIG_PRIVATE_DEFS_INCFLAGS $SRC/$mig
+ 	if [ ! -e "$MIG_HEADER_DST/$MIG_NAME.h" ]; then
+ 		echo "#error $MIG_NAME.h unsupported." > "$MIG_HEADER_DST/$MIG_NAME.h"
+ 	fi
+@@ -183,6 +183,6 @@ mkdir -p $MIG_INTERNAL_HEADER_DST
+  
+ for mig in $MIGS_INTERNAL; do
+ 	MIG_NAME=`basename $mig .defs`
+-	$MIG -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_INTERNAL_HEADER_DST/${MIG_NAME}_internal.h" $MIG_INCFLAGS $SRC/$mig
++	$MIG $EXTRA_MIG_INCLUDES -novouchers -arch $MACHINE_ARCH -cc $MIGCC -header "$MIG_INTERNAL_HEADER_DST/${MIG_NAME}_internal.h" $MIG_INCFLAGS $SRC/$mig
+ done
+  

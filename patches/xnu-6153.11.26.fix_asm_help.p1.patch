@@ -1,11 +1,11 @@
-commit 81c3c934a9b95a2b8bf99350382a409dcf470b49
+commit dd03d10dfc0e94b39594bd40e5283cf464f8f152
 Author: William Kent <wjk011@gmail.com>
 Date:   Wed Apr 29 16:20:45 2020 -0400
 
     Apply patch fix_asm_help
 
 diff --git a/EXTERNAL_HEADERS/architecture/i386/asm_help.h b/EXTERNAL_HEADERS/architecture/i386/asm_help.h
-index ec278d5..08923a7 100644
+index ec278d5..d4c30ba 100644
 --- a/EXTERNAL_HEADERS/architecture/i386/asm_help.h
 +++ b/EXTERNAL_HEADERS/architecture/i386/asm_help.h
 @@ -2,7 +2,7 @@
@@ -110,28 +110,33 @@ index ec278d5..08923a7 100644
  	.endif							;\
  	ret
  
-@@ -271,16 +271,16 @@ name:
+@@ -269,21 +269,14 @@ name:
+ 
+ #if defined(__DYNAMIC__)
  #define PICIFY(var)					\
- 	call	1f					; \
- 1:							; \
+-	call	1f					; \
+-1:							; \
 -	popl	%edx					; \
 -	movl	L ## var ## $non_lazy_ptr-1b(%edx),%edx
-+	popq	%rdx					; \
-+	movq	L##var##$non_lazy_ptr-1b(%rdx),%rdx
++	movq	var(%rip),%rdx
  
  #define CALL_EXTERN_AGAIN(func)	\
  	PICIFY(func)		; \
 -	call	%edx
 +	callq	*%rdx
  
- #define NON_LAZY_STUB(var)	\
- .non_lazy_symbol_pointer	; \
+-#define NON_LAZY_STUB(var)	\
+-.non_lazy_symbol_pointer	; \
 -L ## var ## $non_lazy_ptr:	; \
-+L##var##$non_lazy_ptr:	; \
- .indirect_symbol var		; \
- .long 0				; \
- .text
-@@ -291,25 +291,25 @@ L ## var ## $non_lazy_ptr:	; \
+-.indirect_symbol var		; \
+-.long 0				; \
+-.text
++/* If these exist on x86_64, the linker will assert. */
++#define NON_LAZY_STUB(var)
+ 
+ #define CALL_EXTERN(func)	\
+ 	CALL_EXTERN_AGAIN(func)	; \
+@@ -291,25 +284,25 @@ L ## var ## $non_lazy_ptr:	; \
  
  #define BRANCH_EXTERN(func)	\
  	PICIFY(func)		; \
