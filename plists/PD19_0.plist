@@ -101,7 +101,7 @@
 			<key>original</key>
 			<string>xnu</string>
 			<key>version</key>
-			<string>4903.221.2</string>
+			<string>6153.11.26</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
@@ -111,9 +111,11 @@
 			</dict>
 			<key>patchfiles</key>
 			<array>
-				<string>xnu-4903.221.2.bsd-xcconfig.p1.patch</string>
-				<string>xnu-4903.221.2.libsyscall-build.p1.patch</string>
-				<string>xnu-4903.221.2.libsyscall-mig-flags.p1.patch</string>
+				<string>xnu-6153.11.26.xnu_dependencies_dir.p1.patch</string>
+				<string>xnu-6153.11.26.libsyscall_xcconfig.p1.patch</string>
+				<string>xnu-6153.11.26.libsyscall_build.p1.patch</string>
+				<string>xnu-6153.11.26.libsyscall_makefile.p1.patch</string>
+				<string>xnu-6153.11.26.fix_fork_asm.p1.patch</string>
 			</array>
 		</dict>
 
@@ -450,6 +452,7 @@
 				<string>xnu-6153.11.26.remove_cfg_adr.p1.patch</string>
 				<string>xnu-6153.11.26.ipsec_nexus.p1.patch</string>
 				<string>xnu-6153.11.26.fix_dlil.p1.patch</string>
+				<string>xnu-6153.11.26.fix_asm_help.p1.patch</string>
 			</array>
 		</dict>
 
@@ -477,6 +480,7 @@
 				<string>xnu-6153.11.26.fix_codesigning.p1.patch</string>
 				<string>xnu-6153.11.26.fix_system_framework.p1.patch</string>
 				<string>xnu-6153.11.26.xnu_dependencies_dir.p1.patch</string>
+				<string>xnu-6153.11.26.fix_asm_help.p1.patch</string>
 			</array>
 		</dict>
 	</dict>

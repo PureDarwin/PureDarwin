@@ -1,0 +1,26 @@
+diff --git a/libsyscall/custom/__fork.s b/libsyscall/custom/__fork.s
+index ffcbe5a..cb31e5b 100644
+--- a/libsyscall/custom/__fork.s
++++ b/libsyscall/custom/__fork.s
+@@ -74,6 +74,8 @@ L2:
+ 
+ #elif defined(__x86_64__)
+ 
++NON_LAZY_STUB(__current_pid)
++
+ LEAF(___fork, 0)
+ 	subq  $24, %rsp   // Align the stack, plus room for local storage
+ 
+diff --git a/libsyscall/custom/__ptrace.s b/libsyscall/custom/__ptrace.s
+index 607a26e..4a4b2b0 100644
+--- a/libsyscall/custom/__ptrace.s
++++ b/libsyscall/custom/__ptrace.s
+@@ -41,7 +41,7 @@ LEAF(___ptrace, 0)
+ 
+ #elif defined(__x86_64__)
+ 
+-	.globl	_errno
++NON_LAZY_STUB(_errno)
+ 
+ LEAF(___ptrace, 0)
+ 	xorq	%rax,%rax
