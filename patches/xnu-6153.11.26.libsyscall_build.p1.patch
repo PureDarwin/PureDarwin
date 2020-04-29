@@ -1,19 +1,15 @@
-commit 26ce3afa9ef87368b81a71b0ff7772f193115541
+commit 611e3e05d8a99a47e92c7c474d24f8b0ac34eaf5
 Author: William Kent <wjk011@gmail.com>
-Date:   Wed Apr 29 16:04:43 2020 -0400
+Date:   Wed Apr 29 17:33:57 2020 -0400
 
-    Apply another patch
+    Apply patch libsyscall_build
 
 diff --git a/libsyscall/Libsyscall.xcconfig b/libsyscall/Libsyscall.xcconfig
-index acfdb82..8b897c4 100644
+index 15531c0..fa5d5d6 100644
 --- a/libsyscall/Libsyscall.xcconfig
 +++ b/libsyscall/Libsyscall.xcconfig
-@@ -34,19 +34,19 @@ EXECUTABLE_PREFIX = libsystem_
- PRODUCT_NAME = kernel
- ALWAYS_SEARCH_USER_PATHS = NO
- ORDER_FILE[sdk=iphoneos*] = $(SDKROOT)/$(APPLE_INTERNAL_DIR)/OrderFiles/libsystem_kernel.order
--OTHER_CFLAGS = -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -DLIBSYSCALL_INTERFACE -D__DARWIN_VERS_1050=1 -DNO_SYSCALL_LEGACY
-+OTHER_CFLAGS = -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -momit-leaf-frame-pointer -DLIBSYSCALL_INTERFACE -D__DARWIN_VERS_1050=1 -DNO_SYSCALL_LEGACY
+@@ -27,16 +27,16 @@ ORDER_FILE[sdk=iphoneos*] = $(SDKROOT)/$(APPLE_INTERNAL_DIR)/OrderFiles/libsyste
+ OTHER_CFLAGS = -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -DLIBSYSCALL_INTERFACE -D__DARWIN_VERS_1050=1 -DNO_SYSCALL_LEGACY
  OTHER_CFLAGS[sdk=macosx*][arch=i386] = $(inherited) -UNO_SYSCALL_LEGACY -DSYSCALL_PRE1050
  OTHER_CFLAGS[sdk=macosx*][arch=x86_64*] = $(inherited) -DSYSCALL_PRE1050
 -GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0
