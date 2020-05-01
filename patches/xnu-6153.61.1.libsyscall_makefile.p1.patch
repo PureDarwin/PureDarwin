@@ -1,0 +1,30 @@
+commit 0bbc6850d54622c61792c78c1b3cbbcdf43cc18b
+Author: William Kent <wjk011@gmail.com>
+Date:   Wed Apr 29 16:30:26 2020 -0400
+
+    Apply patch libsyscall_build_makefile
+
+diff --git a/Makefile b/Makefile
+index c833815..7305414 100644
+--- a/Makefile
++++ b/Makefile
+@@ -46,9 +46,6 @@ endif
+ 
+ default: install
+ 
+-# default to OS X
+-SDKROOT ?= macosx.internal
+-
+ installhdrs install:
+ 	cd libsyscall ; \
+ 		xcodebuild $@ $(TARGET)	\
+@@ -57,7 +54,8 @@ installhdrs install:
+ 			"OBJROOT=$(OBJROOT)"						\
+ 			"SYMROOT=$(SYMROOT)"						\
+ 			"DSTROOT=$(DSTROOT)"						\
+-			"SDKROOT=$(SDKROOT)"
++			"SDKROOT=$(SDKROOT)" \
++			"DEPROOT=$(DEPROOT)"
+ 
+ Libsyscall_driverkit: install
+ 

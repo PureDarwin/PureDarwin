@@ -1,0 +1,161 @@
+commit 611e3e05d8a99a47e92c7c474d24f8b0ac34eaf5
+Author: William Kent <wjk011@gmail.com>
+Date:   Wed Apr 29 17:33:57 2020 -0400
+
+    Apply patch libsyscall_build
+
+diff --git a/libsyscall/Libsyscall.xcconfig b/libsyscall/Libsyscall.xcconfig
+index 15531c0..fa5d5d6 100644
+--- a/libsyscall/Libsyscall.xcconfig
++++ b/libsyscall/Libsyscall.xcconfig
+@@ -27,16 +27,16 @@ ORDER_FILE[sdk=iphoneos*] = $(SDKROOT)/$(APPLE_INTERNAL_DIR)/OrderFiles/libsyste
+ OTHER_CFLAGS = -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -DLIBSYSCALL_INTERFACE -D__DARWIN_VERS_1050=1 -DNO_SYSCALL_LEGACY
+ OTHER_CFLAGS[sdk=macosx*][arch=i386] = $(inherited) -UNO_SYSCALL_LEGACY -DSYSCALL_PRE1050
+ OTHER_CFLAGS[sdk=macosx*][arch=x86_64*] = $(inherited) -DSYSCALL_PRE1050
+-GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0
++GCC_PREPROCESSOR_DEFINITIONS = CF_OPEN_SOURCE CF_EXCLUDE_CSTD_HEADERS DEBUG _FORTIFY_SOURCE=0 __PUREDARWIN__=1
+ 
+-HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include
++HEADER_SEARCH_PATHS = $(PROJECT_DIR)/mach $(PROJECT_DIR)/os $(PROJECT_DIR)/wrappers $(PROJECT_DIR)/wrappers/string $(PROJECT_DIR)/wrappers/libproc $(PROJECT_DIR)/wrappers/libproc/spawn $(BUILT_PRODUCTS_DIR)/internal_hdr/include $(BUILT_PRODUCTS_DIR)/mig_hdr/local/include $(BUILT_PRODUCTS_DIR)/mig_hdr/include $(DEPROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
++FRAMEWORK_SEARCH_PATHS = $(DEPROOT)/System/Library/Frameworks
+ SYSTEM_HEADER_SEARCH_PATHS = $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/System/Library/Frameworks/System.framework/PrivateHeaders $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/usr/local/include $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/usr/include
+ SYSTEM_FRAMEWORK_SEARCH_PATHS = $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/System/Library/Frameworks
+ 
+ OTHER_MIGFLAGS = -novouchers -I$(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/System/Library/Frameworks/System.framework/PrivateHeaders -I$(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/usr/local/include -I$(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/usr/include
+ 
+ WARNING_CFLAGS = -Wmost
+-GCC_TREAT_WARNINGS_AS_ERRORS = YES
+ GCC_WARN_ABOUT_MISSING_NEWLINE = YES
+ GCC_NO_COMMON_BLOCKS = YES
+ GCC_C_LANGUAGE_STANDARD = gnu11
+diff --git a/libsyscall/mach/err_iokit.sub b/libsyscall/mach/err_iokit.sub
+index 7a10584..3455511 100644
+--- a/libsyscall/mach/err_iokit.sub
++++ b/libsyscall/mach/err_iokit.sub
+@@ -29,7 +29,7 @@
+ 
+ #include <TargetConditionals.h>
+ #include <IOKit/IOReturn.h>
+-#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
++#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR) && !defined(__PUREDARWIN__)
+ #include <IOKit/usb/USB.h>
+ #include <IOKit/firewire/IOFireWireLib.h>
+ #endif
+@@ -97,7 +97,7 @@ static const char * const err_codes_iokit_common[] = {
+     "(iokit/common) data was not found",				// 0x2f0
+ };
+ 
+-#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
++#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR) && !defined(__PUREDARWIN__)
+ static const struct error_sparse_map err_codes_iokit_usb_map[] = {
+     err_code_map_entry(kIOUSBCRCErr, kIOUSBDataToggleErr),
+     err_code_map_entry(kIOUSBPIDCheckErr, kIOUSBWrongPIDErr),
+@@ -220,7 +220,7 @@ static const struct error_subsystem err_iokit_sub[] =
+ 	err_codes_iokit_common_map,
+ 	errlib_count(err_codes_iokit_common_map),
+     },
+-#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
++#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR) && !defined(__PUREDARWIN__)
+     /*  1 */ {
+ 	"(iokit/usb)",				// 0xe0004000
+ 	errlib_count(err_codes_iokit_usb),
+@@ -241,7 +241,7 @@ static const struct error_subsystem err_iokit_sub[] =
+     /*  5 */ { "(iokit/graphics)",   0 },	// 0xe0014000
+     /*  6 */ err_iokit_null_sub,		// 0xe0018000
+     /*  7 */ err_iokit_null_sub,		// 0xe001c000
+-#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
++#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR) && !defined(__PUREDARWIN__)
+     /*  8 */ {
+ 	"(iokit/bluetooth)",			// 0xe0020000
+ 	errlib_count(err_codes_iokit_bluetooth),
+diff --git a/libsyscall/mach/mach_error.c b/libsyscall/mach/mach_error.c
+index 03efb27..ebc423c 100644
+--- a/libsyscall/mach/mach_error.c
++++ b/libsyscall/mach/mach_error.c
+@@ -60,6 +60,7 @@
+  *      or returns a descriptive string.
+  */
+ 
++#include <sys/reason.h>
+ #include <mach/mach_error.h>
+ #include <mach/boolean.h>
+ #include "errorlib.h"
+@@ -83,3 +84,13 @@ mach_error(const char *str, mach_error_t err)
+ 
+ 	fprintf_stderr("%s %s\n", str, err_str);
+ }
++
++void
++_mach_assert(const char *reason, kern_return_t kr)
++{
++	if (kr != KERN_SUCCESS)
++	{
++		// FIXME: What reason code should I use here instead of -1?
++		abort_with_reason(OS_REASON_LIBSYSTEM, -1, reason, OS_REASON_FLAG_GENERATE_CRASH_REPORT);
++	}
++}
+diff --git a/libsyscall/mach/mach_right.c b/libsyscall/mach/mach_right.c
+index f1857fe..ab2bf61 100644
+--- a/libsyscall/mach/mach_right.c
++++ b/libsyscall/mach/mach_right.c
+@@ -30,6 +30,8 @@
+ #include <mach/mach_port.h>
+ #include <mach/mach_right.h>
+ 
++// From <os/internal/crashlog.h>
++#define _os_set_crash_log_cause_and_message(ac, msg) ((void)(ac), (void)(msg))
+ 
+ #pragma mark Utilities
+ #define _assert_mach(__op, __kr) \
+diff --git a/libsyscall/wrappers/mach_bridge_remote_time.c b/libsyscall/wrappers/mach_bridge_remote_time.c
+index e908460..e7c6d43 100644
+--- a/libsyscall/wrappers/mach_bridge_remote_time.c
++++ b/libsyscall/wrappers/mach_bridge_remote_time.c
+@@ -20,6 +20,8 @@
+  *
+  * @APPLE_LICENSE_HEADER_END@
+  */
++
++#if TARGET_OS_BRIDGE && defined(__arm64__)
+ #include <sys/types.h>
+ #include <machine/cpu_capabilities.h>
+ #include <kern/remote_time.h>
+@@ -31,7 +33,6 @@
+ 
+ extern uint64_t __mach_bridge_remote_time(uint64_t local_time);
+ 
+-#if TARGET_OS_BRIDGE && defined(__arm64__)
+ static uint64_t
+ absolutetime_to_nanoseconds(uint64_t abs_time)
+ {
+diff --git a/libsyscall/wrappers/spawn/posix_spawn.c b/libsyscall/wrappers/spawn/posix_spawn.c
+index ae5585b..a95d22a 100644
+--- a/libsyscall/wrappers/spawn/posix_spawn.c
++++ b/libsyscall/wrappers/spawn/posix_spawn.c
+@@ -28,7 +28,7 @@
+ #define CONFIG_MEMORYSTATUS 1 // <rdar://problem/13604997>
+ #include <sys/types.h> /* for user_size_t */
+ #include <spawn.h>
+-#include <spawn_private.h>
++#include "spawn_private.h"
+ #include <sys/spawn_internal.h>
+ #include <sys/process_policy.h>
+ #include <stdlib.h>
+diff --git a/libsyscall/xcodescripts/compile-syscalls.pl b/libsyscall/xcodescripts/compile-syscalls.pl
+index f278f1d..6123069 100755
+--- a/libsyscall/xcodescripts/compile-syscalls.pl
++++ b/libsyscall/xcodescripts/compile-syscalls.pl
+@@ -63,9 +63,10 @@ my @CFLAGS = (
+ 	"-x assembler-with-cpp",
+ 	"-c",
+ 	"-isysroot", $ENV{'SDKROOT'} || "/",
+-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/usr/include",
+-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/usr/local/include",
+-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
++	"-I".$ENV{"DEPROOT"}."/usr/include",
++	"-I".$ENV{"DEPROOT"}."/usr/local/include",
++	"-I".$ENV{"DEPROOT"}."/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders",
++	"-I".$ENV{"DEPROOT"}."/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders",
+ );
+ 
+ chomp(my $LIBTOOL = `xcrun -sdk "$ENV{'SDKROOT'}" -find libtool`);

@@ -1,0 +1,28 @@
+commit b8a72dd3b0ebdb9f94ab6d5ce2bf5561e1379082
+Author: William Kent <wjk011@gmail.com>
+Date:   Sat Mar 21 16:08:10 2020 -0400
+
+    Apply kext_copyright_check patch
+
+diff --git a/libkern/kxld/kxld_copyright.c b/libkern/kxld/kxld_copyright.c
+index ca66c9a..74f3cb5 100644
+--- a/libkern/kxld/kxld_copyright.c
++++ b/libkern/kxld/kxld_copyright.c
+@@ -49,6 +49,7 @@
+ 
+ #define kCopyrightToken "Copyright © "
+ #define kRightsToken " Apple Inc. All rights reserved."
++#define kRightsTokenPD " PureDarwin Project. All rights reserved."
+ 
+ /******************************************************************************
+ * Globals
+@@ -269,6 +270,9 @@ kxld_validate_copyright_string(const char *str)
+ 
+ 	copyright = kxld_strstr(str, kCopyrightToken);
+ 	rights = kxld_strstr(str, kRightsToken);
++	if (!rights) {
++		rights = kxld_strstr(str, kRightsTokenPD);
++	}
+ 
+ 	if (!copyright || !rights || copyright > rights) {
+ 		goto finish;

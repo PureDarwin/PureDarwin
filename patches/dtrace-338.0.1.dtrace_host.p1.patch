@@ -1,0 +1,156 @@
+commit 73f7a0981a872b0009f046a2e84650561a227dc8
+Author: William Kent <wjk011@gmail.com>
+Date:   Sat Mar 21 14:47:49 2020 -0400
+
+    Apply patches
+
+diff --git a/config/base.xcconfig b/config/base.xcconfig
+index 1952041..1f7ab2b 100644
+--- a/config/base.xcconfig
++++ b/config/base.xcconfig
+@@ -2,7 +2,6 @@ TEST_INSTALL_PATH = /AppleInternal/Tests/dtrace
+ COMMON_TEST_PATH = $(TEST_INSTALL_PATH)/common
+ I386_TEST_PATH = $(TEST_INSTALL_PATH)/i386
+ 
+-SDKROOT = macosx.internal
+ DEAD_CODE_STRIPPING=YES
+ PREBINDING = NO;
+ 
+diff --git a/config/ctftools.xcconfig b/config/ctftools.xcconfig
+index a291e39..0995f99 100644
+--- a/config/ctftools.xcconfig
++++ b/config/ctftools.xcconfig
+@@ -2,7 +2,6 @@
+ // On OSX, binaries are not built fat.
+ VALID_ARCHS[sdk=macosx*] = $(ARCHS_STANDARD_64_BIT)
+ ARCHS[sdk=macosx*] = $(ARCHS_STANDARD_64_BIT)
+-INSTALL_PATH = $(DT_TOOLCHAIN_DIR)/usr/local/bin
+ 
+ STRIP_STYLE = debugging
+ 
+diff --git a/config/libdtrace.xcconfig b/config/libdtrace.xcconfig
+index 2cbfc29..464d62c 100644
+--- a/config/libdtrace.xcconfig
++++ b/config/libdtrace.xcconfig
+@@ -10,8 +10,8 @@ MACH_O_TYPE_dtrace_host = staticlib
+ MACH_O_TYPE_ = mh_dylib
+ MACH_O_TYPE = $(MACH_O_TYPE_$(RC_ProjectName))
+ 
+-OTHER_CFLAGS_dtrace = -DDTRACE_USE_CORESYMBOLICATION
+-OTHER_CFLAGS_ = -DDTRACE_USE_CORESYMBOLICATION
++OTHER_CFLAGS_dtrace = -DDTRACE_USE_CORESYMBOLICATION=0
++OTHER_CFLAGS_ = -DDTRACE_USE_CORESYMBOLICATION=0
+ OTHER_CFLAGS_dtrace_host =
+ OTHER_CFLAGS = $(inherited) $(OTHER_CFLAGS_$(RC_ProjectName))
+ 
+diff --git a/dtrace.xcodeproj/project.pbxproj b/dtrace.xcodeproj/project.pbxproj
+index 64c2cff..d255fa0 100644
+--- a/dtrace.xcodeproj/project.pbxproj
++++ b/dtrace.xcodeproj/project.pbxproj
+@@ -12338,7 +12338,6 @@
+ 			baseConfigurationReference = 1849280F2200E0BD0086F741 /* usdtheadergen.xcconfig */;
+ 			buildSettings = {
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+-				SDKROOT = macosx.internal;
+ 				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited) $(SDKROOT)$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks";
+ 			};
+ 			name = Debug;
+@@ -12348,7 +12347,6 @@
+ 			baseConfigurationReference = 1849280F2200E0BD0086F741 /* usdtheadergen.xcconfig */;
+ 			buildSettings = {
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+-				SDKROOT = macosx.internal;
+ 				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited) $(SDKROOT)$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks";
+ 			};
+ 			name = Release;
+diff --git a/include/llvm-Support/PointerLikeTypeTraits.h b/include/llvm-Support/PointerLikeTypeTraits.h
+index 1e7e5b5..c1e3b97 100644
+--- a/include/llvm-Support/PointerLikeTypeTraits.h
++++ b/include/llvm-Support/PointerLikeTypeTraits.h
+@@ -14,7 +14,6 @@
+ #ifndef LLVM_SUPPORT_POINTERLIKETYPETRAITS_H
+ #define LLVM_SUPPORT_POINTERLIKETYPETRAITS_H
+ 
+-#include "llvm/Support/DataTypes.h"
+ #include <assert.h>
+ #include <type_traits>
+ 
+diff --git a/lib/libdtrace/common/dt_module.c b/lib/libdtrace/common/dt_module.c
+index b486534..2420a06 100644
+--- a/lib/libdtrace/common/dt_module.c
++++ b/lib/libdtrace/common/dt_module.c
+@@ -48,8 +48,6 @@
+ 
+ #include <dtrace.h>
+ 
+-#include <sys/kas_info.h>
+-
+ #include <dt_strtab.h>
+ #include <dt_module.h>
+ #include <dt_impl.h>
+@@ -498,6 +496,7 @@ dt_module_slide()
+         static pthread_mutex_t guard = PTHREAD_MUTEX_INITIALIZER;
+         static uint64_t kernel_slide = 0;
+ 
++#if 0
+         if (!initialized) {
+                 pthread_mutex_lock(&guard);
+                 if (!initialized) {
+@@ -510,6 +509,7 @@ dt_module_slide()
+                 }
+                 pthread_mutex_unlock(&guard);
+         }
++#endif
+ 
+         return kernel_slide;
+ }
+diff --git a/lib/libdtrace/common/dt_proc.c b/lib/libdtrace/common/dt_proc.c
+index 93a11c8..583213f 100644
+--- a/lib/libdtrace/common/dt_proc.c
++++ b/lib/libdtrace/common/dt_proc.c
+@@ -769,6 +769,8 @@ dtrace_proc_grab(dtrace_hdl_t *dtp, pid_t pid, int flags)
+ 	return (P);
+ }
+ 
++extern int pid_resume(pid_t pid); // in libsystem_kernel
++
+ struct ps_prochandle *
+ dtrace_proc_waitfor(dtrace_hdl_t *dtp, char const *pname)
+ {
+diff --git a/lib/libdtrace/common/dtrace.h b/lib/libdtrace/common/dtrace.h
+index f5c1a71..29ecacb 100644
+--- a/lib/libdtrace/common/dtrace.h
++++ b/lib/libdtrace/common/dtrace.h
+@@ -87,12 +87,6 @@ typedef struct {
+ 
+ #include <TargetConditionals.h>
+ 
+-#if TARGET_OS_OSX
+-#define DTRACE_TARGET_APPLE_MAC 1
+-#elif TARGET_OS_IPHONE
+-#define DTRACE_TARGET_APPLE_EMBEDDED 1
+-#endif
+-
+ extern char* demangleSymbolCString(const char*);
+ extern char *ctf_type_name(ctf_file_t *, ctf_id_t, char *, size_t);
+ 
+diff --git a/lib/libproc/libproc.c b/lib/libproc/libproc.c
+index 20a2585..e934cfe 100644
+--- a/lib/libproc/libproc.c
++++ b/lib/libproc/libproc.c
+@@ -36,7 +36,6 @@
+ #include <sys/sysctl.h>
+ 
+ #include <sys/proc_info.h>
+-#include <sys/codesign.h>
+ #include <sys/fasttrap_isa.h>
+ 
+ #if DTRACE_TARGET_APPLE_MAC
+@@ -46,7 +45,6 @@
+ 
+ #include "libproc.h"
+ #include "libproc_apple.h"
+-#include "libproc_internal.h"
+ 
+ #include <spawn.h>
+ #include <pthread.h>
