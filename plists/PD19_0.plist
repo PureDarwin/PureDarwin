@@ -101,7 +101,7 @@
 			<key>original</key>
 			<string>xnu</string>
 			<key>version</key>
-			<string>6153.11.26</string>
+			<string>6153.61.1</string>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
@@ -111,12 +111,12 @@
 			</dict>
 			<key>patchfiles</key>
 			<array>
-				<string>xnu-6153.11.26.xnu_dependencies_dir.p1.patch</string>
-				<string>xnu-6153.11.26.libsyscall_xcconfig.p1.patch</string>
-				<string>xnu-6153.11.26.libsyscall_build.p1.patch</string>
-				<string>xnu-6153.11.26.libsyscall_makefile.p1.patch</string>
-				<string>xnu-6153.11.26.fix_fork_asm.p1.patch</string>
-				<string>xnu-6153.11.26.fix_mig_includes.p1.patch</string>
+				<string>xnu-6153.61.1.xnu_dependencies_dir.p1.patch</string>
+				<string>xnu-6153.61.1.libsyscall_xcconfig.p1.patch</string>
+				<string>xnu-6153.61.1.libsyscall_build.p1.patch</string>
+				<string>xnu-6153.61.1.libsyscall_makefile.p1.patch</string>
+				<string>xnu-6153.61.1.fix_fork_asm.p1.patch</string>
+				<string>xnu-6153.61.1.fix_mig_includes.p1.patch</string>
 			</array>
 		</dict>
 
@@ -417,7 +417,7 @@
 		<key>xnu</key>
 		<dict>
 			<key>version</key>
-			<string>6153.11.26</string>
+			<string>6153.61.1</string>
 			<key>environment</key>
 			<dict>
 				<key>KERNEL_CONFIGS</key>
@@ -442,18 +442,18 @@
 			</dict>
 			<key>patchfiles</key>
 			<array>
-				<string>xnu-6153.11.26.availability_versions.p1.patch</string>
-				<string>xnu-6153.11.26.fix_codesigning.p1.patch</string>
-				<string>xnu-6153.11.26.fix_system_framework.p1.patch</string>
-				<string>xnu-6153.11.26.xnu_dependencies_dir.p1.patch</string>
-				<string>xnu-6153.11.26.kext_copyright_check.p1.patch</string>
-				<string>xnu-6153.11.26.xnu_firehose_dir.p1.patch</string>
-				<string>xnu-6153.11.26.kext_load.p1.patch</string>
-				<string>xnu-6153.11.26.no_uncrustify.p1.patch</string>
-				<string>xnu-6153.11.26.remove_cfg_adr.p1.patch</string>
-				<string>xnu-6153.11.26.ipsec_nexus.p1.patch</string>
-				<string>xnu-6153.11.26.fix_dlil.p1.patch</string>
-				<string>xnu-6153.11.26.fix_asm_help.p1.patch</string>
+				<string>xnu-6153.61.1.availability_versions.p1.patch</string>
+				<string>xnu-6153.61.1.fix_codesigning.p1.patch</string>
+				<string>xnu-6153.61.1.fix_system_framework.p1.patch</string>
+				<string>xnu-6153.61.1.xnu_dependencies_dir.p1.patch</string>
+				<string>xnu-6153.61.1.kext_copyright_check.p1.patch</string>
+				<string>xnu-6153.61.1.xnu_firehose_dir.p1.patch</string>
+				<string>xnu-6153.61.1.kext_load.p1.patch</string>
+				<string>xnu-6153.61.1.no_uncrustify.p1.patch</string>
+				<string>xnu-6153.61.1.remove_cfg_adr.p1.patch</string>
+				<string>xnu-6153.61.1.ipsec_nexus.p1.patch</string>
+				<string>xnu-6153.61.1.fix_dlil.p1.patch</string>
+				<string>xnu-6153.61.1.fix_asm_help.p1.patch</string>
 			</array>
 		</dict>
 
@@ -462,7 +462,7 @@
 			<key>original</key>
 			<string>xnu</string>
 			<key>version</key>
-			<string>6153.11.26</string>
+			<string>6153.61.1</string>
 			<key>environment</key>
 			<dict>
 				<key>KERNEL_CONFIGS</key>
@@ -477,11 +477,11 @@
 			</dict>
 			<key>patchfiles</key>
 			<array>
-				<string>xnu-6153.11.26.availability_versions.p1.patch</string>
-				<string>xnu-6153.11.26.fix_codesigning.p1.patch</string>
-				<string>xnu-6153.11.26.fix_system_framework.p1.patch</string>
-				<string>xnu-6153.11.26.xnu_dependencies_dir.p1.patch</string>
-				<string>xnu-6153.11.26.fix_asm_help.p1.patch</string>
+				<string>xnu-6153.61.1.availability_versions.p1.patch</string>
+				<string>xnu-6153.61.1.fix_codesigning.p1.patch</string>
+				<string>xnu-6153.61.1.fix_system_framework.p1.patch</string>
+				<string>xnu-6153.61.1.xnu_dependencies_dir.p1.patch</string>
+				<string>xnu-6153.61.1.fix_asm_help.p1.patch</string>
 			</array>
 		</dict>
 	</dict>
