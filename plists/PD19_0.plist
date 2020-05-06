@@ -96,6 +96,27 @@
 			</dict>
 		</dict>
 
+		<key>IOATABlockStorage</key>
+		<dict>
+			<key>version</key>
+			<string>20</string>
+			<key>github</key>
+			<string>PureDarwin/IOATABlockStorage</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>IOATAFamily</string>
+					<string>IOStorageFamily</string>
+					<string>libkmod</string>
+				</array>
+				<key>header</key>
+				<array>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>IOATAFamily</key>
 		<dict>
 			<key>version</key>
