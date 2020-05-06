@@ -425,6 +425,16 @@
 			</array>
 		</dict>
 
+		<key>libutil</key>
+		<dict>
+			<key>version</key>
+			<string>57pd1</string>
+			<key>target</key>
+			<string>util</string>
+			<key>github</key>
+			<string>PureDarwin/libutil</string>
+		</dict>
+
 		<key>libxpc</key>
 		<dict>
 			<key>version</key>
@@ -470,6 +480,18 @@
 				<string>syslog-356.200.4.remove-cache-delete.p1.patch</string>
 				<string>syslog-356.200.4.remove-quarantine.p1.patch</string>
 			</array>
+		</dict>
+
+		<key>tzlinkd</key>
+		<dict>
+			<key>version</key>
+			<string>57pd1</string>
+			<key>original</key>
+			<string>libutil</string>
+			<key>target</key>
+			<string>tzlinkd</string>
+			<key>github</key>
+			<string>PureDarwin/libutil</string>
 		</dict>
 
 		<key>xnu</key>
