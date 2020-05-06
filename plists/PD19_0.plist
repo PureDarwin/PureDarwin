@@ -250,6 +250,35 @@
 			</array>
 		</dict>
 
+		<key>hfs</key>
+		<dict>
+			<key>version</key>
+			<string>407.1.3pd1</string>
+			<key>github</key>
+			<string>PureDarwin/hfs</string>
+			<key>target</key>
+			<string>hfs.fs</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>libutil</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>hfs_kext</key>
+		<dict>
+			<key>version</key>
+			<string>407.1.3pd1</string>
+			<key>original</key>
+			<string>hfs</string>
+			<key>github</key>
+			<string>PureDarwin/hfs</string>
+			<key>target</key>
+			<string>kext</string>
+		</dict>
+
 		<key>libcoreservices</key>
 		<dict>
 			<key>version</key>
