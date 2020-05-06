@@ -96,6 +96,25 @@
 			</dict>
 		</dict>
 
+		<key>IOStorageFamily</key>
+		<dict>
+			<key>version</key>
+			<string>238.00.1pd1</string>
+			<key>github</key>
+			<string>PureDarwin/IOStorageFamily</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>libkmod</string>
+				</array>
+				<key>header</key>
+				<array>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>Libsyscall</key>
 		<dict>
 			<key>original</key>
