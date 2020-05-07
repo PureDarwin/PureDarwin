@@ -415,28 +415,6 @@
 			</dict>
 		</dict>
 
-		<key>libpthread_introspection</key>
-		<dict>
-			<key>original</key>
-			<string>libpthread</string>
-			<key>version</key>
-			<string>416.60.2pd1.1</string>
-			<key>target</key>
-			<string>libsystem_pthread introspection</string>
-			<key>github</key>
-			<string>PureDarwin/libpthread</string>
-			<key>dependencies</key>
-			<dict>
-				<key>header</key>
-				<array>
-					<string>Libsyscall</string>
-					<string>Libsystem</string>
-					<string>libplatform_headers</string>
-					<string>xnu_headers</string>
-				</array>
-			</dict>
-		</dict>
-
 		<key>libpthread_kext</key>
 		<dict>
 			<key>original</key>
