@@ -399,7 +399,7 @@
 		<key>libpthread</key>
 		<dict>
 			<key>version</key>
-			<string>416.60.2pd1.1</string>
+			<string>416.60.2pd2</string>
 			<key>github</key>
 			<string>PureDarwin/libpthread</string>
 			<key>dependencies</key>
@@ -419,8 +419,10 @@
 		<dict>
 			<key>original</key>
 			<string>libpthread</string>
+			<key>target</key>
+			<string>libsystem_pthread</string>
 			<key>version</key>
-			<string>416.60.2pd1.1</string>
+			<string>416.60.2pd2</string>
 			<key>target</key>
 			<string>Kext</string>
 			<key>github</key>
