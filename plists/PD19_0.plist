@@ -185,6 +185,20 @@
 			<string>11</string>
 			<key>github</key>
 			<string>PureDarwin/Libsystem</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>Libsyscall</string>
+					<string>libpthread</string>
+					<string>libplatform</string>
+				</array>
+
+				<key>header</key>
+				<array>
+					<string>libplatform_headers</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>Libtrace</key>
@@ -369,7 +383,7 @@
 		<key>libpthread</key>
 		<dict>
 			<key>version</key>
-			<string>416.60.2pd1</string>
+			<string>416.60.2pd1.1</string>
 			<key>github</key>
 			<string>PureDarwin/libpthread</string>
 			<key>dependencies</key>
@@ -389,7 +403,7 @@
 			<key>original</key>
 			<string>libpthread</string>
 			<key>version</key>
-			<string>416.60.2pd1</string>
+			<string>416.60.2pd1.1</string>
 			<key>target</key>
 			<string>libsystem_pthread introspection</string>
 			<key>github</key>
@@ -411,7 +425,7 @@
 			<key>original</key>
 			<string>libpthread</string>
 			<key>version</key>
-			<string>416.60.2pd1</string>
+			<string>416.60.2pd1.1</string>
 			<key>target</key>
 			<string>Kext</string>
 			<key>github</key>
