@@ -353,6 +353,22 @@
 			</array>
 		</dict>
 
+		<key>libmalloc</key>
+		<dict>
+			<key>version</key>
+			<string>283.60.1pd1</string>
+			<key>github</key>
+			<string>PureDarwin/libmalloc</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>libpthread</string>
+					<string>libplatform_headers</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>libplatform</key>
 		<dict>
 			<key>version</key>
@@ -392,6 +408,7 @@
 				<array>
 					<string>Libsyscall</string>
 					<string>Libsystem</string>
+					<string>libmalloc</string>
 					<string>libplatform_headers</string>
 					<string>xnu_headers</string>
 				</array>
