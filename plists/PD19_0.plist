@@ -182,7 +182,7 @@
 		<key>Libsystem</key>
 		<dict>
 			<key>version</key>
-			<string>11</string>
+			<string>20</string>
 			<key>github</key>
 			<string>PureDarwin/Libsystem</string>
 			<key>dependencies</key>
@@ -190,6 +190,8 @@
 				<key>build</key>
 				<array>
 					<string>Libsyscall</string>
+					<string>libcoreservices</string>
+					<string>libmalloc</string>
 					<string>libpthread</string>
 					<string>libplatform</string>
 				</array>
