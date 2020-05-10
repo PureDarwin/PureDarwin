@@ -182,7 +182,7 @@
 		<key>Libsystem</key>
 		<dict>
 			<key>version</key>
-			<string>20</string>
+			<string>20.0.1</string>
 			<key>github</key>
 			<string>PureDarwin/Libsystem</string>
 			<key>dependencies</key>
@@ -191,6 +191,7 @@
 				<array>
 					<string>Libsyscall</string>
 					<string>libcoreservices</string>
+					<string>libdispatch</string>
 					<string>libmalloc</string>
 					<string>libpthread</string>
 					<string>libplatform</string>
