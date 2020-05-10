@@ -490,6 +490,11 @@
 					<string>CrashReporterClient</string>
 					<string>libpthread</string>
 				</array>
+				<key>header</key>
+				<array>
+					<string>libdispatch</string>
+					<string>libplatform_headers</string>
+				</array>
 			</dict>
 		</dict>
 
