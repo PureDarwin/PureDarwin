@@ -366,7 +366,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>libpthread</string>
+					<string>libpthread_headers</string>
 					<string>libplatform_headers</string>
 				</array>
 			</dict>
@@ -416,6 +416,14 @@
 					<string>xnu_headers</string>
 				</array>
 			</dict>
+		</dict>
+
+		<key>libpthread_headers</key>
+		<dict>
+			<key>version</key>
+			<string>416.60.2pd2</string>
+			<key>github</key>
+			<string>PureDarwin/libpthread</string>
 		</dict>
 
 		<key>libpthread_kext</key>
