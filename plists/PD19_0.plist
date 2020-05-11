@@ -423,7 +423,7 @@
 			<key>original</key>
 			<string>libpthread</string>
 			<key>target</key>
-			<string>libsystem_pthread</string>
+			<string>pthread kext</string>
 			<key>version</key>
 			<string>416.60.2pd2</string>
 			<key>target</key>
@@ -434,8 +434,6 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>Libsyscall</string>
-					<string>libplatform_headers</string>
 					<string>xnu_headers</string>
 				</array>
 			</dict>
