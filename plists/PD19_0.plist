@@ -585,7 +585,6 @@
 				<string>xnu-6153.81.5.kext_load.p1.patch</string>
 				<string>xnu-6153.81.5.no_uncrustify.p1.patch</string>
 				<string>xnu-6153.81.5.remove_cfg_adr.p1.patch</string>
-				<string>xnu-6153.81.5.ipsec_nexus.p1.patch</string>
 				<string>xnu-6153.81.5.fix_dlil.p1.patch</string>
 				<string>xnu-6153.81.5.fix_asm_help.p1.patch</string>
 				<string>xnu-6153.81.5.fix_dtrace_collision.p1.patch</string>
