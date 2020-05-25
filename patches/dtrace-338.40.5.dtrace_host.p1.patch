@@ -1,8 +1,8 @@
-commit 73f7a0981a872b0009f046a2e84650561a227dc8
+commit b088c55968331bdd4da258e56d3efa0c97c7acd8
 Author: William Kent <wjk011@gmail.com>
-Date:   Sat Mar 21 14:47:49 2020 -0400
+Date:   Sun May 24 21:30:15 2020 -0400
 
-    Apply patches
+    Apply patch
 
 diff --git a/config/base.xcconfig b/config/base.xcconfig
 index 1952041..1f7ab2b 100644
@@ -75,8 +75,20 @@ index 1e7e5b5..c1e3b97 100644
  #include <assert.h>
  #include <type_traits>
  
+diff --git a/lib/libdtrace/apple/dt_subr_apple.c b/lib/libdtrace/apple/dt_subr_apple.c
+index cb615c2..7f5fbed 100644
+--- a/lib/libdtrace/apple/dt_subr_apple.c
++++ b/lib/libdtrace/apple/dt_subr_apple.c
+@@ -5,7 +5,6 @@
+ #include <string.h>
+ 
+ #include <sys/sysctl.h>
+-#include <os/assumes.h>
+ 
+ #if TARGET_OS_IPHONE && (TARGET_OS_SIMULATOR || !TARGET_OS_IOS)
+ #define TARGET_SUPPORTS_NATIVE_SYSTEM 0
 diff --git a/lib/libdtrace/common/dt_module.c b/lib/libdtrace/common/dt_module.c
-index b486534..2420a06 100644
+index d2890cd..adc011a 100644
 --- a/lib/libdtrace/common/dt_module.c
 +++ b/lib/libdtrace/common/dt_module.c
 @@ -48,8 +48,6 @@
@@ -118,10 +130,10 @@ index 93a11c8..583213f 100644
  dtrace_proc_waitfor(dtrace_hdl_t *dtp, char const *pname)
  {
 diff --git a/lib/libdtrace/common/dtrace.h b/lib/libdtrace/common/dtrace.h
-index f5c1a71..29ecacb 100644
+index 2e475cc..4322082 100644
 --- a/lib/libdtrace/common/dtrace.h
 +++ b/lib/libdtrace/common/dtrace.h
-@@ -87,12 +87,6 @@ typedef struct {
+@@ -89,12 +89,6 @@ typedef struct {
  
  #include <TargetConditionals.h>
  
