@@ -494,6 +494,22 @@
 			</array>
 		</dict>
 
+		<key>libunwind</key>
+		<dict>
+			<key>version</key>
+			<string>35.4pd1</string>
+			<key>github</key>
+			<string>PureDarwin/libunwind</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>dyld</string>
+					<string>libpthread</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>libutil</key>
 		<dict>
 			<key>version</key>
