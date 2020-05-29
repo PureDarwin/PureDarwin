@@ -387,7 +387,7 @@
 		<key>libplatform</key>
 		<dict>
 			<key>version</key>
-			<string>1005.1</string>
+			<string>1005.1.1</string>
 			<key>github</key>
 			<string>PureDarwin/libplatform</string>
 			<key>dependencies</key>
@@ -406,7 +406,7 @@
 			<key>original</key>
 			<string>libplatform</string>
 			<key>version</key>
-			<string>1005.1</string>
+			<string>1005.1.1</string>
 			<key>target</key>
 			<string>headers</string>
 		</dict>
