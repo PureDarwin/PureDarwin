@@ -76,7 +76,7 @@
 			<key>original</key>
 			<string>libcoreservices</string>
 			<key>version</key>
-			<string>10.2</string>
+			<string>10.3</string>
 			<key>target</key>
 			<string>CrashReporterClient</string>
 		</dict>
@@ -311,7 +311,7 @@
 		<key>libcoreservices</key>
 		<dict>
 			<key>version</key>
-			<string>10.2</string>
+			<string>10.3</string>
 			<key>github</key>
 			<string>PureDarwin/libcoreservices</string>
 		</dict>
