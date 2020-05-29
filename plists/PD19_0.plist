@@ -235,7 +235,7 @@
 		<key>corecrypto</key>
 		<dict>
 			<key>version</key>
-			<string>2100.2</string>
+			<string>2200</string>
 			<key>github</key>
 			<string>PureDarwin/corecrypto</string>
 			<key>dependencies</key>
@@ -245,6 +245,18 @@
 					<string>xnu_headers</string>
 				</array>
 			</dict>
+		</dict>
+
+		<key>corecrypto_user</key>
+		<dict>
+			<key>original</key>
+			<string>corecrypto</string>
+			<key>version</key>
+			<string>2200</string>
+			<key>github</key>
+			<string>PureDarwin/corecrypto</string>
+			<key>target</key>
+			<string>corecrypto_user</string>
 		</dict>
 
 		<key>dtrace</key>
