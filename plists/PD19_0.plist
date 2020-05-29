@@ -235,7 +235,7 @@
 		<key>corecrypto</key>
 		<dict>
 			<key>version</key>
-			<string>2200.1</string>
+			<string>2200.2.1</string>
 			<key>github</key>
 			<string>PureDarwin/corecrypto</string>
 			<key>dependencies</key>
@@ -252,7 +252,7 @@
 			<key>original</key>
 			<string>corecrypto</string>
 			<key>version</key>
-			<string>2200.1</string>
+			<string>2200.2.1</string>
 			<key>target</key>
 			<string>corecrypto_user</string>
 			<key>github</key>
