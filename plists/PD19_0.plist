@@ -316,6 +316,14 @@
 			<string>PureDarwin/libcoreservices</string>
 		</dict>
 
+		<key>libcppabi</key>
+		<dict>
+			<key>version</key>
+			<string>26pd1</string>
+			<key>github</key>
+			<string>PureDarwin/libcppabi</string>
+		</dict>
+
 		<key>libdispatch</key>
 		<dict>
 			<key>version</key>
