@@ -165,6 +165,7 @@
 			<dict>
 				<key>build</key>
 				<array>
+					<string>Libinfo</string>
 					<string>libclosure</string>
 					<string>libpthread</string>
 				</array>
@@ -179,6 +180,22 @@
 			<string>Libc</string>
 			<key>github</key>
 			<string>PureDarwin/Libc</string>
+		</dict>
+
+		<key>Libinfo</key>
+		<dict>
+			<key>version</key>
+			<string>538pd1</string>
+			<key>github</key>
+			<string>PureDarwin/Libinfo</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>libdispatch</string>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>Libsyscall</key>
