@@ -242,19 +242,28 @@
 		<key>Libsystem</key>
 		<dict>
 			<key>version</key>
-			<string>20.0.1</string>
+			<string>20.1</string>
 			<key>github</key>
 			<string>PureDarwin/Libsystem</string>
 			<key>dependencies</key>
 			<dict>
 				<key>build</key>
 				<array>
+					<string>Libc</string>
+					<string>Libcompiler_rt</string>
+					<string>Libinfo</string>
+					<string>Libm</string>
 					<string>Libsyscall</string>
+					<string>dyld</string>
+					<string>libclosure</string>
 					<string>libcoreservices</string>
 					<string>libdispatch</string>
 					<string>libmalloc</string>
 					<string>libpthread</string>
 					<string>libplatform</string>
+					<string>libsystem_asl</string>
+					<string>libunwind</string>
+					<string>libxpc</string>
 				</array>
 
 				<key>header</key>
