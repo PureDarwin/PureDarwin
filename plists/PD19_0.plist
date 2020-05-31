@@ -567,7 +567,7 @@
 			<key>target</key>
 			<string>pthread kext</string>
 			<key>version</key>
-			<string>416.60.2pd2</string>
+			<string>416.60.2pd2.1</string>
 			<key>target</key>
 			<string>Kext</string>
 			<key>github</key>
