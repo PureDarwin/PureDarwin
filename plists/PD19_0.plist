@@ -323,6 +323,32 @@
 			</array>
 		</dict>
 
+		<key>dyld</key>
+		<dict>
+			<key>version</key>
+			<string>733.8pd1</string>
+			<key>github</key>
+			<string>PureDarwin/dyld</string>
+			<key>target</key>
+			<string>all</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>CrashReporterClient</string>
+					<string>Libc</string>
+					<string>corecrypto_user</string>
+					<string>libcppabi</string>
+					<string>libmalloc</string>
+					<string>libplatform</string>
+					<string>libpthread</string>
+					<string>libunwind</string>
+					<string>libutil</string>
+					<string>libxpc</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>hfs</key>
 		<dict>
 			<key>version</key>
