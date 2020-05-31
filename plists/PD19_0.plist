@@ -207,6 +207,14 @@
 			</dict>
 		</dict>
 
+		<key>Libm</key>
+		<dict>
+			<key>version</key>
+			<string>1.0</string>
+			<key>github</key>
+			<string>PureDarwin/Libm</string>
+		</dict>
+
 		<key>Libsyscall</key>
 		<dict>
 			<key>original</key>
