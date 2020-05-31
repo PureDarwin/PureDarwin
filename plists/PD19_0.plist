@@ -155,6 +155,32 @@
 			</dict>
 		</dict>
 
+		<key>Libc</key>
+		<dict>
+			<key>version</key>
+			<string>1353.60.8pd1</string>
+			<key>github</key>
+			<string>PureDarwin/Libc</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>libclosure</string>
+					<string>libpthread</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>Libc_headers</key>
+		<dict>
+			<key>version</key>
+			<string>1353.60.8pd1</string>
+			<key>original</key>
+			<string>Libc</string>
+			<key>github</key>
+			<string>PureDarwin/Libc</string>
+		</dict>
+
 		<key>Libsyscall</key>
 		<dict>
 			<key>original</key>
@@ -306,6 +332,23 @@
 			<string>PureDarwin/hfs</string>
 			<key>target</key>
 			<string>kext</string>
+		</dict>
+
+		<key>libclosure</key>
+		<dict>
+			<key>version</key>
+			<string>74pd1</string>
+			<key>github</key>
+			<string>PureDarwin/libclosure</string>
+			<key>target</key>
+			<string>Blocks</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>Libc_headers</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>libcoreservices</key>
