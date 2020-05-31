@@ -483,7 +483,7 @@
 		<key>libpthread</key>
 		<dict>
 			<key>version</key>
-			<string>416.60.2pd2</string>
+			<string>416.60.2pd2.1</string>
 			<key>github</key>
 			<string>PureDarwin/libpthread</string>
 			<key>dependencies</key>
@@ -502,7 +502,7 @@
 		<key>libpthread_headers</key>
 		<dict>
 			<key>version</key>
-			<string>416.60.2pd2</string>
+			<string>416.60.2pd2.1</string>
 			<key>github</key>
 			<string>PureDarwin/libpthread</string>
 		</dict>
