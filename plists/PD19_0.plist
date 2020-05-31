@@ -242,7 +242,7 @@
 		<key>Libsystem</key>
 		<dict>
 			<key>version</key>
-			<string>20.1</string>
+			<string>20.1.1</string>
 			<key>github</key>
 			<string>PureDarwin/Libsystem</string>
 			<key>dependencies</key>
@@ -254,6 +254,7 @@
 					<string>Libinfo</string>
 					<string>Libm</string>
 					<string>Libsyscall</string>
+					<string>corecrypto_user</string>
 					<string>dyld</string>
 					<string>libclosure</string>
 					<string>libcoreservices</string>
