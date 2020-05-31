@@ -501,6 +501,8 @@
 
 		<key>libpthread_headers</key>
 		<dict>
+			<key>original</key>
+			<string>libpthread</string>
 			<key>version</key>
 			<string>416.60.2pd2.1</string>
 			<key>github</key>
