@@ -76,7 +76,7 @@
 			<key>original</key>
 			<string>libcoreservices</string>
 			<key>version</key>
-			<string>10.2</string>
+			<string>10.3</string>
 			<key>target</key>
 			<string>CrashReporterClient</string>
 		</dict>
@@ -155,6 +155,66 @@
 			</dict>
 		</dict>
 
+		<key>Libc</key>
+		<dict>
+			<key>version</key>
+			<string>1353.60.8pd1</string>
+			<key>github</key>
+			<string>PureDarwin/Libc</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>CrashReporterClient</string>
+					<string>Libinfo</string>
+					<string>libclosure</string>
+					<string>libpthread</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>Libc_headers</key>
+		<dict>
+			<key>version</key>
+			<string>1353.60.8pd1</string>
+			<key>original</key>
+			<string>Libc</string>
+			<key>github</key>
+			<string>PureDarwin/Libc</string>
+		</dict>
+
+		<key>Libcompiler_rt</key>
+		<dict>
+			<key>version</key>
+			<string>5.0.0.0.2</string>
+			<key>github</key>
+			<string>PureDarwin/Libcompiler_rt</string>
+		</dict>
+
+		<key>Libinfo</key>
+		<dict>
+			<key>version</key>
+			<string>538pd1</string>
+			<key>github</key>
+			<string>PureDarwin/Libinfo</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>libdispatch</string>
+					<string>xnu_headers</string>
+				</array>
+			</dict>
+		</dict>
+
+		<key>Libm</key>
+		<dict>
+			<key>version</key>
+			<string>1.0</string>
+			<key>github</key>
+			<string>PureDarwin/Libm</string>
+		</dict>
+
 		<key>Libsyscall</key>
 		<dict>
 			<key>original</key>
@@ -182,19 +242,29 @@
 		<key>Libsystem</key>
 		<dict>
 			<key>version</key>
-			<string>20.0.1</string>
+			<string>20.1.1</string>
 			<key>github</key>
 			<string>PureDarwin/Libsystem</string>
 			<key>dependencies</key>
 			<dict>
 				<key>build</key>
 				<array>
+					<string>Libc</string>
+					<string>Libcompiler_rt</string>
+					<string>Libinfo</string>
+					<string>Libm</string>
 					<string>Libsyscall</string>
+					<string>corecrypto_user</string>
+					<string>dyld</string>
+					<string>libclosure</string>
 					<string>libcoreservices</string>
 					<string>libdispatch</string>
 					<string>libmalloc</string>
 					<string>libpthread</string>
 					<string>libplatform</string>
+					<string>libsystem_asl</string>
+					<string>libunwind</string>
+					<string>libxpc</string>
 				</array>
 
 				<key>header</key>
@@ -235,7 +305,7 @@
 		<key>corecrypto</key>
 		<dict>
 			<key>version</key>
-			<string>2200</string>
+			<string>2200.2.1</string>
 			<key>github</key>
 			<string>PureDarwin/corecrypto</string>
 			<key>dependencies</key>
@@ -252,11 +322,11 @@
 			<key>original</key>
 			<string>corecrypto</string>
 			<key>version</key>
-			<string>2200</string>
-			<key>github</key>
-			<string>PureDarwin/corecrypto</string>
+			<string>2200.2.1</string>
 			<key>target</key>
 			<string>corecrypto_user</string>
+			<key>github</key>
+			<string>PureDarwin/corecrypto</string>
 		</dict>
 
 		<key>dtrace</key>
@@ -277,6 +347,32 @@
 			<array>
 				<string>dtrace-338.40.5.dtrace_host.p1.patch</string>
 			</array>
+		</dict>
+
+		<key>dyld</key>
+		<dict>
+			<key>version</key>
+			<string>733.8pd1</string>
+			<key>github</key>
+			<string>PureDarwin/dyld</string>
+			<key>target</key>
+			<string>all</string>
+			<key>dependencies</key>
+			<dict>
+				<key>build</key>
+				<array>
+					<string>CrashReporterClient</string>
+					<string>Libc</string>
+					<string>corecrypto_user</string>
+					<string>libcppabi</string>
+					<string>libmalloc</string>
+					<string>libplatform</string>
+					<string>libpthread</string>
+					<string>libunwind</string>
+					<string>libutil</string>
+					<string>libxpc</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>hfs</key>
@@ -308,12 +404,37 @@
 			<string>kext</string>
 		</dict>
 
+		<key>libclosure</key>
+		<dict>
+			<key>version</key>
+			<string>74pd1</string>
+			<key>github</key>
+			<string>PureDarwin/libclosure</string>
+			<key>target</key>
+			<string>Blocks</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>Libc_headers</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>libcoreservices</key>
 		<dict>
 			<key>version</key>
-			<string>10.2</string>
+			<string>10.3</string>
 			<key>github</key>
 			<string>PureDarwin/libcoreservices</string>
+		</dict>
+
+		<key>libcppabi</key>
+		<dict>
+			<key>version</key>
+			<string>26pd1</string>
+			<key>github</key>
+			<string>PureDarwin/libcppabi</string>
 		</dict>
 
 		<key>libdispatch</key>
@@ -387,7 +508,7 @@
 		<key>libplatform</key>
 		<dict>
 			<key>version</key>
-			<string>1005.1</string>
+			<string>1005.1.2</string>
 			<key>github</key>
 			<string>PureDarwin/libplatform</string>
 			<key>dependencies</key>
@@ -406,7 +527,7 @@
 			<key>original</key>
 			<string>libplatform</string>
 			<key>version</key>
-			<string>1005.1</string>
+			<string>1005.1.2</string>
 			<key>target</key>
 			<string>headers</string>
 		</dict>
@@ -414,7 +535,7 @@
 		<key>libpthread</key>
 		<dict>
 			<key>version</key>
-			<string>416.60.2pd2</string>
+			<string>416.60.2pd2.1</string>
 			<key>github</key>
 			<string>PureDarwin/libpthread</string>
 			<key>dependencies</key>
@@ -432,8 +553,10 @@
 
 		<key>libpthread_headers</key>
 		<dict>
+			<key>original</key>
+			<string>libpthread</string>
 			<key>version</key>
-			<string>416.60.2pd2</string>
+			<string>416.60.2pd2.1</string>
 			<key>github</key>
 			<string>PureDarwin/libpthread</string>
 		</dict>
@@ -445,7 +568,7 @@
 			<key>target</key>
 			<string>pthread kext</string>
 			<key>version</key>
-			<string>416.60.2pd2</string>
+			<string>416.60.2pd2.1</string>
 			<key>target</key>
 			<string>Kext</string>
 			<key>github</key>
@@ -486,6 +609,22 @@
 			</array>
 		</dict>
 
+		<key>libunwind</key>
+		<dict>
+			<key>version</key>
+			<string>35.4pd1</string>
+			<key>github</key>
+			<string>PureDarwin/libunwind</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>dyld</string>
+					<string>libpthread</string>
+				</array>
+			</dict>
+		</dict>
+
 		<key>libutil</key>
 		<dict>
 			<key>version</key>
@@ -499,7 +638,7 @@
 		<key>libxpc</key>
 		<dict>
 			<key>version</key>
-			<string>25</string>
+			<string>30</string>
 			<key>github</key>
 			<string>PureDarwin/XPC</string>
 			<key>dependencies</key>
