@@ -201,6 +201,7 @@
 			<dict>
 				<key>header</key>
 				<array>
+					<string>dyld</string>
 					<string>libdispatch</string>
 					<string>xnu_headers</string>
 				</array>
