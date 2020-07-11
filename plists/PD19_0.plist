@@ -278,7 +278,7 @@
 		<key>Libtrace</key>
 		<dict>
 			<key>version</key>
-			<string>10</string>
+			<string>11</string>
 			<key>github</key>
 			<string>PureDarwin/Libtrace</string>
 			<key>dependencies</key>
@@ -644,7 +644,7 @@
 		<key>libxpc</key>
 		<dict>
 			<key>version</key>
-			<string>30</string>
+			<string>31</string>
 			<key>github</key>
 			<string>PureDarwin/XPC</string>
 			<key>dependencies</key>
