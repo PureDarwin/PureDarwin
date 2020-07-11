@@ -1,0 +1,15 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index bc5b709..a527a96 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1099,10 +1099,6 @@ bsd_init(void)
+ 	}
+ #endif /* DEVFS */
+ 
+-	if (vfs_mount_rosv_data()) {
+-		panic("failed to mount data volume!");
+-	}
+-
+ 	if (vfs_mount_vm()) {
+ 		printf("failed to mount vm volume!");
+ 	}

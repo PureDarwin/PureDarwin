@@ -747,6 +747,8 @@
 				<string>xnu-6153.81.5.fix_dtrace_collision.p1.patch</string>
 				<string>xnu-6153.81.5.kprng_yarrow.p1.patch</string>
 				<string>xnu-6153.81.5.fix_nfs.p1.patch</string>
+				<string>xnu-6153.81.5.rosv_data.p1.patch</string>
+				<string>xnu-6153.81.5.big_sur_iig.p1.patch</string>
 			</array>
 		</dict>
 
