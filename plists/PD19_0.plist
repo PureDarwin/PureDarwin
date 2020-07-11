@@ -353,7 +353,7 @@
 		<key>dyld</key>
 		<dict>
 			<key>version</key>
-			<string>733.8pd1</string>
+			<string>733.8pd1.2</string>
 			<key>github</key>
 			<string>PureDarwin/dyld</string>
 			<key>target</key>
