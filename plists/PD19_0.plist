@@ -158,7 +158,7 @@
 		<key>Libc</key>
 		<dict>
 			<key>version</key>
-			<string>1353.60.8pd1</string>
+			<string>1353.60.8pd1.1</string>
 			<key>github</key>
 			<string>PureDarwin/Libc</string>
 			<key>dependencies</key>
@@ -176,7 +176,7 @@
 		<key>Libc_headers</key>
 		<dict>
 			<key>version</key>
-			<string>1353.60.8pd1</string>
+			<string>1353.60.8pd1.1</string>
 			<key>original</key>
 			<string>Libc</string>
 			<key>github</key>
