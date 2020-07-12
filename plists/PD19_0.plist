@@ -60,7 +60,7 @@
 				</array>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -91,7 +91,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -112,7 +112,7 @@
 				</array>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -131,7 +131,7 @@
 				</array>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -150,7 +150,7 @@
 				</array>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -203,7 +203,7 @@
 				<array>
 					<string>dyld</string>
 					<string>libdispatch</string>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -226,7 +226,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 			<key>patchfiles</key>
@@ -290,7 +290,7 @@
 				<key>header</key>
 				<array>
 					<string>libdispatch</string>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -313,7 +313,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -453,7 +453,7 @@
 					<string>Libsyscall</string>
 					<string>libplatform_headers</string>
 					<string>libpthread</string>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -473,7 +473,7 @@
 				<key>header</key>
 				<array>
 					<string>libplatform_headers</string>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -518,7 +518,7 @@
 				<array>
 					<string>Libsyscall</string>
 					<string>libpthread</string>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 				<key>build</key>
 				<array>
@@ -552,7 +552,7 @@
 					<string>Libsystem</string>
 					<string>libmalloc</string>
 					<string>libplatform_headers</string>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -583,7 +583,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>xnu_headers</string>
+					<string>xnu</string>
 				</array>
 			</dict>
 		</dict>
@@ -749,34 +749,6 @@
 				<string>xnu-6153.81.5.fix_nfs.p1.patch</string>
 				<string>xnu-6153.81.5.rosv_data.p1.patch</string>
 				<string>xnu-6153.81.5.big_sur_iig.p1.patch</string>
-			</array>
-		</dict>
-
-		<key>xnu_headers</key>
-		<dict>
-			<key>original</key>
-			<string>xnu</string>
-			<key>version</key>
-			<string>6153.81.5</string>
-			<key>environment</key>
-			<dict>
-				<key>KERNEL_CONFIGS</key>
-				<string>RELEASE</string>
-			</dict>
-			<key>dependencies</key>
-			<dict>
-				<key>header</key>
-				<array>
-					<string>AvailabilityVersions</string>
-				</array>
-			</dict>
-			<key>patchfiles</key>
-			<array>
-				<string>xnu-6153.81.5.availability_versions.p1.patch</string>
-				<string>xnu-6153.81.5.fix_codesigning.p1.patch</string>
-				<string>xnu-6153.81.5.fix_system_framework.p1.patch</string>
-				<string>xnu-6153.81.5.xnu_dependencies_dir.p1.patch</string>
-				<string>xnu-6153.81.5.fix_asm_help.p1.patch</string>
 			</array>
 		</dict>
 	</dict>
