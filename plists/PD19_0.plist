@@ -364,6 +364,7 @@
 				<array>
 					<string>CrashReporterClient</string>
 					<string>Libc</string>
+					<string>Libsyscall</string>
 					<string>corecrypto_user</string>
 					<string>libcppabi</string>
 					<string>libmalloc</string>
