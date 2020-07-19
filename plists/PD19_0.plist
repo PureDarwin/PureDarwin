@@ -718,6 +718,8 @@
 				<string>0</string>
 				<key>BUILD_LTO</key>
 				<string>0</string>
+				<key>DO_CTFMERGE</key>
+				<string>0</string>
 			</dict>
 			<key>dependencies</key>
 			<dict>
