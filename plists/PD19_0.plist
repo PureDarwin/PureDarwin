@@ -347,6 +347,7 @@
 			<key>patchfiles</key>
 			<array>
 				<string>dtrace-338.40.5.dtrace_host.p1.patch</string>
+				<string>dtrace-338.40.5.arm_compat.p1.patch</string>
 			</array>
 		</dict>
 
