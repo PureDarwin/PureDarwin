@@ -1,0 +1,22 @@
+diff --git a/makedefs/MakeInc.dir b/makedefs/MakeInc.dir
+index ec79505..1b0a18a 100644
+--- a/makedefs/MakeInc.dir
++++ b/makedefs/MakeInc.dir
+@@ -67,6 +67,8 @@ $(eval $(call RECURSIVE_BUILD_RULES_template,build_installhdrs_mi,$(INSTINC_SUBD
+ # Install machine dependent kernel header files
+ #
+ $(eval $(call RECURSIVE_BUILD_RULES_template,build_installhdrs_md,$(INSTINC_SUBDIRS_$(CURRENT_ARCH_CONFIG)),do_installhdrs_md,))
++$(eval $(call RECURSIVE_BUILD_RULES_template,build_installhdrs_md,$(INSTINC_SUBDIRS_ARM),do_installhdrs_md,))
++$(eval $(call RECURSIVE_BUILD_RULES_template,build_installhdrs_md,$(INSTINC_SUBDIRS_ARM64),do_installhdrs_md,))
+ 
+ #
+ # Install machine independent kernel header files
+@@ -77,6 +79,8 @@ $(eval $(call RECURSIVE_BUILD_RULES_template,build_exporthdrs_mi,$(EXPINC_SUBDIR
+ # Install machine dependent kernel header files
+ #
+ $(eval $(call RECURSIVE_BUILD_RULES_template,build_exporthdrs_md,$(EXPINC_SUBDIRS_$(CURRENT_ARCH_CONFIG)),do_exporthdrs_md,))
++$(eval $(call RECURSIVE_BUILD_RULES_template,build_exporthdrs_md,$(EXPINC_SUBDIRS_ARM),do_exporthdrs_md,))
++$(eval $(call RECURSIVE_BUILD_RULES_template,build_exporthdrs_md,$(EXPINC_SUBDIRS_ARM64),do_exporthdrs_md,))
+ 
+ #
+ # Build all architectures for all Configuration/Architecture options
