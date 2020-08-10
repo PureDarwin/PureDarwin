@@ -443,7 +443,7 @@
 		<key>libdispatch</key>
 		<dict>
 			<key>version</key>
-			<string>1173.60.1pd1</string>
+			<string>1173.60.1pd1.1</string>
 			<key>github</key>
 			<string>PureDarwin/libdispatch</string>
 			<key>target</key>
@@ -465,7 +465,7 @@
 			<key>original</key>
 			<string>libdispatch</string>
 			<key>version</key>
-			<string>1173.60.1pd1</string>
+			<string>1173.60.1pd1.1</string>
 			<key>github</key>
 			<string>PureDarwin/libdispatch</string>
 			<key>target</key>
