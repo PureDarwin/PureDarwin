@@ -31,8 +31,6 @@
 		<string>Darwin</string>
 		<key>RC_TARGET_CONFIG</key>
 		<string>MacOSX</string>
-		<key>SDKROOT</key>
-		<string>macosx</string>
 	</dict>
 
 	<key>groups</key>
