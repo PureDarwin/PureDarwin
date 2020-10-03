@@ -222,6 +222,13 @@
 			<string>xnu</string>
 			<key>version</key>
 			<string>6153.81.5</string>
+			<key>environment</key>
+			<dict>
+				<key>KERNEL_CONFIGS</key>
+				<string>RELEASE</string>
+				<key>ARCH_CONFIGS</key>
+				<string>X86_64</string>
+			</dict>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
@@ -715,6 +722,8 @@
 			<dict>
 				<key>KERNEL_CONFIGS</key>
 				<string>RELEASE</string>
+				<key>ARCH_CONFIGS</key>
+				<string>X86_64</string>
 				<key>BUILD_WERROR</key>
 				<string>0</string>
 				<key>BUILD_LTO</key>
