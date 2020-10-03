@@ -31,6 +31,8 @@
 		<string>Darwin</string>
 		<key>RC_TARGET_CONFIG</key>
 		<string>MacOSX</string>
+		<key>DEVELOPMENT_TEAM</key>
+		<string>3P242C9ES5</string>
 	</dict>
 
 	<key>groups</key>
