@@ -152,6 +152,7 @@
 				</array>
 				<key>header</key>
 				<array>
+					<string>IOStorageFamily</string>
 					<string>xnu</string>
 				</array>
 			</dict>
