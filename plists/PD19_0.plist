@@ -87,6 +87,10 @@
 			<string>PureDarwin/IOACPIFamily</string>
 			<key>dependencies</key>
 			<dict>
+				<key>build</key>
+				<array>
+					<string>libkmod</string>
+				</array>
 				<key>header</key>
 				<array>
 					<string>xnu</string>
