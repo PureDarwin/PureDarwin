@@ -233,11 +233,14 @@
 				<string>RELEASE</string>
 				<key>ARCH_CONFIGS</key>
 				<string>X86_64</string>
+				<key>MAKEOVERRIDES</key>
+				<string>ARCHS=x86_64</string>
 			</dict>
 			<key>dependencies</key>
 			<dict>
 				<key>header</key>
 				<array>
+					<string>libplatform_headers</string>
 					<string>xnu</string>
 				</array>
 			</dict>
