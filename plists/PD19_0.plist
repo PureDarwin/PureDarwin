@@ -178,16 +178,6 @@
 			</dict>
 		</dict>
 
-		<key>Libc_headers</key>
-		<dict>
-			<key>version</key>
-			<string>1353.60.8pd1.1</string>
-			<key>original</key>
-			<string>Libc</string>
-			<key>github</key>
-			<string>PureDarwin/Libc</string>
-		</dict>
-
 		<key>Libcompiler_rt</key>
 		<dict>
 			<key>version</key>
@@ -434,7 +424,7 @@
 			<dict>
 				<key>header</key>
 				<array>
-					<string>Libc_headers</string>
+					<string>Libc</string>
 				</array>
 			</dict>
 		</dict>
