@@ -770,6 +770,7 @@
 				<string>xnu-6153.81.5.big_sur_iig.p1.patch</string>
 				<string>xnu-6153.81.5.missing_driverkit_method.p1.patch</string>
 				<string>xnu-6153.81.5.external_headers.p1.patch</string>
+				<string>xnu-6153.81.5.libsyscall_no_bridgeos.p1.patch</string>
 			</array>
 		</dict>
 	</dict>
