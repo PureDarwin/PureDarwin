@@ -79,6 +79,14 @@
 			<string>10.3</string>
 			<key>target</key>
 			<string>CrashReporterClient</string>
+			<key>dependencies</key>
+			<dict>
+				<key>header</key>
+				<array>
+					<string>Libsyscall</string>
+					<string>xnu</string>
+				</array>
+			</dict>
 		</dict>
 
 		<key>IOACPIFamily</key>
