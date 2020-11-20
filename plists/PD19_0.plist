@@ -33,6 +33,8 @@
 		<string>MacOSX</string>
 		<key>DEVELOPMENT_TEAM</key>
 		<string>3P242C9ES5</string>
+		<key>ARCHS</key>
+		<string>x86_64</string>
 	</dict>
 
 	<key>groups</key>
