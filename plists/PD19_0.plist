@@ -94,7 +94,7 @@
 		<key>IOACPIFamily</key>
 		<dict>
 			<key>version</key>
-			<string>100.1</string>
+			<string>100.2</string>
 			<key>github</key>
 			<string>PureDarwin/IOACPIFamily</string>
 			<key>dependencies</key>
@@ -106,8 +106,21 @@
 				<key>header</key>
 				<array>
 					<string>xnu</string>
+					<string>IOACPIFamily_headers</string>
 				</array>
 			</dict>
+		</dict>
+
+		<key>IOACPIFamily_headers</key>
+		<dict>
+			<key>original</key>
+			<string>IOACPIFamily</string>
+			<key>version</key>
+			<string>100.2</string>
+			<key>github</key>
+			<string>PureDarwin/IOACPIFamily</string>
+			<key>target</key>
+			<string>IOACPIFamily</string>
 		</dict>
 
 		<key>IOATABlockStorage</key>
