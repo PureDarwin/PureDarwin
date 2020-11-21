@@ -147,7 +147,7 @@
 		<key>IOATAFamily</key>
 		<dict>
 			<key>version</key>
-			<string>256pd1</string>
+			<string>256pd1.1</string>
 			<key>github</key>
 			<string>PureDarwin/IOATAFamily</string>
 			<key>dependencies</key>
@@ -159,8 +159,19 @@
 				<key>header</key>
 				<array>
 					<string>xnu</string>
+					<string>IOATAFamily_headers</string>
 				</array>
 			</dict>
+		</dict>
+
+		<key>IOATAFamily_headers</key>
+		<dict>
+			<key>original</key>
+			<string>IOATAFamily</string>
+			<key>version</key>
+			<string>256pd1.1</string>
+			<key>github</key>
+			<string>PureDarwin/IOATAFamily</string>
 		</dict>
 
 		<key>IOStorageFamily</key>
@@ -177,10 +188,22 @@
 				</array>
 				<key>header</key>
 				<array>
-					<string>IOStorageFamily</string>
+					<string>IOStorageFamily_headers</string>
 					<string>xnu</string>
 				</array>
 			</dict>
+		</dict>
+
+		<key>IOStorageFamily_headers</key>
+		<dict>
+			<key>original</key>
+			<string>IOStorageFamily</string>
+			<key>version</key>
+			<string>238.00.1pd1</string>
+			<key>github</key>
+			<string>PureDarwin/IOStorageFamily</string>
+			<key>target</key>
+			<string>IOStorageFamily Headers</string>
 		</dict>
 
 		<key>Libc</key>
