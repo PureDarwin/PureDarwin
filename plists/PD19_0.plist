@@ -227,7 +227,7 @@
 		<key>Libcompiler_rt</key>
 		<dict>
 			<key>version</key>
-			<string>5.0.0.0.2</string>
+			<string>5.0.0.0.3</string>
 			<key>github</key>
 			<string>PureDarwin/Libcompiler_rt</string>
 		</dict>
