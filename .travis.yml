@@ -1,8 +1,0 @@
-# Test whether we can use OS X on Travis CI
-
-os:
-  - osx
-
-script:
-  - sw_vers -productVersion
-  - system_profiler SPSoftwareDataType
