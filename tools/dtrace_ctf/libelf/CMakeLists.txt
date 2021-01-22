@@ -24,9 +24,10 @@ target_sources(libelf.host PRIVATE
     xlate64.c
 
     decl.h
-    gelf.h
     machelf.h
     msg.h
+
+    ../include/gelf.h
 )
 set_property(TARGET libelf.host PROPERTY PREFIX "")
 target_include_directories(libelf.host PRIVATE ../include ../include/sys)
