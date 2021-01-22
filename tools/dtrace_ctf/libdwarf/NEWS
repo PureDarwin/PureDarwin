@@ -1,0 +1,208 @@
+March 29, 2006
+  The March  27, 2006 version accomodates DWARF3.
+  Some people have been using the library without
+  altering dwarf.h, libdwarf.h to accomodate
+  large numbers of registers.  This exposed a bug
+  (an off-by-one error) but also makes it clear
+  additional documentation is needed.  So 
+  in libdwarf large new comments near 'TARGET DEPENDENCY'
+  attempt to explain better.
+Oct 03, 2005
+  The July version had an incompatible interface: old
+  dealloc code did not always work right. The incompatibility
+  is now fixed and the new features remain.
+
+July 15, 2005
+  New optional alloc-check code optionally checks all
+  allocated memory is freed (malloc_check.h malloc_check.c)
+  Various new dealloc routines written as the previous approach
+  of letting client code do detailed dealloc turned out not
+  to dealloc all memory.
+  To get the new checking you must manually change a line
+  in malloc_check.h and rebuild libdwarf.
+
+
+Mar 31, 2005
+  Documented  the libexc.so/.debug_funcnames
+  dependency and the 64bit-offset DWARF extension in
+  mips_extentions.{mm,ps}.
+
+Mar 21, 2005
+  gcc 3.3 and 3.4 .eh_frame 'z' augmentations are not handled
+  correctly, so libdwarf gives an error when attempting to
+  print such. gcc 2 'eh' augmentation is simpler and
+  prints correctly.  (.eh_frame is a GNU section,
+  not DWARF2/3, and what is recorded in .eh_frame is not
+  specified by DWARF2/3, though .eh_frame does resemble
+  DWARF2/3 .debug_frame).
+
+
+Oct 28, 2004
+  Updated contact address in copyright: SGI moved 1/4 mile
+  in 2003 to a new address: 1500 Crittenden Lane.
+  
+  Documented additional vendor extensions.
+
+Oct 27, 2004
+  Added known vendor extensions to dwarf2/3 to dwarf.h
+  HP, GNU, PGI and UPC extensions are now recorded.
+  Recorded vendor extensions from Concurrent.
+
+Feb 3, 2004
+  If 'Dwarf_Word' is 64 bits, two macros reading leb numbers
+  fail to initialize upper bits of the values read.
+  First noticed with bogus line numbers printing from dwarfdump.
+  Now we use already-existing functions, avoiding the problem.
+
+Oct 02, 2003
+  Support .debug_loc section fully.
+
+Sept 29, 2003
+  Support DW_FORM_indirect properly.
+  Supports loclists in part (but not multiple loclist entries yet).
+  Support 'padding bytes' at end of .debug_arange and
+  .debug_pubnames and .debug_pubtypes per CU
+  (recent dwarf committee email made it clear this is appropriate).
+
+May 23, 2002
+  Libdwarf now asks for sections only when they are
+  used, so that unneeded sections aren't loaded.
+  Support for using SGI's ELF library as an alternative to
+  using AT&T libelf-style has been added (the SGI ELF
+  library is presently only available internally to SGI).
+
+Jan 10, 2002
+  Fixed memory leak in dwarf_finish().
+
+Aug 21, 2001
+  If one called dwarf_add_file_decl()
+  or dwarf_add_directory_decl() but never added a line,
+  .debug_line was not produced.  This was a mistake,
+  as if any file or directory was provided .debug_line
+  should be produced. Now it is produced.
+
+June 14, 2001
+  Given a cu header offset, it was not easy to derive the
+  CU header DIE offset. Created the new
+  function dwarf_get_cu_die_offset_given_cu_header_offset()
+  do get the CU header DIE offset.
+  Added the function dwarf_get_arange_cu_header_offset()
+  so the cu header offset could be retrieved from .debug_aranges
+  information.
+
+June 07, 2001
+  Major bug in dwarf_leb.c decoding large integers 
+  (Dwarf_Signed 64 bit where library is compiled in ILP32) 
+  found and fixed.
+
+May 21, 2001
+  Some small fixes have been found by various folks,
+  so it seems time to prepare a new source release.
+  See ChangeLog for details.
+
+April 15, 2000
+  The libdwarf copyright has changed to
+     version 2.1 of the GNU Lesser General Public License.
+  Anyone holding a version of libdwarf that was published
+  before this new copyright is allowed to use
+    the copyright published in that earlier libdwarf source
+    on the earlier source
+  or to use 
+    this new copyright on the earlier source,
+  at their option.
+
+
+December 08, 1999
+  The dwarf committee has adopted the offset-extension
+  proposal. This allows compatibly emitting
+  dwarf with 64bit offsets.
+
+  The dwarf reader now automatically figures out which is in use.
+  The dwarf writer configures itself at the time the
+  writer initialization routine is called, though
+  the writer is restricted, at libdwarf 
+  compile time, to one of
+		mips/sgi pure 32/pure 64 offsets/pointers.
+
+		32bit offsets only (per dwarf 2.0.0 and cygnus)
+
+		32bit offsets with extension to 64bit offsets
+		allowed (the offset-extension newly passed).
+  
+  In addition, a great deal of duplicate code
+  for the sgi  .debug_weaknames, .debug_funcnames, 
+  .debug_varnames and .debug_typenames sections has
+  been removed: a single set of functions does the real work now.
+  
+Sept 29, 1999
+  Just found out that cygnus is, on 64bit targets, generating
+  32bit offsets (as elf32 has, for example) with 64 bit
+  pointers (in references to text and data).
+  Whereas sgi has always generated 64bit dwarf with
+  64 bit offsets (as in elf64) and 64bit pointers for
+  64bit pointer objects.
+  I'll call the sgi approach 64-bit and the cygnus approach
+  32bit-offsets.
+
+  Cygnus is following the DWARF2 spec as written, so they are
+  right in doing only 32bit-offsets.
+
+  Folks at sgi (including me) think that, as for elf64,
+  the offsets in dwarf for 64bit pointer-apps should be
+  64 bits.  We think it is only a matter of time
+  before we really *need* 64bit offsets and when that happens
+  it will be on an important app.  Disk space is cheap,
+  so lets just go 64 bit on 64bit apps (such as ia64 apps)
+  to avoid a future problem.
+  I(davea@sgi.com) think the 'pointer-size' references in the dwarf
+  spec were really written for 64-bit pointer apps.
+  I don't recall serious consideration of 64bit pointer
+  apps in the committee deliberations (I did miss
+  a couple of meetings) and think 64bit offsets
+  are consistent with dwarf2, even though the speci
+  was not written for such. We think true full 64 bit
+  dwarf2 is the right way to go (the spec changes
+  are obvious: file and section offsets become 64bit
+  with 64bit pointer objects.
+ 
+  MIPS/SGI is definitely 64-bit offsets for 64 bit objects,
+  cygnus is definitely 32bit-offsets for earlier 64bit pointer
+  environments.
+
+  At any rate, now the dwarf reader allows and accomodates
+  both and the dwarf producer also accomodates both.
+  Some tweaking of the pro_init.c or dwarf_init_finish.c
+  files may be necessary in future: no other changes should
+  be needed to accomodate the two 64bit approaches, as
+  the library (and dwarfdump) now deal with both forms.
+
+
+August 20, 1999
+  Added some #ifndef/#define to pro_util.h to let libdwarf build
+  on more hosts.  (since those hosts don't need the producer
+  code, AFAIK, zero values suffice for missing #defines.)
+
+July 21, 1999
+  Now reader transparently reads either-endianness data
+  from an either-endianness object.
+  Updated dwarf.h and libdwarf.h to recognize
+  GNU egcs dwarf extensions and to print the egcs eh_frame
+  section.
+
+June 10, 1999
+  gnu configure version of libdwarf made available for the
+  first time.  
+  Still allows only same-endian-as-host in objects.
+  
+August, 1994
+  libdwarf source made available for ftp on sgigate.sgi.com
+	/ftp/pub
+
+June, 1994
+  Consumer interface changed completely, following
+  "Candy Machine Interfaces" chapter from
+   "Writing Solid Code" by Steve Maguire (Microsoft Press).
+
+April,  1993
+  Initial version of libdwarf  for dwarf version 2
+  written at sgi.

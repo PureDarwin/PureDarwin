@@ -1,0 +1,31 @@
+
+
+The files:
+	libdwarf.h
+	dwarf.h
+	and all the .h and .c files in this implementation of
+	libdwarf are copyrighted according to the file
+	LIBDWARFCOPYRIGHT.   
+
+
+The dwarf documentation:
+	dwarf.v2.mm and its postscript form and its
+	indexes are copyright Unix International (UI is now defunct).  
+        One presumes XOPEN owns the copyright now. In any case copying
+	and revision without fee is permitted (see the
+	copyright in the document).
+
+The libdwarf documentation:
+	libdwarf2.1.mm
+	libdwarf2p.1.mm
+	are based on material submitted to the UI PLSIG as proposed
+	interfaces for dwarf.  Copyright ownership is unclear, but
+	it seems clear that the intent was there was to be free
+	copying with no fees.
+
+	These documents are substantial revisions, done at SGI, of
+	previous libdwarf work.  
+
+$Source: /plroot/cmplrs.src/v7.4.5m/.RCS/PL/libdwarf/RCS/COPYING,v $
+$Revision: 1.2 $
+$Date: 2001/01/16 17:08:36 $
