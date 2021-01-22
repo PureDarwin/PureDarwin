@@ -30,7 +30,7 @@
 #define	_LIBELF_H
 
 #include <sys/types.h>
-#include "elf.h" /* In lieu of Solaris <sys/elf.h> */
+#include <sys/elf.h>
 
 #ifdef	__cplusplus
 extern "C" {
