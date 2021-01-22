@@ -13,7 +13,7 @@ target_sources(libctf.host PRIVATE
     ctf_util.c
 
     ctf_impl.h
-    libctf.h
+    ../include/libctf.h
 )
 
 set_property(TARGET libctf.host PROPERTY PREFIX "")
