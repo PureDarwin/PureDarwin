@@ -1,7 +1,7 @@
 project(dtrace_ctf_host)
 
-add_library(libelf STATIC)
-target_sources(libelf PRIVATE
+add_library(libelf.host STATIC)
+target_sources(libelf.host PRIVATE
     libelf/begin.c
     libelf/clscook.c
     libelf/clscook_ELF64.c
@@ -27,15 +27,14 @@ target_sources(libelf PRIVATE
 
     libelf/decl.h
     libelf/gelf.h
-    libelf/libelf.h
     libelf/machelf.h
     libelf/msg.h
 )
-set_property(TARGET libelf PROPERTY PREFIX "")
-target_include_directories(libelf PRIVATE include include/sys)
+set_property(TARGET libelf.host PROPERTY PREFIX "")
+target_include_directories(libelf.host PRIVATE include include/sys)
 
-add_library(libdwarf STATIC)
-target_sources(libdwarf PRIVATE
+add_library(libdwarf.host STATIC)
+target_sources(libdwarf.host PRIVATE
     libdwarf/dwarf_abbrev.c
     libdwarf/dwarf_addr_finder.c
     libdwarf/dwarf_alloc.c
@@ -64,5 +63,5 @@ target_sources(libdwarf PRIVATE
     libdwarf/dwarf_vars.c
     libdwarf/dwarf_weaks.c
 )
-set_property(TARGET libdwarf PROPERTY PREFIX "")
-target_include_directories(libdwarf PRIVATE include)
+set_property(TARGET libdwarf.host PROPERTY PREFIX "")
+target_include_directories(libdwarf.host PRIVATE include)
