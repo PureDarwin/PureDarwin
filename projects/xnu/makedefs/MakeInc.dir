@@ -1,0 +1,108 @@
+# -*- mode: makefile;-*-
+#
+# Copyright (C) 1999-2016 Apple Inc. All rights reserved.
+#
+# MakeInc.dir contains the recursion rules for the build system.
+# For instance, the "build_installhdrs_md" target is auto-generated
+# such that make(1) recurses into a specified set of subdirectories
+# (building "build_installhdrs_md" in turn at each level) before
+# building the special "do_installhdrs_md" target at the current
+# level. "do_installhdrs_md" is defined in MakeInc.rule.
+#
+
+# $(1) is the name of the target to produce that will perform the
+#      recursive behavior via dependencies
+# $(2) is a list of subdirectories to recurse into
+# $(3) is the target to build with a sub-make after
+#      the subdirectories have been recursed into
+# $(4) should be "1" if TARGET should be pinned to the per-arch
+#      build COMPONENT directory, or empty if it should recurse
+#      in lockstep with the source recursion
+define RECURSIVE_BUILD_RULES_template
+$(1)_recurse_target_list = $$(addprefix $(1)_recurse_into_,$(2))
+
+.PHONY: $$($(1)_recurse_target_list)
+
+$$($(1)_recurse_target_list):
+	$$(_v)$$(MKDIR) "$$(CURDIR)/$$(patsubst $(1)_recurse_into_%,%,$$@)"
+	$$(_v)$${MAKE} -C "$$(CURDIR)/$$(patsubst $(1)_recurse_into_%,%,$$@)"	\
+		-f "$$(SOURCE)$$(patsubst $(1)_recurse_into_%,%,$$@)/Makefile"	\
+		CURRENT_KERNEL_CONFIG=$${CURRENT_KERNEL_CONFIG}		\
+		CURRENT_ARCH_CONFIG=$${CURRENT_ARCH_CONFIG}		\
+		CURRENT_MACHINE_CONFIG=$${CURRENT_MACHINE_CONFIG}	\
+		CURRENT_BUILD_CONFIG=$${CURRENT_BUILD_CONFIG}		\
+		SOURCE="$$(SOURCE)$$(patsubst $(1)_recurse_into_%,%,$$@)/"	\
+		RELATIVE_SOURCE_PATH="$$(RELATIVE_SOURCE_PATH)/$$(patsubst $(1)_recurse_into_%,%,$$@)"	\
+		TARGET=$(if $(4),$${OBJPATH}/$$(COMPONENT),$$(TARGET)$$(patsubst $(1)_recurse_into_%,%,$$@)/)		\
+		OBJPATH=$${OBJPATH}					\
+		$(1);
+
+.PHONY: $(1)
+
+$(1): $$($(1)_recurse_target_list)
+	$$(_v)$${MAKE} -C "$$(CURDIR)"						\
+		-f $$(firstword $$(MAKEFILE_LIST))				\
+		CURRENT_KERNEL_CONFIG=$${CURRENT_KERNEL_CONFIG}			\
+		CURRENT_ARCH_CONFIG=$${CURRENT_ARCH_CONFIG}			\
+		CURRENT_MACHINE_CONFIG=$${CURRENT_MACHINE_CONFIG}		\
+		CURRENT_BUILD_CONFIG=$${CURRENT_BUILD_CONFIG}			\
+		SOURCE=$$(SOURCE)						\
+		RELATIVE_SOURCE_PATH=$$(RELATIVE_SOURCE_PATH)			\
+		TARGET=$$(TARGET)						\
+		OBJPATH=$${OBJPATH}						\
+		$(3);
+endef
+
+#
+# Setup pass for  all architectures for all Configuration/Architecture options
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_setup,$(SETUP_SUBDIRS),do_build_setup,))
+
+#
+# Install machine independent kernel header files
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_installhdrs_mi,$(INSTINC_SUBDIRS),do_installhdrs_mi,))
+
+#
+# Install machine dependent kernel header files
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_installhdrs_md,$(INSTINC_SUBDIRS_$(CURRENT_ARCH_CONFIG)),do_installhdrs_md,))
+
+#
+# Install machine independent kernel header files
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_exporthdrs_mi,$(EXPINC_SUBDIRS),do_exporthdrs_mi,))
+
+#
+# Install machine dependent kernel header files
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_exporthdrs_md,$(EXPINC_SUBDIRS_$(CURRENT_ARCH_CONFIG)),do_exporthdrs_md,))
+
+#
+# Build all architectures for all Configuration/Architecture options
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_all,$(COMP_SUBDIRS) $(COMP_SUBDIRS_$(CURRENT_ARCH_CONFIG)),do_build_all,1))
+
+#
+# Post-process build results
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,config_all,$(CONFIG_SUBDIRS),do_config_all,1))
+
+#
+# Install for all architectures for all Configuration/Architecture options
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_install_primary,$(INST_SUBDIRS),do_build_install_primary,1))
+$(eval $(call RECURSIVE_BUILD_RULES_template,build_install_non_primary,$(INST_SUBDIRS),do_build_install_non_primary,1))
+$(eval $(call RECURSIVE_BUILD_RULES_template,config_install,$(CONFIG_SUBDIRS),do_config_install,1))
+
+#
+# Install machine independent text files
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,textfiles_install_mi,$(INSTTEXTFILES_SUBDIRS),do_textfiles_install_mi,))
+
+#
+# Install machine dependent text files
+#
+$(eval $(call RECURSIVE_BUILD_RULES_template,textfiles_install_md,$(INSTTEXTFILES_SUBDIRS_$(CURRENT_ARCH_CONFIG)),do_textfiles_install_md,))
+
+# vim: set ft=make:

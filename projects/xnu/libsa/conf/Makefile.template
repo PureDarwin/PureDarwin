@@ -1,0 +1,92 @@
+#
+# Mach Operating System
+# Copyright (c) 1986 Carnegie-Mellon University
+# All rights reserved.  The CMU software License Agreement specifies
+# the terms and conditions for use and redistribution.
+#
+
+export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
+export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
+export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
+export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
+
+include $(MakeInc_cmd)
+include $(MakeInc_def)
+
+#
+# CFLAGS
+#
+CFLAGS+= -include meta_features.h -DLIBSA_KERNEL_PRIVATE
+SFLAGS+= -include meta_features.h
+
+#
+# Directories for mig generated files
+#
+COMP_SUBDIRS =
+
+#
+#  Make sure we don't remove this by accident if interrupted at the wrong
+#  time.
+#
+.PRECIOUS: Makefile
+
+#
+#  Theses macros are filled in by the config program depending on the
+#  current configuration.  The MACHDEP macro is replaced by the
+#  contents of the machine dependent makefile template and the others
+#  are replaced by the corresponding symbol definitions for the
+#  configuration.
+#
+
+%OBJS
+
+%CFILES
+
+%CXXFILES
+
+%SFILES
+
+%MACHDEP
+
+# Rebuild if per-file overrides change
+${OBJS}: $(firstword $(MAKEFILE_LIST))
+
+# Rebuild if global compile flags change
+$(COBJS): .CFLAGS
+.CFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
+$(CXXOBJS): .CXXFLAGS
+.CXXFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+$(SOBJS): .SFLAGS
+.SFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
+
+KLD_FILES = $(OBJS)
+
+$(COMPONENT).filelist: $(OBJS)
+	$(_v)for kld_file in ${KLD_FILES}; do      \
+		$(SEG_HACK) -n __KLD -o $${kld_file}__ $${kld_file} || exit 1; \
+		mv $${kld_file}__ $${kld_file} || exit 1; \
+	done
+	@$(LOG_LDFILELIST) "$(COMPONENT)"
+	$(_v)for obj in ${OBJS}; do	\
+		 $(ECHO) $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
+	done > $(COMPONENT).filelist
+
+
+do_all: $(COMPONENT).filelist
+
+do_build_all:: do_all
+
+%RULES
+
+include $(MakeInc_rule)
+include $(MakeInc_dir)
+
+# the KLD segment is mapped read-only on arm, so if we include llvm profiling
+# here it will segfault the kernel.  (see arm_vm_init.c) We don't currently have
+# a way of retrieving these counters from KLD anyway, so there's no harm in just
+# disabling them.
+CXXFLAGS_GEN:=$(filter-out -fprofile-instr-generate,$(CXXFLAGS_GEN))
+CFLAGS_GEN:=$(filter-out -fprofile-instr-generate,$(CFLAGS_GEN))

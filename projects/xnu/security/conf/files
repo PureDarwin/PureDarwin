@@ -1,0 +1,32 @@
+# options
+
+# OPTIONS/kdebug                        optional kdebug
+OPTIONS/audit				optional audit
+OPTIONS/config_macf			optional config_macf
+OPTIONS/config_macf_socket_subset	optional config_macf_socket_subset
+OPTIONS/config_fse			optional config_fse
+
+# security
+
+security/mac_audit.c					optional config_macf
+security/mac_base.c					standard
+security/mac_data.c					optional config_macf
+security/mac_label.c					optional config_macf
+security/mac_process.c					optional config_macf
+security/mac_vfs.c					optional config_macf
+security/mac_vfs_subr.c					optional config_macf
+security/mac_skywalk.c					optional config_macf skywalk
+security/mac_system.c					optional config_macf
+security/mac_sysv_sem.c					optional config_macf
+security/mac_sysv_shm.c					optional config_macf
+security/mac_sysv_msg.c					optional config_macf
+security/mac_posix_sem.c				optional config_macf
+security/mac_posix_shm.c				optional config_macf
+security/mac_socket.c					optional config_macf
+security/mac_pipe.c					optional config_macf
+security/mac_iokit.c					optional config_macf
+security/mac_file.c					optional config_macf
+security/mac_priv.c					optional config_macf
+security/mac_pty.c					optional config_macf
+security/mac_kext.c					optional config_macf
+security/mac_mach.c					optional config_macf

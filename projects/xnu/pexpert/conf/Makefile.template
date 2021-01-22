@@ -1,0 +1,97 @@
+#
+# Mach Operating System
+# Copyright (c) 1986 Carnegie-Mellon University
+# All rights reserved.  The CMU software License Agreement specifies
+# the terms and conditions for use and redistribution.
+#
+
+export MakeInc_cmd=${SRCROOT}/makedefs/MakeInc.cmd
+export MakeInc_def=${SRCROOT}/makedefs/MakeInc.def
+export MakeInc_rule=${SRCROOT}/makedefs/MakeInc.rule
+export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
+
+include $(MakeInc_cmd)
+include $(MakeInc_def)
+
+#
+# CFLAGS
+#
+CFLAGS+= -include meta_features.h -DPEXPERT_KERNEL_PRIVATE
+SFLAGS+= -include meta_features.h
+
+#
+# Directories for mig generated files
+#
+COMP_SUBDIRS =
+
+#
+#  Make sure we don't remove this by accident if interrupted at the wrong
+#  time.
+#
+.PRECIOUS: Makefile
+
+#
+#  Theses macros are filled in by the config program depending on the
+#  current configuration.  The MACHDEP macro is replaced by the
+#  contents of the machine dependent makefile template and the others
+#  are replaced by the corresponding symbol definitions for the
+#  configuration.
+#
+
+%OBJS
+
+%CFILES
+
+%CXXFILES
+
+%SFILES
+
+%MACHDEP
+
+#
+# Diagnostic opt-outs.  We need to make this list empty.
+#
+# DO NOT ADD MORE HERE.
+#
+# -Wno-cast-align
+pe_identify_machine.o_CFLAGS_ADD += -Wno-cast-align
+# -Wno-implicit-int-conversion
+pe_serial.o_CFLAGS_ADD += -Wno-implicit-int-conversion
+# -Wno-shorten-64-to-32
+pe_identify_machine.o_CFLAGS_ADD += -Wno-shorten-64-to-32
+pe_init.o_CFLAGS_ADD += -Wno-shorten-64-to-32
+# -Wno-sign-conversion
+bootargs.o_CFLAGS_ADD += -Wno-sign-conversion
+device_tree.o_CFLAGS_ADD += -Wno-sign-conversion
+pe_identify_machine.o_CFLAGS_ADD += -Wno-sign-conversion
+pe_init.o_CFLAGS_ADD += -Wno-sign-conversion
+pe_serial.o_CFLAGS_ADD += -Wno-sign-conversion
+
+# Rebuild if per-file overrides change
+${OBJS}: $(firstword $(MAKEFILE_LIST))
+
+# Rebuild if global compile flags change
+$(COBJS): .CFLAGS
+.CFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
+$(CXXOBJS): .CXXFLAGS
+.CXXFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+$(SOBJS): .SFLAGS
+.SFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
+
+$(COMPONENT).filelist: $(OBJS)
+	@$(LOG_LDFILELIST) "$(COMPONENT)"
+	$(_v)for obj in ${OBJS}; do	\
+		 $(ECHO) $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
+	done > $(COMPONENT).filelist
+
+do_all: $(COMPONENT).filelist
+
+do_build_all:: do_all
+
+%RULES
+
+include $(MakeInc_rule)
+include $(MakeInc_dir)

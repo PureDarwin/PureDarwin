@@ -1,0 +1,24 @@
+######################################################################
+#BEGIN	Machine dependent Makefile fragment for arm
+######################################################################
+
+#
+# Diagnostic opt-outs.  We need to make this list empty.
+#
+# DO NOT ADD MORE HERE.
+#
+# -Wno-implicit-int-conversion
+OSSpinLock.o_CFLAGS_ADD += -Wno-implicit-int-conversion
+# -Wno-shorten-64-to-32
+OSArray.cpo_CXXWARNFLAGS_ADD += -Wno-shorten-64-to-32
+OSDictionary.cpo_CXXWARNFLAGS_ADD += -Wno-shorten-64-to-32
+OSKextVersion.o_CFLAGS_ADD += -Wno-shorten-64-to-32
+OSOrderedSet.cpo_CXXWARNFLAGS_ADD += -Wno-shorten-64-to-32
+OSRuntime.cpo_CXXWARNFLAGS_ADD += -Wno-shorten-64-to-32
+OSSerializeBinary.cpo_CXXWARNFLAGS_ADD += -Wno-shorten-64-to-32
+OSString.cpo_CXXWARNFLAGS_ADD += -Wno-shorten-64-to-32
+OSSymbol.cpo_CXXWARNFLAGS_ADD += -Wno-shorten-64-to-32
+
+######################################################################
+#END	Machine dependent Makefile fragment for arm
+######################################################################
