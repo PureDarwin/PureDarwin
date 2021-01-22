@@ -57,3 +57,34 @@ target_sources(ctfdump.host PRIVATE
 target_include_directories(ctfdump.host PRIVATE ../include ../include/sys ../libelf)
 target_link_libraries(ctfdump.host PRIVATE libelf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
 set_property(TARGET ctfdump.host PROPERTY CXX_STANDARD 14)
+
+add_executable(ctfmerge.host)
+target_sources(ctfmerge.host PRIVATE
+    alist.cpp
+    array.c
+    atom.cpp
+    barrier.c
+    ctf.c
+    ctfmerge.c
+    darwin_shim.c
+    dwarf.c
+    fifo.c
+    hash.c
+    iidesc.c
+    input.c
+    list.c
+    memory.c
+    merge.c
+    output.c
+    stack.c
+    strtab.cpp
+    symbol.c
+    tdata.c
+    traverse.c
+    util.c
+    utils.c
+)
+
+target_include_directories(ctfmerge.host PRIVATE ../include ../include/sys ../libelf)
+target_link_libraries(ctfmerge.host PRIVATE libelf.host libdwarf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
+set_property(TARGET ctfmerge.host PROPERTY CXX_STANDARD 14)
