@@ -10,6 +10,7 @@ set(CMAKE_INSTALL_PREFIX "")
 
 include(ExternalProject)
 include(scripts/cmake/install_helpers.cmake)
+include(scripts/cmake/mig.cmake)
 
 add_subdirectory(projects)
 add_subdirectory(tools)
