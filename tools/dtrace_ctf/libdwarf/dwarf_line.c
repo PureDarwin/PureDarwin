@@ -240,7 +240,7 @@ dwarf_srcfiles(Dwarf_Die die,
     }
 
     /* dir_name can be NULL if there is no DW_AT_comp_dir */
-    if(dir_name == 0 || file_name_is_full_path(file_name)) {
+    if(dir_name == 0 || file_name_is_full_path((Dwarf_Small *)file_name)) {
       /* This is safe because dwarf_dealloc is careful to not
        dealloc strings which are part of the raw .debug_* data.
        */

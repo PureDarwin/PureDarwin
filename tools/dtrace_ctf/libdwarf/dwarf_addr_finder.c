@@ -41,8 +41,8 @@
 #ifdef HAVE_ELF_H
 #include <sys/elf.h>
 #endif
-#include <dwarf.h>
-#include <libdwarf.h>
+#include "dwarf.h"
+#include "libdwarf.h"
 #include "dwarf_base_types.h"
 #include "dwarf_alloc.h"
 #include "dwarf_opaque.h"

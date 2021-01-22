@@ -1,3 +1,5 @@
+project(dtrace_ctf_host)
+
 add_library(libelf STATIC)
 target_sources(libelf PRIVATE
     libelf/begin.c
@@ -31,3 +33,36 @@ target_sources(libelf PRIVATE
 )
 set_property(TARGET libelf PROPERTY PREFIX "")
 target_include_directories(libelf PRIVATE include include/sys)
+
+add_library(libdwarf STATIC)
+target_sources(libdwarf PRIVATE
+    libdwarf/dwarf_abbrev.c
+    libdwarf/dwarf_addr_finder.c
+    libdwarf/dwarf_alloc.c
+    libdwarf/dwarf_arange.c
+    libdwarf/dwarf_die_deliv.c
+    libdwarf/dwarf_error.c
+    libdwarf/dwarf_form.c
+    libdwarf/dwarf_frame.c
+    libdwarf/dwarf_frame2.c
+    libdwarf/dwarf_frame3.c
+    libdwarf/dwarf_funcs.c
+    libdwarf/dwarf_global.c
+    libdwarf/dwarf_init_finish.c
+    libdwarf/dwarf_leb.c
+    libdwarf/dwarf_line.c
+    libdwarf/dwarf_line2.c
+    libdwarf/dwarf_loc.c
+    libdwarf/dwarf_macro.c
+    libdwarf/dwarf_print_lines.c
+    libdwarf/dwarf_pubtypes.c
+    libdwarf/dwarf_query.c
+    libdwarf/dwarf_sort_line.c
+    libdwarf/dwarf_string.c
+    libdwarf/dwarf_types.c
+    libdwarf/dwarf_util.c
+    libdwarf/dwarf_vars.c
+    libdwarf/dwarf_weaks.c
+)
+set_property(TARGET libdwarf PROPERTY PREFIX "")
+target_include_directories(libdwarf PRIVATE include)
