@@ -32,7 +32,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <errno.h>
-#include <libelf.h>
+#include "libelf.h"
 #include "decl.h"
 #include "msg.h"
 
@@ -108,7 +108,7 @@ _elf_cook(Elf * elf)
 
 	if (elf->ed_kind != ELF_K_ELF && elf->ed_kind != ELF_K_MACHO)
 		return (OK_YES);
-		
+
 	if (elf->ed_kind == ELF_K_MACHO)
 		inplace = 0; /* Ensures ident structure gets fresh storage */
 

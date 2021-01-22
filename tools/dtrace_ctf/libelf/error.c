@@ -38,7 +38,7 @@ int	__libc_threaded = 1; /* In lieu of Solaris <thread.h> */
 #include	<stdlib.h>
 #include	<string.h>
 #include	<stdio.h>
-#include	<libelf.h>
+#include	"libelf.h"
 #include	"msg.h"
 #undef		_elf_seterr
 

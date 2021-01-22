@@ -25,7 +25,7 @@
  * Use is subject to license terms.
  */
 
-#include <ctf_impl.h>
+#include "ctf_impl.h"
 #include <assert.h>
 
 static int

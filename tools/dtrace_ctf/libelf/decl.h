@@ -37,7 +37,7 @@
 #define USYNC_THREAD IGNORED /* Take PTHREAD_PROCESS_PRIVATE default in pthread_*_init() */
 #define DEFAULTMUTEX PTHREAD_MUTEX_INITIALIZER
 
-typedef pthread_mutex_t mutex_t; 
+typedef pthread_mutex_t mutex_t;
 typedef pthread_rwlock_t rwlock_t;
 typedef pthread_key_t thread_key_t;
 
@@ -55,10 +55,10 @@ typedef pthread_key_t thread_key_t;
 
 #define NOTE(x) /* NOTHING */ /* In lieu of Solaris #include <note.h> */
 
-#include <libelf.h>
+#include "libelf.h"
 #include "machelf.h" /* In lieu of Solaris <sys/machelf.h> */
-#include <gelf.h>
-#include <msg.h>
+#include "gelf.h"
+#include "msg.h"
 
 #include <unistd.h>
 #define PAGESIZE getpagesize()

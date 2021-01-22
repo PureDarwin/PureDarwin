@@ -39,7 +39,7 @@ typedef int64_t		off64_t;
 
 #endif
 
-#include <libelf.h>
+#include "libelf.h"
 
 #ifdef	__cplusplus
 extern "C" {

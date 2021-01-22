@@ -72,7 +72,7 @@
 #error Unknown endian-ness
 #endif
 
-#include <ctf.h> /* In lieu of Solaris <sys/ctf.h> */
+#include "ctf.h" /* In lieu of Solaris <sys/ctf.h> */
 #include <stdint.h>
 
 #ifdef	__cplusplus

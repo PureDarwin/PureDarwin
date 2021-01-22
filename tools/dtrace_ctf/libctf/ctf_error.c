@@ -27,7 +27,7 @@
  * Copyright (c) 2012, Joyent, Inc.
  */
 
-#include <ctf_impl.h>
+#include "ctf_impl.h"
 
 static const char *const _ctf_errlist[] = {
 	"File is not in CTF or ELF format",		 /* ECTF_FMT */

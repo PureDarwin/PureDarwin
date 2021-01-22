@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <memory.h>
 #include <errno.h>
-#include <libelf.h>
+#include "libelf.h"
 #include <sys/mman.h>
 #include "decl.h"
 #include "msg.h"
@@ -133,21 +133,21 @@ _elf_config(Elf * elf)
 	 */
 	if ((elf->ed_fsz >= sizeof(struct fat_header)) &&
 	    (_elf_vm(elf, (size_t)0, (size_t)sizeof(struct fat_header)) == OK_YES) &&
-	    (FAT_MAGIC == *(unsigned int *)(elf->ed_ident) || 
-		 FAT_CIGAM == *(unsigned int *)(elf->ed_ident))) 
+	    (FAT_MAGIC == *(unsigned int *)(elf->ed_ident) ||
+		 FAT_CIGAM == *(unsigned int *)(elf->ed_ident)))
 	{
 		struct fat_header *fat_header = (struct fat_header *)(elf->ed_ident);
 		int nfat_arch = OSSwapBigToHostInt32(fat_header->nfat_arch);
 		int end_of_archs = sizeof(struct fat_header) + nfat_arch * sizeof(struct fat_arch);
 		struct fat_arch *arch = (struct fat_arch *)(elf->ed_ident + sizeof(struct fat_header));
-		
+
 		cpu_type_t cputype = (elf->ed_myflags & EDF_RDKERNTYPE) ? current_kernel_arch() :current_program_arch();
-			
+
 		if (end_of_archs > elf->ed_fsz) {
 			_elf_seterr(EIO_VM, errno);
 			return 0;
 		}
-			
+
 		for (; nfat_arch-- > 0; arch++) {
 			if(((cpu_type_t)OSSwapBigToHostInt32(arch->cputype)) == cputype) {
 				elf->ed_ident += OSSwapBigToHostInt32(arch->offset);
@@ -159,16 +159,16 @@ _elf_config(Elf * elf)
 		}
 		/* Fall through positioned at mach_header for "thin" architecture matching host endian-ness */
 	}
-	
+
 	if ((elf->ed_fsz >= sizeof(struct mach_header)) &&
 	    (_elf_vm(elf, (size_t)0, (size_t)sizeof(struct mach_header)) == OK_YES) &&
-	    (MH_MAGIC == *(unsigned int *)(elf->ed_image) || 
+	    (MH_MAGIC == *(unsigned int *)(elf->ed_image) ||
 		 MH_CIGAM == *(unsigned int *)(elf->ed_image))) {
-		 
+
 		struct mach_header *mh = (struct mach_header *)elf->ed_image;
 		struct load_command *thisLC = (struct load_command *)(&(mh[1]));
 		int i, n = 0;
-			
+
 		for (i = 0; i < mh->ncmds; i++) {
 			int cmd = thisLC->cmd, cmdsize = thisLC->cmdsize;
 
@@ -177,26 +177,26 @@ _elf_config(Elf * elf)
 				{
 					struct segment_command *thisSG = (struct segment_command *)thisLC;
 
-					
+
 					n += thisSG->nsects;
 					break;
 				}
-					
+
 				case LC_SYMTAB:
 					n += 2;
 					break;
-					
+
 				default:
 					break;
 			}
 			thisLC = (struct load_command *) ((caddr_t) thisLC + cmdsize);
 		}
-		
+
 		if (0 == (elf->ed_ident = malloc(sizeof(Elf32_Ehdr)))) {
 			_elf_seterr(EMEM_ELF, errno);
 			return (0);
 		}
-		
+
 		((Elf32_Ehdr *)(elf->ed_ident))->e_ident[EI_MAG0] = 'M';
 		((Elf32_Ehdr *)(elf->ed_ident))->e_ident[EI_MAG1] = 'a';
 		((Elf32_Ehdr *)(elf->ed_ident))->e_ident[EI_MAG2] = 'c';
@@ -248,12 +248,12 @@ _elf_config(Elf * elf)
 		}
 		return (elf);
 	}
-	
+
 	if ((elf->ed_fsz >= sizeof(struct mach_header_64)) &&
 	    (_elf_vm(elf, (size_t)0, (size_t)sizeof(struct mach_header_64)) == OK_YES) &&
-	    (MH_MAGIC_64 == *(unsigned int *)(elf->ed_image) || 
+	    (MH_MAGIC_64 == *(unsigned int *)(elf->ed_image) ||
 		 MH_CIGAM_64 == *(unsigned int *)(elf->ed_image))) {
-		 
+
 		struct mach_header_64 *mh64 = (struct mach_header_64 *)elf->ed_image;
 		struct load_command *thisLC = (struct load_command *)(&(mh64[1]));
 		int i, n = 0;
@@ -268,22 +268,22 @@ _elf_config(Elf * elf)
 					n += thisSG64->nsects;
 					break;
 				}
-					
+
 				case LC_SYMTAB:
 					n += 2;
 					break;
-					
+
 				default:
 					break;
 			}
 			thisLC = (struct load_command *) ((caddr_t) thisLC + cmdsize);
 		}
-		
+
 		if (0 == (elf->ed_ident = malloc(sizeof(Elf64_Ehdr)))) {
 			_elf_seterr(EMEM_ELF, errno);
 			return (0);
 		}
-		
+
 		((Elf64_Ehdr *)(elf->ed_ident))->e_ident[EI_MAG0] = 'M';
 		((Elf64_Ehdr *)(elf->ed_ident))->e_ident[EI_MAG1] = 'a';
 		((Elf64_Ehdr *)(elf->ed_ident))->e_ident[EI_MAG2] = 'c';
@@ -398,7 +398,7 @@ elf_begin(int fd, Elf_Cmd cmd, Elf *ref)
 	case ELF_C_READ:
 		flags = EDF_READ;
 		break;
-		
+
 	case ELF_C_RDKERNTYPE:
 		flags = EDF_READ | EDF_RDKERNTYPE;
 		break;

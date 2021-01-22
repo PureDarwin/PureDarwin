@@ -25,10 +25,10 @@
  */
 
 #include <memory.h>
-#include <libelf.h>
+#include "libelf.h"
 #include <sys/link.h>
-#include <decl.h>
-#include <msg.h>
+#include "decl.h"
+#include "msg.h"
 #include <string.h>
 
 /*
@@ -407,7 +407,7 @@ _elf64_mtype(Elf * elf, Elf64_Word shtype, unsigned ver)
 #pragma unused(elf)
 	if (shtype < SHT_NUM)
 		return (mtype[ver - 1][shtype]);
-	
+
 	/*
 	 * And the default is ELF_T_BYTE - but we should
 	 * certainly have caught any sections we know about

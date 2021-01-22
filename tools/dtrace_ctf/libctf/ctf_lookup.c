@@ -25,7 +25,7 @@
  * Use is subject to license terms.
  */
 
-#include <ctf_impl.h>
+#include "ctf_impl.h"
 #include <mach-o/nlist.h>
 
 /*
@@ -196,10 +196,10 @@ ctf_lookup_by_symbol(ctf_file_t *fp, unsigned long symidx)
 
 			if (nsym->n_desc != STT_OBJECT)
 				return (ctf_set_errno(fp, ECTF_NOTDATA));
-				
+
 		} else if ((N_UNDF | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) &&
 					nsym->n_sect == NO_SECT) {
-					
+
 			if (nsym->n_desc != STT_OBJECT)
 				return (ctf_set_errno(fp, ECTF_NOTDATA));
 		}
@@ -211,10 +211,10 @@ ctf_lookup_by_symbol(ctf_file_t *fp, unsigned long symidx)
 
 			if (nsym->n_desc != STT_OBJECT)
 				return (ctf_set_errno(fp, ECTF_NOTDATA));
-				
+
 		} else if ((N_UNDF | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) &&
 					nsym->n_sect == NO_SECT) {
-					
+
 			if (nsym->n_desc != STT_OBJECT)
 				return (ctf_set_errno(fp, ECTF_NOTDATA));
 		}

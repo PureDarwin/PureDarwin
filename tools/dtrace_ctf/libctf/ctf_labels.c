@@ -24,7 +24,7 @@
  * Use is subject to license terms.
  */
 
-#include <ctf_impl.h>
+#include "ctf_impl.h"
 
 static int
 extract_label_info(ctf_file_t *fp, const ctf_lblent_t **ctl, uint32_t *num_labels)

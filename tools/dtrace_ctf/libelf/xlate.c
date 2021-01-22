@@ -25,12 +25,12 @@
  */
 
 #include <memory.h>
-#include <libelf.h>
+#include "libelf.h"
 
 #include <sys/link.h>
 
-#include <decl.h>
-#include <msg.h>
+#include "decl.h"
+#include "msg.h"
 #include <string.h>
 
 /*
@@ -576,7 +576,7 @@ static const struct {
  */
 
 static const Elf_Type	mtype[EV_CURRENT][SHT_NUM] =
-{ 
+{
 	{			/* [1-1][.] */
 /* NULL */		ELF_T_BYTE,
 /* PROGBITS */		ELF_T_BYTE,

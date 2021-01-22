@@ -31,7 +31,7 @@
 #include <assert.h>
 #include <sys/param.h>
 #include <sys/mman.h>
-#include <ctf_impl.h>
+#include "ctf_impl.h"
 
 /*
  * This static string is used as the template for initially populating a

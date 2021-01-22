@@ -24,8 +24,8 @@
  * Use is subject to license terms.
  */
 
-#include <ctf_impl.h>
-#include <libctf.h>
+#include "ctf_impl.h"
+#include "libctf.h"
 #include <sys/mman.h>
 #include <stdarg.h>
 

@@ -27,7 +27,7 @@
 /*	Copyright (c) 1988 AT&T	*/
 /*	  All Rights Reserved  	*/
 
-#include <libelf.h>
+#include "libelf.h"
 #include "decl.h"
 
 /*

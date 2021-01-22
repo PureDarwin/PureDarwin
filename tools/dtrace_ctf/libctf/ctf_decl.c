@@ -46,7 +46,7 @@
  * lexical precedence order and construct the final C declaration string.
  */
 
-#include <ctf_impl.h>
+#include "ctf_impl.h"
 
 void
 ctf_decl_init(ctf_decl_t *cd, char *buf, size_t len)

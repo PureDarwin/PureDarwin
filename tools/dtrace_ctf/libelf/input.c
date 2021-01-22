@@ -32,7 +32,7 @@
 #include <memory.h>
 #include <errno.h>
 #include <sys/mman.h>
-#include <libelf.h>
+#include "libelf.h"
 #include "decl.h"
 #include "msg.h"
 #include <string.h>

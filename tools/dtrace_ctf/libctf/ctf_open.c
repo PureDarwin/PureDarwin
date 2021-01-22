@@ -25,7 +25,7 @@
  * Use is subject to license terms.
  */
 
-#include <ctf_impl.h>
+#include "ctf_impl.h"
 #include <sys/mman.h>
 #define Z_OK            0	/* In lieu of Solaris <sys/zmod.h> */
 
@@ -134,9 +134,9 @@ sym_to_gelf_macho(const ctf_sect_t *sp, const Elf32_Sym *src, Elf64_Sym * sym, c
 	sym->st_info = STT_NOTYPE;
 	sym->st_other = 0;
 	sym->st_shndx = SHN_MACHO;
-	
+
 	if (nsym->n_type & N_STAB) {
-	
+
 		switch(nsym->n_type) {
 		case N_FUN:
 			sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (STT_FUNC));
@@ -147,16 +147,16 @@ sym_to_gelf_macho(const ctf_sect_t *sp, const Elf32_Sym *src, Elf64_Sym * sym, c
 		default:
 			break;
 		}
-		
+
 	} else if ((N_ABS | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) ||
 		(N_SECT | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT))) {
 
-		sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (nsym->n_desc)); 
+		sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (nsym->n_desc));
 	} else if ((N_UNDF | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) &&
 				nsym->n_sect == NO_SECT) {
 		sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (STT_OBJECT)); /* Common */
 	}
-	
+
 	return sym;
 }
 
@@ -166,7 +166,7 @@ sym_to_gelf_macho_64(const ctf_sect_t *sp, const Elf32_Sym *src, Elf64_Sym * sym
 #pragma unused(sp)
 	const struct nlist_64 *nsym = (const struct nlist_64 *)src;
 	const char *name = base + nsym->n_un.n_strx;
-		
+
 	if (0 == nsym->n_un.n_strx) { // iff a null, "", name.
 		sym->st_name = 0;
 		return sym;
@@ -181,9 +181,9 @@ sym_to_gelf_macho_64(const ctf_sect_t *sp, const Elf32_Sym *src, Elf64_Sym * sym
 	sym->st_info = STT_NOTYPE;
 	sym->st_other = 0;
 	sym->st_shndx = SHN_MACHO_64;
-	
+
 	if (nsym->n_type & N_STAB) {
-	
+
 		switch(nsym->n_type) {
 		case N_FUN:
 			sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (STT_FUNC));
@@ -194,16 +194,16 @@ sym_to_gelf_macho_64(const ctf_sect_t *sp, const Elf32_Sym *src, Elf64_Sym * sym
 		default:
 			break;
 		}
-		
+
 	} else if ((N_ABS | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) ||
 		(N_SECT | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT))) {
 
-		sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (nsym->n_desc)); 
+		sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (nsym->n_desc));
 	} else if ((N_UNDF | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) &&
 				nsym->n_sect == NO_SECT) {
 		sym->st_info = ELF64_ST_INFO((STB_GLOBAL), (STT_OBJECT)); /* Common */
 	}
-	
+
 	return sym;
 }
 
