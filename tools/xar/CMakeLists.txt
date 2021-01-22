@@ -9,7 +9,7 @@ externalproject_add(xar_host.extproj
         env CFLAGS=-w CC=clang CPPFLAGS=-I${OPENSSL_ROOT_DIR}/include LDFLAGS=-L${OPENSSL_ROOT_DIR}/lib
             <SOURCE_DIR>/xar/configure --prefix=${PUREDARWIN_TOOLS_DIR}
     BUILD_COMMAND make
-    INSTALL_COMMAND make install
+    INSTALL_COMMAND true
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
     USES_TERMINAL_INSTALL TRUE
