@@ -9,9 +9,7 @@ add_custom_command(
     OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/VersionMap.h
         ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/for_dyld_priv.inc
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/include/dyld
-    COMMAND ${CMAKE_COMMAND} -E env OUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/include/dyld
-        ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/build_headers.cmake
+    COMMAND ${CMAKE_COMMAND} -D SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -D HEADER_DIR=${CMAKE_CURRENT_BINARY_DIR}/include -P ${CMAKE_CURRENT_SOURCE_DIR}/build_headers.cmake
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Creating VersionMap.h and for_dyld_priv.inc" VERBATIM
 )
