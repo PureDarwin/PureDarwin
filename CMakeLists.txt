@@ -6,7 +6,9 @@ if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID M
 endif()
 
 cmake_policy(SET CMP0114 NEW)
+set(CMAKE_INSTALL_PREFIX "")
 
 include(ExternalProject)
 
+add_subdirectory(projects)
 add_subdirectory(tools)
