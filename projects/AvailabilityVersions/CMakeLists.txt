@@ -21,13 +21,8 @@ add_dependencies(AvailabilityHeaders
 
 install(FILES include/AvailabilityVersions.h DESTINATION usr/include COMPONENT BaseSystem)
 install(DIRECTORY DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A/Headers COMPONENT BaseSystem)
-install(CODE [[
-    execute_process(
-        COMMAND ${CMAKE_COMMAND} -E create_symlink ../../../../../../../usr/include/AvailabilityVersions.h AvailabilityVersions.h
-        WORKING_DIRECTORY $ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/System/Library/Frameworks/Kernel.framework/Versions/A/Headers
-    )
-
-    if(EXISTS $ENV{DESTDIR}/${CMAKE_INSTALL_PREFIX}/System/Library/Frameworks/Kernel.framework/Versions/A/Headers/AvailabilityVersions.h)
-        message(STATUS "Symlinked AvailabilityVersions.h into Kernel.framework")
-    endif()
-]] COMPONENT BaseSystem)
+install_symlink(
+    /System/Library/Frameworks/Kernel.framework/Versions/A/Headers/AvailabilityVersions.h
+    ../../../../../../../usr/include/AvailabilityVersions.h
+    COMPONENT BaseSystem
+)
