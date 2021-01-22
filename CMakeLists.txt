@@ -5,6 +5,8 @@ if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID M
     message(FATAL_ERROR "PureDarwin must be compiled with clang.")
 endif()
 
+cmake_policy(SET CMP0114 NEW)
+
 include(ExternalProject)
 
 add_subdirectory(tools)
