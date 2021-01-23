@@ -1,8 +1,5 @@
 function(target_add_mig_sources target filename)
-    cmake_parse_arguments(MIG "SERVER;CLIENT" "ARCH" "" ${ARGN})
-    if(MIG_SERVER AND MIG_CLIENT)
-        message(SEND_ERROR "Only one of SERVER and CLIENT must be specified")
-    endif()
+    cmake_parse_arguments(MIG "COMPILE_SERVER;COMPILE_CLIENT" "ARCH" "" ${ARGN})
 
     if(NOT MIG_USER_SOURCE_SUFFIX)
         set(MIG_USER_SOURCE_SUFFIX User.c)
@@ -50,12 +47,13 @@ function(target_add_mig_sources target filename)
         COMMENT "Mig ${filename}" VERBATIM
     )
 
-    if(MIG_SERVER)
+    if(MIG_COMPILE_SERVER)
         target_sources(${target} PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_SOURCE_SUFFIX}
             ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_HEADER_SUFFIX}
         )
-    elseif(MIG_CLIENT)
+    endif()
+    if(MIG_COMPILE_CLIENT)
         target_sources(${target} PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_SOURCE_SUFFIX}
             ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_HEADER_SUFFIX}
