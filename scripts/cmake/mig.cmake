@@ -1,7 +1,7 @@
 function(target_add_mig_sources target filename)
     cmake_parse_arguments(MIG "SERVER;CLIENT" "ARCH" "" ${ARGN})
-    if((MIG_SERVER AND MIG_CLIENT) OR (NOT MIG_SERVER AND NOT MIG_CLIENT))
-        message(SEND_ERROR "Exactly one of SERVER and CLIENT must be specified")
+    if(MIG_SERVER AND MIG_CLIENT)
+        message(SEND_ERROR "Only one of SERVER and CLIENT must be specified")
     endif()
 
     if(NOT MIG_USER_SOURCE_SUFFIX)
