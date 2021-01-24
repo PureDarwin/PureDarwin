@@ -1,0 +1,3 @@
+__platform_bzero ___bzero
+__os_lock_type_spin __os_lock_type_eliding
+__os_lock_type_spin __os_lock_type_transactional
