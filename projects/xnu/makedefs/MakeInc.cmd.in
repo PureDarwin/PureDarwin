@@ -193,10 +193,10 @@ ifeq ($(DSYMUTIL),)
 	export DSYMUTIL := $(shell $(XCRUN) -sdk $(SDKROOT) -find dsymutil)
 endif
 ifeq ($(CTFCONVERT),)
-	export CTFCONVERT := /Volumes/Sources/Andromeda/PureDarwin/build/tools/dtrace_ctf/tools/ctfconvert.host
+	export CTFCONVERT := @CTFCONVERT_PATH@
 endif
 ifeq ($(CTFMERGE),)
-	export CTFMERGE :=  /Volumes/Sources/Andromeda/PureDarwin/build/tools/dtrace_ctf/tools/ctfmerge.host
+	export CTFMERGE :=  @CTFMERGE_PATH@
 endif
 ifeq ($(CTFINSERT),)
 	export CTFINSERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctf_insert)
@@ -277,7 +277,7 @@ ifeq ($(HOST_CODESIGN),)
 	export HOST_CODESIGN	:= /usr/bin/codesign
 endif
 ifeq ($(HOST_CODESIGN_ALLOCATE),)
-	export HOST_CODESIGN_ALLOCATE	:= /Volumes/Sources/Andromeda/PureDarwin/build/tools/prefix/bin/x86_64-apple-darwin20-codesign_allocate
+	export HOST_CODESIGN_ALLOCATE	:= @CODESIGN_ALLOCATE_PATH@
 endif
 
 #
