@@ -3,7 +3,6 @@ set_property(TARGET availability.pl PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_S
 
 add_library(AvailabilityHeaders INTERFACE)
 target_include_directories(AvailabilityHeaders INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(AvailabilityHeaders INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 add_custom_command(
     OUTPUT
@@ -14,9 +13,12 @@ add_custom_command(
     COMMENT "Creating VersionMap.h and for_dyld_priv.inc" VERBATIM
 )
 
-add_dependencies(AvailabilityHeaders
+add_darwin_static_library(dyld_availability_headers)
+target_include_directories(dyld_availability_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include)
+target_sources(dyld_availability_headers PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/VersionMap.h
     ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/for_dyld_priv.inc
+    dummy.c
 )
 
 install(FILES include/Availability.h DESTINATION usr/include COMPONENT DeveloperTools)
