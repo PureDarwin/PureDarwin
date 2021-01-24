@@ -90,9 +90,9 @@ static void _dispatch_firehose_gate_wait(dispatch_gate_t l, uint32_t flags);
 #include <sys/param.h>
 #include <sys/types.h>
 #include <vm/vm_kern.h>
-#include <firehose_types_private.h> // <firehose/firehose_types_private.h>
-#include <tracepoint_private.h> // <firehose/tracepoint_private.h>
-#include <chunk_private.h> // <firehose/chunk_private.h>
+#include <firehose/firehose_types_private.h>
+#include <firehose/tracepoint_private.h>
+#include <firehose/chunk_private.h>
 #include "os/firehose_buffer_private.h"
 #include "firehose_buffer_internal.h"
 #include "firehose_inline_internal.h"
