@@ -7,7 +7,7 @@ externalproject_add(xnu_headers.extproj
     CONFIGURE_COMMAND
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
-            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:codesign_allocate_host>
+            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
