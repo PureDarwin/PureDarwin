@@ -23,6 +23,10 @@ add_executable(ar_host IMPORTED GLOBAL)
 add_dependencies(ar_host cctools_host.extproj)
 set_property(TARGET ar_host PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/x86_64-apple-darwin20-ar)
 
+add_executable(ranlib_host IMPORTED GLOBAL)
+add_dependencies(ranlib_host cctools_host.extproj)
+set_property(TARGET ar_host PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/x86_64-apple-darwin20-ranlib)
+
 add_executable(codesign_allocate_host IMPORTED GLOBAL)
 add_dependencies(codesign_allocate_host cctools_host.extproj)
 set_property(TARGET codesign_allocate_host PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/x86_64-apple-darwin20-codesign_allocate)
