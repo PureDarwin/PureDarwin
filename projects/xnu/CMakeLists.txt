@@ -1,7 +1,7 @@
 set(XNU_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
-externalproject_add(xnu_headers
+externalproject_add(xnu_headers.extproj
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_build
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND
@@ -21,4 +21,25 @@ externalproject_add(xnu_headers
     UPDATE_COMMAND "" # prevent constant rebuilds
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
+)
+
+add_library(xnu_headers INTERFACE)
+add_dependencies(xnu_headers xnu_headers.extproj)
+target_include_directories(xnu_headers INTERFACE
+    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/usr/include
+)
+add_library(xnu_private_headers INTERFACE)
+add_dependencies(xnu_private_headers xnu_headers.extproj)
+target_include_directories(xnu_private_headers INTERFACE
+    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/usr/local/include
+)
+add_library(xnu_kernel_headers INTERFACE)
+add_dependencies(xnu_kernel_headers xnu_headers.extproj)
+target_include_directories(xnu_kernel_headers INTERFACE
+    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/Kernel.framework/Headers
+)
+add_library(xnu_kernel_private_headers INTERFACE)
+add_dependencies(xnu_kernel_private_headers xnu_headers.extproj)
+target_include_directories(xnu_private_headers INTERFACE
+    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/Kernel.framework/PrivateHeaders
 )
