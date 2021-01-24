@@ -36,10 +36,10 @@ target_include_directories(xnu_private_headers INTERFACE
 add_library(xnu_kernel_headers INTERFACE)
 add_dependencies(xnu_kernel_headers xnu_headers.extproj)
 target_include_directories(xnu_kernel_headers INTERFACE
-    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/Kernel.framework/Headers
+    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/Kernel.framework/Versions/A/Headers
 )
 add_library(xnu_kernel_private_headers INTERFACE)
 add_dependencies(xnu_kernel_private_headers xnu_headers.extproj)
-target_include_directories(xnu_private_headers INTERFACE
-    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/Kernel.framework/PrivateHeaders
+target_include_directories(xnu_kernel_private_headers INTERFACE
+    ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders
 )
