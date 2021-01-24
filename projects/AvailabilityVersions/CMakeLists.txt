@@ -1,4 +1,4 @@
-add_executable(availability.pl IMPORTED)
+add_executable(availability.pl IMPORTED GLOBAL)
 set_property(TARGET availability.pl PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/availability.pl)
 
 add_library(AvailabilityHeaders INTERFACE)
