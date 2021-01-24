@@ -22,3 +22,19 @@ function(install_symlink source_path target)
         ")
     endif()
 endfunction()
+
+function(install_manpage source)
+    get_filename_component(source_base ${source} NAME)
+    get_filename_component(cat ${source} LAST_EXT)
+    string(REGEX REPLACE "^\.(.)" "\\1" cat ${cat})
+
+    if(cat STREQUAL "")
+        message(SEND_ERROR "Cannot determine section for manpage ${source_base}")
+    endif()
+
+    install(FILES ${source} DESTINATION usr/share/man/man${cat} COMPONENT DeveloperTools)
+
+    foreach(alias ${ARGN})
+        install_symlink(usr/share/man/man${cat}/${alias} ${source_base} COMPONENT DeveloperTools)
+    endforeach()
+endfunction()
