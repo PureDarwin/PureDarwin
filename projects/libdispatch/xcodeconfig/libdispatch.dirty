@@ -1,0 +1,169 @@
+#
+# Copyright (c) 2013 Apple Inc. All rights reserved.
+#
+# @APPLE_APACHE_LICENSE_HEADER_START@
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# @APPLE_APACHE_LICENSE_HEADER_END@
+#
+
+# Must be kept in sync with ObjC TFB checks in object_internal.h
+
+# dispatch_object_t classes
+_OBJC_CLASS_$_OS_dispatch_object
+_OBJC_CLASS_$_OS_dispatch_semaphore
+__OS_dispatch_semaphore_vtable
+_OBJC_CLASS_$_OS_dispatch_group
+__OS_dispatch_group_vtable
+_OBJC_CLASS_$_OS_dispatch_queue
+__OS_dispatch_queue_vtable
+_OBJC_CLASS_$_OS_dispatch_workloop
+__OS_dispatch_workloop_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_serial
+__OS_dispatch_queue_serial_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_concurrent
+__OS_dispatch_queue_concurrent_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_global
+__OS_dispatch_queue_global_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_pthread_root
+__OS_dispatch_queue_pthread_root_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_main
+__OS_dispatch_queue_main_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_runloop
+__OS_dispatch_queue_runloop_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_mgr
+__OS_dispatch_queue_mgr_vtable
+_OBJC_CLASS_$_OS_dispatch_queue_attr
+__OS_dispatch_queue_attr_vtable
+_OBJC_CLASS_$_OS_dispatch_source
+__OS_dispatch_source_vtable
+_OBJC_CLASS_$_OS_dispatch_channel
+__OS_dispatch_channel_vtable
+_OBJC_CLASS_$_OS_dispatch_mach
+__OS_dispatch_mach_vtable
+_OBJC_CLASS_$_OS_dispatch_mach_msg
+__OS_dispatch_mach_msg_vtable
+_OBJC_CLASS_$_OS_dispatch_io
+__OS_dispatch_io_vtable
+_OBJC_CLASS_$_OS_dispatch_operation
+__OS_dispatch_operation_vtable
+_OBJC_CLASS_$_OS_dispatch_disk
+__OS_dispatch_disk_vtable
+# os_object_t classes
+_OBJC_CLASS_$_OS_object
+_OBJC_CLASS_$_OS_voucher
+_OBJC_CLASS_$_OS_os_eventlink
+_OBJC_CLASS_$_OS_os_workgroup
+_OBJC_CLASS_$_OS_os_workgroup_interval
+_OBJC_CLASS_$_OS_os_workgroup_parallel
+#_OBJC_CLASS_$_OS_voucher_recipe
+# non-os_object_t classes
+_OBJC_CLASS_$_OS_dispatch_data
+_OBJC_CLASS_$_OS_dispatch_data_empty
+# metaclasses
+_OBJC_METACLASS_$_OS_dispatch_object
+_OBJC_METACLASS_$_OS_dispatch_semaphore
+_OBJC_METACLASS_$_OS_dispatch_group
+_OBJC_METACLASS_$_OS_dispatch_queue
+_OBJC_METACLASS_$_OS_dispatch_workloop
+_OBJC_METACLASS_$_OS_dispatch_queue_serial
+_OBJC_METACLASS_$_OS_dispatch_queue_concurrent
+_OBJC_METACLASS_$_OS_dispatch_queue_global
+_OBJC_METACLASS_$_OS_dispatch_queue_pthread_root
+_OBJC_METACLASS_$_OS_dispatch_queue_main
+_OBJC_METACLASS_$_OS_dispatch_queue_runloop
+_OBJC_METACLASS_$_OS_dispatch_queue_mgr
+_OBJC_METACLASS_$_OS_dispatch_queue_attr
+_OBJC_METACLASS_$_OS_dispatch_source
+_OBJC_METACLASS_$_OS_dispatch_channel
+_OBJC_METACLASS_$_OS_dispatch_mach
+_OBJC_METACLASS_$_OS_dispatch_mach_msg
+_OBJC_METACLASS_$_OS_dispatch_io
+_OBJC_METACLASS_$_OS_dispatch_operation
+_OBJC_METACLASS_$_OS_dispatch_disk
+_OBJC_METACLASS_$_OS_object
+_OBJC_METACLASS_$_OS_voucher
+_OBJC_METACLASS_$_OS_os_eventlink
+_OBJC_METACLASS_$_OS_os_workgroup
+_OBJC_METACLASS_$_OS_os_workgroup_interval
+_OBJC_METACLASS_$_OS_os_workgroup_parallel
+#_OBJC_METACLASS_$_OS_voucher_recipe
+_OBJC_METACLASS_$_OS_dispatch_data
+_OBJC_METACLASS_$_OS_dispatch_data_empty
+
+# Other dirty symbols
+# large structs / hashes
+__dispatch_main_q
+__dispatch_mgr_q
+__dispatch_mgr_sched
+__dispatch_root_queues
+__dispatch_sources
+__dispatch_timers_heap
+__dispatch_trace_next_timer
+__voucher_hash
+
+# 64 bits
+__dispatch_narrow_check_interval_cache
+__dispatch_narrowing_deadlines
+__voucher_aid_next
+__voucher_unique_pid
+
+# pointer sized
+__dispatch_begin_NSAutoReleasePool
+__dispatch_continuation_alloc_init_pred
+__dispatch_end_NSAutoReleasePool
+__dispatch_is_daemon_pred
+__dispatch_kq_poll_pred
+__dispatch_logv_pred
+__dispatch_mach_calendar_pred
+__dispatch_mach_host_port_pred
+__dispatch_mach_notify_port_pred
+__dispatch_mach_notify_unote
+__dispatch_mach_xpc_hooks
+__dispatch_main_heap
+__dispatch_main_q_handle_pred
+__dispatch_memorypressure_source
+__dispatch_mgr_sched_pred
+__dispatch_queue_serial_numbers
+__dispatch_root_queues_pred
+__dispatch_source_timer_telemetry_pred
+__firehose_task_buffer
+__firehose_task_buffer_pred
+__voucher_activity_debug_channel
+__voucher_libtrace_hooks
+__voucher_task_mach_voucher_pred
+
+# 32bits
+__dispatch_mach_host_port
+__dispatch_mach_notify_port
+__voucher_default_task_mach_voucher
+__voucher_hash_lock
+__voucher_task_mach_voucher
+__os_workgroup_key
+
+# byte-sized
+__dispatch_is_daemon
+__dispatch_memory_warn
+__dispatch_mode
+__dispatch_program_is_probably_callback_driven
+__dispatch_unsafe_fork
+__dispatch_use_dispatch_alloc
+
+__dispatch_io_devs
+__dispatch_io_fds
+__dispatch_io_devs_lockq
+__dispatch_io_fds_lockq
+__dispatch_io_init_pred
+
+__voucher_activity_disabled.disabled
