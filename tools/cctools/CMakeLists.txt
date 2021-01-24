@@ -8,6 +8,7 @@ externalproject_add(cctools_host.extproj
             --enable-xar-support
     BUILD_COMMAND make
     INSTALL_COMMAND true
+    UPDATE_COMMAND ""
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
     USES_TERMINAL_INSTALL TRUE
