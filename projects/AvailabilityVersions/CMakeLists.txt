@@ -19,7 +19,13 @@ add_dependencies(AvailabilityHeaders
     ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/for_dyld_priv.inc
 )
 
+install(FILES include/Availability.h DESTINATION usr/include COMPONENT DeveloperTools)
+install(FILES include/AvailabilityInternal.h DESTINATION usr/include COMPONENT DeveloperTools)
+install(FILES include/AvailabilityMacros.h DESTINATION usr/include COMPONENT DeveloperTools)
 install(FILES include/AvailabilityVersions.h DESTINATION usr/include COMPONENT DeveloperTools)
+install(FILES include/ConditionalMacros.h DESTINATION usr/include COMPONENT DeveloperTools)
+install(FILES include/TargetConditionals.h DESTINATION usr/include COMPONENT DeveloperTools)
+
 install(DIRECTORY DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A/Headers COMPONENT DeveloperTools)
 install_symlink(
     /System/Library/Frameworks/Kernel.framework/Versions/A/Headers/AvailabilityVersions.h
