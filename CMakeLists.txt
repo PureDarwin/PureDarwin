@@ -9,6 +9,7 @@ cmake_policy(SET CMP0114 NEW)
 set(CMAKE_INSTALL_PREFIX "")
 
 include(ExternalProject)
+include(scripts/cmake/crosscompile.cmake)
 include(scripts/cmake/install_helpers.cmake)
 include(scripts/cmake/mig.cmake)
 
