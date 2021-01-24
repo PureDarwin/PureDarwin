@@ -19,13 +19,9 @@ add_executable(darwin_ld IMPORTED GLOBAL)
 add_dependencies(darwin_ld cctools_host.extproj)
 set_property(TARGET darwin_ld PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/x86_64-apple-darwin20-ld)
 
-add_executable(darwin_ar IMPORTED GLOBAL)
-add_dependencies(darwin_ar cctools_host.extproj)
-set_property(TARGET darwin_ar PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/x86_64-apple-darwin20-ar)
-
-add_executable(darwin_ranlib IMPORTED GLOBAL)
-add_dependencies(darwin_ranlib cctools_host.extproj)
-set_property(TARGET darwin_ar PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/x86_64-apple-darwin20-ar)
+add_executable(darwin_libtool IMPORTED GLOBAL)
+add_dependencies(darwin_libtool cctools_host.extproj)
+set_property(TARGET darwin_libtool PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/x86_64-apple-darwin20-libtool)
 
 add_executable(darwin_codesign_allocate IMPORTED GLOBAL)
 add_dependencies(darwin_codesign_allocate cctools_host.extproj)
