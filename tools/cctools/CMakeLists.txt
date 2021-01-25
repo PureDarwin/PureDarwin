@@ -7,7 +7,7 @@ externalproject_add(cctools_host.extproj
             --target=x86_64-apple-darwin20 --with-libxar=${PUREDARWIN_TOOLS_DIR}
             --enable-xar-support
     BUILD_COMMAND make
-    INSTALL_COMMAND true
+    INSTALL_COMMAND make install
     UPDATE_COMMAND ""
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
