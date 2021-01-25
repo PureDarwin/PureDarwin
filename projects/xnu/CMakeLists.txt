@@ -63,7 +63,6 @@ externalproject_add(xnu
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_install
     INSTALL_COMMAND true # installed during build
-    UPDATE_COMMAND "" # prevent constant rebuilds
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
