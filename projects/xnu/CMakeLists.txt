@@ -1,5 +1,3 @@
-set(XNU_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
-
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
 externalproject_add(xnu_headers.extproj
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_build
