@@ -1,0 +1,418 @@
+# -*- mode: makefile;-*-
+#
+# Copyright (C) 1999-2016 Apple Inc. All rights reserved.
+#
+# MakeInc.kernel augments the single-architecture
+# recursive build system with rules specific
+# to assembling and linking a kernel.
+#
+
+#
+# Validate configuration options
+#
+ifeq ($(filter $(CURRENT_ARCH_CONFIG),$(SUPPORTED_ARCH_CONFIGS)),)
+$(error Unsupported CURRENT_ARCH_CONFIG $(CURRENT_ARCH_CONFIG))
+endif
+
+ifeq ($(filter $(CURRENT_KERNEL_CONFIG),$(SUPPORTED_KERNEL_CONFIGS)),)
+$(error Unsupported CURRENT_KERNEL_CONFIG $(CURRENT_KERNEL_CONFIG))
+endif
+
+ifeq ($(filter $(CURRENT_MACHINE_CONFIG),$(SUPPORTED_$(CURRENT_ARCH_CONFIG)_MACHINE_CONFIGS)),)
+$(error Unsupported CURRENT_MACHINE_CONFIG $(CURRENT_MACHINE_CONFIG))
+endif
+
+ifeq ($(filter $(PLATFORM),$(SUPPORTED_PLATFORMS)),)
+$(error Unsupported PLATFORM $(PLATFORM))
+endif
+
+ifeq ($(BUILD_JSON_COMPILATION_DATABASE),1)
+do_build_setup::
+	$(_v)$(CAT) > $(OBJPATH)/compile_commands.json < /dev/null
+endif
+
+ifeq ($(BUILD_STATIC_LINK),1)
+ifeq ($(USE_LTO),1)
+# <rdar://problem/46252406>
+# To run LTO in the xnu project while linking the final result in KCB, without losing debugging info,
+# run ld -r on only the LTO bitcode object files to produce one mach-o for KCB to use, which is added
+# to the static link archive, along with the non-LTO objects (not linked, since ld -r on mach-o objects
+# does not preserve DWARF.)
+PRE_LTO=1
+endif
+endif
+
+#
+# Rules for the highly parallel "build" phase, where each build configuration
+# writes into their own $(TARGET) independent of other build configs
+#
+# There are 4 primary build outputs:
+# 1) $(KERNEL_FILE_NAME).unstripped    (raw linked kernel, unstripped)
+# 2) $(KERNEL_FILE_NAME)               (stripped kernel, with optional CTF data)
+# 3) $(KERNEL_FILE_NAME).dSYM          (dSYM)
+# 4) $(KERNEL_FILE_NAME).link          (bits for static linking)
+
+ifeq ($(BUILD_STATIC_LINK),1)
+
+KERNEL_STATIC_LINK_TARGETS = \
+	$(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).a
+
+KERNEL_STATIC_LINK_DST = \
+			$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).a             \
+			$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarguments \
+			$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarchives  \
+			$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).exp           \
+			$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).alias.exp     \
+			$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros                   \
+			$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/$(KERNEL_LLDBBOOTSTRAP_NAME)
+
+endif
+
+do_build_all:: do_build_kernel
+
+.PHONY: do_build_kernel
+
+do_build_kernel: $(TARGET)/$(KERNEL_FILE_NAME) $(TARGET)/$(KERNEL_FILE_NAME).unstripped $(KERNEL_STATIC_LINK_TARGETS)
+	@:
+
+ifeq ($(BUILD_DSYM),1)
+do_build_all:: do_build_kernel_dSYM
+endif
+
+.PHONY: do_build_kernel_dSYM
+
+do_build_kernel_dSYM: $(TARGET)/$(KERNEL_FILE_NAME).dSYM
+	@:
+
+.LDFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) $(LD_KERNEL_LIBS)
+.CFLAGS: ALWAYS
+	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
+
+$(TARGET)/$(KERNEL_FILE_NAME): $(TARGET)/$(KERNEL_FILE_NAME).unstripped $(TARGET)/$(KERNEL_FILE_NAME).dSYM
+	@$(LOG_STRIP) "$(@F)"
+	$(_v)$(STRIP) $(STRIP_FLAGS) $< -o $@
+	@echo "built kernel at $@"
+	$(_v)$(RM) $@.ctfdata
+ifeq ($(DO_CTFMERGE),1)
+	@$(LOG_CTFCONVERT) "$(@F)"
+	$(_v)$(CTFCONVERT) -c -l xnu -u xnu -o $@.ctf $(TARGET)/$(KERNEL_FILE_NAME).dSYM/Contents/Resources/DWARF/$(KERNEL_FILE_NAME)
+	@$(LOG_CTFMERGE) "$(@F)"
+	$(_v)$(CTFMERGE) -l xnu -o $@ -Z $@.ctfdata $@.ctf
+	$(_v)if [ -s $@.ctfdata ]; then                          \
+		$(LOG_CTFINSERT) "$(@F)";                            \
+		$(CTFINSERT) $@	$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG)) \
+			     $@.ctfdata -o $@;                           \
+	fi;
+endif
+	$(_v)$(LN) $(call function_convert_build_config_to_objdir,$(CURRENT_BUILD_CONFIG))/$(KERNEL_FILE_NAME) $(OBJROOT)/$(KERNEL_FILE_NAME)
+
+$(TARGET)/$(KERNEL_FILE_NAME).dSYM: $(TARGET)/$(KERNEL_FILE_NAME).unstripped
+	@$(LOG_DSYMUTIL) "$(@F)"
+	$(_v)bash -c "$(DSYMUTIL) $(DSYMUTIL_FLAGS) $< -o $@ $(_vstdout) 2> >(grep -v '^warning:.*could not find object file symbol for symbol' 1>&2)"
+	$(_v)$(MV) $@/$(DSYMDWARFDIR)/$(KERNEL_FILE_NAME).unstripped $@/$(DSYMDWARFDIR)/$(KERNEL_FILE_NAME)
+	$(_v)$(TOUCH) $@
+
+$(TARGET)/$(KERNEL_FILE_NAME).unstripped: $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LIST),$(component)/$(CURRENT_KERNEL_CONFIG)/$(component).filelist)) lastkerneldataconst.o lastkernelconstructor.o nonlto.o $(SRCROOT)/config/version.c $(SRCROOT)/config/MasterVersion .LDFLAGS $(filter %/MakeInc.kernel,$(MAKEFILE_LIST))
+	$(_v)${MAKE} -f $(firstword $(MAKEFILE_LIST)) version.o
+ifeq ($(PRE_LTO),1)
+	@$(LOG_LTO) "$(@F)"
+	$(_v)rm -f ltolink.filelist
+	$(_v)rm -f nonltolink.filelist
+	$(_v)files="$$($(CAT) $(filter %.filelist,$+)) version.o $(filter %.o,$+)"; \
+	for ofile in $$files; \
+	do \
+		hdr=$$(od -An -N 4 -t x4 $$ofile); \
+		if [ $$hdr == "0b17c0de" ]; \
+			then \
+				lto="$$lto$$ofile"$$'\n'; \
+			else \
+				nonlto="$$nonlto$$ofile"$$'\n'; \
+			fi; \
+	done; \
+	printf "$$lto" >ltolink.filelist; \
+	printf "$$nonlto" >nonltolink.filelist
+	@$(LOG_LD) "$(@F)"
+	$(_v)if [ -s ltolink.filelist ]; \
+	then \
+		$(LD) $($(addsuffix $(CURRENT_ARCH_CONFIG),ARCH_FLAGS_)) -r nonlto.o -filelist ltolink.filelist $(LDFLAGS_KERNEL_LTO) -Wl,-object_path_lto,$(TARGET)/justlto.o -o $(TARGET)/justlto.tmp.o && \
+		$(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -filelist nonltolink.filelist $(TARGET)/justlto.o $(LDFLAGS_KERNEL_STRIP_LTO) -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES); \
+	else \
+		$(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -filelist nonltolink.filelist -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES); \
+	fi
+else
+	@$(LOG_LD) "$(@F)"
+	$(_v)$(CAT) $(filter %.filelist,$+) < /dev/null > link.filelist
+	$(_v)$(LD) $(LDFLAGS_KERNEL) $(LDFLAGS_KERNEL_ONLY) -filelist link.filelist version.o $(filter %.o,$+) -o $@ $(LD_KERNEL_LIBS) $(LD_KERNEL_ARCHIVES)
+endif
+
+# for now, rename LASTDATA_CONST to LAST on static kernel cache builds
+EXTRA_KC_LINKARGS = -Wl,-rename_segment,__LASTDATA_CONST,__LAST
+
+$(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).a:   $(TARGET)/$(KERNEL_FILE_NAME).unstripped .LDFLAGS $(filter %/MakeInc.kernel,$(MAKEFILE_LIST))
+	@$(LOG_LIBTOOL) "$(@F)"
+	$(_v)$(MKDIR) $(dir $@)
+ifeq ($(PRE_LTO),1)
+	$(_v)$(LIBTOOL) -ca $(TARGET)/justlto.o -filelist nonltolink.filelist -o $@
+else
+	$(_v)$(LIBTOOL) -ca -filelist link.filelist version.o lastkerneldataconst.o lastkernelconstructor.o -o $@
+endif
+	$(_v)cp $(TARGET)/all-kpi.exp $(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).exp
+	$(_v)cp $(TARGET)/all-alias.exp $(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).alias.exp
+	$(_v)echo "$(LD_KERNEL_ARCHIVES)" >$(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarchives
+	$(_v)echo "$(LDFLAGS_KERNEL) $(LD_KERNEL_LIBS) $(EXTRA_KC_LINKARGS)" >$(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarguments
+	$(_v)$(LN) $(call function_convert_build_config_to_objdir,$(CURRENT_BUILD_CONFIG))/$(KERNEL_FILE_NAME).link $(OBJROOT)/$(KERNEL_FILE_NAME).link
+
+nonlto.o: .CFLAGS $(filter %/MakeInc.kernel,$(MAKEFILE_LIST))
+nonlto.o:   $(SRCROOT)/libsa/nonlto.c
+	${C_RULE_0}
+	${C_RULE_1A}$< $(CFLAGS_NOLTO_FLAG)
+	${C_RULE_2}
+
+-include version.d
+version.o: .CFLAGS $(filter %/MakeInc.kernel,$(MAKEFILE_LIST))
+version.o: $(OBJPATH)/version.c
+	${C_RULE_0}
+	${C_RULE_1A}$<
+	${C_RULE_2}
+	${C_RULE_4}
+
+# Always recreate version.sh
+$(OBJPATH)/version.c: $(SRCROOT)/config/version.c $(NEWVERS) $(SRCROOT)/config/MasterVersion ALWAYS
+	$(_v)$(CP) $< $@
+	$(_v)$(NEWVERS) $(OBJPATH)/version.c > /dev/null;
+
+
+-include lastkerneldataconst.d
+lastkerneldataconst.o: .CFLAGS $(filter %/MakeInc.kernel,$(MAKEFILE_LIST))
+lastkerneldataconst.o: $(SRCROOT)/libsa/lastkerneldataconst.c
+	${C_RULE_0}
+	${C_RULE_1A}$<
+	${C_RULE_2}
+
+
+lastkernelconstructor.o_CFLAGS_RM = -fprofile-instr-generate
+# the LAST segment is mapped read-only on arm, so if we include llvm profiling
+# here it will segfault the kernel.  (see arm_vm_init.c) We don't currently have
+# a way of retrieving these counters from LAST anyway, so there's no harm in just
+# disabling them.
+
+LAST_FILES=lastkernelconstructor.o
+-include lastkernelconstructor.d
+lastkernelconstructor.o: .CFLAGS $(filter %/MakeInc.kernel,$(MAKEFILE_LIST))
+lastkernelconstructor.o: $(SRCROOT)/libsa/lastkernelconstructor.c
+	${C_RULE_0}
+	${C_RULE_1A}$< $(CFLAGS_NOLTO_FLAG)
+	${C_RULE_2}
+	${C_RULE_3}
+	${C_RULE_4}
+	$(_v)for last_file in ${LAST_FILES};				\
+	do							\
+		$(SEG_HACK) -s __DATA -n __LASTDATA_CONST -o $${last_file}__ $${last_file} || exit 1; \
+		mv $${last_file}__ $${last_file} || exit 1;		\
+	done
+EXTRA_KC_LINKARGS = -Wl,-rename_segment,__LASTDATA_CONST,__LAST
+
+#
+# Install rules. Each build config is classified as "primary" (the first
+# config for an architecture) or "non-primary". Primary build configs
+# have the semantic of competing to *combine* single-architecture
+# files into a multi-architecture output in the DSTROOT, like
+# $(DSTROOT)/$(KERNEL_FILE_NAME), and consequently each primary build config
+# has its install target run serially with respect to other primary
+# build configs. Non-primary build configs will never compete for
+# files in the DSTROOT or SYMROOT, and can be installed in parallel
+# with other non-primary configs (and even primary configs)
+#
+
+do_build_install_primary:: do_install_machine_specific_kernel
+ifeq ($(BUILD_DSYM),1)
+do_build_install_primary:: do_install_machine_specific_kernel_dSYM
+endif
+
+do_build_install_non_primary:: do_install_machine_specific_kernel
+ifeq ($(BUILD_DSYM),1)
+do_build_install_non_primary:: do_install_machine_specific_kernel_dSYM
+endif
+
+ifeq ($(BUILD_DSYM),1)
+ifeq ($(INSTALL_KERNEL_SYM_TO_KDK),1)
+do_build_install_primary:: do_install_machine_specific_KDK_dSYM
+do_build_install_non_primary:: do_install_machine_specific_KDK_dSYM
+endif
+endif
+
+ifeq ($(INSTALL_XNU_DEBUG_FILES),1)
+do_build_install_primary:: do_install_xnu_debug_files
+endif
+
+.PHONY: do_install_xnu_debug_files
+
+do_install_xnu_debug_files:	$(DSTROOT)/$(DEVELOPER_EXTRAS_DIR)/README.DEBUG-kernel.txt
+	@:
+
+#
+# If the timestamp indicates the DSTROOT kernel is out of
+# date, start over. Normal dependencies don't work because we can have
+# ( BUILDA, BUILDB, INSTALLB, INSTALLA ) in which case at INSTALLA time
+# the timestamps would $(DSTROOT)/$(KERNEL_FILE_NAME) is not out of date compared
+# to BUILDA. So we maintain a separate file at the time make(1)
+# was run and use it to determine what actions to take
+#
+
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME): $(TARGET)/$(KERNEL_FILE_NAME) ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALL) "$(@F)$(Color0) ($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))"
+	$(_v)if [ $(OBJROOT)/.mach_kernel.timestamp -nt $@ ]; then	\
+		$(INSTALL) $(EXEC_INSTALL_FLAGS) $< $@;			\
+		cmdstatus=$$?;						\
+	else								\
+		$(LIPO) -create $@ $< -output $@;			\
+		cmdstatus=$$?;						\
+	fi;								\
+	exit $$cmdstatus
+
+ifeq ($(BUILD_STATIC_LINK),1)
+
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).a: $(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).a ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALL) "$(@F)"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarguments: $(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarguments ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALL) "$(@F)"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarchives: $(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).linkarchives ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALL) "$(@F)"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).exp: $(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).exp ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALL) "$(@F)"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).alias.exp: $(TARGET)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).alias.exp ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALL) "$(@F)"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+# BUILD_STATIC_LINK
+endif
+
+$(SYMROOT)/$(KERNEL_FILE_NAME): $(TARGET)/$(KERNEL_FILE_NAME).unstripped ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALLSYM) "$(@F)$(Color0) ($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))"
+	$(_v)if [ $(OBJROOT)/.mach_kernel.timestamp -nt $@ ]; then		\
+		$(INSTALL) $(EXEC_INSTALL_FLAGS) $< $@;				\
+		cmdstatus=$$?;							\
+	else									\
+		$(LIPO) -create $@ $< -output $@;				\
+		cmdstatus=$$?;							\
+	fi;									\
+	exit $$cmdstatus
+
+
+$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros                                                                     \
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros                      \
+$(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros:                                          \
+$(TARGET)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALLMACROS) "$(@F)$(Color0) $(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))"
+	$(_v)$(CP) -r $< $(dir $@)
+	$(_v)$(TOUCH) $@
+
+$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/$(KERNEL_LLDBBOOTSTRAP_NAME)                                                   \
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME).link/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/$(KERNEL_LLDBBOOTSTRAP_NAME)    \
+$(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/$(KERNEL_LLDBBOOTSTRAP_NAME):                        \
+$(TARGET)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/$(KERNEL_LLDBBOOTSTRAP_NAME)
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALLMACROS) "$(@F)$(Color0) ($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+$(DSTROOT)/$(DEVELOPER_EXTRAS_DIR)/README.DEBUG-kernel.txt: $(SRCROOT)/config/README.DEBUG-kernel.txt
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALL) "$(@F)"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMINFODIR)/Info.plist $(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMINFODIR)/Info.plist: $(TARGET)/$(KERNEL_FILE_NAME).dSYM/$(DSYMINFODIR)/Info.plist
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALLSYM) "$(ColorL)dSYM$(Color0) $(ColorF)$(@F)$(Color0) ($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))"
+	$(_v)$(INSTALL) $(INSTALL_FLAGS) $< $@
+
+$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMDWARFDIR)/$(KERNEL_FILE_NAME) $(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMDWARFDIR)/$(KERNEL_FILE_NAME): $(TARGET)/$(KERNEL_FILE_NAME).dSYM/$(DSYMDWARFDIR)/$(KERNEL_FILE_NAME) ALWAYS
+	$(_v)$(MKDIR) $(dir $@)
+	@$(LOG_INSTALLSYM) "$(ColorL)dSYM$(Color0) $(ColorF)$(@F).dSYM$(ColorF) ($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0))"
+	$(_v)if [ $(OBJROOT)/.mach_kernel.timestamp -nt $@ ]; then			\
+		$(INSTALL) $(EXEC_INSTALL_FLAGS) $< $@;					\
+		cmdstatus=$$?;								\
+	else										\
+		$(LIPO) -create $@ $< -output $@;					\
+		cmdstatus=$$?;								\
+	fi;										\
+	exit $$cmdstatus
+
+.PHONY: do_install_machine_specific_kernel do_install_machine_specific_kernel_dSYM
+
+do_install_machine_specific_kernel: $(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME)                \
+			$(SYMROOT)/$(KERNEL_FILE_NAME)                                                              \
+			$(KERNEL_STATIC_LINK_DST)
+	@:
+
+do_install_machine_specific_kernel_dSYM: \
+			$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMINFODIR)/Info.plist \
+			$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros \
+			$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/$(KERNEL_LLDBBOOTSTRAP_NAME) \
+			$(SYMROOT)/$(KERNEL_FILE_NAME).dSYM/$(DSYMDWARFDIR)/$(KERNEL_FILE_NAME)
+	@:
+
+.PHONY: do_install_machine_specific_KDK_dSYM
+
+do_install_machine_specific_KDK_dSYM: \
+			$(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMINFODIR)/Info.plist \
+			$(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/lldbmacros \
+			$(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMLLDBMACROSDIR)/$(KERNEL_LLDBBOOTSTRAP_NAME) \
+			$(DSTROOT)/$(INSTALL_KERNEL_SYM_DIR)/$(KERNEL_FILE_NAME).dSYM/$(DSYMDWARFDIR)/$(KERNEL_FILE_NAME)
+	@:
+
+# The $(RM) is needed so that the $(LN) doesn't dereference an existing
+# symlink during incremental builds and create a new symlink inside
+# the target of the existing symlink
+do_installhdrs_mi:: $(DSTROOT)/$(KRESDIR)/Info.plist
+ifneq ($(INSTALLHDRS_SKIP_HOST),YES)
+	$(_v)$(MKDIR) $(DSTROOT)/$(KINCFRAME)
+	$(_v)$(MKDIR) $(DSTROOT)/$(KPINCDIR)
+	$(_v)$(MKDIR) $(DSTROOT)/$(KRESDIR)
+	$(_v)$(RM) $(DSTROOT)/$(KINCFRAME)/Versions/Current
+	$(_v)$(LN) $(KINCVERS) $(DSTROOT)/$(KINCFRAME)/Versions/Current
+	$(_v)$(RM) $(DSTROOT)/$(KINCFRAME)/Headers
+	$(_v)$(LN) Versions/Current/Headers			\
+		   $(DSTROOT)/$(KINCFRAME)/Headers
+	$(_v)$(RM) $(DSTROOT)/$(KINCFRAME)/PrivateHeaders
+	$(_v)$(LN) Versions/Current/PrivateHeaders		\
+		   $(DSTROOT)/$(KINCFRAME)/PrivateHeaders
+	$(_v)$(RM) $(DSTROOT)/$(KINCFRAME)/Resources
+	$(_v)$(LN) Versions/Current/Resources			\
+		   $(DSTROOT)/$(KINCFRAME)/Resources
+endif
+
+$(DSTROOT)/$(KRESDIR)/Info.plist: $(SOURCE)/EXTERNAL_HEADERS/Info.plist
+ifneq ($(INSTALLHDRS_SKIP_HOST),YES)
+	$(_v)$(MKDIR) $(DSTROOT)/$(KRESDIR)
+	$(_v)$(INSTALL) $(DATA_INSTALL_FLAGS) $< $@
+	$(_v)$(NEWVERS) $@ $(_vstdout)
+ifeq ($(USE_BINARY_PLIST),1)
+	$(_v)$(PLUTIL) -convert binary1 -o $@ $@
+endif
+endif
+
+$(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(ALIAS_FILE_NAME): ALWAYS
+	@$(LOG_ALIAS) "$(@F)$(Color0) ($(ColorLF)$(CURRENT_ARCH_CONFIG_LC)$(Color0) $(ColorLF)$(CURRENT_MACHINE_CONFIG_LC)$(Color0) $(ColorLF)$(CURRENT_ALIAS_MACHINE_CONFIG_LC)$(Color0))"
+	$(_v)$(INSTALL) $(EXEC_INSTALL_FLAGS) $(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(KERNEL_FILE_NAME) $@
+
+install_alias: $(DSTROOT)/$(INSTALL_KERNEL_DIR)/$(ALIAS_FILE_NAME)
+
+print_exports:
+	$(_v)printenv | sort

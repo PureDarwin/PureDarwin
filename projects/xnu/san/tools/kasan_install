@@ -1,0 +1,92 @@
+#!/bin/bash
+
+#
+# kasan_install: set up a system to run the KASan kernel. Run with "--uninstall"
+# to reverse the setup.
+#
+# Adds kcsuffix=kasan to boot-args.
+#
+
+
+if [[ `whoami` != root ]] ; then
+	echo "Re-running with sudo"
+	sudo "$0" "$@"
+	exit $?
+fi
+
+sip_enabled() {
+	csrutil status |grep -q enabled
+}
+
+prompt() {
+	echo -n "$@ [y/N] "
+	read ans
+	case "$ans" in
+		[yY]*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+kasan_install() {
+
+	dobootargs=0
+
+	echo -n "Checking KASan boot args... "
+
+	bootargs=$(nvram boot-args | cut -f2)
+	cursuffix=$(echo $bootargs | sed -n 's/.*kcsuffix=\([^ ]\)/\1/p')
+
+	if [[ "$cursuffix" == kasan ]] ; then
+		echo "already set."
+	elif [[ -n "$cursuffix" ]] ; then
+		prompt "custom kcsuffix ($cursuffix) is set. Overwrite?" && {
+			bootargs=$(echo "$bootargs" | sed 's/[ ]*kcsuffix=[^ ]*//')
+			dobootargs=1
+		}
+	else
+		prompt "not set. Modify?" && {
+			dobootargs=1
+		}
+	fi
+
+	[[ $dobootargs -eq 1 ]] && {
+		echo -n "Adding boot arg kcsuffix=kasan... "
+		newlen=$(echo -n "$bootargs kcsuffix=kasan" |wc -c)
+		if [[ $newlen -ge 512 ]] ; then
+			echo "boot-args too long. Bailing."
+			exit 3
+		fi
+
+		nvram boot-args="$bootargs kcsuffix=kasan" || exit $?
+		echo "done."
+	}
+
+}
+
+
+kasan_uninstall() {
+
+	echo -n "Removing boot args... "
+
+	bootargs=$(nvram boot-args | cut -f2)
+	cursuffix=$(echo $bootargs | sed -n 's/.*kcsuffix=\([^ ]\)/\1/p')
+
+	if [[ $cursuffix == "kasan" ]] ; then
+		prompt "remove kcsuffix=kasan?" && {
+			echo -n "Removing kcsuffix... "
+			bootargs=$(echo "$bootargs" | sed 's/[ ]*kcsuffix=[^ ]*//')
+			nvram boot-args="$bootargs"
+			echo "done."
+		}
+	else
+		echo "not set."
+	fi
+
+}
+
+case "$1" in
+	*uninstall|*del*|*remove|*rm)
+		kasan_uninstall ;;
+	*)
+		kasan_install ;;
+esac

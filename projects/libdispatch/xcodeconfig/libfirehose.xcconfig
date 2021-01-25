@@ -1,0 +1,35 @@
+//
+// Copyright (c) 2015 Apple Inc. All rights reserved.
+//
+// @APPLE_APACHE_LICENSE_HEADER_START@
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// @APPLE_APACHE_LICENSE_HEADER_END@
+//
+
+SUPPORTED_PLATFORMS = macosx iphoneos iphonesimulator appletvos appletvsimulator watchos watchsimulator
+PRODUCT_NAME = $(TARGET_NAME)
+INSTALL_PATH = /usr/local/lib/
+GCC_PREPROCESSOR_DEFINITIONS = $(GCC_PREPROCESSOR_DEFINITIONS) FIREHOSE_SERVER=1 DISPATCH_USE_DTRACE=0
+OTHER_MIGFLAGS = -novouchers
+OTHER_LDFLAGS =
+PUBLIC_HEADERS_FOLDER_PATH = /usr/include/os
+PRIVATE_HEADERS_FOLDER_PATH = /usr/local/include/os
+STRIP_INSTALLED_PRODUCT = NO
+COPY_PHASE_STRIP = NO
+SEPARATE_STRIP = NO
+VALID_ARCHS[sdk=macosx*] = $(NATIVE_ARCH_ACTUAL)
+
+COPY_HEADERS_RUN_UNIFDEF = YES
+COPY_HEADERS_UNIFDEF_FLAGS = -UKERNEL

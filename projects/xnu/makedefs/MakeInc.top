@@ -1,0 +1,760 @@
+# -*- mode: makefile;-*-
+#
+# Copyright (C) 2010-2016 Apple Inc. All rights reserved.
+#
+# MakeInc.top is the top-level makefile for the xnu
+# build system. All the main XBS targets
+# (like "installhdrs") are defined here, as
+# well as globals that can be overridden on
+# the command-line by the user.
+#
+# This makefile's main purpose is to bootstrap
+# the user's intent ("build these 3 kernels")
+# into 3 single-architecture builds that each
+# invoke the recursive make build system.
+# As such, we have no knowledge of how to build
+# a kernel or perform actions other than
+# invoking a sub-make with a different
+# current directory, makefile, and target. One
+# side effect of this is that each
+# single-architecture build is responsible for
+# inserting its build products into the final
+# multi-architecture output files. To avoid
+# races, these aggregating stages for
+# "primary" build configs are done in serial.
+#
+
+export MakeInc_cmd=${VERSDIR}/makedefs/MakeInc.cmd
+
+include $(MakeInc_cmd)
+
+
+#
+# Architecture Configuration options
+#
+
+# Default to current kernel architecture
+
+ifneq ($(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),)
+     override DEFAULT_ARCH_CONFIG := ARM
+else ifneq ($(filter $(SUPPORTED_SIMULATOR_PLATFORMS),$(PLATFORM)),)
+     override DEFAULT_ARCH_CONFIG := X86_64
+else
+     override DEFAULT_ARCH_CONFIG := X86_64
+endif
+
+# Accept either explicit ARCH_CONFIGS or XBS-style RC_ARCHS
+ifndef ARCH_CONFIGS
+ifdef RC_ARCHS
+ARCH_CONFIGS	:= $(shell printf "%s" "$(RC_ARCHS)" | $(TR) a-z A-Z | $(TR) " " "\n" | sort -u | $(TR) "\n" " ")
+else
+ARCH_CONFIGS	:= DEFAULT
+endif
+endif
+
+#
+# Kernel Configuration options
+#
+
+DEFAULT_PRODUCT_CONFIGS :=
+
+ifneq ($(filter $(RC_ProjectName),xnu_debug),)
+override DEFAULT_KERNEL_CONFIG := DEBUG
+else ifneq ($(filter $(RC_ProjectName),xnu_kasan),)
+override KERNEL_CONFIGS := KASAN
+else ifneq ($(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),)
+override DEFAULT_KERNEL_CONFIG := DEVELOPMENT
+else ifeq ($(PLATFORM),MacOSX)
+override DEFAULT_KERNEL_CONFIG := DEVELOPMENT
+else
+override DEFAULT_KERNEL_CONFIG := RELEASE
+endif
+
+# If KERNEL_CONFIGS is specified it should override default
+ifndef KERNEL_CONFIGS
+KERNEL_CONFIGS := DEFAULT
+endif
+
+# If PRODUCT_CONFIGS is specified it should override default
+ifndef PRODUCT_CONFIGS
+PRODUCT_CONFIGS := $(DEFAULT_PRODUCT_CONFIGS)
+endif
+
+#
+# Machine Configuration options
+#
+
+override DEFAULT_I386_MACHINE_CONFIG := NONE
+override DEFAULT_X86_64_MACHINE_CONFIG := NONE
+override DEFAULT_X86_64H_MACHINE_CONFIG := NONE
+
+ifneq ($(findstring _Sim,$(RC_ProjectName)),)
+override DEFAULT_ARM_MACHINE_CONFIG	:= NONE
+override DEFAULT_ARM64_MACHINE_CONFIG	:= NONE
+else ifneq ($(findstring _host,$(RC_ProjectName)),)
+override DEFAULT_ARM_MACHINE_CONFIG	:= NONE
+override DEFAULT_ARM64_MACHINE_CONFIG	:= NONE
+else
+override DEFAULT_ARM_MACHINE_CONFIG	:= T8002
+override DEFAULT_ARM64_MACHINE_CONFIG	:= T7000
+endif
+
+# This is typically never specified (TARGET_CONFIGS is used)
+ifndef MACHINE_CONFIGS
+MACHINE_CONFIGS	:= DEFAULT
+endif
+
+#
+# Target configuration options.  NOTE - target configurations will
+# override ARCH_CONFIGS and KERNEL_CONFIGS and MACHINE_CONFIGS.
+#
+# Target configs come in groups of three parameters.  The first is the
+# kernel configuration, the second is the architecture configuration,
+# and the third is the machine configuration.  You may pass in as
+# many groups of configurations as you wish.  Each item passed in is
+# seperated by whitespace.
+#
+# Example:
+#	TARGET_CONFIGS="release ppc default debug i386 default release arm MX31ADS"
+# Parameters may be in upper or lower case (they are converted to upper).
+#
+# "default" parameter is a special case.  It means use the default value for
+# that parameter.  Here are the default values for each configuration:
+#
+# default kernel configuration = DEFAULT_KERNEL_CONFIG
+# default architecture configuration = system architecture where you are running make.
+
+ifneq ($(filter $(SUPPORTED_PLATFORMS),$(PLATFORM)),)
+
+# Defaults for "make all_embedded"
+ifeq ($(KERNEL_CONFIGS),DEFAULT)
+KERNEL_CONFIGS_EMBEDDED := RELEASE DEVELOPMENT
+else
+KERNEL_CONFIGS_EMBEDDED := $(KERNEL_CONFIGS)
+endif
+
+ifeq ($(ARCH_CONFIGS),DEFAULT)
+ARCH_CONFIGS_EMBEDDED := ARM ARM64
+ARCH_CONFIGS_DESKTOP := X86_64
+else
+ARCH_CONFIGS_EMBEDDED := $(strip $(shell echo $(filter-out X86_64, $(ARCH_CONFIGS)) | $(TR) a-z A-Z))
+ARCH_CONFIGS_DESKTOP := $(strip $(shell echo $(filter X86_64, $(ARCH_CONFIGS)) | $(TR) a-z A-Z))
+endif
+
+# Find supported products from the device map
+ifneq ($(EMBEDDED_DEVICE_MAP),)
+DEVICEMAP_PRODUCTS_ARMV7  := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "armv7"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+DEVICEMAP_PRODUCTS_ARMV7S := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "armv7s"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+DEVICEMAP_PRODUCTS_ARMV7K := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "armv7k"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+DEVICEMAP_PRODUCTS_ARM := $(DEVICEMAP_PRODUCTS_ARMV7) $(DEVICEMAP_PRODUCTS_ARMV7S) $(DEVICEMAP_PRODUCTS_ARMV7K)
+
+
+DEVICEMAP_PRODUCTS_ARM64 := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+				-query 'SELECT DISTINCT TargetType			\
+					FROM Files					\
+					  INNER JOIN Manifests USING (manifestID)	\
+					  INNER JOIN Targets USING (Target)		\
+					WHERE (KernelMachOArchitecture LIKE "arm64"	\
+					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
+DEVICEMAP_PRODUCTS_OSX_ARM64 := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
+					-query 'SELECT DISTINCT TargetType			\
+					      	FROM Files					\
+					  	  INNER JOIN Manifests USING (manifestID)	\
+					  	  INNER JOIN Targets USING (Target)		\
+					    	WHERE (KernelMachOArchitecture LIKE "arm64"	\
+					   	  AND fileType in ("KernelCache", "RestoreKernelCache") \
+						  AND SDKPlatform == "macosx")')
+
+
+# Generate a list of mappings of the form "n75:arm;t8002" based on the device map
+DEVICEMAP_PRODUCT_SOC_MAPPINGS := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform FROM Targets | awk -F\| '{ if ($$2 ~ /armv[0-9][a-z]?/) { print $$1 ":arm;" $$3 } else if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
+
+# use embedded_device_map
+endif
+
+# Map a product like "n75" to "arm;t8002"
+# $(1) is a product name in lower case
+function_lookup_product = $(call function_substitute_word_with_replacement,	\
+				 $(1),						\
+				 $(DEVICEMAP_PRODUCT_SOC_MAPPINGS),		\
+				 unknown_arch_for_$(1);unknown_platform_for_$(1) \
+			   )
+
+ifneq ($(PLATFORM),MacOSX)
+ifneq ($(EMBEDDED_DEVICE_MAP),)
+# Generate a list of mappings for products that use a different platform for their kernel configuration than their true platform
+# of the form "n71m:arm64;s8000;s8003". The 4th element is the true SoC platform, which will get an on-disk copy, while the
+# kernel's recursive build system will build the 3rd element as the KernelPlatform
+DEVICEMAP_PRODUCT_SOC_ALIASES := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform, Platform FROM Targets WHERE KernelPlatform "!=" Platform | awk -F\| '{ if ($$2 ~ /armv[0-9][a-z]?/) { print $$1 ":arm;" $$3 ";" $$4} else if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
+
+endif
+endif
+
+function_lookup_product_alias = $(call function_substitute_word_with_replacement,	\
+					$(1),						\
+					$(DEVICEMAP_PRODUCT_SOC_ALIASES),		\
+				 )
+endif
+
+ifeq ($(PLATFORM),MacOSX)
+
+# Defaults for "make all_desktop"
+ifeq ($(KERNEL_CONFIGS),DEFAULT)
+KERNEL_CONFIGS_DESKTOP := RELEASE DEVELOPMENT
+else
+KERNEL_CONFIGS_DESKTOP := $(KERNEL_CONFIGS)
+endif
+
+endif
+
+ifndef TARGET_CONFIGS
+ifneq ($(PRODUCT_CONFIGS),)
+# generate TARGET_CONFIGS using KERNEL_CONFIGS and PRODUCT_CONFIGS
+TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_product_config,$(shell printf "%s" "$(PRODUCT_CONFIGS)" | $(TR) A-Z a-z),$(call function_lookup_product,$(my_product_config))),$(foreach my_kernel_config,$(KERNEL_CONFIGS),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_product_config,$(shell printf "%s" "$(PRODUCT_CONFIGS)" | $(TR) A-Z a-z),$(call function_lookup_product_alias,$(my_product_config))),$(foreach my_kernel_config,$(KERNEL_CONFIGS),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+else ifneq ($(filter %_release_embedded,$(MAKECMDGOALS)),)
+# generate TARGET_CONFIGS for RELEASE kernel configs and products in the device map
+TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,RELEASE,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,RELEASE,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+else ifneq ($(filter %_development_embedded,$(MAKECMDGOALS)),)
+# generate TARGET_CONFIGS for DEVELOPMENT kernel configs and products in the device map
+TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,DEVELOPMENT,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,DEVELOPMENT,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+else ifneq ($(filter %_embedded,$(MAKECMDGOALS)),)
+# generate TARGET_CONFIGS for all kernel configs and products in the device map
+TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+else ifneq ($(filter %_desktop,$(MAKECMDGOALS)),)
+# generate TARGET_CONFIGS for all kernel configs for B&I
+TARGET_CONFIGS := $(foreach my_kern_config, $(KERNEL_CONFIGS_DESKTOP), $(foreach my_arch_config, $(ARCH_CONFIGS_DESKTOP), $(foreach my_machine_config, $(MACHINE_CONFIGS), $(my_kern_config) $(my_arch_config) $(my_machine_config))))
+TARGET_CONFIGS += $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+else
+# generate TARGET_CONFIGS using KERNEL_CONFIGS and ARCH_CONFIGS and MACHINE_CONFIGS (which defaults to "DEFAULT")
+TARGET_CONFIGS := $(foreach my_kern_config, $(KERNEL_CONFIGS), $(foreach my_arch_config, $(ARCH_CONFIGS), $(foreach my_machine_config, $(MACHINE_CONFIGS), $(my_kern_config) $(my_arch_config) $(my_machine_config))))
+TARGET_CONFIGS_ALIASES :=
+endif
+endif
+
+ifeq ($(TARGET_CONFIGS),)
+$(error No TARGET_CONFIGS specified)
+endif
+
+TARGET_CONFIGS_UC := $(strip $(shell printf "%s" "$(TARGET_CONFIGS)" | $(TR) a-z A-Z))
+TARGET_CONFIGS_ALIASES_UC := $(strip $(shell printf "%s" "$(TARGET_CONFIGS_ALIASES)" | $(TR) a-z A-Z))
+
+#
+# Build Configurations
+#
+# TARGET_CONFIGS is unwieldy for use in Makefiles. Convert them to
+# "build configurations" which are tuples joined by "^". For
+# example, "RELEASE I386 DEFAULT DEVELOPMENT ARM DEFAULT" becomes
+# "RELEASE^I386^NONE DEVELOPMENT^ARM^T8002", which can be looped
+# over trivially. PRIMARY_BUILD_CONFIGS is the first config
+# for each architecture, used primarily for machine-dependent recursion.
+
+BUILD_CONFIGS = $(call function_create_build_configs, $(TARGET_CONFIGS_UC))
+
+PRIMARY_ARCHS = $(strip $(sort $(foreach build_config, $(BUILD_CONFIGS), $(call function_extract_arch_config_from_build_config, $(build_config)))))
+PRIMARY_BUILD_CONFIGS = $(strip $(foreach arch, $(PRIMARY_ARCHS), $(firstword $(foreach build_config, $(BUILD_CONFIGS), $(if $(filter $(arch),$(call function_extract_arch_config_from_build_config, $(build_config))), $(build_config), )))))
+NON_PRIMARY_BUILD_CONFIGS = $(strip $(filter-out $(PRIMARY_BUILD_CONFIGS), $(BUILD_CONFIGS)))
+FIRST_BUILD_CONFIG = $(firstword $(BUILD_CONFIGS))
+
+ifneq ($(TARGET_CONFIGS_ALIASES_UC),)
+ALIAS_CONFIGS = $(call function_create_alias_configs, $(TARGET_CONFIGS_ALIASES_UC))
+else
+ALIAS_CONFIGS =
+endif
+
+# $(warning PRIMARY_ARCHS is $(PRIMARY_ARCHS))
+# $(warning TARGET_CONFIGS is $(TARGET_CONFIGS))
+# $(warning BUILD_CONFIGS is $(BUILD_CONFIGS))
+# $(warning PRIMARY_BUILD_CONFIGS is $(PRIMARY_BUILD_CONFIGS))
+# $(warning NON_PRIMARY_BUILD_CONFIGS is $(NON_PRIMARY_BUILD_CONFIGS))
+# $(warning TARGET_CONFIGS_ALIASES is $(TARGET_CONFIGS_ALIASES))
+# $(warning ALIAS_CONFIGS is $(ALIAS_CONFIGS))
+
+MEMORY_SIZE := $(shell /usr/sbin/sysctl -n hw.memsize)
+
+# Assume LTO scaling by default, unless it is being explicitly passed on the command-line
+LARGE_BUILD_FOOTPRINT := $(if $(BUILD_LTO),$(BUILD_LTO),1)
+
+ifeq ($(LARGE_BUILD_FOOTPRINT),1)
+RAM_PER_KERNEL_BUILD := 4294967296
+else
+RAM_PER_KERNEL_BUILD := 268435456
+endif
+
+KERNEL_BUILDS_IN_PARALLEL := $(shell if [ $(MEMORY_SIZE) -le $$((1 * $(RAM_PER_KERNEL_BUILD))) ]; then echo 1; elif [ $(MEMORY_SIZE) -gt $$(($(SYSCTL_HW_PHYSICALCPU) * $(RAM_PER_KERNEL_BUILD))) ]; then echo $(SYSCTL_HW_PHYSICALCPU); else expr $(MEMORY_SIZE) / $(RAM_PER_KERNEL_BUILD); fi )
+# $(warning Building $(KERNEL_BUILDS_IN_PARALLEL) kernels in parallel)
+
+#
+# TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template
+#
+# $(1) is the name of the makefile target to invoke for the each build config
+#      after setting up the parallel hierarchy in the TARGET directory
+# $(2) is an optional suffix on the TARGET directory, which might even be
+#      "/.."
+# $(3) are any dependencies for the bootstrap target
+# $(4) are any dependencies that are expanded per-build config to another bootstrap target
+# $(5) is how many build configurations to build in parallel
+# $(6) is which build configs to build in parallel
+#
+# Since building many configurations in parallel may overwhelm the system,
+# we try to throttle behavior into more managable S "stripes" of N/S
+# configurations by generating sequential dependencies between configs
+# in each stripe. That ensures that only S kernel builds are occurring
+# at once at any point in time
+
+define TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template
+
+# Create a list of synthesized targets for each build config
+$(1)_bootstrap_target_list = $$(addprefix $(1)_bootstrap_,$(6))
+
+.PHONY: $$($(1)_bootstrap_target_list)
+
+$(1)_generated_stripe_dependencies = $$(call _function_generate_stripe_groupings,$(1),$(5),$(call reverse,$(6)))
+ifeq ($$(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$$(warning Generate makefile fragment: $$($(1)_generated_stripe_dependencies))
+endif
+$$(eval $$($(1)_generated_stripe_dependencies))
+
+$$($(1)_bootstrap_target_list): $(1)_bootstrap_% : $(1)_stripe_dep_for_% $$(addsuffix _bootstrap_%,$(4)) $(3)
+	$$(_v)$$(MKDIR) $${OBJROOT}/$$(call function_convert_build_config_to_objdir,$$(patsubst $(1)_bootstrap_%,%,$$@))$(2)
+	$$(_v)$${MAKE}													        \
+		-C $${OBJROOT}/$$(call function_convert_build_config_to_objdir,$$(patsubst $(1)_bootstrap_%,%,$$@))$(2)		\
+		-f $${SRCROOT}/Makefile												\
+		CURRENT_KERNEL_CONFIG=$$(call function_extract_kernel_config_from_build_config,$$(patsubst $(1)_bootstrap_%,%,$$@)) \
+		CURRENT_ARCH_CONFIG=$$(call function_extract_arch_config_from_build_config,$$(patsubst $(1)_bootstrap_%,%,$$@))	  \
+		CURRENT_MACHINE_CONFIG=$$(call function_extract_machine_config_from_build_config,$$(patsubst $(1)_bootstrap_%,%,$$@))	\
+		CURRENT_BUILD_CONFIG=$$(patsubst $(1)_bootstrap_%,%,$$@)							\
+		PRIMARY_BUILD_CONFIGS="$(PRIMARY_BUILD_CONFIGS)"							\
+		SOURCE=$${SRCROOT}/												\
+		RELATIVE_SOURCE_PATH=.											\
+		TARGET=$${OBJROOT}/$$(call function_convert_build_config_to_objdir,$$(patsubst $(1)_bootstrap_%,%,$$@))$(2)/	\
+		OBJPATH=$${OBJROOT}/$$(call function_convert_build_config_to_objdir,$$(patsubst $(1)_bootstrap_%,%,$$@))	\
+		$(1)
+
+.PHONY: $(1)_bootstrap
+
+$(1)_bootstrap: $$($(1)_bootstrap_target_list)
+endef
+
+#
+# TOP_LEVEL_STRIPE_DEPENDENCY_template
+#
+# $(1) is the Makefile target we are building for
+# $(2) is the build config that must build first
+# $(3) is the build config that must build after $(2)
+
+define TOP_LEVEL_STRIPE_DEPENDENCY_template
+
+.PHONY: $(1)_stripe_dep_for_$(3)
+
+ $(1)_stripe_dep_for_$(3): $(if $(2),$(1)_bootstrap_$(2))
+
+endef
+
+# $(1) is the Makefile target we are building for
+# $(2) is the stripe size
+# $(3) is the list of the build configs in the current group
+# $(4) is the list of remaining build configs
+_function_generate_stripe_groupings_recursive = $(foreach stripe_index,$(call sequence,$(2)),$(if $(word $(stripe_index),$(4)),$(call TOP_LEVEL_STRIPE_DEPENDENCY_template,$(1),$(word $(stripe_index),$(3)),$(word $(stripe_index),$(4))))) $(if $(word $(call increment,$(2)),$(4)),$(call _function_generate_stripe_groupings_recursive,$(1),$(2),$(wordlist 1,$(2),$(4)),$(wordlist $(call increment,$(2)),$(words $(4)),$(4))))
+
+# $(1) is the Makefile target we are building for
+# $(2) is the stripe size
+# $(3) is the list of the build configs
+_function_generate_stripe_groupings = $(call _function_generate_stripe_groupings_recursive,$(1),$(2),,$(3))
+
+#
+# Setup pass for build system tools
+#
+
+generated_top_level_build_setup = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_setup,/..,,,1,$(FIRST_BUILD_CONFIG))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_setup))
+endif
+$(eval $(generated_top_level_build_setup))
+
+.PHONY: setup
+
+# invalidate current kernel in $(SYMROOT). Timestamp must be +1 from a previous kernel build
+setup: build_setup_bootstrap
+	$(_v)$(TOUCH) $(OBJROOT)/.mach_kernel.timestamp.new
+	$(_v)while [ \! $(OBJROOT)/.mach_kernel.timestamp.new -nt $(OBJROOT)/.mach_kernel.timestamp ]; do \
+		$(SLEEP) 1;					\
+		$(TOUCH) $(OBJROOT)/.mach_kernel.timestamp.new;	\
+	done
+	$(_v)$(MV) $(OBJROOT)/.mach_kernel.timestamp.new $(OBJROOT)/.mach_kernel.timestamp
+	$(_v)$(TOUCH) $(OBJROOT)/.symbolset.timestamp.new
+	$(_v)while [ \! $(OBJROOT)/.symbolset.timestamp.new -nt $(OBJROOT)/.symbolset.timestamp ]; do \
+		$(SLEEP) 1;					\
+		$(TOUCH) $(OBJROOT)/.symbolset.timestamp.new;	\
+	done
+	$(_v)$(MV) $(OBJROOT)/.symbolset.timestamp.new $(OBJROOT)/.symbolset.timestamp
+
+#
+# Install kernel header files
+#
+.PHONY: exporthdrs exporthdrs_mi exporthdrs_md
+
+exporthdrs: exporthdrs_mi exporthdrs_md
+
+#
+# Install machine independent kernel header files
+#
+
+generated_top_level_build_exporthdrs_mi = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_exporthdrs_mi,,setup,,1,$(FIRST_BUILD_CONFIG))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_exporthdrs_mi))
+endif
+$(eval $(generated_top_level_build_exporthdrs_mi))
+
+exporthdrs_mi: build_exporthdrs_mi_bootstrap
+
+#
+# Install machine dependent kernel header files
+#
+
+generated_top_level_build_exporthdrs_md = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_exporthdrs_md,,setup,,$(KERNEL_BUILDS_IN_PARALLEL),$(PRIMARY_BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_exporthdrs_md))
+endif
+$(eval $(generated_top_level_build_exporthdrs_md))
+
+exporthdrs_md: build_exporthdrs_md_bootstrap
+
+#
+# Install kernel header files
+#
+
+.PHONY: installhdrs installhdrs_mi installhdrs_md
+
+ifneq ($(filter $(RC_ProjectName),xnu_debug),)
+installhdrs:
+	@:
+else ifneq ($(filter $(RC_ProjectName),xnu_kasan),)
+installhdrs:
+	@:
+else
+
+installhdrs: installhdrs_mi installhdrs_md
+endif
+
+.PHONY: installhdrs_embedded installhdrs_release_embedded installhdrs_development_embedded installhdrs_desktop
+
+installhdrs_embedded installhdrs_release_embedded installhdrs_desktop: installhdrs
+
+installhdrs_development_embedded:
+
+#
+# Install machine independent header files
+#
+
+generated_top_level_build_installhdrs_mi = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_installhdrs_mi,,setup,build_exporthdrs_mi,1,$(FIRST_BUILD_CONFIG))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_installhdrs_mi))
+endif
+$(eval $(generated_top_level_build_installhdrs_mi))
+
+installhdrs_mi: build_installhdrs_mi_bootstrap
+
+#
+# Install machine dependent kernel header files
+#
+
+generated_top_level_build_installhdrs_md = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_installhdrs_md,,setup,build_exporthdrs_md,$(KERNEL_BUILDS_IN_PARALLEL),$(PRIMARY_BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_installhdrs_md))
+endif
+$(eval $(generated_top_level_build_installhdrs_md))
+
+installhdrs_md: build_installhdrs_md_bootstrap
+
+.PHONY: install_textfiles install_textfiles_mi install_textfiles_md
+
+install_textfiles: install_textfiles_mi install_textfiles_md
+
+#
+#  Install machine independent text files (man pages, dtrace scripts, etc.)
+#
+
+generated_top_level_textfiles_install_mi = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,textfiles_install_mi,,setup,,1,$(FIRST_BUILD_CONFIG))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_textfiles_install_mi))
+endif
+$(eval $(generated_top_level_textfiles_install_mi))
+
+install_textfiles_mi: textfiles_install_mi_bootstrap
+
+#
+#  Install machine dependent text files (man pages, dtrace scripts, etc.)
+#
+
+generated_top_level_textfiles_install_md = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,textfiles_install_md,,setup,,$(KERNEL_BUILDS_IN_PARALLEL),$(PRIMARY_BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_textfiles_install_md))
+endif
+$(eval $(generated_top_level_textfiles_install_md))
+
+install_textfiles_md: textfiles_install_md_bootstrap
+
+#
+# Build all architectures for all Configuration/Architecture options
+#
+
+generated_top_level_build_all = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_all,,setup exporthdrs,,$(KERNEL_BUILDS_IN_PARALLEL),$(BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_all))
+endif
+$(eval $(generated_top_level_build_all))
+
+.PHONY: build
+
+build: build_all_bootstrap
+
+#
+# Post-process build results
+#
+
+generated_top_level_config_all = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,config_all,,setup,build_all,$(KERNEL_BUILDS_IN_PARALLEL),$(BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_config_all))
+endif
+$(eval $(generated_top_level_config_all))
+
+.PHONY: all config
+
+all config: config_all_bootstrap
+
+.PHONY: all_embedded all_release_embedded all_development_embedded all_desktop
+
+all_embedded all_release_embedded all_development_embedded all_desktop: all
+
+#
+# Install kernel files
+#
+
+generated_top_level_build_install_primary = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_install_primary,,setup,config_all,1,$(PRIMARY_BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_install_primary))
+endif
+$(eval $(generated_top_level_build_install_primary))
+
+.PHONY: install_primary
+
+install_primary: build_install_primary_bootstrap
+
+generated_top_level_build_install_non_primary = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,build_install_non_primary,,setup,config_all,$(KERNEL_BUILDS_IN_PARALLEL),$(NON_PRIMARY_BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_build_install_non_primary))
+endif
+$(eval $(generated_top_level_build_install_non_primary))
+
+.PHONY: install_non_primary
+
+install_non_primary: build_install_non_primary_bootstrap
+
+generated_top_level_config_install = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,config_install,,setup,config_all,1,$(PRIMARY_BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_config_install))
+endif
+$(eval $(generated_top_level_config_install))
+
+.PHONY: install_config final_touch_config_timestamps
+
+install_config: config_install_bootstrap final_touch_config_timestamps
+
+# Tell the next build the latest timestamp of any potential file in DSTROOT/SYMROOT
+final_touch_config_timestamps: config_install_bootstrap
+	$(_v)$(TOUCH) $(OBJROOT)/.symbolset.timestamp
+
+#
+# Aggregate install targets, which install everything appropriate for the current build alias/make target
+#
+
+.PHONY: install
+
+ifneq ($(filter $(RC_ProjectName),xnu_debug),)
+install: install_kernels
+else ifneq ($(filter $(RC_ProjectName),xnu_kasan),)
+install: install_config install_kernels
+else ifneq ($(filter $(RC_ProjectName),xnu_headers_Sim),)
+install: installhdrs
+else ifneq ($(filter $(RC_ProjectName),xnu_headers_host),)
+install: installhdrs
+export INSTALLHDRS_SKIP_HOST=YES
+else ifneq ($(filter $(RC_ProjectName),xnu_headers_driverkit),)
+install: installhdrs_desktop
+else
+
+install: installhdrs install_textfiles install_config install_kernels install_aliases checkstyle
+endif
+
+.PHONY: install_embedded install_release_embedded install_development_embedded install_desktop
+
+# By default, all kernel files, headers, text files, and pseudo-kexts are installed
+install_embedded install_release_embedded install_desktop: install
+
+# These special configs only install the kernel files
+install_development_embedded: install_kernels install_aliases
+
+.PHONY: install_kernels final_touch_kernel_timestamps install_aliases
+
+install_kernels: build_install_primary_bootstrap build_install_non_primary_bootstrap final_touch_kernel_timestamps
+
+# Tell the next build the latest timestamp of any potential file in DSTROOT/SYMROOT
+final_touch_kernel_timestamps: build_install_primary_bootstrap build_install_non_primary_bootstrap
+	$(_v)$(TOUCH) $(OBJROOT)/.mach_kernel.timestamp
+	@echo "done building xnu"
+
+# Copy kernels that are aliases of another configuration
+generated_top_level_install_alias = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,install_alias,,install_kernels,,$(KERNEL_BUILDS_IN_PARALLEL),$(ALIAS_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_install_alias))
+endif
+$(eval $(generated_top_level_install_alias))
+
+install_aliases: install_alias_bootstrap
+
+#
+# Install source tree
+#
+.PHONY: installsrc
+
+installsrc:
+	@echo INSTALLSRC $(SRCROOT)
+	$(_v)$(MKDIR) $(SRCROOT)
+	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
+	$(_v)$(CHMOD) -R go+rX $(SRCROOT)
+
+
+#
+# Clean up source tree
+#
+.PHONY: clean
+
+CLEAN_RM_DIRS= $(OBJROOT) $(SYMROOT) $(DSTROOT) \
+		$(SRCROOT)/tools/test/BUILD \
+		$(SRCROOT)/tools/tests/darwintests/build \
+		$(SRCROOT)/tools/tests/testkext/build \
+		$(SRCROOT)/libkdd/build \
+		$(SRCROOT)/tools/tests/unit_tests/BUILD \
+		$(SRCROOT)/tools/tests/execperf/BUILD \
+		$(SRCROOT)/tools/tests/packetdrill/BUILD \
+		$(SRCROOT)/tools/tests/perf_index/BUILD
+
+CLEAN_ACTION_DIRS= $(SRCROOT)/tools/tests/MPMMTest \
+		$(SRCROOT)/tools/tests/TLBcoherency \
+		$(SRCROOT)/tools/tests/kqueue_tests \
+		$(SRCROOT)/tools/tests/mktimer \
+		$(SRCROOT)/tools/tests/zero-to-n \
+		$(SRCROOT)/tools/tests/personas
+
+clean:
+	@:
+	$(_v)rm -f cscope.* 2> /dev/null
+	$(_v)rm -f TAGS 2> /dev/null
+	$(_v)for cdir in $(CLEAN_RM_DIRS); do \
+		if [ -d $${cdir} ] ; then \
+			echo "Removing $${cdir}"; \
+			rm -fr $${cdir} 2> /dev/null  || true ; \
+		fi ; \
+	done
+
+	$(_v)for mcdir in $(CLEAN_ACTION_DIRS); do \
+		make -C $${mcdir} clean; \
+	done
+
+
+#
+# Build source file list for cscope database and tags
+#
+.PHONY: cscope.files
+
+cscope.files:
+	@echo "Building file list for cscope and tags"
+	@find . -name '*.h' -type f | grep -v ^..BUILD > _cscope.files 2> /dev/null
+	@find . -name '*.defs' -type f | grep -v ^..BUILD >> _cscope.files 2> /dev/null
+	@find . -name '*.c' -type f | grep -v ^..BUILD >> _cscope.files 2> /dev/null
+	@find . -name '*.cpp' -type f | grep -v ^..BUILD >> _cscope.files 2> /dev/null
+	@find . -name '*.s' -type f | grep -v ^..BUILD >> _cscope.files 2> /dev/null
+	@find . -name '*.h.template' -type f | grep -v ^..BUILD >> _cscope.files 2> /dev/null
+	@cat $(OBJROOT)/cscope.genhdrs/* >> _cscope.files 2> /dev/null || true
+	@echo -k -q -c > cscope.files 2> /dev/null
+	@sort -u < _cscope.files >> cscope.files 2> /dev/null
+	@rm -f _cscope.files _cscope.files2 2> /dev/null
+
+#
+# Build cscope database
+#
+cscope: cscope.files
+	@echo "Building cscope database"
+	@cscope -bvU 2> /dev/null
+
+#
+# Build tags
+#
+tags: cscope.files
+	@echo "Building ctags"
+	@-sed 1d cscope.files | xargs ctags -dtw 2> /dev/null || \
+		echo "Phantom files detected!" 2>&1 > /dev/null
+	@-[ -f TAGS ] || ${MAKE} -f $(firstword $(MAKEFILE_LIST)) TAGS
+
+TAGS: cscope.files
+	@echo "Building etags"
+	@-cat cscope.files | etags -l auto -S - 2> /dev/null
+	@rm -f cscope.files 2> /dev/null
+
+#
+# Check or reformat source code for official xnu code style
+#
+.PHONY: checkstyle restyle check_uncrustify uncrustify
+
+# User-friendly aliases for those who prefer to remember the name of the tool.
+check_uncrustify: checkstyle
+uncrustify: restyle
+
+checkstyle:
+	${_V}$(SRCROOT)/tools/uncrustify.sh
+
+restyle:
+	${_V}$(SRCROOT)/tools/uncrustify.sh -f
+
+.PHONY: help
+
+help:
+	@cat README.md
+
+.PHONY: print_exports
+
+print_exports:
+	$(_v)printenv | sort
+
+generated_top_level_print_exports = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,print_exports,,,,1,$(FIRST_BUILD_CONFIG))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_print_exports))
+endif
+$(eval $(generated_top_level_print_exports))
+
+.PHONY: print_exports_first_build_config
+
+print_exports_first_build_config: print_exports_bootstrap

@@ -1,0 +1,524 @@
+The libdispatch project exists in a parallel open source repository at:
+  http://github.com/apple/swift-corelibs-libdispatch
+
+Externally contributed changes are synchronized back to the internal repository
+via pull request of the result of `git am` of the contributed patch series.
+
+Internal changes are synchronized from the internal darwin/trunk branch to the
+external repository via `gi am` on the github darwin/trunk branch and merge to
+github master.
+
+Key:
+  APPLIED: change set was applied to internal repository.
+  INTERNAL: change set originated internally (i.e. already applied).
+  SKIPPED: change set was skipped.
+
+svn revisions until r218 from legacy open source repository at
+  http://svn.macosforge.org/repository/libdispatch/trunk
+
+[   1] SKIPPED
+[   2] SKIPPED
+[   3] INTERNAL rdar://problem/7148356
+[   4] APPLIED rdar://problem/7323245
+[   5] APPLIED rdar://problem/7323245
+[   6] APPLIED rdar://problem/7323245
+[   7] APPLIED rdar://problem/7323245
+[   8] APPLIED rdar://problem/7323245
+[   9] APPLIED rdar://problem/7323245
+[  10] APPLIED rdar://problem/7323245
+[  11] APPLIED rdar://problem/7323245
+[  12] APPLIED rdar://problem/7323245
+[  13] SKIPPED
+[  14] APPLIED rdar://problem/7323245
+[  15] APPLIED rdar://problem/7323245
+[  16] APPLIED rdar://problem/7323245
+[  17] APPLIED rdar://problem/7323245
+[  18] APPLIED rdar://problem/7323245
+[  19] APPLIED rdar://problem/7323245
+[  20] APPLIED rdar://problem/7323245
+[  21] APPLIED rdar://problem/7323245
+[  22] APPLIED rdar://problem/7323245
+[  23] APPLIED rdar://problem/7323245
+[  24] APPLIED rdar://problem/7323245
+[  25] APPLIED rdar://problem/7323245
+[  26] APPLIED rdar://problem/7323245
+[  27] APPLIED rdar://problem/7323245
+[  28] APPLIED rdar://problem/7323245
+[  29] APPLIED rdar://problem/7323245
+[  30] SKIPPED
+[  31] APPLIED rdar://problem/7323245
+[  32] APPLIED rdar://problem/7323245
+[  33] APPLIED rdar://problem/7323245
+[  34] APPLIED rdar://problem/7323245
+[  35] SKIPPED
+[  36] APPLIED rdar://problem/7323245
+[  37] APPLIED rdar://problem/7323245
+[  38] APPLIED rdar://problem/7323245
+[  39] APPLIED rdar://problem/7323245
+[  40] APPLIED rdar://problem/7323245
+[  41] APPLIED rdar://problem/7323245
+[  42] APPLIED rdar://problem/7323245
+[  43] APPLIED rdar://problem/7323245
+[  44] APPLIED rdar://problem/7323245
+[  45] APPLIED rdar://problem/7323245
+[  46] APPLIED rdar://problem/7323245
+[  47] APPLIED rdar://problem/7323245
+[  48] APPLIED rdar://problem/7323245
+[  49] APPLIED rdar://problem/7323245
+[  50] APPLIED rdar://problem/7323245
+[  51] APPLIED rdar://problem/7323245
+[  52] APPLIED rdar://problem/7323245
+[  53] APPLIED rdar://problem/7323245
+[  54] APPLIED rdar://problem/7323245
+[  55] APPLIED rdar://problem/7323245
+[  56] APPLIED rdar://problem/7323245
+[  57] APPLIED rdar://problem/7323245
+[  58] APPLIED rdar://problem/7323245
+[  59] APPLIED rdar://problem/7323245
+[  60] APPLIED rdar://problem/7323245
+[  61] APPLIED rdar://problem/7323245
+[  62] APPLIED rdar://problem/7323245
+[  63] APPLIED rdar://problem/7323245
+[  64] APPLIED rdar://problem/7323245
+[  65] APPLIED rdar://problem/7323245
+[  66] APPLIED rdar://problem/7323245
+[  67] APPLIED rdar://problem/7323245
+[  68] APPLIED rdar://problem/7323245
+[  69] APPLIED rdar://problem/7323245
+[  70] APPLIED rdar://problem/7323245
+[  71] INTERNAL
+[  72] INTERNAL
+[  73] APPLIED rdar://problem/7531526
+[  74] APPLIED rdar://problem/7531526
+[  75]
+[  76]
+[  77]
+[  78]
+[  79] APPLIED rdar://problem/7531526
+[  80] APPLIED rdar://problem/7531526
+[  81] APPLIED rdar://problem/7531526
+[  82] APPLIED rdar://problem/7531526
+[  83] APPLIED rdar://problem/7531526
+[  84] APPLIED rdar://problem/7531526
+[  85]
+[  86]
+[  87] APPLIED rdar://problem/7531526
+[  88] APPLIED rdar://problem/7531526
+[  89] APPLIED rdar://problem/7531526
+[  90]
+[  91]
+[  92]
+[  93]
+[  94]
+[  95]
+[  96] APPLIED rdar://problem/7531526
+[  97] APPLIED rdar://problem/7531526
+[  98]
+[  99]
+[ 100]
+[ 101]
+[ 102]
+[ 103] APPLIED rdar://problem/7531526
+[ 104] APPLIED rdar://problem/7531526
+[ 105]
+[ 106] APPLIED rdar://problem/7531526
+[ 107] SKIPPED
+[ 108] SKIPPED
+[ 109] SKIPPED
+[ 110] SKIPPED
+[ 111] SKIPPED
+[ 112] APPLIED rdar://problem/7531526
+[ 113] SKIPPED
+[ 114] APPLIED rdar://problem/7531526
+[ 115] APPLIED rdar://problem/7531526
+[ 116] APPLIED rdar://problem/7531526
+[ 117] SKIPPED
+[ 118] APPLIED rdar://problem/7531526
+[ 119] SKIPPED
+[ 120] APPLIED rdar://problem/7531526
+[ 121] SKIPPED
+[ 122] SKIPPED
+[ 123] SKIPPED
+[ 124] SKIPPED
+[ 125] APPLIED rdar://problem/7531526
+[ 126] SKIPPED
+[ 127] APPLIED rdar://problem/7531526
+[ 128]
+[ 129]
+[ 130]
+[ 131]
+[ 132]
+[ 133]
+[ 134]
+[ 135]
+[ 136]
+[ 137] APPLIED rdar://problem/7647055
+[ 138] SKIPPED
+[ 139] APPLIED rdar://problem/7531526
+[ 140] APPLIED rdar://problem/7531526
+[ 141] APPLIED rdar://problem/7531526
+[ 142] APPLIED rdar://problem/7531526
+[ 143]
+[ 144] APPLIED rdar://problem/7531526
+[ 145] APPLIED rdar://problem/7531526
+[ 146] APPLIED rdar://problem/7531526
+[ 147]
+[ 148]
+[ 149]
+[ 150]
+[ 151] APPLIED rdar://problem/7531526
+[ 152] APPLIED rdar://problem/7531526
+[ 153]
+[ 154] APPLIED rdar://problem/7531526
+[ 155]
+[ 156]
+[ 157] APPLIED rdar://problem/7531526
+[ 158]
+[ 159]
+[ 160]
+[ 161]
+[ 162] APPLIED rdar://problem/7531526
+[ 163] APPLIED rdar://problem/7531526
+[ 164]
+[ 165]
+[ 166] APPLIED rdar://problem/7531526
+[ 167] APPLIED rdar://problem/7531526
+[ 168]
+[ 169] APPLIED rdar://problem/7531526
+[ 170] APPLIED rdar://problem/7531526
+[ 171] APPLIED rdar://problem/7531526
+[ 172] APPLIED rdar://problem/7531526
+[ 173] APPLIED rdar://problem/7531526
+[ 174] APPLIED rdar://problem/7531526
+[ 175] APPLIED rdar://problem/7531526
+[ 176] APPLIED rdar://problem/7531526
+[ 177] APPLIED rdar://problem/7531526
+[ 178]
+[ 179] APPLIED rdar://problem/7531526
+[ 180] APPLIED rdar://problem/7531526
+[ 181]
+[ 182]
+[ 183] INTERNAL rdar://problem/7581831
+[ 202] INTERNAL libdispatch-187.5
+[ 212] INTERNAL libdispatch-228.18
+[ 213] INTERNAL rdar://problem/11754320
+[ 216] INTERNAL libdispatch-339.1.9
+[ 217] INTERNAL libdispatch-442.1.4
+[ 218] INTERNAL libdispatch-500.1.5
+
+github commits starting with 29bdc2f from
+
+  http://github.com/apple/swift-corelibs-libdispatch
+
+[29bdc2f] INTERNAL libdispatch-500.1.5
+[a60acd6] APPLIED rdar://23661056
+[39ac720] APPLIED rdar://23705483
+[acd56f6] APPLIED rdar://23754944
+[394d9a1] APPLIED rdar://23772602
+[3691f26] APPLIED rdar://23868354
+[8904f45] APPLIED rdar://23868354
+[6dbebd6] APPLIED rdar://23868354
+[b2ccfeb] APPLIED rdar://23868354
+[e7ca00f] APPLIED rdar://23868354
+[35eb408] APPLIED rdar://25159995
+[32411c2] APPLIED rdar://25159995
+[31586d5] APPLIED rdar://25159995
+[50faff5] APPLIED rdar://25159995
+[3ce4e3d] APPLIED rdar://25159995
+[b647aee] APPLIED rdar://25159995
+[ab7e16c] APPLIED rdar://25159995
+[cef2960] APPLIED rdar://25159995
+[dfa43cd] APPLIED rdar://25159995
+[8b9c3a9] APPLIED rdar://25159995
+[fefb6cf] APPLIED rdar://25159995
+[1a9c57f] APPLIED rdar://25159995
+[c04488a] APPLIED rdar://25159995
+[f1d58d1] APPLIED rdar://25159995
+[be83e85] APPLIED rdar://25159995
+[79fbb13] APPLIED rdar://25159995
+[6ead519] APPLIED rdar://25159995
+[1fa1513] APPLIED rdar://25159995
+[4a6ec51] APPLIED rdar://25159995
+[bc16cc9] APPLIED rdar://25159995
+[954ace4] APPLIED rdar://25159995
+[5ea30b5] APPLIED rdar://26822213
+[9f1e778] APPLIED rdar://26822213
+[3339b81] APPLIED rdar://26822213
+[4fa8d8d] APPLIED rdar://26822213
+[e922531] APPLIED rdar://26822213
+[195cbcf] APPLIED rdar://27303844
+[5b893c8] APPLIED rdar://27303844
+[92689ed] APPLIED rdar://27303844
+[ecc14fa] APPLIED rdar://27303844
+[2dbf83c] APPLIED rdar://27303844
+[78b9e82] APPLIED rdar://27303844
+[2c0e5ee] APPLIED rdar://27303844
+[5ee237f] APPLIED rdar://27600964
+[77299ec] APPLIED rdar://27600964
+[57c5c28] APPLIED rdar://27600964
+[f8423ec] APPLIED rdar://27600964
+[325f73d] APPLIED rdar://27600964
+[b84e87e] APPLIED rdar://27600964
+[ae71a91] APPLIED rdar://27600964
+[8669dea] APPLIED rdar://27600964
+[a8d0327] APPLIED rdar://27600964
+[2e4e6af] APPLIED rdar://27600964
+[2457fb2] APPLIED rdar://27600964
+[4d58038] APPLIED rdar://27600964
+[98d0a05] APPLIED rdar://27600964
+[8976101] APPLIED rdar://27600964
+[0d9ea5f] APPLIED rdar://28486911
+[e7e9a32] APPLIED rdar://28486911
+[44174d9] APPLIED rdar://28486911
+[6402cb7] APPLIED rdar://28486911
+[e2d5eb5] APPLIED rdar://28486911
+[758bb7f] APPLIED rdar://28486911
+[4c588e9] APPLIED rdar://28486911
+[1300d06] APPLIED rdar://28486911
+[ae1f7e8] APPLIED rdar://28486911
+[40a9bfb] APPLIED rdar://28486911
+[6366081] APPLIED rdar://28486911
+[81d1d0c] APPLIED rdar://28486911
+[5526122] APPLIED rdar://28486911
+[1a7ff3f] APPLIED rdar://28486911
+[e905735] APPLIED rdar://28486911
+[7fe8323] APPLIED rdar://28486911
+[6249878] APPLIED rdar://28486911
+[20792fe] APPLIED rdar://28486911
+[3639fbe] APPLIED rdar://28486911
+[bda3baf] APPLIED rdar://28486911
+[8803d07] APPLIED rdar://28486911
+[d04a0df] APPLIED rdar://28486911
+[69d2a6a] APPLIED rdar://28486911
+[367bd95] APPLIED rdar://28486911
+[152985f] APPLIED rdar://28486911
+[ba7802e] APPLIED rdar://28486911
+[92773e0] APPLIED rdar://30568673
+[548a1b9] APPLIED rdar://30568673
+[b628e5c] APPLIED rdar://30568673
+[a055ddb] APPLIED rdar://30568673
+[012f48b] APPLIED rdar://30568673
+[353adba] APPLIED rdar://30568673
+[eb730eb] APPLIED rdar://30568673
+[ac16fbb] APPLIED rdar://30568673
+[967876e] APPLIED rdar://30568673
+[44c2291] APPLIED rdar://30568673
+[ceb1fac] APPLIED rdar://30568673
+[c95febb] APPLIED rdar://30568673
+[b6e9cf4] APPLIED rdar://30568673
+[e199473] APPLIED rdar://30568673
+[3767ac7] APPLIED rdar://30568673
+[10eb0e4] APPLIED rdar://30568673
+[787dd92] APPLIED rdar://30568673
+[ba4cac5] APPLIED rdar://30568673
+[7974138] APPLIED rdar://30568673
+[cd12dcb] APPLIED rdar://32283666
+[ff05109] APPLIED rdar://32283666
+[73315ee] APPLIED rdar://32283666
+[fcc1924] APPLIED rdar://32283666
+[272e818] APPLIED rdar://32283666
+[b6f8908] APPLIED rdar://32283666
+[a6c16d0] APPLIED rdar://32283666
+[1cc64e1] APPLIED rdar://32283666
+[d137aa4] APPLIED rdar://32283666
+[a69853f] APPLIED rdar://32283666
+[eea0667] APPLIED rdar://32283666
+[f84d21d] APPLIED rdar://32283666
+[3da8398] APPLIED rdar://32283666
+[2df80a3] APPLIED rdar://32283666
+[97a2f06] APPLIED rdar://32283666
+[f76b8f5] APPLIED rdar://32283666
+[3828fbb] APPLIED rdar://32283666
+[5e8789e] APPLIED rdar://32283666
+[3fba60a] APPLIED rdar://32283666
+[d6eb245] APPLIED rdar://32283666
+[0b6c22e] APPLIED rdar://33531111
+[5a3c02a] APPLIED rdar://33531111
+[22df1e7] APPLIED rdar://33531111
+[21273de] APPLIED rdar://33531111
+[dc1857c] APPLIED rdar://33531111
+[56f36b6] APPLIED rdar://33531111
+[c87c6bb] APPLIED rdar://33531111
+[b791d23] APPLIED rdar://33531111
+[c2d0c49] APPLIED rdar://33531111
+[1d25040] APPLIED rdar://33531111
+[ab89c6c] APPLIED rdar://33531111
+[e591e7e] APPLIED rdar://33531111
+[ded5bab] APPLIED rdar://33531111
+[ce90d0c] APPLIED rdar://33531111
+[69c8f3e] APPLIED rdar://33531111
+[23a3a84] APPLIED rdar://33531111
+[79b7529] APPLIED rdar://33531111
+[f8e71eb] APPLIED rdar://33531111
+[8947dcf] APPLIED rdar://33531111
+[5ad9208] APPLIED rdar://33531111
+[698d085] APPLIED rdar://33531111
+[ce1ce45] APPLIED rdar://35017478
+[291f34d] APPLIED rdar://35017478
+[666df60] APPLIED rdar://35017478
+[80dd736] APPLIED rdar://35017478
+[0fd5a69] APPLIED rdar://35017478
+[0e35ed9] APPLIED rdar://35017478
+[70ce56b] APPLIED rdar://35017478
+[40fc1f3] APPLIED rdar://35017478
+[9ec74ed] APPLIED rdar://35017478
+[7f330ed] APPLIED rdar://35017478
+[947b51c] APPLIED rdar://35017478
+[295f676] APPLIED rdar://35017478
+[48196a2] APPLIED rdar://35017478
+[a28fc2b] APPLIED rdar://35017478
+[791ce5d] APPLIED rdar://35017478
+[0d0a998] APPLIED rdar://35017478
+[29329b5] APPLIED rdar://35017478
+[141403a] APPLIED rdar://35017478
+[b7f1beb] APPLIED rdar://35017478
+[7ef9cde] APPLIED rdar://35017478
+[12c9ca8] APPLIED rdar://35017478
+[6d6dc2e] APPLIED rdar://40252515
+[4a9833d] APPLIED rdar://40252515
+[f88e382] APPLIED rdar://40252515
+[bfa9aa7] APPLIED rdar://40252515
+[44f3640] APPLIED rdar://40252515
+[3b06f54] APPLIED rdar://40252515
+[e245cbe] APPLIED rdar://40252515
+[2a539d6] APPLIED rdar://40252515
+[e52c174] APPLIED rdar://40252515
+[723bd98] APPLIED rdar://40252515
+[7e7a579] APPLIED rdar://40252515
+[244a5fe] APPLIED rdar://40252515
+[8b72f76] APPLIED rdar://40252515
+[f3531a2] APPLIED rdar://40252515
+[5cf8acb] APPLIED rdar://40252515
+[dc01e36] APPLIED rdar://40252515
+[2d6d1fd] APPLIED rdar://40252515
+[fdd671d] APPLIED rdar://40252515
+[698220e] APPLIED rdar://40252515
+[9c792ac] APPLIED rdar://40252515
+[b5ec5d8] APPLIED rdar://40252515
+[9295346] APPLIED rdar://40252515
+[bbf03ca] APPLIED rdar://40252515
+[8d3aa22] APPLIED rdar://40252515
+[f151b33] APPLIED rdar://40252515
+[f6e6917] APPLIED rdar://40252515
+[f83b5a4] APPLIED rdar://40252515
+[c4d6402] APPLIED rdar://40252515
+[1457de8] APPLIED rdar://40252515
+[c025baa] APPLIED rdar://40252515
+[a618b46] APPLIED rdar://40252515
+[e723a8e] APPLIED rdar://44568645
+[4ac77b7] APPLIED rdar://44568645
+[03696d7] APPLIED rdar://44568645
+[44f67b2] APPLIED rdar://44568645
+[b15ee59] APPLIED rdar://44568645
+[d29ed37] APPLIED rdar://44568645
+[65ebc0c] APPLIED rdar://44568645
+[93c64d8] APPLIED rdar://44568645
+[1271df6] APPLIED rdar://44568645
+[84ac6ac] APPLIED rdar://44568645
+[30d3c8c] APPLIED rdar://44568645
+[12ff819] APPLIED rdar://44568645
+[82342ee] APPLIED rdar://44568645
+[b13a51e] APPLIED rdar://44568645
+[6bf3065] APPLIED rdar://44568645
+[631821c] APPLIED rdar://44568645
+[e764f34] APPLIED rdar://44568645
+[ff1daf8] APPLIED rdar://44568645
+[b863538] APPLIED rdar://44568645
+[ba3933d] APPLIED rdar://44568645
+[9c48a80] APPLIED rdar://44568645
+[5f49e8b] APPLIED rdar://44568645
+[653a523] APPLIED rdar://44568645
+[ac5f4c4] APPLIED rdar://44568645
+[57139c6] APPLIED rdar://44568645
+[ba74b6a] APPLIED rdar://44568645
+[3975b58] APPLIED rdar://44568645
+[81dc900] APPLIED rdar://44568645
+[6162a1d] APPLIED rdar://44568645
+[c55ff6f] APPLIED rdar://54572081
+[c4a7149] APPLIED rdar://54572081
+[edce1fe] APPLIED rdar://54572081
+[ac525a4] APPLIED rdar://54572081
+[0710b29] APPLIED rdar://54572081
+[e99de71] APPLIED rdar://54572081
+[6d83ad5] APPLIED rdar://54572081
+[3ed78b5] APPLIED rdar://54572081
+[f6376cb] APPLIED rdar://54572081
+[9acbab3] APPLIED rdar://54572081
+[ca08b5f] APPLIED rdar://54572081
+[775f9f2] APPLIED rdar://54572081
+[db37bbc] APPLIED rdar://54572081
+[9852dcb] APPLIED rdar://54572081
+[9ec95bf] APPLIED rdar://54572081
+[bd2367c] APPLIED rdar://54572081
+[a736ea7] APPLIED rdar://54572081
+[3e4ea66] APPLIED rdar://54572081
+[c85c0d8] APPLIED rdar://54572081
+[7187ea2] APPLIED rdar://54572081
+[30eeb14] APPLIED rdar://54572081
+[6a5c6d8] APPLIED rdar://54572081
+[64a12c6] APPLIED rdar://54572081
+[09ec354] APPLIED rdar://54572081
+[5bcd598] APPLIED rdar://54572081
+[7874a92] APPLIED rdar://54572081
+[619775e] APPLIED rdar://54572081
+[e3ae79b] APPLIED rdar://54572081
+[fb368f6] APPLIED rdar://54572081
+[afa6cc3] APPLIED rdar://54572081
+[e6df818] APPLIED rdar://54572081
+[7144ee3] APPLIED rdar://54572081
+[60ffcc2] APPLIED rdar://54572081
+[618b070] APPLIED rdar://54572081
+[dde5892] APPLIED rdar://54572081
+[81c9bf6] APPLIED rdar://54572081
+[4b85ca6] APPLIED rdar://54572081
+[ff3bf51] APPLIED rdar://54572081
+[bc00e13] APPLIED rdar://54572081
+[d44acc0] APPLIED rdar://54572081
+[4659503] APPLIED rdar://54572081
+[60fdf80] APPLIED rdar://54572081
+[7a74af4] APPLIED rdar://54572081
+[f20349f] APPLIED rdar://54572081
+[ef9364c] APPLIED rdar://54572081
+[9d485ca] APPLIED rdar://54572081
+[cbd70d1] APPLIED rdar://54572081
+[6e1825a] APPLIED rdar://54572081
+[319bd33] APPLIED rdar://54572081
+[6c5b3ba] APPLIED rdar://54572081
+[7e7677b] APPLIED rdar://54572081
+[9002f70] APPLIED rdar://54572081
+[cc04868] APPLIED rdar://54572081
+[dc0dd64] APPLIED rdar://54572081
+[a5f5a92] APPLIED rdar://54572081
+[e5ba042] APPLIED rdar://54572081
+[a3bff44] APPLIED rdar://54572081
+[2e3d5c0] APPLIED rdar://54572081
+[1482ec9] APPLIED rdar://54572081
+[6bf6cb1] APPLIED rdar://54572081
+[aa13cad] APPLIED rdar://54572081
+[b073d89] APPLIED rdar://54572081
+[7784917] APPLIED rdar://54572081
+[717b3f7] APPLIED rdar://54572081
+[37010f0] APPLIED rdar://54572081
+[251dba4] APPLIED rdar://54572081
+[a18aa1f] APPLIED rdar://54572081
+[e8d020e] APPLIED rdar://54572081
+[90a84a1] APPLIED rdar://54572081
+[7721660] APPLIED rdar://54572081
+[c5af10f] APPLIED rdar://54572081
+[f01432d] APPLIED rdar://54572081
+[d0394bf] APPLIED rdar://54572081
+[2b14a98] APPLIED rdar://54572081
+[d32596b] APPLIED rdar://54572081
+[52bc6b2] APPLIED rdar://54572081
+[4169c8d] APPLIED rdar://54572081
+[318f6e5] APPLIED rdar://54572081
+[6a36af8] APPLIED rdar://54572081
+[d11d565] APPLIED rdar://54572081
+[d9740c2] APPLIED rdar://54572081
+[fc917b4] APPLIED rdar://54572081
+[f911a44] APPLIED rdar://54572081
+[6d32c4d] APPLIED rdar://54572081
+[9005cb4] APPLIED rdar://54572081
+[68875cb] APPLIED rdar://54572081
+[fc73866] APPLIED rdar://54572081
+[3cf1bf3] APPLIED rdar://54572081

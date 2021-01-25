@@ -1,0 +1,58 @@
+/*
+ * Copyright (c) 2017-2018 Apple Inc. All rights reserved.
+ *
+ * Disassemblers for ARM64 (AArch64)
+ */
+
+#include  <sys/fasttrap_isa.h>
+
+uint8_t dtrace_decode_arm64(uint32_t instr);
+
+struct arm64_decode_entry {
+	uint32_t mask;
+	uint32_t value;
+	uint8_t type;
+};
+
+struct arm64_decode_entry arm64_decode_table[] = {
+	{ .mask = 0xFFFFFFFF, .value = FASTTRAP_ARM64_OP_VALUE_FUNC_ENTRY, .type = FASTTRAP_T_ARM64_STANDARD_FUNCTION_ENTRY },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_LDR_S_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_LDR_S_PC_REL, .type = FASTTRAP_T_ARM64_LDR_S_PC_REL },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_LDR_W_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_LDR_W_PC_REL, .type = FASTTRAP_T_ARM64_LDR_W_PC_REL },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_LDR_D_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_LDR_D_PC_REL, .type = FASTTRAP_T_ARM64_LDR_D_PC_REL },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_LDR_X_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_LDR_X_PC_REL, .type = FASTTRAP_T_ARM64_LDR_X_PC_REL },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_LDR_Q_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_LDR_Q_PC_REL, .type = FASTTRAP_T_ARM64_LDR_Q_PC_REL },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_LRDSW_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_LRDSW_PC_REL, .type = FASTTRAP_T_ARM64_LDRSW_PC_REL },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_B_COND_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_B_COND_PC_REL, .type = FASTTRAP_T_ARM64_B_COND },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_CBNZ_W_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_CBNZ_W_PC_REL, .type = FASTTRAP_T_ARM64_CBNZ_W },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_CBNZ_X_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_CBNZ_X_PC_REL, .type = FASTTRAP_T_ARM64_CBNZ_X },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_CBZ_W_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_CBZ_W_PC_REL, .type = FASTTRAP_T_ARM64_CBZ_W },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_CBZ_X_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_CBZ_X_PC_REL, .type = FASTTRAP_T_ARM64_CBZ_X },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_TBNZ_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_TBNZ_PC_REL, .type = FASTTRAP_T_ARM64_TBNZ },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_TBZ_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_TBZ_PC_REL, .type = FASTTRAP_T_ARM64_TBZ },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_B_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_B_PC_REL, .type = FASTTRAP_T_ARM64_B },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_BL_PC_REL, .value = FASTTRAP_ARM64_OP_VALUE_BL_PC_REL, .type = FASTTRAP_T_ARM64_BL },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_BLR, .value = FASTTRAP_ARM64_OP_VALUE_BLR, .type = FASTTRAP_T_ARM64_BLR },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_BR, .value = FASTTRAP_ARM64_OP_VALUE_BR, .type = FASTTRAP_T_ARM64_BR },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_RET, .value = FASTTRAP_ARM64_OP_VALUE_RET, .type = FASTTRAP_T_ARM64_RET },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_ADRP, .value = FASTTRAP_ARM64_OP_VALUE_ADRP, .type = FASTTRAP_T_ARM64_ADRP },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_ADR, .value = FASTTRAP_ARM64_OP_VALUE_ADR, .type = FASTTRAP_T_ARM64_ADR },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_PRFM, .value = FASTTRAP_ARM64_OP_VALUE_PRFM, .type = FASTTRAP_T_ARM64_PRFM },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_EXCL_MEM, .value = FASTTRAP_ARM64_OP_VALUE_EXCL_MEM, .type = FASTTRAP_T_ARM64_EXCLUSIVE_MEM },
+	{ .mask = FASTTRAP_ARM64_OP_MASK_RETAB, .value = FASTTRAP_ARM64_OP_VALUE_RETAB, .type = FASTTRAP_T_ARM64_RETAB }
+};
+
+#define NUM_DECODE_ENTRIES (sizeof(arm64_decode_table) / sizeof(struct arm64_decode_entry))
+
+uint8_t
+dtrace_decode_arm64(uint32_t instr)
+{
+	unsigned i;
+
+	for (i = 0; i < NUM_DECODE_ENTRIES; i++) {
+		if ((instr & arm64_decode_table[i].mask) == arm64_decode_table[i].value) {
+			return arm64_decode_table[i].type;
+		}
+	}
+
+	return FASTTRAP_T_COMMON;
+}

@@ -1,0 +1,23 @@
+bsd/dev/i386/conf.c		standard
+bsd/dev/i386/cons.c		standard
+bsd/dev/i386/km.c		standard
+bsd/dev/i386/kern_machdep.c	standard
+bsd/dev/i386/stubs.c		standard
+bsd/dev/i386/systemcalls.c	standard
+bsd/dev/i386/sysctl.c           standard
+bsd/dev/i386/unix_signal.c	standard
+
+
+# Lightly ifdef'd to support K64 DTrace
+bsd/dev/i386/dtrace_isa.c	optional config_dtrace
+bsd/dev/i386/dtrace_subr_x86.c	optional config_dtrace
+bsd/dev/i386/fbt_x86.c		optional config_dtrace
+bsd/dev/i386/sdt_x86.c		optional config_dtrace
+bsd/dev/i386/fasttrap_isa.c	optional config_dtrace
+bsd/dev/i386/instr_size.c	optional config_dtrace
+bsd/dev/i386/dis_tables.c	optional config_dtrace
+
+# Support for identifying MACF calouts with locks held
+bsd/kern/policy_check.c			optional config_macf
+
+bsd/kern/bsd_stubs.c		standard

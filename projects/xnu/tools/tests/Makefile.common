@@ -1,0 +1,83 @@
+#
+# Common definitions for test directories
+#
+
+XCRUN := /usr/bin/xcrun
+SDKROOT ?= macosx.internal
+
+# SDKROOT may be passed as a shorthand like "iphoneos.internal". We
+# must resolve these to a full path and override SDKROOT.
+
+SDKROOT_RESOLVED := $(shell xcrun -sdk $(SDKROOT) -show-sdk-path)
+ifeq ($(strip $(SDKROOT)_$(SDKROOT_RESOLVED)),/_)
+SDKROOT_RESOLVED := /
+endif
+override SDKROOT = $(SDKROOT_RESOLVED)
+
+SDKVERSION := $(shell $(XCRUN) -sdk $(SDKROOT) -show-sdk-version)
+
+PLATFORMPATH := $(shell xcrun -sdk $(SDKROOT) -show-sdk-platform-path)
+PLATFORM := $(shell echo $(PLATFORMPATH) | sed 's,^.*/\([^/]*\)\.platform$$,\1,')
+
+ifeq ($(PLATFORM),watchOS)
+    PLATFORM := WatchOS
+endif
+
+SUPPORTED_EMBEDDED_PLATFORMS := iPhoneOS iPhoneOSNano tvOS AppleTVOS WatchOS BridgeOS
+Embedded = $(if $(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),YES,NO)
+
+#
+# Deployment target flag
+#
+ifeq ($(PLATFORM),MacOSX)
+    DEPLOYMENT_TARGET_FLAGS = -mmacosx-version-min=$(SDKVERSION)
+else ifeq ($(PLATFORM),WatchOS)
+    DEPLOYMENT_TARGET_FLAGS = -mwatchos-version-min=$(SDKVERSION)
+else ifeq ($(PLATFORM),tvOS)
+    DEPLOYMENT_TARGET_FLAGS = -mtvos-version-min=$(SDKVERSION)
+else ifeq ($(PLATFORM),AppleTVOS)
+    DEPLOYMENT_TARGET_FLAGS = -mtvos-version-min=$(SDKVERSION)
+else ifeq ($(PLATFORM),BridgeOS)
+    DEPLOYMENT_TARGET_FLAGS = -mbridgeos-version-min=$(SDKVERSION)
+else ifneq ($(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),)
+    DEPLOYMENT_TARGET_FLAGS = -miphoneos-version-min=$(SDKVERSION)
+else ifneq ($(filter $(SUPPORTED_SIMULATOR_PLATFORMS),$(PLATFORM)),)
+    DEPLOYMENT_TARGET_FLAGS =
+else
+    DEPLOYMENT_TARGET_FLAGS =
+endif
+
+DEPLOYMENT_TARGET_DEFINES = -DPLATFORM_$(PLATFORM)
+
+ifeq ($(RC_XBS),YES)
+_v =
+else ifeq ($(VERBOSE),YES)
+_v =
+else
+_v = @
+endif
+
+# These are convenience functions for filtering based on substrings, as the
+# normal filter functions only accept one wildcard.
+FILTER_OUT_SUBSTRING=$(strip $(foreach string,$(2),$(if $(findstring $(1),$(string)),,$(string))))
+FILTER_SUBSTRING=$(strip $(foreach string,$(2),$(if $(findstring $(1),$(string)),$(string),)))
+
+#arch configs if not provided
+ifdef RC_ARCHS
+ARCH_CONFIGS:=$(RC_ARCHS)
+endif
+
+ifeq ($(ARCH_CONFIGS),)
+PLATFORM_LOWERCASE:=$(shell echo "$(PLATFORM)" | tr A-Z a-z)
+ARCH_CONFIGS:=$(shell /usr/bin/plutil -extract SupportedTargets.$(PLATFORM_LOWERCASE).Archs json -o - $(SDKROOT)/SDKSettings.plist | tr '",[]' ' ')
+PLATFORM_LOWERCASE:=
+endif
+
+ARCH_CONFIGS_32:=$(call FILTER_OUT_SUBSTRING,64,$(ARCH_CONFIGS))
+ARCH_CONFIGS_64:=$(call FILTER_SUBSTRING,64,$(ARCH_CONFIGS))
+ARCH_CONFIGS_x86:=$(call FILTER_SUBSTRING,x86_64,$(ARCH_CONFIGS))
+
+ARCH_FLAGS:=$(foreach argarch,$(ARCH_CONFIGS), -arch $(argarch) )
+ARCH_FLAGS_32:=$(foreach argarch,$(ARCH_CONFIGS_32), -arch $(argarch) )
+ARCH_FLAGS_64:=$(foreach argarch,$(ARCH_CONFIGS_64), -arch $(argarch) )
+ARCH_FLAGS_x86:=$(foreach argarch,$(ARCH_CONFIGS_x86), -arch $(argarch) )
