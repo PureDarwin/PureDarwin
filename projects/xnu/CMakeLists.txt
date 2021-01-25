@@ -61,7 +61,7 @@ externalproject_add(xnu
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
-            DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
+            DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_install
     INSTALL_COMMAND true # installed during build
     UPDATE_COMMAND "" # prevent constant rebuilds
     USES_TERMINAL_CONFIGURE TRUE
