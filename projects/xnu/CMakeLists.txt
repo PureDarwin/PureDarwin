@@ -45,7 +45,7 @@ target_include_directories(xnu_kernel_private_headers INTERFACE
 
 
 externalproject_add(xnu
-    PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu
+    PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_build
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND
         cmake
@@ -54,6 +54,8 @@ externalproject_add(xnu
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
+            -D LIBFIREHOSE_HEADER_PATH=${PUREDARWIN_SOURCE_DIR}/projects/libdispatch
+            -D LIBFIREHOSE_LIB_PATH=$<TARGET_FILE_DIR:libfirehose_kernel>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     BUILD_COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
