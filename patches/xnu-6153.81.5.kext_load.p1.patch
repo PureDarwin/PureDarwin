@@ -1,0 +1,30 @@
+commit 7f6b6e296a517aaf6cba12284bb188971bc162ad
+Author: William Kent <wjk011@gmail.com>
+Date:   Sat Mar 21 16:12:08 2020 -0400
+
+    Apply kext_load patch
+
+diff --git a/libkern/c++/OSKext.cpp b/libkern/c++/OSKext.cpp
+index 6de6147..0ba64d1 100644
+--- a/libkern/c++/OSKext.cpp
++++ b/libkern/c++/OSKext.cpp
+@@ -5489,8 +5489,8 @@ OSKext::loadExecutable()
+ 		goto register_kmod;
+ 	}
+ 
+-	/* <rdar://problem/21444003> all callers must be entitled */
+-	if (FALSE == IOTaskHasEntitlement(current_task(), kOSKextManagementEntitlement)) {
++	/* <rdar://problem/21444003> all user-mode callers must be entitled */
++	if (current_task() != kernel_task && FALSE == IOTaskHasEntitlement(current_task(), kOSKextManagementEntitlement)) {
+ 		OSKextLog(this,
+ 		    kOSKextLogErrorLevel | kOSKextLogLoadFlag,
+ 		    "Not entitled to link kext '%s'",
+@@ -7761,7 +7761,7 @@ OSKext::resolveDependencies(
+ 		bool readableCopyrightIsValid = false;
+ 
+ 		hasApplePrefix = STRING_HAS_PREFIX(getIdentifierCString(),
+-		    APPLE_KEXT_PREFIX);
++			APPLE_KEXT_PREFIX) || STRING_HAS_PREFIX(getIdentifierCString(), "org.puredarwin.");
+ 
+ 		infoString = OSDynamicCast(OSString,
+ 		    getPropertyForHostArch("CFBundleGetInfoString"));

@@ -1,0 +1,15 @@
+diff --git a/libkern/c++/OSKext.cpp b/libkern/c++/OSKext.cpp
+index 3f44851..4c1ac1d 100644
+--- a/libkern/c++/OSKext.cpp
++++ b/libkern/c++/OSKext.cpp
+@@ -5389,8 +5389,8 @@ OSKext::loadExecutable()
+         goto register_kmod;
+     }
+ 
+-    /* <rdar://problem/21444003> all callers must be entitled */
+-    if (FALSE == IOTaskHasEntitlement(current_task(), "com.apple.rootless.kext-secure-management")) {
++    /* <rdar://problem/21444003> all user-mode callers must be entitled */
++    if (current_task() != kernel_task && IOTaskHasEntitlement(current_task(), "com.apple.rootless.kext-secure-management") == FALSE) {
+         OSKextLog(this,
+                   kOSKextLogErrorLevel | kOSKextLogLoadFlag,
+                   "Not entitled to link kext '%s'",

@@ -1,0 +1,31 @@
+diff --git a/EXTERNAL_HEADERS/corecrypto/cckprng.h b/EXTERNAL_HEADERS/corecrypto/cckprng.h
+index edcff9a..4d558d8 100644
+--- a/EXTERNAL_HEADERS/corecrypto/cckprng.h
++++ b/EXTERNAL_HEADERS/corecrypto/cckprng.h
+@@ -15,7 +15,7 @@
+ 
+ #include <corecrypto/cc.h>
+ 
+-#define CCKPRNG_YARROW 0
++#define CCKPRNG_YARROW 1
+ 
+ #if CCKPRNG_YARROW
+ 
+@@ -258,6 +258,8 @@ struct cckprng_ctx {
+     struct cckprng_diag diag;
+ };
+ 
++#endif
++
+ // This collection of function pointers is just a convenience for
+ // registering the PRNG with xnu
+ struct cckprng_funcs {
+@@ -276,8 +278,6 @@ struct cckprng_funcs {
+     void (*generate)(struct cckprng_ctx *ctx, unsigned gen_idx, size_t nbytes, void *out);
+ };
+ 
+-#endif
+-
+ /*
+   @function cckprng_init
+   @abstract Initialize a kernel PRNG context.

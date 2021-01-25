@@ -1,0 +1,11 @@
+--- CF-476.15/BuildCFLite.origin	2008-10-30 13:16:27.000000000 +0100
++++ CF-476.15/BuildCFLite	2008-10-30 13:13:22.000000000 +0100
+@@ -83,7 +83,7 @@
+ /bin/chmod -RH a-w,a+rX $DSTBASE/CoreFoundation.framework
+ /bin/chmod -RH u+w $DSTBASE
+ 
+-install_name_tool -id /System/Library/Frameworks/CoreFoundation/Versions/A/CoreFoundation $DSTBASE/CoreFoundation.framework/Versions/A/CoreFoundation
++install_name_tool -id /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation $DSTBASE/CoreFoundation.framework/Versions/A/CoreFoundation
+ 
+ echo "Installing done.  The framework is in $DSTBASE"
+ 

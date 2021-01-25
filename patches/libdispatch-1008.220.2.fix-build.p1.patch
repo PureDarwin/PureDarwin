@@ -1,0 +1,47 @@
+diff --git a/src/firehose/firehose_inline_internal.h b/src/firehose/firehose_inline_internal.h
+index 64d8654..8051af8 100644
+--- a/src/firehose/firehose_inline_internal.h
++++ b/src/firehose/firehose_inline_internal.h
+@@ -48,6 +48,14 @@ firehose_bitmap_first_set(uint64_t bitmap)
+ }
+ #endif
+ 
++static firehose_chunk_t firehose_buffer_chunk_for_address(void *addr);
++OS_ALWAYS_INLINE static firehose_chunk_t firehose_buffer_ref_to_chunk(firehose_buffer_t fb, firehose_chunk_ref_t ref);
++static uint8_t firehose_buffer_qos_bits_propagate(void);
++static void firehose_buffer_stream_flush(firehose_buffer_t fb, firehose_stream_t stream);
++static void firehose_buffer_tracepoint_flush(firehose_buffer_t fb, firehose_tracepoint_t ft, firehose_tracepoint_id_u ftid);
++firehose_tracepoint_t firehose_buffer_tracepoint_reserve_slow(firehose_buffer_t fb, firehose_tracepoint_query_t ask, uint8_t **privptr);
++OS_NOINLINE void firehose_buffer_ring_enqueue(firehose_buffer_t fb, firehose_chunk_ref_t ref);
++
+ #pragma mark -
+ #pragma mark Mach Misc.
+ #ifndef KERNEL
+@@ -165,7 +173,6 @@ firehose_buffer_ref_to_chunk(firehose_buffer_t fb, firehose_chunk_ref_t ref)
+ 	return fb->fb_chunks + ref;
+ }
+ 
+-#ifndef FIREHOSE_SERVER
+ #if DISPATCH_PURE_C
+ 
+ OS_ALWAYS_INLINE
+@@ -535,8 +542,6 @@ firehose_buffer_bank_relinquish_slot(firehose_buffer_t fb, bool for_io)
+ }
+ #endif // !KERNEL
+ 
+-#endif // !defined(FIREHOSE_SERVER)
+-
+ #endif // DISPATCH_PURE_C
+ 
+ #endif // __FIREHOSE_INLINE_INTERNAL__
+diff --git a/xcodeconfig/libfirehose_kernel.xcconfig b/xcodeconfig/libfirehose_kernel.xcconfig
+index e69108f..bf52cc8 100644
+--- a/xcodeconfig/libfirehose_kernel.xcconfig
++++ b/xcodeconfig/libfirehose_kernel.xcconfig
+@@ -31,3 +31,6 @@ HEADER_SEARCH_PATHS = $(PROJECT_DIR) $(SDKROOT)/System/Library/Frameworks/Kernel
+ 
+ COPY_HEADERS_RUN_UNIFDEF = YES
+ COPY_HEADERS_UNIFDEF_FLAGS = -DKERNEL=1 -DOS_FIREHOSE_SPI=1 -DOS_VOUCHER_ACTIVITY_SPI_TYPES=1 -UOS_VOUCHER_ACTIVITY_SPI
++
++GCC_WARN_ABOUT_MISSING_PROTOTYPES = NO
++WARNING_CFLAGS = $(inherited) -Wno-error=unused-function

@@ -1,0 +1,28 @@
+Only in IOAudioFamily-169.4.3.patch/: .nfs.20051027.b743
+diff -ru IOAudioFamily-169.4.3/IOAudioEngineMixer.cpp IOAudioFamily-169.4.3.patch/IOAudioEngineMixer.cpp
+--- IOAudioFamily-169.4.3/IOAudioEngineMixer.cpp	2006-06-01 23:22:47.000000000 +0200
++++ IOAudioFamily-169.4.3.patch/IOAudioEngineMixer.cpp	2009-07-22 00:00:35.000000000 +0200
+@@ -49,7 +49,10 @@
+ 		
+ 		__darwin_ptrdiff_t strideOne=1, strideTwo=1, resultStride=1;
+ 		
+-		vDSP_vadd(floatSource1Buf, strideOne, floatSource2Buf, strideTwo, floatMixBuf, resultStride, numSamps);
++		//vDSP_vadd(floatSource1Buf, strideOne, floatSource2Buf, strideTwo, floatMixBuf, resultStride, numSamps);
++		for ( __darwin_size_t i=0; i < numSamps; i++ ) {
++			floatMixBuf[i] = floatSource1Buf[i] + floatSource2Buf[i];
++		}
+ 		
+         result = kIOReturnSuccess;
+     }
+diff -ru IOAudioFamily-169.4.3/Info-IOAudioFamily.plist IOAudioFamily-169.4.3.patch/Info-IOAudioFamily.plist
+--- IOAudioFamily-169.4.3/Info-IOAudioFamily.plist	2009-03-19 00:36:55.000000000 +0100
++++ IOAudioFamily-169.4.3.patch/Info-IOAudioFamily.plist	2009-07-22 00:00:55.000000000 +0200
+@@ -42,8 +42,6 @@
+ 		<string>9.0.0d1</string>
+ 		<key>com.apple.kpi.bsd</key>
+ 		<string>8.0</string>
+-		<key>com.apple.kext.OSvKernDSPLib</key>
+-		<string>1.0</string>		
+ 	</dict>
+ 	<key>VBRSupported</key>
+ 	<string>YES</string>

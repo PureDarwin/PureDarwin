@@ -1,0 +1,188 @@
+commit 6a2f67e4f55eb5855787bb878dfc58547d3b974e
+Author: William Kent <wjk011@gmail.com>
+Date:   Tue Aug 27 14:21:24 2019 -0400
+
+    Apply patch remove-cache-delete
+
+diff --git a/aslcommon/asl_common.c b/aslcommon/asl_common.c
+index a5c1b89..92a2cf4 100644
+--- a/aslcommon/asl_common.c
++++ b/aslcommon/asl_common.c
+@@ -36,7 +36,6 @@
+ #include <membership.h>
+ #include <xpc/xpc.h>
+ #include <TargetConditionals.h>
+-#include <configuration_profile.h>
+ #include <asl.h>
+ #include <asl_core.h>
+ #include <asl_msg.h>
+diff --git a/aslmanager.tproj/cache_delete.c b/aslmanager.tproj/cache_delete.c
+index 1184fc2..3f714bd 100644
+--- a/aslmanager.tproj/cache_delete.c
++++ b/aslmanager.tproj/cache_delete.c
+@@ -21,125 +21,9 @@
+  * @APPLE_LICENSE_HEADER_END@
+  */
+ 
+-#include <CacheDelete/CacheDelete.h>
+-#include <CoreFoundation/CoreFoundation.h>
+-#include <asl.h>
+-#include "daemon.h"
++#include <stdbool.h>
+ 
+-/* CacheDelete ID (stored in cache delete plist). Must match suggested CacheDelete id naming conventions. */
+-#define CACHE_DELETE_ID "com.apple.activity_tracing.cache-delete"
+-
+-#define CFSTR_FROM_DICT(dict, key) ({ \
+-    void *strRef = NULL; \
+-    if (dict != NULL) { \
+-        strRef = (void *)CFDictionaryGetValue(dict, key); \
+-        if ((strRef == NULL) || (CFStringGetTypeID() != CFGetTypeID(strRef))) strRef = NULL; \
+-    } \
+-    (CFStringRef)strRef; \
+-})
+-
+-#define INT64_FROM_DICT(dict, key) ({ \
+-    int64_t value = 0; \
+-    if (dict != NULL) { \
+-        void *numRef = (void *)CFDictionaryGetValue(dict, key); \
+-        if (numRef && (CFNumberGetTypeID() == CFGetTypeID(numRef))) {\
+-            if (!CFNumberGetValue(numRef, kCFNumberSInt64Type, &value)) value = 0; \
+-        } \
+-    } \
+-    value; \
+-})
+-
+-static int64_t
+-_purgeable(void)
+-{
+-	size_t psize = 0;
+-	int status = cache_delete_task(true, &psize);
+-	if (status == 0) return (uint64_t)psize;
+-	return 0;
+-}
+-
+-static int64_t
+-_purge(int64_t purge_amount_bytes, CacheDeleteUrgency urgency)
+-{
+-	size_t curr_size, new_size;
+-	curr_size = 0;
+-
+-	int status = cache_delete_task(true, &curr_size);
+-	if (status != 0) return 0;
+-
+-	new_size = curr_size - purge_amount_bytes;
+-
+-	status = cache_delete_task(false, &new_size);
+-	if (status == 0) return new_size;
+-
+-	return 0;
+-}
+-
+-static bool
+-_volume_contains_cached_data(CFStringRef volume)
+-{
+-    return true;
+-}
+-
+-
+-static CFDictionaryRef
+-_handle_cache_delete_with_urgency(CFDictionaryRef info, CacheDeleteUrgency urgency, bool purge)
+-{
+-	xpc_transaction_begin();
+-
+-    uint64_t amount_requested = INT64_FROM_DICT(info, CFSTR(CACHE_DELETE_AMOUNT_KEY));
+-    CFStringRef volume_requested = CFSTR_FROM_DICT(info, CFSTR(CACHE_DELETE_VOLUME_KEY));
+-
+-    CFMutableDictionaryRef result = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+-    if (result == NULL)
+-	{
+-        goto bail;
+-    }
+-	else if (volume_requested == NULL)
+-	{
+-        goto bail;
+-    }
+-    
+-    /* TODO: CFStringGetCStringPtr can return NULL */
+-//	debug_log(ASL_LEVEL_DEBUG, "CacheDelete request (purge=%d, urgency=%d, volume=%s, amount=%llu).", (int)urgency, CFStringGetCStringPtr(volume_requested, kCFStringEncodingUTF8), amount_requested);
+-
+-    int64_t amount_purged = 0;
+-    
+-    if (_volume_contains_cached_data(volume_requested))
+-	{
+-        if (purge)
+-		{
+-            amount_purged = _purge(amount_requested, urgency);
+-//			debug_log(ASL_LEVEL_WARNING, "Purged %lld bytes.", amount_purged);
+-        }
+-		else
+-		{
+-            amount_purged = _purgeable();
+-//			debug_log(ASL_LEVEL_WARNING, "%lld bytes of purgeable space.", amount_purged);
+-        }
+-    }
+-    
+-    CFNumberRef amount_purged_obj = CFNumberCreate(NULL, kCFNumberSInt64Type, &amount_purged);
+-    if (amount_purged_obj != NULL)
+-	{
+-        CFDictionaryAddValue(result, CFSTR(CACHE_DELETE_AMOUNT_KEY), amount_purged_obj);
+-        CFRelease(amount_purged_obj);
+-    }
+-    
+-bail:
+-
+-	xpc_transaction_end();
+-   return result;
+-}
+-
+-bool
+-cache_delete_register(void)
+-{
+-    return CacheDeleteRegisterInfoCallbacks(CFSTR(CACHE_DELETE_ID), ^CFDictionaryRef(CacheDeleteUrgency urgency, CFDictionaryRef info) {
+-        /* Purgeable Space Request */
+-        return _handle_cache_delete_with_urgency(info, urgency, false);
+-    }, ^CFDictionaryRef(CacheDeleteUrgency urgency, CFDictionaryRef info) {
+-        /* Purge Request */
+-        return _handle_cache_delete_with_urgency(info, urgency, true);
+-    }, NULL, NULL) == 0;
++bool cache_delete_register() {
++	// CacheDelete does not exist on PureDarwin.
++	return true;
+ }
+diff --git a/aslmanager.tproj/daemon.c b/aslmanager.tproj/daemon.c
+index ea05d27..c750666 100644
+--- a/aslmanager.tproj/daemon.c
++++ b/aslmanager.tproj/daemon.c
+@@ -47,7 +47,6 @@
+ #include <dispatch/dispatch.h>
+ #include <xpc/xpc.h>
+ #include <xpc/private.h>
+-#include <os/assumes.h>
+ #include <vproc_priv.h>
+ #include <libkern/OSAtomic.h>
+ #include "daemon.h"
+diff --git a/libsystem_asl.tproj/src/asl_util.c b/libsystem_asl.tproj/src/asl_util.c
+index 45f9409..ad19edc 100644
+--- a/libsystem_asl.tproj/src/asl_util.c
++++ b/libsystem_asl.tproj/src/asl_util.c
+@@ -32,7 +32,6 @@
+ #include <unistd.h>
+ #include <Block.h>
+ #include <dispatch/dispatch.h>
+-#include <os/assumes.h>
+ #include <xpc/xpc.h>
+ #include <syslog.h>
+ #include <asl_core.h>
+diff --git a/syslogd.tproj/asl_action.c b/syslogd.tproj/asl_action.c
+index 05c2d10..1a67965 100644
+--- a/syslogd.tproj/asl_action.c
++++ b/syslogd.tproj/asl_action.c
+@@ -40,7 +40,6 @@
+ #include <dirent.h>
+ #include <time.h>
+ #include <membership.h>
+-#include <configuration_profile.h>
+ #include "daemon.h"
+ #include <xpc/private.h>
+ 

@@ -1,0 +1,47 @@
+commit 47073984837f34dc4fbc224f9723fe504364652b
+Author: William Kent <wjk011@gmail.com>
+Date:   Tue Aug 27 14:22:49 2019 -0400
+
+    Remove quarantine
+
+diff --git a/darwinbuild.xcconfig b/darwinbuild.xcconfig
+new file mode 100644
+index 0000000..55ef6ea
+--- /dev/null
++++ b/darwinbuild.xcconfig
+@@ -0,0 +1,4 @@
++DEPROOT = /Volumes/BuildRoot_PD18_2
++SYSTEM_HEADER_SEARCH_PATHS = $(DEPROOT)/System/Library/Frameworks/System.framework/PrivateHeaders $(DEPROOT)/usr/include $(DEPROOT)/usr/local/include
++FRAMEWORK_SEARCH_PATHS = $(DEPROOT)/System/Library/Frameworks $(DEPROOT)/System/Library/PrivateFrameworks
++LIBRARY_SEARCH_PATHS = $(DEPROOT)/usr/local/lib $(DEPROOT)/usr/lib
+diff --git a/syslogd.tproj/syslogd.c b/syslogd.tproj/syslogd.c
+index 2d45dc5..790d414 100644
+--- a/syslogd.tproj/syslogd.c
++++ b/syslogd.tproj/syslogd.c
+@@ -49,10 +49,6 @@
+ #include <notify_keys.h>
+ #include <utmpx.h>
+ #include <asl_private.h>
+-
+-#if !TARGET_OS_IPHONE
+-#include <quarantine.h>
+-#endif
+ #include "daemon.h"
+ 
+ #define SERVICE_NAME "com.apple.system.logger"
+@@ -484,15 +480,6 @@ main(int argc, const char *argv[])
+ 	/* Set I/O policy */
+ 	setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_PASSIVE);
+ 
+-#if !TARGET_OS_IPHONE
+-	/* Set Quarantine */
+-	qtn_proc_t qp = qtn_proc_alloc();
+-	qtn_proc_set_identifier(qp, "com.apple.syslogd");
+-	qtn_proc_set_flags(qp, QTN_FLAG_SANDBOX | QTN_FLAG_HARD);
+-	qtn_proc_apply_to_self(qp);
+-	qtn_proc_free(qp);
+-#endif
+-
+ 	memset(&global, 0, sizeof(struct global_s));
+ 
+ 	global.db_lock = (pthread_mutex_t *)calloc(1, sizeof(pthread_mutex_t));
