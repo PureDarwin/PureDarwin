@@ -68,3 +68,8 @@ externalproject_add(xnu
     USES_TERMINAL_BUILD TRUE
 )
 add_dependencies(xnu xnu_headers libfirehose_kernel)
+
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/System/Library DESTINATION System COMPONENT BaseSystem)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/usr/include DESTINATION usr COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/usr/libexec DESTINATION usr COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/usr/share/man DESTINATION usr/share COMPONENT DeveloperTools)
