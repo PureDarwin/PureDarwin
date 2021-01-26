@@ -29,6 +29,6 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lexxer.yy.c
     COMMENT "Lex lexxer.l" VERBATIM
 )
 
-add_executable(mig IMPORTED)
+add_executable(mig IMPORTED GLOBAL)
 set_property(TARGET mig PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/mig.sh)
 add_dependencies(mig migcom)
