@@ -1,5 +1,5 @@
 function(process_mig_source filename)
-    cmake_parse_arguments(MIG "NOVOUCHERS" "ARCH;SERVER_HEADER;CLIENT_HEADER;SERVER_SOURCE;CLIENT_SOURCE" "" ${ARGN})
+    cmake_parse_arguments(MIG "NOVOUCHERS" "ARCH;SERVER_HEADER;CLIENT_HEADER;SERVER_SOURCE;CLIENT_SOURCE;TARGET" "" ${ARGN})
 
     if((NOT MIG_SERVER_HEADER) AND (NOT MIG_CLIENT_HEADER) AND (NOT MIG_SERVER_SOURCE) AND (NOT MIG_CLIENT_SOURCE))
         message(SEND_ERROR "You must specify at least one MiG output")
@@ -7,16 +7,18 @@ function(process_mig_source filename)
     endif()
 
 
-    get_property(_defs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY COMPILE_DEFINITIONS)
-    get_property(_incs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
-
     set(MIG_FLAGS)
-    foreach(def ${_defs})
-        list(APPEND MIG_FLAGS "-D${def}")
-    endforeach()
-    foreach(inc ${_incs})
-        list(APPEND MIG_FLAGS "-I${inc}")
-    endforeach()
+    if(MIG_TARGET)
+        get_property(_defs TARGET ${MIG_TARGET} PROPERTY COMPILE_DEFINITIONS)
+        get_property(_incs TARGET ${MIG_TARGET} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+
+        foreach(def ${_defs})
+            list(APPEND MIG_FLAGS "-D${def}")
+        endforeach()
+        foreach(inc ${_incs})
+            list(APPEND MIG_FLAGS "-I${inc}")
+        endforeach()
+    endif()
     if(MIG_NOVOUCHERS)
         list(APPEND MIG_FLAGS "-novouchers")
     endif()
@@ -43,12 +45,12 @@ function(process_mig_source filename)
         list(APPEND MIG_OUTPUTS ${MIG_CLIENT_SOURCE})
     endif()
 
-    get_filename_component(basename ${filename} NAME_WE)
     add_custom_command(
         OUTPUT ${MIG_OUTPUTS}
         COMMAND
             ${CMAKE_COMMAND} -E env MIGCOM=$<TARGET_FILE:migcom> $<TARGET_FILE:mig> -arch ${MIG_ARCH}
                 ${MIG_FLAGS} ${filename}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS mig migcom ${filename}
         COMMENT "MiG ${filename}" VERBATIM
     )
