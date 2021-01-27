@@ -1,7 +1,5 @@
-#include "<DEVELOPER_DIR>/Makefiles/CoreOS/Xcode/BSD.xcconfig"
-
 BUILD_VARIANTS = normal
-SUPPORTED_PLATFORMS = macosx iphoneos iphoneosnano tvos appletvos watchos bridgeos
+SUPPORTED_PLATFORMS = macosx
 ONLY_ACTIVE_ARCH = NO
 DEAD_CODE_STRIPPING = YES
 DEBUG_INFORMATION_FORMAT = dwarf-with-dsym

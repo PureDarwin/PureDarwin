@@ -72,3 +72,5 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/System/Library DESTINA
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/usr/include DESTINATION usr COMPONENT DeveloperTools)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/usr/libexec DESTINATION usr COMPONENT DeveloperTools)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_install/usr/share/man DESTINATION usr/share COMPONENT DeveloperTools)
+
+add_subdirectory(libsyscall)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2016 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -26,18 +26,6 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-/*
- *  extern int cpu_copy_in_cksum(const void *src, void *dst, uint32_t len,
- *	uint32_t initial_sum);
- *
- *  input :
- *      src : source starting address
- *      dst : destination starting address
- *      len : byte stream length
- *      initial_sum : 32bit sum
- *
- *  output :
- *      the source byte stream is copied into the destination buffer
- *      the function returns the final 16bit checksum
- */
-
+#ifndef OS_THREAD_SELF_RESTRICT_H
+#define OS_THREAD_SELF_RESTRICT_H
+#endif /* OS_THREAD_SELF_RESTRICT_H */
