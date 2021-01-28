@@ -11,9 +11,6 @@ externalproject_add(xar_host.extproj
     BUILD_COMMAND make
     INSTALL_COMMAND make install
     UPDATE_COMMAND ""
-    USES_TERMINAL_CONFIGURE TRUE
-    USES_TERMINAL_BUILD TRUE
-    USES_TERMINAL_INSTALL TRUE
 )
 
 add_executable(xar_host IMPORTED)

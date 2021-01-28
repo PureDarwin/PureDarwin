@@ -8,9 +8,6 @@ externalproject_add(cctools_host.extproj
             --enable-xar-support
     BUILD_COMMAND make
     INSTALL_COMMAND make install
-    USES_TERMINAL_CONFIGURE TRUE
-    USES_TERMINAL_BUILD TRUE
-    USES_TERMINAL_INSTALL TRUE
 )
 add_dependencies(cctools_host.extproj xar_host.extproj)
 
