@@ -163,10 +163,10 @@ ifeq ($(origin CXX),default)
 	export CXX := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang++)
 endif
 ifeq ($(MIG),)
-	export MIG := $(shell $(XCRUN) -sdk $(SDKROOT) -find mig)
+	export MIG := @MIG@
 endif
 ifeq ($(MIGCOM),)
-	export MIGCOM := $(shell $(XCRUN) -sdk $(SDKROOT) -find migcom)
+	export MIGCOM := @MIGCOM@
 endif
 ifeq ($(MIGCC),)
 	export MIGCC := $(CC)

@@ -9,6 +9,7 @@ externalproject_add(xnu_headers.extproj
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
+            -D MIG=$<TARGET_FILE:mig> -D MIGCOM=$<TARGET_FILE:migcom>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     BUILD_COMMAND
         make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=0
@@ -56,6 +57,7 @@ externalproject_add(xnu
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             -D LIBFIREHOSE_HEADER_PATH=${PUREDARWIN_SOURCE_DIR}/projects/libdispatch
             -D LIBFIREHOSE_LIB_PATH=$<TARGET_FILE_DIR:libfirehose_kernel>
+            -D MIG=$<TARGET_FILE:mig> -D MIGCOM=$<TARGET_FILE:migcom>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     BUILD_COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
