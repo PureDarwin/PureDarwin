@@ -181,7 +181,7 @@ ifeq ($(LIPO),)
 	export LIPO := $(shell $(XCRUN) -sdk $(SDKROOT) -find lipo)
 endif
 ifeq ($(LIBTOOL),)
-	export LIBTOOL := $(shell $(XCRUN) -sdk $(SDKROOT) -find libtool)
+	export LIBTOOL := @LIBTOOL_PATH@
 endif
 ifeq ($(NM),)
 	export NM := $(shell $(XCRUN) -sdk $(SDKROOT) -find nm)

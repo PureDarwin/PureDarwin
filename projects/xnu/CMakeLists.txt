@@ -58,6 +58,7 @@ externalproject_add(xnu
             -D LIBFIREHOSE_HEADER_PATH=${PUREDARWIN_SOURCE_DIR}/projects/libdispatch
             -D LIBFIREHOSE_LIB_PATH=$<TARGET_FILE_DIR:libfirehose_kernel>
             -D MIG=$<TARGET_FILE:mig> -D MIGCOM=$<TARGET_FILE:migcom>
+            -D LIBTOOL_PATH=$<TARGET_FILE:darwin_libtool>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     BUILD_COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
