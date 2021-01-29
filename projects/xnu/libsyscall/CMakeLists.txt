@@ -26,7 +26,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
 add_darwin_shared_library(libsystem_kernel)
 target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers) # Must be first
 target_link_libraries(libsystem_kernel PUBLIC AvailabilityHeaders architecture_headers)
-target_link_libraries(libsystem_kernel PUBLIC xnu_headers libsyscall)
+target_link_libraries(libsystem_kernel PUBLIC xnu_headers)
 target_link_libraries(libsystem_kernel PRIVATE libsyscall_mig_headers pthread_headers)
 target_compile_options(libsystem_kernel PRIVATE -Wno-nullability-completeness)
 target_compile_options(libsystem_kernel PRIVATE -F ${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install/System/Library/Frameworks)
