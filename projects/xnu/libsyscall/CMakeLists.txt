@@ -1,25 +1,36 @@
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/xcodescripts/create-syscalls.pl
+    COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
+        ${CMAKE_CURRENT_SOURCE_DIR}/xcodescripts/create-syscalls.pl
         ${CMAKE_CURRENT_SOURCE_DIR}/../bsd/kern/syscalls.master
         ${CMAKE_CURRENT_SOURCE_DIR}/custom
         ${CMAKE_CURRENT_SOURCE_DIR}/Platforms
         MacOSX
         ${CMAKE_CURRENT_BINARY_DIR}/sys
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/xcodescripts/compile-syscalls.pl
+    COMMAND
+        ${CMAKE_COMMAND} -E env
+            DARWIN_LIBTOOL=$<TARGET_FILE:darwin_libtool>
+            PUREDARWIN_SOURCE_DIR=${PUREDARWIN_SOURCE_DIR}
+            SDKROOT=${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install ARCHS=x86_64
+        ${CMAKE_CURRENT_SOURCE_DIR}/xcodescripts/compile-syscalls.pl
         ${CMAKE_CURRENT_BINARY_DIR}/sys/stubs.list
         ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/xcodescripts/create-syscalls.pl
         ${CMAKE_CURRENT_SOURCE_DIR}/xcodescripts/compile-syscalls.pl
         ${CMAKE_CURRENT_SOURCE_DIR}/../bsd/kern/syscalls.master
+        xnu_headers
     COMMENT "Compile system call stubs" VERBATIM
 )
 
 add_darwin_shared_library(libsystem_kernel)
-target_link_libraries(libsystem_kernel PUBLIC AvailabilityHeaders)
-target_link_libraries(libsystem_kernel PUBLIC xnu_headers libsyscall_headers)
-target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers libsyscall_private_headers)
+target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers) # Must be first
+target_link_libraries(libsystem_kernel PUBLIC AvailabilityHeaders architecture_headers)
+target_link_libraries(libsystem_kernel PUBLIC xnu_headers libsyscall)
+target_link_libraries(libsystem_kernel PRIVATE libsyscall_mig_headers pthread_headers)
+target_compile_options(libsystem_kernel PRIVATE -Wno-nullability-completeness)
+target_compile_options(libsystem_kernel PRIVATE -F ${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install/System/Library/Frameworks)
+target_compile_definitions(libsystem_kernel PRIVATE _USE_FORTIFY_LEVEL=0)
 target_sources(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
 
 target_sources(libsystem_kernel PRIVATE
@@ -46,7 +57,6 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/mach_approximate_time.c
     wrappers/mach_approximate_time.s
     wrappers/mach_boottime.c
-    wrappers/mach_bridge_remote_time.c
     wrappers/mach_continuous_time.c
     wrappers/mach_get_times.c
     wrappers/mach_timebase_info.c
@@ -77,14 +87,13 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/work_interval.c
 )
 
-add_library(libsyscall_headers INTERFACE)
-target_include_directories(libsystem_kernel INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/public_headers)
-target_include_directories(libsystem_kernel INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/public_headers)
+target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/public_headers)
+target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_headers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach)
 
-target_include_directories(libsystem_kernel PRIVATE INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/private_headers)
-target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/private_headers)
+target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private_headers)
+target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc_headers) # FIXME: Remove this copy once Libc is built
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_headers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_headers/mach)
 
@@ -111,17 +120,37 @@ install(
     DESTINATION usr/include/mach COMPONENT DeveloperTools
 )
 
-set(PUBLIC_DEFS
-    clock clock_priv exc host_priv host_security lock_set
-    mach_eventlink mach_host mach_port memory_entry processor processor_set
-    task thread_act vm_map
-)
-foreach(name IN LISTS PUBLIC_DEFS)
-    process_mig_source(public_headers/mach/${name}.defs NOVOUCHERS
-        CLIENT_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${name}.h
-        TARGET libsystem_kernel
-    )
 
-    target_sources(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${name}.h)
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${name}.h DESTINATION usr/include/mach COMPONENT DeveloperTools)
+
+
+
+
+
+
+
+add_library(libsyscall_mig_headers INTERFACE)
+target_include_directories(libsyscall_mig_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/public_headers)
+
+process_mig_source(mach/servers/netname.defs
+    SERVER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/servers/netname.h
+    TARGETS xnu_headers xnu_private_headers
+)
+install(FILES mach/server/netname.defs DESTINATION usr/include/mach COMPONENT DeveloperTools)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/netname.h DESTINATION usr/include/mach COMPONENT DeveloperTools)
+target_sources(libsyscall_mig_headers PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/servers/netname.h)
+
+set(public_sources
+    clock clock_priv exc host_priv host_security lock_set
+    mach_eventlink mach_host mach_port mach_voucher
+    memory_entry processor processor_set task thread_act
+    vm_map mach_vm
+)
+foreach(file IN LISTS public_sources)
+    process_mig_source(mach/${file}.defs NOVOUCHERS
+        SERVER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${file}.h
+        TARGETS xnu_headers xnu_private_headers
+    )
+    install(FILES mach/${file}.defs DESTINATION usr/include/mach COMPONENT DeveloperTools)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${file}.h DESTINATION usr/include/mach COMPONENT DeveloperTools)
+    target_sources(libsyscall_mig_headers PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${file}.h)
 endforeach()

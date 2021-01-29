@@ -1,15 +1,15 @@
 /*
- * Copyright (c) 2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
- *
+ * 
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
  * Version 2.0 (the 'License'). You may not use this file except in
  * compliance with the License. Please obtain a copy of the License at
  * http://www.opensource.apple.com/apsl/ and read it before using this
  * file.
- *
+ * 
  * The Original Code and all software distributed under the License are
  * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -17,18 +17,20 @@
  * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
  * Please see the License for the specific language governing rights and
  * limitations under the License.
- *
+ * 
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#include <sys/types.h>
-#include <stdint.h>
-#include <TargetConditionals.h>
+#ifndef __AUTHENTICATION_H__
+#define __AUTHENTICATION_H__
 
-extern uint64_t __memorystatus_available_memory(void);
+#include <sys/cdefs.h>
 
-size_t
-os_proc_available_memory(void)
-{
-	return (size_t)__memorystatus_available_memory();
-}
+__BEGIN_DECLS
+extern char *groupNameForTask(int taskNum);
+extern int isAuthenticatedAsAdministrator(void);
+extern int isAuthenticatedAsAdministratorForTask(int taskNum);
+extern int isAuthenticatedAsRoot(void);
+__END_DECLS
+
+#endif /* __AUTHENTICATION_H__ */

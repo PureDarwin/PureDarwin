@@ -58,17 +58,19 @@ chomp @sources;
 undef $f;
 
 # compiler options
-chomp(my $CC = `xcrun -sdk "$ENV{'SDKROOT'}" -find cc`);
+chomp(my $CC = `xcrun -find cc`);
+die "cannot find C compiler" if $CC eq '';
 my @CFLAGS = (
 	"-x assembler-with-cpp",
 	"-c",
-	"-isysroot", $ENV{'SDKROOT'} || "/",
-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/usr/include",
-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/usr/local/include",
-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
+	"-I".$ENV{"PUREDARWIN_SOURCE_DIR"}."/projects/architecture_headers",
+	"-I".$ENV{"SDKROOT"}."/usr/include",
+	"-I".$ENV{"SDKROOT"}."/usr/local/include",
+	"-I".$ENV{"SDKROOT"}."/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders",
 );
 
-chomp(my $LIBTOOL = `xcrun -sdk "$ENV{'SDKROOT'}" -find libtool`);
+my $LIBTOOL = $ENV{"DARWIN_LIBTOOL"};
+die "cannot find libtool" if $LIBTOOL eq '';
 my @LIBTOOLFLAGS = (
 	"-static",
 );

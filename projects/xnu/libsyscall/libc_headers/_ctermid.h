@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000, 2002-2006, 2008-2010, 2012, 2020 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -21,14 +21,15 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#include <sys/types.h>
-#include <stdint.h>
-#include <TargetConditionals.h>
+#ifndef _CTERMID_H_
+#define _CTERMID_H_
 
-extern uint64_t __memorystatus_available_memory(void);
+#include <sys/cdefs.h>
 
-size_t
-os_proc_available_memory(void)
-{
-	return (size_t)__memorystatus_available_memory();
-}
+__BEGIN_DECLS
+
+char    *ctermid(char *);
+
+__END_DECLS
+
+#endif
