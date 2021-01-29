@@ -67,9 +67,8 @@ scriptPath=$(realpath "$0")
 scriptRoot=$(dirname "$scriptPath")
 migcomPath=$(realpath "${scriptRoot}/../libexec/migcom")
 
-if [ -n "${SDKROOT}" ]; then
-	sdkRoot="${SDKROOT}";
-fi
+sdkRoot=${SDKROOT}
+unset SDKROOT
 
 if [ -z "${MIGCC}" ]; then
   xcrunPath="/usr/bin/xcrun"
@@ -215,4 +214,3 @@ done
 
 /bin/rmdir "${WORKTMP}"
 exit 0
-
