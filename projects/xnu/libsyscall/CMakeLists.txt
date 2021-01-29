@@ -31,6 +31,7 @@ target_link_libraries(libsystem_kernel PRIVATE libsyscall_mig_headers pthread_he
 target_compile_options(libsystem_kernel PRIVATE -Wno-nullability-completeness)
 target_compile_options(libsystem_kernel PRIVATE -F ${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install/System/Library/Frameworks)
 target_compile_definitions(libsystem_kernel PRIVATE _USE_FORTIFY_LEVEL=0)
+target_compile_definitions(libsystem_kernel PRIVATE LIBSYSCALL_INTERFACE)
 target_sources(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
 
 target_sources(libsystem_kernel PRIVATE
@@ -148,9 +149,19 @@ set(public_sources
 foreach(file IN LISTS public_sources)
     process_mig_source(mach/${file}.defs NOVOUCHERS
         SERVER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${file}.h
+        COMPILE_DEFINITIONS LIBSYSCALL_INTERFACE
         TARGETS xnu_headers xnu_private_headers
     )
     install(FILES mach/${file}.defs DESTINATION usr/include/mach COMPONENT DeveloperTools)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${file}.h DESTINATION usr/include/mach COMPONENT DeveloperTools)
     target_sources(libsyscall_mig_headers PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach/${file}.h)
+endforeach()
+
+set(internal_sources mach_port mach_vm thread_act vm_map)
+foreach(file IN LISTS internal_sources)
+    process_mig_source(mach/${file}.defs NOVOUCHERS
+        SERVER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/private_headers/mach/${file}.h
+        TARGETS xnu_headers xnu_private_headers
+    )
+    target_sources(libsyscall_mig_headers PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/private_headers/mach/${file}.h)
 endforeach()
