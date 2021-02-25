@@ -23,7 +23,12 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMENT "Compile system call stubs" VERBATIM
 )
 
-add_darwin_shared_library(libsystem_kernel)
+add_library(libsystem_kernel SHARED)
+add_dependencies(libsystem_kernel darwin_ld)
+target_link_options(libsystem_kernel PRIVATE -fuse-ld=$<TARGET_FILE:darwin_ld>)
+set_property(TARGET libsystem_kernel PROPERTY PREFIX "")
+target_compile_options(libsystem_kernel PRIVATE -target x86_64-apple-darwin20)
+
 target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers) # Must be first
 target_link_libraries(libsystem_kernel PUBLIC AvailabilityHeaders architecture_headers)
 target_link_libraries(libsystem_kernel PUBLIC xnu_headers)

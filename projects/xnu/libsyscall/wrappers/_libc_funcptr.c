@@ -26,8 +26,18 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#define _FORTIFY_SOURCE 0
 #include "_libkernel_init.h"
-#include "strings.h"
+
+void    *_libkernel_memmove(void *, const void *, size_t);
+void    *_libkernel_memset(void *, int, size_t);
+int      _libkernel_strcmp(const char *, const char *);
+char    *_libkernel_strcpy(char *, const char *);
+size_t   _libkernel_strnlen(const char *, size_t);
+size_t   _libkernel_strlen(const char *);
+size_t   _libkernel_strlcpy(char *, const char *, size_t);
+void     _libkernel_bzero(void *, size_t);
+char    *_libkernel_strchr(const char *, int);
 
 extern _libkernel_functions_t _libkernel_functions;
 extern void mig_os_release(void* ptr);

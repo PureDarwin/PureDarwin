@@ -27,9 +27,6 @@
  */
 
 #include <TargetConditionals.h>
-#include <stdbool.h>
-#include <strings.h>
-#include <unistd.h>
 #include "_libkernel_init.h"
 
 extern int mach_init(void);

@@ -24,8 +24,8 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/errno.h>
-#include <strings.h>
 #include <Availability.h>
+#include "string/strings.h"
 
 #include "gethostuuid_private.h"
 
@@ -44,7 +44,7 @@ gethostuuid(uuid_t uuid, const struct timespec *timeout)
 			result = _gethostuuid_callback(uuid);
 		} else {
 			/* no fallback, return -1/EPERM */
-			memset(uuid, 0x00, sizeof(*uuid));
+			_libkernel_memset(uuid, 0x00, sizeof(*uuid));
 		}
 	}
 

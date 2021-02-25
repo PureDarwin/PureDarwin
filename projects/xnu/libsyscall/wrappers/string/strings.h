@@ -78,8 +78,6 @@ void     __bzero(void *, size_t);
 char    *index(const char *, int);
 char    *strchr(const char *, int);
 
-#include "string.h"
-
 void    *_libkernel_memmove(void *, const void *, size_t);
 void    *_libkernel_memset(void *, int, size_t);
 int      _libkernel_strcmp(const char *, const char *);

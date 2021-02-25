@@ -21,8 +21,7 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#include <signal.h>
-
+typedef int pid_t;
 extern int __kill(pid_t pid, int sig, int posix);
 
 /*
