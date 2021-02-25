@@ -94,7 +94,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_headers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_headers/mach)
 
 target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private_headers)
-target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc_headers) # FIXME: Remove this copy once Libc is built
+target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/build_headers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_headers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_headers/mach)
 
