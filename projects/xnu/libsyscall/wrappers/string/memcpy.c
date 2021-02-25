@@ -30,6 +30,7 @@
  * SUCH DAMAGE.
  */
 
+#define _FORTIFY_SOURCE 0
 #include "string.h"
 
 /*

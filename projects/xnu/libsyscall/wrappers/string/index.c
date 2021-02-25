@@ -27,7 +27,10 @@
  * SUCH DAMAGE.
  */
 
+#define _FORTIFY_SOURCE 0
 #include "strings.h"
+
+#define NULL ((void*)0)
 
 __attribute__((visibility("hidden")))
 char *

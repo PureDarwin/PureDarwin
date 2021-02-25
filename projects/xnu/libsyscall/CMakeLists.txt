@@ -32,7 +32,10 @@ target_compile_options(libsystem_kernel PRIVATE -target x86_64-apple-darwin20)
 target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers) # Must be first
 target_link_libraries(libsystem_kernel PUBLIC AvailabilityHeaders architecture_headers)
 target_link_libraries(libsystem_kernel PUBLIC xnu_headers)
-target_link_libraries(libsystem_kernel PRIVATE libsyscall_mig_headers pthread_headers)
+target_link_libraries(libsystem_kernel PRIVATE libsyscall_mig_headers)
+target_link_libraries(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
+target_link_options(libsystem_kernel PRIVATE -nostdlib)
+target_compile_options(libsystem_kernel PRIVATE -fno-stack-check -fno-stack-protector -fno-common)
 target_compile_options(libsystem_kernel PRIVATE -Wno-nullability-completeness)
 target_compile_options(libsystem_kernel PRIVATE -F ${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install/System/Library/Frameworks)
 target_compile_definitions(libsystem_kernel PRIVATE _USE_FORTIFY_LEVEL=0)
@@ -91,6 +94,19 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/utimensat.c
     wrappers/varargs_wrappers.s
     wrappers/work_interval.c
+
+    wrappers/string/index.c
+    wrappers/string/memcpy.c
+    wrappers/string/memset.c
+    wrappers/string/strcmp.c
+    wrappers/string/strcpy.c
+    wrappers/string/strlcpy.c
+    wrappers/string/strlen.c
+    wrappers/string/strsep.c
+
+    wrappers/spawn/posix_spawn.c
+    wrappers/libproc/libproc.c
+    wrappers/libproc/proc_listpidspath.c
 )
 
 target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/public_headers)

@@ -21,6 +21,7 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
+#define _FORTIFY_SOURCE 0
 #include "strings.h"
 
 __attribute__((visibility("hidden")))
