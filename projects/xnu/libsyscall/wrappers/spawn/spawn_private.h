@@ -90,11 +90,11 @@ int     posix_spawnattr_set_gid_np(const posix_spawnattr_t * __restrict, gid_t) 
 int     posix_spawnattr_set_groups_np(const posix_spawnattr_t * __restrict, int, gid_t * __restrict, uid_t) __API_AVAILABLE(macos(10.15), ios(13.0), tvos(13.0), watchos(6.0));
 int     posix_spawnattr_set_login_np(const posix_spawnattr_t * __restrict, const char * __restrict) __API_AVAILABLE(macos(10.15), ios(13.0), tvos(13.0), watchos(6.0));
 
-int     posix_spawnattr_set_subsystem_root_path_np(posix_spawnattr_t *attr, char *path); __API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), watchos(7.0));
+int     posix_spawnattr_set_subsystem_root_path_np(posix_spawnattr_t *attr, char *path) __API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), watchos(7.0));
 
-int     posix_spawnattr_set_platform_np(posix_spawnattr_t *attr, int platform, uint32_t flags); __API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), watchos(7.0));
+int     posix_spawnattr_set_platform_np(posix_spawnattr_t *attr, int platform, uint32_t flags) __API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), watchos(7.0));
 
-int     posix_spawnattr_disable_ptr_auth_a_keys_np(posix_spawnattr_t *attr, uint32_t flags); __API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), watchos(7.0));
+int     posix_spawnattr_disable_ptr_auth_a_keys_np(posix_spawnattr_t *attr, uint32_t flags) __API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), watchos(7.0));
 
 int     posix_spawn_file_actions_add_fileportdup2_np(posix_spawn_file_actions_t * __restrict, mach_port_t, int) __API_AVAILABLE(macos(10.15), ios(13.0), tvos(13.0), watchos(6.0));
 
