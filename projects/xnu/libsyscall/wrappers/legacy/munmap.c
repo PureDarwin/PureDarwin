@@ -30,7 +30,6 @@
 #include <sys/mman.h>
 #include <mach/vm_param.h>
 #include <mach/mach_init.h>
-#include "stack_logging_internal.h"
 
 /*
  * Stub function to account for the differences in standard compliance
@@ -61,10 +60,6 @@ munmap(void *addr, size_t len)
 	offset = ((uintptr_t) addr) & PAGE_MASK;
 	addr = (void *) (((uintptr_t) addr) & ~PAGE_MASK);
 	len += offset;
-
-	if (__syscall_logger) {
-		__syscall_logger(stack_logging_type_vm_deallocate, (uintptr_t)mach_task_self(), (uintptr_t)addr, len, 0, 0);
-	}
 
 	int result = __munmap(addr, len);
 

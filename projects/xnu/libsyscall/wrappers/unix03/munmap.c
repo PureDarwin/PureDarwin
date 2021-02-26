@@ -27,7 +27,6 @@
 
 #include <sys/mman.h>
 #include <mach/mach_init.h>
-#include "stack_logging_internal.h"
 
 /*
  * munmap stub, for stack logging of VM allocations.
@@ -39,10 +38,6 @@ extern int __munmap(void *, size_t);
 int
 munmap(void *addr, size_t len)
 {
-	if (__syscall_logger) {
-		__syscall_logger(stack_logging_type_vm_deallocate, (uintptr_t)mach_task_self(), (uintptr_t)addr, len, 0, 0);
-	}
-
 	int result = __munmap(addr, len);
 
 	return result;

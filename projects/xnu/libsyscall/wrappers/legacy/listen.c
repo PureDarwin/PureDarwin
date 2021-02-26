@@ -34,7 +34,7 @@
 #define __DARWIN_UNIX03 1
 
 #include <sys/socket.h>
-#include "_errno.h"
+#include "../_errno.h"
 
 extern int __listen(int, int);
 

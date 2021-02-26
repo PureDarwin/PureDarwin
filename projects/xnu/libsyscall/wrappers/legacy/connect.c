@@ -35,7 +35,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
-#include "_errno.h"
+#include "../_errno.h"
 
 int __connect_nocancel(int, const struct sockaddr *, socklen_t);
 

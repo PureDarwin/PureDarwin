@@ -38,18 +38,75 @@ target_link_options(libsystem_kernel PRIVATE -nostdlib)
 target_compile_options(libsystem_kernel PRIVATE -fno-stack-check -fno-stack-protector -fno-common)
 target_compile_options(libsystem_kernel PRIVATE -Wno-nullability-completeness)
 target_compile_options(libsystem_kernel PRIVATE -F ${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install/System/Library/Frameworks)
-target_compile_definitions(libsystem_kernel PRIVATE _USE_FORTIFY_LEVEL=0)
+target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0)
 target_compile_definitions(libsystem_kernel PRIVATE LIBSYSCALL_INTERFACE)
+target_compile_definitions(libsystem_kernel PRIVATE __DARWIN_UNIX03=1)
 target_sources(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
 
 target_sources(libsystem_kernel PRIVATE
+    custom/__fork.s
+    custom/__getpid.s
+    custom/__gettimeofday.s
+    custom/__kdebug_trace_string.s
+    custom/__lseek.s
+    custom/__pipe.s
+    custom/__ptrace.s
+    custom/__sigaltstack.s
+    custom/__sigreturn.s
+    custom/__syscall.s
+    custom/__thread_selfid.s
+    custom/__thread_selfusage.s
+    custom/__vfork.s
+    custom/custom.s
+    custom/dummy.c
+    custom/errno.c
+    mach/clock_sleep.c
+    mach/error_codes.c
+    mach/exc_catcher.c
+    mach/exc_catcher_state.c
+    mach/exc_catcher_state_identity.c
+    mach/fprintf_stderr.c
+    mach/host.c
+    mach/mach_error.c
+    mach/mach_error_string.c
+    mach/mach_eventlink.c
+    mach/mach_init.c
+    mach/mach_legacy.c
+    mach/mach_msg.c
+    mach/mach_port.c
+    mach/mach_right.c
+    mach/mach_traps.s
+    mach/mach_vm.c
+    mach/mig_allocate.c
+    mach/mig_deallocate.c
+    mach/mig_reply_port.c
+    mach/mig_reply_setup.c
+    mach/mig_strncpy.c
+    mach/ms_thread_switch.c
+    mach/panic.c
+    mach/port_descriptions.c
+    mach/port_obj.c
+    mach/semaphore.c
+    mach/slot_name.c
+    mach/string.c
+    mach/thread_act.c
     os/alloc_once.c
     os/log_data.c
-
+    public_headers/mach/mach_traps.s
     wrappers/__commpage_gettimeofday.c
     wrappers/__get_cpu_capabilities.s
     wrappers/_libc_funcptr.c
     wrappers/_libkernel_init.c
+    wrappers/cancelable/fcntl-base.c
+    wrappers/cancelable/fcntl-cancel.c
+    wrappers/cancelable/fcntl.c
+    wrappers/cancelable/open.c
+    wrappers/cancelable/pselect-darwinext-cancel.c
+    wrappers/cancelable/pselect-darwinext.c
+    wrappers/cancelable/select-cancel.c
+    wrappers/cancelable/select.c
+    wrappers/cancelable/sigsuspend-cancel.c
+    wrappers/cancelable/sigsuspend.c
     wrappers/carbon_delete.c
     wrappers/clonefile.c
     wrappers/coalition.c
@@ -60,8 +117,33 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/guarded_open_dprotected_np.c
     wrappers/guarded_open_np.c
     wrappers/init_cpu_capabilities.c
+    wrappers/ioctl.c
     wrappers/kdebug_trace.c
     wrappers/kill.c
+    wrappers/legacy/accept.c
+    wrappers/legacy/bind.c
+    wrappers/legacy/connect.c
+    wrappers/legacy/getattrlist.c
+    wrappers/legacy/getaudit.c
+    wrappers/legacy/getpeername.c
+    wrappers/legacy/getsockname.c
+    wrappers/legacy/kill.c
+    wrappers/legacy/lchown.c
+    wrappers/legacy/listen.c
+    wrappers/legacy/mprotect.c
+    wrappers/legacy/msync.c
+    wrappers/legacy/munmap.c
+    wrappers/legacy/recvfrom.c
+    wrappers/legacy/recvmsg.c
+    wrappers/legacy/select-pre1050.c
+    wrappers/legacy/select.c
+    wrappers/legacy/sendmsg.c
+    wrappers/legacy/sendto.c
+    wrappers/legacy/setattrlist.c
+    wrappers/legacy/sigsuspend.c
+    wrappers/legacy/socketpair.c
+    wrappers/libproc/libproc.c
+    wrappers/libproc/proc_listpidspath.c
     wrappers/mach_absolute_time.s
     wrappers/mach_approximate_time.c
     wrappers/mach_approximate_time.s
@@ -69,10 +151,11 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/mach_continuous_time.c
     wrappers/mach_get_times.c
     wrappers/mach_timebase_info.c
-    wrappers/open_dprotected_np.c
     wrappers/open-base.c
+    wrappers/open_dprotected_np.c
     wrappers/persona.c
     wrappers/pid_shutdown_networking.c
+    wrappers/posix_sem_obsolete.c
     wrappers/proc.c
     wrappers/quota_obsolete.c
     wrappers/reboot.c
@@ -82,19 +165,11 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/renamex.c
     wrappers/rmdir.c
     wrappers/select-base.c
+    wrappers/setpriority.c
     wrappers/sfi.c
     wrappers/sigsuspend-base.c
+    wrappers/spawn/posix_spawn.c
     wrappers/stackshot.c
-    wrappers/system-version-compat-support.c
-    wrappers/system-version-compat.c
-    wrappers/terminate_with_reason.c
-    wrappers/thread_register_state.c
-    wrappers/unlink.c
-    wrappers/unlinkat.c
-    wrappers/utimensat.c
-    wrappers/varargs_wrappers.s
-    wrappers/work_interval.c
-
     wrappers/string/index.c
     wrappers/string/memcpy.c
     wrappers/string/memset.c
@@ -103,10 +178,21 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/string/strlcpy.c
     wrappers/string/strlen.c
     wrappers/string/strsep.c
-
-    wrappers/spawn/posix_spawn.c
-    wrappers/libproc/libproc.c
-    wrappers/libproc/proc_listpidspath.c
+    wrappers/system-version-compat-support.c
+    wrappers/system-version-compat.c
+    wrappers/terminate_with_reason.c
+    wrappers/thread_register_state.c
+    wrappers/unix03/chmod.c
+    wrappers/unix03/fchmod.c
+    wrappers/unix03/getrlimit.c
+    wrappers/unix03/mmap.c
+    wrappers/unix03/munmap.c
+    wrappers/unix03/setrlimit.c
+    wrappers/unlink.c
+    wrappers/unlinkat.c
+    wrappers/utimensat.c
+    wrappers/varargs_wrappers.s
+    wrappers/work_interval.c
 )
 
 target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/public_headers)

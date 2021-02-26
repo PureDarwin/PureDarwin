@@ -27,7 +27,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include "_errno.h"
+#include "../_errno.h"
 
 extern int __chmod(const char *path, mode_t mode);
 

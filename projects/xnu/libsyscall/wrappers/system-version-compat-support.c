@@ -37,6 +37,7 @@
  * need to shim the version information).
  */
 
+#define _FORTIFY_SOURCE 0
 #include "system-version-compat-support.h"
 #include <stdbool.h>
 #include <sys/param.h>

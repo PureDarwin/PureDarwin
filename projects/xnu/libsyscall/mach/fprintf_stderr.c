@@ -30,10 +30,10 @@
  *
  */
 
+#include "string.h"
 #include <mach/mach.h>
 #include <mach/mach_init.h>
 #include <stdarg.h>
-#include "string.h"
 
 int (*vprintf_stderr_func)(const char *format, va_list ap);
 

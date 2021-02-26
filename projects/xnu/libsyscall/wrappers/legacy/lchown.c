@@ -34,7 +34,7 @@
 #define __DARWIN_UNIX03 1
 
 #include <sys/types.h>
-#include "_errno.h"
+#include "../_errno.h"
 
 int __lchown(const char *, uid_t, gid_t);
 

@@ -27,7 +27,7 @@
  */
 
 #undef _thread_act_user_
-#include <mach/thread_act_internal.h>
+#include <mach/thread_act.h>
 
 extern void _pthread_clear_qos_tsd(mach_port_t port);
 

@@ -29,7 +29,6 @@
 #include <mach/vm_param.h>
 #include <errno.h>
 #include <mach/mach_init.h>
-#include "stack_logging_internal.h"
 
 void *__mmap(void *addr, size_t len, int prot, int flags, int fildes, off_t off);
 
@@ -61,16 +60,6 @@ mmap(void *addr, size_t len, int prot, int flags, int fildes, off_t off)
 	}
 
 	void *ptr = __mmap(addr, len, prot, flags | MAP_UNIX03, fildes, off);
-
-	if (__syscall_logger) {
-		int stackLoggingFlags = stack_logging_type_vm_allocate;
-		if (flags & MAP_ANON) {
-			stackLoggingFlags |= (fildes & VM_FLAGS_ALIAS_MASK);
-		} else {
-			stackLoggingFlags |= stack_logging_type_mapped_file_or_shared_mem;
-		}
-		__syscall_logger(stackLoggingFlags, (uintptr_t)mach_task_self(), (uintptr_t)len, 0, (uintptr_t)ptr, 0);
-	}
 
 	return ptr;
 }

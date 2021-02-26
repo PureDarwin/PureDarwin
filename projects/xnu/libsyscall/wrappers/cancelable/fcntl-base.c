@@ -21,6 +21,7 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 #include <stdarg.h>
+#include <fcntl.h>
 
 int __FCNTL(int, int, void *);
 

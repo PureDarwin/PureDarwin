@@ -34,7 +34,7 @@
 #define __DARWIN_UNIX03 1
 
 #include <sys/attr.h>
-#include "_errno.h"
+#include "../_errno.h"
 
 #ifdef __LP64__
 extern int __setattrlist(const char *, void *, void *, size_t, unsigned int);

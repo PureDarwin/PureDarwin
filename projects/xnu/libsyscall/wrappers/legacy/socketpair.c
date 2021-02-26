@@ -36,7 +36,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-#include "_errno.h"
+#include "../_errno.h"
 
 extern int __socketpair(int, int, int, int[2]);
 

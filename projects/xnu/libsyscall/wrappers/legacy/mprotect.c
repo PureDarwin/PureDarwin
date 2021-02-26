@@ -26,7 +26,7 @@
 #define _NONSTD_SOURCE
 #include <sys/cdefs.h>
 
-#include "_errno.h"
+#include "../_errno.h"
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <mach/vm_param.h>

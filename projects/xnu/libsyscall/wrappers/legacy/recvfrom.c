@@ -34,7 +34,7 @@
 #define __DARWIN_UNIX03 1
 
 #include <sys/socket.h>
-#include "_errno.h"
+#include "../_errno.h"
 
 ssize_t __recvfrom_nocancel(int, void *, size_t, int, struct sockaddr * __restrict, socklen_t * __restrict);
 

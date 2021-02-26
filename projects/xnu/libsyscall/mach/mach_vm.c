@@ -34,10 +34,8 @@
 #define _mach_vm_user_
 #include <mach/mach.h>
 #include <mach/mach_traps.h>
-#undef _vm_map_user_
-#include <mach/vm_map_internal.h>
-#undef _mach_vm_user_
-#include <mach/mach_vm_internal.h>
+#include <mach/vm_map.h>
+#include <mach/mach_vm.h>
 
 #include "stack_logging_internal.h"
 

@@ -27,7 +27,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include "_errno.h"
+#include "../_errno.h"
 
 extern int __fchmod(int fd, mode_t mode);
 

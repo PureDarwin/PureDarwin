@@ -67,7 +67,7 @@
 #include "errorlib.h"
 #if !TARGET_OS_DRIVERKIT
 #include "err_libkern.sub"
-#include "err_iokit.sub"
+// #include "err_iokit.sub"
 #endif // !TARGET_OS_DRIVERKIT
 #include "err_ipc.sub"
 #include "err_kern.sub"
@@ -146,13 +146,13 @@ const struct error_system _mach_errors[err_max_system + 1] = {
 	},
 
 	/* 0x38; err_iokit */
-	{
-		.max_sub = errlib_count(err_iokit_sub),
-		.bad_sub = "(iokit/?) unknown subsystem error",
-		.subsystem = err_iokit_sub,
-		.map_table = err_iokit_sub_map,
-		.map_count = errlib_count(err_iokit_sub_map)
-	},
+	// {
+	// 	.max_sub = errlib_count(err_iokit_sub),
+	// 	.bad_sub = "(iokit/?) unknown subsystem error",
+	// 	.subsystem = err_iokit_sub,
+	// 	.map_table = err_iokit_sub_map,
+	// 	.map_count = errlib_count(err_iokit_sub_map)
+	// },
 #else
 	/* 0x37 */ errorlib_system_null, /* 0x38 */ errorlib_system_null,
 #endif // TARGET_OS_DRIVERKIT

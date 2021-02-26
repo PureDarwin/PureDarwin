@@ -55,6 +55,7 @@
  * the rights to redistribute these changes.
  */
 
+#include "string.h"
 #include <mach/mach.h>
 #include <mach/mach_host.h>
 
