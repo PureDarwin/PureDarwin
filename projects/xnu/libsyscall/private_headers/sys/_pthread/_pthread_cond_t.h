@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,26 +25,8 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-
-#ifndef _STRING_H_
-#define _STRING_H_
-
-#include <stddef.h>
-#include <stdint.h>
-#include <stdarg.h>
-
-// We're purposefully called "string.h" in order to superceed any use
-// of Libc's string.h (which no one should be using bar MIG) in order
-// to override their use of memcpy.
-
-int _mach_snprintf(char *buffer, int length, const char *fmt, ...);
-int _mach_vsnprintf(char *buffer, int length, const char *fmt, va_list ap);
-
-// These declarations are just for MIG, other users should include string/strings.h
-// These symbols are defined in _libc_funcptr.c
-
-void *memcpy(void *dst0, const void *src0, size_t length);
-void *memset(void *dst0, int c0, size_t length);
-void bzero(void *dst0, size_t length);
-
-#endif /* _STRING_H_ */
+#ifndef _PTHREAD_COND_T
+#define _PTHREAD_COND_T
+#include <sys/_pthread/_pthread_types.h> /* __darwin_pthread_cond_t */
+typedef __darwin_pthread_cond_t pthread_cond_t;
+#endif /* _PTHREAD_COND_T */

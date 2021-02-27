@@ -54,8 +54,6 @@
  * the rights to redistribute these changes.
  */
 
-#include <limits.h>
-
 #include <mach/boolean.h>
 #include <mach/error.h>
 #include <mach/mach_error.h>

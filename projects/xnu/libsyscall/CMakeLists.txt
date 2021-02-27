@@ -23,18 +23,12 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMENT "Compile system call stubs" VERBATIM
 )
 
-add_library(libsystem_kernel SHARED)
-add_dependencies(libsystem_kernel darwin_ld)
-target_link_options(libsystem_kernel PRIVATE -fuse-ld=$<TARGET_FILE:darwin_ld>)
-set_property(TARGET libsystem_kernel PROPERTY PREFIX "")
-target_compile_options(libsystem_kernel PRIVATE -target x86_64-apple-darwin20)
-
+add_darwin_shared_library(libsystem_kernel)
 target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers) # Must be first
 target_link_libraries(libsystem_kernel PUBLIC AvailabilityHeaders architecture_headers)
 target_link_libraries(libsystem_kernel PUBLIC xnu_headers)
 target_link_libraries(libsystem_kernel PRIVATE libsyscall_mig_headers)
 target_link_libraries(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
-target_link_options(libsystem_kernel PRIVATE -nostdlib)
 target_compile_options(libsystem_kernel PRIVATE -fno-stack-check -fno-stack-protector -fno-common)
 target_compile_options(libsystem_kernel PRIVATE -Wno-nullability-completeness)
 target_compile_options(libsystem_kernel PRIVATE -F ${CMAKE_CURRENT_BINARY_DIR}/../xnu_header_install/System/Library/Frameworks)

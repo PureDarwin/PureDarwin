@@ -63,8 +63,6 @@
  *	Error bases for subsytems errors.
  */
 
-#include <stddef.h>
-
 #include <mach/error.h>
 #include <mach/boolean.h>
 
