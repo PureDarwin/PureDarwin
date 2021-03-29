@@ -1,0 +1,51 @@
+.TH MTOC 1 "July 21, 2017" "Apple, Inc."
+.SH NAME
+mtoc \- convert a Mach-O file to a PECOFF file
+.SH SYNOPSIS
+.B mtoc
+[ \-subsystem type ] [ \-section_alignment value ] [ \-align value ] [ \-version major.minor ] [ \-d filename ] input output
+.SH DESCRIPTION
+.I mtoc
+converts the
+.I input
+EFI file built as a Mach-O file into an
+.I output
+PEFOFF file.
+.TP
+.BI \-subsystem " type"
+specifies the EFI subsystem
+.I type
+which can be
+.IR application ,
+.I boot
+or
+.I runtime.
+The default is
+.IR application .
+.TP
+.BI "\-section_alignment" " value"
+Specifies the PECOFF section alignment.
+.I value
+is a hexadecimal number that must be an integral power of 2.
+The default is the Mac OS X target pagesize (1000 hex).  This value should
+match the value used for
+.B "\-segalign"
+when linking the Mach-O file.
+.TP
+.BI "\-align" " value"
+Specifies the PECOFF file and section alignment.
+.I value
+is a hexadecimal number that must be an integral power of 2.
+The default is 400 hex.  This value should match the value used for
+.B "\-segalign"
+when linking the Mach-O file.
+.TP
+.BI "\-version" " major.minor"
+Specifies the PECOFF
+.I major
+and
+.I minor
+versions for the MajorImageVersion and MinorImageVersion fields.
+.TP
+.BI "\-d " filename"
+Specifies the filename to be used to create a debug directory entry with.

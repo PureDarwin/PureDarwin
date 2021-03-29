@@ -1,0 +1,204 @@
+.TH AS 1 "February 12, 2015" "Apple Inc."
+.SH NAME
+as \- Mac OS X Mach-O GNU-based assemblers
+.SH SYNOPSIS
+.B as
+[
+.I "option \&..."
+] [
+.I "file \&..."
+]
+.SH DESCRIPTION
+The
+.I as
+command translates assembly code in the named files to object code.  If no files are specified,
+.I as
+reads from
+.BR stdin .
+All undefined symbols in the assembly are treated as
+global.  The output of the assembly is left in the file
+.B a.out
+by default.
+.PP
+The program
+.B /usr/bin/as
+is actually a driver that executes assemblers for specific target
+architectures.  If no target architecture is specified, it defaults to the
+architecture of the host it is running on.
+.SH OPTIONS
+.TP
+.BI  \-o " name"
+Name the output file
+.I name
+instead of
+.BR a.out .
+.TP
+.BI \-arch " arch_type"
+Specifies the target architecture,
+.IR arch_type ,
+of the assembler to be executed.  The target assemblers for each
+architecture are in
+.BI /usr/libexec/gcc/darwin/ arch_type /as
+or
+.BI /usr/local/libexec/gcc/darwin/ arch_type /as .
+There is only one assembler for an architecture family.  If the
+specified target architecture is a machine-specific implementation,
+the assembler for that architecture family is executed (e.g.,
+.B /usr/libexec/gcc/darwin/ppc/as
+for
+.BR "\-arch ppc604e" ).
+See
+.IR arch (3)
+for the currently known
+.IR arch_type s.
+.TP
+.B \-arch_multiple
+Precede any displayed messages with a line stating
+the program name (\fBas\fR)
+and the architecture (from the
+.BI \-arch " arch_type"
+flag), to distinguish which architecture the error messages refer to.
+When the
+.IR cc (1)
+driver program
+is run with multiple
+.B \-arch
+flags, it invokes
+.I as
+with the
+.B \-arch_multiple
+option.
+.TP
+.BI \-force_cpusubtype_ALL
+By default, the assembler will produce the CPU subtype ALL for the object file
+it is assembling if it finds no implementation-specific instructions.  Also
+by default, the assembler will allow implementation-specific instructions and
+will combine the CPU subtype for those specific implementations.  The combining
+of specific implementations is architecture-dependent; if some combination of
+instructions is not allowed, an error is generated.  With the optional
+.B \-force_cpusubtype_ALL
+flag, all instructions are allowed and the object file's CPU subtype will be
+the ALL subtype.
+If the target architecture specified is a machine-specific implementation
+(e.g.,
+.BR "\-arch ppc603" ,
+.BR "\-arch i486" ),
+the assembler will flag as errors
+instructions that are not supported on that architecture, and it will produce an object
+file with the CPU subtype for that specific implementation (even if no
+implementation-specific instructions are used).
+The
+.B \-force_cpusubtype_ALL
+flag is the default for all x86 and x86_64 architectures.
+.TP
+.B \-dynamic
+Enables dynamic linking features.
+This is the default.
+.TP
+.B \-static
+Causes the assembler to treat as an error any features for dynamic
+linking.  Also causes the .text directive to not include the pure_instructions
+section attribute.
+.TP
+.B \-\|\-
+Use
+.B stdin
+for the assembly source input.
+.TP
+.B \-n
+Instructs the assembler not to assume that the assembly file starts
+with a
+.B \.text
+directive.  Use this option
+when an output file is not to contain a (_\|_TEXT,_\|_text) section or this
+section is not to be first one in the output file.
+.TP
+.B \-f
+Fast; no need for the assembler preprocessor (``app'').  The assembler
+preprocessor can also be turned off by starting the assembly file with
+"#NO_APP\\n".  This is intended for use by compilers which produce assembly
+code in a strict "clean" format that specifies exactly where whitespace
+can go.  The assembler preprocessor needs to be run on hand-written assembly
+files and/or files that have been preprocessed by the C preprocessor
+.B cpp.
+This is typically needed when assembler files are assembled through the use of
+the
+.IR cc (1)
+command, which automatically runs the C preprocessor on assembly
+source files.  The assembler preprocessor strips out excess
+spaces, turns single-quoted characters into a decimal constants, and turns
+# <number> <filename> <level>
+into .line <number>;.file <filename>  pairs.
+When the assembler preprocessor has been turned off by a "#NO_APP\\n" at the
+start of a file, it can be turned back on and off again with pairs of "#APP\\n" and
+"#NO_APP\\n" at the beginnings of lines.  This is used by the compiler to wrap
+assembly statements produced from
+.B asm()
+statements.
+.TP
+.B \-g
+Produce debugging information for the symbolic debugger
+.IR gdb (1)
+so that the assembly source can be debugged symbolically.  The debugger depends on correct use of the C preprocessor's #include directive
+or the assembler's .include directive:  Any include file
+that produces instructions in the (_\|_TEXT,_\|_text) section must be included
+while a .text directive is in
+effect.  In other words, there must be a .text directive before the include,
+and the .text directive must still be in effect at the end of the include file.
+Otherwise, the debugger will get confused when in that assembly file.
+.TP
+.B \-v
+Display the version of the assembler (both the Mac OS X version and the GNU version
+it is based on).
+.TP
+.B \-V
+Print the path and the command line of the assembler the assembler driver is
+using.
+.TP
+.BI \-I dir
+Add the directory
+.I dir
+to the list of directories to search for files included with the .include
+directive.  The default place to search is the current directory.
+.TP
+.B \-W
+Suppress warnings.
+.TP
+.B \-L
+Save non-global defined labels beginning with an 'L'; these labels are normally
+discarded to save space in the resultant symbol table.  The compiler generates
+such temporary labels.
+.TP
+.B \-q
+Use the
+.IR clang (1)
+integrated assembler instead of the GNU based system assembler.  This is
+the default for the x86 and arm architectures.
+.TP
+.B \-Q
+Use the GNU based system assembler.
+.SH "Assembler options for the PowerPC processors"
+.TP
+.B \-static_branch_prediction_Y_bit
+Treat a single trailing '+' or '-' after a conditional PowerPC branch
+instruction as a static branch prediction that sets the Y-bit in the
+opcode.  Pairs of trailing "++" or "--" always set the AT-bits. This is
+the default for Mac OS X.
+.TP
+.B \-static_branch_prediction_AT_bits
+Treat a single trailing '+' or '-' after a conditional PowerPC branch
+instruction as a static branch prediction that sets the AT-bits in the
+opcode. Pairs of trailing "++" or "--" always set the AT-bits but with
+this option a warning is issued if this syntax is used.  With this flag
+the assembler behaves like the IBM tools.
+.TP
+.B \-no_ppc601
+Treat any PowerPC 601 instructions as an error.
+.SH FILES
+a.out	output file
+.SH "SEE ALSO"
+The Mac OS X Assembler Reference in the Xcode documentation viewer: Perform a title search for "assembler" in Apple > Developer Tools Reference Library.
+.br
+The assembler source in the cctools module of the Darwin sources.
+.br
+cc(1), ld(1), nm(1), otool(1), arch(3), Mach-O(5)

@@ -1,0 +1,42 @@
+.TH NSObjectFileImage 3 "July 9, 2003" "Apple Computer, Inc."
+.SH NAME
+NSObjectFileImage_priv \- programmatic interface for working with Mach-O files
+.SH SYNOPSIS
+.nf
+.PP
+#include <mach-o/dyld_priv.h>
+.sp .5
+extern enum DYLD_BOOL
+NSFindSectionAndOffsetInObjectFileImage(
+	NSObjectFileImage objectFileImage,
+	unsigned long imageOffset,
+	const char** segmentName, 	/* can be NULL */
+	const char** sectionName, 	/* can be NULL */
+	unsigned long* sectionOffset)	/* can be NULL */
+.sp .5
+extern enum DYLD_BOOL
+NSHasModInitObjectFileImage(
+	NSObjectFileImage objectFileImage);
+.fi
+.SH DESCRIPTION
+.PP
+These routines are the programmatic interface for working with Mach-O files.
+They bring the Mach-O file into memory and the API allows the file to
+be inspected or loaded into the program.  On creation of an object file image
+it is checked to insure it is a valid format and it is compatible with the host
+machine's cpu architecture.
+.PP
+.PP
+.I NSFindSectionAndOffsetInObjectFileImage
+is supplied an imageOffset into an ObjectFileImage and returns
+via parameters the segment/section name and offset into that section of
+that imageOffset.  It returns FALSE if the imageOffset is not
+in any section, otherwise TRUE.  You can used the resulting sectionOffset to
+index into the data returned by NSGetSectionDataInObjectFileImage.
+.PP
+.I NSHasModInitObjectFileImage
+returns TRUE if the NSObjectFileImage has any module initialization routines
+and FALSE otherwise.
+
+.SH ALSO SEE
+NSObjectFileImage(3), NSModule(3), dyld(3)

@@ -1,0 +1,470 @@
+.TH LIBTOOL 1 "January 27, 2014" "Apple Inc."
+.SH NAME
+libtool \- create libraries
+.br
+ranlib \- add or update the table of contents of archive libraries
+.SH SYNOPSIS
+.B libtool
+.B \-static
+.BI \-o " output"
+[
+.B \-sacLTD
+]
+[
+.B \-
+]
+[
+.BI -arch_only " arch_type"
+]
+[
+.B \-no_warning_for_no_symbols
+]
+.IR file ...
+[-filelist listfile[,dirname]]
+.br
+.sp
+.B libtool
+.B \-dynamic
+.BI \-o " output"
+[
+.BI \-install_name " name"
+]
+[
+.BI \-compatibility_version " number"
+]
+[
+.BI \-current_version " number"
+]
+[
+.I "link editor flags"
+]
+[
+.B \-v
+]
+[
+.B \-noall_load
+]
+[
+.B \-
+]
+[
+.BI -arch_only " arch_type"
+]
+[
+.B \-V
+]
+.IR file ...
+[-filelist listfile[,dirname]]
+.br
+.sp
+.B ranlib
+[
+.B \-sactfqLT
+]
+[
+.B \-
+]
+.IR archive ...
+.SH DESCRIPTION
+The
+.I libtool
+command takes the specified input object files and creates a library for
+use with the link editor,
+.IR ld (1).
+The library's name is specified by
+.I output
+(the argument
+to the
+.B \-o
+flag).  The input object files may be
+in any correct format that contains object files (``universal'' files, archives,
+object files).
+.I Libtool
+will not put any non-object input file into the output library
+(unlike
+.IR ranlib ,
+which allows this in the archives it operates on).
+.PP
+When producing a ``universal'' file from objects of the same CPU type and
+differing CPU subtypes,
+.I libtool
+and
+.I ranlib
+create at most one library for each CPU type, rather than a separate library in
+a universal file for each of the unique pairings of CPU type and CPU subtype.
+Thus, the resulting CPU subtype for each library is the _ALL CPU subtype for
+that CPU type.  This strategy strongly encourages the implementor of a library
+to create one library that chooses optimum code to run at run time, rather than
+at link time.
+.PP
+.I Libtool
+can create either dynamically linked shared libraries, with
+.B \-dynamic,
+or statically linked (archive) libraries, with
+.B \-static.
+.SH "DYNAMICALLY LINKED SHARED LIBRARIES"
+.PP
+Dynamically linked libraries, unlike statically linked libraries, are Mach-O format
+files and not
+.IR ar (5)
+format files.
+Dynamically linked libraries have two restrictions: No symbol may be defined
+in more than one object file and no common symbol can be used.
+To maximize sharing of a dynamically linked shared library the objects should
+be compiled with the
+.B \-dynamic
+flag of
+.IR cc (1)
+to produce indirect undefined references and position-independent code.
+To build a dynamically linked library,
+.IR libtool ,
+runs the link editor,
+.IR ld (1),
+with
+.B \-dylib
+once for each architecture present in the input objects and then
+.IR lipo (1)
+to create a universal file if needed.
+.SH "ARCHIVE (or statically linked) LIBRARIES"
+.PP
+.I Libtool
+with
+.B \-static
+is intended to replace
+.IR ar (5)
+and
+.IR ranlib .
+For backward compatibility,
+.I ranlib
+is still available, and it
+supports universal files.
+.I Ranlib
+adds or updates the table of contents to each
+.I archive
+so it can be linked by the link editor,
+.IR ld (1).
+The table of contents is an archive member at the beginning of the archive that
+indicates which symbols are defined in which library members.
+Because
+.I ranlib
+rewrites the archive, sufficient temporary file space must
+be available in the file system that contains the current directory.
+.I Ranlib
+takes all correct forms of libraries (universal files containing archives, and
+simple archives) and updates the table of contents for all archives in the file.
+.I Ranlib
+also takes one common incorrect form of archive, an archive whose members are
+universal object files, adding or updating the table of contents and producing
+the library in correct form (a universal file containing multiple archives).
+.PP
+The archive member name for a table of contents begins with
+.SM ``\_\^\_.SYMDEF''.
+Currently, there are two types of table of contents produced by
+.IB libtool " \-static"
+and
+.I ranlib
+and understood by the link editor,
+.IR ld (1).
+These are explained below, under the
+.B \-s
+and
+.B \-a
+options.
+.\" OPTIONS
+.SH OPTIONS
+.PP
+The following options pertain to
+.I libtool
+only.
+.TP
+.BI @ file
+Arguments beginning with
+.B @
+are replaced by arguments read from the specified
+.I file,
+as an alternative to listing those arguments on the command line. The files
+simply contain libtool options and files separated by whitespace: spaces, tabs,
+and newlines. Characters can be escaped with a backslash (\\), including
+whitespace characters and other backslashes. Also, arguments that include
+whitespace can be enclosed, wholly or in part, by single- or double-quote
+charcters. These files may contain
+.I @file
+references to additional files, although libtool will error on include cycles.
+If a file cannot be found, the original
+.I @file
+argument will remain in the argument list.
+.TP
+.B \-static
+Produce a statically linked (archive) library from the input files.
+This is the default.
+.TP
+.B \-dynamic
+Produce a dynamically linked shared library from the input files.
+.TP
+.BI \-install_name " name"
+For a dynamic shared library, this specifies the file
+.I name
+the library will be installed in for programs that use it.  If this is not
+specified the name specified by the
+.BI \-o " output"
+option will be used.
+.TP
+.BI \-compatibility_version " number"
+For a dynamic shared library, this specifies the compatibility version number
+of the library.  When a library is used the compatibility version is checked
+and if the user's version is greater that the library's version, an error message is printed and the using program exits.
+The format of
+.I number
+is
+.I X[.Y[.Z]]
+where
+.I X
+must be a positive non-zero number less than or equal to 65535, and
+.I .Y
+and
+.I .Z
+are optional and if present must be non-negative numbers less than or
+equal to 255.
+If this is not specified then it has a
+value of 0 and no checking is done when the library is used.
+.TP
+.BI \-current_version " number"
+For dynamic shared library files this specifies the current version number
+of the library.  The program using the library can obtain the
+current version of the library programmatically to determine exactly
+which version of the library it is using.
+The format of
+.I number
+is
+.I X[.Y[.Z]]
+where
+.I X
+must be a positive non-zero number less than or equal to 65535, and
+.I .Y
+and
+.I .Z
+are optional and if present must be non-negative numbers less than or
+equal to 255.
+If this is not specified then it has a
+value of 0.
+.TP
+.B \-noall_load
+For dynamic shared library files this specifies the the default behavior of
+loading all members of archives on the command line is not to be done.  This
+option is used by the GNU compiler driver,
+.IR cc (1),
+when used with it's
+.B -dynamiclib
+option.  This is done to allow selective loading of the GNU's compiler's runtime
+support library, libcc_dynamic.a .
+.TP
+.I "link editor flags"
+For a dynamic shared library the following
+.IR ld (1)
+flags are accepted and passed through:
+.BI \-l x,
+.BI \-weak-l x,
+.B \-search_paths_first
+.B \-weak_library,
+.BI \-L dir,
+.BI \-y sym,
+.BI \-u sym,
+.BI \-init sym,
+.BI \-i definition:indirect,
+.B \-seg1addr,
+.B \-segs_read_only_addr,
+.B \-segs_read_write_addr,
+.B \-seg_addr_table,
+.B \-seg_addr_table_filename,
+.B \-segprot,
+.B \-segalign,
+.B \-sectcreate,
+.B \-sectorder,
+.B \-sectorder_detail,
+.B \-sectalign,
+.B \-undefined,
+.B \-read_only_relocs,
+.B \-prebind,
+.B \-prebind_all_twolevel_modules,
+.B \-prebind_allow_overlap,
+.B \-noprebind,
+.B \-framework,
+.B \-weak_framework,
+.B \-umbrella,
+.B \-allowable_client,
+.B \-sub_umbrella,
+.B \-sub_library,
+.B \-F,
+.B \-U,
+.B \-Y,
+.B \-Sn,
+.B \-Si,
+.B \-Sp,
+.B \-S,
+.B \-X,
+.B \-x,
+.B \-whyload,
+.B \-all_load.
+.B \-arch_errors_fatal,
+.B \-dylib_file,
+.B \-run_init_lazily,
+.B \-final_output,
+.B \-macosx_version_min,
+.B \-multiply_defined,
+.B \-multiply_defined_unused,
+.B \-twolevel_namespace,
+.B \-twolevel_namespace_hints,
+.B \-flat_namespace,
+.B \-nomultidefs,
+.B \-headerpad,
+.B \-headerpad_max_install_names,
+.B \-weak_reference_mismatches,
+.B \-M,
+.B \-t,
+.B \-no_arch_warnings,
+.B \-single_module,
+.B \-multi_module,
+.B \-exported_symbols_list,
+.B \-unexported_symbols_list,
+.B \-m,
+.B \-dead_strip,
+.B \-no_dead_strip_inits_and_terms,
+.B \-executable_path,
+.B \-syslibroot,
+.B \-no_uuid.
+See the
+.IR ld (1)
+man page for details on these flags.
+The flag
+.B \-image_base
+is a synonym for
+.B \-seg1addr.
+.TP
+.B \-v
+Verbose mode, which prints the
+.IR ld (1)
+commands and
+.IR lipo (1)
+commands executed.
+.TP
+.B \-V
+Print the version of libtool.
+.TP
+.BI \-filelist " listfile[,dirname]"
+The
+.I listfile
+contains a list of file names and is an alternative way of specifiying file
+names on the command line.   The file names are listed one per line separated
+only by newlines (spaces and tabs are assumed to be part of the file name).
+If the optional directory name,
+.I dirname
+is specified then it is prepended to each name in the list file.
+.TP
+.BI \-arch_only " arch_type"
+This option causes libtool to build a library only for the specified
+.I arch_type
+and ignores all other architectures in the input files.  When building a
+dynamic library, if this is specified with a specific cpusubtype other than the
+family cpusubtype then libtool it does not use the
+.IR ld (1)
+.B \-force_cpusubtype_ALL
+flag and passes the
+.B \-arch_only
+argument to
+.IR ld (1)
+as the
+.B \-arch
+flag so that the output is tagged with that cpusubtype.
+.PP
+The following options pertain to the table of contents for an archive library,
+and apply to both
+.IB libtool " \-static"
+and
+.I ranlib:
+.TP
+.B \-s
+Produce the preferred type of table of contents, which results in faster link
+editing when linking with the archive.  The order of the table of contents is
+sorted by symbol name.  The library member name of this type of table of
+contents is
+.SM ``\_\^\_.SYMDEF SORTED''.
+This type of table of contents can only be produced when the library does not
+have multiple members that define the same symbol.  This is the default.
+.TP
+.B \-a
+Produce the original type of table of contents, whose order is based on the order
+of the members in the archive.  The library member name of this type of table of
+contents is
+.SM ``\_\^\_.SYMDEF''.
+This type of table of contents must be used when the library has
+multiple members that define the same symbol.
+.TP
+.B \-c
+Include common symbols as definitions with respect to the table of contents.
+This is seldom the intended behavior for linking from a library,
+as it forces the linking of a library member just because it uses an
+uninitialized global that is undefined at that point in the linking.  This option is
+included only because this was the original behavior of
+.I ranlib.
+This option is not the default.
+.TP
+.B \-L
+Use the 4.4bsd archive extended format #1, which allows archive member names to
+be longer than 16 characters and have spaces in their names.  This option is
+the default.
+.TP
+.B \-T
+Truncate archive member names to 16 characters and don't use the 4.4bsd extended
+format #1.  This option is not the default.
+.TP
+.B \-f
+Warns when the output archive is universal and
+.IR ar (1)
+will no longer be able to operate on it.
+.TP
+.B \-q
+Do nothing if a universal file would be created.
+.TP
+.B \-D
+When building a static library, set archive contents' user ids, group ids,
+dates, and file modes to reasonable defaults. This allows libraries created
+with identical input to be identical to each other, regardless of time of day,
+user, group, umask, and other aspects of the environment.
+.PP
+For compatibility, the following
+.I ranlib
+option is accepted (but ignored):
+.TP
+.B \-t
+This option used to request that
+.I ranlib
+only ``touch'' the archives instead of modifying them.
+The option is now ignored, and the table of contents is rebuilt.
+.PP
+One other option applies to both
+.I libtool
+and
+.IR ranlib :
+.TP
+.B \-
+Treat all remaining arguments as names of files (or archives) and not as
+options.
+.TP
+.B \-no_warning_for_no_symbols
+Don't warn about file that have no symbols.
+.SH "SEE ALSO"
+ld(1), ar(1), otool(1), make(1), redo_prebinding(1), ar(5)
+.SH BUGS
+With the way libraries used to be created, errors were possible if the library
+was modified with
+.IR ar (1)
+and the table of contents was not updated by rerunning
+.IR ranlib (1).
+So previously the link editor,
+.IR ld (1),
+generated an error when the modification date of a library was more recent than
+the creation date of its table of contents.  Unfortunately, this meant that
+you got the error even if you only copy the library.  Since this error was
+found to be too much of a nuisance it was removed.  So now it is possible
+again to get link errors if the library is modified and the table of contents is
+not updated.

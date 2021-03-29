@@ -1,0 +1,215 @@
+.TH OTOOL-CLASSIC 1 "June 22, 2017" "Apple Inc."
+.\#  NAME
+.SH NAME
+otool-classic \- object file displaying tool
+.SH SYNOPSIS
+.B otool
+[
+.I "option \&..."
+] [
+.I "file \&..."
+]
+.\#  DESCRIPTION
+.SH DESCRIPTION
+The
+.I otool-classic
+command displays specified parts of object files or libraries.  It is now
+obsolete and the command line shim,
+.IR otool (1)
+executes
+.IR llvm-obdump (1)
+as the default tool.
+.PP
+If the
+.B \-m
+option is not used the file
+arguments may be of the form
+.IR "libx.a(foo.o)" ,
+to request information about only that object file and not
+the entire library.   (Typically this argument must be quoted,
+.I ``libx.a(foo.o)'',
+to get it past the shell.)
+.I  Otool-classic
+understands both Mach-O (Mach object) files and universal file formats.
+.I  Otool-classic
+can display the specified information in either its raw (numeric) form
+(without the
+.B \-v
+flag), or in a symbolic form using macro names of constants, etc. (with the
+.B \-v
+or
+.B \-V
+flag).
+.PP
+At least one of the following options must be specified:
+.TP
+.B \-a
+Display the archive header, if the file is an archive.
+.TP
+.B \-S
+Display the contents of the `\_\^\_.SYMDEF' file, if the file is an archive.
+.TP
+.B \-f
+Display the universal headers.
+.TP
+.B \-h
+Display the Mach header.
+.TP
+.B \-l
+Display the load commands.
+.TP
+.B \-L
+Display the names and version numbers of the shared libraries that the object
+file uses, as well as the shared library ID if the file is a shared library.
+.TP
+.B \-D
+Display just the install name of a shared library.  See
+.IR install_name_tool (1)
+for more info.
+.TP
+.BI \-s " segname sectname"
+Display the contents of the section
+.RI ( segname,sectname ).
+If the
+.B \-v
+flag is specified, the section is displayed as its type, unless the type is
+zero (the section header flags).  Also the sections
+(\_\^\_OBJC,\_\^\_protocol),
+(\_\^\_OBJC,__string_object) and (\_\^\_OBJC,\_\^\_runtime_setup) are displayed
+symbolically if the
+.B \-v
+flag is specified.
+.TP
+.B \-t
+Display the contents of the (\_\^\_TEXT,\_\^\_text) section.  With the
+.B \-v
+flag, this disassembles the text.  With the
+.B \-V
+flag, it also symbolically disassembles the operands.
+.TP
+.B \-x
+Display the contents of every \_\^\_text section found in the file. This is
+useful when looking at the Mach kernel and other files with \_\^\_text sections
+in more than one segment, or where the \_\^\_text section is somewhere other
+than \_\^\_TEXT. When used with the
+.B \-v
+flag, this disassembles the text. When used with the
+.B \-V
+flag, it also symbolically disassembles the operands.
+.TP
+.B \-d
+Display the contents of the (\_\^\_DATA,\_\^\_data) section.
+.TP
+.B \-o
+Display the contents of the \_\^\_OBJC segment used by the Objective-C run-time
+system.
+.TP
+.B \-r
+Display the relocation entries.
+.TP
+.B \-c
+Display the argument strings (argv[] and envp[]) from a core file.
+.TP
+.B \-I
+Display the indirect symbol table.
+.TP
+.B \-T
+Display the table of contents for a dynamically linked shared library.
+.TP
+.B \-R
+Display the reference table of a dynamically linked shared library.
+.TP
+.B \-M
+Display the module table of a dynamically linked shared library.
+.TP
+.B \-H
+Display the two-level namespace hints table.
+.TP
+.B \-G
+Display the data in code table.
+.TP
+.B \-C
+Display the linker optimization hints (-v for verbose mode can also be added).
+.TP
+.B \-P
+Print the info plist section, (\_\^\_TEXT,\_\^\_info\_plist), as strings.
+.PP
+The following options may also be given:
+.TP
+.BI "\-p " name
+Used with the
+.B \-t
+and
+.B \-v
+or
+.B \-V
+options to start the disassembly from symbol
+.I name
+and continue to the end of the (\_\^\_TEXT,\_\^\_text) section. This option
+can also be used with the
+.B \-x
+option to begin disassembly from symbol
+.I name
+in any segment where a \_\^\_text section is found.
+.TP
+.B \-v
+Display verbosely (symbolically) when possible.
+.TP
+.B \-V
+Display the disassembled operands symbolically (this implies the
+.B \-v
+option).  This is useful with the
+.B \-t
+and
+.B \-x
+options.
+.TP
+.B \-X
+Don't print leading addresses or headers with disassembly of sections.
+.TP
+.B \-q
+Use the llvm disassembler when doing disassembly; this is available for the x86
+and arm architectures.  This is the default.
+.TP
+.BI \-mcpu= arg
+When doing disassembly using the llvm disassembler use the cpu
+.I arg.
+.TP
+.B \-function_offsets
+When doing disassembly print the decimal offset from the last label printed.
+.TP
+.B \-j
+When doing disassembly print the opcode bytes of the instructions.
+.TP
+.B \-Q
+Use
+.IR otool-classic (1)'s
+disassembler when doing disassembly.
+.TP
+.BI \-arch " arch_type"
+Specifies the architecture,
+.I arch_type,
+of the file for
+.IR otool-classic (1)
+to operate on when the file is a universal file (aka a file with multiple
+architectures).  (See
+.IR arch (3)
+for the currently known
+.IR arch_type s.)
+The
+.I arch_type
+can be "all" to operate on all architectures in the file.
+The default is to display only the host architecture, if the file contains it;
+otherwise, all architectures in the file are shown.
+.TP
+.B \-m
+The object file names are not assumed to be in the archive(member) syntax,
+which allows file names containing parenthesis.
+.TP
+.B \-\-version
+Print the
+.IR otool-classic (1)
+version information.
+.\#  "SEE ALSO"
+.SH "SEE ALSO"
+llvm-otool(1), install_name_tool(1), dyld(1) and libtool(1)

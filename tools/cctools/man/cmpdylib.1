@@ -1,0 +1,62 @@
+.TH CMPDYLIB 1 "November 3, 1997" "Apple Computer, Inc."
+.SH NAME
+cmpdylib \- compare two dynamic shared libraries for compatibility
+.SH SYNOPSIS
+.B cmpdylib
+.I oldLibrary
+.I newLibrary
+.SH DESCRIPTION
+.B cmpdylib
+compares two versions of a dynamic shared library to see if they are compatible
+with each other. If the two versions are incompatible, the reason is printed to
+stdout, and the exit status is nonzero. If they are compatible, nothing is
+printed, and the exit status is zero.
+.PP
+To see if the two versions are compatible,
+.B cmpdylib
+first verifies that
+.I newLibrary
+was built for all of the architectures that
+.I oldLibrary
+was built for. If so, for each architecture, it checks to see if the global
+symbols defined in
+.I oldLibrary
+are still defined in
+.I newLibrary.
+It then looks for new symbols, symbols defined in
+.I newLibrary
+that are not defined in
+.I oldLibrary.
+If it finds new symbols, it compares the compatibility version numbers of
+the two libraries.  If the compatibility version number of
+.I newLibrary
+is greater than
+.IR oldLibrary ,
+the libraries are still compatible.
+If the compatibility version number is the same or less, the
+libraries are incompatible.
+.SH OPTIONS
+.TP
+.I oldLibrary
+The older version of the library.
+.TP
+.I newLibrary
+The newer version of the library.
+.SH EXAMPLES
+This example shows the result of performing
+.B cmpdylib
+on two incompatible versions of the Foundation library. As stated, the versions
+are incompatible because the newer version was not built for the ppc
+architecture.
+.PP
+cmpdylib /System/Library/Frameworks/Foundation.framework/Foundation Foundation_proj/Foundation
+.br
+cmpdylib: file: Foundation_proj/Foundation does not contain architecture: ppc
+.br
+cmpdylib: new dynamic shared library: Foundation_proj/Foundation  does not contain architecture ppc
+.SH DIAGNOSTICS
+The exit status is zero if the library versions are compatible and nonzero if they are incompatible.
+.SH BUGS
+There are lots of other things that could be checked for that
+are not (such as the Objective C API).
+

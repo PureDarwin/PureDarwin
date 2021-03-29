@@ -1,26 +1,38 @@
 find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(LibXml2 REQUIRED)
 
-externalproject_add(xar_host.extproj
-    PREFIX ${CMAKE_CURRENT_BINARY_DIR}
-    GIT_REPOSITORY https://github.com/tpoechtrager/xar
-    GIT_TAG origin/master
-
-    CONFIGURE_COMMAND
-        env CFLAGS=-w CC=clang CPPFLAGS=-I${OPENSSL_ROOT_DIR}/include LDFLAGS=-L${OPENSSL_ROOT_DIR}/lib
-            <SOURCE_DIR>/xar/configure --prefix=${PUREDARWIN_TOOLS_DIR}
-    BUILD_COMMAND make
-    INSTALL_COMMAND make install
-    UPDATE_COMMAND ""
-    USES_TERMINAL_CONFIGURE TRUE
-    USES_TERMINAL_BUILD TRUE
-    USES_TERMINAL_INSTALL TRUE
+add_library(host_libxar STATIC)
+target_sources(host_libxar PRIVATE
+    lib/archive.c
+    lib/arcmod.c
+    lib/b64.c
+    lib/bzxar.c
+    lib/darwinattr.c
+    lib/data.c
+    lib/ea.c
+    lib/err.c
+    lib/ext2.c
+    lib/fbsdattr.c
+    lib/filetree.c
+    lib/hash.c
+    lib/io.c
+    lib/linuxattr.c
+    lib/lzmaxar.c
+    lib/macho.c
+    lib/script.c
+    lib/signature.c
+    lib/stat.c
+    lib/subdoc.c
+    lib/util.c
+    lib/zxar.c
 )
+target_include_directories(host_libxar PUBLIC include)
+target_include_directories(host_libxar PRIVATE ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(host_libxar PRIVATE -lz -lxml2)
 
-add_executable(xar_host IMPORTED)
-add_dependencies(xar_host xar_host.extproj)
-set_property(TARGET xar_host PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/bin/xar)
-
-add_library(libxar_host IMPORTED STATIC)
-add_dependencies(libxar_host xar_host.extproj)
-set_property(TARGET libxar_host PROPERTY IMPORTED_LOCATION ${PUREDARWIN_TOOLS_DIR}/lib/libxar.a)
-target_include_directories(libxar_host INTERFACE ${PUREDARWIN_TOOLS_DIR}/include)
+add_executable(host_xar)
+target_sources(host_xar PRIVATE
+    src/xar.c
+)
+target_link_libraries(host_xar PRIVATE host_libxar OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)

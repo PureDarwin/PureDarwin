@@ -1,0 +1,415 @@
+.TH LLVM-OTOOL 1 "July 31, 2018" "Apple Inc."
+.\" NAME
+.SH NAME
+llvm-otool \- the otool-compatible command line parser for llvm-objdump
+.\" SYNOPSIS
+.SH SYNOPSIS
+.B llvm-otool
+[
+.I "option \&..."
+] [
+.I "file \&..."
+]
+.\" DESCRIPTION
+.SH DESCRIPTION
+The command line shim
+.I llvm-otool
+takes all the same options as the original
+.IR otool (1)
+command and executes an equivalent
+.IR objdump (1)
+command.  Its use is to ease the change over
+of the original use of
+.IR otool (1)
+to the llvm based open source
+.IR objdump (1)
+command with the similar functionality.
+.PP
+The original implementation of
+.IR otool (1)
+can now be found as
+.IR otool-classic (1)
+and typically will be run by using "xcrun otool-classic".
+.TP
+.B \-show-objdump-command
+Print the
+.IR objdump (1)
+command that
+.IR llvm-otool (1)
+will execute.
+.\" "NOTES FOR SPECIFIC OPTIONS"
+.SH "NOTES FOR SPECIFIC OPTIONS"
+.TP
+.B \-l
+This always implies the
+.B \-h
+option, as the
+.IR objdump (1)
+option
+.B \-private-headers
+prints both the mach header and load commands.
+.TP
+.B \-S
+To display the contents of the `\_\^\_.SYMDEF' archive file, use
+.IR llvm-nm (1)
+with the
+.B \-print-armap
+option.
+.\" "GENERAL NOTES"
+.SH "GENERAL NOTES"
+Many of the older options in
+.IR otool(1)
+are obsolete as they print parts of the object file that are no longer in use.
+When used with
+.IR llvm-otool (1)
+a line is printed that states the option and the functionality is obsolete.  If
+no valid equivalent options are given then usage message from
+.IR objdump (1)
+will be printed when executed.
+.PP
+The archive member syntax of arguments of the form
+.IR "libx.a(foo.o)" ,
+is not supported.  Which is the same as if the
+.B \-m
+option is always used.
+.PP
+When doing disassembly the default is to not print the opcode bytes of the
+instructions even for 32-bit ARM.  To get the opcode bytes printed for ARM
+the
+.IR otool (1)
+option
+.B \-j
+needs to be used.
+.PP
+There are some white space differences in the output of the
+.IR otool (1)
+and
+.IR objdump (1)
+commands in some cases.  As the
+.IR objdump (1)
+command is not meant to produce the exact same output as
+.IR otool (1)
+in all cases where the functionality is very similar.
+.\" "SPECIFIC TRANSLATIONS OF OPTIONS"
+.SH "SPECIFIC TRANSLATIONS OF OPTIONS"
+Below is the list of
+.IR otool (1)
+options and the specific
+.IR objdump (1)
+option to print the same information.
+To use these options with
+.IR objdump (1)
+the
+.B \-macho
+option must be used.
+The default for
+.IR objdump (1)
+is as if the verbose,
+.B \-v
+option is always used.  To get the non-verbose output the
+.IR objdump (1)
+.B \-non-verbose
+option is used.
+.TP
+.B \-a
+The
+.IR objdump (1)
+.B \-archive-headers
+will print the archive header, if the file is an archive.  To get the offsets
+to the archive headers that would be printed with the
+.IR otool (1)
+.B \-aV
+options, the
+.IR objdump (1)
+.B \-archive-member-offsets
+can be added.
+.TP
+.B \-S
+There is no
+.IR objdump (1)
+option to display  the contents of the `\_\^\_.SYMDEF' file, if the file is an
+archive.  For that use
+.IR llvm-nm (1)
+with the
+.B \-print-armap
+option.
+.TP
+.B \-f
+The
+.IR objdump (1)
+option to display the universal headers is
+.BR \-universal-headers .
+.TP
+.B \-h
+The
+.IR objdump (1)
+option to display the Mach header is
+.BR \-private-header .
+.TP
+.B \-l
+The
+.IR objdump (1)
+option to display the load commands is
+.B \-private-headers
+which also always displays the Mach header.
+.TP
+.B \-L
+The
+.IR objdump (1)
+option to display the names and version numbers of the shared libraries that
+the object file uses, as well as the shared library ID if the file is a shared
+library is
+.BR \-dylibs-used .
+.TP
+.B \-D
+The
+.IR objdump (1)
+option to display just the install name of a shared library is
+.BR \-dylib-id .
+.TP
+.BI \-s " segname sectname"
+The
+.IR objdump (1)
+option to display the contents of the section
+.RI ( segname,sectname )
+is
+.BI \-section " [segname,]sectname"
+where the
+.I segname
+is optional and all segments will be searched for a matching
+.IR sectname .
+.TP
+.B \-t
+The
+.IR objdump (1)
+option to display the contents of the (\_\^\_TEXT,\_\^\_text) section is to use
+the
+.BI \-section " \_\^\_TEXT,\_\^\_text"
+option.  If disassembly is wanted as with the
+.B \-tv
+.IR otool (1)
+options then the
+.IR objdump (1)
+.B \-disassemble
+is used.  By default
+.IR objdump (1)
+also symbolically disassembles the operands as the
+.IR otool (1)
+.B \-tV
+options will do.  If this is not wanted then the
+.IR objdump (1)
+.B \-no-symbolic-operands
+option can be used.
+.TP
+.B \-x
+The
+.IR objdump (1)
+option to display the contents of every \_\^\_text section defined in a Mach-O
+file is
+.BI \-section " ,\_\^\_text" .
+Note that an empty segment name means all segments. If disassembly is wanted as
+with the
+.B \-xv
+.IR otool (1)
+options then
+.IR objdump (1)
+.B \-disassemble-all
+is used.  By default
+.IR objdump (1)
+also symbolically disassembles the operands as the
+.IR otool (1)
+.B \-xV
+options will do.  If this is not wanted then the
+.IR objdump (1)
+.B \-no-symbolic-operands
+option can be used.
+.TP
+.B \-d
+The
+.IR objdump (1)
+option to display the contents of the (\_\^\_DATA,\_\^\_data) section is to use
+the
+.BI \-section " \_\^\_DATA,\_\^\_data"
+option.
+.TP
+.B \-o
+The
+.IR objdump (1)
+option to display the contents of the \_\^\_OBJC segment used by the
+Objective-C run-time system is
+.BR \-objc-meta-data .
+.TP
+.B \-r
+The
+.IR objdump (1)
+option to display the relocation entries is
+.BR \-r .
+Note that the default relocation entry format is different between
+.IR objdump (1)
+and
+.IR otool (1).
+When
+.BR \-r
+is combined with the
+.BR \-macho
+option,
+.IR objdump (1)
+will display the relocation entries in the classic
+.IR otool (1)
+format.
+.TP
+.B \-I
+The
+.IR objdump (1)
+option to display the indirect symbol table is
+.BR \-indirect-symbols .
+.TP
+.B \-G
+The
+.IR objdump (1)
+option to display the data in code table is
+.BR \-data-in-code .
+.TP
+.B \-C
+The
+.IR objdump (1)
+option to display the linker optimization hints is
+.BR \-link-opt-hints .
+.TP
+.B \-P
+The
+.IR objdump (1)
+option to print the info plist section, (\_\^\_TEXT,\_\^\_info\_plist), as
+strings is
+.BR \-info-plist .
+.TP
+.BI "\-p " name
+The
+.IR objdump (1)
+option to start the disassembly from symbol
+.I name
+is
+.BI \-dis-symname " name".
+.TP
+.B \-v
+For
+.IR objdump (1)
+verbose output is the default and to get the non-verbose the option
+.BR \-non-verbose
+is used.
+.TP
+.B \-V
+For
+.IR objdump (1)
+displaying the disassembled operands symbolically is the default and to get
+non-symbolic operands with disassembly the option
+.BR \-no-symbolic-operands
+is used.
+.TP
+.B \-X
+The
+.IR objdump (1)
+option to not print leading addresses or headers with disassembly of sections is
+.BR \-no-leading-addr .
+.TP
+.BI \-mcpu= arg
+The
+.IR objdump (1)
+option when doing disassembly using the llvm disassembler to use the cpu
+.I arg.
+is the same
+.BI \-mcpu= arg
+option.
+.TP
+.BI \-arch " arch_type"
+The
+.IR objdump (1)
+options to specifies the architectures to operate on are the same
+.BI \-arch " arch_type"
+options.
+.TP
+.B \-j
+The
+.IR objdump (1)
+prints the opcode bytes of the instructions when doing disassembly by
+default and is turned off with the option
+.BR \-no-show-raw-insn .
+.TP
+.B \-\-version
+The
+.IR objdump (1)
+option to display the
+.IR llvm-otool (1)
+version information and the
+.IR objdump (1)
+version information is
+.BR \-version
+(with one leading dash).
+.SH "OBSOLETE OPTIONS"
+.TP
+.B \-c
+There is no
+.IR objdump (1)
+option to display the argument strings (argv[] and envp[]) from a core file.
+.TP
+.B \-T
+There is no
+.IR objdump (1)
+option to display the table of contents for a dynamically linked shared library,
+as this table is obsolete and no longer produced by the tools.
+.TP
+.B \-R
+There is no
+.IR objdump (1)
+option to display the reference table of a dynamically linked shared library,
+as this table is obsolete and no longer produced by the tools.
+.TP
+.B \-M
+There is no
+.IR objdump (1)
+option to display the module table of a dynamically linked shared library,
+as this table is obsolete and no longer produced by the tools.
+.TP
+.B \-H
+There is no
+.IR objdump (1)
+option to display the two-level namespace hints table,
+as this table is obsolete and no longer produced by the tools.
+.TP
+.B \-i
+There is no
+.IR objdump (1)
+option to display the shared library initialization table,
+as this table is obsolete and no longer produced by the tools.
+.TP
+.B \-q
+There is no
+.IR objdump (1)
+option to use the llvm disassembler when doing disassembly as this is the
+default.
+.TP
+.B \-Q
+There is no
+.IR objdump (1)
+option to use the
+.IR otool (1)
+disassembler when doing disassembly as only the llvm disassembler is used.
+.TP
+.B \-function_offsets
+There is no
+.IR objdump (1)
+option when doing disassembly to print the decimal offset from the last label
+printed.
+.TP
+.B \-m
+There is no
+.IR objdump (1)
+option to not assume to the
+.I archive(member)
+syntax as that is the default.  And the
+.I archive(member)
+syntax is not supported as file arguments with
+.IR objdump (1).
+.SH "SEE ALSO"
+.IR otool-classic (1),
+.IR llvm-objdump (1)

@@ -1,0 +1,58 @@
+.TH INDR 1 "July 28, 2005" "Apple Computer, Inc."
+.SH NAME
+indr \- add indirection to symbols in object files
+.SH SYNOPSIS
+.B indr
+[\-n] [[\-arch arch_type] ...] list input output
+.sp .5
+.B indr
+[\-n] [[\-arch_indr arch_type list] ...] input output
+.SH DESCRIPTION
+.I Indr
+builds the output file,
+.I output,
+by translating each symbol name listed in the file
+.I list
+to the same name with and underbar prepended to it in all the
+objects in the input file,
+.I input.
+This is used in building the ANSI C library and ``hiding'' non-ANSI C library
+symbols that are used by the ANSI C routines.
+The input file can be either and object file or an archive and the output
+file will be the same type as the input file.
+Then it if the input file is an archive and the
+.B \-n
+flag is not specified then it creates an object for each of these
+symbols with an indirect symbol (n_type == N_INDR) for the symbol name with an
+underbar and adds that to the output archive.
+.PP
+Some or all of the following options may be specified:
+.TP
+.B \-n
+Suppress creating the indirect objects when the output file is an archive.
+This is assumed when the output file is an object file.
+.TP
+.BI \-arch " arch_type"
+Specifies the architecture,
+.I arch_type,
+of the file for
+.IR indr (1)
+to process when the file is a universal file (see
+.IR arch (3)
+for the currently know
+.IR arch_type s).
+The
+.I arch_type
+can be
+.I all
+to process all architectures in the file.
+The default is to process only the host architecture if that is contained in
+the file if not and only one architecture is present in the file then it is
+processed.  In all other cases the architecture(s) to process must be specified
+with this flag.
+.TP
+.BI \-arch " arch_type list"
+Same as above but specifies the list of symbol that applys only to this
+architecture.
+.SH SEE ALSO
+Mach-O(5), arch(3)

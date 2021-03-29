@@ -1,0 +1,69 @@
+.TH SEGEDIT 1 "June 25, 2018" "Apple, Inc."
+.SH NAME
+segedit \- extract and replace sections from object files
+.SH SYNOPSIS
+\fBsegedit\fR \fIinput_file\fR [\fB-extract\fR \fIseg_name\fR \fIsect_name\fR
+\fIdata_file\fR] ...
+.br
+\fBsegedit\fR \fIinput_file\fR [\fB-replace\fR \fIseg_name\fR \fIsect_name\fR
+\fIdata_file\fR] ... \fB-output\fR \fIoutput_file\fR
+.br
+.SH DESCRIPTION
+.B segedit
+extracts or replaces named sections from the \fIinput_file\fR. When extracting
+sections,
+.B segedit
+will write the contents of each requested section into \fIdata_file\fR. When
+replacing sections,
+.B segedit
+will write a new \fIoutput_file\fR formed from the \fIinput_file\fR and the
+requested replacement section content from \fIdata_file\fR. The segment and
+section names are the same as those given to
+.BR ld (1)
+with the
+.I \-sectcreate
+option.  The segment and section names of an object file can be examined with
+the
+.I \-l
+option to
+.BR otool (1).
+Only sections in segments that have no relocation to or from them (i.e., segments
+marked with the
+.SM SG_NORELOC
+flag) can be replaced but all sections can be extracted.
+.PP
+The options to
+.BR segedit (1):
+.TP
+.BI \-extract " seg_name sect_name data_file"
+Extracts each section specified by the segment and section names and places
+the contents in the specified \fIdata_file\fR.
+.TP
+.BI \-replace " seg_name sect_name data_file"
+Replaces each section specified by the segment and section names and takes the
+new section content from the specified \fIdata_file\fR. The
+.BI \-output " output_file"
+option must also be specified. The resulting size of the section will be rounded
+to a multiple of 4 bytes and padded with zero bytes if necessary.
+.TP
+.BI \-output " output_file"
+Specifies the new file to create when replacing sections.
+.SH "SEE ALSO"
+ld(1), otool(1), lipo(1)
+.SH "LIMITATIONS"
+Only Mach-O format files that are laid out in a contiguous address space
+and with their segments in increasing address order can have their segments
+replaced by this program.  This layout is what
+.BR ld (1)
+produces by default.
+.PP
+Only sections in segments that have no relocation to or from them (i.e., segments
+marked with the
+.SM SG_NORELOC
+flag) can be replaced.
+.PP
+.B segedit
+will not extract or replace sections from universal files. If necessary, use
+.BR lipo (1)
+to extract the desired Mach-O files from a universal file before running
+.B segedit.

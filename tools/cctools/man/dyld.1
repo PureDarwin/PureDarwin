@@ -1,0 +1,236 @@
+.TH DYLD 1 "July 24, 2002" "Apple Computer, Inc."
+.SH NAME
+dyld \- the dynamic link editor
+.SH SYNOPSIS
+DYLD_FRAMEWORK_PATH
+.br
+DYLD_FALLBACK_FRAMEWORK_PATH
+.br
+DYLD_LIBRARY_PATH
+.br
+DYLD_FALLBACK_LIBRARY_PATH
+.br
+DYLD_INSERT_LIBRARIES
+.br
+DYLD_FORCE_FLAT_NAMESPACE
+.br
+DYLD_IMAGE_SUFFIX
+.br
+DYLD_PRINT_LIBRARIES
+.br
+DYLD_PRINT_LIBRARIES_POST_LAUNCH
+.br
+DYLD_EBADEXEC_ONLY
+.br
+DYLD_BIND_AT_LAUNCH
+.br
+DYLD_DEAD_LOCK_HANG
+.br
+DYLD_PREBIND_DEBUG
+.br
+DYLD_ABORT_MULTIPLE_INITS
+.br
+DYLD_NEW_LOCAL_SHARED_REGIONS
+.br
+DYLD_NO_FIX_PREBINDING
+.br
+DYLD_TRACE
+.SH DESCRIPTION
+The dynamic linker uses the following environment variables.
+They affect any program that uses the dynamic linker.
+.TP
+.B DYLD_FRAMEWORK_PATH
+This is a colon separated list of directories that contain frameworks.
+The dynamic linker searches these directories before it searches for the
+framework by its install name.
+It allows you to test new versions of existing
+frameworks. (A framework is a library install name that ends in the form
+XXX.framework/Versions/YYY/XXX or XXX.framework/XXX, where XXX and YYY are any
+name.)
+.IP
+For each framework that a program uses, the dynamic linker looks for the
+framework in each directory in
+.SM DYLD_FRAMEWORK_PATH
+in turn. If it looks in all the directories and can't find the framework, it
+searches the directories in
+.SM DYLD_LIBRARY_PATH
+in turn. If it still can't find the framework, it then searches
+.SM DYLD_FALLBACK_FRAMEWORK_PATH
+and
+.SM DYLD_FALLBACK_LIBRARY_PATH
+in turn.
+.IP
+Use the
+.B \-L
+option to
+.IR otool (1).
+to discover the frameworks and shared libraries that the executable
+is linked against.
+.TP
+.B DYLD_FALLBACK_FRAMEWORK_PATH
+This is a colon separated list of directories that contain frameworks.
+It is used as the default location for frameworks not found in their install
+path.
+
+By default, it is set to
+$(HOME)/Library/Frameworks:/Library/Frameworks:/Network/Library/Frameworks:
+/System/Library/Frameworks
+.TP
+.B DYLD_LIBRARY_PATH
+This is a colon separated list of directories that contain libraries. The
+dynamic linker searches these directories before it searches the default
+locations for libraries. It allows you to test new versions of existing
+libraries.
+.IP
+For each library that a program uses, the dynamic linker looks for it in each
+directory in
+.SM DYLD_LIBRARY_PATH
+in turn. If it still can't find the library, it then searches
+.SM DYLD_FALLBACK_FRAMEWORK_PATH
+and
+.SM DYLD_FALLBACK_LIBRARY_PATH
+in turn.
+.IP
+Use the
+.B \-L
+option to
+.IR otool (1).
+to discover the frameworks and shared libraries that the executable
+is linked against.
+.TP
+.B DYLD_FALLBACK_LIBRARY_PATH
+This is a colon separated list of directories that contain libraries.
+It is used as the default location for libraries not found in their install
+path.
+By default, it is set
+to $(HOME)/lib:/usr/local/lib:/lib:/usr/lib.
+.TP
+.B DYLD_INSERT_LIBRARIES
+This is a colon separated list of dynamic libraries to load before the ones
+specified in the program.  This lets you test new modules of existing dynamic
+shared libraries that are used in flat-namespace images by loading a temporary
+dynamic shared library with just the new modules.  Note that this has no
+effect on images built a two-level namespace images using a dynamic shared
+library unless
+.SM DYLD_FORCE_FLAT_NAMESPACE
+is also used.
+.TP
+.B DYLD_FORCE_FLAT_NAMESPACE
+Force all images in the program to be linked as flat-namespace images and ignore
+any two-level namespace bindings.  This may cause programs to fail to execute
+with a multiply defined symbol error if two-level namespace images are used to
+allow the images to have multiply defined symbols.
+.TP
+.B DYLD_IMAGE_SUFFIX
+This is set to a string of a suffix to try to be used for all shared libraries
+used by the program.  For libraries ending in ".dylib" the suffix is applied
+just before the ".dylib".  For all other libraries the suffix is appended to the
+library name.  This is useful for using conventional "_profile" and "_debug"
+libraries and frameworks.
+.TP
+.B DYLD_PRINT_LIBRARIES
+When this is set, the dynamic linker writes to file descriptor 2 (normally
+standard error) the filenames of the libraries the program is using.
+This is useful to make sure that the use of
+.SM DYLD_LIBRARY_PATH
+is getting what you want.
+.TP
+.B DYLD_PRINT_LIBRARIES_POST_LAUNCH
+This does the same as
+.SM DYLD_PRINT_LIBRARIES
+but the printing starts after the program gets to its entry point.
+.TP
+.B DYLD_EBADEXEC_ONLY
+When this is set, the dynamic linker does all of the work needed
+to launch a program without launching it.
+This either prints the cause why the program could not be launched or prints
+a message saying the program could be launched.
+This variable can be used a supplement to the program
+.IR ebadexec (1)
+to determine why a program can't be launched.
+For programs that should not have any undefined symbols when launched the
+.SM DYLD_BIND_AT_LAUNCH
+can also be set to check this.
+.TP
+.B DYLD_BIND_AT_LAUNCH
+When this is set, the dynamic linker binds all undefined symbols
+the program needs at launch time. This includes function symbols that can are normally lazily bound at the time of their first call.
+.TP
+.B DYLD_DEAD_LOCK_HANG
+When this is set, the dynamic linker enters a loop that hangs
+the program if a thread doing a dynamic linker operation attempts to start
+another dynamic linker operation before completing the first.
+This lets you attach a debugger to the process instead of letting the process
+exit.
+.TP
+.B DYLD_PREBIND_DEBUG
+When this is set, the dynamic linker prints diagnostics about
+launching prebound programs and libraries. This lets you determine why a
+program is not being launched prebound.
+You can view the recorded library time stamps with the
+.B \-Lv
+option to
+.IR otool (1).
+.TP
+.B DYLD_ABORT_MULTIPLE_INITS
+When this is set, the dynamic linker causes the program to abort when multiple
+library initialization routines are being run which can happen if code called
+via a library initialization routine makes a call to a dyld API. Then under the
+debugger it is easy to do a back trace and find the code that is making the
+call to a dyld API via code called from a library initialization routine
+.PP
+For secure programs that are UNIX set uid or set gid, the dynamic linker will
+not use the dyld environment variables for path searching and library insertion,
+unless the program is run as the real user.  For secure programs, the dynamic
+linker clears out the value of the dyld path and insertion environment
+variables.  This is so that if a program is
+.IR exec (2)'ed
+from a secure program too will not have it's libraries searched for, as well.
+For statically linked secure programs that
+.IR exec (2)
+other programs that might use the dynamic linker, they too should clear out the
+values of the dyld path and insertion environment variables.
+.TP
+.B DYLD_NEW_LOCAL_SHARED_REGIONS
+When set, the dynamic linker directs the system to provide a new set of shared
+regions as the repository for library load requests for dynamic libraries
+built with
+.SM MH_SPLIT_SEGS
+(split shared libraries).
+
+Split shared libraries reside in a defined contiguous region of address space
+in all dynamic linker runtime processes.  This space is backed by named regions
+or sub-maps.  These sub-maps are owned by the system and items which are to
+mapped into them must be mapped via the
+.IR load_shared_file (2)
+call.  The use of
+sub-maps promotes a high degree of system resource sharing between the
+processes which incorporate and use them.  However, some processes require
+either additional or different libraries to be loaded into the shared region.
+While there is some space available within the shared region for alternate and
+new shared libraries, it is inappropriate to use that area for temporary or
+private libraries.  Setting the
+.SM DYLD_NEW_LOCAL_SHARED_REGIONS
+flag will cause
+all children of the current process to have their own set of sub-maps.  In this
+way the libraries found in the children's submaps will not be caused to be
+present in the submaps shared by the rest of the system.
+
+.SM DYLD_NEW_LOCAL_SHARED_REGIONS
+should be set by anyone wishing to run
+non-standard or temporary split shared libraries by setting an explicit path to
+point to them.  i.e. by using the DYLD_LIBRARY_PATH environment variable
+instead of changing the root by executing a
+.IR chroot (2)
+call.
+.TP
+.B DYLD_TRACE
+Cause dyld to put tracing information in the kernel trace buffer for its
+operations.
+.TP
+.B DYLD_NO_FIX_PREBINDING
+Causes dyld not to run /usr/bin/fix_prebinding on executables that are launched
+which had prebinding information that could not be used for the launch.
+
+.SH "SEE ALSO"
+libtool(1), ld(1), otool(1), redo_prebinding(1)

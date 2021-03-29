@@ -1,19 +1,8 @@
-externalproject_add(cctools_host.extproj
-    PREFIX ${CMAKE_CURRENT_BINARY_DIR}
-    GIT_REPOSITORY https://github.com/tpoechtrager/cctools-port
-    GIT_TAG origin/949.0.1-ld64-530
-    CONFIGURE_COMMAND
-        <SOURCE_DIR>/cctools/configure --prefix=${PUREDARWIN_TOOLS_DIR}
-            --target=x86_64-apple-darwin20 --with-libxar=${PUREDARWIN_TOOLS_DIR}
-            --enable-xar-support
-    BUILD_COMMAND make
-    INSTALL_COMMAND make install
-    UPDATE_COMMAND ""
-    USES_TERMINAL_CONFIGURE TRUE
-    USES_TERMINAL_BUILD TRUE
-    USES_TERMINAL_INSTALL TRUE
-)
-add_dependencies(cctools_host.extproj xar_host.extproj)
+add_subdirectory(libmacho)
+add_subdirectory(libstuff)
+add_subdirectory(misc)
+# add_subdirectory(otool) # disabled - doesn't build
+add_subdirectory(ld64/src)
 
 add_executable(darwin_ld IMPORTED GLOBAL)
 add_dependencies(darwin_ld cctools_host.extproj)
