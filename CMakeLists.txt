@@ -12,6 +12,7 @@ include(ExternalProject)
 include(scripts/cmake/crosscompile.cmake)
 include(scripts/cmake/install_helpers.cmake)
 include(scripts/cmake/mig.cmake)
+include(scripts/cmake/preprocess_file.cmake)
 
 add_subdirectory(projects)
 add_subdirectory(tools)
