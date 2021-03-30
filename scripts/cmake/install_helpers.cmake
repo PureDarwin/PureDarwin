@@ -24,17 +24,29 @@ function(install_symlink source_path target)
 endfunction()
 
 function(install_manpage source)
-    get_filename_component(source_base ${source} NAME)
-    get_filename_component(cat ${source} LAST_EXT)
-    string(REGEX REPLACE "^\.(.)" "\\1" cat ${cat})
+    cmake_parse_arguments(MAN "DEVELOPER" "DIRECTORY" "SYMLINKS" ${ARGN})
 
-    if(cat STREQUAL "")
-        message(SEND_ERROR "Cannot determine section for manpage ${source_base}")
+    if(NOT MAN_DIRECTORY)
+        get_filename_component(source_base ${source} NAME)
+        get_filename_component(cat ${source} LAST_EXT)
+        string(REGEX REPLACE "^\.(.)" "\\1" cat ${cat})
+
+        if(cat STREQUAL "")
+            message(SEND_ERROR "Cannot determine section for manpage ${source_base}")
+        endif()
+
+        set(MAN_DIRECTORY man${cat})
     endif()
 
-    install(FILES ${source} DESTINATION usr/share/man/man${cat} COMPONENT DeveloperTools)
+    if(MAN_DEVELOPER)
+        set(component DeveloperTools)
+    else()
+        set(component BaseSystem)
+    endif()
 
-    foreach(alias ${ARGN})
-        install_symlink(usr/share/man/man${cat}/${alias} ${source_base} COMPONENT DeveloperTools)
+    install(FILES ${source} DESTINATION usr/share/man/${MAN_DIRECTORY} COMPONENT ${component})
+
+    foreach(alias ${MAN_SYMLINKS})
+        install_symlink(usr/share/man/${MAN_DIRECTORY}/${alias} ${source_base} COMPONENT ${component})
     endforeach()
 endfunction()
