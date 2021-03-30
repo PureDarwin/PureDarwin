@@ -69,7 +69,7 @@ set prog=$0
 set prog=$prog:t
 set nonomatch
 set OBJDIR=../BUILD
-set SOURCEDIR=.
+set SOURCEDIR=@XNU_PROJECT_ROOT@
 set CONFIG_PATH=@CONFIG_PATH@
 set MASTER_CONF_DIR=.
 
@@ -282,9 +282,9 @@ part != 0 {\
 # kernel binaries are put).
 #
     echo 'builddir	"."'			>> $SYSCONF.new
-    echo 'objectdir	"'$OBJDIR'"'		>> $SYSCONF.new
-    set SRCDIR=`dirname $SOURCE`
-    echo 'sourcedir	"'$SRCROOT'"'		>> $SYSCONF.new
+    echo 'objectdir	"."'		>> $SYSCONF.new
+    set SRCDIR=`dirname $SOURCEDIR`
+    echo 'sourcedir	"'$SOURCEDIR'"'		>> $SYSCONF.new
     if (-f $SYSCONF) then
 	diff $SYSCONF $SYSCONF.new
 	rm -f $SYSCONF.old
