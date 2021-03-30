@@ -1,0 +1,7 @@
+add_subdirectory(config)
+add_subdirectory(decomment)
+add_subdirectory(installfile)
+add_subdirectory(json_compilation_db)
+add_subdirectory(kextsymboltool)
+add_subdirectory(replacecontents)
+add_subdirectory(setsegname)

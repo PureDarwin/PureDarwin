@@ -1,0 +1,2 @@
+add_executable(xnu_kextsymboltool)
+target_sources(xnu_kextsymboltool PRIVATE kextsymboltool.c)

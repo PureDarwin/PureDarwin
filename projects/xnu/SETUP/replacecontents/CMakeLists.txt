@@ -1,0 +1,2 @@
+add_executable(xnu_replacecontents)
+target_sources(xnu_replacecontents PRIVATE replacecontents.c)

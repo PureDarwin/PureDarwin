@@ -1,0 +1,2 @@
+add_executable(xnu_json_compilation_db)
+target_sources(xnu_json_compilation_db PRIVATE json_compilation_db.c)

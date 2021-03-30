@@ -1,3 +1,13 @@
+add_subdirectory(SETUP)
+
+
+
+
+
+
+
+
+#[[
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
 externalproject_add(xnu_headers.extproj
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_build
@@ -66,3 +76,4 @@ externalproject_add(xnu
     USES_TERMINAL_BUILD TRUE
 )
 add_dependencies(xnu xnu_headers libfirehose_kernel)
+]]#
