@@ -78,17 +78,18 @@ function(install_xnu_headers)
 
     foreach(file IN LISTS INSTALL_FILES)
         get_filename_component(file_abs ${file} ABSOLUTE)
+        get_filename_component(filename ${file} NAME)
         add_custom_command(
-            OUTPUT ${out_base}/${INSTALL_SUBDIRECTORY}/${file}
+            OUTPUT ${out_base}/${INSTALL_SUBDIRECTORY}/${filename}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${out_base}/${INSTALL_SUBDIRECTORY}
-            COMMAND host_unifdef ${unifdef_args} -o ${out_base}/${INSTALL_SUBDIRECTORY}/${file} ${file_abs}
+            COMMAND host_unifdef ${unifdef_args} -o ${out_base}/${INSTALL_SUBDIRECTORY}/${filename} ${file_abs}
             DEPENDS ${file_abs} host_unifdef
             COMMENT "Copy ${INSTALL_SUBDIRECTORY}/${file}" VERBATIM
         )
-        target_sources(${INSTALL_TARGET_NAME} PRIVATE ${out_base}/${INSTALL_SUBDIRECTORY}/${file})
+        target_sources(${INSTALL_TARGET_NAME} PRIVATE ${out_base}/${INSTALL_SUBDIRECTORY}/${filename})
 
         if(NOT install_dir STREQUAL "")
-            install(FILES ${out_base}/${INSTALL_SUBDIRECTORY}/${file} DESTINATION ${install_dir} COMPONENT DeveloperTools)
+            install(FILES ${out_base}/${INSTALL_SUBDIRECTORY}/${filename} DESTINATION ${install_dir} COMPONENT DeveloperTools)
         endif()
     endforeach()
 
