@@ -26,3 +26,12 @@ add_custom_command(
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/lexer.l
     COMMENT "Lex lexer.l" VERBATIM
 )
+
+
+
+preprocess_file(doconf.in ${CMAKE_CURRENT_BINARY_DIR}/doconf
+    CONFIG_PATH=$<TARGET_FILE:xnu_config_tool>
+)
+add_executable(xnu_doconf IMPORTED GLOBAL)
+set_property(TARGET xnu_doconf PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/doconf)
+add_dependencies(xnu_doconf ${CMAKE_CURRENT_BINARY_DIR}/doconf)
