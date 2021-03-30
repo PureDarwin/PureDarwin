@@ -19,6 +19,7 @@ function(install_xnu_headers)
         target_sources(${INSTALL_TARGET_NAME} PRIVATE ${XNU_SOURCE_DIR}/SETUP/empty.c)
     endif()
 
+    set(install_dir "")
     set(unifdef_args)
     list(APPEND unifdef_args
         -UMACH_KERNEL_PRIVATE
