@@ -1,12 +1,24 @@
 function(xnu_run_doconf name)
     add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/config/Makefile
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/Makefile
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/config
         COMMAND xnu_doconf -c -cpu x86_64 -platform x86_64 -platform MacOSX -soc "" -d ${CMAKE_CURRENT_BINARY_DIR}/config -s ${CMAKE_CURRENT_SOURCE_DIR} -m ${PUREDARWIN_SOURCE_DIR}/projects/xnu/config RELEASE
         DEPENDS xnu_doconf COMMENT "xnu_doconf ${name}" VERBATIM
     )
 
-    add_custom_target(xnu.doconf_${name} DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/config/Makefile)
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h
+        COMMAND ${CMAKE_COMMAND} -E env INPUT=${CMAKE_CURRENT_BINARY_DIR}/Makefile OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h ${PUREDARWIN_SOURCE_DIR}/projects/xnu/SETUP/makefile_to_prefix.sh
+        DEPENDS ${PUREDARWIN_SOURCE_DIR}/projects/xnu/SETUP/makefile_to_prefix.sh ${CMAKE_CURRENT_BINARY_DIR}/Makefile
+        COMMENT "Generate ${name} config-prefix.h" VERBATIM
+    )
+
+    add_custom_target(xnu.doconf_${name} DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/Makefile ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
+
+    add_library(xnu.${name}_conf INTERFACE)
+    target_include_directories(xnu.${name}_conf INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
+    target_compile_options(xnu.${name}_conf INTERFACE -include ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
+    add_dependencies(xnu.${name}_conf xnu.doconf_${name})
 endfunction()
 
 add_subdirectory(SETUP)
