@@ -1,7 +1,5 @@
 add_subdirectory(SETUP)
 
-add_subdirectory(bsd)
-
 add_library(xnu_headers INTERFACE)
 target_include_directories(xnu_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/user)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/user)
@@ -15,8 +13,10 @@ target_include_directories(xnu_kernel_headers INTERFACE ${CMAKE_CURRENT_BINARY_D
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/kernel)
 
 add_library(xnu_kernel_private_headers INTERFACE)
-target_include_directories(xnu_kernel_privateheaders INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/kernel_private)
+target_include_directories(xnu_kernel_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/kernel_private)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/kernel_private)
+
+add_subdirectory(bsd)
 
 
 
