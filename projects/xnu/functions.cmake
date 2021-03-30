@@ -72,7 +72,7 @@ function(install_xnu_headers)
             -DKERNEL_PRIVATE -DKERNEL -DPRIVATE -UDRIVERKIT -U_OPEN_SOURCE_ -U__OPEN_SOURCE__
         )
     else()
-        message(SEND_ERROR "Invalid PROJECT value ${INSTALL_DESTINATION}")
+        message(SEND_ERROR "Invalid DESTINATION value ${INSTALL_DESTINATION}")
         return()
     endif()
 
