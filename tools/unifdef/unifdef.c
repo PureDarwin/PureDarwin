@@ -573,7 +573,6 @@ flushline(bool keep)
 	} else {
 		if (lnblank && fputs(newline, output) == EOF)
 			closeout();
-		exitstat = 1;
 		delcount += 1;
 		blankcount = 0;
 	}
