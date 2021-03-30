@@ -1,0 +1,7 @@
+add_subdirectory(bindfs)
+add_subdirectory(devfs)
+add_subdirectory(fifofs)
+add_subdirectory(nullfs)
+add_subdirectory(routefs)
+add_subdirectory(specfs)
+add_subdirectory(union)
