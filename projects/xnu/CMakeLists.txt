@@ -1,4 +1,16 @@
+function(xnu_run_doconf name)
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/config/Makefile
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/config
+        COMMAND xnu_doconf -c -cpu x86_64 -platform x86_64 -platform MacOSX -soc "" -d ${CMAKE_CURRENT_BINARY_DIR}/config -s ${CMAKE_CURRENT_SOURCE_DIR} -m ${PUREDARWIN_SOURCE_DIR}/projects/xnu/config RELEASE
+        DEPENDS xnu_doconf COMMENT "xnu_doconf ${name}" VERBATIM
+    )
+
+    add_custom_target(xnu.doconf_${name} DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/config/Makefile)
+endfunction()
+
 add_subdirectory(SETUP)
+add_subdirectory(bsd)
 
 
 
