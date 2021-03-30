@@ -1,20 +1,21 @@
+include(./functions.cmake)
 add_subdirectory(SETUP)
 
 add_library(xnu_headers INTERFACE)
-target_include_directories(xnu_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/user)
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/user)
+target_include_directories(xnu_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include/user)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/user)
 
 add_library(xnu_private_headers INTERFACE)
-target_include_directories(xnu_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/user_private)
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/user_private)
+target_include_directories(xnu_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include/user_private)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/user_private)
 
 add_library(xnu_kernel_headers INTERFACE)
-target_include_directories(xnu_kernel_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/kernel)
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/kernel)
+target_include_directories(xnu_kernel_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include/kernel)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/kernel)
 
 add_library(xnu_kernel_private_headers INTERFACE)
-target_include_directories(xnu_kernel_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/kernel_private)
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/kernel_private)
+target_include_directories(xnu_kernel_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include/kernel_private)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/kernel_private)
 
 add_subdirectory(bsd)
 
