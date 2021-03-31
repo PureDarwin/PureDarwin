@@ -4,7 +4,7 @@ install_xnu_headers(TARGET_NAME xnu.headers.bsd_devfs DESTINATION user SUBDIRECT
 install_xnu_headers(TARGET_NAME xnu.headers.bsd_devfs DESTINATION user_private SUBDIRECTORY miscfs/devfs FILES
     devfs.h
     devfs_proto.h
-    defsdefs.h
+    devfsdefs.h
     fdesc.h
 )
 install_xnu_headers(TARGET_NAME xnu.headers.bsd_devfs DESTINATION kernel SUBDIRECTORY miscfs/devfs FILES
@@ -13,5 +13,5 @@ install_xnu_headers(TARGET_NAME xnu.headers.bsd_devfs DESTINATION kernel SUBDIRE
 install_xnu_headers(TARGET_NAME xnu.headers.bsd_devfs DESTINATION kernel_private SUBDIRECTORY miscfs/devfs FILES
     devfs.h
     devfs_proto.h
-    defsdefs.h
+    devfsdefs.h
 )
