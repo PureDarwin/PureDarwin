@@ -15,4 +15,4 @@ add_custom_command(
 add_library(xnu.bsd_conf INTERFACE)
 target_include_directories(xnu.bsd_conf INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_options(xnu.bsd_conf INTERFACE -include ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
-add_dependencies(xnu.bsd_conf ${CMAKE_CURRENT_BINARY_DIR}/Makefile ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
+target_sources(xnu.bsd_conf PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
