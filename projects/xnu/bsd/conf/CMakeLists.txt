@@ -1,5 +1,10 @@
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/Makefile
+        ${CMAKE_CURRENT_BINARY_DIR}/systrace_args.c
+        ${CMAKE_CURRENT_BINARY_DIR}/audit_kevents.c
+        ${CMAKE_CURRENT_BINARY_DIR}/init_sysent.c
+        ${CMAKE_CURRENT_BINARY_DIR}/syscalls.c
+        ${CMAKE_CURRENT_BINARY_DIR}/ioconf.c
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/config
     COMMAND xnu_doconf -c -cpu x86_64 -platform x86_64 -platform MacOSX -soc "" -d ${CMAKE_CURRENT_BINARY_DIR}/config -s ${CMAKE_CURRENT_SOURCE_DIR} -m ${PUREDARWIN_SOURCE_DIR}/projects/xnu/config RELEASE
     DEPENDS xnu_doconf COMMENT "Run xnu_doconf for bsd component" VERBATIM
@@ -16,3 +21,13 @@ add_library(xnu.bsd_conf INTERFACE)
 target_include_directories(xnu.bsd_conf INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_options(xnu.bsd_conf INTERFACE -include ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
 target_sources(xnu.bsd_conf PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
+
+add_library(xnu.bsd_conf_source OBJECT)
+target_sources(xnu.bsd_conf_source PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}/ioconf.c
+    ${CMAKE_CURRENT_BINARY_DIR}/systrace_args.c
+    ${CMAKE_CURRENT_BINARY_DIR}/audit_kevents.c
+    ${CMAKE_CURRENT_BINARY_DIR}/init_sysent.c
+    ${CMAKE_CURRENT_BINARY_DIR}/syscalls.c
+)
+add_dependencies(xnu.bsd_conf_source xnu.bsd_conf)
