@@ -18,6 +18,7 @@ target_include_directories(xnu_kernel_private_headers INTERFACE ${CMAKE_CURRENT_
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/kernel_private)
 
 add_subdirectory(bsd)
+add_subdirectory(libkern)
 
 
 
