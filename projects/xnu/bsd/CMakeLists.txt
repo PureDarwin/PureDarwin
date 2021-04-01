@@ -21,7 +21,7 @@ add_subdirectory(uuid)
 add_subdirectory(vfs)
 add_subdirectory(vm)
 
-add_library(xnu.bsd_module OBJECT)
+add_darwin_object_library(xnu.bsd_module)
 target_sources(xnu.bsd_module PRIVATE
     # This list was generated from the Makefile output in the conf/ subdirectory.
     # Unfortunately, in CMake all sources must be known at configuration time.
@@ -420,5 +420,6 @@ target_sources(xnu.bsd_module PRIVATE
 )
 target_link_libraries(xnu.bsd_module PRIVATE xnu_kernel_headers xnu_kernel_private_headers xnu.ptrauth)
 target_include_directories(xnu.bsd_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk)
-target_compile_options(xnu.bsd_module PRIVATE -include ${XNU_SOURCE_DIR}/libkern/os/base.h)
+target_compile_definitions(xnu.bsd_module PRIVATE APPLE KERNEL KERNEL_PRIVATE XNU_KERNEL_PRIVATE PRIVATE __MACHO__=1 volatile=__volatile XNU_KERN_EVENT_DATA_IS_VLA XNU_TARGET_OS_OSX)
+target_compile_options(xnu.bsd_module PRIVATE -mmacosx-version-min=11.0)
 add_dependencies(xnu.bsd_module xnu.bsd_conf)
