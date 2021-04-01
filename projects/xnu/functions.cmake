@@ -15,8 +15,7 @@ function(install_xnu_headers)
     endif()
 
     if(NOT TARGET ${INSTALL_TARGET_NAME})
-        add_darwin_static_library(${INSTALL_TARGET_NAME})
-        target_sources(${INSTALL_TARGET_NAME} PRIVATE ${XNU_SOURCE_DIR}/SETUP/empty.c)
+        add_darwin_object_library(${INSTALL_TARGET_NAME})
     endif()
 
     set(install_dir "")
