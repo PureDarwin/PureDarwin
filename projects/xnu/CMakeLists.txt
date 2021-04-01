@@ -19,6 +19,8 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/kernel_private)
 
 add_subdirectory(bsd)
 add_subdirectory(libkern)
+add_subdirectory(osfmk)
+add_subdirectory(EXTERNAL_HEADERS)
 
 
 
