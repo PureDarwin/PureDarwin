@@ -34,7 +34,7 @@ typedef struct barrier {
 	pthread_mutex_t bar_lock;	/* protects bar_numin */
 	int bar_numin;			/* current number of waiters */
 
-	dispatch_semaphore_t *bar_sem;	/* where everyone waits */
+	dispatch_semaphore_t bar_sem;	/* where everyone waits */
 	int bar_nthr;			/* # of waiters to trigger release */
 } barrier_t;
 
