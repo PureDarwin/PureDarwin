@@ -53,6 +53,8 @@ install_xnu_headers(TARGET_NAME xnu.headers.bsd_sys DESTINATION kernel_private S
     signalvar.h stackshot.h tty.h ttychars.h ttydefaults.h ttydev.h user.h vfs_context.h vmmeter.h
     reason.h spawn_internal.h priv.h pgo.h memory_maintenance.h doc_tombstone.h fsevents.h
     work_interval.h kern_sysctl.h vsock_transport.h
+
+    ${CMAKE_CURRENT_BINARY_DIR}/sysproto.h
 )
 
 set(makesyscalls ${CMAKE_CURRENT_SOURCE_DIR}/../kern/makesyscalls.sh)
