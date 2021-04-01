@@ -33,6 +33,7 @@ preprocess_file(doconf.in ${CMAKE_CURRENT_BINARY_DIR}/doconf
     CONFIG_PATH=$<TARGET_FILE:xnu_config_tool>
     XNU_PROJECT_ROOT=${PUREDARWIN_SOURCE_DIR}/projects/xnu
 )
+add_custom_target(xnu_doconf_gen DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/doconf)
 add_executable(xnu_doconf IMPORTED GLOBAL)
 set_property(TARGET xnu_doconf PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/doconf)
-add_dependencies(xnu_doconf ${CMAKE_CURRENT_BINARY_DIR}/doconf)
+add_dependencies(xnu_doconf xnu_doconf_gen)
