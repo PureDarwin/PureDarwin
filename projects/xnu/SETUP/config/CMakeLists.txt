@@ -36,4 +36,4 @@ preprocess_file(doconf.in ${CMAKE_CURRENT_BINARY_DIR}/doconf
 add_custom_target(xnu_doconf_gen DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/doconf)
 add_executable(xnu_doconf IMPORTED GLOBAL)
 set_property(TARGET xnu_doconf PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/doconf)
-add_dependencies(xnu_doconf xnu_doconf_gen)
+add_dependencies(xnu_doconf xnu_doconf_gen xnu_config_tool)
