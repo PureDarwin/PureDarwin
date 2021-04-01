@@ -20,6 +20,8 @@ add_custom_command(
 add_library(xnu.bsd_conf INTERFACE)
 target_include_directories(xnu.bsd_conf INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_options(xnu.bsd_conf INTERFACE -include ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
+target_compile_options(xnu.bsd_conf INTERFACE -include ${CMAKE_CURRENT_BINARY_DIR}/meta_features.h)
+target_compile_definitions(xnu.bsd_conf INTERFACE DRIVER_PRIVATE _KERNEL_BUILD MACH_KERNEL BSD_BUILD BSD_KERNEL_PRIVATE LD64_DEBUG=0)
 target_sources(xnu.bsd_conf PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h)
 
 add_library(xnu.bsd_conf_source OBJECT)

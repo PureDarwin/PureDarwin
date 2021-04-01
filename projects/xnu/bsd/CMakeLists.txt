@@ -422,4 +422,10 @@ target_link_libraries(xnu.bsd_module PRIVATE xnu_kernel_headers xnu_kernel_priva
 target_include_directories(xnu.bsd_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk)
 target_compile_definitions(xnu.bsd_module PRIVATE APPLE KERNEL KERNEL_PRIVATE XNU_KERNEL_PRIVATE PRIVATE __MACHO__=1 volatile=__volatile XNU_KERN_EVENT_DATA_IS_VLA XNU_TARGET_OS_OSX PLATFORM_MacOSX)
 target_compile_options(xnu.bsd_module PRIVATE -mmacosx-version-min=11.0 -URC_ENABLE_XNU_PRODUCT_INFO_FILTER)
+target_compile_options(xnu.bsd_module PRIVATE
+    # From bsd/conf/Makefile.template
+    -Wno-address-of-packed-member -Wno-cast-align -Wno-cast-qual -Wno-format -Wno-format-extra-args
+    -Wno-format-invalid-specifier -Wno-implicit-int-conversion -Wno-shorten-64-to-32 -Wno-sign-compare
+    -Wno-sign-conversion
+)
 add_dependencies(xnu.bsd_module xnu.bsd_conf)
