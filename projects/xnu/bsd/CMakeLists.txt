@@ -418,14 +418,15 @@ target_sources(xnu.bsd_module PRIVATE
 
     $<TARGET_OBJECTS:xnu.bsd_conf>
 )
-target_link_libraries(xnu.bsd_module PRIVATE xnu_kernel_private_headers xnu_kernel_headers xnu.ptrauth xnu.extheaders)
-target_include_directories(xnu.bsd_module PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk)
-target_compile_definitions(xnu.bsd_module PRIVATE APPLE KERNEL KERNEL_PRIVATE XNU_KERNEL_PRIVATE PRIVATE __MACHO__=1 volatile=__volatile XNU_KERN_EVENT_DATA_IS_VLA XNU_TARGET_OS_OSX PLATFORM_MacOSX)
-target_compile_options(xnu.bsd_module PRIVATE -mmacosx-version-min=11.0 -URC_ENABLE_XNU_PRODUCT_INFO_FILTER)
+target_link_libraries(xnu.bsd_module PRIVATE xnu.ptrauth xnu.extheaders)
+target_include_directories(xnu.bsd_module PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(xnu.bsd_module PRIVATE ${XNU_SOURCE_DIR}/iokit ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk ${XNU_SOURCE_DIR}/osfmk/libsa ${XNU_SOURCE_DIR}/pexpert ${XNU_SOURCE_DIR})
+target_compile_definitions(xnu.bsd_module PRIVATE APPLE KERNEL KERNEL_BUILD KERNEL_PRIVATE BSD_KERNEL_PRIVATE XNU_KERNEL_PRIVATE __MACHO__=1 volatile=__volatile XNU_KERN_EVENT_DATA_IS_VLA XNU_TARGET_OS_OSX PLATFORM_MacOSX)
+target_compile_options(xnu.bsd_module PRIVATE -mmacosx-version-min=11.0 -URC_ENABLE_XNU_PRODUCT_INFO_FILTER -DPRIVATE)
 target_compile_options(xnu.bsd_module PRIVATE
     # From bsd/conf/Makefile.template
     -Wno-address-of-packed-member -Wno-cast-align -Wno-cast-qual -Wno-format -Wno-format-extra-args
     -Wno-format-invalid-specifier -Wno-implicit-int-conversion -Wno-shorten-64-to-32 -Wno-sign-compare
-    -Wno-sign-conversion
+    -Wno-sign-conversion -Wno-incompatible-library-redeclaration
 )
 add_dependencies(xnu.bsd_module xnu.bsd_conf)
