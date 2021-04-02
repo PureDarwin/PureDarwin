@@ -18,7 +18,7 @@ target_sources(xnu.bsd_conf PRIVATE
 )
 
 target_include_directories(xnu.bsd_conf PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(xnu.bsd_conf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(xnu.bsd_conf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR}/..)
 target_compile_options(xnu.bsd_conf PUBLIC "SHELL:-include ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h")
 target_compile_options(xnu.bsd_conf PUBLIC "SHELL:-include ${CMAKE_CURRENT_BINARY_DIR}/meta_features.h")
 target_compile_definitions(xnu.bsd_conf PUBLIC DRIVER_PRIVATE _KERNEL_BUILD MACH_KERNEL BSD_BUILD BSD_KERNEL_PRIVATE LD64_DEBUG=0)
