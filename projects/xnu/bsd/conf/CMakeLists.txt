@@ -1,9 +1,5 @@
 add_custom_command(
     OUTPUT
-        ${CMAKE_CURRENT_BINARY_DIR}/systrace_args.c
-        ${CMAKE_CURRENT_BINARY_DIR}/audit_kevents.c
-        ${CMAKE_CURRENT_BINARY_DIR}/init_sysent.c
-        ${CMAKE_CURRENT_BINARY_DIR}/syscalls.c
         ${CMAKE_CURRENT_BINARY_DIR}/ioconf.c
         ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/config
@@ -26,3 +22,22 @@ target_include_directories(xnu.bsd_conf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_compile_options(xnu.bsd_conf PUBLIC "SHELL:-include ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h")
 target_compile_options(xnu.bsd_conf PUBLIC "SHELL:-include ${CMAKE_CURRENT_BINARY_DIR}/meta_features.h")
 target_compile_definitions(xnu.bsd_conf PUBLIC DRIVER_PRIVATE _KERNEL_BUILD MACH_KERNEL BSD_BUILD BSD_KERNEL_PRIVATE LD64_DEBUG=0)
+
+set(makesyscalls ${XNU_SOURCE_DIR}/bsd/kern/makesyscalls.sh)
+set(syscalls_master ${XNU_SOURCE_DIR}/bsd/kern/syscalls.master)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/init_sysent.c
+    COMMAND ${makesyscalls} ${syscalls_master} table
+    COMMENT "Generate init_sysent.c" VERBATIM
+)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.c
+    COMMAND ${makesyscalls} ${syscalls_master} names
+    COMMENT "Generate syscalls.c" VERBATIM
+)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/audit_kevents.c
+    COMMAND ${makesyscalls} ${syscalls_master} audit
+    COMMENT "Generate audit_kevents.c" VERBATIM
+)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/systrace_args.c
+    COMMAND ${makesyscalls} ${syscalls_master} systrace
+    COMMENT "Generate systrace_args.c" VERBATIM
+)
