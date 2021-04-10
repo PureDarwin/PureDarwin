@@ -62,10 +62,10 @@ function(process_mig_source filename)
     add_custom_command(
         OUTPUT ${MIG_OUTPUTS}
         COMMAND
-            ${CMAKE_COMMAND} -E env MIGCOM=$<TARGET_FILE:migcom> $<TARGET_FILE:mig> -arch ${MIG_ARCH}
-                ${MIG_FLAGS} ${filename}
+            ${CMAKE_COMMAND} -E env MIGCOM=$<TARGET_FILE:migcom> ${CMAKE_SOURCE_DIR}/tools/mig/mig.sh
+                -arch ${MIG_ARCH} ${MIG_FLAGS} ${filename}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS mig migcom ${filename}
+        DEPENDS ${CMAKE_SOURCE_DIR}/tools/mig/mig.sh migcom ${filename}
         COMMENT "MiG ${filename}" VERBATIM
     )
 endfunction()
