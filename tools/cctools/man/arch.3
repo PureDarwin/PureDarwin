@@ -1,0 +1,189 @@
+.Dd June 8, 2016
+.Dt ARCH 3
+.Sh NAME
+.Nm NXGetAllArchInfos ,
+.Nm NXGetLocalArchInfo ,
+.Nm NXGetArchInfoFromName ,
+.Nm NXGetArchInfoFromCpuType ,
+.Nm NXFreeArchInfo ,
+.Nm NXFindBestFatArch ,
+.Nm NXCombineCpuSubtypes
+.Nd get architecture information
+.Sh SYNOPSIS
+.In mach-o/arch.h
+.Ft extern const NXArchInfo *
+.Fn NXGetAllArchInfos "void"
+.Ft extern const NXArchInfo *
+.Fn NXGetLocalArchInfo "void"
+.Ft extern const NXArchInfo *
+.Fn NXGetArchInfoFromName "const char *name"
+.Ft extern const NXArchInfo *
+.Fn NXGetArchInfoFromCpuType "cpu_type_t cputype" "cpu_subtype_t cpusubtype"
+.Ft extern void
+.Fn NXFreeArchInfo "NXArchInfo *x"
+.Ft extern struct fat_arch *
+.Fn NXFindBestFatArch "cpu_type_t cputype" "cpu_subtype_t cpusubtype" "struct fat_arch *fat_archs" "uint32_t nfat_archs"
+.Ft extern struct fat_arch_64 *
+.Fn NXFindBestFatArch_64 "cpu_type_t cputype" "cpu_subtype_t cpusubtype" "struct fat_arch_64 *fat_archs64" "uint32_t nfat_archs"
+.Ft extern cpu_subtype_t
+.Fn NXCombineCpuSubtypes "cpu_type_t cputype" "cpu_subtype_t cpusubtype1" "cpu_subtype_t cpusubtype2"
+.Sh DESCRIPTION
+These functions are intended for use in programs that have to deal with
+universal files or programs that can target multiple architectures.
+Typically, a program will use a command-line argument that starts with
+.Dq \-arch \fBname\fR ,
+where this specifies an architecture.
+These functions and data structures provide some help for processing
+architecture flags and then processing the contents of a universal file.
+.Pp
+The structure
+.Ar NXArchInfo
+is defined in
+.Aq Pa mach-o/arch.h :
+.Bd -literal -offset indent
+	typedef struct {
+		const char *name;
+		cpu_type_t cputype;
+		cpu_subtype_t cpusubtype;
+		enum NXByteOrder byteorder;
+		const char *description;
+	} NXArchInfo;
+.Ed
+It is used to hold the name of the architecture and the corresponding CPU type
+and CPU subtype, together with the architecture's byte order and a brief description string.
+.Pp
+The currently known architectures are:
+.Bl -column hppa7100LC CPU_TYPE_POWERPC64 CPU_SUBTYPE_MC68030_ONLY
+.It Em Name Ta Em "CPU Type" Ta Em "CPU Subtype" Ta Em Description
+.It x86_64 Ta CPU_TYPE_X86_64 Ta CPU_SUBTYPE_X86_64_ALL Ta Intel x86-64
+.It i386 Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_I386_ALL Ta Intel 80x86
+.It arm Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_ALL Ta ARM
+.It arm64 Ta CPU_TYPE_ARM64 Ta CPU_SUBTYPE_ARM64_ALL Ta ARM64
+.It arm64e Ta CPU_TYPE_ARM64 Ta CPU_SUBTYPE_ARM64E Ta ARM64E
+.It arm64_32 Ta CPU_TYPE_ARM64_32 Ta CPU_SUBTYPE_ARM64_32_V8 Ta ARM64_32
+.It ppc Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_ALL Ta PowerPC
+.It ppc64 Ta CPU_TYPE_POWERPC64 Ta CPU_SUBTYPE_POWERPC64_ALL Ta PowerPC 64-bit
+.It m68k Ta CPU_TYPE_MC680x0 Ta CPU_SUBTYPE_MC680x0_ALL Ta Motorola 68K
+.It hppa Ta CPU_TYPE_HPPA Ta CPU_SUBTYPE_HPPA_ALL Ta HP-PA
+.It i860 Ta CPU_TYPE_I860 Ta CPU_SUBTYPE_I860_ALL Ta Intel 860
+.It m88k Ta CPU_TYPE_MC88000 Ta CPU_SUBTYPE_MC88000_ALL Ta Motorola 88K
+.It sparc Ta CPU_TYPE_SPARC Ta CPU_SUBTYPE_SPARC_ALL Ta SPARC
+.It i486 Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_486 Ta Intel 486
+.It i486SX Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_486SX Ta Intel 486SX
+.It pentium Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_PENT Ta Intel Pentium
+.It i586 Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_586 Ta Intel 586
+.It pentpro Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_PENTPRO Ta Intel Pentium Pro
+.It i686 Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_PENTPRO Ta Intel Pentium Pro
+.It pentIIm3 Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_PENTII_M3 Ta Intel Pentium II Model 3
+.It pentIIm5 Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_PENTII_M5 Ta Intel Pentium II Model 5
+.It pentium4 Ta CPU_TYPE_I386 Ta CPU_SUBTYPE_PENTIUM_4 Ta Intel Pentium 4
+.It armv4t Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V4T Ta arm v4t
+.It armv5 Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V5TEJ Ta arm v5
+.It xscale Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_XSCALE Ta arm xscale
+.It armv6 Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V6 Ta arm v6
+.It armv6m Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V6M Ta arm v6m
+.It armv7 Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V7 Ta arm v7
+.It armv7f Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V7F Ta arm v7f
+.It armv7s Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V7S Ta arm v7s
+.It armv7k Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V7K Ta arm v7k
+.It armv7m Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V7M Ta arm v7m
+.It armv7em Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V7EM Ta arm v7em
+.It armv8 Ta CPU_TYPE_ARM Ta CPU_SUBTYPE_ARM_V8 Ta arm v8
+.It arm64 Ta CPU_TYPE_ARM64 Ta CPU_SUBTYPE_ARM64_V8 Ta arm64 v8
+.It ppc601 Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_601 Ta PowerPC 601
+.It ppc603 Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_603 Ta PowerPC 603
+.It ppc604 Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_604 Ta PowerPC 604
+.It ppc604e Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_604e Ta PowerPC 604e
+.It ppc750 Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_750 Ta PowerPC 750
+.It ppc7400 Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_7400 Ta PowerPC 7400
+.It ppc7450 Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_7450 Ta PowerPC 7450
+.It ppc970 Ta CPU_TYPE_POWERPC Ta CPU_SUBTYPE_POWERPC_970 Ta PowerPC 970
+.It m68030 Ta CPU_TYPE_MC680x0 Ta CPU_SUBTYPE_MC68030_ONLY Ta Motorola 68030
+.It m68040 Ta CPU_TYPE_MC680x0 Ta CPU_SUBTYPE_MC68040 Ta Motorola 68040
+.It hppa7100LC Ta CPU_TYPE_HPPA Ta CPU_SUBTYPE_HPPA_7100LC Ta HP-PA 7100LC
+.El
+.Pp
+The first set of entries are used for the architecture family.
+The second set of entries are used for a specific architecture, when more than
+one specific architecture is supported in a family of architectures.
+.Pp
+.Fn NXGetAllArchInfos
+returns a pointer to an array of all known
+NXArchInfo structures.  The last NXArchInfo is marked by a NULL name.
+.Pp
+.Fn NXGetLocalArchInfo
+returns the NXArchInfo for the local host, or NULL if none is known.
+.Pp
+.Fn NXGetArchInfoFromName
+and
+.Fn NXGetArchInfoFromCpuType
+return the NXArchInfo from the architecture's name or CPU type/CPU subtype
+combination.
+A CPU subtype of CPU_SUBTYPE_MULTIPLE can be used to request the most general
+NXArchInfo known for the given CPU type.
+NULL is returned if no matching NXArchInfo can be found.
+.Pp
+.Fn NXFreeArchInfo
+is passed a pointer to an NXArchInfo returned by the above interfaces and if
+not in the array returned in
+.Fn NXGetAllArchInfos
+will
+.Xr free 3
+the description field and then the NXArchInfo pointer.
+.Pp
+The above interfaces that return pointers to NXArchInfo structs in normal
+cases returns a pointer from the array returned in
+.Fn NXGetAllArchInfos .
+In some cases when the cputype is CPU_TYPE_I386 or CPU_TYPE_POWERPC it will
+return a malloc(3)'ed NXArchInfo struct which contains a string in the
+description field also a malloc(3)'ed pointer.  To allow programs not to
+leak memory they can call
+.Fn NXFreeArchInfo
+on pointers returned from the above interfaces.  Since this is a new API on
+older systems can use the code below.  Going forward the above interfaces will
+only return pointers from the array returned in
+.Fn NXGetAllArchInfos .
+.Bd -literal -offset indent
+static void NXFreeArchInfo(
+const NXArchInfo *x)
+{
+	const NXArchInfo *p;
+
+	p = NXGetAllArchInfos();
+	while(p->name != NULL){
+		if(x == p)
+			return;
+		p++;
+	}
+	free((char *)x->description);
+	free((NXArchInfo *)x);
+}
+.Ed
+.Pp
+.Fn NXFindBestFatArch
+is passed a CPU type and CPU subtype and a set of fat_arch structs.
+It selects the best one that matches (if any), and returns a pointer to that
+fat_arch struct (or NULL).
+The fat_arch structs must be in the host byte order and correct such that
+fat_archs really points to enough memory for nfat_archs structs.
+It is possible that this routine could fail if new CPU types or CPU subtypes
+are added and an old version of this routine is used.
+But if there is an exact match between the CPU type and CPU subtype and one of
+the fat_arch structs, this routine will always succeed.
+.Pp
+.Fn NXFindBestFatArch_64
+is the same as
+.Fn NXFindBestFatArch
+but returns and takes fat_arch_64 structs.
+.Pp
+.Fn NXCombineCpuSubtypes
+returns the resulting CPU subtype when combining two different CPU subtypes for
+the specified CPU type.
+If the two CPU subtypes can't be combined (the specific subtypes are mutually
+exclusive), -1 is returned, indicating it is an error to combine them.
+This can also fail and return -1 if new CPU types or CPU subtypes are added
+and an old version of this routine is used.
+But if the CPU subtypes are the same, they can always be combined and this
+routine will return the CPU subtype passed in.
+.Sh SEE ALSO
+.Xr arch 1

@@ -1,0 +1,177 @@
+.TH LIPO 1 "August 31, 2018" "Apple Computer, Inc."
+.SH NAME
+lipo \- create or operate on universal files
+.SH SYNOPSIS
+.B lipo
+.IR input_file
+.IR command
+.IR [option ...]
+.SH DESCRIPTION
+The
+.B lipo
+tool creates or operates on ``universal'' (multi-architecture) files. Generally,
+.B lipo
+reads a single input file and writes to a single output file, although some
+commands and options accept multiple input files.
+.B lipo
+will only ever write to a single output file, and input files are never
+modified in place.
+.PP
+.B lipo
+supports a number of commands for creating universal files from
+single-architecture files, extracting single-architecture files from universal
+files, and displaying architecture information.
+.B lipo
+can only perform one such command at a time, although some command flags may appear more than once. Some commands support additional options that can be
+used with that command. In addition, there are global options that are
+supported by multiple commands.
+.PP
+The
+.I arch_type
+arguments may be any of the supported architecture names listed in the man page
+.IR arch (3).
+.SH COMMANDS
+.TP
+.B \-archs
+Display only the architecture names present in a single input file. Each
+architecture name is a single word, making this option suitable for shell
+scripting. Unknown architectures will be represented by "unknown" along with
+the numeric CPU type and CPU subtype values as a single word.
+.TP
+.BI \-create " [\-arch_blank arch_type ...]"
+Create one universal output file from one or more input files. When input files
+specified on the command-line, all of the architectures in each file will be
+copied into the output file, whereas when input files are included using the
+global
+.B \-arch
+option, only the specified architecture will be copied from that input file.
+The
+.B \-arch_blank
+option specifies that the output for the specified
+.I arch_type
+will be an MH_DYLIB_STUB file. This command requires the
+.B \-output
+option.
+.TP
+.BI \-detailed_info
+Display a detailed list of the architecture types in the input universal file
+(all the the information in the universal header, for each architecture in the
+file).
+.TP
+.BI \-extract " arch_type [\-extract arch_type...]"
+Take one universal input file and copy the
+.I arch_type
+from that universal file into a universal output file containing
+only that architecture. This command requires the
+.B \-output
+option.
+.TP
+.BI \-extract_family " arch_type [\-extract_family arch_type...]"
+Take one universal input file and copy all of the
+.IR arch_type s
+for the family that
+.I arch_type
+is in from that universal file into an output file containing
+only those architectures.  The file will be thin if only one architecture is
+found or universal otherwise. This command requires the
+.B \-output
+option.
+.TP
+.BI \-info
+Display a brief description of each input file along with the names of each
+architecture type in that input file.
+.TP
+.BI \-remove " arch_type [\-remove arch_type ...]"
+Take one universal input file and remove the
+.I arch_type
+from that universal file, placing the result in the output file. This command requires the
+.B \-output
+option.
+.TP
+.BI \-replace " arch_type file_name [\-replace arch_type file_name...]"
+Take one universal input file; in the output file, replace the
+.I arch_type
+contents of the input file with the contents of the specified
+.IR file_name .
+This command requires the
+.B \-output
+option.
+.TP
+.BI \-thin " arch_type"
+Take one input file and create a thin output file with the specified arch_type.
+This command requires the
+.B \-output
+option.
+.TP
+.BI \-verify_arch " arch_type ..."
+Take one input file and verify the specified
+.IR arch_type s
+are present in the file.  If so then exit with a status of 0 else exit with a
+status of 1. Because more than one
+.I arch_type
+can be verified at once, all of the input files must appear before the
+.B \-verify_arch
+flag on the command-line.
+.SH OPTIONS
+.TP
+.BI \-arch " arch_type input_file"
+Tells
+.B lipo
+that
+.I input_file
+contains the specified architecture type.
+The
+.BI \-arch " arch_type"
+specification is unnecessary if
+.I input_file
+is an
+object file, a universal file, or some other file whose architecture(s)
+.B lipo
+can figure out.
+.TP
+.BI \-hideARM64
+When creating a universal binary including both 32-bit and 64-bit ARM files,
+this option will ask
+.B lipo
+to add the 64-bit files at the end and not include them in the count of
+architectures present in the file. The files must be executable files (Mach-O
+filetype MH_EXECUTE). This option has no effect if neither 32-bit ARM nor 64-bit ARM
+files are present, and no other files may be hidden in this way. This option only works with the
+.B \-create,
+.B \-remove,
+and
+.B \-replace,
+commands, and is only intended for tools and workflows testing a workaround on
+older systems.
+.TP
+.BI \-output " output_file"
+Commands that create new files write to the output file specified by the
+.B \-output
+flag. This option is required for the
+.B \-create,
+.B \-extract,
+.B \-extract_family,
+.B \-remove,
+.B \-replace,
+and
+.B \-thin
+commands.
+.TP
+.BI \-segalign " arch_type value"
+Set the segment alignment of the specified
+.I arch_type
+when creating a universal file containing that architecture.
+.I value
+is a hexadecimal number that must be an integral power of 2.
+This is only needed when
+.B lipo
+can't figure out the alignment of an input file
+(currently not an object file),
+or when it guesses at the alignment too conservatively.
+The default for files unknown to
+.B lipo
+is 0 (2^0, or an alignment of one byte),
+and the default alignment for archives
+is 4 (2^2, or 4-byte alignment).
+.SH "SEE ALSO"
+arch(3)

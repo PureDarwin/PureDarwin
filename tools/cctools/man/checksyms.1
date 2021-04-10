@@ -1,0 +1,113 @@
+.TH CHECKSYMS 1 "February 28, 2019" "Apple Computer, Inc."
+.SH NAME
+checksyms \- check Mach-O production binary for proper conventions
+.SH SYNOPSIS
+.B checksyms
+[\-r] [\-d] [\-t] [\-b] [-v] [-] [-arch arch_flag] [-dylib_table filename] [-seg_addr_table filename] [-seg_addr_table_filename pathname] file [...]
+.sp .5
+.SH DESCRIPTION
+.I Checksyms
+preforms checks on a Mach-O production binary to see that it follows the
+proper conventions.
+If the binary follows the conventions,
+or is not a binary,
+.IR checksyms (1)
+exits with zero status.
+A non-zero exit status indicates the
+binary does not follow the conventions for a production binary.
+.PP
+The conventions include:
+proper stripping of symbols for the file type (and whether is is using the
+dynamic linker),
+if the file is a dynamic library then it checks for
+the preferred linked address, setting of compatibility and
+current versions,
+proper prebinding and objcunique if is uses the dynamic linker,
+and proper code generation if a dynamic binary so that there are no
+relocation entries in read-only sections.
+.PP
+Some or all of the following options may be specified:
+.TP
+.B \-r
+The binary is expected to do runtime loading of bundles and is allowed to
+have static symbols.  This is to aid in the debugging of bundles using the
+production binary so that back traces in the debugger shows symbol names for
+static routines.  This is the default for dynamic libraries but not the default
+for executables.
+.TP
+.B \-d
+Print the detail of why the binary fails the checks.
+.TP
+.B \-v
+Print a single string token for each of the checks the binary fails.  This is
+used by the verification tools to allow execptions to specific checks.
+.TP
+.B \-t
+Allow all symbols except debugging symbols (those created by the compiler's
+.B \-g
+option).
+.TP
+.B \-b
+Check the binaries that use the dynamic linker to see that they do not have
+relocation entries in read-only sections, are prebound and had objcunique run
+on them.  This is now the default.
+.TP
+.B \-
+All of arguments following this flag are treated as filenames of binaries to
+check.
+.TP
+.BI \-arch " arch_type"
+Specifies the architecture,
+.I arch_type,
+in the file to check.  More than one
+.BI \-arch " arch_type"
+can be specified.  The default is
+.BI \-arch " all"
+which checks all architectures in the file.  See
+.IR arch (3)
+for the currently known
+.IR arch_type s.
+.TP
+.BI \-dylib_table " filename"
+This option has been removed. In previous versions of
+.B checksyms
+it specifies the filename of the table of dynamic libraries and their addresses.
+If not specified the default is ~rc/Data/DylibTable.
+The format of the table is lines of a dynamic library name and an address in hex
+separated by spaces and / or tabs.
+.TP
+.BI \-seg_addr_table " filename"
+This option has been removed. In previous versions of
+.B checksyms
+it specifies the filename of the segment address table of dynamic library
+install names and their addresses.
+The format of this table is lines of two forms.
+The entries in the table are lines containing either a single hex address and an
+install name or two hex addresses and an install name.  In the first form the
+single hex address is used for ``flat'' libraries and is the
+.B "\-seg1addr".
+In the second form is used for ``split'' libraries and the first address is
+the
+.B "\-segs_read_only_addr"
+address and the second address is the
+.B "\-segs_read_write_addr"
+address.
+If the
+.B \-seg_addr_table
+option is specified this is used instead of the
+table specified with the
+.B \-dylib_table
+option.
+If the the environment variable
+.SM LD_SEG_ADDR_TABLE
+is set it is also used instead of the table specified with the
+.B \-dylib_table
+option.
+.TP
+.BI "\-seg_addr_table_filename" " pathname"
+This option has been removed. In previous versions it instructs
+.B checksyms
+to use
+.B pathname
+instead of the install name of the library for matching an entry in the segment
+address table.

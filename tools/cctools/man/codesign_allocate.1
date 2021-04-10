@@ -1,0 +1,53 @@
+.TH CODESIGN_ALLOCATE 1 "April 17, 2017" "Apple, Inc."
+.SH NAME
+codesign_allocate \-  add code signing data to a Mach-O file
+.SH SYNOPSIS
+.B codesign_allocate
+\-i oldfile [ \-a arch size ]... [ \-A cputype cpusubtype size ]... \-o newfile
+.SH DESCRIPTION
+.I codesign_allocate
+sets up a Mach-O file used by the dynamic linker so space for code signing data
+of the specified size for the specified architecture is embedded in the Mach-O
+file.  The program must be passed one \-a argument or one \-A argument for each
+architecture in a universal file, or exactly one \-a or \-A for a thin file.
+.TP
+.BI \-i " oldfile"
+specifies the input file as
+.I oldfile.
+.TP
+.BI \-o " newfile"
+specifies the output file as
+.I newfile.
+.TP
+.BI \-a " arch size"
+specifies for the architecture
+.I arch
+that the size of the code signing data is to be
+.I size.
+The value of
+.I size
+must be a multiple of 16.
+.TP
+.BI \-A " cputype cpusubtype size"
+specifies for the architecture as a pair of decimal integers for the cputype and
+cpusubtype that the size of the code signing data is to be
+.I size.
+The value of
+.I size
+must be a multiple of 16.
+.TP
+.BI \-r
+remove the code signature data and the LC_CODE_SIGNATURE load command.  This
+is the same as specifiying the
+.B -a
+or
+.B -A
+option with a
+.I size
+of zero.
+.TP
+.BI \-p
+page align the code signature data by padding string table and changing its
+size.  This is not the default as
+.IR codesign (1)
+currently can't use this option.

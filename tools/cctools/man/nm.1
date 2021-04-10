@@ -1,0 +1,273 @@
+.TH NM 1 "December 13, 2018" "Apple, Inc."
+.\" NAME
+.SH NAME
+nm \- display name list (symbol table)
+.SH SYNOPSIS
+.B llvm-nm
+[
+.B \-agnoprumxjlPA
+] [
+.B \-
+] [
+.BI \-t " format"
+] [[
+.BI \-arch " arch_flag
+]...] [
+.IR file " ... ]"
+[
+.B \-s
+.I segname sectname
+]
+.PP
+.B nm-classic
+[
+.B \-agnoprumxjlfPA
+[
+.B s
+.I segname sectname
+]]
+[
+.B \-
+] [
+.BI \-t " format"
+] [[
+.BI \-arch " arch_flag
+]...] [
+.IR file " ... ]"
+.\" DESCRIPTION
+.SH DESCRIPTION
+As of Xcode 8.0 the default
+.IR nm (1)
+tool is
+.IR llvm-nm (1).
+For the most part
+.IR nm (1)
+and
+.IR llvm-nm (1)
+have the same options; notable exceptions include
+.B \-f,
+.B \-s,
+and
+.B \-L
+as described below. This document explains options common between the two
+commands as well as some historically relevant options supported by
+.IR nm-classic (1) .
+More help on options for
+.IR llvm-nm (1)
+is provided when running it with the
+.B \-\-help
+option.
+.PP
+.I nm
+displays the name list (symbol table of nlist structures) of each object
+.I file
+in the argument list.  In some cases, as with an object that has had
+.IR strip (1)
+with its
+.B \-T
+option used on the object, that can be different than the dyld information.
+For that information use
+.IR dyldinfo (1).
+.PP
+If an argument is an archive, a listing for each object
+file in the archive will be produced.
+.I File
+can be of the form libx.a(x.o), in which case only symbols from that member of the
+object file are listed.
+(The parentheses have to be quoted to get by the shell.)
+If no
+.I file
+is given, the symbols in
+.I a.out
+are listed.
+.PP
+Each symbol name is preceded by its value (blanks if undefined).
+Unless the
+.B \-m
+option is specified, this value is followed by one of the following
+characters, representing the symbol type:
+.SM
+.B U
+(undefined),
+.SM
+.B A
+(absolute),
+.SM
+.B  T
+(text section symbol),
+.SM
+.B D
+(data section symbol),
+.SM
+.B B
+(bss section symbol),
+.SM
+.B C
+(common symbol),
+.SM
+.B \-
+(for debugger symbol table entries; see
+.B \-a
+below),
+.SM
+.B S
+(symbol in a section other than those above),
+or
+.SM
+.B I
+(indirect symbol).
+If the symbol is local (non-external), the symbol's type is
+instead represented by the corresponding
+lowercase letter.  A lower case
+.B u
+in a dynamic shared library indicates a undefined reference to a private
+external in another module in the same library.
+.PP
+If the symbol is a Objective-C method, the symbol name is
+.BI \(+-[ "Class_name(category_name)" " " "method:name:" "]\fR,"
+where `+' is for class methods, `\-' is for instance methods,
+and
+.I (category_name)
+is present only when the method is in a category.
+.PP
+The output is sorted alphabetically by default.
+.PP
+Options are:
+.TP
+.B  \-a
+Display all symbol table entries,
+including those inserted for use by debuggers.
+.TP
+.B  \-g
+Display only global (external) symbols.
+.TP
+.B \-n
+Sort numerically rather than alphabetically.
+.TP
+.B  \-o
+Prepend file or archive element name to each output line,
+rather than only once.
+.TP
+.B  \-p
+Don't sort; display in symbol-table order.
+.TP
+.B  \-r
+Sort in reverse order.
+.TP
+.B  \-u
+Display only undefined symbols.
+.TP
+.B  \-U
+Don't display undefined symbols.
+.TP
+.B  \-m
+Display the N_SECT type symbols (Mach-O symbols) as
+.RI ( "segment_name, section_name" )
+followed by either
+.I external
+or
+.I non-external
+and then the symbol name.
+Undefined, common, absolute and indirect symbols get displayed as
+.IR (undefined) ,
+.IR (common) ,
+.IR (absolute) ,
+and
+.IR (indirect) ,
+respectively. Other symbol details are displayed in a human-friendly manner,
+such as "[no dead strip]".
+.IR nm
+will display the referenced symbol for indirect symbols and will display the
+name of the library expected to provide an undefined symbol. See
+.IR nlist (3)
+and
+<mach-o/nlist.h> for more information on the nlist structure.
+.TP
+.B \-x
+Display the symbol table entry's fields in hexadecimal,
+along with the name as a string.
+.TP
+.B \-j
+Just display the symbol names (no value or type).
+.TP
+.BI \-s " segname sectname"
+List only those symbols in the section
+.I (segname,sectname).
+For
+.IR llvm-nm (1)
+this option must be last on the command line, and after the files.
+.TP
+.B \-l
+List a pseudo symbol
+.I ".section_start"
+if no symbol has as its value the starting address of the section.
+(This is used with the
+.B \-s
+option above.)
+.TP
+.BI \-arch " arch_type"
+Specifies the architecture,
+.I arch_type,
+of the file for
+.IR nm (1)
+to operate on when the file is a universal file (see
+.IR arch (3)
+for the currently known
+.IR arch_type s).
+The
+.I arch_type
+can be "all" to operate on all architectures in the file.
+The default is to display the symbols from only the host architecture,
+if the file contains it;
+otherwise, symbols for all architectures in the file
+are displayed.
+.TP
+.B \-f " format"
+For
+.IR llvm-nm (1)
+this specifies the output format.  Where format can be bsd, sysv, posix or
+darwin.
+.TP
+.B \-f
+For
+.IR nm-classic (1)
+this displays the symbol table of a dynamic library flat (as one file not separate modules).  This is obsolete and not supported with
+.IR llvm-nm(1).
+.TP
+.B \-A
+Write the pathname or library name of an object on each line.
+.TP
+.B \-P
+Write information in a portable output format.
+.TP
+.BI \-t " format"
+For the
+.B \-P
+output, write the numeric value in the specified format. The format shall be
+dependent on the single character used as the format option-argument:
+.TP
+.I d
+The value shall be written in decimal (default).
+.TP
+.I o
+The value shall be written in octal.
+.TP
+.I x
+The value shall be written in hexadecimal.
+.TP
+.B \-L
+Display the symbols in the bitcode files in the (\_\^\_LLVM,\_\^\_bundle)
+section if present instead of the object's symbol table. For
+.IR nm-classic (1)
+this is the default if the object has no symbol table and an
+(\_\^\_LLVM,\_\^\_bundle) section exists. This option is not supported by
+.IR llvm-nm (1)
+where displaying llvm bitcode symbols is the default behavior.
+.SH SEE ALSO
+ar(1), ar(5), Mach-O(5), stab(5), nlist(3), dyldinfo(1)
+.SH BUGS
+Displaying Mach-O symbols with
+.B \-m
+is too verbose.  Without the
+.BR \-m ,
+symbols in the Objective-C sections get displayed as an `s'.

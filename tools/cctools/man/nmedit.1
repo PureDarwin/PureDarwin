@@ -1,0 +1,142 @@
+.TH NMEDIT 1 "May 29, 2007" "Apple Inc."
+.SH NAME
+nmedit \- change global symbols to local symbols
+.SH SYNOPSIS
+.B nmedit
+\-s list_file [\-R list_file] [-p] [\-A] [\-] [[\-arch arch_type] ...] object_file ... [-o output]
+.SH DESCRIPTION
+.I Nmedit
+changes the global symbols not listed in the
+.I list_file
+file of the
+.B \-s
+.I list_file
+option to static symbols.  Undefined symbols and common symbols are not affected
+and shouldn't be listed in
+.I list_file.
+For dynamic libraries symbols are turned into private extern symbols that are
+no longer external (rather than static symbols).  This is done so that the
+references between modules of a dynamic library are resolved to the symbols in
+the dynamic library.
+.I Nmedit
+differs from
+.IR strip (1)
+in that it also changes the symbolic debugging information (produce by the
+.B \-g
+option to
+.IR cc (1))
+for the global symbols it changes to static symbols so that the resulting
+object can still be used with the debugger.
+.PP
+.I Nmedit
+like
+.IR strip (1)
+is useful to limit the symbols for use with later linking.
+This allows control of the interface that the executable wants to provide to the
+objects that it will dynamically load, and it will not have to publish symbols
+that are not part of its interface.  For example an executable that wishes to
+allow only a subset of its global symbols but all of the shared libraries
+globals to be used would have its symbol table edited with:
+.RS
+% nmedit \-s interface_symbols \-A executable
+.RE
+where the file
+.I interface_symbols
+would contain only those symbols from the executable
+that it wishes the objects loaded at runtime to have access to.
+Another example is an object that is made up of a number of other objects that
+will be loaded into an executable would built and then have its symbol table
+edited with:
+.RS
+.nf
+% ld \-o relocatable.o \-r a.o b.o c.o
+% nmedit \-s interface_symbols relocatable.o
+.fi
+.RE
+which would leave only the symbols listed in the file
+.I interface_symbols
+(and the undefined and common symbols)
+as global symbols in the object file.
+.PP
+The one or more of the following options is required to
+.IR nmedit (1)
+is:
+.TP
+.BI \-s " filename"
+Leave the symbol table entries for the global symbols listed in
+.I filename
+global but turn all other global symbols (except undefined and common symbols)
+into static symbols.  The symbol names listed in
+.I filename
+must be one per line. Leading and trailing white space are not part of the
+symbol name.  Lines starting with # are ignored, as are lines with only
+white space.
+.TP
+.BI \-R " filename"
+Change the symbol table entries for the global symbols listed in
+.I filename
+into static symbols.  This file has the same format as the
+.B \-s
+.I filename
+option above.
+If the
+.BI \-R " filename"
+option is specified without the
+.BI \-s " filename"
+option, then all symbols not listed in the
+.BI \-R " filename"
+option's filename are left as globals.
+If both a
+.BI \-R " filename"
+and a
+.BI \-s " filename"
+are given the symbols listed in the
+.BI \-R " filename"
+are basically ignored and only those symbols listed in the
+.BI \-s " filename"
+are saved.
+.TP
+.B \-p
+Change symbols to private externs instead of static.  This is allowed as the
+only option to change all defined global symbols to private externs.
+.PP
+The options to
+.IR nmedit (1)
+are:
+.TP
+.B \-A
+Leave all global absolute symbols except those with a value of zero, and save
+objective-C class symbols as globals.  This is intended for use of programs
+that load code at runtime
+and want the loaded code to use symbols from the shared libraries.
+.TP
+.B \-
+Treat all remaining arguments as file names and not options.
+.TP
+.BI \-arch " arch_type"
+Specifies the architecture,
+.I arch_type,
+of the file for
+.IR nmedit (1)
+to process when the file is a universal file (see
+.IR arch (3)
+for the currently know
+.IR arch_type s).
+The
+.I arch_type
+can be
+.I all
+to process all architectures in the file.
+The default is to process all architectures that are contained in
+the file.
+.TP
+.BI \-o " output"
+Write the result into the file
+.I output.
+.SH "SEE ALSO"
+strip(1), ld(1), arch(3)
+.SH BUGS
+The changing of the symbolic debugging information by
+.I nmedit
+is not known to be totally correct and could cause the debugger to crash, get
+confused or produce incorrect information.

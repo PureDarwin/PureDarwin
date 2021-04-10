@@ -1,0 +1,151 @@
+.TH NSObjectFileImage 3 "March 14, 2003" "Apple Computer, Inc."
+.SH NAME
+NSObjectFileImage \- programmatic interface for working with Mach-O files
+.SH SYNOPSIS
+.nf
+.PP
+#include <mach-o/dyld.h>
+.sp .5
+extern NSObjectFileImageReturnCode NSCreateObjectFileImageFromFile(
+	const char *pathName,
+	NSObjectFileImage *objectFileImage);
+.sp .5
+extern NSObjectFileImageReturnCode NSCreateObjectFileImageFromMemory(
+	void *address,
+	unsigned long size,
+	NSObjectFileImage *objectFileImage);
+.sp .5
+extern NSObjectFileImageReturnCode NSCreateCoreFileImageFromFile(
+	const char *pathName,
+	NSObjectFileImage *objectFileImage);
+.sp .5
+extern enum DYLD_BOOL NSDestroyObjectFileImage(
+	NSObjectFileImage objectFileImage);
+.sp .5
+extern unsigned long NSSymbolDefinitionCountInObjectFileImage(
+	NSObjectFileImage objectFileImage);
+.sp .5
+extern const char * NSSymbolDefinitionNameInObjectFileImage(
+	NSObjectFileImage objectFileImage,
+	unsigned long ordinal);
+.sp .5
+extern unsigned long NSSymbolReferenceCountInObjectFileImage(
+	NSObjectFileImage objectFileImage);
+.sp .5
+extern const char * NSSymbolReferenceNameInObjectFileImage(
+	NSObjectFileImage objectFileImage,
+	unsigned long ordinal,
+	enum DYLD_BOOL *tentative_definition); /* can be NULL */
+.sp .5
+extern enum DYLD_BOOL NSIsSymbolDefinedInObjectFileImage(
+	NSObjectFileImage objectFileImage,
+	const char *symbolName);
+.sp .5
+extern void * NSGetSectionDataInObjectFileImage(
+	NSObjectFileImage objectFileImage,
+	const char *segmentName,
+	const char *sectionName,
+	unsigned long* size); /* can be NULL */
+.sp .5
+extern enum DYLD_BOOL NSHasModInitObjectFileImage(
+	NSObjectFileImage objectFileImage);
+.fi
+.SH DESCRIPTION
+.PP
+These routines are the programmatic interface for working with Mach-O files.
+They bring the Mach-O file into memory and the API allows the file to
+be inspected or loaded into the program.  On creation of an object file image
+it is checked to insure it is a valid format and it is compatible with the host
+machine's cpu architecture.
+.PP
+.I NSCreateObjectFileImageFromFile
+takes the parameter
+.I pathName
+as the path name to the file name in the file system and creates and returns
+an NSObjectFileImage.  Currently only
+.SM MH_BUNDLE
+files can be used with
+.I NSCreateObjectFileImageFromFile
+which can then be loaded into the program using
+.IR NSLinkModule (3).
+If the file is valid an NSObjectFileImage is returned and the return code is
+NSObjectFileImageSuccess.
+.I NSCreateObjectFileImageFromMemory
+does the same as
+.I NSCreateObjectFileImageFromFile
+but takes two parameters
+.I address
+and
+.I size
+for the Mach-O file that is in memory.
+.PP
+.I NSCreateCoreFileImageFromFile
+takes the parameter
+.I pathName
+as the path name to a core file in the file system and creates and returns
+an NSObjectFileImage.  This NSObjectFileImage can then can be loaded into a
+task with
+.IR _dyld_debug_task_from_core (3)
+to determine what libraries were loaded and which modules were linked.
+.PP
+.I NSSymbolDefinitionCountInObjectFileImage
+returns the number of symbol definitions in the NSObjectFileImage.
+.PP
+.I NSSymbolDefinitionNameInObjectFileImage
+returns the name of the i'th symbol definitions in the NSObjectFileImage.
+The 'C' string returned should not be freed.  If the ordinal specified is
+outside the range [0..NSSymbolDefinitionCountInObjectFileImage], NULL will be
+returned.
+.PP
+.I NSSymbolReferenceCountInObjectFileImage
+returns the number of references to undefined symbols the NSObjectFileImage.
+.PP
+.I NSSymbolReferenceNameInObjectFileImage
+returns the name of the i'th undefined symbol in the NSObjectFileImage.
+The 'C' string returned should not be freed.  If the ordinal specified is
+outside the range [0..NSSymbolReferenceCountInObjectFileImage], NULL will be
+returned.
+.PP
+.I NSIsSymbolDefinedInObjectFileImage
+returns TRUE if the specified symbol name has a definition in the
+NSObjectFileImage.
+.PP
+.I NSGetSectionDataInObjectFileImage
+returns the address of the data for the named section in the named segment in
+the NSObjectFileImage.  If the parameter size is not NULL, the size of the
+section is returned in size.  If the section cannot be found or a zerofill
+section, NULL is returned and the size returned is zero.
+.PP
+.I NSHasModInitObjectFileImage
+returns TRUE if the NSObjectFileImage has any module initialization routines
+and FALSE otherwise.
+
+.SH RETURN CODES
+The API's that create NSObjectFileImage's return an NSObjectFileImageReturnCode
+with the following possible values:
+.TP
+.B NSObjectFileImageSuccess
+Indicates the API was successful and it returned a valid NSObjectFileImage for
+the host machine's cpu architecture.
+.TP
+.B NSObjectFileImageFailure
+Indicates the API failed and no NSObjectFileImage was returned.  If this is
+returned an error message is printed on stderr as to the reason for the
+failure.
+.TP
+.B NSObjectFileImageInappropriateFile
+Indicates the API failed because the file passed to it was not an appropriate
+type of object file.
+.TP
+.B NSObjectFileImageArch
+Indicates the API failed because the host machine's cpu architecture could not
+be found in the file.
+.TP
+.B NSObjectFileImageFormat
+Indicates the API failed because the Mach-O format was malformed.  If this is
+returned an error message is printed on stderr as to the format error.
+.TP
+.B NSObjectFileImageAccess
+Indicates the API failed because the file could not be accessed.
+.SH ALSO SEE
+NSModule(3), dyld(3)

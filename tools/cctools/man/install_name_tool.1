@@ -1,0 +1,72 @@
+.TH INSTALL_NAME_TOOL 1 "March 4, 2009" "Apple, Inc."
+.SH NAME
+install_name_tool \- change dynamic shared library install names
+.SH SYNOPSIS
+.B install_name_tool
+[\-change old new ] ... [\-rpath old new ] ... [\-add_rpath new ] ... [\-delete_rpath new ] ... [\-id name] file
+.SH DESCRIPTION
+.I Install_name_tool
+changes the dynamic shared library install names and or adds, changes or deletes
+the rpaths recorded in a Mach-O binary.
+For this tool to work when the install names or rpaths are larger the binary
+should be built with the
+.IR ld (1)
+.B \-headerpad_max_install_names
+option.
+.TP
+.BI \-change " old new"
+Changes the dependent shared library install name
+.I old
+to
+.I new
+in the specified Mach-O binary.  More than one of these options can be
+specified.
+If the Mach-O binary does not contain the
+.I old
+install name in a specified
+.B \-change
+option the option is ignored.
+.TP
+.BI \-id " name"
+Changes the shared library identification name of a dynamic shared library to
+.I name.
+If the Mach-O binary is not a dynamic shared library and the
+.B \-id
+option is specified it is ignored.
+.TP
+.BI \-rpath " old new"
+Changes the rpath path name
+.I old
+to
+.I new
+in the specified Mach-O binary.  More than one of these options can be
+specified.
+If the Mach-O binary does not contain the
+.I old
+rpath path name in a specified
+.B \-rpath
+it is an error.
+.TP
+.BI \-add_rpath " new"
+Adds the rpath path name
+.I new
+in the specified Mach-O binary.  More than one of these options can be
+specified.
+If the Mach-O binary already contains the
+.I new
+rpath path name specified in
+.B \-add_rpath
+it is an error.
+.TP
+.BI \-delete_rpath " old"
+deletes the rpath path name
+.I old
+in the specified Mach-O binary.  More than one of these options can be
+specified.
+If the Mach-O binary does not contains the
+.I old
+rpath path name specified in
+.B \-delete_rpath
+it is an error.
+.SH "SEE ALSO"
+ld(1)
