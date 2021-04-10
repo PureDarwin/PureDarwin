@@ -67,19 +67,19 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/trace.codes ${CMAKE_CURREN
     COMMENT "Generate trace.codes" VERBATIM
 )
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/syscall.h
-    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${makesyscalls} ${syscalls_master} header > ${CMAKE_CURRENT_BINARY_DIR}/sys/syscall.h
     DEPENDS ${makesyscalls} ${syscalls_master}
     COMMENT "Generate syscall.h" VERBATIM
 )
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/sysproto.h
-    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${makesyscalls} ${syscalls_master} proto
     DEPENDS ${makesyscalls} ${syscalls_master}
     COMMENT "Generate sysproto.h" VERBATIM
 )
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/_posix_availability.h
-    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/make_posix_availability.sh ${CMAKE_CURRENT_BINARY_DIR}/_posix_availability.h
     DEPENDS make_posix_availability.sh
     COMMENT "Generate _posix_availability.h" VERBATIM
@@ -90,7 +90,7 @@ preprocess_file(make_symbol_aliasing.sh.in ${CMAKE_CURRENT_BINARY_DIR}/make_symb
 )
 
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/_symbol_aliasing.h
-    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/make_symbol_aliasing.sh . ${CMAKE_CURRENT_BINARY_DIR}/sys/_symbol_aliasing.h
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/make_symbol_aliasing.sh
     COMMENT "Generate _symbol_aliasing.h" VERBATIM
