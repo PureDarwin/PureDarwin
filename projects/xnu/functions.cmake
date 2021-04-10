@@ -83,7 +83,7 @@ function(install_xnu_headers)
             COMMAND ${CMAKE_COMMAND} -E make_directory ${out_base}/${INSTALL_SUBDIRECTORY}
             COMMAND host_unifdef ${unifdef_args} -o ${out_base}/${INSTALL_SUBDIRECTORY}/${filename} ${file_abs}
             DEPENDS ${file_abs} host_unifdef
-            COMMENT "Copy ${INSTALL_SUBDIRECTORY}/${file}" VERBATIM
+            COMMENT "Copy ${INSTALL_SUBDIRECTORY}/${filename}" VERBATIM
         )
         target_sources(${INSTALL_TARGET_NAME} PRIVATE ${out_base}/${INSTALL_SUBDIRECTORY}/${filename})
 
