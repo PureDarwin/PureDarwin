@@ -418,7 +418,7 @@ target_sources(xnu.bsd_module PRIVATE
 
     $<TARGET_OBJECTS:xnu.bsd_conf>
 )
-target_link_libraries(xnu.bsd_module PRIVATE xnu.ptrauth xnu.extheaders xnu.bsd_conf)
+target_link_libraries(xnu.bsd_module PRIVATE xnu.ptrauth xnu.extheaders xnu.bsd_conf xnu.bsd_sys_headers)
 target_include_directories(xnu.bsd_module PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(xnu.bsd_module PRIVATE ${XNU_SOURCE_DIR}/iokit ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk ${XNU_SOURCE_DIR}/osfmk/libsa ${XNU_SOURCE_DIR}/pexpert ${XNU_SOURCE_DIR})
 target_compile_definitions(xnu.bsd_module PRIVATE APPLE KERNEL KERNEL_BUILD KERNEL_PRIVATE BSD_KERNEL_PRIVATE XNU_KERNEL_PRIVATE __MACHO__=1 volatile=__volatile XNU_KERN_EVENT_DATA_IS_VLA XNU_TARGET_OS_OSX PLATFORM_MacOSX)

@@ -16,7 +16,7 @@ install_xnu_headers(TARGET_NAME xnu.headers.bsd_sys DESTINATION user SUBDIRECTOR
     vnode.h vnode_if.h vsock.h vstat.h wait.h xattr.h _select.h _structs.h _types.h _endian.h
     domain.h protosw.h spawn.h timex.h commpage.h log_data.h
 
-    ${CMAKE_CURRENT_BINARY_DIR}/_posix_availability.h ${CMAKE_CURRENT_BINARY_DIR}/_symbol_aliasing.h
+    ${CMAKE_CURRENT_BINARY_DIR}/sys/_posix_availability.h ${CMAKE_CURRENT_BINARY_DIR}/sys/_symbol_aliasing.h
 )
 
 install_xnu_headers(TARGET_NAME xnu.headers.bsd_sys DESTINATION user_private SUBDIRECTORY sys FILES
@@ -42,7 +42,7 @@ install_xnu_headers(TARGET_NAME xnu.headers.bsd_sys DESTINATION kernel SUBDIRECT
     _select.h _structs.h _types.h _endian.h protosw.h domain.h kpi_mbuf.h kpi_socket.h kpi_socketfilter.h
     ttycom.h termios.h msg.h wait.h spawn.h timex.h commpage.h
 
-    ${CMAKE_CURRENT_BINARY_DIR}/_posix_availability.h ${CMAKE_CURRENT_BINARY_DIR}/_symbol_aliasing.h
+    ${CMAKE_CURRENT_BINARY_DIR}/sys/_posix_availability.h ${CMAKE_CURRENT_BINARY_DIR}/sys/_symbol_aliasing.h
 )
 
 install_xnu_headers(TARGET_NAME xnu.headers.bsd_sys DESTINATION kernel_private SUBDIRECTORY sys FILES
@@ -54,7 +54,7 @@ install_xnu_headers(TARGET_NAME xnu.headers.bsd_sys DESTINATION kernel_private S
     reason.h spawn_internal.h priv.h pgo.h memory_maintenance.h doc_tombstone.h fsevents.h
     work_interval.h kern_sysctl.h vsock_transport.h
 
-    ${CMAKE_CURRENT_BINARY_DIR}/sysproto.h
+    ${CMAKE_CURRENT_BINARY_DIR}/sys/sysproto.h
 )
 
 set(makesyscalls ${CMAKE_CURRENT_SOURCE_DIR}/../kern/makesyscalls.sh)
@@ -66,17 +66,20 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/trace.codes ${CMAKE_CURREN
     DEPENDS ${makesyscalls} ${syscalls_master}
     COMMENT "Generate trace.codes" VERBATIM
 )
-add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscall.h
-    COMMAND ${makesyscalls} ${syscalls_master} header > ${CMAKE_CURRENT_BINARY_DIR}/syscall.h
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/syscall.h
+    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
+    COMMAND ${makesyscalls} ${syscalls_master} header > ${CMAKE_CURRENT_BINARY_DIR}/sys/syscall.h
     DEPENDS ${makesyscalls} ${syscalls_master}
     COMMENT "Generate syscall.h" VERBATIM
 )
-add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sysproto.h
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/sysproto.h
+    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${makesyscalls} ${syscalls_master} proto
     DEPENDS ${makesyscalls} ${syscalls_master}
     COMMENT "Generate sysproto.h" VERBATIM
 )
-add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/_posix_availability.h
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/_posix_availability.h
+    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/make_posix_availability.sh ${CMAKE_CURRENT_BINARY_DIR}/_posix_availability.h
     DEPENDS make_posix_availability.sh
     COMMENT "Generate _posix_availability.h" VERBATIM
@@ -86,8 +89,13 @@ preprocess_file(make_symbol_aliasing.sh.in ${CMAKE_CURRENT_BINARY_DIR}/make_symb
     AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
 )
 
-add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/_symbol_aliasing.h
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/make_symbol_aliasing.sh . ${CMAKE_CURRENT_BINARY_DIR}/_symbol_aliasing.h
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/_symbol_aliasing.h
+    COMMAND ${CMAKE_COMMAND} -P make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/make_symbol_aliasing.sh . ${CMAKE_CURRENT_BINARY_DIR}/sys/_symbol_aliasing.h
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/make_symbol_aliasing.sh
     COMMENT "Generate _symbol_aliasing.h" VERBATIM
 )
+
+add_darwin_object_library(xnu.bsd_sys_headers)
+target_include_directories(xnu.bsd_sys_headers PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_sources(xnu.bsd_sys_headers PRIVATE ${XNU_SOURCE_DIR}/SETUP/empty.c)
