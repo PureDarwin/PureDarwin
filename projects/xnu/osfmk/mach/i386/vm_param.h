@@ -90,11 +90,6 @@
 #ifndef _MACH_I386_VM_PARAM_H_
 #define _MACH_I386_VM_PARAM_H_
 
-#if !defined(KERNEL) && !defined(__ASSEMBLER__)
-
-#include <mach/vm_page_size.h>
-#endif
-
 #define BYTE_SIZE               8               /* byte size in bits */
 
 #define I386_PGBYTES            4096            /* bytes per 80386 page */
