@@ -1,4 +1,5 @@
 add_subdirectory(atm)
+add_subdirectory(gssd)
 add_subdirectory(libsa)
 
 add_darwin_object_library(xnu.osfmk_module)
