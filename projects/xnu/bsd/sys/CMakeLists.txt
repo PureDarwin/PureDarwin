@@ -75,6 +75,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/syscall.h
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/sysproto.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${makesyscalls} ${syscalls_master} proto
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/sys
     DEPENDS ${makesyscalls} ${syscalls_master}
     COMMENT "Generate sysproto.h" VERBATIM
 )
