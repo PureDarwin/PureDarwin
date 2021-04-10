@@ -1,0 +1,2 @@
+add_library(pthread_kernel_headers INTERFACE)
+target_include_directories(pthread_kernel_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
