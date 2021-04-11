@@ -1,6 +1,7 @@
 add_subdirectory(atm)
 add_subdirectory(gssd)
 add_subdirectory(libsa)
+add_subdirectory(mach)
 
 add_darwin_object_library(xnu.osfmk_module)
 target_sources(xnu.osfmk_module PRIVATE
