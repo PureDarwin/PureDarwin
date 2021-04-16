@@ -10,7 +10,7 @@ fi
 cat $1 | fgrep CONFIG_DEFINES | sed -Ee 's,^export CONFIG_DEFINES = ,,' -e 's,-D,\
 #define ,g' -e 's,=, ,g' -e 's,",,g' | awk '
 NF == 2 {
-    printf("%s 1\n", $0);
+    printf("#define %s 1\n", $2);
     next
 }
 
