@@ -21,7 +21,7 @@ add_subdirectory(uuid)
 add_subdirectory(vfs)
 add_subdirectory(vm)
 
-xnu_component(bsd SOURCES
+xnu_component(bsd
     # This list was generated from the Makefile output in the conf/ subdirectory.
     # Unfortunately, in CMake all sources must be known at configuration time.
     # Therefore, if the config inputs change, we will need to update this manually.
@@ -432,3 +432,4 @@ target_compile_options(xnu.bsd_component PRIVATE
     -Wno-sign-conversion -Wno-incompatible-library-redeclaration
 )
 add_dependencies(xnu.bsd_component xnu.bsd_conf)
+target_link_libraries(xnu.bsd_component PRIVATE xnu_kernel_headers xnu_kernel_private_headers)

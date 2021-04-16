@@ -1,16 +1,9 @@
 set(XNU_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(XNU_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
-function(xnu_component target_name)
-    cmake_parse_arguments(COMP "" "" "SOURCES;LINK_LIBRARIES" ${ARGN})
-
-    if(NOT COMP_SOURCES)
-        message(SEND_ERROR "SOURCES must be specified to xnu_component()")
-        return()
-    endif()
-
+macro(xnu_component target_name)
     add_darwin_object_library(xnu.${target_name}_component)
-    target_sources(xnu.${target_name}_component PRIVATE ${COMP_SOURCES})
+    target_sources(xnu.${target_name}_component PRIVATE ${ARGN})
     if(COMP_LINK_LIBRARIES)
         target_link_libraries(xnu.${target_name}_component PRIVATE ${COMP_LINK_LIBRARIES})
     endif()
@@ -30,7 +23,7 @@ function(xnu_component target_name)
         ${XNU_SOURCE_DIR}/iokit ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk
         ${XNU_SOURCE_DIR}/osfmk/libsa ${XNU_SOURCE_DIR}/pexpert ${XNU_SOURCE_DIR}
     )
-endfunction()
+endmacro()
 
 function(install_xnu_headers)
     cmake_parse_arguments(INSTALL "" "DESTINATION;TARGET_NAME;SUBDIRECTORY" "FILES" ${ARGN})
