@@ -1,6 +1,37 @@
 set(XNU_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(XNU_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
+function(xnu_component target_name)
+    cmake_parse_arguments(COMP "" "" "SOURCES;LINK_LIBRARIES" ${ARGN})
+
+    if(NOT COMP_SOURCES)
+        message(SEND_ERROR "SOURCES must be specified to xnu_component()")
+        return()
+    endif()
+
+    add_darwin_object_library(xnu.${target_name}_component)
+    target_sources(xnu.${target_name}_component PRIVATE ${COMP_SOURCES})
+    if(COMP_LINK_LIBRARIES)
+        target_link_libraries(xnu.${target_name}_component PRIVATE ${COMP_LINK_LIBRARIES})
+    endif()
+
+    target_link_libraries(xnu.${target_name}_component PRIVATE xnu.${target_name}_headers)
+    target_sources(xnu PRIVATE $<TARGET_OBJECTS:xnu.${target_name}_component>)
+
+    target_compile_definitions(xnu.${target_name}_component PRIVATE
+        APPLE KERNEL=1 KERNEL_BUILD KERNEL_PRIVATE BSD_KERNEL_PRIVATE XNU_KERNEL_PRIVATE __MACHO__=1
+        volatile=__volatile XNU_KERN_EVENT_DATA_IS_VLA XNU_TARGET_OS_OSX PLATFORM_MacOSX
+    )
+    target_compile_options(xnu.${target_name}_component PRIVATE -DPRIVATE)
+    target_link_libraries(xnu.${target_name}_component PRIVATE
+        xnu.ptrauth xnu.extheaders xnu.osfmk_gssd_module xnu.bsd_sys_headers xnu.bsd_sys_types_headers
+    )
+    target_include_directories(xnu.${target_name}_component PRIVATE
+        ${XNU_SOURCE_DIR}/iokit ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk
+        ${XNU_SOURCE_DIR}/osfmk/libsa ${XNU_SOURCE_DIR}/pexpert ${XNU_SOURCE_DIR}
+    )
+endfunction()
+
 function(install_xnu_headers)
     cmake_parse_arguments(INSTALL "" "DESTINATION;TARGET_NAME;SUBDIRECTORY" "FILES" ${ARGN})
 

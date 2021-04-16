@@ -19,10 +19,16 @@ target_sources(xnu.bsd_conf PRIVATE
 
 target_include_directories(xnu.bsd_conf PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(xnu.bsd_conf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR}/.. ${XNU_SOURCE_DIR}/libkern)
-target_link_libraries(xnu.bsd_conf PRIVATE xnu.bsd_sys_headers pthread_kernel_headers AvailabilityHeaders)
+target_link_libraries(xnu.bsd_conf PRIVATE xnu.extheaders xnu.bsd_sys_headers pthread_kernel_headers AvailabilityHeaders)
+target_include_directories(xnu.bsd_conf PRIVATE
+    ${XNU_SOURCE_DIR}/iokit ${XNU_SOURCE_DIR}/libkern ${XNU_SOURCE_DIR}/osfmk
+    ${XNU_SOURCE_DIR}/osfmk/libsa ${XNU_SOURCE_DIR}/pexpert ${XNU_SOURCE_DIR}
+)
+
 target_compile_options(xnu.bsd_conf PUBLIC "SHELL:-include ${CMAKE_CURRENT_BINARY_DIR}/config/config-prefix.h")
 target_compile_options(xnu.bsd_conf PUBLIC "SHELL:-include ${CMAKE_CURRENT_BINARY_DIR}/meta_features.h")
-target_compile_definitions(xnu.bsd_conf PUBLIC DRIVER_PRIVATE _KERNEL_BUILD MACH_KERNEL BSD_BUILD BSD_KERNEL_PRIVATE LD64_DEBUG=0)
+target_compile_options(xnu.bsd_conf PRIVATE -Wno-incompatible-library-redeclaration -DPRIVATE)
+target_compile_definitions(xnu.bsd_conf PUBLIC KERNEL KERNEL_PRIVATE DRIVER_PRIVATE _KERNEL_BUILD MACH_KERNEL BSD_BUILD BSD_KERNEL_PRIVATE XNU_KERNEL_PRIVATE LD64_DEBUG=0)
 
 set(makesyscalls ${XNU_SOURCE_DIR}/bsd/kern/makesyscalls.sh)
 set(syscalls_master ${XNU_SOURCE_DIR}/bsd/kern/syscalls.master)
