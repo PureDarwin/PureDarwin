@@ -29,7 +29,7 @@ add_custom_command(
 
 
 
-preprocess_file(doconf.in ${CMAKE_CURRENT_BINARY_DIR}/doconf
+configure_file_lazy(doconf.in ${CMAKE_CURRENT_BINARY_DIR}/doconf
     CONFIG_PATH=$<TARGET_FILE:xnu_config_tool>
     XNU_PROJECT_ROOT=${PUREDARWIN_SOURCE_DIR}/projects/xnu
 )

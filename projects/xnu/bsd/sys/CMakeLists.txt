@@ -86,7 +86,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/_posix_availability.h
     COMMENT "Generate _posix_availability.h" VERBATIM
 )
 
-preprocess_file(make_symbol_aliasing.sh.in ${CMAKE_CURRENT_BINARY_DIR}/make_symbol_aliasing.sh
+configure_file_lazy(make_symbol_aliasing.sh.in ${CMAKE_CURRENT_BINARY_DIR}/make_symbol_aliasing.sh
     AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
 )
 

@@ -1,4 +1,4 @@
-macro(preprocess_file input output)
+macro(configure_file_lazy input output)
     set(flags)
     foreach(arg ${ARGN})
         list(APPEND flags -D ${arg})
