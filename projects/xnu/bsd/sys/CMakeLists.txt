@@ -82,7 +82,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/sysproto.h
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/sys/_posix_availability.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/make_posix_availability.sh ${CMAKE_CURRENT_BINARY_DIR}/sys/_posix_availability.h
-    DEPENDS make_posix_availability.sh
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/make_posix_availability.sh
     COMMENT "Generate _posix_availability.h" VERBATIM
 )
 
