@@ -28,6 +28,7 @@
 #include <kern/startup.h>
 #include <kern/task.h>
 
+#define OS_FIREHOSE_SPI 1
 #include <firehose/tracepoint_private.h>
 #include <firehose/chunk_private.h>
 #include <os/firehose_buffer_private.h>
