@@ -33,6 +33,9 @@ target_include_directories(xnu_private_headers INTERFACE
     ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/usr/local/include
     ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders
 )
+target_compile_options(xnu_private_headers INTERFACE
+    -F${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/System/Library/Frameworks
+)
 add_library(xnu_kernel_headers INTERFACE)
 add_dependencies(xnu_kernel_headers xnu_headers.extproj)
 target_include_directories(xnu_kernel_headers INTERFACE
