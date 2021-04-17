@@ -68,3 +68,16 @@ externalproject_add(xnu
     USES_TERMINAL_BUILD TRUE
 )
 add_dependencies(xnu xnu_headers libfirehose_kernel)
+
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Kernels DESTINATION System/Library COMPONENT BaseSystem)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Extensions DESTINATION System/Library COMPONENT BaseSystem)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Resources DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT BaseSystem)
+install_symlink(/System/Library/Frameworks/Kernel.framework/Versions/Current A COMPONENT BaseSystem)
+install_symlink(/System/Library/Frameworks/Kernel.framework/Resources Versions/Current/Resources COMPONENT BaseSystem)
+
+
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/include DESTINATION usr COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/lib/dtrace DESTINATION usr/lib COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/libexec DESTINATION usr COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/share/man DESTINATION usr/share COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/share/misc DESTINATION usr/share COMPONENT DeveloperTools)
