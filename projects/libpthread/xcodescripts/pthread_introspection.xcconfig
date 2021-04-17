@@ -1,0 +1,8 @@
+#include "pthread.xcconfig"
+
+BUILD_VARIANTS = normal
+INSTALL_PATH = /usr/lib/system/introspection
+
+GCC_PREPROCESSOR_DEFINITIONS = $(BASE_PREPROCESSOR_MACROS) PLOCKSTAT=1
+CONFIGURATION_BUILD_DIR = $(BUILD_DIR)/introspection
+system_pthread_CFLAGS = -mno-omit-leaf-frame-pointer

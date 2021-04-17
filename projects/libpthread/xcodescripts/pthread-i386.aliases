@@ -1,0 +1,21 @@
+# aliases file for pthread old-symbol aliases
+# <symbol> <alias>
+
+_pthread_cancel$UNIX2003            _pthread_cancel
+_pthread_cond_init$UNIX2003         _pthread_cond_init
+_pthread_cond_timedwait$UNIX2003    _pthread_cond_timedwait
+_pthread_cond_wait$UNIX2003         _pthread_cond_wait
+_pthread_join$UNIX2003              _pthread_join
+_pthread_mutexattr_destroy$UNIX2003 _pthread_mutexattr_destroy
+_pthread_rwlock_destroy$UNIX2003    _pthread_rwlock_destroy
+_pthread_rwlock_init$UNIX2003       _pthread_rwlock_init
+_pthread_rwlock_rdlock$UNIX2003     _pthread_rwlock_rdlock
+_pthread_rwlock_tryrdlock$UNIX2003  _pthread_rwlock_tryrdlock
+_pthread_rwlock_trywrlock$UNIX2003  _pthread_rwlock_trywrlock
+_pthread_rwlock_unlock$UNIX2003     _pthread_rwlock_unlock
+_pthread_rwlock_wrlock$UNIX2003     _pthread_rwlock_wrlock
+_pthread_setcancelstate$UNIX2003    _pthread_setcancelstate
+_pthread_setcanceltype$UNIX2003     _pthread_setcanceltype
+_pthread_sigmask$UNIX2003           _pthread_sigmask
+_pthread_testcancel$UNIX2003        _pthread_testcancel
+_sigwait$UNIX2003                   _sigwait
