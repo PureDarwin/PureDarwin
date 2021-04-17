@@ -49,6 +49,7 @@
 
 #define kCopyrightToken "Copyright © "
 #define kRightsToken " Apple Inc. All rights reserved."
+#define kRightsTokenPD " PureDarwin Project. All rights reserved."
 
 /******************************************************************************
 * Globals
@@ -270,6 +271,7 @@ kxld_validate_copyright_string(const char *str)
 	len = strlen(str);
 	copyright = strnstr(str, kCopyrightToken, len);
 	rights = strnstr(str, kRightsToken, len);
+	if (rights == NULL) rights = strnstr(str, kRightsTokenPD, len);
 
 	if (!copyright || !rights || copyright > rights) {
 		goto finish;
