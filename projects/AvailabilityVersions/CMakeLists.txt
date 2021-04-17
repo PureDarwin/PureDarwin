@@ -13,12 +13,11 @@ add_custom_command(
     COMMENT "Creating VersionMap.h and for_dyld_priv.inc" VERBATIM
 )
 
-add_darwin_static_library(dyld_availability_headers)
+add_darwin_object_library(dyld_availability_headers)
 target_include_directories(dyld_availability_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_sources(dyld_availability_headers PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/VersionMap.h
     ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/for_dyld_priv.inc
-    dummy.c
 )
 
 install(FILES include/Availability.h DESTINATION usr/include COMPONENT DeveloperTools)
