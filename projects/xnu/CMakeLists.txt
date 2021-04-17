@@ -67,7 +67,7 @@ externalproject_add(xnu
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu xnu_headers libfirehose_kernel)
+add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host availability.pl darwin_ld)
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Kernels DESTINATION System/Library COMPONENT BaseSystem)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Extensions DESTINATION System/Library COMPONENT BaseSystem)
