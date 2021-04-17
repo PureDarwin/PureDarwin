@@ -55,6 +55,7 @@ externalproject_add(xnu
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
+            -D LD_PATH=$<TARGET_FILE:darwin_ld>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0

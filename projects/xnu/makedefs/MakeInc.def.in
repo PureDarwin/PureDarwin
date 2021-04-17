@@ -493,7 +493,7 @@ SFLAGS	= $(SFLAGS_GEN) \
 #
 # Linker command
 #
-LD	= $(KC++) -nostdlib
+LD	= $(KC++) -nostdlib -fuse-ld=@LD_PATH@
 
 #
 # Default LDFLAGS
