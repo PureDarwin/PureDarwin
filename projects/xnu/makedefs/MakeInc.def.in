@@ -710,12 +710,10 @@ LDFLAGS_KERNEL_ONLY_CONFIG_DEBUGARM64 = $(LDFLAGS_KERNEL_ONLY_CONFIG_DEVELOPMENT
 # (and not the static kernel cache / kcgen)
 #
 LDFLAGS_KERNEL_ONLY_SUBARCH_arm64e = \
-	-Wl,-add_split_seg_info \
-	-Wl,-kernel
+	-Wl,-add_split_seg_info
 
 LDFLAGS_KERNEL_ONLY_SUBARCH_x86_64 = \
-	-Wl,-add_split_seg_info \
-	-Wl,-kernel
+	-Wl,-add_split_seg_info
 LDFLAGS_KERNEL_ONLY_SUBARCH_x86_64h = $(LDFLAGS_KERNEL_ONLY_SUBARCH_x86_64)
 
 LDFLAGS_KERNEL	= $(LDFLAGS_KERNEL_GEN) \
