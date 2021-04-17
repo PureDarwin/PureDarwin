@@ -62,6 +62,7 @@ externalproject_add(xnu
             -D LD_PATH=$<TARGET_FILE:darwin_ld>
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
             -D FIREHOSE_KERNEL_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libdispatch
+            -D PTHREAD_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libpthread/include
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
