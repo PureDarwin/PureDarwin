@@ -20,7 +20,7 @@ externalproject_add(xnu_headers.extproj
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu xnu_headers darwin_codesign_allocate ctfconvert.host ctfmerge.host availability.pl)
+add_dependencies(xnu_headers.extproj darwin_codesign_allocate ctfconvert.host ctfmerge.host availability.pl)
 
 add_library(xnu_headers INTERFACE)
 add_dependencies(xnu_headers xnu_headers.extproj)
