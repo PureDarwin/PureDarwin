@@ -1,0 +1,20 @@
+.\" $OpenBSD: pthread_yield.3,v 1.3 2004/01/25 14:48:32 jmc Exp $
+.\"
+.\" PUBLIC DOMAIN: No Rights Reserved. Marco S Hyman <marc@snafu.org>
+.\"
+.\" $FreeBSD$
+.\"
+.Dd September 18, 2006
+.Dt PTHREAD_YIELD_NP 3
+.Os
+.Sh NAME
+.Nm pthread_yield_np
+.Nd yield control of the current thread
+.Sh SYNOPSIS
+.In pthread.h
+.Ft void
+.Fn pthread_yield_np void
+.Sh DESCRIPTION
+The
+.Fn pthread_yield
+causes the running thread to relinquish the processor.

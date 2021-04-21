@@ -1,0 +1,120 @@
+#include "<DEVELOPER_DIR>/Makefiles/CoreOS/Xcode/BSD.xcconfig"
+
+SDKROOT = macosx.internal
+SUPPORTED_PLATFORMS = macosx iphoneos iphonesimulator appletvos appletvsimulator watchos watchsimulator
+BUILD_VARIANTS = normal debug
+
+SDK_INSTALL_VARIANT = $(SDK_INSTALL_VARIANT_$(DRIVERKIT))
+SDK_INSTALL_VARIANT_1 = driverkit
+SDK_INSTALL_VARIANT_ = default
+SDK_INSTALL_ROOT = $(SDK_INSTALL_ROOT_$(SDK_INSTALL_VARIANT))
+SDK_INSTALL_ROOT_driverkit = $(DRIVERKITROOT)
+SDK_INSTALL_HEADERS_ROOT = $(SDK_INSTALL_HEADERS_ROOT_$(SDK_INSTALL_VARIANT))
+SDK_INSTALL_HEADERS_ROOT_driverkit = $(SDK_INSTALL_ROOT)/$(SDK_RUNTIME_HEADERS_PREFIX)
+SDK_RUNTIME_HEADERS_PREFIX = Runtime
+
+INSTALL_PATH = $(SDK_INSTALL_ROOT)/usr/lib/system
+EXECUTABLE_PREFIX = lib
+PRODUCT_NAME = system_pthread
+PUBLIC_HEADERS_FOLDER_PATH = $(SDK_INSTALL_HEADERS_ROOT)/usr/include/pthread
+PRIVATE_HEADERS_FOLDER_PATH = $(SDK_INSTALL_HEADERS_ROOT)/usr/local/include/pthread
+
+COPY_HEADERS_RUN_UNIFDEF = YES
+COPY_HEADERS_UNIFDEF_FLAGS = -U__PTHREAD_BUILDING_PTHREAD__
+
+SRCROOT_SEARCH_PATHS = $(SRCROOT)/src/resolver $(SRCROOT)/private $(SRCROOT)/include $(SRCROOT)
+SYSTEM_FRAMEWORK_HEADERS = $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/System/Library/Frameworks/System.framework/PrivateHeaders
+HEADER_SEARCH_PATHS = $($(PRODUCT_NAME)_SEARCH_PATHS) $(SRCROOT_SEARCH_PATHS) $(inherited)
+SYSTEM_HEADER_SEARCH_PATHS = $(SYSTEM_FRAMEWORK_HEADERS) $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/usr/local/include $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/usr/include
+SYSTEM_FRAMEWORK_SEARCH_PATHS = $(SDKROOT)/$(SDK_INSTALL_HEADERS_ROOT)/System/Library/Frameworks
+INSTALLHDRS_SCRIPT_PHASE = YES
+ALWAYS_SEARCH_USER_PATHS = YES
+USE_HEADERMAP = NO
+
+GCC_OPTIMIZATION_LEVEL = s
+GCC_C_LANGUAGE_STANDARD = gnu11
+GCC_ENABLE_OBJC_EXCEPTIONS = NO
+GCC_NO_COMMON_BLOCKS = YES
+GCC_SYMBOLS_PRIVATE_EXTERN = NO
+CLANG_LINK_OBJC_RUNTIME = NO
+
+GCC_WARN_64_TO_32_BIT_CONVERSION = YES
+GCC_WARN_ABOUT_MISSING_FIELD_INITIALIZERS = YES
+GCC_WARN_ABOUT_MISSING_NEWLINE = YES
+GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES
+GCC_WARN_ABOUT_RETURN_TYPE = YES
+GCC_WARN_INITIALIZER_NOT_FULLY_BRACKETED = YES
+GCC_WARN_SIGN_COMPARE = YES
+GCC_WARN_SHADOW = YES
+GCC_WARN_UNKNOWN_PRAGMAS = YES
+GCC_WARN_UNUSED_FUNCTION = YES
+GCC_WARN_UNUSED_LABEL = YES
+// GCC_WARN_UNUSED_PARAMETER = YES
+GCC_WARN_UNUSED_VALUE = YES
+GCC_WARN_UNUSED_VARIABLE = YES
+GCC_WARN_UNINITIALIZED_AUTOS = YES
+CLANG_WARN_ASSIGN_ENUM = YES
+CLANG_WARN_BOOL_CONVERSION = YES
+CLANG_WARN_CONSTANT_CONVERSION = YES
+CLANG_WARN_DOCUMENTATION_COMMENTS = YES
+CLANG_WARN_EMPTY_BODY = YES
+CLANG_WARN_ENUM_CONVERSION = YES
+//CLANG_WARN_IMPLICIT_SIGN_CONVERSION = YES
+CLANG_WARN_INFINITE_RECURSION = YES
+// CLANG_WARN_INT_CONVERSION = YES
+CLANG_WARN_SUSPICIOUS_IMPLICIT_CONVERSION = YES
+CLANG_WARN_SUSPICIOUS_MOVE = YES
+CLANG_WARN_UNREACHABLE_CODE = YES
+CLANG_WARN__DUPLICATE_METHOD_MATCH = YES
+
+DISABLED_WARNING_CFLAGS = -Wno-int-conversion -Wno-sign-compare -Wno-sign-conversion -Wno-unused-parameter
+WARNING_CFLAGS = -Wall -Wextra -Wmost -Warray-bounds-pointer-arithmetic -Wcomma -Wconditional-uninitialized -Wcovered-switch-default -Wdate-time -Wdeprecated -Wdouble-promotion -Wduplicate-enum -Wfloat-equal -Widiomatic-parentheses -Wignored-qualifiers -Wimplicit-fallthrough -Wmissing-noreturn -Wnullable-to-nonnull-conversion -Wover-aligned -Wpointer-arith -Wstatic-in-inline -Wtautological-compare -Wunguarded-availability -Wunused -Watomic-implicit-seq-cst $(NO_WARNING_CFLAGS) $(DISABLED_WARNING_CFLAGS)
+NO_WARNING_CFLAGS = -Wno-pedantic -Wno-bad-function-cast -Wno-c++98-compat-pedantic -Wno-cast-align -Wno-cast-qual -Wno-disabled-macro-expansion -Wno-documentation-unknown-command -Wno-format-nonliteral -Wno-packed -Wno-padded -Wno-reserved-id-macro -Wno-switch-enum -Wno-undef -Wno-unreachable-code-aggressive -Wno-unused-macros -Wno-used-but-marked-unused
+
+BASE_PREPROCESSOR_MACROS = __LIBC__ __POSIX_LIB__ __DARWIN_UNIX03=1 __DARWIN_64_BIT_INO_T=1 __DARWIN_NON_CANCELABLE=1 __DARWIN_VERS_1050=1 _FORTIFY_SOURCE=0 __PTHREAD_BUILDING_PTHREAD__=1 $(SIM_PREPROCESSOR_MACROS) __PTHREAD_EXPOSE_INTERNALS__ OS_ATOMIC_CONFIG_MEMORY_ORDER_DEPENDENCY=1
+GCC_PREPROCESSOR_DEFINITIONS = $(BASE_PREPROCESSOR_MACROS) $(PLATFORM_PREPROCESSOR_DEFINITIONS)
+
+// TODO: Remove -fstack-protector on _debug when it is moved to libplatform
+OTHER_CFLAGS = -fno-stack-protector -fno-stack-check -fno-builtin $(PLATFORM_CFLAGS) $($(PRODUCT_NAME)_CFLAGS)
+OTHER_CFLAGS_normal = -momit-leaf-frame-pointer
+OTHER_CFLAGS_debug = -fno-inline -O0 -DDEBUG=1
+
+LINK_WITH_STANDARD_LIBRARIES = NO
+DYLIB_CURRENT_VERSION = $(RC_ProjectSourceVersion)
+DYLIB_COMPATIBILITY_VERSION = 1
+DIRTY_LDFLAGS = -Wl,-dirty_data_list,$(SRCROOT)/xcodescripts/pthread.dirty
+// i386 Simulator shared-cache cannot handle __data_dirty
+DIRTY_LDFLAGS[sdk=macos*][arch=i386] =
+
+LEGACY_ALIAS_LDFLAGS =
+LEGACY_ALIAS_LDFLAGS[sdk=macos*][arch=i386*] = -Wl,-alias_list,$(SRCROOT)/xcodescripts/pthread-i386.aliases
+ALIAS_LDFLAGS = -Wl,-alias_list,$(SRCROOT)/xcodescripts/pthread.aliases $(LEGACY_ALIAS_LDFLAGS)
+
+// rdar://problem/46882983&54282933
+// On macOS, to support the i386 watchOS Simulator, we will continue building
+// libpthread with an i386 slice for the foreseeable future, even though the
+// rest of the OS has dropped i386. (This also applies to libplatform and
+// libsyscall). Normally, dylibs with any dependency on another dylib need
+// to link libdyld for lazy stub binding. libdyld has many dependencies, so
+// that would create a dependency cycle that leads to the whole libSystem
+// umbrella keeping an i386 slice. Instead, ld64 has changed so that the
+// i386 simulator_support slice of libpthread doesn't use lazy binding and so
+// doesn't need -ldyld.
+// So, to break the dependency cycle, macOS libpthread will not link libdyld.
+// All other platforms (including DriverKit on macOS) will continue to link
+// libdyld.
+MACOS_NO_LIBDYLD_LDFLAGS = -ldyld
+MACOS_NO_LIBDYLD_LDFLAGS[sdk=macos*] =
+
+DYLIB_LDFLAGS = -Wl,-umbrella,System -L$(SDK_INSTALL_ROOT)/usr/lib/system -lsystem_kernel -lsystem_platform $(MACOS_NO_LIBDYLD_LDFLAGS) // Don't add compiler_rt or libdyld
+OTHER_LDFLAGS = $(ALIAS_LDFLAGS) $(DYLIB_LDFLAGS) $(DIRTY_LDFLAGS) $(CR_LDFLAGS) $(PLATFORM_LDFLAGS) $(SIMULATOR_LDFLAGS)
+
+SIMULATOR_LDFLAGS =
+SIMULATOR_LDFLAGS[sdk=macosx*] = -Wl,-simulator_support
+IS_ZIPPERED = YES
+
+
+// Simulator build rules
+EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*] = *.c *.s
+SKIP_INSTALL[sdk=iphonesimulator*] = YES
+OTHER_LDFLAGS[sdk=iphonesimulator*] =

@@ -71,6 +71,7 @@
 #include <sys/proc_internal.h>
 #include <sys/vnode.h>
 #include <stdbool.h>
+#define OS_FIREHOSE_SPI 1
 #include <firehose/tracepoint_private.h>
 #include <firehose/chunk_private.h>
 #include <firehose/ioctl_private.h>

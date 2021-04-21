@@ -1,0 +1,31 @@
+# cacheline-aligned
+
+# uint64_t sized
+___pthread_stack_hint
+
+# pointer-sized
+___libdispatch_keventfunction
+___libdispatch_workerfunction
+___libdispatch_workloopfunction
+___pthread_head
+__main_thread_ptr
+__pthread_free
+__pthread_keys
+__pthread_malloc
+__pthread_ptr_munge_token
+_exitf
+
+# int-sized
+___is_threaded
+___pthread_supported_features
+___pthread_tsd_lock
+___pthread_tsd_max
+__main_qos
+__pthread_count
+__pthread_list_lock
+
+# byte-sized
+___workq_newapi
+_default_priority
+_max_priority
+_min_priority
