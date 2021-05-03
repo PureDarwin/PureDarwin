@@ -272,7 +272,7 @@ name:
 	call	1f					; \
 1:							; \
 	popl	%edx					; \
-	movl	L ## var ## $non_lazy_ptr-1b(%edx),%edx
+	movl	L##var##$non_lazy_ptr-1b(%edx),%edx
 
 #define CALL_EXTERN_AGAIN(func)	\
 	PICIFY(func)		; \
@@ -280,7 +280,7 @@ name:
 
 #define NON_LAZY_STUB(var)	\
 .non_lazy_symbol_pointer	; \
-L ## var ## $non_lazy_ptr:	; \
+L##var##$non_lazy_ptr:	; \
 .indirect_symbol var		; \
 .long 0				; \
 .text
@@ -309,7 +309,7 @@ L ## var ## $non_lazy_ptr:	; \
 	call	1f					; \
 1:							; \
 	popl	%edx					; \
-	movl	L ## var ##$non_lazy_ptr-1b(%edx),reg	; \
+	movl	L##var##$non_lazy_ptr-1b(%edx),reg	; \
 	NON_LAZY_STUB(var)
 
 
