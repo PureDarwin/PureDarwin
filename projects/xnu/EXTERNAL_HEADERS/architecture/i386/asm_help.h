@@ -271,12 +271,12 @@ name:
 #define PICIFY(var)					\
 	call	1f					; \
 1:							; \
-	popl	%edx					; \
-	movl	L##var##$non_lazy_ptr-1b(%edx),%edx
+	popq	%rdx					; \
+	movq	L##var##$non_lazy_ptr-1b(%rdx),%rdx
 
 #define CALL_EXTERN_AGAIN(func)	\
 	PICIFY(func)		; \
-	call	%edx
+	callq	*%rdx
 
 #define NON_LAZY_STUB(var)	\
 .non_lazy_symbol_pointer	; \
@@ -291,25 +291,25 @@ L##var##$non_lazy_ptr:	; \
 
 #define BRANCH_EXTERN(func)	\
 	PICIFY(func)		; \
-	jmp	%edx		; \
+	jmpq	*%rdx		; \
 	NON_LAZY_STUB(func)
 
 #define PUSH_EXTERN(var)	\
 	PICIFY(var)		; \
-	movl	(%edx),%edx	; \
-	pushl	%edx		; \
+	movq	(%rdx),%rdx	; \
+	pushq	%rdx		; \
 	NON_LAZY_STUB(var)
 
 #define REG_TO_EXTERN(reg, var)	\
 	PICIFY(var)		; \
-	movl	reg, (%edx)	; \
+	movq	reg, (%rdx)	; \
 	NON_LAZY_STUB(var)
 
 #define EXTERN_TO_REG(var, reg)				\
 	call	1f					; \
 1:							; \
-	popl	%edx					; \
-	movl	L##var##$non_lazy_ptr-1b(%edx),reg	; \
+	popq	%rdx					; \
+	movl	L##var##$non_lazy_ptr-1b(%rdx),reg	; \
 	NON_LAZY_STUB(var)
 
 
