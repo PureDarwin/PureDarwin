@@ -6,6 +6,7 @@ function(add_darwin_executable name)
     target_link_options(${name} PRIVATE -fuse-ld=$<TARGET_FILE:darwin_ld>)
     target_compile_options(${name} PRIVATE -target x86_64-apple-darwin20)
     target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+    target_link_options(${name} PRIVATE -nostdlib)
 
     # TODO: Handle SL_NO_STANDARD_LIBRARIES here, once the libraries have been added to the build.
 
@@ -29,7 +30,7 @@ function(add_darwin_static_library name)
 endfunction()
 
 function(add_darwin_shared_library name)
-    cmake_parse_arguments(SL "" "MACOSX_VERSION_MIN" "" ${ARGN})
+    cmake_parse_arguments(SL "" "MACOSX_VERSION_MIN;INSTALL_NAME_DIR" "RPATHS" ${ARGN})
 
     add_library(${name} SHARED)
     add_dependencies(${name} darwin_ld)
@@ -42,11 +43,19 @@ function(add_darwin_shared_library name)
 
     target_compile_options(${name} PRIVATE -target x86_64-apple-darwin20)
     target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+    target_link_options(${name} PRIVATE -nostdlib)
 
     if(SL_MACOSX_VERSION_MIN)
         target_compile_options(${name} PRIVATE -mmacosx-version-min=${SL_MACOSX_VERSION_MIN})
         target_link_options(${name} PRIVATE -mmacosx-version-min=${SL_MACOSX_VERSION_MIN})
     endif()
+
+    if(SL_INSTALL_NAME_DIR)
+        set_property(TARGET ${name} PROPERTY INSTALL_NAME_DIR ${SL_INSTALL_NAME_DIR})
+    endif()
+    foreach(rpath IN LISTS SL_RPATHS)
+        target_link_options(${name} PRIVATE -rpath ${rpath})
+    endforeach()
 endfunction()
 
 function(add_darwin_object_library name)
