@@ -1,62 +1,75 @@
 function(target_add_mig_sources target filename)
-    cmake_parse_arguments(MIG "COMPILE_SERVER;COMPILE_CLIENT" "ARCH" "" ${ARGN})
+    cmake_parse_arguments(MIG "COMPILE_SERVER;COMPILE_USER;NOVOUCHERS" "USER_HEADER;USER_SOURCE;SERVER_HEADER;SERVER_SOURCE;ARCH" "" ${ARGN})
 
-    if(NOT MIG_USER_SOURCE_SUFFIX)
-        set(MIG_USER_SOURCE_SUFFIX User.c)
+    set(MIG_DEPS)
+    if(MIG_USER_HEADER)
+        list(APPEND MIG_DEPS ${MIG_USER_HEADER})
+    else()
+        set(MIG_USER_HEADER /dev/null)
     endif()
-    if(NOT MIG_USER_HEADER_SUFFIX)
-        set(MIG_USER_HEADER_SUFFIX User.h)
+    if(MIG_USER_HEADER)
+        list(APPEND MIG_DEPS ${MIG_USER_SOURCE})
+    else()
+        set(MIG_USER_SOURCE /dev/null)
     endif()
-    if(NOT MIG_SERVER_SOURCE_SUFFIX)
-        set(MIG_USER_SOURCE_SUFFIX Server.c)
+    if(MIG_SERVER_HEADER)
+        list(APPEND MIG_DEPS ${MIG_SERVER_HEADER})
+    else()
+        set(MIG_SERVER_HEADER /dev/null)
     endif()
-    if(NOT MIG_USER_HEADER_SUFFIX)
-        set(MIG_USER_HEADER_SUFFIX Server.h)
+    if(MIG_SERVER_SOURCE)
+        list(APPEND MIG_DEPS ${MIG_SERVER_SOURCE})
+    else()
+        set(MIG_SERVER_SOURCE /dev/null)
     endif()
 
-    get_target_property(_defs ${target} COMPILE_DEFINITIONS)
-    get_target_property(_incs ${target} INCLUDE_DIRECTORIES)
+    if(MIG_USER_HEADER STREQUAL "/dev/null" AND MIG_USER_SOURCE STREQUAL "/dev/null" AND MIG_SERVER_HEADER STREQUAL "/dev/null" AND MIG_SERVER_SOURCE STREQUAL "/dev/null")
+        message(SEND_ERROR "At least one output must be specified")
+        return()
+    endif()
 
     set(MIG_FLAGS)
-    foreach(def ${_defs})
-        list(APPEND MIG_FLAGS "-D${def}")
+    set(incs $<TARGET_PROPERTY:${target},INCLUDE_DIRECTORIES>)
+    set(defs $<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>)
+    list(APPEND MIG_FLAGS $<$<BOOL:${incs}>:-I$<JOIN:${incs},$<SEMICOLON>-I>>)
+    list(APPEND MIG_FLAGS $<$<BOOL:${defs}>:-D$<JOIN:${defs},$<SEMICOLON>-D>>)
+
+    target_get_library_dependencies(${target} target_dependencies)
+    foreach(dep IN LISTS target_dependencies)
+        set(incs $<TARGET_PROPERTY:${dep},INTERFACE_INCLUDE_DIRECTORIES>)
+        set(defs $<TARGET_PROPERTY:${dep},INTERFACE_COMPILE_DEFINITIONS>)
+        list(APPEND MIG_FLAGS $<$<BOOL:${incs}>:-I$<JOIN:${incs},$<SEMICOLON>-I>>)
+        list(APPEND MIG_FLAGS $<$<BOOL:${defs}>:-D$<JOIN:${defs},$<SEMICOLON>-D>>)
     endforeach()
-    foreach(inc ${_incs})
-        list(APPEND MIG_FLAGS "-I${inc}")
-    endforeach()
+
+    if(MIG_NOVOUCHERS)
+        list(APPEND MIG_FLAGS -novouchers)
+    endif()
 
     if(NOT MIG_ARCH)
         set(MIG_ARCH i386)
     endif()
 
     get_filename_component(basename ${filename} NAME_WE)
-    add_custom_command(
-        OUTPUT
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_SOURCE_SUFFIX}
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_HEADER_SUFFIX}
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_SOURCE_SUFFIX}
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_HEADER_SUFFIX}
-        COMMAND
-            ${CMAKE_COMMAND} -E env MIGCOM=$<TARGET_FILE:migcom> $<TARGET_FILE:mig> -arch ${MIG_ARCH}
-                -user ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_SOURCE_SUFFIX}
-                -header ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_HEADER_SUFFIX}
-                -server ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_SOURCE_SUFFIX}
-                -sheader ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_HEADER_SUFFIX}
-                ${MIG_FLAGS} ${filename}
-        DEPENDS mig migcom
-        COMMENT "Mig ${filename}" VERBATIM
+    get_filename_component(filename_abs ${filename} ABSOLUTE)
+    add_custom_command(OUTPUT ${MIG_DEPS}
+        COMMAND ${CMAKE_COMMAND} -E env MIGCOM=$<TARGET_FILE:migcom> ${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh -arch ${MIG_ARCH}
+            -user ${MIG_USER_SOURCE} -header ${MIG_USER_HEADER} -server ${MIG_SERVER_SOURCE}
+            -sheader ${MIG_SERVER_HEADER} ${MIG_FLAGS} ${filename_abs}
+        DEPENDS migcom
+        COMMENT "MiG ${filename}" VERBATIM COMMAND_EXPAND_LISTS
     )
 
-    if(MIG_COMPILE_SERVER)
-        target_sources(${target} PRIVATE
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_SOURCE_SUFFIX}
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_SERVER_HEADER_SUFFIX}
-        )
+    if(MIG_COMPILE_SERVER AND NOT (MIG_SERVER_SOURCE STREQUAL "/dev/null"))
+        target_sources(${target} PRIVATE ${MIG_SERVER_SOURCE})
+        if(NOT MIG_SERVER_HEADER STREQUAL "/dev/null")
+            target_sources(${target} PRIVATE ${MIG_SERVER_HEADER})
+        endif()
     endif()
-    if(MIG_COMPILE_CLIENT)
-        target_sources(${target} PRIVATE
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_SOURCE_SUFFIX}
-            ${CMAKE_CURRENT_BINARY_DIR}/${basename}${MIG_USER_HEADER_SUFFIX}
-        )
+    if(MIG_COMPILE_USER AND NOT (MIG_USER_SOURCE STREQUAL "/dev/null"))
+        target_sources(${target} PRIVATE ${MIG_USER_SOURCE})
+        if(NOT MIG_USER_HEADER STREQUAL "/dev/null")
+            target_sources(${target} PRIVATE ${MIG_USER_HEADER})
+        endif()
     endif()
 endfunction()
