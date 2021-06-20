@@ -21,7 +21,36 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
 add_darwin_shared_library(libsystem_kernel NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
 target_sources(libsystem_kernel PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
+    mach/clock_sleep.c
+    mach/error_codes.c
+    mach/exc_catcher_state_identity.c
+    mach/exc_catcher_state.c
+    mach/exc_catcher.c
+    mach/fprintf_stderr.c
+    mach/host.c
+    mach/mach_error_string.c
+    mach/mach_error.c
+    mach/mach_eventlink.c
+    mach/mach_init.c
+    mach/mach_legacy.c
+    mach/mach_msg.c
+    mach/mach_port.c
+    mach/mach_right.c
+    mach/mach_traps.s
+    mach/mach_vm.c
+    mach/mig_allocate.c
+    mach/mig_deallocate.c
+    mach/mig_reply_port.c
+    mach/mig_reply_setup.c
+    mach/ms_thread_switch.c
+    mach/panic.c
     mach/port_descriptions.c
+    mach/port_obj.c
+    mach/semaphore.c
+    mach/slot_name.c
+    mach/string.c
+    mach/thread_act.c
+
     wrappers/clonefile.c
 )
 
@@ -34,7 +63,7 @@ target_include_directories(libsystem_kernel PRIVATE bootstrap_include mach ${CMA
 target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness)
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 LIBSYSCALL_INTERFACE __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
 target_link_libraries(libsystem_kernel PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
-target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers)
+target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers libsystem_kernel_private_headers)
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
 target_add_mig_sources(libsystem_kernel mach/clock_priv.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock_priv.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/clock_priv_user.h)
