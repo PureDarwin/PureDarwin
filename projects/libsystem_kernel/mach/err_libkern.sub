@@ -29,7 +29,6 @@
  */
 
 #include <libkern/OSReturn.h>
-#include <libkern/OSKextLib.h>
 
 
 /* These codes are specified in decimal in OSReturn.h.
