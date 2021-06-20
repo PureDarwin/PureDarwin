@@ -57,7 +57,7 @@ target_add_mig_sources(libsystem_kernel mach/restartable.defs COMPILE_USER USER_
 target_add_mig_sources(libsystem_kernel mach/memory_entry.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/memory_entry.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/memory_entry.h NOVOUCHERS)
 target_add_mig_sources(libsystem_kernel mach/mach_eventlink.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_eventlink.c)
 target_add_mig_sources(libsystem_kernel mach/mach_voucher.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_voucher.c)
-target_add_mig_sources(libsystem_kernel mach/servers/netname.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/netname.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel include/servers/netname.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/netname.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h NOVOUCHERS)
 
 
 install(FILES include/servers/ls_defs.h DESTINATION /usr/include/servers COMPONENT DeveloperTools)
