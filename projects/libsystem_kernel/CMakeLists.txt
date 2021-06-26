@@ -18,9 +18,11 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMENT "Compile syscall stubs" VERBATIM
 )
 
+add_library(libsyscall_traps STATIC IMPORTED)
+set_property(TARGET libsyscall_traps PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
+
 add_darwin_shared_library(libsystem_kernel NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
 target_sources(libsystem_kernel PRIVATE
-    ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     mach/clock_sleep.c
     mach/error_codes.c
     mach/exc_catcher_state_identity.c
@@ -63,7 +65,7 @@ target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/p
 target_include_directories(libsystem_kernel PRIVATE bootstrap_include mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 LIBSYSCALL_INTERFACE __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
-target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers libsystem_kernel_private_headers)
+target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers libsystem_kernel_private_headers libsyscall_traps)
 target_link_libraries(libsystem_kernel PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
