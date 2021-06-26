@@ -23,6 +23,8 @@ set_property(TARGET libsyscall_traps PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_
 
 add_darwin_shared_library(libsystem_kernel NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
 target_sources(libsystem_kernel PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
+
     mach/clock_sleep.c
     mach/error_codes.c
     mach/exc_catcher_state_identity.c
