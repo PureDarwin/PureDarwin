@@ -26,12 +26,12 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#include <mach/mach_port_internal.h>
+#include <mach/mach_port.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mach/mach_traps.h>
 #include <mach/mach_sync_ipc.h>
-#include "tsd.h"
+#include <os/tsd.h>
 
 
 kern_return_t
