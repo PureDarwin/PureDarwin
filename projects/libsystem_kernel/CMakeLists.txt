@@ -63,8 +63,8 @@ target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/p
 target_include_directories(libsystem_kernel PRIVATE bootstrap_include mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 LIBSYSCALL_INTERFACE __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
-target_link_libraries(libsystem_kernel PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
 target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers libsystem_kernel_private_headers)
+target_link_libraries(libsystem_kernel PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
 target_add_mig_sources(libsystem_kernel mach/clock_priv.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock_priv.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach/clock_priv.h)
