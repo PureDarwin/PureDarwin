@@ -269,21 +269,14 @@ name:
 
 #if defined(__DYNAMIC__)
 #define PICIFY(var)					\
-	call	1f					; \
-1:							; \
-	popq	%rdx					; \
-	movq	L##var##$non_lazy_ptr-1b(%rdx),%rdx
+	movq	var(%rip),%rdx
 
 #define CALL_EXTERN_AGAIN(func)	\
 	PICIFY(func)		; \
 	callq	*%rdx
 
-#define NON_LAZY_STUB(var)	\
-.non_lazy_symbol_pointer	; \
-L##var##$non_lazy_ptr:	; \
-.indirect_symbol var		; \
-.long 0				; \
-.text
+/* If these exist on x86_64, the linker will assert. */
+#define NON_LAZY_STUB(var)
 
 #define CALL_EXTERN(func)	\
 	CALL_EXTERN_AGAIN(func)	; \
