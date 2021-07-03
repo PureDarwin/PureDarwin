@@ -55,7 +55,97 @@ target_sources(libsystem_kernel_static PRIVATE
     mach/string.c
     mach/thread_act.c
 
+    wrappers/__commpage_gettimeofday.c
+    wrappers/__get_cpu_capabilities.s
+    wrappers/_libc_funcptr.c
+    wrappers/_libkernel_init.c
     wrappers/clonefile.c
+    wrappers/clonefile.c
+    wrappers/coalition.c
+    wrappers/csr.c
+    wrappers/fs_snapshot.c
+    wrappers/gethostuuid.c
+    wrappers/getiopolicy_np.c
+    wrappers/guarded_open_dprotected_np.c
+    wrappers/guarded_open_np.c
+    wrappers/init_cpu_capabilities.c
+    wrappers/ioctl.c
+    wrappers/kdebug_trace.c
+    wrappers/kill.c
+    wrappers/mach_absolute_time.s
+    wrappers/mach_approximate_time.c
+    wrappers/mach_boottime.c
+    wrappers/mach_continuous_time.c
+    wrappers/mach_get_times.c
+    wrappers/mach_timebase_info.c
+    wrappers/open_dprotected_np.c
+    wrappers/persona.c
+    wrappers/pid_shutdown_networking.c
+    wrappers/posix_sem_obsolete.c
+    wrappers/proc.c
+    wrappers/quota_obsolete.c
+    wrappers/reboot.c
+    wrappers/remove-counter.c
+    wrappers/rename.c
+    wrappers/renameat.c
+    wrappers/renamex.c
+    wrappers/rmdir.c
+    wrappers/setpriority.c
+    wrappers/sfi.c
+    wrappers/stackshot.c
+    wrappers/system-version-compat-support.c
+    wrappers/system-version-compat.c
+    wrappers/terminate_with_reason.c
+    wrappers/thread_register_state.c
+    wrappers/unlink.c
+    wrappers/unlinkat.c
+    wrappers/utimensat.c
+    wrappers/varargs_wrappers.s
+    wrappers/work_interval.c
+
+    wrappers/cancelable/fcntl.c
+    wrappers/cancelable/fcntl-cancel.c
+    wrappers/cancelable/open.c
+    wrappers/cancelable/pselect-darwinext.c
+    wrappers/cancelable/pselect-darwinext-cancel.c
+    wrappers/cancelable/select-cancel.c
+    wrappers/cancelable/select.c
+    wrappers/cancelable/sigsuspend.c
+    wrappers/cancelable/sigsuspend-cancel.c
+
+    wrappers/legacy/accept.c
+    wrappers/legacy/bind.c
+    wrappers/legacy/connect.c
+    wrappers/legacy/getattrlist.c
+    wrappers/legacy/getaudit.c
+    wrappers/legacy/getpeername.c
+    wrappers/legacy/getsockname.c
+    wrappers/legacy/kill.c
+    wrappers/legacy/lchown.c
+    wrappers/legacy/listen.c
+    wrappers/legacy/mprotect.c
+    wrappers/legacy/msync.c
+    wrappers/legacy/munmap.c
+    wrappers/legacy/recvfrom.c
+    wrappers/legacy/recvmsg.c
+    wrappers/legacy/select.c
+    wrappers/legacy/select-pre1050.c
+    wrappers/legacy/sendmsg.c
+    wrappers/legacy/sendto.c
+    wrappers/legacy/setattrlist.c
+    wrappers/legacy/sigsuspend.c
+    wrappers/legacy/socketpair.c
+
+    wrappers/libproc/libproc.c
+    wrappers/libproc/proc_listpidspath.c
+    wrappers/spawn/posix_spawn.c
+
+    wrappers/unix03/chmod.c
+    wrappers/unix03/fchmod.c
+    wrappers/unix03/getrlimit.c
+    wrappers/unix03/mmap.c
+    wrappers/unix03/munmap.c
+    wrappers/unix03/setrlimit.c
 )
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/server)
@@ -63,7 +153,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 
 target_include_directories(libsystem_kernel_static PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
-target_include_directories(libsystem_kernel_static PRIVATE bootstrap_include mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
+target_include_directories(libsystem_kernel_static PRIVATE bootstrap_include mach wrappers ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 target_compile_options(libsystem_kernel_static PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 target_compile_definitions(libsystem_kernel_static PRIVATE _FORTIFY_SOURCE=0 LIBSYSCALL_INTERFACE __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
 target_link_libraries(libsystem_kernel_static PRIVATE xnu_private_headers libsystem_kernel_private_headers libsyscall_traps)
@@ -120,7 +210,7 @@ target_sources(libsystem_kernel PRIVATE
 )
 target_include_directories(libsystem_kernel PUBLIC include)
 target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/public_include)
-target_include_directories(libsystem_kernel PRIVATE bootstrap_include)
+target_include_directories(libsystem_kernel PRIVATE bootstrap_include wrappers/string)
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0)
 target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static)
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
