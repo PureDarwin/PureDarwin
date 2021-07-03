@@ -58,7 +58,7 @@ function(add_darwin_shared_library name)
         target_link_options(${name} PRIVATE "LINKER:-install_name;${SL_INSTALL_NAME_DIR}/$<TARGET_FILE_NAME:${name}>")
     endif()
     foreach(rpath IN LISTS SL_RPATHS)
-        target_link_options(${name} PRIVATE -rpath ${rpath})
+        target_link_options(${name} PRIVATE "SHELL:-rpath ${rpath}")
     endforeach()
 endfunction()
 
