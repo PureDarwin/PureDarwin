@@ -193,6 +193,7 @@ static void OSKextLogKextInfo(OSKext *aKext, uint64_t address, uint64_t size, fi
  * Strings and substrings used in dependency resolution.
  */
 #define APPLE_KEXT_PREFIX            "com.apple."
+#define PUREDARWIN_KEXT_PREFIX       "org.puredarwin."
 #define KERNEL_LIB                   "com.apple.kernel"
 
 #define PRIVATE_KPI                  "com.apple.kpi.private"
@@ -8792,7 +8793,7 @@ OSKext::resolveDependencies(
 		bool readableCopyrightIsValid = false;
 
 		hasApplePrefix = STRING_HAS_PREFIX(getIdentifierCString(),
-		    APPLE_KEXT_PREFIX);
+		    APPLE_KEXT_PREFIX) || STRING_HAS_PREFIX(getIdentifierCString(), PUREDARWIN_KEXT_PREFIX);
 
 		infoString = OSDynamicCast(OSString,
 		    getPropertyForHostArch("CFBundleGetInfoString"));
