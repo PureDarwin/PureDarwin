@@ -36,7 +36,6 @@
 #include <sys/proc_info.h>
 
 #include <Availability.h>
-#include <os/availability.h>
 
 /*
  * This header file contains private interfaces to obtain process information.
@@ -100,7 +99,7 @@ int proc_name(int pid, void * buffer, uint32_t buffersize) __OSX_AVAILABLE_START
 int proc_regionfilename(int pid, uint64_t address, void * buffer, uint32_t buffersize) __OSX_AVAILABLE_STARTING(__MAC_10_5, __IPHONE_2_0);
 int proc_kmsgbuf(void * buffer, uint32_t buffersize) __OSX_AVAILABLE_STARTING(__MAC_10_5, __IPHONE_2_0);
 int proc_pidpath(int pid, void * buffer, uint32_t  buffersize) __OSX_AVAILABLE_STARTING(__MAC_10_5, __IPHONE_2_0);
-int proc_pidpath_audittoken(audit_token_t *audittoken, void * buffer, uint32_t  buffersize) API_AVAILABLE(macos(10.16), ios(14.0), watchos(7.0), tvos(14.0));
+int proc_pidpath_audittoken(audit_token_t *audittoken, void * buffer, uint32_t  buffersize) __API_AVAILABLE(macos(10.16), ios(14.0), watchos(7.0), tvos(14.0));
 int proc_libversion(int *major, int * minor) __OSX_AVAILABLE_STARTING(__MAC_10_5, __IPHONE_2_0);
 
 /*

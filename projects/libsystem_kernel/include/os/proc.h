@@ -31,7 +31,7 @@
 
 #include <stddef.h>
 #include <sys/cdefs.h>
-#include <os/availability.h>
+#include <Availability.h>
 
 /*!
  * @header
@@ -82,7 +82,7 @@ __BEGIN_DECLS
  * the calling process exceeds its memory limit.
  */
 
-    API_UNAVAILABLE(macos) API_AVAILABLE(ios(13.0), tvos(13.0), watchos(6.0), bridgeos(4.0))
+    __API_UNAVAILABLE(macos) __API_AVAILABLE(ios(13.0), tvos(13.0), watchos(6.0))
 extern
 size_t os_proc_available_memory(void);
 

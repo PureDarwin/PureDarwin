@@ -21,7 +21,6 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 #include <fcntl.h>
-#include <stdio.h>
 
 void __inc_remove_counter(void);
 int __renameatx_np(int oldfd, const char *old, int newfd, const char *new, unsigned int flags);

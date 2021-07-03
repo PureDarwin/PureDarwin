@@ -23,7 +23,6 @@
 
 #include <sys/types.h>
 #include <stdint.h>
-#include <os/availability.h>
 #include <TargetConditionals.h>
 #include <os/proc.h>
 
