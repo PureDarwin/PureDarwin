@@ -158,7 +158,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 target_include_directories(libsystem_kernel_static PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
 target_include_directories(libsystem_kernel_static PRIVATE bootstrap_include mach wrappers ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 target_compile_options(libsystem_kernel_static PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
-target_compile_definitions(libsystem_kernel_static PRIVATE _FORTIFY_SOURCE=0 LIBSYSCALL_INTERFACE __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
+target_compile_definitions(libsystem_kernel_static PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
 target_link_libraries(libsystem_kernel_static PRIVATE xnu_private_headers libsystem_kernel_private_headers libsyscall_traps)
 target_link_libraries(libsystem_kernel_static PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
 
