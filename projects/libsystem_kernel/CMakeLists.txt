@@ -21,8 +21,8 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
 add_library(libsyscall_traps STATIC IMPORTED)
 set_property(TARGET libsyscall_traps PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
 
-add_darwin_shared_library(libsystem_kernel NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
-target_sources(libsystem_kernel PRIVATE
+add_darwin_static_library(libsystem_kernel_static)
+target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
 
     mach/clock_sleep.c
@@ -62,36 +62,34 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/server)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 
-target_include_directories(libsystem_kernel PUBLIC include)
-target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/public_include)
-target_include_directories(libsystem_kernel PRIVATE bootstrap_include mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
-target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
-target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 LIBSYSCALL_INTERFACE __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
-target_link_libraries(libsystem_kernel PRIVATE xnu_private_headers libsystem_kernel_private_headers libsyscall_traps)
-target_link_libraries(libsystem_kernel PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
-target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
+target_include_directories(libsystem_kernel_static PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
+target_include_directories(libsystem_kernel_static PRIVATE bootstrap_include mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
+target_compile_options(libsystem_kernel_static PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
+target_compile_definitions(libsystem_kernel_static PRIVATE _FORTIFY_SOURCE=0 LIBSYSCALL_INTERFACE __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
+target_link_libraries(libsystem_kernel_static PRIVATE xnu_private_headers libsystem_kernel_private_headers libsyscall_traps)
+target_link_libraries(libsystem_kernel_static PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
 
-target_add_mig_sources(libsystem_kernel mach/clock_priv.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock_priv.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach/clock_priv.h)
-target_add_mig_sources(libsystem_kernel mach/clock_reply.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock_reply.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/clock_reply_user.h)
-target_add_mig_sources(libsystem_kernel mach/clock.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/clock.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/exc.defs COMPILE_USER COMPILE_SERVER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/exc_user.c SERVER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/exc_server.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/exc.h SERVER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/exc_server.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/host_priv.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/host_priv.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/host_priv.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/host_security.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/host_security.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/host_security.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/lock_set.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/lock_set.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/lock_set.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/mach_host.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_host.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/mach_host.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/mach_port.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_port.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/mach_port.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/mach_vm.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_vm.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/mach_vm.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/notify.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/notify.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/notify_user.h)
-target_add_mig_sources(libsystem_kernel mach/processor_set.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/processor_set.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/processor_set.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/processor.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/processor.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/processor.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/task.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/task.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/task.h)
-target_add_mig_sources(libsystem_kernel mach/thread_act.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/thread_act.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/thread_act.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/vm_map.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/vm_map.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/vm_map.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/restartable.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/restartable.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/restartable_user.h)
-target_add_mig_sources(libsystem_kernel mach/memory_entry.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/memory_entry.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/memory_entry.h NOVOUCHERS)
-target_add_mig_sources(libsystem_kernel mach/mach_eventlink.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_eventlink.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/mach_eventlink_user.h)
-target_add_mig_sources(libsystem_kernel mach/mach_voucher.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_voucher.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/mach_voucher_user.h)
-target_add_mig_sources(libsystem_kernel include/servers/netname.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/netname.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/clock_priv.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock_priv.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach/clock_priv.h)
+target_add_mig_sources(libsystem_kernel_static mach/clock_reply.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock_reply.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/clock_reply_user.h)
+target_add_mig_sources(libsystem_kernel_static mach/clock.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/clock.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/exc.defs COMPILE_USER COMPILE_SERVER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/exc_user.c SERVER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/exc_server.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/exc.h SERVER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/exc_server.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/host_priv.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/host_priv.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/host_priv.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/host_security.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/host_security.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/host_security.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/lock_set.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/lock_set.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/lock_set.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/mach_host.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_host.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/mach_host.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/mach_port.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_port.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/mach_port.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/mach_vm.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_vm.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/mach_vm.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/notify.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/notify.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/notify_user.h)
+target_add_mig_sources(libsystem_kernel_static mach/processor_set.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/processor_set.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/processor_set.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/processor.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/processor.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/processor.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/task.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/task.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/task.h)
+target_add_mig_sources(libsystem_kernel_static mach/thread_act.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/thread_act.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/thread_act.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/vm_map.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/vm_map.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/vm_map.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/restartable.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/restartable.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/restartable_user.h)
+target_add_mig_sources(libsystem_kernel_static mach/memory_entry.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/memory_entry.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/memory_entry.h NOVOUCHERS)
+target_add_mig_sources(libsystem_kernel_static mach/mach_eventlink.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_eventlink.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/mach_eventlink_user.h)
+target_add_mig_sources(libsystem_kernel_static mach/mach_voucher.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_voucher.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/mach_voucher_user.h)
+target_add_mig_sources(libsystem_kernel_static include/servers/netname.defs COMPILE_USER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/netname.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h NOVOUCHERS)
 
 
 install(FILES include/servers/ls_defs.h DESTINATION /usr/include/servers COMPONENT DeveloperTools)
@@ -107,6 +105,25 @@ install(FILES include/mach/sync.h DESTINATION /usr/include/mach COMPONENT Develo
 install(FILES include/mach/vm_task.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
 install(FILES include/mach/vm_page_size.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
 install(FILES include/mach/thread_state.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
+
+
+add_darwin_shared_library(libsystem_kernel NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
+target_sources(libsystem_kernel PRIVATE
+    wrappers/string/index.c
+    wrappers/string/memcpy.c
+    wrappers/string/memset.c
+    wrappers/string/strcmp.c
+    wrappers/string/strcpy.c
+    wrappers/string/strlcpy.c
+    wrappers/string/strlen.c
+    wrappers/string/strsep.c
+)
+target_include_directories(libsystem_kernel PUBLIC include)
+target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/public_include)
+target_include_directories(libsystem_kernel PRIVATE bootstrap_include)
+target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0)
+target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static)
+target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
 
 add_library(libsystem_kernel_private_headers INTERFACE)
