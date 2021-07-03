@@ -55,6 +55,7 @@
 #include <mach/mach.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
+#include <mach/mach_traps.h>
 #include <mach/message.h>
 #include <mach/mig_errors.h>
 #include <mach/vm_statistics.h>

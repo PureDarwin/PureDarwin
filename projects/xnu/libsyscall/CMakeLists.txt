@@ -2,7 +2,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
-        ${CMAKE_CURRENT_SOURCE_DIR}/../xnu/bsd/kern/syscalls.master
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bsd/kern/syscalls.master
         ${CMAKE_CURRENT_SOURCE_DIR}/custom ${CMAKE_CURRENT_SOURCE_DIR}/Platforms
         MacOSX ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
@@ -14,7 +14,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-syscalls.pl
-        ${CMAKE_CURRENT_SOURCE_DIR}/../xnu/bsd/kern/syscalls.master
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bsd/kern/syscalls.master
     COMMENT "Compile syscall stubs" VERBATIM
 )
 

@@ -29,7 +29,7 @@
 #include <TargetConditionals.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "tsd.h"
+#include <os/tsd.h>
 
 /*
  * cerror takes the return value of the syscall, being non-zero, and
