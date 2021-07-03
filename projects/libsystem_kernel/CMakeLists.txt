@@ -46,6 +46,7 @@ target_sources(libsystem_kernel_static PRIVATE
     mach/mig_deallocate.c
     mach/mig_reply_port.c
     mach/mig_reply_setup.c
+    mach/mig_strncpy.c
     mach/ms_thread_switch.c
     mach/panic.c
     mach/port_descriptions.c
