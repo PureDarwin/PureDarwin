@@ -146,6 +146,8 @@ target_sources(libsystem_kernel_static PRIVATE
     wrappers/unix03/mmap.c
     wrappers/unix03/munmap.c
     wrappers/unix03/setrlimit.c
+
+    custom/errno.c
 )
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/server)
