@@ -10,6 +10,7 @@ set(CMAKE_INSTALL_PREFIX "")
 
 include(ExternalProject)
 include(scripts/cmake/crosscompile.cmake)
+include(scripts/cmake/bundle_resources.cmake)
 include(scripts/cmake/get_target_dependencies.cmake)
 include(scripts/cmake/install_helpers.cmake)
 include(scripts/cmake/kext.cmake)
