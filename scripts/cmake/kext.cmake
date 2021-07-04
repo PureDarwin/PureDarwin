@@ -1,5 +1,5 @@
 function(add_kext_bundle name)
-    cmake_parse_arguments(SL "KERNEL_PRIVATE" "MACOSX_VERSION_MIN;INFO_PLIST" "" ${ARGN})
+    cmake_parse_arguments(SL "KERNEL_PRIVATE" "MACOSX_VERSION_MIN;INFO_PLIST;BUNDLE_IDENTIFIER;BUNDLE_VERSION;MAIN_FUNCTION;ANTIMAIN_FUNCTION" "" ${ARGN})
 
     if(SL_MACOSX_VERSION_MIN)
         add_darwin_shared_library(${name} MODULE MACOSX_VERSION_MIN ${SL_MACOSX_VERSION_MIN})
@@ -32,6 +32,15 @@ function(add_kext_bundle name)
     else()
         message(SEND_ERROR "INFO_PLIST argument must be provided to add_darwin_kext()")
     endif()
+
+    if(SL_BUNDLE_IDENTIFIER)
+        set_property(TARGET ${name} PROPERTY MACOSX_BUNDLE_GUI_IDENTIFIER ${SL_BUNDLE_IDENTIFIER})
+    endif()
+    if(SL_BUNDLE_VERSION)
+        set_property(TARGET ${name} PROPERTY MACOSX_BUNDLE_BUNDLE_VERSION ${SL_BUNDLE_VERSION})
+    endif()
+
+    add_kmod_info(${name} MAIN_FUNCTION ${SL_MAIN_FUNCTION} ANTIMAIN_FUNCTION ${SL_ANTIMAIN_FUNCTION})
 endfunction()
 
 function(add_kmod_info target)
