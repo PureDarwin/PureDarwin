@@ -1050,6 +1050,7 @@ struct munger_test {
 	{MT_FUNC(munge_wws), 3, 3, {MT_W_VAL, MT_W_VAL, MT_S_VAL}},
 	{MT_FUNC(munge_wwwsw), 5, 5, {MT_W_VAL, MT_W_VAL, MT_W_VAL, MT_S_VAL, MT_W_VAL}},
 	{MT_FUNC(munge_llllll), 12, 6, {MT_L_VAL, MT_L_VAL, MT_L_VAL, MT_L_VAL, MT_L_VAL, MT_L_VAL}},
+	{MT_FUNC(munge_llll), 8, 4, {MT_L_VAL, MT_L_VAL, MT_L_VAL, MT_L_VAL}},
 	{MT_FUNC(munge_l), 2, 1, {MT_L_VAL}},
 	{MT_FUNC(munge_lw), 3, 2, {MT_L_VAL, MT_W_VAL}},
 	{MT_FUNC(munge_lwww), 5, 4, {MT_L_VAL, MT_W_VAL, MT_W_VAL, MT_W_VAL}},
@@ -1170,20 +1171,6 @@ ex_cb_test()
 
 #if defined(HAS_APPLE_PAC)
 
-/*
- *
- *  arm64_ropjop_test - basic xnu ROP/JOP test plan
- *
- *  - assert ROP/JOP configured and running status match
- *  - assert all AppleMode ROP/JOP features enabled
- *  - ensure ROP/JOP keys are set and diversified
- *  - sign a KVA (the address of this function),assert it was signed (changed)
- *  - authenticate the newly signed KVA
- *  - assert the authed KVA is the original KVA
- *  - corrupt a signed ptr, auth it, ensure auth failed
- *  - assert the failed authIB of corrupted pointer is tagged
- *
- */
 
 kern_return_t
 arm64_ropjop_test()
@@ -1195,61 +1182,19 @@ arm64_ropjop_test()
 	boolean_t config_jop_enabled = TRUE;
 
 
-	/* assert all AppleMode ROP/JOP features enabled */
-	uint64_t apctl = __builtin_arm_rsr64(ARM64_REG_APCTL_EL1);
-#if __APSTS_SUPPORTED__
-	uint64_t apsts = __builtin_arm_rsr64(ARM64_REG_APSTS_EL1);
-	T_EXPECT(apsts & APSTS_EL1_MKEYVld, NULL);
-#else
-	T_EXPECT(apctl & APCTL_EL1_MKEYVld, NULL);
-#endif /* __APSTS_SUPPORTED__ */
-	T_EXPECT(apctl & APCTL_EL1_AppleMode, NULL);
-
-	bool kernkeyen = apctl & APCTL_EL1_KernKeyEn;
-#if HAS_APCTL_EL1_USERKEYEN
-	bool userkeyen = apctl & APCTL_EL1_UserKeyEn;
-#else
-	bool userkeyen = false;
-#endif
-	/* for KernKey to work as a diversifier, it must be enabled at exactly one of {EL0, EL1/2} */
-	T_EXPECT(kernkeyen || userkeyen, "KernKey is enabled");
-	T_EXPECT(!(kernkeyen && userkeyen), "KernKey is not simultaneously enabled at userspace and kernel space");
-
-	/* ROP/JOP keys enabled current status */
-	bool status_jop_enabled, status_rop_enabled;
-#if __APSTS_SUPPORTED__ /* H13+ */
-	status_jop_enabled = status_rop_enabled = apctl & APCTL_EL1_EnAPKey1;
-#elif __APCFG_SUPPORTED__ /* H12 */
-	uint64_t apcfg_el1 = __builtin_arm_rsr64(APCFG_EL1);
-	status_jop_enabled = status_rop_enabled = apcfg_el1 & APCFG_EL1_ELXENKEY;
-#else /* !__APCFG_SUPPORTED__ H11 */
-	uint64_t sctlr_el1 = __builtin_arm_rsr64("SCTLR_EL1");
-	status_jop_enabled = sctlr_el1 & SCTLR_PACIA_ENABLED;
-	status_rop_enabled = sctlr_el1 & SCTLR_PACIB_ENABLED;
-#endif /* __APSTS_SUPPORTED__ */
-
-	/* assert configured and running status match */
-	T_EXPECT(config_rop_enabled == status_rop_enabled, NULL);
-	T_EXPECT(config_jop_enabled == status_jop_enabled, NULL);
-
-
 	if (config_jop_enabled) {
 		/* jop key */
-		uint64_t apiakey_hi = __builtin_arm_rsr64(ARM64_REG_APIAKEYHI_EL1);
-		uint64_t apiakey_lo = __builtin_arm_rsr64(ARM64_REG_APIAKEYLO_EL1);
+		uint64_t apiakey_hi = __builtin_arm_rsr64("APIAKEYHI_EL1");
+		uint64_t apiakey_lo = __builtin_arm_rsr64("APIAKEYLO_EL1");
 
-		/* ensure JOP key is set and diversified */
-		T_EXPECT(apiakey_hi != KERNEL_ROP_ID && apiakey_lo != KERNEL_ROP_ID, NULL);
 		T_EXPECT(apiakey_hi != 0 && apiakey_lo != 0, NULL);
 	}
 
 	if (config_rop_enabled) {
 		/* rop key */
-		uint64_t apibkey_hi = __builtin_arm_rsr64(ARM64_REG_APIBKEYHI_EL1);
-		uint64_t apibkey_lo = __builtin_arm_rsr64(ARM64_REG_APIBKEYLO_EL1);
+		uint64_t apibkey_hi = __builtin_arm_rsr64("APIBKEYHI_EL1");
+		uint64_t apibkey_lo = __builtin_arm_rsr64("APIBKEYLO_EL1");
 
-		/* ensure ROP key is set and diversified */
-		T_EXPECT(apibkey_hi != KERNEL_ROP_ID && apibkey_lo != KERNEL_ROP_ID, NULL);
 		T_EXPECT(apibkey_hi != 0 && apibkey_lo != 0, NULL);
 
 		/* sign a KVA (the address of this function) */
@@ -1673,13 +1618,13 @@ arm64_spr_lock_test()
 		thread_block(THREAD_CONTINUE_NULL);
 		T_LOG("Running SPR lock test on cpu %d\n", p->cpu_id);
 
-		uint64_t orig_value = __builtin_arm_rsr64(STR(ARM64_REG_HID8));
+		uint64_t orig_value = __builtin_arm_rsr64(STR(HID8));
 		spr_lock_test_addr = (vm_offset_t)VM_KERNEL_STRIP_PTR(arm64_msr_lock_test);
 		spr_lock_exception_esr = 0;
 		arm64_msr_lock_test(~orig_value);
 		T_EXPECT(spr_lock_exception_esr != 0, "MSR write generated synchronous abort");
 
-		uint64_t new_value = __builtin_arm_rsr64(STR(ARM64_REG_HID8));
+		uint64_t new_value = __builtin_arm_rsr64(STR(HID8));
 		T_EXPECT(orig_value == new_value, "MSR write did not succeed");
 
 		spr_lock_test_addr = 0;

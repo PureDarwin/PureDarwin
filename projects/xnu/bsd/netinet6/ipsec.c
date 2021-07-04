@@ -2519,7 +2519,7 @@ ipsec64_encapsulate(struct mbuf *m, struct secasvar *sav)
 
 	/* construct new IPv4 header. see RFC 2401 5.1.2.1 */
 	/* ECN consideration. */
-	ip64_ecn_ingress(ip4_ipsec_ecn, &ip->ip_tos, &ip6i->ip6_flow);
+	ip64_ecn_ingress(ip4_ipsec_ecn, &ip->ip_tos, &ip6->ip6_flow);
 
 	if (plen + sizeof(struct ip) < IP_MAXPACKET) {
 		ip->ip_len = htons((u_int16_t)(plen + sizeof(struct ip)));
@@ -2784,7 +2784,7 @@ ipsec46_encapsulate(struct ipsec_output_state *state, struct secasvar *sav)
 
 	/* construct new IPv6 header. see RFC 2401 5.1.2.2 */
 	/* ECN consideration. */
-	ip46_ecn_ingress(ip6_ipsec_ecn, &ip6->ip6_flow, &oip->ip_tos);
+	ip46_ecn_ingress(ip6_ipsec_ecn, &ip6->ip6_flow, &ip->ip_tos);
 	if (plen < IPV6_MAXPACKET - sizeof(struct ip6_hdr)) {
 		ip6->ip6_plen = htons((u_int16_t)plen);
 	} else {
@@ -4415,13 +4415,21 @@ ipsec6_tunnel_validate(
 		panic("too short mbuf on ipsec6_tunnel_validate");
 	}
 #endif
-	if (nxt != IPPROTO_IPV4 && nxt != IPPROTO_IPV6) {
+	if (nxt == IPPROTO_IPV4) {
+		if (m->m_pkthdr.len < off + sizeof(struct ip)) {
+			ipseclog((LOG_NOTICE, "ipsec6_tunnel_validate pkthdr %d off %d ip6hdr %zu", m->m_pkthdr.len, off, sizeof(struct ip6_hdr)));
+			return 0;
+		}
+	} else if (nxt == IPPROTO_IPV6) {
+		if (m->m_pkthdr.len < off + sizeof(struct ip6_hdr)) {
+			ipseclog((LOG_NOTICE, "ipsec6_tunnel_validate pkthdr %d off %d ip6hdr %zu", m->m_pkthdr.len, off, sizeof(struct ip6_hdr)));
+			return 0;
+		}
+	} else {
+		ipseclog((LOG_NOTICE, "ipsec6_tunnel_validate invalid nxt(%u) protocol", nxt));
 		return 0;
 	}
 
-	if (m->m_pkthdr.len < off + sizeof(struct ip6_hdr)) {
-		return 0;
-	}
 	/* do not decapsulate if the SA is for transport mode only */
 	if (sav->sah->saidx.mode == IPSEC_MODE_TRANSPORT) {
 		return 0;
@@ -5077,7 +5085,7 @@ sysctl_ipsec_wake_packet SYSCTL_HANDLER_ARGS
 
 	struct proc *p = current_proc();
 	if (p != NULL) {
-		uid_t uid = kauth_cred_getuid(proc_ucred(p));
+		uid_t uid = kauth_cred_getuid(kauth_cred_get());
 		if (uid != 0 && priv_check_cred(kauth_cred_get(), PRIV_NET_PRIVILEGED_IPSEC_WAKE_PACKET, 0) != 0) {
 			ipseclog((LOG_ERR, "process does not hold necessary entitlement to get ipsec wake packet"));
 			return EPERM;

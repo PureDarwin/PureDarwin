@@ -47,6 +47,7 @@
 #include <mach/kern_return.h>
 #include <mach/machine/vm_types.h>
 #include <arm/pmap_public.h>
+#include <kern/ast.h>
 #include <mach/arm/thread_status.h>
 #if defined(__arm64__)
 #include <arm64/tlb.h>
@@ -331,7 +332,7 @@ extern pmap_paddr_t mmu_uvtop(vm_offset_t va);
 #define PMAP_GC_WAIT            2
 
 #if DEVELOPMENT || DEBUG
-#define pmap_cs_log_h(msg, args...) { if(pmap_cs_log_hacks) printf("PMAP_CS: " msg "\n", args); }
+#define pmap_cs_log_h(msg, args...) { if(pmap_cs_log_hacks) printf("PMAP_CS: " msg "\n", ##args); }
 #define pmap_cs_log pmap_cs_log_h
 
 #else
@@ -373,6 +374,10 @@ struct pmap {
 	unsigned int            tte_index_max;          /* max tte index in translation table entries */
 #endif
 
+	void *                  reserved0;
+	void *                  reserved1;
+	uint64_t                reserved2;
+	uint64_t                reserved3;
 
 	unsigned int            stamp;                  /* creation stamp */
 	_Atomic int32_t         ref_count;              /* pmap reference count */
@@ -387,7 +392,13 @@ struct pmap {
 	char                    pmap_procname[17];
 	bool            pmap_stats_assert;
 #endif /* MACH_ASSERT */
+	bool                    reserved4;
 	bool                    pmap_vm_map_cs_enforced;
+	boolean_t               reserved5;
+	uint64_t                reserved6;
+	uint64_t                reserved7;
+	bool                    reserved8;
+	bool                    reserved9;
 #if DEVELOPMENT || DEBUG
 	bool            footprint_suspended;
 	bool            footprint_was_suspended;
@@ -399,6 +410,8 @@ struct pmap {
 	bool            nested_bounds_set;                      /* The nesting bounds have been set */
 #if HAS_APPLE_PAC
 	bool            disable_jop;
+#else
+	bool            reserved10;
 #endif /* HAS_APPLE_PAC */
 };
 
@@ -443,22 +456,20 @@ extern pmap_paddr_t pmap_find_pa(pmap_t map, addr64_t va);
 extern pmap_paddr_t pmap_find_pa_nofault(pmap_t map, addr64_t va);
 extern ppnum_t pmap_find_phys(pmap_t map, addr64_t va);
 extern ppnum_t pmap_find_phys_nofault(pmap_t map, addr64_t va);
+extern void pmap_switch_user(thread_t th, vm_map_t map);
 extern void pmap_set_pmap(pmap_t pmap, thread_t thread);
 extern void pmap_collect(pmap_t pmap);
 extern  void pmap_gc(void);
-#if HAS_APPLE_PAC && XNU_MONITOR
+#if HAS_APPLE_PAC
 extern void * pmap_sign_user_ptr(void *value, ptrauth_key key, uint64_t data, uint64_t jop_key);
 extern void * pmap_auth_user_ptr(void *value, ptrauth_key key, uint64_t data, uint64_t jop_key);
-#endif /* HAS_APPLE_PAC && XNU_MONITOR */
+#endif /* HAS_APPLE_PAC */
 
 /*
  * Interfaces implemented as macros.
  */
 
-#define PMAP_SWITCH_USER(th, new_map, my_cpu) {                         \
-	th->map = new_map;                                                                              \
-	pmap_set_pmap(vm_map_pmap(new_map), th);                                \
-}
+#define PMAP_SWITCH_USER(th, new_map, my_cpu) pmap_switch_user((th), (new_map))
 
 #define pmap_kernel()                                                                           \
 	(kernel_pmap)
@@ -499,6 +510,7 @@ extern vm_map_address_t phystokv_range(pmap_paddr_t pa, vm_size_t *max_len);
 extern vm_map_address_t pmap_map(vm_map_address_t va, vm_offset_t sa, vm_offset_t ea, vm_prot_t prot, unsigned int flags);
 extern vm_map_address_t pmap_map_high_window_bd( vm_offset_t pa, vm_size_t len, vm_prot_t prot);
 extern kern_return_t pmap_map_block(pmap_t pmap, addr64_t va, ppnum_t pa, uint32_t size, vm_prot_t prot, int attr, unsigned int flags);
+extern kern_return_t pmap_map_block_addr(pmap_t pmap, addr64_t va, pmap_paddr_t pa, uint32_t size, vm_prot_t prot, int attr, unsigned int flags);
 extern void pmap_map_globals(void);
 
 #define PMAP_MAP_BD_DEVICE                    0x0
@@ -608,10 +620,10 @@ pmap_disable_user_jop(pmap_t pmap);
 #define PMAP_LEDGER_ALLOC_INDEX 58
 #define PMAP_LEDGER_FREE_INDEX 59
 
-#if HAS_APPLE_PAC && XNU_MONITOR
+#if HAS_APPLE_PAC
 #define PMAP_SIGN_USER_PTR 60
 #define PMAP_AUTH_USER_PTR 61
-#endif /* HAS_APPLE_PAC && XNU_MONITOR */
+#endif /* HAS_APPLE_PAC */
 
 #define PHYS_ATTRIBUTE_CLEAR_RANGE_INDEX 66
 
@@ -624,7 +636,15 @@ pmap_disable_user_jop(pmap_t pmap);
 
 #define PMAP_SET_VM_MAP_CS_ENFORCED_INDEX 72
 
-#define PMAP_COUNT 73
+#define PMAP_SET_COMPILATION_SERVICE_CDHASH_INDEX   73
+#define PMAP_MATCH_COMPILATION_SERVICE_CDHASH_INDEX 74
+
+
+#if DEVELOPMENT || DEBUG
+#define PMAP_TEST_TEXT_CORRUPTION_INDEX 76
+#endif /* DEVELOPMENT || DEBUG */
+
+#define PMAP_COUNT 77
 
 #define PMAP_INVALID_CPU_NUM (~0U)
 
@@ -637,6 +657,18 @@ extern void pmap_cpu_data_init(void);
 
 /* Get the pmap per-CPU data for the current CPU. */
 extern pmap_cpu_data_t * pmap_get_cpu_data(void);
+
+/*
+ * For most batched page operations, we pick a sane default page count
+ * interval at which to check for pending preemption and exit the PPL if found.
+ */
+#define PMAP_DEFAULT_PREEMPTION_CHECK_PAGE_INTERVAL 64
+
+inline bool
+pmap_pending_preemption(void)
+{
+	return !!(*((volatile ast_t*)ast_pending()) & AST_URGENT);
+}
 
 #if XNU_MONITOR
 extern boolean_t pmap_ppl_locked_down;
@@ -714,6 +746,10 @@ extern void CleanPoC_DcacheRegion_Force_nopreempt(vm_offset_t va, size_t length)
 #define pmap_lock_bit(l, i)             hw_lock_bit(l, i, &pmap_lck_grp)
 #define pmap_unlock_bit(l, i)           hw_unlock_bit(l, i)
 #endif
+
+#if DEVELOPMENT || DEBUG
+extern kern_return_t pmap_test_text_corruption(pmap_paddr_t);
+#endif /* DEVELOPMENT || DEBUG */
 
 #endif /* #ifndef ASSEMBLER */
 

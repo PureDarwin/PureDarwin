@@ -615,6 +615,7 @@ struct mbuf {
 #define m_dat           M_dat.M_databuf
 #define m_pktlen(_m)    ((_m)->m_pkthdr.len)
 #define m_pftag(_m)     (&(_m)->m_pkthdr.builtin_mtag._net_mtag._pf_mtag)
+#define m_necptag(_m)   (&(_m)->m_pkthdr.builtin_mtag._net_mtag._necp_mtag)
 
 /* mbuf flags (private) */
 #define M_EXT           0x0001  /* has associated external storage */
@@ -692,6 +693,9 @@ struct mbuf {
 
 /* checksum start adjustment has been done */
 #define CSUM_ADJUST_DONE        0x00020000
+
+/* VLAN encapsulation present */
+#define CSUM_VLAN_ENCAP_PRESENT    0x00040000      /* mbuf has vlan encapsulation */
 
 /* TCP Segment Offloading requested on this mbuf */
 #define CSUM_TSO_IPV4           0x00100000      /* This mbuf needs to be segmented by the NIC */
@@ -813,6 +817,8 @@ union m16kcluster {
 #define M_COPY_PKTHDR(to, from)         m_copy_pkthdr(to, from)
 
 #define M_COPY_PFTAG(to, from)          m_copy_pftag(to, from)
+
+#define M_COPY_NECPTAG(to, from)        m_copy_necptag(to, from)
 
 #define M_COPY_CLASSIFIER(to, from)     m_copy_classifier(to, from)
 
@@ -1076,6 +1082,7 @@ struct mbstat {
 	u_int32_t       m_bigclusters;  /* clusters obtained from page pool */
 	u_int32_t       m_bigclfree;    /* free clusters */
 	u_int32_t       m_bigmclbytes;  /* length of an mbuf cluster */
+	u_int32_t       m_forcedefunct; /* times we force defunct'ed an app's sockets */
 };
 
 /* Compatibillity with 10.3 */
@@ -1276,6 +1283,8 @@ extern struct mbuf *m_prepend_2(struct mbuf *, int, int, int);
 extern struct mbuf *m_pullup(struct mbuf *, int);
 extern struct mbuf *m_split(struct mbuf *, int, int);
 extern void m_mclfree(caddr_t p);
+extern int mbuf_get_class(struct mbuf *m);
+extern bool mbuf_class_under_pressure(struct mbuf *m);
 
 /*
  * On platforms which require strict alignment (currently for anything but
@@ -1434,6 +1443,7 @@ __private_extern__ caddr_t m_mclalloc(int);
 __private_extern__ int m_mclhasreference(struct mbuf *);
 __private_extern__ void m_copy_pkthdr(struct mbuf *, struct mbuf *);
 __private_extern__ void m_copy_pftag(struct mbuf *, struct mbuf *);
+__private_extern__ void m_copy_necptag(struct mbuf *, struct mbuf *);
 __private_extern__ void m_copy_classifier(struct mbuf *, struct mbuf *);
 
 __private_extern__ struct mbuf *m_dtom(void *);

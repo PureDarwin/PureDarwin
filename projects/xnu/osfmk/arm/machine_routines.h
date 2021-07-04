@@ -270,6 +270,8 @@ typedef struct ml_cpu_info ml_cpu_info_t;
 
 typedef enum {
 	CLUSTER_TYPE_SMP,
+	CLUSTER_TYPE_E,
+	CLUSTER_TYPE_P,
 } cluster_type_t;
 
 cluster_type_t ml_get_boot_cluster(void);
@@ -299,9 +301,6 @@ cluster_type_t ml_get_boot_cluster(void);
  * @field coresight_regs    IO-mapped virtual address of CoreSight debug register block.
  * @field coresight_pa      Physical address of CoreSight register block.
  * @field coresight_len     Length of CoreSight register block.
- * @field self_ipi_irq      AIC IRQ vector for self IPI (cpuX->cpuX).  0 if unsupported.
- * @field other_ipi_irq     AIC IRQ vector for other IPI (cpuX->cpuY).  0 if unsupported.
- * @field pmi_irq           AIC IRQ vector for performance management IRQ.  0 if unsupported.
  * @field die_cluster_id    Cluster ID within the local die (EDT: die-cluster-id)
  * @field cluster_core_id   Core ID within the local cluster (EDT: cluster-core-id)
  */
@@ -325,9 +324,6 @@ typedef struct ml_topology_cpu {
 	vm_offset_t                     coresight_regs;
 	uint64_t                        coresight_pa;
 	uint64_t                        coresight_len;
-	int                             self_ipi_irq;
-	int                             other_ipi_irq;
-	int                             pmi_irq;
 	unsigned int                    die_cluster_id;
 	unsigned int                    cluster_core_id;
 } ml_topology_cpu_t;
@@ -675,7 +671,16 @@ void ml_init_timebase(
 
 uint64_t ml_get_timebase(void);
 
+uint64_t ml_get_speculative_timebase(void);
+
+uint64_t ml_get_timebase_entropy(void);
+
 void ml_init_lock_timeout(void);
+
+#if __arm64__
+uint64_t virtual_timeout_inflate_ns(unsigned int vti, uint64_t timeout);
+uint64_t virtual_timeout_inflate_abs(unsigned int vti, uint64_t timeout);
+#endif
 
 boolean_t ml_delay_should_spin(uint64_t interval);
 
@@ -769,6 +774,7 @@ vm_map_offset_t ml_get_max_offset(
 #define MACHINE_MAX_OFFSET_DEVICE       0x08
 #endif
 
+extern void     ml_cpu_init_completed(void);
 extern void     ml_cpu_up(void);
 extern void     ml_cpu_down(void);
 extern void     ml_arm_sleep(void);
@@ -1263,6 +1269,7 @@ uint32_t ml_update_cluster_wfe_recommendation(uint32_t wfe_cluster_id, uint64_t 
 #define UNSIGN_PTR(p) \
 	SIGN(p) ? ((p) | PAC_MASK) : ((p) & ~PAC_MASK)
 
+uint64_t ml_default_rop_pid(void);
 uint64_t ml_default_jop_pid(void);
 void ml_task_set_rop_pid(task_t task, task_t parent_task, boolean_t inherit);
 void ml_task_set_jop_pid(task_t task, task_t parent_task, boolean_t inherit);
@@ -1272,18 +1279,6 @@ void ml_thread_set_disable_user_jop(thread_t thread, uint8_t disable_user_jop);
 void ml_thread_set_jop_pid(thread_t thread, task_t task);
 void *ml_auth_ptr_unchecked(void *ptr, unsigned key, uint64_t modifier);
 
-/**
- * Temporarily enables a userspace JOP key in kernel space, so that the kernel
- * can sign or auth pointers on that process's behalf.
- *
- * @note The caller must disable interrupts before calling
- * ml_enable_user_jop_key(), and may only re-enable interrupts after the
- * complementary ml_disable_user_jop_key() call.
- *
- * @param user_jop_key  The userspace JOP key to temporarily use
- * @return              Saved JOP state, to be passed to the complementary
- *                      ml_disable_user_jop_key() call
- */
 uint64_t ml_enable_user_jop_key(uint64_t user_jop_key);
 
 /**
@@ -1298,6 +1293,7 @@ uint64_t ml_enable_user_jop_key(uint64_t user_jop_key);
 void ml_disable_user_jop_key(uint64_t user_jop_key, uint64_t saved_jop_state);
 #endif /* defined(HAS_APPLE_PAC) */
 
+void ml_enable_monitor(void);
 
 
 #endif /* KERNEL_PRIVATE */

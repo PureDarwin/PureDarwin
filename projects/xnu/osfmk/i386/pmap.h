@@ -706,6 +706,14 @@ pmap_mark_range(pmap_t npmap, uint64_t sv, uint64_t nxrosz, boolean_t NX,
  */
 extern  unsigned        pmap_get_cache_attributes(ppnum_t, boolean_t is_ept);
 
+extern kern_return_t    pmap_map_block_addr(
+	pmap_t pmap,
+	addr64_t va,
+	pmap_paddr_t pa,
+	uint32_t size,
+	vm_prot_t prot,
+	int attr,
+	unsigned int flags);
 extern kern_return_t    pmap_map_block(
 	pmap_t pmap,
 	addr64_t va,
@@ -841,6 +849,10 @@ extern boolean_t pmap_is_empty(pmap_t           pmap,
 
 kern_return_t
     pmap_permissions_verify(pmap_t, vm_map_t, vm_offset_t, vm_offset_t);
+
+#if DEVELOPMENT || DEBUG
+extern kern_return_t pmap_test_text_corruption(pmap_paddr_t);
+#endif /* DEVELOPMENT || DEBUG */
 
 #if MACH_ASSERT
 extern int pmap_stats_assert;

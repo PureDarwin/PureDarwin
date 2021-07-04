@@ -159,6 +159,7 @@ WARNFLAGS_STD := \
 	-Wno-extra-semi-stmt \
 	-Wno-format-non-iso \
 	-Wno-format-nonliteral \
+	-Wno-four-char-constants \
 	-Wno-language-extension-token \
 	-Wno-missing-variable-declarations \
 	-Wno-packed \
@@ -166,8 +167,11 @@ WARNFLAGS_STD := \
 	-Wno-partial-availability \
 	-Wno-reserved-id-macro \
 	-Wno-shift-sign-overflow \
+	-Wno-suggest-destructor-override \
+	-Wno-suggest-override \
 	-Wno-switch-enum \
 	-Wno-undef \
+	-Wno-undef-prefix \
 	-Wno-unused-macros \
 	-Wno-used-but-marked-unused \
 	-Wno-variadic-macros \

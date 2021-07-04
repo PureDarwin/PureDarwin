@@ -138,6 +138,9 @@ extern void *pmap_steal_memory(vm_size_t size); /* Early memory allocation */
 extern void *pmap_steal_freeable_memory(vm_size_t size); /* Early memory allocation */
 
 extern uint_t pmap_free_pages(void); /* report remaining unused physical pages */
+#if defined(__arm__) || defined(__arm64__)
+extern uint_t pmap_free_pages_span(void); /* report phys address range of unused physical pages */
+#endif /* defined(__arm__) || defined(__arm64__) */
 
 extern void pmap_startup(vm_offset_t *startp, vm_offset_t *endp); /* allocate vm_page structs */
 
@@ -694,7 +697,11 @@ extern pmap_t   kernel_pmap;                    /* The kernel's map */
 #else
 
 #define PMAP_CREATE_STAGE2         0
+#if __arm64e__
+#define PMAP_CREATE_DISABLE_JOP    0x4
+#else
 #define PMAP_CREATE_DISABLE_JOP    0
+#endif
 #if __ARM_MIXED_PAGE_SIZE__
 #define PMAP_CREATE_FORCE_4K_PAGES 0x8
 #else
@@ -898,6 +905,9 @@ extern bool pmap_is_trust_cache_loaded(const uuid_t uuid);
 extern uint32_t pmap_lookup_in_static_trust_cache(const uint8_t cdhash[CS_CDHASH_LEN]);
 extern bool pmap_lookup_in_loaded_trust_caches(const uint8_t cdhash[CS_CDHASH_LEN]);
 
+extern void pmap_set_compilation_service_cdhash(const uint8_t cdhash[CS_CDHASH_LEN]);
+extern bool pmap_match_compilation_service_cdhash(const uint8_t cdhash[CS_CDHASH_LEN]);
+
 extern bool pmap_in_ppl(void);
 
 extern void *pmap_claim_reserved_ppl_page(void);
@@ -906,6 +916,10 @@ extern void pmap_free_reserved_ppl_page(void *kva);
 extern void pmap_ledger_alloc_init(size_t);
 extern ledger_t pmap_ledger_alloc(void);
 extern void pmap_ledger_free(ledger_t);
+
+extern bool pmap_is_bad_ram(ppnum_t ppn);
+extern void pmap_retire_page(ppnum_t ppn);
+extern kern_return_t pmap_cs_allow_invalid(pmap_t pmap);
 
 #if __arm64__
 extern bool pmap_is_exotic(pmap_t pmap);

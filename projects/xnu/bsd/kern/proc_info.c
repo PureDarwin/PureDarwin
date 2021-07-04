@@ -2477,7 +2477,7 @@ fill_fileinfo(struct fileproc * fp, proc_t proc, int fd, struct proc_fileinfo * 
 			fproc->fi_status |= PROC_FP_CLFORK;
 		}
 	}
-	if (FILEPROC_TYPE(fp) == FTYPE_GUARDED) {
+	if (fp_isguarded(fp, 0)) {
 		fproc->fi_status |= PROC_FP_GUARDED;
 		fproc->fi_guardflags = 0;
 		if (fp_isguarded(fp, GUARD_CLOSE)) {
@@ -2716,7 +2716,7 @@ proc_pidfdinfo(int pid, int flavor, int fd, user_addr_t buffer, uint32_t buffers
 	break;
 
 	case PROC_PIDFDPSEMINFO: {
-		if ((error = fp_get_ftype(p, fd, DTYPE_PSXSHM, EBADF, &fp)) != 0) {
+		if ((error = fp_get_ftype(p, fd, DTYPE_PSXSEM, EBADF, &fp)) != 0) {
 			goto out1;
 		}
 		error = pid_pseminfo(fp->fp_glob->fg_data, fp, p, fd, buffer, buffersize, retval);

@@ -96,9 +96,8 @@ unsigned long freeze_threshold_percentage = 50;
 
 #if CONFIG_FREEZE
 
-lck_grp_attr_t *freezer_lck_grp_attr;
-lck_grp_t *freezer_lck_grp;
-static lck_mtx_t freezer_mutex;
+static LCK_GRP_DECLARE(freezer_lck_grp, "freezer");
+static LCK_MTX_DECLARE(freezer_mutex, &freezer_lck_grp);
 
 /* Thresholds */
 unsigned int memorystatus_freeze_threshold = 0;
@@ -106,8 +105,8 @@ unsigned int memorystatus_freeze_pages_min = 0;
 unsigned int memorystatus_freeze_pages_max = 0;
 unsigned int memorystatus_freeze_suspended_threshold = FREEZE_SUSPENDED_THRESHOLD_DEFAULT;
 unsigned int memorystatus_freeze_daily_mb_max = FREEZE_DAILY_MB_MAX_DEFAULT;
-uint64_t     memorystatus_freeze_budget_pages_remaining = 0; //remaining # of pages that can be frozen to disk
-boolean_t memorystatus_freeze_degradation = FALSE; //protected by the freezer mutex. Signals we are in a degraded freeze mode.
+uint64_t     memorystatus_freeze_budget_pages_remaining = 0; /* Remaining # of pages that can be frozen to disk */
+boolean_t memorystatus_freeze_degradation = FALSE; /* Protected by the freezer mutex. Signals we are in a degraded freeze mode. */
 
 unsigned int memorystatus_max_frozen_demotions_daily = 0;
 unsigned int memorystatus_thaw_count_demotion_threshold = 0;
@@ -129,60 +128,7 @@ unsigned int memorystatus_thaw_count = 0; /* # of thaws in the current freezer i
 uint64_t memorystatus_thaw_count_since_boot = 0; /* The number of thaws since boot */
 unsigned int memorystatus_refreeze_eligible_count = 0; /* # of processes currently thawed i.e. have state on disk & in-memory */
 
-/* Freezer counters collected for telemtry */
-static struct memorystatus_freezer_stats_t {
-	/*
-	 * # of processes that we've considered freezing.
-	 * Used to normalize the error reasons below.
-	 */
-	uint64_t mfs_process_considered_count;
-
-	/*
-	 * The following counters track how many times we've failed to freeze
-	 * a process because of a specific FREEZER_ERROR.
-	 */
-	/* EXCESS_SHARED_MEMORY */
-	uint64_t mfs_error_excess_shared_memory_count;
-	/* LOW_PRIVATE_SHARED_RATIO */
-	uint64_t mfs_error_low_private_shared_ratio_count;
-	/* NO_COMPRESSOR_SPACE */
-	uint64_t mfs_error_no_compressor_space_count;
-	/* NO_SWAP_SPACE */
-	uint64_t mfs_error_no_swap_space_count;
-	/* pages < memorystatus_freeze_pages_min */
-	uint64_t mfs_error_below_min_pages_count;
-	/* dasd determined it was unlikely to be relaunched. */
-	uint64_t mfs_error_low_probability_of_use_count;
-	/* transient reasons (like inability to acquire a lock). */
-	uint64_t mfs_error_other_count;
-
-	/*
-	 * # of times that we saw memorystatus_available_pages <= memorystatus_freeze_threshold.
-	 * Used to normalize skipped_full_count and shared_mb_high_count.
-	 */
-	uint64_t mfs_below_threshold_count;
-
-	/* Skipped running the freezer because we were out of slots */
-	uint64_t mfs_skipped_full_count;
-
-	/* Skipped running the freezer because we were over the shared mb limit*/
-	uint64_t mfs_skipped_shared_mb_high_count;
-
-	/*
-	 * How many pages have not been sent to swap because they were in a shared object?
-	 * This is being used to gather telemtry so we can understand the impact we'd have
-	 * on our NAND budget if we did swap out these pages.
-	 */
-	uint64_t mfs_shared_pages_skipped;
-
-	/*
-	 * A running sum of the total number of bytes sent to NAND during
-	 * refreeze operations since boot.
-	 */
-	uint64_t mfs_bytes_refrozen;
-	/* The number of refreeze operations since boot */
-	uint64_t mfs_refreeze_count;
-} memorystatus_freezer_stats = {0};
+struct memorystatus_freezer_stats_t memorystatus_freezer_stats = {0};
 
 #endif /* XNU_KERNEL_PRIVATE */
 
@@ -208,6 +154,7 @@ static throttle_interval_t throttle_intervals[] = {
 };
 throttle_interval_t *degraded_throttle_window = &throttle_intervals[0];
 throttle_interval_t *normal_throttle_window = &throttle_intervals[1];
+uint32_t memorystatus_freeze_current_interval = 0;
 
 extern uint64_t vm_swap_get_free_space(void);
 extern boolean_t vm_swap_max_budget(uint64_t *);
@@ -215,11 +162,9 @@ extern int i_coal_jetsam_get_taskrole(coalition_t coal, task_t task);
 
 static void memorystatus_freeze_update_throttle(uint64_t *budget_pages_allowed);
 static void memorystatus_demote_frozen_processes(boolean_t force_one);
-/*
- * Converts the freezer_error_code into a string and updates freezer error counts.
- */
-static void memorystatus_freezer_stringify_error(const int freezer_error_code, char* buffer, size_t len);
 
+static void memorystatus_freeze_handle_error(proc_t p, const int freezer_error_code, bool was_refreeze, pid_t pid, const coalition_t coalition, const char* log_prefix);
+static void memorystatus_freeze_out_of_slots(void);
 static uint64_t memorystatus_freezer_thread_next_run_ts = 0;
 
 /* Sysctls needed for aggd stats */
@@ -228,6 +173,7 @@ SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_count, CTLFLAG_RD | CTLFLAG_LOC
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_thaw_count, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_thaw_count, 0, "");
 SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_thaw_count_since_boot, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_thaw_count_since_boot, "");
 SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_freeze_pageouts, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_freeze_pageouts, "");
+SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_interval, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_freeze_current_interval, 0, "");
 #if DEVELOPMENT || DEBUG
 static int sysctl_memorystatus_freeze_budget_pages_remaining SYSCTL_HANDLER_ARGS
 {
@@ -275,6 +221,8 @@ SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_freezer_shared_pages_skipped, CTLFLAG_
 SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_freezer_bytes_refrozen, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_freezer_stats.mfs_bytes_refrozen, "");
 SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_freezer_refreeze_count, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_freezer_stats.mfs_refreeze_count, "");
 
+static_assert(_kMemorystatusFreezeSkipReasonMax <= UINT8_MAX);
+
 
 /*
  * Calculates the hit rate for the freezer.
@@ -285,27 +233,21 @@ SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_freezer_refreeze_count, CTLFLAG_RD | C
 static int sysctl_memorystatus_freezer_thaw_percentage SYSCTL_HANDLER_ARGS
 {
 #pragma unused(arg1, arg2)
-	size_t thaw_count = 0, frozen_count = 0;
+	uint64_t thaw_count = 0, frozen_count = 0;
 	int thaw_percentage = 100;
-	unsigned int band = (unsigned int) memorystatus_freeze_jetsam_band;
-	proc_t p = PROC_NULL;
-	proc_list_lock();
+	frozen_count = os_atomic_load(&(memorystatus_freezer_stats.mfs_processes_frozen), relaxed);
+	thaw_count = os_atomic_load(&(memorystatus_freezer_stats.mfs_processes_thawed), relaxed);
 
-	p = memorystatus_get_first_proc_locked(&band, FALSE);
-
-	while (p) {
-		if (p->p_memstat_state & P_MEMSTAT_FROZEN) {
-			if (p->p_memstat_thaw_count > 0) {
-				thaw_count++;
-			}
-			frozen_count++;
-		}
-		p = memorystatus_get_next_proc_locked(&band, p, FALSE);
-	}
-	proc_list_unlock();
 	if (frozen_count > 0) {
-		assert(thaw_count <= frozen_count);
-		thaw_percentage = (int)(100 * thaw_count / frozen_count);
+		if (thaw_count > frozen_count) {
+			/*
+			 * Both counts are using relaxed atomics & could be out of sync
+			 * causing us to see thaw_percentage > 100.
+			 */
+			thaw_percentage = 100;
+		} else {
+			thaw_percentage = (int)(100 * thaw_count / frozen_count);
+		}
 	}
 	return sysctl_handle_int(oidp, &thaw_percentage, 0, req);
 }
@@ -313,16 +255,28 @@ SYSCTL_PROC(_kern, OID_AUTO, memorystatus_freezer_thaw_percentage, CTLTYPE_INT |
 
 #define FREEZER_ERROR_STRING_LENGTH 128
 
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_freeze_pages_min, &memorystatus_freeze_pages_min, 0, UINT32_MAX, "");
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_freeze_pages_max, &memorystatus_freeze_pages_max, 0, UINT32_MAX, "");
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_freeze_processes_max, &memorystatus_frozen_processes_max, 0, UINT32_MAX, "");
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_freeze_jetsam_band, &memorystatus_freeze_jetsam_band, JETSAM_PRIORITY_IDLE, JETSAM_PRIORITY_MAX - 1, "");
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_freeze_private_shared_pages_ratio, &memorystatus_freeze_private_shared_pages_ratio, 0, UINT32_MAX, "");
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_freeze_min_processes, &memorystatus_freeze_suspended_threshold, 0, UINT32_MAX, "");
+/*
+ * max. # of frozen process demotions we will allow in our daily cycle.
+ */
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_max_freeze_demotions_daily, &memorystatus_max_frozen_demotions_daily, 0, UINT32_MAX, "");
+
+/*
+ * min # of thaws needed by a process to protect it from getting demoted into the IDLE band.
+ */
+EXPERIMENT_FACTOR_UINT(_kern, memorystatus_thaw_count_demotion_threshold, &memorystatus_thaw_count_demotion_threshold, 0, UINT32_MAX, "");
+
 #if DEVELOPMENT || DEBUG
 
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_jetsam_band, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_jetsam_band, 0, "");
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_daily_mb_max, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_daily_mb_max, 0, "");
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_degraded_mode, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_freeze_degradation, 0, "");
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_threshold, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_threshold, 0, "");
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_pages_min, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_pages_min, 0, "");
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_pages_max, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_pages_max, 0, "");
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_refreeze_eligible_count, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_refreeze_eligible_count, 0, "");
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_processes_max, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_frozen_processes_max, 0, "");
 
 /*
  * Max. shared-anonymous memory in MB that can be held by frozen processes in the high jetsam band.
@@ -334,18 +288,6 @@ SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_shared_mb_max, CTLFLAG_RW | CTL
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_shared_mb, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_frozen_shared_mb, 0, "");
 
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_shared_mb_per_process_max, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_shared_mb_per_process_max, 0, "");
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_private_shared_pages_ratio, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_private_shared_pages_ratio, 0, "");
-
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_min_processes, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_suspended_threshold, 0, "");
-
-/*
- * max. # of frozen process demotions we will allow in our daily cycle.
- */
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_max_freeze_demotions_daily, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_max_frozen_demotions_daily, 0, "");
-/*
- * min # of thaws needed by a process to protect it from getting demoted into the IDLE band.
- */
-SYSCTL_UINT(_kern, OID_AUTO, memorystatus_thaw_count_demotion_threshold, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_thaw_count_demotion_threshold, 0, "");
 
 boolean_t memorystatus_freeze_throttle_enabled = TRUE;
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_freeze_throttle_enabled, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_freeze_throttle_enabled, 0, "");
@@ -449,11 +391,7 @@ again:
 		}
 
 		if (error) {
-			char reason[FREEZER_ERROR_STRING_LENGTH];
-			memorystatus_freezer_stringify_error(freezer_error_code, reason, sizeof(reason));
-
-			printf("sysctl_freeze: task_freeze failed: %s\n", reason);
-
+			memorystatus_freeze_handle_error(p, freezer_error_code, state & P_MEMSTAT_FROZEN, pid, coal, "sysctl_freeze");
 			if (error == KERN_NO_SPACE) {
 				/* Make it easy to distinguish between failures due to low compressor/ swap space and other failures. */
 				error = ENOSPC;
@@ -464,7 +402,12 @@ again:
 			proc_list_lock();
 			if ((p->p_memstat_state & P_MEMSTAT_FROZEN) == 0) {
 				p->p_memstat_state |= P_MEMSTAT_FROZEN;
+				p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonNone;
 				memorystatus_frozen_count++;
+				os_atomic_inc(&memorystatus_freezer_stats.mfs_processes_frozen, relaxed);
+				if (memorystatus_frozen_count == memorystatus_frozen_processes_max) {
+					memorystatus_freeze_out_of_slots();
+				}
 			} else {
 				// This was a re-freeze
 				if (VM_CONFIG_FREEZER_SWAP_IS_ACTIVE) {
@@ -811,7 +754,7 @@ continue_eval:
 				for (j = 0; j < entry_count; j++) {
 					if (strncmp(memorystatus_global_probabilities_table[j].proc_name,
 					    p->p_name,
-					    MAXCOMLEN + 1) == 0) {
+					    MAXCOMLEN) == 0) {
 						probability_of_use = memorystatus_global_probabilities_table[j].use_probability;
 						break;
 					}
@@ -1176,11 +1119,6 @@ memorystatus_freeze_init(void)
 	kern_return_t result;
 	thread_t thread;
 
-	freezer_lck_grp_attr = lck_grp_attr_alloc_init();
-	freezer_lck_grp = lck_grp_alloc_init("freezer", freezer_lck_grp_attr);
-
-	lck_mtx_init(&freezer_mutex, freezer_lck_grp, NULL);
-
 	/*
 	 * This is just the default value if the underlying
 	 * storage device doesn't have any specific budget.
@@ -1208,7 +1146,7 @@ memorystatus_is_process_eligible_for_freeze(proc_t p)
 	 * Called with proc_list_lock held.
 	 */
 
-	LCK_MTX_ASSERT(proc_list_mlock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&proc_list_mlock, LCK_MTX_ASSERT_OWNED);
 
 	boolean_t should_freeze = FALSE;
 	uint32_t state = 0, pages = 0;
@@ -1219,6 +1157,9 @@ memorystatus_is_process_eligible_for_freeze(proc_t p)
 	state = p->p_memstat_state;
 
 	if (state & (P_MEMSTAT_TERMINATED | P_MEMSTAT_LOCKED | P_MEMSTAT_FREEZE_DISABLED | P_MEMSTAT_FREEZE_IGNORE)) {
+		if (state & P_MEMSTAT_FREEZE_DISABLED) {
+			p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonDisabled;
+		}
 		goto out;
 	}
 
@@ -1308,6 +1249,7 @@ memorystatus_is_process_eligible_for_freeze(proc_t p)
 		if (first_consideration) {
 			memorystatus_freezer_stats.mfs_error_below_min_pages_count++;
 		}
+		p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonBelowMinPages;
 		goto out;
 	}
 
@@ -1320,6 +1262,7 @@ memorystatus_is_process_eligible_for_freeze(proc_t p)
 		if (first_consideration) {
 			memorystatus_freezer_stats.mfs_error_other_count++;
 		}
+		p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonOther;
 		goto out;
 	}
 
@@ -1327,9 +1270,15 @@ memorystatus_is_process_eligible_for_freeze(proc_t p)
 
 	if (entry_count) {
 		for (i = 0; i < entry_count; i++) {
+			/*
+			 * NB: memorystatus_internal_probabilities.proc_name is MAXCOMLEN + 1 bytes
+			 * proc_t.p_name is 2*MAXCOMLEN + 1 bytes. So we only compare the first
+			 * MAXCOMLEN bytes here since the name in the probabilities table could
+			 * be truncated from the proc_t's p_name.
+			 */
 			if (strncmp(memorystatus_global_probabilities_table[i].proc_name,
 			    p->p_name,
-			    MAXCOMLEN + 1) == 0) {
+			    MAXCOMLEN) == 0) {
 				probability_of_use = memorystatus_global_probabilities_table[i].use_probability;
 				break;
 			}
@@ -1339,19 +1288,27 @@ memorystatus_is_process_eligible_for_freeze(proc_t p)
 			if (first_consideration) {
 				memorystatus_freezer_stats.mfs_error_low_probability_of_use_count++;
 			}
+			p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonLowProbOfUse;
 			goto out;
 		}
 	}
 
 	should_freeze = TRUE;
 out:
-	if (should_freeze && !first_consideration && !(state & P_MEMSTAT_FROZEN)) {
+	if (should_freeze && !(state & P_MEMSTAT_FROZEN)) {
 		/*
-		 * We're freezing this for the first time and we previously considered it ineligible.
-		 * Bump the considered count so that we track this as 1 failure
-		 * and 1 success.
+		 * Reset the skip reason. If it's killed before we manage to actually freeze it
+		 * we failed to consider it early enough.
 		 */
-		memorystatus_freezer_stats.mfs_process_considered_count++;
+		p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonNone;
+		if (!first_consideration) {
+			/*
+			 * We're freezing this for the first time and we previously considered it ineligible.
+			 * Bump the considered count so that we track this as 1 failure
+			 * and 1 success.
+			 */
+			memorystatus_freezer_stats.mfs_process_considered_count++;
+		}
 	}
 	return should_freeze;
 }
@@ -1460,7 +1417,12 @@ memorystatus_freeze_process_sync(proc_t p)
 
 			if ((p->p_memstat_state & P_MEMSTAT_FROZEN) == 0) {
 				p->p_memstat_state |= P_MEMSTAT_FROZEN;
+				p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonNone;
 				memorystatus_frozen_count++;
+				os_atomic_inc(&memorystatus_freezer_stats.mfs_processes_frozen, relaxed);
+				if (memorystatus_frozen_count == memorystatus_frozen_processes_max) {
+					memorystatus_freeze_out_of_slots();
+				}
 			} else {
 				// This was a re-freeze
 				if (VM_CONFIG_FREEZER_SWAP_IS_ACTIVE) {
@@ -1511,11 +1473,7 @@ memorystatus_freeze_process_sync(proc_t p)
 				 */
 			}
 		} else {
-			char reason[FREEZER_ERROR_STRING_LENGTH];
-			memorystatus_freezer_stringify_error(freezer_error_code, reason, sizeof(reason));
-
-			os_log_with_startup_serial(OS_LOG_DEFAULT, "memorystatus: freezing (specific) pid %d [%s]...skipped (%s)",
-			    aPid, ((p && *p->p_name) ? p->p_name : "unknown"), reason);
+			memorystatus_freeze_handle_error(p, freezer_error_code, p->p_memstat_state & P_MEMSTAT_FROZEN, aPid, NULL, "memorystatus_freeze_process_sync");
 			p->p_memstat_state |= P_MEMSTAT_FREEZE_IGNORE;
 		}
 
@@ -1541,7 +1499,7 @@ memorystatus_freeze_top_process(void)
 	proc_t p = PROC_NULL, next_p = PROC_NULL;
 	unsigned int i = 0;
 	unsigned int band = JETSAM_PRIORITY_IDLE;
-	boolean_t refreeze_processes = FALSE;
+	bool refreeze_processes = false;
 	task_t curr_task = NULL;
 	coalition_t coal = COALITION_NULL;
 	pid_t pid_list[MAX_XPC_SERVICE_PIDS];
@@ -1558,7 +1516,7 @@ memorystatus_freeze_top_process(void)
 		 * try to refreeze any processes we might have thawed
 		 * in the past and push out their compressed state out.
 		 */
-		refreeze_processes = TRUE;
+		refreeze_processes = true;
 		band = (unsigned int) memorystatus_freeze_jetsam_band;
 	}
 
@@ -1570,6 +1528,7 @@ freeze_process:
 		uint32_t purgeable, wired, clean, dirty, shared;
 		uint64_t max_pages = 0;
 		int    freezer_error_code = 0;
+		bool was_refreeze = false;
 
 		p = next_p;
 
@@ -1703,13 +1662,19 @@ freeze_process:
 
 			if ((p->p_memstat_state & P_MEMSTAT_FROZEN) == 0) {
 				p->p_memstat_state |= P_MEMSTAT_FROZEN;
+				p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonNone;
 				memorystatus_frozen_count++;
+				os_atomic_inc(&memorystatus_freezer_stats.mfs_processes_frozen, relaxed);
+				if (memorystatus_frozen_count == memorystatus_frozen_processes_max) {
+					memorystatus_freeze_out_of_slots();
+				}
 			} else {
 				// This was a re-freeze
 				if (VM_CONFIG_FREEZER_SWAP_IS_ACTIVE) {
 					memorystatus_freezer_stats.mfs_bytes_refrozen += dirty * PAGE_SIZE;
 					memorystatus_freezer_stats.mfs_refreeze_count++;
 				}
+				was_refreeze = true;
 			}
 
 			p->p_memstat_frozen_count++;
@@ -1738,7 +1703,7 @@ freeze_process:
 			}
 			memorystatus_freeze_update_throttle(&memorystatus_freeze_budget_pages_remaining);
 			os_log_with_startup_serial(OS_LOG_DEFAULT, "memorystatus: %sfreezing (%s) pid %d [%s] done, memorystatus_freeze_budget_pages_remaining %llu %sfroze %u pages\n",
-			    refreeze_processes? "re" : "", (coal == NULL ? "general" : "coalition-driven"), aPid, ((p && *p->p_name) ? p->p_name : "unknown"), memorystatus_freeze_budget_pages_remaining, refreeze_processes? "Re" : "", dirty);
+			    was_refreeze ? "re" : "", (coal == NULL ? "general" : "coalition-driven"), aPid, ((p && *p->p_name) ? p->p_name : "unknown"), memorystatus_freeze_budget_pages_remaining, was_refreeze ? "Re" : "", dirty);
 
 			proc_list_lock();
 
@@ -1825,7 +1790,7 @@ freeze_process:
 			p->p_memstat_state &= ~P_MEMSTAT_LOCKED;
 			wakeup(&p->p_memstat_state);
 
-			if (refreeze_processes == TRUE) {
+			if (refreeze_processes) {
 				if ((freezer_error_code == FREEZER_ERROR_EXCESS_SHARED_MEMORY) ||
 				    (freezer_error_code == FREEZER_ERROR_LOW_PRIVATE_SHARED_RATIO)) {
 					/*
@@ -1844,12 +1809,7 @@ freeze_process:
 			} else {
 				p->p_memstat_state |= P_MEMSTAT_FREEZE_IGNORE;
 			}
-
-			char reason[FREEZER_ERROR_STRING_LENGTH];
-			memorystatus_freezer_stringify_error(freezer_error_code, reason, sizeof(reason));
-
-			os_log_with_startup_serial(OS_LOG_DEFAULT, "memorystatus: %sfreezing (%s) pid %d [%s]...skipped (%s)\n",
-			    refreeze_processes? "re" : "", (coal == NULL ? "general" : "coalition-driven"), aPid, ((p && *p->p_name) ? p->p_name : "unknown"), reason);
+			memorystatus_freeze_handle_error(p, freezer_error_code, p->p_memstat_state & P_MEMSTAT_FROZEN, aPid, coal, "memorystatus_freeze_top_process");
 
 			proc_rele_locked(p);
 
@@ -1861,7 +1821,7 @@ freeze_process:
 
 	if ((ret == -1) &&
 	    (memorystatus_refreeze_eligible_count >= MIN_THAW_REFREEZE_THRESHOLD) &&
-	    (refreeze_processes == FALSE)) {
+	    (!refreeze_processes)) {
 		/*
 		 * We failed to freeze a process from the IDLE
 		 * band AND we have some thawed  processes
@@ -1873,7 +1833,7 @@ freeze_process:
 
 		band = (unsigned int) memorystatus_freeze_jetsam_band;
 
-		refreeze_processes = TRUE;
+		refreeze_processes = true;
 
 		goto freeze_process;
 	}
@@ -1884,6 +1844,33 @@ freeze_process:
 
 	return ret;
 }
+
+#if DEVELOPMENT || DEBUG
+/* For testing memorystatus_freeze_top_process */
+static int
+sysctl_memorystatus_freeze_top_process SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+	int error, val;
+	/*
+	 * Only freeze on write to prevent freezing during `sysctl -a`.
+	 * The actual value written doesn't matter.
+	 */
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr) {
+		return error;
+	}
+	lck_mtx_lock(&freezer_mutex);
+	int ret = memorystatus_freeze_top_process();
+	lck_mtx_unlock(&freezer_mutex);
+	if (ret == -1) {
+		ret = ESRCH;
+	}
+	return ret;
+}
+SYSCTL_PROC(_vm, OID_AUTO, memorystatus_freeze_top_process, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MASKED,
+    0, 0, &sysctl_memorystatus_freeze_top_process, "I", "");
+#endif /* DEVELOPMENT || DEBUG */
 
 static inline boolean_t
 memorystatus_can_freeze_processes(void)
@@ -2121,27 +2108,86 @@ memorystatus_freeze_calculate_new_budget(
 	return (uint32_t) MIN(new_budget, UINT32_MAX);
 }
 
+/*
+ * Mark all non frozen, freezer-eligible processes as skipped for the given reason.
+ * Used when we hit some system freeze limit and know that we won't be considering remaining processes.
+ * If you're using this for a new reason, make sure to add it to memorystatus_freeze_init_proc so that
+ * it gets set for new processes.
+ * NB: These processes will retain this skip reason until they are reconsidered by memorystatus_is_process_eligible_for_freeze.
+ */
 static void
-memorystatus_freezer_stringify_error(
-	const int freezer_error_code,
-	char* buffer,
-	size_t len)
+memorystatus_freeze_mark_eligible_processes_with_skip_reason(memorystatus_freeze_skip_reason_t reason, bool locked)
 {
-	if (freezer_error_code == FREEZER_ERROR_EXCESS_SHARED_MEMORY) {
-		memorystatus_freezer_stats.mfs_error_excess_shared_memory_count++;
-		strlcpy(buffer, "too much shared memory", len);
-	} else if (freezer_error_code == FREEZER_ERROR_LOW_PRIVATE_SHARED_RATIO) {
-		memorystatus_freezer_stats.mfs_error_low_private_shared_ratio_count++;
-		strlcpy(buffer, "low private-shared pages ratio", len);
-	} else if (freezer_error_code == FREEZER_ERROR_NO_COMPRESSOR_SPACE) {
-		memorystatus_freezer_stats.mfs_error_no_compressor_space_count++;
-		strlcpy(buffer, "no compressor space", len);
-	} else if (freezer_error_code == FREEZER_ERROR_NO_SWAP_SPACE) {
-		memorystatus_freezer_stats.mfs_error_no_swap_space_count++;
-		strlcpy(buffer, "no swap space", len);
-	} else {
-		strlcpy(buffer, "unknown error", len);
+	LCK_MTX_ASSERT(&freezer_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&proc_list_mlock, locked ? LCK_MTX_ASSERT_OWNED : LCK_MTX_ASSERT_NOTOWNED);
+	unsigned int band = JETSAM_PRIORITY_IDLE;
+	proc_t p;
+
+	if (!locked) {
+		proc_list_lock();
 	}
+	p = memorystatus_get_first_proc_locked(&band, FALSE);
+	while (p) {
+		assert(p->p_memstat_effectivepriority == (int32_t) band);
+		if (!(p->p_memstat_state & P_MEMSTAT_FROZEN) && memorystatus_is_process_eligible_for_freeze(p)) {
+			assert(p->p_memstat_freeze_skip_reason == kMemorystatusFreezeSkipReasonNone);
+			p->p_memstat_freeze_skip_reason = (uint8_t) reason;
+		}
+		p = memorystatus_get_next_proc_locked(&band, p, FALSE);
+	}
+	if (!locked) {
+		proc_list_unlock();
+	}
+}
+
+/*
+ * Called after we fail to freeze a process.
+ * Logs the failure, marks the process with the failure reason, and updates freezer stats.
+ */
+static void
+memorystatus_freeze_handle_error(
+	proc_t p,
+	const int freezer_error_code,
+	bool was_refreeze,
+	pid_t pid,
+	const coalition_t coalition,
+	const char* log_prefix)
+{
+	const char *reason;
+	memorystatus_freeze_skip_reason_t skip_reason;
+
+	switch (freezer_error_code) {
+	case FREEZER_ERROR_EXCESS_SHARED_MEMORY:
+		memorystatus_freezer_stats.mfs_error_excess_shared_memory_count++;
+		reason = "too much shared memory";
+		skip_reason = kMemorystatusFreezeSkipReasonExcessSharedMemory;
+		break;
+	case FREEZER_ERROR_LOW_PRIVATE_SHARED_RATIO:
+		memorystatus_freezer_stats.mfs_error_low_private_shared_ratio_count++;
+		reason = "private-shared pages ratio";
+		skip_reason = kMemorystatusFreezeSkipReasonLowPrivateSharedRatio;
+		break;
+	case FREEZER_ERROR_NO_COMPRESSOR_SPACE:
+		memorystatus_freezer_stats.mfs_error_no_compressor_space_count++;
+		reason = "no compressor space";
+		skip_reason = kMemorystatusFreezeSkipReasonNoCompressorSpace;
+		break;
+	case FREEZER_ERROR_NO_SWAP_SPACE:
+		memorystatus_freezer_stats.mfs_error_no_swap_space_count++;
+		reason = "no swap space";
+		skip_reason = kMemorystatusFreezeSkipReasonNoSwapSpace;
+		break;
+	default:
+		reason = "unknown error";
+		skip_reason = kMemorystatusFreezeSkipReasonOther;
+	}
+
+	p->p_memstat_freeze_skip_reason = (uint8_t) skip_reason;
+
+	os_log_with_startup_serial(OS_LOG_DEFAULT, "%s: %sfreezing (%s) pid %d [%s]...skipped (%s)\n",
+	    log_prefix, was_refreeze ? "re" : "",
+	    (coalition == NULL ? "general" : "coalition-driven"), pid,
+	    ((p && *p->p_name) ? p->p_name : "unknown"), reason);
 }
 
 /*
@@ -2152,6 +2198,7 @@ static void
 memorystatus_freeze_start_normal_throttle_interval(uint32_t new_budget, mach_timespec_t start_ts)
 {
 	LCK_MTX_ASSERT(&freezer_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&proc_list_mlock, LCK_MTX_ASSERT_NOTOWNED);
 
 	normal_throttle_window->max_pageouts = new_budget;
 	normal_throttle_window->ts.tv_sec = normal_throttle_window->mins * 60;
@@ -2165,6 +2212,13 @@ memorystatus_freeze_start_normal_throttle_interval(uint32_t new_budget, mach_tim
 	}
 	/* Ensure the normal window is now active. */
 	memorystatus_freeze_degradation = FALSE;
+	memorystatus_freezer_stats.mfs_shared_pages_skipped = 0;
+	/*
+	 * Reset the thawed percentage to 0 so we re-evaluate in the new interval.
+	 */
+	os_atomic_store(&memorystatus_freezer_stats.mfs_processes_thawed, 0, release);
+	os_atomic_store(&memorystatus_freezer_stats.mfs_processes_frozen, memorystatus_frozen_count, release);
+	os_atomic_inc(&memorystatus_freeze_current_interval, release);
 }
 
 #if DEVELOPMENT || DEBUG
@@ -2189,6 +2243,54 @@ SYSCTL_PROC(_vm, OID_AUTO, memorystatus_freeze_calculate_new_budget, CTLTYPE_INT
     0, 0, &sysctl_memorystatus_freeze_calculate_new_budget, "I", "");
 
 #endif /* DEVELOPMENT || DEBUG */
+
+/*
+ * Called when we first run out of budget in an interval.
+ * Marks idle processes as not frozen due to lack of budget.
+ * NB: It might be worth having a CA event here.
+ */
+static void
+memorystatus_freeze_out_of_budget(const struct throttle_interval_t *interval)
+{
+	LCK_MTX_ASSERT(&freezer_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&proc_list_mlock, LCK_MTX_ASSERT_NOTOWNED);
+
+	mach_timespec_t time_left = {0, 0};
+	mach_timespec_t now_ts;
+	clock_sec_t sec;
+	clock_nsec_t nsec;
+
+	time_left.tv_sec = interval->ts.tv_sec;
+	time_left.tv_nsec = 0;
+	clock_get_system_nanotime(&sec, &nsec);
+	now_ts.tv_sec = (unsigned int)(MIN(sec, UINT32_MAX));
+	now_ts.tv_nsec = nsec;
+
+	SUB_MACH_TIMESPEC(&time_left, &now_ts);
+	os_log(OS_LOG_DEFAULT,
+	    "memorystatus_freeze: Out of NAND write budget with %u minutes left in the current freezer interval. %u procs are frozen.\n",
+	    time_left.tv_sec / 60, memorystatus_frozen_count);
+
+	memorystatus_freeze_mark_eligible_processes_with_skip_reason(kMemorystatusFreezeSkipReasonOutOfBudget, false);
+}
+
+/*
+ * Called when we cross over the threshold of maximum frozen processes allowed.
+ * Marks remaining idle processes as not frozen due to lack of slots.
+ */
+static void
+memorystatus_freeze_out_of_slots(void)
+{
+	LCK_MTX_ASSERT(&freezer_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&proc_list_mlock, LCK_MTX_ASSERT_OWNED);
+	assert(memorystatus_frozen_count == memorystatus_frozen_processes_max);
+
+	os_log(OS_LOG_DEFAULT,
+	    "memorystatus_freeze: Out of slots in the freezer. %u procs are frozen.\n",
+	    memorystatus_frozen_count);
+
+	memorystatus_freeze_mark_eligible_processes_with_skip_reason(kMemorystatusFreezeSkipReasonOutOfSlots, true);
+}
 
 /*
  * This function will do 4 things:
@@ -2216,10 +2318,11 @@ memorystatus_freeze_update_throttle(uint64_t *budget_pages_allowed)
 	clock_nsec_t nsec;
 	mach_timespec_t now_ts;
 	LCK_MTX_ASSERT(&freezer_mutex, LCK_MTX_ASSERT_OWNED);
-	LCK_MTX_ASSERT(proc_list_mlock, LCK_MTX_ASSERT_NOTOWNED);
+	LCK_MTX_ASSERT(&proc_list_mlock, LCK_MTX_ASSERT_NOTOWNED);
 
 	unsigned int freeze_daily_pageouts_max = 0;
 	uint32_t budget_rollover = 0;
+	bool started_with_budget = (*budget_pages_allowed > 0);
 
 #if DEVELOPMENT || DEBUG
 	if (!memorystatus_freeze_throttle_enabled) {
@@ -2263,7 +2366,6 @@ memorystatus_freeze_update_throttle(uint64_t *budget_pages_allowed)
 			    interval->mins, budget_rollover),
 		    now_ts);
 		*budget_pages_allowed = interval->max_pageouts;
-		memorystatus_freezer_stats.mfs_shared_pages_skipped = 0;
 
 		memorystatus_demote_frozen_processes(FALSE); /* normal mode...don't force a demotion */
 	} else {
@@ -2278,6 +2380,9 @@ memorystatus_freeze_update_throttle(uint64_t *budget_pages_allowed)
 		if (memorystatus_freeze_degradation == FALSE) {
 			if (interval->pageouts >= interval->max_pageouts) {
 				*budget_pages_allowed = 0;
+				if (started_with_budget) {
+					memorystatus_freeze_out_of_budget(interval);
+				}
 			} else {
 				int budget_left = interval->max_pageouts - interval->pageouts;
 				int budget_threshold = (freeze_daily_pageouts_max * FREEZE_DEGRADATION_BUDGET_THRESHOLD) / 100;
@@ -2351,10 +2456,8 @@ memorystatus_freeze_thread(void *param __unused, wait_result_t wr __unused)
 	}
 
 	/*
-	 * We use memorystatus_apps_idle_delay_time because if/when we adopt aging for applications,
-	 * it'll tie neatly into running the freezer once we age an application.
-	 *
-	 * Till then, it serves as a good interval that can be tuned via a sysctl too.
+	 * Give applications currently in the aging band a chance to age out into the idle band before
+	 * running the freezer again.
 	 */
 	memorystatus_freezer_thread_next_run_ts = mach_absolute_time() + memorystatus_apps_idle_delay_time;
 
@@ -2443,6 +2546,31 @@ memorystatus_get_process_is_freezable(pid_t pid, int *is_freezable)
 	return 0;
 }
 
+errno_t
+memorystatus_get_process_is_frozen(pid_t pid, int *is_frozen)
+{
+	proc_t p = PROC_NULL;
+
+	if (pid == 0) {
+		return EINVAL;
+	}
+
+	/*
+	 * Only allow this on the current proc for now.
+	 * We can check for privileges and allow targeting another process in the future.
+	 */
+	p = current_proc();
+	if (p->p_pid != pid) {
+		return EPERM;
+	}
+
+	proc_list_lock();
+	*is_frozen = (p->p_memstat_state & P_MEMSTAT_FROZEN) != 0;
+	proc_list_unlock();
+
+	return 0;
+}
+
 int
 memorystatus_set_process_is_freezable(pid_t pid, boolean_t is_freezable)
 {
@@ -2494,6 +2622,23 @@ memorystatus_set_process_is_freezable(pid_t pid, boolean_t is_freezable)
 
 	return 0;
 }
+
+/*
+ * Called when process is created before it is added to a memorystatus bucket.
+ */
+void
+memorystatus_freeze_init_proc(proc_t p)
+{
+	/* NB: Process is not on the memorystatus lists yet so it's safe to modify the skip reason without the freezer mutex. */
+	if (memorystatus_freeze_budget_pages_remaining == 0) {
+		p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonOutOfBudget;
+	} else if ((memorystatus_frozen_count >= memorystatus_frozen_processes_max)) {
+		p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonOutOfSlots;
+	} else {
+		p->p_memstat_freeze_skip_reason = kMemorystatusFreezeSkipReasonNone;
+	}
+}
+
 
 static int
 sysctl_memorystatus_do_fastwake_warmup_all  SYSCTL_HANDLER_ARGS

@@ -72,7 +72,7 @@ static_assert(sizeof(cpumap_t) * CHAR_BIT >= MAX_CPUS, "cpumap_t bitvector is to
 #define CPUWINDOWS_BASE                 (VM_MAX_KERNEL_ADDRESS & CPUWINDOWS_BASE_MASK)
 #define CPUWINDOWS_TOP                  (CPUWINDOWS_BASE + (MAX_CPUS * CPUWINDOWS_MAX * ARM_PGBYTES))
 
-static_assert((CPUWINDOWS_BASE >= VM_MIN_KERNEL_ADDRESS) && (CPUWINDOWS_TOP <= VM_MAX_KERNEL_ADDRESS),
+static_assert((CPUWINDOWS_BASE >= VM_MIN_KERNEL_ADDRESS) && ((CPUWINDOWS_TOP - 1) <= VM_MAX_KERNEL_ADDRESS),
     "CPU copy windows too large for CPUWINDOWS_BASE_MASK value");
 
 typedef struct cpu_data_entry {
@@ -169,6 +169,9 @@ typedef struct cpu_data {
 	bool                            cpu_hibernate; /* This cpu is currently hibernating the system */
 	bool                            cpu_running;
 	bool                            cluster_master;
+#if __ARM_ARCH_8_5__
+	bool                            sync_on_cswitch;
+#endif /* __ARM_ARCH_8_5__ */
 	/* true if processor_start() or processor_exit() is operating on this CPU */
 	bool                            in_state_transition;
 

@@ -81,6 +81,7 @@
 #include <machine/reg.h>
 #include <machine/cpu_capabilities.h>
 
+#include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/filedesc.h>
@@ -102,6 +103,7 @@
 #include <sys/signal.h>
 #include <sys/aio_kern.h>
 #include <sys/sysproto.h>
+#include <sys/sysctl.h>
 #include <sys/persona.h>
 #include <sys/reason.h>
 #if SYSV_SHM
@@ -160,6 +162,7 @@
 #include <vm/vm_kern.h>
 #include <vm/vm_fault.h>
 #include <vm/vm_pageout.h>
+#include <vm/pmap.h>
 
 #include <kdp/kdp_dyld.h>
 
@@ -173,6 +176,7 @@
 #endif
 
 #include <IOKit/IOBSD.h>
+#include <IOKit/IOPlatformExpert.h>
 
 extern boolean_t vm_darkwake_mode;
 
@@ -253,7 +257,7 @@ task_t convert_port_to_task(ipc_port_t port);
 /*
  * Mach things for which prototypes are unavailable from Mach headers
  */
-#define IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND 0x1
+#define IPC_OBJECT_COPYIN_FLAGS_ALLOW_IMMOVABLE_SEND 0x1
 void            ipc_task_reset(
 	task_t          task);
 void            ipc_thread_reset(
@@ -1192,7 +1196,9 @@ grade:
 	vm_map_set_user_wire_limit(map, (vm_size_t)proc_limitgetcur(p, RLIMIT_MEMLOCK, FALSE));
 #if XNU_TARGET_OS_OSX
 	if (p->p_platform == PLATFORM_IOS) {
-		vm_map_mark_alien(map);
+		assert(vm_map_is_alien(map));
+	} else {
+		assert(!vm_map_is_alien(map));
 	}
 #endif /* XNU_TARGET_OS_OSX */
 	proc_unlock(p);
@@ -1358,6 +1364,14 @@ grade:
 
 	int cputype = cpu_type();
 	vm_map_exec(map, task, load_result.is_64bit_addr, (void *)p->p_fd->fd_rdir, cputype, cpu_subtype, reslide);
+
+#if XNU_TARGET_OS_OSX
+#define SINGLE_JIT_ENTITLEMENT "com.apple.security.cs.single-jit"
+
+	if (IOTaskHasEntitlement(task, SINGLE_JIT_ENTITLEMENT)) {
+		vm_map_single_jit(map);
+	}
+#endif /* XNU_TARGET_OS_OSX */
 
 	/*
 	 * Close file descriptors which specify close-on-exec.
@@ -1780,7 +1794,7 @@ exec_activate_image(struct image_params *imgp)
 	/* Use excpath, which contains the copyin-ed exec path */
 	DTRACE_PROC1(exec, uintptr_t, excpath);
 
-	MALLOC(ndp, struct nameidata *, sizeof(*ndp), M_TEMP, M_WAITOK | M_ZERO);
+	ndp = kheap_alloc(KHEAP_TEMP, sizeof(*ndp), Z_WAITOK | Z_ZERO);
 	if (ndp == NULL) {
 		error = ENOMEM;
 		goto bad_notrans;
@@ -1927,9 +1941,7 @@ bad_notrans:
 	if (imgp->ip_ndp) {
 		nameidone(imgp->ip_ndp);
 	}
-	if (ndp) {
-		FREE(ndp, M_TEMP);
-	}
+	kheap_free(KHEAP_TEMP, ndp, sizeof(*ndp));
 
 	return error;
 }
@@ -2184,7 +2196,7 @@ exec_handle_port_actions(struct image_params *imgp,
 		if (MACH_PORT_VALID(act->new_port)) {
 			kr = ipc_object_copyin(get_task_ipcspace(current_task()),
 			    act->new_port, MACH_MSG_TYPE_COPY_SEND,
-			    (ipc_object_t *) &port, 0, NULL, IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND);
+			    (ipc_object_t *) &port, 0, NULL, IPC_OBJECT_COPYIN_FLAGS_ALLOW_IMMOVABLE_SEND);
 
 			if (kr != KERN_SUCCESS) {
 				ret = EINVAL;
@@ -2329,7 +2341,8 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
 			int mode = psfa->psfaa_openargs.psfao_mode;
 			int origfd;
 
-			MALLOC(bufp, char *, sizeof(*vap) + sizeof(*ndp), M_TEMP, M_WAITOK | M_ZERO);
+			bufp = kheap_alloc(KHEAP_TEMP,
+			    sizeof(*vap) + sizeof(*ndp), Z_WAITOK | Z_ZERO);
 			if (bufp == NULL) {
 				error = ENOMEM;
 				break;
@@ -2356,7 +2369,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
 			    fileproc_alloc_init, NULL,
 			    &origfd);
 
-			FREE(bufp, M_TEMP);
+			kheap_free(KHEAP_TEMP, bufp, sizeof(*vap) + sizeof(*ndp));
 
 			AUDIT_SUBCALL_EXIT(uthread, error);
 
@@ -2411,7 +2424,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
 
 			kr = ipc_object_copyin(get_task_ipcspace(current_task()),
 			    psfa->psfaa_fileport, MACH_MSG_TYPE_COPY_SEND,
-			    (ipc_object_t *) &port, 0, NULL, IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND);
+			    (ipc_object_t *) &port, 0, NULL, IPC_OBJECT_COPYIN_FLAGS_ALLOW_IMMOVABLE_SEND);
 
 			if (kr != KERN_SUCCESS) {
 				error = EINVAL;
@@ -2463,7 +2476,7 @@ exec_handle_file_actions(struct image_params *imgp, short psa_flags)
 			proc_fdlock(p);
 			if ((fp = fp_get_noref_locked(p, psfa->psfaa_filedes)) == NULL) {
 				error = EBADF;
-			} else if (FILEPROC_TYPE(fp) == FTYPE_GUARDED) {
+			} else if (fp_isguarded(fp, 0)) {
 				error = fp_guard_exception(p, psfa->psfaa_filedes,
 				    fp, kGUARD_EXC_NOCLOEXEC);
 			} else {
@@ -2606,13 +2619,27 @@ exec_spawnattr_getmacpolicyinfo(const void *macextensions, const char *policynam
 	return NULL;
 }
 
+static void
+spawn_free_macpolicyinfo(const struct user__posix_spawn_args_desc *px_args,
+    _posix_spawn_mac_policy_extensions_t psmx, int count)
+{
+	if (psmx == NULL) {
+		return;
+	}
+	for (int i = 0; i < count; i++) {
+		_ps_mac_policy_extension_t *ext = &psmx->psmx_extensions[i];
+		kheap_free(KHEAP_TEMP, ext->datap, (vm_size_t) ext->datalen);
+	}
+	kheap_free(KHEAP_TEMP, psmx, px_args->mac_extensions_size);
+}
+
 static int
-spawn_copyin_macpolicyinfo(const struct user__posix_spawn_args_desc *px_args, _posix_spawn_mac_policy_extensions_t *psmxp)
+spawn_copyin_macpolicyinfo(const struct user__posix_spawn_args_desc *px_args,
+    _posix_spawn_mac_policy_extensions_t *psmxp)
 {
 	_posix_spawn_mac_policy_extensions_t psmx = NULL;
 	int error = 0;
 	int copycnt = 0;
-	int i = 0;
 
 	*psmxp = NULL;
 
@@ -2622,8 +2649,14 @@ spawn_copyin_macpolicyinfo(const struct user__posix_spawn_args_desc *px_args, _p
 		goto bad;
 	}
 
-	MALLOC(psmx, _posix_spawn_mac_policy_extensions_t, px_args->mac_extensions_size, M_TEMP, M_WAITOK);
-	if ((error = copyin(px_args->mac_extensions, psmx, px_args->mac_extensions_size)) != 0) {
+	psmx = kheap_alloc(KHEAP_TEMP, px_args->mac_extensions_size, Z_WAITOK);
+	if (psmx == NULL) {
+		error = ENOMEM;
+		goto bad;
+	}
+
+	error = copyin(px_args->mac_extensions, psmx, px_args->mac_extensions_size);
+	if (error) {
 		goto bad;
 	}
 
@@ -2633,7 +2666,7 @@ spawn_copyin_macpolicyinfo(const struct user__posix_spawn_args_desc *px_args, _p
 		goto bad;
 	}
 
-	for (i = 0; i < psmx->psmx_count; i++) {
+	for (int i = 0; i < psmx->psmx_count; i++) {
 		_ps_mac_policy_extension_t *extension = &psmx->psmx_extensions[i];
 		if (extension->datalen == 0 || extension->datalen > PAGE_SIZE) {
 			error = EINVAL;
@@ -2650,9 +2683,15 @@ spawn_copyin_macpolicyinfo(const struct user__posix_spawn_args_desc *px_args, _p
 			goto bad;
 		}
 #endif
-		MALLOC(data, void *, (size_t)extension->datalen, M_TEMP, M_WAITOK);
-		if ((error = copyin((user_addr_t)extension->data, data, (size_t)extension->datalen)) != 0) {
-			FREE(data, M_TEMP);
+		data = kheap_alloc(KHEAP_TEMP, (vm_size_t) extension->datalen, Z_WAITOK);
+		if (data == NULL) {
+			error = ENOMEM;
+			goto bad;
+		}
+		error = copyin((user_addr_t)extension->data, data, (size_t)extension->datalen);
+		if (error) {
+			kheap_free(KHEAP_TEMP, data, (vm_size_t) extension->datalen);
+			error = ENOMEM;
 			goto bad;
 		}
 		extension->datap = data;
@@ -2662,27 +2701,8 @@ spawn_copyin_macpolicyinfo(const struct user__posix_spawn_args_desc *px_args, _p
 	return 0;
 
 bad:
-	if (psmx != NULL) {
-		for (i = 0; i < copycnt; i++) {
-			FREE(psmx->psmx_extensions[i].datap, M_TEMP);
-		}
-		FREE(psmx, M_TEMP);
-	}
+	spawn_free_macpolicyinfo(px_args, psmx, copycnt);
 	return error;
-}
-
-static void
-spawn_free_macpolicyinfo(_posix_spawn_mac_policy_extensions_t psmx)
-{
-	int i;
-
-	if (psmx == NULL) {
-		return;
-	}
-	for (i = 0; i < psmx->psmx_count; i++) {
-		FREE(psmx->psmx_extensions[i].datap, M_TEMP);
-	}
-	FREE(psmx, M_TEMP);
 }
 #endif /* CONFIG_MACF */
 
@@ -2912,6 +2932,7 @@ proc_apply_jit_and_jumbo_va_policies(proc_t p, task_t task)
 		vm_map_set_jumbo(get_task_map(task));
 		if (jit_entitled) {
 			vm_map_set_jit_entitled(get_task_map(task));
+
 		}
 	}
 }
@@ -3064,7 +3085,8 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
 	 * Allocate a big chunk for locals instead of using stack since these
 	 * structures are pretty big.
 	 */
-	MALLOC(bufp, char *, (sizeof(*imgp) + sizeof(*vap) + sizeof(*origvap)), M_TEMP, M_WAITOK | M_ZERO);
+	bufp = kheap_alloc(KHEAP_TEMP,
+	    sizeof(*imgp) + sizeof(*vap) + sizeof(*origvap), Z_WAITOK | Z_ZERO);
 	imgp = (struct image_params *) bufp;
 	if (bufp == NULL) {
 		error = ENOMEM;
@@ -3148,7 +3170,9 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
 				error = EINVAL;
 				goto bad;
 			}
-			MALLOC(px_sfap, _posix_spawn_file_actions_t, px_args.file_actions_size, M_TEMP, M_WAITOK);
+
+			px_sfap = kheap_alloc(KHEAP_TEMP,
+			    px_args.file_actions_size, Z_WAITOK);
 			if (px_sfap == NULL) {
 				error = ENOMEM;
 				goto bad;
@@ -3175,8 +3199,8 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
 				goto bad;
 			}
 
-			MALLOC(px_spap, _posix_spawn_port_actions_t,
-			    px_args.port_actions_size, M_TEMP, M_WAITOK);
+			px_spap = kheap_alloc(KHEAP_TEMP,
+			    px_args.port_actions_size, Z_WAITOK);
 			if (px_spap == NULL) {
 				error = ENOMEM;
 				goto bad;
@@ -3204,7 +3228,8 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
 				goto bad;
 			}
 
-			MALLOC(px_persona, struct _posix_spawn_persona_info *, px_args.persona_info_size, M_TEMP, M_WAITOK | M_ZERO);
+			px_persona = kheap_alloc(KHEAP_TEMP,
+			    px_args.persona_info_size, Z_WAITOK);
 			if (px_persona == NULL) {
 				error = ENOMEM;
 				goto bad;
@@ -3233,8 +3258,8 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
 				goto bad;
 			}
 
-			MALLOC(px_pcred_info, struct _posix_spawn_posix_cred_info *,
-			    px_args.posix_cred_info_size, M_TEMP, M_WAITOK | M_ZERO);
+			px_pcred_info = kheap_alloc(KHEAP_TEMP,
+			    px_args.posix_cred_info_size, Z_WAITOK);
 			if (px_pcred_info == NULL) {
 				error = ENOMEM;
 				goto bad;
@@ -3270,7 +3295,7 @@ posix_spawn(proc_t ap, struct posix_spawn_args *uap, int32_t *retval)
 				 * ...AND the parent has the entitlement, copy
 				 * the subsystem root path in.
 				 */
-				MALLOC(subsystem_root_path, char *, px_args.subsystem_root_path_size, M_SBUF, M_WAITOK | M_ZERO | M_NULL);
+				subsystem_root_path = zalloc_flags(ZV_NAMEI, Z_WAITOK | Z_ZERO);
 
 				if (subsystem_root_path == NULL) {
 					error = ENOMEM;
@@ -3939,16 +3964,7 @@ bad:
 		 * received by the child in a partially constructed state.
 		 */
 		proc_signalend(p, 0);
-
-		/* flag the 'fork' has occurred */
-		proc_knote(p->p_pptr, NOTE_FORK | p->p_pid);
 	}
-
-	/* flag exec has occurred, notify only if it has not failed due to FP Key error */
-	if (!error && ((p->p_lflag & P_LTERM_DECRYPTFAIL) == 0)) {
-		proc_knote(p, NOTE_EXEC);
-	}
-
 
 	if (error == 0) {
 		/*
@@ -4077,6 +4093,15 @@ bad:
 		}
 	}
 
+	if (spawn_no_exec) {
+		/* flag the 'fork' has occurred */
+		proc_knote(p->p_pptr, NOTE_FORK | p->p_pid);
+	}
+
+	/* flag exec has occurred, notify only if it has not failed due to FP Key error */
+	if (!error && ((p->p_lflag & P_LTERM_DECRYPTFAIL) == 0)) {
+		proc_knote(p, NOTE_EXEC);
+	}
 
 	if (imgp != NULL) {
 		if (imgp->ip_vp) {
@@ -4088,27 +4113,25 @@ bad:
 		if (imgp->ip_strings) {
 			execargs_free(imgp);
 		}
-		if (imgp->ip_px_sfa != NULL) {
-			FREE(imgp->ip_px_sfa, M_TEMP);
-		}
-		if (imgp->ip_px_spa != NULL) {
-			FREE(imgp->ip_px_spa, M_TEMP);
-		}
+		kheap_free(KHEAP_TEMP, imgp->ip_px_sfa,
+		    px_args.file_actions_size);
+		kheap_free(KHEAP_TEMP, imgp->ip_px_spa,
+		    px_args.port_actions_size);
 #if CONFIG_PERSONAS
-		if (imgp->ip_px_persona != NULL) {
-			FREE(imgp->ip_px_persona, M_TEMP);
-		}
+		kheap_free(KHEAP_TEMP, imgp->ip_px_persona,
+		    px_args.persona_info_size);
 #endif
-		if (imgp->ip_px_pcred_info != NULL) {
-			FREE(imgp->ip_px_pcred_info, M_TEMP);
-		}
+		kheap_free(KHEAP_TEMP, imgp->ip_px_pcred_info,
+		    px_args.posix_cred_info_size);
 
 		if (subsystem_root_path != NULL) {
-			FREE(subsystem_root_path, M_SBUF);
+			zfree(ZV_NAMEI, subsystem_root_path);
 		}
 #if CONFIG_MACF
-		if (imgp->ip_px_smpx != NULL) {
-			spawn_free_macpolicyinfo(imgp->ip_px_smpx);
+		_posix_spawn_mac_policy_extensions_t psmx = imgp->ip_px_smpx;
+		if (psmx) {
+			spawn_free_macpolicyinfo(&px_args,
+			    psmx, psmx->psmx_count);
 		}
 		if (imgp->ip_execlabelp) {
 			mac_cred_label_free(imgp->ip_execlabelp);
@@ -4263,9 +4286,8 @@ bad:
 		proc_rele(p);
 	}
 
-	if (bufp != NULL) {
-		FREE(bufp, M_TEMP);
-	}
+	kheap_free(KHEAP_TEMP, bufp,
+	    sizeof(*imgp) + sizeof(*vap) + sizeof(*origvap));
 
 	if (inherit != NULL) {
 		ipc_importance_release(inherit);
@@ -4506,7 +4528,8 @@ __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval)
 	/* Allocate a big chunk for locals instead of using stack since these
 	 * structures a pretty big.
 	 */
-	MALLOC(bufp, char *, (sizeof(*imgp) + sizeof(*vap) + sizeof(*origvap)), M_TEMP, M_WAITOK | M_ZERO);
+	bufp = kheap_alloc(KHEAP_TEMP,
+	    sizeof(*imgp) + sizeof(*vap) + sizeof(*origvap), Z_WAITOK | Z_ZERO);
 	imgp = (struct image_params *) bufp;
 	if (bufp == NULL) {
 		error = ENOMEM;
@@ -4794,9 +4817,8 @@ exit_with_error:
 		proc_rele(p);
 	}
 
-	if (bufp != NULL) {
-		FREE(bufp, M_TEMP);
-	}
+	kheap_free(KHEAP_TEMP, bufp,
+	    sizeof(*imgp) + sizeof(*vap) + sizeof(*origvap));
 
 	if (inherit != NULL) {
 		ipc_importance_release(inherit);
@@ -5376,6 +5398,10 @@ bad:
  * System malloc engages nanozone for UIAPP.
  */
 #define NANO_ENGAGE_KEY "MallocNanoZone=1"
+/*
+ * Used to pass experiment flags up to libmalloc.
+ */
+#define LIBMALLOC_EXPERIMENT_FACTORS_KEY "MallocExperiment="
 
 #define PFZ_KEY "pfz="
 extern user32_addr_t commpage_text32_location;
@@ -5396,10 +5422,16 @@ extern uuid_string_t bootsessionuuid_string;
 #define PTRAUTH_DISABLED_FLAG "ptrauth_disabled=1"
 #define DYLD_ARM64E_ABI_KEY "arm64e_abi="
 #endif /* __has_feature(ptrauth_calls) */
+#define MAIN_TH_PORT_KEY "th_port="
 
 #define FSID_MAX_STRING "0x1234567890abcdef,0x1234567890abcdef"
 
 #define HEX_STR_LEN 18 // 64-bit hex value "0x0123456701234567"
+#define HEX_STR_LEN32 10 // 32-bit hex value "0x01234567"
+
+#if XNU_TARGET_OS_OSX && _POSIX_SPAWN_FORCE_4K_PAGES && PMAP_CREATE_FORCE_4K_PAGES
+#define VM_FORCE_4K_PAGES_KEY "vm_force_4k_pages=1"
+#endif /* XNU_TARGET_OS_OSX && _POSIX_SPAWN_FORCE_4K_PAGES && PMAP_CREATE_FORCE_4K_PAGES */
 
 static int
 exec_add_entropy_key(struct image_params *imgp,
@@ -5447,12 +5479,17 @@ is_arm64e_running_as_arm64(const struct image_params *imgp)
 }
 #endif /* __has_feature(ptrauth_calls) */
 
+_Atomic uint64_t libmalloc_experiment_factors = 0;
+
 static int
 exec_add_apple_strings(struct image_params *imgp,
     const load_result_t *load_result)
 {
 	int error;
 	int img_ptr_size = (imgp->ip_flags & IMGPF_IS_64BIT_ADDR) ? 8 : 4;
+	thread_t new_thread;
+	ipc_port_t sright;
+	uint64_t local_experiment_factors = 0;
 
 	/* exec_save_path stored the first string */
 	imgp->ip_applec = 1;
@@ -5658,6 +5695,62 @@ exec_add_apple_strings(struct image_params *imgp,
 		imgp->ip_applec++;
 	}
 #endif
+	/*
+	 * Add main thread mach port name
+	 * +1 uref on main thread port, this ref will be extracted by libpthread in __pthread_init
+	 * and consumed in _bsdthread_terminate. Leaking the main thread port name if not linked
+	 * against libpthread.
+	 */
+	if ((new_thread = imgp->ip_new_thread) != THREAD_NULL) {
+		thread_reference(new_thread);
+		sright = convert_thread_to_port_pinned(new_thread);
+		task_t new_task = get_threadtask(new_thread);
+		mach_port_name_t name = ipc_port_copyout_send(sright, get_task_ipcspace(new_task));
+		char port_name_hex_str[strlen(MAIN_TH_PORT_KEY) + HEX_STR_LEN32 + 1];
+		snprintf(port_name_hex_str, sizeof(port_name_hex_str), MAIN_TH_PORT_KEY "0x%x", name);
+
+		error = exec_add_user_string(imgp, CAST_USER_ADDR_T(port_name_hex_str), UIO_SYSSPACE, FALSE);
+		if (error) {
+			goto bad;
+		}
+		imgp->ip_applec++;
+	}
+
+#if XNU_TARGET_OS_OSX && _POSIX_SPAWN_FORCE_4K_PAGES && PMAP_CREATE_FORCE_4K_PAGES
+	if (imgp->ip_px_sa != NULL) {
+		struct _posix_spawnattr* psa = (struct _posix_spawnattr *) imgp->ip_px_sa;
+		if (psa->psa_flags & _POSIX_SPAWN_FORCE_4K_PAGES) {
+			const char *vm_force_4k_string = VM_FORCE_4K_PAGES_KEY;
+			error = exec_add_user_string(imgp, CAST_USER_ADDR_T(vm_force_4k_string), UIO_SYSSPACE, FALSE);
+			if (error) {
+				goto bad;
+			}
+			imgp->ip_applec++;
+		}
+	}
+#endif /* XNU_TARGET_OS_OSX && _POSIX_SPAWN_FORCE_4K_PAGES && PMAP_CREATE_FORCE_4K_PAGES */
+
+	/* adding the libmalloc experiment string */
+	local_experiment_factors = os_atomic_load_wide(&libmalloc_experiment_factors, relaxed);
+	if (__improbable(local_experiment_factors != 0)) {
+		char libmalloc_experiment_factors_string[strlen(LIBMALLOC_EXPERIMENT_FACTORS_KEY) + HEX_STR_LEN + 1];
+
+		snprintf(
+			libmalloc_experiment_factors_string,
+			sizeof(libmalloc_experiment_factors_string),
+			LIBMALLOC_EXPERIMENT_FACTORS_KEY "0x%llx",
+			local_experiment_factors);
+		error = exec_add_user_string(
+			imgp,
+			CAST_USER_ADDR_T(libmalloc_experiment_factors_string),
+			UIO_SYSSPACE,
+			FALSE);
+		if (error) {
+			printf("Failed to add the libmalloc experiment factors string with error %d\n", error);
+			goto bad;
+		}
+		imgp->ip_applec++;
+	}
 
 	/* Align the tail of the combined applev area */
 	while (imgp->ip_strspace % img_ptr_size != 0) {
@@ -6053,7 +6146,8 @@ handle_mac_transition:
 					continue;
 				}
 
-				MALLOC(ndp, struct nameidata *, sizeof(*ndp), M_TEMP, M_WAITOK | M_ZERO);
+				ndp = kheap_alloc(KHEAP_TEMP,
+				    sizeof(*ndp), Z_WAITOK | Z_ZERO);
 				if (ndp == NULL) {
 					fp_free(p, indx, fp);
 					error = ENOMEM;
@@ -6066,7 +6160,7 @@ handle_mac_transition:
 
 				if ((error = vn_open(ndp, flag, 0)) != 0) {
 					fp_free(p, indx, fp);
-					FREE(ndp, M_TEMP);
+					kheap_free(KHEAP_TEMP, ndp, sizeof(*ndp));
 					break;
 				}
 
@@ -6083,7 +6177,7 @@ handle_mac_transition:
 				fp_drop(p, indx, fp, 1);
 				proc_fdunlock(p);
 
-				FREE(ndp, M_TEMP);
+				kheap_free(KHEAP_TEMP, ndp, sizeof(*ndp));
 			}
 		}
 	}
@@ -6537,24 +6631,24 @@ load_return_to_errno(load_return_t lrtn)
 
 
 static int execargs_waiters = 0;
-lck_mtx_t *execargs_cache_lock;
+static LCK_MTX_DECLARE_ATTR(execargs_cache_lock, &proc_lck_grp, &proc_lck_attr);
 
 static void
 execargs_lock_lock(void)
 {
-	lck_mtx_lock_spin(execargs_cache_lock);
+	lck_mtx_lock_spin(&execargs_cache_lock);
 }
 
 static void
 execargs_lock_unlock(void)
 {
-	lck_mtx_unlock(execargs_cache_lock);
+	lck_mtx_unlock(&execargs_cache_lock);
 }
 
 static wait_result_t
 execargs_lock_sleep(void)
 {
-	return lck_mtx_sleep(execargs_cache_lock, LCK_SLEEP_DEFAULT, &execargs_free_count, THREAD_INTERRUPTIBLE);
+	return lck_mtx_sleep(&execargs_cache_lock, LCK_SLEEP_DEFAULT, &execargs_free_count, THREAD_INTERRUPTIBLE);
 }
 
 static kern_return_t
@@ -7172,3 +7266,26 @@ exec_prefault_data(proc_t p __unused, struct image_params *imgp, load_result_t *
 		}
 	}
 }
+
+static int
+sysctl_libmalloc_experiments SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg2, req)
+	int changed;
+	errno_t error;
+	uint64_t value = os_atomic_load_wide(&libmalloc_experiment_factors, relaxed);
+
+	error = sysctl_io_number(req, value, sizeof(value), &value, &changed);
+	if (error) {
+		return error;
+	}
+
+	if (changed) {
+		os_atomic_store_wide(&libmalloc_experiment_factors, value, relaxed);
+	}
+
+	return 0;
+}
+
+EXPERIMENT_FACTOR_PROC(_kern, libmalloc_experiments, CTLTYPE_QUAD | CTLFLAG_RW, 0, 0, &sysctl_libmalloc_experiments, "A", "");
+

@@ -82,12 +82,9 @@
 #include <ipc/ipc_object.h>
 #include <sys/kdebug.h>
 
-typedef uint16_t ipc_kmsg_flags_t;
-
-#define IPC_KMSG_FLAGS_ALLOW_IMMOVABLE_SEND 0x1       /* Dest port contains an immovable send right */
-
 #if (DEVELOPMENT || DEBUG)
-#define IKM_PARTIAL_SIG        1     /* Keep partial message signatures for better debug */
+/* Turn on to keep partial message signatures for better debug */
+#define IKM_PARTIAL_SIG        0
 #endif
 
 /*
@@ -106,8 +103,6 @@ typedef uint16_t ipc_kmsg_flags_t;
  */
 
 struct ipc_kmsg {
-	mach_msg_size_t            ikm_size;
-	uint32_t                   ikm_ppriority;    /* pthread priority of this kmsg */
 	struct ipc_kmsg            *ikm_next;        /* next message on port/discard queue */
 	struct ipc_kmsg            *ikm_prev;        /* prev message on port/discard queue */
 	union {
@@ -122,12 +117,14 @@ struct ipc_kmsg {
 #if MACH_FLIPC
 	struct mach_node           *ikm_node;        /* Originating node - needed for ack */
 #endif
+	mach_msg_size_t            ikm_size;
+	uint32_t                   ikm_ppriority;    /* pthread priority of this kmsg */
 #if IKM_PARTIAL_SIG
 	uintptr_t                  ikm_header_sig;   /* sig for just the header */
 	uintptr_t                  ikm_headtrail_sig;/* sif for header and trailer */
 #endif
 	uintptr_t                  ikm_signature;    /* sig for all kernel-processed data */
-	ipc_kmsg_flags_t           ikm_flags;
+	ipc_object_copyin_flags_t  ikm_flags;
 	mach_msg_qos_t             ikm_qos_override; /* qos override on this kmsg */
 	mach_msg_filter_id         ikm_filter_policy_id; /* Sandbox-specific policy id used for message filtering */
 };
@@ -175,46 +172,6 @@ MACRO_END
 MACRO_BEGIN                                                             \
 	(kmsg)->ikm_prealloc = IP_NULL;                                 \
 MACRO_END
-
-#if MACH_FLIPC
-#define ikm_flipc_init(kmsg) (kmsg)->ikm_node = MACH_NODE_NULL
-#else
-#define ikm_flipc_init(kmsg)
-#endif
-
-#if IKM_PARTIAL_SIG
-#define ikm_init(kmsg, size)                                    \
-MACRO_BEGIN                                                     \
-	(kmsg)->ikm_size = (size);                                  \
-	(kmsg)->ikm_flags = 0;                                      \
-	(kmsg)->ikm_prealloc = IP_NULL;                             \
-	(kmsg)->ikm_data = NULL;                                    \
-	(kmsg)->ikm_voucher = IP_NULL;                              \
-	(kmsg)->ikm_importance = IIE_NULL;                          \
-	(kmsg)->ikm_filter_policy_id = 0;                           \
-	(kmsg)->ikm_header_sig = 0;                                 \
-	(kmsg)->ikm_headtrail_sig = 0;                              \
-	(kmsg)->ikm_signature = 0;                                  \
-	ikm_qos_init(kmsg);                                         \
-	ikm_flipc_init(kmsg);                                       \
-	assert((kmsg)->ikm_prev = (kmsg)->ikm_next = IKM_BOGUS);    \
-MACRO_END
-#else
-#define ikm_init(kmsg, size)                                    \
-MACRO_BEGIN                                                     \
-	(kmsg)->ikm_size = (size);                                  \
-	(kmsg)->ikm_flags = 0;                                      \
-	(kmsg)->ikm_prealloc = IP_NULL;                             \
-	(kmsg)->ikm_data = NULL;                                    \
-	(kmsg)->ikm_voucher = IP_NULL;                              \
-	(kmsg)->ikm_importance = IIE_NULL;                          \
-	(kmsg)->ikm_filter_policy_id = 0;                           \
-	(kmsg)->ikm_signature = 0;                                  \
-	ikm_qos_init(kmsg);                                         \
-	ikm_flipc_init(kmsg);                                       \
-	assert((kmsg)->ikm_prev = (kmsg)->ikm_next = IKM_BOGUS);    \
-MACRO_END
-#endif
 
 #define ikm_qos_init(kmsg)                                              \
 MACRO_BEGIN                                                             \
@@ -372,15 +329,6 @@ extern mach_msg_return_t ipc_kmsg_copyout_header(
 	ipc_kmsg_t              kmsg,
 	ipc_space_t             space,
 	mach_msg_option_t       option);
-
-/* Copyout a port right returning a name */
-extern mach_msg_return_t ipc_kmsg_copyout_object(
-	ipc_space_t             space,
-	ipc_object_t            object,
-	mach_msg_type_name_t    msgt_name,
-	mach_port_context_t     *context,
-	mach_msg_guard_flags_t  *guard_flags,
-	mach_port_name_t        *namep);
 
 /* Copyout the header and body to a user message */
 extern mach_msg_return_t ipc_kmsg_copyout(

@@ -29,7 +29,6 @@
 #include <machine/asm.h>
 #include <arm64/exception_asm.h>
 #include <arm64/machine_machdep.h>
-#include <arm64/pac_asm.h>
 #include <arm64/proc_reg.h>
 #include <arm/pmap.h>
 #include <pexpert/arm64/board_config.h>
@@ -39,12 +38,11 @@
 
 #if defined(HAS_APPLE_PAC)
 
-.macro SET_KERN_KEY		dst, apctl_el1
-	orr		\dst, \apctl_el1, #APCTL_EL1_KernKeyEn
-.endmacro
 
-.macro CLEAR_KERN_KEY	dst, apctl_el1
-	and		\dst, \apctl_el1, #~APCTL_EL1_KernKeyEn
+.macro LOAD_CPU_JOP_KEY	dst, tmp
+	mrs		\tmp, TPIDR_EL1
+	ldr		\tmp, [\tmp, ACT_CPUDATAP]
+	ldr		\dst, [\tmp, CPU_JOP_KEY]
 .endmacro
 
 /*
@@ -53,38 +51,14 @@
 	.align 2
 	.globl EXT(ml_enable_user_jop_key)
 LEXT(ml_enable_user_jop_key)
-	mov		x1, x0
-	mrs		x2, TPIDR_EL1
-	ldr		x2, [x2, ACT_CPUDATAP]
-	ldr		x0, [x2, CPU_JOP_KEY]
-
-	cmp		x0, x1
-	b.eq	Lskip_program_el0_jop_key
-	/*
-	 * We can safely write to the JOP key registers without updating
-	 * current_cpu_datap()->jop_key.  The complementary
-	 * ml_disable_user_jop_key() call will put back the old value.  Interrupts
-	 * are also disabled, so nothing else will read this field in the meantime.
-	 */
-	SET_JOP_KEY_REGISTERS	x1, x2
-Lskip_program_el0_jop_key:
-
-	/*
-	 * if (cpu has APCTL_EL1.UserKeyEn) {
-	 *   set APCTL_EL1.KernKeyEn		// KERNKey is mixed into EL0 keys
-	 * } else {
-	 *   clear APCTL_EL1.KernKeyEn		// KERNKey is not mixed into EL0 keys
-	 * }
-	 */
-	mrs		x1, ARM64_REG_APCTL_EL1
-#if   defined(HAS_APCTL_EL1_USERKEYEN)
-	SET_KERN_KEY	x1, x1
-#else
-	CLEAR_KERN_KEY	x1, x1
-#endif
-	msr		ARM64_REG_APCTL_EL1, x1
-	isb
+#if HAS_PARAVIRTUALIZED_PAC
+	mov 	x2, x0
+	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
+	mov		x1, #1
+	hvc		#0
+	LOAD_CPU_JOP_KEY x0, x1
 	ret
+#endif /* HAS_PARAVIRTUALIZED_PAC */
 
 /*
  * void ml_disable_user_jop_key(uint64_t user_jop_key, uint64_t saved_jop_state)
@@ -92,27 +66,13 @@ Lskip_program_el0_jop_key:
 	.align 2
 	.globl EXT(ml_disable_user_jop_key)
 LEXT(ml_disable_user_jop_key)
-	cmp		x0, x1
-	b.eq	Lskip_program_prev_jop_key
-	SET_JOP_KEY_REGISTERS	x1, x2
-Lskip_program_prev_jop_key:
-
-	/*
-	 * if (cpu has APCTL_EL1.UserKeyEn) {
-	 *   clear APCTL_EL1.KernKeyEn		// KERNKey is not mixed into EL1 keys
-	 * } else {
-	 *   set APCTL_EL1.KernKeyEn		// KERNKey is mixed into EL1 keys
-	 * }
-	 */
-	mrs		x1, ARM64_REG_APCTL_EL1
-#if   defined(HAS_APCTL_EL1_USERKEYEN)
-	CLEAR_KERN_KEY	x1, x1
-#else
-	SET_KERN_KEY	x1, x1
-#endif
-	msr		ARM64_REG_APCTL_EL1, x1
-	isb
+#if HAS_PARAVIRTUALIZED_PAC
+	mov 	x2, x1
+	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
+	mov		x1, #0
+	hvc		#0
 	ret
+#endif /* HAS_PARAVIRTUALIZED_PAC */
 
 #endif /* defined(HAS_APPLE_PAC) */
 
@@ -132,11 +92,11 @@ LEXT(set_bp_ret)
 	add		x14, x14, EXT(bp_ret)@pageoff
 	ldr		w14, [x14]
 
-	mrs		x13, ARM64_REG_ACC_CFG
+	mrs		x13, CPU_CFG
 	and		x13, x13, (~(ARM64_REG_ACC_CFG_bpSlp_mask << ARM64_REG_ACC_CFG_bpSlp_shift))
 	and		x14, x14, #(ARM64_REG_ACC_CFG_bpSlp_mask)
 	orr		x13, x13, x14, lsl #(ARM64_REG_ACC_CFG_bpSlp_shift)
-	msr		ARM64_REG_ACC_CFG, x13
+	msr		CPU_CFG, x13
 
 	ret
 #endif // HAS_BP_RET
@@ -151,8 +111,8 @@ LEXT(set_nex_pg)
 	cbz		x14, Lnex_pg_done
 
 	// Set the SEG-recommended value of 12 additional reset cycles
-	HID_INSERT_BITS	ARM64_REG_HID13, ARM64_REG_HID13_RstCyc_mask, ARM64_REG_HID13_RstCyc_val, x13
-	HID_SET_BITS ARM64_REG_HID14, ARM64_REG_HID14_NexPwgEn, x13
+	HID_INSERT_BITS	HID13, ARM64_REG_HID13_RstCyc_mask, ARM64_REG_HID13_RstCyc_val, x13
+	HID_SET_BITS HID14, ARM64_REG_HID14_NexPwgEn, x13
 
 Lnex_pg_done:
 	ret
@@ -269,7 +229,7 @@ LEXT(set_mmu_ttb_alternate)
 #else
 #if defined(HAS_VMSA_LOCK)
 #if DEBUG || DEVELOPMENT
-	mrs		x1, ARM64_REG_VMSA_LOCK_EL1
+	mrs		x1, VMSA_LOCK_EL1
 	and		x1, x1, #(VMSA_LOCK_TTBR1_EL1)
 	cbnz		x1, L_set_locked_reg_panic
 #endif /* DEBUG || DEVELOPMENT */
@@ -344,7 +304,7 @@ LEXT(vmsa_lock)
 	mov x0, #(VMSA_LOCK_TTBR1_EL1 | VMSA_LOCK_TCR_EL1 | VMSA_LOCK_VBAR_EL1)
 #endif
 	orr x0, x0, x1
-	msr ARM64_REG_VMSA_LOCK_EL1, x0
+	msr VMSA_LOCK_EL1, x0
 	isb sy
 	ret
 #endif /* defined(HAS_VMSA_LOCK) */
@@ -372,7 +332,7 @@ LEXT(set_tcr)
 #if defined(HAS_VMSA_LOCK)
 #if DEBUG || DEVELOPMENT
 	// assert TCR unlocked
-	mrs 		x1, ARM64_REG_VMSA_LOCK_EL1
+	mrs 		x1, VMSA_LOCK_EL1
 	and		x1, x1, #(VMSA_LOCK_TCR_EL1)
 	cbnz		x1, L_set_locked_reg_panic
 #endif /* DEBUG || DEVELOPMENT */
@@ -809,7 +769,7 @@ LEXT(arm64_prepare_for_sleep)
 
 #if defined(APPLETYPHOON)
 	// <rdar://problem/15827409>
-	HID_SET_BITS ARM64_REG_HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x9
+	HID_SET_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x9
 	dsb		sy
 	isb		sy
 #endif
@@ -817,11 +777,11 @@ LEXT(arm64_prepare_for_sleep)
 #if HAS_CLUSTER
 	cbnz		x0, 1f                                      // Skip if deep_sleep == true
 	// Mask FIQ and IRQ to avoid spurious wakeups
-	mrs		x9, ARM64_REG_CYC_OVRD
+	mrs		x9, CPU_OVRD
 	and		x9, x9, #(~(ARM64_REG_CYC_OVRD_irq_mask | ARM64_REG_CYC_OVRD_fiq_mask))
 	mov		x10, #(ARM64_REG_CYC_OVRD_irq_disable | ARM64_REG_CYC_OVRD_fiq_disable)
 	orr		x9, x9, x10
-	msr		ARM64_REG_CYC_OVRD, x9
+	msr		CPU_OVRD, x9
 	isb
 1:
 #endif
@@ -829,7 +789,7 @@ LEXT(arm64_prepare_for_sleep)
 	cbz		x0, 1f                                          // Skip if deep_sleep == false
 #if __ARM_GLOBAL_SLEEP_BIT__
 	// Enable deep sleep
-	mrs		x1, ARM64_REG_ACC_OVRD
+	mrs		x1, ACC_OVRD
 	orr		x1, x1, #(ARM64_REG_ACC_OVRD_enDeepSleep)
 	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_mask))
 	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_deepsleep)
@@ -842,23 +802,40 @@ LEXT(arm64_prepare_for_sleep)
 #if HAS_RETENTION_STATE
 	orr		x1, x1, #(ARM64_REG_ACC_OVRD_disPioOnWfiCpu)
 #endif
-	msr		ARM64_REG_ACC_OVRD, x1
+	msr		ACC_OVRD, x1
 
+#if defined(APPLEMONSOON)
+	// Skye has an ACC_OVRD register for EBLK and PBLK. Same bitfield layout for these bits
+	mrs		x1, EBLK_OVRD
+	orr		x1, x1, #(ARM64_REG_ACC_OVRD_enDeepSleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_disL2Flush4AccSlp_deepsleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_ok2PwrDnSRM_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2PwrDnSRM_deepsleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_ok2TrDnLnk_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2TrDnLnk_deepsleep)
+	and		x1, x1, #(~(ARM64_REG_ACC_OVRD_ok2PwrDnCPM_mask))
+	orr		x1, x1, #(  ARM64_REG_ACC_OVRD_ok2PwrDnCPM_deepsleep)
+	msr		EBLK_OVRD, x1
+
+#endif
 
 #else
+#if defined(APPLETYPHOON) || defined(APPLETWISTER)
 	// Enable deep sleep
 	mov		x1, ARM64_REG_CYC_CFG_deepSleep
-	msr		ARM64_REG_CYC_CFG, x1
+	msr		CPU_CFG, x1
+#endif
 #endif
 
 1:
 	// Set "OK to power down" (<rdar://problem/12390433>)
-	mrs		x9, ARM64_REG_CYC_OVRD
+	mrs		x9, CPU_OVRD
 	orr		x9, x9, #(ARM64_REG_CYC_OVRD_ok2pwrdn_force_down)
 #if HAS_RETENTION_STATE
 	orr		x9, x9, #(ARM64_REG_CYC_OVRD_disWfiRetn)
 #endif
-	msr		ARM64_REG_CYC_OVRD, x9
+	msr		CPU_OVRD, x9
 
 #if defined(APPLEMONSOON) || defined(APPLEVORTEX)
 	ARM64_IS_PCORE x9
@@ -881,12 +858,12 @@ LEXT(arm64_prepare_for_sleep)
 	mrs x9, MIDR_EL1
 	EXEC_COREALL_REVLO CPU_VERSION_B0, x9, x10
 #endif
-	mrs		x9, ARM64_REG_HID10
+	mrs		x9, HID10
 	orr		x9, x9, #(ARM64_REG_HID10_DisHwpGups)
-	msr		ARM64_REG_HID10, x9
+	msr		HID10, x9
 	isb		sy
 	and		x9, x9, #(~(ARM64_REG_HID10_DisHwpGups))
-	msr		ARM64_REG_HID10, x9
+	msr		HID10, x9
 	isb		sy
 #endif
 	EXEC_END
@@ -908,9 +885,9 @@ LEXT(arm64_force_wfi_clock_gate)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
 
-	mrs		x0, ARM64_REG_CYC_OVRD
+	mrs		x0, CPU_OVRD
 	orr		x0, x0, #(ARM64_REG_CYC_OVRD_ok2pwrdn_force_up)
-	msr		ARM64_REG_CYC_OVRD, x0
+	msr		CPU_OVRD, x0
 	
 	POP_FRAME
 	ARM64_STACK_EPILOG
@@ -942,7 +919,7 @@ LEXT(typhoon_prepare_for_wfi)
 	PUSH_FRAME
 
 	// <rdar://problem/15827409>
-	HID_SET_BITS ARM64_REG_HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
+	HID_SET_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
 	dsb		sy
 	isb		sy
 
@@ -957,7 +934,7 @@ LEXT(typhoon_return_from_wfi)
 	PUSH_FRAME
 
 	// <rdar://problem/15827409>
-	HID_CLEAR_BITS ARM64_REG_HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
+	HID_CLEAR_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
 	dsb		sy
 	isb		sy 
 
@@ -1002,57 +979,57 @@ LEXT(cpu_defeatures_set)
 	cmp		x0, #1
 	b.ne		cpu_defeatures_set_ret
 	LOAD_UINT64	x1, HID0_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID0
+	mrs		x0, HID0
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID0, x0
+	msr		HID0, x0
 	LOAD_UINT64	x1, HID1_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID1
+	mrs		x0, HID1
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID1, x0
+	msr		HID1, x0
 	LOAD_UINT64	x1, HID2_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID2
+	mrs		x0, HID2
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID2, x0
+	msr		HID2, x0
 	LOAD_UINT64	x1, HID3_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID3
+	mrs		x0, HID3
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID3, x0
+	msr		HID3, x0
 	LOAD_UINT64	x1, HID4_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID4
+	mrs		x0, HID4
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID4, x0
+	msr		HID4, x0
 	LOAD_UINT64	x1, HID7_DEFEATURES_1
-	mrs		x0, ARM64_REG_HID7
+	mrs		x0, HID7
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID7, x0
+	msr		HID7, x0
 	dsb		sy
 	isb		sy 
 	b		cpu_defeatures_set_ret
 cpu_defeatures_set_2:
 	LOAD_UINT64	x1, HID0_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID0
+	mrs		x0, HID0
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID0, x0
+	msr		HID0, x0
 	LOAD_UINT64	x1, HID1_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID1
+	mrs		x0, HID1
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID1, x0
+	msr		HID1, x0
 	LOAD_UINT64	x1, HID2_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID2
+	mrs		x0, HID2
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID2, x0
+	msr		HID2, x0
 	LOAD_UINT64	x1, HID3_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID3
+	mrs		x0, HID3
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID3, x0
+	msr		HID3, x0
 	LOAD_UINT64	x1, HID4_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID4
+	mrs		x0, HID4
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID4, x0
+	msr		HID4, x0
 	LOAD_UINT64	x1, HID7_DEFEATURES_2
-	mrs		x0, ARM64_REG_HID7
+	mrs		x0, HID7
 	orr		x0, x0, x1
-	msr		ARM64_REG_HID7, x0
+	msr		HID7, x0
 	dsb		sy
 	isb		sy 
 	b		cpu_defeatures_set_ret

@@ -70,18 +70,7 @@ static_assert((KERNEL_PMAP_HEAP_RANGE_START & ~ARM_TT_ROOT_OFFMASK) > ARM_KERNEL
 static_assert((((~ARM_KERNEL_PROTECT_EXCEPTION_START) + 1) * 2ULL) <= (ARM_TT_ROOT_SIZE + ARM_TT_ROOT_INDEX_MASK));
 #endif /* __ARM_KERNEL_PROTECT__ */
 
-#if __APRR_SUPPORTED__ && XNU_MONITOR
-/*
- * If APRR is supported, setting XN on L1/L2 table entries will shift the effective
- * APRR index of L3 PTEs covering PPL-protected pages in the kernel dynamic region
- * from PPL R/W to kernel R/W.  That will effectively remove PPL write protection
- * from those pages.  Avoid setting XN at the table level for MONITOR-enabled builds
- * that are backed by APRR.
- */
-#define ARM_DYNAMIC_TABLE_XN ARM_TTE_TABLE_PXN
-#else
 #define ARM_DYNAMIC_TABLE_XN (ARM_TTE_TABLE_PXN | ARM_TTE_TABLE_XN)
-#endif
 
 #if KASAN
 extern vm_offset_t shadow_pbase;
@@ -269,7 +258,9 @@ SECURITY_READ_ONLY_LATE(vm_offset_t)          segLINKB;
 SECURITY_READ_ONLY_LATE(static unsigned long) segSizeLINK;
 
 SECURITY_READ_ONLY_LATE(static vm_offset_t)   segKLDB;
-SECURITY_READ_ONLY_LATE(static unsigned long) segSizeKLD;
+SECURITY_READ_ONLY_LATE(unsigned long)        segSizeKLD;
+SECURITY_READ_ONLY_LATE(static vm_offset_t)   segKLDDATAB;
+SECURITY_READ_ONLY_LATE(static unsigned long) segSizeKLDDATA;
 SECURITY_READ_ONLY_LATE(vm_offset_t)          segLASTB;
 SECURITY_READ_ONLY_LATE(unsigned long)        segSizeLAST;
 SECURITY_READ_ONLY_LATE(vm_offset_t)          segLASTDATACONSTB;
@@ -1349,6 +1340,7 @@ noAuxKC:
 	arm_vm_page_granular_RNX((vm_offset_t)&excepstack_high_guard, PAGE_MAX_SIZE, 0);
 
 	arm_vm_page_granular_ROX(segKLDB, segSizeKLD, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
+	arm_vm_page_granular_RNX(segKLDDATAB, segSizeKLDDATA, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
 	arm_vm_page_granular_RWNX(segLINKB, segSizeLINK, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
 	arm_vm_page_granular_RWNX(segPLKLINKEDITB, segSizePLKLINKEDIT, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT); // Coalesced kext LINKEDIT segment
 	arm_vm_page_granular_ROX(segLASTB, segSizeLAST, ARM64_GRANULE_ALLOW_BLOCK); // __LAST may be empty, but we cannot assume this
@@ -1444,8 +1436,12 @@ arm_vm_physmap_init(boot_args *args)
 	// Slid region between gPhysBase and beginning of protected text
 	arm_vm_physmap_slide(temp_ptov_table, gVirtBase, segLOWEST - gVirtBase, AP_RWNA, 0);
 
-	// kext bootstrap segment
+	// kext bootstrap segments
+#if !defined(KERNEL_INTEGRITY_KTRR) && !defined(KERNEL_INTEGRITY_CTRR)
+	/* __KLD,__text is covered by the rorgn */
 	arm_vm_physmap_slide(temp_ptov_table, segKLDB, segSizeKLD, AP_RONA, 0);
+#endif
+	arm_vm_physmap_slide(temp_ptov_table, segKLDDATAB, segSizeKLDDATA, AP_RONA, 0);
 
 	// Early-boot data
 	arm_vm_physmap_slide(temp_ptov_table, segBOOTDATAB, segSizeBOOTDATA, AP_RONA, 0);
@@ -1562,7 +1558,14 @@ arm_vm_prot_finalize(boot_args * args __unused)
 #endif /* __ARM_KERNEL_PROTECT__ */
 
 #if XNU_MONITOR
+#if !defined(KERNEL_INTEGRITY_KTRR) && !defined(KERNEL_INTEGRITY_CTRR)
+	/* __KLD,__text is covered by the rorgn */
 	for (vm_offset_t va = segKLDB; va < (segKLDB + segSizeKLD); va += ARM_PGBYTES) {
+		pt_entry_t *pte = arm_kva_to_pte(va);
+		*pte = ARM_PTE_EMPTY;
+	}
+#endif
+	for (vm_offset_t va = segKLDDATAB; va < (segKLDDATAB + segSizeKLDDATA); va += ARM_PGBYTES) {
 		pt_entry_t *pte = arm_kva_to_pte(va);
 		*pte = ARM_PTE_EMPTY;
 	}
@@ -1599,6 +1602,11 @@ arm_vm_prot_finalize(boot_args * args __unused)
 	if (segLASTDATACONSTB) {
 		arm_vm_page_granular_RNX(segLASTDATACONSTB, segSizeLASTDATACONST, ARM64_GRANULE_ALLOW_BLOCK);
 	}
+
+	/*
+	 * __KLD,__text should no longer be executable.
+	 */
+	arm_vm_page_granular_RNX(segKLDB, segSizeKLD, ARM64_GRANULE_ALLOW_BLOCK);
 
 	/*
 	 * Must wait until all other region permissions are set before locking down DATA_CONST
@@ -1871,6 +1879,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	segBOOTDATAB     = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__BOOTDATA", &segSizeBOOTDATA);
 	segLINKB         = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__LINKEDIT", &segSizeLINK);
 	segKLDB          = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__KLD", &segSizeKLD);
+	segKLDDATAB      = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__KLDDATA", &segSizeKLDDATA);
 	segPRELINKDATAB  = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PRELINK_DATA", &segSizePRELINKDATA);
 	segPRELINKINFOB  = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PRELINK_INFO", &segSizePRELINKINFO);
 	segPLKLLVMCOVB   = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PLK_LLVM_COV", &segSizePLKLLVMCOV);
@@ -1888,7 +1897,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 		// fileset has kext PLK_TEXT_EXEC under kernel collection TEXT_EXEC following kernel's LAST
 		segKCTEXTEXECB = (vm_offset_t) getsegdatafromheader(kc_mh,             "__TEXT_EXEC", &segSizeKCTEXTEXEC);
 		assert(segPLKTEXTEXECB && !segSizePLKTEXTEXEC);                        // kernel PLK_TEXT_EXEC must be empty
-		assert(segLASTB && segSizeLAST);                                       // kernel LAST must not be empty
+
+		assert(segLASTB);                                                      // kernel LAST can be empty, but it must have
+		                                                                       // a valid address for computations below.
+
 		assert(segKCTEXTEXECB <= segLASTB);                                    // KC TEXT_EXEC must contain kernel LAST
 		assert(segKCTEXTEXECB + segSizeKCTEXTEXEC >= segLASTB + segSizeLAST);
 		segPLKTEXTEXECB = segLASTB + segSizeLAST;
@@ -2003,6 +2015,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	arm_vm_physmap_init(args);
 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
 
+	ml_enable_monitor();
 
 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
 

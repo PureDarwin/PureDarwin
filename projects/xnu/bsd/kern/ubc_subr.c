@@ -777,6 +777,11 @@ csblob_get_entitlements(struct cs_blob *csblob, void **out_start, size_t *out_le
 	}
 
 	csblob->csb_hashtype->cs_init(&context);
+	ptrauth_utils_auth_blob_generic(entitlements,
+	    ntohl(entitlements->length),
+	    OS_PTRAUTH_DISCRIMINATOR("cs_blob.csb_entitlements_blob_signature"),
+	    PTRAUTH_ADDR_DIVERSIFY,
+	    csblob->csb_entitlements_blob_signature);
 	csblob->csb_hashtype->cs_update(&context, entitlements, ntohl(entitlements->length));
 	csblob->csb_hashtype->cs_final(computed_hash, &context);
 
@@ -2957,11 +2962,6 @@ ubc_cs_blob_deallocate(
 	vm_offset_t     blob_addr,
 	vm_size_t       blob_size)
 {
-#if PMAP_CS
-	if (blob_size > pmap_cs_blob_limit) {
-		kmem_free(kernel_map, blob_addr, blob_size);
-	} else
-#endif
 	{
 		kfree(blob_addr, blob_size);
 	}
@@ -3087,6 +3087,12 @@ ubc_cs_reconstitute_code_signature(struct cs_blob const *blob, vm_size_t optiona
 
 	if (blob->csb_entitlements_blob) {
 		/* We need to add a slot for the entitlements */
+		ptrauth_utils_auth_blob_generic(blob->csb_entitlements_blob,
+		    ntohl(blob->csb_entitlements_blob->length),
+		    OS_PTRAUTH_DISCRIMINATOR("cs_blob.csb_entitlements_blob_signature"),
+		    PTRAUTH_ADDR_DIVERSIFY,
+		    blob->csb_entitlements_blob_signature);
+
 		new_blob_size += sizeof(CS_BlobIndex);
 		new_blob_size += ntohl(blob->csb_entitlements_blob->length);
 	}
@@ -3116,6 +3122,12 @@ ubc_cs_reconstitute_code_signature(struct cs_blob const *blob, vm_size_t optiona
 		new_superblob->index[0].offset = htonl((uint32_t)cd_offset);
 		new_superblob->index[1].type = htonl(CSSLOT_ENTITLEMENTS);
 		new_superblob->index[1].offset = htonl((uint32_t)ent_offset);
+
+		ptrauth_utils_auth_blob_generic(blob->csb_entitlements_blob,
+		    ntohl(blob->csb_entitlements_blob->length),
+		    OS_PTRAUTH_DISCRIMINATOR("cs_blob.csb_entitlements_blob_signature"),
+		    PTRAUTH_ADDR_DIVERSIFY,
+		    blob->csb_entitlements_blob_signature);
 
 		memcpy((void *)(new_blob_addr + ent_offset), blob->csb_entitlements_blob, ntohl(blob->csb_entitlements_blob->length));
 
@@ -3247,12 +3259,18 @@ ubc_cs_convert_to_multilevel_hash(struct cs_blob *blob)
 	}
 
 	/* New Code Directory is ready for use, swap it out in the blob structure */
-	ubc_cs_blob_deallocate(blob->csb_mem_kaddr, blob->csb_mem_size);
+	ubc_cs_blob_deallocate((vm_offset_t)blob->csb_mem_kaddr, blob->csb_mem_size);
 
 	blob->csb_mem_size = new_blob_size;
-	blob->csb_mem_kaddr = new_blob_addr;
+	blob->csb_mem_kaddr = (void *)new_blob_addr;
 	blob->csb_cd = cd;
 	blob->csb_entitlements_blob = entitlements;
+	if (blob->csb_entitlements_blob != NULL) {
+		blob->csb_entitlements_blob_signature = ptrauth_utils_sign_blob_generic(blob->csb_entitlements_blob,
+		    ntohl(blob->csb_entitlements_blob->length),
+		    OS_PTRAUTH_DISCRIMINATOR("cs_blob.csb_entitlements_blob_signature"),
+		    PTRAUTH_ADDR_DIVERSIFY);
+	}
 
 	/* The blob has some cached attributes of the Code Directory, so update those */
 
@@ -3306,7 +3324,7 @@ cs_blob_create_validated(
 	/* fill in the new blob */
 	blob->csb_mem_size = size;
 	blob->csb_mem_offset = 0;
-	blob->csb_mem_kaddr = *addr;
+	blob->csb_mem_kaddr = (void *)*addr;
 	blob->csb_flags = 0;
 	blob->csb_signer_type = CS_SIGNER_TYPE_UNKNOWN;
 	blob->csb_platform_binary = 0;
@@ -3344,6 +3362,12 @@ cs_blob_create_validated(
 
 		blob->csb_cd = cd;
 		blob->csb_entitlements_blob = entitlements; /* may be NULL, not yet validated */
+		if (blob->csb_entitlements_blob != NULL) {
+			blob->csb_entitlements_blob_signature = ptrauth_utils_sign_blob_generic(blob->csb_entitlements_blob,
+			    ntohl(blob->csb_entitlements_blob->length),
+			    OS_PTRAUTH_DISCRIMINATOR("cs_blob.csb_entitlements_blob_signature"),
+			    PTRAUTH_ADDR_DIVERSIFY);
+		}
 		blob->csb_hashtype = cs_find_md(cd->hashType);
 		if (blob->csb_hashtype == NULL || blob->csb_hashtype->cs_digest_size > sizeof(hash)) {
 			panic("validated CodeDirectory but unsupported type");
@@ -3417,8 +3441,8 @@ cs_blob_free(
 {
 	if (blob != NULL) {
 		if (blob->csb_mem_kaddr) {
-			ubc_cs_blob_deallocate(blob->csb_mem_kaddr, blob->csb_mem_size);
-			blob->csb_mem_kaddr = 0;
+			ubc_cs_blob_deallocate((vm_offset_t)blob->csb_mem_kaddr, blob->csb_mem_size);
+			blob->csb_mem_kaddr = NULL;
 		}
 		if (blob->csb_entitlements != NULL) {
 			osobject_release(blob->csb_entitlements);
@@ -3552,47 +3576,19 @@ ubc_cs_blob_add(
 			goto out;
 		}
 
-		ubc_cs_blob_deallocate(blob->csb_mem_kaddr, blob->csb_mem_size);
+		ubc_cs_blob_deallocate((vm_offset_t)blob->csb_mem_kaddr, blob->csb_mem_size);
 
-		blob->csb_mem_kaddr = new_mem_kaddr;
+		blob->csb_mem_kaddr = (void *)new_mem_kaddr;
 		blob->csb_mem_size = new_mem_size;
 		blob->csb_cd = new_cd;
 		blob->csb_entitlements_blob = new_entitlements;
-		blob->csb_reconstituted = true;
-	}
-#elif PMAP_CS
-	/*
-	 * When pmap_cs is enabled, there's an expectation that large blobs are
-	 * relocated to their own page.  Above, this happens under
-	 * ubc_cs_reconstitute_code_signature() but that discards parts of the
-	 * signatures that are necessary on some platforms (eg, requirements).
-	 * So in this case, just copy everything.
-	 */
-	if (pmap_cs && (blob->csb_mem_size > pmap_cs_blob_limit)) {
-		vm_offset_t cd_offset, ent_offset;
-		vm_size_t new_mem_size = round_page(blob->csb_mem_size);
-		vm_address_t new_mem_kaddr = 0;
-
-		kr = kmem_alloc_kobject(kernel_map, &new_mem_kaddr, new_mem_size, VM_KERN_MEMORY_SECURITY);
-		if (kr != KERN_SUCCESS) {
-			printf("failed to allocate %lu bytes to relocate blob: %d\n", new_mem_size, kr);
-			error = ENOMEM;
-			goto out;
-		}
-
-		cd_offset = (vm_address_t) blob->csb_cd - blob->csb_mem_kaddr;
-		ent_offset = (vm_address_t) blob->csb_entitlements_blob - blob->csb_mem_kaddr;
-
-		memcpy((void *) new_mem_kaddr, (const void *) blob->csb_mem_kaddr, blob->csb_mem_size);
-		ubc_cs_blob_deallocate(blob->csb_mem_kaddr, blob->csb_mem_size);
-		blob->csb_cd = (const CS_CodeDirectory *) (new_mem_kaddr + cd_offset);
-		/* Only update the entitlements blob pointer if it is non-NULL.  If it is NULL, then
-		 * the blob has no entitlements and ent_offset is garbage. */
 		if (blob->csb_entitlements_blob != NULL) {
-			blob->csb_entitlements_blob = (const CS_GenericBlob *) (new_mem_kaddr + ent_offset);
+			blob->csb_entitlements_blob_signature = ptrauth_utils_sign_blob_generic(blob->csb_entitlements_blob,
+			    ntohl(blob->csb_entitlements_blob->length),
+			    OS_PTRAUTH_DISCRIMINATOR("cs_blob.csb_entitlements_blob_signature"),
+			    PTRAUTH_ADDR_DIVERSIFY);
 		}
-		blob->csb_mem_kaddr = new_mem_kaddr;
-		blob->csb_mem_size = new_mem_size;
+		blob->csb_reconstituted = true;
 	}
 #endif
 
@@ -4418,7 +4414,7 @@ cs_validate_hash(
 		}
 
 		/* blob data has been released */
-		kaddr = blob->csb_mem_kaddr;
+		kaddr = (vm_offset_t)blob->csb_mem_kaddr;
 		if (kaddr == 0) {
 			continue;
 		}
@@ -4906,66 +4902,3 @@ ubc_cs_validation_bitmap_deallocate(__unused vnode_t vp)
 }
 #endif /* CHECK_CS_VALIDATION_BITMAP */
 
-#if PMAP_CS
-kern_return_t
-cs_associate_blob_with_mapping(
-	void                    *pmap,
-	vm_map_offset_t         start,
-	vm_map_size_t           size,
-	vm_object_offset_t      offset,
-	void                    *blobs_p)
-{
-	off_t                   blob_start_offset, blob_end_offset;
-	kern_return_t           kr;
-	struct cs_blob          *blobs, *blob;
-	vm_offset_t             kaddr;
-	struct pmap_cs_code_directory *cd_entry = NULL;
-
-	if (!pmap_cs) {
-		return KERN_NOT_SUPPORTED;
-	}
-
-	blobs = (struct cs_blob *)blobs_p;
-
-	for (blob = blobs;
-	    blob != NULL;
-	    blob = blob->csb_next) {
-		blob_start_offset = (blob->csb_base_offset +
-		    blob->csb_start_offset);
-		blob_end_offset = (blob->csb_base_offset +
-		    blob->csb_end_offset);
-		if ((off_t) offset < blob_start_offset ||
-		    (off_t) offset >= blob_end_offset ||
-		    (off_t) (offset + size) <= blob_start_offset ||
-		    (off_t) (offset + size) > blob_end_offset) {
-			continue;
-		}
-		kaddr = blob->csb_mem_kaddr;
-		if (kaddr == 0) {
-			/* blob data has been released */
-			continue;
-		}
-		cd_entry = blob->csb_pmap_cs_entry;
-		if (cd_entry == NULL) {
-			continue;
-		}
-
-		break;
-	}
-
-	if (cd_entry != NULL) {
-		kr = pmap_cs_associate(pmap,
-		    cd_entry,
-		    start,
-		    size,
-		    offset - blob_start_offset);
-	} else {
-		kr = KERN_CODESIGN_ERROR;
-	}
-#if 00
-	printf("FBDP %d[%s] pmap_cs_associate(%p,%p,0x%llx,0x%llx) -> kr=0x%x\n", proc_selfpid(), &(current_proc()->p_comm[0]), pmap, cd_entry, (uint64_t)start, (uint64_t)size, kr);
-	kr = KERN_SUCCESS;
-#endif
-	return kr;
-}
-#endif /* PMAP_CS */

@@ -371,7 +371,7 @@ tcp_usr_listen(struct socket *so, struct proc *p)
 	struct inpcb *inp = sotoinpcb(so);
 	struct tcpcb *tp;
 
-	COMMON_START();
+	COMMON_START_ALLOW_FLOW_DIVERT(true);
 	if (inp->inp_lport == 0) {
 		error = in_pcbbind(inp, NULL, p);
 	}
@@ -389,7 +389,7 @@ tcp6_usr_listen(struct socket *so, struct proc *p)
 	struct inpcb *inp = sotoinpcb(so);
 	struct tcpcb *tp;
 
-	COMMON_START();
+	COMMON_START_ALLOW_FLOW_DIVERT(true);
 	if (inp->inp_lport == 0) {
 		inp->inp_vflag &= ~INP_IPV4;
 		if ((inp->inp_flags & IN6P_IPV6_V6ONLY) == 0) {
@@ -685,10 +685,18 @@ tcp6_usr_connect(struct socket *so, struct sockaddr *nam, struct proc *p)
 		struct sockaddr_in sin;
 
 		if ((inp->inp_flags & IN6P_IPV6_V6ONLY) != 0) {
-			return EINVAL;
+			error = EINVAL;
+			goto out;
 		}
 
 		in6_sin6_2_sin(&sin, sin6p);
+		/*
+		 * Must disallow TCP ``connections'' to multicast addresses.
+		 */
+		if (IN_MULTICAST(ntohl(sin.sin_addr.s_addr))) {
+			error = EAFNOSUPPORT;
+			goto out;
+		}
 		inp->inp_vflag |= INP_IPV4;
 		inp->inp_vflag &= ~INP_IPV6;
 		if ((error = tcp_connect(tp, (struct sockaddr *)&sin, p)) != 0) {
@@ -1527,7 +1535,7 @@ tcp6_connect(struct tcpcb *tp, struct sockaddr *nam, struct proc *p)
 	if (inp->inp_flow == 0 && inp->in6p_flags & IN6P_AUTOFLOWLABEL) {
 		inp->inp_flow &= ~IPV6_FLOWLABEL_MASK;
 		inp->inp_flow |=
-		    (htonl(inp->inp_flowhash) & IPV6_FLOWLABEL_MASK);
+		    (htonl(ip6_randomflowlabel()) & IPV6_FLOWLABEL_MASK);
 	}
 
 	tcp_set_max_rwinscale(tp, so);

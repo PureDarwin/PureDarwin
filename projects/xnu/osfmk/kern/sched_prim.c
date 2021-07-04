@@ -83,7 +83,6 @@
 #include <kern/kern_types.h>
 #include <kern/backtrace.h>
 #include <kern/clock.h>
-#include <kern/counters.h>
 #include <kern/cpu_number.h>
 #include <kern/cpu_data.h>
 #include <kern/smp.h>
@@ -687,6 +686,8 @@ thread_unblock(
 
 		ctime = mach_absolute_time();
 		thread->realtime.deadline = thread->realtime.constraint + ctime;
+		KDBG(MACHDBG_CODE(DBG_MACH_SCHED, MACH_SET_RT_DEADLINE) | DBG_FUNC_NONE,
+		    (uintptr_t)thread_tid(thread), thread->realtime.deadline, thread->realtime.computation, 0);
 	}
 
 	/*
@@ -2098,6 +2099,10 @@ restart:
 			}
 		}
 
+		bool secondary_forced_idle = ((processor->processor_secondary != PROCESSOR_NULL) &&
+		    (thread_no_smt(thread) || (thread->sched_pri >= BASEPRI_RTQUEUES)) &&
+		    (processor->processor_secondary->state == PROCESSOR_IDLE));
+
 		/* OK, so we're not going to run the current thread. Look at the RT queue. */
 		bool ok_to_run_realtime_thread = sched_ok_to_run_realtime_thread(pset, processor);
 		if ((rt_runq_count(pset) > 0) && ok_to_run_realtime_thread) {
@@ -2174,6 +2179,10 @@ pick_new_rt_thread:
 					ipi_type = sched_ipi_action(sprocessor, NULL, false, SCHED_IPI_EVENT_SMT_REBAL);
 					ast_processor = sprocessor;
 				}
+			} else if (secondary_forced_idle && !thread_no_smt(new_thread) && pset_has_stealable_threads(pset)) {
+				pset_update_processor_state(pset, sprocessor, PROCESSOR_DISPATCHING);
+				ipi_type = sched_ipi_action(sprocessor, NULL, true, SCHED_IPI_EVENT_PREEMPT);
+				ast_processor = sprocessor;
 			}
 			pset_unlock(pset);
 
@@ -2428,8 +2437,6 @@ thread_invoke(
 
 			thread->continuation = thread->parameter = NULL;
 
-			counter(c_thread_invoke_hits++);
-
 			boolean_t enable_interrupts = TRUE;
 
 			/* idle thread needs to stay interrupts-disabled */
@@ -2444,7 +2451,6 @@ thread_invoke(
 		} else if (thread == self) {
 			/* same thread but with continuation */
 			ast_context(self);
-			counter(++c_thread_invoke_same);
 
 			thread_unlock(self);
 
@@ -2484,14 +2490,12 @@ thread_invoke(
 		if (!thread->kernel_stack) {
 need_stack:
 			if (!stack_alloc_try(thread)) {
-				counter(c_thread_invoke_misses++);
 				thread_unlock(thread);
 				thread_stack_enqueue(thread);
 				return FALSE;
 			}
 		} else if (thread == self) {
 			ast_context(self);
-			counter(++c_thread_invoke_same);
 			thread_unlock(self);
 
 			KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
@@ -2520,8 +2524,6 @@ need_stack:
 	ast_context(thread);
 
 	thread_unlock(thread);
-
-	counter(c_thread_invoke_csw++);
 
 	self->reason = reason;
 
@@ -2845,6 +2847,8 @@ thread_dispatch(
 				 *	consumed the entire quantum.
 				 */
 				if (thread->quantum_remaining == 0) {
+					KDBG(MACHDBG_CODE(DBG_MACH_SCHED, MACH_CANCEL_RT_DEADLINE) | DBG_FUNC_NONE,
+					    (uintptr_t)thread_tid(thread), thread->realtime.deadline, thread->realtime.computation, 0);
 					thread->realtime.deadline = UINT64_MAX;
 				}
 			} else {
@@ -3103,8 +3107,6 @@ thread_dispatch(
  *	thread resumes, it will execute the continuation function
  *	on a new kernel stack.
  */
-counter(mach_counter_t  c_thread_block_calls = 0; )
-
 wait_result_t
 thread_block_reason(
 	thread_continue_t       continuation,
@@ -3115,8 +3117,6 @@ thread_block_reason(
 	processor_t     processor;
 	thread_t        new_thread;
 	spl_t           s;
-
-	counter(++c_thread_block_calls);
 
 	s = splsched();
 
@@ -3702,6 +3702,7 @@ realtime_setrun(
 					processor_state_update_from_thread(processor, thread);
 					processor->deadline = thread->realtime.deadline;
 				}
+				bit_set(pset->pending_AST_URGENT_cpu_mask, processor->cpu_id);
 			} else {
 				if (processor == current_processor()) {
 					ast_on(preempt);
@@ -3886,7 +3887,7 @@ processor_setrun(
 #endif
 	if (SCHED(priority_is_urgent)(thread->sched_pri) && thread->sched_pri > processor->current_pri) {
 		preempt = (AST_PREEMPT | AST_URGENT);
-	} else if (processor->active_thread && thread_eager_preemption(processor->active_thread)) {
+	} else if (processor->current_is_eagerpreempt) {
 		preempt = (AST_PREEMPT | AST_URGENT);
 	} else if ((thread->sched_mode == TH_MODE_TIMESHARE) && (thread->sched_pri < thread->base_pri)) {
 		if (SCHED(priority_is_urgent)(thread->base_pri) && thread->sched_pri > processor->current_pri) {
@@ -4738,7 +4739,7 @@ csw_check_locked(
 
 	result = SCHED(processor_csw_check)(processor);
 	if (result != AST_NONE) {
-		return check_reason | result | (thread_eager_preemption(thread) ? AST_URGENT : AST_NONE);
+		return check_reason | result | (thread_is_eager_preempt(thread) ? AST_URGENT : AST_NONE);
 	}
 
 	/*
@@ -5862,57 +5863,62 @@ sched_clutch_timeshare_scan(
 
 #endif /* CONFIG_SCHED_TIMESHARE_CORE */
 
-boolean_t
-thread_eager_preemption(thread_t thread)
+bool
+thread_is_eager_preempt(thread_t thread)
 {
-	return (thread->sched_flags & TH_SFLAG_EAGERPREEMPT) != 0;
+	return thread->sched_flags & TH_SFLAG_EAGERPREEMPT;
 }
 
 void
 thread_set_eager_preempt(thread_t thread)
 {
-	spl_t x;
-	processor_t p;
-	ast_t ast = AST_NONE;
-
-	x = splsched();
-	p = current_processor();
-
+	spl_t s = splsched();
 	thread_lock(thread);
+
+	assert(!thread_is_eager_preempt(thread));
+
 	thread->sched_flags |= TH_SFLAG_EAGERPREEMPT;
 
 	if (thread == current_thread()) {
-		ast = csw_check(thread, p, AST_NONE);
+		/* csw_check updates current_is_eagerpreempt on the processor */
+		ast_t ast = csw_check(thread, current_processor(), AST_NONE);
+
 		thread_unlock(thread);
+
 		if (ast != AST_NONE) {
-			(void) thread_block_reason(THREAD_CONTINUE_NULL, NULL, ast);
+			thread_block_reason(THREAD_CONTINUE_NULL, NULL, ast);
 		}
 	} else {
-		p = thread->last_processor;
+		processor_t last_processor = thread->last_processor;
 
-		if (p != PROCESSOR_NULL && p->state == PROCESSOR_RUNNING &&
-		    p->active_thread == thread) {
-			cause_ast_check(p);
+		if (last_processor != PROCESSOR_NULL &&
+		    last_processor->state == PROCESSOR_RUNNING &&
+		    last_processor->active_thread == thread) {
+			cause_ast_check(last_processor);
 		}
 
 		thread_unlock(thread);
 	}
 
-	splx(x);
+	splx(s);
 }
 
 void
 thread_clear_eager_preempt(thread_t thread)
 {
-	spl_t x;
-
-	x = splsched();
+	spl_t s = splsched();
 	thread_lock(thread);
+
+	assert(thread_is_eager_preempt(thread));
 
 	thread->sched_flags &= ~TH_SFLAG_EAGERPREEMPT;
 
+	if (thread == current_thread()) {
+		current_processor()->current_is_eagerpreempt = false;
+	}
+
 	thread_unlock(thread);
-	splx(x);
+	splx(s);
 }
 
 /*
@@ -6916,3 +6922,61 @@ thread_bind_cluster_type(thread_t thread, char cluster_type, bool soft_bound)
 	(void)soft_bound;
 #endif /* __AMP__ */
 }
+
+#if DEVELOPMENT || DEBUG
+extern int32_t sysctl_get_bound_cpuid(void);
+int32_t
+sysctl_get_bound_cpuid(void)
+{
+	int32_t cpuid = -1;
+	thread_t self = current_thread();
+
+	processor_t processor = self->bound_processor;
+	if (processor == NULL) {
+		cpuid = -1;
+	} else {
+		cpuid = processor->cpu_id;
+	}
+
+	return cpuid;
+}
+
+extern kern_return_t sysctl_thread_bind_cpuid(int32_t cpuid);
+kern_return_t
+sysctl_thread_bind_cpuid(int32_t cpuid)
+{
+	processor_t processor = PROCESSOR_NULL;
+
+	if (cpuid == -1) {
+		goto unbind;
+	}
+
+	if (cpuid < 0 || cpuid >= MAX_SCHED_CPUS) {
+		return KERN_INVALID_VALUE;
+	}
+
+	processor = processor_array[cpuid];
+	if (processor == PROCESSOR_NULL) {
+		return KERN_INVALID_VALUE;
+	}
+
+#if __AMP__
+
+	thread_t thread = current_thread();
+
+	if (thread->sched_flags & (TH_SFLAG_ECORE_ONLY | TH_SFLAG_PCORE_ONLY)) {
+		if ((thread->sched_flags & TH_SFLAG_BOUND_SOFT) == 0) {
+			/* Cannot hard-bind an already hard-cluster-bound thread */
+			return KERN_NOT_SUPPORTED;
+		}
+	}
+
+#endif /* __AMP__ */
+
+unbind:
+	thread_bind(processor);
+
+	thread_block(THREAD_CONTINUE_NULL);
+	return KERN_SUCCESS;
+}
+#endif /* DEVELOPMENT || DEBUG */

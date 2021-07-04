@@ -83,19 +83,19 @@ bit_rol64(uint64_t bitmap, uint n)
 
 /* Non-atomically clear the bit and returns whether the bit value was changed */
 inline static bool
-bit_clear_if_set(uint64_t bitmap, int bit)
+bit_clear_if_set(uint64_t *bitmap, int bit)
 {
-	bool bit_is_set = bit_test(bitmap, bit);
-	bit_clear(bitmap, bit);
+	bool bit_is_set = bit_test(*bitmap, bit);
+	bit_clear(*bitmap, bit);
 	return bit_is_set;
 }
 
 /* Non-atomically set the bit and returns whether the bit value was changed */
 inline static bool
-bit_set_if_clear(uint64_t bitmap, int bit)
+bit_set_if_clear(uint64_t *bitmap, int bit)
 {
-	bool bit_is_set = bit_test(bitmap, bit);
-	bit_set(bitmap, bit);
+	bool bit_is_set = bit_test(*bitmap, bit);
+	bit_set(*bitmap, bit);
 	return !bit_is_set;
 }
 
@@ -312,8 +312,16 @@ bitmap_first(bitmap_t *map, uint nbits)
 inline static void
 bitmap_not(bitmap_t *out, const bitmap_t *in, uint nbits)
 {
-	for (uint i = 0; i <= bitmap_index(nbits - 1); i++) {
+	uint i;
+
+	for (i = 0; i < bitmap_index(nbits - 1); i++) {
 		out[i] = ~in[i];
+	}
+
+	uint nbits_complete = i * 64;
+
+	if (nbits > nbits_complete) {
+		out[i] = ~in[i] & mask(nbits - nbits_complete);
 	}
 }
 
@@ -328,8 +336,16 @@ bitmap_and(bitmap_t *out, const bitmap_t *in1, const bitmap_t *in2, uint nbits)
 inline static void
 bitmap_and_not(bitmap_t *out, const bitmap_t *in1, const bitmap_t *in2, uint nbits)
 {
-	for (uint i = 0; i <= bitmap_index(nbits - 1); i++) {
+	uint i;
+
+	for (i = 0; i < bitmap_index(nbits - 1); i++) {
 		out[i] = in1[i] & ~in2[i];
+	}
+
+	uint nbits_complete = i * 64;
+
+	if (nbits > nbits_complete) {
+		out[i] = (in1[i] & ~in2[i]) & mask(nbits - nbits_complete);
 	}
 }
 

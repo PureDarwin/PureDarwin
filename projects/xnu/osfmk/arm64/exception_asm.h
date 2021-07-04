@@ -37,8 +37,6 @@
 #define PPL_EXIT_BAD_CALL   2 /* The PPL request failed. */
 #define PPL_EXIT_EXCEPTION  3 /* The PPL took an exception. */
 
-/* Guarded mode trap numbers: these are passed as the genter immediate. */
-#define GXF_ENTER_PPL 0
 
 #define KERNEL_MODE_ELR      ELR_GL11
 #define KERNEL_MODE_FAR      FAR_GL11
@@ -135,8 +133,11 @@
  * On CPUs with PAC, the kernel "A" keys are used to create a thread signature.
  * These keys are deliberately kept loaded into the CPU for later kernel use.
  *
+ *   arg0 - KERNEL_MODE or HIBERNATE_MODE
  *   x0 - Address of the save area
  */
+#define KERNEL_MODE 0
+#define HIBERNATE_MODE 1
 
 .macro SPILL_REGISTERS	mode
 	stp		x2, x3, [x0, SS64_X2]                                   // Save remaining GPRs
@@ -181,28 +182,6 @@
 
 #if defined(HAS_APPLE_PAC)
 	.if \mode != HIBERNATE_MODE
-	/**
-	 * Restore kernel keys if:
-	 *
-	 * - Entering the kernel from EL0, and
-	 * - CPU lacks fast A-key switching (fast A-key switching is
-	 *   implemented by reprogramming KERNKey on context switch)
-	 */
-	.if \mode == KERNEL_MODE
-#if HAS_PAC_SLOW_A_KEY_SWITCHING
-	IF_PAC_FAST_A_KEY_SWITCHING	Lskip_restore_kernel_keys_\@, x21
-	and		x21, x23, #(PSR64_MODE_EL_MASK)
-	cmp		x21, #(PSR64_MODE_EL0)
-	bne		Lskip_restore_kernel_keys_\@
-
-	MOV64	x2, KERNEL_JOP_ID
-	mrs		x3, TPIDR_EL1
-	ldr		x3, [x3, ACT_CPUDATAP]
-	REPROGRAM_JOP_KEYS	Lskip_restore_kernel_keys_\@, x2, x3, x4
-	isb		sy
-Lskip_restore_kernel_keys_\@:
-#endif /* HAS_PAC_SLOW_A_KEY_SWITCHING */
-	.endif /* \mode == KERNEL_MODE */
 
 	/* Save x1 and LR to preserve across call */
 	mov		x21, x1

@@ -137,7 +137,7 @@ mptcp_setup_join_subflow_syn_opts(struct socket *so, u_char *opt, unsigned optle
 	if (tp->t_mpflags & TMPF_BACKUP_PATH) {
 		mpjoin_req.mmjo_subtype_bkp |= MPTCP_BACKUP;
 	} else if (inp->inp_boundifp && IFNET_IS_CELLULAR(inp->inp_boundifp) &&
-	    mpts->mpts_mpte->mpte_svctype < MPTCP_SVCTYPE_AGGREGATE) {
+	    mptcp_subflows_need_backup_flag(mpts->mpts_mpte)) {
 		mpjoin_req.mmjo_subtype_bkp |= MPTCP_BACKUP;
 		tp->t_mpflags |= TMPF_BACKUP_PATH;
 	} else {
@@ -463,13 +463,12 @@ mptcp_setup_opts(struct tcpcb *tp, int32_t off, u_char *opt,
 		send_64bit_ack = TRUE;
 	}
 
-#define CHECK_OPTLEN    {                                                       \
-	if ((MAX_TCPOPTLEN - optlen) < dssoptlen) {                             \
-	        mptcplog((LOG_ERR, "%s: dssoptlen %d optlen %d \n", __func__,   \
-	            dssoptlen, optlen),                                         \
-	            MPTCP_SOCKET_DBG, MPTCP_LOGLVL_ERR);                        \
-	        goto ret_optlen;                                                \
-	}                                                                       \
+#define CHECK_OPTLEN    {                                                                   \
+	if ((MAX_TCPOPTLEN - optlen) < dssoptlen) {                                         \
+	        os_log_error(mptcp_log_handle, "%s: dssoptlen %d optlen %d \n", __func__,   \
+	            dssoptlen, optlen);                                                     \
+	            goto ret_optlen;                                                        \
+	}                                                                                   \
 }
 
 #define DO_FIN(dsn_opt) {                                               \
@@ -483,16 +482,15 @@ mptcp_setup_opts(struct tcpcb *tp, int32_t off, u_char *opt,
 	}                                                               \
 }
 
-#define CHECK_DATALEN {                                                 \
-	/* MPTCP socket does not support IP options */                  \
-	if ((len + optlen + dssoptlen) > tp->t_maxopd) {                \
-	        mptcplog((LOG_ERR, "%s: nosp %d len %d opt %d %d %d\n", \
-	            __func__, len, dssoptlen, optlen,                   \
-	            tp->t_maxseg, tp->t_maxopd),                        \
-	            MPTCP_SOCKET_DBG, MPTCP_LOGLVL_ERR);                \
-	/* remove option length from payload len */             \
-	        len = tp->t_maxopd - optlen - dssoptlen;                \
-	}                                                               \
+#define CHECK_DATALEN {                                                             \
+	/* MPTCP socket does not support IP options */                              \
+	if ((len + optlen + dssoptlen) > tp->t_maxopd) {                            \
+	        os_log_error(mptcp_log_handle, "%s: nosp %d len %d opt %d %d %d\n", \
+	            __func__, len, dssoptlen, optlen,                               \
+	            tp->t_maxseg, tp->t_maxopd);                                    \
+	/* remove option length from payload len */                         \
+	        len = tp->t_maxopd - optlen - dssoptlen;                            \
+	}                                                                           \
 }
 
 	if ((tp->t_mpflags & TMPF_SEND_DSN) &&
@@ -974,6 +972,10 @@ mptcp_do_mpcapable_opt(struct tcpcb *tp, u_char *cp, struct tcphdr *th,
 	if (((struct mptcp_mpcapable_opt_common *)cp)->mmco_flags &
 	    MPCAP_UNICAST_IPBIT) {
 		mpte->mpte_flags |= MPTE_UNICAST_IP;
+
+		/* We need an explicit signal for the addresses - zero the existing ones */
+		memset(&mpte->mpte_sub_dst_v4, 0, sizeof(mpte->mpte_sub_dst_v4));
+		memset(&mpte->mpte_sub_dst_v6, 0, sizeof(mpte->mpte_sub_dst_v6));
 	}
 
 	rsp = (struct mptcp_mpcapable_opt_rsp *)cp;
@@ -1426,6 +1428,8 @@ mptcp_do_dss_opt(struct tcpcb *tp, u_char *cp, struct tcphdr *th)
 	if (dss_rsp->mdss_subtype == MPO_DSS) {
 		if (dss_rsp->mdss_flags & MDSS_F) {
 			tp->t_rcv_map.mpt_dfin = 1;
+		} else {
+			tp->t_rcv_map.mpt_dfin = 0;
 		}
 
 		mptcp_do_dss_opt_meat(cp, tp, th);
@@ -1548,7 +1552,7 @@ mptcp_do_add_addr_opt(struct mptses *mpte, u_char *cp)
 	}
 
 	if (addr_opt->maddr_len == MPTCP_ADD_ADDR_OPT_LEN_V4) {
-		struct sockaddr_in *dst = &mpte->mpte_dst_unicast_v4;
+		struct sockaddr_in *dst = &mpte->mpte_sub_dst_v4;
 		struct in_addr *addr = &addr_opt->maddr_u.maddr_addrv4;
 		in_addr_t haddr = ntohl(addr->s_addr);
 
@@ -1573,7 +1577,7 @@ mptcp_do_add_addr_opt(struct mptses *mpte, u_char *cp)
 		dst->sin_port = mpte->__mpte_dst_v4.sin_port;
 		dst->sin_addr.s_addr = addr->s_addr;
 	} else {
-		struct sockaddr_in6 *dst = &mpte->mpte_dst_unicast_v6;
+		struct sockaddr_in6 *dst = &mpte->mpte_sub_dst_v6;
 		struct in6_addr *addr = &addr_opt->maddr_u.maddr_addrv6;
 
 		if (IN6_IS_ADDR_LINKLOCAL(addr) ||

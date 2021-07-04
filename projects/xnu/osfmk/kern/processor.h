@@ -291,7 +291,7 @@ struct pset_node {
 extern struct pset_node pset_node0;
 
 extern queue_head_t tasks, threads, corpse_tasks;
-extern int tasks_count, terminated_tasks_count, threads_count;
+extern int tasks_count, terminated_tasks_count, threads_count, terminated_threads_count;
 decl_lck_mtx_data(extern, tasks_threads_lock);
 decl_lck_mtx_data(extern, tasks_corpse_lock);
 
@@ -300,12 +300,15 @@ decl_lck_mtx_data(extern, tasks_corpse_lock);
  */
 extern queue_head_t terminated_tasks;
 
+extern queue_head_t terminated_threads;
+
 struct processor {
 	processor_state_t       state;                  /* See above */
 	bool                    is_SMT;
 	bool                    is_recommended;
 	bool                    current_is_NO_SMT;      /* cached TH_SFLAG_NO_SMT of current thread */
 	bool                    current_is_bound;       /* current thread is bound to this processor */
+	bool                    current_is_eagerpreempt;/* current thread is TH_SFLAG_EAGERPREEMPT */
 	struct thread          *active_thread;          /* thread running on processor */
 	struct thread          *idle_thread;            /* this processor's idle thread. */
 	struct thread          *startup_thread;
@@ -465,6 +468,18 @@ extern processor_set_t  pset_find(
 	uint32_t                cluster_id,
 	processor_set_t         default_pset);
 
+#if !defined(RC_HIDE_XNU_FIRESTORM) && (MAX_CPU_CLUSTERS > 2)
+
+/*
+ * Find the first processor_set for the given pset_cluster_type.
+ * Should be removed with rdar://57340304, as it's only
+ * useful for the workaround described in rdar://57306691.
+ */
+
+extern processor_set_t  pset_find_first_by_cluster_type(
+	pset_cluster_type_t     pset_cluster_type);
+
+#endif /* !defined(RC_HIDE_XNU_FIRESTORM) && (MAX_CPU_CLUSTERS > 2) */
 
 extern kern_return_t    processor_info_count(
 	processor_flavor_t      flavor,

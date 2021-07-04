@@ -123,9 +123,6 @@ struct fileproc {
 
 #define FILEPROC_TYPE(fp)       ((fp)->fp_flags & FP_TYPEMASK)
 
-#define FP_ISGUARDED(fp, attribs)  \
-	        ((FILEPROC_TYPE(fp) == FTYPE_GUARDED) ? fp_isguarded(fp, attribs) : 0)
-
 typedef enum {
 	FTYPE_SIMPLE    = 0,
 	FTYPE_GUARDED   = (1 << _FP_TYPESHIFT)
@@ -206,11 +203,30 @@ os_refgrp_decl_extern(f_refgrp);        /* os_refgrp_t for file refcounts */
  * @brief
  * Acquire a file reference on the specified file.
  *
+ * @description
+ * The @c proc must be locked while this operation is being performed
+ * to avoid races with setting the FG_CONFINED flag.
+ *
+ * @param proc
+ * The proc this file reference is taken on behalf of.
+ *
  * @param fg
  * The specified file
  */
 void
-fg_ref(struct fileglob *fg);
+fg_ref(proc_t proc, struct fileglob *fg);
+
+/*!
+ * @function fg_drop_live
+ *
+ * @brief
+ * Drops a file reference on the specified file that isn't the last one.
+ *
+ * @param fg
+ * The file whose reference is being dropped.
+ */
+void
+fg_drop_live(struct fileglob *fg);
 
 /*!
  * @function fg_drop

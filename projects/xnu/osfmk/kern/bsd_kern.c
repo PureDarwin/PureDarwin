@@ -77,7 +77,7 @@ void task_bsdtask_kill(task_t);
 
 extern uint64_t get_dispatchqueue_serialno_offset_from_proc(void *p);
 extern uint64_t get_dispatchqueue_label_offset_from_proc(void *p);
-extern uint64_t proc_uniqueid(void *p);
+extern uint64_t proc_uniqueid_task(void *p, void *t);
 extern int proc_pidversion(void *p);
 extern int proc_getcdhash(void *p, char *cdhash);
 
@@ -324,7 +324,7 @@ get_task_map_reference(task_t t)
 		return VM_MAP_NULL;
 	}
 	m = t->map;
-	vm_map_reference_swap(m);
+	vm_map_reference(m);
 	task_unlock(t);
 	return m;
 }
@@ -768,6 +768,12 @@ get_vmmap_size(
 {
 	return vm_map_adjusted_size(map);
 }
+int
+get_task_page_size(
+	task_t task)
+{
+	return vm_map_page_size(task->map);
+}
 
 #if CONFIG_COREDUMP
 
@@ -1016,7 +1022,7 @@ fill_taskprocinfo(task_t task, struct proc_taskinfo_internal * ptinfo)
 	ptinfo->pti_threads_system = tinfo.threads_system;
 	ptinfo->pti_threads_user = tinfo.threads_user;
 
-	ptinfo->pti_faults = task->faults;
+	ptinfo->pti_faults = (int32_t) MIN(counter_load(&task->faults), INT32_MAX);
 	ptinfo->pti_pageins = task->pageins;
 	ptinfo->pti_cow_faults = task->cow_faults;
 	ptinfo->pti_messages_sent = task->messages_sent;
@@ -1268,7 +1274,7 @@ uint64_t
 get_task_uniqueid(task_t task)
 {
 	if (task->bsd_info) {
-		return proc_uniqueid(task->bsd_info);
+		return proc_uniqueid_task(task->bsd_info, task);
 	} else {
 		return UINT64_MAX;
 	}
