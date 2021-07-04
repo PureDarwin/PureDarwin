@@ -12,6 +12,7 @@ include(ExternalProject)
 include(scripts/cmake/crosscompile.cmake)
 include(scripts/cmake/get_target_dependencies.cmake)
 include(scripts/cmake/install_helpers.cmake)
+include(scripts/cmake/kext.cmake)
 include(scripts/cmake/mig.cmake)
 include(scripts/cmake/asm.cmake)
 
