@@ -46,7 +46,7 @@ function(add_kmod_info target)
     endif()
 
     if(NOT KEXT_VERSION)
-        get_property(KEXT_VERRSION TARGET ${target} PROPERTY MACOSX_BUNDLE_BUNDLE_VERSION)
+        get_property(KEXT_VERSION TARGET ${target} PROPERTY MACOSX_BUNDLE_BUNDLE_VERSION)
     endif()
     if(NOT KEXT_VERSION)
         message(SEND_ERROR "MACOSX_BUNDLE_BUNDLE_VERSION is not set on kext target ${target}")
