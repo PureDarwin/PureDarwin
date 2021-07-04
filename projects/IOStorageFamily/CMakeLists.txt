@@ -19,10 +19,11 @@ target_compile_options(IOStorageFamily PRIVATE -Wno-implicit-int-conversion -Wno
 set_property(TARGET IOStorageFamily PROPERTY CXX_STANDARD 17)
 install(TARGETS IOStorageFamily DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
 
-add_bundle_iconset(IOStorageFamily IconResources/External.iconset)
-add_bundle_iconset(IOStorageFamily IconResources/Internal.iconset)
-add_bundle_iconset(IOStorageFamily IconResources/Removable.iconset)
-add_bundle_resources(IOStorageFamily en.lproj/InfoPlist.strings)
+# FIXME: Re-enable these when we have our own tools for handling image resource files.
+# add_bundle_iconset(IOStorageFamily IconResources/External.iconset)
+# add_bundle_iconset(IOStorageFamily IconResources/Internal.iconset)
+# add_bundle_iconset(IOStorageFamily IconResources/Removable.iconset)
+# add_bundle_resources(IOStorageFamily en.lproj/InfoPlist.strings)
 
 
 add_library(IOStorageFamilyHeaders INTERFACE)
