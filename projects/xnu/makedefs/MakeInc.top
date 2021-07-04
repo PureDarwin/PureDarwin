@@ -1,6 +1,6 @@
 # -*- mode: makefile;-*-
 #
-# Copyright (C) 2010-2016 Apple Inc. All rights reserved.
+# Copyright (C) 2010-2020 Apple Inc. All rights reserved.
 #
 # MakeInc.top is the top-level makefile for the xnu
 # build system. All the main XBS targets
@@ -724,6 +724,7 @@ TAGS: cscope.files
 	@-cat cscope.files | etags -l auto -S - 2> /dev/null
 	@rm -f cscope.files 2> /dev/null
 
+
 .PHONY: help
 
 help:
@@ -743,3 +744,5 @@ $(eval $(generated_top_level_print_exports))
 .PHONY: print_exports_first_build_config
 
 print_exports_first_build_config: print_exports_bootstrap
+
+# vim: set ft=make:

@@ -148,6 +148,7 @@ struct icmp6stat icmp6stat;
 
 extern struct inpcbhead ripcb;
 extern int icmp6errppslim;
+extern int icmp6errppslim_random_incr;
 extern int icmp6rappslim;
 static int icmp6errpps_count = 0;
 static int icmp6rapps_count = 0;
@@ -186,6 +187,11 @@ icmp6_init(struct ip6protosw *pp, struct domain *dp)
 	if (!icmp6_initialized) {
 		icmp6_initialized = 1;
 		mld_init();
+		if (icmp6errppslim >= 0 &&
+		    icmp6errppslim_random_incr > 0 &&
+		    icmp6errppslim <= INT32_MAX - (icmp6errppslim_random_incr + 1)) {
+			icmp6errppslim += (random() % icmp6errppslim_random_incr) + 1;
+		}
 	}
 }
 
@@ -986,6 +992,7 @@ icmp6_notify_error(struct mbuf *m, int off, int icmp6len, int code)
 	}
 #endif
 	eip6 = (struct ip6_hdr *)(icmp6 + 1);
+	bzero(&icmp6dst, sizeof(icmp6dst));
 
 	/* Detect the upper level protocol */
 	{
@@ -994,7 +1001,6 @@ icmp6_notify_error(struct mbuf *m, int off, int icmp6len, int code)
 		int eoff = off + sizeof(struct icmp6_hdr) +
 		    sizeof(struct ip6_hdr);
 		struct ip6ctlparam ip6cp;
-		struct in6_addr *finaldst = NULL;
 		int icmp6type = icmp6->icmp6_type;
 		struct ip6_frag *fh;
 		struct ip6_rthdr *rth;
@@ -1080,7 +1086,7 @@ icmp6_notify_error(struct mbuf *m, int off, int icmp6len, int code)
 					/* just ignore a bogus header */
 					if ((rth0->ip6r0_len % 2) == 0 &&
 					    (hops = rth0->ip6r0_len / 2)) {
-						finaldst = (struct in6_addr *)(void *)(rth0 + 1) + (hops - 1);
+						icmp6dst.sin6_addr = *((struct in6_addr *)(void *)(rth0 + 1) + (hops - 1));
 					}
 				}
 				eoff += rthlen;
@@ -1148,13 +1154,10 @@ notify:
 		 */
 		eip6 = (struct ip6_hdr *)(icmp6 + 1);
 
-		bzero(&icmp6dst, sizeof(icmp6dst));
 		icmp6dst.sin6_len = sizeof(struct sockaddr_in6);
 		icmp6dst.sin6_family = AF_INET6;
-		if (finaldst == NULL) {
+		if (IN6_IS_ADDR_UNSPECIFIED(&icmp6dst.sin6_addr)) {
 			icmp6dst.sin6_addr = eip6->ip6_dst;
-		} else {
-			icmp6dst.sin6_addr = *finaldst;
 		}
 		if (in6_setscope(&icmp6dst.sin6_addr, m->m_pkthdr.rcvif, NULL)) {
 			goto freeit;
@@ -1169,14 +1172,11 @@ notify:
 		icmp6src.sin6_flowinfo =
 		    (eip6->ip6_flow & IPV6_FLOWLABEL_MASK);
 
-		if (finaldst == NULL) {
-			finaldst = &eip6->ip6_dst;
-		}
 		ip6cp.ip6c_m = m;
 		ip6cp.ip6c_icmp6 = icmp6;
 		ip6cp.ip6c_ip6 = (struct ip6_hdr *)(icmp6 + 1);
 		ip6cp.ip6c_off = eoff;
-		ip6cp.ip6c_finaldst = finaldst;
+		ip6cp.ip6c_finaldst = &icmp6dst.sin6_addr;
 		ip6cp.ip6c_src = &icmp6src;
 		ip6cp.ip6c_nxt = nxt;
 
@@ -3302,8 +3302,17 @@ icmp6_ratelimit(
 		}
 	} else if (!ppsratecheck(&icmp6errppslim_last, &icmp6errpps_count,
 	    icmp6errppslim)) {
-		/* The packet is subject to rate limit */
-		ret++;
+		/*
+		 * We add some randomness here to still generate ICMPv6 error
+		 * post icmp6errppslim limit with a probability that goes down
+		 * with increased value of icmp6errpps_count.
+		 */
+		if (icmp6errpps_count > 0 && icmp6errppslim > 0 &&
+		    icmp6errpps_count > icmp6errppslim &&
+		    (random() % (icmp6errpps_count - icmp6errppslim)) != 0) {
+			/* The packet is subject to rate limit */
+			ret++;
+		}
 	}
 
 	return ret;

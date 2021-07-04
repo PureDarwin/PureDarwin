@@ -111,7 +111,6 @@ int             debug_task;
 bool need_wa_rdar_55577508 = false;
 SECURITY_READ_ONLY_LATE(bool) static_kernelcache = false;
 
-
 #if HAS_BP_RET
 /* Enable both branch target retention (0x2) and branch direction retention (0x1) across sleep */
 uint32_t bp_ret = 3;
@@ -123,6 +122,17 @@ boolean_t interrupt_masked_debug = 1;
 /* the following are in mach timebase units */
 uint64_t interrupt_masked_timeout = 0xd0000;
 uint64_t stackshot_interrupt_masked_timeout = 0xf9999;
+#endif
+
+/*
+ * A 6-second timeout will give the watchdog code a chance to run
+ * before a panic is triggered by the xcall routine.
+ */
+#define XCALL_ACK_TIMEOUT_NS ((uint64_t) 6000000000)
+uint64_t xcall_ack_timeout_abstime;
+
+#if APPLEVIRTUALPLATFORM
+extern uint64_t debug_ack_timeout;
 #endif
 
 boot_args const_boot_args __attribute__((section("__DATA, __const")));
@@ -147,6 +157,8 @@ SECURITY_READ_ONLY_LATE(boolean_t) diversify_user_jop = TRUE;
 SECURITY_READ_ONLY_LATE(uint64_t) gDramBase;
 SECURITY_READ_ONLY_LATE(uint64_t) gDramSize;
 
+SECURITY_READ_ONLY_LATE(bool) serial_console_enabled = false;
+
 /*
  * Forward definition
  */
@@ -154,6 +166,9 @@ void arm_init(boot_args * args);
 
 #if __arm64__
 unsigned int page_shift_user32; /* for page_size as seen by a 32-bit task */
+
+extern void configure_misc_apple_boot_args(void);
+extern void configure_misc_apple_regs(void);
 #endif /* __arm64__ */
 
 
@@ -282,33 +297,6 @@ arm_auxkc_init(void *mh, void *base)
 #endif /* defined(HAS_APPLE_PAC) */
 }
 
-#if HAS_IC_INVAL_FILTERS
-static void
-configure_misc_apple_regs(void)
-{
-	uint64_t actlr, __unused acfg, __unused ahcr;
-
-	actlr = get_aux_control();
-
-#if HAS_IC_INVAL_FILTERS
-	ahcr = __builtin_arm_rsr64(ARM64_REG_AHCR_EL2);
-	ahcr |= AHCR_IC_IVAU_EnRegime;
-	ahcr |= AHCR_IC_IVAU_EnVMID;
-	ahcr |= AHCR_IC_IALLU_EnRegime;
-	ahcr |= AHCR_IC_IALLU_EnVMID;
-	__builtin_arm_wsr64(ARM64_REG_AHCR_EL2, ahcr);
-#endif /* HAS_IC_INVAL_FILTERS */
-
-
-#if HAS_IC_INVAL_FILTERS
-	actlr |= ACTLR_EL1_IC_IVAU_EnASID;
-#endif /* HAS_IC_INVAL_FILTERS */
-
-	set_aux_control(actlr);
-
-}
-#endif /* HAS_IC_INVAL_FILTERS */
-
 /*
  *		Routine:		arm_init
  *		Function:		Runs on the boot CPU, once, on entry from iBoot.
@@ -333,7 +321,7 @@ arm_init(
 	cpu_data_init(&BootCpuData);
 #if defined(HAS_APPLE_PAC)
 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
-	BootCpuData.rop_key = KERNEL_ROP_ID;
+	BootCpuData.rop_key = ml_default_rop_pid();
 	BootCpuData.jop_key = ml_default_jop_pid();
 #endif /* defined(HAS_APPLE_PAC) */
 
@@ -341,25 +329,10 @@ arm_init(
 
 #if __arm64__
 	wfe_timeout_configure();
-#if HAS_IC_INVAL_FILTERS
-	configure_misc_apple_regs();
-#endif /* HAS_IC_INVAL_FILTERS */
 
-#if defined(HAS_APPLE_PAC)
-#if DEVELOPMENT || DEBUG
-	boolean_t user_jop = TRUE;
-	PE_parse_boot_argn("user_jop", &user_jop, sizeof(user_jop));
-	if (!user_jop) {
-		args->bootFlags |= kBootFlagsDisableUserJOP;
-	}
-#endif /* DEVELOPMENT || DEBUG */
-	boolean_t user_ts_jop = TRUE;
-	PE_parse_boot_argn("user_ts_jop", &user_ts_jop, sizeof(user_ts_jop));
-	if (!user_ts_jop) {
-		args->bootFlags |= kBootFlagsDisableUserThreadStateJOP;
-	}
-	PE_parse_boot_argn("diversify_user_jop", &diversify_user_jop, sizeof(diversify_user_jop));
-#endif /* defined(HAS_APPLE_PAC) */
+	configure_misc_apple_boot_args();
+	configure_misc_apple_regs();
+
 
 	{
 		/*
@@ -475,7 +448,34 @@ arm_init(
 	}
 
 	PE_parse_boot_argn("interrupt_masked_debug_timeout", &interrupt_masked_timeout, sizeof(interrupt_masked_timeout));
-#endif
+
+#endif /* INTERRUPT_MASKED_DEBUG */
+
+	nanoseconds_to_absolutetime(XCALL_ACK_TIMEOUT_NS, &xcall_ack_timeout_abstime);
+
+#if APPLEVIRTUALPLATFORM
+	unsigned int vti;
+
+	if (!PE_parse_boot_argn("vti", &vti, sizeof(vti))) {
+		vti = 6;
+	}
+
+#define VIRTUAL_TIMEOUT_INFLATE_ABS(_timeout)              \
+MACRO_BEGIN                                                \
+	_timeout = virtual_timeout_inflate_abs(vti, _timeout); \
+MACRO_END
+
+#define VIRTUAL_TIMEOUT_INFLATE_NS(_timeout)              \
+MACRO_BEGIN                                                \
+	_timeout = virtual_timeout_inflate_ns(vti, _timeout); \
+MACRO_END
+
+#if INTERRUPT_MASKED_DEBUG
+	VIRTUAL_TIMEOUT_INFLATE_ABS(interrupt_masked_timeout);
+	VIRTUAL_TIMEOUT_INFLATE_ABS(stackshot_interrupt_masked_timeout);
+#endif /* INTERRUPT_MASKED_DEBUG */
+	VIRTUAL_TIMEOUT_INFLATE_NS(debug_ack_timeout);
+#endif /* APPLEVIRTUALPLATFORM */
 
 #if HAS_BP_RET
 	PE_parse_boot_argn("bpret", &bp_ret, sizeof(bp_ret));
@@ -507,6 +507,9 @@ arm_init(
 	 */
 #if __arm64__
 	need_wa_rdar_55577508 = cpuid_get_cpufamily() == CPUFAMILY_ARM_LIGHTNING_THUNDER;
+#ifndef RC_HIDE_XNU_FIRESTORM
+	need_wa_rdar_55577508 |= (cpuid_get_cpufamily() == CPUFAMILY_ARM_FIRESTORM_ICESTORM && get_arm_cpu_version() == CPU_VERSION_A0);
+#endif
 #endif
 
 	/* setup debugging output if one has been chosen */
@@ -533,6 +536,7 @@ arm_init(
 	}
 
 	if (serialmode & SERIALMODE_OUTPUT) {                 /* Start serial if requested */
+		serial_console_enabled = true;
 		(void)switch_to_serial_console(); /* Switch into serial mode */
 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
 	}
@@ -623,9 +627,9 @@ arm_init_cpu(
 	__builtin_arm_wsr("pan", 1);
 #endif
 
-#if HAS_IC_INVAL_FILTERS
+#ifdef __arm64__
 	configure_misc_apple_regs();
-#endif /* HAS_IC_INVAL_FILTERS */
+#endif
 
 	cpu_data_ptr->cpu_flags &= ~SleepState;
 #if     defined(ARMA7)

@@ -108,7 +108,9 @@ queue_head_t            corpse_tasks;
 int                     tasks_count;
 int                     terminated_tasks_count;
 queue_head_t            threads;
+queue_head_t            terminated_threads;
 int                     threads_count;
+int                     terminated_threads_count;
 LCK_GRP_DECLARE(task_lck_grp, "task");
 LCK_ATTR_DECLARE(task_lck_attr, 0, 0);
 LCK_MTX_DECLARE_ATTR(tasks_threads_lock, &task_lck_grp, &task_lck_attr);
@@ -179,6 +181,7 @@ processor_bootstrap(void)
 	queue_init(&tasks);
 	queue_init(&terminated_tasks);
 	queue_init(&threads);
+	queue_init(&terminated_threads);
 	queue_init(&corpse_tasks);
 
 	processor_init(master_processor, master_cpu, &pset0);
@@ -357,6 +360,7 @@ processor_state_update_idle(processor_t processor)
 	processor->current_urgency = THREAD_URGENCY_NONE;
 	processor->current_is_NO_SMT = false;
 	processor->current_is_bound = false;
+	processor->current_is_eagerpreempt = false;
 	os_atomic_store(&processor->processor_set->cpu_running_buckets[processor->cpu_id], TH_BUCKET_SCHED_MAX, relaxed);
 }
 
@@ -378,6 +382,7 @@ processor_state_update_from_thread(processor_t processor, thread_t thread)
 	processor->current_urgency = thread_get_urgency(thread, NULL, NULL);
 	processor->current_is_NO_SMT = thread_no_smt(thread);
 	processor->current_is_bound = thread->bound_processor != PROCESSOR_NULL;
+	processor->current_is_eagerpreempt = thread_is_eager_preempt(thread);
 }
 
 void
@@ -456,6 +461,36 @@ pset_find(
 	return pset;
 }
 
+#if !defined(RC_HIDE_XNU_FIRESTORM) && (MAX_CPU_CLUSTERS > 2)
+
+/*
+ * Find the first processor_set for the given pset_cluster_type.
+ * Should be removed with rdar://57340304, as it's only
+ * useful for the workaround described in rdar://57306691.
+ */
+
+processor_set_t
+pset_find_first_by_cluster_type(
+	pset_cluster_type_t pset_cluster_type)
+{
+	simple_lock(&pset_node_lock, LCK_GRP_NULL);
+	pset_node_t node = &pset_node0;
+	processor_set_t pset = NULL;
+
+	do {
+		pset = node->psets;
+		while (pset != NULL) {
+			if (pset->pset_cluster_type == pset_cluster_type) {
+				break;
+			}
+			pset = pset->pset_list;
+		}
+	} while (pset == NULL && (node = node->node_list) != NULL);
+	simple_unlock(&pset_node_lock);
+	return pset;
+}
+
+#endif /* !defined(RC_HIDE_XNU_FIRESTORM) && (MAX_CPU_CLUSTERS > 2) */
 
 /*
  *	Initialize the given processor_set structure.
@@ -1180,7 +1215,8 @@ processor_set_things(
 	processor_set_t pset,
 	void **thing_list,
 	mach_msg_type_number_t *count,
-	int type)
+	int type,
+	mach_task_flavor_t flavor)
 {
 	unsigned int i;
 	task_t task;
@@ -1312,7 +1348,7 @@ processor_set_things(
 
 	/* for each task, make sure we are allowed to examine it */
 	for (i = used = 0; i < actual_tasks; i++) {
-		if (mac_task_check_expose_task(task_list[i])) {
+		if (mac_task_check_expose_task(task_list[i], flavor)) {
 			task_deallocate(task_list[i]);
 			continue;
 		}
@@ -1423,12 +1459,12 @@ processor_set_tasks_internal(
 	processor_set_t         pset,
 	task_array_t            *task_list,
 	mach_msg_type_number_t  *count,
-	int                     flavor)
+	mach_task_flavor_t      flavor)
 {
 	kern_return_t ret;
 	mach_msg_type_number_t i;
 
-	ret = processor_set_things(pset, (void **)task_list, count, PSET_THING_TASK);
+	ret = processor_set_things(pset, (void **)task_list, count, PSET_THING_TASK, flavor);
 	if (ret != KERN_SUCCESS) {
 		return ret;
 	}
@@ -1437,7 +1473,12 @@ processor_set_tasks_internal(
 	switch (flavor) {
 	case TASK_FLAVOR_CONTROL:
 		for (i = 0; i < *count; i++) {
-			(*task_list)[i] = (task_t)convert_task_to_port((*task_list)[i]);
+			if ((*task_list)[i] == current_task()) {
+				/* if current_task(), return pinned port */
+				(*task_list)[i] = (task_t)convert_task_to_port_pinned((*task_list)[i]);
+			} else {
+				(*task_list)[i] = (task_t)convert_task_to_port((*task_list)[i]);
+			}
 		}
 		break;
 	case TASK_FLAVOR_READ:
@@ -1527,7 +1568,7 @@ processor_set_threads(
 	kern_return_t ret;
 	mach_msg_type_number_t i;
 
-	ret = processor_set_things(pset, (void **)thread_list, count, PSET_THING_THREAD);
+	ret = processor_set_things(pset, (void **)thread_list, count, PSET_THING_THREAD, TASK_FLAVOR_CONTROL);
 	if (ret != KERN_SUCCESS) {
 		return ret;
 	}

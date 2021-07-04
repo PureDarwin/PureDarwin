@@ -118,7 +118,7 @@ boolean_t validate_c_segs = TRUE;
  * the boot-arg & device-tree code.
  */
 
-#if CONFIG_EMBEDDED
+#if !XNU_TARGET_OS_OSX
 
 #if CONFIG_FREEZE
 int     vm_compressor_mode = VM_PAGER_FREEZER_DEFAULT;
@@ -127,10 +127,10 @@ struct  freezer_context freezer_context_global;
 int     vm_compressor_mode = VM_PAGER_NOT_CONFIGURED;
 #endif /* CONFIG_FREEZE */
 
-#else /* CONFIG_EMBEDDED */
+#else /* !XNU_TARGET_OS_OSX */
 int             vm_compressor_mode = VM_PAGER_COMPRESSOR_WITH_SWAP;
 
-#endif /* CONFIG_EMBEDDED */
+#endif /* !XNU_TARGET_OS_OSX */
 
 TUNABLE(uint32_t, vm_compression_limit, "vm_compression_limit", 0);
 int             vm_compressor_is_active = 0;
@@ -344,9 +344,11 @@ static void vm_compressor_do_delayed_compactions(boolean_t);
 static void vm_compressor_compact_and_swap(boolean_t);
 static void vm_compressor_age_swapped_in_segments(boolean_t);
 
-#if !CONFIG_EMBEDDED
+struct vm_compressor_swapper_stats vmcs_stats;
+
+#if XNU_TARGET_OS_OSX
 static void vm_compressor_take_paging_space_action(void);
-#endif
+#endif /* XNU_TARGET_OS_OSX */
 
 void compute_swapout_target_age(void);
 
@@ -481,7 +483,7 @@ vm_wants_task_throttled(task_t task)
 TUNABLE(bool, kill_on_no_paging_space, "-kill_on_no_paging_space", false);
 #endif /* DEVELOPMENT || DEBUG */
 
-#if !CONFIG_EMBEDDED
+#if XNU_TARGET_OS_OSX
 
 static uint32_t no_paging_space_action_in_progress = 0;
 extern void memorystatus_send_low_swap_note(void);
@@ -510,7 +512,7 @@ vm_compressor_take_paging_space_action(void)
 		}
 	}
 }
-#endif /* !CONFIG_EMBEDDED */
+#endif /* XNU_TARGET_OS_OSX */
 
 
 void
@@ -623,12 +625,12 @@ vm_compressor_init(void)
 
 	assert((C_SEGMENTS_PER_PAGE * sizeof(union c_segu)) == PAGE_SIZE);
 
-#ifdef CONFIG_EMBEDDED
+#if !XNU_TARGET_OS_OSX
 	vm_compressor_minorcompact_threshold_divisor = 20;
 	vm_compressor_majorcompact_threshold_divisor = 30;
 	vm_compressor_unthrottle_threshold_divisor = 40;
 	vm_compressor_catchup_threshold_divisor = 60;
-#else
+#else /* !XNU_TARGET_OS_OSX */
 	if (max_mem <= (3ULL * 1024ULL * 1024ULL * 1024ULL)) {
 		vm_compressor_minorcompact_threshold_divisor = 11;
 		vm_compressor_majorcompact_threshold_divisor = 13;
@@ -640,7 +642,7 @@ vm_compressor_init(void)
 		vm_compressor_unthrottle_threshold_divisor = 35;
 		vm_compressor_catchup_threshold_divisor = 50;
 	}
-#endif
+#endif /* !XNU_TARGET_OS_OSX */
 
 	queue_init(&c_bad_list_head);
 	queue_init(&c_age_list_head);
@@ -663,7 +665,7 @@ vm_compressor_init(void)
 	compressor_pool_max_size = C_SEG_MAX_LIMIT;
 	compressor_pool_max_size *= C_SEG_BUFSIZE;
 
-#if !CONFIG_EMBEDDED
+#if XNU_TARGET_OS_OSX
 
 	if (vm_compression_limit == 0) {
 		if (max_mem <= (4ULL * 1024ULL * 1024ULL * 1024ULL)) {
@@ -917,6 +919,8 @@ try_again:
 	vm_compressor_available = 1;
 
 	vm_page_reactivate_all_throttled();
+
+	bzero(&vmcs_stats, sizeof(struct vm_compressor_swapper_stats));
 }
 
 
@@ -1309,14 +1313,14 @@ c_seg_switch_state(c_segment_t c_seg, int new_state, boolean_t insert_head)
 {
 	int     old_state = c_seg->c_state;
 
-#if !CONFIG_EMBEDDED
+#if XNU_TARGET_OS_OSX
 #if     DEVELOPMENT || DEBUG
 	if (new_state != C_IS_FILLING) {
 		LCK_MTX_ASSERT(&c_seg->c_lock, LCK_MTX_ASSERT_OWNED);
 	}
 	LCK_MTX_ASSERT(c_list_lock, LCK_MTX_ASSERT_OWNED);
 #endif
-#endif /* !CONFIG_EMBEDDED */
+#endif /* XNU_TARGET_OS_OSX */
 	switch (old_state) {
 	case C_IS_EMPTY:
 		assert(new_state == C_IS_FILLING || new_state == C_IS_FREE);
@@ -2184,17 +2188,27 @@ compressor_needs_to_swap(void)
 	if (VM_CONFIG_SWAP_IS_ACTIVE) {
 		if (COMPRESSOR_NEEDS_TO_SWAP()) {
 			should_swap = TRUE;
+			vmcs_stats.compressor_swap_threshold_exceeded++;
 			goto check_if_low_space;
 		}
 		if (VM_PAGE_Q_THROTTLED(&vm_pageout_queue_external) && vm_page_anonymous_count < (vm_page_inactive_count / 20)) {
 			should_swap = TRUE;
+			vmcs_stats.external_q_throttled++;
 			goto check_if_low_space;
 		}
 		if (vm_page_free_count < (vm_page_free_reserved - (COMPRESSOR_FREE_RESERVED_LIMIT * 2))) {
 			should_swap = TRUE;
+			vmcs_stats.free_count_below_reserve++;
 			goto check_if_low_space;
 		}
 	}
+
+#if (XNU_TARGET_OS_OSX && __arm64__)
+	/*
+	 * Thrashing detection disabled.
+	 */
+#else /* (XNU_TARGET_OS_OSX && __arm64__) */
+
 	compute_swapout_target_age();
 
 	if (swapout_target_age) {
@@ -2218,7 +2232,9 @@ compressor_needs_to_swap(void)
 #endif
 	if (swapout_target_age) {
 		should_swap = TRUE;
+		vmcs_stats.thrashing_detected++;
 	}
+#endif /* (XNU_TARGET_OS_OSX && __arm64__) */
 
 check_if_low_space:
 
@@ -2268,6 +2284,19 @@ check_if_low_space:
 		 * that we will free up even a single compression segment
 		 */
 		should_swap = vm_compressor_needs_to_major_compact();
+		if (should_swap) {
+			vmcs_stats.fragmentation_detected++;
+#if (XNU_TARGET_OS_OSX && __arm64__)
+			/*
+			 * SSD based systems don't need the fragmentation
+			 * swapout trigger because that was designed for
+			 * systems where the swapout latencies could be long
+			 * enough that the pressure, if allowed to build up,
+			 * would be tightly tied to the swapouts later on.
+			 */
+			should_swap = FALSE;
+#endif /* (XNU_TARGET_OS_OSX && __arm64__) */
+		}
 	}
 
 	/*
@@ -2504,9 +2533,9 @@ vm_compressor_do_delayed_compactions(boolean_t flush_all)
 
 	VM_DEBUG_CONSTANT_EVENT(vm_compressor_do_delayed_compactions, VM_COMPRESSOR_DO_DELAYED_COMPACTIONS, DBG_FUNC_START, c_minor_count, flush_all, 0, 0);
 
-#if !CONFIG_EMBEDDED
+#if XNU_TARGET_OS_OSX
 	LCK_MTX_ASSERT(c_list_lock, LCK_MTX_ASSERT_OWNED);
-#endif /* !CONFIG_EMBEDDED */
+#endif /* XNU_TARGET_OS_OSX */
 
 	while (!queue_empty(&c_minor_list_head) && needs_to_swap == FALSE) {
 		c_seg = (c_segment_t)queue_first(&c_minor_list_head);
@@ -2559,6 +2588,7 @@ vm_compressor_age_swapped_in_segments(boolean_t flush_all)
 		lck_mtx_lock_spin_always(&c_seg->c_lock);
 
 		c_seg_switch_state(c_seg, C_ON_AGE_Q, FALSE);
+		c_seg->c_agedin_ts = (uint32_t) now;
 
 		lck_mtx_unlock_always(&c_seg->c_lock);
 	}
@@ -3183,6 +3213,17 @@ vm_compressor_compact_and_swap(boolean_t flush_all)
 				 * This mode of putting a generic c_seg on the swapout list is
 				 * only supported when we have general swapping enabled
 				 */
+				clock_sec_t lnow;
+				clock_nsec_t lnsec;
+				clock_get_system_nanotime(&lnow, &lnsec);
+				if (c_seg->c_agedin_ts && (lnow - c_seg->c_agedin_ts) < 30) {
+					vmcs_stats.unripe_under_30s++;
+				} else if (c_seg->c_agedin_ts && (lnow - c_seg->c_agedin_ts) < 60) {
+					vmcs_stats.unripe_under_60s++;
+				} else if (c_seg->c_agedin_ts && (lnow - c_seg->c_agedin_ts) < 300) {
+					vmcs_stats.unripe_under_300s++;
+				}
+
 				c_seg_switch_state(c_seg, C_ON_SWAPOUT_Q, FALSE);
 			} else {
 				if ((vm_swapout_ripe_segments == TRUE && c_overage_swapped_count < c_overage_swapped_limit)) {
@@ -3286,11 +3327,11 @@ c_seg_allocate(c_segment_t *current_chead)
 	int             min_needed;
 	int             size_to_populate;
 
-#if !CONFIG_EMBEDDED
+#if XNU_TARGET_OS_OSX
 	if (vm_compressor_low_on_space()) {
 		vm_compressor_take_paging_space_action();
 	}
-#endif /* !CONFIG_EMBEDDED */
+#endif /* XNU_TARGET_OS_OSX */
 
 	if ((c_seg = *current_chead) == NULL) {
 		uint32_t        c_segno;
@@ -4465,11 +4506,11 @@ done:
 		vm_swap_consider_defragmenting(VM_SWAP_FLAGS_NONE);
 	}
 
-#if CONFIG_EMBEDDED
+#if !XNU_TARGET_OS_OSX
 	if ((c_minor_count && COMPRESSOR_NEEDS_TO_MINOR_COMPACT()) || vm_compressor_needs_to_major_compact()) {
 		vm_wake_compactor_swapper();
 	}
-#endif
+#endif /* !XNU_TARGET_OS_OSX */
 
 	return retval;
 }

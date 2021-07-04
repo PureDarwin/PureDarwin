@@ -63,6 +63,7 @@
 #include <kern/task.h>
 
 #include <vm/vm_map.h>
+#include <vm/pmap.h>
 #include <vm/vm_kern.h>
 
 
@@ -133,8 +134,6 @@ SECURITY_READ_ONLY_LATE(int) cs_library_val_enable = DEFAULT_CS_LIBRARY_VA_ENABL
 #endif /* !SECURE_KERNEL */
 int cs_all_vnodes = 0;
 
-static lck_grp_t *cs_lockgrp;
-
 SYSCTL_INT(_vm, OID_AUTO, cs_force_kill, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_force_kill, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, cs_force_hard, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_force_hard, 0, "");
 SYSCTL_INT(_vm, OID_AUTO, cs_debug, CTLFLAG_RW | CTLFLAG_LOCKED, &cs_debug, 0, "");
@@ -194,10 +193,6 @@ cs_init(void)
 	    sizeof(cs_library_val_enable));
 #endif
 #endif /* !SECURE_KERNEL */
-
-	lck_grp_attr_t *attr = lck_grp_attr_alloc_init();
-	cs_lockgrp = lck_grp_alloc_init("KERNCS", attr);
-	lck_grp_attr_free(attr);
 }
 STARTUP(CODESIGNING, STARTUP_RANK_FIRST, cs_init);
 
@@ -231,12 +226,25 @@ cs_allow_invalid(struct proc *p)
 	if (p->p_csflags & CS_VALID) {
 		p->p_csflags |= CS_DEBUGGED;
 	}
+#if PMAP_CS
+	task_t procTask = proc_task(p);
+	if (procTask) {
+		vm_map_t proc_map = get_task_map_reference(procTask);
+		if (proc_map) {
+			if (vm_map_cs_wx_enable(proc_map) != KERN_SUCCESS) {
+				printf("CODE SIGNING: cs_allow_invalid() not allowed by pmap: pid %d\n", p->p_pid);
+			}
+			vm_map_deallocate(proc_map);
+		}
+	}
+#endif // MAP_CS
 	proc_unlock(p);
 
 	/* allow a debugged process to hide some (debug-only!) memory */
 	task_set_memory_ownership_transfer(p->task, TRUE);
 
 	vm_map_switch_protect(get_task_map(p->task), FALSE);
+	vm_map_cs_debugged_set(get_task_map(p->task), TRUE);
 #endif
 	return (p->p_csflags & (CS_KILL | CS_HARD)) == 0;
 }
@@ -461,7 +469,7 @@ csblob_get_size(struct cs_blob *blob)
 vm_address_t
 csblob_get_addr(struct cs_blob *blob)
 {
-	return blob->csb_mem_kaddr;
+	return (vm_address_t)blob->csb_mem_kaddr;
 }
 
 /*
@@ -1540,7 +1548,7 @@ cs_blob_get(proc_t p, void **out_start, size_t *out_length)
 		return 0;
 	}
 
-	*out_start = (void *)csblob->csb_mem_kaddr;
+	*out_start = csblob->csb_mem_kaddr;
 	*out_length = csblob->csb_mem_size;
 
 	return 0;

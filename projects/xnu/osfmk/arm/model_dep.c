@@ -160,7 +160,12 @@ extern void stackshot_memcpy(void *dst, const void *src, size_t len);
 #define FP_MAX_NUM_TO_EVALUATE (50)
 
 /* Timeout (in nanoseconds) for all processors responding to debug crosscall */
+#if APPLEVIRTUALPLATFORM
+uint64_t debug_ack_timeout = 10000000;
+#define DEBUG_ACK_TIMEOUT (debug_ack_timeout)
+#else
 #define DEBUG_ACK_TIMEOUT ((uint64_t) 10000000)
+#endif
 
 /* Forward functions definitions */
 void panic_display_times(void);
@@ -1147,6 +1152,10 @@ DebuggerXCall(
 	if ((serialmode & SERIALMODE_OUTPUT) || stackshot_active()) {
 		INTERRUPT_MASKED_DEBUG_START(current_thread()->machine.int_handler_addr, current_thread()->machine.int_type);
 	}
+
+#if defined(__arm64__)
+	current_thread()->machine.kpcb = NULL;
+#endif /* defined(__arm64__) */
 
 	/* Any cleanup for our pushed context should go here */
 }

@@ -172,6 +172,9 @@
 #endif /* DEBUG || DEVELOPMENT */
 .endmacro
 
+#define CSWITCH_ROP_KEYS	(HAS_APPLE_PAC && HAS_PARAVIRTUALIZED_PAC)
+#define CSWITCH_JOP_KEYS	(HAS_APPLE_PAC && HAS_PARAVIRTUALIZED_PAC)
+
 /*
  * set_process_dependent_keys_and_sync_context
  *
@@ -195,38 +198,45 @@
 	ldr		\cpudatap, [\thread, ACT_CPUDATAP]
 #endif /* defined(__ARM_ARCH_8_5__) || defined(HAS_APPLE_PAC) */
 
+#if defined(__ARM_ARCH_8_5__)
+	ldrb	\wsync, [\cpudatap, CPU_SYNC_ON_CSWITCH]
+#else /* defined(__ARM_ARCH_8_5__) */
 	mov		\wsync, #0
+#endif
 
 
-#if defined(HAS_APPLE_PAC)
+#if CSWITCH_ROP_KEYS
 	ldr		\new_key, [\thread, TH_ROP_PID]
-	ldr		\tmp_key, [\cpudatap, CPU_ROP_KEY]
-	cmp		\new_key, \tmp_key
-	b.eq	1f
-	str		\new_key, [\cpudatap, CPU_ROP_KEY]
-	msr		APIBKeyLo_EL1, \new_key
-	add		\new_key, \new_key, #1
-	msr		APIBKeyHi_EL1, \new_key
-	add		\new_key, \new_key, #1
-	msr		APDBKeyLo_EL1, \new_key
-	add		\new_key, \new_key, #1
-	msr		APDBKeyHi_EL1, \new_key
+	REPROGRAM_ROP_KEYS	Lskip_rop_keys_\@, \new_key, \cpudatap, \tmp_key
+#if HAS_PARAVIRTUALIZED_PAC
+	/* xnu hypervisor guarantees context synchronization during guest re-entry */
+	mov		\wsync, #0
+#else
 	mov		\wsync, #1
-1:
+#endif
+Lskip_rop_keys_\@:
+#endif /* CSWITCH_ROP_KEYS */
 
-#if HAS_PAC_FAST_A_KEY_SWITCHING
-	IF_PAC_SLOW_A_KEY_SWITCHING	Lskip_jop_keys_\@, \new_key
+#if CSWITCH_JOP_KEYS
 	ldr		\new_key, [\thread, TH_JOP_PID]
 	REPROGRAM_JOP_KEYS	Lskip_jop_keys_\@, \new_key, \cpudatap, \tmp_key
+#if HAS_PARAVIRTUALIZED_PAC
+	mov		\wsync, #0
+#else
 	mov		\wsync, #1
+#endif
 Lskip_jop_keys_\@:
-#endif /* HAS_PAC_FAST_A_KEY_SWITCHING */
-
-#endif /* defined(HAS_APPLE_PAC) */
+#endif /* CSWITCH_JOP_KEYS */
 
 	cbz		\wsync, 1f
 	isb 	sy
 
+#if HAS_PARAVIRTUALIZED_PAC
+1:	/* guests need to clear the sync flag even after skipping the isb, in case they synced via hvc instead */
+#endif
+#if defined(__ARM_ARCH_8_5__)
+	strb	wzr, [\cpudatap, CPU_SYNC_ON_CSWITCH]
+#endif
 1:
 .endmacro
 

@@ -1,5 +1,5 @@
 #
-# Copyright (C) 1999-2016 Apple Inc. All rights reserved.
+# Copyright (C) 1999-2020 Apple Inc. All rights reserved.
 #
 ifndef VERSDIR
 export VERSDIR := $(shell /bin/pwd)
@@ -30,6 +30,7 @@ export MakeInc_cmd=${VERSDIR}/makedefs/MakeInc.cmd
 export MakeInc_def=${VERSDIR}/makedefs/MakeInc.def
 export MakeInc_rule=${VERSDIR}/makedefs/MakeInc.rule
 export MakeInc_dir=${VERSDIR}/makedefs/MakeInc.dir
+
 
 #
 # Dispatch non-xnu build aliases to their own build
@@ -186,8 +187,7 @@ TOP_TARGETS = \
 	install install_desktop install_embedded \
 	install_release_embedded install_development_embedded \
 	install_kernels \
-	installopensource \
-	cscope tags TAGS checkstyle restyle check_uncrustify uncrustify \
+	cscope tags TAGS \
 	help
 
 DEFAULT_TARGET = all
@@ -317,6 +317,9 @@ xnu_tests_driverkit:
 	$(MAKE) -C $(SRCROOT)/tests/driverkit $(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) \
 		SRCROOT=$(SRCROOT)/tests/driverkit
 
+
+include $(MakeInc_cmd)
+
 #
 # The "analyze" target defined below invokes Clang Static Analyzer
 # with a predefined set of checks and options for the project.
@@ -338,16 +341,18 @@ STATIC_ANALYZER_TARGET ?=
 STATIC_ANALYZER_EXTRA_FLAGS ?=
 
 analyze:
-	# This is where the reports are going to be available.
-	# Old reports are deleted on make clean only.
-	mkdir -p $(STATIC_ANALYZER_OUTPUT_DIR)
+# This is where the reports are going to be available.
+# Old reports are deleted on make clean only.
+	$(_v)$(MKDIR) $(STATIC_ANALYZER_OUTPUT_DIR)
 
-	# Recursively build the requested target under scan-build.
-	# Exclude checks that weren't deemed to be security critical,
-	# like null pointer dereferences.
-	xcrun scan-build -o $(STATIC_ANALYZER_OUTPUT_DIR) \
+# Recursively build the requested target under scan-build.
+# Exclude checks that weren't deemed to be security critical,
+# like null pointer dereferences.
+	$(_v)$(XCRUN) $(SCAN_BUILD) -o $(STATIC_ANALYZER_OUTPUT_DIR) \
 		-disable-checker deadcode.DeadStores \
 		-disable-checker core.NullDereference \
 		-disable-checker core.DivideZero \
 		$(STATIC_ANALYZER_EXTRA_FLAGS) \
-		make $(STATIC_ANALYZER_TARGET)
+		$(MAKE) $(STATIC_ANALYZER_TARGET) QUIET=1 2>&1 | $(GREP) "^scan-build:"
+
+.PHONY: analyze

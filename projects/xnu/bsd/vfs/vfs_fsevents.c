@@ -152,16 +152,18 @@ static void fsevents_wakeup(fs_event_watcher *watcher);
 //
 // Locks
 //
-static lck_grp_attr_t *  fsevent_group_attr;
-static lck_attr_t *      fsevent_lock_attr;
-static lck_grp_t *       fsevent_mutex_group;
+static LCK_ATTR_DECLARE(fsevent_lock_attr, 0, 0);
+static LCK_GRP_DECLARE(fsevent_mutex_group, "fsevent-mutex");
+static LCK_GRP_DECLARE(fsevent_rw_group, "fsevent-rw");
 
-static lck_grp_t *       fsevent_rw_group;
-
-static lck_rw_t  event_handling_lock; // handles locking for event manipulation and recycling
-static lck_mtx_t watch_table_lock;
-static lck_mtx_t event_buf_lock;
-static lck_mtx_t event_writer_lock;
+static LCK_RW_DECLARE_ATTR(event_handling_lock, // handles locking for event manipulation and recycling
+    &fsevent_rw_group, &fsevent_lock_attr);
+static LCK_MTX_DECLARE_ATTR(watch_table_lock,
+    &fsevent_mutex_group, &fsevent_lock_attr);
+static LCK_MTX_DECLARE_ATTR(event_buf_lock,
+    &fsevent_mutex_group, &fsevent_lock_attr);
+static LCK_MTX_DECLARE_ATTR(event_writer_lock,
+    &fsevent_mutex_group, &fsevent_lock_attr);
 
 
 /* Explicitly declare qsort so compiler doesn't complain */
@@ -204,29 +206,16 @@ fsevents_internal_init(void)
 
 	memset(watcher_table, 0, sizeof(watcher_table));
 
-	fsevent_lock_attr    = lck_attr_alloc_init();
-	fsevent_group_attr   = lck_grp_attr_alloc_init();
-	fsevent_mutex_group  = lck_grp_alloc_init("fsevent-mutex", fsevent_group_attr);
-	fsevent_rw_group     = lck_grp_alloc_init("fsevent-rw", fsevent_group_attr);
-
-	lck_mtx_init(&watch_table_lock, fsevent_mutex_group, fsevent_lock_attr);
-	lck_mtx_init(&event_buf_lock, fsevent_mutex_group, fsevent_lock_attr);
-	lck_mtx_init(&event_writer_lock, fsevent_mutex_group, fsevent_lock_attr);
-
-	lck_rw_init(&event_handling_lock, fsevent_rw_group, fsevent_lock_attr);
-
 	PE_get_default("kern.maxkfsevents", &max_kfs_events, sizeof(max_kfs_events));
 
 	event_zone = zone_create_ext("fs-event-buf", sizeof(kfs_event),
 	    ZC_NOGC | ZC_NOCALLOUT, ZONE_ID_ANY, ^(zone_t z) {
 		// mark the zone as exhaustible so that it will not
 		// ever grow beyond what we initially filled it with
-		zone_set_exhaustible(z, max_kfs_events * sizeof(kfs_event));
+		zone_set_exhaustible(z, max_kfs_events);
 	});
 
-	if (zfill(event_zone, max_kfs_events) < max_kfs_events) {
-		printf("fsevents: failed to pre-fill the event zone.\n");
-	}
+	zone_fill_initially(event_zone, max_kfs_events);
 }
 
 static void
@@ -1556,46 +1545,37 @@ restart_watch:
 		}
 
 		if (watcher->event_list[kfse->type] == FSE_REPORT) {
-			boolean_t watcher_cares;
-
-			if (watcher->devices_not_to_watch == NULL) {
-				watcher_cares = true;
+			if (!(watcher->flags & WATCHER_APPLE_SYSTEM_SERVICE) &&
+			    kfse->type != FSE_DOCID_CREATED &&
+			    kfse->type != FSE_DOCID_CHANGED &&
+			    is_ignored_directory(kfse->str)) {
+				// If this is not an Apple System Service, skip specified directories
+				// radar://12034844
+				error = 0;
+				skipped = 1;
 			} else {
-				lock_watch_table();
-				watcher_cares = watcher_cares_about_dev(watcher, kfse->dev);
-				unlock_watch_table();
-			}
-
-			if (watcher_cares) {
-				if (!(watcher->flags & WATCHER_APPLE_SYSTEM_SERVICE) && kfse->type != FSE_DOCID_CREATED && kfse->type != FSE_DOCID_CHANGED && is_ignored_directory(kfse->str)) {
-					// If this is not an Apple System Service, skip specified directories
-					// radar://12034844
-					error = 0;
-					skipped = 1;
-				} else {
-					skipped = 0;
-					if (last_event_ptr == kfse) {
-						last_event_ptr = NULL;
-						last_event_type = -1;
-						last_coalesced_time = 0;
-					}
-					error = copy_out_kfse(watcher, kfse, uio);
-					if (error != 0) {
-						// if an event won't fit or encountered an error while
-						// we were copying it out, then backup to the last full
-						// event and just bail out.  if the error was ENOENT
-						// then we can continue regular processing, otherwise
-						// we should unlock things and return.
-						uio_setresid(uio, last_full_event_resid);
-						if (error != ENOENT) {
-							lck_rw_unlock_shared(&event_handling_lock);
-							error = 0;
-							goto get_out;
-						}
-					}
-
-					last_full_event_resid = uio_resid(uio);
+				skipped = 0;
+				if (last_event_ptr == kfse) {
+					last_event_ptr = NULL;
+					last_event_type = -1;
+					last_coalesced_time = 0;
 				}
+				error = copy_out_kfse(watcher, kfse, uio);
+				if (error != 0) {
+					// if an event won't fit or encountered an error while
+					// we were copying it out, then backup to the last full
+					// event and just bail out.  if the error was ENOENT
+					// then we can continue regular processing, otherwise
+					// we should unlock things and return.
+					uio_setresid(uio, last_full_event_resid);
+					if (error != ENOENT) {
+						lck_rw_unlock_shared(&event_handling_lock);
+						error = 0;
+						goto get_out;
+					}
+				}
+
+				last_full_event_resid = uio_resid(uio);
 			}
 		}
 

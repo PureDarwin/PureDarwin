@@ -56,7 +56,6 @@
 #include <sys/reason.h>
 #endif
 
-
 #define f_flag fp_glob->fg_flag
 extern int dofilewrite(vfs_context_t ctx, struct fileproc *fp,
     user_addr_t bufp, user_size_t nbyte, off_t offset,
@@ -86,17 +85,25 @@ kern_return_t task_violated_guard(mach_exception_code_t, mach_exception_subcode_
 
 struct guarded_fileproc {
 	struct fileproc gf_fileproc;
-	u_int           gf_magic;
 	u_int           gf_attrs;
 	guardid_t       gf_guard;
 };
 
-const size_t sizeof_guarded_fileproc = sizeof(struct guarded_fileproc);
+ZONE_DECLARE(gfp_zone, "guarded_fileproc",
+    sizeof(struct guarded_fileproc),
+    ZC_NOENCRYPT | ZC_ZFREE_CLEARMEM);
 
-#define FP_TO_GFP(fp)   ((struct guarded_fileproc *)(fp))
+static inline struct guarded_fileproc *
+FP_TO_GFP(struct fileproc *fp)
+{
+	struct guarded_fileproc *gfp =
+	    __container_of(fp, struct guarded_fileproc, gf_fileproc);
+
+	zone_require(gfp_zone, gfp);
+	return gfp;
+}
+
 #define GFP_TO_FP(gfp)  (&(gfp)->gf_fileproc)
-
-#define GUARDED_FILEPROC_MAGIC  0x29083
 
 struct gfp_crarg {
 	guardid_t gca_guard;
@@ -109,17 +116,12 @@ guarded_fileproc_alloc_init(void *crarg)
 	struct gfp_crarg *aarg = crarg;
 	struct guarded_fileproc *gfp;
 
-	if ((gfp = kalloc(sizeof(*gfp))) == NULL) {
-		return NULL;
-	}
-
-	bzero(gfp, sizeof(*gfp));
+	gfp = zalloc_flags(gfp_zone, Z_WAITOK | Z_ZERO);
 
 	struct fileproc *fp = &gfp->gf_fileproc;
 	os_ref_init(&fp->fp_iocount, &f_refgrp);
 	fp->fp_flags = FTYPE_GUARDED;
 
-	gfp->gf_magic = GUARDED_FILEPROC_MAGIC;
 	gfp->gf_guard = aarg->gca_guard;
 	gfp->gf_attrs = aarg->gca_attrs;
 
@@ -130,13 +132,7 @@ void
 guarded_fileproc_free(struct fileproc *fp)
 {
 	struct guarded_fileproc *gfp = FP_TO_GFP(fp);
-
-	if (FILEPROC_TYPE(fp) != FTYPE_GUARDED ||
-	    GUARDED_FILEPROC_MAGIC != gfp->gf_magic) {
-		panic("%s: corrupt fp %p flags %x", __func__, fp, fp->fp_flags);
-	}
-
-	kfree(gfp, sizeof(*gfp));
+	zfree(gfp_zone, gfp);
 }
 
 static int
@@ -155,10 +151,6 @@ fp_lookup_guarded(proc_t p, int fd, guardid_t guard,
 	}
 	struct guarded_fileproc *gfp = FP_TO_GFP(fp);
 
-	if (GUARDED_FILEPROC_MAGIC != gfp->gf_magic) {
-		panic("%s: corrupt fp %p", __func__, fp);
-	}
-
 	if (guard != gfp->gf_guard) {
 		(void) fp_drop(p, fd, fp, locked);
 		return EPERM; /* *not* a mismatch exception */
@@ -172,24 +164,20 @@ fp_lookup_guarded(proc_t p, int fd, guardid_t guard,
 /*
  * Expected use pattern:
  *
- * if (FP_ISGUARDED(fp, GUARD_CLOSE)) {
+ * if (fp_isguarded(fp, GUARD_CLOSE)) {
  *      error = fp_guard_exception(p, fd, fp, kGUARD_EXC_CLOSE);
  *      proc_fdunlock(p);
  *      return error;
  * }
+ *
+ * Passing `0` to `attrs` returns whether the fp is guarded at all.
  */
 
 int
 fp_isguarded(struct fileproc *fp, u_int attrs)
 {
 	if (FILEPROC_TYPE(fp) == FTYPE_GUARDED) {
-		struct guarded_fileproc *gfp = FP_TO_GFP(fp);
-
-		if (GUARDED_FILEPROC_MAGIC != gfp->gf_magic) {
-			panic("%s: corrupt gfp %p flags %x",
-			    __func__, gfp, fp->fp_flags);
-		}
-		return (attrs & gfp->gf_attrs) == attrs;
+		return (attrs & FP_TO_GFP(fp)->gf_attrs) == attrs;
 	}
 	return 0;
 }
@@ -581,11 +569,6 @@ restart:
 			 */
 			struct guarded_fileproc *gfp = FP_TO_GFP(fp);
 
-			if (GUARDED_FILEPROC_MAGIC != gfp->gf_magic) {
-				panic("%s: corrupt gfp %p flags %x",
-				    __func__, gfp, fp->fp_flags);
-			}
-
 			if (oldg == gfp->gf_guard &&
 			    uap->guardflags == gfp->gf_attrs) {
 				/*
@@ -672,11 +655,6 @@ restart:
 			if (0 != uap->nguardflags) {
 				error = EINVAL;
 				goto dropout;
-			}
-
-			if (GUARDED_FILEPROC_MAGIC != gfp->gf_magic) {
-				panic("%s: corrupt gfp %p flags %x",
-				    __func__, gfp, fp->fp_flags);
 			}
 
 			if (oldg != gfp->gf_guard ||
@@ -1028,8 +1006,8 @@ free_vgo(struct vng_owner *vgo)
 }
 
 static int label_slot;
-static lck_rw_t llock;
-static lck_grp_t *llock_grp;
+static LCK_GRP_DECLARE(llock_grp, VNG_POLICY_NAME);
+static LCK_RW_DECLARE(llock, &llock_grp);
 
 static __inline void *
 vng_lbl_get(struct label *label)
@@ -1435,7 +1413,9 @@ vng_guard_violation(const struct vng_info *vgi,
 		if (vng_policy_flags & kVNG_POLICY_EXC_CORPSE) {
 			char *path;
 			int len = MAXPATHLEN;
-			MALLOC(path, char *, len, M_TEMP, M_WAITOK);
+
+			path = zalloc(ZV_NAMEI);
+
 			os_reason_t r = NULL;
 			if (NULL != path) {
 				vn_getpath(vp, path, &len);
@@ -1447,9 +1427,8 @@ vng_guard_violation(const struct vng_info *vgi,
 			if (NULL != r) {
 				os_reason_free(r);
 			}
-			if (NULL != path) {
-				FREE(path, M_TEMP);
-			}
+
+			zfree(ZV_NAMEI, path);
 		} else {
 			thread_t t = current_thread();
 			thread_guard_violation(t, code, subcode, TRUE);
@@ -1645,13 +1624,6 @@ vng_vnode_check_open(kauth_cred_t cred,
  * Configuration gorp
  */
 
-static void
-vng_init(struct mac_policy_conf *mpc)
-{
-	llock_grp = lck_grp_alloc_init(mpc->mpc_name, LCK_GRP_ATTR_NULL);
-	lck_rw_init(&llock, llock_grp, LCK_ATTR_NULL);
-}
-
 SECURITY_READ_ONLY_EARLY(static struct mac_policy_ops) vng_policy_ops = {
 	.mpo_file_label_destroy = vng_file_label_destroy,
 
@@ -1664,7 +1636,6 @@ SECURITY_READ_ONLY_EARLY(static struct mac_policy_ops) vng_policy_ops = {
 	.mpo_vnode_check_open = vng_vnode_check_open,
 
 	.mpo_policy_syscall = vng_policy_syscall,
-	.mpo_policy_init = vng_init,
 };
 
 static const char *vng_labelnames[] = {

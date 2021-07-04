@@ -40,33 +40,6 @@
 #endif /* __ARM_KERNEL_PROTECT__ */
 
 
-#if __APRR_SUPPORTED__
-
-.macro MSR_APRR_EL1_X0
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
-	bl		EXT(pinst_set_aprr_el1)
-#else
-	msr		APRR_EL1, x0
-#endif
-.endmacro
-
-.macro MSR_APRR_EL0_X0
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
-	bl		EXT(pinst_set_aprr_el0)
-#else
-	msr		APRR_EL0, x0
-#endif
-.endmacro
-
-.macro MSR_APRR_SHADOW_MASK_EN_EL1_X0
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
-	bl		EXT(pinst_set_aprr_shadow_mask_en_el1)
-#else
-	msr		APRR_SHADOW_MASK_EN_EL1, x0
-#endif
-.endmacro
-
-#endif /* __APRR_SUPPORTED__ */
 
 .macro MSR_VBAR_EL1_X0
 #if defined(KERNEL_INTEGRITY_KTRR)
@@ -163,68 +136,7 @@ LEXT(reset_vector)
 	msr     VBAR_EL1, x0
 #endif
 
-#if __APRR_SUPPORTED__
-	MOV64	x0, APRR_EL1_DEFAULT
-#if XNU_MONITOR
-	adrp	x4, EXT(pmap_ppl_locked_down)@page
-	ldrb	w5, [x4, #EXT(pmap_ppl_locked_down)@pageoff]
-	cmp		w5, #0
-	b.ne	1f
 
-	// If the PPL is not locked down, we start in PPL mode.
-	MOV64	x0, APRR_EL1_PPL
-1:
-#endif /* XNU_MONITOR */
-
-	MSR_APRR_EL1_X0
-
-	// Load up the default APRR_EL0 value.
-	MOV64	x0, APRR_EL0_DEFAULT
-	MSR_APRR_EL0_X0
-#endif /* __APRR_SUPPORTED__ */
-
-#if defined(KERNEL_INTEGRITY_KTRR)
-	/*
-	 * Set KTRR registers immediately after wake/resume
-	 *
-	 * During power on reset, XNU stashed the kernel text region range values
-	 * into __DATA,__const which should be protected by AMCC RoRgn at this point.
-	 * Read this data and program/lock KTRR registers accordingly.
-	 * If either values are zero, we're debugging kernel so skip programming KTRR.
-	 */
-
-	/* refuse to boot if machine_lockdown() hasn't completed */
-	adrp	x17, EXT(lockdown_done)@page
-	ldr	w17, [x17, EXT(lockdown_done)@pageoff]
-	cbz	w17, .
-
-	// load stashed rorgn_begin
-	adrp	x17, EXT(ctrr_begin)@page
-	add		x17, x17, EXT(ctrr_begin)@pageoff
-	ldr		x17, [x17]
-#if DEBUG || DEVELOPMENT || CONFIG_DTRACE
-	// if rorgn_begin is zero, we're debugging. skip enabling ktrr
-	cbz		x17, Lskip_ktrr
-#else
-	cbz		x17, .
-#endif
-
-	// load stashed rorgn_end
-	adrp	x19, EXT(ctrr_end)@page
-	add		x19, x19, EXT(ctrr_end)@pageoff
-	ldr		x19, [x19]
-#if DEBUG || DEVELOPMENT || CONFIG_DTRACE
-	cbz		x19, Lskip_ktrr
-#else
-	cbz		x19, .
-#endif
-
-	msr		ARM64_REG_KTRR_LOWER_EL1, x17
-	msr		ARM64_REG_KTRR_UPPER_EL1, x19
-	mov		x17, #1
-	msr		ARM64_REG_KTRR_LOCK_EL1, x17
-Lskip_ktrr:
-#endif /* defined(KERNEL_INTEGRITY_KTRR) */
 
 	// Process reset handlers
 	adrp	x19, EXT(ResetHandlerData)@page			// Get address of the reset handler data
@@ -249,62 +161,6 @@ Lnext_cpu_data_entry:
 	b.eq	Lskip_cpu_reset_handler				// Not found
 	b		Lcheck_cpu_data_entry	// loop
 Lfound_cpu_data_entry:
-#if defined(KERNEL_INTEGRITY_CTRR)
-	/*
-	 * Program and lock CTRR if this CPU is non-boot cluster master. boot cluster will be locked
-	 * in machine_lockdown. pinst insns protected by VMSA_LOCK
-	 * A_PXN and A_MMUON_WRPROTECT options provides something close to KTRR behavior
-	 */
-
-	/* refuse to boot if machine_lockdown() hasn't completed */
-	adrp	x17, EXT(lockdown_done)@page
-	ldr	w17, [x17, EXT(lockdown_done)@pageoff]
-	cbz	w17, .
-
-	// load stashed rorgn_begin
-	adrp	x17, EXT(ctrr_begin)@page
-	add		x17, x17, EXT(ctrr_begin)@pageoff
-	ldr		x17, [x17]
-#if DEBUG || DEVELOPMENT || CONFIG_DTRACE
-	// if rorgn_begin is zero, we're debugging. skip enabling ctrr
-	cbz		x17, Lskip_ctrr
-#else
-	cbz		x17, .
-#endif
-
-	// load stashed rorgn_end
-	adrp	x19, EXT(ctrr_end)@page
-	add		x19, x19, EXT(ctrr_end)@pageoff
-	ldr		x19, [x19]
-#if DEBUG || DEVELOPMENT || CONFIG_DTRACE
-	cbz		x19, Lskip_ctrr
-#else
-	cbz		x19, .
-#endif
-
-	mrs		x18, ARM64_REG_CTRR_LOCK_EL1
-	cbnz	x18, Lskip_ctrr  /* don't touch if already locked */
-	msr		ARM64_REG_CTRR_A_LWR_EL1, x17
-	msr		ARM64_REG_CTRR_A_UPR_EL1, x19
-	mov		x18, #(CTRR_CTL_EL1_A_PXN | CTRR_CTL_EL1_A_MMUON_WRPROTECT)
-	msr		ARM64_REG_CTRR_CTL_EL1, x18
-	mov		x18, #1
-	msr		ARM64_REG_CTRR_LOCK_EL1, x18
-
-
-	isb
-	tlbi 	vmalle1
-	dsb 	ish
-	isb
-Lspin_ctrr_unlocked:
-	/* we shouldn't ever be here as cpu start is serialized by cluster in cpu_start(),
-	 * and first core started in cluster is designated cluster master and locks
-	 * both core and cluster. subsequent cores in same cluster will run locked from
-	 * from reset vector */
-	mrs		x18, ARM64_REG_CTRR_LOCK_EL1
-	cbz		x18, Lspin_ctrr_unlocked
-Lskip_ctrr:
-#endif
 	adrp	x20, EXT(const_boot_args)@page
 	add		x20, x20, EXT(const_boot_args)@pageoff
 	ldr		x0, [x21, CPU_RESET_HANDLER]		// Call CPU reset handler
@@ -607,29 +463,6 @@ LEXT(start_first_cpu)
 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 	MSR_VBAR_EL1_X0
 
-#if __APRR_SUPPORTED__
-	// Save the LR
-	mov		x1, lr
-
-#if XNU_MONITOR
-	// If the PPL is supported, we start out in PPL mode.
-	MOV64	x0, APRR_EL1_PPL
-#else
-	// Otherwise, we start out in default mode.
-	MOV64	x0, APRR_EL1_DEFAULT
-#endif
-
-	// Set the APRR state for EL1.
-	MSR_APRR_EL1_X0
-
-	// Set the APRR state for EL0.
-	MOV64	x0, APRR_EL0_DEFAULT
-	MSR_APRR_EL0_X0
-
-
-	// Restore the LR.
-	mov	lr, x1
-#endif /* __APRR_SUPPORTED__ */
 
 	// Get the kernel memory parameters from the boot args
 	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
@@ -849,7 +682,7 @@ common_start:
 #if defined(APPLEHURRICANE)
 	// <rdar://problem/26726624> Increase Snoop reservation in EDB to reduce starvation risk
 	// Needs to be done before MMU is enabled
-	HID_INSERT_BITS	ARM64_REG_HID5, ARM64_REG_HID5_CrdEdbSnpRsvd_mask, ARM64_REG_HID5_CrdEdbSnpRsvd_VALUE, x12
+	HID_INSERT_BITS	HID5, ARM64_REG_HID5_CrdEdbSnpRsvd_mask, ARM64_REG_HID5_CrdEdbSnpRsvd_VALUE, x12
 #endif
 
 #if defined(BCM2837)
@@ -904,73 +737,17 @@ common_start:
 
 1:
 #ifdef HAS_APPLE_PAC
-#ifdef __APSTS_SUPPORTED__
-	mrs		x0, ARM64_REG_APSTS_EL1
-	and		x1, x0, #(APSTS_EL1_MKEYVld)
-	cbz		x1, 1b 										// Poll APSTS_EL1.MKEYVld
-	mrs		x0, ARM64_REG_APCTL_EL1
-	orr		x0, x0, #(APCTL_EL1_AppleMode)
-#ifdef HAS_APCTL_EL1_USERKEYEN
-	orr		x0, x0, #(APCTL_EL1_UserKeyEn)
-	and		x0, x0, #~(APCTL_EL1_KernKeyEn)
-#else /* !HAS_APCTL_EL1_USERKEYEN */
-	orr		x0, x0, #(APCTL_EL1_KernKeyEn)
-#endif /* HAS_APCTL_EL1_USERKEYEN */
-	and		x0, x0, #~(APCTL_EL1_EnAPKey0)
-	msr		ARM64_REG_APCTL_EL1, x0
-
-
-#else
-	mrs		x0, ARM64_REG_APCTL_EL1
-	and		x1, x0, #(APCTL_EL1_MKEYVld)
-	cbz		x1, 1b 										// Poll APCTL_EL1.MKEYVld
-	orr		x0, x0, #(APCTL_EL1_AppleMode)
-	orr		x0, x0, #(APCTL_EL1_KernKeyEn)
-	msr		ARM64_REG_APCTL_EL1, x0
-#endif /* APSTS_SUPPORTED */
-
-	/* ISB necessary to ensure APCTL_EL1_AppleMode logic enabled before proceeding */
-	isb		sy
-	/* Load static kernel key diversification values */
-	ldr		x0, =KERNEL_ROP_ID
-	/* set ROP key. must write at least once to pickup mkey per boot diversification */
-	msr		APIBKeyLo_EL1, x0
-	add		x0, x0, #1
-	msr		APIBKeyHi_EL1, x0
-	add		x0, x0, #1
-	msr		APDBKeyLo_EL1, x0
-	add		x0, x0, #1
-	msr		APDBKeyHi_EL1, x0
-	add		x0, x0, #1
-	msr		ARM64_REG_KERNELKEYLO_EL1, x0
-	add		x0, x0, #1
-	msr		ARM64_REG_KERNELKEYHI_EL1, x0
-	/* set JOP key. must write at least once to pickup mkey per boot diversification */
-	add		x0, x0, #1
-	msr		APIAKeyLo_EL1, x0
-	add		x0, x0, #1
-	msr		APIAKeyHi_EL1, x0
-	add		x0, x0, #1
-	msr		APDAKeyLo_EL1, x0
-	add		x0, x0, #1
-	msr		APDAKeyHi_EL1, x0
-	/* set G key */
-	add		x0, x0, #1
-	msr		APGAKeyLo_EL1, x0
-	add		x0, x0, #1
-	msr		APGAKeyHi_EL1, x0
+#if HAS_PARAVIRTUALIZED_PAC
+	mov		x0, #VMAPPLE_PAC_SET_INITIAL_STATE
+	hvc		#0
+#endif /* HAS_PARAVIRTUALIZED_PAC */
 
 	// Enable caches, MMU, ROP and JOP
 	MOV64	x0, SCTLR_EL1_DEFAULT
 	orr		x0, x0, #(SCTLR_PACIB_ENABLED) /* IB is ROP */
 
-#if __APCFG_SUPPORTED__
-	// for APCFG systems, JOP keys are always on for EL1.
-	// JOP keys for EL0 will be toggled on the first time we pmap_switch to a pmap that has JOP enabled
-#else /* __APCFG_SUPPORTED__ */
 	MOV64	x1, SCTLR_JOP_KEYS_ENABLED
 	orr 	x0, x0, x1
-#endif /* !__APCFG_SUPPORTED__ */
 #else  /* HAS_APPLE_PAC */
 
 	// Enable caches and MMU
@@ -982,10 +759,8 @@ common_start:
 	MOV64	x1, SCTLR_EL1_DEFAULT
 #if HAS_APPLE_PAC
 	orr		x1, x1, #(SCTLR_PACIB_ENABLED)
-#if !__APCFG_SUPPORTED__
 	MOV64	x2, SCTLR_JOP_KEYS_ENABLED
 	orr		x1, x1, x2
-#endif /* !__APCFG_SUPPORTED__ */
 #endif /* HAS_APPLE_PAC */
 	cmp		x0, x1
 	bne		.
@@ -1007,26 +782,18 @@ common_start:
 
 
 #if defined(APPLE_ARM64_ARCH_FAMILY)
-	// Initialization common to all Apple targets
+	// Initialization common to all non-virtual Apple targets
+#if !APPLEVIRTUALPLATFORM
 	ARM64_IS_PCORE x15
-	ARM64_READ_EP_SPR x15, x12, ARM64_REG_EHID4, ARM64_REG_HID4
+	ARM64_READ_EP_SPR x15, x12, EHID4, HID4
 	orr		x12, x12, ARM64_REG_HID4_DisDcMVAOps
 	orr		x12, x12, ARM64_REG_HID4_DisDcSWL2Ops
-	ARM64_WRITE_EP_SPR x15, x12, ARM64_REG_EHID4, ARM64_REG_HID4
+	ARM64_WRITE_EP_SPR x15, x12, EHID4, HID4
+#endif  // !APPLEVIRTUALPLATFORM
 #endif  // APPLE_ARM64_ARCH_FAMILY
 
 	// Read MIDR before start of per-SoC tunables
 	mrs x12, MIDR_EL1
-
-#if defined(APPLELIGHTNING)
-	// Cebu <B0 is deprecated and unsupported (see rdar://problem/42835678)
-	EXEC_COREEQ_REVLO MIDR_CEBU_LIGHTNING, CPU_VERSION_B0, x12, x13
-	b .
-	EXEC_END
-	EXEC_COREEQ_REVLO MIDR_CEBU_THUNDER, CPU_VERSION_B0, x12, x13
-	b .
-	EXEC_END
-#endif
 
 	APPLY_TUNABLES x12, x13
 
@@ -1034,9 +801,9 @@ common_start:
 
 #if HAS_CLUSTER
 	// Unmask external IRQs if we're restarting from non-retention WFI
-	mrs		x9, ARM64_REG_CYC_OVRD
+	mrs		x9, CPU_OVRD
 	and		x9, x9, #(~(ARM64_REG_CYC_OVRD_irq_mask | ARM64_REG_CYC_OVRD_fiq_mask))
-	msr		ARM64_REG_CYC_OVRD, x9
+	msr		CPU_OVRD, x9
 #endif
 
 	// If x21 != 0, we're doing a warm reset, so we need to trampoline to the kernel pmap.

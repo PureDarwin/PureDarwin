@@ -20,7 +20,7 @@ config: $(OBJS)
 	@$(LOG_HOST_LD) "$@"
 	$(_v)$(HOST_CC) $(LDFLAGS) -o $@ $^
 	@$(LOG_HOST_CODESIGN) "$@"
-	$(_v)$(HOST_CODESIGN) -s - $@
+	$(_v)env CODESIGN_ALLOCATE=$(HOST_CODESIGN_ALLOCATE) $(HOST_CODESIGN) -s - $@
 
 %.o: %.c
 	@$(LOG_HOST_CC) "$@"

@@ -227,7 +227,11 @@ extern upl_size_t upl_get_size(
 extern upl_t upl_associated_upl(upl_t upl);
 extern void upl_set_associated_upl(upl_t upl, upl_t associated_upl);
 
+#ifndef MACH_KERNEL_PRIVATE
+typedef struct vm_page  *vm_page_t;
+#endif
 #ifdef  XNU_KERNEL_PRIVATE
+#include <vm/vm_kern.h>
 
 extern upl_size_t upl_adjusted_size(
 	upl_t upl,
@@ -252,22 +256,18 @@ extern void iopl_valid_data(
 	upl_t                   upl_ptr,
 	vm_tag_t        tag);
 
-#endif  /* XNU_KERNEL_PRIVATE */
-
-extern struct vnode * upl_lookup_vnode(upl_t upl);
-
-#ifndef MACH_KERNEL_PRIVATE
-typedef struct vm_page  *vm_page_t;
-#endif
-
-extern void                vm_page_free_list(
+extern void               vm_page_free_list(
 	vm_page_t   mem,
 	boolean_t   prepare_object);
 
 extern kern_return_t      vm_page_alloc_list(
 	int         page_count,
-	int                 flags,
-	vm_page_t * list);
+	kma_flags_t flags,
+	vm_page_t  *list);
+
+#endif  /* XNU_KERNEL_PRIVATE */
+
+extern struct vnode * upl_lookup_vnode(upl_t upl);
 
 extern void               vm_page_set_offset(vm_page_t page, vm_object_offset_t offset);
 extern vm_object_offset_t vm_page_get_offset(vm_page_t page);
@@ -276,9 +276,9 @@ extern vm_page_t          vm_page_get_next(vm_page_t page);
 
 extern kern_return_t    mach_vm_pressure_level_monitor(boolean_t wait_for_pressure, unsigned int *pressure_level);
 
-#if !CONFIG_EMBEDDED
+#if XNU_TARGET_OS_OSX
 extern kern_return_t    vm_pageout_wait(uint64_t deadline);
-#endif
+#endif /* XNU_TARGET_OS_OSX */
 
 #ifdef  MACH_KERNEL_PRIVATE
 
@@ -797,6 +797,20 @@ extern struct vm_pageout_debug vm_pageout_debug;
 #endif
 
 #define MAX_COMPRESSOR_THREAD_COUNT      8
+
+struct vm_compressor_swapper_stats {
+	uint64_t unripe_under_30s;
+	uint64_t unripe_under_60s;
+	uint64_t unripe_under_300s;
+	uint64_t reclaim_swapins;
+	uint64_t defrag_swapins;
+	uint64_t compressor_swap_threshold_exceeded;
+	uint64_t external_q_throttled;
+	uint64_t free_count_below_reserve;
+	uint64_t thrashing_detected;
+	uint64_t fragmentation_detected;
+};
+extern struct vm_compressor_swapper_stats vmcs_stats;
 
 #if DEVELOPMENT || DEBUG
 typedef struct vmct_stats_s {
