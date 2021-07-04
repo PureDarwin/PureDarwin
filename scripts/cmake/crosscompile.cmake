@@ -85,7 +85,7 @@ function(add_kext_bundle name)
     set_property(TARGET ${name} PROPERTY PREFIX "")
     set_property(TARGET ${name} PROPERTY SUFFIX "")
 
-    target_compile_definitions(${name} PRIVATE TARGET_OS_OSX)
+    target_compile_definitions(${name} PRIVATE TARGET_OS_OSX KERNEL)
     target_compile_options(${name} PRIVATE -fapple-kext)
     target_link_options(${name} PRIVATE -fapple-kext)
     target_link_options(${name} PRIVATE "LINKER:-bundle")
