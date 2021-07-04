@@ -1,5 +1,6 @@
 add_subdirectory(AppleI386GenericPlatform)
 add_subdirectory(AvailabilityVersions)
+add_subdirectory(IOStorageFamily)
 add_subdirectory(libdispatch)
 add_subdirectory(libplatform)
 add_subdirectory(libpthread)
