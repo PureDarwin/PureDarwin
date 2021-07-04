@@ -28,13 +28,6 @@
 #ifndef __CLANG_STDATOMIC_H
 #define __CLANG_STDATOMIC_H
 
-/* If we're hosted, fall back to the system's stdatomic.h. FreeBSD, for
- * example, already has a Clang-compatible stdatomic.h header.
- */
-#if __STDC_HOSTED__ && __has_include_next(<stdatomic.h>)
-# include_next <stdatomic.h>
-#else
-
 #include <stddef.h>
 #include <stdint.h>
 
@@ -193,6 +186,5 @@ void atomic_flag_clear_explicit(volatile atomic_flag *, memory_order);
 }
 #endif
 
-#endif /* __STDC_HOSTED__ */
 #endif /* __CLANG_STDATOMIC_H */
 
