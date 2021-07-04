@@ -18,6 +18,7 @@ target_sources(host_ld PRIVATE
 )
 
 target_compile_definitions(host_ld PRIVATE __DARWIN_UNIX03)
+target_compile_options(host_ld PRIVATE "-Wno-#warnings" -Wno-deprecated)
 target_link_libraries(host_ld PRIVATE
     host_libxar host_ld_helper host_ld_BlocksRuntime host_ld_libparsers host_ld_libpasses host_libstuff
     OpenSSL::SSL OpenSSL::Crypto
