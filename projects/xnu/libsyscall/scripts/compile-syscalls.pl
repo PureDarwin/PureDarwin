@@ -38,14 +38,22 @@ use File::Basename ();
 my $basename = File::Basename::basename($0);
 
 sub usage {
-	print "$basename: <source list> <output archive>";
+	print "$basename: <source list> <output archive> [-I<dir> ...]";
 	exit 1;
 }
 
-usage unless scalar(@ARGV) == 2;
+my $sourceList = shift @ARGV;
+my $outputFile = shift @ARGV;
 
-my $sourceList = $ARGV[0];
-my $outputFile = $ARGV[1];
+my @includes = ();
+for my $arg (@ARGV) {
+	if ($arg =~ /^-I/) {
+		push(@includes, $arg);
+	} else {
+		usage;
+	}
+}
+print(@includes, "\n");
 
 my $f = IO::File->new($sourceList, 'r');
 die "$basename: $sourceList: $!\n" unless defined($f);
@@ -58,20 +66,20 @@ chomp @sources;
 undef $f;
 
 # compiler options
-chomp(my $CC = `xcrun -sdk "$ENV{'SDKROOT'}" -find cc`);
+chomp(my $CC = `xcrun -find cc`);
 my @CFLAGS = (
 	"-x assembler-with-cpp",
 	"-c",
-	"-isysroot", $ENV{'SDKROOT'} || "/",
-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/usr/include",
-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/usr/local/include",
-	"-I".$ENV{"SDKROOT"}."/".$ENV{"SDK_INSTALL_HEADERS_ROOT"}."/System/Library/Frameworks/System.framework/PrivateHeaders",
 );
 
-chomp(my $LIBTOOL = `xcrun -sdk "$ENV{'SDKROOT'}" -find libtool`);
+chomp(my $LIBTOOL = `xcrun -find libtool`);
 my @LIBTOOLFLAGS = (
 	"-static",
 );
+
+for my $flag (@includes) {
+	push(@CFLAGS, $flag);
+}
 
 # architectures
 for my $arch (@archs) {

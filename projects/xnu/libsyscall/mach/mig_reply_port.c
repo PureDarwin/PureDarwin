@@ -29,7 +29,7 @@
 #include <mach/mach.h>
 #include <mach/mach_init.h>
 #include <sys/cdefs.h>
-#include "tsd.h"
+#include <os/tsd.h>
 
 __XNU_PRIVATE_EXTERN mach_port_t _task_reply_port = MACH_PORT_NULL;
 

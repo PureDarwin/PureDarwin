@@ -89,3 +89,6 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/lib/dtrace DESTINATION usr
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/libexec DESTINATION usr COMPONENT DeveloperTools)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/share/man DESTINATION usr/share COMPONENT BaseSystem)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/share/misc DESTINATION usr/share COMPONENT BaseSystem)
+
+
+add_subdirectory(libsyscall)

@@ -26,8 +26,8 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#include "string/strings.h"
 #include "_libkernel_init.h"
-#include "strings.h"
 
 extern _libkernel_functions_t _libkernel_functions;
 extern void mig_os_release(void* ptr);

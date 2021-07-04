@@ -67,7 +67,7 @@
 #include "errorlib.h"
 #if !TARGET_OS_DRIVERKIT
 #include "err_libkern.sub"
-#include "err_iokit.sub"
+// #include "err_iokit.sub" // FIXME: Re-enable once IOFireWireLib.h, IOUSBLib.h are found
 #endif // !TARGET_OS_DRIVERKIT
 #include "err_ipc.sub"
 #include "err_kern.sub"
@@ -107,35 +107,35 @@ const struct error_system _mach_errors[err_max_system + 1] = {
 		.subsystem = err_mach_ipc_sub,
 	},
 
-	/* 0x05 */ errorlib_system_null,
-	/* 0x06 */ errorlib_system_null, /* 0x07 */ errorlib_system_null,
-	/* 0x08 */ errorlib_system_null, /* 0x09 */ errorlib_system_null,
-	/* 0x0a */ errorlib_system_null, /* 0x0b */ errorlib_system_null,
-	/* 0x0c */ errorlib_system_null, /* 0x0d */ errorlib_system_null,
-	/* 0x0e */ errorlib_system_null, /* 0x0f */ errorlib_system_null,
+	/* 0x05 */ errorlib_sub_null,
+	/* 0x06 */ errorlib_sub_null, /* 0x07 */ errorlib_sub_null,
+	/* 0x08 */ errorlib_sub_null, /* 0x09 */ errorlib_sub_null,
+	/* 0x0a */ errorlib_sub_null, /* 0x0b */ errorlib_sub_null,
+	/* 0x0c */ errorlib_sub_null, /* 0x0d */ errorlib_sub_null,
+	/* 0x0e */ errorlib_sub_null, /* 0x0f */ errorlib_sub_null,
 
-	/* 0x10 */ errorlib_system_null, /* 0x11 */ errorlib_system_null,
-	/* 0x12 */ errorlib_system_null, /* 0x13 */ errorlib_system_null,
-	/* 0x14 */ errorlib_system_null, /* 0x15 */ errorlib_system_null,
-	/* 0x16 */ errorlib_system_null, /* 0x17 */ errorlib_system_null,
-	/* 0x18 */ errorlib_system_null, /* 0x19 */ errorlib_system_null,
-	/* 0x1a */ errorlib_system_null, /* 0x1b */ errorlib_system_null,
-	/* 0x1c */ errorlib_system_null, /* 0x1d */ errorlib_system_null,
-	/* 0x1e */ errorlib_system_null, /* 0x1f */ errorlib_system_null,
+	/* 0x10 */ errorlib_sub_null, /* 0x11 */ errorlib_sub_null,
+	/* 0x12 */ errorlib_sub_null, /* 0x13 */ errorlib_sub_null,
+	/* 0x14 */ errorlib_sub_null, /* 0x15 */ errorlib_sub_null,
+	/* 0x16 */ errorlib_sub_null, /* 0x17 */ errorlib_sub_null,
+	/* 0x18 */ errorlib_sub_null, /* 0x19 */ errorlib_sub_null,
+	/* 0x1a */ errorlib_sub_null, /* 0x1b */ errorlib_sub_null,
+	/* 0x1c */ errorlib_sub_null, /* 0x1d */ errorlib_sub_null,
+	/* 0x1e */ errorlib_sub_null, /* 0x1f */ errorlib_sub_null,
 
-	/* 0x20 */ errorlib_system_null, /* 0x21 */ errorlib_system_null,
-	/* 0x22 */ errorlib_system_null, /* 0x23 */ errorlib_system_null,
-	/* 0x24 */ errorlib_system_null, /* 0x25 */ errorlib_system_null,
-	/* 0x26 */ errorlib_system_null, /* 0x27 */ errorlib_system_null,
-	/* 0x28 */ errorlib_system_null, /* 0x29 */ errorlib_system_null,
-	/* 0x2a */ errorlib_system_null, /* 0x2b */ errorlib_system_null,
-	/* 0x2c */ errorlib_system_null, /* 0x2d */ errorlib_system_null,
-	/* 0x2e */ errorlib_system_null, /* 0x2f */ errorlib_system_null,
+	/* 0x20 */ errorlib_sub_null, /* 0x21 */ errorlib_sub_null,
+	/* 0x22 */ errorlib_sub_null, /* 0x23 */ errorlib_sub_null,
+	/* 0x24 */ errorlib_sub_null, /* 0x25 */ errorlib_sub_null,
+	/* 0x26 */ errorlib_sub_null, /* 0x27 */ errorlib_sub_null,
+	/* 0x28 */ errorlib_sub_null, /* 0x29 */ errorlib_sub_null,
+	/* 0x2a */ errorlib_sub_null, /* 0x2b */ errorlib_sub_null,
+	/* 0x2c */ errorlib_sub_null, /* 0x2d */ errorlib_sub_null,
+	/* 0x2e */ errorlib_sub_null, /* 0x2f */ errorlib_sub_null,
 
-	/* 0x30 */ errorlib_system_null, /* 0x31 */ errorlib_system_null,
-	/* 0x32 */ errorlib_system_null, /* 0x33 */ errorlib_system_null,
-	/* 0x34 */ errorlib_system_null, /* 0x35 */ errorlib_system_null,
-	/* 0x36 */ errorlib_system_null,
+	/* 0x30 */ errorlib_sub_null, /* 0x31 */ errorlib_sub_null,
+	/* 0x32 */ errorlib_sub_null, /* 0x33 */ errorlib_sub_null,
+	/* 0x34 */ errorlib_sub_null, /* 0x35 */ errorlib_sub_null,
+	/* 0x36 */ errorlib_sub_null,
 
 #if !TARGET_OS_DRIVERKIT
 	/* 0x37; err_libkern */
@@ -145,22 +145,22 @@ const struct error_system _mach_errors[err_max_system + 1] = {
 		.subsystem = err_libkern_sub,
 	},
 
-	/* 0x38; err_iokit */
-	{
-		.max_sub = errlib_count(err_iokit_sub),
-		.bad_sub = "(iokit/?) unknown subsystem error",
-		.subsystem = err_iokit_sub,
-		.map_table = err_iokit_sub_map,
-		.map_count = errlib_count(err_iokit_sub_map)
-	},
+	// /* 0x38; err_iokit */
+	// {
+	// 	.max_sub = errlib_count(err_iokit_sub),
+	// 	.bad_sub = "(iokit/?) unknown subsystem error",
+	// 	.subsystem = err_iokit_sub,
+	// 	.map_table = err_iokit_sub_map,
+	// 	.map_count = errlib_count(err_iokit_sub_map)
+	// },
 #else
-	/* 0x37 */ errorlib_system_null, /* 0x38 */ errorlib_system_null,
+	/* 0x37 */ errorlib_sub_null, /* 0x38 */ errorlib_sub_null,
 #endif // TARGET_OS_DRIVERKIT
 
-	/* 0x39 */ errorlib_system_null,
-	/* 0x3a */ errorlib_system_null, /* 0x3b */ errorlib_system_null,
-	/* 0x3c */ errorlib_system_null, /* 0x3d */ errorlib_system_null,
-	/* 0x3e */ errorlib_system_null, /* 0x3f */ errorlib_system_null,
+	/* 0x39 */ errorlib_sub_null,
+	/* 0x3a */ errorlib_sub_null, /* 0x3b */ errorlib_sub_null,
+	/* 0x3c */ errorlib_sub_null, /* 0x3d */ errorlib_sub_null,
+	/* 0x3e */ errorlib_sub_null, /* 0x3f */ errorlib_sub_null,
 };
 
 // int error_system_count = errlib_count(_mach_errors);
