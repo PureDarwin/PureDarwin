@@ -41,3 +41,6 @@ target_include_directories(IOStorageFamilyHeaders INTERFACE include)
 
 add_library(IOStorageFamilyUserHeaders INTERFACE)
 target_include_directories(IOStorageFamilyUserHeaders INTERFACE user_include)
+
+install(DIRECTORY user_include/IOKit/storage DESTINATION /System/Library/Frameworks/IOKit.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
+install(DIRECTORY include/IOKit/storage DESTINATION /System/Library/Frameworks/Kernel.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
