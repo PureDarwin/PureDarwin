@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "*.*proj": "xml",
-        "_libkernel_init.h": "c",
-        "tsd.h": "c",
-        "thread.h": "c"
-    }
-}
