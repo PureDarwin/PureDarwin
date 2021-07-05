@@ -27,6 +27,7 @@ EXPORT_MI_LIST	= $(filter-out $(NOT_EXPORT_HEADERS), $(ALL_HEADERS))
 EXPORT_MI_DIR = IOKit/$(MI_DIR)
 
 INSTALL_KF_MI_LIST = $(filter-out $(NOT_KF_MI_HEADERS), $(ALL_HEADERS))
+INSTALL_KF_MI_LCL_LIST = $(NOT_KF_MI_HEADERS)
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)

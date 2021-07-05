@@ -16,6 +16,7 @@ include $(MakeInc_def)
 
 INSTINC_SUBDIRS = \
 	nvram \
+	perfcontrol \
 	platform \
 	power \
 	pwr_mgt \
