@@ -2896,8 +2896,8 @@ int dkreadwrite(dkr_t dkr, dkrtype_t dkrtype)
 
     IOStorageAttributes  attributes;
     IOMemoryDescriptor * buffer;
-    register UInt64      byteCount;
-    register UInt64      byteStart;
+    UInt64               byteCount;
+    UInt64               byteStart;
     UInt64               mediaSize;
     MinorSlot *          minor;
     IOReturn             status;
