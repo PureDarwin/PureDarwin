@@ -1,3 +1,4 @@
+add_subdirectory(AppleI386GenericPlatform)
 add_subdirectory(AvailabilityVersions)
 add_subdirectory(libdispatch)
 add_subdirectory(libplatform)

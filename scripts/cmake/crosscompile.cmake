@@ -30,13 +30,14 @@ function(add_darwin_static_library name)
 endfunction()
 
 function(add_darwin_shared_library name)
-    cmake_parse_arguments(SL "" "MACOSX_VERSION_MIN;INSTALL_NAME_DIR" "RPATHS" ${ARGN})
+    cmake_parse_arguments(SL "MODULE" "MACOSX_VERSION_MIN;INSTALL_NAME_DIR" "RPATHS" ${ARGN})
 
-    if(NOT SL_INSTALL_NAME_DIR)
-        message(WARNING "Target ${name} should have INSTALL_NAME_DIR defined")
+    if(SL_MODULE)
+        add_library(${name} MODULE)
+    else()
+        add_library(${name} SHARED)
     endif()
 
-    add_library(${name} SHARED)
     add_dependencies(${name} darwin_ld)
     target_link_options(${name} PRIVATE -fuse-ld=$<TARGET_FILE:darwin_ld>)
 
@@ -56,7 +57,10 @@ function(add_darwin_shared_library name)
 
     if(SL_INSTALL_NAME_DIR)
         target_link_options(${name} PRIVATE "LINKER:-install_name;${SL_INSTALL_NAME_DIR}/$<TARGET_FILE_NAME:${name}>")
+    elseif(NOT SL_MODULE)
+        message(WARNING "Shared library target ${name} should have INSTALL_NAME_DIR defined")
     endif()
+
     foreach(rpath IN LISTS SL_RPATHS)
         target_link_options(${name} PRIVATE "SHELL:-rpath ${rpath}")
     endforeach()

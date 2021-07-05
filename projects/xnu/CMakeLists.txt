@@ -92,3 +92,4 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/share/misc DESTINATION usr
 
 
 add_subdirectory(libsyscall)
+add_subdirectory(libkern/kmod)
