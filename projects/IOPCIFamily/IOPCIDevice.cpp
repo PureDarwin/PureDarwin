@@ -26,7 +26,6 @@
 
 #include <IOKit/pci/IOPCIBridge.h>
 #include <IOKit/pci/IOPCIPrivate.h>
-#include <PCIDriverKit/PCIDriverKitPrivate.h>
 #include <IOKit/pci/IOAGPDevice.h>
 #include <IOKit/pci/IOPCIConfigurator.h>
 #include <IOKit/pci/IOPCIPrivate.h>
