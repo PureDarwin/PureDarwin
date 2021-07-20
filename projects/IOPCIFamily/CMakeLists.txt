@@ -9,6 +9,8 @@ target_sources(IOPCIFamily PRIVATE
     IOPCIRange.cpp
 )
 
+set_property(TARGET IOPCIFamily PROPERTY CXX_STANDARD 11)
+target_compile_options(IOPCIFamily PRIVATE -Wno-implicit-int-conversion -Wno-inconsistent-missing-override -Wno-sign-conversion)
 target_link_libraries(IOPCIFamily PRIVATE IOPCIFamilyHeaders)
 install(TARGETS IOPCIFamily DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
 
