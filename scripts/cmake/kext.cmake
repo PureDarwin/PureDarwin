@@ -73,7 +73,7 @@ function(add_kmod_info target)
         set(KEXT_ANTIMAIN_FUNCTION "0")
     endif()
 
-    configure_file(${PUREDARWIN_SOURCE_DIR}/scripts/cmake/templates/kmod_info.c ${CMAKE_CURRENT_BINARY_DIR}/kmod_info.c)
+    configure_file(${PUREDARWIN_SOURCE_DIR}/scripts/cmake/templates/kmod_info.c.in ${CMAKE_CURRENT_BINARY_DIR}/kmod_info.c)
     target_sources(${target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/kmod_info.c)
     target_link_libraries(${target} PRIVATE libkmod)
 endfunction()
