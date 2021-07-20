@@ -52,6 +52,7 @@ target_include_directories(xnu_kernel_private_headers INTERFACE
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/sym)
 externalproject_add(xnu
+    PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_build
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND true # disable auto CMake configure
     BUILD_COMMAND
