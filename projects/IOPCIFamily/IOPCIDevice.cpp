@@ -1836,7 +1836,7 @@ IOReturn IOPCIDevice::deviceMemoryWrite8(uint8_t  memoryIndex,
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-#if TARGET_OS_OSX
+#if TARGET_OS_OSX && !defined(__PUREDARWIN__)
 
 #pragma mark Public DriverKit Methods
 
