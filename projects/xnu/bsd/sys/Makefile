@@ -274,7 +274,7 @@ _posix_availability.h: $(MAKE_POSIX_AVAILABILITY)
 	@$(LOG_GENERATE) "bsd/sys/$@$(Color0)"
 	$(_v)$(MAKE_POSIX_AVAILABILITY) "$@"
 
-MAKE_SYMBOL_ALIASING = $(SRCROOT)/bsd/sys/make_symbol_aliasing.sh
+MAKE_SYMBOL_ALIASING = $(OBJROOT)/bsd/sys/make_symbol_aliasing.sh
 _symbol_aliasing.h: $(MAKE_SYMBOL_ALIASING)
 	@$(LOG_GENERATE) "bsd/sys/$@$(Color0)"
 	$(_v)$(MAKE_SYMBOL_ALIASING) "$(SDKROOT)" "$@"

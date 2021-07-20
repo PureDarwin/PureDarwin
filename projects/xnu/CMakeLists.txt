@@ -6,6 +6,7 @@ externalproject_add(xnu_headers.extproj
     BUILD_COMMAND
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
+            -D XNU_OBJ=<BINARY_DIR>
             -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
@@ -55,6 +56,7 @@ externalproject_add(xnu
     BUILD_COMMAND
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
+            -D XNU_OBJ=<BINARY_DIR>
             -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
