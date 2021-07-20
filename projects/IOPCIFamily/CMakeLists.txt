@@ -1,4 +1,4 @@
-add_kext_bundle(IOPCIFamily INFO_PLIST Info.plist BUNDLE_IDENTIFIER com.apple.iokit.IOPCIFamily BUNDLE_VERSION 2.4.1)
+add_kext_bundle(IOPCIFamily KERNEL_PRIVATE INFO_PLIST Info.plist BUNDLE_IDENTIFIER com.apple.iokit.IOPCIFamily BUNDLE_VERSION 2.4.1)
 target_sources(IOPCIFamily PRIVATE
     IOPCIBridge.cpp
     IOPCIConfigurator.cpp
@@ -10,7 +10,7 @@ target_sources(IOPCIFamily PRIVATE
 )
 
 set_property(TARGET IOPCIFamily PROPERTY CXX_STANDARD 11)
-target_compile_options(IOPCIFamily PRIVATE -Wno-implicit-int-conversion -Wno-inconsistent-missing-override -Wno-sign-conversion)
+target_compile_options(IOPCIFamily PRIVATE -Wno-implicit-int-conversion -Wno-inconsistent-missing-override -Wno-sign-conversion -Wno-shadow)
 target_link_libraries(IOPCIFamily PRIVATE IOPCIFamilyHeaders)
 install(TARGETS IOPCIFamily DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
 
