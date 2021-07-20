@@ -485,7 +485,7 @@ IOReturn IOPCIDevice::setPCIPowerState(uint8_t powerState, uint32_t options)
 						{
 							bits &= ~kPCIPMCSPMEEnable;
 							bits |= kPCIPMCSPMEStatus;
-							prevState = -1U;
+							prevState = -1;
 						}
 						else
 						{
