@@ -104,7 +104,7 @@ enum {
 */
 
 __exported_push
-class __kpi_deprecated("Use PCIDriverKit") IOAGPDevice : public IOPCIDevice
+class IOAGPDevice : public IOPCIDevice
 {
     OSDeclareDefaultStructors(IOAGPDevice)
 

@@ -55,7 +55,7 @@ enum {
 */
 
 __exported_push
-class __kpi_deprecated("Use PCIDriverKit") IOPCIBridge : public IOService
+class IOPCIBridge : public IOService
 {
     friend class IOPCIDevice;
     friend class IOPCI2PCIBridge;
@@ -341,7 +341,7 @@ protected:
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-class __kpi_deprecated("Use PCIDriverKit") IOPCI2PCIBridge : public IOPCIBridge
+class IOPCI2PCIBridge : public IOPCIBridge
 {
     friend class IOPCIEventSource;
     friend class IOPCIDevice;

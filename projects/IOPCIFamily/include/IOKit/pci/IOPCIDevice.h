@@ -27,10 +27,6 @@
 #include <IOKit/IOTypes.h>
 #include <IOKit/pci/IOPCIFamilyDefinitions.h>
 
-#if TARGET_OS_OSX
-#include <PCIDriverKit/IOPCIDevice.h>
-#endif
-
 /* Definitions of PCI Config Registers */
 enum {
     kIOPCIConfigVendorID                = kIOPCIConfigurationOffsetVendorID,
@@ -251,7 +247,7 @@ struct IOPCIEvent
 };
 
 __exported_push
-class __kpi_deprecated("Use PCIDriverKit") IOPCIEventSource : public IOEventSource
+class IOPCIEventSource : public IOEventSource
 {
     friend class IOPCIBridge;
     friend class IOPCI2PCIBridge;
@@ -347,13 +343,9 @@ Matches a device whose class code is 0x0200zz, an ethernet device.
 */
 
 __exported_push
-class __kpi_deprecated("Use PCIDriverKit") IOPCIDevice : public IOService
+class IOPCIDevice : public IOService
 {
-#if TARGET_OS_OSX
-    OSDeclareDefaultStructorsWithDispatch(IOPCIDevice)
-#else
     OSDeclareDefaultStructors(IOPCIDevice)
-#endif
 
     friend class IOPCIBridge;
     friend class IOPCI2PCIBridge;
