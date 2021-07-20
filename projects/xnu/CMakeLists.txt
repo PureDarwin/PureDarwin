@@ -50,6 +50,7 @@ target_include_directories(xnu_kernel_private_headers INTERFACE
 
 
 
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/sym)
 externalproject_add(xnu
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND true # disable auto CMake configure
@@ -70,7 +71,7 @@ externalproject_add(xnu
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
-            DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
+            SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
     INSTALL_COMMAND true # installed during build
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
