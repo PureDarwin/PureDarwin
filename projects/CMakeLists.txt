@@ -1,5 +1,6 @@
 add_subdirectory(AppleAPIC)
 add_subdirectory(AppleI386GenericPlatform)
+add_subdirectory(AppleIntelPIIXATA)
 add_subdirectory(ApplePS2Controller)
 add_subdirectory(AvailabilityVersions)
 add_subdirectory(IOACPIFamily)
