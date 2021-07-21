@@ -30,17 +30,36 @@ add_library(IOStorageFamilyHeaders INTERFACE)
 target_include_directories(IOStorageFamilyHeaders INTERFACE include)
 
 
-# The files in user_include were created by running the following command:
-#
-# for FILE in $(ls include/IOKit/storage); do
-#   unifdef -UKERNEL -o user_include/IOKit/storage/$(basename $FILE) $FILE
-# done
-#
-# Be sure to rerun this command if the contents of the kernel headers change.
-# Also, IOBlockStoragePerfControlExports.h is not exported to user space.
+add_darwin_object_library(IOStorageFamilyUserHeaders)
+target_sources(IOStorageFamilyUserHeaders PRIVATE user_stub.c)
+target_include_directories(IOStorageFamilyUserHeaders INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/user_include)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage)
 
-add_library(IOStorageFamilyUserHeaders INTERFACE)
-target_include_directories(IOStorageFamilyUserHeaders INTERFACE user_include)
+set(HEADERS
+    IOAppleLabelScheme.h
+    IOApplePartitionScheme.h
+    IOBlockStorageDevice.h
+    IOBlockStorageDriver.h
+    IOFDiskPartitionScheme.h
+    IOFilterScheme.h
+    IOGUIDPartitionScheme.h
+    IOMedia.h
+    IOMediaBSDClient.h
+    IOPartitionScheme.h
+    IOStorage.h
+    IOStorageCardCharacteristics.h
+    IOStorageControllerCharacteristics.h
+    IOStorageDeviceCharacteristics.h
+    IOStorageProtocolCharacteristics.h
+)
+foreach(file IN LISTS HEADERS)
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file}
+        COMMAND $<TARGET_FILE:unifdef> -UKERNEL -o ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file} ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
+        DEPENDS unifdef ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
+        COMMENT "unifdef ${file}" VERBATIM
+    )
+    target_sources(IOStorageFamilyUserHeaders PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file})
+endforeach()
 
-install(DIRECTORY user_include/IOKit/storage DESTINATION /System/Library/Frameworks/IOKit.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage DESTINATION /System/Library/Frameworks/IOKit.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
 install(DIRECTORY include/IOKit/storage DESTINATION /System/Library/Frameworks/Kernel.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
