@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>AppleAPIC</string>
+	<key>CFBundleGetInfoString</key>
+	<string>1.4, Copyright PureDarwin Project. 2003-2008</string>
+	<key>CFBundleIconFile</key>
+	<string></string>
+	<key>CFBundleIdentifier</key>
+	<string>com.apple.driver.AppleAPIC</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>I/O APIC Interrupt Controller Driver</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.4</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>1.4</string>
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>8259-pic</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.apple.driver.AppleAPIC</string>
+			<key>IOClass</key>
+			<string>Apple8259PICInterruptController</string>
+			<key>IONameMatch</key>
+			<string>8259-pic</string>
+			<key>IOProbeScore</key>
+			<integer>1000</integer>
+			<key>IOProviderClass</key>
+			<string>IOPlatformDevice</string>
+		</dict>
+		<key>io-apic</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.apple.driver.AppleAPIC</string>
+			<key>IOClass</key>
+			<string>AppleAPICInterruptController</string>
+			<key>IONameMatch</key>
+			<string>io-apic</string>
+			<key>IOProviderClass</key>
+			<string>IOPlatformDevice</string>
+		</dict>
+	</dict>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright PureDarwin Project</string>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.kpi.iokit</key>
+		<string>8.7.2</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>8.7.2</string>
+	</dict>
+	<key>OSBundleRequired</key>
+	<string>Root</string>
+</dict>
+</plist>

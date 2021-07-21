@@ -133,13 +133,8 @@ void ATATimerEventSource::disable()
     super::disable();
 }
 
-IOReturn ATATimerEventSource::wakeAtTime(UnsignedWide inAbstime)
+IOReturn ATATimerEventSource::wakeAtTime(UInt64 inAbstime)
 {
 	hasExpired = kTimedOutFalse;
-#if ABSOLUTETIME_SCALAR_TYPE
-	UInt64	abstime = (UInt64)inAbstime.hi << 32 | (UInt64)inAbstime.lo;
-    return super::wakeAtTime( abstime );
-#else
 	return super::wakeAtTime(inAbstime);
-#endif	/* ABSOLUTETIME_SCALAR_TYPE */
 }
