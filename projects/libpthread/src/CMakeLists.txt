@@ -7,13 +7,13 @@ target_sources(libpthread PRIVATE
     pthread_cancelable.c
     pthread_cond.c
     pthread_mutex.c
-    qos.c
     pthread_rwlock.c
     pthread_cwd.c
     pthread_tsd.c
     pthread_atfork.c
     pthread_dependency.c
     pthread_asm.S
+    qos.c
     variants/pthread_cancelable_cancel.c
 )
 target_include_directories(libpthread PUBLIC ../include)
@@ -23,3 +23,22 @@ target_link_options(libpthread PRIVATE "LINKER:-alias_file,pthread.aliases")
 target_link_libraries(libpthread PRIVATE libsystem_kernel)
 
 add_firstpass_library(libpthread)
+
+
+add_darwin_static_library(libpthread_dyld)
+target_sources(libpthread_dyld PRIVATE
+    pthread.c
+    pthread_cancelable.c
+    pthread_cond.c
+    pthread_mutex.c
+    pthread_rwlock.c
+    pthread_cwd.c
+    pthread_tsd.c
+    pthread_atfork.c
+    pthread_dependency.c
+    qos.c
+)
+target_include_directories(libpthread_dyld PUBLIC ../include)
+target_include_directories(libpthread_dyld PRIVATE .. ../private)
+target_compile_definitions(libpthread_dyld PRIVATE VARIANT_DYLD)
+target_compile_options(libpthread_dyld PRIVATE -fno-stack-protector -fno-stack-check -fno-builtin)
