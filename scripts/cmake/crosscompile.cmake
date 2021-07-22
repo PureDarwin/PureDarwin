@@ -1,3 +1,8 @@
+define_property(TARGET PROPERTY INSTALL_NAME_LEAF
+    BRIEF_DOCS "Filename to be used in the install name of a shared library"
+    FULL_DOCS "The filename to be appended to the INSTALL_NAME_DIR parameter to add_darwin_shared_library(). Defaults to \"$<TARGET_FILE_NAME:{tgt}>\"."
+)
+
 function(add_darwin_executable name)
     cmake_parse_arguments(SL "NO_STANDARD_LIBRARIES" "MACOSX_VERSION_MIN" "" ${ARGN})
 
@@ -60,8 +65,9 @@ function(add_darwin_shared_library name)
     endif()
 
     if(SL_INSTALL_NAME_DIR)
-        set_property(TARGET ${name} PROPERTY INSTALL_NAME_DIR ${SL_INSTALL_NAME_DIR})
-        target_link_options(${name} PRIVATE "LINKER:-install_name;${SL_INSTALL_NAME_DIR}/$<TARGET_FILE_NAME:${name}>")
+        set_property(TARGET ${name} PROPERTY NO_SONAME TRUE)
+        set_property(TARGET ${name} PROPERTY INSTALL_NAME_LEAF $<TARGET_FILE_NAME:${name}>)
+        target_link_options(${name} PRIVATE -install_name ${SL_INSTALL_NAME_DIR}/$<GENEX_EVAL:$<TARGET_PROPERTY:${name},INSTALL_NAME_LEAF>>)
     elseif(NOT SL_MODULE)
         message(WARNING "Shared library target ${name} should have INSTALL_NAME_DIR defined")
     endif()
@@ -78,5 +84,3 @@ function(add_darwin_object_library name)
     target_compile_options(${name} PRIVATE -target x86_64-apple-darwin20)
     target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
 endfunction()
-
-set(CMAKE_SKIP_RPATH TRUE)

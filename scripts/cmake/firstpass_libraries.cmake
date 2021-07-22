@@ -5,6 +5,7 @@ function(add_firstpass_library original)
 
     set_property(TARGET ${original}.firstpass PROPERTY OUTPUT_NAME ${original})
     set_property(TARGET ${original}.firstpass PROPERTY SUFFIX ".firstpass_dylib")
+    set_property(TARGET ${original}.firstpass PROPERTY INSTLAL_NAME_LEAF $<TARGET_FILE_NAME:${original}>)
 
     get_property(srcs TARGET ${original} PROPERTY SOURCES)
     set_property(TARGET ${original}.firstpass PROPERTY SOURCES ${srcs})
