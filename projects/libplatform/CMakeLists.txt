@@ -1,4 +1,64 @@
-# TODO: Build libsystem_platform.dylib here.
+set(libplatform_sources
+    src/atomics/common/MKGetTimeBaseInfo.c
+    src/atomics/init.c
+    src/atomics/x86_64/pfz.s
+    src/atomics/x86_64/OSAtomic.s
+    src/cachecontrol/generic/cache.c
+    src/cachecontrol/x86_64/cache.s
+    src/introspection/introspection.c
+    src/os/alloc_once.c
+    src/os/atomic.c
+    src/setjmp/x86_64/_setjmp.s
+    src/setjmp/x86_64/_sigtramp.s
+    src/setjmp/x86_64/setjmp.s
+    src/setjmp/generic/setjmperr.c
+    src/setjmp/generic/sigaction.c
+    src/setjmp/generic/sigtramp.c
+    src/simple/asl.c
+    src/simple/getenv.c
+    src/simple/string_io.c
+    src/string/generic/bzero.c
+    src/string/generic/ffsll.c
+    src/string/generic/flsll.c
+    src/string/generic/memchr.c
+    src/string/generic/memcmp.c
+    src/string/generic/memccpy.c
+    src/string/generic/memmove.c
+    src/string/generic/memset_pattern.c
+    src/string/generic/strcmp.c
+    src/string/generic/strcpy.c
+    src/string/generic/strlen.c
+    src/string/generic/strncmp.c
+    src/string/generic/strncpy.c
+    src/string/generic/strnlen.c
+    src/string/generic/strchr.c
+    src/string/generic/strstr.c
+    src/ucontext/generic/getmcontext.c
+    src/ucontext/generic/makecontext.c
+    src/ucontext/generic/setcontext.c
+    src/ucontext/generic/swapcontext.c
+    src/ucontext/x86_64/getcontext.s
+    src/ucontext/x86_64/_setcontext.s
+    src/ucontext/x86_64/_ctx_start.s
+    src/init.c
+)
+
+add_darwin_shared_library(libplatform NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
+set_property(TARGET libplatform PROPERTY PREFIX lib)
+set_property(TARGET libplatform PROPERTY OUTPUT_NAME system_platform)
+target_sources(libplatform PRIVATE ${libplatform_sources})
+target_link_libraries(libplatform PUBLIC libplatform_headers)
+target_link_libraries(libplatform PRIVATE libplatform_private_headers)
+
+add_firstpass_library(libplatform)
+
+
+add_darwin_static_library(libplatform_dyld)
+target_sources(libplatform_dyld PRIVATE ${libplatform_sources})
+target_compile_definitions(libplatform_dyld PRIVATE VARIANT_STATIC=1 VARIANT_DYLD=1)
+target_link_libraries(libplatform_dyld PUBLIC libplatform_headers)
+target_link_libraries(libplatform_dyld PRIVATE libplatform_private_headers)
+
 
 add_library(libplatform_headers INTERFACE)
 target_include_directories(libplatform_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
