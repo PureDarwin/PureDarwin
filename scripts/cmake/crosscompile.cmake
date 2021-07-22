@@ -66,6 +66,7 @@ function(add_darwin_shared_library name)
 
     if(SL_INSTALL_NAME_DIR)
         set_property(TARGET ${name} PROPERTY NO_SONAME TRUE)
+        set_property(TARGET ${name} PROPERTY INSTALL_NAME_DIR ${SL_INSTALL_NAME_DIR})
         set_property(TARGET ${name} PROPERTY INSTALL_NAME_LEAF $<TARGET_FILE_NAME:${name}>)
         target_link_options(${name} PRIVATE -install_name ${SL_INSTALL_NAME_DIR}/$<GENEX_EVAL:$<TARGET_PROPERTY:${name},INSTALL_NAME_LEAF>>)
     elseif(NOT SL_MODULE)
