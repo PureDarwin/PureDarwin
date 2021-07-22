@@ -1,0 +1,25 @@
+add_darwin_shared_library(libpthread NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
+set_property(TARGET libpthread PROPERTY PREFIX lib)
+set_property(TARGET libpthread PROPERTY OUTPUT_NAME system_pthread)
+
+target_sources(libpthread PRIVATE
+    pthread.c
+    pthread_cancelable.c
+    pthread_cond.c
+    pthread_mutex.c
+    qos.c
+    pthread_rwlock.c
+    pthread_cwd.c
+    pthread_tsd.c
+    pthread_atfork.c
+    pthread_dependency.c
+    pthread_asm.S
+    variants/pthread_cancelable_cancel.c
+)
+target_include_directories(libpthread PUBLIC ../include)
+target_include_directories(libpthread PRIVATE .. ../private)
+target_compile_options(libpthread PRIVATE -fno-stack-protector -fno-stack-check -fno-builtin)
+target_link_options(libpthread PRIVATE "LINKER:-alias_file,pthread.aliases")
+target_link_libraries(libpthread PRIVATE libsystem_kernel)
+
+add_firstpass_library(libpthread)
