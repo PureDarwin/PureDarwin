@@ -59,6 +59,7 @@ function(add_darwin_shared_library name)
     endif()
 
     if(SL_INSTALL_NAME_DIR)
+        set_property(TARGET ${name} PROPERTY INSTALL_NAME_DIR ${SL_INSTALL_NAME_DIR})
         target_link_options(${name} PRIVATE "LINKER:-install_name;${SL_INSTALL_NAME_DIR}/$<TARGET_FILE_NAME:${name}>")
     elseif(NOT SL_MODULE)
         message(WARNING "Shared library target ${name} should have INSTALL_NAME_DIR defined")
