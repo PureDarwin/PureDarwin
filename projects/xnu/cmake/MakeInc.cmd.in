@@ -163,10 +163,10 @@ ifeq ($(origin CXX),default)
 	export CXX := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang++)
 endif
 ifeq ($(MIG),)
-	export MIG := $(shell $(XCRUN) -sdk $(SDKROOT) -find mig)
+	export MIG := @MIG_PATH@
 endif
 ifeq ($(MIGCOM),)
-	export MIGCOM := $(shell $(XCRUN) -sdk $(SDKROOT) -find migcom)
+	export MIGCOM := @MIGCOM_PATH@
 endif
 ifeq ($(MIGCC),)
 	export MIGCC := $(CC)
@@ -175,19 +175,19 @@ ifeq ($(IIG),)
 	export IIG := $(shell $(XCRUN) -sdk $(SDKROOT) -find iig)
 endif
 ifeq ($(STRIP),)
-	export STRIP := $(shell $(XCRUN) -sdk $(SDKROOT) -find strip)
+	export STRIP := @STRIP_PATH@
 endif
 ifeq ($(LIPO),)
-	export LIPO := $(shell $(XCRUN) -sdk $(SDKROOT) -find lipo)
+	export LIPO := @LIPO_PATH@
 endif
 ifeq ($(LIBTOOL),)
-	export LIBTOOL := $(shell $(XCRUN) -sdk $(SDKROOT) -find libtool)
+	export LIBTOOL := @LIBTOOL_PATH@
 endif
 ifeq ($(NM),)
-	export NM := $(shell $(XCRUN) -sdk $(SDKROOT) -find nm)
+	export NM := @NM_PATH@
 endif
 ifeq ($(UNIFDEF),)
-	export UNIFDEF := $(shell $(XCRUN) -sdk $(SDKROOT) -find unifdef)
+	export UNIFDEF := @UNIFDEF_PATH@
 endif
 ifeq ($(DSYMUTIL),)
 	export DSYMUTIL := $(shell $(XCRUN) -sdk $(SDKROOT) -find dsymutil)
@@ -202,7 +202,7 @@ ifeq ($(CTFINSERT),)
 	export CTFINSERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctf_insert)
 endif
 ifeq ($(NMEDIT),)
-	export NMEDIT := $(shell $(XCRUN) -sdk $(SDKROOT) -find nmedit)
+	export NMEDIT := @NMEDIT_PATH@
 endif
 
 #

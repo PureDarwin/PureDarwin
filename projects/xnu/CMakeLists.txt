@@ -11,6 +11,14 @@ externalproject_add(xnu_headers.extproj
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
+            -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
+            -D MIGCOM_PATH=$<TARGET_FILE:migcom>
+            -D STRIP_PATH=$<TARGET_FILE:host_strip>
+            -D LIPO_PATH=$<TARGET_FILE:host_lipo>
+            -D NM_PATH=$<TARGET_FILE:host_nm>
+            -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
+            -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=0
@@ -21,7 +29,9 @@ externalproject_add(xnu_headers.extproj
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu_headers.extproj darwin_codesign_allocate ctfconvert.host ctfmerge.host availability.pl)
+add_dependencies(xnu_headers.extproj darwin_codesign_allocate
+    migcom host_strip host_lipo host_nm unifdef host_nmedit
+    ctfconvert.host ctfmerge.host availability.pl)
 
 add_library(xnu_headers INTERFACE)
 add_dependencies(xnu_headers xnu_headers.extproj)
@@ -64,6 +74,14 @@ externalproject_add(xnu
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             -D LD_PATH=$<TARGET_FILE:darwin_ld>
+            -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
+            -D MIGCOM_PATH=$<TARGET_FILE:migcom>
+            -D STRIP_PATH=$<TARGET_FILE:host_strip>
+            -D LIPO_PATH=$<TARGET_FILE:host_lipo>
+            -D NM_PATH=$<TARGET_FILE:host_nm>
+            -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
+            -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
             -D FIREHOSE_KERNEL_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libdispatch
             -D PTHREAD_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libpthread/include
@@ -77,7 +95,7 @@ externalproject_add(xnu
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host availability.pl darwin_ld)
+add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl darwin_ld)
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Kernels DESTINATION System/Library COMPONENT BaseSystem)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Extensions DESTINATION System/Library COMPONENT BaseSystem)
