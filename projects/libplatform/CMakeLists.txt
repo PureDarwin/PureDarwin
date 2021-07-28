@@ -28,7 +28,9 @@ set(libplatform_sources
     src/string/generic/memset_pattern.c
     src/string/generic/strcmp.c
     src/string/generic/strcpy.c
+    src/string/generic/strlcat.c
     src/string/generic/strlen.c
+    src/string/generic/strlcpy.c
     src/string/generic/strncmp.c
     src/string/generic/strncpy.c
     src/string/generic/strnlen.c
