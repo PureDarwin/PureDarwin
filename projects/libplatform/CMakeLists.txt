@@ -8,6 +8,7 @@ set(libplatform_sources
     src/introspection/introspection.c
     src/os/alloc_once.c
     src/os/atomic.c
+    src/os/lock.c
     src/setjmp/x86_64/_setjmp.s
     src/setjmp/x86_64/_sigtramp.s
     src/setjmp/x86_64/setjmp.s
@@ -51,7 +52,7 @@ target_compile_definitions(libplatform PRIVATE _USE_FORTIFY_LEVEL=0)
 target_compile_options(libplatform PRIVATE -Wno-nullability-completeness -Wno-deprecated-declarations -Wno-implicit-function-declaration -fno-stack-protector)
 target_include_directories(libplatform PRIVATE internal)
 target_link_libraries(libplatform PUBLIC libplatform_headers)
-target_link_libraries(libplatform PRIVATE Libc_headers libplatform_private_headers libsystem_kernel libsystem_kernel_private_headers xnu_private_headers xnu_kernel_private_headers)
+target_link_libraries(libplatform PRIVATE xnu_private_headers Libc_headers libplatform_private_headers libsystem_kernel libsystem_kernel_private_headers pthread_common_private_headers xnu_kernel_private_headers)
 target_link_options(libplatform PRIVATE -umbrella System)
 
 #add_firstpass_library(libplatform)
@@ -64,7 +65,7 @@ target_compile_definitions(libplatform_dyld PRIVATE _USE_FORTIFY_LEVEL=0)
 target_compile_options(libplatform_dyld PRIVATE -Wno-nullability-completeness -Wno-deprecated-declarations -Wno-implicit-function-declaration -fno-stack-protector)
 target_include_directories(libplatform_dyld PRIVATE internal)
 target_link_libraries(libplatform_dyld PUBLIC libplatform_headers)
-target_link_libraries(libplatform_dyld PRIVATE Libc_headers libplatform_private_headers libsystem_kernel libsystem_kernel_private_headers xnu_private_headers xnu_kernel_private_headers)
+target_link_libraries(libplatform_dyld PRIVATE xnu_private_headers Libc_headers libplatform_private_headers libsystem_kernel libsystem_kernel_private_headers pthread_common_private_headers xnu_kernel_private_headers)
 
 
 add_library(libplatform_headers INTERFACE)

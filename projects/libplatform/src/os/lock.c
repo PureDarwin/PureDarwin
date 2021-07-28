@@ -18,6 +18,7 @@
  * @APPLE_APACHE_LICENSE_HEADER_END@
  */
 
+#define PRIVATE
 #define OS_UNFAIR_LOCK_INLINE 1
 #include "lock_internal.h"
 #include "os/internal.h"
