@@ -3,6 +3,8 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private)
 
 add_library(Libc_headers INTERFACE)
 target_include_directories(Libc_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/public)
+target_link_libraries(Libc_headers INTERFACE xnu_headers AvailabilityHeaders pthread_common_headers)
+
 add_library(Libc_private_headers INTERFACE)
 target_include_directories(Libc_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/private)
 
@@ -44,7 +46,7 @@ process_libc_headers(FILES
     err.h errno.h fcntl.h fmtmsg.h fnmatch.h fsproperties.h fstab.h fts.h ftw.h getopt.h glob.h
     inttypes.h iso646.h langinfo.h libc.h libgen.h limits.h locale.h memory.h monetary.h monitor.h
     mpool.h ndbm.h nlist.h paths.h printf.h poll.h ranlib.h readpassphrase.h regex.h runetype.h
-    search.h semaphore.h sgtty.h signal.h stab.h standards.h stddef.h stdio.h stdint.h stdlib.h
+    search.h semaphore.h sgtty.h signal.h stab.h standards.h stdbool.h stddef.h stdio.h stdint.h stdlib.h
     strhash.h string.h stringlist.h strings.h struct.h sysexits.h syslog.h tar.h termios.h time.h
     timeconv.h ttyent.h ulimit.h unistd.h util.h utime.h vis.h wchar.h wctype.h wordexp.h xlocale.h
     FreeBSD/nl_types.h NetBSD/utmpx.h ../gen/get_compat.h ../gen/execinfo.h
