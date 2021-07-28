@@ -19,7 +19,6 @@
  */
 
 #include "os/internal.h"
-#include "resolver.h"
 #include "libkern/OSAtomic.h"
 
 #if defined(__arm__) || defined(__arm64__)
