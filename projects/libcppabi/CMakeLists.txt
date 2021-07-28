@@ -35,4 +35,4 @@ target_sources(libcppabi PRIVATE
 # target_link_libraries(libc++abi PRIVATE libSystem)
 
 
-add_firstpass_library(libcppabi)
+#add_firstpass_library(libcppabi)

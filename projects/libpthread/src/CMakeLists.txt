@@ -22,7 +22,7 @@ target_compile_options(libpthread PRIVATE -fno-stack-protector -fno-stack-check 
 target_link_options(libpthread PRIVATE "LINKER:-alias_file,pthread.aliases")
 target_link_libraries(libpthread PRIVATE libsystem_kernel)
 
-add_firstpass_library(libpthread)
+#add_firstpass_library(libpthread)
 
 
 add_darwin_static_library(libpthread_dyld)

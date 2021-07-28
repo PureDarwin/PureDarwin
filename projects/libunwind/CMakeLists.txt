@@ -17,5 +17,5 @@ target_include_directories(libunwind PUBLIC include)
 target_link_options(libunwind PRIVATE -umbrella System)
 
 add_firstpass_library(libunwind)
-target_link_firstpass_siblings(libunwind UPWARD libcppabi libsystem_compiler_rt)
-target_link_firstpass_siblings(libunwind libc libdyld libsystem_malloc libplatform libpthread)
+#target_link_firstpass_siblings(libunwind UPWARD libcppabi libsystem_compiler_rt)
+#target_link_firstpass_siblings(libunwind libc libdyld libsystem_malloc libplatform libpthread)

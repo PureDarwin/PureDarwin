@@ -181,8 +181,8 @@ target_sources(libsystem_compiler_rt PRIVATE ${COMPILER_RT_SOURCES})
 target_link_libraries(libsystem_compiler_rt PRIVATE xnu_headers AvailabilityHeaders)
 target_link_options(libsystem_compiler_rt PRIVATE -compatibility_version 1 -umbrella System)
 
-add_firstpass_library(libsystem_compiler_rt)
-target_link_firstpass_siblings(libsystem_compiler_rt UPWARD libc libm libunwind libplatform libdyld)
-target_link_firstpass_libraries(libsystem_compiler_rt libsystem_kernel)
+#add_firstpass_library(libsystem_compiler_rt)
+#target_link_firstpass_siblings(libsystem_compiler_rt UPWARD libc libm libunwind libplatform libdyld)
+#target_link_firstpass_libraries(libsystem_compiler_rt libsystem_kernel)
 
 install(TARGETS libsystem_compiler_rt DESTINATION /usr/lib/system COMPONENT BaseSystem)

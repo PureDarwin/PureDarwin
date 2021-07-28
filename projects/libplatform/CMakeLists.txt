@@ -50,7 +50,7 @@ target_sources(libplatform PRIVATE ${libplatform_sources})
 target_link_libraries(libplatform PUBLIC libplatform_headers)
 target_link_libraries(libplatform PRIVATE libplatform_private_headers)
 
-add_firstpass_library(libplatform)
+#add_firstpass_library(libplatform)
 
 
 add_darwin_static_library(libplatform_dyld)
