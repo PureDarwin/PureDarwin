@@ -67,7 +67,6 @@ LOG_SYMBOLSETPLIST = $(call _LOG_COMP,SYMSETPLIST)
 LOG_IIG = $(call _LOG_HOST,IIG)
 LOG_HOST_CC = $(call _LOG_HOST,CC)
 LOG_HOST_LD = $(call _LOG_HOST,LD)
-LOG_HOST_CODESIGN = $(call _LOG_HOST,CODESIGN)
 LOG_HOST_BISON = $(call _LOG_HOST,BISON)
 LOG_HOST_FLEX = $(call _LOG_HOST,FLEX)
 LOG_INSTALL = $(call _LOG_HOST,INSTALL)
@@ -151,22 +150,22 @@ ifeq ($(PLATFORM),MacOSX)
 endif
 
 ifeq ($(SDKVERSION),)
-     export SDKVERSION := $(shell $(XCRUN) -sdk $(SDKROOT) -show-sdk-version)
+     export SDKVERSION := 11.0
 endif
 
 # CC/CXX get defined by make(1) by default, so we can't check them
 # against the empty string to see if they haven't been set
 ifeq ($(origin CC),default)
-	export CC := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang)
+	export CC := clang
 endif
 ifeq ($(origin CXX),default)
-	export CXX := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang++)
+	export CXX := clang++
 endif
 ifeq ($(MIG),)
-	export MIG := $(shell $(XCRUN) -sdk $(SDKROOT) -find mig)
+	export MIG := @MIG_PATH@
 endif
 ifeq ($(MIGCOM),)
-	export MIGCOM := $(shell $(XCRUN) -sdk $(SDKROOT) -find migcom)
+	export MIGCOM := @MIGCOM_PATH@
 endif
 ifeq ($(MIGCC),)
 	export MIGCC := $(CC)
@@ -175,22 +174,22 @@ ifeq ($(IIG),)
 	export IIG := $(shell $(XCRUN) -sdk $(SDKROOT) -find iig)
 endif
 ifeq ($(STRIP),)
-	export STRIP := $(shell $(XCRUN) -sdk $(SDKROOT) -find strip)
+	export STRIP := @STRIP_PATH@
 endif
 ifeq ($(LIPO),)
-	export LIPO := $(shell $(XCRUN) -sdk $(SDKROOT) -find lipo)
+	export LIPO := @LIPO_PATH@
 endif
 ifeq ($(LIBTOOL),)
-	export LIBTOOL := $(shell $(XCRUN) -sdk $(SDKROOT) -find libtool)
+	export LIBTOOL := @LIBTOOL_PATH@
 endif
 ifeq ($(NM),)
-	export NM := $(shell $(XCRUN) -sdk $(SDKROOT) -find nm)
+	export NM := @NM_PATH@
 endif
 ifeq ($(UNIFDEF),)
-	export UNIFDEF := $(shell $(XCRUN) -sdk $(SDKROOT) -find unifdef)
+	export UNIFDEF := @UNIFDEF_PATH@
 endif
 ifeq ($(DSYMUTIL),)
-	export DSYMUTIL := $(shell $(XCRUN) -sdk $(SDKROOT) -find dsymutil)
+	export DSYMUTIL := @DSYMUTIL_PATH@
 endif
 ifeq ($(CTFCONVERT),)
 	export CTFCONVERT := @CTFCONVERT_PATH@
@@ -199,10 +198,10 @@ ifeq ($(CTFMERGE),)
 	export CTFMERGE :=  @CTFMERGE_PATH@
 endif
 ifeq ($(CTFINSERT),)
-	export CTFINSERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctf_insert)
+	export CTFINSERT := @CTFINSERT_PATH@
 endif
 ifeq ($(NMEDIT),)
-	export NMEDIT := $(shell $(XCRUN) -sdk $(SDKROOT) -find nmedit)
+	export NMEDIT := @NMEDIT_PATH@
 endif
 
 #
@@ -262,22 +261,16 @@ ifeq ($(HOST_OS_VERSION),)
 	export HOST_OS_VERSION	:= $(shell sw_vers -productVersion)
 endif
 ifeq ($(HOST_CC),)
-	export HOST_CC		:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find clang)
+	export HOST_CC		:= clang
 endif
 ifeq ($(HOST_FLEX),)
-	export HOST_FLEX	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find flex)
+	export HOST_FLEX	:= flex
 endif
 ifeq ($(HOST_BISON),)
-	export HOST_BISON	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find bison)
+	export HOST_BISON	:= bison
 endif
 ifeq ($(HOST_GM4),)
-	export HOST_GM4		:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find gm4)
-endif
-ifeq ($(HOST_CODESIGN),)
-	export HOST_CODESIGN	:= /usr/bin/codesign
-endif
-ifeq ($(HOST_CODESIGN_ALLOCATE),)
-	export HOST_CODESIGN_ALLOCATE	:= @CODESIGN_ALLOCATE_PATH@
+	export HOST_GM4		:= gm4
 endif
 
 #
