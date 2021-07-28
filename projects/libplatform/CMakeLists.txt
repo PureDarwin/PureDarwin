@@ -47,9 +47,10 @@ add_darwin_shared_library(libplatform NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /us
 set_property(TARGET libplatform PROPERTY PREFIX lib)
 set_property(TARGET libplatform PROPERTY OUTPUT_NAME system_platform)
 target_sources(libplatform PRIVATE ${libplatform_sources})
+target_compile_options(libplatform PRIVATE -Wno-nullability-completeness -Wno-deprecated-declarations)
 target_include_directories(libplatform PRIVATE internal)
 target_link_libraries(libplatform PUBLIC libplatform_headers)
-target_link_libraries(libplatform PRIVATE Libc_headers libplatform_private_headers xnu_private_headers xnu_kernel_private_headers)
+target_link_libraries(libplatform PRIVATE Libc_headers libplatform_private_headers libsystem_kernel libsystem_kernel_private_headers xnu_private_headers xnu_kernel_private_headers)
 
 #add_firstpass_library(libplatform)
 
@@ -57,6 +58,7 @@ target_link_libraries(libplatform PRIVATE Libc_headers libplatform_private_heade
 add_darwin_static_library(libplatform_dyld)
 target_sources(libplatform_dyld PRIVATE ${libplatform_sources})
 target_compile_definitions(libplatform_dyld PRIVATE VARIANT_STATIC=1 VARIANT_DYLD=1)
+target_compile_options(libplatform_dyld PRIVATE -Wno-nullability-completeness)
 target_link_libraries(libplatform_dyld PUBLIC libplatform_headers)
 target_link_libraries(libplatform_dyld PRIVATE Libc_headers libplatform_private_headers xnu_private_headers xnu_kernel_private_headers)
 
