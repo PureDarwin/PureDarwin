@@ -43,7 +43,7 @@ endfunction()
 process_libc_headers(FILES
     __wctype.h _ctype.h _locale.h _regex.h _stdio.h _types.h _wctype.h _xlocale.h _ctermid.h aio.h
     alloca.h ar.h assert.h asm.h bitstring.h cpio.h crt_externs.h ctype.h db.h dirent.h disktab.h
-    err.h errno.h fcntl.h fmtmsg.h fnmatch.h fsproperties.h fstab.h fts.h ftw.h getopt.h glob.h
+    err.h errno.h float.h fcntl.h fmtmsg.h fnmatch.h fsproperties.h fstab.h fts.h ftw.h getopt.h glob.h
     inttypes.h iso646.h langinfo.h libc.h libgen.h limits.h locale.h memory.h monetary.h monitor.h
     mpool.h ndbm.h nlist.h paths.h printf.h poll.h ranlib.h readpassphrase.h regex.h runetype.h
     search.h semaphore.h sgtty.h signal.h stab.h standards.h stdbool.h stddef.h stdio.h stdint.h stdlib.h
