@@ -199,7 +199,7 @@ ifeq ($(CTFMERGE),)
 	export CTFMERGE :=  @CTFMERGE_PATH@
 endif
 ifeq ($(CTFINSERT),)
-	export CTFINSERT := $(shell $(XCRUN) -sdk $(SDKROOT) -find ctf_insert)
+	export CTFINSERT := @CTFINSERT_PATH@
 endif
 ifeq ($(NMEDIT),)
 	export NMEDIT := @NMEDIT_PATH@

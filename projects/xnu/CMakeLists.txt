@@ -12,6 +12,7 @@ externalproject_add(xnu_headers.extproj
             -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
+            -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
             -D MIGCOM_PATH=$<TARGET_FILE:migcom>
@@ -75,6 +76,7 @@ externalproject_add(xnu
             -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
             -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
+            -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             -D LD_PATH=$<TARGET_FILE:darwin_ld>
             -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
