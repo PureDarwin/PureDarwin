@@ -21,7 +21,6 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#include "resolver.h"
 #include "internal.h"
 
 #define PREREQUISITE_FULFILLED  (~0u)

@@ -48,7 +48,7 @@ set_property(TARGET libplatform PROPERTY PREFIX lib)
 set_property(TARGET libplatform PROPERTY OUTPUT_NAME system_platform)
 target_sources(libplatform PRIVATE ${libplatform_sources})
 target_link_libraries(libplatform PUBLIC libplatform_headers)
-target_link_libraries(libplatform PRIVATE libplatform_private_headers)
+target_link_libraries(libplatform PRIVATE libplatform_private_headers xnu_private_headers)
 
 #add_firstpass_library(libplatform)
 

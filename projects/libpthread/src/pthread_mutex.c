@@ -50,7 +50,6 @@
  * -- Mutex variable support
  */
 
-#include "resolver.h"
 #include "internal.h"
 #include "kern/kern_trace.h"
 

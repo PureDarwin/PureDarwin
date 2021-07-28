@@ -20,7 +20,7 @@ target_include_directories(libpthread PUBLIC ../include)
 target_include_directories(libpthread PRIVATE .. ../private)
 target_compile_options(libpthread PRIVATE -fno-stack-protector -fno-stack-check -fno-builtin)
 target_link_options(libpthread PRIVATE "LINKER:-alias_file,pthread.aliases")
-target_link_libraries(libpthread PRIVATE libsystem_kernel)
+target_link_libraries(libpthread PRIVATE AvailabilityHeaders libplatform_private_headers libsystem_kernel xnu_private_headers xnu_kernel_private_headers)
 
 #add_firstpass_library(libpthread)
 
@@ -42,3 +42,4 @@ target_include_directories(libpthread_dyld PUBLIC ../include)
 target_include_directories(libpthread_dyld PRIVATE .. ../private)
 target_compile_definitions(libpthread_dyld PRIVATE VARIANT_DYLD)
 target_compile_options(libpthread_dyld PRIVATE -fno-stack-protector -fno-stack-check -fno-builtin)
+target_link_libraries(libpthread_dyld PRIVATE AvailabilityHeaders libplatform_private_headers libsystem_kernel xnu_private_headers xnu_kernel_private_headers)

@@ -48,7 +48,6 @@
  * POSIX Pthread Library
  */
 
-#include "resolver.h"
 #include "internal.h"
 #include <sys/time.h>	      /* For struct timespec and getclock(). */
 

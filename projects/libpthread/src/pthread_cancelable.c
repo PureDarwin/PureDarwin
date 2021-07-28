@@ -49,7 +49,6 @@
  * POSIX Pthread Library
  */
 
-#include "resolver.h"
 #include "internal.h"
 
 #include <stdio.h>	/* For printf(). */

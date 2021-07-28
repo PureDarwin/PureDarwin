@@ -55,7 +55,6 @@
  *	   Ported from FreeBSD
  */
 
-#include "resolver.h"
 #include "internal.h"
 
 #ifdef PLOCKSTAT
