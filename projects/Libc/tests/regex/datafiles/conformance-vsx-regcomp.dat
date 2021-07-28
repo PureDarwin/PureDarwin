@@ -1,0 +1,130 @@
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 1
+BE	z4		123ABCz456DEF	(6,8)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 2
+E	C|k		123ABCz456DEFhij	(5,6)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 3
+B$	\\(\\(ABC\\)z\\(456\\)D\\)		123ABCz456DEF	(3,11)(3,11)(3,6)(7,10)
+E$	(123)(ABC)		123ABCz456DEF	(0,6)(0,3)(3,6)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 4
+BE$	weU		hhehweU[^J]o/.aq	(4,7)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 5
+BE$	[A-K]		7917263lus;/*shls	NOMATCH
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 6
+BE$	DEF.		abcxyz123DEFhij890	(9,13)
+BE$	def.		abcxyz123DEFhij890	NOMATCH
+E$	(DEF)|(QRS)		abcxyz123DEFhij890	(9,12)(9,12)(?,?)
+E$	(def)|(qrs)		abcxyz123DEFhij890	NOMATCH
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 7
+BEi$	def		abcxyz123DEFhij890	(9,12)
+BEi$	DEF		abcxyz123DEFhij890	(9,12)
+Ei$	(def)|(qrs)		abcxyz123DEFhij890	(9,12)(9,12)(?,?)
+Ei$	(DEF)|(QRS)		abcxyz123DEFhij890	(9,12)(9,12)(?,?)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 8
+B$	\\(b\\)..\\(yz1\\).*\\(89\\)		abcxyz123DEFhij890k%#57WQ	(1,17)(1,2)(4,7)(15,17)
+E$	(bc)+(x)?		abcxyz123DEFhij890k%#57WQ	(1,4)(1,3)(3,4)
+B$	\\(bc\\).*\\(D\\)\\(E\\)\\(F\\)\\(h\\)\\(i\\)\\(j\\)\\(8\\)\\(90k\\)		abcxyz123DEFhij890k%#57WQ	(1,19)(1,3)(9,10)(10,11)(11,12)(12,13)(13,14)(14,15)(15,16)(16,19)
+E$	(bc).*(D)(E)(F)(h)(i)(j)(8)(90k)		abcxyz123DEFhij890k%#57WQ	(1,19)(1,3)(9,10)(10,11)(11,12)(12,13)(13,14)(14,15)(15,16)(16,19)
+B$	xyz		abcxyz123DEFhij890k%#57WQ	(3,6)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 9
+B$	\\(b\\)..\\(yz1\\).*\\(89\\)		abcxyz123DEFhij890k%#57WQ	(1,17)(1,2)(4,7)(15,17)
+E$	(bc)+(x)?		abcxyz123DEFhij890k%#57WQ	(1,4)(1,3)(3,4)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 10
+Bw$	\\(ab\\)\\(ccc\\)		abababccccccd	NULL
+B$	\\(abab\\)\\(cccc\\)		abababccccccd	(2,10)(2,6)(6,10)
+Ew$	(ab)(ccc)		abababccccccd	NULL
+E$	(abab)(cccc)		abababccccccd	(2,10)(2,6)(6,10)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 11
+B$	\\(ab\\)\\{1,\\}\\(ccc\\)*		abababccccccd	(0,12)(4,6)(9,12)
+E$	(ab){1,}(ccc)*		abababccccccd	(0,12)(4,6)(9,12)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 12
+B$	\\(ab\\)\\(xyz\\)*\\(def\\)\\{0,3\\}\\(ccc\\)		abcccd	(0,5)(0,2)(?,?)(?,?)(2,5)
+E$	(ab)(xy)?(z)*(A){0,}(ccc)		abcccd	(0,5)(0,2)(?,?)(?,?)(?,?)(2,5)
+E$	(ab)|(yz)		abcccd	(0,2)(0,2)(?,?)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 13
+B$	\\(ab\\)\\(\\(c\\)yz\\)*		abcccd	(0,2)(0,2)(?,?)(?,?)
+E$	(ab)|((c)xyz)		abcccd	(0,2)(0,2)(?,?)(?,?)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 14
+B$	\\(abcc\\)\\(x*\\)		abcccd	(0,4)(0,4)(4,4)
+E$	(ab)(x*)		abcccd	(0,2)(0,2)(2,2)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 15
+BE$	llo\nthe		hello\nthere	(2,9)
+# Test error: Use of REG_EXTENDED in eflags, which corresponds to REG_NOTBOL
+Eb$	l+o\nthe?r		hello\nthere	(2,10)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 16
+BE$	xyz		abcdefGHIJKL	NOMATCH
+B$	\\1		abcdefGHIJKL	ESUBREG
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 17
+BE$	[XY][^GH]		abcdefGHIJKL	NOMATCH
+B$	\\)\\)		abcdefGHIJKL	EPAREN
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 18
+BE$	ABC[DEF]		123456789hijkl%$#	NOMATCH
+B$	\\7		123456789hijkl%$#	ESUBREG
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 19
+BE$	xyz		abcdefGHIJKL	NOMATCH
+B$	\\1		abcdefGHIJKL	ESUBREG
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 20
+BE$	[XY][^GH]		abcdefGHIJKL	NOMATCH
+B$	\\)\\)		abcdefGHIJKL	EPAREN
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 21
+BE$	ABC[DEF]		123456789hijkl%$#	NOMATCH
+B$	\\7		123456789hijkl%$#	ESUBREG
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 22
+BE$	xy[[.ab.]]z		NULL	ECOLLATE
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 23
+BE$	xy[[:non_existant_class:]]z		NULL	ECTYPE
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 24
+BE$	xyz\\		NULL	EESCAPE
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 25
+B$	xy\\(ab\\)z\\3		NULL	ESUBREG
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 26
+BE$	x[y[][z		NULL	EBRACK
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 27
+B$	xy\\(\\(ab\\)z		NULL	EPAREN
+B$	xy\\(ab\\)\\)z		NULL	EPAREN
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 28
+E$	xy((ab)z		NULL	EPAREN
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 29
+B$	xyab\\{3,\\}jk\\{		NULL	EBRACE
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 30 (not in use)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 31
+B$	890magIFd\\{0,j\\}		NULL	BADBR
+E$	890magIFd{0,j}		NULL	BADBR
+B$	890magIFd\\{k,3\\}		NULL	BADBR
+B$	890magIFd\\{k,\\}		NULL	BADBR
+B$	890magIFd\\{k\\}		NULL	BADBR
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 32 (not in use)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 33
+# RE_DUP_MAX = 255
+B$	890magIFd\\{0,256\\}		NULL	BADBR
+E$	890magIFd{0,256}		NULL	BADBR
+B$	890magIFd\\{256,3\\}		NULL	BADBR
+E$	890magIFd{256,3}		NULL	BADBR
+B$	890magIFd\\{256,\\}		NULL	BADBR
+E$	890magIFd{256,}		NULL	BADBR
+B$	890magIFd\\{256\\}		NULL	BADBR
+E$	890magIFd{256}		NULL	BADBR
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 34 (not in use)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 35
+B$	xy\\{4,5,7\\}zabc		NULL	BADBR
+E$	xy{4,5,7}zabc		NULL	BADBR
+# vsx6/tset/XPG4.os/genuts/regcomp/T.regcomp 36 (not in use)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 37
+B$	def\\{3,1\\}cba		NULL	BADBR
+E$	def{3,1}cba		NULL	BADBR
+# vsx6/tset/XPG8.os/genuts/regcomp/T.regcomp 38 (not in use)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 39
+BE$	xy[m-a]z		NULL	ERANGE
+# vsx6/tset/XPG8.os/genuts/regcomp/T.regcomp 40 (not in use)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 41
+E$	*xyz		NULL	BADRPT
+E$	a|*xyz		NULL	BADRPT
+E$	^?xyz		NULL	BADRPT
+E$	(+xyz)		NULL	BADRPT
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 42
+B$	\\(\\(ab\\)\\{1,\\}ab\\)\\(\\(c\\)\\{2\\}\\)*c		abababccccccd	(0,11)(0,6)(2,4)(8,10)(9,10)
+E$	((ab){1,}ab)((c){2})*c		abababccccccd	(0,11)(0,6)(2,4)(8,10)(9,10)
+# vsx4/tset/XPG4.os/genuts/regcomp/T.regcomp 43
+B$	\\(ab\\(xyz\\)*\\)\\(c\\(d\\)*\\)\\{0,3\\}		abcdcdc	(0,7)(0,2)(?,?)(6,7)(?,?)
+E$	(ab(xyz)*)(c(d)*){0,3}		abcdcdc	(0,7)(0,2)(?,?)(6,7)(?,?)
+E$	(ab(xy)?(z)*)(c(d){0,})+		abcdcdc	(0,7)(0,2)(?,?)(?,?)(6,7)(?,?)
+E$	ab((cd)|c)*		abcdcdc	(0,7)(6,7)(?,?)

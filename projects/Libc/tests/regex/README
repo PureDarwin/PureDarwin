@@ -1,0 +1,86 @@
+###########################################################################
+# The testregex tests are not wired up yet
+###########################################################################
+
+The AT&T testregex program is available from:
+
+http://www2.research.att.com/~astopen/testregex/
+
+The so-called "testregex.c 2004-05-31" has a 2010 "what" string, so the
+versioning is weird.
+
+The original source code downloaded from the above URL is testregex.c.orig.
+testregex.c has a few modification, for example, to support our regex's
+"enhanced" mode, as well as pausing if the MallocStackLogging environment
+variable is set.
+
+The data files are in the datafiles subdirectory.  Several are part of the
+testregex distribution:
+
+basic.dat
+categorize.dat
+nullsubexpr.dat
+leftassoc.dat	(not included, since our implementation is right-associative)
+rightassoc.dat
+forcedassoc.dat
+repetition.dat
+
+The rest are from radars, adapted from the conformance tests, collected from
+internet sources or just created to test certain features.
+
+Easy to compile:
+
+% cc testregex.c -o testregex
+
+and easy to run:
+
+% testregex datafiles/union.dat
+TEST	testregex union (AT&T Research) 2010-06-10
+NOTE	regex
+NOTE	unsupported: AUGMENTED,SHELL,CLASS_ESCAPE,COMMENT,DELIMITED,DISCIPLINE,ESCAPE,LEFT,LENIENT,MULTIPLE,MULTIREF,MUSTDELIM,NULL,RIGHT,SHELL_DOT,SHELL_ESCAPED,SHELL_GROUP,SHELL_PATH,SPAN,regnexec,regsubcomp,redecomp
+TEST	testregex union, 8 tests, 0 errors
+
+(Some of the locale tests print extra NOTE lines when it switches into a
+different locale.)
+
+All datafile should run without error, except:
+
+regex-posix-unittest-1.1.dat
+14189743.dat
+
+The first has 8 failures:
+
+% testregex datafiles/regex-posix-unittest-1.1.dat
+TEST	testregex regex-posix-unittest-1.1 (AT&T Research) 2010-06-10
+NOTE	regex
+NOTE	unsupported: AUGMENTED,SHELL,CLASS_ESCAPE,COMMENT,DELIMITED,DISCIPLINE,ESCAPE,LEFT,LENIENT,MULTIPLE,MULTIREF,MUSTDELIM,NULL,RIGHT,SHELL_DOT,SHELL_ESCAPED,SHELL_GROUP,SHELL_PATH,SPAN,regnexec,regsubcomp,redecomp
+datafiles/regex-posix-unittest-1.1.dat:52: (^){0,3} versus a ERE failed: match was: (0,0)(?,?) expected: (0,0)(0,0)
+datafiles/regex-posix-unittest-1.1.dat:58: s(^|())e versus searchme ERE regexec failed: expected: (0,2)(1,1)(1,1)
+datafiles/regex-posix-unittest-1.1.dat:59: s(^|())e versus searchme ERE regexec failed: expected: (0,2)(1,1)(1,1)
+datafiles/regex-posix-unittest-1.1.dat:61: s(^)?e versus searchme ERE regexec failed: expected: (0,2)(?,?)
+datafiles/regex-posix-unittest-1.1.dat:66: ($)|() versus xxx ERE failed: match was: (3,3)(3,3)(?,?) expected: (0,0)(?,?)(0,0)
+datafiles/regex-posix-unittest-1.1.dat:67: $()|^() versus ac\n ERE failed: match was: (4,4)(4,4)(?,?) expected: (0,0)(?,?)(0,0)
+datafiles/regex-posix-unittest-1.1.dat:69: ($)?(.) versus __ ERE regexec failed: expected: (0,1)(?,?)(0,1)
+datafiles/regex-posix-unittest-1.1.dat:73: (.|$){2,} versus xx ERE failed: match was: (0,2)(2,2) expected: (0,2)(1,2)
+TEST	testregex regex-posix-unittest-1.1, 149 tests, 8 errors
+
+This seems to have something to do with repetitions or alterations of ^ and $.
+Doesn't look like I ever filed a radar.
+
+The second failure is from the corresponding radar:
+
+% testregex datafiles/14189743.dat
+TEST	testregex 14189743 (AT&T Research) 2010-06-10
+NOTE	regex
+NOTE	unsupported: AUGMENTED,SHELL,CLASS_ESCAPE,COMMENT,DELIMITED,DISCIPLINE,ESCAPE,LEFT,LENIENT,MULTIPLE,MULTIREF,MUSTDELIM,NULL,RIGHT,SHELL_DOT,SHELL_ESCAPED,SHELL_GROUP,SHELL_PATH,SPAN,regnexec,regsubcomp,redecomp
+datafiles/14189743.dat:2: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus nssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,70)(0,67)(0,67)(0,59)(67,69) expected: (0,1)
+datafiles/14189743.dat:3: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus ssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,69)(0,66)(0,66)(0,64)(66,68) expected: (0,1)
+datafiles/14189743.dat:4: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus snssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,68)(0,65)(0,65)(0,59)(65,67) expected: (0,1)
+datafiles/14189743.dat:5: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus nssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,67)(0,64)(0,64)(0,62)(64,66) expected: (0,1)
+datafiles/14189743.dat:6: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus ssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,66)(0,63)(0,63)(0,59)(63,65) expected: (0,1)
+datafiles/14189743.dat:7: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus snssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,65)(0,62)(0,62)(0,60)(62,64) expected: (0,1)
+datafiles/14189743.dat:8: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus nssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,64)(0,61)(0,61)(0,59)(61,63) expected: (0,1)
+datafiles/14189743.dat:9: ^((([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]\.)*)([[:alnum:]_][[:alnum:]-]{0,61})?[[:alnum:]]$ versus ssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnssnss.edu ERE failed: match was: (0,63)(0,60)(0,60)(0,58)(60,62) expected: (0,1)
+TEST	testregex 14189743, 8 tests, 8 errors
+
+Never had a chance to investigate.
