@@ -171,14 +171,15 @@ set(COMPILER_RT_SOURCES
 
 add_darwin_static_library(libcompiler_rt_dyld)
 target_sources(libcompiler_rt_dyld PRIVATE ${COMPILER_RT_SOURCES})
-target_link_libraries(libcompiler_rt_dyld PRIVATE xnu_headers AvailabilityHeaders Libc_headers)
+target_compile_options(libcompiler_rt_dyld PRIVATE -Wno-nullability-completeness)
+target_link_libraries(libcompiler_rt_dyld PRIVATE libplatform_headers pthread_common_headers xnu_headers AvailabilityHeaders Libc_headers)
 
 
 add_darwin_shared_library(libsystem_compiler_rt NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
 set_property(TARGET libsystem_compiler_rt PROPERTY PREFIX lib)
 set_property(TARGET libsystem_compiler_rt PROPERTY OUTPUT_NAME compiler_rt)
 target_sources(libsystem_compiler_rt PRIVATE ${COMPILER_RT_SOURCES})
-target_link_libraries(libsystem_compiler_rt PRIVATE pthread_common_headers xnu_headers AvailabilityHeaders Libc_headers)
+target_link_libraries(libsystem_compiler_rt PRIVATE libplatform pthread_common_headers xnu_headers AvailabilityHeaders Libc_headers)
 target_link_options(libsystem_compiler_rt PRIVATE -compatibility_version 1 -umbrella System)
 
 #add_firstpass_library(libsystem_compiler_rt)
