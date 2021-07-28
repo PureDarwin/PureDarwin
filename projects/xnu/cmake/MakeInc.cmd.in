@@ -151,16 +151,16 @@ ifeq ($(PLATFORM),MacOSX)
 endif
 
 ifeq ($(SDKVERSION),)
-     export SDKVERSION := $(shell $(XCRUN) -sdk $(SDKROOT) -show-sdk-version)
+     export SDKVERSION := 11.0
 endif
 
 # CC/CXX get defined by make(1) by default, so we can't check them
 # against the empty string to see if they haven't been set
 ifeq ($(origin CC),default)
-	export CC := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang)
+	export CC := clang
 endif
 ifeq ($(origin CXX),default)
-	export CXX := $(shell $(XCRUN) -sdk $(SDKROOT) -find clang++)
+	export CXX := clang++
 endif
 ifeq ($(MIG),)
 	export MIG := @MIG_PATH@
@@ -262,16 +262,16 @@ ifeq ($(HOST_OS_VERSION),)
 	export HOST_OS_VERSION	:= $(shell sw_vers -productVersion)
 endif
 ifeq ($(HOST_CC),)
-	export HOST_CC		:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find clang)
+	export HOST_CC		:= clang
 endif
 ifeq ($(HOST_FLEX),)
-	export HOST_FLEX	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find flex)
+	export HOST_FLEX	:= flex
 endif
 ifeq ($(HOST_BISON),)
-	export HOST_BISON	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find bison)
+	export HOST_BISON	:= bison
 endif
 ifeq ($(HOST_GM4),)
-	export HOST_GM4		:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find gm4)
+	export HOST_GM4		:= gm4
 endif
 ifeq ($(HOST_CODESIGN),)
 	export HOST_CODESIGN	:= /usr/bin/codesign
