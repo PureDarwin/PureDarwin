@@ -14,6 +14,7 @@ target_sources(libunwind PRIVATE
     src/UnwindRegistersSave.S
 )
 target_include_directories(libunwind PUBLIC include)
+target_link_libraries(libunwind PRIVATE Libc_headers)
 target_link_options(libunwind PRIVATE -umbrella System)
 
 add_firstpass_library(libunwind)

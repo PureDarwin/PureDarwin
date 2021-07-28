@@ -32,6 +32,7 @@ target_sources(libcppabi PRIVATE
     src/vec.cc
     src/vterminate.cc
 )
+target_link_libraries(libcppabi PRIVATE Libc_headers)
 # target_link_libraries(libc++abi PRIVATE libSystem)
 
 
