@@ -3,7 +3,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private)
 
 add_library(Libc_headers INTERFACE)
 target_include_directories(Libc_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/public)
-target_link_libraries(Libc_headers INTERFACE xnu_headers AvailabilityHeaders pthread_common_headers)
+target_link_libraries(Libc_headers INTERFACE libmalloc_headers xnu_headers AvailabilityHeaders pthread_common_headers)
 
 add_library(Libc_private_headers INTERFACE)
 target_include_directories(Libc_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/private)
