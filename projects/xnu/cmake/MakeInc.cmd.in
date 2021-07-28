@@ -274,7 +274,7 @@ ifeq ($(HOST_GM4),)
 	export HOST_GM4		:= gm4
 endif
 ifeq ($(HOST_CODESIGN),)
-	export HOST_CODESIGN	:= /usr/bin/codesign
+	export HOST_CODESIGN	:= true
 endif
 ifeq ($(HOST_CODESIGN_ALLOCATE),)
 	export HOST_CODESIGN_ALLOCATE	:= @CODESIGN_ALLOCATE_PATH@
