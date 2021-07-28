@@ -39,6 +39,7 @@ add_dependencies(xnu_headers.extproj darwin_codesign_allocate
 
 add_library(xnu_headers INTERFACE)
 add_dependencies(xnu_headers xnu_headers.extproj)
+target_include_directories(xnu_headers BEFORE INTERFACE ../AvailabilityVersions/include)
 target_include_directories(xnu_headers INTERFACE
     ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install/usr/include
 )
