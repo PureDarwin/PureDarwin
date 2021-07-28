@@ -60,7 +60,7 @@ if(FEATURE_THERM_NOTIFICATION_APIS)
     process_libc_headers(SUBDIRECTORY libkern FILES libkern/OSThermalNotification.h)
 endif()
 
-process_libc_headers(SUBDIRECTORY sys/_types FILES _types/_intmax_t.h _types/_nl_item.h _types/_uint16_t.h
+process_libc_headers(SUBDIRECTORY _types FILES _types/_intmax_t.h _types/_nl_item.h _types/_uint16_t.h
     _types/_uint32_t.h _types/_uint64_t.h _types/_uint8_t.h _types/_uintmax_t.h _types/_wctrans_t.h _types/_wctype_t.h)
 process_libc_headers(SUBDIRECTORY arpa FILES arpa/ftp.h arpa/inet.h arpa/nameser_compat.h arpa/telnet.h arpa/tftp.h)
 process_libc_headers(SUBDIRECTORY protocols FILES protocols/routed.h protocols/rwhod.h protocols/talkd.h protocols/timed.h)
