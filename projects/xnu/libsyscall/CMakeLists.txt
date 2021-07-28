@@ -56,6 +56,9 @@ target_sources(libsystem_kernel_static PRIVATE
     mach/string.c
     mach/thread_act.c
 
+    os/alloc_once.c
+    os/log_data.c
+
     wrappers/__commpage_gettimeofday.c
     wrappers/__get_cpu_capabilities.s
     wrappers/_libc_funcptr.c
