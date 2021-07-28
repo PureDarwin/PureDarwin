@@ -1,3 +1,5 @@
+find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
+
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
 externalproject_add(xnu_headers.extproj
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_build
@@ -19,6 +21,7 @@ externalproject_add(xnu_headers.extproj
             -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
             -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
             -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
+            -D DSYMUTIL_PATH=${dsymutil_path}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=0
@@ -82,6 +85,7 @@ externalproject_add(xnu
             -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
             -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
             -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
+            -D DSYMUTIL_PATH=${dsymutil_path}
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
             -D FIREHOSE_KERNEL_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libdispatch
             -D PTHREAD_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libpthread/include

@@ -190,7 +190,7 @@ ifeq ($(UNIFDEF),)
 	export UNIFDEF := @UNIFDEF_PATH@
 endif
 ifeq ($(DSYMUTIL),)
-	export DSYMUTIL := $(shell $(XCRUN) -sdk $(SDKROOT) -find dsymutil)
+	export DSYMUTIL := @DSYMUTIL_PATH@
 endif
 ifeq ($(CTFCONVERT),)
 	export CTFCONVERT := @CTFCONVERT_PATH@
