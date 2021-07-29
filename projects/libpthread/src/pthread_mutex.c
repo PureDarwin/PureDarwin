@@ -134,16 +134,12 @@ _pthread_mutex_global_init(const char *envp[],
 	}
 
 	bool use_ulock = _PTHREAD_MTX_OPT_ULOCK_DEFAULT;
-	if (_os_xbs_chrooted) {
-		use_ulock = false;
-	} else {
-		envvar = _simple_getenv(envp, "PTHREAD_MUTEX_USE_ULOCK");
-		if (envvar) {
-			use_ulock = (envvar[0] == '1');
-		} else if (registration_data->mutex_default_policy) {
-			use_ulock = registration_data->mutex_default_policy &
-					_PTHREAD_REG_DEFAULT_USE_ULOCK;
-		}
+	envvar = _simple_getenv(envp, "PTHREAD_MUTEX_USE_ULOCK");
+	if (envvar) {
+		use_ulock = (envvar[0] == '1');
+	} else if (registration_data->mutex_default_policy) {
+		use_ulock = registration_data->mutex_default_policy &
+				_PTHREAD_REG_DEFAULT_USE_ULOCK;
 	}
 
 	if (use_ulock != __pthread_mutex_use_ulock) {
