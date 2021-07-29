@@ -3,3 +3,6 @@
 
 add_library(libmalloc_headers INTERFACE)
 target_include_directories(libmalloc_headers INTERFACE include)
+
+add_library(libmalloc_private_headers INTERFACE)
+target_include_directories(libmalloc_private_headers INTERFACE private)
