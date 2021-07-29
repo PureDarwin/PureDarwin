@@ -18,7 +18,7 @@ target_sources(libpthread PRIVATE
 )
 target_include_directories(libpthread PUBLIC ../include)
 target_include_directories(libpthread PRIVATE .. ../private)
-target_compile_options(libpthread PRIVATE -fno-stack-protector -fno-stack-check -fno-builtin -Wno-nullability-completeness)
+target_compile_options(libpthread PRIVATE -fno-stack-protector -fno-stack-check -fno-builtin)
 target_link_options(libpthread PRIVATE "LINKER:-alias_file,pthread.aliases")
 target_link_libraries(libpthread PRIVATE AvailabilityHeaders Libc_headers libplatform_private_headers libsystem_kernel xnu_private_headers xnu_kernel_private_headers)
 

@@ -171,7 +171,6 @@ set(COMPILER_RT_SOURCES
 
 add_darwin_static_library(libcompiler_rt_dyld)
 target_sources(libcompiler_rt_dyld PRIVATE ${COMPILER_RT_SOURCES})
-target_compile_options(libcompiler_rt_dyld PRIVATE -Wno-nullability-completeness)
 target_link_libraries(libcompiler_rt_dyld PRIVATE libplatform_headers pthread_common_headers xnu_headers AvailabilityHeaders Libc_headers)
 
 
