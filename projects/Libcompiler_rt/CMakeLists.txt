@@ -132,7 +132,7 @@ set(COMPILER_RT_SOURCES
     lib/negvdi2.c
     lib/negvsi2.c
     lib/negvti2.c
-    lib/os_version_check.c
+    # lib/os_version_check.c # disabled - CoreFoundation header dependency
     lib/paritydi2.c
     lib/paritysi2.c
     lib/parityti2.c
