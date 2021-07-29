@@ -1,4 +1,4 @@
-add_subdirectory(src)
+include(libdyld.cmake)
 
 add_library(dyld_headers INTERFACE)
 target_include_directories(dyld_headers INTERFACE include)
