@@ -12,6 +12,7 @@ target_sources(libunwind PRIVATE
     src/UnwindRegistersSave.S
 )
 target_include_directories(libunwind PUBLIC include)
+target_compile_definitions(libunwind PRIVATE _LIBUNWIND_IS_NATIVE_ONLY)
 target_link_libraries(libunwind PRIVATE Libc_headers dyld_headers)
 target_link_options(libunwind PRIVATE -umbrella System)
 set_property(TARGET libunwind PROPERTY CXX_STANDARD 11)
