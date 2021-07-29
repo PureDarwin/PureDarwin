@@ -20,8 +20,9 @@ target_include_directories(libpthread PUBLIC ../include)
 target_include_directories(libpthread PRIVATE .. ../private)
 target_compile_definitions(libpthread PRIVATE _FORTIFY_SOURCE=0 __POSIX_LIB__ __PTHREAD_EXPOSE_INTERNALS__)
 target_compile_options(libpthread PRIVATE -fno-stack-protector -fno-stack-check -fno-builtin -Wno-implicit-function-declaration)
-target_link_options(libpthread PRIVATE "LINKER:-alias_file,pthread.aliases")
-target_link_libraries(libpthread PRIVATE xnu_private_headers AvailabilityHeaders Libc_headers libmalloc_private_headers dyld_headers libplatform_private_headers libsystem_kernel libsystem_kernel_private_headers xnu_kernel_private_headers)
+target_link_options(libpthread PRIVATE "LINKER:-alias_list,${CMAKE_CURRENT_SOURCE_DIR}/pthread.aliases")
+target_link_options(libpthread PRIVATE -umbrella System)
+target_link_libraries(libpthread PRIVATE xnu_private_headers libplatform AvailabilityHeaders Libc_headers libmalloc_private_headers dyld_headers libplatform_private_headers libsystem_kernel libsystem_kernel_private_headers xnu_kernel_private_headers)
 
 #add_firstpass_library(libpthread)
 
