@@ -17,7 +17,3 @@ target_include_directories(libunwind PUBLIC include)
 target_link_libraries(libunwind PRIVATE Libc_headers dyld_headers)
 target_link_options(libunwind PRIVATE -umbrella System)
 set_property(TARGET libunwind PROPERTY CXX_STANDARD 11)
-
-add_firstpass_library(libunwind)
-#target_link_firstpass_siblings(libunwind UPWARD libcppabi libsystem_compiler_rt)
-#target_link_firstpass_siblings(libunwind libc libdyld libsystem_malloc libplatform libpthread)
