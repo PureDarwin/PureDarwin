@@ -249,3 +249,4 @@ install(TARGETS libsystem_kernel DESTINATION /usr/lib/system COMPONENT BaseSyste
 
 add_library(libsystem_kernel_private_headers INTERFACE)
 target_include_directories(libsystem_kernel_private_headers INTERFACE private_include)
+target_include_directories(libsystem_kernel_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/private_include)
