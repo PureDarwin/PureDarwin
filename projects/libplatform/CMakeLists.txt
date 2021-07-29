@@ -74,7 +74,8 @@ add_library(libplatform_headers INTERFACE)
 target_include_directories(libplatform_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_library(libplatform_private_headers INTERFACE)
-target_include_directories(libplatform_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/private)
+target_include_directories(libplatform_private_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/private)
+target_link_libraries(libplatform_private_headers INTERFACE libplatform_headers)
 
 install(
     FILES include/setjmp.h include/string_x86.h include/ucontext.h
