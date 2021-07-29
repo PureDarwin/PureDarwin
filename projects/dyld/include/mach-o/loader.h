@@ -45,7 +45,7 @@
  * states and the structures of those flavors for each machine.
  */
 #include <mach/machine/thread_status.h>
-#include <architecture/byte_order.h>
+// #include <architecture/byte_order.h>
 
 /*
  * The 32-bit mach header appears at the very beginning of the object file for
