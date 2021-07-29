@@ -1,6 +1,4 @@
 add_darwin_shared_library(libunwind NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
-set_property(TARGET libcppabi PROPERTY PREFIX lib)
-set_property(TARGET libcppabi PROPERTY OUTPUT_NAME unwind)
 
 target_sources(libunwind PRIVATE
     src/libunwind.cpp
