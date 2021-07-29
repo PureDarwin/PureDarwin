@@ -178,7 +178,7 @@ add_darwin_shared_library(libsystem_compiler_rt NO_STANDARD_LIBRARIES INSTALL_NA
 set_property(TARGET libsystem_compiler_rt PROPERTY PREFIX lib)
 set_property(TARGET libsystem_compiler_rt PROPERTY OUTPUT_NAME compiler_rt)
 target_sources(libsystem_compiler_rt PRIVATE ${COMPILER_RT_SOURCES})
-target_link_libraries(libsystem_compiler_rt PRIVATE libplatform pthread_common_headers xnu_headers AvailabilityHeaders Libc_headers)
+target_link_libraries(libsystem_compiler_rt PRIVATE libplatform pthread_common_headers xnu_headers AvailabilityHeaders Libc_headers libunwind)
 target_link_options(libsystem_compiler_rt PRIVATE -compatibility_version 1 -umbrella System)
 
 #add_firstpass_library(libsystem_compiler_rt)
