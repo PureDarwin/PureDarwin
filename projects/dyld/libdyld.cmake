@@ -33,7 +33,7 @@ target_sources(libdyld PRIVATE
 
 target_include_directories(libdyld PRIVATE dyld3/shared-cache)
 target_link_libraries(libdyld PUBLIC dyld_headers)
-target_link_libraries(libdyld PRIVATE Libc_headers Libc_private_headers libplatform_headers libplatform_private_headers
+target_link_libraries(libdyld PRIVATE BlocksRuntime Libc_headers Libc_private_headers libplatform_headers libplatform_private_headers
     libsystem_kernel xnu_private_headers libsystem_kernel_private_headers xnu_kernel_private_headers)
 target_link_options(libdyld PRIVATE "LINKER:-no_inits" -umbrella System "LINKER:-unexported_symbol,__ZNSt3__18in_placeE")
 set_property(TARGET libdyld PROPERTY CXX_STANDARD 11)
