@@ -89,8 +89,8 @@ externalproject_add(xnu
             -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
             -D DSYMUTIL_PATH=${dsymutil_path}
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
-            -D FIREHOSE_KERNEL_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libdispatch
-            -D PTHREAD_HEADER_PATH=${CMAKE_CURRENT_SOURCE_DIR}/../libpthread/include
+            -D FIREHOSE_KERNEL_HEADER_PATH=$<TARGET_PROPERTY:libfirehose_kernel,INTERFACE_INCLUDE_DIRECTORIES>
+            -D PTHREAD_HEADER_PATH=$<TARGET_PROPERTY:pthread_common_headers,INTERFACE_INCLUDE_DIRECTORIES>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
