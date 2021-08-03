@@ -1,0 +1,3 @@
+add_subdirectory(libdispatch)
+add_subdirectory(libplatform)
+add_subdirectory(libpthread)
