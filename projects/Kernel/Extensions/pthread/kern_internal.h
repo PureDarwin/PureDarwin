@@ -43,8 +43,8 @@ struct ksyn_waitq_element;
 #include <sys/proc_info.h>
 #endif // KERNEL
 
-#include "kern/synch_internal.h"
-#include "kern/kern_trace.h"
+#include "synch_internal.h"
+#include "kern_trace.h"
 #include "pthread/qos.h"
 #include "pthread/qos_private.h"
 

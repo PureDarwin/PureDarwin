@@ -8,7 +8,7 @@
 
 #include <kern/thread.h>
 #include <kern/debug.h>
-#include "kern/kern_internal.h"
+#include "kern_internal.h"
 
 kern_return_t pthread_start(kmod_info_t * ki, void *d);
 kern_return_t pthread_stop(kmod_info_t *ki, void *d);

@@ -10,8 +10,7 @@ target_sources(pthread.kext PRIVATE
 )
 
 target_compile_definitions(pthread.kext PRIVATE XNU_KERNEL_PRIVATE MACH_KERNEL_PRIVATE ABSOLUTETIME_SCALAR_TYPE NEEDS_SCHED_CALL_T __PTHREAD_EXPOSE_INTERNALS__)
-target_link_libraries(pthread.kext PRIVATE xnu_kernel_private_headers xnu_private_headers)
-target_include_directories(pthread.kext PRIVATE .. ../include ../private)
+target_link_libraries(pthread.kext PRIVATE pthread_common_private_headers pthread_common_headers xnu_kernel_private_headers xnu_private_headers)
 target_compile_options(pthread.kext PRIVATE -Wno-sign-conversion -Wno-int-conversion -Wno-implicit-function-declaration -Wno-incompatible-library-redeclaration)
 
 install(TARGETS pthread.kext DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
