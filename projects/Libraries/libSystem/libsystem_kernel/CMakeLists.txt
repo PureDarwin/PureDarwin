@@ -2,7 +2,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
-        ${CMAKE_CURRENT_SOURCE_DIR}/../bsd/kern/syscalls.master
+        ${PUREDARWIN_SOURCE_DIR}/projects/Kernel/xnu/bsd/kern/syscalls.master
         ${CMAKE_CURRENT_SOURCE_DIR}/custom ${CMAKE_CURRENT_SOURCE_DIR}/Platforms
         MacOSX ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
@@ -10,11 +10,11 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
         ${CMAKE_CURRENT_BINARY_DIR}/sys/stubs.list ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
         -I${PUREDARWIN_BINARY_DIR}/projects/Kernel/xnu/xnu_header_install/usr/include
         -I${PUREDARWIN_BINARY_DIR}/projects/Kernel/xnu/xnu_header_install/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders
-        -I${CMAKE_CURRENT_SOURCE_DIR}/../EXTERNAL_HEADERS
+        -I${PUREDARWIN_SOURCE_DIR}/projects/Kernel/xnu/EXTERNAL_HEADERS
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-syscalls.pl
-        ${CMAKE_CURRENT_SOURCE_DIR}/../bsd/kern/syscalls.master
+        ${PUREDARWIN_SOURCE_DIR}/projects/Kernel/xnu/bsd/kern/syscalls.master
     COMMENT "Compile syscall stubs" VERBATIM
 )
 

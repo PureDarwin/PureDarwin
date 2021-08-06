@@ -118,5 +118,4 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/share/man DESTINATION usr/
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/usr/share/misc DESTINATION usr/share COMPONENT BaseSystem)
 
 
-add_subdirectory(libsyscall)
 add_subdirectory(libkern/kmod)
