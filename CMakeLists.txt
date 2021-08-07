@@ -6,7 +6,9 @@ if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID M
 endif()
 
 cmake_policy(SET CMP0114 NEW)
+
 set(CMAKE_INSTALL_PREFIX "")
+set(CMAKE_MACOSX_MIN_VERSION 11.0)
 
 include(ExternalProject)
 include(scripts/cmake/asm.cmake)
