@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import sys
 import struct
 import mmap
@@ -652,7 +652,7 @@ class KCContainerObject(KCObject):
         if not found_end:
             if G.accept_incomplete_data:
                 if not G.data_was_incomplete:
-                    print >>sys.stderr, "kcdata.py WARNING: data is incomplete!"
+                    print("kcdata.py WARNING: data is incomplete!", file=sys.stderr)
                     G.data_was_incomplete = True
             else:
                 raise Exception, self.no_end_message
@@ -1537,7 +1537,7 @@ def formatTurnstileInfo(ti):
         return " [turnstile with unknown inheritor]"
 
     return " [unknown turnstile status!]"
-        
+
 def formatWaitInfoWithTurnstiles(waitinfos, tsinfos):
     wis_tis = []
     for w in waitinfos:
@@ -1557,14 +1557,14 @@ def SaveStackshotReport(j, outfile_name, incomplete):
     from operator import itemgetter, attrgetter
     ss = j.get('kcdata_stackshot')
     if not ss:
-        print "No KCDATA_BUFFER_BEGIN_STACKSHOT object found. Skipping writing report."
+        print("No KCDATA_BUFFER_BEGIN_STACKSHOT object found. Skipping writing report.")
         return
 
     timestamp = ss.get('usecs_since_epoch')
     try:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S +0000",time.gmtime(timestamp / 1000000 if timestamp else None))
     except ValueError, e:
-        print "couldn't convert timestamp:", str(e)
+        print("couldn't convert timestamp:", str(e))
         timestamp = None
 
     os_version = ss.get('osversion', 'Unknown')
@@ -1575,13 +1575,13 @@ def SaveStackshotReport(j, outfile_name, incomplete):
     if shared_cache_info:
         shared_cache_base_addr = shared_cache_info['imageSlidBaseAddress']
         dsc_common = [format_uuid(shared_cache_info['imageUUID']), shared_cache_info['imageSlidBaseAddress'], "S" ]
-        print "Shared cache UUID found from the binary data is <%s> " % str(dsc_common[0])
+        print("Shared cache UUID found from the binary data is <%s> " % str(dsc_common[0]))
 
     dsc_layout = ss.get('system_shared_cache_layout')
 
     dsc_libs = []
     if dsc_layout:
-        print "Found in memory system shared cache layout with {} images".format(len(dsc_layout))
+        print("Found in memory system shared cache layout with {} images".format(len(dsc_layout)))
         slide = ss.get('shared_cache_dyld_load_info')['imageLoadAddress']
 
         for image in dsc_layout:
@@ -1603,7 +1603,7 @@ def SaveStackshotReport(j, outfile_name, incomplete):
     if incomplete:
         obj["reason"] = "!!!INCOMPLETE!!! kernel panic stackshot"
         obj["notes"] = "This stackshot report generated from incomplete data!   Some information is missing! "
-        
+
     processByPid = obj["processByPid"]
     ssplist = ss.get('task_snapshots', {})
     kern_load_info = []
@@ -1629,7 +1629,7 @@ def SaveStackshotReport(j, outfile_name, incomplete):
             if 'imageSlidBaseAddress' in tsnap.get('shared_cache_dyld_load_info'):
                 shared_cache_base_addr = tsnap.get('shared_cache_dyld_load_info')['imageSlidBaseAddress']
             else:
-                print "Specific task shared cache format does not include slid shared cache base address. Skipping writing report."
+                print("Specific task shared cache format does not include slid shared cache base address. Skipping writing report.")
                 return
 
             pr_lib_dsc = [format_uuid(tsnap.get('shared_cache_dyld_load_info')['imageUUID']),
@@ -1681,7 +1681,7 @@ def SaveStackshotReport(j, outfile_name, incomplete):
             threadByID[str(tid)] = {}
             thsnap = threadByID[str(tid)]
             if "thread_snapshot" not in thdata:
-                print "Found broken thread state for thread ID: %s." % tid
+                print("Found broken thread state for thread ID: %s." % tid)
                 break
             threadsnap = thdata["thread_snapshot"]
             thsnap["userTime"] = GetSecondsFromMATime(threadsnap["ths_user_time"], timebase)
@@ -1744,7 +1744,7 @@ def RunCommand(bash_cmd_string, get_stderr = True):
     """
         returns: (int,str) : exit_code and output_str
     """
-    print "RUNNING: %s" % bash_cmd_string
+    print("RUNNING: %s" % bash_cmd_string)
     cmd_args = shlex.split(bash_cmd_string)
     output_str = ""
     exit_code = 0
@@ -1883,7 +1883,7 @@ if __name__ == '__main__':
 
     if args.list_known_types:
         for (n, t) in KNOWN_TYPES_COLLECTION.items():
-            print "%d : %s " % (n, str(t))
+            print("%d : %s " % (n, str(t)))
         sys.exit(1)
 
     if args.incomplete or args.stackshot_file:
@@ -1899,9 +1899,9 @@ if __name__ == '__main__':
         try:
             json_obj = json.loads(str_data)
         except:
-            print >>sys.stderr, "JSON reparsing failed!  Printing string data!\n"
+            print("JSON reparsing failed!  Printing string data!\n", file=sys.stderr)
             import textwrap
-            print textwrap.fill(str_data, 100)
+            print(textwrap.fill(str_data, 100))
             raise
 
         if args.pretty:
@@ -1915,6 +1915,6 @@ if __name__ == '__main__':
                 json_obj, Foundation.NSPropertyListXMLFormat_v1_0, 0, None)[0].bytes().tobytes()
             #sigh.  on some pythons long integers are getting output with L's in the plist.
             plist = re.sub(r'^(\s*<integer>\d+)L(</integer>\s*)$', r"\1\2", plist, flags=re.MULTILINE)
-            print plist,
+            print(plist, end='')
         else:
-            print json.dumps(json_obj, sort_keys=True, indent=4, separators=(',', ': '))
+            print(json.dumps(json_obj, sort_keys=True, indent=4, separators=(',', ': ')))

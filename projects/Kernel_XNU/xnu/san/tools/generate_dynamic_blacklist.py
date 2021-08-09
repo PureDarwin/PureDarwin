@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import sys
 import re
@@ -12,7 +12,7 @@ nentries = 0
 extra_entries = 5
 bl = file(sys.argv[1])
 
-print r'struct blacklist_entry blacklist[] = {'
+print(r'struct blacklist_entry blacklist[] = {')
 
 for line in bl.readlines():
 	line = re_comments.sub("", line).strip()
@@ -39,25 +39,25 @@ for line in bl.readlines():
 	if ty == "":
 		ty = "normal";
 
-	print """	{{
+	print("""	{{
 		.kext_name = {},
 		.func_name = {},
 		.type_mask = {},
-	}},""".format(kext, func, type_map(ty))
+	}},""".format(kext, func, type_map(ty)))
 	nentries += 1
 
 # add space for new entries added at runtime
-print ''
-print r'	/* Unused entries that can be populated at runtime */'
+print()
+print(r'	/* Unused entries that can be populated at runtime */')
 for i in xrange(0, extra_entries):
-	print """	{{
+	print("""	{{
 		.kext_name = {},
 		.func_name = {},
 		.type_mask = {},
-	}},""".format("NULL", "NULL", 0)
+	}},""".format("NULL", "NULL", 0))
 
-print r'};'
-print
+print(r'};')
+print()
 
-print 'static size_t blacklist_entries = {};'.format(nentries)
-print 'static const size_t blacklist_max_entries = {};'.format(nentries + extra_entries)
+print('static size_t blacklist_entries = {};'.format(nentries))
+print('static const size_t blacklist_max_entries = {};'.format(nentries + extra_entries))
