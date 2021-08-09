@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # machtrace_parse.py
 # Parse Mach IPC kmsg data trace from XNU
 #
@@ -372,7 +372,7 @@ class IPCGraph:
             if not src and k == src_str:
                 src = v
             if not dst and k == dst_str:
-                dst = v 
+                dst = v
             if src and dst:
                 break
         if not src:

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """ This file holds all static values that debugging macros need. These are typically object type strings, #defines in C etc.
     The objective is to provide a single place to be the bridge between C code in xnu and the python macros used by lldb.

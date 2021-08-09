@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from subprocess import Popen, PIPE, call
 import re
 import sys
@@ -55,13 +55,12 @@ class SymbolLookup:
 def symbolify(objfile, input, *args, **kargs):
     replacer = SymbolLookup(objfile, *args, **kargs)
     for l in input:
-        print re.sub("(0x)?[0-9a-f]{6,16}", replacer, l),
+        print(re.sub("(0x)?[0-9a-f]{6,16}", replacer, l, end='')
 
 
 def usage():
-    
-    print "usage: %s [filename] [slide]" % sys.argv[0]
-    print "\tor speficy a filename in your SYMBOLIFY_KERNEL environment variable"
+    print("usage: %s [filename] [slide]" % sys.argv[0])
+    print("\tor speficy a filename in your SYMBOLIFY_KERNEL environment variable")
 
     # die now
     sys.exit(1)
@@ -83,7 +82,7 @@ if( KERNEL_FILE is None ):
 if( KERNEL_FILE is None ):
     usage()
 
-print "using kernel file '%s', slide 0x%x" % (KERNEL_FILE, SLIDE)
+print("using kernel file '%s', slide 0x%x" % (KERNEL_FILE, SLIDE))
 
 symbolify(KERNEL_FILE, sys.stdin, min_width=40)
 
