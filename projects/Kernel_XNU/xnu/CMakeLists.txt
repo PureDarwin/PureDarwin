@@ -6,7 +6,7 @@ externalproject_add(xnu_headers.extproj
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND true # disable auto CMake configure
     BUILD_COMMAND
-        cmake
+        ${CMAKE_COMMAND}
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
             -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
@@ -25,12 +25,14 @@ externalproject_add(xnu_headers.extproj
             -D DSYMUTIL_PATH=${dsymutil_path}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
+        ${CMAKE_COMMAND} -E echo "xnu_headers build output located at ${CMAKE_CURRENT_BINARY_DIR}/xnu_headers.log"
+    COMMAND
         make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=0
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
+        2>&1 > ${CMAKE_CURRENT_BINARY_DIR}/xnu_headers.log
     INSTALL_COMMAND true # installed during build
-    USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
 add_dependencies(xnu_headers.extproj darwin_codesign_allocate
@@ -69,7 +71,7 @@ externalproject_add(xnu
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND true # disable auto CMake configure
     BUILD_COMMAND
-        cmake
+        ${CMAKE_COMMAND}
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
             -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
@@ -92,12 +94,14 @@ externalproject_add(xnu
             -D PTHREAD_HEADER_PATH=$<TARGET_PROPERTY:pthread_common_headers,INTERFACE_INCLUDE_DIRECTORIES>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
+        ${CMAKE_COMMAND} -E echo "xnu build output located at ${CMAKE_CURRENT_BINARY_DIR}/xnu_headers.log"
+    COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
+        2>&1 > ${CMAKE_CURRENT_BINARY_DIR}/xnu.log
     INSTALL_COMMAND true # installed during build
-    USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
 add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl darwin_ld)
