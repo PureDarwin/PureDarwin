@@ -4078,6 +4078,9 @@ void Options::parse(int argc, const char* argv[])
 					throw "-oso_prefix missing <path>";
 				fOSOPrefixPath = path;
 			}
+			else if (strcmp(arg, "-adhoc_codesign") == 0 || strcmp(arg, "-no_adhoc_codesign") == 0) {
+				// Ignore these two flags. They are used only for Apple Silicon builds, which we do not support.
+			}
 			// put this last so that it does not interfer with other options starting with 'i'
 			else if ( strncmp(arg, "-i", 2) == 0 ) {
 				const char* colon = strchr(arg, ':');
