@@ -1,3 +1,5 @@
+set(CMAKE_FOLDER "tools")
+
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(LibXml2 REQUIRED)

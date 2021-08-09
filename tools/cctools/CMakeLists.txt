@@ -1,3 +1,5 @@
+set(CMAKE_FOLDER "tools/cctools")
+
 add_subdirectory(libmacho)
 add_subdirectory(libstuff)
 add_subdirectory(misc)

@@ -1,3 +1,5 @@
+set(CMAKE_FOLDER "tools")
+
 add_executable(migcom)
 target_sources(migcom PRIVATE
     error.c

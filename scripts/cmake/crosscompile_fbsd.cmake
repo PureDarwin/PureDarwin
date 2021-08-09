@@ -8,6 +8,8 @@ function(add_fbsd_executable name)
     target_compile_options(${name} PRIVATE -nostdinc -isysroot ${PUREDARWIN_SOURCE_DIR}/tools/fbsd_base/base)
     target_link_options(${name} PRIVATE -target x86_64-pc-freebsd13.0 -fuse-ld=${lld_path})
     target_link_options(${name} PRIVATE -nostdlib -isysroot ${PUREDARWIN_SOURCE_DIR}/tools/fbsd_base/base)
+
+    set_target_folder(${name})
 endfunction()
 
 function(add_fbsd_static_library name)
@@ -23,6 +25,8 @@ function(add_fbsd_static_library name)
     if(name_prefix STREQUAL "lib")
         set_property(TARGET ${name} PROPERTY PREFIX "")
     endif()
+
+    set_target_folder(${name})
 endfunction()
 
 function(add_fbsd_shared_library name)
@@ -44,6 +48,8 @@ function(add_fbsd_shared_library name)
     if(name_prefix STREQUAL "lib")
         set_property(TARGET ${name} PROPERTY PREFIX "")
     endif()
+
+    set_target_folder(${name})
 endfunction()
 
 function(add_fbsd_object_library name)
@@ -53,4 +59,6 @@ function(add_fbsd_object_library name)
     add_dependencies(${name} fbsd_base)
     target_compile_options(${name} PRIVATE -target x86_64-pc-freebsd13.0)
     target_compile_options(${name} PRIVATE -nostdinc -isysroot ${PUREDARWIN_SOURCE_DIR}/tools/fbsd_base/base)
+
+    set_target_folder(${name})
 endfunction()

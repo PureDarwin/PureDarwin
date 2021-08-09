@@ -1,3 +1,5 @@
+set(CMAKE_FOLDER "tools/dtrace")
+
 project(dtrace_ctf_host)
 
 add_subdirectory(libctf)

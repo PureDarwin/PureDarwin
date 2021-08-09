@@ -1,3 +1,9 @@
+macro(set_target_folder name)
+    string(LENGTH ${CMAKE_SOURCE_DIR} CMAKE_SOURCE_DIR_LENGTH)
+    string(SUBSTRING ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR_LENGTH} -1 CMAKE_CURRENT_SOURCE_DIR_RELATIVE)
+    set_property(TARGET ${name} PROPERTY FOLDER "${CMAKE_CURRENT_SOURCE_DIR_RELATIVE}")
+endmacro()
+
 function(add_darwin_executable name)
     cmake_parse_arguments(SL "NO_STANDARD_LIBRARIES" "MACOSX_VERSION_MIN" "" ${ARGN})
 
@@ -20,6 +26,8 @@ function(add_darwin_executable name)
     else()
         message(AUTHOR_WARNING "Could not determine -mmacosx-version-min flag for target ${name}")
     endif()
+
+    set_target_folder(${name})
 endfunction()
 
 function(add_darwin_static_library name)
@@ -34,6 +42,8 @@ function(add_darwin_static_library name)
 
     target_compile_options(${name} PRIVATE -target x86_64-apple-macos${CMAKE_MACOSX_MIN_VERSION})
     target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+
+    set_target_folder(${name})
 endfunction()
 
 function(add_darwin_shared_library name)
@@ -79,6 +89,8 @@ function(add_darwin_shared_library name)
     foreach(rpath IN LISTS SL_RPATHS)
         target_link_options(${name} PRIVATE "SHELL:-rpath ${rpath}")
     endforeach()
+
+    set_target_folder(${name})
 endfunction()
 
 function(add_darwin_object_library name)
@@ -87,6 +99,8 @@ function(add_darwin_object_library name)
     target_compile_definitions(${name} PRIVATE __PUREDARWIN__)
     target_compile_options(${name} PRIVATE -target x86_64-apple-darwin20)
     target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+
+    set_target_folder(${name})
 endfunction()
 
 set(CMAKE_SKIP_RPATH TRUE)

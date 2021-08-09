@@ -1,3 +1,5 @@
+set(CMAKE_FOLDER "tools")
+
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/base.stamp
     COMMAND ${CMAKE_COMMAND} -D OUTDIR=${CMAKE_CURRENT_BINARY_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/download-base.cmake
     COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_BINARY_DIR}/base.stamp
