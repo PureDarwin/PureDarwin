@@ -1,4 +1,4 @@
-find_program(lld_path ld.lld REQUIRED)
+find_program(lld_path ld.lld HINTS /usr/local/opt/llvm/bin REQUIRED)
 
 function(add_fbsd_executable name)
     add_executable(${name})
