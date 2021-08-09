@@ -1,0 +1,5 @@
+add_subdirectory(KernelExtensions)
+add_subdirectory(libfirehose_kernel)
+add_subdirectory(libkmod)
+add_subdirectory(libsystem_kernel)
+add_subdirectory(xnu)
