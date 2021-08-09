@@ -5,6 +5,20 @@ if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID M
     message(FATAL_ERROR "PureDarwin must be compiled with clang.")
 endif()
 
+if(NOT KERNEL_BUILD_FREEBSD AND NOT KERNEL_BUILD_XNU)
+    message(FATAL_ERROR "You must specify one of KERNEL_BUILD_FREEBSD or KERNEL_BUILD_XNU")
+elseif(KERNEL_BUILD_FREEBSD AND KERNEL_BUILD_XNU)
+    message(FATAL_ERROR "You cannot specify both KERNEL_BUILD_FREEBSD and KERNEL_BUILD_XNU")
+endif()
+
+if(KERNEL_BUILD_FREEBSD)
+    include(scripts/cmake/crosscompile_fbsd.cmake)
+else()
+    if(NOT CMAKE_HOST_APPLE)
+        message(FATAL_ERROR "Building PureDarwin with the xnu kernel currently requires a macOS host.")
+    endif()
+endif()
+
 cmake_policy(SET CMP0114 NEW)
 
 set(CMAKE_INSTALL_PREFIX "")
