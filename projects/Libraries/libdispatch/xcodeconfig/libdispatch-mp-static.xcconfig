@@ -1,0 +1,29 @@
+//
+// Copyright (c) 2012-2013 Apple Inc. All rights reserved.
+//
+// @APPLE_APACHE_LICENSE_HEADER_START@
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// @APPLE_APACHE_LICENSE_HEADER_END@
+//
+
+// skip simulator
+SUPPORTED_PLATFORMS = macosx iphoneos appletvos watchos
+PRODUCT_NAME = libdispatch
+INSTALL_PATH = /usr/local/lib/system
+BUILD_VARIANTS = normal debug
+GCC_PREPROCESSOR_DEFINITIONS = $(GCC_PREPROCESSOR_DEFINITIONS) $(STATICLIB_PREPROCESSOR_DEFINITIONS)
+OTHER_LDFLAGS =
+SKIP_INSTALL[sdk=*simulator*] = YES
+EXCLUDED_SOURCE_FILE_NAMES[sdk=*simulator*] = *

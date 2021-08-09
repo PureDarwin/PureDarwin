@@ -1,0 +1,6 @@
+# aliases file for pthread old-symbol aliases
+# <symbol> <alias>
+
+_pthread_is_threaded_np __pthread_is_threaded
+_sched_yield _cthread_yield
+_sched_yield _pthread_yield_np

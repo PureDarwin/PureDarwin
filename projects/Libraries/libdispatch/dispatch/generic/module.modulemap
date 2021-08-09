@@ -1,0 +1,18 @@
+module Dispatch {
+	requires blocks
+	export *
+	link "dispatch"
+	link "BlocksRuntime"
+}
+
+module DispatchIntrospection [system] [extern_c] {
+	header "introspection.h"
+	export *
+}
+
+module CDispatch [system] [extern_c] {
+	umbrella header "dispatch.h"
+	export *
+	requires blocks
+	link "dispatch"
+}

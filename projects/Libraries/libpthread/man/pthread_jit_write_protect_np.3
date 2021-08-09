@@ -1,0 +1,71 @@
+.\" Copyright (c) 2020 Apple Inc. All rights reserved.
+.\"
+.\" @APPLE_LICENSE_HEADER_START@
+.\"
+.\" This file contains Original Code and/or Modifications of Original Code
+.\" as defined in and that are subject to the Apple Public Source License
+.\" Version 2.0 (the 'License'). You may not use this file except in
+.\" compliance with the License. Please obtain a copy of the License at
+.\" http://www.opensource.apple.com/apsl/ and read it before using this
+.\" file.
+.\"
+.\" The Original Code and all software distributed under the License are
+.\" distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+.\" EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+.\" INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+.\" FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+.\" Please see the License for the specific language governing rights and
+.\" limitations under the License.
+.\"
+.\" @APPLE_LICENSE_HEADER_END@
+.\"
+.Dd May 1, 2020
+.Dt PTHREAD_JIT_WRITE_PROTECT_NP 3
+.Os
+.Sh NAME
+.Nm pthread_jit_write_protect_supported_np ,
+.Nm pthread_jit_write_protect_np
+.Nd thread JIT region write protection settings
+.Sh SYNOPSIS
+.In pthread.h
+.Ft int
+.Fn pthread_jit_write_protect_supported_np "void"
+.Ft void
+.Fn pthread_jit_write_protect_np "int enabled"
+.Sh DESCRIPTION
+The
+.Fn pthread_jit_write_protect_supported_np
+function returns whether the
+.Fn pthread_jit_write_protect_np
+API is supported on this platform. If
+.Fn pthread_jit_write_protect_np
+API is supported on this platform,
+.Fn pthread_jit_write_protect_np
+must be called to toggle per-thread write protection on the MAP_JIT region before the thread writes to or executes from the MAP_JIT region.
+.Pp
+The
+.Fn pthread_jit_write_protect_np
+function sets whether MAP_JIT region write protection is enabled for this thread.
+.Pp
+On platforms where
+.Fn pthread_jit_write_protect_supported_np
+is true, MAP_JIT regions are never writeable and executable simultaneously.
+When write protection is enabled for the thread, writes by the thread to the MAP_JIT region are denied and the MAP_JIT region is executable.
+When write protection is disabled for the thread, writes by the thread to the MAP_JIT region are allowed and the MAP_JIT region is not executable.
+Pass a non-zero value for the
+.Fa enabled
+parameter to enable thread JIT region write protection and allow execution. Pass a zero value for the
+.Fa enabled
+parameter to disable thread JIT write protection and deny execution.
+.Pp
+On platforms where
+.Fn pthread_jit_write_protect_supported_np
+is not supported, MAP_JIT regions are both simultaenously writeable and executable. Calls to
+.Fn pthread_jit_write_protect_np
+are no-ops on unsupported platforms.
+.Sh RETURN VALUES
+If supported, the
+.Fn pthread_jit_write_protect_supported_np
+function will return one.  Otherwise the function will return zero.
+.Sh SEE ALSO
+.Xr mmap 2

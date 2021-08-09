@@ -1,0 +1,357 @@
+.\" $NetBSD: pthread_mutexattr.3,v 1.11 2010/07/08 22:46:34 jruoho Exp $
+.\"
+.\" Copyright (c) 2002, 2010 The NetBSD Foundation, Inc.
+.\" All rights reserved.
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\" THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+.\" ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+.\" TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+.\" BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+.\" INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+.\" CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+.\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+.\" POSSIBILITY OF SUCH DAMAGE.
+.\"
+.\" Copyright (C) 2000 Jason Evans <jasone@FreeBSD.org>.
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice(s), this list of conditions and the following disclaimer as
+.\"    the first lines of this file unmodified other than the possible
+.\"    addition of one or more copyright notices.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice(s), this list of conditions and the following disclaimer in
+.\"    the documentation and/or other materials provided with the
+.\"    distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDER(S) ``AS IS'' AND ANY
+.\" EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+.\" PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) BE
+.\" LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+.\" CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+.\" SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+.\" BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+.\" WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+.\" OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+.\" EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+.\"
+.\" $FreeBSD$
+.Dd July 9, 2010
+.Dt PTHREAD_MUTEXATTR 3
+.Os
+.Sh NAME
+.Nm pthread_mutexattr_init ,
+.Nm pthread_mutexattr_destroy ,
+.Nm pthread_mutexattr_setprioceiling ,
+.Nm pthread_mutexattr_getprioceiling ,
+.Nm pthread_mutexattr_setprotocol ,
+.Nm pthread_mutexattr_getprotocol ,
+.Nm pthread_mutexattr_settype ,
+.Nm pthread_mutexattr_gettype
+.Nd mutex attribute operations
+.Sh SYNOPSIS
+.In pthread.h
+.Ft int
+.Fn pthread_mutexattr_init "pthread_mutexattr_t *attr"
+.Ft int
+.Fn pthread_mutexattr_destroy "pthread_mutexattr_t *attr"
+.Ft int
+.Fn pthread_mutexattr_setprioceiling "pthread_mutexattr_t *attr" "int prioceiling"
+.Ft int
+.Fn pthread_mutexattr_getprioceiling "pthread_mutexattr_t *attr" "int *prioceiling"
+.Ft int
+.Fn pthread_mutexattr_setprotocol "pthread_mutexattr_t *attr" "int protocol"
+.Ft int
+.Fn pthread_mutexattr_getprotocol "pthread_mutexattr_t *attr" "int *protocol"
+.Ft int
+.Fn pthread_mutexattr_settype "pthread_mutexattr_t *attr" "int type"
+.Ft int
+.Fn pthread_mutexattr_gettype "pthread_mutexattr_t *attr" "int *type"
+.Ft int
+.Fn pthread_mutexattr_setpolicy_np "pthread_mutexattr_t *attr" "int policy"
+.Ft int
+.Fn pthread_mutexattr_getpolicy_np "pthread_mutexattr_t *attr" "int *policy"
+.Sh DESCRIPTION
+Mutex attributes are used to specify parameters to
+.Fn pthread_mutex_init .
+Like with thread attributes,
+one attribute object can be used in multiple calls to
+.Xr pthread_mutex_init 3 ,
+with or without modifications between calls.
+.Pp
+The
+.Fn pthread_mutexattr_init
+function initializes
+.Fa attr
+with all the default mutex attributes.
+.Pp
+The
+.Fn pthread_mutexattr_destroy
+function destroys
+.Fa attr .
+.Pp
+The
+.Fn pthread_mutexattr_settype
+functions set the mutex
+.Fa type
+value of the attribute.
+Valid mutex types are:
+.Bl -tag -width "XXX" -offset 2n
+.It Dv PTHREAD_MUTEX_NORMAL
+This type of mutex does not check for usage errors.
+It will deadlock if reentered, and result in undefined behavior if a
+locked mutex is unlocked by another thread.
+Attempts to unlock an already unlocked
+.Dv PTHREAD_MUTEX_NORMAL
+mutex will result in undefined behavior.
+.It Dv PTHREAD_MUTEX_ERRORCHECK
+These mutexes do check for usage errors.
+If an attempt is made to relock a
+.Dv PTHREAD_MUTEX_ERRORCHECK
+mutex without first dropping the lock, an error will be returned.
+If a thread attempts to unlock a
+.Dv PTHREAD_MUTEX_ERRORCHECK
+mutex that is locked by another thread, an error will be returned.
+If a thread attempts to unlock a
+.Dv PTHREAD_MUTEX_ERRORCHECK
+thread that is unlocked, an error will be returned.
+.It Dv PTHREAD_MUTEX_RECURSIVE
+These mutexes allow recursive locking.
+An attempt to relock a
+.Dv PTHREAD_MUTEX_RECURSIVE
+mutex that is already locked by the same thread succeeds.
+An equivalent number of
+.Xr pthread_mutex_unlock 3
+calls are needed before the mutex will wake another thread waiting
+on this lock.
+If a thread attempts to unlock a
+.Dv PTHREAD_MUTEX_RECURSIVE
+mutex that is locked by another thread, an error will be returned.
+If a thread attempts to unlock a
+.Dv PTHREAD_MUTEX_RECURSIVE
+thread that is unlocked, an error will be returned.
+.Pp
+It is advised that
+.Dv PTHREAD_MUTEX_RECURSIVE
+mutexes are not used with condition variables.
+This is because of the implicit unlocking done by
+.Xr pthread_cond_wait 3
+and
+.Xr pthread_cond_timedwait 3 .
+.It Dv PTHREAD_MUTEX_DEFAULT
+Also this type of mutex will cause undefined behavior if reentered.
+Unlocking a
+.Dv PTHREAD_MUTEX_DEFAULT
+mutex locked by another thread will result in undefined behavior.
+Attempts to unlock an already unlocked
+.Dv PTHREAD_MUTEX_DEFAULT
+mutex will result in undefined behavior.
+This is the default mutex type for
+.Fn pthread_mutexaddr_init .
+.El
+.Pp
+.Fn pthread_mutexattr_gettype
+functions copy the type value of the attribute to the location pointed to by the second parameter.
+.Pp
+The
+.Fn pthread_mutexattr_setpolicy_np
+function sets the mutex
+.Fa policy
+value of the attribute.
+Valid mutex policies are:
+.Bl -tag -width "XXX" -offset 2n
+.It Dv PTHREAD_MUTEX_POLICY_FIRSTFIT_NP
+The first-fit mutex policy allows acquisition of the mutex to occur in any
+order. This policy is similar in operation to os_unfair_lock, new contending
+acquirers may obtain ownership of the mutex ahead of existing waiters.
+.It Dv PTHREAD_MUTEX_POLICY_FAIRSHARE_NP
+The fairshare mutex policy guarantees that ownership of a contended mutex will
+be granted to waiters on a strictly ordered first-in, first-out basis. That is,
+a mutex holder that unlocks the mutex and then attempts to relock will wait
+behind existing threads already waiting on the mutex before being granted
+ownership again.
+.El
+.Pp
+The
+.Fn pthread_mutexattr_getpolicy_np
+function copies the mutex
+.Fa policy
+value of the attribute to the location pointed to by the second parameter.
+.Pp
+The
+.Fn pthread_mutexattr_set*
+functions set the attribute that corresponds to each function name.
+.Pp
+The
+.Fn pthread_mutexattr_get*
+functions copy the value of the attribute that corresponds to each function name
+to the location pointed to by the second function parameter.
+.Sh RETURN VALUES
+If successful, these functions return 0.
+Otherwise, an error number is returned to indicate the error.
+.Sh ENVIRONMENT
+The following environment variables change the behavior of the pthread mutex
+implementation.
+.Bl -tag -width "XXX" -offset 2n
+.It Ev PTHREAD_MUTEX_DEFAULT_POLICY
+Controls the process-wide policy used when initializing a pthread_mutex_t that
+has not had a policy set via
+.Fn pthread_mutexattr_setpolicy_np .
+The valid values are mapped as:
+.Pp
+.Bl -tag -width "XXX"
+.It Fa 1
+.Dv PTHREAD_MUTEX_POLICY_FAIRSHARE_NP
+.It Fa 3
+.Dv PTHREAD_MUTEX_POLICY_FIRSTFIT_NP
+.El
+.El
+.Sh BACKWARDS COMPATIBILITY
+Prior to macOS 10.14 (iOS and tvOS 12.0, watchOS 5.0) the only available
+pthread mutex policy mode was
+.Dv PTHREAD_MUTEX_POLICY_FAIRSHARE_NP .
+macOS 10.14 (iOS and tvOS 12.0, watchOS 5.0) introduces
+.Dv PTHREAD_MUTEX_POLICY_FIRSTFIT_NP
+and also makes this the default mode for mutexes initialized without a policy
+attribute set.
+.Pp
+Attempting to use
+.Fn pthread_mutexattr_setpolicy_np
+to set the policy of a pthread_mutex_t to
+.Dv PTHREAD_MUTEX_POLICY_FIRSTFIT_NP
+on earlier releases will fail with
+.Er EINVAL
+and the mutex will continue to operate in fairshare mode.
+.Sh ERRORS
+The
+.Fn pthread_mutexattr_init
+function shall fail if:
+.Bl -tag -width Er
+.It Bq Er ENOMEM
+Out of memory.
+.El
+.Pp
+The
+.Fn pthread_mutexattr_destroy
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Invalid value for
+.Fa attr .
+.El
+.Pp
+The
+.Fn pthread_mutexattr_setprioceiling
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Invalid value for
+.Fa attr ,
+or invalid value for
+.Fa prioceiling .
+.El
+.Pp
+The
+.Fn pthread_mutexattr_getprioceiling
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Invalid value for
+.Fa attr .
+.El
+.Pp
+The
+.Fn pthread_mutexattr_setprotocol
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Invalid value for
+.Fa attr ,
+or invalid value for
+.Fa protocol .
+.El
+.Pp
+The
+.Fn pthread_mutexattr_getprotocol
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Invalid value for
+.Fa attr .
+.El
+.Pp
+The
+.Fn pthread_mutexattr_settype
+function shall fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+The value specified either by
+.Fa type
+or
+.Fa attr
+is invalid.
+.El
+.Pp
+The
+.Fn pthread_mutexattr_gettype
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Invalid value for
+.Fa attr .
+.El
+.Pp
+The
+.Fn pthread_mutexattr_setpolicy_np
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+Invalid value for
+.Fa attr .
+.El
+.Pp
+The
+.Fn pthread_mutexattr_getpolicy_np
+function will fail if:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+The value specified either by
+.Fa type
+or
+.Fa attr
+is invalid.
+.El
+.Sh SEE ALSO
+.Xr pthread_mutex_init 3
+.Sh STANDARDS
+The
+.Fn pthread_mutexattr_init
+and
+.Fn pthread_mutexattr_destroy
+functions conform to
+.St -p1003.1-96
+.Pp
+The
+.Fn pthread_mutexattr_setprioceiling ,
+.Fn pthread_mutexattr_getprioceiling ,
+.Fn pthread_mutexattr_setprotocol ,
+.Fn pthread_mutexattr_getprotocol ,
+.Fn pthread_mutexattr_settype ,
+and
+.Fn pthread_mutexattr_gettype
+functions conform to
+.St -susv2

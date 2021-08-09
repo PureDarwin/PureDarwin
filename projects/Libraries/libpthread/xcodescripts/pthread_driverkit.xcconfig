@@ -1,0 +1,2 @@
+#include "pthread.xcconfig"
+#include "pthread-tapi.xcconfig"
