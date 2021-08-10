@@ -13,6 +13,10 @@ elseif(KERNEL_BUILD_FREEBSD AND KERNEL_BUILD_XNU)
 endif()
 
 if(KERNEL_BUILD_FREEBSD)
+    if(XCODE)
+        message(FATAL_ERROR "KERNEL_BUILD_FREEBSD is not compatible with Xcode generator")
+    endif()
+
     include(scripts/cmake/crosscompile_fbsd.cmake)
 else()
     if(NOT CMAKE_HOST_APPLE)
