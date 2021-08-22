@@ -23,6 +23,8 @@ include(cmake/install_helpers.cmake)
 include(cmake/kext.cmake)
 include(cmake/mig.cmake)
 
+list(APPEND CMAKE_MODULE_PATH ${PUREDARWIN_SOURCE_DIR}/scripts/cmake/modules)
+
 add_subdirectory(projects)
 add_subdirectory(src)
 add_subdirectory(tools)
