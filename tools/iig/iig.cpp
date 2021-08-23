@@ -1,18 +1,4 @@
-#include <cstdio>
-#include <string>
-#include <vector>
-
-#include <clang-c/Index.h>
-
-using namespace std;
-
-inline bool strequal(const char *s1, const char *s2) {
-    return strcmp(s1, s2) == 0;
-}
-
-inline bool strnequal(const char *s1, const char *s2, size_t n) {
-    return strncmp(s1, s2, n) == 0;
-}
+#include "iig.h"
 
 static void usage(const char *progname) {
     fprintf(stderr, "usage: %s --def <path/to/input.iig> --header <path/to/header.h> --impl <path/to/source.iig.cpp> -- <clang args>\n", progname);
