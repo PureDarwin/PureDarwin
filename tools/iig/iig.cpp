@@ -65,6 +65,51 @@ int main(int argc, const char * argv[]) {
     CXIndex index = clang_createIndex(0, 0);
     CXTranslationUnit source = clang_createTranslationUnitFromSourceFile(index, inputFilePath.c_str(), extraClangArgs.size(), &extraClangArgs[0], 0, nullptr);
 
+    size_t num_diags = clang_getNumDiagnostics(source);
+    if (num_diags > 0) {
+        bool found_error = false;
+        for (size_t diag_index = 0; diag_index < num_diags; diag_index++) {
+            auto diag = clang_getDiagnostic(source, diag_index);
+
+            const char *severity = nullptr;
+            switch (clang_getDiagnosticSeverity(diag)) {
+                case CXDiagnostic_Fatal:
+                    severity = "fatal error";
+                    break;
+                case CXDiagnostic_Error:
+                    severity = "error";
+                    found_error = true;
+                    break;
+                case CXDiagnostic_Warning:
+                    severity = "warning";
+                    break;
+                case CXDiagnostic_Note:
+                    severity = "note";
+                    break;
+                default:
+                    assertion_failure("unknown CXDiagnosticSeverity");
+                    break;
+            }
+            if (clang_getDiagnosticSeverity(diag) == CXDiagnosticSeverity::CXDiagnostic_Error) {
+                found_error = true;
+            }
+
+            auto text = clang_formatDiagnostic(diag, CXDiagnostic_DisplaySourceLocation);
+            fprintf(stderr, "iig: %s: ", severity);
+            fwrite(stderr, text);
+            fwrite(stderr, "\n");
+            clang_disposeString(text);
+
+            if (clang_getDiagnosticSeverity(diag) == CXDiagnostic_Fatal) {
+                exit(1);
+            }
+
+            clang_disposeDiagnostic(diag);
+        }
+
+        if (found_error) exit(1);
+    }
+
     clang_disposeIndex(index);
     return 0;
 }
