@@ -1,5 +1,6 @@
 {
     "cmake.configureEnvironment": {
         "OPENSSL_ROOT_DIR": "/usr/local/opt/openssl"
-    }
+    },
+    "cmake.clearOutputBeforeBuild": false
 }
