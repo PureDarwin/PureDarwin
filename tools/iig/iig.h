@@ -27,7 +27,7 @@ inline void fwrite(FILE *file, const char *string) {
 
 template<typename CharType>
 inline void fwrite(FILE *file, basic_string<CharType> string) {
-    fwrite(string.c_str(), sizeof(CharType), string.length, file);
+    fwrite(string.c_str(), sizeof(CharType), string.length(), file);
 }
 
 #define assertion_failure(msg) __assert_rtn(__func__, __FILE__, __LINE__, msg)
