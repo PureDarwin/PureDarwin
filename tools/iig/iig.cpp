@@ -1,8 +1,12 @@
 #include "iig.h"
 
 static void usage(const char *progname) {
-    fprintf(stderr, "usage: %s --def <path/to/input.iig> --header <path/to/header.h> --impl <path/to/source.iig.cpp> -- <clang args>\n", progname);
-    fprintf(stderr, "note: The --edits, --log, --framework-name, and --deployment-target options from Apple iig are not implemented and will be ignored\n");
+    std::cerr <<
+        "usage: " << progname <<
+        " --def <path/to/input.iig> --header <path/to/header.h> --impl <path/to/source.iig.cpp> -- <clang args>\n"
+        "note: The --edits, --log, --framework-name, and --deployment-target options from Apple iig are not "
+        "implemented and will be ignored" << std::endl;
+
     exit(1);
 }
 
@@ -15,50 +19,50 @@ int main(int argc, const char * argv[]) {
             extraClangArgs.push_back(argv[i]);
         } else if (strequal(argv[i], "--def")) {
             if (++i == argc) {
-                fprintf(stderr, "iig: error: --def option requires an argument\n");
+                std::cerr << "iig: error: --def option requires an argument" << std::endl;
                 usage(argv[0]);
             }
 
             inputFilePath = argv[i];
         } else if (strequal(argv[i], "--header")) {
             if (++i == argc) {
-                fprintf(stderr, "iig: error: --header option requires an argument\n");
+                std::cerr << "iig: error: --header option requires an argument" << std::endl;
                 usage(argv[0]);
             }
 
             headerOutputPath = argv[i];
         } else if (strequal(argv[i], "--impl")) {
             if (++i == argc) {
-                fprintf(stderr, "iig: error: --impl option requires an argument\n");
+                std::cerr << "iig: error: --impl option requires an argument" << std::endl;
                 usage(argv[0]);
             }
 
             implOutputPath = argv[i];
         } else if (strequal(argv[i], "--edits") || strequal(argv[i], "--log") || strequal(argv[i], "--framework-name") || strequal(argv[i], "--deployment-target")) {
             if (++i == argc) {
-                fprintf(stderr, "iig: error: %s option requires an argument\n", argv[i]);
+                std::cerr << "iig: error: " << argv[i] << " option requires an argument" << std::endl;
                 usage(argv[0]);
             }
 
-            fprintf(stderr, "iig: warning: %s option unimplemented and ignored\n", argv[i]);
+            std::cerr << "iig: warning: " << argv[i] << " option unimplemented and ignored" << std::endl;
         } else if (strequal(argv[i], "--help")) {
             usage(argv[0]);
         } else if (strequal(argv[i], "--")) {
             seenDashDash = true;
         } else {
-            fprintf(stderr, "iig: error: unrecognized option: %s\n", argv[i]);
+            std::cerr << "iig: error: unrecognized option: " << argv[i] << std::endl;
             usage(argv[0]);
         }
     }
 
     if (inputFilePath.size() == 0) {
-        fprintf(stderr, "iig: error: input file not specified\n");
+        std::cerr << "iig: error: input file not specified" << std::endl;
         usage(argv[0]);
     } else if (headerOutputPath.size() == 0) {
-        fprintf(stderr, "iig: error: output header file not specified\n");
+        std::cerr << "iig: error: output header file not specified" << std::endl;
         usage(argv[0]);
     } else if (implOutputPath.size() == 0) {
-        fprintf(stderr, "iig: error: output source file not specified\n");
+        std::cerr << "iig: error: output source file not specified" << std::endl;
         usage(argv[0]);
     }
 
@@ -95,9 +99,7 @@ int main(int argc, const char * argv[]) {
             }
 
             auto text = clang_formatDiagnostic(diag, CXDiagnostic_DisplaySourceLocation);
-            fprintf(stderr, "iig: %s: ", severity);
-            fwrite(stderr, text);
-            fwrite(stderr, "\n");
+            std::cerr << "iig: " << severity << text << "\n";
             clang_disposeString(text);
 
             if (clang_getDiagnosticSeverity(diag) == CXDiagnostic_Fatal) {
