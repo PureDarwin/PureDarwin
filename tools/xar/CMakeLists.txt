@@ -29,7 +29,7 @@ target_sources(host_libxar PRIVATE
 )
 target_include_directories(host_libxar PUBLIC include)
 target_include_directories(host_libxar PRIVATE ${OPENSSL_INCLUDE_DIR})
-target_link_libraries(host_libxar PRIVATE -lz -lxml2)
+target_link_libraries(host_libxar PRIVATE ZLIB::ZLIB LibXml2::LibXml2)
 
 add_executable(host_xar)
 target_sources(host_xar PRIVATE
