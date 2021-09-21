@@ -13,7 +13,7 @@ target_sources(corecrypto.kext PRIVATE
     algorithms/aes_cbc.c
     algorithms/aes_ecb.c
     algorithms/cckprng.c
-    algorithms/md5_impl.cpp
+    algorithms/md5_impl.cc
     algorithms/md5.c
     algorithms/pdcrypto_digest_final.c
     algorithms/pdcrypto_digest_init.c
