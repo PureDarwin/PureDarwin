@@ -6166,15 +6166,6 @@ void Options::checkIllegalOptionCombinations()
 		}
 	}
 
-	// ld64-port: addded #if 0
-#if 0
-	// <rdar://problem/39095109> Linker warning for i386 macOS binaries
-	if ( (architecture() == CPU_TYPE_I386) && platforms().contains(ld::Platform::macOS) ) {
-		if ( !fInternalSDK )
-			warning("The i386 architecture is deprecated for macOS (remove from the Xcode build setting: ARCHS)");
-	}
-#endif
-
 	// <rdar://problem/47805298> building chained fixups should not allow a custom load address
 	if ( fMakeChainedFixups ) {
 		switch ( fOutputKind ) {
