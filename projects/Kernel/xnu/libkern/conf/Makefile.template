@@ -113,7 +113,6 @@ inet_aton.o_CFLAGS_ADD += -Wno-sign-conversion
 infback.o_CFLAGS_ADD += -Wno-sign-conversion
 inflate.o_CFLAGS_ADD += -Wno-sign-conversion
 kxld_array.o_CFLAGS_ADD += -Wno-sign-conversion
-kxld_copyright.o_CFLAGS_ADD += -Wno-sign-conversion
 kxld_dict.o_CFLAGS_ADD += -Wno-sign-conversion
 kxld_object.o_CFLAGS_ADD += -Wno-sign-conversion
 kxld_reloc.o_CFLAGS_ADD += -Wno-sign-conversion
