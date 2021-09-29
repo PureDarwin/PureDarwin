@@ -1,4 +1,3 @@
 add_subdirectory(AvailabilityVersions)
-add_subdirectory(libdispatch)
-add_subdirectory(libplatform)
-add_subdirectory(libpthread)
+add_subdirectory(libSystem)
+add_subdirectory(libkmod)
