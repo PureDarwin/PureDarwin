@@ -46,7 +46,7 @@ int main(int argc, const char * argv[]) {
                 usage(argv[0]);
             }
 
-            std::cerr << "iig: warning: " << argv[i] << " option unimplemented and ignored" << std::endl;
+            // These options are unimplemented and ignored.
         } else if (strequal(argv[i], "--help")) {
             usage(argv[0]);
         } else if (strequal(argv[i], "--")) {
