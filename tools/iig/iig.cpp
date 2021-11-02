@@ -13,11 +13,12 @@ static void usage(const char *progname) {
 int main(int argc, const char * argv[]) {
     int exitCode = 0;
     string inputFilePath, headerOutputPath, implOutputPath;
-    vector<const char *> extraClangArgs; bool seenDashDash = false;
+    string clangFlags; bool seenDashDash = false;
 
     for (int i = 1; i < argc; i++) {
         if (seenDashDash) {
-            extraClangArgs.push_back(argv[i]);
+            clangFlags += argv[i];
+            clangFlags += " ";
         } else if (strequal(argv[i], "--def")) {
             if (++i == argc) {
                 std::cerr << "iig: error: --def option requires an argument" << std::endl;
@@ -68,7 +69,8 @@ int main(int argc, const char * argv[]) {
     }
 
     CXIndex index = clang_createIndex(0, 0);
-    CXTranslationUnit source = clang_createTranslationUnitFromSourceFile(index, inputFilePath.c_str(), extraClangArgs.size(), &extraClangArgs[0], 0, nullptr);
+    const char *clangFlagsStr = clangFlags.c_str();
+    CXTranslationUnit source = clang_createTranslationUnitFromSourceFile(index, inputFilePath.c_str(), 1, &clangFlagsStr, 0, nullptr);
 
     size_t num_diags = clang_getNumDiagnostics(source);
     if (num_diags > 0) {
@@ -97,7 +99,7 @@ int main(int argc, const char * argv[]) {
             }
 
             auto text = clang_formatDiagnostic(diag, CXDiagnostic_DisplaySourceLocation);
-            std::cerr << "iig: " << severity << text << "\n";
+            std::cerr << "iig: " << severity << text << std::endl;
             clang_disposeString(text);
 
             if (clang_getDiagnosticSeverity(diag) == CXDiagnostic_Fatal) {
