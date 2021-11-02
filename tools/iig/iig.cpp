@@ -94,9 +94,6 @@ int main(int argc, const char * argv[]) {
                     assertion_failure("unknown CXDiagnosticSeverity");
                     break;
             }
-            if (clang_getDiagnosticSeverity(diag) == CXDiagnosticSeverity::CXDiagnostic_Error) {
-                found_error = true;
-            }
 
             auto text = clang_formatDiagnostic(diag, CXDiagnostic_DisplaySourceLocation);
             std::cerr << "iig: " << severity << text << "\n";
