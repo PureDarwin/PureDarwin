@@ -1,3 +1,7 @@
+if(CMAKE_GENERATOR STREQUAL "Xcode")
+    message(FATAL_ERROR "PureDarwin cannot be compiled with Xcode.")
+endif()
+
 cmake_minimum_required(VERSION 3.15.1)
 project(PUREDARWIN)
 
