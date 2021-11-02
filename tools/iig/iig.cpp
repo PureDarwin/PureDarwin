@@ -11,6 +11,7 @@ static void usage(const char *progname) {
 }
 
 int main(int argc, const char * argv[]) {
+    int exitCode = 0;
     string inputFilePath, headerOutputPath, implOutputPath;
     vector<const char *> extraClangArgs; bool seenDashDash = false;
 
@@ -109,6 +110,9 @@ int main(int argc, const char * argv[]) {
         if (found_error) exit(1);
     }
 
+    std::cerr << "iig: fatal error: iig is not implemented at this time." << std::endl;
+    exitCode = -1;
+
     clang_disposeIndex(index);
-    return 0;
+    return exitCode;
 }
