@@ -107,7 +107,6 @@ libkern/ptrauth_utils.c         standard
 
 libkern/kxld/kxld.c             optional config_kxld
 libkern/kxld/kxld_array.c       optional config_kxld
-libkern/kxld/kxld_copyright.c   optional config_kxld
 libkern/kxld/kxld_demangle.c    optional config_kxld
 libkern/kxld/kxld_dict.c        optional config_kxld
 libkern/kxld/kxld_kext.c        optional config_kxld

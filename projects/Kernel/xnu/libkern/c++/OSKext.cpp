@@ -192,11 +192,7 @@ static void OSKextLogKextInfo(OSKext *aKext, uint64_t address, uint64_t size, fi
 /**********
  * Strings and substrings used in dependency resolution.
  */
-#define APPLE_KEXT_PREFIX            "com.apple."
-#define PUREDARWIN_KEXT_PREFIX       "org.puredarwin."
 #define KERNEL_LIB                   "com.apple.kernel"
-
-#define PRIVATE_KPI                  "com.apple.kpi.private"
 
 /* Version for compatbility pseudokexts (com.apple.kernel.*),
  * compatible back to v6.0.
@@ -8466,13 +8462,7 @@ OSKext::resolveDependencies(
 	bool                   hasRawKernelDependency   = false;
 	bool                   hasKernelDependency      = false;
 	bool                   hasKPIDependency         = false;
-	bool                   hasPrivateKPIDependency  = false;
 	unsigned int           count;
-
-#if CONFIG_KXLD
-	OSString             * infoString               = NULL;        // do not release
-	OSString             * readableString           = NULL;        // do not release
-#endif // CONFIG_KXLD
 
 	/* A kernel component will automatically have this flag set,
 	 * and a loaded kext should also have it set (as should all its
@@ -8694,9 +8684,6 @@ OSKext::resolveDependencies(
 			hasKernelDependency = true;
 		} else if (STRING_HAS_PREFIX(library_id, KPI_LIB_PREFIX)) {
 			hasKPIDependency = true;
-			if (!strncmp(library_id, PRIVATE_KPI, sizeof(PRIVATE_KPI) - 1)) {
-				hasPrivateKPIDependency = true;
-			}
 		}
 	}
 
@@ -8781,45 +8768,6 @@ OSKext::resolveDependencies(
 		}
 	}
 #endif /* __LP64__ */
-
-#if CONFIG_KXLD
-	/*
-	 * If we're not dynamically linking kexts, then we don't need to check
-	 * copyright strings. The linker in user space has already done this.
-	 */
-	if (hasPrivateKPIDependency) {
-		bool hasApplePrefix = false;
-		bool infoCopyrightIsValid = false;
-		bool readableCopyrightIsValid = false;
-
-		hasApplePrefix = STRING_HAS_PREFIX(getIdentifierCString(),
-		    APPLE_KEXT_PREFIX) || STRING_HAS_PREFIX(getIdentifierCString(), PUREDARWIN_KEXT_PREFIX);
-
-		infoString = OSDynamicCast(OSString,
-		    getPropertyForHostArch("CFBundleGetInfoString"));
-		if (infoString) {
-			infoCopyrightIsValid =
-			    kxld_validate_copyright_string(infoString->getCStringNoCopy());
-		}
-
-		readableString = OSDynamicCast(OSString,
-		    getPropertyForHostArch("NSHumanReadableCopyright"));
-		if (readableString) {
-			readableCopyrightIsValid =
-			    kxld_validate_copyright_string(readableString->getCStringNoCopy());
-		}
-
-		if (!hasApplePrefix || (!infoCopyrightIsValid && !readableCopyrightIsValid)) {
-			OSKextLog(this,
-			    kOSKextLogErrorLevel |
-			    kOSKextLogDependenciesFlag,
-			    "Error - kext %s declares a dependency on %s. "
-			    "Only Apple kexts may declare a dependency on %s.",
-			    getIdentifierCString(), PRIVATE_KPI, PRIVATE_KPI);
-			goto finish;
-		}
-	}
-#endif // CONFIG_KXLD
 
 	result = true;
 	flags.hasAllDependencies = 1;
