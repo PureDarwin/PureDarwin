@@ -1,8 +1,0 @@
-# techically, CF is present, but for updating purposes it's missing
-CF N 476.17
-PureFoundation Y 0.003 9G55pd1 c1bf14d83a82bd4d3dc4f382647f9514a273e179 ? { ICU objc4 autozone libgcc Libsystem CFNetwork }
-NotApple80211 Y 1.0 9G55pd1 e76af684cdf7603e5680fc27f2aa67f21658a086 ? { }
-libstdcxx_libs Y 16 9G55pd1 73ed4a0e58710e1e6ad2a81a7f7d0e9212240332 ? { Libsystem libgcc }
-lua Y 5.1 9G55pd1 7d541f3637fafa32529964dddda27f25d76c5ee4 ? { }
-dm Y 1.0 9G55pd1 0b5aca99ace1df62bbd1d97aff54437952658f7e ? { lua SQLite curl gnuzip gnutar bzip2 }
-

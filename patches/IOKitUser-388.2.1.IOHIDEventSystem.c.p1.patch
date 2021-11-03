@@ -1,8 +1,0 @@
---- IOKitUser-388.2.1/hid.subproj/IOHIDEventSystem.c.origin	2008-10-30 20:18:17.000000000 +0100
-+++ IOKitUser-388.2.1/hid.subproj/IOHIDEventSystem.c	2008-10-30 20:18:59.000000000 +0100
-@@ -0,0 +1,5 @@
-+void IOHIDEventSystemOpen (void) {
-+}
-+
-+void IOHIDEventSystemCreate (void) {
-+}

@@ -1,4 +1,0 @@
-LIBRARY BlocksRuntime
-EXPORTS
-  _NSConcreteGlobalBlock CONSTANT
-  _NSConcreteStackBlock CONSTANT

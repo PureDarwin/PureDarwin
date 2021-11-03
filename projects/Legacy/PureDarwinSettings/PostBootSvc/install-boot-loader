@@ -1,8 +1,0 @@
-   - Install boot0 to the MBR:
-   		sudo fdisk -f boot0 -u -y /dev/rdisk0
-  
-   echo "- Install boot1h to the partition's bootsector:"
-  		echo "sudo dd if=boot1h of=/dev/rdisk0s2"
-  
-   - Install boot to the partition's root directory:
-  		sudo cp boot /

@@ -1,2 +1,0 @@
-san/kasan-arm64.c       optional config_kasan
-san/kasan-test-arm64.s  optional config_kasan
