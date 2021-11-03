@@ -1,3 +1,0 @@
-Editors
-curl
-Chess
