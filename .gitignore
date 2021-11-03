@@ -50,6 +50,10 @@ DerivedData/
 !default.perspectivev3
 xcuserdata/
 
+## JetBrains CLion
+.idea/
+cmake-build-*/
+
 ## Other
 *.moved-aside
 *.xccheckout
