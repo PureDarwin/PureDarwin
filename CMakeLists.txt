@@ -23,5 +23,6 @@ include(cmake/install_helpers.cmake)
 include(cmake/kext.cmake)
 include(cmake/mig.cmake)
 
+add_subdirectory(projects)
 add_subdirectory(src)
 add_subdirectory(tools)
