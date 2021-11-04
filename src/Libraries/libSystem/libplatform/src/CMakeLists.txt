@@ -12,6 +12,7 @@ target_link_libraries(libsystem_platform_static PRIVATE
     xnu_private_headers xnu_headers
 )
 
+target_compile_options(libsystem_platform_static PRIVATE -fno-stack-check -fno-stack-protector)
 target_compile_options(libsystem_platform_static PRIVATE -Wno-implicit-function-declaration)
 target_compile_options(libsystem_platform_static PRIVATE -Wno-deprecated-declarations)
 target_sources(libsystem_platform_static PRIVATE
