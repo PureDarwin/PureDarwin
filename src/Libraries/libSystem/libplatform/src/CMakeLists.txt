@@ -13,7 +13,9 @@ target_link_libraries(libsystem_platform_static PUBLIC
 )
 
 target_compile_definitions(libsystem_platform_static PUBLIC TARGET_OS_OSX=1)
-target_compile_options(libsystem_platform_static PRIVATE -fno-stack-check -fno-stack-protector)
+target_compile_options(libsystem_platform_static PRIVATE
+    -fno-stack-check -fno-stack-protector -fno-common -momit-leaf-frame-pointer
+)
 target_compile_options(libsystem_platform_static PRIVATE -Wno-implicit-function-declaration)
 target_compile_options(libsystem_platform_static PRIVATE -Wno-deprecated-declarations)
 target_sources(libsystem_platform_static PRIVATE
