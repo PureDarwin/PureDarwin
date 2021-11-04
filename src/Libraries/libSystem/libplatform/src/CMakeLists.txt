@@ -9,7 +9,7 @@ target_link_libraries(libsystem_platform_static PRIVATE
     AvailabilityHeaders
     libplatform_private_headers libsystem_kernel_bootstrap_headers
     libsystem_kernel_private_headers pthread_common_headers pthread_common_private_headers
-    xnu_headers xnu_private_headers
+    xnu_private_headers xnu_headers
 )
 
 target_compile_options(libsystem_platform_static PRIVATE -Wno-implicit-function-declaration)
