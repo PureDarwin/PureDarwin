@@ -18,7 +18,7 @@ target_sources(libsystem_platform_static PRIVATE
 add_darwin_shared_library(libsystem_platform INSTALL_NAME_DIR /usr/lib/system)
 target_link_libraries(libsystem_platform INTERFACE libplatform_headers)
 target_link_libraries(libsystem_platform PRIVATE libsystem_platform_static)
-target_link_options(libsystem_platform PRIVATE -umbrella System -all_load)
+target_link_options(libsystem_platform PRIVATE -umbrella System)
 target_link_options(libsystem_platform PRIVATE "LINKER:-force_load,$<TARGET_FILE:libsystem_platform_static>")
 
 target_sources(libsystem_platform PRIVATE force_libplatform_to_build.c)
