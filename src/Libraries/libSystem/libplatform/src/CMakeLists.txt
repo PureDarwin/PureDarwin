@@ -1,17 +1,19 @@
 add_darwin_static_library(libsystem_platform_static)
 add_dependencies(libsystem_platform_static libsystem_kernel_static)
 
-target_include_directories(libsystem_platform_static PRIVATE os/resolver)
+target_include_directories(libsystem_platform_static PRIVATE os/resolver ../include)
 target_link_libraries(libsystem_platform_static INTERFACE libplatform_headers)
 target_link_libraries(libsystem_platform_static PRIVATE libplatform_private_headers)
 target_link_libraries(libsystem_platform_static PRIVATE libsystem_kernel)
 target_link_libraries(libsystem_platform_static PRIVATE
     AvailabilityHeaders
     libplatform_private_headers libsystem_kernel_bootstrap_headers
-    libsystem_kernel_private_headers pthread_common_headers xnu_headers xnu_private_headers
+    libsystem_kernel_private_headers pthread_common_headers pthread_common_private_headers
+    xnu_headers xnu_private_headers
 )
 
 target_compile_options(libsystem_platform_static PRIVATE -Wno-implicit-function-declaration)
+target_compile_options(libsystem_platform_static PRIVATE -Wno-deprecated-declarations)
 target_sources(libsystem_platform_static PRIVATE
     atomics/init.c
     atomics/common/MKGetTimeBaseInfo.c

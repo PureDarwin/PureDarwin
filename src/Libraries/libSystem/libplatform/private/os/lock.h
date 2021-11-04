@@ -22,6 +22,6 @@
 #define __OS_LOCK_PRIVATE_UNFAIR_LOCK_INIT__
 
 
-#include_next <os/lock.h>
+// #include_next <os/lock.h>
 
 #endif // __OS_LOCK_PRIVATE_UNFAIR_LOCK_INIT__
