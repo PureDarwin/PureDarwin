@@ -10,20 +10,20 @@ OPTIONS/mach_assert				optional mach_assert
 
 # iig generated implementation files
 
-./DriverKit/OSObject.iig.cpp		optional iokitcpp
-./DriverKit/OSAction.iig.cpp		optional iokitcpp
-./DriverKit/IOService.iig.cpp		optional iokitcpp
-./DriverKit/IOUserClient.iig.cpp		optional iokitcpp
-./DriverKit/IOMemoryDescriptor.iig.cpp		optional iokitcpp
-./DriverKit/IOBufferMemoryDescriptor.iig.cpp		optional iokitcpp
-./DriverKit/IOMemoryMap.iig.cpp		optional iokitcpp
-./DriverKit/IODispatchSource.iig.cpp		optional iokitcpp
-./DriverKit/IODispatchQueue.iig.cpp		optional iokitcpp
-./DriverKit/IOInterruptDispatchSource.iig.cpp		optional iokitcpp
-./DriverKit/IODataQueueDispatchSource.iig.cpp		optional iokitcpp
-./DriverKit/IOServiceNotificationDispatchSource.iig.cpp		optional iokitcpp
-./DriverKit/IOUserServer.iig.cpp		optional iokitcpp
-./DriverKit/IODMACommand.iig.cpp		optional iokitcpp
+iokit/DriverKit/OSObject.iig.cpp		optional iokitcpp
+iokit/DriverKit/OSAction.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOService.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOUserClient.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOMemoryDescriptor.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOBufferMemoryDescriptor.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOMemoryMap.iig.cpp		optional iokitcpp
+iokit/DriverKit/IODispatchSource.iig.cpp		optional iokitcpp
+iokit/DriverKit/IODispatchQueue.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOInterruptDispatchSource.iig.cpp		optional iokitcpp
+iokit/DriverKit/IODataQueueDispatchSource.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOServiceNotificationDispatchSource.iig.cpp		optional iokitcpp
+iokit/DriverKit/IOUserServer.iig.cpp		optional iokitcpp
+iokit/DriverKit/IODMACommand.iig.cpp		optional iokitcpp
 
 # libIOKit
 
