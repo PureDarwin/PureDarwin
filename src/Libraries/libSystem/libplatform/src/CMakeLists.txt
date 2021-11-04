@@ -1,16 +1,53 @@
 add_darwin_static_library(libsystem_platform_static)
 add_dependencies(libsystem_platform_static libsystem_kernel_static)
 
+target_include_directories(libsystem_platform_static PRIVATE os/resolver)
 target_link_libraries(libsystem_platform_static INTERFACE libplatform_headers)
 target_link_libraries(libsystem_platform_static PRIVATE libplatform_private_headers)
 target_link_libraries(libsystem_platform_static PRIVATE libsystem_kernel)
 target_link_libraries(libsystem_platform_static PRIVATE
     AvailabilityHeaders
     libplatform_private_headers libsystem_kernel_bootstrap_headers
-    libsystem_kernel_private_headers pthread_common_headers xnu_headers
+    libsystem_kernel_private_headers pthread_common_headers xnu_headers xnu_private_headers
 )
 
+target_compile_options(libsystem_platform_static PRIVATE -Wno-implicit-function-declaration)
 target_sources(libsystem_platform_static PRIVATE
+    atomics/init.c
+    atomics/common/MKGetTimeBaseInfo.c
+    introspection/introspection.c
+    os/alloc_once.c
+    os/atomic.c
+    os/lock.c
+    os/semaphore.c
+    setjmp/generic/setjmperr.c
+    setjmp/generic/sigaction.c
+    setjmp/generic/sigtramp.c
+    simple/asl.c
+    simple/getenv.c
+    simple/string_io.c
+    string/generic/bzero.c
+    string/generic/ffsll.c
+    string/generic/flsll.c
+    string/generic/memccpy.c
+    string/generic/memchr.c
+    string/generic/memcmp.c
+    string/generic/memmove.c
+    string/generic/memset_pattern.c
+    string/generic/strchr.c
+    string/generic/strcmp.c
+    string/generic/strcpy.c
+    string/generic/strlcat.c
+    string/generic/strlcpy.c
+    string/generic/strlen.c
+    string/generic/strncmp.c
+    string/generic/strncpy.c
+    string/generic/strnlen.c
+    string/generic/strstr.c
+    ucontext/generic/getmcontext.c
+    ucontext/generic/makecontext.c
+    ucontext/generic/setcontext.c
+    ucontext/generic/swapcontext.c
     init.c
 )
 

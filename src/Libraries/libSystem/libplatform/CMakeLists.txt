@@ -2,7 +2,8 @@ add_library(libplatform_headers INTERFACE)
 target_include_directories(libplatform_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_library(libplatform_private_headers INTERFACE)
-target_include_directories(libplatform_private_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/private)
+target_include_directories(libplatform_private_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/private
+    ${CMAKE_CURRENT_SOURCE_DIR}/internal)
 
 
 install(
