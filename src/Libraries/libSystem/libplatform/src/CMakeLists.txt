@@ -1,15 +1,25 @@
-add_darwin_shared_library(libsystem_platform INSTALL_NAME_DIR /usr/lib/system)
-target_link_options(libsystem_platform PRIVATE -umbrella System -all_load)
-install(TARGETS libsystem_platform DESTINATION /usr/lib/system COMPONENT BaseSystem)
+add_darwin_static_library(libsystem_platform_static)
+add_dependencies(libsystem_platform_static libsystem_kernel_static)
 
-target_link_libraries(libsystem_platform INTERFACE libplatform_headers)
-target_link_libraries(libsystem_platform PRIVATE libsystem_kernel)
-target_link_libraries(libsystem_platform PRIVATE libplatform_private_headers
-     AvailabilityHeaders libsystem_kernel_bootstrap_headers
-     libsystem_kernel_private_headers pthread_common_headers xnu_headers
+target_link_libraries(libsystem_platform_static INTERFACE libplatform_headers)
+target_link_libraries(libsystem_platform_static PRIVATE libplatform_private_headers)
+target_link_libraries(libsystem_platform_static PRIVATE libsystem_kernel)
+target_link_libraries(libsystem_platform_static PRIVATE
+    AvailabilityHeaders
+    libplatform_private_headers libsystem_kernel_bootstrap_headers
+    libsystem_kernel_private_headers pthread_common_headers xnu_headers
 )
-add_dependencies(libsystem_platform libsystem_kernel_static)
 
-target_sources(libsystem_platform PRIVATE
+target_sources(libsystem_platform_static PRIVATE
     init.c
 )
+
+
+add_darwin_shared_library(libsystem_platform INSTALL_NAME_DIR /usr/lib/system)
+target_link_libraries(libsystem_platform INTERFACE libplatform_headers)
+target_link_libraries(libsystem_platform PRIVATE libsystem_platform_static)
+target_link_options(libsystem_platform PRIVATE -umbrella System -all_load)
+target_link_options(libsystem_platform PRIVATE "LINKER:-force_load,$<TARGET_FILE:libsystem_platform_static>")
+
+target_sources(libsystem_platform PRIVATE force_libplatform_to_build.c)
+install(TARGETS libsystem_platform DESTINATION /usr/lib/system COMPONENT BaseSystem)
