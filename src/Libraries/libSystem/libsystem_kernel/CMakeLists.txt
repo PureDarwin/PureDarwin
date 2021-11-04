@@ -424,11 +424,18 @@ target_link_libraries(libsystem_kernel PRIVATE CrashReporterClient)
 target_link_libraries(libsystem_kernel PRIVATE libc_public_headers)
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
-target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
-
 install(TARGETS libsystem_kernel DESTINATION usr/lib/system COMPONENT BaseSystem)
 
 # END DYNAMIC LIBRARY
+
+add_library(libsystem_kernel_private_headers INTERFACE)
+target_include_directories(libsystem_kernel_private_headers INTERFACE private_include)
+target_include_directories(libsystem_kernel_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/private_include)
+
+add_library(libsystem_kernel_bootstrap_headers INTERFACE)
+target_include_directories(libsystem_kernel_bootstrap_headers INTERFACE bootstrap_include)
+
+# INSTALL
 
 install(FILES wrappers/gethostuuid.h DESTINATION usr/include COMPONENT DeveloperTools)
 install(FILES wrappers/spawn/spawn.h DESTINATION usr/include COMPONENT DeveloperTools)
