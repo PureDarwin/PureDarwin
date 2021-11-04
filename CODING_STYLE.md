@@ -22,7 +22,7 @@ An editorconfig file is provided to help contributors to adhere to these rules.
 * Always name targets after the name of their output binary. If you are building a Darwin component target, do include “lib” if it is present in the output filename; CMake will detect this and set the `PREFIX` property accordingly to prevent “lib” appearing twice in the filename. This will _not_ automatically occur for host tool targets, so omit “lib” from target names there.
 * When adding compiler definitions, keep them alphabetized unless it breaks something.
 * Try to keep include directories alphabetized in the CMakeLists file, but there are places where doing so will break the build.
-* Separate build rules for separate binaries with three blank lines. Put `install()` and `add_subdirectory()` calls together in their own section at the end of the file, separated by three blank lines from the others.
+* Separate build rules for separate binaries with two blank lines. Put `install()` and `add_subdirectory()` calls together in their own sections at the end of the file, separated by two blank lines from the others.
 * Look in the source files in the scripts/cmake folder for documentation about what each function or macro does.
 
 ## Kernel Extensions
