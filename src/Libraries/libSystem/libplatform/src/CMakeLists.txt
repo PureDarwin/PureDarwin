@@ -4,12 +4,12 @@ add_dependencies(libsystem_platform_static libsystem_kernel_static)
 target_include_directories(libsystem_platform_static PRIVATE os/resolver ../include)
 target_link_libraries(libsystem_platform_static INTERFACE libplatform_headers)
 target_link_libraries(libsystem_platform_static PRIVATE libplatform_private_headers)
-target_link_libraries(libsystem_platform_static PRIVATE libsystem_kernel)
 target_link_libraries(libsystem_platform_static PRIVATE
-    AvailabilityHeaders
-    libplatform_private_headers libsystem_kernel_bootstrap_headers
-    libsystem_kernel_private_headers pthread_common_headers pthread_common_private_headers
-    xnu_private_headers xnu_headers
+    libplatform_private_headers libsystem_kernel_bootstrap_headers libsystem_kernel_private_headers
+    pthread_common_private_headers xnu_private_headers libsystem_kernel
+)
+target_link_libraries(libsystem_platform_static PUBLIC
+    AvailabilityHeaders pthread_common_headers xnu_headers
 )
 
 target_compile_definitions(libsystem_platform_static PUBLIC TARGET_OS_OSX=1)
@@ -69,7 +69,7 @@ target_sources(libsystem_platform_static PRIVATE
 
 add_darwin_shared_library(libsystem_platform INSTALL_NAME_DIR /usr/lib/system)
 target_link_libraries(libsystem_platform INTERFACE libplatform_headers)
-target_link_libraries(libsystem_platform PRIVATE libsystem_platform_static)
+target_link_libraries(libsystem_platform PRIVATE libsystem_platform_static libsystem_kernel)
 target_link_options(libsystem_platform PRIVATE -umbrella System)
 target_link_options(libsystem_platform PRIVATE "LINKER:-force_load,$<TARGET_FILE:libsystem_platform_static>")
 
