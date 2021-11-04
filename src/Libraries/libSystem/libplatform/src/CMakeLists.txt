@@ -12,6 +12,7 @@ target_link_libraries(libsystem_platform_static PRIVATE
     xnu_private_headers xnu_headers
 )
 
+target_compile_definitions(libsystem_platform_static PUBLIC TARGET_OS_OSX=1)
 target_compile_options(libsystem_platform_static PRIVATE -fno-stack-check -fno-stack-protector)
 target_compile_options(libsystem_platform_static PRIVATE -Wno-implicit-function-declaration)
 target_compile_options(libsystem_platform_static PRIVATE -Wno-deprecated-declarations)
@@ -52,6 +53,17 @@ target_sources(libsystem_platform_static PRIVATE
     ucontext/generic/setcontext.c
     ucontext/generic/swapcontext.c
     init.c
+
+    atomics/x86_64/OSAtomic.s
+    atomics/x86_64/OSAtomicFifo.c
+    atomics/x86_64/pfz.s
+    cachecontrol/x86_64/cache.s
+    setjmp/x86_64/_setjmp.s
+    setjmp/x86_64/_sigtramp.s
+    setjmp/x86_64/setjmp.s
+    ucontext/x86_64/_ctx_start.s
+    ucontext/x86_64/_setcontext.s
+    ucontext/x86_64/getcontext.s
 )
 
 
