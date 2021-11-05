@@ -1,5 +1,5 @@
 add_darwin_static_library(libsystem_platform_static)
-add_dependencies(libsystem_platform_static libsystem_kernel_static)
+# add_dependencies(libsystem_platform_static libsystem_kernel_static)
 
 target_include_directories(libsystem_platform_static PRIVATE os/resolver ../include)
 target_link_libraries(libsystem_platform_static INTERFACE libplatform_headers)
@@ -74,6 +74,7 @@ target_link_libraries(libsystem_platform INTERFACE libplatform_headers)
 target_link_libraries(libsystem_platform PRIVATE libsystem_platform_static libsystem_kernel)
 target_link_options(libsystem_platform PRIVATE -umbrella System)
 target_link_options(libsystem_platform PRIVATE "LINKER:-force_load,$<TARGET_FILE:libsystem_platform_static>")
+target_link_options(libsystem_platform PRIVATE "LINKER:-bind_at_load")
 
 target_sources(libsystem_platform PRIVATE force_libplatform_to_build.c)
 install(TARGETS libsystem_platform DESTINATION /usr/lib/system COMPONENT BaseSystem)
