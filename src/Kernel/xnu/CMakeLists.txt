@@ -1,4 +1,8 @@
-find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
+find_program(dsymutil_path
+    NAMES dsymutil llvm-dsymutil
+    HINTS /usr/lib/llvm-11/bin
+    REQUIRED
+)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
 externalproject_add(xnu_headers.extproj
