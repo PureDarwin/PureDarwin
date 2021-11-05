@@ -9,7 +9,9 @@ if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID M
     message(FATAL_ERROR "PureDarwin must be compiled with clang.")
 endif()
 
-cmake_policy(SET CMP0114 NEW)
+if(POLICY CMP0114)
+    cmake_policy(SET CMP0114 NEW)
+endif()
 
 set(CMAKE_INSTALL_PREFIX "")
 set(CMAKE_MACOSX_MIN_VERSION 11.0)

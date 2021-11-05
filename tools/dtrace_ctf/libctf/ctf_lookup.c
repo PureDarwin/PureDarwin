@@ -286,11 +286,13 @@ ctf_func_info(ctf_file_t *fp, unsigned long symidx, ctf_funcinfo_t *fip)
 		 * On Darwin, we do not have symbol type information
 		 */
 #if !defined(__APPLE__)
+        const Elf32_Sym *symp = (Elf32_Sym *)sp->cts_data + symidx;
 		if (ELF32_ST_TYPE(symp->st_info) != STT_FUNC)
 			return (ctf_set_errno(fp, ECTF_NOTFUNC));
 #endif
 	} else {
 #if !defined(__APPLE__)
+        const Elf64_Sym *symp = (Elf64_Sym *)sp->cts_data + symidx;
 		if (ELF64_ST_TYPE(symp->st_info) != STT_FUNC)
 			return (ctf_set_errno(fp, ECTF_NOTFUNC));
 #endif

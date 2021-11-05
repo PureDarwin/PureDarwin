@@ -29,7 +29,6 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <assert.h>
-#include <synch.h>
 #include <signal.h>
 #include <libgen.h>
 #include <string.h>
@@ -38,7 +37,6 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/mman.h>
-#include <sys/sysconf.h>
 #else
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,7 +92,11 @@ usage(void)
 	    "  Note: if -L labelenv is specified and labelenv is not set in\n"
 	    "  the environment, a default value is used.\n",
 	    progname, progname, (int)strlen(progname), " ",
-	    progname, progname, progname);
+	    progname, progname
+#if defined(__APPLE__)
+        , progname
+#endif
+        );
 }
 
 static void
@@ -164,7 +166,7 @@ main(int argc, char **argv)
 	int require_ctf = 0;
 	int nifiles, nielems;
 	int c, i, idx, tidx, err;
-	
+
 	progname = basename(argv[0]);
 
 	if (getenv("CTFMERGE_DEBUG_LEVEL"))
@@ -261,7 +263,7 @@ main(int argc, char **argv)
 	if ((uniqfile != NULL || withfile != NULL) && raw_ctf_file != NULL)
 		err++;
 #endif
-		
+
 	if (err) {
 		usage();
 		exit(2);
@@ -287,7 +289,7 @@ main(int argc, char **argv)
 	if (raw_ctf_file && access(raw_ctf_file, F_OK) != -1)
 		terminate("Raw CTF output file %s already exists", raw_ctf_file);
 #endif
-		
+
 	/*
 	 * This is ugly, but we don't want to have to have a separate tool
 	 * (yet) just for copying an ELF section with our specific requirements,
@@ -443,6 +445,6 @@ main(int argc, char **argv)
 		free(tmpname);
 	}
 #endif /* __APPLE__ */
-		
+
 	return (0);
 }

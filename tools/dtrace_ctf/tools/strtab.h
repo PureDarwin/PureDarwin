@@ -35,6 +35,10 @@
 extern "C" {
 #endif
 
+#ifndef __APPLE__
+typedef ulong ulong_t;
+#endif
+
 typedef struct strhash strhash_t;
 
 typedef struct strtab {

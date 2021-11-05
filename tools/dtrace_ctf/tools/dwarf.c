@@ -97,6 +97,9 @@
 #include "alist.h"
 #include "traverse.h"
 
+#define DW_ATE_SUN_interval_float       0x91
+#define DW_ATE_SUN_imaginary_float      0x92 /* Obsolete: See DW_ATE_imaginary_float */
+
 #if defined(__APPLE__)
 /* Sun extensions not present in Darwin's dwarf.h */
 #define DW_ATE_SUN_interval_float       0x91
@@ -551,16 +554,16 @@ die_specification_die(dwarf_t *dw, Dwarf_Die die)
 	Dwarf_Off ref;
 	Dwarf_Die new_die;
 	int rc;
-	
+
 	if ((attr = die_attr(dw, die, DW_AT_specification, 0)) == NULL)
 		return (NULL);
-		
+
 	ref = die_attr_ref(dw, die, DW_AT_specification);
-	
+
 	if ((rc = dwarf_offdie(dw->dw_dw, ref, &new_die, &dw->dw_err)) != DW_DLV_OK) {
 		terminate("die %llu: failed to get DW_AT_specificaiton ref\n", die);
 	}
-	
+
 	return (new_die);
 }
 
@@ -1748,17 +1751,17 @@ die_function_create(dwarf_t *dw, Dwarf_Die die, Dwarf_Off off, tdesc_t *tdp)
 	if (die_isdecl(dw, die)) {
 		return; /* Prototype. */
 	}
-	
+
 	Dwarf_Die spec_die = die_specification_die(dw, die); // AT_specification indirection?
 	if (spec_die)
 		die = spec_die; // and we'll deallocate through spec_die below.
-	
+
 	if ((name = die_linkage_name(dw, die)) != NULL) {
 		/* and press on with this die describing a C++ method ... */
 	} else {
 		name = die_name(dw, die);
 	}
-	
+
 	if (name == ATOM_NULL) {
 		return; /* Subprogram without name. */
 	}
@@ -2239,12 +2242,6 @@ dw_read(Elf *elf, const char *filename, const char *unitmatch, int verbose, tdat
 		dw->dw_td = tdata_new();
 		die_create(dw, child);
 		die_resolve(dw);
-
-#if !defined(__APPLE__)
-		cvt_fixups(td, dw->dw_ptrsz);
-#else
-		/* Ignore Solaris gore. See on-src-20080707/usr/src/tools/ctf/cvt/fixup_tdescs.c */
-#endif
 
 		cutd = tdata_new();
 		debug(1, "mergeto %s to cutd\n", dw->dw_cuname->value);

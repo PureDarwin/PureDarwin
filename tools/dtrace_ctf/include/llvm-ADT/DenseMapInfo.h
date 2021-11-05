@@ -14,6 +14,7 @@
 #define LLVM_ADT_DENSEMAPINFO_H
 
 #include <memory>
+#include "murmur2_or_cityhash.h"
 
 namespace llvm {
 

@@ -64,9 +64,9 @@
  */
 
 #if !defined(__APPLE__)
-#include <uts/common/sys/ctf.h>
-#include <uts/common/sys/ctf_api.h>
-#include <lib/libctf/common/libctf.h>
+#include <sys/ctf.h>
+#include <sys/ctf_api.h>
+#include <libctf.h>
 #else
 #include "darwin_shim.h"
 #include "ctf.h"

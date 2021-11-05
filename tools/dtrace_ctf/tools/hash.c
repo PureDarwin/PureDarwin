@@ -30,6 +30,7 @@
 
 #if !defined(__APPLE__)
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <strings.h>
 #include <sys/types.h>
@@ -38,6 +39,10 @@
 #include "hash.h"
 #include "memory.h"
 #include "list.h"
+
+#ifndef __APPLE__
+typedef ulong ulong_t;
+#endif
 
 #else
 #include <stdio.h>

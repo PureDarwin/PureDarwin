@@ -1,3 +1,5 @@
+add_compile_options(-Wno-format)
+
 add_subdirectory(libmacho)
 add_subdirectory(libstuff)
 add_subdirectory(misc)

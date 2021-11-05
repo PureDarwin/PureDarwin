@@ -175,8 +175,10 @@ kern_return_t host_info(host_t host, host_flavor_t flavor,
 
         basic_info = (host_basic_info_t) host_info_out;
         memset(basic_info, 0x00, sizeof(*basic_info));
-        basic_info->cpu_type = EMULATED_HOST_CPU_TYPE;
-        basic_info->cpu_subtype = EMULATED_HOST_CPU_SUBTYPE;
+
+        // This will need to be updated if we ever target a different architecture.
+        basic_info->cpu_type = CPU_TYPE_X86_64;
+        basic_info->cpu_subtype = CPU_SUBTYPE_X86_64_H;
     }
 
   return 0;

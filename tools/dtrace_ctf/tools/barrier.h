@@ -27,14 +27,19 @@
 #ifndef _BARRIER_H
 #define	_BARRIER_H
 
-#include <dispatch/dispatch.h>
 #include <pthread.h>
+
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#else
+typedef struct dispatch_semaphore_s *dispatch_semaphore_t;
+#endif
 
 typedef struct barrier {
 	pthread_mutex_t bar_lock;	/* protects bar_numin */
 	int bar_numin;			/* current number of waiters */
 
-	dispatch_semaphore_t *bar_sem;	/* where everyone waits */
+	dispatch_semaphore_t bar_sem;	/* where everyone waits */
 	int bar_nthr;			/* # of waiters to trigger release */
 } barrier_t;
 

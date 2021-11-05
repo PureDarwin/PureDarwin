@@ -1333,50 +1333,7 @@ static size_t maxpgsize = 0x400000;
 static void
 bigheap(void)
 {
-	size_t big, *size;
-	int sizes;
-	struct memcntl_mha mha;
-
-	/*
-	 * First, get the available pagesizes.
-	 */
-	if ((sizes = getpagesizes(NULL, 0)) == -1)
-		return;
-
-	if (sizes == 1 || (size = alloca(sizeof (size_t) * sizes)) == NULL)
-		return;
-
-	if (getpagesizes(size, sizes) == -1)
-		return;
-
-	while (size[sizes - 1] > maxpgsize)
-		sizes--;
-
-	/* set big to the largest allowed page size */
-	big = size[sizes - 1];
-	if (big & (big - 1)) {
-		/*
-		 * The largest page size is not a power of two for some
-		 * inexplicable reason; return.
-		 */
-		return;
-	}
-
-	/*
-	 * Now, align our break to the largest page size.
-	 */
-	if (brk((void *)((((uintptr_t)sbrk(0) - 1) & ~(big - 1)) + big)) != 0)
-		return;
-
-	/*
-	 * set the preferred page size for the heap
-	 */
-	mha.mha_cmd = MHA_MAPSIZE_BSSBRK;
-	mha.mha_flags = 0;
-	mha.mha_pagesize = big;
-
-	(void) memcntl(NULL, 0, MC_HAT_ADVISE, (caddr_t)&mha, 0, 0);
-}
+    // Not needed on modern Linux AFAIK.
 }
 #else
 static void
@@ -1719,7 +1676,7 @@ wq_init(workqueue_t *wq, int nfiles)
 
 	wq->wq_wip = xcalloc(sizeof (wip_t) * nslots);
 	wq->wq_nwipslots = nslots;
-	wq->wq_nthreads = MIN(sysconf(_SC_NPROCESSORS_ONLN) * 3 / 2, nslots);
+	wq->wq_nthreads = nslots;
 	wq->wq_thread = xmalloc(sizeof (pthread_t) * wq->wq_nthreads);
 
 	if (getenv("CTFMERGE_INPUT_THROTTLE"))

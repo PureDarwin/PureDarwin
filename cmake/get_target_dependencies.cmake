@@ -12,16 +12,18 @@ macro(_target_get_linked_libraries_in _target _outlist)
     list_add_if_not_present("${_outlist}" "${_target}")
 
     # get libraries
-    get_target_property(public_libs "${_target}" INTERFACE_LINK_LIBRARIES)
-    get_target_property(libs "${_target}" LINK_LIBRARIES)
-
     set(libs_to_check)
+
+    get_target_property(public_libs "${_target}" INTERFACE_LINK_LIBRARIES)
     if(public_libs)
         foreach(lib IN LISTS public_libs)
             list(APPEND libs_to_check ${lib})
         endforeach()
     endif()
-    if(libs)
+
+    get_target_property(target_type "${_target}" TYPE)
+    if(NOT target_type STREQUAL "INTERFACE_LIBRARY")
+        get_target_property(libs "${_target}" LINK_LIBRARIES)
         foreach(lib IN LISTS libs)
             list(APPEND libs_to_check ${lib})
         endforeach()
