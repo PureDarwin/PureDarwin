@@ -3,6 +3,7 @@ macro(cctools_misc_executable name)
     target_link_libraries(host_${name} PRIVATE host_libmacho host_libstuff)
     target_include_directories(host_${name} PRIVATE ../include ../include/foreign ../libstuff)
     target_compile_definitions(host_${name} PRIVATE -D__DARWIN_UNIX03)
+    target_link_libraries(host_${name} PRIVATE m) # System libm, required for log2() on Linux
 endmacro()
 
 cctools_misc_executable(checksyms)

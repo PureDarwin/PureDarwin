@@ -58,7 +58,6 @@ const char *progname = "ctfdump";
 #include "utils.h"
 #include "symbol.h"
 
-#ifdef __APPLE__
 extern caddr_t write_buffer(ctf_header_t *h, ctf_buf_t *buf, size_t *resszp);
 extern caddr_t write_compressed_buffer(ctf_header_t *h, ctf_buf_t *buf, size_t *resszp);
 struct ctf_buf {
@@ -72,8 +71,6 @@ struct ctf_buf {
 };
 
 void write_file(Elf *src, const char *srcname, Elf *dst, const char *dstname, caddr_t ctfdata, size_t ctfsize, int flags);
-
-#endif /* __APPLE__ */
 
 #define	WARN(x)	{ warn(x); return (E_ERROR); }
 
@@ -269,7 +266,7 @@ gelf_getsym_macho(Elf_Data * data, int ndx, GElf_Sym * sym, const char *base)
 	const struct nlist *nsym = (const struct nlist *)(data->d_buf);
 	const char *name;
 	char *tmp;
-	
+
 	nsym += ndx;
 	name = base + nsym->n_un.n_strx;
 
@@ -285,9 +282,9 @@ gelf_getsym_macho(Elf_Data * data, int ndx, GElf_Sym * sym, const char *base)
 	sym->st_info = GELF_ST_INFO((STB_GLOBAL), (STT_NOTYPE));
 	sym->st_other = 0;
 	sym->st_shndx = SHN_MACHO; /* Mark underlying file as Mach-o */
-	
+
 	if (nsym->n_type & N_STAB) { /* Detect C++ methods */
-	
+
 		switch(nsym->n_type) {
 		case N_FUN:
 			sym->st_info = GELF_ST_INFO((STB_GLOBAL), (STT_FUNC));
@@ -298,16 +295,16 @@ gelf_getsym_macho(Elf_Data * data, int ndx, GElf_Sym * sym, const char *base)
 		default:
 			break;
 		}
-		
+
 	} else if ((N_ABS | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) ||
 		(N_SECT | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT))) {
 
-		sym->st_info = GELF_ST_INFO((STB_GLOBAL), (nsym->n_desc)); 
+		sym->st_info = GELF_ST_INFO((STB_GLOBAL), (nsym->n_desc));
 	} else if ((N_UNDF | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) &&
 				nsym->n_sect == NO_SECT) {
 		sym->st_info = GELF_ST_INFO((STB_GLOBAL), (STT_OBJECT)); /* Common */
 	}
-			
+
 	return sym;
 }
 
@@ -317,7 +314,7 @@ gelf_getsym_macho_64(Elf_Data * data, int ndx, GElf_Sym * sym, const char *base)
 	const struct nlist_64 *nsym = (const struct nlist_64 *)(data->d_buf);
 	const char *name;
 	char *tmp;
-	
+
 	nsym += ndx;
 	name = base + nsym->n_un.n_strx;
 
@@ -333,9 +330,9 @@ gelf_getsym_macho_64(Elf_Data * data, int ndx, GElf_Sym * sym, const char *base)
 	sym->st_info = GELF_ST_INFO((STB_GLOBAL), (STT_NOTYPE));
 	sym->st_other = 0;
 	sym->st_shndx = SHN_MACHO_64; /* Mark underlying file as Mach-o */
-	
+
 	if (nsym->n_type & N_STAB) { /* Detect C++ methods */
-	
+
 		switch(nsym->n_type) {
 		case N_FUN:
 			sym->st_info = GELF_ST_INFO((STB_GLOBAL), (STT_FUNC));
@@ -346,16 +343,16 @@ gelf_getsym_macho_64(Elf_Data * data, int ndx, GElf_Sym * sym, const char *base)
 		default:
 			break;
 		}
-		
+
 	} else if ((N_ABS | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) ||
 		(N_SECT | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT))) {
 
-		sym->st_info = GELF_ST_INFO((STB_GLOBAL), (nsym->n_desc)); 
+		sym->st_info = GELF_ST_INFO((STB_GLOBAL), (nsym->n_desc));
 	} else if ((N_UNDF | N_EXT) == (nsym->n_type & (N_TYPE | N_EXT)) &&
 				nsym->n_sect == NO_SECT) {
 		sym->st_info = GELF_ST_INFO((STB_GLOBAL), (STT_OBJECT)); /* Common */
 	}
-			
+
 	return sym;
 }
 #endif /* __APPLE__ */
@@ -821,8 +818,8 @@ read_strtab(const ctf_header_t *hp, const ctf_data_t *cd)
 /*
  * Remove unwanted symbols from strtab: replace them with "-    ".
  */
-static int 
-clean_strtab(ctf_header_t *hp, ctf_data_t *cd, strtab_t *strtab, 
+static int
+clean_strtab(ctf_header_t *hp, ctf_data_t *cd, strtab_t *strtab,
 		char **syms, int nsyms)
 {
 	size_t n, off, len = hp->cth_strlen;
@@ -861,7 +858,7 @@ static void
 ctf_data_to_ctf_buf(ctf_header_t *hp, ctf_data_t *cd, ctf_buf_t *cb)
 {
 	/* create empty strtab (to be filled in clean_strtab) */
-	strtab_create(&cb->ctb_strtab); 
+	strtab_create(&cb->ctb_strtab);
 	cb->ctb_base = cd->cd_ctfdata;
 	cb->ctb_end = cd->cd_ctfdata + hp->cth_stroff;
 	cb->ctb_ptr = cb->ctb_end;
@@ -904,10 +901,10 @@ write_ctfdata(int srcfd, Elf *srcelf, const char *srcname, const char *dstname, 
 		len += cd->cd_ctflen;
 		*/
 	}
-	
+
 	/* send the data to the destination file */
 	write_file(srcelf, srcname, dstelf, dstname, data, len, 0);
-	
+
 	free(data);
 	elf_end(dstelf);
 	(void) close(dstfd);
@@ -1034,7 +1031,7 @@ print_usage(FILE *fp, int verbose)
 		    "\t-h  dump file header\n"
 		    "\t-l  dump label table\n"
 #ifdef __APPLE__
-		    "\t-r  remove listed symbols from CTF data\n" 
+		    "\t-r  remove listed symbols from CTF data\n"
 #endif /* __APPLE__ */
 		    "\t-s  dump string table\n"
 		    "\t-S  dump statistics\n"
@@ -1189,18 +1186,18 @@ skiploop:
 					int dir_idx;
 					cd.cd_nsyms = shdr.sh_size / shdr.sh_entsize;
 					cd.cd_symdata = elf_getdata(symscn, NULL);
-					
+
 					if ((dir_idx = findelfsecidx(elf, filename, ".dir_str_table")) < 0 ||
 						(symstrscn = elf_getscn(elf, dir_idx)) == NULL ||
 						(cd.cd_strdata = elf_getdata(symstrscn, NULL)) == NULL)
 						terminate("%s: Can't open direct string table\n", filename);
-						
+
 					cd.sh_link = SHN_MACHO; /* Mark underlying file as Mach-o */
 				} else if (SHN_MACHO_64 == shdr.sh_link) { /* Underlying file is Mach-o 64 */
 					int dir_idx;
 					cd.cd_nsyms = shdr.sh_size / shdr.sh_entsize;
 					cd.cd_symdata = elf_getdata(symscn, NULL);
-					
+
 					if ((dir_idx = findelfsecidx(elf, filename, ".dir_str_table")) < 0 ||
 						(symstrscn = elf_getscn(elf, dir_idx)) == NULL ||
 						(cd.cd_strdata = elf_getdata(symstrscn, NULL)) == NULL)
@@ -1303,7 +1300,7 @@ skiploop:
 		char **syms = &argv[optind];
 		char *tmpname = (char *)mktmpname(filename, ".ctf");
 		ctf_buf_t tmpbuf;
-		
+
 		ctf_data_to_ctf_buf(hp, &cd, &tmpbuf);
 		clean_strtab(hp, &cd, &tmpbuf.ctb_strtab, syms, nsyms);
 

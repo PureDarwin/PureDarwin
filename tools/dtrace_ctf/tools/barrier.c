@@ -34,10 +34,40 @@
  * returns from barrier_wait() with a return code of 1; the remaining threads
  * get a return code of 0.
  */
+
 #include <pthread.h>
-#include <stdio.h>
 
 #include "barrier.h"
+
+#if !__APPLE__
+#include <stdatomic.h>
+#include <stdlib.h>
+
+struct dispatch_semaphore_s {
+    atomic_int count;
+};
+
+static dispatch_semaphore_t dispatch_semaphore_create(int count) {
+    dispatch_semaphore_t sema = (dispatch_semaphore_t) calloc(1, sizeof(struct dispatch_semaphore_s));
+    sema->count = count;
+    return sema;
+}
+
+#define DISPATCH_TIME_FOREVER 0
+static void dispatch_semaphore_wait(dispatch_semaphore_t sema, int unused) {
+    int old_count = atomic_fetch_sub(&sema->count, 1) - 1;
+    if (old_count <= 0) {
+        for (int value = atomic_read(&sema->count); ; value = atomic_read(&sema->count)) {
+            if (value >= 0) break;
+            thread_yield();
+        }
+    }
+}
+
+static void dispatch_semaphore_signal(dispatch_semaphore_t sema) {
+    atomic_fetch_add(&sema->count, 1);
+}
+#endif
 
 void
 barrier_init(barrier_t *bar, int nthreads)

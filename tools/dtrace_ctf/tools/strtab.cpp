@@ -42,10 +42,9 @@
 #include "darwin_shim.h"
 #include "strtab.h"
 #include "memory.h"
+#endif /* __APPLE__ */
 
 #define	MIN(a, b) 		((a) > (b) ? (b) : (a))
-
-#endif /* __APPLE__ */
 
 #include "llvm-ADT/DenseMap.h"
 
