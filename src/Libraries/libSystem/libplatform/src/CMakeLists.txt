@@ -1,5 +1,4 @@
 add_darwin_static_library(libsystem_platform_static)
-# add_dependencies(libsystem_platform_static libsystem_kernel_static)
 
 target_include_directories(libsystem_platform_static PRIVATE os/resolver ../include)
 target_link_libraries(libsystem_platform_static INTERFACE libplatform_headers)
