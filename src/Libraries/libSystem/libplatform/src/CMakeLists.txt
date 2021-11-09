@@ -92,6 +92,7 @@ target_link_libraries(libsystem_platform PRIVATE libplatform_private_headers)
 target_link_libraries(libsystem_platform PRIVATE libsystem_kernel)
 target_link_options(libsystem_platform PRIVATE -umbrella System)
 target_link_options(libsystem_platform PRIVATE "LINKER:-bind_at_load")
+target_link_options(libsystem_platform PRIVATE "LINKER:-alias_list,${CMAKE_CURRENT_SOURCE_DIR}/libplatform.aliases")
 
 target_sources(libsystem_platform PRIVATE force_libplatform_to_build.c)
 install(TARGETS libsystem_platform DESTINATION /usr/lib/system COMPONENT BaseSystem)
