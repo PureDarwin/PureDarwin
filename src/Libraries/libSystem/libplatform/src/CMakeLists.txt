@@ -1,23 +1,4 @@
-add_darwin_static_library(libsystem_platform_static)
-
-target_include_directories(libsystem_platform_static PRIVATE os/resolver ../include)
-target_link_libraries(libsystem_platform_static INTERFACE libplatform_headers)
-target_link_libraries(libsystem_platform_static PRIVATE libplatform_private_headers)
-target_link_libraries(libsystem_platform_static PRIVATE
-    libplatform_private_headers libsystem_kernel_bootstrap_headers libsystem_kernel_private_headers
-    pthread_common_private_headers xnu_private_headers libsystem_kernel
-)
-target_link_libraries(libsystem_platform_static PUBLIC
-    AvailabilityHeaders pthread_common_headers xnu_headers
-)
-
-target_compile_definitions(libsystem_platform_static PUBLIC TARGET_OS_OSX=1)
-target_compile_options(libsystem_platform_static PRIVATE
-    -fno-stack-check -fno-stack-protector -fno-common -momit-leaf-frame-pointer
-)
-target_compile_options(libsystem_platform_static PRIVATE -Wno-implicit-function-declaration)
-target_compile_options(libsystem_platform_static PRIVATE -Wno-deprecated-declarations)
-target_sources(libsystem_platform_static PRIVATE
+set(libplatform_sources
     atomics/init.c
     atomics/common/MKGetTimeBaseInfo.c
     introspection/introspection.c
@@ -67,12 +48,49 @@ target_sources(libsystem_platform_static PRIVATE
     ucontext/x86_64/getcontext.s
 )
 
+add_darwin_static_library(libsystem_platform_dyld)
+target_sources(libsystem_platform_dyld PRIVATE ${libplatform_sources})
+target_include_directories(libsystem_platform_dyld PRIVATE os/resolver ../include)
+target_compile_definitions(libsystem_platform_dyld PRIVATE VARIANT_STATIC=1 VARIANT_DYLD=1)
+target_link_libraries(libsystem_platform_dyld INTERFACE libplatform_headers)
+target_link_libraries(libsystem_platform_dyld PRIVATE libplatform_private_headers)
+target_link_libraries(libsystem_platform_dyld PRIVATE
+    libplatform_private_headers libsystem_kernel_bootstrap_headers libsystem_kernel_private_headers
+    pthread_common_private_headers xnu_private_headers libsystem_kernel
+)
+target_link_libraries(libsystem_platform_dyld PUBLIC
+    AvailabilityHeaders pthread_common_headers xnu_headers
+)
+
+target_compile_definitions(libsystem_platform_dyld PUBLIC TARGET_OS_OSX=1)
+target_compile_options(libsystem_platform_dyld PRIVATE
+    -fno-stack-check -fno-stack-protector -fno-common -momit-leaf-frame-pointer
+)
+target_compile_options(libsystem_platform_dyld PRIVATE -Wno-implicit-function-declaration)
+target_compile_options(libsystem_platform_dyld PRIVATE -Wno-deprecated-declarations)
+
 
 add_darwin_shared_library(libsystem_platform INSTALL_NAME_DIR /usr/lib/system)
+target_sources(libsystem_platform PRIVATE ${libplatform_sources})
+target_compile_definitions(libsystem_platform PUBLIC TARGET_OS_OSX=1)
+target_include_directories(libsystem_platform PRIVATE os/resolver ../include)
+
+target_compile_options(libsystem_platform PRIVATE
+    -fno-stack-check -fno-stack-protector -fno-common -momit-leaf-frame-pointer
+)
+target_compile_options(libsystem_platform PRIVATE -Wno-implicit-function-declaration)
+target_compile_options(libsystem_platform PRIVATE -Wno-deprecated-declarations)
+
+target_link_libraries(libsystem_platform PRIVATE
+    libplatform_private_headers libsystem_kernel_bootstrap_headers libsystem_kernel_private_headers
+    pthread_common_private_headers xnu_private_headers
+)
+
+target_link_libraries(libsystem_platform PUBLIC AvailabilityHeaders pthread_common_headers xnu_headers)
 target_link_libraries(libsystem_platform INTERFACE libplatform_headers)
-target_link_libraries(libsystem_platform PRIVATE libsystem_platform_static libsystem_kernel)
+target_link_libraries(libsystem_platform PRIVATE libplatform_private_headers)
+target_link_libraries(libsystem_platform PRIVATE libsystem_kernel)
 target_link_options(libsystem_platform PRIVATE -umbrella System)
-target_link_options(libsystem_platform PRIVATE "LINKER:-force_load,$<TARGET_FILE:libsystem_platform_static>")
 target_link_options(libsystem_platform PRIVATE "LINKER:-bind_at_load")
 
 target_sources(libsystem_platform PRIVATE force_libplatform_to_build.c)
