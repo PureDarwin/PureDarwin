@@ -1,4 +1,6 @@
-set(libplatform_sources
+add_darwin_shared_library(libsystem_platform INSTALL_NAME_DIR /usr/lib/system)
+
+target_sources(libsystem_platform PRIVATE
     atomics/init.c
     atomics/common/MKGetTimeBaseInfo.c
     introspection/introspection.c
@@ -48,30 +50,6 @@ set(libplatform_sources
     ucontext/x86_64/getcontext.s
 )
 
-add_darwin_static_library(libsystem_platform_dyld)
-target_sources(libsystem_platform_dyld PRIVATE ${libplatform_sources})
-target_include_directories(libsystem_platform_dyld PRIVATE os/resolver ../include)
-target_compile_definitions(libsystem_platform_dyld PRIVATE VARIANT_STATIC=1 VARIANT_DYLD=1)
-target_link_libraries(libsystem_platform_dyld INTERFACE libplatform_headers)
-target_link_libraries(libsystem_platform_dyld PRIVATE libplatform_private_headers)
-target_link_libraries(libsystem_platform_dyld PRIVATE
-    libplatform_private_headers libsystem_kernel_bootstrap_headers libsystem_kernel_private_headers
-    pthread_common_private_headers xnu_private_headers libsystem_kernel
-)
-target_link_libraries(libsystem_platform_dyld PUBLIC
-    AvailabilityHeaders pthread_common_headers xnu_headers
-)
-
-target_compile_definitions(libsystem_platform_dyld PUBLIC TARGET_OS_OSX=1)
-target_compile_options(libsystem_platform_dyld PRIVATE
-    -fno-stack-check -fno-stack-protector -fno-common -momit-leaf-frame-pointer
-)
-target_compile_options(libsystem_platform_dyld PRIVATE -Wno-implicit-function-declaration)
-target_compile_options(libsystem_platform_dyld PRIVATE -Wno-deprecated-declarations)
-
-
-add_darwin_shared_library(libsystem_platform INSTALL_NAME_DIR /usr/lib/system)
-target_sources(libsystem_platform PRIVATE ${libplatform_sources})
 target_compile_definitions(libsystem_platform PUBLIC TARGET_OS_OSX=1)
 target_include_directories(libsystem_platform PRIVATE os/resolver ../include)
 
