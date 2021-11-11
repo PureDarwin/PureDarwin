@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1999 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -20,31 +20,28 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-/* cache control */
+/*
+ * Copyright (c) 1995 NeXT Computer, Inc. All Rights Reserved
+ */
 
-#include <stddef.h>
-#include <errno.h>
-#include <sys/types.h>
-#include <libkern/OSCacheControl.h>
+/*
+** Prototypes for the functions to get environment information in
+** the world of dynamic libraries. Lifted from .c file of same name.
+** Fri Jun 23 12:56:47 PDT 1995
+** AOF (afreier@next.com)
+*/
 
-int
-sys_cache_control(int function, void *start, size_t len)
-{
-	int	status = 0;
-	
-	switch( function ) {
-	
-	case kCacheFunctionPrepareForExecution:
-		sys_icache_invalidate(start, len);
-		break;
-		
-	case kCacheFunctionFlushDcache:
-		sys_dcache_flush(start, len);
-		break;
-		
-	default:
-		status = ENOTSUP;
-	}
-	
-	return	status;
-}
+#include <sys/cdefs.h>
+
+__BEGIN_DECLS
+extern char ***_NSGetArgv(void);
+extern int *_NSGetArgc(void);
+extern char ***_NSGetEnviron(void);
+extern char **_NSGetProgname(void);
+#ifdef __LP64__
+extern struct mach_header_64 *
+#else /* !__LP64__ */
+extern struct mach_header *
+#endif /* __LP64__ */
+				_NSGetMachExecuteHeader(void);
+__END_DECLS

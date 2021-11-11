@@ -203,9 +203,4 @@ __END_DECLS
 #include <xlocale/_string.h>
 #endif /* _USE_EXTENDED_LOCALES_ */
 
-#if defined (__GNUC__) && _FORTIFY_SOURCE > 0 && !defined (__cplusplus)
-/* Security checking functions.  */
-#include <secure/_string.h>
-#endif
-
 #endif /* _STRING_H_ */

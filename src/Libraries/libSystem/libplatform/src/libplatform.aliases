@@ -1,0 +1,3 @@
+__platform_bzero ___bzero
+_os_unfair_lock_lock_with_options _os_unfair_lock_lock_with_options_4Libc
+_os_unfair_lock_unlock _os_unfair_lock_unlock_4Libc
