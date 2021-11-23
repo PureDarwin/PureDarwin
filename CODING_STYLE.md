@@ -17,7 +17,7 @@ An editorconfig file is provided to help contributors to adhere to these rules.
 ## The Build
 
 * Final PRs as-merged must use the CMake build system only. The system is not fully implemented yet, but is designed to be a straight port from Xcode once you know what to put in CMakeLists.txt, while still abiding by standard CMake idioms.
-* As a corollary to the above: No Xcode projects in `main` branch. These are perfectly OK in topic branches and PRs, but please remove them before merging. This helps prevent noise in future diffs due to Xcode rewriting project files at its whim.
+* As a corollary to the above: No Xcode projects in `main` branch. These are perfectly OK in topic branches and PRs, but please remove them before merging. This helps prevent noise in future diffs due to Xcode rewriting project files at its whim. The gitignore file will help to enforce this; note that you can easily override it using `git add -f`.
 
 ## CMake
 
