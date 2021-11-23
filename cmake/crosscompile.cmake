@@ -54,7 +54,7 @@ function(add_darwin_shared_library name)
         set_property(TARGET ${name} PROPERTY PREFIX "")
     endif()
 
-    target_compile_options(${name} PRIVATE -target x86_64-apple-darwin20)
+    target_compile_options(${name} PRIVATE -target x86_64-apple-macos${CMAKE_MACOSX_MIN_VERSION})
     target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
     target_link_options(${name} PRIVATE -nostdlib)
 
@@ -85,7 +85,7 @@ function(add_darwin_object_library name)
     add_library(${name} OBJECT)
     set_property(TARGET ${name} PROPERTY LINKER_LANGUAGE C)
     target_compile_definitions(${name} PRIVATE __PUREDARWIN__)
-    target_compile_options(${name} PRIVATE -target x86_64-apple-darwin20)
+    target_compile_options(${name} PRIVATE -target x86_64-apple-macos${CMAKE_MACOSX_MIN_VERSION})
     target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
 endfunction()
 
