@@ -4,7 +4,7 @@ This document is a work in progress. Please follow it at all times.
 
 If you are editing anything that does not already conform
 to the below standards, please follow the formatting that is in use there instead.
-Feel free to clean up a file that you are editing; just make sure that you commit your functional changes separately.
+Feel free to clean up a file that you are editing; just make sure that your functional changes are in a separate commit.
 Cleanup-only PRs are also welcome.
 
 An editorconfig file is provided to help contributors to adhere to these rules.
@@ -13,6 +13,11 @@ An editorconfig file is provided to help contributors to adhere to these rules.
 
 * No trailing whitespace, including on blank lines. If your editor is programmed to automatically strip trailing whitespace when you save, please commit the whitespace changes separately from the functional changes for ease of review.
 * All files should always end with one (and only one) newline. No blank lines at the end of a file.
+
+## The Build
+
+* Final PRs as-merged must use the CMake build system only. The system is not fully implemented yet, but is designed to be a straight port from Xcode once you know what to put in CMakeLists.txt, while still abiding by standard CMake idioms.
+* As a corollary to the above: No Xcode projects in `main` branch. These are perfectly OK in topic branches and PRs, but please remove them before merging. This helps prevent noise in future diffs due to Xcode rewriting project files at its whim. The gitignore file will help to enforce this; note that you can easily override it using `git add -f`.
 
 ## CMake
 
@@ -24,6 +29,7 @@ An editorconfig file is provided to help contributors to adhere to these rules.
 * Try to keep include directories alphabetized in the CMakeLists file, but there are places where doing so will break the build.
 * Separate build rules for separate binaries with two blank lines. Put `install()` and `add_subdirectory()` calls together in their own sections at the end of the file, separated by two blank lines from the others.
 * Look in the source files in the scripts/cmake folder for documentation about what each function or macro does.
+* Don’t install private headers just because Apple installs them, if you think we’ll be their only users. A great many number of such headers are copied as build artifacts only because Apple’s build is distributed across many repositories; ours is monolithic. Feel free to install them if you disagree or are in doubt; it will be discussed in PR review.
 
 ## Kernel Extensions
 

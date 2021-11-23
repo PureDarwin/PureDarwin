@@ -285,9 +285,9 @@ target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
 
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0)
-target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static)
-target_link_libraries(libsystem_kernel PRIVATE CrashReporterClient)
-target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
+target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static CrashReporterClient)
+target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load -nostdlib)
+install(TARGETS libsystem_kernel DESTINATION /usr/lib/system COMPONENT BaseSystem)
 
 install(TARGETS libsystem_kernel DESTINATION usr/lib/system COMPONENT BaseSystem)
 

@@ -11,8 +11,8 @@ function(add_kext_bundle name)
     set_property(TARGET ${name} PROPERTY SUFFIX "")
 
     target_compile_definitions(${name} PRIVATE TARGET_OS_OSX KERNEL)
-    target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fapple-kext>)
-    target_link_options(${name} PRIVATE "LINKER:-bundle")
+    target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fapple-kext> -nostdinc)
+    target_link_options(${name} PRIVATE "LINKER:-bundle" -nostdlib)
     target_link_options(${name} PRIVATE "SHELL:-undefined dynamic_lookup")
 
     if(SL_KERNEL_PRIVATE)
