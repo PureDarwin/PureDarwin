@@ -29,6 +29,7 @@ An editorconfig file is provided to help contributors to adhere to these rules.
 * Try to keep include directories alphabetized in the CMakeLists file, but there are places where doing so will break the build.
 * Separate build rules for separate binaries with two blank lines. Put `install()` and `add_subdirectory()` calls together in their own sections at the end of the file, separated by two blank lines from the others.
 * Look in the source files in the scripts/cmake folder for documentation about what each function or macro does.
+* Don’t install private headers by default, but you may do so at your discretion if you believe it is appropriate.
 
 ## Kernel Extensions
 
