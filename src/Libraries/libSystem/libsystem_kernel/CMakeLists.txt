@@ -1,3 +1,30 @@
+# libsystem_kernel has a few targets:
+# - /usr/local/lib/dyld/libsystem_kernel.a
+#   - 3 public, 4 private headers
+#     - wrappers/gethostuuid.h
+#     - wrappers/spawn/spawn.h
+#     - wrappers/libproc/libproc.h
+#
+#     - wrappers/gethostuuid_private.h
+#     - wrappers/_libkernel_init.h
+#     - wrappers/spawn/spawn_private.h
+#     - wrappers/libproc/libproc_internal.h
+#   - 2 headers in private os/
+#     - os/thread_self_restrict.h
+#     - os/tsd.h
+#   - compile 140 sources
+#   - public mig headers (mach/, servers/)
+#   - private mig headers (mach/)
+#   - link with syscalls.a
+#
+# - /usr/lib/system/libsystem_kernel.dylib
+#   - link with libsystem_kernel.a
+#   - compile 10 sources
+#
+# - /usr/local/lib/system/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
+# - /usr/local/lib/loaderd/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
+# - /usr/local/lib/dyld_stub/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
+
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
@@ -21,7 +48,18 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
 add_library(libsyscall_traps STATIC IMPORTED)
 set_property(TARGET libsyscall_traps PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a)
 
+# END SYSCALL TRAPS
+
+add_library(libsystem_kernel_private_headers INTERFACE)
+target_include_directories(libsystem_kernel_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/private_include private_include)
+
+# END INTERFACE DEFINITION
+
 add_darwin_static_library(libsystem_kernel_static)
+
+# This product should be called libsystem_kernel.a and should be placed in /usr/local/lib/{dyld,system,loaderd,dyld_stub}
+set_target_properties(libsystem_kernel_static PROPERTIES OUTPUT_NAME "libsystem_kernel")
+
 target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
 
@@ -58,8 +96,6 @@ target_sources(libsystem_kernel_static PRIVATE
 
     wrappers/__commpage_gettimeofday.c
     wrappers/__get_cpu_capabilities.s
-    wrappers/_libc_funcptr.c
-    wrappers/_libkernel_init.c
     wrappers/clonefile.c
     wrappers/clonefile.c
     wrappers/coalition.c
@@ -95,7 +131,6 @@ target_sources(libsystem_kernel_static PRIVATE
     wrappers/sfi.c
     wrappers/stackshot.c
     wrappers/system-version-compat-support.c
-    wrappers/system-version-compat.c
     wrappers/terminate_with_reason.c
     wrappers/thread_register_state.c
     wrappers/unlink.c
@@ -155,10 +190,18 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
 
+# TODO: I believe bootstrap_include/* comes from either clang or libC; move to that instead of this.
+#   This shouldn't be an issue once we actually compile llvm/clang for the host
+target_include_directories(libsystem_kernel_static PUBLIC bootstrap_include)
+
 target_include_directories(libsystem_kernel_static PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
-target_include_directories(libsystem_kernel_static PRIVATE bootstrap_include mach wrappers ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/private_include ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach)
+target_include_directories(libsystem_kernel_static PRIVATE mach mach/mach mach/servers custom private_include wrappers ${CMAKE_CURRENT_BINARY_DIR}/private_include)
+# Needed for MIG files to compile
+target_include_directories(libsystem_kernel_static PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach)
+
 target_compile_options(libsystem_kernel_static PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 target_compile_definitions(libsystem_kernel_static PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
+
 target_link_libraries(libsystem_kernel_static PRIVATE xnu_private_headers libsystem_kernel_private_headers libsyscall_traps)
 target_link_libraries(libsystem_kernel_static PUBLIC xnu_headers pthread_common_headers AvailabilityHeaders)
 
@@ -182,8 +225,9 @@ mig(mach/restartable.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_SOUR
 mig(mach/memory_entry.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/memory_entry.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/memory_entry.h NOVOUCHERS)
 mig(mach/mach_eventlink.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_eventlink.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/mach_eventlink_user.h)
 mig(mach/mach_voucher.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/mach_voucher.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/mach_voucher_user.h)
-mig(include/servers/netname.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/netname.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h NOVOUCHERS)
+mig(mach/servers/netname.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/netname.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h NOVOUCHERS)
 
+# MIG output from above
 target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/clock_priv.c
     ${CMAKE_CURRENT_BINARY_DIR}/clock_reply.c
@@ -208,23 +252,16 @@ target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/netname.c
 )
 
+# This library is installed in 4 locations for inclusion in various other packages
+install(TARGETS libsystem_kernel_static DESTINATION usr/local/lib/system COMPONENT DeveloperInternal)
+install(TARGETS libsystem_kernel_static DESTINATION usr/local/lib/dyld COMPONENT DeveloperInternal)
+install(TARGETS libsystem_kernel_static DESTINATION usr/local/lib/loaderd COMPONENT DeveloperInternal)
+install(TARGETS libsystem_kernel_static DESTINATION usr/local/lib/dyld_stub COMPONENT DeveloperInternal)
 
-install(FILES include/servers/ls_defs.h DESTINATION /usr/include/servers COMPONENT DeveloperTools)
-install(FILES include/servers/netname_defs.h DESTINATION /usr/include/servers COMPONENT DeveloperTools)
-install(FILES include/servers/nm_defs.h DESTINATION /usr/include/servers COMPONENT DeveloperTools)
-install(FILES include/mach/mach.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/mach_error.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/mach_init.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/mach_interface.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/mach_right.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/port_obj.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/sync.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/vm_task.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/vm_page_size.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-install(FILES include/mach/thread_state.h DESTINATION /usr/include/mach COMPONENT DeveloperTools)
-
+# END STATIC LIBRARY
 
 add_darwin_shared_library(libsystem_kernel NO_STANDARD_LIBRARIES INSTALL_NAME_DIR /usr/lib/system)
+
 target_sources(libsystem_kernel PRIVATE
     wrappers/string/index.c
     wrappers/string/memcpy.c
@@ -234,15 +271,46 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/string/strlcpy.c
     wrappers/string/strlen.c
     wrappers/string/strsep.c
+    wrappers/_libkernel_init.c
+    wrappers/_libc_funcptr.c
+    wrappers/system-version-compat.c
 )
-target_include_directories(libsystem_kernel PUBLIC include)
-target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/public_include)
-target_include_directories(libsystem_kernel PRIVATE bootstrap_include wrappers/string)
+target_include_directories(libsystem_kernel PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
+target_include_directories(libsystem_kernel PRIVATE wrappers/string)
+
+# Copied from static target above
+target_include_directories(libsystem_kernel PRIVATE mach mach/mach mach/servers custom private_include wrappers ${CMAKE_CURRENT_BINARY_DIR}/private_include)
+
+target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
+target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
+
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0)
 target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static)
+target_link_libraries(libsystem_kernel PRIVATE CrashReporterClient)
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
-install(TARGETS libsystem_kernel DESTINATION /usr/lib/system COMPONENT BaseSystem)
 
+install(TARGETS libsystem_kernel DESTINATION usr/lib/system COMPONENT BaseSystem)
 
-add_library(libsystem_kernel_private_headers INTERFACE)
-target_include_directories(libsystem_kernel_private_headers INTERFACE private_include)
+# END DYNAMIC LIBRARY
+
+install(FILES wrappers/gethostuuid.h DESTINATION usr/include COMPONENT DeveloperTools)
+install(FILES wrappers/spawn/spawn.h DESTINATION usr/include COMPONENT DeveloperTools)
+install(FILES wrappers/libproc/libproc.h DESTINATION usr/include COMPONENT DeveloperTools)
+
+install(FILES wrappers/gethostuuid_private.h DESTINATION usr/local/include COMPONENT DeveloperInternal)
+install(FILES wrappers/_libkernel_init.h DESTINATION usr/local/include COMPONENT DeveloperInternal)
+install(FILES wrappers/spawn/spawn_private.h DESTINATION usr/local/include COMPONENT DeveloperInternal)
+install(FILES wrappers/libproc/libproc_internal.h DESTINATION usr/local/include COMPONENT DeveloperInternal)
+
+install(FILES os/proc.h DESTINATION usr/include COMPONENT DeveloperTools)
+
+install(FILES os/thread_self_restrict.h DESTINATION usr/local/include/os COMPONENT DeveloperInternal)
+install(FILES os/tsd.h DESTINATION usr/local/include/os COMPONENT DeveloperInternal)
+
+# Install MIG headers
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers DESTINATION usr/include COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach DESTINATION usr/include COMPONENT DeveloperTools)
+
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/private_include/mach DESTINATION usr/include COMPONENT DeveloperInternal)
+
+# END INSTALL HEADERS
