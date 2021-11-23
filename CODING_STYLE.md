@@ -29,7 +29,7 @@ An editorconfig file is provided to help contributors to adhere to these rules.
 * Try to keep include directories alphabetized in the CMakeLists file, but there are places where doing so will break the build.
 * Separate build rules for separate binaries with two blank lines. Put `install()` and `add_subdirectory()` calls together in their own sections at the end of the file, separated by two blank lines from the others.
 * Look in the source files in the scripts/cmake folder for documentation about what each function or macro does.
-* Don’t install private headers just Apple installs them, if you think we’ll be their only users. A great many number of such headers are copied as build artifacts only because Apple’s build is distributed across many repositories; ours is monolithic. Feel free to install them if you disagree or are in doubt; it will be discussed in PR review.
+* Don’t install private headers just because Apple installs them, if you think we’ll be their only users. A great many number of such headers are copied as build artifacts only because Apple’s build is distributed across many repositories; ours is monolithic. Feel free to install them if you disagree or are in doubt; it will be discussed in PR review.
 
 ## Kernel Extensions
 
