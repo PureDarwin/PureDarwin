@@ -34,6 +34,9 @@ Temporary Items
 # Xcode
 #
 # gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+*.xcodeproj/
+*.xcworkspace/
+*.xcconfig
 
 ## Build generated
 build/
