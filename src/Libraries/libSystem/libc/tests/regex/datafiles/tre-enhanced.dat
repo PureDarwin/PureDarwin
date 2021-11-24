@@ -1,0 +1,17 @@
+## Test \x in wide character under UTF-8
+{C	en_US.UTF-8
+B$	\\x{263a}			\xe2\x98\xba	NOMATCH
+B$	SAME				x{263a}		(0,7)
+E$	\\x{263a}			\xe2\x98\xba	BADBR
+BE$	\\x81				\xc2\x81	NOMATCH
+BE$	SAME				x81		(0,3)
+BE$H	\\x{263a}			\xe2\x98\xba	(0,3)
+BE$H	\\x81				\xc2\x81	(0,2)
+}
+## Test non-self-contained options only apply to current subexpression
+E	((?i)fu)bar		Fubar		BADRPT
+E	((?i)fu)bar		FuBar		BADRPT
+EH	((?i)fu)bar		Fubar		(0,5)(0,2)
+EH	((?i)fu)bar		FuBar		NOMATCH
+EH	(?:(?i)fu)bar		Fubar		(0,5)
+EH	(?:(?i)fu)bar		FuBar		NOMATCH

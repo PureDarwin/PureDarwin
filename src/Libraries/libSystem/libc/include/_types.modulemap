@@ -1,0 +1,22 @@
+// Module map for the non-stdint.h parts of _types/.
+//
+// Expected to be included by the top-level module.modulemap.
+//
+// See also: module.modulemap
+// See also: stdint.modulemap (excluded parts of _types/)
+
+module Darwin.POSIX._types {
+        export *
+        umbrella "_types"
+
+        // These headers are part of Darwin_C_stdint._types.
+        exclude header "_types/_intmax_t.h"
+        exclude header "_types/_uint16_t.h"
+        exclude header "_types/_uint32_t.h"
+        exclude header "_types/_uint64_t.h"
+        exclude header "_types/_uint8_t.h"
+        exclude header "_types/_uintmax_t.h"
+
+        // Export everything.
+        module * { export * }
+}

@@ -1,0 +1,16 @@
+{C	en_US.UTF-8
+E$	\xce\x88			\xce\x88		(0,2)
+E$	\xce\x88			\xce\x89		NOMATCH
+E$	[[:upper:]]			\xce\x89		(0,2)
+Ei$	[[:upper:]]			\xce\x89		(0,2)
+E$	[[:lower:]]			\xce\x89		NOMATCH
+Ei$	[[:lower:]]			\xce\x89		(0,2)
+E$	[\xce\x88-\xce\x8a]		\xce\x89		(0,2)
+E$	\xe1\xbc\x88			\xe1\xbc\x88		(0,3)
+E$	\xe1\xbc\x88			\xe1\xbc\x89		NOMATCH
+E$	[[:upper:]]			\xe1\xbc\x89		(0,3)
+Ei$	[[:upper:]]			\xe1\xbc\x89		(0,3)
+E$	[[:lower:]]			\xe1\xbc\x89		NOMATCH
+Ei$	[[:lower:]]			\xe1\xbc\x89		(0,3)
+E$	[\xe1\xbc\x88-\xe1\xbc\x8f]	\xe1\xbc\x89		(0,3)
+}

@@ -1,0 +1,323 @@
+/* package up error # */
+"error %1$d" = "error %1$d";
+"error %1$#x" = "error %1$#x";
+/* errno error 0 */
+"Undefined error: 0" = "Undefined error: 0";
+
+/* errno error 1 */
+"Operation not permitted" = "Operation not permitted";
+
+/* errno error 2 */
+"No such file or directory" = "No such file or directory";
+
+/* errno error 3 */
+"No such process" = "No such process";
+
+/* errno error 4 */
+"Interrupted system call" = "Interrupted system call";
+
+/* errno error 5 */
+"Input/output error" = "Input/output error";
+
+/* errno error 6 */
+"Device not configured" = "Device not configured";
+
+/* errno error 7 */
+"Argument list too long" = "Argument list too long";
+
+/* errno error 8 */
+"Exec format error" = "Exec format error";
+
+/* errno error 9 */
+"Bad file descriptor" = "Bad file descriptor";
+
+/* errno error 10 */
+"No child processes" = "No child processes";
+
+/* errno error 11 */
+"Resource deadlock avoided" = "Resource deadlock avoided";
+
+/* errno error 12 */
+"Cannot allocate memory" = "Cannot allocate memory";
+
+/* errno error 13 */
+"Permission denied" = "Permission denied";
+
+/* errno error 14 */
+"Bad address" = "Bad address";
+
+/* errno error 15 */
+"Block device required" = "Block device required";
+
+/* errno error 16 */
+"Resource busy" = "Resource busy";
+
+/* errno error 17 */
+"File exists" = "File exists";
+
+/* errno error 18 */
+"Cross-device link" = "Cross-device link";
+
+/* errno error 19 */
+"Operation not supported by device" = "Operation not supported by device";
+
+/* errno error 20 */
+"Not a directory" = "Not a directory";
+
+/* errno error 21 */
+"Is a directory" = "Is a directory";
+
+/* errno error 22 */
+"Invalid argument" = "Invalid argument";
+
+/* errno error 23 */
+"Too many open files in system" = "Too many open files in system";
+
+/* errno error 24 */
+"Too many open files" = "Too many open files";
+
+/* errno error 25 */
+"Inappropriate ioctl for device" = "Inappropriate ioctl for device";
+
+/* errno error 26 */
+"Text file busy" = "Text file busy";
+
+/* errno error 27 */
+"File too large" = "File too large";
+
+/* errno error 28 */
+"No space left on device" = "No space left on device";
+
+/* errno error 29 */
+"Illegal seek" = "Illegal seek";
+
+/* errno error 30 */
+"Read-only file system" = "Read-only file system";
+
+/* errno error 31 */
+"Too many links" = "Too many links";
+
+/* errno error 32 */
+"Broken pipe" = "Broken pipe";
+
+/* errno error 33 */
+"Numerical argument out of domain" = "Numerical argument out of domain";
+
+/* errno error 34 */
+"Result too large" = "Result too large";
+
+/* errno error 35 */
+"Resource temporarily unavailable" = "Resource temporarily unavailable";
+
+/* errno error 36 */
+"Operation now in progress" = "Operation now in progress";
+
+/* errno error 37 */
+"Operation already in progress" = "Operation already in progress";
+
+/* errno error 38 */
+"Socket operation on non-socket" = "Socket operation on non-socket";
+
+/* errno error 39 */
+"Destination address required" = "Destination address required";
+
+/* errno error 40 */
+"Message too long" = "Message too long";
+
+/* errno error 41 */
+"Protocol wrong type for socket" = "Protocol wrong type for socket";
+
+/* errno error 42 */
+"Protocol not available" = "Protocol not available";
+
+/* errno error 43 */
+"Protocol not supported" = "Protocol not supported";
+
+/* errno error 44 */
+"Socket type not supported" = "Socket type not supported";
+
+/* errno error 45 */
+"Operation not supported" = "Operation not supported";
+
+/* errno error 46 */
+"Protocol family not supported" = "Protocol family not supported";
+
+/* errno error 47 */
+"Address family not supported by protocol family" = "Address family not supported by protocol family";
+
+/* errno error 48 */
+"Address already in use" = "Address already in use";
+
+/* errno error 49 */
+"Can't assign requested address" = "Can't assign requested address";
+
+/* errno error 50 */
+"Network is down" = "Network is down";
+
+/* errno error 51 */
+"Network is unreachable" = "Network is unreachable";
+
+/* errno error 52 */
+"Network dropped connection on reset" = "Network dropped connection on reset";
+
+/* errno error 53 */
+"Software caused connection abort" = "Software caused connection abort";
+
+/* errno error 54 */
+"Connection reset by peer" = "Connection reset by peer";
+
+/* errno error 55 */
+"No buffer space available" = "No buffer space available";
+
+/* errno error 56 */
+"Socket is already connected" = "Socket is already connected";
+
+/* errno error 57 */
+"Socket is not connected" = "Socket is not connected";
+
+/* errno error 58 */
+"Can't send after socket shutdown" = "Can't send after socket shutdown";
+
+/* errno error 59 */
+"Too many references: can't splice" = "Too many references: can't splice";
+
+/* errno error 60 */
+"Operation timed out" = "Operation timed out";
+
+/* errno error 61 */
+"Connection refused" = "Connection refused";
+
+/* errno error 62 */
+"Too many levels of symbolic links" = "Too many levels of symbolic links";
+
+/* errno error 63 */
+"File name too long" = "File name too long";
+
+/* errno error 64 */
+"Host is down" = "Host is down";
+
+/* errno error 65 */
+"No route to host" = "No route to host";
+
+/* errno error 66 */
+"Directory not empty" = "Directory not empty";
+
+/* errno error 67 */
+"Too many processes" = "Too many processes";
+
+/* errno error 68 */
+"Too many users" = "Too many users";
+
+/* errno error 69 */
+"Disc quota exceeded" = "Disc quota exceeded";
+
+/* errno error 70 */
+"Stale NFS file handle" = "Stale NFS file handle";
+
+/* errno error 71 */
+"Too many levels of remote in path" = "Too many levels of remote in path";
+
+/* errno error 72 */
+"RPC struct is bad" = "RPC struct is bad";
+
+/* errno error 73 */
+"RPC version wrong" = "RPC version wrong";
+
+/* errno error 74 */
+"RPC prog. not avail" = "RPC prog. not avail";
+
+/* errno error 75 */
+"Program version wrong" = "Program version wrong";
+
+/* errno error 76 */
+"Bad procedure for program" = "Bad procedure for program";
+
+/* errno error 77 */
+"No locks available" = "No locks available";
+
+/* errno error 78 */
+"Function not implemented" = "Function not implemented";
+
+/* errno error 79 */
+"Inappropriate file type or format" = "Inappropriate file type or format";
+
+/* errno error 80 */
+"Authentication error" = "Authentication error";
+
+/* errno error 81 */
+"Need authenticator" = "Need authenticator";
+
+/* errno error 82 */
+"Device power is off" = "Device power is off";
+
+/* errno error 83 */
+"Device error" = "Device error";
+
+/* errno error 84 */
+"Value too large to be stored in data type" = "Value too large to be stored in data type";
+
+/* errno error 85 */
+"Bad executable (or shared library)" = "Bad executable (or shared library)";
+
+/* errno error 86 */
+"Bad CPU type in executable" = "Bad CPU type in executable";
+
+/* errno error 87 */
+"Shared library version mismatch" = "Shared library version mismatch";
+
+/* errno error 88 */
+"Malformed Mach-o file" = "Malformed Mach-o file";
+
+/* errno error 89 */
+"Operation canceled" = "Operation canceled";
+
+/* errno error 90 */
+"Identifier removed" = "Identifier removed";
+
+/* errno error 91 */
+"No message of desired type" = "No message of desired type";
+
+/* errno error 92 */
+"Illegal byte sequence" = "Illegal byte sequence";
+
+/* errno error 93 */
+"Attribute not found" = "Attribute not found";
+
+/* errno error 94 */
+"Bad message" = "Bad message";
+
+/* errno error 95 */
+"EMULTIHOP (Reserved)" = "EMULTIHOP (Reserved)";
+
+/* errno error 96 */
+"No message available on STREAM" = "No message available on STREAM";
+
+/* errno error 97 */
+"ENOLINK (Reserved)" = "ENOLINK (Reserved)";
+
+/* errno error 98 */
+"No STREAM resources" = "No STREAM resources";
+
+/* errno error 99 */
+"Not a STREAM" = "Not a STREAM";
+
+/* errno error 100 */
+"Protocol error" = "Protocol error";
+
+/* errno error 101 */
+"STREAM ioctl timeout" = "STREAM ioctl timeout";
+
+/* errno error 102 */
+"Operation not supported on socket" = "Operation not supported on socket";
+
+/* errno error 103 */
+"Policy not found" = "Policy not found";
+
+/* errno error 104 */
+"State not recoverable" = "State not recoverable";
+
+/* errno error 105 */
+"Previous owner died" = "Previous owner died";
+
+/* errno error 106 */
+"Interface output queue is full" = "Interface output queue is full";

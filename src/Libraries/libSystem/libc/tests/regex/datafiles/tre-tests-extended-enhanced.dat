@@ -1,0 +1,119 @@
+# Large number of macros in one regexp.
+E$H	[A-Z]\\d\\s?\\d[A-Z]{2}|[A-Z]\\d{2}\\s?\\d[A-Z]{2}|[A-Z]{2}\\d\\s?\\d[A-Z]{2}|[A-Z]{2}\\d{2}\\s?\\d[A-Z]{2}|[A-Z]\\d[A-Z]\\s?\\d[A-Z]{2}|[A-Z]{2}\\d[A-Z]\\s?\\d[A-Z]{2}|[A-Z]{3}\\s?\\d[A-Z]{2}			A12BC		(0,5)
+E$H	SAME			A1 2BC		(0,6)
+E$H	SAME			A123BC		(0,6)
+E$H	SAME			AB1 2BC		(0,7)
+E$H	SAME			AB12 3CD	(0,8)
+E$H	SAME			A1B 2CD		(0,7)
+E$H	SAME			AB1C 2DE	(0,8)
+E$H	SAME			ABC 1DE		(0,7)
+# Test leftmost and longest matching and some tricky submatches
+#E	(?l)(wee|week)(night|knights)s*	weeknights	(0,10)(0,3)(3,10)
+#E	SAME				weeknightss	(0,11)(0,3)(3,10)
+# Tests for nonstandard syntax extensions.
+#
+# Zero width assertions
+EH	\<x				aax xaa		(4,5)
+EH	SAME				xaa		(0,1)
+EH	x\>				axx xaa		(2,3)
+EH	SAME				aax		(2,3)
+EH	\bx				axx xaa		(4,5)
+EH	SAME				aax		NOMATCH
+EH	SAME				xax		(0,1)
+EH	x\b				axx xaa		(2,3)
+EH	SAME				aax		(2,3)
+EH	SAME				xaa		NOMATCH
+EH	\Bx				aax xxa		(2,3)
+EH	\Bx\b				aax xxx		(2,3)
+EH	\<.				;xaa		(1,2)
+# Shorthands for character classes
+EH	\w{1,}				,.(a23_Nt-öo)	(3,9)
+EH	\d{1,}				uR120_4=v4	(2,5)
+EH	\D{1,}				120d_=vA4s	(3,8)
+EH	\w+				,.(a23_Nt-öo)	(3,9)
+EH	\d+				uR120_4=v4	(2,5)
+EH	\D+				120d_=vA4s	(3,8)
+# Quoted special characters
+E$H	\\t				\t		(0,1)
+E$H	\\e				\033		(0,1)
+# Test the \x1B and \x{263a} extensions for specifying 8 bit and wide
+# characters in hexadecimal.
+EH	\x41				ABC		(0,1)
+E$H	\\x5				\005		(0,1)
+E$H	\\x5r				\005r		(0,2)
+# test_comp("\\x",REG_EXTENDED,0)
+# test_nexec("\000",1,0,REG_OK,0,1)
+# test_comp("\\xr",REG_EXTENDED,0)
+# test_nexec("\000r",2,0,REG_OK,0,2)
+EH	\x{41}				ABC		(0,1)
+E$H	\\x{5}				\005		(0,1)
+E$H	\\x{5}r				\005r		(0,2)
+# test_comp("\\x{}",REG_EXTENDED,0)
+# test_nexec("\000",1,0,REG_OK,0,1)
+# test_comp("\\x{}r",REG_EXTENDED,0)
+# test_nexec("\000r",2,0,REG_OK,0,2)
+# Tests for (?inrU-inrU) and (?inrU-inrU:)
+EH	foo(?i)bar			fooBaR		(0,6)
+EH	foo(?i)bar|zap			fooBaR		(0,6)
+EH	SAME				foozap		(3,6)
+EH	SAME				foozAp		(3,6)
+EH	SAME				bar		NOMATCH
+EH	SAME				zap		(0,3)
+EiH	foo(?-i:zap)zot			FoOzapZOt	(0,9)
+EiH	SAME				FoOzApZOt	NOMATCH
+EH	foo(?i:bar|zap)			foozap		(0,6)
+EH	SAME				foobar		(0,6)
+EH	SAME				foobAr		(0,6)
+EH	SAME				fooZaP		(0,6)
+EH	foo(?U:o*)(o*)			foooo		(0,5)(3,5)
+# Test comment syntax
+EH	foo(?# This here is a comment. )bar	foobar	(0,6)
+# Tests for \Q and \E
+EH	\((\Q)?:\<[^$\E)		()?:\<[^$	(0,9)(1,9)
+EH	\Qabc\E.*			abcdef		(0,6)
+EH	\Qabc\E.*|foo			parabc123wxyz	(3,13)
+EH	SAME				fooabc123wxyz	(0,3)
+# Back referencing tests
+EH	([a-z]*) \1			foobar foobar	(0,13)(0,6)
+# Searching for a leftmost longest square (repeated string)
+EH	(.*)\1				foobarfoobar	(0,12)(0,6)
+EH	a(b)*c\1			acb		NOMATCH
+EH	SAME				abbcbbb		(0,5)(2,3)
+EH	SAME				abbdbd		NOMATCH
+EH	([a-c]*)\1			abcacdef	(0,0)(0,0)
+EH	SAME				abcabcabcd	(0,6)(0,3)
+EH	(a*)*(x)(\1)			x		(0,1)(0,0)(0,1)(1,1)
+EH	SAME				ax		(0,2)(1,1)(1,2)(2,2)
+EH	(a)\1{1,2}			aabc		(0,2)(0,1)
+EH	((.*)\1)+			aa		ESUBREG
+EH	()(\1\1)*			NULL		(0,0)(0,0)(0,0)
+# Check that back references work with REG_NOSUB
+EHw	(o)\1				foobar		NULL
+EH	(o)\1				foobar		(1,3)(1,2)
+EH	SAME				fobar		NOMATCH
+EH	\1foo				NULL		ESUBREG
+EH	\1foo(bar)			x		ESUBREG
+# Back reference with zero-width assertion
+EH	(.)\1$				foox		NOMATCH
+EH	SAME				foo		(1,3)(1,2)
+# Back references together with {}
+EH	([0-9]{5})\1			12345		NOMATCH
+EH	SAME				1234512345	(0,10)(0,5)
+EH	([0-9]{4})\1			1234		NOMATCH
+EH	SAME				12341234	(0,8)(0,4)
+# Test minimal repetitions (non-greedy repetitions)
+#
+# Basic
+EH	.*?				abcd		(0,0)
+EH	.+?				abcd		(0,1)
+EH	.??				abcd		(0,0)
+EH	.{2,5}?				abcd		(0,2)
+# More complicated
+EH	<b>(.*?)</b>			<b>text1</b><b>text2</b>	(0,12)(3,8)
+EH	a(.*?)(foo|bar|zap)		hubba wooga-booga zabar gafoo wazap	(4,23)(5,20)(20,23)
+# Test REG_UNGREEDY
+EHm	.*				abcd		(0,0)
+EHm	.*?				abcd		(0,4)
+##### Extras
+# ^ magic after |
+EH	(a|^b)				bas		(0,1)(0,1)
