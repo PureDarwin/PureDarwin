@@ -240,7 +240,7 @@ target_include_directories(libsystem_kernel PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/p
 target_include_directories(libsystem_kernel PRIVATE bootstrap_include wrappers/string)
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0)
 target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static)
-target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load -nostdlib)
+target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 install(TARGETS libsystem_kernel DESTINATION /usr/lib/system COMPONENT BaseSystem)
 
 
