@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BATSConfigVersion</key>
+	<string>0.1.0</string>
+	<key>Project</key>
+	<string>libmalloc</string>
+	<key>Tests</key>
+	<array>
+		<dict>
+			<key>AsRoot</key>
+			<true/>
+			<key>Command</key>
+			<array>
+				<string>/bin/bash</string>
+				<string>/AppleInternal/Tests/libmalloc/scripts/BenchBMallocToSystemV2</string>
+			</array>
+			<key>TestSpecificLogs</key>
+			<array>
+				<string>BATS_TMP_DIR/.*perfdata</string>
+				<string>BATS_TMP_DIR/dtres_.*</string>
+			</array>
+			<key>TestOutputType</key>
+			<string>stderrOutput</string>
+			<key>TestName</key>
+			<string>libmalloc.MallocBench</string>
+			<key>Timeout</key>
+			<integer>4800</integer>
+			<key>WorkingDirectory</key>
+			<string>/AppleInternal/Tests/libmalloc</string>
+			<key>Tags</key>
+			<array>
+				<string>perf</string>
+			</array>
+			<!-- MallocBench is no longer representative of workloads that libmalloc is optimizing for. -->
+			<key>Disabled</key>
+			<true/>
+		</dict>
+	</array>
+</dict>
+</plist>
