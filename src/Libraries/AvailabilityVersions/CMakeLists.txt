@@ -27,6 +27,10 @@ install(FILES include/AvailabilityVersions.h DESTINATION usr/include COMPONENT D
 install(FILES include/ConditionalMacros.h DESTINATION usr/include COMPONENT DeveloperTools)
 install(FILES include/TargetConditionals.h DESTINATION usr/include COMPONENT DeveloperTools)
 
+# I'm not sure where to put this file, as it doesn't seem to be in any of the public components from opensource.apple.com.
+# This file specifically was pulled from the MacOS 11.3 SDK in Xcode.
+install(FILES include/os/availability.h DESTINATION usr/include/os COMPONENT DeveloperTools)
+
 # The install scripts from Apple keep these around, stripping out the local/ directory later for release builds.
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/VersionMap.h DESTINATION usr/local/include/dyld COMPONENT DeveloperInternal)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/for_dyld_priv.inc DESTINATION usr/local/include/dyld COMPONENT DeveloperInternal)

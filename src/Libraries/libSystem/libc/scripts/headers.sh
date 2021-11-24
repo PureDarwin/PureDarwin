@@ -24,8 +24,8 @@ XARGS=xargs
 GREP=grep
 FGREP=fgrep
 
-eval $(${SRCROOT}/xcodescripts/generate_features.pl --bash)
-UNIFDEFARGS=$(${SRCROOT}/xcodescripts/generate_features.pl --unifdef)
+eval $(${SRCROOT}/scripts/generate_features.pl --bash)
+UNIFDEFARGS=$(${SRCROOT}/scripts/generate_features.pl --unifdef)
 
 if [[ "${DEPLOYMENT_LOCATION}" == "NO" ]] ; then
     HDRROOT=${BUILT_PRODUCTS_DIR}
@@ -141,8 +141,8 @@ if [ "x${FEATURE_LEGACY_UTMP_APIS}" == "x1" ]; then
 	INC_INSTHDRS=( "${INC_INSTHDRS[@]}" utmp.h )
 fi
 
-INC_INSTHDRS=( 
-	"${INC_INSTHDRS[@]/#/${SRCROOT}/include/}" 
+INC_INSTHDRS=(
+	"${INC_INSTHDRS[@]/#/${SRCROOT}/include/}"
 	${SRCROOT}/include/FreeBSD/nl_types.h
 	${SRCROOT}/include/NetBSD/utmpx.h
 	${SRCROOT}/stdtime/FreeBSD/tzfile.h
@@ -347,8 +347,8 @@ fi
 
 for i in `${FIND} "${HDRROOT}/${SDK_INSTALL_HEADERS_ROOT}" -name \*.h -print0 | ${XARGS} -0 ${GREP} -l '^//Begin-Libc'`; do
 	${CHMOD} u+w $i &&
-	${ECHO} ${ED} - $i \< ${SRCROOT}/xcodescripts/strip-header.ed &&
-	${ED} - $i < ${SRCROOT}/xcodescripts/strip-header.ed &&
+	${ECHO} ${ED} - $i \< ${SRCROOT}/scripts/strip-header.ed &&
+	${ED} - $i < ${SRCROOT}/scripts/strip-header.ed &&
 	${CHMOD} u-w $i || exit 1;
 done
 for i in `${FIND} "${HDRROOT}/${SDK_INSTALL_HEADERS_ROOT}" -name \*.h -print0 | ${XARGS} -0 ${FGREP} -l -e UNIFDEF -e OPEN_SOURCE -e _USE_EXTENDED_LOCALES_`; do
