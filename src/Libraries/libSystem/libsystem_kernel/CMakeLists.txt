@@ -202,9 +202,8 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/internal_include/mach)
 target_include_directories(libsystem_kernel_static PUBLIC bootstrap_include)
 
 target_include_directories(libsystem_kernel_static PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
-target_include_directories(libsystem_kernel_static PRIVATE mach mach/mach mach/servers custom wrappers ${CMAKE_CURRENT_BINARY_DIR}/internal_include)
-# Needed for MIG files to compile
-target_include_directories(libsystem_kernel_static PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach)
+target_include_directories(libsystem_kernel_static PRIVATE mach mach/mach mach/servers custom wrappers)
+target_include_directories(libsystem_kernel_static PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/internal_include)
 
 target_compile_options(libsystem_kernel_static PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 
@@ -234,8 +233,6 @@ mig(mach/thread_act.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_HEADE
 mig(mach/vm_map.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/vm_map.h NOVOUCHERS)
 
 mig(mach/servers/netname.defs INCLUDES_FROM_TARGET libsystem_kernel_static USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h NOVOUCHERS)
-
-# COMPILE_SERVER USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/exc_user.c SERVER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/exc_server.c SERVER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/exc_server.h
 
 # Pass NODEFINES to build 'internal' copies of these MIG files. See scripts/mach_install_mig.sh for info.
 mig(mach/clock.defs INCLUDES_FROM_TARGET libsystem_kernel_static NODEFINES TRUE USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/clock.c USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/clock.h NOVOUCHERS)
@@ -293,6 +290,8 @@ target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/internal_include/mach/vm_map.c
 )
 
+# We need to add these as sources to ensure they're built before the c files below,
+#   as they are generated dependencies. It's a bit messy, but it all works out just fine.
 target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/clock.h
     ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/clock_priv.h
@@ -404,11 +403,13 @@ target_sources(libsystem_kernel PRIVATE
     wrappers/_libc_funcptr.c
     wrappers/system-version-compat.c
 )
+
 target_include_directories(libsystem_kernel PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
 target_include_directories(libsystem_kernel PRIVATE wrappers/string)
 
 # Copied from static target above
-target_include_directories(libsystem_kernel PRIVATE mach mach/mach mach/servers custom wrappers ${CMAKE_CURRENT_BINARY_DIR}/internal_include)
+target_include_directories(libsystem_kernel PRIVATE mach mach/mach mach/servers custom wrappers)
+target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/internal_include)
 target_include_directories(libsystem_kernel PRIVATE libsystem_kernel_private_headers)
 
 target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
@@ -416,6 +417,7 @@ target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 __DARWIN_V
 
 target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static)
 target_link_libraries(libsystem_kernel PRIVATE CrashReporterClient)
+
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
 install(TARGETS libsystem_kernel DESTINATION usr/lib/system COMPONENT BaseSystem)
