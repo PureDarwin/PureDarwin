@@ -423,6 +423,8 @@ target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 __DARWIN_V
 
 target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_static)
 target_link_libraries(libsystem_kernel PRIVATE CrashReporterClient)
+target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
+install(TARGETS libsystem_kernel DESTINATION /usr/lib/system COMPONENT BaseSystem)
 
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
