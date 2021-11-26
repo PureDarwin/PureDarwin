@@ -1,0 +1,8 @@
+libsystem_kernel from xnu-7195.121.3
+
+- include/, private_include/ now include symlinks to various exported headers
+- xcodescripts --> scripts
+- bridgeos() availability macro commented out in os/proc.h due to build error
+
+- temporarily using headers extracted from clang build output in bootstrap_include (TODO: Build clang ourselves)
+

@@ -1,0 +1,52 @@
+// Module map for stdint.h.
+//
+// Expected to be included by the top-level module.modulemap.
+//
+// See also: module.modulemap
+// See also: _types.modulemap (reset of _types/)
+
+// This is a module for the version of stdint.h provided by Libc.  It is a
+// standalone module to allow Clang's builtins and libc++ to interpose and then
+// call #include_next.
+module Darwin_C_stdint [system] [extern_c] [no_undeclared_includes] {
+        export *
+
+        module stdint {
+                export *
+                header "stdint.h"
+        }
+
+        extern module _pthread_types "sys_pthread_types.modulemap"
+        extern module _sys_types "sys__types.modulemap"
+        extern module _sys_cdefs "sys_cdefs.modulemap"
+        extern module _machine_types "machine_types.modulemap"
+
+        module _types {
+                export *
+
+                module _intmax_t {
+                        export *
+                        header "_types/_intmax_t.h"
+                }
+                module _uint16_t {
+                        export *
+                        header "_types/_uint16_t.h"
+                }
+                module _uint32_t {
+                        export *
+                        header "_types/_uint32_t.h"
+                }
+                module _uint64_t {
+                        export *
+                        header "_types/_uint64_t.h"
+                }
+                module _uint8_t {
+                        export *
+                        header "_types/_uint8_t.h"
+                }
+                module _uintmax_t {
+                        export *
+                        header "_types/_uintmax_t.h"
+                }
+        }
+}

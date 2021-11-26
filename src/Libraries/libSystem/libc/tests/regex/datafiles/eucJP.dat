@@ -1,0 +1,9 @@
+{C	ja_JP.eucJP
+E$	\xa3\xc1		\xa3\xc1		(0,2)
+E$	\xa3\xc1		\xa3\xc2		NOMATCH
+E$	[[:upper:]]		\xa3\xc2		(0,2)
+Ei$	[[:upper:]]		\xa3\xc2		(0,2)
+E$	[[:lower:]]		\xa3\xc2		NOMATCH
+Ei$	[[:lower:]]		\xa3\xc2		(0,2)
+E$	[\xa3\xc1-\xa3\xc3]	\xa3\xc2		(0,2)
+}

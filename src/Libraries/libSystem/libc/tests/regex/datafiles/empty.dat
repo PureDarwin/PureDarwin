@@ -1,0 +1,7 @@
+E	(a*)x		x	(0,1)(0,0)
+E	(a)*x		x	(0,1)(?,?)
+E	(a*)*x		x	(0,1)(0,0)
+E	(a+)x		x	NOMATCH
+E	(a)+x		x	NOMATCH
+E	(a+)*x		x	(0,1)(?,?)
+E	(a*)+x		x	(0,1)(0,0)

@@ -1,0 +1,20 @@
+B	\(a\)*\1	a	NOMATCH
+#E	(?l)(a*)(b|abc)(c*)		abc	(0,3)(0,0)(0,3)(3,3)
+E	(...?.?)*		xxxx		(0,4)(0,4)
+E	(...?.?)*		xxxxx		(0,5)(3,5)
+E	(...?.?)*		xxxxxx		(0,6)(4,6)
+E	(...?.?)*		xxxxxxx		(0,7)(4,7)
+E	(...?.?)*		xxxxxxxx	(0,8)(4,8)
+E	(...?.?)*		xxxxxxxxx	(0,9)(7,9)
+E	(...?.?)*		xxxxxxxxxx	(0,10)(8,10)
+E	(...?.?)*		xxxxxxxxxxx	(0,11)(8,11)
+{C	en_GB.UTF-8
+E	^([[:digit:]]){3}$	abc	NOMATCH
+}
+B	\(a\(b\)*\)*\2		abab	NOMATCH
+B	a\(b\)*c\1	acb	NOMATCH
+B	a\(b\)*c\1	abbcbbb	(0,5)(2,3)
+B	a\(b\)*c\1	abbdbd	NOMATCH
+E	(a|ab)(bc|c)		abcabc	(0,3)(0,2)(2,3)
+:RE#33:E	(aba|ab|a|z)*		ababa	(0,5)(2,5)
+:RE#33:E	(aba|ab|a|(z))*		ababa	(0,5)(2,5)

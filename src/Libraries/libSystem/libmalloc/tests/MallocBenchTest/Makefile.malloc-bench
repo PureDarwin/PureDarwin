@@ -1,0 +1,85 @@
+XCODEBUILD_ARGS:= -configuration Release -sdk $(SDKROOT) -derivedDataPath .
+BMALLOC_DIR := $(MALLOCBENCHTEST_DIR)/BMALLOC
+MALLOC_BENCH_DIR := $(MALLOCBENCHTEST_DIR)/MALLOC_BENCH
+SCRIPTS_DIR := $(MALLOCBENCHTEST_DIR)/scripts
+
+#
+# It is assumed that we already have the MallocBench and bmalloc sources. The following
+# targets would fetch them, but they are not used, for now.
+get_bmalloc:
+	@echo Fetching bmalloc source...
+	-rm -rf $(BMALLOC_DIR)
+	-mkdir -p $(BMALLOC_DIR)
+	cd $(BMALLOC_DIR);								\
+		svn co https://svn.webkit.org/repository/webkit/trunk/Source/bmalloc
+
+get_MallocBench:
+	@echo Fetching MallocBench source...
+	-rm -rf $(MALLOC_BENCH_DIR)
+	cd $(MALLOCBENCHTEST_DIR);							\
+		svn co https://svn.webkit.org/repository/webkit/trunk/PerformanceTests/MallocBench MALLOC_BENCH 
+
+# Make this depend on get_bmalloc if we can find a way to access the SVN servers.
+build-bmalloc:
+	@echo Making bmalloc...
+	sed -i sv -e '/^#include.*ccache.xcconfig/d' $(BMALLOC_DIR)/bmalloc/Configurations/DebugRelease.xcconfig
+	cd $(BMALLOC_DIR)/bmalloc;		 					\
+		xcodebuild -scheme mbmalloc $(XCODEBUILD_ARGS);				\
+	cd $(SRCROOT)
+
+# Make this depend on get_MallocBench if we can find a way to access the SVN servers.
+build-MallocBench:
+	@echo Making MallocBench...
+	cd $(MALLOC_BENCH_DIR);								\
+		xcodebuild -scheme mbmalloc $(XCODEBUILD_ARGS);				\
+		xcodebuild -scheme MallocBench $(XCODEBUILD_ARGS); 			\
+	cd $(SRCROOT);
+
+install-scripts:
+	@echo Installing MallocBench scripts...
+	mkdir -p $(INSTALLDIR)/scripts
+	cp $(SCRIPTS_DIR)/* $(INSTALLDIR)/scripts
+
+install-bmalloc: build-bmalloc
+	@echo Installing bmalloc...
+	$(eval B = $(shell 								\
+		cd $(BMALLOC_DIR)/bmalloc;						\
+		xcodebuild -scheme mbmalloc $(XCODEBUILD_ARGS) -showBuildSettings	\
+			| grep TARGET_BUILD_DIR | sed -e s':.*= ::'; 			\
+	))
+	mkdir -p $(INSTALLDIR)/bmalloc
+	cp $(B)/libmbmalloc.dylib $(INSTALLDIR)/bmalloc
+
+install-MallocBench: build-MallocBench
+	@echo Installing MallocBench...
+	$(eval B = $(shell 								\
+		cd $(MALLOC_BENCH_DIR);							\
+		xcodebuild -scheme MallocBench $(XCODEBUILD_ARGS) -showBuildSettings	\
+			| grep TARGET_BUILD_DIR | sed -e s':.*= ::'; 			\
+	))
+	mkdir -p $(INSTALLDIR)/MallocBench
+	cp -R $(B)/* $(INSTALLDIR)/MallocBench
+	codesign --force --sign - --entitlements $(MALLOCBENCHTEST_DIR)/get_task_allow_entitlement.plist $(INSTALLDIR)/MallocBench/MallocBench
+	codesign -d --entitlements - $(INSTALLDIR)/MallocBench/MallocBench
+
+clean-bmalloc:
+	-rm -rf $(BMALLOC_DIR)/bmalloc/Logs
+	-rm -rf $(BMALLOC_DIR)/bmalloc/Build
+	-rm -rf $(BMALLOC_DIR)/bmalloc/ModuleCache.noindex
+	-rm -f $(BMALLOC_DIR)/bmalloc/info.plist
+
+clean-MallocBench:
+	-rm -rf $(MALLOC_BENCH_DIR)/Logs
+	-rm -rf $(MALLOC_BENCH_DIR)/Build
+	-rm -rf $(MALLOC_BENCH_DIR)/ModuleCache.noindex
+	-rm -f $(MALLOC_BENCH_DIR)/info.plist
+
+# Darwintest target extensions
+clean: clean-bmalloc clean-MallocBench
+
+# Targets required by darwintest
+
+MALLOC_BENCH: build-bmalloc build-MallocBench
+
+install-MALLOC_BENCH: install-scripts install-bmalloc install-MallocBench
+

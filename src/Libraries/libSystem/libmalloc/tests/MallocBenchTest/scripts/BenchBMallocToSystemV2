@@ -1,0 +1,10 @@
+MALLOC_BENCH_DIR=`pwd`/MallocBench
+BMALLOC_LIB_DIR=`pwd`/bmalloc
+SCRIPTS_DIR=`pwd`/scripts
+
+# Use env.setup for local testing, overriding MALLOC_BENCH_DIR, BMALLOC_LIB_DIR
+# and SCRIPTS_DIR as required.
+# . ./scripts/env.setup
+
+export MALLOCBENCH_RUN_TIMEOUT=2400
+/usr/local/bin/recon ${SCRIPTS_DIR}/benchrun-mallocbench.lua ${MALLOC_BENCH_DIR}/MallocBench bmalloc:${BMALLOC_LIB_DIR}/libmbmalloc.dylib SystemMalloc:${MALLOC_BENCH_DIR}/libmbmalloc.dylib NanoMallocV2:${MALLOC_BENCH_DIR}/libmbmalloc.dylib
