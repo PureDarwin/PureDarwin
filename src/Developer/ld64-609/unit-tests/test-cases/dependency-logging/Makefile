@@ -1,0 +1,50 @@
+##
+# Copyright (c) 2010-2011 Apple Inc. All rights reserved.
+#
+# @APPLE_LICENSE_HEADER_START@
+# 
+# This file contains Original Code and/or Modifications of Original Code
+# as defined in and that are subject to the Apple Public Source License
+# Version 2.0 (the 'License'). You may not use this file except in
+# compliance with the License. Please obtain a copy of the License at
+# http://www.opensource.apple.com/apsl/ and read it before using this
+# file.
+# 
+# The Original Code and all software distributed under the License are
+# distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+# EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+# INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+# Please see the License for the specific language governing rights and
+# limitations under the License.
+# 
+# @APPLE_LICENSE_HEADER_END@
+##
+TESTROOT = ../..
+include ${TESTROOT}/include/common.makefile
+
+#
+# Check that LD_TRACE_* work
+#
+
+run: all
+
+all:
+	${CC} ${CCFLAGS} foo.c -c -o foo.o
+	libtool -static foo.o -o libfoo.a
+	rm -rf trace_ars
+	export LD_TRACE_ARCHIVES=1 && export LD_TRACE_FILE=trace_ars && ${CC} ${CCFLAGS} main.c libfoo.a -o main
+	grep 'libfoo.a' trace_ars | ${FAIL_IF_EMPTY}
+	export LD_TRACE_ARCHIVES=1 && export LD_TRACE_FILE=trace_ars2 && ${CC} ${CCFLAGS} main.c -Wl,-force_load,libfoo.a -o main
+	grep 'libfoo.a' trace_ars2 | ${FAIL_IF_EMPTY}
+	export LD_TRACE_ARCHIVES=1 && export LD_TRACE_FILE=trace_ars3 && ${CC} ${CCFLAGS} main.c libfoo.a -o main -all_load
+	grep 'libfoo.a' trace_ars3 | ${FAIL_IF_EMPTY}
+	${CC} ${CCFLAGS} foo.c -dynamiclib -o libfoo.dylib
+	rm -rf trace_dylibs
+	export LD_TRACE_DYLIBS=1 && export LD_TRACE_FILE=trace_dylibs && ${CC} ${CCFLAGS} main.c libfoo.dylib -o main
+	grep 'libfoo.dylib' trace_dylibs | ${FAIL_IF_EMPTY}
+	${PASS_IFF_GOOD_MACHO} main
+	
+
+clean:
+	rm -rf foo.o libfoo.a libfoo.dylib main trace_ars trace_ars2 trace_ars3 trace_dylibs

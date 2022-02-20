@@ -1,0 +1,40 @@
+.Dd May 11, 2020
+.Os
+.Dt DLOPEN_PREFLIGHT 3
+.Sh NAME
+.Nm dlopen_preflight
+.Nd preflight the load of a dynamic library or bundle
+.Sh SYNOPSIS
+.In dlfcn.h
+.Ft bool
+.Fn dlopen_preflight "const char* path"
+.Sh DESCRIPTION
+.Fn dlopen_preflight
+examines the mach-o file specified by 
+.Fa path .
+It checks if the file and libraries it depends on are all compatible with the current process. 
+That is, they contain the correct architecture and are not otherwise ABI incompatible.
+.Pp
+.Fn dlopen_preflight
+was created for the PowerPC to Intel transition for use by apps with plugins that the user chooses to load.
+The app could use dlopen_preflight() to show only loadable plugins to the user (such as in a menu).
+.Pp
+This is potentially an expensive call because it may internally do the same as dlopen/dlclose.  Only
+use dlopen_preflight() if you need to show the user a list of potentially loadable plugins.
+.Pp
+.Fn dlopen_preflight
+was first available in Mac OS X 10.5.
+.Sh SEARCHING
+.Fn dlopen_preflight
+uses the same steps as 
+.Fn dlopen
+to find a compatible mach-o file.
+.Sh RETURN VALUES
+.Fn dlopen_preflight
+returns true on if the mach-o file is compatible.  If the file is not compatible, it returns false 
+and sets an error string that can be examined with
+.Fn dlerror .
+.Pp
+.Sh SEE ALSO
+.Xr dlopen 3
+.Xr dlerror 3

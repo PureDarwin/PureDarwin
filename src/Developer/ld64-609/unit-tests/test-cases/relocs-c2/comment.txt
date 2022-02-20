@@ -1,0 +1,5 @@
+The point of this test is to verify a .o file can round-trip through ld -r correctly.  The ObjectDump utility is used
+dump a "canonical" textual representation of a .o file.  The before and after .o files are then diff'ed.
+No differences means this test passes
+
+Currently for ppc64 the .o's alternate! in content

@@ -1,0 +1,2 @@
+The point of this test is to check that -dead_strip does not remove
+atoms in sections with the S_ATTR_NO_DEAD_STRIP bit set

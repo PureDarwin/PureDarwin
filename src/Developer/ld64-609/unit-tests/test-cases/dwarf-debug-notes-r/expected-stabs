@@ -1,0 +1,24 @@
+0000    SO CWD/
+0000    SO main.cxx
+0001   OSO CWD/main.o
+0000 BNSYM 
+0000   FUN _main
+0000   FUN 
+0000 ENSYM 
+0000    SO 
+0000    SO CWD/
+0000    SO foo.cxx
+0001   OSO CWD/foo.o
+0000 BNSYM 
+0000   FUN __Z3foov
+0000   FUN 
+0000 ENSYM  
+0000    SO 
+0000    SO CWD/
+0000    SO bar.cxx
+0001   OSO CWD/bar.o
+0000 BNSYM 
+0000   FUN __Z3barv
+0000   FUN 
+0000 ENSYM  
+0000    SO 

@@ -42,6 +42,10 @@
 #define CRGetCrashLogMessage2() _crc_make_getter(message2)
 #define CRSetCrashLogMessage2(m) _crc_make_setter(message2, m)
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 struct crashreporter_annotations_t {
 	uint64_t version;
 	uint64_t message;
@@ -55,5 +59,9 @@ struct crashreporter_annotations_t {
 
 CRASH_REPORTER_CLIENT_HIDDEN
 extern struct crashreporter_annotations_t gCRAnnotations;
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif /* __CrashReporterClient__ */

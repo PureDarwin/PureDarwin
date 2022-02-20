@@ -1,0 +1,36 @@
+#!/bin/sh
+
+usage() {
+	echo Usage: $0 number-of-tests-logs-to-keep
+	echo where number-of-tests-logs-to-keep must be a non-zero integer
+	exit
+}
+
+# Usage: if no arguments
+[ -z "$1" ] && usage
+
+# Check if requesting 0 tests to remain!
+[ "$1" -ne 0 ]
+
+# don't test directly--use the result value
+# because the command can fail for badly formed integers
+[ $? -ne 0 ] && usage
+
+# get the dir names of all tests in date order
+ls -1dtr /tmp/proctor*>/tmp/all$$ 2>/dev/null
+
+# select the last few to keep
+tail -$1 /tmp/all$$>/tmp/keep$$
+
+# get a list of the others
+DELLIST=`diff /tmp/all$$ /tmp/keep$$|grep '^<'|sed -e 's/^< //'`
+
+# any work to do?
+if [ "$DELLIST" ]
+then
+	echo rm -rf $DELLIST
+	rm -rf $DELLIST
+fi
+
+# rm the temps
+rm /tmp/all$$ /tmp/keep$$

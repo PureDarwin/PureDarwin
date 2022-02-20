@@ -1,0 +1,22 @@
+.Dd November 7, 2008
+.Dt unwinddump 1
+.Os Darwin
+.Sh NAME
+.Nm unwinddump
+.Nd "Displays compact unwind information in an executable"
+.Sh SYNOPSIS
+.Nm
+.Op Fl arch Ar arch-name 
+.Ar file(s)
+.Sh DESCRIPTION
+When a C++ (or x86_64 Objective-C) exception is thrown, the runtime must unwind
+the stack looking for some function to catch the exception.  Traditionally, 
+the unwind information is stored in the __TEXT/__eh_frame section of each executable
+as Dwarf CFI (call frame information).  Beginning in Mac OS X 10.6, the unwind
+information is also encoded in the __TEXT/__unwind_info section using a two-level
+lookup table of compact unwind encodings.  
+.Pp
+The unwinddump tool displays the content of the __TEXT/__unwind_info section.
+.Sh SEE ALSO
+.Xr ld 1
+.Xr dwarfdump 1

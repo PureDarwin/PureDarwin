@@ -1,0 +1,73 @@
+#!/bin/sh
+
+hide()
+{
+	$PROCTOR set_hidden $1 1 >/dev/null
+}
+
+if [ -z "$1" ]
+	then echo "Usage: mkld HOST [ DBPATH ]" >&2
+	exit 1
+fi
+
+if [ -z "$PROCTOR" ]
+	then PROCTOR=proctor
+fi
+
+DBNAME="$2"
+[ -z "$DBNAME" ] && DBNAME=ld
+PROCTOR="$PROCTOR $1 $DBNAME"
+
+$PROCTOR tools gcc g++ objc obj-c++ libstdc++ ld ld ld_classic cctools
+$PROCTOR sysattrs \
+ ld64="ld64" \
+ ld="ld (ld_classic)" \
+ gcc="GCC" \
+ cctools="cctools" \
+ os="OS Build" \
+ processor=Processor \
+ platform=Platform \
+ hostname="Hostname" \
+ gcc_opts="gcc options" \
+ g++_opts="g++ options" \
+ objc_opts="objc options" \
+ obj-c++_opts="obj-c++ options" \
+ libstdc++_opts="libstdc++ options" \
+ LANG="LANG environment variable" \
+ LC_CTYPE="LC_CTYPE environment variable" \
+ LC_MESSAGES="LC_MESSAGES environment variable" \
+ LC_ALL="LC_ALL environment variable" \
+ TMPDIR="TMPDIR environment variable" \
+ GCC_EXEC_PREFIX="GCC_EXEC_PREFIX environment variable" \
+ COMPILER_PATH="COMPILER_PATH environment variable" \
+ LIBRARY_PATH="LIBRARY_PATH environment variable" \
+ LANG="LANG environment variable" \
+ CPATH="CPATH environment variable" \
+ C_INCLUDE_PATH="C_INCLUDE_PATH environment variable" \
+ CPLUS_INCLUDE_PATH="CPLUS_INCLUDE_PATH environment variable" \
+ OBJC_INCLUDE_PATH="OBJC_INCLUDE_PATH environment variable" \
+ DEPENDENCIES_OUTPUT="DEPENDENCIES_OUTPUT environment variable" \
+ SUNPRO_DEPENDENCIES="SUNPRO_DEPENDENCIES environment variable" \
+
+for TOOL in gcc g++ objc obj-c++ libstdc++
+	do hide ${TOOL}_opts
+done
+
+hide LANG
+hide LC_CTYPE
+hide LC_MESSAGES
+hide LC_ALL
+hide TMPDIR
+hide GCC_EXEC_PREFIX
+hide COMPILER_PATH
+hide LIBRARY_PATH
+hide LANG
+hide CPATH
+hide C_INCLUDE_PATH
+hide CPLUS_INCLUDE_PATH
+hide OBJC_INCLUDE_PATH
+hide DEPENDENCIES_OUTPUT
+hide SUNPRO_DEPENDENCIES
+
+$PROCTOR results PASS=1 XFAIL=1 KFAIL=1 FAIL=0 XPASS=0 KPASS=0 UNRESOLVED=0 TIMEDOUT=0 UNSUPPORTED=0 UNTESTED=0
+$PROCTOR severities logline NOTE WARNING ERROR

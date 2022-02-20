@@ -1,0 +1,4 @@
+[submodule "llvm-project"]
+path = src/Developer/llvm-project
+url = https://github.com/apple/llvm-project.git
+branch = swift-5.5.1-RELEASE

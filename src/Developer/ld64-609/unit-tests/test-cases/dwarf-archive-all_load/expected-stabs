@@ -1,0 +1,24 @@
+0000    SO CWD/
+0000    SO bar.c
+0001   OSO CWD/liball.a(bar.o)
+0000 BNSYM 
+0000   FUN _bar
+0000   FUN 
+0000 ENSYM 
+0000    SO 
+0000    SO CWD/
+0000    SO baz.c
+0001   OSO CWD/liball.a(baz.o)
+0000 BNSYM 
+0000   FUN _baz
+0000   FUN 
+0000 ENSYM 
+0000    SO 
+0000    SO CWD/
+0000    SO foo.c
+0001   OSO CWD/liball.a(foo.o)
+0000 BNSYM 
+0000   FUN _foo
+0000   FUN 
+0000 ENSYM 
+0000    SO 

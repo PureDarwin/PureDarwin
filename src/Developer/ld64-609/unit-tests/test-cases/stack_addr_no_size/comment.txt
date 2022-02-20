@@ -1,0 +1,11 @@
+Test the ld commands -stack_addr, -stack_size (3939852 and 4729162)
+
+
+-stack_addr value
+Specifies the initial address of the stack pointer value, where value is a hexadecimal number rounded to the segment alignment. The default segment alignment is the target pagesize (currently, 1000 hexadecimal for the PowerPC and for i386). If -stack_size is specified and -stack_addr is not, a default stack address specific for the architecture being linked will be used and its value printed as a warning message. This creates a segment named __UNIXSTACK. Note that the initial stack address will be either at the high address of the segment or the low address of the segment depending on which direction the stack grows for the architecture being linked.
+
+
+-stack_size value
+Specifies the size of the stack segment value, where value is a hexadecimal number rounded to the segment alignment. The default segment alignment is the target pagesize (currently, 1000 hexadecimal for the PowerPC and for i386). If -stack_addr is specified and -stack_size is not, a default stack size specific for the architecture being linked will be used and its value printed as a warning message. This creates a segment named __UNIXSTACK .
+
+

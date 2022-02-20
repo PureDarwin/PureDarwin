@@ -1,0 +1,1 @@
+Test the we set emit LC_UUID correctly

@@ -1,0 +1,33 @@
+0000    SO CWD/
+0000    SO hello.cxx
+0001   OSO CWD/hello.o
+0000 BNSYM 
+0000   FUN _main
+0000   FUN 
+0000 ENSYM 
+0000 BNSYM 
+0000   FUN __Z3fooi
+0000   SOL ./header.h
+0000   FUN 
+0000 ENSYM 
+0000    SO 
+0000    SO CWD/
+0000    SO other.cxx
+0001   OSO CWD/other.o
+0000 BNSYM 
+0000   FUN __Z3bari
+0000   FUN 
+0000 ENSYM 
+0000 BNSYM 
+0000   FUN .my_non_standard_function_name
+0000   FUN 
+0000 ENSYM 
+0000 STSYM .my_non_standard_name_static
+0000 STSYM .my_non_standard_name
+0000 STSYM __ZZ3bariE8bar_init
+0000  GSYM _init
+0000  GSYM _uninit
+0000 STSYM __ZZ3bariE10bar_uninit
+0000 STSYM __ZL7suninit
+0000 STSYM __ZL5sinit
+0000    SO 

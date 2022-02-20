@@ -1,0 +1,1 @@
+Verify that -dylib_file option allows you to replace an indirect dylib

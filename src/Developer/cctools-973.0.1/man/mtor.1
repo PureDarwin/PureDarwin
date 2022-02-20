@@ -1,0 +1,146 @@
+.\" Copyright (c) 2019 Apple, Inc.
+.\" MDT
+.Dd January 31, 2019
+.Os "Darwin"
+.Dt MTOR 1
+.Sh NAME
+.Nm mtor
+.Nd convert Mach-O to raw binary files
+.\"  SYNOPSIS
+.Sh SYNOPSIS
+.Nm
+.Op Fl nv
+.Op Fl start Aq start_address
+.Op Fl no_bss
+.Op Fl version
+.Op Fl output Ar out_file
+.Ar file
+.Nm
+.Fl help
+.Op Fl version
+.Nm
+.Fl version
+.\"  DESCRIPTION
+.Sh  DESCRIPTION
+.Nm
+converts a Mach-O preload
+.Ar file
+into a raw binary
+.Ar out_file .
+These output files represent in-core images in a ready-to-run layout that
+can be flashed to firmware, burned into ROM, or otherwise run on "bare metal". This raw binary includes only the __TEXT and __DATA segments of the Mach-O file;
+the Mach-O header, load commands, and other segments are ignored. By default
+.Nm
+positions each segment at the address stored in the segment's
+.Em vmaddr
+field, as displayed by
+.Xr otool 1
+using the
+.Fl l
+(ell) command. Empty space, such as that between the start of the file and the __TEXT
+segment, will be zero-filled.
+.Pp
+The following options are available:
+.Pp
+.\"  OPTIONS
+.Bl -tag -width "XXkeepParent"
+.It Fl h , help
+Print usage.
+.It Fl n
+Don't actually write the output file. Implies the
+.Fl v
+flag.
+.It Fl no_bss
+Omit all zero-filled sections from the __DATA segment, including those sections
+marked with the S_ZEROFILL flag in
+.Xr otool 1 .
+In practice, the __DATA segment is truncated at the first zero-filled section.
+.It Fl o , output Ar out_file
+Commands that create new files write to the
+.Ar out_file
+file specified by the
+.Fl output
+flag. This option is required.
+.It Fl packdata Ar data_address_symbol_name Ar data_size_symbol_name
+Position the __DATA segment immediately after __TEXT regardless of __DATA's
+vm address. The preload program is expeceted to manually move the __DATA
+segment into it's final vm location at runtime, before referencing any data.
+In order to do that,
+.Nm
+will write the offset to __DATA (i.e., load memory address) and its size
+directly into the __TEXT segment, using two symbols supplied on the command
+line. These symbols must point to 32-bit values within the program's __TEXT
+segment.
+.Nm
+will error if the symbols do not exist in the nlist, or if they do not refer
+to storage within the __TEXT segment. Because the Mach-O nlist does not contain
+symbol sizes, the 32-bit storage requirement cannot be verified, although
+.Nm
+will warn if
+.Ar data_address_symbol_name
+or
+.Ar data_size_symbol_name
+have not been pre-initialized to 0.
+.It Fl start Ar start_address
+Position the __TEXT segment at the specified address instead of honoring the
+__TEXT segment's vmaddr location. The __DATA segment will also be adjusted by
+a similar amount so that the relative distance between __TEXT and __DATA is
+preserved.
+.Nm
+will warn and return a non-zero exit code if one or more sections is no longer
+aligned to their section alignment. The
+.Xr ld 1
+flags
+.Fl image_base
+and
+.Fl seg1addr
+are also synonyms for this option.
+.It Fl v
+Print verbose information about the segments being extracted into the output
+file.
+.It Fl version
+Print version information.
+.El
+.\"  CAVEAT MTOR
+.Sh CAVEAT MTOR
+Only Mach-O preload files can be processed by
+.Nm .
+Use the
+.Fl preload
+option to
+.Xr ld 1
+to generate preload files. A Mach-O file's type can be viewed by passing the
+.Fl hv
+flags to
+.Xr otool 1 .
+.Pp
+While
+.Nm
+can change the __TEXT section's starting address via the
+.Fl start
+option, the file contents cannot be relinked. Segments and sections cannot be
+realigned or moved independently from each other. If segments or sections need
+to be at specific addresses or be positioned within specific alignment
+constraints, use
+.Xr ld 1 's
+.Fl seg1addr ,
+.Fl segalign ,
+and similar options to produce a Mach-O binary within those constraints.
+.\"  SEE ALSO
+.Sh SEE ALSO
+.Xr ld 1 ,
+.Xr lipo 1 ,
+.Xr otool 1 ,
+.Xr otool-classic 1 ,
+.Xr Mach-O 5 .
+.\"  HISTORY
+.\" .Sh HISTORY
+.\"  BUGS
+.Sh BUGS
+The
+.Nm
+tool only works on Mach-O binaries. It current does not support universal
+(multi-architectural) files. Use
+.Xr lipo 1
+to extract stand-alone Mach-O files from universal files before running
+.Nm .

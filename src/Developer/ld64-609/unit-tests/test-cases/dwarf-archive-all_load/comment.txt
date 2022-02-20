@@ -1,0 +1,2 @@
+Test that using -all_load to pull all .o files out of an archive
+proeduces good "debug notes".

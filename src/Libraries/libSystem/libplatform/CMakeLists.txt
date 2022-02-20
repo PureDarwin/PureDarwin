@@ -1,5 +1,9 @@
 # TODO: Build libsystem_platform.dylib here.
 
+# Headers to install:
+# include/* - public headers
+# private/* - private headers
+
 add_library(libplatform_headers INTERFACE)
 target_include_directories(libplatform_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

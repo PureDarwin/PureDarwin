@@ -1,6 +1,5 @@
-find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
-
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
+
 externalproject_add(xnu_headers.extproj
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_build
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
@@ -9,20 +8,20 @@ externalproject_add(xnu_headers.extproj
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
-            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
-            -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
-            -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
-            -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
+            #-D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
+            #-D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
+            #-D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
+            #-D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
-            -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
-            -D MIGCOM_PATH=$<TARGET_FILE:migcom>
-            -D STRIP_PATH=$<TARGET_FILE:host_strip>
-            -D LIPO_PATH=$<TARGET_FILE:host_lipo>
-            -D NM_PATH=$<TARGET_FILE:host_nm>
-            -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
-            -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
-            -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
-            -D DSYMUTIL_PATH=${dsymutil_path}
+            -D MIG_PATH=${RC_HOST_BIN}/mig
+            -D MIGCOM_PATH=${RC_HOST_BIN}/../libexec/migcom
+            #-D STRIP_PATH=$<TARGET_FILE:host_strip>
+            #-D LIPO_PATH=$<TARGET_FILE:host_lipo>
+            #-D NM_PATH=$<TARGET_FILE:host_nm>
+            #-D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
+            #-D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            -D UNIFDEF_PATH=${RC_HOST_BIN}/unifdef
+            -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=0
@@ -33,9 +32,11 @@ externalproject_add(xnu_headers.extproj
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu_headers.extproj darwin_codesign_allocate
-    migcom host_strip host_lipo host_nm unifdef host_nmedit
-    ctfconvert.host ctfmerge.host availability.pl)
+# add_dependencies(xnu_headers.extproj darwin_codesign_allocate
+#     migcom host_strip host_lipo host_nm unifdef host_nmedit
+#     ctfconvert.host ctfmerge.host availability.pl)
+
+add_dependencies(xnu_headers.extproj availability.pl)
 
 add_library(xnu_headers INTERFACE)
 add_dependencies(xnu_headers xnu_headers.extproj)
@@ -72,24 +73,27 @@ externalproject_add(xnu
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
-            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
-            -D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
-            -D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
-            -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
+            #-D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
+            #-D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
+            #-D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
+            #-D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
-            -D LD_PATH=$<TARGET_FILE:darwin_ld>
-            -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
-            -D MIGCOM_PATH=$<TARGET_FILE:migcom>
-            -D STRIP_PATH=$<TARGET_FILE:host_strip>
-            -D LIPO_PATH=$<TARGET_FILE:host_lipo>
-            -D NM_PATH=$<TARGET_FILE:host_nm>
-            -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
-            -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
-            -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
-            -D DSYMUTIL_PATH=${dsymutil_path}
+            #-D LD_PATH=$<TARGET_FILE:darwin_ld>
+            -D MIG_PATH=${RC_HOST_BIN}/mig
+            -D MIGCOM_PATH=${RC_HOST_BIN}/../libexec/migcom
+            #-D STRIP_PATH=$<TARGET_FILE:host_strip>
+            #-D LIPO_PATH=$<TARGET_FILE:host_lipo>
+            #-D NM_PATH=$<TARGET_FILE:host_nm>
+            #-D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
+            #-D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            -D UNIFDEF_PATH=${RC_HOST_BIN}/unifdef
+            -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
             -D FIREHOSE_KERNEL_HEADER_PATH=$<TARGET_PROPERTY:libfirehose_kernel,INTERFACE_INCLUDE_DIRECTORIES>
             -D PTHREAD_HEADER_PATH=$<TARGET_PROPERTY:pthread_common_headers,INTERFACE_INCLUDE_DIRECTORIES>
+            -D CMAKE_ASM_COMPILER=${CMAKE_ASM_COMPILER}
+            -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
@@ -100,7 +104,8 @@ externalproject_add(xnu
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl darwin_ld)
+#add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl darwin_ld)
+add_dependencies(xnu xnu_headers libfirehose_kernel availability.pl)
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Resources DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT BaseSystem)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Headers DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT DeveloperTools)

@@ -55,6 +55,7 @@ default: install
 SDKROOT ?= macosx.internal
 
 installhdrs install:
+	echo ${CC}
 	cd libsyscall ; \
 		xcodebuild $@ $(TARGET)	\
 			$(MAKEOVERRIDES)	\

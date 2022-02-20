@@ -1,0 +1,340 @@
+.ig
+
+  Copyright (c) 2019 Apple Inc.  All Rights Reserved.
+
+..
+.Dd December 31, 2018
+.Os "Darwin"
+.Dt VTOOL 1
+.Sh NAME
+.Nm vtool
+.Nd Mach-O version number utility
+.\"  SYNOPSIS
+.Sh SYNOPSIS
+.Nm
+.Op Fl arch Aq arch
+.Ar ...
+.Aq Ar show\ command
+.Ar ...
+.Ar file
+.Nm
+.Op Fl arch Aq arch
+.Ar ...
+.Aq Ar set\ command
+.Ar ...
+.Op Fl replace
+.Fl output Ar out_file
+.Ar file
+.Nm
+.Op Fl arch Aq arch
+.Ar ...
+.Aq Ar remove\ command
+.Ar ...
+.Fl output Ar out_file
+.Ar file
+.Nm
+.Fl help
+.\"  DESCRIPTION
+.Sh DESCRIPTION
+The
+.Nm
+utility displays and edits build and source version numbers embedded in the
+.Xr Mach-O 5
+file format. These version numbers are stored within the Mach-O load
+commands, as described in the
+.Aq Pa mach-o/loader.h
+header file and in the
+.Sx VERSION LOAD COMMANDS
+section below. When editing files, a new
+.Ar out_file
+must be specified using the
+.Fl output
+flag;
+.Nm
+will only ever write to a single output file, and input files are never modified
+in place.
+.Pp
+.Nm
+operates in one of three functional modes (in addition to a
+.Em help
+mode) depending on the type of arguments specified on the command line:
+.Em show ,
+.Em set ,
+and
+.Em remove .
+All of these modes operate on
+.Dq universal
+(multi-architecture) files as well as
+ordinary Mach-O files. The
+.Fl arch
+flag limits operation to one or more architectures within a universal file.
+.Pp
+.Bl -tag -width "XXkeepParent"
+.It Em Show
+Show options include
+.Fl show ,
+.Fl show-build ,
+.Fl show-source ,
+and
+.Fl show-space .
+Only one of these commands may be specified. The version information will be
+printed in a manner similar to
+.Xr otool 1
+or
+.Xr otool-classic 1 .
+.It Em Set
+Set options include
+.Fl set-build-tool ,
+.Fl set-build-version ,
+.Fl set-source-version ,
+and
+.Fl set-version-min .
+Any number of these commands can be combined in a single
+.Nm
+invocation. You can use these set commands to add a new build version to a
+Mach-O or to replace an existing version for a specific platform. When used
+with the
+.Fl replace
+option, all existing build versions will be entirely replaced by the new
+build versions specified on the command line.
+.It Em Remove
+Remove options include
+.Fl remove-build-tool ,
+.Fl remove-build-version ,
+and
+.Fl remove-source-version .
+Any number of these commands can be combined in a single
+.Nm
+invocation.
+.El
+.Pp
+Currently
+.Nm
+only operates on final linked binaries, such as executable files, dynamic
+libraries, and bundles. Because the executable code in Mach-O final linked
+binaries cannot be moved or resized, and because the load commands reside
+between the mach header and the executable code, there is only a limited amount
+of space available for
+.Nm
+to save changes. Set operations that add or resize load commands may fail if
+there isn't enough space in the Mach-O file availble to hold the new load
+commands.
+.\"  OPTIONS
+.Sh OPTIONS
+.Bl -tag -width "XXkeepParent"
+.It Fl arch Aq arch
+Specifies the architecture,
+.Aq arch ,
+for
+.Nm
+to operate on when the file is a universal (multi-architecture) file. See
+.Xr arch 3
+for the current list of architectures. More than one architecture can be
+specified, and by default
+.Nm
+will operate on all architectures in a universal file.
+.It Fl h , help
+Print full usage.
+.It Fl o , output Ar out_file
+Commands that create new files write to the
+.Ar out_file
+file specified by the
+.Fl output
+flag. This option is required for all set and remove commands.
+.It Fl r , replace
+When used with
+.Fl set-build-version
+or
+.Fl set-version-min
+the
+.Fl replace
+option instructs
+.Nm
+to discard all of the existing build versions from the input file. Use this to
+change a file's platform in a single call to
+.Nm .
+When used with the
+.Fl set-build-tool
+command,
+.Nm
+will discard all of the existing tool versions from the specified platform's
+build version. This option has no effect on source versions.
+.It Fl remove-build-tool Ar platform tool
+Removes
+.Ar tool
+from the
+.Ar platform
+build version. A build version for the specified platform must exist in the
+input file and that build version must be an
+.Dv LC_BUILD_VERSION .
+Must be used with
+.Fl output .
+See
+.Sx VERSION LOAD COMMANDS
+for more information on platform and tool values.
+.It Fl remove-build-version Ar platform
+Removes the build version for the specified
+.Ar platform .
+Must be used with
+.Fl output .
+See
+.Sx VERSION LOAD COMMANDS
+for more information on platform values.
+.It Fl remove-source-version
+Removes the source version from the Mach-O file. Must be used with
+.Fl output .
+.It Fl set-build-tool Ar platform tool version
+Updates the build version load command for
+.Ar platform
+to include the specified
+.Ar tool ,
+adding a new tool entry if necessary. The build version must be an
+.Em LC_BUILD_VERSION
+load command which either already existss within the input file or is newly
+specified on the command line. The
+.Ar version
+field takes the format X.Y.Z. Must be used with
+.Fl output .
+See
+.Sx VERSION LOAD COMMANDS
+for more information on platform and tool values.
+.It Fl set-build-version Ar platform minos sdk Op Fl tool Ar tool version
+Create or update the
+.Em LC_BUILD_VERSION
+load command for
+.Ar platform
+to include the specified
+.Ar minos
+and
+.Ar sdk
+version numbers, and zero or more optional tools. The
+.Ar minos , sdk ,
+and tool
+.Ar version
+all take the format X.Y.Z. Must be used with
+.Fl output .
+See
+.Sx VERSION LOAD COMMANDS
+for more information on platform and tool values.
+.It Fl set-source-version Ar version
+Create or update the source version load command.
+.Ar version
+takes the format A.B.C.D.E. Must be used with
+.Fl output .
+.It Fl set-version-min Ar platform minos sdk
+Create or update an
+.Em LC_VERSION_MIN_*
+load command for
+.Ar platform .
+This option is included to support older operating systems, and generally one
+should favor
+.Fl set-build-version
+instead. Note that version min load commands do not support tool versions, and
+not all platforms can be expressed using version min load commands. Must be used
+with
+.Fl output .
+.It Fl show , show-all
+Display the build and source versions within the specified file. This option
+cannot be combined with other commands.
+.It Fl show-build
+Display the build versions within the specified file. This option cannot be
+combined with other commands.
+.It Fl show-source
+Display the source version within the specified file. This option cannot be
+combined with other commands.
+.It Fl show-space
+Show the space in the file consumed by the mach header and the existing load
+commands, and measure the amount of additional space available for adding new
+load commands.
+.It Fl
+A single dash instructs
+.Nm
+to stop parsing arguments. This is useful for operating on files whose names
+would otherwise be interpreted as an option or flag.
+.El
+.\"  VERSION LOAD COMMANDS
+.Sh VERSION LOAD COMMANDS
+Modern Mach-O files can contain multiple build versions, one for each unqiue
+.Em platform
+represented in the file. A platform is a loosely-defined concept within
+Mach-O, most often used to identify different Darwin operating systems, such
+as
+.Em macOS
+and
+.Em iOS .
+Platforms and tools can be specified either by name (e.g.,
+.Qq macos
+or
+.Qq clang )
+or by number (e.g.,
+.Qq 1 ) .
+Common platform and tool constants are defined in
+.Aq Pa mach-o/loader.h
+and
+.Nm
+will display platform and tool names when invoked with
+.Fl help .
+.Pp
+Modern Mach-O files store build information in one or more
+.Dv LC_BUILD_VERSION
+load commands.
+.Dv LC_BUILD_VERSION
+supports arbitrary platforms and can include version information about the
+tools used to build the Mach-O file. Older
+Mach-O files use a
+.Dq version min
+load command, such as
+.Dv LC_VERSION_MIN_MACOSX .
+While version min commands are appropriate when deploying Mach-O files on older
+operating systems, be aware that they do not support tool versions, and
+version min load commands do not exist for all possible platforms. In some cases
+.Dv LC_BUILD_VERSION
+and
+.Dv LC_VERSION_MIN_*
+load commands can appear in a single Mach-O file, but many restrictions apply,
+and
+.Nm
+may not enforce these restrictions.
+.Nm
+will prevent you from writing more than one build version load command for the
+same platform.
+.Pp
+Source versions are stored in a single
+.Dv LC_SOURCE_VERSION
+load command.
+.Pp
+When writing new load commands,
+.Nm
+will attempt to preserve the order of the load commands as they appear on the
+command line. No attempt is made to preserve positions relative to other
+existing load commands. Editing an existing load command may have the side
+effect of moving the load command to the end of the load command list.
+.\"  SEE ALSO
+.Sh SEE ALSO
+.Xr ld 1 ,
+.Xr lipo 1 ,
+.Xr otool-classic 1 ,
+.Xr arch 3 ,
+.Xr Mach-O 5 .
+.\"  HISTORY
+.Sh HISTORY
+.Em LC_BUILD_VERSION
+first appeared in macOS 10.13 in 2017 for use with the bridgeOS platform.
+.Pp
+.Em LC_BUILD_VERSION
+became the default build version load command for the macOS, iOS, tvOS, and
+watchOS platforms in 2018 with macOS 10.14, iOS 12.0, and friends. The list of
+platforms also grew to include iOSSimulator, tvOSSimulator, and
+watchOSSimulator.
+.Pp
+.Nm
+first appeared in macOS 10.15 and iOS 13.0 in 2019.
+.\"  BUGS
+.Sh BUGS
+.Nm
+will write load commands in a different order than
+.Xr ld 1 .
+.Pp
+Currently
+.Nm
+does not work with object files or archives.

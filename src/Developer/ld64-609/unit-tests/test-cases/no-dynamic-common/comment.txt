@@ -1,0 +1,1 @@
+The point of this test is to determine if common symbols are not allowed with MH_DYLIB output format with the -multi_module option

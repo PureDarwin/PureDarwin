@@ -1,0 +1,200 @@
+.TH DYLD 3 "November 14, 2002" "Apple Computer, Inc."
+.SH NAME
+dyld \- low level programatic interface to the dynamic link editor
+.SH SYNOPSIS
+.nf
+.PP
+#include <mach-o/dyld.h>
+unsigned long _dyld_present(void);
+.sp .5
+unsigned long _dyld_image_count(void);
+.sp .5
+struct mach_header *_dyld_get_image_header(
+	unsigned long image_index);
+.sp .5
+unsigned long _dyld_get_image_vmaddr_slide(
+	unsigned long image_index);
+.sp .5
+char *_dyld_get_image_name(
+	unsigned long image_index);
+.sp .5
+void _dyld_lookup_and_bind(
+	char *symbol_name,
+	unsigned long *address,
+	void **module);
+.sp .5
+void _dyld_lookup_and_bind_with_hint(
+	char *symbol_name,
+	const char *library_name_hint,
+	unsigned long *address,
+	void **module);
+.sp .5
+void _dyld_lookup_and_bind_fully(
+	char *symbol_name,
+	unsigned long *address,
+	void **module);
+.sp .5
+enum bool _dyld_bind_fully_image_containing_address(
+	unsigned long *address);
+.sp .5
+enum bool _dyld_image_containing_address(
+	unsigned long address);
+.sp .5
+enum bool _dyld_get_image_header_containing_address(
+	unsigned long address);
+.sp .5
+enum bool _dyld_launched_prebound(void);
+.sp .5
+enum bool _dyld_all_twolevel_modules_prebound(void);
+.sp .5
+int _dyld_func_lookup(
+	char *dyld_func_name,
+	unsigned long *address);
+.sp .5
+extern void _dyld_bind_objc_module(
+	void *objc_module);
+.sp .5
+extern void _dyld_get_objc_module_sect_for_module(
+	NSModule module,
+	void **objc_module,
+	unsigned long *size);
+.sp .5
+extern void _dyld_lookup_and_bind_objc(
+	const char *symbol_name,
+	unsigned long *address,
+	void **module);
+.sp .5
+extern void _dyld_moninit(
+	void (*monaddition)(char *lowpc, char *highpc));
+.sp .5
+
+extern void _dyld_register_func_for_add_image(
+	void (*func)(struct mach_header *mh, unsigned long vmaddr_slide));
+.sp .5
+extern void _dyld_register_func_for_remove_image(
+	void (*func)(struct mach_header *mh, unsigned long vmaddr_slide));
+.sp .5
+extern void _dyld_register_func_for_link_module(
+	void (*func)(NSModule module));
+.fi
+.SH DESCRIPTION
+These routines are the low level programatic interface to the dynamic link
+editor.
+.PP
+.I _dyld_present returns non-zero if the dynamic linker is being used in the
+program and zero otherwise.  If this returns zero this rest of these functions
+should not be called and most likely crash the program if called.
+.PP
+.I _dyld_image_count
+returns the current number of images mapped in by the dynamic link editor.
+.PP
+.I _dyld_get_image_header
+returns the mach header of the image indexed by image_index.  If image_index is
+out of range NULL is returned.
+.PP
+.I _dyld_get_image_vmaddr_slide
+returns the virtural memory address slide amount of the image indexed by
+.I image_index.
+If image_index is out of range zero is returned.
+.PP
+.I _dyld_get_image_name
+returns the name of the image indexed by
+.I image_index.
+If image_index is out of range NULL is returned.
+.PP
+.I _dyld_lookup_and_bind
+looks up the
+.I symbol_name
+and binds it into the program.  It indirectly returns the
+.I address
+and and a pointer to the
+.I module
+that defined the symbol.
+.PP
+.I _dyld_lookup_and_bind_with_hint
+is the same as
+.I _dyld_lookup_and_bind
+but the
+.I library_name_hint
+parameter provides a hint as to where to start the lookup in a prebound
+program.  The
+.I library_name_hint
+parameter is matched up with the actual library install names with
+.IR strstr (3).
+.PP
+.I _dyld_lookup_and_bind_fully
+looks up the
+.I symbol_name
+and binds it and all of its references into the program.  It indirectly returns
+the
+.I address
+and and a pointer to the
+.I module
+that defined the symbol.
+.PP
+.I _dyld_bind_fully_image_containing_address
+fully binds the image containing the specified address.  It returns TRUE if the
+address is contained in a loaded image and FALSE otherwise.
+.PP
+.I _dyld_image_containing_address
+It returns TRUE if the address is contained in an image dyld loaded and FALSE
+otherwise.
+.PP
+.I _dyld_get_image_header_containing_address
+It returns a pointer to the mach header of the image if the address is contained
+in an image dyld loaded and NULL otherwise.
+.PP
+.I _dyld_launched_prebound
+returns TRUE if the program was launched using the prebound state and FALSE
+otherwise.
+.PP
+.I_dyld_all_twolevel_modules_prebound(void);
+returns TRUE if all the libraries currently in use by the program are being used
+as two-level namespace libraries, are prebound and have all their modules bound.
+Otherwise it returns FALSE.
+.PP
+.I _dyld_func_lookup
+is passed a name,
+.I dyld_func_name,
+of a dynamic link editor function and returns the
+.I address
+of the function indirectly.  It returns non-zero if the function is found
+and zero otherwise.
+.PP
+.I _dyld_bind_objc_module
+is passed a pointer to something in an (__OBJC,__module) section and causes the
+module that is associated with that address to be bound.
+.PP
+.I _dyld_get_objc_module_sect_for_module
+is passed a module and sets a pointer to the (__OBJC,__module) section and its
+size for the specified module.
+.PP
+.I _dyld_lookup_and_bind_objc()
+is the same as _dyld_lookup_and_bind() but does not update the symbol pointers
+if the symbol is in a bound module.  The reason for this is that an objc symbol
+like
+.I .objc_class_name_Object
+is never used by a symbol pointer.  Since this is done a lot by the objc
+runtime and updating symbol pointers is not cheep it should not be done.
+.PP
+.I _dyld_moninit
+is called from the profiling runtime routine
+.IR moninit(3)
+to cause the dyld loaded code to be profiled.  It is passed a pointer to the
+the profiling runtime routine
+.IR monaddtion(3)
+to be called after an image had been mapped in.
+.PP
+.I _dyld_register_func_for_add_image
+registers the specified function to be called when a new image is added
+(a bundle or a dynamic shared library) to the program.  When this function is
+first registered it is called for once for each image that is currently part of
+the program.
+.PP
+.I _dyld_register_func_for_remove_image
+registers the specified function to be called when an image is removed
+(a bundle or a dynamic shared library) from the program.
+.I _dyld_register_func_for_link_module
+registers the specified function to be called when a module is bound into the
+program.  When this function is first registered it is called for once for each
+module that is currently bound into the program.

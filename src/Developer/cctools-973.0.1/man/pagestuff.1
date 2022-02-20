@@ -1,0 +1,51 @@
+.TH PAGESTUFF 1 "June 23, 2020" "Apple, Inc."
+.SH NAME
+pagestuff \- Mach-O file page analysis tool
+.SH SYNOPSIS
+pagestuff file [-arch arch_flag] [[-a] [-p] | [pagenumber...]]
+.SH DESCRIPTION
+.B pagestuff
+shows how a structure of a Mach-O or universal file corresponds
+to logical pages on the current system. Structural information includes
+the location and extent of file headers, sections and segments, symbol tables,
+code signatures, etc. When displaying a universal file, all architectures will
+be shown unless otherwise specified by the
+.B \-arch
+flag.
+.PP
+The options to
+.BR pagestuff (1)
+are:
+.TP
+.BI \-arch " arch_type"
+Specifies the architecture,
+.I arch_type,
+of the file for
+.B pagestuff
+to operate on when the file is a universal file.  (See
+.BR arch (3)
+for the currently known
+.IR arch_type s.)
+When this option is used the logical page numbers start from the beginning of
+the architecture file within the universal file.
+.TP
+.BI \-pagesize " pagesize"
+Specifies the page size to use when computing logical page boundaries. By
+default
+.I pagestuff
+will use the page size of the current system.
+.TP
+.B \-a
+Display all pages in the file.
+.TP
+.B \-p
+Print a list of the sections of the specified file, offsets and lengths.
+When displaying a universal file, all archs will be displayed unless
+Print a list of the sections of the specified Mach-O file, with offsets and
+lengths. Note that the
+.BR size (1)
+tool displays a much more concise listing given the `-l -m -x' arguments.
+.SH "SEE ALSO"
+.BR size (1) ,
+.BR arch (3) ,
+.BR Mach-O (5) .

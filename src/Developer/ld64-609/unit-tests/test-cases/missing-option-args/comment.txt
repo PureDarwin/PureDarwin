@@ -1,0 +1,1 @@
+Verify that missing arguments don't cause ld to crash

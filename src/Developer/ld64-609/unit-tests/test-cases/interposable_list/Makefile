@@ -1,0 +1,47 @@
+##
+# Copyright (c) 2007 Apple Inc. All rights reserved.
+#
+# @APPLE_LICENSE_HEADER_START@
+# 
+# This file contains Original Code and/or Modifications of Original Code
+# as defined in and that are subject to the Apple Public Source License
+# Version 2.0 (the 'License'). You may not use this file except in
+# compliance with the License. Please obtain a copy of the License at
+# http://www.opensource.apple.com/apsl/ and read it before using this
+# file.
+# 
+# The Original Code and all software distributed under the License are
+# distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+# EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+# INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+# Please see the License for the specific language governing rights and
+# limitations under the License.
+# 
+# @APPLE_LICENSE_HEADER_END@
+##
+TESTROOT = ../..
+include ${TESTROOT}/include/common.makefile
+
+#
+# Check that -interposable and -interposable_list work 
+#
+
+run: all
+
+all:
+	# by default, no test* functions should go through stubs
+	${CC} ${CCFLAGS} test.c -dynamiclib -o libtest.dylib
+	# -interposable should make all four test* functions go through stubs
+	${CC} ${CCFLAGS} test.c -dynamiclib -Wl,-interposable -o libtest.dylib
+	otool -Iv libtest.dylib | grep '4 entries' | ${FAIL_IF_EMPTY}
+	otool -Iv libtest.dylib | grep '_test' | ${FAIL_IF_EMPTY}
+	# -interposable_list should make just two test* functions go through stubs
+	${CC} ${CCFLAGS} test.c -dynamiclib -Wl,-interposable_list test.exp -o libtest.dylib
+	otool -Iv libtest.dylib | grep '2 entries' | ${FAIL_IF_EMPTY}
+	otool -Iv libtest.dylib | grep '_test3' | ${FAIL_IF_STDIN}
+	${PASS_IFF_GOOD_MACHO} libtest.dylib
+	
+
+clean:
+	rm libtest.dylib

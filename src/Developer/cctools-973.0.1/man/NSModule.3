@@ -1,0 +1,610 @@
+.TH NSModule 3 "October 6, 2003" "Apple Computer, Inc."
+.SH NAME
+NSModule \- programmatic interface for working with modules and symbols
+.SH SYNOPSIS
+.nf
+.PP
+#include <mach-o/dyld.h>
+.sp .5
+typedef void * NSModule;
+.sp .5
+extern NSModule NSLinkModule(
+	NSObjectFileImage objectFileImage,
+	const char *moduleName,
+	unsigned long options);
+.sp .5
+extern enum DYLD_BOOL NSUnLinkModule(
+	NSModule module,
+	unsigned long options);
+.sp .5
+extern const char * NSNameOfModule(
+	NSModule m);
+.sp .5
+extern const char * NSLibraryNameForModule(
+	NSModule m);
+.sp 2
+typedef void * NSSymbol;
+.sp .5
+extern enum DYLD_BOOL NSIsSymbolNameDefined(
+	const char *symbolName);
+.sp .5
+extern enum DYLD_BOOL NSIsSymbolNameDefinedWithHint(
+	const char *symbolName
+	const char *libraryNameHint);
+.sp .5
+extern enum DYLD_BOOL NSIsSymbolNameDefinedInImage(
+	const struct mach_header *image,
+	const char *symbolName);
+.sp .5
+extern NSSymbol NSLookupAndBindSymbol(
+	const char *symbolName);
+.sp .5
+extern NSSymbol NSLookupAndBindSymbolWithHint(
+	const char *symbolName
+	const char *libraryNameHint);
+.sp .5
+extern NSSymbol NSLookupSymbolInModule(
+	NSModule module,
+	const char *symbolName);
+.sp .5
+extern NSSymbol NSLookupSymbolInImage(
+	const struct mach_header *image,
+	const char *symbolName,
+	unsigned long options);
+.sp .5
+extern const char * NSNameOfSymbol(
+	NSSymbol symbol);
+.sp .5
+extern void * NSAddressOfSymbol(
+	NSSymbol symbol);
+.sp .5
+extern NSModule NSModuleForSymbol(
+	NSSymbol symbol);
+.sp .5
+extern enum DYLD_BOOL NSAddLibrary(
+	const char *pathName);
+.sp .5
+extern enum DYLD_BOOL NSAddLibraryWithSearching(
+	const char *pathName);
+.sp .5
+extern const struct mach_header * NSAddImage(
+	const char *image_name,
+	unsigned long options);
+.sp .5
+extern long NSVersionOfRunTimeLibrary(
+	const char *libraryName);
+.sp .5
+extern long NSVersionOfLinkTimeLibrary(
+	const char *libraryName);
+.sp .5
+extern int _NSGetExecutablePath(
+	char *buf,
+	unsigned long *bufsize)
+.sp 2
+extern void NSInstallLinkEditErrorHandlers(
+	NSLinkEditErrorHandlers *handlers);
+.sp .5
+extern void NSLinkEditError(
+	NSLinkEditErrors *c,
+	int *errorNumber,
+	const char **fileName,
+	const char **errorString);
+.if
+.SH "FUTURE SYNOPSIS"
+.nf
+.PP
+extern NSModule NSReplaceModule(
+	NSModule moduleToReplace,
+	NSObjectFileImage newObjectFileImage,
+	unsigned long options);
+.fi
+.PP
+These routines are the programmatic interface for working with modules and
+symbols in a program.  A program is composed of a set of images, an executable,
+plugins, and dynamic shared libraries.  An image which is an executable or a
+plugin is composed of one module containing a collection of symbols.  A dynamic
+shared library is composed of one or more modules with each of those modules
+containing a separate collection of symbols.  If a symbol is used from a module
+then all the symbols from that module are used.
+.PP
+When a program is executed it selectively binds the symbols it needs from the
+modules in the dynamic libraries that are loaded.  Normally a program is
+staticly linked against a set of dynamic shared libraries when it is built.
+So when the program is executed the dynamic linker will automaticly load those
+dynamic shared libraries.
+.PP
+A program may programmatically load plugins after it starts executing and that
+is done with two sets of API's.  The first is the API's of
+.IR NSObjectFileImage (3)
+and the second is
+.I NSLinkModule.
+Unlike modules in the dynamic libraries when a plugin is loaded it is not
+selectively bound to but always bound into the program.
+.PP
+.I NSLinkModule
+links the specified object file image into the program and returns the module
+handle for it.
+Currently the implementation is limited to only Mach-O MH_BUNDLE types which
+are used for plugins.
+A module name is specified when a module is linked so that later
+.I NSNameOfModule
+can be used with the module handle and to do things like report errors.
+If you want
+.IR gdb (1)
+to be able to debug your module, when calling
+.I NSLinkModule
+you should pass the image path as the module name.
+When a module is linked, all libraries referenced by the module are added to
+the list of libraries to be searched.
+The parameter,
+.I options,
+can have a set of options or'ed together.  The options for
+.I NSLinkModule
+are as follows:
+.TP
+.B NSLINKMODULE_OPTION_NONE
+This specifies no options.  With this the global symbols from the module are
+made part of the global symbol table of the program.  If any errors occur the
+handlers installed with
+.I NSInstallLinkEditErrorHandlers
+are called or the default action is taken if there are no handlers.
+.TP
+.B NSLINKMODULE_OPTION_BINDNOW
+This option causes the dynamic link editor to bind all undefined references for
+the loaded module and not allow references to be bound as needed.  This affects
+all the references in the module and all of the dependent references.
+.TP
+.B NSLINKMODULE_OPTION_PRIVATE
+With this option the global symbols from the module are not made part of
+the global symbol table of the program.  The global symbols of the
+module can then be looked up using
+.I NSLookupSymbolInModule.
+.TP
+.B NSLINKMODULE_OPTION_RETURN_ON_ERROR
+With this option if errors occur while binding this module it is automaticly
+unloaded and
+.SM NULL
+is returned as the module handle.  To get the error information for the module
+that failed to load the routine
+.I NSLinkEditError
+is then used.  It has the same parameters as the link edit error handler (see
+below) except all the parameters are pointers in which the information is
+returned indirectly.
+.TP
+.B NSLINKMODULE_OPTION_DONT_CALL_MOD_INIT_ROUTINES
+With this option the module init routines are not called.  This is only useful
+to the fix-and-continue implementation.
+.TP
+.B NSLINKMODULE_OPTION_TRAILING_PHYS_NAME
+With this option the parameter,
+.I moduleName
+is assumed to be a string with the logical name of the image with the physical
+name of the object file tailing after the NULL character of the logical name.
+This is only useful to the zero-link implementation.
+.PP
+.I NSUnLinkModule
+unlinks the specified module handle from the program.  Currently the
+implementation is limited to only allow modules linked with
+.I NSLinkModule
+to be unlinked.  The parameter,
+.I options,
+can have a set of options or'ed together.  The options for
+.I NSUnLinkModule
+are as follows:
+.TP
+.B NSUNLINKMODULE_OPTION_NONE
+This specifies no options.  With this the module is unlinked from the program
+and the memory for the module is deallocated.  If any errors occur the
+handlers installed with
+.I NSInstallLinkEditErrorHandlers
+are called or the default action is taken if there are no handlers.
+.TP
+.B NSUNLINKMODULE_OPTION_KEEP_MEMORY_MAPPED
+With this option the memory for the module is not deallocated allowing pointers
+into the module to still be valid.
+.TP
+.B NSUNLINKMODULE_OPTION_RESET_LAZY_REFERENCES
+With this option any lazy references (direct function calls) to symbols defined
+in the module are reset to be bound on first call again and not cause any
+undefined symbol errors.  Currently this is only implemented for the PowerPC
+architecture.
+.PP
+.I NSNameOfModule
+is passed a module handle and returns the name of the module.  If the module
+handle is invalid
+.SM NULL
+is returned.
+.PP
+.I NSLibraryNameForModule
+is passed a module handle and returns the name of the library the module is in
+if any.  If the module handle is for a module that is not in a library (in the
+executable or a plugin) or the module handle is invalid
+.SM NULL
+is returned.
+.PP
+.I NSIsSymbolNameDefined
+is passed a global symbol name (global 'C' symbols names are preceded with an
+underbar '\_') and returns
+.SM TRUE
+or
+.SM FALSE
+based on if the symbol is defined in the program's global symbol table.
+If the symbol is not defined no error occurs.
+.PP
+.I NSIsSymbolNameDefinedWithHint
+is the same as
+.I NSIsSymbolNameDefined
+but the
+.I libraryNameHint
+parameter provides a hint as to where to start the lookup in a prebound
+program.  The
+.I libraryNameHint
+parameter is matched up with the actual library install names with
+.IR strstr (3).
+.PP
+.I NSIsSymbolNameDefinedInImage
+is passed a pointer to the mach_header of a mach_header structure of a
+dynamic library being used by the program and a symbol name.  This returns
+.SM TRUE
+or FALSE
+based on if the symbol is defined in the specified image or one of the image's
+sub-frameworks or sub-umbrellas.
+If the program was built with the
+.IR ld (1)
+.B \-force_flat_namespace
+flag or executed with the environment variable
+.SM DYLD_FORCE_FLAT_NAMESPACE
+set and the pointer to a mach_header structure is not of a bundle loaded with
+the
+.B NSLINKMODULE_OPTION_PRIVATE
+option of
+.IR NSLinkModule (3)
+then the pointer to a mach_header is ignored and the symbol is looked up in
+all the images using the first definition if found.
+.PP
+The image handle parameter for
+.I NSLookupSymbolInImage
+and
+.I NSIsSymbolNameDefinedInImage
+is a pointer to a read-only mach header structure of a dynamic library being
+used by the program.  Besides the
+.IR NSAddImage (3)
+routine the pointer to a mach header can also be obtained by using a link editor
+defined symbol as in <mach-o/ldsym.h> and described on the
+.IR ld (1)
+man page.
+Also the
+.IR dyld (3)
+routine
+.IR _dyld_get_image_header (3)
+and the mach_header pointer arguments to the call back routines called from
+.IR _dyld_register_func_for_add_image (3)
+routines can also be used.
+.PP
+.I NSLookupAndBindSymbol
+is passed a global symbol name and looks up and binds the symbol into the
+program.
+It returns an NSSymbol for the symbol.  If any errors occur the handlers
+installed with
+.I NSInstallLinkEditErrorHandlers
+are called or the default action is taken if there are no handlers.
+.PP
+.I NSLookupAndBindSymbolWithHint
+is the same as
+.I NSLookupAndBindSymbol
+but the
+.I libraryNameHint
+parameter provides a hint as to where to start the lookup in a prebound
+program.  The
+.I libraryNameHint
+parameter is matched up with the actual library install names with
+.IR strstr (3).
+.PP
+.I NSLookupSymbolInModule
+is passed a symbol name and a module handle and looks up the symbol in that
+module.  Currently this is only implemented for module handles returned with
+.I NSLinkModule.
+If the symbol is found an NSSymbol for the symbol is returned otherwise
+.SM NULL
+is returned and no error occurs.
+.PP
+.I NSLookupSymbolInImage
+is passed a pointer to a mach_header structure of a dynamic library being used
+by the program and a symbol name.  It returns an NSSymbol for the symbol for
+defined in the specified image or the image's sub-frameworks or sub-umbrellas.
+If the program was built with the
+.IR ld (1)
+.B \-force_flat_namespace
+flag or executed with the environment variable
+.SM DYLD_FORCE_FLAT_NAMESPACE
+set and the pointer to a mach_header structure is not of a bundle loaded with
+the
+.B NSLINKMODULE_OPTION_PRIVATE
+option of
+.IR NSLinkModule (3)
+then the pointer to a mach_header is ignored and the symbol is looked up in
+all the images using the first definition found.
+If the option
+.SM NSLOOKUPSYMBOLINIMAGE_OPTION_RETURN_ON_ERROR
+is not used if any errors occur the handlers installed with
+.I NSInstallLinkEditErrorHandlers
+are called or the default action is taken if there are no handlers.
+The options of
+.I NSLookupSymbolInImage
+are as follows:
+.TP
+.B NSLOOKUPSYMBOLINIMAGE_OPTION_BIND
+Just bind the non-lazy symbols of module that defines the
+.I symbolName
+and let all lazy symbols in the module be bound on first call.  This should be
+used in the normal case for a trusted module expected to bind without any errors
+like a module in a system supplied library.
+.TP
+.B NSLOOKUPSYMBOLINIMAGE_OPTION_BIND_NOW
+Bind all the non-lazy and lazy symbols of module that defines the
+.I symbolName
+and let all dependent symbols in the needed libraries be bound as needed.  This
+would be used for a module that might not be expected bind without errors but
+links against only system supplied libraries which are expected to bind without
+any errors.
+.TP
+.B NSLOOKUPSYMBOLINIMAGE_OPTION_BIND_FULLY
+Bind all the symbols of the module that defines the
+.I symbolName
+and all the dependent symbols of all needed libraries.  This should only be
+used for things like signal handlers and linkedit error handlers that can't
+bind other symbols when executing to handle the signal or error.
+.TP
+.B NSLOOKUPSYMBOLINIMAGE_OPTION_RETURN_ON_ERROR
+With this option if errors occur while binding the module that defines the
+.I symbolName
+then the module is automaticly unloaded and
+.SM NULL
+is returned as the NSSymbol.  To get the error information for why the module
+that failed to bind the routine
+.I NSLinkEditError
+is then used.  It has the same parameters as the link edit error handler (see
+below) except all the parameters are pointers in which the information is
+returned indirectly.
+.PP
+.I NSNameOfSymbol
+is passed an NSSymbol and returns the name of the symbol.
+.PP
+.I NSAddressOfSymbol
+is passed an NSSymbol and returns the address of the symbol.
+.PP
+.I NSModuleForSymbol
+is passed an NSSymbol and returns the NSModule that symbol is defined in.
+.PP
+.I NSAddLibrary
+is passed the file name of a dynamic shared library to be added to the search
+list.  If it is successful it returns
+.SM TRUE
+else it returns
+.SM FALSE.
+.PP
+.I NSAddLibraryWithSearching
+is passed the file name of a dynamic shared library to be added to the search
+list the file name passed will be effected by the various
+.SM DYLD
+environment variables as if this library were linked into the program.  If it
+is successful it returns
+.SM TRUE
+else it returns
+.SM FALSE.
+.PP
+.I NSAddImage
+is passed the file name of a dynamic shared library to be added to the search
+list of the program if not already loaded.  It returns a pointer to the
+mach_header structure of the dynamic library being used by the program.
+For best performance of this routine if the library is expected to be already
+loaded by the program the
+.I image_name
+should be a full path name and the same as the name recorded by the program.
+If it is a symlink then an
+.IR open (2)
+and an
+.IR fstat (2)
+are needed to determine it is the same file as one already loaded.
+.PP
+If the dynamic shared library has not already been loaded it along with all the
+needed dependent libraries are loaded.  With the options parameter
+.SM NSADDIMAGE_OPTION_NONE
+then any error in loading will cause the linkEdit error handler set by
+.IR NSInstallLinkEditErrorHandlers (3)
+to be called or the default action of printing the error and exiting to be
+taken.  The other options of
+.I NSAddImage
+are as follows:
+.TP
+.B NSADDIMAGE_OPTION_RETURN_ON_ERROR
+With this option if errors occur while loading this library it is automatically
+unloaded and
+.SM NULL
+is returned.  To get the error information for the library that failed to load
+the routine
+.I NSLinkEditError
+is then used.  It has the same parameters as the link edit error handler (see
+below) except all the parameters are pointers in which the information is
+returned indirectly.
+.TP
+.B NSADDIMAGE_OPTION_WITH_SEARCHING
+With this option the
+.I image_name
+passed for the library and all its dependents will be effected by the various
+.SM DYLD
+environment variables as if this library were linked into the program.
+.TP
+.B NSADDIMAGE_OPTION_RETURN_ONLY_IF_LOADED
+With this option if the
+.I image_name
+passed for the library has not already been loaded it is not loaded.  Only if
+it has been loaded the pointer to the mach_header will not be
+.SM NULL.
+.TP
+.B NSADDIMAGE_OPTION_MATCH_FILENAME_BY_INSTALLNAME
+When this option is specified if a later load of a dependent dynamic library
+with a file system path is needed by an image that matches the install name of
+the dynamic library loaded with this option, then the dynamic library loaded
+with the call to NSAddImage() is used in place of the dependent dynamic library.
+.PP
+.I NSVersionOfRunTimeLibrary
+is passed the install name of a dynamic shared library and returns
+current_version number of the library the program is using or \-1 if the
+program is not using that library.
+.PP
+.I NSVersionOfLinkTimeLibrary
+is passed the install name of a dynamic shared library and returns the
+current_version number of the library the executable program was built
+with or \-1 if the program was not built with that library.
+.PP
+.I _NSGetExecutablePath
+copies the path of the executable into the buffer and
+returns 0 if the path was successfully copied in the provided buffer. If the
+buffer is not large enough, \-1 is returned and the expected buffer size is
+copied in *bufsize. Note that _NSGetExecutablePath will return "a path" to
+the executable not a "real path" to the executable. That is the path may be
+a symbolic link and not the real file. And with deep directories the total
+bufsize needed could be more than MAXPATHLEN.
+.SH ERROR HANDLING
+.PP
+.I NSInstallLinkEditErrorHandlers
+is passed a pointer to a NSLinkEditErrorHandlers which contains three function
+pointers to be used for handling dynamic link errors.  The prototypes for these
+functions are given in the following typedef:
+.RS
+.nf
+typedef struct {
+     void     (*undefined)(const char *symbolName);
+     NSModule (*multiple)(NSSymbol s, NSModule oldModule, NSModule newModule);
+     void     (*linkEdit)(NSLinkEditErrors errorClass, int errorNumber,
+                          const char *fileName, const char *errorString);
+} NSLinkEditErrorHandlers;
+.fi
+.RE
+.PP
+The first two functions allow the programmer to direct the link edit processing
+of undefined symbols and multiply defined symbols.
+The third function allows the programmer to catch all other link editor
+errors.
+.PP
+The state when one of the user error functions gets called will be such that no
+module will be partially loaded (except in the case of resource errors like out
+of memory and other relocation errors).
+However, with undefined symbol errors those modules referencing undefined
+symbols will be partially bound, and use of such modules can and will crash the
+program.
+.PP
+Great care should be taken when implementing these functions, as the program is
+running in a state that will crash if it uses an unbound symbol.
+To be safe, these functions should only rely on other things in the same module
+or in the executable.
+.PP
+If the user does not supply these functions, the default will be to write an
+error message on to file descriptor 2 (usually stderr) and exit the program
+(except for the
+.I linkEdit
+error handler when the
+.I NSLinkEditErrors
+is NSLinkEditWarningError, then the default is to do nothing).
+.PP
+The specified undefined handler may make calls to any of the runtime loading
+functions to add modules based on the undefined symbol name.
+After dealing with this symbol name successfully (by doing a runtime loading
+operation to resolve the undefined reference) the handler simply returns.
+If more symbol's names remain undefined the handler will be called repeatedly
+with an undefined symbol name.
+If the handler can't deal with the symbol it should not return (put up a panel,
+abort, etc) and cause the program to exit.
+Or it can remove itself as the undefined handler and return which will cause
+the default action of printing the undefined symbol names and exiting.
+.PP
+The specified multiply defined symbol handler is called during the process of
+runtime linking and thus it may not call any of the runtime loading functions
+as only one set of linking operations can be performed in the task at a time.
+The only programmatic functions that can be called from a multiply defined
+symbol handler are
+.I NSNameOfSymbol,
+.I NSNameOfModule
+and
+.I NSLibraryNameForModule
+(provided they are linked into the program before the handler is called).
+This handler returns the module handle for the symbol that is to be used for
+further link editing, either the
+.I oldModule
+or the
+.I newModule.
+It may also record one of the module handles to later take action after the
+runtime linking process has completed (for example later unlink the module).
+The dynamic link editor updates the references to the symbol if the handler
+specifies the new symbol is to be used.
+The references which are updated are those that the compiler system generated
+as indirect references.  Initialized data and references that were created at
+runtime are not effected.
+.PP
+The specified
+.I linkEdit
+error handler is called for all other runtime linking errors.
+These other runtime linking errors are either warnings or fatal errors.
+If the user's link edit error handler function returns
+for a fatal error it will cause the program to exit.
+There is small set of major error classes which have specific error numbers.
+These numbers are be passed in the parameter
+.I errorClass.
+These major error classes include:
+.RS
+.nf
+typedef enum {
+	NSLinkEditFileAccessError,
+	NSLinkEditFileFormatError,
+	NSLinkEditMachResourceError,
+	NSLinkEditUnixResourceError,
+	NSLinkEditOtherError,
+	NSLinkEditWarningError,
+	NSLinkEditMultiplyDefinedError,
+	NSLinkEditUndefinedError
+} NSLinkEditErrors;
+.fi
+.RE
+.PP
+For the error class NSLinkEditUnixResourceError the
+.I errorNumber
+parameter will be an
+.I errno
+value (see
+.IR intro (2)).
+For the error class NSLinkEditMachResourceError the
+.I errorNumber
+parameter will be a
+.I kern_return_t
+value.
+For the error class NSLinkEditOtherError the
+.I errorNumber
+parameter will be a one of the following values:
+.RS
+.nf
+typedef enum {
+    NSOtherErrorRelocation,
+    NSOtherErrorLazyBind,
+    NSOtherErrorIndrLoop,
+    NSOtherErrorLazyInit,
+    NSOtherErrorInvalidArgs
+} NSOtherErrorNumbers;
+.fi
+.RE
+.PP
+For all errors, an attempt to pass an error string will be made.
+In some cases such as resource errors, it may not be possible to return a
+string.
+In those cases the
+.I errorString
+parameter will be
+.sm NULL.
+.PP
+For file access errors and file format errors, an attempt to return a file name
+will also be passed, and if that is not possible the
+.I filename
+parameter will be
+.sm NULL.
+.SH ALSO SEE
+NSObjectFileImage(3), dyld(3)

@@ -1,0 +1,5 @@
+The point of this test is a sanity check -dead_strip
+
+1) in a main executable, dead globals are removed
+2) in a dylib/bundle with -exported_symbols_list, dead globals are removed
+3) in a dylib/bundle without -exported_symbols_list, dead globals are *not* removed

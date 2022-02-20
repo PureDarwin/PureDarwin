@@ -1,0 +1,5 @@
+The point of this test is a sanity check that ld
+produces good "debug notes" stabs from dwarf .o files after
+some of the .o files are merged with ld -r.
+Running nm through stabs-filter.pl produces connonical stabs
+that can be diffed against a checked in know good set of stabs

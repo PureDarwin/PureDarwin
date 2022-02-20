@@ -1,0 +1,1 @@
+void fooPath(void){}

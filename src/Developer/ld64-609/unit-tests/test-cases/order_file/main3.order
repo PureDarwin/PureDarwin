@@ -1,0 +1,8 @@
+
+# spaces before and after main4
+main.o:   _main4  
+#
+main.o:  _main3# trailing comment
+#
+
+

@@ -1,0 +1,336 @@
+.TH KLD 3 "July 28, 2005" "Apple Computer, Inc."
+.SH NAME
+kld_load, kld_load_from_memory, kld_lookup, kld_forget_symbol, kld_unload_all,
+kld_load_basefile, kld_load_basefile_from_memory,
+kld_address_func, kld_set_link_options
+\- programmatically link edit and load driver object files
+.SH SYNOPSIS
+.nf
+.PP
+#include <kld.h>
+.PP
+#ifdef __DYNAMIC__
+__private_extern__ long kld_load_basefile(
+	const char *base_filename);
+.PP
+__private_extern__ long kld_load(
+	struct mach_header **header_addr,
+	const char *object_filename,
+	const char *output_filename);
+.PP
+__private_extern__ long kld_load_from_memory(
+	struct mach_header **header_addr,
+	const char *object_name,
+	char *object_addr,
+	long object_size,
+	const char *output_filename);
+#endif /* __DYNAMIC__ */
+.PP
+#ifdef __STATIC__
+__private_extern__ long kld_load_from_memory(
+	struct mach_header **header_addr,
+	const char *object_name,
+	char *object_addr,
+	long *object_size);
+#endif /* __STATIC__ */
+.PP
+__private_extern__ long kld_load_basefile_from_memory(
+	const char *base_filename,
+	char *base_addr,
+	long base_size);
+.PP
+__private_extern__ long kld_lookup(
+	const char *symbol_name,
+	unsigned long *value);
+.PP
+__private_extern__ long kld_forget_symbol(
+	const char *symbol_name);
+.PP
+__private_extern__ long kld_unload_all(
+	long deallocate_sets);
+.PP
+__private_extern__ void kld_address_func(
+	unsigned long (*func)(unsigned long size, unsigned long headers_size));
+.PP
+#define KLD_STRIP_ALL	0x00000000
+#define KLD_STRIP_NONE	0x00000001
+.PP
+__private_extern__ void kld_set_link_options(
+    unsigned long link_options);
+.fi
+.SH DESCRIPTION
+The kld package is designed for loading kernel drivers both by the kernel for
+loading boot drivers and kextload for loading other drivers.
+The library that contains the kld package is linked with the
+.BI \-l kld
+linker flag.  For the kernel when linked with the
+.B \-static
+flag the
+.BI \-l kld
+linker flag will link the library libkld.a.
+And for kextload when linked with the
+.B \-dynamic
+flag the
+.BI \-l kld
+linker flag will link the library libkld.dylib.
+.PP
+For the kernel the
+.I kld_load_basefile_from_memory,
+and
+.I kld_load_from_memory
+APIs are provided in the library libkld.a compiled with the
+.B \-static
+compiler flag.  Using this library one must define the following variable:
+.nf
+	extern char *kld_basefile_name;
+.fi
+which is the the name of the base file used for error messages.
+
+.PP
+For kextload the
+.I kld_load_basefile,
+.I kld_load_basefile_from_memory,
+.I kld_load,
+and
+.I kld_load_from_memory
+APIs are provided in the library libkld.dylib compiled with the
+.B \-dynamic
+compiler flag.
+.PP
+.I kld_load
+or
+.I kld_load_from_memory
+link edits and loads the file specified by
+.I object_filename
+or memory pointed to by
+.I obj_addr
+respectively to the base file that was previous loaded with a call to
+.I kld_load_basefile
+or
+.I kld_load_basefile_from_memory.
+.PP
+If the program, in this case the kernel, is to allow the loaded
+object files to use symbols from itself, it must be built with the
+.B \-seglinkedit
+option of the link editor,
+.IR ld (1),
+in order to have its symbol table mapped into memory.
+.PP
+The symbol table may be trimmed to limit which symbols are allowed to be
+referenced by loaded objects.  This can be accomplished with the
+.B "\-s filename"
+option to
+.IR strip (1).
+For the routines described here, only global symbols are used, so local
+symbols can be removed with the
+.B \-x
+option to
+.IR ld (1)
+or
+.IR strip (1).
+Doing so saves space in the final program and vastly decreases the time
+spent by the first call to
+.IR kld_load_from_memory
+or
+.IR kld_load_basefile.
+(This is true of the first call in the program, as well as the first call after an invocation of
+.IR kld_unload_all).
+The first call to
+.IR kld_load_from_memory
+or
+.IR kld_load_basefile
+must go through all the symbols of the program or basefile, so if the program
+has been compiled for debugging (for example), it can take orders of magnitude
+longer.
+.PP
+Since the objects loaded with
+.I kld_load
+or
+.I kld_load_from_memory
+can only use symbols that appear in the executable program,
+if the program uses a library and wants to make all the symbols in that
+library available to the loaded objects, it must force all of the library
+symbols into the executable.
+This can be done for all libraries with the
+.B \-all_load
+option to
+.IR ld (1)
+when building the executable.
+This will copy all the library code into the executable.
+
+.PP
+The object file being loaded will only be successful if there are no link edit
+errors (undefined symbols, etc.).  If an error occurs, the object file is
+unloaded automatically.  If errors occur the user supplied routine will be
+called:
+.nf
+	extern void kld_error_vprintf(const char *format, va_list ap);
+.fi
+.PP
+If the link editing and loading is successful,
+the address of the header of what was loaded is returned
+through the pointer
+.I header_addr
+(if it isn't NULL).
+If
+.I kld_load
+is successful and the parameter
+.I output_filename
+isn't NULL, an object file is written to that filename.
+This file can be used with the
+.IR gdb (1)
+.I add-file
+command to debug the code in the dynamically loaded object.
+The
+.I kld_load
+function returns 1 for success and 0 for failure.  If a fatal system error
+(out of memory, etc.) occurs, all future calls to
+.I kld_load
+and the other routines described here will fail.
+.PP
+.I kld_load_from_memory()
+is similar to
+.IR kld_load() ,
+but works on memory rather than a file.  The argument
+.I object_name
+is the name associated with the memory and is used for messages.
+(It must not be NULL.) The
+arguments
+.I object_addr
+and
+.I object_size
+are the memory address and size of the object file.
+.I kld_load_from_memory()
+only allows one thin object file (not an archive or ``universal'' file) to be
+loaded.
+.PP
+.I kld_lookup()
+looks up the specified symbol name and returns its value indirectly through the pointer
+.I value.
+It returns 1 if it finds the symbol, and 0 otherwise.  If any errors occur it
+also calls the user supplied
+.I kld_error_vprintf
+routine (For kld_lookup, only internal errors can result.)
+.PP
+.I kld_forget_symbol()
+causes this package to forget the existence of the specified symbol name.
+This allows a new object to be loaded that defines this symbol.  All objects
+loaded before this call will continue to use the value of the symbol in effect
+at the time the object was loaded.
+It returns 1 if it finds the symbol and 0 otherwise.  If any errors occur it
+also calls the user supplied
+.I kld_error_vprintf
+routine (For this routine, only internal errors can result.)
+.PP
+.I kld_unload_all()
+clears out all allocated data structures used by these routines.  If the
+parameter
+.I deallocate_sets
+is non-zero, the function also unloads all objects that were loaded.
+If
+.I deallocate_sets
+is zero the object sets aren't unloaded, and the program can continue to use
+the code and data loaded.  However, further calls to the routines
+described here will no longer know
+about the symbols in those objects.  If objects aren't to be allowed access
+to each other's symbols, an
+.I kld_unload_all
+call between calls to
+.I kld_load
+allows the objects to be loaded without fear of global symbol
+names' clashing.
+.I kld_unload_all
+returns 1 if it is successful and 0 otherwise.  If any errors occur
+also calls the user supplied
+.I kld_error_vprintf
+routine.
+.PP
+The argument to
+.IR kld_load_basefile
+specifies a base file, whose symbol table is taken as the
+basis for subsequent
+.I kld_load's.
+.IR kld_load_basefile_from_memory
+is an alternate interface that allows mapped ``thin'' object image to be
+specified rather than a file.  The base file may be a ``universal'' file, and
+must contain an architecture that would execute on the host;
+otherwise, it is an error.
+If the file is a universal file, the ``best'' architecture (as defined by
+what the kernel
+.IR exec (2)
+would select) is used as the base file.
+.I kld_load_basefile
+must be invoked before any call to
+.I kld_load.
+Alternatively, it can be called after
+.IR kld_unload_all ,
+which unloads the base file.  This call is intended to be used when a program
+is dynamically loading object sets into a program other than itself, where
+.I base_filename
+contains the symbol table of the target program.  The routine
+.IR kld_address_func ,
+described next, would also be used.
+.PP
+.I kld_address_func
+is passed a pointer to a function,
+.IR func ,
+that will be called from
+.IR kld_load .
+The parameter values that
+.I kld_load
+will supply to
+.I func
+are the size of the memory required for the object being loaded,
+and the size of the headers (which are also included in the
+calculation of
+.IR size ).
+The function
+specified by
+.I func
+should return the address where the output is to be link edited.
+.I kld_address_func
+is
+intended to be used when a program is dynamically loading objects into a
+program other than itself; the function allows it to pick the place in the
+address space of the target program.
+.PP
+.I kld_set_link_options
+is passed a mask of options,
+.IR link_options ,
+that are used to control some aspects of the following
+.I kld_load
+operations. Passing
+.I KLD_STRIP_NONE
+will stop kld from stripping symbols from the output in all cases. By default
+all symbols are stripped for kernel loads and when
+.I output_filename
+is NULL for
+.I kld_load()
+and
+.I kld_load_from_memory()
+
+.SH "UNIVERSAL FILE SUPPORT"
+All functions that accept object files or archives also accept ``universal''
+files, except for the restrictions noted above for
+.I kld_load_from_memory
+and
+.IR kld_load_basefile .
+
+.SH "SEE ALSO"
+ld(1), strip(1), gdb(1)
+
+.SH BUGS
+There exists one semantic link edit problem with respect to common symbols.
+If an object file is loaded that has common symbols left after the
+symbols have been merged,
+.I kld_load
+has to allocate storage for these symbols
+for the code to run without error.  The problem occurs if, on a later call to
+.IR kld_load ,
+one of the common symbols that
+.I kld_load
+allocated appears in an object
+file as a defining symbol (not a common or undefined symbol).  In this case,
+.I kld_load
+will report the symbol as being multiply defined.  However, if this combination
+of object files were statically linked, no error would occur.
