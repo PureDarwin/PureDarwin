@@ -156,10 +156,10 @@ endif
 # CC/CXX get defined by make(1) by default, so we can't check them
 # against the empty string to see if they haven't been set
 ifeq ($(origin CC),default)
-	export CC := clang
+	export CC := @CMAKE_C_COMPILER@
 endif
 ifeq ($(origin CXX),default)
-	export CXX := clang++
+	export CXX := @CMAKE_CXX_COMPILER@
 endif
 ifeq ($(MIG),)
 	export MIG := @MIG_PATH@

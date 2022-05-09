@@ -32,8 +32,8 @@ install(FILES include/TargetConditionals.h DESTINATION usr/include COMPONENT Dev
 install(FILES include/os/availability.h DESTINATION usr/include/os COMPONENT DeveloperTools)
 
 # The install scripts from Apple keep these around, stripping out the local/ directory later for release builds.
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/VersionMap.h DESTINATION usr/local/include/dyld COMPONENT DeveloperInternal)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/for_dyld_priv.inc DESTINATION usr/local/include/dyld COMPONENT DeveloperInternal)
+#install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/VersionMap.h DESTINATION usr/local/include/dyld COMPONENT DeveloperInternal)
+#install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/dyld/for_dyld_priv.inc DESTINATION usr/local/include/dyld COMPONENT DeveloperInternal)
 
 install(FILES availability.pl DESTINATION usr/local/libexec COMPONENT DeveloperInternal)
 

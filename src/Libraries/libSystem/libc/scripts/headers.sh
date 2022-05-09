@@ -1,5 +1,8 @@
 #!/bin/bash
-set -x
+
+if [ "${RC_VERBOSE}" == "YES" ]; then
+	set -x
+fi
 
 # Installs Libc header files
 
@@ -347,14 +350,14 @@ fi
 
 for i in `${FIND} "${HDRROOT}/${SDK_INSTALL_HEADERS_ROOT}" -name \*.h -print0 | ${XARGS} -0 ${GREP} -l '^//Begin-Libc'`; do
 	${CHMOD} u+w $i &&
-	${ECHO} ${ED} - $i \< ${SRCROOT}/scripts/strip-header.ed &&
+	#${ECHO} ${ED} - $i \< ${SRCROOT}/scripts/strip-header.ed &&
 	${ED} - $i < ${SRCROOT}/scripts/strip-header.ed &&
 	${CHMOD} u-w $i || exit 1;
 done
 for i in `${FIND} "${HDRROOT}/${SDK_INSTALL_HEADERS_ROOT}" -name \*.h -print0 | ${XARGS} -0 ${FGREP} -l -e UNIFDEF -e OPEN_SOURCE -e _USE_EXTENDED_LOCALES_`; do
 	${CHMOD} u+w $i &&
 	${CP} $i $i.orig &&
-	${ECHO} ${UNIFDEF} ${UNIFDEFARGS} $i.orig \> $i &&
+	#${ECHO} ${UNIFDEF} ${UNIFDEFARGS} $i.orig \> $i &&
 	{ ${UNIFDEF} ${UNIFDEFARGS} $i.orig > $i || [ $? -ne 2 ]; } &&
 	${RM} $i.orig &&
 	${CHMOD} u-w $i || exit 1;

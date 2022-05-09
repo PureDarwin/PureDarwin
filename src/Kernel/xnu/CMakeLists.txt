@@ -28,10 +28,12 @@ externalproject_add(xnu_headers.extproj
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
+            VERBOSE=${CMAKE_VERBOSE_MAKEFILE} RC_ProjectName=xnu_headers
     INSTALL_COMMAND true # installed during build
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
+
 # add_dependencies(xnu_headers.extproj darwin_codesign_allocate
 #     migcom host_strip host_lipo host_nm unifdef host_nmedit
 #     ctfconvert.host ctfmerge.host availability.pl)
@@ -86,6 +88,13 @@ externalproject_add(xnu
             #-D NM_PATH=$<TARGET_FILE:host_nm>
             #-D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
             #-D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            #############################################
+            -D STRIP_PATH=strip
+            -D LIPO_PATH=lipo
+            -D NM_PATH=nm
+            -D NMEDIT_PATH=nmedit
+            -D LIBTOOL_PATH=libtool
+            #############################################
             -D UNIFDEF_PATH=${RC_HOST_BIN}/unifdef
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
@@ -94,12 +103,17 @@ externalproject_add(xnu
             -D CMAKE_ASM_COMPILER=${CMAKE_ASM_COMPILER}
             -D CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
             -D CMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -D CMAKE_C_FLAGS=${CMAKE_C_FLAGS}
+            -D CMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+            -D RC_NONARCH_CFLAGS=${RC_NONARCH_CFLAGS}
+            -D RC_NONARCH_CXXFLAGS=${RC_NONARCH_CXXFLAGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
+            VERBOSE=${CMAKE_VERBOSE_MAKEFILE} RC_ProjectName=xnu
     INSTALL_COMMAND true # installed during build
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE

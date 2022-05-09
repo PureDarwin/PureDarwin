@@ -6,7 +6,7 @@ target_sources(IOACPIFamily PRIVATE
 
 target_compile_options(IOACPIFamily PRIVATE -Wno-implicit-int-conversion -Wno-sign-conversion)
 target_link_libraries(IOACPIFamily PRIVATE IOACPIFamilyHeaders)
-install(TARGETS IOACPIFamily DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
+install(TARGETS IOACPIFamily DESTINATION System/Library/Extensions COMPONENT BaseSystem)
 
 add_library(IOACPIFamilyHeaders INTERFACE)
 target_include_directories(IOACPIFamilyHeaders INTERFACE include)

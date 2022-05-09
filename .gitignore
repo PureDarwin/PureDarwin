@@ -41,6 +41,7 @@ Temporary Items
 ## Build generated
 build/
 DerivedData/
+products/
 
 ## Various settings
 *.pbxuser

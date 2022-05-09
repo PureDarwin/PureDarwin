@@ -278,9 +278,9 @@ endif
 #
 # Default CFLAGS
 #
-ifdef RC_NONARCH_CFLAGS
-OTHER_CFLAGS = $(RC_NONARCH_CLFAGS)
-endif
+#ifdef RC_NONARCH_CFLAGS
+#OTHER_CFLAGS = $(RC_NONARCH_CLFAGS)
+#endif
 
 #
 # Debug info
@@ -306,6 +306,7 @@ CFLAGS_GEN = $(DEBUG_CFLAGS) -nostdinc \
 	-fsigned-bitfields \
 	-fmerge-all-constants \
 	-fno-c++-static-destructors \
+	@RC_NONARCH_CFLAGS@	\
 	$(OTHER_CFLAGS)
 
 CFLAGS_RELEASE	=
@@ -461,7 +462,8 @@ CXXFLAGS_GEN  = -std=gnu++1z -fsized-deallocation -fapple-kext $(OTHER_CXXFLAGS)
 
 CXXFLAGS      = $(CXXFLAGS_GEN) \
 		  $($(addsuffix $(CURRENT_ARCH_CONFIG),CXXFLAGS_)) \
-		  $($(addsuffix $(CURRENT_KERNEL_CONFIG),CXXFLAGS_))
+		  $($(addsuffix $(CURRENT_KERNEL_CONFIG),CXXFLAGS_)) \
+		  @RC_NONARCH_CXXFLAGS@
 
 #
 # Assembler command
