@@ -1,0 +1,20 @@
+Docs - DTraceToolkit Documentation
+
+   Contents		summary of toolkit commands
+   Docs/Examples	examples of command usage
+   Docs/Notes		notes on commands
+
+The following may be followed to learn about a DTraceToolkit command,
+
+	1. read "Contents" for a command name and toolkit location.
+	2. run the command with "-h" to check it's usage.
+	3. read the manpage from Man/man1m.
+	4. read the examples from Docs/Examples.
+	5. read the notes from Docs/Notes.
+
+Try the following to discover all docs related to a command, eg iosnoop,
+
+	find . | grep iosnoop
+
+best run from the DTraceToolkit root directory.
+

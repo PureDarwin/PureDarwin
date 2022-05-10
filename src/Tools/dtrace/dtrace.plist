@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>OpenSourceProject</key>
+		<string>dtrace</string>
+		<key>OpenSourceVersion</key>
+		<string>on-src-20060828</string>
+		<key>OpenSourceURL</key>
+		<string>http://hub.opensolaris.org/bin/view/downloads/on</string>
+		<key>OpenSourceImportDate</key>
+		<string>2006-08-29</string>
+		<key>OpenSourceLicense</key>
+		<string>CDDL</string>
+		<key>OpenSourceLicenseFile</key>
+		<string>dtrace.txt</string>
+	</dict>
+</array>
+</plist>
