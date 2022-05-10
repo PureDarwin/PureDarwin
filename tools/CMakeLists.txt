@@ -8,7 +8,7 @@ project(PUREDARWIN)
 cmake_policy(SET CMP0114 NEW)
 
 #add_subdirectory(cctools)
-#add_subdirectory(dtrace_ctf)
+add_subdirectory(ctfconvert)
 add_subdirectory(mig)
 add_subdirectory(unifdef)
 add_subdirectory(xar)

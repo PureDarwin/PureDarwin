@@ -76,8 +76,8 @@ externalproject_add(xnu
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
             #-D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
-            #-D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
-            #-D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
+            -D CTFCONVERT_PATH=${RC_HOST_BIN}/ctfconvert
+            -D CTFMERGE_PATH=${RC_HOST_BIN}/ctfmerge
             #-D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             #-D LD_PATH=$<TARGET_FILE:darwin_ld>
