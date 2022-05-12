@@ -7,12 +7,20 @@ project(PUREDARWIN)
 
 cmake_policy(SET CMP0114 NEW)
 
-#add_subdirectory(cctools)
+add_subdirectory(cctools)
 add_subdirectory(ctfconvert)
+add_subdirectory(ld64)
 add_subdirectory(mig)
 add_subdirectory(unifdef)
 add_subdirectory(xar)
 
-# cctools (from cctools)
-# dtrace tools
-# ld64 (from ld64)
+# WE NEED A LINKER!!
+
+# These commands are as of yet missing from the host toolchain:
+# asa, bison, ctags, docc, dwarfdump-classic, dyldinfo, flex, flex++,
+#   gm4, gperf, iig, indent, ld, lex, lorder, m4, rpcgen, unwinddump, yacc
+
+# Symlinks/other tools:
+# c++, c++filt, c89, c99, cc, cpp
+# gcov --> llvm-cov
+# dwarfdump --> llvm-dwarfdump

@@ -8,18 +8,18 @@ externalproject_add(xnu_headers.extproj
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
-            #-D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
-            #-D CTFCONVERT_PATH=$<TARGET_FILE:ctfconvert.host>
-            #-D CTFMERGE_PATH=$<TARGET_FILE:ctfmerge.host>
-            #-D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
+            -D CODESIGN_ALLOCATE_PATH=${RC_HOST_BIN}/codesign_allocate
+            -D CTFCONVERT_PATH=${RC_HOST_BIN}/ctfconvert
+            -D CTFMERGE_PATH=${RC_HOST_BIN}/ctfmerge
+            -D CTFINSERT_PATH=${RC_HOST_BIN}/ctf_insert
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             -D MIG_PATH=${RC_HOST_BIN}/mig
             -D MIGCOM_PATH=${RC_HOST_BIN}/../libexec/migcom
-            #-D STRIP_PATH=$<TARGET_FILE:host_strip>
-            #-D LIPO_PATH=$<TARGET_FILE:host_lipo>
-            #-D NM_PATH=$<TARGET_FILE:host_nm>
-            #-D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
-            #-D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            -D STRIP_PATH=${RC_HOST_BIN}/strip
+            -D LIPO_PATH=${RC_HOST_BIN}/lipo
+            -D NM_PATH=${RC_HOST_BIN}/nm
+            -D NMEDIT_PATH=${RC_HOST_BIN}/nmedit
+            -D LIBTOOL_PATH=${RC_HOST_BIN}/libtool
             -D UNIFDEF_PATH=${RC_HOST_BIN}/unifdef
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
@@ -75,26 +75,19 @@ externalproject_add(xnu
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
-            #-D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
+            -D CODESIGN_ALLOCATE_PATH=${RC_HOST_BIN}/codesign_allocate
             -D CTFCONVERT_PATH=${RC_HOST_BIN}/ctfconvert
             -D CTFMERGE_PATH=${RC_HOST_BIN}/ctfmerge
-            #-D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
+            -D CTFINSERT_PATH=${RC_HOST_BIN}/ctf_insert
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             #-D LD_PATH=$<TARGET_FILE:darwin_ld>
             -D MIG_PATH=${RC_HOST_BIN}/mig
             -D MIGCOM_PATH=${RC_HOST_BIN}/../libexec/migcom
-            #-D STRIP_PATH=$<TARGET_FILE:host_strip>
-            #-D LIPO_PATH=$<TARGET_FILE:host_lipo>
-            #-D NM_PATH=$<TARGET_FILE:host_nm>
-            #-D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
-            #-D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
-            #############################################
-            -D STRIP_PATH=strip
-            -D LIPO_PATH=lipo
-            -D NM_PATH=nm
-            -D NMEDIT_PATH=nmedit
-            -D LIBTOOL_PATH=libtool
-            #############################################
+            -D STRIP_PATH=${RC_HOST_BIN}/strip
+            -D LIPO_PATH=${RC_HOST_BIN}/lipo
+            -D NM_PATH=${RC_HOST_BIN}/nm
+            -D NMEDIT_PATH=${RC_HOST_BIN}/nmedit
+            -D LIBTOOL_PATH=${RC_HOST_BIN}/libtool
             -D UNIFDEF_PATH=${RC_HOST_BIN}/unifdef
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>

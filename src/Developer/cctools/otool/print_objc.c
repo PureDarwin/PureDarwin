@@ -38,6 +38,21 @@
 #include "dyld_bind_info.h"
 #include "ofile_print.h"
 
+/**** DARWIN - These are imported from an older version of objc-class.h ****/
+
+#define CLS_GETINFO(cls,infomask)	((cls)->info & infomask)
+
+#define CLS_CLASS		0x1L
+#define CLS_META		0x2L
+#define CLS_INITIALIZED		0x4L
+#define CLS_POSING		0x8L
+#define CLS_MAPPED		0x10L
+#define CLS_FLUSH_CACHE		0x20L
+#define CLS_GROW_CACHE		0x40L
+#define CLS_METHOD_ARRAY        0x100L
+
+/****                                                                   ****/
+
 /*
  * Here we need structures that have the same memory layout and size as the
  * 32-bit Objective-C 1 meta data structures.
