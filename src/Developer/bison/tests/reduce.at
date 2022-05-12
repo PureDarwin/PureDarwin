@@ -1,0 +1,355 @@
+# Exercising Bison Grammar Reduction.                      -*- Autotest -*-
+# Copyright (C) 2001, 2002 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+AT_BANNER([[Grammar Reduction.]])
+
+
+## ------------------- ##
+## Useless Terminals.  ##
+## ------------------- ##
+
+AT_SETUP([Useless Terminals])
+
+AT_DATA([[input.y]],
+[[%verbose
+%output="input.c"
+
+%token useless1
+%token useless2
+%token useless3
+%token useless4
+%token useless5
+%token useless6
+%token useless7
+%token useless8
+%token useless9
+
+%token useful
+%%
+exp: useful;
+]])
+
+AT_CHECK([[bison input.y]])
+
+AT_CHECK([[sed -n '/^Grammar/q;/^$/!p' input.output]], 0,
+[[Terminals which are not used
+   useless1
+   useless2
+   useless3
+   useless4
+   useless5
+   useless6
+   useless7
+   useless8
+   useless9
+]])
+
+AT_CLEANUP
+
+
+
+## ---------------------- ##
+## Useless Nonterminals.  ##
+## ---------------------- ##
+
+AT_SETUP([Useless Nonterminals])
+
+AT_DATA([[input.y]],
+[[%verbose
+%output="input.c"
+
+%nterm useless1
+%nterm useless2
+%nterm useless3
+%nterm useless4
+%nterm useless5
+%nterm useless6
+%nterm useless7
+%nterm useless8
+%nterm useless9
+
+%token useful
+%%
+exp: useful;
+]])
+
+AT_CHECK([[bison input.y]], 0, [],
+[[input.y: warning: 9 useless nonterminals
+input.y:4.8-15: warning: useless nonterminal: useless1
+input.y:5.8-15: warning: useless nonterminal: useless2
+input.y:6.8-15: warning: useless nonterminal: useless3
+input.y:7.8-15: warning: useless nonterminal: useless4
+input.y:8.8-15: warning: useless nonterminal: useless5
+input.y:9.8-15: warning: useless nonterminal: useless6
+input.y:10.8-15: warning: useless nonterminal: useless7
+input.y:11.8-15: warning: useless nonterminal: useless8
+input.y:12.8-15: warning: useless nonterminal: useless9
+]])
+
+AT_CHECK([[sed -n '/^Grammar/q;/^$/!p' input.output]], 0,
+[[Useless nonterminals
+   useless1
+   useless2
+   useless3
+   useless4
+   useless5
+   useless6
+   useless7
+   useless8
+   useless9
+]])
+
+AT_CLEANUP
+
+
+
+## --------------- ##
+## Useless Rules.  ##
+## --------------- ##
+
+AT_SETUP([Useless Rules])
+
+AT_KEYWORDS([report])
+
+AT_DATA([[input.y]],
+[[%verbose
+%output="input.c"
+%token useful
+%%
+exp: useful;
+useless1: '1';
+useless2: '2';
+useless3: '3';
+useless4: '4';
+useless5: '5';
+useless6: '6';
+useless7: '7';
+useless8: '8';
+useless9: '9';
+]])
+
+AT_CHECK([[bison input.y]], 0, [],
+[[input.y: warning: 9 useless nonterminals and 9 useless rules
+input.y:6.1-8: warning: useless nonterminal: useless1
+input.y:7.1-8: warning: useless nonterminal: useless2
+input.y:8.1-8: warning: useless nonterminal: useless3
+input.y:9.1-8: warning: useless nonterminal: useless4
+input.y:10.1-8: warning: useless nonterminal: useless5
+input.y:11.1-8: warning: useless nonterminal: useless6
+input.y:12.1-8: warning: useless nonterminal: useless7
+input.y:13.1-8: warning: useless nonterminal: useless8
+input.y:14.1-8: warning: useless nonterminal: useless9
+input.y:6.11-13: warning: useless rule: useless1: '1'
+input.y:7.11-13: warning: useless rule: useless2: '2'
+input.y:8.11-13: warning: useless rule: useless3: '3'
+input.y:9.11-13: warning: useless rule: useless4: '4'
+input.y:10.11-13: warning: useless rule: useless5: '5'
+input.y:11.11-13: warning: useless rule: useless6: '6'
+input.y:12.11-13: warning: useless rule: useless7: '7'
+input.y:13.11-13: warning: useless rule: useless8: '8'
+input.y:14.11-13: warning: useless rule: useless9: '9'
+]])
+
+AT_CHECK([[sed -n '/^Grammar/q;/^$/!p' input.output]], 0,
+[[Useless nonterminals
+   useless1
+   useless2
+   useless3
+   useless4
+   useless5
+   useless6
+   useless7
+   useless8
+   useless9
+Terminals which are not used
+   '1'
+   '2'
+   '3'
+   '4'
+   '5'
+   '6'
+   '7'
+   '8'
+   '9'
+Useless rules
+    2 useless1: '1'
+    3 useless2: '2'
+    4 useless3: '3'
+    5 useless4: '4'
+    6 useless5: '5'
+    7 useless6: '6'
+    8 useless7: '7'
+    9 useless8: '8'
+   10 useless9: '9'
+]])
+
+AT_CLEANUP
+
+
+
+## ------------------- ##
+## Reduced Automaton.  ##
+## ------------------- ##
+
+# Check that the automaton is that as the for the grammar reduced by
+# hand.
+
+AT_SETUP([Reduced Automaton])
+
+AT_KEYWORDS([report])
+
+# The non reduced grammar.
+# ------------------------
+AT_DATA([[not-reduced.y]],
+[[/* A useless token. */
+%token useless_token
+/* A useful one. */
+%token useful
+%verbose
+%output="not-reduced.c"
+
+%%
+
+exp: useful            { /* A useful action. */ }
+   | non_productive    { /* A non productive action. */ }
+   ;
+
+not_reachable: useful  { /* A not reachable action. */ }
+             ;
+
+non_productive: non_productive useless_token
+                       { /* Another non productive action. */ }
+              ;
+%%
+]])
+
+AT_CHECK([[bison not-reduced.y]], 0, [],
+[[not-reduced.y: warning: 2 useless nonterminals and 3 useless rules
+not-reduced.y:14.1-13: warning: useless nonterminal: not_reachable
+not-reduced.y:11.6-19: warning: useless nonterminal: non_productive
+not-reduced.y:11.6-57: warning: useless rule: exp: non_productive
+not-reduced.y:14.16-56: warning: useless rule: not_reachable: useful
+not-reduced.y:17.17-18.63: warning: useless rule: non_productive: non_productive useless_token
+]])
+
+AT_CHECK([[sed -n '/^Grammar/q;/^$/!p' not-reduced.output]], 0,
+[[Useless nonterminals
+   not_reachable
+   non_productive
+Terminals which are not used
+   useless_token
+Useless rules
+    2 exp: non_productive
+    3 not_reachable: useful
+    4 non_productive: non_productive useless_token
+]])
+
+# The reduced grammar.
+# --------------------
+AT_DATA([[reduced.y]],
+[[/* A useless token. */
+%token useless_token
+/* A useful one. */
+%token useful
+%verbose
+%output="reduced.c"
+
+%%
+
+exp: useful            { /* A useful action. */ }
+//   | non_productive    { /* A non productive action. */ } */
+   ;
+
+//not_reachable: useful  { /* A not reachable action. */ }
+//             ;
+
+//non_productive: non_productive useless_token
+//                       { /* Another non productive action. */ }
+//              ;
+%%
+]])
+
+AT_CHECK([[bison reduced.y]])
+
+# Comparing the parsers.
+cp reduced.c expout
+AT_CHECK([sed 's/not-reduced/reduced/g' not-reduced.c], 0, [expout])
+
+AT_CLEANUP
+
+
+
+## ------------------- ##
+## Underivable Rules.  ##
+## ------------------- ##
+
+AT_SETUP([Underivable Rules])
+
+AT_KEYWORDS([report])
+
+AT_DATA([[input.y]],
+[[%verbose
+%output="input.c"
+%token useful
+%%
+exp: useful | underivable;
+underivable: indirection;
+indirection: underivable;
+]])
+
+AT_CHECK([[bison input.y]], 0, [],
+[[input.y: warning: 2 useless nonterminals and 3 useless rules
+input.y:5.15-25: warning: useless nonterminal: underivable
+input.y:6.14-24: warning: useless nonterminal: indirection
+input.y:5.15-25: warning: useless rule: exp: underivable
+input.y:6.14-24: warning: useless rule: underivable: indirection
+input.y:7.14-24: warning: useless rule: indirection: underivable
+]])
+
+AT_CHECK([[sed -n '/^Grammar/q;/^$/!p' input.output]], 0,
+[[Useless nonterminals
+   underivable
+   indirection
+Useless rules
+    2 exp: underivable
+    3 underivable: indirection
+    4 indirection: underivable
+]])
+
+AT_CLEANUP
+
+
+
+## ---------------- ##
+## Empty Language.  ##
+## ---------------- ##
+
+AT_SETUP([Empty Language])
+
+AT_DATA([[input.y]],
+[[%output="input.c"
+%%
+exp: exp;
+]])
+
+AT_CHECK([[bison input.y]], 1, [],
+[[input.y: warning: 2 useless nonterminals and 2 useless rules
+input.y:3.1-3: fatal error: start symbol exp does not derive any sentence
+]])
+
+AT_CLEANUP

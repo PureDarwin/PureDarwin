@@ -1,0 +1,68 @@
+# Kinyarwanda translations for bison package.
+# Copyright (C) 2005 Free Software Foundation, Inc.
+# This file is distributed under the same license as the bison package.
+# Steve Murphy <murf@e-tools.com>, 2005.
+# Steve performed initial rough translation from compendium built from translations provided by the following translators:
+# Philibert Ndandali  <ndandali@yahoo.fr>, 2005.
+# Viateur MUGENZI <muvia1@yahoo.fr>, 2005.
+# Noëlla Mupole <s24211045@tuks.co.za>, 2005.
+# Carole Karema <karemacarole@hotmail.com>, 2005.
+# JEAN BAPTISTE NGENDAHAYO <ngenda_denis@yahoo.co.uk>, 2005.
+# Augustin KIBERWA  <akiberwa@yahoo.co.uk>, 2005.
+# Donatien NSENGIYUMVA <ndonatienuk@yahoo.co.uk>, 2005.
+# Antoine Bigirimana <antoine@e-tools.com>, 2005.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: bison 2.0\n"
+"Report-Msgid-Bugs-To: bug-bison@gnu.org\n"
+"POT-Creation-Date: 2006-06-05 00:32-0700\n"
+"PO-Revision-Date: 2005-04-04 10:55-0700\n"
+"Last-Translator: Steven Michael Murphy <murf@e-tools.com>\n"
+"Language-Team: Kinyarwanda <translation-team-rw@lists.sourceforge.net>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: data/glr.c:916 data/yacc.c:581
+msgid "syntax error: cannot back up"
+msgstr ""
+
+#: data/glr.c:1801
+msgid "syntax is ambiguous"
+msgstr ""
+
+#: data/glr.c:2168 data/glr.c:2174 data/glr.c:2428 data/lalr1.cc:878
+#: data/yacc.c:1304 data/yacc.c:1332
+msgid "syntax error"
+msgstr ""
+
+#: data/glr.c:2488 data/yacc.c:1114 data/yacc.c:1456
+msgid "memory exhausted"
+msgstr "Ububiko"
+
+#: data/yacc.c:866
+#, c-format
+msgid "syntax error, unexpected %s"
+msgstr ""
+
+#: data/yacc.c:867
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s"
+msgstr ""
+
+#: data/yacc.c:868
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s"
+msgstr ""
+
+#: data/yacc.c:869
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s"
+msgstr ""
+
+#: data/yacc.c:870
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s or %s"
+msgstr ""

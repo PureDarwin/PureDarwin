@@ -1,0 +1,82 @@
+# Mensajes en español para GNU Bison.
+# Copyright (C) 1998 Free Software Foundation, Inc.
+# Nicolás García-Pedrajas <ngarcia-pedrajas@acm.org>, 1998.
+#
+# Corregido por:
+#
+# cll - Carlos Linares López        clinares@acm.org
+#                                   clinares@delicias.dia.fi.upm.es
+#
+# Notas:
+#
+# 1. Nicolás, en algunas ocasiones notarás que algunos `msgstr' no están
+# indentados como los `msgid'. No te preocupes, eso es porque yo utilizo
+# el `po-mode' de Emacs, ... Él es el responsable de esas indentaciones
+# del `msgstr' :)
+#
+# 2. Todos los comentarios que contengan "Duda:" debieran revisarse.
+#
+# --------------------------------------------------------------------
+# En mi opinión has hecho un excelente trabajo y te animo a que sigas
+# manteniendo esta traducción y a que lo intentes con otras.
+#
+# (¡te lo dice el tío que ha traducido el paquete más grande: 1406
+# mensajes en el clisp!)
+#
+# 						      Carlos Linares
+# --------------------------------------------------------------------
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: GNU bison 1.875\n"
+"Report-Msgid-Bugs-To: bug-bison@gnu.org\n"
+"POT-Creation-Date: 2006-06-05 00:32-0700\n"
+"PO-Revision-Date: 2003-01-02 12:47+0100\n"
+"Last-Translator: Nicolás García-Pedrajas <ngarcia-pedrajas@acm.org>\n"
+"Language-Team: Spanish <es@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=ISO-8859-1\n"
+"Content-Transfer-Encoding: 8-bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: data/glr.c:916 data/yacc.c:581
+msgid "syntax error: cannot back up"
+msgstr ""
+
+#: data/glr.c:1801
+msgid "syntax is ambiguous"
+msgstr ""
+
+#: data/glr.c:2168 data/glr.c:2174 data/glr.c:2428 data/lalr1.cc:878
+#: data/yacc.c:1304 data/yacc.c:1332
+msgid "syntax error"
+msgstr ""
+
+#: data/glr.c:2488 data/yacc.c:1114 data/yacc.c:1456
+msgid "memory exhausted"
+msgstr "memoria agotada"
+
+#: data/yacc.c:866
+#, c-format
+msgid "syntax error, unexpected %s"
+msgstr ""
+
+#: data/yacc.c:867
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s"
+msgstr ""
+
+#: data/yacc.c:868
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s"
+msgstr ""
+
+#: data/yacc.c:869
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s"
+msgstr ""
+
+#: data/yacc.c:870
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s or %s"
+msgstr ""

@@ -1,0 +1,31 @@
+<plist version="1.0">
+<array>
+<dict>
+	<key>OpenSourceProject</key>
+	<string>make</string>
+	<key>OpenSourceVersion</key>
+	<string>3.81</string>
+	<key>OpenSourceWebsiteURL</key>
+	<string>http://www.gnu.org/software/make/</string>
+	<key>OpenSourceURL</key>
+	<string>ftp://ftp.gnu.org/gnu/make/make-3.81.tar.bz2</string>
+	<key>OpenSourceSHA1</key>
+	<string>41ed86d941b9c8025aee45db56c0283169dcab3d</string>
+	<key>OpenSourceImportDate</key>
+	<string>2006-11-30</string>
+	<key>OpenSourceModifications</key>
+	<array>
+		<string>--NeXT-option hacks.</string>
+		<string>Objective-C support (.m .ym .lm).</string>
+		<string>Conformance changes.</string>
+		<string>Use old method of handling line continuations. (4339040, 4408688)</string>
+		<string>Add support for posix_spawn()</string>
+		<string>Patch for savanah bug 20033</string>
+	</array>
+	<key>OpenSourceLicense</key>
+	<string>GPL</string>
+	<key>OpenSourceLicenseFile</key>
+	<string>gnumake.txt</string>
+</dict>
+</array>
+</plist>

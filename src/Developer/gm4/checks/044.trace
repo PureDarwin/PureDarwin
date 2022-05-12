@@ -1,0 +1,33 @@
+dnl @ ../doc/m4.texinfo:2097: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+traceoff(`foo')
+dnl @result{}
+traceon(`foo')
+dnl @result{}
+foo
+dnl @result{}foo
+define(`foo', `bar')
+dnl @result{}
+foo
+dnl @error{}m4trace: -1- foo -> `bar'
+dnl @result{}bar
+undefine(`foo')
+dnl @result{}
+ifdef(`foo', `yes', `no')
+dnl @result{}no
+indir(`foo')
+dnl @error{}m4:stdin:8: undefined macro `foo'
+dnl @result{}
+define(`foo', `blah')
+dnl @result{}
+foo
+dnl @error{}m4trace: -1- foo -> `blah'
+dnl @result{}blah
+traceoff
+dnl @result{}
+foo
+dnl @result{}blah

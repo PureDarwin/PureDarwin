@@ -1,0 +1,20 @@
+dnl @ ../doc/m4.texinfo:1421: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+foo bar blah
+dnl @result{}foo bar blah
+define(`foo', `some')define(`bar', `other')define(`blah', `text')
+dnl @result{}
+foo bar blah
+dnl @result{}some other text
+undefine(`foo')
+dnl @result{}
+foo bar blah
+dnl @result{}foo other text
+undefine(`bar', `blah')
+dnl @result{}
+foo bar blah
+dnl @result{}foo bar blah

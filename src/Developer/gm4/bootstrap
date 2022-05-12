@@ -1,0 +1,259 @@
+#! /bin/sh
+
+# bootstrap (GNU M4) version 2006-07-15
+# Written by Gary V. Vaughan  <gary@gnu.org>
+
+# Copyright (C) 2004, 2005, 2006 Free Software Foundation, Inc.
+# This is free software; see the source for copying conditions.  There is NO
+# warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, a copy can be downloaded from
+# http://www.gnu.org/copyleft/gpl.html, or by writing to the Free
+# Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+# MA 02110-1301, USA.
+
+# Usage: $progname [options]
+
+# -v      --version          print version information
+# -h,-?   --help             print short or long help message
+
+# You can also set the following variables to help $progname
+# locate the right tools:
+#   AUTORECONF, GNULIB_TOOL, RM, SED
+
+# This script bootstraps a CVS checkout of GNU M4 by correctly
+# calling out to parts of the GNU Build Platform.  Currently this
+# requires GNU Autoconf 2.60, GNU Automake 1.9.6, and bleeding edge
+# CVS snapshots of GNU Gnulib.
+
+# Report bugs to <bug-m4@gnu.org>
+
+: ${AUTORECONF=autoreconf}
+: ${GNULIB_TOOL=gnulib-tool}
+: ${RM=rm -f}
+: ${SED=sed}
+
+dirname="s,/[^/]*$,,"
+basename="s,^.*/,,g"
+
+# Work around backward compatibility issue on IRIX 6.5. On IRIX 6.4+, sh
+# is ksh but when the shell is invoked as "sh" and the current value of
+# the _XPG environment variable is not equal to 1 (one), the special
+# positional parameter $0, within a function call, is the name of the
+# function.
+progpath="$0"
+
+# The name of this program:
+progname=`echo "$progpath" | $SED "$basename"`
+PROGRAM=bootstrap
+
+# func_echo arg...
+# Echo program name prefixed message.
+func_echo ()
+{
+    echo $progname: ${1+"$@"}
+}
+
+
+# func_error arg...
+# Echo program name prefixed message to standard error.
+func_error ()
+{
+    echo $progname: ${1+"$@"} >&2
+}
+
+# func_fatal_error arg...
+# Echo program name prefixed message to standard error, and exit.
+func_fatal_error ()
+{
+    func_error ${1+"$@"}
+    exit $EXIT_FAILURE
+}
+
+# func_verbose arg...
+# Echo program name prefixed message in verbose mode only.
+func_verbose ()
+{
+    $opt_verbose && func_error ${1+"$@"}
+}
+
+# func_missing_arg argname
+# Echo program name prefixed message to standard error and set global
+# exit_cmd.
+func_missing_arg ()
+{
+   func_error "missing argument for $1"
+   exit_cmd=exit
+}
+
+# func_fatal_help arg...
+# Echo program name prefixed message to standard error, followed by
+# a help hint, and exit.
+func_fatal_help ()
+{
+    func_error ${1+"$@"}
+    func_fatal_error "Try \`$progname --help' for more information."
+}
+
+# func_missing_arg argname
+# Echo program name prefixed message to standard error and set global
+# exit_cmd.
+func_missing_arg ()
+{
+   func_error "missing argument for $1"
+   exit_cmd=exit
+}
+
+# func_usage
+# Echo short help message to standard output and exit.
+func_usage ()
+{
+    $SED '/^# Usage:/,/# -h/ {
+        s/^# //; s/^# *$//;
+	s/\$progname/'$progname'/;
+	p;
+    }; d' < "$progpath"
+    echo
+    echo "run \`$progname --help | more' for full usage"
+    exit $EXIT_SUCCESS
+}
+
+# func_help
+# Echo long help message to standard output and exit.
+func_help ()
+{
+    $SED '/^# Usage:/,/# Report bugs to/ {
+        s/^# //; s/^# *$//;
+	s/\$progname/'$progname'/;
+	p;
+     }; d' < "$progpath"
+    exit $EXIT_SUCCESS
+}
+
+# func_version
+# Echo version message to standard output and exit.
+func_version ()
+{
+    $SED '/^# '$PROGRAM' (GNU /,/# warranty; / {
+        s/^# //; s/^# *$//;
+        s/\((C)\)[ 0-9,-]*\( [1-9][0-9]*\)/\1\2/;
+        p;
+     }; d' < "$progpath"
+     exit $EXIT_SUCCESS
+}
+
+# func_update
+# Copy $1 to $2 if it is newer.
+func_update ()
+{
+  if test -f "$2" && cmp -s "$1" "$2" ; then
+    func_verbose "$2 is up-to-date"
+  else
+    func_echo "copying $1 -> $2"
+    cp "$1" "$2"
+  fi
+}
+
+# Parse options once, thoroughly.  This comes as soon as possible in
+# the script to make things like `bootstrap --version' happen quickly.
+{
+  # sed scripts:
+  my_sed_single_opt='1s/^\(..\).*$/\1/;q'
+  my_sed_single_rest='1s/^..\(.*\)$/\1/;q'
+  my_sed_long_opt='1s/^\(--[^=]*\)=.*/\1/;q'
+  my_sed_long_arg='1s/^--[^=]*=//'
+
+  # this just eases exit handling
+  while test $# -gt 0; do
+    opt="$1"
+    shift
+    case $opt in
+      # Separate optargs to short options:
+      -\?|-h)		func_usage					;;
+      --help)		func_help					;;
+      --version)	func_version					;;
+      --)		break						;;
+      -*)		func_fatal_help "unrecognized option \`$opt'"	;;
+      *)		set -- "$opt" ${1+"$@"};	break		;;
+    esac
+  done
+
+  # Bail if the options were screwed
+  $exit_cmd $EXIT_FAILURE
+}
+
+## ---------------------------- ##
+## Find the gnulib module tree. ##
+## ---------------------------- ##
+
+case $GNULIB_TOOL in
+    /*  )  gnulibdir=$GNULIB_TOOL ;;		# absolute
+    */* )  gnulibdir=`pwd`/$GNULIB_TOOL ;;	# relative
+    *   )  gnulibdir=`which "$GNULIB_TOOL"` ;;	# PATH search
+esac
+
+# Follow symlinks
+while test -h "$gnulibdir"; do
+
+    # Resolve symbolic link.
+    sedexpr1='s, -> ,#%%#,'
+    sedexpr2='s,^.*#%%#\(.*\)$,\1,p'
+    linkval=`LC_ALL=C ls -l "$gnulibdir" | $SED "$sedexpr1" | $SED -n "$sedexpr2"`
+    test -n "$linkval" || break
+
+    case "$linkval" in
+	/* ) gnulibdir="$linkval" ;;
+	* )  gnulibdir=`echo "$gnulibdir" | sed -e 's,/[^/]*$,,'`/"$linkval" ;;
+    esac
+
+done
+
+gnulibdir=`echo "$gnulibdir" | $SED "$dirname"`
+
+## ---------------------- ##
+## Import Gnulib modules. ##
+## ---------------------- ##
+
+func_echo "running: $GNULIB_TOOL --update"
+$GNULIB_TOOL --update || func_fatal_error "gnulib-tool failed"
+
+## ----------- ##
+## Autoreconf. ##
+## ----------- ##
+
+func_echo "running: $AUTORECONF --force --verbose --install"
+$AUTORECONF --force --verbose --install || func_fatal_error "autoreconf failed"
+
+## ---------------------------------------- ##
+## Gnulib is more up-to-date than automake. ##
+## ---------------------------------------- ##
+
+func_update "$gnulibdir"/build-aux/config.guess config.guess
+func_update "$gnulibdir"/build-aux/config.sub config.sub
+func_update "$gnulibdir"/build-aux/depcomp depcomp
+func_update "$gnulibdir"/build-aux/install-sh install-sh
+func_update "$gnulibdir"/build-aux/mdate-sh doc/mdate-sh
+func_update "$gnulibdir"/build-aux/missing missing
+func_update "$gnulibdir"/build-aux/texinfo.tex doc/texinfo.tex
+func_update "$gnulibdir"/doc/COPYING COPYING
+func_update "$gnulibdir"/doc/INSTALL INSTALL
+
+exit 0
+
+# Local variables:
+# eval: (add-hook 'write-file-hooks 'time-stamp)
+# time-stamp-start: "# bootstrap (GNU M4) version "
+# time-stamp-format: "%:y-%02m-%02d"
+# time-stamp-end: "$"
+# End:

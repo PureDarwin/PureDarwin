@@ -1,0 +1,59 @@
+# Irish translations for bison.
+# Copyright (C) 2004 Free Software Foundation, Inc.
+# This file is distributed under the same license as the bison package.
+# Kevin Patrick Scannell <scannell@SLU.EDU>, 2004, 2005.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: bison-runtime 2.1\n"
+"Report-Msgid-Bugs-To: bug-bison@gnu.org\n"
+"POT-Creation-Date: 2006-06-05 00:32-0700\n"
+"PO-Revision-Date: 2005-09-18 23:14-0500\n"
+"Last-Translator: Kevin Patrick Scannell <scannell@SLU.EDU>\n"
+"Language-Team: Irish <gaeilge-gnulinux@lists.sourceforge.net>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=ISO-8859-1\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: data/glr.c:916 data/yacc.c:581
+msgid "syntax error: cannot back up"
+msgstr "earráid chomhréire: ní féidir cúlú"
+
+#: data/glr.c:1801
+msgid "syntax is ambiguous"
+msgstr "comhréir dhébhríoch"
+
+#: data/glr.c:2168 data/glr.c:2174 data/glr.c:2428 data/lalr1.cc:878
+#: data/yacc.c:1304 data/yacc.c:1332
+msgid "syntax error"
+msgstr "earráid chomhréire"
+
+#: data/glr.c:2488 data/yacc.c:1114 data/yacc.c:1456
+msgid "memory exhausted"
+msgstr "cuimhne ídithe"
+
+#: data/yacc.c:866
+#, c-format
+msgid "syntax error, unexpected %s"
+msgstr "earráid chomhréire, %s gan choinne"
+
+#: data/yacc.c:867
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s"
+msgstr "earráid chomhréire, %s gan choinne, bhíothas ag súil le %s"
+
+#: data/yacc.c:868
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s"
+msgstr "earráid chomhréire, %s gan choinne, bhíothas ag súil le %s nó %s"
+
+#: data/yacc.c:869
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s"
+msgstr "earráid chomhréire, %s gan choinne, bhíothas ag súil le %s nó %s nó %s"
+
+#: data/yacc.c:870
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s or %s"
+msgstr ""
+"earráid chomhréire, %s gan choinne, bhíothas ag súil le %s nó %s nó %s nó %s"

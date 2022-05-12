@@ -1,0 +1,114 @@
+# Checking the output filenames.                    -*- Autotest -*-
+# Copyright (C) 2000, 2001, 2002, 2005 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+AT_BANNER([[Output file names.]])
+
+
+# AT_CHECK_OUTPUT(INPUT-FILE, [DIRECTIVES], [FLAGS], EXPECTED-FILES, [SHELLIO],
+#                 [ADDITIONAL-TESTS])
+# -----------------------------------------------------------------------------
+m4_define([AT_CHECK_OUTPUT],
+[AT_SETUP([Output files: $2 $3 $5])
+case "$1" in
+  */*) mkdir `echo "$1" | sed 's,/.*,,'`;;
+esac
+AT_DATA([$1],
+[[$2
+%%
+foo: {};
+]])
+
+AT_CHECK([bison $3 $1 $5], 0)
+AT_CHECK([ls $4], [], [ignore])
+$6
+AT_CLEANUP
+])
+
+AT_CHECK_OUTPUT([foo.y], [], [-dv],
+		[foo.output foo.tab.c foo.tab.h])
+AT_CHECK_OUTPUT([foo.y], [], [-dv],
+		[foo.output foo.tab.c foo.tab.h],
+		[>&-])
+AT_CHECK_OUTPUT([foo.y], [], [-dv -o foo.c],
+		[foo.c foo.h foo.output])
+AT_CHECK_OUTPUT([foo.y], [], [-dv -o foo.tab.c],
+		[foo.output foo.tab.c foo.tab.h])
+AT_CHECK_OUTPUT([foo.y], [], [-dv -y],
+		[y.output y.tab.c y.tab.h])
+AT_CHECK_OUTPUT([foo.y], [], [-dv -b bar],
+		[bar.output bar.tab.c bar.tab.h])
+AT_CHECK_OUTPUT([foo.y], [], [-dv -g -o foo.c],
+		[foo.c foo.h foo.output foo.vcg])
+
+
+AT_CHECK_OUTPUT([foo.y], [%defines %verbose],      [],
+		[foo.output foo.tab.c foo.tab.h])
+AT_CHECK_OUTPUT([foo.y], [%defines %verbose %yacc],[],
+		[y.output y.tab.c y.tab.h])
+
+AT_CHECK_OUTPUT([foo.yy], [%defines %verbose %yacc],[],
+		[y.output y.tab.c y.tab.h])
+
+# Exercise %output and %file-prefix
+AT_CHECK_OUTPUT([foo.y], [%file-prefix="bar" %defines %verbose],      [],
+		[bar.output bar.tab.c bar.tab.h])
+AT_CHECK_OUTPUT([foo.y], [%output="bar.c" %defines %verbose %yacc],[],
+		[bar.output bar.c bar.h])
+AT_CHECK_OUTPUT([foo.y],
+		[%file-prefix="baz" %output="bar.c" %defines %verbose %yacc],
+		[],
+		[bar.output bar.c bar.h])
+
+
+# Check priorities of extension control.
+AT_CHECK_OUTPUT([foo.yy], [%defines %verbose], [],
+		[foo.output foo.tab.cc foo.tab.hh])
+
+AT_CHECK_OUTPUT([foo.yy], [%defines %verbose ], [-o foo.c],
+		[foo.c foo.h foo.output])
+
+AT_CHECK_OUTPUT([foo.yy], [],
+		[--defines=foo.hpp -o foo.c++],
+		[foo.c++ foo.hpp])
+
+AT_CHECK_OUTPUT([foo.yy], [],
+		[-o foo.c++ --graph=foo.gph],
+		[foo.c++ foo.gph])
+
+
+## ------------ ##
+## C++ output.  ##
+## ------------ ##
+
+m4_define([AT_CHECK_NO_SUBDIR_PART],
+[# Also make sure that the includes do not refer to the subdirectory.
+AT_CHECK([grep 'include .subdir/' $1.cc], 1, [])
+AT_CHECK([grep 'include .subdir/' $1.hh], 1, [])
+])
+
+AT_CHECK_OUTPUT([foo.yy], [%skeleton "lalr1.cc" %defines %verbose], [],
+		[foo.tab.cc foo.tab.hh foo.output location.hh stack.hh position.hh])
+
+AT_CHECK_OUTPUT([subdir/foo.yy], [%skeleton "lalr1.cc" %defines %verbose], [],
+		[foo.tab.cc foo.tab.hh foo.output location.hh stack.hh position.hh],
+		[], [AT_CHECK_NO_SUBDIR_PART([foo.tab])])
+
+AT_CHECK_OUTPUT([subdir/foo.yy], [%skeleton "lalr1.cc" %defines %verbose],
+		[-o subdir/foo.cc],
+		[subdir/foo.cc subdir/foo.hh subdir/foo.output subdir/location.hh subdir/stack.hh subdir/position.hh],
+		[], [AT_CHECK_NO_SUBDIR_PART([subdir/foo])])

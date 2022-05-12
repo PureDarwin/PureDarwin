@@ -1,0 +1,13 @@
+dnl @ ../doc/m4.texinfo:2348: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`hi', `HI')
+dnl @result{}
+m4wrap(`m4wrap(`2 hi
+')0 hi dnl 1 hi')
+dnl @result{}
+dnl @error{}m4: Warning: end of file treated as newline
+dnl @result{}0 HI 2 HI

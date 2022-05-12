@@ -1,0 +1,50 @@
+--- main.c.orig	2006-03-19 18:36:37.000000000 -0800
++++ main.c	2011-12-05 17:00:01.000000000 -0800
+@@ -885,6 +885,36 @@
+ #endif
+ }
+ 
++#ifdef __APPLE__
++static void
++define_makefilepath_variable(void)
++{
++	uint32_t bufsize;
++	char buf[PATH_MAX], path[PATH_MAX];
++	char *p;
++	struct stat sb;
++
++	/* For $ANY_DIR/usr/bin/make, try $ANY_DIR/Makefiles */
++	bufsize = sizeof(buf);
++	if (_NSGetExecutablePath(buf, &bufsize) == 0 && realpath(buf, path) != NULL) {
++		p = strstr(path, "/usr/bin/gnumake");
++		if (p == NULL) {
++			p = strstr(path, "/usr/bin/make");
++		}
++
++		if (p != NULL && p != path) {
++			strcpy(p, "/Makefiles");
++			if (lstat(path, &sb) == 0 && S_ISDIR(sb.st_mode)) {
++				define_variable("MAKEFILEPATH", 12, path, o_default, 0);
++				return;
++			}
++		}
++	}
++
++	/* Fallback is $DEVELOPER_DIR/Makefiles */
++	define_variable("MAKEFILEPATH", 12, "$(shell /usr/bin/xcode-select -print-path 2>/dev/null || echo /Developer)/Makefiles", o_default, 1);
++}
++#endif /* __APPLE__ */
+ 
+ #ifdef _AMIGA
+ int
+@@ -1590,6 +1620,10 @@
+     default_goal_name = &v->value;
+   }
+ 
++#ifdef __APPLE__
++  define_makefilepath_variable ();
++#endif /* __APPLE__ */
++
+   /* Read all the makefiles.  */
+ 
+   read_makefiles

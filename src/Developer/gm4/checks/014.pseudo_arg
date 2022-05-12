@@ -1,0 +1,21 @@
+dnl @ ../doc/m4.texinfo:1309: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`nargs', `$#')
+dnl @result{}
+nargs
+dnl @result{}0
+nargs()
+dnl @result{}1
+nargs(`arg1', `arg2', `arg3')
+dnl @result{}3
+nargs(`commas can be quoted, like this')
+dnl @result{}1
+nargs(arg1#inside comments, commas do not separate arguments
+still arg1)
+dnl @result{}1
+nargs((unquoted parentheses, like this, group arguments))
+dnl @result{}1

@@ -1,0 +1,30 @@
+dnl @ ../doc/m4.texinfo:4039: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+syscmd(`false')
+dnl @result{}
+ifelse(sysval, `0', `zero', `non-zero')
+dnl @result{}non-zero
+syscmd(`exit 2')
+dnl @result{}
+sysval
+dnl @result{}2
+syscmd(`true')
+dnl @result{}
+sysval
+dnl @result{}0
+esyscmd(`false')
+dnl @result{}
+ifelse(sysval, `0', `zero', `non-zero')
+dnl @result{}non-zero
+esyscmd(`exit 2')
+dnl @result{}
+sysval
+dnl @result{}2
+esyscmd(`true')
+dnl @result{}
+sysval
+dnl @result{}0

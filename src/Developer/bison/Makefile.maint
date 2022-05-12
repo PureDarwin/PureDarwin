@@ -1,0 +1,639 @@
+# -*-Makefile-*-
+# This Makefile fragment is shared between the coreutils,
+# CPPI, Bison, and Autoconf.
+
+## Copyright (C) 2001-2006 Free Software Foundation, Inc.
+##
+## This program is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation; either version 2, or (at your option)
+## any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; if not, write to the Free Software
+## Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+## 02110-1301, USA.
+
+# This is reported not to work with make-3.79.1
+# ME := $(word $(words $(MAKEFILE_LIST)),$(MAKEFILE_LIST))
+ME := Makefile.maint
+
+# Do not save the original name or timestamp in the .tar.gz file.
+# Use --rsyncable if available.
+gzip_rsyncable = \
+  (gzip --help|grep rsyncable) >/dev/null 2>&1 && echo --rsyncable
+GZIP_ENV = "--no-name --best `$(gzip_rsyncable)`"
+
+CVS = cvs
+
+# cvsu is part of the cvsutils package: http://www.red-bean.com/cvsutils/
+CVS_LIST = sh -c ' \
+    if test -x $(srcdir)/build-aux/cvsu; then \
+      $(srcdir)/build-aux/cvsu --find --types=AFGM $$*; \
+    else \
+      awk -F/ '\''{ \
+	  if (!$$1 && $$3 !~ /^-/) { \
+	    f=FILENAME; \
+	    sub(/CVS\/Entries/, "", f); \
+	    print f $$2; \
+	  }}'\'' \
+	$$(find $${*-*} -name Entries -print) /dev/null; \
+    fi \
+  ' dummy
+
+CVS_LIST_EXCEPT = \
+  $(CVS_LIST) | if test -f .x-$@; then grep -vEf .x-$@; else grep -v ChangeLog; fi
+
+ifeq ($(origin prev_version_file), undefined)
+  prev_version_file = .prev-version
+endif
+
+PREV_VERSION := $(shell cat $(prev_version_file))
+VERSION_REGEXP = $(subst .,\.,$(VERSION))
+
+tag-package = $(shell echo "$(PACKAGE)" | tr '[:lower:]' '[:upper:]')
+tag-this-version = $(subst .,_,$(VERSION))
+this-cvs-tag = $(tag-package)-$(tag-this-version)
+my_distdir = $(PACKAGE)-$(VERSION)
+
+# Old releases are stored here.
+# Used for diffs and xdeltas.
+release_archive_dir ?= ../release
+
+# Prevent programs like 'sort' from considering distinct strings to be equal.
+# Doing it here saves us from having to set LC_ALL elsewhere in this file.
+export LC_ALL = C
+
+
+
+## --------------- ##
+## Sanity checks.  ##
+## --------------- ##
+
+# FIXME: add a check to prohibit definition in src/*.c of symbols defined
+# in system.h.  E.g. today I removed from tail.c a useless definition of
+# ENOSYS.  It was useless because system.h ensures it's defined.
+
+# Checks that don't require cvs.
+# Run `changelog-check' last, as previous test may reveal problems requiring
+# new ChangeLog entries.
+local-checks-available = \
+  po-check copyright-check writable-files m4-check author_mark_check \
+  changelog-check strftime-check $(syntax-check-rules) \
+  makefile_path_separator_check \
+  makefile-check
+.PHONY: $(local-checks-available)
+
+local-check = $(filter-out $(local-checks-to-skip), $(local-checks-available))
+
+.PHONY: $(syntax-check-rules)
+syntax-check-rules = \
+  sc_cast_of_argument_to_free \
+  sc_cast_of_x_alloc_return_value \
+  sc_cast_of_alloca_return_value \
+  sc_changelog \
+  sc_dd_max_sym_length \
+  sc_error_exit_success \
+  sc_file_system \
+  sc_no_if_have_config_h \
+  sc_obsolete_symbols \
+  sc_prohibit_atoi_atof \
+  sc_prohibit_jm_in_m4 \
+  sc_prohibit_assert_without_use \
+  sc_require_config_h \
+  sc_root_tests \
+  sc_space_tab \
+  sc_sun_os_names \
+  sc_system_h_headers \
+  sc_tight_scope \
+  sc_trailing_blank \
+  sc_two_space_separator_in_usage \
+  sc_unmarked_diagnostics \
+  sc_useless_cpp_parens
+
+syntax-check: $(syntax-check-rules)
+#	@grep -nE '#  *include <(limits|std(def|arg|bool))\.h>'		\
+#	    $$(find -type f -name '*.[chly]') &&			\
+#	  { echo '$(ME): found conditional include' 1>&2;		\
+#	    exit 1; } || :
+
+#	grep -nE '^#  *include <(string|stdlib)\.h>'			\
+#	    $(srcdir)/{lib,src}/*.[chy] &&				\
+#	  { echo '$(ME): FIXME' 1>&2;					\
+#	    exit 1; } || :
+# FIXME: don't allow `#include .strings\.h' anywhere
+
+sc_cast_of_argument_to_free:
+	@grep -nE '\<free \(\(' $(srcdir)/{lib,src}/*.[chly] &&		\
+	  { echo '$(ME): don'\''t cast free argument' 1>&2;		\
+	    exit 1; } || :
+
+sc_cast_of_x_alloc_return_value:
+	@grep -nE --exclude=$(srcdir)/lib/regex.c			\
+	    '\*\) *x(m|c|re)alloc\>'					\
+	    $(srcdir)/{lib,src}/*.[chy] &&				\
+	  { echo '$(ME): don'\''t cast x*alloc return value' 1>&2;	\
+	    exit 1; } || :
+
+sc_cast_of_alloca_return_value:
+	@grep -nE '\*\) *alloca\>'					\
+	    $(srcdir)/src/*.[chy] &&					\
+	  { echo '$(ME): don'\''t cast alloca return value' 1>&2;	\
+	    exit 1; } || :
+
+sc_space_tab:
+	@grep -n '[ ]	' $$($(CVS_LIST_EXCEPT)) &&			\
+	  { echo '$(ME): found SPACE-TAB sequence; remove the SPACE'	\
+		1>&2; exit 1; } || :
+
+# Don't use the old ato* functions in `real' code.
+# They provide no error checking mechanism.
+# Instead, use strto* functions.
+sc_prohibit_atoi_atof:
+	@grep -nE '\<ato([filq]|ll)\>' $$($(CVS_LIST_EXCEPT)) &&	\
+	  { echo '$(ME): do not use ato''f, ato''i, ato''l, ato''ll, or ato''q'	\
+		1>&2; exit 1; } || :
+
+# Using EXIT_SUCCESS as the first argument to error is misleading,
+# since when that parameter is 0, error does not exit.  Use `0' instead.
+sc_error_exit_success:
+	@grep -nF 'error (EXIT_SUCCESS,'					\
+	    $$(find -type f -name '*.[chly]') &&			\
+	  { echo '$(ME): found error (EXIT_SUCCESS' 1>&2;		\
+	    exit 1; } || :
+
+sc_file_system:
+	@grep -ni 'file''system' $$($(CVS_LIST_EXCEPT)) &&		\
+	  { echo '$(ME): found use of "file''system";'			\
+	    'rewrite to use "file system"' 1>&2;			\
+	    exit 1; } || :
+
+sc_no_if_have_config_h:
+	@grep -n '^# *if HAVE_CONFIG_H' $$($(CVS_LIST_EXCEPT)) &&	\
+	  { echo '$(ME): found use of #if HAVE_CONFIG_H; use #ifdef'	\
+		1>&2; exit 1; } || :
+
+# Nearly all .c files must include <config.h>.
+sc_require_config_h:
+	@grep -L '^# *include <config\.h>'				\
+		$$($(CVS_LIST_EXCEPT) | grep '\.c$$')			\
+	    | grep . &&							\
+	  { echo '$(ME): the above files do not include <config.h>'	\
+		1>&2; exit 1; } || :
+
+# Prohibit the inclusion of assert.h without an actual use of assert.
+sc_prohibit_assert_without_use:
+	@files=$$(grep -l '# *include <assert\.h>'			\
+		    $$($(CVS_LIST_EXCEPT) | grep '\.c$$')) &&		\
+	grep -L '\<assert (' $$files					\
+	    | grep . &&							\
+	  { echo "$(ME): the above files include <assert.h> but don't use it" \
+		1>&2; exit 1; } || :
+
+sc_obsolete_symbols:
+	@grep -nE '\<(HAVE''_FCNTL_H|O''_NDELAY)\>'			\
+	     $$($(CVS_LIST_EXCEPT)) &&					\
+	  { echo '$(ME): do not use HAVE''_FCNTL_H or O''_NDELAY'	\
+		1>&2; exit 1; } || :
+
+# FIXME: warn about definitions of EXIT_FAILURE, EXIT_SUCCESS, STREQ
+
+# Each nonempty line must start with a year number, or a TAB.
+sc_changelog:
+	@grep -n '^[^12	]' $$(find . -maxdepth 2 -name ChangeLog) &&	\
+	  { echo '$(ME): found unexpected prefix in a ChangeLog' 1>&2;	\
+	    exit 1; } || :
+
+# Ensure that dd's definition of LONGEST_SYMBOL stays in sync
+# with the strings from the two affected variables.
+dd_c = $(srcdir)/src/dd.c
+sc_dd_max_sym_length:
+ifneq ($(wildcard $(dd_c)),)
+	@len=$$( (sed -n '/conversions\[\] =$$/,/^};/p' $(dd_c);\
+		 sed -n '/flags\[\] =$$/,/^};/p' $(dd_c) )	\
+		|sed -n '/"/s/^[^"]*"\([^"]*\)".*/\1/p'		\
+	      | wc --max-line-length);				\
+	max=$$(sed -n '/^#define LONGEST_SYMBOL /s///p' $(dd_c)	\
+	      |tr -d '"' | wc --max-line-length);		\
+	if test "$$len" = "$$max"; then :; else			\
+	  echo 'dd.c: LONGEST_SYMBOL is not longest' 1>&2;	\
+	  exit 1;						\
+	fi
+endif
+
+# Many m4 macros names once began with `jm_'.
+# On 2004-04-13, they were all changed to start with gl_ instead.
+# Make sure that none are inadvertently reintroduced.
+sc_prohibit_jm_in_m4:
+	@grep -nE 'jm_[A-Z]'						\
+		$$($(CVS_LIST) $(srcdir)/m4 |grep '\.m4$$') &&		\
+	    { echo '$(ME): do not use jm_ in m4 macro names'		\
+	      1>&2; exit 1; } || :
+
+sc_root_tests:
+	@t1=sc-root.expected; t2=sc-root.actual;			\
+	grep -nl '^PRIV_CHECK_ARG=require-root'				\
+	  $$($(CVS_LIST) tests) |sed s,tests,., |sort > $$t1;		\
+	sed -n 's,	cd \([^ ]*\) .*MAKE..check TESTS=\(.*\),./\1/\2,p' \
+	  $(srcdir)/tests/Makefile.am |sort > $$t2;			\
+	diff -u $$t1 $$t2 || diff=1;					\
+	rm -f $$t1 $$t2;						\
+	test "$$diff"							\
+	  && { echo 'tests/Makefile.am: missing check-root action'>&2;	\
+	       exit 1; } || :
+
+# Create a list of regular expressions matching the names
+# of files included from system.h.  Exclude a couple.
+.re-list:
+	@sed -n '/^# *include /s///p' $(srcdir)/src/system.h \
+	  | grep -Ev 'sys/(param|file)\.h' \
+	  | sed 's/ .*//;;s/^["<]/^# *include [<"]/;s/\.h[">]$$/\\.h[">]/' \
+	  > $@-t
+	@mv $@-t $@
+
+# Files in src/ should not include directly any of
+# the headers already included via system.h.
+sc_system_h_headers: .re-list
+	@if test -f $(srcdir)/src/system.h; then			\
+	  trap 'rc=$$?; rm -f .re-list; exit $$rc' 0 1 2 3 15;		\
+	  grep -nE -f .re-list						\
+	      $$($(CVS_LIST) src |					\
+		 grep -Ev '((copy|system)\.h|parse-gram\.c)$$')		\
+	    && { echo '$(ME): the above are already included via system.h'\
+		  1>&2;  exit 1; } || :;				\
+	fi
+
+sc_sun_os_names:
+	@grep -nEi \
+	    'solaris[^[:alnum:]]*2\.(7|8|9|[1-9][0-9])|sunos[^[:alnum:]][6-9]' \
+	    $$($(CVS_LIST_EXCEPT)) &&					\
+	  { echo '$(ME): found misuse of Sun OS version numbers' 1>&2;	\
+	    exit 1; } || :
+
+sc_tight_scope:
+	$(MAKE) -C src $@
+
+sc_trailing_blank:
+	@grep -n '[	 ]$$' $$($(CVS_LIST_EXCEPT)) &&			\
+	  { echo '$(ME): found trailing blank(s)'			\
+		1>&2; exit 1; } || :
+
+sc_two_space_separator_in_usage:
+	@grep -n '^   *--[a-z][0-9A-Za-z-]* [^ ].*\\$$'			\
+	    $$($(CVS_LIST_EXCEPT)) &&					\
+	  { echo "$(ME): help2man requires at least two spaces between"; \
+	    echo "$(ME): an option and its description"; \
+		1>&2; exit 1; } || :
+
+# Look for diagnostics that aren't marked for translation.
+# This won't find any for which error's format string is on a separate line.
+sc_unmarked_diagnostics:
+	@grep -nE							\
+	    '\<error \([^"]*"[^"]*[a-z]{3}' $$($(CVS_LIST_EXCEPT))	\
+	  | grep -v '_''(' &&						\
+	  { echo '$(ME): found unmarked diagnostic(s)' 1>&2;		\
+	    exit 1; } || :
+
+# Avoid useless parentheses like those in this example:
+# #if defined (SYMBOL) || defined (SYM2)
+sc_useless_cpp_parens:
+	@grep -n '^# *if .*defined *(' $$($(CVS_LIST_EXCEPT)) &&	\
+	  { echo '$(ME): found useless parentheses in cpp directive'	\
+		1>&2; exit 1; } || :
+
+# Ensure that date's --help output stays in sync with the info
+# documentation for GNU strftime.  The only exception is %N,
+# which date accepts but GNU strftime does not.
+extract_char = sed 's/^[^%][^%]*%\(.\).*/\1/'
+strftime-check:
+	if test -f $(srcdir)/src/date.c; then				\
+	  grep '^  %.  ' $(srcdir)/src/date.c | sort			\
+	    | $(extract_char) > $@-src;					\
+	  { echo N;							\
+	    info libc date calendar format | grep '^    `%.'\'		\
+	      | $(extract_char); } | sort > $@-info;			\
+	  diff -u $@-src $@-info || exit 1;				\
+	  rm -f $@-src $@-info;						\
+	fi
+
+# Ensure that we use only the standard $(VAR) notation,
+# not @...@ in Makefile.am, now that we can rely on automake
+# to emit a definition for each substituted variable.
+makefile-check:
+	grep -nE '@[A-Z_0-9]+@' `find . -name Makefile.am` \
+	  && { echo 'Makefile.maint: use $$(...), not @...@' 1>&2; exit 1; } || :
+
+news-date-check: NEWS
+	today=`date +%Y-%m-%d`;	\
+	if head NEWS | grep '^\*.* $(VERSION_REGEXP) ('$$today')' \
+	    >/dev/null; then \
+	  :; \
+	else \
+	  echo "version or today's date is not in NEWS" 1>&2; \
+	  exit 1; \
+	fi
+
+changelog-check:
+	if head ChangeLog | grep 'Version $(VERSION_REGEXP)\.$$' \
+	    >/dev/null; then \
+	  :; \
+	else \
+	  echo "$(VERSION) not in ChangeLog" 1>&2; \
+	  exit 1; \
+	fi
+
+m4-check:
+	@grep -n 'AC_DEFUN([^[]' m4/*.m4 \
+	  && { echo 'Makefile.maint: quote the first arg to AC_DEFUN' 1>&2; \
+	       exit 1; } || :
+
+# Verify that all source files using _() are listed in po/POTFILES.in.
+# FIXME: don't hard-code file names below; use a more general mechanism.
+po-check:
+	if test -f po/POTFILES.in; then					\
+	  grep -E -v '^(#|$$)' po/POTFILES.in				\
+	    | grep -v '^src/false\.c$$' | sort > $@-1;			\
+	  files=;							\
+	  for file in $$($(CVS_LIST_EXCEPT)) lib/*.[ch]; do		\
+	    case $$file in						\
+	    djgpp/* | man/*) continue;;					\
+	    esac;							\
+	    case $$file in						\
+	    *.[ch])							\
+	      base=`expr " $$file" : ' \(.*\)\..'`;			\
+	      { test -f $$base.l || test -f $$base.y; } && continue;;	\
+	    esac;							\
+	    files="$$files $$file";					\
+	  done;								\
+	  grep -E -l '\bN?_\([^)"]*("|$$)' $$files | sort -u > $@-2;	\
+	  diff -u $@-1 $@-2 || exit 1;					\
+	  rm -f $@-1 $@-2;						\
+	fi
+
+# In a definition of #define AUTHORS "... and ..." where the RHS contains
+# the English word `and', the string must be marked with `N_ (...)' so that
+# gettext recognizes it as a string requiring translation.
+author_mark_check:
+	@grep -n '^# *define AUTHORS "[^"]* and ' src/*.c |grep -v ' N_ (' && \
+	  { echo 'Makefile.maint: enclose the above strings in N_ (...)' 1>&2; \
+	    exit 1; } || :
+
+# Sometimes it is useful to change the PATH environment variable
+# in Makefiles.  When doing so, it's better not to use the Unix-centric
+# path separator of `:', but rather the automake-provided `@PATH_SEPARATOR@'.
+# It'd be better to use `find -print0 ...|xargs -0 ...', but less portable,
+# and there probably aren't many projects with so many Makefile.am files
+# that we'd have to worry about limits on command line length.
+msg = 'Makefile.maint: Do not use `:'\'' above; use @PATH_SEPARATOR@ instead'
+makefile_path_separator_check:
+	@grep -n 'PATH=.*:' `find $(srcdir) -name Makefile.am` \
+	  && { echo $(msg) 1>&2; exit 1; } || :
+
+# Check that `make alpha' will not fail at the end of the process.
+writable-files:
+	if test -d $(release_archive_dir); then :; else			\
+	  mkdir $(release_archive_dir);					\
+	fi
+	for file in $(distdir).tar.gz $(xd-delta)			\
+	            $(release_archive_dir)/$(distdir).tar.gz		\
+	            $(release_archive_dir)/$(xd-delta); do		\
+	  test -e $$file || continue;					\
+	  test -w $$file						\
+	    || { echo ERROR: $$file is not writable; fail=1; };		\
+	done;								\
+	test "$$fail" && exit 1 || :
+
+v_etc_file = lib/version-etc.c
+# Make sure that the copyright date in $(v_etc_file) is up to date.
+copyright-check:
+	@if test -f $(v_etc_file); then \
+	  grep 'enum { COPYRIGHT_YEAR = '$$(date +%Y)' };' $(v_etc_file) \
+	    >/dev/null \
+	  || { echo 'out of date copyright in $(v_etc_file); update it' 1>&2; \
+	       exit 1; }; \
+	fi
+
+
+# Sanity checks with the CVS repository.
+cvs-tag-check:
+	echo $(this-cvs-tag); \
+	if $(CVS) -n log -h README | grep -e $(this-cvs-tag): >/dev/null; then \
+	  echo "$(this-cvs-tag) as already been used; not tagging" 1>&2; \
+	  exit 1; \
+	else :; fi
+
+cvs-diff-check:
+	if $(CVS) diff >cvs-diffs; then				\
+	  rm cvs-diffs;						\
+	else							\
+	  echo "Some files are locally modified:" 1>&2;		\
+	  cat cvs-diffs;					\
+	  exit 1;						\
+	fi
+
+cvs-check: cvs-diff-check cvs-tag-check
+
+maintainer-distcheck: changelog-check
+	$(MAKE) distcheck
+	$(MAKE) my-distcheck
+
+
+# Tag before making distribution.  Also, don't make a distribution if
+# checks fail.  Also, make sure the NEWS file is up-to-date.
+# FIXME: use dist-hook/my-dist like distcheck-hook/my-distcheck.
+cvs-dist: $(local-check) cvs-check maintainer-distcheck
+	$(CVS) update po
+	$(CVS) tag -c $(this-cvs-tag)
+	$(MAKE) dist
+
+# Use this to make sure we don't run these programs when building
+# from a virgin tgz file, below.
+null_AM_MAKEFLAGS = \
+  ACLOCAL=false \
+  AUTOCONF=false \
+  AUTOMAKE=false \
+  AUTOHEADER=false \
+  MAKEINFO=false
+
+# Detect format-string/arg-list mismatches that would normally be obscured
+# by the use of _().  The --disable-nls effectively defines away that macro,
+# and building with CFLAGS='-Wformat -Werror' causes any format warning to be
+# treated as a failure.  Also, check for shadowing problems with -Wshadow.
+# These CFLAGS are pretty strict.  If you build this target, you probably
+# have to have a recent version of gcc and glibc headers.
+TMPDIR ?= /tmp
+t=$(TMPDIR)/$(PACKAGE)/test
+my-distcheck: $(local-check) $(release_archive_dir)/$(prev-tgz)
+	-rm -rf $(t)
+	mkdir -p $(t)
+	GZIP=$(GZIP_ENV) $(AMTAR) -C $(t) -zxf $(distdir).tar.gz
+	cd $(t)/$(distdir)				\
+	  && ./configure --disable-nls			\
+	  && $(MAKE) CFLAGS='-Werror -Wall -Wformat -Wshadow' \
+	      AM_MAKEFLAGS='$(null_AM_MAKEFLAGS)'	\
+	  && $(MAKE) dvi				\
+	  && $(MAKE) check				\
+	  && $(MAKE) distclean
+	(cd $(t) && mv $(distdir) $(distdir).old	\
+	  && $(AMTAR) -zxf - ) < $(distdir).tar.gz
+	diff -ur $(t)/$(distdir).old $(t)/$(distdir)
+	-rm -rf $(t)
+	@echo "========================"; \
+	echo "$(distdir).tar.gz is ready for distribution"; \
+	echo "========================"
+
+WGET = wget
+WGETFLAGS = -C off
+
+rel-check:
+	tarz=/tmp/rel-check-tarz-$$$$; \
+	md5_tmp=/tmp/rel-check-md5-$$$$; \
+	set -e; \
+	trap 'status=$$?; rm -f $$tarz $$md5_tmp; exit $$status' 0 1 2 3 15; \
+	$(WGET) $(WGETFLAGS) -q --output-document=$$tarz $(url); \
+	echo "$(md5)  -" > $$md5_tmp; \
+	md5sum -c $$md5_tmp < $$tarz
+
+prev-tgz = $(PACKAGE)-$(PREV_VERSION).tar.gz
+xd-delta = $(PACKAGE)-$(PREV_VERSION)-$(VERSION).xdelta
+
+rel-files = $(xd-delta) $(DIST_ARCHIVES)
+announcement: NEWS ChangeLog $(rel-files)
+	@./announce-gen							\
+	    --release-type=$(RELEASE_TYPE)				\
+	    --package=$(PACKAGE)					\
+	    --prev=$(PREV_VERSION)					\
+	    --curr=$(VERSION)						\
+	    --release-archive-directory=$(release_archive_dir)		\
+	    --gpg-key-id=$(gpg_key_ID)					\
+	    --news=NEWS							\
+	    $(addprefix --url-dir=, $(url_dir_list))			\
+
+
+## ---------------- ##
+## Updating files.  ##
+## ---------------- ##
+
+ftp-gnu = ftp://ftp.gnu.org/gnu
+www-gnu = http://www.gnu.org
+
+# Use mv, if you don't have/want move-if-change.
+move_if_change ?= move-if-change
+
+
+# --------------------- #
+# Updating everything.  #
+# --------------------- #
+
+.PHONY: update
+local_updates ?= wget-update cvs-update po-update
+update: $(local_updates)
+
+
+# ------------------- #
+# Updating PO files.  #
+# ------------------- #
+
+po_repo = http://www.iro.umontreal.ca/contrib/po/maint/$(PACKAGE)
+.PHONY: do-po-update po-update
+do-po-update:
+	tmppo=/tmp/$(PACKAGE)-$(VERSION)-po &&\
+	rm -rf $$tmppo && \
+	mkdir $$tmppo && \
+	(cd $$tmppo && \
+	  $(WGET) $(WGETFLAGS) -r -l1 -nd --no-parent -A '*.po' $(po_repo)) &&\
+	cp $$tmppo/*.po po
+	cd po && $(MAKE) update-po
+	$(MAKE) po-check
+
+po-update:
+	if test -d "po"; then \
+	  $(MAKE) do-po-update; \
+	fi
+
+# -------------------------- #
+# Updating GNU build tools.  #
+# -------------------------- #
+
+# The following pseudo table associates a local directory and a URL
+# with each of the files that belongs to some other package and is
+# regularly updated from the specified URL.
+wget_files ?= \
+  $(srcdir)/build-aux/config.guess \
+  $(srcdir)/build-aux/config.sub \
+  $(srcdir)/build-aux/texinfo.tex \
+  $(srcdir)/src/ansi2knr.c
+
+get-targets = $(patsubst %, get-%, $(wget_files))
+
+config.guess-url_prefix = $(ftp-gnu)/build-aux/
+config.sub-url_prefix = $(ftp-gnu)/build-aux/
+
+ansi2knr.c-url_prefix = ftp://ftp.cs.wisc.edu/ghost/
+
+texinfo.tex-url_prefix = $(ftp-gnu)/texinfo/
+
+standards.texi-url_prefix = $(www-gnu)/prep/
+make-stds.texi-url_prefix = $(standards.texi-url_prefix)
+
+target = $(patsubst get-%, %, $@)
+url = $($(notdir $(target))-url_prefix)$(notdir $(target))
+
+.PHONY: $(get-targets)
+$(get-targets):
+	$(WGET) $(WGETFLAGS) $(url) -O $(target).t \
+	  && $(move_if_change) $(target).t $(target)
+
+cvs_files ?= \
+  $(srcdir)/build-aux/depcomp \
+  $(srcdir)/build-aux/install-sh \
+  $(srcdir)/build-aux/missing \
+  $(srcdir)/build-aux/mkinstalldirs \
+  $(srcdir)/src/ansi2knr.c
+automake_repo=:pserver:anoncvs:anoncvs@sources.redhat.com:/cvs/automake
+.PHONY: wget-update
+wget-update: $(get-targets)
+
+.PHONY: cvs-update
+cvs-update:
+	fail=;								\
+	for f in $(cvs_files); do					\
+	  test -f $$f || { echo "*** skipping $$f" 1>&2; continue; };	\
+	  cvs diff $$f > /dev/null					\
+	    || { echo "*** $$f is locally modified; skipping it" 1>&2;	\
+		 fail=yes; continue; };					\
+	  file=$$(basename $$f);					\
+	  echo checking out $$file...;					\
+	  $(CVS) -d $(automake_repo) co -p automake/lib/$$file> $$f.t	\
+	    && $(move_if_change) $$f.t $$f;				\
+	done;								\
+	test "$$fail" && exit 1
+
+emit_upload_commands:
+	@echo =====================================
+	@echo =====================================
+	@echo "$(srcdir)/gnupload $(GNUPLOADFLAGS) \\"
+	@echo "    --to $(gnu_rel_host):coreutils \\"
+	@echo "  $(rel-files)"
+	@echo '# send the /tmp/announcement e-mail'
+	@echo =====================================
+	@echo =====================================
+
+$(xd-delta): $(release_archive_dir)/$(prev-tgz) $(distdir).tar.gz
+	xdelta delta -9 $^ $@ || :
+
+.PHONY: alpha beta major
+alpha beta major: news-date-check $(local-check)
+	$(MAKE) cvs-dist
+	$(MAKE) $(xd-delta)
+	$(MAKE) -s announcement RELEASE_TYPE=$@ > /tmp/announce-$(my_distdir)
+	ln $(rel-files) $(release_archive_dir)
+	chmod a-w $(rel-files)
+	$(MAKE) -s emit_upload_commands RELEASE_TYPE=$@
+	echo $(VERSION) > $(prev_version_file)
+	$(CVS) ci -m. $(prev_version_file)

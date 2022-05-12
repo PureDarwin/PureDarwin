@@ -1,0 +1,197 @@
+--- file.c.orig	2007-01-26 14:14:38.000000000 -0800
++++ file.c	2007-01-26 14:15:35.000000000 -0800
+@@ -737,6 +737,14 @@
+ 	    f2->command_flags |= COMMANDS_SILENT;
+     }
+ 
++  f = lookup_file (".POSIX");
++  if (f != 0 && f->is_target) {
++    posix_pedantic = 1;
++#ifndef VMS
++    define_variable("ARFLAGS", 7, "-rv", o_default, 1);
++#endif
++  }
++
+   f = lookup_file (".NOTPARALLEL");
+   if (f != 0 && f->is_target)
+     not_parallel = 1;
+--- job.c.orig	2005-02-17 14:54:46.000000000 -0800
++++ job.c	2005-02-22 19:26:33.000000000 -0800
+@@ -971,6 +971,8 @@
+ #endif
+   register char *p;
+   int flags;
++  int already_set_status = 0;
++  char *saved_cmd_ptr = NULL;
+ #ifdef VMS
+   char *argv;
+ #else
+@@ -986,8 +988,10 @@
+   flags = (child->file->command_flags
+ 	   | child->file->cmds->lines_flags[child->command_line - 1]);
+ 
+-  p = child->command_ptr;
+-  child->noerror = ((flags & COMMANDS_NOERROR) != 0);
++  saved_cmd_ptr = p = child->command_ptr;
++  /* noerror is a single bit, so unless COMMANDS_NOERROR has the low bit set,
++    the ?1:0 isn't redundant */
++  child->noerror = (flags & COMMANDS_NOERROR) ? 1 : 0;
+ 
+   while (*p != '\0')
+     {
+@@ -1032,7 +1036,8 @@
+   /* If -q was given, say that updating `failed' if there was any text on the
+      command line, or `succeeded' otherwise.  The exit status of 1 tells the
+      user that -q is saying `something to do'; the exit status for a random
+-     error is 2.  */
++     error is 2.  NOTE: in posix_pedantic mode we continue to look at commands,
++     without posix_pedantic we cna short curcuit */
+   if (argv != 0 && question_flag && !(flags & COMMANDS_RECURSE))
+     {
+ #ifndef VMS
+@@ -1040,23 +1045,45 @@
+       free ((char *) argv);
+ #endif
+       child->file->update_status = 1;
+-      notice_finished_file (child->file);
+-      return;
++      already_set_status = 1;
++      if (!posix_pedantic) {
++	  notice_finished_file (child->file);
++	  return;
++      } else {
++	  argv = 0;
++      }
+     }
+ 
+-  if (touch_flag && !(flags & COMMANDS_RECURSE))
+-    {
+-      /* Go on to the next command.  It might be the recursive one.
+-	 We construct ARGV only to find the end of the command line.  */
++  if (argv && touch_flag) {
++      if (!(flags & COMMANDS_RECURSE)) {
++	  /* Go on to the next command.  It might be the recursive one.
++	     We construct ARGV only to find the end of the command line.  */
+ #ifndef VMS
+-      if (argv)
+-        {
+-          free (argv[0]);
+-          free ((char *) argv);
+-        }
++	    if (argv) {
++		free (argv[0]);
++		free ((char *) argv);
++	    }
+ #endif
+-      argv = 0;
++	    argv = 0;
++    } else {
++	/* insert a non-recursave version of the current command next on
++	  the command list so that all the proper non-recursave stuff
++	  happens.  This fixes a signifigant bug where if all the commands
++	  for a given target were recursave "make -t" would not touch the
++	  target!
++	*/
++	struct child *nk = malloc(sizeof(struct child));
++	*nk = *child;
++	char *cp = saved_cmd_ptr;
++	while(*cp == '-' || *cp == '+' || *cp == '@') {
++	    fprintf(stderr, "cp %p %c\n", cp, *cp);
++	    cp++;
++	}
++	nk->command_ptr = cp;
++	child->next = nk;
++	nk->file->cmds->lines_flags[nk->command_line - 1] &= ~COMMANDS_RECURSE;
+     }
++  }
+ 
+   if (argv == 0)
+     {
+@@ -1072,7 +1099,9 @@
+ 	  /* No more commands.  Make sure we're "running"; we might not be if
+              (e.g.) all commands were skipped due to -n.  */
+           set_command_state (child->file, cs_running);
+-	  child->file->update_status = 0;
++	  if (!already_set_status) {
++	      child->file->update_status = 0;
++	  }
+ 	  notice_finished_file (child->file);
+ 	}
+       return;
+--- main.c.orig	2005-02-17 14:54:46.000000000 -0800
++++ main.c	2005-02-18 15:27:53.000000000 -0800
+@@ -213,6 +213,10 @@
+ int keep_going_flag;
+ int default_keep_going_flag = 0;
+ 
++/* we are required to track these so we can show them in MAKEFLAGS rather
++ then merely showing the current state */
++int seen_k_switch = 0, seen_S_switch = 0;
++
+ /* Nonzero means check symlink mtimes.  */
+ 
+ int check_symlink_flag = 0;
+@@ -2283,6 +2287,11 @@
+       error (NILF,
+              _("warning:  Clock skew detected.  Your build may be incomplete."));
+ 
++    /* Without this a make -q on a target containing all +'ed actions
++      returns MAKE_SUCCESS */
++    if (question_flag && commands_started && status == MAKE_SUCCESS) {
++	status = MAKE_TROUBLE;
++    }
+     /* Exit.  */
+     die (status);
+   }
+@@ -2503,6 +2512,12 @@
+ 		 options which are to be ignored still consume args.  */
+ 	      int doit = !env || cs->env;
+ 
++	      if (c == 'k') {
++		  seen_k_switch = 1;
++	      } else if (c == 'S') {
++		  seen_S_switch = 1;
++	      }
++
+ 	      switch (cs->type)
+ 		{
+ 		default:
+@@ -2759,6 +2774,15 @@
+       flagslen += 2 + strlen (cs->long_name);				      \
+   } while (0)
+ 
++#define ADD_SWITCH(CH, ARG,LEN) { \
++    const struct command_switch *cs;  \
++    for(cs = switches; cs->c != '\0'; ++cs) {  \
++	if (cs->c == CH) {  \
++	    ADD_FLAG(ARG, LEN); \
++	}  \
++    } \
++}
++
+   for (cs = switches; cs->c != '\0'; ++cs)
+     if (cs->toenv && (!makefile || !cs->no_makefile))
+       switch (cs->type)
+@@ -2839,6 +2863,13 @@
+ 	  break;
+ 	}
+ 
++  if (seen_S_switch) {
++      ADD_SWITCH('S', 0, 0);
++      if (seen_k_switch && !keep_going_flag) {
++	  ADD_SWITCH('k', 0, 0);
++      }
++  }
++
+   flagslen += 4 + sizeof posixref; /* Four more for the possible " -- ".  */
+ 
+ #undef	ADD_FLAG
+@@ -2971,7 +3002,7 @@
+ 			  to redefine its value with the full set of
+ 			  switches.  Of course, an override or command
+ 			  definition will still take precedence.  */
+-		       o_file, 1);
++		       posix_pedantic ? o_env : o_file, 1);
+   if (! all)
+     /* The first time we are called, set MAKEFLAGS to always be exported.
+        We should not do this again on the second call, because that is

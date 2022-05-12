@@ -1,0 +1,175 @@
+# Executing Actions.                               -*- Autotest -*-
+# Copyright (C) 2002, 2004, 2005 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+AT_BANNER([[User Actions.]])
+
+
+# AT_SYNCLINES_COMPILE(FILE)
+# --------------------------
+# Compile FILE expecting an error, and save in the file stdout the
+# normalized output.  Ignore the exit status, since some compilers
+# (e.g. c89 on IRIX 6.5) triger warnings on `#error', instead of
+# errors.
+m4_define([AT_SYNCLINES_COMPILE],
+[AT_CHECK([$CC $CFLAGS $CPPFLAGS -c $1], [ignore], [], [stderr])
+# In case GCC displays column information, strip it down.
+#
+#   input.y:4:2: #error "4"    or
+#   input.y:4.2: #error "4"    or
+#   input.y:4:2: error: #error "4"
+# =>
+#   input.y:4: #error "4"
+#
+AT_CHECK([[sed -e 's/^\([^:]*:[^:.]*\)[.:][^:]*:\(.*\)$/\1:\2/' -e 's/^\([^:]*:[^:]*:\)[^@%:@]*\( @%:@error\)/\1\2/' stderr]], 0, [stdout])
+])
+
+# AT_TEST_SYNCLINE(TITLE, INPUT, ERROR-MSG)
+# -----------------------------------------
+# Check that compiling the parser produced from INPUT cause GCC
+# to issue ERROR-MSG.
+m4_define([AT_TEST_SYNCLINE],
+[AT_SETUP([$1])
+
+# It seems impossible to find a generic scheme to check the location
+# of an error.  Even requiring GCC is not sufficient, since for instance
+# the version modified by Apple:
+#
+# | Reading specs from /usr/libexec/gcc/darwin/ppc/2.95.2/specs
+# | Apple Computer, Inc. version gcc-934.3, based on gcc version 2.95.2
+# | 19991024 (release) configure:2124: $? = 0
+#
+# instead of:
+#
+# | input.y:2: #error "2"
+#
+# it reports:
+#
+# | input.y:2: "2"
+# | cpp-precomp: warning: errors during smart preprocessing, retrying in basic mode
+
+AT_DATA([syncline.c],
+[[#error "1"
+]])
+
+AT_SYNCLINES_COMPILE([syncline.c])
+AT_CHECK([[test "`cat stdout`" = 'syncline.c:1: @%:@error "1"' || exit 77]])
+
+AT_DATA([[input.y]], [$2])
+AT_CHECK([bison -o input.c input.y])
+AT_SYNCLINES_COMPILE([input.c])
+AT_CHECK([cat stdout], 0, [$3])
+AT_CLEANUP
+])
+
+
+## --------------------- ##
+## Prologue synch line.  ##
+## --------------------- ##
+
+
+AT_TEST_SYNCLINE([Prologue synch line],
+[[%{
+#error "2"
+void yyerror (const char *s);
+int yylex (void);
+%}
+%%
+exp: '0';
+]],
+[input.y:2: #error "2"
+])
+
+
+## ------------------- ##
+## %union synch line.  ##
+## ------------------- ##
+
+AT_TEST_SYNCLINE([%union synch line],
+[[%union {
+#error "2"
+  char dummy;
+}
+%{
+void yyerror (const char *s);
+int yylex (void);
+%}
+%%
+exp: '0';
+]],
+[input.y:2: #error "2"
+])
+
+
+## ------------------------- ##
+## Postprologue synch line.  ##
+## ------------------------- ##
+
+AT_TEST_SYNCLINE([Postprologue synch line],
+[[%{
+void yyerror (const char *s);
+int yylex (void);
+%}
+%union
+{
+  int ival;
+}
+%{
+#error "10"
+%}
+%%
+exp: '0';
+]],
+[input.y:10: #error "10"
+])
+
+
+## ------------------- ##
+## Action synch line.  ##
+## ------------------- ##
+
+AT_TEST_SYNCLINE([Action synch line],
+[[%{
+void yyerror (const char *s);
+int yylex (void);
+%}
+%%
+exp:
+{
+#error "8"
+};
+]],
+[input.y:8: #error "8"
+])
+
+
+## --------------------- ##
+## Epilogue synch line.  ##
+## --------------------- ##
+
+AT_TEST_SYNCLINE([Epilogue synch line],
+[[%{
+void yyerror (const char *s);
+int yylex (void);
+%}
+%%
+exp: '0';
+%%
+#error "8"
+]],
+[input.y:8: #error "8"
+])

@@ -1,0 +1,15 @@
+dnl @ ../doc/m4.texinfo:4224: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`foo', ``$0' called at __file__:__line__')
+dnl @result{}
+foo
+dnl @result{}foo called at stdin:2
+include(`incl.m4')
+dnl @result{}Include file start
+dnl @result{}foo called at ../examples/incl.m4:2
+dnl @result{}Include file end
+dnl @result{}

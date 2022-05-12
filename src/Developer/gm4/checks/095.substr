@@ -1,0 +1,12 @@
+dnl @ ../doc/m4.texinfo:3446: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+substr(`abc')
+dnl @error{}m4:stdin:1: Warning: too few arguments to builtin `substr'
+dnl @result{}abc
+substr(`abc',)
+dnl @error{}m4:stdin:2: empty string treated as 0 in builtin `substr'
+dnl @result{}abc

@@ -1,0 +1,138 @@
+# Extract all examples from the manual source.            -*- AWK -*-
+
+# This file is part of GNU Bison
+# Copyright 1992, 2000, 2001, 2005, 2006 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+# 02111-1307  USA
+
+# This script is for use with any Awk that conforms to POSIX.
+# It was derived from a similar script tests/generate.awk in GNU m4.
+#
+# Usage: extexi input-file.texi ... -- [FILES to extract]
+BEGIN {
+  if (!output_dir)
+    output_dir = ".";
+  for (argc = 1; argc < ARGC; ++argc)
+    if (ARGV[argc] == "--")
+      break;
+  for (i = argc + 1; i < ARGC; ++i)
+    file_wanted[ARGV[i]] = 1;
+  ARGC = argc;
+}
+
+/^@node / {
+  if (seq > 0)
+    print "AT_CLEANUP";
+
+  split ($0, tmp, ",");
+  node = substr(tmp[1], 7);
+  seq = 0;
+}
+
+/^@comment file: / {
+  if (!file_wanted[$3])
+    message("ignoring " $3);
+  else
+    {
+      message("extracting " $3);
+      file = $3;
+    }
+}
+
+/^@example$/, /^@end example$/ {
+  if (!file)
+    next;
+
+  if ($0 ~ /^@example$/)
+    {
+      input = files_output[file] ? "\n" : "";
+
+      # FNR is starting at 0 instead of 1, and
+      # #line report the line number of the *next* line.
+      # => + 2.
+      # Note that recent Bison support it, but not Flex.
+      if (file ~ /\.[chy]*$/)
+	input = "#line " (FNR + 1) " \"" FILENAME "\"\n";
+      next;
+    }
+
+  if ($0 ~ /^@end example$/)
+    {
+      if (input == "")
+	fatal("no contents: " file);
+
+      input = normalize(input);
+      # No spurious end of line: use printf.
+      if (files_output[file])
+	# The parens around the output file seem to be required
+        # by awk on Mac OS X Tiger (darwin 8.4.6).
+        printf ("%s", input) >> (output_dir "/" file);
+      else
+	printf ("%s", input) > (output_dir "/" file);
+      close (output_dir "/" file);
+      files_output[file] = 1;
+
+      file = input = "";
+      next;
+    }
+
+  input = input $0 "\n";
+}
+
+
+# We have to handle CONTENTS line per line, since anchors in AWK are
+# referring to the whole string, not the lines.
+function normalize(contents,    i, lines, n, line, res) {
+  # Remove the Texinfo tags.
+  n = split (contents, lines, "\n");
+  # We don't want the last field which empty: it's behind the last \n.
+  for (i = 1; i < n; ++i)
+    {
+      line = lines[i];
+
+      # Whole line commands.
+      if (line ~ /^@(c |comment|dots|end (ignore|group)|ignore|group)/)
+	# Gperf accepts empty lines as valid input!!!
+	if (file ~ /\.gperf$/)
+	  continue;
+	else
+	  line = "";
+
+      gsub (/^@result\{\}/, "", line);
+      gsub (/^@error\{\}/,  "", line);
+      gsub ("@[{]", "{", line);
+      gsub ("@}", "}", line);
+      gsub ("@@", "@", line);
+      gsub ("@comment.*", "", line);
+
+      res = res line "\n";
+    }
+  return res;
+}
+
+
+function message(msg) {
+  if (! message_printed[msg])
+    {
+      print "extexi: " msg > "/dev/stderr";
+      message_printed[msg] = 1;
+    }
+}
+
+function fatal(msg) {
+  message(msg);
+  exit 1
+}

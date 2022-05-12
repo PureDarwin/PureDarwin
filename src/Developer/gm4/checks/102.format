@@ -1,0 +1,14 @@
+dnl @ ../doc/m4.texinfo:3627: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`foo', `The brown fox jumped over the lazy dog')
+dnl @result{}
+format(`The string "%s" uses %d characters', foo, len(foo))
+dnl @result{}The string "The brown fox jumped over the lazy dog" uses 38 characters
+format(`%.0f', `56789.9876')
+dnl @result{}56790
+len(format(`%-*X', `300', `1'))
+dnl @result{}300

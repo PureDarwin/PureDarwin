@@ -1,0 +1,10 @@
+dnl @ ../doc/m4.texinfo:3927: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+__gnu__
+dnl @result{}
+ifdef(`__gnu__', `Extensions are active')
+dnl @result{}Extensions are active

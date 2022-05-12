@@ -1,0 +1,14 @@
+dnl @ ../doc/m4.texinfo:3181: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+divert(`1')one
+divert(`2')two
+divert(`3')three
+divert(`2')undivert`'dnl
+divert`'undivert`'dnl
+dnl @result{}two
+dnl @result{}one
+dnl @result{}three

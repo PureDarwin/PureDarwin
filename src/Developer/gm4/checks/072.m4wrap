@@ -1,0 +1,9 @@
+dnl @ ../doc/m4.texinfo:2873: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+m4wrap(`m4wrap(`)')len(abc')
+dnl @result{}
+dnl @error{}m4: ERROR: end of file in argument list

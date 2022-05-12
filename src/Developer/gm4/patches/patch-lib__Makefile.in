@@ -1,0 +1,11 @@
+--- lib/Makefile.in.orig	2008-07-11 17:02:56.000000000 -0700
++++ lib/Makefile.in	2008-07-11 17:03:06.000000000 -0700
+@@ -247,7 +247,7 @@
+ 	stat-macros.h stdbool_.h stdint_.h stdlib-safer.h stdlib--.h \
+ 	stat_.h stdio-safer.h stdio--.h unistd-safer.h unistd--.h \
+ 	unlocked-io.h xalloc.h
+-BUILT_SOURCES = $(ALLOCA_H) $(GETOPT_H) $(STDBOOL_H) $(STDINT_H) \
++BUILT_SOURCES = $(ALLOCA_H) $(GETOPT_H) $(STDBOOL_H) \
+ 	$(SYS_STAT_H) $(UNISTD_H)
+ SUFFIXES = 
+ MOSTLYCLEANFILES = core *.stackdump alloca.h alloca.h-t getopt.h \

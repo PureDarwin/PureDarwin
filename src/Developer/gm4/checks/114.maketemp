@@ -1,0 +1,18 @@
+dnl @ ../doc/m4.texinfo:4134: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+dnl This test assumes /tmp is a valid directory name, which is not true
+dnl for native Windows.
+ifdef(`__unix__', , `errprint(` skipping: not sure /tmp exists
+')m4exit(`77')')dnl
+define(`file1', maketemp(`/tmp/fooXXXXXX'))dnl
+define(`file2', maketemp(`/tmp/fooXXXXXX'))dnl
+ifelse(file1, file2, `same', `different')
+dnl @result{}different
+syscmd(`rm 'file1 file2)
+dnl @result{}
+sysval
+dnl @result{}0

@@ -1,0 +1,22 @@
+<plist version="1.0">
+<array>
+<dict>
+	<key>OpenSourceProject</key>
+	<string>m4</string>
+	<key>OpenSourceVersion</key>
+	<string>1.4.6</string>
+	<key>OpenSourceWebsiteURL</key>
+	<string>http://www.gnu.org/software/m4/</string>
+	<key>OpenSourceURL</key>
+	<string>http://ftp.gnu.org/gnu/m4/m4-1.4.6.tar.bz2</string>
+	<key>OpenSourceSHA1</key>
+	<string>a29c051e967f2d11ad7e4bb41121f68321a15832</string>
+	<key>OpenSourceImportDate</key>
+	<string>2006-09-21</string>
+	<key>OpenSourceLicense</key>
+	<string>GPL</string>
+	<key>OpenSourceLicenseFile</key>
+	<string>gm4.txt</string>
+</dict>
+</array>
+</plist>

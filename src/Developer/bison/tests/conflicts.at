@@ -1,0 +1,620 @@
+# Exercising Bison on conflicts.                         -*- Autotest -*-
+
+# Copyright (C) 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+AT_BANNER([[Conflicts.]])
+
+
+## ---------------- ##
+## S/R in initial.  ##
+## ---------------- ##
+
+# I once hacked Bison in such a way that it lost its reductions on the
+# initial state (because it was confusing it with the last state).  It
+# took me a while to strip down my failures to this simple case.  So
+# make sure it finds the s/r conflict below.
+
+AT_SETUP([S/R in initial])
+
+AT_DATA([[input.y]],
+[[%expect 1
+%%
+exp: e 'e';
+e: 'e' | /* Nothing. */;
+]])
+
+AT_CHECK([bison -o input.c input.y], 0, [],
+[[input.y:4.9: warning: rule never reduced because of conflicts: e: /* empty */
+]])
+
+AT_CLEANUP
+
+
+## ------------------- ##
+## %nonassoc and eof.  ##
+## ------------------- ##
+
+AT_SETUP([%nonassoc and eof])
+
+AT_DATA_GRAMMAR([input.y],
+[[
+%{
+#include <stdio.h>
+#include <stdlib.h>
+
+#define YYERROR_VERBOSE 1
+static void
+yyerror (const char *msg)
+{
+  fprintf (stderr, "%s\n", msg);
+}
+
+/* The current argument. */
+static const char *input = NULL;
+
+static int
+yylex (void)
+{
+  /* No token stands for end of file. */
+  if (input && *input)
+    return *input++;
+  else
+    return 0;
+}
+
+%}
+
+%nonassoc '<' '>'
+
+%%
+expr: expr '<' expr
+    | expr '>' expr
+    | '0'
+    ;
+%%
+int
+main (int argc, const char *argv[])
+{
+  if (argc > 1)
+    input = argv[1];
+  return yyparse ();
+}
+]])
+
+# Specify the output files to avoid problems on different file systems.
+AT_CHECK([bison -o input.c input.y])
+AT_COMPILE([input])
+
+AT_PARSER_CHECK([./input '0<0'])
+# FIXME: This is an actual bug, but a new one, in the sense that
+# no one has ever spotted it!  The messages are *wrong*: there should
+# be nothing there, it should be expected eof.
+AT_PARSER_CHECK([./input '0<0<0'], [1], [],
+         [syntax error, unexpected '<', expecting '<' or '>'
+])
+
+AT_PARSER_CHECK([./input '0>0'])
+AT_PARSER_CHECK([./input '0>0>0'], [1], [],
+         [syntax error, unexpected '>', expecting '<' or '>'
+])
+
+AT_PARSER_CHECK([./input '0<0>0'], [1], [],
+         [syntax error, unexpected '>', expecting '<' or '>'
+])
+
+AT_CLEANUP
+
+
+
+## ------------------------- ##
+## Unresolved SR Conflicts.  ##
+## ------------------------- ##
+
+AT_SETUP([Unresolved SR Conflicts])
+
+AT_KEYWORDS([report])
+
+AT_DATA([input.y],
+[[%token NUM OP
+%%
+exp: exp OP exp | NUM;
+]])
+
+AT_CHECK([bison -o input.c --report=all input.y], 0, [],
+[input.y: conflicts: 1 shift/reduce
+])
+
+# Check the contents of the report.
+AT_CHECK([cat input.output], [],
+[[State 5 conflicts: 1 shift/reduce
+
+
+Grammar
+
+    0 $accept: exp $end
+
+    1 exp: exp OP exp
+    2    | NUM
+
+
+Terminals, with rules where they appear
+
+$end (0) 0
+error (256)
+NUM (258) 2
+OP (259) 1
+
+
+Nonterminals, with rules where they appear
+
+$accept (5)
+    on left: 0
+exp (6)
+    on left: 1 2, on right: 0 1
+
+
+state 0
+
+    0 $accept: . exp $end
+    1 exp: . exp OP exp
+    2    | . NUM
+
+    NUM  shift, and go to state 1
+
+    exp  go to state 2
+
+
+state 1
+
+    2 exp: NUM .
+
+    $default  reduce using rule 2 (exp)
+
+
+state 2
+
+    0 $accept: exp . $end
+    1 exp: exp . OP exp
+
+    $end  shift, and go to state 3
+    OP    shift, and go to state 4
+
+
+state 3
+
+    0 $accept: exp $end .
+
+    $default  accept
+
+
+state 4
+
+    1 exp: . exp OP exp
+    1    | exp OP . exp
+    2    | . NUM
+
+    NUM  shift, and go to state 1
+
+    exp  go to state 5
+
+
+state 5
+
+    1 exp: exp . OP exp  [$end, OP]
+    1    | exp OP exp .  [$end, OP]
+
+    OP  shift, and go to state 4
+
+    OP        [reduce using rule 1 (exp)]
+    $default  reduce using rule 1 (exp)
+]])
+
+AT_CLEANUP
+
+
+
+## ----------------------- ##
+## Resolved SR Conflicts.  ##
+## ----------------------- ##
+
+AT_SETUP([Resolved SR Conflicts])
+
+AT_KEYWORDS([report])
+
+AT_DATA([input.y],
+[[%token NUM OP
+%left OP
+%%
+exp: exp OP exp | NUM;
+]])
+
+AT_CHECK([bison -o input.c --report=all input.y])
+
+# Check the contents of the report.
+AT_CHECK([cat input.output], [],
+[[Grammar
+
+    0 $accept: exp $end
+
+    1 exp: exp OP exp
+    2    | NUM
+
+
+Terminals, with rules where they appear
+
+$end (0) 0
+error (256)
+NUM (258) 2
+OP (259) 1
+
+
+Nonterminals, with rules where they appear
+
+$accept (5)
+    on left: 0
+exp (6)
+    on left: 1 2, on right: 0 1
+
+
+state 0
+
+    0 $accept: . exp $end
+    1 exp: . exp OP exp
+    2    | . NUM
+
+    NUM  shift, and go to state 1
+
+    exp  go to state 2
+
+
+state 1
+
+    2 exp: NUM .
+
+    $default  reduce using rule 2 (exp)
+
+
+state 2
+
+    0 $accept: exp . $end
+    1 exp: exp . OP exp
+
+    $end  shift, and go to state 3
+    OP    shift, and go to state 4
+
+
+state 3
+
+    0 $accept: exp $end .
+
+    $default  accept
+
+
+state 4
+
+    1 exp: . exp OP exp
+    1    | exp OP . exp
+    2    | . NUM
+
+    NUM  shift, and go to state 1
+
+    exp  go to state 5
+
+
+state 5
+
+    1 exp: exp . OP exp  [$end, OP]
+    1    | exp OP exp .  [$end, OP]
+
+    $default  reduce using rule 1 (exp)
+
+    Conflict between rule 1 and token OP resolved as reduce (%left OP).
+]])
+
+AT_CLEANUP
+
+
+## -------------------------------- ##
+## Defaulted Conflicted Reduction.  ##
+## -------------------------------- ##
+
+# When there are RR conflicts, some rules are disabled.  Usually it is
+# simply displayed as:
+#
+#    $end           reduce using rule 3 (num)
+#    $end           [reduce using rule 4 (id)]
+#
+# But when `reduce 3' is the default action, we'd produce:
+#
+#    $end           [reduce using rule 4 (id)]
+#    $default    reduce using rule 3 (num)
+#
+# In this precise case (a reduction is masked by the default
+# reduction), we make the `reduce 3' explicit:
+#
+#    $end           reduce using rule 3 (num)
+#    $end           [reduce using rule 4 (id)]
+#    $default    reduce using rule 3 (num)
+#
+# Maybe that's not the best display, but then, please propose something
+# else.
+
+AT_SETUP([Defaulted Conflicted Reduction])
+AT_KEYWORDS([report])
+
+AT_DATA([input.y],
+[[%%
+exp: num | id;
+num: '0';
+id : '0';
+%%
+]])
+
+AT_CHECK([bison -o input.c --report=all input.y], 0, [],
+[[input.y: conflicts: 1 reduce/reduce
+input.y:4.6-8: warning: rule never reduced because of conflicts: id: '0'
+]])
+
+# Check the contents of the report.
+AT_CHECK([cat input.output], [],
+[[Rules never reduced
+
+    4 id: '0'
+
+
+State 1 conflicts: 1 reduce/reduce
+
+
+Grammar
+
+    0 $accept: exp $end
+
+    1 exp: num
+    2    | id
+
+    3 num: '0'
+
+    4 id: '0'
+
+
+Terminals, with rules where they appear
+
+$end (0) 0
+'0' (48) 3 4
+error (256)
+
+
+Nonterminals, with rules where they appear
+
+$accept (4)
+    on left: 0
+exp (5)
+    on left: 1 2, on right: 0
+num (6)
+    on left: 3, on right: 1
+id (7)
+    on left: 4, on right: 2
+
+
+state 0
+
+    0 $accept: . exp $end
+    1 exp: . num
+    2    | . id
+    3 num: . '0'
+    4 id: . '0'
+
+    '0'  shift, and go to state 1
+
+    exp  go to state 2
+    num  go to state 3
+    id   go to state 4
+
+
+state 1
+
+    3 num: '0' .  [$end]
+    4 id: '0' .  [$end]
+
+    $end      reduce using rule 3 (num)
+    $end      [reduce using rule 4 (id)]
+    $default  reduce using rule 3 (num)
+
+
+state 2
+
+    0 $accept: exp . $end
+
+    $end  shift, and go to state 5
+
+
+state 3
+
+    1 exp: num .
+
+    $default  reduce using rule 1 (exp)
+
+
+state 4
+
+    2 exp: id .
+
+    $default  reduce using rule 2 (exp)
+
+
+state 5
+
+    0 $accept: exp $end .
+
+    $default  accept
+]])
+
+AT_CLEANUP
+
+
+
+
+## -------------------- ##
+## %expect not enough.  ##
+## -------------------- ##
+
+AT_SETUP([%expect not enough])
+
+AT_DATA([input.y],
+[[%token NUM OP
+%expect 0
+%%
+exp: exp OP exp | NUM;
+]])
+
+AT_CHECK([bison -o input.c input.y], 1, [],
+[input.y: conflicts: 1 shift/reduce
+input.y: expected 0 shift/reduce conflicts
+])
+AT_CLEANUP
+
+
+## --------------- ##
+## %expect right.  ##
+## --------------- ##
+
+AT_SETUP([%expect right])
+
+AT_DATA([input.y],
+[[%token NUM OP
+%expect 1
+%%
+exp: exp OP exp | NUM;
+]])
+
+AT_CHECK([bison -o input.c input.y])
+AT_CLEANUP
+
+
+## ------------------ ##
+## %expect too much.  ##
+## ------------------ ##
+
+AT_SETUP([%expect too much])
+
+AT_DATA([input.y],
+[[%token NUM OP
+%expect 2
+%%
+exp: exp OP exp | NUM;
+]])
+
+AT_CHECK([bison -o input.c input.y], 1, [],
+[input.y: conflicts: 1 shift/reduce
+input.y: expected 2 shift/reduce conflicts
+])
+AT_CLEANUP
+
+
+## ------------------------------ ##
+## %expect with reduce conflicts  ##
+## ------------------------------ ##
+
+AT_SETUP([%expect with reduce conflicts])
+
+AT_DATA([input.y],
+[[%expect 0
+%%
+program: a 'a' | a a;
+a: 'a';
+]])
+
+AT_CHECK([bison -o input.c input.y], 1, [],
+[input.y: conflicts: 1 reduce/reduce
+input.y: expected 0 reduce/reduce conflicts
+])
+AT_CLEANUP
+
+
+## ------------------------------- ##
+## %no-default-prec without %prec  ##
+## ------------------------------- ##
+
+AT_SETUP([%no-default-prec without %prec])
+
+AT_DATA([[input.y]],
+[[%left '+'
+%left '*'
+
+%%
+
+%no-default-prec;
+
+e:   e '+' e
+   | e '*' e
+   | '0'
+   ;
+]])
+
+AT_CHECK([bison -o input.c input.y], 0, [],
+[[input.y: conflicts: 4 shift/reduce
+]])
+AT_CLEANUP
+
+
+## ---------------------------- ##
+## %no-default-prec with %prec  ##
+## ---------------------------- ##
+
+AT_SETUP([%no-default-prec with %prec])
+
+AT_DATA([[input.y]],
+[[%left '+'
+%left '*'
+
+%%
+
+%no-default-prec;
+
+e:   e '+' e %prec '+'
+   | e '*' e %prec '*'
+   | '0'
+   ;
+]])
+
+AT_CHECK([bison -o input.c input.y])
+AT_CLEANUP
+
+
+## ---------------- ##
+## %default-prec    ##
+## ---------------- ##
+
+AT_SETUP([%default-prec])
+
+AT_DATA([[input.y]],
+[[%left '+'
+%left '*'
+
+%%
+
+%default-prec;
+
+e:   e '+' e
+   | e '*' e
+   | '0'
+   ;
+]])
+
+AT_CHECK([bison -o input.c input.y])
+AT_CLEANUP

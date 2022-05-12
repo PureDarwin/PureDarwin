@@ -1,0 +1,15 @@
+dnl @ ../doc/m4.texinfo:3572: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`upcase', `translit(`$*', `a-z', `A-Z')')dnl
+define(`downcase', `translit(`$*', `A-Z', `a-z')')dnl
+define(`capitalize1',
+       `regexp(`$1', `^\(\w\)\(\w*\)',
+               `upcase(`\1')`'downcase(`\2')')')dnl
+define(`capitalize',
+       `patsubst(`$1', `\w+', `capitalize1(`\&')')')dnl
+capitalize(`GNUs not Unix')
+dnl @result{}Gnus Not Unix

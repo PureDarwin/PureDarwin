@@ -1,0 +1,92 @@
+--- src/output.c.orig	2006-05-14 13:40:35.000000000 -0700
++++ src/output.c	2007-09-26 01:40:58.000000000 -0700
+@@ -40,6 +40,10 @@
+ #include "symtab.h"
+ #include "tables.h"
+ 
++/* these are for _makerelative() */
++#include <mach-o/dyld.h>
++#include <sys/param.h>
++#include <stdlib.h>
+ 
+ static struct obstack format_obstack;
+ 
+@@ -107,6 +111,49 @@
+ GENERATE_MUSCLE_INSERT_TABLE(muscle_insert_item_number_table, item_number)
+ GENERATE_MUSCLE_INSERT_TABLE(muscle_insert_state_number_table, state_number)
+ 
++/* see 5090475 & 5460821 */
++static char	_m4[PATH_MAX];
++static char	_pkgdatadir[PATH_MAX];
++
++static void
++_makerelative(void)
++{
++    char	buf[PATH_MAX];
++    uint32_t	bufsize = sizeof(buf);
++    char 	*cp;
++
++    if (*_pkgdatadir)
++	return;
++
++    if (_NSGetExecutablePath(buf, &bufsize) != 0)
++	goto error;
++
++    cp = buf + strlen(buf);
++    while(cp > buf && *--cp != '/') {} // skip over progname
++    if(cp <= buf)
++	goto error;
++    *cp = 0;
++
++    if(realpath(buf, _pkgdatadir) == NULL)
++	goto error;
++
++    /* copy the bin directory to _m4, and append base of M4 */
++    strcpy(_m4, _pkgdatadir);
++    strlcat(_m4, "/", sizeof(_m4));
++    strlcat(_m4, base_name(M4), sizeof(_m4));
++
++    cp = _pkgdatadir + strlen(_pkgdatadir);
++    while(cp > _pkgdatadir && *--cp != '/') {} // skip over dir (usually "bin")
++    if(cp <= _pkgdatadir)
++	goto error;
++    *cp = 0;
++    strlcat(_pkgdatadir, "/share/bison", sizeof(_pkgdatadir));
++    return;
++
++error:
++    strlcpy(_pkgdatadir, PKGDATADIR, sizeof(_pkgdatadir));
++    strlcpy(_m4, M4, sizeof(_m4));
++}
+ 
+ /*--------------------------------------------------------------------.
+ | Print to OUT a representation of STRING escaped both for C and M4.  |
+@@ -512,10 +559,15 @@
+   char *full_m4sugar;
+   char *full_skeleton;
+   char const *p;
+-  char const *m4 = (p = getenv ("M4")) ? p : M4;
+-  char const *pkgdatadir = (p = getenv ("BISON_PKGDATADIR")) ? p : PKGDATADIR;
++  char const *m4;
++  char const *pkgdatadir;
+   size_t skeleton_size = strlen (skeleton) + 1;
+-  size_t pkgdatadirlen = strlen (pkgdatadir);
++  size_t pkgdatadirlen;
++
++  _makerelative();
++  m4 = (p = getenv ("M4")) ? p : _m4;
++  pkgdatadir = (p = getenv ("BISON_PKGDATADIR")) ? p : _pkgdatadir;
++  pkgdatadirlen = strlen (pkgdatadir);
+   while (pkgdatadirlen && pkgdatadir[pkgdatadirlen - 1] == '/')
+     pkgdatadirlen--;
+   full_skeleton = xmalloc (pkgdatadirlen + 1
+@@ -621,7 +673,8 @@
+   /* About the skeletons. */
+   {
+     char const *pkgdatadir = getenv ("BISON_PKGDATADIR");
+-    MUSCLE_INSERT_STRING ("pkgdatadir", pkgdatadir ? pkgdatadir : PKGDATADIR);
++    _makerelative();
++    MUSCLE_INSERT_STRING ("pkgdatadir", pkgdatadir ? pkgdatadir : _pkgdatadir);
+     MUSCLE_INSERT_C_STRING ("skeleton", skeleton);
+   }
+ }

@@ -1,0 +1,14 @@
+dnl @ ../doc/m4.texinfo:3384: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+regexp(`GNUs not Unix', `\<[a-z]\w+')
+dnl @result{}5
+regexp(`GNUs not Unix', `\<Q\w*')
+dnl @result{}-1
+regexp(`GNUs not Unix', `\w\(\w+\)$', `*** \& *** \1 ***')
+dnl @result{}*** Unix *** nix ***
+regexp(`GNUs not Unix', `\<Q\w*', `*** \& *** \1 ***')
+dnl @result{}

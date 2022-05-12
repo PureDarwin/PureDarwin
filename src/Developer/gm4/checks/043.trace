@@ -1,0 +1,18 @@
+dnl @ ../doc/m4.texinfo:2072: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`foo', `Hello World.')
+dnl @result{}
+define(`echo', `$@')
+dnl @result{}
+traceon(`foo', `echo')
+dnl @result{}
+foo
+dnl @error{}m4trace: -1- foo -> `Hello World.'
+dnl @result{}Hello World.
+echo(gnus, and gnats)
+dnl @error{}m4trace: -1- echo(`gnus', `and gnats') -> ``gnus',`and gnats''
+dnl @result{}gnus,and gnats

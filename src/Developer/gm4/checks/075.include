@@ -1,0 +1,13 @@
+dnl @ ../doc/m4.texinfo:2958: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`bar', include(`incl.m4'))
+dnl @result{}
+This is `bar':  >>bar<<
+dnl @result{}This is bar:  >>Include file start
+dnl @result{}foo
+dnl @result{}Include file end
+dnl @result{}<<

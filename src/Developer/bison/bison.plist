@@ -1,0 +1,20 @@
+<plist version="1.0">
+<dict>
+	<key>OpenSourceProject</key>
+	<string>bison</string>
+	<key>OpenSourceVersion</key>
+	<string>2.3</string>
+	<key>OpenSourceWebsiteURL</key>
+	<string>http://www.gnu.org/software/bison/</string>
+	<key>OpenSourceURL</key>
+	<string>http://ftp.gnu.org/gnu/bison/bison-2.3.tar.bz2</string>
+	<key>OpenSourceMD5</key>
+	<string>7e489f35c6d8171f0cb0cad3dda0fb39f2cb0b62</string>
+	<key>OpenSourceImportDate</key>
+	<string>2006-06-14</string>
+	<key>OpenSourceLicense</key>
+	<string>GPL</string>
+	<key>OpenSourceLicenseFile</key>
+	<string>bison.txt</string>
+</dict>
+</plist>

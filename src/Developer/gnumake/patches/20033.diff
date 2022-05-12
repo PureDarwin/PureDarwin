@@ -1,0 +1,57 @@
+Index: ChangeLog
+===================================================================
+RCS file: /sources/make/make/ChangeLog,v
+retrieving revision 2.330
+diff -u -B -b -r2.330 ChangeLog
+--- ChangeLog	11 May 2007 20:57:21 -0000	2.330
++++ ChangeLog	14 Jun 2007 02:25:49 -0000
+@@ -1,3 +1,9 @@
++2007-06-13  Paul Smith  <psmith@gnu.org>
++
++	* expand.c (variable_expand_for_file): Preserve the value of
++	reading_file rather than setting it to 0 at the end.
++	Fixes Savannah bug #20033.
++
+ 2007-05-11  Paul Smith  <psmith@gnu.org>
+ 
+ 	* job.c (new_job): Add debug info to specify where make found the
+Index: expand.c
+===================================================================
+RCS file: /sources/make/make/expand.c,v
+retrieving revision 1.50
+diff -u -B -b -r1.50 expand.c
+--- expand.c	20 Mar 2007 03:02:26 -0000	1.50
++++ expand.c	14 Jun 2007 02:25:49 -0000
+@@ -460,13 +460,16 @@
+ variable_expand_for_file (const char *line, struct file *file)
+ {
+   char *result;
+-  struct variable_set_list *save;
++  struct variable_set_list *savev;
++  const struct floc *savef;
+ 
+   if (file == 0)
+     return variable_expand (line);
+ 
+-  save = current_variable_set_list;
++  savev = current_variable_set_list;
+   current_variable_set_list = file->variables;
++
++  savef = reading_file;
+   if (file->cmds && file->cmds->fileinfo.filenm)
+     reading_file = &file->cmds->fileinfo;
+   else
+@@ -471,9 +474,11 @@
+     reading_file = &file->cmds->fileinfo;
+   else
+     reading_file = 0;
++
+   result = variable_expand (line);
+-  current_variable_set_list = save;
+-  reading_file = 0;
++
++  current_variable_set_list = savev;
++  reading_file = savef;
+ 
+   return result;
+ }

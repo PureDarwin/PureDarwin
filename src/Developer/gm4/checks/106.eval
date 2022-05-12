@@ -1,0 +1,16 @@
+dnl @ ../doc/m4.texinfo:3830: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+eval(0x80000000 / -1)
+dnl @result{}-2147483648
+eval(0x80000000 % -1)
+dnl @result{}0
+eval(0x7fffffff)
+dnl @result{}2147483647
+incr(eval(0x7fffffff))
+dnl @result{}-2147483648
+eval(-4 >> 33)
+dnl @result{}-2

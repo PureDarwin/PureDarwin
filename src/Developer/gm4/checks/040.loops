@@ -1,0 +1,16 @@
+dnl @ ../doc/m4.texinfo:1962: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+undivert(`forloop.m4')
+dnl @result{}divert(`-1')
+dnl @result{}# forloop(var, from, to, stmt)
+dnl @result{}define(`forloop',
+dnl @result{}  `pushdef(`$1', `$2')_forloop(`$1', `$2', `$3', `$4')popdef(`$1')')
+dnl @result{}define(`_forloop',
+dnl @result{}  `$4`'ifelse($1, `$3', ,
+dnl @result{}    `define(`$1', incr($1))_forloop(`$1', `$2', `$3', `$4')')')
+dnl @result{}divert`'dnl
+dnl @result{}

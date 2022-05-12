@@ -1,0 +1,16 @@
+dnl @ ../doc/m4.texinfo:3705: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+incr(`4')
+dnl @result{}5
+decr(`7')
+dnl @result{}6
+incr()
+dnl @error{}m4:stdin:3: empty string treated as 0 in builtin `incr'
+dnl @result{}1
+decr()
+dnl @error{}m4:stdin:4: empty string treated as 0 in builtin `decr'
+dnl @result{}-1
