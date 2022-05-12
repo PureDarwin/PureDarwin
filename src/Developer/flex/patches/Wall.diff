@@ -1,0 +1,11 @@
+--- gen.c~	2007-05-30 23:21:57.000000000 -0700
++++ gen.c	2008-04-25 18:09:27.000000000 -0700
+@@ -506,7 +506,7 @@ void gen_find_action ()
+ 	else if (reject) {
+ 		indent_puts ("yy_current_state = *--YY_G(yy_state_ptr);");
+ 		indent_puts ("YY_G(yy_lp) = yy_accept[yy_current_state];");
+-
++		outn ("goto find_rule; /* Shut up GCC warning -Wall */");
+ 		outn ("find_rule: /* we branch to this label when backing up */");
+ 
+ 		indent_puts

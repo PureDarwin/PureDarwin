@@ -1,0 +1,32 @@
+<plist version="1.0">
+<array>
+<dict>
+        <key>OpenSourceProject</key>
+        <string>flex</string>
+        <key>OpenSourceWebsiteURL</key>
+        <string>http://flex.sourceforge.net</string>
+        <key>OpenSourceVersion</key>
+        <string>2.5.35</string>
+        <key>OpenSourceURL</key>
+	<string>http://prdownloads.sourceforge.net/flex/flex-2.5.35.tar.bz2?download</string>
+	<key>OpenSourceSHA1</key>
+	<string>c507095833aaeef2d6502e12638e54bf7ad2f24a</string>
+        <key>OpenSourceImportDate</key>
+        <string>2008-02-26</string>
+        <key>OpenSourceModifications</key>
+        <array>
+		<string>input() must return 0 at EOF</string>
+		<string>Clear stdin error when rewiring for child</string>
+		<string>libmain's main() must exit</string>
+		<string>find M4 in $PATH</string>
+		<string>Fix warnings when compiling lexer with -Wall</string>
+		<string>Fix warnings when compiling lexer with -Wshorten-64-to-32</string>
+        </array>
+        <key>OpenSourceLicense</key>
+        <string>Other</string>
+        <key>OpenSourceLicenseFile</key>
+        <string>flex.txt</string>
+</dict>
+</array>
+</plist>
+
