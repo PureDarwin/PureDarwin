@@ -1,0 +1,105 @@
+.\"Modified from man(1) of FreeBSD, the NetBSD mdoc.template, and mdoc.samples.
+.\"See Also:
+.\"man mdoc.samples for a complete listing of options
+.\"man mdoc for the short list of editing options
+.\"/usr/share/misc/mdoc.template
+.Dd August 20, 2012
+.Dt cn 1      \" Program name and manual section number 
+.Os Darwin
+.Sh NAME                 \" Section Header - required - don't modify 
+.Nm cn,
+.\" The following lines are read in generating the apropos(man -k) database. Use only key
+.\" words here as the database is built based on the words here and in the .ND line. 
+.\" Use .Nm macro to designate other names for the documented program.
+.Nd Command line interface to CommonNumerics routines.
+.Sh SYNOPSIS             \" Section Header - required - don't modify
+.Nm
+.Op Fl hilqv             \" [-hilqv]
+.Op Fl p Ar prompt       \" [-p prompt]
+.Op Ar command           \" [command]
+.Op Ar command_options   \" [command_options]
+.Op Ar command_args      \" [command_args]
+.Sh DESCRIPTION          \" Section Header - required - don't modify
+A simple command line utility allowing you to perform CRC and Base Encode/Decode with the
+Common Numerics functions.
+.Pp
+.Nm
+has the following standard options for all sub-commands:
+.Bl -tag -width Ds
+.It Fl h
+Show help information.
+.It Fl a
+Use the specified algorithm.
+The CRC, Encode, and Decode commands have various algorithms
+that can be used on data provided to them.
+.It Fl s <string>
+Performs the operation on the specified string value.
+.It Fl v
+Function in Verbose mode.
+.El                      \" Ends the list
+.Sh "CN COMMAND SUMMARY"
+.Nm
+currently only provides functions for two activities: CRC calculation and Base Encoding and Decoding (base16, base32, base64).
+.Pp
+Here are brief descriptions of all the
+.Nm
+commands:
+.Pp
+.Bl -tag -width Encode|Decode -compact
+.It Nm crc
+Perform a CRC on the data provided either as a string or on stdin.
+.Pp
+.Ar Algorithms
+.Bl -tag -compact -width Ds
+.It "10 - kCN_CRC_8"
+.It "11 - kCN_CRC_8_ICODE"
+.It "12 - kCN_CRC_8_ITU"
+.It "13 - kCN_CRC_8_ROHC"
+.It "14 - kCN_CRC_8_WCDMA"
+.It "20 - kCN_CRC_16"
+.It "21 - kCN_CRC_16_CCITT_TRUE"
+.It "22 - kCN_CRC_16_CCITT_FALSE"
+.It "23 - kCN_CRC_16_USB"
+.It "24 - kCN_CRC_16_XMODEM"
+.It "25 - kCN_CRC_16_DECT_R"
+.It "26 - kCN_CRC_16_DECT_X"
+.It "27 - kCN_CRC_16_ICODE"
+.It "28 - kCN_CRC_16_VERIFONE"
+.It "29 - kCN_CRC_16_A"
+.It "30 - kCN_CRC_16_B"
+.It "31 - kCN_CRC_16_Fletcher"
+.It "40 - kCN_CRC_32_Adler"
+.It "41 - kCN_CRC_32"
+.It "42 - kCN_CRC_32_CASTAGNOLI"
+.It "43 - kCN_CRC_32_BZIP2"
+.It "44 - kCN_CRC_32_MPEG_2"
+.It "45 - kCN_CRC_32_POSIX"
+.It "46 - kCN_CRC_32_XFER"
+.It "60 - kCN_CRC_64_ECMA_182"
+.El
+.Pp
+.It Nm Encode|Decode
+Encode or Decode data provided either as a string or on stdin using one of the algorithms
+specified below.
+.Pp
+.Ar Algorithms
+.Bl -tag -compact -width Ds
+.It "1 - kCNEncodingBase64"
+.It "2 - kCNEncodingBase32"
+.It "3 - kCNEncodingBase32Recovery"
+.It "4 - kCNEncodingBase32HEX"
+.It "5 - kCNEncodingBase16"
+.El
+.El
+.Sh ENVIRONMENT      \" May not be needed
+.Bl -tag -width "CN_READ_SIZE" \" ENV_VAR_1 is width of the string ENV_VAR_1
+.It Ev CN_READ_SIZE
+The "read size" to use when processing incoming data.
+.It Ev CN_WIDTH
+The number of columns in which to output data when performing a base encoding.
+The default is 64 columns.
+.El
+.\" .Sh BUGS              \" Document known, unremedied bugs
+.Sh HISTORY           \" Document history if command behaves in a unique manner
+.Nm
+was introduced in Mac OS X version 10.9 and iOS version 7.0.

@@ -1,0 +1,107 @@
+.Dd April 5, 2007
+.Dt CC_MD5 3cc
+.Os
+.Sh NAME
+.Nm CC_MD2_Init
+.Nm CC_MD2_Update
+.Nm CC_MD2_Final
+.Nm CC_MD2
+.Pp
+.Nm CC_MD4_Init
+.Nm CC_MD4_Update
+.Nm CC_MD4_Final
+.Nm CC_MD4
+.Pp
+.Nm CC_MD5_Init
+.Nm CC_MD5_Update
+.Nm CC_MD5_Final
+.Nm CC_MD5
+.Pp
+.Nd MD2, MD4, and MD5 hash functions
+.Sh SYNOPSIS
+.In CommonCrypto/CommonDigest.h
+.Ft extern int
+.Fn CC_MD2_Init "CC_MD2_CTX *c"
+.Ft extern int
+.Fn CC_MD2_Update "CC_MD2_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_MD2_Final "unsigned char *md" "CC_MD2_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_MD2 "const void *data" "CC_LONG len" "unsigned char *md"
+.Pp
+.Ft extern int
+.Fn CC_MD4_Init "CC_MD4_CTX *c"
+.Ft extern int
+.Fn CC_MD4_Update "CC_MD4_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_MD4_Final "unsigned char *md" "CC_MD4_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_MD4 "const void *data" "CC_LONG len" "unsigned char *md"
+.Pp
+.Ft extern int
+.Fn CC_MD5_Init "CC_MD5_CTX *c"
+.Ft extern int
+.Fn CC_MD5_Update "CC_MD5_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_MD5_Final "unsigned char *md" "CC_MD5_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_MD5 "const void *data" "CC_LONG len" "unsigned char *md"
+.Sh DESCRIPTION
+The following functions are used to produce an hash from data:
+.Pp
+.Fn CC_MD2_Init
+initializes a 
+.Ft CC_MD2_CTX
+structure.
+.Pp
+.Fn CC_MD2_Update
+can be called repeatedly with chunks of the message to
+be hashed (len bytes at data).
+.Pp
+.Fn CC_MD2_Final
+places the MD2 message digest in md, which must have space
+for 
+.Ft CC_MD2_DIGEST_LENGTH
+== 16 bytes of output, and erases the 
+.Ft CC_MD2_CTX .
+.Pp
+.Fn CC_MD2
+computes the MD2 message digest of the len
+bytes at data and places it in md (which must have space for
+.Ft CC_MD2_DIGEST_LENGTH
+== 16 bytes of output). It returns the md pointer.
+.Pp
+.Fn CC_MD4_Init , 
+.Fn CC_MD4_Update , 
+.Fn CC_MD4_Final , 
+.Fn CC_MD4 , 
+.Fn CC_MD5_Init , 
+.Fn CC_MD5_Update , 
+.Fn CC_MD5_Final ,
+and 
+.Fn CC_MD5
+are analogous using an 
+.Ft CC_MD4_CTX
+and 
+.Ft CC_MD5_CTX
+structure.
+.Sh NOTE
+MD2, MD4, and MD5 are recommended only for compatibility with existing
+applications. In new applications, SHA\-256(or greater) should be
+preferred.
+.Sh RETURN VALUES
+All routines return 1 except for the one-shot routines (
+.Fn CC_MD2
+, etc.), which return the pointer passed in via the md parameter.
+.Sh CONFORMING TO
+RFC 1319, RFC 1320, RFC 1321
+.Sh SEE ALSO
+.Xr CC_crypto 3cc ,
+.Xr CC_SHA 3cc ,
+.Xr CCHmac 3cc ,
+.Xr CCCryptor 3cc
+.Sh HISTORY
+These functions are available in OS X 10.4 and later.
+.Pp
+These functions provide similar functionality to the routines found
+in OpenSSL 0.9.6 and may use the same implementation.

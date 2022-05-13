@@ -1,0 +1,148 @@
+.Dd April 5, 2007
+.Dt CC_SHA 3cc
+.Os
+.Sh NAME
+.Nm CC_SHA1_Init
+.Nm CC_SHA1_Update
+.Nm CC_SHA1_Final
+.Nm CC_SHA1
+.Pp
+.Nm CC_SHA224_Init
+.Nm CC_SHA224_Update
+.Nm CC_SHA224_Final
+.Nm CC_SHA224
+.Pp
+.Nm CC_SHA256_Init
+.Nm CC_SHA256_Update
+.Nm CC_SHA256_Final
+.Nm CC_SHA256
+.Pp
+.Nm CC_SHA384_Init
+.Nm CC_SHA384_Update
+.Nm CC_SHA384_Final
+.Nm CC_SHA384
+.Pp
+.Nm CC_SHA512_Init
+.Nm CC_SHA512_Update
+.Nm CC_SHA512_Final
+.Nm CC_SHA512
+.Pp
+.Nd Secure Hash Algorithms
+.Sh SYNOPSIS
+.In CommonCrypto/CommonDigest.h
+.Pp
+.Ft extern int
+.Fn CC_SHA1_Init "CC_SHA1_CTX *c"
+.Ft extern int
+.Fn CC_SHA1_Update "CC_SHA1_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_SHA1_Final "unsigned char *md" "CC_SHA1_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_SHA1 "const void *data" "CC_LONG len" "unsigned char *md"
+.Pp
+.Ft extern int
+.Fn CC_SHA224_Init "CC_SHA256_CTX *c"
+.Ft extern int
+.Fn CC_SHA224_Update "CC_SHA256_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_SHA224_Final "unsigned char *md" "CC_SHA256_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_SHA224 "const void *data" "CC_LONG len" "unsigned char *md"
+.Pp
+.Ft extern int
+.Fn CC_SHA256_Init "CC_SHA256_CTX *c"
+.Ft extern int
+.Fn CC_SHA256_Update "CC_SHA256_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_SHA256_Final "unsigned char *md" "CC_SHA256_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_SHA256 "const void *data" "CC_LONG len" "unsigned char *md"
+.Pp
+.Ft extern int
+.Fn CC_SHA384_Init "CC_SHA512_CTX *c"
+.Ft extern int
+.Fn CC_SHA384_Update "CC_SHA512_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_SHA384_Final "unsigned char *md" "CC_SHA512_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_SHA384 "const void *data" "CC_LONG len" "unsigned char *md"
+.Pp
+.Ft extern int
+.Fn CC_SHA512_Init "CC_SHA512_CTX *c"
+.Ft extern int
+.Fn CC_SHA512_Update "CC_SHA512_CTX *c" "const void *data" "CC_LONG len"
+.Ft extern int
+.Fn CC_SHA512_Final "unsigned char *md" "CC_SHA512_CTX *c"
+.Ft extern unsigned char *
+.Fn CC_SHA512 "const void *data" "CC_LONG len" "unsigned char *md"
+.Sh DESCRIPTION
+SHA\-1 (Secure Hash Algorithm) is a cryptographic hash function with a
+160 bit output.
+.Pp
+.Fn CC_SHA1
+computes the SHA\-1 message digest of the len
+bytes at data and places it in md (which must have space for
+.Ft CC_SHA1_DIGEST_LENGTH
+== 20 bytes of output). It returns the md pointer.
+.Pp
+.Fn CC_SHA1_Init
+initializes a
+.Ft CC_SHA1_CTX
+structure.
+.Pp
+.Fn CC_SHA1_Update
+can be called repeatedly with chunks of the message to
+be hashed (len bytes at data).
+.Pp
+.Fn CC_SHA1_Final
+places the message digest in md, which must have space
+for
+.Ft CC_SHA1_DIGEST_LENGTH
+== 20 bytes of output, and erases the
+.Ft CC_SHA1_CTX .
+.Pp
+The successor versions of SHA\-1, SHA-2, are also implemented for hash
+bit lengths of 224, 256, 384, and 512.  The functions to call to invoke the larger hash-size
+versions of the algorithms include the hash size as part of the function names:
+.Pp
+.Fn CC_SHA224_Init ,
+.Fn CC_SHA224_Update ,
+.Fn CC_SHA224_Final ,
+.Fn CC_SHA224
+.Pp
+.Fn CC_SHA256_Init ,
+.Fn CC_SHA256_Update ,
+.Fn CC_SHA256_Final ,
+.Fn CC_SHA256
+.Pp
+.Fn CC_SHA384_Init ,
+.Fn CC_SHA384_Update ,
+.Fn CC_SHA384_Final ,
+.Fn CC_SHA384
+.Pp
+.Fn CC_SHA512_Init ,
+.Fn CC_SHA512_Update ,
+.Fn CC_SHA512_Final ,
+.Fn CC_SHA512
+.Sh RETURN VALUES
+All routines return 1 except for the one-shot routines (
+.Fn CC_SHA1 ,
+etc.), which
+return the pointer passed in via the md parameter.
+.Sh CONFORMING TO
+SHA\-1: US Federal Information Processing Standard FIPS PUB 180\-1 (Secure Hash
+Standard),
+ANSI X9.30
+.Pp
+SHA\-2: US Federal Information Processing Standard FIPS PUB 180\-2 (Secure Hash
+Standard)
+.Sh HISTORY
+These functions are available in OS X 10.4 and later.
+.Pp
+These functions provide similar functionality to the routines found in OpenSSL 0.9.6
+and may use the same implementation.
+.Sh SEE ALSO
+.Xr CC_MD5 3cc ,
+.Xr CCCryptor 3cc ,
+.Xr CCHmac 3cc ,
+.Xr CC_crypto 3cc

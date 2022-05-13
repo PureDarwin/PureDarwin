@@ -35,6 +35,11 @@ target_sources(libxar PRIVATE
     lib/zxar.c
 )
 
+target_compile_options(libxar PRIVATE -flto)
+target_link_options(libxar PRIVATE -flto)
+
+target_link_libraries(libxar PUBLIC OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)
+
 # External host libraries we link we
 target_include_directories(libxar PRIVATE ${OPENSSL_INCLUDE_DIR} ${LIBXML2_INCLUDE_DIR})
 
@@ -51,7 +56,10 @@ target_sources(xar PRIVATE
     src/xar.c
 )
 
-target_link_libraries(xar PRIVATE libxar OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)
+target_compile_options(xar PRIVATE -flto)
+target_link_options(xar PRIVATE -flto)
+
+target_link_libraries(xar PRIVATE libxar)
 
 install(TARGETS xar DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 
