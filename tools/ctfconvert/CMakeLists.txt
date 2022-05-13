@@ -50,6 +50,7 @@ set(CTF_CFLAGS
     -Wno-unused-macros
     -Wno-used-but-marked-unused
     -Wno-vla
+    -flto
 )
 
 # BEGIN STATIC LIBRARY LIBCTF
@@ -76,6 +77,7 @@ target_include_directories(libctf PUBLIC include include/sys)
 target_include_directories(libctf PUBLIC dtrace/lib/libctf/common)
 target_compile_definitions(libctf PRIVATE CTF_OLD_VERSIONS)
 target_compile_options(libctf PRIVATE ${CTF_CFLAGS})
+target_link_options(libctf PRIVATE -flto)
 
 # END STATIC LIBRARY LIBCTF
 
@@ -117,6 +119,7 @@ target_include_directories(libdwarf PUBLIC include include/sys)
 target_compile_definitions(libdwarf PRIVATE DWARF_SIMPLE_MALLOC)
 target_include_directories(libdwarf PUBLIC dtrace/lib/libdwarf dtrace/lib/libdwarf/cmplrs)
 target_compile_options(libdwarf PRIVATE ${CTF_CFLAGS})
+target_link_options(libdwarf PRIVATE -flto)
 
 # END STATIC LIBRARY LIBDWARF
 
@@ -153,6 +156,7 @@ target_include_directories(libelf PUBLIC include include/sys)
 target_compile_definitions(libelf PRIVATE DWARF_SIMPLE_MALLOC)
 target_include_directories(libelf PUBLIC dtrace/lib/libelf)
 target_compile_options(libelf PRIVATE ${CTF_CFLAGS})
+target_link_options(libelf PRIVATE -flto)
 
 # END STATIC LIBRARY LIBELF
 
@@ -172,6 +176,7 @@ target_link_libraries(ctfconvert PRIVATE libctf libdwarf libelf ZLIB::ZLIB)
 target_compile_definitions(ctfconvert PRIVATE DWARF_SIMPLE_MALLOC)
 target_compile_options(ctfconvert PRIVATE ${CTF_CFLAGS})
 set_property(TARGET ctfconvert PROPERTY CXX_STANDARD 14)
+target_link_options(ctfconvert PRIVATE -flto)
 
 install(TARGETS ctfconvert DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 
@@ -191,6 +196,7 @@ target_link_libraries(ctfdump PRIVATE libctf libelf ZLIB::ZLIB)
 target_compile_definitions(ctfdump PRIVATE DWARF_SIMPLE_MALLOC)
 target_compile_options(ctfdump PRIVATE ${CTF_CFLAGS})
 set_property(TARGET ctfdump PROPERTY CXX_STANDARD 14)
+target_link_options(ctfdump PRIVATE -flto)
 
 install(TARGETS ctfdump DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 
@@ -213,6 +219,7 @@ target_link_libraries(ctfmerge PRIVATE libctf libdwarf libelf ZLIB::ZLIB)
 target_compile_definitions(ctfmerge PRIVATE DWARF_SIMPLE_MALLOC)
 target_compile_options(ctfmerge PRIVATE ${CTF_CFLAGS})
 set_property(TARGET ctfmerge PROPERTY CXX_STANDARD 14)
+target_link_options(ctfmerge PRIVATE -flto)
 
 install(TARGETS ctfmerge DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 
