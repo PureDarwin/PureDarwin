@@ -3,9 +3,17 @@
 #   the PureDarwin Operating System.
 
 cmake_minimum_required(VERSION 3.15.1)
-project(PUREDARWIN)
+project(PUREDARWIN-TOOLSET)
 
 cmake_policy(SET CMP0114 NEW)
+
+# These are generally what is expected
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_C_STANDARD 11)
+
+# Enable LTO for everything
+add_compile_options(-flto)
+add_link_options(-flto)
 
 add_subdirectory(bison)
 add_subdirectory(cctools)
@@ -24,13 +32,13 @@ macro(install_link named target)
     install(CODE "message(\"-- Create alias: ${CMAKE_INSTALL_PREFIX}/${named} --> ${target}\")")
 endmacro()
 
+install_link(dwarfdump llvm-dwarfdump)
+install_link(gcov llvm-cov)
 install_link(m4 gm4)
 install_link(make gnumake)
 
-# WE NEED A LINKER!!
-
 # These commands are as of yet missing from the host toolchain:
-# docc, dwarfdump-classic, flex, flex++, lex, iig, ld
+# docc, dwarfdump-classic, flex, flex++, lex, iig
 
 # We're still missing these few:
 # docc, dwarfdump-classic, iig
@@ -42,12 +50,10 @@ install_link(make gnumake)
 # gm4 --> gm4, m4
 # gnumake --> gnumake, make
 # gperf --> gperf
+# ld64 --> ld, dyldinfo, unwinddump, machocheck
 
 # TODO:
 # flex --> flex, flex++, lex
-# ld64 --> ld, dyldinfo, unwinddump, machocheck
 
 # Symlinks/other tools:
 # c++, c++filt, c89, c99, cc, cpp
-# gcov --> llvm-cov
-# dwarfdump --> llvm-dwarfdump

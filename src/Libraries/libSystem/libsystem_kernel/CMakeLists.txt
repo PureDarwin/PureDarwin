@@ -25,14 +25,18 @@
 # - /usr/local/lib/loaderd/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
 # - /usr/local/lib/dyld_stub/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
 
+# BEGIN SYSCALL TRAPS
+
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
-    COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
+    COMMAND ${CMAKE_COMMAND} -E env ARCHS=${RC_CURRENT_ARCH}
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
         ${RC_SOURCE_DIR}/Kernel/xnu/bsd/kern/syscalls.master
         ${CMAKE_CURRENT_SOURCE_DIR}/custom ${CMAKE_CURRENT_SOURCE_DIR}/Platforms
         MacOSX ${CMAKE_CURRENT_BINARY_DIR}/sys
-    COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
+    COMMAND ${CMAKE_COMMAND} -E env ARCHS=${RC_CURRENT_ARCH}
+        LIBTOOL=${RC_HOST_BIN}/libtool CC=${CMAKE_C_COMPILER}
+        TARGET_TRIPLE=${CMAKE_C_COMPILER_TARGET}
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-syscalls.pl
         ${CMAKE_CURRENT_BINARY_DIR}/sys/stubs.list ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
         -I${PUREDARWIN_BINARY_DIR}/Kernel/xnu/xnu_header_install/usr/include

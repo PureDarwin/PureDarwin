@@ -35,9 +35,6 @@ target_sources(libxar PRIVATE
     lib/zxar.c
 )
 
-target_compile_options(libxar PRIVATE -flto)
-target_link_options(libxar PRIVATE -flto)
-
 target_link_libraries(libxar PUBLIC OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)
 
 # External host libraries we link we
@@ -55,9 +52,6 @@ add_executable(xar)
 target_sources(xar PRIVATE
     src/xar.c
 )
-
-target_compile_options(xar PRIVATE -flto)
-target_link_options(xar PRIVATE -flto)
 
 target_link_libraries(xar PRIVATE libxar)
 

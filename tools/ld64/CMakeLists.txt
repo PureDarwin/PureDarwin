@@ -33,10 +33,7 @@ macro(add_tool named)
         ${CMAKE_CURRENT_BINARY_DIR}
     )
 
-    set_property(TARGET ${named} PROPERTY CXX_STANDARD 14)
-
-    target_compile_options(${named} PRIVATE -Wno-invalid-offsetof -flto)
-    target_link_options(${named} PRIVATE -flto)
+    target_compile_options(${named} PRIVATE -Wno-invalid-offsetof)
 
     install(TARGETS ${named} DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 endmacro()
@@ -100,8 +97,6 @@ target_include_directories(ld PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/ld64/src/ld/parsers
     ${CMAKE_CURRENT_SOURCE_DIR}/ld64/src/ld/parsers/libunwind
 )
-
-# -ltapi
 
 target_compile_options(ld PRIVATE -Wno-undef-prefix -Wno-deprecated-declarations -Wno-return-stack-address)
 
@@ -173,10 +168,5 @@ target_include_directories(libprunetrie PRIVATE
 )
 
 target_include_directories(libprunetrie PUBLIC include_libprunetrie)
-
-target_compile_options(libprunetrie PRIVATE -flto)
-target_link_options(libprunetrie PRIVATE -flto)
-
-# TODO: DT_TOOLCHAIN_DIR
 
 # END STATIC LIBRARY libprunetrie

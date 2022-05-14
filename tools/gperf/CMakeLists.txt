@@ -27,9 +27,6 @@ target_include_directories(gperf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/gperf/lib
 )
 
-target_compile_options(gperf PRIVATE -flto)
-target_link_options(gperf PRIVATE -flto)
-
 install(TARGETS gperf DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 
 # END EXECUTABLE GPERF

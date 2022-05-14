@@ -55,8 +55,6 @@ target_include_directories(gm4 PRIVATE
 )
 
 target_compile_definitions(gm4 PRIVATE HAVE_CONFIG_H)
-target_compile_options(gm4 PRIVATE -flto)
-target_link_options(gm4 PRIVATE -flto)
 
 install(TARGETS gm4 DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 

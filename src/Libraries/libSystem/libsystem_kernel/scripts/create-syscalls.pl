@@ -3,14 +3,14 @@
 # Copyright (c) 2006-2014 Apple Inc. All rights reserved.
 #
 # @APPLE_OSREFERENCE_LICENSE_HEADER_START@
-# 
+#
 # This file contains Original Code and/or Modifications of Original Code
 # as defined in and that are subject to the Apple Public Source License
 # Version 2.0 (the 'License'). You may not use this file except in
 # compliance with the License. Please obtain a copy of the License at
 # http://www.opensource.apple.com/apsl/ and read it before using this
 # file.
-# 
+#
 # The Original Code and all software distributed under the License are
 # distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
 # EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -18,7 +18,7 @@
 # FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
 # Please see the License for the specific language governing rights and
 # limitations under the License.
-# 
+#
 # @APPLE_OSREFERENCE_LICENSE_HEADER_END@
 #
 ##########################################################################
@@ -47,6 +47,9 @@ use File::Basename ();
 use File::Copy ();
 use File::Spec;
 use IO::File;
+
+# DARWIN - Silence this script unless verbose requested.
+my $verbose = $ENV{"RC_VERBOSE"};
 
 my $MyName = File::Basename::basename($0);
 
@@ -243,7 +246,7 @@ sub readMaster {
 
 sub checkForCustomStubs {
     my ($dir) = @_;
-    
+
     my ($c_sym_name, $sym);
     while (($c_sym_name, $sym) = each %Symbols) {
         my $source = "__".$$sym{c_sym}.".s";
@@ -262,18 +265,18 @@ sub checkForCustomStubs {
             $$sym{asm_sym} = "__".$$sym{asm_sym};
             $$sym{is_private} = 1;
         }
-    }    
+    }
 }
 
 sub readAliases {
     my ($platformDir, $platformName) = @_;
     my $genericMap = File::Spec->join($platformDir, "syscall.map");
-    
+
     my %sym_to_c;
     foreach my $k (keys %Symbols) {
         $sym_to_c{$Symbols{$k}{asm_sym}} = $k;
     }
-    
+
     my @a = ();
     for my $arch (@Architectures) {
         (my $new_arch = $arch) =~ s/arm(v.*)/arm/g;
@@ -281,21 +284,21 @@ sub readAliases {
         $new_arch =~ s/arm64(.*)/arm64/g;
         push(@a, $new_arch) unless grep { $_ eq $new_arch } @a;
     }
-    
+
     foreach my $arch (@a) {
         my $syscallFile = File::Spec->join($platformDir, $platformName, $arch, "syscall.map");
-        
+
         my @files = ();
         push(@files, IO::File->new($syscallFile, 'r'));
         die "$MyName: $syscallFile: $!\n" unless defined($files[$#files]);
         push(@files, IO::File->new($genericMap, 'r'));
         die "$MyName: $genericMap: $!\n" unless defined($files[$#files]);
-        
+
         foreach my $f (@files) {
             while (<$f>) {
                 next if /^#/;
                 chomp;
-                
+
                 my ($alias, $target_symbol) = split;
                 if (defined($target_symbol)) {
                     foreach my $sym (values %Symbols) {
@@ -308,10 +311,10 @@ sub readAliases {
                             next unless ($$sym{asm_sym} eq $target || $$sym{asm_sym} eq $target_symbol);
                         }
                         $$sym{aliases}{$arch} = [] unless $$sym{aliases}{$arch};
-                        
+
                         die "$MyName: $arch $$sym{asm_sym} -> $alias: Duplicate alias.\n" if grep { $_ eq $alias } @{$$sym{aliases}{$arch}};
                         push(@{$$sym{aliases}{$arch}}, $alias);
-                        
+
                         # last thing to do, if we aliased over a first class symbol, we need
                         # to mark it
                         my $c = $sym_to_c{$alias};
@@ -410,13 +413,13 @@ sub writeAliasesForSymbol {
         (my $arch = $subarch) =~ s/arm(v.*)/arm/;
         $arch =~ s/x86_64(.*)/x86_64/;
         $arch =~ s/arm64(.*)/arm64/;
-        
+
         next unless scalar($$symbol{aliases}{$arch});
-        
+
 				printf $f "#if defined(__${arch}__)\n";
         foreach my $alias_sym (@{$$symbol{aliases}{$arch}}) {
             my $sym = (grep { $_ eq $arch } @{$$symbol{except}}) ? "__".$$symbol{asm_sym} : $$symbol{asm_sym};
-					
+
 						printf $f "\t.globl\t$alias_sym\n";
 						printf $f "\t.set\t$alias_sym, $sym\n";
         }
@@ -447,7 +450,11 @@ readAliases($PlatformsDir, $PlatformName);
 for(@Copy) {
     my $custom = File::Spec->join($CustomDir, $_);
     my $path = File::Spec->join($OutDir, $_);
-    print "Copy $custom -> $path\n";
+
+    if ($verbose eq "YES") {
+        print "Copy $custom -> $path\n";
+    }
+
     File::Copy::copy($custom, $path) || die "$MyName: copy($custom, $path): $!\n";
 }
 
@@ -464,9 +471,14 @@ while (($k, $sym) = each %Symbols)
 	if ($$sym{is_custom}) {
 		my $custom = File::Spec->join($CustomDir, $$sym{is_custom});
 		File::Copy::copy($custom, $outpath);
-		print "Copied $outpath\n";
-		
-		print "Writing aliases for $srcname\n";
+
+		if ($verbose eq "YES")
+		{
+			print "Copied $outpath\n";
+
+			print "Writing aliases for $srcname\n";
+		}
+
 		my $f = IO::File->new($outpath, 'a');
 		die "$MyName: $outpath: $!\n" unless defined($f);
 		writeAliasesForSymbol($f, $sym);
@@ -474,8 +486,11 @@ while (($k, $sym) = each %Symbols)
 	} else {
 		my $f = IO::File->new($outpath, 'w');
 		die "$MyName: $outpath: $!\n" unless defined($f);
-		
-		printf "Creating $outpath\n";
+
+		if ($verbose eq "YES") {
+			printf "Creating $outpath\n";
+		}
+
 		writeStubForSymbol($f, $sym);
 		writeAliasesForSymbol($f, $sym);
 		undef $f;
@@ -494,4 +509,3 @@ for my $s (@sources) {
 }
 undef $f;
 undef $path;
-

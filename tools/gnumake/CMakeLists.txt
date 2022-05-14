@@ -43,8 +43,7 @@ target_include_directories(gnumake PRIVATE
 target_compile_definitions(gnumake PRIVATE INCLUDEDIR=\"/usr/include\" LIBDIR=\"/usr/lib\" LOCALEDIR=\"/usr/share/locale\")
 target_compile_definitions(gnumake PRIVATE HAVE_CONFIG_H USE_POSIX_SPAWN)
 
-target_compile_options(gnumake PRIVATE -Wno-string-compare -flto)
-target_link_options(gnumake PRIVATE -flto)
+target_compile_options(gnumake PRIVATE -Wno-string-compare)
 
 install(TARGETS gnumake DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 

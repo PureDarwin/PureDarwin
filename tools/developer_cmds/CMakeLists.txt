@@ -4,9 +4,6 @@
 macro(add_tool named)
     add_executable(${named})
 
-    target_compile_options(${named} PRIVATE -flto)
-    target_link_options(${named} PRIVATE -flto)
-
     install(TARGETS ${named} DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
 endmacro()
 

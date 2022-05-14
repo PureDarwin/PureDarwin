@@ -26,9 +26,6 @@ target_sources(migcom PRIVATE
 target_compile_definitions(migcom PRIVATE MIG_VERSION=\"\")
 target_include_directories(migcom PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-target_compile_options(migcom PRIVATE -flto)
-target_link_options(migcom PRIVATE -flto)
-
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/y.tab.c
     COMMAND yacc -d -b "${CMAKE_CURRENT_BINARY_DIR}/y" ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.y
     COMMENT "Yacc parser.y" VERBATIM

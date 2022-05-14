@@ -24,6 +24,12 @@
 #ifndef _MACH_O_DYLD_PRIV_H_
 #define _MACH_O_DYLD_PRIV_H_
 
+/**** DARWIN - This file is a copy of dyld_priv.h for building ld. ****/
+/* It has been preprocessed in advance, and references to bridgeos    */
+/*   have been removed, so that normal builds of clang can actually   */
+/*   compile it.                                                      */
+/****                                                              ****/
+
 #include <assert.h>
 #include <stdbool.h>
 #include <unistd.h>

@@ -131,8 +131,8 @@ target_include_directories(libstuff PRIVATE ${RC_HOST_BIN}/../include)
 # TODO: Better way to track cctools version
 target_compile_definitions(libstuff PRIVATE CURRENT_PROJECT_VERSION=\"973.0.1\")
 target_compile_definitions(libstuff PUBLIC LTO_SUPPORT)
-target_compile_options(libstuff PUBLIC -Wno-ambiguous-macro -flto)
-target_link_options(libstuff PUBLIC -flto)
+
+target_compile_options(libstuff PUBLIC -Wno-ambiguous-macro)
 
 # END STATIC LIBRARY libstuff
 

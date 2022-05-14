@@ -1527,8 +1527,9 @@ void InputFiles::dylibs(ld::Internal& state)
 	// and -bundle_loader
 	state.bundleLoader = _bundleLoader;
 	
+    /**** DARWIN - This behavior is absolutely idiotic. Disable it. We know what we're doing. ****/
 	// <rdar://problem/10807040> give an error when -nostdlib is used and libSystem is missing
-	if ( (state.dylibs.size() == 0) && _options.needsEntryPointLoadCommand() && !_options.platforms().contains(ld::Platform::driverKit))  {
+	/*if ( (state.dylibs.size() == 0) && _options.needsEntryPointLoadCommand() && !_options.platforms().contains(ld::Platform::driverKit))  {
 		// HACK until 39514191 is fixed
 		bool grandfather = false;
 		for (const File* inFile : _inputFiles) {
@@ -1537,7 +1538,7 @@ void InputFiles::dylibs(ld::Internal& state)
 		}
 		if ( !grandfather )
 			throw "dynamic main executables must link with libSystem.dylib";
-	}
+	}*/
 }
 
 void InputFiles::archives(ld::Internal& state)

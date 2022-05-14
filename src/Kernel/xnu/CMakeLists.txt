@@ -24,7 +24,7 @@ externalproject_add(xnu_headers.extproj
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=0
+        make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=1
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
@@ -33,10 +33,6 @@ externalproject_add(xnu_headers.extproj
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-
-# add_dependencies(xnu_headers.extproj darwin_codesign_allocate
-#     migcom host_strip host_lipo host_nm unifdef host_nmedit
-#     ctfconvert.host ctfmerge.host availability.pl)
 
 add_dependencies(xnu_headers.extproj availability.pl)
 
@@ -80,7 +76,7 @@ externalproject_add(xnu
             -D CTFMERGE_PATH=${RC_HOST_BIN}/ctfmerge
             -D CTFINSERT_PATH=${RC_HOST_BIN}/ctf_insert
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
-            #-D LD_PATH=$<TARGET_FILE:darwin_ld>
+            -D LD_PATH=${RC_HOST_BIN}/ld
             -D MIG_PATH=${RC_HOST_BIN}/mig
             -D MIGCOM_PATH=${RC_HOST_BIN}/../libexec/migcom
             -D STRIP_PATH=${RC_HOST_BIN}/strip
@@ -102,7 +98,7 @@ externalproject_add(xnu
             -D RC_NONARCH_CXXFLAGS=${RC_NONARCH_CXXFLAGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=0
+        make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=1
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
