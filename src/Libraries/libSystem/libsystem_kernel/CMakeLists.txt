@@ -201,9 +201,8 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/internal_include/mach)
 
-# TODO: The only remaining headers here are from clang. Once we build clang ourselves,
-#   we can finally remove this directory and be happy.
-target_include_directories(libsystem_kernel_static PUBLIC bootstrap_include)
+# We need a few compiler internal headers here to make
+target_include_directories(libsystem_kernel_static PUBLIC ${RC_COMPILER_INCLUDE_DIR})
 
 # libc exposes some public headers we use even though we don't need to link against libc
 target_link_libraries(libsystem_kernel_static PUBLIC libc_public_headers)

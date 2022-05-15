@@ -5,7 +5,7 @@ externalproject_add(xnu_headers.extproj
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND true # disable auto CMake configure
     BUILD_COMMAND
-        cmake
+        cmake -DCMAKE_MAKE_PROGRAM=${RC_HOST_BIN}/make
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
             -D CODESIGN_ALLOCATE_PATH=${RC_HOST_BIN}/codesign_allocate
@@ -24,7 +24,7 @@ externalproject_add(xnu_headers.extproj
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=1
+        ${RC_HOST_BIN}/make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=1
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
@@ -68,7 +68,7 @@ externalproject_add(xnu
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
     CONFIGURE_COMMAND true # disable auto CMake configure
     BUILD_COMMAND
-        cmake
+        cmake -DCMAKE_MAKE_PROGRAM=${RC_HOST_BIN}/make
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
             -D CODESIGN_ALLOCATE_PATH=${RC_HOST_BIN}/codesign_allocate
@@ -98,7 +98,7 @@ externalproject_add(xnu
             -D RC_NONARCH_CXXFLAGS=${RC_NONARCH_CXXFLAGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=1
+        ${RC_HOST_BIN}/make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=1
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
