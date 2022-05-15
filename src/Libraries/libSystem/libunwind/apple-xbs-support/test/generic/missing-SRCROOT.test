@@ -1,0 +1,3 @@
+RUN: rm -rf %t
+RUN: mkdir -p %t/dest
+RUN: ! make -C %src_root RC_ProjectName=clang 2>&1 | grep 'SRCROOT not set'

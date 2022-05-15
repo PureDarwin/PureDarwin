@@ -39,9 +39,7 @@ install_link(make gnumake)
 
 # These commands are as of yet missing from the host toolchain:
 # docc, dwarfdump-classic, flex, flex++, lex, iig
-
-# We're still missing these few:
-# docc, dwarfdump-classic, iig
+# (flex, flex++, lex are in the source tree, just not built.)
 
 # These are done
 # bison --> bison, yacc
@@ -56,4 +54,4 @@ install_link(make gnumake)
 # flex --> flex, flex++, lex
 
 # Symlinks/other tools:
-# c++, c++filt, c89, c99, cc, cpp
+# c++filt, c89, c99, cpp

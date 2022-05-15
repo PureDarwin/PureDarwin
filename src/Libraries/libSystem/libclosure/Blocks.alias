@@ -1,0 +1,7 @@
+# <symbol>  <alias>
+_OBJC_CLASS_$___NSStackBlock__       __NSConcreteStackBlock
+_OBJC_CLASS_$___NSMallocBlock__      __NSConcreteMallocBlock
+_OBJC_CLASS_$___NSAutoBlock__        __NSConcreteAutoBlock
+_OBJC_CLASS_$___NSFinalizingBlock__  __NSConcreteFinalizingBlock
+_OBJC_CLASS_$___NSGlobalBlock__      __NSConcreteGlobalBlock
+_OBJC_CLASS_$___NSBlockVariable__    __NSConcreteWeakBlockVariable

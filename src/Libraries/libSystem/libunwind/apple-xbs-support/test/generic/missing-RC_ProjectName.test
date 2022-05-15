@@ -1,0 +1,4 @@
+RUN: rm -rf %t
+RUN: mkdir -p %t/dest
+RUN: ! make -C %src_root 2>&1 | grep 'make RC_ProjectName=clang'
+RUN: ! make -C %src_root 2>&1 | grep 'make RC_ProjectName=clang_device'

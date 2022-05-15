@@ -1,0 +1,3 @@
+system_sim_kernel system_kernel
+system_sim_platform system_platform
+system_sim_pthread system_pthread

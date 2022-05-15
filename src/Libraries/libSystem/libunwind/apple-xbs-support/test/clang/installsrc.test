@@ -1,0 +1,17 @@
+RUN: rm -rf %t
+RUN: mkdir -p %t/dest
+RUN: make -C %src_root installsrc "SRCROOT=%t/dest" "RC_ProjectName=clang" "RC_ProjectSourceVersion=9999.99.99" 2>&1 \
+RUN: | grep 'clang => apple-xbs-support/clang.mk'
+
+# Verify that we got all the subdirs we wanted.
+
+RUN: stat %t/dest/Makefile
+RUN: stat %t/dest/apple-xbs-support
+RUN: stat %t/dest/clang
+RUN: stat %t/dest/clang-shims
+RUN: stat %t/dest/clang-tools-extra
+RUN: stat %t/dest/compiler-rt
+RUN: stat %t/dest/libcxx
+RUN: stat %t/dest/libcxxabi
+RUN: stat %t/dest/llvm
+RUN: ! stat %t/dest/polly

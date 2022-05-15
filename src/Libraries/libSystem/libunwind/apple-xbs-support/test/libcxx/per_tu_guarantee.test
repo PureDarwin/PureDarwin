@@ -1,0 +1,26 @@
+# Test that the per-TU guarantee is disabled internally, and enabled for the
+# public SDK.
+
+RUN: rm -rf %t
+RUN: mkdir -p %t/objroot
+RUN: mkdir -p %t/dstroot
+RUN: mkdir -p %t/symroot
+RUN: make -C "%src_root" installhdrs -j 1 RC_ProjectName=libcxx \
+RUN:            RC_ProjectSourceVersion=9999.99.99 \
+RUN:            OBJROOT="%t/objroot" \
+RUN:            DSTROOT="%t/dstroot" \
+RUN:            SYMROOT="%t/symroot" \
+RUN:            SRCROOT="%src_root" \
+RUN:            SDKROOT=$(xcrun --sdk macosx.internal --show-sdk-path) \
+RUN:            RC_ARCHS=x86_64
+
+# The per-TU guarantee should be disabled in the internal SDK (i.e. by default)
+RUN: echo "#include <version>" \
+RUN:    | xcrun clang -nostdinc++ -isystem %t/dstroot/usr/include/c++/v1 -x c++ - -E -dM \
+RUN:    | grep '#define _LIBCPP_HIDE_FROM_ABI_PER_TU 0'
+
+# But it should be enabled in the public SDK (after running clang-sdk-sanitizer)
+RUN: xcrun clang-sdk-sanitizer -i "%t/dstroot/usr/include/c++/v1/__config"
+RUN: echo "#include <version>" \
+RUN:    | xcrun clang -nostdinc++ -isystem %t/dstroot/usr/include/c++/v1 -x c++ - -E -dM \
+RUN:    | grep '#define _LIBCPP_HIDE_FROM_ABI_PER_TU 1'

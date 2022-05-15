@@ -1,0 +1,11 @@
+;; Copyright (c) 2020 Apple Inc.  All Rights reserved.
+;;
+
+(version 1)
+(deny default)
+(import "system.sb")
+
+(deny darwin-notification-post (notification-name "com.apple.test.sandbox-disallow"))
+(allow darwin-notification-post (notification-name "com.apple.test.sandbox-allow"))
+(allow darwin-notification-post (notification-name "test.post.back"))
+(allow darwin-notification-post (notification-name "test.exit"))
