@@ -10,3 +10,5 @@ set(CMAKE_CXX_COMPILER_TARGET ${triple})
 
 add_compile_options(-nostdinc)
 add_link_options(-nostdlib)
+
+include_directories(SYSTEM ${RC_HOST_BIN}/../lib/clang/15.0.0/include)
