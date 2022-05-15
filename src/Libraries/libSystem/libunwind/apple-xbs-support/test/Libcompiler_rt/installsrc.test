@@ -1,0 +1,12 @@
+RUN: rm -rf %t
+RUN: mkdir -p %t/dest
+RUN: make -C %src_root installsrc "SRCROOT=%t/dest" "RC_ProjectName=Libcompiler_rt"
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/dest/Libcompiler_rt.xcodeproj
+RUN: stat %t/dest/lib
+RUN: ! stat %t/dest/cmake
+RUN: ! stat %t/dest/make
+RUN: ! stat %t/dest/test
+

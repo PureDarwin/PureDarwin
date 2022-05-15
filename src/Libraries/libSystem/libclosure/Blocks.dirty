@@ -1,0 +1,17 @@
+_OBJC_CLASS_$___NSAutoBlock__
+_OBJC_CLASS_$___NSBlockVariable__
+_OBJC_CLASS_$___NSFinalizingBlock__
+_OBJC_CLASS_$___NSGlobalBlock__
+_OBJC_CLASS_$___NSMallocBlock__
+_OBJC_CLASS_$___NSStackBlock__
+
+_OBJC_METACLASS_$___NSAutoBlock__
+_OBJC_METACLASS_$___NSBlockVariable__
+_OBJC_METACLASS_$___NSFinalizingBlock__
+_OBJC_METACLASS_$___NSGlobalBlock__
+_OBJC_METACLASS_$___NSMallocBlock__
+_OBJC_METACLASS_$___NSStackBlock__
+
+__ZL20_Block_retain_object
+__ZL21_Block_release_object
+__ZL23_Block_destructInstance

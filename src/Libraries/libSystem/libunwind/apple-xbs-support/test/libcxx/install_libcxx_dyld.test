@@ -1,0 +1,27 @@
+# Run the build for libcxx_dyld
+RUN: rm -rf %t
+RUN: mkdir -p %t/objroot
+RUN: mkdir -p %t/dstroot
+RUN: mkdir -p %t/symroot
+RUN: make -C "%src_root" libcxx_dyld -j 1 RC_ProjectName=libcxx_dyld \
+RUN:            RC_ProjectSourceVersion=9999.99.99 \
+RUN:            OBJROOT="%t/objroot" \
+RUN:            DSTROOT="%t/dstroot" \
+RUN:            SYMROOT="%t/symroot" \
+RUN:            SRCROOT="%src_root" \
+RUN:            SDKROOT=$(xcrun --sdk macosx.internal --show-sdk-path) \
+RUN:            RC_ARCHS=x86_64
+
+# Check that libc++abi-static.a built in the right locations
+RUN: stat "%t/dstroot/usr/local/lib/dyld/libc++abi-static.a"
+RUN: stat "%t/dstroot/usr/local/lib/loaderd/libc++abi-static.a"
+RUN: stat "%t/dstroot/usr/local/lib/system/libc++abi-static.a"
+
+# Make sure libc++abi-static.a doesn't use static initializers inside its
+# dynamic cast implementation. Static initializers are not supported by dyld.
+RUN: ! nm -og "%t/dstroot/usr/local/lib/dyld/libc++abi-static.a" | grep -E 'U\s+[_]+cxa_guard_acquire' | grep 'private_typeinfo.cpp'
+
+# Don't clobber content from libcxx.
+RUN: ! stat "%t/dstroot/usr/include"
+RUN: ! stat "%t/dstroot/usr/lib"
+RUN: ! stat "%t/dstroot/usr/local/OpenSourceLicenses"

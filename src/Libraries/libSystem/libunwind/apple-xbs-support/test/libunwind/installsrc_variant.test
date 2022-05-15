@@ -1,0 +1,25 @@
+# Test variant trains.
+RUN: rm -rf %t
+RUN: mkdir -p %t/variant/dest %t/variant/Sim
+RUN: make -C %src_root installsrc "SRCROOT=%t/variant/dest" "RC_ProjectName=Variant_libunwind" 2>&1 \
+RUN: | grep 'Variant_libunwind => apple-xbs-support/libunwind.mk'
+RUN: stat %t/variant/dest/Makefile
+RUN: stat %t/variant/dest/apple-xbs-support
+RUN: stat %t/variant/dest/libunwind
+RUN: ! stat %t/variant/dest/llvm
+RUN: ! stat %t/variant/dest/clang
+RUN: ! stat %t/variant/dest/libcxx
+RUN: make -C %src_root installsrc "SRCROOT=%t/variant/Sim" "RC_ProjectName=Variant_libunwind_Sim" 2>&1 \
+RUN: | grep 'Variant_libunwind_Sim => apple-xbs-support/libunwind_Sim.mk'
+RUN: stat %t/variant/Sim/Makefile
+RUN: stat %t/variant/Sim/apple-xbs-support
+RUN: stat %t/variant/Sim/libunwind
+RUN: ! stat %t/variant/Sim/llvm
+RUN: ! stat %t/variant/Sim/clang
+RUN: ! stat %t/variant/Sim/libcxx
+
+# Suffix is not a variant.  Make sure we get a reasonable error message if the
+# file is missing.
+RUN: mkdir -p %t/suffix/dest %t/suffix/Sim
+RUN: ! make -C %src_root installsrc "SRCROOT=%t/suffix/dest" "RC_ProjectName=libunwind_Suffix" 2>&1 \
+RUN: | grep 'libunwind_Suffix => apple-xbs-support/libunwind_Suffix.mk'

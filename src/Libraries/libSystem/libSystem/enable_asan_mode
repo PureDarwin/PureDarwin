@@ -1,0 +1,244 @@
+#!/bin/bash -e
+
+ASAN_HALT_ON_ERROR=0
+ASAN_START_DEACTIVATED=1
+DARWINUP_OPTIONS=()
+LIBSYSTEM_B="/usr/lib/libSystem.B.dylib"
+LIBSYSTEM_B_ASAN="/usr/lib/libSystem.B_asan.dylib"
+# Use long name to reduce possibility of collision with other roots.
+ROOT_TMP=/tmp/___tmp_whole_os_asan_root___from_enable_asan_mode_script
+ROOT_NAME="$(basename "${ROOT_TMP}")"
+VERBOSE=0
+
+function usage() {
+  echo "Usage:"
+  echo "$0 [OPTIONS] <action>"
+  echo "$0 --help"
+  echo ""
+  echo "<action> is one of the following:"
+  echo ""
+  echo "enable - Enables Whole OS ASan mode on the system"
+  echo "disable - Disables Whole OS ASan mode on the system"
+  echo ""
+  echo "OPTIONS"
+  echo ""
+  echo "--help"
+  echo "--halt-on-error <value>"
+  echo "  Set ASan's halt_on_error option (default: ${ASAN_HALT_ON_ERROR})"
+  echo ""
+  echo "--start-deactivated <value>"
+  echo "  Set ASan's start_deactivated option (default: ${ASAN_START_DEACTIVATED})"
+  echo ""
+  echo "--verbose"
+  echo ""
+  echo "DESCRIPTION"
+  echo ""
+  echo "This script puts the device into \"Whole OS ASan mode\" where ASan is loaded"
+  echo "into most userspace processes."
+  echo ""
+}
+
+function root_user_check() {
+  if [[ $(id -u) != 0 ]]; then echo "Must be run as root." 1>&2; exit 1; fi
+}
+
+function create_root() {
+  # This function generates a root on-the-fly in a temporary directory.
+  # The intention is that this root is installable using darwinup.
+  root_user_check
+
+  RSYNC_OPTIONS=()
+  if [ "${VERBOSE}" -ne 0 ]; then
+    RSYNC_OPTIONS+=( \
+      "--progress" \
+      "--human-readable" \
+    )
+  fi
+
+  rm -rf "${ROOT_TMP}"
+  mkdir -p "${ROOT_TMP}"
+  # Use rsync so we preserve the right ownership and permissions set.
+  rsync --archive --relative "${RSYNC_OPTIONS[@]}" \
+    /usr/lib/libSystem.B_asan.dylib \
+    "${ROOT_TMP}"
+
+  # Move the ASan variant into the location of the normal variant.
+  mv "${ROOT_TMP}/${LIBSYSTEM_B_ASAN}" "${ROOT_TMP}/${LIBSYSTEM_B}"
+
+  # If this file is present on the system and we are using a development build
+  # then the usual memory resource limits won't be applied.
+  # rdar://problem/43520116
+  DISABLE_MEM_LIMIT_COOKIE_FILE="/usr/local/share/launchd-disable-memory-limits"
+  DISABLE_MEM_LIMIT_COOKIE_CONTENTS="kEnableAsanDisableMemLimit"
+
+  DISABLE_MEM_LIMIT_COOKIE_DIR="$(dirname "${DISABLE_MEM_LIMIT_COOKIE_FILE}")"
+  mkdir -p "${ROOT_TMP}/${DISABLE_MEM_LIMIT_COOKIE_DIR}"
+  echo "${DISABLE_MEM_LIMIT_COOKIE_CONTENTS}" > "${ROOT_TMP}/${DISABLE_MEM_LIMIT_COOKIE_FILE}"
+
+  # Set ASan options
+  # TODO(dliew): rdar://problem/73592766
+  ASAN_OPTIONS_FILE_PATH="/System/Library/Preferences/com.apple.asan.options"
+  ASAN_OPTIONS="color=never:handle_segv=0:handle_sigbus=0:handle_sigill=0:handle_sigfpe=0:external_symbolizer_path=:log_path=stderr:log_exe_name=0:print_module_map=2:detect_odr_violation=0:start_deactivated=1:halt_on_error=0"
+
+  # Patch options based on script settings.
+  if [ "X$(echo "${ASAN_OPTIONS}" | grep -c "start_deactivated")" != "X1" ]; then
+    echo "INTERNAL ERROR: start_deactivated not in ASAN_OPTIONS" 2>&1
+    exit 1
+  fi
+  if [ "X$(echo "${ASAN_OPTIONS}" | grep -c "halt_on_error")" != "X1" ]; then
+    echo "INTERNAL ERROR: halt_on_error not in ASAN_OPTIONS" 2>&1
+    exit 1
+  fi
+  ASAN_OPTIONS=$(echo "${ASAN_OPTIONS}" | \
+    sed -E "s/start_deactivated=[0-9]+/start_deactivated=${ASAN_START_DEACTIVATED}/;s/halt_on_error=[0-9]+/halt_on_error=${ASAN_HALT_ON_ERROR}/")
+
+  ASAN_OPTIONS_FILE_DIR="$(dirname "${ASAN_OPTIONS_FILE_PATH}")"
+  mkdir -p "${ROOT_TMP}/${ASAN_OPTIONS_FILE_DIR}"
+  [ ${VERBOSE} -ne 0 ] && echo "Setting ASan options: ${ASAN_OPTIONS}"
+  echo "${ASAN_OPTIONS}" > "${ROOT_TMP}/${ASAN_OPTIONS_FILE_PATH}"
+
+  if [ ${VERBOSE} -ne 0 ]; then
+    echo "Created root at \"${ROOT_TMP}\""
+  fi
+}
+
+function install_root() {
+  root_user_check
+  if [ ${VERBOSE} -ne 0 ]; then
+    echo "Installing root \"${ROOT_TMP}\""
+  fi
+  darwinup "${DARWINUP_OPTIONS[@]}" install "${ROOT_TMP}"
+}
+
+function is_root_installed() {
+  DARWINUP_OUTPUT=$(darwinup list "${ROOT_NAME}" | grep -c "${ROOT_NAME}")
+  if [ "${DARWINUP_OUTPUT}" = "0" ]; then
+    echo "0"
+  else
+    echo "1"
+  fi
+}
+
+function remove_root() {
+  root_user_check
+  if [ ${VERBOSE} -ne 0 ]; then
+    echo "Uninstalling root \"${ROOT_NAME}\""
+  fi
+  darwinup "${DARWINUP_OPTIONS[@]}" uninstall "${ROOT_NAME}"
+}
+
+function enable_asan_mode() {
+  if [ "$(is_root_installed)" -eq 1 ]; then
+    echo "ASan mode is already enabled." 2>&1
+    exit 1
+  fi
+  create_root
+  install_root
+  echo "Root installed. You should now reboot."
+}
+
+function disable_asan_mode() {
+  if [ "$(is_root_installed)" -eq 0 ]; then
+    echo "ASan mode is already disabled." 2>&1
+    exit 1
+  fi
+  remove_root
+  echo "Root removed. You should now reboot."
+}
+
+function status_asan_mode() {
+  if [ "$(is_root_installed)" -eq 1 ]; then
+    echo "ASan mode is enabled."
+  else
+    echo "ASan mode is disabled."
+  fi
+}
+
+function parse_bool() {
+  if [ $# -ne 3 ]; then
+    echo "INTERNAL ERROR: Wrong number of args parsed" 2>&1
+    exit 1
+  fi
+  VALUE="$1"
+  DEST_VAR="$2"
+  CONSUMER_ARG="$3"
+  if [ -z "${VALUE}" ]; then
+    echo "Value passed to ${CONSUMER_ARG} cannot be empty" 2>&1
+    exit 1
+  fi
+  DEST_VALUE=""
+  if [ "${VALUE}" = "1" ]; then
+    DEST_VALUE=1
+  elif [ "${VALUE}" = "0" ]; then
+    DEST_VALUE=0
+  else
+    echo "${CONSUMER_ARG} passed value \"${VALUE}\" which is not a boolean" 2>&1
+    exit 1
+  fi
+  eval ${DEST_VAR}="${DEST_VALUE}"
+}
+
+# Begin
+
+# Parse options
+if [ $# -lt 1 ]; then
+  echo "At least one argument must be provided" 2>&1
+  usage
+  exit 1
+fi
+
+# Parse args
+ACTION=""
+while [ $# -ne 0 ]; do
+  case "$1" in
+    --halt-on-error)
+      shift
+      parse_bool "$1" ASAN_HALT_ON_ERROR "--halt-on-error"
+    ;;
+    --help)
+      usage
+      exit 0
+    ;;
+    --start-deactivated)
+      shift
+      parse_bool "$1" ASAN_START_DEACTIVATED "--start-deactivated"
+    ;;
+    -v|--verbose)
+      VERBOSE=1
+    ;;
+    *)
+      # If last arg parse as action
+      if [ $# -eq 1 ]; then
+        ACTION="${1}"
+      else
+        echo "Unrecognised option \"${1}\"" 2>&1
+        exit 1
+      fi
+    ;;
+  esac
+  shift
+done
+
+if [ ${VERBOSE} -ne 0 ]; then
+  DARWINUP_OPTIONS+=(-v)
+  set -x
+fi
+
+# Do action
+case "${ACTION}" in
+  enable)
+    enable_asan_mode
+  ;;
+  disable)
+    disable_asan_mode
+  ;;
+  status)
+    status_asan_mode
+  ;;
+  *)
+    echo "Unknown action \"${ACTION}\"" 2>&1
+    exit 1
+  ;;
+esac
+
+exit 0

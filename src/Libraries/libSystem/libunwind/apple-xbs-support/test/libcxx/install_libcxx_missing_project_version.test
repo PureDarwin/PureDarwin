@@ -1,0 +1,25 @@
+# Make sure that if we build libcxx and forget to provide a project version,
+# we get a clear error message.
+RUN: rm -rf %t
+RUN: mkdir -p %t/objroot
+RUN: mkdir -p %t/dstroot
+RUN: mkdir -p %t/symroot
+RUN: (! make -C "%src_root" install -j 1 RC_ProjectName=libcxx \
+RUN:            OBJROOT="%t/objroot" \
+RUN:            DSTROOT="%t/dstroot" \
+RUN:            SYMROOT="%t/symroot" \
+RUN:            SRCROOT="%src_root" \
+RUN:            SDKROOT=$(xcrun --sdk macosx.internal --show-sdk-path) \
+RUN:            RC_ARCHS=x86_64 2>&1) | grep "Argument to --version must not be empty"
+
+RUN: rm -rf %t
+RUN: mkdir -p %t/objroot
+RUN: mkdir -p %t/dstroot
+RUN: mkdir -p %t/symroot
+RUN: (! make -C "%src_root" libcxx_driverkit -j 1 RC_ProjectName=libcxx_driverkit \
+RUN:            OBJROOT="%t/objroot" \
+RUN:            DSTROOT="%t/dstroot" \
+RUN:            SYMROOT="%t/symroot" \
+RUN:            SRCROOT="%src_root" \
+RUN:            SDKROOT=$(xcrun --sdk driverkit.macosx.internal --show-sdk-path) \
+RUN:            RC_ARCHS=x86_64 2>&1) | grep "Argument to --version must not be empty"

@@ -1,0 +1,394 @@
+{\rtf1\ansi\ansicpg1252\cocoartf949\cocoasubrtf430
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 Monaco;}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue0;}
+\margl1440\margr1440\margb1800\margt1800\vieww14920\viewh16280\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs52 \cf0 Language Specification for Blocks\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\fs24 \cf0 \
+2008/2/25 \'97 created\
+2008/7/28 \'97 revised, 
+\f1\fs20 __block
+\f0\fs24  syntax\
+2008/8/13 \'97 revised, Block globals\
+2008/8/21 \'97 revised, C++ elaboration\
+2008/11/1 \'97 revised, 
+\f1\fs20 __weak
+\f0\fs24  support\
+2009/1/12 \'97 revised, explicit return types\
+2009/2/10 \'97 revised, __block objects need retain\
+\
+\pard\pardeftab720\ql\qnatural
+\cf0 Copyright 2008-2009 Apple, Inc.\'a0Permission is hereby granted, free of charge, to any person obtaining a copy\'a0of this software and associated documentation files (the "Software"), to deal\'a0in the Software without restriction, including without limitation the rights\'a0to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\'a0copies of the Software, and to permit persons to whom the Software is\'a0furnished to do so, subject to the following conditions:\
+\
+The above copyright notice and this permission notice shall be included in\'a0all copies or substantial portions of the Software.\
+\
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\'a0\'a0IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\'a0\'a0FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\'a0\'a0AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\'a0\'a0LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\'a0OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\'a0THE SOFTWARE.\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+\cf0 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 The Block Type\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0\fs24 \cf0 \
+A new 
+\i derived type
+\i0  is introduced to C and, by extension, Objective-C, C++, and Objective-C++. Like function types, the Block type is a pair consisting of a result value type and a list of parameter types very similar to a function type. Blocks are intended to be used much like functions with the key distinction being that in addition to executable code they also contain various variable bindings to automatic (stack) or managed (heap) memory.\
+\
+The abstract declarator 
+\f1\fs20 int (^)(char, float)
+\f0\fs24  describes a reference to a Block that, when invoked, takes two parameters, the first of type 
+\f1\fs20 char
+\f0\fs24  and the second of type 
+\f1\fs20 float
+\f0\fs24 , and returns a value of type 
+\f1\fs20 int
+\f0\fs24 .  The Block referenced is of opaque data that may reside in automatic (stack) memory, global memory, or heap memory.\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 \
+Block Variable Declarations\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0\fs24 \cf0 \
+A variable with Block type is declared using function pointer style notation substituting 
+\f1\fs20 ^
+\f0\fs24  for 
+\f1\fs20 *
+\f0\fs24 . The following are valid Block variable declarations:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     void (^blockReturningVoidWithVoidArgument)(void);\
+    int (^blockReturningIntWithIntAndCharArguments)(int, char);\
+    void (^arrayOfTenBlocksReturningVoidWithIntArgument[10])(int);\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+Variadic 
+\f1\fs20 ...
+\f0\fs24  arguments are supported. [variadic.c]  A Block that takes no arguments must specify void in the argument list [voidarg.c].  An empty parameter list does not represent, as K&R provide, an unspecified argument list.  Note: both gcc and clang support K&R style as a convenience.\
+\
+A Block reference may be cast to a pointer of arbitrary type and vice versa. [cast.c]  A Block reference may not be dereferenced via the pointer dereference operator 
+\f1\fs20 *
+\f0\fs24 , and thus a Block's size may not be computed at compile time. [sizeof.c]\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 \
+Block Literal Expressions\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0\fs24 \cf0 \
+A Block literal expression produces a reference to a Block. It is introduced by the use of the 
+\f1\fs20 ^
+\f0\fs24  token as a unary operator.  \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     Block_literal_expression ::=   ^ block_decl compound_statement_body\
+    block_decl ::= \
+    block_decl ::= parameter_list\
+    block_decl ::= type_expression\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+...where type expression is extended to allow 
+\f1\fs20 ^
+\f0\fs24  as a Block reference (pointer) where 
+\f1\fs20 *
+\f0\fs24  is allowed as a function reference (pointer).\
+\
+The following Block literal:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     ^ void (void) \{ printf("hello world\\n"); \}\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+...produces a reference to a Block with no arguments with no return value.\
+\
+The return type is optional and is inferred from the return statements. If the return statements return a value, they all must return a value of the same type. If there is no value returned the inferred type of the Block is 
+\f1\fs20 void
+\f0\fs24 ; otherwise it is the type of the return statement value.\
+\
+If the return type is omitted and the argument list is 
+\f1\fs20 ( void )
+\f0\fs24 , the 
+\f1\fs20 ( void )
+\f0\fs24  argument list may also be omitted.\
+\
+So:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     ^ ( void ) \{ printf("hello world\\n"); \}\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+...and:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     ^ \{ printf("hello world\\n"); \}\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+...are exactly equivalent constructs for the same expression.\
+\
+The 
+\f1\fs20 type_expression
+\f0\fs24  extends C expression parsing to accommodate Block reference declarations as it accommodates function pointer declarations.\
+\
+Given:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     typedef int (*pointerToFunctionThatReturnsIntWithCharArg)(char);\
+    pointerToFunctionThatReturnsIntWithCharArg functionPointer;\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     ^ pointerToFunctionThatReturnsIntWithCharArg (float x) \{ return functionPointer; \}\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+...and:
+\f1\fs20 \
+    ^ int ((*)(float x))(char) \{ return functionPointer; \}\
+
+\f0\fs24 \
+...are equivalent expressions, as is:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0 \
+    ^(float x) \{ return functionPointer; \}\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+[returnfunctionptr.c]\
+\
+The compound statement body establishes a new lexical scope within that of its parent. Variables used within the scope of the compound statement are bound to the Block in the normal manner with the exception of those in automatic (stack) storage. Thus one may access functions and global variables as one would expect, as well as static local variables. [testme]\
+\
+Local 
+\i automatic
+\i0  (stack) variables referenced within the compound statement of a Block are imported and captured by the Block as const copies. The capture (binding) is performed at the time of the Block literal expression evaluation.\
+\
+The lifetime of variables declared in a Block is that of a function; each activation frame contains a new copy of variables declared within the local scope of the Block. Such variable declarations should be allowed anywhere [testme] rather than only when C99 parsing is requested, including 
+\f1\fs20 \cf2 for
+\f0\fs24 \cf0  statements. [testme]\
+\
+Block literal expressions may occur within Block literal expressions (nest) and all variables captured by any nested blocks are implicitly also captured in the scopes of their enclosing Blocks.\
+\
+A Block literal expression may be used as the initialization value for Block variables at global or local static scope.\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 \
+The Invoke Operator\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0\fs24 \cf0 \
+Blocks are invoked using function call syntax with a list of expression parameters of types corresponding to the declaration and returning a result type also according to the declaration. Given:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     int (^x)(char);\
+    void (^z)(void);\
+    int (^(*y))(char) = &x;\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+...the following are all legal Block invocations:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0     x('a');\
+    (*y)('a');\
+    (true ? x : *y)('a')\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 \
+The Copy and Release Operations\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0\fs24 \cf0 \
+The compiler and runtime provide copy and release operations for Block references that create and, in matched use, release allocated storage for referenced Blocks.\
+\
+The copy operation 
+\f1\fs20 Block_copy()
+\f0\fs24  is styled as a function that takes an arbitrary Block reference and returns a Block reference of the same type. The release operation, 
+\f1\fs20 Block_release()
+\f0\fs24 , is styled as a function that takes an arbitrary Block reference and, if dynamically matched to a Block copy operation, allows recovery of the referenced allocated memory.\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\fs28 \cf0 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b \cf0 The 
+\f1\b0 __block
+\f0\b  Storage Qualifier\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0\fs24 \cf0 \
+In addition to the new Block type we also introduce a new storage qualifier, 
+\f1\fs20 __block
+\f0\fs24 , for local variables. [testme: a __block declaration within a block literal]  The 
+\f1\fs20 __block
+\f0\fs24  storage qualifier is mutually exclusive to the existing local storage qualifiers 
+\f1\fs20 auto
+\f0\fs24 , 
+\f1\fs20 register
+\f0\fs24 , and 
+\f1\fs20 static
+\f0\fs24 .[testme]  Variables qualified by __block act as if they were in allocated storage and this storage is automatically recovered after last use of said variable.  An implementation may choose an optimization where the storage is initially automatic and only "moved" to allocated (heap) storage upon a Block_copy of a referencing Block.  Such variables may be mutated as normal variables are.\
+\
+In the case where a __block variable is a Block one must assume that the __block variable resides in allocated storage and as such is assumed to reference a Block that is also in allocated storage (that it is the result of a Block_copy operation).  Despite this there is no provision to do a Block_copy or a Block_release if an implementation provides initial automatic storage for Blocks.  This is due to the inherent race condition of potentially several threads trying to update the shared variable and the need for synchronization around disposing of older values and copying new ones.  Such synchronization is beyond the scope of this language specification.\
+\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 Control Flow\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0 \cf0 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\fs24 \cf0 The compound statement of a Block is treated much like a function body with respect to control flow in that 
+\f1\fs20 goto
+\f0\fs24 , 
+\f1\fs20 break
+\f0\fs24 , and 
+\f1\fs20 continue
+\f0\fs24  do not escape the Block.  Exceptions are treated "normally" in that when thrown they pop stack frames until a catch clause is found.\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\fs32 \cf0 Objective-C Extensions
+\b0\fs36 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\fs24 \cf0 \
+Objective-C extends the definition of a Block reference type to be that also of 
+\f1\fs20 id
+\f0\fs24 .  A variable or expression of Block type may be messaged or used as a parameter wherever an 
+\f1\fs20 id
+\f0\fs24  may be. The converse is also true. Block references may thus appear as properties and are subject to the 
+\f1\fs20 assign
+\f0\fs24 , 
+\f1\fs20 retain
+\f0\fs24 , and 
+\f1\fs20 copy
+\f0\fs24  attribute logic that is reserved for objects.\
+\
+All Blocks are constructed to be Objective-C objects regardless of whether the Objective-C runtime is operational in the program or not. Blocks using automatic (stack) memory are objects and may be messaged, although they may not be assigned into 
+\f1\fs20 __weak
+\f0\fs24  locations if garbage collection is enabled.\
+\
+Within a Block literal expression within a method definition references to instance variables are also imported into the lexical scope of the compound statement. These variables are implicitly qualified as references from 
+\f1\fs20 self
+\f0\fs24 , and so 
+\f1\fs20 self
+\f0\fs24  is imported as a const copy. The net effect is that  instance variables can be mutated.\
+\
+The 
+\f1\fs20 Block_copy
+\f0\fs24  operator retains all objects held in variables of automatic storage referenced within the Block expression (or form strong references if running under garbage collection).  Object variables of 
+\f1\fs20 __block
+\f0\fs24  storage type are assumed to hold normal pointers with no provision for retain and release messages.\
+\
+Foundation defines (and supplies) 
+\f1\fs20 -copy
+\f0\fs24  and 
+\f1\fs20 -release
+\f0\fs24  methods for Blocks.\
+\
+In the Objective-C and Objective-C++ languages, we allow the 
+\f1\fs20 __weak
+\f0\fs24  specifier for 
+\f1\fs20 __block
+\f0\fs24  variables of 
+\f1\fs20 object
+\f0\fs24  type.  If garbage collection is not enabled, this qualifier causes these variables to be kept without retain messages being sent. This knowingly leads to dangling pointers if the Block (or a copy) outlives the lifetime of this object.\
+\
+In garbage collected environments, the 
+\f1\fs20 __weak
+\f0\fs24  variable is set to 
+\f1\fs20 nil
+\f0\fs24  when the object it references is collected, as long as the 
+\f1\fs20 __block
+\f0\fs24  variable resides in the heap (either by default or via 
+\f1\fs20 Block_copy()
+\f0\fs24 ).  The initial Apple implementation does in fact start 
+\f1\fs20 __block
+\f0\fs24  variables on the stack and migrate them to the heap only as a result of a 
+\f1\fs20 Block_copy()
+\f0\fs24  operation.\
+\
+It is a runtime error to attempt to assign a reference to a stack-based Block into any storage marked 
+\f1\fs20 __weak
+\f0\fs24 , including 
+\f1\fs20 __weak __block
+\f0\fs24  variables.\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b\fs28 \cf0 \
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\fs32 \cf0 C++ Extensions\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\b0\fs24 \cf0 \
+Block literal expressions within functions are extended to allow const use of C++ objects, pointers, or references held in automatic storage.\
+\
+For example, given class 
+\f1\fs20 Foo
+\f0\fs24  with member function 
+\f1\fs20 fighter(void)
+\f0\fs24 :\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0       Foo foo;\
+      Foo &fooRef = foo;\
+      Foo *fooPtr = &foo;\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+...a Block that used 
+\f1\fs20 foo
+\f0\fs24  would import the variables as const variations:\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f1\fs20 \cf0        const Foo block_foo = foo;	// const copy constructor\
+       const Foo &block_fooRef = fooRef;\
+       const Foo *block_fooPtr = fooPtr;\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\ql\qnatural\pardirnatural
+
+\f0\fs24 \cf0 \
+Stack-local objects are copied into a Block via a copy const constructor.  If no such constructor exists, it is considered an error to reference such objects from within the Block compound statements. A destructor is run as control leaves the compound statement that contains the Block literal expression.\
+\
+If a Block originates on the stack, a const copy constructor of the stack-based Block const copy is performed when a 
+\f1\fs20 Block_copy
+\f0\fs24  operation is called; when the last 
+\f1\fs20 Block_release
+\f0\fs24  (or subsequently GC) occurs, a destructor is run on the heap copy.\
+\
+Variables declared as residing in 
+\f1\fs20 __block
+\f0\fs24  storage may be initially allocated in the heap or may first appear on the stack and be copied to the heap as a result of a 
+\f1\fs20 Block_copy()
+\f0\fs24  operation. When copied from the stack, a normal copy constructor is used to initialize the heap-based version from the original stack version. The destructor for a const copied object is run at the normal end of scope. The destructor for any initial stack based version is also called at normal end of scope.\
+\
+Within a member function, access to member functions and variables is done via an implicit const copy of a 
+\f1\fs20 this
+\f0\fs24  pointer.\
+\
+Member variables that are Blocks may not be overloaded by the types of their arguments.\
+}
