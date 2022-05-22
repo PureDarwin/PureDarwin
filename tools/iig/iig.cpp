@@ -57,13 +57,13 @@ int main(int argc, const char * argv[]) {
         }
     }
 
-    if (inputFilePath.size() == 0) {
+    if (inputFilePath.empty()) {
         std::cerr << "iig: error: input file not specified" << std::endl;
         usage(argv[0]);
-    } else if (headerOutputPath.size() == 0) {
+    } else if (headerOutputPath.empty()) {
         std::cerr << "iig: error: output header file not specified" << std::endl;
         usage(argv[0]);
-    } else if (implOutputPath.size() == 0) {
+    } else if (implOutputPath.empty()) {
         std::cerr << "iig: error: output source file not specified" << std::endl;
         usage(argv[0]);
     }
