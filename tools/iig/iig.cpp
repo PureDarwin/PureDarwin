@@ -99,7 +99,7 @@ int main(int argc, const char * argv[]) {
             }
 
             auto text = clang_formatDiagnostic(diag, CXDiagnostic_DisplaySourceLocation);
-            std::cerr << "iig: " << severity << text << std::endl;
+            std::cerr << "iig: " << severity << ": " << text << std::endl;
             clang_disposeString(text);
 
             if (clang_getDiagnosticSeverity(diag) == CXDiagnostic_Fatal) {
