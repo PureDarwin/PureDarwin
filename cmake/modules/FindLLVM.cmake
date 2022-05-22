@@ -1,0 +1,55 @@
+# This file only searches for the parts of LLVM required by PureDarwin.
+
+if(LLVM_ROOT_DIR)
+    if(DEFINED LLVM_VERSION)
+        find_program(LLVM_CONFIG llvm-config-${LLVM_VERSION} HINTS ${LLVM_ROOT_DIR}/bin NO_CMAKE_PATH)
+    endif()
+    if(NOT LLVM_CONFIG)
+        find_program(LLVM_CONFIG llvm-config HINTS ${LLVM_ROOT_DIR}/bin NO_CMAKE_PATH)
+    endif()
+else()
+    if(DEFINED LLVM_VERSION)
+        message(STATUS "Using LLVM ${LLVM_VERSION}")
+        find_program(LLVM_CONFIG llvm-config-${LLVM_VERSION})
+    endif()
+    if(NOT LLVM_CONFIG)
+        find_program(LLVM_CONFIG llvm-config)
+    endif()
+endif()
+
+set(LLVM_CONFIG ${LLVM_CONFIG} CACHE PATH "Path to llvm-config executable")
+mark_as_advanced(LLVM_CONFIG)
+
+if(LLVM_CONFIG)
+    execute_process(COMMAND ${LLVM_CONFIG} --includedir OUTPUT_VARIABLE LLVM_INCLUDE_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(LLVM_INCLUDE_DIR ${LLVM_INCLUDE_DIR} CACHE PATH "Path to the LLVM headers")
+    mark_as_advanced(LLVM_INCLUDE_DIRS)
+
+    execute_process(COMMAND ${LLVM_CONFIG} --libdir OUTPUT_VARIABLE LLVM_LIBRARY_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(LLVM_LIBRARY_DIR ${LLVM_LIBRARY_DIR} CACHE PATH "Path to the LLVM lib directory")
+    mark_as_advanced(LLVM_LIBRARY_DIRS)
+
+    execute_process(COMMAND ${LLVM_CONFIG} --bindir OUTPUT_VARIABLE LLVM_BINARY_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+    set(LLVM_BINARY_DIR ${LLVM_BINARY_DIR} CACHE PATH "Path to the LLVM bin directory")
+else()
+    message(SEND_ERROR "Could not find llvm-config program in PATH (try setting LLVM_ROOT_DIR)")
+endif()
+
+if(LLVM_BINARY_DIR)
+    find_program(LLVM_DSYMUTIL NAMES dsymutil llvm-dsymutil PATHS ${LLVM_BINARY_DIR})
+    message(STATUS "Found dsymutil: ${LLVM_DSYMUTIL}")
+endif()
+if(LLVM_LIBRARY_DIR)
+    find_library(LLVM_LIBCLANG NAMES libclang.dylib libclang.so PATHS ${LLVM_LIBRARY_DIR})
+    message(STATUS "Found libclang: ${LLVM_LIBCLANG}")
+endif()
+
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(LLVM DEFAULT_MSG LLVM_LIBCLANG LLVM_DSYMUTIL
+    LLVM_INCLUDE_DIR LLVM_INCLUDE_DIR LLVM_LIBRARY_DIR)
+
+if(LLVM_FOUND)
+    add_library(libclang_imported UNKNOWN IMPORTED)
+    set_property(TARGET libclang_imported APPEND PROPERTY IMPORTED_LOCATION ${LLVM_LIBCLANG})
+    set_property(TARGET libclang_imported APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${LLVM_INCLUDE_DIR})
+endif()
