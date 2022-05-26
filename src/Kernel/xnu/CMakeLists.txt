@@ -1,4 +1,8 @@
 find_package(LLVM REQUIRED)
+if(NOT LLVM_DSYMUTIL)
+    # Otherwise CI would fail with a syntax error when calling dsymutil.
+    message(SEND_ERROR "Cannot locate dsymutil")
+endif()
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
 externalproject_add(xnu_headers.extproj
