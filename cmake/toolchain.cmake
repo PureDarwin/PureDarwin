@@ -13,3 +13,14 @@ add_link_options(-nostdlib)
 
 # Ensure we can still find compiler internal headers
 include_directories(SYSTEM ${RC_HOST_BIN}/../lib/clang/15.0.0/include)
+
+# Set compiler flags from the passed variable.
+set(CMAKE_CXX_FLAGS ${RC_NONARCH_CXXFLAGS})
+set(CMAKE_C_FLAGS ${RC_NONARCH_CFLAGS})
+
+# Enable LTO for the whole build
+add_compile_options(-flto)
+add_link_options(-flto)
+
+# ASM flags
+set(CMAKE_ASM_FLAGS "-x assembler-with-cpp")

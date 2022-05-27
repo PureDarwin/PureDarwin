@@ -1,4 +1,62 @@
+# XNU. This is the kernel for the system. There are a few targets we need to build
+#   out of these sources.
+
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
+
+# RC_ENABLE_PRODUCT_INFO_FILTER
+
+##### Makefile
+# VERSDIR
+# SRCROOT, OBJROOT, DSTROOT, SYMROOT
+#
+# RC_ProjectName::
+#   Libsyscall, Libsyscall_headers_Sim, Libsyscall_driverkit (xcodebuild libsyscall)
+#   libkxld (make -C libkern/kxld $@ USE_APPLE_PB_SUPPORT=all)
+#   libkmod (xcodebuild libkmod (libkern/kmon))
+#   xnu_tests (xnu_tests target)
+#   xnu_debug, xnu_kasan
+#
+# install_kernels
+#
+# we should pass -j${RC_BUILD_JOBS}
+# ... include
+
+##### MakeInc.cmd:
+# RC_XBS sets VERBOSE=YES
+# QUIET != 0, unset --> VERBOSE=NO, PRINTF > /dev/null
+#
+# NOTE: xnu includes XCRUN as a variable. We need to be very careful...
+# It additionally attempts to find an SDK by name:
+# If SDKROOT, HOST_SDKROOT are passed in, SDKROOT_RESOLVED is not,
+#   xcrun -sdk ${SDKROOT} -show-sdk-path is called, setting SDKROOT_RESOLVED.
+# Then, SDKROOT is override to be ${SDKROOT_RESOLVED}
+# The same is done for ${HOST_SDKROOT_RESOLVED}
+# We should pass PLATFORM=MaxOSX in to avoid platform lookup.
+# Additionally, SDKVERSION should be set to the equivalent macos version to our darwin version.
+#
+# We need to send in CMAKE_C_COMPILER, CMAKE_CXX_COMPILER, MIG_PATH, MIGCOM_PATH, STRIP_PATH,
+#   LIPO_PATH, LIBTOOL_PATH, NM_PATH, UNIFDEF_PATH, DSYMUTIL_PATH, CTFCONVERT_PATH, CTFMERGE_PATH,
+#   CTFINSERT_PATH, NMEDIT_PATH
+#
+# TODO: We should build by hand the tools that come with xnu.
+#   Specifically, setsegname, kextsymboltool, decomment, installfile, replacecontents,
+#    json_compilation_db, and possibly newvers.pl.
+# Either this or we should pass HOST_CC, HOST_FLEX, HOST_BISON, HOST_GM4.
+#####
+
+##### MakeInc.def
+# We will need to properly set KERNEL_CONFIGS, ARCH_CONFIGS, <ARCH>_MACHINE_CONFIGS
+# KERNEL_CONFGS can include RELEASE DEVELOPMENT DEBUG PROFILE KASAN
+# ARCH_CONFIGS can include X86_64 X86_64H ARM ARM64
+# ARM64_MACHINE_CONFIGS can include T7000 T7001 S8000 S8001 T8010 T8011 BCM2837
+# X86_64{,H}_MACHINE_CONFIGS can include NONE
+#
+# CURRENT_ARCH_CONFIG, CURRENT_KERNEL_CONFIG, CURRENT_MACHINE_CONFIG
+# RC_NONARCH_CFLAGS, RC_NONARCH_CXXFLAGS need to be passed properly
+# FIREHOSE_KERNEL_LIBRARY_PATH
+#####
+
+# DEVELOPER_EXTRAS_DIR
 
 externalproject_add(xnu_headers.extproj
     PREFIX ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_build
@@ -24,7 +82,8 @@ externalproject_add(xnu_headers.extproj
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        ${RC_HOST_BIN}/make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=1
+        ${RC_HOST_BIN}/make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64
+            BUILD_LTO=1 LOGCOLORS=y
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
@@ -99,7 +158,7 @@ externalproject_add(xnu
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         ${RC_HOST_BIN}/make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=1
-            BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
+            BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE LOGCOLORS=y
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
             VERBOSE=${CMAKE_VERBOSE_MAKEFILE} RC_ProjectName=xnu
