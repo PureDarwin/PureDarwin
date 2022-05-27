@@ -60,7 +60,7 @@ set path = ($path .)
 #	configurations in terms of these attributes within MASTER.
 #
 # 14-Apr-83  Mike Accetta (mja) at Carnegie-Mellon University
-#	Added -config switch to only run /etc/config without 
+#	Added -config switch to only run /etc/config without
 #	"make depend" and "make".
 #
 ######################################################################
@@ -70,7 +70,9 @@ set prog=$prog:t
 set nonomatch
 set OBJDIR=../BUILD
 set SOURCEDIR=.
-set CONFIG_DIR=$OBJROOT/SETUP/config
+# Darwin - Use proper config binary
+#set CONFIG_DIR=$OBJROOT/SETUP/config
+set CONFIG_CMD="${RC_HOST_BIN}/xnu-config"
 set MASTER_CONF_DIR=.
 
 unset doconfig
@@ -297,9 +299,9 @@ part != 0 {\
 	    echo "[ configuring $SYSID ]"
         endif
 	if ($?profile) then
-	    $CONFIG_DIR/config -c $SOURCEDIR -p $SYSCONF
+	    "${CONFIG_CMD}" -c $SOURCEDIR -p $SYSCONF
 	else
-	    $CONFIG_DIR/config -c $SOURCEDIR $SYSCONF
+	    "${CONFIG_CMD}" -c $SOURCEDIR $SYSCONF
 	endif
     endif
 end

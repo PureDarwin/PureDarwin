@@ -25,6 +25,7 @@ add_subdirectory(gperf)
 add_subdirectory(ld64)
 add_subdirectory(mig)
 add_subdirectory(xar)
+add_subdirectory(xnu-tools)
 
 # There are various symlinks normally created by the above targets...
 macro(install_link named target)

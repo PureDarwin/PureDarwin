@@ -80,10 +80,16 @@ externalproject_add(xnu_headers.extproj
             -D LIBTOOL_PATH=${RC_HOST_BIN}/libtool
             -D UNIFDEF_PATH=${RC_HOST_BIN}/unifdef
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
+            -D SETSEGNAME=${RC_HOST_BIN}/setsegname
+            -D KEXTSYMBOLTOOL=${RC_HOST_BIN}/kextsymboltool
+            -D DECOMMENT=${RC_HOST_BIN}/decomment
+            -D INSTALLFILE=${RC_HOST_BIN}/installfile
+            -D REPLACECONTENTS=${RC_HOST_BIN}/replacecontents
+            -D JSON_COMPILATION_DB=${RC_HOST_BIN}/json_compilation_db
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        ${RC_HOST_BIN}/make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64
-            BUILD_LTO=1 LOGCOLORS=y
+        ${CMAKE_COMMAND} -E env RC_HOST_BIN=${RC_HOST_BIN}  ${RC_HOST_BIN}/make -C <SOURCE_DIR> installhdrs
+            ARCH_CONFIGS=X86_64 BUILD_LTO=1 LOGCOLORS=y
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
@@ -145,6 +151,12 @@ externalproject_add(xnu
             -D LIBTOOL_PATH=${RC_HOST_BIN}/libtool
             -D UNIFDEF_PATH=${RC_HOST_BIN}/unifdef
             -D DSYMUTIL_PATH=${RC_HOST_BIN}/dsymutil
+            -D SETSEGNAME=${RC_HOST_BIN}/setsegname
+            -D KEXTSYMBOLTOOL=${RC_HOST_BIN}/kextsymboltool
+            -D DECOMMENT=${RC_HOST_BIN}/decomment
+            -D INSTALLFILE=${RC_HOST_BIN}/installfile
+            -D REPLACECONTENTS=${RC_HOST_BIN}/replacecontents
+            -D JSON_COMPILATION_DB=${RC_HOST_BIN}/json_compilation_db
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
             -D FIREHOSE_KERNEL_HEADER_PATH=$<TARGET_PROPERTY:libfirehose_kernel,INTERFACE_INCLUDE_DIRECTORIES>
             -D PTHREAD_HEADER_PATH=$<TARGET_PROPERTY:pthread_common_headers,INTERFACE_INCLUDE_DIRECTORIES>
@@ -157,11 +169,12 @@ externalproject_add(xnu
             -D RC_NONARCH_CXXFLAGS=${RC_NONARCH_CXXFLAGS}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        ${RC_HOST_BIN}/make -C <SOURCE_DIR> install ARCH_CONFIGS=X86_64 BUILD_LTO=1
-            BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=RELEASE LOGCOLORS=y
-            SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
-            SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
-            VERBOSE=${CMAKE_VERBOSE_MAKEFILE} RC_ProjectName=xnu
+        ${CMAKE_COMMAND} -E env RC_HOST_BIN=${RC_HOST_BIN} ${RC_HOST_BIN}/make -C <SOURCE_DIR> install
+            ARCH_CONFIGS=X86_64 BUILD_LTO=1 BUILD_WERROR=0 DO_CTFMERGE=0
+            KERNEL_CONFIGS=RELEASE LOGCOLORS=y SRCROOT=${CMAKE_CURRENT_SOURCE_DIR}
+            OBJROOT=<BINARY_DIR> SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym
+            DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu VERBOSE=${CMAKE_VERBOSE_MAKEFILE}
+            RC_ProjectName=xnu
     INSTALL_COMMAND true # installed during build
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
