@@ -6,7 +6,3 @@ branch = stable/20220421
 path = tools/ninja
 url = https://github.com/ninja-build/ninja.git
 branch = master
-[submodule "dbuild"]
-path = tools/dbuild
-url = https://github.com/beeselmane/dbuild.git
-branch = main
