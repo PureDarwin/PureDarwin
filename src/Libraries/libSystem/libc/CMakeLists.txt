@@ -27,12 +27,7 @@ target_sources(libc_features PRIVATE
 set(libc_headers_dir ${CMAKE_CURRENT_BINARY_DIR}/headers)
 
 add_custom_command(
-    OUTPUT
-        # Technically, we generate a lot more than just this, but oh well...
-        ${libc_headers_dir}/usr/include
-        ${libc_headers_dir}/usr/local/include
-        ${libc_headers_dir}/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders
-        ${libc_headers_dir}/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders
+    OUTPUT ${libc_headers_dir}/libc_headers.stamp
     COMMAND ${CMAKE_COMMAND} -E env ARCHS="arm64 x86_64"
         SRCROOT=${CMAKE_CURRENT_SOURCE_DIR}
         DERIVED_FILES_DIR=${CMAKE_CURRENT_BINARY_DIR}
@@ -41,14 +36,16 @@ add_custom_command(
         BUILT_PRODUCTS_DIR=${libc_headers_dir}
         SDK_INSTALL_HEADERS_ROOT=""
         sh -c "${CMAKE_CURRENT_SOURCE_DIR}/scripts/headers.sh"
+    COMMAND ${CMAKE_COMMAND} -E touch ${libc_headers_dir}/libc_headers.stamp
     COMMENT "Copying libC headers..."
 )
 
-add_darwin_object_library(libc_headers_gen)
+add_library(libc_headers_gen INTERFACE)
+add_library(libc_headers_gen_private INTERFACE)
 
 target_include_directories(libc_headers_gen INTERFACE ${libc_headers_dir}/usr/include)
 
-target_sources(libc_headers_gen PRIVATE
+target_include_directories(libc_headers_gen_private INTERFACE
     ${libc_headers_dir}/usr/include
     ${libc_headers_dir}/usr/local/include
     ${libc_headers_dir}/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders

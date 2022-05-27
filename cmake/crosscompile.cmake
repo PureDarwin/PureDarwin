@@ -10,6 +10,7 @@ function(add_darwin_executable name)
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
         target_link_options(${name} PRIVATE -nostdlib)
+        set_property(TARGET ${name} PROPERTY OSX_ARCHITECTURES x86_64)
     endif()
 
     # TODO: Handle SL_NO_STANDARD_LIBRARIES here, once the libraries have been added to the build.
@@ -50,6 +51,7 @@ function(add_darwin_static_library name)
 
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+        set_property(TARGET ${name} PROPERTY OSX_ARCHITECTURES x86_64)
     endif()
 endfunction()
 
@@ -75,6 +77,8 @@ function(add_darwin_shared_library name)
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
         target_link_options(${name} PRIVATE -nostdlib)
+
+        set_property(TARGET ${name} PROPERTY OSX_ARCHITECTURES x86_64)
     endif()
 
     if(SL_MACOSX_VERSION_MIN)
@@ -124,6 +128,7 @@ function(add_darwin_object_library name)
 
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+        set_property(TARGET ${name} PROPERTY OSX_ARCHITECTURES x86_64)
     endif()
 endfunction()
 
