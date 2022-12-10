@@ -22,8 +22,8 @@ environment are described below.
 ## Quick Start
 
 To get started quickly with the default configuration, navigate to the
-PureDarwin repository root, ensure you've cloned this submodule properly, and
-execute `source tools/dbuild/setup.sh`. Some default build variables should be
+PureDarwin repository root and
+execute `source tools/rc/setup.sh`. Some default build variables should be
 output. You can now run `rc` or `rc root` from anywhere to return to the
 PureDarwin root directory.
 
