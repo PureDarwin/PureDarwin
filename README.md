@@ -12,3 +12,5 @@ One current goal of this project is to provide a useful bootable ISO/VM of Darwi
 Come Join our forum over at https://www.pd-devs.org/ 
 
 See the [Wiki](https://github.com/PureDarwin/PureDarwin/wiki) for more information.
+
+To build PureDarwin, [follow the instructions in this file](./tools/rc/README.md).
