@@ -68,6 +68,8 @@ function do_usage {
     echo "Currently supported verbs:"
     echo " - build"
     echo " - root"
+    echo " - --make-host-tooolchain"
+    echo " - --force-rebuild-llvm"
 }
 
 ### Host tool build functions
