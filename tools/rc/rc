@@ -76,7 +76,7 @@ function do_make_ninja {
     local rchosttype=$(echo ${RC_HOST_TYPE} | tr '[:upper:]' '[:lower:]')
 
     echo "Checking out ninja sources..."
-    pushd "${HOST_NINJA_ROOT}"
+    pushd "${HOST_NINJA_ROOT}" > /dev/null
 
     git fetch origin refs/tags/"${HOST_NINJA_TAG}"
     status=$?
@@ -84,7 +84,7 @@ function do_make_ninja {
     if [ $status -ne 0 ]; then
         echo "Fetch failed with status ${status}!"
 
-        popd
+        popd > /dev/null
         return ${status}
     fi
 
@@ -94,13 +94,13 @@ function do_make_ninja {
     if [ $status -ne 0 ]; then
         echo "Checkout failed with status ${status}!"
 
-        popd
+        popd > /dev/null
         return ${status}
     fi
 
     echo "Bootstrapping and building ninja..."
 
-    mkdir -pv "${HOST_NINJA_BUILD_DIR}" || (status=$? && popd && return ${status})
+    mkdir -pv "${HOST_NINJA_BUILD_DIR}" || (status=$? && popd > /dev/null && return ${status})
     cd "${HOST_NINJA_BUILD_DIR}"
 
     "${HOST_NINJA_ROOT}/configure.py" --bootstrap --platform="${rchosttype}" --host="${rchosttype}"
@@ -109,7 +109,7 @@ function do_make_ninja {
     if [ $status -ne 0 ]; then
         echo "Failed to building ninja!"
 
-        popd
+        popd > /dev/null
         return ${status}
     fi
 
@@ -117,13 +117,13 @@ function do_make_ninja {
     install -d -m 0755 "${RC_HOST_BIN}"
     install -CSv -m 0755 "${HOST_NINJA_BUILD_DIR}/ninja" "${RC_HOST_BIN}/ninja"
 
-    popd
+    popd > /dev/null
     return 0
 }
 
 # This is a bit more complex than building ninja, I pulled this out by itself
 function checkout_llvm {
-    pushd "${HOST_LLVM_ROOT}"
+    pushd "${HOST_LLVM_ROOT}" > /dev/null
 
     echo "Checkout out LLVM sources (This may take a while)..."
 
@@ -133,7 +133,7 @@ function checkout_llvm {
     if [ $status -ne 0 ]; then
         echo "Failed to fetch LLVM sources! (branch=${HOST_LLVM_BRANCH}, status=${status})"
 
-        popd
+        popd > /dev/null
         return $status
     fi
 
@@ -143,11 +143,11 @@ function checkout_llvm {
     if [ $status -ne 0 ]; then
         echo "Failed to fetch LLVM sources! (commit=${HOST_LLVM_COMMIT}, status=${status})"
 
-        popd
+        popd > /dev/null
         return $status
     fi
 
-    popd
+    popd > /dev/null
     return $status
 }
 
@@ -155,13 +155,13 @@ function checkout_llvm {
 function do_build_llvm {
     # TODO: Move this code out of this function; I want to be able to build LLVM
     #   on different commits without changing this file.
-    pushd "${HOST_LLVM_ROOT}"
+    pushd "${HOST_LLVM_ROOT}" > /dev/null
 
     local llvm_commit=$(git log -n1 --pretty='%H')
     local status=$?
 
     # We're done in the LLVM root now
-    popd
+    popd > /dev/null
 
     # Checkout if either the above command failed or we're not on the right commit.
     if [ $status -ne 0 ] || [ "${llvm_commit}" != "${HOST_LLVM_COMMIT}" ]; then
