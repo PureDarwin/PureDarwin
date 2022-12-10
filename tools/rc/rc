@@ -75,29 +75,6 @@ function do_usage {
 function do_make_ninja {
     local rchosttype=$(echo ${RC_HOST_TYPE} | tr '[:upper:]' '[:lower:]')
 
-    echo "Checking out ninja sources..."
-    pushd "${HOST_NINJA_ROOT}" > /dev/null
-
-    git fetch origin refs/tags/"${HOST_NINJA_TAG}"
-    status=$?
-
-    if [ $status -ne 0 ]; then
-        echo "Fetch failed with status ${status}!"
-
-        popd > /dev/null
-        return ${status}
-    fi
-
-    git checkout refs/tags/"${HOST_NINJA_TAG}"
-    status=$?
-
-    if [ $status -ne 0 ]; then
-        echo "Checkout failed with status ${status}!"
-
-        popd > /dev/null
-        return ${status}
-    fi
-
     echo "Bootstrapping and building ninja..."
 
     mkdir -pv "${HOST_NINJA_BUILD_DIR}" || (status=$? && popd > /dev/null && return ${status})
