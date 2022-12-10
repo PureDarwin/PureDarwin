@@ -1,0 +1,218 @@
+# Process this -*- Autotest -*- file with autom4te.
+
+# Macros for the GNU Bison Test suite.
+# Copyright (C) 2003, 2004, 2005, 2006 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+# We want a recent Autotest.
+m4_version_prereq([2.58])
+
+
+## ------------------------------- ##
+## Macros decoding Bison options.  ##
+## ------------------------------- ##
+
+
+# AT_BISON_OPTION_PUSHDEFS([BISON-OPTIONS])
+# -----------------------------------------
+m4_define([AT_BISON_OPTION_PUSHDEFS],
+[_AT_BISON_OPTION_PUSHDEFS($[1], $[2], [$1])])
+
+
+# _AT_BISON_OPTION_PUSHDEFS($1, $2, [BISON-OPTIONS])
+# --------------------------------------------------
+# This macro works around the impossibility to define macros
+# inside macros, because issuing `[$1]' is not possible in M4 :(.
+# This sucks hard, GNU M4 should really provide M5 like $$1.
+m4_define([_AT_BISON_OPTION_PUSHDEFS],
+[m4_if([$1$2], $[1]$[2], [],
+       [m4_fatal([$0: Invalid arguments: $@])])dnl
+m4_pushdef([AT_LALR1_CC_IF],
+[m4_bmatch([$3], ["lalr1.cc"], [$1], [$2])])
+m4_pushdef([AT_GLR_CC_IF],
+[m4_bmatch([$3], ["glr.cc"], [$1], [$2])])
+m4_pushdef([AT_SKEL_CC_IF],
+[m4_bmatch([$3], ["\(glr\|lalr1\).cc"], [$1], [$2])])
+m4_pushdef([AT_GLR_IF],
+[m4_bmatch([$3], [%glr-parser], [$1], [$2])])
+# Using yacc.c?
+m4_pushdef([AT_YACC_IF],
+[m4_bmatch([$3], [%glr-parser\|%skeleton], [$2], [$1])])
+m4_pushdef([AT_PARAM_IF],
+[m4_bmatch([$3], [%parse-param], [$1], [$2])])
+m4_pushdef([AT_LOCATION_IF],
+[m4_bmatch([$3], [%locations], [$1], [$2])])
+m4_pushdef([AT_PURE_IF],
+[m4_bmatch([$3], [%pure-parser], [$1], [$2])])
+m4_pushdef([AT_PURE_AND_LOC_IF],
+[m4_bmatch([$3], [%locations.*%pure-parser\|%pure-parser.*%locations],
+	   [$1], [$2])])
+m4_pushdef([AT_GLR_OR_PARAM_IF],
+[m4_bmatch([$3], [%glr-parser\|%parse-param], [$1], [$2])])
+m4_pushdef([AT_NAME_PREFIX],
+[m4_bmatch([$3], [%name-prefix=".*"], 
+           [m4_bregexp([$3], [name-prefix="\([^"]*\)"], [\1])],
+           [yy])])
+# yyerror receives the location if %location & %pure & (%glr or %parse-param).
+m4_pushdef([AT_YYERROR_ARG_LOC_IF],
+[AT_GLR_OR_PARAM_IF([AT_PURE_AND_LOC_IF([$1], [$2])],
+		    [$2])])
+# yyerror always sees the locations (when activated), except if
+# yacc & pure & !param.
+m4_pushdef([AT_YYERROR_SEES_LOC_IF],
+[AT_LOCATION_IF([AT_YACC_IF([AT_PURE_IF([AT_PARAM_IF([$1], [$2])],
+					[$1])],
+			    [$1])],
+		[$2])])
+
+# The interface is pure: either because %pure-parser, or because we
+# are using the C++ parsers.
+m4_pushdef([AT_PURE_LEX_IF],
+[AT_PURE_IF([$1],
+	    [AT_SKEL_CC_IF([$1], [$2])])])
+
+AT_PURE_LEX_IF(
+[m4_pushdef([AT_LOC], [(*llocp)])
+ m4_pushdef([AT_VAL], [(*lvalp)])
+ m4_pushdef([AT_LEX_FORMALS],
+	    [YYSTYPE *lvalp[]AT_LOCATION_IF([, YYLTYPE *llocp])])
+ m4_pushdef([AT_LEX_ARGS],
+	    [lvalp[]AT_LOCATION_IF([, llocp])])
+ m4_pushdef([AT_USE_LEX_ARGS],
+	    [(void) lvalp;AT_LOCATION_IF([(void) llocp])])
+ m4_pushdef([AT_LEX_PRE_FORMALS],
+	    [AT_LEX_FORMALS, ])
+ m4_pushdef([AT_LEX_PRE_ARGS],
+	    [AT_LEX_ARGS, ])
+],
+[m4_pushdef([AT_LOC], [(yylloc)])
+ m4_pushdef([AT_VAL], [(yylval)])
+ m4_pushdef([AT_LEX_FORMALS],     [void])
+ m4_pushdef([AT_LEX_ARGS],        [])
+ m4_pushdef([AT_USE_LEX_ARGS],    [])
+ m4_pushdef([AT_LEX_PRE_FORMALS], [])
+ m4_pushdef([AT_LEX_PRE_ARGS],    [])
+])
+])# _AT_BISON_OPTION_PUSHDEFS
+
+
+# AT_BISON_OPTION_POPDEFS
+# -----------------------
+m4_define([AT_BISON_OPTION_POPDEFS],
+[m4_popdef([AT_LEX_PRE_ARGS])
+m4_popdef([AT_LEX_PRE_FORMALS])
+m4_popdef([AT_USE_LEX_ARGS])
+m4_popdef([AT_LEX_ARGS])
+m4_popdef([AT_LEX_FORMALS])
+m4_popdef([AT_VAL])
+m4_popdef([AT_LOC])
+m4_popdef([AT_PURE_LEX_IF])
+m4_popdef([AT_YYERROR_SEES_LOC_IF])
+m4_popdef([AT_YYERROR_ARG_LOC_IF])
+m4_popdef([AT_NAME_PREFIX])
+m4_popdef([AT_GLR_OR_PARAM_IF])
+m4_popdef([AT_PURE_AND_LOC_IF])
+m4_popdef([AT_LOCATION_IF])
+m4_popdef([AT_PARAM_IF])
+m4_popdef([AT_YACC_IF])
+m4_popdef([AT_GLR_IF])
+m4_popdef([AT_SKEL_CC_IF])
+m4_popdef([AT_GLR_CC_IF])
+m4_popdef([AT_LALR1_CC_IF])
+])# AT_BISON_OPTION_POPDEFS
+
+
+
+## -------------------------- ##
+## Generating Grammar Files.  ##
+## -------------------------- ##
+
+
+# AT_DATA_GRAMMAR_PROLOGUE
+# ------------------------
+# The prologue that should be included in any grammar which parser is
+# meant to be compiled.
+m4_define([AT_DATA_GRAMMAR_PROLOGUE],
+[[%{
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+  /* We don't need perfect functions for these tests. */
+# undef malloc
+# undef memcmp
+# undef realloc
+#endif
+%}]
+])
+
+
+# AT_DATA_GRAMMAR(NAME, CONTENT)
+# ------------------------------
+# Generate the file NAME, which CONTENT is preceded by
+# AT_DATA_GRAMMAR_PROLOGUE.
+m4_define([AT_DATA_GRAMMAR],
+[AT_DATA([$1],
+[AT_DATA_GRAMMAR_PROLOGUE
+$2])
+])
+
+
+## ------------------------ ##
+## Compiling C, C++ Files.  ##
+## ------------------------ ##
+
+
+# AT_COMPILE(OUTPUT, [SOURCES = OUTPUT.c])
+# ----------------------------------------
+# Compile SOURCES into OUTPUT.  If OUTPUT does not contain '.',
+# assume that we are linking too; this is a hack.
+m4_define([AT_COMPILE],
+[AT_CHECK([$CC $CFLAGS $CPPFLAGS m4_bmatch([$1], [[.]], [], [$LDFLAGS ])-o $1 m4_default([$2], [$1.c])[]m4_bmatch([$1], [[.]], [], [ $LIBS])],
+	   0, [ignore], [ignore])])
+
+# AT_COMPILE_CXX(OUTPUT, [SOURCES = OUTPUT.cc])
+# --------------------------------------------
+# Compile SOURCES into OUTPUT.  If OUTPUT does not contain '.',
+# assume that we are linking too; this is a hack.
+# If the C++ compiler does not work, ignore the test.
+m4_define([AT_COMPILE_CXX],
+[AT_KEYWORDS(c++)
+AT_CHECK([$BISON_CXX_WORKS], 0, ignore, ignore)
+AT_CHECK([$CXX $CXXFLAGS $CPPFLAGS m4_bmatch([$1], [[.]], [], [$LDFLAGS ])-o $1 m4_default([$2], [$1.cc])[]m4_bmatch([$1], [[.]], [], [ $LIBS])],
+	 0, [ignore], [ignore])])
+
+
+
+## ---------------------------- ##
+## Running a generated parser.  ##
+## ---------------------------- ##
+
+# AT_PARSER_CHECK(COMMAND, EXIT-STATUS, EXPOUT, EXPERR)
+# -----------------------------------------------------
+# So that we can run `./testsuite PREPARSER='valgrind -q' for instance.
+m4_define([AT_PARSER_CHECK],
+[AT_CHECK([$PREPARSER $1], [$2], [$3], [$4])])
+
+
+
+
+## ----------------------- ##
+## Launch the test suite.  ##
+## ----------------------- ##
+
+AT_INIT
+
+AT_TESTED([bison])

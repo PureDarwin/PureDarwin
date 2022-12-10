@@ -1,0 +1,13 @@
+dnl @ ../doc/m4.texinfo:2845: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`f', `ifelse(`$1', `0', `Answer: 0!=1
+', eval(`$1>1'), `0', `Answer: $2$1=eval(`$2$1')
+', `m4wrap(`f(decr(`$1'), `$2$1*')')')')
+dnl @result{}
+f(`10')
+dnl @result{}
+dnl @result{}Answer: 10*9*8*7*6*5*4*3*2*1=3628800

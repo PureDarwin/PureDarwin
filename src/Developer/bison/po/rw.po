@@ -1,0 +1,809 @@
+# Kinyarwanda translations for bison package.
+# Copyright (C) 2005 Free Software Foundation, Inc.
+# This file is distributed under the same license as the bison package.
+# Steve Murphy <murf@e-tools.com>, 2005.
+# Steve performed initial rough translation from compendium built from translations provided by the following translators:
+# Philibert Ndandali  <ndandali@yahoo.fr>, 2005.
+# Viateur MUGENZI <muvia1@yahoo.fr>, 2005.
+# Noëlla Mupole <s24211045@tuks.co.za>, 2005.
+# Carole Karema <karemacarole@hotmail.com>, 2005.
+# JEAN BAPTISTE NGENDAHAYO <ngenda_denis@yahoo.co.uk>, 2005.
+# Augustin KIBERWA  <akiberwa@yahoo.co.uk>, 2005.
+# Donatien NSENGIYUMVA <ndonatienuk@yahoo.co.uk>, 2005.
+# Antoine Bigirimana <antoine@e-tools.com>, 2005.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: bison 2.0\n"
+"Report-Msgid-Bugs-To: bug-bison@gnu.org\n"
+"POT-Creation-Date: 2006-06-05 00:32-0700\n"
+"PO-Revision-Date: 2005-04-04 10:55-0700\n"
+"Last-Translator: Steven Michael Murphy <murf@e-tools.com>\n"
+"Language-Team: Kinyarwanda <translation-team-rw@lists.sourceforge.net>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/complain.c:53 src/complain.c:68
+#, fuzzy
+msgid "warning: "
+msgstr "Iburira!"
+
+#: src/complain.c:124 src/complain.c:140
+#, fuzzy
+msgid "fatal error: "
+msgstr "Ikosa"
+
+#: src/conflicts.c:77
+#, fuzzy, c-format
+msgid "    Conflict between rule %d and token %s resolved as shift"
+msgstr "hagati Na Nka Gusunika"
+
+#: src/conflicts.c:85
+#, fuzzy, c-format
+msgid "    Conflict between rule %d and token %s resolved as reduce"
+msgstr "hagati Na Nka"
+
+#: src/conflicts.c:92
+#, fuzzy, c-format
+msgid "    Conflict between rule %d and token %s resolved as an error"
+msgstr "hagati Na Nka Ikosa"
+
+#: src/conflicts.c:400
+#, fuzzy, c-format
+msgid "conflicts: %d shift/reduce, %d reduce/reduce\n"
+msgstr "Gusunika"
+
+#: src/conflicts.c:403
+#, fuzzy, c-format
+msgid "conflicts: %d shift/reduce\n"
+msgstr "Gusunika"
+
+#: src/conflicts.c:405
+#, c-format
+msgid "conflicts: %d reduce/reduce\n"
+msgstr ""
+
+#: src/conflicts.c:423
+#, fuzzy, c-format
+msgid "State %d "
+msgstr "leta:"
+
+#: src/conflicts.c:490
+#, fuzzy, c-format
+msgid "%%expect-rr applies only to GLR parsers"
+msgstr "%%expect-rrKuri"
+
+#: src/conflicts.c:515
+#, fuzzy, c-format
+msgid "expected %d shift/reduce conflict"
+msgid_plural "expected %d shift/reduce conflicts"
+msgstr[0] "Ikitezwe: Gusunika"
+
+#: src/conflicts.c:520
+#, fuzzy, c-format
+msgid "expected %d reduce/reduce conflict"
+msgid_plural "expected %d reduce/reduce conflicts"
+msgstr[0] "Ikitezwe:"
+
+#: src/files.c:112
+#, fuzzy, c-format
+msgid "cannot open file `%s'"
+msgstr "Gufungura IDOSIYE"
+
+#: src/files.c:128
+#, fuzzy
+msgid "I/O error"
+msgstr "Ikosa"
+
+#: src/files.c:131
+#, fuzzy
+msgid "cannot close file"
+msgstr "Gufunga IDOSIYE"
+
+#: src/files.c:339
+#, fuzzy, c-format
+msgid "conflicting outputs to file %s"
+msgstr "Kuri IDOSIYE"
+
+#: src/getargs.c:194
+#, fuzzy, c-format
+msgid "Try `%s --help' for more information.\n"
+msgstr "kugirango Birenzeho Ibisobanuro"
+
+#: src/getargs.c:200
+#, fuzzy
+msgid "GNU bison generates parsers for LALR(1) grammars.\n"
+msgstr "kugirango 1."
+
+#: src/getargs.c:204
+#, c-format
+msgid "Usage: %s [OPTION]... FILE\n"
+msgstr ""
+
+#: src/getargs.c:208
+#, fuzzy
+msgid ""
+"If a long option shows an argument as mandatory, then it is mandatory\n"
+"for the equivalent short option also.  Similarly for optional arguments.\n"
+msgstr "a Ihitamo Nka Hanyuma ni i Ihitamo kugirango Bitari ngombwa ingingo"
+
+#: src/getargs.c:214
+#, fuzzy
+msgid ""
+"Operation modes:\n"
+"  -h, --help                 display this help and exit\n"
+"  -V, --version              output version information and exit\n"
+"      --print-localedir      output directory containing locale-dependent "
+"data\n"
+"  -y, --yacc                 emulate POSIX yacc\n"
+msgstr ""
+"h Ifashayobora Kugaragaza iyi Ifashayobora Na V Verisiyo Ibisohoka Verisiyo "
+"Ibisobanuro Na Y"
+
+#: src/getargs.c:222
+#, fuzzy
+msgid ""
+"Parser:\n"
+"  -S, --skeleton=FILE        specify the skeleton to use\n"
+"  -t, --debug                instrument the parser for debugging\n"
+"      --locations            enable locations computation\n"
+"  -p, --name-prefix=PREFIX   prepend PREFIX to the external symbols\n"
+"  -l, --no-lines             don't generate `#line' directives\n"
+"  -n, --no-parser            generate the tables only\n"
+"  -k, --token-table          include a table of token names\n"
+msgstr ""
+"i Kuri T Kosora amakosa i kugirango Gushoboza P Izina: Imbanziriza Kuri i "
+"external L Oya Imirongo N Oya i Imbonerahamwe K imbonerahamwe# Gushyiramo a "
+"imbonerahamwe# Bya"
+
+#: src/getargs.c:234
+#, fuzzy
+msgid ""
+"Output:\n"
+"  -d, --defines              also produce a header file\n"
+"  -r, --report=THINGS        also produce details on the automaton\n"
+"  -v, --verbose              same as `--report=state'\n"
+"  -b, --file-prefix=PREFIX   specify a PREFIX for output files\n"
+"  -o, --output=FILE          leave output to FILE\n"
+"  -g, --graph                also produce a VCG description of the "
+"automaton\n"
+msgstr ""
+"D a Umutwempangano R Icyegeranyo Birambuye ku i v Nka Icyegeranyo B IDOSIYE "
+"Imbanziriza a kugirango Ibisohoka o Ibisohoka Ibisohoka Kuri g a "
+"Isobanuramiterere Bya i"
+
+#: src/getargs.c:245
+#, fuzzy
+msgid ""
+"THINGS is a list of comma separated words that can include:\n"
+"  `state'        describe the states\n"
+"  `itemset'      complete the core item sets with their closure\n"
+"  `look-ahead'   explicitly associate look-ahead tokens to items\n"
+"  `solved'       describe shift/reduce conflicts solving\n"
+"  `all'          include all the above information\n"
+"  `none'         disable the report\n"
+msgstr ""
+"ni a Urutonde Bya Akitso Amagambo Gushyiramo i Byuzuye i Ikintu Na: Kuri "
+"Gusunika Gushyiramo Byose i hejuru i"
+
+#: src/getargs.c:256
+#, fuzzy
+msgid "Report bugs to <bug-bison@gnu.org>.\n"
+msgstr "org."
+
+#: src/getargs.c:273
+#, c-format
+msgid "bison (GNU Bison) %s"
+msgstr ""
+
+#: src/getargs.c:275
+#, fuzzy
+msgid "Written by Robert Corbett and Richard Stallman.\n"
+msgstr "ku Na"
+
+#: src/getargs.c:279
+#, fuzzy, c-format
+msgid "Copyright (C) %d Free Software Foundation, Inc.\n"
+msgstr "C"
+
+#: src/getargs.c:281
+#, fuzzy
+msgid ""
+"This is free software; see the source for copying conditions.  There is NO\n"
+"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n"
+msgstr ""
+"ni Kigenga i Inkomoko kugirango ni OYA ATARIIGIHARWE kugirango Cyangwa A"
+
+#: src/getargs.c:453
+#, fuzzy, c-format
+msgid "missing operand after `%s'"
+msgstr "Ibuze Nyuma"
+
+#: src/getargs.c:455
+#, fuzzy, c-format
+msgid "extra operand `%s'"
+msgstr "Birenga"
+
+#: src/gram.c:139
+msgid "empty"
+msgstr "kirimo ubusa"
+
+#: src/gram.c:233
+msgid "Grammar"
+msgstr ""
+
+#: src/gram.c:320 src/reduce.c:395
+#, fuzzy
+msgid "warning"
+msgstr "Iburira"
+
+#: src/main.c:125
+#, fuzzy
+msgid "rule never reduced because of conflicts"
+msgstr "Nta narimwe Bya"
+
+#: src/parse-gram.y:548
+#, fuzzy
+msgid "missing identifier in parameter declaration"
+msgstr "Ibuze Ikiranga in"
+
+#: src/print.c:49
+#, fuzzy, c-format
+msgid " type %d is %s\n"
+msgstr "Ubwoko ni"
+
+#: src/print.c:165
+#, fuzzy, c-format
+msgid "shift, and go to state %d\n"
+msgstr "Gusunika Na Gyayo Kuri Leta"
+
+#: src/print.c:167
+#, fuzzy, c-format
+msgid "go to state %d\n"
+msgstr "Gyayo Kuri Leta"
+
+#: src/print.c:204
+#, fuzzy
+msgid "error (nonassociative)\n"
+msgstr "Ikosa"
+
+#: src/print.c:292
+#, fuzzy, c-format
+msgid "reduce using rule %d (%s)"
+msgstr "ikoresha"
+
+#: src/print.c:294
+#, fuzzy, c-format
+msgid "accept"
+msgstr "Kwemera"
+
+#: src/print.c:325 src/print.c:391
+#, fuzzy
+msgid "$default"
+msgstr "$Mburabuzi"
+
+#: src/print.c:420
+#, fuzzy, c-format
+msgid "state %d"
+msgstr "leta:"
+
+#: src/print.c:456
+#, fuzzy
+msgid "Terminals, with rules where they appear"
+msgstr "Na: Kugaragara"
+
+#: src/print.c:483
+#, fuzzy
+msgid "Nonterminals, with rules where they appear"
+msgstr "Na: Kugaragara"
+
+#: src/print.c:512
+#, fuzzy, c-format
+msgid " on left:"
+msgstr "ku Ibumoso:"
+
+#: src/print.c:527
+#, fuzzy, c-format
+msgid " on right:"
+msgstr "ku Iburyo:"
+
+#: src/print.c:555
+#, fuzzy
+msgid "Rules never reduced"
+msgstr "Nta narimwe"
+
+#: src/reader.c:58
+#, fuzzy, c-format
+msgid "multiple %s declarations"
+msgstr "Igikubo"
+
+#: src/reader.c:120
+#, fuzzy, c-format
+msgid "result type clash on merge function %s: <%s> != <%s>"
+msgstr "Igisubizo Ubwoko ku Gukomatanya Umumaro"
+
+#: src/reader.c:210
+#, fuzzy, c-format
+msgid "rule given for %s, which is a token"
+msgstr "kugirango ni a"
+
+#: src/reader.c:253
+#, fuzzy, c-format
+msgid "type clash on default action: <%s> != <%s>"
+msgstr "Ubwoko ku Mburabuzi Igikorwa"
+
+#: src/reader.c:259
+#, fuzzy
+msgid "empty rule for typed nonterminal, and no action"
+msgstr "ubusa kugirango Na Oya Igikorwa"
+
+# sc/source\ui\src\globstr.src:RID_GLOBSTR.STR_VALID_DEFERROR.text
+#: src/reader.c:273
+#, fuzzy, c-format
+msgid "unused value: $%d"
+msgstr "Agaciro siko"
+
+#: src/reader.c:275
+msgid "unset value: $$"
+msgstr ""
+
+#: src/reader.c:353 src/reader.c:367 src/reader.c:380
+#, c-format
+msgid "only one %s allowed per rule"
+msgstr ""
+
+#: src/reader.c:363 src/reader.c:378
+#, c-format
+msgid "%s affects only GLR parsers"
+msgstr ""
+
+#: src/reader.c:365
+#, fuzzy, c-format
+msgid "%s must be followed by positive number"
+msgstr "%sku Umubare"
+
+#: src/reader.c:534
+#, fuzzy
+msgid "no rules in the input grammar"
+msgstr "Oya in i Iyinjiza"
+
+#: src/reduce.c:243
+msgid "useless rule"
+msgstr ""
+
+#: src/reduce.c:304
+#, c-format
+msgid "useless nonterminal: %s"
+msgstr ""
+
+#: src/reduce.c:352
+msgid "Useless nonterminals"
+msgstr ""
+
+#: src/reduce.c:365
+#, fuzzy
+msgid "Terminals which are not used"
+msgstr "OYA"
+
+#: src/reduce.c:374
+msgid "Useless rules"
+msgstr ""
+
+#: src/reduce.c:390
+#, fuzzy, c-format
+msgid "%d rule never reduced\n"
+msgid_plural "%d rules never reduced\n"
+msgstr[0] "%dNta narimwe"
+
+#: src/reduce.c:398
+#, c-format
+msgid "%d useless nonterminal"
+msgid_plural "%d useless nonterminals"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/reduce.c:404
+#, fuzzy, c-format
+msgid " and "
+msgstr "Na"
+
+#: src/reduce.c:407
+#, c-format
+msgid "%d useless rule"
+msgid_plural "%d useless rules"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/reduce.c:437
+#, fuzzy, c-format
+msgid "start symbol %s does not derive any sentence"
+msgstr "Gutangira IKIMENYETSO OYA"
+
+#: src/scan-gram.l:197
+#, fuzzy
+msgid "stray `,' treated as white space"
+msgstr "Nka Umweru Umwanya"
+
+#: src/scan-gram.l:261
+#, fuzzy, c-format
+msgid "invalid directive: %s"
+msgstr "Sibyo"
+
+#: src/scan-gram.l:321
+#, fuzzy, c-format
+msgid "invalid character: %s"
+msgstr "Sibyo Inyuguti"
+
+#: src/scan-gram.l:441
+#, fuzzy
+msgid "invalid null character"
+msgstr "Sibyo NTAGIHARI Inyuguti"
+
+#: src/scan-gram.l:454 src/scan-gram.l:465 src/scan-gram.l:486
+#, fuzzy, c-format
+msgid "invalid escape sequence: %s"
+msgstr "Sibyo"
+
+#: src/scan-gram.l:456 src/scan-gram.l:467 src/scan-gram.l:488
+#, fuzzy, c-format
+msgid "invalid null character: %s"
+msgstr "Sibyo NTAGIHARI Inyuguti"
+
+#: src/scan-gram.l:493
+#, c-format
+msgid "unrecognized escape sequence: %s"
+msgstr ""
+
+#: src/scan-gram.l:575
+#, fuzzy, c-format
+msgid "missing `{' in %s"
+msgstr "Ibuze in"
+
+#: src/scan-gram.l:640
+msgid "stray `$'"
+msgstr ""
+
+#: src/scan-gram.l:644
+msgid "stray `@'"
+msgstr ""
+
+#: src/scan-gram.l:776 src/scan-gram.l:1087
+msgid "line number overflow"
+msgstr ""
+
+#: src/scan-gram.l:778
+msgid "column number overflow"
+msgstr ""
+
+#: src/scan-gram.l:861
+#, fuzzy, c-format
+msgid "$$ of `%s' has no declared type"
+msgstr "$$Bya Oya Ubwoko"
+
+#: src/scan-gram.l:881
+#, fuzzy, c-format
+msgid "$%d of `%s' has no declared type"
+msgstr "$%dBya Oya Ubwoko"
+
+#: src/scan-gram.l:891 src/scan-gram.l:958 src/scan-gram.l:1009
+#, fuzzy, c-format
+msgid "integer out of range: %s"
+msgstr "Umubare wuzuye Inyuma Bya Urutonde"
+
+# sc/source\ui\src\globstr.src:RID_GLOBSTR.STR_VALID_DEFERROR.text
+#: src/scan-gram.l:927 src/scan-gram.l:993
+#, fuzzy, c-format
+msgid "invalid value: %s"
+msgstr "Agaciro siko"
+
+#: src/scan-gram.l:1103
+msgid "rule is too long"
+msgstr ""
+
+#: src/scan-gram.l:1131
+#, fuzzy, c-format
+msgid "missing `%s' at end of file"
+msgstr "Ibuze ku Impera Bya IDOSIYE"
+
+#: src/scan-gram.l:1142
+#, fuzzy, c-format
+msgid "missing `%s' at end of line"
+msgstr "Ibuze ku Impera Bya Umurongo"
+
+# sc/source\ui\src\globstr.src:RID_GLOBSTR.STR_VALID_DEFERROR.text
+#: src/symlist.c:145
+#, fuzzy, c-format
+msgid "invalid $ value: $%d"
+msgstr "Agaciro siko"
+
+#: src/symtab.c:71
+#, fuzzy, c-format
+msgid "too many symbols in input grammar (limit is %d)"
+msgstr "Ibimenyetso in Iyinjiza ni"
+
+#: src/symtab.c:110
+#, fuzzy, c-format
+msgid "%s redeclaration for %s"
+msgstr "%skugirango"
+
+#: src/symtab.c:111
+#, fuzzy
+msgid "first declaration"
+msgstr "Itangira"
+
+#: src/symtab.c:199
+#, fuzzy, c-format
+msgid "symbol %s redefined"
+msgstr "IKIMENYETSO"
+
+#: src/symtab.c:213
+#, fuzzy, c-format
+msgid "symbol %s redeclared"
+msgstr "IKIMENYETSO"
+
+#: src/symtab.c:230
+#, fuzzy, c-format
+msgid "redefining user token number of %s"
+msgstr "Ukoresha: Umubare Bya"
+
+#: src/symtab.c:257
+#, fuzzy, c-format
+msgid "symbol %s is used, but is not defined as a token and has no rules"
+msgstr "IKIMENYETSO ni ni OYA Nka a Na Oya"
+
+#: src/symtab.c:282
+#, fuzzy, c-format
+msgid "symbol `%s' used more than once as a literal string"
+msgstr "IKIMENYETSO Birenzeho Rimwe Nka a Ikurikiranyanyuguti"
+
+#: src/symtab.c:285
+#, fuzzy, c-format
+msgid "symbol `%s' given more than one literal string"
+msgstr "IKIMENYETSO Birenzeho Ikurikiranyanyuguti"
+
+#: src/symtab.c:428
+#, fuzzy, c-format
+msgid "tokens %s and %s both assigned number %d"
+msgstr "Na Byombi Umubare"
+
+#: src/symtab.c:651
+#, fuzzy, c-format
+msgid "the start symbol %s is undefined"
+msgstr "i Gutangira IKIMENYETSO ni kidasobanuye"
+
+#: src/symtab.c:655
+#, fuzzy, c-format
+msgid "the start symbol %s is a token"
+msgstr "i Gutangira IKIMENYETSO ni a"
+
+#: lib/argmatch.c:137
+#, fuzzy, c-format
+msgid "invalid argument %s for %s"
+msgstr "Sibyo kugirango"
+
+#: lib/argmatch.c:138
+#, fuzzy, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "kugirango"
+
+#: lib/argmatch.c:157
+#, fuzzy, c-format
+msgid "Valid arguments are:"
+msgstr "ingingo"
+
+#: lib/bitset_stats.c:177
+#, c-format
+msgid "%u bitset_allocs, %u freed (%.2f%%).\n"
+msgstr ""
+
+#: lib/bitset_stats.c:180
+#, c-format
+msgid "%u bitset_sets, %u cached (%.2f%%)\n"
+msgstr ""
+
+#: lib/bitset_stats.c:183
+#, c-format
+msgid "%u bitset_resets, %u cached (%.2f%%)\n"
+msgstr ""
+
+#: lib/bitset_stats.c:186
+#, c-format
+msgid "%u bitset_tests, %u cached (%.2f%%)\n"
+msgstr ""
+
+#: lib/bitset_stats.c:190
+#, c-format
+msgid "%u bitset_lists\n"
+msgstr ""
+
+#: lib/bitset_stats.c:192
+#, fuzzy
+msgid "count log histogram\n"
+msgstr "IBARA LOG"
+
+#: lib/bitset_stats.c:195
+#, fuzzy
+msgid "size log histogram\n"
+msgstr "Ingano LOG"
+
+#: lib/bitset_stats.c:198
+msgid "density histogram\n"
+msgstr ""
+
+#: lib/bitset_stats.c:212
+#, fuzzy, c-format
+msgid ""
+"Bitset statistics:\n"
+"\n"
+msgstr "Sitatisitiki"
+
+#: lib/bitset_stats.c:215
+#, c-format
+msgid "Accumulated runs = %u\n"
+msgstr ""
+
+#: lib/bitset_stats.c:259 lib/bitset_stats.c:264
+#, fuzzy
+msgid "Could not read stats file."
+msgstr "OYA Gusoma stats IDOSIYE"
+
+#: lib/bitset_stats.c:261
+#, fuzzy, c-format
+msgid "Bad stats file size.\n"
+msgstr "stats IDOSIYE Ingano"
+
+#: lib/bitset_stats.c:287 lib/bitset_stats.c:289
+#, fuzzy
+msgid "Could not write stats file."
+msgstr "OYA Kwandika stats IDOSIYE"
+
+#: lib/bitset_stats.c:292
+#, fuzzy
+msgid "Could not open stats file for writing."
+msgstr "OYA Gufungura stats IDOSIYE kugirango"
+
+#: lib/error.c:121
+#, fuzzy
+msgid "Unknown system error"
+msgstr "Sisitemu Ikosa"
+
+#: lib/getopt.c:531 lib/getopt.c:547
+#, fuzzy, c-format
+msgid "%s: option `%s' is ambiguous\n"
+msgstr "%s:Ihitamo ni"
+
+#: lib/getopt.c:580 lib/getopt.c:584
+#, fuzzy, c-format
+msgid "%s: option `--%s' doesn't allow an argument\n"
+msgstr "%s:Ihitamo Kwemerera"
+
+#: lib/getopt.c:593 lib/getopt.c:598
+#, fuzzy, c-format
+msgid "%s: option `%c%s' doesn't allow an argument\n"
+msgstr "%s:Ihitamo Kwemerera"
+
+#: lib/getopt.c:641 lib/getopt.c:660 lib/getopt.c:976 lib/getopt.c:995
+#, fuzzy, c-format
+msgid "%s: option `%s' requires an argument\n"
+msgstr "%s:Ihitamo"
+
+#: lib/getopt.c:698 lib/getopt.c:701
+#, fuzzy, c-format
+msgid "%s: unrecognized option `--%s'\n"
+msgstr "%s:Ihitamo"
+
+#: lib/getopt.c:709 lib/getopt.c:712
+#, fuzzy, c-format
+msgid "%s: unrecognized option `%c%s'\n"
+msgstr "%s:Ihitamo"
+
+#: lib/getopt.c:764 lib/getopt.c:767
+#, fuzzy, c-format
+msgid "%s: illegal option -- %c\n"
+msgstr "%s:Ihitamo"
+
+#: lib/getopt.c:773 lib/getopt.c:776
+#, fuzzy, c-format
+msgid "%s: invalid option -- %c\n"
+msgstr "%s:Sibyo Ihitamo"
+
+#: lib/getopt.c:828 lib/getopt.c:844 lib/getopt.c:1048 lib/getopt.c:1066
+#, fuzzy, c-format
+msgid "%s: option requires an argument -- %c\n"
+msgstr "%s:Ihitamo"
+
+#: lib/getopt.c:897 lib/getopt.c:913
+#, fuzzy, c-format
+msgid "%s: option `-W %s' is ambiguous\n"
+msgstr "%s:Ihitamo ni"
+
+#: lib/getopt.c:937 lib/getopt.c:955
+#, fuzzy, c-format
+msgid "%s: option `-W %s' doesn't allow an argument\n"
+msgstr "%s:Ihitamo Kwemerera"
+
+#: lib/obstack.c:433 lib/obstack.c:435 lib/xalloc-die.c:37
+#, fuzzy
+msgid "memory exhausted"
+msgstr "Ububiko"
+
+# basctl/source\basicide\basidesh.src:RID_IMGBTN_REMOVEWATCH.text
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  If the catalog has no translation,
+#. locale_quoting_style quotes `like this', and
+#. clocale_quoting_style quotes "like this".
+#.
+#. For example, an American English Unicode locale should
+#. translate "`" to U+201C (LEFT DOUBLE QUOTATION MARK), and
+#. should translate "'" to U+201D (RIGHT DOUBLE QUOTATION
+#. MARK).  A British English Unicode locale should instead
+#. translate these to U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. U+2019 (RIGHT SINGLE QUOTATION MARK), respectively.
+#.
+#. If you don't know what to put here, please see
+#. <http://en.wikipedia.org/wiki/Quotation_mark#Glyphs>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:245
+#, fuzzy
+msgid "`"
+msgstr "`"
+
+#: lib/quotearg.c:246
+msgid "'"
+msgstr "'"
+
+#: lib/subpipe.c:171
+#, fuzzy, c-format
+msgid "subsidiary program `%s' could not be invoked"
+msgstr "Porogaramu OYA"
+
+#: lib/subpipe.c:173
+#, fuzzy, c-format
+msgid "subsidiary program `%s' not found"
+msgstr "Porogaramu OYA Byabonetse"
+
+#: lib/subpipe.c:175
+#, fuzzy, c-format
+msgid "subsidiary program `%s' failed"
+msgstr "Porogaramu Byanze"
+
+#: lib/subpipe.c:176
+#, fuzzy, c-format
+msgid "subsidiary program `%s' failed (exit status %d)"
+msgstr "Porogaramu Byanze Gusohoka Imimerere"
+
+#: lib/timevar.c:475
+#, fuzzy
+msgid ""
+"\n"
+"Execution times (seconds)\n"
+msgstr "Times amasogonda"
+
+# #-#-#-#-#  sc.pot (PACKAGE VERSION)  #-#-#-#-#
+# sc/source\ui\src\autofmt.src:RID_SCDLG_AUTOFORMAT.STR_SUM.text
+# #-#-#-#-#  sc.pot (PACKAGE VERSION)  #-#-#-#-#
+# sc/source\ui\src\globstr.src:RID_GLOBSTR.STR_PIVOT_TOTAL.text
+#: lib/timevar.c:525
+#, fuzzy
+msgid " TOTAL                 :"
+msgstr "Igiteranyo"
+
+#: lib/timevar.c:561
+#, fuzzy, c-format
+msgid "time in %s: %ld.%06ld (%ld%%)\n"
+msgstr "Igihe in"
+
+#, fuzzy
+#~ msgid "POSIX forbids declarations in the grammar"
+#~ msgstr "in i"
+
+# sc/source\ui\src\globstr.src:RID_GLOBSTR.STR_VALID_DEFERROR.text
+#, fuzzy
+#~ msgid "invalid $ value"
+#~ msgstr "Agaciro siko"

@@ -1,0 +1,23 @@
+dnl @ ../doc/m4.texinfo:4528: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`a1', `A1')
+dnl @result{}
+dnl First argument, concatenated with 1
+define(`_1', `$1')define(`first1', `_1($@)1')
+dnl @result{}
+dnl Eleventh argument, portable
+define(`_9', `$9')define(`eleventh', `_9(shift(shift($@)))')
+dnl @result{}
+dnl Eleventh argument, GNU style
+define(`Eleventh', `$11')
+dnl @result{}
+first1(`a', `b', `c', `d', `e', `f', `g', `h', `i', `j', `k')
+dnl @result{}A1
+eleventh(`a', `b', `c', `d', `e', `f', `g', `h', `i', `j', `k')
+dnl @result{}k
+Eleventh(`a', `b', `c', `d', `e', `f', `g', `h', `i', `j', `k')
+dnl @result{}k

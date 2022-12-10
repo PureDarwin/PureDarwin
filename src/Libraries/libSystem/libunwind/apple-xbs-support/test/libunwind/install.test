@@ -1,0 +1,40 @@
+# Check plain libunwind has no --sim.
+RUN: env APPLE_XBS_SUPPORT_PRINT_ARGS_AND_EXIT=1                              \
+RUN:     make -C %src_root install "SRCROOT=%src_root"                        \
+RUN:                               "RC_ProjectName=libunwind"                 \
+RUN:   | grep 'apple-install-libunwind.sh'                                    \
+RUN:   | grep -v -e '--sim'
+
+# Check Sim libunwind has --sim.
+RUN: env APPLE_XBS_SUPPORT_PRINT_ARGS_AND_EXIT=1                              \
+RUN:     make -C %src_root install "SRCROOT=%src_root"                        \
+RUN:                               "RC_ProjectName=libunwind_Sim"             \
+RUN:   | grep 'apple-install-libunwind.sh'                                    \
+RUN:   | grep -e '--sim'
+RUN: env APPLE_XBS_SUPPORT_PRINT_ARGS_AND_EXIT=1                              \
+RUN:     make -C %src_root install "SRCROOT=%src_root"                        \
+RUN:                               "RC_ProjectName=libunwind_dyld_Sim"        \
+RUN:   | grep 'apple-install-libunwind.sh'                                    \
+RUN:   | grep -e '--sim'
+
+# Check that --dyld is correct.
+RUN: env APPLE_XBS_SUPPORT_PRINT_ARGS_AND_EXIT=1                              \
+RUN:     make -C %src_root install "SRCROOT=%src_root"                        \
+RUN:                               "RC_ProjectName=libunwind"                 \
+RUN:   | grep 'apple-install-libunwind.sh'                                    \
+RUN:   | grep -v -e '--dyld'
+RUN: env APPLE_XBS_SUPPORT_PRINT_ARGS_AND_EXIT=1                              \
+RUN:     make -C %src_root install "SRCROOT=%src_root"                        \
+RUN:                               "RC_ProjectName=libunwind_Sim"             \
+RUN:   | grep 'apple-install-libunwind.sh'                                    \
+RUN:   | grep -v -e '--dyld'
+RUN: env APPLE_XBS_SUPPORT_PRINT_ARGS_AND_EXIT=1                              \
+RUN:     make -C %src_root install "SRCROOT=%src_root"                        \
+RUN:                               "RC_ProjectName=libunwind_dyld"            \
+RUN:   | grep 'apple-install-libunwind.sh'                                    \
+RUN:   | grep -e '--dyld'
+RUN: env APPLE_XBS_SUPPORT_PRINT_ARGS_AND_EXIT=1                              \
+RUN:     make -C %src_root install "SRCROOT=%src_root"                        \
+RUN:                               "RC_ProjectName=libunwind_dyld_Sim"        \
+RUN:   | grep 'apple-install-libunwind.sh'                                    \
+RUN:   | grep -e '--dyld'

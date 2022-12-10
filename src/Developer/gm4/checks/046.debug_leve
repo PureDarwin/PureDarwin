@@ -1,0 +1,25 @@
+dnl @ ../doc/m4.texinfo:2225: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`foo', `FOO')
+dnl @result{}
+traceon(`foo')
+dnl @result{}
+debugmode()
+dnl @result{}
+foo
+dnl @error{}m4trace: -1- foo -> `FOO'
+dnl @result{}FOO
+debugmode
+dnl @result{}
+foo
+dnl @error{}m4trace: -1- foo
+dnl @result{}FOO
+debugmode(`+l')
+dnl @result{}
+foo
+dnl @error{}m4trace:8: -1- foo
+dnl @result{}FOO

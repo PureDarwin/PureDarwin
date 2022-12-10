@@ -1,0 +1,15 @@
+dnl @ ../doc/m4.texinfo:1755: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+ifdef(`foo', ``foo' is defined', ``foo' is not defined')
+dnl @result{}foo is not defined
+define(`foo', `')
+dnl @result{}
+ifdef(`foo', ``foo' is defined', ``foo' is not defined')
+dnl @result{}foo is defined
+ifdef(`no_such_macro', `yes', `no', `extra argument')
+dnl @error{}m4:stdin:4: Warning: excess arguments to builtin `ifdef' ignored
+dnl @result{}no

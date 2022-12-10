@@ -25,23 +25,27 @@
 # - /usr/local/lib/loaderd/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
 # - /usr/local/lib/dyld_stub/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
 
+# BEGIN SYSCALL TRAPS
+
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
-    COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
+    COMMAND ${CMAKE_COMMAND} -E env ARCHS=${RC_CURRENT_ARCH}
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
-        ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd/kern/syscalls.master
+        ${RC_SOURCE_DIR}/Kernel/xnu/bsd/kern/syscalls.master
         ${CMAKE_CURRENT_SOURCE_DIR}/custom ${CMAKE_CURRENT_SOURCE_DIR}/Platforms
         MacOSX ${CMAKE_CURRENT_BINARY_DIR}/sys
-    COMMAND ${CMAKE_COMMAND} -E env ARCHS=x86_64
+    COMMAND ${CMAKE_COMMAND} -E env ARCHS=${RC_CURRENT_ARCH}
+        LIBTOOL=${RC_HOST_BIN}/libtool CC=${CMAKE_C_COMPILER}
+        TARGET_TRIPLE=${CMAKE_C_COMPILER_TARGET}
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-syscalls.pl
         ${CMAKE_CURRENT_BINARY_DIR}/sys/stubs.list ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
-        -I${PUREDARWIN_BINARY_DIR}/src/Kernel/xnu/xnu_header_install/usr/include
-        -I${PUREDARWIN_BINARY_DIR}/src/Kernel/xnu/xnu_header_install/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders
-        -I${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/EXTERNAL_HEADERS
+        -I${PUREDARWIN_BINARY_DIR}/Kernel/xnu/xnu_header_install/usr/include
+        -I${PUREDARWIN_BINARY_DIR}/Kernel/xnu/xnu_header_install/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders
+        -I${RC_SOURCE_DIR}/Kernel/xnu/EXTERNAL_HEADERS
     DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-syscalls.pl
-        ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd/kern/syscalls.master
+        ${RC_SOURCE_DIR}/Kernel/xnu/bsd/kern/syscalls.master
     COMMENT "Compile syscall stubs" VERBATIM
 )
 
@@ -197,9 +201,8 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/internal_include/mach)
 
-# TODO: The only remaining headers here are from clang. Once we build clang ourselves,
-#   we can finally remove this directory and be happy.
-target_include_directories(libsystem_kernel_static PUBLIC bootstrap_include)
+# We need a few compiler internal headers here to make
+target_include_directories(libsystem_kernel_static PUBLIC ${RC_COMPILER_INCLUDE_DIR})
 
 # libc exposes some public headers we use even though we don't need to link against libc
 target_link_libraries(libsystem_kernel_static PUBLIC libc_public_headers)

@@ -1,0 +1,31 @@
+#! /bin/sh
+
+test -z "$VERBOSE" && {
+   exec > /dev/null 2>&1
+   set -x
+}
+
+cat >input <<EOF
+a := 1
+b := 2
+c := 3
+d := a + b * c
+d
+EOF
+
+./calc++ input
+./calc++ -p input
+
+cat >input <<EOF
+a := 1
+d := a + b * c
+EOF
+./calc++ input
+
+cat >input <<EOF
+toto := 1
+toto
+EOF
+./calc++ -s input
+
+rm input

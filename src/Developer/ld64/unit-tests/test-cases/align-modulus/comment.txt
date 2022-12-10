@@ -1,0 +1,2 @@
+The point of this test is to verify that the modules of symbol _b is maintained.  The address for _b must be
+3 mod 16.  Therefore the last hexdigit of the address must be 3.

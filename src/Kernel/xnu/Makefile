@@ -55,6 +55,7 @@ default: install
 SDKROOT ?= macosx.internal
 
 installhdrs install:
+	echo ${CC}
 	cd libsyscall ; \
 		xcodebuild $@ $(TARGET)	\
 			$(MAKEOVERRIDES)	\
@@ -248,7 +249,8 @@ EXPINC_SUBDIRS_X86_64H = $(EXPINC_SUBDIRS)
 EXPINC_SUBDIRS_ARM = $(EXPINC_SUBDIRS)
 EXPINC_SUBDIRS_ARM64 = $(EXPINC_SUBDIRS)
 
-SETUP_SUBDIRS = SETUP san bsd
+# Darwin -- build tools under SETUP/ as part of host toolchain
+SETUP_SUBDIRS = san bsd
 
 COMP_SUBDIRS_X86_64 = $(ALL_SUBDIRS)
 COMP_SUBDIRS_X86_64H = $(ALL_SUBDIRS)

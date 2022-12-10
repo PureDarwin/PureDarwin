@@ -1,0 +1,62 @@
+# -*- mode:po; coding:utf-8; -*- Slovenian message catalogue for bison-runtime-2.1.
+# Copyright (C) 2005 Free Software Foundation, Inc.
+# Matej Urbančič <matej.urban@gmail.com>, 2005.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: bison-runtime 2.1\n"
+"Report-Msgid-Bugs-To: bug-bison@gnu.org\n"
+"POT-Creation-Date: 2006-06-05 00:32-0700\n"
+"PO-Revision-Date: 2005-10-06 14:58+0200\n"
+"Last-Translator: Primož Peterlin <primoz.peterlin@biofiz.mf.uni-lj.si>\n"
+"Language-Team: Slovenian <translation-team-sl@lists.sourceforge.net>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=(n%100==1 ? 1 : n%100==2 ? 2 : n%100==3 || n"
+"%100==4 ? 3 : 0);\n"
+"X-Poedit-Language: Slovenian\n"
+"X-Poedit-Country: SLOVENIA\n"
+"X-Poedit-SourceCharset: utf-8\n"
+
+#: data/glr.c:916 data/yacc.c:581
+msgid "syntax error: cannot back up"
+msgstr "napačna skladnja: ni mogoče povrniti"
+
+#: data/glr.c:1801
+msgid "syntax is ambiguous"
+msgstr "dvoumna skladnja"
+
+#: data/glr.c:2168 data/glr.c:2174 data/glr.c:2428 data/lalr1.cc:878
+#: data/yacc.c:1304 data/yacc.c:1332
+msgid "syntax error"
+msgstr "skladenjska napaka"
+
+#: data/glr.c:2488 data/yacc.c:1114 data/yacc.c:1456
+msgid "memory exhausted"
+msgstr "zmanjkalo pomnilnika"
+
+#: data/yacc.c:866
+#, c-format
+msgid "syntax error, unexpected %s"
+msgstr "skladenjska napaka, nepričakovan %s"
+
+#: data/yacc.c:867
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s"
+msgstr "skladenjska napaka, nepričakovan %s, pričakuje se %s"
+
+#: data/yacc.c:868
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s"
+msgstr "skladenjska napaka, nepričakovan %s, pričakuje se %s ali %s"
+
+#: data/yacc.c:869
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s"
+msgstr "skladenjska napaka, nepričakovan %s, pričakuje se %s , %s ali %s"
+
+#: data/yacc.c:870
+#, c-format
+msgid "syntax error, unexpected %s, expecting %s or %s or %s or %s"
+msgstr "skladenjska napaka, nepričakovan %s, pričakuje se %s , %s , %s ali %s"

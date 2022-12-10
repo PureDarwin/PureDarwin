@@ -1,0 +1,879 @@
+# Irish translations for bison.
+# Copyright (C) 2004 Free Software Foundation, Inc.
+# This file is distributed under the same license as the bison package.
+# Kevin Patrick Scannell <scannell@SLU.EDU>, 2004.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: bison 2.0a\n"
+"Report-Msgid-Bugs-To: bug-bison@gnu.org\n"
+"POT-Creation-Date: 2006-06-05 00:32-0700\n"
+"PO-Revision-Date: 2005-05-22 23:14-0500\n"
+"Last-Translator: Kevin Patrick Scannell <scannell@SLU.EDU>\n"
+"Language-Team: Irish <ga@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=ISO-8859-1\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=n==1 ? 0 : (n>1 && n<7) ? 1 : (n>6 && n "
+"<11) ? 2 : 3;\n"
+
+#: src/complain.c:53 src/complain.c:68
+msgid "warning: "
+msgstr "rabhadh: "
+
+#: src/complain.c:124 src/complain.c:140
+msgid "fatal error: "
+msgstr "earráid mharfach: "
+
+#: src/conflicts.c:77
+#, c-format
+msgid "    Conflict between rule %d and token %s resolved as shift"
+msgstr ""
+"    Coinbhleacht idir riail %d agus teaghrán comharthach %s: réitíodh mar "
+"iomlaoid"
+
+#: src/conflicts.c:85
+#, c-format
+msgid "    Conflict between rule %d and token %s resolved as reduce"
+msgstr ""
+"    Coinbhleacht idir riail %d agus teaghrán comharthach %s: réitíodh mar "
+"laghdú"
+
+#: src/conflicts.c:92
+#, c-format
+msgid "    Conflict between rule %d and token %s resolved as an error"
+msgstr ""
+"    Coinbhleacht idir riail %d agus teaghrán comharthach %s: réitíodh mar "
+"earráid"
+
+#: src/conflicts.c:400
+#, c-format
+msgid "conflicts: %d shift/reduce, %d reduce/reduce\n"
+msgstr "coinbhleachtaí: %d iomlaoid/laghdú, %d laghdú/laghdú\n"
+
+#: src/conflicts.c:403
+#, c-format
+msgid "conflicts: %d shift/reduce\n"
+msgstr "coinbhleachtaí: %d iomlaoid/laghdú\n"
+
+#: src/conflicts.c:405
+#, c-format
+msgid "conflicts: %d reduce/reduce\n"
+msgstr "coinbhleachtaí: %d laghdú/laghdú\n"
+
+#: src/conflicts.c:423
+#, c-format
+msgid "State %d "
+msgstr "Staid %d "
+
+#: src/conflicts.c:490
+#, c-format
+msgid "%%expect-rr applies only to GLR parsers"
+msgstr "Níl %%expect-rr in úsáid ach le parsálaithe GLR"
+
+#: src/conflicts.c:515
+#, c-format
+msgid "expected %d shift/reduce conflict"
+msgid_plural "expected %d shift/reduce conflicts"
+msgstr[0] "bhíothas ag súil le %d coinbhleacht iomlaoid/laghdú"
+msgstr[1] "bhíothas ag súil le %d choinbhleacht iomlaoid/laghdú"
+msgstr[2] "bhíothas ag súil le %d gcoinbhleacht iomlaoid/laghdú"
+msgstr[3] "bhíothas ag súil le %d coinbhleacht iomlaoid/laghdú"
+
+#: src/conflicts.c:520
+#, c-format
+msgid "expected %d reduce/reduce conflict"
+msgid_plural "expected %d reduce/reduce conflicts"
+msgstr[0] "bhíothas ag súil le %d coinbhleacht laghdú/laghdú"
+msgstr[1] "bhíothas ag súil le %d choinbhleacht laghdú/laghdú"
+msgstr[2] "bhíothas ag súil le %d gcoinbhleacht laghdú/laghdú"
+msgstr[3] "bhíothas ag súil le %d coinbhleacht laghdú/laghdú"
+
+#: src/files.c:112
+#, c-format
+msgid "cannot open file `%s'"
+msgstr "ní féidir comhad `%s' a oscailt"
+
+#: src/files.c:128
+msgid "I/O error"
+msgstr "Earráid I/A"
+
+#: src/files.c:131
+msgid "cannot close file"
+msgstr "ní féidir comhad a dhúnadh"
+
+#: src/files.c:339
+#, c-format
+msgid "conflicting outputs to file %s"
+msgstr "aschuir chontrártha scríofa i gcomhad %s"
+
+#: src/getargs.c:194
+#, c-format
+msgid "Try `%s --help' for more information.\n"
+msgstr "Bain triail as `%s --help' chun tuilleadh eolais a fháil.\n"
+
+#: src/getargs.c:200
+msgid "GNU bison generates parsers for LALR(1) grammars.\n"
+msgstr "Gineann GNU bison parsálaithe le haghaidh gramadach LALR(1).\n"
+
+#: src/getargs.c:204
+#, c-format
+msgid "Usage: %s [OPTION]... FILE\n"
+msgstr "Úsáid: %s [ROGHA]... COMHAD\n"
+
+#: src/getargs.c:208
+msgid ""
+"If a long option shows an argument as mandatory, then it is mandatory\n"
+"for the equivalent short option also.  Similarly for optional arguments.\n"
+msgstr ""
+"Is riachtanach le rogha ghearr aon argóint atá riachtanach\n"
+"leis an rogha fhada, agus ar an nós céanna leis na hargóintí roghnacha.\n"
+
+#: src/getargs.c:214
+#, fuzzy
+msgid ""
+"Operation modes:\n"
+"  -h, --help                 display this help and exit\n"
+"  -V, --version              output version information and exit\n"
+"      --print-localedir      output directory containing locale-dependent "
+"data\n"
+"  -y, --yacc                 emulate POSIX yacc\n"
+msgstr ""
+"Móid oibre:\n"
+"  -h, --help      taispeáin an chabhair seo agus scoir\n"
+"  -V, --version   taispeáin eolas faoin leagan agus scoir\n"
+"  -y, --yacc      déan aithris ar yacc POSIX\n"
+
+#: src/getargs.c:222
+msgid ""
+"Parser:\n"
+"  -S, --skeleton=FILE        specify the skeleton to use\n"
+"  -t, --debug                instrument the parser for debugging\n"
+"      --locations            enable locations computation\n"
+"  -p, --name-prefix=PREFIX   prepend PREFIX to the external symbols\n"
+"  -l, --no-lines             don't generate `#line' directives\n"
+"  -n, --no-parser            generate the tables only\n"
+"  -k, --token-table          include a table of token names\n"
+msgstr ""
+"Parsálaí:\n"
+"  -S, --skeleton=COMHAD      socraigh an chreatlach le húsáid\n"
+"  -t, --debug                ullmhaigh an parsálaí le haghaidh "
+"dífhabhtaithe\n"
+"      --locations            cumasaigh ríomh na suímh\n"
+"  -p, --name-prefix=RÉIMÍR   cuir RÉIMÍR roimh gach siombail sheachtrach\n"
+"  -l, --no-lines             ná gin treoracha `#line'\n"
+"  -n, --no-parser            ná gin ach táblaí\n"
+"  -k, --token-table          cuir tábla d'ainmneacha teaghrán san áireamh\n"
+
+#: src/getargs.c:234
+msgid ""
+"Output:\n"
+"  -d, --defines              also produce a header file\n"
+"  -r, --report=THINGS        also produce details on the automaton\n"
+"  -v, --verbose              same as `--report=state'\n"
+"  -b, --file-prefix=PREFIX   specify a PREFIX for output files\n"
+"  -o, --output=FILE          leave output to FILE\n"
+"  -g, --graph                also produce a VCG description of the "
+"automaton\n"
+msgstr ""
+"Aschur:\n"
+"  -d, --defines              gin comhad ceanntásca freisin\n"
+"  -r, --report=RUDAÍ         tabhair sonraí faoin uathoibreán\n"
+"  -v, --verbose              ar comhbhrí le `--report=state'\n"
+"  -b, --file-prefix=RÉIMÍR   RÉIMÍR ar aschomhaid\n"
+"  -o, --output=COMHAD        scríobh aschur sa CHOMHAD\n"
+"  -g, --graph                gin cur síos VCG ar an uathoibreán freisin\n"
+
+#: src/getargs.c:245
+msgid ""
+"THINGS is a list of comma separated words that can include:\n"
+"  `state'        describe the states\n"
+"  `itemset'      complete the core item sets with their closure\n"
+"  `look-ahead'   explicitly associate look-ahead tokens to items\n"
+"  `solved'       describe shift/reduce conflicts solving\n"
+"  `all'          include all the above information\n"
+"  `none'         disable the report\n"
+msgstr ""
+"Is féidir ceann nó níos mó de na focail seo a chur i RUDAÍ,\n"
+"scartha le camóga:\n"
+"  `state'        cur síos ar staideanna\n"
+"  `itemset'      comhlíon na croíthacair míre lena gclabhsúr\n"
+"  `look-ahead'    ceangal ceannamhairc le míreanna go follasach\n"
+"  `solved'       réiteach de choinbhleachtaí iomlaoid/laghdú\n"
+"  `all'          gach sonra thuas\n"
+"  `none'         díchumasaigh an tuairisc\n"
+
+#: src/getargs.c:256
+msgid "Report bugs to <bug-bison@gnu.org>.\n"
+msgstr "Seol tuairiscí fabhtanna chuig <bug-bison@gnu.org>.\n"
+
+#: src/getargs.c:273
+#, c-format
+msgid "bison (GNU Bison) %s"
+msgstr "bison (GNU Bison) %s"
+
+#: src/getargs.c:275
+msgid "Written by Robert Corbett and Richard Stallman.\n"
+msgstr "Le Robert Corbett agus Richard Stallman.\n"
+
+#: src/getargs.c:279
+#, c-format
+msgid "Copyright (C) %d Free Software Foundation, Inc.\n"
+msgstr "Copyright © %d Free Software Foundation, Inc.\n"
+
+#: src/getargs.c:281
+msgid ""
+"This is free software; see the source for copying conditions.  There is NO\n"
+"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n"
+msgstr ""
+"Is saorbhogearra an ríomhchlár seo; féach ar an bhunchód le haghaidh\n"
+"coinníollacha cóipeála.  Níl baránta ar bith ann; go fiú níl baránta ann\n"
+"d'INDÍOLTACHT nó FEILIÚNACHT DO FHEIDHM AR LEITH.\n"
+
+#: src/getargs.c:453
+#, c-format
+msgid "missing operand after `%s'"
+msgstr "oibreann ar iarraidh i ndiaidh `%s'"
+
+#: src/getargs.c:455
+#, c-format
+msgid "extra operand `%s'"
+msgstr "oibreann breise `%s'"
+
+#: src/gram.c:139
+msgid "empty"
+msgstr "folamh"
+
+#: src/gram.c:233
+msgid "Grammar"
+msgstr "Gramadach"
+
+#: src/gram.c:320 src/reduce.c:395
+msgid "warning"
+msgstr "rabhadh"
+
+#: src/main.c:125
+msgid "rule never reduced because of conflicts"
+msgstr "riail nach laghdaithe riamh de bhíthin coinbhleachtaí"
+
+#: src/parse-gram.y:548
+msgid "missing identifier in parameter declaration"
+msgstr "aitheantóir ar iarraidh i bhfógra paraiméadair"
+
+# don't know if alignment matters here, so use 4-letter 'sórt' vs. 'cineál'-KPS
+#: src/print.c:49
+#, c-format
+msgid " type %d is %s\n"
+msgstr " de chineál %d is %s\n"
+
+#: src/print.c:165
+#, c-format
+msgid "shift, and go to state %d\n"
+msgstr "déan iomlaoid, agus téigh go staid %d\n"
+
+#: src/print.c:167
+#, c-format
+msgid "go to state %d\n"
+msgstr "téigh go staid %d\n"
+
+#: src/print.c:204
+msgid "error (nonassociative)\n"
+msgstr "earráid (neamh-chomhthiomsaitheach)\n"
+
+#: src/print.c:292
+#, c-format
+msgid "reduce using rule %d (%s)"
+msgstr "laghdaigh, ag úsáid rialach %d (%s)"
+
+#: src/print.c:294
+#, c-format
+msgid "accept"
+msgstr "glac leis"
+
+#: src/print.c:325 src/print.c:391
+msgid "$default"
+msgstr "$réamhshocraithe"
+
+#: src/print.c:420
+#, c-format
+msgid "state %d"
+msgstr "staid %d"
+
+#: src/print.c:456
+msgid "Terminals, with rules where they appear"
+msgstr "Sloinn dolaghdaithe, le rialacha más cuí"
+
+#: src/print.c:483
+msgid "Nonterminals, with rules where they appear"
+msgstr "Sloinn inlaghdaithe, le rialacha más cuí"
+
+#: src/print.c:512
+#, c-format
+msgid " on left:"
+msgstr " ar clé:"
+
+#: src/print.c:527
+#, c-format
+msgid " on right:"
+msgstr " ar dheis:"
+
+#: src/print.c:555
+msgid "Rules never reduced"
+msgstr "Rialacha nach laghdaithe riamh"
+
+#: src/reader.c:58
+#, c-format
+msgid "multiple %s declarations"
+msgstr "fógraí %s iomadúla"
+
+#: src/reader.c:120
+#, c-format
+msgid "result type clash on merge function %s: <%s> != <%s>"
+msgstr ""
+"caismirt idir cineálacha toraidh i bhfeidhm chumaiscthe %s: <%s> != <%s>"
+
+#: src/reader.c:210
+#, c-format
+msgid "rule given for %s, which is a token"
+msgstr "tugadh riail i gcomhair %s, agus é ina theaghrán comharthach"
+
+#: src/reader.c:253
+#, c-format
+msgid "type clash on default action: <%s> != <%s>"
+msgstr "caismirt idir cineálacha leis an ghníomh réamhshocraithe: <%s> != <%s>"
+
+#: src/reader.c:259
+msgid "empty rule for typed nonterminal, and no action"
+msgstr ""
+"riail fholamh i gcomhair teaghrán inlaghdaithe le cineál, ach níl aon ghníomh"
+
+#: src/reader.c:273
+#, fuzzy, c-format
+msgid "unused value: $%d"
+msgstr "luach neamhbhailí: %s"
+
+#: src/reader.c:275
+msgid "unset value: $$"
+msgstr ""
+
+#: src/reader.c:353 src/reader.c:367 src/reader.c:380
+#, c-format
+msgid "only one %s allowed per rule"
+msgstr "ní cheadaítear ach %s amháin an riail"
+
+#: src/reader.c:363 src/reader.c:378
+#, c-format
+msgid "%s affects only GLR parsers"
+msgstr "Níl %s curtha i bhfeidhm ach ar pharsálaithe GLR"
+
+#: src/reader.c:365
+#, c-format
+msgid "%s must be followed by positive number"
+msgstr "Ní foláir uimhir dheimhneach a theacht i ndiaidh %s"
+
+#: src/reader.c:534
+msgid "no rules in the input grammar"
+msgstr "níl aon riail sa ghramadach ionchurtha"
+
+#: src/reduce.c:243
+msgid "useless rule"
+msgstr "riail dhíomhaoin"
+
+#: src/reduce.c:304
+#, c-format
+msgid "useless nonterminal: %s"
+msgstr "slonn díomhaoin inlaghdaithe: %s"
+
+#: src/reduce.c:352
+msgid "Useless nonterminals"
+msgstr "Sloinn dhíomhaoin inlaghdaithe"
+
+#: src/reduce.c:365
+msgid "Terminals which are not used"
+msgstr "Sloinn dolaghdaithe nach in úsáid"
+
+#: src/reduce.c:374
+msgid "Useless rules"
+msgstr "Rialacha díomhaoine"
+
+#: src/reduce.c:390
+#, c-format
+msgid "%d rule never reduced\n"
+msgid_plural "%d rules never reduced\n"
+msgstr[0] "%d riail nach laghdaithe riamh\n"
+msgstr[1] "%d riail nach laghdaithe riamh\n"
+msgstr[2] "%d riail nach laghdaithe riamh\n"
+msgstr[3] "%d riail nach laghdaithe riamh\n"
+
+#: src/reduce.c:398
+#, c-format
+msgid "%d useless nonterminal"
+msgid_plural "%d useless nonterminals"
+msgstr[0] "%d slonn díomhaoin inlaghdaithe"
+msgstr[1] "%d shlonn díomhaoin inlaghdaithe"
+msgstr[2] "%d slonn díomhaoin inlaghdaithe"
+msgstr[3] "%d slonn díomhaoin inlaghdaithe"
+
+#: src/reduce.c:404
+#, c-format
+msgid " and "
+msgstr " agus "
+
+#: src/reduce.c:407
+#, c-format
+msgid "%d useless rule"
+msgid_plural "%d useless rules"
+msgstr[0] "%d riail dhíomhaoin"
+msgstr[1] "%d riail dhíomhaoin"
+msgstr[2] "%d riail dhíomhaoin"
+msgstr[3] "%d riail dhíomhaoin"
+
+#: src/reduce.c:437
+#, c-format
+msgid "start symbol %s does not derive any sentence"
+msgstr "níl aon abairt díorthaithe ón siombail tosaigh %s"
+
+#: src/scan-gram.l:197
+msgid "stray `,' treated as white space"
+msgstr "`,' ar seachrán, caith leis mar spás bán"
+
+#: src/scan-gram.l:261
+#, c-format
+msgid "invalid directive: %s"
+msgstr "treoir neamhbhailí: %s"
+
+#: src/scan-gram.l:321
+#, c-format
+msgid "invalid character: %s"
+msgstr "carachtar neamhbhailí: %s"
+
+#: src/scan-gram.l:441
+msgid "invalid null character"
+msgstr "carachtar neamhbhailí nialasach"
+
+#: src/scan-gram.l:454 src/scan-gram.l:465 src/scan-gram.l:486
+#, c-format
+msgid "invalid escape sequence: %s"
+msgstr "éalúchán neamhbhailí: %s"
+
+#: src/scan-gram.l:456 src/scan-gram.l:467 src/scan-gram.l:488
+#, c-format
+msgid "invalid null character: %s"
+msgstr "carachtar neamhbhailí nialasach: %s"
+
+#: src/scan-gram.l:493
+#, c-format
+msgid "unrecognized escape sequence: %s"
+msgstr "seicheamh éalúcháin anaithnid: %s"
+
+#: src/scan-gram.l:575
+#, fuzzy, c-format
+msgid "missing `{' in %s"
+msgstr "`{' ar iarraidh i `%s'"
+
+#: src/scan-gram.l:640
+msgid "stray `$'"
+msgstr ""
+
+#: src/scan-gram.l:644
+msgid "stray `@'"
+msgstr ""
+
+#: src/scan-gram.l:776 src/scan-gram.l:1087
+msgid "line number overflow"
+msgstr ""
+
+#: src/scan-gram.l:778
+msgid "column number overflow"
+msgstr ""
+
+#: src/scan-gram.l:861
+#, c-format
+msgid "$$ of `%s' has no declared type"
+msgstr "Níl aon chineál fógartha ag $$ de `%s'"
+
+#: src/scan-gram.l:881
+#, c-format
+msgid "$%d of `%s' has no declared type"
+msgstr "Níl aon chineál fógartha ag $%d de `%s'"
+
+#: src/scan-gram.l:891 src/scan-gram.l:958 src/scan-gram.l:1009
+#, c-format
+msgid "integer out of range: %s"
+msgstr "slánuimhir as raon: %s"
+
+#: src/scan-gram.l:927 src/scan-gram.l:993
+#, c-format
+msgid "invalid value: %s"
+msgstr "luach neamhbhailí: %s"
+
+#: src/scan-gram.l:1103
+msgid "rule is too long"
+msgstr ""
+
+#: src/scan-gram.l:1131
+#, c-format
+msgid "missing `%s' at end of file"
+msgstr "`%s' ar iarraidh ag críoch an chomhaid"
+
+#: src/scan-gram.l:1142
+#, c-format
+msgid "missing `%s' at end of line"
+msgstr "`%s' ar iarraidh ag críoch na líne"
+
+#: src/symlist.c:145
+#, fuzzy, c-format
+msgid "invalid $ value: $%d"
+msgstr "luach neamhbhailí: %s"
+
+#: src/symtab.c:71
+#, c-format
+msgid "too many symbols in input grammar (limit is %d)"
+msgstr "an iomarca siombailí sa ghramadach ionchurtha (uasmhéid %d)"
+
+#: src/symtab.c:110
+#, c-format
+msgid "%s redeclaration for %s"
+msgstr "athfhógra %s ar %s"
+
+#: src/symtab.c:111
+msgid "first declaration"
+msgstr "an chéad fhógra"
+
+#: src/symtab.c:199
+#, c-format
+msgid "symbol %s redefined"
+msgstr "sainmhíniú nua ar shiombail %s"
+
+#: src/symtab.c:213
+#, fuzzy, c-format
+msgid "symbol %s redeclared"
+msgstr "sainmhíniú nua ar shiombail %s"
+
+#: src/symtab.c:230
+#, c-format
+msgid "redefining user token number of %s"
+msgstr "sainmhíniú nua ar an uimhir theaghráin do %s"
+
+#: src/symtab.c:257
+#, c-format
+msgid "symbol %s is used, but is not defined as a token and has no rules"
+msgstr ""
+"tá siombail %s in úsáid, ach níl sé ina teaghrán comharthach agus níl aon "
+"riail aici"
+
+#: src/symtab.c:282
+#, c-format
+msgid "symbol `%s' used more than once as a literal string"
+msgstr "siombail `%s' in úsáid níos mó ná uair amháin mar theaghrán litriúil"
+
+#: src/symtab.c:285
+#, c-format
+msgid "symbol `%s' given more than one literal string"
+msgstr "tá níos mó ná aon teaghrán litriúil amháin ag an tsiombail `%s'"
+
+#: src/symtab.c:428
+#, c-format
+msgid "tokens %s and %s both assigned number %d"
+msgstr "tá teaghráin chomharthach ann (%s agus %s) leis an uimhir chéanna (%d)"
+
+#: src/symtab.c:651
+#, c-format
+msgid "the start symbol %s is undefined"
+msgstr "siombail tosaigh %s gan sainmhíniú"
+
+#: src/symtab.c:655
+#, c-format
+msgid "the start symbol %s is a token"
+msgstr "is teaghrán comharthach í an tsiombail tosaigh %s"
+
+#: lib/argmatch.c:137
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "argóint neamhbhailí %s chun %s"
+
+#: lib/argmatch.c:138
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "argóint dhébhríoch %s chun %s"
+
+#: lib/argmatch.c:157
+#, c-format
+msgid "Valid arguments are:"
+msgstr "Na hargóintí bailí:"
+
+#: lib/bitset_stats.c:177
+#, c-format
+msgid "%u bitset_allocs, %u freed (%.2f%%).\n"
+msgstr "%u bitset_allocs, %u scaoilte (%.2f%%).\n"
+
+#: lib/bitset_stats.c:180
+#, c-format
+msgid "%u bitset_sets, %u cached (%.2f%%)\n"
+msgstr "%u bitset_sets, %u curtha i dtaisce (%.2f%%)\n"
+
+#: lib/bitset_stats.c:183
+#, c-format
+msgid "%u bitset_resets, %u cached (%.2f%%)\n"
+msgstr "%u bitset_resets, %u curtha i dtaisce (%.2f%%)\n"
+
+#: lib/bitset_stats.c:186
+#, c-format
+msgid "%u bitset_tests, %u cached (%.2f%%)\n"
+msgstr "%u bitset_tests, %u curtha i dtaisce (%.2f%%)\n"
+
+#: lib/bitset_stats.c:190
+#, c-format
+msgid "%u bitset_lists\n"
+msgstr "%u bitset_lists\n"
+
+#: lib/bitset_stats.c:192
+msgid "count log histogram\n"
+msgstr "histeagram loga áirimh\n"
+
+#: lib/bitset_stats.c:195
+msgid "size log histogram\n"
+msgstr "histeagram loga méid\n"
+
+#: lib/bitset_stats.c:198
+msgid "density histogram\n"
+msgstr "histeagram dlúithe\n"
+
+#: lib/bitset_stats.c:212
+#, c-format
+msgid ""
+"Bitset statistics:\n"
+"\n"
+msgstr ""
+"Staitistic Bitset:\n"
+"\n"
+
+#: lib/bitset_stats.c:215
+#, c-format
+msgid "Accumulated runs = %u\n"
+msgstr "Rití carnacha = %u\n"
+
+#: lib/bitset_stats.c:259 lib/bitset_stats.c:264
+msgid "Could not read stats file."
+msgstr "Níorbh fhéidir an comhad staitistice a léamh."
+
+#: lib/bitset_stats.c:261
+#, c-format
+msgid "Bad stats file size.\n"
+msgstr "Méid comhaid staitistice earráideach.\n"
+
+#: lib/bitset_stats.c:287 lib/bitset_stats.c:289
+msgid "Could not write stats file."
+msgstr "Níorbh fhéidir scríobh ar an chomhad staitistice."
+
+#: lib/bitset_stats.c:292
+msgid "Could not open stats file for writing."
+msgstr "Níorbh fhéidir an comhad staitistice a oscailt chun scríobh ann."
+
+#: lib/error.c:121
+msgid "Unknown system error"
+msgstr "Earráid chórais anaithnid"
+
+#: lib/getopt.c:531 lib/getopt.c:547
+#, c-format
+msgid "%s: option `%s' is ambiguous\n"
+msgstr "%s: Tá an rogha `%s' débhríoch\n"
+
+#: lib/getopt.c:580 lib/getopt.c:584
+#, c-format
+msgid "%s: option `--%s' doesn't allow an argument\n"
+msgstr "%s: ní cheadaítear argóint i ndiaidh na rogha `--%s'\n"
+
+#: lib/getopt.c:593 lib/getopt.c:598
+#, c-format
+msgid "%s: option `%c%s' doesn't allow an argument\n"
+msgstr "%s: ní cheadaítear argóint i ndiaidh na rogha `%c%s'\n"
+
+#: lib/getopt.c:641 lib/getopt.c:660 lib/getopt.c:976 lib/getopt.c:995
+#, c-format
+msgid "%s: option `%s' requires an argument\n"
+msgstr "%s: ní foláir argóint don rogha `%s'\n"
+
+#: lib/getopt.c:698 lib/getopt.c:701
+#, c-format
+msgid "%s: unrecognized option `--%s'\n"
+msgstr "%s: rogha anaithnid `--%s'\n"
+
+#: lib/getopt.c:709 lib/getopt.c:712
+#, c-format
+msgid "%s: unrecognized option `%c%s'\n"
+msgstr "%s: rogha anaithnid `%c%s'\n"
+
+#: lib/getopt.c:764 lib/getopt.c:767
+#, c-format
+msgid "%s: illegal option -- %c\n"
+msgstr "%s: rogha neamhcheadaithe -- %c\n"
+
+#: lib/getopt.c:773 lib/getopt.c:776
+#, c-format
+msgid "%s: invalid option -- %c\n"
+msgstr "%s: rogha neamhbhailí -- %c\n"
+
+#: lib/getopt.c:828 lib/getopt.c:844 lib/getopt.c:1048 lib/getopt.c:1066
+#, c-format
+msgid "%s: option requires an argument -- %c\n"
+msgstr "%s: ní foláir argóint don rogha -- %c\n"
+
+#: lib/getopt.c:897 lib/getopt.c:913
+#, c-format
+msgid "%s: option `-W %s' is ambiguous\n"
+msgstr "%s: Tá an rogha `-W %s' débhríoch\n"
+
+#: lib/getopt.c:937 lib/getopt.c:955
+#, c-format
+msgid "%s: option `-W %s' doesn't allow an argument\n"
+msgstr "%s: ní cheadaítear argóint i ndiaidh na rogha `-W %s'\n"
+
+#: lib/obstack.c:433 lib/obstack.c:435 lib/xalloc-die.c:37
+msgid "memory exhausted"
+msgstr "cuimhne ídithe"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  If the catalog has no translation,
+#. locale_quoting_style quotes `like this', and
+#. clocale_quoting_style quotes "like this".
+#.
+#. For example, an American English Unicode locale should
+#. translate "`" to U+201C (LEFT DOUBLE QUOTATION MARK), and
+#. should translate "'" to U+201D (RIGHT DOUBLE QUOTATION
+#. MARK).  A British English Unicode locale should instead
+#. translate these to U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. U+2019 (RIGHT SINGLE QUOTATION MARK), respectively.
+#.
+#. If you don't know what to put here, please see
+#. <http://en.wikipedia.org/wiki/Quotation_mark#Glyphs>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:245
+msgid "`"
+msgstr "`"
+
+#: lib/quotearg.c:246
+msgid "'"
+msgstr "'"
+
+#: lib/subpipe.c:171
+#, c-format
+msgid "subsidiary program `%s' could not be invoked"
+msgstr "níorbh fhéidir an fochlár `%s' a rith"
+
+#: lib/subpipe.c:173
+#, c-format
+msgid "subsidiary program `%s' not found"
+msgstr "fochlár `%s' gan aimsiú"
+
+#: lib/subpipe.c:175
+#, c-format
+msgid "subsidiary program `%s' failed"
+msgstr "theip ar an fhochlár `%s'"
+
+#: lib/subpipe.c:176
+#, c-format
+msgid "subsidiary program `%s' failed (exit status %d)"
+msgstr "theip ar an fhochlár `%s' (stádas scortha %d)"
+
+#: lib/timevar.c:475
+msgid ""
+"\n"
+"Execution times (seconds)\n"
+msgstr ""
+"\n"
+"Agaí rite (soicindí)\n"
+
+#: lib/timevar.c:525
+msgid " TOTAL                 :"
+msgstr " IOMLÁN                :"
+
+#: lib/timevar.c:561
+#, c-format
+msgid "time in %s: %ld.%06ld (%ld%%)\n"
+msgstr "aga i %s: %ld.%06ld (%ld%%)\n"
+
+#~ msgid "syntax error: cannot back up"
+#~ msgstr "earráid chomhréire: ní féidir cúlú"
+
+#~ msgid "Stack now"
+#~ msgstr "Cruach anois"
+
+#~ msgid "Reducing stack by rule %d (line %u), "
+#~ msgstr "Cruach á laghdú, ag úsáid rialach %d (líne %u)"
+
+#~ msgid "parser stack overflow"
+#~ msgstr "cruach pharsála thar maoil"
+
+#~ msgid "Stack size increased to %lu\n"
+#~ msgstr "Méadaíodh an chruach go %lu\n"
+
+#~ msgid "Entering state %d\n"
+#~ msgstr "Ag dul go staid %d\n"
+
+#~ msgid "Reading a token: "
+#~ msgstr "Teaghrán comharthach á léamh: "
+
+#~ msgid "Now at end of input.\n"
+#~ msgstr "Ag deireadh an ionchuir.\n"
+
+#~ msgid "Next token is"
+#~ msgstr "An chéad teaghrán comharthach eile"
+
+#~ msgid "Shifting"
+#~ msgstr "Ag déanamh iomlaoid"
+
+#~ msgid "POSIX forbids declarations in the grammar"
+#~ msgstr "Ní cheadaítear fógraí sa ghramadach de réir POSIX"
+
+#~ msgid "syntax error, unexpected %s"
+#~ msgstr "earráid chomhréire, %s gan choinne"
+
+#~ msgid "syntax error, unexpected %s, expecting %s"
+#~ msgstr "earráid chomhréire, %s gan choinne, bhíothas ag súil le %s"
+
+#~ msgid "syntax error, unexpected %s, expecting %s or %s"
+#~ msgstr "earráid chomhréire, %s gan choinne, bhíothas ag súil le %s nó %s"
+
+#~ msgid "syntax error, unexpected %s, expecting %s or %s or %s"
+#~ msgstr ""
+#~ "earráid chomhréire, %s gan choinne, bhíothas ag súil le %s nó %s nó %s"
+
+#~ msgid "syntax error, unexpected %s, expecting %s or %s or %s or %s"
+#~ msgstr ""
+#~ "earráid chomhréire, %s gan choinne, bhíothas ag súil le %s nó %s nó %s nó "
+#~ "%s"
+
+#~ msgid "syntax error; also memory exhausted"
+#~ msgstr "earráid chomhréire; cuimhne ídithe freisin"
+
+#~ msgid "syntax error"
+#~ msgstr "earráid chomhréire"
+
+#~ msgid "Error: discarding"
+#~ msgstr "Earráid: curtha i leataobh"
+
+#~ msgid "Error: popping"
+#~ msgstr "Earráid: á phlobadh"
+
+#~ msgid "Error: discarding lookahead"
+#~ msgstr "Earráid: réamhfheiceáil curtha i leataobh"
+
+#~ msgid "invalid $ value"
+#~ msgstr "luach $ neamhbhailí"
+
+#~ msgid "type redeclaration for %s"
+#~ msgstr "athfhógra cineáil ar %s"
+
+#~ msgid "redefining precedence of %s"
+#~ msgstr "tosaíocht nua ar %s"
+
+#~ msgid "conflicting precedences for %s and %s"
+#~ msgstr "tosaíochtaí contrártha idir %s agus %s"
+
+#~ msgid "conflicting associativities for %s (%s) and %s (%s)"
+#~ msgstr "comhthiomsaitheacht chontrártha idir %s (%s) agus %s (%s)"

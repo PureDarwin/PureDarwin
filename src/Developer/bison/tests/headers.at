@@ -1,0 +1,137 @@
+# Bison Parser Headers.                               -*- Autotest -*-
+# Copyright (C) 2001, 2002, 2006 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+AT_BANNER([[Parser Headers.]])
+
+
+## ---------------------- ##
+## %union and --defines.  ##
+## ---------------------- ##
+
+
+AT_SETUP([%union and --defines])
+
+AT_DATA([input.y],
+[%union
+{
+  int   integer;
+  char *string ;
+}
+%%
+exp: {};
+])
+
+AT_CHECK([bison --defines input.y])
+
+AT_CLEANUP
+
+
+
+## --------------------- ##
+## Invalid CPP headers.  ##
+## --------------------- ##
+
+# AT_TEST_CPP_GUARD_H([INPUT-FILE-BASE)
+# -------------------------------------
+m4_define([AT_TEST_CPP_GUARD_H],
+[AT_SETUP([Invalid CPP guards: $1])
+
+# Possibly create inner directories.
+dirname=`AS_DIRNAME([$1])`
+AS_MKDIR_P([$dirname])
+
+AT_DATA_GRAMMAR([$1.y],
+[%{
+#include <$1.h>
+void yyerror (const char *);
+int yylex (void);
+%}
+%%
+dummy:;
+%%
+#include <$1.h>
+])
+
+AT_CHECK([bison --defines=$1.h --output=y.tab.c $1.y])
+
+AT_COMPILE([y.tab.o], [-I. -c y.tab.c])
+
+AT_CLEANUP
+])
+
+AT_TEST_CPP_GUARD_H([input/input])
+AT_TEST_CPP_GUARD_H([9foo])
+
+
+
+## ---------------- ##
+## export YYLTYPE.  ##
+## ---------------- ##
+
+
+AT_SETUP([export YYLTYPE])
+
+AT_DATA_GRAMMAR([input.y],
+[%locations
+
+%name-prefix="my_"
+%{
+#include <stdio.h>
+#include <stdlib.h>
+
+static int
+my_lex (void)
+{
+  return EOF;
+}
+
+static void
+my_error (const char *msg)
+{
+  fprintf (stderr, "%s\n", msg);
+}
+
+%}
+%%
+exp:;
+])
+
+AT_CHECK([bison --defines -o input.c input.y])
+
+# YYLTYPE should be defined, and MY_LLOC declared.
+AT_DATA([caller.c],
+[[#include "input.h"
+YYLTYPE *my_llocp = &my_lloc;
+
+int my_parse (void);
+
+int
+main (void)
+{
+  return my_parse ();
+}
+]])
+
+# Link and execute, just to make sure everything is fine (and in
+# particular, that MY_LLOC is indeed defined somewhere).
+AT_COMPILE([caller.o], [-c caller.c])
+AT_COMPILE([input.o], [-c input.c])
+AT_COMPILE([caller], [caller.o input.o])
+AT_PARSER_CHECK([./caller])
+
+AT_CLEANUP

@@ -1,0 +1,59 @@
+#!/bin/sh
+
+unset RC_TRACE_DYLIBS
+unset RC_TRACE_ARCHIVES
+unset LD_TRACE_DYLIBS
+unset LD_TRACE_ARCHIVES
+
+# cd into test-cases directory
+cd `echo "$0" | sed 's/run-all-unit-tests/test-cases/'`
+
+[ "$PROCTORRUN" ] && exec ../proctor-run
+
+all_archs="x86_64  i386"
+valid_archs="x86_64 i386"
+ios_sdk_directory="/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs"
+# only test arm code if iOS platform tools installed
+min_available_ios_sdk_version()
+{
+	ls "${ios_sdk_directory}" |
+		grep --invert-match --ignore-case "internal" |  # exclude internal SDKs
+		sort --version-sort | head -n 1 |  # take SDK with min version
+		sed "s/^iPhoneOS\(.*\)\.sdk$/\1/"  # return only the version string
+}
+version_ge()
+{
+	test "$(printf '%s\n' "$@" | sort --version-sort | head -n 1)" == "$2";
+}
+if [ -d $ios_sdk_directory ]
+then
+	arm_arch="armv7"
+	# Newer SDKs don't support older architectures.
+	if version_ge "$(min_available_ios_sdk_version)" "11.0"
+	then
+		arm_arch="arm64"
+	fi
+    all_archs="${all_archs}  ${arm_arch}"
+    valid_archs="${valid_archs} ${arm_arch}"
+fi
+
+
+# clean first
+../bin/make-recursive.pl clean > /dev/null
+
+mkdir /tmp/$$
+for arch in $all_archs
+do
+	echo ""
+	echo " * * * Running all unit tests for architecture $arch * * *"
+
+	# build architecture
+	[ "$NEWTEST" ] && NT=-newtest
+
+	../bin/make-recursive$NT.pl ARCH=$arch VALID_ARCHS="$valid_archs" | ../bin/result-filter.pl
+
+	# clean up so svn is happy
+	../bin/make-recursive.pl ARCH=$arch clean > /dev/null
+
+	echo ""
+done

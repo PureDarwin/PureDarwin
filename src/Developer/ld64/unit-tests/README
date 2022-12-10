@@ -1,0 +1,28 @@
+
+The easy way to run all tests is within Xcode.  Just select "unit-tests" as the target and click Build.
+
+When run from within Xcode, the just built linker will be used.  If you cd into a test case and run it, the
+installed linker (e.g. /usr/bin/ld) will be used.
+
+Each test case is a directory with a Makefile.  The Makefile default target should do whatever work is necessary
+to perform the test. If successful is should print "PASS xxx" where xxx is the name of the test case.  Otherwise
+it should print "FAIL xxx reason".  If nothing is printed (for instance a tool crashed), the harness will 
+automatically print that it failed.  The harness will always pass ARCH to the Makefile to specify which 
+architecture to test. The Makefile should also have a "clean" target which removes and generated files.
+
+
+There are some utility functions for use in Makefiles for generating the PASS/FAIL strings:
+
+	${PASS_IFF} can be put in front of the last command in the make rule and it will print PASS
+	if the command returned 0 or FAIL otherwise.  Example:
+		${PASS_IFF} ${CC} foo.c -o foo
+	Will print PASS if and only if the compilation succeeded
+		
+	${PASS_IFF_EMPTY} can have data piped into it.  It prints PASS if there is no data, otherwise FAIL.
+	Example:
+		otool -hv foo.o | grep SUBSECTIONS_VIA_SYMBOLS | ${PASS_IFF_EMPTY}
+	Will print PASS if and only if the output of otool does not contain SUBSECTIONS_VIA_SYMBOLS
+	
+	
+ 
+

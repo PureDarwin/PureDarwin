@@ -1,0 +1,12 @@
+dnl @ ../doc/m4.texinfo:4290: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+m4wrap(`This text is lost to `m4exit'.')
+dnl @result{}
+divert(`1') And so is this.
+divert
+dnl @result{}
+m4exit

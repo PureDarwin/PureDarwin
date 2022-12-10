@@ -1,0 +1,11 @@
+dnl @ ../doc/m4.texinfo:2337: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+dnl(`args are ignored, but side effects occur',
+define(`foo', `like this')) while this text is ignored: undefine(`foo')
+dnl @error{}m4:stdin:2: Warning: excess arguments to builtin `dnl' ignored
+See how `foo' was defined, foo?
+dnl @result{}See how foo was defined, like this?

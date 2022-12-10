@@ -12,7 +12,7 @@ function(add_kext_bundle name)
 
     target_compile_definitions(${name} PRIVATE TARGET_OS_OSX KERNEL)
     target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fapple-kext>)
-    target_link_options(${name} PRIVATE "LINKER:-bundle")
+    target_link_options(${name} PRIVATE "LINKER:-bundle" "LINKER:-kext")
     target_link_options(${name} PRIVATE "SHELL:-undefined dynamic_lookup")
 
     if(SL_KERNEL_PRIVATE)
@@ -73,7 +73,7 @@ function(add_kmod_info target)
         set(KEXT_ANTIMAIN_FUNCTION "0")
     endif()
 
-    configure_file(${PUREDARWIN_SOURCE_DIR}/cmake/templates/kmod_info.c.in ${CMAKE_CURRENT_BINARY_DIR}/kmod_info.c)
+    configure_file(${RC_DARWIN_ROOT}/cmake/templates/kmod_info.c.in ${CMAKE_CURRENT_BINARY_DIR}/kmod_info.c)
     target_sources(${target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/kmod_info.c)
     target_link_libraries(${target} PRIVATE libkmod)
 endfunction()

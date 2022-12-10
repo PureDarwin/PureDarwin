@@ -1,0 +1,8 @@
+[submodule "llvm-project"]
+path = src/Developer/llvm/llvm-project
+url = https://github.com/apple/llvm-project.git
+branch = stable/20220421 
+[submodule "ninja"]
+path = tools/ninja
+url = https://github.com/ninja-build/ninja.git
+branch = master

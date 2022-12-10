@@ -1,0 +1,17 @@
+dnl @ ../doc/m4.texinfo:4873: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`fatal_error',
+  `errprint(__program__:ifelse(__line__, `0', `',
+    `__file__:__line__:')` fatal error: $*
+')m4exit(`1')')
+dnl @result{}
+m4wrap(`divnum(`demo of internal message')
+fatal_error(`inside wrapped text')')
+dnl @result{}
+dnl @error{}m4: Warning: excess arguments to builtin `divnum' ignored
+dnl @result{}0
+dnl @error{}m4: fatal error: inside wrapped text

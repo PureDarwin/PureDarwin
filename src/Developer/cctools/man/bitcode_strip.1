@@ -1,0 +1,63 @@
+.TH BITCODE_STRIP 1 "June 23, 2020" "Apple, Inc."
+.SH NAME
+bitcode_strip \- remove or leave the bitcode segment in a Mach-O file
+.SH SYNOPSIS
+.B bitcode_strip
+.I input
+[
+.B \-r
+|
+.B \-m
+|
+.B \-l
+] [
+.B \-v
+] [
+.B \-keep_cs
+]
+.BI \-o " output"
+.SH DESCRIPTION
+.I bitcode_strip
+strips Mach-O files and Universal files containing LLVM bitcode, either by
+removing the bitcode or by removing the native executable code. If the Mach-O
+file or architecture in an Universal file does not have a bitcode segment it
+is left essentially unchanged. By default
+.B bitcode_strip
+will remove the code signature load commands from the output file as the
+code signature is no longer valid.
+.SH OPTIONS
+.TP
+.B \-r
+Remove the __LLVM bitcode segment entirely.
+.TP
+.B \-m
+Remove the bitcode from the __LLVM segment, leaving behind a marker.
+.TP
+.B \-l
+Remove all of the native executable code, leaving the LLVM bitcode behind. In
+this case,
+.B bitcode_strip
+will take care to preserve the (__TEXT,__info_plist) section while removing the
+rest of the __TEXT segment.
+.TP
+.B \-v
+Print the arguments passed to other tools run by
+.B bitcode_strip
+when processing bitcode files.
+.TP
+.B \-keep_cs
+Preserve the codesign load commands in the output binary, even though the code
+signature is no longer valid. This can be useful when using
+.BR codesign (1)
+.B \-preserve-metadata
+to resign the binary.
+.TP
+.BI \-o " output"
+specifies the output file as
+.I output.
+.TP
+.BI input
+specifies the input Mach-O or Universal file to operate on.
+.SH "SEE ALSO"
+.BR codesign (1),
+.BR otool (1).

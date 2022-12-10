@@ -1,0 +1,16 @@
+dnl @ ../doc/m4.texinfo:3095: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+We decided to divert the stream for irrigation.
+dnl @result{}We decided to  the stream for irrigation.
+define(`divert', `ifelse(`$#', `0', ``$0'', `builtin(`$0', $@)')')
+dnl @result{}
+divert(-1)
+Ignored text.
+divert(0)
+dnl @result{}
+We decided to divert the stream for irrigation.
+dnl @result{}We decided to divert the stream for irrigation.

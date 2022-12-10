@@ -1,0 +1,16 @@
+dnl @ ../doc/m4.texinfo:3948: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`provided', `0')
+dnl @result{}
+ifdef(`__unix__', `define(`provided', incr(provided))')
+dnl @result{}
+ifdef(`__windows__', `define(`provided', incr(provided))')
+dnl @result{}
+ifdef(`__os2__', `define(`provided', incr(provided))')
+dnl @result{}
+provided
+dnl @result{}1

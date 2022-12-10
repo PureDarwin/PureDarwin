@@ -1,0 +1,16 @@
+
+# order __data section so even if different compiler lays out data 
+# differently, linker lays out the same, so stabs are in same order
+.my_non_standard_name_static
+.my_non_standard_name
+__ZZ3bariE8bar_init
+_init
+_uninit
+__ZZ3bariE10bar_uninit
+__ZL7suninit
+__ZL5sinit
+
+
+
+
+

@@ -1,0 +1,11 @@
+--- read.c.orig	2008-10-14 17:34:58.000000000 -0700
++++ read.c	2008-10-14 17:35:06.000000000 -0700
+@@ -1821,7 +1821,7 @@
+           current_variable_set_list = f->variables;
+           v = try_variable_definition (flocp, defn, origin, 1);
+           if (!v)
+-            error (flocp, _("Malformed target-specific variable definition"));
++            fatal (flocp, _("Malformed target-specific variable definition"));
+           current_variable_set_list = global;
+         }
+ 

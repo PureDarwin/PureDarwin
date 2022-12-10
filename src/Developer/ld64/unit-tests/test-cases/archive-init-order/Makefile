@@ -1,0 +1,48 @@
+##
+# Copyright (c) 2011 Apple Inc. All rights reserved.
+#
+# @APPLE_LICENSE_HEADER_START@
+# 
+# This file contains Original Code and/or Modifications of Original Code
+# as defined in and that are subject to the Apple Public Source License
+# Version 2.0 (the 'License'). You may not use this file except in
+# compliance with the License. Please obtain a copy of the License at
+# http://www.opensource.apple.com/apsl/ and read it before using this
+# file.
+# 
+# The Original Code and all software distributed under the License are
+# distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+# EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+# INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+# Please see the License for the specific language governing rights and
+# limitations under the License.
+# 
+# @APPLE_LICENSE_HEADER_END@
+##
+TESTROOT = ../..
+include ${TESTROOT}/include/common.makefile
+
+#
+# Check the order of functions from archives.
+#
+
+run: all
+
+all:
+	${CC} ${CCFLAGS} foo.c -c -o foo.o 
+	${CC} ${CCFLAGS} foo2.c -c -o foo2.o 
+	${CC} ${CCFLAGS} foo3.c -c -o foo3.o 
+	${CC} ${CCFLAGS} bar.c -c -o bar.o 
+	${CC} ${CCFLAGS} bar2.c -c -o bar2.o 
+	${CC} ${CCFLAGS} bar3.c -c -o bar3.o 
+	libtool -static foo.o foo2.o foo3.o -o libfoo.a
+	libtool -static bar3.o bar2.o bar.o -o libbar.a
+	${CC} ${CCFLAGS} main.c -lbar -lfoo -L. -o main -Wl,-map,main.map
+	grep anon main.map | awk '{ print $$4}' > main-actual.txt
+	sort main-actual.txt > main-should.txt
+	diff main-actual.txt main-should.txt
+	${PASS_IFF_GOOD_MACHO} main
+
+clean:
+	rm -rf *.o *.a main main.map main*.txt

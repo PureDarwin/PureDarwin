@@ -1,0 +1,18 @@
+dnl @ ../doc/m4.texinfo:2444: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`hi', `HI')
+dnl @result{}
+changequote(`q', `Q')
+dnl @result{}
+q hi Q hi
+dnl @result{}q HI Q HI
+changequote
+dnl @result{}
+changequote(`-', `EOF')
+dnl @result{}
+- hi EOF hi
+dnl @result{} hi  HI

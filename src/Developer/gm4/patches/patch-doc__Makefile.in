@@ -1,0 +1,11 @@
+--- doc/Makefile.in.orig	2006-09-21 19:42:44.000000000 -0700
++++ doc/Makefile.in	2006-09-21 19:45:29.000000000 -0700
+@@ -506,7 +506,7 @@
+ 
+ info-am: $(INFO_DEPS)
+ 
+-install-data-am: install-info-am install-man
++install-data-am: install-man
+ 
+ install-exec-am:
+ 

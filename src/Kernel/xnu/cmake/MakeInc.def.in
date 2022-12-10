@@ -278,9 +278,10 @@ endif
 #
 # Default CFLAGS
 #
-ifdef RC_NONARCH_CFLAGS
-OTHER_CFLAGS = $(RC_NONARCH_CLFAGS)
-endif
+## DARWIN -- We handle this ourself
+#ifdef RC_NONARCH_CFLAGS
+#OTHER_CFLAGS = $(RC_NONARCH_CLFAGS)
+#endif
 
 #
 # Debug info
@@ -306,6 +307,7 @@ CFLAGS_GEN = $(DEBUG_CFLAGS) -nostdinc \
 	-fsigned-bitfields \
 	-fmerge-all-constants \
 	-fno-c++-static-destructors \
+	@RC_NONARCH_CFLAGS@	\
 	$(OTHER_CFLAGS)
 
 CFLAGS_RELEASE	=
@@ -461,7 +463,8 @@ CXXFLAGS_GEN  = -std=gnu++1z -fsized-deallocation -fapple-kext $(OTHER_CXXFLAGS)
 
 CXXFLAGS      = $(CXXFLAGS_GEN) \
 		  $($(addsuffix $(CURRENT_ARCH_CONFIG),CXXFLAGS_)) \
-		  $($(addsuffix $(CURRENT_KERNEL_CONFIG),CXXFLAGS_))
+		  $($(addsuffix $(CURRENT_KERNEL_CONFIG),CXXFLAGS_)) \
+		  @RC_NONARCH_CXXFLAGS@
 
 #
 # Assembler command
@@ -524,7 +527,7 @@ LDFLAGS_KERNEL_GEN = \
 	-Wl,-headerpad,152
 
 # LDFLAGS_KERNEL_SDK	= -L$(SDKROOT)/usr/local/lib/kernel -lfirehose_kernel
-LDFLAGS_KERNEL_SDK	= -L$(dir @FIREHOSE_KERNEL_LIBRARY_PATH@)
+LDFLAGS_KERNEL_SDK	= -L$(dir @FIREHOSE_KERNEL_LIBRARY_PATH@) -lfirehose_kernel
 
 LDFLAGS_KERNEL_RELEASE	=
 LDFLAGS_KERNEL_DEVELOPMENT     =

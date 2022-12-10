@@ -1,0 +1,4 @@
+  segname __ROM2
+  segname __ROM
+  segname __RAM
+  segname __ZF

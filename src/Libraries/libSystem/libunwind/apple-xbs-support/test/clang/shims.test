@@ -1,0 +1,22 @@
+# Build c99.
+RUN: rm -rf %t
+RUN: mkdir -p %t/objroot
+RUN: mkdir -p %t/dstroot
+RUN: make -C %src_root \
+RUN:   install -j 1 \
+RUN:   RC_ProjectName=clang_shims RC_ProjectSourceVersion=9999.99.99 \
+RUN:   OBJROOT="%t"/objroot DSTROOT="%t"/dstroot SRCROOT=%src_root \
+RUN:   DEVELOPER_DIR="%DEVELOPER_DIR"
+
+# Check that c99 builds.
+RUN: stat "%t/dstroot/%DEVELOPER_DIR"/usr/bin/c99
+
+# Check that c99 calls out to clang for -d M.
+#
+# FIXME: Move this to clang-shims/test once we have a test suite set up.
+REQUIRES: iworkdir=os
+RUN: printf "%%s\n" >"%t/dstroot/%DEVELOPER_DIR"/usr/bin/clang \
+RUN:   "#!/bin/sh" 'exec xcrun clang "$@"'
+RUN: chmod +x "%t/dstroot/%DEVELOPER_DIR"/usr/bin/clang
+RUN: "%t/dstroot/%DEVELOPER_DIR"/usr/bin/c99 -W macros \
+RUN:   | grep "#define __APPLE__ 1"

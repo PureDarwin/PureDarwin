@@ -1,9 +1,16 @@
+# xar - XAR Archive tool. Build static library + link with final file to create
+#   executable image for the host.
+
+# Host libraries we need to link with
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(LibXml2 REQUIRED)
 
-add_library(host_libxar STATIC)
-target_sources(host_libxar PRIVATE
+# BEGIN STATICLIB LIBXAR
+
+add_library(libxar STATIC)
+
+target_sources(libxar PRIVATE
     lib/archive.c
     lib/arcmod.c
     lib/b64.c
@@ -27,12 +34,27 @@ target_sources(host_libxar PRIVATE
     lib/util.c
     lib/zxar.c
 )
-target_include_directories(host_libxar PUBLIC include)
-target_include_directories(host_libxar PRIVATE ${OPENSSL_INCLUDE_DIR} ${LIBXML2_INCLUDE_DIR})
-target_link_libraries(host_libxar PRIVATE ZLIB::ZLIB LibXml2::LibXml2)
 
-add_executable(host_xar)
-target_sources(host_xar PRIVATE
+target_link_libraries(libxar PUBLIC OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)
+
+# External host libraries we link we
+target_include_directories(libxar PRIVATE ${OPENSSL_INCLUDE_DIR} ${LIBXML2_INCLUDE_DIR})
+
+# Our header directory
+target_include_directories(libxar PUBLIC include)
+
+# END STATICLIB LIBXAR
+
+# BEGIN EXECUTABLE XAR
+
+add_executable(xar)
+
+target_sources(xar PRIVATE
     src/xar.c
 )
-target_link_libraries(host_xar PRIVATE host_libxar OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)
+
+target_link_libraries(xar PRIVATE libxar)
+
+install(TARGETS xar DESTINATION ${CMAKE_INSTALL_PREFIX} COMPONENT HostTools)
+
+# END EXECUTABLE XAR

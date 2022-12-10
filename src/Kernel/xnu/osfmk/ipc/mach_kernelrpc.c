@@ -309,10 +309,6 @@ _kernelrpc_mach_port_get_attributes_trap(struct _kernelrpc_mach_port_get_attribu
 	int rv = MACH_SEND_INVALID_DEST;
 	mach_msg_type_number_t count;
 
-	if (task != current_task()) {
-		goto done;
-	}
-
 	// MIG does not define the type or size of the mach_port_info_t out array
 	// anywhere, so derive them from the field in the generated reply struct
 #define MACH_PORT_INFO_OUT (((__Reply__mach_port_get_attributes_from_user_t*)NULL)->port_info_out)
@@ -321,6 +317,11 @@ _kernelrpc_mach_port_get_attributes_trap(struct _kernelrpc_mach_port_get_attribu
 	    "mach_port_info_t has grown significantly, reevaluate stack usage");
 	const mach_msg_type_number_t max_count = (sizeof(MACH_PORT_INFO_OUT) / sizeof(MACH_PORT_INFO_OUT[0]));
 	typeof(MACH_PORT_INFO_OUT[0]) info[max_count];
+
+	// PUREDARWIN: Move this conditional here to avoid error because initialization above skipped.
+	if (task != current_task()) {
+		goto done;
+	}
 
 	/*
 	 * zero out our stack buffer because not all flavors of

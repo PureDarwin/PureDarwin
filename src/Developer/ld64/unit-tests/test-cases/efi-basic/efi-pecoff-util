@@ -1,0 +1,942 @@
+#!/usr/bin/python
+#
+# Copyright (c) 2013 - 2016 Apple Inc. All rights reserved
+#
+# Dump out a PE/COFF, PE/COFF+, or TE file using the EfiPeCoff class
+#
+# Read from memory in lldb
+# T=pecoff.EfiPeCoff(lldb.target, 0x86c7d000)
+#
+# Read from a Python file object
+# T=pecoff.EfiPeCoff(file)
+#
+# Read from a Python string
+# T=pecoff.EfiPeCoff(file.read())
+#
+
+import sys
+import struct
+import collections
+import optparse
+import commands
+import os
+import platform
+
+#----------------------------------------------------------------------
+# Code that auto imports LLDB
+#----------------------------------------------------------------------
+try: 
+    # Just try for LLDB in case PYTHONPATH is already correctly setup
+    import lldb
+except ImportError:
+    lldb_python_dirs = list()
+    # lldb is not in the PYTHONPATH, try some defaults for the current platform
+    platform_system = platform.system()
+    if platform_system == 'Darwin':
+        # On Darwin, try the currently selected Xcode directory
+        xcode_dir = commands.getoutput("xcode-select --print-path")
+        if xcode_dir:
+            lldb_python_dirs.append(os.path.realpath(xcode_dir + '/../SharedFrameworks/LLDB.framework/Resources/Python'))
+            lldb_python_dirs.append(xcode_dir + '/Library/PrivateFrameworks/LLDB.framework/Resources/Python')
+        lldb_python_dirs.append('/System/Library/PrivateFrameworks/LLDB.framework/Resources/Python')
+    success = False
+    for lldb_python_dir in lldb_python_dirs:
+        if os.path.exists(lldb_python_dir):
+            if not (sys.path.__contains__(lldb_python_dir)):
+                sys.path.append(lldb_python_dir)
+                try: 
+                    import lldb
+                except ImportError:
+                    pass
+                else:
+                    success = True
+                    break
+    if not success:
+        print "error: couldn't locate the 'lldb' module, please set PYTHONPATH correctly"
+        sys.exit(1)
+
+class ReadOnlyFile:
+  '''Abstract reading data from an object:
+     Duck type an lldb.SBTarget, string (output of file.read()), or Python File object. 
+  '''
+  def __init__(self, readAbstraction, address = 0):
+    # Python file object 
+    self.file = None
+    # offset for FAT binaries. 
+    self.offset = None
+
+    # lldb SBTarget
+    self.address = None
+    self.startingAddress = None
+    self.SBTarget = None
+    self.SBError = None
+
+    # Python string (file.read())
+    self.data = None
+    self.dataIndex = 0
+
+    if isinstance(readAbstraction, lldb.SBTarget):
+      # duck type lldb memory reads
+      self.address = address
+      self.startingAddress = address
+      self.SBTarget = readAbstraction
+      self.SBError = lldb.SBError() 
+    elif isinstance(readAbstraction, file):
+      # duck type to a Python file 
+      self.file = readAbstraction
+      self.offset = address
+    elif isinstance(readAbstraction, str):
+      # string, like the result of reading the file in via Python
+      self.data = readAbstraction
+      self.dataIndex = 0
+    else:
+      raise SyntaxError('Unsupported type for readAbstraction')
+
+  def Read (self, size, offset=None):
+    if offset is not None:
+      self.Seek (offset)
+
+    if self.file:
+      return self.file.read(size)
+
+    if self.address:
+      data = self.SBTarget.process.ReadMemory (self.address, size, self.SBError)
+      self.address += size
+      return bytearray(data)
+
+    if self.data:
+      data = self.data[self.dataIndex:self.dataIndex+size]
+      self.dataIndex += size
+      return data
+
+  def ReadCString (self, offset=None, maxSize=512):
+    if offset:
+      self.Seek (offset)
+
+    if self.file:
+      data = self.file.read(maxSize)
+      str = data.split('\x00')[0]
+      # seek to end of string
+      self.file.seek (-(maxSize - len(str)), os.SEEK_CUR)
+      return data      
+
+    if self.address:
+      data = self.SBTarget.process.ReadCStringFromMemory (self.address, maxSize, self.SBError)
+      self.address += len(data)
+      return data      
+
+    if self.data:
+      data = self.data[self.dataIndex:self.dataIndex+maxSize]
+      str = data.split('\x00')[0]
+      self.dataIndex += len(str)
+      return str
+    
+
+  def Seek (self, offset, whence = os.SEEK_SET):
+    if self.file:
+      return self.file.seek(offset, whence)
+
+    if self.address:
+      if   whence == os.SEEK_SET:
+        self.address = self.startingAddress + offset
+      elif whence == os.SEEK_CUR:
+        self.address = self.address + offset
+      elif whence == os.SEEK_END:
+        raise SyntaxError('whence does not support SEEK_END due to memory not having an end')
+      else:
+        raise SyntaxError('illegal whence value')
+
+    if self.data:
+      if   whence == os.SEEK_SET:
+        self.dataIndex = offset
+      elif whence == os.SEEK_CUR:
+        self.dataIndex = self.dataIndex + offset
+      elif whence == os.SEEK_END:
+        raise SyntaxError('whence does not support SEEK_END due to memory not having an end')
+      else:
+        raise SyntaxError('illegal whence value')
+
+  def Tell (self):
+    if self.file:
+      return self.file.tell()
+
+    if self.address:
+      return self.address
+
+    if self.data:
+      return self.dataIndex
+      
+
+  def __del__(self):
+    if self.file:
+      self.file.close()
+
+class EfiPeCoff:
+  ''' class to abstract PE/COFF walking'''
+
+  # PE/COFF class definitions
+
+  # 
+  # typedef struct {
+  #   UINT32  VirtualAddress;
+  #   UINT32  Size;
+  # } EFI_IMAGE_DATA_DIRECTORY;
+  # 
+  # typedef struct {
+  #   UINT16                    Signature;            ///< The signature for TE format = "VZ".
+  #   UINT16                    Machine;              ///< From the original file header.
+  #   UINT8                     NumberOfSections;     ///< From the original file header.
+  #   UINT8                     Subsystem;            ///< From original optional header.
+  #   UINT16                    StrippedSize;         ///< Number of bytes we removed from the header.
+  #   UINT32                    AddressOfEntryPoint;  ///< Offset to entry point -- from original optional header.
+  #   UINT32                    BaseOfCode;           ///< From original image -- required for ITP debug.
+  #   UINT64                    ImageBase;            ///< From original file header.
+  #   EFI_IMAGE_DATA_DIRECTORY  DataDirectory[2];     ///< Only base relocation and debug directory.
+  # } EFI_TE_IMAGE_HEADER;
+  # 
+
+  EFI_TE_IMAGE_HEADER_fmt = '<HHBBHLLQLLLL'
+  TeHdrLength = struct.calcsize(EFI_TE_IMAGE_HEADER_fmt)
+  EFI_TE_IMAGE_HEADER_tuple = 'Signature Machine NumberOfSections Subsystem StrippedSize AddressOfEntryPoint BaseOfCode ImageBase DataDirVirt_Reloc DataDirSize_Reloc DataDirVirt_Debug DataDirSize_Debug'
+  EFI_TE_IMAGE_HEADER = collections.namedtuple ('EFI_TE_IMAGE_HEADER', EFI_TE_IMAGE_HEADER_tuple)
+
+  EFI_IMAGE_NT_SIGNATURE = 0x00004550
+  # 
+  # ///
+  # /// PE images can start with an optional DOS header, so if an image is run
+  # /// under DOS it can print an error message.
+  # ///
+  # typedef struct {
+  #   UINT16  e_magic;    ///< Magic number.
+  #   UINT16  e_cblp;     ///< Bytes on last page of file.
+  #   UINT16  e_cp;       ///< Pages in file.
+  #   UINT16  e_crlc;     ///< Relocations.
+  #   UINT16  e_cparhdr;  ///< Size of header in paragraphs.
+  #   UINT16  e_minalloc; ///< Minimum extra paragraphs needed.
+  #   UINT16  e_maxalloc; ///< Maximum extra paragraphs needed.
+  #   UINT16  e_ss;       ///< Initial (relative) SS value.
+  #   UINT16  e_sp;       ///< Initial SP value.
+  #   UINT16  e_csum;     ///< Checksum.
+  #   UINT16  e_ip;       ///< Initial IP value.
+  #   UINT16  e_cs;       ///< Initial (relative) CS value.
+  #   UINT16  e_lfarlc;   ///< File address of relocation table.
+  #   UINT16  e_ovno;     ///< Overlay number.
+  #   UINT16  e_res[4];   ///< Reserved words.
+  #   UINT16  e_oemid;    ///< OEM identifier (for e_oeminfo).
+  #   UINT16  e_oeminfo;  ///< OEM information; e_oemid specific.
+  #   UINT16  e_res2[10]; ///< Reserved words.
+  #   UINT32  e_lfanew;   ///< File address of new exe header.
+  # } EFI_IMAGE_DOS_HEADER;
+  # 
+
+  # cheat as 58s is really e_cblp -> e_res2[10] 
+  EFI_IMAGE_DOS_HEADER_fmt = '<H58sI'
+  DosHdrLength = struct.calcsize(EFI_IMAGE_DOS_HEADER_fmt)
+  EFI_IMAGE_DOS_HEADER_tuple = 'e_magic e_ignore e_lfanew'
+  EFI_IMAGE_DOS_HEADER = collections.namedtuple ('EFI_IMAGE_DOS_HEADER', EFI_IMAGE_DOS_HEADER_tuple)
+
+  #define EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES 16
+  # 
+  # ///
+  # /// @attention
+  # /// EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC means PE32 and 
+  # /// EFI_IMAGE_OPTIONAL_HEADER32 must be used. The data structures only vary
+  # /// after NT additional fields.
+  # ///
+  EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC = 0x10b
+  # 
+  # UINT32                      Signature;
+  # typedef struct {
+  #   UINT16  Machine;
+  #   UINT16  NumberOfSections;
+  #   UINT32  TimeDateStamp;
+  #   UINT32  PointerToSymbolTable;
+  #   UINT32  NumberOfSymbols;
+  #   UINT16  SizeOfOptionalHeader;
+  #   UINT16  Characteristics;
+  # } EFI_IMAGE_FILE_HEADER;
+  # ///
+  # /// Optional Header Standard Fields for PE32.
+  # ///
+  # typedef struct {
+  #   ///
+  #   /// Standard fields.
+  #   ///
+  #   UINT16                    Magic;
+  #   UINT8                     MajorLinkerVersion;
+  #   UINT8                     MinorLinkerVersion;
+  #   UINT32                    SizeOfCode;
+  #   UINT32                    SizeOfInitializedData;
+  #   UINT32                    SizeOfUninitializedData;
+  #   UINT32                    AddressOfEntryPoint;
+  #   UINT32                    BaseOfCode;
+  #   UINT32                    BaseOfData;  ///< PE32 contains this additional field, which is absent in PE32+.
+  #   ///
+  #   /// Optional Header Windows-Specific Fields.
+  #   ///
+  #   UINT32                    ImageBase;
+  #   UINT32                    SectionAlignment;
+  #   UINT32                    FileAlignment;
+  #   UINT16                    MajorOperatingSystemVersion;
+  #   UINT16                    MinorOperatingSystemVersion;
+  #   UINT16                    MajorImageVersion;
+  #   UINT16                    MinorImageVersion;
+  #   UINT16                    MajorSubsystemVersion;
+  #   UINT16                    MinorSubsystemVersion;
+  #   UINT32                    Win32VersionValue;
+  #   UINT32                    SizeOfImage;
+  #   UINT32                    SizeOfHeaders;
+  #   UINT32                    Checksum;
+  #   UINT16                    Subsystem;
+  #   UINT16                    DllCharacteristics;
+  #   UINT32                    SizeOfStackReserve;
+  #   UINT32                    SizeOfStackCommit;
+  #   UINT32                    SizeOfHeapReserve;
+  #   UINT32                    SizeOfHeapCommit;
+  #   UINT32                    LoaderFlags;
+  #   UINT32                    NumberOfRvaAndSizes;
+  #   EFI_IMAGE_DATA_DIRECTORY  DataDirectory[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES];
+  # } EFI_IMAGE_OPTIONAL_HEADER32;
+  # 
+
+  EFI_IMAGE_DATA_DIRECTORY_tuple = '''
+  DataDirVirt_Export DataDirSize_Export 
+  DataDirVirt_Import DataDirSize_Import 
+  DataDirVirt_Resource DataDirSize_Resource 
+  DataDirVirt_Exception DataDirSize_Exception 
+  DataDirVirt_Security DataDirSize_Security 
+  DataDirVirt_Reloc DataDirSize_Reloc 
+  DataDirVirt_Debug DataDirSize_Debug
+  DataDir7Virt DataDir7Size 
+  DataDir8Virt DataDir8Size 
+  DataDir9Virt DataDir9Size 
+  DataDir10Virt DataDir10Size 
+  DataDir11Virt DataDir11Size 
+  DataDir12Virt DataDir12Size 
+  DataDir13Virt DataDir13Size 
+  DataDir14Virt DataDir14Size 
+  DataDir15Virt DataDir15Size 
+  '''
+
+
+  EFI_IMAGE_OPTIONAL_HEADER32_fmt = '<IHHIIIHHHBBIIIIIIIIIHHHHHHIIIIHHIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII'
+  OptionalHeader32Length = struct.calcsize(EFI_IMAGE_OPTIONAL_HEADER32_fmt)
+  EFI_IMAGE_OPTIONAL_HEADER32_tuple = '''
+  Signature
+  Machine
+  NumberOfSections
+  TimeDateStamp
+  PointerToSymbolTable
+  NumberOfSymbols
+  SizeOfOptionalHeader
+  Characteristics
+  Magic
+  MajorLinkerVersion
+  MinorLinkerVersion
+  SizeOfCode
+  SizeOfInitializedData
+  SizeOfUninitializedData
+  AddressOfEntryPoint
+  BaseOfCode
+  BaseOfData
+  ImageBase
+  SectionAlignment
+  FileAlignment
+  MajorOperatingSystemVersion
+  MinorOperatingSystemVersion
+  MajorImageVersion
+  MinorImageVersion
+  MajorSubsystemVersion
+  MinorSubsystemVersion
+  Win32VersionValue
+  SizeOfImage
+  SizeOfHeaders
+  Checksum
+  Subsystem
+  DllCharacteristics
+  SizeOfStackReserve
+  SizeOfStackCommit
+  SizeOfHeapReserve
+  SizeOfHeapCommit
+  LoaderFlags
+  NumberOfRvaAndSizes
+  ''' + EFI_IMAGE_DATA_DIRECTORY_tuple
+  EFI_IMAGE_OPTIONAL_HEADER32 = collections.namedtuple ('EFI_IMAGE_OPTIONAL_HEADER32', EFI_IMAGE_OPTIONAL_HEADER32_tuple)
+
+
+  # 
+  # ///
+  # /// @attention
+  # /// EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC means PE32+ and 
+  # /// EFI_IMAGE_OPTIONAL_HEADER64 must be used. The data structures only vary
+  # /// after NT additional fields.
+  # ///
+  EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC = 0x20b
+  # 
+  # ///
+  # /// Optional Header Standard Fields for PE32+.
+  # ///
+
+
+  # UINT32                      Signature;
+  # typedef struct {
+  #   UINT16  Machine;
+  #   UINT16  NumberOfSections;
+  #   UINT32  TimeDateStamp;
+  #   UINT32  PointerToSymbolTable;
+  #   UINT32  NumberOfSymbols;
+  #   UINT16  SizeOfOptionalHeader;
+  #   UINT16  Characteristics;
+  # } EFI_IMAGE_FILE_HEADER;
+  # ///
+  # /// COFF File Header (Object and Image).
+  # ///
+  # typedef struct {
+  #   ///
+  #   /// Standard fields.
+  #   ///
+  #   UINT16                    Magic;
+  #   UINT8                     MajorLinkerVersion;
+  #   UINT8                     MinorLinkerVersion;
+  #   UINT32                    SizeOfCode;
+  #   UINT32                    SizeOfInitializedData;
+  #   UINT32                    SizeOfUninitializedData;
+  #   UINT32                    AddressOfEntryPoint;
+  #   UINT32                    BaseOfCode;
+  #   ///
+  #   /// Optional Header Windows-Specific Fields.
+  #   ///
+  #   UINT64                    ImageBase;
+  #   UINT32                    SectionAlignment;
+  #   UINT32                    FileAlignment;
+  #   UINT16                    MajorOperatingSystemVersion;
+  #   UINT16                    MinorOperatingSystemVersion;
+  #   UINT16                    MajorImageVersion;
+  #   UINT16                    MinorImageVersion;
+  #   UINT16                    MajorSubsystemVersion;
+  #   UINT16                    MinorSubsystemVersion;
+  #   UINT32                    Win32VersionValue;
+  #   UINT32                    SizeOfImage;
+  #   UINT32                    SizeOfHeaders;
+  #   UINT32                    Checksum;
+  #   UINT16                    Subsystem;
+  #   UINT16                    DllCharacteristics;
+  #   UINT64                    SizeOfStackReserve;
+  #   UINT64                    SizeOfStackCommit;
+  #   UINT64                    SizeOfHeapReserve;
+  #   UINT64                    SizeOfHeapCommit;
+  #   UINT32                    LoaderFlags;
+  #   UINT32                    NumberOfRvaAndSizes;
+  #   EFI_IMAGE_DATA_DIRECTORY  DataDirectory[EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES];
+  # } EFI_IMAGE_OPTIONAL_HEADER64;
+  # 
+
+  EFI_IMAGE_OPTIONAL_HEADER64_fmt = '<IHHIIIHHHBBIIIIIQIIHHHHHHIIIIHHQQQQIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII'
+  OptionalHeader64Length = struct.calcsize(EFI_IMAGE_OPTIONAL_HEADER64_fmt)
+  EFI_IMAGE_OPTIONAL_HEADER64_tuple = '''
+  Signature
+  Machine
+  NumberOfSections
+  TimeDateStamp
+  PointerToSymbolTable
+  NumberOfSymbols
+  SizeOfOptionalHeader
+  Characteristics
+  Magic
+  MajorLinkerVersion
+  MinorLinkerVersion
+  SizeOfCode
+  SizeOfInitializedData
+  SizeOfUninitializedData
+  AddressOfEntryPoint
+  BaseOfCode
+  ImageBase
+  SectionAlignment
+  FileAlignment
+  MajorOperatingSystemVersion
+  MinorOperatingSystemVersion
+  MajorImageVersion
+  MinorImageVersion
+  MajorSubsystemVersion
+  MinorSubsystemVersion
+  Win32VersionValue
+  SizeOfImage
+  SizeOfHeaders
+  Checksum
+  Subsystem
+  DllCharacteristics
+  SizeOfStackReserve
+  SizeOfStackCommit
+  SizeOfHeapReserve
+  SizeOfHeapCommit
+  LoaderFlags
+  NumberOfRvaAndSizes
+  ''' + EFI_IMAGE_DATA_DIRECTORY_tuple
+  EFI_IMAGE_OPTIONAL_HEADER64 = collections.namedtuple ('EFI_IMAGE_OPTIONAL_HEADER64', EFI_IMAGE_OPTIONAL_HEADER64_tuple)
+
+  # 
+  # #define EFI_IMAGE_SIZEOF_SHORT_NAME 8
+  # 
+  # ///
+  # /// Section Table. This table immediately follows the optional header.
+  # ///
+  # typedef struct {
+  #   UINT8 Name[EFI_IMAGE_SIZEOF_SHORT_NAME];
+  #   union {
+  #     UINT32  PhysicalAddress;
+  #     UINT32  VirtualSize;
+  #   } Misc;
+  #   UINT32  VirtualAddress;
+  #   UINT32  SizeOfRawData;
+  #   UINT32  PointerToRawData;
+  #   UINT32  PointerToRelocations;
+  #   UINT32  PointerToLinenumbers;
+  #   UINT16  NumberOfRelocations;
+  #   UINT16  NumberOfLinenumbers;
+  #   UINT32  Characteristics;
+  # } EFI_IMAGE_SECTION_HEADER;
+  # 
+
+  EFI_IMAGE_SECTION_HEADER_fmt = '<QIIIIIIHHI'
+  PeCoffSectionLength = struct.calcsize(EFI_IMAGE_SECTION_HEADER_fmt) 
+  EFI_IMAGE_SECTION_HEADER_tuple = 'Name VirtualSize VirtualAddress SizeOfRawData PointerToRawData PointerToRelocations PointerToLinenumbers NumberOfRelocations NumberOfLinenumbers Characteristics'
+  EFI_IMAGE_SECTION_HEADER = collections.namedtuple ('EFI_IMAGE_SECTION_HEADER', EFI_IMAGE_SECTION_HEADER_tuple)
+
+  #     
+  # ///
+  # /// Debug Directory Format.
+  # ///
+  # typedef struct {
+  #   UINT32  Characteristics;
+  #   UINT32  TimeDateStamp;
+  #   UINT16  MajorVersion;
+  #   UINT16  MinorVersion;
+  #   UINT32  Type;
+  #   UINT32  SizeOfData;
+  #   UINT32  RVA;           ///< The address of the debug data when loaded, relative to the image base.
+  #   UINT32  FileOffset;    ///< The file pointer to the debug data.
+  # } EFI_IMAGE_DEBUG_DIRECTORY_ENTRY;
+  # 
+
+  EFI_IMAGE_DEBUG_DIRECTORY_ENTRY_fmt = '<IIHHIIII'
+  EFI_IMAGE_DEBUG_DIRECTORY_ENTRY_tuple = 'Characteristics TimeDateStamp MajorVersion MinorVersion Type SizeOfData RVA FileOffset'
+  EFI_IMAGE_DEBUG_DIRECTORY_ENTRY = collections.namedtuple ('EFI_IMAGE_DEBUG_DIRECTORY_ENTRY', EFI_IMAGE_DEBUG_DIRECTORY_ENTRY_tuple)
+
+  ##define CODEVIEW_SIGNATURE_MTOC  SIGNATURE_32('M', 'T', 'O', 'C')
+  #typedef struct {
+  #  UINT32    Signature;                       ///< "MTOC".
+  #  GUID      MachOUuid;
+  #  //
+  #  //  Filename of .DLL (Mach-O with debug info) goes here
+  #  //
+  #} EFI_IMAGE_DEBUG_CODEVIEW_MTOC_ENTRY;
+
+  #typedef struct {
+  #  UINT32  Data1;
+  #  UINT16  Data2;
+  #  UINT16  Data3;
+  #  UINT8   Data4[8];
+  #} GUID;
+
+  EFI_GUID_fmt = '<IHHBBBBBBBB'
+
+  # typedef struct {
+  #   UINT32  VirtualAddress;
+  #   UINT32  SizeOfBlock;
+  # } EFI_IMAGE_BASE_RELOCATION;
+
+  EFI_IMAGE_BASE_RELOCATION_fmt = '<II'
+  BaseRelocationLength = struct.calcsize(EFI_IMAGE_BASE_RELOCATION_fmt)
+
+  # ///
+  # /// The WIN_CERTIFICATE structure is part of the PE/COFF specification.
+  # ///
+  # typedef struct {
+  #   ///
+  #   /// The length of the entire certificate,  
+  #   /// including the length of the header, in bytes.                                
+  #   ///
+  #   UINT32  dwLength;
+  #   ///
+  #   /// The revision level of the WIN_CERTIFICATE 
+  #   /// structure. The current revision level is 0x0200.                                   
+  #   ///
+  #   UINT16  wRevision;
+  #   ///
+  #   /// The certificate type. See WIN_CERT_TYPE_xxx for the UEFI      
+  #   /// certificate types. The UEFI specification reserves the range of 
+  #   /// certificate type values from 0x0EF0 to 0x0EFF.                          
+  #   ///
+  #   UINT16  wCertificateType;
+  #   ///
+  #   /// The following is the actual certificate. The format of   
+  #   /// the certificate depends on wCertificateType.
+  #   ///
+  #   /// UINT8 bCertificate[ANYSIZE_ARRAY];
+  #   ///
+  # } WIN_CERTIFICATE;
+
+  WIN_CERTIFICATE_fmt = "<IHH"
+  WinCertLength = struct.calcsize(WIN_CERTIFICATE_fmt)
+
+  def __init__(self, readAbstraction, address = 0):
+    self.f = ReadOnlyFile(readAbstraction, address)
+    # ( ImageType:        'TE'/'PE32'/'PE32+'
+    #   OptionalHeaderCollection: Optional Header and Data Directory
+    #   HeaderFormat:     in struct.Struct() form
+    #   TeOffset
+    #   HeaderSize)
+    self.PeHdr = None
+    self.TeHdr = None
+    self.TeAdjust = 0
+    
+    self.PeCoffType = ''
+    self.MachineType = ''
+    self.PeHdrFmt = None
+    self.PeSections = 0
+    self.FvSection = False
+    self.ZeroList = []
+    self.PeCoffHdrRead ()
+
+  def TeHdrTuple (self, offset=0):
+    data = self.f.Read (EfiPeCoff.TeHdrLength,offset)  
+    TeHdr = EfiPeCoff.EFI_TE_IMAGE_HEADER._make (struct.Struct(EfiPeCoff.EFI_TE_IMAGE_HEADER_fmt).unpack_from (data))
+    return (TeHdr, EfiPeCoff.TeHdrLength - TeHdr.StrippedSize) 
+
+  def DosHdrTuple (self, offset=0):
+    data = self.f.Read(EfiPeCoff.DosHdrLength,offset)
+    return EfiPeCoff.EFI_IMAGE_DOS_HEADER._make (struct.unpack_from(EfiPeCoff.EFI_IMAGE_DOS_HEADER_fmt, data))
+
+  ImageFileMachine = {
+    0x014c : "IA32",
+    0x0200 : "IPF",
+    0x0EBC : "EBC",
+    0x8664 : "X64",
+    0x01c2 : "ARM",
+    0xAA64 : "AArch64",
+  }
+  
+  def PeCoffHdrRead (self):
+    # Test for FV Section (*.te build output)
+    image = self.f.Read(4, 0) 
+    if image[0:2] == 'MZ' or image[0:2] == 'VZ' or image[0:4] == 'PE\0\0':
+      offset = 0
+    else:
+      offset = 4
+      self.FvSection = True
+    
+    image = self.f.Read(2, offset)
+    if   image[0:2] == 'MZ':
+      # PE/COFF starts with DOS Header
+      DosHdr = self.DosHdrTuple (offset)
+      offset += DosHdr.e_lfanew
+    elif image[0:2] == 'VZ':
+      # PE/COFF starts with TE Header
+      self.TeHdr, self.TeAdjust = self.TeHdrTuple (offset)
+      self.PeCoffType = "TE"
+      self.MachineType = self.ImageFileMachine.get (self.TeHdr.Machine, 'Unknown')
+      self.PeSections = EfiPeCoff.TeHdrLength
+
+      data = self.f.Read(EfiPeCoff.TeHdrLength, offset)
+      self.PeHdrFmt = EfiPeCoff.EFI_TE_IMAGE_HEADER_fmt
+      return 
+    else:  
+      # PE/COFF starts with PE/COFF header
+      offset = 0
+
+    image = self.f.Read(4, offset)
+    if image[0:4] != 'PE\0\0':
+      print "Bad PE/COFF Signature = %4s" % image
+      return ("Unknown", None, "", 0, 0)
+
+    # Check the magic to figure out if 32 or 64 bit PE/COFF
+    (Magic,) = struct.unpack_from ('<H', self.f.Read(2, offset+24))
+    if Magic == EfiPeCoff.EFI_IMAGE_NT_OPTIONAL_HDR32_MAGIC:
+      data = self.f.Read(EfiPeCoff.OptionalHeader32Length, offset)
+      self.PeHdr = EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER32._make (struct.Struct(EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER32_fmt).unpack_from (data))
+      self.PeCoffType = "PE32"
+      self.PeHdrFmt = EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER32_fmt
+
+      # TimeDateStamp: Offset, size
+      self.ZeroList.append([offset + struct.calcsize(EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER32_fmt[0:4]), 4])
+      # Checksum: Offset, size
+      self.ZeroList.append([offset + struct.calcsize(EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER32_fmt[0:29]), 4])
+    elif Magic == EfiPeCoff.EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC:
+      data = self.f.Read(EfiPeCoff.OptionalHeader64Length, offset)
+      self.PeHdr = EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER64._make (struct.Struct(EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER64_fmt).unpack_from (data))
+      self.PeCoffType = "PE32+"
+      self.PeHdrFmt = EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER64_fmt
+
+      # TimeDateStamp: Offset, size
+      self.ZeroList.append([offset + struct.calcsize(EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER64_fmt[0:4]), 4])
+      # Checksum: Offset, size
+      self.ZeroList.append([offset + struct.calcsize(EfiPeCoff.EFI_IMAGE_OPTIONAL_HEADER64_fmt[0:29]), 4])
+    else:
+      print "Unknown Magic 0x%02x" % Magic
+      return ("Unknown", None, "", 0, 0)
+
+    self.MachineType = self.ImageFileMachine.get (self.PeHdr.Machine, 'Unknown')
+
+    # ImageContext->PeCoffHeaderOffset + sizeof (UINT32) + sizeof (EFI_IMAGE_FILE_HEADER) + Hdr.Pe32->FileHeader.SizeOfOptionalHeader;
+    self.PeSections = offset + 4 + 20 + self.PeHdr.SizeOfOptionalHeader
+
+  def PeCoffDumpHdr (self):
+      PeHdr = self.PeHdr if self.TeHdr is None else self.TeHdr
+      Width = max (len (s) for s in PeHdr._fields)
+      return "\n".join('{0} = {1:#0{2}x}'.format(s.ljust(Width), getattr(PeHdr, s), FmtStrToWidth(self.PeHdrFmt[i+1])+2) for i, s in enumerate (PeHdr._fields))
+  
+  def PeCoffZeroInfo (self):
+      # Return the files offsets and number of bytes that need to get zero'ed
+      return self.ZeroList
+
+  def NumberOfSections (self):
+    if self.PeHdr is not None:
+      return self.PeHdr.NumberOfSections
+    elif self.TeHdr is not None:
+      return self.TeHdr.NumberOfSections
+    else:
+      return 0
+
+  def PeCoffGetSection (self, index):
+    offset = self.PeSections + (index * EfiPeCoff.PeCoffSectionLength)
+    data = self.f.Read(EfiPeCoff.PeCoffSectionLength, offset)
+    return (data[0:8].split('\x00')[0], EfiPeCoff.EFI_IMAGE_SECTION_HEADER._make (struct.Struct(EfiPeCoff.EFI_IMAGE_SECTION_HEADER_fmt).unpack_from (data)))
+
+  def PeCoffDumpSectionHdr (self, Name, Section):
+    Width = max (len (s) for s in Section._fields)
+    result = ''
+    for i, s in enumerate (Section._fields):
+      result += '{0} = '.format(s.ljust(Width)) 
+      if i == 0 and Name != '':
+        # print name as a string, not a hex value
+        result += Name + '\n'
+      else:
+        result += '{0:#0{1}x}\n'.format(getattr(Section, s), FmtStrToWidth(EfiPeCoff.EFI_IMAGE_SECTION_HEADER_fmt[i+1])+2)
+
+    return result
+
+  def PeCoffDumpSection (self, Name, Section):
+    data = self.f.Read (Section.SizeOfRawData, Section.VirtualAddress)
+    result = []
+    Address = Section.VirtualAddress
+    for i in xrange (0, Section.SizeOfRawData, 16):
+      HexStr  = ' '.join(["%02X"%ord(x) for x in data[i:i+16]])
+      TextStr = ''.join([x if 0x20 <= ord(x) < 0x7F else b'.'  for x in data[i:i+16]])
+      result.append("%08X  %-*s   |%s|\n" % (Address + i, 16*3, HexStr, TextStr))
+
+    return ''.join(result)
+    
+
+  def PeCoffGetPdePointer (self, DebugEntry = 0, DebugEntrySize = 0, adjust = 0):
+    #
+    if DebugEntrySize == 0:
+      if self.PeHdr is not None:
+        DebugEntry     = self.PeHdr.DataDirVirt_Debug
+        DebugEntrySize = self.PeHdr.DataDirSize_Debug
+      elif self.TeHdr is not None:
+        DebugEntry     = self.TeHdr.DataDirVirt_Debug
+        DebugEntrySize = self.TeHdr.DataDirSize_Debug
+        adjust         = self.TeAdjust        
+      else:
+        return ('','')
+
+    offset = DebugEntry + adjust
+    data = self.f.Read(DebugEntrySize, offset)
+    DirectoryEntry = EfiPeCoff.EFI_IMAGE_DEBUG_DIRECTORY_ENTRY._make (struct.Struct(EfiPeCoff.EFI_IMAGE_DEBUG_DIRECTORY_ENTRY_fmt).unpack_from (data))
+    offset = DirectoryEntry.FileOffset + adjust
+
+    data = self.f.Read(4, offset)
+    guid = ''
+    if   data == 'MTOC':
+      data = self.f.Read(16)
+      tup = struct.unpack (EfiPeCoff.EFI_GUID_fmt, data)
+      guid = '{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}'.format(*tup)
+      Str = self.f.ReadCString ()
+    elif data == 'NB10':
+      Str = self.f.ReadCString (offset + 16)
+    elif data == 'RSDS':
+      Str = self.f.ReadCString (offset + 24)
+    else:
+      Str = "\x00"
+
+
+    # Python is more that happy to print out a NULL
+    return (Str.split('\x00')[0], guid)
+
+  def PeCoffDumpRelocations (self, offset, size):
+    data = self.f.Read(size, offset)
+    base    = 0
+    baseEnd = size - EfiPeCoff.BaseRelocationLength
+    value = ''
+    while base < baseEnd:
+      (VirtualAddress, SizeOfBlock) = struct.unpack_from (EfiPeCoff.EFI_IMAGE_BASE_RELOCATION_fmt, data[base:base + EfiPeCoff.BaseRelocationLength])
+      if SizeOfBlock == 0 or SizeOfBlock > size:
+        break
+      reloc    = base + EfiPeCoff.BaseRelocationLength
+      relocEnd = base + SizeOfBlock
+      value += '0x%08x SizeOfBlock 0x%x\n' % (VirtualAddress, SizeOfBlock)
+      while reloc < relocEnd:
+        rel, = struct.unpack_from ('<H', data[reloc:reloc+2])
+        value += '    0x%04x 0x%x\n' % ((rel & 0xFFF), rel >> 12, )
+        reloc += 2
+    
+      base = relocEnd
+    return value
+
+  def PeCoffDumpCert (self, offset, size):
+    data = self.f.Read(size, offset)
+    value = '\n'
+    if size > 8:
+      (dwLength, wRevision, wCertificateType) = struct.unpack_from (EfiPeCoff.WIN_CERTIFICATE_fmt, data)
+      value += "dwLength = 0x%04x wRevision = 0x%02x wCertificateType = 0x%02x\n" % (dwLength, wRevision, wCertificateType)
+      # UEFI Scheme
+      for i in range(struct.calcsize(EfiPeCoff.WIN_CERTIFICATE_fmt), size, 0x10):
+        value += "0x{:04x}:".format(i), 
+        value += " ".join("{:02x}".format(ord(c)) for c in data[i:i+0x10])
+        value += '\n'
+    else:
+      # Loki Scheme
+      start = 0
+      while start < size:
+        (VirtualAddress, SizeOfBlock) = struct.unpack_from (EfiPeCoff.EFI_IMAGE_BASE_RELOCATION_fmt, data[start: start + struct.calcsize(EfiPeCoff.EFI_IMAGE_BASE_RELOCATION_fmt)])
+        start += struct.calcsize(EfiPeCoff.EFI_IMAGE_BASE_RELOCATION_fmt)
+        value += "CERT: 0x%X size 0x%x\n" % (VirtualAddress, SizeOfBlock)
+        cert = self.f.Read(SizeOfBlock, VirtualAddress)
+        for i in range(0, SizeOfBlock, 0x10):
+          value += "0x{:04x}:".format(i)
+          value +=  " ".join("{:02x}".format(ord(c)) for c in cert[i:i+0x10])
+          value += '\n'
+    return value
+    
+  def __str__(self):
+    return self.PeCoffDumpHdr()
+
+def FmtStrToWidth (c):
+  c = c.upper()
+  if c== 'B':
+    return 1*2
+  if c== 'H':
+    return 2*2
+  if c== 'I' or c=='L':
+    return 4*2
+  if c== 'Q':
+    return 8*2
+  return 0
+
+#define EFI_FAT_BINARY_MAGIC	0x0ef1fab9
+
+# typedef struct _EFI_FAT_BINARY_HEADER {
+# 	UINT32	magic;		  /* FAT_MAGIC */
+# 	UINT32	nfat_arch;	/* number of structs that follow */
+# } EFI_FAT_BINARY_HEADER;
+
+# typedef struct _EFI_FAT_BINARY_ARCH {
+# 	UINT32	cputype;    /* cpu specifier (int) */
+# 	UINT32	cpusubtype;	/* machine specifier (int) */
+# 	UINT32	offset;     /* file offset to this object file */
+# 	UINT32	size;       /* size of this object file */
+# 	UINT32	align;      /* alignment as a power of 2 */
+# } EFI_FAT_BINARY_ARCH;
+
+EFI_FAT_BINARY_ARCH_fmt = '<IIIII'
+
+fatCpuType = {
+  0x01000007: 'x86_64 (X64)',
+  0x00000007: 'i386 (Ia32)',
+  0x0000000C: 'ARM (Arm)',
+  0x0100000C: 'ARM64 (AArch64)',
+}
+
+def CheckForFatBinary (f):
+  '''Return a list of PE/COFF binary objects, from a file object. 
+  '''
+  fatEntry = 4 + 4
+  data = f.read(fatEntry)
+  (magic, nfat_arch) = struct.unpack_from ('<II', data)
+  if magic == 0x0ef1fab9:
+    res  = []
+    for i in range (nfat_arch):
+      f.seek(fatEntry)
+      fatEntry += struct.calcsize(EFI_FAT_BINARY_ARCH_fmt)
+      data = f.read(struct.calcsize(EFI_FAT_BINARY_ARCH_fmt))
+      (cputype, cpusubtype, offset, size, align) = struct.unpack_from (EFI_FAT_BINARY_ARCH_fmt, data)
+      f.seek(offset)
+      res.append((EfiPeCoff(f.read (size)), "FAT Binary of type %s: offset 0x%x size 0x%x alignment 0x%x" % (fatCpuType.get(cputype, 'Unknown'), offset, size, align)))
+  else:
+    # entire file is a PE/COFF image
+    f.seek(0)
+    res = [(EfiPeCoff(f.read()), "")]
+  return res
+
+if __name__ == "__main__":
+  usage = "usage: %prog [options] PECOFF_FILE"
+  parser = optparse.OptionParser(usage=usage)
+  parser.add_option('-r', '--relocations', action='store_true', dest='relocation', help='display relocation info', default=False)
+  parser.add_option('-c', '--cert', action='store_true', dest='cert', help='display security cert info', default=False)
+  parser.add_option('-s', '--section', type=str, dest='section', help='dump info on a section', default='')
+  parser.add_option('-z', '--zero', action='store_true', dest='zero', help='Zero out fields to enable build reproducibility', default=False)
+  (options, args) = parser.parse_args(sys.argv)
+
+  if len(args) <= 1:
+    parser.print_help()
+    sys.exit(-1)
+
+  with open(args[1], "rb" if not options.zero else "r+b") as f:
+    for (pecoff, description) in CheckForFatBinary (f):
+      if not options.zero:
+        if description != '':
+          print description
+
+        print "%s is a %s:%s image%s" % (args[1], pecoff.PeCoffType, pecoff.MachineType, ' wrapped in FV Section:' if pecoff.FvSection else ':')
+        if pecoff.PeCoffType == '':
+          sys.exit(-1)
+
+        # print header
+        print pecoff.PeCoffDumpHdr()
+        print
+        print "\nSections:"
+        for i in range (0, pecoff.NumberOfSections()):
+          (Name, Section) = pecoff.PeCoffGetSection (i)
+          print pecoff.PeCoffDumpSectionHdr (Name, Section)
+          print
+
+          if   '.reloc' in Name and options.relocation:
+            print pecoff.PeCoffDumpRelocations (Section.PointerToRawData, Section.VirtualSize)
+          
+          elif '.debug' in Name:
+            (PdbPointer, Guid) = pecoff.PeCoffGetPdePointer ()
+            if Guid == '':
+              print "PdbPointer:{0}\n".format(PdbPointer)
+            else:
+              print "PdbPointer (Mach-O symbol file):{0}\n           (Mach-O UUID): {1}".format(PdbPointer, Guid)
+
+          if options.section in Name and options.section != '':
+            print pecoff.PeCoffDumpSection(Name, Section) 
+
+        if options.cert:
+          print pecoff.PeCoffDumpCert (pecoff.PeHdr.DataDirVirt_Security, pecoff.PeHdr.DataDirSize_Security)
+        
+      else:
+        # this is necessary to find the 'zero list' entries for the debug section
+        for i in range (0, pecoff.NumberOfSections()):
+          (Name, Section) = pecoff.PeCoffGetSection (i)
+
+          if Section.SizeOfRawData > Section.VirtualSize:
+            sizeDiff = Section.SizeOfRawData - Section.VirtualSize
+            offset = pecoff.TeAdjust + Section.PointerToRawData + Section.SizeOfRawData - sizeDiff
+            pecoff.ZeroList.append( [offset, sizeDiff] )
+
+          # The .debug section also contains a timestamp
+          if '.debug' in Name:
+            pecoff.ZeroList.append([pecoff.TeAdjust + Section.PointerToRawData + struct.calcsize(EfiPeCoff.EFI_IMAGE_DEBUG_DIRECTORY_ENTRY_fmt[0:2]), 4])
+
+        for patch, size in pecoff.PeCoffZeroInfo():
+          #print 'patching 0x%x for 0x%x bytes' % (patch, size)
+          if patch != 0:
+            if size == -1:
+              # -1 means to the end of the file
+              f.seek(0,2)
+              size = f.tell() - patch
+            f.seek(patch)
+            f.write(bytearray(size))
+

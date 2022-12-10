@@ -1,0 +1,2 @@
+ const char* b = "hello";
+

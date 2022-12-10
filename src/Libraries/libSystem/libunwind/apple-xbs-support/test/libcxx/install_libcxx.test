@@ -1,0 +1,27 @@
+# Run the build for libcxx
+RUN: rm -rf %t
+RUN: mkdir -p %t/objroot
+RUN: mkdir -p %t/dstroot
+RUN: mkdir -p %t/symroot
+RUN: make -C "%src_root" install -j 1 RC_ProjectName=libcxx \
+RUN:            RC_ProjectSourceVersion=9999.99.99 \
+RUN:            OBJROOT="%t/objroot" \
+RUN:            DSTROOT="%t/dstroot" \
+RUN:            SYMROOT="%t/symroot" \
+RUN:            SRCROOT="%src_root" \
+RUN:            SDKROOT=$(xcrun --sdk macosx.internal --show-sdk-path) \
+RUN:            RC_ARCHS=x86_64
+
+# Check that libc++.1.dylib and libc++abi.dylib built in the right locations
+RUN: stat "%t/dstroot/usr/lib/libc++.1.dylib"
+RUN: stat "%t/dstroot/usr/lib/libc++abi.dylib"
+
+# Check that we installed the libc++ and libc++abi headers in the right location
+RUN: stat "%t/dstroot/usr/include/c++/v1/__config"
+RUN: stat "%t/dstroot/usr/include/cxxabi.h"
+
+# Check that the compatibility_version of libc++ and libc++abi is 1.0.0
+RUN: otool -L "%t/dstroot/usr/lib/libc++abi.dylib" | \
+RUN:        grep "libc++abi.dylib" | grep "compatibility version 1.0.0"
+RUN: otool -L "%t/dstroot/usr/lib/libc++.1.dylib" | \
+RUN:        grep "libc++.1.dylib" | grep "compatibility version 1.0.0"

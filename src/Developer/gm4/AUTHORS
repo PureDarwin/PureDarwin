@@ -1,0 +1,98 @@
+Authors of GNU M4.
+
+The following contributors have warranted legal paper exchanges with
+the Free Software Foundation for their contributions to GNU M4.  Also
+see the files ChangeLog and THANKS.
+
+This list comes from "sed -ne '/^M4/,/^$/p' /gd/gnuorg/copyright.list"
+on the fencepost.gnu.org machine.
+
+M4	Rene' Seindal	Denmark	 1964	1990-03-28
+Assigns program and future changes.
+
+M4	University of Copenhagen	1990-01-17
+Disclaims the program by Rene Seindal.
+
+M4	James L. Avera	USA	 ?	1993-10-04
+Assigns changes.
+Changed (in m4-1.0.3): M4.c M4.h debug.c Makefile.in configure.in
+Changelog
+Added: stackovf.c tests/stackovf_test.sh
+
+M4	Pete Chown	Uk	1972	1994-06-28
+Assigns changes (builtin.c, input.c, m4.h, m4.texinfo, macro.c).
+
+M4	John Gerard Makecki	USA	1954	1995-04-24
+Assigns changes. (eval.c, builtin.c, m4.[ch]; new - numb.[ch])
+johnm@vlibs.com
+
+M4	VLSI Libraries Inc.	1995-04-24
+Disclaims changes by John Gerard Makecki.
+
+M4	Francois Pinard	Canada	1949	1996-02-01
+Assigns past and future changes.
+pinard@iro.umontreal.ca
+
+M4	Thomas Tanner	Germany	1979	1999-06-23
+Assigns past and future changes.
+tanner@ffii.org
+
+M4	Gary V. Vaughan	 Uk	1970	2000-10-02
+Assigns past and future changes (extensive; new src/modules.c).
+gvv@techie.com, gary@gnu.org
+
+M4 TRANSLATIONS	Yuji Minejima	Japan	1969	2001-05-09
+Assigns translation of manual for m4.
+
+M4	Akim Demaille	France	1970	2001-11-01
+Assigns past and future changes.
+akim@freefriends.org
+
+M4	Andrew James Bettison	Australia	1964	2001-11-19
+Assigns past and future changes. (list with assignment)
+andrewb@zip.com.au
+
+M4	Noah Jeffrey Misch	United States	1984	2004-07-05
+Assigns past and future changes.
+noah@cs.caltech.edu
+
+M4	Michael Elizabeth Chastain	Us	1962	2001-12-27
+Assigns past and future changes.
+mec@shout.net
+
+M4	William C. Cox	United States	1945	2004-12-04
+Assigns past and future changes.
+bill@qswtools.com
+
+M4	Alexandre Duret-Lutz	France	1978	2004-12-04
+Assigns past and future changes.
+adl@gnu.org
+
+M4	John Gatewood Ham	USA, 1964	2005-11-01	
+Assigns Past and Future Changes
+zappaman@buraphalinux.org
+Changed files:
+m4-1.4.3/COPYING,m4-1.4.3/ChangeLog,m4-1.4.3/README, m4-1.4.3/THANKS, m4-1.4.3/checks/Makefile.in, m4-1.4.3/doc/m4.texinfo,m4-1.4.3/src/m4.c, New file: m4-1.4.3/checks/invocation_tests
+
+M4	Eric Benjamin Blake	USA, 1977	2006-01-18
+Assigns Past and Future Changes
+ebb9@byu.net
+
+M4	John Brzustowski	Canada, 1966	2006-03-06
+Assigns Past and Future Changes
+jbrzusto@fastmail.fm
+
+M4	Ralf Wildenhues	Germany, 1975	2006-03-20
+Assigns Past and Future Changes
+Ralf.Wildenhues@gmx.de
+
+========================================================================
+
+Copyright (C) 2000, 2006 Free Software Foundation, Inc.
+
+Permission is granted to copy, distribute and/or modify this document
+under the terms of the GNU Free Documentation License, Version 1.2 or
+any later version published by the Free Software Foundation; with no
+Invariant Sections, with no Front-Cover Texts, and with no Back-Cover
+Texts.  A copy of the license is included in the ``GNU Free
+Documentation License'' file as part of this distribution.

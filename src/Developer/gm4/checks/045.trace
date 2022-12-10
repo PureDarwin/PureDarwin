@@ -1,0 +1,18 @@
+dnl @ ../doc/m4.texinfo:2130: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+traceon(`eval', `m4_divnum')
+dnl @result{}
+define(`m4_eval', defn(`eval'))
+dnl @result{}
+define(`m4_divnum', defn(`divnum'))
+dnl @result{}
+eval(divnum)
+dnl @error{}m4trace: -1- eval(`0') -> `0'
+dnl @result{}0
+m4_eval(m4_divnum)
+dnl @error{}m4trace: -2- m4_divnum -> `0'
+dnl @result{}0

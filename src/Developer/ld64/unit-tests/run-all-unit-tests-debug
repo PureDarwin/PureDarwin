@@ -1,0 +1,26 @@
+#!/bin/sh
+
+# cd into test-cases directory
+cd `echo "$0" | sed 's/run-all-unit-tests/test-cases/'`
+
+[ "$PROCTORRUN" ] && exec ../proctor-run
+
+all_archs="ppc ppc64 i386 x86_64"
+
+mkdir /tmp/$$
+for arch in $all_archs
+do
+	echo ""
+	echo " * * * Running all unit tests for architecture $arch * * *"
+
+	# build architecture
+	[ "$NEWTEST" ] && NT=-newtest
+
+	mkdir /tmp/$$
+	../bin/make-recursive$NT.pl ARCH=$arch VALID_ARCHS="$all_archs" | tee /tmp/$$/raw | ../bin/result-filter.pl | tee /tmp/$$/sum
+
+	# clean up so svn is happy
+	../bin/make-recursive.pl ARCH=$arch clean > /dev/null
+
+	echo ""
+done

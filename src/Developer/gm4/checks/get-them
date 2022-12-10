@@ -1,0 +1,75 @@
+#!/bin/sh
+# Extract all examples from the manual source.
+# Copyright (C) 1992, 2005, 2006 Free Software Foundation, Inc.
+
+# This script is for use with GNU awk.
+
+FILE=${1-/dev/null}
+
+$AWK '
+
+BEGIN {
+  node = "";
+  seq = -1;
+  count = 0;
+  file = "NONE";
+}
+
+/^@node / {
+  if (seq > 0)
+    printf(" --  %d file%s", seq, seq == 1 ? "" : "s");
+  if (seq >= 0)
+    printf("\n");
+
+  split($0, tmp, ",");
+  node = substr(tmp[1], 7);
+  if (length(node) > 10)
+    printf("Node: %s - truncated", node);
+  else
+    printf("Node: %s ", node);
+  gsub(" ", "_", node);
+  node = tolower(substr(node, 1, 10));
+  seq = 0;
+}
+
+/^@comment ignore$/ {
+  getline;
+  next;
+}
+
+/^@example$/, /^@end example$/ {
+  if (seq < 0)
+    next;
+  if ($0 ~ /^@example$/) {
+    if (count > 0)
+      close (file);
+    seq++;
+    count++;
+    file = sprintf("%03d.%s", count, node);
+    printf("dnl @ %s:%d: Origin of test\n"\
+	   "dnl @ Copyright (C) 2006 Free Software Foundation\n"\
+	   "dnl @ This file is free software; the Free Software Foundation\n"\
+	   "dnl @ gives unlimited permission to copy and/or distribute it\n"\
+	   "dnl @ with or without modifications, as long as this notice\n"\
+	   "dnl @ is preserved.\n", FILENAME, NR) > file;
+    next;
+  }
+  if ($0 ~ /^@end example$/) {
+    next;
+  }
+  if ($0 ~ /^\^D$/)
+    next;
+  if ($0 ~ /^@result\{\}/ || $0 ~ /^@error\{\}/)
+    prefix = "dnl ";
+  else
+    prefix = "";
+  gsub("@@", "@", $0);
+  gsub("@comment.*", "", $0);
+  gsub("@tabchar{}", "\t", $0);
+  printf("%s%s\n", prefix, $0) >> file;
+}
+
+END {
+  printf("\n");
+}
+' $FILE

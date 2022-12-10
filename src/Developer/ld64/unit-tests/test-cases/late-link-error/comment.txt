@@ -1,0 +1,2 @@
+The point of this test is a sanity check that if
+ld errors out during linking, that no output file is remaining

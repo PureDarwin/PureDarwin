@@ -1,0 +1,3 @@
+#define NOTIFY_OLD_IPC_BASE
+
+#include "notify_ipc.defs"

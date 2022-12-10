@@ -1,0 +1,73 @@
+.TH PLOCKSTAT 1 "July 2007" "1.0" ""
+.SH NAME
+plockstat \- front-end to DTrace to print statistics about POSIX mutexes and read/write locks
+\fB
+.SH SYNOPSIS
+.nf
+.fam C
+\fBplockstat\fP [\fB-vACHV\fR] [\fB-n\fP \fIcount\fP] [\fB-s\fP \fIdepth\fP] [\fB-e\fP \fIsecs\fP] [\fB-x\fP opt[=val]]
+\fBcommand\fP [arg\.\.\.]
+.PP
+\fBplockstat\fP [\fB-vACHV\fP] [\fB-n\fP \fIcount\fP] [\fB-s\fP \fIdepth\fP] [\fB-e\fP \fIsecs\fP] [\fB-x\fP opt[=val]]
+\fB-p\fP \fIpid\fP
+.fam T
+.fi
+.SH OVERVIEW
+The \fIplockstat\fP command is a front-end to DTrace that can be used to print
+statistics about POSIX mutexes and read/write locks.
+.br
+.P
+Since OS X 10.11, in order to use this, your process must be run with DYLD_LIBRARY_PATH set to
+contain /usr/lib/system/introspection:
+
+.RS 8
+DYLD_LIBRARY_PATH=/usr/lib/system/introspection
+.br
+.RE
+.P
+Which contains the necessary static DTrace probes.
+
+.SH OPTIONS
+
+.TP
+.B
+\fB-v\fR
+print a message when tracing starts
+.TP
+.B
+\fB-A\fP
+trace contention and hold events (same as \fB-CH\fP)
+.TP
+.B
+\fB-C\fP
+trace contention events for mutexes and rwlocks
+.TP
+.B
+\fB-H\fP
+trace hold events for mutexes and rwlocks
+.TP
+.B
+\fB-V\fP
+print the dtrace script to run
+.TP
+.B
+\fB-n\fP \fIcount\fP
+display only '\fIcount\fP' entries for each event type
+.TP
+.B
+\fB-s\fP \fIdepth\fP
+show stack trace upto '\fIdepth\fP' entries
+.TP
+.B
+\fB-e\fP \fIsecs\fP
+exit after specified seconds
+.TP
+.B
+\fB-x\fP arg[=val]
+enable a DTrace runtime option or a D compiler option
+.TP
+.B
+\fB-p\fP \fIpid\fP
+attach and trace the specified process id
+.SH SEE ALSO
+\fBdtrace\fP(1)

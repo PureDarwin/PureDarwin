@@ -1,0 +1,8 @@
+#! @SHELL@
+# @configure_input@
+# Wrapper around a non installed bison to make it work as an installed one.
+
+# Use the shipped files, not those installed.
+BISON_PKGDATADIR='@abs_top_srcdir@/data'
+export BISON_PKGDATADIR
+exec $PREBISON '@abs_top_builddir@/src/bison' ${1+"$@"}

@@ -1,0 +1,11 @@
+--- flex.skl+orig	2006-12-20 12:29:20.000000000 -0800
++++ flex.skl	2006-12-20 12:29:32.000000000 -0800
+@@ -1818,7 +1818,7 @@ m4_ifdef( [[M4_YY_USE_LINENO]],
+ 				case EOB_ACT_END_OF_FILE:
+ 					{
+ 					if ( yywrap( M4_YY_CALL_ONLY_ARG ) )
+-						return EOF;
++						return 0;
+ 
+ 					if ( ! YY_G(yy_did_buffer_switch_on_eof) )
+ 						YY_NEW_FILE;

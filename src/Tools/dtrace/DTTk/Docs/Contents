@@ -1,0 +1,65 @@
+Contents - Command Summary
+
+   The following is a list of commands found in the DTraceToolkit, along
+   with their directory location.
+
+Generally commands that end in a ".d" are DTrace scripts, and commands
+that don't are DTrace scripts wrapped in another language (eg, shell
+or Perl). See the Docs/Readme for instructions for finding their docs.
+
+DTraceToolkit/
+   dappprof		profile user and lib function usage
+   dapptrace		trace user and lib function usage
+   dexplorer		run a series of scripts and archive output
+   dtruss		process syscall info. DTrace truss
+   execsnoop		snoop process execution as it occurs
+   iosnoop		snoop I/O events as they occur
+   iotop		display top disk I/O events by process
+   opensnoop		snoop file opens as they occur
+   procsystime		analyse process system call times
+   rwsnoop		snoop read/write events
+   rwtop		display top read/write bytes by process
+   Cpu/
+	cpuwalk.d	measure which CPUs a process runs on
+	dispqlen.d	dispatcher queue length by CPU
+	loads.d		print load averages
+   Disk/
+	bitesize.d	print disk event size report
+	hotspot.d	print disk event by location
+	iofile.d	I/O wait time by filename and process
+	iofileb.d	I/O bytes by filename and process
+	iopattern	print disk I/O pattern
+	iopending	plot number of pending disk events
+	seeksize.d	print disk seek size report
+   Docs/
+	oneliners.txt	DTrace oneliners
+   Kernel/
+	priclass.d	priority distribution by scheduling class
+	pridist.d	process priority distribution
+   Locks/
+	lockbyproc.d	lock time by process name
+	lockbydist.d	lock time distribution by process name
+   Proc/
+	creatbyproc.d	snoop file creat() by process name
+	fddist		file descriptor usage distribution
+	fileproc.d	snoop files opened by process
+	kill.d		snoop process signals
+	lastwords	print syscalls before exit
+	newproc.d	snoop new processes
+	pidpersec.d	print new PIDs per sec
+	rwbbypid.d	read/write bytes by PID
+	rwbypid.d	read/write calls by PID
+	rwbytype.d	read/write bytes by vnode type
+	sampleproc	sample processes on the CPUs
+	sigdist.d	signal distribution by process name
+	sysbypid.d	system stats by PID
+	syscallbyproc.d	system calls by process name
+	syscallbypid.d	system calls by process ID
+	topsysproc	display top syscalls by process name
+   System/
+	syscallbysysc.d	system calls by system call
+	topsyscall	display top system call type
+   User/
+	setuids.d	snoop setuid calls
+
+Total: 44 scripts

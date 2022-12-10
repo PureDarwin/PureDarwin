@@ -1,0 +1,23 @@
+dnl @ ../doc/m4.texinfo:4641: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+undivert(`wrapfifo.m4')dnl
+dnl @result{}dnl Redefine m4wrap to have FIFO semantics.
+dnl @result{}define(`_m4wrap_level', `0')dnl
+dnl @result{}define(`m4wrap',
+dnl @result{}`ifdef(`m4wrap'_m4wrap_level,
+dnl @result{}       `define(`m4wrap'_m4wrap_level,
+dnl @result{}               defn(`m4wrap'_m4wrap_level)`$1')',
+dnl @result{}       `builtin(`m4wrap', `define(`_m4wrap_level',
+dnl @result{}                                  incr(_m4wrap_level))dnl
+dnl @result{}m4wrap'_m4wrap_level)dnl
+dnl @result{}define(`m4wrap'_m4wrap_level, `$1')')')dnl
+include(`wrapfifo.m4')
+dnl @result{}
+m4wrap(`a`'m4wrap(`c
+', `d')')m4wrap(`b')
+dnl @result{}
+dnl @result{}abc

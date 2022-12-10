@@ -1,0 +1,12 @@
+dnl @ ../doc/m4.texinfo:1252: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`exch', `$2, $1')
+dnl @result{}
+define(exch(``expansion text'', ``macro''))
+dnl @result{}
+macro
+dnl @result{}expansion text

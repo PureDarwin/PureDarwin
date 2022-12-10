@@ -156,10 +156,10 @@ endif
 # CC/CXX get defined by make(1) by default, so we can't check them
 # against the empty string to see if they haven't been set
 ifeq ($(origin CC),default)
-	export CC := clang
+	export CC := @CMAKE_C_COMPILER@
 endif
 ifeq ($(origin CXX),default)
-	export CXX := clang++
+	export CXX := @CMAKE_CXX_COMPILER@
 endif
 ifeq ($(MIG),)
 	export MIG := @MIG_PATH@
@@ -214,6 +214,7 @@ SUPPORTED_PLATFORMS := MacOSX DriverKit $(SUPPORTED_SIMULATOR_PLATFORMS) $(SUPPO
 # Platform-specific tools
 EDM_DBPATH ?= $(PLATFORMPATH)/usr/local/standalone/firmware/device_map.db
 
+### DARWIN -- Build these as part of host SDK
 # Scripts or tools we build ourselves
 #
 # setsegname - Rename segments in a Mach-O object file
@@ -224,13 +225,19 @@ EDM_DBPATH ?= $(PLATFORMPATH)/usr/local/standalone/firmware/device_map.db
 # replacecontents - Write contents to a file and update modtime *only* if
 #               contents differ
 #
-SEG_HACK = $(OBJROOT)/SETUP/setsegname/setsegname
-KEXT_CREATE_SYMBOL_SET = $(OBJROOT)/SETUP/kextsymboltool/kextsymboltool
-DECOMMENT = $(OBJROOT)/SETUP/decomment/decomment
+#SEG_HACK = $(OBJROOT)/SETUP/setsegname/setsegname
+#KEXT_CREATE_SYMBOL_SET = $(OBJROOT)/SETUP/kextsymboltool/kextsymboltool
+#DECOMMENT = $(OBJROOT)/SETUP/decomment/decomment
 NEWVERS = $(SRCROOT)/config/newvers.pl
-INSTALL = $(OBJROOT)/SETUP/installfile/installfile
-REPLACECONTENTS = $(OBJROOT)/SETUP/replacecontents/replacecontents
-JSONCOMPILATIONDB = $(OBJROOT)/SETUP/json_compilation_db/json_compilation_db
+#INSTALL = $(OBJROOT)/SETUP/installfile/installfile
+#REPLACECONTENTS = $(OBJROOT)/SETUP/replacecontents/replacecontents
+#JSONCOMPILATIONDB = $(OBJROOT)/SETUP/json_compilation_db/json_compilation_db
+SEG_HACK = @SETSEGNAME@
+KEXT_CREATE_SYMBOL_SET = @KEXTSYMBOLTOOL@
+DECOMMENT = @DECOMMENT@
+INSTALL = @INSTALLFILE@
+REPLACECONTENTS = @REPLACECONTENTS@
+JSONCOMPILATIONDB = @JSON_COMPILATION_DB@
 
 # Standard BSD tools
 RM = /bin/rm -f

@@ -17,7 +17,7 @@ target_sources(IOStorageFamily PRIVATE
 target_include_directories(IOStorageFamily PRIVATE include)
 target_compile_options(IOStorageFamily PRIVATE -Wno-implicit-int-conversion -Wno-sign-conversion -Wno-deprecated-declarations)
 set_property(TARGET IOStorageFamily PROPERTY CXX_STANDARD 17)
-install(TARGETS IOStorageFamily DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
+install(TARGETS IOStorageFamily DESTINATION System/Library/Extensions COMPONENT BaseSystem)
 
 # FIXME: Re-enable these when we have our own tools for handling image resource files.
 # add_bundle_iconset(IOStorageFamily IconResources/External.iconset)
@@ -54,12 +54,12 @@ set(HEADERS
 )
 foreach(file IN LISTS HEADERS)
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file}
-        COMMAND $<TARGET_FILE:unifdef> -UKERNEL -o ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file} ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
-        DEPENDS unifdef ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
+        COMMAND ${RC_HOST_BIN}/unifdef -UKERNEL -o ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file} ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
         COMMENT "unifdef ${file}" VERBATIM
     )
     target_sources(IOStorageFamilyUserHeaders PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file})
 endforeach()
 
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage DESTINATION /System/Library/Frameworks/IOKit.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
-install(DIRECTORY include/IOKit/storage DESTINATION /System/Library/Frameworks/Kernel.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage DESTINATION System/Library/Frameworks/IOKit.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)
+install(DIRECTORY include/IOKit/storage DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A/Headers/IOKit COMPONENT DeveloperTools)

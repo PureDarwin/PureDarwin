@@ -1,0 +1,16 @@
+dnl @ ../doc/m4.texinfo:2544: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`comment', `COMMENT')
+dnl @result{}
+# A normal comment
+dnl @result{}# A normal comment
+changecom(`/*', `*/')
+dnl @result{}
+# Not a comment anymore
+dnl @result{}# Not a COMMENT anymore
+But: /* this is a comment now */ while this is not a comment
+dnl @result{}But: /* this is a comment now */ while this is not a COMMENT

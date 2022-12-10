@@ -1,0 +1,207 @@
+regression test suite for security components.
+by Michael Brouwer
+
+
+GOALS
+=====
+
+The goals of this test setup are  to have something that required
+0 configuration and setup and allows developers to quickly write
+new standalone test cases.
+
+
+USAGE
+=====
+
+The tests are runnable from the top level Makefile by typing:
+    make test
+or individually from the command line or with gdb.  Tests will be
+built into a directory called build by default or into LOCAL_BUILD_DIR
+if you set that in your environment.
+
+
+DIRECTORY LAYOUT
+================
+
+Currently there are subdirectories for a number of different parts
+of the security stack.  Each directory contains some of the unit
+tests I've managed to find from radar and other places.
+
+The test programs output their results in a format called TAP.  This
+is described here:
+    http://search.cpan.org/~petdance/Test-Harness-2.46/lib/Test/Harness/TAP.pod
+Because of this we can use Perl's Test::Harness to run the tests
+and produce some nice looking output without the need to write an
+entire test harness.
+
+Tests can be written in C, C++ or Objective-C or perl (using
+Test::More in perl).
+
+
+WRITING TESTS
+=============
+
+To add a new test simply copy one of the existing ones and hack away.
+Any file with a main() function in it will be built into a test
+automatically by the top level Makefile (no configuration required).
+
+To use the testmore C "library" all you need to do is #include
+"testmore.h" in your test program.
+
+Then in your main function you must call:
+
+plan_tests(NUMTESTS) where NUMTESTS is the number of test cases you
+test program will run.  After that you can start writing tests.
+There are a couple of macros to help you get started:
+
+The following are ways to run an actual test case (as in they count
+towards the NUMTESTS number above):
+
+ok(EXPR, NAME)
+    Evaluate EXPR if it's true the test passes if false it fails.
+    The second argument is a descriptive name of the test for debugging
+    purposes.
+
+is(EXPR, VALUE, NAME)
+    Evaluate EXPR if it's equal to VALUE the test passes otherwise
+    it fails.  This is equivalent to ok(EXPR == VALUE, NAME) except
+    this produces nicer output in a failure case.
+    CAVEAT: Currently EXPR and VALUE must both be type int.
+
+isnt(EXPR, VALUE, NAME)
+    Opposite of is() above.
+    CAVEAT: Currently EXPR and VALUE must both be type int.
+
+cmp_ok(EXPR, OP, VALUE, NAME)
+    Succeeds if EXPR OP VALUE is true.  Produces a diagnostic if not.
+    CAVEAT: Currently EXPR and VALUE must both be type int.
+
+ok_status(EXPR, NAME)
+    Evaluate EXPR, if it's 0 the test passes otherwise print a
+    diagnostic with the name and number of the error returned.
+
+is_status(EXPR, VALUE, NAME)
+    Evaluate EXPR, if the error returned equals VALUE the test
+    passes, otherwise print a diagnostic with the expected and
+    actual error returned.
+
+ok_unix(EXPR, NAME)
+    Evaluate EXPR, if it's >= 0 the test passes otherwise print a
+    diagnostic with the name and number of the errno.
+
+is_unix(EXPR, VALUE, NAME)
+    Evaluate EXPR, if the errno set by it equals VALUE the test
+    passes, otherwise print a diagnostic with the expected and
+    actual errno.
+
+Finally if you somehow can't express the success or failure of a
+test using the macros above you can use pass(NAME) or fail(NAME)
+explicitly.  These are equivalent to ok(1, NAME) and ok(0, NAME)
+respectively.
+
+
+LEAKS
+=====
+
+If you want to check for leaks in your test you can #include
+"testleaks.h" in your program and call:
+
+ok_leaks(NAME)
+    Passes if there are no leaks in your program.
+
+is_leaks(VALUE, NAME)
+    Passes if there are exactly VALUE leaks in your program.  Useful
+    if you are calling code that is known to leak and you can't fix
+    it.  But you still want to make sure there are no new leaks in
+    your code.
+
+
+C++
+===
+
+For C++ programs you can #include "testcpp.h" which defines these
+additional macros:
+no_throw(EXPR, NAME)
+    Success if EXPR doesn't throw.
+
+does_throw(EXPR, NAME)
+    Success if EXPR does throw.
+
+is_throw(EXPR, CLASS, FUNC, VALUE, NAME)
+    Success if EXPR throws an exception of type CLASS and CLASS.FUNC == VALUE.
+    Example usage:
+    is_throw(CssmError::throwMe(42), CssmError, osStatus(), 42, "throwMe(42)");
+
+
+TODO and SKIP
+=============
+
+Sometimes you write a test case that is known to fail (because you
+found a bug).  Rather than commenting out that test case you should
+put it inside a TODO block.  This will cause the test to run but
+the failure will not be reported as an error.  When the test starts
+passing (presumably because someone fixed the bug) you can comment
+out the TODO block and leave the test in place.
+
+The syntax for doing this looks like so:
+
+    TODO: {
+        todo("<rdar://problem/4000000> ER: AAPL target: $4,000,000/share");
+
+        cmp_ok(apple_stock_price(), >=, 4000000, "stock over 4M");
+    }
+
+Sometimes you don't want to run a particular test case or set of
+test cases because something in the environment is missing or you
+are running on a different version of the OS than the test was
+designed for.  To achieve this you can use a SKIP block.
+
+The syntax for a SKIP block looks like so:
+
+    SKIP: {
+        skip("only runs on Tiger and later", 4, os_version() >= os_tiger);
+
+        ok(tiger_test1(), "test1");
+        ok(tiger_test2(), "test2");
+        ok(tiger_test3(), "test3");
+        ok(tiger_test4(), "test4");
+    }
+
+How it works is like so:  If the third argument to skip evaluates
+to false it breaks out of the SKIP block and reports N tests as
+being skipped (where N is the second argument to skip)  The reason
+for the test being skipped is given as the first argument to skip.
+
+
+Utility Functions
+=================
+
+Anyone writing tests can add new utility functions.  Currently there
+is a pair called tests_begin and tests_end.  To get them
+#include "testenv.h". Calling them doesn't count as running a test
+case, unless you wrap them in an ok() macro.  tests_begin creates
+a unique dir in /tmp and sets HOME in the environment to that dir.
+tests_end cleans up the mess that tests_begin made.
+
+When writing your own utility functions you will probably want to use
+the setup("task") macro so that any uses of ok() and other macros
+don't count as actual test cases run, but do report errors when they
+fail.   Here is an example of how tests_end() does this:
+
+int
+tests_end(int result)
+{
+        setup("tests_end");
+        /* Restore previous cwd and remove scratch dir. */
+        return (ok_unix(fchdir(current_dir), "fchdir") &&
+                ok_unix(close(current_dir), "close") &&
+                ok_unix(rmdir_recursive(scratch_dir), "rmdir_recursive"));
+}
+
+Setup cases all tests unil the end of the current funtion to not count
+against your test cases test count and they output nothing if they
+succeed.
+
+There is also a simple utility header called "testcssm.h" which
+currently defines cssm_attach and cssm_detach functions for loading
+and initializing cssm and loading a module.

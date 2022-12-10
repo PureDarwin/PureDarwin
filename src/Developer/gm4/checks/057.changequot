@@ -1,0 +1,24 @@
+dnl @ ../doc/m4.texinfo:2497: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+define(`hi', `HI')
+dnl @result{}
+changequote(`""', `"')
+dnl @result{}
+""hi"""hi"
+dnl @result{}hihi
+""hi" ""hi"
+dnl @result{}hi hi
+""hi"" "hi"
+dnl @result{}hi" "HI"
+changequote
+dnl @result{}
+`hi`hi'hi'
+dnl @result{}hi`hi'hi
+changequote(`"', `"')
+dnl @result{}
+"hi"hi"hi"
+dnl @result{}hiHIhi

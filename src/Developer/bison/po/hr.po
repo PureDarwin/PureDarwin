@@ -1,0 +1,965 @@
+# Translation of bision to Croatian
+# Copyright (C) 2002 Free Software Foundation, Inc.
+# Denis Lackovic <delacko@fly.srk.fer.hr>, 2002.
+# This file is distributed under the same license as the bison package.
+# Denis Lackovic <delacko@fly.srk.fer.hr>, 2002.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: bison 1.34a\n"
+"Report-Msgid-Bugs-To: bug-bison@gnu.org\n"
+"POT-Creation-Date: 2006-06-05 00:32-0700\n"
+"PO-Revision-Date: 2002-04-10 22:20+01\n"
+"Last-Translator: Denis Lackovic <delacko@fly.srk.fer.hr>\n"
+"Language-Team: Croatian <lokalizacija@linux.hr>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=iso-8859-2\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n==1 ? 0 : 1);\n"
+
+#: src/complain.c:53 src/complain.c:68
+msgid "warning: "
+msgstr "upozorenje:"
+
+#: src/complain.c:124 src/complain.c:140
+msgid "fatal error: "
+msgstr "fatalna gre¹ka:"
+
+#: src/conflicts.c:77
+#, fuzzy, c-format
+msgid "    Conflict between rule %d and token %s resolved as shift"
+msgstr "Konflikt u stanju %d izmeðu pravila %d i znaka %s razrije¹en kao %s.\n"
+
+#: src/conflicts.c:85
+#, fuzzy, c-format
+msgid "    Conflict between rule %d and token %s resolved as reduce"
+msgstr "Konflikt u stanju %d izmeðu pravila %d i znaka %s razrije¹en kao %s.\n"
+
+#: src/conflicts.c:92
+#, fuzzy, c-format
+msgid "    Conflict between rule %d and token %s resolved as an error"
+msgstr "Konflikt u stanju %d izmeðu pravila %d i znaka %s razrije¹en kao %s.\n"
+
+#: src/conflicts.c:400
+#, c-format
+msgid "conflicts: %d shift/reduce, %d reduce/reduce\n"
+msgstr ""
+
+#: src/conflicts.c:403
+#, fuzzy, c-format
+msgid "conflicts: %d shift/reduce\n"
+msgstr " %d pomakni/reduciraj"
+
+#: src/conflicts.c:405
+#, fuzzy, c-format
+msgid "conflicts: %d reduce/reduce\n"
+msgstr " %d reduviraj/reduciraj"
+
+#: src/conflicts.c:423
+#, fuzzy, c-format
+msgid "State %d "
+msgstr "stanje %d"
+
+#: src/conflicts.c:490
+#, c-format
+msgid "%%expect-rr applies only to GLR parsers"
+msgstr ""
+
+#: src/conflicts.c:515
+#, fuzzy, c-format
+msgid "expected %d shift/reduce conflict"
+msgid_plural "expected %d shift/reduce conflicts"
+msgstr[0] "oèekujem %d pomakni/reduciraj konflikt\n"
+msgstr[1] "oèekujem %d pomakni/reduciraj konflikata\n"
+
+#: src/conflicts.c:520
+#, fuzzy, c-format
+msgid "expected %d reduce/reduce conflict"
+msgid_plural "expected %d reduce/reduce conflicts"
+msgstr[0] "%d reduciraj/reduciraj konflikt"
+msgstr[1] "%d reduciraj/reduciraj konflikata"
+
+#: src/files.c:112
+#, c-format
+msgid "cannot open file `%s'"
+msgstr "ne mogu otvoriti datoteku `%s'"
+
+#: src/files.c:128
+#, fuzzy
+msgid "I/O error"
+msgstr "gre¹ka"
+
+#: src/files.c:131
+msgid "cannot close file"
+msgstr "ne mogu zatvoriti datoteku"
+
+#: src/files.c:339
+#, fuzzy, c-format
+msgid "conflicting outputs to file %s"
+msgstr "konfliktne asocijativne vrijednosti za %s i %s"
+
+#: src/getargs.c:194
+#, c-format
+msgid "Try `%s --help' for more information.\n"
+msgstr "Poku¹aj `%s --help' za vi¹e informacija.\n"
+
+#: src/getargs.c:200
+msgid "GNU bison generates parsers for LALR(1) grammars.\n"
+msgstr "GNU bison generira parsere za LALR(1) gramatike.\n"
+
+#: src/getargs.c:204
+#, c-format
+msgid "Usage: %s [OPTION]... FILE\n"
+msgstr "Kori¹tenje: %s [OPCIJA]... DATOTEKA\n"
+
+#: src/getargs.c:208
+msgid ""
+"If a long option shows an argument as mandatory, then it is mandatory\n"
+"for the equivalent short option also.  Similarly for optional arguments.\n"
+msgstr ""
+"Ako duga opcija ka¾e da je argument obavezan, tada je on obavezan\n"
+"i za ekvivalentnu kratku opciju. Slièno je i za opcionalne argumente.\n"
+
+#: src/getargs.c:214
+#, fuzzy
+msgid ""
+"Operation modes:\n"
+"  -h, --help                 display this help and exit\n"
+"  -V, --version              output version information and exit\n"
+"      --print-localedir      output directory containing locale-dependent "
+"data\n"
+"  -y, --yacc                 emulate POSIX yacc\n"
+msgstr ""
+"Naèini rada:\n"
+"  -h, --help      prika¾i ovu pomoæ i izaði\n"
+"  -V, --version   prika¾i verziju i izaði\n"
+"  -y, --yacc      emuliraj POSIX yacc\n"
+
+#: src/getargs.c:222
+msgid ""
+"Parser:\n"
+"  -S, --skeleton=FILE        specify the skeleton to use\n"
+"  -t, --debug                instrument the parser for debugging\n"
+"      --locations            enable locations computation\n"
+"  -p, --name-prefix=PREFIX   prepend PREFIX to the external symbols\n"
+"  -l, --no-lines             don't generate `#line' directives\n"
+"  -n, --no-parser            generate the tables only\n"
+"  -k, --token-table          include a table of token names\n"
+msgstr ""
+"Parser:\n"
+"  -S, --skeleton=DATOTEKA        specificiraj kostur za uporabu\n"
+"  -t, --debug                pripremi parser za deugiranje\n"
+"      --locations            omoguæi izraèunavanje lokacija\n"
+"  -p, --name-prefix=PREFIKS   stavi PREFIX ispred vanjskih simbola\n"
+"  -l, --no-lines             ne eneriraj `#line' direktive\n"
+"  -n, --no-parser            generiraj samo tablice\n"
+"  -k, --token-table          ukljuèi tablicu imena znakova\n"
+
+#: src/getargs.c:234
+#, fuzzy
+msgid ""
+"Output:\n"
+"  -d, --defines              also produce a header file\n"
+"  -r, --report=THINGS        also produce details on the automaton\n"
+"  -v, --verbose              same as `--report=state'\n"
+"  -b, --file-prefix=PREFIX   specify a PREFIX for output files\n"
+"  -o, --output=FILE          leave output to FILE\n"
+"  -g, --graph                also produce a VCG description of the "
+"automaton\n"
+msgstr ""
+"Izlaz:\n"
+"  -d, --defines              takoðer proizvedi header datoteku\n"
+"  -v, --verbose              takoðer proizvedi obja¹njenje automata\n"
+"  -b, --file-prefix=PREFIKS   specificiraj PREFIKS za izlazne datoteke\n"
+"  -o, --output=DATOTEKA          ispi¹i izlaz u DATOTEKU\n"
+"  -g, --graph                takoðer proizvedi VCG opis automata\n"
+
+#: src/getargs.c:245
+msgid ""
+"THINGS is a list of comma separated words that can include:\n"
+"  `state'        describe the states\n"
+"  `itemset'      complete the core item sets with their closure\n"
+"  `look-ahead'   explicitly associate look-ahead tokens to items\n"
+"  `solved'       describe shift/reduce conflicts solving\n"
+"  `all'          include all the above information\n"
+"  `none'         disable the report\n"
+msgstr ""
+
+#: src/getargs.c:256
+msgid "Report bugs to <bug-bison@gnu.org>.\n"
+msgstr "Izvjesti o bugovima na <bug-bison@gnu.org>.\n"
+
+#: src/getargs.c:273
+#, c-format
+msgid "bison (GNU Bison) %s"
+msgstr "bison (GNU Bison) %s"
+
+#: src/getargs.c:275
+msgid "Written by Robert Corbett and Richard Stallman.\n"
+msgstr ""
+
+#: src/getargs.c:279
+#, fuzzy, c-format
+msgid "Copyright (C) %d Free Software Foundation, Inc.\n"
+msgstr ""
+"Copyright 1984, 1986, 1989, 1992, 2000, 2001, 2002\n"
+"Free Software Foundation, Inc.\n"
+
+#: src/getargs.c:281
+msgid ""
+"This is free software; see the source for copying conditions.  There is NO\n"
+"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n"
+msgstr ""
+"Ovo je slobodni softver; pogledajte kod kako biste doznali uvjete "
+"kopiranja.  NEMA\n"
+"garancije; èak ni tvrdnje o ISPLATIVOSTI ili POGODNOSTI ZA NEKU SVRHU.\n"
+
+#: src/getargs.c:453
+#, c-format
+msgid "missing operand after `%s'"
+msgstr ""
+
+#: src/getargs.c:455
+#, c-format
+msgid "extra operand `%s'"
+msgstr ""
+
+#: src/gram.c:139
+msgid "empty"
+msgstr "prazno"
+
+#: src/gram.c:233
+msgid "Grammar"
+msgstr "Gramatika"
+
+#: src/gram.c:320 src/reduce.c:395
+#, fuzzy
+msgid "warning"
+msgstr "upozorenje:"
+
+#: src/main.c:125
+msgid "rule never reduced because of conflicts"
+msgstr ""
+
+#: src/parse-gram.y:548
+msgid "missing identifier in parameter declaration"
+msgstr ""
+
+#: src/print.c:49
+#, c-format
+msgid " type %d is %s\n"
+msgstr " tip %d je %s\n"
+
+#: src/print.c:165
+#, fuzzy, c-format
+msgid "shift, and go to state %d\n"
+msgstr "    %-4s\tpomakni i idi u stanje %d\n"
+
+#: src/print.c:167
+#, fuzzy, c-format
+msgid "go to state %d\n"
+msgstr "    $   \tidu u stanje %d\n"
+
+#: src/print.c:204
+#, fuzzy
+msgid "error (nonassociative)\n"
+msgstr "%-4s\tgre¹ka (nonassociative)"
+
+#: src/print.c:292
+#, fuzzy, c-format
+msgid "reduce using rule %d (%s)"
+msgstr "$default\treduciraj koristeæi pravilo %d (%s)"
+
+#: src/print.c:294
+#, c-format
+msgid "accept"
+msgstr ""
+
+#: src/print.c:325 src/print.c:391
+msgid "$default"
+msgstr ""
+
+#: src/print.c:420
+#, c-format
+msgid "state %d"
+msgstr "stanje %d"
+
+#: src/print.c:456
+msgid "Terminals, with rules where they appear"
+msgstr "Zavr¹ni znakovi, sa pravilima gdje se pojavljuju"
+
+#: src/print.c:483
+msgid "Nonterminals, with rules where they appear"
+msgstr "Nezavr¹ni znakovi, sa pravilima gdje se pojavljuju"
+
+#: src/print.c:512
+#, c-format
+msgid " on left:"
+msgstr "s lijeva:"
+
+#: src/print.c:527
+#, c-format
+msgid " on right:"
+msgstr "s desna:"
+
+#: src/print.c:555
+#, fuzzy
+msgid "Rules never reduced"
+msgstr "%d pravilo nije nikad reducirano\n"
+
+#: src/reader.c:58
+#, c-format
+msgid "multiple %s declarations"
+msgstr "vi¹estruke %s deklaracije"
+
+#: src/reader.c:120
+#, c-format
+msgid "result type clash on merge function %s: <%s> != <%s>"
+msgstr ""
+
+#: src/reader.c:210
+#, c-format
+msgid "rule given for %s, which is a token"
+msgstr "pravilo dato za %s, a to je znak"
+
+#: src/reader.c:253
+#, fuzzy, c-format
+msgid "type clash on default action: <%s> != <%s>"
+msgstr "sudar tipova (`%s' `%s') na deaultnoj akciji"
+
+#: src/reader.c:259
+msgid "empty rule for typed nonterminal, and no action"
+msgstr "prazno pravilo za nezavr¹ni znak, i nema akcije"
+
+#: src/reader.c:273
+#, c-format
+msgid "unused value: $%d"
+msgstr ""
+
+#: src/reader.c:275
+msgid "unset value: $$"
+msgstr ""
+
+#: src/reader.c:353 src/reader.c:367 src/reader.c:380
+#, c-format
+msgid "only one %s allowed per rule"
+msgstr ""
+
+#: src/reader.c:363 src/reader.c:378
+#, c-format
+msgid "%s affects only GLR parsers"
+msgstr ""
+
+#: src/reader.c:365
+#, c-format
+msgid "%s must be followed by positive number"
+msgstr ""
+
+#: src/reader.c:534
+msgid "no rules in the input grammar"
+msgstr "nema pravila u ulaznoj gramatici"
+
+#: src/reduce.c:243
+#, fuzzy
+msgid "useless rule"
+msgstr "%d beskorisno pravilo"
+
+#: src/reduce.c:304
+#, fuzzy, c-format
+msgid "useless nonterminal: %s"
+msgstr "Beskorisni nezavr¹ni znakovi:"
+
+#: src/reduce.c:352
+#, fuzzy
+msgid "Useless nonterminals"
+msgstr "Beskorisni nezavr¹ni znakovi:"
+
+#: src/reduce.c:365
+#, fuzzy
+msgid "Terminals which are not used"
+msgstr "Zavr¹ni znakovi koji nisu kori¹teni:"
+
+#: src/reduce.c:374
+#, fuzzy
+msgid "Useless rules"
+msgstr "Beskorisna pravila:"
+
+#: src/reduce.c:390
+#, c-format
+msgid "%d rule never reduced\n"
+msgid_plural "%d rules never reduced\n"
+msgstr[0] "%d pravilo nije nikad reducirano\n"
+msgstr[1] "%d pravila nisu nikad reducirana\n"
+
+#: src/reduce.c:398
+#, c-format
+msgid "%d useless nonterminal"
+msgid_plural "%d useless nonterminals"
+msgstr[0] "%d beskorisan nezavr¹ni znak"
+msgstr[1] "%d beskorisnih nezavr¹nih znakova"
+
+#: src/reduce.c:404
+#, c-format
+msgid " and "
+msgstr " i"
+
+#: src/reduce.c:407
+#, c-format
+msgid "%d useless rule"
+msgid_plural "%d useless rules"
+msgstr[0] "%d beskorisno pravilo"
+msgstr[1] "%d beskorisnih pravila"
+
+#: src/reduce.c:437
+#, fuzzy, c-format
+msgid "start symbol %s does not derive any sentence"
+msgstr "Poèetni simbol %s ne daje niti jednu reèenicu"
+
+#: src/scan-gram.l:197
+msgid "stray `,' treated as white space"
+msgstr ""
+
+#: src/scan-gram.l:261
+#, fuzzy, c-format
+msgid "invalid directive: %s"
+msgstr "nedozvoljeni ulaz: %s"
+
+#: src/scan-gram.l:321
+#, fuzzy, c-format
+msgid "invalid character: %s"
+msgstr "nepoznati znak: %s"
+
+#: src/scan-gram.l:441
+#, fuzzy
+msgid "invalid null character"
+msgstr "nedozvoljena %s deklaracija"
+
+#: src/scan-gram.l:454 src/scan-gram.l:465 src/scan-gram.l:486
+#, fuzzy, c-format
+msgid "invalid escape sequence: %s"
+msgstr "nedozvoljeni ulaz: %s"
+
+#: src/scan-gram.l:456 src/scan-gram.l:467 src/scan-gram.l:488
+#, fuzzy, c-format
+msgid "invalid null character: %s"
+msgstr "nedozvoljeni ulaz: %s"
+
+#: src/scan-gram.l:493
+#, fuzzy, c-format
+msgid "unrecognized escape sequence: %s"
+msgstr "neprepoznati: %s"
+
+#: src/scan-gram.l:575
+#, c-format
+msgid "missing `{' in %s"
+msgstr ""
+
+#: src/scan-gram.l:640
+msgid "stray `$'"
+msgstr ""
+
+#: src/scan-gram.l:644
+msgid "stray `@'"
+msgstr ""
+
+#: src/scan-gram.l:776 src/scan-gram.l:1087
+msgid "line number overflow"
+msgstr ""
+
+#: src/scan-gram.l:778
+msgid "column number overflow"
+msgstr ""
+
+#: src/scan-gram.l:861
+#, c-format
+msgid "$$ of `%s' has no declared type"
+msgstr "$$ od `%s' nema deklarirani tip"
+
+#: src/scan-gram.l:881
+#, c-format
+msgid "$%d of `%s' has no declared type"
+msgstr "$%d od `%s' nema deklarirani tip"
+
+#: src/scan-gram.l:891 src/scan-gram.l:958 src/scan-gram.l:1009
+#, c-format
+msgid "integer out of range: %s"
+msgstr ""
+
+#: src/scan-gram.l:927 src/scan-gram.l:993
+#, fuzzy, c-format
+msgid "invalid value: %s"
+msgstr "nedozvoljena $ vrijednost"
+
+#: src/scan-gram.l:1103
+msgid "rule is too long"
+msgstr ""
+
+#: src/scan-gram.l:1131
+#, fuzzy, c-format
+msgid "missing `%s' at end of file"
+msgstr "nezavr¹eni znakovni niz na kraju datoteke"
+
+#: src/scan-gram.l:1142
+#, fuzzy, c-format
+msgid "missing `%s' at end of line"
+msgstr "nezavr¹eni znakovni niz na kraju datoteke"
+
+#: src/symlist.c:145
+#, fuzzy, c-format
+msgid "invalid $ value: $%d"
+msgstr "nedozvoljena $ vrijednost"
+
+#: src/symtab.c:71
+#, fuzzy, c-format
+msgid "too many symbols in input grammar (limit is %d)"
+msgstr "previ¹e simbola (znakovi plus nezavr¹ni znakovi); maksimalno %d"
+
+#: src/symtab.c:110
+#, fuzzy, c-format
+msgid "%s redeclaration for %s"
+msgstr "ponovna deklaracija za %s"
+
+#: src/symtab.c:111
+#, fuzzy
+msgid "first declaration"
+msgstr "nedozvoljena %s deklaracija"
+
+#: src/symtab.c:199
+#, c-format
+msgid "symbol %s redefined"
+msgstr "simbol %s ponovo definiran"
+
+#: src/symtab.c:213
+#, fuzzy, c-format
+msgid "symbol %s redeclared"
+msgstr "simbol %s ponovo definiran"
+
+#: src/symtab.c:230
+#, fuzzy, c-format
+msgid "redefining user token number of %s"
+msgstr "ponovno definiran prethodnik od %s"
+
+#: src/symtab.c:257
+#, c-format
+msgid "symbol %s is used, but is not defined as a token and has no rules"
+msgstr "simbol %s je kori¹ten, ali nije definiran kao znak i nema pravila"
+
+#: src/symtab.c:282
+#, c-format
+msgid "symbol `%s' used more than once as a literal string"
+msgstr "simbol `%s' kori¹ten vi¹e puta kao znakovni niz"
+
+#: src/symtab.c:285
+#, c-format
+msgid "symbol `%s' given more than one literal string"
+msgstr "simbolz `%s' dat vi¹e od jednog znakovnog niza"
+
+#: src/symtab.c:428
+#, c-format
+msgid "tokens %s and %s both assigned number %d"
+msgstr "objema znakovima %s i %s je pridru¾en broj %d"
+
+#: src/symtab.c:651
+#, c-format
+msgid "the start symbol %s is undefined"
+msgstr "poèetni simbol  %s nije definiran"
+
+#: src/symtab.c:655
+#, c-format
+msgid "the start symbol %s is a token"
+msgstr "poèetni simbol %s je znak"
+
+#: lib/argmatch.c:137
+#, fuzzy, c-format
+msgid "invalid argument %s for %s"
+msgstr "nedozvoljeni ulaz: %s"
+
+#: lib/argmatch.c:138
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr ""
+
+#: lib/argmatch.c:157
+#, c-format
+msgid "Valid arguments are:"
+msgstr ""
+
+#: lib/bitset_stats.c:177
+#, c-format
+msgid "%u bitset_allocs, %u freed (%.2f%%).\n"
+msgstr ""
+
+#: lib/bitset_stats.c:180
+#, c-format
+msgid "%u bitset_sets, %u cached (%.2f%%)\n"
+msgstr ""
+
+#: lib/bitset_stats.c:183
+#, c-format
+msgid "%u bitset_resets, %u cached (%.2f%%)\n"
+msgstr ""
+
+#: lib/bitset_stats.c:186
+#, c-format
+msgid "%u bitset_tests, %u cached (%.2f%%)\n"
+msgstr ""
+
+#: lib/bitset_stats.c:190
+#, c-format
+msgid "%u bitset_lists\n"
+msgstr ""
+
+#: lib/bitset_stats.c:192
+msgid "count log histogram\n"
+msgstr ""
+
+#: lib/bitset_stats.c:195
+msgid "size log histogram\n"
+msgstr ""
+
+#: lib/bitset_stats.c:198
+msgid "density histogram\n"
+msgstr ""
+
+#: lib/bitset_stats.c:212
+#, c-format
+msgid ""
+"Bitset statistics:\n"
+"\n"
+msgstr ""
+
+#: lib/bitset_stats.c:215
+#, c-format
+msgid "Accumulated runs = %u\n"
+msgstr ""
+
+#: lib/bitset_stats.c:259 lib/bitset_stats.c:264
+msgid "Could not read stats file."
+msgstr ""
+
+#: lib/bitset_stats.c:261
+#, c-format
+msgid "Bad stats file size.\n"
+msgstr ""
+
+#: lib/bitset_stats.c:287 lib/bitset_stats.c:289
+msgid "Could not write stats file."
+msgstr ""
+
+#: lib/bitset_stats.c:292
+msgid "Could not open stats file for writing."
+msgstr ""
+
+#: lib/error.c:121
+msgid "Unknown system error"
+msgstr "Nepoznata sistemska gre¹ka"
+
+#: lib/getopt.c:531 lib/getopt.c:547
+#, c-format
+msgid "%s: option `%s' is ambiguous\n"
+msgstr "%s: opcija `%s' je nejednoznaèna\n"
+
+#: lib/getopt.c:580 lib/getopt.c:584
+#, c-format
+msgid "%s: option `--%s' doesn't allow an argument\n"
+msgstr "%s: opcija `--%s' ne dopu¹ta argument\n"
+
+#: lib/getopt.c:593 lib/getopt.c:598
+#, c-format
+msgid "%s: option `%c%s' doesn't allow an argument\n"
+msgstr "%s: opcija `%c%s' ne dopu¹ta argument\n"
+
+#: lib/getopt.c:641 lib/getopt.c:660 lib/getopt.c:976 lib/getopt.c:995
+#, c-format
+msgid "%s: option `%s' requires an argument\n"
+msgstr "%s: opcija `%s' zahtijeva argument\n"
+
+#: lib/getopt.c:698 lib/getopt.c:701
+#, c-format
+msgid "%s: unrecognized option `--%s'\n"
+msgstr "%s: neprepoznata opcija `--%s'\n"
+
+#: lib/getopt.c:709 lib/getopt.c:712
+#, c-format
+msgid "%s: unrecognized option `%c%s'\n"
+msgstr "%s: neprepoznata opcija `%c%s'\n"
+
+#: lib/getopt.c:764 lib/getopt.c:767
+#, c-format
+msgid "%s: illegal option -- %c\n"
+msgstr "%s: nedozvoljena opcija -- %c\n"
+
+#: lib/getopt.c:773 lib/getopt.c:776
+#, c-format
+msgid "%s: invalid option -- %c\n"
+msgstr "%s: nedozvoljena opcija -- %c\n"
+
+#: lib/getopt.c:828 lib/getopt.c:844 lib/getopt.c:1048 lib/getopt.c:1066
+#, c-format
+msgid "%s: option requires an argument -- %c\n"
+msgstr "%s: opcija zahtijeva argument -- %c\n"
+
+#: lib/getopt.c:897 lib/getopt.c:913
+#, c-format
+msgid "%s: option `-W %s' is ambiguous\n"
+msgstr "%s: opcija `-W %s' je nejednoznaèna\n"
+
+#: lib/getopt.c:937 lib/getopt.c:955
+#, c-format
+msgid "%s: option `-W %s' doesn't allow an argument\n"
+msgstr "%s: opcija `-W %s' ne dopu¹ta argument\n"
+
+#: lib/obstack.c:433 lib/obstack.c:435 lib/xalloc-die.c:37
+msgid "memory exhausted"
+msgstr "iscrpljeni memorijski resursi"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  If the catalog has no translation,
+#. locale_quoting_style quotes `like this', and
+#. clocale_quoting_style quotes "like this".
+#.
+#. For example, an American English Unicode locale should
+#. translate "`" to U+201C (LEFT DOUBLE QUOTATION MARK), and
+#. should translate "'" to U+201D (RIGHT DOUBLE QUOTATION
+#. MARK).  A British English Unicode locale should instead
+#. translate these to U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. U+2019 (RIGHT SINGLE QUOTATION MARK), respectively.
+#.
+#. If you don't know what to put here, please see
+#. <http://en.wikipedia.org/wiki/Quotation_mark#Glyphs>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:245
+msgid "`"
+msgstr "`"
+
+#: lib/quotearg.c:246
+msgid "'"
+msgstr "'"
+
+#: lib/subpipe.c:171
+#, c-format
+msgid "subsidiary program `%s' could not be invoked"
+msgstr ""
+
+#: lib/subpipe.c:173
+#, c-format
+msgid "subsidiary program `%s' not found"
+msgstr ""
+
+#: lib/subpipe.c:175
+#, c-format
+msgid "subsidiary program `%s' failed"
+msgstr ""
+
+#: lib/subpipe.c:176
+#, c-format
+msgid "subsidiary program `%s' failed (exit status %d)"
+msgstr ""
+
+#: lib/timevar.c:475
+msgid ""
+"\n"
+"Execution times (seconds)\n"
+msgstr ""
+
+#: lib/timevar.c:525
+msgid " TOTAL                 :"
+msgstr ""
+
+#: lib/timevar.c:561
+#, c-format
+msgid "time in %s: %ld.%06ld (%ld%%)\n"
+msgstr ""
+
+#~ msgid "too many states (max %d)"
+#~ msgstr "previ¹e stanja (maks %d)"
+
+#~ msgid "reduce"
+#~ msgstr "reduciraj"
+
+#~ msgid "shift"
+#~ msgstr "pomakni"
+
+#~ msgid "%d shift/reduce conflict"
+#~ msgid_plural "%d shift/reduce conflicts"
+#~ msgstr[0] "%d pomakni/reduciraj konflikat"
+#~ msgstr[1] "%d pomakni/reduciraj konflikata"
+
+#~ msgid "and"
+#~ msgstr "i"
+
+#~ msgid "State %d contains "
+#~ msgstr "Stanje %d sadr¾i"
+
+#~ msgid "conflicts: "
+#~ msgstr "konflikt:"
+
+#~ msgid "%s contains "
+#~ msgstr "%s sadr¾i"
+
+#~ msgid "    %-4s\t[reduce using rule %d (%s)]\n"
+#~ msgstr "    %-4s\t[reduciraj koristeæi pravilo %d (%s)]\n"
+
+#~ msgid ""
+#~ "    $default\treduce using rule %d (%s)\n"
+#~ "\n"
+#~ msgstr ""
+#~ "    $default\treduciraj koristeæi pravilo %d (%s)\n"
+#~ "\n"
+
+#~ msgid "    %-4s\treduce using rule %d (%s)\n"
+#~ msgstr "    %-4s\treduciraj koristeæi pravilo %d (%s)\n"
+
+#~ msgid "    $default\treduce using rule %d (%s)\n"
+#~ msgstr "    $default\treduciraj koristeæi pravilo %d (%s)\n"
+
+#~ msgid "`%s' is no longer supported"
+#~ msgstr "`%s' vi¹e nije podr¾ano"
+
+#~ msgid "%s: no grammar file given\n"
+#~ msgstr "%s: nije data datoteka sa gramatikom\n"
+
+#~ msgid "%s: extra arguments ignored after `%s'\n"
+#~ msgstr "%s: dodatni argumenti se ignoriraju nakon `%s'\n"
+
+#~ msgid "too many gotos (max %d)"
+#~ msgstr "previ¹e goto-a (maksimalno %d)"
+
+#~ msgid "unexpected `/' found and ignored"
+#~ msgstr "neoèekivan  `/' naðen i zanemaren"
+
+#~ msgid "unterminated comment"
+#~ msgstr "nezavr¹eni komentar"
+
+#~ msgid "unexpected end of file"
+#~ msgstr "neoèekivan kraj datoteke"
+
+#~ msgid "unescaped newline in constant"
+#~ msgstr "neoèekivan znak za novu liniju u konstanti"
+
+#~ msgid "octal value outside range 0...255: `\\%o'"
+#~ msgstr "oktalna vrijednost izvan dosega 0...255: `\\%o'"
+
+#~ msgid "hexadecimal value above 255: `\\x%x'"
+#~ msgstr "heksadecimalna vrijednost vi¹a od 255: `\\x%x'"
+
+#~ msgid "unknown escape sequence: `\\' followed by `%s'"
+#~ msgstr "nepoznata escape sekvenca: `\\' koju slijedi `%s'"
+
+#~ msgid "unterminated type name at end of file"
+#~ msgstr "nezavr¹eno ime tipa pri kraju datoteke"
+
+#~ msgid "unterminated type name"
+#~ msgstr "nezavr¹eno ime tipa"
+
+#~ msgid "use \"...\" for multi-character literal tokens"
+#~ msgstr "koristi \"...\" za vi¹ebajtne znakove"
+
+#~ msgid "`%s' supports no argument: %s"
+#~ msgstr "`%s' ne podr¾ava argument: %s"
+
+#~ msgid "`%s' requires an argument"
+#~ msgstr "`%s' zahtijeva argument"
+
+#~ msgid "maximum table size (%d) exceeded"
+#~ msgstr "maksimalna velièina tablice (%d) prekoraèena"
+
+#~ msgid "   (rule %d)"
+#~ msgstr "   (pravilo %d)"
+
+#~ msgid "    $default\taccept\n"
+#~ msgstr "    $default\tprihvati\n"
+
+#~ msgid "    NO ACTIONS\n"
+#~ msgstr "    NEMA AKCIJA\n"
+
+#~ msgid "    %-4s\terror (nonassociative)\n"
+#~ msgstr "    %-4s\tgre¹ka (nonassociative)\n"
+
+#~ msgid "    %-4s\tgo to state %d\n"
+#~ msgstr "    %-4s\tidu u stanje %d\n"
+
+#~ msgid "Number, Line, Rule"
+#~ msgstr "Broj, Linija, Pravilo"
+
+#~ msgid "  %3d %3d %s ->"
+#~ msgstr "  %3d %3d %s ->"
+
+#~ msgid "   Skipping to next \\n"
+#~ msgstr "   Preskaèem na slijedeæe \\n"
+
+#~ msgid "   Skipping to next %c"
+#~ msgstr "   Preskaèem na slijedeæi %c"
+
+#~ msgid "unterminated string"
+#~ msgstr "nezavr¹eni znakovni niz"
+
+#~ msgid "invalid @ value"
+#~ msgstr "nedozvoljena  @ vrijednost"
+
+#~ msgid "%s is invalid"
+#~ msgstr "%s je nedozvoljeno"
+
+#~ msgid "unterminated `%{' definition"
+#~ msgstr "nezavr¹ena `%{' definicija"
+
+#~ msgid "Premature EOF after %s"
+#~ msgstr "Preuranjeni EOF nakon %s"
+
+#~ msgid "`%s' is invalid in %s"
+#~ msgstr "`%s' je nedozvoljen u %s"
+
+#~ msgid "%type declaration has no <typename>"
+#~ msgstr "%type deklaracija nema  <typename>"
+
+#~ msgid "invalid %%type declaration due to item: %s"
+#~ msgstr "nedozvoljena %%type deklaracija zbog: %s"
+
+#~ msgid "invalid text (%s) - number should be after identifier"
+#~ msgstr "nedozvoljeno tekst (%s) - broj bi trebao biti nakon identifikatora"
+
+#~ msgid "unexpected item: %s"
+#~ msgstr "neoèekivani: %s"
+
+#~ msgid "unmatched %s"
+#~ msgstr "nije pronaðen %s"
+
+#~ msgid "argument of %%expect is not an integer"
+#~ msgstr "argument od %%expect nije cijeli broj"
+
+#~ msgid "unrecognized item %s, expected an identifier"
+#~ msgstr "neprepoznati %s, oèekivan nakon identifikatora"
+
+#~ msgid "expected string constant instead of %s"
+#~ msgstr "oèekivana znakovna konstana umjesto %s"
+
+#~ msgid "no input grammar"
+#~ msgstr "nema ulazne gramatike"
+
+#~ msgid "unterminated %guard clause"
+#~ msgstr "nezavr¹ena %guard klauzula"
+
+#~ msgid "ill-formed rule: initial symbol not followed by colon"
+#~ msgstr "lo¹e pravilo: zarez ne bi trebao slijediti poèetni simbol"
+
+#~ msgid "grammar starts with vertical bar"
+#~ msgstr "gramatika poèinje sa okomitom crtom"
+
+#~ msgid "previous rule lacks an ending `;'"
+#~ msgstr "prethodnom pravilu nedostaje zavr¹etak `;'"
+
+#~ msgid "two @prec's in a row"
+#~ msgstr "dva @prec's u retku"
+
+#~ msgid "%%guard present but %%semantic_parser not specified"
+#~ msgstr "%%guard prisutan ali %%semantic_parser nije specificiran"
+
+#~ msgid "two actions at end of one rule"
+#~ msgstr "dvije akcije pri kraju jednog pravila"
+
+#~ msgid "conflicting precedences for %s and %s"
+#~ msgstr "konflikt u prethodnici za %s and %s"

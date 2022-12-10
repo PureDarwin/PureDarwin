@@ -1,0 +1,65 @@
+RUN: rm -rf %t
+RUN: mkdir -p %t/dest
+RUN: make -C %src_root installsrc "SRCROOT=%t/dest" "RC_ProjectName=libcxx"
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/dest/Makefile
+RUN: stat %t/dest/apple-xbs-support
+RUN: stat %t/dest/llvm
+RUN: stat %t/dest/libcxx
+RUN: stat %t/dest/libcxxabi
+RUN: ! stat %t/dest/clang
+RUN: ! stat %t/dest/libunwind
+
+RUN: mkdir -p %t/Sim
+RUN: make -C %src_root installsrc "SRCROOT=%t/Sim" "RC_ProjectName=libcxx_Sim"
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/Sim/Makefile
+RUN: stat %t/Sim/apple-xbs-support
+RUN: stat %t/Sim/llvm
+RUN: stat %t/Sim/libcxx
+RUN: stat %t/Sim/libcxxabi
+RUN: ! stat %t/Sim/clang
+RUN: ! stat %t/Sim/libunwind
+
+RUN: mkdir -p %t/driverkit
+RUN: make -C %src_root installsrc "SRCROOT=%t/driverkit" "RC_ProjectName=libcxx_driverkit"
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/driverkit/Makefile
+RUN: stat %t/driverkit/apple-xbs-support
+RUN: stat %t/driverkit/llvm
+RUN: stat %t/driverkit/libcxx
+RUN: stat %t/driverkit/libcxxabi
+RUN: ! stat %t/driverkit/clang
+RUN: ! stat %t/driverkit/libunwind
+
+RUN: mkdir -p %t/dyld
+RUN: make -C %src_root installsrc "SRCROOT=%t/dyld" "RC_ProjectName=libcxx_dyld"
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/dyld/Makefile
+RUN: stat %t/dyld/apple-xbs-support
+RUN: stat %t/dyld/llvm
+RUN: stat %t/dyld/libcxx
+RUN: stat %t/dyld/libcxxabi
+RUN: ! stat %t/dyld/clang
+RUN: ! stat %t/dyld/libunwind
+
+RUN: mkdir -p %t/dyldSim
+RUN: make -C %src_root installsrc "SRCROOT=%t/dyldSim" "RC_ProjectName=libcxx_dyld_Sim"
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/dyldSim/Makefile
+RUN: stat %t/dyldSim/apple-xbs-support
+RUN: stat %t/dyldSim/llvm
+RUN: stat %t/dyldSim/libcxx
+RUN: stat %t/dyldSim/libcxxabi
+RUN: ! stat %t/dyldSim/clang
+RUN: ! stat %t/dyldSim/libunwind

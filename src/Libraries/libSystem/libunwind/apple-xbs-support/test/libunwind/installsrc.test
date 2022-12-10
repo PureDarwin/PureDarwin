@@ -1,0 +1,26 @@
+RUN: rm -rf %t
+RUN: mkdir -p %t/dest
+RUN: make -C %src_root installsrc "SRCROOT=%t/dest" "RC_ProjectName=libunwind" 2>&1 \
+RUN: | grep 'libunwind => apple-xbs-support/libunwind.mk'
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/dest/Makefile
+RUN: stat %t/dest/apple-xbs-support
+RUN: stat %t/dest/libunwind
+RUN: ! stat %t/dest/llvm
+RUN: ! stat %t/dest/clang
+RUN: ! stat %t/dest/libcxx
+
+
+RUN: mkdir -p %t/Sim
+RUN: make -C %src_root installsrc "SRCROOT=%t/Sim" "RC_ProjectName=libunwind_Sim"
+
+# Verify that we got all the subdirs we wanted, but not others.
+
+RUN: stat %t/Sim/Makefile
+RUN: stat %t/Sim/apple-xbs-support
+RUN: stat %t/Sim/libunwind
+RUN: ! stat %t/Sim/llvm
+RUN: ! stat %t/Sim/clang
+RUN: ! stat %t/Sim/libcxx

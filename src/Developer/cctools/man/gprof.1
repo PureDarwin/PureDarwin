@@ -1,0 +1,284 @@
+.\"	$OpenBSD: gprof.1,v 1.4 1996/10/15 23:55:56 deraadt Exp $
+.\"	$NetBSD: gprof.1,v 1.6 1995/11/21 22:24:55 jtc Exp $
+.\"
+.\" Copyright (c) 1983, 1990, 1993
+.\"	The Regents of the University of California.  All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\" 3. All advertising materials mentioning features or use of this software
+.\"    must display the following acknowledgement:
+.\"	This product includes software developed by the University of
+.\"	California, Berkeley and its contributors.
+.\" 4. Neither the name of the University nor the names of its contributors
+.\"    may be used to endorse or promote products derived from this software
+.\"    without specific prior written permission.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.\"	@(#)gprof.1	8.1 (Berkeley) 6/6/93
+.\"
+.TH GPROF 1 "July 28, 2005" "Apple Computer, Inc."
+.SH NAME
+gprof \- display call graph profile data
+.SH SYNOPSIS
+.B gprof
+[ \fIoptions\fR ] [ a.out [ gmon.out ... ] ]
+.SH DESCRIPTION
+.I gprof
+produces an execution profile of a C, Pascal, or Fortran77 program.
+The effect of called routines is incorporated in the profile of each caller.
+The profile data is taken from the call graph profile file
+.RI ( gmon.out
+by default), which is created by programs
+compiled with the
+.B \-pg
+option of
+.IR cc ,
+.IR pc ,
+and
+.IR f77 .
+The symbol table in the
+named object file
+.RI ( a.out
+by default)
+is read and correlated with the
+call graph profile file.
+If more than one profile file is specified,
+the
+.I gprof
+output shows the sum of the profile information in the given profile files.
+.PP
+First, a flat profile is given.
+This listing gives the total execution times
+and call counts for each of the functions
+in the program, sorted by decreasing time.
+.PP
+Next, these times are propagated along the edges of the call graph.
+Cycles are discovered, and calls into a cycle are made to share the time
+of the cycle.
+A second listing shows the functions
+sorted according to the time they represent
+including the time of their call graph descendents.
+Below each function entry is shown its (direct) call graph children,
+and how their times are propagated to this function.
+A similar display above the function shows how this function's time and the
+time of its descendents is propagated to its (direct) call graph parents.
+.PP
+Cycles are also shown, with an entry for the cycle as a whole as well as a
+listing of the members of the cycle and their contributions to the
+time and call counts of the cycle.
+.SH "UNIVERSAL FILE SUPPORT"
+.I gprof
+accepts a ``universal'' file for the
+.I a.out
+file, using the host architecture from the file.  (It is an error if the
+``universal'' file does not contain the host architecture.)
+.SH OPTIONS
+.TP
+The following options are available:
+.TP
+.B \-a
+suppresses the displaying of statically declared functions.
+If this option is given, all relevant information about the static function
+(such as time samples, calls to other functions, calls from other functions)
+belongs to the function loaded just before the static function in the
+.I a.out
+file.
+.TP
+.B \-b
+suppresses the displaying of a description of each field in the profile.
+.TP
+.B \-c
+the static call graph of the program is discovered by a heuristic
+which examines the text space of the object file.
+Static-only parents or children are indicated
+with call counts of 0.  (The
+.B \-c
+option is currently not supported.)
+.TP
+.BI \-e " name"
+suppresses the displaying of the graph profile entry for routine
+.I name
+and all its descendants
+(unless they have other ancestors that aren't suppressed).
+More than one
+.B \-e
+option may be given.
+Only one
+.I name
+may be given with each
+.B \-e
+option.
+.TP
+.BI \-E " name"
+suppresses the displaying of the graph profile entry for routine
+.I name
+(and its descendants) as
+.BR \-e ,
+above, and also excludes the time spent in
+.I name
+(and its descendants) from the total and percentage time computations.
+(For example,
+.B \-E
+.I mcount
+and all of the other
+.IR monitor (3)
+routines are excluded by default.)
+.TP
+.BI \-f " name"
+displays the graph profile entry of only the specified routine
+.I name
+and its descendants.
+More than one
+.B \-f
+option may be given.
+Only one
+.I name
+may be given with each
+.B \-f
+option.
+.TP
+.BI \-F " name"
+displays the graph profile entry of only the routine
+.I name
+and its descendants (as
+.BR \-f,
+above) and also uses only the times of the displayed routines
+in total time and percentage computations.
+More than one
+.B \-F
+option may be given.
+Only one
+.I name
+may be given with each
+.B \-F
+option.
+The
+.B \-F
+option
+overrides
+the
+.B \-E
+option.
+.TP
+.B \-s
+a profile file
+.I gmon.sum
+is produced which represents
+the sum of the profile information in all the specified profile files.
+This summary profile file may be given to subsequent
+executions of gprof (probably also with a
+.BR \-s )
+to accumulate profile data across several runs of an
+.I a.out
+file.
+.TP
+.B \-S
+produces four order files suitable as input to
+.IR ld (1):
+.I gmon.order
+is an ordering based on a closest is best algorithm,
+.I callf.order
+is based on call frequency,
+.I callo.order
+is based on call order and
+.I time.order
+is based on time.
+The order files contain only those functions which were called or
+sampled (including spontaneous functions). For library functions to
+appear correctly in the order file, a
+.I whatsloaded
+file produced by
+.IR ld (1)
+should exist in the working directory. Filenames in the order file
+will be missing for: files compiled without the
+.BR \-g
+option, assembly files, and stripped executables.
+This option does not work with executables that have already been scattered.
+The
+.I gmon.order
+file can take a long time to produce and can be suppressed with the
+.B \-x
+option.
+.TP
+.B \-z
+displays routines which have zero usage (as indicated by call counts
+and accumulated time).
+This is useful in conjunction with the
+.B \-c
+option for discovering which routines were never called.
+.SH FILES
+.ta 1.5i
+a.out
+the namelist and text space.
+.br
+gmon.out
+dynamic call graph and profile.
+.br
+gmon.sum
+summarized dynamic call graph and profile.
+.br
+gmon.order
+ordering based on closest is best algorithm.
+.br
+callf.order
+ordering based on call frequency.
+.br
+callo.order
+ordering based on call order.
+.br
+time.order
+ordering based on time.
+.SH "SEE ALSO"
+monitor(3), profil(2), cc(1)
+.br
+dyld(1) and the DYLD_IMAGE_SUFFIX environment variable
+.br
+``gprof: A Call Graph Execution Profiler'', by
+Graham, S.L., Kessler, P.B., McKusick, M.K.;
+.IR "Proceedings of the SIGPLAN '82 Symposium on Compiler Construction" ,
+SIGPLAN Notices, Vol. 17, No. 6, pp. 120-126, June 1982.
+.SH BUGS
+Beware of quantization errors.
+The granularity of the sampling is shown, but remains
+statistical at best.
+We assume that the time for each execution of a function
+can be expressed by the total time for the function divided
+by the number of times the function is called.
+Thus the time propagated along the call graph arcs to parents of that
+function is directly proportional to the number of times that
+arc is traversed.
+.PP
+Parents which are not themselves profiled will have the time of
+their profiled children propagated to them, but they will appear
+to be spontaneously invoked in the call graph listing, and will
+not have their time propagated further.
+Similarly, signal catchers, even though profiled, will appear
+to be spontaneous (although for more obscure reasons).
+Any profiled children of signal catchers should have their times
+propagated properly, unless the signal catcher was invoked during
+the execution of the profiling routine, in which case all is lost.
+.PP
+The profiled program must call
+.IR exit (2)
+or return normally for the profiling information to be saved
+in the
+.B gmon.out
+file.

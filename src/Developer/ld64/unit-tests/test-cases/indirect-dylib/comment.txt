@@ -1,0 +1,4 @@
+The point of this test is a sanity check that an indirect
+library is not accidentally searched for symbols.
+
+<rdar://problem/4681062> wrong error message when symbol is found in unused indirect library#

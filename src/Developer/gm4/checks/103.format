@@ -1,0 +1,21 @@
+dnl @ ../doc/m4.texinfo:3641: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+include(`forloop.m4')
+dnl @result{}
+forloop(`i', `1', `10', `format(`%6d squared is %10d
+', i, eval(i**2))')
+dnl @result{}     1 squared is          1
+dnl @result{}     2 squared is          4
+dnl @result{}     3 squared is          9
+dnl @result{}     4 squared is         16
+dnl @result{}     5 squared is         25
+dnl @result{}     6 squared is         36
+dnl @result{}     7 squared is         49
+dnl @result{}     8 squared is         64
+dnl @result{}     9 squared is         81
+dnl @result{}    10 squared is        100
+dnl @result{}

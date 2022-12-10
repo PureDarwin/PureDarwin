@@ -1,0 +1,1 @@
+RUN: %src_root/apple-xbs-support/utils/find-clang-asan-version | grep "\d\d\d\d"

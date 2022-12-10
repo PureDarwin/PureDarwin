@@ -1,0 +1,396 @@
+# Checking the Bison scanner.                    -*- Autotest -*-
+# Copyright (C) 2002, 2003, 2004, 2005, 2006 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
+
+AT_BANNER([[Input Processing.]])
+
+# Mostly test that we are robust to mistakes.
+
+
+## ------------ ##
+## Invalid $n.  ##
+## ------------ ##
+
+AT_SETUP([Invalid dollar-n])
+
+AT_DATA([input.y],
+[[%%
+exp: { $$ = $1 ; };
+]])
+
+AT_CHECK([bison input.y], [1], [],
+[[input.y:2.13-14: integer out of range: `$1'
+]])
+
+AT_CLEANUP
+
+
+## ------------ ##
+## Invalid @n.  ##
+## ------------ ##
+
+AT_SETUP([Invalid @n])
+
+AT_DATA([input.y],
+[[%%
+exp: { @$ = @1 ; };
+]])
+
+AT_CHECK([bison input.y], [1], [],
+[[input.y:2.13-14: integer out of range: `@1'
+]])
+
+AT_CLEANUP
+
+
+## -------------- ##
+## Type Clashes.  ##
+## -------------- ##
+
+AT_SETUP([Type Clashes])
+
+AT_DATA([input.y],
+[[%token foo
+%type <bar> exp
+%%
+exp: foo {} foo
+   | foo
+   | /* Empty. */
+   ;
+]])
+
+AT_CHECK([bison input.y], [], [],
+[[input.y:4.6-15: warning: type clash on default action: <bar> != <>
+input.y:5.6-8: warning: type clash on default action: <bar> != <>
+input.y:6.5: warning: empty rule for typed nonterminal, and no action
+]])
+
+AT_CLEANUP
+
+
+## --------------- ##
+## Unused values.  ##
+## --------------- ##
+
+AT_SETUP([Unused values])
+
+AT_DATA([input.y],
+[[%token <integer> INT
+%type <integer> a b c d e f g h i j k l
+%destructor { destroy ($$); } INT a b c d e f g h i j k l
+%%
+start:
+  'a' a { $2 } | 'b' b { $2 } | 'c' c { $2 } | 'd' d { $2 } | 'e' e { $2 }
+| 'f' f { $2 } | 'g' g { $2 } | 'h' h { $2 } | 'i' i { $2 } | 'j' j { $2 }
+| 'k' k { $2 } | 'l' l { $2 }
+;
+
+a: INT | INT { } INT { } INT { };
+b: INT | /* empty */;
+c: INT | INT { $1 } INT { } INT { };
+d: INT | INT { } INT { $1 } INT { };
+e: INT | INT { } INT {  } INT { $1 };
+f: INT | INT { } INT {  } INT { $$ = $1 + $3 + $5; };
+g: INT | INT { $$ } INT { $$ } INT { };
+h: INT | INT { $$ } INT { $$ = $2 } INT { };
+i: INT | INT INT { } { $$ = $1 + $2; };
+j: INT | INT INT { $<integer>$ = 1; } { $$ = $1 + $2; };
+k: INT | INT INT { $$; } { $$ = $3; } { };
+l: INT | INT { $$ = $1; } INT { $$ = $2 + $3; } INT { $$ = $4 + $5; };
+
+]])
+
+AT_CHECK([bison input.y], [], [],
+[[input.y:11.10-32: warning: unset value: $$
+input.y:11.10-32: warning: unused value: $1
+input.y:11.10-32: warning: unused value: $3
+input.y:11.10-32: warning: unused value: $5
+input.y:12.9: warning: empty rule for typed nonterminal, and no action
+input.y:13.10-35: warning: unset value: $$
+input.y:13.10-35: warning: unused value: $3
+input.y:13.10-35: warning: unused value: $5
+input.y:14.10-35: warning: unset value: $$
+input.y:14.10-35: warning: unused value: $3
+input.y:14.10-35: warning: unused value: $5
+input.y:15.10-36: warning: unset value: $$
+input.y:15.10-36: warning: unused value: $3
+input.y:15.10-36: warning: unused value: $5
+input.y:17.10-38: warning: unset value: $$
+input.y:17.10-38: warning: unused value: $1
+input.y:17.10-38: warning: unused value: $2
+input.y:17.10-38: warning: unused value: $3
+input.y:17.10-38: warning: unused value: $4
+input.y:17.10-38: warning: unused value: $5
+input.y:18.10-43: warning: unset value: $$
+input.y:18.10-43: warning: unused value: $1
+input.y:18.10-43: warning: unused value: $3
+input.y:18.10-43: warning: unused value: $4
+input.y:18.10-43: warning: unused value: $5
+input.y:20.10-55: warning: unused value: $3
+input.y:21.10-41: warning: unset value: $$
+input.y:21.10-41: warning: unused value: $1
+input.y:21.10-41: warning: unused value: $2
+input.y:21.10-41: warning: unused value: $4
+]])
+
+AT_CLEANUP
+
+
+## ---------------------- ##
+## Incompatible Aliases.  ##
+## ---------------------- ##
+
+AT_SETUP([Incompatible Aliases])
+
+AT_DATA([input.y],
+[[%token foo "foo"
+
+%type <bar>       foo
+%printer {bar}    foo
+%destructor {bar} foo
+%left             foo
+
+%type <baz>       "foo"
+%printer {baz}    "foo"
+%destructor {baz} "foo"
+%left             "foo"
+
+%%
+exp: foo;
+]])
+
+AT_CHECK([bison input.y], [1], [],
+[[input.y:8.7-11: %type redeclaration for foo
+input.y:3.7-11: first declaration
+input.y:10.13-17: %destructor redeclaration for foo
+input.y:5.13-17: first declaration
+input.y:9.10-14: %printer redeclaration for foo
+input.y:10.13-17: first declaration
+input.y:11.1-5: %left redeclaration for foo
+input.y:6.1-5: first declaration
+]])
+
+AT_CLEANUP
+
+
+
+## ----------------------- ##
+## Torturing the Scanner.  ##
+## ----------------------- ##
+
+# Be sure to compile and run, so that the C compiler checks what
+# we do.
+
+AT_SETUP([Torturing the Scanner])
+
+
+AT_DATA([input.y], [])
+AT_CHECK([bison input.y], [1], [],
+[[input.y:1.1: syntax error, unexpected end of file
+]])
+
+
+AT_DATA([input.y], 
+[{}
+])
+AT_CHECK([bison input.y], [1], [],
+[[input.y:1.1-2: syntax error, unexpected {...}
+]])
+
+
+AT_DATA_GRAMMAR([input.y],
+[[%{
+/* This is seen in GCC: a %{ and %} in middle of a comment. */
+const char *foo = "So %{ and %} can be here too.";
+
+#if 0
+/* These examples test Bison while not stressing C compilers too much.
+   Many C compilers mishandle backslash-newlines, so this part of the
+   test is inside "#if 0".  The comment and string are written so that
+   the "#endif" will be seen regardless of the C compiler bugs that we
+   know about, namely:
+
+     HP C (as of late 2002) mishandles *\[newline]\[newline]/ within a
+     comment.
+
+     The Apple Darwin compiler (as of late 2002) mishandles
+     \\[newline]' within a character constant.
+
+   */
+
+/\
+* A comment with backslash-newlines in it. %} *\
+\
+/
+/* { Close the above comment, if the C compiler mishandled it.  */
+
+char str[] = "\\
+" A string with backslash-newlines in it %{ %} \\
+\
+"";
+
+char apostrophe = '\'';
+#endif
+
+#include <stdio.h>
+%}
+/* %{ and %} can be here too. */
+
+%{
+/* Exercise pre-prologue dependency to %union.  */
+typedef int value;
+%}
+
+/* Exercise M4 quoting: '@:>@@:>@', 0.  */
+
+/* Also exercise %union. */
+%union
+{
+  value ival; /* A comment to exercise an old bug. */
+};
+
+
+/* Exercise post-prologue dependency to %union.  */
+%{
+static YYSTYPE value_as_yystype (value val);
+
+/* Exercise quotes in declarations.  */
+char quote[] = "@:>@@:>@,";
+%}
+
+%{
+static void yyerror (const char *s);
+static int yylex (void);
+%}
+
+%type <ival> '@<:@'
+
+/* Exercise quotes in strings.  */
+%token FAKE "fake @<:@@:>@ \a\b\f\n\r\t\v\"\'\?\\\u005B\U0000005c ??!??'??(??)??-??/??<??=??> \x1\1"
+
+%%
+/* Exercise M4 quoting: '@:>@@:>@', @<:@, 1.  */
+exp: '@<:@' '\1' two '$' '@' '{' oline output.or.oline.opt
+  {
+    /* Exercise quotes in braces.  */
+    char tmp[] = "@<:@%c@:>@,\n";
+    printf (tmp, $1);
+  }
+;
+
+two: '\x000000000000000000000000000000000000000000000000000000000000000000002';
+oline: '@' 'o' 'l' 'i' 'n' 'e' '@' '_' '_' 'o' 'l' 'i' 'n' 'e' '_' '_';
+output.or.oline.opt: ;|oline;;|output;;;
+output: '#' 'o' 'u' 't' 'p' 'u' 't' ' ';
+%%
+/* Exercise M4 quoting: '@:>@@:>@', @<:@, 2.  */
+
+static YYSTYPE
+value_as_yystype (value val)
+{
+  YYSTYPE res;
+  res.ival = val;
+  return res;
+}
+
+static int
+yylex (void)
+{
+  static const char *input = "@<:@\1\2$@{@oline@__@&t@oline__\
+#output "; /* "
+  */
+  yylval = value_as_yystype (*input);
+  return *input++;
+}
+
+static void
+yyerror (const char *msg)
+{
+  fprintf (stderr, "%s\n", msg);
+}
+]])
+
+# Pacify Emacs'font-lock-mode: "
+
+AT_DATA([main.c],
+[[typedef int value;
+#include "input.h"
+
+int yyparse (void);
+
+int
+main (void)
+{
+  return yyparse ();
+}
+]])
+
+AT_CHECK([bison -d -v -o input.c input.y])
+AT_COMPILE([input.o], [-c input.c])
+AT_COMPILE([main.o], [-c main.c])
+AT_COMPILE([input], [input.o main.o])
+AT_PARSER_CHECK([./input], 0,
+[[[@<:@],
+]])
+
+AT_CLEANUP
+
+
+## ---------------------- ##
+## Typed symbol aliases.  ##
+## ---------------------- ##
+
+AT_SETUP([Typed symbol aliases])
+
+# Bison 2.0 broke typed symbol aliases - ensure they work.
+
+AT_DATA_GRAMMAR([input.y],
+[[%union
+{
+  int val;
+};
+%token <val> MY_TOKEN "MY TOKEN"
+%type <val> exp
+%%
+exp: "MY TOKEN";
+%%
+]])
+
+AT_CHECK([bison -o input.c input.y])
+
+AT_CLEANUP
+
+
+## --------- ##
+## Require.  ##
+## --------- ##
+
+m4_define([AT_CHECK_REQUIRE],
+[AT_SETUP([Require $1])
+AT_DATA_GRAMMAR([input.y],
+[[%require "$1";
+%%
+empty_file:;
+]])
+AT_CHECK([bison -o input.c input.y], $2, [], ignore)
+AT_CLEANUP
+])
+
+AT_CHECK_REQUIRE(1.0, 0)
+AT_CHECK_REQUIRE(AT_PACKAGE_VERSION, 0)
+## FIXME: Some day augment this version number.
+AT_CHECK_REQUIRE(100.0, 63)

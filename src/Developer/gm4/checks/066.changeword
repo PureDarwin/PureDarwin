@@ -1,0 +1,17 @@
+dnl @ ../doc/m4.texinfo:2708: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+ifdef(`changeword', `', `errprint(` skipping: no changeword support
+')m4exit(`77')')dnl
+define(`_indir', defn(`indir'))
+dnl @result{}
+changeword(`_[_a-zA-Z0-9]*')
+dnl @result{}
+esyscmd(`foo')
+dnl @result{}esyscmd(foo)
+_indir(`esyscmd', `echo hi')
+dnl @result{}hi
+dnl @result{}

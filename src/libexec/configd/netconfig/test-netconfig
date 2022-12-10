@@ -1,0 +1,38 @@
+#!/bin/sh
+
+PHYS_VLAN=${PHYS_VLAN:=en7}
+NETCONFIG=${NETCONFIG:=/usr/local/bin/netconfig}
+
+commands="add set remove disable enable show create destroy setvlan"
+for cmd in ${commands}
+do
+	echo $cmd
+	${NETCONFIG} ${cmd} --help
+	${NETCONFIG} ${cmd}
+	echo
+done
+
+ifconfig feth0 || {
+    ifconfig feth0 create || {
+	exit 1
+    }
+}
+
+$NETCONFIG set -i feth0 -N RealFake -D || exit 1
+$NETCONFIG show -S RealFake || exit 1
+$NETCONFIG set -i feth0 -p ipv4 -c manual -A 2.2.2.2 -m 255.255.0.0 -r 2.2.2.1 -p ipv6 -c automatic -p dns -A 2.2.2.1,2.2.2.3 -A 2.2.2.4 -n apple.com -s blah.com,blah.blah.blah.com -s another.com || exit 1
+$NETCONFIG show -S RealFake || exit 1
+$NETCONFIG disable -i feth0 -p ipv4 -p ipv6 -p dns || exit 1
+$NETCONFIG set -i feth0 -D -p ipv4 -c dhcp -C TestClientID -p ipv6 -c manual -A fdcd::2 -r fdcd::1 || exit 1
+$NETCONFIG disable -S RealFake || exit 1
+$NETCONFIG enable -S RealFake || exit 1
+$NETCONFIG remove -S RealFake || exit 1
+$NETCONFIG create -t vlan -I 1234 -P ${PHYS_VLAN} -N MyVLAN || exit 1
+$NETCONFIG add -i vlan0 -N MyVLAN -D || exit 1
+$NETCONFIG show -S MyVLAN || exit 1
+$NETCONFIG setvlan -i MyVLAN -I 1 -P ${PHYS_VLAN} || exit 1
+$NETCONFIG remove -S MyVLAN || exit 1
+$NETCONFIG destroy -i MyVLAN || exit 1
+ifconfig feth0 destroy
+
+exit 0

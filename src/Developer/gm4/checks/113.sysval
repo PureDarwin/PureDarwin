@@ -1,0 +1,19 @@
+dnl @ ../doc/m4.texinfo:4085: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+dnl This test assumes kill is a shell builtin, and that signals are
+dnl recognizable.
+ifdef(`__unix__', ,
+      `errprint(` skipping: syscmd does not have unix semantics
+')m4exit(`77')')dnl
+syscmd(`kill -13 $$')
+dnl @result{}
+sysval
+dnl @result{}3328
+esyscmd(`kill -9 $$')
+dnl @result{}
+sysval
+dnl @result{}2304

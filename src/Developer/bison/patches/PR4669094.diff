@@ -1,0 +1,60 @@
+--- data/glr.c.orig	2007-05-02 16:12:55.000000000 -0700
++++ data/glr.c	2007-05-02 16:14:27.000000000 -0700
+@@ -240,7 +240,7 @@
+ #include <stdarg.h>
+ 
+ #ifndef YY_
+-# if YYENABLE_NLS
++# if defined YYENABLE_NLS && YYENABLE_NLS
+ #  if ENABLE_NLS
+ #   include <libintl.h> /* INFRINGES ON USER NAME SPACE */
+ #   define YY_(msgid) dgettext ("bison-runtime", msgid)
+@@ -2301,7 +2301,7 @@
+   yychar = YYEMPTY;
+   yylval = yyval_default;
+ ]b4_locations_if([
+-#if YYLTYPE_IS_TRIVIAL
++#if defined YYLTYPE_IS_TRIVIAL && YYLTYPE_IS_TRIVIAL
+   yylloc.first_line   = yylloc.last_line   = 1;
+   yylloc.first_column = yylloc.last_column = 0;
+ #endif
+--- data/lalr1.cc.orig	2007-05-02 16:15:06.000000000 -0700
++++ data/lalr1.cc	2007-05-02 16:15:22.000000000 -0700
+@@ -318,7 +318,7 @@
+ b4_syncline([@oline@], [@ofile@])[
+ 
+ #ifndef YY_
+-# if YYENABLE_NLS
++# if defined YYENABLE_NLS && YYENABLE_NLS
+ #  if ENABLE_NLS
+ #   include <libintl.h> /* FIXME: INFRINGES ON USER NAME SPACE */
+ #   define YY_(msgid) dgettext ("bison-runtime", msgid)
+--- data/yacc.c.orig	2007-05-02 16:15:43.000000000 -0700
++++ data/yacc.c	2007-05-02 16:16:18.000000000 -0700
+@@ -262,7 +262,7 @@
+ #define YYSIZE_MAXIMUM ((YYSIZE_T) -1)
+ 
+ #ifndef YY_
+-# if YYENABLE_NLS
++# if defined YYENABLE_NLS && YYENABLE_NLS
+ #  if ENABLE_NLS
+ #   include <libintl.h> /* INFRINGES ON USER NAME SPACE */
+ #   define YY_(msgid) dgettext ("bison-runtime", msgid)
+@@ -619,7 +619,7 @@
+    we won't break user code: when these are the locations we know.  */
+ 
+ #ifndef YY_LOCATION_PRINT
+-# if YYLTYPE_IS_TRIVIAL
++# if defined YYLTYPE_IS_TRIVIAL && YYLTYPE_IS_TRIVIAL
+ #  define YY_LOCATION_PRINT(File, Loc)			\
+      fprintf (File, "%d.%d-%d.%d",			\
+ 	      (Loc).first_line, (Loc).first_column,	\
+@@ -1060,7 +1060,7 @@
+   yyssp = yyss;
+   yyvsp = yyvs;
+ ]b4_locations_if([[  yylsp = yyls;
+-#if YYLTYPE_IS_TRIVIAL
++#if defined YYLTYPE_IS_TRIVIAL && YYLTYPE_IS_TRIVIAL
+   /* Initialize the default location before parsing starts.  */
+   yylloc.first_line   = yylloc.last_line   = 1;
+   yylloc.first_column = yylloc.last_column = 0;

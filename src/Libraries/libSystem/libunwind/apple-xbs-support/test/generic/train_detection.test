@@ -1,0 +1,187 @@
+###############################################################################
+# Tests for train_detection.mk
+###############################################################################
+include train_detection.mk
+
+# Test success paths.
+# RUN: %make_with_helpers -f %s
+
+# Dummy target that always succeeds
+.PHONY: test
+test:
+	@echo run tests.
+
+define assert_true
+$(if $(strip $(1)),\
+  $(info PASS assert_true:"$(1)"),\
+  $(error FAIL assert_true:"$(1)"))
+endef
+define assert_false
+$(if $(strip $(1)),\
+  $(error FAIL assert_false:"$(1)"),\
+  $(info PASS assert_false:"$(1)"))
+endef
+define str_is_eq
+$(if $(shell [ "$(1)" = "$(2)" ] && echo 1),1,)
+endef
+define assert_str_eq
+$(if $(call str_is_eq,$(1),$(2)),\
+  $(info PASS assert_str_eq: "$(1)" == "$(2)"),\
+  $(info FAIL assert_str_eq: "$(1)" != "$(2)"))
+endef
+
+# Test str_is_eq
+$(call assert_true,$(call str_is_eq,a,a,))
+$(call assert_true,$(call str_is_eq,abc,abc))
+$(call assert_false,$(call str_is_eq,abc,abcd))
+$(call assert_false,$(call str_is_eq,,abcd))
+$(call assert_false,$(call str_is_eq,abcd,))
+$(call assert_true,$(call str_is_eq,foo bar,foo bar))
+$(call assert_false,$(call str_is_eq,foo bar baz,foo bar))
+$(call assert_false,$(call str_is_eq,foo bar,foo bar baz))
+
+# Test toolchains-are-for-os
+$(call assert_true,$(call toolchains-are-for-os,OSX))
+$(call assert_true,$(call toolchains-are-for-os,iOS))
+$(call assert_true,$(call toolchains-are-for-os,WatchOS))
+$(call assert_true,$(call toolchains-are-for-os,AppleTVOS))
+$(call assert_true,$(call toolchains-are-for-os,BridgeOS))
+$(call assert_true,$(call toolchains-are-for-os,OSX-10.15))
+$(call assert_true,$(call toolchains-are-for-os,\
+  OSX iOS WatchOS AppleTVOS BridgeOS))
+$(call assert_false,$(call toolchains-are-for-os,XcodeDefault))
+$(call assert_false,$(call toolchains-are-for-os,\
+  OSX XcodeDefault))
+$(call assert_false,$(call toolchains-are-for-os,))
+$(call assert_false,$(call toolchains-are-for-os, ))
+
+# Test invert
+$(call assert_false,$(call invert,1))
+$(call assert_true,$(call invert,))
+$(call assert_true,$(call invert, ))
+
+# Test toolchain-version-is-at-least
+$(call assert_true,$(call toolchain-version-is-at-least,OSX-10.15,OSX-10.15))
+$(call assert_true,$(call toolchain-version-is-at-least,OSX-10.16,OSX-10.15))
+$(call assert_true,$(call toolchain-version-is-at-least,OSX-10.17,OSX-10.15))
+$(call assert_true,$(call toolchain-version-is-at-least,OSX-11.0,OSX-10.15))
+$(call assert_false,$(call toolchain-version-is-at-least,OSX-10.4,OSX-10.15))
+$(call assert_false,$(call toolchain-version-is-at-least,OSX-10.14,OSX-10.15))
+$(call assert_false,$(call toolchain-version-is-at-least,,OSX-10.15))
+
+# Failure Paths
+# RUN: (! %make_with_helpers -f %s \
+# RUN: TEST_FAILURE=toolchain-version-is-at-least0) 2>&1 | \
+# RUN: grep 'Unknown toolchain in " "'
+ifeq ($(TEST_FAILURE),toolchain-version-is-at-least0)
+  $(call assert_false,$(call toolchain-version-is-at-least,,))
+endif
+
+# RUN: (! %make_with_helpers -f %s \
+# RUN: TEST_FAILURE=toolchain-version-is-at-least1) 2>&1 | \
+# RUN: grep 'expected one hyphen in each version'
+ifeq ($(TEST_FAILURE),toolchain-version-is-at-least1)
+  $(call assert_false,$(call toolchain-version-is-at-least,,OSX))
+endif
+
+# RUN: (! %make_with_helpers -f %s \
+# RUN: TEST_FAILURE=toolchain-version-is-at-least2) 2>&1 | \
+# RUN: grep 'expected one dot in each version'
+ifeq ($(TEST_FAILURE),toolchain-version-is-at-least2)
+  $(call assert_false,$(call toolchain-version-is-at-least,OSX-10.15,OSX-10))
+endif
+
+# RUN: (! %make_with_helpers -f %s \
+# RUN: TEST_FAILURE=toolchain-version-is-at-least3) 2>&1 | \
+# RUN: grep 'expected one hyphen in each version'
+ifeq ($(TEST_FAILURE),toolchain-version-is-at-least3)
+  $(call assert_false,$(call toolchain-version-is-at-least,XcodeDefault,OSX-10))
+endif
+
+# RUN: (! %make_with_helpers -f %s \
+# RUN: TEST_FAILURE=toolchain-version-is-at-least4) 2>&1 | \
+# RUN: grep 'Unknown toolchain in "XcodeDefault-5.0 OSX-10.15"'
+ifeq ($(TEST_FAILURE),toolchain-version-is-at-least4)
+  $(call assert_false,$(call toolchain-version-is-at-least,XcodeDefault-5.0,OSX-10.15))
+endif
+
+MIN_V := OSX-11.0 iOS-14.0 WatchOS-7.0 AppleTVOS-14.0 BridgeOS-5.0
+$(call assert_false,$(call toolchain-version-is-at-least,\
+  OSX-10.15,$(MIN_V)))
+$(call assert_true,$(call toolchain-version-is-at-least,\
+  OSX-11.0,$(MIN_V)))
+$(call assert_false,$(call toolchain-version-is-at-least,\
+  iOS-13.0,$(MIN_V)))
+$(call assert_true,$(call toolchain-version-is-at-least,\
+  iOS-14.0,$(MIN_V)))
+$(call assert_false,$(call toolchain-version-is-at-least,\
+  WatchOS-6.0,$(MIN_V)))
+$(call assert_true,$(call toolchain-version-is-at-least,\
+  WatchOS-7.0,$(MIN_V)))
+$(call assert_false,$(call toolchain-version-is-at-least,\
+  AppleTVOS-13.0,$(MIN_V)))
+$(call assert_true,$(call toolchain-version-is-at-least,\
+  AppleTVOS-14.0,$(MIN_V)))
+$(call assert_false,$(call toolchain-version-is-at-least,\
+  BridgeOS-4.0,$(MIN_V)))
+$(call assert_true,$(call toolchain-version-is-at-least,\
+  BridgeOS-5.0,$(MIN_V)))
+$(call assert_false,$(call toolchain-version-is-at-least,\
+  OSX-10.15,iOS-13.0))
+
+# Test toolchain-name-version
+$(call assert_str_eq,$(call toolchain-name-version,/Applications/Xcode.app/Contents/Developer/Toolchains/OSX11.0.xctoolchain),OSX-11.0)
+$(call assert_str_eq,$(call toolchain-name-version,/Applications/Xcode.app/Contents/Developer/Toolchains/iOS13.4.xctoolchain),iOS-13.4)
+$(call assert_str_eq,$(call toolchain-name-version,/Applications/Xcode.app/Contents/Developer/Toolchains/WatchOS6.2.xctoolchain),WatchOS-6.2)
+$(call assert_str_eq,$(call toolchain-name-version,/Applications/Xcode.app/Contents/Developer/Toolchains/AppleTVOS13.4.xctoolchain),AppleTVOS-13.4)
+$(call assert_str_eq,$(call toolchain-name-version,/Applications/Xcode.app/Contents/Developer/Toolchains/BridgeOS4.0.xctoolchain),BridgeOS-4.0)
+$(call assert_str_eq,$(call toolchain-name-version,/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain),XcodeDefault)
+
+# Test os-train-version-is-at-least
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/OSX11.0.xctoolchain
+$(call assert_true,$(call os-train-version-is-at-least,OSX-10.15))
+$(call assert_true,$(call os-train-version-is-at-least,OSX-11.0))
+$(call assert_false,$(call os-train-version-is-at-least,OSX-11.1))
+$(call assert_true,$(call os-train-version-is-at-least,$(MIN_V)))
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/OSX10.15.xctoolchain
+$(call assert_false,$(call os-train-version-is-at-least,$(MIN_V)))
+
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/iOS14.0.xctoolchain
+$(call assert_true,$(call os-train-version-is-at-least,iOS-13.0))
+$(call assert_true,$(call os-train-version-is-at-least,iOS-14.0))
+$(call assert_false,$(call os-train-version-is-at-least,iOS-15.0))
+$(call assert_true,$(call os-train-version-is-at-least,$(MIN_V)))
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/iOS13.0.xctoolchain
+$(call assert_false,$(call os-train-version-is-at-least,$(MIN_V)))
+
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/WatchOS7.0.xctoolchain
+$(call assert_true,$(call os-train-version-is-at-least,WatchOS-6.0))
+$(call assert_true,$(call os-train-version-is-at-least,WatchOS-7.0))
+$(call assert_false,$(call os-train-version-is-at-least,WatchOS-8.0))
+$(call assert_true,$(call os-train-version-is-at-least,$(MIN_V)))
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/WatchOS6.0.xctoolchain
+$(call assert_false,$(call os-train-version-is-at-least,$(MIN_V)))
+
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/AppleTVOS14.0.xctoolchain
+$(call assert_true,$(call os-train-version-is-at-least,AppleTVOS-13.0))
+$(call assert_true,$(call os-train-version-is-at-least,AppleTVOS-14.0))
+$(call assert_false,$(call os-train-version-is-at-least,AppleTVOS-15.0))
+$(call assert_true,$(call os-train-version-is-at-least,$(MIN_V)))
+DT_TOOLCHAIN_DIR=/Applications/Xcode.app/Contents/Developer/Toolchains/AppleTVOS13.0.xctoolchain
+$(call assert_false,$(call os-train-version-is-at-least,$(MIN_V)))
+
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/BridgeOS5.0.xctoolchain
+$(call assert_true,$(call os-train-version-is-at-least,BridgeOS-4.0))
+$(call assert_true,$(call os-train-version-is-at-least,BridgeOS-5.0))
+$(call assert_false,$(call os-train-version-is-at-least,BridgeOS-6.0))
+$(call assert_true,$(call os-train-version-is-at-least,$(MIN_V)))
+DT_TOOLCHAIN_DIR:=/Applications/Xcode.app/Contents/Developer/Toolchains/BridgeOS4.0.xctoolchain
+$(call assert_false,$(call os-train-version-is-at-least,$(MIN_V)))
+
+# RUN: (! %make_with_helpers -f %s \
+# RUN: TEST_FAILURE=os-train-version-is-at-least0) 2>&1 | \
+# RUN: grep 'DT_TOOLCHAIN_DIR cannot be empty'
+ifeq ($(TEST_FAILURE),os-train-version-is-at-least0)
+ DT_TOOLCHAIN_DIR :=
+ $(call os-train-version-is-at-least,OSX-10.15)
+endif

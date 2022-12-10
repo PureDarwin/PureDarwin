@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>OpenSourceProject</key>
+	<string>gperf</string>
+	<key>OpenSourceVersion</key>
+	<string>3.0.3</string>
+	<key>OpenSourceWebsiteURL</key>
+	<string>http://www.gnu.org/software/gperf/</string>
+	<key>OpenSourceURL</key>
+	<string>http://ftp.gnu.org/gnu/gperf/gperf-3.0.3.tar.gz</string>
+	<key>OpenSourceSHA1</key>
+	<string>3c535d2727eb0dca10ca87cefa03720a8280c7a2</string>
+	<key>OpenSourceImportDate</key>
+	<string>2007-11-02</string>
+	<key>OpenSourceLicense</key>
+	<string>GPL</string>
+	<key>OpenSourceLicenseFile</key>
+	<string>gperf.txt</string>
+	<key>OpenSourceModifications</key>
+	<array>
+		<string>use offsetof</string>
+		<string>add --size-type=TYPE for len parameters</string>
+		<string>avoid inlining lookup function (12056452, 12056494)</string>
+	</array>
+</dict>
+</plist>

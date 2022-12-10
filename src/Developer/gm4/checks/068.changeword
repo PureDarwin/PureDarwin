@@ -1,0 +1,13 @@
+dnl @ ../doc/m4.texinfo:2765: Origin of test
+dnl @ Copyright (C) 2006 Free Software Foundation
+dnl @ This file is free software; the Free Software Foundation
+dnl @ gives unlimited permission to copy and/or distribute it
+dnl @ with or without modifications, as long as this notice
+dnl @ is preserved.
+ifdef(`changeword', `', `errprint(` skipping: no changeword support
+')m4exit(`77')')dnl
+define(`a', `errprint(`Hello')')dnl
+changeword(`@\([_a-zA-Z0-9]*\)')
+dnl @result{}
+@a
+dnl @result{}errprint(Hello)

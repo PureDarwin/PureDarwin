@@ -1,0 +1,11 @@
+--- implicit.c.orig	2006-03-31 22:36:40.000000000 -0800
++++ implicit.c	2006-11-30 17:58:09.000000000 -0800
+@@ -696,7 +696,7 @@
+                  so it might actually exist.  */
+ 
+               /* @@ dep->changed check is disabled. */
+-              if (((f = lookup_file (name)) != 0 && f->is_target)
++              if (((f = lookup_file (name)) != 0)
+                   /*|| ((!dep->changed || check_lastslash) && */
+                   || file_exists_p (name))
+                 continue;

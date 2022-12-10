@@ -3,7 +3,7 @@
 # Copyright (c) 2010 Apple Inc. All rights reserved.
 #
 # @APPLE_OSREFERENCE_LICENSE_HEADER_START@
-# 
+#
 # This file contains Original Code and/or Modifications of Original Code
 # as defined in and that are subject to the Apple Public Source License
 # Version 2.0 (the 'License'). You may not use this file except in
@@ -12,10 +12,10 @@
 # unlawful or unlicensed copies of an Apple operating system, or to
 # circumvent, violate, or enable the circumvention or violation of, any
 # terms of an Apple operating system software license agreement.
-# 
+#
 # Please obtain a copy of the License at
 # http://www.opensource.apple.com/apsl/ and read it before using this file.
-# 
+#
 # The Original Code and all software distributed under the License are
 # distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
 # EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -23,7 +23,7 @@
 # FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
 # Please see the License for the specific language governing rights and
 # limitations under the License.
-# 
+#
 # @APPLE_OSREFERENCE_LICENSE_HEADER_END@
 #
 
@@ -65,17 +65,22 @@ chomp @sources;
 
 undef $f;
 
+my $verbose = $ENV{"RC_VERBOSE"};
+
 # compiler options
-chomp(my $CC = `xcrun -find cc`);
+chomp(my $CC = $ENV{"CC"});
 my @CFLAGS = (
 	"-x assembler-with-cpp",
 	"-c",
 );
 
-chomp(my $LIBTOOL = `xcrun -find libtool`);
+chomp(my $LIBTOOL = $ENV{"LIBTOOL"});
 my @LIBTOOLFLAGS = (
 	"-static",
 );
+
+my $target = $ENV{"TARGET_TRIPLE"};
+push(@CFLAGS, "--target=$target");
 
 for my $flag (@includes) {
 	push(@CFLAGS, $flag);
@@ -87,7 +92,8 @@ for my $arch (@archs) {
 }
 
 # do each compile
-my $jobs = `sysctl -n hw.ncpu` + 2;
+#my $jobs = `sysctl -n hw.ncpu` + 2;
+my $jobs = $ENV{"RC_BUILD_JOBS"};
 
 for my $src (@sources) {
 	if ($jobs == 0) {
@@ -97,16 +103,19 @@ for my $src (@sources) {
 			printf "wait exited with -1 (no children) and exhausted allowed jobs. Exiting.\n";
 			exit 1;
 		}
-		
+
 		if ($? != 0) {
 			printf "$CC exited with value %d\n", $? >> 8;
 			exit 1;
 		}
 	}
-	
+
 	(my $o = $src) =~ s/\.s$/\.o/;
 	my $compileCommand = "$CC " . join(' ', @CFLAGS) . " -o $o $src";
-	printf $compileCommand . "\n";
+
+	if ($verbose eq "YES") {
+		printf $compileCommand . "\n";
+	}
 
 	$jobs--;
 	my $pid = fork();
@@ -123,7 +132,9 @@ while (wait != -1) {
 	}
 }
 
-printf "Finished assembly, beginning link.\n";
+if ($verbose eq "YES") {
+	printf "Finished assembly, beginning link.\n";
+}
 
 # final link
 
@@ -133,7 +144,10 @@ if (-f $outputFile) {
 
 my $linkCommand = "$LIBTOOL " . join(' ', @LIBTOOLFLAGS) . " -o $outputFile " . join(' ', @objects);
 
-printf $linkCommand . "\n";
+if ($verbose eq "YES") {
+	printf $linkCommand . "\n";
+}
+
 system($linkCommand);
 if ($? != 0) {
 	print "$LIBTOOL exited with value %d\n", $? >> 8;

@@ -1,0 +1,27 @@
+safety/tst.basename.d
+safety/tst.caller.d
+safety/tst.cleanpath.d
+safety/tst.copyin.d
+# safety/tst.ddi_pathname.d						/* WAIVED: Solaris device driver model specific. */
+safety/tst.dirname.d
+safety/tst.index.d
+# safety/tst.msgdsize.d							/* WAIVED: Darwin doesn't do SysV msg buffers(?) */
+# safety/tst.msgsize.d
+safety/tst.null.d
+safety/tst.progenyof.d
+safety/tst.random.d
+# safety/tst.rw.d								/* RADAR 4769158: Awaits rw_lock_is_held et al */
+safety/tst.shortstr.d
+safety/tst.stack.d
+safety/tst.stackdepth.d
+safety/tst.strchr.d
+safety/tst.strjoin.d
+safety/tst.strstr.d
+safety/tst.strtok.d
+safety/tst.substr.d
+safety/tst.unalign.d
+safety/tst.uregs.d
+safety/tst.ustack.d							
+safety/tst.ustackdepth.d
+safety/tst.vahole.d
+# safety/tst.violentdeath.ksh

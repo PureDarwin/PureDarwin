@@ -1,0 +1,1823 @@
+.TH LD_CLASSIC 1 "August 4, 2006" "Apple Computer, Inc."
+.SH NAME
+ld_classic \- The old Mach object file link editor
+.SH SYNOPSIS
+.B ld_classic
+[
+.I "option \&..."
+] [
+.I "file \&..."
+]
+.SH DESCRIPTION
+The
+.I ld_classic
+command combines several Mach-O (Mach object) files into one by combining like sections
+in like segments from all the object files, resolving external references, and
+searching libraries.  In the simplest case several object
+.I files
+are given, and
+.I ld_classic
+combines them, producing an object file which can either be executed or
+become the input for a further
+.I ld_classic
+run.  (In the latter case, the
+.B \-r
+option must be given to preserve the relocation information.)  Unless an output
+file is specified,
+.I ld_classic
+produces a file named
+.BR a.out .
+This file is made executable only if no errors occurred during the link editing
+and there are no undefined symbols.
+.SH "UNIVERSAL FILE SUPPORT"
+The link editor accepts ``universal'' (multiple-architecture) input files, but
+always creates a ``thin'' (single-architecture), standard Mach-O output file.
+The architecture is specified using the
+.B \-arch
+.I " arch_type"
+option.  If this option is not used,
+.IR ld_classic (1)
+attempts to determine the output architecture by examining the first object
+file encountered on the command line.  If it is a ``thin''
+file, its architecture determines that of the output file.  If the first input
+file is a ``universal'' file, the ``best'' architecture for the host is used.
+(See the explanation of the
+.B \-arch
+option, below.)
+.PP
+The compiler driver
+.IR cc (1)
+handles creating universal executables by calling
+.IR ld_classic (1)
+multiple times and using
+.IR lipo (1)
+to create a ``universal'' file from the results of the
+.IR ld_classic (1)
+executions.
+.SH "OUTPUT FILE LAYOUT"
+.PP
+The object files are loaded in the order in which they are specified on the
+command line.  The segments and the
+sections in those segments will appear in the output file in the order they are
+encountered in the object files being linked.  All zero fill sections will appear
+after all non-zero fill sections in their segments.
+.PP
+Sections created from files with the
+.B \-sectcreate
+option will appear in the output file last.  Section names for sections created
+from files are not allowed to overlap with a section name in the same segment
+as a section coming from an object file.  Sections created from files may be in
+a segment which has sections from object files and if so will be loaded at the
+end of the non-zero fill sections for that segment.
+.PP
+If the option
+.B \-seglinkedit
+is specified, the segment it creates is the last segment in the output file.
+.PP
+The address of each segment can be specified with
+.B \-segaddr,
+which takes the segment's name as an argument.
+The address of the first segment can alternatively be specified using
+.B \-seg1addr,
+in which case a segment name is not used.
+Segments that do not have a specified
+address will be assigned addresses in the order in which they appear
+in the output file.  A segment's address will be assigned
+based on the ending address of the previous segment.
+If the address of the
+first segment has not been specified by name,
+its assigned address will be
+the specified (via
+.BR \-seg1addr )
+or default first segment address.
+If neither flag is used to specify the first segment's address, its
+default address is zero
+for all formats except the demand-paged executable format
+.SM (MH_EXECUTE),
+in which case the default first address is the value of the segment alignment.
+.PP
+For demand-paged executable format
+.SM (MH_EXECUTE)
+output files,
+if none of the segments' addresses covers address zero through
+the value of the segment alignment, a segment with no access protection
+will be created to cover those addresses.  This segment, named
+.SM "``_\|_PAGEZERO'',"
+is created so that any attempt to dereference a NULL pointer will cause a
+memory exception.
+.PP
+The entry point of the output file is the beginning of
+the first section in the first segment (unless the
+.B \-e
+option is specified).
+.SH STATIC ARCHIVE LIBRARIES
+.PP
+.I ld_classic
+supports two types of libraries: static archive libraries and dynamic shared
+libraries.  Searching for undefined symbols is performed differently for dynamic
+shared libraries than it is for static archive libraries.  The searching of
+dynamic shared libraries is described later.
+.PP
+When a static archive library is specified as an argument to
+.IR ld_classic ,
+it is searched exactly once, at the
+point it is encountered in the argument list.  Only those members defining an unresolved external
+reference, as defined by the static archive library's table of contents,
+are loaded.  To produce the table of contents, all static archive libraries must be processed by
+.IR ranlib (1).
+.PP
+Generally, a static archive library does not have multiple members that define
+the same symbol.  For these types of libraries, the order of the members is not important, so
+the table of contents can be sorted for faster link editing using the
+.B \-s
+option to
+.IR ranlib (1).
+The first member
+of the static archive library is named
+.SM "``\_\^\_.SYMDEF SORTED'',"
+which is understood to be a sorted table of contents.
+.PP
+If the static archive library does have multiple members that define
+the same symbol, the table of contents that
+.IR ranlib (1)
+produces can't be sorted.  Instead, it follows the order in which the members
+appear in the static archive library.  The link editor searches the table of
+contents iteratively, loading members until no further references are
+satisfied.  In the unsorted case, the first member of the static archive
+library is named
+.SM "``\_\^\_.SYMDEF'',"
+which is understood to be a table of contents in
+the order of the archive members.
+.PP
+Static archive library members can also be loaded in response to
+the
+.B \-ObjC
+and
+.B \-all_load
+flags. See their descriptions below.
+
+.SH DYNAMIC SHARED LIBRARIES
+.PP
+When a dynamic shared library or an object file that was linked against a
+dynamic shared library is specified as an argument to
+.IR ld_classic ,
+that library is placed in the dynamic shared library search list. The order of
+the search list is always the same order the libraries were encountered on the
+command line. When linking -flat_namespace, all dynamic libraries that the
+dynamic libraries are dependent upon are added to the end of the search list.
+.PP
+Once the search list is constructed, the static link editor checks for undefined
+symbols by simulating the way the dynamic linker will search for undefined
+symbols at runtime. For each undefined symbol, the static link editor searches
+each library in the search list until it finds a module that defines the symbol.
+With each undefined symbol, the search starts with the first library in the
+list.  This is different than for static archive libraries, where each library
+is searched exactly once for all undefined symbols.
+.PP
+The static link editor simulates dynamic linking as if all the undefined
+symbols are to be bound at program launch time. The dynamic linker actually
+binds undefined symbols as they are encountered during execution instead of at
+program launch. However, the static link editor always produces the same linking
+as the dynamic linker as long as none of the dynamic shared libraries define the
+same symbol. Different linking can occur only when there is more than one
+definition of a symbol and the library modules that contain the definitions for
+that symbol do not define and reference exactly the same symbols.  In this case,
+even different executions of the same program can produce different linking
+because the dynamic linker binds undefined functions as they are called, and
+this affects the order in which undefined symbols are bound.  Because it can
+produce different dynamic linking, using dynamic shared libraries that define
+the same symbols in the same program is strongly discouraged.
+.PP
+If a static archive library appears after a dynamic shared library on the
+command line, the static library is placed in the dynamic library search list
+and is searched as a dynamic library.  In this way, when a dynamic library has
+undefined symbols, it will cause the appropriate members of the static libraries
+to be loaded into the output.  Searching static libraries as dynamic libraries
+can cause problems if the dynamic library later changes to reference symbols
+from the static library that it did not previously reference. In this case when
+the program runs, the dynamic linker will report these symbols as undefined
+because the members for these symbols were not loaded into the output.
+
+.SH TWO-LEVEL AND FLAT NAMESPACES
+.PP
+Two-level and flat namespaces refer to how references to symbols in dynamic
+libraries are resolved to a definition in specific dynamic library.  For
+two-level namespace that resolution is done at static link time when each
+image (program, bundle and shared library) is built.  When a program is using
+images built with two-level namespace there may be different global symbols
+with the same name being used by different images in the program (this is now
+the default).  When a program is using all flat namespace images then only one
+global symbol for each global symbol name is used by all images of the program
+(this was the default in MacOS X 10.0).
+.PP
+When creating an output file with the static link editor that links against
+dynamic libraries, the references to symbols in those libraries can be recorded
+at static link time to bind to a specific library definition (two-level
+namespace) or left to be bound at execution time to the first library in the
+search order of the program (flat namespace).  A program, its dynamic libraries
+and its bundles may each be either two-level or flat namespace images.  The
+dynamic linker will bind each image according to how it was built.
+.PP
+When creating an output file with the static link editor when
+.B \-twolevel_namespace
+is in effect (now the default) all undefined references must be satisfied at
+static link time.  The flags to allow undefined references,
+.BI \-U symbol_name,
+.BI \-undefined " warning"
+and
+.BI \-undefined " suppress"
+can't be used.
+When the environment variable
+.B MACOSX_DEPLOYMENT_TARGET
+is set to
+.B 10.3
+or higher then
+.BI \-undefined " dynamic_lookup"
+can also be used.  The specific library definition recorded
+for each reference is the first library that has a definition as listed on the
+link line.  Listing an umbrella framework implies all of its sub-frameworks,
+sub-umbrellas and sub-libraries.  For any reference to a definition found in
+an umbrella framework's sub-framework, sub-umbrella or sub-library will be
+recorded as coming from the umbrella framework.  Then at execution time the
+dynamic linker will search that umbrella framework's sub-frameworks,
+sub-umbrellas and sub-libraries for those references.
+Also when two-level namespace is in effect only those frameworks listed on the
+link line (and sub-frameworks, sub-umbrellas and sub-libraries of umbrella
+frameworks) are searched.  Other dependent libraries which are not
+sub-frameworks, sub-umbrellas or sub-libraries of umbrella frameworks are not
+searched.
+.RS
+.PP
+When creating bundles (MH_BUNDLE outputs) with the static link editor when
+two-level namespace is in effect (now the default) and the bundle has
+references to symbols
+expected to be defined in the program loading the bundle, then the
+.BI \-bundle_loader " executable"
+must be used.
+.PP
+When creating an output file with the static link editor when
+.B \-flat_namespace
+is in effect (the MacOS X 10.0 default) all undefined references must be
+satisfied at static link time when
+.BI \-undefined " error"
+(the default) is used.  The static
+link editor checks the undefined references by searching all the libraries
+listed on the link line then all dependent libraries.  The undefined symbols
+in the created output file are left to be resolved at execution time by the
+dynamic link editor in the dynamic libraries in the search order of the program.
+
+.SH MULTIPLY DEFINED SYMBOLS
+.PP
+If there are multiply defined symbols in the object files being linked into
+the output file being created this always results in a multiply defined
+symbol error.
+.PP
+When the static link editor links symbols in from a dynamic library that result
+in multiply defined symbols the handling depends on the type of name space of
+output file being created and possibly the type of name space of the dynamic
+library.
+.PP
+When the static link editor is creating a two-level namespace image and a
+there is a multiply defined symbol from dynamic library then that generates a
+multiply defined symbol warning (by default), where the treatment of this
+warning can be changed with the
+.B \-multiply_defined
+flag.
+.PP
+When the static link editor is creating a flat namespace image and a there is
+a multiply defined symbol from dynamic library, if the library is a flat
+namespace image then that generates a multiply defined symbol error.  If the
+library is a two-level namespace image then that generates a multiply defined
+symbol warning (by default), where the treatment of this warning can be changed
+with the
+.B \-multiply_defined
+flag.
+
+.SH "USING THE DYNAMIC LINK EDITOR AND DYNAMIC SHARED LIBRARIES"
+.PP
+The option
+.B \-dynamic
+must be specified in order to use dynamic shared libraries (and any of the features used to implement them) and/or the dynamic link editor.
+To make sure that the output is not using any features that would
+require the dynamic link editor, the flag
+.B \-static
+can be specified.
+Only one of these flags can be specified.
+
+.SH "LINK EDITOR DEFINED SYMBOLS"
+.PP
+There is a group of link editor defined symbols for the
+.SM MH_EXECUTE,
+.SM MH_DYLIB
+and
+.SM MH_PRELOAD
+file types (see the header file <mach-o/ldsyms.h>).  Link editor symbols are
+reserved; it is an error if an input object file defines such a symbol.
+Only those link editor symbols that are referenced by the object file
+appear in the output file's symbol table.
+.PP
+The link editor defined symbol `\_\^\_mh_execute_header'
+(`\_mh_execute_header' in C) is reserved when the output file format is
+.SM MH_EXECUTE.
+This symbol is the address of the Mach header in a Mach-O executable (a
+file of type
+.SM MH_EXECUTE).
+It does not appear in
+any other Mach-O file type.  It can be used to get to the addresses and
+sizes of all the segments and sections in the executable.  This can be done by parsing the headers
+and load commands (see
+.IR Mach-O (5)).
+.PP
+The link editor defined symbol `\_\^\_mh_dylib_header'
+(`\_mh_dylib_header' in C) is reserved when the output file format is
+.SM MH_DYLIB.
+This symbol is the address of the Mach header in a Mach-O dynamic shared library
+(a file of type
+.SM MH_DYLIB)
+and is a private external symbol.
+It does not appear in
+any other Mach-O file type.  It can be used to get to the addresses and
+sizes of all the segments and sections in a dynamic shared library.  The
+addresses, however, must have the value
+.IR _dyld_get_image_vmaddr_slide (3)
+added to them.
+.PP
+The
+.SM MH_PRELOAD
+file type has link editor defined symbols for the
+beginning and ending of each segment, and for the
+beginning and ending of each section within a segment.
+These names are provided for use in a Mach-O preloaded file,
+since it does not have its headers loaded as part of the first segment.
+The names of the symbols for a segment's beginning and end
+have the form: \_\^\_SEGNAME\_\^\_begin and \_\^\_SEGNAME\_\^\_end,
+where \_\^\_SEGNAME is the name of the segment.  Similarly, the symbols for
+a section have the form:
+\_\^\_SEGNAME\_\^\_sectname\_\^\_begin and \_\^\_SEGNAME\_\^\_sectname\_\^\_end,
+where \_\^\_sectname is the name of the section in the segment \_\^\_SEGNAME.
+These symbols' types are those of the section that the names refer to.
+(A symbol that refers to the end of a section actually has, as its value, the beginning address of the next section, but the symbol's type is still that of the section mentioned in the symbol's name.)
+.SH OPTIONS
+.PP
+.I Ld
+understands several options.  Filenames and
+options that refer to libraries (such as
+.B \-l
+and
+.BR \-framework ),
+as well as options that create symbols (such as
+.B \-u
+and
+.BR \-i ),
+are position-dependent: They define the load order and affect what gets
+loaded from libraries.
+Some
+.I ld_classic
+options overlap with compiler options.  If the compiler driver
+.IR cc (1)
+is used to invoke
+.I ld_classic ,
+it maybe necessary to pass the
+.IR ld_classic (1)
+options to
+.IR cc (1)
+using
+.BR \-Wl,\-option,argument1,argument2 .
+
+In this release of the static link editor, 64-bit code is processed by a the new
+link editor /usr/bin/ld.  And it is an error to pass -arch ppc64 or -arch x86_64
+to
+.IR ld_classic (1).
+
+The most common option is:
+.TP
+.BI  \-o " name"
+The output file is named
+.IR name ,
+instead of
+.BR a.out .
+
+.PP
+The following flags are related to architectures:
+.TP
+.BI \-arch " arch_type"
+Specifies the architecture,
+.I arch_type,
+for the output file. ``Universal'' input files that do not contain this
+specified architecture are ignored.  Only one
+.BI \-arch " arch_type"
+can be specified.  See
+.IR arch (3)
+for the currently known
+.IR arch_type s.
+If
+.I " arch_type"
+specifies a certain implementation of an architecture (such as
+.BI \-arch " m68040"
+or
+.BI \-arch " i486"
+), the resulting object file has that specific CPU subtype, and it is an
+error if any input file has a CPU subtype that will not combine to the CPU subtype
+for
+.IR " arch_type" .
+.IP
+The default output file architecture is determined by the first object file to
+be linked.  If it is a ``thin'' (standard Mach-O) file, or a ``universal'' file
+that contains only one architecture, the output file will have the same
+architecture.  Otherwise, if it is a ``universal'' file
+containing an architecture that would execute on the host, then the ``best''
+architecture is used, as defined by what the kernel exec(2) would select.
+Otherwise, it is an error, and a
+.BI \-arch " arch_type"
+must be specified.
+For family architectures (like ppc and i386) the CPU subtype of the linked
+output is the ALL cpusubtype.  For specific CPU subtypes (ppc7400 vs. ppc970),
+the resulting CPU subtype of the linked output is to 'combine' the CPU subtypes.
+The combining is CPU specific and generally results in the minimum CPU subtype
+needed to support all the combined CPU subtypes.
+.TP
+.B \-arch_multiple
+This flag is used by the
+.IR cc (1)
+driver program when it is run with multiple
+.BI \-arch " arch_type"
+flags.  It instructs programs like
+.IR ld_classic (1)
+to precede any displayed message with a line stating
+the program name, in this case
+.IR ld_classic ,
+and the architecture (from the
+.BI \-arch " arch_type"
+flag).  This helps distinguish which architecture the error messages refer to.
+.TP
+.B \-force_cpusubtype_ALL
+The
+.B \-force_cpusubtype_ALL
+flag causes the CPU subtype to remain the
+.SM ALL
+CPU subtype and not to be combined or
+changed.  This flag has precedence over any
+.BI \-arch " arch_type"
+flag for a specific implementation.
+This is the default for all x86 architectures.
+.PP
+The following flags are related to using the dynamic link editor and/or
+dynamic shared libraries (and any of the features used to implement them):
+.TP
+.B \-dynamic
+Allows use of the features associated with dynamic link editor.  The default is
+.B \-dynamic.
+.TP
+.B \-static
+Causes those features associated with dynamic link editor to be treated as
+an error. (The description for the options that will cause an error if you use them in conjunction with
+.B \-static
+are marked with the statement "when
+.B \-dynamic
+ is used").
+.TP
+.BI \-read_only_relocs " treatment"
+Specifies how relocation entries in read-only sections are to be treated when
+.B \-dynamic
+is used.
+To get the best possible sharing, the read-only sections should not have any
+relocation entries.
+If they do, the dynamic linker will write on the section.
+Having relocation entries appear in read-only sections is normally avoided by compiling with the option
+.B \-dynamic.
+But in such cases non-converted assembly code
+or objects not compiled with
+.B \-dynamic
+relocation entries will appear in read-only sections.
+The
+.I treatment
+can be:
+.I error,
+.I warning,
+or
+.I suppress.
+Which cause the treatment of relocation entries in read-only sections as either,
+errors, warnings, or suppressed messages.
+The default is to treat these as errors.
+.TP
+.BI \-sect_diff_relocs " treatment"
+Specifies how section difference relocation enries are to be treated when
+.B \-dynamic
+and
+.B \-execute
+are used.
+To get the best possible code generation the compiler should not generate code
+for executables (MH_EXECUTE format outputs) that have any section difference
+relocation entries.  The
+.IR gcc (1)
+compiler has the
+.B \-mdynamic-no-pic
+flag for generating code for executables.  The default treatment is
+.I suppress,
+where no message is printed.  The other treatments are
+.I error
+or
+.I warning.
+This option can also be specified by setting the environment variable
+.SM LD_SECT_DIFF_RELOCS
+to the treatment values.
+.TP
+.BI \-weak_reference_mismatches " treatment"
+Specifies how to treat mismatches of symbol references in the the object files
+being linked. Normally the all the undefined symbol references of the object
+files being linked should be consistent for each undefined symbol.  That is all
+undefined symbols should either be weak or non-weak references. The default
+treatment is
+.I error,
+where the link fails with an error message.  The other treatments are
+.I weak
+or
+.I non-weak,
+which makes mismatched undefined symbol references either weak or non-weak
+in the output, respectively.  Care must be taken when using the treatment
+.I weak
+as the use of the non-weak symbol references in an object file may cause the
+program to crash when the symbol is not present at execution time.
+.TP
+.B \-prebind
+Have the static linker,
+.IR ld_classic (1),
+prebind an executable's or dynamic shared library's undefined symbols to the
+addresses of the dynamic libraries it is being linked with.
+This optimization can only be done if the libraries don't overlap and
+no symbols are overridden.
+When the resulting program is run and the same libraries are used to run the
+program as when the program was linked, the dynamic linker can use the prebound
+addresses.
+If not, the dynamic linker undoes the prebinding and binds normally.
+This option can also be specified by setting the environment variable
+.SM LD_PREBIND.
+If the environment variable
+.SM LD_FORCE_NO_PREBIND
+is set both the option
+.B \-prebind
+.SM LD_PREBIND
+environment variable are ignore and the output is not prebound.
+Or if the environment variable
+.B MACOSX_DEPLOYMENT_TARGET
+is set to 10.4 or greater and the output is not a split a dynamic library the
+output is not prebound.
+.TP
+.B \-noprebind
+Do not have the static linker,
+.IR ld_classic (1),
+prebind the output.  If this is specified the environment variable
+.SM LD_PREBIND
+is ignored.
+.TP
+.B \-prebind_allow_overlap
+Have the static linker,
+.IR ld_classic (1),
+prebind the output even if the addresses of the dynamic libraries it uses
+overlap.  The resulting output can then have
+.IR redo_prebinding (1)
+run on it to fix up the prebinding after the overlapping dynamic libraries
+have been rebuilt.  This option can also be specified by setting the
+environment variable
+.SM LD_PREBIND_ALLOW_OVERLAP.
+.TP
+.B \-prebind_all_twolevel_modules
+Have the static linker,
+.IR ld_classic (1),
+mark all modules from prebound two-level namespace dynamic libraries as used
+by the program even if they are not statically referenced.  This can provide
+improved launch time for programs like Objective-C programs that use symbols
+indirectly through NIB files. This option can also be specified by setting the
+environment variable
+.SM LD_PREBIND_ALL_TWOLEVEL_MODULES.
+.TP
+.B \-noprebind_all_twolevel_modules
+Don't have the static linker,
+.IR ld_classic (1),
+mark all modules from prebound two-level namespace dynamic libraries as used
+by the program.  This flag overrides the setting of the
+environment variable
+.SM LD_PREBIND_ALL_TWOLEVEL_MODULES.
+.TP
+.B \-nofixprebinding
+Have the static linker,
+.IR ld_classic (1),
+mark the executable so that the dynamic linker will never notify the prebinding
+agent if this launched and its prebinding is out of date.  This is used when
+building the prebinding agent itself.
+.PP
+The following flags are related to libraries:
+.TP
+.BI \-l x
+This
+option is an abbreviation for the library name
+.RI `lib x .a',
+where
+.I x
+is a string.
+If
+.B \-dynamic
+is specified the abbreviation for the library name is first search as
+.RI `lib x .dylib'
+and then
+.RI `lib x .a'
+is searched for.
+.I ld_classic
+searches for libraries first in any directories
+specified with
+.B \-L
+options, then in any directories specified in the colon separated set of paths
+in the environment variable LD_LIBRARY_PATH, then the standard directories
+.BR /lib ,
+.BR /usr/lib ,
+and
+.BR "/usr/local/lib" .
+A library is searched when its name is encountered,
+so the placement of the
+.B  \-l
+flag is significant.  If string
+.I x
+is of the form
+.IR x .o,
+then that file is searched for in the same places, but without prepending
+`lib' or appending `.a' or `.dylib' to the filename.
+.TP
+.BI \-weak-l x
+This is the same as the
+.BI \-l x
+but forces the library and all references to it to be marked as weak imports.
+Care must be taken when using this as the use of the non-weak symbol references
+in an object file may cause the program to crash when the symbol or library is
+not present at execution time.
+.TP
+.BI \-weak_library " file_name_path_to_library"
+This is the same as listing a file name path to a library on the link line
+except that it forces the library and all references to it to be marked as
+weak imports.
+Care must be taken when using this as the use of the non-weak symbol references
+in an object file may cause the program to crash when the symbol or library is
+not present at execution time.
+.TP
+.BI \-L dir
+Add
+.I dir
+to the list of directories in which to search for libraries.
+Directories specified with
+.B \-L
+are searched before the standard directories.
+.TP
+.B \-Z
+Do not search the standard directories when searching for libraries.
+.TP
+.BI "\-syslibroot " rootdir
+Prepend
+.I rootdir
+to the standard directories when searching for libraries or frameworks.
+.TP
+.B \-search_paths_first
+By default when the
+.B \-dynamic
+flag is in effect, the
+.BI \-l x
+and
+.BI \-weak-l x
+options first search for a file of the form
+.RI `lib x .dylib'
+in each directory in the library search path, then a file of the form
+.RI `lib x .a'
+is searched for in the library search paths.
+This option changes it so that in each path
+.RI `lib x .dylib'
+is searched for then
+.RI `lib x .a'
+before the next path in the library search path is searched.
+.TP
+.BI "\-framework " name[,suffix]
+Specifies a framework to link against. Frameworks are dynamic shared libraries,
+but they are stored in different locations, and therefore must be searched for
+differently. When this option is specified,
+.I ld_classic
+searches for framework `\fIname\fR.framework/\fIname\fR'
+first in any directories
+specified with the
+.B \-F
+option, then in the standard framework directories
+.BR /Library/Frameworks ,
+.BR /Network/Library/Frameworks ,
+and
+.BR "/System/Library/Frameworks" .
+The placement of the
+.B \-framework
+option is significant, as it determines when and how the framework is searched.
+If the optional suffix is specified the framework is first searched for the
+name with the suffix and then without.
+.TP
+.BI "\-weak_framework " name[,suffix]
+This is the same as the
+.BI "\-framework " name[,suffix]
+but forces the framework and all references to it to be marked as weak imports.
+Care must be taken when using this as the use of the non-weak symbol references
+in an object file may cause the program to crash when the symbol or framework is
+not present at execution time.
+.TP
+.BI \-F dir
+Add
+.I dir
+to the list of directories in which to search for frameworks.
+Directories specified with
+.B \-F
+are searched before the standard framework directories.
+.TP
+.B \-ObjC
+Loads all members of static archive libraries that define an Objective C class or a category. This option does not apply to dynamic shared libraries.
+.TP
+.B \-all_load
+Loads all members of static archive libraries.
+This option does not apply to dynamic shared
+libraries.
+.TP
+.BI \-dylib_file " install_name:file_name"
+Specifies that a dynamic shared library is in a different location than its standard location. Use this option when you link with a library that is dependent on a dynamic library, and the dynamic library is in a location other than its default location.
+.I install_name
+specifies the path where the library normally resides.
+.I file_name
+specifies the path of the library you want to use instead.
+For example, if you link to a library that depends upon the dynamic library libsys and you have libsys installed in a nondefault location, you would use this option:
+\fB\-dylib_file /lib/libsys_s.A.dylib:/me/lib/libsys_s.A.dylib\fR.
+.TP
+.BI \-executable_path " path_name"
+Specifies that
+.I path_name
+is used to replace
+.I @executable_path
+for dependent libraries.
+
+.PP
+The following options specify the output file format (the file type):
+.TP
+.B "\-execute"
+Produce a Mach-O demand-paged executable format file.  The headers are placed
+in the first segment, and all segments are padded to the segment alignment.
+This has a file type of
+.SM MH_EXECUTE.
+This is the default.  If no segment address is specified at address zero, a
+segment with no protection (no read, write, or execute permission) is created
+at address zero.
+This segment, whose size is that of the segment
+alignment, is named
+.SM ``_\|_PAGEZERO''.
+This option was previously named
+.BR "\-Mach" ,
+which will continue to be recognized.
+.TP
+.B \-object
+Produce a Mach-O file in the relocatable object file format that is
+intended for execution.  This differs from using the
+.B \-r
+option in that it defines common symbols, does not allow undefined symbols and
+does not preserve relocation entries.  This has a file type of
+.SM MH_OBJECT.
+In this format all sections are placed in one unnamed segment with all
+protections (read, write, execute) allowed on that segment.  This is intended
+for extremely small programs that would otherwise be large due to segment
+padding.  In this format, and all
+.SM non-MH_EXECUTE
+formats, the link editor
+defined symbol ``\_\^\_mh_execute_header'' is not defined since the headers are
+not part of the segment.  This format file can't be used with the dynamic
+linker.
+.TP
+.B \-preload
+Produce a Mach-O preloaded executable format file.  The headers are not placed
+in any segment.  All sections are placed in their proper segments and they are
+padded to the segment alignment.  This has a file type of
+.SM MH_PRELOAD.
+This option was previously
+.BR "\-p" ,
+which will continue to be recognized.
+.TP
+.B "\-dylib"
+Produce a Mach-O dynamically linked shared library format file.  The headers are
+placed in the first segment.  All sections are placed in their proper segments
+and they are padded to the segment alignment.  This has a file type of
+.SM MH_DYLIB.
+This option is used by
+.IR libtool (1)
+when its
+.B \-dynamic
+option is specified.
+.TP
+.B "\-bundle"
+Produce a Mach-O bundle format file.  The headers are placed in the first
+segment.  All sections are placed in their proper segments
+and they are padded to the segment alignment.  This has a file type of
+.SM MH_BUNDLE.
+.TP
+.B "\-dylinker"
+Produces a Mach-O dynamic link editor format file.  The headers are placed in the
+first segment.  All sections are placed in their proper segments, and they are
+padded to the segment alignment.  This has a file type of
+.SM MH_DYLINKER.
+.TP
+.B \-fvmlib
+Produce a Mach-O fixed VM shared library format file.  The headers are placed
+in the first segment but the first section in that segment will be placed on
+the next segment alignment boundary in that segment.  All sections are placed
+in their proper segments and they are padded to the segment alignment.
+This has a file type of
+.SM MH_FVMLIB.
+
+.PP
+The following flags affect the contents of the output file:
+.TP
+.B  \-r
+Save the relocation information in the output file
+so that it can be the subject of another
+.I ld_classic
+run.  The resulting file type is a Mach-O relocatable file
+.SM (MH_OBJECT)
+if not otherwise specified.
+This flag also prevents final definitions from being
+given to common symbols,
+and suppresses the `undefined symbol' diagnostics.
+.TP
+.B  \-d
+Force definition of common storage even if the
+.B \-r
+option is present.  This option also forces link editor defined symbols to be defined.
+This option is assumed when there is a dynamic link editor load command in the input
+and
+.B \-r
+is not specified.
+
+.PP
+The following flags support segment specifications:
+.TP
+.BI "\-segalign" " value"
+Specifies the segment alignment.
+.I value
+is a hexadecimal number that must be an integral power of 2.
+The default is the target pagesize (currently 1000 hex for the PowerPC and
+i386).
+.TP
+.BI "\-seg1addr" " addr"
+Specifies the starting address of the first segment in the output file.
+.I addr
+is a hexadecimal number and must be a multiple of the segment alignment.
+This option can also be specified as
+.B "\-image_base."
+.TP
+.BI "\-segaddr" " name addr"
+Specifies the starting address of the segment named
+.I name
+to be
+.I addr.
+The address must be a hexadecimal number that is a multiple of the segment alignment.
+.TP
+.BI "\-segs_read_only_addr" " addr"
+Specifies the starting address of the read-only segments in a dynamic shared
+library.  When this option is used the dynamic shared library is built such
+that the read-only and read-write segments are split into separate address
+ranges.  By default the read-write segments are 256meg (0x10000000) after
+the read-only segments.
+.I addr
+is a hexadecimal number and must be a multiple of the segment alignment.
+.TP
+.BI "\-segs_read_write_addr" " addr"
+Specifies the starting address of the read-write segments in a dynamic shared
+library.  When this option is used the
+.B \-segs_read_only_addr
+must also be used (see above).
+.I addr
+is a hexadecimal number and must be a multiple of the segment alignment.
+.TP
+.BI "\-seg_addr_table" " filename"
+For dynamic shared libraries the
+.B "\-seg1addr"
+or the pair of
+.B "\-segs_read_only_addr"
+and
+.B "\-segs_read_write_addr"
+are specified by an entry in the segment address table in
+.I filename
+that matches the install name of the library.
+The entries in the table are lines containing either a single hex address and an
+install name or two hex addresses and an install name.  In the first form the
+single hex address is used as the
+.B "\-seg1addr".
+In the second form the first address is used as the
+.B "\-segs_read_only_addr"
+address and the second address is used as the
+.B "\-segs_read_write_addr"
+address.
+This option can also be specified by setting the environment variable
+.SM LD_SEG_ADDR_TABLE.
+If the environment variable is set then any
+.BR "\-seg1addr" ,
+.BR "\-segs_read_only_addr" ,
+.B "\-segs_read_write_addr"
+and
+.B "\-seg_addr_table"
+options are ignored and a warning is printed.
+.TP
+.BI "\-seg_addr_table_filename" " pathname"
+Use
+.B pathname
+instead of the install name of the library for matching an entry in the segment
+address table.
+.TP
+.BI "\-segprot" " name max init"
+Specifies the maximum and initial virtual memory protection of the named
+segment,
+.I name,
+to be
+.I max
+and
+.I init
+,respectively.  The values for
+.I max
+and
+.I init
+are any combination of the characters `r' (for read), `w' (for write),
+`x' (for execute) and '\-' (no access).  The default is `rwx' for the maximum
+protection for all segments for PowerPC architecures and `rw` for the all Intel
+architecures.
+The default for the initial protection for all segments is `rw' unless the
+segment contains a section which contains some machine instructions, in which
+case the default for the initial protection is `rwx' (and for Intel
+architecures it also sets the maximum protection to `rwx' in this case).
+The default for the initial protection for the
+.SM "``_\|_TEXT''"
+segment is `rx' (not writable).
+.TP
+.B \-seglinkedit
+Create the link edit segment, named
+.SM "``_\|_LINKEDIT''"
+(this is the default).
+This segment contains all the link edit information (relocation information,
+symbol table, string table, etc.) in the object file.  If the segment protection
+for this segment is not specified, the initial protection is not writable.
+This can only be specified when the output file type is not
+.SM MH_OBJECT
+and
+.SM MH_PRELOAD
+output file types.  To get at the contents of this section, the Mach header
+and load commands must be parsed from the link editor defined symbols like
+`\_\^\_mh_execute_header' (see
+.IR Mach-O (5)).
+.TP
+.B \-noseglinkedit
+Do not create the link edit segment (see
+.B \-seglinkedit
+above).
+.TP
+.BI "\-pagezero_size" " value"
+Specifies the segment size of _\|_PAGEZERO to be of size
+.IR value ,
+where
+.I value
+is a hexadecimal number rounded to the segment alignment.
+The default is the target pagesize (currently, 1000 hexadecimal for the PowerPC
+and for i386).
+.TP
+.BI "\-stack_addr" " value"
+Specifies the initial address of the stack pointer
+.IR value ,
+where
+.I value
+is a hexadecimal number rounded to the segment alignment.
+The default segment alignment is the target pagesize (currently, 1000
+hexadecimal for the PowerPC and for i386).
+If
+.B \-stack_size
+is specified and
+.B \-stack_addr
+is not, a default stack address specific for the architecture being linked will
+be used and its value printed as a warning message.
+This creates a segment named _\|_UNIXSTACK.  Note that the initial stack address
+will be either at the high address of the segment or the low address of the
+segment depending on which direction the stack grows for the architecture being
+linked.
+.TP
+.BI "\-stack_size" " value"
+Specifies the size of the stack segment
+.IR value ,
+where
+.I value
+is a hexadecimal number rounded to the segment alignment.
+The default segment alignment is the target pagesize (currently, 1000
+hexadecimal for the PowerPC and for i386).
+If
+.B \-stack_addr
+is specified and
+.B \-stack_size
+is not, a default stack size specific for the architecture being linked will be
+used and its value printed as a warning message.
+This creates a segment named _\|_UNIXSTACK .
+.TP
+.B \-allow_stack_execute
+Marks executable so that all stacks in the task will be given stack execution
+privilege.  This includes pthread stacks.
+
+.PP
+The following flags support section specifications:
+.TP
+.BI "\-sectcreate" " segname sectname file"
+The section
+.I sectname
+in the segment
+.I segname
+is created from the contents of
+.I file.
+The combination of
+.I segname
+and
+.I sectname
+must be unique; there cannot already be a section
+.I (segname,sectname)
+in any input object file.
+This option was previously called
+.BR "\-segcreate" ,
+which will continue to be recognized.
+.TP
+.BI "\-sectalign" " segname sectname value"
+The section named
+.I sectname
+in the segment
+.I segname
+will have its alignment set to
+.IR value ,
+where
+.I value
+is a hexadecimal number that must be an integral power of 2.
+This can be used to set the alignment of a section created from a file, or to
+increase the alignment of a section from an object file, or to set the maximum
+alignment of the
+.SM (_\|_DATA,_\|_common)
+section, where common symbols are defined
+by the link editor.  Setting the alignment of a literal section causes the
+individual literals to be aligned on that boundary.  If the section
+alignment is not specified by a section header in an object file or on the
+command line, it defaults to 10 (hex), indicating 16-byte alignment.
+.TP
+.BI "\-sectorder" " segname sectname orderfile"
+The section
+.I sectname
+in the segment
+.I segname
+of the input files will be broken up into blocks associated with
+symbols in the section.  The output section will be created by ordering
+the blocks as specified by the lines in the
+.I orderfile.
+These blocks are aligned to the output file's section alignment for this
+section.  Any section can be ordered in the output file except symbol pointer and symbol stub sections.
+.IP
+For non-literal sections, each line of the
+.I orderfile
+contains an object name and a symbol name, separated by a single colon (':').
+Lines that start with # are ignored and treated as comments.
+If the object file is
+in an archive, the archive name, followed by a single colon, must precede the
+object file name.  The object file names and archive names should be exactly the
+names as seen by the link editor, but if not, the link editor attempts to match
+up the names the best it can.
+For non-literal sections, the easiest way to generate an order file is
+with the ``\f3\-jonls +\f2segname sectname\f1'' options to
+.IR nm (1).
+.IP
+The format of the
+.I orderfile
+for literal sections is specific to each type of literal section.  For C
+string literal sections, each line of the order file contains one literal C
+string, which may include ANSI C escape sequences.  For four-byte literal
+sections, the order file format is one 32-bit hex number with a leading 0x
+per
+line, with the rest of the line treated as a comment.  For eight-byte literal
+sections, the order file has two 32-bit hex numbers per line; each number
+has a leading 0x, the two numbers are separated by white
+space, and the rest of the line is treated as a comment.
+For literal pointer sections, the lines in the order file represent
+pointers, one per line.  A literal pointer is represented by the name of
+the segment that contains the literal being pointed to, followed by the
+section name, followed by the literal. These three strings are separated
+by colons with no extra white space.
+For all the literal sections, each line in the the order file is simply entered
+into the literal section and will appear in the output file in the same order
+as in the
+order file.  There is no check to see whether the literal is present
+in the loaded objects.
+For literal sections, the easiest way to generate an order file is with
+the ``\f3\-X \-v \-s \f2segname sectname\f1'' options to
+.IR otool (1).
+.TP
+.B \-sectorder_detail
+When using the
+.B \-sectorder
+option,  any pairs of object file names and symbol names that are found in
+the loaded objects, but not specified in the
+.IR orderfile ,
+are placed last in the output file's section.   These pairs are ordered by
+object file (as the filenames appear
+on the command line), with the different symbols from a given object
+file being ordered by
+increasing symbol address (that is, the order
+in which the symbols occurred in the object file,
+not their order in the symbol table).  By default, the link editor displays a summary
+that simply shows the number
+of symbol names found in the loaded objects but not in the
+.IR orderfile ,
+as well as the number of symbol names listed in the
+.I orderfile
+but not found in the loaded objects.  (The summary is omitted if both values
+are zero.)  To instead produce a detailed list of these symbols, use the
+.B \-sectorder_detail
+flag.  If an object file-symbol name pair is listed multiple times, a
+warning is generated, and the first occurrence is used.
+.TP
+.BI "\-sectobjectsymbols" " segname sectname"
+This causes the link editor to generate local symbols in the section
+.I sectname
+in the segment
+.IR segname .
+Each object file that has one of these sections will have a local
+symbol created
+whose name is that of the object file, or of the member of the archive.
+The symbol's value will be the first address where that object file's section
+was loaded.  The symbol has the type N_SECT and its section number is the
+the same as that of the section
+.I (segname,sectname)
+in the output file.
+This symbol will be placed in the symbol table just before all other local
+symbols
+for the object file.  This feature is typically used where the section is
+.SM (\_\^\_TEXT,\_\^\_text),
+in order to help the debugger debug object files produced by old versions of
+the compiler or by non-Apple compilers.
+
+.PP
+The following flags are related to name spaces:
+.TP
+.B \-twolevel_namespace
+Specifies the output to be built as a two-level namespace image.
+This option can also be specified by setting the environment variable
+.SM LD_TWOLEVEL_NAMESPACE.
+This is the default.
+.TP
+.B \-flat_namespace
+Specifies the output to be built as a flat namespace image.
+This is not the default (but was the default in MacOS X 10.0).
+.TP
+.B \-force_flat_namespace
+Specifies the executable output to be built and executed treating all its
+dynamic libraries as flat namespace images.  This marks the executable so that
+the dynamic link editor treats all dynamic libraries as flat namespace
+images when the program is executed.
+.TP
+.BI \-bundle_loader " executable"
+This specifies the
+.I executable
+that will be loading the bundle output file being linked.  Undefined symbols
+from the bundle are checked against the specified executable like it was one of
+the dynamic libraries the bundle was linked with.  If the bundle being created
+with
+.B \-twolevel_namespace
+in effect then the searching of the executable for
+symbols is based on the placement of the
+.B \-bundle_loader
+flag relative to the dynamic libraries.  If the the bundle being created with
+.B \-flat_namespace
+then the searching of the executable is done before all dynamic libraries.
+.TP
+.B \-private_bundle
+This allows symbols defined in the output to also be defined in executable in
+the
+.B \-bundle_loader
+argument
+when
+.B \-flat_namespace
+is in effect.
+This implies that the bundle output file being created is going to be loaded by
+the executable with the
+.B NSLINKMODULE_OPTION_PRIVATE
+option to
+.IR NSLinkModule (3).
+.TP
+.B \-twolevel_namespace_hints
+Specifies to create the output with the two-level namespace hints table to be
+used by the dynamic linker.  This is the default except when the
+.B \-bundle
+flag is specified.  If this is used when the
+.B \-bundle
+flag is specified the bundle will fail to load on a MacOS X 10.0 system with a
+malformed object error.
+.TP
+.BI \-multiply_defined " treatment"
+Specifies how multiply defined symbols in dynamic libraries when
+.B \-twolevel_namespace
+is in effect are to be treated.
+.I treatment
+can be:
+.I error,
+.I warning,
+or
+.I suppress.
+Which cause the treatment of multiply defined symbols in dynamic libraries
+as either, errors, warnings, or suppresses the checking of multiply symbols
+from dynamic libraries when
+.B \-twolevel_namespace
+is in effect.
+The default is to treat multiply defined symbols in dynamic libraries as
+warnings when
+.B \-twolevel_namespace
+is in effect.
+.TP
+.BI \-multiply_defined_unused " treatment"
+Specifies how unused multiply defined symbols in dynamic libraries when
+.B \-twolevel_namespace
+is in effect are to be treated.
+An unused multiply defined symbol is one in which there is a symbol defined in
+the output that is also defined in the dynamic libraries the output is linked
+with but the symbol in the dynamic library is not used by any reference in the
+output.
+.I treatment
+can be:
+.I error,
+.I warning,
+or
+.I suppress.
+The default for unused multiply defined symbols is to suppress these messages.
+.TP
+.B -nomultidefs
+specifying this flag marks the umbrella being created such that the dynamic
+linker is guaranteed that no multiple definitions of symbols in the umbrella's
+sub-images will ever exist.  This allows the dynamic linker to always use the
+two-level namespace lookup hints even if the timestamps of the sub-images
+do not match.  This flag implies
+.BI \-multiply_defined " error".
+
+.PP
+The following flags are related to symbols.  These flags' arguments
+are external symbols whose names have `_' prepended to the C,
+.SM FORTRAN,
+or Pascal variable name.
+.TP
+.BI \-y sym
+Display each file in which
+.I sym
+appears, its type, and whether the file defines or references it.  Any
+multiply defined symbols are automatically
+traced.  Like most of the other symbol-related flags,
+.B \-y
+takes only one argument; the flag may be specified more than once in the
+command line to trace more than one symbol.
+.TP
+.BI \-Y " number"
+For the first
+.I number
+undefined symbols, displays each file in which the symbol appears, its type and whether the file defines or references it (that is, the same style of output produced by the
+.B \-y
+option). To keep the output manageable, this option displays at most
+.I number
+references.
+.TP
+.B \-keep_private_externs
+Don't turn private external symbols into static symbols, but rather leave them
+as private external in the resulting output file.
+.TP
+.B \-m
+Don't treat multiply defined symbols from the linked objects as a hard error;
+instead, simply print a warning.  The first linked object defining such a symbol
+is used for linking; its value is used for the symbol in the symbol table.  The
+code and data for all such symbols are copied into the output.  The duplicate
+symbols other than the first symbol may still end up being used in the resulting
+output file through local references.  This can still produce a resulting output
+file that is in error.  This flag's use is strongly discouraged!
+.TP
+.B \-whyload
+Indicate why each member of a library is loaded.  In other words, indicate
+which currently undefined symbol is being resolved, causing that
+member to be loaded.  This in combination with the above
+.BI \-y sym
+flag can help determine exactly why a link edit is failing due to multiply
+defined symbols.
+.B
+.TP
+.BI  \-u " sym"
+Enter the argument
+.I sym
+into the symbol table as an undefined symbol.  This is useful
+for loading wholly from a library, since initially the symbol
+table is empty and an unresolved reference is needed
+to force the loading of the first object file.
+.TP
+.BI \-e " sym"
+The argument
+.I sym
+is taken to be the symbol name of the entry point of
+the resulting file.  By default, the entry point is the address of the
+first section in the first segment.
+.TP
+.BI \-i definition:indirect
+Create an indirect symbol for the symbol name
+.I definition
+which is defined to be the same as the symbol name
+.I indirect
+(which is taken to be undefined).  When a definition of the symbol named
+.I indirect
+is linked, both symbols will take on the defined type and value.
+.IP
+This option overlaps with a compiler option.
+If you use the compiler driver
+.IR cc (1)
+to invoke \fIld_classic\fR,
+invoke this option in this way:
+.BI \-Wl,\-i definition:indirect.
+
+.TP
+.BI \-undefined " treatment"
+Specifies how undefined symbols are to be treated.
+.I treatment
+can be:
+.I error,
+.I warning,
+or
+.I suppress.
+Which cause the treatment of undefined symbols as either, errors, warnings, or
+suppresses the checking of undefined symbols.
+The default is to treat undefined symbols as errors.
+When the environment variable
+.B MACOSX_DEPLOYMENT_TARGET
+is set to
+.B 10.3
+or higher then
+.BI \-undefined " dynamic_lookup"
+can also be used to allow any undefined symbols to be looked up dynamically at
+runtime.  Use of a binary built with this flag requires a system with a dynamic
+linker from Mac OS X 10.3 or later.
+The flag
+.BI \-undefined " define_a_way"
+can also be used to cause the static linker to create a private definition for
+all undefined symbols.  This flag should only be used if it is known that the
+undefined symbols are not referenced as any use of them may cause a crash.
+.TP
+.BI  \-U " sym"
+Allow the symbol
+.I sym
+to be undefined, even if the
+.B \-r
+flag is not given.  Produce an executable file if the only undefined
+symbols are those specified with
+.BR \-U.
+.IP
+This option overlaps with a compiler option.
+If you use the compiler driver
+.IR cc (1)
+to invoke \fIld_classic\fR,
+invoke this option in this way:
+.BI \-Wl,\-U, sym.
+.TP
+.B \-bind_at_load
+Causes the output file to be marked such that the dynamic linker will bind all
+undefined references when the file is loaded or launched.
+
+.PP
+The following flags are related to stripping link edit information.
+This information can also be removed by
+.IR strip (1),
+which uses the same options.  (The
+exception is the
+.B \-s
+flag below, but this is the same as
+.IR strip (1)
+with no arguments.)
+The following flags are listed in decreasing level of stripping.
+.TP
+.B \-s
+Completely strip the output; that is, remove the symbol table
+and relocation information.
+.TP
+.B \-x
+Strips the non-global symbols; only saves external symbols.
+.IP
+This option overlaps with a compiler option.
+If you use the compiler driver
+.IR cc (1)
+to invoke \fIld_classic\fR,
+invoke this option in this way:
+.B \-Wl,\-x.
+.TP
+.B \-S
+Strip debugging symbols; only save local and global symbols.
+.TP
+.B \-X
+Strip local symbols whose names begin with `L'; save all other symbols.
+(The compiler and assembler currently strip these internally-generated
+labels by default, so they generally do not appear in object files
+seen by the link editor.)
+.TP
+.B \-Sp
+Strip, edit and add debugging symbols so the debugger can used most of the
+debugging symbols from the object files.
+.TP
+.B \-Si
+Strip duplicate debugging symbols from include files.  This is
+the default.
+.TP
+.B  \-b
+Strip the base file's symbols from the output file.  (The base file
+is given as the argument to the
+.B \-A
+option.)
+.IP
+This option overlaps with a compiler option.
+If you use the compiler driver
+.IR cc (1)
+to invoke \fIld_classic\fR,
+invoke this option in this way:
+.B \-Wl,\-b.
+.TP
+.B \-Sn
+Don't strip any symbols.
+.TP
+.BI \-exported_symbols_list " filename"
+The specified
+.I filename
+contains lists of global symbol names that will remain as global symbols in the
+output file.  All other global symbols will be treated as if they were marked as
+.I __private_extern__
+and will not be global in the output file. The symbol names listed in
+.I filename
+must be one per line. Leading and trailing white space are not part of the
+symbol name.  Lines starting with # are ignored, as are lines with only white
+space.
+.TP
+.BI \-unexported_symbols_list " filename"
+The specified
+.I filename
+contains lists of global symbol names that will not remain as global symbols in
+the output file.  The symbols will be treated as if they were marked as
+.I __private_extern__
+and will not be global in the output file. The symbol names listed in
+.I filename
+must be one per line. Leading and trailing white space are not part of the
+symbol name.  Lines starting with # are ignored, as are lines with only white
+space.
+.TP
+.BI \-no_uuid
+Do not emit an LC_UUID load command in the linked output file.
+
+.TP
+.B -dead_strip
+Remove blocks of code and data that are unreachable by the entry point or
+exported symbols.
+.TP
+.B -no_dead_strip_inits_and_terms
+When specified along with
+.B -dead_strip
+cause all constructors and destructors to never be dead stripped.
+
+.PP
+The remaining options are infrequently used:
+.TP
+.B \-v
+Print the version of the linker.
+.TP
+.B \-w
+Suppresses all warning messages.
+.TP
+.B \-no_arch_warnings
+Suppresses warning messages about files that have the wrong architecture for the
+.B \-arch
+flag.
+.TP
+.B \-arch_errors_fatal
+Cause the errors having to do with files that have the wrong architecture to be
+fatal and stop the link editor.
+.TP
+.B \-M
+Produce a load map, listing all the segments and sections.  The list
+includes the address where each input file's section appears in the
+output file, as well as the section's size.
+.IP
+This option overlaps with a compiler option.
+If you use the compiler driver
+.IR cc (1)
+to invoke \fIld_classic\fR,
+invoke this option in this way:
+.B \-Wl,\-M.
+.TP
+.B \-whatsloaded
+Display a single line listing each object file that is
+loaded.  Names of objects in archives have the form libfoo.a(bar.o).
+.TP
+.BI \-filelist " listfile[,dirname]"
+Specifies that the linker should link the files listed in
+.I listfile .
+This is an alternative to listing the files on the command line. The file names are listed one per line separated
+only by newlines. (Spaces and tabs are assumed to be part of the file name.)
+If the optional directory name,
+.I dirname
+is specified, it is prepended to each name in the list file.
+.TP
+.BI "\-headerpad" " value"
+Specifies the minimum amount of space ("padding") following
+the headers for the
+.SM MH_EXECUTE
+format and all output file types with the dynamic linker.
+.I value
+is a hexadecimal number.
+When a segment's size is rounded up to the segment alignment, there
+is extra space left over, which is placed between the headers and the sections, rather than at the end of the segment.  The
+.B headerpad
+option specifies the minimum size of this padding,
+which can be useful if the headers will be altered later.
+The default value is the larger of 2 * sizeof(struct section) so the program
+/usr/bin/objcunique can always add two section headers, or if the output is an
+MH_EXECUTE filetype and
+.B \-prebind
+is specified 3 times the size of the LC_PREBOUND_DYLIB load commands.
+The actual amount of pad will be as large as the amount of the first
+segment's round-off.
+(That is, take the total size of the first segments'
+headers and non-zerofill sections, round this size
+up to the segment alignment,
+and use the difference between the rounded
+and unrounded sizes as the minimum amount of padding.)
+.TP
+.B \-headerpad_max_install_names
+Add to the header padding enough space to allow changing all dynamic shared
+library paths recorded in the output file to be changed to MAXPATHLEN in length.
+.TP
+.B \-t
+Trace the progress of the link editor; display the name of each file
+that is
+loaded as it is processed in the first and second pass of the link
+editor.
+.TP
+.BI \-A " basefile"
+Incremental loading: linking is to be done in a manner
+that lets the resulting object be read into an already executing
+program, the
+.IR basefile .
+.I basefile
+is the name of a file whose symbol table will be taken as a basis
+on which to define additional symbols.
+Only newly linked material will be entered into the
+.BR a.out
+file, but the new symbol table will reflect
+every symbol defined in the base file and the newly linked files.
+Option(s) to specify the addresses of the segments are typically
+needed, since
+the default addresses tend to overlap with the
+.I basefile.
+The default format of the object file is
+.SM MH_OBJECT.
+Note: It is strongly recommended that this option NOT be used,
+because the dyld package described in
+.IR dyld (3)
+is a much easier alternative.
+.TP
+.BI \-dylib_install_name " name"
+For dynamic shared library files, specifies the name of the file
+the library will be installed in for programs that use it.  If this is not
+specified, the name specified in the
+.BI \-o " name"
+option will be used.
+This option is used as the
+.IR libtool (1)
+.BI \-install_name " name"
+option when its
+.B \-dynamic
+option is specified.
+.TP
+.BI \-umbrella " framework_name"
+Specifies this is a subframework where
+.I framework_name
+is the name of the umbrella framework this subframework is a part of.  Where
+.I framework_name
+is the same as the argument to the
+.BI \-framework " framework_name"
+option.  This subframework can then only be linked into the umbrella framework
+with the same
+.I framework_name
+or another subframework with the same umbrella framework name.  Any other
+attempt to statically link this subframework directly will result in an error
+stating to link with the umbrella framework instead.  When building the umbrella
+framework that uses this subframework no additional options are required.
+However the install name of the umbrella framework, required to be specified
+with
+.BR \-dylib_install_name ,
+must have the proper format for an install name of a framework for the
+.I framework_name
+of the umbrella framework to be determined.
+.TP
+.BI \-allowable_client " client_name"
+Specifies that for this subframework the
+.I client_name
+can link with this subframework without error even though it is not part of
+the umbrella framework that this subframework is part of.  The
+.I client_name
+can be another framework name or a name used by bundles (see the
+.BI \-client_name " client_name"
+option below).
+.TP
+.BI \-client_name " client_name"
+Specifies the
+.I client_name
+of a bundle for checking of allowable clients of subframeworks (see the
+.BI \-allowable_client " client_name"
+option above).
+.TP
+.BI \-sub_umbrella " framework_name"
+Specifies that the
+.I framework_name
+being linked by a dynamic library is to be treated as one of the
+subframeworks with respect to twolevel namespace.
+.TP
+.BI \-sub_library " library_name"
+Specifies that the
+.I library_name
+being linked by a dynamic library is to be treated as one of the
+sublibraries with respect to twolevel namespace.  For example the
+.I library_name
+for
+.I /usr/lib/libobjc_profile.A.dylib
+would be
+.I libobjc.
+.TP
+.BI \-init " sym"
+The argument
+.I sym
+is taken to be the symbol name of the dynamic shared library initialization
+routine.  If any module is used from the dynamic library the library
+initialization routine is called before any symbol is used from the library
+including C++ static initializers (and #pragma CALL_ON_LOAD routines).
+.TP
+.B \-run_init_lazily
+This option is obsolete.
+.TP
+.BI \-dylib_compatibility_version " number"
+For dynamic shared library files, this specifies the compatibility version number
+of the library.  When a library is used by a program, the compatibility version is checked
+and if the program's version is greater that the library's version, it is an error.
+The format of
+.I number
+is
+.I X[.Y[.Z]]
+where
+.I X
+must be a positive non-zero number less than or equal to 65535, and
+.I .Y
+and
+.I .Z
+are optional and if present must be non-negative numbers less than or
+equal to 255.
+If the compatibility version number is not specified, it has a
+value of 0 and no checking is done when the library is used.
+This option is used as the
+.IR libtool (1)
+.BI \-compatibility_version " number"
+option
+when its
+.B \-dynamic
+option is set.
+.TP
+.BI \-dylib_current_version " number"
+For dynamic shared library files, specifies the current version number
+of the library.  The current version of the library can be obtained
+programmatically by the user of the library so it can determine exactly which version of the library it is using.
+The format of
+.I number
+is
+.I X[.Y[.Z]]
+where
+.I X
+must be a positive non-zero number less than or equal to 65535, and
+.I .Y
+and
+.I .Z
+are optional and if present must be non-negative numbers less than or
+equal to 255.
+If the version number is not specified, it has a
+value of 0.
+This option is used as the
+.IR libtool (1)
+.BI \-current_version " number"
+option when its
+.B \-dynamic
+option is set.
+.TP
+.BI \-single_module
+When building a dynamic library build the library so that it contains only
+one module.
+.TP
+.BI \-multi_module
+When building a dynamic library build the library so that it contains one
+module for each object file linked in.  This is the default.
+.TP
+.BI \-dylinker_install_name " name"
+For dynamic link editor files, specifies the name of the file
+the dynamic link editor will be installed in for programs that use it.
+.TP
+.BI \-macosx_version_min " version"
+This overrides the
+.B MACOSX_DEPLOYMENT_TARGET
+environment variable (see below).  Unlike other linker options, this one may
+be specified multiple times; only the last occurrence is effective.
+.PP
+The following environment variable is used to control the use of incompatible
+features in the output with respect to Mac OS X releases.
+.TP
+.B MACOSX_DEPLOYMENT_TARGET
+This is set to indicate the oldest Mac OS X version that that the output is to
+be used on.  When this is set to a release that is older than the current
+release features that are incompatible with that release will be disabled.  If
+a feature is seen in the input that can't be in the output due to this setting
+a warning is issued.  The current allowable values for this are
+.B 10.1,
+.B 10.2
+.B 10.3,
+and
+.B 10.4
+with the default being
+.B 10.4
+for the i386 architecture and
+.B 10.1
+for all other architectures.
+.PP
+The following environment variables are used by Apple's Build and Integration
+team:
+.TP
+.B LD_TRACE_ARCHIVES
+When this is set it causes a message of the form ``[Logging for XBS]
+Used static archive:
+.I filename''
+for each static archive that has members linked into the output.
+.TP
+.B LD_TRACE_DYLIBS
+When this is set it causes a message of the form ``[Logging for XBS]
+Used dynamic library:
+.I filename''
+for each dynamic library linked into the output.
+.TP
+.B RC_TRACE_PREBINDING_DISABLED
+When this is set it causes a message of the form ``[Logging for XBS
+prebinding disabled for
+.I filename
+because
+.I reason''.
+Where
+.I filename
+is the value of the
+.B \-final_output
+argument if specified or the value of the
+.B \-o
+argument.
+.TP
+.BI \-final_output " filename"
+The argument
+.I filename
+is used in the above message when RC_TRACE_PREBINDING_DISABLED is set.
+.TP
+.B LD_TRACE_FILE
+When this is set, messages displayed due to the
+.B LD_TRACE_ARCHIVES
+,
+.B LD_TRACE_DYLIBS
+, and
+.B LD_TRACE_PREBINDING_DISABLED
+environment variables are printed to the file whose path is specified
+by this variable instead of stdout.
+.TP
+.B LD_SPLITSEGS_NEW_LIBRARIES
+When set and
+.B MACOSX_DEPLOYMENT_TARGET
+is set to 10.4 or greater and the output is a dynamic library, and if the
+install name of the library is not listed the segment address table, and if the
+environment variable
+.B LD_UNPREBOUND_LIBRARIES
+is set with a file name with a list of library install names and the install
+name is not listed, then this is built as a split shared library.
+
+.PP
+Options available in early versions of the Mach-O link editor
+may no longer be supported.
+
+.SH FILES
+.ta \w'/Network/Library/Frameworks/*.framework/*\ \ 'u
+/lib/lib*.{a,dylib}	libraries
+.br
+/usr/lib/lib*.{a,dylib}
+.br
+/usr/local/lib/lib*.{a,dylib}
+.br
+/Library/Frameworks/*.framework/*	framework libraries
+.br
+/Network/Library/Frameworks/*.framework/*	framework libraries
+.br
+/System/Library/Frameworks/*.framework/*	framework libraries
+.br
+a.out	output file
+.SH "SEE ALSO"
+as(1), ar(1), cc(1), libtool(1), ranlib(1), nm(1), otool(1) lipo(1), ld(1),
+arch(3), dyld(3), Mach-O(5), strip(1), redo_prebinding(1)

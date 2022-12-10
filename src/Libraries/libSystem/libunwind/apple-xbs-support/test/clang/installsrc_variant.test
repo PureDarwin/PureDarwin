@@ -1,0 +1,7 @@
+# Check that variants can pass clang_compiler_rt content.
+RUN: rm -rf %t
+RUN: mkdir -p %t/dest
+RUN: make -C %src_root installsrc "SRCROOT=%t/dest" "RC_ProjectName=Variant_clang" \
+RUN:   "RC_ProjectSourceVersion=9999.99.99" 2>&1 \
+RUN:   | tee %t/log \
+RUN:   | grep 'COMPILER_RT_TOOLCHAIN_DYLIB_DIR:.*/Variant_clang_compiler_rt/'

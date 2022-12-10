@@ -1,0 +1,63 @@
+find_makefile()
+{
+	local j
+
+	MF=""
+
+	if [ ! -d $1 ]
+	then
+		return 1
+	fi
+
+	for j in Makefile makefile Makefile.newtest makefile.newtest
+	do
+		[ -f $1/$j ] && MF=$j
+	done
+
+	[ "$MF" ] && return 0
+	return 1
+}
+
+find_path_to_test_dir()
+{
+	# FIND THE PATH TO THE TEST DIR
+	# SO THAT WE CAN ADD THE BIN DIR INTO
+	# THE SEARCH PATH
+
+	# remember the top level execution dir
+	chmod +x "$0"	# just in case
+
+	#add path to $0 into search
+	savedir=$PWD
+		DIRNAME=`dirname $0`
+		[ -d "$DIRNAME" ] && cd "$DIRNAME"
+		PATH=$PATH:$PWD
+	cd "$savedir"
+
+	chmod +x "$0"	# just in case
+	EXECNAME=`which $0`
+	DIRNAME=`dirname "$EXECNAME"`
+	if [ -d "$DIRNAME" ]
+	then
+		TEST_HOME_DIR="$DIRNAME"
+	else
+		TEST_HOME_DIR="$savedir" # Give up and assume current dir
+	fi
+
+	PATH="$PATH":"$TEST_HOME_DIR"/bin:"$savedir"
+}
+
+find_path_to_test_dir
+
+cd "$TEST_HOME_DIR/test-cases"
+
+for i in *
+do
+	[ -d "$i" ] &&
+	(
+		if find_makefile $i
+		then
+			make -C $i -f $MF -s -k clean >/dev/null 2>/dev/null
+		fi
+	)
+done

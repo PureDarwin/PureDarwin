@@ -1,0 +1,7 @@
+The point of this test if the linker already has a weak definition
+it does not try to find another copy in an archive
+
+There are two case to test:
+1) both the main .o files and the archive have the same weak symbol (_foo)
+2) main.o has a weak symbol and the archive has a non-weak symbol (_baz)
+In both cases the linker should ignore the archive. 

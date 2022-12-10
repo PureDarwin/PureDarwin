@@ -1,0 +1,87 @@
+##
+## Copyright (C) 1992, 1993, 1994, 2006 Free Software Foundation, Inc.
+##
+## This program is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation; either version 2 of the License, or
+## (at your option) any later version.
+##
+## This program is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with this program; See the file COPYING.  if not, write to
+## the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+## Boston, MA 02110-1301, USA.
+
+PACKAGE = @PACKAGE@
+VERSION = @VERSION@
+
+SHELL = /bin/sh
+
+bindir = @bindir@
+exec_prefix = @exec_prefix@
+prefix = @prefix@
+srcdir = @srcdir@
+VPATH = @srcdir@
+PATH_SEPARATOR = @PATH_SEPARATOR@
+
+# Should be GNU awk, for the get-them script.
+AWK = @AWK@
+
+# Vern says that the first star is required around an Alpha make bug.
+CHECKS = $(srcdir)/*[0-9][0-9][0-9].*
+# Makefile.in is automatically distributed by automake.
+DISTFILES = $(srcdir)/get-them $(srcdir)/check-them $(srcdir)/stamp-checks
+
+all: $(srcdir)/stamp-checks
+
+$(srcdir)/stamp-checks: $(srcdir)/get-them $(srcdir)/../doc/m4.texinfo
+	rm -f $(CHECKS)
+	cd $(srcdir) && AWK=$(AWK) ./get-them ../doc/m4.texinfo
+	touch $(srcdir)/stamp-checks
+
+install:
+
+dvi pdf ps html info:
+install-dvi install-pdf install-ps install-html install-info:
+
+uninstall:
+
+check: $(srcdir)/stamp-checks
+	PATH=`pwd`/../src"$(PATH_SEPARATOR)"$$PATH; export PATH; \
+	$(srcdir)/check-them -I $(srcdir)/../examples $(CHECKS)
+
+installcheck: $(srcdir)/stamp-checks
+	PATH='$(bindir)'"$(PATH_SEPARATOR)"$$PATH; export PATH; \
+	$(srcdir)/check-them -I $(srcdir)/../examples $(CHECKS)
+
+tags:
+
+mostlyclean:
+
+clean: mostlyclean
+
+distclean: clean
+	rm -f Makefile
+
+maintainer-clean realclean: distclean
+	rm -f $(CHECKS) $(srcdir)/stamp-checks
+
+distdir: dist
+
+dist: $(DISTFILES)
+	@echo "Copying distribution files"
+	@for file in $(DISTFILES) $(CHECKS); do \
+	  ln $$file ../$(PACKAGE)-$(VERSION)/checks 2> /dev/null \
+	    || cp -p $$file ../$(PACKAGE)-$(VERSION)/checks; \
+	done
+
+Makefile: $(srcdir)/Makefile.in ../config.status
+	cd .. && ./config.status checks/$@
+
+# Tell versions [3.59,3.63) of GNU make not to export all variables.
+# Otherwise a system limit (for SysV at least) may be exceeded.
+.NOEXPORT:
