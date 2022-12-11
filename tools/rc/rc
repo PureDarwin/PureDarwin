@@ -165,7 +165,6 @@ function do_build_llvm {
         "-DCMAKE_MACOSX_RPATH=ON"                                                               \
         "-DLLVM_ENABLE_ZLIB=ON"                                                                 \
         "-DLLVM_ENABLE_MODULES=ON"                                                              \
-        "-DLLVM_LTO_VERSION_OFFSET=3000"                                                        \
         "-DCLANG_SPAWN_CC1=ON"                                                                  \
         "-DBUG_REPORT_URL=https://github.com/PureDarwin"                                        \
         "-DLLVM_BUILD_EXTERNAL_COMPILER_RT=ON"                                                  \
@@ -180,7 +179,6 @@ function do_build_llvm {
         "-DCMAKE_INSTALL_PREFIX=${RC_HOST_BIN}/.."                                              \
         "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra;compiler-rt"                            \
         "-DCMAKE_BUILD_TYPE=release"                                                            \
-        "-DLLVM_ENABLE_LTO=Full"                                                                \
         "-DPACKAGE_VENDOR=Apple"                                                                \
         -B "${HOST_LLVM_BUILD_DIR}"                                                             \
         -GNinja
