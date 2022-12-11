@@ -21,11 +21,10 @@ environment are described below.
 
 ## Quick Start
 
-To get started quickly with the default configuration, navigate to the
-PureDarwin repository root and
-execute `source tools/rc/setup.sh`. Some default build variables should be
+To get started quickly with the default configuration, source the file
+`tools/rc/setup.sh`.  Some default build variables should be
 output. You can now run `rc` or `rc root` from anywhere to return to the
-PureDarwin root directory.
+PureDarwin root directory, which will be located automatically.
 
 Now, to build the host toolchain, run `rc --make-host-toolchain` (this will
 take many minutes, even on the best machine).
