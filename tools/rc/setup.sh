@@ -17,12 +17,16 @@ if [ -z "${RC_HOST_TYPE}" ]; then
     export RC_HOST_TYPE=$(uname -s)
 fi
 
+if [ -z "${RC_DARWIN_ROOT}" ]; then
+    export RC_DARWIN_ROOT=$(cd `dirname $0` && cd ../.. && pwd)
+fi
+
 # Setup host-dependent variables/perform host-dependent checks
 case ${RC_HOST_TYPE} in
     "Darwin")
-        if [ -z "${RC_DARWIN_ROOT}" ]; then
+        if [ -n "${RC_DARWIN_ROOT}" ]; then
             # Darwin doesn't have readlink -f
-            export RC_DARWIN_ROOT="$(pwd -P)"
+            export RC_DARWIN_ROOT="$(cd ${RC_DARWIN_ROOT} && pwd -P)"
         fi
 
         if [ -z "${RC_BUILD_JOBS}" ]; then
@@ -31,8 +35,8 @@ case ${RC_HOST_TYPE} in
 
         ;;
     "Linux")
-        if [ -z "${RC_DARWIN_ROOT}" ]; then
-            export RC_DARWIN_ROOT="$(readlink -f ${PWD})"
+        if [ -n "${RC_DARWIN_ROOT}" ]; then
+            export RC_DARWIN_ROOT="$(cd ${RC_DARWIN_ROOT} && readlink -f ${PWD})"
         fi
 
         if [ -z "${RC_BUILD_JOBS}" ]; then
