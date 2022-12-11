@@ -531,7 +531,8 @@ LDFLAGS_KERNEL_GEN = \
 	-Wl,-pagezero_size,0x0 \
 	-Wl,-version_load_command \
 	-Wl,-function_starts \
-	-Wl,-headerpad,152
+	-Wl,-headerpad,152 \
+	-Wl,-not_for_dyld_shared_cache
 
 # LDFLAGS_KERNEL_SDK	= -L$(SDKROOT)/usr/local/lib/kernel -lfirehose_kernel
 LDFLAGS_KERNEL_SDK	= -L$(dir @FIREHOSE_KERNEL_LIBRARY_PATH@) -lfirehose_kernel
