@@ -184,7 +184,14 @@ WARNFLAGS_STD := $(WARNFLAGS_STD) \
 	-Wno-anon-enum-enum-conversion \
 	-Wno-error=enum-enum-conversion \
 	-Wno-error=c99-designator \
-	-Wno-error=reorder-init-list
+	-Wno-error=reorder-init-list \
+	-Wno-reserved-identifier \
+	-Wno-declaration-after-statement \
+	-Wno-null-pointer-subtraction \
+	-Wno-unaligned-access \
+	-Wno-unused-but-set-variable \
+	-Wno-void-pointer-to-enum-cast \
+	-Wno-cast-function-type
 
 # Hand-written sign conversion diagnostics are resolved, but the
 # auto-generated ones need mig and iig to be updated to fix.  Disable the
