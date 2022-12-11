@@ -39,6 +39,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E touch ${libc_headers_dir}/libc_headers.stamp
     COMMENT "Copying libC headers..."
 )
+add_custom_target(libc_headers_gen_create DEPENDS ${libc_headers_dir}/libc_headers.stamp)
 
 add_library(libc_headers_gen INTERFACE)
 add_library(libc_headers_gen_private INTERFACE)
@@ -51,6 +52,9 @@ target_include_directories(libc_headers_gen_private INTERFACE
     ${libc_headers_dir}/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders
     ${libc_headers_dir}/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders
 )
+
+add_dependencies(libc_headers_gen libc_headers_gen_create)
+add_dependencies(libc_headers_gen_private libc_headers_gen_create)
 
 # This is the only public header directory
 install(DIRECTORY ${libc_headers_dir}/usr/include DESTINATION usr COMPONENT DeveloperTools)
