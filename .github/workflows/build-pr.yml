@@ -14,9 +14,12 @@ jobs:
       - name: Install Packages
         run: |
           export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
-          brew install openssl ninja
-      - name: Build
+          brew install openssl
+      - name: Build Toolchain
         run: |
-          mkdir build && cd build
-          cmake -G Ninja -DKERNEL_BUILD_XNU=1 -DOPENSSL_ROOT_DIR=/usr/local/opt/openssl ..
-          ninja
+          source ./tools/rc/setup.sh
+          rc --make-host-toolchain
+      - name: Build PureDarwin
+        run: |
+          source ./tools/rc/setup.sh
+          rc build
