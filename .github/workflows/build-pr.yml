@@ -17,9 +17,11 @@ jobs:
           brew install openssl
       - name: Build Toolchain
         run: |
+          export RC_DARWIN_ROOT=${PWD}
           source ./tools/rc/setup.sh
           rc --make-host-toolchain
       - name: Build PureDarwin
         run: |
+          export RC_DARWIN_ROOT=${PWD}
           source ./tools/rc/setup.sh
           rc build
