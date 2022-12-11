@@ -23,6 +23,8 @@ target_sources(ld64_headers PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/compile_stubs.h
 )
 
+target_include_directories(ld64_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
+
 macro(add_tool named)
     add_executable(${named})
 
