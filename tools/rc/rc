@@ -227,12 +227,18 @@ function make_host_tools {
         v_flag=""
     fi
 
+    local OTHER_FLAGS
+    if [ -n "${OPENSSL_ROOT_DIR}" ]; then
+        OTHER_FLAGS="-DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}"
+    fi
+
     cmake -S "${RC_TOOLS_DIR}"                                  \
         "-DCMAKE_MAKE_PROGRAM=${RC_HOST_BIN}/ninja"             \
         "-DRC_HOST_BIN=${RC_HOST_BIN}"                          \
         -B "${RC_BUILD_ROOT}/tools"                             \
         -G Ninja                                                \
-        "-DCMAKE_INSTALL_PREFIX=${RC_HOST_BIN}"
+        "-DCMAKE_INSTALL_PREFIX=${RC_HOST_BIN}"                 \
+        ${OTHER_FLAGS}
 
     status=$?
 

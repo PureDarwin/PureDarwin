@@ -18,6 +18,7 @@ jobs:
       - name: Build Toolchain
         run: |
           export RC_DARWIN_ROOT=${PWD}
+          export OPENSSL_ROOT_DIR=/usr/local/opt/openssl
           source ./tools/rc/setup.sh
           rc --make-host-toolchain
       - name: Build PureDarwin
