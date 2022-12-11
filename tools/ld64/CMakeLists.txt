@@ -119,6 +119,8 @@ target_sources(objcimageinfo PRIVATE
     ld64/src/other/objcimageinfo.cpp
 )
 
+target_link_libraries(objcimageinfo PRIVATE ld64_headers)
+
 # BEGIN EXECUTABLE OBJCIMAGEINFO
 
 # BEGIN EXECUTABLE UNWINDDUMP
@@ -129,6 +131,7 @@ target_sources(unwinddump PRIVATE
     ld64/src/other/UnwindDump.cpp
 )
 
+target_link_libraries(unwinddump PRIVATE ld64_headers)
 target_link_options(unwinddump PRIVATE "LINKER:-exported_symbol,__mh_execute_header")
 
 # END EXECUTABLE UNWINDDUMP
@@ -141,6 +144,8 @@ target_sources(machocheck PRIVATE
     ld64/src/other/machochecker.cpp
 )
 
+target_link_libraries(machocheck PRIVATE ld64_headers)
+
 # END EXECUTABLE MACHOCHECK
 
 # BEGIN EXECUTABLE DYLDINFO
@@ -150,6 +155,8 @@ add_tool(dyldinfo)
 target_sources(dyldinfo PRIVATE
     ld64/src/other/dyldinfo.cpp
 )
+
+target_link_libraries(dyldinfo PRIVATE ld64_headers)
 
 # END EXECUTABLE DYLDINFO
 
