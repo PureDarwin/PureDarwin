@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Clone
         uses: actions/checkout@v2
+      - name: Clone Submodules
+        run: git submodule update --init
       - name: Install Packages
         run: |
           export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
