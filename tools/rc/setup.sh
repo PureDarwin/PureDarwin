@@ -26,7 +26,7 @@ case ${RC_HOST_TYPE} in
     "Darwin")
         if [ -n "${RC_DARWIN_ROOT}" ]; then
             # Darwin doesn't have readlink -f
-            export RC_DARWIN_ROOT="$(cd ${RC_DARWIN_ROOT} && pwd -P))"
+            export RC_DARWIN_ROOT="$(cd ${RC_DARWIN_ROOT} && pwd -P)"
         fi
 
         if [ -z "${RC_BUILD_JOBS}" ]; then
