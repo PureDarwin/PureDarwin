@@ -7,8 +7,8 @@ essentially a simpler version of darwinbuild that uses modern concepts
 and best practices.
 
 Currently, this project contains two scripts: `setup.sh` and `rc`, both written
-as standard UNIX shell scripts. The `setup.sh` scripts is meant to be executed
-in the user's shell (usually with the `source` builtin), and has been tested in
+as standard UNIX shell scripts. The `setup.sh` script is meant to be executed
+in the root of the PureDarwin folder (usually with the `source` builtin), and has been tested in
 both bash and zsh. The `setup.sh` script sets up the user's build environment
 for building PureDarwin, and installs the `rc` script into the user's PATH
 (which is updated to include the `${RC_HOST_BIN}` directory).
