@@ -26,7 +26,7 @@ endfunction()
 function(install_manpage source)
     get_filename_component(source_base ${source} NAME)
     get_filename_component(cat ${source} LAST_EXT)
-    string(REGEX REPLACE "^\.(.)" "\\1" cat ${cat})
+    string(REGEX REPLACE "\.(.)$" "\\1" cat ${cat})
 
     if(cat STREQUAL "")
         message(SEND_ERROR "Cannot determine section for manpage ${source_base}")
