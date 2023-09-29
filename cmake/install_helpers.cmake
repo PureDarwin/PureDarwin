@@ -40,6 +40,7 @@ function(install_manpage source)
     install(FILES ${source} DESTINATION usr/share/man/man${cat} COMPONENT ${MAN_COMPONENT}})
 
     foreach(alias ${MAN_ALIASES})
-        install_symlink(usr/share/man/man${cat}/${alias} ${source_base} COMPONENT ${MAN_COMPONENT})
+        string(REGEX REPLACE "\.(.)$" "\\1" alias_cat ${alias})
+        install_symlink(usr/share/man/man${alias_cat}/${alias} ${source_base} COMPONENT ${MAN_COMPONENT})
     endforeach()
 endfunction()
