@@ -152,8 +152,10 @@ WARNFLAGS_STD := \
 	-Wno-bad-function-cast \
 	-Wno-c++-compat \
 	-Wno-c++98-compat \
+	-Wno-cast-function-type \
 	-Wno-conditional-uninitialized \
 	-Wno-covered-switch-default \
+	-Wno-declaration-after-statement \
 	-Wno-disabled-macro-expansion \
 	-Wno-documentation-unknown-command \
 	-Wno-extra-semi-stmt \
@@ -170,10 +172,12 @@ WARNFLAGS_STD := \
 	-Wno-suggest-destructor-override \
 	-Wno-suggest-override \
 	-Wno-switch-enum \
+	-Wno-unaligned-access \
 	-Wno-undef \
 	-Wno-undef-prefix \
 	-Wno-unused-macros \
 	-Wno-used-but-marked-unused \
+	-Wno-unused-but-set-variable \
 	-Wno-variadic-macros \
 	-Wno-vla \
 	-Wno-zero-length-array
