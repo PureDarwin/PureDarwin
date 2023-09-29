@@ -37,7 +37,7 @@ function(install_manpage source)
         message(SEND_ERROR "Cannot determine section for manpage ${source_base}")
     endif()
 
-    install(FILES ${source} DESTINATION usr/share/man/man${cat} COMPONENT ${MAN_COMPONENT}})
+    install(FILES ${source} DESTINATION usr/share/man/man${cat} COMPONENT ${MAN_COMPONENT})
 
     foreach(alias ${MAN_ALIASES})
         string(REGEX REPLACE "\.(.)$" "\\1" alias_cat ${alias})
