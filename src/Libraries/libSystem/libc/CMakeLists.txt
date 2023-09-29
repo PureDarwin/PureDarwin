@@ -39,11 +39,13 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E touch ${libc_headers_dir}/libc_headers.stamp
     COMMENT "Copying libC headers..."
 )
+add_custom_target(libc_headers_gen_script DEPENDS ${libc_headers_dir}/libc_headers.stamp)
 
 add_library(libc_headers_gen INTERFACE)
 add_library(libc_headers_gen_private INTERFACE)
 
 target_include_directories(libc_headers_gen INTERFACE ${libc_headers_dir}/usr/include)
+add_dependencies(libc_headers_gen INTERFACE libc_headers_gen_script)
 
 target_include_directories(libc_headers_gen_private INTERFACE
     ${libc_headers_dir}/usr/include
