@@ -35,8 +35,8 @@
 #define CRASHREPORTER_ANNOTATIONS_VERSION 5
 #define CRASH_REPORTER_CLIENT_HIDDEN __attribute__((visibility("hidden")))
 
-#define _crc_make_getter(attr) ((const char *)(unsigned long)gCRAnnotations.attr)
-#define _crc_make_setter(attr, arg) (gCRAnnotations.attr = (uint64_t)(unsigned long)(arg))
+#define _crc_make_getter(attr) ((const char *)gCRAnnotations.attr)
+#define _crc_make_setter(attr, arg) (gCRAnnotations.attr = (uint64_t)(arg))
 #define CRGetCrashLogMessage() _crc_make_getter(message)
 #define CRSetCrashLogMessage(m) _crc_make_setter(message, m)
 #define CRGetCrashLogMessage2() _crc_make_getter(message2)
