@@ -4,5 +4,7 @@
 # every C file. Don't do this.
 add_compile_options(-Wno-overriding-t-option)
 
+add_definitions(-DTARGET_OS_MACOSX=1)
+
 add_subdirectory(Kernel)
 add_subdirectory(Libraries)
