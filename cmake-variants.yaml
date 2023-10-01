@@ -1,0 +1,14 @@
+kernelType:
+  default: xnu
+  description: Kernel type to build
+  choices:
+    xnu:
+      short: XNU
+      long: XNU
+      settings:
+        KERNEL_BUILD_XNU: 1
+    fbsd:
+      short: FreeBSD
+      long: FreeBSD
+      settings:
+        KERNEL_BUILD_FREEBSD: 1

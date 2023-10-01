@@ -1,5 +1,6 @@
 add_subdirectory(cctools)
 add_subdirectory(dtrace_ctf)
+add_subdirectory(iig)
 add_subdirectory(mig)
 add_subdirectory(unifdef)
 add_subdirectory(xar)

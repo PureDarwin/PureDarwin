@@ -1,4 +1,8 @@
-find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
+find_package(LLVM REQUIRED)
+if(NOT LLVM_DSYMUTIL)
+    # Otherwise CI would fail with a syntax error when calling dsymutil.
+    message(SEND_ERROR "Cannot locate dsymutil")
+endif()
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install)
 externalproject_add(xnu_headers.extproj
@@ -22,7 +26,8 @@ externalproject_add(xnu_headers.extproj
             -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
             -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
             -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
-            -D DSYMUTIL_PATH=${dsymutil_path}
+            -D IIG_PATH=$<TARGET_FILE:host_iig>
+            -D DSYMUTIL_PATH=${LLVM_DSYMUTIL}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=X86_64 BUILD_LTO=0
@@ -35,7 +40,7 @@ externalproject_add(xnu_headers.extproj
 )
 add_dependencies(xnu_headers.extproj darwin_codesign_allocate
     migcom host_strip host_lipo host_nm unifdef host_nmedit
-    ctfconvert.host ctfmerge.host availability.pl)
+    ctfconvert.host ctfmerge.host availability.pl host_iig)
 
 add_library(xnu_headers INTERFACE)
 add_dependencies(xnu_headers xnu_headers.extproj)
@@ -86,7 +91,8 @@ externalproject_add(xnu
             -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
             -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
             -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
-            -D DSYMUTIL_PATH=${dsymutil_path}
+            -D IIG_PATH=$<TARGET_FILE:host_iig>
+            -D DSYMUTIL_PATH=${LLVM_DSYMUTIL}
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
             -D FIREHOSE_KERNEL_HEADER_PATH=$<TARGET_PROPERTY:libfirehose_kernel,INTERFACE_INCLUDE_DIRECTORIES>
             -D PTHREAD_HEADER_PATH=$<TARGET_PROPERTY:pthread_common_headers,INTERFACE_INCLUDE_DIRECTORIES>
@@ -100,7 +106,7 @@ externalproject_add(xnu
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl darwin_ld)
+add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate ctfconvert.host ctfmerge.host migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl darwin_ld host_iig)
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Resources DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT BaseSystem)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Headers DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT DeveloperTools)
