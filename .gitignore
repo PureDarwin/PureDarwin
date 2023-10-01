@@ -57,6 +57,9 @@ xcuserdata/
 .idea/
 cmake-build-*/
 
+## Visual Studio Code
+.vscode/
+
 ## Other
 *.moved-aside
 *.xccheckout
