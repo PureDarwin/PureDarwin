@@ -10,3 +10,9 @@ Darwin is the Open Source operating system from Apple that forms the basis for M
 One current goal of this project is to provide a useful bootable ISO/VM of some recent version of Darwin.
 
 See the [Wiki](https://github.com/PureDarwin/PureDarwin/wiki) for more information.
+
+## Building PureDarwin
+
+To build PureDarwin, you will need OpenSSL installed, which is used by xar and ld64.
+PureDarwin builds only on macOS. It is currently tested with Xcode 14, but should work
+with any other modern Xcode.
