@@ -34,3 +34,4 @@ target_sources(corecrypto.kext PRIVATE
 target_include_directories(corecrypto.kext PRIVATE include)
 target_link_libraries(corecrypto.kext PRIVATE xnu_kernel_private_headers)
 set_property(TARGET corecrypto.kext PROPERTY CXX_STANDARD 11)
+install(TARGETS corecrypto.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)

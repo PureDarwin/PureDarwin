@@ -21,4 +21,4 @@ target_include_directories(IOATAFamilyHeaders INTERFACE include)
 add_library(IOATAFamilyPrivateHeaders INTERFACE)
 target_include_directories(IOATAFamilyPrivateHeaders INTERFACE private_include)
 
-install(TARGETS IOATAFamily DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
+install(TARGETS IOATAFamily DESTINATION System/Library/Extensions COMPONENT BaseSystem)

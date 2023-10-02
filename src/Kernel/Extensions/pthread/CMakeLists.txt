@@ -13,4 +13,4 @@ target_compile_definitions(pthread.kext PRIVATE XNU_KERNEL_PRIVATE MACH_KERNEL_P
 target_link_libraries(pthread.kext PRIVATE pthread_common_private_headers pthread_common_headers xnu_kernel_private_headers xnu_private_headers)
 target_compile_options(pthread.kext PRIVATE -Wno-sign-conversion -Wno-int-conversion -Wno-implicit-function-declaration -Wno-incompatible-library-redeclaration)
 
-install(TARGETS pthread.kext DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
+install(TARGETS pthread.kext DESTINATION System/Library/Extensions COMPONENT BaseSystem)

@@ -6,4 +6,4 @@ target_sources(AppleI386GenericPlatform PRIVATE
     AppleI386PlatformExpert.cpp
 )
 
-install(TARGETS AppleI386GenericPlatform DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
+install(TARGETS AppleI386GenericPlatform DESTINATION System/Library/Extensions COMPONENT BaseSystem)

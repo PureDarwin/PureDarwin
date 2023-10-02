@@ -8,5 +8,5 @@ target_sources(AppleIntelPIIXATA PRIVATE
 
 target_compile_options(AppleIntelPIIXATA PRIVATE -Wno-implicit-int-conversion -Wno-shorten-64-to-32 -Wno-sign-conversion)
 target_link_libraries(AppleIntelPIIXATA PRIVATE IOACPIFamilyHeaders IOATAFamilyHeaders IOATAFamilyPrivateHeaders IOPCIFamilyHeaders IOStorageFamilyHeaders)
-install(TARGETS AppleIntelPIIXATA DESTINATION /System/Library/Extensions/IOATAFamily.kext/Contents/PlugIns COMPONENT BaseSystem)
+install(TARGETS AppleIntelPIIXATA DESTINATION System/Library/Extensions/IOATAFamily.kext/Contents/PlugIns COMPONENT BaseSystem)
 add_dependencies(AppleIntelPIIXATA IOATAFamily)
