@@ -5,4 +5,4 @@ target_sources(AppleAPIC PRIVATE
 )
 target_compile_options(AppleAPIC PRIVATE -Wno-implicit-int-conversion -Wno-sign-conversion)
 
-install(TARGETS AppleAPIC DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
+install(TARGETS AppleAPIC DESTINATION System/Library/Extensions COMPONENT BaseSystem)
