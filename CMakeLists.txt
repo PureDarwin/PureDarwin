@@ -8,6 +8,9 @@ project(PUREDARWIN)
 if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID MATCHES "Clang"))
     message(FATAL_ERROR "PureDarwin must be compiled with clang.")
 endif()
+if(NOT CMAKE_HOST_APPLE)
+    message(FATAL_ERROR "PureDarwin currently can be built only on macOS.")
+endif()
 
 cmake_policy(SET CMP0114 NEW)
 
