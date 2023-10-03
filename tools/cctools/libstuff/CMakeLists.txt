@@ -44,6 +44,7 @@ target_sources(host_libstuff PRIVATE
     writeout.c
 )
 
+set_property(TARGET host_libstuff PROPERTY OUTPUT_NAME stuff)
 target_compile_definitions(host_libstuff PRIVATE
     __DARWIN_UNIX03
     PROGRAM_PREFIX=\"\"

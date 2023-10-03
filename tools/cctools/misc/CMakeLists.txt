@@ -1,5 +1,6 @@
 macro(cctools_misc_executable name)
     add_executable(host_${name} ${name}.c)
+    set_property(TARGET host_${name} PROPERTY OUTPUT_NAME ${name})
     target_link_libraries(host_${name} PRIVATE host_libmacho host_libstuff)
     target_include_directories(host_${name} PRIVATE ../include ../include/foreign ../libstuff)
     target_compile_definitions(host_${name} PRIVATE -D__DARWIN_UNIX03)
