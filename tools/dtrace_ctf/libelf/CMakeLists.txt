@@ -29,5 +29,5 @@ target_sources(libelf.host PRIVATE
 
     ../include/gelf.h
 )
-set_property(TARGET libelf.host PROPERTY PREFIX "")
+set_property(TARGET libelf.host PROPERTY OUTPUT_NAME elf)
 target_include_directories(libelf.host PRIVATE ../include ../include/sys)
