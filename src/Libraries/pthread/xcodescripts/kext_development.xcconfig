@@ -1,3 +1,0 @@
-DEBUG = YES
-
-#include "kext.xcconfig"
