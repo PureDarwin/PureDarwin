@@ -1,5 +1,5 @@
 #include <corecrypto/ccmode_factory.h>
-#include <corecrypto/private/ccstubs.h>
+#include <corecrypto/ccstubs.h>
 
 int ccmode_cfb_init(const struct ccmode_cfb* cfb, cccfb_ctx* _ctx, size_t rawkey_len, const void* rawkey, const void* iv) {
 	CC_STUB_ERR();

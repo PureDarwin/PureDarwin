@@ -4,10 +4,10 @@
 #include <stdio.h>
 #include <corecrypto/cc_debug.h>
 #include <corecrypto/ccder.h>
-#include <corecrypto/private/ccec_points.h>
-#include <corecrypto/private/ccec_extra.h>
-#include <corecrypto/private/ccn_extra.h>
-#include <corecrypto/private/cczp_extra.h>
+#include <corecrypto/ccec_points.h>
+#include <corecrypto/ccec_extra.h>
+#include <corecrypto/ccn_extra.h>
+#include <corecrypto/cczp_extra.h>
 
 // essential reading: http://www.secg.org/sec1-v2.pdf
 

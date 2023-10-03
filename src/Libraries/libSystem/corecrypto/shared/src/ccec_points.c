@@ -1,6 +1,6 @@
-#include <corecrypto/private/ccec_points.h>
-#include <corecrypto/private/ccn_extra.h>
-#include <corecrypto/private/ccec_extra.h>
+#include <corecrypto/ccec_points.h>
+#include <corecrypto/ccn_extra.h>
+#include <corecrypto/ccec_extra.h>
 
 void ccec_projective_point_container_init_at_infinity(cc_size n, ccec_projective_point_container_t point) {
 	point.n = n;

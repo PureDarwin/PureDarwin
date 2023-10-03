@@ -1,5 +1,5 @@
 #include <corecrypto/ccmode_factory.h>
-#include <corecrypto/private/ccstubs.h>
+#include <corecrypto/ccstubs.h>
 
 int ccmode_ctr_init(const struct ccmode_ctr* ctr, ccctr_ctx* _ctx, size_t rawkey_len, const void* rawkey, const void* iv) {
 	CC_STUB_ERR();

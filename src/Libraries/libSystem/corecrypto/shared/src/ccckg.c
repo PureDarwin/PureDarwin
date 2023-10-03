@@ -1,5 +1,5 @@
 #include <corecrypto/ccckg.h>
-#include <corecrypto/private/ccstubs.h>
+#include <corecrypto/ccstubs.h>
 
 size_t ccckg_sizeof_commitment(ccec_const_cp_t cp, const struct ccdigest_info* digest_info) {
 	CC_STUB(0);

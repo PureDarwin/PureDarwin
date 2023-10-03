@@ -1,4 +1,4 @@
-#include <corecrypto/private/cczp_extra.h>
+#include <corecrypto/cczp_extra.h>
 #include <stdbool.h>
 
 void cczp_mul_mod(cczp_const_t zp, cc_unit* r, const cc_unit* a, const cc_unit* b) {

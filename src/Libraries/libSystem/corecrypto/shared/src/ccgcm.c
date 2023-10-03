@@ -1,6 +1,6 @@
-#include <corecrypto/private/cc128.h>
+#include <corecrypto/cc128.h>
 #include <corecrypto/ccmode_factory.h>
-#include <corecrypto/private/ccstubs.h>
+#include <corecrypto/ccstubs.h>
 #include <corecrypto/ccmode.h>
 #include <string.h>
 #include <stdio.h>

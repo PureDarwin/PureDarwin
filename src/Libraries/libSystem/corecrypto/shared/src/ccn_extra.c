@@ -1,4 +1,4 @@
-#include <corecrypto/private/ccn_extra.h>
+#include <corecrypto/ccn_extra.h>
 #include <stdbool.h>
 #include <corecrypto/cc_debug.h>
 

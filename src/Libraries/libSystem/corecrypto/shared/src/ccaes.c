@@ -1,7 +1,7 @@
 #include <corecrypto/ccaes.h>
 #include <corecrypto/ccmode_factory.h>
 #include <corecrypto/cc_error.h>
-#include <corecrypto/private/ccstubs.h>
+#include <corecrypto/ccstubs.h>
 #include <stdio.h>
 
 typedef struct {

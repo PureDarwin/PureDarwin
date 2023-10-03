@@ -1,6 +1,6 @@
-#include <corecrypto/private/ccec_extra.h>
-#include <corecrypto/private/ccec_points.h>
-#include <corecrypto/private/cczp_extra.h>
+#include <corecrypto/ccec_extra.h>
+#include <corecrypto/ccec_points.h>
+#include <corecrypto/cczp_extra.h>
 #include <corecrypto/cc_debug.h>
 
 // https://en.wikibooks.org/wiki/Cryptography/Prime_Curve/Jacobian_Coordinates
