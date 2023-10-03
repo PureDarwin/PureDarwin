@@ -28,5 +28,5 @@ target_sources(libdwarf.host PRIVATE
     dwarf_vars.c
     dwarf_weaks.c
 )
-set_property(TARGET libdwarf.host PROPERTY PREFIX "")
+set_property(TARGET libdwarf.host PROPERTY OUTPUT_NAME dwarf)
 target_include_directories(libdwarf.host PRIVATE ../include)

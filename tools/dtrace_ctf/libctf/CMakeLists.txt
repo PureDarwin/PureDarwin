@@ -16,6 +16,6 @@ target_sources(libctf.host PRIVATE
     ../include/libctf.h
 )
 
-set_property(TARGET libctf.host PROPERTY PREFIX "")
+set_property(TARGET libctf.host PROPERTY OUTPUT_NAME ctf)
 target_include_directories(libctf.host PRIVATE ../include ../include/sys)
 target_compile_definitions(libctf.host PRIVATE CTF_OLD_VERSIONS)
