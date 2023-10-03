@@ -70,7 +70,9 @@ function(add_darwin_shared_library name)
 
     string(SUBSTRING ${name} 0 3 name_prefix)
     if(name_prefix STREQUAL "lib")
-        set_property(TARGET ${name} PROPERTY PREFIX "")
+        string(SUBSTRING ${name} 3 -1 base_name)
+        set_property(TARGET ${name} PROPERTY OUTPUT_NAME ${base_name})
+        set_property(TARGET ${name} PROPERTY PREFIX lib)
     endif()
 
     if(NOT SL_USE_HOST_SDK)
