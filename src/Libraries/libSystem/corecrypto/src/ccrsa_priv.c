@@ -1,7 +1,7 @@
 #include <corecrypto/ccrsa_priv.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <corecrypto/ccder.h>
+#include <corecrypto/ccstubs.h>
 #include <string.h>
 
 int ccrsa_oaep_encode_parameter(const struct ccdigest_info* di,
@@ -10,8 +10,7 @@ int ccrsa_oaep_encode_parameter(const struct ccdigest_info* di,
                                 size_t message_len, const uint8_t *message,
                                 size_t parameter_data_len, const uint8_t *parameter_data)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_oaep_decode_parameter(const struct ccdigest_info* di,
@@ -19,8 +18,7 @@ int ccrsa_oaep_decode_parameter(const struct ccdigest_info* di,
                                 size_t s_size, cc_unit *s,
                                 size_t parameter_data_len, const uint8_t *parameter_data)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_encrypt_eme_pkcs1v15(ccrsa_pub_ctx_t key,
@@ -28,8 +26,7 @@ int ccrsa_encrypt_eme_pkcs1v15(ccrsa_pub_ctx_t key,
                            size_t *r_size, uint8_t *r,
                            size_t s_size, const uint8_t *s)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_encrypt_oaep(ccrsa_pub_ctx_t key,
@@ -40,16 +37,14 @@ int ccrsa_encrypt_oaep(ccrsa_pub_ctx_t key,
                    size_t parameter_data_len,
                    const uint8_t *parameter_data)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_decrypt_eme_pkcs1v15(ccrsa_full_ctx_t key,
                            size_t *r_size, uint8_t *r,
                            size_t s_size, uint8_t *s)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_decrypt_oaep(ccrsa_full_ctx_t key,
@@ -59,14 +54,12 @@ int ccrsa_decrypt_oaep(ccrsa_full_ctx_t key,
                        size_t parameter_data_len,
                        const uint8_t *parameter_data)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_crt_makekey(cczp_t zm, const cc_unit *e, cc_unit *d, cczp_t zp, cc_unit *dp, cc_unit *qinv, cczp_t zq, cc_unit *dq)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_emsa_pkcs1v15_encode(size_t emlen, uint8_t* em, size_t dgstlen, const uint8_t* dgst, const uint8_t* oid) {
@@ -142,26 +135,22 @@ int ccrsa_emsa_pkcs1v15_verify(size_t emlen, uint8_t* em, size_t dgstlen, const 
 }
 
 int ccrsa_emsa_pss_encode(const struct ccdigest_info* di1, const struct ccdigest_info* di2, size_t salt_len, const void* salt, size_t data_len, const void* data, size_t output_bits, void* output) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 };
 
 int ccrsa_emsa_pss_decode(const struct ccdigest_info* di1, const struct ccdigest_info* di2, size_t salt_len, size_t data_len, const void* data, size_t output_bits, void* output) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 };
 
 int ccrsa_eme_pkcs1v15_encode(struct ccrng_state *rng,
 		size_t r_size, cc_unit *r, size_t s_size,
 		const uint8_t *s)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }
 
 int ccrsa_eme_pkcs1v15_decode(size_t *r_size, uint8_t *r,
 		size_t s_size, cc_unit *s)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 }

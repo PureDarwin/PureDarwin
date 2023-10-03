@@ -1,5 +1,5 @@
 #include <corecrypto/ccripemd.h>
-#include <stdio.h>
+#include <corecrypto/ccstubs.h>
 
 #define USE_SUPER_COOL_NEW_CCOID_T
 #include <corecrypto/ccripemd.h>
@@ -9,7 +9,7 @@
 #include <corecrypto/ccsha1.h>
 
 static void rmd128_compress(ccdigest_state_t state, unsigned long nblocks, const void *in) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_VOID();
 }
 
 const struct ccdigest_info ccrmd128_ltc_di = {
@@ -24,7 +24,7 @@ const struct ccdigest_info ccrmd128_ltc_di = {
 };
 
 static void rmd160_compress(ccdigest_state_t state, unsigned long nblocks, const void *in) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_VOID();
 }
 
 const struct ccdigest_info ccrmd160_ltc_di = {
@@ -39,7 +39,7 @@ const struct ccdigest_info ccrmd160_ltc_di = {
 };
 
 static void rmd256_compress(ccdigest_state_t state, unsigned long nblocks, const void *in) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_VOID();
 }
 
 static const uint32_t ccrmd256_initial_state[8] = {
@@ -65,7 +65,7 @@ const struct ccdigest_info ccrmd256_ltc_di = {
 };
 
 static void rmd320_compress(ccdigest_state_t state, unsigned long nblocks, const void *in) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_VOID();
 }
 
 static const uint32_t ccrmd320_initial_state[10] = {

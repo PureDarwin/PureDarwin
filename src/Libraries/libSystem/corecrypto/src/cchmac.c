@@ -1,6 +1,6 @@
 #include <corecrypto/cchmac.h>
 #include <corecrypto/cc_priv.h>
-#include <stdio.h>
+#include <corecrypto/ccstubs.h>
 
 void cchmac_init(const struct ccdigest_info *di, cchmac_ctx_t ctx,
                  size_t key_len, const void *key) {
@@ -87,6 +87,5 @@ void cchmac(const struct ccdigest_info *di, size_t key_len,
 
 int cchmac_test(const struct cchmac_test_input *input);
 int cchmac_test_chunks(const struct cchmac_test_input *input, size_t chunk_size) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return 0;
+	CC_STUB();
 }

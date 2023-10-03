@@ -4,6 +4,7 @@
 #include <corecrypto/ccrsa_priv.h>
 #include <corecrypto/cc_debug.h>
 #include <corecrypto/ccder.h>
+#include <corecrypto/ccstubs.h>
 
 // Reference used is https://tools.ietf.org/html/rfc8017
 
@@ -38,7 +39,7 @@ int ccrsa_import_pub(ccrsa_pub_ctx_t key, size_t inlen, const uint8_t *der) {
 
 cc_size ccder_decode_rsa_pub_n(const uint8_t *der, const uint8_t *der_end)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(-1);
 }
 
 int ccrsa_pub_crypt(ccrsa_pub_ctx_t key, cc_unit* out, const cc_unit* in) {
@@ -67,22 +68,22 @@ int ccrsa_pub_crypt(ccrsa_pub_ctx_t key, cc_unit* out, const cc_unit* in) {
 int ccrsa_generate_key(unsigned long nbits, ccrsa_full_ctx_t rsa_ctx,
                        size_t e_size, const void *e, struct ccrng_state *rng)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_ERR();
 }
 
 int ccrsa_priv_crypt(ccrsa_priv_ctx_t key, cc_unit *out, const cc_unit *in)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_ERR();
 }
 
 cc_size ccder_decode_rsa_priv_n(const uint8_t *der, const uint8_t *der_end)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(-1);
 }
 
 const uint8_t *ccder_decode_rsa_priv(const ccrsa_full_ctx_t key, const uint8_t *der, const uint8_t *der_end)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(NULL);
 }
 
 /*
@@ -128,7 +129,7 @@ int ccrsa_verify_pkcs1v15(ccrsa_pub_ctx_t key, const uint8_t* oid, size_t digest
 	// we allocate according to the size of the modulus
 	// because the `n` that will be used in the `cczp_power` function
 	// is the one set in the ZP structure. we need to make sure
-	// we have the same number of units allocated, 
+	// we have the same number of units allocated,
 	s = __builtin_alloca(mod_byte_size);
 	memset(s, 0, mod_byte_size);
 	if (ccn_read_uint(sig_units, s, sig_len, sig)) {
@@ -209,12 +210,12 @@ ccrsa_generate_fips186_key(unsigned long nbits, ccrsa_full_ctx_t fk,
                            size_t e_size, const void *eBytes,
                            struct ccrng_state *rng1, struct ccrng_state *rng2)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_ERR();
 }
 
 int ccrsa_export_pub(const ccrsa_pub_ctx_t key, size_t out_len, uint8_t *out)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_ERR();
 }
 
 cc_size ccder_decode_rsa_pub_x509_n(const uint8_t *der, const uint8_t *der_end) {
@@ -229,17 +230,17 @@ cc_size ccder_decode_rsa_pub_x509_n(const uint8_t *der, const uint8_t *der_end) 
 
 size_t ccder_encode_rsa_priv_size(const ccrsa_full_ctx_t key)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(-1);
 }
 
 uint8_t *ccder_encode_rsa_priv(const ccrsa_full_ctx_t key, const uint8_t *der, uint8_t *der_end)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(NULL);
 }
 
 size_t ccder_encode_rsa_pub_size(const ccrsa_pub_ctx_t key)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(-1);
 }
 
 int
@@ -255,7 +256,7 @@ ccrsa_make_fips186_key(unsigned long nbits,
                        cc_size *nm, cc_unit *r_m,
                        cc_size *nd, cc_unit *r_d)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_ERR();
 }
 
 int ccrsa_get_pubkey_components(const ccrsa_pub_ctx_t pubkey, uint8_t *modulus, size_t *modulusLength, uint8_t *exponent, size_t *exponentLength)
@@ -284,25 +285,21 @@ int ccrsa_sign_pkcs1v15(ccrsa_full_ctx_t key, const uint8_t *oid,
                         size_t digest_len, const uint8_t *digest,
                         size_t *sig_len, uint8_t *sig)
 {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_ERR();
 }
 
 int ccrsa_make_priv(ccrsa_full_ctx_t key, size_t expLen, const void* exp, size_t pLen, const void* p, size_t qLen, const void* q) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 };
 
 int ccrsa_make_pub(ccrsa_pub_ctx_t key, size_t expLen, const void* exp, size_t modLen, const void* mod) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 };
 
 int ccrsa_sign_pss(ccrsa_full_ctx_t key, const struct ccdigest_info* di1, const struct ccdigest_info* di2, size_t saltLen, struct ccrng_state* rng, size_t hashLen, const void* hash, size_t* signedDataLen, void* signedData) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 };
 
 int ccrsa_verify_pss(ccrsa_full_ctx_t key, const struct ccdigest_info* di1, const struct ccdigest_info* di2, size_t hashLen, const void* hash, size_t signedDataLen, const void* signedData, size_t saltLen, bool* valid) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB(-1);
 };

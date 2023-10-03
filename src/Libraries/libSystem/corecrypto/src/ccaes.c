@@ -2,7 +2,6 @@
 #include <corecrypto/ccmode_factory.h>
 #include <corecrypto/cc_error.h>
 #include <corecrypto/ccstubs.h>
-#include <stdio.h>
 
 typedef struct {
 	uint8_t bytes[4][4];

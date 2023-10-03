@@ -1,5 +1,5 @@
 #include <corecrypto/ccn.h>
-#include <stdio.h>
+#include <corecrypto/ccstubs.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <corecrypto/ccrng.h>
@@ -106,7 +106,7 @@ size_t ccn_bitlen(cc_size n, const cc_unit *s) {
 }
 
 size_t ccn_trailing_zeros(cc_size n, const cc_unit *s) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB(0);
 }
 
 /*
@@ -153,7 +153,7 @@ cc_unit ccn_sub(cc_size n, cc_unit *r, const cc_unit *s, const cc_unit *t)
 }
 
 cc_unit ccn_abs(cc_size n, cc_unit *r, const cc_unit *s, const cc_unit *t) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB(0);
 }
 
 cc_unit ccn_sub1(cc_size n, cc_unit *r, const cc_unit *s, cc_unit v) {
@@ -208,7 +208,7 @@ cc_unit ccn_add1(cc_size n, cc_unit *r, const cc_unit *s, cc_unit v)
 }
 
 void ccn_lcm(cc_size n, cc_unit *r2n, const cc_unit *s, const cc_unit *t) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 #define CC_HI_BITS(x) (x >> (CCN_UNIT_BITS >> 1))
@@ -398,23 +398,23 @@ void ccn_mul(cc_size n, cc_unit *r_2n, const cc_unit *s, const cc_unit *t) {
 }
 
 void ccn_mul_ws(cc_size count, cc_unit *r, const cc_unit *s, const cc_unit *t, cc_ws_t ws) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 cc_unit ccn_mul1(cc_size n, cc_unit *r, const cc_unit *s, const cc_unit v) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 cc_unit ccn_addmul1(cc_size n, cc_unit *r, const cc_unit *s, const cc_unit v) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 void ccn_gcd(cc_size n, cc_unit *r, const cc_unit *s, const cc_unit *t) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 void ccn_gcdn(cc_size rn, cc_unit *r, cc_size sn, const cc_unit *s, cc_size tn, const cc_unit *t) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 int ccn_read_uint(cc_size n, cc_unit *r, size_t data_size, const uint8_t *data) {
@@ -459,7 +459,7 @@ int ccn_read_uint(cc_size n, cc_unit *r, size_t data_size, const uint8_t *data) 
 size_t ccn_write_int_size(cc_size n, const cc_unit* s) {
 	const cc_size bits = ccn_bitlen(n, s);
   // For signed integers, add a leading zero byte if the
-  // most significant bit is set. 
+  // most significant bit is set.
 	return cc_sizeof_bits(bits) + (bits % 8 == 0);
 };
 
@@ -505,7 +505,7 @@ void ccn_set(cc_size n, cc_unit *r, const cc_unit *s) {
 }
 
 void ccn_zero_multi(cc_size n, cc_unit *r, ...) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 void ccn_print(cc_size n, const cc_unit *s) {
@@ -521,7 +521,7 @@ void ccn_print(cc_size n, const cc_unit *s) {
 }
 
 void ccn_lprint(cc_size n, const char *label, const cc_unit *s) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }
 
 int ccn_random_bits(cc_size nbits, cc_unit *r, struct ccrng_state *rng) {
@@ -580,7 +580,7 @@ void ccn_make_recip(cc_size nd, cc_unit* result, const cc_unit* d) {
 		ccn_shift_left_multi(n + 1, d_copy, d_copy, shift);
 		ccn_shift_left_multi(n + 1, pow, pow, shift);
 	}
-	
+
 	// note that after normalization, the divisor still has the same number of digits as before
 	// but the dividend has a new most significant digit
 	//
@@ -760,5 +760,5 @@ int ccn_div_euclid(cc_size nq, cc_unit *q, cc_size nr, cc_unit *r, cc_size na, c
 };
 
 int ccn_div_use_recip(cc_size nq, cc_unit *q, cc_size nr, cc_unit *r, cc_size na, const cc_unit *a, cc_size nd, const cc_unit *d, const cc_unit *recip_d) {
-  printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+  CC_STUB_VOID();
 }

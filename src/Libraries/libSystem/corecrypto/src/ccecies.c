@@ -1,10 +1,9 @@
 #include <corecrypto/ccecies.h>
-#include <stdio.h>
+#include <corecrypto/ccstubs.h>
 
 size_t ccecies_encrypt_gcm_ciphertext_size(ccec_pub_ctx_t public_key,
 		ccecies_gcm_t ecies, size_t plaintext_len) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return 1;
+	CC_STUB(1);
 }
 
 int
@@ -18,8 +17,7 @@ ccecies_encrypt_gcm( ccec_pub_ctx_t public_key,
 		const void *sharedinfo_2,
 		size_t *encrypted_blob_len,
 		uint8_t *encrypted_blob) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+    CC_STUB_ERR();
 }
 
 int
@@ -33,16 +31,14 @@ ccecies_decrypt_gcm(ccec_full_ctx_t full_key,
 		const void *sharedinfo_2,
 		size_t *plaintext_len,
 		uint8_t *plaintext) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return -1;
+	CC_STUB_ERR();
 }
 
 size_t
 ccecies_decrypt_gcm_plaintext_size(ccec_full_ctx_t full_key,
 		ccecies_gcm_t ecies,
 		size_t ciphertext_len) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
-	return 1;
+	CC_STUB_ERR();
 }
 
 void
@@ -53,5 +49,5 @@ ccecies_encrypt_gcm_setup(ccecies_gcm_t ecies,
 		uint32_t cipher_key_size,
 		uint32_t mac_tag_size,
 		uint32_t options) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_VOID()
 }

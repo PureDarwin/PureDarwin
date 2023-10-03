@@ -1,5 +1,5 @@
 #include <corecrypto/ccder.h>
-#include <stdio.h>
+#include <corecrypto/ccstubs.h>
 #include <stdlib.h>
 
 // NOTE(@facekapow):
@@ -288,14 +288,14 @@ uint8_t *ccder_encode_raw_octet_string(size_t s_size, const uint8_t *s,
 }
 
 size_t ccder_encode_eckey_size(size_t priv_size, ccoid_t oid, size_t pub_size) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(-1);
 }
 
 uint8_t *ccder_encode_eckey(size_t priv_size, const uint8_t *priv_key,
                             ccoid_t oid,
                             size_t pub_size, const uint8_t *pub_key,
                             uint8_t *der, uint8_t *der_end) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(NULL);
 }
 
 uint8_t *
@@ -377,7 +377,7 @@ ccder_decode_sequence_tl(const uint8_t **body_end,
 	return body_start;
 }
 
-const uint8_t *ccder_decode_uint_n(cc_size *n, 
+const uint8_t *ccder_decode_uint_n(cc_size *n,
                                  const uint8_t *der, const uint8_t *der_end) {
 	size_t num_len = 0;
 	const uint8_t* num_start = ccder_decode_tl(CCDER_INTEGER, &num_len, der, der_end);
@@ -460,5 +460,5 @@ const uint8_t *ccder_decode_eckey(uint64_t *version,
                                   ccoid_t *oid,
                                   size_t *pub_size, const uint8_t **pub_key,
                                   const uint8_t *der, const uint8_t *der_end) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(NULL);
 }

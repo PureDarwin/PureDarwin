@@ -2,8 +2,8 @@
 #include <corecrypto/ccmode_factory.h>
 #include <corecrypto/ccstubs.h>
 #include <corecrypto/ccmode.h>
+#include <corecrypto/ccstubs.h>
 #include <string.h>
-#include <stdio.h>
 
 #define CCGCM_MODE_INITIALIZE 0
 #define CCGCM_MODE_IV         1
@@ -433,7 +433,7 @@ int ccgcm_inc_iv(const struct ccmode_gcm* mode, ccgcm_ctx* _ctx, void* iv) {
 };
 
 int ccgcm_set_iv_legacy(const struct ccmode_gcm *mode, ccgcm_ctx *ctx, size_t iv_nbytes, const void *iv) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_ERR();
 };
 
 int ccgcm_one_shot(const struct ccmode_gcm* mode, size_t key_len, const void* key, size_t iv_len, const void* iv, size_t adata_len, const void* adata, size_t nbytes, const void* in, void* out, size_t tag_len, void* tag) {

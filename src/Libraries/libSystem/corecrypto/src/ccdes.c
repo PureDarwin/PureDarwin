@@ -5,7 +5,7 @@
 #include <corecrypto/ccdes.h>
 #include <corecrypto/ccmode_factory.h>
 #include <corecrypto/cc_error.h>
-#include <stdio.h>
+#include <corecrypto/ccstubs.h>
 #include <string.h>
 
 CCMODE_GCM_FACTORY(des, encrypt);
@@ -674,16 +674,16 @@ static int ccdes3_ecb_decrypt(const ccecb_ctx* ctx, size_t block_count, const vo
 };
 
 int ccdes_key_is_weak(void *key, size_t  length) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB(-1);
 }
 
 void ccdes_key_set_odd_parity(void *key, size_t length) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_VOID();
 }
 
 uint32_t
 ccdes_cbc_cksum(void *in, void *out, size_t length,
                 void *key, size_t keylen, void *ivec) {
-	printf("DARLING CRYPTO STUB: %s\n", __PRETTY_FUNCTION__);
+	CC_STUB_VOID();
 }
 
