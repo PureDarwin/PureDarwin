@@ -24,3 +24,22 @@ target_sources(corecrypto_static PRIVATE
     $<TARGET_OBJECTS:corecrypto_shared>
     $<TARGET_OBJECTS:corecrypto_user>
 )
+
+#[[
+add_darwin_circular_library(corecrypto
+    INSTALL_NAME "/usr/lib/system/libcorecrypto.dylib"
+    OBJECT_LIBRARIES corecrypto_shared corecrypto_user
+    SIBLINGS
+        libsystem_dyld
+        libcompiler_rt
+        libplatform
+        libsystem_malloc
+        libsystem_c
+        libsystem_blocks
+        libsystem_pthread
+        macho
+        libdispatch_shared
+    STRONG_DEPENDENCIES
+        libsystem_kernel
+)
+]]
