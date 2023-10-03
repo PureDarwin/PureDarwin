@@ -9,16 +9,18 @@ endif()
 
 include(corecrypto_shared.cmake)
 
-add_darwin_static_library(corecrypto_static)
-target_sources(corecrypto_static PRIVATE
-    $<TARGET_OBJECTS:corecrypto_shared>
-    cc_user_stub.c
-)
-
-target_link_libraries(corecrypto_static PRIVATE
+add_darwin_object_library(corecrypto_user)
+target_sources(corecrypto_user PRIVATE cc_user_stub.c)
+target_link_libraries(corecrypto_user PRIVATE
     AvailabilityHeaders
     clang_bootstrap_headers
     libc_public_headers
     pthread_common_headers
     xnu_headers
+)
+
+add_darwin_static_library(corecrypto_static)
+target_sources(corecrypto_static PRIVATE
+    $<TARGET_OBJECTS:corecrypto_shared>
+    $<TARGET_OBJECTS:corecrypto_user>
 )
