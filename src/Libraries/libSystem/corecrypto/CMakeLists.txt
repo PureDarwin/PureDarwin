@@ -12,6 +12,7 @@ target_include_directories(corecrypto_shared PUBLIC include)
 target_include_directories(corecrypto_shared PRIVATE private)
 target_link_libraries(corecrypto_shared PRIVATE
     AvailabilityHeaders
+    clang_bootstrap_headers
     libc_public_headers
     pthread_common_headers
     xnu_headers
@@ -85,6 +86,7 @@ target_sources(corecrypto_static PRIVATE
 
 target_link_libraries(corecrypto_static PRIVATE
     AvailabilityHeaders
+    clang_bootstrap_headers
     libc_public_headers
     pthread_common_headers
     xnu_headers

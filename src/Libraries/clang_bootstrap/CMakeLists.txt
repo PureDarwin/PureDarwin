@@ -1,0 +1,2 @@
+add_library(clang_bootstrap_headers INTERFACE)
+target_include_directories(clang_bootstrap_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
