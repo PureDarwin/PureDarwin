@@ -9,7 +9,7 @@ externalproject_add(xnu_headers.extproj
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
-            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
+            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:host_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:host_ctfconvert>
             -D CTFMERGE_PATH=$<TARGET_FILE:host_ctfmerge>
             -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
@@ -33,7 +33,7 @@ externalproject_add(xnu_headers.extproj
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu_headers.extproj darwin_codesign_allocate
+add_dependencies(xnu_headers.extproj host_codesign_allocate
     migcom host_strip host_lipo host_nm unifdef host_nmedit
     host_ctfconvert host_ctfmerge availability.pl)
 
@@ -72,12 +72,12 @@ externalproject_add(xnu
         cmake
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
-            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:darwin_codesign_allocate>
+            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:host_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:host_ctfconvert>
             -D CTFMERGE_PATH=$<TARGET_FILE:host_ctfmerge>
             -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
-            -D LD_PATH=$<TARGET_FILE:darwin_ld>
+            -D LD_PATH=$<TARGET_FILE:host_ld>
             -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
             -D MIGCOM_PATH=$<TARGET_FILE:migcom>
             -D STRIP_PATH=$<TARGET_FILE:host_strip>
@@ -100,7 +100,7 @@ externalproject_add(xnu
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu xnu_headers libfirehose_kernel darwin_codesign_allocate host_ctfconvert host_ctfmerge migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl darwin_ld)
+add_dependencies(xnu xnu_headers libfirehose_kernel host_codesign_allocate host_ctfconvert host_ctfmerge migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl host_ld)
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Resources DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT BaseSystem)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Headers DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT DeveloperTools)
