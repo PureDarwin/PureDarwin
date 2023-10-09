@@ -74,6 +74,7 @@ function(add_darwin_shared_library name)
         set_property(TARGET ${name} PROPERTY OUTPUT_NAME ${base_name})
         set_property(TARGET ${name} PROPERTY PREFIX lib)
     endif()
+    set_property(TARGET ${name} PROPERTY SUFFIX .dylib)
 
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
