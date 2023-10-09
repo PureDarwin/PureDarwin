@@ -395,6 +395,7 @@ install(TARGETS libsystem_kernel_static DESTINATION usr/local/lib/dyld_stub COMP
 # END STATIC LIBRARY
 
 add_darwin_shared_library(libsystem_kernel INSTALL_NAME_DIR /usr/lib/system)
+set_property(TARGET libsystem_kernel PROPERTY OUTPUT_NAME system_kernel)
 
 target_sources(libsystem_kernel PRIVATE
     wrappers/string/index.c
