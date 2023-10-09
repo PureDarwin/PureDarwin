@@ -40,7 +40,7 @@
 
 #ifndef _PTRDIFF_T
 #define _PTRDIFF_T
-typedef __typeof__(((int*)NULL)-((int*)NULL)) ptrdiff_t;
+typedef __typeof__(((int*)1)-((int*)1)) ptrdiff_t;
 #endif
 #ifndef _SIZE_T
 #define _SIZE_T
