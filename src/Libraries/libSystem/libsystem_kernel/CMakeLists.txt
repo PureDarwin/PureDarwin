@@ -417,7 +417,7 @@ target_include_directories(libsystem_kernel PRIVATE wrappers/string)
 # Copied from static target above
 target_include_directories(libsystem_kernel PRIVATE mach mach/mach mach/servers custom wrappers)
 target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/internal_include)
-target_include_directories(libsystem_kernel PRIVATE libsystem_kernel_private_headers)
+target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_private_headers)
 
 target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
