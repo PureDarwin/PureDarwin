@@ -1,5 +1,5 @@
-add_library(host_ld_libparsers STATIC)
-target_sources(host_ld_libparsers PRIVATE
+add_library(ld_libparsers STATIC)
+target_sources(ld_libparsers PRIVATE
     archive_file.cpp
     lto_file.cpp
     macho_dylib_file.cpp
@@ -8,8 +8,9 @@ target_sources(host_ld_libparsers PRIVATE
     textstub_dylib_file.cpp
 )
 
-target_compile_definitions(host_ld_libparsers PRIVATE __DARWIN_UNIX03)
-target_include_directories(host_ld_libparsers PRIVATE
+set_property(TARGET ld_libparsers PROPERTY OUTPUT_NAME ld_parsers)
+target_compile_definitions(ld_libparsers PRIVATE __DARWIN_UNIX03)
+target_include_directories(ld_libparsers PRIVATE
     ../../../../include
     ../../../../include/foreign
     ../../abstraction
@@ -18,5 +19,5 @@ target_include_directories(host_ld_libparsers PRIVATE
     ../..
     ..
 )
-target_link_libraries(host_ld_libparsers PRIVATE host_ld_helper)
-set_property(TARGET host_ld_libparsers PROPERTY CXX_STANDARD 11)
+target_link_libraries(ld_libparsers PRIVATE ld_helper)
+set_property(TARGET ld_libparsers PROPERTY CXX_STANDARD 11)

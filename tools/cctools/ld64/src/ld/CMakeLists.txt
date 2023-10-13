@@ -3,8 +3,8 @@ add_subdirectory(passes)
 
 find_package(OpenSSL REQUIRED)
 
-add_executable(host_ld)
-target_sources(host_ld PRIVATE
+add_host_tool(ld)
+target_sources(ld PRIVATE
     debugline.c
     InputFiles.cpp
     ld.cpp
@@ -17,15 +17,15 @@ target_sources(host_ld PRIVATE
     code-sign-blobs/blob.cpp
 )
 
-target_compile_definitions(host_ld PRIVATE __DARWIN_UNIX03)
-target_compile_options(host_ld PRIVATE "-Wno-#warnings" -Wno-deprecated)
-target_link_libraries(host_ld PRIVATE
-    host_libxar host_ld_helper host_ld_BlocksRuntime host_ld_libparsers host_ld_libpasses host_libstuff
+target_compile_definitions(ld PRIVATE __DARWIN_UNIX03)
+target_compile_options(ld PRIVATE "-Wno-#warnings" -Wno-deprecated)
+target_link_libraries(ld PRIVATE
+    libxar ld_helper ld_BlocksRuntime ld_libparsers ld_libpasses libstuff
     OpenSSL::SSL OpenSSL::Crypto
 )
-set_property(TARGET host_ld PROPERTY OUTPUT_NAME ld)
-set_property(TARGET host_ld PROPERTY CXX_STANDARD 11)
-target_include_directories(host_ld PRIVATE
+set_property(TARGET ld PROPERTY OUTPUT_NAME ld)
+set_property(TARGET ld PROPERTY CXX_STANDARD 11)
+target_include_directories(ld PRIVATE
     ../../../include
     ../../../include/foreign
     ..

@@ -5,6 +5,10 @@ endif()
 cmake_minimum_required(VERSION 3.15.1)
 project(PUREDARWIN)
 
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    message(FATAL_ERROR "CMAKE_SYSTEM_NAME not set properly, are you sure you are using configure.sh?")
+endif()
+
 if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID MATCHES "Clang"))
     message(FATAL_ERROR "PureDarwin must be compiled with clang.")
 endif()
@@ -24,6 +28,7 @@ include(cmake/install_helpers.cmake)
 include(cmake/kext.cmake)
 include(cmake/mig.cmake)
 
+include(cmake/tools.cmake)
+
 add_subdirectory(projects)
 add_subdirectory(src)
-add_subdirectory(tools)

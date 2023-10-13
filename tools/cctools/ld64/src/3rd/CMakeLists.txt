@@ -1,5 +1,5 @@
-add_library(host_ld_helper STATIC)
-target_sources(host_ld_helper PRIVATE
+add_library(ld_helper STATIC)
+target_sources(ld_helper PRIVATE
     helper.c
     qsort_r.c
     strlcat.c
@@ -9,13 +9,11 @@ target_sources(host_ld_helper PRIVATE
     mkpath_np.c
     find_executable.c
 )
-set_property(TARGET host_ld_helper PROPERTY OUTPUT_NAME ld_helper)
-target_include_directories(host_ld_helper PRIVATE include ../../../include ../../../include/foreign)
-target_compile_definitions(host_ld_helper PRIVATE -D__DARWIN_UNIX03)
+target_include_directories(ld_helper PRIVATE include ../../../include ../../../include/foreign)
+target_compile_definitions(ld_helper PRIVATE -D__DARWIN_UNIX03)
 
-add_library(host_ld_BlocksRuntime STATIC)
-set_property(TARGET host_ld_BlocksRuntime PROPERTY OUTPUT_NAME ld_BlocksRuntime)
-target_sources(host_ld_BlocksRuntime PRIVATE
+add_library(ld_BlocksRuntime STATIC)
+target_sources(ld_BlocksRuntime PRIVATE
     BlocksRuntime/data.c
     BlocksRuntime/runtime.c
 )

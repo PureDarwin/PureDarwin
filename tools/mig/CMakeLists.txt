@@ -1,4 +1,4 @@
-add_executable(migcom)
+add_host_tool(migcom)
 target_sources(migcom PRIVATE
     error.c
     global.c

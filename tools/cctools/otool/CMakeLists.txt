@@ -1,5 +1,5 @@
-add_executable(host_otool)
-target_sources(host_otool PRIVATE
+add_host_tool(otool)
+target_sources(otool PRIVATE
     main.c
     ofile_print.c
     m68k_disasm.c
@@ -20,16 +20,16 @@ target_sources(host_otool PRIVATE
 
     ../libstuff/ofile.c
 )
-target_include_directories(host_otool PRIVATE ../include ../include/foreign)
-target_link_libraries(host_otool PRIVATE host_libxar host_libstuff -lc++)
+target_include_directories(otool PRIVATE ../include ../include/foreign)
+target_link_libraries(otool PRIVATE libxar libstuff -lc++)
 
 if(APPLE)
-    target_sources(host_otool PRIVATE
+    target_sources(otool PRIVATE
         print_objc.c
         print_objc2_32bit.c
         print_objc2_64bit.c
     )
 
-    target_compile_definitions(host_otool PRIVATE USE_LIBOBJC)
-    target_link_libraries(host_otool PRIVATE -lobjc)
+    target_compile_definitions(otool PRIVATE USE_LIBOBJC)
+    target_link_libraries(otool PRIVATE -lobjc)
 endif()
