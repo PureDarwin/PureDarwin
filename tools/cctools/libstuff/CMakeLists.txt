@@ -1,5 +1,5 @@
-add_library(host_libstuff STATIC)
-target_sources(host_libstuff PRIVATE
+add_library(libstuff STATIC)
+target_sources(libstuff PRIVATE
     allocate.c
     apple_version.c
     arch_usage.c
@@ -44,12 +44,12 @@ target_sources(host_libstuff PRIVATE
     writeout.c
 )
 
-set_property(TARGET host_libstuff PROPERTY OUTPUT_NAME stuff)
-target_compile_definitions(host_libstuff PRIVATE
+set_property(TARGET libstuff PROPERTY OUTPUT_NAME stuff)
+target_compile_definitions(libstuff PRIVATE
     __DARWIN_UNIX03
     PROGRAM_PREFIX=\"\"
 )
-target_include_directories(host_libstuff PRIVATE
+target_include_directories(libstuff PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/foreign
 )

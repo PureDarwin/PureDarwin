@@ -54,9 +54,9 @@ set(HEADERS
 )
 foreach(file IN LISTS HEADERS)
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file}
-        COMMAND $<TARGET_FILE:unifdef> -UKERNEL -o ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file} ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
-        DEPENDS unifdef ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
-        COMMENT "unifdef ${file}" VERBATIM
+        COMMAND $<TARGET_FILE:host_unifdef> -UKERNEL -o ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file} ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
+        DEPENDS host_unifdef ${CMAKE_CURRENT_SOURCE_DIR}/include/IOKit/storage/${file}
+	DEPENDS host_unifdef COMMENT "unifdef ${file}" VERBATIM
     )
     target_sources(IOStorageFamilyUserHeaders PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/user_include/IOKit/storage/${file})
 endforeach()

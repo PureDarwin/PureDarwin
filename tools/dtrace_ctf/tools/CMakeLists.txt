@@ -1,7 +1,7 @@
 find_package(ZLIB REQUIRED)
 
-add_executable(host_ctfconvert)
-target_sources(host_ctfconvert PRIVATE
+add_host_tool(ctfconvert)
+target_sources(ctfconvert PRIVATE
     alist.cpp
     array.c
     atom.cpp
@@ -26,13 +26,12 @@ target_sources(host_ctfconvert PRIVATE
     util.c
 )
 
-set_property(TARGET host_ctfconvert PROPERTY OUTPUT_NAME "ctfconvert")
-target_include_directories(host_ctfconvert PRIVATE ../include ../include/sys ../libelf)
-target_link_libraries(host_ctfconvert PRIVATE libelf.host libdwarf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
-set_property(TARGET host_ctfconvert PROPERTY CXX_STANDARD 14)
+target_include_directories(ctfconvert PRIVATE ../include ../include/sys ../libelf)
+target_link_libraries(ctfconvert PRIVATE libelf.host libdwarf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
+set_property(TARGET ctfconvert PROPERTY CXX_STANDARD 14)
 
-add_executable(host_ctfdump)
-target_sources(host_ctfdump PRIVATE
+add_host_tool(ctfdump)
+target_sources(ctfdump PRIVATE
     alist.cpp
     array.c
     atom.cpp
@@ -55,13 +54,12 @@ target_sources(host_ctfdump PRIVATE
     utils.c
 )
 
-set_property(TARGET host_ctfdump PROPERTY OUTPUT_NAME "ctfdump")
-target_include_directories(host_ctfdump PRIVATE ../include ../include/sys ../libelf)
-target_link_libraries(host_ctfdump PRIVATE libelf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
-set_property(TARGET host_ctfdump PROPERTY CXX_STANDARD 14)
+target_include_directories(ctfdump PRIVATE ../include ../include/sys ../libelf)
+target_link_libraries(ctfdump PRIVATE libelf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
+set_property(TARGET ctfdump PROPERTY CXX_STANDARD 14)
 
-add_executable(host_ctfmerge)
-target_sources(host_ctfmerge PRIVATE
+add_host_tool(ctfmerge)
+target_sources(ctfmerge PRIVATE
     alist.cpp
     array.c
     atom.cpp
@@ -87,7 +85,6 @@ target_sources(host_ctfmerge PRIVATE
     utils.c
 )
 
-set_property(TARGET host_ctfmerge PROPERTY OUTPUT_NAME ctfmerge)
-target_include_directories(host_ctfmerge PRIVATE ../include ../include/sys ../libelf)
-target_link_libraries(host_ctfmerge PRIVATE libelf.host libdwarf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
-set_property(TARGET host_ctfmerge PROPERTY CXX_STANDARD 14)
+target_include_directories(ctfmerge PRIVATE ../include ../include/sys ../libelf)
+target_link_libraries(ctfmerge PRIVATE libelf.host libdwarf.host libctf.host ${ZLIB_LIBRARY_RELEASE})
+set_property(TARGET ctfmerge PROPERTY CXX_STANDARD 14)

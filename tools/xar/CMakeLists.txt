@@ -2,8 +2,8 @@ find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(LibXml2 REQUIRED)
 
-add_library(host_libxar STATIC)
-target_sources(host_libxar PRIVATE
+add_library(libxar STATIC)
+target_sources(libxar PRIVATE
     lib/archive.c
     lib/arcmod.c
     lib/b64.c
@@ -27,14 +27,13 @@ target_sources(host_libxar PRIVATE
     lib/util.c
     lib/zxar.c
 )
-set_property(TARGET host_libxar PROPERTY OUTPUT_NAME xar)
-target_include_directories(host_libxar PUBLIC include)
-target_include_directories(host_libxar PRIVATE ${OPENSSL_INCLUDE_DIR} ${LIBXML2_INCLUDE_DIR})
-target_link_libraries(host_libxar PRIVATE ZLIB::ZLIB LibXml2::LibXml2)
+set_property(TARGET libxar PROPERTY OUTPUT_NAME xar)
+target_include_directories(libxar PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(libxar PRIVATE ${OPENSSL_INCLUDE_DIR} ${LIBXML2_INCLUDE_DIR})
+target_link_libraries(libxar PRIVATE ZLIB::ZLIB LibXml2::LibXml2)
 
-add_executable(host_xar)
-target_sources(host_xar PRIVATE
+add_host_tool(xar)
+target_sources(xar PRIVATE
     src/xar.c
 )
-set_property(TARGET host_xar PROPERTY OUTPUT_NAME xar)
-target_link_libraries(host_xar PRIVATE host_libxar OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)
+target_link_libraries(xar PRIVATE libxar OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB LibXml2::LibXml2)

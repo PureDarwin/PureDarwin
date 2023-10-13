@@ -1,5 +1,5 @@
-add_library(host_ld_libpasses STATIC)
-target_sources(host_ld_libpasses PRIVATE
+add_library(ld_libpasses STATIC)
+target_sources(ld_libpasses PRIVATE
     branch_island.cpp
     branch_shim.cpp
     compact_unwind.cpp
@@ -17,8 +17,9 @@ target_sources(host_ld_libpasses PRIVATE
     inits.cpp
 )
 
-target_compile_definitions(host_ld_libpasses PRIVATE __DARWIN_UNIX03)
-target_include_directories(host_ld_libpasses PRIVATE
+set_property(TARGET ld_libpasses PROPERTY OUTPUT_NAME ld_passes)
+target_compile_definitions(ld_libpasses PRIVATE __DARWIN_UNIX03)
+target_include_directories(ld_libpasses PRIVATE
     ../../../../include
     ../../../../include/foreign
     ../../abstraction
@@ -28,4 +29,4 @@ target_include_directories(host_ld_libpasses PRIVATE
     ../../3rd
     ../../..
 )
-set_property(TARGET host_ld_libpasses PROPERTY CXX_STANDARD 11)
+set_property(TARGET ld_libpasses PROPERTY CXX_STANDARD 11)
