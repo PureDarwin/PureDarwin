@@ -61,7 +61,6 @@ function(mig filename)
         set(MIG_ARCH i386)
     endif()
 
-    get_filename_component(basename ${filename} NAME_WE)
     get_filename_component(filename_abs ${filename} ABSOLUTE)
     add_custom_command(OUTPUT ${MIG_DEPS}
         COMMAND ${CMAKE_COMMAND} -E env MIGCOM=$<TARGET_FILE:migcom> ${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh -arch ${MIG_ARCH}
