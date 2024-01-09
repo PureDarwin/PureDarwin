@@ -29,3 +29,4 @@ target_include_directories(host_ld_libpasses PRIVATE
     ../../..
 )
 set_property(TARGET host_ld_libpasses PROPERTY CXX_STANDARD 11)
+suppress_warnings(host_ld_libpasses)
