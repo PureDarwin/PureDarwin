@@ -23,6 +23,7 @@ include(cmake/get_target_dependencies.cmake)
 include(cmake/install_helpers.cmake)
 include(cmake/kext.cmake)
 include(cmake/mig.cmake)
+include(cmake/suppress_warnings.cmake)
 
 add_subdirectory(projects)
 add_subdirectory(src)
