@@ -1,7 +1,7 @@
 macro(add_bundle_resources target)
     cmake_parse_arguments(SL "" "SUBDIRECTORY" "FILES" ${ARGN})
 
-    foreach(file IN LISTS SL_FILES)
+    foreach(file ${SL_FILES})
         set_property(TARGET ${target} APPEND PROPERTY RESOURCE ${file})
         set_property(SOURCE ${file} PROPERTY MACOSX_PACKAGE_LOCATION Resources/${SL_SUBDIRECTORY})
         target_sources(${target} PRIVATE ${file})
