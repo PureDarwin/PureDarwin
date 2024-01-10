@@ -1,5 +1,6 @@
 add_darwin_static_library(libefi)
 target_include_directories(libefi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc)
+target_compile_definitions(libefi PRIVATE _M_X64)
 
 # For stdint.h.
 target_link_libraries(libefi PRIVATE xnu_kernel_headers)
