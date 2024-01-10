@@ -1,4 +1,5 @@
 add_darwin_static_library(libefi)
+set_property(TARGET libefi PROPERTY OUTPUT_NAME "efi")
 target_include_directories(libefi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc)
 target_compile_definitions(libefi PRIVATE _M_X64)
 
