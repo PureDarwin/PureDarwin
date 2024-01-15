@@ -598,6 +598,7 @@ cpuid_supports_leaf7(i386_cpu_info_t *info_p)
             if (info_p->cpu_family >= CPUID_FAMILY_AMD15h) { ret = true; } 
             break;
     }
+    return ret;
 }
 
 static void
