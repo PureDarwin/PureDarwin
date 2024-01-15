@@ -46,6 +46,7 @@
 #include <kern/misc_protos.h>
 #include <kern/spl.h>
 #include <kern/assert.h>
+#include <kern/timer_call.h>
 #include <mach/vm_prot.h>
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>         /* for kernel_map */
@@ -96,21 +97,27 @@ tsc_stamp(void *tscptr)
     wrmsr64(MSR_P5_TSC, *(uint64_t *)tsc);
 }
 
-static void
-tsc_sync(thread_call_param_t param0 __unused, thread_call_param_t param1 __unused)
-{
-    uint64_t tsc;
-    
-    tsc = rdmsr64(MSR_P5_TSC);
-}
-
 /* AMDs TSC is different per core, causing weird things */
 /* AMD at somepoint made a piece of software called 'Dual-Core Optimiser' */
 /* Anyways, this is mostly just fixing hardware in software. */
 /* Sync it in kernel so we don't need any external kernel extenions */
 uint64_t tsc_sync_interval_msecs = 5000; /* 5 seconds */
 uint64_t tsc_sync_interval_abs;
-timer_call_t sync_tsc_timer;
+uint64_t tsc_sync_next_deadline;
+static timer_call_data_t sync_tsc_timer;
+
+static void
+tsc_sync(thread_call_param_t param0 __unused, thread_call_param_t param1 __unused)
+{
+    uint64_t tsc;
+    
+    tsc = rdmsr64(MSR_P5_TSC);
+    /* Run on all cores */
+    mp_rendezvous_no_intrs(stamp_tsc, (void*)&tsc);
+    
+    clock_deadline_for_periodic_event(tsc_sync_interval_abs, mach_absolute_time(), &tsc_sync_next_deadline);
+    timer_call_enter_with_leeway(&sync_tsc_timer, NULL, tsc_sync_next_deadline, 0, TIMER_CALL_SYS_NORMAL, FALSE);
+}
 
 static bool
 amd_is_divisor_reserved_zen(uint64_t field)
@@ -355,6 +362,11 @@ tsc_init(void)
             
             tscGranularity = tscFreq / busFreq;
             bus2tsc = tmrCvt(busFCvtt2n, tscFCvtn2t);
+            
+            clock_interval_to_absolutetime_interval(tsc_sync_interval_msecs, NSEC_PER_MSEC, &tsc_sync_interval_abs);
+            timer_call_setup(&sync_tsc_timer, tsc_sync, NULL);
+            tsc_sync_next_deadline = mach_absolute_time() + tsc_sync_interval_abs;
+            timer_call_enter_with_leeway(&sync_tsc_timer, NULL, tsc_sync_next_deadline, 0, TIMER_CALL_SYS_NORMAL, FALSE);
             return;
         }
         default: {
