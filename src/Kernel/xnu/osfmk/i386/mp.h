@@ -67,6 +67,12 @@
 #include <i386/mp_events.h>
 #include <machine/limits.h>
 
+/* Ah the limitations of ancient software. */
+/* Somebody's going to have to fix this eventually */
+/* Threadripper users with > 64 threads have to disable multithreading for it to work */
+/* int128_t? Wait that's a 64-bit exclusive */
+/* Welp. I guess we're stuck in a catch twenty-two unless i386 gets dropped */
+/* Realistically, i386 support died in 2011 with OS X Lion. */
 #define MAX_CPUS        64              /* 8 * sizeof(cpumask_t) */
 
 #ifndef ASSEMBLER

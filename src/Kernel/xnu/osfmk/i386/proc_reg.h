@@ -787,4 +787,9 @@ __END_DECLS
 #define HV_VMX_EPTP_WALK_LENGTH(wl)             (0ULL | ((((wl) - 1) & 0x7) << 3))
 #define HV_VMX_EPTP_ENABLE_AD_FLAGS             (1ULL << 6)
 
+#define MSR_AMD_HARDWARE_CFG                    0xC0010015 /* Declares TSC at P0 freq */
+#define     MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0 0x00100000 /* Bit 24 */
+
+#define MSR_AMD_PSTATE_P0                       0xC0010064 /* Other P-State MSRs are this until P0 + 0x7 (P-State 7) */
+
 #endif  /* _I386_PROC_REG_H_ */
