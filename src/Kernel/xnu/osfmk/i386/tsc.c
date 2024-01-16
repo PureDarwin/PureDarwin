@@ -141,7 +141,7 @@ amd_is_divisor_reserved_zen(uint64_t field)
 
 /* Referenced from AMDs 17h Family Open-Source Register Reference and AMD's 16h BIOS and Kernel Developer guide */
 static float /* ??? Why use divisors that are decimal integers AMD? */
-amd_get_divisior_for_tsc_freq(uint64_t field)
+amd_get_divisor_for_tsc_freq(uint64_t field)
 {
     i386_cpu_info_t *infop = cpuid_info();
     
@@ -343,13 +343,13 @@ tsc_init(void)
                 /* 16h and 15h have different bitfields for the two from 17h+ */
                 did = bitfield32(msr, 8, 6); /* CpuDid */
                 fid = bitfield32(msr, 5, 0); /* CpuFid */
-                freq = 100 * (fid + 0x10) / amd_get_divisior_for_tsc_freq(did);
+                freq = 100 * (fid + 0x10) / amd_get_divisor_for_tsc_freq(did);
                 kprintf("P0/TSC freq: %lluMHz\n", freq); /* Is it in Hex or Decimal? */
                 tscFreq = (freq * kilo) * 1000ULL; /* MHz -> KHz -> Hz*/
             } else if (infop->cpuid_family >= CPUID_FAMILY_AMD_17h) { /* AMDs Zen and newer platforms */
                 did = bitfield32(msr, 13, 8); /* CpuDid */
                 fid = bitfield32(msr, 7, 0); /* CpuFid */
-                freq = (fid * 0x25) / amd_get_divisior_for_tsc_freq(did);
+                freq = (fid * 0x25) / amd_get_divisor_for_tsc_freq(did);
                 msr = rdmsr64(MSR_AMD_HARDWARE_CFG);
                 wrmsr64(MSR_AMD_HARDWARE_CFG, msr | MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0); /* The P0 Frequency can change? */
                 kprintf("P0/TSC freq: %lluMHz\n", freq); /* Is it in Hex or Decimal? */
