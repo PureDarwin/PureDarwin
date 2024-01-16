@@ -326,7 +326,7 @@ cpuid_do_was(void)
 }
 
 static void
-cpuid_determine_ven( i386_cpu_info_t * info_p )
+cpuid_determine_vendor( i386_cpu_info_t * info_p )
 {
     DBG("cpuid_determine_ven(%p)\n", info_p);
 
@@ -595,7 +595,7 @@ cpuid_supports_leaf7(i386_cpu_info_t *info_p)
             if (info_p->cpuid_model >= CPUID_MODEL_IVYBRIDGE) { ret = true; }
             break;
         case CPUID_VEN_AMD:
-            if (info_p->cpu_family >= CPUID_FAMILY_AMD15h) { ret = true; } 
+            if (info_p->cpuid_family >= CPUID_FAMILY_AMD_15h) { ret = true; }
             break;
     }
     return ret;
@@ -757,8 +757,8 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
         cpuid_mwait_leaf_t      *cmp = &info_p->cpuid_mwait_leaf;
 
         /*
-		 * Extract the Monitor/Mwait Leaf info:
-		 */
+         * Extract the Monitor/Mwait Leaf info:
+         */
         cpuid_fn(5, reg);
         cmp->linesize_min = reg[eax];
         cmp->linesize_max = reg[ebx];
@@ -958,7 +958,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
                     case CPUID_MODEL_AMD_VISHERA: /* DELHI, SEOUL, WARSAW, ABU DHABI */
                     case CPUID_MODEL_AMD_TRINITY:
                     case CPUID_MODEL_AMD_RICHLAND:
-                        cpufamily = CPUFAMILY_AMD_PILEDROVER;
+                        cpufamily = CPUFAMILY_AMD_PILEDRIVER;
                         break;
                     case CPUID_MODEL_AMD_KAVERI: /* BALD EAGLE (?) */
                     case CPUID_MODEL_AMD_GODAVARI:
@@ -1034,8 +1034,6 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
     info_p->cpuid_cpufamily = cpufamily;
     DBG("cpuid_set_cpufamily(%p) returning 0x%x\n", info_p, cpufamily);
     return cpufamily;
-}
-
 }
 /*
  * Must be invoked either when executing single threaded, or with
@@ -1129,8 +1127,8 @@ cpuid_set_info(void)
                 /* FIXME: do 15h and 16h even support HTT? */ 
                 info_p->core_count = bitfield32(reg[ecx], 7, 0) + 1;
                 info_p->thread_count = bitfield32(reg[ecx], 7, 0) + 1;
-                /* WORKAROUND: physical_per_package isn't set correctly in cpuid_set_cache_info */
-                info_p->cpuid_physical_per_package = info_p->core_count;
+                /* WORKAROUND: cores_per_package isn't set correctly in cpuid_set_cache_info */
+                info_p->cpuid_cores_per_package = info_p->core_count;
                 info_p->cpuid_logical_per_package = info_p->thread_count;
             }
             case CPUFAMILY_AMD_ZEN:
@@ -1145,8 +1143,8 @@ cpuid_set_info(void)
                 info_p->thread_count = bitfield32(reg[ecx], 7, 0) + 1;
                 cpuid_fn(0x8000001E, reg);
                 info_p->core_count = info_p->thread_count / bitfield32(reg[ebx], 13, 8); /* ThreadsPerCore */
-                /* WORKAROUND: physical_per_package isn't set correctly in cpuid_set_cache_info */
-                info_p->cpuid_physical_per_package = info_p->core_count;
+                /* WORKAROUND: cores_per_package isn't set correctly in cpuid_set_cache_info */
+                info_p->cpuid_cores_per_package = info_p->core_count;
                 info_p->cpuid_logical_per_package = info_p->thread_count;
             }
             default: {
