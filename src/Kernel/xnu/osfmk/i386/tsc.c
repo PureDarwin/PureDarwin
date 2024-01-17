@@ -351,7 +351,8 @@ tsc_init(void)
                 fid = bitfield32(msr, 7, 0); /* CpuFid */
                 freq = (fid * 0x25) / amd_get_divisor_for_tsc_freq(did);
                 msr = rdmsr64(MSR_AMD_HARDWARE_CFG);
-                wrmsr64(MSR_AMD_HARDWARE_CFG, msr | MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0); /* The P0 Frequency can change? */
+                msr |= MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0;  /* The P0 Frequency can change? */
+                wrmsr64(MSR_AMD_HARDWARE_CFG, msr);
                 kprintf("P0/TSC freq: %lluMHz\n", freq); /* Is it in Hex or Decimal? */
                 tscFreq = (freq * kilo) * 1000ULL; /* MHz -> KHz -> Hz*/
             } else {
