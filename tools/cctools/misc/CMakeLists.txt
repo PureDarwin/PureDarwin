@@ -29,10 +29,10 @@ cctools_misc_executable(cmpdylib)
 cctools_misc_executable(inout)
 cctools_misc_executable(vtool)
 
-suppress_warnings(host_bitcode_strip)
-suppress_warnings(host_install_name_tool)
-suppress_warnings(host_strip)
-suppress_warnings(host_vtool)
+suppress_all_warnings(host_bitcode_strip)
+suppress_all_warnings(host_install_name_tool)
+suppress_all_warnings(host_strip)
+suppress_all_warnings(host_vtool)
 
 # Special cases
 add_executable(host_nmedit strip.c)
