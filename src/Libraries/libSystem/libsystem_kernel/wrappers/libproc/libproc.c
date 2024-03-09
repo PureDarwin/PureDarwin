@@ -292,7 +292,7 @@ proc_pidpath_audittoken(audit_token_t *audittoken, void * buffer, uint32_t buffe
 	int idversion = audittoken->val[7];
 
 	retval = __proc_info_extended_id(PROC_INFO_CALL_PIDINFO, pid, PROC_PIDPATHINFO, PIF_COMPARE_IDVERSION, (uint64_t)idversion,
-	    (uint64_t)0, buffer, buffersize);
+	    (uint64_t)0, (user_addr_t)buffer, buffersize);
 	if (retval != -1) {
 		len = (int)strlen(buffer);
 		return len;
