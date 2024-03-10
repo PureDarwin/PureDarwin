@@ -58,7 +58,7 @@ target_include_directories(libsystem_kernel_private_headers INTERFACE private_in
 add_darwin_static_library(libsystem_kernel_static)
 
 # This product should be called libsystem_kernel.a and should be placed in /usr/local/lib/{dyld,system,loaderd,dyld_stub}
-set_target_properties(libsystem_kernel_static PROPERTIES OUTPUT_NAME "libsystem_kernel")
+set_target_properties(libsystem_kernel_static PROPERTIES OUTPUT_NAME "system_kernel")
 
 target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a

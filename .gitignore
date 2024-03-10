@@ -59,6 +59,7 @@ cmake-build-*/
 
 ## Visual Studio Code
 .vscode/
+.cache/
 
 ## Other
 *.moved-aside

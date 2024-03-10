@@ -1,4 +1,5 @@
 add_darwin_static_library(libfirehose_kernel)
+set_property(TARGET libfirehose_kernel PROPERTY OUTPUT_NAME "firehose_kernel")
 target_sources(libfirehose_kernel PRIVATE
     src/firehose_buffer.c
 )
