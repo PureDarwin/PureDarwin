@@ -715,6 +715,12 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
     if (info_p->cpuid_features & CPUID_FEATURE_HTT) {
         info_p->cpuid_logical_per_package =
             bitfield32(reg[ebx], 23, 16);
+    } else if (info_p->cpuid_ven == CPUID_VEN_AMD) {
+        cpuid_fn(0x80000008, reg);
+        info_p->cpuid_logical_per_package = bitfield32(reg[ecx], 7, 0) + 1; /* ThreadCount and CoreCount on some AMD CPUs */
+        if (info_p->cpuid_family == CPUID_FAMILY_AMD_15h || info_p->cpuid_family == CPUID_FAMILY_AMD_16h) {
+            info_p->cpuid_cores_per_package = info_p->cpuid_logical_per_package; /* WORKAROUND */
+        }
     } else {
         /* Does this mean that it assumes that the logical core per physical core is one? */
         /* XNU defines a package as the whole CPU in cpu_topology */
@@ -1019,6 +1025,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
                         break;
                     case CPUID_MODEL_AMD_RAPHAEL:
                     case CPUID_MODEL_AMD_PHOENIX:
+                    case CPUID_MODEL_AMD_PHOENIX_DESKTOP:
                     case CPUID_MODEL_AMD_PHOENIX2:
                         cpufamily = CPUFAMILY_AMD_ZEN4;
                         break;
@@ -1094,6 +1101,12 @@ cpuid_set_info(void)
     } else {
         switch (info_p->cpuid_cpufamily) {
             case CPUFAMILY_INTEL_PENRYN:
+            case CPUFAMILY_AMD_BULLDOZER:
+            case CPUFAMILY_AMD_PILEDRIVER:
+            case CPUFAMILY_AMD_STEAMROLLER:
+            case CPUFAMILY_AMD_EXCAVATOR:
+            case CPUFAMILY_AMD_JAGUAR:
+            case CPUFAMILY_AMD_PUMA:
                 cpuid_set_cache_info(info_p);
                 info_p->core_count   = info_p->cpuid_cores_per_package;
                 info_p->thread_count = info_p->cpuid_logical_per_package;
@@ -1114,23 +1127,6 @@ cpuid_set_info(void)
                 cpuid_set_cache_info(info_p);
                 break;
             }
-            case CPUFAMILY_AMD_BULLDOZER:
-            case CPUFAMILY_AMD_PILEDRIVER:
-            case CPUFAMILY_AMD_STEAMROLLER:
-            case CPUFAMILY_AMD_EXCAVATOR:
-            case CPUFAMILY_AMD_JAGUAR:
-            case CPUFAMILY_AMD_PUMA: {
-                uint32_t reg[4];
-
-                cpuid_set_cache_info(info_p);
-                cpuid_fn(0x80000008, reg);
-                /* FIXME: do 15h and 16h even support HTT? */ 
-                info_p->core_count = bitfield32(reg[ecx], 7, 0) + 1;
-                info_p->thread_count = bitfield32(reg[ecx], 7, 0) + 1;
-                /* WORKAROUND: cores_per_package isn't set correctly in cpuid_set_cache_info */
-                info_p->cpuid_cores_per_package = info_p->core_count;
-                info_p->cpuid_logical_per_package = info_p->thread_count;
-            }
             case CPUFAMILY_AMD_ZEN:
             case CPUFAMILY_AMD_ZENX:
             case CPUFAMILY_AMD_ZEN2:
@@ -1139,13 +1135,11 @@ cpuid_set_info(void)
                 uint32_t reg[4];
 
                 cpuid_set_cache_info(info_p);
-                cpuid_fn(0x80000008, reg); /* CPUID leaf 0x80000008 ECX bits 7:0 became Thread Count in Zen (and 16h) */
-                info_p->thread_count = bitfield32(reg[ecx], 7, 0) + 1;
+                info_p->thread_count = info_p->cpuid_logical_per_package;
                 cpuid_fn(0x8000001E, reg);
                 info_p->core_count = info_p->thread_count / bitfield32(reg[ebx], 13, 8); /* ThreadsPerCore */
                 /* WORKAROUND: cores_per_package isn't set correctly in cpuid_set_cache_info */
                 info_p->cpuid_cores_per_package = info_p->core_count;
-                info_p->cpuid_logical_per_package = info_p->thread_count;
             }
             default: {
                 uint64_t msr = rdmsr64(MSR_CORE_THREAD_COUNT);

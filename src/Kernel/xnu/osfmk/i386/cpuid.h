@@ -64,7 +64,7 @@
 /*
  * This is so we don't have a global isAMD variable.
  */
-#define CPUID_VEN_UNKNWON       0
+#define CPUID_VEN_UNKNOWN       0
 #define CPUID_VEN_INTEL         1
 #define CPUID_VEN_AMD           2
 
@@ -354,6 +354,7 @@
 #define CPUID_MODEL_AMD_CEZANNE 0x50
 #define CPUID_MODEL_AMD_RAPHAEL 0x61
 #define CPUID_MODEL_AMD_PHOENIX 0x74
+#define CPUID_MODEL_AMD_PHOENIX_DESKTOP 0x75
 #define CPUID_MODEL_AMD_PHOENIX2 0x78
 /*
  * Dragon Range?
