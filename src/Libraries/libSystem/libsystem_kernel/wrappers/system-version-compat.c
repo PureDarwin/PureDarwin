@@ -138,7 +138,7 @@ int
 _system_version_compat_open_shim(int opened_fd, int openat_fd, const char *orig_path, int oflag, mode_t mode,
     int (*close_syscall)(int), int (*open_syscall)(const char *, int, mode_t),
     int (*openat_syscall)(int, const char *, int, mode_t),
-    int (*fcntl_syscall)(int, int, long))
+    int (*fcntl_syscall)(int, int, void *))
 {
 	/* stash the errno from the original open{at} call */
 	int stashed_errno = errno;
@@ -146,7 +146,7 @@ _system_version_compat_open_shim(int opened_fd, int openat_fd, const char *orig_
 	size_t path_str_len = strnlen(orig_path, sizeof(new_path));
 
 	/* Resolve the full path of the file we've opened */
-	if (fcntl_syscall(opened_fd, F_GETPATH, new_path)) {
+	if (fcntl_syscall(opened_fd, F_GETPATH, (void *)&new_path)) {
 		if (errno == EINTR) {
 			/* If we got EINTR, we close the file that was opened and return -1 & EINTR */
 			close_syscall(opened_fd);

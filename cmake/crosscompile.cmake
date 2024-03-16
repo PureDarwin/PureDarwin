@@ -36,11 +36,6 @@ function(add_darwin_static_library name)
     add_dependencies(${name} host_libtool)
     target_compile_definitions(${name} PRIVATE __PUREDARWIN__)
 
-    string(SUBSTRING ${name} 0 3 name_prefix)
-    if(name_prefix STREQUAL "lib")
-        set_property(TARGET ${name} PROPERTY PREFIX "")
-    endif()
-
     if(SL_MACOSX_VERSION_MIN)
         target_compile_options(${name} PRIVATE -target x86_64-apple-macos${SL_MACOSX_VERSION_MIN})
     elseif(CMAKE_MACOSX_MIN_VERSION)
