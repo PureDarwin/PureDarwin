@@ -50,20 +50,20 @@
 	.globl name;	\
 	name:
 
-ENTRY(efi_call0)
+ENTRY(_efi_call0)
 	subq $40, %rsp
 	call *%rdi
 	addq $40, %rsp
 	ret
 
-ENTRY(efi_call1)
+ENTRY(_efi_call1)
 	subq $40, %rsp
 	mov  %rsi, %rcx
 	call *%rdi
 	addq $40, %rsp
 	ret
 
-ENTRY(efi_call2)
+ENTRY(_efi_call2)
 	subq $40, %rsp
 	/* mov %rdx, %rdx */
 	mov  %rsi, %rcx
@@ -71,7 +71,7 @@ ENTRY(efi_call2)
 	addq $40, %rsp
 	ret
 
-ENTRY(efi_call3)
+ENTRY(_efi_call3)
 	subq $40, %rsp
 	mov  %rcx, %r8
 	/* mov %rdx, %rdx */
@@ -80,7 +80,7 @@ ENTRY(efi_call3)
 	addq $40, %rsp
 	ret
 
-ENTRY(efi_call4)
+ENTRY(_efi_call4)
 	subq $40, %rsp
 	mov %r8, %r9
 	mov %rcx, %r8
@@ -90,7 +90,7 @@ ENTRY(efi_call4)
 	addq $40, %rsp
 	ret
 
-ENTRY(efi_call5)
+ENTRY(_efi_call5)
 	subq $40, %rsp
 	mov %r9, 32(%rsp)
 	mov %r8, %r9
@@ -101,7 +101,7 @@ ENTRY(efi_call5)
 	addq $40, %rsp
 	ret
 
-ENTRY(efi_call6)
+ENTRY(_efi_call6)
 	subq $56, %rsp
 	mov 56+8(%rsp), %rax
 	mov %rax, 40(%rsp)
@@ -114,7 +114,7 @@ ENTRY(efi_call6)
 	addq $56, %rsp
 	ret
 
-ENTRY(efi_call7)
+ENTRY(_efi_call7)
 	subq $56, %rsp
 	mov 56+16(%rsp), %rax
 	mov %rax, 48(%rsp)
@@ -129,7 +129,7 @@ ENTRY(efi_call7)
 	addq $56, %rsp
 	ret
 
-ENTRY(efi_call8)
+ENTRY(_efi_call8)
 	subq $72, %rsp
 	mov 72+24(%rsp), %rax
 	mov %rax, 56(%rsp)
@@ -146,7 +146,7 @@ ENTRY(efi_call8)
 	addq $72, %rsp
 	ret
 
-ENTRY(efi_call9)
+ENTRY(_efi_call9)
 	subq $72, %rsp
 	mov 72+32(%rsp), %rax
 	mov %rax, 64(%rsp)
@@ -165,7 +165,7 @@ ENTRY(efi_call9)
 	addq $72, %rsp
 	ret
 
-ENTRY(efi_call10)
+ENTRY(_efi_call10)
 	subq $88, %rsp
 	mov 88+40(%rsp), %rax
 	mov %rax, 72(%rsp)
