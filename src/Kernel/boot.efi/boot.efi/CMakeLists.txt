@@ -4,10 +4,15 @@ target_link_libraries(booter PRIVATE libefi)
 target_link_options(booter PRIVATE -static -e _EfiMain -seg1addr 0x1000)
 
 target_sources(booter PRIVATE
+    device_tree.c
     main.c
     plist.c
     util.c
 )
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(booter PRIVATE DEBUG_BUILD)
+endif()
 
 
 add_custom_command(TARGET booter POST_BUILD
