@@ -5,6 +5,7 @@ target_link_options(booter PRIVATE -static -e _EfiMain -seg1addr 0x1000)
 
 target_sources(booter PRIVATE
     main.c
+    plist.c
     util.c
 )
 
