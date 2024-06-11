@@ -62,6 +62,14 @@ void bzero(void *s, size_t n) {
     }
 }
 
+void bcopy(const void *source, void *dest, size_t len) {
+    char *sourceBuffer = (char *)source;
+    char *destBuffer = (char *)dest;
+    for (int i = 0; i < len; i++) {
+        destBuffer[i] = sourceBuffer[i];
+    }
+}
+
 void *malloc(size_t size) {
     return AllocatePool(size);
 }

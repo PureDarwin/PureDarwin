@@ -33,6 +33,7 @@ extern int strncmp(char *left, char *right, size_t size);
 extern int strlen(char *string);
 extern char *strcpy(char *destination, const char *source);
 extern void bzero(void *s, size_t n);
+extern void bcopy(const void *source, void *dest, size_t len);
 
 extern void *malloc(size_t size);
 extern void *calloc(size_t count, size_t size);
