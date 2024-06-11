@@ -27,6 +27,17 @@ int strncmp(char *left, char *right, size_t len) {
     return 0;
 }
 
+int strlen(char *string) {
+    size_t len = 0;
+
+    while (*string != '\0') {
+        string++;
+        len++;
+    }
+
+    return len;
+}
+
 void *malloc(size_t size) {
     return AllocatePool(size);
 }
