@@ -36,4 +36,8 @@ extern void *malloc(size_t size);
 extern void *calloc(size_t count, size_t size);
 extern void free(void *ptr);
 
+// In main.c
+extern void EfiPanicBoot(char *message, char *file, int line) __attribute__((noreturn));
+#define panic(msg) EfiPanicBoot(msg, __FILE__, __LINE__)
+
 #endif
