@@ -8,4 +8,4 @@ target_sources(ApplePIODMA PRIVATE
 
 set_property(TARGET ApplePIODMA PROPERTY CXX_STANDARD 11)
 target_link_libraries(ApplePIODMA PRIVATE IOPCIFamilyHeaders)
-install(TARGETS ApplePIODMA DESTINATION /System/Library/Extensions COMPONENT BaseSystem)
+install(TARGETS ApplePIODMA DESTINATION System/Library/Extensions COMPONENT BaseSystem)
