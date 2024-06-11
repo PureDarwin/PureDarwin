@@ -53,6 +53,15 @@ extern char *strcpy(char *destination, const char *source) {
     return destination;
 }
 
+void bzero(void *s, size_t n) {
+    if (n == 0) return;
+
+    char *ptr = (char *)s;
+    for (size_t i = 0; i < n; i++) {
+        ptr[i] = 0;
+    }
+}
+
 void *malloc(size_t size) {
     return AllocatePool(size);
 }
