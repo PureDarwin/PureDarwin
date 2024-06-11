@@ -31,6 +31,7 @@ typedef __SIZE_TYPE__ size_t;
 extern int strcmp(char *left, char *right);
 extern int strncmp(char *left, char *right, size_t size);
 extern int strlen(char *string);
+extern char *strcpy(char *destination, const char *source);
 
 extern void *malloc(size_t size);
 extern void *calloc(size_t count, size_t size);

@@ -38,6 +38,21 @@ int strlen(char *string) {
     return len;
 }
 
+extern char *strcpy(char *destination, const char *source) {
+    if (*source == '\0') {
+        *destination = '\0';
+        return destination;
+    }
+
+    do {
+        *destination = *source;
+        destination++;
+        source++;
+    } while (*source != '\0');
+
+    return destination;
+}
+
 void *malloc(size_t size) {
     return AllocatePool(size);
 }
