@@ -25,7 +25,9 @@
 #ifndef EFI_BOOT_UTIL_H
 #define EFI_BOOT_UTIL_H
 
+#ifndef _EFI_DEF_H
 #define NULL 0
+#endif
 
 typedef __SIZE_TYPE__ size_t;
 extern int strcmp(char *left, char *right);
