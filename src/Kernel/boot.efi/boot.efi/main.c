@@ -3,7 +3,7 @@
 
 void EfiPanicBoot(char *message, char *file, int line) {
     Print(L"Unrecoverable error during boot process: %s\n", message);
-    Print(L"Occurred at: %s:%d\n", file, line);
+    Print(L"Occurred at: %s:%d\n\n", file, line);
     Print(L"Press any key to shut down.\n");
 
     EFI_INPUT_KEY ignored;
