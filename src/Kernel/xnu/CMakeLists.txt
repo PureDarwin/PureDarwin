@@ -100,7 +100,11 @@ externalproject_add(xnu
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu xnu_headers libfirehose_kernel host_codesign_allocate host_ctfconvert host_ctfmerge migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl host_ld)
+add_dependencies(xnu
+    xnu_headers libfirehose_kernel host_codesign_allocate host_ctfconvert host_ctfmerge
+    migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl host_ld
+    dyld_availability_headers
+)
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Resources DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT BaseSystem)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/xnu/System/Library/Frameworks/Kernel.framework/Versions/A/Headers DESTINATION System/Library/Frameworks/Kernel.framework/Versions/A COMPONENT DeveloperTools)
