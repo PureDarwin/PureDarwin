@@ -12,6 +12,8 @@ install(
 )
 
 
+add_compile_options(-Wno-nullability-completeness)
+
 add_subdirectory(dyld)
 add_subdirectory(man)
 add_subdirectory(src)
