@@ -1,1 +1,1 @@
-../../src/mach/sync.h
+../../mach/mach/sync.h

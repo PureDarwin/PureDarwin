@@ -1,1 +1,1 @@
-../../src/mach/thread_state.h
+../../mach/mach/thread_state.h

@@ -1,1 +1,1 @@
-../../src/mach/mach_right.h
+../../mach/mach/mach_right.h

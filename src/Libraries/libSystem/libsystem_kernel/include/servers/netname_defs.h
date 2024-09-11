@@ -1,1 +1,1 @@
-../../src/servers/netname_defs.h
+../../mach/servers/netname_defs.h
