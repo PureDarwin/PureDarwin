@@ -204,9 +204,11 @@ target_link_libraries(libsystem_kernel_static PUBLIC libc_public_headers)
 target_link_libraries(libsystem_kernel_static PRIVATE clang_bootstrap_headers)
 target_link_libraries(libsystem_kernel_static PUBLIC architecture_headers)
 
-target_include_directories(libsystem_kernel_static PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
+add_library(libsystem_kernel_headers INTERFACE)
+target_include_directories(libsystem_kernel_headers INTERFACE include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
 target_include_directories(libsystem_kernel_static PRIVATE mach mach/mach mach/servers custom wrappers)
 target_include_directories(libsystem_kernel_static PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/internal_include)
+target_link_libraries(libsystem_kernel_static PRIVATE libsystem_kernel_headers)
 
 target_compile_options(libsystem_kernel_static PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 
