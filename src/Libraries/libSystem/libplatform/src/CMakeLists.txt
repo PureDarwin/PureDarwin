@@ -60,8 +60,8 @@ target_compile_options(libsystem_platform PRIVATE -Wno-implicit-function-declara
 target_compile_options(libsystem_platform PRIVATE -Wno-deprecated-declarations)
 
 target_link_libraries(libsystem_platform PRIVATE
-    libplatform_private_headers libsystem_kernel_bootstrap_headers libsystem_kernel_private_headers
-    libc_public_headers pthread_common_private_headers xnu_private_headers
+    libplatform_private_headers libsystem_kernel_headers libsystem_kernel_private_headers architecture_headers
+    libc_public_headers pthread_common_private_headers xnu_private_headers xnu_headers clang_bootstrap_headers
 )
 
 target_link_libraries(libsystem_platform PUBLIC AvailabilityHeaders pthread_common_headers xnu_headers)
