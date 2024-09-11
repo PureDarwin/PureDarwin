@@ -1,6 +1,4 @@
-//  XCode will not build a library unless it contains at least one module.
-//  Absent this requirement, libm.dylib would be composed entirely by linking
-//  the component static libraries together, but to satisfy it, we must have
-//  a C file.
+//  CMake will not build a library unless it contains at least one source file.
+//  Other than this, libplatform.dylib is composed entirely by the contents of libplatform_static.a.
 
-typedef int theCStandardDoesNotAllowAnEmptyModule;
+typedef int no_empty_modules;
