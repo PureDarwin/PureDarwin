@@ -7,15 +7,15 @@ void EfiPanicBoot(char *message, char *file, int line) {
     Print(L"Press any key to shut down.\n");
 
     EFI_INPUT_KEY ignored;
-    ST->ConIn->ReadKeyStroke(ST->ConIn, &ignored);
+    uefi_call_wrapper(ST->ConIn->ReadKeyStroke, 2, ST->ConIn, &ignored);
 
-    ST->RuntimeServices->ResetSystem(EfiResetShutdown, EFI_ABORTED, 0, NULL);
+    uefi_call_wrapper(ST->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_ABORTED, 0, NULL);
 
     // Should never get here.
     __builtin_unreachable();
 }
 
-EFI_STATUS EFIAPI EfiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
+EFI_STATUS EFI_FUNCTION EfiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     InitializeLib(ImageHandle, SystemTable);
 

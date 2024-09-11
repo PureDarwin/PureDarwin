@@ -1,6 +1,7 @@
 add_darwin_static_library(libefi)
 set_property(TARGET libefi PROPERTY OUTPUT_NAME "efi")
 target_include_directories(libefi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc)
+target_compile_definitions(libefi PUBLIC GNU_EFI_USE_MS_ABI)
 
 # __stack_chk_fail and __stack_chk_guard do not exist in EFI land.
 # EFI also assumes short wchar (it is int by default).
