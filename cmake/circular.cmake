@@ -24,7 +24,7 @@ function(add_darwin_circular_library name)
         target_sources(${firstpass_name} PRIVATE $<TARGET_OBJECTS:${lib}>)
     endforeach()
 
-    target_link_options(${firstpass_name} PRIVATE "LINKER:-flat_namespace" "LINKER:-undefined suppress")
+    target_link_options(${firstpass_name} PRIVATE "LINKER:-flat_namespace" "LINKER:-undefined,suppress")
 
     foreach(dep ${CIRCULAR_STRONG_SIBLINGS})
         target_link_libraries(${firstpass_name} PRIVATE "${dep}_firstpass")
