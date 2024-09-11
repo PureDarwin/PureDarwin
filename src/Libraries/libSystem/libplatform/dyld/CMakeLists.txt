@@ -53,10 +53,9 @@ target_sources(libsystem_platform_dyld PRIVATE
 target_include_directories(libsystem_platform_dyld PRIVATE ../src/os/resolver ../include)
 target_compile_definitions(libsystem_platform_dyld PRIVATE VARIANT_STATIC=1 VARIANT_DYLD=1)
 target_link_libraries(libsystem_platform_dyld INTERFACE libplatform_headers)
-target_link_libraries(libsystem_platform_dyld PRIVATE libplatform_private_headers)
 target_link_libraries(libsystem_platform_dyld PRIVATE
-      libplatform_private_headers libsystem_kernel_bootstrap_headers libsystem_kernel_private_headers
-      pthread_common_private_headers xnu_private_headers libsystem_kernel
+    libplatform_private_headers libsystem_kernel_headers libsystem_kernel_private_headers architecture_headers
+    libc_public_headers pthread_common_private_headers xnu_private_headers xnu_headers clang_bootstrap_headers
 )
 target_link_libraries(libsystem_platform_dyld PUBLIC
       AvailabilityHeaders pthread_common_headers xnu_headers
