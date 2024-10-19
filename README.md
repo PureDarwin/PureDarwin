@@ -1,7 +1,4 @@
-# PureDarwin
-
-[![PureDarwin Discord](https://dcbadge.limes.pink/api/server/https://discord.gg/9kz8XXRRcT)](https://discord.gg/9kz8XXRRcT)
-==========
+# PureDarwin   [![PureDarwin Discord](https://dcbadge.limes.pink/api/server/https://discord.gg/9kz8XXRRcT?style=flat)](https://discord.gg/9kz8XXRRcT)
 
 ![](https://www.puredarwin.org/images/logo-mark-text-fff.svg)
 
