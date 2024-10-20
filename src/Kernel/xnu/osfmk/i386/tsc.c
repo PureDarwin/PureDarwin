@@ -147,37 +147,37 @@ amd_get_divisor_for_tsc_freq(uint64_t field)
     
     switch (field) {
         case 0x00:
-            if (infop->cpuid_family >= CPUID_FAMILY_AMD_17h) {
+            if (infop->cpuid_family >= 0x17) {
                 return 0; /* switched to OFF on Zen */
             } else {
                 return 1;
             }
         case 0x01:
-            if (infop->cpuid_family >= CPUID_FAMILY_AMD_17h) {
+            if (infop->cpuid_family >= 0x17) {
                 panic("Invalid TSC divisor field! 0x%llx", field);
             } else {
                 return 2;
             }
         case 0x02:
-            if (infop->cpuid_family >= CPUID_FAMILY_AMD_17h) {
+            if (infop->cpuid_family >= 0x17) {
                 panic("Invalid TSC divisor field! 0x%llx", field);
             } else {
                 return 4;
             }
         case 0x03:
-            if (infop->cpuid_family >= CPUID_FAMILY_AMD_17h) {
+            if (infop->cpuid_family >= 0x17) {
                 panic("Invalid TSC divisor field! 0x%llx", field);
             } else {
                 return 8;
             }
         case 0x04:
-            if (infop->cpuid_family >= CPUID_FAMILY_AMD_17h) {
+            if (infop->cpuid_family >= 0x17) {
                 panic("Invalid TSC divisor field! 0x%llx", field);
             } else {
                 return 16;
             }
         default:
-            if (infop->cpuid_family <= CPUID_FAMILY_AMD_16h) {
+            if (infop->cpuid_family <= 0x16) {
                 panic("Invalid TSC divisor field! 0x%llx", field);
             } else {
                 if (amd_is_divisor_reserved_zen(field)) {
@@ -239,7 +239,7 @@ tsc_init(void)
     boolean_t       N_by_2_bus_ratio = FALSE;
     
     if (PE_parse_boot_argn("tsc_sync_interval", &tsc_sync_interval_msecs, sizeof(tsc_sync_interval_msecs))) {
-        kprintf("Syncing TSC at %s every milliseconds instead of default (5000)");
+        kprintf("Syncing TSC at %s every milliseconds instead of default (5000)", tsc_sync_interval_msecs);
     }
     
     if (cpuid_vmm_present()) {
@@ -339,22 +339,33 @@ tsc_init(void)
             busFCvtt2n = ((1 * Giga) << 32) / busFreq;
             busFCvtn2t = ((1 * Giga) << 32) / busFCvtt2n; /* Using this instead of the default alleviates HDA crackling on AMD's APU line */
             msr = rdmsr64(MSR_AMD_PSTATE_P0); /* P0 MSR */
-            if (infop->cpuid_family == CPUID_FAMILY_AMD_16h && infop->cpuid_family == CPUID_FAMILY_AMD_15h) {
+            if (infop->cpuid_family == 0x15 && infop->cpuid_family == 0x16) {
                 /* 16h and 15h have different bitfields for the two from 17h+ */
                 did = bitfield32(msr, 8, 6); /* CpuDid */
                 fid = bitfield32(msr, 5, 0); /* CpuFid */
                 freq = 100 * (fid + 0x10) / amd_get_divisor_for_tsc_freq(did);
                 kprintf("P0/TSC freq: %lluMHz\n", freq); /* Is it in Hex or Decimal? */
                 tscFreq = (freq * kilo) * 1000ULL; /* MHz -> KHz -> Hz*/
-            } else if (infop->cpuid_family >= CPUID_FAMILY_AMD_17h) { /* AMDs Zen and newer platforms */
+            } else if (infop->cpuid_family == 0x17, infop->cpuid_family == 0x19) { /* AMDs Zen 5 and newer platforms */
                 did = bitfield32(msr, 13, 8); /* CpuDid */
                 fid = bitfield32(msr, 7, 0); /* CpuFid */
-                freq = (fid * 0x25) / amd_get_divisor_for_tsc_freq(did);
+                freq = 200 * fid / amd_get_divisor_for_tsc_freq(did);
                 msr = rdmsr64(MSR_AMD_HARDWARE_CFG);
                 msr |= MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0;  /* The P0 Frequency can change? */
                 wrmsr64(MSR_AMD_HARDWARE_CFG, msr);
                 kprintf("P0/TSC freq: %lluMHz\n", freq); /* Is it in Hex or Decimal? */
-                tscFreq = (freq * kilo) * 1000ULL; /* MHz -> KHz -> Hz*/
+                tscFreq = (freq * kilo) * 1000ULL; /* MHz -> KHz -> Hz */
+            } else if (infop->cpuid_family >= 0x1A) {
+                /* TSC should just run at P0? */
+                fid = bitfield32(msr, 11, 0); /* CpuFid */
+                if (fid > 0xF) {
+                    fid *= 5; /* thanks AMD for Zen 5. */
+                }
+                msr = rdmsr64(MSR_AMD_HARDWARE_CFG);
+                msr |= MSR_AMD_HARDWARE_CFG_TSC_LOCK_AT_P0;  /* The P0 Frequency can change? */
+                wrmsr64(MSR_AMD_HARDWARE_CFG, msr);
+                kprintf("P0/TSC freq: %lluMHz\n", freq); /* Is it in Hex or Decimal? */
+                tscFreq = (freq * kilo) * 1000ULL; /* MHz -> KHz -> Hz */
             } else {
                 panic("Unsupported AMD CPU family\n");
             }

@@ -399,7 +399,7 @@ cpuid_set_cache_info( i386_cpu_info_t * info_p )
         uint32_t        cache_partitions;
         uint32_t        colors;
 
-        reg[eax] = info_p->cpuid_ven == CPUID_VEN_INTEL ? 4 : 0x8000001D;           /* cpuid request 4 */
+        reg[eax] = info_p->cpuid_ven == CPUID_VEN_INTEL ? 4 : 0x8000001D;           /* cpuid request 4 or 8000001Dh */
         reg[ecx] = index;       /* index starting at 0 */
         cpuid(reg);
         DBG("cpuid(4) index=%d eax=0x%x\n", index, reg[eax]);
@@ -583,24 +583,6 @@ cpuid_set_cache_info( i386_cpu_info_t * info_p )
     DBG("\n");
 }
 
-static bool
-cpuid_supports_leaf7(i386_cpu_info_t *info_p)
-{
-    bool ret = false;
-
-    DBG("cpuid_supports_leaf7(%p)", info_p);
-
-    switch (info_p->cpuid_ven) {
-        case CPUID_VEN_INTEL:
-            if (info_p->cpuid_model >= CPUID_MODEL_IVYBRIDGE) { ret = true; }
-            break;
-        case CPUID_VEN_AMD:
-            if (info_p->cpuid_family >= CPUID_FAMILY_AMD_15h) { ret = true; }
-            break;
-    }
-    return ret;
-}
-
 static void
 cpuid_set_generic_info(i386_cpu_info_t *info_p)
 {
@@ -718,7 +700,7 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
     } else if (info_p->cpuid_ven == CPUID_VEN_AMD) {
         cpuid_fn(0x80000008, reg);
         info_p->cpuid_logical_per_package = bitfield32(reg[ecx], 7, 0) + 1; /* ThreadCount and CoreCount on some AMD CPUs */
-        if (info_p->cpuid_family == CPUID_FAMILY_AMD_15h || info_p->cpuid_family == CPUID_FAMILY_AMD_16h) {
+        if (info_p->cpuid_family == 0x15 || info_p->cpuid_family == 0x16) {
             info_p->cpuid_cores_per_package = info_p->cpuid_logical_per_package; /* WORKAROUND */
         }
     } else {
@@ -864,7 +846,7 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
         DBG("  EDX           : 0x%x\n", xsp->extended_state[edx]);
     }
 
-    if (cpuid_supports_leaf7(info_p)) {
+    if (info_p->cpuid_max_basic >= 0x7) {
         /*
          * Leaf7 Features:
          */
@@ -933,30 +915,73 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
                     case CPUID_MODEL_CRYSTALWELL:
                         cpufamily = CPUFAMILY_INTEL_HASWELL;
                         break;
+                    case CPUID_MODEL_BAYTRAIL:
+                    case CPUID_MODEL_TANGIER:
+                    case CPUID_MODEL_AVOTON:
+                    case CPUID_MODEL_ANNIEDALE:
+                    case CPUID_MODEL_SOFIA:
+                        cpufamily = CPUFAMILY_INTEL_SILVERMONT;
+                        break;
                     case CPUID_MODEL_BROADWELL:
                     case CPUID_MODEL_BRYSTALWELL:
                         cpufamily = CPUFAMILY_INTEL_BROADWELL;
+                        break;
+                    case CPUID_MODEL_BRASWELL: /* merge with Silvermont? */
+                        cpufamily = CPUFAMILY_INTEL_AIRMONT;
                         break;
                     case CPUID_MODEL_SKYLAKE:
                     case CPUID_MODEL_SKYLAKE_DT:
                     case CPUID_MODEL_SKYLAKE_W:
                         cpufamily = CPUFAMILY_INTEL_SKYLAKE;
                         break;
+                    case CPUID_MODEL_APOLLOLAKE:
+                    case CPUID_MODEL_DENVERTON:
+                        cpufamily = CPUFAMILY_INTEL_GOLDMONT;
+                        break;
                     case CPUID_MODEL_KABYLAKE:
                     case CPUID_MODEL_KABYLAKE_DT:
                         cpufamily = CPUFAMILY_INTEL_KABYLAKE;
                         break;
+                    case CPUID_MODEL_GEMINILAKE:
+                        cpufamily = CPUFAMILY_INTEL_GOLDMONTPLUS;
+                        break;
                     case CPUID_MODEL_ICELAKE:
                     case CPUID_MODEL_ICELAKE_H:
                     case CPUID_MODEL_ICELAKE_DT:
+                    case CPUID_MODEL_ICELAKE_SP:
+                    case CPUID_MODEL_ICELAKE_DE:
                         cpufamily = CPUFAMILY_INTEL_ICELAKE;
+                        break;
+                    case CPUID_MODEL_COMETLAKE_DT:
+                        cpufamily = CPUFAMILY_INTEL_COMETLAKE;
+                        break;
+                    case CPUID_MODEL_TIGERLAKE_U:
+                    case CPUID_MODEL_TIGERLAKE_H:
+                        cpufamily = CPUFAMILY_INTEL_TIGERLAKE;
+                        break;
+                    case CPUID_MODEL_ROCKETLAKE:
+                        cpufamily = CPUFAMILY_INTEL_ROCKETLAKE;
+                        break;
+                    case CPUID_MODEL_ALDERLAKE: /* for ADL+: should the scheduler be tinkered with so the big.LITTLE architecture is more... refined as opposed to all cores being equal */
+                    case CPUID_MODEL_ALDERLAKE_P:
+                        cpufamily = CPUFAMILY_INTEL_ALDERLAKE;
+                        break;
+                    case CPUID_MODEL_RAPTORLAKE:
+                    case CPUID_MODEL_RAPTORLAKE_P:
+                        cpufamily = CPUFAMILY_INTEL_RAPTORLAKE;
+                        break;
+                    case CPUID_MODEL_SAPPHIRERAPIDS:
+                        cpufamily = CPUFAMILY_INTEL_SAPPHIRERAPIDS;
+                        break;
+                    case CPUID_MODEL_EMERALDRAPIDS:
+                        cpufamily = CPUFAMILY_INTEL_EMERALDRAPIDS;
                         break;
                 }
                 break;
         }
     } else if (info_p->cpuid_ven == CPUID_VEN_AMD) {
         switch (info_p->cpuid_family) {
-            case CPUID_FAMILY_AMD_15h:
+            case 0x15:
                 switch (info_p->cpuid_model) {
                     case CPUID_MODEL_AMD_ZAMBEZI: /* ZURICH, VALENCIA, INTERLAGOS */
                         cpufamily = CPUFAMILY_AMD_BULLDOZER;
@@ -979,7 +1004,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
                         panic("Unsupported AMD Family 15h Model! 0x%x", info_p->cpuid_model);
                 }
                 break;
-            case CPUID_FAMILY_AMD_16h:
+            case 0x16:
                 switch (info_p->cpuid_model) {
                     case CPUID_MODEL_AMD_KABINI: /* TEMASH, KYOTO */
                         cpufamily = CPUFAMILY_AMD_JAGUAR;
@@ -991,7 +1016,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
                         panic("Unsupported AMD Family 16h Model! 0x%x", info_p->cpuid_model);
                 }
                 break;
-            case CPUID_FAMILY_AMD_17h:
+            case 0x17:
                 switch (info_p->cpuid_model) {
                     case CPUID_MODEL_AMD_NAPLES: /* WHITEHAVEN, SUMMIT RIDGE, SNOWY OWL */
                     case CPUID_MODEL_AMD_RAVEN_RIDGE: /* GREAT HORNED OWL */
@@ -1014,7 +1039,7 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
                         panic("Unsupported AMD Family 17h Model! 0x%x", info_p->cpuid_model);
                 }
                 break;
-            case CPUID_FAMILY_AMD_19h:
+            case 0x19:
                 switch (info_p->cpuid_model) {
                     case CPUID_MODEL_AMD_CHAGALL:
                     case CPUID_MODEL_AMD_MILAN:
@@ -1025,12 +1050,21 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
                         break;
                     case CPUID_MODEL_AMD_RAPHAEL:
                     case CPUID_MODEL_AMD_PHOENIX:
-                    case CPUID_MODEL_AMD_PHOENIX_DESKTOP:
+                    case CPUID_MODEL_AMD_HAWKPOINT:
                     case CPUID_MODEL_AMD_PHOENIX2:
                         cpufamily = CPUFAMILY_AMD_ZEN4;
                         break;
                     default:
                         panic("Unsupported AMD Family 19h Model! 0x%x", info_p->cpuid_model);
+                }
+                break;
+            case 0x1A:
+                switch (info_p->cpuid_model) {
+                    case CPUID_MODEL_AMD_GRANITE_RIDGE:
+                        cpufamily = CPUFAMILY_AMD_ZEN5;
+                        break;
+                    default:
+                        panic("Unsupported AMD Family 1Ah Model! 0x%x", info_p->cpuid_model);
                 }
                 break;
             default:

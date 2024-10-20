@@ -265,10 +265,16 @@
 #define CPUID_MODEL_HASWELL             0x3C
 #define CPUID_MODEL_HASWELL_EP          0x3F
 #define CPUID_MODEL_HASWELL_ULT         0x45
+#define CPUID_MODEL_BAYTRAIL            0x37
+#define CPUID_MODEL_TANGIER             0x4A
+#define CPUID_MODEL_AVOTON              0x4D
+#define CPUID_MODEL_ANNIEDALE           0x5A
+#define CPUID_MODEL_SOFIA               0x5D
 #define CPUID_MODEL_BROADWELL           0x3D
 #define CPUID_MODEL_BROADWELL_ULX       0x3D
 #define CPUID_MODEL_BROADWELL_ULT       0x3D
 #define CPUID_MODEL_BRYSTALWELL         0x47
+#define CPUID_MODEL_BRASWELL            0x4C
 #define CPUID_MODEL_SKYLAKE             0x4E
 #define CPUID_MODEL_SKYLAKE_ULT         0x4E
 #define CPUID_MODEL_SKYLAKE_ULX         0x4E
@@ -277,15 +283,30 @@
 #define PLATID_XEON_SP_1                0x00
 #define PLATID_XEON_SP_2                0x07
 #define PLATID_MAYBE_XEON_SP            0x01
+#define CPUID_MODEL_APOLLOLAKE          0x5C
+#define CPUID_MODEL_DENVERTON           0x5F
 #define CPUID_MODEL_KABYLAKE            0x8E
 #define CPUID_MODEL_KABYLAKE_ULT        0x8E
 #define CPUID_MODEL_KABYLAKE_ULX        0x8E
 #define CPUID_MODEL_KABYLAKE_DT         0x9E
+#define CPUID_MODEL_GEMINILAKE          0x7A
 #define CPUID_MODEL_ICELAKE             0x7E
 #define CPUID_MODEL_ICELAKE_ULT         0x7E
 #define CPUID_MODEL_ICELAKE_ULX         0x7E
 #define CPUID_MODEL_ICELAKE_DT          0x7D
 #define CPUID_MODEL_ICELAKE_H           0x9F
+#define CPUID_MODEL_ICELAKE_SP          0x6A
+#define CPUID_MODEL_ICELAKE_DE          0x6C
+#define CPUID_MODEL_COMETLAKE_DT        0xA5
+#define CPUID_MODEL_TIGERLAKE_U         0x8C
+#define CPUID_MODEL_TIGERLAKE_H         0x8D
+#define CPUID_MODEL_ROCKETLAKE          0xA7
+#define CPUID_MODEL_ALDERLAKE           0x97
+#define CPUID_MODEL_ALDERLAKE_P         0x9A
+#define CPUID_MODEL_RAPTORLAKE          0xB7
+#define CPUID_MODEL_RAPTORLAKE_P        0xBA
+#define CPUID_MODEL_SAPPHIRERAPIDS      0x8F
+#define CPUID_MODEL_EMERALDRAPIDS       0xCF
 
 /* 
  * There's a lot of crossover of HEDT & Mainstream post-Zen. Blame AMD.
@@ -293,8 +314,7 @@
  * Location: Leaf 80000001, EBX, bits 31:28
  */
 
-#define CPUID_FAMILY_AMD_15h 0x15
-
+/* AMD 15h Family Model IDs */
 #define CPUID_MODEL_AMD_ZAMBEZI 0x01
 #define CPUID_MODEL_AMD_ZURICH CPUID_MODEL_AMD_ZAMBEZI
 #define CPUID_MODEL_AMD_VALENCIA CPUID_MODEL_AMD_ZURICH
@@ -314,8 +334,8 @@
 #define CPUID_MODEL_AMD_STONEY_RIDGE 0x70
 /* MISSING: Brown Falcon, Prairie Falcon */
 
-#define CPUID_FAMILY_AMD_16h 0x16
 
+/* AMD 16h Family Model IDs */
 #define CPUID_MODEL_AMD_KABINI 0x00
 #define CPUID_MODEL_AMD_TEMASH CPUID_MODEL_AMD_KABINI
 #define CPUID_MODEL_AMD_KYOTO CPUID_MODEL_AMD_TEMASH
@@ -324,8 +344,7 @@
 #define CPUID_MODEL_AMD_STEPPE_EAGLE CPUID_MODEL_AMD_BEEMA
 #define CPUID_MODEL_AMD_CROWNED_EAGLE CPUID_MODEL_AMD_STEPPE_EAGLE
 
-#define CPUID_FAMILY_AMD_17h 0x17
-
+/* AMD 17h Family Model IDs */
 #define CPUID_MODEL_AMD_NAPLES 0x01
 #define CPUID_MODEL_AMD_WHITEHAVEN CPUID_MODEL_AMD_NAPLES
 #define CPUID_MODEL_AMD_SUMMIT_RIDGE CPUID_MODEL_AMD_WHITEHAVEN
@@ -345,8 +364,7 @@
 #define CPUID_MODEL_AMD_VAN_GOGH 0x90
 #define CPUID_MODEL_AMD_MENDOCINO 0xA0
 
-#define CPUID_FAMILY_AMD_19h 0x19
-
+/* AMD 19h Family Model IDs */
 #define CPUID_MODEL_AMD_CHAGALL 0x08
 #define CPUID_MODEL_AMD_MILAN 0x11
 #define CPUID_MODEL_AMD_VERMEER 0x21
@@ -354,13 +372,15 @@
 #define CPUID_MODEL_AMD_CEZANNE 0x50
 #define CPUID_MODEL_AMD_RAPHAEL 0x61
 #define CPUID_MODEL_AMD_PHOENIX 0x74
-#define CPUID_MODEL_AMD_PHOENIX_DESKTOP 0x75
+#define CPUID_MODEL_AMD_HAWKPOINT 0x75
 #define CPUID_MODEL_AMD_PHOENIX2 0x78
 /*
  * Dragon Range?
  * If somebody finds the model for that line please add it here
  */
 
+/* AMD 1Ah Family Model IDs */
+#define CPUID_MODEL_AMD_GRANITE_RIDGE 0x44
 
 #define CPUID_VMM_FAMILY_NONE           0x0
 #define CPUID_VMM_FAMILY_UNKNOWN        0x1
