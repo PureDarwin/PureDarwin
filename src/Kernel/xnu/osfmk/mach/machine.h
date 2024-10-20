@@ -419,10 +419,33 @@ __END_DECLS
 #define CPUFAMILY_INTEL_SANDYBRIDGE     0x5490b78c
 #define CPUFAMILY_INTEL_IVYBRIDGE       0x1f65e835
 #define CPUFAMILY_INTEL_HASWELL         0x10b282dc
+#define CPUFAMILY_INTEL_SILVERMONT      0x35e4dae6
 #define CPUFAMILY_INTEL_BROADWELL       0x582ed09c
+#define CPUFAMILY_INTEL_AIRMONT         0x65403882
 #define CPUFAMILY_INTEL_SKYLAKE         0x37fc219f
+#define CPUFAMILY_INTEL_GOLDMONT        0x5aa3af84
 #define CPUFAMILY_INTEL_KABYLAKE        0x0f817246
+#define CPUFAMILY_INTEL_GOLDMONTPLUS    0x7579609d
 #define CPUFAMILY_INTEL_ICELAKE         0x38435547
+#define CPUFAMILY_INTEL_COMETLAKE       0x1cf8a03e
+#define CPUFAMILY_INTEL_TIGERLAKE       0xfd59ea01
+#define CPUFAMILY_INTEL_ROCKETLAKE      0x42bf2585
+#define CPUFAMILY_INTEL_ALDERLAKE       0xd30ad9b9
+#define CPUFAMILY_INTEL_RAPTORLAKE      0x072b3824
+#define CPUFAMILY_INTEL_SAPPHIRERAPIDS  0xadbf08de
+#define CPUFAMILY_INTEL_EMERALDRAPIDS   0xb1812dab
+#define CPUFAMILY_AMD_BULLDOZER         0xa67cf51c 
+#define CPUFAMILY_AMD_PILEDRIVER        0x26df7c2b
+#define CPUFAMILY_AMD_STEAMROLLER       0x94deb6cf
+#define CPUFAMILY_AMD_EXCAVATOR         0x016e0b7a
+#define CPUFAMILY_AMD_JAGUAR            0xa2809e27
+#define CPUFAMILY_AMD_PUMA              0x248fda86
+#define CPUFAMILY_AMD_ZEN               0xa0462bf0
+#define CPUFAMILY_AMD_ZENX              0x26af45f6 /* Zen+ */
+#define CPUFAMILY_AMD_ZEN2              0x7352772b
+#define CPUFAMILY_AMD_ZEN3              0x67f5ea5f
+#define CPUFAMILY_AMD_ZEN4              0x4cbfaf43
+#define CPUFAMILY_AMD_ZEN5              0x1b5515e1
 #define CPUFAMILY_ARM_9                 0xe73283ae
 #define CPUFAMILY_ARM_11                0x8ff620d8
 #define CPUFAMILY_ARM_XSCALE            0x53b005f5
@@ -446,10 +469,9 @@ __END_DECLS
 #define CPUSUBFAMILY_ARM_HP             1
 #define CPUSUBFAMILY_ARM_HG             2
 #define CPUSUBFAMILY_ARM_M              3
-#ifndef RC_HIDE_XNU_FIRESTORM
 #define CPUSUBFAMILY_ARM_HS             4
 #define CPUSUBFAMILY_ARM_HC_HD          5
-#endif /* !RC_HIDE_XNU_FIRESTORM */
+#define CPUSUBFAMILY_ARM_HA             6
 
 /* The following synonyms are deprecated: */
 #define CPUFAMILY_INTEL_6_23    CPUFAMILY_INTEL_PENRYN
