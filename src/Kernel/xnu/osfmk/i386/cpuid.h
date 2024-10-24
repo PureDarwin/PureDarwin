@@ -62,6 +62,13 @@
 #define _HBit(n)                (1ULL << ((n)+32))
 
 /*
+ * This is so we don't have a global isAMD variable.
+ */
+#define CPUID_VEN_UNKNOWN       0
+#define CPUID_VEN_INTEL         1
+#define CPUID_VEN_AMD           2
+
+/*
  * The CPUID_FEATURE_XXX values define 64-bit values
  * returned in %ecx:%edx to a CPUID request with %eax of 1:
  */
@@ -258,10 +265,16 @@
 #define CPUID_MODEL_HASWELL             0x3C
 #define CPUID_MODEL_HASWELL_EP          0x3F
 #define CPUID_MODEL_HASWELL_ULT         0x45
+#define CPUID_MODEL_BAYTRAIL            0x37
+#define CPUID_MODEL_TANGIER             0x4A
+#define CPUID_MODEL_AVOTON              0x4D
+#define CPUID_MODEL_ANNIEDALE           0x5A
+#define CPUID_MODEL_SOFIA               0x5D
 #define CPUID_MODEL_BROADWELL           0x3D
 #define CPUID_MODEL_BROADWELL_ULX       0x3D
 #define CPUID_MODEL_BROADWELL_ULT       0x3D
 #define CPUID_MODEL_BRYSTALWELL         0x47
+#define CPUID_MODEL_BRASWELL            0x4C
 #define CPUID_MODEL_SKYLAKE             0x4E
 #define CPUID_MODEL_SKYLAKE_ULT         0x4E
 #define CPUID_MODEL_SKYLAKE_ULX         0x4E
@@ -270,15 +283,104 @@
 #define PLATID_XEON_SP_1                0x00
 #define PLATID_XEON_SP_2                0x07
 #define PLATID_MAYBE_XEON_SP            0x01
+#define CPUID_MODEL_APOLLOLAKE          0x5C
+#define CPUID_MODEL_DENVERTON           0x5F
 #define CPUID_MODEL_KABYLAKE            0x8E
 #define CPUID_MODEL_KABYLAKE_ULT        0x8E
 #define CPUID_MODEL_KABYLAKE_ULX        0x8E
 #define CPUID_MODEL_KABYLAKE_DT         0x9E
+#define CPUID_MODEL_GEMINILAKE          0x7A
 #define CPUID_MODEL_ICELAKE             0x7E
 #define CPUID_MODEL_ICELAKE_ULT         0x7E
 #define CPUID_MODEL_ICELAKE_ULX         0x7E
 #define CPUID_MODEL_ICELAKE_DT          0x7D
 #define CPUID_MODEL_ICELAKE_H           0x9F
+#define CPUID_MODEL_ICELAKE_SP          0x6A
+#define CPUID_MODEL_ICELAKE_DE          0x6C
+#define CPUID_MODEL_COMETLAKE_DT        0xA5
+#define CPUID_MODEL_TIGERLAKE_U         0x8C
+#define CPUID_MODEL_TIGERLAKE_H         0x8D
+#define CPUID_MODEL_ROCKETLAKE          0xA7
+#define CPUID_MODEL_ALDERLAKE           0x97
+#define CPUID_MODEL_ALDERLAKE_P         0x9A
+#define CPUID_MODEL_RAPTORLAKE          0xB7
+#define CPUID_MODEL_RAPTORLAKE_P        0xBA
+#define CPUID_MODEL_SAPPHIRERAPIDS      0x8F
+#define CPUID_MODEL_EMERALDRAPIDS       0xCF
+
+/* 
+ * There's a lot of crossover of HEDT & Mainstream post-Zen. Blame AMD.
+ * HEDT & Mainstream (AM4) can be determined via the CPU's PkgType
+ * Location: Leaf 80000001, EBX, bits 31:28
+ */
+
+/* AMD 15h Family Model IDs */
+#define CPUID_MODEL_AMD_ZAMBEZI 0x01
+#define CPUID_MODEL_AMD_ZURICH CPUID_MODEL_AMD_ZAMBEZI
+#define CPUID_MODEL_AMD_VALENCIA CPUID_MODEL_AMD_ZURICH
+#define CPUID_MODEL_AMD_INTERLAGOS CPUID_MODEL_AMD_VALENCIA
+#define CPUID_MODEL_AMD_VISHERA 0x02
+#define CPUID_MODEL_AMD_DELHI CPUID_MODEL_AMD_VISHERA
+#define CPUID_MODEL_AMD_SEOUL CPUID_MODEL_AMD_DELHI
+#define CPUID_MODEL_AMD_WARSAW CPUID_MODEL_AMD_WARSAW
+#define CPUID_MODEL_AMD_ABU_DHABI CPUID_MODEL_AMD_WARSAW
+#define CPUID_MODEL_AMD_TRINITY 0x10
+#define CPUID_MODEL_AMD_RICHLAND 0x13
+#define CPUID_MODEL_AMD_KAVERI 0x30
+#define CPUID_MODEL_AMD_BALD_EAGLE CPUID_MODEL_AMD_KAVERI
+#define CPUID_MODEL_AMD_GODAVARI 0x38
+#define CPUID_MODEL_AMD_CARRIZO 0x60
+#define CPUID_MODEL_AMD_BRISTOL_RIDGE 0x65
+#define CPUID_MODEL_AMD_STONEY_RIDGE 0x70
+/* MISSING: Brown Falcon, Prairie Falcon */
+
+
+/* AMD 16h Family Model IDs */
+#define CPUID_MODEL_AMD_KABINI 0x00
+#define CPUID_MODEL_AMD_TEMASH CPUID_MODEL_AMD_KABINI
+#define CPUID_MODEL_AMD_KYOTO CPUID_MODEL_AMD_TEMASH
+#define CPUID_MODEL_AMD_MULLINS 0x30
+#define CPUID_MODEL_AMD_BEEMA CPUID_MODEL_AMD_MULLINS
+#define CPUID_MODEL_AMD_STEPPE_EAGLE CPUID_MODEL_AMD_BEEMA
+#define CPUID_MODEL_AMD_CROWNED_EAGLE CPUID_MODEL_AMD_STEPPE_EAGLE
+
+/* AMD 17h Family Model IDs */
+#define CPUID_MODEL_AMD_NAPLES 0x01
+#define CPUID_MODEL_AMD_WHITEHAVEN CPUID_MODEL_AMD_NAPLES
+#define CPUID_MODEL_AMD_SUMMIT_RIDGE CPUID_MODEL_AMD_WHITEHAVEN
+#define CPUID_MODEL_AMD_COLFAX 0x08
+#define CPUID_MODEL_AMD_PINNACLE_RIDGE CPUID_MODEL_AMD_COLFAX
+#define CPUID_MODEL_AMD_RAVEN_RIDGE 0x11
+#define CPUID_MODEL_AMD_GREAT_HORNED_OWL CPUID_MODEL_AMD_RAVEN_RIDGE
+#define CPUID_MODEL_AMD_PICASSO 0x18
+#define CPUID_MODEL_AMD_BANDED_KESTREL CPUID_MODEL_AMD_PICASSO
+#define CPUID_MODEL_AMD_DALI 0x20
+#define CPUID_MODEL_AMD_ROME 0x31
+#define CPUID_MODEL_AMD_CASTLE_PEAK CPUID_MODEL_AMD_ROME
+#define CPUID_MODEL_AMD_RENOIR 0x60
+#define CPUID_MODEL_AMD_GREY_HAWK CPUID_MODEL_AMD_RENOIR
+#define CPUID_MODEL_AMD_LUCIENNE 0x68
+#define CPUID_MODEL_AMD_MATISSE 0x71
+#define CPUID_MODEL_AMD_VAN_GOGH 0x90
+#define CPUID_MODEL_AMD_MENDOCINO 0xA0
+
+/* AMD 19h Family Model IDs */
+#define CPUID_MODEL_AMD_CHAGALL 0x08
+#define CPUID_MODEL_AMD_MILAN 0x11
+#define CPUID_MODEL_AMD_VERMEER 0x21
+#define CPUID_MODEL_AMD_REMBRANDT 0x44
+#define CPUID_MODEL_AMD_CEZANNE 0x50
+#define CPUID_MODEL_AMD_RAPHAEL 0x61
+#define CPUID_MODEL_AMD_PHOENIX 0x74
+#define CPUID_MODEL_AMD_HAWKPOINT 0x75
+#define CPUID_MODEL_AMD_PHOENIX2 0x78
+/*
+ * Dragon Range?
+ * If somebody finds the model for that line please add it here
+ */
+
+/* AMD 1Ah Family Model IDs */
+#define CPUID_MODEL_AMD_GRANITE_RIDGE 0x44
 
 #define CPUID_VMM_FAMILY_NONE           0x0
 #define CPUID_VMM_FAMILY_UNKNOWN        0x1
@@ -287,7 +389,6 @@
 #define CPUID_VMM_FAMILY_HYVE           0x4
 #define CPUID_VMM_FAMILY_HVF            0x5
 #define CPUID_VMM_FAMILY_KVM            0x6
-
 
 #if DEBUG || DEVELOPMENT
 
@@ -496,6 +597,8 @@ typedef struct i386_cpu_info {
 	uint64_t                cpuid_leaf7_extfeatures;
 	cpuid_tsc_leaf_t        cpuid_tsc_leaf;
 	cpuid_xsave_leaf_t      cpuid_xsave_leaf[2];
+  
+	uint8_t cpuid_ven; /* corresponds to the CPUID_VEN_XXX macros */
 } i386_cpu_info_t;
 
 #if defined(MACH_KERNEL_PRIVATE) && !defined(ASSEMBLER)

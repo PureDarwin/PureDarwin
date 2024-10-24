@@ -416,8 +416,9 @@ lapic_init(void)
 
 	kprintf("ID: 0x%x LDR: 0x%x\n", LAPIC_READ(ID), LAPIC_READ(LDR));
 	if ((LAPIC_READ(VERSION) & LAPIC_VERSION_MASK) < 0x14) {
-		panic("Local APIC version 0x%x, 0x14 or more expected\n",
+		kprintf("Local APIC version 0x%x, 0x14 or more expected by default\n",
 		    (LAPIC_READ(VERSION) & LAPIC_VERSION_MASK));
+		/* Continue anyways. AMD CPUs have different values IIRC */
 	}
 
 	/* Set up the lapic_id <-> cpu_number map and add this boot processor */
