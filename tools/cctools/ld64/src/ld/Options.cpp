@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <mach/vm_prot.h>
+#include <signal.h>
 #ifdef __APPLE__ // ld64-port
 #include <sys/sysctl.h>
 #endif
@@ -2490,6 +2491,8 @@ static const ld::PlatformInfo* isPlatformName(const char* arg)
 //
 void Options::parse(int argc, const char* argv[])
 {
+    bool fDebugStop = false;
+
     // Store the original args in the link snapshot.
     fLinkSnapshot.recordRawArgs(argc, argv);
 
@@ -4081,6 +4084,9 @@ void Options::parse(int argc, const char* argv[])
 			else if (strcmp(arg, "-adhoc_codesign") == 0 || strcmp(arg, "-no_adhoc_codesign") == 0) {
 				// Ignore these two flags. They are used only for Apple Silicon builds, which we do not support.
 			}
+            else if (strcmp(arg, "-debug_pause") == 0) {
+                fDebugStop = true;
+            }
 			// put this last so that it does not interfer with other options starting with 'i'
 			else if ( strncmp(arg, "-i", 2) == 0 ) {
 				const char* colon = strchr(arg, ':');
@@ -4139,6 +4145,13 @@ void Options::parse(int argc, const char* argv[])
 			fLinkSnapshot.createSnapshot();
 		}
 	}
+
+    if (fDebugStop) {
+        fprintf(stderr, "ld: pid %d pausing for debugger\n", getpid());
+
+        bool continue_program = false;
+        while (!continue_program) raise(SIGSTOP);
+    }
 }
 
 bool Options::shouldUseBuildVersion(ld::Platform plat, uint32_t minOSvers) const

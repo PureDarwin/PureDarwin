@@ -52,6 +52,10 @@ set_property(TARGET libsyscall_traps PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_
 
 add_library(libsystem_kernel_private_headers INTERFACE)
 target_include_directories(libsystem_kernel_private_headers INTERFACE private_include)
+target_include_directories(libsystem_kernel_private_headers INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/private_include)
+
+add_library(libsystem_kernel_bootstrap_headers INTERFACE)
+target_include_directories(libsystem_kernel_bootstrap_headers INTERFACE bootstrap_include)
 
 # END INTERFACE DEFINITION
 
@@ -416,6 +420,7 @@ target_include_directories(libsystem_kernel PRIVATE mach mach/mach mach/servers 
 target_include_directories(libsystem_kernel PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/internal_include)
 target_link_libraries(libsystem_kernel PRIVATE libsystem_kernel_private_headers)
 
+target_compile_options(libsystem_kernel INTERFACE -Wno-nullability-completeness)
 target_compile_options(libsystem_kernel PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 target_compile_definitions(libsystem_kernel PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050)
 
@@ -424,11 +429,11 @@ target_link_libraries(libsystem_kernel PRIVATE CrashReporterClient)
 target_link_libraries(libsystem_kernel PRIVATE libc_public_headers)
 target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
 
-target_link_options(libsystem_kernel PRIVATE -umbrella System -all_load)
-
 install(TARGETS libsystem_kernel DESTINATION usr/lib/system COMPONENT BaseSystem)
 
 # END DYNAMIC LIBRARY
+
+# INSTALL
 
 install(FILES wrappers/gethostuuid.h DESTINATION usr/include COMPONENT DeveloperTools)
 install(FILES wrappers/spawn/spawn.h DESTINATION usr/include COMPONENT DeveloperTools)
