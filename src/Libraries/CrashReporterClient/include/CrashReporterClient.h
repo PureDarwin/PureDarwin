@@ -29,6 +29,10 @@
 #ifndef __CrashReporterClient__
 #define __CrashReporterClient__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 #define CRASHREPORTER_ANNOTATIONS_SECTION "__crash_info"
@@ -55,5 +59,9 @@ struct crashreporter_annotations_t {
 
 CRASH_REPORTER_CLIENT_HIDDEN
 extern struct crashreporter_annotations_t gCRAnnotations;
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif /* __CrashReporterClient__ */
