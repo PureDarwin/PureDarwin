@@ -36,6 +36,7 @@
 */
 
 #define _FILE_OFFSET_BITS 64
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <sys/types.h>
