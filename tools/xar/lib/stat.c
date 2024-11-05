@@ -41,6 +41,8 @@
 */
 
 #define _FILE_OFFSET_BITS 64
+#define _GNU_SOURCE
+#define _XOPEN_SOURCE 500
 
 #include "config.h"
 #ifndef HAVE_ASPRINTF
@@ -197,7 +199,7 @@ DONE:
 			xar_prop_set(f, "acl/appleextended", t);
 			acl_free(t);
 		}
-		
+
 	}
 	acl_free(a);
 #endif /* !__APPLE__ */
@@ -305,7 +307,7 @@ static int32_t flags_archive(xar_t x, xar_file_t f, const struct stat *sb) {
 #ifdef HAVE_STRUCT_STAT_ST_FLAGS
 	if( !sb->st_flags )
 		return 0;
-	
+
 	if( !xar_check_prop(x, XAR_FLAG_FORK) )
 		return 0;
 #ifdef UF_NODUMP
@@ -470,7 +472,7 @@ int32_t xar_flags_extract(xar_t x, xar_file_t f, const char *file, char *buffer,
 #else
 	(void)x; (void)f; (void)file; (void)buffer; (void)len;
 #endif
-	
+
 	return 0;
 }
 
@@ -489,7 +491,7 @@ int32_t xar_stat_archive(xar_t x, xar_file_t f, const char *file, const char *bu
 			xar_prop_set(f, "type", "file");
 		return 0;
 	}
-	
+
 	if( S_ISREG(XAR(x)->sbcache.st_mode) && (XAR(x)->sbcache.st_nlink > 1) ) {
 		xar_file_t tmpf;
 		const char *id = xar_attr_get(f, NULL, "id");
@@ -636,7 +638,7 @@ int32_t xar_set_perm(xar_t x, xar_file_t f, const char *file, char *buffer, size
 	/* when writing to a buffer, there are no permissions to set */
 	if ( len )
 		return 0;
-	
+
 	/* in case we don't find anything useful in the archive */
 	u = geteuid();
 	g = getegid();
@@ -735,7 +737,7 @@ int32_t xar_set_perm(xar_t x, xar_file_t f, const char *file, char *buffer, size
 				xar_err_callback(x, XAR_SEVERITY_NONFATAL, XAR_ERR_ARCHIVE_EXTRACTION);
 			}
 #endif
-#endif 
+#endif
 	} else {
 		if( chown(file, u, g) ) {
 			xar_err_new(x);
@@ -816,7 +818,7 @@ int32_t xar_stat_extract(xar_t x, xar_file_t f, const char *file, char *buffer, 
 		if( (tmpll < 0) || (tmpll > 255) )
 			return -1;
 		minor = (uint32_t)tmpll;
-		
+
 		devt = xar_makedev(major, minor);
 		unlink(file);
 		if( mknod(file, modet, devt) ) {
@@ -882,10 +884,10 @@ int32_t xar_stat_extract(xar_t x, xar_file_t f, const char *file, char *buffer, 
 					const char *akey, *aval;
 					if( strncmp("data", ptr, 4) != 0 )
 						continue;
-	
+
 					if( xar_prop_get(tmpf, ptr, &val) )
 						continue;
-	
+
 					xar_prop_set(f, ptr, val);
 					a = xar_iter_new();
 					for(akey = xar_attr_first(tmpf, ptr, a); akey; akey = xar_attr_next(a)) {
