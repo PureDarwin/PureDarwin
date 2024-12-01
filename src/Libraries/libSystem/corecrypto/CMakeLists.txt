@@ -8,6 +8,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
 endif()
 
 include(corecrypto_shared.cmake)
+include(host_corecrypto_static.cmake)
 
 add_darwin_object_library(corecrypto_user)
 target_sources(corecrypto_user PRIVATE cc_user_stub.c)

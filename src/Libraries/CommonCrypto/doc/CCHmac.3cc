@@ -1,0 +1,63 @@
+.Dd March 22, 2007
+.Dt CCHMAC 3
+.Os
+.Sh NAME
+.Nm CCHmacInit ,
+.Nm CCHmacUpdate ,
+.Nm CCHmacFinal ,
+.Nm CCHmac
+.Nd Common HMAC Algorithm Interfaces
+.Sh LIBRARY
+These functions are found in libSystem.
+.Sh SYNOPSIS
+.In CommonCrypto/CommonHMAC.h
+.Ft void
+.Fn CCHmacInit "CCHmacContext *ctx" "CCHmacAlgorithm algorithm" "const void *key" "size_t keyLength"
+.Ft void
+.Fn CCHmacUpdate "CCHmacContext *ctx" "const void *data" "size_t dataLength"
+.Ft void
+.Fn CCHmacFinal "CCHmacContext *ctx" "void *macOut"
+.Ft void
+.Fn CCHmac "CCHmacAlgorithm algorithm" "const void *key" "size_t keyLength" "const void *data" "size_t dataLength" "void *macOut"
+.Sh DESCRIPTION
+This interface provides access to a number of HMAC
+algorithms. The following algorithms are available:
+.Bl -tag -width "kCCHmacAlgSHA224"
+.It kCCHmacAlgSHA1
+- HMAC with SHA1 digest
+.It kCCHmacAlgMD5
+- HMAC with MD5 digest
+.It kCCHmacAlgSHA256
+- HMAC with SHA256 digest
+.It kCCHmacAlgSHA384
+- HMAC with SHA384 digest
+.It kCCHmacAlgSHA224
+- HMAC with SHA224 digest
+.It kCCHmacAlgSHA512
+- HMAC with SHA512 digest
+.El
+.Pp
+The MAC must be verified by comparing the computed and expected values
+using
+.Fn timingsafe_bcmp
+Other comparison functions (e.g.
+.Fn memcmp
+) must not be used as they may be vulnerable to practical timing attacks,
+leading to MAC forgery.
+.Pp
+The object declared in this interface, CCHmacContext, provides
+a handle for use with the
+.Fn CCHmacInit
+.Fn CCHmacUpdate
+and
+.Fn CCHmacFinal
+calls to complete the HMAC operation.  In addition there is a one shot function,
+.Fn CCHmac
+that performs a complete HMAC on a single piece of data.
+.Sh HISTORY
+These functions are available in OS X 10.5 and later.
+.Sh SEE ALSO
+.Xr CC_MD5 3cc ,
+.Xr CC_SHA 3cc ,
+.Xr CC_crypto 3cc ,
+.Xr CCCrypto 3cc
