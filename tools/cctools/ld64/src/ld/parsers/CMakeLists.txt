@@ -1,6 +1,7 @@
 add_library(host_ld_libparsers STATIC)
 target_sources(host_ld_libparsers PRIVATE
     archive_file.cpp
+    generic_dylib_file.cpp
     lto_file.cpp
     macho_dylib_file.cpp
     macho_relocatable_file.cpp

@@ -384,6 +384,11 @@ void doPass(const Options& opts, ld::Internal& internal)
 			is64 = true;
 			break;
 #endif
+#if SUPPORT_ARCH_arm64_32
+		case CPU_TYPE_ARM64_32:
+			is64 = false;
+			break;
+#endif
 	}
 	
 	// make GOT entries

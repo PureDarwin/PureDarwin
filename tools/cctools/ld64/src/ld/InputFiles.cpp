@@ -44,6 +44,7 @@
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <mach-o/fat.h>
+#include <sys/sysctl.h>
 #include <libkern/OSAtomic.h>
 
 #include <string>
@@ -180,11 +181,6 @@ private:
 ld::Section CustomStackAtom::_s_section("__UNIXSTACK", "__stack", ld::Section::typeStack, true);
 
 
-static bool isCompilerSupportLib(const char* path) {
-	const char* libName = strrchr(path, '/');
-	return ( (libName != NULL) && (strncmp(libName, "/libclang_rt", 12) == 0) );
-}
-
 
 const char* InputFiles::extractFileInfo(const uint8_t* p, unsigned len, const char* path, ld::Platform& platform)
 {
@@ -192,10 +188,10 @@ const char* InputFiles::extractFileInfo(const uint8_t* p, unsigned len, const ch
 
 	const char* result = mach_o::relocatable::archName(p);
 	if ( result != NULL ) {
-		cpu_type_t    type;
-		cpu_subtype_t subtype;
-		uint32_t      ignore;
-		mach_o::relocatable::isObjectFile(p, len, &type, &subtype, &platform, &ignore);
+		cpu_type_t    	type;
+		cpu_subtype_t 	subtype;
+		ld::VersionSet	platformsFound;
+		mach_o::relocatable::isObjectFile(p, len, &type, &subtype, platformsFound);
 		return result;
 	}
 
@@ -237,13 +233,14 @@ const char* InputFiles::extractFileInfo(const uint8_t* p, unsigned len, const ch
 
 ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib)
 {
+    bool fromSDK = _options.fromSDK(info.path);
 #ifdef TAPI_SUPPORT
 	// handle inlined framework first.
 	if (info.isInlined) {
 		auto interface = _options.findTAPIFile(info.path);
 		if (!interface)
 			throwf("could not find inlined dylib file: %s", info.path);
-		auto file = textstub::dylib::parse(info.path, interface, info.modTime, info.ordinal, _options, indirectDylib);
+		auto file = textstub::dylib::parse(info.path, interface, info.modTime, info.ordinal, _options, indirectDylib, fromSDK);
 		if (!file)
 			throwf("could not parse inlined dylib file: %s(%s)", interface->getInstallName().c_str(), info.path);
 		return file;
@@ -297,7 +294,18 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 			// Look for a fallback slice.
 			for (uint32_t i = 0; i < sliceCount; ++i) {
 				if ( OSSwapBigToHostInt32(archs[i].cputype) == (uint32_t)_options.fallbackArchitecture() &&
-					OSSwapBigToHostInt32(archs[i].cpusubtype) == (uint32_t)_options.fallbackSubArchitecture() ) {
+					(OSSwapBigToHostInt32(archs[i].cpusubtype) & ~CPU_SUBTYPE_MASK) == (uint32_t)_options.fallbackSubArchitecture() ) {
+					sliceToUse = i;
+					sliceFound = true;
+					break;
+				}
+			}
+		}
+		if ( !sliceFound && (_options.architecture() == CPU_TYPE_ARM64) && (_options.subArchitecture() == CPU_SUBTYPE_ARM64_ALL) ) {
+			// <rdar://problem/65681348> let arm64 executables link against arm64e slice of dylibs
+			for (uint32_t i = 0; i < sliceCount; ++i) {
+				if ( (OSSwapBigToHostInt32(archs[i].cputype) == CPU_TYPE_ARM64) &&
+					(OSSwapBigToHostInt32(archs[i].cpusubtype) & ~CPU_SUBTYPE_MASK) == CPU_SUBTYPE_ARM64E) {
 					sliceToUse = i;
 					sliceFound = true;
 					break;
@@ -362,6 +370,8 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 	objOpts.usingBitcode		= _options.bundleBitcode();
 	objOpts.maxDefaultCommonAlignment = _options.maxDefaultCommonAlign();
 	objOpts.internalSDK 		= _options.internalSDK();
+	objOpts.forceHidden			= false;
+	objOpts.platformMismatchesAreWarning = _options.platformMismatchesAreWarning();
 
 	ld::relocatable::File* objResult = mach_o::relocatable::parse(p, len, info.path, info.modTime, info.ordinal, objOpts);
 	if ( objResult != NULL ) {
@@ -387,12 +397,12 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 		case Options::kDynamicExecutable:
 		case Options::kDynamicLibrary:
 		case Options::kDynamicBundle:	
-			dylibResult = mach_o::dylib::parse(p, len, info.path, info.modTime, _options, info.ordinal, info.options.fBundleLoader, indirectDylib);
+			dylibResult = mach_o::dylib::parse(p, len, info.path, info.modTime, _options, info.ordinal, info.options.fBundleLoader, indirectDylib, fromSDK);
 			if ( dylibResult != NULL ) {
 				return dylibResult;
 			}
 #ifdef TAPI_SUPPORT
-			dylibResult = textstub::dylib::parse(p, len, info.path, info.modTime, _options, info.ordinal, info.options.fBundleLoader, indirectDylib);
+			dylibResult = textstub::dylib::parse(p, len, info.path, info.modTime, _options, info.ordinal, info.options.fBundleLoader, indirectDylib, fromSDK);
 			if ( dylibResult != NULL ) {
 				return dylibResult;
 			}
@@ -410,6 +420,7 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 	// see if it is a static library
 	::archive::ParserOptions archOpts;
 	archOpts.objOpts				= objOpts;
+	archOpts.objOpts.forceHidden	= info.options.fLoadHidden;
 	archOpts.forceLoadThisArchive	= info.options.fForceLoad;
 	archOpts.forceLoadAll			= _options.fullyLoadArchives();
 	archOpts.forceLoadObjC			= _options.loadAllObjcObjectsFromArchives();
@@ -458,7 +469,7 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 				if ( realpath(ldPath, tmpPath) != NULL ) {
 					char* lastSlash = strrchr(tmpPath, '/');
 					if ( lastSlash != NULL )
-						strcpy(lastSlash, "/../lib/llvm/libLTO.so");
+						strcpy(lastSlash, "/../lib/libLTO.dylib");
 					libLTO = tmpPath;
 					if ( realpath(tmpPath, libLTOPath) != NULL ) 
 						libLTO = libLTOPath;
@@ -494,7 +505,7 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 			const char* fileArchName = extractFileInfo(p, len, info.path, filePlatform);
 			throwf("building for %s-%s but attempting to link with file built for %s-%s",
 					_options.platforms().to_str().c_str(), _options.architectureName(),
-					ld::platformInfo(filePlatform).printName, fileArchName);
+					ld::nameFromPlatform(filePlatform), fileArchName);
 		}
 	}
 }
@@ -556,7 +567,8 @@ void InputFiles::logArchive(ld::File* file) const
 		char realName[MAXPATHLEN];
 		if ( realpath(fullPath, realName) != NULL )
 			fullPath = realName;
-		logTraceInfo("[Logging for XBS] Used static archive: %s\n", fullPath);
+		if ( _options.traceArchives() )
+			logTraceInfo("[Logging for XBS] Used static archive: %s\n", fullPath);
 		
 		std::string archivePath(fullPath);
 		_archiveFilePaths.push_back(archivePath);
@@ -709,6 +721,8 @@ void InputFiles::addLinkerOptionLibraries(ld::Internal& state, ld::File::AtomHan
 							dylibReader->forEachAtom(handler);
 							dylibReader->setImplicitlyLinked();
 							dylibReader->setSpeculativelyLoaded();
+							if ( state.linkerOptionNeededFrameworks.count(frameworkName) )
+								dylibReader->setNeededDylib();
 							this->addDylib(dylibReader, info);
 						}
 					}
@@ -757,6 +771,8 @@ void InputFiles::addLinkerOptionLibraries(ld::Internal& state, ld::File::AtomHan
 						dylibReader->setImplicitlyLinked();
 						dylibReader->setSpeculativelyLoaded();
 						this->addDylib(dylibReader, info);
+						if ( state.linkerOptionNeededLibraries.count(libName) )
+							dylibReader->setNeededDylib();
 					}
 					else if ( archiveReader != NULL ) {
 						_searchLibraries.push_back(LibraryInfo(archiveReader));
@@ -1028,7 +1044,7 @@ void InputFiles::startThread(void (*threadFunc)(InputFiles *)) const {
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	// set a nice big stack (same as main thread) because some code uses potentially large stack buffers
-	pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+	pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
 	pthread_create(&thread, &attr, (void *(*)(void*))threadFunc, (void *)this);
 	pthread_detach(thread);
 	pthread_attr_destroy(&attr);
@@ -1126,9 +1142,9 @@ ld::File* InputFiles::addDylib(ld::dylib::File* reader, const Options::FileInfo&
 		else 
 			warning("ignoring upward dylib option for %s\n", info.path);
 	}
-	if ( info.options.fLazyLoad )
-		reader->setWillBeLazyLoadedDylb();
-	
+	if ( info.options.fNeeded )
+		reader->setNeededDylib();
+
 	// add to map of loaded dylibs
 	const char* installPath = reader->installPath();
 	if ( installPath != NULL ) {

@@ -232,6 +232,9 @@ template <> cpu_type_t File<x86>::architecture()    { return CPU_TYPE_I386; }
 template <> cpu_type_t File<x86_64>::architecture() { return CPU_TYPE_X86_64; }
 template <> cpu_type_t File<arm>::architecture()    { return CPU_TYPE_ARM; }
 template <> cpu_type_t File<arm64>::architecture()  { return CPU_TYPE_ARM64; }
+#if SUPPORT_ARCH_arm64_32
+template <> cpu_type_t File<arm64_32>::architecture()  { return CPU_TYPE_ARM64_32; }
+#endif
 
 template <typename A>
 bool File<A>::validMachOFile(const uint8_t* fileContent, uint64_t fileLength, const mach_o::relocatable::ParserOptions& opts)
@@ -680,6 +683,12 @@ ld::archive::File* parse(const uint8_t* fileContent, uint64_t fileLength,
 				return archive::Parser<arm64>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
 			break;
 #endif
+#if SUPPORT_ARCH_arm64_32
+		case CPU_TYPE_ARM64_32:
+			if ( archive::Parser<arm64_32>::validFile(fileContent, fileLength, opts.objOpts) )
+				return archive::Parser<arm64_32>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
+			break;
+#endif
 	}
 	return NULL;
 }
@@ -706,11 +715,15 @@ bool isArchiveFile(const uint8_t* fileContent, uint64_t fileLength, ld::Platform
 #endif
 		*archiveArchName = mach_o::relocatable::archName(p->content());
 		if ( *archiveArchName != NULL ) {
-			cpu_type_t    type;
-			cpu_subtype_t subtype;
-			uint32_t      ignore;
-			if ( mach_o::relocatable::isObjectFile(p->content(), p->contentSize(), &type, &subtype, platform, &ignore) )
+			cpu_type_t    	type;
+			cpu_subtype_t 	subtype;
+			ld::VersionSet	platformsFound;
+			if ( mach_o::relocatable::isObjectFile(p->content(), p->contentSize(), &type, &subtype, platformsFound) ) {
+				platformsFound.forEach(^(ld::Platform aPlat, uint32_t minVersion, uint32_t sdkVersion, bool& stop) {
+					*platform = aPlat;
+				});
 				return true;
+			}
 		}
 	}
 	return false;

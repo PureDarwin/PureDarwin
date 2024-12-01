@@ -138,6 +138,7 @@ private:
 	uint8_t*					copyDyldEnvLoadCommand(uint8_t* p, const char* env) const;
 	uint8_t*					copyLinkerOptionsLoadCommand(uint8_t* p, const std::vector<const char*>&) const;
 	uint8_t*					copyOptimizationHintsLoadCommand(uint8_t* p) const;
+	uint8_t*					copyCodeSignatureLoadCommand(uint8_t* p) const;
 
 	uint32_t					sectionFlags(ld::Internal::FinalSection* sect) const;
 	bool						sectionTakesNoDiskSpace(ld::Internal::FinalSection* sect) const;
@@ -167,6 +168,7 @@ private:
 	bool						_hasOptimizationHints;
 	bool						_hasExportsTrieLoadCommand;
 	bool						_hasChainedFixupsLoadCommand;
+	bool						_hasCodeSignature;
 	bool						_simulatorSupportDylib;
 	ld::VersionSet			 	_platforms;
 	uint32_t					_dylibLoadCommmandsCount;
@@ -202,7 +204,7 @@ HeaderAndLoadCommandsAtom<A>::HeaderAndLoadCommandsAtom(const Options& opts, ld:
 		_toolsVersions(state.toolsVersions)
 {
 	bzero(_uuid, 16);
-	_hasDyldInfoLoadCommand = opts.makeCompressedDyldInfo();
+	_hasDyldInfoLoadCommand = opts.makeCompressedDyldInfo() || state.cantUseChainedFixups;
 	_hasDyldLoadCommand = ((opts.outputKind() == Options::kDynamicExecutable) || (_options.outputKind() == Options::kDyld));
 	_hasDylibIDLoadCommand = (opts.outputKind() == Options::kDynamicLibrary);
 	_hasThreadLoadCommand = _options.needsThreadLoadCommand();
@@ -213,8 +215,9 @@ HeaderAndLoadCommandsAtom<A>::HeaderAndLoadCommandsAtom(const Options& opts, ld:
 	_hasSymbolTableLoadCommand = true;
 	_hasUUIDLoadCommand = (opts.UUIDMode() != Options::kUUIDNone);
 	_hasOptimizationHints = (_state.someObjectHasOptimizationHints && (opts.outputKind() == Options::kObjectFile));
-	_hasExportsTrieLoadCommand = opts.makeChainedFixups() && opts.dyldLoadsOutput();
-	_hasChainedFixupsLoadCommand = opts.makeChainedFixups() && opts.dyldLoadsOutput();
+	_hasExportsTrieLoadCommand = opts.makeChainedFixups() && !state.cantUseChainedFixups && opts.dyldLoadsOutput();
+	_hasCodeSignature = opts.adHocSign();
+	_hasChainedFixupsLoadCommand = opts.makeChainedFixups() && !state.cantUseChainedFixups && opts.dyldOrKernelLoadsOutput();
 
 	switch ( opts.outputKind() ) {
 		case Options::kDynamicExecutable:
@@ -236,14 +239,20 @@ HeaderAndLoadCommandsAtom<A>::HeaderAndLoadCommandsAtom(const Options& opts, ld:
 			}
 			for (const char* frameworkName : _state.unprocessedLinkerOptionFrameworks) {
 				std::vector<const char*>* lo = new std::vector<const char*>();
-				lo->push_back("-framework");
+				if ( _state.linkerOptionNeededFrameworks.count(frameworkName) )
+					lo->push_back("-needed_framework");
+				else
+					lo->push_back("-framework");
 				lo->push_back(frameworkName);
 				_linkerOptions.push_back(*lo);
 			};
 			for (const char* libName : _state.unprocessedLinkerOptionLibraries) {
 				std::vector<const char*>* lo = new std::vector<const char*>();
 				char * s = new char[strlen(libName)+3];
-				strcpy(s, "-l");
+				if ( _state.linkerOptionNeededLibraries.count(libName) )
+					strcpy(s, "-needed-l");
+				else
+					strcpy(s, "-l");
 				strcat(s, libName);
 				lo->push_back(s);
 				_linkerOptions.push_back(*lo);
@@ -522,7 +531,10 @@ uint64_t HeaderAndLoadCommandsAtom<A>::size() const
 	
 	if ( _hasOptimizationHints )
 		sz += sizeof(macho_linkedit_data_command<P>);
-		
+
+	if ( _hasCodeSignature )
+		sz += sizeof(macho_linkedit_data_command<P>);
+
 	return sz;
 }
 
@@ -607,6 +619,9 @@ uint32_t HeaderAndLoadCommandsAtom<A>::commandsCount() const
 	if ( _hasOptimizationHints )
 		++count;
 		
+	if ( _hasCodeSignature )
+		++count;
+
 	return count;
 }
 
@@ -696,11 +711,17 @@ template <> uint32_t HeaderAndLoadCommandsAtom<x86>::magic() const		{ return MH_
 template <> uint32_t HeaderAndLoadCommandsAtom<x86_64>::magic() const	{ return MH_MAGIC_64; }
 template <> uint32_t HeaderAndLoadCommandsAtom<arm>::magic() const		{ return MH_MAGIC; }
 template <> uint32_t HeaderAndLoadCommandsAtom<arm64>::magic() const		{ return MH_MAGIC_64; }
+#if SUPPORT_ARCH_arm64_32
+template <> uint32_t HeaderAndLoadCommandsAtom<arm64_32>::magic() const		{ return MH_MAGIC; }
+#endif
 
 template <> uint32_t HeaderAndLoadCommandsAtom<x86>::cpuType() const	{ return CPU_TYPE_I386; }
 template <> uint32_t HeaderAndLoadCommandsAtom<x86_64>::cpuType() const	{ return CPU_TYPE_X86_64; }
 template <> uint32_t HeaderAndLoadCommandsAtom<arm>::cpuType() const	{ return CPU_TYPE_ARM; }
 template <> uint32_t HeaderAndLoadCommandsAtom<arm64>::cpuType() const	{ return CPU_TYPE_ARM64; }
+#if SUPPORT_ARCH_arm64_32
+template <> uint32_t HeaderAndLoadCommandsAtom<arm64_32>::cpuType() const	{ return CPU_TYPE_ARM64_32; }
+#endif
 
 
 template <>
@@ -730,6 +751,13 @@ uint32_t HeaderAndLoadCommandsAtom<arm64>::cpuSubType() const
 	return _state.cpuSubType;
 }
 
+#if SUPPORT_ARCH_arm64_32
+template <>
+uint32_t HeaderAndLoadCommandsAtom<arm64_32>::cpuSubType() const
+{
+	return CPU_SUBTYPE_ARM64_32_V8;
+}
+#endif
 
 
 template <typename A>
@@ -879,6 +907,7 @@ uint32_t HeaderAndLoadCommandsAtom<A>::sectionFlags(ld::Internal::FinalSection* 
 			return S_REGULAR;
 		case ld::Section::typeObjCClassRefs:
 		case ld::Section::typeObjC2CategoryList:
+		case ld::Section::typeObjC2ClassList:
 			return S_REGULAR | S_ATTR_NO_DEAD_STRIP;
 		case ld::Section::typeZeroFill:
 			if ( _options.optimizeZeroFill() )
@@ -1258,10 +1287,11 @@ template <typename A>
 {
 	macho_build_version_command<P>* cmd = (macho_build_version_command<P>*)p;
 
-	// temp hack until iOSMac SDK version plumbed through
-	if (platform == ld::Platform::iOSMac)
+	// If we are on iOSMac and see a pre-13.0 SDK version it means we are using an old clang driver and should set the version
+	// to 13.0
+	if (platform == ld::Platform::iOSMac && sdkVersion < 0x000D0000) {
 		sdkVersion = 0x000D0000;
-
+	}
 	cmd->set_cmd(LC_BUILD_VERSION);
 	cmd->set_cmdsize(alignedSize(sizeof(macho_build_version_command<P>) + sizeof(macho_build_tool_version<P>)*_toolsVersions.size()));
 	cmd->set_platform((uint32_t)platform);
@@ -1381,6 +1411,29 @@ uint8_t* HeaderAndLoadCommandsAtom<arm64>::copyThreadsLoadCommand(uint8_t* p) co
 	return p + threadLoadCommandSize();
 }
 
+#if SUPPORT_ARCH_arm64_32
+template <>
+uint32_t HeaderAndLoadCommandsAtom<arm64_32>::threadLoadCommandSize() const
+{
+	return this->alignedSize(16 + 34 * 8); // base size + ARM_EXCEPTION_STATE64_COUNT * 4
+}
+
+template <>
+uint8_t* HeaderAndLoadCommandsAtom<arm64_32>::copyThreadsLoadCommand(uint8_t* p) const
+{
+	assert(_state.entryPoint != NULL);
+	pint_t start = _state.entryPoint->finalAddress(); 
+	macho_thread_command<P>* cmd = (macho_thread_command<P>*)p;
+	cmd->set_cmd(LC_UNIXTHREAD);
+	cmd->set_cmdsize(threadLoadCommandSize());
+	cmd->set_flavor(6);	 // ARM_THREAD_STATE64
+	cmd->set_count(68);	 // ARM_EXCEPTION_STATE64_COUNT
+	cmd->set_thread_register(64, start);		// pc
+	if ( _options.hasCustomStack() )
+		cmd->set_thread_register(62, _options.customStackAddr());	// sp
+	return p + threadLoadCommandSize();
+}
+#endif
 
 template <typename A>
 uint8_t* HeaderAndLoadCommandsAtom<A>::copyEntryPointLoadCommand(uint8_t* p) const
@@ -1437,9 +1490,7 @@ uint8_t* HeaderAndLoadCommandsAtom<A>::copyDylibLoadCommand(uint8_t* p, const ld
 		warning("cannot weak upward link.  Dropping weak for %s", dylib->installPath());
 	if ( weakLink && reExport )
 		warning("cannot weak re-export a dylib.  Dropping weak for %s", dylib->installPath());
-	if ( dylib->willBeLazyLoadedDylib() )
-		cmd->set_cmd(LC_LAZY_LOAD_DYLIB);
-	else if ( reExport )
+	if ( reExport )
 		cmd->set_cmd(LC_REEXPORT_DYLIB);
 	else if ( upward )
 		cmd->set_cmd(LC_LOAD_UPWARD_DYLIB);
@@ -1574,8 +1625,6 @@ uint8_t* HeaderAndLoadCommandsAtom<A>::copyLinkerOptionsLoadCommand(uint8_t* p, 
 	return p + sz;
 }
 
-
-
 template <typename A>
 uint8_t* HeaderAndLoadCommandsAtom<A>::copyOptimizationHintsLoadCommand(uint8_t* p) const
 {
@@ -1584,6 +1633,17 @@ uint8_t* HeaderAndLoadCommandsAtom<A>::copyOptimizationHintsLoadCommand(uint8_t*
 	cmd->set_cmdsize(sizeof(macho_linkedit_data_command<P>));
 	cmd->set_dataoff(_writer.optimizationHintsSection->fileOffset);
 	cmd->set_datasize(_writer.optimizationHintsSection->size);
+	return p + sizeof(macho_linkedit_data_command<P>);
+}
+
+template <typename A>
+uint8_t* HeaderAndLoadCommandsAtom<A>::copyCodeSignatureLoadCommand(uint8_t* p) const
+{
+	macho_linkedit_data_command<P>* cmd = (macho_linkedit_data_command<P>*)p;
+	cmd->set_cmd(LC_CODE_SIGNATURE);
+	cmd->set_cmdsize(sizeof(macho_linkedit_data_command<P>));
+	cmd->set_dataoff(_writer.codeSignatureSection->fileOffset);
+	cmd->set_datasize(_writer.codeSignatureSection->size);
 	return p + sizeof(macho_linkedit_data_command<P>);
 }
 
@@ -1597,6 +1657,14 @@ void HeaderAndLoadCommandsAtom<A>::copyRawContent(uint8_t buffer[]) const
 	mh->set_magic(this->magic());
 	mh->set_cputype(this->cpuType());
 	mh->set_cpusubtype(this->cpuSubType());
+	if (_state.hasArm64eABIVersion) {
+		if ( _options.dyldLoadsOutput() && !_options.platforms().minOS(ld::version2020Fall) ) {
+			// when targeting older OSs (e.g. iOS 13), don't set ABI bits
+		}
+		else {
+			mh->set_cpusubtypeflags(_state.arm64eABIVersion);
+		}
+	}
 	mh->set_filetype(this->fileType());
 	mh->set_ncmds(this->commandsCount());
 	mh->set_sizeofcmds(this->size()-sizeof(macho_header<P>));
@@ -1713,6 +1781,8 @@ void HeaderAndLoadCommandsAtom<A>::copyRawContent(uint8_t buffer[]) const
 	if ( _hasOptimizationHints )
 		p = this->copyOptimizationHintsLoadCommand(p);
  
+	if ( _hasCodeSignature )
+		p = this->copyCodeSignatureLoadCommand(p);
 }
 
 

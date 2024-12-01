@@ -31,6 +31,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <limits.h>

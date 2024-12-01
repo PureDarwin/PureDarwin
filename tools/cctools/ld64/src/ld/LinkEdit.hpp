@@ -30,6 +30,8 @@
 #include <errno.h>
 #include <limits.h>
 #include <unistd.h>
+#include <CommonCrypto/CommonDigest.h>
+#include <CommonCrypto/CommonDigestSPI.h>
 
 #include <vector>
 #include <unordered_map>
@@ -38,7 +40,11 @@
 #include "ld.hpp"
 #include "Architectures.hpp"
 #include "MachOFileAbstraction.hpp"
-#include "code-sign-blobs/superblob.h"
+#include "libcodedirectory.h"
+
+#ifndef CS_LINKER_SIGNED
+	#define CS_LINKER_SIGNED            0x00020000  /* Automatically signed by the linker */
+#endif
 
 namespace ld {
 namespace tool {
@@ -105,6 +111,14 @@ public:
 	
 	void append_mem(const void* mem, size_t len) {
 		_data.insert(_data.end(), (uint8_t*)mem, (uint8_t*)mem + len);
+	}
+
+	// adds 'len' bytes to buffer and returns pointer to start of block
+	uint8_t* alloc(size_t len) {
+		size_t start = _data.size();
+		for (size_t i=0; i < len; ++i)
+			_data.push_back(0);
+		return &_data[start];
 	}
 
 	static unsigned int	uleb128_size(uint64_t value) {
@@ -1213,19 +1227,22 @@ void ChainedInfoAtom<A>::encode() const
 	this->_encodedData.bytes().reserve(1024);
 
 	uint16_t format = DYLD_CHAINED_IMPORT;
-	if ( _writer._chainedFixupBinds.hasHugeAddends() )
+	if ( _writer._chainedFixupBinds.hasHugeSymbolStrings() )
+		format = DYLD_CHAINED_IMPORT_ADDEND64;
+	else if ( _writer._chainedFixupBinds.hasHugeAddends() )
 		format = DYLD_CHAINED_IMPORT_ADDEND64;
 	else if ( _writer._chainedFixupBinds.hasLargeAddends() )
 		format = DYLD_CHAINED_IMPORT_ADDEND;
 	dyld_chained_fixups_header header;
 	header.fixups_version = 0;
-	header.starts_offset  = sizeof(dyld_chained_fixups_header);
+	header.starts_offset  = (sizeof(dyld_chained_fixups_header)+7 & -8); // 8-byte align
 	header.imports_offset = 0;	// fixed up later
 	header.symbols_offset = 0;	// fixed up later
 	header.imports_count  = _writer._chainedFixupBinds.count();
 	header.imports_format = format;
 	header.symbols_format = 0;
 	this->_encodedData.append_mem(&header, sizeof(dyld_chained_fixups_header));
+	this->_encodedData.pad_to_size(8);
 	const unsigned segsHeaderOffset = this->_encodedData.size();
 
 	// write starts table
@@ -1236,31 +1253,42 @@ void ChainedInfoAtom<A>::encode() const
 	uint32_t emptyOffset = 0;
 	for (unsigned i=1; i < _writer._chainedFixupSegments.size(); ++i)
 		this->_encodedData.append_mem(&emptyOffset, sizeof(uint32_t)); // fixed up later if segment used
-	unsigned segIndex = 0;
-	uint64_t baseAddress = 0;
+	unsigned segIndex         = 0;
+	uint64_t textStartAddress = 0;
 	uint64_t maxRebaseAddress = 0;
 	for (OutputFile::ChainedFixupSegInfo& segInfo : _writer._chainedFixupSegments) {
-		if ( strcmp(segInfo.name, "__TEXT") == 0 )
-			baseAddress = segInfo.startAddr;
-		else if ( strcmp(segInfo.name, "__LINKEDIT") == 0 )
+		if ( strcmp(segInfo.name, "__TEXT") == 0 ) {
+			textStartAddress = segInfo.startAddr;
+		}
+		else if ( strcmp(segInfo.name, "__LINKEDIT") == 0 ) {
+			uint64_t baseAddress = textStartAddress;
+			if ( (segInfo.pointerFormat == DYLD_CHAINED_PTR_32) && (baseAddress == 0x4000) )
+				baseAddress = 0; // 32-bit main executables have rebase targets that are zero based
 			maxRebaseAddress = (segInfo.startAddr - baseAddress + 0x00100000-1) & -0x00100000; // align to 1MB
+		}
 	}
 	_writer._chainedFixupBinds.setMaxRebase(maxRebaseAddress);
 	for (OutputFile::ChainedFixupSegInfo& segInfo : _writer._chainedFixupSegments) {
 		if ( !segInfo.pages.empty() ) {
 			uint32_t startBytesPerPage = sizeof(uint16_t);
-			if ( segInfo.pointerFormat == DYLD_CHAINED_PTR_32 )
-				startBytesPerPage = 32; // guesstimate 32-bit chains go ~0.5K before needing a new start
+			if ( segInfo.pointerFormat == DYLD_CHAINED_PTR_32 ) {
+				if ( _options.sharedRegionEligible() )
+					startBytesPerPage = 256; // can't reuse non-pointers for dylibs in cache, so alloc worst case space
+				else
+					startBytesPerPage = 40 ; // guesstimate 32-bit chains go ~0.5K before needing a new start
+			}
 			dyld_chained_starts_in_segment aSeg;
-			aSeg.size 			   = sizeof(dyld_chained_starts_in_segment) + segInfo.pages.size()*startBytesPerPage;
+			aSeg.size 			   = offsetof(dyld_chained_starts_in_segment, page_start) + segInfo.pages.size()*startBytesPerPage;
 			aSeg.page_size 		   = segInfo.pageSize;
 			aSeg.pointer_format    = segInfo.pointerFormat;
-			aSeg.segment_offset    = segInfo.startAddr - baseAddress;
-			aSeg.max_valid_pointer = maxRebaseAddress;
+			aSeg.segment_offset    = segInfo.startAddr - textStartAddress;
+			aSeg.max_valid_pointer = (segInfo.pointerFormat == DYLD_CHAINED_PTR_32) ? maxRebaseAddress : 0;
 			aSeg.page_count 	   = segInfo.pages.size();
+			// pad so that dyld_chained_starts_in_segment will be 64-bit aligned
+			this->_encodedData.pad_to_size(8);
 			dyld_chained_starts_in_image* segHeader = (dyld_chained_starts_in_image*)(this->_encodedData.start()+segsHeaderOffset);
 			segHeader->seg_info_offset[segIndex] = this->_encodedData.size() - segsHeaderOffset;
-			this->_encodedData.append_mem(&aSeg, sizeof(dyld_chained_starts_in_segment)-sizeof(uint16_t));
+			this->_encodedData.append_mem(&aSeg, offsetof(dyld_chained_starts_in_segment, page_start) );
 			std::vector<uint16_t> 	segChainOverflows;
 			for (OutputFile::ChainedFixupPageInfo& pageInfo : segInfo.pages) {
 				uint16_t startOffset = pageInfo.fixupOffsets.empty() ? DYLD_CHAINED_PTR_START_NONE : pageInfo.fixupOffsets.front();
@@ -1284,29 +1312,40 @@ void ChainedInfoAtom<A>::encode() const
 	stringPool.push_back('\0');
 	_writer._chainedFixupBinds.forEachBind(^(unsigned int bindOrdinal, const ld::Atom* importAtom, uint64_t addend) {
 		uint32_t libOrdinal;
-		bool isBind = _writer.needsBind(importAtom, nullptr, nullptr, nullptr, &libOrdinal);
+		uint64_t tempAddend = addend;
+		bool isBind = _writer.needsBind(importAtom, false, &tempAddend, nullptr, nullptr, &libOrdinal);
 		assert(isBind);
-		const char*            symName 		= importAtom->name();
+		const char* symName    = importAtom->name();
+		bool 		weakImport = importAtom->weakImported();
+		if ( const ld::dylib::File* fromDylib = (ld::dylib::File*)importAtom->file() ) {
+			// if command line forced symbols from this dylib to be weak
+			if ( fromDylib->forcedWeakLinked() )
+				weakImport = true;
+		}
+		uint32_t nameOffset = stringPool.size();
 		if ( header.imports_format == DYLD_CHAINED_IMPORT ) {
 			dyld_chained_import   anImport;
 			anImport.lib_ordinal = libOrdinal;
-			anImport.weak_import = importAtom->weakImported();
-			anImport.name_offset = stringPool.size();
+			anImport.weak_import = weakImport;
+			anImport.name_offset = nameOffset;
+			assert(anImport.name_offset == nameOffset);
 			imports.push_back(anImport);
 		}
 		else if ( header.imports_format == DYLD_CHAINED_IMPORT_ADDEND ) {
 			dyld_chained_import_addend  anImportA;
 			anImportA.lib_ordinal = libOrdinal;
-			anImportA.weak_import = importAtom->weakImported();
-			anImportA.name_offset = stringPool.size();
+			anImportA.weak_import = weakImport;
+			anImportA.name_offset = nameOffset;
 			anImportA.addend      = addend;
+			assert((uint64_t)anImportA.addend == addend);
+			assert(anImportA.name_offset == nameOffset);
 			importsAddend.push_back(anImportA);
 		}
 		else {
 			dyld_chained_import_addend64  anImportA64;
 			anImportA64.lib_ordinal = libOrdinal;
-			anImportA64.weak_import = importAtom->weakImported();
-			anImportA64.name_offset = stringPool.size();
+			anImportA64.weak_import = weakImport;
+			anImportA64.name_offset = nameOffset;
 			anImportA64.addend      = addend;
 			importsAddend64.push_back(anImportA64);
 		}
@@ -1657,6 +1696,35 @@ void SplitSegInfoV1Atom<arm64>::addSplitSegInfo(uint64_t address, ld::Fixup::Kin
 }
 #endif
 
+#if SUPPORT_ARCH_arm64_32
+template <>
+void SplitSegInfoV1Atom<arm64_32>::addSplitSegInfo(uint64_t address, ld::Fixup::Kind kind, uint32_t extra) const
+{
+	switch (kind) {
+		case ld::Fixup::kindStoreARM64Page21:
+		case ld::Fixup::kindStoreARM64GOTLoadPage21:
+		case ld::Fixup::kindStoreARM64GOTLeaPage21:
+		case ld::Fixup::kindStoreARM64TLVPLoadPage21:
+		case ld::Fixup::kindStoreTargetAddressARM64Page21:
+		case ld::Fixup::kindStoreTargetAddressARM64GOTLoadPage21:
+		case ld::Fixup::kindStoreTargetAddressARM64GOTLeaPage21:
+			_adrpLocations.push_back(address);
+			break;
+		case ld::Fixup::kindStoreLittleEndian32:
+		case ld::Fixup::kindStoreARM64PCRelToGOT:
+			_32bitPointerLocations.push_back(address);
+			break;
+ 		case ld::Fixup::kindStoreLittleEndian64:
+		case ld::Fixup::kindStoreTargetAddressLittleEndian64:
+			_64bitPointerLocations.push_back(address);
+			break;
+		default:
+			warning("codegen at address 0x%08llX prevents image from working in dyld shared cache", address);
+			break;
+	}
+}
+#endif
+
 template <typename A>
 void SplitSegInfoV1Atom<A>::uleb128EncodeAddresses(const std::vector<uint64_t>& locations) const
 {
@@ -1958,7 +2026,9 @@ private:
 	{
 		 bool operator()(const ld::Fixup* left, const ld::Fixup* right)
 		 {
-			  return (left->offsetInAtom < right->offsetInAtom);
+			if (left->offsetInAtom != right->offsetInAtom)
+				return (left->offsetInAtom < right->offsetInAtom);
+			return (left->kind > right->kind);
 		 }
 	};
 
@@ -2048,7 +2118,7 @@ void DataInCodeAtom<A>::encode() const
 					if ( ((*sfit)->kind != prevKind) && (prevKind != ld::Fixup::kindDataInCodeEnd) ) {
 						int len = (*sfit)->offsetInAtom - prevOffset;
 						if ( len == 0 )
-							warning("multiple L$start$ labels found at same address in %s at offset 0x%04X", atom->name(), prevOffset);
+							warning("overlapping data-in-code in '%s' at offset 0x%04X", atom->name(), prevOffset);
 						this->encodeEntry(atom->finalAddress()+prevOffset-mhAddress, (*sfit)->offsetInAtom - prevOffset, prevKind);
 					}
 					prevKind = (*sfit)->kind;
@@ -2129,6 +2199,105 @@ void OptimizationHintsAtom<A>::encode() const
 	}
 	
 	this->_encoded = true;
+}
+
+class CodeSignatureAtom : public LinkEditAtom
+{
+public:
+												CodeSignatureAtom(const Options& opts, ld::Internal& state, OutputFile& writer)
+													: LinkEditAtom(opts, state, writer, _s_section, 16), _opts(opts) {
+														assert(opts.outputKind() != Options::kObjectFile);
+														this->_encoded = true;  // only works because this is last
+													}
+
+	// overrides of ld::Atom
+	virtual const char*							name() const		{ return "code signature"; }
+	// overrides of LinkEditAtom
+	virtual void								encode() const;
+
+			void								hash(uint8_t* wholeFileBuffer) const;
+
+private:
+	const Options& 				_opts;
+	mutable libcd*				_sigRef = nullptr;
+
+	static ld::Section			_s_section;
+
+};
+
+ld::Section CodeSignatureAtom::_s_section("__LINKEDIT", "__code_sign", ld::Section::typeLinkEdit, true);
+
+void CodeSignatureAtom::encode() const
+{
+	// calculate pages in binary to know how big codesignature needs to be
+	Internal::FinalSection* codeSignSect = _state.sections.back();
+	assert(codeSignSect->atoms[0] == this);
+	const size_t inBbufferSize = codeSignSect->fileOffset;
+
+	// create code signing object
+	_sigRef = libcd_create(inBbufferSize);
+
+	// figure out which hashes to use
+	__block ld::Platform sig_platform = ld::Platform::unknown;
+	__block uint32_t     sig_min_version;
+	_opts.platforms().forEach(^(ld::Platform platform, uint32_t minVersion, uint32_t sdkVersion, bool& stop) {
+		switch ( platform ) {
+		case Platform::unknown:
+		case Platform::freestanding:
+		case Platform::bridgeOS:
+			break;
+		case ld::Platform::macOS:
+		case ld::Platform::iOS:
+		case ld::Platform::tvOS:
+		case ld::Platform::iOS_simulator:
+		case ld::Platform::tvOS_simulator:
+		case ld::Platform::watchOS_simulator:
+		case ld::Platform::driverKit:
+		case ld::Platform::watchOS:
+			sig_platform = platform;
+			sig_min_version = minVersion;
+			break;
+		case ld::Platform::iOSMac:
+			// if this is zippered, don't overwrite macOS info
+			if ( sig_platform == ld::Platform::unknown ) {
+				sig_platform = platform;
+				sig_min_version = minVersion;
+			}
+			break;
+		}
+	});
+	if ( libcd_set_hash_types_for_platform_version(_sigRef, (int)sig_platform, (int)sig_min_version) != LIBCD_SET_HASH_TYPE_SUCCESS )
+		throw "can't determine codesign hash for output platform";
+
+	// set identifier
+	const char* lastSlash = strrchr(_opts.outputFilePath(), '/');
+	const char* leafName = (lastSlash != nullptr) ? lastSlash+1 : _opts.outputFilePath();
+	libcd_set_signing_id(_sigRef, leafName);
+
+	// add flags
+	libcd_set_flags(_sigRef, CS_ADHOC | CS_LINKER_SIGNED);
+
+	// update section size now that code signature size is known
+	codeSignSect->size = libcd_superblob_size(_sigRef);
+
+	// allocate space for code-signature (never used, sign is written directly to output buffer in hash())
+	this->_encodedData.alloc(codeSignSect->size);
+
+	// align to pointer size
+	this->_encodedData.pad_to_size(8);
+	this->_encoded = true;
+}
+
+void CodeSignatureAtom::hash(uint8_t* wholeFileBuffer) const
+{
+	Internal::FinalSection* codeSignSect = _state.sections.back();
+	assert(codeSignSect->atoms[0] == this);
+	uint8_t* codeSignBuffer = &wholeFileBuffer[codeSignSect->fileOffset];
+
+	libcd_set_input_mem(_sigRef, wholeFileBuffer);
+	libcd_set_output_mem(_sigRef, codeSignBuffer, codeSignSect->size);
+	if ( libcd_serialize(_sigRef) != 0 )
+		throw "error code signing";
 }
 
 

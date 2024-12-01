@@ -143,14 +143,14 @@ ld::Section StubHelperHelperAtom::_s_section("__TEXT", "__stub_helper", ld::Sect
 class StubHelperAtom : public ld::Atom {
 public:
 											StubHelperAtom(ld::passes::stubs::Pass& pass, const ld::Atom* lazyPointer,
-																							const ld::Atom& stubTo)
+														   const ld::Atom& stubTo, bool stubToResolver)
 				: ld::Atom(_s_section, ld::Atom::definitionRegular, ld::Atom::combineNever,
 							ld::Atom::scopeLinkageUnit, ld::Atom::typeStubHelper, 
 							symbolTableNotIn, false, false, false, ld::Atom::Alignment(1)), 
 				_stubTo(stubTo),
 				_fixup1(1, ld::Fixup::k1of2, ld::Fixup::kindSetLazyOffset, lazyPointer),
 				_fixup2(1, ld::Fixup::k2of2, ld::Fixup::kindStoreLittleEndian32),
-				_fixup3(6, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressX86BranchPCRel32, helperHelper(pass)) { }
+				_fixup3(6, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressX86BranchPCRel32, helperHelper(pass, *this, stubToResolver)) { }
 				
 	virtual const ld::File*					file() const					{ return _stubTo.file(); }
 	virtual const char*						name() const					{ return _stubTo.name(); }
@@ -173,8 +173,11 @@ public:
 	virtual ld::Fixup::iterator				fixupsEnd() const				{ return &((ld::Fixup*)&_fixup3)[1]; }
 
 private:
-	static ld::Atom* helperHelper(ld::passes::stubs::Pass& pass) {
-		if ( pass.compressedHelperHelper == NULL ) 
+	static ld::Atom* helperHelper(ld::passes::stubs::Pass& pass, StubHelperAtom& stub, bool stubToResolver) {
+		// hack for no-lazy bind.  StubHelper is not used by needs to be constructed, so use dummy values
+		if ( stubToResolver )
+			return &stub;
+		if ( pass.compressedHelperHelper == NULL )
 			pass.compressedHelperHelper = new StubHelperHelperAtom(pass);
 		return pass.compressedHelperHelper;
 	}
@@ -256,7 +259,7 @@ public:
 							ld::Atom::scopeTranslationUnit, ld::Atom::typeLazyPointer, 
 							symbolTableNotIn, false, false, false, ld::Atom::Alignment(2)), 
 				_stubTo(stubTo),
-				_helper(pass, this, stubTo),
+				_helper(pass, this, stubTo, stubToResolver),
 				_resolverHelper(pass, this, stubTo),
 				_fixup1(0, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressLittleEndian32, 
 									stubToResolver ? &_resolverHelper : (stubToGlobalWeakDef ?  &stubTo : &_helper)),
@@ -331,14 +334,17 @@ ld::Section StubAtom::_s_section("__TEXT", "__symbol_stub", ld::Section::typeStu
 class NonLazyPointerAtom : public ld::Atom {
 public:
 	NonLazyPointerAtom(ld::passes::stubs::Pass& pass, const ld::Atom& target,
-					   bool weakImport)
+					   bool stubToResolver, bool weakImport)
 				: ld::Atom(_s_section, ld::Atom::definitionRegular, 
 							ld::Atom::combineNever, ld::Atom::scopeLinkageUnit, ld::Atom::typeNonLazyPointer, 
 							symbolTableNotIn, false, false, false, ld::Atom::Alignment(2)),
 				_target(target),
-				_fixup1(0, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressLittleEndian32, &target) {
+				_resolverHelper(pass, this, target),
+				_fixup1(0, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressLittleEndian32, (stubToResolver ? &_resolverHelper : &target)) {
 					_fixup1.weakImport = weakImport;
 					pass.addAtom(*this);
+					if ( stubToResolver )
+						pass.addAtom(_resolverHelper);
 				}
 
 	virtual const ld::File*					file() const					{ return _target.file(); }
@@ -352,6 +358,7 @@ public:
 
 private:
 	const ld::Atom&							_target;
+	ResolverHelperAtom						_resolverHelper;
 	ld::Fixup								_fixup1;
 	
 	static ld::Section						_s_section;
@@ -363,12 +370,12 @@ ld::Section NonLazyPointerAtom::_s_section("__DATA", "__got", ld::Section::typeN
 class NonLazyStubAtom : public ld::Atom {
 public:
 	NonLazyStubAtom(ld::passes::stubs::Pass& pass, const ld::Atom& target,
-					bool weakImport)
+					bool stubToResolver, bool weakImport)
 				: ld::Atom(_s_section, ld::Atom::definitionRegular, ld::Atom::combineNever,
 							ld::Atom::scopeLinkageUnit, ld::Atom::typeStub, 
 							symbolTableNotIn, false, false, false, ld::Atom::Alignment(1)), 
 				_target(target),
-				_nonlazyPointer(pass, target, weakImport),
+				_nonlazyPointer(pass, target, stubToResolver, weakImport),
 				_fixup1(8, ld::Fixup::k1of4, ld::Fixup::kindSetTargetAddress, &_nonlazyPointer),
 				_fixup2(8, ld::Fixup::k2of4, ld::Fixup::kindSubtractTargetAddress, this),
 				_fixup3(8, ld::Fixup::k3of4, ld::Fixup::kindSubtractAddend, 5),

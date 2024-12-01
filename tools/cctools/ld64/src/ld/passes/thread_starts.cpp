@@ -313,7 +313,7 @@ void doPass(const Options& opts, ld::Internal& state)
 		// create atom that contains the whole chain starts section
 		state.addAtom(*new ThreadStartsAtom(fixupAlignment, numThreadStarts));
 	}
-	else if ( opts.makeChainedFixups() && !opts.dyldLoadsOutput() ) {
+	else if ( opts.makeChainedFixups() && !opts.dyldOrKernelLoadsOutput() ) {
 		buildAddressMap(opts, state);
 		uint32_t startsCount = countChains(state, DYLD_CHAINED_PTR_32_FIRMWARE);
 		state.addAtom(*new ChainStartsAtom(startsCount));
