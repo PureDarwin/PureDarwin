@@ -48,9 +48,9 @@ namespace dylib {
 // savings for large dylibs.
 //
 template <typename A>
-class File final : public generic::dylib::File<A>
+class File final : public generic::dylib::File
 {
-	using Base = generic::dylib::File<A>;
+	using Base = generic::dylib::File;
 
 public:
 					File(const char* path, const uint8_t* fileContent, uint64_t fileLength, const Options *opts,
@@ -60,7 +60,7 @@ public:
 						 cpu_type_t cpuType, cpu_subtype_t cpuSubType, bool enforceDylibSubtypesMatch,
 						 bool allowSimToMacOSX, bool addVers, bool buildingForSimulator,
 						 bool logAllFiles, const char* installPath, bool indirectDylib,
-						 bool usingBitcode, bool internalSDK);
+						 bool usingBitcode, bool internalSDK, bool fromSDK, bool platformMismatchesAreWarning);
 					File(tapi::LinkerInterfaceFile* file, const char *path, const Options *opts,
 						 time_t mTime, ld::File::Ordinal ordinal, bool linkingFlatNamespace,
 						 bool linkingMainExecutable, bool hoistImplicitPublicDylibs,
@@ -68,7 +68,7 @@ public:
 						 cpu_type_t cpuType, cpu_subtype_t cpuSubType, bool enforceDylibSubtypesMatch,
 						 bool allowSimToMacOSX, bool addVers, bool buildingForSimulator,
 						 bool logAllFiles, const char* installPath, bool indirectDylib,
-					     bool usingBitcode, bool internalSDK);
+					     bool usingBitcode, bool internalSDK, bool fromSDK, bool platformMismatchesAreWarning);
 	virtual			~File() noexcept {}
 	
 	// overrides of generic::dylib::File
@@ -78,7 +78,7 @@ private:
 	void				init(tapi::LinkerInterfaceFile* file, const Options *opts, bool buildingForSimulator,
 									 bool indirectDylib, bool linkingFlatNamespace, bool linkingMainExecutable,
 									 const char *path, const ld::VersionSet& platforms, const char *targetInstallPath,
-									 bool usingBitcode, bool internalSDK);
+									 bool usingBitcode, bool internalSDK, bool fromSDK, bool platformMismatchesAreWarning);
 	void				buildExportHashTable(const tapi::LinkerInterfaceFile* file);
 	static bool useSimulatorVariant();
 	
@@ -148,7 +148,7 @@ File<A>::File(const char* path, const uint8_t* fileContent, uint64_t fileLength,
 		  bool allowWeakImports, cpu_type_t cpuType, cpu_subtype_t cpuSubType,
 		  bool enforceDylibSubtypesMatch, bool allowSimToMacOSX, bool addVers,
 		  bool buildingForSimulator, bool logAllFiles, const char* targetInstallPath,
-		  bool indirectDylib, bool usingBitcode, bool internalSDK)
+		  bool indirectDylib, bool usingBitcode, bool internalSDK, bool fromSDK, bool platformMismatchesAreWarning)
 : Base(strdup(path), mTime, ord, platforms, allowWeakImports, linkingFlatNamespace,
 	   hoistImplicitPublicDylibs, allowSimToMacOSX, addVers)
 {
@@ -188,14 +188,14 @@ File<A>::File(const char* path, const uint8_t* fileContent, uint64_t fileLength,
 		throw strdup(errorMessage.c_str());
 
 	// unmap file - it is no longer needed.
-	munmap((void *)fileContent, fileLength);
+	munmap((caddr_t)fileContent, fileLength);
 
 	// write out path for -t option
 	if ( logAllFiles )
 		printf("%s\n", path);
 
 	init(_interface, opts, buildingForSimulator, indirectDylib, linkingFlatNamespace,
-		 linkingMainExecutable, path, platforms, targetInstallPath, usingBitcode, internalSDK);
+		 linkingMainExecutable, path, platforms, targetInstallPath, usingBitcode, internalSDK, fromSDK, platformMismatchesAreWarning);
 }
 
 	template<typename A>
@@ -206,19 +206,19 @@ File<A>::File(const char* path, const uint8_t* fileContent, uint64_t fileLength,
 				 cpu_type_t cpuType, cpu_subtype_t cpuSubType, bool enforceDylibSubtypesMatch,
 				 bool allowSimToMacOSX, bool addVers, bool buildingForSimulator,
 				 bool logAllFiles, const char* installPath, bool indirectDylib,
-				 bool usingBitcode, bool internalSDK)
+				 bool usingBitcode, bool internalSDK, bool fromSDK, bool platformMismatchesAreWarning)
 	: Base(strdup(path), mTime, ordinal, platforms, allowWeakImports, linkingFlatNamespace,
 		   hoistImplicitPublicDylibs, allowSimToMacOSX, addVers), _interface(file)
 {
 	init(_interface, opts, buildingForSimulator, indirectDylib, linkingFlatNamespace,
-		 linkingMainExecutable, path, platforms, installPath, usingBitcode, internalSDK);
+		 linkingMainExecutable, path, platforms, installPath, usingBitcode, internalSDK, fromSDK, platformMismatchesAreWarning);
 }
 	
 template<typename A>
 void File<A>::init(tapi::LinkerInterfaceFile* file, const Options *opts, bool buildingForSimulator,
 				   bool indirectDylib, bool linkingFlatNamespace, bool linkingMainExecutable,
 				   const char *path, const ld::VersionSet& cmdLinePlatforms, const char *targetInstallPath,
-				   bool usingBitcode, bool internalSDK) {
+				   bool usingBitcode, bool internalSDK, bool fromSDK, bool platformMismatchesAreWarning) {
 	_opts = opts;
 	this->_bitcode = std::unique_ptr<ld::Bitcode>(new ld::Bitcode(nullptr, 0));
 	this->_noRexports = !file->hasReexportedLibraries();
@@ -262,10 +262,9 @@ void File<A>::init(tapi::LinkerInterfaceFile* file, const Options *opts, bool bu
 	{
 		lcPlatforms = mapPlatform(file->getPlatform(), useSimulatorVariant());
 	}
-	this->_platforms = lcPlatforms;
 
 	// check cross-linking
-	cmdLinePlatforms.checkDylibCrosslink(lcPlatforms, path, ".tbd", internalSDK, indirectDylib, usingBitcode);
+	cmdLinePlatforms.checkDylibCrosslink(lcPlatforms, path, ".tbd", internalSDK, indirectDylib, usingBitcode, _isUnzipperedTwin, _dylibInstallPath, fromSDK, platformMismatchesAreWarning);
 
 	for (const auto& reexport : file->reexportedLibraries()) {
 		const char *path = strdup(reexport.c_str());
@@ -284,7 +283,7 @@ void File<A>::init(tapi::LinkerInterfaceFile* file, const Options *opts, bool bu
 		// ImportAtom constructor.
 		for (const auto &sym : file->undefineds())
 			importNames.emplace_back(sym.getName().c_str());
-		this->_importAtom = new generic::dylib::ImportAtom<A>(*this, importNames);
+		this->_importAtom = new generic::dylib::ImportAtom(*this, importNames);
 	}
 	
 	// build hash table
@@ -300,11 +299,7 @@ void File<A>::buildExportHashTable(const tapi::LinkerInterfaceFile* file) {
 		const char* name = sym.getName().c_str();
 		bool weakDef = sym.isWeakDefined();
 		bool tlv = sym.isThreadLocalValue();
-
-		typename Base::AtomAndWeak bucket = { nullptr, weakDef, tlv, 0 };
-		if ( this->_s_logHashtable )
-			fprintf(stderr, "  adding %s to hash table for %s\n", name, this->path());
-		this->_atoms[strdup(name)] = bucket;
+		addExportedSymbol(name, weakDef, tlv, 0);
 	}
 }
 
@@ -324,7 +319,7 @@ public:
 	static ld::dylib::File*	parse(const char* path, const uint8_t* fileContent,
 								  uint64_t fileLength, time_t mTime,
 								  ld::File::Ordinal ordinal, const Options& opts,
-								  bool indirectDylib, cpu_type_t architecture, cpu_subtype_t subArchitecture)
+								  bool indirectDylib, bool fromSDK, cpu_type_t architecture, cpu_subtype_t subArchitecture)
 	{
 		return new File<A>(path, fileContent, fileLength, &opts, mTime, ordinal,
 						   opts.flatNamespace(),
@@ -342,12 +337,14 @@ public:
 						   opts.installPath(),
 						   indirectDylib,
 						   opts.bundleBitcode(),
-						   opts.internalSDK());
+						   opts.internalSDK(),
+						   fromSDK,
+						   opts.platformMismatchesAreWarning());
 	}
 	
 	static ld::dylib::File*	parse(const char* path, tapi::LinkerInterfaceFile* file, time_t mTime,
 								  ld::File::Ordinal ordinal, const Options& opts,
-								  bool indirectDylib, cpu_type_t architecture, cpu_subtype_t subArchitecture)
+								  bool indirectDylib, bool fromSDK, cpu_type_t architecture, cpu_subtype_t subArchitecture)
 	{
 		return new File<A>(file, path, &opts, mTime, ordinal,
 						   opts.flatNamespace(),
@@ -365,7 +362,9 @@ public:
 						   opts.installPath(),
 						   indirectDylib,
 						   opts.bundleBitcode(),
-						   opts.internalSDK());
+						   opts.internalSDK(),
+						   fromSDK,
+						   opts.platformMismatchesAreWarning());
 	}
 
 };
@@ -373,29 +372,29 @@ public:
 
 static ld::dylib::File* parseAsArchitecture(const uint8_t* fileContent, uint64_t fileLength, const char* path,
 											time_t modTime, ld::File::Ordinal ordinal, const Options& opts,
-											bool bundleLoader, bool indirectDylib,
+											bool bundleLoader, bool indirectDylib, bool fromSDK,
 											cpu_type_t architecture, cpu_subtype_t subArchitecture)
 {
 	switch ( architecture ) {
 #if SUPPORT_ARCH_x86_64
 		case CPU_TYPE_X86_64:
-			return Parser<x86_64>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<x86_64>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_i386
 		case CPU_TYPE_I386:
-			return Parser<x86>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<x86>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_arm_any
 		case CPU_TYPE_ARM:
-			return Parser<arm>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<arm>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_arm64
 		case CPU_TYPE_ARM64:
-			return Parser<arm64>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<arm64>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
-			return Parser<arm64_32>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<arm64_32>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 		default:
 			throwf("unsupported architecture for tbd file");
@@ -405,29 +404,29 @@ static ld::dylib::File* parseAsArchitecture(const uint8_t* fileContent, uint64_t
 
 
 static ld::dylib::File *parseAsArchitecture(const char *path, tapi::LinkerInterfaceFile* file, time_t modTime,
-																						ld::File::Ordinal ordinal, const Options& opts, bool indirectDylib,
-																						cpu_type_t architecture, cpu_subtype_t subArchitecture)
+											ld::File::Ordinal ordinal, const Options& opts, bool indirectDylib,
+											bool fromSDK, cpu_type_t architecture, cpu_subtype_t subArchitecture)
 {
 	switch ( architecture ) {
 #if SUPPORT_ARCH_x86_64
 		case CPU_TYPE_X86_64:
-			return Parser<x86_64>::parse(path, file, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<x86_64>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_i386
 		case CPU_TYPE_I386:
-			return Parser<x86>::parse(path, file, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<x86>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_arm_any
 		case CPU_TYPE_ARM:
-			return Parser<arm>::parse(path, file, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<arm>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_arm64
 		case CPU_TYPE_ARM64:
-			return Parser<arm64>::parse(path, file, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<arm64>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
-			return Parser<arm64_32>::parse(path, file, modTime, ordinal, opts, indirectDylib, architecture, subArchitecture);
+			return Parser<arm64_32>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 		default:
 			throwf("unsupported architecture for tbd file");
@@ -441,33 +440,33 @@ static ld::dylib::File *parseAsArchitecture(const char *path, tapi::LinkerInterf
 //
 ld::dylib::File* parse(const uint8_t* fileContent, uint64_t fileLength, const char* path,
 					   time_t modtime, const Options& opts, ld::File::Ordinal ordinal,
-					   bool bundleLoader, bool indirectDylib)
+					   bool bundleLoader, bool indirectDylib, bool fromSDK)
 {
 	if (!tapi::LinkerInterfaceFile::isSupported(path, fileContent, fileLength))
 		return nullptr;
 
 	try {
-		return parseAsArchitecture(fileContent, fileLength, path, modtime, ordinal, opts, bundleLoader, indirectDylib, opts.architecture(), opts.subArchitecture());
+		return parseAsArchitecture(fileContent, fileLength, path, modtime, ordinal, opts, bundleLoader, indirectDylib, fromSDK, opts.architecture(), opts.subArchitecture());
 	} catch (...) {
 		if (!opts.fallbackArchitecture())
 			throw;
 	}
 
 	warning("architecture %s not present in TBD %s, attempting fallback", opts.architectureName(), path);
-	return parseAsArchitecture(fileContent, fileLength, path, modtime, ordinal, opts, bundleLoader, indirectDylib, opts.fallbackArchitecture(), opts.fallbackSubArchitecture());
+	return parseAsArchitecture(fileContent, fileLength, path, modtime, ordinal, opts, bundleLoader, indirectDylib, fromSDK, opts.fallbackArchitecture(), opts.fallbackSubArchitecture());
 }
 
 ld::dylib::File *parse(const char *path, tapi::LinkerInterfaceFile* file, time_t modTime,
-					   ld::File::Ordinal ordinal, const Options& opts, bool indirectDylib) {
+					   ld::File::Ordinal ordinal, const Options& opts, bool indirectDylib, bool fromSDK) {
 	try {
-		return parseAsArchitecture(path, file, modTime, ordinal, opts, indirectDylib, opts.architecture(), opts.subArchitecture());
+		return parseAsArchitecture(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, opts.architecture(), opts.subArchitecture());
 	} catch (...) {
 		if (!opts.fallbackArchitecture())
 			throw;
 	}
 
 	warning("architecture %s not present in TBD %s, attempting fallback", opts.architectureName(), path);
-	return parseAsArchitecture(path, file, modTime, ordinal, opts, indirectDylib, opts.fallbackArchitecture(), opts.fallbackSubArchitecture());
+	return parseAsArchitecture(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, opts.fallbackArchitecture(), opts.fallbackSubArchitecture());
 }
 
 

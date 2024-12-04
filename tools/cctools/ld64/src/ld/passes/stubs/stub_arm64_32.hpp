@@ -200,13 +200,13 @@ public:
 							ld::Atom::scopeLinkageUnit, ld::Atom::typeStubHelper, 
 							symbolTableNotIn, false, false, false, ld::Atom::Alignment(2)),
 				_stubTo(stubTo),
-				_fixup1(24, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressARM64Branch26, &stubTo),
-				_fixup2(28, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressARM64Page21, lazyPointer),
-				_fixup3(32, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressARM64PageOff12, lazyPointer) { }
+				_fixup1(40, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressARM64Branch26, &stubTo),
+				_fixup2(44, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressARM64Page21, lazyPointer),
+				_fixup3(48, ld::Fixup::k1of1, ld::Fixup::kindStoreTargetAddressARM64PageOff12, lazyPointer) { }
 				
 	virtual const ld::File*					file() const					{ return _stubTo.file(); }
 	virtual const char*						name() const					{ return _stubTo.name(); }
-	virtual uint64_t						size() const					{ return 68; }
+	virtual uint64_t						size() const					{ return 100; }
 	virtual uint64_t						objectAddress() const			{ return 0; }
 	virtual void							copyRawContent(uint8_t buffer[]) const {
 		OSWriteLittleInt32(&buffer[ 0], 0, 0xa9bf7bfd); // stp	fp, lr, [sp, #-16]!
@@ -215,17 +215,25 @@ public:
 		OSWriteLittleInt32(&buffer[12], 0, 0xa9bf0be3); // stp	x3, x2, [sp, #-16]!
 		OSWriteLittleInt32(&buffer[16], 0, 0xa9bf13e5); // stp	x5, x4, [sp, #-16]!
 		OSWriteLittleInt32(&buffer[20], 0, 0xa9bf1be7); // stp	x7, x6, [sp, #-16]!
-		OSWriteLittleInt32(&buffer[24], 0, 0x94000000); // bl	_foo
-		OSWriteLittleInt32(&buffer[28], 0, 0x90000010); // adrp	x16, lazy_pointer@PAGE
-		OSWriteLittleInt32(&buffer[32], 0, 0x91000210); // add	x16, x16, lazy_pointer@PAGEOFF
-		OSWriteLittleInt32(&buffer[36], 0, 0xb9000200); // str	w0, [x16]
-		OSWriteLittleInt32(&buffer[40], 0, 0xaa0003f0); // mov	x16, x0
-		OSWriteLittleInt32(&buffer[44], 0, 0xa8c11be7); // ldp	x7, x6, [sp], #16
-		OSWriteLittleInt32(&buffer[48], 0, 0xa8c113e5); // ldp	x5, x4, [sp], #16
-		OSWriteLittleInt32(&buffer[52], 0, 0xa8c10be3); // ldp	x3, x2, [sp], #16
-		OSWriteLittleInt32(&buffer[56], 0, 0xa8c103e1); // ldp	x1, x0, [sp], #16
-		OSWriteLittleInt32(&buffer[60], 0, 0xa8c17bfd); // ldp	fp, lr, [sp], #16
-		OSWriteLittleInt32(&buffer[64], 0, 0xd61f0200); // br	x16
+		OSWriteLittleInt32(&buffer[24], 0, 0x6dbf03e1); // stp	d1, d0, [sp, #-16]!
+		OSWriteLittleInt32(&buffer[28], 0, 0x6dbf0be3); // stp	d3, d2, [sp, #-16]!
+		OSWriteLittleInt32(&buffer[32], 0, 0x6dbf13e5); // stp	d5, d4, [sp, #-16]!
+		OSWriteLittleInt32(&buffer[36], 0, 0x6dbf1be7); // stp	d7, d6, [sp, #-16]!
+		OSWriteLittleInt32(&buffer[40], 0, 0x94000000); // bl	_foo
+		OSWriteLittleInt32(&buffer[44], 0, 0x90000010); // adrp	x16, lazy_pointer@PAGE
+		OSWriteLittleInt32(&buffer[48], 0, 0x91000210); // add	x16, x16, lazy_pointer@PAGEOFF
+		OSWriteLittleInt32(&buffer[52], 0, 0xb9000200); // str	w0, [x16]
+		OSWriteLittleInt32(&buffer[56], 0, 0xaa0003f0); // mov	x16, x0
+		OSWriteLittleInt32(&buffer[60], 0, 0x6cc11be7); // ldp	d7, d6, [sp], #16
+		OSWriteLittleInt32(&buffer[64], 0, 0x6cc113e5); // ldp	d5, d4, [sp], #16
+		OSWriteLittleInt32(&buffer[68], 0, 0x6cc10be3); // ldp	d3, d2, [sp], #16
+		OSWriteLittleInt32(&buffer[72], 0, 0x6cc103e1); // ldp	d1, d0, [sp], #16
+		OSWriteLittleInt32(&buffer[76], 0, 0xa8c11be7); // ldp	x7, x6, [sp], #16
+		OSWriteLittleInt32(&buffer[80], 0, 0xa8c113e5); // ldp	x5, x4, [sp], #16
+		OSWriteLittleInt32(&buffer[84], 0, 0xa8c10be3); // ldp	x3, x2, [sp], #16
+		OSWriteLittleInt32(&buffer[88], 0, 0xa8c103e1); // ldp	x1, x0, [sp], #16
+		OSWriteLittleInt32(&buffer[92], 0, 0xa8c17bfd); // ldp	fp, lr, [sp], #16
+		OSWriteLittleInt32(&buffer[96], 0, 0xd61f0200); // br	x16
 	}
 	virtual void							setScope(Scope)					{ }
 	virtual ld::Fixup::iterator				fixupsBegin() const				{ return &_fixup1; }

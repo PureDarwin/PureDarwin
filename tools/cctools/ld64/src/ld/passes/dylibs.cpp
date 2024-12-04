@@ -61,15 +61,31 @@ void doPass(const Options& opts, ld::Internal& state)
 	for (std::vector<ld::dylib::File*>::iterator it = state.dylibs.begin(); it != state.dylibs.end(); ++it) {
 		ld::dylib::File* aDylib = *it;
 		// set "willRemoved" bit on implicit dylibs that did not provide any exports
-		if ( aDylib->implicitlyLinked() && !aDylib->explicitlyLinked() && !aDylib->providedExportAtom() )
+		if ( aDylib->implicitlyLinked() && !aDylib->explicitlyLinked() && !aDylib->providedExportAtom() && !aDylib->neededDylib() )
 			aDylib->setWillBeRemoved(true);
 		// set "willRemoved" bit on dead strippable explicit dylibs that did not provide any exports
-		if ( aDylib->explicitlyLinked() && aDylib->deadStrippable() && !aDylib->providedExportAtom() )
+		if ( aDylib->explicitlyLinked() && aDylib->deadStrippable() && !aDylib->providedExportAtom() && !aDylib->neededDylib() )
 			aDylib->setWillBeRemoved(true);
 		// set "willRemoved" bit on any unused explicit when -dead_strip_dylibs is used
-		if ( opts.deadStripDylibs() && !aDylib->providedExportAtom() )
+		if ( opts.deadStripDylibs() && !aDylib->providedExportAtom() && !aDylib->neededDylib() )
 			aDylib->setWillBeRemoved(true);
-	}	
+		// <rdar://problem/48642080> Warn when dylib links itself
+		if ( (opts.outputKind() == Options::kDynamicLibrary) && !aDylib->willRemoved() ) {
+			if ( strcmp(opts.installPath(), aDylib->installPath()) == 0 )
+				warning("%s is linking with itself", opts.installPath());
+		}
+		// <rdar://problem/45501357> linker should warn about unused libraries/frameworks
+		if ( opts.warnUnusedDylibs() && !aDylib->neededDylib() ) {
+			if ( aDylib->explicitlyLinked() && !aDylib->providedExportAtom() && !aDylib->willBeReExported()
+				&& (strncmp(aDylib->installPath(), "/usr/lib/libSystem.", 19) != 0)
+				&& (strncmp(aDylib->installPath(), "/usr/lib/libc++.", 16) != 0)
+				&& (strncmp(aDylib->installPath(), "/System/Library/Frameworks/Foundation.framework/", 48) != 0) ) {
+				// don't warn if this dylib re-exports another one that does have used symbols
+				if ( !aDylib->hasReExportedDependentsThatProvidedExportAtom() )
+					warning("linking with (%s) but not using any symbols from it", aDylib->installPath());
+			}
+		}
+	}
 	// remove unused dylibs
 	state.dylibs.erase(std::remove_if(state.dylibs.begin(), state.dylibs.end(), WillBeUsed()), state.dylibs.end());
 	

@@ -50,19 +50,19 @@ const Platform basePlatform(Platform platform)
 }
 
 static const PlatformInfo sAllSupportedPlatforms[] = {
-    { Platform::unknown,           Platform::unknown,      "unknown",           "",                                NULL,                        0x00000000, 0x00000000, 0,                       false, true,  PlatEnforce::error,   PlatEnforce::error },
-    { Platform::macOS,             Platform::macOS,        "macOS",             "-macos_version_min",             "MACOSX_DEPLOYMENT_TARGET",   0x000A0E00, 0x000A0400, LC_VERSION_MIN_MACOSX,   false, true,  PlatEnforce::warning, PlatEnforce::warning },
-    { Platform::iOS,               Platform::iOS,          "iOS",               "-ios_version_min",               "IPHONEOS_DEPLOYMENT_TARGET", 0x000C0000, 0x00070000, LC_VERSION_MIN_IPHONEOS, true,  true,  PlatEnforce::warning, PlatEnforce::warning },
-    { Platform::tvOS,              Platform::tvOS,         "tvOS",              "-tvos_version_min",              "TVOS_DEPLOYMENT_TARGET",     0x000C0000, 0x00070000, LC_VERSION_MIN_TVOS,     true,  true,  PlatEnforce::warning, PlatEnforce::warning },
-    { Platform::watchOS,           Platform::watchOS,      "watchOS",           "-watchos_version_min",           "WATCHOS_DEPLOYMENT_TARGET",  0x00050000, 0x00020000, LC_VERSION_MIN_WATCHOS,  true,  true,  PlatEnforce::warning, PlatEnforce::warning },
-    { Platform::bridgeOS,          Platform::bridgeOS,     "bridgeOS",          "-bridgeos_version_min",          "BRIDGEOS_DEPLOYMENT_TARGET", 0x00010000, 0x00010000, 0,                       false, true,  PlatEnforce::warning, PlatEnforce::warning },
+    { Platform::unknown,           Platform::unknown,      "unknown",           "",                                NULL,                        0x00000000, 0x00000000, 0,                       false, true,  PlatEnforce::error,                     PlatEnforce::error },
+    { Platform::macOS,             Platform::macOS,        "macOS",             "-macos_version_min",             "MACOSX_DEPLOYMENT_TARGET",   0x000A0E00, 0x000A0800, LC_VERSION_MIN_MACOSX,   false, true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::warning },
+    { Platform::iOS,               Platform::iOS,          "iOS",               "-ios_version_min",               "IPHONEOS_DEPLOYMENT_TARGET", 0x000C0000, 0x00070000, LC_VERSION_MIN_IPHONEOS, true,  true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::warning },
+    { Platform::tvOS,              Platform::tvOS,         "tvOS",              "-tvos_version_min",              "TVOS_DEPLOYMENT_TARGET",     0x000C0000, 0x00070000, LC_VERSION_MIN_TVOS,     true,  true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::warning },
+    { Platform::watchOS,           Platform::watchOS,      "watchOS",           "-watchos_version_min",           "WATCHOS_DEPLOYMENT_TARGET",  0x00050000, 0x00020000, LC_VERSION_MIN_WATCHOS,  true,  true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::warning },
+    { Platform::bridgeOS,          Platform::bridgeOS,     "bridgeOS",          "-bridgeos_version_min",          "BRIDGEOS_DEPLOYMENT_TARGET", 0x00010000, 0x00010000, 0,                       false, true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::warning },
     { Platform::iOSMac,            Platform::iOSMac,       "Mac Catalyst",      "-maccatalyst_version_min",       NULL,                         0x000D0000, 0x000D0000, 0,                       false, true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::warnInternalErrorExternal },
-    { Platform::iOS_simulator,     Platform::iOS,          "iOS Simulator",     "-ios_simulator_version_min",     NULL,                         0x000D0000, 0x00080000, LC_VERSION_MIN_IPHONEOS, false, true,  PlatEnforce::warning, PlatEnforce::warning },
-    { Platform::tvOS_simulator,    Platform::tvOS,         "tvOS Simulator",    "-tvos_simulator_version_min",    NULL,                         0x000D0000, 0x00080000, LC_VERSION_MIN_TVOS,     false, true,  PlatEnforce::warning, PlatEnforce::warning },
-    { Platform::watchOS_simulator, Platform::watchOS,      "watchOS Simulator", "-watchos_simulator_version_min", NULL,                         0x00060000, 0x00020000, LC_VERSION_MIN_WATCHOS,  false, true,  PlatEnforce::warning, PlatEnforce::warning },
-    { Platform::driverKit,         Platform::driverKit,    "DriverKit",         "-driverkit_version_min",         NULL,                         0x00130000, 0x00130000, 0,                       false, true,  PlatEnforce::error,   PlatEnforce::error },
+    { Platform::iOS_simulator,     Platform::iOS,          "iOS Simulator",     "-ios_simulator_version_min",     NULL,                         0x000D0000, 0x00080000, LC_VERSION_MIN_IPHONEOS, false, true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::error },
+    { Platform::tvOS_simulator,    Platform::tvOS,         "tvOS Simulator",    "-tvos_simulator_version_min",    NULL,                         0x000D0000, 0x00080000, LC_VERSION_MIN_TVOS,     false, true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::error },
+    { Platform::watchOS_simulator, Platform::watchOS,      "watchOS Simulator", "-watchos_simulator_version_min", NULL,                         0x00060000, 0x00020000, LC_VERSION_MIN_WATCHOS,  false, true,  PlatEnforce::warnInternalErrorExternal, PlatEnforce::error },
+    { Platform::driverKit,         Platform::driverKit,    "DriverKit",         "-driverkit_version_min",         NULL,                         0x00130000, 0x00130000, 0,                       false, true,  PlatEnforce::error,                     PlatEnforce::error },
 
-    { Platform::freestanding,     Platform::freestanding,  "free standing",     "-preload",                       NULL,                         0x00000000, 0,          0,                       false, false, PlatEnforce::allow,   PlatEnforce::allow   },
+    { Platform::freestanding,     Platform::freestanding,  "free standing",     "-preload",                       NULL,                         0x00000000, 0,          0,                       false, false, PlatEnforce::allow,                     PlatEnforce::allow   },
 };
 
 static void versionToString(uint32_t value, char buffer[32])
@@ -74,7 +74,7 @@ static void versionToString(uint32_t value, char buffer[32])
 }
 
 void VersionSet::checkObjectCrosslink(const VersionSet& objectPlatforms, const std::string& targetPath, bool internalSDK,
-                                      bool bitcode) const {
+                                      bool bitcode, bool platformMismatchesAreWarning) const {
     // Check platform cross-linking.
     __block bool warned = false;
     forEach(^(ld::Platform cmdLinePlatform, uint32_t cmdLineMinVersion, uint32_t cmdLineSDKVersion, bool& stop) {
@@ -82,7 +82,18 @@ void VersionSet::checkObjectCrosslink(const VersionSet& objectPlatforms, const s
         if ( objectPlatforms.empty() && !contains(ld::Platform::iOSMac))
             return;
 
-        if ( !objectPlatforms.contains(cmdLinePlatform) ) {
+        if ( objectPlatforms.contains(cmdLinePlatform) ) {
+            uint32_t objMinOS = objectPlatforms.minOS(cmdLinePlatform);
+            if ( (cmdLineMinVersion != 0) && (objMinOS > cmdLineMinVersion) ) {
+                char t1[32];
+                char t2[32];
+                versionToString(objMinOS, t1);
+                versionToString(cmdLineMinVersion, t2);
+                warning("object file (%s) was built for newer %s version (%s) than being linked (%s)",
+                        targetPath.c_str(), nameFromPlatform(cmdLinePlatform), t1, t2);
+            }
+        }
+        else {
             if (bitcode) {
                 throwf("building for %s, but linking in object file (%s) built for %s,",
                        to_str().c_str(), targetPath.c_str(), objectPlatforms.to_str().c_str());
@@ -92,12 +103,10 @@ void VersionSet::checkObjectCrosslink(const VersionSet& objectPlatforms, const s
             else {
                 auto enforce = platformInfo(cmdLinePlatform)._linkingObjectFiles;
                 if (enforce == PlatEnforce::warnInternalErrorExternal) {
-                    if (internalSDK) {
-                        enforce = PlatEnforce::warning;
-                    } else {
-                        enforce = PlatEnforce::error;
-                    }
+                    enforce = (internalSDK ? PlatEnforce::warning : PlatEnforce::error);
                 }
+                if ( platformMismatchesAreWarning && (enforce == PlatEnforce::error) )
+                    enforce = PlatEnforce::warning;
                 switch (enforce) {
                     case PlatEnforce::allow:
                         break;
@@ -122,52 +131,71 @@ void VersionSet::checkObjectCrosslink(const VersionSet& objectPlatforms, const s
                 }
             }
         }
-        else if ( (cmdLineMinVersion != 0) && (minOS(cmdLinePlatform) > cmdLineMinVersion) ) {
-            char t1[32];
-            char t2[32];
-            versionToString(minOS(cmdLinePlatform), t1);
-            versionToString(cmdLineMinVersion, t2);
-            warning("object file (%s) was built for newer %s version (%s) than being linked (%s)",
-                    targetPath.c_str(), platformInfo(cmdLinePlatform).printName, t1, t2);
-        }
     });
+}
+
+static bool startsWith(const char* str, const char* prefix)
+{
+    if ( str == nullptr )
+        return false;
+    return (strncmp(str, prefix, strlen(prefix)) == 0);
 }
 
 void VersionSet::checkDylibCrosslink(const VersionSet& dylibPlatforms, const std::string& targetPath,
                                      const std::string& dylibType, bool internalSDK, bool indirectDylib,
-                                     bool bitcode) const {
+                                     bool bitcode, bool isUnzipperedTwin, const char* installName, bool fromSDK,
+                                     bool platformMismatchesAreWarning) const {
     // Check platform cross-linking.
     __block bool warned = false;
     forEach(^(ld::Platform cmdLinePlatform, uint32_t cmdLineMinVersion, uint32_t cmdLineSDKVersion, bool& stop) {
         // <rdar://51768462> if dylib is old and has no platform specified, don't complain (unless building for iOSMac)
         if ( dylibPlatforms.empty() && !contains(ld::Platform::iOSMac))
             return;
-        if ( !dylibPlatforms.contains(cmdLinePlatform) ) {
+        if ( dylibPlatforms.contains(cmdLinePlatform) ) {
+            // <rdar://problem/53510264> check any non-OS dylibs do not have a newer min OS
+            if ( !fromSDK && !startsWith(installName, "/usr/lib") && !startsWith(installName, "/System/Library/") ) {
+                uint32_t dylibMinOS = dylibPlatforms.minOS(cmdLinePlatform);
+                if ( (cmdLineMinVersion != 0) && (dylibMinOS > cmdLineMinVersion) ) {
+                    char t1[32];
+                    char t2[32];
+                    versionToString(dylibMinOS, t1);
+                    versionToString(cmdLineMinVersion, t2);
+                    warning("dylib (%s) was built for newer %s version (%s) than being linked (%s)",
+                            targetPath.c_str(), nameFromPlatform(cmdLinePlatform), t1, t2);
+                }
+            }
+        }
+        else {
             // Normally linked dylibs need to support all the platforms we are building for,
             // with the exception of zippered binaries linking to macOS only libraries in the OS.
             // To handle that case we exit early when the commandline platform is iOSMac, if
             // the platforms also contain macOS.
-            if (cmdLinePlatform == ld::Platform::iOSMac && contains(ld::Platform::macOS))
+            if (cmdLinePlatform == ld::Platform::iOSMac && contains(ld::Platform::macOS) && !isUnzipperedTwin)
                 return;
             // <rdar://problem/48416765> spurious warnings when iOSMac binary is built links with zippered dylib that links with macOS dylib
             // <rdar://problem/50517845> iOSMac app links simulator frameworks without warning/error
             if  ( indirectDylib && dylibPlatforms.contains(ld::Platform::macOS) && contains(ld::Platform::iOSMac) )
                 return;
+            // <rdar://problem/61607340> simulators can link with special three libsytem_* dylibs
+            if ( this->contains(ld::simulatorPlatforms) && dylibPlatforms.contains(ld::Platform::macOS) && (installName != nullptr) ) {
+                if ( strcmp(installName, "/usr/lib/system/libsystem_kernel.dylib") == 0 )
+                    return;
+                if ( strcmp(installName, "/usr/lib/system/libsystem_platform.dylib") == 0 )
+                    return;
+                if ( strcmp(installName, "/usr/lib/system/libsystem_pthread.dylib") == 0 )
+                    return;
+            }
             if ( bitcode ) {
                 throwf("building for %s, but linking in %s file (%s) built for %s,",
                        to_str().c_str(),  dylibType.c_str(), targetPath.c_str(), dylibPlatforms.to_str().c_str());
-            } else if ( (count() == 2) && (cmdLinePlatform == ld::Platform::iOSMac) )  {
-                // clang is not emitting second LC_BUILD_VERSION in zippered .o files
             }
             else {
-                auto enforce = platformInfo(cmdLinePlatform)._linkingObjectFiles;
+                auto enforce = platformInfo(cmdLinePlatform)._linkingDylibs;
                 if (enforce == PlatEnforce::warnInternalErrorExternal) {
-                    if (internalSDK) {
-                        enforce = PlatEnforce::warning;
-                    } else {
-                        enforce = PlatEnforce::error;
-                    }
+                    enforce = (internalSDK ? PlatEnforce::warning : PlatEnforce::error);
                 }
+                if ( platformMismatchesAreWarning && (enforce == PlatEnforce::error) )
+                    enforce = PlatEnforce::warning;
                 switch (enforce) {
                     case PlatEnforce::allow:
                         break;
@@ -175,16 +203,25 @@ void VersionSet::checkDylibCrosslink(const VersionSet& dylibPlatforms, const std
                         // only warn during B&I builds
                         if ( (getenv("RC_XBS") != NULL) && (getenv("RC_BUILDIT") == NULL) )
                             break;
-                    case PlatEnforce::warning: {
+                        [[clang::fallthrough]];
+                    case PlatEnforce::warning:
                         if ( !warned ) {
-                            warning("building for %s, but linking in %s file (%s) built for %s",
+                            if ( isUnzipperedTwin && (this->count() == 2) )
+                                warning("building zippered for %s, but linking in unzippered twin %s file (%s) built for %s",
+                                    to_str().c_str(),  dylibType.c_str(), targetPath.c_str(), dylibPlatforms.to_str().c_str());
+                            else
+                                warning("building for %s, but linking in %s file (%s) built for %s",
                                     to_str().c_str(),  dylibType.c_str(), targetPath.c_str(), dylibPlatforms.to_str().c_str());
                             warned = true;
                         }
-                    } break;
+                        break;
                     case PlatEnforce::error:
-                        throwf("building for %s, but linking in %s built for %s,",
-                               to_str().c_str(),  dylibType.c_str(),  dylibPlatforms.to_str().c_str());
+                        if ( isUnzipperedTwin && (this->count() == 2) )
+                            throwf("building zippered for %s, but linking in in unzippered twin %s built for %s,",
+                                    to_str().c_str(),  dylibType.c_str(),  dylibPlatforms.to_str().c_str());
+                        else
+                            throwf("building for %s, but linking in %s built for %s,",
+                                    to_str().c_str(),  dylibType.c_str(),  dylibPlatforms.to_str().c_str());
                         break;
                     case PlatEnforce::warnInternalErrorExternal:
                         assert(0);
@@ -201,9 +238,7 @@ const PlatformInfo& platformInfo(Platform platform)
         if ( info.platform == platform )
             return info;
     }
-    assert(0 && "unknown platform");
-    abort();                 // ld64-port
-    __builtin_unreachable(); // ld64-port
+    return sAllSupportedPlatforms[0];
 }
 
 void forEachSupportedPlatform(void (^handler)(const PlatformInfo& info, bool& stop))
@@ -250,6 +285,38 @@ Platform platformFromBuildVersion(uint32_t plat, const mach_header* mh)
     return (Platform)plat;
 }
 
+Platform platformFromName(const char* platformName)
+{
+    auto normalizedStringComp = [](char c1, char c2) {
+        return (c1 == c2 || std::toupper(c1) == std::toupper(c2)
+                || (c1 == ' ' && c2 == '-') || (c1 == '-' && c2 == ' '));
+    };
+    // check if this is a platform name in our table
+    const size_t platformNameLen = strlen(platformName);
+    for (const PlatformInfo& info : sAllSupportedPlatforms) {
+		if ( platformNameLen != strlen(info.printName) )
+            continue;
+		if ( std::equal(platformName, &platformName[platformNameLen], &info.printName[0], normalizedStringComp) )
+            return info.platform;
+	}
+    // check if this is a raw platform number
+	char *end = nullptr;
+	long num = strtol(platformName, &end, 10);
+    if ( (end != nullptr) && (*end == '\0') )
+        return (Platform)num;
 
+    return Platform::unknown;
+}
+
+const char* nameFromPlatform(Platform platform)
+{
+    for (const PlatformInfo& info : sAllSupportedPlatforms) {
+        if ( info.platform == platform )
+            return info.printName;
+    }
+    static char strBuffer[32];
+    sprintf(strBuffer, "platform=%u", (unsigned)platform);
+    return strBuffer;
+}
 
 } // namespace

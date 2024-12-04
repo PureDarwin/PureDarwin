@@ -101,8 +101,10 @@ read_uleb128 (struct line_reader_data * leb)
     
     if (bit >= 64 || b << bit >> bit != b)
       result = (uint64_t) -1;
-    else
-      result |= b << bit, bit += 7;
+    else {
+      result |= b << bit;
+      bit += 7;
+    }
   } while (*leb->cpos++ >= 0x80);
   return result;
 }

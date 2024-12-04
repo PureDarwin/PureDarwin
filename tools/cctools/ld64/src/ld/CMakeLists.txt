@@ -8,9 +8,11 @@ target_sources(host_ld PRIVATE
     debugline.c
     InputFiles.cpp
     ld.cpp
+    libcodedirectory.c
     Options.cpp
     OutputFile.cpp
     Resolver.cpp
+    ResponseFiles.cpp
     Snapshot.cpp
     SymbolTable.cpp
     PlatformSupport.cpp
@@ -23,6 +25,9 @@ target_link_libraries(host_ld PRIVATE
     host_libxar host_ld_helper host_ld_BlocksRuntime host_ld_libparsers host_ld_libpasses host_libstuff
     OpenSSL::SSL OpenSSL::Crypto
     host_commoncrypto_static
+    host_commoncrypto_private_headers
+    host_commoncrypto_headers
+    host_corecrypto_headers
 )
 set_property(TARGET host_ld PROPERTY OUTPUT_NAME ld)
 set_property(TARGET host_ld PROPERTY CXX_STANDARD 11)

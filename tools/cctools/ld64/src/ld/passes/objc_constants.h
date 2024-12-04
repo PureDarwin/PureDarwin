@@ -1,6 +1,6 @@
 /* -*- mode: C++; c-basic-offset: 4; tab-width: 4 -*-
  *
- * Copyright (c) 2015 Apple Inc. All rights reserved.
+ * Copyright (c) 2009 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -22,30 +22,25 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef __TEXTSTUB_DYLIB_FILE_H__
-#define __TEXTSTUB_DYLIB_FILE_H__
 
-#ifdef TAPI_SUPPORT
+#ifndef __OBJC_CONSTANTS_H__
+#define __OBJC_CONSTANTS_H__
 
-#include "ld.hpp"
 #include "Options.h"
-
-namespace textstub {
-namespace dylib {
+#include "ld.hpp"
 
 
-extern ld::dylib::File* parse(const uint8_t* fileContent, uint64_t fileLength, const char* path,
-							  time_t modTime, const Options& opts, ld::File::Ordinal ordinal,
-							  bool bundleLoader, bool indirectDylib, bool fromSDK);
+namespace ld {
+namespace passes {
+namespace objc_constants {
 
-extern ld::dylib::File *parse(const char *path, tapi::LinkerInterfaceFile* file, time_t modTime,
-                              ld::File::Ordinal ordinal, const Options& opts, bool indirectDylib, bool fromSDK);
+// called by linker to create GOT entries for __TEXT to objc constant classes references
+// and load from those GOTs instead
+extern void doPass(const Options& opts, ld::Internal& internal);
 
-extern bool isTextStubFile(const uint8_t* fileContent, uint64_t fileLength, const char* path);
 
-} // namespace dylib
-} // namespace textstub
+} // namespace objc_constants
+} // namespace passes
+} // namespace ld
 
-#endif /* TAPI_SUPPORT */
-
-#endif // __TEXTSTUB_DYLIB_FILE_H__
+#endif // __OBJC_CONSTANTS_H__

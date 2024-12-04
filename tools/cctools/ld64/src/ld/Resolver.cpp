@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <limits.h>
@@ -327,6 +328,13 @@ void Resolver::doLinkerOption(const std::vector<const char*>& linkerOption, cons
 				_internal.unprocessedLinkerOptionLibraries.insert(&lo1[2]);
 			}
 		}
+		else if ( strncmp(lo1, "-needed-l", 9) == 0) {
+			const char* libName = &lo1[9];
+			if (_internal.linkerOptionLibraries.count(libName) == 0) {
+				_internal.unprocessedLinkerOptionLibraries.insert(libName);
+			}
+			_internal.linkerOptionNeededLibraries.insert(libName);
+		}
 		else {
 			warning("unknown linker option from object file ignored: '%s' in %s", lo1, fileName);
 		}
@@ -338,6 +346,12 @@ void Resolver::doLinkerOption(const std::vector<const char*>& linkerOption, cons
 			if (_internal.linkerOptionFrameworks.count(lo2b) == 0) {
 				_internal.unprocessedLinkerOptionFrameworks.insert(lo2b);
 			}
+		}
+		else if ( strcmp(lo2a, "-needed_framework") == 0 ) {
+			if (_internal.linkerOptionFrameworks.count(lo2b) == 0) {
+				_internal.unprocessedLinkerOptionFrameworks.insert(lo2b);
+			}
+			_internal.linkerOptionNeededFrameworks.insert(lo2b);
 		}
 		else {
 			warning("unknown linker option from object file ignored: '%s' '%s' from %s", lo2a, lo2b, fileName);
@@ -461,14 +475,10 @@ void Resolver::doFile(const ld::File& file)
 		if ( objFile->hasllvmProfiling() )
 			_havellvmProfiling = true;
 
-#if MULTI
-		// update minOSVersion off all .o files
-		uint32_t objMinOS = objFile->minOSVersion();
-		if ( !objMinOS )
+		// remember if we found .o without platform info
+		if ( objFile->platforms().empty() )
 			_internal.objectFileFoundWithNoVersion = true;
-		if ( (_options.outputKind() == Options::kObjectFile) && (objMinOS > _internal.minOSVersion) )
-			_internal.minOSVersion = objMinOS;
-#endif
+
 		// update set of known tools used
 		for (const std::pair<uint32_t,uint32_t>& entry : objFile->toolVersions()) {
 			uint64_t combined = (uint64_t)entry.first << 32 | entry.second;
@@ -496,19 +506,6 @@ void Resolver::doFile(const ld::File& file)
 					}
 				}
 				break;
-			
-			case CPU_TYPE_ARM64:
-				if ( _options.subArchitecture() != nextObjectSubType ) {
-					if ( _options.allowSubArchitectureMismatches() ) {
-						warning("object file %s was built for different arm64 sub-type (%d) than link command line (%d)",
-							file.path(), nextObjectSubType, _options.subArchitecture());
-					}
-					else {
-						throwf("object file %s was built for different arm64 sub-type (%d) than link command line (%d)",
-							file.path(), nextObjectSubType, _options.subArchitecture());
-					}
-				}
-				break;
 
 			case CPU_TYPE_I386:
 				_internal.cpuSubType = CPU_SUBTYPE_I386_ALL;
@@ -526,6 +523,27 @@ void Resolver::doFile(const ld::File& file)
 					else {
 						throwf("object file %s was built for different x86_64 sub-type (%d) than link command line (%d)", 
 							file.path(), nextObjectSubType, _options.subArchitecture());
+					}
+				}
+				break;
+			case CPU_TYPE_ARM64:
+				if (_options.subArchitecture() == CPU_SUBTYPE_ARM64E) {
+					if ((file.cpuSubTypeFlags() & 0x80) == 0) {
+						warning("object file %s was built with an incompatible arm64e ABI compiler", file.path());
+						break;
+					}
+					if (!_internal.hasArm64eABIVersion) {
+						_internal.arm64eABIVersion = file.cpuSubTypeFlags();
+						_internal.hasArm64eABIVersion = true;
+					} else {
+						// The compilers that generate ABI versions have not been submitted yet, so only warn about old .o files
+						// when we have already seen a new one.
+						if ( _internal.arm64eABIVersion != file.cpuSubTypeFlags()) {
+							const char * originalVersion = (_internal.arm64eABIVersion & 0x40) ? "kernel" : "user";
+							const char * fileVersion = (file.cpuSubTypeFlags() & 0x40) ? "kernel" : "user";
+							warning("object file %s was built for different arm64e ABI (%s version %u) than earlier object files (%s version %u)",
+									file.path(), fileVersion, (file.cpuSubTypeFlags() & 0x3f), originalVersion, (_internal.arm64eABIVersion & 0x3f));
+						}
 					}
 				}
 				break;
@@ -607,10 +625,7 @@ void Resolver::doFile(const ld::File& file)
 
 		// <rdar://problem/25680358> verify dylibs use same version of Swift language
 		if ( file.swiftVersion() != 0 ) {
-			if ( _internal.swiftVersion == 0 ) {
-				_internal.swiftVersion = file.swiftVersion();
-			}
-			else if ( file.swiftVersion() != _internal.swiftVersion ) {
+			if ( (_internal.swiftVersion != 0) && (file.swiftVersion() != _internal.swiftVersion) ) {
 				char fileVersion[64];
 				char otherVersion[64];
 				Options::userReadableSwiftVersion(file.swiftVersion(), fileVersion);
@@ -1180,7 +1195,7 @@ void Resolver::deadStripOptimize(bool force)
 		}
 		// <rdar://problem/49468634> if doing LTO, mark all libclang_rt* mach-o atoms as live since the backend may suddenly codegen uses of them
 		else if ( _haveLLVMObjs && !force && (atom->contentType() !=  ld::Atom::typeLTOtemporary) ) {
-			if ( strstr(atom->safeFilePath(), "libclang_rt") != nullptr ) {
+			if ( isCompilerSupportLib(atom->safeFilePath()) ) {
 				_deadStripRoots.insert(atom);
 			}
 		}
@@ -1188,10 +1203,17 @@ void Resolver::deadStripOptimize(bool force)
 
 	// mark all roots as live, and all atoms they reference
 	for (std::set<const ld::Atom*>::iterator it=_deadStripRoots.begin(); it != _deadStripRoots.end(); ++it) {
+		const ld::Atom* anAtom = *it;
 		WhyLiveBackChain rootChain;
 		rootChain.previous = NULL;
-		rootChain.referer = *it;
-		this->markLive(**it, &rootChain);
+		rootChain.referer = anAtom;
+		if ( force && (anAtom->contentType() == ld::Atom::typeLTOtemporary) && (strcmp((anAtom)->name(), "import-atom") == 0) ) {
+			// <rdar://problem/57667716> LTO code-gen is done, doing second dead strip pass.  Don't use import-atom any more
+		}
+		else {
+			//fprintf(stderr, "dont-dead-strip: %p %s\n", anAtom, (anAtom)->name());
+			this->markLive(*anAtom, &rootChain);
+		}
 	}
 	
 	// special case atoms that need to be live if they reference something live
@@ -1643,20 +1665,10 @@ void Resolver::fillInHelpersInInternalState()
 		}
 	}
 	
-	_internal.lazyBindingHelper = NULL;
-	if ( _options.usingLazyDylibLinking() ) {
-		// "dyld_lazy_dylib_stub_binding_helper" comes from lazydylib1.o file, so should already exist in symbol table
-		if ( _symbolTable.hasName("dyld_lazy_dylib_stub_binding_helper") ) {
-			SymbolTable::IndirectBindingSlot slot = _symbolTable.findSlotForName("dyld_lazy_dylib_stub_binding_helper");
-			_internal.lazyBindingHelper = _internal.indirectBindingTable[slot];
-		}
-		if ( _internal.lazyBindingHelper == NULL )
-			throw "symbol dyld_lazy_dylib_stub_binding_helper not defined (usually in lazydylib1.o)";
-	}
-	
+	_internal.lazyBindingHelper = NULL;	
 	_internal.compressedFastBinderProxy = NULL;
 	// FIXME: What about fMakeThreadedStartsSection?
-	if ( needsStubHelper && _options.makeCompressedDyldInfo() ) { 
+	if ( needsStubHelper && _options.makeCompressedDyldInfo() && !_options.noLazyBinding()) {
 		// "dyld_stub_binder" comes from libSystem.dylib so will need to manually resolve
 		if ( !_symbolTable.hasName("dyld_stub_binder") ) {
 			_inputFiles.searchLibraries("dyld_stub_binder", true, false, false, *this);
@@ -1746,6 +1758,14 @@ void Resolver::removeCoalescedAwayAtoms()
 	}
 }
 
+// Note: this list should come from libLTO.dylib
+// It is a list of symbols the backend for libLTO.dylib might generate
+// and for statically linked firmware, we need to load the impl from archives
+// before running LTO compilation.
+static const char* sSoftSymbolNames[] = { "___udivdi3", "___udivsi3", "___divsi3", "___muldi3",
+										  "___gtdf2", "___ltdf2",
+										   "_memset", "_strcpy",  "_snprintf", "___sanitize_trap" };
+
 void Resolver::linkTimeOptimize()
 {
 	// only do work here if some llvm obj files where loaded
@@ -1753,6 +1773,25 @@ void Resolver::linkTimeOptimize()
 		return;
 
 #ifdef LTO_SUPPORT
+	// when building firmware with LTO, make sure all surprise symbols libLTO might generate are loaded if possible
+	switch ( _options.outputKind() ) {
+		case Options::kDynamicExecutable:
+		case Options::kDynamicLibrary:
+		case Options::kDynamicBundle:
+		case Options::kObjectFile:
+		case Options::kKextBundle:
+		case Options::kDyld:
+			break;
+		case Options::kStaticExecutable:
+		case Options::kPreload:
+			for (const char* softName : sSoftSymbolNames ) {
+				if ( ! _symbolTable.hasName(softName) ) {
+					_inputFiles.searchLibraries(softName, false, true, false, *this);
+				}
+			}
+			break;
+	}
+
 	// <rdar://problem/15314161> LTO: Symbol multiply defined error should specify exactly where the symbol is found
     _symbolTable.checkDuplicateSymbols();
 
@@ -1781,6 +1820,7 @@ void Resolver::linkTimeOptimize()
 	optOpt.verboseOptimizationHints     = _options.verboseOptimizationHints();
 	optOpt.armUsesZeroCostExceptions    = _options.armUsesZeroCostExceptions();
 	optOpt.simulator					= _options.targetIOSSimulator();
+	optOpt.internalSDK					= _options.internalSDK();
 #if SUPPORT_ARCH_arm64e
 	optOpt.supportsAuthenticatedPointers = _options.supportsAuthenticatedPointers();
 #endif
@@ -1863,13 +1903,6 @@ void Resolver::linkTimeOptimize()
 		this->resolveUndefines();
 	}
 	else {
-		// last chance to check for undefines
-		this->resolveUndefines();
-		this->checkUndefines(true);
-
-		// check new code does not override some dylib
-		this->checkDylibSymbolCollisions();
-
 		// <rdar://problem/33853815> remove undefs from LTO objects that gets optimized away
 		std::unordered_set<const ld::Atom*> mustPreserve;
 		if ( _internal.classicBindingHelper != NULL )
@@ -1886,6 +1919,14 @@ void Resolver::linkTimeOptimize()
 				mustPreserve.insert(_internal.indirectBindingTable[slot]);
 		}
 		_symbolTable.removeDeadUndefs(_atoms, mustPreserve);
+
+		// last chance to check for undefines
+		this->resolveUndefines();
+		this->checkUndefines(true);
+
+		// check new code does not override some dylib
+		this->checkDylibSymbolCollisions();
+
 	}
 #else
     throwf("no builtin LTO support"); // ld64-port
@@ -1940,6 +1981,44 @@ void Resolver::dumpAtoms()
 	}
 }
 
+
+void Resolver::checkChainedFixupsBounds()
+{
+	// disable chained fixups on 32-bit arch if binary too big
+	if ( ! _options.makeChainedFixups() )
+		return;
+	if ( _options.architecture() & CPU_ARCH_ABI64 )
+		return;
+	uint64_t totalSize = 0;
+	for (const ld::Atom* atom : _atoms) {
+		totalSize += atom->size();
+	}
+	bool tooBig = (totalSize > 64*1024*1024);
+
+	// TEMP: disable chained fixups on 32-bit arch if it contains Darwin Test metadata
+	bool hasDtMetaData = false;
+	for (ld::Internal::FinalSection* sect: _internal.sections) {
+		if ( (strcmp(sect->sectionName(), "__dt_tests") == 0) && (strncmp(sect->segmentName(), "__DATA", 6) == 0) )
+			hasDtMetaData = true;
+	}
+
+	if ( tooBig || hasDtMetaData ) {
+		_internal.cantUseChainedFixups = true;
+		switch ( _options.outputKind() ) {
+			case Options::kDynamicExecutable:
+			case Options::kDynamicLibrary:
+			case Options::kDynamicBundle:
+			case Options::kObjectFile:
+			case Options::kDyld:
+				break;
+			case Options::kStaticExecutable:
+			case Options::kKextBundle:
+			case Options::kPreload:
+				throwf("binary is too big to use -fixup_chains");
+		}
+	}
+}
+
 void Resolver::resolve()
 {
 	this->initializeState();
@@ -1958,6 +2037,7 @@ void Resolver::resolve()
 	this->tweakWeakness();
     _symbolTable.checkDuplicateSymbols();
 	this->buildArchivesList();
+	this->checkChainedFixupsBounds();
 }
 
 
