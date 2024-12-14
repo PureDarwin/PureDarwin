@@ -63,7 +63,10 @@ decl_simple_lock_data(static, mtrr_lock);
 #define MTRR_LOCK()     simple_lock(&mtrr_lock, LCK_GRP_NULL);
 #define MTRR_UNLOCK()   simple_unlock(&mtrr_lock);
 
-//#define MTRR_DEBUG 1
+#ifdef DEBUG || DEVELOPMENT
+#define MTRR_DEBUG 1
+#endif
+
 #if     MTRR_DEBUG
 #define DBG(x...)       kprintf(x)
 #else
@@ -354,6 +357,7 @@ mtrr_update_action(void * cache_control_type)
 		 * The five high-order bits of each field are reserved, and must be set to all 0s."
 		 * So, we zero-out the high 5 bits of the PA6 entry here:
 		 */
+		/* This causes the Metal Acceleration drivers in macOS to go kaput on AMD CPUs */
 		pat &= ~(0xFFULL << 48);
 		pat |=  (0x01ULL << 48);
 		wrmsr64(MSR_IA32_CR_PAT, pat);

@@ -54,6 +54,16 @@
 
 bool mt_core_supported = false;
 
+#define MT_CONFIG_FOR_PMC(ctr) (1 << (ctr))
+
+/* this is a workaround for a HW quirk in Silvermont/Airmont */
+/* of course, this can infact be applied to misc CPUs too. */
+#define MT_CONFIG_PMC0 MT_CONFIG_FOR_PMC(0)
+#define MT_CONFIG_PMC1 MT_CONFIG_FOR_PMC(1)
+#define MT_CONFIG_PMC2 MT_CONFIG_FOR_PMC(2)
+
+uint32_t mt_config = MT_CONFIG_PMC0 | MT_CONFIG_PMC1 | MT_CONFIG_PMC2;
+
 /*
  * PMC[0-2]_{RD,WR} allow reading and writing the fixed PMCs.
  *
@@ -79,7 +89,7 @@ mt_cur_cpu(void)
 uint64_t
 mt_core_snap(unsigned int ctr)
 {
-	if (!mt_core_supported) {
+	if (!mt_core_supported || !(mt_config & MT_CONFIG_FOR_PMC(ctr))) {
 		return 0;
 	}
 
@@ -99,7 +109,7 @@ mt_core_snap(unsigned int ctr)
 void
 mt_core_set_snap(unsigned int ctr, uint64_t count)
 {
-	if (!mt_core_supported) {
+	if (!mt_core_supported || !(mt_config & MT_CONFIG_FOR_PMC(ctr))) {
 		return;
 	}
 
@@ -344,6 +354,10 @@ mt_early_init(void)
 	if (info->cpuid_arch_perf_leaf.version >= 2) {
 		lapic_set_pmi_func((i386_intr_func_t)mt_pmi_x86_64);
 		mt_core_supported = true;
+	}
+	if (info->cpuid_cpufamily == CPUFAMILY_INTEL_SILVERMONT || info->cpuid_cpufamily == CPUFAMILY_INTEL_AIRMONT) {
+		kprintf("MT: Silvermont/Airmont quirk applied");
+		mt_config &= ~(MT_CONFIG_PMC1 | MT_CONFIG_PMC2); /* is there a better way to do this? */
 	}
 }
 
