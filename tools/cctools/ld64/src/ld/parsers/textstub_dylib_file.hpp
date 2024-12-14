@@ -36,10 +36,10 @@ namespace dylib {
 
 extern ld::dylib::File* parse(const uint8_t* fileContent, uint64_t fileLength, const char* path,
 							  time_t modTime, const Options& opts, ld::File::Ordinal ordinal,
-							  bool bundleLoader, bool indirectDylib);
+							  bool bundleLoader, bool indirectDylib, bool fromSDK);
 
 extern ld::dylib::File *parse(const char *path, tapi::LinkerInterfaceFile* file, time_t modTime,
-                              ld::File::Ordinal ordinal, const Options& opts, bool indirectDylib);
+                              ld::File::Ordinal ordinal, const Options& opts, bool indirectDylib, bool fromSDK);
 
 extern bool isTextStubFile(const uint8_t* fileContent, uint64_t fileLength, const char* path);
 

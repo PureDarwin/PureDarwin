@@ -175,6 +175,10 @@ struct atom_equal {
                 return false;
             if ( f1->kind != f2->kind )
                 return false;
+            if ( (f1->kind == ld::Fixup::kindAddAddend) || (f1->kind == ld::Fixup::kindSubtractAddend) ) {
+                if ( f1->u.addend != f2->u.addend )
+                    return false;
+            }
             if ( f1->clusterSize != f2->clusterSize )
                 return false;
             if ( f1->binding != f2->binding )

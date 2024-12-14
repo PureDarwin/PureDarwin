@@ -85,7 +85,7 @@ private:
 		ld::Internal&	_state;
 	};
 				
-	typedef std::unordered_map<const char*, const ld::Atom*, CStringHash, CStringEquals> NameToAtom;
+	typedef std::unordered_map<std::string_view, const ld::Atom*> NameToAtom;
 	
 	typedef std::map<const ld::Atom*, const ld::Atom*> AtomToAtom;
 	
@@ -250,9 +250,9 @@ bool Layout::Comparer::operator()(const ld::Atom* left, const ld::Atom* right)
 	if ( leftFileOrdinal != rightFileOrdinal )
 		return leftFileOrdinal< rightFileOrdinal;
 
-	// tentative defintions have no address in .o file, they are traditionally laid out by name
-	if ( leftIsTent && rightIsTent ) 
-		return (strcmp(left->name(), right->name()) < 0);
+	// tentative definitions have no address in .o file, they are traditionally laid out by name
+	if ( leftIsTent && rightIsTent )
+		return left->getUserVisibleName() < right->getUserVisibleName();
 
 	// lastly sort by atom address
 	int64_t addrDiff = left->objectAddress() - right->objectAddress();
@@ -261,8 +261,8 @@ bool Layout::Comparer::operator()(const ld::Atom* left, const ld::Atom* right)
 		if ( leftIsAlias != rightIsAlias )
 			return leftIsAlias;
 
-		// both at same address, sort by name 
-		return (strcmp(left->name(), right->name()) < 0);
+		// both at same address, sort by name
+		return left->getUserVisibleName() < right->getUserVisibleName();
 	}
 	return (addrDiff < 0);
 }
@@ -319,8 +319,8 @@ void Layout::buildNameTable()
 		for (std::vector<const ld::Atom*>::iterator ait=sect->atoms.begin(); ait != sect->atoms.end(); ++ait) {
 			const ld::Atom* atom = *ait;
 			if ( atom->symbolTableInclusion() == ld::Atom::symbolTableIn ) {
-				const char* name = atom->name();
-				if ( name != NULL) {
+				auto name = atom->getUserVisibleName();
+				if ( name.size() != 0 ) {
 					// static function or data
 					NameToAtom::iterator pos = _nameTable.find(name);
 					if ( pos == _nameTable.end() )
@@ -340,10 +340,10 @@ void Layout::buildNameTable()
 	if ( _s_log ) {
 		fprintf(stderr, "buildNameTable() _nameTable:\n");
 		for(NameToAtom::iterator it=_nameTable.begin(); it != _nameTable.end(); ++it)
-			fprintf(stderr, "  %p <- %s\n", it->second, it->first);
+			fprintf(stderr, "  %p <- %s\n", it->second, std::string(it->first).c_str());
 		fprintf(stderr, "buildNameTable() _nameCollisionAtoms:\n");
 		for(std::vector<const ld::Atom*>::iterator it=_nameCollisionAtoms.begin(); it != _nameCollisionAtoms.end(); ++it)
-			fprintf(stderr, "  %p, %s\n", *it, (*it)->name());
+			fprintf(stderr, "  %p, %s\n", *it, std::string((*it)->getUserVisibleName()).c_str());
 	}
 }
 
@@ -365,7 +365,7 @@ const ld::Atom* Layout::findAtom(const Options::OrderedSymbol& orderedSymbol)
 			}
 			for (std::vector<const ld::Atom*>::iterator it=_nameCollisionAtoms.begin(); it != _nameCollisionAtoms.end(); it++) {
 				const ld::Atom* atom = *it;
-				if ( strcmp(atom->name(), orderedSymbol.symbolName) == 0 ) {
+				if ( atom->getUserVisibleName() == std::string_view(orderedSymbol.symbolName) ) {
 					if ( matchesObjectFile(atom, orderedSymbol.objectFileName) ) {
 						return atom;
 					}
@@ -521,7 +521,7 @@ void Layout::buildOrdinalOverrideMap()
 						bool wildCardMatch;
 						const ld::File* f = atom->file();
 						const char* path = (f != NULL) ? f->path() : NULL;
-						if ( !_options.moveRwSymbol(atom->name(), path, dstSeg, wildCardMatch) )
+						if ( !_options.moveRwSymbol(atom->getUserVisibleName(), path, dstSeg, wildCardMatch) )
 							moveToData.insert(atom);
 					}
 					break;

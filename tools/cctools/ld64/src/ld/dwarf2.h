@@ -67,9 +67,24 @@ enum {
   DW_FORM_sec_offset, 
   DW_FORM_exprloc,
   DW_FORM_flag_present,
-  DW_FORM_ref_sig8 
+  /* new in Dwarf 5 */
+  DW_FORM_ref_sig8 = 0x20,
+  DW_FORM_strx = 0x1a,
+  DW_FORM_addrx,
+  DW_FORM_rnglistx = 0x23,
+  DW_FORM_strx1 = 0x25,
+  DW_FORM_strx2,
+  DW_FORM_strx3,
+  DW_FORM_strx4,
+  DW_FORM_addrx1,
+  DW_FORM_addrx2,
+  DW_FORM_addrx3,
+  DW_FORM_addrx4,
 };
 
+enum {
+  DW_UT_compile = 0x01
+};
 
 enum {
   DW_LNS_extended_op = 0,

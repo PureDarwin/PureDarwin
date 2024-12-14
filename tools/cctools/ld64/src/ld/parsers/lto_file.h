@@ -74,6 +74,7 @@ struct OptimizeOptions {
 	bool								verboseOptimizationHints;
 	bool								armUsesZeroCostExceptions;
 	bool								simulator;
+	bool								internalSDK;
 #if SUPPORT_ARCH_arm64e
 	bool								supportsAuthenticatedPointers;
 #endif

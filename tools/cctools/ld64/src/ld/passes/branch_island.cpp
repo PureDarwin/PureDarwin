@@ -61,7 +61,7 @@ static bool _s_log = false;
 static ld::Section _s_text_section("__TEXT", "__text", ld::Section::typeCode);
 
 
-#if SUPPORT_ARCH_arm64
+#if SUPPORT_ARCH_arm64 || SUPPORT_ARCH_arm64_32
 
 class ARM64BranchIslandAtom : public ld::Atom {
 public:
@@ -307,7 +307,7 @@ static ld::Atom* makeBranchIsland(const Options& opts, ld::Fixup::Kind kind, int
 				return new ARMtoARMBranchIslandAtom(name, nextTarget, finalTarget);
 			}
 			break;
-#if SUPPORT_ARCH_arm64
+#if SUPPORT_ARCH_arm64 || SUPPORT_ARCH_arm64_32
 	    case ld::Fixup::kindStoreARM64Branch26:
 		case ld::Fixup::kindStoreTargetAddressARM64Branch26:
 			return new ARM64BranchIslandAtom(name, nextTarget, finalTarget);
@@ -337,6 +337,11 @@ static uint64_t textSizeWhenMightNeedBranchIslands(const Options& opts, bool see
 			return 128000000; // arm64 can branch +/- 128MB
 			break;
 #endif
+#if SUPPORT_ARCH_arm64_32
+		case CPU_TYPE_ARM64_32:
+			return 128000000; // arm64_32 can branch +/- 128MB
+			break;
+#endif
 	}
 	assert(0 && "unexpected architecture");
 	return 0x100000000LL;
@@ -356,6 +361,11 @@ static uint64_t maxDistanceBetweenIslands(const Options& opts, bool seenThumbBra
 			break;
 #if SUPPORT_ARCH_arm64
 		case CPU_TYPE_ARM64:
+			return 124*1024*1024;		 // 4MB of branch islands per 128MB
+			break;
+#endif
+#if SUPPORT_ARCH_arm64_32
+		case CPU_TYPE_ARM64_32:
 			return 124*1024*1024;		 // 4MB of branch islands per 128MB
 			break;
 #endif
@@ -532,7 +542,7 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 				case ld::Fixup::kindStoreThumbBranch22:
 				case ld::Fixup::kindStoreTargetAddressARMBranch24:
 				case ld::Fixup::kindStoreTargetAddressThumbBranch22:
-#if SUPPORT_ARCH_arm64
+#if SUPPORT_ARCH_arm64 || SUPPORT_ARCH_arm64_32
 				case ld::Fixup::kindStoreARM64Branch26:
 				case ld::Fixup::kindStoreTargetAddressARM64Branch26:
 #endif
@@ -713,6 +723,9 @@ void doPass(const Options& opts, ld::Internal& state)
 		case CPU_TYPE_ARM:
 #if SUPPORT_ARCH_arm64
 		case CPU_TYPE_ARM64:
+#endif
+#if SUPPORT_ARCH_arm64_32
+		case CPU_TYPE_ARM64_32:
 #endif
 			break;
 		default:

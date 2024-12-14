@@ -61,16 +61,14 @@ struct arm64
 	typedef Pointer64<LittleEndian>		P;
 };
 
-// ld64-port: I am not sure if this is correct.
 struct arm64e
 {
 	typedef Pointer64<LittleEndian>		P;
 };
 
-// ld64-port: Nor am I sure if this is correct either...
 struct arm64_32
 {
-	typedef Pointer32<LittleEndian>		P;
+	typedef Pointer32<LittleEndian>	P;
 };
 
 #endif // __ARCHITECTURES__

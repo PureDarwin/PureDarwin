@@ -29,6 +29,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <limits.h>
@@ -51,7 +52,7 @@ namespace tool {
 class OutputFile
 {
 public:
-								OutputFile(const Options& opts);
+								OutputFile(const Options& opts, ld::Internal& state);
 
 	
 	// iterates all atoms in initial files
@@ -63,10 +64,10 @@ public:
 	uint32_t					dylibToOrdinal(const ld::dylib::File*) const;
 	uint32_t					encryptedTextStartOffset()	{ return _encryptedTEXTstartOffset; }
 	uint32_t					encryptedTextEndOffset()	{ return _encryptedTEXTendOffset; }
-	int							compressedOrdinalForAtom(const ld::Atom* target);
+	int							compressedOrdinalForAtom(const ld::Atom* target) const;
 	uint64_t					fileSize() const { return _fileSize; }
 
-	bool						needsBind(const ld::Atom* toTarget, uint64_t* accumulator = nullptr,
+	bool						needsBind(const ld::Atom* toTarget, bool authPtr, uint64_t* accumulator = nullptr,
 										  uint64_t* inlineAddend = nullptr, uint32_t* bindOrdinal = nullptr,
 										  uint32_t* libOrdinal = nullptr) const;
 	
@@ -94,7 +95,8 @@ public:
 	ld::Internal::FinalSection*	indirectSymbolTableSection;
 	ld::Internal::FinalSection*	threadedPageStartsSection;
 	ld::Internal::FinalSection*	chainInfoSection;
-	
+	ld::Internal::FinalSection*	codeSignatureSection;
+
 	struct RebaseInfo {
 						RebaseInfo(uint8_t t, uint64_t addr) : _type(t), _address(addr) {}
 		uint8_t			_type;
@@ -126,13 +128,15 @@ public:
 		
 		// for sorting
 		int operator<(const BindingInfo& rhs) const {
-			// sort by library, symbol, type, then address
+			// sort by library, symbol, type, flags, then address
 			if ( this->_libraryOrdinal != rhs._libraryOrdinal )
 				return  (this->_libraryOrdinal < rhs._libraryOrdinal );
 			if ( this->_symbolName != rhs._symbolName )
 				return ( strcmp(this->_symbolName, rhs._symbolName) < 0 );
 			if ( this->_type != rhs._type )
 				return  (this->_type < rhs._type );
+			if ( this->_flags != rhs._flags )
+				return  (this->_flags >= rhs._flags );
 			return  (this->_address < rhs._address );
 		}
 	};
@@ -311,10 +315,11 @@ private:
 	class ChainedFixupBinds
 	{
 	public:
-		void  	 ensureTarget(const ld::Atom* atom, uint64_t addend);
+		void  	 ensureTarget(const ld::Atom* atom, bool authPtr, uint64_t addend);
 		uint32_t count() const;
 		bool  	 hasLargeAddends() const;
 		bool     hasHugeAddends() const;
+		bool	 hasHugeSymbolStrings() const;
 		void	 forEachBind(void (^callback)(unsigned bindOrdinal, const ld::Atom* importAtom, uint64_t addend));
 		uint32_t ordinal(const ld::Atom* atom, uint64_t addend) const;
 		void	 setMaxRebase(uint64_t max) { _maxRebase = max; }
@@ -369,6 +374,7 @@ private:
 		  bool								_hasLocalRelocations;
 		  bool								_hasExternalRelocations;
 		  bool								_hasOptimizationHints;
+		  bool								_hasCodeSignature;
 	uint64_t								_fileSize;
 	std::map<uint64_t, uint32_t>			_lazyPointerAddressToInfoOffset;
 	uint32_t								_encryptedTEXTstartOffset;
@@ -395,6 +401,7 @@ public:
 	std::unordered_map<const ld::Atom*, uint32_t> _chainedFixupNoAddendBindOrdinals;
 	ChainedFixupBinds						_chainedFixupBinds;
 	std::vector<ChainedFixupSegInfo>    	_chainedFixupSegments;
+	size_t 									_importedSymbolsCount;
 #if SUPPORT_ARCH_arm64e
 	std::map<uintptr_t, std::pair<Fixup::AuthData, uint64_t>> _authenticatedFixupData;
 #endif
@@ -417,6 +424,7 @@ public:
 	class LinkEditAtom*						_dataInCodeAtom;
 	class LinkEditAtom*						_optimizationHintsAtom;
 	class LinkEditAtom*						_chainedInfoAtom;
+	class CodeSignatureAtom*				_codeSignatureAtom;
 
 };
 

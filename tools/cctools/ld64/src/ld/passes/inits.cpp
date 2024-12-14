@@ -76,7 +76,7 @@ void doPass(Options& opts, ld::Internal& state)
 	//const bool log = false;
 
 	// only transform initializers in final linked image
-	if ( opts.outputKind() == Options::kObjectFile )
+	if ( !opts.dyldLoadsOutput() )
 		return;
 
     // only transform if targetting new enough OS
@@ -84,26 +84,25 @@ void doPass(Options& opts, ld::Internal& state)
         return;
 
     // transform -init function
-    std::vector<const InitOffsetAtom*> initFunctions;
     if ( (opts.initFunctionName() != NULL) && (state.entryPoint != NULL) ) {
         InitOffsetAtom* initOffsetAtom = new InitOffsetAtom(state.entryPoint);
-        initFunctions.push_back(initOffsetAtom);
         state.addAtom(*initOffsetAtom);
         state.entryPoint = NULL;  // this prevents LC_ROUTINES from being generated
     }
 
 	// only needed if there is a __mod_init_funcs section
+    std::vector<InitOffsetAtom*> orderedInitOffsetAtoms;
 	for (ld::Internal::FinalSection* sect : state.sections) {
 		if ( sect->type() != ld::Section::typeInitializerPointers )
 			continue;
         const uint64_t pointerSize = (opts.architecture() & CPU_ARCH_ABI64) ? 8 : 4;
-        std::vector<InitOffsetAtom*> orderedAtoms;
         for (const ld::Atom* atom : sect->atoms) {
             for (ld::Fixup::iterator fit = atom->fixupsBegin(), end=atom->fixupsEnd(); fit != end; ++fit) {
                 if ( fit->firstInCluster() )
-                    orderedAtoms.push_back(NULL);
+                    orderedInitOffsetAtoms.push_back(NULL);
             }
         }
+        uint64_t atomOffsetInSection = 0;
 		for (const ld::Atom* atom : sect->atoms) {
 			for (ld::Fixup::iterator fit = atom->fixupsBegin(), end=atom->fixupsEnd(); fit != end; ++fit) {
                 const Atom* initFunc = NULL;
@@ -118,28 +117,28 @@ void doPass(Options& opts, ld::Internal& state)
                         assert(0 && "fixup binding kind unsupported for initializer section");
                         break;
                 }
-                unsigned index = fit->offsetInAtom / pointerSize;
-                assert(index < orderedAtoms.size());
-                orderedAtoms[index] = new InitOffsetAtom(initFunc);
+                // relocations in .o files may be in random order, so fixups are in random order,
+                // but we need initializers to run in order the pointers were in the __mod_init_func section.
+                unsigned index = (atomOffsetInSection + fit->offsetInAtom) / pointerSize;
+                assert(index < orderedInitOffsetAtoms.size());
+                orderedInitOffsetAtoms[index] = new InitOffsetAtom(initFunc);
             }
-        }
-        // relocations in .o files may be in random order, so fixups are in random order,
-        // but we need initializers to run in order the pointers were in the __mod_init_func section.
-        for (InitOffsetAtom* atom : orderedAtoms) {
-            initFunctions.push_back(atom);
-            state.addAtom(*atom);
+            atomOffsetInSection += atom->size();
         }
 	}
-    if ( initFunctions.empty() )
+    if ( orderedInitOffsetAtoms.empty() )
         return;
-
-
 
     // remove any old style __mod_init_funcs sections
 	state.sections.erase(std::remove_if(state.sections.begin(), state.sections.end(),
                                         [&](ld::Internal::FinalSection*& sect) {
                                             return (sect->type() == ld::Section::typeInitializerPointers);
                                         }), state.sections.end());
+
+    // add in new __init_offsets section (must do after done iterating state.sections)
+    for (InitOffsetAtom* atom : orderedInitOffsetAtoms) {
+        state.addAtom(*atom);
+    }
 }
 
 

@@ -172,6 +172,9 @@ void doPass(const Options& opts, ld::Internal& internal)
 		case CPU_TYPE_X86_64:
 		case CPU_TYPE_ARM:
 		case CPU_TYPE_ARM64:
+#if SUPPORT_ARCH_arm64_32
+		case CPU_TYPE_ARM64_32:
+#endif
 			storeKind = ld::Fixup::kindStoreLittleEndian32;
 			break;
 		default:

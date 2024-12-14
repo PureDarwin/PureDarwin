@@ -51,6 +51,8 @@ struct ParserOptions {
 	bool			usingBitcode;
 	uint8_t			maxDefaultCommonAlignment;
 	bool			internalSDK;
+	bool			forceHidden;
+	bool			platformMismatchesAreWarning;
 };
 
 extern ld::relocatable::File* parse(const uint8_t* fileContent, uint64_t fileLength, 
@@ -59,7 +61,7 @@ extern ld::relocatable::File* parse(const uint8_t* fileContent, uint64_t fileLen
 									
 extern bool isObjectFile(const uint8_t* fileContent, uint64_t fileLength, const ParserOptions& opts);
 
-extern bool isObjectFile(const uint8_t* fileContent, uint64_t fileLength, cpu_type_t* result, cpu_subtype_t* subResult, ld::Platform* platform, uint32_t* minOsVers);
+extern bool isObjectFile(const uint8_t* fileContent, uint64_t fileLength, cpu_type_t* result, cpu_subtype_t* subResult, ld::VersionSet& platformsFound);
 
 extern bool hasObjC2Categories(const uint8_t* fileContent);					
 

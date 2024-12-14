@@ -8,6 +8,7 @@ target_sources(host_ld_libpasses PRIVATE
     got.cpp
     huge.cpp
     objc.cpp
+    objc_constants.cpp
     order.cpp
     tlvp.cpp
     stubs/stubs.cpp

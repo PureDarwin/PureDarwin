@@ -29,6 +29,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <limits.h>
@@ -104,6 +105,7 @@ private:
 	void					buildArchivesList();
 	void					doLinkerOption(const std::vector<const char*>& linkerOption, const char* fileName);
 	void					dumpAtoms();
+	void					checkChainedFixupsBounds();
 
 	typedef std::unordered_set<const char*, CStringHash, CStringEquals>  StringSet;
 
