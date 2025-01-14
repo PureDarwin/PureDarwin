@@ -1,4 +1,5 @@
 /* include/config.h.  Generated from config.h.in by configure.  */
+#ifdef __APPLE__
 /* #undef HAVE_SYS_STATFS_H */
 #define HAVE_SYS_XATTR_H 1
 /* #undef HAVE_SYS_EXTATTR_H */
@@ -19,11 +20,13 @@
 #define HAVE_SYS_ACL_H 1
 /* #undef HAVE_LIBUTIL_H */
 #define HAVE_ASPRINTF 1
-/* #undef HAVE_LIBBZ2 */
-/* #undef HAVE_LIBLZMA */
 #define HAVE_LCHOWN 1
 #define HAVE_LCHMOD 1
 #define HAVE_STRMODE 1
+#endif /* __APPLE__ */
+
+/* #undef HAVE_LIBBZ2 */
+/* #undef HAVE_LIBLZMA */
 #define UID_STRING RId32
 #define UID_CAST (uint32_t)
 #define GID_STRING PRId32

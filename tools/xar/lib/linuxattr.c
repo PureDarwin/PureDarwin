@@ -37,6 +37,7 @@
 
 #include "config.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <libgen.h>
 #include "xar.h"
@@ -94,7 +95,7 @@ struct _linuxattr_context{
 #define LINUXATTR_CONTEXT(x) ((struct _linuxattr_context *)(x))
 
 int32_t xar_linuxattr_read(xar_t x, xar_file_t f, void * buf, size_t len, void *context) {
-	
+
 	(void)x; (void)f;
 	if( !LINUXATTR_CONTEXT(context)->buf ) {
 		int r;
@@ -155,7 +156,7 @@ int32_t xar_linuxattr_archive(xar_t x, xar_file_t f, const char* file, const cha
 
 	if( !xar_check_prop(x, "ea") )
 		return 0;
-	
+
 TRYAGAIN:
 	buf = malloc(bufsz);
 	if(!buf)
@@ -217,12 +218,12 @@ int32_t xar_linuxattr_extract(xar_t x, xar_file_t f, const char* file, char *buf
 
 	(void)buffer;
 	memset(&context,0,sizeof(struct _linuxattr_context));
-	
+
 	/* data buffers, can't store linux attrs */
 	if(len){
 		return 0;
 	}
-	
+
 	/* Check for EA extraction behavior */
 
 	memset(&sfs, 0, sizeof(sfs));
