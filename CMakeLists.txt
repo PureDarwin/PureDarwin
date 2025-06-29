@@ -11,7 +11,6 @@ endif()
 
 cmake_policy(SET CMP0114 NEW)
 
-set(CMAKE_INSTALL_PREFIX "")
 set(CMAKE_MACOSX_MIN_VERSION 11.0)
 
 include(ExternalProject)
