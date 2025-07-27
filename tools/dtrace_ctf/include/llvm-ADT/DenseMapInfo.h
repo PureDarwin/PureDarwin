@@ -14,6 +14,7 @@
 #define LLVM_ADT_DENSEMAPINFO_H
 
 #include <memory>
+#include <cstring>
 
 namespace llvm {
 
