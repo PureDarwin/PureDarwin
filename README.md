@@ -11,7 +11,14 @@ See the [Website](https://www.puredarwin.org) for more information.
 ## Building PureDarwin
 
 To build PureDarwin, you will need OpenSSL installed, which is used by xar and ld64.
-PureDarwin builds only on macOS. It is currently tested with Xcode 14, but should work
+PureDarwin builds only on x86_64 (Intel) macOS. It is currently tested with Xcode 14, but should work
 with any other modern Xcode.
 
 You will also need zlib, which is used by the DTrace CTF tools used in building the kernel.
+
+```console
+$ brew install openssl cmake ninja
+$ mkdir build && cd build
+$ cmake -G Ninja ..
+$ ninja
+```
