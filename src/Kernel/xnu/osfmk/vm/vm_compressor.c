@@ -122,7 +122,6 @@ boolean_t validate_c_segs = TRUE;
 
 #if CONFIG_FREEZE
 int     vm_compressor_mode = VM_PAGER_FREEZER_DEFAULT;
-struct  freezer_context freezer_context_global;
 #else /* CONFIG_FREEZE */
 int     vm_compressor_mode = VM_PAGER_NOT_CONFIGURED;
 #endif /* CONFIG_FREEZE */
@@ -131,6 +130,10 @@ int     vm_compressor_mode = VM_PAGER_NOT_CONFIGURED;
 int             vm_compressor_mode = VM_PAGER_COMPRESSOR_WITH_SWAP;
 
 #endif /* !XNU_TARGET_OS_OSX */
+
+#if CONFIG_FREEZE
+struct  freezer_context freezer_context_global;
+#endif /* CONFIG_FREEZE */
 
 TUNABLE(uint32_t, vm_compression_limit, "vm_compression_limit", 0);
 int             vm_compressor_is_active = 0;

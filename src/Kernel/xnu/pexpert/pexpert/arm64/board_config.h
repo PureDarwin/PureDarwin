@@ -230,6 +230,16 @@
 #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
 #endif  /* ARM64_BOARD_CONFIG_BCM2837 */
 
+#ifdef ARM64_BOARD_CONFIG_VIRT
+#include <pexpert/arm64/QEMUVIRT.h>
+
+#define MAX_L2_CLINE                   6
+#define MAX_CPUS                       4
+#define MAX_CPU_CLUSTERS               1
+
+#define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
+#endif  /* ARM64_BOARD_CONFIG_VIRT */
+
 #ifdef ARM64_BOARD_CONFIG_VMAPPLE
 #include <pexpert/arm64/VMAPPLE.h>
 

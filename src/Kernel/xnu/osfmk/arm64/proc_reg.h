@@ -664,6 +664,10 @@
  * the kernel.
  */
 #endif /* __ARM_KERNEL_PROTECT__ */
+#if defined(ARM_LARGE_MEMORY)
+#define T0SZ_BOOT 23ULL
+#define T1SZ_BOOT 23ULL
+#else /* !ARM_LARGE_MEMORY */
 #ifdef __ARM_16K_PG__
 #if __ARM64_PMAP_SUBPAGE_L1__
 #define T0SZ_BOOT 25ULL
@@ -696,6 +700,7 @@
 #endif /*__ARM64_PMAP_SUBPAGE_L1__*/
 #endif /* __ARM_16K_PG__ */
 #endif /* defined(APPLE_ARM64_ARCH_FAMILY) */
+#endif /* !ARM_LARGE_MEMORY */
 
 #if __ARM_42BIT_PA_SPACE__
 #define TCR_IPS_VALUE TCR_IPS_42BITS

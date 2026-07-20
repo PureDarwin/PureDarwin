@@ -387,7 +387,11 @@ PE_init_platform(boolean_t vm_initialized, void *args)
 	if (PE_state.initialized == FALSE) {
 		PE_state.initialized = TRUE;
 		PE_state.bootArgs = boot_args_ptr;
+#if defined(__arm64__)
+		PE_state.deviceTreeHead = (void *)ml_static_ptovirt((vm_offset_t)boot_args_ptr->deviceTreeP);
+#else
 		PE_state.deviceTreeHead = boot_args_ptr->deviceTreeP;
+#endif
 		PE_state.deviceTreeSize = boot_args_ptr->deviceTreeLength;
 		PE_state.video.v_baseAddr = boot_args_ptr->Video.v_baseAddr;
 		PE_state.video.v_rowBytes = boot_args_ptr->Video.v_rowBytes;

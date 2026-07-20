@@ -54,6 +54,9 @@ stdenv.mkDerivation {
       -kext "$KEXTS/RavynXHCIPort.kext" \
       -kext "$KEXTS/IOGraphicsFamily.kext" \
       -kext "$KEXTS/IOGOPFramebuffer.kext" \
+      -kext "$KEXTS/IOVirtIOFamily.kext" \
+      -kext "$KEXTS/IOVirtIOGPU.kext" \
+      -kext "$KEXTS/IOVirtIONet.kext" \
       -kext "$KEXTS/IONetworkingFamily.kext" \
       -kext "$KEXTS/PDE1000.kext" \
       -kext "$KEXTS/RavynHDAudio.kext" \

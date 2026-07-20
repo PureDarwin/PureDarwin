@@ -9,7 +9,7 @@
   outputs = { self, nixpkgs, iig-tools, kc-tools, xnu-loader }:
     let
       lib = nixpkgs.lib;
-      systems = [ "x86_64-linux" "x86_64-darwin" ];
+      systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = lib.genAttrs systems;
 
       mkSystem = system:
@@ -29,18 +29,6 @@
             if fbdoomExternalSrcEnv == "" then null
             else builtins.path { path = /. + fbdoomExternalSrcEnv; name = "fbdoom-external-src"; };
 
-          # Real OPL music (i_music_opl_glue.c/opl_pd.c drive fbDOOM's own
-          # i_oplmusic.c against software OPL3 emulation) needs
-          # midifile.c/mus2mid.c and the opl/ library, which fbDOOM's own
-          # tree doesn't ship (it predates chocolate-doom's OPL rewrite).
-          # Rather than vendoring edited copies of someone else's GPL
-          # source into this repo, fetch nixpkgs' own pinned
-          # chocolate-doom release tarball and apply our small patch set
-          # on top at build time - same "treat upstream as hostile,
-          # narrow patches only" spirit as the rest of this component.
-          # opl_pd.c (the PureDarwin single-threaded pull backend replacing
-          # opl_sdl.c) and i_music_opl_glue.c are entirely our own files and
-          # live directly in src/Userspace/fbdoom, not here.
           chocolateDoomPatchedSrc = pkgs.runCommand "puredarwin-chocolate-doom-patched" { } ''
             mkdir -p $out
             cp -r ${pkgs.chocolate-doom.src}/opl $out/opl
@@ -63,6 +51,10 @@
             })
           );
           darwinCrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain.nix { };
+          arm64CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain.nix {
+            target = "arm64-apple-darwin20.4";
+            clangTarget = "arm64-apple-macosx11.0";
+          };
           libtapi = if isDarwin then null else pkgs.callPackage ./nix/pkgs/libtapi.nix { };
           nativeLd =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/native-ld.nix {
@@ -180,6 +172,9 @@
           coreFoundationSource = sourceWith "puredarwin-corefoundation-source" [
             "src/Libraries/CoreFoundation"
             "src/Libraries/libSystem/libc/pd-compat-include"
+          ];
+          securitySource = sourceWith "puredarwin-security-source" [
+            "src/Libraries/Security"
           ];
 
           mkPureDarwinBuild = args: pkgs.callPackage ./build.nix ({
@@ -1027,6 +1022,13 @@
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
             };
+          securityBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/security.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              src = "${securitySource}/src/Libraries/Security";
+            };
           libSystemBuild = mkPureDarwinBuild {
             pname = "puredarwin-libsystem";
             src = libSystemSource;
@@ -1067,6 +1069,29 @@
             installKernel = true;
             xnuKernelConfig = "RELEASE";
           };
+          kernelArm64Build = mkPureDarwinBuild {
+            pname = "puredarwin-kernel-arm64";
+            src = kernelSource;
+            buildTargets = [ "xnu" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = true;
+            xnuKernelConfig = "RELEASE";
+            puredarwinArch = "arm64";
+            inherit arm64CrossToolchain;
+          };
+          kernelArm64VirtBuild = mkPureDarwinBuild {
+            pname = "puredarwin-kernel-arm64-virt";
+            src = kernelSource;
+            buildTargets = [ "xnu" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = true;
+            xnuKernelConfig = "RELEASE";
+            puredarwinArch = "arm64";
+            inherit arm64CrossToolchain;
+            extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT" ];
+          };
           kernelDebugBuild = mkPureDarwinBuild {
             pname = "puredarwin-kernel-debug";
             src = kernelSource;
@@ -1075,6 +1100,18 @@
             installUserland = false;
             installKernel = true;
             xnuKernelConfig = "DEBUG";
+          };
+          kernelArm64VirtDebugBuild = mkPureDarwinBuild {
+            pname = "puredarwin-kernel-arm64-virt-debug";
+            src = kernelSource;
+            buildTargets = [ "xnu" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = true;
+            xnuKernelConfig = "DEBUG";
+            puredarwinArch = "arm64";
+            inherit arm64CrossToolchain;
+            extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT" ];
           };
           xnuHeadersBuild = mkPureDarwinBuild {
             pname = "puredarwin-xnu-headers";
@@ -1095,6 +1132,19 @@
             installKernel = false;
             installKexts = true;
             enableIOGraphicsFamily = true;
+          };
+          kextsArm64Build = mkPureDarwinBuild {
+            pname = "puredarwin-kexts-arm64";
+            src = kextsSource;
+            buildTargets = [ "corecrypto.kext" "pthread.kext" ];
+            enableUserspace = false;
+            installUserland = false;
+            installKernel = false;
+            installKexts = true;
+            installKextNames = [ "corecrypto.kext" "pthread.kext" ];
+            enableIOGraphicsFamily = false;
+            puredarwinArch = "arm64";
+            inherit arm64CrossToolchain;
           };
           iographicsBuild = mkPureDarwinBuild {
             pname = "puredarwin-iographics";
@@ -1171,6 +1221,7 @@
             corefoundation = coreFoundationBuild;
             icucore = icuCoreBuild;
             iokit = iokitBuild;
+            security = securityBuild;
             i3 = i3Build;
             i3status = i3statusShimBuild;
             startup-notification = startupNotificationBuild;
@@ -1211,7 +1262,11 @@
             xnu-debug = kernelDebugBuild;
             kernel = kernelBuild;
             kernel-debug = kernelDebugBuild;
+            kernel-arm64 = kernelArm64Build;
+            kernel-arm64-virt = kernelArm64VirtBuild;
+            kernel-arm64-virt-debug = kernelArm64VirtDebugBuild;
             kexts = kextsBuild;
+            kexts-arm64 = kextsArm64Build;
             iographics = iographicsBuild;
             basesystem = fullBuild;
             basesystem-split = splitBaseSystem;
@@ -1258,6 +1313,11 @@
               kcDebugBuild = pkgs.callPackage ./nix/pkgs/kc.nix {
                 kernel = kernelDebugBuild;
                 kexts = kextsBuild;
+                kcTools = kc-tools.packages.${system}.default;
+              };
+              kcArm64DebugBuild = pkgs.callPackage ./nix/pkgs/kc-arm64.nix {
+                kernel = kernelArm64VirtDebugBuild;
+                kexts = kextsArm64Build;
                 kcTools = kc-tools.packages.${system}.default;
               };
               imageBuild = pkgs.callPackage ./image.nix {
@@ -1401,9 +1461,11 @@
               native-ld = nativeLd;
               kc = kcBuild;
               kc-debug = kcDebugBuild;
+              kc-arm64-debug = kcArm64DebugBuild;
               corefoundation = coreFoundationBuild;
               icucore = icuCoreBuild;
               iokit = iokitBuild;
+              security = securityBuild;
               image = imageBuild;
               image-hfs = imageHfsBuild;
               image-debug = imageDebugBuild;

@@ -15128,6 +15128,19 @@ pmap_lookup_in_static_trust_cache(const uint8_t cdhash[CS_CDHASH_LEN])
 #endif
 }
 
+/*
+ * PureDarwin: genuinely missing from this arm pmap.c (present in the
+ * x86_64 pmap.c equivalent, just under a plain simple_lock instead of the
+ * PPL's pmap_simple_lock - see osfmk/x86_64/pmap.c's
+ * pmap_set_compilation_service_cdhash for the sibling definition) - the
+ * two functions below reference these globals unconditionally with no
+ * declaration anywhere in this file or a header.
+ */
+MARK_AS_PMAP_DATA SIMPLE_LOCK_DECLARE(pmap_compilation_service_cdhash_lock, 0);
+MARK_AS_PMAP_DATA uint8_t pmap_compilation_service_cdhash[CS_CDHASH_LEN] = { 0 };
+
+bool pmap_cs_log_hacks = false;
+
 MARK_AS_PMAP_TEXT static void
 pmap_set_compilation_service_cdhash_internal(const uint8_t cdhash[CS_CDHASH_LEN])
 {
@@ -15174,6 +15187,19 @@ pmap_match_compilation_service_cdhash(const uint8_t cdhash[CS_CDHASH_LEN])
 #else
 	return pmap_match_compilation_service_cdhash_internal(cdhash);
 #endif
+}
+
+/*
+ * PureDarwin: called unconditionally from vm_map.c's vm_map_cs_wx_enable(),
+ * but (unlike its x86_64 pmap.c sibling, which has always had a plain
+ * "unsupported on this architecture" stub) never defined anywhere in this
+ * arm pmap.c for a config without XNU_MONITOR (PPL).
+ */
+kern_return_t
+pmap_cs_allow_invalid(__unused pmap_t pmap)
+{
+	// Unsupported on this architecture.
+	return KERN_SUCCESS;
 }
 
 MARK_AS_PMAP_TEXT static void

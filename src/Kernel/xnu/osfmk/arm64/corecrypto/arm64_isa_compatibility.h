@@ -28,7 +28,16 @@
 // #include <Availability.h>
 #include <sys/cdefs.h>
 
-#if defined(__clang__) && ((defined(__apple_build_version__) && __apple_build_version__ > 5010000))
+/*
+ * PureDarwin: __apple_build_version__ is only ever defined by Apple's own
+ * clang, never by a vanilla/nixpkgs LLVM - so this always fell into the
+ * #else (pre-2019, no ".4s" suffix) branch when cross-building, and our
+ * modern LLVM's integrated assembler rejects that older operand syntax
+ * outright ("invalid operand for instruction" on sha256h/sha256su0/etc).
+ * Default to the modern intrinics syntax for any non-Apple clang, which is
+ * always recent enough to want it.
+ */
+#if defined(__clang__) && (!defined(__apple_build_version__) || __apple_build_version__ > 5010000)
 #define __USES_V_CRYPTO_INTRINSICS 1
 #else
 #define __USES_V_CRYPTO_INTRINSICS 0

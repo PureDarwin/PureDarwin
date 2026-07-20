@@ -365,6 +365,39 @@ start_cpu:
 	str		$5, [$3]							// Write entry to L1 table
 .endmacro
 
+#if defined(ARM_LARGE_MEMORY)
+/*
+ * create_l0_table_entry
+ *
+ * Given a virtual address, creates a table entry in an L0 translation table
+ * to point to an L1 translation table. Only needed under ARM_LARGE_MEMORY:
+ * that config's T1SZ_BOOT (see proc_reg.h) yields a 41-bit input address
+ * space, which architecturally requires the walk to start at L0 (an L1
+ * table alone only covers a 39-bit space) - without this, TTBR0/TTBR1
+ * pointing directly at an L1 table is a canonical-address mismatch that
+ * the MMU rejects as a translation fault (IFSC "level 0") the first time
+ * a real kernel VA outside the table's L1-sized reach is touched.
+ *   arg0 - Virtual address
+ *   arg1 - L0 table address
+ *   arg2 - L1 table address
+ *   arg3 - Scratch register
+ *   arg4 - Scratch register
+ *   arg5 - Scratch register
+ */
+#define ARM_BOOT_L0_INDEX_MASK (((1ULL << ((64 - T1SZ_BOOT) - 39)) - 1) << 39)
+
+.macro create_l0_table_entry
+	and		$3,	$0, #(ARM_BOOT_L0_INDEX_MASK)
+	lsr		$3, $3, #(ARM_TT_L0_SHIFT)			// Get index in L0 table for L1 table
+	lsl		$3, $3, #(TTE_SHIFT)				// Convert index into pointer offset
+	add		$3, $1, $3							// Get L0 entry pointer
+	mov		$4, #(ARM_TTE_BOOT_TABLE)			// Get L0 table entry template
+	and		$5, $2, #(ARM_TTE_TABLE_MASK)		// Get address bits of L1 table
+	orr		$5, $4, $5 							// Create table entry for L1 table
+	str		$5, [$3]							// Write entry to L0 table
+.endmacro
+#endif /* ARM_LARGE_MEMORY */
+
 /*
  * create_l2_block_entries
  *
@@ -455,6 +488,22 @@ LEXT(start_first_cpu)
 	msr		OSLAR_EL1, xzr
 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
 
+#if defined(BCM2837)
+	// raw PL011 UART print at the very first instruction, pre-MMU
+	// (BCM2837-only: hardcodes that board's real PL011 physical address,
+	// which doesn't exist on other targets like QEMU virt)
+	movz	x8, #0x3F20, lsl #16
+	movk	x8, #0x1000
+	movz	w9, #'E'
+6:	ldr		w10, [x8, #0x18]
+	tbnz	w10, #5, 6b
+	str		w9, [x8]
+	movz	w9, #'0'
+7:	ldr		w10, [x8, #0x18]
+	tbnz	w10, #5, 7b
+	str		w9, [x8]
+#endif /* BCM2837 */
+
 	mov		x20, x0
 	mov		x21, #0
 
@@ -519,7 +568,12 @@ LEXT(start_first_cpu)
 	mov		x0, #(ARM_TTE_EMPTY)				// Load invalid entry template
 	mov		x1, x25								// Start at V=P pagetable root
 	mov		x2, #(TTE_PGENTRIES)				// Load number of entries per page
+#if defined(ARM_LARGE_MEMORY)
+	mov		x6, #6								// 2 extra L0 root pages (V=P + KVA)
+	mul		x2, x2, x6							// Shift by 6 for num entries on 6 pages
+#else
 	lsl		x2, x2, #2							// Shift by 2 for num entries on 4 pages
+#endif
 
 Linvalidate_bootstrap:							// do {
 	str		x0, [x1], #(1 << TTE_SHIFT)			//   Invalidate and advance
@@ -586,8 +640,20 @@ Lkernelcache_base_found:
 	 * BOOTSTRAP_TABLE_SIZE. For a 2G 4k page device, assuming the worst-case
 	 * slide, we need 1xL1 and up to 3xL2 pages (1GB mapped per L1 entry), so
 	 * 8 total pages for V=P and KVA.
+	 *
+	 * Under ARM_LARGE_MEMORY, two additional root pages precede these (see
+	 * the create_l0_table_entry comment above): page 0 - V=P L0 root,
+	 * page 1 - KVA L0 root; the V=P/KVA L1 tables and L2 free area are
+	 * pushed back by 2 pages to make room.
 	 */
+#if defined(ARM_LARGE_MEMORY)
+	mov		x27, x0								// Save V=P vbase (x0 mutates below)
+	mov		x28, x14							// Save KVA vbase (x22, x14 mutates below)
+	add		x1, x25, PGBYTES
+	add		x1, x1, PGBYTES
+#else
 	mov		x1, x25
+#endif
 	add		x3, x1, PGBYTES
 	mov		x2, x3
 
@@ -603,11 +669,71 @@ Lkernelcache_base_found:
 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
 
+#if defined(ARM_LARGE_MEMORY)
+	/*
+	 * Link the L0 root tables to the L1 tables just built. x25 - V=P L0
+	 * root page, x25+PGBYTES - KVA L0 root page.
+	 */
+	create_l0_table_entry x27, x25, x1, x6, x10, x11
+	add		x26, x25, PGBYTES
+	create_l0_table_entry x28, x26, x3, x6, x10, x11
+#endif
+
+#if defined(BCM2837)
+	/* Print low 32 bits of x2 (final free L2-page pointer after
+	 * both V=P and KVA bootstrap mappings), x14 (final KVA virt cursor),
+	 * and x15 (final KVA phys cursor) as raw hex, to verify actual runtime
+	 * table construction against hand-derived expectations.
+	 */
+	mov		x28, x30		// save lr (still needed for arm_init jump later)
+	mov		x9, x2
+	bl		Lprint_hex32_dbg
+	mov		x9, x14
+	bl		Lprint_hex32_dbg
+	mov		x9, x15
+	bl		Lprint_hex32_dbg
+	mov		x30, x28
+#endif /* BCM2837 */
+
 	/* Ensure TTEs are visible */
 	dsb		ish
 
 
 	b		common_start
+
+#if defined(BCM2837)
+/* Print low 32 bits of x9 as 8 hex chars + trailing space via
+ * raw PL011 UART MMIO. Clobbers x9,x16-x19,w0. Preserves lr via caller.
+ * hardcodes that board's PL011 physical address. */
+Lprint_hex32_dbg:
+	movz	x16, #0x3F20, lsl #16
+	movk	x16, #0x1000
+	mov		x19, x9
+	mov		x17, #8
+91:
+	lsr		x18, x19, #28
+	and		x18, x18, #0xf
+	lsl		x19, x19, #4
+	cmp		x18, #10
+	b.lt	92f
+	add		x18, x18, #(0x41-10)
+	b		93f
+92:
+	add		x18, x18, #0x30
+93:
+94:
+	ldr		w0, [x16, #0x18]
+	tbnz	w0, #5, 94b
+	str		w18, [x16]
+	subs	x17, x17, #1
+	b.ne	91b
+	movz	w18, #0x20
+95:
+	ldr		w0, [x16, #0x18]
+	tbnz	w0, #5, 95b
+	str		w18, [x16]
+	ret
+#endif /* BCM2837 */
 
 /*
  * Begin common CPU initialization
@@ -736,6 +862,20 @@ common_start:
 	MSR_VBAR_EL1_X0
 
 1:
+#if defined(BCM2837)
+	// Raw PL011 UART print "M0" right before SCTLR_EL1 write (MMU still off here)
+	movz	x11, #0x3F20, lsl #16
+	movk	x11, #0x1000
+	movz	w12, #'M'
+8:	ldr		w13, [x11, #0x18]
+	tbnz	w13, #5, 8b
+	str		w12, [x11]
+	movz	w12, #'0'
+9:	ldr		w13, [x11, #0x18]
+	tbnz	w13, #5, 9b
+	str		w12, [x11]
+#endif /* BCM2837 */
+
 #ifdef HAS_APPLE_PAC
 #if HAS_PARAVIRTUALIZED_PAC
 	mov		x0, #VMAPPLE_PAC_SET_INITIAL_STATE
@@ -753,8 +893,31 @@ common_start:
 	// Enable caches and MMU
 	MOV64	x0, SCTLR_EL1_DEFAULT
 #endif /* HAS_APPLE_PAC */
+	// TEMP DEBUG: extra belt-and-suspenders barrier immediately before enabling
+	// the MMU, to rule out stale-TLB/TCG-translation-block staleness across
+	// the SCTLR_EL1.M toggle.
+	dsb		ish
+	tlbi	vmalle1
+	dsb		ish
+	isb
 	MSR_SCTLR_EL1_X0
 	isb		sy
+
+#if defined(BCM2837)
+	// Raw PL011 UART print "P0" as the very first thing after the
+	// real SCTLR_EL1 write + isb, before the readback check. Uses x11-x13 only
+	// (x0/x1 still needed live for the cmp/bne readback check below).
+	movz	x11, #0x3F20, lsl #16
+	movk	x11, #0x1000
+	movz	w12, #'P'
+10:	ldr		w13, [x11, #0x18]
+	tbnz	w13, #5, 10b
+	str		w12, [x11]
+	movz	w12, #'0'
+11:	ldr		w13, [x11, #0x18]
+	tbnz	w13, #5, 11b
+	str		w12, [x11]
+#endif /* BCM2837 */
 
 	MOV64	x1, SCTLR_EL1_DEFAULT
 #if HAS_APPLE_PAC
@@ -762,8 +925,55 @@ common_start:
 	MOV64	x2, SCTLR_JOP_KEYS_ENABLED
 	orr		x1, x1, x2
 #endif /* HAS_APPLE_PAC */
+
+#if defined(BCM2837)
+	// Raw PL011 UART print "Q0" right before the cmp/bne readback
+	// check, using x14-x16 only (x0/x1 must stay untouched, they're live for
+	// the check right after).
+	stp		x14, x15, [sp, #-16]!
+	stp		x16, x17, [sp, #-16]!
+	movz	x14, #0x3F20, lsl #16
+	movk	x14, #0x1000
+	movz	w15, #'Q'
+12:	ldr		w16, [x14, #0x18]
+	tbnz	w16, #5, 12b
+	str		w15, [x14]
+	movz	w15, #'0'
+13:	ldr		w16, [x14, #0x18]
+	tbnz	w16, #5, 13b
+	str		w15, [x14]
+	ldp		x16, x17, [sp], #16
+	ldp		x14, x15, [sp], #16
+#endif /* BCM2837 */
+
 	cmp		x0, x1
 	bne		.
+
+#if defined(BCM2837)
+	// Raw PL011 UART print to prove forward progress post-MMU-enable
+	stp		x0, x1, [sp, #-16]!
+	stp		x2, x3, [sp, #-16]!
+	movz	x2, #0x3F20, lsl #16
+	movk	x2, #0x1000
+	movz	w3, #'D'
+2:	ldr		w1, [x2, #0x18]
+	tbnz	w1, #5, 2b
+	str		w3, [x2]
+	movz	w3, #'B'
+3:	ldr		w1, [x2, #0x18]
+	tbnz	w1, #5, 3b
+	str		w3, [x2]
+	movz	w3, #'G'
+4:	ldr		w1, [x2, #0x18]
+	tbnz	w1, #5, 4b
+	str		w3, [x2]
+	movz	w3, #'1'
+5:	ldr		w1, [x2, #0x18]
+	tbnz	w1, #5, 5b
+	str		w3, [x2]
+	ldp		x2, x3, [sp], #16
+	ldp		x0, x1, [sp], #16
+#endif /* BCM2837 */
 
 #if (!CONFIG_KERNEL_INTEGRITY || (CONFIG_KERNEL_INTEGRITY && !defined(KERNEL_INTEGRITY_WT)))
 	/* Watchtower

@@ -1686,11 +1686,19 @@ out:
 	return error;
 }
 
-#if !XNU_TARGET_OS_OSX
+#if CONFIG_EMBEDDED
 /*
  * Freeze the specified process (provided in args->pid), or find and freeze a PID.
  * When a process is specified, this call is blocking, otherwise we wake up the
  * freezer thread and do not block on a process being frozen.
+ *
+ * PureDarwin: gate on CONFIG_EMBEDDED, matching syscalls.master, which
+ * swaps this whole entry for `nosys` (not `pid_hibernate`) when
+ * CONFIG_EMBEDDED is off - makesyscalls.sh then never emits
+ * `struct pid_hibernate_args` into sysproto.h, so a build with
+ * CONFIG_EMBEDDED unset must not reference that type either. The
+ * previous !XNU_TARGET_OS_OSX guard didn't match this condition for our
+ * arm64/virt config, leaving the struct forward-declared-only.
  */
 kern_return_t
 pid_hibernate(struct proc *p __unused, struct pid_hibernate_args *args, int *ret)
@@ -1748,7 +1756,7 @@ out:
 	*ret = error;
 	return error;
 }
-#endif /* !XNU_TARGET_OS_OSX */
+#endif /* CONFIG_EMBEDDED */
 
 #if SOCKETS
 int

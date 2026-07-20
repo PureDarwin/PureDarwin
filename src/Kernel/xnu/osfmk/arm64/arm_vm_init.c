@@ -360,7 +360,7 @@ phystokv(pmap_paddr_t pa)
 			return pa - ptov_table[i].pa + ptov_table[i].va;
 		}
 	}
-	assertf((pa - gPhysBase) < real_phys_size, "%s: illegal PA: 0x%llx", __func__, (uint64_t)pa);
+	assertf(real_phys_size == 0 || (pa - gPhysBase) < real_phys_size, "%s: illegal PA: 0x%llx", __func__, (uint64_t)pa);
 	return pa - gPhysBase + gVirtBase;
 }
 

@@ -48,10 +48,17 @@
 , xnuKernelConfig ? "RELEASE"
 , xorgDriverIncludes ? null
 , extraCmakeFlags ? [ ]
+, puredarwinArch ? "x86_64"
+, arm64CrossToolchain ? null
 }:
 
 let
   isDarwinHost = stdenv.hostPlatform.isDarwin;
+  isArm64 = puredarwinArch == "arm64";
+  # nix-toolchain.cmake's NIX_DARWIN_TOOLCHAIN_DIR just needs to point at
+  # whichever wrapper set matches NIX_DARWIN_HOST below.
+  activeCrossToolchain = if isArm64 then arm64CrossToolchain else darwinCrossToolchain;
+  nixDarwinHost = if isArm64 then "arm64-apple-darwin20.4" else "x86_64-apple-darwin20.4";
   sdkTarball = if isDarwinHost then null else requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -80,7 +87,7 @@ stdenv.mkDerivation ({
     cmake ninja bison flex perl bash ed unifdef tcsh
     pax coreutils findutils gawk gnused clang ruby iig
   ] ++ lib.optionals (!isDarwinHost) [
-    darwinCrossToolchain nativeUnifdef nativeMigcom gnustep-base
+    activeCrossToolchain nativeUnifdef nativeMigcom gnustep-base
   ];
 
   buildInputs = [ zlib openssl ] ++ lib.optionals (!isDarwinHost) [ libuuid ];
@@ -100,13 +107,13 @@ stdenv.mkDerivation ({
     fi
   '' + lib.optionalString (!isDarwinHost) ''
     if [ -e src/Kernel/xnu/cmake/MakeInc.cmd.in ]; then
-      sed -i "s#/usr/local/osxcross/bin/xcrun#${darwinCrossToolchain}/bin/xcrun#g" \
+      sed -i "s#/usr/local/osxcross/bin/xcrun#${activeCrossToolchain}/bin/xcrun#g" \
         src/Kernel/xnu/cmake/MakeInc.cmd.in
       sed -i -E 's#(^|[[:space:]=])/(usr/)?bin/([A-Za-z_]+)#\1\3#g' \
         src/Kernel/xnu/cmake/MakeInc.cmd.in
     fi
     if [ -e tools/mig/mig.sh ]; then
-      sed -i "s#/usr/local/osxcross/bin/xcrun#${darwinCrossToolchain}/bin/xcrun#g" \
+      sed -i "s#/usr/local/osxcross/bin/xcrun#${activeCrossToolchain}/bin/xcrun#g" \
         tools/mig/mig.sh
     fi
   '' + ''
@@ -153,6 +160,7 @@ EOF
       -DLIBXML2_INCLUDE_DIR="$DARWIN_SDK_ROOT/usr/include/libxml2" \
       -DLIBXML2_LIBRARY="$DARWIN_SDK_ROOT/usr/lib/libxml2.tbd" \
       -DPUREDARWIN_MACOSX_SDK="$DARWIN_SDK_ROOT" \
+      -DPUREDARWIN_ARCH=${puredarwinArch} \
       -DPUREDARWIN_ENABLE_PROJECTS=${if enableProjects then "ON" else "OFF"} \
       -DPUREDARWIN_ENABLE_KERNEL=${if enableKernel then "ON" else "OFF"} \
       -DPUREDARWIN_ENABLE_LIBRARIES=${if enableLibraries then "ON" else "OFF"} \
@@ -180,7 +188,29 @@ EOF
 if [ "$1" = "-static" ] && [ "$2" = "-o" ]; then
   out="$3"
   shift 3
-  exec x86_64-apple-darwin20.4-ar rcs "$out" "$@"
+  exec ${nixDarwinHost}-ar rcs "$out" "$@"
+fi
+if [ "$1" = "-ca" ]; then
+  shift
+  out=""
+  members=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -filelist)
+        members="$members $(cat "$2")"
+        shift 2
+        ;;
+      -o)
+        out="$2"
+        shift 2
+        ;;
+      *)
+        members="$members $1"
+        shift
+        ;;
+    esac
+  done
+  exec ${nixDarwinHost}-ar rcs "$out" $members
 fi
 echo "unsupported libtool invocation: $*" >&2
 exit 1
@@ -245,13 +275,6 @@ EOF
       cp build-nix/src/Libraries/IOKit/libIOKitCF.a $out/usr/lib/system/
     fi
     cp build-nix/src/Libraries/dyld/dyld $out/usr/lib/
-    # Ship the C headers so in-guest compilers (tcc) can build against the
-    # system: xnu's installed headers (sys/*, mach/*, ...) overlaid with
-    # libc's generated public header tree (stdio.h, stdlib.h, ...). Staged
-    # under pd-guest-headers/, NOT usr/include: ports compile with
-    # -I''${libSystem}/usr/include, and populating that path would change
-    # header resolution for every cross-built port. image.nix moves this
-    # into the guest's /usr/include at assembly time.
     if [ -d build-nix/src/Libraries/libSystem/libc/headers/usr/include ]; then
       mkdir -p $out/pd-guest-headers
       if [ -d build-nix/src/Kernel/xnu/xnu_header_install/usr/include ]; then
@@ -286,5 +309,6 @@ EOF
     platforms = platforms.linux ++ platforms.darwin;
   };
 } // lib.optionalAttrs (!isDarwinHost) {
-  NIX_DARWIN_TOOLCHAIN_DIR = "${darwinCrossToolchain}/bin";
+  NIX_DARWIN_TOOLCHAIN_DIR = "${activeCrossToolchain}/bin";
+  NIX_DARWIN_HOST = nixDarwinHost;
 })

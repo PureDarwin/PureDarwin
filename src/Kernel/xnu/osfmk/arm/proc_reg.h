@@ -266,7 +266,7 @@
 
 #define DFSR_WRITE     0x00000800 /* write data abort fault */
 
-#if defined (ARMA7) || defined (APPLE_ARM64_ARCH_FAMILY) || defined (BCM2837)
+#if defined (ARMA7) || defined (APPLE_ARM64_ARCH_FAMILY) || defined (BCM2837) || defined (QEMUVIRT)
 
 #define TEST_FSR_VMFAULT(status) \
 	(((status) == FSR_PFAULT)     \
@@ -385,6 +385,15 @@
 #elif defined (VMAPPLE)
 
 /* I-Cache. */
+#define MMU_I_CLINE 6
+
+/* D-Cache. */
+#define MMU_CLINE   6
+
+#elif defined (QEMUVIRT)
+
+/* I-Cache. QEMU virt models a standard ARMv8 core (e.g. Cortex-A72); use
+ * the standard 64-byte cache line size. */
 #define MMU_I_CLINE 6
 
 /* D-Cache. */

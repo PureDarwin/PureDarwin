@@ -413,6 +413,7 @@ EOF
     do
       ln -s toybox "$staging/bin/$applet"
     done
+    ln -s toybox "$staging/usr/bin/env"
     ln -sf zsh "$staging/bin/sh"
 
     chmod 1777 \

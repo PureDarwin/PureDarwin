@@ -664,7 +664,7 @@ extern pmap_cpu_data_t * pmap_get_cpu_data(void);
  */
 #define PMAP_DEFAULT_PREEMPTION_CHECK_PAGE_INTERVAL 64
 
-inline bool
+static inline bool
 pmap_pending_preemption(void)
 {
 	return !!(*((volatile ast_t*)ast_pending()) & AST_URGENT);

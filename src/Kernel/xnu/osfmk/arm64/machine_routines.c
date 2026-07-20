@@ -2658,3 +2658,17 @@ ml_cluster_wfe_timeout(uint32_t wfe_cluster_id)
 	uint64_t wfet = os_atomic_load(&arm64_cluster_wfe_recs[wfe_cluster_id], relaxed);
 	return wfet;
 }
+
+/*
+ * PureDarwin: declared (osfmk/arm/machine_routines.h) and called
+ * unconditionally from arm_vm_init.c's arm_vm_init(), but never defined
+ * anywhere in this tree for the non-PPL (!XNU_MONITOR) case we build
+ * with here. Real Apple Silicon builds enable the PPL/"monitor" hardware
+ * security feature this configures; without XNU_MONITOR there's nothing
+ * to enable.
+ */
+void
+ml_enable_monitor(void)
+{
+	// Unsupported without XNU_MONITOR (PPL).
+}

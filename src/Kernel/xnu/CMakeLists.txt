@@ -1,11 +1,5 @@
 find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
 
-# --output-sync (used below to keep XNU's recursive submake output from
-# interleaving) needs GNU Make >= 4.0. Nix's `make` always qualifies, but
-# native macOS builds get Xcode's own /usr/bin/make, which is still the
-# ancient 3.81-derived BSD fork (`make --version` there identifies as "GNU
-# Make 3.81" - --output-sync was added in 4.0) and rejects the flag
-# outright ("unrecognized option"). Detect it instead of assuming.
 execute_process(
     COMMAND make --version
     OUTPUT_VARIABLE _xnu_make_version_output
@@ -22,7 +16,10 @@ endif()
 # includes "i386/types.h"); arm64 installs arm/ and needs a MACHINE_CONFIGS.
 if(PUREDARWIN_ARM64)
     set(XNU_ARCH_CONFIGS ARM64)
-    set(XNU_MACHINE_CONFIGS MACHINE_CONFIGS=BCM2837)
+    if(NOT DEFINED PUREDARWIN_ARM64_MACHINE_CONFIG)
+        set(PUREDARWIN_ARM64_MACHINE_CONFIG BCM2837)
+    endif()
+    set(XNU_MACHINE_CONFIGS MACHINE_CONFIGS=${PUREDARWIN_ARM64_MACHINE_CONFIG})
 else()
     set(XNU_ARCH_CONFIGS X86_64)
     set(XNU_MACHINE_CONFIGS "")
@@ -36,19 +33,6 @@ if(PUREDARWIN_NIX_TOOLCHAIN)
     # command, so a kernel linked with it fails to boot ("failed to find
     # entry vmaddr"). Everything else still links fine with lld.
     set(XNU_LD_PATH "$ENV{NIX_NATIVE_LD_PATH}")
-    # cctools/misc's host_strip/host_lipo/host_nm are add_executable()
-    # targets built with the project's main (cross) toolchain, so under
-    # PUREDARWIN_NIX_TOOLCHAIN they come out as Mach-O binaries that can't
-    # run as build-time host tools on Linux - same Canadian-cross gap as
-    # host_ld above. toolchain.nix already ships native ELF wrapper scripts
-    # for these three (they just exec nixpkgs' llvm-strip/-lipo/-nm), so use
-    # those instead. NMEDIT/LIBTOOL/CODESIGN_ALLOCATE/CTFINSERT have no
-    # nixpkgs equivalent and still use the (currently working, since never
-    # actually exec'd until now) host_* cctools builds.
-    # Real cctools strip (built next to the native ld, see native-ld.nix):
-    # llvm-strip refuses the linked kernel ("shared library is not yet
-    # supported"). Fall back to the llvm wrapper only if the native-ld
-    # derivation predates the strip addition.
     get_filename_component(_nix_native_ld_dir "$ENV{NIX_NATIVE_LD_PATH}" DIRECTORY)
     if(EXISTS "${_nix_native_ld_dir}/strip")
         set(XNU_STRIP_PATH "${_nix_native_ld_dir}/strip")
@@ -59,14 +43,6 @@ if(PUREDARWIN_NIX_TOOLCHAIN)
     set(XNU_NM_PATH "$ENV{NIX_DARWIN_TOOLCHAIN_DIR}/x86_64-apple-darwin20.4-nm")
     set(XNU_HOST_CC_PATH "$ENV{NIX_HOST_CC_PATH}")
 else()
-    # On a non-Apple host the in-tree host_ld/host_strip/host_lipo/host_nm
-    # add_executable() targets are built by the CROSS toolchain and come out
-    # as Mach-O binaries the build host can't exec ("posix_spawn failed:
-    # Exec format error" at the kernel link). osxcross ships native ELF
-    # builds of the same tools as "<triple>-ld" etc - its ld is a real
-    # ld64 (TAPI-capable, supports "-kernel -static"), so prefer those,
-    # mirroring what cmake/crosscompile.cmake does for userland links.
-    # On a macOS host the host_* targets are runnable, keep using them.
     if(NOT CMAKE_HOST_APPLE)
         get_filename_component(_xnu_ar_name "${CMAKE_AR}" NAME)
         if(_xnu_ar_name MATCHES "^(.+)-ar$")
@@ -210,20 +186,6 @@ externalproject_add(xnu
             -D PTHREAD_HEADER_PATH=$<TARGET_PROPERTY:pthread_common_headers,INTERFACE_INCLUDE_DIRECTORIES>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
-        # LD=${XNU_LD_PATH}: the "-D LD_PATH=..." passed to preprocess_files.cmake
-        # above is a no-op - MakeInc.cmd.in never references an @LD_PATH@
-        # substitution token at all, for either the Darwin or Linux branch.
-        # $(LD) is therefore GNU Make's own builtin default ("ld", origin
-        # "default", no ifeq($(origin LD),default) guard exists to swap it
-        # for the right cross tool the way CC/CXX get one) - so whatever LD
-        # happens to be in the inherited environment silently wins instead.
-        # Setting it explicitly here is the only way to actually control
-        # which linker the kernel gets built with.
-        # STRIP is passed via env like LD (not just -D STRIP_PATH): on Linux
-        # makedefs' UNAME_S branch ignores @STRIP_PATH@ and resolves strip
-        # with `xcrun -find strip`, which finds the llvm-strip wrapper - and
-        # llvm-strip can't strip the linked kernel ("shared library is not
-        # yet supported").
         ${CMAKE_COMMAND} -E env LD=${XNU_LD_PATH} STRIP=${XNU_STRIP_PATH} ${XNU_HOST_CC_ENV} --unset=CC --unset=CXX --unset=NM --unset=CTFCONVERT --unset=CTFMERGE --unset=CTFINSERT
         make ${XNU_MAKE_OUTPUT_SYNC_FLAG} -C <SOURCE_DIR> install ARCH_CONFIGS=${XNU_ARCH_CONFIGS} ${XNU_MACHINE_CONFIGS} BUILD_LTO=0
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=${PUREDARWIN_XNU_KERNEL_CONFIG}

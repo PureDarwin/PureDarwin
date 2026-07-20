@@ -20,6 +20,9 @@ if(PUREDARWIN_ENABLE_IOGRAPHICS_FAMILY)
     add_subdirectory(IOGraphicsFamily)
 endif()
 add_subdirectory(IOGOPFramebuffer)
+add_subdirectory(IOVirtIOFamily)
+add_subdirectory(IOVirtIOGPU)
+add_subdirectory(IOVirtIONet)
 add_subdirectory(IOHIDFamily)
 add_subdirectory(IONetworkingFamily)
 add_subdirectory(PDE1000)
@@ -34,9 +37,6 @@ add_subdirectory(AppleFileSystemDriver)
 add_subdirectory(Ext4FileSystemDriver)
 add_subdirectory(pthread)
 
-# Umbrella target so builds that name explicit targets (e.g. the Nix full
-# build - `ninja all` is unusable there, it drags in tools/* as bogus
-# cross-compiled targets) can pull in every kext with one name.
 add_custom_target(kexts)
 add_dependencies(kexts
     IOPCIFamily ApplePIODMA IOStorageFamily IONVMEFamily.kext
@@ -44,7 +44,8 @@ add_dependencies(kexts
     IOUSBHIDDriver.kext
     AppleUSBEHCI.kext AppleUSBOHCI.kext AppleUSBUHCI.kext
     RavynAHCIPort.kext RavynXHCIPort.kext
-    IOGOPFramebuffer.kext IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext
+    IOGOPFramebuffer.kext IOVirtIOFamily.kext IOVirtIOGPU.kext IOVirtIONet.kext
+    IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext
     RavynHDAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext pthread.kext
