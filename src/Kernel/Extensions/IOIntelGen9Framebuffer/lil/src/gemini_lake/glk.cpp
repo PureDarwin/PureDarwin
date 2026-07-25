@@ -7,6 +7,7 @@
 #include "src/gemini_lake/hdmi.hpp"
 #include "src/gemini_lake/phy.hpp"
 #include "src/kaby_lake/dp.hpp"
+#include "src/kaby_lake/hdmi.hpp"
 #include "src/kaby_lake/gtt.hpp"
 #include "src/kaby_lake/pci.hpp"
 #include "src/kaby_lake/pcode.hpp"
@@ -85,14 +86,17 @@ void init_gpu(LilGpu *lil_gpu) {
 					con->crtc->shutdown = glk::dp::shutdown;
 					route_pipe_a();
 					break;
-				case glk::dp::SinkKind::DualModeHDMI:
-					// Drive the DP port as HDMI/TMDS (dual mode). Treat it as an
-					// HDMI connector so the mode set selects HDMI signaling.
+				case glk::dp::SinkKind::DualModeHDMI: {
+					uint8_t ddc = con->encoder->dp.ddc_pin;
+					con->encoder->hdmi.ddc_pin = ddc;
 					con->type = HDMI;
+					con->is_connected = kbl::hdmi::is_connected;
+					con->get_connector_info = kbl::hdmi::get_connector_info;
 					con->crtc->commit_modeset = glk::hdmi::commit_modeset;
 					con->crtc->shutdown = glk::hdmi::shutdown;
 					route_pipe_a();
 					break;
+				}
 				case glk::dp::SinkKind::None:
 					lil_log(WARNING, "glk: no sink on DP connector %lu\n", i);
 					break;

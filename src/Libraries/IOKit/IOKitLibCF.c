@@ -328,10 +328,15 @@ pd_parse_property_xml(const char *bytes, mach_msg_type_number_t len,
 	char *wrapped;
 	size_t headerLen = sizeof(header) - 1;
 	size_t footerLen = sizeof(footer) - 1;
-	size_t total = headerLen + len + footerLen;
+	size_t total;
 	CFDataRef data;
 	CFTypeRef result;
 
+	if (len > 0 && bytes[len - 1] == '\0') {
+		len--;
+	}
+
+	total = headerLen + len + footerLen;
 	wrapped = malloc(total);
 	if (wrapped == NULL) {
 		return NULL;

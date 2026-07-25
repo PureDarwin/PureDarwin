@@ -31,12 +31,33 @@ bool is_enabled(Gpu *gpu, enum LilDdiId ddi) {
 	       (REG(phy_ctl_family(ddi)) & COMMON_RESET_DIS);
 }
 
-// Common-lane bring-up for a single PHY (identified by any DDI it serves).
-void power_up_phy(Gpu *gpu, enum LilDdiId ddi) {
-	REG(P_CR_GT_DISP_PWRON) |= phy_pwron_bit(ddi);
+bool is_accessible(Gpu *gpu, enum LilDdiId ddi) {
+	uint32_t v = REG(cl1cm_dw0(ddi));
+	return (v & PHY_POWER_GOOD) && !(v & PHY_RESERVED_BIT7);
+}
 
-	if(!wait_for_bit_set(REG_PTR(cl1cm_dw0(ddi)), PHY_POWER_GOOD, 100, 10))
-		lil_log(WARNING, "glk::phy: PHY for DDI %c never reported power good\n", '0' + ddi);
+// Common-lane bring-up for a single PHY (identified by any DDI it serves).
+bool power_up_phy(Gpu *gpu, enum LilDdiId ddi) {
+	uint32_t status = REG(cl1cm_dw0(ddi));
+	if(!(status & PHY_POWER_GOOD) || (status & PHY_RESERVED_BIT7)) {
+		uint32_t pwr = REG(P_CR_GT_DISP_PWRON);
+		lil_log(VERBOSE, "glk::phy: DDI %c power request before=0x%x mask=0x%x status=0x%x\n",
+		        '0' + ddi, pwr, phy_pwron_bit(ddi), status);
+		REG(P_CR_GT_DISP_PWRON) = pwr | phy_pwron_bit(ddi);
+		lil_log(VERBOSE, "glk::phy: DDI %c power request after=0x%x\n",
+		        '0' + ddi, REG(P_CR_GT_DISP_PWRON));
+	}
+
+	for(unsigned i = 0; i < 100; i++) {
+		if(is_accessible(gpu, ddi))
+			break;
+		lil_usleep(100);
+	}
+	if(!is_accessible(gpu, ddi)) {
+		lil_log(WARNING, "glk::phy: PHY for DDI %c never became accessible; PORT_CL1CM_DW0=0x%x\n",
+		        '0' + ddi, REG(cl1cm_dw0(ddi)));
+		return false;
+	}
 
 	// iref offsets (Rcomp reference trim).
 	REG(cl1cm_dw9(ddi))  = (REG(cl1cm_dw9(ddi))  & ~IREF_OFFSET_MASK) | IREF_OFFSET(0xE4);
@@ -45,6 +66,7 @@ void power_up_phy(Gpu *gpu, enum LilDdiId ddi) {
 	// Sustained-clock config and dynamic power-down enables.
 	REG(cl1cm_dw28(ddi)) = (REG(cl1cm_dw28(ddi)) & ~0x3u) | SUS_CLK_CONFIG
 	                     | OCL1_POWER_DOWN_EN | DW28_OLDO_DYNPWRDOWNEN;
+	return true;
 }
 
 } // namespace
@@ -57,13 +79,11 @@ void init(LilGpu *lil_gpu, enum LilDdiId ddi) {
 		return;
 	}
 
-	if(REG(cl1cm_dw0(ddi)) & PHY_POWER_GOOD) {
-		lil_log(VERBOSE, "glk::phy: DDI %c powered by firmware; inheriting\n", '0' + ddi);
-		REG(phy_ctl_family(ddi)) |= COMMON_RESET_DIS;
-		return;
+	if(is_accessible(gpu, ddi)) {
+		lil_log(VERBOSE, "glk::phy: DDI %c powered by firmware; completing PHY init\n", '0' + ddi);
+	} else {
+		lil_log(VERBOSE, "glk::phy: initializing PHY for DDI %c\n", '0' + ddi);
 	}
-
-	lil_log(VERBOSE, "glk::phy: initializing PHY for DDI %c\n", '0' + ddi);
 
 	enum LilDdiId master = DDI_A;
 	bool is_master = (ddi == DDI_A);
@@ -72,14 +92,16 @@ void init(LilGpu *lil_gpu, enum LilDdiId ddi) {
 		// Ensure the master PHY1 (DDI A) is up and calibrated so its GRC code is
 		// available to copy, even when no DDI A display is attached.
 		if(!is_enabled(gpu, master)) {
-			power_up_phy(gpu, master);
+			if(!power_up_phy(gpu, master))
+				return;
 			REG(phy_ctl_family(master)) |= COMMON_RESET_DIS;
 		}
 		if(!wait_for_bit_set(REG_PTR(ref_dw3(master)), GRC_DONE, 100, 10))
 			lil_log(WARNING, "glk::phy: Rcomp master grc_done timeout\n");
 	}
 
-	power_up_phy(gpu, ddi);
+	if(!power_up_phy(gpu, ddi))
+		return;
 
 	if(!is_master) {
 		// Copy the master's GRC (fast) code into this slave PHY and override.
