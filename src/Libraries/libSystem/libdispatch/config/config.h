@@ -119,11 +119,13 @@
 #define HAVE_NORETURN_BUILTIN_TRAP 1
 
 /* Define if you have the Objective-C runtime */
-/* PureDarwin: no real Objective-C runtime (no libobjc) - forced to 0 rather
- * than the pre-baked upstream value of 1, so the *.m/HAVE_OBJC-gated pieces
- * of libdispatch (data.m/object.m, ObjC autorelease elision, etc.) aren't
- * compiled. See libdispatch/CMakeLists.txt for the rest of that story. */
+/* PureDarwin now has a real objc4-derived libobjc (see
+ * nix/pkgs/libobjc.nix); CMakeLists.txt sets HAVE_OBJC via
+ * target_compile_definitions when wiring USE_OBJC=1, so don't clobber that
+ * here - only supply a default for builds that don't set it. */
+#ifndef HAVE_OBJC
 #define HAVE_OBJC 0
+#endif
 
 /* Define to 1 if you have the `posix_fadvise' function. */
 #define HAVE_POSIX_FADVISE 0

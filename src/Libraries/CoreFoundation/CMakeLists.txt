@@ -4,7 +4,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules)
 
 project(CoreFoundation
   VERSION 1338
-  LANGUAGES ASM C)
+  LANGUAGES ASM C OBJC)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED YES)
@@ -38,8 +38,16 @@ option(CF_DEPLOYMENT_SWIFT "Build for swift" NO)
 if("${CMAKE_C_SIMULATE_ID}" STREQUAL "MSVC")
   add_compile_options($<$<COMPILE_LANGUAGE:C>:/FI${PROJECT_SOURCE_DIR}/Base.subproj/CoreFoundation_Prefix.h>)
 else()
-  add_compile_options($<$<COMPILE_LANGUAGE:C>:-include$<SEMICOLON>${PROJECT_SOURCE_DIR}/Base.subproj/CoreFoundation_Prefix.h>)
+  add_compile_options($<$<COMPILE_LANGUAGE:C,OBJC>:-include$<SEMICOLON>${PROJECT_SOURCE_DIR}/Base.subproj/CoreFoundation_Prefix.h>)
 endif()
+
+# Real Apple CoreFoundation is compiled entirely as Objective-C (the ".c"
+# extension on most of its sources is conventional, not literal C-only
+# parsing) - several files rely on it for scattered @interface/@end blocks
+# gated by DEPLOYMENT_RUNTIME_OBJC (e.g. CFAttributedString.c). Force the
+# ObjC frontend on this target's C sources to match, scoped to the target
+# (not CMAKE_C_FLAGS) so it doesn't break CMake's own C-compiler ABI checks.
+add_compile_options($<$<COMPILE_LANGUAGE:C>:-x$<SEMICOLON>objective-c$<SEMICOLON>-fno-objc-arc>)
 
 add_compile_options($<$<COMPILE_LANGUAGE:C>:-fblocks>)
 
@@ -267,6 +275,11 @@ add_framework(CoreFoundation
                 URL.subproj/CFURLAccess.h
                 URL.subproj/CFURLComponents.h
               SOURCES
+                # Bridging (ObjC toll-free bridge glue; requires
+                # DEPLOYMENT_RUNTIME_OBJC + libobjc + Foundation headers,
+                # wired by nix/pkgs/corefoundation.nix)
+                Bridging.subproj/__NSCFType.m
+                Bridging.subproj/CFBridgingClasses.m
                 # Base
                 Base.subproj/CFBase.c
                 Base.subproj/CFFileUtilities.c
@@ -338,14 +351,18 @@ add_framework(CoreFoundation
                 Preferences.subproj/CFPreferences.c
                 Preferences.subproj/CFXMLPreferencesDomain.c
                 # RunLoop
-                # TODO(compnerd) make this empty on non-Mach targets
-                # RunLoop.subproj/CFMachPort.c
-                # RunLoop.subproj/CFMachPort_Lifetime.c
+                # PureDarwin: real Mach target (actual XNU/Mach IPC, not the
+                # Linux-only swift-corelibs-foundation build these files were
+                # excluded for) - SystemStarter's real job-exit detection
+                # (task_name_for_pid + CFMachPort dead-name notification)
+                # needs the real CFMachPortCreateWithPort/
+                # CFMachPortCreateRunLoopSource/CFMachPortSetInvalidationCallBack.
+                RunLoop.subproj/CFMachPort.c
+                RunLoop.subproj/CFMachPort_Lifetime.c
                 # RunLoop.subproj/CFMessagePort.c
-                # PureDarwin: minimal stand-in for the two commented-out
-                # files above, whose __CFMachPortClass/__CFMessagePortClass
-                # CFRuntime.c's class table references unconditionally.
-                RunLoop.subproj/CFMachPort_PureDarwin_Stub.c
+                # PureDarwin: CFMessagePort.c itself still excluded - see
+                # CFMessagePort_PureDarwin_Stub.c for why.
+                RunLoop.subproj/CFMessagePort_PureDarwin_Stub.c
                 RunLoop.subproj/CFRunLoop.c
                 RunLoop.subproj/CFSocket.c
                 # Stream

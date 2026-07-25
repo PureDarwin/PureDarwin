@@ -17,7 +17,17 @@ void ccrng_system_done(struct ccrng_system_state* rng)
 
 static int getrandom_entropy(struct ccrng_state* rng, unsigned long count, void* out)
 {
-	getentropy(out, count);
+	unsigned char *p = out;
+	(void)rng;
+
+	while (count > 0) {
+		size_t chunk = count > 256 ? 256 : count;
+
+		if (getentropy(p, chunk) != 0) {
+			return -1;
+		}
+		p += chunk;
+		count -= chunk;
+	}
 	return 0;
 }
-

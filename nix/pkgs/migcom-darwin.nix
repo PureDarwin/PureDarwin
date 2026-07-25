@@ -62,10 +62,10 @@ stdenv.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out/libexec
-    cp out/migcom $out/libexec/migcom
-    mkdir -p $out/bin
-    install -m755 mig.sh $out/bin/mig
+    mkdir -p $out/usr/libexec
+    cp out/migcom $out/usr/libexec/migcom
+    mkdir -p $out/usr/bin
+    install -m755 mig.sh $out/usr/bin/mig
     runHook postInstall
   '';
 

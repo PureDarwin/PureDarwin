@@ -159,6 +159,7 @@ target_sources(libsystem_kernel_static PRIVATE
     wrappers/legacy/connect.c
     wrappers/legacy/getattrlist.c
     wrappers/legacy/getaudit.c
+    wrappers/legacy/audit_token.c
     wrappers/legacy/getpeername.c
     wrappers/legacy/getsockname.c
     wrappers/legacy/kill.c
@@ -215,7 +216,15 @@ target_include_directories(libsystem_kernel_static PRIVATE ${CMAKE_CURRENT_BINAR
 target_compile_options(libsystem_kernel_static PRIVATE -fdollars-in-identifiers -no-cpp-precomp -fno-common -fno-stack-protector -fno-stack-check -momit-leaf-frame-pointer -Wno-nullability-completeness -Wno-implicit-function-declaration)
 
 # We define LIBSYSCALL_INTERFACE to pass to the MIG compiler below. This will indicate we don't want 'internal' versions of the given MIG files.
-target_compile_definitions(libsystem_kernel_static PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 PRIVATE=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050 LIBSYSCALL_INTERFACE)
+# __DARWIN_ONLY_UNIX_CONFORMANCE=1 matches libc_static's own setting (see
+# libc/CMakeLists.txt) - on real Apple builds this is inherited from an
+# internal BSD.xcconfig not present in this open-source drop, and it needs
+# to be consistent everywhere: without it, wrappers/unix03/chmod.c's own
+# <sys/stat.h> declaration of chmod() asm-renames chmod.c's OWN "chmod"
+# function definition to "_chmod$UNIX2003" (via __DARWIN_ALIAS) instead of
+# plain "_chmod" - which breaks every internal libc caller (mkpath_np.c,
+# sysconf.c, raise.c, pause.c, ...) that expects the plain symbol.
+target_compile_definitions(libsystem_kernel_static PRIVATE _FORTIFY_SOURCE=0 __DARWIN_VERS_1050=1 __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1 NO_SYSCALL_LEGACY SYSCALL_PRE1050 LIBSYSCALL_INTERFACE)
 if(PUREDARWIN_USE_LD64_LLD)
     target_compile_definitions(libsystem_kernel_static PRIVATE PD_LD64LLD_WEAK_LIBC_FUNCPTR)
 endif()

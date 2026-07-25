@@ -1,9 +1,3 @@
-# xf86-input-puredarwin: loadable Xorg input driver reading /dev/xhci_mouse
-# and /dev/xhci_kbd. Built only when the Xorg module SDK path is provided
-# (PUREDARWIN_XORG_INCLUDE_DIRS), same as the video driver. Unlike the video
-# driver this needs no IOKit/PDGOP - it only uses open()/read() and the xf86
-# input server symbols (resolved at dlopen from the Xorg image).
-
 if(NOT PUREDARWIN_XORG_INCLUDE_DIRS)
     message(STATUS "xf86-input-puredarwin: PUREDARWIN_XORG_INCLUDE_DIRS not set, skipping Xorg input driver")
     return()
@@ -18,11 +12,6 @@ add_darwin_shared_library(puredarwininput_drv
 # Xorg's loader looks the module up as "<name>_drv"; strip CMake's "lib".
 set_target_properties(puredarwininput_drv PROPERTIES PREFIX "" SUFFIX ".so")
 
-# xf86 server symbols (xf86PostMotionEventP, InitPointerDeviceStruct, ...)
-# resolve at dlopen from the already-loaded Xorg image. Leave them undefined
-# via flat namespace (this ld64 rejects -undefined dynamic_lookup in a dylib),
-# and export only the module entry point so we don't pollute the flat
-# namespace with libSystem's surface.
 target_link_options(puredarwininput_drv PRIVATE
     -flat_namespace
     "LINKER:-undefined,warning"
@@ -33,7 +22,6 @@ target_link_options(puredarwininput_drv PRIVATE
 set_property(TARGET puredarwininput_drv APPEND PROPERTY LINK_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/puredarwininput_drv.exports)
 
-# Reach the Xorg SDK headers: drop the helper's -nostdinc, re-add the sysroot.
 get_target_property(_opts puredarwininput_drv COMPILE_OPTIONS)
 if(_opts)
     list(REMOVE_ITEM _opts -nostdinc)
@@ -59,7 +47,36 @@ target_include_directories(puredarwininput_drv PRIVATE
     ${PUREDARWIN_XORG_INCLUDE_DIRS}
 )
 
-# C runtime from the libSystem stub; server symbols stay flat/undefined.
+if(NOT TARGET migcom AND DEFINED ENV{NIX_MIGCOM_PATH})
+    add_executable(migcom IMPORTED GLOBAL)
+    set_target_properties(migcom PROPERTIES IMPORTED_LOCATION "$ENV{NIX_MIGCOM_PATH}")
+endif()
+
+add_library(puredarwininput_local_IOKit STATIC)
+mig(${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/device/device.defs
+    INCLUDES_FROM_TARGET puredarwininput_local_IOKit
+    USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/device_user.h
+    USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/device_user.c
+    NOVOUCHERS)
+target_sources(puredarwininput_local_IOKit PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/Libraries/IOKit/IOKitLib.c
+    ${CMAKE_CURRENT_BINARY_DIR}/device_user.c
+)
+target_compile_definitions(puredarwininput_local_IOKit PRIVATE IOKIT=1 KERNEL=0)
+target_include_directories(puredarwininput_local_IOKit
+    PUBLIC ${CMAKE_SOURCE_DIR}/src/Libraries/IOKit/include
+    PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}
+        ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libsystem_kernel/mach
+)
+target_link_libraries(puredarwininput_drv PRIVATE puredarwininput_local_IOKit)
+if(TARGET libsystem_kernel_static)
+    target_link_libraries(puredarwininput_drv PRIVATE libsystem_kernel_static)
+endif()
+if(TARGET libsyscall_traps)
+    target_link_libraries(puredarwininput_drv PRIVATE libsyscall_traps)
+endif()
+
 target_link_options(puredarwininput_drv PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>

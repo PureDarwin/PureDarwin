@@ -23,13 +23,6 @@
 , libxcvt
 }:
 
-# Full hw/xfree86 DDX (the real "Xorg" server), as opposed to xvfb.nix's
-# in-memory Xvfb. Everything heavy stays off (pciaccess/udev/drm/dri/glx);
-# the PureDarwin GOP framebuffer is driven by an out-of-tree loadable video
-# driver module (xf86-video-puredarwingop) that Xorg dlopen()s at runtime -
-# dyld's dlopen is already proven on this target (launchd et al.), so the
-# upstream modular driver model works here rather than static-linking.
-
 let
   xDeps = [
     pixman
@@ -160,9 +153,6 @@ EOF
 
   buildPhase = ''
     runHook preBuild
-    # Build everything installable (Xorg + loadable modules like libwfb).
-    # The test subdir was removed in postPatch, so `all` no longer needs the
-    # X11/extensions test headers.
     ninja -C build
     runHook postBuild
   '';

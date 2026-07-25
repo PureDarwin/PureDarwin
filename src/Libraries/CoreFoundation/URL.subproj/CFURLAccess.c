@@ -55,7 +55,11 @@ DEFINE_WEAK_CFNETWORK_FUNC_FAIL(Boolean, _CFURLDestroyResource, (CFURLRef A, SIn
 
 #endif
 
+#if !DEPLOYMENT_RUNTIME_OBJC
+// Pure-C forward-declaration placeholder; under DEPLOYMENT_RUNTIME_OBJC the
+// real @class NSString (objc/NSObject.h, via Foundation) is already visible.
 typedef struct __NSString__ *NSString;
+#endif
 
 /*
     Pre-10.6 property keys

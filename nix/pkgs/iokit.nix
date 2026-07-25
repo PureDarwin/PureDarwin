@@ -24,13 +24,6 @@ stdenv.mkDerivation {
 
   dontUnpack = true;
 
-  # Just the final dylib link step: libIOKitCF.a (src/Libraries/IOKit/
-  # IOKitLibCF.c, real MIG-based IOServiceGetMatchingService/
-  # IORegistryEntryCreateCFProperty/etc - see that file's own comment)
-  # already got compiled as part of the main in-tree libSystem build
-  # (which has the XNU-header/MIG machinery this needs), deliberately
-  # without CoreFoundation's real headers. Link it against real CF here,
-  # matching every other "-lCoreFoundation" consumer (fastfetch.nix etc).
   buildPhase = ''
     runHook preBuild
 
@@ -38,6 +31,9 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
 
+    # -Wl,-fixup_chains: same eager-bind fix as corefoundation.nix - PD's
+    # dyld lazy-binding path is fragile and this dylib's own internal calls
+    # need to not go through it.
     ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
@@ -45,6 +41,7 @@ stdenv.mkDerivation {
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,/usr/lib/libIOKitCF.dylib \
       -Wl,-force_load,${libSystem}/usr/lib/system/libIOKitCF.a \
+      -Wl,-fixup_chains \
       -lCoreFoundation -lSystem \
       -o libIOKitCF.dylib
 

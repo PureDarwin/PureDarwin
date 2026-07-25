@@ -22,19 +22,6 @@ let
     '';
   };
 
-  # prefix must be the path git will actually live at on the *target*
-  # image (/usr), not the Nix build-time $out - git bakes prefix into the
-  # binary as compiled-in constants (GIT_EXEC_PATH -> $(prefix)/libexec/
-  # git-core, DEFAULT_GIT_TEMPLATE_DIR -> $(prefix)/share/git-core/
-  # templates) and looks those up as absolute paths at runtime, not
-  # relative to argv0. Building with prefix=$out bakes in the Nix store
-  # hash path, which doesn't exist on the deployed Darwin image, so at
-  # runtime git can't find its own git-remote-https helper or templates
-  # ("remote-https is not a git command", "templates not found in
-  # /nix/store/..."). Install phase still lands files under $out/usr/...
-  # via DESTDIR so the Nix package remains relocatable at build time;
-  # image.nix's copyPackage() then places them at the real /usr/... the
-  # compiled-in paths expect. Same pattern as xorg.nix/xvfb-xkbcomp.nix.
   makeFlags = "uname_S=Darwin uname_R=20.5.0 uname_M=x86_64 uname_O=Darwin prefix=/usr"
     + " NO_GETTEXT=YesPlease NO_TCLTK=YesPlease NO_PYTHON=YesPlease NO_PERL=YesPlease"
     + " NO_ICONV=YesPlease NO_UNIX_SOCKETS=YesPlease NO_OPENSSL=YesPlease NO_EXPAT=YesPlease"

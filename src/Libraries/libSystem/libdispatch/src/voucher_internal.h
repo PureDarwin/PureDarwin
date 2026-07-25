@@ -645,6 +645,20 @@ _voucher_release(voucher_t voucher)
 	(void)voucher;
 }
 
+DISPATCH_ALWAYS_INLINE
+static inline struct voucher_s *
+_voucher_retain_inline(struct voucher_s *voucher)
+{
+	return voucher;
+}
+
+DISPATCH_ALWAYS_INLINE
+static inline void
+_voucher_release_inline(struct voucher_s *voucher)
+{
+	(void)voucher;
+}
+
 // Upstream only defines this in the VOUCHER_USE_MACH_VOUCHER=1 branch above
 // (a _voucher_release() variant that skips disposal, used by exactly one
 // call site in inline_internal.h's _dispatch_set_priority_and_voucher()).

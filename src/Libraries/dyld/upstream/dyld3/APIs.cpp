@@ -1614,6 +1614,11 @@ static const struct dyld_func dyld_funcs[] = {
     {"__dyld_dlsym_internal",           (void*)dyld3::dlsym_internal },
     {"__dyld_dlclose",                  (void*)dyld3::dlclose },
     {"__dyld_dlerror",                  (void*)dyld3::dlerror },
+    // PureDarwin: real dyldAPIsInLibSystem.cpp's own _dyld_is_memory_immutable
+    // is a thin _dyld_func_lookup("__dyld_is_memory_immutable", ...) trampoline
+    // to this exact dyld3 implementation - same pattern as the dl* entries
+    // above. Publish it the same way for pd_libSystem_compat.c's forwarder.
+    {"__dyld_is_memory_immutable",      (void*)dyld3::_dyld_is_memory_immutable },
     // PureDarwin: compatFuncLookup() below walks this array until p->name is
     // NULL, but there was no terminating entry - so any name not matched above
     // read past the end of the array and strcmp'd whatever happened to follow it

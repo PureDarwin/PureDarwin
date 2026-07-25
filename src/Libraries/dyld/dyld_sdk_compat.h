@@ -18,6 +18,9 @@
 #include <TargetConditionals.h>
 #include <string.h>
 #include <libkern/OSAtomic.h>
+#if __has_include(<ptrauth.h>)
+ #include <ptrauth.h>
+#endif
 /* Defines SPI_AVAILABLE / SPI_DEPRECATED (empty fallbacks). dyld_process_info.h
  * uses SPI_AVAILABLE but only pulls it transitively via the real dispatch.h,
  * which our minimal dispatch stub replaces -- so pull it explicitly here. */
@@ -55,6 +58,11 @@ __END_DECLS
 #endif
 #ifndef EXIT_REASON_PAYLOAD_MAX_LEN
  #define EXIT_REASON_PAYLOAD_MAX_LEN    2048
+#endif
+
+#if !__has_feature(ptrauth_intrinsics) && !defined(__PTRAUTH__)
+ #undef ptrauth_auth_and_resign
+ #define ptrauth_auth_and_resign(value, old_key, old_data, new_key, new_data) (value)
 #endif
 
 #endif /* PUREDARWIN_DYLD_SDK_COMPAT_H */

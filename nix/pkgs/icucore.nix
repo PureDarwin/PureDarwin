@@ -41,6 +41,9 @@ stdenv.mkDerivation {
       make -j"$NIX_BUILD_CORES"
     )
 
+    # -Wl,-fixup_chains everywhere below: same eager-bind fix as
+    # corefoundation.nix/iokit.nix - PD's dyld lazy-binding path is fragile,
+    # these dylibs' own internal calls need to not go through it.
     mkdir -p build
     ( cd build
       CC=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
@@ -49,7 +52,7 @@ stdenv.mkDerivation {
       RANLIB=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib \
       CFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -mmacosx-version-min=11.0" \
       CXXFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -mmacosx-version-min=11.0" \
-      LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-platform_version,macos,11.0,11.5 -lSystem" \
+      LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains -lSystem" \
       ../source/configure \
         --host=x86_64-apple-darwin20.4 \
         --with-cross-build=$PWD/../native-build \
@@ -100,6 +103,7 @@ stdenv.mkDerivation {
       -Wl,-reexport_library,"$out/usr/lib/libicuuc.76.1.dylib" \
       -Wl,-reexport_library,"$out/usr/lib/libicudata.76.1.dylib" \
       -Wl,-reexport_library,"$out/usr/lib/libicui18n.76.1.dylib" \
+      -Wl,-fixup_chains \
       -lSystem \
       -o "$out/usr/lib/libicucore.A.dylib" placeholder.o
     ln -s libicucore.A.dylib $out/usr/lib/libicucore.dylib

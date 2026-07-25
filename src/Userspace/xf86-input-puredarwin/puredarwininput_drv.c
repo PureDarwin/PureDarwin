@@ -1,15 +1,3 @@
-/*
- * xf86-input-puredarwin: loadable Xorg input driver for PureDarwin.
- *
- * The generic USB HID driver exposes raw event streams as character devices:
- * /dev/usb_hid_mouse and /dev/usb_hid_kbd. A userspace X server can't read the in-kernel
- * IOHIDSystem, so this driver polls those char devices and re-posts the events
- * through the xf86 input API.
- *
- * One driver, two personalities selected by the "PDType" option ("mouse" or
- * "keyboard"), each pointed at its device node via the "Device" option.
- */
-
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -23,6 +11,11 @@
 #include "exevents.h"
 #include "xkbsrv.h"
 #include <X11/keysym.h>
+
+#include <IOKit/IOKitLib.h>
+#include <mach/mach.h>
+
+#define kPDIOHIDSuppressConsoleKeyboardSelector 13
 
 /* Must match IOUSBHIDDriver's userspace event structs. */
 struct USBHIDMouseEvent {
@@ -140,6 +133,43 @@ PDReadInput(InputInfoPtr pInfo)
     }
 }
 
+/* Best-effort: tell IOHIDSystem a "WindowServer" is now handling keyboard
+ * input, so it stops also feeding keystrokes into the console tty. Failure
+ * just means the console-input leak stays present - never fatal to X. */
+static void
+PDAcquireIOHIDSystem(InputInfoPtr pInfo)
+{
+    mach_port_t masterPort = MACH_PORT_NULL;
+    io_service_t service = IO_OBJECT_NULL;
+    io_connect_t connect = IO_OBJECT_NULL;
+    kern_return_t kr;
+
+    kr = IOMasterPort(MACH_PORT_NULL, &masterPort);
+    if (kr != KERN_SUCCESS)
+        return;
+
+    kr = IOServiceGetMatchingService(masterPort, IOServiceMatching("IOHIDSystem"), &service);
+    if (kr != KERN_SUCCESS || service == IO_OBJECT_NULL)
+        return;
+
+    kr = IOServiceOpen(service, mach_task_self(), 0, &connect);
+    IOObjectRelease(service);
+    if (kr != KERN_SUCCESS)
+        return;
+
+    uint64_t arg = 0;
+    kr = IOConnectCallScalarMethod(connect, kPDIOHIDSuppressConsoleKeyboardSelector, &arg, 1, NULL, NULL);
+    if (kr != KERN_SUCCESS)
+        xf86IDrvMsg(pInfo, X_WARNING, "IOHIDSystem suppressConsoleKeyboard failed (0x%x); "
+                    "console tty may still see keystrokes\n", kr);
+    else
+        xf86IDrvMsg(pInfo, X_INFO, "acquired IOHIDSystem console-input ownership\n");
+
+    /* Leave connect open for the life of the server - the suppression flag
+     * is only meaningful while some client holds it, and losing the port
+     * is harmless either way. */
+}
+
 static int
 PDDeviceControl(DeviceIntPtr dev, int what)
 {
@@ -176,6 +206,8 @@ PDDeviceControl(DeviceIntPtr dev, int what)
                 return BadRequest;
             }
         }
+        if (priv->type == PD_KEYBOARD)
+            PDAcquireIOHIDSystem(pInfo);
         xf86AddEnabledDevice(pInfo);
         dev->public.on = TRUE;
         break;

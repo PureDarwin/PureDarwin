@@ -7,6 +7,7 @@ foreach(_puredarwin_library_dir
     libcxxabi
     libSystem
     libresolv
+    XPC
     dyld
     IOKit
     PDGOP

@@ -1,0 +1,69 @@
+/*
+ * PureDarwin local reconstruction of launchd's XPC domain MIG interface.
+ *
+ * The server routines are already present in core.c; this file exposes that
+ * surface to launchd's normal MIG demux path so XPC domains can become real
+ * launchd job managers instead of a missing-server stub.
+ */
+
+subsystem xpc_domain 1000;
+
+#include <mach/std_types.defs>
+#include <mach/mach_types.defs>
+#include "job_types.defs"
+
+import "vproc.h";
+import "vproc_priv.h";
+import "vproc_internal.h";
+
+userprefix xpc_domain_mig_;
+serverprefix xpc_domain_;
+
+type event_name_t = c_string[64];
+
+routine
+import2(
+				j			: job_t;
+				reqport		: mach_port_t;
+				dport		: mach_port_move_receive_t
+);
+
+routine
+set_environment(
+				j			: job_t;
+sreplyport		rp			: mach_port_make_send_once_t;
+				bsport		: mach_port_t;
+				excport		: mach_port_t;
+				ctx			: pointer_t
+);
+
+routine
+load_services(
+				j			: job_t;
+				services	: pointer_t
+);
+
+routine
+check_in(
+				j			: job_t;
+out				bsport		: mach_port_t;
+out				sbsport		: mach_port_t;
+out				excport		: mach_port_t;
+out				asport		: mach_port_t;
+out				uid			: uid_t;
+out				gid			: gid_t;
+out				asid		: integer_t;
+out				ctx			: pointer_t, dealloc
+);
+
+routine
+get_service_name(
+				j			: job_t;
+out				name		: event_name_t
+);
+
+routine
+add_services(
+				j			: job_t;
+				services	: pointer_t
+);

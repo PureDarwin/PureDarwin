@@ -33,10 +33,10 @@ static char sccsid[] = "@(#)daemon.c	8.1 (Berkeley) 6/4/93";
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD: src/lib/libc/gen/daemon.c,v 1.8 2007/01/09 00:27:53 imp Exp $");
 
-#ifndef VARIANT_PRE1050
+#if !defined(VARIANT_PRE1050) && !defined(__PUREDARWIN__)
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
-#endif /* !VARIANT_PRE1050 */
+#endif /* !VARIANT_PRE1050 && !__PUREDARWIN__ */
 #include "namespace.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -46,7 +46,7 @@ __FBSDID("$FreeBSD: src/lib/libc/gen/daemon.c,v 1.8 2007/01/09 00:27:53 imp Exp 
 #include <unistd.h>
 #include "un-namespace.h"
 
-#ifndef VARIANT_PRE1050
+#if !defined(VARIANT_PRE1050) && !defined(__PUREDARWIN__)
 static void
 move_to_root_bootstrap(void)
 {
@@ -69,7 +69,7 @@ move_to_root_bootstrap(void)
 	task_set_bootstrap_port(mach_task_self(), parent_port);
 	bootstrap_port = parent_port;
 }
-#endif /* !VARIANT_PRE1050 */
+#endif /* !VARIANT_PRE1050 && !__PUREDARWIN__ */
 
 int daemon(int, int) __DARWIN_1050(daemon);
 
@@ -88,9 +88,9 @@ daemon(nochdir, noclose)
 	sa.sa_handler = SIG_IGN;
 	sa.sa_flags = 0;
 	osa_ok = _sigaction(SIGHUP, &sa, &osa);
-#ifndef VARIANT_PRE1050
+#if !defined(VARIANT_PRE1050) && !defined(__PUREDARWIN__)
 	move_to_root_bootstrap();
-#endif /* !VARIANT_PRE1050 */
+#endif /* !VARIANT_PRE1050 && !__PUREDARWIN__ */
 	switch (fork()) {
 	case -1:
 		return (-1);

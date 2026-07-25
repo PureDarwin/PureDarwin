@@ -36,24 +36,14 @@ stdenv.mkDerivation {
     export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
     export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
     export CPPFLAGS="-I${libSystem}/usr/include -I${zlib}/include"
-    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
-    # Same trap as toybox: a real Apple SDK's -isysroot makes ld64 implicitly
-    # find stub dylibs (libz.1.dylib etc.) that don't exist at runtime here,
-    # so disable the implicit search path and force-load our real static zlib.
+    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -DMAGIC='\"/usr/share/misc/magic\"'"
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${zlib}/lib -Wl,-force_load,${zlib}/lib/libz.a -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
 
-    # Cross-compiling: autoconf can't run test programs, so it guesses
-    # conservatively wrong for a few glibc/BSD-only functions file's
-    # src/*.c probes for. Force the portable fallbacks.
     for fn in fgetln strlcpy strlcat strcasestr getline mkstemp mkostemp \
               vasprintf asprintf reallocarray funopen pipe2; do
       export "ac_cv_func_''${fn}=no"
     done
 
-    # file bundles its own build-time "compiled magic" generator (a native
-    # host binary, not part of the cross build) - autotools handles that via
-    # AC_PROG_CC_FOR_BUILD internally, but be explicit so it doesn't try to
-    # use our cross clang for it.
     export CC_FOR_BUILD=cc
 
     ./configure \
@@ -66,11 +56,6 @@ stdenv.mkDerivation {
       --without-python \
       --disable-libseccomp
 
-    # On Darwin, libm's symbols live in libSystem itself (no separate libm),
-    # but file's configure unconditionally adds -lm since it doesn't know
-    # that - and -Wl,-Z above means there's no stub libm.dylib for ld64 to
-    # silently fall back to anymore. Strip it; -lSystem already provides
-    # what's needed (or our libSystem.exports stub does).
     find . -name Makefile -exec sed -i -E 's/-lm\b//g' {} +
 
     runHook postConfigure
@@ -85,6 +70,8 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     make install
+    mkdir -p $out/usr/share/misc
+    cp -p $out/share/misc/magic.mgc $out/usr/share/misc/magic.mgc
     runHook postInstall
   '';
 

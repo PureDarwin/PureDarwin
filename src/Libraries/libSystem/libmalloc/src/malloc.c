@@ -476,7 +476,7 @@ static void *
 default_zone_memalign(malloc_zone_t *zone, size_t alignment, size_t size)
 {
 	zone = runtime_default_zone();
-	
+
 	return zone->memalign(zone, alignment, size);
 }
 

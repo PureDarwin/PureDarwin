@@ -12,7 +12,7 @@
 	    Samuel Zormeister (1/7/2026) - Fix TARGET_RT64_BIT to be TARGET_RT_64_BIT.
 
 		Samuel Zormeister (1/7/2026) - Enable CFXML<Parser, Node> on DEPLOYMENT_RUNTIME_C
- 
+
         Samuel Zormeister (2/7/2026) - Implement proper Objective-C object checking under DEPLOYMENT_RUNTIME_OBJC (CF_IS_OBJC)
 */
 
@@ -1000,7 +1000,7 @@ extern CFTypeID CFTreeGetTypeID(void);
 extern CFTypeID CFPlugInInstanceGetTypeID(void);
 extern CFTypeID CFStringTokenizerGetTypeID(void);
 extern CFTypeID CFStorageGetTypeID(void);
-#if TARGET_OS_LINUX || (TARGET_OS_MAC && !DEPLOYMENT_RUNTIME_OBJC)
+#if TARGET_OS_LINUX || TARGET_OS_MAC
 CF_PRIVATE void __CFTSDInitialize(void);
 #endif
 #if TARGET_OS_WIN32
@@ -1143,10 +1143,10 @@ _CFThreadRef _CF_pthread_main_thread_np(void) {
 #endif
 
 
-
-#if TARGET_OS_LINUX || TARGET_OS_BSD
-static void __CFInitialize(void) __attribute__ ((constructor));
-static
+#if TARGET_OS_LINUX || TARGET_OS_BSD || TARGET_OS_MAC
+// External (not static) linkage: CFBase.c's CFAllocatorAllocate() now calls
+// this defensively too (see there) - it can't if this stays file-local.
+void __CFInitialize(void) __attribute__ ((constructor));
 #endif
 #if TARGET_OS_WIN32
 CF_EXPORT
@@ -1169,7 +1169,7 @@ void __CFInitialize(void) {
 #if TARGET_OS_WIN32
         // Must not call any CF functions
         __CFTSDWindowsInitialize();
-#elif TARGET_OS_LINUX || (TARGET_OS_MAC && !DEPLOYMENT_RUNTIME_OBJC)
+#elif TARGET_OS_LINUX || TARGET_OS_MAC
         __CFTSDInitialize();
 #endif
         __CFProphylacticAutofsAccess = true;
@@ -1196,6 +1196,23 @@ void __CFInitialize(void) {
         uintptr_t NSCFType = __CFSwiftGetBaseClass();
         for (CFIndex idx = 1; idx < __CFRuntimeClassTableSize; idx++) {
             __CFRuntimeObjCClassTable[idx] = NSCFType;
+        }
+#elif DEPLOYMENT_RUNTIME_OBJC
+        // Mirror the Swift branch above: every CF typeID needs *some* ObjC
+        // bridge class, or _CFRuntimeCreateInstance's
+        // object_setClass(memory, (Class)__CFISAForTypeID(typeID)) calls
+        // object_setClass with a NULL class the moment anything creates an
+        // instance of a typeID nobody explicitly bridged (which, without
+        // this, is every type except the ones with their own
+        // _CFRuntimeBridgeClasses() call elsewhere - e.g. CFAllocator,
+        // instantiated during this very __CFInitialize call, well before
+        // CFString.c's NSCFString registration constructor even runs).
+        // Default everything to the generic __NSCFType wrapper
+        // (Bridging.subproj/__NSCFType.m); specific types can still
+        // override this with their own more precise bridge class via a
+        // later _CFRuntimeBridgeClasses() call, same as NSCFString does.
+        for (CFIndex idx = 1; idx < __CFRuntimeClassTableSize; idx++) {
+            _CFRuntimeBridgeClasses(idx, "__NSCFType");
         }
 #endif
 

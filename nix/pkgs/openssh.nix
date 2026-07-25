@@ -26,91 +26,18 @@ stdenv.mkDerivation {
   src = openssh.src;
 
   postPatch = ''
-    # Darwin's stdlib.h declares arc4random_stir(void). When configure decides
-    # it is unavailable, OpenSSH's compat header turns it into a function-like
-    # macro; later SDK declarations then fail to parse. PureDarwin does not
-    # currently export arc4random_stir, so keep it unavailable but don't poison
-    # the SDK headers.
-    substituteInPlace openbsd-compat/openbsd-compat.h \
-      --replace-fail '# define arc4random_stir()' '# include <stdlib.h>
-# define arc4random_stir()'
-
-    # PureDarwin does not export ptrace or setgroups yet. Avoid OpenSSH's
-    # Darwin-specific anti-trace call, and keep uid group swapping disabled
-    # until libSystem has a real setgroups wrapper.
-    substituteInPlace platform-tracing.c \
-      --replace-fail '#ifdef PT_DENY_ATTACH' '#if defined(PT_DENY_ATTACH) && !defined(__APPLE__)'
-    substituteInPlace uidswap.c \
-      --replace-fail 'if (setgroups(user_groupslen, user_groups) == -1)' 'if (0)' \
-      --replace-fail 'if (setgroups(saved_egroupslen, saved_egroups) == -1)' 'if (0)'
-    substituteInPlace sshd-auth.c \
-      --replace-fail 'if (setgroups(1, gidset) == -1)' 'if (0)'
-    substituteInPlace sshd.c \
-      --replace-fail 'if (geteuid() == 0 && setgroups(0, NULL) == -1)' 'if (0)' \
-      --replace-fail 'if (setgroups(0, NULL) < 0)' 'if (0)'
-
-    # Bring-up fallback: some images still fail getpwuid(0) early in OpenSSH.
-    # Keep the fallback local to the client tools and only synthesize root.
-    substituteInPlace ssh.c \
-      --replace-fail 'if (!pw) {
-		logit("No user exists for uid %lu", (u_long)getuid());
-		exit(255);
-	}' 'if (!pw && getuid() == 0) {
-		static struct passwd root_pw;
-		root_pw.pw_name = "root";
-		root_pw.pw_passwd = "*";
-		root_pw.pw_uid = 0;
-		root_pw.pw_gid = 0;
-		root_pw.pw_dir = "/var/root";
-		root_pw.pw_shell = "/bin/sh";
-		pw = &root_pw;
-	}
-	if (!pw) {
-		logit("No user exists for uid %lu", (u_long)getuid());
-		exit(255);
-	}'
-    substituteInPlace ssh-keygen.c \
-      --replace-fail 'if (!pw)
-		fatal("No user exists for uid %lu", (u_long)getuid());' 'if (!pw && getuid() == 0) {
-		static struct passwd root_pw;
-		root_pw.pw_name = "root";
-		root_pw.pw_passwd = "*";
-		root_pw.pw_uid = 0;
-		root_pw.pw_gid = 0;
-		root_pw.pw_dir = "/var/root";
-		root_pw.pw_shell = "/bin/sh";
-		pw = &root_pw;
-	}
-	if (!pw)
-		fatal("No user exists for uid %lu", (u_long)getuid());'
-
-    # sshd reads passwd records across a still-moving PureDarwin libc/header
-    # boundary. Root is the only login account during bring-up, so normalize it
-    # into OpenSSH's own struct layout before allowed_user() checks pw_shell.
-    substituteInPlace auth.c \
-      --replace-fail 'pw = getpwnam(user);' 'pw = getpwnam(user);
-	if (pw != NULL && strcmp(user, "root") == 0) {
-		static struct passwd root_pw;
-		root_pw.pw_name = "root";
-		root_pw.pw_passwd = "plain:root";
-		root_pw.pw_uid = 0;
-		root_pw.pw_gid = 0;
-#ifdef HAVE_STRUCT_PASSWD_PW_GECOS
-		root_pw.pw_gecos = "System Administrator";
+    substituteInPlace openbsd-compat/bsd-setres_id.h \
+      --replace-fail '#ifndef HAVE_SETRESGID
+int	setresgid(gid_t, gid_t, gid_t);
 #endif
-#ifdef HAVE_STRUCT_PASSWD_PW_EXPIRE
-		root_pw.pw_expire = 0;
+#ifndef HAVE_SETRESUID
+int	setresuid(uid_t, uid_t, uid_t);
+#endif' '#if !defined(HAVE_SETRESGID) || defined(__APPLE__)
+int	setresgid(gid_t, gid_t, gid_t);
 #endif
-#ifdef HAVE_STRUCT_PASSWD_PW_CHANGE
-		root_pw.pw_change = 0;
-#endif
-#ifdef HAVE_STRUCT_PASSWD_PW_CLASS
-		root_pw.pw_class = "";
-#endif
-		root_pw.pw_dir = "/var/root";
-		root_pw.pw_shell = "/bin/sh";
-		pw = &root_pw;
-	}'
+#if !defined(HAVE_SETRESUID) || defined(__APPLE__)
+int	setresuid(uid_t, uid_t, uid_t);
+#endif'
 
     # The bring-up passwd(1) stores "plain:<password>" until PureDarwin has
     # crypt(3)/shadow plumbing. Keep this compatibility inside OpenSSH so libc
@@ -133,8 +60,8 @@ stdenv.mkDerivation {
     export AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
     export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
     export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
-    export CPPFLAGS="-I${libSystem}/usr/include -I${openssl}/include -I${zlib}/include"
-    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+    export CPPFLAGS="-I${libSystem}/pd-guest-headers -I${openssl}/include -I${zlib}/include"
+    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -DPLATFORM_MacOSX -D_DARWIN_C_SOURCE -Wno-nullability-completeness"
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${openssl}/lib -L${zlib}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -lSystem"
     export LIBS="-Wl,-force_load,${openssl}/lib/libcrypto.a -Wl,-force_load,${zlib}/lib/libz.a -lSystem"
 
@@ -146,8 +73,8 @@ stdenv.mkDerivation {
     export ac_cv_func___b64_pton=no
     export ac_cv_func_arc4random=yes
     export ac_cv_func_arc4random_buf=yes
-    export ac_cv_func_arc4random_stir=no
-    export ac_cv_func_arc4random_uniform=no
+    export ac_cv_func_arc4random_stir=yes
+    export ac_cv_func_arc4random_uniform=yes
     export ac_cv_func_bcrypt_pbkdf=no
     export ac_cv_func_closefrom=no
     export ac_cv_func_close_range=no
@@ -155,7 +82,7 @@ stdenv.mkDerivation {
     export ac_cv_func_freezero=no
     export ac_cv_func_fstatvfs=yes
     export ac_cv_func_getaddrinfo=yes
-    export ac_cv_func_getentropy=no
+    export ac_cv_func_getentropy=yes
     export ac_cv_func_getrandom=no
     export ac_cv_func_getnameinfo=yes
     export ac_cv_func_getpagesize=yes
@@ -220,9 +147,6 @@ stdenv.mkDerivation {
       --disable-wtmpx \
       --disable-lastlog
 
-    sed -i '/^#[[:space:]]*define[[:space:]]*arc4random_stir()$/c\
-#include <stdlib.h>\
-#define arc4random_stir()' defines.h
     substituteInPlace Makefile \
       --replace-fail '$(INSTALL) -m 4711 $(STRIP_OPT) ssh-keysign$(EXEEXT) $(DESTDIR)$(SSH_KEYSIGN)$(EXEEXT)' \
                      '$(INSTALL) -m 0755 $(STRIP_OPT) ssh-keysign$(EXEEXT) $(DESTDIR)$(SSH_KEYSIGN)$(EXEEXT)'

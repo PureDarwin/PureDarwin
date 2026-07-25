@@ -1,18 +1,3 @@
-# x86_64-apple-darwin cross toolchain built entirely from nixpkgs' own
-# unwrapped LLVM/clang/lld - no osxcross build.sh, no compiling a second
-# copy of LLVM from source. Verified end-to-end: nixpkgs clang emits real
-# Mach-O objects for -target x86_64-apple-macosx*, and nixpkgs' ld64.lld
-# links directly against Apple's .tbd (TAPI) stub libraries with no shims
-# needed - and -fuse-ld=lld (resolved by PATH, not by absolute path - see
-# compilerWrapper below) makes clang's Darwin driver auto-derive
-# -arch/-platform_version/-syslibroot correctly, matching what osxcross's
-# own from-source clang wrapper does.
-#
-# Produces osxcross-name-compatible wrapper binaries
-# (x86_64-apple-darwin20.4-clang, -clang++, -ar, -ranlib, -strip, -nm, -ld,
-# -dsymutil, -install_name_tool, -lipo, plus an xcrun shim) so it's a
-# drop-in alternative to /usr/local/osxcross/bin, and is usable directly
-# via cmake/nix-toolchain.cmake.
 { lib
 , writeShellScriptBin
 , symlinkJoin
@@ -70,20 +55,10 @@ let
       "''${args[@]}"
   '';
 
-  # osxcross also exposes a bare (non-triple-prefixed) "dsymutil" on PATH,
-  # which some CMakeLists (e.g. src/Kernel/xnu) look for via
-  # find_program(... NAMES dsymutil llvm-dsymutil). Match that.
   bareDsymutil = writeShellScriptBin "dsymutil" ''
     exec ${bintools}/bin/dsymutil "$@"
   '';
 
-  # Minimal xcrun: `xcrun [-sdk macosx] TOOL ARGS...` -> our wrapped TOOL, or
-  # a handful of direct queries (-show-sdk-*) that xnu's own makedefs
-  # (cmake/MakeInc.cmd.in) issue directly rather than dispatching to a tool.
-  # -find falls back past our own toolchain bin dir to plain PATH lookup,
-  # since some tools makedefs asks for (mig, migcom, unifdef, libtool) are
-  # the project's own build products / nixpkgs-native tools, not part of
-  # this cross toolchain.
   xcrunShim = writeShellScriptBin "xcrun" ''
     set -e
     BINDIR="$(cd "$(dirname "$0")" && pwd)"

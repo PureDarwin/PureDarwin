@@ -164,6 +164,7 @@ typedef struct os_log_s *os_log_t;
 #endif
 
 CF_EXPORT const char *_CFProcessName(void);
+CF_PRIVATE void __CFInitialize(void);
 CF_PRIVATE CFStringRef _CFProcessNameString(void);
 
 CF_EXPORT Boolean _CFGetCurrentDirectory(char *path, int maxlen);
@@ -784,9 +785,16 @@ CF_INLINE Boolean CF_IS_OBJC(CFTypeID typeId, const void *obj)
                 return false;
             } else {
 #if OBJC_HAVE_NONPOINTER_ISA
-                /* Non-pointer ISAs use bit 0 to indicate a nonpointer ISA. */
+                /* Non-pointer ISAs use bit 0 to indicate a nonpointer ISA; the
+                 * class pointer is embedded in the middle bits (extracted via
+                 * objc_debug_isa_class_mask). A CF-created instance whose isa
+                 * objc has converted to non-pointer form (e.g. after an inline
+                 * retain) still has the CF-bridged class as its embedded class,
+                 * so it is NOT a foreign ObjC subclass. Compare the embedded
+                 * class against the type's isa rather than merely testing that
+                 * it is nonzero (which is always true for any real object). */
                 if (objIsa & 0x1) {
-                    return (objIsa & objc_debug_isa_class_mask) != 0;
+                    return (objIsa & objc_debug_isa_class_mask) != tidIsa;
                 }
 #endif
             }

@@ -41,9 +41,6 @@ stdenv.mkDerivation {
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${openssl}/lib -L${zlib}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
     export LIBS="-Wl,-force_load,${openssl}/lib/libssl.a -Wl,-force_load,${openssl}/lib/libcrypto.a -Wl,-force_load,${zlib}/lib/libz.a -lSystem"
 
-    # Cross-compiling: curl's own configure can't run test programs, so a
-    # handful of glibc/BSD-only probes guess wrong for Darwin. Force the
-    # portable fallbacks/known-good answers, same pattern as nano/file.
     for fn in fchmod ftruncate getpeername getsockname recv send \
               strtoll poll fsetxattr; do
       export "ac_cv_func_''${fn}=yes"
@@ -73,11 +70,6 @@ stdenv.mkDerivation {
       --disable-manual \
       --disable-threaded-resolver
 
-    # configure detects a Darwin host triple and unconditionally links
-    # against CoreFoundation/SystemConfiguration for its macOS proxy-
-    # autoconfig support - real frameworks that don't exist in this build
-    # (no Foundation/CF stack here yet). Strip the link flags; curl falls
-    # back to env-var proxy config (http_proxy etc.) without them.
     find . -name Makefile -exec sed -i \
       -e 's/-framework CoreFoundation//g' \
       -e 's/-framework SystemConfiguration//g' \
@@ -85,17 +77,6 @@ stdenv.mkDerivation {
       -e 's/-framework Security//g' \
       {} +
 
-    # Stripping the framework LDFLAGS above isn't enough on its own: our
-    # LDFLAGS include -Wl,-undefined,dynamic_lookup (needed elsewhere so
-    # ld64 doesn't hard-fail resolving genuinely-provided-at-runtime
-    # symbols), which also silently waves through *this* now-truly-missing
-    # SCDynamicStoreCopyProxies call instead of erroring at link time - it
-    # only surfaces later as a dyld lazy-bind crash the first time
-    # lib/macos.c's code path actually runs. curl_setup.h's own
-    # CURL_MACOS_CALL_COPYPROXIES guard (APPLE + TARGET_OS_MAC + !IPHONE +
-    # USE_IPV6) is unconditional and has no configure-time opt-out, so
-    # comment out its #define directly rather than trying to fight the
-    # macro conditions upstream.
     sed -i -E 's/^(#\s*define\s+CURL_MACOS_CALL_COPYPROXIES\s+1)/\/* \1 disabled: no SystemConfiguration framework in this build *\//' \
       lib/curl_setup.h
 

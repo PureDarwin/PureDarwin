@@ -38,10 +38,6 @@ stdenv.mkDerivation {
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -lSystem"
 
-    # AC_FUNC_FORK/AC_FUNC_WAIT3/AC_C_BIGENDIAN use AC_TRY_RUN, which cannot
-    # execute a cross-compiled Darwin binary on this Linux build host.
-    # PureDarwin's fork/wait3 are the plain, non-vfork-broken kind, and
-    # x86_64 is little-endian, so pre-seed the cache with those answers.
     export ac_cv_func_fork_works=yes
     export ac_cv_func_wait3=yes
     export ac_cv_c_bigendian=no

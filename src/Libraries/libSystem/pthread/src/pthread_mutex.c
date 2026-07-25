@@ -53,6 +53,9 @@
 #include "resolver.h"
 #include "internal.h"
 #include "kern/kern_trace.h"
+#if !VARIANT_DYLD
+#include <os/variant_private.h>   // _os_xbs_chrooted (used by the #if !VARIANT_DYLD block below)
+#endif
 
 #ifndef BUILDING_VARIANT /* [ */
 

@@ -570,6 +570,22 @@ void *CFAllocatorAllocate(CFAllocatorRef allocator, CFIndex size, CFOptionFlags 
     CFAllocatorAllocateCallBack allocateFunc;
     void *newptr = NULL;
 
+    // Under DEPLOYMENT_RUNTIME_OBJC, the `_cfisa == __CFISAForCFAllocator()`
+    // check just below depends on __CFRuntimeObjCClassTable being
+    // populated (see __CFInitialize's DEPLOYMENT_RUNTIME_OBJC branch in
+    // CFRuntime.c). Nothing else in this file calls __CFInitialize()
+    // defensively - it relies entirely on the constructor attribute having
+    // already run - and if this is ever reached before that (e.g. from
+    // another dylib's own early static initializer), the table read
+    // returns 0 while kCFAllocatorSystemDefault's compile-time-baked
+    // _cfisa is the real __NSCFType class pointer, are unequal, and this
+    // function misinterprets a real CFAllocator as a malloc_zone_t
+    // (`return malloc_zone_malloc((malloc_zone_t*)allocator, size)` below)
+    // - which then recurses back in here via CF's own bootstrap path,
+    // overflowing the stack. __CFInitialize is idempotent, so this is free
+    // once the constructor really has already run.
+    __CFInitialize();
+
     if (NULL == allocator) {
 	allocator = __CFGetDefaultAllocator();
     }

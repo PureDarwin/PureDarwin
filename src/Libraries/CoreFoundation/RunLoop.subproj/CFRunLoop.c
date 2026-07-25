@@ -96,7 +96,12 @@ extern _CFThreadRef pthread_main_thread_np(void);
 typedef struct voucher_s *voucher_t;
 
 extern voucher_t _Nullable voucher_copy(void);
+#if !DEPLOYMENT_RUNTIME_OBJC
+// Under DEPLOYMENT_RUNTIME_OBJC, <os/object.h> (pulled in transitively) has
+// already provided a real os_release(object) macro (-> [object release]);
+// this extern is only the non-ObjC (pure C refcounting) fallback.
 extern void os_release(void *object);
+#endif
 
 extern mach_port_t _dispatch_get_main_queue_port_4CF(void);
 

@@ -69,6 +69,7 @@ add_darwin_static_library(IOKitCF)
 
 target_sources(IOKitCF PRIVATE
     IOKitLibCF.c
+    pd_IOKitWaitQuiet.c
     ${CMAKE_CURRENT_BINARY_DIR}/device_user.c
 )
 

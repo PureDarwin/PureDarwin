@@ -1501,6 +1501,23 @@ IOReturn IOHIDSystem::createShmemGated(void* p1 __unused)
     return kIOReturnSuccess;
 }
 
+IOReturn IOHIDSystem::suppressConsoleKeyboard(void*, void*, void*, void*, void*, void*)
+{                                                                    // IOMethod
+    return cmdGate->runAction((IOCommandGate::Action)doSuppressConsoleKeyboard, NULL);
+}
+
+IOReturn IOHIDSystem::doSuppressConsoleKeyboard(IOHIDSystem *self, void * arg0)
+                        /* IOCommandGate::Action */
+{
+    return self->suppressConsoleKeyboardGated(arg0);
+}
+
+IOReturn IOHIDSystem::suppressConsoleKeyboardGated(void* p1 __unused)
+{
+    consoleKeyboardSuppressed = true;
+    return kIOReturnSuccess;
+}
+
 // Initialize the shared memory area.
 //
 // This should be run from a command gate action.
@@ -2437,7 +2454,7 @@ void IOHIDSystem::keyboardEventGated(unsigned   eventType,
             /* extPID */   0,
             /* processKEQ*/false
             );
-    } else {
+    } else if (!consoleKeyboardSuppressed) {
         static const char cursorCodes[] = { 'D', 'A', 'C', 'B' };
         if( (eventType == NX_KEYDOWN) && ((flags & NX_ALTERNATEMASK) != NX_ALTERNATEMASK)) {
             if( (charSet == NX_SYMBOLSET)

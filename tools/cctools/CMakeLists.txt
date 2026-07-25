@@ -1,9 +1,11 @@
 add_subdirectory(libmacho)
 add_subdirectory(libstuff)
 add_subdirectory(misc)
-# add_subdirectory(otool) # disabled - doesn't build
+# add_subdirectory(otool) # disabled - see nix/pkgs/host-otool.nix instead (this project's CMake hard-pins CMAKE_SYSTEM_NAME=Darwin globally, so add_executable(host_otool) isn't actually a native host build here)
 add_subdirectory(ld64/src)
 if(PUREDARWIN_ENABLE_SELFHOST_CCTOOLS)
     add_subdirectory(misc-selfhost)
+    add_subdirectory(ar-selfhost)
+    add_subdirectory(otool-selfhost)
     add_subdirectory(ld64-selfhost)
 endif()

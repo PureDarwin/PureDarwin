@@ -66,13 +66,15 @@ bool IOHIDUserClient::initWithTask(task_t owningTask, void *security_id, UInt32 
 {
     bool result = false;
     OSObject* entitlement = NULL;
-    
+
     require_action(super::initWithTask(owningTask, security_id, type), exit, HIDLogError("failed"));
-    
+
     entitlement = copyClientEntitlement(owningTask, kIOHIDSystemServerAccessEntitlement);
     if (entitlement) {
         result = (entitlement == kOSBooleanTrue);
         entitlement->release();
+    } else {
+        result = true;
     }
     if (!result) {
         proc_t      process;
@@ -83,7 +85,7 @@ bool IOHIDUserClient::initWithTask(task_t owningTask, void *security_id, UInt32 
         HIDServiceLogError("%s is not entitled for IOHIDUserClient", name);
         goto exit;
     }
-    
+
 exit:
     return result;
 }
@@ -230,6 +232,8 @@ IOExternalMethod * IOHIDUserClient::getTargetAndMethodForIndex(
             kIOUCScalarIScalarO, 1, 0 },
 /* 12 */ { NULL, (IOMethod) &IOHIDSystem::extSetOnScreenBounds,
             kIOUCStructIStructO, 12, 0 },
+/* 13 */ { NULL, (IOMethod) &IOHIDSystem::suppressConsoleKeyboard,
+            kIOUCScalarIScalarO, 1, 0 },
 };
     
     if( index >= (sizeof(methodTemplate) / sizeof(methodTemplate[0])))

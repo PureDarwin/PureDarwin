@@ -220,7 +220,20 @@ void AppleI386PlatformExpert::setupBIOS(IOService *nub) {
 }
 
 bool AppleI386PlatformExpert::getMachineName(char *name, int maxLength) {
-	strncpy(name, "x86", maxLength);
+	if (!name || maxLength <= 0) {
+		return false;
+	}
+
+#if defined(__x86_64__)
+	const char *machineName = "x86_64";
+#elif defined(__i386__)
+	const char *machineName = "i386";
+#else
+	const char *machineName = "x86";
+#endif
+
+	strncpy(name, machineName, maxLength);
+	name[maxLength - 1] = '\0';
 	return true;
 }
 

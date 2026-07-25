@@ -33,3 +33,5 @@ if(APPLE)
     target_compile_definitions(host_otool PRIVATE USE_LIBOBJC)
     target_link_libraries(host_otool PRIVATE -lobjc)
 endif()
+
+install(TARGETS host_otool DESTINATION native-bin COMPONENT BaseSystem)

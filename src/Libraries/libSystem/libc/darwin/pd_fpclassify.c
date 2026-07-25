@@ -1,5 +1,5 @@
 /*
- * __fpclassifyf/__fpclassifyd/__fpclassifyl -- real Apple's <math.h> fpclassify(x)
+ * __fpclassifyf/__fpclassifyd/__fpclassifyl - real Apple's <math.h> fpclassify(x)
  * macro (see SDK usr/include/math.h) expands to a call to one of these Libm
  * entry points rather than a compiler builtin directly. We don't have Libm in
  * this tree; gdtoa's _hdtoa.c/_ldtoa.c (hex-float / long-double formatting,

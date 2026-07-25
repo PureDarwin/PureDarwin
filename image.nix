@@ -9,14 +9,16 @@
 , dosfstools
 , mtools
 , e2fsprogs
+, fakeroot
 , apfsprogs
+, iana-etc
 , hfsprogs ? null
 , libdmg-hfsplus ? null
 , cacert
 , espMB ? 64
-, rootMB ? 640
+, rootMB ? 1536
 , apfsMB ? 128
-  # "ext4": ext4 root + APFS test partition (default, historical layout).
+  # "ext4": ext4 root + APFS test partition
   # "hfs":  EFI + HFS+ root ONLY - no ext4, no APFS. Root is mounted by the
   #         stock hfs.kext instead of our ext4.kext; xnu-loader already
   #         prefers an Apple_HFS partition when deriving boot-uuid.
@@ -26,7 +28,7 @@
   # xnu-loader reads this off the ESP at \EFI\BOOT\boot-args.txt
   # it falls back if it cannot find a boot-args.txt, so not strictly needed here
   # but generally nice to have so we can override things easily now
-, bootArgs ? "-v debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1"
+, bootArgs ? "debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 vgpu_debug=1 pdtrace=1"
 }:
 
 assert lib.isDerivation baseSystem;
@@ -40,7 +42,7 @@ stdenv.mkDerivation {
 
   dontUnpack = true;
 
-  nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs apfsprogs ]
+  nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs fakeroot apfsprogs ]
     ++ lib.optionals (rootFsType == "hfs") [ hfsprogs libdmg-hfsplus ];
 
   buildPhase = ''
@@ -113,6 +115,7 @@ ${if rootFsType == "hfs" then ''
       copyPackage "${package}";
     '') extraPackages}
     for dir in \
+      System/Library/StartupItems \
       usr \
       usr/bin \
       usr/lib \
@@ -122,16 +125,18 @@ ${if rootFsType == "hfs" then ''
       usr/share/X11 \
       bin \
       sbin \
+      boot \
       dev \
       etc \
       etc/fonts \
-      etc/init \
       tmp \
       var \
       var/cache \
       var/cache/fontconfig \
       var/root \
+      var/root/.cache \
       var/run \
+      var/run/dbus \
       var/log \
       var/tmp \
       var/empty \
@@ -140,11 +145,10 @@ ${if rootFsType == "hfs" then ''
       mkdir -p "$staging/$dir"
     done
 
-    # Classic Darwin compatibility names: libc/libm/libpthread/libdl/libinfo
-    # are all libSystem symlinks on real Darwin. tcc links "-lc" by default
-    # (tcc_add_runtime); other in-guest builds ask for -lm/-lpthread. Done at
-    # image assembly (not in the libsystem output) so cross-build autoconf
-    # probes don't suddenly start detecting -lc and enabling new code paths.
+    # mke2fs -d (below, ext4 variant) silently drops genuinely-empty
+    # directories when populating the image
+    touch "$staging/var/run/dbus/.keep"
+
     for compat in libc libm libpthread libdl libinfo; do
       ln -sf libSystem.B.dylib "$staging/usr/lib/$compat.dylib"
     done
@@ -154,23 +158,38 @@ ${if rootFsType == "hfs" then ''
     # see them; the guest gets them at /usr/include.
     if [ -d "$staging/pd-guest-headers" ]; then
       mkdir -p "$staging/usr/include"
-      cp -a "$staging/pd-guest-headers"/. "$staging/usr/include/"
-      rm -rf "$staging/pd-guest-headers"
+      # Copy via an independent intermediate so this can't hit a "same file"
+      # error when a staged package left usr/include hardlinked to the
+      # pd-guest-headers inode (happens for the userland+stripped base combo);
+      # the intermediate has fresh inodes, so the final copy always overwrites
+      # cleanly. Result is identical to a plain cp for every image.
+      rm -rf "$staging/.pd-guest-headers-tmp"
+      cp -a "$staging/pd-guest-headers" "$staging/.pd-guest-headers-tmp"
+      cp -a "$staging/.pd-guest-headers-tmp"/. "$staging/usr/include/"
+      rm -rf "$staging/.pd-guest-headers-tmp" "$staging/pd-guest-headers"
     fi
 
     cat > $staging/etc/passwd <<'EOF'
 root:*:0:0:System Administrator:/var/root:/bin/sh
 daemon:*:1:1:System Services:/var/root:/usr/bin/false
 sshd:*:74:74:Privilege-separated SSH:/var/empty:/usr/bin/false
+messagebus:*:96:96:D-Bus Message Daemon User:/var/empty:/usr/bin/false
 nobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false
 EOF
     cat > $staging/etc/group <<'EOF'
 wheel:*:0:root
 daemon:*:1:root
 sshd:*:74:
+messagebus:*:96:
 nogroup:*:-1:
 nobody:*:-2:
 staff:*:20:root
+EOF
+    cp ${iana-etc}/etc/services $staging/etc/services
+    cp ${iana-etc}/etc/protocols $staging/etc/protocols
+    cat > $staging/etc/hosts <<'EOF'
+127.0.0.1	localhost
+::1		localhost
 EOF
     cat > $staging/etc/profile <<'EOF'
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
@@ -182,6 +201,7 @@ export LOGNAME=''${LOGNAME:-root}
 export FONTCONFIG_FILE=''${FONTCONFIG_FILE:-/etc/fonts/fonts.conf}
 export XDG_CONFIG_DIRS=''${XDG_CONFIG_DIRS:-/etc}
 export XDG_DATA_DIRS=''${XDG_DATA_DIRS:-/usr/share:/share}
+export XLOCALEDIR=''${XLOCALEDIR:-/usr/share/X11/locale}
 export PS1='# '
 EOF
     cat > $staging/etc/zshenv <<'EOF'
@@ -194,6 +214,7 @@ export LOGNAME=''${LOGNAME:-root}
 export FONTCONFIG_FILE=''${FONTCONFIG_FILE:-/etc/fonts/fonts.conf}
 export XDG_CONFIG_DIRS=''${XDG_CONFIG_DIRS:-/etc}
 export XDG_DATA_DIRS=''${XDG_DATA_DIRS:-/usr/share:/share}
+export XLOCALEDIR=''${XLOCALEDIR:-/usr/share/X11/locale}
 EOF
     cat > $staging/etc/zprofile <<'EOF'
 test -r /etc/profile && . /etc/profile
@@ -217,15 +238,79 @@ EOF
     cat > $staging/etc/ttys <<'EOF'
 /dev/console /bin/zsh -l
 EOF
-    cat > $staging/etc/init/rc.boot <<'EOF'
+    mkdir -p $staging/System/Library/LaunchDaemons $staging/usr/libexec
+
+    cat > $staging/usr/libexec/pd-set-hostname <<'EOF'
 #!/bin/sh
+if test -x /bin/hostname; then
+    /bin/hostname puredarwin
+fi
+EOF
+    cat > $staging/System/Library/LaunchDaemons/org.puredarwin.hostname.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.puredarwin.hostname</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/pd-set-hostname</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>
+EOF
+
+    cat > $staging/usr/libexec/pd-dbus-launch <<'EOF'
+#!/bin/sh
+# launchctl's system bootstrap empties /var/run at boot (empty_dir(_PATH_VARRUN)),
+# so the /var/run/dbus dir created in the image is gone by the time we run and
+# dbus-daemon fails to bind /var/run/dbus/system_bus_socket. Recreate it here.
+# 1777 (sticky, world-writable) matches the image staging perms: dbus-daemon
+# --system drops to the messagebus user after binding and needs to write its
+# pidfile/socket here, and this project has no per-file chown yet. (toybox has
+# no chmod applet, so set the mode via mkdir -m.)
+/bin/mkdir -p -m 1777 /var/run/dbus
+if test -x /bin/dbus-daemon; then
+    exec /bin/dbus-daemon --config-file=/share/dbus-1/system.conf
+fi
+exit 0
+EOF
+    cat > $staging/System/Library/LaunchDaemons/org.puredarwin.dbus.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.puredarwin.dbus</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/pd-dbus-launch</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>
+EOF
 
 ${lib.optionalString (rootFsType == "hfs") ''
+    cat > $staging/usr/libexec/pd-root-remount <<'EOF'
+#!/bin/sh
 # The kernel mounts the root volume read-only and hfs.kext honors that
 # (ext4.kext force-clears MNT_RDONLY instead, which is why the ext4 image
 # never needed this). Classic Darwin does mount -uw / from /etc/rc.
-# IOMediaBSDClient may not have published /dev/disk0s2 yet when rc.boot
-# runs, so retry until the node shows up.
+# IOMediaBSDClient may not have published /dev/disk0s2 yet when this runs,
+# so retry until the node shows up.
 if test -x /bin/mount; then
     n=0
     while test ! -c /dev/disk0s2 -a ! -b /dev/disk0s2 -a $n -lt 50; do
@@ -234,15 +319,35 @@ if test -x /bin/mount; then
     done
     /bin/mount -t hfs -o update,rw /dev/disk0s2 /
 fi
-''}
-if test -x /bin/hostname; then
-    /bin/hostname puredarwin
-fi
-
-if test -x /bin/netsetup; then
-    /bin/netsetup
-fi
 EOF
+    cat > $staging/System/Library/LaunchDaemons/org.puredarwin.root-remount.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.puredarwin.root-remount</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/pd-root-remount</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
+</dict>
+</plist>
+EOF
+''}
+
+    chmod 755 \
+      $staging/usr/libexec/pd-set-hostname \
+      $staging/usr/libexec/pd-dbus-launch
+${lib.optionalString (rootFsType == "hfs") ''
+    chmod 755 $staging/usr/libexec/pd-root-remount
+''}
     cat > $staging/var/root/.profile <<'EOF'
 test -r /etc/profile && . /etc/profile
 EOF
@@ -276,20 +381,11 @@ EOF
       $staging/var/root/.profile \
       $staging/var/root/.zprofile \
       $staging/var/root/.zshrc
-    chmod 755 $staging/etc/init/rc.boot
 
     ${lib.optionalString (testAudioFile != null) ''
       cp ${testAudioFile} $staging/badapple.pcm
     ''}
 
-    # Real Darwin's system-identity plist, read directly by lots of code
-    # (CoreFoundation's system-version APIs, etc) rather than through
-    # sw_vers - sw_vers itself (src/Userspace/sw_vers/sw_vers.c) still just
-    # uses its own compiled-in PRODUCT_NAME/PRODUCT_VERSION constants
-    # ("PureDarwin"/"11.3"), matched here so both report the same thing.
-    # curl (curl.nix) is built with --with-ca-bundle=/etc/ssl/cert.pem;
-    # stage a real CA bundle there so TLS verification actually has
-    # something to check against.
     mkdir -p $staging/etc/ssl
     cp ${cacert}/etc/ssl/certs/ca-bundle.crt $staging/etc/ssl/cert.pem
     chmod 644 $staging/etc/ssl/cert.pem
@@ -416,12 +512,28 @@ EOF
     ln -s toybox "$staging/usr/bin/env"
     ln -sf zsh "$staging/bin/sh"
 
+    # Scripts widely assume `#!/usr/bin/env foo` works, not just `/bin/foo`.
+    ln -sf ../../bin/env "$staging/usr/bin/env"
+
+    # Create a cc compat
+    ln -sf ../../bin/tcc "$staging/usr/bin/cc"
+
     chmod 1777 \
       "$staging/tmp" \
       "$staging/var/tmp" \
       "$staging/tmp/.X11-unix"
 
+    # dbus-daemon --system runs as the messagebus user (see system.conf's
+    # <user>) after opening its listening socket, and needs to write its
+    # pidfile/socket here post-setuid. This project has no chown mechanism
+    # yet (no package assigns non-root file ownership), so - matching the
+    # existing world-writable-sticky precedent for /tmp/var-tmp above -
+    # this is 1777 rather than owned-by-messagebus 755, until real
+    # per-file ownership support exists.
+    chmod 1777 "$staging/var/run/dbus"
+
     chmod 700  $staging/var/root
+    chmod 755  $staging/var/root/.cache
     chmod 755  $staging/var/empty
 
     echo "Image X11 executables:"
@@ -468,17 +580,12 @@ ${lib.optionalString (rootFsType == "hfs") ''
 
     tar --format=ustar --owner=0 --group=0 --hard-dereference \
       -cf staging.tar -C "$staging" .
-    # hfsplus is chatty (one line per file) and its ASSERTs print to stdout,
-    # so capture everything and only show it on failure.
     if ! hfsplus root.img untar staging.tar > untar.log 2>&1; then
       echo "hfsplus untar failed; last lines:" >&2
       tail -40 untar.log >&2
       exit 1
     fi
 
-    # Sanity check the populated catalog (fsck.hfsplus refuses plain files:
-    # "Can't get device block size"): key paths must be listable so a populate
-    # bug fails the build instead of surfacing as mystery corruption at boot.
     for path in /bin /usr/bin /usr/lib /etc; do
       hfsplus root.img ls "$path" >/dev/null
     done
@@ -488,20 +595,20 @@ ${lib.optionalString (rootFsType == "hfs") ''
     dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc status=none
 ''}
 ${lib.optionalString (rootFsType == "ext4") ''
-    # ext4.kext now maintains metadata_csum checksums, initializes
-    # uninitialized (uninit_bg) block/inode groups on demand, handles 64-bit
-    # descriptors (ext4_csum.c), and journals metadata with replay-on-mount
-    # (ext4_jbd.c), so format with a journal. Keep ^orphan_file (no
-    # orphan-file recovery support).
+    # mke2fs -d records each source file's uid/gid, and under Nix the whole
+    # staging tree is owned by the unprivileged build user (uid 1000/gid 100),
+    # not root. That breaks anything that checks for root ownership. This fixes that issue.
+    fakeroot bash <<FAKESCRIPT
+    chown -R 0:0 "$staging"
     mke2fs -q -F -t ext4 \
       -b 4096 \
       -O ^orphan_file \
       -L darwin-ext4 \
-      -d $staging \
+      -d "$staging" \
       root.img >/dev/null
+FAKESCRIPT
+    # /var/empty must be 0755 (mke2fs -d may have staged it u+rwX-only).
     cat > root-debugfs.cmds <<'EOF'
-set_inode_field /var/empty uid 0
-set_inode_field /var/empty gid 0
 set_inode_field /var/empty mode 040755
 EOF
     debugfs -w -f root-debugfs.cmds root.img >/dev/null

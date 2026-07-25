@@ -1,8 +1,9 @@
-# Native (build-host) HFS+ manipulation tool from libdmg-hfsplus. Used by
-# image-hfs.nix to populate the HFS+ root filesystem inside the Nix sandbox
-# (no loop mounts / no root): `hfsplus <img> untar <staging.tar>` creates
-# files, directories, and symlinks with their tar-recorded mode/uid/gid.
-{ stdenv, lib, fetchFromGitHub, cmake, zlib }:
+{ stdenv
+, lib
+, fetchFromGitHub
+, cmake
+, zlib
+}:
 
 stdenv.mkDerivation {
   pname = "libdmg-hfsplus";
@@ -20,8 +21,6 @@ stdenv.mkDerivation {
   nativeBuildInputs = [ cmake ];
   cmakeFlags = [
     "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-    # We install straight out of the build tree (no `make install` target for
-    # just hfsplus), so keep the build-dir RPATH out of the binary.
     "-DCMAKE_SKIP_BUILD_RPATH=ON"
   ];
   buildInputs = [ zlib ];

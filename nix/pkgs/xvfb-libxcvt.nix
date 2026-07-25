@@ -46,12 +46,6 @@ pkg-config = '${pkg-config}/bin/pkg-config'
 
 [built-in options]
 c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include']
-# Static-only lib: no -dylinker_install_name / -dylib_file here. Those are
-# executable/dyld-path flags; on a shared build ld64 would stamp the bogus
-# /usr/lib/dyld as this dylib's LC_ID_DYLIB, which then poisons anything that
-# links it (Xorg got an LC_LOAD_DYLIB /usr/lib/dyld and failed to load). We
-# force a static archive below so libxcvt is baked into Xorg with no runtime
-# dylib and no id at all.
 c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-platform_version,macos,11.0,11.5', '-lSystem']
 
 [host_machine]

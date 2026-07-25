@@ -207,6 +207,7 @@ __BEGIN_DECLS
 
 int     faccessat(int, const char *, int, int) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
 int     fchownat(int, const char *, uid_t, gid_t, int)  __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
+int     getentropy(void *, size_t) __OSX_AVAILABLE(10.12) __IOS_AVAILABLE(10.0) __TVOS_AVAILABLE(10.0) __WATCHOS_AVAILABLE(3.0);
 int     linkat(int, const char *, int, const char *, int)       __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
 ssize_t readlinkat(int, const char *, char *, size_t)   __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);
 int     symlinkat(const char *, int, const char *) __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0);

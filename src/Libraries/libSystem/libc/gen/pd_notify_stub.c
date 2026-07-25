@@ -6,7 +6,7 @@
  * a running notifyd -- none of which exist in PureDarwin yet. notify_post only
  * leaks into the libSystem export surface transitively, so until XPC + notifyd
  * are up, posting a notification is a no-op that reports success. Swap this for
- * the real /home/vali/development/darwin/Libnotify client once XPC lands.
+ * the real Libnotify client once XPC lands.
  */
 #include <stdint.h>
 

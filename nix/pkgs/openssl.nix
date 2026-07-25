@@ -38,18 +38,9 @@ stdenv.mkDerivation {
     export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
     export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
     export CPPFLAGS="-I${libSystem}/usr/include"
-    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -DOPENSSL_NO_APPLE_CRYPTO_RANDOM"
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
 
-    # darwin64-x86_64-cc is OpenSSL's own target config for this triple; it
-    # normally assumes a native host cc/ld (Xcode's), which we're replacing
-    # via the CC/AR/RANLIB/CFLAGS/LDFLAGS overrides above. no-asm avoids
-    # needing a working host-runnable nasm/perlasm pipeline for now (comes
-    # back later as a perf pass, not correctness). no-shared: this system
-    # doesn't have a real dyld image-loading pipeline for third-party
-    # dylibs yet, so static-only + force_load is the same pattern used for
-    # zlib/ncurses. no-tests/no-apps: the resulting test/apps binaries are
-    # Mach-O and can't run on this Linux build host to self-check anyway.
     perl ./Configure darwin64-x86_64-cc \
       no-asm no-shared no-tests no-async no-engine no-dso no-threads \
       --prefix=$out \

@@ -1,5 +1,5 @@
 /*
- * ffs(3) -- real implementation (__builtin_ffs), not stubbed.
+ * ffs(3) - real implementation (__builtin_ffs), not stubbed.
  *
  * The upstream FreeBSD ffs() lives in libplatform's ffsll.c but is gated
  * behind `#if VARIANT_DYLD && TARGET_OS_SIMULATOR`, which doesn't apply to

@@ -39,6 +39,9 @@
 , expat
 , libXau
 , libXdmcp
+, libpng
+, libXext
+, libXrender
 }:
 
 let
@@ -72,6 +75,9 @@ let
     expat
     libXau
     libXdmcp
+    libpng
+    libXext
+    libXrender
   ];
   depPcPaths = deps;
   sdkTarball = requireFile {

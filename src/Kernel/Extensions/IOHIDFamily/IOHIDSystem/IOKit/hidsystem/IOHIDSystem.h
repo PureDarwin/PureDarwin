@@ -133,6 +133,11 @@ private:
 	bool evInitialized;	// Has the first-open-only initialization run?
     bool evStateChanging;   // Is the event system state changing.
 	bool eventsOpen;	// Boolean: has evmmap been called yet?
+	bool consoleKeyboardSuppressed; // a client asked us to stop feeding
+	                                // keystrokes into cons_cinput, without
+	                                // taking on full eventsOpen/postEvent
+	                                // WindowServer duties (see
+	                                // suppressConsoleKeyboard).
 	bool cursorStarted;	// periodic events running?
 	bool cursorEnabled;	// cursor positioning ok?
 	bool cursorCoupled;	// cursor positioning on pointer moves ok?
@@ -327,6 +332,11 @@ public:
 
   /* Create the shared memory area */
   virtual IOReturn createShmem(void*,void*,void*,void*,void*,void*);
+
+  /* Stop feeding keystrokes to cons_cinput without taking on the full
+   * eventsOpen/postEvent WindowServer contract - see puredarwininput's
+   * PDAcquireIOHIDSystem(). */
+  virtual IOReturn suppressConsoleKeyboard(void*,void*,void*,void*,void*,void*);
 
   /* register the IOSharedDataQueue for the new user events */
   virtual IOReturn registerEventQueue(IOSharedDataQueue * queue);
@@ -530,6 +540,9 @@ static	IOReturn	doSetDisplayBounds (IOHIDSystem *self, void * arg0, void * arg1)
 
 static	IOReturn	doCreateShmem (IOHIDSystem *self, void * arg0);
         IOReturn	createShmemGated (void * p1);
+
+static	IOReturn	doSuppressConsoleKeyboard (IOHIDSystem *self, void * arg0);
+        IOReturn	suppressConsoleKeyboardGated (void * p1);
 
 static    IOReturn    doRegisterEventQueue (IOHIDSystem *self, void * arg0);
         IOReturn    registerEventQueueGated (void * p1);

@@ -239,19 +239,35 @@ IOServiceGetMatchingServices(mach_port_t masterPort, CFDictionaryRef matching,
 	return kr;
 }
 
+/* Defined below; resolves kIOMasterPortDefault to the real master device port. */
+static mach_port_t pd_default_master_port(void);
+
 io_registry_entry_t
 IORegistryEntryFromPath(mach_port_t masterPort, const io_string_t path)
 {
 	io_registry_entry_t entry = IO_OBJECT_NULL;
 	io_string_t pathCopy;
+	mach_port_t usePort;
 	size_t i;
+
+	/* The kernel's is_io_registry_entry_from_path rejects any port that isn't
+	 * master_device_port with kIOReturnNotPrivileged, so kIOMasterPortDefault
+	 * (MACH_PORT_NULL) must be resolved to the real master port first - same as
+	 * IORegistryGetRootEntry/IOServiceGetMatchingService do. Without this, a
+	 * default-port lookup (e.g. IOKitWaitQuiet's "IOService:/") silently
+	 * returns a null entry. */
+	usePort = (masterPort == MACH_PORT_NULL) ? pd_default_master_port() : masterPort;
 
 	for (i = 0; i < sizeof(pathCopy) - 1 && path[i] != '\0'; i++) {
 		pathCopy[i] = path[i];
 	}
 	pathCopy[i] = '\0';
 
-	io_registry_entry_from_path(masterPort, pathCopy, &entry);
+	io_registry_entry_from_path(usePort, pathCopy, &entry);
+
+	if (usePort != MACH_PORT_NULL && usePort != masterPort) {
+		mach_port_deallocate(mach_task_self(), usePort);
+	}
 	return entry;
 }
 

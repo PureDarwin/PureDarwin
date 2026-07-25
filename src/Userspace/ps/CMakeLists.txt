@@ -8,6 +8,11 @@ endif()
 
 target_sources(ps PRIVATE
     ps.c
+    fmt.c
+    keyword.c
+    nlist.c
+    print.c
+    tasks.c
 )
 
 target_compile_options(ps PRIVATE

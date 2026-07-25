@@ -44,14 +44,25 @@ __FBSDID("$FreeBSD: src/lib/libc/gen/arc4random.c,v 1.25 2008/09/09 09:46:36 ach
 #include <pthread.h>
 
 #include <TargetConditionals.h>
+#if defined(__PUREDARWIN__)
+extern void _os_crash(const char *);
+#define os_crash(...) do { \
+		_os_crash("arc4random: fatal RNG initialization failure"); \
+		__builtin_trap(); \
+	} while (0)
+#else
 #if !TARGET_OS_DRIVERKIT
 #define OS_CRASH_ENABLE_EXPERIMENTAL_LIBTRACE 1
 #endif
 #include <os/assumes.h>
+#endif
 #include <os/lock.h>
 
 #include "string.h"
 #include "libc_private.h"
+
+void arc4random_buf(void *buf, size_t buf_size);
+uint32_t arc4random_uniform(uint32_t upper_bound);
 
 #if defined(__APPLE__) && !defined(VARIANT_STATIC)
 #include <corecrypto/ccrng.h>

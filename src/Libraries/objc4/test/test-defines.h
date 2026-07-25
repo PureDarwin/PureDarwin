@@ -1,0 +1,1 @@
+#define TEST_OVERRIDES_NEW 1

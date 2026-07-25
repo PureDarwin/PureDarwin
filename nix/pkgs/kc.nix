@@ -1,4 +1,10 @@
-{ stdenv, lib, kcTools, kernel, kexts, classic ? false }:
+{ stdenv
+, lib
+, kcTools
+, kernel
+, kexts
+, classic ? false
+}:
 
 stdenv.mkDerivation {
   pname = "puredarwin-kc";
@@ -58,9 +64,9 @@ stdenv.mkDerivation {
       -kext "$KEXTS/IOVirtIOGPU.kext" \
       -kext "$KEXTS/IOVirtIONet.kext" \
       -kext "$KEXTS/IONetworkingFamily.kext" \
+      -kext "$KEXTS/IOIntelGen9Framebuffer.kext" \
       -kext "$KEXTS/PDE1000.kext" \
       -kext "$KEXTS/RavynHDAudio.kext" \
-      -kext "$KEXTS/ApplePS2Controller.kext" \
       "''${codeless[@]}" \
       ${lib.optionalString classic "-classic"} \
       -o kernel

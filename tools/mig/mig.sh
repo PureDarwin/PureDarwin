@@ -50,17 +50,20 @@
 realpath()
 {
 	local FILE="$1"
-	local PARENT=$(dirname "$FILE")
-	local BASE=$(basename "$FILE")
-	pushd "$PARENT" >/dev/null 2>&1 || return 0
-	local DIR=$(pwd -P)
-	popd >/dev/null
-	if [ "$DIR" == "/" ]; then
+	local PARENT
+	local BASE
+	local DIR
+
+	PARENT=$(dirname "$FILE") || return 1
+	BASE=$(basename "$FILE") || return 1
+	DIR=$(cd "$PARENT" >/dev/null 2>&1 && pwd -P) || return 1
+
+	if [ "$DIR" = "/" ]; then
 		echo "/$BASE"
 	else
 		echo "$DIR/$BASE"
 	fi
-	return 1
+	return 0
 }
 
 UNAME_S="$(uname -s)"
@@ -109,7 +112,10 @@ if [ $# -eq 1 ] && [ "$1" = "-version" ] ; then
 	exit $?
 fi
 
-cppflags="-D__MACH30__"
+migflags=()
+cppflags=( "-D__MACH30__" )
+target=()
+iSysRootParm=()
 
 files=
 

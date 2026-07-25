@@ -56,19 +56,26 @@ PDGOPOpen(PDGOPFramebuffer *fb)
         goto fail;
     }
 
+    static const char *kFramebufferClasses[] = {
+        "IOGOPFramebuffer",
+        "IOVirtIOGPU",
+    };
+    fb->service = IO_OBJECT_NULL;
     PDGOP_SET_STAGE("IOServiceMatching");
-    matching = IOServiceMatching("IOGOPFramebuffer");
-    if (matching == NULL) {
-        kr = KERN_RESOURCE_SHORTAGE;
-        goto fail;
-    }
-
-    PDGOP_SET_STAGE("IOServiceGetMatchingService");
-    kr = IOServiceGetMatchingService(fb->masterPort, matching, &fb->service);
-    if (kr != KERN_SUCCESS || fb->service == IO_OBJECT_NULL) {
-        if (kr == KERN_SUCCESS) {
-            kr = KERN_FAILURE;
+    for (size_t i = 0; i < sizeof(kFramebufferClasses) / sizeof(kFramebufferClasses[0]); i++) {
+        matching = IOServiceMatching(kFramebufferClasses[i]);
+        if (matching == NULL) {
+            continue;
         }
+        kr = IOServiceGetMatchingService(fb->masterPort, matching, &fb->service);
+        if (kr == KERN_SUCCESS && fb->service != IO_OBJECT_NULL) {
+            break;
+        }
+        fb->service = IO_OBJECT_NULL;
+    }
+    PDGOP_SET_STAGE("IOServiceGetMatchingService");
+    if (fb->service == IO_OBJECT_NULL) {
+        kr = KERN_FAILURE;
         goto fail;
     }
 

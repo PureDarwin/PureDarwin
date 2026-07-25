@@ -816,7 +816,21 @@ RavynAHCIPort::issueCommand(PortState &portState,
     portWrite32(portState.port, PORT_IS,   0xFFFFFFFFU);
     portWrite32(portState.port, PORT_SERR, 0xFFFFFFFFU);
 
+    /*
+     * CI can still read as set for a short while after the owning command's
+     * own completion loop already observed BSY/DRQ clear and returned -
+     * waitWhileBusy() above only checks TFD, not CI, and the HBA is free to
+     * retire the slot slightly later. Poll briefly for it to drain (mirrors
+     * the completion loop below) before concluding the port is genuinely
+     * wedged; a real timeout/TFES elsewhere already recovers the port itself.
+     */
     uint32_t ci = portRead32(portState.port, PORT_CI);
+    if (ci & 1U) {
+        for (uint32_t i = 0; i < 50 && (ci & 1U); i++) {
+            IOSleep(1);
+            ci = portRead32(portState.port, PORT_CI);
+        }
+    }
     if (ci & 1U) {
         AHCI_Log("Slot 0 already active on port %u, CI=%08x",
                 portState.port, ci);

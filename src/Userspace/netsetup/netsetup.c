@@ -1,19 +1,24 @@
 /*
- * netsetup - tiny early PureDarwin IPv4 configurator.
+ * pd-networkd - early PureDarwin IPv4 network bring-up.
  *
- * Defaults match QEMU user networking:
- *   en0 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3.
+ * This is still static IPv4 by default, but it is now a launchd-started
+ * service instead of a manually invoked boot hack. DHCP can replace the static
+ * lease loader without changing the interface/route/resolver apply path.
  */
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <netinet/in.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -22,6 +27,45 @@
     (((sa)->sa_len == 0) ? sizeof(long) : \
     (1 + (((sa)->sa_len - 1) | (sizeof(long) - 1))))
 #endif
+
+#define PD_NETWORKD_DEFAULT_IFACE "en0"
+#define PD_NETWORKD_DEFAULT_ADDR "10.0.2.15"
+#define PD_NETWORKD_DEFAULT_MASK "255.255.255.0"
+#define PD_NETWORKD_DEFAULT_ROUTER "10.0.2.2"
+#define PD_NETWORKD_DEFAULT_DNS "10.0.2.3"
+#define PD_NETWORKD_DEFAULT_BROADCAST "10.0.2.255"
+#define PD_NETWORKD_DEFAULT_WAIT_SECONDS 30
+
+struct pd_network_config {
+    const char *ifname;
+    const char *addr;
+    const char *mask;
+    const char *router;
+    const char *dns;
+    const char *broadcast;
+    int wait_seconds;
+    int write_resolver;
+};
+
+static void
+pd_log(const char *fmt, ...)
+{
+    va_list ap;
+
+    printf("PureDarwin network: ");
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+}
+
+static const char *
+env_default(const char *name, const char *fallback)
+{
+    const char *value = getenv(name);
+
+    return (value && value[0]) ? value : fallback;
+}
 
 static int
 parse_ipv4(const char *text, struct sockaddr_in *sin)
@@ -44,6 +88,42 @@ copy_sockaddr(struct sockaddr *dst, const struct sockaddr_in *src)
 }
 
 static int
+get_flags(int sock, const char *ifname, short *flags)
+{
+    struct ifreq ifr;
+
+    memset(&ifr, 0, sizeof(ifr));
+    strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+
+    if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0)
+        return -1;
+
+    *flags = ifr.ifr_flags;
+    return 0;
+}
+
+static int
+wait_for_interface(int sock, const char *ifname, int wait_seconds)
+{
+    short flags;
+
+    for (int i = 0; i <= wait_seconds; i++) {
+        if (get_flags(sock, ifname, &flags) == 0) {
+            pd_log("%s is present flags=0x%x", ifname, flags);
+            return 0;
+        }
+
+        if (i == wait_seconds)
+            break;
+        sleep(1);
+    }
+
+    pd_log("%s did not appear after %d seconds: %s",
+        ifname, wait_seconds, strerror(errno));
+    return -1;
+}
+
+static int
 set_flags(int sock, const char *ifname, short set, short clear)
 {
     struct ifreq ifr;
@@ -52,7 +132,7 @@ set_flags(int sock, const char *ifname, short set, short clear)
     strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 
     if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
-        printf("netsetup: %s SIOCGIFFLAGS failed: %s\n", ifname, strerror(errno));
+        pd_log("%s SIOCGIFFLAGS failed: %s", ifname, strerror(errno));
         return -1;
     }
 
@@ -60,7 +140,7 @@ set_flags(int sock, const char *ifname, short set, short clear)
     ifr.ifr_flags &= (short)~clear;
 
     if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
-        printf("netsetup: %s SIOCSIFFLAGS failed: %s\n", ifname, strerror(errno));
+        pd_log("%s SIOCSIFFLAGS failed: %s", ifname, strerror(errno));
         return -1;
     }
     return 0;
@@ -76,20 +156,20 @@ add_addr(int sock, const char *ifname, const char *addr, const char *mask, const
     strlcpy(ifra.ifra_name, ifname, sizeof(ifra.ifra_name));
 
     if (parse_ipv4(addr, &sin) < 0) {
-        printf("netsetup: invalid address %s\n", addr);
+        pd_log("invalid address %s", addr);
         return -1;
     }
     copy_sockaddr(&ifra.ifra_addr, &sin);
 
     if (parse_ipv4(mask, &sin) < 0) {
-        printf("netsetup: invalid netmask %s\n", mask);
+        pd_log("invalid netmask %s", mask);
         return -1;
     }
     copy_sockaddr(&ifra.ifra_mask, &sin);
 
     if (broadcast && broadcast[0]) {
         if (parse_ipv4(broadcast, &sin) < 0) {
-            printf("netsetup: invalid broadcast %s\n", broadcast);
+            pd_log("invalid broadcast %s", broadcast);
             return -1;
         }
         copy_sockaddr(&ifra.ifra_broadaddr, &sin);
@@ -97,18 +177,17 @@ add_addr(int sock, const char *ifname, const char *addr, const char *mask, const
 
     if (ioctl(sock, SIOCAIFADDR, &ifra) < 0) {
         if (errno == EEXIST) {
-            printf("netsetup: %s already has %s\n", ifname, addr);
+            pd_log("%s already has %s", ifname, addr);
             return 0;
         }
-        printf("netsetup: %s SIOCAIFADDR %s failed: %s\n",
-            ifname, addr, strerror(errno));
+        pd_log("%s SIOCAIFADDR %s failed: %s", ifname, addr, strerror(errno));
         return -1;
     }
 
-    printf("netsetup: %s inet %s netmask %s", ifname, addr, mask);
-    if (broadcast && broadcast[0])
-        printf(" broadcast %s", broadcast);
-    printf("\n");
+    pd_log("%s inet %s netmask %s%s%s",
+        ifname, addr, mask,
+        (broadcast && broadcast[0]) ? " broadcast " : "",
+        (broadcast && broadcast[0]) ? broadcast : "");
     return 0;
 }
 
@@ -139,13 +218,13 @@ add_default_route(const char *gateway)
     if (parse_ipv4("0.0.0.0", &dst) < 0 ||
         parse_ipv4(gateway, &gw) < 0 ||
         parse_ipv4("0.0.0.0", &mask) < 0) {
-        printf("netsetup: invalid gateway %s\n", gateway);
+        pd_log("invalid gateway %s", gateway);
         return -1;
     }
 
     sock = socket(PF_ROUTE, SOCK_RAW, AF_INET);
     if (sock < 0) {
-        printf("netsetup: PF_ROUTE socket failed: %s\n", strerror(errno));
+        pd_log("PF_ROUTE socket failed: %s", strerror(errno));
         return -1;
     }
 
@@ -167,59 +246,58 @@ add_default_route(const char *gateway)
     if (written < 0) {
         if (errno == EEXIST) {
             close(sock);
-            printf("netsetup: default route already exists\n");
+            pd_log("default route already exists");
             return 0;
         }
-        printf("netsetup: add default route via %s failed: %s\n",
-            gateway, strerror(errno));
+        pd_log("add default route via %s failed: %s", gateway, strerror(errno));
         close(sock);
         return -1;
     }
 
     close(sock);
-    printf("netsetup: default route via %s\n", gateway);
+    pd_log("default route via %s", gateway);
     return 0;
 }
 
-static void
-usage(void)
+static int
+write_resolver_config(const char *dns)
 {
-    printf("usage:\n");
-    printf("  netsetup\n");
-    printf("  netsetup IFADDR NETMASK GATEWAY\n");
-    printf("  netsetup IFNAME IFADDR NETMASK GATEWAY [BROADCAST]\n");
+    char buf[160];
+    ssize_t len;
+    int fd;
+
+    if (!dns || !dns[0])
+        return 0;
+
+    mkdir("/etc", 0755);
+
+    fd = open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        pd_log("open /etc/resolv.conf failed: %s", strerror(errno));
+        return -1;
+    }
+
+    len = snprintf(buf, sizeof(buf), "nameserver %s\n", dns);
+    if (len < 0 || (size_t)len >= sizeof(buf) || write(fd, buf, (size_t)len) != len) {
+        pd_log("write /etc/resolv.conf failed: %s", strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    pd_log("resolver nameserver %s", dns);
+    return 0;
 }
 
-int
-main(int argc, char **argv)
+static int
+apply_network_config(const struct pd_network_config *cfg)
 {
-    const char *ifname = "en0";
-    const char *addr = "10.0.2.15";
-    const char *mask = "255.255.255.0";
-    const char *gateway = "10.0.2.2";
-    const char *broadcast = "10.0.2.255";
     int sock;
     int rc = 0;
 
-    if (argc == 4) {
-        addr = argv[1];
-        mask = argv[2];
-        gateway = argv[3];
-        broadcast = "";
-    } else if (argc == 5 || argc == 6) {
-        ifname = argv[1];
-        addr = argv[2];
-        mask = argv[3];
-        gateway = argv[4];
-        broadcast = (argc == 6) ? argv[5] : "";
-    } else if (argc != 1) {
-        usage();
-        return 2;
-    }
-
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        printf("netsetup: AF_INET socket failed: %s\n", strerror(errno));
+        pd_log("AF_INET socket failed: %s", strerror(errno));
         return 1;
     }
 
@@ -228,15 +306,81 @@ main(int argc, char **argv)
     if (set_flags(sock, "lo0", IFF_UP, 0) < 0)
         rc = 1;
 
-    if (add_addr(sock, ifname, addr, mask, broadcast) < 0)
+    if (wait_for_interface(sock, cfg->ifname, cfg->wait_seconds) < 0) {
+        close(sock);
+        return 1;
+    }
+
+    if (add_addr(sock, cfg->ifname, cfg->addr, cfg->mask, cfg->broadcast) < 0)
         rc = 1;
-    if (set_flags(sock, ifname, IFF_UP, 0) < 0)
+    if (set_flags(sock, cfg->ifname, IFF_UP, 0) < 0)
         rc = 1;
 
     close(sock);
 
-    if (add_default_route(gateway) < 0)
+    if (add_default_route(cfg->router) < 0)
+        rc = 1;
+    if (cfg->write_resolver && write_resolver_config(cfg->dns) < 0)
         rc = 1;
 
     return rc;
+}
+
+static void
+usage(const char *prog)
+{
+    printf("usage:\n");
+    printf("  %s [--wait SECONDS] [IFNAME IFADDR NETMASK GATEWAY [DNS [BROADCAST]]]\n", prog);
+    printf("environment overrides:\n");
+    printf("  PUREDARWIN_NET_IFACE PUREDARWIN_NET_ADDR PUREDARWIN_NET_MASK\n");
+    printf("  PUREDARWIN_NET_ROUTER PUREDARWIN_NET_DNS PUREDARWIN_NET_BROADCAST\n");
+}
+
+int
+main(int argc, char **argv)
+{
+    struct pd_network_config cfg;
+    int argi = 1;
+
+    cfg.ifname = env_default("PUREDARWIN_NET_IFACE", PD_NETWORKD_DEFAULT_IFACE);
+    cfg.addr = env_default("PUREDARWIN_NET_ADDR", PD_NETWORKD_DEFAULT_ADDR);
+    cfg.mask = env_default("PUREDARWIN_NET_MASK", PD_NETWORKD_DEFAULT_MASK);
+    cfg.router = env_default("PUREDARWIN_NET_ROUTER", PD_NETWORKD_DEFAULT_ROUTER);
+    cfg.dns = env_default("PUREDARWIN_NET_DNS", PD_NETWORKD_DEFAULT_DNS);
+    cfg.broadcast = env_default("PUREDARWIN_NET_BROADCAST", PD_NETWORKD_DEFAULT_BROADCAST);
+    cfg.wait_seconds = PD_NETWORKD_DEFAULT_WAIT_SECONDS;
+    cfg.write_resolver = 1;
+
+    while (argi < argc && strncmp(argv[argi], "--", 2) == 0) {
+        if (strcmp(argv[argi], "--no-resolver") == 0) {
+            cfg.write_resolver = 0;
+            argi++;
+        } else if (strcmp(argv[argi], "--wait") == 0 && argi + 1 < argc) {
+            cfg.wait_seconds = atoi(argv[argi + 1]);
+            if (cfg.wait_seconds < 0)
+                cfg.wait_seconds = 0;
+            argi += 2;
+        } else {
+            usage(argv[0]);
+            return 2;
+        }
+    }
+
+    if (argc - argi == 4 || argc - argi == 5 || argc - argi == 6) {
+        cfg.ifname = argv[argi++];
+        cfg.addr = argv[argi++];
+        cfg.mask = argv[argi++];
+        cfg.router = argv[argi++];
+        if (argi < argc)
+            cfg.dns = argv[argi++];
+        if (argi < argc)
+            cfg.broadcast = argv[argi++];
+    } else if (argc != argi) {
+        usage(argv[0]);
+        return 2;
+    }
+
+    pd_log("configuring %s addr=%s mask=%s router=%s dns=%s",
+        cfg.ifname, cfg.addr, cfg.mask, cfg.router, cfg.dns ? cfg.dns : "");
+    return apply_network_config(&cfg);
 }

@@ -123,19 +123,31 @@ IOVirtIOTransport::attach(IOPCIDevice *pci)
 {
     fPCIDevice = pci;
 
+    // Enable decode before touching any BAR - mapping (and even the
+    // fallback BAR-sizing dance's temporary command-register state) can
+    // silently fail or read garbage with Memory Space Enable still off.
+    pci->setBusMasterEnable(true);
+    pci->setMemoryEnable(true);
+
     IOByteCount capOffset = 0;
     UInt32 found;
+    unsigned nCaps = 0;
     while ((found = pci->extendedFindPCICapability(PCI_CAP_ID_VNDR, &capOffset)) != 0) {
+        nCaps++;
         // capOffset is the capability's own start (cap_vndr byte); field
         // offsets below are relative to it, per struct virtio_pci_cap.
         UInt8 base = (UInt8)capOffset;
         UInt8 cfgType = pci->configRead8((UInt8)(base + kCapCfgType));
         UInt8 bar     = pci->configRead8((UInt8)(base + kCapBar));
         UInt32 off    = pci->configRead32((UInt8)(base + kCapOffset));
+        IOLog("IOVirtIOTransport: vendor cap #%u at off=0x%x type=%u bar=%u regoff=0x%x\n",
+              nCaps, (unsigned)capOffset, cfgType, bar, off);
 
         IOMemoryMap *map = mapBar(pci, bar);
-        if (!map)
+        if (!map) {
+            IOLog("IOVirtIOTransport: failed to map BAR%u for cap type=%u\n", bar, cfgType);
             continue;
+        }
         volatile uint8_t *base_va = (volatile uint8_t *)map->getVirtualAddress() + off;
 
         switch (cfgType) {
@@ -158,11 +170,11 @@ IOVirtIOTransport::attach(IOPCIDevice *pci)
         }
     }
 
-    if (!fCommonCfg || !fNotifyCfg)
+    if (!fCommonCfg || !fNotifyCfg) {
+        IOLog("IOVirtIOTransport: attach failed (nCaps=%u commonCfg=%p notifyCfg=%p)\n",
+              nCaps, (void *)fCommonCfg, (void *)fNotifyCfg);
         return false;
-
-    pci->setBusMasterEnable(true);
-    pci->setMemoryEnable(true);
+    }
 
     // VIRTIO 1.1 sec 3.1.1 device initialization handshake.
     w8(fCommonCfg + kCommonDeviceStatus, 0); // reset

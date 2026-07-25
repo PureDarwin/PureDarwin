@@ -66,6 +66,8 @@
 
 __BEGIN_DECLS
 
+extern bool _os_xbs_chrooted;
+
 /*!
  * @function os_variant_has_internal_content
  *

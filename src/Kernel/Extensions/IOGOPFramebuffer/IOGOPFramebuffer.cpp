@@ -15,6 +15,7 @@
 #endif
 
 extern "C" int switch_to_video_console(void);
+extern "C" void vc_progress_set(boolean_t enable, uint32_t vc_delay);
 extern "C" int devfs_is_ready(void);
 extern "C" boolean_t PE_parse_boot_argn(const char *arg_string, void *arg_ptr, int max_arg);
 
@@ -315,7 +316,7 @@ IOGOPFramebuffer::start(IOService *provider)
     IOReturn ret = pe->setConsoleInfo(&consoleInfo, kPEGraphicsMode);
     if (ret != kIOReturnSuccess) {
         DEBUG("setConsoleInfo failed: %d\n", ret);
-        // Don't fail - we can still register the service even if console init fails
+        // Don't fail - we can still register the service.
     } else {
         DEBUG("Kernel graphics console initialized\n");
 
@@ -325,6 +326,10 @@ IOGOPFramebuffer::start(IOService *provider)
             pe->setConsoleInfo(&consoleInfo, kPEAcquireScreen);
             pe->setConsoleInfo(&consoleInfo, kPETextScreen);
             DEBUG("active console switched to video, old console=%d\n", oldConsole);
+
+            vc_progress_set(FALSE, 0);
+            vc_progress_set(TRUE, 0);
+            DEBUG("gopprogress: overlaid kernel progress meter on text console\n");
         }
     }
 

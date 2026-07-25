@@ -1844,6 +1844,7 @@ void *cookie) /* cookie is not used */
 	}
 #endif
 
+	if(segname != NULL && sectname != NULL){
 	    if(strcmp(segname, "__LLVM") == 0 &&
 	       strcmp(sectname, "__bundle") == 0 &&
 	       (vflag == TRUE || Vflag == TRUE) &&
@@ -1963,6 +1964,7 @@ void *cookie) /* cookie is not used */
 				   sect_size, sect_addr);
 		}
 	    }
+	}
 	}
 
 #if 0
@@ -2148,7 +2150,11 @@ void *cookie) /* cookie is not used */
 	    free(segnames);
 	}
 #endif
-}
+/* The processor() function's real closing brace is a few hundred lines
+ * above (right before the #if 0 block starting here) - everything from
+ * there through here is dead code (already #if 0'd out by Apple upstream),
+ * except this trailing brace itself, which apparently only balanced out
+ * under a real USE_LIBOBJC build. Not needed: dropped. */
 
 /*
  * get_symbol_table_info() returns pointers to the symbol table and string

@@ -104,7 +104,8 @@ if(PUREDARWIN_ENABLE_SELFHOST_CCTOOLS)
     )
     set_property(TARGET libstuff_static PROPERTY OUTPUT_NAME stuff_selfhost)
     target_compile_definitions(libstuff_static PRIVATE
-        __DARWIN_UNIX03
+        __DARWIN_UNIX03=1
+        _DARWIN_USE_64_BIT_INODE=1
         PROGRAM_PREFIX=\"\"
     )
     target_include_directories(libstuff_static PRIVATE

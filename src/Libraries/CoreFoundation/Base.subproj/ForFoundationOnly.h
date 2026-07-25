@@ -83,6 +83,15 @@ CF_EXPORT void *_Nonnull __CFSafelyReallocateWithAllocator(CFAllocatorRef _Nulla
 
 _CF_EXPORT_SCOPE_BEGIN
 
+// Registers an Objective-C class (by name) as the toll-free bridge for a CF
+// typeID: instances of that typeID get their isa swapped to this class by
+// _CFRuntimeCreateInstance (see CFRuntime.c). Foundation calls this once per
+// bridged type (e.g. CFStringGetTypeID() <-> "NSCFString") from a
+// constructor run at image-load time, before any instance of that type can
+// be created. No-op (and undeclared class name is fine) when CF is not
+// built with DEPLOYMENT_RUNTIME_OBJC.
+CF_EXPORT void _CFRuntimeBridgeClasses(CFTypeID cf_typeID, const char *cls_name);
+
 CF_EXPORT const CFStringRef _kCFBundleExecutablePathKey;
 CF_EXPORT const CFStringRef _kCFBundleInfoPlistURLKey;
 CF_EXPORT const CFStringRef _kCFBundleRawInfoPlistURLKey;
@@ -709,15 +718,27 @@ CF_EXPORT void *_CFCreateArrayStorage(size_t numPointers, Boolean zeroed, size_t
 #define DECLARE_STATIC_CLASS_REF(CLASSNAME) extern void STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, STATIC_CLASS_NAME(CLASSNAME))
 #define STATIC_CLASS_REF(CLASSNAME) &(STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, STATIC_CLASS_NAME(CLASSNAME)))
 
-#elif DEPLOYMENT_TARGET_OBJC
+#elif DEPLOYMENT_RUNTIME_OBJC
+// PD: this branch used to be guarded by "DEPLOYMENT_TARGET_OBJC", a macro
+// that is never defined anywhere in this tree (the real build flag is
+// DEPLOYMENT_RUNTIME_OBJC) - so it was permanently dead code, and
+// STATIC_CLASS_REF(...) always fell through to the final #else's `NULL`.
+// That's what INIT_CFRUNTIME_BASE_WITH_CLASS(__NSCFType, ...) uses to bake
+// kCFAllocatorSystemDefault's _cfisa at compile time: it was silently
+// getting compiled as a NULL isa, permanently mismatching
+// __CFISAForCFAllocator()'s real (non-null) runtime-bridged class pointer
+// in every `_cfisa == __CFISAForCFAllocator()` check in CFBase.c - which
+// made CFAllocatorAllocate() misidentify every real CFAllocator as a raw
+// malloc_zone_t and recurse into malloc_zone_malloc via its own bootstrap
+// path until the stack overflowed.
 
 #define STATIC_CLASS_PREFIX OBJC_CLASS_$_
 
 #define STATIC_CLASS_NAME_CONCAT_INNER(x,y) x ## y
 #define STATIC_CLASS_NAME_CONCAT(x,y) STATIC_CLASS_NAME_CONCAT_INNER(x,y)
 
-#define DECLARE_STATIC_CLASS_REF(classname) extern void STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, classname)
-#define STATIC_CLASS_REF(CLASSNAME) &(STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, classname))
+#define DECLARE_STATIC_CLASS_REF(CLASSNAME) extern void STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, CLASSNAME)
+#define STATIC_CLASS_REF(CLASSNAME) &(STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, CLASSNAME))
 
 #else // if !DEPLOYMENT_RUNTIME_SWIFT
 

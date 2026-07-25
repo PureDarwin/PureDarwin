@@ -1,42 +1,9 @@
-/*
- * PureDarwin libSystem.B.dylib initializer - the real dyld<->libSystem
- * handshake, not a hack.
- *
- * This constructor MUST live in libSystem.B.dylib itself, not in libdyld.dylib
- * (where it was originally, alongside dyldLibSystemGlue.c/pd_dladdr.c - an
- * understandable first guess since it's dyld-shaped code). Real dyld hardcodes
- * a check (ImageLoaderMachO.cpp doModInitFunctions): until
- * gProcessInfo->libSystemInitialized is true, the ONLY image allowed to run
- * ANY initializer is the one whose install path exactly equals
- * LIBSYSTEM_DYLIB_PATH ("/usr/lib/libSystem.B.dylib") - every other dylib's
- * initializer throws "initializer in image (...) that does not link with
- * libSystem.dylib". Since THIS constructor is what flips gLibSystemHelpers
- * from NULL to non-NULL (which is what sets libSystemInitialized = true in
- * the first place), it has to be the FIRST initializer dyld runs, and per
- * that check that means it has to be compiled into libSystem.B.dylib's own
- * object files, with libSystem.B.dylib's own install path - exactly mirroring
- * real Darwin, where this handshake is libSystem_initializer(), part of
- * libSystem.B.dylib, not of any re-exported child.
- *
- * At load time dyld fills the __DATA,__dyld section (in dyldLibSystemGlue.c,
- * still built into libdyld.dylib - that part IS dyld-side, not moved) with
- * its _dyld_func_lookup implementation. This constructor looks up dyld's
- * "__dyld_register_thread_helpers" entry point and hands it a LibSystemHelpers
- * table. Once registered, dyld's gLibSystemHelpers is non-NULL, which is what
- * lets dyld launch an LC_MAIN main executable (it needs
- * helpers->startGlueToCallExit + version >= 9; see dyld2.cpp:_main).
- *
- * We deliberately provide only the helper table + start glue, not the full
- * dyldAPIsInLibSystem.cpp API surface (dlopen/NSModule/...), which launchd does
- * not use. The struct layout mirrors dyld/src/dyldLibSystemInterface.h exactly
- * (version 13) - that is the ABI dyld reads, so it must not drift.
- */
-
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 #include <pthread.h>
 #include <sys/mman.h>
 #include <mach/mach.h>
@@ -81,15 +48,68 @@ struct LibSystemHelpers {
 extern void *pd_libdyld_getStartGlueToCallExit(void);
 extern int _dyld_func_lookup(const char *name, void **address);
 extern void _pthread_set_self(void *p);   /* p == NULL selects the VARIANT_DYLD seed path */
-extern void _program_vars_init(const struct ProgramVars *vars);
-extern void __atexit_init(void);
-extern void _init_clock_port(void);
-extern void __chk_init(void);
-extern void __xlocale_init(void);
-extern void __guard_setup(const char *apple[]);
-extern void _subsystem_init(const char *apple[]);
 extern void __malloc_init(const char *apple[]);
 extern int mach_init(void);
+
+struct _libpthread_functions {
+	unsigned long version;
+	void (*exit)(int);
+	void *(*malloc)(size_t);
+	void (*free)(void *);
+};
+extern int __pthread_init(const struct _libpthread_functions *pthread_funcs,
+    const char *envp[], const char *apple[], const struct ProgramVars *vars);
+static void __libdarwin_init(void) { }
+
+extern void libdispatch_init(void);
+/* Exported wrapper in libdyld.dylib (pd_libdyld_exports.c) for the hidden-
+ * visibility tlv_initializer() -- see that file for why the bridge is needed. */
+extern void pd_libdyld_tlv_initializer(void);
+
+#include "../libc/darwin/libc_private.h"
+extern void _malloc_fork_prepare(void);
+extern void _malloc_fork_parent(void);
+extern void _malloc_fork_child(void);
+extern void _pthread_fork_prepare(void);
+extern void _pthread_fork_parent(void);
+extern void _pthread_fork_child(void);
+extern void _pthread_fork_child_postinit(void);
+extern int  _mach_fork_child(void);
+extern void dispatch_atfork_prepare(void);
+extern void dispatch_atfork_parent(void);
+extern void dispatch_atfork_child(void);
+extern void _notify_fork_child(void);
+
+static void
+pd_atfork_prepare(void)
+{
+	dispatch_atfork_prepare();
+	_malloc_fork_prepare();
+	_pthread_fork_prepare();
+}
+
+static void
+pd_atfork_parent(void)
+{
+	_pthread_fork_parent();
+	_malloc_fork_parent();
+	dispatch_atfork_parent();
+}
+
+static void
+pd_atfork_child(void)
+{
+	_mach_fork_child();
+	_pthread_fork_child();
+	_malloc_fork_child();
+	_libc_fork_child();
+	dispatch_atfork_child();
+	_notify_fork_child();
+	/* client-registered pthread_atfork() child handlers run last, same as
+	 * real Apple's libSystem_atfork_child() - _pthread_fork_child() itself
+	 * only does the internal (non-client) piece, see pthread_atfork.c. */
+	_pthread_fork_child_postinit();
+}
 
 static pthread_mutex_t sGlobalDyldLock = PTHREAD_MUTEX_INITIALIZER;
 static void acquireGlobalDyldLock(void) { pthread_mutex_lock(&sGlobalDyldLock); }
@@ -157,24 +177,55 @@ static void pd_libSystem_initializer(int argc, const char *argv[], const char *e
 		vars = &fallback_vars;
 	}
 
-	_program_vars_init(vars);
 	mach_init();
+	/* Real dyld seeds this minimal TSD itself, in its own separately-linked
+	 * copy of pthread_static, before any dylib initializer (including this
+	 * one) ever runs - see _pthread_set_self_dyld() in pthread.c. PD's dyld
+	 * doesn't do that, so we seed it here instead, right before the real
+	 * __pthread_init() (which expects _pthread_self_direct() to already
+	 * return non-NULL) needs it. */
 	_pthread_set_self(NULL);
-	/* One-per-process __bsdthread_register handshake with the pthread kext.
-	 * Without it the kernel refuses every bsdthread_create (EINVAL) and
-	 * pthread_create() can never succeed. Real Darwin does this inside
-	 * __pthread_init(), which our VARIANT_DYLD pthread build compiles out. */
+	(void)task_get_special_port(mach_task_self(), TASK_BOOTSTRAP_PORT, &bootstrap_port);
+
 	{
-		extern void _pd_pthread_register(void);
-		_pd_pthread_register();
+		const struct _libpthread_functions pthread_funcs = {
+			.version = 2,
+			.exit = exit,
+			.malloc = malloc,
+			.free = free,
+		};
+		__pthread_init(&pthread_funcs, envp, apple, vars);
 	}
-	__atexit_init();
-	_init_clock_port();
-	__chk_init();
-	__xlocale_init();
-	__guard_setup(apple);
-	_subsystem_init(apple);
+
+	{
+		const struct _libc_functions libc_funcs = {
+			.version = 1,
+			.atfork_prepare = pd_atfork_prepare,
+			.atfork_parent = pd_atfork_parent,
+			.atfork_child = pd_atfork_child,
+			.dirhelper = NULL,
+		};
+		_libc_initializer(&libc_funcs, envp, apple, vars);
+	}
+
 	__malloc_init(apple);
+	__libdarwin_init();
+
+	/* Apple order: malloc -> (keymgr) -> dyld -> pthread_late -> libdispatch.
+	 * PD lacks the intermediate OSX-only steps, so right after malloc is the
+	 * correct earliest-safe point (pthread + malloc are up, which is all
+	 * libdispatch_init() needs). Without this, notifyd aborts the moment it
+	 * touches a dispatch queue/source - see extern decl above. */
+	libdispatch_init();
+
+	/* __malloc_late_init() is deliberately NOT called: its real work is
+	 * wiring up dlopen-based ASan/MallocStackLogging dylib support (see
+	 * stack_logging_early_finished() in malloc.c), which PD doesn't have/
+	 * need - and stack_logging_early_finished() unconditionally dereferences
+	 * *_NSGetEnviron(), which can still be NULL this early (environ_pointer
+	 * is populated by _program_vars_init(), whose dyld-side wiring isn't
+	 * guaranteed to have already resolved for every caller by this point in
+	 * PD's merged single-dylib boot). Real risk for zero real benefit here. */
 
 	sHelpers.startGlueToCallExit = pd_libdyld_getStartGlueToCallExit();
 
@@ -182,4 +233,22 @@ static void pd_libSystem_initializer(int argc, const char *argv[], const char *e
 	register_fn reg = NULL;
 	if (_dyld_func_lookup("__dyld_register_thread_helpers", (void **)&reg) && reg != NULL)
 		reg(&sHelpers);
+
+	/* Thread-local-variable runtime. Real Apple runs this inside
+	 * _dyld_initializer() (dyldAPIsInLibSystem.cpp); PD open-codes the
+	 * thread-helper registration above instead of calling _dyld_initializer(),
+	 * so tlv_initializer() would otherwise never run. Without it, dyld never
+	 * gets the tlv_load_notification add-image callback, no image's
+	 * __thread_vars descriptors are ever initialized, and the FIRST access to
+	 * any __thread variable jumps through an uninitialized (null/_tlv_bootstrap)
+	 * thunk -> SIGSEGV. Must come after pthread + malloc are up (it does
+	 * pthread_key_create); registering here also fires the notification
+	 * immediately for every already-mapped dylib (e.g. libOSMesa's glapi TLS). */
+	pd_libdyld_tlv_initializer();
+
+	/* C99 7.5(3) / rdar://11588042: errno is zero at program startup and is
+	 * never set to zero by any library function - so clear whatever the init
+	 * steps above dirtied before handing control to the program's main().
+	 * Real libSystem_initializer() ends with exactly this. */
+	errno = 0;
 }

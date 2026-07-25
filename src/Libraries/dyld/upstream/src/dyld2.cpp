@@ -6616,6 +6616,9 @@ _main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide,
 
 	setContext(mainExecutableMH, argc, argv, envp, apple);
 
+	//gLinkContext.verboseMapping = true;
+	//gLinkContext.verboseInit = true;
+
 	// Pickup the pointer to the exec path.
 	sExecPath = _simple_getenv(apple, "executable_path");
 

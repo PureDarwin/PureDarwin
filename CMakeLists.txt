@@ -4,6 +4,55 @@ endif()
 
 cmake_minimum_required(VERSION 3.15.1)
 project(PUREDARWIN)
+# libdispatch's src/object.m (OS_object/USE_OBJC glue) needs the ObjC
+# frontend available project-wide.
+enable_language(OBJC)
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated-headers/objc)
+file(GLOB _pd_objc4_headers ${CMAKE_SOURCE_DIR}/src/Libraries/objc4/runtime/*.h)
+foreach(_pd_h ${_pd_objc4_headers})
+  get_filename_component(_pd_name ${_pd_h} NAME)
+  if(NOT EXISTS ${CMAKE_BINARY_DIR}/generated-headers/objc/${_pd_name})
+    file(CREATE_LINK ${_pd_h} ${CMAKE_BINARY_DIR}/generated-headers/objc/${_pd_name} SYMBOLIC)
+  endif()
+endforeach()
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated-headers/Foundation)
+file(GLOB_RECURSE _pd_foundation_headers ${CMAKE_SOURCE_DIR}/src/Libraries/Foundation/*.h)
+foreach(_pd_h ${_pd_foundation_headers})
+  get_filename_component(_pd_name ${_pd_h} NAME)
+  if(NOT EXISTS ${CMAKE_BINARY_DIR}/generated-headers/Foundation/${_pd_name})
+    file(CREATE_LINK ${_pd_h} ${CMAKE_BINARY_DIR}/generated-headers/Foundation/${_pd_name} SYMBOLIC)
+  endif()
+endforeach()
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated-headers/mach-o)
+file(GLOB _pd_macho_headers ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/EXTERNAL_HEADERS/mach-o/*.h)
+foreach(_pd_h ${_pd_macho_headers})
+  get_filename_component(_pd_name ${_pd_h} NAME)
+  if(NOT EXISTS ${CMAKE_BINARY_DIR}/generated-headers/mach-o/${_pd_name})
+    file(CREATE_LINK ${_pd_h} ${CMAKE_BINARY_DIR}/generated-headers/mach-o/${_pd_name} SYMBOLIC)
+  endif()
+endforeach()
+
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated-headers/dlfcn)
+if(EXISTS ${CMAKE_SOURCE_DIR}/src/Libraries/dyld/upstream/include/dlfcn.h AND
+   NOT EXISTS ${CMAKE_BINARY_DIR}/generated-headers/dlfcn/dlfcn.h)
+  file(CREATE_LINK ${CMAKE_SOURCE_DIR}/src/Libraries/dyld/upstream/include/dlfcn.h
+       ${CMAKE_BINARY_DIR}/generated-headers/dlfcn/dlfcn.h SYMBOLIC)
+endif()
+
+# Foundation's NSObjCRuntime.h wants <CoreFoundation/CFAvailability.h> (and
+# transitively other flat "<CoreFoundation/Foo.h>" headers)
+# Mirror that here for header-only consumers like this.
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/generated-headers/CoreFoundation)
+file(GLOB_RECURSE _pd_cf_headers ${CMAKE_SOURCE_DIR}/src/Libraries/CoreFoundation/*.h)
+foreach(_pd_h ${_pd_cf_headers})
+  get_filename_component(_pd_name ${_pd_h} NAME)
+  if(NOT EXISTS ${CMAKE_BINARY_DIR}/generated-headers/CoreFoundation/${_pd_name})
+    file(CREATE_LINK ${_pd_h} ${CMAKE_BINARY_DIR}/generated-headers/CoreFoundation/${_pd_name} SYMBOLIC)
+  endif()
+endforeach()
 
 if((NOT CMAKE_C_COMPILER_ID MATCHES "AppleClang") AND (NOT CMAKE_C_COMPILER_ID MATCHES "Clang"))
     message(FATAL_ERROR "PureDarwin must be compiled with clang.")

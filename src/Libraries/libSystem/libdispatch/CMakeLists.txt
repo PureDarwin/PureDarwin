@@ -10,12 +10,22 @@ target_sources(libdispatch_static PRIVATE
     src/allocator.c
     src/apply.c
     src/benchmark.c
+    src/block.cpp
     src/data.c
+    # data.m: OS_dispatch_data / OS_dispatch_data_empty ObjC classes
+    # (USE_OBJC=1), same "C file + matching .m" split as object.c/object.m.
+    src/data.m
     src/init.c
     src/introspection.c
     src/io.c
     src/mach.c
+    # object.c: core refcounting + public dispatch_retain/release/etc (uses
+    # DISPATCH_OBJECT_TFB to bridge to object.m's ObjC classes below when
+    # applicable). object.m: the ObjC OS_object class hierarchy itself
+    # (OS_OBJECT_USE_OBJC=1). Real Apple compiles both together, not one or
+    # the other.
     src/object.c
+    src/object.m
     src/once.c
     src/queue.c
     src/semaphore.c
@@ -37,14 +47,15 @@ target_sources(libdispatch_static PRIVATE
     compat-include/pd_libdispatch_link_gaps.c
 )
 set_target_properties(libdispatch_static PROPERTIES EXCLUDE_FROM_ALL TRUE)
+set_source_files_properties(src/object.m src/data.m PROPERTIES
+    COMPILE_OPTIONS "-fno-objc-arc;-fobjc-exceptions")
+
 target_compile_definitions(libdispatch_static PRIVATE
     __PUREDARWIN__=1
     DISPATCH_USE_INTERNAL_WORKQUEUE=0
-    HAVE_OBJC=0
-    USE_OBJC=0
-    # provider.h is DTrace-probe-point glue generated from provider.d at
-    # build time (dtrace -h) - we have no DTrace and don't generate it.
-    # TARGET_OS_OSX (needed elsewhere) would otherwise auto-enable this.
+    HAVE_OBJC=1
+    USE_OBJC=1
+    OS_OBJECT_USE_OBJC=1
     DISPATCH_USE_DTRACE=0
     VOUCHER_USE_MACH_VOUCHER=0
     PRIVATE=1
@@ -54,6 +65,9 @@ target_compile_definitions(libdispatch_static PRIVATE
 )
 target_include_directories(libdispatch_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
+    # object.m / object_internal.h (USE_OBJC=1): <objc/objc-exception.h>,
+    # <Foundation/NSString.h>
+    ${CMAKE_BINARY_DIR}/generated-headers
     ${CMAKE_CURRENT_SOURCE_DIR}/compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -87,23 +101,17 @@ endif()
 target_compile_options(libdispatch_static PRIVATE
     -isysroot ${PUREDARWIN_MACOSX_SDK}
     -Wno-availability
+    -include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_neuter_api_available.h
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/pd_bridgeos_compat.h>
+    $<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_bridgeos_compat_cxx.h>
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/src/Libraries/dyld/dyld_sdk_compat.h>
-    # kdebug_trace() declaration (real implementation already exists and
-    # builds in libsystem_kernel/wrappers/kdebug_trace.c).
-    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/bsd/sys_private/kdebug_private.h>
+    -include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/bsd/sys_private/kdebug_private.h
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern/os/base_private.h>
-    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_work_interval_instance.h>)
+    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_work_interval_instance.h>
+    $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17;-fblocks;-fno-rtti;-fno-exceptions;-isystem${PUREDARWIN_MACOSX_SDK}/usr/include/c++/v1;-isystem${PUREDARWIN_MACOSX_SDK}/usr/include>)
 
-# The MIG-generated mach headers (public_include) must exist first.
 add_dependencies(libdispatch_static libsystem_kernel_static)
 
-# MacTypes.h: the generated libc header tree (libc_public_headers, above)
-# doesn't carry it, but libkern/OSTypes.h (pulled in via dyld_sdk_compat.h's
-# -include -> libkern/OSAtomic.h) wants it. Appended in its own call, after
-# target_link_libraries above, so it lands after the generated tree on the
-# command line and only fills this one gap - libc/include's own sys/cdefs.h
-# must NOT win over the generated tree's
 target_include_directories(libdispatch_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../libc/include)
 
@@ -112,3 +120,12 @@ target_include_directories(libdispatch_static PRIVATE
 
 target_include_directories(libdispatch_static PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern)
+
+target_include_directories(libdispatch_static PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libc/locale
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libc/locale/FreeBSD
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libc/stdtime/FreeBSD)
+
+target_include_directories(libdispatch_static PRIVATE
+    ${CMAKE_BINARY_DIR}/generated-headers/dlfcn)
+

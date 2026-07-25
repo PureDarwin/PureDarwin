@@ -72,17 +72,6 @@ realloc(void *ptr, size_t size)
 	return _libkernel_functions->realloc(ptr, size);
 }
 
-__attribute__((visibility("hidden"), weak))
-void *
-reallocf(void *ptr, size_t size)
-{
-	void *nptr = realloc(ptr, size);
-	if (!nptr && ptr) {
-		free(ptr);
-	}
-	return nptr;
-}
-
 PD_LIBKERNEL_FUNCPTR_ATTR
 void
 _pthread_exit_if_canceled(int error)

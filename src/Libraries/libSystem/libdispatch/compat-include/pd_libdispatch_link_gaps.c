@@ -12,15 +12,8 @@
  *   threaded/no-QoS-class behavior degrades gracefully (queues still run,
  *   just without real QoS-based scheduling), matching the
  *   work_interval_instance_t stub's approach.
- * - _dispatch_block_special_invoke is a sentinel function pointer real
- *   Apple's block.c (Blocks-runtime-dependent dispatch_block_create())
- *   defines - we don't compile block.c at all (needs libc++/libobjc we
- *   don't have), so no code path can ever actually produce a block whose
- *   invoke pointer equals this address; it only needs to exist and be
- *   distinct from every real invoke function for the identity comparison
- *   in inline_internal.h to work correctly (always false, correctly).
- * - __os_assert_log/_strerror$UNIX2003 are small, genuinely-missing
- *   plain utility functions.
+ * - _strerror$UNIX2003 is a small, genuinely-missing plain utility
+ *   function.
  */
 
 #include <errno.h>
@@ -30,19 +23,8 @@
 #include <pthread/workqueue_private.h>
 #include <sys/qos.h>
 #include <string.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <mach/mach_types.h>
-
-static void
-_pd_dispatch_block_special_invoke_impl(void *ctxt)
-{
-	(void)ctxt;
-}
-
-/* Declared in queue_internal.h as `extern void (*const
- * _dispatch_block_special_invoke)(void*);` - an object, not a function. */
-void (*const _dispatch_block_special_invoke)(void *) = _pd_dispatch_block_special_invoke_impl;
 
 int
 pthread_attr_set_qos_class_np(pthread_attr_t *attr, qos_class_t qos_class, int relative_priority)
@@ -119,14 +101,6 @@ qos_class_t
 qos_class_main(void)
 {
 	return QOS_CLASS_UNSPECIFIED;
-}
-
-char *
-_os_assert_log(uint64_t code)
-{
-	static char buf[64];
-	snprintf(buf, sizeof(buf), "os_assert failure (code 0x%llx)", (unsigned long long)code);
-	return buf;
 }
 
 extern char *__pd_strerror_unix2003(int errnum) __asm("_strerror$UNIX2003");

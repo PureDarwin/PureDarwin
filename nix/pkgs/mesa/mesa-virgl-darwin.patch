@@ -1,0 +1,76 @@
+--- a/src/gallium/drivers/virgl/virgl_context.c	2026-07-24 17:59:06.858381750 -0400
++++ src/gallium/drivers/virgl/virgl_context.c	2026-07-24 17:59:21.286395125 -0400
+@@ -21,7 +21,9 @@
+  * USE OR OTHER DEALINGS IN THE SOFTWARE.
+  */
+ 
++#if !defined(__APPLE__)
+ #include <libsync.h>
++#endif
+ #include "pipe/p_shader_tokens.h"
+ 
+ #include "compiler/nir/nir.h"
+--- a/src/gallium/drivers/virgl/virgl_screen.c	2026-07-24 17:59:06.859086933 -0400
++++ src/gallium/drivers/virgl/virgl_screen.c	2026-07-24 19:09:26.438791350 -0400
+@@ -908,7 +908,11 @@
+    struct virgl_context *vctx = virgl_context(ctx);
+ 
+    if (vws->flush_frontbuffer) {
+-      virgl_flush_eq(vctx, vctx, NULL);
++      /* The xlib GLX present path (xm_st.c) passes ctx==NULL when no state
++       * tracker context is current; virgl_flush_eq() dereferences it, so guard
++       * (softpipe tolerates a NULL ctx here). */
++      if (vctx)
++         virgl_flush_eq(vctx, vctx, NULL);
+       vws->flush_frontbuffer(vws, vres->hw_res, level, layer, winsys_drawable_handle,
+                              sub_box);
+    }
+@@ -1027,6 +1031,10 @@
+ 
+ static void virgl_disk_cache_create(struct virgl_screen *screen)
+ {
++#if defined(__APPLE__)
++   screen->disk_cache = NULL;
++   return;
++#else
+    const struct build_id_note *note =
+       build_id_find_nhdr_for_addr(virgl_disk_cache_create);
+    unsigned build_id_len = build_id_length(note);
+@@ -1052,8 +1060,10 @@
+    _mesa_sha1_format(timestamp, sha1);
+ 
+    screen->disk_cache = disk_cache_create("virgl", timestamp, 0);
++#endif
+ }
+ 
++
+ static bool
+ virgl_is_dmabuf_modifier_supported(UNUSED struct pipe_screen *pscreen,
+                                    UNUSED uint64_t modifier,
+--- a/src/gallium/drivers/virgl/meson.build	2026-07-24 17:59:06.859941279 -0400
++++ src/gallium/drivers/virgl/meson.build	2026-07-24 17:59:21.291311963 -0400
+@@ -38,12 +38,12 @@
+   [ files_libvirgl ],
+   gnu_symbol_visibility : 'hidden',
+   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_virtio],
+-  dependencies : [dep_libdrm, idep_mesautil, idep_xmlconfig, idep_nir],
++  dependencies : [idep_mesautil, idep_xmlconfig, idep_nir],
+ )
+ 
+ driver_virgl = declare_dependency(
+   compile_args : '-DGALLIUM_VIRGL',
+-  link_with : [libvirgl, libvirgldrm, libvirglvtest],
++  link_with : [libvirgl, libvirglvtest],
+ )
+ 
+ if with_tests
+--- a/src/gallium/meson.build	2026-07-24 17:59:06.860627487 -0400
++++ src/gallium/meson.build	2026-07-24 17:59:21.292719746 -0400
+@@ -153,7 +153,6 @@
+ endif
+ if with_gallium_virgl
+   subdir('winsys/virgl/common')
+-  subdir('winsys/virgl/drm')
+   subdir('winsys/virgl/vtest')
+   subdir('drivers/virgl')
+ else

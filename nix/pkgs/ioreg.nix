@@ -27,19 +27,6 @@ stdenv.mkDerivation {
 
   dontConfigure = true;
 
-  # Real apple-oss-distributions IOKitTools/ioreg.tproj/ioreg.c, unmodified,
-  # plus three small local headers (compat/) standing in for real Apple
-  # headers this project doesn't ship: IOCFSerialize.h (header only - ioreg
-  # never actually calls IOCFSerialize, just needs the declaration to
-  # parse), IOKitLibPrivate.h (only the two _IOObject*/kIOClassNameOverride
-  # entry points ioreg actually uses), and term.h (tgetent/tgetstr/tputs -
-  # this project has no termcap db, so "not found" is the real answer, see
-  # term_stub.c). Everything else - IOServiceGetMatchingService,
-  # IORegistryEntryCreateCFProperties, IORegistryEntryGetPath, etc. - is
-  # the real MIG-backed src/Libraries/IOKit/IOKitLibCF.c, already compiled
-  # into libSystem's own build and linked here via iokit.nix's
-  # libIOKitCF.dylib (real CoreFoundation-linked, matching every other
-  # "-lCoreFoundation" consumer in this tree).
   buildPhase = ''
     runHook preBuild
 

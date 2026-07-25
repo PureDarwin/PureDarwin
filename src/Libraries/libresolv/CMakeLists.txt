@@ -1,15 +1,3 @@
-# This is a self-contained DNS client (reads
-# /etc/resolv.conf, builds/sends/parses UDP+TCP DNS queries over ordinary
-# sockets) - unlike the rest of the real Darwin name-resolution stack
-# (Libinfo's si_module/mdns_module), it does NOT need mDNSResponder or
-# DirectoryService running as a daemon, so it's usable as-is here.
-#
-# Dropped from the upstream tree: dst_*.c/dst*.h, ns_sign.c, ns_verify.c,
-# res_mkupdate.c, res_update.c/.h, res_sendsigned.c, res_findzonecut.c (DNS
-# dynamic-update/DNSSEC signing - not needed for plain lookups, pulls in a
-# lot of extra crypto plumbing) and dns_async.c (dispatch/mach-async query
-# API - no libdispatch integration needed for a synchronous res_query path).
-
 add_darwin_static_library(libresolv_static)
 target_sources(libresolv_static PRIVATE
     base64.c

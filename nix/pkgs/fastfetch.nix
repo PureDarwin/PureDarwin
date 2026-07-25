@@ -106,11 +106,6 @@ GLEOF
 
     sed -i 's#src/detection/dns/dns_apple\.c#src/detection/dns/dns_linux.c#' CMakeLists.txt
 
-    # displayserver_apple.c is entirely built around private CoreGraphics/
-    # WindowServer calls (CGWindowServerCreateServerPort etc) - a whole
-    # separate framework subsystem PureDarwin doesn't have (same category as
-    # OpenGL/CG display APIs flagged separately). No upstream _nosupport.c
-    # for this module either; write one matching its one entry point.
     cat > src/detection/displayserver/displayserver_nosupport.c <<'DSEOF'
 #include "displayserver.h"
 

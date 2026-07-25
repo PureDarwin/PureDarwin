@@ -4,13 +4,7 @@ target_include_directories(pthread_common_headers INTERFACE ${CMAKE_CURRENT_SOUR
 add_library(pthread_common_private_headers INTERFACE)
 target_include_directories(pthread_common_private_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/private)
 
-# Minimal pthread built with -DVARIANT_DYLD: the reduced locking/TSD subset a
-# -nostdlib client (dyld) static-links. Under VARIANT_DYLD most of the runtime
-# is elided (setspecific -> ENOTSUP, cancellation no-ops, no key destructors).
 add_darwin_static_library(pthread_static)
-# WIP: blocked on the shared kernel-stdatomic shadow (os/atomic_private ->
-# os/atomic.h -> kernel <stdatomic.h>, no memory_order in userspace TU). Keep out
-# of the default build until that's resolved; build explicitly with `ninja pthread_static`.
 set_target_properties(pthread_static PROPERTIES EXCLUDE_FROM_ALL TRUE)
 target_sources(pthread_static PRIVATE
     src/pthread.c
@@ -25,17 +19,8 @@ target_sources(pthread_static PRIVATE
     pd_main_qos.c
     pd_dyld_variant_extras.c    # _pthread_atomic_xchg_ptr + _pthread_qos_class_encode_workqueue
 )
-# __POSIX_LIB__: build the pthread library proper, so struct sched_param comes
-# from private/pthread/posix_sched.h and pthread/sched.h only forward-declares it
-# (they're mutually exclusive on this macro; without it both define -> redefinition).
-# __PTHREAD_EXPOSE_INTERNALS__ + PRIVATE unlock the internal inline helpers in
-# <pthread/priority_private.h> (_pthread_priority_thread_qos, _pthread_unspecified_
-# priority, _pthread_priority_make_from_thread_qos) — gated #if PRIVATE &&
-# __PTHREAD_EXPOSE_INTERNALS__; Apple builds libpthread's own .c files with both.
 target_compile_definitions(pthread_static PRIVATE
     VARIANT_DYLD=1 __POSIX_LIB__ PRIVATE=1 __PTHREAD_EXPOSE_INTERNALS__=1
-    # See pthread_tsd.c: dyld's static copy of the key allocator must draw
-    # from a disjoint slot range or it collides with in-process libpthread.
     PD_PTHREAD_TSD_DYLD_RANGE=1)
 target_include_directories(pthread_static PRIVATE
     # Reconstructed Apple-internal os/alloc_once_private.h (absent from the open
@@ -46,11 +31,6 @@ target_include_directories(pthread_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/pthread   # internal.h does #include "pthread.h"
     ${CMAKE_CURRENT_SOURCE_DIR}/private
-    # Userspace mach/* comes from libsystem_kernel in two halves: hand-written
-    # headers (mach.h, mach_init.h, mach_interface.h) in source mach/, and the
-    # MIG-generated stubs (clock_priv.h, ...) in the build-tree public_include.
-    # Both are required (mach_interface.h #includes the generated ones), and the
-    # generated half only exists after libsystem_kernel_static builds.
     ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/private_include
     ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/mach
     ${CMAKE_BINARY_DIR}/src/Libraries/libSystem/libsystem_kernel/public_include
@@ -67,33 +47,75 @@ target_link_libraries(pthread_static PRIVATE
     libc_private_headers
     libplatform_headers
     libplatform_private_headers
-    # xnu_private_headers FIRST: the public usr/include/mach/thread_policy.h strips
-    # THREAD_QOS_LAST (#ifdef PRIVATE); the System.framework PrivateHeaders copy
-    # keeps it, so it must win the <mach/thread_policy.h> lookup.
     xnu_private_headers
     xnu_headers
 )
-# bridgeos availability shim (reuse libplatform's), force-included for C only.
 target_compile_options(pthread_static PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/pd_bridgeos_compat.h>
-    # dyld-832 pthread.c vs PD's slightly older internal.h prototypes produce a
-    # handful of void*<->uint64/mach_vm_address_t mismatches (_pthread_struct_init
-    # stack arg, __bsdthread_register offsets arg, workq fn-ptr casts). All are
-    # width-preserving on LP64 — the values passed are correct, only the declared
-    # C types drift — so demote the promoted -Werror=int-conversion here.
     -Wno-int-conversion
 )
 set_source_files_properties(src/pthread_asm.s PROPERTIES
     LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp -UVARIANT_DYLD")
-# pthread_tsd.c: build WITHOUT VARIANT_DYLD so it provides real dynamic TLS keys
-# (pthread_key_create/delete + a working pthread_setspecific with destructors).
-# dyld's own thread-local-variable support (threadLocalVariables.c) allocates
-# dynamic keys with destructors at dlopen time -- the VARIANT_DYLD tsd (no keys,
-# setspecific->ENOTSUP) can't serve that. The full tsd is self-contained and its
-# slot layout matches what the VARIANT_DYLD pthread.c uses for the direct slots.
 set_source_files_properties(src/pthread_tsd.c PROPERTIES
     COMPILE_FLAGS "-UVARIANT_DYLD -DPTHREAD_KEY_LEGACY_SUPPORT=0")
 # The generated mach MIG headers (public_include) must exist before we compile.
 if(TARGET libsystem_kernel_static)
     add_dependencies(pthread_static libsystem_kernel_static)
+endif()
+
+add_darwin_static_library(pthread_full_static)
+target_sources(pthread_full_static PRIVATE
+    src/pthread.c
+    src/pthread_mutex.c
+    src/pthread_cond.c
+    src/pthread_rwlock.c
+    src/pthread_tsd.c
+    src/pthread_cancelable.c
+    src/pthread_atfork.c
+    src/pthread_dependency.c
+    src/pthread_asm.s
+    src/qos.c                  # real _pthread_set_main_qos/_pthread_qos_class_encode_workqueue (pd_main_qos.c is the VARIANT_DYLD-only substitute)
+)
+target_compile_definitions(pthread_full_static PRIVATE
+    __POSIX_LIB__ PRIVATE=1 __PTHREAD_EXPOSE_INTERNALS__=1
+    # This target is merged into libSystem_B_stub alongside real libc_static
+    # (unlike real Apple's separate libpthread.dylib/Libc.dylib split) - skip
+    # pthread.c's own memset/memcpy/bzero shims, real libc's are already here.
+    PD_PTHREAD_MERGED_INTO_LIBSYSTEM=1)
+target_include_directories(pthread_full_static PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat-include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/resolver
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pthread
+    ${CMAKE_CURRENT_SOURCE_DIR}/private
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/private_include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/mach
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/include   # real spawn.h (posix_spawnattr_t) for qos.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libc                        # <os/variant_private.h> (libc_static uses this same source-root trick)
+    ${CMAKE_BINARY_DIR}/src/Libraries/libSystem/libsystem_kernel/public_include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/private
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libmalloc/private
+    ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd
+)
+target_link_libraries(pthread_full_static PRIVATE
+    AvailabilityHeaders
+    architecture_headers
+    clang_bootstrap_headers
+    libc_public_headers
+    libc_private_headers
+    libplatform_headers
+    libplatform_private_headers
+    xnu_private_headers
+    xnu_headers
+)
+target_compile_options(pthread_full_static PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/pd_bridgeos_compat.h>
+    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/include/spawn.h>
+    -Wno-int-conversion
+)
+set_source_files_properties(src/pthread_asm.s PROPERTIES
+    LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp -UVARIANT_DYLD")
+if(TARGET libsystem_kernel_static)
+    add_dependencies(pthread_full_static libsystem_kernel_static)
 endif()

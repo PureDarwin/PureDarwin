@@ -81,26 +81,8 @@ EOF
     export OBJDUMP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-objdump"
     export CPPFLAGS="-I${libSystem}/usr/include"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
-    # NOTE: deliberately no "-Wl,-dylinker_install_name,/usr/lib/dyld" here.
-    # That flag only makes sense for an executable's own LC_ID_DYLINKER; for
-    # a shared library, ld64 was observed to use it as a fallback "install
-    # path" whenever no correct -install_name reached it, stamping this
-    # dylib's own LC_ID_DYLIB as "/usr/lib/dyld" - which then poisons every
-    # consumer (e.g. i3) that links against it with the same bogus
-    # dependency path ("Library not loaded: /usr/lib/dyld ... wrong
-    # filetype", since /usr/lib/dyld is MH_DYLINKER, not MH_DYLIB, and can
-    # never legally be loaded as a dependency). libtool's own darwin
-    # dylib-link rules already compute a correct -install_name from
-    # --libdir (set to /usr/lib above), so this flag isn't needed here.
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -lSystem"
 
-    # libtool bakes --libdir into each shared library's own -install_name
-    # (LC_ID_DYLIB). Using the Nix store path ($out/usr/lib) here would
-    # embed a build-time-only path into the dylib itself - same class of
-    # bug as the puredarwin-git prefix issue. Point --libdir at the real
-    # deployed path (/usr/lib) so libtool computes a correct install_name,
-    # and redirect the actual file placement to $out/usr/lib separately at
-    # install time below (DESTDIR-style decoupling).
     ./configure \
       --host=x86_64-apple-darwin20.4 \
       --build=$(cc -dumpmachine) \

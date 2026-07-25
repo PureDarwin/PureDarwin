@@ -64,14 +64,6 @@ endian = 'little'
 EOF
 
     export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" xPkgConfigDeps}"
-    # Force static: without this, meson also builds a real libxkbcommon
-    # .dylib whose LC_ID_DYLIB ends up wrong (same bug as libiconv had -
-    # see libiconv.nix), poisoning any consumer (i3) that links against it
-    # with a bogus dependency on "/usr/lib/dyld" itself, which can never be
-    # loaded as a dependency ("wrong filetype"). All of this package's
-    # sibling meson-based deps (glib.nix, pango.nix, cairo.nix,
-    # harfbuzz.nix, fontconfig.nix, fribidi.nix) already force static for
-    # the same reason.
     meson setup build \
       --cross-file puredarwin-cross.ini \
       --prefix=$out \

@@ -498,6 +498,15 @@ void _dispatch_xref_dispose(dispatch_object_t dou);
 void _dispatch_dispose(dispatch_object_t dou);
 #if DISPATCH_COCOA_COMPAT
 #if USE_OBJC
+// objc/runtime.h's OBJC_ENUM forward-declaration trick
+// (`enum Name : Type Name;`) doesn't parse under strict C++ (only C/ObjC/
+// ObjC++) with this clang. This section only needs the Class/id/SEL types
+// (from objc/objc.h, unconditionally real regardless of language) plus the
+// two autorelease pool externs below - not the full runtime.h API surface -
+// for plain C/C++ dispatch sources (block.cpp etc); only pull in the full
+// header under __OBJC__ (.m/.mm), where the trick is valid.
+#include <objc/objc.h>
+#if __OBJC__
 #include <objc/runtime.h>
 #if __has_include(<objc/objc-internal.h>)
 #include <objc/objc-internal.h>
@@ -505,6 +514,14 @@ void _dispatch_dispose(dispatch_object_t dou);
 extern void *objc_autoreleasePoolPush(void);
 extern void objc_autoreleasePoolPop(void *context);
 #endif // __has_include(<objc/objc-internal.h>)
+#else
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *context);
+// object.c's _os_object_dealloc() calls this directly (plain C, not gated
+// by __OBJC__); it's declared in objc/runtime.h, which the ObjC-only
+// section above deliberately skips including here.
+extern void *objc_destructInstance(id _Nullable obj);
+#endif // __OBJC__
 #define _dispatch_autorelease_pool_push() \
 		objc_autoreleasePoolPush()
 #define _dispatch_autorelease_pool_pop(context) \
