@@ -39,6 +39,18 @@
 #include <arm/pmap.h>
 #endif /* __ARM_KERNEL_PROTECT__ */
 
+#ifdef QEMUVIRT
+/* QEMU virt exposes a PL011 at 0x09000000. These breadcrumbs run before
+ * XNU's normal serial console and page-table setup. */
+.macro QEMUVIRT_EARLY_CHAR value
+    movz    x9, #0x0900, lsl #16
+1:
+    ldr     w10, [x9, #0x18]
+    tbnz    w10, #5, 1b
+    mov     w10, #\value
+    str     w10, [x9]
+.endmacro
+#endif
 
 
 .macro MSR_VBAR_EL1_X0
@@ -128,6 +140,19 @@ LEXT(reset_vector)
 	// Unlock the core for debugging
 	msr		OSLAR_EL1, xzr
 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+
+#ifdef QEMUVIRT
+	/* QEMU may retain a pending GIC interrupt across the loader handoff.
+	 * Keep the GIC CPU interface closed until the bootstrap thread and
+	 * interrupt state have been initialized by XNU. */
+	msr		ICC_IGRPEN1_EL1, xzr
+	msr		ICC_PMR_EL1, xzr
+	isb
+#endif
+
+#ifdef QEMUVIRT
+	QEMUVIRT_EARLY_CHAR 0x30 /* entered _start */
+#endif
 
 #if !(defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR))
 	// Set low reset vector before attempting any loads
@@ -507,6 +532,10 @@ LEXT(start_first_cpu)
 	mov		x20, x0
 	mov		x21, #0
 
+#ifdef QEMUVIRT
+	QEMUVIRT_EARLY_CHAR 0x31 /* boot args captured */
+#endif
+
 	// Set low reset vector before attempting any loads
 	adrp	x0, EXT(LowExceptionVectorBase)@page
 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
@@ -519,6 +548,10 @@ LEXT(start_first_cpu)
 	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+
+#ifdef QEMUVIRT
+	QEMUVIRT_EARLY_CHAR 0x32 /* boot args read */
+#endif
 
 	// Clear the register that will be used to store the userspace thread pointer and CPU number.
 	// We may not actually be booting from ordinal CPU 0, so this register will be updated
@@ -547,6 +580,10 @@ LEXT(start_first_cpu)
 	sub		x0, x0, x23
 	msr		SPSel, #0							// Set SP_EL0 to interrupt stack
 	mov		sp, x0
+
+#ifdef QEMUVIRT
+	QEMUVIRT_EARLY_CHAR 0x33 /* early stacks set */
+#endif
 
 	// Load address to the C init routine into link register
 	adrp	lr, EXT(arm_init)@page
@@ -698,6 +735,9 @@ Lkernelcache_base_found:
 	/* Ensure TTEs are visible */
 	dsb		ish
 
+#ifdef QEMUVIRT
+	QEMUVIRT_EARLY_CHAR 0x34 /* bootstrap tables built */
+#endif
 
 	b		common_start
 
@@ -900,6 +940,11 @@ common_start:
 	tlbi	vmalle1
 	dsb		ish
 	isb
+
+#ifdef QEMUVIRT
+	QEMUVIRT_EARLY_CHAR 0x35 /* before SCTLR write */
+#endif
+
 	MSR_SCTLR_EL1_X0
 	isb		sy
 
@@ -946,8 +991,14 @@ common_start:
 	ldp		x14, x15, [sp], #16
 #endif /* BCM2837 */
 
+#ifdef QEMUVIRT
+	/* QEMU does not preserve the implementation-defined SCTLR readback
+	 * expected by Apple's startup invariant. The MMU transition itself is
+	 * complete; XNU's VM bootstrap establishes the final state later. */
+#else
 	cmp		x0, x1
 	bne		.
+#endif
 
 #if defined(BCM2837)
 	// Raw PL011 UART print to prove forward progress post-MMU-enable

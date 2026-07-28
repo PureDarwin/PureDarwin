@@ -163,6 +163,12 @@
  */
 .macro CHECK_KERNEL_STACK unused
 	stp		x2, x3, [sp, #-16]!				// Save {x2-x3}
+#if defined(QEMUVIRT)
+	/* The virt timer can interrupt before XNU has installed a current thread
+	 * and its kernel stack.  The bootstrap stack is valid at this point, but
+	 * it does not satisfy the Apple per-thread stack layout checks below. */
+	b		Lvalid_stack_\@
+#endif
 	and		x1, x1, #ESR_EC_MASK				// Mask the exception class
 	mov		x2, #(ESR_EC_SP_ALIGN << ESR_EC_SHIFT)
 	cmp		x1, x2								// If we have a stack alignment exception
@@ -172,6 +178,10 @@
 	b.ne	Lvalid_stack_\@						// ...validate the stack pointer
 	mrs		x0, SP_EL0					// Get SP_EL0
 	mrs		x1, TPIDR_EL1						// Get thread pointer
+#if defined(QEMUVIRT)
+	/* Early startup has no current thread yet. */
+	cbz		x1, Lvalid_stack_\@
+#endif
 Ltest_kstack_\@:
 	ldr		x2, [x1, TH_KSTACKPTR]				// Get top of kernel stack
 	sub		x3, x2, KERNEL_STACK_SIZE			// Find bottom of kernel stack

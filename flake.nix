@@ -1818,12 +1818,24 @@
           kextsArm64Build = mkPureDarwinBuild {
             pname = "puredarwin-kexts-arm64";
             src = kextsSource;
-            buildTargets = [ "corecrypto.kext" "pthread.kext" ];
+            buildTargets = [
+              "IOPCIFamily" "IOStorageFamily" "IOVirtIOFamily.kext"
+              "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
+              "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
+              "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext"
+     "PDArmPlatformExpert" "PDArmPCI"
+            ];
             enableUserspace = false;
             installUserland = false;
             installKernel = false;
             installKexts = true;
-            installKextNames = [ "corecrypto.kext" "pthread.kext" ];
+            installKextNames = [
+              "IOPCIFamily.kext" "IOStorageFamily.kext" "IOVirtIOFamily.kext"
+              "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
+              "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
+              "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext"
+     "PDArmPlatformExpert.kext" "PDArmPCI.kext"
+            ];
             enableIOGraphicsFamily = false;
             puredarwinArch = "arm64";
             inherit arm64CrossToolchain;
@@ -1917,6 +1929,26 @@
             cp -a ${splitBaseSystemStripped}/. "$out/"
             chmod -R u+w "$out"
             cp -a ${userlandBuild}/. "$out/"
+          '';
+
+          # Kernel bring-up image: ARM64 kernel and kexts only. This deliberately
+          # omits the architecture-specific userspace so kernel/KC changes do
+          # not rebuild the full image closure. The guest will stop at init
+          # loading, which is sufficient for early kernel and handoff testing.
+          splitBaseSystemArm64VirtMinimal = pkgs.runCommand "puredarwin-basesystem-arm64-virt-minimal-0.1" { } ''
+            mkdir -p "$out"
+            cp -a ${kernelArm64VirtDebugBuild}/. "$out/"
+            chmod -R u+w "$out"
+            cp -a ${kextsArm64Build}/. "$out/"
+            chmod -R u+w "$out"
+          '';
+
+          splitBaseSystemArm64VirtMinimalRelease = pkgs.runCommand "puredarwin-basesystem-arm64-virt-minimal-release-0.1" { } ''
+            mkdir -p "$out"
+            cp -a ${kernelArm64VirtBuild}/. "$out/"
+            chmod -R u+w "$out"
+            cp -a ${kextsArm64Build}/. "$out/"
+            chmod -R u+w "$out"
           '';
 
           imageExtraPackageSet = lib.optionalAttrs (!isDarwin) {
@@ -2109,6 +2141,11 @@
                 kexts = kextsArm64Build;
                 kcTools = kc-tools.packages.${system}.default;
               };
+              kcArm64ReleaseBuild = pkgs.callPackage ./nix/pkgs/kc-arm64.nix {
+                kernel = kernelArm64VirtBuild;
+                kexts = kextsArm64Build;
+                kcTools = kc-tools.packages.${system}.default;
+              };
               imageExtraPackages = lib.attrValues imageExtraPackageSet
                 ++ lib.optional (fbdoomExternalSrc != null) fbdoomBuild;
               imageBuild = pkgs.callPackage ./image.nix {
@@ -2137,6 +2174,39 @@
                 xnuLoader = xnu-loader.packages.${system}.default;
                 apfsprogs = pkgs.apfsprogs;
                 imageFileName = "puredarwin-debug.img";
+              };
+              imageArm64VirtBuild = pkgs.callPackage ./image.nix {
+                baseSystem = splitBaseSystem;
+                extraPackages = imageExtraPackages;
+                kc = kcArm64DebugBuild;
+                xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+                apfsprogs = pkgs.apfsprogs;
+                efiBinary = "BOOTAA64.EFI";
+                imageFileName = "puredarwin-arm64-virt.img";
+              };
+              imageArm64VirtMinimalBuild = pkgs.callPackage ./image.nix {
+                baseSystem = splitBaseSystemArm64VirtMinimal;
+                extraPackages = [ ];
+                kc = kcArm64DebugBuild;
+                xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+                apfsprogs = pkgs.apfsprogs;
+                efiBinary = "BOOTAA64.EFI";
+                espMB = 64;
+                rootMB = 256;
+                imageFileName = "puredarwin-arm64-virt-minimal.img";
+                bootArgs = "debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 vgpu_debug=1 pdtrace=1 ahci_debug=1 no_interrupt_masked_debug=1";
+              };
+              imageArm64VirtMinimalReleaseBuild = pkgs.callPackage ./image.nix {
+                baseSystem = splitBaseSystemArm64VirtMinimalRelease;
+                extraPackages = [ ];
+                kc = kcArm64ReleaseBuild;
+                xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+                apfsprogs = pkgs.apfsprogs;
+                efiBinary = "BOOTAA64.EFI";
+                espMB = 64;
+                rootMB = 256;
+                imageFileName = "puredarwin-arm64-virt-minimal-release.img";
+                bootArgs = "serial=3 -noprogress ahci_debug=1 kext=0xffff io=0xffff";
               };
               strippedExtraPackages = [ zshBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild mesaBuild pdVirglShimBuild osmesaTriBuild osmesaFbBuild mesaDemosBuild ];
               imageStrippedBuild = pkgs.callPackage ./image.nix {
@@ -2269,12 +2339,142 @@
                     "$@"
                 '';
               };
+              runArm64Uefi = pkgs.writeShellApplication {
+                name = "puredarwin-arm64-uefi";
+                runtimeInputs = [ pkgs.qemu ];
+                text = ''
+                  set -euo pipefail
+
+                  state_dir="''${PUREDARWIN_ARM64_UEFI_STATE_DIR:-$PWD/.puredarwin-arm64-uefi}"
+                  aavmf_code="''${PUREDARWIN_AAVMF_CODE:-${pkgs.pkgsCross.aarch64-multiplatform.OVMF.fd}/FV/AAVMF_CODE.fd}"
+                  aavmf_vars_template="''${PUREDARWIN_AAVMF_VARS_TEMPLATE:-${pkgs.pkgsCross.aarch64-multiplatform.OVMF.fd}/FV/AAVMF_VARS.fd}"
+                  aavmf_vars="''${PUREDARWIN_AAVMF_VARS:-$state_dir/AAVMF_VARS.fd}"
+
+                  mkdir -p "$state_dir"
+                  if [ "''${PUREDARWIN_ARM64_RESET_VARS:-0}" = 1 ]; then
+                    rm -f "$aavmf_vars"
+                  fi
+                  if [ ! -e "$aavmf_vars" ]; then
+                    cp "$aavmf_vars_template" "$aavmf_vars"
+                    chmod u+w "$aavmf_vars"
+                  fi
+
+                  exec qemu-system-aarch64 \
+                    -machine virt,gic-version=3 \
+                    -cpu "''${PUREDARWIN_ARM64_VM_CPU:-max}" \
+                    -m "''${PUREDARWIN_VM_MEMORY:-1024}" \
+                    -drive if=pflash,format=raw,unit=0,readonly=on,file="$aavmf_code" \
+                    -drive if=pflash,format=raw,unit=1,file="$aavmf_vars" \
+                    -device virtio-gpu-pci \
+                    -serial mon:stdio \
+                    -display "''${PUREDARWIN_ARM64_UEFI_DISPLAY:-gtk}" \
+                    -no-reboot \
+                    -no-shutdown \
+                    "$@"
+                '';
+              };
+              runArm64Uboot = pkgs.writeShellApplication {
+                name = "puredarwin-arm64-uboot";
+                runtimeInputs = [ pkgs.qemu ];
+                text = ''
+                  set -euo pipefail
+
+                  image="''${PUREDARWIN_IMAGE:-}"
+                  if [ -z "$image" ]; then
+                    if [ -e "$PWD/puredarwin-arm64-virt.img" ]; then
+                      image="$PWD/puredarwin-arm64-virt.img"
+                    elif [ -e "$PWD/result/puredarwin-arm64-virt.img" ]; then
+                      image="$PWD/result/puredarwin-arm64-virt.img"
+                    else
+                      echo "puredarwin-arm64-uboot: no image found" >&2
+                      exit 1
+                    fi
+                  fi
+
+                  image_readonly_opt=""
+                  if [ ! -w "$image" ]; then
+                    image_readonly_opt=",snapshot=on"
+                  fi
+
+                  exec qemu-system-aarch64 \
+                    -machine virt,gic-version=3 \
+                    -cpu "''${PUREDARWIN_ARM64_VM_CPU:-max}" \
+                    -smp "''${PUREDARWIN_VM_SMP:-4}" \
+                    -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
+                    -bios "${pkgs.pkgsCross.aarch64-multiplatform.ubootQemuAarch64}/u-boot.bin" \
+                    -drive if=none,id=system,file="$image",format=raw$image_readonly_opt \
+                    -device ich9-ahci,id=ahci0 \
+                    -device ide-hd,drive=system,bus=ahci0.0 \
+                    -serial mon:stdio \
+                    -display none \
+                    -no-reboot \
+                    -no-shutdown \
+                    "$@"
+                '';
+              };
+              runArm64Virt = pkgs.writeShellApplication {
+                name = "puredarwin-arm64-virt";
+                runtimeInputs = [ pkgs.qemu ];
+                text = ''
+                  set -euo pipefail
+
+                  state_dir="''${PUREDARWIN_ARM64_VM_STATE_DIR:-$PWD/.puredarwin-arm64-virt}"
+                  image="''${PUREDARWIN_IMAGE:-}"
+                  aavmf_code="''${PUREDARWIN_AAVMF_CODE:-${pkgs.pkgsCross.aarch64-multiplatform.OVMF.fd}/FV/AAVMF_CODE.fd}"
+                  aavmf_vars_template="''${PUREDARWIN_AAVMF_VARS_TEMPLATE:-${pkgs.pkgsCross.aarch64-multiplatform.OVMF.fd}/FV/AAVMF_VARS.fd}"
+                  aavmf_vars="''${PUREDARWIN_AAVMF_VARS:-$state_dir/AAVMF_VARS.fd}"
+
+                  if [ -z "$image" ]; then
+                    if [ -e "$PWD/puredarwin-arm64-virt.img" ]; then
+                      image="$PWD/puredarwin-arm64-virt.img"
+                    elif [ -e "$PWD/result/puredarwin-arm64-virt.img" ]; then
+                      image="$PWD/result/puredarwin-arm64-virt.img"
+                    else
+                      echo "puredarwin-arm64-virt: no image found; run nix build .#image-arm64-virt" >&2
+                      exit 1
+                    fi
+                  fi
+
+                  image_readonly_opt=""
+                  if [ ! -w "$image" ]; then
+                    image_readonly_opt=",snapshot=on"
+                  fi
+
+                  mkdir -p "$state_dir"
+                  if [ "''${PUREDARWIN_ARM64_RESET_VARS:-0}" = 1 ]; then
+                    rm -f "$aavmf_vars"
+                  fi
+                  if [ ! -e "$aavmf_vars" ]; then
+                    cp "$aavmf_vars_template" "$aavmf_vars"
+                    chmod u+w "$aavmf_vars"
+                  fi
+
+                  exec qemu-system-aarch64 \
+                    -machine virt,gic-version=3 \
+                    -boot order=c,strict=on \
+                    -cpu "''${PUREDARWIN_ARM64_VM_CPU:-max}" \
+                    -smp "''${PUREDARWIN_VM_SMP:-4}" \
+                    -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
+                    -drive if=pflash,format=raw,unit=0,readonly=on,file="$aavmf_code" \
+                    -drive if=pflash,format=raw,unit=1,file="$aavmf_vars" \
+                    -drive if=none,id=system,file="$image",format=raw$image_readonly_opt \
+                    -device virtio-blk-pci,drive=system,bootindex=1 \
+                    -device virtio-net-pci,netdev=net0 \
+                    -netdev user,id=net0,hostfwd=tcp::2223-:22 \
+                    -serial mon:stdio \
+                    -display none \
+                    -no-reboot \
+                    -no-shutdown \
+                    "$@"
+                '';
+              };
             in {
               darwin-cross-toolchain = darwinCrossToolchain;
               native-ld = nativeLd;
               kc = kcBuild;
               kc-debug = kcDebugBuild;
               kc-arm64-debug = kcArm64DebugBuild;
+              kc-arm64 = kcArm64ReleaseBuild;
               corefoundation = coreFoundationBuild;
               icucore = icuCoreBuild;
               libcxxabi-dylib = libcxxabiDylibBuild;
@@ -2295,6 +2495,9 @@
               launchd = launchdBuild;
               launchctl = launchctlBuild;
               image = imageBuild;
+              image-arm64-virt = imageArm64VirtBuild;
+              image-arm64-virt-minimal = imageArm64VirtMinimalBuild;
+              image-arm64-virt-minimal-release = imageArm64VirtMinimalReleaseBuild;
               image-hfs = imageHfsBuild;
               image-debug = imageDebugBuild;
               image-stripped = imageStrippedBuild;
@@ -2304,12 +2507,16 @@
               userland = userlandBuild;
               vm-runner = runVm;
               kvm-runner = runKvm;
+              arm64-virt-runner = runArm64Virt;
+              arm64-uefi-runner = runArm64Uefi;
+              arm64-uboot-runner = runArm64Uboot;
             };
 
           linuxApps =
             let
               runVm = linuxPackages.vm-runner;
               runKvm = linuxPackages.kvm-runner;
+              runVirt = linuxPackages.arm64-virt-runner;
             in {
               default = {
                 type = "app";
@@ -2318,6 +2525,18 @@
               vm = {
                 type = "app";
                 program = "${runVm}/bin/puredarwin-vm";
+              };
+              arm64-virt = {
+                type = "app";
+                program = "${runVirt}/bin/puredarwin-arm64-virt";
+              };
+              arm64-uefi = {
+                type = "app";
+                program = "${linuxPackages.arm64-uefi-runner}/bin/puredarwin-arm64-uefi";
+              };
+              arm64-uboot = {
+                type = "app";
+                program = "${linuxPackages.arm64-uboot-runner}/bin/puredarwin-arm64-uboot";
               };
               kvm = {
                 type = "app";

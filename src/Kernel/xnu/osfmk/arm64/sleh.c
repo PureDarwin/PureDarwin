@@ -108,6 +108,70 @@ _Static_assert(ARM64_KDBG_CODE_GUEST <= UINT16_MAX, "arm64 KDBG trace codes out 
 
 void panic_with_thread_kernel_state(const char *msg, arm_saved_state_t *ss) __abortlike;
 
+#if defined(QEMUVIRT)
+extern void serial_putc(char);
+
+static void
+qemu_panic_hex(uint64_t value)
+{
+	static const char digits[] = "0123456789abcdef";
+	for (int shift = 60; shift >= 0; shift -= 4) {
+		serial_putc(digits[(value >> shift) & 0xf]);
+	}
+}
+
+static void
+qemu_panic_text(const char *text)
+{
+	if (text == NULL) {
+		return;
+	}
+	while (*text != '\0') {
+		serial_putc(*text++);
+	}
+}
+
+static void
+qemu_panic_fault(const char *prefix, uint32_t fault_code)
+{
+	serial_putc('\r');
+	serial_putc('\n');
+	qemu_panic_text(prefix);
+	serial_putc('0');
+	serial_putc('x');
+	qemu_panic_hex(fault_code);
+	serial_putc(')');
+	serial_putc('\r');
+	serial_putc('\n');
+}
+
+static void
+qemu_panic_state(arm_saved_state64_t *state)
+{
+	serial_putc('\r');
+	serial_putc('\n');
+	serial_putc('Q'); serial_putc('E'); serial_putc('M'); serial_putc('U');
+	serial_putc('V'); serial_putc('I'); serial_putc('R'); serial_putc('T');
+	serial_putc(' '); serial_putc('p'); serial_putc('a'); serial_putc('n');
+	serial_putc('i'); serial_putc('c'); serial_putc(':'); serial_putc(' ');
+	serial_putc('p'); serial_putc('c'); serial_putc('='); qemu_panic_hex(state->pc);
+	serial_putc(' '); serial_putc('l'); serial_putc('r'); serial_putc('='); qemu_panic_hex(state->lr);
+	serial_putc(' '); serial_putc('e'); serial_putc('s'); serial_putc('r'); serial_putc('='); qemu_panic_hex(state->esr);
+	serial_putc(' '); serial_putc('f'); serial_putc('a'); serial_putc('r'); serial_putc('='); qemu_panic_hex(state->far);
+	serial_putc(' '); serial_putc('s'); serial_putc('p'); serial_putc('='); qemu_panic_hex(state->sp);
+	serial_putc(' '); serial_putc('f'); serial_putc('p'); serial_putc('='); qemu_panic_hex(state->fp);
+	serial_putc('\r'); serial_putc('\n');
+	serial_putc('i'); serial_putc('0'); serial_putc('='); qemu_panic_hex(*(volatile uint32_t *)(uintptr_t)state->pc);
+	serial_putc(' '); serial_putc('i'); serial_putc('1'); serial_putc('='); qemu_panic_hex(*(volatile uint32_t *)(uintptr_t)(state->pc + 4));
+	serial_putc('\r'); serial_putc('\n');
+	for (unsigned int i = 0; i < 10; i++) {
+		serial_putc('x'); serial_putc('0' + i); serial_putc('='); qemu_panic_hex(state->x[i]);
+		serial_putc(i == 9 ? '\r' : ' ');
+	}
+	serial_putc('\n');
+}
+#endif
+
 void sleh_synchronous_sp1(arm_context_t *, uint32_t, vm_offset_t) __abortlike;
 void sleh_synchronous(arm_context_t *, uint32_t, vm_offset_t);
 
@@ -476,6 +540,24 @@ panic_with_thread_kernel_state(const char *msg, arm_saved_state_t *ss)
 
 	os_atomic_cmpxchg(&original_faulting_state, NULL, state, seq_cst);
 
+#if defined(QEMUVIRT)
+	/* panic() receives a stringized format on arm64, so its normal panic hook
+	 * cannot render the varargs state. Emit the useful registers directly. */
+	serial_putc('\r');
+	serial_putc('\n');
+	qemu_panic_text("QEMUVIRT panic: ");
+	qemu_panic_text(msg);
+	serial_putc('\r');
+	serial_putc('\n');
+	qemu_panic_state(state);
+#endif
+
+#if defined(QEMUVIRT)
+	/* The raw serial report above is the authoritative panic text on virt.
+	 * Keep panic_plain's reason free of format tokens because PE_panic_hook
+	 * does not receive the corresponding varargs. */
+	panic_plain("QEMUVIRT kernel exception");
+#else
 	panic_plain("%s at pc 0x%016llx, lr 0x%016llx (saved state: %p%s)\n"
 	    "\t  x0: 0x%016llx  x1:  0x%016llx  x2:  0x%016llx  x3:  0x%016llx\n"
 	    "\t  x4: 0x%016llx  x5:  0x%016llx  x6:  0x%016llx  x7:  0x%016llx\n"
@@ -496,6 +578,7 @@ panic_with_thread_kernel_state(const char *msg, arm_saved_state_t *ss)
 	    state->x[24], state->x[25], state->x[26], state->x[27],
 	    state->x[28], state->fp, state->lr, state->sp,
 	    state->pc, state->cpsr, state->esr, state->far);
+#endif
 }
 
 void
@@ -1611,7 +1694,11 @@ handle_kernel_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_ad
 		panic_with_thread_kernel_state("Kernel parity error.", state);
 #endif
 	} else {
+	#if defined(QEMUVIRT)
+		qemu_panic_fault("Unclassified kernel abort (fault_code=", fault_code);
+	#else
 		kprintf("Unclassified kernel abort (fault_code=0x%x)\n", fault_code);
+	#endif
 	}
 
 	panic_with_thread_kernel_state("Kernel data abort.", state);
@@ -1761,6 +1848,33 @@ sleh_irq(arm_saved_state_t *state)
 
 #if USE_APPLEARMSMP
 	PE_handle_ext_interrupt();
+#elif defined(QEMUVIRT)
+	/*
+	 * QEMU virt runs XNU at Non-secure EL1, where Group 0 (Secure -> FIQ) is
+	 * inaccessible; the ARM generic timer and device interrupts are delivered as
+	 * Group 1 IRQs through the GICv3 system-register CPU interface. Acknowledge
+	 * via ICC_IAR1_EL1, dispatch the virtual-timer PPI to the RTC tick and every
+	 * other INTID to the registered CPU interrupt handler, then EOI.
+	 */
+	{
+		uint64_t iar = __builtin_arm_rsr64("ICC_IAR1_EL1");
+		uint32_t intid = (uint32_t)(iar & 0xffffff);
+
+		if (intid == 27 /* CNTV virtual-timer PPI */) {
+			cdp->cpu_decrementer = -1; /* Large */
+			rtclock_intr(TRUE);
+		} else if (intid < 1020) {
+			cdp->interrupt_handler(cdp->interrupt_target,
+			    cdp->interrupt_refCon,
+			    cdp->interrupt_nub,
+			    cdp->interrupt_source);
+		}
+
+		if (intid < 1020) {
+			__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
+			__builtin_arm_isb(ISB_SY);
+		}
+	}
 #else
 	/* Run the registered interrupt handler. */
 	cdp->interrupt_handler(cdp->interrupt_target,
@@ -1989,4 +2103,3 @@ sleh_invalid_stack(arm_context_t *context, uint32_t esr __unused, vm_offset_t fa
 
 	panic_with_thread_kernel_state("Invalid kernel stack pointer (probable corruption).", &context->ss);
 }
-

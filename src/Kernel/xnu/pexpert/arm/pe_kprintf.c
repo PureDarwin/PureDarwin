@@ -9,6 +9,7 @@
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 #include <kern/debug.h>
+#include <kern/startup.h>
 #include <kern/simple_lock.h>
 #include <os/log_private.h>
 #include <libkern/section_keywords.h>
@@ -125,11 +126,15 @@ kprintf(const char *fmt, ...)
 		ml_set_interrupts_enabled(state);
 		va_end(listp);
 
-		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
+		if (startup_phase >= STARTUP_SUB_OSLOG) {
+			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
+		}
 		va_end(listp2);
 	} else {
 		va_start(listp, fmt);
-		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp, caller);
+		if (startup_phase >= STARTUP_SUB_OSLOG) {
+			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp, caller);
+		}
 		va_end(listp);
 	}
 }

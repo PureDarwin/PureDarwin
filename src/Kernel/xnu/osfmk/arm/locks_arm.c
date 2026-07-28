@@ -353,6 +353,10 @@ void
 _disable_preemption(void)
 {
 	thread_t     thread = current_thread();
+	/* The first QEMU exception path can run before TPIDR_EL1 is assigned. */
+	if (thread == THREAD_NULL) {
+		return;
+	}
 	unsigned int count  = thread->machine.preemption_count;
 
 	if (__improbable(++count == 0)) {
@@ -444,6 +448,9 @@ void
 _enable_preemption(void)
 {
 	thread_t     thread = current_thread();
+	if (thread == THREAD_NULL) {
+		return;
+	}
 	unsigned int count  = thread->machine.preemption_count;
 
 	if (__improbable(count == 0)) {
@@ -462,7 +469,13 @@ _enable_preemption(void)
 int
 get_preemption_level(void)
 {
-	return current_thread()->machine.preemption_count;
+	thread_t thread = current_thread_fast();
+
+	/* Exception entry may query this before TPIDR_EL1 contains a thread. */
+	if (thread == THREAD_NULL) {
+		return 0;
+	}
+	return thread->machine.preemption_count;
 }
 
 /*

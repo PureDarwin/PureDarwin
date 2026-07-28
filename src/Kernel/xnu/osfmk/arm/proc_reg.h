@@ -94,11 +94,11 @@
 
 #endif
 
-#if __ARM_42BIT_PA_SPACE__
+#if __ARM_42BIT_PA_SPACE__ && !defined(QEMUVIRT)
 /* For now, force the issue! */
 /* We need more VA space for the identity map to bootstrap the MMU */
 #undef __ARM64_PMAP_SUBPAGE_L1__
-#endif /* __ARM_42BIT_PA_SPACE__ */
+#endif /* __ARM_42BIT_PA_SPACE__ && !defined(QEMUVIRT) */
 
 #if __ARM_KERNEL_PROTECT__
 /*

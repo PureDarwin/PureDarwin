@@ -327,6 +327,19 @@ _cnputs(char * c, int size)
 
 	const uint32_t idx = get_cons_ops_index();
 
+#if defined(QEMUVIRT)
+	/* QEMU virt has no video backend. Avoid the early KC callback table until
+	 * its function pointers have been fixed up by the VM runtime. */
+	(void)idx;
+	while (size-- > 0) {
+		if (*c == '\n') {
+			_serial_putc(0, 0, '\r');
+		}
+		_serial_putc(0, 0, *c++);
+	}
+	return;
+#endif
+
 	while (size-- > 0) {
 		if (*c == '\n') {
 			cons_ops[idx].putc(0, 0, '\r');
@@ -489,13 +502,32 @@ cnputc(char c)
 {
 	console_buf_t * cbp;
 	cpu_data_t * cpu_data_p;
+#if defined(__arm64__) || defined(__aarch64__)
+	thread_t thread;
+#endif
 	boolean_t needs_print = TRUE;
 	char * write_ptr;
 	char * cp;
 
 restart:
 	mp_disable_preemption();
+#if defined(__arm64__) || defined(__aarch64__)
+	/*
+	 * Early in boot the current thread may not have per-CPU data assigned yet;
+	 * fall back to direct serial output. thread->machine.CpuDatap is
+	 * arm64-specific (x86's machine_thread has no such member), so x86 keeps
+	 * using current_cpu_datap() as before.
+	 */
+	thread = current_thread_fast();
+	if (thread == THREAD_NULL || thread->machine.CpuDatap == NULL) {
+		mp_enable_preemption();
+		_cnputs(&c, 1);
+		return;
+	}
+	cpu_data_p = thread->machine.CpuDatap;
+#else
 	cpu_data_p = current_cpu_datap();
+#endif
 	cbp = (console_buf_t *)cpu_data_p->cpu_console_buf;
 	if (console_suspended || cbp == NULL) {
 		mp_enable_preemption();

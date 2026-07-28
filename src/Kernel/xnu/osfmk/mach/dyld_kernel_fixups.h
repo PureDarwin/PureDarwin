@@ -173,7 +173,15 @@ walk_chain(const struct mach_header_64* mh,
 			dyldLogFunc("[LOG] kernel-fixups: value of chain %p", chain);
 		}
 		union ChainedFixupPointerOnDisk chainContent __unused = *chain;
+		if (segInfo->segment_offset == 0xd28000 && pageIndex == 0x13) {
+			dyldLogFunc("[KCDBG] chain=%p raw=0x%llx base0=%p off=0x%x\n",
+			    chain, (unsigned long long)chainContent.raw64, basePointers[0], offsetInPage);
+		}
 		fixup_value(chain, segInfo, slide, basePointers, &stop);
+		if (segInfo->segment_offset == 0xd28000 && pageIndex == 0x13) {
+			dyldLogFunc("[KCDBG] fixed=%p raw=0x%llx stop=%d\n",
+			    chain, (unsigned long long)chain->raw64, stop);
+		}
 		if (!stop) {
 			switch (segInfo->pointer_format) {
 #if __LP64__
@@ -274,6 +282,15 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
 		return 0;
 	}
 
+	/* The primary boot KC is cache level zero for the kernel-cache pointer
+	 * format. Keep the early ARM path usable even if its caller has not yet
+	 * published that base in the shared KC table. */
+	const void *effectiveBasePointers[KCNumKinds];
+	memcpy(effectiveBasePointers, basePointers, sizeof(effectiveBasePointers));
+	if (effectiveBasePointers[0] == NULL) {
+		effectiveBasePointers[0] = mh;
+	}
+
 	if (LogFixups) {
 		dyldLogFunc("[LOG] kernel-fixups: found chained fixups %p\n", chainedFixups);
 		dyldLogFunc("[LOG] kernel-fixups: found linkeditVMAddr %p\n", (void*)linkeditVMAddr);
@@ -313,13 +330,31 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
 				continue;
 			}
 			if (offsetInPage & DYLD_CHAINED_PTR_START_MULTI) {
-				// FIXME: Implement this
-				return 1;
+				/* A page may contain several independent chains when the
+				 * distance between fixups exceeds the 12-bit next field.
+				 * The page_start value indexes the trailing chain_starts
+				 * array; its final entry carries DYLD_CHAINED_PTR_START_LAST. */
+				uint16_t chainIndex = offsetInPage & ~DYLD_CHAINED_PTR_START_MULTI;
+				const uint16_t *chainStarts = segInfo->page_start + segInfo->page_count;
+				if (segInfo->segment_offset == 0xd28000 && pageIndex == 0x13) {
+					dyldLogFunc("[KCDBG] page start=0x%x index=%u first=0x%x second=0x%x\n",
+					    offsetInPage, chainIndex, chainStarts[chainIndex], chainStarts[chainIndex + 1]);
+				}
+				for (;;) {
+					uint16_t chainStart = chainStarts[chainIndex++];
+					bool last = (chainStart & DYLD_CHAINED_PTR_START_LAST) != 0;
+					chainStart &= ~DYLD_CHAINED_PTR_START_LAST;
+					/* A malformed chain must not prevent later KC segments from
+					 * being rebased. The walker has already stopped this chain. */
+					(void)walk_chain(mh, segInfo, pageIndex, chainStart, slide, effectiveBasePointers);
+					if (last) {
+						break;
+					}
+				}
 			} else {
 				// one chain per page
-				if (walk_chain(mh, segInfo, pageIndex, offsetInPage, slide, basePointers)) {
-					stopped = 1;
-				}
+				/* Keep processing independent pages after a bad chain. */
+				(void)walk_chain(mh, segInfo, pageIndex, offsetInPage, slide, effectiveBasePointers);
 			}
 		}
 	}

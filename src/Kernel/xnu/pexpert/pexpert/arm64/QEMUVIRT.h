@@ -29,6 +29,7 @@
 #define QEMUVIRT_UART_FR_TXFF     (1U << 5)  /* transmit FIFO full */
 
 /* GICv3, matched against the real QEMU virt DTB */
+#define GIC_SPURIOUS_IRQ          1023    /* INTID returned by ICC_IAR when no interrupt is pending */
 #define QEMUVIRT_GICD_BASE_PHYS   0x08000000ULL
 #define QEMUVIRT_GICD_SIZE        0x10000ULL
 #define QEMUVIRT_GICR_BASE_PHYS   0x080a0000ULL

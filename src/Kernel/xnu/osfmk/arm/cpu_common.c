@@ -214,6 +214,13 @@ cpu_handle_xcall(cpu_data_t *cpu_data_ptr)
 {
 	broadcastFunc   xfunc;
 	void            *xparam;
+	thread_t        thread = current_thread_fast();
+
+	/* Do not consume xcall slots while the bootstrap CPU has no thread
+	 * context.  The interrupt can arrive before TPIDR_EL1 is installed. */
+	if (thread == THREAD_NULL || cpu_data_ptr == NULL) {
+		return;
+	}
 
 	os_atomic_thread_fence(acquire);
 	/* Come back around if cpu_signal_internal is running on another CPU and has just
@@ -566,12 +573,23 @@ cpu_signal_handler(void)
 void
 cpu_signal_handler_internal(boolean_t disable_signal)
 {
-	cpu_data_t     *cpu_data_ptr = getCpuDatap();
+	cpu_data_t     *cpu_data_ptr;
 	unsigned int    cpu_signal;
+	thread_t        thread = current_thread_fast();
+
+	/* No kernel thread exists during the first platform transition.  An IPI
+	 * left pending by the virtual interrupt controller must be acknowledged,
+	 * but its scheduler/xcall payload cannot be run until TPIDR_EL1 is valid. */
+	if (thread == THREAD_NULL || thread->machine.CpuDatap == NULL ||
+	    thread->machine.pcpu_data_base == 0) {
+		os_atomic_andnot(&BootCpuData.cpu_signal, ~SIGPdisabled, relaxed);
+		return;
+	}
+	cpu_data_ptr = thread->machine.CpuDatap;
 
 	cpu_data_ptr->cpu_stat.ipi_cnt++;
 	cpu_data_ptr->cpu_stat.ipi_cnt_wake++;
-	SCHED_STATS_INC(ipi_count);
+	/* Scheduler stats use the per-CPU base and are not bootstrap-safe. */
 
 	cpu_signal = os_atomic_or(&cpu_data_ptr->cpu_signal, 0, relaxed);
 
@@ -811,7 +829,14 @@ cpu_number(void)
 vm_offset_t
 current_percpu_base(void)
 {
-	return current_thread()->machine.pcpu_data_base;
+	thread_t thread = current_thread_fast();
+
+	/* The virtual interrupt controller can enter an IPI path before the
+	 * bootstrap thread installs TPIDR_EL1. */
+	if (thread == THREAD_NULL) {
+		return 0;
+	}
+	return thread->machine.pcpu_data_base;
 }
 
 uint64_t

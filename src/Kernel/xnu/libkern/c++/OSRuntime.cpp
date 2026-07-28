@@ -58,8 +58,17 @@ __BEGIN_DECLS
  * returns success is sufficient.  This MUST live in permanent text (not the
  * __KLD segment, which is freed by OSKextRemoveKextBootstrap), otherwise a kext
  * whose constructors run after bootstrap teardown would call a freed page.
+ *
+ * Nothing in the kernel itself references it (only kexts do, resolved later at
+ * kernel-collection link time), so it must be an exported symbol (see
+ * config/Libkern.exports) or a RELEASE build strips it: nmedit demotes every
+ * non-exported global to a local and strip -x then removes it.  When that
+ * happens the KC linker cannot resolve the kext import and binds it to the
+ * _panic trampoline, so the first kext static constructor "calls __cxa_atexit"
+ * and instead panics with a garbage format string.  "used" + default
+ * visibility additionally keep -dead_strip from dropping it before nmedit runs.
  */
-__attribute__((weak))
+__attribute__((used, visibility("default")))
 int
 __cxa_atexit(void (*func)(void))
 {

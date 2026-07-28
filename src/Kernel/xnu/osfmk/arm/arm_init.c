@@ -256,6 +256,7 @@ arm_slide_rebase_and_sign_image(void)
 			    &__thread_starts_sect_end[0],
 			    (uintptr_t)k_mh, (uintptr_t)k_mh - slide, slide);
 		}
+
 #if defined(HAS_APPLE_PAC)
 		OSRuntimeSignStructors(&_mh_execute_header);
 #endif /* defined(HAS_APPLE_PAC) */
@@ -363,6 +364,10 @@ arm_init(
 		/*
 		 * Select the advertised kernel page size.
 		 */
+		#if defined(QEMUVIRT)
+		/* QEMU virt exposes a 4 KB translation granule even with 4 GB RAM. */
+		PAGE_SHIFT_CONST = ARM_PGSHIFT;
+		#else
 		if (args->memSize > 1ULL * 1024 * 1024 * 1024) {
 			/*
 			 * arm64 device with > 1GB of RAM:
@@ -377,6 +382,7 @@ arm_init(
 			 */
 			PAGE_SHIFT_CONST = ARM_PGSHIFT;
 		}
+		#endif
 
 		/* 32-bit apps always see 16KB page size */
 		page_shift_user32 = PAGE_MAX_SHIFT;

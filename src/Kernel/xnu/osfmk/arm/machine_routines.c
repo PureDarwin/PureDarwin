@@ -406,6 +406,35 @@ ml_parse_cpu_topology(void)
 	uint32_t cpu_boot_arg;
 	int err;
 
+#if defined(QEMUVIRT)
+	/* QEMU virt exposes generic ARM CPU nodes, not Apple's EDT topology
+	 * schema. The virt target currently boots one CPU; initialize the same
+	 * single-cluster topology without requiring Apple-only DT properties. */
+	cpu_boot_arg = 1;
+	PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));
+	if (cpu_boot_arg == 0) {
+		cpu_boot_arg = 1;
+	}
+	if (cpu_boot_arg > MAX_CPUS) {
+		cpu_boot_arg = MAX_CPUS;
+	}
+
+	topology_info.num_cpus = 1;
+	topology_info.max_cpu_id = 0;
+	topology_info.num_clusters = 1;
+	topology_info.max_cluster_id = 0;
+	topology_info.cpus[0].cpu_id = 0;
+	topology_info.cpus[0].phys_id = 0;
+	topology_info.cpus[0].cluster_id = 0;
+	topology_info.cpus[0].cluster_type = CLUSTER_TYPE_SMP;
+	topology_info.clusters[0].cluster_id = 0;
+	topology_info.clusters[0].cluster_type = CLUSTER_TYPE_SMP;
+	topology_info.clusters[0].num_cpus = 1;
+	topology_info.clusters[0].first_cpu_id = 0;
+	topology_info.clusters[0].cpu_mask = 1;
+	return;
+#endif
+
 	err = SecureDTLookupEntry(NULL, "/cpus", &entry);
 	assert(err == kSuccess);
 
@@ -418,7 +447,7 @@ ml_parse_cpu_topology(void)
 	ml_topology_cluster_t *cluster = &topology_info.clusters[0];
 	unsigned int cpu_id = 0;
 	while (kSuccess == SecureDTIterateEntries(&iter, &child)) {
-#if MACH_ASSERT
+#if MACH_ASSERT && !defined(QEMUVIRT)
 		unsigned int propSize;
 		void const *prop = NULL;
 		if (cpu_id == 0) {

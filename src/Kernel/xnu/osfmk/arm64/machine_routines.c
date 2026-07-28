@@ -832,6 +832,34 @@ ml_install_interrupt_handler(
 	(void) ml_set_interrupts_enabled(current_state);
 }
 
+#if defined(QEMUVIRT)
+/*
+ * GICv3 CPU interface bring-up for the ARM generic-timer path.
+ *
+ * QEMU virt runs XNU at Non-secure EL1, where the CNTV virtual timer and device
+ * interrupts are delivered as Group 1 IRQs (handled in sleh_irq via
+ * ICC_IAR1_EL1). Group 0 (Secure -> FIQ) is inaccessible from NS-EL1, so only
+ * the Group 1 CPU-interface state is programmed here. The reset path leaves the
+ * CPU interface closed, so this re-opens it (SRE, priority mask, Group 1 enable)
+ * per CPU once the CPU/thread state is installed. The distributor /
+ * redistributor / timer-PPI MMIO bring-up is done separately by the platform
+ * driver (PDArmGIC in the PDArmPlatformExpert kext), because functional device
+ * mappings are only available once IOKit is up -- ml_init_interrupt() runs too
+ * early.
+ */
+static void
+gic_v3_cpu_interface_init(void)
+{
+	__asm__ volatile (
+	    "msr ICC_SRE_EL1, %0\n"
+	    "isb\n"
+	    "msr ICC_PMR_EL1, %1\n"
+	    "msr ICC_IGRPEN1_EL1, %2\n"
+	    "isb\n"
+	    :: "r"((uint64_t)0x1), "r"((uint64_t)0xff), "r"((uint64_t)0x1) : "memory");
+}
+#endif /* QEMUVIRT */
+
 /*
  *	Routine:        ml_init_interrupt
  *	Function:	Initialize Interrupts
@@ -839,6 +867,16 @@ ml_install_interrupt_handler(
 void
 ml_init_interrupt(void)
 {
+#if defined(QEMUVIRT)
+	/*
+	 * The reset path disables the GIC CPU interface before XNU has a bootstrap
+	 * thread. Re-open the CPU interface only after cpu_machine_init has installed
+	 * the current CPU/thread state. The distributor/redistributor MMIO bring-up
+	 * is done later by the PDArmGIC platform driver, once IOKit device mappings
+	 * are usable.
+	 */
+	gic_v3_cpu_interface_init();
+#endif
 #if defined(HAS_IPI)
 	/*
 	 * ml_init_interrupt will get called once for each CPU, but this is redundant
@@ -959,6 +997,41 @@ ml_parse_cpu_topology(void)
 	OpaqueDTEntryIterator iter;
 	uint32_t cpu_boot_arg;
 	int err;
+
+#if defined(QEMUVIRT)
+	/* QEMU virt exposes a generic ARM device tree, not Apple's EDT topology
+	 * schema.  Avoid the Apple-only per-CPU properties here and provide the
+	 * complete one-CPU topology expected by the rest of arm64 XNU. */
+	cpu_boot_arg = 1;
+	PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));
+	if (cpu_boot_arg == 0) {
+		cpu_boot_arg = 1;
+	}
+	if (cpu_boot_arg > MAX_CPUS) {
+		cpu_boot_arg = MAX_CPUS;
+	}
+
+	memset(&topology_info, 0, sizeof(topology_info));
+	topology_info.cpus = topology_cpu_array;
+	topology_info.clusters = topology_cluster_array;
+	topology_info.num_cpus = 1;
+	topology_info.max_cpu_id = 0;
+	topology_info.num_clusters = 1;
+	topology_info.max_cluster_id = 0;
+	topology_info.cpus[0].cpu_id = 0;
+	topology_info.cpus[0].phys_id = 0;
+	topology_info.cpus[0].cluster_id = 0;
+	topology_info.cpus[0].cluster_type = CLUSTER_TYPE_SMP;
+	topology_info.boot_cpu = &topology_info.cpus[0];
+	topology_info.boot_cluster = &topology_info.clusters[0];
+	topology_info.clusters[0].cluster_id = 0;
+	topology_info.clusters[0].cluster_type = CLUSTER_TYPE_SMP;
+	topology_info.clusters[0].num_cpus = 1;
+	topology_info.clusters[0].first_cpu_id = 0;
+	topology_info.clusters[0].cpu_mask = 1;
+	cluster_offsets[0] = 0;
+	return;
+#endif
 
 	int64_t cluster_phys_to_logical[MAX_CPU_CLUSTER_PHY_ID + 1];
 	int64_t cluster_max_cpu_phys_id[MAX_CPU_CLUSTER_PHY_ID + 1];
@@ -2261,7 +2334,14 @@ wfe_timeout_configure(void)
 #endif /* !defined(ARM_BOARD_WFE_TIMEOUT_NS) */
 	}
 	ticks_per_sec = gPEClockFrequencyInfo.timebase_frequency_hz;
+	if (ticks_per_sec == 0 || events_per_sec == 0) {
+		arm64_eventi = 0;
+		return;
+	}
 	ticks_per_event = ticks_per_sec / events_per_sec;
+	if (ticks_per_event == 0) {
+		ticks_per_event = 1;
+	}
 	bit_index = flsll(ticks_per_event) - 1; /* Highest bit set */
 
 	/* Round up to power of two */

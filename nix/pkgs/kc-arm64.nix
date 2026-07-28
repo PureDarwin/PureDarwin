@@ -1,4 +1,4 @@
-{ stdenv, lib, kcTools, kernel, kexts, classic ? true }:
+{ stdenv, lib, kcTools, kernel, kexts, classic ? false }:
 
 stdenv.mkDerivation {
   pname = "puredarwin-kc-arm64";
@@ -20,8 +20,16 @@ stdenv.mkDerivation {
 
     ${kcTools}/bin/kc-builder \
       -kernel "$KERNEL_BIN" \
+      -kext "$KEXTS/IOPCIFamily.kext" \
       -kext "$KEXTS/corecrypto.kext" \
       -kext "$KEXTS/pthread.kext" \
+      -kext "$KEXTS/PDArmPlatformExpert.kext" \
+      -kext "$KEXTS/PDArmPCI.kext" \
+      -kext "$KEXTS/IOStorageFamily.kext" \
+      -kext "$KEXTS/RavynAHCIPort.kext" \
+      -kext "$KEXTS/ext4.kext" \
+      -kext "$KEXTS/AppleFileSystemDriver.kext" \
+      -kext "$KEXTS/Ext4FileSystemDriver.kext" \
       "''${codeless[@]}" \
       ${lib.optionalString classic "-classic"} \
       -o kernel

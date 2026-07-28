@@ -129,6 +129,7 @@ _ctl_getenqueuespace
 _ctl_register
 _current_proc
 _desiredvnodes
+_devfs_is_ready
 _devfs_make_node
 _devfs_make_node_clone
 _devfs_remove

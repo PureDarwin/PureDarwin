@@ -852,6 +852,16 @@ serial_init(void)
 	soc_base = pe_arm_get_soc_base_phys();
 
 	if (soc_base == 0) {
+#if defined(QEMUVIRT_UART)
+		/* QEMU virt has no Apple arm-io node. Map the architectural PL011
+		 * directly from the board definition so post-MMU kernel logging works. */
+		vmapple_uart0_base_vaddr = ml_io_map(QEMUVIRT_UART_BASE_PHYS,
+		    QEMUVIRT_UART_SIZE);
+		if (vmapple_uart0_base_vaddr != 0) {
+			register_serial_functions(&vmapple_uart_serial_functions);
+			return 1;
+		}
+#endif
 		return 0;
 	}
 

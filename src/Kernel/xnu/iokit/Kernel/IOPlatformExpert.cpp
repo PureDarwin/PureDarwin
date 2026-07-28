@@ -190,7 +190,10 @@ IOPlatformExpert::start( IOService * provider )
 	PE_parse_boot_argn("enforce_quiesce_safety", &gEnforceQuiesceSafety,
 	    sizeof(gEnforceQuiesceSafety));
 
-	return configure(provider);
+	IOLog("PD-DIAG: platform start before configure\n");
+	bool configured = configure(provider);
+	IOLog("PD-DIAG: platform start after configure (%d)\n", configured);
+	return configured;
 }
 
 bool
@@ -1557,11 +1560,14 @@ IODTPlatformExpert::probe( IOService * provider,
 bool
 IODTPlatformExpert::configure( IOService * provider )
 {
+	IOLog("PD-DIAG: IODT configure begin\n");
 	if (!super::configure( provider)) {
 		return false;
 	}
+	IOLog("PD-DIAG: IODT configure after super\n");
 
 	processTopLevel( provider );
+	IOLog("PD-DIAG: IODT configure after processTopLevel\n");
 
 	return true;
 }
@@ -1590,6 +1596,7 @@ IODTPlatformExpert::createNubs( IOService * parent, OSIterator * iter )
 
 	if (iter) {
 		while ((next = (IORegistryEntry *) iter->getNextObject())) {
+			IOLog("PD-DIAG: IODT createNubs candidate %s\n", next->getName());
 			if (NULL == (nub = createNub( next ))) {
 				continue;
 			}
@@ -1648,6 +1655,7 @@ IODTPlatformExpert::processTopLevel( IORegistryEntry * rootEntry )
 	OSIterator *        kids;
 	IORegistryEntry *   next;
 	IORegistryEntry *   cpus;
+	IOLog("PD-DIAG: IODT processTopLevel begin\n");
 
 	// infanticide
 	kids = IODTFindMatchingEntries( rootEntry, 0, deleteList());
@@ -1659,18 +1667,23 @@ IODTPlatformExpert::processTopLevel( IORegistryEntry * rootEntry )
 	}
 
 	publishNVRAM();
+	IOLog("PD-DIAG: IODT after publishNVRAM\n");
 	assert(gIOOptionsEntry != NULL); // subclasses that do their own NVRAM initialization shouldn't be calling this
 	dtNVRAM = gIOOptionsEntry;
 
 	// Publish the cpus.
 	cpus = rootEntry->childFromPath( "cpus", gIODTPlane);
 	if (cpus) {
+		IOLog("PD-DIAG: IODT before CPU nubs\n");
 		createNubs( this, IODTFindMatchingEntries( cpus, kIODTExclusive, NULL));
+		IOLog("PD-DIAG: IODT after CPU nubs\n");
 		cpus->release();
 	}
 
 	// publish top level, minus excludeList
+	IOLog("PD-DIAG: IODT before top-level nubs\n");
 	createNubs( this, IODTFindMatchingEntries( rootEntry, kIODTExclusive, excludeList()));
+	IOLog("PD-DIAG: IODT after top-level nubs\n");
 }
 
 IOReturn
@@ -2030,12 +2043,15 @@ IOPlatformExpertDevice::init(void *dtRoot)
 bool
 IOPlatformExpertDevice::startIOServiceMatching(void)
 {
+	IOLog("PD-DIAG: platform device startIOServiceMatching begin\n");
 	workLoop = IOWorkLoop::workLoop();
 	if (!workLoop) {
 		return false;
 	}
 
+	IOLog("PD-DIAG: platform device before registerService\n");
 	registerService();
+	IOLog("PD-DIAG: platform device after registerService\n");
 
 	return true;
 }
@@ -2244,8 +2260,17 @@ bool
 IOPlatformDevice::compareName( OSString * name,
     OSString ** matched ) const
 {
-	return ((IOPlatformExpert *)getProvider())->
-	       compareNubName( this, name, matched );
+	/*
+	 * See IOPlatformDevice::getResources: on this split-platform-expert port a
+	 * nub's provider may be the root IOPlatformExpertDevice rather than an
+	 * IOPlatformExpert, so guard the cast and fall back to the plain name
+	 * comparison instead of dispatching through the wrong vtable.
+	 */
+	IOPlatformExpert *platform = OSDynamicCast( IOPlatformExpert, getProvider() );
+	if (platform == NULL) {
+		return super::compareName( name, matched );
+	}
+	return platform->compareNubName( this, name, matched );
 }
 
 IOService *
@@ -2257,7 +2282,20 @@ IOPlatformDevice::matchLocation( IOService * /* client */ )
 IOReturn
 IOPlatformDevice::getResources( void )
 {
-	return ((IOPlatformExpert *)getProvider())->getNubResources( this );
+	/*
+	 * Apple platforms guarantee an IOPlatformExpert provider here, but this
+	 * port splits the root nub (IOPlatformExpertDevice) from the concrete
+	 * platform expert (PDArmPlatformExpert).  Nubs parented directly under the
+	 * root (e.g. the NVRAM "options" node) therefore have a provider that is
+	 * not an IOPlatformExpert; casting and dispatching getNubResources through
+	 * it lands on the wrong vtable slot and faults.  Such nubs simply have no
+	 * platform-expert-resolved resources.
+	 */
+	IOPlatformExpert *platform = OSDynamicCast( IOPlatformExpert, getProvider() );
+	if (platform == NULL) {
+		return kIOReturnSuccess;
+	}
+	return platform->getNubResources( this );
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */

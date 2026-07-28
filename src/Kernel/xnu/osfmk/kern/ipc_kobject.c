@@ -110,6 +110,30 @@
 #include <device/device_types.h>
 #include <device/device_server.h>
 
+#if defined(QEMUVIRT)
+extern void serial_putc(char);
+
+static void
+qemu_mig_hex(uint64_t value)
+{
+	static const char digits[] = "0123456789abcdef";
+	for (int shift = 60; shift >= 0; shift -= 4) {
+		serial_putc(digits[(value >> shift) & 0xf]);
+	}
+}
+
+static void
+qemu_mig_value(const char *label, uint64_t value)
+{
+	while (*label) {
+		serial_putc(*label++);
+	}
+	qemu_mig_hex(value);
+	serial_putc('\r');
+	serial_putc('\n');
+}
+#endif
+
 #if     CONFIG_USER_NOTIFICATION
 #include <UserNotification/UNDReplyServer.h>
 #endif
@@ -248,6 +272,12 @@ mig_init(void)
 	for (i = 0; i < n; i++) {
 		range = mig_e[i]->end - mig_e[i]->start;
 		if (!mig_e[i]->start || range < 0) {
+#if defined(QEMUVIRT)
+			qemu_mig_value("QEMU mig bad index=", i);
+			qemu_mig_value("QEMU mig subsystem=", (uint64_t)(uintptr_t)mig_e[i]);
+			qemu_mig_value("QEMU mig start=", mig_e[i]->start);
+			qemu_mig_value("QEMU mig end=", mig_e[i]->end);
+#endif
 			panic("the msgh_ids in mig_e[] aren't valid!");
 		}
 

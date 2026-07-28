@@ -1,12 +1,15 @@
 if(NOT PUREDARWIN_ARM64)
+    add_subdirectory(IOACPIFamily)
     add_subdirectory(AppleAPIC)
     add_subdirectory(AppleI386GenericPlatform)
     add_subdirectory(AppleI386PCI)
     add_subdirectory(AppleIntelPIIXATA)
     add_subdirectory(ApplePS2Controller)
-    add_subdirectory(IOACPIFamily)
     add_subdirectory(IOATAFamily)
     add_subdirectory(IOATABlockStorage)
+else()
+    add_subdirectory(PDArmPlatformExpert)
+    add_subdirectory(PDArmPCI)
 endif()
 
 add_subdirectory(IOPCIFamily)
@@ -52,6 +55,9 @@ add_dependencies(kexts
     corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext pthread.kext
 )
+if(PUREDARWIN_ARM64)
+    add_dependencies(kexts PDArmPlatformExpert)
+endif()
 if(PUREDARWIN_ENABLE_IOGRAPHICS_FAMILY)
     add_dependencies(kexts IOGraphicsFamily.kext)
 endif()

@@ -5949,6 +5949,18 @@ retry:
 		}
 did_consider:
 		if (considered > MAX_CONSIDERED_BEFORE_YIELD && npages <= 1) {
+			/*
+			 * If no run has started, the current page was rejected and
+			 * cannot become usable merely by yielding.  Retrying it would
+			 * loop forever on permanently secluded pages (common during
+			 * early QEMU ARM boot), so advance the scan while retaining the
+			 * queue locks.
+			 */
+			if (npages == 0) {
+				considered = 0;
+				continue;
+			}
+
 			PAGE_REPLACEMENT_ALLOWED(FALSE);
 
 			lck_mtx_unlock(&vm_page_queue_free_lock);

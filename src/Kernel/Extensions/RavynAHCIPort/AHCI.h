@@ -201,7 +201,7 @@ struct AHCIFIS_H2D {
 /* Command Table: 1 table for slot 0, 128-byte aligned */
 #define AHCI_CTBL_SIZE      AHCI_CMD_TABLE_SIZE
 /* DMA bounce buffer for IDENTIFY and small I/O */
-#define AHCI_DMA_SIZE       (512 * 256)  /* 128 KiB */
+#define AHCI_DMA_SIZE       (512 * 32)   /* 16 KiB; keeps contiguous DMA bounded */
 
 /* Total per-port allocation (2 MiB aligned is overkill but safe) */
 #define AHCI_PORT_MEM_SIZE  (AHCI_CLB_SIZE + AHCI_FIS_SIZE + AHCI_CTBL_SIZE + AHCI_DMA_SIZE + 4096)
@@ -212,11 +212,10 @@ enum {
     kPortFISOffset = 0x400,    // FIS Receive Area: 256 B
     kPortCTOffset  = 0x800,    // Command Table: aligned to 128 B
     kPortDMAOffset = 0x1000,   // DMA bounce buffer: page-aligned
-    kPortMemBytes  = 0x21000   // 0x1000 fixed overhead + 128 KiB DMA = 132 KiB
+    kPortMemBytes  = 0x5000    // 0x1000 fixed overhead + 16 KiB DMA = 20 KiB
 };
 
 #define AHCI_TIMEOUT_MS       5000  /* 5-second command timeout */
 #define AHCI_RESET_TIMEOUT_MS 1000
 
 #endif /* _AHCI_H */
-

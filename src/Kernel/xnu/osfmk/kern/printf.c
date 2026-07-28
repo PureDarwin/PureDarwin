@@ -160,6 +160,7 @@
 #include <kern/cpu_number.h>
 #include <kern/thread.h>
 #include <kern/debug.h>
+#include <kern/startup.h>
 #include <kern/sched_prim.h>
 #include <kern/misc_protos.h>
 #include <stdarg.h>
@@ -902,7 +903,25 @@ vprintf_internal(const char *fmt, va_list ap_in, void *caller)
 	cpu_data_t * cpu_data_p;
 	if (fmt) {
 		struct console_printbuf_state info_data;
+#if defined(__arm64__) || defined(__aarch64__)
+		/*
+		 * Early in boot the current thread may not have per-CPU data assigned
+		 * yet; fall back to direct console output. thread->machine.CpuDatap is
+		 * arm64-specific (x86's machine_thread has no such member), so x86 keeps
+		 * using current_cpu_datap() as before.
+		 */
+		thread_t thread = current_thread_fast();
+		if (thread == THREAD_NULL || thread->machine.CpuDatap == NULL) {
+			va_list early_ap;
+			va_copy(early_ap, ap_in);
+			_doprnt_log(fmt, &early_ap, cons_putc_locked, 16);
+			va_end(early_ap);
+			return 0;
+		}
+		cpu_data_p = thread->machine.CpuDatap;
+#else
 		cpu_data_p = current_cpu_datap();
+#endif
 
 		va_list ap;
 		va_copy(ap, ap_in);
@@ -918,9 +937,16 @@ vprintf_internal(const char *fmt, va_list ap_in, void *caller)
 			disable_preemption();
 			_doprnt_log(fmt, &ap, cons_putc_locked, 16);
 			enable_preemption();
+			/* OS log is not initialized until after the early CPU setup. */
+			va_end(ap);
+			return 0;
 		}
 
 		va_end(ap);
+
+		if (startup_phase < STARTUP_SUB_OSLOG) {
+			return 0;
+		}
 
 		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, ap_in, caller);
 	}

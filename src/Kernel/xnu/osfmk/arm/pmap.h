@@ -88,7 +88,7 @@
  */
 #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
 #else // ARM_LARGE_MEMORY
-#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
+#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
 #endif
 
 typedef uint64_t        tt_entry_t;                                     /* translation table entry type */

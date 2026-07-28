@@ -661,9 +661,11 @@ __ZTVN8OSSymbol9MetaClassE
 __ZTVN9OSBoolean9MetaClassE
 __ZdaPv
 __ZdlPv
+__ZdlPvm
 __Znam
 __Znwm
 ___bzero
+___cxa_atexit
 ___cxa_pure_virtual
 ___llvm_profile_runtime
 ___memcpy_chk

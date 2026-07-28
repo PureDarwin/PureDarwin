@@ -25,10 +25,11 @@
 , rootFsType ? "ext4"
 , testAudioFile ? null
 , imageFileName ? "puredarwin.img"
+, efiBinary ? "BOOTX64.EFI"
   # xnu-loader reads this off the ESP at \EFI\BOOT\boot-args.txt
   # it falls back if it cannot find a boot-args.txt, so not strictly needed here
   # but generally nice to have so we can override things easily now
-, bootArgs ? "debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 vgpu_debug=1 pdtrace=1"
+, bootArgs ? "debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 vgpu_debug=1 pdtrace=1"
 }:
 
 assert lib.isDerivation baseSystem;
@@ -86,7 +87,7 @@ ${if rootFsType == "hfs" then ''
     truncate -s $((esp_size * 512)) esp.img
     mkfs.vfat -F 32 -n EFI esp.img >/dev/null
     mmd -i esp.img ::/EFI ::/EFI/BOOT
-    mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+    mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}
     mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
     printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
     mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt

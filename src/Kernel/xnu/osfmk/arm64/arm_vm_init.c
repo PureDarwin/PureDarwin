@@ -355,6 +355,12 @@ SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
 vm_map_address_t
 phystokv(pmap_paddr_t pa)
 {
+	/* The segmented physical aperture is not populated until arm_vm_init().
+	 * Early boot still has the flat bootstrap mapping established by start.s. */
+	if (!kva_active) {
+		return pa - gPhysBase + gVirtBase;
+	}
+
 	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
 		if ((pa >= ptov_table[i].pa) && (pa < (ptov_table[i].pa + ptov_table[i].len))) {
 			return pa - ptov_table[i].pa + ptov_table[i].va;
@@ -368,6 +374,14 @@ vm_map_address_t
 phystokv_range(pmap_paddr_t pa, vm_size_t *max_len)
 {
 	vm_size_t len;
+	if (!kva_active) {
+		len = PAGE_SIZE - (pa & PAGE_MASK);
+		if (*max_len > len) {
+			*max_len = len;
+		}
+		return pa - gPhysBase + gVirtBase;
+	}
+
 	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
 		if ((pa >= ptov_table[i].pa) && (pa < (ptov_table[i].pa + ptov_table[i].len))) {
 			len = ptov_table[i].len - (pa - ptov_table[i].pa);
@@ -388,6 +402,10 @@ phystokv_range(pmap_paddr_t pa, vm_size_t *max_len)
 vm_offset_t
 ml_static_vtop(vm_offset_t va)
 {
+	if (!kva_active) {
+		return va - gVirtBase + gPhysBase;
+	}
+
 	for (size_t i = 0; (i < PTOV_TABLE_SIZE) && (ptov_table[i].len != 0); i++) {
 		if ((va >= ptov_table[i].va) && (va < (ptov_table[i].va + ptov_table[i].len))) {
 			return va - ptov_table[i].va + ptov_table[i].pa;
@@ -1100,6 +1118,12 @@ arm_vm_page_granular_RWNX(vm_offset_t start, unsigned long size, unsigned granul
 	arm_vm_page_granular_prot(start, size, 0, 1, AP_RWNA, 1, granule);
 }
 
+static inline void
+arm_vm_page_granular_RWX(vm_offset_t start, unsigned long size, unsigned granule)
+{
+	arm_vm_page_granular_prot(start, size, 0, 1, AP_RWNA, 0, granule);
+}
+
 /* used in the chosen/memory-map node, populated by iBoot. */
 typedef struct MemoryMapFileInfo {
 	vm_offset_t paddr;
@@ -1319,6 +1343,28 @@ noAuxKC:
 	arm_vm_page_granular_RWNX(segDATACONSTB, segSizeDATACONST, ARM64_GRANULE_ALLOW_BLOCK);
 
 	arm_vm_page_granular_ROX(segTEXTEXECB, segSizeTEXTEXEC, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
+
+	/* A fileset KC may carry the kext text payload in an additional
+	 * collection-level __TEXT_EXEC command.  The embedded kernel header's
+	 * first __TEXT_EXEC is intentionally only the kernel range, so the normal
+	 * lookup above does not cover that later command.  Keep the payload mapped
+	 * RWNX until OSKext applies each kext's final protections. */
+	if (kernel_mach_header_is_in_fileset(&_mh_execute_header)) {
+		kernel_mach_header_t *kc_mh = PE_get_kc_header(KCKindPrimary);
+		kernel_segment_command_t *kc_lc = (kernel_segment_command_t *)
+		    ((uintptr_t)kc_mh + sizeof(*kc_mh));
+		for (unsigned int i = 0; i < kc_mh->ncmds; i++) {
+			if (kc_lc->cmd == LC_SEGMENT_KERNEL &&
+			    !strncmp(kc_lc->segname, "__TEXT_EXEC", sizeof(kc_lc->segname)) &&
+			    kc_lc->vmsize &&
+			    ((vm_offset_t)kc_lc->vmaddr != segTEXTEXECB ||
+			     kc_lc->vmsize != segSizeTEXTEXEC)) {
+				arm_vm_page_granular_RWX((vm_offset_t)kc_lc->vmaddr,
+				    kc_lc->vmsize, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
+			}
+			kc_lc = (kernel_segment_command_t *)((uintptr_t)kc_lc + kc_lc->cmdsize);
+		}
+	}
 
 #if XNU_MONITOR
 	arm_vm_page_granular_ROX(segPPLTEXTB, segSizePPLTEXT, ARM64_GRANULE_ALLOW_BLOCK | ARM64_GRANULE_ALLOW_HINT);
@@ -1760,6 +1806,15 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 #else
 	static_memory_end = physmap_base + mem_size;
 #endif // ARM_LARGE_MEMORY
+	physmap_end = physmap_base + real_phys_size;
+#elif defined(ARM_LARGE_MEMORY)
+	/* On large-memory systems the physical aperture lives below the kernel VA
+	 * region, so the kernel's dynamic range ends at topOfKernelData; the
+	 * aperture itself is mapped separately (init_ptpages of physmap_base
+	 * below).  Without this the physmap_base + mem_size form places
+	 * dynamic_memory_begin below gVirtBase and underflows the bootstrap-table
+	 * span computation. */
+	static_memory_end = phystokv(args->topOfKernelData);
 	physmap_end = physmap_base + real_phys_size;
 #else
 	static_memory_end = physmap_base + mem_size + (PTOV_TABLE_SIZE * ARM_TT_TWIG_SIZE); // worst possible case for block alignment
