@@ -10,9 +10,12 @@
 , libSystem
 , harfbuzz
 , freetype
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
+  targetInfo = import ../lib/target-info.nix targetTriple;
+
   deps = [ freetype ];
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
@@ -48,10 +51,10 @@ stdenv.mkDerivation {
 
     cat > puredarwin-cross.ini <<EOF
 [binaries]
-c = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang'
-cpp = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang++'
-ar = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar'
-strip = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip'
+c = '${darwinCrossToolchain}/bin/${targetTriple}-clang'
+cpp = '${darwinCrossToolchain}/bin/${targetTriple}-clang++'
+ar = '${darwinCrossToolchain}/bin/${targetTriple}-ar'
+strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
 
 [built-in options]
@@ -65,9 +68,9 @@ needs_exe_wrapper = true
 
 [host_machine]
 system = 'darwin'
-cpu_family = 'x86_64'
-cpu = 'x86_64'
-endian = 'little'
+cpu_family = '${targetInfo.mesonCpuFamily}'
+cpu = '${targetInfo.mesonCpu}'
+endian = '${targetInfo.mesonEndian}'
 EOF
 
     meson setup build \

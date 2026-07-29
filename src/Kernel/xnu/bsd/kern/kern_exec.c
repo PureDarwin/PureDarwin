@@ -161,6 +161,7 @@
 #include <vm/vm_protos.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_fault.h>
+
 #include <vm/vm_pageout.h>
 #include <vm/pmap.h>
 
@@ -4861,7 +4862,6 @@ copyinptr(user_addr_t froma, user_addr_t *toptr, int ptr_size)
 	return error;
 }
 
-
 /*
  * copyoutptr
  *
@@ -6384,6 +6384,7 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 	 */
 	size_t path_length = strlen(path) + 1;
 	argv0 = scratch_addr;
+	/* This page is kernel-created bootstrap storage, so no user pointer is involved. */
 	error = copyout(path, argv0, path_length);
 	if (error) {
 		return error;
@@ -6541,11 +6542,49 @@ load_init_program(proc_t p)
 {
 	uint32_t i;
 	int error;
-	vm_map_t map = current_map();
-	mach_vm_offset_t scratch_addr = 0;
+	vm_map_t map = get_task_map(p->task);
 	mach_vm_size_t map_page_size = vm_map_page_size(map);
+	/* Avoid the first user page while the bootstrap pmap is being activated. */
+	mach_vm_offset_t scratch_addr = 0x10000000ULL;
+	(void) vm_map_switch(map);
 
-	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
+	kern_return_t scratch_kr = mach_vm_allocate_kernel(map, &scratch_addr, map_page_size,
+	    VM_FLAGS_FIXED, VM_KERN_MEMORY_NONE);
+	if (scratch_kr != KERN_SUCCESS) {
+		panic("unable to allocate init exec scratch page: kr 0x%x addr 0x%llx size 0x%llx",
+		    (unsigned)scratch_kr, (uint64_t)scratch_addr, (uint64_t)map_page_size);
+	}
+
+	/*
+	 * Hand the init process stdin/stdout/stderr on the console.  Nothing has
+	 * opened a file on its behalf yet, so anything it reports before it sets
+	 * up its own logging would otherwise be lost to EBADF.  Descriptors are
+	 * inherited across the exec below, and because the table starts empty the
+	 * three opens land on 0, 1 and 2 in order.
+	 */
+	{
+		static const char console_path[] = "/dev/console";
+
+		if (copyout(console_path, (user_addr_t)scratch_addr, sizeof(console_path)) == 0) {
+			for (int fd = 0; fd < 3; fd++) {
+				struct open_args console_args = {
+					.path = (user_addr_t)scratch_addr,
+					.flags = (fd == 0) ? O_RDONLY : O_WRONLY,
+					.mode = 0,
+				};
+				int32_t opened_fd = -1;
+				int console_error = open(p, &console_args, &opened_fd);
+
+				if (console_error != 0 || opened_fd != fd) {
+					printf("load_init_program: /dev/console as fd %d failed: "
+					    "error %d, got fd %d\n", fd, console_error, opened_fd);
+					break;
+				}
+			}
+		} else {
+			printf("load_init_program: unable to stage /dev/console path\n");
+		}
+	}
 #if CONFIG_MEMORYSTATUS
 	(void) memorystatus_init_at_boot_snapshot();
 #endif /* CONFIG_MEMORYSTATUS */
@@ -7354,4 +7393,3 @@ sysctl_libmalloc_experiments SYSCTL_HANDLER_ARGS
 }
 
 EXPERIMENT_FACTOR_PROC(_kern, libmalloc_experiments, CTLTYPE_QUAD | CTLFLAG_RW, 0, 0, &sysctl_libmalloc_experiments, "A", "");
-

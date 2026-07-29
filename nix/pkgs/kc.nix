@@ -3,7 +3,6 @@
 , kcTools
 , kernel
 , kexts
-, classic ? false
 }:
 
 stdenv.mkDerivation {
@@ -68,7 +67,6 @@ stdenv.mkDerivation {
       -kext "$KEXTS/PDE1000.kext" \
       -kext "$KEXTS/RavynHDAudio.kext" \
       "''${codeless[@]}" \
-      ${lib.optionalString classic "-classic"} \
       -o kernel
     runHook postBuild
   '';

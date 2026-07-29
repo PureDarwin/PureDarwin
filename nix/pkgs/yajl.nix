@@ -6,6 +6,7 @@
 , nativeLd
 , libSystem
 , yajl
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -46,9 +47,9 @@ stdenv.mkDerivation {
       -DCMAKE_SYSTEM_NAME=Darwin \
       -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
       -DCMAKE_OSX_SYSROOT="$DARWIN_SDK_ROOT" \
-      -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
-      -DCMAKE_AR=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar \
-      -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib \
+      -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang \
+      -DCMAKE_AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
+      -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
       -DCMAKE_INSTALL_PREFIX=$out \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \

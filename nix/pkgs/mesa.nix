@@ -26,9 +26,12 @@
 , pdVirglShim
 , virglWinsysSrc
 , virglAbiHeader
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
+  targetInfo = import ../lib/target-info.nix targetTriple;
+
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -84,6 +87,27 @@ stdenv.mkDerivation {
       --replace 'vws = virgl_vtest_winsys_wrap(winsys);' \
                 'vws = virgl_puredarwin_winsys_wrap(winsys);'
 
+    # The OSMesa target gets the same virgl treatment as libgl-xlib below:
+    # driver_virgl (which is what defines GALLIUM_VIRGL, so inline_sw_helper.h's
+    # "virpipe" branch compiles in at all), the PureDarwin winsys source, and the
+    # shim to link against. Without this, OSMesa knows only softpipe -
+    # sw_screen_create_named(winsys, "virpipe") returns NULL and
+    # st_api_create_context() dereferences the NULL screen. libgalliumvl_stub
+    # comes along for the ride: virgl_screen.c references the vl_video_buffer_*
+    # video layer, and libgl-xlib links that same stub for the same reason.
+    ameson=src/gallium/targets/osmesa/meson.build
+    substituteInPlace $ameson \
+      --replace "  'target.c'," \
+                "  'target.c', '../../winsys/virgl/puredarwin/virgl_puredarwin_winsys.c'," \
+      --replace 'osmesa_link_args = []' \
+                "osmesa_link_args = ['-L${pdVirglShim}/usr/lib', '-lpd_virgl_shim']" \
+      --replace 'dep_unwind, driver_swrast' \
+                'dep_unwind, driver_swrast, driver_virgl' \
+      --replace 'libmesa, libgallium, libws_null, osmesa_link_with,' \
+                'libmesa, libgallium, libws_null, libgalliumvl_stub, osmesa_link_with,' \
+      --replace '    inc_gallium_drivers,' \
+                "    inc_gallium_drivers, include_directories('../../winsys/virgl/puredarwin'), inc_virtio,"
+
     xmeson=src/gallium/targets/libgl-xlib/meson.build
     substituteInPlace $xmeson \
       --replace "files('xlib.c')," \
@@ -107,12 +131,12 @@ stdenv.mkDerivation {
 
     cat > puredarwin-cross.ini <<EOF
 [binaries]
-c = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang'
-cpp = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang++'
-ar = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar'
-strip = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip'
+c = '${darwinCrossToolchain}/bin/${targetTriple}-clang'
+cpp = '${darwinCrossToolchain}/bin/${targetTriple}-clang++'
+ar = '${darwinCrossToolchain}/bin/${targetTriple}-ar'
+strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
-install_name_tool = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-install_name_tool'
+install_name_tool = '${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool'
 
 [built-in options]
 c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-Qunused-arguments', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include', ${lib.concatMapStringsSep ", " (s: "'${s}'") depIncludes}]
@@ -123,9 +147,9 @@ cpp_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '
 [host_machine]
 system = 'darwin'
 subsystem = 'macos'
-cpu_family = 'x86_64'
-cpu = 'x86_64'
-endian = 'little'
+cpu_family = '${targetInfo.mesonCpuFamily}'
+cpu = '${targetInfo.mesonCpu}'
+endian = '${targetInfo.mesonEndian}'
 
 [properties]
 needs_exe_wrapper = true

@@ -59,7 +59,7 @@
 // <rdar://problem/19818071>
 #define CONFIG_MADVISE_STYLE MADV_FREE_REUSABLE
 
-#if MALLOC_TARGET_64BIT
+#if MALLOC_TARGET_64BIT && !defined(__arm64__) && !defined(__aarch64__)
 #define CONFIG_NANOZONE 1
 #define CONFIG_ASLR_INTERNAL 0
 #else // MALLOC_TARGET_64BIT
@@ -76,7 +76,7 @@
 #define CONFIG_MEDIUM_CACHE 1
 
 // medium allocator enabled or disabled
-#if MALLOC_TARGET_64BIT
+#if MALLOC_TARGET_64BIT && !defined(__arm64__) && !defined(__aarch64__)
 #if MALLOC_TARGET_IOS
 #define CONFIG_MEDIUM_ALLOCATOR 0
 #else // MALLOC_TARGET_IOS

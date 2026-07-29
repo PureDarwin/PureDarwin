@@ -279,6 +279,8 @@ PD_LIBMALLOC_COMPAT_DIR=${SRCROOT}/../libmalloc/compat-include
 MACHINE_INSTHDRS=()
 MACHINE_I386_INSTHDRS=()
 I386_INSTHDRS=()
+MACHINE_ARM_INSTHDRS=()
+ARM_INSTHDRS=()
 XNU_LIBKERN_INSTHDRS=()
 XNU_LIBKERN_I386_INSTHDRS=()
 for hdr in _types.h endian.h limits.h _mcontext.h signal.h types.h; do
@@ -290,6 +292,12 @@ for hdr in _types.h _limits.h endian.h limits.h _mcontext.h signal.h types.h; do
 	if [ -f "${XNU_BSD_DIR}/i386/${hdr}" ]; then
 		MACHINE_I386_INSTHDRS=( "${MACHINE_I386_INSTHDRS[@]}" "${XNU_BSD_DIR}/i386/${hdr}" )
 		I386_INSTHDRS=( "${I386_INSTHDRS[@]}" "${XNU_BSD_DIR}/i386/${hdr}" )
+	fi
+done
+for hdr in _types.h _limits.h endian.h limits.h _mcontext.h signal.h types.h; do
+	if [ -f "${XNU_BSD_DIR}/arm/${hdr}" ]; then
+		MACHINE_ARM_INSTHDRS=( "${MACHINE_ARM_INSTHDRS[@]}" "${XNU_BSD_DIR}/arm/${hdr}" )
+		ARM_INSTHDRS=( "${ARM_INSTHDRS[@]}" "${XNU_BSD_DIR}/arm/${hdr}" )
 	fi
 done
 if [ -f "${XNU_LIBKERN_DIR}/_OSByteOrder.h" ]; then
@@ -413,8 +421,13 @@ copy_missing_header_tree "${XNU_BSD_SYS_DIR}" "${INCDIR}/sys"
 copy_missing_header_tree "${XNU_BSD_DIR}/machine" "${INCDIR}/machine"
 copy_missing_header_tree "${XNU_BSD_DIR}/i386" "${INCDIR}/i386"
 copy_missing_header_tree "${XNU_BSD_DIR}/i386" "${INCDIR}/machine/i386"
+copy_missing_header_tree "${XNU_BSD_DIR}/arm" "${INCDIR}/arm"
+copy_missing_header_tree "${XNU_BSD_DIR}/arm" "${INCDIR}/machine/arm"
 copy_missing_header_tree "${XNU_BSD_DIR}/bsm" "${INCDIR}/bsm"
 copy_missing_header_tree "${XNU_OSFMK_DIR}/i386" "${INCDIR}/i386"
+copy_missing_header_tree "${XNU_OSFMK_DIR}/arm" "${INCDIR}/arm"
+copy_header_tree "${XNU_OSFMK_DIR}/arm" "${INCDIR}/System/arm"
+copy_missing_header_tree "${XNU_OSFMK_DIR}/arm64" "${INCDIR}/mach/arm64"
 copy_missing_header_tree "${XNU_MACH_DIR}" "${INCDIR}/mach"
 copy_missing_header_tree "${XNU_OSFMK_DIR}/mach_debug" "${INCDIR}/mach_debug"
 copy_missing_header_tree "${XNU_LIBKERN_DIR}" "${INCDIR}/libkern"
@@ -444,6 +457,14 @@ fi
 if [ -n "${I386_INSTHDRS}" ]; then
 ${MKDIR} ${INCDIR}/i386
 ${INSTALL} -m ${INSTALLMODE} ${I386_INSTHDRS[@]} ${INCDIR}/i386
+fi
+if [ -n "${MACHINE_ARM_INSTHDRS}" ]; then
+	${MKDIR} ${INCDIR}/machine/arm
+	${INSTALL} -m ${INSTALLMODE} ${MACHINE_ARM_INSTHDRS[@]} ${INCDIR}/machine/arm
+fi
+if [ -n "${ARM_INSTHDRS}" ]; then
+	${MKDIR} ${INCDIR}/arm
+	${INSTALL} -m ${INSTALLMODE} ${ARM_INSTHDRS[@]} ${INCDIR}/arm
 fi
 if [ -n "${XLOCALE_INSTHDRS}" ]; then
 ${MKDIR} ${INCDIR}/xlocale

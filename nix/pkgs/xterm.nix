@@ -19,6 +19,8 @@
 , libXpm
 , libXaw
 , xorgproto
+, ncurses
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -79,10 +81,10 @@ stdenv.mkDerivation {
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" (map lib.getDev xDeps)}:${lib.makeSearchPath "share/pkgconfig" (map lib.getDev xDeps)}"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
-    export CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
-    export AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
-    export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
-    export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
+    export CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
+    export AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
+    export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
+    export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
     export CPPFLAGS="-I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") xDeps}"
     # -DNO_XPOLL_H: xorgproto's <X11/Xpoll.h> hardcodes the glibc fd_set member
     # name (__fds_bits) in its XFD_COPYSET; Darwin's fd_set uses fds_bits. Skip
@@ -99,11 +101,16 @@ stdenv.mkDerivation {
     $AR d libXext-trimmed.a reallocarray.o
     $RANLIB libXext-trimmed.a
     trimmedXext="-Wl,-force_load,$PWD/libXext-trimmed.a"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
-    export LIBS="${xForceLoad} $trimmedXext -lSystem"
+    export CPPFLAGS="''${CPPFLAGS:-} -I${ncurses}/include/ncursesw -I${ncurses}/include"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${ncurses}/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
+    # Link the real static ncurses rather than leaning on the terminfo shims
+    # that used to live in libSystem: those made setupterm() succeed while every
+    # tigetstr() reported the capability absent, so xterm's TcapInit passed but
+    # its termcap-query feature (xtermcap.c, OPT_TCAP_*) saw an empty terminal.
+    export LIBS="${xForceLoad} $trimmedXext -Wl,-force_load,${ncurses}/lib/libncursesw.a -lSystem"
 
     ./configure \
-      --host=x86_64-apple-darwin20.4 \
+      --host=${targetTriple} \
       --build=$(cc -dumpmachine) \
       --prefix=$out \
       --disable-desktop \

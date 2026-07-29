@@ -25,6 +25,7 @@
 , iig
 , libxml2
 , libtapi
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -83,8 +84,8 @@ EOF
     patchShebangs src tools
 
     mkdir -p .nix-native-stubs
-    ln -sf ${clang}/bin/clang .nix-native-stubs/x86_64-apple-darwin20.4-clang
-    ln -sf "$(command -v ar)" .nix-native-stubs/x86_64-apple-darwin20.4-ar
+    ln -sf ${clang}/bin/clang .nix-native-stubs/${targetTriple}-clang
+    ln -sf "$(command -v ar)" .nix-native-stubs/${targetTriple}-ar
 
     mkdir -p .nix-native-stubs/sdk-shim-include
     echo '#include <machine/endian.h>' > .nix-native-stubs/sdk-shim-include/endian.h
@@ -119,7 +120,7 @@ EOF
     cmake -S . -B build-nix-native -G Ninja \
       -DCMAKE_C_COMPILER=${clang}/bin/clang \
       -DCMAKE_CXX_COMPILER=${clang}/bin/clang++ \
-      -DCMAKE_AR="$PWD/.nix-native-stubs/x86_64-apple-darwin20.4-ar" \
+      -DCMAKE_AR="$PWD/.nix-native-stubs/${targetTriple}-ar" \
       -DCMAKE_BUILD_TYPE=Release \
       -DOPENSSL_ROOT_DIR=${openssl.dev} \
       -DOPENSSL_CRYPTO_LIBRARY=${openssl.out}/lib/libcrypto.so \

@@ -4,6 +4,7 @@
 , gnumake
 , darwinCrossToolchain
 , nativeLd
+, targetTriple ? "x86_64-apple-darwin20.4"
 , libSystem
 , libiconvReal
 }:
@@ -72,19 +73,19 @@ EOF
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
-    export CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
+    export CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     export LD="${nativeLd}/bin/ld"
-    export AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
-    export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
-    export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
-    export NM="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-nm"
-    export OBJDUMP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-objdump"
+    export AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
+    export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
+    export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
+    export NM="${darwinCrossToolchain}/bin/${targetTriple}-nm"
+    export OBJDUMP="${darwinCrossToolchain}/bin/${targetTriple}-objdump"
     export CPPFLAGS="-I${libSystem}/usr/include"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -lSystem"
 
     ./configure \
-      --host=x86_64-apple-darwin20.4 \
+      --host=${targetTriple} \
       --build=$(cc -dumpmachine) \
       --prefix=/usr \
       --libdir=/usr/lib \

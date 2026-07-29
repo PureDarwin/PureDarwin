@@ -6546,6 +6546,8 @@ job_setup_exception_port(job_t j, task_t target_task)
 	f = PPC_THREAD_STATE64;
 #elif defined(__i386__) || defined(__x86_64__)
 	f = x86_THREAD_STATE;
+#elif defined(__arm64__) || defined(__aarch64__)
+	f = ARM_THREAD_STATE64;
 #elif defined(__arm__)
 	f = ARM_THREAD_STATE;
 #else
@@ -8279,9 +8281,14 @@ job_mig_swap_complex(job_t j, vproc_gsk_t inkey, vproc_gsk_t outkey,
 		}
 		jobmgr_export_env_from_other_jobs(j->mgr, output_obj);
 		runtime_ktrace0(RTKT_LAUNCHD_DATA_PACK);
-		if (!job_assumes(j, launch_data_pack(output_obj, (void *)*outval, *outvalCnt, NULL, NULL) != 0)) {
+		packed_size = launch_data_pack(output_obj, (void *)*outval, *outvalCnt, NULL, NULL);
+		if (!job_assumes(j, packed_size != 0)) {
 			goto out_bad;
 		}
+		/* The reply carries only what was packed. Leaving *outvalCnt at the
+		 * 20MB allocation makes the client unpack past the data: libnv sees
+		 * nvlh_size != message size and aborts. */
+		*outvalCnt = packed_size;
 		launch_data_free(output_obj);
 		break;
 	case VPROC_GSK_ALLJOBS:
@@ -8294,6 +8301,10 @@ job_mig_swap_complex(job_t j, vproc_gsk_t inkey, vproc_gsk_t outkey,
 		if (!job_assumes(j, packed_size != 0)) {
 			goto out_bad;
 		}
+		/* The reply carries only what was packed. Leaving *outvalCnt at the
+		 * 20MB allocation makes the client unpack past the data: libnv sees
+		 * nvlh_size != message size and aborts. */
+		*outvalCnt = packed_size;
 		launch_data_free(output_obj);
 		break;
 	case VPROC_GSK_MGR_NAME:
@@ -8304,6 +8315,10 @@ job_mig_swap_complex(job_t j, vproc_gsk_t inkey, vproc_gsk_t outkey,
 		if (!job_assumes(j, packed_size != 0)) {
 			goto out_bad;
 		}
+		/* The reply carries only what was packed. Leaving *outvalCnt at the
+		 * 20MB allocation makes the client unpack past the data: libnv sees
+		 * nvlh_size != message size and aborts. */
+		*outvalCnt = packed_size;
 
 		launch_data_free(output_obj);
 		break;
@@ -8319,6 +8334,10 @@ job_mig_swap_complex(job_t j, vproc_gsk_t inkey, vproc_gsk_t outkey,
 		if (!job_assumes(j, packed_size != 0)) {
 			goto out_bad;
 		}
+		/* The reply carries only what was packed. Leaving *outvalCnt at the
+		 * 20MB allocation makes the client unpack past the data: libnv sees
+		 * nvlh_size != message size and aborts. */
+		*outvalCnt = packed_size;
 
 		launch_data_free(output_obj);
 		break;
@@ -10106,6 +10125,10 @@ job_mig_take_subset(job_t j, mach_port_t *reqport, mach_port_t *rcvright,
 	if (!job_assumes(j, packed_size != 0)) {
 		goto out_bad;
 	}
+	/* The reply carries only what was packed. Leaving *outdataCnt at the 20MB
+	 * allocation makes the client unpack past the data: libnv sees nvlh_size
+	 * != message size and aborts. */
+	*outdataCnt = packed_size;
 
 	launch_data_free(outdata_obj_array);
 

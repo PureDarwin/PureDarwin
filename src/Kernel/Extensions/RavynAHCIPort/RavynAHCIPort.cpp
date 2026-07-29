@@ -711,10 +711,22 @@ RavynAHCIPort::rebasePort(PortState &portState)
 
     bzero((void *)portState.memVirt, kPortMemBytes);
 
-    if (!waitWhileBusy(portState.port, 1000))
+    /*
+     * Do not wait for PxTFD.BSY here. Several Intel mobile SATA parts,
+     * including the HM76 controller's attached disks, report BSY until the
+     * host performs a SATA COMRESET. Waiting before reset makes enumeration
+     * fail permanently with TFD=0x80. The command engine must be stopped for
+     * COMRESET, so perform it now and only wait for task-file readiness after
+     * the link has been reset.
+     */
+    if (!resetPort(portState.port))
+        AHCI_Log("warning: port %u COMRESET did not complete, continuing",
+                 portState.port);
+
+    if (!startPortEngine(portState.port))
         return false;
 
-    return startPortEngine(portState.port);
+    return waitWhileBusy(portState.port, AHCI_TIMEOUT_MS);
 }
 
 void
@@ -777,7 +789,16 @@ RavynAHCIPort::issueCommand(PortState &portState,
                             uint32_t     byteCount,
                             bool       write)
 {
-    if (!portState.memVirt || !buffer || byteCount == 0) return false;
+    /*
+     * byteCount == 0 is a non-data command (FLUSH CACHE EXT and friends): it
+     * carries no PRD and the device returns no Data FIS. Issuing such a command
+     * with a PRD attached leaves it outstanding forever, because the transfer
+     * the PRD describes never happens.
+     */
+    const bool nonData = (byteCount == 0);
+
+    if (!portState.memVirt) return false;
+    if (!nonData && !buffer) return false;
 
     IOLockLock(fCommandLock);
     auto unlock = [&]() {
@@ -798,16 +819,18 @@ RavynAHCIPort::issueCommand(PortState &portState,
     volatile uint8_t *dmaBuf = portState.memVirt + kPortDMAOffset;
 
     const uint32_t dmaCapacity = kPortMemBytes - kPortDMAOffset;
-    if (byteCount > dmaCapacity) {
+    if (!nonData && byteCount > dmaCapacity) {
         AHCI_Log("Command buffer too big: %u (max %u)", byteCount, dmaCapacity);
         unlock();
         return false;
     }
 
-    if (write)
-        bcopy(buffer, (void *)dmaBuf, byteCount);
-    else
-        bzero((void *)dmaBuf, byteCount);
+    if (!nonData) {
+        if (write)
+            bcopy(buffer, (void *)dmaBuf, byteCount);
+        else
+            bzero((void *)dmaBuf, byteCount);
+    }
 
     bzero((void *)hdr, sizeof(AHCICmdHeader));
     bzero((void *)tableBase, AHCI_CMD_TABLE_SIZE);
@@ -815,14 +838,16 @@ RavynAHCIPort::issueCommand(PortState &portState,
     hdr[0].cfl_flags = CMD_HDR_CFL(sizeof(AHCIFIS_H2D) / sizeof(uint32_t));
     if (write)
         hdr[0].cfl_flags |= CMD_HDR_WRITE;
-    hdr[0].prdtl = 1;
+    hdr[0].prdtl = nonData ? 0 : 1;
     hdr[0].prdbc = 0;
     hdr[0].ctba  = (uint32_t)(portState.memPhys + kPortCTOffset);
     hdr[0].ctbau = (uint32_t)((uint64_t)(portState.memPhys + kPortCTOffset) >> 32);
 
-    prd[0].dba  = (uint32_t)(portState.memPhys + kPortDMAOffset);
-    prd[0].dbau = (uint32_t)((uint64_t)(portState.memPhys + kPortDMAOffset) >> 32);
-    prd[0].dbc  = (byteCount - 1) | PRD_DBC_INT;
+    if (!nonData) {
+        prd[0].dba  = (uint32_t)(portState.memPhys + kPortDMAOffset);
+        prd[0].dbau = (uint32_t)((uint64_t)(portState.memPhys + kPortDMAOffset) >> 32);
+        prd[0].dbc  = (byteCount - 1) | PRD_DBC_INT;
+    }
 
     cfis->type      = FIS_TYPE_H2D;
     cfis->pmport_c  = FIS_H2D_C;
@@ -883,7 +908,7 @@ RavynAHCIPort::issueCommand(PortState &portState,
         }
 
         if ((ciNow & 1U) == 0) {
-            if (!write)
+            if (!nonData && !write)
                 bcopy((const void *)dmaBuf, buffer, byteCount);
             unlock();
             return true;
@@ -908,11 +933,16 @@ RavynAHCIPort::issueCommand(PortState &portState,
     }
 
 
-    AHCI_Log("Command 0x%02x timeout port=%u CI=%08x IS=%08x TFD=%08x",
+    AHCI_Log("Command 0x%02x timeout port=%u CI=%08x IS=%08x TFD=%08x CMD=%08x SERR=%08x SACT=%08x prdbc=%u irq=%d",
             ataCommand, portState.port,
             portRead32(portState.port, PORT_CI),
             portRead32(portState.port, PORT_IS),
-            portRead32(portState.port, PORT_TFD));
+            portRead32(portState.port, PORT_TFD),
+            portRead32(portState.port, PORT_CMD),
+            portRead32(portState.port, PORT_SERR),
+            portRead32(portState.port, PORT_SACT),
+            (unsigned)hdr[0].prdbc,
+            (int)fInterruptsEnabled);
     recoverWedgedPort(portState.port);
     unlock();
     return false;
@@ -927,18 +957,6 @@ RavynAHCIPort::identifyDevice(PortState &portState, uint16_t *identifyWords512)
     bzero(identifyWords512, 512);
 
     if (!rebasePort(portState))
-        return false;
-
-    uint32_t ssts = portRead32(portState.port, PORT_SSTS);
-    if (PORT_SSTS_DET(ssts) == PORT_SSTS_DET_PRESENT &&
-        PORT_SSTS_IPM(ssts) == PORT_SSTS_IPM_ACTIVE) {
-        AHCI_Debug("identify port=%u link already active, skipping reset", portState.port);
-    } else if (!resetPort(portState.port)) {
-        /* Not fatal on all HBAs; some devices are already link-up and ready. */
-        AHCI_Log("warning: port %u reset did not complete, continuing", portState.port);
-    }
-
-    if (!waitWhileBusy(portState.port, 1000))
         return false;
 
     if (!issueCommand(portState,
@@ -1038,9 +1056,8 @@ bool
 RavynAHCIPort::flushCache(PortState &portState)
 {
     if (!portState.lba48) return true;   /* no cache on very old devices */
-    /* FLUSH CACHE EXT takes no LBA / count fields */
-    uint8_t dummy = 0;
-    return issueCommand(portState, ATA_CMD_FLUSH_EXT, 0, 0, &dummy, 1, false);
+    /* FLUSH CACHE EXT takes no LBA / count fields and transfers no data */
+    return issueCommand(portState, ATA_CMD_FLUSH_EXT, 0, 0, NULL, 0, false);
 }
 
 

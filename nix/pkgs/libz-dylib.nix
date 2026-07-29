@@ -5,6 +5,7 @@
 , nativeLd
 , libSystem
 , zlib
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -36,7 +37,7 @@ stdenv.mkDerivation {
     mkdir -p sdk
     tar xf ${sdkTarball} -C sdk
     export PATH="${darwinCrossToolchain}/bin:$PATH"
-    CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
+    CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     # unistd.h for lseek()/off_t use in gzlib.c - not pulled in transitively
     # under our SDK header set the way it apparently is on real macOS.
     CFLAGS="-isysroot $PWD/sdk/MacOSX11.3.sdk -I${libSystem}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -O2 -include unistd.h"

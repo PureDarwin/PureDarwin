@@ -23,9 +23,12 @@
 , fontconfig
 , expat
 , libpng
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
+  targetInfo = import ../lib/target-info.nix targetTriple;
+
   deps = [ pixman zlib xorgproto libX11 libXext libXrender libxcb libXau libXdmcp freetype fontconfig expat libpng ];
   depPcPaths = map lib.getDev deps;
   sdkTarball = requireFile {
@@ -64,11 +67,11 @@ stdenv.mkDerivation {
 
     cat > puredarwin-cross.ini <<EOF
 [binaries]
-c = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang'
-ar = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar'
-strip = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip'
+c = '${darwinCrossToolchain}/bin/${targetTriple}-clang'
+ar = '${darwinCrossToolchain}/bin/${targetTriple}-ar'
+strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
-install_name_tool = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-install_name_tool'
+install_name_tool = '${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool'
 
 [built-in options]
 c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-DHAVE_UINT64_T=1', '-DHAVE___UINT128_T=1', '-DHAVE_XRENDERCREATESOLIDFILL=1', '-DHAVE_XRENDERCREATELINEARGRADIENT=1', '-DHAVE_XRENDERCREATERADIALGRADIENT=1', '-DHAVE_XRENDERCREATECONICALGRADIENT=1', '-DFC_RGBA_UNKNOWN=0', '-DFC_RGBA_RGB=1', '-DFC_RGBA_BGR=2', '-DFC_RGBA_VRGB=3', '-DFC_RGBA_VBGR=4', '-DFC_RGBA_NONE=5', '-DFC_HINT_NONE=0', '-DFC_HINT_SLIGHT=1', '-DFC_HINT_MEDIUM=2', '-DFC_HINT_FULL=3', '-DFC_LCD_NONE=0', '-DFC_LCD_DEFAULT=1', '-DFC_LCD_LIGHT=2', '-DFC_LCD_LEGACY=3', '-fno-stack-protector', '-I${libSystem}/usr/include', ${lib.concatMapStringsSep ", " (dep: "'-I${lib.getDev dep}/include'") deps}]
@@ -76,9 +79,9 @@ c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '
 
 [host_machine]
 system = 'darwin'
-cpu_family = 'x86_64'
-cpu = 'x86_64'
-endian = 'little'
+cpu_family = '${targetInfo.mesonCpuFamily}'
+cpu = '${targetInfo.mesonCpu}'
+endian = '${targetInfo.mesonEndian}'
 EOF
 
     meson setup build \

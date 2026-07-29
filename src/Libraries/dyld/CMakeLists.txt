@@ -102,7 +102,7 @@ target_include_directories(dyld PRIVATE
 # _FORTIFY_SOURCE=0: avoids the __*_chk fortified libc variants (___memcpy_chk,
 # ___memset_chk) which would otherwise need a libc we don't link.
 target_compile_definitions(dyld PRIVATE NDEBUG BUILDING_DYLD=1 BUILDING_LIBDYLD=1
-    _DARWIN_C_SOURCE CORECRYPTO_DONOT_USE_TRANSPARENT_UNION _FORTIFY_SOURCE=0)
+    PRIVATE=1 _DARWIN_C_SOURCE CORECRYPTO_DONOT_USE_TRANSPARENT_UNION _FORTIFY_SOURCE=0)
 if(PUREDARWIN_USE_LD64_LLD)
     target_compile_definitions(dyld PRIVATE PD_LD64LLD_WEAK_DYLD_FALLBACKS)
 endif()

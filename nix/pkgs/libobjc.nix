@@ -2,6 +2,7 @@
 , lib
 , requireFile
 , darwinCrossToolchain
+, targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , libSystem
 , libcxxabiDylib
@@ -30,7 +31,7 @@ let
     '';
   };
 
-  cc = "${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang";
+  cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang";
   # All runtime/*.mm are part of libobjc (the -old variants self-gate on the
   # current config). objcdt/objcrt tools and their sources are not included.
   mmSrcs = [
@@ -44,7 +45,11 @@ let
     "Object" "Protocol"
   ];
   # x86_64 assembly.
-  asmSrcs = [
+  asmSrcs = if targetTriple == "arm64-apple-darwin20.4" then [
+    "Messengers.subproj/objc-msg-arm64"
+    "objc-blocktramps-arm64"
+    "objc-sel-table"
+  ] else [
     "Messengers.subproj/objc-msg-x86_64"
     "objc-blocktramps-x86_64"
     "objc-sel-table"

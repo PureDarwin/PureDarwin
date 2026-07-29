@@ -7,6 +7,7 @@
 , libSystem
 , libparserutils
 , libiconv
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -53,7 +54,7 @@ stdenv.mkDerivation {
 
     perl build/make-aliases.pl
 
-    CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
+    CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
 
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -Iinclude -Isrc -I${libSystem}/usr/include -I${libiconv}/usr/include"
 

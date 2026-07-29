@@ -8,6 +8,7 @@
 , nativeLd
 , libSystem
 , bison
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -45,11 +46,11 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
-    export CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
-    export CXX="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang++"
-    export AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
-    export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
-    export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
+    export CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
+    export CXX="${darwinCrossToolchain}/bin/${targetTriple}-clang++"
+    export AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
+    export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
+    export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
     export CPPFLAGS="-I${libSystem}/usr/include"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
     export CXXFLAGS="$CFLAGS"
@@ -62,7 +63,7 @@ stdenv.mkDerivation {
     export ac_cv_func_rewinddir=yes
 
     ./configure \
-      --host=x86_64-apple-darwin20.4 \
+      --host=${targetTriple} \
       --build=$(cc -dumpmachine) \
       --prefix=/usr \
       --disable-nls

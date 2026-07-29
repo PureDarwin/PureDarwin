@@ -9,6 +9,7 @@
 , zlib
 , curl
 , openssl
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -55,9 +56,9 @@ stdenv.mkDerivation {
 
     rm -rf "$DARWIN_SDK_ROOT/System/Library/Frameworks/Python.framework"
 
-    CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
-    AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
-    RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
+    CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
+    AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
+    RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
 
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -I${libSystem}/usr/include -I${zlib}/include -I${curl}/include"
     LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${zlib}/lib -Wl,-force_load,${zlib}/lib/libz.a -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
@@ -74,9 +75,9 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
-    AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
-    RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
+    CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
+    AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
+    RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -I${libSystem}/usr/include -I${zlib}/include -I${curl}/include"
     LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${zlib}/lib -Wl,-force_load,${zlib}/lib/libz.a -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
 

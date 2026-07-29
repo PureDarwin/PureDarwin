@@ -3,6 +3,7 @@
 , requireFile
 , darwinCrossToolchain
 , nativeLd
+, targetTriple ? "x86_64-apple-darwin20.4"
 , libSystem
 , fastfetch
 , cmake
@@ -10,6 +11,8 @@
 , pkg-config
 , corefoundation
 , iokit
+, openglFramework
+, mesa
 }:
 
 let
@@ -33,6 +36,9 @@ stdenv.mkDerivation {
   cmakeFlags = [
     "-DCMAKE_TOOLCHAIN_FILE=${../../cmake/nix-toolchain.cmake}"
     "-DNIX_DARWIN_TOOLCHAIN_DIR=${darwinCrossToolchain}/bin"
+    # Without this the toolchain file falls back to the x86 triple and looks for
+    # an x86_64-prefixed clang inside the arm64 toolchain.
+    "-DNIX_DARWIN_HOST=${targetTriple}"
     "-DHAVE_MALLOC_USABLE_SIZE=OFF"
     "-DHAVE_PIPE2=OFF"
     # memrchr doesn't exist on real macOS either - same false-positive risk.
@@ -91,18 +97,12 @@ const char* ffDetectSound(FF_A_UNUSED FFSoundOptions* options, FF_A_UNUSED FFlis
 SNDEOF
     sed -i 's#src/detection/sound/sound_apple\.[mc]#src/detection/sound/sound_nosupport.c#' CMakeLists.txt
 
-    cat > src/detection/opengl/opengl_apple.c <<'GLEOF'
-#include "opengl.h"
-
-const char* ffDetectOpenGL(FFOpenGLOptions* options, FFOpenGLResult* result)
-{
-    (void) options;
-    (void) result;
-    return "OpenGL is not supported here";
-}
-GLEOF
-
-    sed -i '/PRIVATE "-framework OpenGL"/d' CMakeLists.txt
+    # Upstream's opengl_apple.c is used as-is: PureDarwin has a real
+    # OpenGL.framework (CGL over Mesa's OSMesa), so CGLChoosePixelFormat/
+    # CGLCreateContext/glGetString all resolve and fastfetch reports Mesa's
+    # actual GL version and renderer. The -framework OpenGL link line upstream
+    # already emits sits inside the Apple framework block that the awk pass
+    # below strips wholesale, so it is re-added to LDFLAGS instead.
 
     sed -i 's#src/detection/dns/dns_apple\.c#src/detection/dns/dns_linux.c#' CMakeLists.txt
 
@@ -222,8 +222,8 @@ GPUEOF
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export NIX_DARWIN_TOOLCHAIN_DIR="${darwinCrossToolchain}/bin"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lIOKitCF -lCoreFoundation -lSystem"
-    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${corefoundation}/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks -F${openglFramework}/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -Wl,-dylib_file,/usr/lib/libOSMesa.8.dylib:${mesa}/usr/lib/libOSMesa.8.dylib -framework OpenGL -lIOKitCF -lCoreFoundation -lSystem"
+    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -F${openglFramework}/System/Library/Frameworks -I${mesa}/usr/include -I${libSystem}/usr/include -I${corefoundation}/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
   '';
 
   dontFixup = true;

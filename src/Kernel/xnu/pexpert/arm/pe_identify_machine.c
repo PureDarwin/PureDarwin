@@ -522,26 +522,6 @@ PE_init_cpu(void)
 void
 PE_panic_hook(const char *str __unused)
 {
-	#if defined(QEMUVIRT)
-	/* QEMU virt has no Apple panic/debug transport. Do not pass the panic
-	 * format through kprintf: this hook receives no varargs, so that would
-	 * print the format tokens literally and can corrupt panic-time output. */
-	extern void serial_putc(char);
-	serial_putc('\r');
-	serial_putc('\n');
-	serial_putc('Q'); serial_putc('E'); serial_putc('M'); serial_putc('U');
-	serial_putc('V'); serial_putc('I'); serial_putc('R'); serial_putc('T');
-	serial_putc(' '); serial_putc('p'); serial_putc('a'); serial_putc('n');
-	serial_putc('i'); serial_putc('c'); serial_putc(':'); serial_putc(' ');
-	if (str != NULL) {
-		while (*str != '\0') {
-			serial_putc(*str++);
-		}
-	}
-	serial_putc('\r');
-	serial_putc('\n');
-	return;
-	#endif
 	if (PE_arm_debug_panic_hook != NULL) {
 		PE_arm_debug_panic_hook(str);
 	}

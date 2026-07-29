@@ -9,9 +9,12 @@
 , darwinCrossToolchain
 , nativeLd
 , libSystem
+, corefoundation
+, systemConfiguration
 , curl
 , zlib
 , openssl
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -33,15 +36,13 @@ stdenv.mkDerivation {
   nativeBuildInputs = [ autoconf automake libtool gnum4 gnumake ];
   buildInputs = [ zlib openssl ];
 
-  # curl's own sources gate several real-Darwin-only features (CommonCrypto
-  # SHA256, SystemConfiguration proxy auto-detection, Apple SecTrust) purely
-  # on __APPLE__/SDK-version macros, which our SDK 11.3 headers legitimately
-  # define even though none of those frameworks/dylibs actually exist on
-  # PureDarwin - falls back to curl's own portable implementations instead.
+  # curl gates several real-Darwin-only features (CommonCrypto SHA256, Apple
+  # SecTrust) purely on __APPLE__/SDK-version macros, which our SDK 11.3 headers
+  # legitimately define even though those frameworks do not exist here - fall
+  # back to curl's own portable implementations. SystemConfiguration is real, so
+  # CURL_MACOS_CALL_COPYPROXIES (proxy auto-detection via
+  # SCDynamicStoreCopyProxies) is left enabled - see curl.nix.
   postPatch = ''
-    substituteInPlace lib/curl_setup.h \
-      --replace-fail '#    define CURL_MACOS_CALL_COPYPROXIES 1' \
-                      '/* PureDarwin: no real SystemConfiguration.framework here */'
     substituteInPlace lib/sha256.c \
       --replace-fail '#elif (defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && \' \
                       '#elif 0 && (defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && \'
@@ -56,17 +57,33 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
-    export CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
-    export AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
-    export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
-    export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
-    export NM="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-nm"
-    export CPPFLAGS="-I${libSystem}/usr/include -I${zlib}/include -I${openssl}/include -isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
+    export CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
+    export AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
+    export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
+    export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
+    export NM="${darwinCrossToolchain}/bin/${targetTriple}-nm"
+    # See curl.nix for why bridgeos needs a force-included header rather than -D.
+    cat > "$PWD/pd-bridgeos.h" <<'EOF'
+#ifndef PUREDARWIN_CURL_BRIDGEOS_H
+#define PUREDARWIN_CURL_BRIDGEOS_H
+#ifndef __API_AVAILABLE_PLATFORM_bridgeos
+#define __API_AVAILABLE_PLATFORM_bridgeos(x) bridgeos,introduced=x
+#endif
+#ifndef __API_DEPRECATED_PLATFORM_bridgeos
+#define __API_DEPRECATED_PLATFORM_bridgeos(x,y) bridgeos,introduced=x,deprecated=y
+#endif
+#ifndef __API_UNAVAILABLE_PLATFORM_bridgeos
+#define __API_UNAVAILABLE_PLATFORM_bridgeos bridgeos,unavailable
+#endif
+#endif
+EOF
+
+    export CPPFLAGS="-I${libSystem}/usr/include -I${zlib}/include -I${openssl}/include -isysroot $DARWIN_SDK_ROOT -include $PWD/pd-bridgeos.h -F${corefoundation}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
     export CFLAGS="$CPPFLAGS"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${zlib}/lib -L${openssl}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F${corefoundation}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${zlib}/lib -L${openssl}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
 
     ./configure \
-      --host=x86_64-apple-darwin20.4 \
+      --host=${targetTriple} \
       --build=$(cc -dumpmachine) \
       --prefix=$out \
       --with-openssl=${openssl} --disable-ldap --disable-ldaps --without-libpsl \
@@ -76,12 +93,9 @@ stdenv.mkDerivation {
       --with-zlib=${zlib} --with-ca-bundle=/etc/ssl/cert.pem \
       ac_cv_func_accept4=no ac_cv_func_getpass_r=no
 
-    # See curl.nix: configure detects a Darwin host triple and
-    # unconditionally links against CoreFoundation/SystemConfiguration for
-    # macOS proxy-autoconfig support - no real frameworks exist here.
+    # See curl.nix: CoreServices and Security are still stripped, but
+    # CoreFoundation and SystemConfiguration are real and linked for real.
     find . -name Makefile -exec sed -i \
-      -e 's/-framework CoreFoundation//g' \
-      -e 's/-framework SystemConfiguration//g' \
       -e 's/-framework CoreServices//g' \
       -e 's/-framework Security//g' \
       {} +
@@ -106,6 +120,9 @@ stdenv.mkDerivation {
       -install_name /usr/lib/libcurl.4.dylib \
       -compatibility_version 7 \
       -current_version 9 \
+      -F${corefoundation}/System/Library/Frameworks \
+      -F${systemConfiguration}/System/Library/Frameworks \
+      -framework CoreFoundation -framework SystemConfiguration \
       -lSystem -lz \
       "''${objs[@]}" \
       -o libcurl.4.dylib

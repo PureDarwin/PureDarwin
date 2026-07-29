@@ -177,6 +177,21 @@ sshd:*:74:74:Privilege-separated SSH:/var/empty:/usr/bin/false
 messagebus:*:96:96:D-Bus Message Daemon User:/var/empty:/usr/bin/false
 nobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false
 EOF
+    # Darwin's libinfo file_module reads /etc/master.passwd when euid==0 (it is
+    # the root-only file that carries the hashes) and does NOT fall back to
+    # /etc/passwd, so without this every getpwnam/getpwuid fails for root -
+    # which breaks dbus, login and anything else resolving a user.
+    # Format is the BSD master.passwd one: the two extra fields (class, change,
+    # expire) sit between gid and gecos.
+    cat > $staging/etc/master.passwd <<'EOF'
+root:*:0:0::0:0:System Administrator:/var/root:/bin/sh
+daemon:*:1:1::0:0:System Services:/var/root:/usr/bin/false
+sshd:*:74:74::0:0:Privilege-separated SSH:/var/empty:/usr/bin/false
+messagebus:*:96:96::0:0:D-Bus Message Daemon User:/var/empty:/usr/bin/false
+nobody:*:-2:-2::0:0:Unprivileged User:/var/empty:/usr/bin/false
+EOF
+    chmod 600 $staging/etc/master.passwd
+
     cat > $staging/etc/group <<'EOF'
 wheel:*:0:root
 daemon:*:1:root
@@ -371,6 +386,7 @@ EOF
     fi
     chmod 644 \
       $staging/etc/passwd \
+      $staging/etc/master.passwd \
       $staging/etc/group \
       $staging/etc/profile \
       $staging/etc/zshenv \

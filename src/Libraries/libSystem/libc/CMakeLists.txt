@@ -85,6 +85,18 @@ target_link_libraries(libc_kernel_headers INTERFACE libc_headers_gen)
 
 target_include_directories(libc_public_headers INTERFACE ${libc_headers_dir}/usr/include)
 target_include_directories(libc_public_headers INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/wrappers)
+# The generated machine/_types.h selects the target-specific XNU BSD header
+# (arm/_types.h or i386/_types.h).  Keep that directory on the public header
+# interface so consumers such as corecrypto see the same architecture headers
+# as libc itself.
+target_include_directories(libc_public_headers INTERFACE
+    ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd)
+if(PUREDARWIN_ARCH STREQUAL "arm64")
+    target_compile_definitions(libc_public_headers INTERFACE
+        __DARWIN_ONLY_VERS_1050=1
+        __DARWIN_ONLY_UNIX_CONFORMANCE=1
+        __DARWIN_ONLY_64_BIT_INO_T=1)
+endif()
 
 target_include_directories(libc_private_headers INTERFACE ${libc_headers_dir}/System/Library/Frameworks/System.framework/Versions/B/PrivateHeaders)
 target_include_directories(libc_private_headers INTERFACE ${libc_headers_dir}/usr/local/include)
@@ -94,10 +106,17 @@ target_include_directories(libc_kernel_headers INTERFACE ${libc_headers_dir}/Sys
 # END HEADER INTERFACE
 
 add_darwin_static_library(libc_static)
+if(PUREDARWIN_ARCH STREQUAL "arm64")
+    target_compile_definitions(libc_static PRIVATE
+        __DARWIN_ONLY_VERS_1050=1
+        __DARWIN_ONLY_UNIX_CONFORMANCE=1
+        __DARWIN_ONLY_64_BIT_INO_T=1)
+endif()
 target_sources(libc_static PRIVATE
     string/strcat.c
     string/strncat.c
     string/pd_strnlen.c          # _strnlen / _strlcpy
+    string/pd_bcmp.c             # _bcmp (legacy alias of memcmp; ping(8))
     string/FreeBSD/strdup.c
     string/FreeBSD/strtok.c      # _strtok (init /etc/ttys tokenizing)
     string/pd_strtok_r.c         # _strtok_r forwarder (__weak_reference alias not emitted)
@@ -219,7 +238,6 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/sysctlnametomib.c # _sysctlnametomib
     gen/FreeBSD/clock.c          # _clock
     gen/FreeBSD/getlogin.c       # _getlogin / _getlogin_r
-    gen/pd_getpwent.c            # getpwnam/getpwuid (/etc/passwd reader; no libinfo)
     gen/getusershell.c           # getusershell/setusershell/endusershell (/etc/shells)
     string/FreeBSD/wcscmp.c      # _wcscmp (wcscoll)
     stdlib/FreeBSD/imaxabs.c     # _imaxabs (inttypes)
@@ -232,12 +250,9 @@ target_sources(libc_static PRIVATE
     string/FreeBSD/rindex.c      # _rindex
     stdtime/FreeBSD/localtime.c  # _localtime / _mktime / _tzset (tzfile reader)
     stdtime/FreeBSD/strftime.c   # _strftime
+    stdtime/FreeBSD/strptime.c   # _strptime/_strptime_l (was a partial hand-rolled parser in pd_libSystem_compat.c)
     stdtime/FreeBSD/asctime.c    # _asctime
     stdtime/timezone_unix03.c    # _st_get_timezone / _st_set_timezone (strftime %z)
-    gen/pd_notify_stub.c         # notify_post shim (real libnotify needs XPC)
-    gen/pd_getgrent.c            # getgrnam/getgrgid/getgrouplist (/etc/group reader; no libinfo)
-    gen/pd_netdb_stub.c          # gethostbyname/h_errno/hstrerror (no libinfo/libresolv yet)
-    gen/pd_getservbyname.c       # getservbyname (/etc/services reader; no libinfo)
     libm/pd_libm_sincos_stret.c  # __sincos*_stret / __sincospi*_stret (Apple-only wrappers, not in openlibm; -fno-builtin below)
     libm/pd_libm_exp10.c         # __exp10 / __exp10f (Apple-only base-10 exp, not in openlibm)
     gen/clock_gettime.c          # _clock_gettime / _clock_settime
@@ -293,6 +308,7 @@ target_sources(libc_static PRIVATE
     darwin/subsystem.c
     stdlib/FreeBSD/heapsort.c    # _heapsort
     stdlib/FreeBSD/getenv.c      # _getenv/_setenv/_unsetenv
+    stdlib/grantpt.c             # _posix_openpt/_grantpt/_ptsname/_ptsname_r/_unlockpt
     gen/FreeBSD/sysctlbyname.c   # _sysctlbyname (-> __sysctlbyname syscall)
     sys/crt_externs.c            # _NSGetEnviron/_NSGetArgv/_NSGetArgc/_NSGetProgname
     stdlib/FreeBSD/exit.c        # _exit/exit (calls __cxa_finalize then the raw syscall)
@@ -303,6 +319,7 @@ target_sources(libc_static PRIVATE
     darwin/pd_os_crash.c         # __os_crash (minimal real report-then-let-caller-trap; see file comment)
     darwin/pd_unix2003.c         # $UNIX2003 <-> plain forwarders; see file comment
     gen/FreeBSD/arc4random.c     # corecrypto-backed arc4random/arc4random_buf/arc4random_uniform
+    net/FreeBSD/nsap_addr.c      # inet_nsap_addr/inet_nsap_ntoa (libresolv ns_print.c)
     gen/FreeBSD/daemon.c         # _daemon$1050
     gen/FreeBSD/signal.c         # _signal (libmalloc's pguard_malloc.c installs a SIGSEGV handler)
     gen/sigsetops.c              # sigemptyset/sigfillset/sigaddset/sigdelset/sigismember
@@ -345,7 +362,6 @@ target_sources(libc_static PRIVATE
     secure/sprintf_chk.c         # ___sprintf_chk
     gen/FreeBSD/termios.c        # _tcgetattr
     gen/setlogin.c               # _setlogin
-    net/pd_ether_addr.c          # _ether_aton/_ether_ntoa
     string/FreeBSD/strnstr.c     # _strnstr
     os/pd_assumes.c               # os_assumes/os_assert real-contract impl (see file comment: real os/assumes.c needs firehose/os_log private ABI logd doesn't back here)
     emulated/lchflags.c           # _lchflags (real launchctl.c)
@@ -405,6 +421,9 @@ target_compile_definitions(libc_static PRIVATE __DARWIN_ONLY_UNIX_CONFORMANCE=1)
 target_link_libraries(libc_static PRIVATE xnu_private_headers)
 target_link_libraries(libc_static PUBLIC openlibm_static)
 add_dependencies(libc_static libc_features libsystem_kernel_static)
+if(PUREDARWIN_ARM64)
+    target_sources(libc_static PRIVATE darwin/pd_arm64_abi.c)
+endif()
 target_include_directories(libc_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/include/${PUREDARWIN_ARCH}   # generated libc-features.h
     ${CMAKE_CURRENT_BINARY_DIR}/include
@@ -534,12 +553,19 @@ set_source_files_properties(
     PROPERTIES COMPILE_FLAGS "-DHAVE_CONFIG_H -I${CMAKE_CURRENT_SOURCE_DIR}/regex/TRE -I${CMAKE_CURRENT_SOURCE_DIR}/regex/TRE/lib -I${CMAKE_CURRENT_SOURCE_DIR}/regex/FreeBSD")
 
 add_darwin_static_library(libc_internal_static)
+if(PUREDARWIN_ARCH STREQUAL "arm64")
+    target_compile_definitions(libc_internal_static PRIVATE
+        __DARWIN_ONLY_VERS_1050=1
+        __DARWIN_ONLY_UNIX_CONFORMANCE=1
+        __DARWIN_ONLY_64_BIT_INO_T=1)
+endif()
 set_target_properties(libc_internal_static PROPERTIES EXCLUDE_FROM_ALL TRUE)
 target_sources(libc_internal_static PRIVATE
     gen/FreeBSD/opendir.c        # _opendir$INODE64
     gen/FreeBSD/readdir.c        # _readdir$INODE64 / _readdir_r$INODE64
     gen/FreeBSD/scandir.c        # _scandir$INODE64 / _alphasort$INODE64
     gen/FreeBSD/closedir.c       # _closedir
+    gen/FreeBSD/rewinddir.c      # _rewinddir$INODE64 / _rewinddir
     gen/FreeBSD/telldir.c        # telldir/seekdir support used by the above
     gen/FreeBSD/getcwd.c         # _getcwd / ___private_getcwd
     gen/FreeBSD/getpagesize.c    # _getpagesize (pulled by telldir)
@@ -655,6 +681,7 @@ target_sources(libc_internal_static PRIVATE
     stdio/FreeBSD/fgetpos.c       # _fgetpos (flex table serialization)
     stdio/FreeBSD/fsetpos.c       # _fsetpos (flex table serialization)
     locale/FreeBSD/localeconv.c   # _localeconv/_localeconv_l (vfprintf's grouping_init)
+    locale/FreeBSD/nl_langinfo.c  # _nl_langinfo/_nl_langinfo_l (the stub only answered CODESET)
     stdio/FreeBSD/xprintf_str.c
     stdio/FreeBSD/xprintf_int.c    # also chr/ptr
     stdio/FreeBSD/xprintf_float.c
@@ -688,7 +715,6 @@ target_sources(libc_internal_static PRIVATE
     net/FreeBSD/inet_addr.c        # _inet_addr / _inet_aton (Xlib DISPLAY parsing)
     net/FreeBSD/recv.c             # _recv (Xlib socket transport)
     net/FreeBSD/send.c             # _send (curl socket transport)
-    net/pd_in6_addr.c              # _in6addr_any / _in6addr_loopback (xterm Xtrans IPv6 transport)
     string/FreeBSD/wcscpy.c        # _wcscpy (collate.c's __collate_wcsdup)
     string/FreeBSD/wcsncpy.c       # _wcsncpy (collate.c's substitute/collating-symbol/equiv-value)
     gdtoa/FreeBSD/gdtoa-dmisc.c
@@ -751,6 +777,12 @@ target_include_directories(libc_internal_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/private       # _simple.h (os/assumes.h)
     ${CMAKE_CURRENT_SOURCE_DIR}/../libmalloc/include         # malloc/_malloc.h (stdlib.h)
     ${CMAKE_CURRENT_SOURCE_DIR}/../libmalloc/compat-include  # System/machine/cpu_capabilities.h
+    # libdarwin/variant.c: h/*.h are installed as <os/*.h>, xnu's bsd/sys/csr.h
+    # as <System/sys/csr.h>, and it is an xpc_create_from_plist() client.
+    ${CMAKE_CURRENT_SOURCE_DIR}/libdarwin/os-include
+    ${CMAKE_CURRENT_SOURCE_DIR}/libdarwin/sys-include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../XPC/libxpc/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../XPC/libinfo/compat
     ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/osfmk            # i386/cpu_capabilities.h
     ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd              # sys/wait.h and BSD header tree
 )
@@ -774,5 +806,5 @@ target_compile_options(libc_internal_static PRIVATE
 # maps them onto the internal __dd_* members. Force-include it for those files.
 set_source_files_properties(
     gen/FreeBSD/opendir.c gen/FreeBSD/readdir.c
-    gen/FreeBSD/closedir.c gen/FreeBSD/telldir.c
+    gen/FreeBSD/closedir.c gen/FreeBSD/telldir.c gen/FreeBSD/rewinddir.c
     PROPERTIES COMPILE_FLAGS "-include${CMAKE_CURRENT_SOURCE_DIR}/gen/__dirent.h")

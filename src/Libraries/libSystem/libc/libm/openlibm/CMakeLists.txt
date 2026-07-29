@@ -7,6 +7,7 @@
 add_darwin_static_library(openlibm_static)
 
 target_sources(openlibm_static PRIVATE
+    $<$<BOOL:${PUREDARWIN_ARM64}>:src/pd_arm64.c>
     # src/ - main portable C implementation (see src/Make.files)
     src/common.c
     src/e_acos.c src/e_acosf.c src/e_acosh.c src/e_acoshf.c
@@ -108,6 +109,36 @@ target_sources(openlibm_static PRIVATE
     amd64/fenv.c
 )
 
+set(_openlibm_long_double_sources
+    src/s_copysignl.c src/s_fabsl.c src/s_llrintl.c src/s_lrintl.c src/s_modfl.c
+    src/e_acosl.c src/e_asinl.c src/e_atan2l.c src/e_fmodl.c
+    src/s_fmaxl.c src/s_fminl.c src/s_ilogbl.c
+    src/e_hypotl.c src/e_lgammal.c src/e_remainderl.c src/e_sqrtl.c
+    src/s_atanl.c src/s_ceill.c src/s_cosl.c src/s_cprojl.c
+    src/s_csqrtl.c src/s_floorl.c src/s_fmal.c
+    src/s_frexpl.c src/s_logbl.c src/s_nexttoward.c
+    src/s_remquol.c src/s_roundl.c src/s_lroundl.c src/s_llroundl.c
+    src/s_cpowl.c src/s_cargl.c
+    src/s_sinl.c src/s_sincosl.c src/s_tanl.c src/s_truncl.c src/w_cabsl.c
+    src/s_nextafterl.c src/s_rintl.c src/s_scalbnl.c src/polevll.c
+    src/s_casinl.c src/s_ctanl.c
+    src/s_cimagl.c src/s_conjl.c src/s_creall.c src/s_cacoshl.c src/s_catanhl.c src/s_casinhl.c
+    src/s_catanl.c src/s_csinl.c src/s_cacosl.c src/s_cexpl.c src/s_csinhl.c src/s_ccoshl.c
+    src/s_clogl.c src/s_ctanhl.c src/s_ccosl.c src/s_cbrtl.c
+    ld80/invtrig.c
+    ld80/e_acoshl.c ld80/e_powl.c ld80/k_tanl.c ld80/s_exp2l.c
+    ld80/e_atanhl.c ld80/e_lgammal_r.c ld80/e_sinhl.c ld80/s_asinhl.c ld80/s_expm1l.c
+    ld80/e_coshl.c ld80/e_log10l.c ld80/e_tgammal.c
+    ld80/e_expl.c ld80/e_log2l.c ld80/k_cosl.c ld80/s_log1pl.c ld80/s_tanhl.c
+    ld80/e_logl.c ld80/k_sinl.c ld80/s_erfl.c ld80/s_nanl.c)
+if(PUREDARWIN_ARCH STREQUAL "arm64")
+    set_source_files_properties(${_openlibm_long_double_sources}
+        PROPERTIES HEADER_FILE_ONLY TRUE)
+    # The ARM fenv implementation is provided by the public compiler/runtime
+    # ABI; openlibm has no separate ARM source file in this tree.
+    set_source_files_properties(amd64/fenv.c PROPERTIES HEADER_FILE_ONLY TRUE)
+endif()
+
 set_target_properties(openlibm_static PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 get_target_property(_openlibm_copts openlibm_static COMPILE_OPTIONS)
@@ -116,7 +147,10 @@ if(_openlibm_copts)
     set_target_properties(openlibm_static PROPERTIES COMPILE_OPTIONS "${_openlibm_copts}")
 endif()
 
-target_compile_options(openlibm_static PRIVATE -isysroot ${PUREDARWIN_MACOSX_SDK} -Wno-implicit-function-declaration)
+target_compile_options(openlibm_static PRIVATE
+    -isysroot ${PUREDARWIN_MACOSX_SDK}
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/src/cdefs-compat.h
+    -Wno-implicit-function-declaration)
 target_compile_definitions(openlibm_static PRIVATE
     __PUREDARWIN__=1
     __BSD_VISIBLE=1

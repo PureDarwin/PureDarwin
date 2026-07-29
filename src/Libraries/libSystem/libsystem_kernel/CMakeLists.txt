@@ -119,6 +119,7 @@ target_sources(libsystem_kernel_static PRIVATE
     wrappers/mach_continuous_time.c
     wrappers/mach_get_times.c
     wrappers/mach_timebase_info.c
+    wrappers/mremap_encrypted.c
     wrappers/open-base.c
     wrappers/open_dprotected_np.c
     wrappers/persona.c

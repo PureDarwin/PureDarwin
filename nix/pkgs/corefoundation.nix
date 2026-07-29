@@ -4,6 +4,7 @@
 , cmake
 , ninja
 , darwinCrossToolchain
+, targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , llvmPackages
 , libSystem
@@ -43,9 +44,9 @@ stdenv.mkDerivation {
 
     mkdir -p placeholder-libs
     echo 'static int puredarwin_placeholder;' > placeholder-libs/placeholder.c
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang -isysroot "$DARWIN_SDK_ROOT" -c placeholder-libs/placeholder.c -o placeholder-libs/placeholder.o
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar crs placeholder-libs/libBlocksRuntime.a placeholder-libs/placeholder.o
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar crs placeholder-libs/libdispatch.a placeholder-libs/placeholder.o
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang -isysroot "$DARWIN_SDK_ROOT" -c placeholder-libs/placeholder.c -o placeholder-libs/placeholder.o
+    ${darwinCrossToolchain}/bin/${targetTriple}-ar crs placeholder-libs/libBlocksRuntime.a placeholder-libs/placeholder.o
+    ${darwinCrossToolchain}/bin/${targetTriple}-ar crs placeholder-libs/libdispatch.a placeholder-libs/placeholder.o
 
     # Foundation is not built as a library here (CF only needs its headers to
     # compile Bridging.subproj/__NSCFType.m, which is the ObjC toll-free
@@ -66,6 +67,7 @@ stdenv.mkDerivation {
     cmake -S . -B build -G Ninja \
       -DCMAKE_TOOLCHAIN_FILE=${../../cmake/nix-toolchain.cmake} \
       -DNIX_DARWIN_TOOLCHAIN_DIR=${darwinCrossToolchain}/bin \
+      -DNIX_DARWIN_HOST=${targetTriple} \
       -DNIX_DARWIN_SDK_ROOT=$DARWIN_SDK_ROOT \
       -DBUILD_SHARED_LIBS=ON \
       -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \

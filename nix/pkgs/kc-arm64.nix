@@ -1,4 +1,9 @@
-{ stdenv, lib, kcTools, kernel, kexts, classic ? false }:
+{ stdenv
+, lib
+, kcTools
+, kernel
+, kexts
+}:
 
 stdenv.mkDerivation {
   pname = "puredarwin-kc-arm64";
@@ -30,8 +35,24 @@ stdenv.mkDerivation {
       -kext "$KEXTS/ext4.kext" \
       -kext "$KEXTS/AppleFileSystemDriver.kext" \
       -kext "$KEXTS/Ext4FileSystemDriver.kext" \
+      -kext "$KEXTS/msdosfs.kext" \
+      -kext "$KEXTS/apfs.kext" \
+      -kext "$KEXTS/HFSEncodings.kext" \
+      -kext "$KEXTS/hfs.kext" \
+      -kext "$KEXTS/IONVMEFamily.kext" \
+      -kext "$KEXTS/IOHIDFamily.kext" \
+      -kext "$KEXTS/IOUSBFamily.kext" \
+      -kext "$KEXTS/IOUSBCompositeDriver.kext" \
+      -kext "$KEXTS/AppleUSBMergeNub.kext" \
+      -kext "$KEXTS/IOUSBHIDDriver.kext" \
+      -kext "$KEXTS/AppleUSBEHCI.kext" \
+      -kext "$KEXTS/AppleUSBOHCI.kext" \
+      -kext "$KEXTS/RavynXHCIPort.kext" \
+      -kext "$KEXTS/IONetworkingFamily.kext" \
+      -kext "$KEXTS/IOVirtIOFamily.kext" \
+      -kext "$KEXTS/IOVirtIOGPU.kext" \
+      -kext "$KEXTS/IOVirtIONet.kext" \
       "''${codeless[@]}" \
-      ${lib.optionalString classic "-classic"} \
       -o kernel
     runHook postBuild
   '';

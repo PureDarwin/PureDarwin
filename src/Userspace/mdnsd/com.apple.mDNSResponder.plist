@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.apple.mDNSResponder</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/sbin/mdnsd</string>
+		<!--
+		    PosixDaemon.c calls daemon(0,0) unless mDNS_DebugMode is set, and
+		    a daemon that forks away cannot be supervised by launchd. -debug
+		    is the only flag it accepts and does exactly two things: skip that
+		    fork, and send LogMsg() to stderr instead of syslog (see
+		    mDNSDebug.h) - no behavioural change, which is what we want here.
+		-->
+		<string>-debug</string>
+	</array>
+	<!-- -debug sends LogMsg() to stderr; capture it so resolver failures are
+	     diagnosable (mdnsd is where every hostname lookup goes - libinfo's
+	     search order is cache, mdns, file). -->
+	<key>StandardOutPath</key>
+	<string>/var/log/mdnsd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/mdnsd.log</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+</dict>
+</plist>

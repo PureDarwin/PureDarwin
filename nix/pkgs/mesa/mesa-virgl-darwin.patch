@@ -74,3 +74,34 @@
    subdir('winsys/virgl/vtest')
    subdir('drivers/virgl')
  else
+--- a/src/mesa/state_tracker/st_manager.c
++++ b/src/mesa/state_tracker/st_manager.c
+@@ -958,6 +958,17 @@
+    struct gl_config mode, *mode_ptr = &mode;
+    bool no_error = false;
+ 
++   /* A frontend whose screen creation failed still reaches here with a NULL
++    * screen: sw_screen_create_named() returns NULL when the driver named by
++    * GALLIUM_DRIVER was not linked into this target, and neither the OSMesa
++    * nor the GLX frontend checks before calling in. Report the failure rather
++    * than faulting on screen->context_create.
++    */
++   if (fscreen == NULL || fscreen->screen == NULL) {
++      *error = ST_CONTEXT_ERROR_NO_MEMORY;
++      return NULL;
++   }
++
+    _mesa_initialize(attribs->options.mesa_extension_override);
+ 
+    /* Create a hash table for the framebuffer interface objects
+--- a/src/gallium/frontends/osmesa/osmesa.c
++++ b/src/gallium/frontends/osmesa/osmesa.c
+@@ -639,7 +639,7 @@
+       osmesa->accum_format = PIPE_FORMAT_R16G16B16A16_SNORM;
+    }
+    if (depthBits > 0 && stencilBits > 0) {
+-      osmesa->depth_stencil_format = PIPE_FORMAT_Z24_UNORM_S8_UINT;
++      osmesa->depth_stencil_format = PIPE_FORMAT_S8_UINT_Z24_UNORM;
+    }
+    else if (stencilBits > 0) {
+       osmesa->depth_stencil_format = PIPE_FORMAT_S8_UINT;

@@ -175,7 +175,10 @@ UInt32 AppleUSBEHCI::opRead32(UInt32 offset)
 void AppleUSBEHCI::opWrite32(UInt32 offset, UInt32 value)
 {
     *(volatile UInt32 *)(_opRegs + offset) = value;
-    __asm__ __volatile__("mfence" : : : "memory");
+    /* Full barrier after an MMIO write. __sync_synchronize() rather than
+     * a bare mfence so this controller also builds for arm64, where
+     * EHCI/OHCI are common on-SoC. */
+    __sync_synchronize();
 }
 
 bool AppleUSBEHCI::mapEHCIRegisters(IOPCIDevice *provider)
@@ -758,7 +761,7 @@ IOReturn AppleUSBEHCI::interruptTransfer(IOMemoryDescriptor *buffer,
         _intrQH->bufferPtr[i] = 0;
         _intrQH->extBufferPtr[i] = 0;
     }
-    __asm__ __volatile__("mfence" : : : "memory");
+    __sync_synchronize();
 
     IOReturn ret = waitForQTD(td, 20);
     UInt32 token = USBToHostLong(td->flags);

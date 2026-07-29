@@ -8,12 +8,14 @@
 #define QEMUVIRT_BRINGUP
 #define ARM_ARCH_TIMER
 
+#define __ARM_16K_PG__            1
 #define __ARM_ARCH__              8
 #define __ARM_VMSA__              8
 #define __ARM_VFP__               4
 #define __ARM_COHERENT_CACHE__    1
 #define __ARM_DEBUG__             7
 #define __ARM64_PMAP_SUBPAGE_L1__ 1
+#define __ARM_PAN_AVAILABLE__ 1
 
 #ifndef ASSEMBLER
 

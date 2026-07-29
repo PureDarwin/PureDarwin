@@ -2,6 +2,7 @@
 , lib
 , requireFile
 , darwinCrossToolchain
+, targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , libSystem
 , libcxxabiDylib
@@ -19,7 +20,7 @@ let
     '';
   };
 
-  cc = "${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang";
+  cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang";
 
   cxxSrcs = [
     "algorithm" "any" "bind" "charconv" "chrono" "condition_variable"

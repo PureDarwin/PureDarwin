@@ -53,7 +53,11 @@ set_source_files_properties(${DYLD_SRC_DIR}/src/dyld_stub_binder.s PROPERTIES
     LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp")
 
 set(_pd_cpu_caps_redirect ${CMAKE_CURRENT_BINARY_DIR}/compat-include/System/machine/cpu_capabilities.h)
-set(_pd_cpu_caps_real ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/i386/cpu_capabilities.h)
+if(PUREDARWIN_ARM64)
+    set(_pd_cpu_caps_real ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/arm/cpu_capabilities.h)
+else()
+    set(_pd_cpu_caps_real ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/i386/cpu_capabilities.h)
+endif()
 file(WRITE ${_pd_cpu_caps_redirect} "#include \"${_pd_cpu_caps_real}\"\n")
 
 target_include_directories(libdyld PRIVATE

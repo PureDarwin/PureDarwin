@@ -76,6 +76,9 @@
 #endif	/* __STDC__ */
 #endif	/* __ELF__ */
 #endif  /* __weak_reference */
+#ifndef __strong_alias
+#define __strong_alias(sym, aliassym) __strong_reference(sym, aliassym)
+#endif
 #endif	/* __GNUC__ */
 
 

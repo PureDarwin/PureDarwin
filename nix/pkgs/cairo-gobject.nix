@@ -7,6 +7,7 @@
 , cairo
 , cairoReal
 , glib
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -39,7 +40,7 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
 
-    CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
+    CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
 
     SRC=$(echo */util/cairo-gobject)
     touch "$SRC/config.h"

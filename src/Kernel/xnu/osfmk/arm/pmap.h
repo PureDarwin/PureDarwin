@@ -283,6 +283,9 @@ extern pmap_paddr_t get_mmu_ttb(void);
 extern pmap_paddr_t mmu_kvtop(vm_offset_t va);
 extern pmap_paddr_t mmu_kvtop_wpreflight(vm_offset_t va);
 extern pmap_paddr_t mmu_uvtop(vm_offset_t va);
+#if defined(__arm64__)
+extern pmap_paddr_t mmu_uvtop_wtop(vm_offset_t va);
+#endif
 
 #if (__ARM_VMSA__ <= 7)
 /* Convert address offset to translation table index */

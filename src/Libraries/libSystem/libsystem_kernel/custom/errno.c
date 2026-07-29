@@ -48,12 +48,29 @@ extern void _pthread_exit_if_canceled(int error);
 #undef errno
 int errno;
 
+/*
+ * Whether the thread-specific data area is usable yet.
+ *
+ * On arm/arm64 the TSD base is an ordinary pointer held in TPIDRRO_EL0, and it
+ * stays null until libpthread registers one.  dyld runs well before that, so a
+ * syscall failing during early startup would otherwise fault dereferencing slot
+ * zero rather than reporting its error.  x86 reaches the TSD through %gs, where
+ * the base is a segment-relative literal zero and must not be tested this way.
+ */
+#if defined(__arm__) || defined(__arm64__)
+#define _os_tsd_is_initialized() (_os_tsd_get_base() != NULL)
+#else
+#define _os_tsd_is_initialized() 1
+#endif
+
 int *
 __error(void)
 {
-	void *ptr = _os_tsd_get_direct(__TSD_ERRNO);
-	if (ptr != NULL) {
-		return (int*)ptr;
+	if (_os_tsd_is_initialized()) {
+		void *ptr = _os_tsd_get_direct(__TSD_ERRNO);
+		if (ptr != NULL) {
+			return (int*)ptr;
+		}
 	}
 	return &errno;
 }
@@ -63,9 +80,11 @@ cerror_return_t
 cerror_nocancel(int err)
 {
 	errno = err;
-	int *tsderrno = (int*)_os_tsd_get_direct(__TSD_ERRNO);
-	if (tsderrno) {
-		*tsderrno = err;
+	if (_os_tsd_is_initialized()) {
+		int *tsderrno = (int*)_os_tsd_get_direct(__TSD_ERRNO);
+		if (tsderrno) {
+			*tsderrno = err;
+		}
 	}
 	return -1;
 }

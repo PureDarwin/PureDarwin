@@ -2,6 +2,7 @@
 , lib
 , requireFile
 , darwinCrossToolchain
+, targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , libSystem
 , corefoundation
@@ -33,7 +34,7 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
 
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" \
       -I${libSystem}/pd-xpc-dev/include \
       -I${corefoundation}/include \
@@ -53,7 +54,7 @@ stdenv.mkDerivation {
       ${src}/src/Libraries/XPC/launchd/pd_launchd_main.c \
       -o launchd
 
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib \

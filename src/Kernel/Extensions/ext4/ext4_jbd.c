@@ -1,31 +1,5 @@
 /*
  * ext4_jbd.c - JBD2 journal: replay on mount, write-ahead commit per vnop.
- *
- * Design: the driver's metadata writes are all synchronous and run under the
- * mount-wide em_fs_lock, so a "transaction" is simply every metadata block
- * written between the outermost ext4_fs_lock/ext4_fs_unlock pair (one vnop).
- * ext4_meta_bwrite() does NOT write in place immediately: it copies the block
- * into the open transaction and releases the buffer (contents stay visible to
- * later reads via the buf cache, and ext4_blkread() overlays the transaction
- * copy in case the cache dropped it). At commit time (outermost unlock):
- *
- *   1. journal superblock marked dirty (s_start=s_first, s_sequence=N)
- *   2. descriptor block(s) + escaped data blocks + commit block, sequence N
- *   3. device cache flush            (journal is now durable)
- *   4. every logged block written in place
- *   5. device cache flush            (in-place state is now durable)
- *   6. journal superblock s_sequence=N+1 (s_start stays s_first)
- *
- * If step 6 is lost, replay re-applies transaction N - idempotent, since this
- * is physical block journaling. A crash before step 3 completes leaves a
- * partial/absent transaction N with no in-place writes issued at all, so the
- * fs stays at the pre-vnop state. A crash between 3 and 5 is exactly what
- * replay repairs.
- *
- * Format compatibility: mke2fs with metadata_csum creates a v2 journal
- * superblock with JBD2_FEATURE_INCOMPAT_CSUM_V3; we read and write those
- * checksums (crc32c, seed = crc32c(~0, jsb uuid)). Legacy uncsummed and
- * 64BIT-tag journals are handled on the replay side too.
  */
 #include "ext4.h"
 #include <sys/buf.h>

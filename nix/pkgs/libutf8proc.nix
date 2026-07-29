@@ -5,6 +5,7 @@
 , nativeLd
 , libSystem
 , libutf8proc
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -29,7 +30,7 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
 
-    CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
+    CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
 
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -DUTF8PROC_EXPORTS -Iinclude/libutf8proc -I${libSystem}/usr/include"
 

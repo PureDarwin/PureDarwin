@@ -18,6 +18,13 @@ int sandbox_init(const char *profile, uint64_t flags, char **errorbuf);
 #define SANDBOX_CHECK_NO_REPORT 0x0001
 int sandbox_check_by_audit_token(audit_token_t audit, const char *operation, sandbox_filter_type_t type, ...);
 
+/*
+ * Chain to the SDK's sandbox.h when there is one. Targets built -nostdinc
+ * (configd) have no later sandbox.h on the path, and the declarations above are
+ * all they need.
+ */
+#if __has_include_next(<sandbox.h>)
 #include_next <sandbox.h>
+#endif
 
 #endif /* _PD_SANDBOX_COMPAT_H_ */

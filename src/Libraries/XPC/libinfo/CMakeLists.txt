@@ -13,7 +13,18 @@ target_sources(XPC_libinfo_static PRIVATE
     getnameinfo_link.c
     if_indextoname.c
     ils.c
-    pd_mdns_module_stub.c
+    mdns_module.c
+    dns.subproj/herror.c
+    gen.subproj/vars.c
+    gen.subproj/getifaddrs.c
+    # Real if_nametoindex (built on getifaddrs above). The pd_net_compat.c stub
+    # returned 0 = "not found" for every name, which made mDNSPosix's
+    # SetupInterfaceList() 'continue' past every interface, so mDNS_Init()
+    # failed even once getifaddrs worked.
+    gen.subproj/if_nametoindex.c
+    # Real ether_aton/ether_ntoa/ether_line (was libc/net/pd_ether_addr.c,
+    # which had no ether_line and formatted octets without zero-padding).
+    gen.subproj/ether_addr.c
 )
 
 target_compile_definitions(XPC_libinfo_static PRIVATE __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
@@ -25,6 +36,8 @@ target_compile_options(XPC_libinfo_static PRIVATE
 target_include_directories(XPC_libinfo_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/compat
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../mDNSResponder/mDNSShared
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libresolv/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libc/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libc/darwin

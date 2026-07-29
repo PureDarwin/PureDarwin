@@ -37,7 +37,11 @@ extern int __pd_fcntl_syscall(int fd, int cmd, long arg) __asm("___fcntl");
 extern int __pd_getrlimit_unix2003(int resource, struct rlimit *rlp) __asm("_getrlimit$UNIX2003");
 extern int __pd_mprotect_default(void *addr, size_t len, int prot) __asm("_mprotect");
 extern int __pd_open_unix2003(const char *path, int flags, mode_t mode) __asm("_open$UNIX2003");
+#if defined(__arm64__) || defined(__aarch64__)
+extern DIR *__pd_opendir_native(const char *path) __asm("_opendir");
+#else
 extern DIR *__pd_opendir_inode64(const char *path) __asm("_opendir$INODE64");
+#endif
 extern ssize_t __pd_pread_default(int fd, void *buf, size_t nbyte, off_t offset) __asm("_pread");
 extern ssize_t __pd_write_default(int fd, const void *buf, size_t nbyte) __asm("_write");
 extern int __pd_pthread_cond_wait_unix2003(pthread_cond_t *cond, pthread_mutex_t *mutex) __asm("_pthread_cond_wait$UNIX2003");
@@ -100,7 +104,11 @@ int __pd_open_default(const char *path, int flags, ...)
 DIR *__pd_opendir_inode64_unix2003(const char *path) __asm("_opendir$INODE64$UNIX2003");
 DIR *__pd_opendir_inode64_unix2003(const char *path)
 {
+#if defined(__arm64__) || defined(__aarch64__)
+	return __pd_opendir_native(path);
+#else
 	return __pd_opendir_inode64(path);
+#endif
 }
 
 ssize_t __pd_pread_unix2003(int fd, void *buf, size_t nbyte, off_t offset) __asm("_pread$UNIX2003");
@@ -145,11 +153,13 @@ int __pd_pthread_rwlock_wrlock_default(pthread_rwlock_t *rwlock)
 	return __pd_pthread_rwlock_wrlock_unix2003(rwlock);
 }
 
+#if !defined(__arm64__) && !defined(__aarch64__)
 size_t __pd_fwrite_default(const void *ptr, size_t size, size_t nitems, FILE *stream) __asm("_fwrite");
 size_t __pd_fwrite_default(const void *ptr, size_t size, size_t nitems, FILE *stream)
 {
 	return __pd_fwrite_unix2003(ptr, size, nitems, stream);
 }
+#endif
 
 /* AMFI: grant every dyld capability. */
 int amfi_check_dyld_policy_self(uint64_t input_flags, uint64_t *output_flags)

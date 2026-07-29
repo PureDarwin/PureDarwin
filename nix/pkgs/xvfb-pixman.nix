@@ -9,9 +9,12 @@
 , nativeLd
 , libSystem
 , pixman
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
+  targetInfo = import ../lib/target-info.nix targetTriple;
+
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -39,9 +42,9 @@ stdenv.mkDerivation {
 
     cat > puredarwin-cross.ini <<EOF
 [binaries]
-c = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang'
-ar = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar'
-strip = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip'
+c = '${darwinCrossToolchain}/bin/${targetTriple}-clang'
+ar = '${darwinCrossToolchain}/bin/${targetTriple}-ar'
+strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
 
 [built-in options]
@@ -50,9 +53,9 @@ c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '
 
 [host_machine]
 system = 'darwin'
-cpu_family = 'x86_64'
-cpu = 'x86_64'
-endian = 'little'
+cpu_family = '${targetInfo.mesonCpuFamily}'
+cpu = '${targetInfo.mesonCpu}'
+endian = '${targetInfo.mesonEndian}'
 EOF
 
     meson setup build \

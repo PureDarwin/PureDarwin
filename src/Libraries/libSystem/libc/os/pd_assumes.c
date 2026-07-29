@@ -16,6 +16,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <CrashReporterClient.h>
+/* os_log_pack_t, for _os_crash_fmt() below. By path: <os/log_private.h> finds
+ * xnu's kernel-side copy on libc's include path, not this userspace shim. */
+#include "../pd-compat-include/os/log_private.h"
 
 void
 _os_assumes_log(uint64_t code)
@@ -54,4 +57,29 @@ _os_crash(const char *message)
     fprintf(stderr, "PureDarwin: fatal: %s\n", message);
     CRSetCrashLogMessage(message);
     abort();
+}
+
+/*
+ * The os_crash() variant that takes format arguments (os/assumes.h's
+ * OS_CRASH_ENABLE_EXPERIMENTAL_LIBTRACE path, which libdarwin uses) packs the
+ * message into an os_log_pack and calls this. Real assumes.c renders the pack
+ * through os_log_pack_send_and_compose(); the format string is the part that
+ * reaches a customer crash log either way, so report that and abort as
+ * _os_crash() above does.
+ */
+void
+_os_crash_fmt(os_log_pack_t pack, size_t pack_size)
+{
+    (void)pack_size;
+    _os_crash((pack != NULL && pack->format != NULL)
+        ? pack->format : "(no message)");
+}
+
+/*
+ * Called after a noreturn crash path so the compiler cannot turn the preceding
+ * call into a tail call, which would lose the caller's frame in the crash log.
+ */
+void
+_os_avoid_tail_call(void)
+{
 }

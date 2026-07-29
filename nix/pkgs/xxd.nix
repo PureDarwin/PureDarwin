@@ -5,6 +5,7 @@
 , nativeLd
 , libSystem
 , tinyxxd
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -33,7 +34,7 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -std=c11 \
       -isysroot "$DARWIN_SDK_ROOT" \
       -mmacosx-version-min=11.0 \

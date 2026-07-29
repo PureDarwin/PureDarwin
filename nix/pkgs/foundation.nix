@@ -7,6 +7,7 @@
 , libobjc
 , corefoundation
 , src
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 # Cross-builds the small real slice of Foundation vendored at
@@ -27,7 +28,7 @@ let
     '';
   };
 
-  cc = "${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang";
+  cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang";
   mmSrcs = [
     "String.subproj/NSString"
     "String.subproj/NSCFString"

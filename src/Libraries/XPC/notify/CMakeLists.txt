@@ -106,6 +106,11 @@ target_sources(notifyd PRIVATE
     pd_sandbox_check.c
 )
 target_compile_definitions(notifyd PRIVATE __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
+if(PUREDARWIN_ARM64)
+    target_compile_definitions(notifyd PRIVATE
+        __DARWIN_ONLY_VERS_1050=1
+        __DARWIN_ONLY_64_BIT_INO_T=1)
+endif()
 target_compile_options(notifyd PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libplatform/pd_bridgeos_compat.h>
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/pd_notifyd_compat.h>

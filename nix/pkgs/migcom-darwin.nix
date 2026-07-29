@@ -6,6 +6,7 @@
 , darwinCrossToolchain
 , nativeLd
 , libSystem
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -43,7 +44,7 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
 
-    CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
+    CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
 
     CFLAGS="-std=gnu89 -D__private_extern__= -DMIG_VERSION=\"0.1\" -isysroot $DARWIN_SDK_ROOT -I. -I${libSystem}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
     LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"

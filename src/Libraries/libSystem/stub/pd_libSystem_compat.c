@@ -22,6 +22,8 @@
 #include <mach/vm_types.h>
 #include <mach-o/loader.h>
 #include <sys/qos.h>
+#include <limits.h>
+#include <sysdir.h>
 
 extern int __pd_sys_pause(void) __asm("___pause");
 extern pid_t __pd_sys_waitpid(pid_t pid, int *status, int options) __asm("___waitpid");
@@ -135,24 +137,6 @@ __pd_fopen_extsn(const char *path, const char *mode)
     return fopen(path, mode);
 }
 
-extern void __pd_syslog_extsn(int priority, const char *format, ...) __asm("_syslog$DARWIN_EXTSN");
-extern void vsyslog(int priority, const char *format, va_list ap);
-
-void
-__pd_syslog_extsn(int priority, const char *format, ...)
-{
-    /* curl was compiled against the real SDK's syslog.h, which renames the
-     * declaration to this mangled name via __DARWIN_ALIAS - our own
-     * gen/oldsyslog.c syslog() is the plain (unrenamed) symbol, so just
-     * forward. va_list can't cross a varargs call boundary portably, so
-     * reimplement via vsyslog instead of calling syslog(priority, format...). */
-    va_list ap;
-    va_start(ap, format);
-    vsyslog(priority, format, ap);
-    va_end(ap);
-}
-
-
 /* This fork's sys/cdefs.h stubs __weak_reference to a no-op (needed for
  * static archive linking), so s_scalbn.c's `__strong_reference(scalbn,
  * ldexp)` alias never gets pulled in unless something references it by name
@@ -233,51 +217,6 @@ char *index(const char *s, int c)
     return __builtin_strchr(s, c);
 }
 
-/*
- * Minimal terminfo shims. On real Darwin these live in libncurses; PureDarwin
- * has neither an ncurses library nor a compiled terminfo database. xterm links
- * ncurses' setupterm()/tigetstr()/del_curterm()/cur_term for its *optional*
- * termcap-query and function-key feature (xtermcap.c, OPT_TCAP_*), and dyld
- * aborts at load if these flat-namespace symbols resolve nowhere. Provide just
- * enough to satisfy the linker and behave as "no terminal capabilities found":
- * setupterm succeeds so xterm's TcapInit passes, but every tigetstr() lookup
- * reports the capability absent, so no bogus escape sequences are invented.
- */
-void *cur_term = NULL;
-
-int
-setupterm(const char *term, int filedes, int *errret)
-{
-    (void)term;
-    (void)filedes;
-    if (errret != NULL) {
-        *errret = 1;            /* 1 == success, per the terminfo convention */
-    }
-    return 0;                   /* OK */
-}
-
-char *
-tigetstr(const char *capname)
-{
-    (void)capname;
-    return (char *)-1;          /* (char *)-1 == capability absent/cancelled */
-}
-
-int
-del_curterm(void *oterm)
-{
-    (void)oterm;
-    return 0;                   /* OK */
-}
-
-/* ncurses use_extended_names(): xterm calls it to toggle extended terminfo
- * capability names. With no terminfo backend there is nothing to toggle. */
-int
-use_extended_names(int enable)
-{
-    (void)enable;
-    return 0;
-}
 
 /*
  * The rest of this file back-fills libc/libutil/libinfo functions that xterm
@@ -299,40 +238,9 @@ use_extended_names(int enable)
 #include <wchar.h>
 #include <wctype.h>
 
-/* Group-database iteration xterm touches on its setuid path (which PureDarwin
- * builds with --disable-setuid). Minimal, well-behaved stub. */
-void
-endgrent(void)
-{
-}
 
-int
-initgroups(const char *name, int basegid)
-{
-    (void)name;
-    (void)basegid;
-    return 0;
-}
 
-struct hostent *
-gethostbyaddr(const void *addr, socklen_t len, int type)
-{
-    (void)addr;
-    (void)len;
-    (void)type;
-    return NULL;                /* no reverse resolver; caller falls back */
-}
 
-char *
-nl_langinfo(int item)
-{
-    /* CODESET is nl_langinfo item 0 on Darwin; report UTF-8 so xterm selects
-     * its wide-character path. Everything else: empty string. */
-    if (item == 0) {
-        return (char *)"UTF-8";
-    }
-    return (char *)"";
-}
 
 static void
 pd_pwcopy(struct passwd *dst, const struct passwd *src,
@@ -373,33 +281,7 @@ pd_pwcopy(struct passwd *dst, const struct passwd *src,
     *result = dst;
 }
 
-int
-getpwuid_r(uid_t uid, struct passwd *pwd, char *buffer, size_t bufsize,
-           struct passwd **result)
-{
-    struct passwd *found = getpwuid(uid);
 
-    if (found == NULL) {
-        *result = NULL;
-        return 0;               /* not found is not an error */
-    }
-    pd_pwcopy(pwd, found, buffer, bufsize, result);
-    return (*result == NULL) ? ERANGE : 0;
-}
-
-int
-getpwnam_r(const char *login, struct passwd *pwd, char *buffer, size_t bufsize,
-           struct passwd **result)
-{
-    struct passwd *found = getpwnam(login);
-
-    if (found == NULL) {
-        *result = NULL;
-        return 0;
-    }
-    pd_pwcopy(pwd, found, buffer, bufsize, result);
-    return (*result == NULL) ? ERANGE : 0;
-}
 
 /*
  * PureDarwin's libc archive ships none of the Unix98 pty helpers, so provide
@@ -417,50 +299,10 @@ getpwnam_r(const char *login, struct passwd *pwd, char *buffer, size_t bufsize,
 #define TIOCPTYUNLK _IO('t', 82)
 #endif
 
-int
-posix_openpt(int oflag)
-{
-    return open("/dev/ptmx", oflag);
-}
 
-int
-grantpt(int fildes)
-{
-    return ioctl(fildes, TIOCPTYGRANT);
-}
 
-int
-unlockpt(int fildes)
-{
-    return ioctl(fildes, TIOCPTYUNLK);
-}
 
-char *
-ptsname(int fildes)
-{
-    static char buffer[128];
 
-    if (ioctl(fildes, TIOCPTYGNAME, buffer) < 0) {
-        return NULL;
-    }
-    return buffer;
-}
-
-int
-ptsname_r(int fildes, char *buffer, size_t buflen)
-{
-    char name[128];
-
-    if (ioctl(fildes, TIOCPTYGNAME, name) < 0) {
-        return -1;
-    }
-    if (strlen(name) >= buflen) {
-        errno = ERANGE;
-        return -1;
-    }
-    strcpy(buffer, name);
-    return 0;
-}
 
 /*
  * popen$DARWIN_EXTSN: xterm references the versioned symbol (the SDK's
@@ -646,33 +488,7 @@ pd_grcopy(struct group *dst, const struct group *src,
     *result = dst;
 }
 
-int
-getgrnam_r(const char *name, struct group *grp, char *buffer, size_t bufsize,
-           struct group **result)
-{
-    struct group *found = getgrnam(name);
 
-    if (found == NULL) {
-        *result = NULL;
-        return 0;
-    }
-    pd_grcopy(grp, found, buffer, bufsize, result);
-    return (*result == NULL) ? ERANGE : 0;
-}
-
-int
-getgrgid_r(gid_t gid, struct group *grp, char *buffer, size_t bufsize,
-           struct group **result)
-{
-    struct group *found = getgrgid(gid);
-
-    if (found == NULL) {
-        *result = NULL;
-        return 0;
-    }
-    pd_grcopy(grp, found, buffer, bufsize, result);
-    return (*result == NULL) ? ERANGE : 0;
-}
 
 extern int __pd_getgroups(int gidsetsize, gid_t grouplist[]) __asm("_getgroups");
 int __pd_getgroups_extsn(int gidsetsize, gid_t grouplist[]) __asm("_getgroups$DARWIN_EXTSN");
@@ -705,92 +521,7 @@ statvfs(const char *path, struct statvfs *buf)
     return 0;
 }
 
-static const char *
-pd_strptime_num(const char *s, int mindigits, int maxdigits, int *out)
-{
-    int n = 0, count = 0;
 
-    while (count < maxdigits && *s >= '0' && *s <= '9') {
-        n = n * 10 + (*s - '0');
-        s++;
-        count++;
-    }
-    if (count < mindigits)
-        return NULL;
-    *out = n;
-    return s;
-}
-
-char *
-strptime(const char *s, const char *format, struct tm *tm)
-{
-    int val;
-
-    while (*format) {
-        if (*format == '%' && format[1]) {
-            format++;
-            switch (*format) {
-            case 'Y':
-                s = pd_strptime_num(s, 1, 4, &val);
-                if (!s) return NULL;
-                tm->tm_year = val - 1900;
-                break;
-            case 'y':
-                s = pd_strptime_num(s, 1, 2, &val);
-                if (!s) return NULL;
-                tm->tm_year = (val < 69) ? val + 100 : val;
-                break;
-            case 'm':
-                s = pd_strptime_num(s, 1, 2, &val);
-                if (!s) return NULL;
-                tm->tm_mon = val - 1;
-                break;
-            case 'd':
-                s = pd_strptime_num(s, 1, 2, &val);
-                if (!s) return NULL;
-                tm->tm_mday = val;
-                break;
-            case 'H':
-                s = pd_strptime_num(s, 1, 2, &val);
-                if (!s) return NULL;
-                tm->tm_hour = val;
-                break;
-            case 'M':
-                s = pd_strptime_num(s, 1, 2, &val);
-                if (!s) return NULL;
-                tm->tm_min = val;
-                break;
-            case 'S':
-                s = pd_strptime_num(s, 1, 2, &val);
-                if (!s) return NULL;
-                tm->tm_sec = val;
-                break;
-            case '%':
-                if (*s != '%') return NULL;
-                s++;
-                break;
-            case 'n':
-            case 't':
-                while (*s == ' ' || *s == '\t' || *s == '\n')
-                    s++;
-                break;
-            default:
-                return NULL;   /* unsupported specifier */
-            }
-            format++;
-        } else if (*format == ' ') {
-            while (*s == ' ' || *s == '\t')
-                s++;
-            format++;
-        } else {
-            if (*s != *format)
-                return NULL;
-            s++;
-            format++;
-        }
-    }
-    return (char *)s;
-}
 
 int
 pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void))
@@ -811,19 +542,94 @@ issetugid(void)
     return 0;
 }
 
-typedef unsigned int sysdir_search_path_enumeration_state;
+/*
+ * sysdir(3)
+ *
+ * Enumerates a standard directory across the domains it exists in, cheapest
+ * domain first. The state is opaque to callers, so it just packs the directory
+ * selector with the domains left to visit; 0 ends the enumeration.
+ *
+ * Only the directories PureDarwin actually has are mapped. An unmapped
+ * directory yields no paths at all rather than a plausible-looking one, so a
+ * caller iterating it finds nothing instead of a path that never exists.
+ */
 
-sysdir_search_path_enumeration_state
-sysdir_start_search_path_enumeration(int dir, int domainMask)
+#define PD_SYSDIR_DIR_SHIFT     16
+#define PD_SYSDIR_DOMAIN_MASK   0xffffu
+
+static const char *
+pd_sysdir_suffix(unsigned int dir)
 {
-    (void)dir; (void)domainMask;
-    return 0;
+    switch (dir) {
+    case 5:   return "Library";                     /* SYSDIR_DIRECTORY_LIBRARY */
+    case 7:   return "Users";                       /* SYSDIR_DIRECTORY_USER */
+    case 8:   return "Library/Documentation";
+    case 10:  return "Library/CoreServices";
+    case 13:  return "Library/Caches";
+    case 14:  return "Library/Application Support";
+    case 1:   return "Applications";
+    case 4:   return "Applications/Utilities";
+    default:  return NULL;
+    }
+}
+
+static const char *
+pd_sysdir_domain_root(unsigned int domain_bit)
+{
+    switch (domain_bit) {
+    case 1u << 1: return "";            /* LOCAL:   /Library */
+    case 1u << 2: return "/Network";    /* NETWORK: /Network/Library */
+    case 1u << 3: return "/System";     /* SYSTEM:  /System/Library */
+    default:      return NULL;          /* USER needs $HOME, handled by caller */
+    }
 }
 
 sysdir_search_path_enumeration_state
-sysdir_get_next_search_path_enumeration(sysdir_search_path_enumeration_state state, char *path)
+sysdir_start_search_path_enumeration(sysdir_search_path_directory_t dir,
+                                     sysdir_search_path_domain_mask_t domainMask)
 {
-    (void)state; (void)path;
+    if (pd_sysdir_suffix((unsigned int)dir) == NULL) {
+        return 0;
+    }
+    return ((unsigned int)dir << PD_SYSDIR_DIR_SHIFT) |
+           ((unsigned int)domainMask & PD_SYSDIR_DOMAIN_MASK);
+}
+
+sysdir_search_path_enumeration_state
+sysdir_get_next_search_path_enumeration(sysdir_search_path_enumeration_state state,
+                                        char *path)
+{
+    unsigned int dir      = state >> PD_SYSDIR_DIR_SHIFT;
+    unsigned int domains  = state & PD_SYSDIR_DOMAIN_MASK;
+    const char  *suffix   = pd_sysdir_suffix(dir);
+
+    if ((state == 0) || (suffix == NULL) || (domains == 0) || (path == NULL)) {
+        return 0;
+    }
+
+    /* Visit the lowest set domain bit, then clear it for the next call. */
+    while (domains != 0) {
+        unsigned int  bit  = domains & (~domains + 1u);
+        const char   *root = pd_sysdir_domain_root(bit);
+
+        domains &= ~bit;
+
+        if (bit == (1u << 0)) {
+            const char *home = getenv("HOME");
+
+            if (home == NULL) {
+                continue;
+            }
+            snprintf(path, PATH_MAX, "%s/%s", home, suffix);
+        } else if (root != NULL) {
+            snprintf(path, PATH_MAX, "%s/%s", root, suffix);
+        } else {
+            continue;
+        }
+
+        return (dir << PD_SYSDIR_DIR_SHIFT) | domains;
+    }
+
     return 0;
 }
 
@@ -836,21 +642,18 @@ OSAtomicCompareAndSwapPtrBarrier(void *oldValue, void *newValue, void * volatile
 }
 
 /*
- * _os_log_create: os_log_create(subsystem, category) is a macro
- * (os/log.h) expanding to _os_log_create(&__dso_handle, subsystem,
- * category) - the real ABI symbol callers actually link against. os_log
- * itself needs a real logging daemon (logd) this OS doesn't have; return a
- * distinct non-NULL handle so callers that just check "did creation
- * succeed" work, and route actual logging through os_log_type_enabled
- * always reporting "disabled" (real Apple's own default-safe fallback
- * shape) rather than implementing a full os_log pipeline.
+ * _os_log_create: the symbol <os/log.h>'s os_log_create(subsystem, category)
+ * macro actually emits, with the caller's &__dso_handle prepended. The dso is
+ * not used; forward to the real implementation in libsystem_trace so callers
+ * get a genuine os_log_t - __os_log_impl() dereferences it.
  */
+extern void *os_log_create(const char *subsystem, const char *category);
+
 void *
 _os_log_create(void *dso, const char *subsystem, const char *category)
 {
-    (void)dso; (void)subsystem; (void)category;
-    static int dummy_log_handle;
-    return &dummy_log_handle;
+    (void)dso;
+    return os_log_create(subsystem, category);
 }
 
 typedef unsigned int __pd_mvr_kern_return_t;
@@ -891,6 +694,7 @@ __pd_readdir_r_plain(DIR *dirp, struct dirent *entry, struct dirent **result)
     return __pd_readdir_r_inode64(dirp, entry, result);
 }
 
+#if !defined(__arm64__) && !defined(__aarch64__)
 extern DIR *__pd_opendir_inode64(const char *name) __asm("_opendir$INODE64");
 DIR *__pd_opendir_plain(const char *name) __asm("_opendir");
 DIR *
@@ -899,56 +703,61 @@ __pd_opendir_plain(const char *name)
     return __pd_opendir_inode64(name);
 }
 
+extern void __pd_rewinddir_inode64(DIR *dirp) __asm("_rewinddir$INODE64");
+void __pd_rewinddir_plain(DIR *dirp) __asm("_rewinddir");
+void
+__pd_rewinddir_plain(DIR *dirp)
+{
+    __pd_rewinddir_inode64(dirp);
+}
+
+extern DIR *__pd_fdopendir_inode64(int fd) __asm("_fdopendir$INODE64");
+DIR *__pd_fdopendir_plain(int fd) __asm("_fdopendir");
+DIR *
+__pd_fdopendir_plain(int fd)
+{
+    return __pd_fdopendir_inode64(fd);
+}
+
+extern int __pd_alphasort_inode64(const struct dirent **a, const struct dirent **b)
+    __asm("_alphasort$INODE64");
+int __pd_alphasort_plain(const struct dirent **a, const struct dirent **b)
+    __asm("_alphasort");
+int
+__pd_alphasort_plain(const struct dirent **a, const struct dirent **b)
+{
+    return __pd_alphasort_inode64(a, b);
+}
+
 /*
- * asl(3) client API: fully __API_DEPRECATED in favor of os_log even on
- * real macOS (see asl.h) - CF only calls it as a last-resort logging
- * fallback. No asl daemon exists here either way, so this is a genuine
- * no-op client: asl_open/asl_new return a distinct non-NULL handle (so
- * callers don't treat creation itself as a failure), every other call
- * quietly succeeds without producing any actual log output.
+ * daemon(3) is __DARWIN_ALIAS'd to _daemon$1050 on x86; arm64 builds libc with
+ * __DARWIN_ONLY_VERS_1050 and emits the plain name, so only x86 needs the
+ * forwarder for callers that reference the unsuffixed symbol.
  */
-typedef struct __pd_asl_object_s *pd_asl_object_t;
-static int pd_asl_dummy_object;
-
-pd_asl_object_t
-asl_open(const char *ident, const char *facility, uint32_t opts)
-{
-    (void)ident; (void)facility; (void)opts;
-    return (pd_asl_object_t)&pd_asl_dummy_object;
-}
-
-pd_asl_object_t
-asl_new(uint32_t type)
-{
-    (void)type;
-    return (pd_asl_object_t)&pd_asl_dummy_object;
-}
-
+extern int __pd_daemon_1050(int nochdir, int noclose) __asm("_daemon$1050");
+int __pd_daemon_plain(int nochdir, int noclose) __asm("_daemon");
 int
-asl_set(pd_asl_object_t obj, const char *key, const char *value)
+__pd_daemon_plain(int nochdir, int noclose)
 {
-    (void)obj; (void)key; (void)value;
-    return 0;
+    return __pd_daemon_1050(nochdir, noclose);
 }
 
+extern int __pd_scandir_inode64(const char *dirname, struct dirent ***namelist,
+    int (*select)(const struct dirent *),
+    int (*compar)(const struct dirent **, const struct dirent **))
+    __asm("_scandir$INODE64");
+int __pd_scandir_plain(const char *dirname, struct dirent ***namelist,
+    int (*select)(const struct dirent *),
+    int (*compar)(const struct dirent **, const struct dirent **))
+    __asm("_scandir");
 int
-asl_send(pd_asl_object_t obj, pd_asl_object_t msg)
+__pd_scandir_plain(const char *dirname, struct dirent ***namelist,
+    int (*select)(const struct dirent *),
+    int (*compar)(const struct dirent **, const struct dirent **))
 {
-    (void)obj; (void)msg;
-    return 0;
+    return __pd_scandir_inode64(dirname, namelist, select, compar);
 }
-
-void
-asl_free(pd_asl_object_t obj)
-{
-    (void)obj;
-}
-
-void
-asl_close(pd_asl_object_t obj)
-{
-    (void)obj;
-}
+#endif
 
 /*
  * Legacy OSAtomic ops (libkern/OSAtomic.h, deprecated since 10.12 in favor
@@ -965,6 +774,26 @@ int32_t
 OSAtomicDecrement32(volatile int32_t *theValue)
 {
     return __sync_sub_and_fetch(theValue, 1);
+}
+
+/* The Barrier variants differ only in ordering guarantees; __sync_* builtins
+ * are already full barriers, so the plain and Barrier forms are the same here. */
+int32_t
+OSAtomicIncrement32Barrier(volatile int32_t *theValue)
+{
+    return __sync_add_and_fetch(theValue, 1);
+}
+
+int32_t
+OSAtomicDecrement32Barrier(volatile int32_t *theValue)
+{
+    return __sync_sub_and_fetch(theValue, 1);
+}
+
+bool
+OSAtomicCompareAndSwapLongBarrier(long oldValue, long newValue, volatile long *theValue)
+{
+    return __sync_bool_compare_and_swap(theValue, oldValue, newValue);
 }
 
 int
@@ -1016,50 +845,6 @@ void
 os_unfair_lock_unlock(pd_os_unfair_lock_s *lock)
 {
     __sync_lock_release(&lock->locked);
-}
-
-/*
- * os_log_type_enabled/_os_log_debug_impl/_os_log_error_impl: companions to
- * _os_log_create above. Every os_log_* call site is guarded by
- * `if (os_log_type_enabled(log, type))` before calling the _impl function,
- * so always reporting "disabled" means the _impl functions are linked
- * (satisfying the symbol reference) but never actually invoked at runtime.
- */
-int
-os_log_type_enabled(void *oslog, unsigned int type)
-{
-    (void)oslog; (void)type;
-    return 0;
-}
-
-void
-_os_log_debug_impl(void *dso, void *log, unsigned int type, const char *format, uint8_t *buf, uint32_t size)
-{
-    (void)dso; (void)log; (void)type; (void)format; (void)buf; (void)size;
-}
-
-void
-_os_log_error_impl(void *dso, void *log, unsigned int type, const char *format, uint8_t *buf, uint32_t size)
-{
-    (void)dso; (void)log; (void)type; (void)format; (void)buf; (void)size;
-}
-
-/*
- * __os_log_default/__os_log_internal: the os_log(log, format, ...) macro
- * (unlike os_log_debug/os_log_error, which gate on os_log_type_enabled at
- * the call site) always compile-time-packs its format args and calls
- * __os_log_internal() unconditionally - the enabled/disabled decision is
- * made *inside* the real implementation. With no logd here, treating every
- * log point as "disabled" (a no-op body) is the same safe-fallback shape
- * as os_log_type_enabled() above, just for the call sites that don't
- * check first.
- */
-void *_os_log_default;
-
-void
-_os_log_internal(void *dso, void *log, uint8_t type, const char *format, uint8_t *buf, uint32_t size)
-{
-    (void)dso; (void)log; (void)type; (void)format; (void)buf; (void)size;
 }
 
 /*
@@ -1182,22 +967,6 @@ qos_class_t
 qos_class_self(void)
 {
     return QOS_CLASS_UNSPECIFIED;
-}
-
-/*
- * os_log_create: CF calls this directly (not through the os_log_create ->
- * _os_log_create macro redirect real Apple's os/log.h defines - CF must be
- * built against a copy of that header without the redirect, or without
- * OS_LOG_TARGET_HAS_10_12_FEATURES). Same stub behavior as _os_log_create
- * above, under the plain (non-underscore) name CF's own object files
- * actually reference.
- */
-void *
-os_log_create(const char *subsystem, const char *category)
-{
-    (void)subsystem; (void)category;
-    static int dummy_log_handle;
-    return &dummy_log_handle;
 }
 
 /*

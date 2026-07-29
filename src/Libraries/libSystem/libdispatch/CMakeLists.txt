@@ -52,6 +52,11 @@ set_source_files_properties(src/object.m src/data.m PROPERTIES
 
 target_compile_definitions(libdispatch_static PRIVATE
     __PUREDARWIN__=1
+    # Must match libc_static and libsystem_kernel_static (see the note in
+    # libsystem_kernel/CMakeLists.txt): without it, <unistd.h> asm-renames
+    # close/read/pread/pwrite to their $UNIX2003 spellings, which do not exist
+    # on x86_64 - nothing referenced them until asl_fd.c pulled in io.c.
+    __DARWIN_ONLY_UNIX_CONFORMANCE=1
     DISPATCH_USE_INTERNAL_WORKQUEUE=0
     HAVE_OBJC=1
     USE_OBJC=1

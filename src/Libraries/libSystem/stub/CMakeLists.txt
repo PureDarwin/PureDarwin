@@ -36,6 +36,23 @@ target_include_directories(libSystem_B_stub PRIVATE
 set(LIBSYSTEM_EXPORTS ${CMAKE_CURRENT_SOURCE_DIR}/libSystem.exports)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBSYSTEM_EXPORTS})
 file(STRINGS ${LIBSYSTEM_EXPORTS} _libsystem_export_lines)
+set(_libsystem_exports_for_link ${LIBSYSTEM_EXPORTS})
+if(PUREDARWIN_ARM64)
+    # Drop only the legacy x86 ABI suffixes. Modern ARM64 APIs still use
+    # Darwin extension/versioned names such as $DARWIN_EXTSN and $V2.
+    list(FILTER _libsystem_export_lines EXCLUDE REGEX "\\$(UNIX2003|INODE64|1050)$")
+    list(FILTER _libsystem_export_lines EXCLUDE REGEX "__ZNSt3__1plIc.*ERKS9_PKS6_")
+    # The SDK headers use the unsuffixed ARM64 spellings for these syscalls,
+    # while the shared export file only lists their x86 ABI variants.
+    list(APPEND _libsystem_export_lines
+        _select _fstat _fstatat _fstatfs _getfsstat _getmntinfo
+        _lstat _stat _statfs _readdir _glob _globfree)
+    set(_libsystem_exports_for_link ${CMAKE_CURRENT_BINARY_DIR}/libSystem.arm64.exports)
+    file(WRITE ${_libsystem_exports_for_link} "")
+    foreach(_line ${_libsystem_export_lines})
+        file(APPEND ${_libsystem_exports_for_link} "${_line}\n")
+    endforeach()
+endif()
 set(_libsystem_u_flags)
 foreach(_line ${_libsystem_export_lines})
     string(STRIP "${_line}" _line)
@@ -48,9 +65,29 @@ add_dependencies(libSystem_B_stub
     libc_static libc_internal_static libmalloc_static
     corecrypto_static CrashReporterClient libresolv_static
     libdispatch_static openlibm_static XPC_notify_client_static XPC_notifyd_mig_static
+    mDNSResponder_dnssd_static XPC_libinfo_static syslog_asl_static
+    libsystem_trace_static libdarwin_static libSystemConfiguration_static
     XPC_libxpc_static XPC_libnv_static XPC_launchd_mig_static)
 target_link_options(libSystem_B_stub PRIVATE
     -Wl,-force_load,$<TARGET_FILE:XPC_notify_client_static>
+    # libdns_sd is part of libSystem on Darwin (libsystem_dnssd.dylib).
+    -Wl,-force_load,$<TARGET_FILE:mDNSResponder_dnssd_static>
+    # libinfo is part of libSystem on Darwin: it provides the real getpwnam/
+    # getgrnam/getservbyname/gethostbyname/getaddrinfo/getfsent, which were
+    # previously hand-stubbed in libc because this archive was never linked.
+    -Wl,-force_load,$<TARGET_FILE:XPC_libinfo_static>
+    # libsystem_asl.dylib is part of libSystem on Darwin; asl(3) + syslog(3).
+    -Wl,-force_load,$<TARGET_FILE:syslog_asl_static>
+    # libsystem_trace.dylib (os_log/os_signpost) is part of libSystem on Darwin;
+    # libsystem_asl above calls os_log_with_args() from it.
+    -Wl,-force_load,$<TARGET_FILE:libsystem_trace_static>
+    # libdarwin (os_variant_*, os_boot_mode_*, the os/bsd.h + os/stdlib.h
+    # helpers) is part of libSystem on Darwin.
+    -Wl,-force_load,$<TARGET_FILE:libdarwin_static>
+    # libSystemConfiguration.a is part of libSystem on Darwin: the dnsinfo
+    # client (dns_configuration_copy) that libresolv and mDNSResponder use to
+    # pick up configd's DNS configuration.
+    -Wl,-force_load,$<TARGET_FILE:libSystemConfiguration_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libnv_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libxpc_static>
     $<TARGET_FILE:XPC_notifyd_mig_static>
@@ -152,7 +189,7 @@ target_link_options(libSystem_B_stub PRIVATE
     -Wl,-order_file,${LIBDISPATCH_ORDER}
     -Wl,-dead_strip
     -Wl,-fixup_chains
-    -Wl,-exported_symbols_list,${LIBSYSTEM_EXPORTS})
+    -Wl,-exported_symbols_list,${_libsystem_exports_for_link})
 if(PUREDARWIN_USE_LD64_LLD)
     # ld64.lld diagnoses duplicate archive members before ordinary dead_strip
     # can discard them; Apple's ld64 accepts this link. Keep the compatibility

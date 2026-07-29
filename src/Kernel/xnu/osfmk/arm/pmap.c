@@ -74,30 +74,6 @@
 #include <arm/misc_protos.h>
 #include <arm/trap.h>
 
-#if defined(QEMUVIRT)
-extern void serial_putc(char);
-
-static void
-qemu_pmap_trace_hex(uint64_t value)
-{
-	static const char digits[] = "0123456789abcdef";
-	for (int shift = 60; shift >= 0; shift -= 4) {
-		serial_putc(digits[(value >> shift) & 0xf]);
-	}
-}
-
-static void
-qemu_pmap_trace(const char *label, uint64_t value)
-{
-	while (*label) {
-		serial_putc(*label++);
-	}
-	qemu_pmap_trace_hex(value);
-	serial_putc('\r');
-	serial_putc('\n');
-}
-#endif
-
 #if     (__ARM_VMSA__ > 7)
 #include <arm64/proc_reg.h>
 #include <pexpert/arm64/boot.h>
@@ -8297,6 +8273,12 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t 
 		PMAP_UPDATE_TLBS(pmap, v, v + (pt_attr_page_size(pt_attr) * PAGE_RATIO), false);
 	} else {
 		WRITE_PTE(pte_p, pte);
+		/*
+		 * PureDarwin: A translation fault can be retained in the hardware TLB. When
+		 * fault handling installs the first mapping, invalidate that cached
+		 * negative translation before the faulting access is retried.
+		 */
+		flush_mmu_tlb();
 		__builtin_arm_isb(ISB_SY);
 	}
 
@@ -8660,16 +8642,6 @@ Pmap_enter_retry:
 
 	pte = pa_to_pte(pa) | ARM_PTE_TYPE;
 
-#if defined(QEMUVIRT)
-	{
-		static unsigned int qemu_pmap_pte_trace_count;
-		if (pmap == kernel_pmap && qemu_pmap_pte_trace_count < 8) {
-			qemu_pmap_trace("QEMU pmap rawpte=", pte);
-			qemu_pmap_pte_trace_count++;
-		}
-	}
-#endif
-
 	if (wired) {
 		pte |= ARM_PTE_WIRED;
 	}
@@ -8980,21 +8952,6 @@ Pmap_enter_cleanup:
 	}
 
 Pmap_enter_return:
-
-#if defined(QEMUVIRT)
-	{
-		static unsigned int qemu_pmap_trace_count;
-		if (pmap == kernel_pmap && qemu_pmap_trace_count < 8) {
-			qemu_pmap_trace("QEMU pmap va=", v);
-			qemu_pmap_trace("QEMU pmap pa=", pa);
-			qemu_pmap_trace("QEMU pmap root=", (uint64_t)(uintptr_t)pmap->tte);
-			qemu_pmap_trace("QEMU pmap pte=", (uint64_t)(uintptr_t)pte_p);
-			qemu_pmap_trace("QEMU pmap pteval=", *pte_p);
-			qemu_pmap_trace("QEMU pmap ttbr=", get_mmu_ttb());
-			qemu_pmap_trace_count++;
-		}
-	}
-#endif
 
 #if CONFIG_PGTRACE
 	if (pgtrace_enabled) {

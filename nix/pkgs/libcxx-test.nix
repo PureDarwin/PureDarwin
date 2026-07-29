@@ -6,6 +6,7 @@
 , libSystem
 , libcxxabiDylib
 , libcxxDylib
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -19,7 +20,7 @@ let
     '';
   };
 
-  cc = "${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang++";
+  cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang++";
 
   testSrc = ''
     #include <vector>

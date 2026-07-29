@@ -586,20 +586,7 @@ DebuggerTrapWithState(debugger_op db_op, const char *db_message, const char *db_
 	    db_panic_options, db_panic_data_ptr,
 	    db_proceed_on_sync_failure, db_panic_caller);
 
-	/*
-	 * On ARM this generates an uncategorized exception -> sleh code ->
-	 *   DebuggerCall -> kdp_trap -> handle_debugger_trap
-	 * So that is how XNU ensures that only one core can panic.
-	 * The rest of the cores are halted by IPI if possible; if that
-	 * fails it will fall back to dbgwrap.
-	 */
-	#if defined(QEMUVIRT)
-	/* QEMU virt has no XNU debugger transport; avoid the undefined-instruction
-	 * trap loop and let the caller's panic path report the saved state. */
-	return KERN_FAILURE;
-	#else
 	TRAP_DEBUGGER;
-	#endif
 
 	ret = CPUDEBUGGERRET;
 
@@ -624,15 +611,7 @@ Assert(
 	}
 #endif
 
-#if defined(QEMUVIRT)
-	/* The QEMU panic path intentionally avoids the debugger trap, and its
-	 * minimal formatter cannot preserve panic varargs. Emit assertion context
-	 * before handing control to that path. */
-	printf("QEMUVIRT assertion: %s:%d: %s\n", file, line, expression);
-	panic_plain("QEMUVIRT assertion failed");
-#else
 	panic_plain("%s:%d Assertion failed: %s", file, line, expression);
-#endif
 }
 
 boolean_t

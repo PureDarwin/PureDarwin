@@ -1,0 +1,127 @@
+/*
+ * Copyright (c) 1998-2016 Apple Inc. All rights reserved.
+ *
+ * @APPLE_LICENSE_HEADER_START@
+ * 
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this
+ * file.
+ * 
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ * 
+ * @APPLE_LICENSE_HEADER_END@
+ */
+
+#include <mach/mach_types.defs>
+#include <mach/std_types.defs>
+
+subsystem DAServer 0;
+
+import <mach/mach.h>;
+import <sys/types.h>;
+import <Security/Authorization.h>;
+
+import "DAServer.defs.h";
+
+type ___caddr_t                   = c_string [*:1024]   ctype : caddr_t;
+type ___path_t                    = c_string [*:4096]   ctype : ___path_t;
+type ___uid_t                     = int32_t             ctype : uid_t;
+type ___vm_address_t              = array [] of char    ctype : vm_address_t;
+type ___AuthorizationExternalForm = struct [32] of char ctype : AuthorizationExternalForm;
+
+routine _DAServerDiskCopyDescription( _session     : mach_port_t;
+                                      _disk        : ___caddr_t;
+                                  out _description : ___vm_address_t, dealloc );
+
+routine _DAServerDiskGetOptions( _session : mach_port_t;
+                                 _disk    : ___caddr_t;
+                             out _options : int32_t );
+
+routine _DAServerDiskGetUserUID( _session : mach_port_t;
+                                 _disk    : ___caddr_t;
+                             out _userUID : ___uid_t );
+
+routine _DAServerDiskIsClaimed( _session : mach_port_t;
+                                _disk    : ___caddr_t;
+                            out _claimed : boolean_t );
+
+routine _DAServerDiskSetAdoption( _session  : mach_port_t;
+                                  _disk     : ___caddr_t;
+                                  _adoption : boolean_t;
+                 ServerAuditToken _token    : audit_token_t );
+
+routine _DAServerDiskSetEncoding( _session  : mach_port_t;
+                                  _disk     : ___caddr_t;
+                                  _encoding : int32_t;
+                 ServerAuditToken _token    : audit_token_t );
+
+routine _DAServerDiskSetOptions( _session : mach_port_t;
+                                 _disk    : ___caddr_t;
+                                 _options : int32_t;
+                                 _value   : int32_t );
+
+simpleroutine _DAServerDiskUnclaim( _session : mach_port_t;
+                                    _disk    : ___caddr_t );
+
+routine _DAServerSessionCopyCallbackQueue( _session : mach_port_t;
+                                       out _queue   : ___vm_address_t, dealloc );
+
+routine _DAServerSessionCreate( _session : mach_port_t;
+                                _name    : ___caddr_t;
+               ServerAuditToken _token   : audit_token_t;
+                            out _server  : mach_port_make_send_t );
+
+routine _DAServerSessionQueueRequest( _session   : mach_port_t;
+                                      _kind      : uint32_t;
+                                      _argument0 : ___caddr_t;
+                                      _argument1 : int32_t;
+                                      _argument2 : ___vm_address_t;
+                                      _argument3 : ___vm_address_t;
+                                      _address   : mach_vm_offset_t;
+                                      _context   : mach_vm_offset_t;
+                     ServerAuditToken _token     : audit_token_t );
+
+simpleroutine _DAServerSessionQueueResponse( _session    : mach_port_t;
+                                             _address    : mach_vm_offset_t;
+                                             _context    : mach_vm_offset_t;
+                                             _kind       : uint32_t;
+                                             _disk       : ___caddr_t;
+                                             _response   : ___vm_address_t;
+                                             _responseID : int32_t );
+
+routine _DAServerSessionRegisterCallback( _session : mach_port_t;
+                                          _address : mach_vm_offset_t;
+                                          _context : mach_vm_offset_t;
+                                          _kind    : uint32_t;
+                                          _order   : int32_t;
+                                          _match   : ___vm_address_t;
+                                          _watch   : ___vm_address_t );
+
+simpleroutine _DAServerSessionRelease( _session : mach_port_t );
+
+simpleroutine _DAServerSessionSetAuthorization( _session       : mach_port_t;
+                                                _authorization : ___AuthorizationExternalForm );
+
+simpleroutine _DAServerSessionSetClientPort( _session : mach_port_t;
+                                             _client  : mach_port_make_send_t );
+
+simpleroutine _DAServerSessionUnregisterCallback( _session : mach_port_t;
+                                                  _address : mach_vm_offset_t;
+                                                  _context : mach_vm_offset_t );
+
+routine _DAServermkdir( _session : mach_port_t;
+                        _path    : ___path_t;
+       ServerAuditToken _token   : audit_token_t );
+
+routine _DAServerrmdir( _session : mach_port_t;
+                        _path    : ___path_t;
+       ServerAuditToken _token   : audit_token_t );

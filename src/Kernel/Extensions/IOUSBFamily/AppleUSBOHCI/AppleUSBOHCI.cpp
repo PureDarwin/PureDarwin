@@ -78,7 +78,10 @@ static bool                  gEnumRunning;
 static inline void ohciW(volatile UInt32 *r, UInt32 v)
 {
     *r = v;
-    __asm__ __volatile__("mfence" ::: "memory");
+    /* Full barrier after an MMIO write. __sync_synchronize() rather than
+     * a bare mfence so this controller also builds for arm64, where
+     * EHCI/OHCI are common on-SoC. */
+    __sync_synchronize();
 }
 static inline UInt32 ohciR(volatile UInt32 *r) { return *r; }
 
@@ -351,7 +354,7 @@ IOReturn AppleUSBOHCI::DoControlTransfer(UInt8 address, const UInt8 *setup,
     ed[2] = tdPhys(TD_SETUP);      // tdQueueHeadPtr (halt/carry = 0)
     ed[3] = 0;                     // nextED
 
-    __asm__ __volatile__("mfence" ::: "memory");
+    __sync_synchronize();
 
     // Kick the control list.
     ohciW(&regs->hcControlHeadED, edPhys(ED_CONTROL));
@@ -361,7 +364,7 @@ IOReturn AppleUSBOHCI::DoControlTransfer(UInt8 address, const UInt8 *setup,
     // Poll until the ED's TD queue drains (head==tail) or halts, with timeout.
     bool done = false, halted = false;
     for (int i = 0; i < 1000; i++) {          // ~1000 * 100us = 100ms
-        __asm__ __volatile__("mfence" ::: "memory");
+        __sync_synchronize();
         UInt32 head = ed[2];
         if (head & 1) { halted = true; break; }         // H bit set on error
         if ((head & ~0xFu) == (ed[1] & ~0xFu)) { done = true; break; }
@@ -575,7 +578,7 @@ IOReturn AppleUSBOHCI::UIMReadWrite(IOMemoryDescriptor *buffer, USBDeviceAddress
     ed[1] = tdPhys(TD_INTR_TAIL);
     ed[2] = tdPhys(TD_INTR);
     ed[3] = 0;
-    __asm__ __volatile__("mfence" ::: "memory");
+    __sync_synchronize();
 
     // Link into the HCCA interrupt table (all 32 slots) and enable periodic.
     volatile UInt32 *hcca = (volatile UInt32 *)_hccaBuffer->getBytesNoCopy();
@@ -585,7 +588,7 @@ IOReturn AppleUSBOHCI::UIMReadWrite(IOMemoryDescriptor *buffer, USBDeviceAddress
 
     bool done = false, halted = false;
     for (int i = 0; i < 100; i++) {         // ~100 * 100us = 10ms poll window
-        __asm__ __volatile__("mfence" ::: "memory");
+        __sync_synchronize();
         UInt32 head = ed[2];
         if (head & 1) { halted = true; break; }
         if ((head & ~0xFu) == (ed[1] & ~0xFu)) { done = true; break; }

@@ -148,8 +148,6 @@ fail:
 	return error;
 }
 
-/* --- directory scan --- */
-
 /*
  * Iterate directory `dvp` looking for `name`/`namelen`.  On match returns the
  * child inode number in *ino_out.
@@ -1194,14 +1192,6 @@ ext4_vnop_create_impl(struct vnop_create_args *ap)
 	return ext4_vget(emp, ino, dvp, vpp, cnp);
 }
 
-/*
- * vn_create() dispatches VREG through VNOP_CREATE but VSOCK/VFIFO/VBLK/VCHR
- * through VNOP_MKNOD (vfs_subr.c) - so AF_UNIX bind(2), which creates a
- * VSOCK name node, lands HERE, not in create. Without this vnop the default
- * handler returned ENOTSUP, which userland saw as bind() EOPNOTSUPP (i3's
- * IPC socket). vnop_mknod_args and vnop_create_args are layout-identical in
- * XNU, and our create impl already gates on VREG/VSOCK, so delegate.
- */
 static int
 ext4_vnop_create_impl(struct vnop_create_args *ap);
 
@@ -2012,22 +2002,12 @@ ext4_vnop_inactive_impl(struct vnop_inactive_args *ap)
 	return 0;
 }
 
-/*
- * Read-only fs: nothing to flush. But this MUST be implemented (not left to
- * vnop_default, which returns ENOTSUP): mount_common() calls VNOP_FSYNC on a
- * mountpoint's covered vnode, so without this every submount onto an ext4
- * root - notably devfs at /dev - fails with ENOTSUP (error 45), leaving
- * userland with no /dev/console and launchd unable to start.
- */
 static int
 ext4_vnop_fsync(struct vnop_fsync_args *ap)
 {
 	vnode_t vp = ap->a_vp;
 	struct ext4node *ep = VTOE(vp);
 
-	/* Must exist (not vnop_default/ENOTSUP): mount_common() fsyncs a
-	 * mountpoint's covered vnode, and ENOTSUP there broke devfs at /dev.
-	 * With batched journal commits this is also the force-commit point. */
 	if (ep == NULL)
 		return 0;
 	if (vnode_isreg(vp) && ubc_pages_resident(vp))
@@ -2044,14 +2024,14 @@ static int
 ext4_vnop_pathconf(struct vnop_pathconf_args *ap)
 {
 	switch (ap->a_name) {
-	case _PC_LINK_MAX:      *ap->a_retval = 65000; return 0;
-	case _PC_NAME_MAX:      *ap->a_retval = 255;   return 0;
-	case _PC_PATH_MAX:      *ap->a_retval = PATH_MAX; return 0;
-	case _PC_CHOWN_RESTRICTED: *ap->a_retval = 1;  return 0;
-	case _PC_NO_TRUNC:      *ap->a_retval = 1;      return 0;
-	case _PC_CASE_SENSITIVE: *ap->a_retval = 1;     return 0;
-	case _PC_CASE_PRESERVING: *ap->a_retval = 1;    return 0;
-	default:                return EINVAL;
+	case _PC_LINK_MAX: *ap->a_retval = 65000; return 0;
+	case _PC_NAME_MAX: *ap->a_retval = 255; return 0;
+	case _PC_PATH_MAX: *ap->a_retval = PATH_MAX; return 0;
+	case _PC_CHOWN_RESTRICTED: *ap->a_retval = 1; return 0;
+	case _PC_NO_TRUNC: *ap->a_retval = 1; return 0;
+	case _PC_CASE_SENSITIVE: *ap->a_retval = 1; return 0;
+	case _PC_CASE_PRESERVING: *ap->a_retval = 1; return 0;
+	default: return EINVAL;
 	}
 }
 

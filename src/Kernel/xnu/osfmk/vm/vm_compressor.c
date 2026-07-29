@@ -624,6 +624,17 @@ vm_compressor_init(void)
 	if (PE_parse_boot_argn("-disable_freezer_cseg_acct", bootarg_name, sizeof(bootarg_name))) {
 		freezer_incore_cseg_acct = FALSE;
 	}
+#if defined(ARM64_BOARD_CONFIG_VIRT)
+	/*
+	 * The QEMU virt board's kernel VA window is only a few GB of free space
+	 * after the low-globals and physical-aperture reservations. Accounting
+	 * for the freezer's max configured swap space would grow the compressor
+	 * submap by ~100 GB (VM_MAX_SWAP_FILE_NUM * MAX_SWAP_FILE_SIZE), which
+	 * cannot fit. This board has no app-freezer use case, so keep the
+	 * compressor submap sized to in-core segments only.
+	 */
+	freezer_incore_cseg_acct = FALSE;
+#endif
 #endif /* CONFIG_FREEZE */
 
 	assert((C_SEGMENTS_PER_PAGE * sizeof(union c_segu)) == PAGE_SIZE);
@@ -668,7 +679,25 @@ vm_compressor_init(void)
 	compressor_pool_max_size = C_SEG_MAX_LIMIT;
 	compressor_pool_max_size *= C_SEG_BUFSIZE;
 
-#if XNU_TARGET_OS_OSX
+#if defined(ARM64_BOARD_CONFIG_VIRT)
+
+	/*
+	 * On the QEMU virt board physical memory is small and the kernel_map has
+	 * only a few GB of free VA at this point. The macOS sizing formula below
+	 * multiplies max_mem and never caps compressor_pool_max_size down to
+	 * physical memory, so it would request a submap far larger than this
+	 * board's address space can satisfy. Size the pool to physical memory,
+	 * matching the embedded default.
+	 */
+	if (compressor_pool_max_size > max_mem) {
+		compressor_pool_max_size = max_mem;
+	}
+	if (vm_compression_limit == 0) {
+		compressor_pool_size = max_mem;
+	}
+	compressor_pool_multiplier = 1;
+
+#elif XNU_TARGET_OS_OSX
 
 	if (vm_compression_limit == 0) {
 		if (max_mem <= (4ULL * 1024ULL * 1024ULL * 1024ULL)) {

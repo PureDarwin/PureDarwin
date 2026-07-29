@@ -20,6 +20,7 @@
 , libICE
 , libSM
 , xorgproto
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -85,10 +86,10 @@ stdenv.mkDerivation {
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" (map lib.getDev xDeps)}:${lib.makeSearchPath "share/pkgconfig" (map lib.getDev xDeps)}"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
-    export CC="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang"
-    export AR="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar"
-    export RANLIB="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib"
-    export STRIP="${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip"
+    export CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
+    export AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
+    export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
+    export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
     export CPPFLAGS="-I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") xDeps}"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -DNO_XPOLL_H"
     cp ${libXext}/lib/libXext.a libXext-trimmed.a
@@ -99,7 +100,7 @@ stdenv.mkDerivation {
     export LIBS="${xForceLoad} -lSystem"
 
     ./configure \
-      --host=x86_64-apple-darwin20.4 \
+      --host=${targetTriple} \
       --build=$(cc -dumpmachine) \
       --prefix=$out \
       --without-app-defaults

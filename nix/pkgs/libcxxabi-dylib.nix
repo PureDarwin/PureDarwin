@@ -2,6 +2,7 @@
 , lib
 , requireFile
 , darwinCrossToolchain
+, targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , libSystem
 , src
@@ -30,7 +31,7 @@ let
     '';
   };
 
-  cc = "${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang";
+  cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang";
 
   # libc++abi ABI-layer sources (mirrors _abi_srcs in the CMakeLists).
   abiSrcs = [

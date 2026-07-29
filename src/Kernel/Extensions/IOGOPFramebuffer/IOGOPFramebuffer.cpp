@@ -305,7 +305,10 @@ IOGOPFramebuffer::start(IOService *provider)
     consoleInfo.v_height     = bootDisplay.v_height;
     consoleInfo.v_depth      = 32;  // GOP is always 32-bit
     consoleInfo.v_rowBytes   = bootDisplay.v_rowBytes;
-    consoleInfo.v_display    = GRAPHICS_MODE;
+    /* kPEGraphicsMode (pexpert.h) rather than GRAPHICS_MODE, which is only
+     * defined in pexpert/i386/boot.h; both are 1, but the PE name is
+     * arch-neutral so this file also builds for arm64. */
+    consoleInfo.v_display    = kPEGraphicsMode;
     consoleInfo.v_offset     = 0;
     consoleInfo.v_length     = 0;  // Let kernel calculate from height * rowBytes
     consoleInfo.v_rotate     = 0;

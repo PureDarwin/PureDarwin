@@ -6,6 +6,7 @@
 , libSystem
 , corefoundation
 , src
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -34,7 +35,7 @@ stdenv.mkDerivation {
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
 
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -I${src}/include -I${corefoundation}/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \

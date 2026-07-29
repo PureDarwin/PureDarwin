@@ -2,6 +2,7 @@
 , lib
 , requireFile
 , darwinCrossToolchain
+, targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , libSystem
 , icuSrc
@@ -46,15 +47,15 @@ stdenv.mkDerivation {
     # these dylibs' own internal calls need to not go through it.
     mkdir -p build
     ( cd build
-      CC=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
-      CXX=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang++ \
-      AR=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar \
-      RANLIB=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib \
+      CC=${darwinCrossToolchain}/bin/${targetTriple}-clang \
+      CXX=${darwinCrossToolchain}/bin/${targetTriple}-clang++ \
+      AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
+      RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
       CFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -mmacosx-version-min=11.0" \
       CXXFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -mmacosx-version-min=11.0" \
       LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains -lSystem" \
       ../source/configure \
-        --host=x86_64-apple-darwin20.4 \
+        --host=${targetTriple} \
         --with-cross-build=$PWD/../native-build \
         --disable-renaming \
         --disable-tests --disable-samples --disable-extras --disable-icuio \
@@ -73,7 +74,9 @@ stdenv.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out/usr/lib
+    mkdir -p $out/usr/lib $out/include/unicode
+    cp -a source/common/unicode/. $out/include/unicode/
+    cp -a source/i18n/unicode/. $out/include/unicode/
 
     for f in build/lib/*.dylib; do
       [ -L "$f" ] && continue
@@ -81,10 +84,10 @@ stdenv.mkDerivation {
     done
     for f in "$out"/usr/lib/*.dylib; do
       name=$(basename "$f")
-      ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-install_name_tool \
+      ${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool \
         -id "/usr/lib/$name" "$f"
       for dep in libicuuc.76.dylib libicudata.76.dylib libicui18n.76.dylib; do
-        ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-install_name_tool \
+        ${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool \
           -change "$dep" "/usr/lib/$dep" "$f" 2>/dev/null || true
       done
     done
@@ -93,9 +96,9 @@ stdenv.mkDerivation {
     ln -s libicui18n.76.1.dylib $out/usr/lib/libicui18n.76.dylib
 
     echo 'static int puredarwin_icucore_placeholder;' > placeholder.c
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" -c placeholder.c -o placeholder.o
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib -fuse-ld=${nativeLd}/bin/ld \
       -nostdlib -L${libSystem}/usr/lib -L"$out/usr/lib" \
       -Wl,-platform_version,macos,11.0,11.5 \

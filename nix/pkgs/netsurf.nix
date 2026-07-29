@@ -53,6 +53,7 @@
 , harfbuzz
 , freetype2
 , fontconfig
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -114,10 +115,10 @@ override NETSURF_USE_HARU_PDF := NO
 override NETSURF_USE_NSPSL := NO
 override NETSURF_USE_NSLOG := NO
 override NETSURF_USE_VIDEO := NO
-override CC := ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang
-override AR := ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar
-override RANLIB := ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib
-override STRIP := ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip
+override CC := ${darwinCrossToolchain}/bin/${targetTriple}-clang
+override AR := ${darwinCrossToolchain}/bin/${targetTriple}-ar
+override RANLIB := ${darwinCrossToolchain}/bin/${targetTriple}-ranlib
+override STRIP := ${darwinCrossToolchain}/bin/${targetTriple}-strip
 override PKG_CONFIG := ${pkg-config}/bin/pkg-config
 # NOT "override" here: unlike CC/AR/.../PKG_CONFIG (which nothing else
 # in netsurf's Makefiles reassigns), CFLAGS/LDFLAGS accumulate further

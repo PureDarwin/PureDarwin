@@ -7,6 +7,7 @@
 , nativeLd
 , libSystem
 , zlib
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
@@ -41,9 +42,9 @@ stdenv.mkDerivation {
     cmake -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Darwin \
       -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
-      -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
-      -DCMAKE_AR=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar \
-      -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ranlib \
+      -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang \
+      -DCMAKE_AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
+      -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
       -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -I${libSystem}/usr/include" \
       -DCMAKE_EXE_LINKER_FLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -lSystem" \
       -DCMAKE_INSTALL_PREFIX=$out \

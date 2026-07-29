@@ -21,3 +21,12 @@ enum {
 CF_ASSUME_NONNULL_END
 
 #endif /* _PD_SECBASE_H */
+
+/*
+ * Keychain Services. PureDarwin has no securityd and therefore no keychain, so
+ * only the opaque type is declared - SystemConfiguration's
+ * SCPreferencesKeychainPrivate.h needs it to parse.
+ */
+typedef struct OpaqueSecKeychainRef *SecKeychainRef;
+typedef struct OpaqueSecKeychainItemRef *SecKeychainItemRef;
+typedef struct OpaqueSecAccessRef *SecAccessRef;

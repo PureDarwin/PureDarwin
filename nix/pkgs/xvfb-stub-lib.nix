@@ -8,8 +8,12 @@
 , headers ? {}
 , includeFrom ? []
 , source
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
+let
+  targetInfo = import ../lib/target-info.nix targetTriple;
+in
 stdenv.mkDerivation {
   pname = "puredarwin-${name}";
   inherit version;
@@ -22,8 +26,8 @@ stdenv.mkDerivation {
     cat > build/${name}.c <<'EOF'
 ${source}
 EOF
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang -target x86_64-apple-macosx11.0 -c build/${name}.c -o build/${name}.o
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar rcs build/lib${name}.a build/${name}.o
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang -target ${targetInfo.clangTarget} -c build/${name}.c -o build/${name}.o
+    ${darwinCrossToolchain}/bin/${targetTriple}-ar rcs build/lib${name}.a build/${name}.o
     runHook postBuild
   '';
 

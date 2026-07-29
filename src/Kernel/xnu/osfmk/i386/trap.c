@@ -144,7 +144,7 @@ extern boolean_t dtrace_handle_trap(int, x86_saved_state_t *);
 
 #ifdef MACH_BSD
 extern char *   proc_name_address(void *p);
-extern int      proc_pid(void *p);
+extern int      proc_pid(struct proc *p);
 #endif /* MACH_BSD */
 
 extern boolean_t pmap_smep_enabled;

@@ -2,9 +2,11 @@
 , lib
 , requireFile
 , darwinCrossToolchain
+, targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , libSystem
 , corefoundation
+, iokitCFStatic
 }:
 
 let
@@ -34,13 +36,13 @@ stdenv.mkDerivation {
     # -Wl,-fixup_chains: same eager-bind fix as corefoundation.nix - PD's
     # dyld lazy-binding path is fragile and this dylib's own internal calls
     # need to not go through it.
-    ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
+    ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,/usr/lib/libIOKitCF.dylib \
-      -Wl,-force_load,${libSystem}/usr/lib/system/libIOKitCF.a \
+      -Wl,-force_load,${iokitCFStatic}/usr/lib/system/libIOKitCF.a \
       -Wl,-fixup_chains \
       -lCoreFoundation -lSystem \
       -o libIOKitCF.dylib

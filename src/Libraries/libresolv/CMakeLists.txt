@@ -17,13 +17,12 @@ target_sources(libresolv_static PRIVATE
     res_mkquery.c
     res_query.c
     res_send.c
-    pd_notify_stub.c
-    pd_dnsinfo_stub.c
-    pd_dns_sd_stub.c
+    # dst_s_dns_key_id() etc, called by ns_print.c for DNSSEC KEY records.
+    # Was a hand-written approximation in pd_net_compat.c; this is BIND's real
+    # footprint calculation (RSA special case + checksum fallback).
+    dst_support.c
     pd_res_compat.c
     pd_res_state.c
-    pd_net_compat.c
-    pd_getaddrinfo.c
 )
 
 target_compile_definitions(libresolv_static PRIVATE
@@ -46,6 +45,7 @@ target_compile_options(libresolv_static PRIVATE
 # directly rather than duplicating the headers here too.
 target_include_directories(libresolv_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mDNSResponder/mDNSShared  # real dns_sd.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include          # ifaddrs.h, notify.h stub
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/darwin      # libc_private.h

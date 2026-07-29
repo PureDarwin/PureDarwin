@@ -17,9 +17,12 @@
 , libffi
 , zlib
 , libiconv
+, targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
+  targetInfo = import ../lib/target-info.nix targetTriple;
+
   deps = [ glib libxml2 dbus pcre2 libffi zlib libiconv ];
   depPcPaths = map lib.getDev deps;
   sdkTarball = requireFile {
@@ -59,12 +62,12 @@ stdenv.mkDerivation {
 
     cat > puredarwin-cross.ini <<EOF
 [binaries]
-c = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang'
-cpp = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang++'
-ar = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar'
-strip = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-strip'
+c = '${darwinCrossToolchain}/bin/${targetTriple}-clang'
+cpp = '${darwinCrossToolchain}/bin/${targetTriple}-clang++'
+ar = '${darwinCrossToolchain}/bin/${targetTriple}-ar'
+strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
-install_name_tool = '${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-install_name_tool'
+install_name_tool = '${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool'
 
 [built-in options]
 c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-Qunused-arguments', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include', ${lib.concatMapStringsSep ", " (dep: "'-I${lib.getDev dep}/include'") deps}]
@@ -73,9 +76,9 @@ c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-f
 [host_machine]
 system = 'darwin'
 subsystem = 'macos'
-cpu_family = 'x86_64'
-cpu = 'x86_64'
-endian = 'little'
+cpu_family = '${targetInfo.mesonCpuFamily}'
+cpu = '${targetInfo.mesonCpu}'
+endian = '${targetInfo.mesonEndian}'
 
 [properties]
 needs_exe_wrapper = true
