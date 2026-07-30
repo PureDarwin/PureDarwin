@@ -84,6 +84,14 @@ struct xpc_object {
 	size_t			xo_size;
 	xpc_u			xo_u;
 	audit_token_t *		xo_audit_token;
+	/*
+	 * For a message that arrived over a connection: the connection it came
+	 * in on, so xpc_dictionary_get_remote_connection() can hand a server the
+	 * peer to reply to. Set by xpc_connection_recv_message() as it dispatches
+	 * to the handler; NULL on any object the process built itself. Borrowed,
+	 * not retained - the connection outlives the message it delivers.
+	 */
+	xpc_connection_t	xo_remote_connection;
 	TAILQ_ENTRY(xpc_object) xo_link;
 };
 

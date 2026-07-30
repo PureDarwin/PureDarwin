@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.puredarwin.filesystems.ext4</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>ext4</string>
+	<key>CFBundlePackageType</key>
+	<string>fsbd</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+
+	<!--
+	    FSMediaTypes tells diskarbitrationd which media this filesystem is
+	    worth probing, keyed by the IOMedia Content hint. "" is the wildcard
+	    for media with no usable hint.
+
+	    Two entries rather than one wildcard: an ext4 volume in a GPT
+	    partition carries the Linux filesystem data GUID, and that is the
+	    strong signal. The wildcard entry is what catches a whole disk or a
+	    partition whose hint is missing, and it is ordered after the others
+	    (FSProbeOrder below) so better-identified filesystems get first look.
+	-->
+	<key>FSMediaTypes</key>
+	<dict>
+		<key>0FC63DAF-8483-4772-8E79-3D69D8477DE4</key>
+		<dict>
+			<key>FSProbeExecutable</key>
+			<string>ext4.util</string>
+			<key>FSProbeOrder</key>
+			<integer>110</integer>
+		</dict>
+		<key></key>
+		<dict>
+			<key>FSProbeExecutable</key>
+			<string>ext4.util</string>
+			<key>FSProbeOrder</key>
+			<integer>200</integer>
+		</dict>
+	</dict>
+
+	<!--
+	    A single personality. FSName is the string passed to
+	    "/sbin/mount -t", so it has to match the name ext4.kext registers
+	    with the kernel's VFS table.
+
+	    There is deliberately no FSRepairExecutable: PureDarwin has no
+	    fsck_ext4, and naming one that does not exist makes DAFileSystemProbe
+	    fail with ENOTSUP before it ever runs the probe. Without it DA treats
+	    the volume as unrepairable and mounts it as-is, which is the current
+	    truth - ext4.kext's own journal replay is what recovers a dirty
+	    volume. ext4.util -q still reports cleanliness, so DA logs the state
+	    accurately even though it cannot act on it.
+	-->
+	<key>FSPersonalities</key>
+	<dict>
+		<key>ext4</key>
+		<dict>
+			<key>FSName</key>
+			<string>ext4</string>
+			<key>FSProbeExecutable</key>
+			<string>ext4.util</string>
+			<key>FSSubType</key>
+			<integer>0</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -216,8 +216,18 @@
               # SCNetworkConfigurationPrivate.h <IOKit/IOKitLib.h>.
               "src/Libraries/Security"
               "src/Libraries/IOKit"
-              # configd's session.c needs IOKit/IOReturn.h.
+              # SCNetworkInterface.c reads 802.1X config keys; ip_plugin.c reads
+              # PPP link states.
+              "src/Libraries/eap8021x"
+              "src/Libraries/ppp"
+              # configd's session.c needs IOKit/IOReturn.h; SCNetworkInterface.c
+              # and InterfaceNamer need the IONetworkingFamily headers.
               "src/Kernel/xnu/iokit"
+              "src/Kernel/Extensions/IONetworkingFamily/include"
+              "src/Kernel/Extensions/IOStorageFamily/include"
+              "src/Kernel/Extensions/IOSerialFamily/include"
+              "src/Kernel/Extensions/IOUSBFamily/include"
+              "src/Libraries/dyld/upstream/include"
             ]);
           iokitCFSource = sourceWith "puredarwin-iokitcf-source"
             (libSystemSourcePaths ++ [ "src/Kernel/xnu/iokit" ]);
@@ -234,6 +244,12 @@
               "src/Kernel/Extensions/IOBDStorageFamily/include"
               "src/Kernel/xnu/iokit"
               "src/Libraries/dyld/upstream/include"
+              # diskarbitrationd
+              "src/Libraries/XPC"
+              "src/Libraries/CommonCrypto"
+              "src/Libraries/libdarwin"
+              "src/Libraries/architecture"
+              "src/Libraries/libsystem_trace"
             ]);
           objcSource = sourceWith "puredarwin-objc-source" [
             "src/Libraries/objc4"
@@ -254,7 +270,7 @@
           userlandBuild = mkPureDarwinBuild {
             pname = "puredarwin-userland";
             src = userlandSource;
-            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "pd-networkd" "ping" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "mdnsd" ]
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "pd-networkd" "ping" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" ]
               # shell_cmds (+ tsort/uuencode/uudecode)
               ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
               # text_cmds
@@ -2636,6 +2652,14 @@
                   "$out/usr/libexec/configd"
                 cp src/Libraries/SystemConfiguration/configd.tproj/com.apple.configd.plist \
                   "$out/System/Library/LaunchDaemons/"
+                # Builtin plugins live inside configd, but plugin_support.c still
+                # discovers them by walking /System/Library/SystemConfiguration
+                # for bundles, so each one needs its Info.plist installed.
+                for p in PreferencesMonitor LinkConfiguration KernelEventMonitor IPMonitor; do
+                  d="$out/System/Library/SystemConfiguration/$p.bundle/Contents"
+                  mkdir -p "$d"
+                  cp "src/Libraries/SystemConfiguration/Plugins/$p/Info.plist" "$d/"
+                done
                 runHook postInstall
               '';
             });
@@ -2665,11 +2689,21 @@
                 runHook postInstall
               '';
             });
+          # Diagnostic: replays diskarbitrationd's DADiskCreateFromIOMedia checks
+          # against one IOMedia and names the failing one.
+          iomediacheckBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/iomediacheck.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+            };
           diskArbitrationBuild =
             if isDarwin then null else (mkPureDarwinBuild {
               pname = "puredarwin-diskarbitration";
               src = diskArbitrationSource;
-              buildTargets = [ "DiskArbitration" ];
+              buildTargets = [ "DiskArbitration" "diskarbitrationd" ];
               enableProjects = false;
               enableKernel = false;
               enableUserspace = false;
@@ -2680,6 +2714,7 @@
                 "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationBuild}"
                 "-DPUREDARWIN_IOKIT_PREFIX=${iokitBuild}"
                 "-DPUREDARWIN_SECURITY_PREFIX=${securityBuild}"
+                "-DPUREDARWIN_SYSTEMCONFIGURATION_PREFIX=${systemConfigurationBuild}"
               ];
             }).overrideAttrs (old: {
               installPhase = ''
@@ -2698,6 +2733,11 @@
                   "$out/usr/lib/libDiskArbitration.dylib"
                 mkdir -p "$out/include"
                 cp -a src/Libraries/DiskArbitration/include/DiskArbitration "$out/include/"
+                mkdir -p "$out/usr/libexec" "$out/System/Library/LaunchDaemons"
+                cp build-nix/src/Libraries/DiskArbitration/diskarbitrationd \
+                  "$out/usr/libexec/diskarbitrationd"
+                cp src/Libraries/DiskArbitration/diskarbitrationd/com.apple.diskarbitrationd.plist \
+                  "$out/System/Library/LaunchDaemons/"
                 runHook postInstall
               '';
             });
@@ -3475,6 +3515,7 @@
             security = securityBuild;
             systemConfiguration = systemConfigurationBuild;
             diskArbitration = diskArbitrationBuild;
+            iomediacheck = iomediacheckBuild;
             opengl-framework = openglFrameworkBuild;
             i3 = i3Build;
             i3status = i3statusShimBuild;
@@ -3600,6 +3641,7 @@
             systemConfiguration-arm64 = systemConfigurationArm64Build;
             diskArbitration = diskArbitrationBuild;
             iokitcf-static = iokitCFStaticBuild;
+            iomediacheck = iomediacheckBuild;
             startupNotification-arm64 = startupNotificationArm64Build;
             xcalc-arm64 = xcalcArm64Build;
             xcb-arm64 = xcbArm64Build;

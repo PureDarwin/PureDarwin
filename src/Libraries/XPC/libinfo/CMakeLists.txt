@@ -12,6 +12,7 @@ target_sources(XPC_libinfo_static PRIVATE
     si_getaddrinfo.c
     getnameinfo_link.c
     if_indextoname.c
+    if_nameindex.c
     ils.c
     mdns_module.c
     dns.subproj/herror.c

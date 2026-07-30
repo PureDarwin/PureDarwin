@@ -25,6 +25,7 @@
 #include <IOKit/assert.h>
 #include <IOKit/system.h>
 #include <IOKit/IORegistryEntry.h>
+#include <IOKit/IODeviceTreeSupport.h>   // gIODTPlane
 #include <IOKit/platform/ApplePlatformExpert.h>
 #include <libkern/c++/OSContainers.h>
 #include <libkern/c++/OSUnserialize.h>
@@ -130,6 +131,33 @@ bool AppleI386PlatformExpert::configure(IOService *provider) {
 			if (nub == 0) { kprintf(">>>   createNub -> NULL\n"); continue; }
 
 			nub->attach(this);
+
+			/*
+			 * Also root the nub in the IODeviceTree plane, under the
+			 * device-tree entry that plane hangs off.
+			 *
+			 * attach() above places the nub in the service plane only.
+			 * These nubs are synthesised from the "top-level" array
+			 * rather than read out of a real device tree, so nothing
+			 * else ever put them in gIODTPlane - which left every
+			 * descendant detached from the plane's root. IOPCIFamily
+			 * then attaches each IOPCIDevice under its bridge's DT
+			 * entry (IOPCIConfigurator's attachToParent(dtBridge,
+			 * gIODTPlane)), so a PCI device ended up *in* the plane,
+			 * with a parent, but with no path back to the root.
+			 *
+			 * IORegistryEntry::getPath() walks up until it reaches
+			 * gRegistryRoot's child in the plane and fails if it hits
+			 * NULL first, so IORegistryEntryGetPath(entry,
+			 * kIODeviceTreePlane, ...) failed for everything under
+			 * PCI while inPlane() and getNameInPlane() - neither of
+			 * which consults the root - happily succeeded.
+			 */
+			if (provider && !nub->attachToParent(provider, gIODTPlane)) {
+				kprintf(">>>   nub '%s': attachToParent(gIODTPlane) failed\n",
+				        nub->getName());
+			}
+
 			nub->registerService();
 			kprintf(">>>   registered nub '%s'\n", nub->getName());
 			nub->release();

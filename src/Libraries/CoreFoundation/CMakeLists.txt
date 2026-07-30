@@ -402,7 +402,13 @@ target_compile_definitions(CoreFoundation
                              $<$<COMPILE_LANGUAGE:ASM>:CF_CHARACTERSET_BITMAP="CharacterSets/CFCharacterSetBitmaps.bitmap">
                              $<$<COMPILE_LANGUAGE:ASM>:CF_CHARACTERSET_UNICHAR_DB="CharacterSets/CFUniCharPropertyDatabase.data">
                              $<$<COMPILE_LANGUAGE:ASM>:CF_CHARACTERSET_UNICODE_DATA_B="CharacterSets/CFUnicodeData-B.mapping">
-                             $<$<COMPILE_LANGUAGE:ASM>:CF_CHARACTERSET_UNICODE_DATA_L="CharacterSets/CFUnicodeData-L.mapping">)
+                             $<$<COMPILE_LANGUAGE:ASM>:CF_CHARACTERSET_UNICODE_DATA_L="CharacterSets/CFUnicodeData-L.mapping">
+                             # The Unicode tables reach the binary through the
+                             # .incbin directives above, as raw symbols. Tell
+                             # CFUniChar.c to read them that way rather than from
+                             # a -sectcreate'd __UNICODE segment, which this build
+                             # does not produce.
+                             USE_RAW_SYMBOL=1)
 target_include_directories(CoreFoundation
                            PRIVATE
                              ${PROJECT_SOURCE_DIR}
@@ -467,7 +473,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL Darwin)
                           icucore)
   set_target_properties(CoreFoundation
                         PROPERTIES LINK_FLAGS
-                          -Xlinker;-alias_list;-Xlinker;Base.subproj/DarwinSymbolAliases;-twolevel_namespace;-sectcreate;__UNICODE;__csbitmaps;CharacterSets/CFCharacterSetBitmaps.bitmap;-sectcreate;__UNICODE;__properties;CharacterSets/CFUniCharPropertyDatabase.data;-sectcreate;__UNICODE;__data;CharacterSets/CFUnicodeData-L.mapping;-segprot;__UNICODE;r;r)
+                          # Absolute paths, not relative: link flags are evaluated in the
+                          # build directory, so "CharacterSets/..." resolved to nothing.
+                          # ld64 created the __UNICODE sections empty instead of failing,
+                          # which left CFUniChar reading its Unicode tables out of a
+                          # zero-length section - garbage header, wild offsets, SIGSEGV
+                          # the first time anything decomposed a string.
+                          -Xlinker;-alias_list;-Xlinker;${CMAKE_CURRENT_SOURCE_DIR}/Base.subproj/DarwinSymbolAliases;-twolevel_namespace;-sectcreate;__UNICODE;__csbitmaps;${CMAKE_CURRENT_SOURCE_DIR}/CharacterSets/CFCharacterSetBitmaps.bitmap;-sectcreate;__UNICODE;__properties;${CMAKE_CURRENT_SOURCE_DIR}/CharacterSets/CFUniCharPropertyDatabase.data;-sectcreate;__UNICODE;__data;${CMAKE_CURRENT_SOURCE_DIR}/CharacterSets/CFUnicodeData-L.mapping;-segprot;__UNICODE;r;r)
 endif()
 
 install(TARGETS

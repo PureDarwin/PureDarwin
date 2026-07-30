@@ -60,6 +60,16 @@ typedef enum {
 } xpc_process_command_t;
 
 
+/*
+ * The value of a code-signing entitlement on the peer of an XPC connection.
+ * PureDarwin does not sign binaries and has no securityd, so a peer carries no
+ * entitlements and this always reports none - the same reasoning as Security.c's
+ * SecTask. Callers read NULL as "not entitled", which is accurate here.
+ */
+xpc_object_t
+xpc_connection_copy_entitlement_value(xpc_connection_t connection,
+                                      const char *entitlement);
+
 #ifdef __cplusplus
 }
 #endif

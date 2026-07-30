@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnableTransactions</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.apple.diskarbitrationd</string>
+	<key>MachServices</key>
+	<dict>
+		<key>com.apple.DiskArbitration.diskarbitrationd</key>
+		<true/>
+	</dict>
+	<key>POSIXSpawnType</key>
+	<string>Interactive</string>
+	<key>Program</key>
+	<string>/usr/libexec/diskarbitrationd</string>
+	<!--
+	    PureDarwin: -d turns on DALogDebug, which is where every probe and
+	    mount decision is recorded, and opens /var/log/diskarbitrationd.log.
+	    Without it DA is silent about everything except hard errors. Drop this
+	    once disk probing is trusted.
+	-->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/diskarbitrationd</string>
+		<string>-d</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>__CFPREFERENCES_AVOID_DAEMON</key>
+		<string>1</string>
+		<key>__CF_USER_TEXT_ENCODING</key>
+		<string>0x0:0:0</string>
+	</dict>
+</dict>
+</plist>

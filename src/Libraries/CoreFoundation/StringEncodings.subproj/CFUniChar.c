@@ -40,7 +40,19 @@ extern void _CFGetFrameworkPath(wchar_t *path, int maxLength);
 #define __kCFCharacterSetDir "\\Windows\\CoreFoundation"
 #endif
 
-#if TARGET_OS_MAC
+/*
+ * PureDarwin: let the build choose. Apple's CoreFoundation ships the Unicode
+ * tables in a __UNICODE segment created with ld's -sectcreate, which is what
+ * USE_MACHO_SEGMENT reads. This tree instead embeds them with .incbin from
+ * String.subproj/CFCharacterSetData.S and friends, producing the raw symbols
+ * USE_RAW_SYMBOL reads. Both are legitimate; only one matches a given link.
+ *
+ * Without this guard TARGET_OS_MAC forced the segment path unconditionally, so
+ * CF looked for its tables in a __UNICODE section that no longer gets created,
+ * found a zero-length one, and read a garbage header - a wild index into the
+ * bitmap and a SIGSEGV the first time anything decomposed a string.
+ */
+#if TARGET_OS_MAC && !defined(USE_RAW_SYMBOL)
 #define USE_MACHO_SEGMENT 1
 #elif DEPLOYMENT_RUNTIME_SWIFT && (TARGET_OS_LINUX || TARGET_OS_BSD || TARGET_OS_WIN32)
 #define USE_RAW_SYMBOL 1

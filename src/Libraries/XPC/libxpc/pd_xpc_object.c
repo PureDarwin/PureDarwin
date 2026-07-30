@@ -55,3 +55,51 @@ os_release(void *obj)
         free(obj);
     }
 }
+
+/*
+ * See xpc/private.h: with no code signing there are no entitlements to report,
+ * so this correctly finds none rather than fabricating one. Callers read NULL as
+ * "not entitled".
+ *
+ * One visible consequence: configd's IPMonitorControl server gates interface
+ * rank and advisory changes on an entitlement, so those requests are refused.
+ * The DNS configuration path does not go through it.
+ */
+/*
+ * The connection a message arrived on, recorded by
+ * xpc_connection_recv_message() as it dispatches to the handler. A server uses
+ * this to address its reply. NULL for any object this process created itself,
+ * which is what a caller should expect.
+ */
+xpc_connection_t
+xpc_dictionary_get_remote_connection(xpc_object_t xdict)
+{
+    struct xpc_object *xo = xdict;
+
+    if (xo == NULL) {
+        return NULL;
+    }
+    return xo->xo_remote_connection;
+}
+
+xpc_object_t
+xpc_connection_copy_entitlement_value(xpc_connection_t connection,
+                                      const char *entitlement)
+{
+    (void)connection;
+    (void)entitlement;
+    return NULL;
+}
+
+/*
+ * The uid an XPC connection's peer should be created as. launchd applies this
+ * when it spawns the service; PureDarwin's launchd does not implement per-service
+ * target uids, and every daemon here runs as root, so recording it would have no
+ * effect. diskarbitrationd sets it on its DAAgent connection.
+ */
+void
+xpc_connection_set_target_uid(xpc_connection_t connection, uid_t uid)
+{
+    (void)connection;
+    (void)uid;
+}

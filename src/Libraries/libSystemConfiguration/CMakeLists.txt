@@ -2,19 +2,27 @@ add_darwin_static_library(libSystemConfiguration_static)
 
 target_sources(libSystemConfiguration_static PRIVATE
     dnsinfo/dnsinfo_copy.c
+    nwi/network_information.c
+    nwi/network_state_information_priv.c
     libSystemConfiguration/libSystemConfiguration_client.c
 )
 
 target_include_directories(libSystemConfiguration_static PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/dnsinfo
+    ${CMAKE_CURRENT_SOURCE_DIR}/nwi
 )
 
 target_include_directories(libSystemConfiguration_static PRIVATE
     # SCPrivate.h stand-in; must precede any real SystemConfiguration headers.
     ${CMAKE_CURRENT_SOURCE_DIR}/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/libSystemConfiguration
+    ${CMAKE_CURRENT_SOURCE_DIR}/nwi
     ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_trace/os-include        # os/log.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/libxpc/include                # xpc, vproc_priv
+    ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/notify                        # notify.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../CommonCrypto/include              # CommonCrypto/CommonDigest.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../SystemConfiguration/config-agent-info  # config_agent_info.h
+    ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/bsd                           # net/necp.h (struct netagent)
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/libinfo/compat                # dispatch/private.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/include

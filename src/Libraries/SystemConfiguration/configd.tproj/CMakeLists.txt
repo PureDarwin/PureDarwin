@@ -35,13 +35,93 @@ target_sources(configd PRIVATE
     _notifyviaport.c
     _snapshot.c
     ${CMAKE_CURRENT_BINARY_DIR}/configServer.c
+    # The server halves of the dnsinfo and nwi XPC protocols. These use
+    # CoreFoundation, so unlike their clients (which live in
+    # libSystemConfiguration.a inside libSystem) they belong here in configd.
+    ../../libSystemConfiguration/dnsinfo/dnsinfo_create.c
+    ../../libSystemConfiguration/dnsinfo/dnsinfo_server.c
+    ../../libSystemConfiguration/dnsinfo/dnsinfo_flatfile.c
+    ../../libSystemConfiguration/nwi/network_information_server.c
+    ../../libSystemConfiguration/libSystemConfiguration/libSystemConfiguration_server.c
+    ../IPMonitorControl/IPMonitorControlServer.c
+    ../Plugins/common/IPMonitorControlPrefs.c
+    ../config-agent-info/config_agent_info.c
+    ../pd_awd_report_stub.c
+    ../Plugins/pd_ipmonitor_absent.c
 )
 
+# Builtin plugins: compiled into configd rather than dlopen'd, which is what
+# each plugin's own Info.plist asks for with <key>Builtin</key>. The Info.plist
+# still has to be installed as a bundle for plugin_support.c to discover it.
+set(_configd_plugins
+    PreferencesMonitor
+    LinkConfiguration
+    KernelEventMonitor
+    IPMonitor
+)
+
+# IPMonitor's NAT64 support is the only source in the plugin that genuinely
+# needs Apple's libnetwork (the nw_* object API); everything else, including the
+# DNS configuration that feeds dnsinfo, is plain C. Its ObjC config agents need
+# the network-agent APIs, which are likewise absent.
+set(_configd_plugin_excludes
+    nat64-configuration.c
+    # The ObjC config agents drive libnetwork's network-agent machinery through
+    # Foundation; neither is present.
+    agent-monitor.m
+    configAgent.m
+    dnsAgent.m
+    proxyAgent.m
+    controller.m
+    # set-hostname.c resolves the primary address through SCNetworkReachability,
+    # which needs libnetwork.
+    set-hostname.c
+    # smb-configuration.c needs <smb_server_prefs.h> from Apple's smb project.
+    smb-configuration.c
+)
+
+foreach(_plugin ${_configd_plugins})
+    # .m as well as .c: several plugin sources carry the ObjC extension but hold
+    # plain C (KernelEventMonitor's ev_extra.m is only ioctl wrappers).
+    file(GLOB _plugin_sources
+        ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/${_plugin}/*.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/${_plugin}/*.m)
+    foreach(_excluded ${_configd_plugin_excludes})
+        list(FILTER _plugin_sources EXCLUDE REGEX "/${_excluded}$")
+    endforeach()
+    target_sources(configd PRIVATE ${_plugin_sources})
+    target_compile_definitions(configd PRIVATE HAVE_PLUGIN_${_plugin}=1)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/${_plugin}/Info.plist
+        DESTINATION System/Library/SystemConfiguration/${_plugin}.bundle/Contents
+        COMPONENT BaseSystem)
+endforeach()
+
 target_include_directories(configd PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/common
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}                                      # config.h, configServer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../pd-compat-include                 # os/state_private.h, ne_session.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../SystemConfiguration.fproj         # SCDynamicStoreInternal.h et al
+    ${CMAKE_CURRENT_SOURCE_DIR}/../IPMonitorControl                  # IPMonitorControl.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../IPMonitorControl/AWD               # AWDIPMonitor*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/IPMonitor                  # ip_plugin.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../config-agent-info                  # config_agent_info.h
+    # XPC/notify before libresolv/include: the latter carries a cut-down
+    # notify.h stub, written before PureDarwin had a notifyd, which would
+    # otherwise shadow the real header.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../XPC/notify                      # real notify.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libresolv/include              # ifaddrs.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libresolv                       # resolv.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../mDNSResponder/mDNSShared         # dns_sd_private.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../ppp/include                      # ppp/ppp_msg.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystemConfiguration/nwi      # network_information.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystemConfiguration/libSystemConfiguration
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystemConfiguration/dnsinfo  # dnsinfo.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../CommonCrypto/include            # CommonCrypto/CommonDigest.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../XPC/libinfo                     # netdb_async.h, si_compare.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../pd-compat-include                 # nw/private.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../SystemConfiguration.fproj/helper  # SCHelper_client.h
+    ${CMAKE_SOURCE_DIR}/src/Kernel/Extensions/IONetworkingFamily/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     # configd.m includes <objc/objc-runtime.h> but uses nothing from it; the
     # header alone is enough, no libobjc link required.
@@ -89,6 +169,7 @@ target_compile_options(configd PRIVATE
     -fblocks
     -F${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libplatform/pd_bridgeos_compat.h>
+    $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../pd_sc_prelude.h>
     -w)
 
 target_link_options(configd PRIVATE

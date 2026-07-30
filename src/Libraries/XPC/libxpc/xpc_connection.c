@@ -478,6 +478,7 @@ xpc_connection_recv_message(void *context)
 	if (conn->xc_flags & XPC_CONNECTION_MACH_SERVICE_LISTENER) {
 		TAILQ_FOREACH(peer, &conn->xc_peers, xc_link) {
 			if (remote == peer->xc_remote_port) {
+				((struct xpc_object *)result)->xo_remote_connection = peer;
 				dispatch_async(peer->xc_target_queue, ^{
 					peer->xc_handler(result);
 					xpc_release(result);
@@ -501,6 +502,8 @@ xpc_connection_recv_message(void *context)
 			conn->xc_handler(peer);
 		});
 
+		((struct xpc_object *)result)->xo_remote_connection = peer;
+
 		dispatch_async(peer->xc_target_queue, ^{
 			peer->xc_handler(result);
 			xpc_release(result);
@@ -509,6 +512,7 @@ xpc_connection_recv_message(void *context)
 	} else {
 		xpc_connection_set_credentials(conn,
 		    ((struct xpc_object *)result)->xo_audit_token);
+		((struct xpc_object *)result)->xo_remote_connection = conn;
 
 		TAILQ_FOREACH(call, &conn->xc_pending, xp_link) {
 			if (call->xp_id == id) {

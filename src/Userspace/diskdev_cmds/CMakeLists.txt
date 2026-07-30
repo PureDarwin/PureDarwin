@@ -26,5 +26,7 @@ foreach(_pd_tgt mount umount)
     )
 
     add_dependencies(${_pd_tgt} libSystem_B_stub dyld)
-    install(TARGETS ${_pd_tgt} DESTINATION bin COMPONENT BaseSystem)
+    # sbin, not bin: diskarbitrationd execs /sbin/mount and /sbin/umount by
+    # absolute path, and that is where Apple ships them.
+    install(TARGETS ${_pd_tgt} DESTINATION sbin COMPONENT BaseSystem)
 endforeach()
