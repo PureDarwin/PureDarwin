@@ -22,5 +22,4 @@ option(PUREDARWIN_ENABLE_FBDOOM "Build fbDOOM (GPL, external source required) fo
 add_subdirectory(fbdoom)
 option(PUREDARWIN_ENABLE_OSMESA_FB "Build the OSMesa softpipe on-screen triangle demo" OFF)
 add_subdirectory(osmesa-fb)
-add_subdirectory(glxgears)
 add_subdirectory(pd-virgl-shim)

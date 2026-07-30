@@ -127,7 +127,7 @@ EOF
   dontFixup = true;
 
   meta = with lib; {
-    description = "mesa-demos (glxgears, glxinfo, ...) cross-built for PureDarwin";
+    description = "mesa-demos cross-built for PureDarwin";
     platforms = platforms.linux;
   };
 }

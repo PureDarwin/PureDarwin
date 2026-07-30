@@ -3008,42 +3008,6 @@
                 runHook postInstall
               '';
             });
-          glxgearsBuild =
-            if isDarwin then null else (mkPureDarwinBuild {
-              pname = "puredarwin-glxgears";
-              src = userlandSource;
-
-              buildTargets = [ "glxgears" ];
-
-              enableProjects = false;
-              enableKernel = false;
-              enableLibraries = false;
-              enableTools = false;
-              installUserland = false;
-              installKernel = false;
-
-              prebuiltLibSystem = libSystemBuild;
-
-              extraCmakeFlags = [
-                "-DPUREDARWIN_ENABLE_GLXGEARS=ON"
-                "-DPUREDARWIN_MESA_PREFIX=${mesaBuild}/usr"
-
-                "-DPUREDARWIN_X11_INCLUDE_DIR=${lib.getDev xlibBuild}/include"
-                "-DPUREDARWIN_XORGPROTO_INCLUDE_DIR=${lib.getDev pkgs.xorgproto}/include"
-
-                "-DPUREDARWIN_X11_LIBRARY=${xlibBuild}/lib/libX11.a"
-                "-DPUREDARWIN_XCB_LIBRARY=${xcbBuild}/lib/libxcb.a"
-                "-DPUREDARWIN_XAU_LIBRARY=${xvfbLibXauBuild}/lib/libXau.a"
-                "-DPUREDARWIN_XDMCP_LIBRARY=${xvfbLibXdmcpBuild}/lib/libXdmcp.a"
-              ];
-            }).overrideAttrs (old: {
-              installPhase = ''
-                runHook preInstall
-                mkdir -p "$out/usr/bin"
-                cp build-nix/src/Userspace/glxgears/glxgears "$out/usr/bin/glxgears"
-                runHook postInstall
-              '';
-            });
           kernelBuild = mkPureDarwinBuild {
             pname = "puredarwin-kernel";
             src = kernelSource;
@@ -4120,7 +4084,6 @@
               mesa = mesaBuild;
               osmesa-tri = osmesaTriBuild;
               osmesa-fb = osmesaFbBuild;
-              glxgears = glxgearsBuild;
               libobjc = libobjcBuild;
               objc-test = objcTestBuild;
               foundation = foundationBuild;
