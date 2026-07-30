@@ -9,6 +9,10 @@ OPTIONS/config_dtrace				optional config_dtrace
 OPTIONS/mach_assert				optional mach_assert
 
 # iig generated implementation files
+#
+# Paths are relative to the source root, not iokit/ as upstream: iig runs in the
+# tree here and writes these next to their .iig inputs, rather than them being
+# seeded into the build directory.
 
 iokit/DriverKit/OSObject.iig.cpp		optional iokitcpp
 iokit/DriverKit/OSAction.iig.cpp		optional iokitcpp

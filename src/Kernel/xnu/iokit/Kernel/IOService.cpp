@@ -1023,10 +1023,6 @@ IOService::startMatching( IOOptionBits options )
 	bool        ok;
 	bool        sync;
 	bool        waitAgain;
-	bool        pdTrace = (0 == strcmp(getMetaClass()->getClassName(), "PDArmPlatformExpert"))
-	    || (0 == strcmp(getMetaClass()->getClassName(), "IOPlatformExpertDevice"));
-	if (pdTrace) IOLog("PD-DIAG: %s startMatching begin self=%p options=0x%llx\n",
-	    getMetaClass()->getClassName(), this, (unsigned long long)options);
 
 	lockForArbitration();
 
@@ -1072,28 +1068,16 @@ IOService::startMatching( IOOptionBits options )
 		} else if (!sync || (kIOServiceAsynchronous & options)) {
 			ok = (NULL != _IOServiceJob::startJob( this, kMatchNubJob, options ));
 		} else {
-				do {
-					if ((__state[1] & kIOServiceNeedConfigState)) {
-					if (pdTrace) IOLog("PD-DIAG: %s startMatching before doServiceMatch self=%p\n",
-					    getMetaClass()->getClassName(), this);
+			do {
+				if ((__state[1] & kIOServiceNeedConfigState)) {
 					doServiceMatch( options );
-					if (pdTrace) IOLog("PD-DIAG: %s startMatching after doServiceMatch self=%p\n",
-					    getMetaClass()->getClassName(), this);
-					}
+				}
 
-				if (pdTrace) IOLog("PD-DIAG: %s startMatching before post-match arbitration self=%p\n",
-				    getMetaClass()->getClassName(), this);
 				lockForArbitration();
-				if (pdTrace) IOLog("PD-DIAG: %s startMatching after post-match arbitration self=%p\n",
-				    getMetaClass()->getClassName(), this);
 				IOLockLock( gIOServiceBusyLock );
 
 				waitAgain = ((prevBusy < (__state[1] & kIOServiceBusyStateMask))
 				    && (0 == (__state[0] & kIOServiceInactiveState)));
-				if (pdTrace) IOLog("PD-DIAG: %s startMatching post-match busy=%u prev=%u wait=%d\n",
-				    getMetaClass()->getClassName(),
-				    (unsigned)(__state[1] & kIOServiceBusyStateMask),
-				    (unsigned)prevBusy, waitAgain);
 
 				if (waitAgain) {
 					__state[1] |= kIOServiceSyncPubState | kIOServiceBusyWaiterState;
@@ -1104,8 +1088,6 @@ IOService::startMatching( IOOptionBits options )
 				unlockForArbitration();
 
 				if (waitAgain) {
-					if (pdTrace) IOLog("PD-DIAG: platform startMatching waiting busy=%u prev=%u\n",
-					    (unsigned)(__state[1] & kIOServiceBusyStateMask), (unsigned)prevBusy);
 					assert_wait((event_t) this /*&__state[1]*/, THREAD_UNINT);
 				}
 
@@ -4802,18 +4784,12 @@ IOService::doServiceMatch( IOOptionBits options )
 	bool                reRegistered = true;
 	bool                didRegister;
 	OSArray *           notifiers[2] = {NULL};
-	bool pdTrace = (0 == strcmp(getMetaClass()->getClassName(), "PDArmPlatformExpert"))
-	    || (0 == strcmp(getMetaClass()->getClassName(), "IOPlatformExpertDevice"));
-	if (pdTrace) IOLog("PD-DIAG: %s doServiceMatch begin self=%p\n",
-	    getMetaClass()->getClassName(), this);
 
 //    job->nub->deliverNotification( gIOPublishNotification,
 //                              kIOServiceRegisteredState, 0xffffffff );
 
 	while (keepGuessing) {
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before findDrivers\n");
 		matches = gIOCatalogue->findDrivers( this, &catalogGeneration );
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after findDrivers\n");
 		// the matches list should always be created by findDrivers()
 		if (matches) {
 			lockForArbitration();
@@ -4856,76 +4832,53 @@ IOService::doServiceMatch( IOOptionBits options )
 					resourceKeys = copyPropertyKeys();
 				}
 				probeCandidates( matches );
-				if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after probeCandidates\n");
 			} else {
 				matches->release();
 			}
 		}
 
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before final arbitration lock\n");
 		lockForArbitration();
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after final arbitration lock state0=0x%x state1=0x%x\n",
-		    __state[0], __state[1]);
 		reRegistered = (0 != (__state[1] & kIOServiceNeedConfigState));
 		keepGuessing =
 		    (reRegistered || (catalogGeneration !=
 		    gIOCatalogue->getGenerationCount()))
 		    && (0 == (__state[0] & kIOServiceInactiveState));
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch loop state0=0x%x state1=0x%x reRegistered=%d keep=%d\n",
-		    __state[0], __state[1], reRegistered, keepGuessing);
 
 		if (keepGuessing) {
-			if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before loop unlock\n");
 			unlockForArbitration();
-			if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after loop unlock\n");
 		}
 	}
 
 	if ((0 == (__state[0] & kIOServiceInactiveState))
 	    && (0 == (__state[1] & kIOServiceModuleStallState))) {
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before matched notifiers\n");
 		if (resourceKeys) {
 			setProperty(gIOResourceMatchedKey, resourceKeys);
 		}
 
 		notifiers[0] = copyNotifiers(gIOMatchedNotification,
 		    kIOServiceMatchedState, 0xffffffff);
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after matched notifiers\n");
 		if (0 == (__state[0] & kIOServiceFirstMatchState)) {
 			notifiers[1] = copyNotifiers(gIOFirstMatchNotification,
 			    kIOServiceFirstMatchState, 0xffffffff);
 		}
-		if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after first notifiers\n");
 	}
 
 	__state[1] &= ~kIOServiceConfigRunning;
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before config unlock\n");
 	unlockForArbitration();
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after config unlock\n");
 
 	if (resourceKeys) {
 		resourceKeys->release();
 	}
 
 	invokeNotifiers(&notifiers[0]);
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after matched invoke\n");
 	invokeNotifiers(&notifiers[1]);
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after first invoke\n");
 
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before final state lock\n");
 	lockForArbitration();
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after final state lock\n");
 	__state[1] &= ~kIOServiceConfigState;
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before terminate phase2\n");
 	scheduleTerminatePhase2();
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after terminate phase2\n");
 
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch before busy decrement\n");
 	_adjustBusy( -1 );
-	if (pdTrace) IOLog("PD-DIAG: root doServiceMatch after busy decrement\n");
 	unlockForArbitration();
-	if (pdTrace) IOLog("PD-DIAG: %s doServiceMatch complete self=%p\n",
-	    getMetaClass()->getClassName(), this);
 }
 
 UInt32

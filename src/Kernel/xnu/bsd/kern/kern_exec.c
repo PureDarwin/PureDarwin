@@ -6304,35 +6304,35 @@ create_unix_stack(vm_map_t map, load_result_t* load_result,
 		 */
 		if (load_result->user_stack_size == 0) {
 			load_result->user_stack_size = proc_limitgetcur(p, RLIMIT_STACK, TRUE);
-			/*
-			 * PD: RLIMIT_STACK can be RLIM_INFINITY (or otherwise >= the
-			 * allocated stack region -- PD's default stack rlimit is currently
-			 * unlimited). size - user_stack_size would then underflow to a huge
-			 * value and mach_vm_protect would fence off essentially the entire
-			 * stack as VM_PROT_NONE, so freshly grown (never-faulted) stack pages
-			 * take a fatal not-present fault. When the limit already covers the
-			 * whole allocation there is nothing above it to protect.
-			 */
-			if (load_result->user_stack_size >= size) {
-				prot_size = 0;
-			} else {
-				prot_size = vm_map_trunc_page(size - load_result->user_stack_size, vm_map_page_mask(map));
-			}
+						/*
+						* PD: RLIMIT_STACK can be RLIM_INFINITY (or otherwise >= the
+						* allocated stack region -- PD's default stack rlimit is currently
+						* unlimited). size - user_stack_size would then underflow to a huge
+						* value and mach_vm_protect would fence off essentially the entire
+						* stack as VM_PROT_NONE, so freshly grown (never-faulted) stack pages
+						* take a fatal not-present fault. When the limit already covers the
+						* whole allocation there is nothing above it to protect.
+						*/
+						if (load_result->user_stack_size >= size) {
+								prot_size = 0;
+						} else {
+			prot_size = vm_map_trunc_page(size - load_result->user_stack_size, vm_map_page_mask(map));
+						}
 		} else {
 			prot_size = PAGE_SIZE;
 		}
 
 		prot_addr = addr;
-		if (prot_size > 0) {
-			kr = mach_vm_protect(map,
-			    prot_addr,
-			    prot_size,
-			    FALSE,
-			    VM_PROT_NONE);
-			if (kr != KERN_SUCCESS) {
-				(void)mach_vm_deallocate(map, addr, size);
-				return kr;
-			}
+				if (prot_size > 0) {
+		kr = mach_vm_protect(map,
+		    prot_addr,
+		    prot_size,
+		    FALSE,
+		    VM_PROT_NONE);
+		if (kr != KERN_SUCCESS) {
+			(void)mach_vm_deallocate(map, addr, size);
+			return kr;
+						}
 		}
 	}
 
@@ -6370,7 +6370,7 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 	int error;
 	struct execve_args init_exec_args;
 	user_addr_t argv0 = USER_ADDR_NULL, argv1 = USER_ADDR_NULL;
-	user_addr_t envp0 = USER_ADDR_NULL;
+		user_addr_t envp0 = USER_ADDR_NULL;
 
 	/*
 	 * Validate inputs and pre-conditions
@@ -6384,7 +6384,7 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 	 */
 	size_t path_length = strlen(path) + 1;
 	argv0 = scratch_addr;
-	/* This page is kernel-created bootstrap storage, so no user pointer is involved. */
+		/* This page is kernel-created bootstrap storage, so no user pointer is involved. */
 	error = copyout(path, argv0, path_length);
 	if (error) {
 		return error;
@@ -6409,7 +6409,7 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 		scratch_addr = USER_ADDR_ALIGN(scratch_addr + init_args_length, sizeof(user_addr_t));
 	}
 
-	user_addr_t argv_addr = scratch_addr;
+		user_addr_t argv_addr = scratch_addr;
 	if (proc_is64bit(p)) {
 		user64_addr_t argv64bit[3] = {};
 
@@ -6421,7 +6421,7 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 		if (error) {
 			return error;
 		}
-		scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(argv64bit), sizeof(user_addr_t));
+				scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(argv64bit), sizeof(user_addr_t));
 	} else {
 		user32_addr_t argv32bit[3] = {};
 
@@ -6433,62 +6433,62 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 		if (error) {
 			return error;
 		}
-		scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(argv32bit), sizeof(user_addr_t));
-	}
-
-	/*
-	 * pid 1 needs no shared cache (PD has none), so nothing guarantees
-	 * /usr/lib/libobjc.A.dylib is mapped into any process the way it would
-	 * be on real Darwin. dyld requires libSystem's own initializer to run
-	 * before any other image's (see ImageLoaderMachO::doModInitFunctions),
-	 * which rules out giving libSystem.B.dylib a load-command dependency
-	 * on libobjc (objc4 has real static initializers - that would make
-	 * them run during libSystem's own dependency walk, before libSystem
-	 * is marked initialized, and dyld panics). Loading libobjc as an
-	 * independent DYLD_INSERT_LIBRARIES root sidesteps that: it still
-	 * depends on libSystem (like real Darwin), so ordering is correct,
-	 * and dyld's flat-namespace lookup then resolves libSystem's
-	 * currently-undefined objc_* references (-Wl,-U in
-	 * libSystem/stub/CMakeLists.txt) against it. Set here (pid 1's
-	 * otherwise-empty envp) so every descendant process inherits it.
-	 */
-	static const char dyld_insert_env[] = "DYLD_INSERT_LIBRARIES=/usr/lib/libobjc.A.dylib";
-	envp0 = scratch_addr;
-	error = copyout(dyld_insert_env, envp0, sizeof(dyld_insert_env));
-	if (error) {
-		return error;
-	}
-	scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(dyld_insert_env), sizeof(user_addr_t));
-
-	user_addr_t envp_addr = scratch_addr;
-	if (proc_is64bit(p)) {
-		user64_addr_t envp64bit[2] = {};
-
-		envp64bit[0] = envp0;
-		envp64bit[1] = USER_ADDR_NULL;
-
-		error = copyout(envp64bit, scratch_addr, sizeof(envp64bit));
-		if (error) {
-			return error;
+				scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(argv32bit), sizeof(user_addr_t));
 		}
-	} else {
-		user32_addr_t envp32bit[2] = {};
 
-		envp32bit[0] = (user32_addr_t)envp0;
-		envp32bit[1] = USER_ADDR_NULL;
-
-		error = copyout(envp32bit, scratch_addr, sizeof(envp32bit));
+		/*
+		* pid 1 needs no shared cache (PD has none), so nothing guarantees
+		* /usr/lib/libobjc.A.dylib is mapped into any process the way it would
+		* be on real Darwin. dyld requires libSystem's own initializer to run
+		* before any other image's (see ImageLoaderMachO::doModInitFunctions),
+		* which rules out giving libSystem.B.dylib a load-command dependency
+		* on libobjc (objc4 has real static initializers - that would make
+		* them run during libSystem's own dependency walk, before libSystem
+		* is marked initialized, and dyld panics). Loading libobjc as an
+		* independent DYLD_INSERT_LIBRARIES root sidesteps that: it still
+		* depends on libSystem (like real Darwin), so ordering is correct,
+		* and dyld's flat-namespace lookup then resolves libSystem's
+		* currently-undefined objc_* references (-Wl,-U in
+		* libSystem/stub/CMakeLists.txt) against it. Set here (pid 1's
+		* otherwise-empty envp) so every descendant process inherits it.
+		*/
+		static const char dyld_insert_env[] = "DYLD_INSERT_LIBRARIES=/usr/lib/libobjc.A.dylib";
+		envp0 = scratch_addr;
+		error = copyout(dyld_insert_env, envp0, sizeof(dyld_insert_env));
 		if (error) {
-			return error;
+				return error;
 		}
+		scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(dyld_insert_env), sizeof(user_addr_t));
+
+		user_addr_t envp_addr = scratch_addr;
+		if (proc_is64bit(p)) {
+				user64_addr_t envp64bit[2] = {};
+
+				envp64bit[0] = envp0;
+				envp64bit[1] = USER_ADDR_NULL;
+
+				error = copyout(envp64bit, scratch_addr, sizeof(envp64bit));
+				if (error) {
+						return error;
+				}
+		} else {
+				user32_addr_t envp32bit[2] = {};
+
+				envp32bit[0] = (user32_addr_t)envp0;
+				envp32bit[1] = USER_ADDR_NULL;
+
+				error = copyout(envp32bit, scratch_addr, sizeof(envp32bit));
+				if (error) {
+						return error;
+				}
 	}
 
 	/*
 	 * Set up argument block for fake call to execve.
 	 */
 	init_exec_args.fname = argv0;
-	init_exec_args.argp = argv_addr;
-	init_exec_args.envp = envp_addr;
+		init_exec_args.argp = argv_addr;
+		init_exec_args.envp = envp_addr;
 
 	/*
 	 * So that init task is set with uid,gid 0 token
@@ -6542,49 +6542,49 @@ load_init_program(proc_t p)
 {
 	uint32_t i;
 	int error;
-	vm_map_t map = get_task_map(p->task);
+		vm_map_t map = get_task_map(p->task);
 	mach_vm_size_t map_page_size = vm_map_page_size(map);
-	/* Avoid the first user page while the bootstrap pmap is being activated. */
-	mach_vm_offset_t scratch_addr = 0x10000000ULL;
-	(void) vm_map_switch(map);
+		/* Avoid the first user page while the bootstrap pmap is being activated. */
+		mach_vm_offset_t scratch_addr = 0x10000000ULL;
+		(void) vm_map_switch(map);
 
-	kern_return_t scratch_kr = mach_vm_allocate_kernel(map, &scratch_addr, map_page_size,
-	    VM_FLAGS_FIXED, VM_KERN_MEMORY_NONE);
-	if (scratch_kr != KERN_SUCCESS) {
-		panic("unable to allocate init exec scratch page: kr 0x%x addr 0x%llx size 0x%llx",
-		    (unsigned)scratch_kr, (uint64_t)scratch_addr, (uint64_t)map_page_size);
-	}
-
-	/*
-	 * Hand the init process stdin/stdout/stderr on the console.  Nothing has
-	 * opened a file on its behalf yet, so anything it reports before it sets
-	 * up its own logging would otherwise be lost to EBADF.  Descriptors are
-	 * inherited across the exec below, and because the table starts empty the
-	 * three opens land on 0, 1 and 2 in order.
-	 */
-	{
-		static const char console_path[] = "/dev/console";
-
-		if (copyout(console_path, (user_addr_t)scratch_addr, sizeof(console_path)) == 0) {
-			for (int fd = 0; fd < 3; fd++) {
-				struct open_args console_args = {
-					.path = (user_addr_t)scratch_addr,
-					.flags = (fd == 0) ? O_RDONLY : O_WRONLY,
-					.mode = 0,
-				};
-				int32_t opened_fd = -1;
-				int console_error = open(p, &console_args, &opened_fd);
-
-				if (console_error != 0 || opened_fd != fd) {
-					printf("load_init_program: /dev/console as fd %d failed: "
-					    "error %d, got fd %d\n", fd, console_error, opened_fd);
-					break;
-				}
-			}
-		} else {
-			printf("load_init_program: unable to stage /dev/console path\n");
+		kern_return_t scratch_kr = mach_vm_allocate_kernel(map, &scratch_addr, map_page_size,
+			VM_FLAGS_FIXED, VM_KERN_MEMORY_NONE);
+		if (scratch_kr != KERN_SUCCESS) {
+				panic("unable to allocate init exec scratch page: kr 0x%x addr 0x%llx size 0x%llx",
+					(unsigned)scratch_kr, (uint64_t)scratch_addr, (uint64_t)map_page_size);
 		}
-	}
+
+		/*
+		* Hand the init process stdin/stdout/stderr on the console.  Nothing has
+		* opened a file on its behalf yet, so anything it reports before it sets
+		* up its own logging would otherwise be lost to EBADF.  Descriptors are
+		* inherited across the exec below, and because the table starts empty the
+		* three opens land on 0, 1 and 2 in order.
+		*/
+		{
+				static const char console_path[] = "/dev/console";
+
+				if (copyout(console_path, (user_addr_t)scratch_addr, sizeof(console_path)) == 0) {
+						for (int fd = 0; fd < 3; fd++) {
+								struct open_args console_args = {
+										.path = (user_addr_t)scratch_addr,
+										.flags = (fd == 0) ? O_RDONLY : O_WRONLY,
+										.mode = 0,
+								};
+								int32_t opened_fd = -1;
+								int console_error = open(p, &console_args, &opened_fd);
+
+								if (console_error != 0 || opened_fd != fd) {
+										printf("load_init_program: /dev/console as fd %d failed: "
+											"error %d, got fd %d\n", fd, console_error, opened_fd);
+										break;
+								}
+						}
+				} else {
+						printf("load_init_program: unable to stage /dev/console path\n");
+				}
+		}
 #if CONFIG_MEMORYSTATUS
 	(void) memorystatus_init_at_boot_snapshot();
 #endif /* CONFIG_MEMORYSTATUS */

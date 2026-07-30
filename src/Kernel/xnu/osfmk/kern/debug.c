@@ -586,6 +586,13 @@ DebuggerTrapWithState(debugger_op db_op, const char *db_message, const char *db_
 	    db_panic_options, db_panic_data_ptr,
 	    db_proceed_on_sync_failure, db_panic_caller);
 
+	/*
+	 * On ARM this generates an uncategorized exception -> sleh code ->
+	 *   DebuggerCall -> kdp_trap -> handle_debugger_trap
+	 * So that is how XNU ensures that only one core can panic.
+	 * The rest of the cores are halted by IPI if possible; if that
+	 * fails it will fall back to dbgwrap.
+	 */
 	TRAP_DEBUGGER;
 
 	ret = CPUDEBUGGERRET;

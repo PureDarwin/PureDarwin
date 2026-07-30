@@ -173,15 +173,7 @@ walk_chain(const struct mach_header_64* mh,
 			dyldLogFunc("[LOG] kernel-fixups: value of chain %p", chain);
 		}
 		union ChainedFixupPointerOnDisk chainContent __unused = *chain;
-		if (segInfo->segment_offset == 0xd28000 && pageIndex == 0x13) {
-			dyldLogFunc("[KCDBG] chain=%p raw=0x%llx base0=%p off=0x%x\n",
-			    chain, (unsigned long long)chainContent.raw64, basePointers[0], offsetInPage);
-		}
 		fixup_value(chain, segInfo, slide, basePointers, &stop);
-		if (segInfo->segment_offset == 0xd28000 && pageIndex == 0x13) {
-			dyldLogFunc("[KCDBG] fixed=%p raw=0x%llx stop=%d\n",
-			    chain, (unsigned long long)chain->raw64, stop);
-		}
 		if (!stop) {
 			switch (segInfo->pointer_format) {
 #if __LP64__
@@ -313,7 +305,6 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
 	}
 
 	int stopped = 0;
-	dyldLogFunc("[MH] slide: seg_count=%u\n", fixupStarts->seg_count);
 	for (uint32_t segIndex = 0; segIndex < fixupStarts->seg_count && !stopped; ++segIndex) {
 		if (LogFixups) {
 			dyldLogFunc("[LOG] kernel-fixups: segment %d\n", segIndex);
@@ -322,8 +313,6 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
 			continue;
 		}
 		const struct dyld_chained_starts_in_segment* segInfo = (const struct dyld_chained_starts_in_segment*)((uintptr_t)fixupStarts + fixupStarts->seg_info_offset[segIndex]);
-		dyldLogFunc("[MH] slide: seg=%u pages=%u fmt=0x%x\n",
-		    segIndex, segInfo->page_count, segInfo->pointer_format);
 		for (uint32_t pageIndex = 0; pageIndex < segInfo->page_count && !stopped; ++pageIndex) {
 			uint16_t offsetInPage = segInfo->page_start[pageIndex];
 			if (offsetInPage == DYLD_CHAINED_PTR_START_NONE) {
@@ -336,10 +325,6 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
 				 * array; its final entry carries DYLD_CHAINED_PTR_START_LAST. */
 				uint16_t chainIndex = offsetInPage & ~DYLD_CHAINED_PTR_START_MULTI;
 				const uint16_t *chainStarts = segInfo->page_start + segInfo->page_count;
-				if (segInfo->segment_offset == 0xd28000 && pageIndex == 0x13) {
-					dyldLogFunc("[KCDBG] page start=0x%x index=%u first=0x%x second=0x%x\n",
-					    offsetInPage, chainIndex, chainStarts[chainIndex], chainStarts[chainIndex + 1]);
-				}
 				for (;;) {
 					uint16_t chainStart = chainStarts[chainIndex++];
 					bool last = (chainStart & DYLD_CHAINED_PTR_START_LAST) != 0;

@@ -30,6 +30,11 @@
 #define _I386_X86_HYPERCALL_H_
 
 /*
+ * Not gated on DEBUG || DEVELOPMENT as upstream: hypercalls are enabled on every
+ * PureDarwin build, since the DEBUG-only path was broken.
+ */
+
+/*
  * Apple Hypercall Calling Convention (x64)
  *
  * Registers |                Usage                       |

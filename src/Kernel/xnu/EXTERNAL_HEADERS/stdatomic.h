@@ -28,6 +28,11 @@
 #ifndef __CLANG_STDATOMIC_H
 #define __CLANG_STDATOMIC_H
 
+/*
+ * Upstream's __STDC_HOSTED__ include_next fallback is dropped: cross-building
+ * finds the host's stdatomic.h, which is wrong for the kernel.
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 

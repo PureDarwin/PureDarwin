@@ -191,6 +191,10 @@ static void OSKextLogKextInfo(OSKext *aKext, uint64_t address, uint64_t size, fi
 
 /**********
  * Strings and substrings used in dependency resolution.
+ *
+ * The com.apple.kpi.private copyright/prefix enforcement is removed: private KPI
+ * is used here by PureDarwin, Apple and ravynOS kexts alike, none of which can
+ * claim a com.apple. identifier or Apple copyright.
  */
 #define KERNEL_LIB                   "com.apple.kernel"
 

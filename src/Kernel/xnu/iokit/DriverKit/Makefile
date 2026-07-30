@@ -5,6 +5,10 @@ export MakeInc_dir=${SRCROOT}/makedefs/MakeInc.dir
 
 IIG_INCFLAGS = -I$(SRCROOT)/iokit -I$(SRCROOT)/osfmk -I$(SRCROOT)/bsd -I$(OBJROOT)/bsd $(INCFLAGS_EXTERN)
 
+# Upstream's iig rules are dropped: the generated .h/.iig.cpp pairs are produced
+# by iig in the tree (see iokit/conf/files) and committed, so this Makefile only
+# installs headers rather than generating them.
+
 INCDIR = $(FRAMEDIR)/$(DKIT_INCDIR)
 DRIVERKITINCDIR = $(DRIVERKITFRAMEDIR)/$(DRIVERKIT_DKIT_INCDIR)
 LCLDIR = $(FRAMEDIR)/$(DKIT_PINCDIR)
