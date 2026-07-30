@@ -356,44 +356,9 @@ kdp_i386_trap(
 	boolean_t prev_interrupts_state;
 
 	if (trapno != T_INT3 && trapno != T_DEBUG) {
-		kprintf(
-			"\n=== Trap %u ===\n"
-			"RAX %016llx  RBX %016llx  RCX %016llx  RDX %016llx\n"
-			"RSI %016llx  RDI %016llx  RBP %016llx\n"
-			"R8  %016llx  R9  %016llx  R10 %016llx  R11 %016llx\n"
-			"R12 %016llx  R13 %016llx  R14 %016llx  R15 %016llx\n"
-			"RIP %016llx  RSP %016llx\n"
-			"RFL %016llx  ERR %016llx\n"
-			"CR2 %016llx\n"
-			"CS %04x  SS %04x  FS %04x  GS %04x  DS %04x  ES %04x\n",
-			trapno,
-			saved_state->rax,
-			saved_state->rbx,
-			saved_state->rcx,
-			saved_state->rdx,
-			saved_state->rsi,
-			saved_state->rdi,
-			saved_state->rbp,
-			saved_state->r8,
-			saved_state->r9,
-			saved_state->r10,
-			saved_state->r11,
-			saved_state->r12,
-			saved_state->r13,
-			saved_state->r14,
-			saved_state->r15,
-			saved_state->isf.rip,
-			saved_state->isf.rsp,
-			saved_state->isf.rflags,
-			saved_state->isf.err,
-			saved_state->cr2,
-			saved_state->isf.cs,
-			saved_state->isf.ss,
-			saved_state->fs,
-			saved_state->gs,
-			saved_state->ds,
-			saved_state->es
-		);
+		kprintf("Debugger: Unexpected kernel trap number: "
+		    "0x%x, RIP: 0x%llx, CR2: 0x%llx\n",
+		    trapno, saved_state->isf.rip, saved_state->cr2);
 		if (!kdp.is_conn) {
 			return FALSE;
 		}

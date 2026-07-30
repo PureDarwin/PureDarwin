@@ -634,13 +634,11 @@ KLDBootstrap::loadKernelExternalComponents(void)
 		isKernelExternalComponent = OSDynamicCast(OSBoolean,
 		    theKext->getPropertyForHostArch(kAppleKernelExternalComponentKey));
 		if (isKernelExternalComponent && isKernelExternalComponent->isTrue()) {
-			OSReturn loadResult;
-
 			OSKextLog(/* kext */ NULL,
 			    kOSKextLogStepLevel |
 			    kOSKextLogLoadFlag,
 			    "Loading kernel external component %s.", bundleID->getCStringNoCopy());
-			loadResult = OSKext::loadKextWithIdentifier(bundleID->getCStringNoCopy(),
+			OSKext::loadKextWithIdentifier(bundleID->getCStringNoCopy(),
 			    /* allowDefer */ false);
 		}
 	}
@@ -782,3 +780,4 @@ bootstrapLoadSecurityExtensions(void)
 	sBootstrapObject.loadSecurityExtensions();
 	return;
 }
+
