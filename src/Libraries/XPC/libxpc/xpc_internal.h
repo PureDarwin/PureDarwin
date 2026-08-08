@@ -39,9 +39,7 @@
 
 #define debugf(msg, ...) \
 	do { \
-		os_log_t logger = os_log_create("org.puredarwin.libxpc", "Debug"); \
-		os_log(logger, msg, ##__VA_ARGS__); \
-		os_release(logger); \
+		os_log(_pd_xpc_log(), msg, ##__VA_ARGS__); \
 	} while(0);
 
 #define	XPC_SEQID	"XPC sequence number"
@@ -126,6 +124,7 @@ struct xpc_connection {
 	int 			xc_flags;
 	bool			xc_started;
 	bool			xc_cancelled;
+	bool			xc_invalid;
 	_Atomic(uint64_t)	xc_last_id;
 	void *			xc_context;
 	struct xpc_connection * xc_parent;
@@ -192,7 +191,7 @@ __private_extern__ void xpc_api_misuse(const char *info, ...) __attribute__((nor
  * these "class" identifiers to resolve to real ObjC metaclass symbols -
  * can never link here. These OS_xpc_object_class/OS_xpc_connection_class
  * identifiers are only ever used as opaque `isa` tag values (see
- * pd_xpc_object.c's os_retain/os_release, which dispatch on ref-counting
+ * pd_xpc_object.c's _pd_xpc_retain/_pd_xpc_release, which dispatch on ref-counting
  * fields, not on isa method tables), so plain extern data objects with
  * their literal C names are the correct real substitute - not a fabricated
  * behavior, just the non-ObjC storage this tree's build already commits to
@@ -204,5 +203,12 @@ __private_extern__ void xpc_api_misuse(const char *info, ...) __attribute__((nor
 #define OS_OBJECT_CLASS_SYMBOL(name) OS_##name##_class
 #define OS_OBJC_CLASS_RAW_SYMBOL_NAME(name) "_OBJC_CLASS_$_" OS_STRINGIFY(name)
 #endif
+
+_os_object_t _pd_xpc_object_alloc(const void *cls, size_t size);
+void *_pd_xpc_retain(void *obj);
+void _pd_xpc_release(void *obj);
+
+/* The process-wide libxpc log object. See debugf() above. */
+os_log_t _pd_xpc_log(void);
 
 #endif	/* _LIBXPC_XPC_INTERNAL_H */

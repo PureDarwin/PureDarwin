@@ -17,7 +17,7 @@
 , libdmg-hfsplus ? null
 , cacert
 , espMB ? 64
-, rootMB ? 4096
+, rootMB ? 6144
 , apfsMB ? 128
   # "ext4": ext4 root + APFS test partition
   # "hfs":  EFI + HFS+ root ONLY - no ext4, no APFS. Root is mounted by the
@@ -599,7 +599,7 @@ EOF
     ln -sf ../../bin/env "$staging/usr/bin/env"
 
     # Create a cc compat
-    ln -sf ../../bin/tcc "$staging/usr/bin/cc"
+    ln -sf ../../bin/clang "$staging/usr/bin/cc"
 
     chmod 1777 \
       "$staging/tmp" \

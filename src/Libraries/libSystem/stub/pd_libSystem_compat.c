@@ -419,6 +419,25 @@ __pd_popen_extsn(const char *command, const char *type)
 }
 
 /*
+ * sigwait: the SDK headers asm-rename sigwait to the UNIX 03 variant, so our
+ * pthread source compiles its definition as _sigwait$UNIX2003 and libSystem
+ * ends up with no plain _sigwait at all. Binaries built against a real macOS
+ * SDK (rustc is one) reference the unsuffixed name, so forward it to the
+ * variant we do have. The definition needs its own explicit asm label,
+ * otherwise the header rename would apply here too and we would just be
+ * redefining _sigwait$UNIX2003.
+ */
+extern int __pd_sigwait_unix2003(const sigset_t *set, int *sig)
+    __asm("_sigwait$UNIX2003");
+extern int __pd_sigwait(const sigset_t *set, int *sig) __asm("_sigwait");
+
+int
+__pd_sigwait(const sigset_t *set, int *sig)
+{
+    return __pd_sigwait_unix2003(set, sig);
+}
+
+/*
  * select$1050: xterm's SDK <sys/select.h> asm-renames select to the 10.5
  * ("UNIX2003") variant. libSystem already provides select$DARWIN_EXTSN from
  * the libc archive, so forward the 1050 alias to it.

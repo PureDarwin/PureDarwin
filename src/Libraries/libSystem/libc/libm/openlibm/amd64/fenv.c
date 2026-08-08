@@ -158,7 +158,26 @@ feraiseexcept(int excepts)
 	return (0);
 }
 
+#ifdef __PUREDARWIN__
+/* Out of line for the same reason feclearexcept above is: the extern inline
+ * declaration emits no symbol against this SDK's fenv.h, so nothing provided
+ * fetestexcept at all. libLLVM imports it, and a dlopen with RTLD_NOW - which
+ * is what Wine uses to load libGL - fails to bind the whole chain without it. */
+int  fetestexcept(int excepts)
+{
+    uint32_t mxcsr;
+    uint16_t status;
+
+    /* Same body as the inline this replaces, rather than the _fegetexceptflag
+     * helper above: that one calls GET_FSW(), which is defined nowhere and has
+     * never been linked. */
+    __stmxcsr(&mxcsr);
+    __fnstsw(&status);
+    return ((status | mxcsr) & excepts);
+}
+#else
 extern inline OLM_DLLEXPORT int fetestexcept(int __excepts);
+#endif
 extern inline OLM_DLLEXPORT int fegetround(void);
 extern inline OLM_DLLEXPORT int fesetround(int __round);
 

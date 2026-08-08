@@ -4,13 +4,31 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dispatch/dispatch.h>
 #include "xpc_internal.h"
 
 void *OS_xpc_object_class;
 void *OS_xpc_connection_class;
 
+/*
+ * One log object for the whole process, created on first use and never
+ * released - see debugf() in xpc_internal.h. dispatch_once rather than a bare
+ * static so concurrent first calls cannot each calloc one and leak.
+ */
+os_log_t
+_pd_xpc_log(void)
+{
+	static dispatch_once_t once;
+	static os_log_t log;
+
+	dispatch_once(&once, ^{
+		log = os_log_create("org.puredarwin.libxpc", "Debug");
+	});
+	return log;
+}
+
 _os_object_t
-_os_object_alloc(const void *cls, size_t size)
+_pd_xpc_object_alloc(const void *cls, size_t size)
 {
     struct xpc_object_header *hdr = calloc(1, sizeof(struct xpc_object_header) + size);
 
@@ -23,8 +41,13 @@ _os_object_alloc(const void *cls, size_t size)
     return (_os_object_t)hdr;
 }
 
+/*
+ * Also renamed away from os_retain/os_release for the reason above: libdispatch
+ * exports those too, and its versions call objc_retain/objc_release on an isa
+ * these objects do not have.
+ */
 void *
-os_retain(void *obj)
+_pd_xpc_retain(void *obj)
 {
     struct xpc_object_header *hdr = obj;
 
@@ -35,7 +58,7 @@ os_retain(void *obj)
 }
 
 void
-os_release(void *obj)
+_pd_xpc_release(void *obj)
 {
     struct xpc_object_header *hdr = obj;
 

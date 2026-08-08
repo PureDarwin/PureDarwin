@@ -60,9 +60,10 @@ dns_configuration_notify_key()
 #pragma mark DNS configuration [dnsinfo] client support
 
 
-// Note: protected by __dns_configuration_queue()
+// Note: protected by dnsinfo_lock
 static int			dnsinfo_active		= 0;
 static libSC_info_client_t	*dnsinfo_client		= NULL;
+static pthread_mutex_t		dnsinfo_lock		= PTHREAD_MUTEX_INITIALIZER;
 
 
 static dispatch_queue_t
@@ -93,7 +94,8 @@ dns_configuration_copy()
 		return NULL;
 	}
 
-	dispatch_sync(__dns_configuration_queue(), ^{
+	pthread_mutex_lock(&dnsinfo_lock);
+	{
 		if ((dnsinfo_active++ == 0) || (dnsinfo_client == NULL)) {
 			static dispatch_once_t	once;
 			static const char	*service_name	= DNSINFO_SERVICE_NAME;
@@ -121,7 +123,8 @@ dns_configuration_copy()
 				--dnsinfo_active;
 			}
 		}
-	});
+	}
+	pthread_mutex_unlock(&dnsinfo_lock);
 
 	if ((dnsinfo_client == NULL) || !dnsinfo_client->active) {
 		// if DNS configuration server not available
@@ -175,13 +178,13 @@ dns_configuration_free(dns_config_t *config)
 		return;	// ASSERT
 	}
 
-	dispatch_sync(__dns_configuration_queue(), ^{
-		if (--dnsinfo_active == 0) {
-			// if last reference, drop connection
-			libSC_info_client_release(dnsinfo_client);
-			dnsinfo_client = NULL;
-		}
-	});
+	pthread_mutex_lock(&dnsinfo_lock);
+	if (--dnsinfo_active == 0) {
+		// if last reference, drop connection
+		libSC_info_client_release(dnsinfo_client);
+		dnsinfo_client = NULL;
+	}
+	pthread_mutex_unlock(&dnsinfo_lock);
 
 	free((void *)config);
 	return;
@@ -203,9 +206,9 @@ _dns_configuration_ack(dns_config_t *config, const char *bundle_id)
 		return;
 	}
 
-	dispatch_sync(__dns_configuration_queue(), ^{
-		dnsinfo_active++;	// keep connection active (for the life of the process)
-	});
+	pthread_mutex_lock(&dnsinfo_lock);
+	dnsinfo_active++;		// keep connection active (for the life of the process)
+	pthread_mutex_unlock(&dnsinfo_lock);
 
 	// create message
 	reqdict = xpc_dictionary_create(NULL, NULL, 0);

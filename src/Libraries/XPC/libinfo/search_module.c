@@ -937,11 +937,7 @@ si_module_static_search(void)
 
 	static dispatch_once_t once;
 
-	//{ const char m[] = "PD-DIAG: si_module_static_search: before dispatch_once\n";
-	//  write(2, m, sizeof(m) - 1); }
 	dispatch_once(&once, ^{
-		//{ const char m[] = "PD-DIAG: si_module_static_search: inside dispatch_once block\n";
-		//  write(2, m, sizeof(m) - 1); }
 		si.name = strdup("search");
 		search_si_private_t *pp = calloc(1, sizeof(search_si_private_t));
 		si.private = pp;
@@ -969,8 +965,6 @@ si_module_static_search(void)
 		};
 
 		int count = sizeof(modules) / sizeof(char *);
-		//{ const char m[] = "PD-DIAG: si_module_static_search: before si_module_config_modules_for_category\n";
-		//  write(2, m, sizeof(m) - 1); }
 		if (si_module_config_modules_for_category(pp, CATEGORY_DEFAULT, count, modules) != 0)
 		{
 			free(si.name);
@@ -1003,9 +997,6 @@ si_module_static_search(void)
 			}
 		}
 	});
-
-	// { const char m[] = "PD-DIAG: si_module_static_search: after dispatch_once\n";
-	//   write(2, m, sizeof(m) - 1); }
 
 	return (!result) ? &si : NULL;
 }

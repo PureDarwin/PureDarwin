@@ -161,11 +161,23 @@ static struct shmid_kernel *shm_find_segment_by_shmid(int);
 static int shm_delete_mapping(struct proc *, struct shmmap_state *, int);
 
 #ifdef __APPLE_API_PRIVATE
-#define DEFAULT_SHMMAX  (4 * 1024 * 1024)
+/*
+ * Raised from the stock 4M/32/8/1024. Those date from an era of much smaller
+ * displays and cannot be tuned up afterwards: shminit() sizes the shmsegs array
+ * from shmmni on first use and then refuses to change it, so shmmni in
+ * particular has to be right at boot.
+ *
+ * X11 MIT-SHM wants a segment per drawable at framebuffer size - a single
+ * 1920x1080x4 buffer is 8M, twice the old total - so Mesa failed every
+ * XShmAttach ("MESA: error: Failed to attach to x11 shm") and fell back to
+ * XPutImage. Chromium compounds it by running many processes, each wanting
+ * segments of its own, against a system-wide cap of 32.
+ */
+#define DEFAULT_SHMMAX  (64 * 1024 * 1024)
 #define DEFAULT_SHMMIN  1
-#define DEFAULT_SHMMNI  32
-#define DEFAULT_SHMSEG  8
-#define DEFAULT_SHMALL  1024
+#define DEFAULT_SHMMNI  192
+#define DEFAULT_SHMSEG  64
+#define DEFAULT_SHMALL  32768
 
 struct shminfo shminfo = {
 	.shmmax = DEFAULT_SHMMAX,

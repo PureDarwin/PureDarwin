@@ -25,6 +25,7 @@
 , libxcb
 , libXau
 , libXdmcp
+, libXxf86vm
 , xorgproto
 , xtrans
 , wayland
@@ -63,7 +64,7 @@ let
     "-L${wayland}/lib"
   ];
 
-  xDeps = [ libX11 libXext libxcb libXau libXdmcp xorgproto xtrans libxshmfence
+  xDeps = [ libX11 libXext libxcb libXau libXdmcp libXxf86vm xorgproto xtrans libxshmfence
             wayland waylandProtocols ];
   xPkgConfigPath = lib.concatMapStringsSep ":"
     (p: "${p}/lib/pkgconfig:${p}/share/pkgconfig") xDeps;
@@ -133,6 +134,19 @@ stdenv.mkDerivation {
 #endif
       "llvmpipe",'
     done
+
+    # llvmpipe's screen-creation branch also accepts the EMPTY driver name, and
+    # the candidate list starts with $GALLIUM_DRIVER - empty whenever the user
+    # has not asked for anything - so llvmpipe was created on the very first
+    # iteration and the virpipe entry added below it was never reached. That is
+    # why GALLIUM_DRIVER=virpipe gave the host GPU but the default did not.
+    # Match its own name only: an unset GALLIUM_DRIVER now falls through to
+    # virpipe, and back to llvmpipe when virgl is unavailable (the wrap returns
+    # NULL without an IOVirtIOGPU 3D device, e.g. on real hardware).
+    # LIBGL_ALWAYS_SOFTWARE still forces software via the only_sw guard.
+    substituteInPlace src/gallium/auxiliary/target-helpers/sw_helper.h \
+      --replace 'if (screen == NULL && (strcmp(driver, "llvmpipe") == 0 || !driver[0]))' \
+                'if (screen == NULL && strcmp(driver, "llvmpipe") == 0)'
 
     # The DRI helper still contains the Linux virtio-gpu entry point even
     # though the Darwin virgl build intentionally omits the DRM winsys.
@@ -207,6 +221,10 @@ endian = '${targetInfo.mesonEndian}'
 needs_exe_wrapper = true
 EOF
 
+    # glx-direct: direct contexts are the only ones that can work. The module
+    # the X server loads for AIGLX is Mesa's "dril" stub, whose
+    # createNewContext returns NULL by design, so an indirect context cannot be
+    # created at all (and the server then crashes destroying it)
     meson setup build \
       --cross-file puredarwin-cross.ini \
       --prefix=$out/usr \
@@ -220,7 +238,7 @@ EOF
       -Dgles1=disabled \
       -Dgles2=enabled \
       -Dglx=dri \
-      -Dglx-direct=false \
+      -Dglx-direct=true \
       -Degl=enabled \
       -Dgbm=disabled \
       -Dllvm=enabled \

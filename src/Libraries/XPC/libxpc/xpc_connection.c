@@ -50,7 +50,7 @@ xpc_connection_create(const char *name, dispatch_queue_t targetq)
 	char *qname;
 	struct xpc_connection *conn;
 
-	conn = _os_object_alloc(&OS_xpc_connection_class, sizeof(struct xpc_connection) - sizeof(struct xpc_object_header));
+	conn = _pd_xpc_object_alloc(&OS_xpc_connection_class, sizeof(struct xpc_connection) - sizeof(struct xpc_object_header));
 	if (conn == NULL) {
 		errno = ENOMEM;
 		return (NULL);
@@ -129,12 +129,11 @@ xpc_connection_create_mach_service(const char *name, dispatch_queue_t targetq,
 		return (conn);
 	}
 
-	/* Look up named mach service */
 	kr = bootstrap_look_up(bootstrap_port, name, &conn->xc_remote_port);
 	if (kr != KERN_SUCCESS) {
 		errno = ENOENT;
-		xpc_release(conn);
-		return (NULL);
+		conn->xc_remote_port = MACH_PORT_NULL;
+		conn->xc_invalid = true;
 	}
 
 	return (conn);
@@ -203,6 +202,17 @@ xpc_connection_resume(xpc_connection_t xconn)
 	if (conn->xc_cancelled)
 		return;
 
+	/*
+	 * Nothing to listen to on a connection whose service was never found.
+	 * Resuming is the point at which a real one would report that, and the
+	 * handler is set by now, so tell the caller.
+	 */
+	if (conn->xc_invalid) {
+		conn->xc_started = true;
+		xpc_connection_deliver_invalid(conn);
+		return;
+	}
+
 	/* Create dispatch source for top-level connection */
 	if (conn->xc_parent == NULL) {
 		conn->xc_recv_source = dispatch_source_create(
@@ -231,6 +241,9 @@ xpc_connection_send_message(xpc_connection_t xconn,
 	uint64_t id;
 
 	conn = xconn;
+	if (conn->xc_invalid)
+		return;
+
 	id = xpc_dictionary_get_uint64(message, XPC_SEQID);
 
 	if (id == 0)
@@ -254,6 +267,16 @@ xpc_connection_send_message_with_reply(xpc_connection_t xconn,
 	call->xp_handler = Block_copy(handler);
 	call->xp_queue = targetq ? targetq : conn->xc_target_queue;
 	TAILQ_INSERT_TAIL(&conn->xc_pending, call, xp_link);
+
+	/*
+	 * No reply is ever coming for a service that does not exist, and callers
+	 * of the _sync variant block until the handler runs. Fail the call now
+	 * rather than leaving them waiting forever.
+	 */
+	if (conn->xc_invalid) {
+		xpc_connection_deliver_invalid(conn);
+		return;
+	}
 
 	dispatch_async(conn->xc_send_queue, ^{
 		xpc_send(conn, message, call->xp_id);

@@ -77,6 +77,11 @@ stdenv.mkDerivation {
   inherit (wine) version;
   src = wine.src;
 
+  patches = [
+    ./wine-init-handler-null-gsbase.patch
+    ./wine-fault-handler-null-teb.patch
+  ];
+
   # mingwGcc builds Wine's PE-format modules. Like winebuild it runs on the
   # build host and emits Windows binaries, so it never touches PureDarwin.
   nativeBuildInputs = [ pkg-config gnumake flex bison mingwGcc mingwGcc32 python3 waylandScanner ];

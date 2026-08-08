@@ -321,8 +321,6 @@ static CFDictionaryRef _launchctl_jetsam_defaults_cached = NULL;
 int
 main(int argc, char *const argv[])
 {
-	{ const char m[] = "PD-DIAG: launchctl main: entered\n";
-	  write(2, m, sizeof(m) - 1); }
 	if (getenv(LAUNCH_ENV_BOOTSTRAPPINGSYSTEM)) {
 		/* We're bootstrapping the install environment, so we can't talk to
 		 * mDNSResponder or opendirectoryd.
@@ -469,66 +467,45 @@ static CFPropertyListRef
 CFPropertyListCreateFromFile(CFURLRef plistURL)
 {
 	extern long write(int, const void *, unsigned long) __asm("_write");
-#define PD_TR(s) //do { const char m[] = "PD-DIAG: CFPropertyListCreateFromFile: " s "\n"; write(2, m, sizeof(m) - 1); } while (0)
 
-	PD_TR("before CFReadStreamCreateWithFile");
 	CFReadStreamRef plistReadStream = CFReadStreamCreateWithFile(NULL, plistURL);
-	PD_TR("after CFReadStreamCreateWithFile");
 
 	CFErrorRef streamErr = NULL;
-	PD_TR("before CFReadStreamOpen");
 	if (!plistReadStream || !CFReadStreamOpen(plistReadStream)) {
-		PD_TR("CFReadStreamOpen failed (or no stream)");
 		if (plistReadStream) {
 			streamErr = CFReadStreamCopyError(plistReadStream);
-			PD_TR("after CFReadStreamCopyError");
 			/* streamErr can legitimately be NULL here (e.g. the stream
 			 * simply couldn't be opened - file missing - without CF ever
 			 * recording a CFErrorRef for it); CFErrorCopyDescription(NULL)
 			 * would be a null-deref, not an objc bug. */
 			if (streamErr) {
 				CFStringRef errString = CFErrorCopyDescription(streamErr);
-				PD_TR("after CFErrorCopyDescription");
 				launchctl_log_CFString(LOG_ERR, errString);
 				CFRelease(errString);
 				CFRelease(streamErr);
-			} else {
-				PD_TR("streamErr was NULL, skipping description");
 			}
 		}
-	} else {
-		PD_TR("CFReadStreamOpen succeeded");
 	}
 
 	CFPropertyListRef plist = NULL;
 	if (plistReadStream) {
         CFErrorRef error = NULL;
 		CFPropertyListFormat plistFormat = 0;
-		PD_TR("before CFPropertyListCreateWithStream");
         plist = CFPropertyListCreateWithStream(NULL, plistReadStream, 0, kCFPropertyListImmutable, &plistFormat, &error);
-		PD_TR("after CFPropertyListCreateWithStream");
 		if (!plist) {
-			PD_TR("plist creation failed");
 			if (error) {
 				CFStringRef errString = CFErrorCopyDescription(error);
-				PD_TR("after CFErrorCopyDescription(error)");
 				launchctl_log_CFString(LOG_ERR, errString);
 				CFRelease(errString);
 				CFRelease(error);
-			} else {
-				PD_TR("error was NULL, skipping description");
 			}
 		}
 	}
 
 	if (plistReadStream) {
-		PD_TR("before CFReadStreamClose");
 		CFReadStreamClose(plistReadStream);
-		PD_TR("before CFRelease(plistReadStream)");
 		CFRelease(plistReadStream);
 	}
-	PD_TR("returning from CFPropertyListCreateFromFile");
-#undef PD_TR
 
 	return plist;
 }
@@ -928,8 +905,6 @@ read_plist_file(const char *file, bool editondisk, bool load)
 	}
 
 	CFStringRef label = CFDictionaryGetValue(plist, CFSTR(LAUNCH_JOBKEY_LABEL));
-	//{ char m[192]; int n = snprintf(m, sizeof(m), "PD-DIAG read_plist_file: label=%p labelTypeOK=%d\n", (void *)label, label ? (int)CFTypeCheck(label, CFString) : -1);
-	//  write(2, m, n > 0 ? (size_t)n : 0); }
 	if (!(label && CFTypeCheck(label, CFString))) {
 		return NULL;
 	}
@@ -1303,17 +1278,11 @@ readpath(const char *what, struct load_unload_state *lus)
 	struct dirent *de;
 	DIR *d;
 
-	{ char m[512]; int n = snprintf(m, sizeof(m), "PD-DIAG readpath: enter what=%s\n", what);
-	  write(2, m, n > 0 ? (size_t)n : 0); }
 	if (!path_goodness_check(what, lus->forceload)) {
-		char m[512]; int n = snprintf(m, sizeof(m), "PD-DIAG readpath: path_goodness_check FAILED what=%s\n", what);
-		write(2, m, n > 0 ? (size_t)n : 0);
 		return;
 	}
 
 	if (stat(what, &sb) == -1) {
-		char m[512]; int n = snprintf(m, sizeof(m), "PD-DIAG readpath: stat FAILED what=%s errno=%d\n", what, errno);
-		write(2, m, n > 0 ? (size_t)n : 0);
 		return;
 	}
 
@@ -1321,8 +1290,6 @@ readpath(const char *what, struct load_unload_state *lus)
 		readfile(what, lus);
 	} else if (S_ISDIR(sb.st_mode)) {
 		if ((d = opendir(what)) == NULL) {
-			char m[512]; int n = snprintf(m, sizeof(m), "PD-DIAG readpath: opendir FAILED what=%s errno=%d\n", what, errno);
-			write(2, m, n > 0 ? (size_t)n : 0);
 			return;
 		}
 
@@ -1336,17 +1303,12 @@ readpath(const char *what, struct load_unload_state *lus)
 
 			if (!path_goodness_check(buf, lus->forceload)) {
 				pd_skipped++;
-				char m[1024]; int n = snprintf(m, sizeof(m), "PD-DIAG readpath: path_goodness_check SKIP %s\n", buf);
-				write(2, m, n > 0 ? (size_t)n : 0);
 				continue;
 			}
 
 			pd_read++;
 			readfile(buf, lus);
 		}
-		char m[768]; int n = snprintf(m, sizeof(m), "PD-DIAG readpath: dir %s seen=%d skipped=%d read=%d\n",
-				what, pd_seen, pd_skipped, pd_read);
-		write(2, m, n > 0 ? (size_t)n : 0);
 		closedir(d);
 	}
 }
@@ -2315,19 +2277,11 @@ system_specific_bootstrap(bool sflag)
 	launch_data_t lda, ldb;
 #endif
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before handle_system_bootstrapper_crashes_separately\n";
-	//  write(2, m, sizeof(m) - 1); }
 	handle_system_bootstrapper_crashes_separately();
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after handle_system_bootstrapper_crashes_separately, before si_search_module_set_flags(mdns)\n";
-	//  write(2, m, sizeof(m) - 1); }
 
 	// Disable Libinfo lookups to mdns and ds while bootstrapping (8698260)
 	si_search_module_set_flags("mdns", 1);
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after si_search_module_set_flags(mdns), before (ds)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	si_search_module_set_flags("ds", 1);
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after si_search_module_set_flags(ds)\n";
-	//  write(2, m, sizeof(m) - 1); }
 
 	/* rc.cdrom's hack to load the system means that we're not the real system
 	 * bootstrapper. So we set this environment variable, and if the real
@@ -2338,17 +2292,9 @@ system_specific_bootstrap(bool sflag)
 	 */
 	(void)setenv(LAUNCH_ENV_BOOTSTRAPPINGSYSTEM, "1", 1);
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before do_sysversion_sysctl\n";
-	//  write(2, m, sizeof(m) - 1); }
 	do_sysversion_sysctl();
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after do_sysversion_sysctl\n";
-	//  write(2, m, sizeof(m) - 1); }
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before do_single_user_mode\n";
-	//  write(2, m, sizeof(m) - 1); }
 	do_single_user_mode(sflag);
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after do_single_user_mode\n";
-	//  write(2, m, sizeof(m) - 1); }
 
 	(void)posix_assumes_zero(kq = kqueue());
 	EV_SET(&kev, 0, EVFILT_TIMER, EV_ADD|EV_ONESHOT, NOTE_SECONDS, 60, 0);
@@ -2358,22 +2304,12 @@ system_specific_bootstrap(bool sflag)
 	EV_SET(&kev, SIGTERM, EVFILT_SIGNAL, EV_ADD, 0, 0, 0);
 	(void)posix_assumes_zero(kevent(kq, &kev, 1, NULL, 0, NULL));
 	(void)posix_assumes_zero(signal(SIGTERM, SIG_IGN));
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after kevent block, before sysctl(hostname)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	(void)posix_assumes_zero(sysctl(hnmib, 2, NULL, NULL, "localhost", sizeof("localhost")));
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before loopback_setup_ipv4\n";
-	//  write(2, m, sizeof(m) - 1); }
 	loopback_setup_ipv4();
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before loopback_setup_ipv6\n";
-	//  write(2, m, sizeof(m) - 1); }
 	loopback_setup_ipv6();
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before apply_sysctls_from_file\n";
-	//  write(2, m, sizeof(m) - 1); }
 	apply_sysctls_from_file("/etc/sysctl.conf");
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after apply_sysctls_from_file\n";
-	//  write(2, m, sizeof(m) - 1); }
 
 #if TARGET_OS_EMBEDDED
 	if (path_check("/etc/rc.boot")) {
@@ -2404,11 +2340,7 @@ system_specific_bootstrap(bool sflag)
 			_exit(EXIT_FAILURE);
 		}
 	} else {
-		//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before do_potential_fsck\n";
-		//  write(2, m, sizeof(m) - 1); }
 		do_potential_fsck();
-		//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after do_potential_fsck\n";
-		//  write(2, m, sizeof(m) - 1); }
 	}
 
 #if TARGET_OS_EMBEDDED
@@ -2481,13 +2413,9 @@ system_specific_bootstrap(bool sflag)
 		}
 	}
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before empty_dir/remove block\n";
-	//  write(2, m, sizeof(m) - 1); }
 	empty_dir(_PATH_VARRUN, NULL);
 	empty_dir(_PATH_TMP, NULL);
 	(void)remove(_PATH_NOLOGIN);
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after empty_dir/remove block\n";
-	//  write(2, m, sizeof(m) - 1); }
 
 	if (path_check("/usr/libexec/dirhelper")) {
 		const char *dirhelper_tool[] = { "/usr/libexec/dirhelper", "-machineBoot", NULL };
@@ -2517,12 +2445,8 @@ system_specific_bootstrap(bool sflag)
 	systemstats_boot();
 #endif
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before do_BootCache_magic(START)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	do_BootCache_magic(BOOTCACHE_START);
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before _vproc_set_global_on_demand(true)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	_vproc_set_global_on_demand(true);
 
 	char *load_launchd_items[] = { "load", "-D", "all", "/System/Library/LaunchDaemons", NULL };
@@ -2532,42 +2456,24 @@ system_specific_bootstrap(bool sflag)
 		load_launchd_items[2] = "system";
 	}
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before load_and_unload_cmd(LaunchDaemons)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	(void)posix_assumes_zero(load_and_unload_cmd(load_launchd_items_cnt, load_launchd_items));
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after load_and_unload_cmd(LaunchDaemons)\n";
-	//  write(2, m, sizeof(m) - 1); }
 
 	/* See <rdar://problem/5066316>. */
 	if (!_launchctl_apple_internal) {
 		mach_timespec_t w = { 5, 0 };
-		//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before IOKitWaitQuiet\n";
-		//  write(2, m, sizeof(m) - 1); }
 		IOKitWaitQuiet(kIOMasterPortDefault, &w);
-		//{ const char m[] = "PD-DIAG: system_specific_bootstrap: after IOKitWaitQuiet\n";
-		//  write(2, m, sizeof(m) - 1); }
 	}
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before do_BootCache_magic(TAG)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	do_BootCache_magic(BOOTCACHE_TAG);
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before do_bootroot_magic\n";
-	//  write(2, m, sizeof(m) - 1); }
 	do_bootroot_magic();
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before _vproc_set_global_on_demand(false)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	_vproc_set_global_on_demand(false);
 
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: before final kevent(kq)\n";
-	//  write(2, m, sizeof(m) - 1); }
 	(void)posix_assumes_zero(kevent(kq, NULL, 0, &kev, 1, NULL));
 
 	/* warmd now handles cutting off the BootCache. We just kick it off. */
 	(void)close(kq);
-	//{ const char m[] = "PD-DIAG: system_specific_bootstrap: returning (end of function)\n";
-	//  write(2, m, sizeof(m) - 1); }
 }
 
 void
@@ -2810,8 +2716,6 @@ load_and_unload_cmd(int argc, char *const argv[])
 	lus.pass1 = launch_data_alloc(LAUNCH_DATA_ARRAY);
 
 	es = __CFStartSearchPathEnumeration(kCFLibraryDirectory /* was NSLibraryDirectory*/, es);
-	//{ char m[128]; int n = snprintf(m, sizeof(m), "PD-DIAG load_cmd: after __CFStartSearchPathEnumeration es=0x%lx\n", (unsigned long)es);
-	//  write(2, m, n > 0 ? (size_t)n : 0); }
 
 	while ((es = __CFGetNextSearchPathEnumeration(es, (uint8_t *)nspath, sizeof(nspath)))) {
 		if (lus.session_type) {
@@ -2819,9 +2723,6 @@ load_and_unload_cmd(int argc, char *const argv[])
 		} else {
 			strcat(nspath, "/LaunchDaemons");
 		}
-
-		//{ char m[512]; int n = snprintf(m, sizeof(m), "PD-DIAG load_cmd: enum nspath=%s es=0x%lx\n", nspath, (unsigned long)es);
-		//  write(2, m, n > 0 ? (size_t)n : 0); }
 
 		bool should_glob = true;
 		if (_launchctl_verbose_boot) {
@@ -2856,8 +2757,6 @@ load_and_unload_cmd(int argc, char *const argv[])
 			glob_t g;
 
 			int gr = glob(nspath, GLOB_TILDE|GLOB_NOSORT, NULL, &g);
-			///{ char m[512]; int n = snprintf(m, sizeof(m), "PD-DIAG load_cmd: glob(%s) rc=%d matches=%zu\n", nspath, gr, gr == 0 ? (size_t)g.gl_pathc : (size_t)0);
-			///  write(2, m, n > 0 ? (size_t)n : 0); }
 			if (gr == 0) {
 				for (i = 0; i < g.gl_pathc; i++) {
 					readpath(g.gl_pathv[i], &lus);
@@ -2866,15 +2765,10 @@ load_and_unload_cmd(int argc, char *const argv[])
 			}
 		}
 	}
-	//{ char m[128]; int n = snprintf(m, sizeof(m), "PD-DIAG load_cmd: pass1 count=%u\n", (unsigned)launch_data_array_get_count(lus.pass1));
-	//  write(2, m, n > 0 ? (size_t)n : 0); }
 
 	for (i = 0; i < (size_t)argc; i++) {
 		readpath(argv[i], &lus);
 	}
-
-	//{ char m[128]; int n = snprintf(m, sizeof(m), "PD-DIAG load_cmd: after argv loop pass1 count=%u load=%d\n", (unsigned)launch_data_array_get_count(lus.pass1), (int)lus.load);
-	//  write(2, m, n > 0 ? (size_t)n : 0); }
 
 	if (launch_data_array_get_count(lus.pass1) == 0) {
 		if (!_launchctl_is_managed) {
@@ -2885,10 +2779,7 @@ load_and_unload_cmd(int argc, char *const argv[])
 	}
 
 	if (lus.load) {
-		{ const char m[] = "PD-DIAG load_cmd: before distill_jobs\n"; write(2, m, sizeof(m) - 1); }
 		distill_jobs(lus.pass1);
-		{ char m[160]; int n = snprintf(m, sizeof(m), "PD-DIAG load_cmd: after distill_jobs count=%u sysbootstrap=%d xpcdomain=%d\n", (unsigned)launch_data_array_get_count(lus.pass1), (int)_launchctl_system_bootstrap, (int)launchctl_use_xpc_domain_bootstrap());
-		  write(2, m, n > 0 ? (size_t)n : 0); }
 		if (_launchctl_verbose_boot) {
 			launchctl_log(LOG_NOTICE, "PureDarwin bootstrap found %zu jobs",
 					launch_data_array_get_count(lus.pass1));
@@ -2933,14 +2824,12 @@ load_and_unload_cmd(int argc, char *const argv[])
 	}
 
 out:
-	{ char m[96]; int n = snprintf(m, sizeof(m), "PD-DIAG load_cmd: out reached, overrides_changed=%d\n", (int)_launchctl_overrides_db_changed); write(2, m, n > 0 ? (size_t)n : 0); }
 	if (_launchctl_overrides_db_changed) {
 		WriteMyPropertyListToFile(_launchctl_overrides_db, _launchctl_job_overrides_db_path);
 	}
 
 	flock(dbfd, LOCK_UN);
 	close(dbfd);
-	{ const char m[] = "PD-DIAG load_cmd: returning 0\n"; write(2, m, sizeof(m) - 1); }
 	return 0;
 }
 
@@ -3062,9 +2951,6 @@ submit_job_pass(launch_data_t jobs)
 	size_t i;
 	int e;
 
-	{ char m[128]; int n = snprintf(m, sizeof(m), "PD-DIAG submit_job_pass: enter count=%u\n", (unsigned)launch_data_array_get_count(jobs));
-	  write(2, m, n > 0 ? (size_t)n : 0); }
-
 	if (launch_data_array_get_count(jobs) == 0)
 		return;
 
@@ -3082,10 +2968,7 @@ submit_job_pass(launch_data_t jobs)
 
 	launch_data_dict_insert(msg, jobs, LAUNCH_KEY_SUBMITJOB);
 
-	{ const char m[] = "PD-DIAG submit_job_pass: before launch_msg SubmitJob\n"; write(2, m, sizeof(m) - 1); }
 	resp = launch_msg(msg);
-	{ char m[128]; int n = snprintf(m, sizeof(m), "PD-DIAG submit_job_pass: after launch_msg resp=%p resptype=%d errno=%d\n", (void *)resp, resp ? launch_data_get_type(resp) : -1, errno);
-	  write(2, m, n > 0 ? (size_t)n : 0); }
 
 	if (resp) {
 		switch (launch_data_get_type(resp)) {
@@ -3098,12 +2981,6 @@ submit_job_pass(launch_data_t jobs)
 				launch_data_t obatind = launch_data_array_get_index(resp, i);
 				launch_data_t jatind = launch_data_array_get_index(jobs, i);
 				const char *lab4job = launch_data_get_string(launch_data_dict_lookup(jatind, LAUNCH_JOBKEY_LABEL));
-				{ char m[192]; int n = snprintf(m, sizeof(m),
-				    "PD-DIAG submit resp[%zu] label=%s obtype=%d oberrno=%d\n",
-				    i, lab4job ? lab4job : "(nil)",
-				    obatind ? launch_data_get_type(obatind) : -1,
-				    (obatind && launch_data_get_type(obatind) == LAUNCH_DATA_ERRNO) ? launch_data_get_errno(obatind) : 0);
-				  write(2, m, n > 0 ? (size_t)n : 0); }
 				if (LAUNCH_DATA_ERRNO == launch_data_get_type(obatind)) {
 					e = launch_data_get_errno(obatind);
 					switch (e) {
@@ -3133,7 +3010,6 @@ submit_job_pass(launch_data_t jobs)
 	}
 
 	launch_data_free(msg);
-	{ const char m[] = "PD-DIAG submit_job_pass: done\n"; write(2, m, sizeof(m) - 1); }
 }
 
 int
@@ -4688,23 +4564,15 @@ skip_sysctl_tool:
 static CFStringRef
 copySystemBuildVersion(void)
 {
-	extern long write(int, const void *, unsigned long) __asm("_write");
-#define PD_TR(s) //do { const char m[] = "PD-DIAG: copySystemBuildVersion: " s "\n"; write(2, m, sizeof(m) - 1); } while (0)
 
     CFStringRef build = NULL;
     const char path[] = "/System/Library/CoreServices/SystemVersion.plist";
-	PD_TR("before CFURLCreateFromFileSystemRepresentation");
     CFURLRef plistURL = CFURLCreateFromFileSystemRepresentation(kCFAllocatorSystemDefault, (const uint8_t *)path, sizeof(path) - 1, false);
-	PD_TR("after CFURLCreateFromFileSystemRepresentation");
 
 	CFPropertyListRef plist = NULL;
-	PD_TR("before CFPropertyListCreateFromFile");
     if (plistURL && (plist = CFPropertyListCreateFromFile(plistURL))) {
-		PD_TR("after CFPropertyListCreateFromFile (got plist)");
 		if (CFTypeCheck(plist, CFDictionary)) {
-			PD_TR("before CFDictionaryGetValue");
 			build = (CFStringRef)CFDictionaryGetValue((CFDictionaryRef)plist, _kCFSystemVersionBuildVersionKey);
-			PD_TR("after CFDictionaryGetValue");
 			if (build && CFTypeCheck(build, CFString)) {
 				CFRetain(build);
 			} else {
@@ -4714,9 +4582,7 @@ copySystemBuildVersion(void)
 		}
 
 		CFRelease(plist);
-		PD_TR("after CFRelease(plist)");
     } else {
-		PD_TR("after CFPropertyListCreateFromFile (no plist)");
 		build = CFSTR("99Z999");
 		/* This function is a "copy" (its caller unconditionally
 		 * CFReleases whatever it returns) - CFSTR() here is NOT the
@@ -4734,11 +4600,8 @@ copySystemBuildVersion(void)
 
 	if (plistURL) {
 		CFRelease(plistURL);
-		PD_TR("after CFRelease(plistURL)");
 	}
 
-	PD_TR("returning");
-#undef PD_TR
     return build;
 }
 
@@ -4761,11 +4624,7 @@ do_sysversion_sysctl(void)
 		return;
 	}
 
-	//{ const char m[] = "PD-DIAG: do_sysversion_sysctl: before copySystemBuildVersion\n";
-	//  write(2, m, sizeof(m) - 1); }
 	buildvers = copySystemBuildVersion();
-	//{ const char m[] = "PD-DIAG: do_sysversion_sysctl: after copySystemBuildVersion\n";
-	//  write(2, m, sizeof(m) - 1); }
 	/* copySystemBuildVersion() returns a CFStringRef (CFSTR("99Z999") on
 	 * any failure, never NULL) - it used to be a plain malloc'd char* in
 	 * an earlier version of this function, and this call site was never
@@ -4774,11 +4633,7 @@ do_sysversion_sysctl(void)
 	 * crashed here (not a CF/objc bug - a stale type mismatch from that
 	 * conversion). CFStringGetCString/CFRelease are the real API for this. */
 	if (buildvers && CFStringGetCString(buildvers, buf, sizeof(buf), kCFStringEncodingUTF8)) {
-		//{ const char m[] = "PD-DIAG: do_sysversion_sysctl: before kern.osversion set\n";
-		//  write(2, m, sizeof(m) - 1); }
 		(void)posix_assumes_zero(sysctl(mib, 2, NULL, 0, buf, strlen(buf) + 1));
-		//{ const char m[] = "PD-DIAG: do_sysversion_sysctl: after kern.osversion set\n";
-		//  write(2, m, sizeof(m) - 1); }
 	}
 	if (buildvers) {
 		CFRelease(buildvers);

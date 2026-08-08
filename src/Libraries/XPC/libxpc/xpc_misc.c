@@ -120,13 +120,13 @@ xpc_object_destroy(struct xpc_object *xo)
 xpc_object_t
 xpc_retain(xpc_object_t obj)
 {
-	return os_retain(obj);
+	return _pd_xpc_retain(obj);
 }
 
 void
 xpc_release(xpc_object_t obj)
 {
-	os_release(obj);
+	_pd_xpc_release(obj);
 }
 
 static const char *xpc_errors[] = {

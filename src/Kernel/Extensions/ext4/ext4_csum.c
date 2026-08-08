@@ -321,8 +321,35 @@ ext4_dir_block_csum_set(struct ext4mount *emp, ino_t ino,
 	crc = ext4_crc32c(emp->em_csum_seed, &ino_le, sizeof(ino_le));
 	crc = ext4_crc32c(crc, &gen_le, sizeof(gen_le));
 	crc = ext4_crc32c(crc, block,
-	    emp->em_blocksize - sizeof(tail->det_checksum));
+	    emp->em_blocksize - EXT4_DIR_ENTRY_TAIL_SIZE);
 	tail->det_checksum = OSSwapHostToLittleInt32(crc);
+}
+
+void
+ext4_extent_block_csum_set(struct ext4mount *emp, ino_t ino,
+    const struct ext4_inode *inode, void *block)
+{
+	struct ext4_extent_header *eh = (struct ext4_extent_header *)block;
+	uint32_t ino_le, gen_le, crc;
+	size_t tail_off;
+
+	if (!emp->em_has_metadata_csum)
+		return;
+	if (le16(eh->eh_magic) != EXT4_EXT_MAGIC)
+		return;
+
+	tail_off = sizeof(struct ext4_extent_header) +
+	    (size_t)le16(eh->eh_max) * sizeof(struct ext4_extent);
+	if (tail_off + sizeof(uint32_t) > emp->em_blocksize)
+		return;
+
+	ino_le = OSSwapHostToLittleInt32((uint32_t)ino);
+	gen_le = inode != NULL ? inode->i_generation : 0;
+	crc = ext4_crc32c(emp->em_csum_seed, &ino_le, sizeof(ino_le));
+	crc = ext4_crc32c(crc, &gen_le, sizeof(gen_le));
+	crc = ext4_crc32c(crc, block, tail_off);
+	crc = OSSwapHostToLittleInt32(crc);
+	memcpy((char *)block + tail_off, &crc, sizeof(crc));
 }
 
 /*

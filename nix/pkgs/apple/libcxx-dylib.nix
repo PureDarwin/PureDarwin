@@ -76,13 +76,20 @@ stdenv.mkDerivation {
       objs="$objs $o"
     done
 
+    # -reexport-lc++abi, not plain -lc++abi: on Apple platforms libc++.1.dylib
+    # RE-EXPORTS libc++abi, so a two-level-namespace binary that records
+    # "___cxa_pure_virtual, expected in /usr/lib/libc++.1.dylib" resolves. Linking
+    # it as an ordinary dependency makes the symbol reachable transitively but
+    # NOT from libc++'s own namespace, and dyld refuses to launch (seen with
+    # rustc: "Symbol not found: ___cxa_pure_virtual, Expected in libc++.1.dylib"
+    # while nm showed it present and global in libc++abi.dylib).
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${libcxxabiDylib}/usr/lib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,/usr/lib/libc++.1.dylib \
       -Wl,-fixup_chains \
-      -lc++abi -lSystem \
+      -Wl,-reexport-lc++abi -lSystem \
       -o libc++.1.dylib $objs
 
     runHook postBuild

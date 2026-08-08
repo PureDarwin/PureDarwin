@@ -151,7 +151,7 @@ __private_extern__ struct xpc_object *
 _xpc_prim_create_flags(xpc_type_t type, xpc_u value, size_t size, uint16_t flags)
 {
 	struct xpc_object *xo;
-	xo = _os_object_alloc(&OS_xpc_object_class, sizeof(struct xpc_object) - sizeof(struct xpc_object_header));
+	xo = _pd_xpc_object_alloc(&OS_xpc_object_class, sizeof(struct xpc_object) - sizeof(struct xpc_object_header));
 	if (xo == NULL)
 		return (NULL);
 

@@ -1047,6 +1047,94 @@ user_trap(
 			    thread->task->bsd_info ? proc_name_address(thread->task->bsd_info) : "?",
 			    thread->task->bsd_info ? proc_pid(thread->task->bsd_info) : -1,
 			    (unsigned long long)rip);
+			if (is_saved_state64(saved_state)) {
+				x86_saved_state64_t *r = saved_state64(saved_state);
+				/* Deliberate traps carry their argument in a register -
+				 * DISPATCH_INTERNAL_CRASH and friends park it there so it
+				 * survives into a crash report. gsbase says which structure
+				 * %gs-relative TSD reads were hitting, which Wine changes
+				 * under us as it switches between Windows and unix code. */
+				printf("PD-DIAG: rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx rdi=0x%llx rsi=0x%llx rbp=0x%llx gsbase=0x%llx\n",
+				    (unsigned long long)r->rax, (unsigned long long)r->rbx,
+				    (unsigned long long)r->rcx, (unsigned long long)r->rdx,
+				    (unsigned long long)r->rdi, (unsigned long long)r->rsi,
+				    (unsigned long long)r->rbp,
+				    (unsigned long long)THREAD_TO_PCB(thread)->cthread_self);
+				/*
+				 * The trap argument is usually an object. Dump its first few
+				 * words, and for any word that is a readable pointer to a
+				 * printable string, print the string too - that names the
+				 * object outright (a dispatch queue carries dq_label).
+				 */
+				{
+					/*
+					 * gsbase is the thread's TSD base, so the %gs-relative
+					 * slots can be read directly. Slots 16..31 cover
+					 * libdispatch's reserved keys: 20 is the current queue and
+					 * 21 the thread frame, and those two are set as a pair -
+					 * a queue with no frame was set by a bare
+					 * _dispatch_queue_set_current rather than by an unbalanced
+					 * thread-frame push.
+					 */
+					uint64_t tsd = THREAD_TO_PCB(thread)->cthread_self;
+					if (tsd > 0x1000ULL && tsd < 0x800000000000ULL) {
+						printf("PD-DIAG: tsd[16..31]:");
+						for (int i = 16; i < 32; i++) {
+							uint64_t w = 0;
+							if (copyin((user_addr_t)(tsd + (uint64_t)i * 8),
+							    (char *)&w, 8) != 0) {
+								printf(" <unreadable>");
+								break;
+							}
+							printf(" %d=0x%llx", i, (unsigned long long)w);
+						}
+						printf("\n");
+					}
+				}
+				if (r->rdi > 0x1000ULL && r->rdi < 0x800000000000ULL) {
+					printf("PD-DIAG: [rdi]:");
+					for (int i = 0; i < 12; i++) {
+						uint64_t w = 0;
+						if (copyin((user_addr_t)(r->rdi + (uint64_t)i * 8),
+						    (char *)&w, 8) != 0) {
+							printf(" <unreadable>");
+							break;
+						}
+						printf(" 0x%llx", (unsigned long long)w);
+					}
+					printf("\n");
+					for (int i = 0; i < 12; i++) {
+						uint64_t w = 0;
+						char s[40];
+						int ok = 1;
+						if (copyin((user_addr_t)(r->rdi + (uint64_t)i * 8),
+						    (char *)&w, 8) != 0) {
+							break;
+						}
+						if (w <= 0x1000ULL || w >= 0x800000000000ULL) {
+							continue;
+						}
+						for (int j = 0; j < (int)sizeof(s); j++) {
+							if (copyin((user_addr_t)(w + (uint64_t)j),
+							    &s[j], 1) != 0) {
+								ok = 0;
+								break;
+							}
+							if (s[j] == '\0') {
+								break;
+							}
+							if (s[j] < 0x20 || s[j] > 0x7e) {
+								ok = 0;
+								break;
+							}
+						}
+						s[sizeof(s) - 1] = '\0';
+						if (ok && s[0] != '\0') {
+							printf("PD-DIAG: [rdi+0x%x] -> \"%s\"\n", i * 8, s);
+						}
+					}
+				}
+			}
 			{
 				uint8_t insn[16];
 				int ok = 1;
@@ -1243,6 +1331,20 @@ user_trap(
 			    (unsigned long long)r->rcx, (unsigned long long)r->rdx,
 			    (unsigned long long)r->rdi, (unsigned long long)r->rsi,
 			    (unsigned long long)r->rbp);
+			/*
+			 * A %gs-relative fault whose address is exactly the offset means
+			 * the segment base is zero. Print all three views of it: what the
+			 * thread should have, what the hardware actually has (swapgs put
+			 * the user base in KERNEL_GS_BASE on entry), and what this cpu
+			 * last cached. A valid cthread_self with a zero MSR is the kernel
+			 * failing to restore the base; a zero cthread_self means userspace
+			 * never set one on this thread.
+			 */
+			printf("PD-DIAG: gs cthread_self=0x%llx msr_kernel_gs=0x%llx cpu_user_gs=0x%llx gs_sel=0x%x\n",
+			    (unsigned long long)THREAD_TO_PCB(thread)->cthread_self,
+			    (unsigned long long)rdmsr64(MSR_IA32_KERNEL_GS_BASE),
+			    (unsigned long long)current_cpu_datap()->cpu_uber.cu_user_gs_base,
+			    (unsigned int)r->gs);
 		}
 		{
 			uint8_t insn[16];

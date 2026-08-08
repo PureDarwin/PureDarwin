@@ -142,6 +142,9 @@ fegetexceptflag(fexcept_t *__flagp, int __excepts)
 OLM_DLLEXPORT int fesetexceptflag(const fexcept_t *__flagp, int __excepts);
 OLM_DLLEXPORT int feraiseexcept(int __excepts);
 
+#ifdef __PUREDARWIN__
+int fetestexcept(int __excepts);
+#else
 __fenv_static __attribute__((always_inline)) inline int
 fetestexcept(int __excepts)
 {
@@ -152,6 +155,7 @@ fetestexcept(int __excepts)
 	__fnstsw(&__status);
 	return ((__status | __mxcsr) & __excepts);
 }
+#endif
 
 __fenv_static inline int
 fegetround(void)

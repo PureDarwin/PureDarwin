@@ -962,6 +962,7 @@
               libxcb = xcbBuild;
               libXau = xvfbLibXauBuild;
               libXdmcp = xvfbLibXdmcpBuild;
+              libXxf86vm = xvfbLibXxf86vmBuild;
               wayland = waylandBuild;
               waylandProtocols = waylandProtocolsBuild;
               waylandScanner = waylandScannerBuild;
@@ -1456,6 +1457,11 @@
               libxkbfile = xvfbLibXkbfileBuild;
               libXdmcp = pkgs.libxdmcp;
               libxcvt = xvfbLibxcvtBuild;
+              mesa = mesaBuild;
+              libX11 = xlibBuild;
+              libxcb = xcbBuild;
+              libXext = xvfbLibXextBuild;
+              libXfixes = xvfbLibXfixesBuild;
             };
           pdsurfaceBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/pdsurface.nix {
@@ -1534,6 +1540,17 @@
               version = pkgs.libXrender.version;
               src = pkgs.libXrender.src;
               deps = [ pkgs.xorgproto xlibBuild ];
+            };
+          # libGL's direct-rendering path calls into XF86VidMode for refresh
+          # rate reporting, so glx-direct=true needs this.
+          xvfbLibXxf86vmBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              pname = "puredarwin-libXxf86vm";
+              version = pkgs.libXxf86vm.version;
+              src = pkgs.libXxf86vm.src;
+              deps = [ pkgs.xorgproto xlibBuild xvfbLibXextBuild ];
             };
           xvfbLibXfixesBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xorg-cross-lib.nix {

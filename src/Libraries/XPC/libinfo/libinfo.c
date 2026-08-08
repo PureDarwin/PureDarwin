@@ -97,11 +97,7 @@ si_search(void)
 	static si_mod_t *search = NULL;
 
 	if (search == NULL) {
-		//{ const char m[] = "PD-DIAG: si_search: before si_module_with_name(search)\n";
-		//  write(2, m, sizeof(m) - 1); }
 		search = si_module_with_name("search");
-		//{ const char m[] = "PD-DIAG: si_search: after si_module_with_name(search)\n";
-		//  write(2, m, sizeof(m) - 1); }
 	}
 
 	return search;

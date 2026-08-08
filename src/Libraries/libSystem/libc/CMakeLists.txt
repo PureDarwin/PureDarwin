@@ -676,6 +676,7 @@ target_sources(libc_internal_static PRIVATE
     stdio/FreeBSD/sprintf.c       # _sprintf (err.c's _e_visprintf)
     stdio/FreeBSD/sscanf.c        # _sscanf
     stdio/FreeBSD/fscanf.c        # _fscanf (libfontenc's encparse.c)
+    stdio/FreeBSD/scanf.c         # _scanf (libLLVM imports it)
     stdio/FreeBSD/funopen.c       # _funopen (cookie-backed stdio)
     stdio/FreeBSD/fmemopen.c      # _fmemopen (memory-backed FILE*)
     stdlib/FreeBSD/atof.c         # _atof (freetype/libXfont2 config parsing)

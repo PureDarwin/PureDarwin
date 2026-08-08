@@ -21,6 +21,11 @@
 , libfontenc
 , xvfbZlib
 , libxcvt
+, mesa
+, libX11
+, libxcb
+, libXext
+, libXfixes
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
@@ -39,6 +44,12 @@ let
     libxcvt
   ];
   xPkgConfigDeps = map lib.getDev xDeps;
+
+  # GLX pulls in Mesa (gl.pc, dri.pc) plus everything gl.pc/glx.pc name in
+  # Requires.private - pkg-config walks those even for a shared link, so all
+  # of x11, xext, xfixes, x11-xcb, xcb, xcb-glx and xcb-dri2 have to resolve.
+  glxDeps = [ mesa libX11 libxcb libXext libXfixes ];
+  glxPkgConfigDeps = map lib.getDev glxDeps;
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -81,6 +92,23 @@ stdenv.mkDerivation {
       hw/xfree86/common/xf86Extensions.c
 
     patch -p1 < ${../../../patches/xorg-mitshm-puredarwin.patch}
+
+    # DRI_DRIVER_PATH is taken from dri.pc's dridriverdir, which points into
+    # the Mesa store path. The server only ever runs on the guest, where the
+    # drivers land at /usr/lib/dri.
+    sed -i "s|dri_dep.get_pkgconfig_variable('dridriverdir')|'/usr/lib/dri'|" \
+      include/meson.build
+
+    # glxProbeDriver() builds "<dir>/<name>_dri.so"; Mesa names its loadable
+    # modules .dylib here, so the dlopen never found swrast.
+    sed -i 's|%.\*s/%s_dri\.so|%.*s/%s_dri.dylib|' glx/glxdricommon.c
+
+    # The module loaded for AIGLX is Mesa's "dril" compatibility stub, whose
+    # createNewContext returns NULL by design (indirect GLX has been dead
+    # upstream since Mesa 24.1). Xorg does not check for that and tears the
+    # server down through a null driContext
+    sed -i 's|^    return \&context->base;$|    if (context->driContext == NULL) { free(context); return NULL; }\n    return \&context->base;|' \
+      glx/glxdriswrast.c
   '';
 
   configurePhase = ''
@@ -116,7 +144,8 @@ cpu = '${targetInfo.mesonCpu}'
 endian = '${targetInfo.mesonEndian}'
 EOF
 
-    export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" xPkgConfigDeps}"
+    # Mesa keeps its .pc files under usr/lib/pkgconfig, not lib/pkgconfig.
+    export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "lib/pkgconfig" glxPkgConfigDeps}:${lib.makeSearchPath "usr/lib/pkgconfig" glxPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" glxPkgConfigDeps}"
     # input_thread=false: the threaded input path spins on Darwin - ospoll's
     # poll() backend returns immediately and InputThreadDoWork busy-loops. It was
     # off by accident until now (its PTHREAD_MUTEX_RECURSIVE probe was failing
@@ -139,7 +168,7 @@ EOF
       -Dxwin=false \
       -Dxquartz=false \
       -Dglamor=false \
-      -Dglx=false \
+      -Dglx=true \
       -Dxdmcp=false \
       -Dxdm-auth-1=false \
       -Dsecure-rpc=false \

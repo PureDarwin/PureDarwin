@@ -394,7 +394,7 @@ let
     libcroco = libcrocoBuild;
     librsvg = librsvgBuild;
     gettext = gettextBuild;
-    webkitgtk = webkitgtkBuild;
+    #webkitgtk = webkitgtkBuild;
     libsoup = libsoupBuild;
     sqlite = sqliteBuild;
     libpsl = libpslBuild;

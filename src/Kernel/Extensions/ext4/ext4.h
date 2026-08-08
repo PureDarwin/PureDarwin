@@ -64,6 +64,7 @@
 
 /* i_flags */
 #define EXT4_EXTENTS_FL         0x00080000  /* inode uses extents */
+#define EXT4_INDEX_FL           0x00001000  /* directory has an HTREE index */
 
 /* on-disk superblock (partial; fields we read) */
 struct ext4_super_block {
@@ -364,8 +365,8 @@ int  ext4_free_inode(struct ext4mount *emp, ino_t ino, enum vtype type);
 int  ext4_alloc_block(struct ext4mount *emp, uint64_t goal, uint64_t *pblk_out);
 int  ext4_free_block(struct ext4mount *emp, uint64_t pblk);
 void ext4_inode_init_extent_header(struct ext4_inode *inode);
-int  ext4_inode_append_extent(struct ext4mount *emp, struct ext4_inode *inode,
-               uint32_t lblk, uint64_t pblk);
+int  ext4_inode_append_extent(struct ext4mount *emp, ino_t ino,
+               struct ext4_inode *inode, uint32_t lblk, uint64_t pblk);
 int  ext4_inode_free_extents(struct ext4mount *emp, struct ext4_inode *inode);
 int  ext4_inode_truncate_extents(struct ext4mount *emp, struct ext4_inode *inode,
                uint64_t keep_blocks);
@@ -401,6 +402,8 @@ int  ext4_dir_block_has_tail(struct ext4mount *emp, const void *block);
 void ext4_dir_block_init_tail(struct ext4mount *emp, void *block);
 void ext4_dir_block_csum_set(struct ext4mount *emp, ino_t ino,
                const struct ext4_inode *inode, void *block);
+void ext4_extent_block_csum_set(struct ext4mount *emp, ino_t ino,
+               const struct ext4_inode *inode, void *block);
 int  ext4_group_has_super(struct ext4mount *emp, uint32_t grp);
 /* Synthesize an uninitialized block group's bitmap. Returns 0 and fills
  * `map`/`*free_out` on success, or nonzero if the computed free count
@@ -413,6 +416,7 @@ int  ext4_init_block_bitmap(struct ext4mount *emp, uint32_t grp,
 void ext4_fs_lock_tagged(struct ext4mount *emp, const char *who);
 #define ext4_fs_lock(emp) ext4_fs_lock_tagged((emp), __func__)
 void ext4_fs_unlock(struct ext4mount *emp);
+void ext4_fs_unlock_nocommit(struct ext4mount *emp);
 
 /* Validate a directory block's rec_len chain. Returns 0 if walkable. */
 int  ext4_dir_block_check(struct ext4mount *emp, const void *block,

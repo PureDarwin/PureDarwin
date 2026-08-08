@@ -12,11 +12,17 @@
 #include <sys/kernel.h>
 #include <sys/unistd.h>
 #include <sys/syslimits.h>
+#include <sys/fcntl.h>
+#include <sys/disk.h>
 #include <string.h>
 #include <vm/vm_kern.h>
 #include <IOKit/IOLocks.h>
 
 int (**ext4_vnodeop_p)(void *);
+
+/* Blocks read per em_fs_lock acquisition. The lock is mount-wide, so a block
+ * at a time makes every read contend with every other vnop on the mount. */
+#define EXT4_READ_BATCH_BLOCKS  32
 
 static int ext4_ensure_block(struct ext4node *ep, uint32_t lblk,
     uint64_t *pblk_out);
@@ -326,6 +332,7 @@ ext4_vnop_read_impl(struct vnop_read_args *ap)
 	struct ext4node *ep = VTOE(vp);
 	uint32_t bs = ep->e_mount->em_blocksize;
 	char *buf;
+	size_t bufsz;
 	uint64_t file_size;
 	int error = 0;
 
@@ -343,7 +350,8 @@ ext4_vnop_read_impl(struct vnop_read_args *ap)
 		    uio_offset(uio) + uio_resid(uio), NULL,
 		    UBC_PUSHDIRTY | UBC_SYNC);
 
-	buf = (char *)_MALLOC(bs, M_TEMP, M_WAITOK);
+	bufsz = (size_t)bs * EXT4_READ_BATCH_BLOCKS;
+	buf = (char *)_MALLOC(bufsz, M_TEMP, M_WAITOK);
 	if (buf == NULL)
 		return ENOMEM;
 
@@ -356,28 +364,61 @@ ext4_vnop_read_impl(struct vnop_read_args *ap)
 
 	while (uio_resid(uio) > 0) {
 		off_t foff = uio_offset(uio);
-		size_t want;
+		size_t chunk, filled = 0;
 
 		if (foff >= (off_t)file_size)
 			break;
-		want = bs - (foff % bs);
-		if (want > (size_t)uio_resid(uio))
-			want = (size_t)uio_resid(uio);
-		if (foff + (off_t)want > (off_t)file_size)
-			want = (size_t)(file_size - foff);
+		/* Clamp so the batch spans at most EXT4_READ_BATCH_BLOCKS
+		 * blocks: an unaligned start would otherwise reach one block
+		 * past the mapping array resolved below. */
+		chunk = bufsz - (size_t)(foff % bs);
+		if (chunk > (size_t)uio_resid(uio))
+			chunk = (size_t)uio_resid(uio);
+		if (foff + (off_t)chunk > (off_t)file_size)
+			chunk = (size_t)(file_size - foff);
 
+		/*
+		 * Gather a batch of blocks per acquisition rather than one.
+		 * em_fs_lock covers the whole mount, so a block at a time meant
+		 * every 4K of every read serialised against every other vnop -
+		 * loading Wine's DLLs across dozens of processes starved the
+		 * loader lock for a minute at a time. Copying out still happens
+		 * unlocked below.
+		 *
+		 * The I/O deliberately stays inside the lock. Resolving the
+		 * batch's mapping under it and reading outside was measurably
+		 * faster but returned wrong bytes (three corpus files, and a
+		 * guest that could no longer complete an ssh handshake): the
+		 * mapping can change under a reader that no longer holds it.
+		 */
 		ext4_fs_lock(ep->e_mount);
-		error = ext4_read_range(ep, foff, buf, want);
-		ext4_fs_unlock(ep->e_mount);
-		if (error)
-			break;
+		while (filled < chunk) {
+			off_t at = foff + (off_t)filled;
+			size_t part = bs - (size_t)(at % bs);
+
+			if (part > chunk - filled)
+				part = chunk - filled;
+			error = ext4_read_range(ep, (uint64_t)at, buf + filled,
+			    part);
+			if (error)
+				break;
+			filled += part;
+		}
+		ext4_fs_unlock_nocommit(ep->e_mount);
+
 		/*
 		 * uiomove runs unlocked on purpose. The destination is a user
 		 * buffer that can itself be a page of a file on this mount, so
 		 * the copy can fault; holding em_fs_lock across it deadlocks
 		 * the whole mount against the VNOP_PAGEIN servicing that fault.
 		 */
-		error = uiomove(buf, (int)want, uio);
+		if (filled > 0) {
+			int uerr = uiomove(buf, (int)filled, uio);
+			if (uerr) {
+				error = uerr;
+				break;
+			}
+		}
 		if (error)
 			break;
 	}
@@ -415,12 +456,28 @@ ext4_vtype_to_ft(enum vtype type)
 	}
 }
 
+/*
+ * Give up a directory's HTREE index before changing its contents.
+ */
+static void
+ext4_dir_drop_htree(struct ext4node *dep)
+{
+	uint32_t flags = le32(dep->e_raw.i_flags);
+
+	if ((flags & EXT4_INDEX_FL) == 0)
+		return;
+	dep->e_raw.i_flags = le32(flags & ~EXT4_INDEX_FL);
+	(void)ext4_write_inode(dep->e_mount, dep->e_ino, &dep->e_raw);
+}
+
 static int
 ext4_dir_add(struct ext4node *dep, const char *name, size_t namelen,
     ino_t ino, enum vtype type)
 {
 	struct ext4mount *emp = dep->e_mount;
 	uint32_t bs = emp->em_blocksize;
+
+	ext4_dir_drop_htree(dep);
 	uint16_t need;
 	uint64_t off;
 
@@ -534,6 +591,8 @@ ext4_dir_remove(struct ext4node *dep, const char *name, size_t namelen,
 	uint32_t bs = emp->em_blocksize;
 	uint64_t off;
 
+	ext4_dir_drop_htree(dep);
+
 	for (off = 0; off < dep->e_size; off += bs) {
 		uint64_t pblk = 0;
 		buf_t bp = NULL;
@@ -591,6 +650,8 @@ ext4_dir_replace(struct ext4node *dep, const char *name, size_t namelen,
 	struct ext4mount *emp = dep->e_mount;
 	uint32_t bs = emp->em_blocksize;
 	uint64_t off;
+
+	ext4_dir_drop_htree(dep);
 
 	for (off = 0; off < dep->e_size; off += bs) {
 		uint64_t pblk = 0;
@@ -733,6 +794,22 @@ ext4_touch_inode(struct ext4_inode *ri)
 }
 
 /*
+ * A change to an inode's metadata updates ctime alone. mtime belongs to
+ * changes of the file's data, and to whatever utimes(2) explicitly asks for.
+ *
+ * Keeping these apart matters more here than it looks: mmap(2) issues a
+ * setattr carrying only va_access_time on every mapping, so bumping mtime
+ * for any setattr made every mapped file appear freshly modified.
+ */
+static void
+ext4_touch_ctime(struct ext4_inode *ri)
+{
+	struct timeval tv;
+	microtime(&tv);
+	ri->i_ctime = le32((uint32_t)tv.tv_sec);
+}
+
+/*
  * Actually tear down an unlinked inode: free its extents/blocks and its
  * inode-bitmap entry, and unhash the in-memory node so a subsequent
  * ext4_alloc_inode() reusing this number can't hand back this stale,
@@ -766,22 +843,37 @@ ext4_finish_free_inode(struct ext4node *ep)
 	return 0;
 }
 
+/*
+ * i_extra_isize for a newly created inode.
+ */
+static uint16_t
+ext4_new_extra_isize(const struct ext4mount *emp)
+{
+	if (emp->em_inode_size <= EXT4_GOOD_OLD_INODE_SIZE)
+		return 0;
+	if (emp->em_inode_size - EXT4_GOOD_OLD_INODE_SIZE < 32)
+		return (uint16_t)(emp->em_inode_size - EXT4_GOOD_OLD_INODE_SIZE);
+	return 32;
+}
+
+/*
+ * Link count remaining after unlinking one name for this inode.
+ */
+static uint16_t
+ext4_links_after_unlink(uint16_t links, enum vtype vtype)
+{
+	if (vtype == VDIR)
+		return 0;
+	return links > 0 ? (uint16_t)(links - 1) : 0;
+}
+
 static int
 ext4_drop_inode(struct ext4node *ep)
 {
 	int error;
-	uint16_t links = le16(ep->e_raw.i_links_count);
+	uint16_t links = ext4_links_after_unlink(le16(ep->e_raw.i_links_count),
+	    ep->e_vtype);
 
-	/*
-	 * Multi-link files (hardlinks) must only be torn down once the
-	 * last dirent referencing them is gone. This is what makes
-	 * git's finalize-via-link()+unlink() sequence safe: link() adds a
-	 * second dirent to the same inode and bumps this count to 2, so
-	 * the unlink() of the temp name must merely drop it back to 1,
-	 * not free the inode's extents out from under the surviving name.
-	 */
-	if (links > 0)
-		links--;
 	ep->e_raw.i_links_count = le16(links);
 	if (links > 0) {
 		ext4_touch_inode(&ep->e_raw);
@@ -830,9 +922,8 @@ ext4_drop_inode_ino(struct ext4mount *emp, ino_t ino)
 		return error;
 
 	/* Same last-link-only teardown as ext4_drop_inode(); see its comment. */
-	links = le16(raw.i_links_count);
-	if (links > 0)
-		links--;
+	vtype = ext4_mode_to_vtype(le16(raw.i_mode));
+	links = ext4_links_after_unlink(le16(raw.i_links_count), vtype);
 	raw.i_links_count = le16(links);
 	if (links > 0) {
 		microtime(&tv);
@@ -840,7 +931,6 @@ ext4_drop_inode_ino(struct ext4mount *emp, ino_t ino)
 		return ext4_write_inode(emp, ino, &raw);
 	}
 
-	vtype = ext4_mode_to_vtype(le16(raw.i_mode));
 	error = ext4_inode_free_extents(emp, &raw);
 	if (error)
 		return error;
@@ -920,7 +1010,7 @@ ext4_ensure_block_alloc(struct ext4node *ep, uint32_t lblk, uint64_t *pblk_out,
 	error = ext4_alloc_block(emp, 0, &pblk);
 	if (error)
 		return error;
-	error = ext4_inode_append_extent(emp, &ep->e_raw, lblk, pblk);
+	error = ext4_inode_append_extent(emp, ep->e_ino, &ep->e_raw, lblk, pblk);
 	if (error) {
 		(void)ext4_free_block(emp, pblk);
 		return error;
@@ -940,9 +1030,12 @@ ext4_ensure_block(struct ext4node *ep, uint32_t lblk, uint64_t *pblk_out)
 }
 
 /* Write [off, off+len) of the file from a kernel buffer `src` (len<=bs),
- * allocating the block if needed. Mirrors ext4_read_range for pagein. */
+ * allocating the block if needed. Mirrors ext4_read_range for pagein.
+ * `allocated` (may be NULL) reports whether a new block was mapped, so the
+ * caller knows the extent tree changed and the inode has to be written out. */
 static int
-ext4_write_range(struct ext4node *ep, uint64_t foff, const void *src, size_t len)
+ext4_write_range(struct ext4node *ep, uint64_t foff, const void *src, size_t len,
+    bool *allocated)
 {
 	struct ext4mount *emp = ep->e_mount;
 	uint32_t bs = emp->em_blocksize;
@@ -954,7 +1047,7 @@ ext4_write_range(struct ext4node *ep, uint64_t foff, const void *src, size_t len
 	if (boff + len > bs)
 		len = bs - boff;
 
-	error = ext4_ensure_block(ep, (uint32_t)(foff / bs), &pblk);
+	error = ext4_ensure_block_alloc(ep, (uint32_t)(foff / bs), &pblk, allocated);
 	if (error)
 		return error;
 	error = ext4_blkread(emp, pblk, &bp);
@@ -975,14 +1068,23 @@ ext4_vnop_write_impl(struct vnop_write_args *ap)
 	int error = 0;
 	bool dirty = false;
 	off_t write_start;
+	char *bounce;
 
 	if (vnode_isdir(vp))
 		return EISDIR;
+
+	ext4_fs_lock(emp);
 	if (ap->a_ioflag & IO_APPEND)
 		uio_setoffset(uio, (off_t)ep->e_size);
+	ext4_fs_unlock_nocommit(emp);
+
 	if (uio_offset(uio) < 0)
 		return EINVAL;
 	write_start = uio_offset(uio);
+
+	bounce = (char *)_MALLOC(bs, M_TEMP, M_WAITOK);
+	if (bounce == NULL)
+		return ENOMEM;
 
 	while (uio_resid(uio) > 0) {
 		off_t foff = uio_offset(uio);
@@ -996,40 +1098,60 @@ ext4_vnop_write_impl(struct vnop_write_args *ap)
 		if (want > (size_t)uio_resid(uio))
 			want = (size_t)uio_resid(uio);
 
-		error = ext4_ensure_block_alloc(ep, lblk, &pblk, &fresh);
-		if (error)
-			break;
-		error = ext4_blkread(emp, pblk, &bp);   /* read-modify-write */
+		/*
+		 * Copy out of the user buffer before taking anything. The source
+		 * can be a page of a file on this same mount, so the copy can
+		 * fault: doing it while holding em_fs_lock deadlocks the mount
+		 * against the VNOP_PAGEIN servicing that fault, and doing it
+		 * while holding a busy buf_t pins a device buffer across an
+		 * unbounded wait. uiomove has already consumed these bytes if it
+		 * succeeds - a later failure therefore surfaces as a short
+		 * write, which is what vn_write() turns a partial transfer into
+		 * anyway.
+		 */
+		error = uiomove(bounce, (int)want, uio);
 		if (error)
 			break;
 
-		if (fresh)
-			memset((char *)buf_dataptr(bp), 0, bs);
-		error = uiomove((char *)buf_dataptr(bp) + boff, (int)want, uio);
-		if (error) {
-			buf_brelse(bp);
-			break;
+		ext4_fs_lock(emp);
+		error = ext4_ensure_block_alloc(ep, lblk, &pblk, &fresh);
+		if (error == 0)
+			error = ext4_blkread(emp, pblk, &bp);  /* read-modify-write */
+		if (error == 0) {
+			if (fresh)
+				memset((char *)buf_dataptr(bp), 0, bs);
+			memcpy((char *)buf_dataptr(bp) + boff, bounce, want);
+			error = buf_bawrite(bp);   /* async: data block; releases bp */
 		}
-		error = buf_bawrite(bp);   /* async: data block; releases bp */
+		if (error == 0) {
+			if (uio_offset(uio) > (off_t)ep->e_size)
+				ep->e_size = (uint64_t)uio_offset(uio);
+			dirty = true;
+		}
+		ext4_fs_unlock(emp);
 		if (error)
 			break;
-		if (uio_offset(uio) > (off_t)ep->e_size)
-			ep->e_size = (uint64_t)uio_offset(uio);
-		dirty = true;
 	}
+
+	_FREE(bounce, M_TEMP);
 
 	if (dirty) {
 		struct timeval tv;
+
 		microtime(&tv);
+		ext4_fs_lock(emp);
 		ep->e_raw.i_size_lo = le32((uint32_t)ep->e_size);
 		ep->e_raw.i_size_high = le32((uint32_t)(ep->e_size >> 32));
 		ep->e_raw.i_ctime = le32((uint32_t)tv.tv_sec);
 		ep->e_raw.i_mtime = le32((uint32_t)tv.tv_sec);
-		ubc_setsize(vp, ep->e_size);
 		(void)ext4_write_inode(emp, ep->e_ino, &ep->e_raw);
-		/* write(2) went through the block layer below the UBC; any
-		 * already-resident pages of this range are now stale and would
-		 * be served to a later mmap/exec as-is. */
+		ext4_fs_unlock(emp);
+
+		/* Both of these can re-enter the filesystem through the UBC, so
+		 * they run outside the lock. write(2) went through the block
+		 * layer below the UBC; any already-resident pages of this range
+		 * are now stale and would be served to a later mmap/exec as-is. */
+		ubc_setsize(vp, ep->e_size);
 		(void)ubc_msync(vp, write_start, uio_offset(uio), NULL,
 		    UBC_INVALIDATE);
 	}
@@ -1124,7 +1246,12 @@ ext4_resize_file(struct ext4node *ep, uint64_t new_size)
 	ep->e_size = new_size;
 	ep->e_raw.i_size_lo = le32((uint32_t)new_size);
 	ep->e_raw.i_size_high = le32((uint32_t)(new_size >> 32));
-	ext4_touch_inode(&ep->e_raw);
+	/* Truncating to the length the file already has changes no data, so it
+	 * is a metadata-only event. */
+	if (new_size != old_size)
+		ext4_touch_inode(&ep->e_raw);
+	else
+		ext4_touch_ctime(&ep->e_raw);
 	ubc_setsize(ep->e_vp, ep->e_size);
 	return ext4_write_inode(emp, ep->e_ino, &ep->e_raw);
 }
@@ -1163,7 +1290,7 @@ ext4_vnop_setattr_impl(struct vnop_setattr_args *ap)
 		ep->e_raw.i_mtime = le32((uint32_t)vap->va_modify_time.tv_sec);
 		VATTR_SET_SUPPORTED(vap, va_modify_time);
 	}
-	ext4_touch_inode(&ep->e_raw);
+	ext4_touch_ctime(&ep->e_raw);
 	return ext4_write_inode(ep->e_mount, ep->e_ino, &ep->e_raw);
 }
 
@@ -1225,11 +1352,18 @@ ext4_vnop_create_impl(struct vnop_create_args *ap)
 	raw.i_ctime = le32((uint32_t)tv.tv_sec);
 	raw.i_mtime = le32((uint32_t)tv.tv_sec);
 	raw.i_links_count = le16(1);
-	raw.i_flags = le32(EXT4_EXTENTS_FL);
-	raw.i_extra_isize = le16(emp->em_inode_size > EXT4_GOOD_OLD_INODE_SIZE ?
-	    (uint16_t)(emp->em_inode_size - EXT4_GOOD_OLD_INODE_SIZE) : 0);
-	(void)ext4_inode_append_extent(emp, &raw, 0, 0);
-	((struct ext4_extent_header *)raw.i_block)->eh_entries = 0;
+	raw.i_extra_isize = le16(ext4_new_extra_isize(emp));
+	/*
+	 * Only a file that can hold data gets an extent tree. A socket has no
+	 * blocks, and stamping an extent header into its i_block[] made e2fsck
+	 * call it "an illegal socket" and then want the parent's dirent
+	 * filetype cleared along with it.
+	 */
+	if (vtype == VREG) {
+		raw.i_flags = le32(EXT4_EXTENTS_FL);
+		(void)ext4_inode_append_extent(emp, ino, &raw, 0, 0);
+		((struct ext4_extent_header *)raw.i_block)->eh_entries = 0;
+	}
 
 	error = ext4_write_inode(emp, ino, &raw);
 	if (error) {
@@ -1358,9 +1492,8 @@ ext4_vnop_mkdir_impl(struct vnop_mkdir_args *ap)
 	raw.i_links_count = le16(2);
 	raw.i_blocks_lo = le32(emp->em_blocksize / 512);
 	raw.i_flags = le32(EXT4_EXTENTS_FL);
-	raw.i_extra_isize = le16(emp->em_inode_size > EXT4_GOOD_OLD_INODE_SIZE ?
-	    (uint16_t)(emp->em_inode_size - EXT4_GOOD_OLD_INODE_SIZE) : 0);
-	error = ext4_inode_append_extent(emp, &raw, 0, pblk);
+	raw.i_extra_isize = le16(ext4_new_extra_isize(emp));
+	error = ext4_inode_append_extent(emp, ino, &raw, 0, pblk);
 	if (error) {
 		(void)ext4_free_block(emp, pblk);
 		(void)ext4_free_inode(emp, ino, VDIR);
@@ -1622,8 +1755,7 @@ ext4_vnop_symlink_impl(struct vnop_symlink_args *ap)
 	raw.i_ctime = le32((uint32_t)tv.tv_sec);
 	raw.i_mtime = le32((uint32_t)tv.tv_sec);
 	raw.i_links_count = le16(1);
-	raw.i_extra_isize = le16(emp->em_inode_size > EXT4_GOOD_OLD_INODE_SIZE ?
-	    (uint16_t)(emp->em_inode_size - EXT4_GOOD_OLD_INODE_SIZE) : 0);
+	raw.i_extra_isize = le16(ext4_new_extra_isize(emp));
 
 	if (len < sizeof(raw.i_block)) {
 		memcpy(raw.i_block, ap->a_target, len);
@@ -1635,7 +1767,7 @@ ext4_vnop_symlink_impl(struct vnop_symlink_args *ap)
 		error = ext4_alloc_block(emp, 0, &pblk);
 		if (error)
 			goto fail_inode;
-		error = ext4_inode_append_extent(emp, &raw, 0, pblk);
+		error = ext4_inode_append_extent(emp, ino, &raw, 0, pblk);
 		if (error) {
 			(void)ext4_free_block(emp, pblk);
 			goto fail_inode;
@@ -1918,6 +2050,7 @@ ext4_vnop_pageout_impl(struct vnop_pageout_args *ap)
 	kern_return_t kr;
 	int error = 0;
 	size_t done;
+	bool grew = false;
 
 	kr = ubc_upl_map(pl, &ioaddr);
 	if (kr != KERN_SUCCESS)
@@ -1940,13 +2073,28 @@ ext4_vnop_pageout_impl(struct vnop_pageout_args *ap)
 		if (foff + (off_t)chunk > (off_t)ep->e_size)
 			chunk = (size_t)(ep->e_size - foff);
 
-		error = ext4_write_range(ep, foff, src, chunk);
+		bool allocated = false;
+
+		error = ext4_write_range(ep, foff, src, chunk, &allocated);
 		if (error)
 			break;
+		if (allocated)
+			grew = true;
 		done += chunk;
 	}
 
 	ubc_upl_unmap(pl);
+
+	/*
+	 * Paging out into a hole allocates blocks and appends extents, but that
+	 * only touched the in-core inode. Without writing it back the extent
+	 * tree is lost on unmount, and the file reads back as zeroes at its
+	 * full length - which is what a file extended by ftruncate(2) and then
+	 * filled through mmap(2) did. Data written by write(2) survived only
+	 * because it had already persisted the inode itself.
+	 */
+	if (grew && !error)
+		error = ext4_write_inode(emp, ep->e_ino, &ep->e_raw);
 
 	if (!(ap->a_flags & UPL_NOCOMMIT)) {
 		if (error)
@@ -2084,6 +2232,58 @@ ext4_vnop_fsync(struct vnop_fsync_args *ap)
 	return 0;
 }
 
+/*
+ * fcntl(F_FULLFSYNC) does NOT arrive as VNOP_FSYNC - XNU's fcntl handler sends
+ * it, F_BARRIERFSYNC and F_CHKCLEAN straight to VNOP_IOCTL
+ * (bsd/kern/kern_descrip.c). With no ioctl vnop at all they fell through to
+ * ext4_vnop_default, which answers ENOTSUP, and userland saw errno 45
+ * "Operation not supported". Rust's File::sync_data()/sync_all() are exactly
+ * fcntl(F_FULLFSYNC) on Darwin, so anything written through Rust's std -
+ * rustup writing settings.toml, cargo writing its caches - failed outright.
+ */
+static int
+ext4_vnop_ioctl(struct vnop_ioctl_args *ap)
+{
+	vnode_t vp = ap->a_vp;
+	struct ext4node *ep = VTOE(vp);
+	struct ext4mount *emp;
+
+	if (ep == NULL)
+		return ENOTTY;
+	emp = ep->e_mount;
+
+	switch (ap->a_command) {
+	case F_FULLFSYNC:
+	case F_BARRIERFSYNC:
+		if (vnode_isreg(vp) && ubc_pages_resident(vp))
+			(void)ubc_msync(vp, 0, ubc_getsize(vp), NULL,
+			    UBC_PUSHDIRTY | UBC_SYNC);
+		ext4_fs_lock(emp);
+		(void)ext4_jnl_commit(emp);
+		ext4_fs_unlock_nocommit(emp);
+		/*
+		 * What separates this from plain fsync: the caller is asking for
+		 * the data to be on the media, and buf_bwrite only gets it as far
+		 * as the device's own write-back cache. Flush that too, the way
+		 * unmount already does.
+		 */
+		if (emp->em_devvp != NULL)
+			(void)VNOP_IOCTL(emp->em_devvp, DKIOCSYNCHRONIZECACHE,
+			    NULL, FWRITE, ap->a_context);
+		return 0;
+
+	case F_CHKCLEAN:
+		/* "are this file's dirty pages written back" - after the above,
+		 * and for anything we would have flushed, yes. */
+		return 0;
+
+	default:
+		/* ENOTTY, not ENOTSUP: this is the POSIX answer for an ioctl a
+		 * file system does not implement, and callers probe for it. */
+		return ENOTTY;
+	}
+}
+
 static int
 ext4_vnop_pathconf(struct vnop_pathconf_args *ap)
 {
@@ -2206,21 +2406,24 @@ ext4_vnop_read(struct vnop_read_args *ap)
 
 	ext4_fs_lock(emp);
 	emp->em_stats.reads++;
-	ext4_fs_unlock(emp);
+	ext4_fs_unlock_nocommit(emp);
 	return ext4_vnop_read_impl(ap);
 }
 
 static int
+/*
+ * Write takes em_fs_lock per block inside the impl rather than across the whole
+ * call, for the same reason read does: it must not hold it over uiomove.
+ * See ext4_vnop_write_impl.
+ */
 ext4_vnop_write(struct vnop_write_args *ap)
 {
 	struct ext4mount *emp = VTOE(ap->a_vp)->e_mount;
-	int error;
 
 	ext4_fs_lock(emp);
 	emp->em_stats.writes++;
-	error = ext4_vnop_write_impl(ap);
-	ext4_fs_unlock(emp);
-	return error;
+	ext4_fs_unlock_nocommit(emp);
+	return ext4_vnop_write_impl(ap);
 }
 
 static int
@@ -2371,6 +2574,7 @@ static const struct vnodeopv_entry_desc ext4_vnodeop_entries[] = {
 	{ &vnop_rmdir_desc,    (VOPFUNC)ext4_vnop_rmdir },
 	{ &vnop_inactive_desc, (VOPFUNC)ext4_vnop_inactive },
 	{ &vnop_fsync_desc,    (VOPFUNC)ext4_vnop_fsync },
+	{ &vnop_ioctl_desc,    (VOPFUNC)ext4_vnop_ioctl },
 	{ &vnop_reclaim_desc,  (VOPFUNC)ext4_vnop_reclaim },
 	{ &vnop_pathconf_desc, (VOPFUNC)ext4_vnop_pathconf },
 	{ NULL, NULL }
