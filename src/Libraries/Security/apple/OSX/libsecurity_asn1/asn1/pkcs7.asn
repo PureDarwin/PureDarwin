@@ -1,0 +1,63 @@
+PKCS7 
+
+-- ??? {iso(1) member-body(2) us(840) rsadsi(113549) pkcs(1) pkcs-7(7)
+--      modules(0) pkcs-7(1)}
+
+DEFINITIONS EXPLICIT TAGS ::=
+BEGIN
+
+--
+-- 3. Definitions
+--
+
+-- EXPORTS All;
+
+IMPORTS
+
+	informationFramework, authenticationFramework
+		FROM UsefulDefinitions { usefulDefinitions }
+
+	AlgorithmIdentifier
+		FROM AuthenticationFramework { authenticationFramework }
+
+;
+
+-- *** A large amount of stuff we don't need right now deleted ***
+
+--
+-- 13. Encrypted-data content type
+--
+
+EncryptedData ::= SEQUENCE {
+  version               INTEGER {edVer0(0)} (edVer0),
+  encryptedContentInfo  EncryptedContentInfo
+}
+
+EncryptedContentInfo ::= SEQUENCE {
+  contentType     ContentType,
+  contentEncryptionAlgorithm
+                  ContentEncryptionAlgorithmIdentifier,
+  encryptedContent
+                  [0] IMPLICIT EncryptedContent OPTIONAL
+}
+
+ContentType ::= OBJECT IDENTIFIER
+
+EncryptedContent ::= OCTET STRING
+
+ContentEncryptionAlgorithmIdentifier ::= AlgorithmIdentifier
+
+--
+-- 14. Object Identifiers
+--
+
+pkcs-7                  OBJECT IDENTIFIER ::=
+  { iso(1) member-body(2) us(840) rsadsi(113549) pkcs(1) 7 }
+dataPkcs7               OBJECT IDENTIFIER ::= { pkcs-7 1 }
+signedData              OBJECT IDENTIFIER ::= { pkcs-7 2 }
+envelopedData           OBJECT IDENTIFIER ::= { pkcs-7 3 }
+signedAndEnvelopedData  OBJECT IDENTIFIER ::= { pkcs-7 4 }
+digestedData            OBJECT IDENTIFIER ::= { pkcs-7 5 }
+encryptedData           OBJECT IDENTIFIER ::= { pkcs-7 6 }
+
+END

@@ -1,0 +1,58 @@
+Per the terms of the Mozilla Public License, version 1.1, this file contains
+a summary of the changes made by Apple Computer ("Apple") to source code
+originally developed by Netscape.
+
+General Notes
+-------------
+
+1. This module, SecurityNssAsn1, is based on the Netscape Security
+   Services ("NSS") portion of the Mozilla Browser project. The 
+   source upon which SecurityNssAsn1 was based was pulled from 
+   the Mozilla CVS repository, top of tree as of January 21, 2003. 
+   The SecurityNssAsn1 project contains only those portions of NSS 
+   used to perform BER encoding and decoding, along with minimal 
+   support required by the encode/decode routines. 
+
+2. The directory structure of SecurityNssAsn1 differs significantly
+   from that of NSS, rendering simple diffs to document changes
+   unwieldy. Diffs could still be performed on a file-by-file basis.
+   
+3. All Apple changes are flagged by the symbol __APPLE__, either
+   via "#ifdef __APPLE__" or in a comment. 
+   
+
+Changes
+-------
+
+1. Basic platform-specific support is in nsprPub/Source/nsprPortX.c.
+   This support is specific to Mac OS X.
+   
+2. The fundamental data wrapper, SECItem, has been typedef'd to a
+   CSSM_DATA. This provides interoperability between the code in
+   this module with the code in the Apple Security framework.
+   
+3. Indication of signed integer types has moved from the 
+   source/destination of encoding/decoding (SecItem.type) to a flag
+   in the template defining encoding/decoding rules 
+   (SEC_ASN1_SIGNED_INT in SEC_ASN1Template.kind). The default
+   for ASN1 integer types, when this flag is not set, is unsigned. 
+   
+4. The dynamic template resolution mechanism has been updated to 
+   provide the template chooser routine specific access to the 
+   SECItem being encoded to or decoded from. This faciliates
+   efficient inline processing of many ASN_ANY and CHOICE types. 
+  
+5. The source of the core secasn1e.c and secasn1d.c files has been 
+   reformatted to be legible with 4-space tabs. Contrary to the 
+   comments at the top of these files, these files were actually 
+   formatted for 8-space tabs. 
+   
+6. Templates for encoding/decoding of fundamental ASN types was moved
+   from secasn1d.c to a new file, asn1Templates.c. All other 
+   templates in the SecurityNssAsn1 source were written by Apple.
+   
+7. Updated the prcpucfg.h file to nspr-4.8.9 version.
+
+8. Changed various integer types for variables and functions arguments
+   to be 64 bits safe.
+

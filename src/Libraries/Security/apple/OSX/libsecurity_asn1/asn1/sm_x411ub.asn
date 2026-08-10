@@ -1,0 +1,131 @@
+-- @(#) sm_x411ub.asn 1.3 3/4/98 15:25:57 
+UpperBounds  
+-- {  joint-iso-ccitt mhs-motis(6)  mts(3)  modules(0) upper-bounds(3) }
+
+DEFINITIONS IMPLICIT TAGS ::=
+
+BEGIN
+
+-- Prologue
+
+-- Exports everything
+
+-- IMPORTS nothing
+
+-- Upper bounds
+
+ub-integer-options INTEGER ::= 256
+
+ub-queue-size INTEGER ::= 2147483647    -- the largest  integer  in 32 bits
+
+ub-content-length INTEGER ::= 2147483647     -- the largest integer in 32 bits
+
+ub-password-length INTEGER ::= 62
+
+ub-bit-options INTEGER ::= 16
+
+ub-content-types INTEGER ::= 1024
+
+ub-tsap-id-length INTEGER ::= 16
+
+ub-recipients INTEGER ::= 32767
+
+ub-content-id-length INTEGER ::= 16
+
+ub-x121-address-length INTEGER ::= 15
+
+ub-mts-user-types INTEGER ::= 256
+
+ub-reason-codes INTEGER ::= 32767
+
+ub-diagnostic-codes INTEGER ::= 32767
+
+ub-supplementary-info-length INTEGER ::= 256
+
+ub-extension-types INTEGER ::= 256
+                                 
+ub-recipient-number-for-advice-length INTEGER ::= 32
+
+ub-content-correlator-length INTEGER ::= 512
+
+ub-redirections INTEGER ::= 512
+
+ub-dl-expansions INTEGER ::= 512
+
+ub-built-in-content-type INTEGER ::= 32767
+
+ub-local-id-length INTEGER ::= 32
+
+ub-mta-name-length INTEGER ::= 32
+
+ub-country-name-numeric-length INTEGER ::= 3
+
+ub-country-name-alpha-length INTEGER ::= 2
+
+ub-domain-name-length INTEGER ::= 16
+
+ub-terminal-id-length INTEGER ::= 24
+
+ub-organization-name-length INTEGER ::= 64
+
+ub-numeric-user-id-length INTEGER ::= 32
+
+ub-surname-length INTEGER ::= 40
+
+ub-given-name-length INTEGER ::= 16
+
+ub-initials-length INTEGER ::= 5
+
+ub-generation-qualifier-length INTEGER ::= 3
+
+ub-organizational-units INTEGER ::= 4
+
+ub-organizational-unit-name-length INTEGER ::= 32
+
+ub-domain-defined-attributes INTEGER ::= 4
+
+ub-domain-defined-attribute-type-length INTEGER ::= 8
+
+ub-domain-defined-attribute-value-length INTEGER ::= 128
+                                 
+ub-extension-attributes INTEGER ::= 256
+
+ub-common-name-length INTEGER ::= 64
+
+ub-pds-name-length INTEGER ::= 16
+
+ub-postal-code-length INTEGER ::= 16
+
+ub-pds-parameter-length INTEGER ::= 30
+
+ub-physical-address-lines INTEGER ::= 6
+
+ub-unformatted-address-length INTEGER ::= 180
+
+ub-e163-4-number-length INTEGER ::= 15
+
+ub-e163-4-sub-address-length INTEGER ::= 40
+
+ub-built-in-encoded-information-types INTEGER ::= 32
+
+ub-teletex-private-use-length INTEGER ::= 128
+
+ub-encoded-information-types INTEGER ::= 1024
+
+ub-security-labels INTEGER ::= 256
+
+ub-labels-and-redirections INTEGER ::= 256
+
+ub-security-problems INTEGER ::= 256
+
+ub-privacy-mark-length INTEGER ::= 128
+
+ub-security-categories INTEGER ::= 64
+
+ub-transfers INTEGER ::= 512
+
+ub-bilateral-info INTEGER ::= 1024
+
+ub-additional-info INTEGER ::= 1024
+
+END -- of UpperBounds

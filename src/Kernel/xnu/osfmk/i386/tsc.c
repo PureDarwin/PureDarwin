@@ -105,6 +105,9 @@ uint64_t tsc_sync_interval_msecs = 5000; /* 5 seconds */
 uint64_t tsc_sync_interval_abs;
 uint64_t tsc_sync_next_deadline;
 static timer_call_data_t sync_tsc_timer;
+/* Set by tsc_init(), consumed by tsc_sync_init_deferred() once the timer
+ * callout world exists. See the comment at the assignment. */
+static boolean_t tsc_sync_deferred = FALSE;
 
 static void
 tsc_sync(thread_call_param_t param0 __unused, thread_call_param_t param1 __unused)
@@ -332,6 +335,7 @@ tsc_init(void)
 				}
 				break;
 		}
+	case CPUFAMILY_INTEL_METEORLAKE:
 	case CPUFAMILY_INTEL_KABYLAKE:
 	case CPUFAMILY_INTEL_ICELAKE:
 	case CPUFAMILY_INTEL_SKYLAKE: {
@@ -363,6 +367,9 @@ tsc_init(void)
 			    infop->cpuid_model == CPUID_MODEL_SKYLAKE_W &&
 			    is_xeon_sp(infop->cpuid_processor_flag)) {
 				refFreq = BASE_ART_CLOCK_SOURCE_SP;
+			} else if (cpuid_cpufamily() == CPUFAMILY_INTEL_METEORLAKE) {
+				/* 38.4MHz crystal, not the 24MHz default. */
+				refFreq = BASE_ART_CLOCK_SOURCE_MTL;
 			} else {
 				refFreq = BASE_ART_CLOCK_SOURCE;
 			}
@@ -559,14 +566,23 @@ tsc_init(void)
 	    (uint32_t)(tscFCvtn2t >> 32), (uint32_t)tscFCvtn2t,
 	    tscGranularity, N_by_2_bus_ratio ? " (N/2)" : "");
 
-		if (sync_amd_tsc) {
-				clock_interval_to_absolutetime_interval(tsc_sync_interval_msecs,
-					NSEC_PER_MSEC, &tsc_sync_interval_abs);
-				timer_call_setup(&sync_tsc_timer, tsc_sync, NULL);
-				tsc_sync_next_deadline = mach_absolute_time() + tsc_sync_interval_abs;
-				timer_call_enter_with_leeway(&sync_tsc_timer, NULL,
-					tsc_sync_next_deadline, 0, TIMER_CALL_SYS_NORMAL, FALSE);
+		tsc_sync_deferred = sync_amd_tsc;
+}
+
+void
+tsc_sync_init_deferred(void)
+{
+		if (!tsc_sync_deferred) {
+				return;
 		}
+		tsc_sync_deferred = FALSE;
+
+		clock_interval_to_absolutetime_interval(tsc_sync_interval_msecs,
+			NSEC_PER_MSEC, &tsc_sync_interval_abs);
+		timer_call_setup(&sync_tsc_timer, tsc_sync, NULL);
+		tsc_sync_next_deadline = mach_absolute_time() + tsc_sync_interval_abs;
+		timer_call_enter_with_leeway(&sync_tsc_timer, NULL,
+			tsc_sync_next_deadline, 0, TIMER_CALL_SYS_NORMAL, FALSE);
 }
 
 void

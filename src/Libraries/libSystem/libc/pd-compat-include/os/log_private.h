@@ -12,10 +12,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if __has_include(<os/log.h>)
+#include <os/log.h>
+#define PD_HAVE_REAL_OS_LOG 1
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#ifndef PD_HAVE_REAL_OS_LOG
 typedef void *os_log_t;
 typedef uint8_t os_log_type_t;
 
@@ -25,6 +31,7 @@ typedef uint8_t os_log_type_t;
 #ifndef OS_LOG_TYPE_ERROR
 #define OS_LOG_TYPE_ERROR   ((os_log_type_t)0x10)
 #endif
+#endif /* !PD_HAVE_REAL_OS_LOG */
 
 typedef struct os_log_pack_s {
 	uint32_t size;

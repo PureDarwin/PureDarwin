@@ -1,0 +1,40 @@
+PrivateKeyInformationSyntax
+-- PKCS#8 ASN.1
+DEFINITIONS IMPLICIT TAGS  ::=
+BEGIN
+-- EXPORTS All --
+IMPORTS
+        AlgorithmIdentifier
+           FROM AuthenticationFramework { authenticationFramework }
+        Attributes
+           FROM InformationFramework { informationFramework }
+        EncryptedKey
+           FROM CryptographicMessageSyntax
+;
+
+PrivateKeyInfo ::= SEQUENCE {
+	version INTEGER, -- Version,
+	privateKeyAlgorithm AlgorithmIdentifier,
+	privateKey PrivateKey,
+	attributes [0] IMPLICIT Attributes OPTIONAL }
+
+
+-- Version ::= INTEGER
+
+-- PrivateKeyAlgorithmIdentifier ::= AlgorithmIdentifier
+
+
+PrivateKey ::= OCTET STRING
+
+
+EncryptedPrivateKeyInfo ::= SEQUENCE {
+	encryptionAlgorithm AlgorithmIdentifier,
+	encryptedKey EncryptedKey }
+
+
+-- EncryptionAlgorithmIdentifier ::= AlgorithmIdentifier
+
+-- EncryptedKey ::= OCTET STRING
+
+END -- PrivateKeyInformationSyntax
+

@@ -1,0 +1,46 @@
+PKCS1-OIDS
+DEFINITIONS IMPLICIT TAGS  ::=
+BEGIN
+-- EXPORTS All --
+
+IMPORTS
+  BigIntegerStr
+    FROM VdaEnhancedTypes
+;
+
+rsadsi OBJECT IDENTIFIER ::= { 1 2 840 113549 }
+pkcs OBJECT IDENTIFIER ::= { rsadsi 1 }
+
+pkcs-1 OBJECT IDENTIFIER ::= { pkcs 1 }
+rsaEncryption OBJECT IDENTIFIER ::= { pkcs-1 1 }
+md2WithRSAEncryption OBJECT IDENTIFIER ::= { pkcs-1 2 }
+md4WithRSAEncryption OBJECT IDENTIFIER ::= { pkcs-1 3 }
+md5WithRSAEncryption OBJECT IDENTIFIER ::= { pkcs-1 4 }
+sha1withRSAEncryption OBJECT IDENTIFIER ::= { pkcs-1 5 }  -- dmitch
+
+rsaDigestAlgorithm OBJECT IDENTIFIER ::= { rsadsi 2 }
+md2 OBJECT IDENTIFIER ::= { rsaDigestAlgorithm 2 }
+md4 OBJECT IDENTIFIER ::= { rsaDigestAlgorithm 4 }
+md5 OBJECT IDENTIFIER ::= { rsaDigestAlgorithm 5 }
+
+RSAPublicKey ::= SEQUENCE {
+  modulus BigIntegerStr, -- n
+  publicExponent BigIntegerStr -- e
+}
+
+RSAPrivateKey ::= SEQUENCE {
+  version INTEGER, -- Version,
+  modulus BigIntegerStr, -- n
+  publicExponent BigIntegerStr, -- e
+  privateExponent BigIntegerStr, -- d
+  prime1 BigIntegerStr, -- p
+  prime2 BigIntegerStr, -- q
+  exponent1 BigIntegerStr, -- d mod (p-1)
+  exponent2 BigIntegerStr, -- d mod (q-1)
+  coefficient BigIntegerStr -- (inverse of q) mod p
+}
+
+-- Version ::= INTEGER
+
+END -- PKCS1-OIDS
+

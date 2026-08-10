@@ -16,6 +16,7 @@ struct VirtQueue {
     uint16_t   queueSize;
     uint16_t   queueIndex;
     uint16_t   lastUsedIdx;
+    volatile uint8_t *notifyAddr; // resolved once in initQueue; see notify()
     uint16_t   nextFreeDesc; // simple bump allocator; caller is responsible
                              // for not exceeding queueSize descriptors
                              // in flight at once (fine for a polling,

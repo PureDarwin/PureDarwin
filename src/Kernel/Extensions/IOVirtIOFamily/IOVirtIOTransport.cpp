@@ -280,6 +280,9 @@ IOVirtIOTransport::initQueue(VirtQueue *vq, uint16_t index, uint16_t size)
     w64(fCommonCfg + kCommonQueueDevice, vq->usedMem->getPhysicalAddress());
     w16(fCommonCfg + kCommonQueueSize, vq->queueSize);
     w16(fCommonCfg + kCommonQueueEnable, 1);
+
+    vq->notifyAddr = fNotifyCfg +
+        (size_t)r16(fCommonCfg + kCommonQueueNotifyOff) * fNotifyOffMultiplier;
     return true;
 }
 
@@ -328,23 +331,39 @@ IOVirtIOTransport::addDescChain(VirtQueue *vq, const VirtIOChainEntry *entries, 
 void
 IOVirtIOTransport::notify(VirtQueue *vq)
 {
-    w16(fCommonCfg + kCommonQueueSelect, vq->queueIndex);
-    uint16_t notifyOff = r16(fCommonCfg + kCommonQueueNotifyOff);
-    w16(fNotifyCfg + (size_t)notifyOff * fNotifyOffMultiplier, vq->queueIndex);
+    w16(vq->notifyAddr, vq->queueIndex);
 }
+
+static const unsigned kSpinPollUsecs = 200;
 
 bool
 IOVirtIOTransport::pollForCompletion(VirtQueue *vq, unsigned timeoutMs, uint32_t *outLen, uint16_t *outId)
 {
-    VRingUsedHdr *uh = (VRingUsedHdr *)vq->used;
-    unsigned waited = 0;
-    while (uh->idx == vq->lastUsedIdx) {
+    volatile VRingUsedHdr *uh = (volatile VRingUsedHdr *)vq->used;
+
+    if (uh->idx == vq->lastUsedIdx) {
         if (timeoutMs == 0)
             return false; // non-blocking: nothing ready yet
-        IOSleep(1);
-        if (++waited >= timeoutMs)
-            return false;
+
+        // Sleeping a whole millisecond per poll capped every caller at about
+        // 1000 requests/sec no matter how fast the device was. Spin briefly
+        // first so cache-hot completions are picked up in microseconds, and
+        // only then fall back to sleeping.
+        unsigned spun = 0;
+        while (uh->idx == vq->lastUsedIdx && spun < kSpinPollUsecs) {
+            IODelay(1);
+            spun++;
+        }
+
+        unsigned waited = 0;
+        while (uh->idx == vq->lastUsedIdx) {
+            IOSleep(1);
+            if (++waited >= timeoutMs)
+                return false;
+        }
     }
+
+    OSSynchronizeIO();
 
     if (outLen || outId) {
         VRingUsedElem *ring = (VRingUsedElem *)((uint8_t *)vq->used + sizeof(VRingUsedHdr));

@@ -39,7 +39,8 @@
     "IOVirtIOFamily.kext"
     "IOVirtIOGPU.kext"
     "IOVirtIONet.kext"
-    "IOIntelGen9Framebuffer.kext"
+    "IOVirtIOBlock.kext"
+    "IOIntelFramebuffer.kext"
     "PDE1000.kext"
     "RavynHDAudio.kext"
 ]

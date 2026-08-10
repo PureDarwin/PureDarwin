@@ -364,6 +364,10 @@ cpuid_set_cache_info( i386_cpu_info_t * info_p )
 		}
 		((uint32_t *)(void *)info_p->cache_info)[j] = cpuid_result[j];
 	}
+	/* cache_info[0] drives the loop below; on parts where leaf 2 is
+	 * deprecated it is not necessarily the small count older CPUs return. */
+	DBG("cpuid_set_cache_info: leaf2 done, cache_info[0]=0x%x\n",
+	    info_p->cache_info[0]);
 	/* first byte gives number of cpuid calls to get all descriptors */
 	for (i = 1; i < info_p->cache_info[0]; i++) {
 		if (i * 16 > sizeof(info_p->cache_info)) {
@@ -389,7 +393,14 @@ cpuid_set_cache_info( i386_cpu_info_t * info_p )
 		cpuid_deterministic_supported = TRUE;
 	}
 
-	for (index = 0; cpuid_deterministic_supported; index++) {
+	/*
+	 * Bounded: the only exit below is the CPU reporting cache type 0. That is
+	 * the architectural contract, but it puts an unbounded loop over a CPUID
+	 * leaf in the early boot path, where a part that does not terminate the
+	 * enumeration as expected hangs the machine before any console exists.
+	 * No real topology comes close to this many levels.
+	 */
+	for (index = 0; cpuid_deterministic_supported && index < 16; index++) {
 		cache_type_t    type = Lnone;
 		uint32_t        cache_type;
 		uint32_t        cache_level;
@@ -722,6 +733,38 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
 		info_p->cpuid_logical_per_package = 1;
 	}
 
+	/*
+	 * Leaf 1 EBX[23:16] is a legacy field that is only a power-of-two upper
+	 * bound, and on hybrid silicon it stops resembling reality - a Core Ultra 9
+	 * 185H (16 cores / 22 threads) reports 128 there. Leaf 0x1F (V2 extended
+	 * topology) supersedes leaf 0xB for parts with more level types than
+	 * SMT/Core, which is exactly what P-core + E-core + LP-E-core needs.
+	 */
+	if (info_p->cpuid_ven == CPUID_VEN_INTEL && info_p->cpuid_max_basic >= 0x0b) {
+		uint32_t topo[4];
+		uint32_t leaf = (info_p->cpuid_max_basic >= 0x1f) ? 0x1f : 0x0b;
+		uint32_t widest = 0;
+		uint32_t sub;
+
+		for (sub = 0; sub < 8; sub++) {
+			topo[eax] = leaf;
+			topo[ecx] = sub;
+			cpuid(topo);
+			if (bitfield32(topo[ecx], 15, 8) == 0) {
+				break;          /* invalid level: end of enumeration */
+			}
+			if (bitfield32(topo[ebx], 15, 0) > widest) {
+				widest = bitfield32(topo[ebx], 15, 0);
+			}
+		}
+		DBG("cpuid: topology leaf 0x%x levels=%u logical_per_package=%u"
+		    " (leaf1 said %u)\n", leaf, sub, widest,
+		    info_p->cpuid_logical_per_package);
+		if (widest != 0) {
+			info_p->cpuid_logical_per_package = widest;
+		}
+	}
+
 	if (info_p->cpuid_max_ext >= 0x80000001) {
 		cpuid_fn(0x80000001, reg);
 		info_p->cpuid_extfeatures =
@@ -964,6 +1007,10 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 					case CPUID_MODEL_ICELAKE_SP:
 					case CPUID_MODEL_ICELAKE_DE:
 			cpufamily = CPUFAMILY_INTEL_ICELAKE;
+						break;
+					case CPUID_MODEL_METEORLAKE:
+					case CPUID_MODEL_METEORLAKE_L:
+						cpufamily = CPUFAMILY_INTEL_METEORLAKE;
 						break;
 					case CPUID_MODEL_COMETLAKE_DT:
 						cpufamily = CPUFAMILY_INTEL_COMETLAKE;

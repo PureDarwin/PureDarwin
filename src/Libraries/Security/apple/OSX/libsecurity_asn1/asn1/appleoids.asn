@@ -1,0 +1,237 @@
+APPLE-OIDS
+DEFINITIONS IMPLICIT TAGS  ::=
+BEGIN
+-- EXPORTS All --
+
+IMPORTS
+  BigIntegerStr
+    FROM VdaEnhancedTypes
+  pkcs
+	FROM PKCS1-OIDS
+;
+
+-- base OIDs for Apple, Apple Data Security
+appleBaseOid OBJECT IDENTIFIER ::= { 1 2 840 113635 }
+appleDataSecurity OBJECT IDENTIFIER ::= { appleBaseOid 100 }
+
+-- base OIDs for Apple Trust Policies and Algorithms
+appleTrustPolicy OBJECT IDENTIFIER ::= { appleDataSecurity 1 }
+appleSecurityAlgorithm OBJECT IDENTIFIER ::=Ê{ appleDataSecurity 2 }
+
+-- Apple trust policy OIDs
+
+appleISignTP OBJECT IDENTIFIER 		::= { appleTrustPolicy 1 }
+appleX509Basic OBJECT IDENTIFIER 	::= { appleTrustPolicy 2 }
+appleSSLPolicy OBJECT IDENTIFIER    ::= { appleTrustPolicy 3 } 
+
+-- Apple algorithms
+appleFee OBJECT IDENTIFIER ::= { appleSecurityAlgorithm 1 }
+appleAsc OBJECT IDENTIFIER ::= { appleSecurityAlgorithm 2 }
+appleFeeMD5 OBJECT IDENTIFIER ::= { appleSecurityAlgorithm 3 }
+appleFeeSHA1 OBJECT IDENTIFIER ::= { appleSecurityAlgorithm 4 }
+appleFeed OBJECT IDENTIFIER ::= { appleSecurityAlgorithm 5 }
+appleFeedExp OBJECT IDENTIFIER ::= { appleSecurityAlgorithm 6 }
+appleECDSA OBJECT IDENTIFIER ::= { appleSecurityAlgorithm 7 }
+
+-- PKCS3 OIDs
+pkcs-3 OBJECT IDENTIFIER ::= { pkcs 3 }
+dhKeyAgreement OBJECT IDENTIFIER ::= { pkcs-3 1 }
+
+-- FEE ElGamal-style signature
+FEEElGamalSignature ::= SEQUENCE {
+  u     BigIntegerStr,
+  pmX 	BigIntegerStr
+}
+
+-- FEE ECDSA-style signature
+FEEECDSASignature ::= SEQUENCE {
+  c     BigIntegerStr, 
+  d     BigIntegerStr
+}
+
+-- FEE Curve parameters
+FEEPrimeType ::=    INTEGER { pt-mersenne(0), pt-fee(1), pt-general(2) }
+FEECurveType ::=    INTEGER { ct-montgomery(0), ct-weierstrass(1), ct-general(2) }
+
+FEECurveParameters ::= SEQUENCE
+{
+	primeType		FEEPrimeType,
+	curveType		FEECurveType,
+	q				INTEGER,			-- unsigned
+	k				INTEGER,			-- signed 
+	m				INTEGER,
+	a				BigIntegerStr,
+	bb				BigIntegerStr,		-- can't use variable/field b
+	c				BigIntegerStr,
+	x1Plus			BigIntegerStr,
+	x1Minus			BigIntegerStr,
+	cOrderPlus		BigIntegerStr,
+	cOrderMinus		BigIntegerStr,
+	x1OrderPlus		BigIntegerStr,
+	x1OrderMinus	BigIntegerStr,
+	basePrime		BigIntegerStr	OPTIONAL	-- iff FEEPrimeType == pt-general
+}
+
+-- FEE keys
+
+FEEPublicKey ::= SEQUENCE
+{
+	version			INTEGER,
+	curveParams		FEECurveParameters,
+	plusX			BigIntegerStr,
+	minusX			BigIntegerStr,
+	plusY			BigIntegerStr	OPTIONAL	-- iff FEECurveType == ct-weierstrass
+}
+
+FEEPrivateKey ::= SEQUENCE 
+{
+	version			INTEGER,
+	curveParams		FEECurveParameters,
+	privData		BigIntegerStr
+}
+
+-- DSA keys
+--
+-- DSA private keys are represented as a PrivateKeyInfo (pkcs8); DSA public keys
+-- are represented as SubjectPublicKeyInfo (sm_s509af). However, the public p, g, 
+-- and q parameters are expressed in the AlgorithmIdentifier.parameters
+-- field which is an ANY type. To simplify encoding and decoding (AsnAny is a royal
+-- hassle to deal with), we define new structs for the entire keys here.
+-- NOTE: these definition are derived from reverse engineering the key blobs
+-- created by BSAFE 4.0 using info type KI_DSA{Public,Private}BER. The BSAFE 
+-- documentation claims that this encoding is X9.20 compatible; however BSAFE
+-- adds a field to the dss-params (here called DSABSafeParams) struct which 
+-- indicates the prime size in bits. The encoding and decoding implemented here
+-- is verified to be compatible with BSAFE 4.0 but no other implementations of
+-- DSA keys.
+-- 
+DSAPrivateKey ::= SEQUENCE
+{
+	version			INTEGER,
+	dsaAlg			DSAAlgorithmId,
+	privateKey		OCTET STRING
+}	
+
+--
+-- The publicKey is actually the DER encoding of an ASN integer, wrapped in a
+-- BIT STRING. 
+--
+DSAPublicKey ::= SEQUENCE
+{
+	dsaAlg			DSAAlgorithmId,
+	publicKey		BIT STRING
+}
+
+--
+-- A convenient replacement for a DSA AlgorithmIdentifier
+--
+DSAAlgorithmId ::= SEQUENCE
+{
+	algorithm       OBJECT IDENTIFIER,	-- id_dsa from sm_cms
+	params			DSABsafeParams
+}
+
+--
+-- This is the "ANY" parameter from AlgorithmIdentifier.
+--
+DSABsafeParams ::= SEQUENCE
+{
+	keySizeInBits	INTEGER,	
+	p				BigIntegerStr,
+	q				BigIntegerStr,
+	g				BigIntegerStr
+}
+
+--
+-- DSAPrivateKey.privateKey is actually the DER encoding, as an AsnOcts, of this.
+--
+DSAPrivateKeyOcts ::= SEQUENCE
+{
+	privateKey		BigIntegerStr
+}
+	
+-- 
+-- DSA keys in openssl format. 
+--
+-- Public keys are SubjectPublicKeyInfo. AlgorithmIdentifier.parameters 
+-- is a DSAAlgParams. We redefine the whole thing here to avoid AsnAny 
+-- processing.
+--
+-- The publicKey is actually the DER encoding of an ASN integer, wrapped in a
+-- BIT STRING. 
+--
+DSAPublicKeyX509 ::= SEQUENCE
+{
+	dsaAlg			DSAAlgorithmIdX509,
+	publicKey		BIT STRING
+}
+
+--
+-- A convenient replacement for a DSA AlgorithmIdentifier, X509 format
+--
+DSAAlgorithmIdX509 ::= SEQUENCE
+{
+	algorithm       OBJECT IDENTIFIER,	-- id_dsa from sm_cms
+	--
+	-- this replaces AsnAny parameters; it is the DSA parameter format
+	-- which is common to the CSP and to openssl
+	--
+	params			DSAAlgParams	
+}
+
+--
+-- Private keys are one of these, which appears to be specific to openssl.
+--
+DSAPrivateKeyOpenssl ::= SEQUENCE
+{
+	version			INTEGER,
+	p				BigIntegerStr,
+	q				BigIntegerStr,
+	g				BigIntegerStr,
+	pub				BigIntegerStr,
+	priv			BigIntegerStr
+}
+
+--
+-- DSA signature
+--
+DSASignature ::= SEQUENCE
+{
+	r				BigIntegerStr,
+	s				BigIntegerStr
+}
+
+--
+-- Encoding of the basic DSA parameters for use in a CDSA key generation context.
+-- 
+DSAAlgParams ::= SEQUENCE
+{
+	p				BigIntegerStr,
+	q				BigIntegerStr,
+	g				BigIntegerStr
+}
+
+-- Diffie Hellman per PKCS3
+
+DHPrivateKey ::= SEQUENCE
+{
+	dHOid			OBJECT IDENTIFIER,			-- dhKeyAgreement
+	params			DHParameter,
+	secretPart		BigIntegerStr
+}
+
+DHParameterBlock ::= SEQUENCE
+{
+	oid				OBJECT IDENTIFIER,			-- pkcs-3
+	params			DHParameter
+}
+
+DHParameter ::= SEQUENCE
+{
+	prime				BigIntegerStr,			-- p
+	base				BigIntegerStr,			-- g
+	privateValueLength 	BigIntegerStr OPTIONAL
+}
+
+END -- APPLE-OIDS
+

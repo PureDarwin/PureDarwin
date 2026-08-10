@@ -176,6 +176,9 @@ protected:
     static void enumThreadEntry(void *arg, wait_result_t);
     void enumThreadLoop(void);
     void enumeratePort(UInt32 port);
+    IOUSBDevice *addressAndPublishDevice(const char *where, UInt32 port,
+                                         UInt8 *outDeviceClass);
+    void enumerateHub(USBDeviceAddress hubAddr);
     UInt32 portRead32(UInt32 port);
     void portWrite32(UInt32 port, UInt32 value);
     void releaseAsyncSchedule(void);

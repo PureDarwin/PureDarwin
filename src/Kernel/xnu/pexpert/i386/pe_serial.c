@@ -665,7 +665,7 @@ serial_putc( char c )
 	 * sees output emitted before the graphics console exists. It is recorded
 	 * and replayed onto the screen when the console comes up.
 	 */
-	//vc_serial_record_early(c);
+	vc_serial_record_early(c);
 }
 
 int

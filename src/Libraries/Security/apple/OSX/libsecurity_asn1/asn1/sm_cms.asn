@@ -1,0 +1,431 @@
+
+-- @(#) sm_cms.asn 1.13 12/17/98 14:17:10 
+-- FROM cms.txt:   <http://ietf.org/internet-drafts/draft-ietf-smime-cms-13.txt>
+
+   CryptographicMessageSyntax
+       { 1 2 840 113549 1 9 16 0 1 }
+       --RWC;{ iso(1) member-body(2) us(840) rsadsi(113549)
+       --RWC;  pkcs(1) pkcs-9(9) smime(16) modules(0) cms(1) }
+
+   DEFINITIONS IMPLICIT TAGS ::=
+   BEGIN
+
+   -- EXPORTS All
+   -- The types and values defined in this module are exported for use in
+   -- the other ASN.1 modules.  Other applications may use them for their
+   -- own purposes.
+
+   IMPORTS
+
+  -- MB;KeyIdentifier (replaces SubjectKeyIdentifier)
+     KeyIdentifier
+	   FROM CertificateExtensions
+
+  -- MB;PKCS1-OIDS
+     rsadsi, pkcs --MB;rsaEncryption, md5
+	   FROM PKCS1-OIDS
+
+  -- Useful Definitions from X.501
+     informationFramework, authenticationFramework
+       FROM UsefulDefinitions  { usefulDefinitions }
+
+  -- Directory Information Framework (X.501)
+       Name, Attribute, Attributes, AttributeValue
+         FROM InformationFramework --RWC; { joint-iso-itu-t ds(5) rWCmodules(1)
+         --RWC; "modules(1)" re-defined from above "CrytpgraphicMessageSyntax".
+         --RWC;    informationFramework(1) 3 }
+
+   -- Directory Authentication Framework (X.509)
+      AlgorithmIdentifier, AttributeCertificate, Certificate,
+      CertificateList, CertificateSerialNumber, Time
+        FROM AuthenticationFramework; --RWC;{ joint-iso-itu-t rWCds(5)
+        --RWC; "ds(1)" re-defined.
+        --RWC;module(1) rWCauthenticationFramework(7) 3 } ;
+
+
+
+
+
+   -- Cryptographic Message Syntax
+
+   ContentInfo ::= SEQUENCE {
+     contentType ContentType,
+     content [0] EXPLICIT ANY } --RWC;DEFINED BY contentType }
+
+   ContentType ::= OBJECT IDENTIFIER
+
+   SignedData ::= SEQUENCE {
+     version CMSVersion,
+     digestAlgorithms DigestAlgorithmIdentifiers,
+     encapContentInfo EncapsulatedContentInfo,
+     certificates [0] IMPLICIT CertificateSet OPTIONAL,
+     crls [1] IMPLICIT CertificateRevocationLists OPTIONAL,
+     signerInfos SignerInfos }
+
+   DigestAlgorithmIdentifiers ::= SET OF DigestAlgorithmIdentifier
+
+   SignerInfos ::= SET OF SignerInfo
+
+
+
+   EncapsulatedContentInfo ::= SEQUENCE {
+     eContentType ContentType,
+     eContent [0] EXPLICIT OCTET STRING OPTIONAL }
+
+   SignerInfo ::= SEQUENCE {
+     version CMSVersion,
+     sid SignerIdentifier,
+     digestAlgorithm DigestAlgorithmIdentifier,
+     signedAttrs [0] IMPLICIT Attributes OPTIONAL, --MB;SignedAttributes OPTIONAL,
+     signatureAlgorithm SignatureAlgorithmIdentifier,
+     signature SignatureValue,
+     unsignedAttrs [1] IMPLICIT Attributes OPTIONAL } --MB;UnsignedAttributes OPTIONAL }
+
+   SignerIdentifier ::= CHOICE {
+     issuerAndSerialNumber IssuerAndSerialNumber,
+     subjectKeyIdentifier [0] KeyIdentifier } --MB;SubjectKeyIdentifier }
+
+   --MB;SignedAttributes ::= SET SIZE (1..MAX) OF Attribute
+
+   --MB;UnsignedAttributes ::= SET SIZE (1..MAX) OF Attribute
+
+   --MB;Attribute ::= SEQUENCE {
+   --MB;  attrType OBJECT IDENTIFIER,
+   --MB;  attrValues SET OF AttributeValue }
+
+   --MB;AttributeValue ::= ANY
+
+   SignatureValue ::= OCTET STRING
+
+   EnvelopedData ::= SEQUENCE {
+     version CMSVersion,
+     originatorInfo [0] IMPLICIT OriginatorInfo OPTIONAL,
+     recipientInfos RecipientInfos,
+     encryptedContentInfo EncryptedContentInfo,
+     unprotectedAttrs [1] IMPLICIT Attributes OPTIONAL } --MB;UnprotectedAttributes OPTIONAL }
+
+   OriginatorInfo ::= SEQUENCE {
+     certs [0] IMPLICIT CertificateSet OPTIONAL,
+     crls [1] IMPLICIT CertificateRevocationLists OPTIONAL }
+
+   RecipientInfos ::= SET OF RecipientInfo
+
+   EncryptedContentInfo ::= SEQUENCE {
+     contentType ContentType,
+     contentEncryptionAlgorithm ContentEncryptionAlgorithmIdentifier,
+     encryptedContent [0] IMPLICIT EncryptedContent OPTIONAL }
+
+   EncryptedContent ::= OCTET STRING
+
+
+
+   --MB;UnprotectedAttributes ::= SET SIZE (1..MAX) OF Attribute
+
+   RecipientInfo ::= CHOICE {
+     ktri KeyTransRecipientInfo,
+     kari [1] KeyAgreeRecipientInfo,
+     kekri [2] KEKRecipientInfo }
+
+   EncryptedKey ::= OCTET STRING
+
+   KeyTransRecipientInfo ::= SEQUENCE {
+     version CMSVersion,  -- always set to 0 or 2
+     rid RecipientIdentifier,
+     keyEncryptionAlgorithm KeyEncryptionAlgorithmIdentifier,
+     encryptedKey EncryptedKey }
+
+   RecipientIdentifier ::= CHOICE {
+     issuerAndSerialNumber IssuerAndSerialNumber,
+     subjectKeyIdentifier [0] KeyIdentifier } --MB;SubjectKeyIdentifier }
+
+   KeyAgreeRecipientInfo ::= SEQUENCE {
+     version CMSVersion,  -- always set to 3
+     originator [0] EXPLICIT OriginatorIdentifierOrKey,
+     ukm [1] EXPLICIT UserKeyingMaterial OPTIONAL,
+     keyEncryptionAlgorithm KeyEncryptionAlgorithmIdentifier,
+     recipientEncryptedKeys RecipientEncryptedKeys }
+
+   OriginatorIdentifierOrKey ::= CHOICE {
+     issuerAndSerialNumber IssuerAndSerialNumber,
+     subjectKeyIdentifier [0] KeyIdentifier, --MB;SubjectKeyIdentifier,
+     originatorKey [1] OriginatorPublicKey }
+
+   OriginatorPublicKey ::= SEQUENCE {
+     algorithm AlgorithmIdentifier,
+     publicKey BIT STRING }
+
+   RecipientEncryptedKeys ::= SEQUENCE OF RecipientEncryptedKey
+
+   RecipientEncryptedKey ::= SEQUENCE {
+     rid KeyAgreeRecipientIdentifier,
+     encryptedKey EncryptedKey }
+
+   KeyAgreeRecipientIdentifier ::= CHOICE {
+     issuerAndSerialNumber IssuerAndSerialNumber,
+     rKeyId [0] IMPLICIT RecipientKeyIdentifier }
+
+
+
+
+   RecipientKeyIdentifier ::= SEQUENCE {
+     subjectKeyIdentifier KeyIdentifier, --MB;SubjectKeyIdentifier,
+     date GeneralizedTime OPTIONAL,
+     other OtherKeyAttribute OPTIONAL }
+
+   --MB;SubjectKeyIdentifier ::= OCTET STRING
+
+   KEKRecipientInfo ::= SEQUENCE {
+     version CMSVersion,  -- always set to 4
+     kekid KEKIdentifier,
+     keyEncryptionAlgorithm KeyEncryptionAlgorithmIdentifier,
+     encryptedKey EncryptedKey }
+
+   KEKIdentifier ::= SEQUENCE {
+     keyIdentifier OCTET STRING,
+     date GeneralizedTime OPTIONAL,
+     other OtherKeyAttribute OPTIONAL }
+
+   DigestedData ::= SEQUENCE {
+     version CMSVersion,
+     digestAlgorithm DigestAlgorithmIdentifier,
+     encapContentInfo EncapsulatedContentInfo,
+     digest Digest }
+
+   Digest ::= OCTET STRING
+
+   EncryptedData ::= SEQUENCE {
+     version CMSVersion,
+     encryptedContentInfo EncryptedContentInfo }
+
+   AuthenticatedData ::= SEQUENCE {
+     version CMSVersion,
+     originatorInfo [0] IMPLICIT OriginatorInfo OPTIONAL,
+     recipientInfos RecipientInfos,
+     macAlgorithm MessageAuthenticationCodeAlgorithm,
+     digestAlgorithm [1] DigestAlgorithmIdentifier OPTIONAL,
+     encapContentInfo EncapsulatedContentInfo,
+     authenctiatedAttributes [2] IMPLICIT Attributes OPTIONAL, --MB;AuthAttributes OPTIONAL,
+     mac MessageAuthenticationCode,
+     unauthenticatedAttributes [3] IMPLICIT Attributes OPTIONAL } --MB;UnauthAttributes OPTIONAL }
+
+   --MB;AuthAttributes ::= SET SIZE (1..MAX) OF Attribute
+
+   --MB;UnauthAttributes ::= SET SIZE (1..MAX) OF Attribute
+
+   MessageAuthenticationCode ::= OCTET STRING
+
+   DigestAlgorithmIdentifier ::= AlgorithmIdentifier
+
+
+
+   SignatureAlgorithmIdentifier ::= AlgorithmIdentifier
+
+   KeyEncryptionAlgorithmIdentifier ::= AlgorithmIdentifier
+
+   ContentEncryptionAlgorithmIdentifier ::= AlgorithmIdentifier
+
+   MessageAuthenticationCodeAlgorithm ::= AlgorithmIdentifier
+
+   CertificateRevocationLists ::= SET OF CertificateList
+
+   CertificateChoices ::= CHOICE {
+     certificate Certificate,  -- See X.509
+     extendedCertificate [0] IMPLICIT ExtendedCertificate,  -- Obsolete
+     attrCert [1] IMPLICIT AttributeCertificate }  -- See X.509 & X9.57
+
+   CertificateSet ::= SET OF CertificateChoices
+
+   IssuerAndSerialNumber ::= SEQUENCE {
+     issuer Name,
+     serialNumber CertificateSerialNumber }
+
+   CMSVersion ::= INTEGER  { v0(0), v1(1), v2(2), v3(3), v4(4) }
+
+   UserKeyingMaterial ::= OCTET STRING
+
+   UserKeyingMaterials ::= SET SIZE (1..MAX) OF UserKeyingMaterial
+
+   OtherKeyAttribute ::= SEQUENCE {
+     keyAttrId OBJECT IDENTIFIER,
+     keyAttr ANY  OPTIONAL } --RWC;DEFINED BY keyAttrId OPTIONAL }
+
+
+   -- CMS Attributes
+
+   MessageDigest ::= OCTET STRING
+
+   SigningTime  ::= Time
+
+   --MB;Time ::= CHOICE {
+   --MB;  utcTime UTCTime,
+   --MB;  generalTime GeneralizedTime }
+
+   Countersignature ::= SignerInfo
+
+
+
+   -- Algorithm Identifiers
+
+   sha-1 OBJECT IDENTIFIER ::= { 1 3 14 3 2 26 } --MB;{ iso(1) identified-organization(3)
+       --MB;oiw(14) secsig(3) algorithm(2) 26 }
+
+   --MB;md5 OBJECT IDENTIFIER ::= { iso(1) member-body(2) us(840)
+   --MB;    rsadsi(113549) digestAlgorithm(2) 5 }
+
+   id-dsa-with-sha1 OBJECT IDENTIFIER ::= { 1 2 840 10040 4 3 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) x9-57 (10040) x9cm(4) 3 }
+
+   --MB;rsaEncryption OBJECT IDENTIFIER ::= { iso(1) member-body(2)
+   --MB;    us(840) rsadsi(113549) pkcs(1) pkcs-1(1) 1 }
+
+   dh-public-number OBJECT IDENTIFIER ::= { 1 2 840 10046 2 1 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) ansi-x942(10046) number-type(2) 1 }
+
+   id-alg-ESDH OBJECT IDENTIFIER ::= { pkcs 9 16 3 5 } --MB;{ iso(1) member-body(2) us(840)
+       --MB;rsadsi(113549) pkcs(1) pkcs-9(9) smime(16) alg(3) 5 }
+
+   id-alg-CMS3DESwrap OBJECT IDENTIFIER ::= { pkcs 9 16 3 6 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs-9(9) smime(16) alg(3) 6 }
+
+   id-alg-CMSRC2wrap OBJECT IDENTIFIER ::= { pkcs 9 16 3 7 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs-9(9) smime(16) alg(3) 7 }
+
+   des-ede3-cbc OBJECT IDENTIFIER ::= { rsadsi 3 7 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) encryptionAlgorithm(3) 7 }
+
+   rc2-cbc OBJECT IDENTIFIER ::= { rsadsi 3 2 } --MB;{ iso(1) member-body(2) us(840)
+       --MB;rsadsi(113549) encryptionAlgorithm(3) 2 }
+
+   hMAC-SHA1 OBJECT IDENTIFIER ::= { 1 3 6 1 5 5 8 1 2 } --MB;{ iso(1) identified-organization(3)
+       --MB;dod(6) internet(1) security(5) mechanisms(5) 8 1 2 }
+
+   -- some more algorithms added by dmitch 
+   
+   rc2-ecb OBJECT IDENTIFIER ::= { rsadsi 3 3 }
+
+   rc4 OBJECT IDENTIFIER ::= { rsadsi 3 4 }
+
+   rc4WithMAC OBJECT IDENTIFIER ::= { rsadsi 3 5 }
+
+   desx-CBC OBJECT IDENTIFIER ::= { rsadsi 3 6 }
+
+   rc5CBC OBJECT IDENTIFIER ::= { rsadsi 3 8 }
+   
+   rc5-CBCPad OBJECT IDENTIFIER ::= { rsadsi 3 9 }
+   
+   desCDMF OBJECT IDENTIFIER ::= { rsadsi 3 10 }
+   
+   -- this is the OID used by BSAFE when generating DSA keys. It is not
+   -- the same as id_dsa from sm_x501ud...
+   
+   dsa-bsafe OBJECT IDENTIFIER ::= {1 3 14 3 2 12}
+   
+   -- end of dmitch addenda
+   
+   
+   -- Algorithm Parameters
+
+   KeyWrapAlgorithm ::= AlgorithmIdentifier
+
+   RC2wrapParameter ::= RC2ParameterVersion
+
+   RC2ParameterVersion ::= INTEGER
+
+   CBCParameter ::= IV
+
+   IV ::= OCTET STRING  -- exactly 8 octets
+
+   RC2CBCParameter ::= SEQUENCE {
+     rc2ParameterVersion INTEGER,
+     iv OCTET STRING  }  -- exactly 8 octets
+
+
+   -- Content Type Object Identifiers
+
+   id-data OBJECT IDENTIFIER ::= { pkcs 7 1 } --MB; { iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs7(7) 1 }
+
+   id-signedData OBJECT IDENTIFIER ::= { pkcs 7 2 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs7(7) 2 }
+
+   id-envelopedData OBJECT IDENTIFIER ::= { pkcs 7 3 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs7(7) 3 }
+
+   id-digestedData OBJECT IDENTIFIER ::= { pkcs 7 5 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs7(7) 5 }
+
+   id-encryptedData OBJECT IDENTIFIER ::= { pkcs 7 6 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs7(7) 6 }
+
+   id-ct-authData OBJECT IDENTIFIER ::= { pkcs 9 16 1 2 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs-9(9) smime(16)
+       --MB;ct(1) 2 }
+
+
+   -- Attribute Object Identifiers
+
+   id-contentType OBJECT IDENTIFIER ::= { pkcs 9 3 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs9(9) 3 }
+
+   id-messageDigest OBJECT IDENTIFIER ::= { pkcs 9 4 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs9(9) 4 }
+
+   id-signingTime OBJECT IDENTIFIER ::= { pkcs 9 5 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs9(9) 5 }
+
+   id-countersignature OBJECT IDENTIFIER ::= { pkcs 9 6 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs9(9) 6 }
+
+
+   -- Obsolete Extended Certificate syntax from PKCS#6
+
+   ExtendedCertificateOrCertificate ::= CHOICE {
+     certificate Certificate,
+     extendedCertificate [0] IMPLICIT ExtendedCertificate }
+
+   ExtendedCertificate ::= SEQUENCE {
+     extendedCertificateInfo ExtendedCertificateInfo,
+     signatureAlgorithm SignatureAlgorithmIdentifier,
+     signature Signature }
+
+   ExtendedCertificateInfo ::= SEQUENCE {
+     version CMSVersion,
+     certificate Certificate,
+     attributes Attributes } --MB;UnauthAttributes }
+
+   Signature ::= BIT STRING
+
+
+
+   -- Everything below this line is not part of draft-ietf-smime-cms-13.txt
+
+
+   -- Attribute Object Identifiers
+
+   id-macValue OBJECT IDENTIFIER ::= { pkcs 9 16 2 8 } --MB;{ iso(1) member-body(2)
+       --MB;us(840) rsadsi(113549) pkcs(1) pkcs9(9) smime(16) aa(2) 8 }
+
+
+   -- Algorithm Identifiers
+
+   id-dsa OBJECT IDENTIFIER ::= { 1 2 840 10040 4 1 } --MB;{iso(1) member-body(2)
+       --MB;us(840) x9-57(10040) x9cm(4) 1 }
+
+
+   -- Content Encryption Algorithms
+   --        For the effective-key-bits (key size) greater than 32 and less
+   --        than 256, the RC2-CBC algorithm parameters are encoded as:
+   --        RC2-CBC parameter ::=  SEQUENCE {
+   --                rc2ParameterVersion INTEGER,
+   --                iv OCTET STRING (8) }
+   --        For the effective-key-bits of 40, 64, and 128, the
+   --        rc2ParameterVersion values are 160, 120, 58 respectively.
+
+
+   -- Normally in PKCS#7
+   DigestInfo ::= SEQUENCE { -- Defined in PKCS#7 but not IETF-CMS
+     digestAlgorithm DigestAlgorithmIdentifier,
+     digest Digest }
+
+
+   END -- of CryptographicMessageSyntax

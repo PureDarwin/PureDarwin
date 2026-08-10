@@ -1,0 +1,158 @@
+-- @(#) sm_x411mtsas.asn 1.3 2/25/98 16:39:35 
+MTSAbstractService 
+-- { joint-iso-ccitt mhs-motis(6) mts(3) modules(0)
+-- mts-abstract-service(1) }
+
+DEFINITIONS IMPLICIT TAGS ::=
+
+BEGIN
+
+-- Prologue
+
+-- Exports everything
+
+-- Import UpperBounds Information
+
+IMPORTS
+   ub-bit-options, ub-built-in-content-type, 
+   ub-built-in-encoded-information-types, ub-common-name-length, 
+   ub-content-id-length, ub-content-length, ub-content-types, 
+   ub-country-name-alpha-length, ub-country-name-numeric-length,
+   ub-dl-expansions, ub-domain-defined-attribute-value-length,
+   ub-domain-defined-attributes, ub-domain-defined-attribute-type-length,
+   ub-domain-name-length, 
+   ub-encoded-information-types, ub-extension-attributes, ub-extension-types,
+   ub-generation-qualifier-length, ub-given-name-length,  ub-initials-length,
+   ub-integer-options, ub-labels-and-redirections, ub-local-id-length,
+   ub-mta-name-length, ub-mts-user-types, ub-numeric-user-id-length,
+   ub-organization-name-length, ub-organizational-unit-name-length,
+   ub-organizational-units, ub-password-length, ub-pds-name-length,
+   ub-pds-parameter-length,   
+   ub-postal-code-length, ub-privacy-mark-length, ub-queue-size, 
+   ub-reason-codes, ub-recipients, ub-recipient-number-for-advice-length, 
+   ub-redirections, ub-security-categories, ub-security-labels, 
+   ub-security-problems, ub-supplementary-info-length, ub-surname-length, 
+   ub-terminal-id-length, ub-tsap-id-length,
+   ub-x121-address-length
+   FROM UpperBounds  { upperBounds } ;
+
+-- O/R names
+
+-- not used
+--
+-- ORName ::= [APPLICATION 0] SEQUENCE {
+--     address            COMPONENTS OF ORAddress,
+--     directory-name [0] Name OPTIONAL }
+
+ORAddress ::= SEQUENCE {
+   standard-attributes       StandardAttributes,
+   domain-defined-attributes DomainDefinedAttributes OPTIONAL,
+
+   -- also see teletex-domain-defined-attributes
+
+  extension-attributes ExtensionAttributes OPTIONAL }
+
+-- Note - The OR-address is semantically absent from the OR-name 
+-- if the standard-attribute sequence is empty and the 
+-- domain-defined-attributes and extension-attributes  are both omitted.
+
+-- Standard attributes
+
+StandardAttributes ::= SEQUENCE {
+   country-name               CountryName OPTIONAL,
+   administration-domain-name AdministrationDomainName OPTIONAL,
+                              -- also see  extended-network-address
+   network-address            [0] NetworkAddress OPTIONAL, 
+   terminal-identifier        [1] TerminalIdentifier OPTIONAL,
+   private-domain-name        [2] PrivateDomainName OPTIONAL,
+                                  --also see teletex-organization-name
+   organization-name          [3] OrganizationName OPTIONAL,
+   numeric-user-identifier    [4] NumericUserIdentifier OPTIONAL,
+                                  --also  see  teletex-personal-name
+   personal-name              [5] PersonalName OPTIONAL,  
+                                  --also see teletex-organizational-unit-names 
+   organizational-unit-names  [6] OrganizationUnitNames OPTIONAL }
+
+
+CountryName ::= [APPLICATION 1] CHOICE {
+   x121-dcc-code         NumericString (SIZE  (ub-country-name-numeric-length)),
+
+   iso-3166-alpha2-code  PrintableString (SIZE (ub-country-name-alpha-length)) }
+
+AdministrationDomainName ::= [APPLICATION 2] CHOICE {
+   numeric NumericString (SIZE (0..ub-domain-name-length)),
+   printable PrintableString (SIZE (0..ub-domain-name-length)) }
+
+NetworkAddress ::= X121Address
+
+X121Address ::= NumericString (SIZE (1..ub-x121-address-length))
+
+TerminalIdentifier  ::= PrintableString (SIZE (1..ub-terminal-id-length))
+
+PrivateDomainName ::= CHOICE {
+   numeric NumericString (SIZE (1. .ub-domain-name-length)),
+   printable PrintableString (SIZE (1..ub-domain-name-length)) }
+
+OrganizationName  ::= PrintableString (SIZE (1..ub-organization-name-length))
+
+NumericUserIdentifier ::= NumericString (SIZE (1..ub-numeric-user-id-length))
+
+PersonalName ::= SET {
+   surname     [0] PrintableString (SIZE (1..ub-surname-length)),
+   given-name  [1]  PrintableString (SIZE (1..ub-given-name-length)) OPTIONAL,
+   initials    [2]  PrintableString  (SIZE  (1..ub-initials-length)) OPTIONAL,
+   generation-qualifier [3] PrintableString 
+                 (SIZE (1..ub-generation-qualifier-length)) OPTIONAL }
+
+OrganizationUnitNames  ::=  SEQUENCE SIZE  (1..ub-organizational-units) OF
+                            OrganizationUnitName
+
+OrganizationUnitName   ::=  PrintableString 
+                           (SIZE (1..ub-organizational-unit-name-length))
+
+-- Domain-defined attributes
+
+DomainDefinedAttributes  ::= SEQUENCE SIZE (1..ub-domain-defined-attributes) 
+                             OF DomainDefinedAttribute
+
+DomainDefinedAttribute ::= SEQUENCE {
+   type  PrintableString  (SIZE  (1..ub-domain-defined-attribute-type-length)),
+   value PrintableString (SIZE (1..ub-domain-defined-attribute-value-length)) }
+
+-- Extension attributes
+
+ExtensionAttributes  ::= SET SIZE (1. .ub-extension-attributes)  OF
+                         ExtensionAttribute
+
+ExtensionAttribute ::= SEQUENCE {
+   extension-attribute-type  [0] INTEGER,
+   extension-attribute-value [1] ANY }
+
+CommonName ::= PrintableString (SIZE (1..ub-common-name-length))
+
+TeletexCommonName  ::= TeletexString (SIZE (1..ub-common-name-length))
+
+TeletexOrganizationalName  ::=  TeletexString  
+                                 (SIZE  (1..ub-organization-name-length))
+
+TeletexPersonalName ::= SET {
+   surname     [0] TeletexString (SIZE (1..ub-surname-length)),
+   given-name  [1] TeletexString (SIZE (1..ub-given-name-length)) OPTIONAL,
+   initials    [2] TeletexString (SIZE (1..ub-initials-length)) OPTIONAL,
+   generation-qualifier [3] TeletexString 
+                   (SIZE (1..ub-generation-qualifier-length)) OPTIONAL }
+
+TeletexOrganizationUnitNames ::= SEQUENCE SIZE (1..ub-organizational-units) OF
+     TeletexOrganizationalUnitName
+
+TeletexOrganizationalUnitName ::= TeletexString 
+     (SIZE  (1..ub-organizational-unit-name-length))
+
+TeletexDomainDefinedAttributes ::= SEQUENCE 
+     SIZE (1..ub-domain-defined-attributes) OF TeletexDomainDefinedAttribute
+
+TeletexDomainDefinedAttribute ::= SEQUENCE {
+     type  TeletexString (SIZE (1..ub-domain-defined-attribute-type-length)),
+     value TeletexString  (SIZE (1..ub-domain-defined-attribute-value-length)) }
+
+END

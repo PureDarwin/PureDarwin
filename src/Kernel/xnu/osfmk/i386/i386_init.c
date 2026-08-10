@@ -845,6 +845,10 @@ i386_init(void)
 	postcode(I386_INIT_ENTRY);
 
 	pal_i386_init();
+	/* Before anything can consult the CPU topology: the lock guarding it was
+	 * otherwise not initialised until cpu_thread_init(), and using it before
+	 * then panics from inside the panic path, hiding the real fault. */
+	x86_topo_lock_init();
 	tsc_init();
 	rtclock_early_init();   /* mach_absolute_time() now functional */
 

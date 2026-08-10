@@ -1,0 +1,53 @@
+-- PKCS10 ASN module
+
+PKCS5
+DEFINITIONS IMPLICIT TAGS  ::=
+BEGIN
+-- EXPORTS All --
+
+IMPORTS
+  -- Directory Information Framework (X.501)
+		Name, Attribute, Attributes
+			FROM InformationFramework
+
+   -- Directory Authentication Framework (X.509)
+		AlgorithmIdentifier, SubjectPublicKeyInfo
+			FROM AuthenticationFramework
+			
+	-- CryptographicMessageSyntax (draft-ietf-smime-cms-13)
+		Signature, SignatureAlgorithmIdentifier
+			FROM CryptographicMessageSyntax
+;
+
+CertificationRequestInfo ::= SEQUENCE {
+	version VersionP10,
+	subject Name,
+	subjectPublicKeyInfo SubjectPublicKeyInfo,
+	attributes [0] IMPLICIT Attributes 
+}
+
+VersionP10 ::= INTEGER
+-- redefined, same as InformationFramework (sm_x501if.asn)
+-- Attributes ::= SET OF Attribute
+
+-- Per PKCS10 spec
+CertificationRequest ::= SEQUENCE {
+	certificationRequestInfo CertificationRequestInfo,
+	signatureAlgorithm SignatureAlgorithmIdentifier,
+	signature Signature 
+}
+
+-- This is what we actually use to avoid unnecessary 
+-- setup and teardown of CertificationRequestInfo when
+-- signing and verifying
+CertificationRequestSigned ::= SEQUENCE {
+	certificationRequestInfo ANY,
+	signatureAlgorithm SignatureAlgorithmIdentifier,
+	signature Signature 
+}
+
+-- duplicated from CryptographicMessageSyntax
+-- SignatureAlgorithmIdentifier ::= AlgorithmIdentifier
+-- Signature ::= BIT STRING
+
+END -- PKCS10

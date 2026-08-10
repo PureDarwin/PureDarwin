@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnablePressuredExit</key>
+	<true/>
+	<key>EnableTransactions</key>
+	<true/>
+	<key>GroupName</key>
+	<string>_securityd</string>
+	<key>Label</key>
+	<string>com.apple.secitemd</string>
+	<key>MachServices</key>
+	<dict>
+		<key>com.apple.securityd</key>
+		<true/>
+	</dict>
+	<key>POSIXSpawnType</key>
+	<string>Interactive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/secitemd</string>
+	</array>
+	<key>Umask</key>
+	<integer>54</integer>
+	<key>UserName</key>
+	<string>_securityd</string>
+	<key>_LimitLoadFromVariant</key>
+	<string>IsRecovery</string>
+	<key>_LimitLoadToVariant</key>
+	<string>IsDarwinOS</string>
+</dict>
+</plist>

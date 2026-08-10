@@ -1,0 +1,48 @@
+-- @(#) sm_x501if.asn 1.2 2/24/98 13:39:21 
+InformationFramework 
+--
+-- oid defined in sm_x501ud.asn
+--
+-- { joint-iso-itu-t(1) ds(5) modules(1) informationFramework(1) 3 }
+DEFINITIONS EXPLICIT TAGS ::=
+BEGIN
+
+
+-- Added this because the CMS module needs it and thinks it comes from
+-- this module.
+--
+--   Pierce 2/23/98
+
+Attributes ::= SET OF Attribute
+
+AttributeType ::= OBJECT IDENTIFIER
+
+AttributeValue ::= ANY
+
+Attribute ::= SEQUENCE {
+   type   AttributeType,
+   values SET OF AttributeValue
+}
+
+Name ::= CHOICE {
+   rDNSequence RDNSequence 
+}
+
+DistinguishedName ::= RDNSequence
+
+RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
+
+RelativeDistinguishedName ::= SET SIZE (1..MAX) OF
+   AttributeTypeAndDistinguishedValue
+
+
+AttributeTypeAndDistinguishedValue ::= SEQUENCE {
+   type                      OBJECT IDENTIFIER,
+   value                     ANY,
+   primaryDistinguished      BOOLEAN DEFAULT TRUE,
+   valuesWithContext         SET SIZE (1 .. MAX) OF SEQUENCE {
+   distingAttrValue          OBJECT IDENTIFIER OPTIONAL,
+   contextList               SET SIZE (1 .. MAX) OF ANY } OPTIONAL
+}
+
+END

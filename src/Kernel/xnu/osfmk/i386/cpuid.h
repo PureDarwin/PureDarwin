@@ -298,6 +298,10 @@
 #define CPUID_MODEL_ICELAKE_H           0x9F
 #define CPUID_MODEL_ICELAKE_SP          0x6A
 #define CPUID_MODEL_ICELAKE_DE          0x6C
+/* Meteor Lake (Core Ultra, family 6). 0xAA is the -H/-U mobile die. */
+#define CPUID_MODEL_METEORLAKE          0xAA
+#define CPUID_MODEL_METEORLAKE_H        0xAA
+#define CPUID_MODEL_METEORLAKE_L        0xAC
 #define CPUID_MODEL_COMETLAKE_DT        0xA5
 #define CPUID_MODEL_TIGERLAKE_U         0x8C
 #define CPUID_MODEL_TIGERLAKE_H         0x8D

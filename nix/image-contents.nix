@@ -823,6 +823,26 @@ let
             chmod u+w "$ovmf_vars"
           fi
 
+          case "''${PUREDARWIN_VM_DISK:-ahci}" in
+            virtio|virtio-blk)
+              disk_args=(
+                -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt"
+                -device "virtio-blk-pci,drive=system"
+              )
+              ;;
+            ahci)
+              disk_args=(
+                -device "ich9-ahci,id=sata"
+                -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt"
+                -device "ide-hd,bus=sata.0,drive=system"
+              )
+              ;;
+            *)
+              echo "PUREDARWIN_VM_DISK must be 'ahci' or 'virtio'" >&2
+              exit 1
+              ;;
+          esac
+
           exec qemu-system-x86_64 \
             -machine q35,accel=kvm \
             -cpu "''${PUREDARWIN_KVM_CPU:-host}" \
@@ -832,10 +852,8 @@ let
             -fw_cfg name=opt/ovmf/X-PciMmio64Mb,string=2048 \
             -drive if=pflash,format=raw,unit=0,readonly=on,file="$ovmf_code" \
             -drive if=pflash,format=raw,unit=1,file="$ovmf_vars" \
-            -device ich9-ahci,id=sata \
-            -drive if=none,id=system,file="$image",format=raw,cache=writeback"$image_readonly_opt" \
-            -device ide-hd,bus=sata.0,drive=system \
-            -device e1000-82545em,netdev=net0 \
+            "''${disk_args[@]}" \
+            -device virtio-net,netdev=net0 \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             ''${PUREDARWIN_VM_NETDUMP:+-object filter-dump,id=netdump,netdev=net0,file="$PUREDARWIN_VM_NETDUMP"} \
             -device qemu-xhci,id=xhci \

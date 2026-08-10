@@ -1,0 +1,238 @@
+-- @(#) sm_ess.asn 1.13 12/17/98 14:17:02 
+-- FROM ess.txt:  draft-ietf-smime-ess-09.txt
+ExtendedSecurityServices
+     { 1 2 840 113549 1 9 16 0 2 } --MB;{ iso(1) member-body(2) us(840) rsadsi(113549)
+      --MB; pkcs(1) pkcs-9(9) smime(16) modules(0) ess(2) }
+
+DEFINITIONS IMPLICIT TAGS ::=
+BEGIN
+
+IMPORTS
+
+     KeyIdentifier, PolicyQualifierInfo, PolicyInformation, CertPolicyId
+	   FROM CertificateExtensions
+
+    pkcs-9
+    FROM PKCS9-OIDS
+ 
+-- Cryptographic Message Syntax (CMS)
+    ContentType, IssuerAndSerialNumber, CMSVersion
+    FROM CryptographicMessageSyntax { 1 2 840 113549 1 9 16 0 1 }
+   --RWC;iso(1) member-body(2) us(840)
+    --RWC;rsadsi(113549) pkcs(1) pkcs-9(9) smime(16) modules(0) cms(1)}
+
+-- PKIX Certificate and CRL Profile, Sec A.2 Implicitly Tagged Module,
+--  1988 Syntax
+    --RWC;PolicyInformation FROM PKIX1Implicit88 {iso(1)   RWC; Added ")"
+    --RWC;identified-organization(3)dod(6) internet(1) security(5)
+    --RWC;mechanisms(5) pkix(7)id-mod(0) id-pkix1-implicit-88(2)}
+
+-- X.509
+    --RWC;GeneralNames, CertificateSerialNumber FROM CertificateExtensions  RWC; Removed ","
+    --RWC;{joint-iso-ccitt ds(5) module(1) certificateExtensions(26) 0}
+
+   ub-security-categories, ub-privacy-mark-length, ub-integer-options FROM UpperBounds
+                  -- RWC; Added to avoid SNACC ASN.1 Compiler link errors.
+
+   CertificateSerialNumber, IssuerSerial
+      FROM AuthenticationFramework  --RWC; Added
+
+   GeneralNames FROM CommonX509Definitions ;   --RWC; Added
+
+
+-- Extended Security Services
+
+-- The construct "SEQUENCE SIZE (1..MAX) OF" appears in several ASN.1
+-- constructs in this module. A valid ASN.1 SEQUENCE can have zero or
+-- more entries. The SIZE (1..MAX) construct constrains the SEQUENCE to 
+-- have at least one entry. MAX indicates the upper bound is unspecified.
+-- Implementations are free to choose an upper bound that suits their
+-- environment.
+
+-- Section 2.7
+
+ReceiptRequest ::= SEQUENCE {
+  signedContentIdentifier ContentIdentifier,
+  receiptsFrom ReceiptsFrom,
+  receiptsTo SEQUENCE SIZE (1..ub-receiptsTo) OF GeneralNames }
+
+ub-receiptsTo INTEGER ::= 16
+
+smime OBJECT IDENTIFIER ::= { pkcs-9 smime(16) }
+
+id-aa OBJECT IDENTIFIER ::= { pkcs-9 smime(16) 2 }
+
+id-aa-receiptRequest OBJECT IDENTIFIER ::= { id-aa 1 }
+
+ContentIdentifier ::= OCTET STRING
+
+id-aa-contentIdentifier OBJECT IDENTIFIER ::= { id-aa 7 }
+
+ReceiptsFrom ::= CHOICE {
+  allOrFirstTier [0] AllOrFirstTier,
+  -- formerly "allOrNone [0]AllOrNone"
+  receiptList [1] SEQUENCE OF GeneralNames }
+
+AllOrFirstTier ::= INTEGER { -- Formerly AllOrNone
+  allReceipts (0),
+  firstTierRecipients (1) }
+
+
+-- Section 2.8
+
+Receipt ::= SEQUENCE {
+  version CMSVersion,  -- Version is imported from [CMS]
+  contentType ContentType,
+  signedContentIdentifier ContentIdentifier,
+  originatorSignatureValue OCTET STRING }
+
+id-ct-receipt OBJECT IDENTIFIER ::= { smime id-ct(1) 1 }
+
+-- Section 2.9
+
+ContentHints ::= SEQUENCE {
+  contentDescription UTF8String OPTIONAL, --RWC;SIZE (1..MAX) OPTIONAL,
+  contentType ContentType }
+
+id-aa-contentHint OBJECT IDENTIFIER ::= { id-aa 4 }
+
+-- Section 2.10
+
+MsgSigDigest ::= OCTET STRING
+
+id-aa-msgSigDigest OBJECT IDENTIFIER ::= { id-aa 5 }
+
+-- Section 2.11
+
+ContentReference ::= SEQUENCE {
+  contentType ContentType,
+  signedContentIdentifier ContentIdentifier,
+  originatorSignatureValue OCTET STRING }
+
+id-aa-contentReference   OBJECT IDENTIFIER ::= { id-aa 10 }
+
+
+-- Section 3.2
+
+ESSSecurityLabel ::= SET {
+  security-policy-identifier SecurityPolicyIdentifier,
+  security-classification SecurityClassification OPTIONAL,
+  privacy-mark ESSPrivacyMark OPTIONAL,
+  security-categories SecurityCategories OPTIONAL }
+
+id-aa-securityLabel OBJECT IDENTIFIER ::= { id-aa 2}
+
+SecurityPolicyIdentifier ::= OBJECT IDENTIFIER
+
+SecurityClassification ::= INTEGER {
+  unmarked (0),
+  unclassified (1),
+  restricted (2),
+  confidential (3),
+  secret (4),
+  top-secret (5) } (0..ub-integer-options)
+
+--RWC; IMPORTED;ub-integer-options INTEGER ::= 256
+
+ESSPrivacyMark ::= CHOICE {
+  pString····· PrintableString, --RWC;SIZE (1..ub-privacy-mark-length),
+  utf8String·· UTF8String --RWC;SIZE (1..MAX)
+}
+
+--RWC; IMPORTED;ub-privacy-mark-length INTEGER ::= 128
+
+SecurityCategories ::= SET SIZE (1..ub-security-categories) OF
+        SecurityCategory
+
+--RWC; IMPORTED;ub-security-categories INTEGER ::= 64
+
+SecurityCategory ::= SEQUENCE {
+  type  [0] OBJECT IDENTIFIER,
+  value [1] ANY  --RWC;DEFINED BY type 
+}
+
+--Note: The aforementioned SecurityCategory syntax produces identical
+--hex encodings as the following SecurityCategory syntax that is
+--documented in the X.411 specification:
+--
+--SecurityCategory ::= SEQUENCE {
+--     type  [0]  SECURITY-CATEGORY,
+--     value [1]  ANY DEFINED BY type }
+--
+--SECURITY-CATEGORY MACRO ::=
+--BEGIN
+--TYPE NOTATION ::= type | empty
+--VALUE NOTATION ::= value (VALUE OBJECT IDENTIFIER)
+--END
+
+-- Section 3.4
+
+EquivalentLabels ::= SEQUENCE OF ESSSecurityLabel
+
+id-aa-equivalentLabels OBJECT IDENTIFIER ::= { id-aa 9}
+
+
+-- Section 4.4
+
+MLExpansionHistory ::= SEQUENCE
+        SIZE (1..ub-ml-expansion-history) OF MLData
+
+id-aa-mlExpandHistory OBJECT IDENTIFIER ::= { id-aa 3}
+
+ub-ml-expansion-history INTEGER ::= 64
+
+MLData ::= SEQUENCE {
+  mailListIdentifier EntityIdentifier,
+        -- EntityIdentifier is imported from [CMS]
+  expansionTime GeneralizedTime,
+  mlReceiptPolicy MLReceiptPolicy OPTIONAL }
+
+EntityIdentifier ::= CHOICE {
+  issuerAndSerialNumber IssuerAndSerialNumber,
+  subjectKeyIdentifier KeyIdentifier }   
+
+MLReceiptPolicy ::= CHOICE {
+  none [0] NULL,
+  insteadOf [1] SEQUENCE SIZE (1..MAX) OF GeneralNames,
+  inAdditionTo [2] SEQUENCE SIZE (1..MAX) OF GeneralNames }
+
+
+-- Section 5.4
+
+SigningCertificate ::=  SEQUENCE {
+    certs        SEQUENCE OF ESSCertID,
+    policies     SEQUENCE OF PolicyInformation OPTIONAL
+}
+
+id-aa-signingCertificate OBJECT IDENTIFIER ::= { id-aa 4444 } --RWC;Removed <TBD> }
+
+ESSCertID ::=  SEQUENCE {
+     certHash                 CertHash,
+     issuerSerial             IssuerSerial OPTIONAL
+}
+
+CertHash ::= OCTET STRING -- SHA1 hash of entire certificate
+--RWC; Modified "Hash" to "CertHash" to avoid crypto++ library contention.
+
+--RWC;
+--RWC; Added for completeness
+--RWC;
+
+
+   -- policyQualifierIds for Internet policy qualifiers
+
+   id-pkix  OBJECT IDENTIFIER  ::=
+               { iso(1) identified-organization(3) dod(6) internet(1)
+                       security(5) mechanisms(5) pkix(7) }
+
+   id-qt          OBJECT IDENTIFIER ::=  { id-pkix 2 }
+   id-qt-cps      OBJECT IDENTIFIER ::=  { id-qt 1 }
+   id-qt-unotice  OBJECT IDENTIFIER ::=  { id-qt 2 }
+
+   PolicyQualifierId ::=
+        OBJECT IDENTIFIER ( id-qt-cps | id-qt-unotice )
+
+
+
+
+END

@@ -66,6 +66,17 @@ x86_topology_parameters_t       topoParms;
 
 decl_simple_lock_data(, x86_topo_lock);
 
+void
+x86_topo_lock_init(void)
+{
+	static boolean_t x86_topo_lock_inited = FALSE;
+
+	if (!x86_topo_lock_inited) {
+		simple_lock_init(&x86_topo_lock, 0);
+		x86_topo_lock_inited = TRUE;
+	}
+}
+
 static struct cpu_cache {
 	int     level; int     type;
 } cpu_caches[LCACHE_MAX] = {
@@ -982,7 +993,7 @@ cpu_thread_init(void)
 	 * the CPU topology infrastructure.
 	 */
 	if (my_cpu == master_cpu && !initialized) {
-		simple_lock_init(&x86_topo_lock, 0);
+		x86_topo_lock_init();
 
 		/*
 		 * Put this logical CPU into the physical CPU topology.

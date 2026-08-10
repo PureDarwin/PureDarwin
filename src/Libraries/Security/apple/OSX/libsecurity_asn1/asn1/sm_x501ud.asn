@@ -1,0 +1,136 @@
+-- @(#) sm_x501ud.asn 1.3 3/2/98 12:55:28 
+UsefulDefinitions 
+-- { joint-iso-ccitt ds(5) module(1) usefulDefinitions(0) 2 }
+DEFINITIONS ::=
+
+BEGIN
+
+-- EXPORTS All --
+
+-- The types and values defined in this module are exported for use in the 
+-- other ASN.1 modules contained within the Directory Specifications, and 
+-- for the use of other applications which will use them to access 
+-- Directory services. Other applications may use them for their own purposes, 
+-- but this will not constrain extensions and modifications needed to maintain
+--  or improve the Directory service.
+
+ds OBJECT IDENTIFIER   ::=    { joint-iso-ccitt ds(5) }
+
+-- categories of information object 
+
+module OBJECT IDENTIFIER   ::=    {ds 1}
+
+serviceElement OBJECT IDENTIFIER   ::=    {ds 2}
+applicationContext OBJECT IDENTIFIER   ::=    {ds 3}
+attributeType OBJECT IDENTIFIER   ::=    {ds 4}
+attributeSyntax OBJECT IDENTIFIER   ::=    {ds 5}
+objectClass OBJECT IDENTIFIER   ::=    {ds 6}
+-- attributeSet OBJECT IDENTIFIER   ::=   {ds 7}
+dsAlgorithm OBJECT IDENTIFIER   ::=   {ds 8}
+abstractSyntax OBJECT IDENTIFIER   ::=   {ds 9}
+-- object OBJECT IDENTIFIER   ::=    {ds 10}
+-- port    OBJECT IDENTIFIER   ::=    {ds 11}
+dsaOperationalAttribute OBJECT IDENTIFIER   ::=    {ds 12}
+matchingRule OBJECT IDENTIFIER   ::=    {ds 13}
+knowledgeMatchingRule OBJECT IDENTIFIER   ::=    {ds 14}
+nameForm OBJECT IDENTIFIER   ::=    {ds 15}
+group    OBJECT IDENTIFIER   ::=    {ds 16}
+subentry OBJECT IDENTIFIER   ::=    {ds 17}
+operationalAttributeType OBJECT IDENTIFIER   ::=    {ds 18}
+operationalBinding OBJECT IDENTIFIER   ::=   {ds 19}
+schemaObjectClass OBJECT IDENTIFIER   ::=   {ds 20}
+schemaOperationalAttribute OBJECT IDENTIFIER   ::=   {ds 21}
+administrativeRoles OBJECT IDENTIFIER   ::=   {ds 23}
+accessControlAttribute OBJECT IDENTIFIER   ::=   {ds 24}
+rosObject OBJECT IDENTIFIER   ::=   {ds 25}
+contract OBJECT IDENTIFIER   ::=   {ds 26}
+package OBJECT IDENTIFIER   ::=   {ds 27}
+accessControlSchemes OBJECT IDENTIFIER   ::=   {ds 28}
+certificateExtension OBJECT IDENTIFIER   ::=   {ds 29}
+managementObject OBJECT IDENTIFIER   ::=   {ds 30}
+-- modules --
+
+-- already defined
+--
+-- usefulDefinitions OBJECT IDENTIFIER   ::=   {module usefulDefinitions(0) 3}
+informationFramework OBJECT IDENTIFIER   ::=   {module informationFramework(1) 3}
+directoryAbstractService OBJECT IDENTIFIER   ::=   {module directoryAbstractService(2) 3}
+distributedOperations OBJECT IDENTIFIER   ::=   {module distributedOperations(3) 3}
+protocolObjectIdentifiers OBJECT IDENTIFIER   ::=   {module protocolObjectIdentifiers (4) 3}
+selectedAttributeTypes OBJECT IDENTIFIER   ::=   {module selectedAttributeTypes(5) 3}
+selectedObjectClasses OBJECT IDENTIFIER   ::=   {module selectedObjectClasses(6) 3}
+authenticationFramework OBJECT IDENTIFIER   ::=   {module authenticationFramework(7) 3}
+algorithmObjectIdentifiers OBJECT IDENTIFIER   ::=   {module algorithmObjectIdentifiers(8) 3}
+directoryObjectIdentifiers OBJECT IDENTIFIER   ::=   {module directoryObjectIdentifiers(9) 3}
+upperBounds OBJECT IDENTIFIER   ::=   {module upperBounds(10) 3}
+dap OBJECT IDENTIFIER   ::=   {module dap(11) 3}
+
+dsp OBJECT IDENTIFIER   ::=   {module dsp(12) 3}
+distributedDirectoryOIDs OBJECT IDENTIFIER   ::=   {module distributedDirectoryOIDs(13) 3}
+directoryShadowOIDs OBJECT IDENTIFIER   ::=   {module directoryShadowOIDs(14) 3}
+directoryShadowAbstractService OBJECT IDENTIFIER   ::=   {module directoryShadowAbstractService(15) 3}
+disp OBJECT IDENTIFIER   ::=   {module disp(16) 3}
+dop OBJECT IDENTIFIER   ::=   {module dop(17) 3}
+opBindingManagement OBJECT IDENTIFIER   ::=   {module opBindingManagement(18) 3}
+opBindingOIDs OBJECT IDENTIFIER   ::=   {module opBindingOIDs(19) 3}
+hierarchicalOperationalBindings OBJECT IDENTIFIER   ::=   {module hierarchicalOperationalBindings(20) 3}
+dsaOperationalAttributeTypes OBJECT IDENTIFIER   ::=   {module dsaOperationalAttributeTypes(22) 3}
+schemaAdministration OBJECT IDENTIFIER   ::=   {module schemaAdministration(23) 3}
+basicAccessControl OBJECT IDENTIFIER   ::=   {module basicAccessControl(24) 3}
+directoryOperationalBindingTypes OBJECT IDENTIFIER   ::=   {module directoryOperationalBindingTypes(25) 3}
+certificateExtensions OBJECT IDENTIFIER   ::=   {module certificateExtensions (26) 0}
+directoryManagement OBJECT IDENTIFIER   ::=   {module directoryManagement (27) 1}
+enhancedSecurity OBJECT IDENTIFIER   ::=   {module enhancedSecurity (28) }
+
+
+-- synonyms --
+id-oc OBJECT IDENTIFIER   ::=   objectClass
+id-at OBJECT IDENTIFIER   ::=   attributeType
+id-as OBJECT IDENTIFIER   ::=   abstractSyntax
+id-mr OBJECT IDENTIFIER   ::=   matchingRule
+id-nf OBJECT IDENTIFIER   ::=   nameForm
+id-sc OBJECT IDENTIFIER   ::=   subentry
+id-oa OBJECT IDENTIFIER   ::=   operationalAttributeType
+id-ob OBJECT IDENTIFIER   ::=   operationalBinding
+id-doa OBJECT IDENTIFIER   ::=   dsaOperationalAttribute
+id-kmr OBJECT IDENTIFIER   ::=   knowledgeMatchingRule
+id-soc OBJECT IDENTIFIER   ::=   schemaObjectClass
+id-soa OBJECT IDENTIFIER   ::=   schemaOperationalAttribute
+id-ar OBJECT IDENTIFIER   ::=   administrativeRoles
+id-aca OBJECT IDENTIFIER   ::=   accessControlAttribute
+id-ac OBJECT IDENTIFIER   ::=   applicationContext
+id-rosObject OBJECT IDENTIFIER   ::=   rosObject
+id-contract OBJECT IDENTIFIER   ::=   contract
+id-package OBJECT IDENTIFIER   ::=   package
+id-acScheme OBJECT IDENTIFIER   ::=   accessControlSchemes
+id-ce OBJECT IDENTIFIER   ::=   certificateExtension
+id-mgt OBJECT IDENTIFIER   ::=   managementObject
+-- obsolete module identifiers --
+--   usefulDefinitions OBJECT IDENTIFIER   ::=   {module 0}
+--   informationFramework OBJECT IDENTIFIER   ::=   {module 1}
+--    directoryAbstractService OBJECT IDENTIFIER   ::=   {module 2}
+--    distributedOperations OBJECT IDENTIFIER   ::=   {module 3}
+--   protocolObjectIdentifiers OBJECT IDENTIFIER   ::=   {module 4}
+--    selectedAttributeTypes OBJECT IDENTIFIER   ::=   {module 5}
+--    selectedObjectClasses OBJECT IDENTIFIER   ::=   {module 6}
+--   authenticationFramework OBJECT IDENTIFIER   ::=   {module 7}
+--   algorithmObjectIdentifiers OBJECT IDENTIFIER   ::=   {module 8}
+--   directoryObjectIdentifiers OBJECT IDENTIFIER   ::=   {module 9}
+--   upperBounds OBJECT IDENTIFIER   ::=   {module 10}
+--   dap OBJECT IDENTIFIER   ::=   {module 11}
+--   dsp OBJECT IDENTIFIER   ::=   {module 12}
+--   distributedDirectoryObjectIdentifiers
+-- OBJECT IDENTIFIER   ::=   {module 13}
+-- unused module identifiers --
+--   directoryShadowOIDs OBJECT IDENTIFIER   ::=   {module 14}
+--   directoryShadowAbstractService OBJECT IDENTIFIER   ::=   {module 15}
+--   disp OBJECT IDENTIFIER   ::=   {module 16}
+--   dop OBJECT IDENTIFIER   ::=   {module 17}
+--   opBindingManagement OBJECT IDENTIFIER   ::=   {module 18}
+--   opBindingOIDs OBJECT IDENTIFIER   ::=   {module 19}
+--   hierarchicalOperationalBindings OBJECT IDENTIFIER   ::=   {module 20}
+--   dsaOperationalAttributeTypes OBJECT IDENTIFIER   ::=   {module 22}
+--   schemaAdministration OBJECT IDENTIFIER   ::=   {module 23}
+--   basicAccessControl    OBJECT IDENTIFIER   ::=   {module 24}
+--   operationalBindingOIDs OBJECT IDENTIFIER   ::=   {module 25}
+END

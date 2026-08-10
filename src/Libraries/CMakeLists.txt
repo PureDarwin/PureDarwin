@@ -3,6 +3,7 @@ foreach(_puredarwin_library_dir
     architecture
     CrashReporterClient
     CommonCrypto
+    libDER
     clang_bootstrap
     libcxxabi
     libSystem

@@ -1,0 +1,13 @@
+-- @(#) sm_vdatypes.asn 1.4 4/27/98 14:51:24 
+VdaEnhancedTypes DEFINITIONS ::=
+BEGIN
+
+-- NOTE: 
+--       This module contains the ASN.1 defintions for types that are not
+--       supported by Snacc 1.3b1 (i.e. UniversalString) and some echanced
+--       types for handling large integers.
+--
+
+BigIntegerStr    ::= [UNIVERSAL  2] IMPLICIT OCTET STRING
+
+END

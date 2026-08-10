@@ -222,6 +222,7 @@ add_framework(CoreFoundation
                 AppServices.subproj/CFUserNotification.h
                 # Base
                 Base.subproj/CFAvailability.h
+                Bridging.subproj/CFXPCBridge.h
                 Base.subproj/CFBase.h
                 Base.subproj/CFByteOrder.h
                 Base.subproj/CFUUID.h
@@ -280,6 +281,7 @@ add_framework(CoreFoundation
                 # wired by nix/pkgs/corefoundation.nix)
                 Bridging.subproj/__NSCFType.m
                 Bridging.subproj/CFBridgingClasses.m
+                Bridging.subproj/CFXPCBridge.c
                 # Base
                 Base.subproj/CFBase.c
                 Base.subproj/CFFileUtilities.c

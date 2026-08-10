@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>OpenSourceLicense</key>
+		<string>mpl</string>
+		<key>OpenSourceImportDate</key>
+		<string>2003-01-30</string>
+		<key>OpenSourceLicenseFile</key>
+		<string>libsecurity_asn1.txt</string>
+		<key>OpenSourceModifications</key>
+		<string>a BER/DER encode/decode library based on Netscape&apos;s NSS</string>
+		<key>OpenSourceProject</key>
+		<string>Mozilla NSS</string>
+		<key>OpenSourceURL</key>
+		<string>ftp.mozilla.org/security/nss/releases/NSS_3_4_1_RTM/src/nss-3.4.1.tar.gz</string>
+		<key>OpenSourceVersion</key>
+		<string>NSS-3.4</string>
+		<key>OpenSourceWebsiteURL</key>
+		<string>http://www.mozilla.org/projects/security/pki/nss/</string>
+	</dict>
+</array>
+</plist>

@@ -1,0 +1,225 @@
+-- @(#) sm_x509af.asn 1.2 2/24/98 13:40:34 
+AuthenticationFramework 
+-- 
+-- oid defined in sm_x501ud.asn
+--
+-- {joint-iso-ccitt ds(5) module(1) authenticationFramework(7) 3}
+
+DEFINITIONS ::=
+
+BEGIN
+
+-- EXPORTS All --
+-- The types and values defined in this module are exported for use in the 
+-- other ASN.1 modules contained 
+-- within the Directory Specifications, and for the use of other applications
+-- which will use them to access Directory services. Other applications may 
+-- use them for their own purposes, but this will not constrain
+-- extensions and modifications needed to maintain or improve the Directory 
+-- service.
+
+IMPORTS
+
+   BigIntegerStr
+   FROM VdaEnhancedTypes
+
+   id-at, informationFramework, upperBounds, selectedAttributeTypes, 
+   basicAccessControl, certificateExtensions
+      FROM UsefulDefinitions { usefulDefinitions }
+
+   Name, Attribute, AttributeType
+      FROM InformationFramework  { informationFramework }
+
+   ub-password-length
+      FROM UpperBounds  { upperBounds }
+
+-- not used
+--   AuthenticationLevel
+--     FROM BasicAccessControl { basicAccessControl }
+
+--   GeneralNames
+--      FROM CertificateExtensions { certificateExtensions }
+
+   GeneralNames
+        FROM CommonX509Definitions
+
+   UniqueIdentifier
+      FROM SelectedAttributeTypes  { selectedAttributeTypes } ;
+
+-- basic certificate definition
+
+Certificate ::= SEQUENCE {
+    certificateToSign    CertificateToSign,
+    algorithmIdentifier  AlgorithmIdentifier,
+    signatureValue       BIT STRING }
+
+CertificateToSign ::=  SEQUENCE {
+   version           [0]  Version DEFAULT v1,
+   serialNumber           CertificateSerialNumber,
+   signature              AlgorithmIdentifier,
+   issuer                 Name,
+   validity               Validity,
+   subject                Name,
+   subjectPublicKeyInfo   SubjectPublicKeyInfo,
+                        -- if present, version must be v2 or v3
+   issuerUniqueIdentifier   [1]   IMPLICIT UniqueIdentifier OPTIONAL,
+                        -- if present, version must be v2 or v3
+   subjectUniqueIdentifier  [2]   IMPLICIT UniqueIdentifier OPTIONAL,
+                        -- If present, version must be v3 
+   extensions         [3]   Extensions OPTIONAL }
+
+Version            ::=   INTEGER { v1(0), v2(1), v3(2) }
+
+-- CertificateSerialNumber   ::=   INTEGER
+
+CertificateSerialNumber ::= BigIntegerStr
+
+
+AlgorithmIdentifier      ::=   SEQUENCE {
+   algorithm       OBJECT IDENTIFIER,
+   parameters      ANY OPTIONAL }
+
+Validity            ::=   SEQUENCE {
+   notBefore   Time,
+   notAfter    Time }
+
+SubjectPublicKeyInfo   ::=   SEQUENCE {
+   algorithm          AlgorithmIdentifier,
+   subjectPublicKey   BIT STRING }
+
+Time  ::=  CHOICE { 
+   utcTime       UTCTime, 
+   generalizedTime   GeneralizedTime }
+
+Extensions ::= SEQUENCE OF Extension
+
+-- For those extensions where ordering of individual extensions within the 
+-- SEQUENCE is significant, the specification of those individual extensions
+--  shall include the rules for the significance of the order therein
+
+Extension ::= SEQUENCE {
+   extnId      OBJECT IDENTIFIER,
+   critical    BOOLEAN DEFAULT FALSE,
+               -- extnValue contains a DER encoding
+   extnValue   OCTET STRING }
+
+-- other certifiate constructs
+
+Certificates            ::=   SEQUENCE {
+   userCertificate      Certificate,
+   certificationPath    ForwardCertificationPath OPTIONAL }
+
+ForwardCertificationPath ::=   SEQUENCE OF CrossCertificates
+
+CrossCertificates ::=   SET OF Certificate
+
+CertificationPath ::=   SEQUENCE {
+   userCertificate      Certificate,
+   theCACertificates    SEQUENCE OF CertificatePair OPTIONAL }
+
+CertificatePair ::=   SEQUENCE {
+   -- at least one of the pair shall be present
+   forward      [0]   Certificate OPTIONAL, 
+   reverse      [1]   Certificate OPTIONAL }
+
+-- certificate revocation list (CRL)
+
+CertificateList ::= SEQUENCE {
+   crlToSign           CRLToSign,
+   algorithmIdentifier AlgorithmIdentifier,
+   signatureValue      BIT STRING }
+   
+CRLToSign ::= SEQUENCE {
+   version           Version OPTIONAL, -- if present, version must be v2
+   signature         AlgorithmIdentifier,
+   issuer            Name,
+   thisUpdate        Time,
+   nextUpdate        Time OPTIONAL,
+   revokedCertificates   SEQUENCE OF SEQUENCE {
+         userCertificate      CertificateSerialNumber,
+         revocationDate       Time,
+         crlEntryExtensions   Extensions OPTIONAL } OPTIONAL,
+   crlExtensions   [0]  Extensions OPTIONAL }
+
+-- attribute certificate
+AttributeCertificationPath  ::=  SEQUENCE {
+   attributeCertificate   AttributeCertificate, 
+   acPath      SEQUENCE OF ACPathData OPTIONAL }
+
+ACPathData  ::=  SEQUENCE {
+   certificate            [0]  Certificate  OPTIONAL,
+   attributeCertificate   [1]  AttributeCertificate  OPTIONAL }
+
+AttributeCertificate ::= SEQUENCE {
+   attributeCertificateInfo AttributeCertificateInfo,
+   algorithmIdentifier      AlgorithmIdentifier,
+   signatureValue           BIT STRING }
+
+AttributeCertificateInfo ::= SEQUENCE {
+   version         Version DEFAULT v1,
+   subject   CHOICE {
+      baseCertificateID [0] IssuerSerial,    -- associated  with a Public Key 
+                                             -- Certificate 
+      subjectName       [1] GeneralNames },  -- associated  with a name 
+   issuer                 GeneralNames, -- CA issuing the attribute certificate
+   signature              AlgorithmIdentifier,
+   serialNumber           CertificateSerialNumber,
+   attCertValidityPeriod  AttCertValidityPeriod,
+   attributes      SEQUENCE OF Attribute,
+   issuerUniqueID   UniqueIdentifier OPTIONAL,
+   extensions      Extensions OPTIONAL }
+
+IssuerSerial  ::= SEQUENCE {
+   issuer       GeneralNames,
+   serial       CertificateSerialNumber,
+   issuerUID    UniqueIdentifier OPTIONAL}
+
+AttCertValidityPeriod ::= SEQUENCE {
+   notBeforeTime   GeneralizedTime,
+   notAfterTime   GeneralizedTime }
+
+AttributeCertificateAssertion  ::=  SEQUENCE  {
+   -- At least one component of the sequence must be present
+   subject      [0]   CHOICE {
+      baseCertificateID   [0]  IssuerSerial,
+      subjectName         [1]  Name } OPTIONAL,
+   issuer          [1]   Name OPTIONAL,
+   attCertValidity [2]   GeneralizedTime OPTIONAL,
+   attType         [3]   SET OF AttributeType OPTIONAL }
+
+-- Apple addenda: abstract "signed CRL or cert". In this case the blob to be
+-- signed is actually an encoded CertificateToSign or CRLToSign. Representing
+-- that blob as an ASN ANY field allows for signature verify without decoding 
+-- the entire CertificateToSign or CRLToSign.
+
+SignedCertOrCrl ::= SEQUENCE {
+    tbsBlob				ANY,
+    algIdBlob  			ANY,
+    signatureValue		BIT STRING }
+
+-- attribute types --
+
+UserPassword ::= OCTET STRING (SIZE (0..ub-password-length))
+
+UserCertificate ::= Certificate
+
+CACertificate ::= Certificate
+
+CrossCertificatePair ::= CertificatePair
+
+AuthorityRevocationList ::= CertificateList
+
+CertificateRevocationList ::= CertificateList
+
+AttributeCertificateRevocationList ::= CertificateList
+
+-- object identifier assignments --
+id-at-userPassword      OBJECT IDENTIFIER   ::=   {id-at 35} 
+id-at-userCertificate      OBJECT IDENTIFIER   ::=   {id-at 36}
+id-at-cAcertificate         OBJECT IDENTIFIER   ::=   {id-at 37}
+id-at-authorityRevocationList   OBJECT IDENTIFIER   ::=   {id-at 38}
+id-at-certificateRevocationList   OBJECT IDENTIFIER   ::=   {id-at 39}
+id-at-crossCertificatePair      OBJECT IDENTIFIER   ::=   {id-at 40}
+id-at-attributeCertificate      OBJECT IDENTIFIER   ::=   {id-at 58}
+
+END

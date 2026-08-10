@@ -1,0 +1,19 @@
+PKCS9-OIDS
+DEFINITIONS IMPLICIT TAGS  ::=
+BEGIN
+-- EXPORTS All --
+
+pkcs-9 OBJECT IDENTIFIER ::= { 1 2 840 113549 1 9 }
+
+emailAddress OBJECT IDENTIFIER ::= { pkcs-9 1 }
+unstructuredName OBJECT IDENTIFIER ::= { pkcs-9 2 }
+contentTypePkcs9 OBJECT IDENTIFIER ::= { pkcs-9 3 }
+messageDigest OBJECT IDENTIFIER ::= { pkcs-9 4 }
+signingTime OBJECT IDENTIFIER ::= { pkcs-9 5 }
+countersignature OBJECT IDENTIFIER ::= { pkcs-9 6 }
+challengePassword OBJECT IDENTIFIER ::= { pkcs-9 7 }
+unstructuredAddress OBJECT IDENTIFIER ::= { pkcs-9 8 }
+extendedCertificateAttributes OBJECT IDENTIFIER ::= { pkcs-9 9 }
+
+END -- PKCS9-OIDS
+

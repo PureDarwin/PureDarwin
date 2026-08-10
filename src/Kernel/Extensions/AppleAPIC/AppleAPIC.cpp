@@ -100,6 +100,23 @@ bool AppleAPIC::start( IOService * provider )
         goto fail;
     }
 
+    {
+        static uint32_t claimedPhys[8];
+        static uint32_t claimedCount;
+        uint32_t thisPhys = num->unsigned32BitValue();
+
+        for (uint32_t i = 0; i < claimedCount; i++) {
+            if (claimedPhys[i] == thisPhys) {
+                kprintf("AppleAPIC: phys 0x%x already claimed, refusing "
+                        "duplicate instance\n", thisPhys);
+                goto fail;
+            }
+        }
+        if (claimedCount < (sizeof(claimedPhys) / sizeof(claimedPhys[0]))) {
+            claimedPhys[claimedCount++] = thisPhys;
+        }
+    }
+
     // Describe the I/O APIC registers using a memory descriptor.
 
     _apicMemory = IOMemoryDescriptor::withPhysicalAddress(
@@ -138,7 +155,19 @@ bool AppleAPIC::start( IOService * provider )
     // With the registers mapped in, find out how many interrupt table
     // entries are supported.
 
-    _vectorCount = GET_FIELD( indexRead( kIndexVER ), kVERMaxEntries );
+    // On AMD this sequence stops after the "reading VER"
+    // line above, and "the MMIO read never returned" and "the read returned
+    // nonsense and we died allocating from it" are indistinguishable without
+    // seeing the raw register value first.
+    {
+        kprintf("AppleAPIC: VER writing index\n");
+        IOAPIC_REG( IND ) = kIndexVER;
+        kprintf("AppleAPIC: VER index written, reading data\n");
+        UInt32 verRaw = (UInt32) IOAPIC_REG( DAT );
+        kprintf("AppleAPIC: VER raw=0x%x\n", verRaw);
+        _vectorCount = GET_FIELD( verRaw, kVERMaxEntries );
+        kprintf("AppleAPIC: VER maxEntries=%lu\n", (unsigned long) _vectorCount);
+    }
     if (_vectorCount >= 0xFF)
     {
         APIC_LOG("IOAPIC-%ld: excessive vector count (%ld)\n",

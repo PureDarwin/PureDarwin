@@ -1,0 +1,44 @@
+-- @(#) sm_x509cmn.asn 1.3 3/2/98 12:56:14 
+CommonX509Definitions
+DEFINITIONS IMPLICIT TAGS ::=
+
+BEGIN
+
+-- EXPORTS ALL
+
+IMPORTS
+   informationFramework, selectedAttributeTypes
+      FROM UsefulDefinitions { usefulDefinitions }
+
+   Name
+      FROM InformationFramework  { informationFramework }
+
+   DirectoryString
+      FROM SelectedAttributeTypes  { selectedAttributeTypes }
+
+   ORAddress
+      FROM MTSAbstractService { mTSAbstractService } ;
+
+GeneralNames ::= SEQUENCE SIZE (1..MAX) OF GeneralName
+
+GeneralName ::= CHOICE {
+   otherName        [0]   OtherName,
+   rfc822Name       [1]   IA5String,
+   dNSName          [2]   IA5String,
+   x400Address      [3]   ORAddress,
+   directoryName    [4]   Name,
+   ediPartyName     [5]   EDIPartyName,
+   uniformResourceIdentifier  [6]   IA5String,
+   iPAddress                  [7]   OCTET STRING,
+   registeredID               [8]   OBJECT IDENTIFIER }
+
+-- Was OID.... 
+OtherName ::= SEQUENCE {
+	typeId			OBJECT IDENTIFIER,
+	value			[0] EXPLICIT ANY } -- DEFINED BY contentType 
+
+EDIPartyName ::= SEQUENCE {
+   nameAssigner      [0]   DirectoryString  OPTIONAL,
+   partyName         [1]   DirectoryString  }
+
+END

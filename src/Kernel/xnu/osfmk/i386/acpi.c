@@ -692,6 +692,10 @@ acpi_find_table(uintptr_t rsdp_physaddr, const char *signature)
 	return NULL;
 }
 
+/* MADT entry type for a Processor Local x2APIC (ACPI 4.0+). The ACPI headers
+ * vendored in this tree predate it, so define it here. */
+#define ACPI_MADT_TYPE_LOCAL_X2APIC 9
+
 /*
  * Returns the count of enabled logical processors present in the ACPI
  * MADT, or 0 if the MADT could not be located.
@@ -727,6 +731,34 @@ acpi_count_enabled_logical_processors(void)
 		{
 			MADT_PROCESSOR_APIC *madt_procp = (MADT_PROCESSOR_APIC *)next_apic_entryp;
 			if (madt_procp->ProcessorEnabled) {
+				enabled_cpu_count++;
+			}
+
+			break;
+		}
+
+		case ACPI_MADT_TYPE_LOCAL_X2APIC:
+		{
+			/*
+			 * Processor Local x2APIC (ACPI 4.0+, MADT type 9).
+			 */
+			struct madt_local_x2apic {
+				uint8_t  Type;
+				uint8_t  Length;
+				uint16_t Reserved;
+				uint32_t X2ApicId;
+				uint32_t Flags;
+				uint32_t AcpiProcessorUid;
+			} __attribute__((packed));
+			const struct madt_local_x2apic *x2p =
+			    (const struct madt_local_x2apic *)next_apic_entryp;
+
+			if (next_apic_entryp->Length < sizeof(*x2p)) {
+				DBG("Malformed MADT x2APIC entry, length 0x%x\n",
+				    next_apic_entryp->Length);
+				break;
+			}
+			if (x2p->Flags & 1u) {
 				enabled_cpu_count++;
 			}
 

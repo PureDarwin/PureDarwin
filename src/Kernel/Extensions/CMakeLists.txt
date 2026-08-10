@@ -25,8 +25,9 @@ endif()
 add_subdirectory(IOGOPFramebuffer)
 add_subdirectory(IOVirtIOFamily)
 add_subdirectory(IOVirtIOGPU)
-add_subdirectory(IOIntelGen9Framebuffer)
+add_subdirectory(IOIntelFramebuffer)
 add_subdirectory(IOVirtIONet)
+add_subdirectory(IOVirtIOBlock)
 add_subdirectory(IOHIDFamily)
 add_subdirectory(IONetworkingFamily)
 add_subdirectory(PDE1000)
@@ -49,7 +50,8 @@ add_dependencies(kexts
     AppleUSBEHCI.kext AppleUSBOHCI.kext AppleUSBUHCI.kext
     RavynAHCIPort.kext RavynXHCIPort.kext
     IOGOPFramebuffer.kext IOVirtIOFamily.kext IOVirtIOGPU.kext IOVirtIONet.kext
-    IOIntelGen9Framebuffer.kext
+    IOVirtIOBlock.kext
+    IOIntelFramebuffer.kext
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext
     RavynHDAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext

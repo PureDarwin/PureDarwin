@@ -68,6 +68,8 @@ extern decl_simple_lock_data(, x86_topo_lock);
 
 extern void *cpu_thread_alloc(int);
 extern void cpu_thread_init(void);
+/* Idempotent; safe to call before cpu_thread_init(). See cpu_threads.c. */
+extern void x86_topo_lock_init(void);
 extern void cpu_thread_halt(void);
 
 extern void x86_set_logical_topology(x86_lcpu_t *lcpu, int pnum, int lnum);

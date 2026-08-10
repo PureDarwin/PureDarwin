@@ -1,0 +1,137 @@
+PKIXTSP {iso(1) identified-organization(3) dod(6) internet(1)
+   security(5) mechanisms(5) pkix(7) id-mod(0) id-mod-tsp(13)}
+
+DEFINITIONS IMPLICIT TAGS ::=
+
+BEGIN
+
+-- EXPORTS ALL --
+
+IMPORTS
+
+     Extensions, AlgorithmIdentifier
+     FROM PKIX1Explicit88 {iso(1) identified-organization(3)
+     dod(6) internet(1) security(5) mechanisms(5) pkix(7)
+     id-mod(0) id-pkix1-explicit-88(1)}
+
+     GeneralName FROM PKIX1Implicit88 {iso(1)
+     identified-organization(3) dod(6) internet(1) security(5)
+     mechanisms(5) pkix(7) id-mod(0) id-pkix1-implicit-88(2)}
+
+     ContentInfo FROM CryptographicMessageSyntax {iso(1)
+     member-body(2) us(840) rsadsi(113549) pkcs(1) pkcs-9(9)
+     smime(16) modules(0) cms(1)}
+
+     PKIFreeText FROM PKIXCMP {iso(1) identified-organization(3)
+     dod(6) internet(1) security(5) mechanisms(5) pkix(7) id-mod(0)
+     id-mod-cmp(9)} ;
+
+                     --  Locally defined OIDs  --
+
+-- eContentType for a time-stamp token
+
+id-ct-TSTInfo  OBJECT IDENTIFIER ::= { iso(1) member-body(2)
+us(840) rsadsi(113549) pkcs(1) pkcs-9(9) smime(16) ct(1) 4}
+
+-- 2.4.1
+
+TimeStampReq ::= SEQUENCE  {
+   version                  INTEGER  { v1(1) },
+   messageImprint           MessageImprint,
+     --a hash algorithm OID and the hash value of the data to be
+     --time-stamped
+   reqPolicy                TSAPolicyId                OPTIONAL,
+   nonce                    INTEGER                    OPTIONAL,
+   certReq                  BOOLEAN                    DEFAULT FALSE,
+   extensions               [0] IMPLICIT Extensions    OPTIONAL  }
+
+MessageImprint ::= SEQUENCE  {
+     hashAlgorithm                AlgorithmIdentifier,
+     hashedMessage                OCTET STRING  }
+
+TSAPolicyId ::= OBJECT IDENTIFIER
+
+-- 2.4.2
+
+TimeStampResp ::= SEQUENCE  {
+     status                  PKIStatusInfo,
+     timeStampToken          TimeStampToken     OPTIONAL  }
+
+-- The status is based on the definition of status
+-- in section 3.2.3 of [RFC2510]
+
+PKIStatusInfo ::= SEQUENCE {
+    status        PKIStatus,
+    statusString  PKIFreeText     OPTIONAL,
+    failInfo      PKIFailureInfo  OPTIONAL  }
+
+PKIStatus ::= INTEGER {
+    granted                (0),
+    -- when the PKIStatus contains the value zero a TimeStampToken, as
+       requested, is present.
+    grantedWithMods        (1),
+     -- when the PKIStatus contains the value one a TimeStampToken,
+       with modifications, is present.
+    rejection              (2),
+    waiting                (3),
+    revocationWarning      (4),
+     -- this message contains a warning that a revocation is
+     -- imminent
+    revocationNotification (5)
+     -- notification that a revocation has occurred   }
+
+    -- When the TimeStampToken is not present
+    -- failInfo indicates the reason why the
+    -- time-stamp request was rejected and
+    -- may be one of the following values.
+
+PKIFailureInfo ::= BIT STRING {
+    badAlg               (0),
+      -- unrecognized or unsupported Algorithm Identifier
+    badRequest           (2),
+      -- transaction not permitted or supported
+    badDataFormat        (5),
+      -- the data submitted has the wrong format
+    timeNotAvailable    (14),
+      -- the TSA's time source is not available
+    unacceptedPolicy    (15),
+      -- the requested TSA policy is not supported by the TSA.
+    unacceptedExtension (16),
+      -- the requested extension is not supported by the TSA.
+    addInfoNotAvailable (17)
+      -- the additional information requested could not be understood
+      -- or is not available
+    systemFailure       (25)
+      -- the request cannot be handled due to system failure  }
+
+TimeStampToken ::= ContentInfo
+
+     -- contentType is id-signedData as defined in [CMS]
+     -- content is SignedData as defined in([CMS])
+     -- eContentType within SignedData is id-ct-TSTInfo
+     -- eContent within SignedData is TSTInfo
+
+TSTInfo ::= SEQUENCE  {
+    version                      INTEGER  { v1(1) },
+    policy                       TSAPolicyId,
+    messageImprint               MessageImprint,
+      -- MUST have the same value as the similar field in
+      -- TimeStampReq
+    serialNumber                 INTEGER,
+     -- Time-Stamping users MUST be ready to accommodate integers
+     -- up to 160 bits.
+    genTime                      GeneralizedTime,
+    accuracy                     Accuracy                 OPTIONAL,
+    ordering                     BOOLEAN             DEFAULT FALSE,
+    nonce                        INTEGER                  OPTIONAL,
+      -- MUST be present if the similar field was present
+      -- in TimeStampReq.  In that case it MUST have the same value.
+    tsa                          [0] GeneralName          OPTIONAL,
+    extensions                   [1] IMPLICIT Extensions  OPTIONAL   }
+
+Accuracy ::= SEQUENCE {
+                seconds        INTEGER           OPTIONAL,
+                millis     [0] INTEGER  (1..999) OPTIONAL,
+                micros     [1] INTEGER  (1..999) OPTIONAL  }
+                
+                

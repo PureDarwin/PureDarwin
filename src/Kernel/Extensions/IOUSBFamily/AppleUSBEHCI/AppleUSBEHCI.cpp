@@ -839,6 +839,21 @@ IOReturn AppleUSBEHCI::waitForBulkChain(const UInt32 *tdIndex, const UInt32 *tdL
         bool done = false;
         bool shortPacket = false;
 
+        if (USBToHostLong(_asyncQH->qTDFlags) & kEHCIqTDStatusHalted) {
+            for (UInt32 i = 0; i < count; i++) {
+                UInt32 tok = USBToHostLong(qTDAt(tdIndex[i])->flags);
+                if (tok & kEHCIqTDStatusActive) {
+                    break;
+                }
+                moved += tdLength[i] -
+                    ((tok & kEHCIqTDBytesMask) >> kEHCIqTDBytesShift);
+            }
+            if (movedOut) {
+                *movedOut = moved;
+            }
+            return kIOUSBPipeStalled;
+        }
+
         for (UInt32 i = 0; i < count; i++) {
             EHCIGeneralTransferDescriptorSharedPtr td = qTDAt(tdIndex[i]);
             UInt32 token = USBToHostLong(td->flags);
@@ -867,7 +882,7 @@ IOReturn AppleUSBEHCI::waitForBulkChain(const UInt32 *tdIndex, const UInt32 *tdL
         if (done) {
             if (movedOut)
                 *movedOut = moved;
-            return halted ? kIOReturnIOError : kIOReturnSuccess;
+            return halted ? kIOUSBPipeStalled : kIOReturnSuccess;
         }
         IOSleep(1);
     }
@@ -974,7 +989,22 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
             (USBToHostLong(_asyncQH->qTDFlags) & kEHCIqTDDataToggle) ? 1 : 0;
         if (!isWrite && moved)
             buffer->writeBytes(0, data, moved);
+        EHCI_Log("bulk ok addr=%u ep=%u %s len=%u moved=%u toggle=%u->%u",
+                 address, epNum, isWrite ? "OUT" : "IN", length, moved, toggle,
+                 _bulkDataToggle[address & 0x7fU][epNum][dirIndex]);
+    } else if (ret == kIOUSBPipeStalled) {
+        _bulkDataToggle[address & 0x7fU][epNum][dirIndex] = 0;
+        EHCI_Log("bulk STALL addr=%u ep=%u %s len=%u moved=%u qhFlags=%08x",
+                 address, epNum, isWrite ? "OUT" : "IN", length, moved,
+                 USBToHostLong(_asyncQH->qTDFlags));
     } else if (ret == kIOReturnTimeout) {
+        UInt32 qhFlags = USBToHostLong(_asyncQH->qTDFlags);
+        UInt32 td0     = USBToHostLong(qTDAt(0)->flags);
+        EHCI_Log("bulk timeout addr=%u ep=%u %s len=%u maxpkt=%u toggle=%u "
+                 "qhFlags=%08x td0=%08x qhCaps=%08x",
+                 address, epNum, isWrite ? "OUT" : "IN", length,
+                 (unsigned)maxPacket, toggle, qhFlags, td0,
+                 USBToHostLong(_asyncQH->endpointCaps));
         ret = kIOUSBTransactionTimeout;
     }
 
@@ -995,6 +1025,22 @@ void AppleUSBEHCI::portWrite32(UInt32 port, UInt32 value)
 {
     opWrite32(kEHCIPortSCBase + (port - 1) * 4, value);
 }
+
+// USB 2.0 chapter 11 hub class: descriptor type, port features and the
+// wPortStatus bits we act on.
+enum {
+    kUSBHubDescriptorType         = 0x29,
+    kUSBHubClassCode              = 0x09,
+
+    kUSBHubPortFeatureReset       = 4,
+    kUSBHubPortFeaturePower       = 8,
+    kUSBHubPortFeatureCConnection = 16,
+    kUSBHubPortFeatureCReset      = 20,
+
+    kUSBHubPortStatusConnection   = 0x0001,
+    kUSBHubPortStatusEnable       = 0x0002,
+    kUSBHubPortStatusHighSpeed    = 0x0400,
+};
 
 void AppleUSBEHCI::enumThreadEntry(void *arg, wait_result_t)
 {
@@ -1051,6 +1097,138 @@ void AppleUSBEHCI::enumeratePort(UInt32 port)
         return;
     }
 
+    UInt8 devClass = 0;
+    IOUSBDevice *dev = addressAndPublishDevice("port", port, &devClass);
+    if (!dev)
+        return;
+
+    _portDevices[port] = dev;
+
+    // Intel PCH root ports all hang off an internal rate-matching hub, so on
+    // that hardware this recursion is the only way anything else is seen.
+    if (devClass == kUSBHubClassCode)
+        enumerateHub(dev->GetAddress());
+}
+
+void AppleUSBEHCI::enumerateHub(USBDeviceAddress hubAddr)
+{
+    UInt8 hubDesc[8];
+    IOUSBDevRequest req;
+
+    bzero(hubDesc, sizeof(hubDesc));
+    bzero(&req, sizeof(req));
+    req.bmRequestType = 0xA0;                 /* device-to-host, class, device */
+    req.bRequest = kUSBRqGetDescriptor;
+    req.wValue = kUSBHubDescriptorType << 8;
+    req.wIndex = 0;
+    req.wLength = sizeof(hubDesc);
+    req.pData = hubDesc;
+    if (controlTransfer(hubAddr, &req) != kIOReturnSuccess || req.wLenDone < 3) {
+        EHCI_Log("hub %u GET_DESCRIPTOR(hub) failed", hubAddr);
+        return;
+    }
+
+    UInt8 nports = hubDesc[2];
+    /* bPwrOn2PwrGood is in 2ms units. */
+    UInt32 powerGoodMs = (UInt32)hubDesc[5] * 2;
+    if (nports == 0 || nports > 15) {
+        EHCI_Log("hub %u implausible port count %u", hubAddr, nports);
+        return;
+    }
+    EHCI_Log("hub %u has %u ports, pwr2good %u ms", hubAddr, nports, powerGoodMs);
+
+    for (UInt8 p = 1; p <= nports; p++) {
+        bzero(&req, sizeof(req));
+        req.bmRequestType = 0x23;             /* host-to-device, class, other */
+        req.bRequest = kUSBRqSetFeature;
+        req.wValue = kUSBHubPortFeaturePower;
+        req.wIndex = p;
+        if (controlTransfer(hubAddr, &req) != kIOReturnSuccess)
+            EHCI_Log("hub %u port %u PORT_POWER failed", hubAddr, p);
+    }
+    IOSleep(powerGoodMs + 100);
+
+    for (UInt8 p = 1; p <= nports; p++) {
+        UInt8 st[4];
+        bzero(st, sizeof(st));
+        bzero(&req, sizeof(req));
+        req.bmRequestType = 0xA3;             /* device-to-host, class, other */
+        req.bRequest = kUSBRqGetStatus;
+        req.wValue = 0;
+        req.wIndex = p;
+        req.wLength = sizeof(st);
+        req.pData = st;
+        if (controlTransfer(hubAddr, &req) != kIOReturnSuccess || req.wLenDone < 4)
+            continue;
+
+        UInt16 portStatus = (UInt16)(st[0] | (st[1] << 8));
+        if (!(portStatus & kUSBHubPortStatusConnection))
+            continue;
+
+        bzero(&req, sizeof(req));
+        req.bmRequestType = 0x23;
+        req.bRequest = kUSBRqClearFeature;
+        req.wValue = kUSBHubPortFeatureCConnection;
+        req.wIndex = p;
+        (void)controlTransfer(hubAddr, &req);
+
+        bzero(&req, sizeof(req));
+        req.bmRequestType = 0x23;
+        req.bRequest = kUSBRqSetFeature;
+        req.wValue = kUSBHubPortFeatureReset;
+        req.wIndex = p;
+        if (controlTransfer(hubAddr, &req) != kIOReturnSuccess) {
+            EHCI_Log("hub %u port %u PORT_RESET failed", hubAddr, p);
+            continue;
+        }
+        IOSleep(60);
+
+        bzero(&req, sizeof(req));
+        req.bmRequestType = 0x23;
+        req.bRequest = kUSBRqClearFeature;
+        req.wValue = kUSBHubPortFeatureCReset;
+        req.wIndex = p;
+        (void)controlTransfer(hubAddr, &req);
+        IOSleep(20);
+
+        bzero(st, sizeof(st));
+        bzero(&req, sizeof(req));
+        req.bmRequestType = 0xA3;
+        req.bRequest = kUSBRqGetStatus;
+        req.wValue = 0;
+        req.wIndex = p;
+        req.wLength = sizeof(st);
+        req.pData = st;
+        if (controlTransfer(hubAddr, &req) != kIOReturnSuccess || req.wLenDone < 4)
+            continue;
+        portStatus = (UInt16)(st[0] | (st[1] << 8));
+
+        if (!(portStatus & kUSBHubPortStatusEnable)) {
+            EHCI_Log("hub %u port %u not enabled after reset status=%04x",
+                     hubAddr, p, portStatus);
+            continue;
+        }
+        if (!(portStatus & kUSBHubPortStatusHighSpeed)) {
+            EHCI_Log("hub %u port %u is not high-speed (status=%04x), skipping: "
+                     "split transactions are not implemented", hubAddr, p, portStatus);
+            continue;
+        }
+
+        UInt8 devClass = 0;
+        IOUSBDevice *dev = addressAndPublishDevice("hub port", p, &devClass);
+        if (!dev)
+            continue;
+
+        /* Hubs behind hubs are legal; recursion depth is bounded by the USB
+         * spec's 5-tier limit and in practice by the address space. */
+        if (devClass == kUSBHubClassCode)
+            enumerateHub(dev->GetAddress());
+    }
+}
+
+IOUSBDevice *AppleUSBEHCI::addressAndPublishDevice(const char *where, UInt32 port,
+                                                   UInt8 *outDeviceClass)
+{
     _addrMaxPacket[0] = 64;
     IOUSBDeviceDescriptor devdesc;
     bzero(&devdesc, sizeof(devdesc));
@@ -1063,8 +1241,8 @@ void AppleUSBEHCI::enumeratePort(UInt32 port)
     req.wLength = 8;
     req.pData = &devdesc;
     if (controlTransfer(0, &req) != kIOReturnSuccess || req.wLenDone < 8) {
-        EHCI_Log("port %u GET_DESCRIPTOR(8) failed", port);
-        return;
+        EHCI_Log("%s %u GET_DESCRIPTOR(8) failed", where, port);
+        return NULL;
     }
 
     UInt8 maxPkt0 = devdesc.bMaxPacketSize0 ? devdesc.bMaxPacketSize0 : 64;
@@ -1077,34 +1255,38 @@ void AppleUSBEHCI::enumeratePort(UInt32 port)
     req.bRequest = kUSBRqSetAddress;
     req.wValue = newAddr;
     if (controlTransfer(0, &req) != kIOReturnSuccess) {
-        EHCI_Log("port %u SET_ADDRESS(%u) failed", port, newAddr);
-        return;
+        EHCI_Log("%s %u SET_ADDRESS(%u) failed", where, port, newAddr);
+        return NULL;
     }
     IOSleep(2);
 
     _addrMaxPacket[newAddr] = maxPkt0;
     IOUSBDevice *dev = CreateAndConfigureDevice(newAddr, kUSBDeviceSpeedHigh, maxPkt0);
     if (!dev) {
-        EHCI_Log("port %u CreateAndConfigureDevice failed", port);
-        return;
+        EHCI_Log("%s %u CreateAndConfigureDevice failed", where, port);
+        return NULL;
     }
     if (!dev->attach(this)) {
         dev->release();
-        return;
+        return NULL;
     }
     if (!dev->start(this)) {
         dev->detach(this);
         dev->release();
-        return;
+        return NULL;
     }
     dev->registerService();
 
     if (dev->SetConfiguration(dev, 1) != kIOReturnSuccess)
-        EHCI_Log("port %u SetConfiguration failed (continuing)", port);
+        EHCI_Log("%s %u SetConfiguration failed (continuing)", where, port);
 
-    _portDevices[port] = dev;
-    EHCI_Log("port %u device %u published vid=%04x pid=%04x",
-             port, newAddr, dev->GetVendorID(), dev->GetProductID());
+    if (outDeviceClass)
+        *outDeviceClass = devdesc.bDeviceClass;
+
+    EHCI_Log("%s %u device %u published vid=%04x pid=%04x class=%02x",
+             where, port, newAddr, dev->GetVendorID(), dev->GetProductID(),
+             devdesc.bDeviceClass);
+    return dev;
 }
 
 void AppleUSBEHCI::releaseAsyncSchedule(void)
@@ -1219,9 +1401,24 @@ IOReturn AppleUSBEHCI::UIMClearPipeStall(USBDeviceAddress address, Endpoint *end
         return kIOReturnBadArgument;
     if (endpoint->transferType != kUSBBulk)
         return kIOReturnSuccess;
-    _bulkDataToggle[address & 0x7fU][endpoint->number & 0x0fU]
-                   [(endpoint->direction == kUSBOut) ? 1 : 0] = 0;
-    return kIOReturnSuccess;
+
+    bool isOut = (endpoint->direction == kUSBOut);
+    UInt8 epNum = endpoint->number & 0x0fU;
+
+    _bulkDataToggle[address & 0x7fU][epNum][isOut ? 1 : 0] = 0;
+
+    IOUSBDevRequest req;
+    bzero(&req, sizeof(req));
+    req.bmRequestType = 0x02;               /* host-to-device, standard, endpoint */
+    req.bRequest = kUSBRqClearFeature;
+    req.wValue = 0;                         /* ENDPOINT_HALT */
+    req.wIndex = (UInt16)(epNum | (isOut ? 0x00 : 0x80));
+    req.wLength = 0;
+
+    IOReturn ret = controlTransfer(address, &req);
+    EHCI_Log("clear stall addr=%u ep=%u %s ret=%08x",
+             address, epNum, isOut ? "OUT" : "IN", ret);
+    return ret;
 }
 
 IOReturn AppleUSBEHCI::UIMDeviceRequest(IOUSBDevRequest *request, USBDeviceAddress address)

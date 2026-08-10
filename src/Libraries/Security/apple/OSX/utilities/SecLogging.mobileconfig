@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadIdentifier</key>
+    <string>com.apple.security.logging</string>
+    <key>PayloadUUID</key>
+    <string>B4F88847-3A51-4B9D-A2EB-44D7481D1525</string>
+
+    <key>PayloadDescription</key>
+    <string>Sets defaults</string>
+    <key>PayloadDisplayName</key>
+    <string>Security Logging Defaults - Test Profile</string>
+    <key>PayloadOrganization</key>
+    <string>Apple, Inc</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+
+    <key>DurationUntilRemoval</key>
+    <real>259200</real> <!-- 3 days -->
+
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadUUID</key>
+            <string>65DB0454-B417-4F10-92DE-1EB5F8F997FF</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.defaults.1</string>
+            <key>PayloadType</key>
+            <string>com.apple.defaults.managed</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadContent</key>
+            <array>
+
+                <!-- Each domain gets one dict -->
+                <dict>
+                    <key>DefaultsDomainName</key>
+                    <string>.GlobalPreferences</string>
+                    <key>DefaultsData</key>
+                    <dict>
+                        <key>SecLogLevel</key>
+                        <integer>7</integer>
+                    </dict>
+                </dict>
+
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

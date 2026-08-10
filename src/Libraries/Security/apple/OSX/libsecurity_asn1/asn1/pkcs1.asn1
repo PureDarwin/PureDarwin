@@ -1,0 +1,205 @@
+PKCS-1 {iso(1) member-body(2) us(840) rsadsi(113549) pkcs(1) pkcs-1(1)
+        modules(0) pkcs-1(1)}
+
+-- $Revision: 1.1 $
+
+-- This module has been checked for conformance with the ASN.1
+-- standard by the OSS ASN.1 Tools
+
+DEFINITIONS EXPLICIT TAGS ::=
+
+BEGIN
+
+-- EXPORTS ALL --
+-- All types and values defined in this module is exported for use in other
+-- ASN.1 modules.
+
+-- IMPORTS None --
+
+-- Basic object identifiers 
+
+-- The DER for this in hexadecimal is:
+-- 06 08 
+--    2A 86 48 86 F7 0D 01 01
+--
+pkcs-1 OBJECT IDENTIFIER ::= {
+   iso(1) member-body(2) us(840) rsadsi(113549) pkcs(1) 1 }
+
+--
+-- When the following OIDs are used in an AlgorithmIdentifier
+-- the parameters MUST be present and MUST be NULL.
+--
+rsaEncryption          OBJECT IDENTIFIER ::= { pkcs-1 1 }
+md2WithRSAEncryption   OBJECT IDENTIFIER ::= { pkcs-1 2 }
+md4WithRSAEncryption   OBJECT IDENTIFIER ::= { pkcs-1 3 }
+md5WithRSAEncryption   OBJECT IDENTIFIER ::= { pkcs-1 4 }
+sha1WithRSAEncryption  OBJECT IDENTIFIER ::= { pkcs-1 5 }
+rsaOAEPEncryptionSET   OBJECT IDENTIFIER ::= { pkcs-1 6 }
+
+--
+-- When id-RSAES-OAEP is used in an AlgorithmIdentifier
+-- the parameters MUST be present and MUST be RSAES-OAEP-params.
+--
+id-RSAES-OAEP          OBJECT IDENTIFIER ::= { pkcs-1 7 }
+
+--
+-- When id-mgf1 is used in an AlgorithmIdentifier
+-- the parameters MUST be present and MUST be
+-- a DigestAlgorithmIdentifier, specifically SHA1Identifier.
+--
+id-mgf1                OBJECT IDENTIFIER ::= { pkcs-1 8 }
+
+--
+-- When id-pSpecified is used in an AlgorithmIdentifier
+-- the parameters MUST be an OCTET STRING.
+--
+id-pSpecified OBJECT IDENTIFIER ::= { pkcs-1 9 }
+
+--
+-- This OID really belongs in a module with the secsig OIDs.
+--
+id-sha1                OBJECT IDENTIFIER ::= { 
+   iso(1) identified-organization(3) oiw(14) secsig(3)
+   algorithms(2) 26 }
+
+
+-- Useful types
+
+ALGORITHM-IDENTIFIER ::= TYPE-IDENTIFIER
+
+-- Note: the parameter InfoObjectSet in the following definitions
+-- allows a distinct information object set to be specified for
+-- sets of algorithms such as:  
+-- DigestAlgorithms ALGORITHM-IDENTIFIER ::= {
+--    { NULL IDENTIFIED BY id-sha1 },
+--    { NULL IDENTIFIED BY id-md5 },
+--    { NULL IDENTIFIED BY id-md2 }
+-- }
+--
+AlgorithmIdentifier { ALGORITHM-IDENTIFIER:InfoObjectSet } ::= 
+SEQUENCE {
+   algorithm   ALGORITHM-IDENTIFIER.&id({InfoObjectSet}),
+   parameters  ALGORITHM-IDENTIFIER.&Type({InfoObjectSet}
+                                           {@algorithm}) OPTIONAL
+}
+
+-- Algorithms
+
+--
+-- Allowed OAEP digest algorithms.
+--
+OAEPDigestAlgorithms ALGORITHM-IDENTIFIER ::= {
+   { SHA1Parameters IDENTIFIED BY id-sha1 },
+     ... --Allows for future expansion
+}
+
+sha1Identifier AlgorithmIdentifier {{ OAEPDigestAlgorithms }} ::= 
+   {algorithm id-sha1, parameters SHA1Parameters : NULL}
+
+SHA1Parameters ::= NULL
+
+--
+-- Allowed Mask Generation Function algorithms.
+-- If the identifier is id-mgf1, the parameters
+-- are a single digest algorithm identifier.
+--
+PKCS1MGFAlgorithms ALGORITHM-IDENTIFIER ::= {
+   { MGF1Parameters IDENTIFIED BY id-mgf1 },
+     ...--Allows for future expansion
+}
+
+MGF1Parameters ::= 
+   AlgorithmIdentifier { {OAEPDigestAlgorithms} }
+
+--
+-- Allowed algorithms for pSourceFunc.
+--
+PKCS1PSourceAlgorithms ALGORITHM-IDENTIFIER ::= {
+   { PEmptyString IDENTIFIED BY id-pSpecified },
+   ...--Allows for future expansion
+}
+
+PEmptyString ::= OCTET STRING (SIZE(0))
+
+-- 
+-- This identifier means that P is an empty string, so the digest
+-- of the empty string appears in the RSA block before masking.
+--
+pSpecifiedEmptyIdentifier AlgorithmIdentifier {{ PKCS1PSourceAlgorithms }} ::=
+   { algorithm id-pSpecified, parameters PEmptyString : ''H }
+
+--
+-- Default AlgorithmIdentifier for id-RSAES-OAEP.maskGenFunc.
+--
+mgf1SHA1Identifier AlgorithmIdentifier {{ PKCS1MGFAlgorithms }} ::=
+    { algorithm id-mgf1, 
+      parameters AlgorithmIdentifier{{OAEPDigestAlgorithms}} : sha1Identifier}
+
+--
+-- Type identifier definitions for the PKCS #1 OIDs.
+--
+PKCS1Algorithms ALGORITHM-IDENTIFIER ::= {
+   { NULL IDENTIFIED BY rsaEncryption }               |
+   { NULL IDENTIFIED BY md2WithRSAEncryption }        |
+   { NULL IDENTIFIED BY md4WithRSAEncryption }        |
+   { NULL IDENTIFIED BY md5WithRSAEncryption }        |
+   { NULL IDENTIFIED BY sha1WithRSAEncryption }       |
+   { NULL IDENTIFIED BY rsaOAEPEncryptionSET }        |
+   { RSAES-OAEP-params IDENTIFIED BY id-RSAES-OAEP }  | 
+     PKCS1PSourceAlgorithms,
+     ... -- Allows for future expansion
+}
+
+-- Main structures
+
+RSAPublicKey ::= SEQUENCE {
+   modulus          INTEGER, -- (Usually large) n = p*q
+   publicExponent   INTEGER  -- (Usually small) e 
+}
+
+-- 
+-- Representation of RSA private key with p and q
+-- information for the CRT algorithm.
+--
+RSAPrivateKey ::= SEQUENCE {
+   version          INTEGER { rsaPrivateKeyVer0(0) }(rsaPrivateKeyVer0),
+   modulus          INTEGER, -- (Usually large) n
+   publicExponent   INTEGER, -- (Usually small) e
+   privateExponent  INTEGER, -- (Usually large) d
+   prime1           INTEGER, -- (Usually large) p
+   prime2           INTEGER, -- (Usually large) q
+   exponent1        INTEGER, -- (Usually large) d mod (p-1)
+   exponent2        INTEGER, -- (Usually large) d mod (q-1)
+   coefficient      INTEGER  -- (Usually large) (inverse of q) mod p 
+}
+
+-- 
+-- AlgorithmIdentifier.parameters for id-RSAES-OAEP.
+-- Note that the tags in this Sequence are explicit.
+--
+
+RSAES-OAEP-params ::=  SEQUENCE { 
+   hashFunc         [0] AlgorithmIdentifier { {OAEPDigestAlgorithms} }
+                        DEFAULT sha1Identifier,
+   maskGenFunc      [1] AlgorithmIdentifier { {PKCS1MGFAlgorithms} }
+                        DEFAULT mgf1SHA1Identifier,               
+   pSourceFunc      [2] AlgorithmIdentifier { {PKCS1PSourceAlgorithms} } 
+                        DEFAULT pSpecifiedEmptyIdentifier
+}
+
+-- 
+-- Identifier for default RSAES-OAEP algorithm identifier
+-- The DER Encoding of this is in hexadecimal:
+-- 30 0D
+--    06 09 
+--       2A 86 48 86 F7 0D 01 01 07
+--    30 00   
+--       Notice that the DER encoding of default values is "empty". 
+--
+rSAES-OAEP-Default-Identifier AlgorithmIdentifier{ {PKCS1Algorithms} } ::= 
+     {algorithm id-RSAES-OAEP,
+      parameters RSAES-OAEP-params : {hashFunc    sha1Identifier, 
+                                      maskGenFunc mgf1SHA1Identifier,
+                                      pSourceFunc pSpecifiedEmptyIdentifier}}
+
+END -- PKCS1Definitions
