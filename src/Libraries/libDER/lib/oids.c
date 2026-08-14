@@ -338,3 +338,186 @@ const DERItem oidSha1Fee = { NULL, 0 };
  * Deliberately empty: an empty DERItem can never compare equal to a real
  * OID, so this reads as "not present" rather than matching the wrong thing. */
 const DERItem oidApplePolicyEscrowService = { NULL, 0 };
+
+/*
+ * Apple's own OID arcs, under appleDataSecurity (1.2.840.113635.100).
+ * Sourced from the APSL Security-59754 sources - libsecurity_cssm's oidsbase.h
+ * and oidscert.cpp for the arc tree, and the per-policy documentation in
+ * trust/headers/SecPolicyPriv.h for each individual marker and EKU.
+ */
+/* 1.2.840.113635.100.6.2.1  Apple WWDR intermediate marker */
+static const DERByte oidAppleIntmMarkerAppleWWDR_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x01 };
+const DERItem oidAppleIntmMarkerAppleWWDR = { (DERByte *)oidAppleIntmMarkerAppleWWDR_bytes, sizeof(oidAppleIntmMarkerAppleWWDR_bytes) };
+
+/* 1.2.840.113635.100.6.2.3  Apple Application Integration intermediate marker */
+static const DERByte oidAppleIntmMarkerAppleID_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x03 };
+const DERItem oidAppleIntmMarkerAppleID = { (DERByte *)oidAppleIntmMarkerAppleID_bytes, sizeof(oidAppleIntmMarkerAppleID_bytes) };
+
+/* 1.2.840.113635.100.6.2.7  Apple ID intermediate marker (second subCA) */
+static const DERByte oidAppleIntmMarkerAppleID2_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x07 };
+const DERItem oidAppleIntmMarkerAppleID2 = { (DERByte *)oidAppleIntmMarkerAppleID2_bytes, sizeof(oidAppleIntmMarkerAppleID2_bytes) };
+
+/* 1.2.840.113635.100.6.2.10  Apple System Integration 2 intermediate marker */
+static const DERByte oidAppleIntmMarkerAppleSystemIntg2_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x0a };
+const DERItem oidAppleIntmMarkerAppleSystemIntg2 = { (DERByte *)oidAppleIntmMarkerAppleSystemIntg2_bytes, sizeof(oidAppleIntmMarkerAppleSystemIntg2_bytes) };
+
+/* 1.2.840.113635.100.6.2.12  Apple Server Authentication intermediate marker */
+static const DERByte oidAppleIntmMarkerAppleServerAuthentication_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x0c };
+const DERItem oidAppleIntmMarkerAppleServerAuthentication = { (DERByte *)oidAppleIntmMarkerAppleServerAuthentication_bytes, sizeof(oidAppleIntmMarkerAppleServerAuthentication_bytes) };
+
+/* 1.2.840.113635.100.6.2.13  Apple System Integration G3 intermediate marker */
+static const DERByte oidAppleIntmMarkerAppleSystemIntgG3_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x0d };
+const DERItem oidAppleIntmMarkerAppleSystemIntgG3 = { (DERByte *)oidAppleIntmMarkerAppleSystemIntgG3_bytes, sizeof(oidAppleIntmMarkerAppleSystemIntgG3_bytes) };
+
+/* 1.2.840.113635.100.6.2.16  Apple HomeKit server CA intermediate marker */
+static const DERByte oidAppleIntmMarkerAppleHomeKitServerCA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x02, 0x10 };
+const DERItem oidAppleIntmMarkerAppleHomeKitServerCA = { (DERByte *)oidAppleIntmMarkerAppleHomeKitServerCA_bytes, sizeof(oidAppleIntmMarkerAppleHomeKitServerCA_bytes) };
+
+/* 1.2.840.113635.100.4.1  Apple code signing EKU */
+static const DERByte oidAppleExtendedKeyUsageCodeSigning_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x04, 0x01 };
+const DERItem oidAppleExtendedKeyUsageCodeSigning = { (DERByte *)oidAppleExtendedKeyUsageCodeSigning_bytes, sizeof(oidAppleExtendedKeyUsageCodeSigning_bytes) };
+
+/* Apple Apple code signing EKU, developer variant - arc not stated in any source we may use.
+ * Deliberately empty: an empty DERItem can never compare equal to a real
+ * OID, so this reads as "not present" rather than matching the wrong thing. */
+const DERItem oidAppleExtendedKeyUsageCodeSigningDev = { NULL, 0 };
+
+/* 1.2.840.113635.100.4.7  Apple ID sharing EKU */
+static const DERByte oidAppleExtendedKeyUsageAppleID_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x04, 0x07 };
+const DERItem oidAppleExtendedKeyUsageAppleID = { (DERByte *)oidAppleExtendedKeyUsageAppleID_bytes, sizeof(oidAppleExtendedKeyUsageAppleID_bytes) };
+
+/* 1.2.840.113635.100.4.14  Apple Passbook signing EKU */
+static const DERByte oidAppleExtendedKeyUsagePassbook_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x04, 0x0e };
+const DERItem oidAppleExtendedKeyUsagePassbook = { (DERByte *)oidAppleExtendedKeyUsagePassbook_bytes, sizeof(oidAppleExtendedKeyUsagePassbook_bytes) };
+
+/* 1.2.840.113635.100.4.16  Apple configuration profile signing EKU */
+static const DERByte oidAppleExtendedKeyUsageProfileSigning_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x04, 0x10 };
+const DERItem oidAppleExtendedKeyUsageProfileSigning = { (DERByte *)oidAppleExtendedKeyUsageProfileSigning_bytes, sizeof(oidAppleExtendedKeyUsageProfileSigning_bytes) };
+
+/* 1.2.840.113635.100.4.17  Apple configuration profile signing EKU, QA */
+static const DERByte oidAppleExtendedKeyUsageQAProfileSigning_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x04, 0x11 };
+const DERItem oidAppleExtendedKeyUsageQAProfileSigning = { (DERByte *)oidAppleExtendedKeyUsageQAProfileSigning_bytes, sizeof(oidAppleExtendedKeyUsageQAProfileSigning_bytes) };
+
+/* 1.2.840.113635.100.4.11  Apple macOS provisioning profile signing */
+static const DERByte oidAppleCertExtOSXProvisioningProfileSigning_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x04, 0x0b };
+const DERItem oidAppleCertExtOSXProvisioningProfileSigning = { (DERByte *)oidAppleCertExtOSXProvisioningProfileSigning_bytes, sizeof(oidAppleCertExtOSXProvisioningProfileSigning_bytes) };
+
+/* 1.2.840.113635.100.5.12  Apple mobile store signing certificate policy */
+static const DERByte oidApplePolicyMobileStore_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x05, 0x0c };
+const DERItem oidApplePolicyMobileStore = { (DERByte *)oidApplePolicyMobileStore_bytes, sizeof(oidApplePolicyMobileStore_bytes) };
+
+/* 1.2.840.113635.100.5.12.1  Apple mobile store signing certificate policy, QA */
+static const DERByte oidApplePolicyMobileStoreProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x05, 0x0c, 0x01 };
+const DERItem oidApplePolicyMobileStoreProdQA = { (DERByte *)oidApplePolicyMobileStoreProdQA_bytes, sizeof(oidApplePolicyMobileStoreProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.1.16  Apple Passbook card issuer leaf marker */
+static const DERByte oidAppleInstallerPackagingSigningExternal_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x01, 0x10 };
+const DERItem oidAppleInstallerPackagingSigningExternal = { (DERByte *)oidAppleInstallerPackagingSigningExternal_bytes, sizeof(oidAppleInstallerPackagingSigningExternal_bytes) };
+
+/* 1.2.840.113635.100.6.1.24  Apple tvOS application signing */
+static const DERByte oidAppleTVOSApplicationSigningProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x01, 0x18 };
+const DERItem oidAppleTVOSApplicationSigningProd = { (DERByte *)oidAppleTVOSApplicationSigningProd_bytes, sizeof(oidAppleTVOSApplicationSigningProd_bytes) };
+
+/* 1.2.840.113635.100.6.1.24.1  Apple tvOS application signing, QA */
+static const DERByte oidAppleTVOSApplicationSigningProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x01, 0x18, 0x01 };
+const DERItem oidAppleTVOSApplicationSigningProdQA = { (DERByte *)oidAppleTVOSApplicationSigningProdQA_bytes, sizeof(oidAppleTVOSApplicationSigningProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.25  Apple ID validation record signing */
+static const DERByte oidAppleCertExtensionAppleIDRecordValidationSigning_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x19 };
+const DERItem oidAppleCertExtensionAppleIDRecordValidationSigning = { (DERByte *)oidAppleCertExtensionAppleIDRecordValidationSigning_bytes, sizeof(oidAppleCertExtensionAppleIDRecordValidationSigning_bytes) };
+
+/* 1.2.840.113635.100.6.27.1  Apple SSL server authentication */
+static const DERByte oidAppleCertExtAppleServerAuthentication_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x01 };
+const DERItem oidAppleCertExtAppleServerAuthentication = { (DERByte *)oidAppleCertExtAppleServerAuthentication_bytes, sizeof(oidAppleCertExtAppleServerAuthentication_bytes) };
+
+/* 1.2.840.113635.100.6.27.2  Apple GS server authentication */
+static const DERByte oidAppleCertExtAppleServerAuthenticationGS_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x02 };
+const DERItem oidAppleCertExtAppleServerAuthenticationGS = { (DERByte *)oidAppleCertExtAppleServerAuthenticationGS_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationGS_bytes) };
+
+/* 1.2.840.113635.100.6.27.3.2  Apple PPQ server authentication */
+static const DERByte oidAppleCertExtAppleServerAuthenticationPPQProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x03, 0x02 };
+const DERItem oidAppleCertExtAppleServerAuthenticationPPQProd = { (DERByte *)oidAppleCertExtAppleServerAuthenticationPPQProd_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationPPQProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.3.1  Apple PPQ server authentication, QA */
+static const DERByte oidAppleCertExtAppleServerAuthenticationPPQProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x03, 0x01 };
+const DERItem oidAppleCertExtAppleServerAuthenticationPPQProdQA = { (DERByte *)oidAppleCertExtAppleServerAuthenticationPPQProdQA_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationPPQProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.27.4.2  Apple IDS server authentication */
+static const DERByte oidAppleCertExtAppleServerAuthenticationIDSProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x04, 0x02 };
+const DERItem oidAppleCertExtAppleServerAuthenticationIDSProd = { (DERByte *)oidAppleCertExtAppleServerAuthenticationIDSProd_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationIDSProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.4.1  Apple IDS server authentication, QA */
+static const DERByte oidAppleCertExtAppleServerAuthenticationIDSProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x04, 0x01 };
+const DERItem oidAppleCertExtAppleServerAuthenticationIDSProdQA = { (DERByte *)oidAppleCertExtAppleServerAuthenticationIDSProdQA_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationIDSProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.27.5.2  Apple APN server authentication */
+static const DERByte oidAppleCertExtAppleServerAuthenticationAPNProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x05, 0x02 };
+const DERItem oidAppleCertExtAppleServerAuthenticationAPNProd = { (DERByte *)oidAppleCertExtAppleServerAuthenticationAPNProd_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationAPNProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.5.1  Apple APN server authentication, QA */
+static const DERByte oidAppleCertExtAppleServerAuthenticationAPNProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x05, 0x01 };
+const DERItem oidAppleCertExtAppleServerAuthenticationAPNProdQA = { (DERByte *)oidAppleCertExtAppleServerAuthenticationAPNProdQA_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationAPNProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.27.6.2  Apple Find My iPhone server authentication */
+static const DERByte oidAppleCertExtFMiPServerAuthProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x06, 0x02 };
+const DERItem oidAppleCertExtFMiPServerAuthProd = { (DERByte *)oidAppleCertExtFMiPServerAuthProd_bytes, sizeof(oidAppleCertExtFMiPServerAuthProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.6.1  Apple Find My iPhone server authentication, QA */
+static const DERByte oidAppleCertExtFMiPServerAuthProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x06, 0x01 };
+const DERItem oidAppleCertExtFMiPServerAuthProdQA = { (DERByte *)oidAppleCertExtFMiPServerAuthProdQA_bytes, sizeof(oidAppleCertExtFMiPServerAuthProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.27.7.2  Apple escrow proxy server authentication */
+static const DERByte oidAppleCertExtEscrowProxyServerAuthProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x07, 0x02 };
+const DERItem oidAppleCertExtEscrowProxyServerAuthProd = { (DERByte *)oidAppleCertExtEscrowProxyServerAuthProd_bytes, sizeof(oidAppleCertExtEscrowProxyServerAuthProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.7.1  Apple escrow proxy server authentication, QA */
+static const DERByte oidAppleCertExtEscrowProxyServerAuthProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x07, 0x01 };
+const DERItem oidAppleCertExtEscrowProxyServerAuthProdQA = { (DERByte *)oidAppleCertExtEscrowProxyServerAuthProdQA_bytes, sizeof(oidAppleCertExtEscrowProxyServerAuthProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.27.8.2  Apple AST2 diagnostics server authentication */
+static const DERByte oidAppleCertExtAST2DiagnosticsServerAuthProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x08, 0x02 };
+const DERItem oidAppleCertExtAST2DiagnosticsServerAuthProd = { (DERByte *)oidAppleCertExtAST2DiagnosticsServerAuthProd_bytes, sizeof(oidAppleCertExtAST2DiagnosticsServerAuthProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.8.1  Apple AST2 diagnostics server authentication, QA */
+static const DERByte oidAppleCertExtAST2DiagnosticsServerAuthProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x08, 0x01 };
+const DERItem oidAppleCertExtAST2DiagnosticsServerAuthProdQA = { (DERByte *)oidAppleCertExtAST2DiagnosticsServerAuthProdQA_bytes, sizeof(oidAppleCertExtAST2DiagnosticsServerAuthProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.27.9  Apple HomeKit server authentication */
+static const DERByte oidAppleCertExtHomeKitServerAuth_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x09 };
+const DERItem oidAppleCertExtHomeKitServerAuth = { (DERByte *)oidAppleCertExtHomeKitServerAuth_bytes, sizeof(oidAppleCertExtHomeKitServerAuth_bytes) };
+
+/* 1.2.840.113635.100.6.27.11.2  Apple MMCS server authentication */
+static const DERByte oidAppleCertExtAppleServerAuthenticationMMCSProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x0b, 0x02 };
+const DERItem oidAppleCertExtAppleServerAuthenticationMMCSProd = { (DERByte *)oidAppleCertExtAppleServerAuthenticationMMCSProd_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationMMCSProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.11.1  Apple MMCS server authentication, QA */
+static const DERByte oidAppleCertExtAppleServerAuthenticationMMCSProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x0b, 0x01 };
+const DERItem oidAppleCertExtAppleServerAuthenticationMMCSProdQA = { (DERByte *)oidAppleCertExtAppleServerAuthenticationMMCSProdQA_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationMMCSProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.27.15.2  Apple iCloud setup server authentication */
+static const DERByte oidAppleCertExtAppleServerAuthenticationiCloudSetupProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x0f, 0x02 };
+const DERItem oidAppleCertExtAppleServerAuthenticationiCloudSetupProd = { (DERByte *)oidAppleCertExtAppleServerAuthenticationiCloudSetupProd_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationiCloudSetupProd_bytes) };
+
+/* 1.2.840.113635.100.6.27.15.1  Apple iCloud setup server authentication, QA */
+static const DERByte oidAppleCertExtAppleServerAuthenticationiCloudSetupProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1b, 0x0f, 0x01 };
+const DERItem oidAppleCertExtAppleServerAuthenticationiCloudSetupProdQA = { (DERByte *)oidAppleCertExtAppleServerAuthenticationiCloudSetupProdQA_bytes, sizeof(oidAppleCertExtAppleServerAuthenticationiCloudSetupProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.30  Apple SMP encryption */
+static const DERByte oidAppleCertExtAppleSMPEncryption_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x1e };
+const DERItem oidAppleCertExtAppleSMPEncryption = { (DERByte *)oidAppleCertExtAppleSMPEncryption_bytes, sizeof(oidAppleCertExtAppleSMPEncryption_bytes) };
+
+/* 1.2.840.113635.100.6.38.1  Apple PPQ signing, QA */
+static const DERByte oidAppleCertExtApplePPQSigningProdQA_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x26, 0x01 };
+const DERItem oidAppleCertExtApplePPQSigningProdQA = { (DERByte *)oidAppleCertExtApplePPQSigningProdQA_bytes, sizeof(oidAppleCertExtApplePPQSigningProdQA_bytes) };
+
+/* 1.2.840.113635.100.6.38.2  Apple PPQ signing */
+static const DERByte oidAppleCertExtApplePPQSigningProd_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x26, 0x02 };
+const DERItem oidAppleCertExtApplePPQSigningProd = { (DERByte *)oidAppleCertExtApplePPQSigningProd_bytes, sizeof(oidAppleCertExtApplePPQSigningProd_bytes) };
+
+/* 1.2.840.113635.100.6.39  Apple Pay issuer encryption */
+static const DERByte oidAppleCertExtCryptoServicesExtEncryption_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x27 };
+const DERItem oidAppleCertExtCryptoServicesExtEncryption = { (DERByte *)oidAppleCertExtCryptoServicesExtEncryption_bytes, sizeof(oidAppleCertExtCryptoServicesExtEncryption_bytes) };
+
+/* 1.2.840.113635.100.6.43  Apple TV VPN profile signing */
+static const DERByte oidAppleCertExtATVVPNProfileSigning_bytes[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x06, 0x2b };
+const DERItem oidAppleCertExtATVVPNProfileSigning = { (DERByte *)oidAppleCertExtATVVPNProfileSigning_bytes, sizeof(oidAppleCertExtATVVPNProfileSigning_bytes) };

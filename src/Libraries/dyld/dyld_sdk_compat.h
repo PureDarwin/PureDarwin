@@ -16,6 +16,12 @@
 
 #include <Availability.h>
 #include <TargetConditionals.h>
+/* This header is force-included, so it runs before anything else has declared
+ * the basic types. On a Darwin host the C++ standard library's own <string.h>
+ * and <libkern/OSAtomic.h> shims are reached first and neither declares what it
+ * uses, so seed size_t and the fixed-width integer types up front. */
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 #include <libkern/OSAtomic.h>
 #if __has_include(<ptrauth.h>)

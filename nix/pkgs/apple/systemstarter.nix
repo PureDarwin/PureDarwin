@@ -73,6 +73,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Real PureDarwin/XPC SystemStarter + classic StartupItems support";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

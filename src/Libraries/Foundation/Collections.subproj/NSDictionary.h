@@ -15,9 +15,14 @@
 
 @class NSURL, NSError, NSString;
 
-@interface NSDictionary : NSObject
+@interface NSDictionary<__covariant KeyType, __covariant ObjectType> : NSObject
 
 + (instancetype)dictionary;
+/* The compiler emits +dictionaryWithObjects:forKeys:count: for a @{...}
+ * literal, so it is API rather than convenience. */
++ (instancetype)dictionaryWithObjects:(const ObjectType _Nonnull [_Nullable])objects
+                              forKeys:(const KeyType _Nonnull [_Nullable])keys
+                                count:(NSUInteger)count;
 
 /* The plist readers. -contentsOfURL: is what NSProcessInfo-free code uses to
  * read SystemVersion.plist and friends; both go through CFPropertyList. */
@@ -28,11 +33,12 @@
 - (NSUInteger)count;
 - (nullable id)objectForKey:(id)key;
 - (nullable id)objectForKeyedSubscript:(id)key;
-- (NSArray *)allKeys;
+- (NSArray<KeyType> *)allKeys;
+- (void)enumerateKeysAndObjectsUsingBlock:(void (^)(KeyType key, ObjectType obj, BOOL *stop))block;
 
 @end
 
-@interface NSMutableDictionary : NSDictionary
+@interface NSMutableDictionary<KeyType, ObjectType> : NSDictionary<KeyType, ObjectType>
 
 + (instancetype)dictionaryWithCapacity:(NSUInteger)capacity;
 

@@ -22,17 +22,35 @@ if(NOT CMAKE_HOST_APPLE AND NOT NATIVE_LD64_EXECUTABLE)
     endif()
 endif()
 
+# On a Darwin host, PureDarwin's own ld64 (host_ld) is built without TAPI
+# support and cannot read the SDK's .tbd text stubs, so a TAPI-capable ld is
+# needed instead. xcrun is the usual way to find one - but it only works inside
+# a full developer directory, and on failure it prints its complaint on stdout
+# where the path should be, which then arrives at the compiler as
+# -fuse-ld=error:...  Resolve it once, here, and check the answer.
+if(CMAKE_HOST_APPLE)
+    execute_process(COMMAND xcrun --find ld
+        OUTPUT_VARIABLE _puredarwin_xcrun_ld
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _puredarwin_xcrun_ld_result)
+    if(_puredarwin_xcrun_ld_result EQUAL 0 AND EXISTS "${_puredarwin_xcrun_ld}")
+        set(PUREDARWIN_HOST_LD "${_puredarwin_xcrun_ld}")
+    else()
+        # No usable developer directory - DEVELOPER_DIR pointing at a bare SDK
+        # is the case here. cctools' ld from the build environment does support
+        # TAPI and is on PATH.
+        find_program(PUREDARWIN_HOST_LD NAMES ld REQUIRED)
+    endif()
+endif()
+
 function(add_darwin_executable name)
     cmake_parse_arguments(SL "NO_STANDARD_LIBRARIES;USE_HOST_SDK" "MACOSX_VERSION_MIN" "" ${ARGN})
 
     add_executable(${name})
     target_compile_definitions(${name} PRIVATE __PUREDARWIN__)
     if(CMAKE_HOST_APPLE)
-        # PD own ld64 (host_ld) is built without TAPI support, so it cannot
-        # resolve the SDK .tbd text-stub files (e.g. libSystem.tbd), fall
-        # back to the real Apple linker via xcrun, which handles them fine.
-        execute_process(COMMAND xcrun --find ld OUTPUT_VARIABLE XCRUN_LD OUTPUT_STRIP_TRAILING_WHITESPACE)
-        target_link_options(${name} PRIVATE -fuse-ld=${XCRUN_LD})
+        target_link_options(${name} PRIVATE -fuse-ld=${PUREDARWIN_HOST_LD})
     elseif(NATIVE_LD64_EXECUTABLE)
         target_link_options(${name} PRIVATE -fuse-ld=${NATIVE_LD64_EXECUTABLE})
     elseif(PUREDARWIN_USE_LD64_LLD)
@@ -92,11 +110,7 @@ function(add_darwin_shared_library name)
     endif()
 
     if(CMAKE_HOST_APPLE)
-        # PD own ld64 (host_ld) is built without TAPI support, so it cannot
-        # resolve the SDK .tbd text-stub files (e.g. libSystem.tbd), fall
-        # back to the real Apple linker via xcrun, which handles them fine.
-        execute_process(COMMAND xcrun --find ld OUTPUT_VARIABLE XCRUN_LD OUTPUT_STRIP_TRAILING_WHITESPACE)
-        target_link_options(${name} PRIVATE -fuse-ld=${XCRUN_LD})
+        target_link_options(${name} PRIVATE -fuse-ld=${PUREDARWIN_HOST_LD})
     elseif(NATIVE_LD64_EXECUTABLE)
         target_link_options(${name} PRIVATE -fuse-ld=${NATIVE_LD64_EXECUTABLE})
     elseif(PUREDARWIN_USE_LD64_LLD)

@@ -33,7 +33,7 @@
 #include <IOKit/hidsystem/IOHIDParameter.h>
 #include "IOKit/hidsystem/IOHIDSystem.h"
 #include "IOKit/hidsystem/IOHIKeyboard.h"
-/* PD: unused; pulls modern HID core */
+/* PureDarwin: unused; pulls modern HID core */
 #include "IOHIDFamilyTrace.h"
 #include "ev_private.h"
 #include "IOHIDDebug.h"
@@ -974,7 +974,7 @@ IOReturn IOHIKeyboard::message( UInt32 type, IOService * provider,
             break;
             
         case kIOHIDSystemDeviceSeizeRequestMessage:
-            /* PD: modern IOHIDDevice core not in this kext; no provider can
+            /* PureDarwin: modern IOHIDDevice core not in this kext; no provider can
              * be one, so the seize request is not applicable. */
             if (0)
             {

@@ -19,7 +19,12 @@ foreach(_puredarwin_library_dir
     # after XPC for the same reason: config.defs' MIG rule takes its include
     # path from the SystemConfiguration target, which needs libxpc's headers.
     SystemConfiguration
+    # after SystemConfiguration: Security links CoreFoundation/libobjc/Foundation
+    # by prefix, but shares libDER_static, corecrypto_static and
+    # commoncrypto_static with libSystem, so those targets must exist first.
+    Security
     DiskArbitration
+    SymptomReporter
     dyld
     IOKit
     PDGOP

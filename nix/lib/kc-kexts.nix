@@ -24,6 +24,7 @@
     "AppleFileSystemDriver.kext"
     "Ext4FileSystemDriver.kext"
     "IOHIDFamily.kext"
+    "ApplePS2Controller.kext"
     "IOUSBFamily.kext"
     "IOUSBCompositeDriver.kext"
     "AppleUSBMergeNub.kext"

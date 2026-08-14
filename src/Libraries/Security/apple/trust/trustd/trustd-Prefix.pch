@@ -1,0 +1,14 @@
+//
+// Prefix header for all source files of the 'security.auth' target in the 'security.auth' project
+//
+
+#include "authtypes.h"
+#include "object.h"
+
+#include <CoreFoundation/CFBase.h>
+#include <CoreFoundation/CFRuntime.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <AssertMacros.h>
+#include <mach/message.h>
+#include <sys/types.h>

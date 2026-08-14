@@ -109,7 +109,9 @@ target_include_directories(SystemConfiguration PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../CrashReporterClient/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Security/include
+    # Security publishes libDER's headers here, under the security_libDER/
+    # spelling its own SecCertificatePriv.h uses.
+    ${PUREDARWIN_SECURITY_PREFIX}/include
     # Apple's CoreFoundation-based IOKitLib (IOKitUser), not PureDarwin's
     # CF-free PDIOKitLib.
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOKit/iokituser/include
@@ -165,6 +167,10 @@ target_compile_definitions(SystemConfiguration PRIVATE
 target_compile_options(SystemConfiguration PRIVATE
     -fblocks
     -F${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks
+    # <Security/Security.h> and friends now come from the built framework's own
+    # Headers, which carry Apple's real API - the source tree's include/Security
+    # only holds the umbrella and the two placeholder headers.
+    -F${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libplatform/pd_bridgeos_compat.h>
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/pd_sc_prelude.h>
     -w)

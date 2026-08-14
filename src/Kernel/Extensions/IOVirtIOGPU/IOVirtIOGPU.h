@@ -134,6 +134,7 @@ public:
                               uint32_t hotX, uint32_t hotY);
     bool     gpuMoveCursor(uint32_t x, uint32_t y);
     bool     cursorAvailable() const { return fCursorQOK; }
+    IOBufferMemoryDescriptor *copyFramebufferMemory();
 
     bool     virglAvailable() const { return fVirglOK; }
     const uint8_t *virglCaps(uint32_t *outLen) const { if (outLen) *outLen = fVirglCapsLen; return fVirglCaps; }

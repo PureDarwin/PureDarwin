@@ -1,0 +1,92 @@
+(version 1)
+
+(deny default)
+(deny file-map-executable iokit-get-properties process-info* nvram*)
+(deny dynamic-code-generation)
+
+(import "system.sb")
+(import "com.apple.corefoundation.sb")
+(corefoundation)
+
+(allow process-info* (target self))
+
+;; For resolving symlinks, realpath(3), and equivalents.
+(allow file-read-metadata)
+
+;; For validating the entitlements of clients (for keychain and trust settings)
+;; see 31353815
+(allow process-info-codesignature)
+(allow process-info-pidinfo)
+(allow file-read*)
+
+;; ${PRODUCT_NAME}’s preference domain.
+(allow user-preference-read user-preference-write
+    (preference-domain "com.apple.trustd"))
+
+;; Global and security preferences
+(allow user-preference-read
+	(preference-domain "com.apple.security")
+	(preference-domain ".GlobalPreferences")
+	(preference-domain "com.apple.MobileAsset"))
+
+;; Read/write access to a temporary directory.
+(allow file-read* file-write*
+    (subpath (param "_TMPDIR"))
+    (subpath (param "_DARWIN_CACHE_DIR")))
+
+;; Read/write access to keychains and caches
+(allow file-read* file-write*
+	(subpath "/private/var/db/mds/")
+	(subpath "/private/var/db/crls/")
+	(subpath "/private/var/protected/")
+	(subpath "/System/Library/Security/")
+	(subpath "/Library/Keychains/")
+	(subpath "/private/var/root/Library/Caches/com.apple.nsurlsessiond/"))
+
+(allow file-read*
+	(literal "/usr/libexec")
+	(literal "/usr/libexec/trustd")
+	(literal "/Library/Preferences/com.apple.security.plist")
+	(regex #"/.GlobalPreferences[^/]*\.plist")
+	(literal "/Library/Preferences/com.apple.SoftwareUpdate.plist")
+    (literal "/Library/Application Support/CrashReporter/SubmitDiagInfo.domains"))
+
+(allow file-map-executable
+    (regex #"/CoreServicesInternal")
+    (regex #"/csparser"))
+
+(allow mach-lookup
+	(global-name "com.apple.ocspd")
+	(global-name "com.apple.SecurityServer")
+	(global-name "com.apple.SystemConfiguration.configd")
+    (global-name "com.apple.mobileassetd")
+	(global-name "com.apple.mobileassetd.v2")
+    (global-name "com.apple.securityd.xpc")
+    (global-name "com.apple.cfnetwork.cfnetworkagent")
+    (global-name "com.apple.nsurlsessiond")
+    (global-name "com.apple.dnssd.service")
+    (xpc-service-name "com.apple.powerlog.plxpclogger.xpc")
+    (global-name "com.apple.nesessionmanager.content-filter")
+    (global-name "com.apple.trustdFileHelper")
+    (global-name "com.apple.AppSSO.service-xpc"))
+
+(allow ipc-posix-shm
+	(ipc-posix-name "com.apple.AppleDatabaseChanged"))
+
+ ;; Read IOKit properties for personalization
+ (allow iokit-get-properties
+    (iokit-property "image4-supported")
+    (iokit-property "Content")
+    (iokit-property "boot-uuid")
+    (iokit-property "IORegistryEntryPropertyKeys")
+    (iokit-property "IOClassNameOverride")
+    (iokit-property "Protocol Characteristics")
+    (iokit-property "board-id")
+    (iokit-property "chip-id")
+    (iokit-property "unique-chip-id")
+    (iokit-property "boot-manifest-hash")
+    (iokit-property "crypto-hash-method")
+    (iokit-property "boot-objects-path"))
+
+(allow network-outbound)
+(allow system-socket)

@@ -19,6 +19,7 @@ class IOVirtIOGPUUserClient : public IOUserClient
 private:
     IOVirtIOGPU *fOwner;
     task_t       fTask;
+    bool         fFramebufferClient;
 
     ResEntry     fRes[kMaxResources];
     uint32_t     fResCount;
@@ -44,7 +45,8 @@ private:
     IOReturn mSetScanoutResource(IOExternalMethodArguments *a);
 
 public:
-    static IOVirtIOGPUUserClient *withOwner(IOVirtIOGPU *owner, task_t task);
+    static IOVirtIOGPUUserClient *withOwner(IOVirtIOGPU *owner, task_t task,
+                                            bool framebufferClient = false);
 
     virtual bool     start(IOService *provider) override;
     virtual void     stop(IOService *provider) override;

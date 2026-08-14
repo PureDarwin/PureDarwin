@@ -1,0 +1,47 @@
+--- a/dlls/vccorlib140/cxx.h
++++ b/dlls/vccorlib140/cxx.h
+@@ -91,10 +91,16 @@
+ 
+ #elif defined __WINE_PE_BUILD
+ 
++#if defined(__arm64ec__) || defined(__aarch64__)
++#define CXX_ASM_NAKED __attribute__((naked))
++#else
++#define CXX_ASM_NAKED
++#endif
++
+ #define DEFINE_RTTI_BASE(name, this_off, base_classes, mangled_name) \
+ type_info name ## _type_info = { &type_info_vtable, NULL, mangled_name }; \
+ extern const rtti_base_descriptor name ## _rtti_base_descriptor[1]; \
+-void __asm_dummy_ ## name ## _rtti_base(void) \
++void __asm_dummy_ ## name ## _rtti_base(void) CXX_ASM_NAKED \
+ { \
+     asm( ".balign 4\n\t" \
+          __ASM_GLOBL(#name "_rtti_base_descriptor") "\n\t" \
+@@ -106,7 +112,7 @@
+ #define DEFINE_RTTI_DATA2(name, off, mangled_name, ...) \
+ extern const rtti_object_locator name##_rtti; \
+ DEFINE_RTTI_BASE(name, 0, ARRAY_SIZE(((const void *[]){ __VA_ARGS__ }))-1, mangled_name) \
+-void __asm_dummy_ ## name ## _rtti(void) \
++void __asm_dummy_ ## name ## _rtti(void) CXX_ASM_NAKED \
+ { \
+     asm( ".balign 4\n\t" \
+          #name "_rtti_base_array:\n\t" \
+@@ -193,7 +199,7 @@
+ #define DEFINE_CXX_TYPE2(type, ...) \
+ extern const cxx_type_info type ## _cxx_type_info[1]; \
+ extern const cxx_exception_type type ## _exception_type; \
+-void __asm_dummy_ ## type ## _exception_type(void) \
++void __asm_dummy_ ## type ## _exception_type(void) CXX_ASM_NAKED \
+ { \
+     asm( ".balign 4\n\t" \
+          __ASM_GLOBL(#type "_cxx_type_info") "\n\t" \
+@@ -217,7 +223,7 @@
+ #define DEFINE_CXX_BASE(type, flags, off, mangled_name) \
+ type_info type ## _type_info = { &type_info_vtable, NULL, mangled_name }; \
+ extern const cxx_type_info type ## _cxx_type_info[1]; \
+-void __asm_dummy_ ## type ## _exception_type(void) \
++void __asm_dummy_ ## type ## _exception_type(void) CXX_ASM_NAKED \
+ {\
+     asm( ".balign 4\n\t" \
+          __ASM_GLOBL(#type "_cxx_type_info") "\n\t" \

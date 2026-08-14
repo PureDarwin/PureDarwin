@@ -7,6 +7,7 @@
 , nativeLd ? null
 , nativeUnifdef ? null
 , nativeMigcom ? null
+, pinnedAppleSdk ? null
 , openssl
 , libxml2
 , m4
@@ -28,9 +29,11 @@
 , libuuid
 , ruby
 , iig
+, cctools
 , tinycc
 , src ? ./.
 , pname ? "puredarwin-nix-toolchain"
+, version ? "0.1"
 , buildTargets ? [ "launchd" ]
 , enableProjects ? true
 , enableKernel ? true
@@ -52,6 +55,8 @@
 , extraCmakeFlags ? [ ]
 , puredarwinArch ? "x86_64"
 , arm64CrossToolchain ? null
+, compilerRt ? null
+, compilerRtArm64 ? null
 }:
 
 let
@@ -60,6 +65,10 @@ let
   # nix-toolchain.cmake's NIX_DARWIN_TOOLCHAIN_DIR just needs to point at
   # whichever wrapper set matches NIX_DARWIN_HOST below.
   activeCrossToolchain = if isArm64 then arm64CrossToolchain else darwinCrossToolchain;
+  # Every component that configures src/Libraries also builds libdyld, which
+  # needs compiler-rt for __isPlatformVersionAtLeast (@available's backend).
+  # Selected here rather than per-derivation so no component can be missed.
+  activeCompilerRt = if isArm64 then compilerRtArm64 else compilerRt;
   nixDarwinHost = if isArm64 then "arm64-apple-darwin20.4" else "x86_64-apple-darwin20.4";
   sdkTarball = if isDarwinHost then null else requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
@@ -99,8 +108,7 @@ let
     else "${openssl.out}/lib/libssl.so";
 in
 stdenv.mkDerivation ({
-  inherit pname;
-  version = "0.1";
+  inherit pname version;
 
   inherit src;
 
@@ -109,8 +117,11 @@ stdenv.mkDerivation ({
   nativeBuildInputs = [
     cmake ninja bison flex perl bash ed unifdef tcsh
     pax coreutils findutils gawk gnused clang ruby iig
+    nativeUnifdef nativeMigcom
   ] ++ lib.optionals (!isDarwinHost) [
-    activeCrossToolchain nativeUnifdef nativeMigcom gnustep-base
+    activeCrossToolchain gnustep-base
+  ] ++ lib.optionals isDarwinHost [
+    cctools
   ];
 
   buildInputs = [ zlib openssl ] ++ lib.optionals (!isDarwinHost) [ libuuid ];
@@ -122,12 +133,16 @@ stdenv.mkDerivation ({
     tar xf ${sdkTarball} -C sdk
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
   '' + lib.optionalString isDarwinHost ''
-    export DARWIN_SDK_ROOT="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
+    export DEVELOPER_DIR="${pinnedAppleSdk}"
+    export DARWIN_SDK_ROOT="$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     # xnu's makefiles otherwise resolve these by shelling out to xcrun again,
     # which fails in the nix sandbox and leaves its error text in $(PLATFORM).
     export SDKROOT="$DARWIN_SDK_ROOT"
     export SDKROOT_RESOLVED="$DARWIN_SDK_ROOT"
     export HOST_SDKROOT_RESOLVED="$DARWIN_SDK_ROOT"
+    export PUREDARWIN_SDKROOT="$DARWIN_SDK_ROOT"
+    export NIX_CXXSTDLIB_COMPILE=""
+    export NIX_CXXSTDLIB_COMPILE_${lib.replaceStrings [ "-" "." ] [ "_" "_" ] stdenv.hostPlatform.config}=""
     export PLATFORM=MacOSX
     # xnu defaults HOST_GM4 to the system gm4, which aborts on CoreFoundation's
     # fork-without-exec guard when flex forks it. Use nixpkgs m4, as Linux does.
@@ -171,7 +186,7 @@ EOF
   '' + lib.optionalString (!isDarwinHost) ''
     export NIX_NATIVE_LD_PATH="${nativeLd}/bin/ld"
     export NIX_HOST_CC_PATH="${clang}/bin/clang"
-
+  '' + ''
     export NIX_MIGCOM_PATH="${nativeMigcom}/bin/migcom"
     export NIX_UNIFDEF_PATH="${nativeUnifdef}/bin/unifdef"
   '' + ''
@@ -190,7 +205,13 @@ EOF
       -DLIBXML2_INCLUDE_DIR=${libxml2Include} \
       -DLIBXML2_LIBRARY=${libxml2Library} \
       -DPUREDARWIN_MACOSX_SDK="$DARWIN_SDK_ROOT" \
+  '' + lib.optionalString isDarwinHost ''
+      -DCMAKE_OSX_SYSROOT="$DARWIN_SDK_ROOT" \
+      -DCMAKE_CXX_FLAGS="-nostdinc++ -isystem $DARWIN_SDK_ROOT/usr/include/c++/v1" \
+  '' + ''
       -DPUREDARWIN_ARCH=${puredarwinArch} \
+      ${lib.optionalString (activeCompilerRt != null)
+        "-DPUREDARWIN_COMPILER_RT_PREFIX=${activeCompilerRt} \\"}
       -DPUREDARWIN_ENABLE_PROJECTS=${if enableProjects then "ON" else "OFF"} \
       -DPUREDARWIN_ENABLE_KERNEL=${if enableKernel then "ON" else "OFF"} \
       -DPUREDARWIN_ENABLE_LIBRARIES=${if enableLibraries then "ON" else "OFF"} \
@@ -209,10 +230,12 @@ EOF
   buildPhase = ''
     runHook preBuild
     mkdir -p .nix-stubs
-  '' + lib.optionalString (!isDarwinHost) ''
-    ln -sf "$PWD/tools/mig/mig.sh" .nix-stubs/mig
+    if [ -e tools/mig/mig.sh ]; then
+      ln -sf "$PWD/tools/mig/mig.sh" .nix-stubs/mig
+    fi
     ln -sf "${nativeMigcom}/bin/migcom" .nix-stubs/migcom
     ln -sf "${nativeUnifdef}/bin/unifdef" .nix-stubs/unifdef
+  '' + lib.optionalString (!isDarwinHost) ''
     cat > .nix-stubs/libtool <<'EOF'
 #!/bin/sh
 if [ "$1" = "-static" ] && [ "$2" = "-o" ]; then

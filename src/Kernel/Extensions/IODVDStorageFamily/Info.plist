@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>IODVDStorageFamily</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.apple.iokit.IODVDStorageFamily</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>I/O Kit DVD Storage Family</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.8</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>1.8</string>
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>IODVDBlockStorageDriver</key>
+		<dict>
+			<key>IOClass</key>
+			<string>IODVDBlockStorageDriver</string>
+			<key>IOPropertyMatch</key>
+			<dict>
+				<key>device-type</key>
+				<string>DVD</string>
+			</dict>
+			<key>IOProviderClass</key>
+			<string>IODVDBlockStorageDevice</string>
+		</dict>
+		<key>IODVDMediaBSDClient</key>
+		<dict>
+			<key>IOClass</key>
+			<string>IODVDMediaBSDClient</string>
+			<key>IOMatchCategory</key>
+			<string>IOMediaBSDClient</string>
+			<key>IOProbeScore</key>
+			<integer>31000</integer>
+			<key>IOProviderClass</key>
+			<string>IODVDMedia</string>
+			<key>IOResourceMatch</key>
+			<string>IOBSD</string>
+		</dict>
+	</dict>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 1998-2014 Apple Inc. All rights reserved.</string>
+	<key>OSBundleAllowUserLoad</key>
+	<true/>
+	<key>OSBundleCompatibleVersion</key>
+	<string>1.0</string>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.iokit.IOCDStorageFamily</key>
+		<string>1.7</string>
+		<key>com.apple.iokit.IOStorageFamily</key>
+		<string>1.7</string>
+		<key>com.apple.kpi.bsd</key>
+		<string>8.0</string>
+		<key>com.apple.kpi.iokit</key>
+		<string>8.0</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>8.0</string>
+		<key>com.apple.kpi.mach</key>
+		<string>8.0</string>
+	</dict>
+	<key>OSBundleRequired</key>
+	<string>Local-Root</string>
+</dict>
+</plist>

@@ -1422,7 +1422,7 @@ void
 vcputc(__unused int l, __unused int u, int c)
 {
 	/*
-	 * PD: mirror everything rendered on the video console to the serial
+	 * PureDarwin: mirror everything rendered on the video console to the serial
 	 * port. vcputc is the single sink for the VC_CONS_OPS console, so once
 	 * IOFramebuffer flips the active console to video, ALL output that would
 	 * otherwise only reach the framebuffer - including userland printf via

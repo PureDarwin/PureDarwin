@@ -8,6 +8,20 @@ add_custom_command(TARGET libSystem_B_stub POST_BUILD
         "$<TARGET_FILE_DIR:libSystem_B_stub>/libSystem.dylib"
     VERBATIM)
 
+# This dylib carries LC_REEXPORT_DYLIB for /usr/lib/system/libdyld.dylib, and a
+# linker can only follow that re-export if it can find libdyld.dylib on its
+# search path - otherwise every symbol libSystem re-exports from it (the block
+# runtime among them) comes out undefined. Consumers all pass -L for this
+# directory already, so putting a link to libdyld here resolves it everywhere
+# without touching each call site. It lives on this side of the pair because
+# libSystem_B_stub already depends on libdyld; doing it from libdyld would close
+# a dependency cycle.
+add_custom_command(TARGET libSystem_B_stub POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E create_symlink
+        "$<TARGET_FILE:libdyld>"
+        "$<TARGET_FILE_DIR:libSystem_B_stub>/$<TARGET_FILE_NAME:libdyld>"
+    VERBATIM)
+
 target_sources(libSystem_B_stub PRIVATE
     empty.c
     pd_libSystem_init.c
@@ -46,11 +60,28 @@ if(PUREDARWIN_ARM64)
     # Darwin extension/versioned names such as $DARWIN_EXTSN and $V2.
     list(FILTER _libsystem_export_lines EXCLUDE REGEX "\\$(UNIX2003|INODE64|1050)$")
     list(FILTER _libsystem_export_lines EXCLUDE REGEX "__ZNSt3__1plIc.*ERKS9_PKS6_")
+    # Symbols that only exist on x86. Exporting one that was never built makes
+    # the -exported_symbols_list itself the undefined reference, so the link
+    # fails with no other clue as to who wanted it.
+    #   i386_set_ldt   - x86 LDT syscall, no ARM equivalent
+    #   nexttoward,
+    #   scalbnl        - openlibm builds these from its ld80/ tree, which is
+    #                    80-bit x87 long double; on arm64 long double is double
+    #   fe*except      - openlibm's fenv is the x86 SSE/x87 implementation
+    list(FILTER _libsystem_export_lines EXCLUDE REGEX
+        "^_(i386_set_ldt|i386_get_ldt|nexttoward|scalbnl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag)$")
     # The SDK headers use the unsuffixed ARM64 spellings for these syscalls,
     # while the shared export file only lists their x86 ABI variants.
     list(APPEND _libsystem_export_lines
-        _select _fstat _fstatat _fstatfs _getfsstat _getmntinfo
+        _select _pselect _pselect$DARWIN_EXTSN _fstat _fstatat _fstatfs _getfsstat _getmntinfo
         _lstat _stat _statfs _readdir _glob _globfree)
+    # compiler-rt's __clear_cache. arm64 only: it issues the dc cvau/ic ivau
+    # sequence a JIT needs after writing code, and x86's coherent instruction
+    # cache means compiler-rt does not build it there at all - listing it in the
+    # shared export file would make the export list itself an undefined
+    # reference on x86.
+    list(APPEND _libsystem_export_lines ___clear_cache
+        _sys_icache_invalidate _sys_dcache_flush)
     set(_libsystem_exports_for_link ${CMAKE_CURRENT_BINARY_DIR}/libSystem.arm64.exports)
     file(WRITE ${_libsystem_exports_for_link} "")
     foreach(_line ${_libsystem_export_lines})
@@ -143,6 +174,26 @@ if(TARGET libcxx_static)
 endif()
 if(TARGET commoncrypto_static)
     target_link_libraries(libSystem_B_stub PRIVATE $<TARGET_FILE:commoncrypto_static>)
+endif()
+
+# LLVM's compiler-rt builtins: 128-bit division, some float<->int conversions,
+# __clear_cache and friends - everything the compiler lowers to a call because
+# the hardware has no single instruction for it. These used to be hand-written
+# in pd_libSystem_compat.c because no prebuilt libclang_rt.builtins existed for
+# this cross target; it is cross-built now, so use the real thing.
+#
+# Linked as a plain archive, deliberately NOT force_load. The export list
+# already generates a -u root for every symbol below, which pulls exactly the
+# members that provide them. force_load would instead drag in every member,
+# including os_version_check.c.o - whose __isPlatformVersionAtLeast calls
+# _availability_version_check, which this libSystem does not implement.
+if(PUREDARWIN_COMPILER_RT_PREFIX)
+    set(_pd_compiler_rt "${PUREDARWIN_COMPILER_RT_PREFIX}/lib/libcompiler_rt.a")
+    if(NOT EXISTS "${_pd_compiler_rt}")
+        message(FATAL_ERROR
+            "PUREDARWIN_COMPILER_RT_PREFIX is set but ${_pd_compiler_rt} does not exist")
+    endif()
+    target_link_libraries(libSystem_B_stub PRIVATE "${_pd_compiler_rt}")
 endif()
 
 # libdispatch's object.m (OS_OBJECT_USE_OBJC=1) references the real objc4

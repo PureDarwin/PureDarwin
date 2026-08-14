@@ -81,6 +81,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "libobjc smoke test binary (/usr/bin/objc-test)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

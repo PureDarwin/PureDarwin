@@ -87,6 +87,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin OpenGL.framework: CGL over GLX pbuffers, re-exporting the GL API";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

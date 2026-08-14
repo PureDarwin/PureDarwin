@@ -5,6 +5,8 @@
 #define _LIB_DER_OIDS_H_
 
 #include <libDER/DERItem.h>
+/* Callers that name an OID almost always go on to compare against it. */
+#include <libDER/DER_Decode.h>
 
 __BEGIN_DECLS
 
@@ -90,6 +92,52 @@ extern const DERItem oidGoogleEmbeddedSignedCertificateTimestamp;    /* 1.3.6.1.
 extern const DERItem oidMd5Fee;    /* UNVERIFIED - never matches; see oids.c */
 extern const DERItem oidSha1Fee;    /* UNVERIFIED - never matches; see oids.c */
 extern const DERItem oidApplePolicyEscrowService;    /* UNVERIFIED - never matches; see oids.c */
+
+/* Apple's own arcs under appleDataSecurity (1.2.840.113635.100). */
+extern const DERItem oidAppleIntmMarkerAppleWWDR;    /* 1.2.840.113635.100.6.2.1  Apple WWDR intermediate marker */
+extern const DERItem oidAppleIntmMarkerAppleID;    /* 1.2.840.113635.100.6.2.3  Apple Application Integration intermediate marker */
+extern const DERItem oidAppleIntmMarkerAppleID2;    /* 1.2.840.113635.100.6.2.7  Apple Apple ID intermediate marker (second subCA) */
+extern const DERItem oidAppleIntmMarkerAppleSystemIntg2;    /* 1.2.840.113635.100.6.2.10  Apple System Integration 2 intermediate marker */
+extern const DERItem oidAppleIntmMarkerAppleServerAuthentication;    /* 1.2.840.113635.100.6.2.12  Apple Server Authentication intermediate marker */
+extern const DERItem oidAppleIntmMarkerAppleSystemIntgG3;    /* 1.2.840.113635.100.6.2.13  Apple System Integration G3 intermediate marker */
+extern const DERItem oidAppleIntmMarkerAppleHomeKitServerCA;    /* 1.2.840.113635.100.6.2.16  Apple HomeKit server CA intermediate marker */
+extern const DERItem oidAppleExtendedKeyUsageCodeSigning;    /* 1.2.840.113635.100.4.1  Apple Apple code signing EKU */
+extern const DERItem oidAppleExtendedKeyUsageCodeSigningDev;    /* UNVERIFIED - never matches; see oids.c */
+extern const DERItem oidAppleExtendedKeyUsageAppleID;    /* 1.2.840.113635.100.4.7  Apple Apple ID sharing EKU */
+extern const DERItem oidAppleExtendedKeyUsagePassbook;    /* 1.2.840.113635.100.4.14  Apple Passbook signing EKU */
+extern const DERItem oidAppleExtendedKeyUsageProfileSigning;    /* 1.2.840.113635.100.4.16  Apple configuration profile signing EKU */
+extern const DERItem oidAppleExtendedKeyUsageQAProfileSigning;    /* 1.2.840.113635.100.4.17  Apple configuration profile signing EKU, QA */
+extern const DERItem oidAppleCertExtOSXProvisioningProfileSigning;    /* 1.2.840.113635.100.4.11  Apple macOS provisioning profile signing */
+extern const DERItem oidApplePolicyMobileStore;    /* 1.2.840.113635.100.5.12  Apple mobile store signing certificate policy */
+extern const DERItem oidApplePolicyMobileStoreProdQA;    /* 1.2.840.113635.100.5.12.1  Apple mobile store signing certificate policy, QA */
+extern const DERItem oidAppleInstallerPackagingSigningExternal;    /* 1.2.840.113635.100.6.1.16  Apple Passbook card issuer leaf marker */
+extern const DERItem oidAppleTVOSApplicationSigningProd;    /* 1.2.840.113635.100.6.1.24  Apple tvOS application signing */
+extern const DERItem oidAppleTVOSApplicationSigningProdQA;    /* 1.2.840.113635.100.6.1.24.1  Apple tvOS application signing, QA */
+extern const DERItem oidAppleCertExtensionAppleIDRecordValidationSigning;    /* 1.2.840.113635.100.6.25  Apple Apple ID validation record signing */
+extern const DERItem oidAppleCertExtAppleServerAuthentication;    /* 1.2.840.113635.100.6.27.1  Apple Apple SSL server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationGS;    /* 1.2.840.113635.100.6.27.2  Apple GS server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationPPQProd;    /* 1.2.840.113635.100.6.27.3.2  Apple PPQ server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationPPQProdQA;    /* 1.2.840.113635.100.6.27.3.1  Apple PPQ server authentication, QA */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationIDSProd;    /* 1.2.840.113635.100.6.27.4.2  Apple IDS server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationIDSProdQA;    /* 1.2.840.113635.100.6.27.4.1  Apple IDS server authentication, QA */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationAPNProd;    /* 1.2.840.113635.100.6.27.5.2  Apple APN server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationAPNProdQA;    /* 1.2.840.113635.100.6.27.5.1  Apple APN server authentication, QA */
+extern const DERItem oidAppleCertExtFMiPServerAuthProd;    /* 1.2.840.113635.100.6.27.6.2  Apple Find My iPhone server authentication */
+extern const DERItem oidAppleCertExtFMiPServerAuthProdQA;    /* 1.2.840.113635.100.6.27.6.1  Apple Find My iPhone server authentication, QA */
+extern const DERItem oidAppleCertExtEscrowProxyServerAuthProd;    /* 1.2.840.113635.100.6.27.7.2  Apple escrow proxy server authentication */
+extern const DERItem oidAppleCertExtEscrowProxyServerAuthProdQA;    /* 1.2.840.113635.100.6.27.7.1  Apple escrow proxy server authentication, QA */
+extern const DERItem oidAppleCertExtAST2DiagnosticsServerAuthProd;    /* 1.2.840.113635.100.6.27.8.2  Apple AST2 diagnostics server authentication */
+extern const DERItem oidAppleCertExtAST2DiagnosticsServerAuthProdQA;    /* 1.2.840.113635.100.6.27.8.1  Apple AST2 diagnostics server authentication, QA */
+extern const DERItem oidAppleCertExtHomeKitServerAuth;    /* 1.2.840.113635.100.6.27.9  Apple HomeKit server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationMMCSProd;    /* 1.2.840.113635.100.6.27.11.2  Apple MMCS server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationMMCSProdQA;    /* 1.2.840.113635.100.6.27.11.1  Apple MMCS server authentication, QA */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationiCloudSetupProd;    /* 1.2.840.113635.100.6.27.15.2  Apple iCloud setup server authentication */
+extern const DERItem oidAppleCertExtAppleServerAuthenticationiCloudSetupProdQA;    /* 1.2.840.113635.100.6.27.15.1  Apple iCloud setup server authentication, QA */
+extern const DERItem oidAppleCertExtAppleSMPEncryption;    /* 1.2.840.113635.100.6.30  Apple SMP encryption */
+extern const DERItem oidAppleCertExtApplePPQSigningProdQA;    /* 1.2.840.113635.100.6.38.1  Apple PPQ signing, QA */
+extern const DERItem oidAppleCertExtApplePPQSigningProd;    /* 1.2.840.113635.100.6.38.2  Apple PPQ signing */
+extern const DERItem oidAppleCertExtCryptoServicesExtEncryption;    /* 1.2.840.113635.100.6.39  Apple Apple Pay issuer encryption */
+extern const DERItem oidAppleCertExtATVVPNProfileSigning;    /* 1.2.840.113635.100.6.43  Apple Apple TV VPN profile signing */
 
 __END_DECLS
 

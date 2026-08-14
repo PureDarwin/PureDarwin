@@ -23,6 +23,11 @@ if(PUREDARWIN_ARM64)
     set(_libplatform_setjmp
         src/setjmp/arm64/setjmp.s
         src/setjmp/generic/sigtramp.c)
+    # sys_icache_invalidate/sys_dcache_flush. Only meaningful on ARM: x86's
+    # instruction cache is coherent with the data cache, so the generic C file
+    # there is a no-op and nothing needs it. compiler-rt's __clear_cache calls
+    # sys_icache_invalidate, which is what any JIT needs after writing code.
+    set(_libplatform_cachecontrol src/cachecontrol/arm64/cache.s)
 else()
     # OSAtomic.s: OSAtomicAdd/CompareAndSwap primitives. Plus the PFZ (pre-emption-
     # free zone) commpage pieces dyld's OSAtomicFifoEnqueue/Dequeue reference:
@@ -36,6 +41,11 @@ else()
         src/setjmp/x86_64/_setjmp.s
         src/setjmp/x86_64/_sigtramp.s
         src/setjmp/generic/sigtramp.c)
+    # x86 needs nothing here: its instruction cache is coherent, compiler-rt
+    # does not build __clear_cache for it, and generic/cache.c only defines the
+    # sys_cache_control dispatcher - which would reference the two primitives
+    # this arch has no reason to provide.
+    set(_libplatform_cachecontrol)
 endif()
 
 add_darwin_static_library(libplatform_static)
@@ -68,6 +78,7 @@ target_sources(libplatform_static PRIVATE
     src/setjmp/generic/sigaction.c   # __platform_sigaction (libc's sigaction.c wrapper)
     ${_libplatform_setjmp}
     ${_libplatform_atomics}
+    ${_libplatform_cachecontrol}
 )
 # VARIANT_STATIC: emit the plain C names (memcpy/memmove/strlen/strcmp/...) as
 # real symbols, not just the __platform_* internals -- this is the static-archive
@@ -124,6 +135,10 @@ set_source_files_properties(
     src/atomics/x86_64/pfz.s
     PROPERTIES LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp"
 )
+if(PUREDARWIN_ARM64)
+    set_source_files_properties(src/cachecontrol/arm64/cache.s
+        PROPERTIES LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp")
+endif()
 # init.c assigns the commpage PFZ base (uintptr_t) to a void* -- width-preserving
 # on LP64; the promoted -Werror=int-conversion is spurious here.
 set_source_files_properties(src/atomics/init.c

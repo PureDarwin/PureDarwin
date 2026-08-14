@@ -218,38 +218,267 @@ size_t __os_log_encode(void* buffer,
     return size;
 }
 
-size_t os_log_pack_size(const char* format, ...)
+/*
+ * %@ is CoreFoundation's specifier, not printf's, so rendering it means asking
+ * CF for the object's description. libsystem_trace sits below CoreFoundation
+ * and cannot link it, so look the three entry points up at runtime instead:
+ * processes without CF (and there are several here) simply get the pointer.
+ */
+static void pd_append_cf_object(char** outp, size_t* remp, const void* cf)
 {
-    size_t psize = sizeof(struct os_log_pack_s);
-    va_list ap;
-    _os_log_arg_header* ah;
-    const char* fmtp = format;
+    static void*    (*copy_description)(const void*);
+    static int      (*get_cstring)(const void*, char*, long, uint32_t);
+    static void     (*cf_release)(const void*);
+    static int      looked_up;
+    char            desc[512];
+    void*           str;
+    int             n;
 
-    va_start(ap, format);
-    ah = va_arg(ap, _os_log_arg_header*);
-    va_end(ap);
-
-    if (!format)
-        return 0;
-
-    psize += strlen(format) + 1;
-
-    /* Use format specifiers to enumerate the args chunk */
-    while (*fmtp) {
-        if (*fmtp == '%') {
-            fmtp++;
-            if (*fmtp != '%') {
-                /* Step over this argument's header and payload as we go;
-                 * otherwise every specifier re-reads the first entry. */
-                psize += ah->payload_size;
-                ah = (_os_log_arg_header *)((uint8_t *)ah +
-                    sizeof(*ah) + ah->payload_size);
-            }
-        }
-        fmtp++;
+    if (!looked_up) {
+        copy_description = dlsym(RTLD_DEFAULT, "CFCopyDescription");
+        get_cstring      = dlsym(RTLD_DEFAULT, "CFStringGetCString");
+        cf_release       = dlsym(RTLD_DEFAULT, "CFRelease");
+        looked_up = 1;
     }
 
-    return psize;
+    if (cf == NULL) {
+        n = snprintf(*outp, *remp, "(null)");
+        goto advance;
+    }
+
+    if (copy_description == NULL || get_cstring == NULL || cf_release == NULL) {
+        n = snprintf(*outp, *remp, "<%p>", cf);
+        goto advance;
+    }
+
+    str = copy_description(cf);
+    if (str == NULL) {
+        n = snprintf(*outp, *remp, "<%p>", cf);
+        goto advance;
+    }
+
+    /* 0x08000100 is kCFStringEncodingUTF8. */
+    if (get_cstring(str, desc, (long)sizeof(desc), 0x08000100)) {
+        n = snprintf(*outp, *remp, "%s", desc);
+    } else {
+        n = snprintf(*outp, *remp, "<%p>", cf);
+    }
+    cf_release(str);
+
+advance:
+    if (n < 0) {
+        return;
+    }
+    if ((size_t)n >= *remp) {
+        *outp += *remp - 1;
+        *remp = 1;
+        return;
+    }
+    *outp += n;
+    *remp -= (size_t)n;
+}
+
+/*
+ * Render a format string and its arguments to text.
+ *
+ * vsnprintf cannot be used on the whole string because os_log formats may carry
+ * %@, and once one specifier has to be handled here the rest must be too - a
+ * va_list cannot be re-entered partway through. So walk the format, hand each
+ * ordinary specifier to snprintf on its own, and expand %@ via CoreFoundation.
+ */
+static void pd_os_log_render(char* out, size_t out_size, const char* format,
+    va_list ap)
+{
+    const char* p = format;
+    char*       o = out;
+    size_t      rem = out_size;
+
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (format == NULL) {
+        return;
+    }
+
+    while (*p != '\0' && rem > 1) {
+        char    spec[64];
+        size_t  slen = 0;
+        int     star_width = 0, star_prec = 0;
+        int     width = 0, prec = 0;
+        int     n = 0;
+        char    conv;
+        /* 0 = int, 1 = long, 2 = long long, 3 = size_t/ptrdiff, 4 = short/char */
+        int     lenmod = 0;
+
+        if (*p != '%') {
+            *o++ = *p++;
+            rem--;
+            continue;
+        }
+
+        spec[slen++] = *p++;            /* '%' */
+        if (*p == '%') {
+            *o++ = '%';
+            rem--;
+            p++;
+            continue;
+        }
+
+        /*
+         * os_log annotations - %{public}@, %{private}s, %{bool}d and friends.
+         * They carry privacy and type hints for the logging system, not the
+         * formatting, so drop them rather than passing them to snprintf.
+         */
+        if (*p == '{') {
+            while (*p != '\0' && *p != '}') {
+                p++;
+            }
+            if (*p == '}') {
+                p++;
+            }
+        }
+
+        /* flags */
+        while (*p && strchr("-+ #0'", *p) && slen < sizeof(spec) - 8) {
+            spec[slen++] = *p++;
+        }
+        /* width */
+        if (*p == '*') {
+            star_width = 1;
+            width = va_arg(ap, int);
+            p++;
+        } else {
+            while (*p >= '0' && *p <= '9' && slen < sizeof(spec) - 8) {
+                spec[slen++] = *p++;
+            }
+        }
+        /* precision */
+        if (*p == '.') {
+            spec[slen++] = *p++;
+            if (*p == '*') {
+                star_prec = 1;
+                prec = va_arg(ap, int);
+                p++;
+            } else {
+                while (*p >= '0' && *p <= '9' && slen < sizeof(spec) - 8) {
+                    spec[slen++] = *p++;
+                }
+            }
+        }
+        /* length modifier */
+        while (*p && strchr("hljztLq", *p) && slen < sizeof(spec) - 4) {
+            if (*p == 'l') {
+                lenmod = (lenmod == 1) ? 2 : 1;
+            } else if (*p == 'h') {
+                lenmod = 4;
+            } else if (*p == 'j' || *p == 'z' || *p == 't' || *p == 'q') {
+                lenmod = 3;
+            }
+            spec[slen++] = *p++;
+        }
+
+        conv = *p;
+        if (conv == '\0') {
+            break;
+        }
+        spec[slen++] = *p++;
+        spec[slen] = '\0';
+
+        /*
+         * Rebuild the width/precision that were consumed as arguments, so the
+         * single-specifier snprintf below sees a self-contained format.
+         */
+        if (star_width || star_prec) {
+            char rebuilt[80];
+
+            if (star_width && star_prec) {
+                snprintf(rebuilt, sizeof(rebuilt), "%%%d.%d%c", width, prec, conv);
+            } else if (star_width) {
+                snprintf(rebuilt, sizeof(rebuilt), "%%%d%c", width, conv);
+            } else {
+                snprintf(rebuilt, sizeof(rebuilt), "%%.%d%c", prec, conv);
+            }
+            strlcpy(spec, rebuilt, sizeof(spec));
+        }
+
+        switch (conv) {
+        case '@':
+            pd_append_cf_object(&o, &rem, va_arg(ap, const void*));
+            continue;
+        case 'd': case 'i':
+            if (lenmod == 2 || lenmod == 3) {
+                n = snprintf(o, rem, spec, va_arg(ap, long long));
+            } else if (lenmod == 1) {
+                n = snprintf(o, rem, spec, va_arg(ap, long));
+            } else {
+                n = snprintf(o, rem, spec, va_arg(ap, int));
+            }
+            break;
+        case 'o': case 'u': case 'x': case 'X':
+            if (lenmod == 2 || lenmod == 3) {
+                n = snprintf(o, rem, spec, va_arg(ap, unsigned long long));
+            } else if (lenmod == 1) {
+                n = snprintf(o, rem, spec, va_arg(ap, unsigned long));
+            } else {
+                n = snprintf(o, rem, spec, va_arg(ap, unsigned int));
+            }
+            break;
+        case 'c':
+            n = snprintf(o, rem, spec, va_arg(ap, int));
+            break;
+        case 's': {
+            const char* sv = va_arg(ap, const char*);
+            n = snprintf(o, rem, spec, sv ? sv : "(null)");
+            break;
+        }
+        case 'p':
+            n = snprintf(o, rem, spec, va_arg(ap, void*));
+            break;
+        case 'f': case 'F': case 'e': case 'E':
+        case 'g': case 'G': case 'a': case 'A':
+            n = snprintf(o, rem, spec, va_arg(ap, double));
+            break;
+        case 'n':
+            /* Never write through a caller pointer from a log format. */
+            (void)va_arg(ap, void*);
+            n = 0;
+            break;
+        default:
+            n = snprintf(o, rem, "%s", spec);
+            break;
+        }
+
+        if (n < 0) {
+            break;
+        }
+        if ((size_t)n >= rem) {
+            o += rem - 1;
+            rem = 1;
+            break;
+        }
+        o += n;
+        rem -= (size_t)n;
+    }
+
+    *o = '\0';
+}
+
+/*
+ * The pack payload holds the rendered message rather than the format string
+ * plus encoded arguments: without libtrace's binary tracepoint encoder (see
+ * os_log_encode() above) the arguments cannot be serialised, and discarding
+ * them left every %@/%s to reach the console literally. Reserve a fixed payload
+ * so the rendering has somewhere to go.
+ */
+#define PD_OS_LOG_RENDER_MAX 1024
+
+size_t os_log_pack_size(const char* format, ...)
+{
+    if (!format) {
+        return 0;
+    }
+    return sizeof(struct os_log_pack_s) + PD_OS_LOG_RENDER_MAX;
 }
 
 uint8_t* os_log_pack_fill(void* pack,
@@ -259,29 +488,37 @@ uint8_t* os_log_pack_fill(void* pack,
 {
     const void* dso = __builtin_return_address(0);
     Dl_info info;
+    struct os_log_pack_s *s;
+    uint8_t* payload;
+    size_t avail;
+    va_list ap;
 
-    if (!pack || pack_size == 0 || !format)
+    (void)saved_errno;
+
+    if (!pack || !format || pack_size <= sizeof(struct os_log_pack_s)) {
         return NULL;
+    }
 
-    if (pack_size < strlen(format) + sizeof(struct os_log_pack_s))
-        return NULL;
-
-    uint8_t* payload = (uint8_t*)pack + sizeof(struct os_log_pack_s);
-    struct os_log_pack_s *s = (struct os_log_pack_s *)pack;
+    s = (struct os_log_pack_s *)pack;
+    payload = (uint8_t*)pack + sizeof(struct os_log_pack_s);
+    avail = pack_size - sizeof(struct os_log_pack_s);
 
     s->olp_continuous_time = mach_continuous_time();
     clock_gettime(CLOCK_REALTIME, &s->olp_wall_time);
 
     /* Find the mach_header */
-    if (dladdr(dso, &info))
+    if (dladdr(dso, &info)) {
         s->olp_mh = info.dli_fbase;
-
+    }
     s->olp_pc = dso;
-    s->olp_format = (const char *)payload;
-    memcpy(s->olp_format, format, strlen(format) + 1);
 
-    payload += strlen(format) + 1;
-    return payload;
+    va_start(ap, format);
+    pd_os_log_render((char*)payload, avail, format, ap);
+    va_end(ap);
+
+    s->olp_format = (const char *)payload;
+
+    return payload + strlen((const char*)payload) + 1;
 }
 
 /*
@@ -352,6 +589,26 @@ void __os_log_impl(void* dso,
  * depending on which SDK a caller was compiled against, so provide each.
  */
 void _os_log_debug_impl(void* dso,
+    os_log_t log,
+    os_log_type_t type,
+    const char* format,
+    uint8_t* buffer,
+    uint32_t buffer_size)
+{
+    __os_log_impl(dso, log, type, format, buffer, buffer_size);
+}
+
+void _os_log_impl(void* dso,
+    os_log_t log,
+    os_log_type_t type,
+    const char* format,
+    uint8_t* buffer,
+    uint32_t buffer_size)
+{
+    __os_log_impl(dso, log, type, format, buffer, buffer_size);
+}
+
+void _os_log_fault_impl(void* dso,
     os_log_t log,
     os_log_type_t type,
     const char* format,

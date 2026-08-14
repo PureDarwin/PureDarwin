@@ -26,6 +26,9 @@ typedef struct PDGOPFramebuffer {
 
 kern_return_t PDGOPOpen(PDGOPFramebuffer *fb);
 void PDGOPClose(PDGOPFramebuffer *fb);
+kern_return_t PDGOPPresent(PDGOPFramebuffer *fb,
+                           uint32_t x, uint32_t y,
+                           uint32_t width, uint32_t height);
 const char *PDGOPLastErrorStage(void);
 
 __END_DECLS

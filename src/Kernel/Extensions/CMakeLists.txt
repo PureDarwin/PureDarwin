@@ -14,6 +14,9 @@ endif()
 
 add_subdirectory(IOPCIFamily)
 add_subdirectory(IOStorageFamily)
+add_subdirectory(IOCDStorageFamily)
+add_subdirectory(IODVDStorageFamily)
+add_subdirectory(IOBDStorageFamily)
 add_subdirectory(IONVMEFamily)
 add_subdirectory(IOUSBFamily)
 add_subdirectory(RavynAHCIPort)
@@ -44,7 +47,8 @@ add_subdirectory(pthread)
 
 add_custom_target(kexts)
 add_dependencies(kexts
-    IOPCIFamily ApplePIODMA IOStorageFamily IONVMEFamily.kext
+    IOPCIFamily ApplePIODMA IOStorageFamily IOCDStorageFamily.kext
+    IODVDStorageFamily.kext IOBDStorageFamily.kext IONVMEFamily.kext
     IOUSBFamily IOUSBCompositeDriver.kext AppleUSBMergeNub.kext
     IOUSBHIDDriver.kext
     AppleUSBEHCI.kext AppleUSBOHCI.kext AppleUSBUHCI.kext

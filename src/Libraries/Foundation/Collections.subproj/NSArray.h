@@ -12,10 +12,11 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@interface NSArray : NSObject
+@interface NSArray<__covariant ObjectType> : NSObject
 
 + (instancetype)array;
-+ (instancetype)arrayWithObjects:(const id *)objects count:(NSUInteger)count;
++ (instancetype)arrayWithObjects:(const ObjectType _Nonnull [_Nullable])objects count:(NSUInteger)count;
++ (instancetype)arrayWithArray:(NSArray<ObjectType> *)array;
 
 - (NSUInteger)count;
 - (id)objectAtIndex:(NSUInteger)index;
@@ -24,11 +25,12 @@
 
 @end
 
-@interface NSMutableArray : NSArray
+@interface NSMutableArray<ObjectType> : NSArray<ObjectType>
 
 + (instancetype)arrayWithCapacity:(NSUInteger)capacity;
 
-- (void)addObject:(id)object;
+- (void)addObject:(ObjectType)object;
+- (void)addObjectsFromArray:(NSArray<ObjectType> *)array;
 - (void)removeObjectAtIndex:(NSUInteger)index;
 - (void)removeAllObjects;
 

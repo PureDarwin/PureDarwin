@@ -113,7 +113,7 @@ target_compile_options(libdispatch_static PRIVATE
     -include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/bsd/sys_private/kdebug_private.h
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern/os/base_private.h>
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_work_interval_instance.h>
-    $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17;-fblocks;-fno-rtti;-fno-exceptions;-isystem${PUREDARWIN_MACOSX_SDK}/usr/include/c++/v1;-isystem${PUREDARWIN_MACOSX_SDK}/usr/include>)
+    $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17;-fblocks;-fno-rtti;-fno-exceptions;-isystem${PUREDARWIN_LIBCXX_INCLUDE_DIR};-isystem${PUREDARWIN_MACOSX_SDK}/usr/include>)
 
 add_dependencies(libdispatch_static libsystem_kernel_static)
 

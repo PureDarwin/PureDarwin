@@ -1,0 +1,64 @@
+diff --git a/tools/winebuild/import.c b/tools/winebuild/import.c
+--- a/tools/winebuild/import.c
++++ b/tools/winebuild/import.c
+@@ -1387,6 +1387,7 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struct
+             output( "\t.seh_endproc\n" );
+             break;
+         case CPU_ARM64:
++        case CPU_ARM64EC:
+             output( "\t.seh_proc %s\n", asm_name( delay_load ) );
+             output( "\tstp x29, x30, [sp, #-80]!\n" );
+             output( "\t.seh_save_fplr_x 80\n" );
+@@ -1410,9 +1410,6 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struct
+             output( "\tbr x16\n" );
+             output( "\t.seh_endproc\n" );
+             break;
+-        case CPU_ARM64EC:
+-            assert( 0 );
+-            break;
+         }
+         output_function_size( delay_load );
+         output_gnu_stack_note();
+@@ -1544,6 +1541,7 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struct
+                 output( "1:\t.long %s\n", asm_name( imp_name ) );
+                 break;
+             case CPU_ARM64:
++            case CPU_ARM64EC:
+                 output( "\tadrp x16, %s\n", asm_name( imp_name ) );
+                 output( "\tadd x16, x16, #:lo12:%s\n", asm_name( imp_name ) );
+                 output( "\tbr x16\n" );
+@@ -1556,9 +1554,6 @@ static void build_windows_import_lib( const char *lib_name, DLLSPEC *spec, struct
+                     output( "\tb %s\n", asm_name( delay_load ) );
+                 }
+                 break;
+-            case CPU_ARM64EC:
+-                assert( 0 );
+-                break;
+             }
+
+             output_import_section( 4, is_delay );
+
+diff --git a/libs/tomcrypt/src/headers/tomcrypt_macros.h b/libs/tomcrypt/src/headers/tomcrypt_macros.h
+--- a/libs/tomcrypt/src/headers/tomcrypt_macros.h
++++ b/libs/tomcrypt/src/headers/tomcrypt_macros.h
+@@ -254,1 +254,1 @@
+-#elif !defined(__STRICT_ANSI__) && defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__)) && !defined(INTEL_CC) && !defined(LTC_NO_ASM)
++#elif !defined(__STRICT_ANSI__) && defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__)) && !defined(__arm64ec__) && !defined(INTEL_CC) && !defined(LTC_NO_ASM)
+
+diff --git a/dlls/msvcrt/cxx.h b/dlls/msvcrt/cxx.h
+--- a/dlls/msvcrt/cxx.h
++++ b/dlls/msvcrt/cxx.h
+@@ -20,2 +20,7 @@
+ #include "wine/asm.h"
+ 
++#if defined(__arm64ec__) || defined(__aarch64__)
++#define CXX_ASM_NAKED __attribute__((naked))
++#else
++#define CXX_ASM_NAKED
++#endif
+@@ -94,1 +94,1 @@
+-void __asm_dummy_ ## name ## _rtti(void) \
++void __asm_dummy_ ## name ## _rtti(void) CXX_ASM_NAKED \
+@@ -168,1 +168,1 @@
+-void __asm_dummy_ ## type ## _exception_type(void) \
++void __asm_dummy_ ## type ## _exception_type(void) CXX_ASM_NAKED \

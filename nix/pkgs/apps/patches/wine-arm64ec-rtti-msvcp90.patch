@@ -1,0 +1,32 @@
+--- a/dlls/msvcp90/cxx.h
++++ b/dlls/msvcp90/cxx.h
+@@ -20,6 +20,11 @@
+ #include "winternl.h"
+ #include "rtlsupportapi.h"
+ #include "wine/asm.h"
++#if defined(__arm64ec__) || defined(__aarch64__)
++#define CXX_ASM_NAKED __attribute__((naked))
++#else
++#define CXX_ASM_NAKED
++#endif
+ 
+ #define CLASS_IS_SIMPLE_TYPE          1
+ #define CLASS_HAS_VIRTUAL_BASE_CLASS  4
+@@ -91,7 +92,7 @@
+ extern const rtti_object_locator name##_rtti; \
+ type_info name ## _type_info = { &type_info_vtable, NULL, mangled_name }; \
+ extern const rtti_base_descriptor name ## _rtti_base_descriptor[1]; \
+-void __asm_dummy_ ## name ## _rtti(void) \
++void __asm_dummy_ ## name ## _rtti(void) CXX_ASM_NAKED \
+ { \
+     asm( ".balign 4\n\t" \
+          __ASM_GLOBL(#name "_rtti_base_descriptor") "\n\t" \
+@@ -165,7 +166,7 @@
+ #define DEFINE_CXX_TYPE2(type, dtor, ...) \
+ extern const cxx_type_info type ## _cxx_type_info[1]; \
+ extern const cxx_exception_type type ## _exception_type; \
+-void __asm_dummy_ ## type ## _exception_type(void) \
++void __asm_dummy_ ## type ## _exception_type(void) CXX_ASM_NAKED \
+ { \
+     asm( ".balign 4\n\t" \
+          __ASM_GLOBL(#type "_cxx_type_info") "\n\t" \

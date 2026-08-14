@@ -12,11 +12,20 @@ get_filename_component(_toolchain_bin "${CMAKE_AR}" DIRECTORY)
 # the host is Linux, so use CMAKE_HOST_APPLE to distinguish native AppleClang
 # from osxcross.
 if(CMAKE_HOST_APPLE AND NOT CMAKE_CROSSCOMPILING)
-    execute_process(
-        COMMAND xcrun --sdk macosx --show-sdk-path
-        OUTPUT_VARIABLE _sdk
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
+    # PUREDARWIN_MACOSX_SDK is the SDK the rest of the build was configured
+    # against - honour it rather than asking xcrun, which answers for whatever
+    # DEVELOPER_DIR happens to point at and, when that is a bare SDK tree with
+    # no surrounding developer directory, fails and prints its error where the
+    # path should be.
+    if(PUREDARWIN_MACOSX_SDK AND EXISTS "${PUREDARWIN_MACOSX_SDK}")
+        set(_sdk "${PUREDARWIN_MACOSX_SDK}")
+    else()
+        execute_process(
+            COMMAND xcrun --sdk macosx --show-sdk-path
+            OUTPUT_VARIABLE _sdk
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
 
     find_program(_real_clang NAMES clang REQUIRED)
 

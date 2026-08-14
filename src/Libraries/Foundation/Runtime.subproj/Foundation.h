@@ -9,11 +9,16 @@
 #if !defined(__FOUNDATION_FOUNDATION__)
 #define __FOUNDATION_FOUNDATION__ 1
 
+#include <dispatch/dispatch.h>
+
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/FoundationErrors.h>
 #import <Foundation/NSError.h>
 #import <Foundation/NSArray.h>
+#import <Foundation/NSData.h>
 #import <Foundation/NSDictionary.h>
+#import <Foundation/NSNumber.h>
+#import <Foundation/NSDate.h>
 #import <Foundation/NSURL.h>
 
 #endif /* ! __FOUNDATION_FOUNDATION__ */

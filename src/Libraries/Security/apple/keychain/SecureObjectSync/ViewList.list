@@ -1,0 +1,51 @@
+
+// This is the list of views.
+// To add a new view put it in this file with the DOVIEWMACRO defined:
+// Arguments for DOVIEWMACRO in arg order are:
+// DOVIEWMACRO(VIEWNAME, DEFSTRING, CMDSTRING, SYSTEM, DEFAULTSETTING, INITIALSYNCSETTING, ALWAYSONSETTING, BACKUPSETTING, V0SETTING)
+// VIEWNAME - the base name used for both the view and the viewhint.  This will become the constants  kSOSView<name> and  kSecAttrViewHint<name>
+// DEFSTRING - the string constant to be used for both the viewname and viewhint
+// CMDSTRING - the string used in the "security" command when refering to this view.
+// SYSTEM - either "SOS" or CKKS": the syncing system to be used for this view
+// DEFAULTSETTING - if the view is turned on by default put a D in this column - otherwise keep it blank
+// INITIALSYNCSETTING - if the view is to be included in initialSync default put a I in this column - otherwise keep it blank
+// ALWAYSONSETTING - if the view cannot be disabled put an A in this column - otherwise keep it blank
+// BACKUPSETTING - if the view must be synced before we do any backup put a B in this column - otherwise keep it blank
+// V0SETTING - this is used for "synthentic" views for V0 - there are no viewhints for these" - for all others keep it blank
+//
+// Once an entry is in here make the following two additional changes:
+// for views, add the declaration for kSOSView<name> in SOSCloudCircle.h
+// for viewhints add the declaration for kSecAttrViewHint<name> in SecItemPriv.h
+
+DOVIEWMACRO(WiFi,                   "WiFi",                 "wifi",                    SOS,   ,  ,  ,  , V)
+DOVIEWMACRO(AutofillPasswords,      "Passwords",            "passwords",               SOS,   ,  ,  ,  , V)
+DOVIEWMACRO(SafariCreditCards,      "CreditCards",          "creditcards",             SOS,   ,  ,  ,  , V)
+DOVIEWMACRO(iCloudIdentity,         "iCloudIdentity",       "icloudidentity",          SOS,  D,  , A, B, V)
+DOVIEWMACRO(BackupBagV0,            "BackupBagV0",          "backupv0",                SOS,  D,  , A,  , V)
+DOVIEWMACRO(OtherSyncable,          "OtherSyncable",        "othersyncable",           SOS,   ,  ,  ,  , V)
+DOVIEWMACRO(ContinuityUnlock,       "ContinuityUnlock",     "continuityunlock",        SOS,  D,  , A,  ,  )
+DOVIEWMACRO(AppleTV,                "AppleTV",              "appletv",                 SOS,  D,  , A,  ,  )
+DOVIEWMACRO(HomeKit,                "HomeKit",              "homekit",                 SOS,  D,  , A,  ,  )
+DOVIEWMACRO(AccessoryPairing,       "AccessoryPairing",     "accessorypairing",        SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSCloudKit,            "PCS-CloudKit",         "cloudkit",                SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSEscrow,              "PCS-Escrow",           "escrow",                  SOS,  D,  , A, B,  )
+DOVIEWMACRO(PCSFDE,                 "PCS-FDE",              "fde",                     SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSFeldspar,            "PCS-Feldspar",         "feldspar",                SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSMailDrop,            "PCS-Maildrop",         "maildrop",                SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSMasterKey,           "PCS-MasterKey",        "masterkey",               SOS,  D,  , A, B,  )
+DOVIEWMACRO(PCSNotes,               "PCS-Notes",            "notes",                   SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSPhotos,              "PCS-Photos",           "photos",                  SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSSharing,             "PCS-Sharing",          "sharing",                 SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSiCloudBackup,        "PCS-Backup",           "icloudbackup",            SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSiCloudDrive,         "PCS-iCloudDrive",      "iclouddrive",             SOS,  D,  , A,  ,  )
+DOVIEWMACRO(PCSiMessage,            "PCS-iMessage",         "imessage",                SOS,  D,  , A,  ,  )
+DOVIEWMACRO(NanoRegistry,           "NanoRegistry",         "nanoregistry",            SOS,  D,  , A,  ,  )
+DOVIEWMACRO(WatchMigration,         "WatchMigration",       "watchmigration",          SOS,  D,  , A,  ,  )
+DOVIEWMACRO(Engram,                 "Engram",               "engram",                  CKKS, D,  , A,  ,  )
+DOVIEWMACRO(Manatee,                "Manatee",              "manatee",                 CKKS, D,  , A,  ,  )
+DOVIEWMACRO(AutoUnlock,             "AutoUnlock",           "autounlock",              CKKS, D,  , A,  ,  )
+DOVIEWMACRO(Health,                 "Health",               "health",                  CKKS, D,  , A,  ,  )
+DOVIEWMACRO(ApplePay,               "ApplePay",             "applepay",                CKKS, D,  , A,  ,  )
+DOVIEWMACRO(Home,                   "Home",                 "home",                    CKKS, D,  , A,  ,  )
+DOVIEWMACRO(LimitedPeersAllowed,    "LimitedPeersAllowed",  "limitedpeersallowed",     CKKS, D,  , A,  ,  )
+

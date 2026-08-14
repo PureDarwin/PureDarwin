@@ -52,6 +52,15 @@ else()
             find_program(XNU_NATIVE_LIPO_EXECUTABLE NAMES "${_xnu_triple}-lipo")
             find_program(XNU_NATIVE_NM_EXECUTABLE NAMES "${_xnu_triple}-nm")
         endif()
+    elseif(PUREDARWIN_HOST_LD)
+        # A Darwin host already has a real ld, resolved once in
+        # cmake/crosscompile.cmake. Use it: the fallback below is
+        # $<TARGET_FILE:host_ld>, and a generator expression naming a target is
+        # itself a build dependency on it - so the kernel would pull in the
+        # in-tree ld64, which cannot be built from this component at all (ld64
+        # needs the CommonCrypto/corecrypto private headers, and the kernel
+        # source filter does not ship those directories).
+        set(XNU_NATIVE_LD_EXECUTABLE "${PUREDARWIN_HOST_LD}")
     endif()
     if(XNU_NATIVE_LD_EXECUTABLE)
         set(XNU_LD_PATH "${XNU_NATIVE_LD_EXECUTABLE}")
@@ -200,7 +209,13 @@ set(_xnu_dependencies
     migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl host_ld
     dyld_availability_headers
 )
-if(PUREDARWIN_NIX_TOOLCHAIN)
+# host_ld is the in-tree ld64, needed only when nothing else can link Mach-O.
+# The nix toolchain supplies NATIVE_LD64_EXECUTABLE and a Darwin host has a real
+# ld (see cmake/crosscompile.cmake), so in both cases building it is wasted work
+# - and on a Darwin host it cannot be built from this component at all, since
+# ld64 needs the CommonCrypto/corecrypto private headers and the kernel source
+# filter does not ship those directories.
+if(PUREDARWIN_NIX_TOOLCHAIN OR CMAKE_HOST_APPLE)
     list(REMOVE_ITEM _xnu_dependencies host_ld)
 endif()
 add_dependencies(xnu ${_xnu_dependencies})

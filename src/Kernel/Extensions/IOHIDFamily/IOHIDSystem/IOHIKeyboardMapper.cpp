@@ -46,7 +46,7 @@
 #include <IOKit/hidsystem/IOHIDParameter.h>
 #include <IOKit/hidsystem/IOHIDSystem.h>
 #include <libkern/OSByteOrder.h>
-/* PD: unused; pulls modern HID core */
+/* PureDarwin: unused; pulls modern HID core */
 #include "IOHIDevicePrivateKeys.h"
 #include "IOHIDFamilyPrivate.h"
 

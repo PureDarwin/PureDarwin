@@ -1,0 +1,41 @@
+(version 1)
+
+(deny default)
+(deny file-map-executable process-info* nvram*)
+(deny dynamic-code-generation)
+
+(deny mach-priv-host-port)
+
+(import "system.sb")
+(import "com.apple.corefoundation.sb")
+(corefoundation)
+
+(allow process-info* (target self))
+
+;; For resolving symlinks, realpath(3), and equivalents.
+(allow file-read-metadata)
+
+;; Global preferences
+(allow user-preference-read
+    (preference-domain ".GlobalPreferences"))
+
+;; For validating the entitlements of clients.
+(allow process-info-codesignature)
+
+;; Read/write access to a temporary directory.
+(allow file-read* file-write*
+       (subpath (param "_TMPDIR"))
+       (subpath (param "_DARWIN_CACHE_DIR")))
+
+;; Delete un-needed files
+(allow file-read-metadata file-write-unlink
+        (subpath "/Library/Keychains/"))
+
+;; Fix permissions on files in trustd's data vault
+(allow file-write-mode file-write-owner
+        (subpath "/private/var/protected/trustd"))
+
+(allow file-read*
+    (literal "/usr/libexec")
+    (literal "/usr/libexec/trustdFileHelper")
+    (regex #"/.GlobalPreferences[^/]*\.plist"))

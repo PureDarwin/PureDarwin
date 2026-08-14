@@ -58,6 +58,8 @@ CONST_STRING_DECL(kCFUserNotificationProgressIndicatorValueKey, "ProgressIndicat
 CONST_STRING_DECL(kCFUserNotificationSessionIDKey, "SessionID")
 CONST_STRING_DECL(kCFUserNotificationPopUpTitlesKey, "PopUpTitles")
 CONST_STRING_DECL(kCFUserNotificationTextFieldTitlesKey, "TextFieldTitles")
+CONST_STRING_DECL(kCFUserNotificationHelpAnchorKey, "HelpAnchor")
+CONST_STRING_DECL(kCFUserNotificationHelpBookKey, "HelpBook")
 CONST_STRING_DECL(kCFUserNotificationCheckBoxTitlesKey, "CheckBoxTitles")
 CONST_STRING_DECL(kCFUserNotificationTextFieldValuesKey, "TextFieldValues")
 #if TARGET_OS_OSX

@@ -1,18 +1,3 @@
-/*
- * PureDarwin: real xpc_event_publisher_* is Apple's private XPC event
- * streaming/matching API - never open-sourced anywhere
- *
- * The XPC_EVENT_PUBLISHER_ACTION_INITIAL_BARRIER handler is
- * NOT cosmetic: it's where the daemon's actual Mach IPC channels
- * (mach_channel/mach_notifs_channel) get connected via
- * dispatch_mach_connect(). A pure no-op stub would leave notifyd's real
- * client-facing Mach service never listening. This minimal implementation
- * preserves that real behavior: activate() immediately fires the
- * INITIAL_BARRIER action (so the Mach channels connect for real), and
- * simply never fires ADD/REMOVE (no real XPC-event-matching subscribers
- * ever register - degrades gracefully, same as real notifyd would if the
- * matching subsystem had zero subscribers).
- */
 #include <stdlib.h>
 #include <Block.h>
 #include "libnotify.h"

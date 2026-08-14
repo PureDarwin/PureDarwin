@@ -13,10 +13,33 @@
 #include <sys/unistd.h>
 #include <sys/syslimits.h>
 #include <sys/fcntl.h>
+#include <sys/fsctl.h>
 #include <sys/disk.h>
 #include <string.h>
 #include <vm/vm_kern.h>
 #include <IOKit/IOLocks.h>
+
+/*
+ * ext4's on-disk directory-entry file types are numbered independently of BSD's
+ * d_type values - EXT4_FT_DIR is 2, which is DT_CHR; EXT4_FT_REG_FILE is 1,
+ * which is DT_FIFO. Copying one into the other makes readdir() describe every
+ * directory as a character device, which anything that trusts d_type then gets
+ * wrong (CFBundle stops recognising bundle layouts, for one).
+ */
+static uint8_t
+ext4_ft_to_dtype(uint8_t ft)
+{
+	switch (ft) {
+	case EXT4_FT_REG_FILE:	return DT_REG;
+	case EXT4_FT_DIR:	return DT_DIR;
+	case EXT4_FT_CHRDEV:	return DT_CHR;
+	case EXT4_FT_BLKDEV:	return DT_BLK;
+	case EXT4_FT_FIFO:	return DT_FIFO;
+	case EXT4_FT_SOCK:	return DT_SOCK;
+	case EXT4_FT_SYMLINK:	return DT_LNK;
+	default:		return DT_UNKNOWN;
+	}
+}
 
 int (**ext4_vnodeop_p)(void *);
 
@@ -1903,7 +1926,7 @@ ext4_vnop_readdir_impl(struct vnop_readdir_args *ap)
 				if (nl > NAME_MAX) nl = NAME_MAX;
 				memset(&dent, 0, sizeof(dent));
 				dent.d_ino    = le32(de->inode);
-				dent.d_type   = de->file_type;
+				dent.d_type   = ext4_ft_to_dtype(de->file_type);
 				dent.d_namlen = nl;
 				memcpy(dent.d_name, de->name, nl);
 				dent.d_name[nl] = '\0';
@@ -2275,6 +2298,13 @@ ext4_vnop_ioctl(struct vnop_ioctl_args *ap)
 	case F_CHKCLEAN:
 		/* "are this file's dirty pages written back" - after the above,
 		 * and for anything we would have flushed, yes. */
+		return 0;
+
+	case FSIOC_KERNEL_ROOTAUTH:
+		/*
+		 * Apple Silicon macOS boots a Signed System Volume and bsd_init()
+		 * panics if the root file system cannot vouch for its own seal.
+		 */
 		return 0;
 
 	default:

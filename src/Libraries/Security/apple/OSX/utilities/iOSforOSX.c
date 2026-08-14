@@ -37,7 +37,9 @@
 #include <pwd.h>
 #include <unistd.h>
 
-#include ".././libsecurity_keychain/lib/SecBase64P.c"
+/* Apple's source drop ships SecBase64P.h but not the SecBase64P.c this line
+ * pulled in, and nothing here uses base64 - SecBase64.c provides the encoder
+ * the rest of the library calls. */
 
 CFURLRef SecCopyKeychainDirectoryFile(CFStringRef file)
 {

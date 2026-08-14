@@ -1,0 +1,12 @@
+diff --git a/tools/winebuild/import.c b/tools/winebuild/import.c
+--- a/tools/winebuild/import.c
++++ b/tools/winebuild/import.c
+@@ -1301,4 +1301,8 @@ static void output_import_section( int index, int is_delay )
+         output( "\n\t.section .data$didat%d\n", index );
+     else
+         output( "\n\t.section .rdata$didat%d\n", index );
++
++    /* ARM64 relocations address pointer tables in these sections directly. */
++    if ((target.cpu == CPU_ARM64 || target.cpu == CPU_ARM64EC) && (index == 4 || index == 5))
++        output( "\t.balign %u\n", get_ptr_size() );
+ }

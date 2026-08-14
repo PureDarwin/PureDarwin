@@ -66,14 +66,38 @@ chomp @sources;
 undef $f;
 
 # compiler options
-chomp(my $CC = `xcrun -find cc`);
+# xcrun only works inside a full developer directory, and on failure prints its
+# complaint on stdout where the path should be - so prefer whatever the
+# surrounding build already chose, then xcrun, then plain PATH lookup.
+sub find_tool {
+	my ($envvar, $tool) = @_;
+	# xcrun first: a cross build's xcrun resolves to the Darwin-targeting
+	# toolchain, whereas the environment's CC is the build host's native
+	# compiler and cannot produce Mach-O. Only when xcrun cannot answer -
+	# a Darwin host whose DEVELOPER_DIR is a bare SDK with no developer
+	# directory around it - does the environment win.
+	chomp(my $found = `xcrun -find $tool 2>/dev/null`);
+	return $found if $? == 0 && length($found);
+	return $ENV{$envvar} if $ENV{$envvar};
+	return $tool;
+}
+
+my $CC = find_tool('CC', 'cc');
 my @CFLAGS = (
 	"-x assembler-with-cpp",
 	"-c",
 	"-DPRIVATE",
 );
 
-chomp(my $LIBTOOL = `xcrun -find libtool`);
+# These compiles are driven by hand rather than by CMake, so CMAKE_OSX_SYSROOT
+# does not reach them. Without this a Darwin host resolves <sys/syscall.h> from
+# whichever SDK its compiler defaults to, which for a nixpkgs clang is one far
+# newer than the pinned MacOSX11.3 the rest of the build uses - and newer SDKs
+# have dropped syscall numbers syscalls.master still lists. SDKROOT is not
+# usable for this: nixpkgs' cc-wrapper overwrites it with its own SDK.
+push(@CFLAGS, "-isysroot $ENV{PUREDARWIN_SDKROOT}") if $ENV{PUREDARWIN_SDKROOT};
+
+my $LIBTOOL = find_tool('LIBTOOL', 'libtool');
 my @LIBTOOLFLAGS = (
 	"-static",
 );

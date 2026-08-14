@@ -18,7 +18,13 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/libexec/configd</string>
+		<string>-d</string>
+		<string>-v</string>
 	</array>
+	<key>StandardOutPath</key>
+	<string>/dev/console</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/console</string>
 	<key>Umask</key>
 	<integer>18</integer>
 	<key>MinimalBootProfile</key>

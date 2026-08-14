@@ -4,10 +4,15 @@
 #include <IOKit/IOLib.h>
 
 #define super IOUserClient
+#define kIOFBGetPixelInformationSelector 1
+#define kIOFBGetCurrentDisplayModeSelector 2
+#define kIOFBVRAMMemory 110
+#define kPDGPU_Present 11
 OSDefineMetaClassAndStructors(IOVirtIOGPUUserClient, IOUserClient);
 
 IOVirtIOGPUUserClient *
-IOVirtIOGPUUserClient::withOwner(IOVirtIOGPU *owner, task_t task)
+IOVirtIOGPUUserClient::withOwner(IOVirtIOGPU *owner, task_t task,
+                                 bool framebufferClient)
 {
     IOVirtIOGPUUserClient *uc = new IOVirtIOGPUUserClient;
     if (!uc)
@@ -18,6 +23,7 @@ IOVirtIOGPUUserClient::withOwner(IOVirtIOGPU *owner, task_t task)
     }
     uc->fOwner    = owner;
     uc->fTask     = task;
+    uc->fFramebufferClient = framebufferClient;
     uc->fResCount = 0;
     uc->fCtxCount = 0;
     return uc;
@@ -337,6 +343,38 @@ IOVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
     if (!fOwner)
         return kIOReturnNotAttached;
 
+    if (fFramebufferClient) {
+        /* Minimal type-0 framebuffer ABI used by PDGOP. */
+        switch (selector) {
+        case kIOFBGetPixelInformationSelector:
+            if (args->scalarInputCount < 3 || !args->structureOutput ||
+                args->structureOutputSize < sizeof(IOPixelInformation))
+                return kIOReturnBadArgument;
+            return fOwner->getPixelInformation(
+                (IODisplayModeID)args->scalarInput[0],
+                (IOIndex)args->scalarInput[1],
+                (IOPixelAperture)args->scalarInput[2],
+                (IOPixelInformation *)args->structureOutput);
+        case kIOFBGetCurrentDisplayModeSelector:
+            if (args->scalarOutputCount < 2)
+                return kIOReturnBadArgument;
+            return fOwner->getCurrentDisplayMode(
+                (IODisplayModeID *)&args->scalarOutput[0],
+                (IOIndex *)&args->scalarOutput[1]);
+        case kPDGPU_Present:
+            if (!args->structureInput ||
+                args->structureInputSize < sizeof(uint32_t) * 4)
+                return kIOReturnBadArgument;
+            {
+                const uint32_t *rect = (const uint32_t *)args->structureInput;
+                return fOwner->gpuPresent(rect[0], rect[1], rect[2], rect[3])
+                    ? kIOReturnSuccess : kIOReturnIOError;
+            }
+        default:
+            return kIOReturnUnsupported;
+        }
+    }
+
     switch (selector) {
     case kPDVirgl_GetCaps:         return mGetCaps(args);
     case kPDVirgl_CreateContext:   return mCreateContext(args);
@@ -364,6 +402,15 @@ IOReturn
 IOVirtIOGPUUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
                                            IOMemoryDescriptor **memory)
 {
+    if (fFramebufferClient && type == kIOFBVRAMMemory) {
+        IOBufferMemoryDescriptor *fb = fOwner ? fOwner->copyFramebufferMemory() : NULL;
+        if (!fb)
+            return kIOReturnNotFound;
+        *memory = fb;
+        *options = 0;
+        return kIOReturnSuccess;
+    }
+
     ResEntry *e = findRes((uint32_t)type);
     if (!e || !e->backing)
         return kIOReturnNotFound;

@@ -719,7 +719,7 @@ CF_EXPORT void *_CFCreateArrayStorage(size_t numPointers, Boolean zeroed, size_t
 #define STATIC_CLASS_REF(CLASSNAME) &(STATIC_CLASS_NAME_CONCAT(STATIC_CLASS_PREFIX, STATIC_CLASS_NAME(CLASSNAME)))
 
 #elif DEPLOYMENT_RUNTIME_OBJC
-// PD: this branch used to be guarded by "DEPLOYMENT_TARGET_OBJC", a macro
+// PureDarwin: this branch used to be guarded by "DEPLOYMENT_TARGET_OBJC", a macro
 // that is never defined anywhere in this tree (the real build flag is
 // DEPLOYMENT_RUNTIME_OBJC) - so it was permanently dead code, and
 // STATIC_CLASS_REF(...) always fell through to the final #else's `NULL`.

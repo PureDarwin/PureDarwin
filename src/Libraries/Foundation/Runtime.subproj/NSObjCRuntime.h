@@ -30,6 +30,21 @@
     #define NS_DESIGNATED_INITIALIZER __attribute__((objc_designated_initializer))
 #endif
 
+/* Ownership annotations: a +1 return from a method whose name does not begin
+ * with alloc/new/copy, and the reverse. */
+#ifndef NS_RETURNS_RETAINED
+    #define NS_RETURNS_RETAINED __attribute__((ns_returns_retained))
+#endif
+#ifndef NS_RETURNS_NOT_RETAINED
+    #define NS_RETURNS_NOT_RETAINED __attribute__((ns_returns_not_retained))
+#endif
+#ifndef NS_CONSUMED
+    #define NS_CONSUMED __attribute__((ns_consumed))
+#endif
+#ifndef NS_CONSUMES_SELF
+    #define NS_CONSUMES_SELF __attribute__((ns_consumes_self))
+#endif
+
 typedef struct _NSZone NSZone;
 
 #ifndef __has_attribute

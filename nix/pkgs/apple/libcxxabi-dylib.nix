@@ -8,18 +8,6 @@
 , src
 }:
 
-# Builds a real /usr/lib/libc++abi.dylib for PureDarwin.
-#
-# The same vendored LLVM libc++abi / libunwind / libc++ subtrees that
-# src/Libraries/libcxxabi/CMakeLists.txt compiles into *static* archives (for
-# ICU) are compiled here with the identical raw-clang flags, but linked into a
-# single dynamic library. libunwind and the small libc++ subset are folded in
-# so that a downstream `-lc++abi` (e.g. libobjc) resolves the C++ ABI,
-# exception, and unwind symbols in one shot.
-#
-# Kept deliberately in lock-step with that CMakeLists: if the source subset or
-# flags there change, mirror them here.
-
 let
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
@@ -137,6 +125,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin libc++abi.dylib (libc++abi + libunwind + libc++ subset, cross-built)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -1133,6 +1133,7 @@ _strspn
 _ungetc
 _utimensat
 ___isPlatformVersionAtLeast
+__availability_version_check
 _dladdr
 _dlclose
 _dlerror
@@ -1983,3 +1984,26 @@ _y0
 _y0f
 _y1
 _y1f
+
+# Implemented in the vendored libdispatch/libsystem_trace/libc but never listed
+# here, so the archive members were dropped and Security could not link.
+_dispatch_barrier_sync
+_dispatch_set_target_queue
+_dispatch_queue_attr_make_with_autorelease_frequency
+___os_log_impl
+___os_log_fault_impl
+__os_log_impl
+__os_log_fault_impl
+__os_log_disabled
+___dtoa
+___freedtoa
+__os_activity_create
+__os_activity_initiate
+__os_activity_initiate_f
+__os_activity_label_useraction
+__os_activity_current
+__os_activity_none
+_os_activity_scope_enter
+_os_activity_scope_leave
+_os_activity_get_identifier
+_csops_audittoken

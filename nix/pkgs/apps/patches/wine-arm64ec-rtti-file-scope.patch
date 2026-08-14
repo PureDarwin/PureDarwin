@@ -1,0 +1,21 @@
+--- a/dlls/msvcrt/cxx.h
++++ b/dlls/msvcrt/cxx.h
+@@ -92,8 +92,8 @@
+ 
+ #elif defined __WINE_PE_BUILD
+ 
+ #define DEFINE_RTTI_DATA2(name, off, mangled_name, ...) \
+ extern const rtti_object_locator name##_rtti; \
+ type_info name ## _type_info = { &type_info_vtable, NULL, mangled_name }; \
+ extern const rtti_base_descriptor name ## _rtti_base_descriptor[1]; \
+-void __asm_dummy_ ## name ## _rtti(void) \
++void __asm_dummy_ ## name ## _rtti(void) CXX_ASM_NAKED \
+@@ -167,7 +167,7 @@
+ 
+ #elif defined __WINE_PE_BUILD
+ 
+ #define DEFINE_CXX_TYPE2(type, dtor, ...) \
+ extern const cxx_type_info type ## _cxx_type_info[1]; \
+ extern const cxx_exception_type type ## _exception_type; \
+-void __asm_dummy_ ## type ## _exception_type(void) \
++void __asm_dummy_ ## type ## _exception_type(void) CXX_ASM_NAKED \

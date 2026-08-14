@@ -27,10 +27,13 @@
 , testAudioFile ? null
 , imageFileName ? "puredarwin.img"
 , efiBinary ? "BOOTX64.EFI"
+, netbootOnly ? false
+, useRamdisk ? false
+, ramdiskMB ? 128
   # xnu-loader reads this off the ESP at \EFI\BOOT\boot-args.txt
   # it falls back if it cannot find a boot-args.txt, so not strictly needed here
   # but generally nice to have so we can override things easily now
-, bootArgs ? "debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1"
+, bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1"
 }:
 
 assert lib.isDerivation baseSystem;
@@ -50,6 +53,7 @@ stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     export MTOOLS_SKIP_CHECK=1
+    netboot_only=${if netbootOnly then "1" else "0"}
     LINUX_FS_GUID=0FC63DAF-8483-4772-8E79-3D69D8477DE4
     APFS_GUID=7C3457EF-0000-11AA-AA11-00306543ECAC
     # Apple_HFS: xnu-loader scans GPT for this type GUID and derives boot-uuid
@@ -58,6 +62,7 @@ stdenv.mkDerivation {
     # boot-uuid-media for the matching volume.
     HFS_GUID=48465300-0000-11AA-AA11-00306543ECAC
 
+    if [ "$netboot_only" -eq 0 ]; then
     img=puredarwin.img
     esp_sectors=$((${toString espMB} * 2048))
     root_sectors=$((${toString rootMB} * 2048))
@@ -92,8 +97,11 @@ ${if rootFsType == "hfs" then ''
     mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
     printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
     mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt
-    dd if=esp.img of=$img bs=512 seek=$esp_start count=$esp_size conv=notrunc status=none
+    fi
 
+    if [ "$netboot_only" -eq 1 ]; then
+      printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
+    fi
     staging="$PWD/root-staging"
     mkdir -p "$staging"
 
@@ -619,6 +627,44 @@ EOF
     chmod 755  $staging/var/root/.cache
     chmod 755  $staging/var/empty
 
+${lib.optionalString useRamdisk ''
+    # Build the netboot-style RAMDisk from the same minimal staging tree used
+    # for the normal root image. The loader reads this file from the ESP and
+    # publishes it as /chosen/memory-map/RAMDisk for XNU's md0 device.
+    ramdisk_img="$PWD/ramdisk.img"
+    truncate -s $(( ${toString ramdiskMB} * 1024 * 1024 )) "$ramdisk_img"
+    mkfs.vfat -F 32 -n RAMDISK "$ramdisk_img" >/dev/null
+    (
+      cd "$staging"
+      while IFS= read -r -d "" entry; do
+        rel="''${entry#./}"
+        mmd -i "$ramdisk_img" "::/$rel"
+      done < <(find . -mindepth 1 -type d ! -type l -print0)
+
+      while IFS= read -r -d "" entry; do
+        rel="''${entry#./}"
+        source="$entry"
+        if [ -L "$entry" ]; then
+          source=$(readlink -f "$entry" 2>/dev/null || true)
+        fi
+        if [ -f "$source" ]; then
+          mcopy -o -i "$ramdisk_img" "$source" "::/$rel"
+        else
+          echo "skipping non-file ramdisk entry $entry"
+        fi
+      done < <(find . -mindepth 1 \( -type f -o -type l \) -print0)
+    )
+    if [ "$netboot_only" -eq 0 ]; then
+      mcopy -o -i esp.img "$ramdisk_img" ::/ramdisk.img
+    fi
+''}
+
+    # Embed the completed ESP only after the optional ramdisk has been added.
+    if [ "$netboot_only" -eq 0 ]; then
+      dd if=esp.img of=$img bs=512 seek=$esp_start count=$esp_size conv=notrunc status=none
+    fi
+
+    if [ "$netboot_only" -eq 0 ]; then
     echo "Image X11 executables:"
     for executable in Xvfb Xorg xeyes xterm i3 i3bar i3-msg startx dmenu; do
       found=
@@ -698,13 +744,22 @@ EOF
 
     dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc status=none
 ''}
+    fi
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
     mkdir -p $out
+${lib.optionalString netbootOnly ''
+    cp ${xnuLoader}/img/EFI/BOOT/${efiBinary} $out/${efiBinary}
+    cp ${kc}/kernel $out/kernel
+    cp boot-args.txt $out/boot-args.txt
+    cp ramdisk.img $out/ramdisk.img
+''}
+${lib.optionalString (!netbootOnly) ''
     cp puredarwin.img $out/${imageFileName}
+''}
     runHook postInstall
   '';
 

@@ -9,6 +9,7 @@ add_darwin_static_library(libsystem_trace_static)
 target_sources(libsystem_trace_static PRIVATE
     log.c
     signpost.c
+    activity.c
     init.c
 )
 

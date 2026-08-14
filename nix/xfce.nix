@@ -4,7 +4,8 @@
 # Most XFCE "hard" dependencies are optional at configure time
 # (XDT_CHECK_OPTIONAL_PACKAGE), so components missing from this tree are
 # disabled rather than fatal.
-{ atspi2CoreBuild
+{ targetTriple ? "x86_64-apple-darwin20.4"
+, atspi2CoreBuild
 , cairoBuild
 , cairoGobjectBuild
 , darwinCrossToolchain
@@ -86,7 +87,7 @@ let
 
   xfconfBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       shared = true;
       nativeMesonTools = nativeMesonToolsDir;
@@ -116,7 +117,7 @@ let
   libxfce4utilBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/xfce/libxfce4util.nix {
       nativeMesonTools = nativeMesonToolsDir;
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       inherit (pkgs) libxfce4util;
       glib = glibBuild;
@@ -127,7 +128,7 @@ let
     };
   libxfce4uiBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       shared = true;
       nativeMesonTools = nativeMesonToolsDir;
@@ -168,7 +169,7 @@ let
     };
   xfwm4Build =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
       pname = "puredarwin-xfwm4";
@@ -212,7 +213,7 @@ let
   libxfce4windowingBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/xfce/libxfce4windowing.nix {
       nativeMesonTools = nativeMesonToolsDir;
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       # the 4.20.6 release tarball, not nixpkgs' src: that checkout is
       # 4.20.5 (its version attr disagrees) and xfce4-panel 4.20.8 needs
@@ -265,7 +266,7 @@ let
     };
   garconBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       # shared for the same reason as xfconf: xfce4-panel dlopens plugin
       # modules that link this too, so a static copy would be registered
@@ -299,7 +300,7 @@ let
     };
   exoBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       shared = true;
       nativeMesonTools = nativeMesonToolsDir;
@@ -331,7 +332,7 @@ let
     };
   xfce4SessionBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
       pname = "puredarwin-xfce4-session";
@@ -390,7 +391,7 @@ let
     };
   xfce4PanelBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
       # shared, unlike the other leaf executables: the panel's plugins are
@@ -443,7 +444,7 @@ let
     };
   xfdesktopBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
       pname = "puredarwin-xfdesktop";
@@ -488,7 +489,7 @@ let
   xfce4TerminalBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/xfce/xfce4-terminal.nix {
       nativeMesonTools = nativeMesonToolsDir;
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       version = "1.2.0";
       src = xfce4TerminalSrc;
@@ -532,7 +533,7 @@ let
     };
   xfce4SettingsBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
       pname = "puredarwin-xfce4-settings";
@@ -575,7 +576,7 @@ let
     };
   xfce4AppfinderBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
       pname = "puredarwin-xfce4-appfinder";
@@ -611,7 +612,7 @@ let
     };
   thunarBuild =
     if isDarwin then null else pkgs.callPackage ./pkgs/x11/xorg-cross-lib.nix {
-      inherit darwinCrossToolchain nativeLd;
+      inherit darwinCrossToolchain nativeLd targetTriple;
       libSystem = libSystemBuild;
       guestPrefix = true;
       # thunarx extensions are dlopened libtool -module targets, and Thunar

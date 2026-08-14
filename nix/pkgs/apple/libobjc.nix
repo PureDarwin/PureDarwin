@@ -148,6 +148,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Apple objc4 Objective-C runtime, cross-built as /usr/lib/libobjc.A.dylib";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

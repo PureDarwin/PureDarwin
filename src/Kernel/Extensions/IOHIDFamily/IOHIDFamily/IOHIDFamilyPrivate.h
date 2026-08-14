@@ -25,7 +25,7 @@
 
 #ifdef KERNEL
 #include "IOHIDKeys.h"
-/* PD: IOHIDDevice.h (modern HID core) needs iig-generated headers; the
+/* PureDarwin: IOHIDDevice.h (modern HID core) needs iig-generated headers; the
  * declarations below only need IOService. */
 #include <IOKit/IOService.h>
 #endif

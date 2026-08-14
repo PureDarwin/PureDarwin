@@ -118,6 +118,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin libc++.1.dylib (full C++ standard library, cross-built, layered on libc++abi.dylib)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

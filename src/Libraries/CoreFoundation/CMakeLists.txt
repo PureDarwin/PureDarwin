@@ -220,6 +220,7 @@ add_framework(CoreFoundation
                 # AppServices
                 AppServices.subproj/CFNotificationCenter.h
                 AppServices.subproj/CFUserNotification.h
+                AppServices.subproj/CFUserNotificationPriv.h
                 # Base
                 Base.subproj/CFAvailability.h
                 Bridging.subproj/CFXPCBridge.h

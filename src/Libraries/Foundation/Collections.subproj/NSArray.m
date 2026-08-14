@@ -22,6 +22,10 @@
                              (CFIndex)count, &kCFTypeArrayCallBacks);
 }
 
++ (instancetype)arrayWithArray:(NSArray *)array {
+    return (id)CFArrayCreateCopy(kCFAllocatorDefault, (CFArrayRef)array);
+}
+
 - (NSUInteger)count {
     return (NSUInteger)CFArrayGetCount((CFArrayRef)self);
 }
@@ -55,6 +59,12 @@
 
 - (void)addObject:(id)object {
     CFArrayAppendValue((CFMutableArrayRef)self, (const void *)object);
+}
+
+- (void)addObjectsFromArray:(NSArray *)array {
+    CFIndex n = CFArrayGetCount((CFArrayRef)array);
+    CFArrayAppendArray((CFMutableArrayRef)self, (CFArrayRef)array,
+                       CFRangeMake(0, n));
 }
 
 - (void)removeObjectAtIndex:(NSUInteger)index {

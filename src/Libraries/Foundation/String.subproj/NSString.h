@@ -12,6 +12,8 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSRange.h>
 
+@class NSData;
+
 typedef unsigned short unichar;
 
 typedef NS_OPTIONS(NSUInteger, NSStringEncodingConversionOptions) {
@@ -30,6 +32,11 @@ typedef NS_ENUM(NSUInteger, NSStringEncoding) {
 + (instancetype)stringWithFormat:(NSString *)format, ...;
 
 - (instancetype)initWithUTF8String:(const char *)utf8String;
+- (instancetype)initWithBytes:(const void *)bytes
+                       length:(NSUInteger)length
+                     encoding:(NSStringEncoding)encoding;
+
+- (NSData *)dataUsingEncoding:(NSStringEncoding)encoding;
 
 - (NSUInteger)length;
 - (unichar)characterAtIndex:(NSUInteger)index;
@@ -42,6 +49,18 @@ typedef NS_ENUM(NSUInteger, NSStringEncoding) {
          options:(NSStringEncodingConversionOptions)options
            range:(NSRange)range
   remainingRange:(NSRange *)leftover;
+
+@end
+
+
+@interface NSMutableString : NSString
+
++ (instancetype)string;
++ (instancetype)stringWithCapacity:(NSUInteger)capacity;
+
+- (void)appendString:(NSString *)string;
+- (void)appendFormat:(NSString *)format, ...;
+- (void)setString:(NSString *)string;
 
 @end
 

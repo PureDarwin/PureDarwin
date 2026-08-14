@@ -392,6 +392,11 @@ PDGOPBlockHandler(ScreenPtr pScreen, void *timeout)
     region = DamageRegion(p->damage);
     if (RegionNotEmpty(region)) {
         PDGOPBlitDamage(pScrn, region);
+        /* The mapped pages are the VirtIO resource backing, but the host
+         * scanout only sees them after an explicit transfer/flush. */
+        (void)PDGOPPresent(&p->fb, 0, 0,
+                           (uint32_t)pScrn->virtualX,
+                           (uint32_t)pScrn->virtualY);
         DamageEmpty(p->damage);
     }
 }

@@ -13,6 +13,8 @@ stdenv.mkDerivation {
   inherit (wine) version;
   src = wine.src;
 
+  patches = [ ./patches/wine-arm64ec-import-lib.patch ];
+
   nativeBuildInputs = [ pkg-config gnumake flex bison ];
   # sfnt2fon converts the bundled TTFs to .fon bitmaps and needs real freetype;
   # this is the build host's, since these tools only ever run here.

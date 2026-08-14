@@ -11,6 +11,17 @@
 
 #import <objc/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
+#include <CoreFoundation/CFBase.h>
 
+/* The two bridging casts ARC code uses to hand an object to CoreFoundation and
+ * back. They are inlines rather than functions so the __bridge_retained and
+ * __bridge_transfer casts happen in the caller, where ARC can see them. */
+static inline CFTypeRef _Nullable CFBridgingRetain(id _Nullable object) {
+    return (__bridge_retained CFTypeRef)object;
+}
+
+static inline id _Nullable CFBridgingRelease(CFTypeRef CF_RELEASES_ARGUMENT _Nullable value) {
+    return (__bridge_transfer id)value;
+}
 
 #endif /* ! __FOUNDATION_NSOBJECT__ */

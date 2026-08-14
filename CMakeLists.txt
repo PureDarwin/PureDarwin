@@ -107,6 +107,9 @@ else()
 endif()
 set(PUREDARWIN_MACOSX_SDK "${_puredarwin_default_macosx_sdk}" CACHE PATH "macOS SDK root for userspace bootstrap components")
 
+set(PUREDARWIN_LIBCXX_INCLUDE_DIR "${PUREDARWIN_MACOSX_SDK}/usr/include/c++/v1"
+    CACHE PATH "libc++ headers for targets that pass -nostdinc")
+
 option(PUREDARWIN_ENABLE_PROJECTS "Configure PureDarwin project definitions" ON)
 option(PUREDARWIN_ENABLE_KERNEL "Configure PureDarwin kernel targets" ON)
 option(PUREDARWIN_ENABLE_LIBRARIES "Configure PureDarwin library targets" ON)

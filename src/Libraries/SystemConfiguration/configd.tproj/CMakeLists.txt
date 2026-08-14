@@ -1,7 +1,5 @@
 add_darwin_executable(configd MACOSX_VERSION_MIN 11.0)
 
-# The framework build generates only the client half of config.defs; configd is
-# the other end, so it needs the MIG server dispatch routine.
 mig(../SystemConfiguration.fproj/config.defs
     INCLUDES_FROM_TARGET configd
     USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/config.h
@@ -45,19 +43,18 @@ target_sources(configd PRIVATE
     ../../libSystemConfiguration/libSystemConfiguration/libSystemConfiguration_server.c
     ../IPMonitorControl/IPMonitorControlServer.c
     ../Plugins/common/IPMonitorControlPrefs.c
+    ../Plugins/common/InterfaceNamerControlPrefs.c
     ../config-agent-info/config_agent_info.c
     ../pd_awd_report_stub.c
     ../Plugins/pd_ipmonitor_absent.c
 )
 
-# Builtin plugins: compiled into configd rather than dlopen'd, which is what
-# each plugin's own Info.plist asks for with <key>Builtin</key>. The Info.plist
-# still has to be installed as a bundle for plugin_support.c to discover it.
 set(_configd_plugins
     PreferencesMonitor
     LinkConfiguration
     KernelEventMonitor
     IPMonitor
+    InterfaceNamer
 )
 
 # IPMonitor's NAT64 support is the only source in the plugin that genuinely
@@ -91,12 +88,28 @@ foreach(_plugin ${_configd_plugins})
     endforeach()
     target_sources(configd PRIVATE ${_plugin_sources})
     target_compile_definitions(configd PRIVATE HAVE_PLUGIN_${_plugin}=1)
-    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/${_plugin}/Info.plist
+    # Each plist carries CFBundleIdentifier as the literal Xcode build variable
+    # $(PRODUCT_BUNDLE_IDENTIFIER), which Xcode substitutes from the target's
+    # settings at build time. Installed verbatim it stays unexpanded,
+    # CFBundleGetIdentifier() returns NULL, and plugin_support.c skips the
+    # bundle with "no bundle ID" - so configd loads no plugins at all. Substitute
+    # the identifier the builtin table expects, which is what CFBundleName in
+    # these same plists already spells out.
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/${_plugin}/Info.plist _plugin_plist)
+    string(REPLACE "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        "com.apple.SystemConfiguration.${_plugin}" _plugin_plist "${_plugin_plist}")
+    file(GENERATE
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/plugin-plists/${_plugin}/Info.plist
+        CONTENT "${_plugin_plist}")
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/plugin-plists/${_plugin}/Info.plist
         DESTINATION System/Library/SystemConfiguration/${_plugin}.bundle/Contents
         COMPONENT BaseSystem)
 endforeach()
 
 target_include_directories(configd PRIVATE
+    # Security publishes libDER's headers here, under the security_libDER/
+    # spelling its own SecCertificatePriv.h uses.
+    ${PUREDARWIN_SECURITY_PREFIX}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../Plugins/common
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}                                      # config.h, configServer.h
@@ -136,7 +149,11 @@ target_include_directories(configd PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Libraries/XPC/launchd/System-compat            # sandbox.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libc/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../CrashReporterClient/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../Security/include
+    # IOKitUser (Apple's CoreFoundation-based IOKitLib) must come before both
+    # PureDarwin's CF-free PDIOKitLib headers and xnu's kernel-side IOKit, or
+    # InterfaceNamer gets the kernel IOTypes.h and loses IONotificationPortRef,
+    # IORegistryEntryIDMatching and IOConnectSetCFProperties.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../IOKit/iokituser/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../IOKit/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../XPC/libxpc/include             # vproc.h, vproc_priv.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libc
@@ -166,6 +183,10 @@ target_compile_definitions(configd PRIVATE
 )
 
 target_compile_options(configd PRIVATE
+    # <Security/*.h> comes from the built framework's own Headers, which carry
+    # Apple's real API; the source tree's include/Security only holds the
+    # umbrella and the two placeholder headers.
+    -F${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks
     -fblocks
     -F${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../../libSystem/libplatform/pd_bridgeos_compat.h>
@@ -181,6 +202,10 @@ target_link_options(configd PRIVATE
     $<TARGET_FILE:SystemConfiguration>
     "${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks/Security.framework/Versions/A/Security"
     $<TARGET_FILE:CrashReporterClient>
+    # InterfaceNamer talks to IONetworkStack's user client and walks the
+    # registry, so it needs IOKitUser's CF-based IOKitLib.
+    -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib
+    -lIOKitCF
     -lSystem)
 
 target_link_libraries(configd PRIVATE

@@ -84,6 +84,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin/XPC launchd (bootstrap-namespace PID 1)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

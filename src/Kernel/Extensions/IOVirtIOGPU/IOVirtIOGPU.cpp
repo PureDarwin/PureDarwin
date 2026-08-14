@@ -922,6 +922,22 @@ IOVirtIOGPU::start(IOService *provider)
 {
     DEBUG("start provider=%p\n", provider);
 
+    /* IOFramebuffer::start() creates its IOFBController through the
+     * dependent-ID path. VirtIO has no firmware framebuffer dependency, so
+     * provide a stable ID based on the PCI provider before entering the base
+     * class. Without this, inherited user-client calls can run with a
+     * missing controller and fault while Xorg queries the display mode. */
+    if (!getProperty(kIOFBDependentIDKey)) {
+        uint64_t dependentID = provider ? provider->getRegistryEntryID() : 0;
+        OSNumber *number = OSNumber::withNumber(dependentID, 64);
+        if (number) {
+            setProperty(kIOFBDependentIDKey, number);
+            number->release();
+        } else {
+            DEBUG("failed to allocate framebuffer dependent ID\n");
+        }
+    }
+
     if (!super::start(provider)) {
         DEBUG("super::start failed\n");
         return false;
@@ -990,6 +1006,9 @@ IOVirtIOGPU::start(IOService *provider)
 
     fWidth = kDefaultWidth;
     fHeight = kDefaultHeight;
+    fNativePresent = false;
+    fPresentPending = false;
+    fPresentX1 = fPresentY1 = fPresentX2 = fPresentY2 = 0;
     gpuGetDisplayInfo(&fWidth, &fHeight); // best-effort; keep defaults on failure
     fPitch = fWidth * 4;
     fResourceId = 1;
@@ -1027,6 +1046,7 @@ IOVirtIOGPU::start(IOService *provider)
     }
 
     IOPlatformExpert *pe = getPlatform();
+#if !defined(__arm64__) && !defined(__aarch64__)
     if (pe) {
         PE_Video consoleInfo;
         consoleInfo.v_baseAddr = (unsigned long)fFbPhys | 1; // force mapping
@@ -1058,6 +1078,9 @@ IOVirtIOGPU::start(IOService *provider)
             }
         }
     }
+#else
+    (void)pe;
+#endif
 
     fFlushCall = thread_call_allocate(flushCallback, this);
     if (fFlushCall)
@@ -1101,6 +1124,23 @@ IOReturn
 IOVirtIOGPU::newUserClient(task_t owningTask, void *securityID, UInt32 type,
                            IOUserClient **handler)
 {
+    /* Type 0 is the normal framebuffer connection. The inherited
+     * IOFramebufferUserClient assumes a firmware-style controller and faults
+     * during IOServiceOpen for this PCI-backed framebuffer. */
+    if (type == 0) {
+        IOVirtIOGPUUserClient *uc = IOVirtIOGPUUserClient::withOwner(
+            this, owningTask, true);
+        if (!uc)
+            return kIOReturnNoMemory;
+        if (!uc->attach(this) || !uc->start(this)) {
+            uc->detach(this);
+            uc->release();
+            return kIOReturnError;
+        }
+        *handler = uc;
+        return kIOReturnSuccess;
+    }
+
     // The PDSurface protocol does not depend on virgl, so it is offered
     // whether or not 3D came up.
     if (type == kPDSurfaceConnectType) {
@@ -1173,6 +1213,15 @@ IODeviceMemory *
 IOVirtIOGPU::getVRAMRange(void)
 {
     return getApertureRange(kIOFBSystemAperture);
+}
+
+IOBufferMemoryDescriptor *
+IOVirtIOGPU::copyFramebufferMemory()
+{
+    if (!fFbMem)
+        return NULL;
+    fFbMem->retain();
+    return fFbMem;
 }
 
 IOReturn

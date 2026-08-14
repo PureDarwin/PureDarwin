@@ -59,6 +59,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Real apple-oss-distributions ioreg (IOKitTools), linked against real CoreFoundation + this project's MIG-backed IOKitLibCF";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

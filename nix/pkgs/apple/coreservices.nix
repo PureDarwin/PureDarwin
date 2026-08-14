@@ -64,6 +64,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "CoreServices umbrella framework (CarbonCore Multiprocessing entry points)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

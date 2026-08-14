@@ -47,8 +47,6 @@
 , iokitBuild
 , coreServicesBuild
 , jsoncBuild
-, dlsymTestBuild
-, gsbaseTestBuild
 , wineBuild
 , libX11SharedBuild
 , libxcbSharedBuild
@@ -223,6 +221,8 @@
 , xxdBuild
 , xzBuild
 , yajlBuild
+, asmjitTestArm64Build
+, jitTestArm64Build
 , zshArm64Build
 , zshBuild
 }:
@@ -359,8 +359,6 @@ let
     vulkan-loader = vulkanLoaderBuild;
     vulkan-tools = vulkanToolsBuild;
     libxshmfence = libxshmfenceSharedBuild;
-    dlsym-test = dlsymTestBuild;
-    gsbase-test = gsbaseTestBuild;
     xvfb = xvfbBuild;
     xorg = xorgBuild;
     xwayland = xwaylandBuild;
@@ -532,6 +530,15 @@ let
   };
 
   commonPackages = {
+    darwin-toolchain = darwinCrossToolchain;
+    launchd = launchdBuild;
+    launchctl = launchctlBuild;
+    corefoundation = coreFoundationBuild;
+    icucore = icuCoreBuild;
+    iokit = iokitBuild;
+    libobjc = libobjcBuild;
+    libcxx-dylib = libcxxDylibBuild;
+    libcxxabi-dylib = libcxxabiDylibBuild;
     userland = userlandBuild;
     tcc = tccBuild;
     cctools = cctoolsBuild;
@@ -576,6 +583,22 @@ let
     pcre2 = pcre2Build;
     yajl = yajlBuild;
     startup-notification = startupNotificationBuild;
+    xfconf = xfconfBuild;
+    libxfce4util = libxfce4utilBuild;
+    libxfce4ui = libxfce4uiBuild;
+    libxfce4windowing = libxfce4windowingBuild;
+    libwnck = libwnckBuild;
+    garcon = garconBuild;
+    exo = exoBuild;
+    xfwm4 = xfwm4Build;
+    xfce4-session = xfce4SessionBuild;
+    xfce4-panel = xfce4PanelBuild;
+    xfdesktop = xfdesktopBuild;
+    xfce4-appfinder = xfce4AppfinderBuild;
+    thunar = thunarBuild;
+    xfce4-settings = xfce4SettingsBuild;
+    vte = vteBuild;
+    xfce4-terminal = xfce4TerminalBuild;
     cairo = cairoBuild;
     libffi = libffiBuild;
     glib = glibBuild;
@@ -644,7 +667,7 @@ let
         hfsprogs = pkgs.hfsprogs;
         libdmg-hfsplus = pkgs.callPackage ./pkgs/toolchain/libdmg-hfsplus.nix { };
         rootFsType = "hfs";
-        #testAudioFile = /home/vali/development/darwin/badapple.pcm;
+        #testAudioFile = /home/vali/development/darwin/stillalive.pcm;
       };
       imageDebugBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
@@ -665,19 +688,31 @@ let
       };
       imageArm64VirtMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
-        extraPackages = [ ];
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build
+                          jitTestArm64Build asmjitTestArm64Build ];
         kc = kcArm64DebugBuild;
         xnuLoader = xnu-loader.packages.${system}.arm64-virt;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
-        espMB = 64;
-        rootMB = 256;
+        espMB = 768;
+        rootMB = 512;
         imageFileName = "puredarwin-arm64-virt-minimal.img";
-        bootArgs = "debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 vgpu_debug=1 pdtrace=1 ahci_debug=1 no_interrupt_masked_debug=1";
+        ramdiskMB = 512;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
       };
-      # Full arm64 image: the same userland as the x86 .#image, on the
-      # arm64 base system and release KC. Sized for the whole stack
-      # (ICU data and Mesa alone are most of a minimal image).
+      netbootArm64VirtMinimalBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtMinimal;
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build
+                          jitTestArm64Build asmjitTestArm64Build ];
+        kc = kcArm64DebugBuild;
+        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        netbootOnly = true;
+        useRamdisk = true;
+        ramdiskMB = 512;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
+      };
       imageArm64VirtFullBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimalRelease;
         extraPackages = imageExtraPackagesArm64;
@@ -687,13 +722,11 @@ let
         efiBinary = "BOOTAA64.EFI";
         espMB = 64;
         rootMB = 3072;
-        imageFileName = "puredarwin-arm64-virt-full.img";
-        bootArgs = "serial=3 -noprogress";
+        imageFileName = "puredarwin-arm64-virt.img";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 vgpu_debug=1";
       };
       imageArm64VirtMinimalReleaseBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimalRelease;
-        # toybox backs /bin/ls, /bin/cp and friends (they are symlinks
-        # to it), so without it those are all dangling.
         extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ];
         kc = kcArm64ReleaseBuild;
         xnuLoader = xnu-loader.packages.${system}.arm64-virt;
@@ -702,9 +735,9 @@ let
         espMB = 64;
         rootMB = 512;
         imageFileName = "puredarwin-arm64-virt-minimal-release.img";
-        bootArgs = "serial=3 -noprogress ahci_debug=1 kext=0xffff io=0xffff";
+        bootArgs = "-v serial=3 ahci_debug=1 kext=0xffff io=0xffff";
       };
-      strippedExtraPackages = [ zshBuild toyboxBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild coreServicesBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild gsbaseTestBuild ];
+      strippedExtraPackages = [ zshBuild toyboxBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild coreServicesBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild foundationBuild securityBuild systemConfigurationBuild diskArbitrationBuild ioregBuild ];
       imageStrippedBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
         extraPackages = strippedExtraPackages;
@@ -722,7 +755,7 @@ let
         imageFileName = "puredarwin-minimal.img";
         espMB = 64;
         rootMB = 384;
-        bootArgs = "debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemMinimalDebug;
@@ -733,7 +766,7 @@ let
         imageFileName = "puredarwin-minimal-debug.img";
         espMB = 64;
         rootMB = 384;
-        bootArgs = "-v debug=0x219 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1 pdtrace=1";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 serial_video_mirror=1 pdtrace=1";
       };
       runVm = pkgs.writeShellApplication {
         name = "puredarwin-vm";
@@ -979,15 +1012,19 @@ let
           exec qemu-system-aarch64 \
             -machine virt,gic-version=3 \
             -boot order=c,strict=on \
-            -cpu "''${PUREDARWIN_ARM64_VM_CPU:-max}" \
+            -cpu "''${PUREDARWIN_ARM64_VM_CPU:-neoverse-n2}" \
             -smp "''${PUREDARWIN_VM_SMP:-4}" \
             -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
             -drive if=pflash,format=raw,unit=0,readonly=on,file="$aavmf_code" \
             -drive if=pflash,format=raw,unit=1,file="$aavmf_vars" \
             -drive if=none,id=system,file="$image",format=raw$image_readonly_opt \
             -device virtio-blk-pci,drive=system,bootindex=1 \
+            -device ramfb \
             -device virtio-net-pci,netdev=net0 \
             -netdev user,id=net0,hostfwd=tcp::2223-:22 \
+            -device qemu-xhci,id=xhci \
+            -device usb-kbd,bus=xhci.0 \
+            -device usb-mouse,bus=xhci.0 \
             -serial mon:stdio \
             -display none \
             -no-reboot \
@@ -1008,7 +1045,7 @@ let
       libcxx-dylib = libcxxDylibBuild;
       libcxx-test = libcxxTestBuild;
       mesa = mesaBuild;
-          libobjc = libobjcBuild;
+      libobjc = libobjcBuild;
       objc-test = objcTestBuild;
       foundation = foundationBuild;
       autoconf = autoconfBuild;
@@ -1022,6 +1059,7 @@ let
       image = imageBuild;
       image-arm64-virt = imageArm64VirtBuild;
       image-arm64-virt-minimal = imageArm64VirtMinimalBuild;
+      netboot-arm64-virt-minimal = netbootArm64VirtMinimalBuild;
       image-arm64-virt-minimal-release = imageArm64VirtMinimalReleaseBuild;
       image-arm64-virt-full = imageArm64VirtFullBuild;
       image-hfs = imageHfsBuild;

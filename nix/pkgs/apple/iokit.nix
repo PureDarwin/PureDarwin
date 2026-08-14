@@ -68,6 +68,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Real CF-shaped IOKitLib (IOServiceGetMatchingService, IORegistryEntryCreateCFProperty, etc), linked against real CoreFoundation";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

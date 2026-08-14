@@ -26,6 +26,8 @@
 , libxcb
 , libXext
 , libXfixes
+, mesaGlHeaders
+, glHeaders
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
@@ -48,7 +50,7 @@ let
   # GLX pulls in Mesa (gl.pc, dri.pc) plus everything gl.pc/glx.pc name in
   # Requires.private - pkg-config walks those even for a shared link, so all
   # of x11, xext, xfixes, x11-xcb, xcb, xcb-glx and xcb-dri2 have to resolve.
-  glxDeps = [ mesa libX11 libxcb libXext libXfixes ];
+  glxDeps = [ mesa libX11 libxcb libXext libXfixes glHeaders ];
   glxPkgConfigDeps = map lib.getDev glxDeps;
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
@@ -73,7 +75,7 @@ stdenv.mkDerivation {
     python3
   ];
 
-  buildInputs = xDeps;
+  buildInputs = xDeps ++ [ glHeaders ];
 
   postPatch = ''
     patchShebangs .
@@ -134,7 +136,7 @@ pkgconfig = '${pkg-config}/bin/pkg-config'
 [built-in options]
 # _XSERVER64: see xvfb.nix -- meson's cross sizeof check fails, so define
 # it by hand or XID/Mask/Atom are 8 bytes and value-list parsing breaks.
-c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-D_XSERVER64=1', '-I${libSystem}/usr/include']
+c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-D_XSERVER64=1', '-I${libSystem}/usr/include', '-I${glHeaders}/include']
 c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylinker_install_name,/usr/lib/dyld', '-Wl,-platform_version,macos,11.0,11.5', '-lSystem', '${freetype2}/lib/libfreetype.dylib', '${libfontenc}/lib/libfontenc.a', '${xvfbZlib}/lib/libz.a']
 
 [host_machine]
@@ -144,8 +146,30 @@ cpu = '${targetInfo.mesonCpu}'
 endian = '${targetInfo.mesonEndian}'
 EOF
 
+    # Mesa's DRI headers have no pkg-config file, but Xorg's include checks
+    # require the small metadata package even when DRI1/2/3 are disabled.
+    mkdir -p dri-pkgconfig/lib/pkgconfig
+    cat > dri-pkgconfig/lib/pkgconfig/dri.pc <<EOF
+prefix=${mesaGlHeaders}
+includedir=${mesaGlHeaders}/include
+Name: dri
+Description: Direct Rendering Infrastructure headers
+Version: 1.0.0
+    Cflags: -I${mesaGlHeaders}/include
+EOF
+    cat > dri-pkgconfig/lib/pkgconfig/gl.pc <<EOF
+prefix=${mesa}
+exec_prefix=${mesa}
+libdir=${mesa}/usr/lib
+includedir=${glHeaders}/include
+Name: gl
+Description: PureDarwin Mesa OpenGL library
+Version: 1.2
+Libs: -L${mesa}/usr/lib -lGL
+Cflags: -I${glHeaders}/include
+EOF
     # Mesa keeps its .pc files under usr/lib/pkgconfig, not lib/pkgconfig.
-    export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "lib/pkgconfig" glxPkgConfigDeps}:${lib.makeSearchPath "usr/lib/pkgconfig" glxPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" glxPkgConfigDeps}"
+    export PKG_CONFIG_PATH="$PWD/dri-pkgconfig/lib/pkgconfig:${lib.makeSearchPath "lib/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" xPkgConfigDeps}:${lib.makeSearchPath "lib/pkgconfig" glxPkgConfigDeps}:${lib.makeSearchPath "usr/lib/pkgconfig" glxPkgConfigDeps}:${lib.makeSearchPath "share/pkgconfig" glxPkgConfigDeps}"
     # input_thread=false: the threaded input path spins on Darwin - ospoll's
     # poll() backend returns immediately and InputThreadDoWork busy-loops. It was
     # off by accident until now (its PTHREAD_MUTEX_RECURSIVE probe was failing

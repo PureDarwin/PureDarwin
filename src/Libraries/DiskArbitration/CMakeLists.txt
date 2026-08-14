@@ -38,6 +38,9 @@ target_sources(DiskArbitration PRIVATE
 target_include_directories(DiskArbitration PUBLIC include)
 
 target_include_directories(DiskArbitration PRIVATE
+    # Security publishes libDER's headers here, under the security_libDER/
+    # spelling its own SecCertificatePriv.h uses.
+    ${PUREDARWIN_SECURITY_PREFIX}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/DiskArbitration
     # binary dir before diskarbitrationd/: the framework wants the MIG-generated
     # DAServer.h, and the daemon directory has a DAServer.h of its own that would
@@ -49,7 +52,6 @@ target_include_directories(DiskArbitration PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../CrashReporterClient/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Security/include
     # Apple's CoreFoundation-based IOKitLib (IOKitUser), not PureDarwin's
     # CF-free PDIOKitLib - DA needs IOBSDNameMatching, the registry property
     # calls and kIOServicePlane.
@@ -94,6 +96,10 @@ target_compile_definitions(DiskArbitration PRIVATE
 )
 
 target_compile_options(DiskArbitration PRIVATE
+    # <Security/*.h> comes from the built framework's own Headers, which carry
+    # Apple's real API; the source tree's include/Security only holds the
+    # umbrella and the two placeholder headers.
+    -F${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks
     -fblocks
     -F${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libplatform/pd_bridgeos_compat.h>
@@ -153,6 +159,9 @@ target_sources(diskarbitrationd PRIVATE
 )
 
 target_include_directories(diskarbitrationd PRIVATE
+    # Security publishes libDER's headers here, under the security_libDER/
+    # spelling its own SecCertificatePriv.h uses.
+    ${PUREDARWIN_SECURITY_PREFIX}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/diskarbitrationd
     ${CMAKE_CURRENT_SOURCE_DIR}/pd-compat-include                     # FSPrivate.h
     ${CMAKE_CURRENT_BINARY_DIR}/daemon                                # DAServer*.h (MIG)
@@ -163,7 +172,6 @@ target_include_directories(diskarbitrationd PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/notify                         # notify.h, notify_keys.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/pd-compat-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../CrashReporterClient/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Security/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOKit/iokituser/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/libxpc/include                 # xpc/private.h, bootstrap_priv.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../XPC/libinfo/compat                 # dispatch/private.h
@@ -211,6 +219,10 @@ target_compile_definitions(diskarbitrationd PRIVATE
 )
 
 target_compile_options(diskarbitrationd PRIVATE
+    # <Security/*.h> comes from the built framework's own Headers, which carry
+    # Apple's real API; the source tree's include/Security only holds the
+    # umbrella and the two placeholder headers.
+    -F${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks
     -fblocks
     -F${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libplatform/pd_bridgeos_compat.h>

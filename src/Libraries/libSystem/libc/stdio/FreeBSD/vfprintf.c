@@ -34,10 +34,10 @@
 #pragma clang diagnostic ignored "-Wint-conversion"
 
 #include <TargetConditionals.h>
-/* PureDarwin: forced to 0 -- we don't have the os_log packed-argument backend
+/* PureDarwin: forced to 0 - we don't have the os_log packed-argument backend
  * (_os_crash_fmt/os_log_pack_*) this flag pulls in. Falls back to os_crash()'s
  * simple single-string path (os/assumes.h), which is real and already wired
- * (darwin/pd_os_crash.c) -- same report-then-trap contract for this %n abuse
+ * (darwin/pd_os_crash.c) - same report-then-trap contract for this %n abuse
  * guard, just without structured os_log data we have no infra to produce. */
 #define OS_CRASH_ENABLE_EXPERIMENTAL_LIBTRACE 0
 

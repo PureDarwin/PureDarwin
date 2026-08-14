@@ -230,11 +230,15 @@ int msdosfs_vfs_mount(struct mount *mp, vnode_t devvp, user_addr_t data, vfs_con
 	OSKextRetainKextWithLoadTag(OSKextGetCurrentLoadTag());
 #endif
 	
-	error = copyin(data, &args, sizeof(struct msdosfs_args));
-	if (error)
-		goto error_exit;
-	if (args.magic != MSDOSFS_ARGSMAGIC)
-		args.flags = 0;
+	/* vfs_mountroot() calls VFS_MOUNT with no user mount arguments. */
+	bzero(&args, sizeof(args));
+	if (data != USER_ADDR_NULL) {
+		error = copyin(data, &args, sizeof(struct msdosfs_args));
+		if (error)
+			goto error_exit;
+		if (args.magic != MSDOSFS_ARGSMAGIC)
+			args.flags = 0;
+	}
 
 	/*
 	 * If updating, check whether changing from read-only to
@@ -362,8 +366,10 @@ int msdosfs_mount(vnode_t devvp, struct mount *mp, vfs_context_t context)
 	 */
 
 	error = buf_invalidateblks(devvp, BUF_WRITE_DATA, 0, 0);
-	if (error)
+	if (error) {
+		printf("msdosfs_mount: invalidate blocks failed: %d\n", error);
 		return (error);
+	}
 
 	vfs_setlocklocal(mp);
 	
@@ -377,8 +383,10 @@ int msdosfs_mount(vnode_t devvp, struct mount *mp, vfs_context_t context)
 	 * NOTE: 4096 is a maximum sector size in current...
 	 */
 	error = (int)buf_meta_bread(devvp, 0, 4096, vfs_context_ucred(context), &bp);
-	if (error)
+	if (error) {
+		printf("msdosfs_mount: boot-sector read failed: %d\n", error);
 		goto error_exit;
+	}
 	buf_markaged(bp);
 	bsp = (union bootsector *)buf_dataptr(bp);
 	b50 = (struct byte_bpb50 *)bsp->bs50.bsBPB;
@@ -470,6 +478,7 @@ int msdosfs_mount(vnode_t devvp, struct mount *mp, vfs_context_t context)
 		error = ENXIO;
 		goto error_exit;
 	}
+	printf("msdosfs_mount: bytes/sec=%u blocksize=%u\n", pmp->pm_BytesPerSec, pmp->pm_BlockSize);
 	pmp->pm_BlocksPerSec = pmp->pm_BytesPerSec / pmp->pm_BlockSize;
 	pmp->pm_bnshift = ffs(pmp->pm_BlockSize) - 1;
 	
@@ -1581,7 +1590,8 @@ int msdosfs_module_start(kmod_info_t *ki, void *data)
 	vfe.vfe_vopcnt = 2;		/* We just have vnode operations for regular files and directories, and the FAT */
 	vfe.vfe_opvdescs = msdosfs_vnodeop_opv_desc_list;
 	strlcpy(vfe.vfe_fsname, "msdos", sizeof(vfe.vfe_fsname));
-	vfe.vfe_flags = VFS_TBLTHREADSAFE | VFS_TBLNOTYPENUM | VFS_TBLLOCALVOL | VFS_TBL64BITREADY | VFS_TBLREADDIR_EXTENDED;
+	/* Allow FAT volumes to be selected by the generic root mount probe. */
+	vfe.vfe_flags = VFS_TBLTHREADSAFE | VFS_TBLNOTYPENUM | VFS_TBLLOCALVOL | VFS_TBL64BITREADY | VFS_TBLREADDIR_EXTENDED | VFS_TBLCANMOUNTROOT;
 	vfe.vfe_reserv[0] = 0;
 	vfe.vfe_reserv[1] = 0;
 	

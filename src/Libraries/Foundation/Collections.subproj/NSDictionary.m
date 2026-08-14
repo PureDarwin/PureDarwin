@@ -80,6 +80,39 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
                                   &kCFTypeDictionaryValueCallBacks);
 }
 
+/* CFDictionaryCreate takes keys first, the ObjC spelling takes objects first. */
++ (instancetype)dictionaryWithObjects:(const id *)objects
+                              forKeys:(const id *)keys
+                                count:(NSUInteger)count {
+    return (id)CFDictionaryCreate(kCFAllocatorDefault,
+                                  (const void **)keys, (const void **)objects,
+                                  (CFIndex)count,
+                                  &kCFTypeDictionaryKeyCallBacks,
+                                  &kCFTypeDictionaryValueCallBacks);
+}
+
+- (void)enumerateKeysAndObjectsUsingBlock:(void (^)(id, id, BOOL *))block {
+    CFIndex n = CFDictionaryGetCount((CFDictionaryRef)self);
+    if (n <= 0 || block == NULL) {
+        return;
+    }
+    const void **keys = malloc((size_t)n * sizeof(*keys));
+    const void **values = malloc((size_t)n * sizeof(*values));
+    if (keys == NULL || values == NULL) {
+        free(keys);
+        free(values);
+        return;
+    }
+    /* Snapshot first: the block is allowed to mutate a mutable receiver. */
+    CFDictionaryGetKeysAndValues((CFDictionaryRef)self, keys, values);
+    BOOL stop = NO;
+    for (CFIndex i = 0; i < n && !stop; i++) {
+        block((__bridge id)keys[i], (__bridge id)values[i], &stop);
+    }
+    free(keys);
+    free(values);
+}
+
 + (nullable instancetype)dictionaryWithContentsOfURL:(NSURL *)url
                                                error:(NSError **)error {
     if (error != NULL) {

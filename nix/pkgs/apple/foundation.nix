@@ -33,7 +33,10 @@ let
     "String.subproj/NSString"
     "String.subproj/NSCFString"
     "Collections.subproj/NSArray"
+    "Collections.subproj/NSData"
     "Collections.subproj/NSDictionary"
+    "Numeric.subproj/NSNumber"
+    "Date.subproj/NSDate"
     "URL.subproj/NSURL"
     "Runtime.subproj/NSError"
   ];
@@ -60,7 +63,7 @@ stdenv.mkDerivation {
     # these sources and its own real Foundation.framework/*.h must not be
     # picked up here.
     mkdir -p foundation-headers/Foundation
-    find Runtime.subproj String.subproj Collections.subproj URL.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
+    find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj XPC.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
 
     # corefoundation.nix installs its headers flattened into $out/include
     # (no "CoreFoundation/" subdirectory) - stage the same
@@ -100,7 +103,7 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/usr/lib $out/usr/include/Foundation
     cp libFoundation.dylib $out/usr/lib/
-    find Runtime.subproj String.subproj Collections.subproj URL.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
+    find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj XPC.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
     runHook postInstall
   '';
 
@@ -108,6 +111,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin Foundation (NSString/NSCFString real toll-free bridge slice), cross-built as /usr/lib/libFoundation.dylib";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

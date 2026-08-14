@@ -131,15 +131,28 @@ let
   coreServicesSource = sourceWith "puredarwin-coreservices-source" [
     "src/Libraries/CoreServices"
   ];
-  securitySource = sourceWith "puredarwin-security-source" [
-    "src/Libraries/Security"
-  ];
-  # SystemConfiguration builds inside the same CMake project as libSystem
-  # (it links -lSystem), so it needs libSystem's whole source set plus
-  # its own directory.
-  # SystemConfiguration builds inside the same CMake project as libSystem
-  # (it links -lSystem), so it needs libSystem's whole source set plus
-  # its own directory.
+  securitySource = sourceWith "puredarwin-security-source"
+    (libSystemSourcePaths ++ [
+      "src/Libraries/Security"
+      "src/Libraries/libDER"
+      "src/Libraries/CommonCrypto"
+      "src/Libraries/XPC/libxpc/include"
+      # debugging.h includes <asl.h>
+      "src/Libraries/syslog/libsystem_asl.tproj/include"
+      # SecCFWrappers.h includes <IOKit/IOReturn.h>
+      "src/Kernel/xnu/iokit"
+      # SecItem.c/SecTrust.c include <os/activity.h>
+      "src/Libraries/libsystem_trace"
+      # SecPolicyLeafCallbacks.c includes <dlfcn.h>
+      "src/Libraries/dyld/upstream/include"
+      # SecCFError.c includes <notify.h>
+      "src/Libraries/XPC/notify"
+      # CommonCrypto reaches <mach-o/dyld.h> -> <architecture/byte_order.h>
+      "src/Libraries/architecture"
+      # SecTask.c includes <IOKit/IOKitLib.h> and <bsm/libbsm.h>
+      "src/Libraries/IOKit"
+      "src/Libraries/libdarwin/pd-compat-include"
+    ]);
   systemConfigurationSource = sourceWith "puredarwin-systemconfiguration-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/SystemConfiguration"
@@ -162,6 +175,16 @@ let
     ]);
   iokitCFSource = sourceWith "puredarwin-iokitcf-source"
     (libSystemSourcePaths ++ [ "src/Kernel/xnu/iokit" ]);
+  symptomReporterSource = sourceWith "puredarwin-symptomreporter-source"
+    (libSystemSourcePaths ++ [
+      "src/Libraries/SymptomReporter"
+    ]);
+  protocolBufferSource = sourceWith "puredarwin-protocolbuffer-source" [
+    "src/Libraries/ProtocolBuffer"
+  ];
+  wirelessDiagnosticsSource = sourceWith "puredarwin-wirelessdiagnostics-source" [
+    "src/Libraries/WirelessDiagnostics"
+  ];
   diskArbitrationSource = sourceWith "puredarwin-diskarbitration-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/DiskArbitration"
@@ -232,6 +255,9 @@ let
   # glib/gtk3/pango/cairo/pcre2/fribidi - everything already here - with
   # gnutls and icu behind get_option(). xfce4-terminal asks for vte >= 0.51.3,
   # so 0.70 is comfortably new enough.
+  # asmjit: a real third-party JIT library, used to prove PureDarwin supports
+  # code generation the way an unmodified upstream JIT expects.
+  asmjitSrc = pkgs.asmjit.src;
   vteSrc = pkgs.fetchurl {
     url = "https://download.gnome.org/sources/vte/0.70/vte-0.70.6.tar.xz";
     sha256 = "sha256-6Q4gjdWrcPlnXmtTLr1cjYMJQ75A7svZ026YCXkIAVI=";
@@ -268,6 +294,9 @@ in {
     systemConfigurationSource
     iokitCFSource
     diskArbitrationSource
+    symptomReporterSource
+    protocolBufferSource
+    wirelessDiagnosticsSource
     objcSource
     libcxxDylibSource
     foundationSource
@@ -279,6 +308,7 @@ in {
     xfce4SessionSrc
     xfce4PanelSrc
     xfdesktopSrc
+    asmjitSrc
     vteSrc
     xfce4TerminalSrc
     xfce4SettingsSrc

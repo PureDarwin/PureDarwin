@@ -980,13 +980,6 @@ snprintf_l(char *str, size_t size, locale_t loc, const char *format, ...)
     return ret;
 }
 
-/*
- * PureDarwin: real uuid_generate/uuid_generate_random/uuid_generate_time
- * (plus uuid_clear/compare/copy/is_null/unparse/pack/unpack) now come from
- * the vendored libc/uuid/uuidsrc sources (see libc/CMakeLists.txt) instead
- * of this hand-rolled arc4random-only stub.
- */
-
 unsigned int
 mk_timer_create(void)
 {
@@ -1045,108 +1038,13 @@ qos_class_self(void)
 }
 
 /*
- * __udivti3: compiler-rt's 128-bit unsigned division, needed whenever code
- * divides an unsigned __int128 (CFBigNumber's 128-bit arithmetic here) on a
- * target without native 128-bit division. No prebuilt libclang_rt.builtins
- * for this cross target, so implement the well-known compiler-rt algorithm
- * directly: binary long division, one bit at a time. Not fast, but CF only
- * needs this for occasional big-number formatting, not a hot path.
+ * The compiler-rt 128-bit builtins (__udivti3, __divti3, __umodti3, __modti3,
+ * __floattidf, __fixdfti) used to be hand-written here, because no prebuilt
+ * libclang_rt.builtins existed for this cross target. It is cross-built now
+ * (nix/pkgs/toolchain/compiler-rt.nix) and force_loaded into libSystem, so the
+ * real implementations are used instead - they handle the edge cases these
+ * did not, notably trapping on division by zero rather than quietly returning 0.
  */
-unsigned __int128
-__udivti3(unsigned __int128 a, unsigned __int128 b)
-{
-    if (b == 0) return 0; /* real compiler-rt traps; we don't have one to trap into */
-    unsigned __int128 quotient = 0;
-    unsigned __int128 remainder = 0;
-    for (int i = 127; i >= 0; i--) {
-        remainder = (remainder << 1) | ((a >> i) & 1);
-        if (remainder >= b) {
-            remainder -= b;
-            quotient |= ((unsigned __int128)1 << i);
-        }
-    }
-    return quotient;
-}
-
-/*
- * __divti3: the signed counterpart, same reason. Divide the magnitudes with
- * __udivti3 and apply the sign, which is what compiler-rt does.
- */
-__int128
-__divti3(__int128 a, __int128 b)
-{
-    int negate = 0;
-
-    if (a < 0) { a = -a; negate ^= 1; }
-    if (b < 0) { b = -b; negate ^= 1; }
-
-    unsigned __int128 quotient =
-        __udivti3((unsigned __int128)a, (unsigned __int128)b);
-
-    return negate ? -(__int128)quotient : (__int128)quotient;
-}
-
-
-/*
- * More compiler-rt 128-bit builtins, same reason as __udivti3 above: there is
- * no prebuilt libclang_rt.builtins for this cross target. Written out rather
- * than using the C operators, because the compiler lowers those right back
- * into these functions.
- */
-unsigned __int128
-__umodti3(unsigned __int128 a, unsigned __int128 b)
-{
-    if (b == 0) return 0;
-    return a - __udivti3(a, b) * b;
-}
-
-__int128
-__modti3(__int128 a, __int128 b)
-{
-    if (b == 0) return 0;
-    return a - __divti3(a, b) * b;
-}
-
-/* 2^64, the scale factor between the two halves of a 128-bit value. */
-#define PD_TWO64 18446744073709551616.0
-
-double
-__floattidf(__int128 a)
-{
-    if (a == 0) return 0.0;
-
-    int neg = a < 0;
-    unsigned __int128 u = neg ? -(unsigned __int128)a : (unsigned __int128)a;
-    /* uint64_t -> double is native, so split and recombine. */
-    double r = (double)(uint64_t)(u >> 64) * PD_TWO64 + (double)(uint64_t)u;
-
-    return neg ? -r : r;
-}
-
-__int128
-__fixdfti(double a)
-{
-    if (a != a) return 0;              /* NaN */
-
-    int neg = a < 0;
-    if (neg) a = -a;
-    if (a < 1.0) return 0;
-
-    unsigned __int128 r;
-    if (a < PD_TWO64) {
-        r = (unsigned __int128)(uint64_t)a;
-    } else {
-        double hi = a / PD_TWO64;
-        if (hi >= PD_TWO64) {          /* saturate, as compiler-rt does */
-            return neg ? -(((__int128)1) << 126) * 2 : ~(((__int128)1) << 127);
-        }
-        uint64_t h = (uint64_t)hi;
-        uint64_t l = (uint64_t)(a - (double)h * PD_TWO64);
-        r = ((unsigned __int128)h << 64) | l;
-    }
-
-    return neg ? -(__int128)r : (__int128)r;
-}
 
 /*
  * libplatform already implements these as _platform_memset_pattern*, and
@@ -1186,11 +1084,19 @@ __pd_memset_pattern16(void *b, const void *pattern16, size_t len)
  * s_scalbnl.c, but that alias is not emitted for Mach-O here - exporting
  * _scalbnl pulls the object in and ldexpl still comes out undefined. They are
  * the same operation for a binary-radix long double, which is what x86_64 has.
+ *
+ * scalbnl itself only exists on x86: openlibm builds it from its ld80/ tree,
+ * which is the 80-bit x87 long double. On arm64 long double is plain double,
+ * so scalbn is both available and exactly right.
  */
 long double
 ldexpl(long double x, int n)
 {
+#if defined(__aarch64__) || defined(__arm64__)
+    return scalbn((double)x, n);
+#else
     return scalbnl(x, n);
+#endif
 }
 
 

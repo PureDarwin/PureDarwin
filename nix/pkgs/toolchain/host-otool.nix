@@ -90,7 +90,7 @@ stdenv.mkDerivation {
   dontFixup = true;
 
   meta = with lib; {
-    description = "PureDarwin otool and install_name_tool, cross-built for PureDarwin";
-    platforms = platforms.linux;
+    description = "PureDarwin otool and install_name_tool";
+    platforms = platforms.unix;
   };
 }

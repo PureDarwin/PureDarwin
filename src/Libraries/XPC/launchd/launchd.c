@@ -110,7 +110,6 @@ static void handle_pid1_crashes_separately(void);
 static void do_pid1_crash_diagnosis_mode(const char *msg);
 static int basic_fork(void);
 static bool do_pid1_crash_diagnosis_mode2(const char *msg);
-static void pd_phase(const char *);
 static void pd_pid1_prepare_legacy_ipc(void);
 
 static void *update_thread(void *nothing);
@@ -227,20 +226,15 @@ main(int argc, char *const *argv)
 			launchd_syslog(LOG_NOTICE | LOG_CONSOLE, "*** Debug logging is enabled. ***");
 		}
 
-		pd_phase("before pid1 crash handlers");
 		handle_pid1_crashes_separately();
-		pd_phase("after pid1 crash handlers");
 
 		/* Start the update thread.
 		 *
 		 * <rdar://problem/5039559&6153301>
 		 */
 		pthread_t t = NULL;
-		pd_phase("before update thread");
 		(void)os_assumes_zero(pthread_create(&t, NULL, update_thread, NULL));
-		pd_phase("after update thread create");
 		(void)os_assumes_zero(pthread_detach(t));
-		pd_phase("after update thread detach");
 
 		/* PID 1 doesn't have a flat namespace. */
 		launchd_flat_mach_namespace = false;
@@ -286,29 +280,18 @@ main(int argc, char *const *argv)
 		launchd_syslog(LOG_DEBUG, "Per-user launchd started (UID/username): %u/%s.", launchd_uid, launchd_username);
 	}
 
-	pd_phase("before networking monitor");
 	monitor_networking_state();
-	pd_phase("after networking monitor");
 	if (pid1_magic) {
-		pd_phase("before legacy ipc server");
 		pd_pid1_prepare_legacy_ipc();
 		ipc_server_init();
-		pd_phase("after legacy ipc server");
 	}
-	pd_phase("before jobmgr_init");
 	jobmgr_init(sflag);
-	pd_phase("after jobmgr_init");
 	if (pid1_magic) {
 		/* PureDarwin: mount /dev before launchctl bootstraps the system domain. */
 		extern void pd_launchd_boot(void);
-		pd_phase("before pd_launchd_boot");
 		pd_launchd_boot();
-		pd_phase("after pd_launchd_boot");
 	}
-	pd_phase("before runtime init2");
 	launchd_runtime_init2();
-	pd_phase("after runtime init2");
-	pd_phase("entering runtime");
 	launchd_runtime();
 }
 
@@ -327,15 +310,6 @@ handle_pid1_crashes_separately(void)
 	(void)posix_assumes_zero(sigaction(SIGTRAP, &fsa, NULL));
 	(void)posix_assumes_zero(sigaction(SIGABRT, &fsa, NULL));
 	(void)posix_assumes_zero(sigaction(SIGSEGV, &fsa, NULL));
-}
-
-void
-pd_phase(const char *phase)
-{
-	if (pid1_magic && launchd_console) {
-		fprintf(launchd_console, "PureDarwin launchd: %s\n", phase);
-		fflush(launchd_console);
-	}
 }
 
 void

@@ -220,6 +220,22 @@ StartIOKitMatching(void)
 	 * removed and personalities have been sent.
 	 */
 	IOService::getServiceRoot()->adjustBusy(1);
+
+	/*
+	 * PureDarwin has no IOKit daemon. Upstream, kernelmanagerd sends its
+	 * personalities and the kext_request handler answers by calling
+	 * IOService::iokitDaemonLaunched(), which drops the busy count taken
+	 * just above, releases any deferred matches and publishes the "IOKit"
+	 * resource. Here every kext is already in the kernel collection before
+	 * matching starts, so that message never arrives: without this the
+	 * registry stays busy forever, IOKitWaitQuiet never returns, and
+	 * anything waiting for quiescence (configd's InterfaceNamer, so no enN
+	 * is ever named) blocks until its own timeout.
+	 *
+	 * Everything the daemon would have delivered is present already, so
+	 * report it as launched now rather than leaving the count unbalanced.
+	 */
+	IOService::iokitDaemonLaunched();
 #endif
 }
 

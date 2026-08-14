@@ -97,6 +97,11 @@ EOF
 
   buildPhase = ''
     runHook preBuild
+    # libxfce4util-config.c includes this generated source directly.  The
+    # upstream Meson graph does not express that include as a dependency, so
+    # parallel Ninja builds can compile the consumer before the generator.
+    ninja -C build libxfce4util/libxfce4util-visibility.c \
+      libxfce4util/libxfce4util-visibility.h
     ninja -C build
     runHook postBuild
   '';

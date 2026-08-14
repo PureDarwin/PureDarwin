@@ -1,12 +1,18 @@
 #include <PDGOP.h>
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
+#include <stdio.h>
 #include <string.h>
 
 #define kIOFBVRAMMemory 110
 #define kIOFBGetPixelInformationSelector 1
 #define kIOFBGetCurrentDisplayModeSelector 2
 #define kIOFBSystemAperture 0
+#define kPDGPU_Present 11
+
+typedef struct PDGOPPresentRect {
+    uint32_t x, y, width, height;
+} PDGOPPresentRect;
 
 static const char *gPDGOPLastErrorStage = "none";
 
@@ -61,8 +67,11 @@ PDGOPOpen(PDGOPFramebuffer *fb)
     }
 
     static const char *kFramebufferClasses[] = {
-        "IOGOPFramebuffer",
         "IOVirtIOGPU",
+        "IOGOPFramebuffer",
+        /* Some ARM64 kernels publish the concrete framebuffer under the
+         * IOFramebuffer superclass in the user-visible registry. */
+        "IOFramebuffer",
     };
     fb->service = IO_OBJECT_NULL;
     PDGOP_SET_STAGE("IOServiceMatching");
@@ -79,6 +88,9 @@ PDGOPOpen(PDGOPFramebuffer *fb)
         kr = fb->service != IO_OBJECT_NULL ? KERN_SUCCESS : KERN_FAILURE;
 #endif
         if (fb->service != IO_OBJECT_NULL) {
+            char serviceName[128] = {0};
+            if (IORegistryEntryGetName(fb->service, serviceName) == KERN_SUCCESS)
+                fprintf(stderr, "PDGOP: selected framebuffer service %s\n", serviceName);
             break;
         }
         kr = KERN_FAILURE;
@@ -160,6 +172,22 @@ PDGOPClose(PDGOPFramebuffer *fb)
         (void)mach_port_deallocate(mach_task_self(), fb->masterPort);
     }
     memset(fb, 0, sizeof(*fb));
+}
+
+kern_return_t
+PDGOPPresent(PDGOPFramebuffer *fb, uint32_t x, uint32_t y,
+             uint32_t width, uint32_t height)
+{
+    PDGOPPresentRect rect;
+
+    if (fb == NULL || fb->connect == IO_OBJECT_NULL)
+        return KERN_INVALID_ARGUMENT;
+    rect.x = x;
+    rect.y = y;
+    rect.width = width;
+    rect.height = height;
+    return IOConnectCallStructMethod(fb->connect, kPDGPU_Present,
+                                      &rect, sizeof(rect), NULL, NULL);
 }
 
 const char *

@@ -163,6 +163,6 @@ PCEOF
 
   meta = with lib; {
     description = "Real ICU, cross-built for x86_64-apple-darwin (libicuuc/libicudata/libicui18n) to back libicucore.A.dylib";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

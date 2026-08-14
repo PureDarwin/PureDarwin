@@ -3,6 +3,9 @@
 
 #include <uuid/uuid.h>
 #include <xpc/xpc.h>
+/* Apple's xpc/private.h pulls pthread in, and callers such as Security's SecDb
+ * rely on that rather than including it themselves. */
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {

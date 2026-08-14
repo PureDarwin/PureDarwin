@@ -6,6 +6,8 @@
 }:
 
 let
+  onDarwin = stdenv.hostPlatform.isDarwin;
+
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -20,22 +22,11 @@ let
     "error.c" "global.c" "header.c" "mig.c" "routine.c" "server.c"
     "statement.c" "string.c" "type.c" "user.c" "utils.c"
   ];
-in
-stdenv.mkDerivation {
-  pname = "puredarwin-migcom-native";
-  version = "0.1";
 
-  src = ../../../tools/mig;
-
-  nativeBuildInputs = [ bison flex ];
-
-  dontConfigure = true;
-
-  buildPhase = ''
-    runHook preBuild
-    yacc -d -b y parser.y
-    lex -o lexxer.yy.c lexxer.l
-
+  # On a Darwin host the compiler's own SDK already provides the real mach/,
+  # i386/ and machine/ headers mig's sources expect, so none of the staging or
+  # glibc-vs-Apple typedef reconciliation below is needed - just compile.
+  sdkShimPhase = lib.optionalString (!onDarwin) ''
     mkdir -p sdk
     tar xf ${sdkTarball} -C sdk
     SDK="$PWD/sdk/MacOSX11.3.sdk"
@@ -67,6 +58,29 @@ stdenv.mkDerivation {
        "$SDK/usr/include/AvailabilityVersions.h" \
        "$SDK/usr/include/AvailabilityMacros.h" \
        mach_shim/
+  '';
+
+  hostCflags =
+    if onDarwin
+    then ''-I . -include sys/types.h''
+    else ''-I . -I mach_shim -include sys/types.h -include bits/types/__mbstate_t.h'';
+in
+stdenv.mkDerivation {
+  pname = "puredarwin-migcom-native";
+  version = "0.1";
+
+  src = ../../../tools/mig;
+
+  nativeBuildInputs = [ bison flex ];
+
+  dontConfigure = true;
+
+  buildPhase = ''
+    runHook preBuild
+    yacc -d -b y parser.y
+    lex -o lexxer.yy.c lexxer.l
+
+    ${sdkShimPhase}
 
     mkdir -p migcom_native
     objs=""
@@ -74,8 +88,7 @@ stdenv.mkDerivation {
       name="$(basename "$src" .c)"
       obj="migcom_native/$name.o"
       $CC -std=gnu89 -D__private_extern__= -D__LITTLE_ENDIAN__ -DMIG_VERSION=\"\" \
-        -I . -I mach_shim \
-        -include sys/types.h -include bits/types/__mbstate_t.h \
+        ${hostCflags} \
         -c "$src" -o "$obj"
       objs="$objs $obj"
     done
@@ -91,7 +104,7 @@ stdenv.mkDerivation {
   '';
 
   meta = with lib; {
-    description = "Native ELF build of PureDarwin's tools/mig migcom, for use as a build-time host tool";
-    platforms = platforms.linux;
+    description = "Native build of PureDarwin's tools/mig migcom, for use as a build-time host tool";
+    platforms = platforms.unix;
   };
 }

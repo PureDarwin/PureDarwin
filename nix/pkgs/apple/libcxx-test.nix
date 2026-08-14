@@ -94,6 +94,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "libc++.dylib STL smoke test binary (/usr/bin/cxx-test)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

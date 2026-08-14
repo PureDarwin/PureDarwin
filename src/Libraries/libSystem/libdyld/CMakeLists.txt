@@ -133,6 +133,15 @@ target_link_libraries(libdyld PRIVATE
     # constructors to libc++'s own stdexcept.cpp.
     $<TARGET_FILE:libcxx_static>)
 
+if(PUREDARWIN_COMPILER_RT_PREFIX)
+    set(_pd_libdyld_compiler_rt "${PUREDARWIN_COMPILER_RT_PREFIX}/lib/libcompiler_rt.a")
+    if(NOT EXISTS "${_pd_libdyld_compiler_rt}")
+        message(FATAL_ERROR
+            "PUREDARWIN_COMPILER_RT_PREFIX is set but ${_pd_libdyld_compiler_rt} does not exist")
+    endif()
+    target_link_libraries(libdyld PRIVATE "${_pd_libdyld_compiler_rt}")
+endif()
+
 target_link_options(libdyld PRIVATE
     -isysroot ${PUREDARWIN_MACOSX_SDK}
     -compatibility_version 1.0.0
@@ -146,9 +155,8 @@ target_link_options(libdyld PRIVATE
     -Wl,-u,__dyld_find_unwind_sections
     -Wl,-u,__dyld_register_func_for_remove_image
     -Wl,-u,__NSGetExecutablePath
-    # clang @available() helper: nothing inside libdyld calls it (only external
-    # binaries do, via libSystem's reexport), so dead_strip would drop it.
     -Wl,-u,___isPlatformVersionAtLeast)
+
 if(CMAKE_HOST_APPLE)
     set(_libdyld_apple_ld_stub_dir ${CMAKE_CURRENT_BINARY_DIR}/apple-ld-stubs)
     set(_libdyld_apple_ld_pthread_stub ${_libdyld_apple_ld_stub_dir}/libsystem_pthread.tbd)

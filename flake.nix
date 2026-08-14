@@ -44,6 +44,9 @@
             systemConfigurationSource
             iokitCFSource
             diskArbitrationSource
+            symptomReporterSource
+            protocolBufferSource
+            wirelessDiagnosticsSource
             objcSource
             libcxxDylibSource
             foundationSource
@@ -55,6 +58,7 @@
             xfce4SessionSrc
             xfce4PanelSrc
             xfdesktopSrc
+            asmjitSrc
             vteSrc
             xfce4TerminalSrc
             xfce4SettingsSrc
@@ -74,12 +78,20 @@
           bootstrapCrossToolchain =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix { };
           libtapi = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/libtapi.nix { };
+          # A Darwin host already has Apple's ld64 in nixpkgs, so it needs none
+          # of the bootstrap-lld-then-build-cctools dance the Linux cross build
+          # goes through to obtain a TAPI-capable linker.
           nativeLd =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
+            if isDarwin then pkgs.ld64
+            else pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
               darwinCrossToolchain = bootstrapCrossToolchain;
               inherit libtapi iig;
             };
-          darwinCrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
+          # Not actually a *cross* toolchain on Darwin - the wrappers pin the
+          # target triple, the pinned SDK and the linker, which is what every
+          # consumer wants on either host. toolchain.nix is built from nixpkgs'
+          # llvmPackages_21, which exists on both.
+          darwinCrossToolchain = pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
             inherit nativeLd;
           };
           arm64CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
@@ -87,8 +99,8 @@
             target = "arm64-apple-darwin20.4";
             clangTarget = "arm64-apple-macosx11.0";
           };
-          nativeUnifdef = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/unifdef.nix { };
-          nativeMigcom = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/migcom.nix { };
+          nativeUnifdef = pkgs.callPackage ./nix/pkgs/toolchain/unifdef.nix { };
+          nativeMigcom = pkgs.callPackage ./nix/pkgs/toolchain/migcom.nix { };
           libapfsrwBuild = pkgs.callPackage ./nix/pkgs/apple/libapfsrw.nix { };
 
           sourceWith = name: prefixes:
@@ -142,8 +154,12 @@
             "tools/cctools/include/stuff/openstep_mach.h"
             "tools/cctools/include/mach/machine.h"
           ];
+          pinnedAppleSdk =
+            if isDarwin then pkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix { } else null;
           mkPureDarwinBuild = args: pkgs.callPackage ./build.nix ({
-            inherit darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig;
+            inherit darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig pinnedAppleSdk;
+            compilerRt = compilerRtBuild;
+            compilerRtArm64 = arm64.compilerRtArm64Build or null;
           } // args);
 
           userlandBuild = mkPureDarwinBuild {
@@ -986,6 +1002,28 @@
             };
           hostOtoolBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/host-otool.nix { };
+          # aarch64 Windows PE toolchain (llvm-mingw equivalent) for Wine's
+          # new WoW64 on arm64. See the file for the two nixpkgs bugs it works around.
+          fexWow64Build =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/fex-wow64.nix {
+              mingwAarch64Cc = mingwAarch64.cc;
+              mingwAarch64Pthreads = mingwAarch64.pthreads;
+            };
+
+          mingwAarch64 =
+            if isDarwin then null else import ./nix/pkgs/toolchain/mingw-aarch64.nix {
+              inherit pkgs system;
+              # 21 hits the AArch64 SEH unwind backend bug on Wine's concrt140.
+              llvmVersion = "22";
+            };
+
+          compilerRtBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt.nix {
+              inherit darwinCrossToolchain nativeLd;
+              nativeMesonTools = nativeMesonToolsDir;
+              llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
+              llvmVersion = pkgs.llvmPackages_21.llvm.version;
+            };
           llvmCrossBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/llvm-cross.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -1458,6 +1496,8 @@
               libXdmcp = pkgs.libxdmcp;
               libxcvt = xvfbLibxcvtBuild;
               mesa = mesaBuild;
+              mesaGlHeaders = pkgs.mesa-gl-headers;
+              glHeaders = pkgs.libglvnd.dev;
               libX11 = xlibBuild;
               libxcb = xcbBuild;
               libXext = xvfbLibXextBuild;
@@ -1670,6 +1710,88 @@
             inherit xvfbPixmanBuild;
             inherit xvfbZlibBuild;
           };
+          xfceDesktopArm64 = import ./nix/xfce.nix {
+            inherit lib;
+            targetTriple = "arm64-apple-darwin20.4";
+            atspi2CoreBuild = atspi2CoreArm64Build;
+            cairoBuild = cairoArm64Build;
+            cairoGobjectBuild = cairoGobjectArm64Build;
+            darwinCrossToolchain = arm64CrossToolchain;
+            dbusBuild = dbusArm64Build;
+            inherit exoSrc;
+            expatBuild = expatArm64Build;
+            fontconfigBuild = fontconfigArm64Build;
+            freetype2Build = freetype2Arm64Build;
+            fribidiBuild = fribidiArm64Build;
+            inherit garconSrc;
+            gdkPixbufBuild = gdkPixbufArm64Build;
+            glibBuild = glibArm64Build;
+            gtk3Build = gtk3Arm64Build;
+            gtkLayerShellBuild = gtkLayerShellArm64Build;
+            mesaBuild = mesaArm64Build;
+            waylandBuild = waylandArm64Build;
+            inherit waylandProtocolsBuild;
+            inherit waylandScannerBuild;
+            xkbcommonBuild = xkbcommonArm64Build;
+            harfbuzzBuild = harfbuzzArm64Build;
+            inherit isDarwin;
+            libSystemBuild = libSystemArm64Build;
+            libdisplayInfoBuild = libdisplayInfoArm64Build;
+            libepoxyBuild = libepoxyArm64Build;
+            libffiBuild = libffiArm64Build;
+            libiconvBuild = libiconvArm64Build;
+            libpngBuild = libpngArm64Build;
+            libwnckBuild = libwnckArm64Build;
+            inherit libxfce4uiSrc;
+            inherit nativeLd;
+            inherit nativeMesonToolsDir;
+            pangoBuild = pangoArm64Build;
+            pcre2Build = pcre2Arm64Build;
+            inherit pkgs;
+            startupNotificationBuild = startupNotificationArm64Build;
+            inherit thunarSrc;
+            vteBuild = vteArm64Build;
+            xcbBuild = xcbArm64Build;
+            inherit xfce4AppfinderSrc;
+            inherit xfce4PanelSrc;
+            inherit xfce4SessionSrc;
+            inherit xfce4SettingsSrc;
+            inherit xfce4TerminalSrc;
+            inherit xfconfSrc;
+            inherit xfdesktopSrc;
+            inherit xfwm4Src;
+            xlibBuild = xlibArm64Build;
+            xvfbLibICEBuild = xvfbLibICEArm64Build;
+            xvfbLibSMBuild = xvfbLibSMArm64Build;
+            xvfbLibXauBuild = xvfbLibXauArm64Build;
+            xvfbLibXcompositeBuild = xvfbLibXcompositeArm64Build;
+            xvfbLibXcursorBuild = xvfbLibXcursorArm64Build;
+            xvfbLibXdamageBuild = xvfbLibXdamageArm64Build;
+            xvfbLibXdmcpBuild = xvfbLibXdmcpArm64Build;
+            xvfbLibXextBuild = xvfbLibXextArm64Build;
+            xvfbLibXfixesBuild = xvfbLibXfixesArm64Build;
+            xvfbLibXiBuild = xvfbLibXiArm64Build;
+            xvfbLibXineramaBuild = xvfbLibXineramaArm64Build;
+            xvfbLibXpresentBuild = xvfbLibXpresentArm64Build;
+            xvfbLibXrandrBuild = xvfbLibXrandrArm64Build;
+            xvfbLibXrenderBuild = xvfbLibXrenderArm64Build;
+            xvfbLibXresBuild = xvfbLibXresArm64Build;
+            xvfbPixmanBuild = xvfbPixmanArm64Build;
+            xvfbZlibBuild = xvfbZlibArm64Build;
+          };          xfconfArm64 = xfceDesktopArm64.xfconfBuild;
+          libxfce4utilArm64 = xfceDesktopArm64.libxfce4utilBuild;
+          libxfce4uiArm64 = xfceDesktopArm64.libxfce4uiBuild;
+          xfwm4Arm64 = xfceDesktopArm64.xfwm4Build;
+          libxfce4windowingArm64 = xfceDesktopArm64.libxfce4windowingBuild;
+          garconArm64 = xfceDesktopArm64.garconBuild;
+          exoArm64 = xfceDesktopArm64.exoBuild;
+          xfce4SessionArm64 = xfceDesktopArm64.xfce4SessionBuild;
+          xfce4PanelArm64 = xfceDesktopArm64.xfce4PanelBuild;
+          xfdesktopArm64 = xfceDesktopArm64.xfdesktopBuild;
+          xfce4TerminalArm64 = xfceDesktopArm64.xfce4TerminalBuild;
+          xfce4SettingsArm64 = xfceDesktopArm64.xfce4SettingsBuild;
+          xfce4AppfinderArm64 = xfceDesktopArm64.xfce4AppfinderBuild;
+          thunarArm64 = xfceDesktopArm64.thunarBuild;
           inherit (xfceDesktop)
             xfconfBuild
             libxfce4utilBuild
@@ -2550,13 +2672,13 @@
               inherit (pkgs) xorgproto;
             };
           icuCoreBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/icucore.nix {
+            pkgs.callPackage ./nix/pkgs/apple/icucore.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               icuSrc = pkgs.icu.src;
             };
           coreFoundationBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/corefoundation.nix {
+            pkgs.callPackage ./nix/pkgs/apple/corefoundation.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               inherit (pkgs) icu;
@@ -2566,14 +2688,14 @@
               foundationSrc = "${foundationSource}/src/Libraries/Foundation";
             };
           libcxxabiDylibBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/libcxxabi-dylib.nix {
+            pkgs.callPackage ./nix/pkgs/apple/libcxxabi-dylib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               src = libcxxDylibSource;
             };
 
           libcxxDylibBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/libcxx-dylib.nix {
+            pkgs.callPackage ./nix/pkgs/apple/libcxx-dylib.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
@@ -2587,21 +2709,18 @@
               libcxxDylib = libcxxDylibBuild;
             };
           libobjcBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/libobjc.nix {
+            pkgs.callPackage ./nix/pkgs/apple/libobjc.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
               src = objcSource;
             };
-          gsbaseTestBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/gsbase-test.nix {
-              inherit darwinCrossToolchain nativeLd;
+          asmjitTestBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/asmjit-test.nix {
+              inherit darwinCrossToolchain nativeLd asmjitSrc;
               libSystem = libSystemBuild;
-            };
-          dlsymTestBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/dlsym-test.nix {
-              inherit darwinCrossToolchain nativeLd;
-              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
             };
           objcTestBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/objc-test.nix {
@@ -2617,8 +2736,21 @@
               corefoundation = coreFoundationBuild;
               src = "${foundationSource}/src/Libraries/Foundation";
             };
+          protocolBufferBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/protocolbuffer.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              src = "${protocolBufferSource}/src/Libraries/ProtocolBuffer";
+            };
+          wirelessDiagnosticsBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/wirelessdiagnostics.nix {
+              src = "${wirelessDiagnosticsSource}/src/Libraries/WirelessDiagnostics";
+            };
           iokitBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/iokit.nix {
+            pkgs.callPackage ./nix/pkgs/apple/iokit.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -2661,6 +2793,7 @@
             inherit i3statusShimBuild;
             inherit icuCoreBuild;
             inherit iokitBuild;
+            inherit iokitCFStaticBuild;
             inherit kernelSource;
             inherit kextsSource;
             inherit launchctlBuild;
@@ -2675,6 +2808,16 @@
             inherit nativeLd;
             inherit nativeMesonToolsDir;
             inherit ncursesBuild;
+            inherit coreServicesSource;
+            inherit vteSrc;
+            inherit asmjitSrc;
+            inherit wineToolsBuild;
+            inherit fexWow64Build;
+            mingwAarch64Cc = if isDarwin then null else mingwAarch64.cc;
+            mingwArm64ecCc = if isDarwin then null else mingwAarch64.arm64ecCc;
+            inherit waylandScannerBuild;
+            inherit waylandProtocolsBuild;
+            inherit diskArbitrationSource;
             inherit securitySource;
             inherit userlandBuild;
             inherit userlandSource;
@@ -2682,6 +2825,11 @@
             inherit xlibLocaleBuild;
             inherit xvfbFontsBuild;
             inherit zshBuild;
+            inherit xfconfArm64 libxfce4utilArm64 libxfce4uiArm64
+              libxfce4windowingArm64 libwnckArm64Build garconArm64 exoArm64
+              xfwm4Arm64 xfce4SessionArm64 xfce4PanelArm64 xfdesktopArm64
+              xfce4AppfinderArm64 thunarArm64 xfce4SettingsArm64
+              xfce4TerminalArm64;
           };
           inherit (arm64)
             atspi2CoreArm64Build
@@ -2786,6 +2934,65 @@
             xzArm64Build
             fileArm64Build
             opensslArm64Build
+            sqliteArm64Build
+            libjpegArm64Build
+            libwebpArm64Build
+            libgpgErrorArm64Build
+            libgcryptArm64Build
+            libtasn1Arm64Build
+            nghttp2Arm64Build
+            libpslArm64Build
+            gettextArm64Build
+            libxshmfenceSharedArm64Build
+            nettleSharedArm64Build
+            xvfbLibXineramaArm64Build
+            xvfbLibXresArm64Build
+            xvfbLibXcompositeArm64Build
+            xvfbLibXdamageArm64Build
+            xvfbLibXpresentArm64Build
+            iceauthArm64Build
+            xrandrArm64Build
+            xrdbArm64Build
+            xinitArm64Build
+            coreServicesArm64Build
+            iomediacheckArm64Build
+            pdsurfaceArm64Build
+            diskArbitrationArm64Build
+            libcrocoArm64Build
+            librsvgArm64Build
+            gnutlsSharedArm64Build
+            libsoupArm64Build
+            vteArm64Build
+            libwnckArm64Build
+            llvmCrossArm64Build
+            compilerRtArm64Build
+            jitTestArm64Build
+            wineArm64Build
+            asmjitTestArm64Build
+            gtkLayerShellArm64Build
+            libgbmArm64Build
+            jsoncArm64Build
+            libX11SharedArm64Build
+            libxcbSharedArm64Build
+            libXauSharedArm64Build
+            libXdmcpSharedArm64Build
+            libXextSharedArm64Build
+            libXrenderSharedArm64Build
+            libXfixesSharedArm64Build
+            libXiSharedArm64Build
+            libXcursorSharedArm64Build
+            libXrandrSharedArm64Build
+            mesonArm64Build
+            cmakeArm64Build
+            ninjaArm64Build
+            clangCrossArm64Build
+            wlrootsArm64Build
+            swayArm64Build
+            libdrmArm64Build
+            xwaylandArm64Build
+            libdisplayInfoArm64Build
+            xvfbLibXxf86vmArm64Build
+            waylandArm64Build
             bmakeArm64Build
             gnumakeArm64Build
             gnum4Arm64Build
@@ -2815,16 +3022,24 @@
             splitBaseSystemArm64VirtMinimal
             splitBaseSystemArm64VirtMinimalRelease
             imageExtraPackageSetArm64
-            imageExtraPackagesArm64
             ;
+          # The XFCE desktop is instantiated in this file (it needs both the
+          # arm64 builds and the shared sources), so it is appended here rather
+          # than inside arm64.nix where the rest of the list lives.
+          imageExtraPackagesArm64 = arm64.imageExtraPackagesArm64 ++ [
+            xfconfArm64 libxfce4utilArm64 libxfce4uiArm64 libxfce4windowingArm64
+            garconArm64 exoArm64 xfwm4Arm64 xfdesktopArm64 thunarArm64
+          ];
           securityBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/security.nix {
-              inherit darwinCrossToolchain nativeLd;
-              libSystem = libSystemBuild;
+              inherit mkPureDarwinBuild;
               corefoundation = coreFoundationBuild;
-              src = "${securitySource}/src/Libraries/Security";
+              libobjc = libobjcBuild;
+              foundation = foundationBuild;
+              sqlite = sqliteBuild;
+              src = securitySource;
             };
-          mkSystemConfigurationBuild = { corefoundation, libobjc, security }:
+          mkSystemConfigurationBuild = { corefoundation, libobjc, security, iokit }:
             if isDarwin then null else (mkPureDarwinBuild {
               pname = "puredarwin-systemconfiguration";
               src = systemConfigurationSource;
@@ -2839,6 +3054,9 @@
                 "-DPUREDARWIN_COREFOUNDATION_PREFIX=${corefoundation}"
                 "-DPUREDARWIN_LIBOBJC_PREFIX=${libobjc}"
                 "-DPUREDARWIN_SECURITY_PREFIX=${security}"
+                # InterfaceNamer drives the interface-naming user client through
+                # IOKitUser's CF-based IOKitLib.
+                "-DPUREDARWIN_IOKIT_PREFIX=${iokit}"
               ];
             }).overrideAttrs (old: {
               installPhase = ''
@@ -2849,9 +3067,20 @@
                   "$fw/Versions/A/SystemConfiguration"
                 cp -a src/Libraries/SystemConfiguration/include/SystemConfiguration/. \
                   "$fw/Versions/A/Headers/"
+                # Resources the framework looks up at runtime: the localized
+                # interface-name strings and NetworkConfiguration.plist, which
+                # InterfaceNamer consults while naming. Without them every
+                # lookup logs "failed to get resource url" and falls back to an
+                # empty strings table.
+                mkdir -p "$fw/Versions/A/Resources"
+                cp src/Libraries/SystemConfiguration/SystemConfiguration.fproj/NetworkConfiguration.plist \
+                  "$fw/Versions/A/Resources/"
+                cp -a src/Libraries/SystemConfiguration/SystemConfiguration.fproj/en.lproj \
+                  "$fw/Versions/A/Resources/"
                 ln -s A "$fw/Versions/Current"
                 ln -s Versions/Current/SystemConfiguration "$fw/SystemConfiguration"
                 ln -s Versions/Current/Headers "$fw/Headers"
+                ln -s Versions/Current/Resources "$fw/Resources"
                 # Flat dylib alias, as Security.framework and OpenGL have.
                 mkdir -p "$out/usr/lib"
                 ln -s "../../System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration" \
@@ -2867,10 +3096,14 @@
                 # Builtin plugins live inside configd, but plugin_support.c still
                 # discovers them by walking /System/Library/SystemConfiguration
                 # for bundles, so each one needs its Info.plist installed.
-                for p in PreferencesMonitor LinkConfiguration KernelEventMonitor IPMonitor; do
+                for p in PreferencesMonitor LinkConfiguration KernelEventMonitor IPMonitor InterfaceNamer; do
                   d="$out/System/Library/SystemConfiguration/$p.bundle/Contents"
                   mkdir -p "$d"
-                  cp "src/Libraries/SystemConfiguration/Plugins/$p/Info.plist" "$d/"
+                  # The build-dir copy, not the source one: these plists set
+                  # CFBundleIdentifier to Xcode's $(PRODUCT_BUNDLE_IDENTIFIER),
+                  # and configd skips any bundle whose identifier does not
+                  # resolve. The build substitutes it; the source cannot.
+                  cp "build-nix/src/Libraries/SystemConfiguration/configd.tproj/plugin-plists/$p/Info.plist" "$d/"
                 done
                 runHook postInstall
               '';
@@ -2878,7 +3111,7 @@
           # IOKitUser's CoreFoundation-based IOKitLib. Built apart from libSystem
           # because it links CoreFoundation, which itself links libSystem.
           iokitCFStaticBuild =
-            if isDarwin then null else (mkPureDarwinBuild {
+            (mkPureDarwinBuild {
               pname = "puredarwin-iokitcf-static";
               src = iokitCFSource;
               buildTargets = [ "IOKitCF" ];
@@ -2911,6 +3144,39 @@
               iokit = iokitBuild;
               iokitHeaders = iokitCFStaticBuild;
             };
+          # Apple's SymptomReporter is a private framework with no source and
+          # no SDK header; this is PureDarwin's own, recording symptoms through
+          # os_log. bootp's IPConfiguration plugin is the consumer.
+          symptomReporterBuild =
+            if isDarwin then null else (mkPureDarwinBuild {
+              pname = "puredarwin-symptomreporter";
+              src = symptomReporterSource;
+              buildTargets = [ "SymptomReporter" ];
+              enableProjects = false;
+              enableKernel = false;
+              enableUserspace = false;
+              installUserland = false;
+              installKernel = false;
+              extraCmakeFlags = [
+                "-DPUREDARWIN_ENABLE_SYMPTOMREPORTER=ON"
+              ];
+            }).overrideAttrs (old: {
+              installPhase = ''
+                runHook preInstall
+                fw="$out/System/Library/PrivateFrameworks/SymptomReporter.framework"
+                mkdir -p "$fw/Versions/A/Headers"
+                cp build-nix/src/Libraries/SymptomReporter/libSymptomReporter.dylib \
+                  "$fw/Versions/A/SymptomReporter"
+                cp -a src/Libraries/SymptomReporter/include/SymptomReporter/. \
+                  "$fw/Versions/A/Headers/"
+                ln -s A "$fw/Versions/Current"
+                ln -s Versions/Current/SymptomReporter "$fw/SymptomReporter"
+                ln -s Versions/Current/Headers "$fw/Headers"
+                mkdir -p "$out/include"
+                cp -a src/Libraries/SymptomReporter/include/SymptomReporter "$out/include/"
+                runHook postInstall
+              '';
+            });
           diskArbitrationBuild =
             if isDarwin then null else (mkPureDarwinBuild {
               pname = "puredarwin-diskarbitration";
@@ -2958,6 +3224,7 @@
               corefoundation = coreFoundationBuild;
               libobjc = libobjcBuild;
               security = securityBuild;
+              iokit = iokitBuild;
             };
           systemStarterBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/systemstarter.nix {
@@ -2968,7 +3235,7 @@
               src = libSystemSource;
             };
           launchctlBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/launchctl.nix {
+            pkgs.callPackage ./nix/pkgs/apple/launchctl.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -2976,7 +3243,7 @@
               src = libSystemSource;
             };
           launchdBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/launchd.nix {
+            pkgs.callPackage ./nix/pkgs/apple/launchd.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -3068,14 +3335,14 @@
             inherit
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
-              coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild dlsymTestBuild gsbaseTestBuild dmenuBuild exoBuild expatBuild fastfetchBuild
+              coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild dmenuBuild exoBuild expatBuild fastfetchBuild
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
               libXcursorSharedBuild libXrandrSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
               gnumakeBuild gtk3Build gtkLayerShellBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
-              cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 iographicsBuild iokitBuild
+              cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 iographicsBuild iokitBuild jitTestArm64Build asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelBuild kernelDebugBuild kextsArm64Build kextsBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild wlrootsBuild swayBuild
@@ -3118,8 +3385,6 @@
           probePackages = lib.optionalAttrs (!isDarwin) {
             coreservices = coreServicesBuild;
             wine-tools = wineToolsBuild;
-            dlsym-test = dlsymTestBuild;
-            gsbase-test = gsbaseTestBuild;
             libX11-shared = libX11SharedBuild;
             libxcb-shared = libxcbSharedBuild;
             libXau-shared = libXauSharedBuild;
@@ -3137,6 +3402,12 @@
             vulkan-loader = vulkanLoaderBuild;
             vulkan-tools = vulkanToolsBuild;
             llvm-cross = llvmCrossBuild;
+            compiler-rt = compilerRtBuild;
+            mingw-aarch64-cc = if isDarwin then null else mingwAarch64.cc;
+            mingw-arm64ec-cc = if isDarwin then null else mingwAarch64.arm64ecCc;
+            fex-wow64 = fexWow64Build;
+            mingw-aarch64-crt = if isDarwin then null else mingwAarch64.mingw;
+            asmjit-test = asmjitTestBuild;
             clang = clangCrossBuild;
             kc-tools-guest = kcToolsGuestBuild;
             libgpg-error = libgpgErrorBuild;
@@ -3159,6 +3430,68 @@
             xz-arm64 = xzArm64Build;
             file-arm64 = fileArm64Build;
             openssl-arm64 = opensslArm64Build;
+            sqlite-arm64 = sqliteArm64Build;
+            libjpeg-arm64 = libjpegArm64Build;
+            libwebp-arm64 = libwebpArm64Build;
+            libgpg-error-arm64 = libgpgErrorArm64Build;
+            libgcrypt-arm64 = libgcryptArm64Build;
+            libtasn1-arm64 = libtasn1Arm64Build;
+            nghttp2-arm64 = nghttp2Arm64Build;
+            libpsl-arm64 = libpslArm64Build;
+            gettext-arm64 = gettextArm64Build;
+            libxshmfence-arm64 = libxshmfenceSharedArm64Build;
+            nettle-arm64 = nettleSharedArm64Build;
+            libXinerama-arm64 = xvfbLibXineramaArm64Build;
+            libXres-arm64 = xvfbLibXresArm64Build;
+            libXcomposite-arm64 = xvfbLibXcompositeArm64Build;
+            libXdamage-arm64 = xvfbLibXdamageArm64Build;
+            libXpresent-arm64 = xvfbLibXpresentArm64Build;
+            iceauth-arm64 = iceauthArm64Build;
+            xrandr-arm64 = xrandrArm64Build;
+            xrdb-arm64 = xrdbArm64Build;
+            xinit-arm64 = xinitArm64Build;
+            coreServices-arm64 = coreServicesArm64Build;
+            iomediacheck-arm64 = iomediacheckArm64Build;
+            pdsurface-arm64 = pdsurfaceArm64Build;
+            diskArbitration-arm64 = diskArbitrationArm64Build;
+            libcroco-arm64 = libcrocoArm64Build;
+            librsvg-arm64 = librsvgArm64Build;
+            gnutls-arm64 = gnutlsSharedArm64Build;
+            libsoup-arm64 = libsoupArm64Build;
+            vte-arm64 = vteArm64Build;
+            libwnck-arm64 = libwnckArm64Build;
+            llvm-arm64 = llvmCrossArm64Build;
+            compiler-rt-arm64 = compilerRtArm64Build;
+            wine-arm64 = wineArm64Build;
+            asmjit-test-arm64 = asmjitTestArm64Build;
+            gtkLayerShell-arm64 = gtkLayerShellArm64Build;
+            libgbm-arm64 = libgbmArm64Build;
+            jsonc-arm64 = jsoncArm64Build;
+            meson-arm64 = mesonArm64Build;
+            cmake-arm64 = cmakeArm64Build;
+            ninja-arm64 = ninjaArm64Build;
+            clang-arm64 = clangCrossArm64Build;
+            wlroots-arm64 = wlrootsArm64Build;
+            sway-arm64 = swayArm64Build;
+            libdrm-arm64 = libdrmArm64Build;
+            xwayland-arm64 = xwaylandArm64Build;
+            libdisplayInfo-arm64 = libdisplayInfoArm64Build;
+            libXxf86vm-arm64 = xvfbLibXxf86vmArm64Build;
+            wayland-arm64 = waylandArm64Build;
+            xfconf-arm64 = xfconfArm64;
+            libxfce4util-arm64 = libxfce4utilArm64;
+            libxfce4ui-arm64 = libxfce4uiArm64;
+            xfwm4-arm64 = xfwm4Arm64;
+            libxfce4windowing-arm64 = libxfce4windowingArm64;
+            garcon-arm64 = garconArm64;
+            exo-arm64 = exoArm64;
+            xfce4Session-arm64 = xfce4SessionArm64;
+            xfce4Panel-arm64 = xfce4PanelArm64;
+            xfdesktop-arm64 = xfdesktopArm64;
+            xfce4Terminal-arm64 = xfce4TerminalArm64;
+            xfce4Settings-arm64 = xfce4SettingsArm64;
+            xfce4Appfinder-arm64 = xfce4AppfinderArm64;
+            thunar-arm64 = thunarArm64;
             ncurses-arm64 = ncursesArm64Build;
             libiconv-arm64 = libiconvArm64Build;
             zsh-arm64 = zshArm64Build;
@@ -3237,6 +3570,9 @@
             security-arm64 = securityArm64Build;
             systemConfiguration-arm64 = systemConfigurationArm64Build;
             diskArbitration = diskArbitrationBuild;
+            symptomReporter = symptomReporterBuild;
+            protocolBuffer = protocolBufferBuild;
+            wirelessDiagnostics = wirelessDiagnosticsBuild;
             iokitcf-static = iokitCFStaticBuild;
             iomediacheck = iomediacheckBuild;
             startupNotification-arm64 = startupNotificationArm64Build;

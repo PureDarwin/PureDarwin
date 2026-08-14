@@ -46,7 +46,7 @@ extern void mig_os_release(void* ptr);
  * dyld links libsystem_kernel statically but never runs that init, and provides
  * its OWN malloc/free/realloc (a pre-libSystem pool allocator in dyldNew.cpp).
  * Marking these weak lets dyld's strong definitions win the link (otherwise this
- * archive member -- pulled in for the string dispatchers -- shadowed dyld's
+ * archive member, pulled in for the string dispatchers, shadowed dyld's
  * malloc, so every dyld allocation dereferenced the NULL table: fault_addr=0x10,
  * the malloc slot offset). Normal libSystem clients still get these as the only
  * (weak) definition and route through the initialized table as before.
@@ -113,7 +113,7 @@ pthread_current_stack_contains_np(const void *addr, size_t len)
 
 /*
  * PureDarwin: the upstream _libkernel_generic_string_functions table only
- * populated a subset of the slots -- on a real system the FULL optimized table
+ * populated a subset of the slots - on a real system the FULL optimized table
  * is installed by __libkernel_platform_init() (during libSystem's initializer)
  * before any string function is ever called, so the gaps never mattered. But
  * dyld links libsystem_kernel statically and NEVER runs platform_init, so it

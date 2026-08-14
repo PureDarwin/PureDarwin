@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnablePressuredExit</key>
+	<true/>
+	<key>EnableTransactions</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>DEBUGSCOPE</key>
+		<string>-policy-node,policy-set,policy,alloc,trust,bind,profile,trace,dbconn,OTR,serverxpc,sqlite3,error_thee_well</string>
+		<key>WAIT4DEBUGGER</key>
+		<string>NO</string>
+	</dict>
+	<key>Label</key>
+	<string>com.apple.trustd</string>
+	<key>MachServices</key>
+	<dict>
+		<key>com.apple.trustd</key>
+		<true/>
+	</dict>
+	<key>POSIXSpawnType</key>
+	<string>Adaptive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/trustd</string>
+	</array>
+	<key>UserName</key>
+	<string>_trustd</string>
+	<key>Umask</key>
+	<integer>27</integer>
+</dict>
+</plist>

@@ -4634,8 +4634,16 @@ void IOFramebuffer::initialize()
 	OSDictionary  *     matching;
 
 	gIOFBServerInit      = true;
+#if defined(__arm64__) || defined(__aarch64__)
+	/* ARM boot_args replaced the x86 flags field with bootFlags. The only
+	 * equivalent currently defined by the ARM ABI is dark boot. */
+	uint64_t armBootFlags = ((boot_args *) PE_state.bootArgs)->bootFlags;
+	gIOFBBlackBoot       = (0 != (kBootFlagsDarkBoot & armBootFlags));
+	gIOFBBlackBootTheme  = 0;
+#else
 	gIOFBBlackBoot       = (0 != (kBootArgsFlagBlack & ((boot_args *) PE_state.bootArgs)->flags));
 	gIOFBBlackBootTheme  = (0 != (kBootArgsFlagBlackBg & ((boot_args *) PE_state.bootArgs)->flags));
+#endif
 	if (gIOFBBlackBoot || gIOFBBlackBootTheme) gIOFBGrayValue = 0;
     gIOFBVerboseBoot     = PE_parse_boot_argn("-v", NULL,0);
 

@@ -1,0 +1,19 @@
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -917,7 +917,15 @@
+ #elif defined __APPLE__
+     {
+         struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&get_current_teb()->GdiTebBatch;
+-        _thread_set_tsd_base( (uint64_t)((struct amd64_thread_data *)thread_data->cpu_data)->pthread_teb );
++        uint64_t pthread_teb = (uint64_t)((struct amd64_thread_data *)thread_data->cpu_data)->pthread_teb;
++
++        /* get_current_teb() infers the TEB from rsp, so on a signal taken before
++         * this thread registered its altstack it points at the unix stack and
++         * pthread_teb reads as garbage - normally 0. Installing that leaves every
++         * later %gs access pointing at an absolute address, including the
++         * NtCurrentTeb() in fault_handler_has_teb() meant to detect exactly this.
++         * Keep the base the kernel already gave us. */
++        if (pthread_teb) _thread_set_tsd_base( pthread_teb );
+ 
+         /* When in a syscall, CS will be the kernel's selector (0x07, SYSCALL_CS in xnu source)
+          * instead of the user selector (cs64_sel: 0x2b, USER64_CS).

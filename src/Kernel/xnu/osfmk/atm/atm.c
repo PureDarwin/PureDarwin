@@ -55,7 +55,7 @@ atm_init(void)
 
 	if (!PE_parse_boot_argn("atm_diagnostic_config", &atm_diagnostic_config, sizeof(atm_diagnostic_config))) {
 		if (!PE_get_default("kern.atm_diagnostic_config", &atm_diagnostic_config, sizeof(atm_diagnostic_config))) {
-			/* PD: no logd/userspace log consumer exists in this OS, so the
+			/* PureDarwin: no logd/userspace log consumer exists in this OS, so the
 			 * kernel-side firehose tracepoint path (os_log_with_args, called
 			 * unconditionally from every kprintf() when interrupts are
 			 * enabled) is dead weight - and it isn't reliably safe: it

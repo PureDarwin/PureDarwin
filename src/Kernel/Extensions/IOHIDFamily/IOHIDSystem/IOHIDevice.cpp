@@ -27,7 +27,7 @@
 #include <IOKit/hidsystem/IOHIDevice.h>
 #include <IOKit/hidsystem/IOHIDParameter.h>
 #include "IOHIDevicePrivateKeys.h"
-/* PD: IOHIDEventService (modern HID core) needs iig-generated DriverKit
+/* PureDarwin: IOHIDEventService (modern HID core) needs iig-generated DriverKit
  * headers we do not have; console-input milestone drops the optional
  * property propagation to it. See CMakeLists.txt. */
 /* #include "IOHIDEventService.h" */

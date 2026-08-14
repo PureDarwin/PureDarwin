@@ -77,6 +77,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Real PureDarwin/XPC launchctl (launchd 842.91.1 lineage)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

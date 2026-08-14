@@ -27,7 +27,7 @@ stdenv.mkDerivation {
   '';
 
   meta = with lib; {
-    description = "Native ELF build of PureDarwin's tools/unifdef, for use as a build-time host tool";
-    platforms = platforms.linux;
+    description = "Native build of PureDarwin's tools/unifdef, for use as a build-time host tool";
+    platforms = platforms.unix;
   };
 }

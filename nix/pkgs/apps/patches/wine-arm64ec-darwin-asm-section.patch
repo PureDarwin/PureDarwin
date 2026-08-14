@@ -1,0 +1,13 @@
+--- a/include/wine/asm.h
++++ b/include/wine/asm.h
+@@ -75,8 +75,8 @@
+ #endif
+ 
+ #ifdef __arm64ec_x64__
+-# define __ASM_FUNC_SECTION(name) ".section .text,\"xr\",discard," name
+-# define __ASM_FUNC_ALIGN ".balign 16"
++# define __ASM_FUNC_SECTION(name) ".text"
++# define __ASM_FUNC_ALIGN ".align 4"
+ #else
+ # define __ASM_FUNC_SECTION(name) ".text"
+ # define __ASM_FUNC_ALIGN ".align 4"

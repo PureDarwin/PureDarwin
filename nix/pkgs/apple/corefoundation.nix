@@ -48,12 +48,6 @@ stdenv.mkDerivation {
     ${darwinCrossToolchain}/bin/${targetTriple}-ar crs placeholder-libs/libBlocksRuntime.a placeholder-libs/placeholder.o
     ${darwinCrossToolchain}/bin/${targetTriple}-ar crs placeholder-libs/libdispatch.a placeholder-libs/placeholder.o
 
-    # Foundation is not built as a library here (CF only needs its headers to
-    # compile Bridging.subproj/__NSCFType.m, which is the ObjC toll-free
-    # bridge glue living inside CF itself) - stage a "Foundation/" include
-    # directory from the vendored Foundation source tree so
-    # `#import <Foundation/NSObject.h>` resolves the way a real framework
-    # search path would.
     mkdir -p foundation-headers/Foundation
     find ${foundationSrc} -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
 
@@ -109,6 +103,6 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "PureDarwin CoreFoundation (from apple/swift-corelibs-foundation), cross-built as a real dylib";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>IOCDStorageFamily</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.apple.iokit.IOCDStorageFamily</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>I/O Kit CD Storage Family</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.8</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>1.8</string>
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>IOCDBlockStorageDriver</key>
+		<dict>
+			<key>IOClass</key>
+			<string>IOCDBlockStorageDriver</string>
+			<key>IOPropertyMatch</key>
+			<dict>
+				<key>device-type</key>
+				<string>CDROM</string>
+			</dict>
+			<key>IOProviderClass</key>
+			<string>IOCDBlockStorageDevice</string>
+		</dict>
+		<key>IOCDMediaBSDClient</key>
+		<dict>
+			<key>IOClass</key>
+			<string>IOCDMediaBSDClient</string>
+			<key>IOMatchCategory</key>
+			<string>IOMediaBSDClient</string>
+			<key>IOProbeScore</key>
+			<integer>31000</integer>
+			<key>IOProviderClass</key>
+			<string>IOCDMedia</string>
+			<key>IOResourceMatch</key>
+			<string>IOBSD</string>
+		</dict>
+		<key>IOCDPartitionScheme</key>
+		<dict>
+			<key>Content Mask</key>
+			<string>CD_partition_scheme</string>
+			<key>Content Table</key>
+			<dict>
+				<key>0x01</key>
+				<string>CD_DA</string>
+				<key>0x02</key>
+				<string>CD_ROM_Mode_1</string>
+				<key>0x03</key>
+				<string>CD_ROM_Mode_2</string>
+				<key>0x04</key>
+				<string>CD_ROM_Mode_2_Form_1</string>
+				<key>0x05</key>
+				<string>CD_ROM_Mode_2_Form_2</string>
+			</dict>
+			<key>IOClass</key>
+			<string>IOCDPartitionScheme</string>
+			<key>IOMatchCategory</key>
+			<string>IOStorage</string>
+			<key>IOProviderClass</key>
+			<string>IOCDMedia</string>
+		</dict>
+	</dict>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 1998-2014 Apple Inc. All rights reserved.</string>
+	<key>OSBundleAllowUserLoad</key>
+	<true/>
+	<key>OSBundleCompatibleVersion</key>
+	<string>1.0</string>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.iokit.IOStorageFamily</key>
+		<string>1.7</string>
+		<key>com.apple.kpi.bsd</key>
+		<string>8.0</string>
+		<key>com.apple.kpi.iokit</key>
+		<string>8.0</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>8.0</string>
+		<key>com.apple.kpi.mach</key>
+		<string>8.0</string>
+	</dict>
+	<key>OSBundleRequired</key>
+	<string>Local-Root</string>
+</dict>
+</plist>

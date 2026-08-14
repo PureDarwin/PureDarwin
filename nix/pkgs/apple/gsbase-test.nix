@@ -211,6 +211,6 @@ stdenv.mkDerivation {
   dontFixup = true;
   meta = with lib; {
     description = "Reports whether thread_info(THREAD_IDENTIFIER_INFO) returns a usable thread_handle (/usr/bin/gsbase-test)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

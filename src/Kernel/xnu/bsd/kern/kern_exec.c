@@ -6305,8 +6305,8 @@ create_unix_stack(vm_map_t map, load_result_t* load_result,
 		if (load_result->user_stack_size == 0) {
 			load_result->user_stack_size = proc_limitgetcur(p, RLIMIT_STACK, TRUE);
 						/*
-						* PD: RLIMIT_STACK can be RLIM_INFINITY (or otherwise >= the
-						* allocated stack region -- PD's default stack rlimit is currently
+						* PureDarwin: RLIMIT_STACK can be RLIM_INFINITY (or otherwise >= the
+						* allocated stack region - PD's default stack rlimit is currently
 						* unlimited). size - user_stack_size would then underflow to a huge
 						* value and mach_vm_protect would fence off essentially the entire
 						* stack as VM_PROT_NONE, so freshly grown (never-faulted) stack pages

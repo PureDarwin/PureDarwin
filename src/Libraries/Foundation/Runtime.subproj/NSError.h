@@ -14,6 +14,11 @@
 
 @class NSString;
 
+/* NSErrorDomain and NSErrorUserInfoKey are typed NSString aliases; code that
+ * declares an error domain constant spells it with the alias. */
+typedef NSString *NSErrorDomain;
+typedef NSString *NSErrorUserInfoKey;
+
 @interface NSError : NSObject
 
 + (instancetype)errorWithDomain:(NSString *)domain code:(NSInteger)code;
