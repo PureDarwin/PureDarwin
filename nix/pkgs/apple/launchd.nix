@@ -46,6 +46,9 @@ stdenv.mkDerivation {
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_launchd_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_launchd_mig_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libxpc_static.a \
+      -Wl,-U,_OBJC_CLASS_\$_NSObject \
+      -Wl,-U,_OBJC_METACLASS_\$_NSObject \
+      -Wl,-U,__objc_empty_cache \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libinfo_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libnv_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libCrashReporterClient.a \

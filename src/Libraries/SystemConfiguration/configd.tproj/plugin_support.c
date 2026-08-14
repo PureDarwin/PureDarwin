@@ -116,6 +116,12 @@ static CFMutableDictionaryRef	exiting			= NULL;
  * existing "add failed" path below.
  */
 
+#ifdef	HAVE_PLUGIN_IPConfiguration
+extern SCDynamicStoreBundleLoadFunction		load_IPConfiguration;
+extern SCDynamicStoreBundleStartFunction	start_IPConfiguration;
+extern SCDynamicStoreBundlePrimeFunction	prime_IPConfiguration;
+extern SCDynamicStoreBundleStopFunction		stop_IPConfiguration;
+#endif
 #ifdef	HAVE_PLUGIN_IPMonitor
 extern SCDynamicStoreBundleLoadFunction		load_IPMonitor;
 extern SCDynamicStoreBundlePrimeFunction	prime_IPMonitor;
@@ -149,6 +155,15 @@ typedef struct {
 
 
 static const builtin builtin_plugins[] = {
+#ifdef	HAVE_PLUGIN_IPConfiguration
+	{
+		CFSTR("com.apple.SystemConfiguration.IPConfiguration"),
+		load_IPConfiguration,
+		start_IPConfiguration,
+		prime_IPConfiguration,
+		stop_IPConfiguration
+	},
+#endif
 #ifdef	HAVE_PLUGIN_IPMonitor
 	{
 		CFSTR("com.apple.SystemConfiguration.IPMonitor"),

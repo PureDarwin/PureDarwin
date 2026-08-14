@@ -147,6 +147,9 @@ ${if rootFsType == "hfs" then ''
       var/root/.cache \
       var/run \
       var/run/dbus \
+      var/db \
+      var/db/dhcpclient \
+      var/db/dhcpclient/leases \
       var/log \
       var/tmp \
       var/empty \
@@ -250,6 +253,12 @@ EOF
     cat > $staging/etc/hosts <<'EOF'
 127.0.0.1	localhost
 ::1		localhost
+EOF
+    cat > $staging/etc/fstab <<'EOF'
+#
+# Static filesystem mount table. The root filesystem is mounted by the kernel
+# using the boot-uuid/boot-args, so it deliberately has no entry here.
+#
 EOF
     cat > $staging/etc/profile <<'EOF'
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin

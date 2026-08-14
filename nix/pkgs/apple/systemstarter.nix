@@ -44,6 +44,9 @@ stdenv.mkDerivation {
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libxpc_static.a \
+      -Wl,-U,_OBJC_CLASS_\$_NSObject \
+      -Wl,-U,_OBJC_METACLASS_\$_NSObject \
+      -Wl,-U,__objc_empty_cache \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libinfo_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libnv_static.a \
       -Wl,-fixup_chains \

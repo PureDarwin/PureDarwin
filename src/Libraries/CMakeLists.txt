@@ -18,6 +18,9 @@ foreach(_puredarwin_library_dir
     syslog
     # after XPC for the same reason: config.defs' MIG rule takes its include
     # path from the SystemConfiguration target, which needs libxpc's headers.
+    # before SystemConfiguration: configd links the IPConfiguration plugin that
+    # bootp builds, so those targets have to exist first.
+    bootp
     SystemConfiguration
     # after SystemConfiguration: Security links CoreFoundation/libobjc/Foundation
     # by prefix, but shares libDER_static, corecrypto_static and

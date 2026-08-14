@@ -7,8 +7,9 @@
 #include <dispatch/dispatch.h>
 #include "xpc_internal.h"
 
-void *OS_xpc_object_class;
-void *OS_xpc_connection_class;
+/* _pd_xpc_release dispatches teardown on the isa. */
+OS_OBJECT_OBJC_CLASS_DECL(xpc_connection);
+
 
 /*
  * One log object for the whole process, created on first use and never

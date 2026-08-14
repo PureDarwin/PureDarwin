@@ -180,6 +180,7 @@ target_include_directories(configd PRIVATE
 target_compile_definitions(configd PRIVATE
     __DARWIN_ONLY_UNIX_CONFORMANCE=1
     PRIVATE=1
+    HAVE_PLUGIN_IPConfiguration=1
 )
 
 target_compile_options(configd PRIVATE
@@ -206,9 +207,22 @@ target_link_options(configd PRIVATE
     # registry, so it needs IOKitUser's CF-based IOKitLib.
     -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib
     -lIOKitCF
+    # IPConfiguration's report_symptoms.c submits DHCP acquisition symptoms.
+    "${PUREDARWIN_SYMPTOMREPORTER_PREFIX}/System/Library/PrivateFrameworks/SymptomReporter.framework/Versions/A/SymptomReporter"
     -lSystem)
 
+# IPConfiguration, the DHCP client, lives in the bootp project rather than
+# under Plugins/, so it is linked as its own library rather than joining the
+# _configd_plugins loop below. Its Info.plist is installed by bootp.
+# force_load because the linker only pulls archive members that resolve an
+# undefined symbol: server.c is reached solely through server_init(), so a name
+# collision was enough to drop it and the MIG server it carries, silently.
+target_link_options(configd PRIVATE
+    -Wl,-force_load,$<TARGET_FILE:ipconfiguration_static>)
+
 target_link_libraries(configd PRIVATE
+    ipconfiguration_static
+    bootplib_static
     AvailabilityHeaders
     clang_bootstrap_headers
     libc_public_headers

@@ -1,9 +1,9 @@
 /*
- * pd-networkd - early PureDarwin IPv4 network bring-up.
+ * netsetup - manually configure an interface, default route and resolver.
  *
- * This is still static IPv4 by default, but it is now a launchd-started
- * service instead of a manually invoked boot hack. DHCP can replace the static
- * lease loader without changing the interface/route/resolver apply path.
+ * Boot-time network bring-up is IPConfiguration's job now: it holds the real
+ * DHCP lease and configures lo0 itself. This stays as a hand-run tool for
+ * static addressing and for bringing a link up when DHCP is not an option.
  */
 #include <arpa/inet.h>
 #include <errno.h>

@@ -92,7 +92,7 @@ stdenv.mkDerivation {
 
   postPatch = ''
     patchShebangs .
-    substituteInPlace Makefile --replace-fail 'LDFLAGS += -Wl,--trace' '# LDFLAGS += -Wl,--trace (removed for PureDarwin: lld does not support it)'
+    substituteInPlace Makefile --replace-fail 'LDFLAGS += -Wl,--trace' '# LDFLAGS += -Wl,--trace'
   '';
 
   configurePhase = ''

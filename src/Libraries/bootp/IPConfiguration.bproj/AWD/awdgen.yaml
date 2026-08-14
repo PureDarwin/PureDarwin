@@ -1,0 +1,4 @@
+component: IPConfiguration
+output_directory: IPConfiguration.bproj/AWD
+package: AWD
+language: objc-no-arc

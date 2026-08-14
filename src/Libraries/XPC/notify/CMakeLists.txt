@@ -120,6 +120,7 @@ target_compile_options(notifyd PRIVATE
     -ferror-limit=0)
 target_include_directories(notifyd PRIVATE ${PD_NOTIFY_INCLUDES})
 target_link_options(notifyd PRIVATE
+    ${PUREDARWIN_LIBXPC_OBJC_UNDEFINED}
     -nostdlib
     -isysroot ${PUREDARWIN_MACOSX_SDK}
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>

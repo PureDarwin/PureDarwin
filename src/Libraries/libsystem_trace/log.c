@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
@@ -118,7 +119,38 @@ os_log_shim_enabled(os_log_t log, os_log_type_t type)
 
 bool os_log_type_enabled(os_log_t log, os_log_type_t type)
 {
-    return true; // FIXME
+    static _Atomic(int) resolved;
+    static os_log_type_t lowest_enabled;
+
+    (void)log;
+
+    if (!atomic_load_explicit(&resolved, memory_order_acquire)) {
+        const char *mode = getenv("OS_ACTIVITY_MODE");
+        os_log_type_t lowest = OS_LOG_TYPE_DEFAULT;
+
+        if (mode != NULL) {
+            if (strcmp(mode, "debug") == 0) {
+                lowest = OS_LOG_TYPE_DEBUG;
+            } else if (strcmp(mode, "info") == 0) {
+                lowest = OS_LOG_TYPE_INFO;
+            }
+        }
+        lowest_enabled = lowest;
+        atomic_store_explicit(&resolved, 1, memory_order_release);
+    }
+
+    /* The type values are not ordered by severity: debug is 0x02 and info is
+     * 0x01, both below default (0x00) in importance but above it numerically. */
+    switch (type) {
+        case OS_LOG_TYPE_DEBUG:
+            return lowest_enabled == OS_LOG_TYPE_DEBUG;
+        case OS_LOG_TYPE_INFO:
+            return lowest_enabled == OS_LOG_TYPE_DEBUG
+                || lowest_enabled == OS_LOG_TYPE_INFO;
+        default:
+            /* default, error and fault are always emitted. */
+            return true;
+    }
 }
 
 bool
@@ -571,6 +603,13 @@ void __os_log_impl(void* dso,
     uint32_t buffer_size)
 {
     if (!format)
+        return;
+
+    /* Every emission path funnels through here, so this is where the level
+     * filter belongs; the os_log_debug()/os_log_info() macros do check
+     * os_log_*_enabled() first, but only when the caller was compiled against
+     * an SDK whose macros expand that way. */
+    if (!os_log_type_enabled(log, type))
         return;
 
     /* This _should_ be identical to the NSObject layout */

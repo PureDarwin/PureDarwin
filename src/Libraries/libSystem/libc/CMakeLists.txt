@@ -29,6 +29,10 @@ add_custom_command(
         BUILT_PRODUCTS_DIR=${libc_headers_dir}
         SDK_INSTALL_HEADERS_ROOT=""
         sh -c "${CMAKE_CURRENT_SOURCE_DIR}/scripts/headers.sh"
+    # headers.sh copies xnu's headers in verbatim, so kernel-only blocks would
+    # otherwise reach userspace consumers; Apple's SDK ships them stripped.
+    COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/scripts/strip_kernel_headers.sh
+        ${libc_headers_dir}/usr/include
     COMMAND ${CMAKE_COMMAND} -E touch ${libc_headers_dir}/libc_headers.stamp
     COMMENT "Copying libC headers..."
 )
@@ -321,6 +325,7 @@ target_sources(libc_static PRIVATE
     darwin/pd_unix2003.c         # $UNIX2003 <-> plain forwarders; see file comment
     gen/FreeBSD/arc4random.c     # corecrypto-backed arc4random/arc4random_buf/arc4random_uniform
     net/FreeBSD/nsap_addr.c      # inet_nsap_addr/inet_nsap_ntoa (libresolv ns_print.c)
+    net/FreeBSD/linkaddr.c      # link_ntoa (bootplib's ARP/link-layer printing)
     gen/FreeBSD/daemon.c         # _daemon$1050
     gen/FreeBSD/signal.c         # _signal (libmalloc's pguard_malloc.c installs a SIGSEGV handler)
     gen/sigsetops.c              # sigemptyset/sigfillset/sigaddset/sigdelset/sigismember

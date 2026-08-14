@@ -154,6 +154,7 @@
 , pkgs
 , pythonBuild
 , securityBuild
+, symptomReporterBuild
 , splitBaseSystemArm64VirtMinimal
 , splitBaseSystemArm64VirtMinimalRelease
 , startupNotificationBuild
@@ -222,7 +223,6 @@
 , xzBuild
 , yajlBuild
 , asmjitTestArm64Build
-, jitTestArm64Build
 , zshArm64Build
 , zshBuild
 }:
@@ -460,6 +460,7 @@ let
     iokit = iokitBuild;
     coreServices = coreServicesBuild;
     security = securityBuild;
+    symptomReporter = symptomReporterBuild;
     systemConfiguration = systemConfigurationBuild;
     diskArbitration = diskArbitrationBuild;
     iomediacheck = iomediacheckBuild;
@@ -688,8 +689,7 @@ let
       };
       imageArm64VirtMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
-        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build
-                          jitTestArm64Build asmjitTestArm64Build ];
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build asmjitTestArm64Build ];
         kc = kcArm64DebugBuild;
         xnuLoader = xnu-loader.packages.${system}.arm64-virt;
         apfsprogs = pkgs.apfsprogs;
@@ -702,8 +702,7 @@ let
       };
       netbootArm64VirtMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
-        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build
-                          jitTestArm64Build asmjitTestArm64Build ];
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build asmjitTestArm64Build ];
         kc = kcArm64DebugBuild;
         xnuLoader = xnu-loader.packages.${system}.arm64-virt;
         apfsprogs = pkgs.apfsprogs;
@@ -737,7 +736,7 @@ let
         imageFileName = "puredarwin-arm64-virt-minimal-release.img";
         bootArgs = "-v serial=3 ahci_debug=1 kext=0xffff io=0xffff";
       };
-      strippedExtraPackages = [ zshBuild toyboxBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild coreServicesBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild foundationBuild securityBuild systemConfigurationBuild diskArbitrationBuild ioregBuild ];
+      strippedExtraPackages = [ zshBuild toyboxBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild coreServicesBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild foundationBuild securityBuild symptomReporterBuild systemConfigurationBuild diskArbitrationBuild ioregBuild ];
       imageStrippedBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
         extraPackages = strippedExtraPackages;
@@ -1053,6 +1052,7 @@ let
       iokit = iokitBuild;
       coreServices = coreServicesBuild;
       security = securityBuild;
+    symptomReporter = symptomReporterBuild;
       systemstarter = systemStarterBuild;
       launchd = launchdBuild;
       launchctl = launchctlBuild;

@@ -28,6 +28,7 @@
 , libobjcBuild
 , mkPureDarwinBuild
 , mkSystemConfigurationBuild
+, symptomReporterBuild
 , nativeLd
 , nativeMesonToolsDir
 , ncursesBuild
@@ -980,12 +981,22 @@ let
     sqlite = sqliteArm64Build;
     src = securitySource;
   };
+  # IPConfiguration's report_symptoms.c needs this; the x86 build cannot be
+  # reused, it is a dylib of the wrong architecture.
+  symptomReporterArm64Build =
+    if isDarwin || symptomReporterBuild == null then null
+    else symptomReporterBuild.override {
+      puredarwinArch = "arm64";
+      inherit arm64CrossToolchain;
+      corefoundation = coreFoundationArm64Build;
+    };
   systemConfigurationArm64Build =
   let base = mkSystemConfigurationBuild {
     corefoundation = coreFoundationArm64Build;
     libobjc = libobjcArm64Build;
     security = securityArm64Build;
     iokit = iokitArm64Build;
+    symptomReporter = symptomReporterArm64Build;
   };
   in if base == null then null else base.override {
     puredarwinArch = "arm64";

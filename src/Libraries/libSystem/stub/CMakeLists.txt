@@ -102,7 +102,7 @@ add_dependencies(libSystem_B_stub
     libdispatch_static openlibm_static XPC_notify_client_static XPC_notifyd_mig_static
     mDNSResponder_dnssd_static XPC_libinfo_static syslog_asl_static
     libsystem_trace_static libdarwin_static libSystemConfiguration_static
-    XPC_libxpc_static XPC_libnv_static XPC_launchd_mig_static)
+    XPC_libxpc_static XPC_libxpc_objc_static XPC_libnv_static XPC_launchd_mig_static)
 target_link_options(libSystem_B_stub PRIVATE
     # Without this only the archive members something already references get
     # pulled in, so most of libm (cosh, sinh, the erf/gamma family, ...) never
@@ -129,6 +129,7 @@ target_link_options(libSystem_B_stub PRIVATE
     -Wl,-force_load,$<TARGET_FILE:libSystemConfiguration_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libnv_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libxpc_static>
+    -Wl,-force_load,$<TARGET_FILE:XPC_libxpc_objc_static>
     $<TARGET_FILE:XPC_notifyd_mig_static>
     $<TARGET_FILE:XPC_launchd_mig_static>)
 if(PUREDARWIN_USE_LD64_LLD)

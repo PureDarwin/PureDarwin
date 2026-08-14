@@ -1,6 +1,6 @@
 /* PureDarwin: DTrace probes disabled (no dtrace on the build host to generate
  * this from magmallocProvider.d). These no-op stubs are exactly libmalloc's
- * own DARWINTEST fallback (src/dtrace.h) -- functionally a probes-off build. */
+ * own DARWINTEST fallback (src/dtrace.h) - functionally a probes-off build. */
 #ifndef _MAGMALLOCPROVIDER_H
 #define _MAGMALLOCPROVIDER_H
 #define	MAGMALLOC_ALLOCREGION(arg0, arg1, arg2, arg3)

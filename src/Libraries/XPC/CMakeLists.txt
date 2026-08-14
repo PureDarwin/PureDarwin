@@ -1,3 +1,8 @@
+set(PUREDARWIN_LIBXPC_OBJC_UNDEFINED
+    -Wl,-U,_OBJC_CLASS_$_NSObject
+    -Wl,-U,_OBJC_METACLASS_$_NSObject
+    -Wl,-U,__objc_empty_cache)
+
 foreach(_puredarwin_xpc_dir
     libnv
     libinfo

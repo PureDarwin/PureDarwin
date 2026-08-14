@@ -6436,30 +6436,6 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 				scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(argv32bit), sizeof(user_addr_t));
 		}
 
-		/*
-		* pid 1 needs no shared cache (PD has none), so nothing guarantees
-		* /usr/lib/libobjc.A.dylib is mapped into any process the way it would
-		* be on real Darwin. dyld requires libSystem's own initializer to run
-		* before any other image's (see ImageLoaderMachO::doModInitFunctions),
-		* which rules out giving libSystem.B.dylib a load-command dependency
-		* on libobjc (objc4 has real static initializers - that would make
-		* them run during libSystem's own dependency walk, before libSystem
-		* is marked initialized, and dyld panics). Loading libobjc as an
-		* independent DYLD_INSERT_LIBRARIES root sidesteps that: it still
-		* depends on libSystem (like real Darwin), so ordering is correct,
-		* and dyld's flat-namespace lookup then resolves libSystem's
-		* currently-undefined objc_* references (-Wl,-U in
-		* libSystem/stub/CMakeLists.txt) against it. Set here (pid 1's
-		* otherwise-empty envp) so every descendant process inherits it.
-		*/
-		static const char dyld_insert_env[] = "DYLD_INSERT_LIBRARIES=/usr/lib/libobjc.A.dylib";
-		envp0 = scratch_addr;
-		error = copyout(dyld_insert_env, envp0, sizeof(dyld_insert_env));
-		if (error) {
-				return error;
-		}
-		scratch_addr = USER_ADDR_ALIGN(scratch_addr + sizeof(dyld_insert_env), sizeof(user_addr_t));
-
 		user_addr_t envp_addr = scratch_addr;
 		if (proc_is64bit(p)) {
 				user64_addr_t envp64bit[2] = {};

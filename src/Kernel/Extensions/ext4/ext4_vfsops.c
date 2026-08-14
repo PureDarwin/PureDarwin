@@ -173,6 +173,15 @@ ext4_mount(struct mount *mp, vnode_t devvp, __unused user_addr_t data,
 
 	vfs_setlocklocal(mp);
 
+	/* After journal replay, so the group descriptors read here are the
+	 * recovered ones. Failure is not fatal: a stale bg_itable_unused only
+	 * makes e2fsck misreport, it does not affect the mounted filesystem. */
+	if (!vfs_isrdonly(mp)) {
+		int rerr = ext4_repair_itable_unused(emp);
+		if (rerr)
+			E4LOG("bg_itable_unused repair failed: %d", rerr);
+	}
+
 	/* fill in statfs */
 	sfs = vfs_statfs(mp);
 	sfs->f_bsize  = emp->em_blocksize;

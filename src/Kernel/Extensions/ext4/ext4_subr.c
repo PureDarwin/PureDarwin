@@ -431,6 +431,36 @@ ext4_gd_clear_flag(struct ext4_group_desc *gd, uint16_t flag)
 	gd->bg_flags = le16((uint16_t)(le16(gd->bg_flags) & ~flag));
 }
 
+static uint32_t
+ext4_gd_itable_unused(struct ext4mount *emp, const struct ext4_group_desc *gd)
+{
+	uint32_t v = le16(gd->bg_itable_unused_lo);
+
+	if (emp->em_desc_size >= 64)
+		v |= ((uint32_t)le16(gd->bg_itable_unused_hi)) << 16;
+	return v;
+}
+
+static void
+ext4_gd_set_itable_unused(struct ext4mount *emp, struct ext4_group_desc *gd,
+    uint32_t tail)
+{
+	gd->bg_itable_unused_lo = le16((uint16_t)(tail & 0xffff));
+	if (emp->em_desc_size >= 64)
+		gd->bg_itable_unused_hi = le16((uint16_t)(tail >> 16));
+}
+
+/* Count the run of never-allocated inodes at the END of a group's table. */
+static uint32_t
+ext4_itable_unused_from_bitmap(const uint8_t *map, uint32_t limit)
+{
+	uint32_t tail = 0;
+
+	while (tail < limit && !ext4_bitmap_test(map, limit - tail - 1))
+		tail++;
+	return tail;
+}
+
 /*
  * bg_itable_unused is how many inodes at the END of this group's table have
  * never been written, and fsck skips them.
@@ -439,17 +469,8 @@ static void
 ext4_gd_note_inode_used(struct ext4mount *emp, struct ext4_group_desc *gd,
     const uint8_t *map)
 {
-	uint32_t tail = 0;
-	uint32_t i = emp->em_inodes_per_group;
-
-	while (i > 0 && !ext4_bitmap_test(map, i - 1)) {
-		tail++;
-		i--;
-	}
-
-	gd->bg_itable_unused_lo = le16((uint16_t)(tail & 0xffff));
-	if (emp->em_desc_size >= 64)
-		gd->bg_itable_unused_hi = le16((uint16_t)(tail >> 16));
+	ext4_gd_set_itable_unused(emp, gd,
+	    ext4_itable_unused_from_bitmap(map, emp->em_inodes_per_group));
 }
 
 static int
@@ -539,6 +560,61 @@ ext4_alloc_inode_locked(struct ext4mount *emp, enum vtype type,
 		buf_brelse(bp);
 	}
 	return ENOSPC;
+}
+
+int
+ext4_repair_itable_unused(struct ext4mount *emp)
+{
+	uint32_t grp;
+	uint32_t repaired = 0;
+
+	for (grp = 0; grp < emp->em_groups_count; grp++) {
+		struct ext4_group_desc gd;
+		buf_t bp = NULL;
+		uint32_t limit, tail, cur;
+		int error;
+
+		error = ext4_read_group_desc(emp, grp, &gd);
+		if (error)
+			return error;
+
+		limit = emp->em_inodes_per_group;
+		if ((uint64_t)(grp + 1) * emp->em_inodes_per_group >
+		    emp->em_inodes_count)
+			limit = (uint32_t)(emp->em_inodes_count -
+			    (uint64_t)grp * emp->em_inodes_per_group);
+
+		/* A group flagged INODE_UNINIT with every inode still free has
+		 * never been allocated into, so its on-disk bitmap bytes are
+		 * undefined and must not be read - the whole table is unused. */
+		if ((le16(gd.bg_flags) & EXT4_BG_INODE_UNINIT) &&
+		    le16(gd.bg_free_inodes_count_lo) == limit) {
+			tail = limit;
+		} else {
+			error = ext4_blkread(emp, ext4_gd_inode_bitmap(emp, &gd),
+			    &bp);
+			if (error)
+				return error;
+			tail = ext4_itable_unused_from_bitmap(
+			    (const uint8_t *)buf_dataptr(bp), limit);
+			buf_brelse(bp);
+		}
+
+		cur = ext4_gd_itable_unused(emp, &gd);
+		if (tail == cur)
+			continue;
+
+		ext4_gd_set_itable_unused(emp, &gd, tail);
+		error = ext4_write_group_desc(emp, grp, &gd);
+		if (error)
+			return error;
+		repaired++;
+	}
+
+	if (repaired != 0)
+		E4LOG("repaired bg_itable_unused in %u group(s)", repaired);
+
+	return 0;
 }
 
 int

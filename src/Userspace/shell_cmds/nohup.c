@@ -56,8 +56,8 @@ __FBSDID("$FreeBSD: src/usr.bin/nohup/nohup.c,v 1.10 2003/05/03 19:44:46 obrien 
 #include <string.h>
 #include <unistd.h>
 
-/* PureDarwin: no vproc/launchd-console API - SIGHUP ignore (below) is the
- * whole point of nohup and works without it. */
+#include <vproc.h>
+#include <vproc_priv.h>
 
 static void dofile(void);
 static void usage(void);
@@ -91,6 +91,12 @@ main(int argc, char *argv[])
 		err(EXIT_MISC, "%s", argv[0]);
 
 	(void)signal(SIGHUP, SIG_IGN);
+
+	/* Ignoring SIGHUP is only half of it: launchd sends its own teardown to
+	 * every job in the console session, so detach into the background session
+	 * as well. libvproc implements this through _vprocmgr_switch_to_session. */
+	if (_vprocmgr_detach_from_console(0) != NULL)
+		err(EXIT_MISC, "can't detach from console");
 
 	execvp(*argv, argv);
 	exit_status = (errno == ENOENT) ? EXIT_NOTFOUND : EXIT_NOEXEC;

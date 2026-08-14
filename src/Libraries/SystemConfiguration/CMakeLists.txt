@@ -94,7 +94,7 @@ target_sources(SystemConfiguration PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/configUser.c
     pd_sc_cfurl_resource.c
     pd_fsevents_stub.c
-    pd_sc_reachability_stub.c
+    pd_sc_reachability.c
 )
 
 target_include_directories(SystemConfiguration PUBLIC include)

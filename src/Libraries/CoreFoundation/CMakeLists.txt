@@ -41,12 +41,6 @@ else()
   add_compile_options($<$<COMPILE_LANGUAGE:C,OBJC>:-include$<SEMICOLON>${PROJECT_SOURCE_DIR}/Base.subproj/CoreFoundation_Prefix.h>)
 endif()
 
-# Real Apple CoreFoundation is compiled entirely as Objective-C (the ".c"
-# extension on most of its sources is conventional, not literal C-only
-# parsing) - several files rely on it for scattered @interface/@end blocks
-# gated by DEPLOYMENT_RUNTIME_OBJC (e.g. CFAttributedString.c). Force the
-# ObjC frontend on this target's C sources to match, scoped to the target
-# (not CMAKE_C_FLAGS) so it doesn't break CMake's own C-compiler ABI checks.
 add_compile_options($<$<COMPILE_LANGUAGE:C>:-x$<SEMICOLON>objective-c$<SEMICOLON>-fno-objc-arc>)
 
 add_compile_options($<$<COMPILE_LANGUAGE:C>:-fblocks>)
@@ -54,12 +48,6 @@ add_compile_options($<$<COMPILE_LANGUAGE:C>:-fblocks>)
 if("${CMAKE_C_SIMULATE_ID}" STREQUAL "MSVC")
   add_compile_options($<$<COMPILE_LANGUAGE:C>:/EHsc>)
 else()
-  # PureDarwin: -fexceptions emits unwind-table personality-routine
-  # references (___gcc_personality_v0) that need a real C++/ObjC exception
-  # unwind runtime (libunwind/libc++abi) to back them - we have neither,
-  # and nothing we compile here is real Objective-C using @try/@catch
-  # (all the *_apple.m files that would have needed it are stubbed - see
-  # fastfetch.nix), so there's nothing that actually needs unwinding.
   add_compile_options($<$<COMPILE_LANGUAGE:C>:-fno-exceptions>)
 endif()
 
@@ -264,6 +252,7 @@ add_framework(CoreFoundation
                 RunLoop.subproj/CFMachPort.h
                 RunLoop.subproj/CFMessagePort.h
                 RunLoop.subproj/CFRunLoop.h
+                RunLoop.subproj/CFFileDescriptor.h
                 RunLoop.subproj/CFSocket.h
                 # Stream
                 Stream.subproj/CFStream.h
@@ -357,19 +346,12 @@ add_framework(CoreFoundation
                 Preferences.subproj/CFPreferences.c
                 Preferences.subproj/CFXMLPreferencesDomain.c
                 # RunLoop
-                # PureDarwin: real Mach target (actual XNU/Mach IPC, not the
-                # Linux-only swift-corelibs-foundation build these files were
-                # excluded for) - SystemStarter's real job-exit detection
-                # (task_name_for_pid + CFMachPort dead-name notification)
-                # needs the real CFMachPortCreateWithPort/
-                # CFMachPortCreateRunLoopSource/CFMachPortSetInvalidationCallBack.
                 RunLoop.subproj/CFMachPort.c
                 RunLoop.subproj/CFMachPort_Lifetime.c
-                # RunLoop.subproj/CFMessagePort.c
-                # PureDarwin: CFMessagePort.c itself still excluded - see
-                # CFMessagePort_PureDarwin_Stub.c for why.
-                RunLoop.subproj/CFMessagePort_PureDarwin_Stub.c
+                RunLoop.subproj/CFMessagePort.c
                 RunLoop.subproj/CFRunLoop.c
+                AppServices.subproj/CFUserNotification.c
+                RunLoop.subproj/CFFileDescriptor.c
                 RunLoop.subproj/CFSocket.c
                 # Stream
                 Stream.subproj/CFConcreteStreams.c

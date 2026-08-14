@@ -53,6 +53,9 @@ let
     "tools"
   ];
   userlandSource = sourceWith "puredarwin-userland-source" [
+    # nohup detaches from the console session through _vprocmgr_detach_from_console;
+    # vproc_priv.h is private and not in the SDK.
+    "src/Libraries/XPC/libxpc/include"
     "src/Kernel/xnu/osfmk"
     # ping(8) from network_cmds needs <netinet/ip_var.h>,
     # <netinet/in_systm.h>, <netinet/ip_icmp.h> and the SO_TC_* socket
@@ -156,6 +159,10 @@ let
   systemConfigurationSource = sourceWith "puredarwin-systemconfiguration-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/SystemConfiguration"
+      # configd links bootp's IPConfiguration plugin
+      "src/Libraries/bootp"
+      # report_symptoms.c includes <SymptomReporter/SymptomReporter.h>
+      "src/Libraries/SymptomReporter"
       # SCPreferences.h includes <Security/Security.h>, and
       # SCNetworkConfigurationPrivate.h <IOKit/IOKitLib.h>.
       "src/Libraries/Security"

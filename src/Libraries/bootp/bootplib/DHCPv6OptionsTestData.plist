@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>tests</key>
+	<array>
+		<dict>
+			<key>dhcp_dns_servers</key>
+			<array>
+				<string>fd01::1</string>
+				<string>fd01::2</string>
+			</array>
+			<key>dhcp_domain_list</key>
+			<array>
+				<string>comcast.net</string>
+				<string>comcast1.net</string>
+			</array>
+		</dict>
+		<dict>
+			<key>dhcp_23</key>
+			<array>
+				<string>fd01::1</string>
+				<string>fd01::2</string>
+			</array>
+			<key>dhcp_24</key>
+			<array>
+				<string>comcast.net</string>
+				<string>comcast1.net</string>
+			</array>
+		</dict>
+		<dict>
+			<key>dhcp_dns_servers</key>
+			<string>fd01::1</string>
+			<key>dhcp_domain_list</key>
+			<string>comcast.net</string>
+		</dict>
+		<dict>
+			<key>dhcp_captive_portal_url</key>
+			<string>https://www.somecompany.net/the/url</string>
+		</dict>
+		<dict>
+			<key>dhcp_103</key>
+			<string>https://www.somecompany.net/the/url</string>
+		</dict>
+		<dict>
+			<key>expect_success</key>
+			<false/>
+			<key>dhcp_dns_servers</key>
+			<string>a</string>
+			<key>dhcp_domain_list</key>
+			<integer>23</integer>
+		</dict>
+	</array>
+</dict>
+</plist>

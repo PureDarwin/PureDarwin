@@ -1,12 +1,6 @@
 /*
  * os_state: the sysdiagnose "state dump" facility. A process registers a block
- * that libsystem serialises on demand when a state dump is collected.
- *
- * PureDarwin has no state-dump collector, so os_state_add_handler() registers
- * nothing and the block is simply never invoked - the documented behaviour when
- * no collector exists, and exactly what SCDynamicStore expects (it ignores the
- * return value). The types below match the real ABI so the handler block in
- * SCDOpen.c compiles unmodified.
+ * that gets serialised on demand when a state dump is collected.
  */
 
 #ifndef _PUREDARWIN_OS_STATE_PRIVATE_H_
@@ -53,19 +47,9 @@ typedef uint64_t os_state_handle_t;
 
 typedef os_state_data_t (^os_state_block_t)(os_state_hints_t hints);
 
-static inline os_state_handle_t
-os_state_add_handler(dispatch_queue_t queue, os_state_block_t block)
-{
-	(void)queue;
-	(void)block;
-	return 0;
-}
-
-static inline void
-os_state_remove_handler(os_state_handle_t handle)
-{
-	(void)handle;
-}
+/* Returns a non-zero handle on success, 0 on failure. */
+os_state_handle_t os_state_add_handler(dispatch_queue_t queue, os_state_block_t block);
+void os_state_remove_handler(os_state_handle_t handle);
 
 __END_DECLS
 

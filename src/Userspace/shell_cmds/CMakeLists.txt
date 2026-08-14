@@ -43,6 +43,10 @@ add_shell_cmd(logname logname.c)
 add_shell_cmd(mktemp mktemp.c)
 add_shell_cmd(nice nice.c)
 add_shell_cmd(nohup nohup.c)
+# nohup detaches from the console session through _vprocmgr_detach_from_console.
+# vproc_priv.h is private and not in the SDK, so take it from our libxpc.
+target_include_directories(nohup PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/Libraries/XPC/libxpc/include)
 add_shell_cmd(printenv printenv.c)
 add_shell_cmd(pwd pwd.c)
 add_shell_cmd(renice renice.c)

@@ -7229,6 +7229,30 @@ reloadAllImages:
 				gProcessInfo->dyldPath = strdup(dyldPathBuffer);
 		}
 
+		// PureDarwin: libobjc is always loaded, as if it had been inserted.
+		try {
+			LoadContext context;
+			context.useSearchPaths		= false;
+			context.useFallbackPaths	= false;
+			context.useLdLibraryPath	= false;
+			context.implicitRPath		= false;
+			context.matchByInstallName	= false;
+			context.dontLoad			= false;
+			context.mustBeBundle		= false;
+			context.mustBeDylib			= true;
+			context.canBePIE			= false;
+			context.origin				= NULL;
+			context.rpath				= NULL;
+			unsigned objcCacheIndex;
+			load("/usr/lib/libobjc.A.dylib", context, objcCacheIndex);
+		}
+		catch (const char* msg) {
+			dyld::log("dyld: warning: could not load /usr/lib/libobjc.A.dylib: %s\n", msg);
+		}
+		catch (...) {
+			dyld::log("dyld: warning: could not load /usr/lib/libobjc.A.dylib\n");
+		}
+
 		// load any inserted libraries
 		if	( sEnv.DYLD_INSERT_LIBRARIES != NULL ) {
 			for (const char* const* lib = sEnv.DYLD_INSERT_LIBRARIES; *lib != NULL; ++lib) 

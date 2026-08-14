@@ -74,6 +74,7 @@
 #include <CoreFoundation/CFPlugIn.h>
 #include <CoreFoundation/CFRunLoop.h>
 #include <CoreFoundation/CFStream.h>
+#include <CoreFoundation/CFFileDescriptor.h>
 #include <CoreFoundation/CFSocket.h>
 #include <CoreFoundation/CFMachPort.h>
 

@@ -1,0 +1,162 @@
+/*
+ * Copyright (c) 2000-2014, 2020 Apple Inc. All rights reserved.
+ *
+ * @APPLE_LICENSE_HEADER_START@
+ * 
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this
+ * file.
+ * 
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ * 
+ * @APPLE_LICENSE_HEADER_END@
+ */
+
+#include <mach/std_types.defs>
+#include <mach/mach_types.defs>
+
+subsystem ipconfig 20000;
+serverprefix _;
+
+import "ipconfig_types.h";
+
+type ip_address = MACH_MSG_TYPE_INTEGER_32
+	ctype : uint32_t;
+type ipconfig_status = MACH_MSG_TYPE_INTEGER_32
+	ctype : ipconfig_status_t;
+
+type if_name = array[16] of char
+	ctype : InterfaceName;
+type service_id = array[128] of char
+	ctype : ServiceID;
+
+/*
+ * serialized XML data (client->server)
+ */
+type xmlData    = ^ array [] of MACH_MSG_TYPE_BYTE
+	ctype : xmlData_t;
+
+/*
+ * serialized XML data (server->client)
+ */
+type xmlDataOut    = ^ array [] of MACH_MSG_TYPE_BYTE
+	ctype : xmlDataOut_t;
+
+/*
+ * serialized data out (server->client)
+ */
+type dataOut = ^ array [] of MACH_MSG_TYPE_BYTE
+	ctype : dataOut_t;
+
+/*
+ * MiG interfaces
+ */
+routine ipconfig_if_count(	server : mach_port_t;
+			 out	count : int);
+
+routine ipconfig_get_option(	server : mach_port_t;
+				name : if_name;
+				option_code : int;
+			 out	option_data : dataOut;
+			 out	status : ipconfig_status);
+
+routine ipconfig_if_addr(	server : mach_port_t;
+				name : if_name;
+			 out	addr : ip_address;
+			 out	status : ipconfig_status);
+
+routine ipconfig_get_packet(	server : mach_port_t;
+				name : if_name;
+			 out	packet : dataOut;
+			 out	status : ipconfig_status);
+
+routine ipconfig_set(		server : mach_port_t;
+				name : if_name;
+				method_data : xmlData;
+			 out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+
+routine ipconfig_set_verbose(	server : mach_port_t;
+				verbose : int;
+			 out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+
+#ifdef IPCONFIG_TEST_NO_ENTRY
+routine ipconfig_set_something(	server : mach_port_t;
+				verbose : int;
+			 out	status : ipconfig_status );
+#else /* IPCONFIG_TEST_NO_ENTRY */
+	skip;
+#endif /* IPCONFIG_TEST_NO_ENTRY */
+
+routine ipconfig_add_service(	server : mach_port_t;
+				name : if_name;
+				method_data : xmlData;
+			out	serviceID : service_id;
+			out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+	skip;
+
+routine ipconfig_find_service(	server : mach_port_t;
+				name : if_name;
+				exact : boolean_t;
+				method_data : xmlData;
+			out	serviceID : service_id;
+			out	status : ipconfig_status );
+
+routine ipconfig_remove_service(server : mach_port_t;
+				name : if_name;
+				method_data : xmlData;
+			out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+routine ipconfig_set_service(	server : mach_port_t;
+				name : if_name;
+				method_data : xmlData;
+			out	serviceID : service_id;
+			out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+
+routine ipconfig_get_v6_packet(	server : mach_port_t;
+				name : if_name;
+			 out	packet : dataOut;
+			 out	status : ipconfig_status);
+
+routine ipconfig_remove_service_on_interface(
+				server : mach_port_t;
+				name : if_name;
+				serviceID : service_id;
+			out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+routine ipconfig_refresh_service(
+				server : mach_port_t;
+				name : if_name;
+				serviceID : service_id;
+			out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+routine ipconfig_forget_network(
+				server : mach_port_t;
+				name : if_name;
+				network_data : xmlData;
+			out	status : ipconfig_status;
+	    ServerAuditToken	audit_token : audit_token_t);
+
+routine ipconfig_get_ra(	server : mach_port_t;
+				name : if_name;
+			 out	ra_data : xmlDataOut;
+			 out	status : ipconfig_status);

@@ -12,6 +12,10 @@
 	<dict>
 		<key>com.apple.SystemConfiguration.configd</key>
 		<true/>
+		<!-- Claimed by the builtin IPConfiguration plugin's bootstrap_check_in;
+		     launchd only hands out ports for services this job declares. -->
+		<key>com.apple.network.IPConfiguration</key>
+		<true/>
 	</dict>
 	<key>POSIXSpawnType</key>
 	<string>Interactive</string>

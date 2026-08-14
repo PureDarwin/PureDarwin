@@ -1836,6 +1836,11 @@ _vm_copy
 _vm_kernel_page_mask
 _vm_protect
 _vm_remap
+_OBJC_CLASS_$_OS_xpc_object
+_OBJC_CLASS_$_OS_xpc_connection
+_OBJC_METACLASS_$_OS_xpc_object
+_OBJC_METACLASS_$_OS_xpc_connection
+__vprocmgr_detach_from_console
 _vproc_swap_integer
 _vproc_transaction_begin
 _vproc_transaction_end
@@ -1984,9 +1989,8 @@ _y0
 _y0f
 _y1
 _y1f
-
-# Implemented in the vendored libdispatch/libsystem_trace/libc but never listed
-# here, so the archive members were dropped and Security could not link.
+_link_ntoa
+_timegm
 _dispatch_barrier_sync
 _dispatch_set_target_queue
 _dispatch_queue_attr_make_with_autorelease_frequency
@@ -2006,4 +2010,6 @@ __os_activity_none
 _os_activity_scope_enter
 _os_activity_scope_leave
 _os_activity_get_identifier
+_os_state_add_handler
+_os_state_remove_handler
 _csops_audittoken

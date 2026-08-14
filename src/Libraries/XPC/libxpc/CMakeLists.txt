@@ -1,4 +1,5 @@
 add_darwin_static_library(XPC_libxpc_static)
+
 # gCRAnnotations (CrashReporterClient.c's custom "__DATA,__crash_info"
 # section global, used by xpc_debug.c's xpc_api_misuse via
 # CRSetCrashLogMessage) never showed up in libSystem.B.dylib's dynamic
@@ -80,3 +81,17 @@ target_link_libraries(XPC_libxpc_static PRIVATE
 add_dependencies(XPC_libxpc_static libc_features)
 # Wired up in ../CMakeLists.txt after launchd/ (which generates job.h etc, and
 # depends on this target existing first for ITS OWN mig() calls) is processed.
+
+# The ObjC classes behind xpc_object_t/xpc_connection_t live in their own
+# archive, force-loaded ONLY by libSystem.B.dylib.
+add_darwin_static_library(XPC_libxpc_objc_static)
+target_sources(XPC_libxpc_objc_static PRIVATE pd_xpc_object_class.m)
+target_include_directories(XPC_libxpc_objc_static PRIVATE
+    $<TARGET_PROPERTY:XPC_libxpc_static,INCLUDE_DIRECTORIES>)
+target_compile_options(XPC_libxpc_objc_static PRIVATE
+    $<TARGET_PROPERTY:XPC_libxpc_static,COMPILE_OPTIONS>)
+target_compile_definitions(XPC_libxpc_objc_static PRIVATE
+    $<TARGET_PROPERTY:XPC_libxpc_static,COMPILE_DEFINITIONS>)
+target_link_libraries(XPC_libxpc_objc_static PRIVATE
+    AvailabilityHeaders clang_bootstrap_headers libc_public_headers
+    libc_features pthread_common_headers)

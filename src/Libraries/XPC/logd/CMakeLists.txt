@@ -51,6 +51,7 @@ target_compile_options(logd PRIVATE
     -ferror-limit=0)
 target_include_directories(logd PRIVATE ${PD_LOGD_INCLUDES})
 target_link_options(logd PRIVATE
+    ${PUREDARWIN_LIBXPC_OBJC_UNDEFINED}
     -nostdlib
     -isysroot ${PUREDARWIN_MACOSX_SDK}
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>

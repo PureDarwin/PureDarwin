@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fstab.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,7 +53,8 @@ struct hfs_mount_args {
 static void
 usage(void)
 {
-    fprintf(stderr, "usage: mount -t type [-o options] special node\n");
+    fprintf(stderr, "usage: mount [-v] -t type [-o options] special node\n");
+    fprintf(stderr, "       mount [-v] -a [-t [no]type[,type...]]\n");
     exit(64);
 }
 
@@ -141,39 +143,11 @@ mount_generic(const char *type, const char *device, const char *dir, int flags)
     return mount(type, dir, flags, &args);
 }
 
-int
-main(int argc, char **argv)
+static int
+mount_one(const char *type, const char *device, const char *dir, int flags,
+    int verbose)
 {
-    const char *type = NULL;
-    const char *options = NULL;
-    const char *device;
-    const char *dir;
-    int ch;
-    int flags;
     int rc;
-
-    while ((ch = getopt(argc, argv, "rt:o:")) != -1) {
-        switch (ch) {
-        case 'r':
-            options = options ? options : "ro";
-            break;
-        case 't':
-            type = optarg;
-            break;
-        case 'o':
-            options = optarg;
-            break;
-        default:
-            usage();
-        }
-    }
-
-    if (!type || argc - optind != 2)
-        usage();
-
-    device = argv[optind];
-    dir = argv[optind + 1];
-    flags = parse_options(options);
 
     /* mkdir("/") fails EISDIR rather than EEXIST; either means "already there". */
     if (mkdir(dir, 0755) < 0 && errno != EEXIST && errno != EISDIR) {
@@ -194,5 +168,123 @@ main(int argc, char **argv)
         return 1;
     }
 
+    if (verbose)
+        printf("%s on %s (%s)\n", device, dir, type);
+
     return 0;
+}
+
+/*
+ * -t takes a comma-separated list; a leading "no" turns the whole list into an
+ * exclusion, so "nonfs" means "everything except nfs".
+ */
+static int
+type_included(const char *typelist, const char *fstype)
+{
+    const char *p;
+    int exclude;
+    int found = 0;
+
+    if (typelist == NULL)
+        return 1;
+    if (fstype == NULL)
+        return 0;
+
+    exclude = (strncmp(typelist, "no", 2) == 0);
+    p = exclude ? typelist + 2 : typelist;
+
+    while (*p != '\0') {
+        size_t len = strcspn(p, ",");
+
+        if (len == strlen(fstype) && strncmp(p, fstype, len) == 0) {
+            found = 1;
+            break;
+        }
+        p += len;
+        if (*p == ',')
+            p++;
+    }
+
+    return exclude ? !found : found;
+}
+
+/* mount -a: everything in /etc/fstab that the type list allows. */
+static int
+mount_all(const char *typelist, const char *options, int verbose)
+{
+    struct fstab *fs;
+    int status = 0;
+
+    setfsent();
+    while ((fs = getfsent()) != NULL) {
+        int flags;
+
+        /* Swap and "xx" entries are not filesystems to mount. */
+        if (fs->fs_type != NULL &&
+            (strcmp(fs->fs_type, FSTAB_SW) == 0 ||
+             strcmp(fs->fs_type, FSTAB_XX) == 0))
+            continue;
+
+        if (!type_included(typelist, fs->fs_vfstype))
+            continue;
+
+        /* The kernel already mounted the root volume; re-mounting it here
+         * would only risk disturbing a working mount. */
+        if (fs->fs_file != NULL && strcmp(fs->fs_file, "/") == 0)
+            continue;
+
+        flags = parse_options(options != NULL ? options : fs->fs_mntops);
+        if (mount_one(fs->fs_vfstype, fs->fs_spec, fs->fs_file, flags, verbose) != 0)
+            status = 1;
+    }
+    endfsent();
+
+    return status;
+}
+
+int
+main(int argc, char **argv)
+{
+    const char *type = NULL;
+    const char *options = NULL;
+    int all = 0;
+    int verbose = 0;
+    int ch;
+
+    while ((ch = getopt(argc, argv, "advrt:o:")) != -1) {
+        switch (ch) {
+        case 'a':
+            all = 1;
+            break;
+        case 'd':
+            /* "fake" mount: accepted and ignored, nothing here to dry-run. */
+            break;
+        case 'v':
+            verbose = 1;
+            break;
+        case 'r':
+            options = options ? options : "ro";
+            break;
+        case 't':
+            type = optarg;
+            break;
+        case 'o':
+            options = optarg;
+            break;
+        default:
+            usage();
+        }
+    }
+
+    if (all) {
+        if (argc - optind != 0)
+            usage();
+        return mount_all(type, options, verbose);
+    }
+
+    if (!type || argc - optind != 2)
+        usage();
+
+    return mount_one(type, argv[optind], argv[optind + 1],
+        parse_options(options), verbose);
 }

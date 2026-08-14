@@ -10,6 +10,7 @@ target_sources(libsystem_trace_static PRIVATE
     log.c
     signpost.c
     activity.c
+    state.c
     init.c
 )
 
