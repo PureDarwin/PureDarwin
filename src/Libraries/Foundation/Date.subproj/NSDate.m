@@ -8,6 +8,7 @@
 
 #import <Foundation/NSDate.h>
 #include <CoreFoundation/CFDate.h>
+#include <CoreFoundation/ForFoundationOnly.h>
 
 /* NSDate and CFDate share the same epoch - 2001-01-01 00:00:00 GMT - so the
  * reference-date interval passes through untouched. Only the 1970 accessors
@@ -59,3 +60,10 @@
 }
 
 @end
+
+#if DEPLOYMENT_RUNTIME_OBJC
+__attribute__((constructor))
+static void __NSCFDateBridgeInit(void) {
+    _CFRuntimeBridgeClasses(CFDateGetTypeID(), "NSDate");
+}
+#endif

@@ -30,6 +30,11 @@
 , netbootOnly ? false
 , useRamdisk ? false
 , ramdiskMB ? 128
+  # Paths (relative to the root) to drop from the RAMDisk only. A ramdisk has
+  # to fit in RAM twice over on the way in, so anything that is not needed to
+  # run the system is worth removing.
+, ramdiskPrune ? []
+, rawDebugLog ? false
   # xnu-loader reads this off the ESP at \EFI\BOOT\boot-args.txt
   # it falls back if it cannot find a boot-args.txt, so not strictly needed here
   # but generally nice to have so we can override things easily now
@@ -95,6 +100,13 @@ ${if rootFsType == "hfs" then ''
     mmd -i esp.img ::/EFI ::/EFI/BOOT
     mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}
     mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
+${lib.optionalString rawDebugLog ''
+    # Keep the log file's cluster chain fixed before boot. The kernel logger
+    # will overwrite data sectors only; it must never allocate FAT clusters
+    # or update directory metadata while handling an early failure.
+    truncate -s 4194304 pdlog.bin
+    mcopy -o -i esp.img pdlog.bin                           ::/EFI/BOOT/PDLOG.BIN
+''}
     printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
     mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt
     fi
@@ -640,29 +652,36 @@ ${lib.optionalString useRamdisk ''
     # Build the netboot-style RAMDisk from the same minimal staging tree used
     # for the normal root image. The loader reads this file from the ESP and
     # publishes it as /chosen/memory-map/RAMDisk for XNU's md0 device.
+    #
+    # ext4, not FAT: a Darwin root filesystem is full of symlinks (all of
+    # /usr/lib) and depends on execute bits, neither of which FAT records - the
+    # mcopy loop could only skip them. Same mke2fs invocation as the root image
+    # below, including the fakeroot chown, because uid 0 ownership matters just
+    # as much here.
+${lib.optionalString (ramdiskPrune != []) ''
+    for prune in ${lib.escapeShellArgs ramdiskPrune}; do
+      if [ -e "$staging/$prune" ]; then
+        echo "ramdisk: pruning $prune ($(du -sh "$staging/$prune" | cut -f1))"
+        rm -rf "$staging/$prune"
+      fi
+    done
+''}
     ramdisk_img="$PWD/ramdisk.img"
-    truncate -s $(( ${toString ramdiskMB} * 1024 * 1024 )) "$ramdisk_img"
-    mkfs.vfat -F 32 -n RAMDISK "$ramdisk_img" >/dev/null
-    (
-      cd "$staging"
-      while IFS= read -r -d "" entry; do
-        rel="''${entry#./}"
-        mmd -i "$ramdisk_img" "::/$rel"
-      done < <(find . -mindepth 1 -type d ! -type l -print0)
+    fakeroot bash <<FAKESCRIPT
+    chown -R 0:0 "$staging"
+    mke2fs -q -F -t ext4 \
+      -b 4096 \
+      -O ^orphan_file \
+      -L darwin-ramdisk \
+      -d "$staging" \
+      `# size is a count of -b sized blocks, so MB * 1024*1024/4096` \
+      "$ramdisk_img" $(( ${toString ramdiskMB} * 256 )) >/dev/null
+FAKESCRIPT
+    cat > ramdisk-debugfs.cmds <<'EOF'
+set_inode_field /var/empty mode 040755
+EOF
+    debugfs -w -f ramdisk-debugfs.cmds "$ramdisk_img" >/dev/null
 
-      while IFS= read -r -d "" entry; do
-        rel="''${entry#./}"
-        source="$entry"
-        if [ -L "$entry" ]; then
-          source=$(readlink -f "$entry" 2>/dev/null || true)
-        fi
-        if [ -f "$source" ]; then
-          mcopy -o -i "$ramdisk_img" "$source" "::/$rel"
-        else
-          echo "skipping non-file ramdisk entry $entry"
-        fi
-      done < <(find . -mindepth 1 \( -type f -o -type l \) -print0)
-    )
     if [ "$netboot_only" -eq 0 ]; then
       mcopy -o -i esp.img "$ramdisk_img" ::/ramdisk.img
     fi

@@ -507,7 +507,17 @@ bsd_init(void)
 	const char *slash_dev = NULL;
 #endif
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+/*
+ * bsd_init() is otherwise silent until printf(copyright), and on a board still
+ * being brought up it is where the boot stops - most of it is one-line calls
+ * whose failure looks identical from outside. The trace it enables is the
+ * only view into that.
+ */
+#define DEBUG_BSDINIT 1
+#else
 #define DEBUG_BSDINIT 0
+#endif
 
 #if DEBUG_BSDINIT
 #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)

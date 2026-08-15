@@ -97,4 +97,9 @@ typedef struct _NSZone NSZone;
 #define NS_ENUM_DEPRECATED_MAC(...)
 #define NS_ENUM_DEPRECATED_IOS(...)
 
+@class NSString;
+
+void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+void NSLogv(NSString *format, va_list args) __attribute__((format(__NSString__, 1, 0)));
+
 #endif /* ! __FOUNDATION_NSOBJCRUNTIME__ */

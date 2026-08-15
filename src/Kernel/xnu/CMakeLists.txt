@@ -14,7 +14,14 @@ endif()
 
 # XNU build arch. x86_64 installs the i386/ machine headers (machine/types.h
 # includes "i386/types.h"); arm64 installs arm/ and needs a MACHINE_CONFIGS.
-if(PUREDARWIN_ARM64)
+if(PUREDARWIN_ARM32)
+    # 32-bit ARM. Only board so far is BCM2835 (Raspberry Pi Zero, ARMv6).
+    set(XNU_ARCH_CONFIGS ARM)
+    if(NOT DEFINED PUREDARWIN_ARM32_MACHINE_CONFIG)
+        set(PUREDARWIN_ARM32_MACHINE_CONFIG BCM2835)
+    endif()
+    set(XNU_MACHINE_CONFIGS MACHINE_CONFIGS=${PUREDARWIN_ARM32_MACHINE_CONFIG})
+elseif(PUREDARWIN_ARM64)
     set(XNU_ARCH_CONFIGS ARM64)
     if(NOT DEFINED PUREDARWIN_ARM64_MACHINE_CONFIG)
         set(PUREDARWIN_ARM64_MACHINE_CONFIG BCM2837)

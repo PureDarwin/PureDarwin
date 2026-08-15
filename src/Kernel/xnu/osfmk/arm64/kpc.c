@@ -37,7 +37,12 @@
 #include <stdint.h>
 #include <sys/errno.h>
 
-#if APPLE_ARM64_ARCH_FAMILY
+/*
+ * PUREDARWIN_NO_APPLE_PMU: the Apple implementation below reads the PMC and
+ * PMCR system registers by name, which only Apple's clang can encode. Fall
+ * back to the no-counters implementation at the bottom of this file.
+ */
+#if APPLE_ARM64_ARCH_FAMILY && !defined(PUREDARWIN_NO_APPLE_PMU)
 
 #if MONOTONIC
 #include <kern/monotonic.h>

@@ -87,4 +87,12 @@ pd_entry_t      BootPTD[2048]
 __attribute__((section("__HIB, __bootPT"))) = {
 	FOR_0_TO_2047(ID_MAP_2MEG)
 };
+
+/*
+ * Page directory for a firmware framebuffer above the low identity map. Which
+ * PDPT slot points here is not known until pstart reads boot_args, so both the
+ * slot and the entries are filled in there - see PD_MAP_HIGH_FB.
+ */
+pd_entry_t      BootFBPD[PTE_PER_PAGE]
+__attribute__((section("__HIB, __bootPT"))) = { 0 };
 #endif /* MACHINE_BOOTSTRAPPTD */

@@ -19,7 +19,8 @@ PRIVATE_KERNELFILES = \
 	PL192_VIC.h \
 	protos.h \
 	S3cUART.h \
-	T8002.h
+	T8002.h \
+	BCM2835.h
 
 # Headers installed into System.framework/PrivateHeaders (userspace internal SDK only).
 INSTALL_MD_LCL_LIST = ${PRIVATE_DATAFILES}

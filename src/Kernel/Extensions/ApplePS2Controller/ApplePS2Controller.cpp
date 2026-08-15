@@ -206,6 +206,18 @@ bool ApplePS2Controller::start(IOService * provider)
   //
  if (!super::start(provider))  return false;
 
+  //
+  // Many modern boards publish a ps2controller nub from ACPI but have no real
+  // 8042 behind it, in which case the status port floats high. 0xFF has both
+  // kOutputReady and kInputBusy set, so every wait loop below would spin
+  // forever and hold this nub busy, which in turn blocks IOKit quiesce.
+  //
+  if (inb(kCommandPort) == 0xFF)
+  {
+    IOLog("ApplePS2Controller: no 8042 present (status port reads 0xff)\n");
+    return false;
+  }
+
 #if DEBUGGER_SUPPORT
   // Enable special key sequence to enter debugger if debug boot-arg was set.
   int debugFlag = 0;
@@ -249,7 +261,7 @@ bool ApplePS2Controller::start(IOService * provider)
   // the work loop.
   //
 
-  while ( inb(kCommandPort) & kOutputReady )
+  for (int drain = 0; drain < 1024 && (inb(kCommandPort) & kOutputReady); drain++)
   {
     IODelay(kDataDelay);
     inb(kDataPort);
@@ -624,10 +636,19 @@ void ApplePS2Controller::interruptOccurred(OSObject *, IOInterruptEventSource *,
   }
 
   UInt8 status;
+  //
+  // Every iteration below is supposed to consume one byte out of the 8042's
+  // one-byte output buffer, so a working controller drains in a handful of
+  // passes. A nub with no real 8042 behind it leaves kOutputReady asserted no
+  // matter how often the data port is read, and these loops never end - inside
+  // an interrupt context, which takes the machine with it. Cap them: dropping
+  // input from hardware that is not there beats hanging the boot.
+  //
+  int drainLimit = kInterruptDrainLimit;
 #if DEBUGGER_SUPPORT
   int state;
   lockController(&state);              // (lock out interrupt + access to queue)
-  while (1)
+  while (drainLimit-- > 0)
   {
     // See if data is available on the keyboard input stream (off queue);
     // we do not read keyboard data from the real data port if it should
@@ -655,7 +676,7 @@ void ApplePS2Controller::interruptOccurred(OSObject *, IOInterruptEventSource *,
 #else
   // Loop only while there is data currently on the input stream.
 
-  while ( ((status = inb(kCommandPort)) & kOutputReady) )
+  while ( drainLimit-- > 0 && ((status = inb(kCommandPort)) & kOutputReady) )
   {
     // Read in and dispatch the data, but only if it isn't what is required
     // by the active command.
@@ -664,6 +685,9 @@ void ApplePS2Controller::interruptOccurred(OSObject *, IOInterruptEventSource *,
                             inb(kDataPort));
   }
 #endif // DEBUGGER_SUPPORT
+
+  if (drainLimit < 0)
+    IOLog("ApplePS2Controller: output buffer will not drain, ignoring\n");
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1112,7 +1136,9 @@ void ApplePS2Controller::writeDataPort(UInt8 byte)
   // This method should only be dispatched from our single-threaded work loop.
   //
 
-  while (inb(kCommandPort) & kInputBusy)  IODelay(kDataDelay);
+  /* Bounded: a wedged or absent controller must not hang the work loop. */
+  for (int i = 0; i < kInputBusyRetries && (inb(kCommandPort) & kInputBusy); i++)
+    IODelay(kDataDelay);
   outb(kDataPort, byte);
 }
 
@@ -1127,7 +1153,8 @@ void ApplePS2Controller::writeCommandPort(UInt8 byte)
   // This method should only be dispatched from our single-threaded work loop.
   //
 
-  while (inb(kCommandPort) & kInputBusy)  IODelay(kDataDelay);
+  for (int i = 0; i < kInputBusyRetries && (inb(kCommandPort) & kInputBusy); i++)
+    IODelay(kDataDelay);
   outb(kCommandPort, byte);
 }
 
@@ -1211,7 +1238,8 @@ bool ApplePS2Controller::doEscape(UInt8 scancode)
     {
       // Disable the mouse by forcing the clock line low.
 
-      while (inb(kCommandPort) & kInputBusy)  IODelay(kDataDelay);
+      for (int i = 0; i < kInputBusyRetries && (inb(kCommandPort) & kInputBusy); i++)
+        IODelay(kDataDelay);
       outb(kCommandPort, kCP_DisableMouseClock);
 
       // Call the debugger function.
@@ -1220,7 +1248,8 @@ bool ApplePS2Controller::doEscape(UInt8 scancode)
 
       // Re-enable the mouse by making the clock line active.
 
-      while (inb(kCommandPort) & kInputBusy)  IODelay(kDataDelay);
+      for (int i = 0; i < kInputBusyRetries && (inb(kCommandPort) & kInputBusy); i++)
+        IODelay(kDataDelay);
       outb(kCommandPort, kCP_EnableMouseClock);
 
       releaseModifiers = true;

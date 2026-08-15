@@ -133,6 +133,13 @@ bool                    serial_console_enabled = false;
 
 static boot_args        *kernelBootArgs;
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+extern void pd_boot_mark_init(boot_args *args);
+extern void pd_boot_mark_direct(uint32_t band, boot_args *args);
+extern int  pd_boot_mark_physmap;
+extern void pd_boot_mark_band(uint32_t band);
+#endif
+
 extern int              disableConsoleOutput;
 extern const char       version[];
 extern const char       version_variant[];
@@ -433,7 +440,28 @@ Idle_PTs_init(void)
 	 */
 	physmap_base = new_physmap_base;
 	physmap_max = new_physmap_max;
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/*
+	 * Carry the high-framebuffer mapping across the page-table switch.
+	 */
+	{
+		extern pd_entry_t BootFBPD[];
+		uint64_t fb = kernelBootArgs->Video.v_baseAddr;
+
+		if (fb >= (4ULL << 30) && fb < (512ULL << 30)) {
+			IdlePDPT[(fb >> 30) & 0x1ff] =
+			    (pdpt_entry_t)ID_MAP_VTOP(BootFBPD)
+			    | INTEL_PTE_VALID | INTEL_PTE_WRITE;
+		}
+	}
+#endif
+
 	set_cr3_raw((uintptr_t)ID_MAP_VTOP(IdlePML4));
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_boot_mark_physmap = 1;
+#endif
 }
 
 /*
@@ -697,6 +725,11 @@ vstart(vm_offset_t boot_args_start)
 #endif
 
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_boot_mark_direct(PD_BAND_VSTART_C, (boot_args *)boot_args_start);
+	pd_boot_mark_init((boot_args *)boot_args_start);
+#endif
+
 	postcode(VSTART_ENTRY);
 
 	/*
@@ -717,6 +750,7 @@ vstart(vm_offset_t boot_args_start)
 		 * Get startup parameters.
 		 */
 		kernelBootArgs = (boot_args *)boot_args_start;
+
 		lphysfree = kernelBootArgs->kaddr + kernelBootArgs->ksize;
 		physfree = (void *)(uintptr_t)((lphysfree + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
 
@@ -845,12 +879,15 @@ i386_init(void)
 	postcode(I386_INIT_ENTRY);
 
 	pal_i386_init();
+	pd_boot_mark_band(PD_BAND_PAL_INIT);
 	/* Before anything can consult the CPU topology: the lock guarding it was
 	 * otherwise not initialised until cpu_thread_init(), and using it before
 	 * then panics from inside the panic path, hiding the real fault. */
 	x86_topo_lock_init();
 	tsc_init();
+	pd_boot_mark_band(PD_BAND_TSC);
 	rtclock_early_init();   /* mach_absolute_time() now functional */
+	pd_boot_mark_band(PD_BAND_RTCLOCK);
 
 	kernel_debug_string_early("i386_init");
 	//pstate_trace(); /* Where does this come from? */
@@ -861,24 +898,29 @@ i386_init(void)
 	/* Initialize machine-check handling */
 	mca_cpu_init();
 #endif
+	pd_boot_mark_band(PD_BAND_MCA);
 
 	master_cpu = 0;
 
 	kernel_debug_string_early("kernel_startup_bootstrap");
 	kernel_startup_bootstrap();
+	pd_boot_mark_band(PD_BAND_STARTUP_BS);
 
 	/*
 	 * Initialize the timer callout world
 	 */
 	timer_call_init();
+	pd_boot_mark_band(PD_BAND_TIMER_CALL);
 
 	cpu_init();
 
 	postcode(CPU_INIT_D);
+	pd_boot_mark_band(PD_BAND_CPU_INIT);
 
 	/* setup debugging output if one has been chosen */
 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
 	kprintf("kprintf initialized\n");
+	pd_boot_mark_band(PD_BAND_KPRINTF);
 
 	if (!PE_parse_boot_argn("diag", &dgWork.dgFlags, sizeof(dgWork.dgFlags))) {
 		dgWork.dgFlags = 0;

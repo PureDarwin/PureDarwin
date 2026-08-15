@@ -2253,6 +2253,23 @@ void CLASS::probeBaseAddressRegister(IOPCIConfigEntry * device, uint32_t lastBar
         range = device->ranges[barNum];
         IOPCIRangeInit(range, type, start, size, size);
         range->minAddress = minBARAddressDefault[type];
+
+        /*
+         * Claim the console here, while the firmware's address still exists.
+         */
+        if (fPFMConsole && !fConsoleRange)
+        {
+            uint64_t fwStart = (saved & ~barMask);
+
+            if (fwStart && (fPFMConsole >= fwStart)
+             && (fPFMConsole < (fwStart + size)))
+            {
+                fPFMConsole  -= fwStart;
+                fConsoleRange = range;
+                DLOG("  console in BAR 0x%x 0x%llx:0x%llx, offset 0x%llx\n",
+                     barOffset, fwStart, size, fPFMConsole);
+            }
+        }
         if (clean64)
         {
             range->flags |= kIOPCIRangeFlagBar64;
@@ -2368,16 +2385,21 @@ void CLASS::bridgeProbeRanges( IOPCIConfigEntry * bridge, uint32_t resetMask )
 
     if (true /* should check r/w */)
     {
+        uint64_t upperBase = 0;
+
         bridge->clean64 = (0x1 == (end & 0xf));
         if (bridge->clean64)
         {
-            upper  = configRead32(bridge, kPCI2PCIPrefetchUpperBase);
-            start |= (upper << 32);
+            upperBase = configRead32(bridge, kPCI2PCIPrefetchUpperBase);
             upper  = configRead32(bridge, kPCI2PCIPrefetchUpperLimit);
             end   |= (upper << 32);
         }
 
+        /*
+         * The upper half of the base has to be applied after the low half is extracted
+         */
         start = (end & 0xfff0) << 16;
+        start |= (upperBase << 32);
         end  |= 0x000fffff;
         if (start && (end > start))
             size = end - start + 1;
@@ -2500,10 +2522,17 @@ int32_t CLASS::scanProc(void * ref, IOPCIConfigEntry * bridge)
 			DLOG("scan %s" B() "\n", bootScan ? "(boot) " : "", BRIDGE_IDENT(bridge));
 			if (kPCIStatic != (kPCIHPTypeMask & bridge->supportsHotPlug))
 			{
-				resetMask = ((1 << kIOPCIResourceTypeMemory)
-						   | (1 << kIOPCIResourceTypePrefetchMemory)
-						   | (1 << kIOPCIResourceTypeIO)
-						   | (1 << kIOPCIResourceTypeBusNumber));
+				/*
+				 * Bus numbers are always reset - bootResetProc() and the bus
+				 * allocator depend on it. Memory and I/O are not, unless asked.
+				 */
+				resetMask = (1 << kIOPCIResourceTypeBusNumber);
+				if (kIOPCIConfiguratorResetBoot & fFlags)
+				{
+					resetMask |= ((1 << kIOPCIResourceTypeMemory)
+							    | (1 << kIOPCIResourceTypePrefetchMemory)
+							    | (1 << kIOPCIResourceTypeIO));
+				}
 			}
 			bridgeScanBus(bridge, (bridge->fpbDown ? bridge->space.s.busNum : bridge->secBusNum));
 			bridge->deviceState |= kPCIDeviceStateScanned;
@@ -3157,7 +3186,17 @@ int32_t CLASS::bridgeAllocateResources(IOPCIConfigEntry * bridge, uint32_t typeM
             if (!childRange)                           continue;
             if (!((1 << childRange->type) & typeMask)) continue;
 
-            canRelocate = (kIOPCIConfiguratorBoot & fFlags);
+            /*
+             * At boot this only holds when the boot configuration is being
+             * thrown away wholesale. Marking firmware's assignments
+             * relocatable while probeBaseAddressRegister keeps their starts
+             * frees every bridge window and then asks the allocator to place
+             * fixed-address children inside parents that no longer have a
+             * start - which fails, leaving the windows written as the closed
+             * range and every device behind them reading 0xffffffff.
+             */
+            canRelocate = (0 != (kIOPCIConfiguratorResetBoot & fFlags))
+                        && (0 != (kIOPCIConfiguratorBoot & fFlags));
             canRelocate |= (0 != (kPCIDeviceStatePaused & child->deviceState));
 
             if ((rangeIndex == kIOPCIRangeBridgeBusNumber) && !canRelocate)
@@ -3256,13 +3295,41 @@ int32_t CLASS::bridgeAllocateResources(IOPCIConfigEntry * bridge, uint32_t typeM
 			if (!range) continue;
 			type = range->type;
 
-			if (bridge->isHostBridge 
+			/*
+			 * Push 64-bit capable memory above 4GB - but only for a range
+			 * that is actually going to be reallocated. Under a preserved
+			 * boot configuration nothing is ever allocated into the host
+			 * bridge's list, so !nextSubRange is true for every child and
+			 * this zeroed the start of every firmware-placed memory window,
+			 * which is what closed them one apply later.
+			 */
+			if (bridge->isHostBridge
 				&& !childRange->nextSubRange
 				&& (kIOPCIResourceTypeMemory == type)
-				&& (childRange->maxAddress > 0xFFFFFFFFULL))
+				&& (childRange->maxAddress > 0xFFFFFFFFULL)
+				&& !(childRange->start && childRange->size
+				     && (kIOPCIConfiguratorBoot & fFlags)
+				     && !(kIOPCIConfiguratorResetBoot & fFlags)))
 			{
 				childRange->minAddress = (1ULL << 32);
 				childRange->start = 0;
+			}
+
+			/*
+			 * A bridge window's proposedSize is the sum of what its children
+			 * asked for. Preserving the boot configuration means those
+			 * children are never allocated into this bridge's range list, so
+			 * that sum is zero and the block below would zero the window and
+			 * close it - even though firmware placed it and devices are
+			 * decoding behind it. Treat what firmware programmed as the
+			 * request instead.
+			 */
+			if (!childRange->proposedSize
+			  && (kIOPCIConfiguratorBoot & fFlags)
+			  && !(kIOPCIConfiguratorResetBoot & fFlags)
+			  && childRange->start && childRange->size)
+			{
+				childRange->proposedSize = childRange->size;
 			}
 
 			if (!childRange->proposedSize)
@@ -3376,6 +3443,26 @@ int32_t CLASS::bridgeAllocateResources(IOPCIConfigEntry * bridge, uint32_t typeM
 			canRelocate = (0 != (kIOPCIConfiguratorBoot & fFlags));
 			canRelocate |= (!childRange->nextSubRange);
 			canRelocate |= (0 != (kIOPCIRangeFlagRelocatable & childRange->flags));
+
+			/*
+			 * Unless the boot configuration is being thrown away, a range the
+			 * firmware already placed keeps its address even when the
+			 * allocator cannot account for it. Zeroing the start here and
+			 * failing to find it a new home leaves the bridge window written
+			 * as the closed range, and every device behind it then reads
+			 * 0xffffffff - which took out USB, NVMe and anything else on the
+			 * far side of these bridges.
+			 */
+			if ((kIOPCIConfiguratorBoot & fFlags)
+			  && !(kIOPCIConfiguratorResetBoot & fFlags)
+			  && placed)
+			{
+				kprintf("PCI: keeping firmware %s 0x%llx:0x%llx for " D() "\n",
+						gPCIResourceTypeName[type], placed,
+						childRange->proposedSize,
+						DEVICE_IDENT(childRange->device));
+				canRelocate = false;
+			}
 
 			if (canRelocate && placed)
 			{
@@ -3627,6 +3714,15 @@ void CLASS::bridgeApplyConfiguration(IOPCIConfigEntry * bridge, uint32_t typeMas
     uint32_t     baselim32;
     uint16_t     baselim16;
     bool         accessDisabled;
+    /*
+     * Whether a window with nothing to program should be closed or left as
+     * the firmware set it. The allocator's bookkeeping does not survive a
+     * preserved boot configuration - nothing is allocated into any list, so
+     * sizes read back as zero - and writing the closed encoding on the
+     * strength of that takes out every device behind the bridge.
+     */
+    bool preserveBoot = ((kIOPCIConfiguratorBoot & fFlags)
+                      && !(kIOPCIConfiguratorResetBoot & fFlags));
 
     enum { 
         kBridgeCommand = (kIOPCICommandIOSpace | kIOPCICommandMemorySpace | kIOPCICommandBusMaster) 
@@ -3763,8 +3859,16 @@ void CLASS::bridgeApplyConfiguration(IOPCIConfigEntry * bridge, uint32_t typeMas
                 end = start + range->size - 1;
                 baselim16 = ((start >> 8) & 0xf0) | (end & 0xf000);        
             }
-            configWrite16(bridge, kPCI2PCIIORange, baselim16);
-            configWrite32(bridge, kPCI2PCIUpperIORange, 0);
+            if ((0x00f0 == baselim16) && preserveBoot)
+            {
+                kprintf("PCI: leaving firmware I/O window on " B() " alone\n",
+                        BRIDGE_IDENT(bridge));
+            }
+            else
+            {
+                configWrite16(bridge, kPCI2PCIIORange, baselim16);
+                configWrite32(bridge, kPCI2PCIUpperIORange, 0);
+            }
 
             DLOGI("  I/O: base/limit   = 0x%04x\n",
                  configRead16(bridge, kPCI2PCIIORange));
@@ -3791,7 +3895,15 @@ void CLASS::bridgeApplyConfiguration(IOPCIConfigEntry * bridge, uint32_t typeMas
                 end   = range->start + range->size - 1;
                 baselim32 = ((start >> 16) & 0xFFF0) | (end & 0xFFF00000);
             }
-            configWrite32(bridge, kPCI2PCIMemoryRange, baselim32);
+            if ((0x0000FFF0 == baselim32) && preserveBoot)
+            {
+                kprintf("PCI: leaving firmware MEM window on " B() " alone\n",
+                        BRIDGE_IDENT(bridge));
+            }
+            else
+            {
+                configWrite32(bridge, kPCI2PCIMemoryRange, baselim32);
+            }
 
             DLOGI("  MEM: base/limit   = 0x%08x\n", (uint32_t) 
                  configRead32(bridge, kPCI2PCIMemoryRange));
@@ -3811,33 +3923,50 @@ void CLASS::bridgeApplyConfiguration(IOPCIConfigEntry * bridge, uint32_t typeMas
             start     = 0xFFFFFFFFFFFFFFFF;
             end       = 0;
 
-            if ((1 << kIOPCIRangeBridgePFMemory) & bridge->rangeBaseChanges)
+            if (((1 << kIOPCIRangeBridgePFMemory) & bridge->rangeBaseChanges)
+			  && !preserveBoot)
 			{
 				configWrite32(bridge, kPCI2PCIPrefetchUpperBase,  -1U);
 				configWrite32(bridge, kPCI2PCIPrefetchUpperLimit,  0);
 				configWrite32(bridge, kPCI2PCIPrefetchMemoryRange, baselim32);
 			}
             range = bridge->ranges[kIOPCIRangeBridgePFMemory];
-            if (range && range->start && range->size && !(kPCIDeviceStateNoLink & bridge->deviceState))
+            if (!range || (!range->size && !range->nextSubRange))
             {
-                assert((range->size  & (0x100000-1)) == 0);
-                assert((range->start & (0x100000-1)) == 0);
+				bridge->rangeBaseChanges &= ~(1 << kIOPCIRangeBridgePFMemory);
+				bridge->rangeSizeChanges &= ~(1 << kIOPCIRangeBridgePFMemory);
+			}
+			else
+            {
+                if (range->start && range->size && !(kPCIDeviceStateNoLink & bridge->deviceState))
+                {
+                    assert((range->size  & (0x100000-1)) == 0);
+                    assert((range->start & (0x100000-1)) == 0);
     
-                start = range->start;
-                end = range->start + range->size - 1;
-                baselim32 = ((start >> 16) & 0xFFF0) | (end & 0xFFF00000);
-            }
-            configWrite32(bridge, kPCI2PCIPrefetchMemoryRange, baselim32);
-            configWrite32(bridge, kPCI2PCIPrefetchUpperLimit, (end   >> 32));
-            configWrite32(bridge, kPCI2PCIPrefetchUpperBase,  (start >> 32));
+                    start = range->start;
+                    end = range->start + range->size - 1;
+                    baselim32 = ((start >> 16) & 0xFFF0) | (end & 0xFFF00000);
+                }
+                if ((0x0000FFF0 == baselim32) && preserveBoot)
+                {
+                    kprintf("PCI: leaving firmware PFM window on " B() " alone\n",
+                            BRIDGE_IDENT(bridge));
+                }
+                else
+                {
+                configWrite32(bridge, kPCI2PCIPrefetchMemoryRange, baselim32);
+                configWrite32(bridge, kPCI2PCIPrefetchUpperLimit, (end   >> 32));
+                configWrite32(bridge, kPCI2PCIPrefetchUpperBase,  (start >> 32));
+                }
 
             DLOGI("  PFM: base/limit   = 0x%08x, 0x%08x, 0x%08x\n",  
                  (uint32_t)configRead32(bridge, kPCI2PCIPrefetchMemoryRange),
                  (uint32_t)configRead32(bridge, kPCI2PCIPrefetchUpperBase),
                  (uint32_t)configRead32(bridge, kPCI2PCIPrefetchUpperLimit));
 
-            bridge->rangeBaseChanges &= ~(1 << kIOPCIRangeBridgePFMemory);
-            bridge->rangeSizeChanges &= ~(1 << kIOPCIRangeBridgePFMemory);
+                bridge->rangeBaseChanges &= ~(1 << kIOPCIRangeBridgePFMemory);
+                bridge->rangeSizeChanges &= ~(1 << kIOPCIRangeBridgePFMemory);
+            }
         }
     }
     while (false);
@@ -3871,8 +4000,22 @@ void CLASS::bridgeApplyConfiguration(IOPCIConfigEntry * bridge, uint32_t typeMas
 
     restoreAccess(bridge, commandReg);
 
-    DLOGI("  Bridge Command    = 0x%08x\n", 
+    DLOGI("  Bridge Command    = 0x%08x\n",
          configRead32(bridge, kIOPCIConfigCommand));
+
+    if (kPCIHeaderType1 == bridge->headerType)
+    {
+        uint32_t memRange = configRead32(bridge, kPCI2PCIMemoryRange);
+        uint32_t pfmRange = configRead32(bridge, kPCI2PCIPrefetchMemoryRange);
+
+        kprintf("PCI: bridge " B() " window mem 0x%08x-0x%08x pf 0x%08x-0x%08x "
+                "(upper 0x%08x/0x%08x) cmd 0x%04x\n", BRIDGE_IDENT(bridge),
+                (memRange & 0xfff0) << 16, (memRange & 0xfff00000) | 0xfffff,
+                (pfmRange & 0xfff0) << 16, (pfmRange & 0xfff00000) | 0xfffff,
+                (uint32_t)configRead32(bridge, kPCI2PCIPrefetchUpperBase),
+                (uint32_t)configRead32(bridge, kPCI2PCIPrefetchUpperLimit),
+                (uint16_t)configRead16(bridge, kIOPCIConfigCommand));
+    }
 }
 
 //---------------------------------------------------------------------------

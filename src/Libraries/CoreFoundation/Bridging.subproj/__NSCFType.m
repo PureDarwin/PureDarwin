@@ -49,10 +49,6 @@
     return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
 }
 
-- (id) autorelease {
-    return [(NSObject *)self autorelease];
-}
-
 - (BOOL) _tryRetain {
     CFRetain((CFTypeRef)self);
     return YES;

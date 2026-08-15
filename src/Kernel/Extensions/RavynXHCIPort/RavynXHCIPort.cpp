@@ -304,7 +304,25 @@ bool RavynXHCIPort::start(IOService *provider)
     }
 
     fCapRegs = (volatile UInt8 *)fBARMap->getVirtualAddress();
-    UInt8 capLength = *(volatile UInt8 *)(fCapRegs + XHCI_CAPLENGTH);
+    fBARLength = (UInt64)fBARMap->getLength();
+
+    /* Everything below indexes off register contents, so nothing read here can
+     * be trusted until the window is known to be decoding. A device whose BAR
+     * the firmware left inside an unassigned bridge aperture reads back as all
+     * ones on every access: CAPLENGTH comes back 0xff, DBOFF/RTSOFF come back
+     * ~4GB, and the resulting fDBRegs/fRTRegs point far outside the mapping -
+     * which is the page fault seen in capRead32() on such a machine. */
+    UInt32 capId = capRead32(XHCI_CAPLENGTH);
+    UInt8 capLength = (UInt8)(capId & 0xff);
+    if (capId == 0xFFFFFFFFU || capId == 0) {
+        XHCI_Log("BAR0 not decoding (CAPLENGTH/HCIVERSION=%08x), refusing to attach", capId);
+        return false;
+    }
+    if (capLength < 0x20 || (UInt64)capLength + XHCI_PORTREGS_BASE > fBARLength) {
+        XHCI_Log("bad CAPLENGTH %u for a 0x%llx-byte BAR, refusing to attach",
+                capLength, (unsigned long long)fBARLength);
+        return false;
+    }
     fOpRegs = fCapRegs + capLength;
 
     UInt32 hcsp1 = capRead32(XHCI_HCSPARAMS1);
@@ -312,9 +330,26 @@ bool RavynXHCIPort::start(IOService *provider)
     fMaxSlots = XHCI_HCSP1_MAXSLOTS(hcsp1);
     fMaxPorts = XHCI_HCSP1_MAXPORTS(hcsp1);
     fContextSize = XHCI_HCCP1_CSZ(hccp1) ? 64 : 32;
+    if (hcsp1 == 0xFFFFFFFFU || fMaxSlots == 0 || fMaxPorts == 0 ||
+        (UInt64)capLength + XHCI_PORTREGS_BASE +
+        (UInt64)fMaxPorts * XHCI_PORTREGS_SIZE > fBARLength) {
+        XHCI_Log("implausible HCSPARAMS1=%08x (slots=%u ports=%u) for a 0x%llx-byte BAR, "
+                "refusing to attach", hcsp1, fMaxSlots, fMaxPorts,
+                (unsigned long long)fBARLength);
+        return false;
+    }
 
     UInt32 dboff = capRead32(XHCI_DBOFF) & ~0x3U;
     UInt32 rtsoff = capRead32(XHCI_RTSOFF) & ~0x1FU;
+    /* The doorbell array is one dword per slot (plus the command doorbell) and
+     * the runtime regs are 0x20 bytes of interrupter 0 after the 0x20-byte
+     * header; both have to fit, or the first ringDoorbell()/rtWrite32() faults. */
+    if ((UInt64)dboff + ((UInt64)fMaxSlots + 1) * 4 > fBARLength ||
+        (UInt64)rtsoff + 0x40 > fBARLength) {
+        XHCI_Log("DBOFF=%x/RTSOFF=%x outside the 0x%llx-byte BAR, refusing to attach",
+                dboff, rtsoff, (unsigned long long)fBARLength);
+        return false;
+    }
     fDBRegs = fCapRegs + dboff;
     fRTRegs = fCapRegs + rtsoff;
 
@@ -326,13 +361,6 @@ bool RavynXHCIPort::start(IOService *provider)
     XHCI_Log("HCSPARAMS2=%08x HCSPARAMS3=%08x HCCPARAMS2=%08x PAGESIZE=%08x",
             capRead32(XHCI_HCSPARAMS2), capRead32(XHCI_HCSPARAMS3),
             capRead32(XHCI_HCCPARAMS2), opRead32(XHCI_PAGESIZE));
-
-    if (fContextSize != 32) {
-        /* 64-byte contexts (CSZ=1) need every context-array struct doubled up;
-         * not implemented - bail cleanly rather than corrupt DMA memory. */
-        XHCI_Log("64-byte contexts not supported, refusing to attach");
-        return false;
-    }
 
     claimBIOSOwnership();
 
@@ -473,7 +501,7 @@ void RavynXHCIPort::claimBIOSOwnership()
     UInt32 hccp1 = capRead32(XHCI_HCCPARAMS1);
     UInt32 off = XHCI_HCCP1_XECP(hccp1) * 4;
 
-    for (int guard = 0; guard < 64 && off > 0 && off < 0x10000; guard++) {
+    for (int guard = 0; guard < 64 && off > 0 && (UInt64)off + 16 <= fBARLength; guard++) {
         UInt32 cap = *(volatile UInt32 *)(fCapRegs + off);
         UInt32 id = XHCI_XECP_ID(cap);
         UInt32 next = XHCI_XECP_NEXT(cap);
@@ -522,7 +550,7 @@ void RavynXHCIPort::parseExtendedCapabilities()
     UInt8  usb2Ports[64]; UInt32 nUsb2 = 0;
     UInt8  usb3Ports[64]; UInt32 nUsb3 = 0;
 
-    for (int guard = 0; guard < 64 && off > 0 && off < 0x10000; guard++) {
+    for (int guard = 0; guard < 64 && off > 0 && (UInt64)off + 16 <= fBARLength; guard++) {
         UInt32 dw0 = *(volatile UInt32 *)(fCapRegs + off);
         UInt32 id = XHCI_XECP_ID(dw0);
         UInt32 next = XHCI_XECP_NEXT(dw0);
@@ -1212,13 +1240,13 @@ bool RavynXHCIPort::addressDevice(UInt32 slotId, UInt32 port0based, UInt32 route
 
     sr.deviceCtxMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut,
-        sizeof(XHCIDeviceContext), mask);
+        deviceCtxBytes(), mask);
     sr.inputCtxMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut,
-        sizeof(XHCIInputContext), mask);
+        inputCtxBytes(), mask);
     if (!sr.deviceCtxMem || !sr.inputCtxMem) return false;
-    bzero((void*)sr.deviceCtxMem->getBytesNoCopy(), sizeof(XHCIDeviceContext));
-    bzero((void*)sr.inputCtxMem->getBytesNoCopy(), sizeof(XHCIInputContext));
+    bzero((void*)sr.deviceCtxMem->getBytesNoCopy(), deviceCtxBytes());
+    bzero((void*)sr.inputCtxMem->getBytesNoCopy(), inputCtxBytes());
     XHCI_DMA_LOG("deviceCtx", sr.deviceCtxMem);
     XHCI_DMA_LOG("inputCtx", sr.inputCtxMem);
 
@@ -1265,15 +1293,15 @@ bool RavynXHCIPort::sendAddressDeviceCommand(UInt32 slotId, UInt32 port0based, U
                                              UInt32 parentHubSlot, UInt32 parentPortNum)
 {
     SlotResources &sr = fSlots[slotId];
-    XHCIInputContext *ic = (XHCIInputContext *)sr.inputCtxMem->getBytesNoCopy();
-    bzero(ic, sizeof(*ic));
-    ic->control.dropFlags = 0;
-    ic->control.addFlags = (1U << 0) /* slot ctx */ | (1U << 1) /* EP0 ctx */;
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
+    inputCtl(ic)->dropFlags = 0;
+    inputCtl(ic)->addFlags = (1U << 0) /* slot ctx */ | (1U << 1) /* EP0 ctx */;
 
-    ic->slot.dword0 = (routeString & 0xFFFFFU) |
+    inputSlot(ic)->dword0 = (routeString & 0xFFFFFU) |
                       (speed << SLOT_CTX_SPEED_SHIFT) |
                       (1U << SLOT_CTX_ENTRIES_SHIFT);
-    ic->slot.dword1 = ((port0based + 1) << SLOT_CTX_ROOTPORT_SHIFT);
+    inputSlot(ic)->dword1 = ((port0based + 1) << SLOT_CTX_ROOTPORT_SHIFT);
     /* Parent Hub Slot ID / Parent Port Number exist solely to let the xHC
      * pick the right Transaction Translator for split transactions to a
      * Low-/Full-Speed device connected through a High-Speed hub; they must
@@ -1286,15 +1314,15 @@ bool RavynXHCIPort::sendAddressDeviceCommand(UInt32 slotId, UInt32 port0based, U
      * observed to wedge the real controller's command ring entirely -
      * every doCommand() after that Address Device timed out, including
      * ones for completely unrelated root ports. */
-    ic->slot.dword2 = ((parentHubSlot & 0xFFU) << SLOT_CTX_PARENT_SLOT_SHIFT) |
+    inputSlot(ic)->dword2 = ((parentHubSlot & 0xFFU) << SLOT_CTX_PARENT_SLOT_SHIFT) |
                       ((parentPortNum & 0xFFU) << SLOT_CTX_PARENT_PORT_SHIFT);
-    ic->slot.dword3 = 0;
+    inputSlot(ic)->dword3 = 0;
 
-    ic->ep[0].dword0 = 0;
-    ic->ep[0].dword1 = EP_CTX_CERR(3) | (EP_TYPE_CONTROL << EP_CTX_TYPE_SHIFT) |
+    inputEp(ic, 1)->dword0 = 0;
+    inputEp(ic, 1)->dword1 = EP_CTX_CERR(3) | (EP_TYPE_CONTROL << EP_CTX_TYPE_SHIFT) |
                        ((UInt32)maxPkt << EP_CTX_MAXPKT_SHIFT);
-    ic->ep[0].trDequeuePtr = sr.ep0RingMem->getPhysicalAddress() | 1 /* DCS */;
-    ic->ep[0].avgTrbLen_maxEsitLo = 8;
+    inputEp(ic, 1)->trDequeuePtr = sr.ep0RingMem->getPhysicalAddress() | 1 /* DCS */;
+    inputEp(ic, 1)->avgTrbLen_maxEsitLo = 8;
 
     UInt8 cc = 0;
     UInt32 slotOut = 0;
@@ -1383,20 +1411,20 @@ bool RavynXHCIPort::configureBulkEndpoints(UInt32 slotId, UInt8 inEp, UInt16 inM
                                            UInt8 outEp, UInt16 outMaxPkt)
 {
     SlotResources &sr = fSlots[slotId];
-    XHCIInputContext *ic = (XHCIInputContext *)sr.inputCtxMem->getBytesNoCopy();
-    bzero(ic, sizeof(*ic));
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
 
     /* DCI = endpoint number * 2 + (dir_in ? 1 : 0); index into ep[] is DCI - 1. */
     UInt32 inDCI = inEp * 2 + 1;
     UInt32 outDCI = outEp * 2;
     UInt32 maxDCI = (inDCI > outDCI) ? inDCI : outDCI;
 
-    ic->control.addFlags = (1U << 0) /* slot */ | (1U << inDCI) | (1U << outDCI);
+    inputCtl(ic)->addFlags = (1U << 0) /* slot */ | (1U << inDCI) | (1U << outDCI);
 
     /* Copy current slot context forward, bump context entries. */
-    XHCIDeviceContext *dc = (XHCIDeviceContext *)sr.deviceCtxMem->getBytesNoCopy();
-    ic->slot = dc->slot;
-    ic->slot.dword0 = (ic->slot.dword0 & ~((UInt32)0x1F << SLOT_CTX_ENTRIES_SHIFT)) |
+    void *dc = sr.deviceCtxMem->getBytesNoCopy();
+    *inputSlot(ic) = *deviceSlot(dc);
+    inputSlot(ic)->dword0 = (inputSlot(ic)->dword0 & ~((UInt32)0x1F << SLOT_CTX_ENTRIES_SHIFT)) |
                       (maxDCI << SLOT_CTX_ENTRIES_SHIFT);
 
     if (!allocRing(&sr.bulkInRingMem, &sr.bulkInRing, kRingTRBs)) return false;
@@ -1409,15 +1437,15 @@ bool RavynXHCIPort::configureBulkEndpoints(UInt32 slotId, UInt8 inEp, UInt16 inM
     sr.bulkOutRing[kRingTRBs - 1].param = sr.bulkOutRingMem->getPhysicalAddress();
     sr.bulkOutRing[kRingTRBs - 1].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | TRB_CYCLE;
 
-    ic->ep[inDCI - 1].dword1 = EP_CTX_CERR(3) | (EP_TYPE_BULK_IN << EP_CTX_TYPE_SHIFT) |
+    inputEp(ic, inDCI)->dword1 = EP_CTX_CERR(3) | (EP_TYPE_BULK_IN << EP_CTX_TYPE_SHIFT) |
                                ((UInt32)inMaxPkt << EP_CTX_MAXPKT_SHIFT);
-    ic->ep[inDCI - 1].trDequeuePtr = sr.bulkInRingMem->getPhysicalAddress() | 1;
-    ic->ep[inDCI - 1].avgTrbLen_maxEsitLo = inMaxPkt;
+    inputEp(ic, inDCI)->trDequeuePtr = sr.bulkInRingMem->getPhysicalAddress() | 1;
+    inputEp(ic, inDCI)->avgTrbLen_maxEsitLo = inMaxPkt;
 
-    ic->ep[outDCI - 1].dword1 = EP_CTX_CERR(3) | (EP_TYPE_BULK_OUT << EP_CTX_TYPE_SHIFT) |
+    inputEp(ic, outDCI)->dword1 = EP_CTX_CERR(3) | (EP_TYPE_BULK_OUT << EP_CTX_TYPE_SHIFT) |
                                 ((UInt32)outMaxPkt << EP_CTX_MAXPKT_SHIFT);
-    ic->ep[outDCI - 1].trDequeuePtr = sr.bulkOutRingMem->getPhysicalAddress() | 1;
-    ic->ep[outDCI - 1].avgTrbLen_maxEsitLo = outMaxPkt;
+    inputEp(ic, outDCI)->trDequeuePtr = sr.bulkOutRingMem->getPhysicalAddress() | 1;
+    inputEp(ic, outDCI)->avgTrbLen_maxEsitLo = outMaxPkt;
 
     UInt8 cc = 0;
     UInt32 slotOut = 0;
@@ -1435,15 +1463,15 @@ bool RavynXHCIPort::configureInterruptInEndpoint(UInt32 slotId, UInt8 epNum,
                                                  UInt16 maxPkt, UInt8 interval)
 {
     SlotResources &sr = fSlots[slotId];
-    XHCIInputContext *ic = (XHCIInputContext *)sr.inputCtxMem->getBytesNoCopy();
-    bzero(ic, sizeof(*ic));
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
 
     UInt32 inDCI = epNum * 2 + 1;
-    ic->control.addFlags = (1U << 0) /* slot */ | (1U << inDCI);
+    inputCtl(ic)->addFlags = (1U << 0) /* slot */ | (1U << inDCI);
 
-    XHCIDeviceContext *dc = (XHCIDeviceContext *)sr.deviceCtxMem->getBytesNoCopy();
-    ic->slot = dc->slot;
-    ic->slot.dword0 = (ic->slot.dword0 & ~((UInt32)0x1F << SLOT_CTX_ENTRIES_SHIFT)) |
+    void *dc = sr.deviceCtxMem->getBytesNoCopy();
+    *inputSlot(ic) = *deviceSlot(dc);
+    inputSlot(ic)->dword0 = (inputSlot(ic)->dword0 & ~((UInt32)0x1F << SLOT_CTX_ENTRIES_SHIFT)) |
                       (inDCI << SLOT_CTX_ENTRIES_SHIFT);
 
     /* A keyboard slot has no bulk endpoints, so reuse the bulk-IN ring fields
@@ -1457,11 +1485,11 @@ bool RavynXHCIPort::configureInterruptInEndpoint(UInt32 slotId, UInt8 epNum,
      * endpoint descriptor value used by the existing path, but do provide
      * Max ESIT Payload below; a periodic endpoint with zero ESIT payload can
      * configure successfully yet never be scheduled by real controllers. */
-    ic->ep[inDCI - 1].dword0 = ((UInt32)interval << 16);
-    ic->ep[inDCI - 1].dword1 = EP_CTX_CERR(3) | (EP_TYPE_INTERRUPT_IN << EP_CTX_TYPE_SHIFT) |
+    inputEp(ic, inDCI)->dword0 = ((UInt32)interval << 16);
+    inputEp(ic, inDCI)->dword1 = EP_CTX_CERR(3) | (EP_TYPE_INTERRUPT_IN << EP_CTX_TYPE_SHIFT) |
                                ((UInt32)maxPkt << EP_CTX_MAXPKT_SHIFT);
-    ic->ep[inDCI - 1].trDequeuePtr = sr.bulkInRingMem->getPhysicalAddress() | 1;
-    ic->ep[inDCI - 1].avgTrbLen_maxEsitLo = ((UInt32)maxPkt << 16) | maxPkt;
+    inputEp(ic, inDCI)->trDequeuePtr = sr.bulkInRingMem->getPhysicalAddress() | 1;
+    inputEp(ic, inDCI)->avgTrbLen_maxEsitLo = ((UInt32)maxPkt << 16) | maxPkt;
 
     UInt8 cc = 0; UInt32 slotOut = 0;
     bool ok = doCommand(sr.inputCtxMem->getPhysicalAddress(), 0,
@@ -1585,8 +1613,8 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
          * prior transfer" (state 2) from "Running but nothing completed"
          * (state 1) from "Stopped" (state 3), plus what TR dequeue pointer
          * the controller thinks it's at vs the physical TRB we just pushed. */
-        XHCIDeviceContext *dc = (XHCIDeviceContext *)sr.deviceCtxMem->getBytesNoCopy();
-        UInt32 epd0 = dc->ep[dci - 1].dword0;
+        void *dc = sr.deviceCtxMem->getBytesNoCopy();
+        UInt32 epd0 = deviceEp(dc, dci)->dword0;
         UInt64 pushedPhys = ring == sr.bulkInRing
             ? sr.bulkInRingMem->getPhysicalAddress()
             : sr.bulkOutRingMem->getPhysicalAddress();
@@ -1594,8 +1622,8 @@ bool RavynXHCIPort::bulkTransfer(UInt32 slotId, UInt8 epNum, bool in,
                 "epState=%u epType=%u ctrlrDeq=%016llx ringBase=%016llx enq=%u USBSTS=%08x",
                 slotId, epNum, dci, in, len,
                 (unsigned)(epd0 & 0x7),
-                (unsigned)((dc->ep[dci - 1].dword1 >> EP_CTX_TYPE_SHIFT) & 0x7),
-                (unsigned long long)dc->ep[dci - 1].trDequeuePtr,
+                (unsigned)((deviceEp(dc, dci)->dword1 >> EP_CTX_TYPE_SHIFT) & 0x7),
+                (unsigned long long)deviceEp(dc, dci)->trDequeuePtr,
                 (unsigned long long)pushedPhys, enqueue, opRead32(XHCI_USBSTS));
         return false;
     }
@@ -1610,15 +1638,15 @@ bool RavynXHCIPort::markSlotAsHub(UInt32 slotId, UInt8 numPorts, bool multiTT,
                                   UInt8 intrEp, UInt16 intrMaxPkt, UInt8 intrInterval)
 {
     SlotResources &sr = fSlots[slotId];
-    XHCIInputContext *ic = (XHCIInputContext *)sr.inputCtxMem->getBytesNoCopy();
-    XHCIDeviceContext *dc = (XHCIDeviceContext *)sr.deviceCtxMem->getBytesNoCopy();
-    bzero(ic, sizeof(*ic));
+    void *ic = sr.inputCtxMem->getBytesNoCopy();
+    void *dc = sr.deviceCtxMem->getBytesNoCopy();
+    bzero(ic, inputCtxBytes());
 
-    ic->control.addFlags = (1U << 0); /* slot context always updated */
-    ic->slot = dc->slot;
-    ic->slot.dword0 |= SLOT_CTX_HUB_BIT;
-    if (multiTT) ic->slot.dword0 |= SLOT_CTX_MTT_BIT;
-    ic->slot.dword1 = (ic->slot.dword1 & ~((UInt32)0xFFU << SLOT_CTX_NUMPORTS_SHIFT)) |
+    inputCtl(ic)->addFlags = (1U << 0); /* slot context always updated */
+    *inputSlot(ic) = *deviceSlot(dc);
+    inputSlot(ic)->dword0 |= SLOT_CTX_HUB_BIT;
+    if (multiTT) inputSlot(ic)->dword0 |= SLOT_CTX_MTT_BIT;
+    inputSlot(ic)->dword1 = (inputSlot(ic)->dword1 & ~((UInt32)0xFFU << SLOT_CTX_NUMPORTS_SHIFT)) |
                       ((UInt32)numPorts << SLOT_CTX_NUMPORTS_SHIFT);
 
     /* Configure the hub's own interrupt (status change) endpoint alongside
@@ -1635,17 +1663,17 @@ bool RavynXHCIPort::markSlotAsHub(UInt32 slotId, UInt8 numPorts, bool multiTT,
         sr.bulkInRing[kRingTRBs - 1].control = TRB_SET_TYPE(TRB_TYPE_LINK) | TRB_TC | TRB_CYCLE;
 
         UInt32 intrDCI = intrEp * 2 + 1;
-        ic->control.addFlags |= (1U << intrDCI);
+        inputCtl(ic)->addFlags |= (1U << intrDCI);
         UInt16 maxPkt = intrMaxPkt ? intrMaxPkt : 8;
-        ic->ep[intrDCI - 1].dword0 = ((UInt32)(intrInterval ? intrInterval : 8) << 16);
-        ic->ep[intrDCI - 1].dword1 = EP_CTX_CERR(3) | (3 /* interrupt */ << EP_CTX_TYPE_SHIFT) |
+        inputEp(ic, intrDCI)->dword0 = ((UInt32)(intrInterval ? intrInterval : 8) << 16);
+        inputEp(ic, intrDCI)->dword1 = EP_CTX_CERR(3) | (3 /* interrupt */ << EP_CTX_TYPE_SHIFT) |
                                      ((UInt32)maxPkt << EP_CTX_MAXPKT_SHIFT);
-        ic->ep[intrDCI - 1].trDequeuePtr = sr.bulkInRingMem->getPhysicalAddress() | 1;
-        ic->ep[intrDCI - 1].avgTrbLen_maxEsitLo = maxPkt;
+        inputEp(ic, intrDCI)->trDequeuePtr = sr.bulkInRingMem->getPhysicalAddress() | 1;
+        inputEp(ic, intrDCI)->avgTrbLen_maxEsitLo = maxPkt;
 
-        UInt32 maxDCI = (ic->slot.dword0 >> SLOT_CTX_ENTRIES_SHIFT) & 0x1F;
+        UInt32 maxDCI = (inputSlot(ic)->dword0 >> SLOT_CTX_ENTRIES_SHIFT) & 0x1F;
         if (intrDCI > maxDCI) {
-            ic->slot.dword0 = (ic->slot.dword0 & ~((UInt32)0x1F << SLOT_CTX_ENTRIES_SHIFT)) |
+            inputSlot(ic)->dword0 = (inputSlot(ic)->dword0 & ~((UInt32)0x1F << SLOT_CTX_ENTRIES_SHIFT)) |
                               (intrDCI << SLOT_CTX_ENTRIES_SHIFT);
         }
     }

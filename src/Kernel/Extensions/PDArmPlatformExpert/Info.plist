@@ -20,6 +20,19 @@
 	<string>1</string>
 	<key>IOKitPersonalities</key>
 	<dict>
+		<key>PureDarwin Apple ARM platform</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>org.puredarwin.kext.PDArmPlatformExpert</string>
+			<key>IOClass</key>
+			<string>PDAppleARMPlatformExpert</string>
+			<key>IONameMatch</key>
+			<string>AppleARM</string>
+			<key>IOProbeScore</key>
+			<string>10000</string>
+			<key>IOProviderClass</key>
+			<string>IOPlatformExpertDevice</string>
+		</dict>
 		<key>PureDarwin ARM platform</key>
 		<dict>
 			<key>CFBundleIdentifier</key>

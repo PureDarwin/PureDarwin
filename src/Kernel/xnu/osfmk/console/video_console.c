@@ -96,6 +96,7 @@
 #include <kern/debug.h>
 #include <kern/spl.h>
 #include <kern/thread_call.h>
+#include <kern/startup.h>	/* startup_phase, for the early framebuffer mapping */
 
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>
@@ -105,6 +106,7 @@
 
 #include <pexpert/pexpert.h>
 #include <sys/kdebug.h>
+#include <libkern/OSAtomic.h>
 
 #include "iso_font.c"
 #if defined(XNU_TARGET_OS_OSX)
@@ -154,7 +156,6 @@ static uint32_t gc_buffer_size;
 
 LCK_GRP_DECLARE(vconsole_lck_grp, "vconsole");
 static lck_ticket_t vcputc_lock;
-
 
 #define VCPUTC_LOCK_INIT()                              \
 MACRO_BEGIN                                             \
@@ -1261,11 +1262,19 @@ gc_update_color(int color, boolean_t fore)
 extern void serial_putc(char);
 
 static uint64_t  pd_efb_phys   = 0;    /* physical base of the framebuffer */
+static volatile uint32_t *pd_efb_va = NULL; /* mapped view, once one is possible */
+static uint64_t  pd_efb_size   = 0;
 static uint32_t  pd_efb_stride = 0;    /* in pixels, not bytes */
 static uint32_t  pd_efb_cols   = 0;
 static uint32_t  pd_efb_rows   = 0;
 static uint32_t  pd_efb_x      = 0;
 static uint32_t  pd_efb_y      = 0;
+
+#if defined(__x86_64__)
+extern uintptr_t pd_boot_mark_fb_va(void);
+#else
+#define pd_boot_mark_fb_va()    ((uintptr_t)0)
+#endif
 
 void pd_early_fb_init(void);
 void pd_early_fb_putc(char c);
@@ -1280,31 +1289,79 @@ pd_early_fb_init(void)
 	if (!PE_state.video.v_baseAddr || PE_state.video.v_depth != 32) {
 		return;
 	}
+#if defined(__x86_64__)
+	if (PE_state.video.v_baseAddr > UINT32_MAX &&
+	    startup_phase < STARTUP_SUB_VM_KERNEL &&
+	    pd_boot_mark_fb_va() == 0) {
+		return;
+	}
+#endif
 	if (!PE_state.video.v_rowBytes || !PE_state.video.v_width) {
 		return;
 	}
 
 	pd_efb_phys   = PE_state.video.v_baseAddr & ~3ULL;
+	pd_efb_size   = (uint64_t)PE_state.video.v_rowBytes * PE_state.video.v_height;
 	pd_efb_stride = PE_state.video.v_rowBytes / 4;
 	pd_efb_cols   = PE_state.video.v_width  / ISO_CHAR_WIDTH;
 	pd_efb_rows   = PE_state.video.v_height / ISO_CHAR_HEIGHT;
 	pd_efb_x      = 0;
+#if defined(__x86_64__)
+	/* 16 bands of 16 rows each; see PD_BAND_* in i386/postcode.h. */
+	pd_efb_y      = (16 * 16) / ISO_CHAR_HEIGHT + 1;
+#else
+	/* arm64 start.s paints at most two bands, and text over them is fine. */
 	pd_efb_y      = 0;
+#endif
+	if (pd_efb_y >= pd_efb_rows) {
+		pd_efb_y = 0;
+	}
+}
+
+static void
+pd_early_fb_map(void)
+{
+	if (pd_efb_va != NULL || pd_efb_phys == 0) {
+		return;
+	}
+	if (pd_boot_mark_fb_va() != 0) {
+		return;
+	}
+#if defined(__x86_64__)
+	if (startup_phase < STARTUP_SUB_KMEM_ALLOC) {
+		return;
+	}
+	pd_efb_va = (volatile uint32_t *)ml_io_map(pd_efb_phys, pd_efb_size);
+#else
+	/*
+	 * arm64 keeps writing through ml_phys_write_word. On these boards the
+	 * framebuffer can sit above the memory the bootloader reports (iBoot
+	 * carves the display buffer out past memSize on T8010), so it is not
+	 * covered by the physical aperture an io mapping would be built from,
+	 * and taking this path silently kills the console at the exact moment
+	 * startup reaches kmem_alloc.
+	 */
+#endif
 }
 
 static void
 pd_early_fb_pixel(uint32_t x, uint32_t y, uint32_t colour)
 {
-	ml_phys_write_word((vm_offset_t)(pd_efb_phys +
-	    ((uint64_t)y * pd_efb_stride + x) * 4), colour);
+	uint64_t index = (uint64_t)y * pd_efb_stride + x;
+	uintptr_t band_va;
+
+	if (pd_efb_va != NULL) {
+		pd_efb_va[index] = colour;
+		return;
+	}
+	band_va = pd_boot_mark_fb_va();
+	if (band_va != 0) {
+		((volatile uint32_t *)band_va)[index] = colour;
+		return;
+	}
+	ml_phys_write_word((vm_offset_t)(pd_efb_phys + index * 4), colour);
 }
 
-/*
- * Blank the text line about to be written. Wrapping to the top and clearing
- * ahead is deliberate: a real scroll would have to move every pixel on the
- * screen through ml_phys_write_word one word at a time, which is slow enough
- * to change the timing of whatever is being debugged.
- */
 static void
 pd_early_fb_clear_line(uint32_t line)
 {
@@ -1313,6 +1370,31 @@ pd_early_fb_clear_line(uint32_t line)
 	for (row = 0; row < ISO_CHAR_HEIGHT; row++) {
 		for (col = 0; col < pd_efb_cols * ISO_CHAR_WIDTH; col++) {
 			pd_early_fb_pixel(col, line * ISO_CHAR_HEIGHT + row, 0);
+		}
+	}
+}
+
+/*
+ * Only worth doing when there is a direct view of the framebuffer to store
+ * through. Without one every pixel is an ml_phys_write_word(), i.e. a pmap
+ * copy window per word: a 1536x2048 panel is over three million of them, which
+ * takes seconds and changes the timing of whatever is being debugged. In that
+ * case wrap the way this console always used to - clear only the line about to
+ * be written and leave the rest of the previous pass on screen.
+ */
+static void
+pd_early_fb_clear_screen(void)
+{
+	uint32_t row, col;
+
+	if (pd_efb_va == NULL && pd_boot_mark_fb_va() == 0) {
+		pd_early_fb_clear_line(0);
+		return;
+	}
+
+	for (row = 0; row < pd_efb_rows * ISO_CHAR_HEIGHT; row++) {
+		for (col = 0; col < pd_efb_cols * ISO_CHAR_WIDTH; col++) {
+			pd_early_fb_pixel(col, row, 0);
 		}
 	}
 }
@@ -1331,14 +1413,21 @@ pd_early_fb_putc(char c)
 		pd_early_fb_clear_line(0);
 	}
 
+	pd_early_fb_map();
+
 	if (c == '\r') {
 		pd_efb_x = 0;
 		return;
 	}
 	if (c == '\n') {
 		pd_efb_x = 0;
-		pd_efb_y = (pd_efb_y + 1) % pd_efb_rows;
-		pd_early_fb_clear_line(pd_efb_y);
+		pd_efb_y++;
+		if (pd_efb_y >= pd_efb_rows) {
+			pd_efb_y = 0;
+			pd_early_fb_clear_screen();
+		} else {
+			pd_early_fb_clear_line(pd_efb_y);
+		}
 		return;
 	}
 	if (pd_efb_x >= pd_efb_cols) {
@@ -1356,6 +1445,34 @@ pd_early_fb_putc(char c)
 		}
 	}
 	pd_efb_x++;
+}
+
+#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
+static void
+pd_early_fb_rebase(uint64_t newphys)
+{
+	extern uint64_t pd_boot_mark_base;
+
+	if (newphys == 0 || newphys == (pd_efb_phys & ~3ULL)) {
+		return;
+	}
+	pd_efb_phys = 0;
+	pd_efb_va   = NULL;
+	pd_early_fb_init();
+	/*
+	 * No clear here: until pd_early_fb_map() runs, every pixel goes through
+	 * ml_phys_write_word(), and a full screen of those is millions of pmap
+	 * copy windows. The first newline clears a line at a time soon enough.
+	 */
+}
+#endif
+
+void
+pd_early_fb_puts(const char *s)
+{
+	while (*s != '\0') {
+		pd_early_fb_putc(*s++);
+	}
 }
 
 #define VC_EARLY_RING_SIZE 16384
@@ -1433,6 +1550,7 @@ vcputc(__unused int l, __unused int u, int c)
 	 * Gated on serial output being requested; kprintf no longer emits its
 	 * own serial copy (PE_kputc is plain cnputc_unbuffered), so no doubling.
 	 */
+
 	if (serialmode & SERIALMODE_OUTPUT) {
 		serial_putc((char)c);
 	}
@@ -3123,6 +3241,12 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 		new_vinfo.v_baseaddr |= (VM_MIN_KERNEL_ADDRESS & ~LOW_4GB_MASK);
 #endif
 
+#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
+		if (new_vinfo.v_physaddr != 0) {
+			pd_early_fb_rebase(new_vinfo.v_physaddr);
+		}
+#endif
+
 		/* Update the vinfo structure atomically with respect to the vc_progress task if running */
 		if (vc_progress) {
 			simple_lock(&vc_progress_lock, LCK_GRP_NULL);
@@ -3167,6 +3291,20 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 	}
 
 	graphics_now = gc_graphics_boot && !gc_desire_text;
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/*
+	 * The console handoff is where output has repeatedly stopped, and from the
+	 * outside "the driver wedged" and "the driver took the screen and cannot
+	 * draw on it" look the same. Report what each op is handed, so the geometry
+	 * vc will use can be checked against what the bootloader found.
+	 */
+	kprintf("initialize_screen: op=%u vinfo base=0x%lx phys=0x%llx "
+	    "%ux%u depth=%u rowbytes=%u type=%u scale=%u "
+	    "(gc_acquired=%d graphics_now=%d)\n",
+	    op, (unsigned long)vinfo.v_baseaddr, (uint64_t)vinfo.v_physaddr,
+	    vinfo.v_width, vinfo.v_height, vinfo.v_depth, vinfo.v_rowbytes,
+	    vinfo.v_type, vinfo.v_scale, (int)gc_acquired, (int)graphics_now);
+#endif
 	switch (op) {
 	case kPEGraphicsMode:
 		gc_graphics_boot = TRUE;

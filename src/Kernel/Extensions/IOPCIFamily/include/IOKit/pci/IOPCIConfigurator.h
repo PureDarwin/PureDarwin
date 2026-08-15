@@ -159,6 +159,13 @@ enum {
     kIOPCIConfiguratorTBPanics       = 0x01000000,
     kIOPCIConfiguratorTBUSBCPanics   = 0x02000000,
 
+    // Discard the firmware's memory/IO assignments at boot and lay the machine
+    // out from scratch (Apple's behaviour). Off by default: on generic PC
+    // firmware the assignments are good, and throwing them away relocates the
+    // EFI framebuffer - which no driver then reprograms, so the display is
+    // lost for the rest of the boot. Set with pci=0x4000000.
+    kIOPCIConfiguratorResetBoot      = 0x04000000,
+
     kIOPCIConfiguratorBootDefer      = kIOPCIConfiguratorDeferHotPlug | kIOPCIConfiguratorBoot,
 };
 

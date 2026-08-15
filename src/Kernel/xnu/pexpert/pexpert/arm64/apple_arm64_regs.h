@@ -17,6 +17,31 @@
 #define ARM64_REG_HID0_LoopBuffDisb       (1<<20)
 #define ARM64_REG_HID0_AMXCacheFusionDisb (1ULL<<21)
 #define ARM64_REG_HID0_ICPrefLimitOneBrn  (1<<25)
+/*
+ * Apple's implementation-defined HID registers. Their own assembler knows these
+ * names; open-source clang needs the s3_<op1>_c15_<crm>_<op2> encodings, which
+ * every other open-source Apple-silicon project spells the same way. Only the
+ * registers the kernel actually touches are listed.
+ */
+#define ARM64_REG_HID0        s3_0_c15_c0_0
+#define ARM64_REG_HID1        s3_0_c15_c1_0
+#define ARM64_REG_HID3        s3_0_c15_c3_0
+#define ARM64_REG_EHID3       s3_0_c15_c3_1
+#define ARM64_REG_HID4        s3_0_c15_c4_0
+#define ARM64_REG_EHID4       s3_0_c15_c4_1
+#define ARM64_REG_HID5        s3_0_c15_c5_0
+#define ARM64_REG_LSU_ERR_CTL s3_3_c15_c1_0
+/* CPU_OVRD is the register older sources call CYC_OVRD. */
+#define ARM64_REG_CPU_OVRD    s3_5_c15_c5_0
+#define ARM64_REG_ACC_OVRD    s3_5_c15_c6_0
+
+/* Some call sites spell these without the ARM64_REG_ prefix. */
+#define HID4     ARM64_REG_HID4
+#define EHID4    ARM64_REG_EHID4
+#define HID5     ARM64_REG_HID5
+#define CPU_OVRD ARM64_REG_CPU_OVRD
+#define ACC_OVRD ARM64_REG_ACC_OVRD
+
 #define ARM64_REG_HID0_FetchWidthDisb     (1ULL<<28)
 #define ARM64_REG_HID0_PMULLFuseDisable   (1ULL<<33)
 #define ARM64_REG_HID0_CacheFusionDisable (1ULL<<36)

@@ -11,6 +11,9 @@
 #include <pexpert/arm/board_config.h>
 #elif defined(__arm64__)
 #include <pexpert/arm64/board_config.h>
+#if defined(PUREDARWIN_MASK_AIC_SOURCES)
+#include <pexpert/arm64/AIC.h>
+#endif
 #endif
 
 #include <kern/clock.h>
@@ -613,6 +616,31 @@ pe_arm_map_interrupt_controller(void)
 		kprintf("pe_arm_map_interrupt_controller: failed to find the interrupt-controller.\n");
 		return 0;
 	}
+
+#if defined(PUREDARWIN_MASK_AIC_SOURCES)
+	/*
+	 * Mask every AIC source, and drain whatever the booter left pending.
+	 */
+	{
+		vm_offset_t pic_base = gPicBase;
+		uint32_t    ncpus, nirqs, i;
+
+		nirqs = kAICAicCap0Int(aic_read32(kAICAicCap0, 0));
+		ncpus = kAICAicCap0Proc(aic_read32(kAICAicCap0, 0));
+
+		for (i = 0; i < (nirqs + 31) / 32; i++) {
+			aic_write32(kAICIntMaskSet(i), ~0u);
+		}
+
+		/* Acknowledge anything already latched, one per CPU interface. */
+		for (i = 0; i < ncpus; i++) {
+			(void)aic_read32(kAICIack, 0);
+		}
+
+		kprintf("pe_arm_map_interrupt_controller: masked %u AIC sources across %u cpus\n",
+		    nirqs, ncpus);
+	}
+#endif /* PUREDARWIN_MASK_AIC_SOURCES */
 
 	if (SecureDTFindEntry("device_type", "timer", &entryP) == kSuccess) {
 		kprintf("pe_arm_map_interrupt_controller: found timer\n");

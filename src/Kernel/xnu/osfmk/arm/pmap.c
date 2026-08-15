@@ -4651,6 +4651,18 @@ pmap_get_arm64_prot(
  *	avail_end	PA of last managed physical page
  */
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+/*
+ * Bring-up markers; see arm_init.c. Still legal here because arm_vm_init()
+ * defers dropping the bootstrap identity map until this function returns.
+ */
+extern void pd_start_mark(unsigned slot, uint32_t colour, boot_args *args);
+extern boot_args *BootArgs;
+#define PD_PMAP_MARK(slot, colour) pd_start_mark((slot), (colour), BootArgs)
+#else
+#define PD_PMAP_MARK(slot, colour) do { } while (0)
+#endif
+
 void
 pmap_bootstrap(
 	vm_offset_t vstart)
@@ -4663,6 +4675,8 @@ pmap_bootstrap(
 	vm_size_t       asid_table_size;
 	unsigned int    npages;
 	vm_map_offset_t maxoffset;
+
+	PD_PMAP_MARK(33, 0x00ff6060);	/* salmon: entered pmap_bootstrap */
 
 	lck_grp_init(&pmap_lck_grp, "pmap", LCK_GRP_ATTR_NULL);
 
@@ -4733,7 +4747,11 @@ pmap_bootstrap(
 	memset((void *) &kernel_pmap->stats, 0, sizeof(kernel_pmap->stats));
 
 	/* allocate space for and initialize the bookkeeping structures */
+	PD_PMAP_MARK(34, 0x0060ff60);	/* mint: about to compute the I/O regions */
+
 	io_attr_table_size = pmap_compute_io_rgns();
+
+	PD_PMAP_MARK(35, 0x006060ff);	/* periwinkle: I/O regions computed */
 	npages = (unsigned int)atop(mem_size);
 	pp_attr_table_size = npages * sizeof(pp_attr_t);
 	pv_head_size = round_page(sizeof(pv_entry_t *) * npages);
@@ -4768,8 +4786,12 @@ pmap_bootstrap(
 
 	memset((char *)phystokv(pmap_struct_start), 0, avail_start - pmap_struct_start);
 
+	PD_PMAP_MARK(36, 0x00ffff60);	/* butter: pmap structures zeroed */
+
 	pmap_load_io_rgns();
 	ptd_bootstrap(ptd_root_table, (unsigned int)(ptd_root_table_size / sizeof(pt_desc_t)));
+
+	PD_PMAP_MARK(37, 0x00ff60ff);	/* orchid: page table descriptors bootstrapped */
 
 #if XNU_MONITOR
 	pmap_array_begin = (void *)phystokv(avail_start);
@@ -4793,6 +4815,8 @@ pmap_bootstrap(
 #endif
 	pmap_cpu_data_array_init();
 
+	PD_PMAP_MARK(38, 0x0060ffff);	/* ice: per-cpu pmap data up */
+
 	vm_first_phys = gPhysBase;
 	vm_last_phys = trunc_page(avail_end);
 
@@ -4808,6 +4832,8 @@ pmap_bootstrap(
 	free_tt_count = 0;
 	free_tt_max = 0;
 
+	PD_PMAP_MARK(39, 0x00ffa0a0);	/* rose quartz: pmap free lists initialised */
+
 	queue_init(&pt_page_list);
 
 	pmap_pages_request_count = 0;
@@ -4816,6 +4842,8 @@ pmap_bootstrap(
 
 	virtual_space_start = vstart;
 	virtual_space_end = VM_MAX_KERNEL_ADDRESS;
+
+	PD_PMAP_MARK(40, 0x00a0ffa0);	/* pale mint: about to fill the ASID bitmaps */
 
 	bitmap_full(&asid_bitmap[0], pmap_max_asids);
 	bitmap_full(&asid_plru_bitmap[0], MAX_HW_ASIDS);
@@ -4840,6 +4868,8 @@ pmap_bootstrap(
 		}
 	}
 #endif
+
+	PD_PMAP_MARK(41, 0x00a0a0ff);	/* pale periwinkle: ASID bitmaps filled */
 
 	PE_parse_boot_argn("pmap_panic_dev_wimg_on_managed", &pmap_panic_dev_wimg_on_managed, sizeof(pmap_panic_dev_wimg_on_managed));
 

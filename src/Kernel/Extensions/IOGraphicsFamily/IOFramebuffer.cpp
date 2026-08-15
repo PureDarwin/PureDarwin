@@ -9060,7 +9060,11 @@ IOReturn IOFramebuffer::open( void )
         if ((this == gIOFBConsoleFramebuffer) || !gIOFBConsoleFramebuffer)
             setPlatformConsole(0, kPEDisableScreen, DBG_IOG_SOURCE_OPEN);
 
+        // Console is off from here until the controller is up: on a machine
+        // with no serial port this stretch is invisible, so say where we are.
+        kprintf("IOFB: console disabled, notifying DisplayModeWillChange\n");
         deliverFramebufferNotification( kIOFBNotifyDisplayModeWillChange );
+        kprintf("IOFB: notified, calling enableController\n");
 
         IOService * provider = getProvider();
         provider->setProperty("AAPL,gray-value", gIOFBGray32Data);
@@ -9078,6 +9082,7 @@ IOReturn IOFramebuffer::open( void )
         FB_START(enableController,0,__LINE__,0);
         err = enableController();
         FB_END(enableController,err,__LINE__,0);
+        kprintf("IOFB: enableController returned 0x%x\n", err);
         if (kIOReturnSuccess != err)  // Vendor controller had a problem
         {
             dead = true;

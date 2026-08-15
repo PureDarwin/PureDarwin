@@ -246,8 +246,10 @@ typedef struct {
     UInt32 configInfo; /* configuration value[7:0], interface number[15:8], alt setting[23:16] */
 } __attribute__((packed)) XHCIInputControlContext;
 
-/* A 32-byte-context Input Context: control + slot + 31 endpoint contexts.
- * We only ever populate slot + EP0 + one bulk IN + one bulk OUT. */
+/* Layout only, for reference and sizing at CSZ=0. Do NOT index these as C
+ * arrays: with 64-byte contexts (HCCPARAMS1.CSZ=1) every entry is spaced
+ * 64 bytes apart, so the driver addresses contexts through the fContextSize
+ * scaled helpers in RavynXHCIPort.h. */
 typedef struct {
     XHCIInputControlContext control;
     XHCISlotContext         slot;

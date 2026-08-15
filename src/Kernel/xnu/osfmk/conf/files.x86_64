@@ -39,6 +39,7 @@ osfmk/i386/fpu.c		standard
 osfmk/i386/fp_simd.s		standard
 osfmk/i386/i386_lock.s		standard
 osfmk/i386/i386_init.c		standard
+osfmk/i386/pd_boot_mark.c	standard
 osfmk/i386/i386_vm_init.c	standard
 osfmk/i386/io_map.c		standard
 osfmk/i386/ktss.c		standard

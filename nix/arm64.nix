@@ -988,7 +988,6 @@ let
     else symptomReporterBuild.override {
       puredarwinArch = "arm64";
       inherit arm64CrossToolchain;
-      corefoundation = coreFoundationArm64Build;
     };
   systemConfigurationArm64Build =
   let base = mkSystemConfigurationBuild {
@@ -2002,6 +2001,49 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT" ];
   };
+  # Apple A10 (T8010) - iPad 6th gen / iPhone 7, booted by pongoOS over
+  # checkm8 rather than by xnu-loader. The board config, AIC and the s5l
+  # and dockchannel UARTs are Apple's own in-tree code; only the machine
+  # config selection differs from the QEMU virt kernel.
+  kernelArm64T8010Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-t8010";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8010" ];
+  };
+  kernelArm64T8010DebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-t8010-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8010" ];
+  };
+  # Raspberry Pi Zero (BCM2835, ARM1176JZF-S / ARMv6Z). Kernel only: there is
+  # no 32-bit ARM userland, and XNU's arm tree has never been built for ARMv6
+  # in this generation - this target exists to find out what that costs.
+  kernelArm32Bcm2835Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-bcm2835";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "armv6";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM32_MACHINE_CONFIG=BCM2835" ];
+  };
   kextsArm64Build = mkPureDarwinBuild {
     pname = "puredarwin-kexts-arm64";
     src = kextsSource;
@@ -2021,7 +2063,7 @@ let
       "RavynXHCIPort.kext" "IOVirtIOGPU.kext" "IOVirtIOBlock.kext"
       "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext"
       "IONVMEFamily.kext"
-      "RavynHDAudio.kext" "PDE1000.kext"
+      "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
     ];
     enableUserspace = false;
     installUserland = false;
@@ -2041,7 +2083,7 @@ let
       "RavynXHCIPort.kext" "IOVirtIOGPU.kext" "IOVirtIOBlock.kext"
       "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext"
       "IONVMEFamily.kext"
-      "RavynHDAudio.kext" "PDE1000.kext"
+      "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
     ];
     enableIOGraphicsFamily = true;
     puredarwinArch = "arm64";
@@ -2240,6 +2282,9 @@ let
     foundation = foundationArm64Build;
     iokit = iokitArm64Build;
     security = securityArm64Build;
+    # configd links against SymptomReporter, so it has to ship wherever
+    # systemConfiguration does - x86 gets it via the same pairing.
+    symptomReporter = symptomReporterArm64Build;
     systemConfiguration = systemConfigurationArm64Build;
     opengl-framework = openglFrameworkArm64Build;
     i3 = i3Arm64Build;
@@ -2483,6 +2528,9 @@ in
     kernelArm64Build
     kernelArm64VirtBuild
     kernelArm64VirtDebugBuild
+    kernelArm64T8010Build
+    kernelArm64T8010DebugBuild
+    kernelArm32Bcm2835Build
     kextsArm64Build
     splitBaseSystemArm64VirtMinimal
     splitBaseSystemArm64VirtMinimalRelease

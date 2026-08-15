@@ -86,6 +86,49 @@
 #endif /* defined(KERNEL_INTEGRITY_KTRR) */
 .endmacro
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+.macro EARLY_FB_SAVE ba
+	ldr		x8, [\ba, BA_VIDEO_BASE]
+	ldr		w9, [\ba, BA_VIDEO_ROWBYTES]
+	adrp	x10, EXT(pd_start_fb_info)@page
+	add		x10, x10, EXT(pd_start_fb_info)@pageoff
+	str		x8, [x10]
+	str		x9, [x10, #8]
+.endmacro
+
+/*
+ * Clobbers x8-x15, and must not touch the stack: SP is set to a KVA long
+ * before the MMU comes on (see the excepstack_top setup in start_first_cpu),
+ * so any push here faults. Every call site below is a point where x8-x15 are
+ * dead.
+ */
+.macro EARLY_FB_BAND slot, colour
+	adrp	x8, EXT(pd_start_fb_info)@page
+	add		x8, x8, EXT(pd_start_fb_info)@pageoff
+	ldr		x9, [x8]							// framebuffer base
+	ldr		x10, [x8, #8]						// bytes per row
+	cbz		x9, 5f
+	cbz		x10, 5f
+	mov		x11, #((\slot) * 16)				// first row of this band
+	mul		x11, x11, x10
+	add		x9, x9, x11
+	movz	w15, #((\colour) & 0xffff)
+	movk	w15, #(((\colour) >> 16) & 0xffff), lsl #16
+	mov		w12, #16							// rows in a band
+1:
+	mov		x13, x9
+	lsr		w14, w10, #2						// pixels in a row
+2:
+	str		w15, [x13], #4
+	subs	w14, w14, #1
+	b.ne	2b
+	add		x9, x9, x10
+	subs	w12, w12, #1
+	b.ne	1b
+5:
+.endmacro
+#endif /* PUREDARWIN_EARLY_FB_MARK */
+
 /*
  * Checks the reset handler for global and CPU-specific reset-assist functions,
  * then jumps to the reset handler with boot args and cpu data. This is copied
@@ -515,11 +558,21 @@ LEXT(start_first_cpu)
 	mov		x20, x0
 	mov		x21, #0
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// White: the booter's jump landed and the kernel is executing.
+	EARLY_FB_SAVE x20
+	EARLY_FB_BAND 0, 0x00ffffff
+#endif
+
 	// Set low reset vector before attempting any loads
 	adrp	x0, EXT(LowExceptionVectorBase)@page
 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 	MSR_VBAR_EL1_X0
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Red: the low exception vector is installed.
+	EARLY_FB_BAND 1, 0x00ff0000
+#endif
 
 	// Get the kernel memory parameters from the boot args
 	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
@@ -527,6 +580,11 @@ LEXT(start_first_cpu)
 	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Blue: the boot args have been read.
+	EARLY_FB_BAND 2, 0x000000ff
+#endif
 
 	// Clear the register that will be used to store the userspace thread pointer and CPU number.
 	// We may not actually be booting from ordinal CPU 0, so this register will be updated
@@ -555,6 +613,11 @@ LEXT(start_first_cpu)
 	sub		x0, x0, x23
 	msr		SPSel, #0							// Set SP_EL0 to interrupt stack
 	mov		sp, x0
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Yellow: the exception and interrupt stack pointers are set.
+	EARLY_FB_BAND 3, 0x00ffff00
+#endif
 
 	// Load address to the C init routine into link register
 	adrp	lr, EXT(arm_init)@page
@@ -587,6 +650,11 @@ Linvalidate_bootstrap:							// do {
 	str		x0, [x1], #(1 << TTE_SHIFT)			//   Invalidate and advance
 	subs	x2, x2, #1							//   entries--
 	b.ne	Linvalidate_bootstrap				// } while (entries != 0)
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Red: the bootstrap page tables have been cleared.
+	EARLY_FB_BAND 4, 0x00ff00ff
+#endif
 
 	/*
 	 * In order to reclaim memory on targets where TZ0 (or some other entity)
@@ -635,6 +703,10 @@ Lkernelcache_base_found:
 	 * x14 - KVA virtual cursor
 	 * x15 - KVA physical cursor
 	 */
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Blue: the kernelcache base scan is done and the bases are adjusted.
+	EARLY_FB_BAND 5, 0x0000ffff
+#endif
 	mov		x4, x0
 	mov		x14, x22
 	mov		x15, x23
@@ -670,6 +742,28 @@ Lkernelcache_base_found:
 	 * x5 - total number of L2 entries to allocate
 	 */
 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/*
+	 * Stretch the V=P mapping up to the framebuffer. iBoot carves the display
+	 * buffer out above the memory it reports in memSize, so it is not covered
+	 * by the mapping built from x24, and the markers below would fault on it
+	 * the moment the MMU came on. This costs one more L2 block entry and lasts
+	 * only until arm_vm_init builds the real tables.
+	 */
+	adrp	x8, EXT(pd_start_fb_info)@page
+	add		x8, x8, EXT(pd_start_fb_info)@pageoff
+	ldr		x9, [x8]							// framebuffer physical base
+	cbz		x9, 1f
+	subs	x9, x9, x4							// distance from the V=P base
+	b.ls	1f									// below it: already mapped
+	lsr		x9, x9, #(ARM_TT_L2_SHIFT)
+	add		x9, x9, #2							// its block, plus rounding
+	cmp		x9, x5
+	csel	x5, x9, x5, hi
+1:
+#endif
+
 	/* create_bootstrap_mapping(vbase, pbase, num_ents, L1 table, freeptr) */
 	create_bootstrap_mapping x0,  x4,  x5, x1, x2, x6, x10, x11, x12, x13
 
@@ -702,6 +796,11 @@ Lkernelcache_base_found:
 	bl		Lprint_hex32_dbg
 	mov		x30, x28
 #endif /* BCM2837 */
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Yellow: both bootstrap mappings are built.
+	EARLY_FB_BAND 6, 0x00ff8000
+#endif
 
 	/* Ensure TTEs are visible */
 	dsb		ish
@@ -900,6 +999,11 @@ common_start:
 	// Enable caches and MMU
 	MOV64	x0, SCTLR_EL1_DEFAULT
 #endif /* HAS_APPLE_PAC */
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Green: about to turn the MMU on. Nothing can be painted after this.
+	EARLY_FB_BAND 7, 0x0000ff00
+#endif
+
 	// TEMP DEBUG: extra belt-and-suspenders barrier immediately before enabling
 	// the MMU, to rule out stale-TLB/TCG-translation-block staleness across
 	// the SCTLR_EL1.M toggle.
@@ -910,6 +1014,16 @@ common_start:
 
 	MSR_SCTLR_EL1_X0
 	isb		sy
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/*
+	 * Grey: the MMU is on and we are still executing V=P. This only paints if
+	 * the framebuffer falls inside the V=P bootstrap mapping, which covers the
+	 * kernelcache base to the end of memory - so its absence is not proof on
+	 * its own that the MMU transition failed.
+	 */
+	EARLY_FB_BAND 8, 0x00808080
+#endif
 
 #if defined(BCM2837)
 	// Raw PL011 UART print "P0" as the very first thing after the
@@ -1005,6 +1119,12 @@ common_start:
 	msr		TPIDR_EL1, xzr						// Set thread register
 
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Purple: past the MMU switch, about to touch the implementation-defined
+	// HID registers, whose encodings are reconstructed rather than published.
+	EARLY_FB_BAND 9, 0x00800080
+#endif
+
 #if defined(APPLE_ARM64_ARCH_FAMILY)
 	// Initialization common to all non-virtual Apple targets
 #if !APPLEVIRTUALPLATFORM
@@ -1016,10 +1136,20 @@ common_start:
 #endif  // !APPLEVIRTUALPLATFORM
 #endif  // APPLE_ARM64_ARCH_FAMILY
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Teal: the HID4/EHID4 writes survived.
+	EARLY_FB_BAND 10, 0x00008080
+#endif
+
 	// Read MIDR before start of per-SoC tunables
 	mrs x12, MIDR_EL1
 
 	APPLY_TUNABLES x12, x13
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Pale green: the per-SoC tunables survived.
+	EARLY_FB_BAND 11, 0x0080ff80
+#endif
 
 
 
@@ -1030,12 +1160,22 @@ common_start:
 	msr		CPU_OVRD, x9
 #endif
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Orange-red: the CPU_OVRD unmask survived.
+	EARLY_FB_BAND 12, 0x00ff4000
+#endif
+
 	// If x21 != 0, we're doing a warm reset, so we need to trampoline to the kernel pmap.
 	cbnz	x21, Ltrampoline
 
 	// Set KVA of boot args as first arg
 	add		x0, x20, x22
 	sub		x0, x0, x23
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	// Light green: about to return into arm_init at its kernel virtual address.
+	EARLY_FB_BAND 13, 0x0040ff40
+#endif
 
 #if KASAN
 	mov	x20, x0
@@ -1112,6 +1252,16 @@ arm_init_tramp:
 
 	/* Return to arm_init() */
 	ret
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	.section __DATA,__data
+	.align 3
+	.globl EXT(pd_start_fb_info)
+LEXT(pd_start_fb_info)
+	.quad 0
+	.quad 0
+	.text
+#endif /* PUREDARWIN_EARLY_FB_MARK */
 
 //#include	"globals_asm.h"
 

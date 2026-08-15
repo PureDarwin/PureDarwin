@@ -451,6 +451,11 @@ main(
 	DECLARE("USL_INTERLOCK", offsetof(usimple_lock_data_t, interlock));
 
 	DECLARE("INTSTACK_SIZE", INTSTACK_SIZE);
+	DECLARE("BA_VIDEO_BASE", offsetof(struct boot_args, Video.v_baseAddr));
+	DECLARE("BA_VIDEO_ROWBYTES", offsetof(struct boot_args, Video.v_rowBytes));
+	DECLARE("BA_VIDEO_WIDTH", offsetof(struct boot_args, Video.v_width));
+	DECLARE("BA_VIDEO_HEIGHT", offsetof(struct boot_args, Video.v_height));
+	DECLARE("BA_VIDEO_DEPTH", offsetof(struct boot_args, Video.v_depth));
 	DECLARE("KADDR", offsetof(struct boot_args, kaddr));
 	DECLARE("KSIZE", offsetof(struct boot_args, ksize));
 	DECLARE("MEMORYMAP", offsetof(struct boot_args, MemoryMap));

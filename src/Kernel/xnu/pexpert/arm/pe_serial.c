@@ -1004,6 +1004,10 @@ serial_init(void)
 	return 1;
 }
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+extern void vc_serial_record_early(char c);
+#endif
+
 void
 uart_putc(char c)
 {
@@ -1018,6 +1022,16 @@ uart_putc(char c)
 		fns->td0(c);
 		fns = fns->next;
 	}
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/*
+	 * Every serial write on this platform funnels through here, including
+	 * kprintf's serial_putc_crlf, which bypasses serial_putc. Record it so it
+	 * can be drawn on the framebuffer; when no UART was probed the loop above
+	 * simply does nothing and this is the only output there is.
+	 */
+	vc_serial_record_early(c);
+#endif
 }
 
 int

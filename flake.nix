@@ -3018,6 +3018,9 @@
             kernelArm64Build
             kernelArm64VirtBuild
             kernelArm64VirtDebugBuild
+            kernelArm64T8010Build
+            kernelArm64T8010DebugBuild
+            kernelArm32Bcm2835Build
             kextsArm64Build
             splitBaseSystemArm64VirtMinimal
             splitBaseSystemArm64VirtMinimalRelease
@@ -3356,7 +3359,8 @@
               gnumakeBuild gtk3Build gtkLayerShellBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
-              kernelArm64VirtDebugBuild kernelBuild kernelDebugBuild kextsArm64Build kextsBuild
+              kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm32Bcm2835Build
+              kernelBuild kernelDebugBuild kextsArm64Build kextsBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild wlrootsBuild swayBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build
@@ -3395,6 +3399,10 @@
             ;
           # Investigative builds, not image contents.
           probePackages = lib.optionalAttrs (!isDarwin) {
+            # Cross toolchain, exposed so out-of-tree flakes (e.g. checkm8-tools'
+            # PongoOS build) can link Mach-O with the real cctools ld64.
+            arm64-cross-toolchain = arm64CrossToolchain;
+            native-ld = nativeLd;
             coreservices = coreServicesBuild;
             wine-tools = wineToolsBuild;
             libX11-shared = libX11SharedBuild;

@@ -47,9 +47,15 @@
 #define ARM_ARCH_TIMER
 #define ARM_BOARD_WFE_TIMEOUT_NS             1000
 
-#if defined(HAS_CTRR)
+/*
+ * PUREDARWIN_NO_KERNEL_INTEGRITY: on boards we boot through pongoOS after a
+ * checkm8 exploit, the region registers are already unlocked by the time the
+ * kernel runs, and the in-kernel lockdown path needs iBoot's memmap_types.h,
+ * which is not part of the open-source tree.
+ */
+#if defined(HAS_CTRR) && !defined(PUREDARWIN_NO_KERNEL_INTEGRITY)
 #define KERNEL_INTEGRITY_CTRR                1
-#elif defined(HAS_KTRR)
+#elif defined(HAS_KTRR) && !defined(PUREDARWIN_NO_KERNEL_INTEGRITY)
 #define KERNEL_INTEGRITY_KTRR                1
 #elif defined(MONITOR)
 #define KERNEL_INTEGRITY_WT                  1

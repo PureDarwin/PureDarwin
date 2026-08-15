@@ -303,6 +303,64 @@ arm_auxkc_init(void *mh, void *base)
  *		Function:		Runs on the boot CPU, once, on entry from iBoot.
  */
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+/*
+ * The C continuation of the bands in start.s. Legal only while the V=P
+ * bootstrap mapping is still live under TTBR0 - from the entry to arm_init
+ * until arm_vm_init() installs the real page tables. The framebuffer sits
+ * above the memory iBoot reports in memSize, so it is outside the kernel's
+ * physical aperture and phystokv() cannot reach it; writing the physical
+ * address straight through the bootstrap mapping is the only way to draw
+ * this early.
+ */
+void pd_start_mark(unsigned slot, uint32_t colour, boot_args *args);
+void
+pd_start_mark(unsigned slot, uint32_t colour, boot_args *args)
+{
+	volatile uint32_t *fb;
+	uint32_t stride, row, col;
+
+	if (args == NULL || args->Video.v_baseAddr == 0 ||
+	    args->Video.v_rowBytes == 0) {
+		return;
+	}
+	fb = (volatile uint32_t *)(uintptr_t)args->Video.v_baseAddr;
+	stride = (uint32_t)(args->Video.v_rowBytes / 4);
+
+	for (row = 0; row < 16; row++) {
+		for (col = 0; col < stride; col++) {
+			fb[(slot * 16 + row) * stride + col] = colour;
+		}
+	}
+}
+/*
+ * The same marker after arm_vm_init() has replaced the bootstrap tables. The
+ * framebuffer is outside the physical aperture, so this goes the long way
+ * round through the pmap copy windows, which exist only once pmap_bootstrap()
+ * has run - that is, not before arm_vm_init() returns.
+ */
+void
+pd_start_mark_late(unsigned slot, uint32_t colour, boot_args *args)
+{
+	uint64_t base;
+	uint32_t stride, row, col;
+
+	if (args == NULL || args->Video.v_baseAddr == 0 ||
+	    args->Video.v_rowBytes == 0) {
+		return;
+	}
+	base = args->Video.v_baseAddr;
+	stride = (uint32_t)(args->Video.v_rowBytes / 4);
+
+	for (row = 0; row < 16; row++) {
+		for (col = 0; col < stride; col++) {
+			ml_phys_write_word((vm_offset_t)(base +
+			    ((uint64_t)(slot * 16 + row) * stride + col) * 4), colour);
+		}
+	}
+}
+#endif /* PUREDARWIN_EARLY_FB_MARK */
+
 __startup_func
 void
 arm_init(
@@ -312,7 +370,16 @@ arm_init(
 	uint32_t        memsize;
 	uint64_t        xmaxmem;
 	thread_t        thread;
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(14, 0x00ff8080, args);	/* pink: reached arm_init */
+#endif
+
 	arm_slide_rebase_and_sign_image();
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(15, 0x008080ff, args);	/* periwinkle: image rebased and signed */
+#endif
 
 	/* If kernel integrity is supported, use a constant copy of the boot args. */
 	const_boot_args = *args;
@@ -351,7 +418,15 @@ arm_init(
 		real_phys_size = args->memSize;
 	}
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(16, 0x00c0c000, args);	/* olive: about to init the platform expert */
+#endif
+
 	PE_init_platform(FALSE, args); /* Get platform expert set up */
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(17, 0x0000c000, args);	/* dark green: platform expert is up */
+#endif
 
 #if __arm64__
 	wfe_timeout_configure();
@@ -519,7 +594,17 @@ MACRO_END
 	__builtin_arm_wsr("pan", 1);
 #endif  /* __ARM_PAN_AVAILABLE__ */
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/* Last marker of this kind: arm_vm_init() replaces the bootstrap tables,
+	 * and the V=P mapping the marker relies on goes with them. */
+	pd_start_mark(18, 0x00ffffff, args);	/* white again: about to build the real page tables */
+#endif
+
 	arm_vm_init(xmaxmem, args);
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark_late(19, 0x00ff00ff, args);	/* magenta: the real page tables are up */
+#endif
 
 	if (debug_boot_arg) {
 		patch_low_glo();
@@ -544,6 +629,10 @@ MACRO_END
 #endif
 
 	/* setup debugging output if one has been chosen */
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark_late(20, 0x0000ffff, args);	/* cyan: about to bring kprintf up */
+#endif
+
 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
 	kprintf("kprintf initialized\n");
 

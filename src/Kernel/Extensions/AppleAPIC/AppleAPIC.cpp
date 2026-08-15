@@ -148,25 +148,16 @@ bool AppleAPIC::start( IOService * provider )
     // Cache the ID register, restored on system wake. We trust the BIOS
     // to assign an unique APIC ID for each I/O APIC. Can we?
 
-    kprintf("AppleAPIC: baseAddr=0x%lx, about to indexRead(ID)\n", _apicBaseAddr);
     _apicIDRegister = indexRead( kIndexID );
-    kprintf("AppleAPIC: indexRead(ID)=0x%lx OK, reading VER\n", _apicIDRegister);
 
     // With the registers mapped in, find out how many interrupt table
     // entries are supported.
 
-    // On AMD this sequence stops after the "reading VER"
-    // line above, and "the MMIO read never returned" and "the read returned
-    // nonsense and we died allocating from it" are indistinguishable without
-    // seeing the raw register value first.
     {
-        kprintf("AppleAPIC: VER writing index\n");
-        IOAPIC_REG( IND ) = kIndexVER;
-        kprintf("AppleAPIC: VER index written, reading data\n");
-        UInt32 verRaw = (UInt32) IOAPIC_REG( DAT );
+        UInt32 verRaw = indexRead( kIndexVER );
+
         kprintf("AppleAPIC: VER raw=0x%x\n", verRaw);
         _vectorCount = GET_FIELD( verRaw, kVERMaxEntries );
-        kprintf("AppleAPIC: VER maxEntries=%lu\n", (unsigned long) _vectorCount);
     }
     if (_vectorCount >= 0xFF)
     {
@@ -376,11 +367,11 @@ void AppleAPIC::writeVectorEntry( IOInterruptVectorNumber vectorNumber )
 
     state = IOSimpleLockLockDisableInterrupt( _apicLock );
         
-    indexWrite( kIndexRTLO + vectorNumber * 2,
-                _vectorTable[vectorNumber].l32 );
+    indexWriteLocked( kIndexRTLO + vectorNumber * 2,
+                      _vectorTable[vectorNumber].l32 );
 
-    indexWrite( kIndexRTHI + vectorNumber * 2,
-                _vectorTable[vectorNumber].h32 );
+    indexWriteLocked( kIndexRTHI + vectorNumber * 2,
+                      _vectorTable[vectorNumber].h32 );
 
     IOSimpleLockUnlockEnableInterrupt( _apicLock, state );
 }
@@ -396,8 +387,8 @@ void AppleAPIC::writeVectorEntry( IOInterruptVectorNumber vectorNumber, VectorEn
 
     state = IOSimpleLockLockDisableInterrupt( _apicLock );
 
-    indexWrite( kIndexRTLO + vectorNumber * 2, entry.l32 );
-    indexWrite( kIndexRTHI + vectorNumber * 2, entry.h32 );
+    indexWriteLocked( kIndexRTLO + vectorNumber * 2, entry.l32 );
+    indexWriteLocked( kIndexRTHI + vectorNumber * 2, entry.h32 );
 
     IOSimpleLockUnlockEnableInterrupt( _apicLock, state );
 }

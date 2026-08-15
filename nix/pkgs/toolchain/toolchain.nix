@@ -26,18 +26,39 @@ let
   lld = llvmPackages_21.lld;
   bintools = llvmPackages_21.bintools-unwrapped;
 
+  # The ISA baseline for generated code.
+  #
+  # clang's default CPU for arm64-apple-macosx11.0 is an Apple Silicon Mac
+  # (ARMv8.5), so it freely emits the ARMv8.1 large-system-extension atomics -
+  # ldadd, cas and friends. The oldest hardware PureDarwin targets is Hurricane
+  # (A10), which is ARMv8.0 and traps those as undefined instructions: the
+  # symptom is SIGILL in the first process to execute one. Note -march=armv8-a
+  # does NOT prevent this on Apple targets; only -mcpu does.
+  baselineCpu = if lib.hasPrefix "arm64-" clangTarget then [ "-mcpu=apple-a10" ] else [ ];
+
   compilerWrapper = name: realBin: writeShellScriptBin "${target}-${name}" ''
     SDK="''${DARWIN_SDK_ROOT:-${defaultSdkRoot}}"
     export PATH="${lld}/bin:$PATH"
     fuseld=(${linkerArg})
+    cpu=(${lib.escapeShellArgs baselineCpu})
+    prev=
     for a in "$@"; do
       case "$a" in
         -fuse-ld=*) fuseld=() ;;
         -c|-E|-S|-fsyntax-only) fuseld=() ;;
       esac
+      # An explicit -arch overrides the arch in -target, and -mcpu is rejected
+      # outright for a target it does not apply to. mig preprocesses its .defs
+      # with -arch x86_64 whatever the real target is, so this is not
+      # hypothetical.
+      if [ "$prev" = -arch ] && [ "$a" != arm64 ]; then
+        cpu=()
+      fi
+      prev="$a"
     done
     exec ${realBin} \
       -target ${clangTarget} \
+      "''${cpu[@]}" \
       -isysroot "$SDK" \
       "''${fuseld[@]}" \
       "$@"

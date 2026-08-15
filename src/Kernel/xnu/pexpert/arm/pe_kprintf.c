@@ -27,6 +27,17 @@ static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
 
 static void serial_putc_crlf(char c);
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+extern void vc_serial_record_early(char c);
+
+static void
+pd_early_kputc(char c)
+{
+	vc_serial_record_early(c);
+	cnputc_unbuffered(c);
+}
+#endif /* PUREDARWIN_EARLY_FB_MARK */
+
 __startup_func
 static void
 PE_init_kprintf(void)
@@ -51,7 +62,11 @@ PE_init_kprintf(void)
 	if (serial_init()) {
 		PE_kputc = serial_putc_crlf;
 	} else {
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+		PE_kputc = pd_early_kputc;
+#else
 		PE_kputc = cnputc_unbuffered;
+#endif
 	}
 }
 STARTUP(KPRINTF, STARTUP_RANK_FIRST, PE_init_kprintf);

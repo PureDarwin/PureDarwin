@@ -624,14 +624,15 @@ vm_compressor_init(void)
 	if (PE_parse_boot_argn("-disable_freezer_cseg_acct", bootarg_name, sizeof(bootarg_name))) {
 		freezer_incore_cseg_acct = FALSE;
 	}
-#if defined(ARM64_BOARD_CONFIG_VIRT)
+#if defined(ARM64_BOARD_CONFIG_VIRT) || defined(ARM64_BOARD_CONFIG_T8010)
 	/*
-	 * The QEMU virt board's kernel VA window is only a few GB of free space
-	 * after the low-globals and physical-aperture reservations. Accounting
-	 * for the freezer's max configured swap space would grow the compressor
-	 * submap by ~100 GB (VM_MAX_SWAP_FILE_NUM * MAX_SWAP_FILE_SIZE), which
-	 * cannot fit. This board has no app-freezer use case, so keep the
-	 * compressor submap sized to in-core segments only.
+	 * These boards' kernel VA window is only a few GB of free space after the
+	 * low-globals and physical-aperture reservations. Accounting for the
+	 * freezer's max configured swap space would grow the compressor submap by
+	 * ~100 GB (VM_MAX_SWAP_FILE_NUM * MAX_SWAP_FILE_SIZE, which take their
+	 * macOS values here - 100 files of 1 GB - because the build targets
+	 * XNU_TARGET_OS_OSX), which cannot fit. Neither board has an app-freezer
+	 * use case, so keep the compressor submap sized to in-core segments only.
 	 */
 	freezer_incore_cseg_acct = FALSE;
 #endif
@@ -679,15 +680,15 @@ vm_compressor_init(void)
 	compressor_pool_max_size = C_SEG_MAX_LIMIT;
 	compressor_pool_max_size *= C_SEG_BUFSIZE;
 
-#if defined(ARM64_BOARD_CONFIG_VIRT)
+#if defined(ARM64_BOARD_CONFIG_VIRT) || defined(ARM64_BOARD_CONFIG_T8010)
 
 	/*
-	 * On the QEMU virt board physical memory is small and the kernel_map has
-	 * only a few GB of free VA at this point. The macOS sizing formula below
-	 * multiplies max_mem and never caps compressor_pool_max_size down to
-	 * physical memory, so it would request a submap far larger than this
-	 * board's address space can satisfy. Size the pool to physical memory,
-	 * matching the embedded default.
+	 * On the arm64 boards this targets, physical memory is small and the
+	 * kernel_map has only a few GB of free VA at this point. The macOS sizing
+	 * formula below multiplies max_mem and never caps compressor_pool_max_size
+	 * down to physical memory, so it would request a submap far larger than
+	 * these boards' address space can satisfy. Size the pool to physical
+	 * memory, matching the embedded default.
 	 */
 	if (compressor_pool_max_size > max_mem) {
 		compressor_pool_max_size = max_mem;

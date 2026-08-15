@@ -90,7 +90,16 @@ TUNABLE(bool, iokit_iomd_setownership_enabled,
 static inline void
 vm_mem_bootstrap_log(const char *message)
 {
-//	kprintf("vm_mem_bootstrap: %s\n", message);
+	/*
+	 * The steps between two startup phases are otherwise invisible, and on a
+	 * board with no serial the startup phase lines are all there is to go on:
+	 * a stop between "reached phase 7" (kmem_alloc) and phase 8 (zalloc) is
+	 * vm_fault_init or kext_alloc_init, and nothing said which.
+	 */
+	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+	    startup_phase >= STARTUP_SUB_KPRINTF) {
+		kprintf("vm_mem_bootstrap: %s\n", message);
+	}
 	kernel_debug_string_early(message);
 }
 

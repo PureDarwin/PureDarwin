@@ -27,4 +27,14 @@
 #define PEXPERT_NO_3X_IMAGES    1
 #endif  /* ARM_BOARD_CONFIG_T8004 */
 
+#ifdef ARM_BOARD_CONFIG_BCM2835
+#define ARM1176
+#include <pexpert/arm/BCM2835.h>
+#define MAX_CPUS                    1
+#define MAX_CPU_CLUSTERS            1
+#define MAX_L2_CLINE              5
+#define ARM_BOARD_CLASS_BCM2835
+#define PEXPERT_NO_3X_IMAGES    1
+#endif  /* ARM_BOARD_CONFIG_BCM2835 */
+
 #endif /* ! _PEXPERT_ARM_BOARD_CONFIG_H */

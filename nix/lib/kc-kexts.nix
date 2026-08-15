@@ -43,5 +43,6 @@
     "IOVirtIOBlock.kext"
     "IOIntelFramebuffer.kext"
     "PDE1000.kext"
+    "PDRealtek8111.kext"
     "RavynHDAudio.kext"
 ]

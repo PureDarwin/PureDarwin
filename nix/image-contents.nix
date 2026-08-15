@@ -72,6 +72,9 @@
 , kernelArm64Build
 , kernelArm64VirtBuild
 , kernelArm64VirtDebugBuild
+, kernelArm64T8010Build
+, kernelArm64T8010DebugBuild
+, kernelArm32Bcm2835Build
 , kernelBuild
 , kernelDebugBuild
 , kextsArm64Build
@@ -554,6 +557,9 @@ let
     kernel-arm64 = kernelArm64Build;
     kernel-arm64-virt = kernelArm64VirtBuild;
     kernel-arm64-virt-debug = kernelArm64VirtDebugBuild;
+    kernel-arm64-t8010 = kernelArm64T8010Build;
+    kernel-arm64-t8010-debug = kernelArm64T8010DebugBuild;
+    kernel-arm32-bcm2835 = kernelArm32Bcm2835Build;
     kexts = kextsBuild;
     kexts-arm64 = kextsArm64Build;
     iographics = iographicsBuild;
@@ -649,6 +655,16 @@ let
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
+      kcArm64T8010DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
+        kernel = kernelArm64T8010DebugBuild;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+      };
+      kcArm64T8010ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-t8010.nix {
+        kernel = kernelArm64T8010Build;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+      };
       imageExtraPackages = lib.attrValues imageExtraPackageSet
         ++ lib.optional (fbdoomExternalSrc != null) fbdoomBuild;
       imageBuild = pkgs.callPackage ../image.nix {
@@ -712,6 +728,42 @@ let
         ramdiskMB = 512;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
       };
+      # T8010 (iPad 6). No EFI and no disk: pongoOS chainloads the kernel
+      # collection and hands the same staging tree over as an ext4 ramdisk,
+      # which XNU mounts as /dev/md0. netbootOnly keeps the builder from
+      # assembling a partitioned disk image around it - only kernel and
+      # ramdisk are ever used.
+      ramdiskArm64T8010Build = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtMinimal;
+        extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ];
+        kc = kcArm64T8010DebugBuild;
+        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        netbootOnly = true;
+        useRamdisk = true;
+        # The pruned tree is ~98MB (mostly libicudata, which CoreFoundation
+        # needs), so this leaves the running system ~55MB to write into. Both
+        # pongoOS limits had to be raised to carry it: the 128MB upload cap and
+        # the 64MB static-region cap.
+        ramdiskMB = 160;
+        # The kernel is chainloaded by pongoOS, never read from the filesystem,
+        # so the ~100MB of kernels and their link archives are dead weight
+        # here; the rest is headers and static libraries for building against
+        # the system, which nothing on a first boot needs.
+        ramdiskPrune = [
+          "System/Library/Kernels"
+          "include"
+          "usr/include"
+          "usr/local/include"
+          "pd-guest-headers"
+          "pd-xpc-dev"
+          "lib/pkgconfig"
+          "usr/lib/pkgconfig"
+          "applets.txt"
+        ];
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
+      };
       imageArm64VirtFullBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimalRelease;
         extraPackages = imageExtraPackagesArm64;
@@ -765,6 +817,7 @@ let
         imageFileName = "puredarwin-minimal-debug.img";
         espMB = 64;
         rootMB = 384;
+        rawDebugLog = true;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 serial_video_mirror=1 pdtrace=1";
       };
       runVm = pkgs.writeShellApplication {
@@ -1038,6 +1091,9 @@ let
       kc-debug = kcDebugBuild;
       kc-arm64-debug = kcArm64DebugBuild;
       kc-arm64 = kcArm64ReleaseBuild;
+      kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
+      ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
+      kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
       corefoundation = coreFoundationBuild;
       icucore = icuCoreBuild;
       libcxxabi-dylib = libcxxabiDylibBuild;
@@ -1052,7 +1108,7 @@ let
       iokit = iokitBuild;
       coreServices = coreServicesBuild;
       security = securityBuild;
-    symptomReporter = symptomReporterBuild;
+      symptomReporter = symptomReporterBuild;
       systemstarter = systemStarterBuild;
       launchd = launchdBuild;
       launchctl = launchctlBuild;

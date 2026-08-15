@@ -170,16 +170,42 @@ protected:
     // Inline functions to read and write to the APIC
     // indirect registers. Must be accessed as 32-bit values.
 
-    inline UInt32    indexRead( UInt32 index )
+    // The index and data registers are one piece of state shared by every
+    // caller: whoever writes IND last decides what DAT refers to. Anything
+    // that runs in between - another thread, an interrupt handler that masks a
+    // vector - retargets the access underneath us. Callers already holding
+    // _apicLock use these; everyone else must use the locked pair below.
+
+    inline UInt32    indexReadLocked( UInt32 index )
     {
         IOAPIC_REG( IND ) = index;
         return IOAPIC_REG( DAT );
     }
 
-    inline void      indexWrite( UInt32 index, UInt32 value )
+    inline void      indexWriteLocked( UInt32 index, UInt32 value )
     {
         IOAPIC_REG( IND ) = index;
         IOAPIC_REG( DAT ) = value;
+    }
+
+    inline UInt32    indexRead( UInt32 index )
+    {
+        IOInterruptState state;
+        UInt32           value;
+
+        state = IOSimpleLockLockDisableInterrupt( _apicLock );
+        value = indexReadLocked( index );
+        IOSimpleLockUnlockEnableInterrupt( _apicLock, state );
+        return value;
+    }
+
+    inline void      indexWrite( UInt32 index, UInt32 value )
+    {
+        IOInterruptState state;
+
+        state = IOSimpleLockLockDisableInterrupt( _apicLock );
+        indexWriteLocked( index, value );
+        IOSimpleLockUnlockEnableInterrupt( _apicLock, state );
     }
 
     // Enable or disable (mask) a vector entry. Protected with
@@ -190,7 +216,7 @@ protected:
         IOInterruptState state;
         state = IOSimpleLockLockDisableInterrupt( _apicLock );
         _vectorTable[vectorNumber].l32 &= ~kRTLOMaskDisabled;
-        indexWrite( kIndexRTLO + vectorNumber * 2,
+        indexWriteLocked( kIndexRTLO + vectorNumber * 2,
                     _vectorTable[vectorNumber].l32 );
         IOSimpleLockUnlockEnableInterrupt( _apicLock, state );
     }
@@ -200,7 +226,7 @@ protected:
         IOInterruptState state;
         state = IOSimpleLockLockDisableInterrupt( _apicLock );
         _vectorTable[vectorNumber].l32 |= kRTLOMaskDisabled;
-        indexWrite( kIndexRTLO + vectorNumber * 2,
+        indexWriteLocked( kIndexRTLO + vectorNumber * 2,
                     _vectorTable[vectorNumber].l32 );
         IOSimpleLockUnlockEnableInterrupt( _apicLock, state );
     }

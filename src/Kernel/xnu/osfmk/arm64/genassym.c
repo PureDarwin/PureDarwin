@@ -298,6 +298,8 @@ main(int     argc,
 	DECLARE("BA_MEM_SIZE", offsetof(struct boot_args, memSize));
 	DECLARE("BA_TOP_OF_KERNEL_DATA", offsetof(struct boot_args, topOfKernelData));
 	DECLARE("BA_BOOT_FLAGS", offsetof(struct boot_args, bootFlags));
+	DECLARE("BA_VIDEO_BASE", offsetof(struct boot_args, Video.v_baseAddr));
+	DECLARE("BA_VIDEO_ROWBYTES", offsetof(struct boot_args, Video.v_rowBytes));
 
 	DECLARE("SR_RESTORE_TCR_EL1", offsetof(struct sysreg_restore, tcr_el1));
 

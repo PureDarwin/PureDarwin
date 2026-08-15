@@ -1540,6 +1540,20 @@ pmap_startup(
 
 	absolutetime_to_nanoseconds(mach_absolute_time(), &start_ns);
 	vm_pages_count = 0;
+#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
+	/*
+	 * This loop writes to every free physical page through the physmap, so a
+	 * page the physmap does not actually cover faults here and nowhere
+	 * earlier. Report the bounds and then the progress, because the useful
+	 * fact is the last page number reached, not that it stopped.
+	 */
+	{
+		extern uint64_t physmap_base, physmap_max;
+		kprintf("pmap_startup: npages=%d fill=%d physmap %llx..%llx (%llu MB)\n",
+		    npages, (int)fill, physmap_base, physmap_max,
+		    (physmap_max - physmap_base) >> 20);
+	}
+#endif
 	for (i = 0; i < npages; i++) {
 		/* Did we run out of pages? */
 		if (!pmap_next_page(&phys_page)) {
@@ -1587,6 +1601,13 @@ pmap_startup(
 		}
 #endif
 		++vm_pages_count;
+#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
+		/* 256MB apart: often enough to localise the fault, rare enough
+		 * that the printing does not dominate the boot. */
+		if ((i & 0xffff) == 0) {
+			kprintf("pmap_startup: i=%d ppn=0x%x\n", i, phys_page);
+		}
+#endif
 		vm_page_init(&vm_pages[i], phys_page, FALSE);
 		if (fill) {
 			fillPage(phys_page, fillval);

@@ -336,6 +336,25 @@ bool RavynAHCIPort::start(IOService *provider)
 
     fABAR = (volatile uint8_t *)fABARMap->getVirtualAddress();
 
+    /* A BAR the firmware left inside an unassigned bridge aperture reads back
+     * as all ones on every access. Writing GHC.AE into that and then trusting
+     * CAP/PI gets a controller that claims 32 populated ports and a 64-bit DMA
+     * capability it does not have, so refuse before the first write. The port
+     * register file also has to fit inside what actually got mapped. */
+    if (fABARMap->getLength() < PORT_REGS_BASE + 32 * PORT_REGS_SIZE) {
+        AHCI_Log("ABAR mapping is only 0x%llx bytes, refusing to attach",
+                (unsigned long long)fABARMap->getLength());
+        return false;
+    }
+    {
+        uint32_t probe = hbaRead32(AHCI_VS);
+        if (probe == 0xFFFFFFFFU || hbaRead32(AHCI_CAP) == 0xFFFFFFFFU) {
+            AHCI_Log("ABAR not decoding (VS=%08x CAP=%08x), refusing to attach",
+                    probe, hbaRead32(AHCI_CAP));
+            return false;
+        }
+    }
+
     /* Enable AHCI mode (GHC.AE) */
     uint32_t ghc = hbaRead32(AHCI_GHC);
     if (!(ghc & AHCI_GHC_AE)) {
@@ -712,21 +731,50 @@ RavynAHCIPort::rebasePort(PortState &portState)
     bzero((void *)portState.memVirt, kPortMemBytes);
 
     /*
+     * FRE must be on *before* COMRESET: the initial D2H Register FIS the device
+     * sends afterwards is what carries the signature and clears BSY, and PxTFD
+     * is only updated while the FIS receive engine runs. With FRE off, that FIS
+     * is dropped and PxTFD keeps its power-on 0x80 forever (QEMU updates TFD
+     * regardless, so this only bites on real hardware).
+     */
+    {
+        uint32_t cmd = portRead32(portState.port, PORT_CMD);
+        portWrite32(portState.port, PORT_CMD, cmd | PORT_CMD_FRE);
+        for (uint32_t i = 0; i < 500; i++) {
+            if (portRead32(portState.port, PORT_CMD) & PORT_CMD_FR)
+                break;
+            ahciSpinMicros(1000);
+        }
+    }
+
+    /*
      * Do not wait for PxTFD.BSY here. Several Intel mobile SATA parts,
      * including the HM76 controller's attached disks, report BSY until the
      * host performs a SATA COMRESET. Waiting before reset makes enumeration
-     * fail permanently with TFD=0x80. The command engine must be stopped for
-     * COMRESET, so perform it now and only wait for task-file readiness after
-     * the link has been reset.
+     * fail permanently with TFD=0x80.
      */
     if (!resetPort(portState.port))
         AHCI_Log("warning: port %u COMRESET did not complete, continuing",
                  portState.port);
 
-    if (!startPortEngine(portState.port))
-        return false;
+    /* COMRESET sets the SERR diagnostic bits; they must be cleared before ST. */
+    portWrite32(portState.port, PORT_SERR, 0xFFFFFFFFU);
+    portWrite32(portState.port, PORT_IS,   0xFFFFFFFFU);
 
-    return waitWhileBusy(portState.port, AHCI_TIMEOUT_MS);
+    if (!waitWhileBusy(portState.port, AHCI_TIMEOUT_MS)) {
+        AHCI_Log("port %u TFD=%08x SSTS=%08x SERR=%08x CMD=%08x after reset",
+                 portState.port, portRead32(portState.port, PORT_TFD),
+                 portRead32(portState.port, PORT_SSTS),
+                 portRead32(portState.port, PORT_SERR),
+                 portRead32(portState.port, PORT_CMD));
+        return false;
+    }
+
+    /* ST may only be set once BSY/DRQ are clear, which is now true. */
+    uint32_t cmd = portRead32(portState.port, PORT_CMD);
+    portWrite32(portState.port, PORT_CMD, cmd | PORT_CMD_ST);
+
+    return true;
 }
 
 void

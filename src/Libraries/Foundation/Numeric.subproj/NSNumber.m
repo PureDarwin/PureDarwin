@@ -10,6 +10,7 @@
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFNumber.h>
+#include <CoreFoundation/ForFoundationOnly.h>
 
 /* Every constructor here is a class convenience method, so the result must be
  * autoreleased - a boxed @(x) under ARC is released by its caller. */
@@ -146,3 +147,10 @@ __NSNUMBER_GETTER(integerValue, NSInteger, kCFNumberNSIntegerType)
 }
 
 @end
+
+#if DEPLOYMENT_RUNTIME_OBJC
+__attribute__((constructor))
+static void __NSCFNumberBridgeInit(void) {
+    _CFRuntimeBridgeClasses(CFNumberGetTypeID(), "NSNumber");
+}
+#endif

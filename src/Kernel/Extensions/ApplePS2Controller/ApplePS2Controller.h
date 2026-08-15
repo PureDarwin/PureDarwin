@@ -122,6 +122,8 @@ typedef enum { kDT_Keyboard, kDT_Mouse } PS2DeviceType;
 // Port timings.
 
 #define kDataDelay              7       // usec to delay before data is valid
+#define kInputBusyRetries       10000   // * kDataDelay = 70 ms, then give up
+#define kInterruptDrainLimit    64      // 8042 has a one-byte output buffer
 
 // Ports used to control the PS/2 keyboard/mouse and read data from it.
 

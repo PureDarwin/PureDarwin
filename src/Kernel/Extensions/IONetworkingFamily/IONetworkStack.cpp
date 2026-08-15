@@ -1062,23 +1062,32 @@ bool IONetworkStackUserClient::initWithTask(	task_t			owningTask,
                                                 UInt32			type,
                                                 OSDictionary *	properties )
 {
+	kprintf("IONetworkStackUserClient::initWithTask entry\n");
 	if (!super::initWithTask(owningTask, securityID, type, properties))
 		return false;
 
+	kprintf("IONetworkStackUserClient::initWithTask checking privilege\n");
 	if (IOUserClient::clientHasPrivilege(
 		securityID, kIOClientPrivilegeAdministrator) != kIOReturnSuccess)
 		return false;
 
+	kprintf("IONetworkStackUserClient::initWithTask ok\n");
     return true;
 }
 
 bool IONetworkStackUserClient::start( IOService * provider )
 {
+    kprintf("IONetworkStackUserClient::start entry\n");
     if ( super::start(provider) == false )
         return false;
 
+    kprintf("IONetworkStackUserClient::start opening provider\n");
     if ( provider->open(this) == false )
+    {
+        kprintf("IONetworkStackUserClient::start provider open REFUSED\n");
         return false;
+    }
+    kprintf("IONetworkStackUserClient::start opened\n");
 
     _provider = OSDynamicCast(IONetworkStack, provider);
     if (!_provider)

@@ -99,6 +99,20 @@
 #define STR1(x) #x
 #define STR(x) STR1(x)
 
+/*
+ * The per-SoC error status registers below (MMU_ERR_STS, LLC_ERR_*, FED_ERR_STS,
+ * and friends) are named system registers only in Apple's own clang. Open-source
+ * clang cannot encode them by name, and their s3_<op1>_c15_<crm>_<op2> encodings
+ * are not published for these cores - a wrong guess would take an undefined
+ * instruction trap from inside a panic handler. Read them as zero instead: this
+ * code only runs while reporting an error that is already fatal.
+ */
+#if defined(__APPLE_INTERNAL_CLANG_ERR_REGS__)
+#define IMPL_ERR_RSR64(reg) __builtin_arm_rsr64(STR(reg))
+#else
+#define IMPL_ERR_RSR64(reg) (0ULL)
+#endif
+
 #define ARM64_KDBG_CODE_KERNEL (0 << 8)
 #define ARM64_KDBG_CODE_USER   (1 << 8)
 #define ARM64_KDBG_CODE_GUEST  (2 << 8)
@@ -326,12 +340,12 @@ arm64_implementation_specific_error(arm_saved_state_t *state, uint32_t esr, vm_o
 #if defined(NO_ECORE)
 	uint64_t l2c_err_sts, l2c_err_adr, l2c_err_inf;
 
-	mmu_err_sts = __builtin_arm_rsr64(STR(MMU_ERR_STS));
-	l2c_err_sts = __builtin_arm_rsr64(STR(LLC_ERR_STS));
-	l2c_err_adr = __builtin_arm_rsr64(STR(LLC_ERR_ADR));
-	l2c_err_inf = __builtin_arm_rsr64(STR(LLC_ERR_INF));
-	lsu_err_sts = __builtin_arm_rsr64(STR(LSU_ERR_STS));
-	fed_err_sts = __builtin_arm_rsr64(STR(FED_ERR_STS));
+	mmu_err_sts = IMPL_ERR_RSR64(MMU_ERR_STS);
+	l2c_err_sts = IMPL_ERR_RSR64(LLC_ERR_STS);
+	l2c_err_adr = IMPL_ERR_RSR64(LLC_ERR_ADR);
+	l2c_err_inf = IMPL_ERR_RSR64(LLC_ERR_INF);
+	lsu_err_sts = IMPL_ERR_RSR64(LSU_ERR_STS);
+	fed_err_sts = IMPL_ERR_RSR64(FED_ERR_STS);
 
 	panic_plain("Unhandled " CPU_NAME
 	    " implementation specific error. state=%p esr=%#x far=%p\n"
@@ -345,13 +359,13 @@ arm64_implementation_specific_error(arm_saved_state_t *state, uint32_t esr, vm_o
 	uint64_t l2c_err_sts, l2c_err_adr, l2c_err_inf, mpidr, migsts;
 
 	mpidr = __builtin_arm_rsr64("MPIDR_EL1");
-	migsts = __builtin_arm_rsr64(STR(MIGSTS_EL1));
-	mmu_err_sts = __builtin_arm_rsr64(STR(MMU_ERR_STS));
-	l2c_err_sts = __builtin_arm_rsr64(STR(LLC_ERR_STS));
-	l2c_err_adr = __builtin_arm_rsr64(STR(LLC_ERR_ADR));
-	l2c_err_inf = __builtin_arm_rsr64(STR(LLC_ERR_INF));
-	lsu_err_sts = __builtin_arm_rsr64(STR(LSU_ERR_STS));
-	fed_err_sts = __builtin_arm_rsr64(STR(FED_ERR_STS));
+	migsts = IMPL_ERR_RSR64(MIGSTS_EL1);
+	mmu_err_sts = IMPL_ERR_RSR64(MMU_ERR_STS);
+	l2c_err_sts = IMPL_ERR_RSR64(LLC_ERR_STS);
+	l2c_err_adr = IMPL_ERR_RSR64(LLC_ERR_ADR);
+	l2c_err_inf = IMPL_ERR_RSR64(LLC_ERR_INF);
+	lsu_err_sts = IMPL_ERR_RSR64(LSU_ERR_STS);
+	fed_err_sts = IMPL_ERR_RSR64(FED_ERR_STS);
 
 	panic_plain("Unhandled " CPU_NAME
 	    " implementation specific error. state=%p esr=%#x far=%p p-core?%d migsts=%p\n"
@@ -363,24 +377,24 @@ arm64_implementation_specific_error(arm_saved_state_t *state, uint32_t esr, vm_o
 #else // !defined(NO_ECORE) && !defined(HAS_MIGSTS)
 	uint64_t llc_err_sts, llc_err_adr, llc_err_inf, mpidr;
 #if defined(HAS_DPC_ERR)
-	uint64_t dpc_err_sts = __builtin_arm_rsr64(STR(DPC_ERR_STS));
+	uint64_t dpc_err_sts = IMPL_ERR_RSR64(DPC_ERR_STS);
 #endif // defined(HAS_DPC_ERR)
 
 	mpidr = __builtin_arm_rsr64("MPIDR_EL1");
 
 	if (mpidr & MPIDR_PNE) {
-		mmu_err_sts = __builtin_arm_rsr64(STR(MMU_ERR_STS));
-		lsu_err_sts = __builtin_arm_rsr64(STR(LSU_ERR_STS));
-		fed_err_sts = __builtin_arm_rsr64(STR(FED_ERR_STS));
+		mmu_err_sts = IMPL_ERR_RSR64(MMU_ERR_STS);
+		lsu_err_sts = IMPL_ERR_RSR64(LSU_ERR_STS);
+		fed_err_sts = IMPL_ERR_RSR64(FED_ERR_STS);
 	} else {
-		mmu_err_sts = __builtin_arm_rsr64(STR(E_MMU_ERR_STS));
-		lsu_err_sts = __builtin_arm_rsr64(STR(E_LSU_ERR_STS));
-		fed_err_sts = __builtin_arm_rsr64(STR(E_FED_ERR_STS));
+		mmu_err_sts = IMPL_ERR_RSR64(E_MMU_ERR_STS);
+		lsu_err_sts = IMPL_ERR_RSR64(E_LSU_ERR_STS);
+		fed_err_sts = IMPL_ERR_RSR64(E_FED_ERR_STS);
 	}
 
-	llc_err_sts = __builtin_arm_rsr64(STR(LLC_ERR_STS));
-	llc_err_adr = __builtin_arm_rsr64(STR(LLC_ERR_ADR));
-	llc_err_inf = __builtin_arm_rsr64(STR(LLC_ERR_INF));
+	llc_err_sts = IMPL_ERR_RSR64(LLC_ERR_STS);
+	llc_err_adr = IMPL_ERR_RSR64(LLC_ERR_ADR);
+	llc_err_inf = IMPL_ERR_RSR64(LLC_ERR_INF);
 
 	panic_plain("Unhandled " CPU_NAME
 	    " implementation specific error. state=%p esr=%#x far=%p p-core?%d"

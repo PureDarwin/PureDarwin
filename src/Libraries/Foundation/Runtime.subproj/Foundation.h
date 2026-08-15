@@ -20,6 +20,9 @@
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSDate.h>
 #import <Foundation/NSURL.h>
+#import <Foundation/NSString.h>
+#import <Foundation/NSStream.h>
+#import <Foundation/NSZone.h>
 
 #endif /* ! __FOUNDATION_FOUNDATION__ */
 

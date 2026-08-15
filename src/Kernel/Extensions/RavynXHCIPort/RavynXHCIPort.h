@@ -96,6 +96,7 @@ private:
     IOPCIDevice        * fProvider;
     IOMemoryDescriptor * fBARDesc;
     IOMemoryMap         * fBARMap;
+    UInt64                fBARLength;
     volatile UInt8      * fCapRegs;
     volatile UInt8      * fOpRegs;
     volatile UInt8      * fRTRegs;
@@ -216,6 +217,28 @@ private:
     RavynXHCIMassStorageDisk * fDiskNubs[16];
 
     InterruptInEndpoint fIntrIn[64][16]; /* [slotId][endpoint number] */
+
+    /*
+     * Context array addressing. HCCPARAMS1.CSZ picks 32- or 64-byte contexts,
+     * and with 64-byte contexts every entry is simply spaced twice as far
+     * apart - the fields themselves are unchanged, the upper half is reserved.
+     * So nothing here indexes a C array of context structs; everything is a
+     * byte offset scaled by fContextSize. An Input Context is the control
+     * context, the slot context, then endpoint contexts addressed by DCI
+     * (1..31); a Device Context is the same without the control context.
+     */
+    inline UInt32 inputCtxBytes(void) const  { return 33 * fContextSize; }
+    inline UInt32 deviceCtxBytes(void) const { return 32 * fContextSize; }
+    inline XHCIInputControlContext *inputCtl(void *ic) const
+        { return (XHCIInputControlContext *)ic; }
+    inline XHCISlotContext *inputSlot(void *ic) const
+        { return (XHCISlotContext *)((UInt8 *)ic + fContextSize); }
+    inline XHCIEndpointContext *inputEp(void *ic, UInt32 dci) const
+        { return (XHCIEndpointContext *)((UInt8 *)ic + (1 + dci) * fContextSize); }
+    inline XHCISlotContext *deviceSlot(void *dc) const
+        { return (XHCISlotContext *)dc; }
+    inline XHCIEndpointContext *deviceEp(void *dc, UInt32 dci) const
+        { return (XHCIEndpointContext *)((UInt8 *)dc + dci * fContextSize); }
 
     inline UInt32 capRead32(UInt32 off) const
         { return *(volatile UInt32 *)(fCapRegs + off); }

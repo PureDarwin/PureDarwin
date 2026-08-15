@@ -1740,6 +1740,13 @@ init_ptpages(tt_entry_t *tt, vm_map_address_t start, vm_map_address_t end, bool 
 #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
 #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+/* Bring-up markers; see arm_init.c. The V=P form stays legal until
+ * set_mmu_ttb() installs the invalid table over TTBR0, below. */
+extern void pd_start_mark(unsigned slot, uint32_t colour, boot_args *args);
+extern void pd_start_mark_late(unsigned slot, uint32_t colour, boot_args *args);
+#endif
+
 void
 arm_vm_init(uint64_t memory_size, boot_args * args)
 {
@@ -1752,6 +1759,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	uint64_t         mem_segments;
 	vm_offset_t      ptpage_vaddr;
 	vm_map_address_t dynamic_memory_begin;
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(21, 0x00ff0080, args);	/* rose: entered arm_vm_init */
+#endif
 
 	/*
 	 * Get the virtual and physical kernel-managed memory base from boot_args.
@@ -1862,6 +1873,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	 * after bootstrap complete, xnu can warm start with a single 16KB page mapping
 	 * to trampoline to KVA. this requires only 3 pages to stay resident.
 	 */
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(22, 0x0080ff00, args);	/* lime: memory sizes computed */
+#endif
+
 	avail_start = args->topOfKernelData;
 
 #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
@@ -1896,6 +1911,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	 *   the so called physical aperture should be statically mapped
 	 */
 	init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, TRUE, 0);
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(23, 0x000080ff, args);	/* azure: physical aperture page tables built */
+#endif
 
 #if defined(ARM_LARGE_MEMORY)
 	/*
@@ -1998,6 +2017,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	edata = (vm_offset_t) segDATAB + segSizeDATA;
 	end_kern = round_page(segHIGHESTKC ? segHIGHESTKC : getlastaddr()); /* Force end to next page */
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(24, 0x00c08040, args);	/* tan: segment layout checks passed */
+#endif
+
 	vm_set_page_size();
 
 	vm_kernel_base = segTEXTB;
@@ -2019,7 +2042,15 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	vm_prelink_sdata = segPRELINKDATAB;
 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(25, 0x0040c080, args);	/* sea green: about to set segment protections */
+#endif
+
 	arm_vm_prot_init(args);
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(26, 0x00c04080, args);	/* plum: segment protections applied */
+#endif
 
 	vm_page_kernelcache_count = (unsigned int) (atop_64(end_kern - segLOWEST));
 
@@ -2065,14 +2096,31 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	mt_early_init();
 #endif /* MONOTONIC */
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(27, 0x00808000, args);	/* dark yellow: dynamic page tables built */
+#endif
+
 	set_tbi();
 
 	arm_vm_physmap_init(args);
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(28, 0x00ff8000, args);	/* amber: about to switch to the real page tables */
+#endif
+
 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(29, 0x00ff00c0, args);	/* magenta-pink: real TTBR1 installed */
+#endif
 
 	ml_enable_monitor();
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(30, 0x0000c0ff, args);	/* sky: monitor enabled */
+#else
 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+#endif
 
 	flush_mmu_tlb();
 #if defined(HAS_VMSA_LOCK)
@@ -2123,8 +2171,17 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 		vm_kernel_etext = segTEXTB + segSizeTEXT + segSizeTEXTEXEC;
 	} else {
 		assert(segDATACONSTB == segTEXTB + segSizeTEXT);
-		assert(segTEXTEXECB == segDATACONSTB + segSizeDATACONST);
-		vm_kernel_etext = segTEXTB + segSizeTEXT + segSizeDATACONST + segSizeTEXTEXEC;
+		/*
+		 * __LASTDATA_CONST lies between __DATA_CONST and __TEXT_EXEC - the
+		 * fileset branch above says as much, deriving segPLKDATACONSTB from
+		 * its end. This branch predates the segment and assumes __TEXT_EXEC
+		 * follows __DATA_CONST directly, which only holds while
+		 * __LASTDATA_CONST is empty. Where the segment is absent
+		 * segSizeLASTDATACONST is zero and both lines below are unchanged.
+		 */
+		assert(segTEXTEXECB == segDATACONSTB + segSizeDATACONST + segSizeLASTDATACONST);
+		vm_kernel_etext = segTEXTB + segSizeTEXT + segSizeDATACONST +
+		    segSizeLASTDATACONST + segSizeTEXTEXEC;
 	}
 
 	dynamic_memory_begin = ROUND_TWIG(dynamic_memory_begin);
@@ -2150,7 +2207,24 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 		arm_vm_map(cpu_tte, cur, ARM_PTE_EMPTY);
 	}
 #endif
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_start_mark(31, 0x00c0ff00, args);	/* chartreuse: about to bootstrap the pmap */
+#endif
+
 	pmap_bootstrap(dynamic_memory_begin);
+
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/*
+	 * The direct form, not the copy-window one: the bootstrap identity map is
+	 * still live for another few lines, and the copy windows this early in the
+	 * pmap's life are not something to bet a diagnostic on.
+	 */
+	pd_start_mark(32, 0x0080ffff, args);	/* pale blue: pmap is up */
+
+	/* The deferred drop of the bootstrap identity map; see above. */
+	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+	flush_mmu_tlb();
+#endif
 
 	disable_preemption();
 
