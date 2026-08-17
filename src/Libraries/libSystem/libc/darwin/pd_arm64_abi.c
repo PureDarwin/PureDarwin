@@ -1,5 +1,6 @@
 #include <pthread.h>
 #include <stdio.h>
+#include <dirent.h>
 #include <sys/resource.h>
 
 /* dyld is built against the historical SDK spellings even on arm64. */
@@ -43,3 +44,12 @@ PD_PTHREAD_ALIAS(int, pthread_sigmask, (int h, const sigset_t *s, sigset_t *o), 
 PD_PTHREAD_ALIAS(void, pthread_testcancel, (void), ())
 
 #undef PD_PTHREAD_ALIAS
+
+/* dyld still carries the SDK's historical inode64 spelling on ARM32. */
+DIR *
+pd_opendir_inode64(const char *path) __asm("_opendir$INODE64");
+DIR *
+pd_opendir_inode64(const char *path)
+{
+    return opendir(path);
+}

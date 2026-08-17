@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
+#include <math.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -29,6 +30,52 @@ int NXArgc = 0;
 const char **NXArgv = 0;
 PD_DYLD_FALLBACK_ATTR const char **environ = 0;
 const char *__progname = 0;
+
+double nan(const char *tagp) __asm("_nan");
+double nan(const char *tagp)
+{
+	(void)tagp;
+	return __builtin_nan("");
+}
+
+float nanf(const char *tagp) __asm("_nanf");
+float nanf(const char *tagp)
+{
+	(void)tagp;
+	return __builtin_nanf("");
+}
+
+long double nanl(const char *tagp) __asm("_nanl");
+long double nanl(const char *tagp)
+{
+	(void)tagp;
+	return (long double)__builtin_nan("");
+}
+
+int __availability_version_check(uint32_t count, void *versions)
+{
+	(void)count;
+	(void)versions;
+	return 1;
+}
+
+void dispatch_once_f(long *predicate, void *context, void (*function)(void *))
+{
+	if (*predicate == 0) {
+		*predicate = 1;
+		function(context);
+	}
+}
+
+int fls(int value)
+{
+	int result = 0;
+	while (value != 0) {
+		result++;
+		value = (unsigned)value >> 1;
+	}
+	return result;
+}
 
 extern int __pd_close_default(int fd) __asm("_close");
 extern int __pd_closedir_default(DIR *dirp) __asm("_closedir");
@@ -153,7 +200,7 @@ int __pd_pthread_rwlock_wrlock_default(pthread_rwlock_t *rwlock)
 	return __pd_pthread_rwlock_wrlock_unix2003(rwlock);
 }
 
-#if !defined(__arm64__) && !defined(__aarch64__)
+#if !defined(__arm__) && !defined(__arm64__) && !defined(__aarch64__)
 size_t __pd_fwrite_default(const void *ptr, size_t size, size_t nitems, FILE *stream) __asm("_fwrite");
 size_t __pd_fwrite_default(const void *ptr, size_t size, size_t nitems, FILE *stream)
 {

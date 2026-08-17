@@ -28,6 +28,17 @@ if(PUREDARWIN_ARM64)
     # there is a no-op and nothing needs it. compiler-rt's __clear_cache calls
     # sys_icache_invalidate, which is what any JIT needs after writing code.
     set(_libplatform_cachecontrol src/cachecontrol/arm64/cache.s)
+elseif(PUREDARWIN_ARM32)
+    # ARM32 uses the portable ARM atomics and classic ARM EABI setjmp files.
+    set(_libplatform_atomics
+        src/os/atomic.c)
+    set(_libplatform_setjmp
+        src/setjmp/arm/setjmp.s
+        src/setjmp/arm/_setjmp.s
+        src/setjmp/arm/_longjmp.s
+        src/setjmp/arm/longjmp.s
+        src/setjmp/generic/sigtramp.c)
+    set(_libplatform_cachecontrol)
 else()
     # OSAtomic.s: OSAtomicAdd/CompareAndSwap primitives. Plus the PFZ (pre-emption-
     # free zone) commpage pieces dyld's OSAtomicFifoEnqueue/Dequeue reference:

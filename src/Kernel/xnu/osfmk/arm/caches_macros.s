@@ -38,7 +38,7 @@
 .macro GET_CACHE_CONFIG
 	lsl		$0, $0, #1
 	mcr		p15, 2, $0, c0, c0, 0				// Select appropriate cache
-	isb											// Synchronize context
+	ISB_BARRIER											// Synchronize context
 
 	mrc		p15, 1, $0, c0, c0, 0
 	ubfx	$1, $0, #3, #10						// extract number of ways - 1

@@ -361,6 +361,24 @@ pd_start_mark_late(unsigned slot, uint32_t colour, boot_args *args)
 }
 #endif /* PUREDARWIN_EARLY_FB_MARK */
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+void
+pd_bcm2835_early_uart_tag(char phase)
+{
+	return;
+	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x20201000;
+	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x20201018;
+	const char tag[] = { 'A', phase, '\r', '\n' };
+
+	for (unsigned int i = 0; i < sizeof(tag); i++) {
+		while ((*uart_fr & 0x20U) != 0) {
+			/* Poll until the PL011 TX FIFO has room. */
+		}
+		*uart_dr = (uint32_t)tag[i];
+	}
+}
+#endif
+
 __startup_func
 void
 arm_init(
@@ -371,11 +389,19 @@ arm_init(
 	uint64_t        xmaxmem;
 	thread_t        thread;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('0');
+#endif
+
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(14, 0x00ff8080, args);	/* pink: reached arm_init */
 #endif
 
 	arm_slide_rebase_and_sign_image();
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('1');
+#endif
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(15, 0x008080ff, args);	/* periwinkle: image rebased and signed */
@@ -386,6 +412,9 @@ arm_init(
 	BootArgs = args = &const_boot_args;
 
 	cpu_data_init(&BootCpuData);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('2');
+#endif
 #if defined(HAS_APPLE_PAC)
 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
 	BootCpuData.rop_key = ml_default_rop_pid();
@@ -411,18 +440,33 @@ arm_init(
 	 */
 	{
 		extern unsigned long gVirtBase, gPhysBase, gPhysSize;
-		extern unsigned long real_phys_size;
 		gPhysBase = args->physBase;
 		gVirtBase = args->virtBase;
 		gPhysSize = args->memSize;
-		real_phys_size = args->memSize;
+#if __arm64__
+		/*
+		 * Only the arm64 arm_vm_init.c has real_phys_size; the 32-bit
+		 * one derives everything from gPhysBase/gPhysSize, which are
+		 * set just above.
+		 */
+		{
+			extern unsigned long real_phys_size;
+			real_phys_size = args->memSize;
+		}
+#endif /* __arm64__ */
 	}
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(16, 0x00c0c000, args);	/* olive: about to init the platform expert */
 #endif
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('3');
+#endif
 	PE_init_platform(FALSE, args); /* Get platform expert set up */
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('4');
+#endif
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(17, 0x0000c000, args);	/* dark green: platform expert is up */
@@ -471,7 +515,13 @@ arm_init(
 	}
 #endif
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('5');
+#endif
 	ml_parse_cpu_topology();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('6');
+#endif
 
 	master_cpu = ml_get_boot_cpu_number();
 	assert(master_cpu >= 0 && master_cpu <= ml_get_max_cpu_number());
@@ -495,7 +545,13 @@ arm_init(
 	    + ((uintptr_t)&BootCpuData
 	    - (uintptr_t)(args->virtBase)));
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('7');
+#endif
 	thread = thread_bootstrap();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('8');
+#endif
 	thread->machine.CpuDatap = &BootCpuData;
 	thread->machine.pcpu_data_base = (vm_offset_t)0;
 	machine_set_current_thread(thread);
@@ -520,21 +576,46 @@ arm_init(
 	boot_processor->kernel_timer = &thread->system_timer;
 	boot_processor->thread_timer = &thread->system_timer;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('9');
+#endif
 	cpu_bootstrap();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('a');
+#endif
 
 	rtclock_early_init();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('b');
+#endif
 
 	kernel_debug_string_early("kernel_startup_bootstrap");
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('c');
+#endif
 	kernel_startup_bootstrap();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('d');
+#endif
 
 	/*
 	 * Initialize the timer callout world
 	 */
 	timer_call_init();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('e');
+#endif
 
 	cpu_init();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('f');
+#endif
 
 	processor_bootstrap();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('g');
+	pd_bcm2835_early_uart_tag('h');
+#endif
 
 	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
 		xmaxmem = (uint64_t) maxmem * (1024 * 1024);
@@ -543,6 +624,9 @@ arm_init(
 	} else {
 		xmaxmem = 0;
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('i');
+#endif
 
 #if INTERRUPT_MASKED_DEBUG
 	int wdt_boot_arg = 0;
@@ -558,6 +642,9 @@ arm_init(
 #endif /* INTERRUPT_MASKED_DEBUG */
 
 	nanoseconds_to_absolutetime(XCALL_ACK_TIMEOUT_NS, &xcall_ack_timeout_abstime);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('j');
+#endif
 
 #if APPLEVIRTUALPLATFORM
 	unsigned int vti;
@@ -600,7 +687,13 @@ MACRO_END
 	pd_start_mark(18, 0x00ffffff, args);	/* white again: about to build the real page tables */
 #endif
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('k');
+#endif
 	arm_vm_init(xmaxmem, args);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('l');
+#endif
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark_late(19, 0x00ff00ff, args);	/* magenta: the real page tables are up */
@@ -633,7 +726,13 @@ MACRO_END
 	pd_start_mark_late(20, 0x0000ffff, args);	/* cyan: about to bring kprintf up */
 #endif
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('m');
+#endif
 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('n');
+#endif
 	kprintf("kprintf initialized\n");
 
 	serialmode = 0;
@@ -664,6 +763,9 @@ MACRO_END
 
 	/* setup console output */
 	PE_init_printf(FALSE);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('o');
+#endif
 
 #if __arm64__
 #if DEBUG
@@ -672,6 +774,9 @@ MACRO_END
 #endif
 
 	cpu_machine_idle_init(TRUE);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('p');
+#endif
 
 #if     (__ARM_ARCH__ == 7)
 	if (arm_diag & 0x8000) {
@@ -680,14 +785,26 @@ MACRO_END
 #endif
 
 	PE_init_platform(TRUE, &BootCpuData);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('q');
+#endif
 
 #if __arm64__
 	ml_map_cpu_pio();
 #endif
 
 	cpu_timebase_init(TRUE);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('r');
+#endif
 	PE_init_cpu();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('s');
+#endif
 	fiq_context_init(TRUE);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('t');
+#endif
 
 
 #if HIBERNATION
@@ -717,6 +834,9 @@ MACRO_END
 
 	gDramBase = *dram_base;
 	gDramSize = *dram_size;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('u');
+#endif
 
 	/*
 	 * Initialize the stack protector for all future calls
@@ -730,6 +850,9 @@ MACRO_END
 	 * against string vulnerabilities
 	 */
 	__stack_chk_guard &= ~(0xFFULL << 8);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('v');
+#endif
 	machine_startup(args);
 }
 

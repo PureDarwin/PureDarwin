@@ -21,9 +21,21 @@ function(add_kext_bundle name)
     # The XNU kernel proper is built with -mno-red-zone; kexts must match.
     # The red zone is an x86-64 SysV ABI feature; -mno-red-zone is x86-only
     # (clang rejects it on arm64, which has no red zone to disable).
-    if(NOT PUREDARWIN_ARM64)
+    if(NOT PUREDARWIN_ARM64 AND NOT PUREDARWIN_ARM32)
         target_compile_options(${name} PRIVATE -mno-red-zone)
     endif()
+
+    # There is no __stack_chk_guard in the kernel, and on ARMv6 the reference
+    # to it becomes a text relocation the bundle linker refuses outright. The
+    # kernel proper is built without the stack protector; kexts must match.
+    target_compile_options(${name} PRIVATE -fno-stack-protector)
+
+    # Tentative definitions must be allocated in the kext, not left as common
+    # symbols: a common symbol is N_UNDF with a size in n_value, so the kext
+    # linker cannot tell it apart from a genuine import and binds it to the
+    # panic trampoline instead of giving it storage.
+    target_compile_options(${name} PRIVATE -fno-common)
+
 
     if(CMAKE_HOST_APPLE)
         # Real Apple ld rejects a plain MH_BUNDLE (-bundle) unless it links
@@ -39,6 +51,21 @@ function(add_kext_bundle name)
         endif()
     endif()
     target_link_options(${name} PRIVATE "SHELL:-undefined dynamic_lookup")
+
+    # ARMv6 has no movw/movt, so the compiler reaches other symbols through
+    # literal pools, which ld64 sees as relocations in a read-only section and
+    # refuses in a bundle. The kernel proper links with the same suppression
+    # (LDFLAGS_KERNEL_GENARM in MakeInc.def.in); kexts are loaded the same way.
+    if(PUREDARWIN_ARM32)
+        target_link_options(${name} PRIVATE "SHELL:-Wl,-read_only_relocs,suppress")
+
+        # ARMv6 has no integer divide instruction, so the compiler emits calls
+        # to __udivsi3 and friends. The kernel keeps its copy of those private,
+        # so give each kext its own rather than binding to nothing.
+        if(PUREDARWIN_KERNEL_COMPILER_RT)
+            target_link_options(${name} PRIVATE "${PUREDARWIN_KERNEL_COMPILER_RT}")
+        endif()
+    endif()
 
     if(SL_KERNEL_PRIVATE)
         target_compile_definitions(${name} PRIVATE KERNEL_PRIVATE)

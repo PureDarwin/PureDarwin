@@ -5,6 +5,7 @@
 #include "PDArmCPU.h"
 #include "PDArmGIC.h"
 #include "PDAppleAIC.h"
+#include "PDBcm2835IC.h"
 
 class PDArmPlatformExpert : public IODTPlatformExpert
 {
@@ -95,13 +96,34 @@ PDArmPlatformExpert::getModelName(char *name, int maxLength)
 bool
 PDArmPlatformExpert::initPlatformInterrupts(void)
 {
+	/* BCM2835 has the legacy ARMCTRL controller; the QEMU GIC mapping is
+	 * invalid on the Pi Zero. Mask every source now, before PDArmCPU installs
+	 * the CPU interrupt handler: ARMCTRL has no end-of-interrupt, so anything
+	 * the booter left enabled would re-enter forever once delivery starts. */
+#if defined(__arm__) && !defined(__arm64__)
+	if (!PDBcm2835IC_maskAll()) {
+		IOLog("PDArmPlatformExpert: could not reach the BCM2835 interrupt "
+		    "controller\n");
+		return false;
+	}
+	return true;
+#else
 	PDArmGIC_init();
 	return true;
+#endif
 }
 
 void
 PDArmPlatformExpert::initPlatformInterruptsLate(void)
 {
+#if defined(__arm__) && !defined(__arm64__)
+	/* The CPU interrupt controller exists by now, so the ARMCTRL controller
+	 * can attach to it and start dispatching. */
+	if (!PDBcm2835IC_init()) {
+		IOLog("PDArmPlatformExpert: BCM2835 interrupt controller unavailable; "
+		    "device interrupts will not be delivered\n");
+	}
+#endif
 }
 
 const char *

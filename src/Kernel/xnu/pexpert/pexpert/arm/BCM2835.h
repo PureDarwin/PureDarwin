@@ -23,13 +23,31 @@
  * BCM2835 System Timer - so ARM_ARCH_TIMER is deliberately absent.
  */
 #define __ARM_ARCH__              6
-#define __ARM_VMSA__              6
+/*
+ * 7, not 6, and deliberately so. XNU spells its 32-bit page-table support
+ * "VMSA7", and tests for it as __ARM_VMSA__ == 7 in 39 places and > 7 (meaning
+ * arm64) in 45 more - there is no VMSA6 branch anywhere in the tree. Declaring
+ * 6 does not select a v6 path, it selects the arm64 one, which is why every
+ * arm32 file collapsed.
+ *
+ * It is also the truth: with SCTLR.XP set, ARM1176 uses the extended
+ * (subpages-disabled) short-descriptor format, which is the same layout ARMv7
+ * made mandatory. start.s must set SCTLR.XP for this to hold.
+ */
+#define __ARM_VMSA__              7
 #define __ARM_VFP__               2
 #define __ARM_DEBUG__             6
 
 #ifndef ASSEMBLER
 
-#define PI3_UART
+/*
+ * Use UART0 (the ARM PL011 at peripheral offset 0x201000) exclusively.
+ * PI3_UART selects the AUX mini-UART driver and would remux GPIO14/15 to
+ * ALT5 when serial_init() runs, disconnecting the PL011 console inherited
+ * from LK.  VMAPPLE_UART is XNU's polled PL011 implementation; the device
+ * tree supplied by LK exposes this block as uart0.
+ */
+#define VMAPPLE_UART
 
 #define PI3_BREAK                               asm volatile("bkpt #0");
 
@@ -97,5 +115,33 @@
 #define BCM2837_GET32(addr)             BCM2835_GET32(addr)
 
 #endif /* ! ASSEMBLER */
+
+/*
+ * System Timer and ARMCTRL interrupt controller. Bus addresses 0x7E003000 and
+ * 0x7E00B000 are ARM physical 0x20003000 and 0x2000B000; start.s maps the
+ * first megabyte of the peripheral window V=P, which covers both.
+ *
+ * These are outside the ASSEMBLER guard because the decrementer routines in
+ * machine_routines_asm.s use the register offsets.
+ */
+#define BCM2835_ST_BASE_V               0x20003000
+#define BCM2835_ST_CS                   0x00    /* control/status, match bits */
+#define BCM2835_ST_CLO                  0x04    /* counter, low 32 bits */
+#define BCM2835_ST_CHI                  0x08    /* counter, high 32 bits */
+#define BCM2835_ST_C3                   0x18    /* compare channel 3 */
+#define BCM2835_ST_M3                   (1 << 3) /* channel 3 match, write to clear */
+
+/*
+ * The compare is an equality match against the low 32 bits of the counter, not
+ * a "greater or equal", so a deadline written even one tick late is missed
+ * until the counter wraps ~71 minutes later. Deadlines are floored this far
+ * ahead to stay clear of that.
+ */
+#define BCM2835_DEC_MIN                 16      /* ticks, i.e. microseconds */
+
+#define BCM2835_ARMCTRL_BASE_V          0x2000B000
+#define BCM2835_ARMCTRL_FIQ_CONTROL     0x20C
+#define BCM2835_FIQ_ENABLE              (1 << 7)
+#define BCM2835_FIQ_SRC_SYSTEM_TIMER_3  3       /* GPU IRQ 3 = System Timer match 3 */
 
 #endif /* ! _PEXPERT_ARM_BCM2835_H */

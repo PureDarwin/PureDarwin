@@ -155,6 +155,27 @@ _mach_absolute_time:
 #include <mach/arm/syscall_sw.h>
 #include <mach/arm/traps.h>
 
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_6J__) || defined(__ARM_ARCH_6K__) || defined(__ARM_ARCH_6Z__) || defined(__ARM_ARCH_6ZK__)
+
+/* ARMv6 has neither the ARMv7 commpage barriers nor movw/movt. */
+	.text
+	.align 2
+	.globl _mach_absolute_time
+_mach_absolute_time:
+	mov	r12, #MACH_ARM_TRAP_ABSTIME
+	swi	#SWI_SYSCALL
+	bx	lr
+
+	.text
+	.align 2
+	.globl _mach_continuous_time_kernel
+_mach_continuous_time_kernel:
+	mov	r12, #MACH_ARM_TRAP_CONTTIME
+	swi	#SWI_SYSCALL
+	bx	lr
+
+#else
+
 /*
  * If userspace access to the timebase is supported (indicated through the commpage),
  * directly reads the timebase and uses it and the current timebase offset (also in
@@ -218,6 +239,8 @@ _mach_continuous_time_kernel:
 	mov	r12, #MACH_ARM_TRAP_CONTTIME	// Load the magic MCT number
 	swi	#SWI_SYSCALL
 	bx	lr
+
+#endif
 
 #elif defined(__arm64__)
 

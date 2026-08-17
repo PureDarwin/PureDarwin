@@ -55,7 +55,7 @@ set(LIBSYSTEM_EXPORTS ${CMAKE_CURRENT_SOURCE_DIR}/libSystem.exports)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBSYSTEM_EXPORTS})
 file(STRINGS ${LIBSYSTEM_EXPORTS} _libsystem_export_lines)
 set(_libsystem_exports_for_link ${LIBSYSTEM_EXPORTS})
-if(PUREDARWIN_ARM64)
+if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     # Drop only the legacy x86 ABI suffixes. Modern ARM64 APIs still use
     # Darwin extension/versioned names such as $DARWIN_EXTSN and $V2.
     list(FILTER _libsystem_export_lines EXCLUDE REGEX "\\$(UNIX2003|INODE64|1050)$")
@@ -69,7 +69,16 @@ if(PUREDARWIN_ARM64)
     #                    80-bit x87 long double; on arm64 long double is double
     #   fe*except      - openlibm's fenv is the x86 SSE/x87 implementation
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
-        "^_(i386_set_ldt|i386_get_ldt|nexttoward|scalbnl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag)$")
+        "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|getfsstat|i386_set_ldt)$")
+    if(PUREDARWIN_ARM32)
+        # The ARMv6 bootstrap runtime does not provide the x86-only long
+        # double/fenv entry points, 64-bit integer builtins, generic DWARF
+        # unwinder exports, or the x86 LDT ABI.
+        list(FILTER _libsystem_export_lines EXCLUDE REGEX
+            "^(__Unwind_(Backtrace|RaiseException|Find_FDE|Resume)|__dyld_find_unwind_sections|___gxx_personality_v0|___cxa_pure_virtual|__longjmp|___(u?divti3|u?modti3|fixdfti|floattidf))$")
+        list(FILTER _libsystem_export_lines EXCLUDE REGEX
+            "^_(isnormal|isfinite|isnan|scalbn)l$")
+    endif()
     # The SDK headers use the unsuffixed ARM64 spellings for these syscalls,
     # while the shared export file only lists their x86 ABI variants.
     list(APPEND _libsystem_export_lines
@@ -80,8 +89,10 @@ if(PUREDARWIN_ARM64)
     # cache means compiler-rt does not build it there at all - listing it in the
     # shared export file would make the export list itself an undefined
     # reference on x86.
-    list(APPEND _libsystem_export_lines ___clear_cache
-        _sys_icache_invalidate _sys_dcache_flush)
+    if(PUREDARWIN_ARM64)
+        list(APPEND _libsystem_export_lines ___clear_cache
+            _sys_icache_invalidate _sys_dcache_flush)
+    endif()
     set(_libsystem_exports_for_link ${CMAKE_CURRENT_BINARY_DIR}/libSystem.arm64.exports)
     file(WRITE ${_libsystem_exports_for_link} "")
     foreach(_line ${_libsystem_export_lines})
@@ -194,7 +205,15 @@ if(PUREDARWIN_COMPILER_RT_PREFIX)
         message(FATAL_ERROR
             "PUREDARWIN_COMPILER_RT_PREFIX is set but ${_pd_compiler_rt} does not exist")
     endif()
-    target_link_libraries(libSystem_B_stub PRIVATE "${_pd_compiler_rt}")
+    if(PUREDARWIN_ARM32)
+        # The ARMv6 archive contains the compiler's 32-bit division helpers,
+        # but none of those names are in the exported-symbol list. Force-load
+        # it so C++ startup code and libc objects can resolve them as well.
+        target_link_options(libSystem_B_stub PRIVATE
+            -Wl,-force_load,${_pd_compiler_rt})
+    else()
+        target_link_libraries(libSystem_B_stub PRIVATE "${_pd_compiler_rt}")
+    endif()
 endif()
 
 # libdispatch's object.m (OS_OBJECT_USE_OBJC=1) references the real objc4

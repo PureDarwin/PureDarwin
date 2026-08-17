@@ -37,7 +37,12 @@ _mach_continuous_time_base(void)
 		uint64_t read1, read2;
 		read1 = *base_ptr;
 #if defined(__arm__)
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_6J__) || defined(__ARM_ARCH_6K__) || defined(__ARM_ARCH_6Z__) || defined(__ARM_ARCH_6ZK__)
+		/* ARMv6 spelling of the data synchronization barrier. */
+		__asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" :: "r"(read1) : "memory");
+#else
 		__asm__ volatile ("dsb sy" ::: "memory");
+#endif
 #elif defined(__i386__)
 		__asm__ volatile ("lfence" ::: "memory");
 #else

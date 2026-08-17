@@ -795,6 +795,16 @@ struct if_data_internal {
 	u_int32_t       ifi_mtu;        /* maximum transmission unit */
 	u_int32_t       ifi_metric;     /* routing metric (external only) */
 	u_int32_t       ifi_baudrate;   /* linespeed */
+#if __arm__ && (__ARM_ARCH < 7)
+	/*
+	 * This ABI aligns u_int64_t to 4 bytes inside a structure, which would
+	 * put the counter block at offset 20 and trip the
+	 * IF_DATA_REQUIRE_ALIGNED_64 assertions in dlil.c. The counters are
+	 * read and written as 64-bit quantities, so pad to restore the 8-byte
+	 * alignment the rest of the tree assumes.
+	 */
+	u_int32_t       ifi_pad_armv6;
+#endif /* __arm__ && __ARM_ARCH < 7 */
 	/* volatile statistics */
 	u_int64_t       ifi_ipackets;   /* packets received on interface */
 	u_int64_t       ifi_ierrors;    /* input errors on interface */

@@ -94,6 +94,24 @@
 
 #endif
 
+#if defined (ARM1176)
+/*
+ * ARM1176JZF-S (Raspberry Pi Zero / BCM2835): ARMv6K+TrustZone, VMSAv6,
+ * VFPv2, single core. The board header sets __ARM_ARCH__/__ARM_VMSA__/
+ * __ARM_VFP__/__ARM_DEBUG__; what follows is what the kernel itself keys off.
+ *
+ * Deliberately NOT defined here, and why:
+ *   __ARM_COHERENT_CACHE__     - ARM11 does not maintain I/D coherency in
+ *                                hardware; caches.c must do it explicitly.
+ *   __ARMA7_SMP__              - single core, no MP_CORE spec to honour.
+ *   __ARM_PTE_PHYSMAP__        - the A7 workaround it enables is for a
+ *                                cache-alias erratum that does not apply.
+ *   __ARM_TIME_TIMEBASE_ONLY__ - there is no generic timer at all; the board
+ *                                uses the BCM2835 System Timer.
+ */
+#define __ARM_SUB_ARCH__           CPU_ARCH_ARMv6
+#endif
+
 #if __ARM_42BIT_PA_SPACE__ && !defined(QEMUVIRT)
 /* For now, force the issue! */
 /* We need more VA space for the identity map to bootstrap the MMU */
@@ -260,13 +278,15 @@
 #define FSR_SPERM      0x0000000D /* Permission Section */
 #define FSR_PPERM      0x0000000F /* Permission Page */
 #define FSR_EXT        0x00001000 /* External (Implementation Defined Classification) */
+#define FSR_SEXT       0x00000008 /* Precise (synchronous) external abort */
+#define FSR_AEXT       0x00000406 /* Imprecise (asynchronous) external abort */
 
 #define FSR_MASK       0x0000040F /* Valid bits */
 #define FSR_ALIGN_MASK 0x0000040D /* Valid bits to check align */
 
 #define DFSR_WRITE     0x00000800 /* write data abort fault */
 
-#if defined (ARMA7) || defined (APPLE_ARM64_ARCH_FAMILY) || defined (BCM2837) || defined (QEMUVIRT)
+#if defined (ARMA7) || defined (ARM1176) || defined (APPLE_ARM64_ARCH_FAMILY) || defined (BCM2837) || defined (QEMUVIRT)
 
 #define TEST_FSR_VMFAULT(status) \
 	(((status) == FSR_PFAULT)     \
@@ -317,6 +337,28 @@
 
 #define L2_SWAY         (L2_CSIZE - L2_NWAY)     /* set size 1<<MMU_SWAY */
 #define L2_NSET         (L2_SWAY - L2_CLINE)     /* lines per way 1<<MMU_NSET */
+
+#elif defined (ARM1176)
+
+/*
+ * ARM1176JZF-S as configured on BCM2835: 16KB I-cache and 16KB D-cache, both
+ * 4-way set associative with 32-byte lines. There is no ARM-side L2 - the
+ * BCM2835's 128KB L2 sits behind the VideoCore, not the CPU - so
+ * __ARM_L2CACHE__ stays undefined.
+ */
+
+/* I-Cache */
+#define MMU_I_CLINE     5                      /* cache line size as 1<<MMU_I_CLINE (32) */
+
+/* D-Cache */
+#define MMU_CSIZE       14                     /* cache size as 1<<MMU_CSIZE (16K) */
+#define MMU_CLINE       5                      /* cache line size as 1<<MMU_CLINE (32) */
+#define MMU_NWAY        2                      /* set associativity 1<<MMU_NWAY (4) */
+#define MMU_I7SET       5                      /* cp15 c7 set incrementer 1<<MMU_I7SET */
+#define MMU_I7WAY       30                     /* cp15 c7 way incrementer 1<<MMU_I7WAY */
+
+#define MMU_SWAY        (MMU_CSIZE - MMU_NWAY) /* set size 1<<MMU_SWAY */
+#define MMU_NSET        (MMU_SWAY - MMU_CLINE) /* lines per way 1<<MMU_NSET (128) */
 
 #elif defined (APPLETYPHOON)
 
@@ -451,6 +493,7 @@
 #define SCTLR_ICACHE   0x00001000 /* Instruction cache enabled. */
 #define SCTLR_HIGHVEC  0x00002000 /* Vector table at 0xffff0000 */
 #define SCTLR_RROBIN   0x00004000 /* Round Robin replacement */
+#define SCTLR_XP       0x00800000 /* ARMv6 extended page-table format */
 #define SCTLR_HA       0x00020000 /* Hardware Access flag enable */
 #define SCTLR_NMFI     0x08000000 /* Non-maskable FIQ */
 #define SCTLR_TRE      0x10000000 /* TEX remap enable */
@@ -477,7 +520,12 @@
 
 #define PRRR_NOSn_ISH(region) (0x1<<((region)+24))
 
-#if defined (ARMA7)
+#if defined (ARMA7) || defined (ARM1176)
+/*
+ * TEX remap was introduced in ARMv6 and ARM1176 implements PRRR/NMRR with the
+ * same layout, so the A7 mapping carries over unchanged. UNVALIDATED ON
+ * HARDWARE - if early memory attributes look wrong on a Pi, start here.
+ */
 #define PRRR_SETUP (0x1F08022A)
 #else
 #error processor not supported
@@ -497,7 +545,7 @@
 #define NMRR_WRITETHRU   0x2 /* Write-Through, no Write-Allocate */
 #define NMRR_WRITEBACKNO 0x3 /* Write-Back, no Write-Allocate */
 
-#if defined (ARMA7)
+#if defined (ARMA7) || defined (ARM1176)
 #define NMRR_SETUP (0x01210121)
 #else
 #error processor not supported
@@ -523,6 +571,14 @@
 
 #if defined (ARMA7)
 #define TTBR_SETUP (TTBR_RGN_WRITEBACK|TTBR_IRGN_WRITEBACK|TTBR_SHARED)
+#elif defined (ARM1176)
+/*
+ * VMSAv6 spells inner cacheability as a single C bit (TTBR[0]) rather than
+ * ARMv7's split IRGN[0]/IRGN[1] pair, so TTBR_IRGN_WRITEBACK (bit 6 + bit 0)
+ * must not be used here - bit 6 is reserved on this core.
+ */
+#define TTBR_INNER_CACHEABLE  0x00000001
+#define TTBR_SETUP (TTBR_RGN_WRITEBACK|TTBR_INNER_CACHEABLE)
 #else
 #error processor not supported
 #endif
@@ -589,7 +645,18 @@
 #define CACHE_ATTRINDX_POSTED                    CACHE_ATTRINDX_DISABLE
 #define CACHE_ATTRINDX_POSTED_REORDERED          CACHE_ATTRINDX_DISABLE
 #define CACHE_ATTRINDX_POSTED_COMBINED_REORDERED CACHE_ATTRINDX_DISABLE
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+/*
+ * Do not use remap region zero for ARM1176 kernel RAM. Giving normal RAM an
+ * explicit TEX bit makes bootstrap sections and all later pmap-created pages
+ * select PRRR/NMRR region four. Region four is Normal memory, so ARMv6
+ * exclusive accesses are legal; the D-cache remains disabled separately in
+ * start.s during BCM2835 bring-up.
+ */
+#define CACHE_ATTRINDX_DEFAULT                   CACHE_ATTRINDX_INNERWRITEBACK
+#else
 #define CACHE_ATTRINDX_DEFAULT                   CACHE_ATTRINDX_WRITEBACK
+#endif
 
 
 /*
@@ -701,7 +768,11 @@
 
 #define ARM_TTE_BLOCK_SHSHIFT    16
 #define ARM_TTE_BLOCK_SH_MASK    0x00010000                     /* shared (SMP) mapping mask */
+#if defined(ARM1176)
+#define ARM_TTE_BLOCK_SH         0
+#else
 #define ARM_TTE_BLOCK_SH         0x00010000                     /* shared (SMP) mapping */
+#endif
 
 #define ARM_TTE_BLOCK_CBSHIFT    2
 #define ARM_TTE_BLOCK_CB(x)      ((x) << ARM_TTE_BLOCK_CBSHIFT)
@@ -832,7 +903,13 @@
 
 #define ARM_PTE_SHSHIFT        10
 #define ARM_PTE_SHMASK         0x00000400             /* shared (SMP) mapping mask */
+#if defined(ARM1176)
+/* See ARM_TTE_BLOCK_SH above: exclusives to Shareable memory need an external
+ * monitor the BCM2835 does not have. */
+#define ARM_PTE_SH             0
+#else
 #define ARM_PTE_SH             0x00000400             /* shared (SMP) mapping */
+#endif
 
 #define ARM_PTE_CBSHIFT        2
 #define ARM_PTE_CB(x)          ((x)<<ARM_PTE_CBSHIFT)

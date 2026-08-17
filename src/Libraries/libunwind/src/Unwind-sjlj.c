@@ -76,7 +76,7 @@ struct _Unwind_FunctionContext {
 
 #if !defined(FOR_DYLD)
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(_LIBUNWIND_HAS_NO_THREADS)
 #include <System/pthread_machdep.h>
 #else
 static _LIBUNWIND_THREAD_LOCAL struct _Unwind_FunctionContext *stack = NULL;
@@ -84,7 +84,7 @@ static _LIBUNWIND_THREAD_LOCAL struct _Unwind_FunctionContext *stack = NULL;
 
 static struct _Unwind_FunctionContext *
 __Unwind_SjLj_GetTopOfFunctionStack(void) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(_LIBUNWIND_HAS_NO_THREADS)
   return _pthread_getspecific_direct(__PTK_LIBC_DYLD_Unwind_SjLj_Key);
 #else
   return stack;
@@ -93,7 +93,7 @@ __Unwind_SjLj_GetTopOfFunctionStack(void) {
 
 static void
 __Unwind_SjLj_SetTopOfFunctionStack(struct _Unwind_FunctionContext *fc) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(_LIBUNWIND_HAS_NO_THREADS)
   _pthread_setspecific_direct(__PTK_LIBC_DYLD_Unwind_SjLj_Key, fc);
 #else
   stack = fc;

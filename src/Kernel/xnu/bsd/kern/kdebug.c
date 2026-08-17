@@ -1489,6 +1489,16 @@ kernel_debug_filtered(
 void
 kernel_debug_string_early(const char *message)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/*
+	 * The ARMv6 bootstrap reaches this before the early kdebug backing state is
+	 * safely accessible. These strings are diagnostic-only; attempting to
+	 * record one faults before kernel_startup_bootstrap() can initialize the
+	 * remaining startup subsystems.
+	 */
+	(void)message;
+	return;
+#else
 	uintptr_t arg[4] = {0, 0, 0, 0};
 
 	/* Stuff the message string in the args and log it. */
@@ -1496,6 +1506,7 @@ kernel_debug_string_early(const char *message)
 	KERNEL_DEBUG_EARLY(
 		TRACE_INFO_STRING,
 		arg[0], arg[1], arg[2], arg[3]);
+#endif
 }
 
 #define SIMPLE_STR_LEN (64)

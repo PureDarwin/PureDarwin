@@ -39,6 +39,7 @@ osfmk/arm/mcount.s		optional profile
 osfmk/arm/WKdmDecompress_new.s	standard
 osfmk/arm/WKdmCompress_new.s	standard
 osfmk/arm/WKdmData_new.s	standard
+osfmk/arm/WKdm_arm1176.c	standard
 osfmk/arm/lz4_decode_armv7NEON.s standard
 osfmk/arm/lz4_encode_armv7.s standard
 osfmk/arm/bcopy.s	standard

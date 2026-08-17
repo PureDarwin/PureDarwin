@@ -31,6 +31,29 @@
 #include <mach_kdp.h>
 #include "assym.s"
 
+/*
+ * BCM2835 early mini-UART breadcrumb. LK leaves the mini-UART and its GPIOs
+ * configured, so startup can emit characters before pexpert exists. Do not
+ * use the stack here: _start has not established it yet. r2 and r3 are
+ * scratch at each call site below.
+ */
+.macro RPI1_EARLY_UART char
+	ldr		r2, =0x20201018				// PL011_UART_FR
+1:	ldr		r3, [r2]
+	tst		r3, #0x20					// TX FIFO full
+	bne		1b
+	sub		r2, r2, #0x18				// PL011_UART_DR
+	mov		r3, #\char
+	str		r3, [r2]
+.endm
+
+.macro RPI1_EARLY_TAG first, second
+	RPI1_EARLY_UART \first
+	RPI1_EARLY_UART \second
+	RPI1_EARLY_UART 13
+	RPI1_EARLY_UART 10
+.endm
+
 	.text
 	.align 12
 
@@ -54,12 +77,12 @@ L_start_cpu_0:
 
 	// Turn on L1 I-Cache, Branch prediction early
 	mcr		p15, 0, r11, c7, c5, 0				// invalidate the icache
-	isb											// before moving on
+	ISB_BARRIER											// before moving on
 	mrc		p15, 0, r11, c1, c0, 0				// read mmu control into r11
 	orr		r11, r11, #(SCTLR_ICACHE | SCTLR_PREDIC)	// enable i-cache, b-prediction
 	mcr		p15, 0, r11, c1, c0, 0				// set mmu control
-	dsb											// ensure mmu settings are inplace
-	isb											// before moving on
+	DSB_BARRIER											// ensure mmu settings are inplace
+	ISB_BARRIER											// before moving on
 
 	// Get the kernel's phys & virt addr, and size from BootArgs
 	ldr		r8, [r0, BA_PHYS_BASE]				// Get the phys base in r8
@@ -89,16 +112,17 @@ LEXT(_start)
 	// r1 set to zero
 	mov		r1, #0
 	LOAD_ADDR(lr, arm_init)
+	RPI1_EARLY_TAG 'S', '0'
 	cpsid	if									// Disable IRQ FIQ
 
 	// Turn on L1 I-Cache, Branch prediction early
 	mcr		p15, 0, r11, c7, c5, 0				// invalidate the icache
-	isb											// before moving on
+	ISB_BARRIER											// before moving on
 	mrc		p15, 0, r11, c1, c0, 0				// read mmu control into r11
 	orr		r11, r11, #(SCTLR_ICACHE | SCTLR_PREDIC)	// enable i-cache, b-prediction
 	mcr		p15, 0, r11, c1, c0, 0				// set mmu control
-	dsb											// ensure mmu settings are inplace
-	isb											// before moving on
+	DSB_BARRIER											// ensure mmu settings are inplace
+	ISB_BARRIER											// before moving on
 
 	// Get the kernel's phys & virt addr, and size from boot_args.
 	ldr		r8, [r0, BA_PHYS_BASE]				// Get the phys base in r8
@@ -190,6 +214,45 @@ invalidate_tte:
 	orr		r11, r7, r6							// make tte entry value
 	str		r11, [r5]							// store tte
 
+	// Keep the Pi 1 PL011 reachable while executing in the temporary
+	// identity map, so breadcrumbs remain safe after the MMU is enabled.
+	mov		r7, #0x200
+	orr		r7, r7, #2						// L1 index for 0x20200000
+	add		r5, r4, r7, LSL #2
+	lsl		r7, r7, #ARM_TT_L1_SHIFT
+	orr		r11, r7, r6
+	str		r11, [r5]
+
+	// The first 1 MB of the peripheral window holds the System Timer at
+	// 0x20003000, which ml_get_timebase reads directly, and the ARMCTRL
+	// interrupt controller at 0x2000B000.
+	mov		r7, #0x200						// L1 index for 0x20000000
+	add		r5, r4, r7, LSL #2
+	lsl		r7, r7, #ARM_TT_L1_SHIFT
+	orr		r11, r7, r6
+	str		r11, [r5]
+
+	// LK exposes its HDMI framebuffer to the ARM at physical 0x06000000.
+	// Keep that section reachable during bootstrap so arm_init's colored
+	// progress bands can be drawn before arm_vm_init installs final mappings.
+	mov		r7, #0x60
+	add		r5, r4, r7, LSL #2
+	lsl		r7, r7, #ARM_TT_L1_SHIFT
+	orr		r11, r7, r6
+	str		r11, [r5]
+	add		r5, r5, #4
+	add		r7, r7, #ARM_TT_L1_SIZE
+	orr		r11, r7, r6
+	str		r11, [r5]
+	add		r5, r5, #4
+	add		r7, r7, #ARM_TT_L1_SIZE
+	orr		r11, r7, r6
+	str		r11, [r5]
+	add		r5, r5, #4
+	add		r7, r7, #ARM_TT_L1_SIZE
+	orr		r11, r7, r6
+	str		r11, [r5]
+
 	// Set up the virtual mapping for the kernel using 1Mb direct section TTE entries
 	mov		r7, r8								// Save original phys base
 	add		r5, r4, r9, LSR #ARM_TT_L1_SHIFT-2	// convert vaddr to tte pointer
@@ -245,8 +308,7 @@ doneveqp:
 
 	add		r6, r4, PGBYTES * 9					// get page table base (past 4 + 4 + 1 tte/pte pages)
 	add		r6, r6, #0xc00						// adjust to last 1MB section
-	mov		r7, #(ARM_TTE_TABLE_MASK & 0xFFFF) 	// ARM_TTE_TABLE_MASK low halfword
-	movt		r7, #(ARM_TTE_TABLE_MASK >> 16)		// ARM_TTE_TABLE_MASK top halfword 
+	LOAD_IMM32(r7, ARM_TTE_TABLE_MASK)
 	and		r11, r6, r7							// apply mask
 	orr		r11, r11, #ARM_TTE_TYPE_TABLE		// mark it as a coarse page table
 	str		r11, [r5]							// store tte entry for page table
@@ -263,8 +325,7 @@ doneveqp:
 	// Now initialize the page table entry for the exception vectors
 	mov		r5, #0xff000000						// part of HIGH_EXC_VECTORS
 	orr		r5, r5, #0x00ff0000					// rest of HIGH_EXC_VECTORS
-	mov		r7, #(ARM_TT_L2_INDEX_MASK & 0xFFFF) // ARM_TT_L2_INDEX_MASK low halfword
-	movt	r7, #(ARM_TT_L2_INDEX_MASK >> 16)	// ARM_TT_L2_INDEX_MASK top halfword 
+	LOAD_IMM32(r7, ARM_TT_L2_INDEX_MASK)
 	and		r5, r5, r7 							// mask for getting index 
 	mov		r5, r5, LSR #ARM_TT_L2_SHIFT		// get page table index
 	add		r5, r6, r5, LSL #2					// convert to pte pointer
@@ -273,8 +334,7 @@ doneveqp:
 	sub		r11, r11, r9						// convert to physical address
 	add		r11, r11, r8
 
-	mov		r7, #(ARM_PTE_PAGE_MASK & 0xFFFF) 	// ARM_PTE_PAGE_MASK low halfword
-	movt	r7, #(ARM_PTE_PAGE_MASK >> 16)		// ARM_PTE_PAGE_MASK top halfword 
+	LOAD_IMM32(r7, ARM_PTE_PAGE_MASK)
 	and		r11, r11, r7						// insert masked address into pte
 	orr		r11, r11, r2						// add template bits
 	str		r11, [r5]							// store pte by base and index
@@ -326,7 +386,7 @@ join_start:
 	mrc		p15, 0, r11, c1, c0, 1
 	orr		r11, r11, #(1<<6)						// SMP
 	mcr		p15, 0, r11, c1, c0, 1
-	isb
+	ISB_BARRIER
 #endif
 #endif
 
@@ -339,35 +399,48 @@ join_start:
 	mcr		p15, 0, r11, c7, c5, 0				// invalidate the icache
 
 	// set DACR
-	mov		r11, #(ARM_DAC_SETUP & 0xFFFF) 		// ARM_DAC_SETUP low halfword
-	movt	r11, #(ARM_DAC_SETUP >> 16)			// ARM_DAC_SETUP top halfword 
+	LOAD_IMM32(r11, ARM_DAC_SETUP)
 	mcr		p15, 0, r11, c3, c0, 0				// write to dac register
 
 	// Set PRRR
-	mov		r11, #(PRRR_SETUP & 0xFFFF) 		// PRRR_SETUP low halfword
-	movt	r11, #(PRRR_SETUP >> 16)			// PRRR_SETUP top halfword 
+	LOAD_IMM32(r11, PRRR_SETUP)
 	mcr		p15, 0, r11, c10,c2,0				// write to PRRR register
 
 	// Set NMRR
-	mov		r11, #(NMRR_SETUP & 0xFFFF)			// NMRR_SETUP low halfword
-	movt	r11, #(NMRR_SETUP >> 16)			// NMRR_SETUP top halfword 
+	LOAD_IMM32(r11, NMRR_SETUP)
 	mcr		p15, 0, r11, c10,c2,1				// write to NMRR register
 
 	// set SCTLR
 	mrc		p15, 0, r11, c1, c0, 0				// read  system control
 
 	bic		r11, r11, #SCTLR_ALIGN				// force off alignment exceptions
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/*
+	 * Select the extended VMSAv6 descriptor format and enable TEX remapping.
+	 * XNU's CACHE_ATTRINDX_DEFAULT descriptors encode region zero; PRRR/NMRR
+	 * above turn that region into normal memory while TRE is enabled. Keep
+	 * the ARM1176 D-cache disabled during bring-up: enabling it currently
+	 * produces a deferred external abort during the first dirty writeback,
+	 * while Normal memory with caching disabled still permits exclusives.
+	 */
+	mov		r7, #(SCTLR_XP | SCTLR_TRE)
+	orr		r7, r7, #(SCTLR_HIGHVEC | SCTLR_ICACHE | SCTLR_PREDIC)
+	orr		r7, r7, #SCTLR_ENABLE
+#else
 	mov		r7, #(SCTLR_AFE|SCTLR_TRE)			// Access flag, TEX remap
 	orr		r7, r7, #(SCTLR_HIGHVEC | SCTLR_ICACHE | SCTLR_PREDIC)
 	orr		r7, r7, #(SCTLR_DCACHE | SCTLR_ENABLE)
+#endif
 #if  (__ARM_ENABLE_SWAP__ == 1)
 	orr		r7, r7, #SCTLR_SW					// SWP/SWPB Enable
 #endif
 	orr		r11, r11, r7						// or in the default settings
+	RPI1_EARLY_TAG 'M', '0'
 	mcr		p15, 0, r11, c1, c0, 0				// set mmu control
 
-	dsb											// ensure mmu settings are inplace
-	isb											// before moving on
+	DSB_BARRIER											// ensure mmu settings are inplace
+	ISB_BARRIER											// before moving on
+	RPI1_EARLY_TAG 'V', '0'
 
 #if __ARM_VFP__
 	// Initialize the VFP coprocessors.
@@ -375,7 +448,7 @@ join_start:
 	mov		r3, #15								// 0xF
 	orr		r2, r2, r3, LSL #20					// enable 10 and 11
 	mcr		p15, 0, r2, c1, c0, 2				// write coprocessor control register
-	isb
+	ISB_BARRIER
 #endif	/* __ARM_VFP__ */
 		
 	// Running virtual.  Prepare to call init code
@@ -395,11 +468,11 @@ LEXT(arm_init_tramp)
 	add		r5, r5, PGBYTES * 4 				// get kernel page table base (past 4 boot tte pages)
 	mcr		p15, 0, r5, c2, c0, 0				// write kernel to translation table base 0
 	mcr		p15, 0, r5, c2, c0, 1				// also to translation table base 1
-	isb
+	ISB_BARRIER
 	mov		r5, #0
 	mcr		p15, 0, r5, c8, c7, 0				// Flush all TLB entries
-	dsb											// ensure mmu settings are inplace
-	isb											// before moving on
+	DSB_BARRIER											// ensure mmu settings are inplace
+	ISB_BARRIER											// before moving on
 
 join_start_1:
 #if __ARM_VFP__
@@ -414,6 +487,7 @@ join_start_1:
 #endif	/* __ARM_VFP__ */
 
 	mov		r7, #0								// Set stack frame 0
+	RPI1_EARLY_TAG 'I', '0'
 	bx		lr
 
 LOAD_ADDR_GEN_DEF(arm_init)

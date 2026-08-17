@@ -410,6 +410,10 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	tt_entry_t       *boot_tte;
 	uint32_t         mem_segments;
 	kernel_section_t *sectDCONST;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('0');
+#endif
 
 	/*
 	 * Get the virtual and physical memory base from boot_args.
@@ -447,6 +451,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	cpu_tte = (tt_entry_t *) phystokv(cpu_ttep);
 
 	bcopy(boot_tte, cpu_tte, ARM_PGBYTES * 4);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('1');
+#endif
 
 	/*
 	 * Clear out any V==P mappings that may have been established in e.g. start.s
@@ -469,6 +476,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 		*tte = ARM_TTE_TYPE_FAULT;
 		tte++;
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('2');
+#endif
 
 	/* Skip 6 pages (four L1 + two L2 entries) */
 	avail_start = cpu_ttep + ARM_PGBYTES * 6;
@@ -490,6 +500,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	segPRELINKTEXTB = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PRELINK_TEXT", &segSizePRELINKTEXT);
 	segPRELINKINFOB = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__PRELINK_INFO", &segSizePRELINKINFO);
 	segBOOTDATAB = (vm_offset_t) getsegdatafromheader(&_mh_execute_header, "__BOOTDATA", &segSizeBOOTDATA);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('3');
+#endif
 
 	segEXTRADATA = 0;
 	segSizeEXTRADATA = 0;
@@ -509,6 +522,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 		segEXTRADATA = phystokv(trustCacheRange->paddr);
 		segSizeEXTRADATA = trustCacheRange->length;
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('4');
+#endif
 
 	etext = (vm_offset_t) segTEXTB + segSizeTEXT;
 	sdata = (vm_offset_t) segDATAB;
@@ -555,8 +571,14 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 			doconstro = FALSE;
 		}
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('5');
+#endif
 
 	vm_set_page_size();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('6');
+#endif
 
 	vm_prelink_stext = segPRELINKTEXTB;
 	vm_prelink_etext = segPRELINKTEXTB + segSizePRELINKTEXT;
@@ -565,7 +587,17 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	vm_slinkedit = segLINKB;
 	vm_elinkedit = segLINKB + segSizeLINK;
 
-	sane_size = mem_size - (avail_start - gPhysBase);
+	/*
+	 * This subtraction is unsigned and pointer-sized, so it wraps to nearly 4GB
+	 * if the kernel image plus its boot page tables reach past the end of the
+	 * memory the booter reported. Every memory-derived tunable is scaled from
+	 * sane_size, so refuse to propagate a wrapped value.
+	 */
+	if (__improbable((avail_start - gPhysBase) >= (pmap_paddr_t)mem_size)) {
+		sane_size = mem_size;
+	} else {
+		sane_size = mem_size - (avail_start - gPhysBase);
+	}
 	max_mem = mem_size;
 	vm_kernel_slide = gVirtBase - VM_KERNEL_LINK_ADDRESS;
 	vm_kernel_stext = segTEXTB;
@@ -577,9 +609,18 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	vm_kernel_slid_base = segTEXTB;
 	vm_kernel_slid_top = vm_kext_top;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('7');
+#endif
 	pmap_bootstrap((gVirtBase + MEM_SIZE_MAX + 0x3FFFFF) & 0xFFC00000);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('8');
+#endif
 
 	arm_vm_prot_init(args);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('9');
+#endif
 
 	vm_page_kernelcache_count = (unsigned int) (atop_64(end_kern - segLOWEST));
 
@@ -606,10 +647,22 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 		*(tte + 2) = pa_to_tte((ptp_phys + 0x800)) | ARM_TTE_TYPE_TABLE;
 		*(tte + 3) = pa_to_tte((ptp_phys + 0xC00)) | ARM_TTE_TYPE_TABLE;
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('a');
+#endif
 
 	set_mmu_ttb(cpu_ttep);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('b');
+#endif
 	set_mmu_ttb_alternate(cpu_ttep);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('c');
+#endif
 	flush_mmu_tlb();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('d');
+#endif
 #if __arm__ && __ARM_USER_PROTECT__
 	{
 		unsigned int ttbr0_val, ttbr1_val;
@@ -625,4 +678,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 
 	first_avail = avail_start;
 	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('e');
+#endif
 }

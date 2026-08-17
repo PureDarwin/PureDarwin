@@ -312,6 +312,25 @@ atomic_exchange_abort(void)
 static boolean_t
 atomic_test_and_set32(uint32_t *target, uint32_t test_mask, uint32_t set_mask, enum memory_order ord, boolean_t wait)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/*
+	 * BCM2835's ARM/VPU asynchronous bridge does not complete ARM exclusive
+	 * transactions to SDRAM. All hardware bit locks funnel through this
+	 * primitive, and BCM2835 is uniprocessor, so serialize the operation by
+	 * masking local interrupts instead of issuing LDREX/STREX.
+	 */
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	uint32_t value = *(volatile uint32_t *)target;
+	boolean_t acquired = (value & test_mask) == 0;
+	if (acquired) {
+		*(volatile uint32_t *)target = value | set_mask;
+	}
+	__asm__ volatile ("" ::: "memory");
+	ml_set_interrupts_enabled(intr);
+	(void)ord;
+	(void)wait;
+	return acquired;
+#else
 	uint32_t                value, prev;
 
 	for (;;) {
@@ -329,6 +348,7 @@ atomic_test_and_set32(uint32_t *target, uint32_t test_mask, uint32_t set_mask, e
 			return TRUE;
 		}
 	}
+#endif
 }
 
 inline boolean_t
@@ -514,11 +534,27 @@ lck_spin_init(
 	lck_grp_t * grp,
 	__unused lck_attr_t * attr)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('o');
+#endif
 	lck->type = LCK_SPIN_TYPE;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('p');
+#endif
 	hw_lock_init(&lck->hwlock);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('q');
+#endif
 	if (grp) {
 		lck_grp_reference(grp);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('r');
+#endif
 		lck_grp_lckcnt_incr(grp, LCK_TYPE_SPIN);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('s');
+#endif
 	}
 }
 
@@ -1040,6 +1076,21 @@ lck_rw_lock_exclusive(lck_rw_t *lock)
 	} else if (get_preemption_level() == 0) {
 		panic("Taking non-sleepable RW lock with preemption enabled");
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	uint32_t data = *(volatile uint32_t *)&lock->lck_rw_data;
+	if ((data & (LCK_RW_SHARED_MASK | LCK_RW_WANT_EXCL |
+	    LCK_RW_WANT_UPGRADE | LCK_RW_INTERLOCK)) == 0) {
+		*(volatile uint32_t *)&lock->lck_rw_data = data | LCK_RW_WANT_EXCL;
+		(void)ml_set_interrupts_enabled(intr);
+#if CONFIG_DTRACE
+		LOCKSTAT_RECORD(LS_LCK_RW_LOCK_EXCL_ACQUIRE, lock, DTRACE_RW_EXCL);
+#endif
+	} else {
+		(void)ml_set_interrupts_enabled(intr);
+		lck_rw_lock_exclusive_gen(lock);
+	}
+#else
 	if (LCK_RW_LOCK_EXCLUSIVE_TAS(lock)) {
 #if     CONFIG_DTRACE
 		LOCKSTAT_RECORD(LS_LCK_RW_LOCK_EXCL_ACQUIRE, lock, DTRACE_RW_EXCL);
@@ -1047,6 +1098,7 @@ lck_rw_lock_exclusive(lck_rw_t *lock)
 	} else {
 		lck_rw_lock_exclusive_gen(lock);
 	}
+#endif
 #if MACH_ASSERT
 	thread_t owner = ordered_load_rw_owner(lock);
 	assertf(owner == THREAD_NULL, "state=0x%x, owner=%p", ordered_load_rw(lock), owner);
@@ -1742,6 +1794,33 @@ lck_rw_done(lck_rw_t *lock)
 	uint32_t        data, prev;
 	boolean_t       once = FALSE;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	prev = data = *(volatile uint32_t *)&lock->lck_rw_data;
+	if (data & LCK_RW_SHARED_MASK) {
+		data -= LCK_RW_SHARED_READER;
+	} else if (data & LCK_RW_WANT_UPGRADE) {
+		data &= ~LCK_RW_WANT_UPGRADE;
+	} else if (data & LCK_RW_WANT_EXCL) {
+		data &= ~LCK_RW_WANT_EXCL;
+		ordered_store_rw_owner(lock, THREAD_NULL);
+	} else {
+		(void)ml_set_interrupts_enabled(intr);
+		panic("Releasing unowned BCM2835 RW lock");
+	}
+	if (prev & LCK_RW_W_WAITING) {
+		data &= ~LCK_RW_W_WAITING;
+		if ((prev & LCK_RW_PRIV_EXCL) == 0) {
+			data &= ~LCK_RW_R_WAITING;
+		}
+	} else {
+		data &= ~LCK_RW_R_WAITING;
+	}
+	*(volatile uint32_t *)&lock->lck_rw_data = data;
+	(void)ml_set_interrupts_enabled(intr);
+	return lck_rw_done_gen(lock, prev);
+#endif
+
 	for (;;) {
 		data = atomic_exchange_begin32(&lock->lck_rw_data, &prev, memory_order_release_smp);
 		if (data & LCK_RW_INTERLOCK) {          /* wait for interlock to clear */
@@ -2124,12 +2203,19 @@ lck_mtx_init_ext(
 	lck_attr_t * attr)
 {
 	lck_attr_t     *lck_attr;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('h');
+#endif
 
 	if (attr != LCK_ATTR_NULL) {
 		lck_attr = attr;
 	} else {
 		lck_attr = &LockDefaultLckAttr;
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('i');
+#endif
 
 	if ((lck_attr->lck_attr_val) & LCK_ATTR_DEBUG) {
 		lck_mtx_ext_init(lck_ext, grp, lck_attr);
@@ -2138,11 +2224,28 @@ lck_mtx_init_ext(
 		lck->lck_mtx_type = LCK_MTX_TYPE;
 	} else {
 		lck->lck_mtx_waiters = 0;
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('j');
+#endif
 		lck->lck_mtx_type = LCK_MTX_TYPE;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('k');
+#endif
 		ordered_store_mtx(lck, 0);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('l');
+#endif
 	}
 	lck_grp_reference(grp);
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('m');
+#endif
 	lck_grp_lckcnt_incr(grp, LCK_TYPE_MTX);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('n');
+#endif
 }
 
 /*

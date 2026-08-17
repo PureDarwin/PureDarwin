@@ -6402,8 +6402,15 @@ IOUserClient::registerFilterCallbacks(const struct io_filter_callbacks *callback
 OSMetaClassDefineReservedUnused(IOUserClient, 0);
 OSMetaClassDefineReservedUnused(IOUserClient, 1);
 #else
-OSMetaClassDefineReservedUsed(IOUserClient, 0);
-OSMetaClassDefineReservedUsed(IOUserClient, 1);
+/*
+ * Must be the X86 variant, matching the declarations in IOUserClient.h.
+ * Plain ...DefineReservedUsed emits no definition, which is right on 32-bit
+ * x86 where those slots have real implementations, but on 32-bit ARM the
+ * header declares them Unused and the vtable then references stubs that were
+ * never emitted.
+ */
+OSMetaClassDefineReservedUsedX86(IOUserClient, 0);
+OSMetaClassDefineReservedUsedX86(IOUserClient, 1);
 #endif
 OSMetaClassDefineReservedUnused(IOUserClient, 2);
 OSMetaClassDefineReservedUnused(IOUserClient, 3);

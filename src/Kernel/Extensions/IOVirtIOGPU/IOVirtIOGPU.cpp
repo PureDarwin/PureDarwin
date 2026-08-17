@@ -31,6 +31,7 @@ OSDefineMetaClassAndStructors(IOVirtIOGPU, IOFramebuffer);
 #define kDefaultWidth  1024
 #define kDefaultHeight 768
 #define kFlushIntervalMs 16   // fallback cadence; native presents wake it immediately
+#define kPresentLeaseTicks 32 // ~0.5s of silence before the fallback push resumes
 
 static bool gVGPUDebug;
 static bool gVGPUDebugChecked;
@@ -101,6 +102,14 @@ enum {
 };
 
 enum { VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM = 1 };
+
+enum {
+    kGpuCfgEventsRead   = 0,
+    kGpuCfgEventsClear  = 4,
+    kGpuCfgNumScanouts  = 8,
+    kGpuCfgNumCapsets   = 12,
+};
+enum { VIRTIO_GPU_EVENT_DISPLAY = (1u << 0) };
 
 struct VGpuCtrlHdr {
     uint32_t type;
@@ -419,6 +428,8 @@ IOVirtIOGPU::gpuSetScanoutResource(uint32_t resourceId, uint32_t width,
         return false;
 
     fScanoutResourceId = resourceId;
+    fScanoutWidth = width;
+    fScanoutHeight = height;
     // Whatever the resource already holds on the host is what appears; a
     // guest-backed surface has to be pushed with gpuFlushSurface() first.
     return gpuResourceFlush(resourceId, 0, 0, width, height);
@@ -596,6 +607,7 @@ IOVirtIOGPU::gpuPresent(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
      * responsive. */
     IOLockLock(fCtrlLock);
     fNativePresent = true;
+    fPresentIdleTicks = 0;
     if (!fPresentPending) {
         fPresentX1 = x;
         fPresentY1 = y;
@@ -884,6 +896,48 @@ IOVirtIOGPU::allocFenceId()
 }
 
 void
+IOVirtIOGPU::checkDisplayEvents()
+{
+    volatile uint8_t *cfg = fTransport.deviceConfig();
+    if (!cfg)
+        return;
+
+    uint32_t events = *(volatile uint32_t *)(cfg + kGpuCfgEventsRead);
+    if (!(events & VIRTIO_GPU_EVENT_DISPLAY))
+        return;
+
+    // Clear first: a reconfiguration that happens while we are re-reading the
+    // modes must leave the bit set for the next tick rather than be swallowed.
+    *(volatile uint32_t *)(cfg + kGpuCfgEventsClear) = VIRTIO_GPU_EVENT_DISPLAY;
+    OSSynchronizeIO();
+
+    uint32_t width = 0, height = 0;
+    if (!gpuGetDisplayInfo(&width, &height)) {
+        DEBUG("display event, but no scanout is enabled yet\n");
+        return;
+    }
+
+    if (width > fScanoutWidth)   width = fScanoutWidth;
+    if (height > fScanoutHeight) height = fScanoutHeight;
+    if (!width || !height)
+        return;
+
+    DEBUG("display event: re-pointing scanout 0 at resource %u (%ux%u)\n",
+          fScanoutResourceId, width, height);
+
+    if (!gpuSetScanout(0, fScanoutResourceId, width, height)) {
+        DEBUG("display event: SET_SCANOUT failed\n");
+        return;
+    }
+
+    // The host discards a scanout's contents across reconfiguration, so push
+    // the whole framebuffer back even if a client owns the present cadence.
+    if (fScanoutResourceId == fResourceId && fFbBase)
+        gpuTransferToHost2D(fResourceId, 0, 0, width, height);
+    gpuResourceFlush(fScanoutResourceId, 0, 0, width, height);
+}
+
+void
 IOVirtIOGPU::flushCallback(thread_call_param_t self, thread_call_param_t)
 {
     ((IOVirtIOGPU *)self)->scheduleFlush();
@@ -892,12 +946,17 @@ IOVirtIOGPU::flushCallback(thread_call_param_t self, thread_call_param_t)
 void
 IOVirtIOGPU::scheduleFlush()
 {
+    checkDisplayEvents();
+
     IOLockLock(fCtrlLock);
-    bool nativePresent = fNativePresent;
     bool pending = fPresentPending;
     uint32_t x1 = fPresentX1, y1 = fPresentY1;
     uint32_t x2 = fPresentX2, y2 = fPresentY2;
     fPresentPending = false;
+
+    if (!pending && fNativePresent && ++fPresentIdleTicks >= kPresentLeaseTicks)
+        fNativePresent = false;
+    bool nativePresent = fNativePresent;
     IOLockUnlock(fCtrlLock);
 
     // Only the driver's own framebuffer needs its pixels pushed to the host;
@@ -1008,11 +1067,14 @@ IOVirtIOGPU::start(IOService *provider)
     fHeight = kDefaultHeight;
     fNativePresent = false;
     fPresentPending = false;
+    fPresentIdleTicks = 0;
     fPresentX1 = fPresentY1 = fPresentX2 = fPresentY2 = 0;
     gpuGetDisplayInfo(&fWidth, &fHeight); // best-effort; keep defaults on failure
     fPitch = fWidth * 4;
     fResourceId = 1;
     fScanoutResourceId = fResourceId;
+    fScanoutWidth = fWidth;
+    fScanoutHeight = fHeight;
 
     size_t fbSize = (size_t)fPitch * fHeight;
     fFbMem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(

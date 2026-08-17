@@ -107,6 +107,10 @@ Lreset_low_vector:
 	// physical cpu number is stored in MPIDR Affinity level 0
 	mrc		p15, 0, r6, c0, c0, 5				// Read MPIDR
 	and		r6, r6, #0xFF						// Extract Affinity level 0
+#elif	defined(ARM1176)
+	// Single core, and MPIDR is not architected before ARMv7 - the only
+	// physical cpu number this board can report is 0.
+	mov		r6, #0
 #else
 #error missing Who Am I implementation
 #endif
@@ -353,7 +357,7 @@ IF_USERMODE_EXCEPTION undef
 	mcr		p15, 0, r3, c2, c0, 0				// Set TTBR0
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
 	mvn		r0, #0
@@ -403,9 +407,9 @@ ELSE_IF_KERNELMODE_EXCEPTION undef
 	add		r7, sp, EXC_CTX_SIZE						// Save frame pointer
 #endif
 
-	mrs		r4, lr_und
+	READ_BANKED_LR(r4, und, PSR_UND_MODE, r5)
 	str		r4, [sp, SS_PC]						// Save complete
-	mrs		r4, spsr_und
+	READ_BANKED_SPSR(r4, und, PSR_UND_MODE, r5)
 	str		r4, [sp, SS_CPSR]	
 
 	mov		ip, sp
@@ -455,7 +459,7 @@ ELSE_IF_KERNELMODE_EXCEPTION undef
 	mrc		p15, 0, r11, c13, c0, 1				// Save CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	mov		r0, sp								// Argument
 
@@ -475,7 +479,7 @@ ELSE_IF_KERNELMODE_EXCEPTION undef
 	ldr		r11, [r9, ACT_ASID]                 // Load thread asid
 1:
 	mcr		p15, 0, r11, c13, c0, 1             // set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	b		load_and_go_sys
 
@@ -553,7 +557,7 @@ swi_from_user:
 	mcr		p15, 0, r3, c2, c0, 0				// Set TTBR0
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
 	mvn		r0, #0
@@ -715,8 +719,8 @@ icache_invalidate_trap:
 	mcr		p15, 0, r5, c2, c0, 0				// Set TTBR0
 	ldr     r5, [r9, ACT_ASID]					// Load thread asid
 	mcr		p15, 0, r5, c13, c0, 1				// Set CONTEXTIDR
-	dsb		ish
-	isb
+	DSB_BARRIER
+	ISB_BARRIER
 #endif
 	bl		EXT(InvalidatePoU_IcacheRegion)
 	mrc		p15, 0, r9, c13, c0, 4				// Reload r9 from TPIDRPRW
@@ -725,7 +729,7 @@ icache_invalidate_trap:
 	mcr		p15, 0, r4, c2, c0, 0				// Set TTBR0
 	mov		r4, #0								// Load kernel asid
 	mcr		p15, 0, r4, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	str		r6, [r9, TH_RECOVER]
 	bl		EXT(thread_exception_return)
@@ -744,7 +748,7 @@ dcache_flush_trap:
 	mcr		p15, 0, r6, c2, c0, 0				// Set TTBR0
 	ldr     r5, [r9, ACT_ASID]					// Load thread asid
 	mcr		p15, 0, r5, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	bl		EXT(flush_dcache_syscall)
 	mrc		p15, 0, r9, c13, c0, 4				// Reload r9 from TPIDRPRW
@@ -753,7 +757,7 @@ dcache_flush_trap:
 	mcr		p15, 0, r5, c2, c0, 0				// Set TTBR0
 	mov		r5, #0								// Load kernel asid
 	mcr		p15, 0, r5, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	str		r4, [r9, TH_RECOVER]
 	bl		EXT(thread_exception_return)
@@ -779,7 +783,7 @@ cache_trap_jmp:
 	mcr		p15, 0, r5, c2, c0, 0				// Set TTBR0
 	mov		r5, #0								// Load kernel asid
 	mcr		p15, 0, r5, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	mrc		p15, 0, r3, c6, c0 					// Read Fault Address
 cache_trap_error:
@@ -867,7 +871,7 @@ IF_USERMODE_EXCEPTION prefabt
 	mcr		p15, 0, r3, c2, c0, 0				// Set TTBR0
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
 	mvn		r0, #0
@@ -925,10 +929,10 @@ UNWIND_PROLOGUE
 	mrc		p15, 0, r11, c13, c0, 1				// Save CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
-	mrs		r4, lr_abt
+	READ_BANKED_LR(r4, abt, PSR_ABT_MODE, r5)
 	str		r4, [sp, SS_PC]					// Save pc
 
 	mrc		p15, 0, r5, c6, c0, 2 				// Read IFAR
@@ -936,7 +940,7 @@ UNWIND_PROLOGUE
 	mrc		p15, 0, r5, c5, c0, 1 				// Read (instruction) Fault Status
 	str		r5, [sp, SS_STATUS]					// Save fault status register to pcb
 
-	mrs		r4, spsr_abt
+	READ_BANKED_SPSR(r4, abt, PSR_ABT_MODE, r5)
 	str		r4, [sp, SS_CPSR]	
 
 	mov		r0, sp
@@ -961,7 +965,7 @@ UNWIND_DIRECTIVES
 	ldr		r11, [r9, ACT_ASID]                 // Load thread asid
 1:
 	mcr		p15, 0, r11, c13, c0, 1             // set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
 	b		load_and_go_sys
@@ -1016,7 +1020,7 @@ IF_USERMODE_EXCEPTION dataabt
 	mcr		p15, 0, r3, c2, c0, 0				// Set TTBR0
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
 	mvn		r0, #0
@@ -1065,9 +1069,9 @@ UNWIND_PROLOGUE
 	fmxr		fpscr, r4					// And shove it into FPSCR
 #endif
 
-	mrs		r4, lr_abt
+	READ_BANKED_LR(r4, abt, PSR_ABT_MODE, r5)
 	str		r4, [sp, SS_PC]
-	mrs		r4, spsr_abt
+	READ_BANKED_SPSR(r4, abt, PSR_ABT_MODE, r5)
 	str		r4, [sp, SS_CPSR]	
 
 #if __ARM_USER_PROTECT__
@@ -1080,7 +1084,7 @@ UNWIND_PROLOGUE
 	mrc		p15, 0, r11, c13, c0, 1				// Save CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	mrc		p15, 0, r5, c5, c0					// Read Fault Status
 	mrc		p15, 0, r6, c6, c0					// Read Fault Address
@@ -1108,7 +1112,7 @@ UNWIND_DIRECTIVES
 	ldr		r11, [r9, ACT_ASID]                 // Load thread asid
 1:
 	mcr		p15, 0, r11, c13, c0, 1             // set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
 load_and_go_sys:	
@@ -1136,7 +1140,7 @@ load_and_go_sys:
 	mrc		p15, 0, r11, c13, c0, 1				// Save CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	ldr		lr, [sp, SS_LR]							// Restore the link register
 	stmfd		sp!, {r7, lr}							// Push a fake frame
@@ -1159,7 +1163,7 @@ load_and_go_sys:
 	ldr		r11, [r9, ACT_ASID]                 // Load thread asid
 1:
 	mcr		p15, 0, r11, c13, c0, 1             // set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 lags1:
 	ldr		lr, [sp, SS_LR]
@@ -1257,7 +1261,7 @@ fleh_irq_user:
 	mcr		p15, 0, r3, c2, c0, 0				// Set TTBR0
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 #if	!CONFIG_SKIP_PRECISE_USER_KERNEL_TIME
 	bl		EXT(timer_state_event_user_to_kernel)
@@ -1304,7 +1308,7 @@ fleh_irq_kernel:
 	mrc		p15, 0, r11, c13, c0, 1				// Get CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	mov		r5, sp								// Saved context in r5
 
@@ -1399,7 +1403,7 @@ return_from_irq:
 	ldr		r11, [r9, ACT_ASID]                 // Load thread asid
 1:
 	mcr		p15, 0, r11, c13, c0, 1             // set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	b       load_and_go_sys
 
@@ -1458,7 +1462,7 @@ fleh_decirq_user:
 	mcr		p15, 0, r3, c2, c0, 0				// Set TTBR0
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 #if	!CONFIG_SKIP_PRECISE_USER_KERNEL_TIME
 	bl		EXT(timer_state_event_user_to_kernel)
@@ -1505,7 +1509,7 @@ fleh_decirq_kernel:
 	mrc		p15, 0, r11, c13, c0, 1				// Get CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	mov		r5, sp								// Saved context in r5
 
@@ -1592,6 +1596,24 @@ LEXT(fleh_fiq_generic)
 	subspl	pc, lr, #4							// Return unless DEC < 0
 	b		EXT(fleh_dec)
 
+/*
+ * BCM2835 decrementer FIQ.
+ *
+ * Unlike fleh_fiq_generic this is a one-shot: the System Timer's channel 3
+ * comparator fires once at the deadline bcm2835_set_decrementer programmed, so
+ * there is no periodic tick to accumulate and the timebase is read straight
+ * out of the counter by ml_get_timebase. Acknowledge the match and go.
+ *
+ * r10 holds the System Timer base (its CS register) and r11 the channel 3
+ * match bit; fiq_context_init loaded both from the tbd_ops eoi pair.
+ */
+	.text
+	.align 2
+	.globl EXT(fleh_fiq_bcm2835)
+LEXT(fleh_fiq_bcm2835)
+	str		r11, [r10]							// Clear the channel 3 match
+	b		EXT(fleh_dec)
+
 	.text
 	.align	2
 	.globl	EXT(fleh_dec)
@@ -1634,7 +1656,7 @@ LEXT(fleh_dec)
 	mrc		p15, 0, r11, c13, c0, 1				// Get CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	mov		r0, #1								// Mark this as coming from user context
 	b		4f
@@ -1670,7 +1692,7 @@ LEXT(fleh_dec)
 	mrc		p15, 0, r11, c13, c0, 1				// Get CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	mov		r5, sp								// Saved context in r5
 
@@ -1715,7 +1737,7 @@ LEXT(fleh_dec)
 	mrc		p15, 0, r11, c13, c0, 1				// Get CONTEXTIDR
 	mov		r3, #0								// Load kernel asid
 	mcr		p15, 0, r3, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 
 	ALIGN_STACK r0, r1
@@ -1742,7 +1764,7 @@ LEXT(fleh_dec)
 #if __ARM_USER_PROTECT__
 	mcr		p15, 0, r10, c2, c0, 0				// Set TTBR0
 	mcr		p15, 0, r11, c13, c0, 1				// Set CONTEXTIDR
-	isb
+	ISB_BARRIER
 #endif
 	ldr		lr, [sp, SS_PC]
 	ldmia	sp, {r0-r12}						// Restore saved registers
@@ -1926,7 +1948,7 @@ return_to_user_now:
 	mcr		p15, 0, r3, c2, c0, 0				// Set TTBR0
 	ldr		r2, [r9, ACT_ASID]					// Load thread asid
 	mcr		p15, 0, r2, c13, c0, 1
-	isb
+	ISB_BARRIER
 #endif
 	ldr		lr, [sp, SS_PC]						// Restore user mode pc
 	ldmia	sp, {r0-r12, sp, lr}^				// Restore the other user mode registers

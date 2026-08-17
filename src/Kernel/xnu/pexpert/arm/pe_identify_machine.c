@@ -56,6 +56,29 @@ pe_identify_machine(boot_args * bootArgs)
 
 	(void)bootArgs;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/* The BCM2835 system timer used by ml_get_timebase runs at 1 MHz. */
+	bzero((void *)&gPEClockFrequencyInfo, sizeof(clock_frequency_info_t));
+	gPEClockFrequencyInfo.timebase_frequency_hz = 1000000;
+	gPEClockFrequencyInfo.dec_clock_rate_hz = 1000000;
+	gPEClockFrequencyInfo.fix_frequency_hz = 1000000;
+	gPEClockFrequencyInfo.bus_frequency_hz = 250000000;
+	gPEClockFrequencyInfo.bus_frequency_min_hz = 250000000;
+	gPEClockFrequencyInfo.bus_frequency_max_hz = 250000000;
+	gPEClockFrequencyInfo.cpu_frequency_hz = 1000000000;
+	gPEClockFrequencyInfo.cpu_frequency_min_hz = 1000000000;
+	gPEClockFrequencyInfo.cpu_frequency_max_hz = 1000000000;
+	gPEClockFrequencyInfo.bus_clock_rate_hz = 250000000;
+	gPEClockFrequencyInfo.cpu_clock_rate_hz = 1000000000;
+	gPEClockFrequencyInfo.bus_clock_rate_num = 250000000;
+	gPEClockFrequencyInfo.bus_clock_rate_den = 1;
+	gPEClockFrequencyInfo.bus_to_cpu_rate_num = 4;
+	gPEClockFrequencyInfo.bus_to_cpu_rate_den = 1;
+	gPEClockFrequencyInfo.bus_to_dec_rate_num = 1;
+	gPEClockFrequencyInfo.bus_to_dec_rate_den = 250;
+	return;
+#endif
+
 	if (pe_arm_get_soc_base_phys() == 0) {
 #if defined(QEMUVIRT)
 		/* QEMU virt has the ARM architectural timer but no Apple arm-io node. */
@@ -303,6 +326,13 @@ extern uint32_t t8002_get_decrementer(void);
 extern void     t8002_set_decrementer(uint32_t);
 static struct tbd_ops    t8002_funcs = {&fleh_fiq_t8002, &t8002_get_decrementer, &t8002_set_decrementer};
 #endif /* defined(ARM_BOARD_CLASS_T8002) */
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+extern void     fleh_fiq_bcm2835(void);
+extern uint32_t bcm2835_get_decrementer(void);
+extern void     bcm2835_set_decrementer(uint32_t);
+static struct tbd_ops    bcm2835_funcs = {&fleh_fiq_bcm2835, &bcm2835_get_decrementer, &bcm2835_set_decrementer};
+#endif /* defined(ARM_BOARD_CONFIG_BCM2835) */
 
 vm_offset_t     gPicBase;
 vm_offset_t     gTimerBase;
@@ -667,6 +697,12 @@ pe_arm_init_interrupts(void *args)
 	return pe_arm_init_timer(args);
 	#endif
 
+	#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/* The BCM2835 has neither an Apple interrupt-controller node nor an
+	 * arm-io range to map; its ARMCTRL block is at a fixed address. */
+	return pe_arm_init_timer(args);
+	#endif
+
 	/* Set up mappings for interrupt controller and possibly timers (if they haven't been set up already) */
 	if (args != NULL) {
 		if (!pe_arm_map_interrupt_controller()) {
@@ -693,6 +729,23 @@ pe_arm_init_timer(void *args)
 	pic_base = gPicBase;
 	timer_base = gTimerBase;
 	soc_phys = gSocPhys;
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_PUT32(BCM2835_ST_BASE_V + BCM2835_ST_CS, BCM2835_ST_M3);
+	BCM2835_PUT32(BCM2835_ARMCTRL_BASE_V + BCM2835_ARMCTRL_FIQ_CONTROL,
+	    BCM2835_FIQ_ENABLE | BCM2835_FIQ_SRC_SYSTEM_TIMER_3);
+
+	tbd_funcs = &bcm2835_funcs;
+	eoi_addr = BCM2835_ST_BASE_V;   /* CS is at offset 0, so this is both the
+	                                 * timer base the decrementer routines want
+	                                 * and the address the FIQ acknowledges to */
+	eoi_value = BCM2835_ST_M3;
+
+	if (args != NULL) {
+		ml_init_timebase(args, tbd_funcs, eoi_addr, eoi_value);
+	}
+	return 1;
+#endif /* defined(ARM_BOARD_CONFIG_BCM2835) */
 
 #if defined(ARM_BOARD_CLASS_T8002)
 	if (!strcmp(gPESoCDeviceType, "t8002-io") ||

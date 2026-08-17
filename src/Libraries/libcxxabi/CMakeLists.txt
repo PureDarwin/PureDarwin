@@ -57,7 +57,11 @@ else()
         )
     endif()
 
-    set(_target_flags)
+    # The cross clang wrapper defaults to the host architecture. Keep the
+    # explicit target here as well as on the parent CMake targets; these
+    # archives are built by raw custom commands rather than normal CMake
+    # compile rules.
+    set(_target_flags -arch "${PUREDARWIN_ARCH}")
 endif()
 
 set(_config "${CMAKE_CURRENT_SOURCE_DIR}/config")   # __config_site, __assertion_handler
@@ -108,7 +112,6 @@ set(_abi_srcs
     cxa_exception
     cxa_exception_storage
     cxa_personality
-    cxa_virtual
     cxa_guard
     private_typeinfo
     stdlib_typeinfo
@@ -118,6 +121,12 @@ set(_abi_srcs
     abort_message
     pd_bootstrap_runtime
 )
+if(NOT PUREDARWIN_ARCH MATCHES "^arm")
+    # The existing x86_64 libSystem export table requires this definition.
+    # ARMv6 dyld supplies its own copy, so including it there would create a
+    # duplicate symbol when the ABI archive is force-loaded.
+    list(APPEND _abi_srcs cxa_virtual)
+endif()
 
 set(_abi_objs "")
 foreach(s ${_abi_srcs})
@@ -168,6 +177,12 @@ set(_uw_flags
     -D_LIBUNWIND_IS_NATIVE_ONLY
     -D_LIBUNWIND_BUILDING_LIBUNWIND=1
 )
+if(PUREDARWIN_ARCH MATCHES "^arm")
+    # The ARMv6 bootstrap userland is single-threaded at this stage, and the
+    # SDK does not provide Apple's private pthread_machdep.h.  This also keeps
+    # the compact libunwind registration path independent of libpthread.
+    list(APPEND _uw_flags -D_LIBUNWIND_HAS_NO_THREADS)
+endif()
 # See the matching comment on _abi_flags above for why this is conditional.
 if((CMAKE_HOST_APPLE AND NOT CMAKE_CROSSCOMPILING) OR PUREDARWIN_NIX_TOOLCHAIN)
     list(APPEND _uw_flags -I ${_libcxx}/include)
@@ -179,6 +194,11 @@ endif()
 # Unwind-EHABI (ARM32), Unwind-seh (Windows), Unwind-wasm, Unwind_AIXExtras.
 set(_uw_cxx    libunwind)
 set(_uw_c      UnwindLevel1 UnwindLevel1-gcc-ext)
+if(PUREDARWIN_ARCH MATCHES "^arm")
+    # Clang uses SjLj exceptions for the ARMv6 target; the default subset
+    # intentionally omits this file for x86_64/DWARF builds.
+    list(APPEND _uw_c Unwind-sjlj)
+endif()
 set(_uw_asm    UnwindRegistersRestore UnwindRegistersSave)
 
 set(_uw_objs "")

@@ -105,6 +105,9 @@ struct CacheInfo
 #elif __ARM_ARCH_7S__
     #define ARCH_NAME            "armv7s"
     #define ARCH_CACHE_MAGIC     "dyld_v1  armv7s"
+#elif __ARM_ARCH_6__ || __ARM_ARCH_6J__ || __ARM_ARCH_6K__ || __ARM_ARCH_6Z__ || __ARM_ARCH_6ZK__
+    #define ARCH_NAME            "armv6"
+    #define ARCH_CACHE_MAGIC     "dyld_v1   armv6"
 #elif __arm64e__
     #define ARCH_NAME            "arm64e"
     #define ARCH_CACHE_MAGIC     "dyld_v1  arm64e"
@@ -1015,4 +1018,3 @@ void deallocateExistingSharedCache()
 }
 
 } // namespace dyld3
-

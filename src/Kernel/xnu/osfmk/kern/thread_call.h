@@ -395,6 +395,10 @@ typedef struct thread_call thread_call_data_t;
 
 extern void             thread_call_initialize(void);
 
+/* False until thread_call_initialize() has run; see the comment on
+ * thread_call_ready in thread_call.c. */
+extern bool             thread_call_is_ready(void);
+
 extern void             thread_call_setup(
 	thread_call_t                   call,
 	thread_call_func_t              func,

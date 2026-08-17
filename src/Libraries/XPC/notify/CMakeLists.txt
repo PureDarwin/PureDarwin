@@ -106,7 +106,7 @@ target_sources(notifyd PRIVATE
     pd_sandbox_check.c
 )
 target_compile_definitions(notifyd PRIVATE __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
-if(PUREDARWIN_ARM64)
+if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     target_compile_definitions(notifyd PRIVATE
         __DARWIN_ONLY_VERS_1050=1
         __DARWIN_ONLY_64_BIT_INO_T=1)

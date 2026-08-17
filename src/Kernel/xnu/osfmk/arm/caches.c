@@ -374,14 +374,19 @@ platform_cache_idle_enter(
 	} else {
 		FlushPoU_Dcache();
 
-#if (__ARM_ARCH__ < 8)
+/*
+ * The cpu_CLW* fields exist only for ARMA7 (cpu_data_internal.h), so this
+ * has to match that condition and not __ARM_ARCH__ - the cross-CPU cache
+ * line write tracking they drive is an A7 SMP mechanism in the first place.
+ */
+#if defined(ARMA7)
 		cpu_data_t      *cpu_data_ptr = getCpuDatap();
 		cpu_data_ptr->cpu_CLW_active = 0;
 		__builtin_arm_dmb(DMB_ISH);
 		cpu_data_ptr->cpu_CLWFlush_req = 0;
 		cpu_data_ptr->cpu_CLWClean_req = 0;
 		CleanPoC_DcacheRegion((vm_offset_t) cpu_data_ptr, sizeof(cpu_data_t));
-#endif /* (__ARM_ARCH__ < 8) */
+#endif /* defined(ARMA7) */
 	}
 
 #if defined(ARMA7)

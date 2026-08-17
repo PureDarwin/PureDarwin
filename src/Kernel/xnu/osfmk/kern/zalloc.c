@@ -2929,9 +2929,31 @@ zfree_clear_or_poison(zone_t zone, vm_offset_t addr, vm_offset_t elem_size)
 		 * Element size is larger than zp_min_size in this path,
 		 * zones with smaller elements have z_free_zeroes set.
 		 */
+		/*
+		 * The comment above assumes elem_size > zp_min_size, because a
+		 * zone with smaller elements is supposed to have z_free_zeroes
+		 * set.  If that ever fails to hold, this bzero runs off the end
+		 * of the element and silently zeroes whatever lives after it -
+		 * clamp instead of corrupting the neighbours.
+		 */
+		vm_offset_t clear_size = zp_min_size;
+
+		if (__improbable(clear_size > elem_size)) {
+			static bool warned;
+
+			if (!warned) {
+				warned = true;
+				printf("zalloc: zone \"%s\" has %d byte elements but "
+				    "z_free_zeroes is clear and zp_min_size is %d "
+				    "(submap_idx %d); clamping\n",
+				    zone->z_name ?: "?", (int)elem_size,
+				    (int)zp_min_size, (int)zone->z_submap_idx);
+			}
+			clear_size = elem_size;
+		}
 		*get_primary_ptr(addr) = zp_canary ^ (uintptr_t)addr;
 		bzero((void *)addr + sizeof(vm_offset_t),
-		    zp_min_size - sizeof(vm_offset_t));
+		    clear_size - sizeof(vm_offset_t));
 		*get_backup_ptr(addr, elem_size) = zp_canary ^ (uintptr_t)addr;
 
 		poison = ZPM_CANARY;
@@ -2988,7 +3010,9 @@ zalloc_uaf_panic(zone_t z, uintptr_t elem, size_t size, zprot_mode_t zpm)
 			}
 		}
 
-		for (uint32_t o = sizeof(v); o < zp_min_size; o += sizeof(v)) {
+		/* Matches the clamp in zfree_clear_or_poison(). */
+		for (uint32_t o = sizeof(v);
+		    o < zp_min_size && o < (uint32_t)esize; o += sizeof(v)) {
 			if ((v = *(uintptr_t *)(elem + o)) == 0) {
 				continue;
 			}
@@ -4775,6 +4799,16 @@ zone_expand_async_schedule_if_needed(zone_t zone)
 		return;
 	}
 
+	/*
+	 * On a machine with little memory a zone can run dry before
+	 * kernel_bootstrap_thread() gets as far as thread_call_initialize(),
+	 * and enqueueing onto a group whose queue heads are still zero panics.
+	 * Leave z_async_refilling clear so the next allocation tries again.
+	 */
+	if (!thread_call_is_ready()) {
+		return;
+	}
+
 	if (zone->z_elems_free == 0 || !vm_pool_low()) {
 		zone->z_async_refilling = true;
 		thread_call_enter(&zone_expand_callout);
@@ -5440,10 +5474,12 @@ zfree_ext(zone_t zone, zone_stats_t zstats, void *addr)
 	zpercpu_get(zstats)->zs_mem_freed += elem_size;
 
 	if (zone->z_pcpu_cache) {
-		return zfree_cached(zone, page_meta, ze);
+		zfree_cached(zone, page_meta, ze);
+			return;
 	}
 
-	return zfree_item(zone, page_meta, ze);
+	zfree_item(zone, page_meta, ze);
+	return;
 }
 
 void

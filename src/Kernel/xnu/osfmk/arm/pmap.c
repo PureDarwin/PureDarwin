@@ -1349,8 +1349,55 @@ SECURITY_READ_ONLY_LATE(pmap_t) sharedpage_pmap_default;
 
 /* PPATTR Define Macros */
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+/*
+ * ARM1176 has no halfword exclusive instructions. Clang's 16-bit atomic
+ * builtins nevertheless lower to LDREXH/STREXH, which the core rejects. The
+ * BCM2835 port is uniprocessor, so excluding interrupts provides the same
+ * serialization without relying on unsupported exclusive accesses.
+ */
+static inline void
+ppattr_set_bits_bcm2835(volatile pp_attr_t *p, pp_attr_t bits)
+{
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	*p = (pp_attr_t)(*p | bits);
+	__asm__ volatile ("" ::: "memory");
+	ml_set_interrupts_enabled(intr);
+}
+
+static inline void
+ppattr_clear_bits_bcm2835(volatile pp_attr_t *p, pp_attr_t bits)
+{
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	*p = (pp_attr_t)(*p & (pp_attr_t)~bits);
+	__asm__ volatile ("" ::: "memory");
+	ml_set_interrupts_enabled(intr);
+}
+
+static inline boolean_t
+ppattr_compare_exchange_bcm2835(volatile pp_attr_t *p, pp_attr_t old,
+    pp_attr_t new)
+{
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	boolean_t exchanged = (*p == old);
+	if (exchanged) {
+		*p = new;
+	}
+	__asm__ volatile ("" ::: "memory");
+	ml_set_interrupts_enabled(intr);
+	return exchanged;
+}
+
+#define ppattr_set_bits(h, b)    ppattr_set_bits_bcm2835((h), (pp_attr_t)(b))
+#define ppattr_clear_bits(h, b)  ppattr_clear_bits_bcm2835((h), (pp_attr_t)(b))
+#define ppattr_compare_exchange(h, o, n) \
+	ppattr_compare_exchange_bcm2835((h), (pp_attr_t)(o), (pp_attr_t)(n))
+#else
 #define ppattr_set_bits(h, b)    os_atomic_or((h), (pp_attr_t)(b), acq_rel)
 #define ppattr_clear_bits(h, b)  os_atomic_andnot((h), (pp_attr_t)(b), acq_rel)
+#define ppattr_compare_exchange(h, o, n) \
+	OSCompareAndSwap16((o), (n), (h))
+#endif
 
 #define ppattr_test_bits(h, b)                                                          \
 	((*(h) & (pp_attr_t)(b)) == (pp_attr_t)(b))
@@ -1687,11 +1734,26 @@ pmap_assert_locked_any(__unused pmap_t pmap)
 	pmap_sync_tlb(strong);                                                          \
 }
 
+/*
+ * ARM1176's translation table walker reads through the write buffer, not
+ * around it, and its DMB does not drain that buffer - only DSB does.  A DMB
+ * here would let a freshly written entry stay invisible to the walker, and
+ * would also let a store that the bus rejects surface much later as an
+ * imprecise external abort at an unrelated pc.
+ */
+#if defined(ARM1176)
+#define FLUSH_PTE_RANGE(spte, epte)                                                     \
+	__builtin_arm_dsb(DSB_ISH);
+
+#define FLUSH_PTE(pte_p)                                                                \
+	__builtin_arm_dsb(DSB_ISH);
+#else
 #define FLUSH_PTE_RANGE(spte, epte)                                                     \
 	__builtin_arm_dmb(DMB_ISH);
 
 #define FLUSH_PTE(pte_p)                                                                \
 	__builtin_arm_dmb(DMB_ISH);
+#endif
 
 #define FLUSH_PTE_STRONG(pte_p)                                                         \
 	__builtin_arm_dsb(DSB_ISH);
@@ -3023,7 +3085,8 @@ pmap_mark_page_as_ppl_page_internal(pmap_paddr_t pa, bool initially_free)
 			    __FUNCTION__,
 			    pa);
 		}
-	} while (!OSCompareAndSwap16(attr, attr | PP_ATTR_MONITOR, &pp_attr_table[pai]));
+	} while (!ppattr_compare_exchange(&pp_attr_table[pai], attr,
+	    attr | PP_ATTR_MONITOR));
 
 	UNLOCK_PVH(pai);
 
@@ -4675,10 +4738,17 @@ pmap_bootstrap(
 	vm_size_t       asid_table_size;
 	unsigned int    npages;
 	vm_map_offset_t maxoffset;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('A');
+#endif
 
 	PD_PMAP_MARK(33, 0x00ff6060);	/* salmon: entered pmap_bootstrap */
 
 	lck_grp_init(&pmap_lck_grp, "pmap", LCK_GRP_ATTR_NULL);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('B');
+#endif
 
 #if XNU_MONITOR
 
@@ -4726,7 +4796,15 @@ pmap_bootstrap(
 #else
 	kernel_pmap->is_64bit = FALSE;
 #endif
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/* Bootstrap is single-threaded; ARM1176 STREX is unavailable here. */
+	kernel_pmap->stamp = ++pmap_stamp;
+#else
 	kernel_pmap->stamp = os_atomic_inc(&pmap_stamp, relaxed);
+#endif
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('C');
+#endif
 
 #if ARM_PARAMETERIZED_PMAP
 	kernel_pmap->pmap_pt_attr = native_pt_attr;
@@ -4745,11 +4823,17 @@ pmap_bootstrap(
 
 	pmap_lock_init(kernel_pmap);
 	memset((void *) &kernel_pmap->stats, 0, sizeof(kernel_pmap->stats));
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('D');
+#endif
 
 	/* allocate space for and initialize the bookkeeping structures */
 	PD_PMAP_MARK(34, 0x0060ff60);	/* mint: about to compute the I/O regions */
 
 	io_attr_table_size = pmap_compute_io_rgns();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('E');
+#endif
 
 	PD_PMAP_MARK(35, 0x006060ff);	/* periwinkle: I/O regions computed */
 	npages = (unsigned int)atop(mem_size);
@@ -4770,6 +4854,9 @@ pmap_bootstrap(
 	asid_table_size = sizeof(*asid_bitmap) * BITMAP_LEN(pmap_max_asids);
 
 	pmap_compute_pv_targets();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('F');
+#endif
 
 	pmap_struct_start = avail_start;
 
@@ -4785,11 +4872,17 @@ pmap_bootstrap(
 	avail_start = round_page(avail_start + asid_table_size);
 
 	memset((char *)phystokv(pmap_struct_start), 0, avail_start - pmap_struct_start);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('G');
+#endif
 
 	PD_PMAP_MARK(36, 0x00ffff60);	/* butter: pmap structures zeroed */
 
 	pmap_load_io_rgns();
 	ptd_bootstrap(ptd_root_table, (unsigned int)(ptd_root_table_size / sizeof(pt_desc_t)));
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('H');
+#endif
 
 	PD_PMAP_MARK(37, 0x00ff60ff);	/* orchid: page table descriptors bootstrapped */
 
@@ -4814,6 +4907,9 @@ pmap_bootstrap(
 	pmap_ledger_refcnt_end = (void *)phystokv(avail_start);
 #endif
 	pmap_cpu_data_array_init();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('I');
+#endif
 
 	PD_PMAP_MARK(38, 0x0060ffff);	/* ice: per-cpu pmap data up */
 
@@ -4831,6 +4927,9 @@ pmap_bootstrap(
 	free_tt_list = TT_FREE_ENTRY_NULL;
 	free_tt_count = 0;
 	free_tt_max = 0;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('J');
+#endif
 
 	PD_PMAP_MARK(39, 0x00ffa0a0);	/* rose quartz: pmap free lists initialised */
 
@@ -4849,6 +4948,9 @@ pmap_bootstrap(
 	bitmap_full(&asid_plru_bitmap[0], MAX_HW_ASIDS);
 	// Clear the highest-order bit, which corresponds to MAX_HW_ASIDS + 1
 	asid_plru_bitmap[MAX_HW_ASIDS >> 6] = ~(1ULL << 63);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('K');
+#endif
 
 
 
@@ -4887,6 +4989,9 @@ pmap_bootstrap(
 	/* Shadow the CPU copy windows, as they fall outside of the physical aperture */
 	kasan_map_shadow(CPUWINDOWS_BASE, CPUWINDOWS_TOP - CPUWINDOWS_BASE, true);
 #endif /* KASAN */
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('L');
+#endif
 }
 
 #if XNU_MONITOR
@@ -6847,6 +6952,10 @@ pmap_remove_range_options(
 		}
 #endif
 
+		if (spte == ARM_PTE_TYPE_FAULT) {
+			continue;
+		}
+
 		while (!managed) {
 			if (pmap != kernel_pmap &&
 			    (options & PMAP_OPTIONS_REMOVE) &&
@@ -8550,6 +8659,17 @@ pmap_enter_options_internal(
 	unsigned int    wimg_bits;
 	boolean_t       was_compressed, was_alt_compressed;
 	kern_return_t   kr = KERN_SUCCESS;
+
+#if defined(ARM1176)
+	/*
+	 * Bring-up aid: drain the write buffer on the way in, so that an imprecise
+	 * external abort raised by an earlier store is reported here rather than
+	 * at the first exclusive access further down this function.  It tells the
+	 * two cases apart - a pc inside pmap_enter means the bad store is one of
+	 * ours, a pc at this barrier means it came from the caller's side.
+	 */
+	__builtin_arm_dsb(DSB_ISH);
+#endif
 
 	VALIDATE_PMAP(pmap);
 
@@ -12661,7 +12781,8 @@ pmap_batch_set_cache_attributes_internal(
 
 		/* WIMG bits should only be updated under the PVH lock, but we should do this in a CAS loop
 		 * to avoid losing simultaneous updates to other bits like refmod. */
-	} while (!OSCompareAndSwap16(pp_attr_current, pp_attr_template, &pp_attr_table[pai]));
+	} while (!ppattr_compare_exchange(&pp_attr_table[pai], pp_attr_current,
+	    pp_attr_template));
 
 	wimg_bits_new = VM_WIMG_DEFAULT;
 	if (pp_attr_template & PP_ATTR_WIMG_MASK) {
@@ -12767,7 +12888,8 @@ pmap_set_cache_attributes_priv(
 
 		/* WIMG bits should only be updated under the PVH lock, but we should do this in a CAS loop
 		 * to avoid losing simultaneous updates to other bits like refmod. */
-	} while (!OSCompareAndSwap16(pp_attr_current, pp_attr_template, &pp_attr_table[pai]));
+	} while (!ppattr_compare_exchange(&pp_attr_table[pai], pp_attr_current,
+	    pp_attr_template));
 
 	wimg_bits_new = VM_WIMG_DEFAULT;
 	if (pp_attr_template & PP_ATTR_WIMG_MASK) {
@@ -13581,7 +13703,8 @@ pmap_pin_kernel_pages(vm_offset_t kva, size_t nbytes)
 			if (attr & PP_ATTR_MONITOR) {
 				panic("%s(%p): physical page 0x%llx belongs to PPL", __func__, (void*)kva, (uint64_t)pa);
 			}
-		} while (!OSCompareAndSwap16(attr, attr | PP_ATTR_NO_MONITOR, &pp_attr_table[pai]));
+		} while (!ppattr_compare_exchange(&pp_attr_table[pai], attr,
+		    attr | PP_ATTR_NO_MONITOR));
 	}
 }
 

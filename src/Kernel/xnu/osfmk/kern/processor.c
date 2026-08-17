@@ -175,16 +175,32 @@ int sched_enable_smt = 1;
 void
 processor_bootstrap(void)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('G');
+#endif
 	pset_node0.psets = &pset0;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('H');
+#endif
 	pset_init(&pset0, &pset_node0);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('I');
+#endif
 
 	queue_init(&tasks);
 	queue_init(&terminated_tasks);
 	queue_init(&threads);
 	queue_init(&terminated_threads);
 	queue_init(&corpse_tasks);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('J');
+#endif
 
 	processor_init(master_processor, master_cpu, &pset0);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('K');
+#endif
 }
 
 /*
@@ -199,6 +215,10 @@ processor_init(
 	processor_set_t        pset)
 {
 	spl_t           s;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('R');
+#endif
 
 	assert(cpu_id < MAX_SCHED_CPUS);
 	processor->cpu_id = cpu_id;
@@ -207,6 +227,9 @@ processor_init(
 		/* Scheduler state for master_processor initialized in sched_init() */
 		SCHED(processor_init)(processor);
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('S');
+#endif
 
 	processor->state = PROCESSOR_OFF_LINE;
 	processor->active_thread = processor->startup_thread = processor->idle_thread = THREAD_NULL;
@@ -225,6 +248,9 @@ processor_init(
 	processor->processor_list = NULL;
 	processor->must_idle = false;
 	processor->running_timers_active = false;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('T');
+#endif
 	for (int i = 0; i < RUNNING_TIMER_MAX; i++) {
 		timer_call_setup(&processor->running_timers[i],
 		    running_timer_funcs[i], processor);
@@ -234,9 +260,18 @@ processor_init(
 	timer_init(&processor->idle_state);
 	timer_init(&processor->system_state);
 	timer_init(&processor->user_state);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('U');
+#endif
 
 	s = splsched();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('V');
+#endif
 	pset_lock(pset);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('W');
+#endif
 	bit_set(pset->cpu_bitmask, cpu_id);
 	bit_set(pset->recommended_bitmask, cpu_id);
 	bit_set(pset->primary_map, cpu_id);
@@ -248,9 +283,15 @@ processor_init(
 		pset->cpu_set_hi = (cpu_id > pset->cpu_set_hi)? cpu_id: pset->cpu_set_hi;
 	}
 	pset_unlock(pset);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('X');
+#endif
 	splx(s);
 
 	simple_lock(&processor_list_lock, LCK_GRP_NULL);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('Y');
+#endif
 	if (processor_list == NULL) {
 		processor_list = processor;
 	} else {
@@ -260,6 +301,9 @@ processor_init(
 	processor_count++;
 	processor_array[cpu_id] = processor;
 	simple_unlock(&processor_list_lock);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('Z');
+#endif
 }
 
 bool system_is_SMT = false;
@@ -501,6 +545,10 @@ pset_init(
 	pset_node_t                     node)
 {
 	static uint32_t pset_count = 0;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('L');
+#endif
 
 	if (pset != &pset0) {
 		/*
@@ -525,6 +573,9 @@ pset_init(
 	pset->primary_map = 0;
 	pset->realtime_map = 0;
 	pset->cpu_running_foreign = 0;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('M');
+#endif
 
 	for (uint i = 0; i < PROCESSOR_STATE_LEN; i++) {
 		pset->cpu_state_map[i] = 0;
@@ -536,6 +587,9 @@ pset_init(
 #endif
 	pset->pending_spill_cpu_mask = 0;
 	pset_lock_init(pset);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('N');
+#endif
 	pset->pset_self = IP_NULL;
 	pset->pset_name_self = IP_NULL;
 	pset->pset_list = PROCESSOR_SET_NULL;
@@ -552,10 +606,20 @@ pset_init(
 	 */
 	pset->is_SMT = false;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('O');
+#endif
 	simple_lock(&pset_node_lock, LCK_GRP_NULL);
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('P');
+#endif
 	pset->pset_id = pset_count++;
 	bit_set(node->pset_map, pset->pset_id);
 	simple_unlock(&pset_node_lock);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('Q');
+#endif
 
 	pset_array[pset->pset_id] = pset;
 }

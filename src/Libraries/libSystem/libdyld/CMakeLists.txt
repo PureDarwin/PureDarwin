@@ -47,6 +47,7 @@ target_sources(libdyld PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libdispatch/src/BlocksRuntime/data.c
     ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libdispatch/src/BlocksRuntime/runtime.c)
 
+
 set_source_files_properties(${DYLD_SRC_DIR}/src/start_glue.s PROPERTIES
     LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp")
 set_source_files_properties(${DYLD_SRC_DIR}/src/dyld_stub_binder.s PROPERTIES
@@ -54,6 +55,8 @@ set_source_files_properties(${DYLD_SRC_DIR}/src/dyld_stub_binder.s PROPERTIES
 
 set(_pd_cpu_caps_redirect ${CMAKE_CURRENT_BINARY_DIR}/compat-include/System/machine/cpu_capabilities.h)
 if(PUREDARWIN_ARM64)
+    set(_pd_cpu_caps_real ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/arm/cpu_capabilities.h)
+elseif(PUREDARWIN_ARM32)
     set(_pd_cpu_caps_real ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/arm/cpu_capabilities.h)
 else()
     set(_pd_cpu_caps_real ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/i386/cpu_capabilities.h)
@@ -127,11 +130,21 @@ target_link_libraries(libdyld PRIVATE
     ${CMAKE_BINARY_DIR}/src/Libraries/libSystem/libsystem_kernel/syscalls.a
     $<TARGET_FILE:corecrypto_static>
     $<TARGET_FILE:CrashReporterClient>
+    $<TARGET_FILE:openlibm_static>
     $<TARGET_FILE:libcxxabi_static>    # __cxa_atexit/__cxa_finalize[_ranges]
     # std::out_of_range (dyld3/Loading.cpp) needs std::logic_error's ctor. Up to
     # libc++ 10 that was in libc++abi's stdlib_stdexcept.cpp; LLVM 21 moved the
     # constructors to libc++'s own stdexcept.cpp.
     $<TARGET_FILE:libcxx_static>)
+
+# dyld's C++ exception and ABI references form archive cycles on ARM32. Force
+# these runtime archives into the image so the linker does not discard the
+# SjLj entry points before resolving the later dyld objects.
+if(PUREDARWIN_ARM32)
+    target_link_options(libdyld PRIVATE
+        -Wl,-force_load,$<TARGET_FILE:libcxxabi_static>
+        -Wl,-force_load,$<TARGET_FILE:libunwind_static>)
+endif()
 
 if(PUREDARWIN_COMPILER_RT_PREFIX)
     set(_pd_libdyld_compiler_rt "${PUREDARWIN_COMPILER_RT_PREFIX}/lib/libcompiler_rt.a")
@@ -152,10 +165,13 @@ target_link_options(libdyld PRIVATE
     # calls them, they're only ever called from outside (libunwind, via
     # libSystem_B_stub's own -Wl,-u/-reexport_library of this dylib), so
     # dead-code stripping sees them as unreferenced roots and removes them.
-    -Wl,-u,__dyld_find_unwind_sections
     -Wl,-u,__dyld_register_func_for_remove_image
     -Wl,-u,__NSGetExecutablePath
     -Wl,-u,___isPlatformVersionAtLeast)
+
+if(NOT PUREDARWIN_ARM32)
+    target_link_options(libdyld PRIVATE -Wl,-u,__dyld_find_unwind_sections)
+endif()
 
 if(CMAKE_HOST_APPLE)
     set(_libdyld_apple_ld_stub_dir ${CMAKE_CURRENT_BINARY_DIR}/apple-ld-stubs)

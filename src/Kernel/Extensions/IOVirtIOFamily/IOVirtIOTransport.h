@@ -21,6 +21,9 @@ struct VirtQueue {
                              // for not exceeding queueSize descriptors
                              // in flight at once (fine for a polling,
                              // one-request-at-a-time driver)
+    bool       stalled;      // a blocking poll gave up on a request the device
+                             // may still complete later; the next submit has
+                             // to resync before it can trust the used ring
 };
 
 struct VRingDesc {

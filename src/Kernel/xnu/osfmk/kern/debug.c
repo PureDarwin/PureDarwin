@@ -486,6 +486,21 @@ static void
 DebuggerLock(void)
 {
 	int my_cpu = cpu_number();
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/*
+	 * BCM2835 is single-core and its ARM1176 cannot perform LDREX/STREX
+	 * against the strongly-ordered bootstrap mapping that contains this
+	 * lock. Interrupts are already disabled, so a plain load/store is
+	 * sufficient and avoids taking another abort while reporting the
+	 * original early-boot failure.
+	 */
+	if (atomic_load_explicit(&debugger_cpu, memory_order_relaxed) != my_cpu) {
+		atomic_store_explicit(&debugger_cpu, my_cpu, memory_order_relaxed);
+		OSMemoryBarrier();
+	}
+	return;
+#else
 	int debugger_exp_cpu = DEBUGGER_NO_CPU;
 	assert(ml_get_interrupts_enabled() == FALSE);
 
@@ -498,6 +513,7 @@ DebuggerLock(void)
 	}
 
 	return;
+#endif
 }
 
 static void
@@ -512,7 +528,11 @@ DebuggerUnlock(void)
 	 * lock so we can simply store DEBUGGER_NO_CPU and follow with
 	 * a barrier.
 	 */
+	#if defined(ARM_BOARD_CONFIG_BCM2835)
+	atomic_store_explicit(&debugger_cpu, DEBUGGER_NO_CPU, memory_order_relaxed);
+	#else
 	atomic_store(&debugger_cpu, DEBUGGER_NO_CPU);
+	#endif
 	OSMemoryBarrier();
 
 	return;

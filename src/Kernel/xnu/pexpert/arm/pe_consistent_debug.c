@@ -27,6 +27,7 @@
  */
 
 #include <pexpert/pexpert.h>
+#include <machine/atomic.h>
 #include <pexpert/arm/consistent_debug.h>
 #include <pexpert/device_tree.h>
 #include <libkern/OSAtomic.h>
@@ -100,7 +101,7 @@ PE_consistent_debug_register(uint64_t record_id, uint64_t physaddr, uint64_t len
 	allocated_header->length = length;
 	allocated_header->physaddr = physaddr;
 	// Make sure the hdr/length are visible before the record_id.
-	__asm__ volatile ("dmb ish" : : : "memory");
+	ARM_DMB_ISH();
 	allocated_header->record_id = record_id;
 	return 0;
 }

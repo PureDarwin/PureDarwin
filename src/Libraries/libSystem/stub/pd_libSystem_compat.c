@@ -761,6 +761,7 @@ fprintf_l(FILE *stream, locale_t loc, const char *format, ...)
     return ret;
 }
 
+#if !defined(__arm__) && !defined(__arm64__) && !defined(__aarch64__)
 extern int __pd_readdir_r_inode64(DIR *dirp, struct dirent *entry, struct dirent **result) __asm("_readdir_r$INODE64");
 int __pd_readdir_r_plain(DIR *dirp, struct dirent *entry, struct dirent **result) __asm("_readdir_r");
 int
@@ -769,7 +770,6 @@ __pd_readdir_r_plain(DIR *dirp, struct dirent *entry, struct dirent **result)
     return __pd_readdir_r_inode64(dirp, entry, result);
 }
 
-#if !defined(__arm64__) && !defined(__aarch64__)
 extern DIR *__pd_opendir_inode64(const char *name) __asm("_opendir$INODE64");
 DIR *__pd_opendir_plain(const char *name) __asm("_opendir");
 DIR *
@@ -1083,21 +1083,66 @@ __pd_memset_pattern16(void *b, const void *pattern16, size_t len)
  * ldexpl: openlibm defines it as __weak_reference(scalbnl, ldexpl) in
  * s_scalbnl.c, but that alias is not emitted for Mach-O here - exporting
  * _scalbnl pulls the object in and ldexpl still comes out undefined. They are
- * the same operation for a binary-radix long double, which is what x86_64 has.
+ * the same operation for a binary-radix long double, which is what x86_64 and
+ * ARM have.
  *
- * scalbnl itself only exists on x86: openlibm builds it from its ld80/ tree,
- * which is the 80-bit x87 long double. On arm64 long double is plain double,
- * so scalbn is both available and exactly right.
+ * scalbnl itself is not emitted by the ARM openlibm build. On ARM long double
+ * is plain double, so scalbn is both available and exactly right.
  */
 long double
 ldexpl(long double x, int n)
 {
-#if defined(__aarch64__) || defined(__arm64__)
+#if defined(__arm__) || defined(__aarch64__) || defined(__arm64__)
     return scalbn((double)x, n);
 #else
     return scalbnl(x, n);
 #endif
 }
+
+#if defined(__arm__)
+/* ARMv6 has no usable long-double or floating-environment ABI in this port.
+ * Keep the libSystem surface linkable while preserving the double operation
+ * that the ABI actually implements. */
+long double
+scalbnl(long double x, int n)
+{
+    return (long double)scalbn((double)x, n);
+}
+
+int
+fegetenv(uint32_t *envp)
+{
+    if (envp != NULL) {
+        *envp = 0;
+    }
+    return 0;
+}
+
+int
+fesetenv(const uint32_t *envp)
+{
+    (void)envp;
+    return 0;
+}
+
+int
+__isfinitel(long double x)
+{
+    return __builtin_isfinite((double)x);
+}
+
+int
+__isnormall(long double x)
+{
+    return __builtin_isnormal((double)x);
+}
+
+int
+__isnanl(long double x)
+{
+    return __builtin_isnan((double)x);
+}
+#endif
 
 
 /*

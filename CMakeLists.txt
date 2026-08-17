@@ -72,7 +72,8 @@ endif()
 
 # Target CPU architecture. x86_64 is the primary/working target (QEMU boot,
 # loader, dyld). arm64 is an opt-in in progress: configure with
-# -DPUREDARWIN_ARCH=arm64. Falls back to CMAKE_OSX_ARCHITECTURES if that's set.
+# -DPUREDARWIN_ARCH=arm64 or armv6. Falls back to CMAKE_OSX_ARCHITECTURES if
+# that's set.
 if(NOT PUREDARWIN_ARCH)
     if(CMAKE_OSX_ARCHITECTURES)
         set(PUREDARWIN_ARCH "${CMAKE_OSX_ARCHITECTURES}")
@@ -88,7 +89,8 @@ if(PUREDARWIN_ARCH MATCHES "^(arm64|aarch64)$")
     set(PUREDARWIN_ARM64 TRUE)
     set(PUREDARWIN_ARM32 FALSE)
 elseif(PUREDARWIN_ARCH MATCHES "^(armv6|armv7|arm)$")
-    # 32-bit ARM. Kernel only for now - there is no userland for this arch.
+    # 32-bit ARM currently targets the ARM1176/ARMv6 userland as well as the
+    # BCM2835 kernel.
     set(PUREDARWIN_ARCH "armv6")
     set(PUREDARWIN_ARM64 FALSE)
     set(PUREDARWIN_ARM32 TRUE)

@@ -87,7 +87,7 @@ LEXT(cpu_idle_wfi)
  */
 
 #if	(__ARM_ARCH__ >= 7)
-	dsb
+	DSB_BARRIER
 	.globl EXT(wfi_inst)
 LEXT(wfi_inst)
 	wfi
@@ -115,7 +115,7 @@ LEXT(timer_grab)
 0:
 	ldr		r2, [r0, TIMER_HIGH]
 	ldr		r3, [r0, TIMER_LOW]
-	dmb		ish									// dmb ish
+	DMB_BARRIER									// dmb ish
 	ldr		r1, [r0, TIMER_HIGHCHK]
 	cmp		r1, r2
 	bne		0b
@@ -126,9 +126,9 @@ LEXT(timer_grab)
 	.globl	EXT(timer_advance_internal_32)
 LEXT(timer_advance_internal_32)
 	str		r1, [r0, TIMER_HIGHCHK]
-	dmb		ish									// dmb ish
+	DMB_BARRIER									// dmb ish
 	str		r2, [r0, TIMER_LOW]
-	dmb		ish									// dmb ish
+	DMB_BARRIER									// dmb ish
 	str		r1, [r0, TIMER_HIGH]
 	bx		lr
 
@@ -181,12 +181,12 @@ LEXT(set_fpscr)
         .globl EXT(OSSynchronizeIO)
 LEXT(OSSynchronizeIO)
 	.align          2
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 .macro SYNC_TLB_FLUSH
-	dsb	ish
-	isb
+	DSB_BARRIER
+	ISB_BARRIER
 .endmacro
 
 /*
@@ -203,7 +203,11 @@ LEXT(sync_tlb_flush)
 
 .macro FLUSH_MMU_TLB
 	mov     r0, #0
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	mcr     p15, 0, r0, c8, c7, 0				// ARMv6: invalidate unified TLB
+#else
 	mcr     p15, 0, r0, c8, c3, 0				// Invalidate Inner Shareable entire TLBs
+#endif
 .endmacro
 
 /*
@@ -263,7 +267,11 @@ LEXT(flush_core_tlb)
 	bx	lr
 
 .macro FLUSH_MMU_TLB_ENTRY
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	mcr     p15, 0, r0, c8, c7, 1				// ARMv6: invalidate unified TLB by MVA
+#else
 	mcr     p15, 0, r0, c8, c3, 1				// Invalidate TLB  Inner Shareableentry
+#endif
 .endmacro
 /*
  *	void flush_mmu_tlb_entry_async(uint32_t)
@@ -292,7 +300,11 @@ LEXT(flush_mmu_tlb_entry)
 
 .macro FLUSH_MMU_TLB_ENTRIES
 1:
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	mcr     p15, 0, r0, c8, c7, 1				// ARMv6: invalidate unified TLB by MVA
+#else
 	mcr     p15, 0, r0, c8, c3, 1				// Invalidate TLB Inner Shareable entry 
+#endif
 	add	r0, r0, ARM_PGBYTES				// Increment to the next page
 	cmp	r0, r1						// Loop if current address < end address
 	blt	1b
@@ -325,7 +337,11 @@ LEXT(flush_mmu_tlb_entries)
 
 
 .macro FLUSH_MMU_TLB_MVA_ENTRIES
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	mcr     p15, 0, r0, c8, c7, 1				// ARMv6: invalidate unified TLB by MVA
+#else
 	mcr     p15, 0, r0, c8, c3, 3				// Invalidate TLB Inner Shareable entries by mva
+#endif
 .endmacro
 
 /*
@@ -354,7 +370,11 @@ LEXT(flush_mmu_tlb_mva_entries)
 	bx	lr
 
 .macro FLUSH_MMU_TLB_ASID
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	mcr     p15, 0, r0, c8, c7, 2				// ARMv6: invalidate unified TLB by ASID
+#else
 	mcr     p15, 0, r0, c8, c3, 2				// Invalidate TLB Inner Shareable entries by asid
+#endif
 .endmacro
 
 /*
@@ -421,8 +441,8 @@ LEXT(set_mmu_ttb)
 	orr		r0, r0, #(TTBR_SETUP & 0xFF)		// Setup PTWs memory attribute
 	orr		r0, r0, #(TTBR_SETUP & 0xFF00)		// Setup PTWs memory attribute
 	mcr		p15, 0, r0, c2, c0, 0				// write r0 to translation table 0
-	dsb		ish
-	isb
+	DSB_BARRIER
+	ISB_BARRIER
 	bx		lr
 
 /*
@@ -435,8 +455,8 @@ LEXT(set_mmu_ttb_alternate)
 	orr		r0, r0, #(TTBR_SETUP & 0xFF)		// Setup PTWs memory attribute
 	orr		r0, r0, #(TTBR_SETUP & 0xFF00)		// Setup PTWs memory attribute
 	mcr		p15, 0, r0, c2, c0, 1				// write r0 to translation table 1
-	dsb		ish
-	isb
+	DSB_BARRIER
+	ISB_BARRIER
 	bx		lr
 
 /*
@@ -467,7 +487,7 @@ LEXT(get_aux_control)
 	.globl EXT(set_aux_control)
 LEXT(set_aux_control)
 	mcr		p15, 0, r0, c1, c0, 1				// write r0 back to aux control
-	isb
+	ISB_BARRIER
 	bx		lr
 
 
@@ -489,7 +509,7 @@ LEXT(get_mmu_control)
 	.globl EXT(set_mmu_control)
 LEXT(set_mmu_control)
 	mcr		p15, 0, r0, c1, c0, 0				// write r0 back to mmu control
-	isb
+	ISB_BARRIER
 	bx		lr
 
 /*
@@ -503,7 +523,7 @@ LEXT(mmu_kvtop)
 	cpsid	if									// Disable FIQ IRQ
 	mov		r1, r0
 	mcr		p15, 0, r1, c7, c8, 0				// Write V2PCWPR
-	isb
+	ISB_BARRIER
 	mrc		p15, 0, r0, c7, c4, 0				// Read PAR
 	ands	r2, r0, #0x1						// Test conversion aborted
 	bne		mmu_kvtophys_fail
@@ -533,7 +553,7 @@ LEXT(mmu_uvtop)
 	cpsid	if									// Disable FIQ IRQ
 	mov		r1, r0
 	mcr		p15, 0, r1, c7, c8, 2				// Write V2PCWUR
-	isb
+	ISB_BARRIER
 	mrc		p15, 0, r0, c7, c4, 0				// Read PAR
 	ands	r2, r0, #0x1						// Test conversion aborted
 	bne		mmu_uvtophys_fail
@@ -563,7 +583,7 @@ LEXT(mmu_kvtop_wpreflight)
 	cpsid	if									// Disable FIQ IRQ
 	mov		r1, r0
 	mcr		p15, 0, r1, c7, c8, 1				// Write V2PCWPW
-	isb
+	ISB_BARRIER
 	mrc		p15, 0, r0, c7, c4, 0				// Read PAR
 	ands	r2, r0, #0x1						// Test conversion aborted
 	bne		mmu_kvtophys_wpreflight_fail
@@ -593,7 +613,7 @@ mmu_kvtophys_wpreflight_ret:
 	.globl EXT(set_context_id)
 LEXT(set_context_id)
 	mcr		p15, 0, r0, c13, c0, 1
-	isb
+	ISB_BARRIER
 	bx		lr
 
 /*
@@ -640,7 +660,7 @@ LEXT(set_context_id)
 	msr		cpsr, r5				;\
 	ldr		r3, [r12, ACT_ASID]			;\
 	mcr		p15, 0, r3, c13, c0, 1			;\
-	isb
+	ISB_BARRIER
 #else
 #define	COPYIO_MAP_USER()
 #endif
@@ -689,7 +709,7 @@ L$0_noerror:
 	mcr		p15, 0, r3, c2, c0, 0				;\
 	mov		r3, #0						;\
 	mcr		p15, 0, r3, c13, c0, 1				;\
-	isb
+	ISB_BARRIER
 #else
 #define	COPYIO_UNMAP_USER()					\
 	mrc		p15, 0, r12, c13, c0, 4
@@ -1033,8 +1053,7 @@ LEXT(arm_debug_set_cp14)
 	str   	r0, [r2, CPU_USER_DEBUG]				// Set current user debug
 
 	// Lock the debug registers
-	movw    ip, #0xCE55
-	movt    ip, #0xC5AC
+	LOAD_IMM32(ip, 0xC5ACCE55)
 	mcr     p14, 0, ip, c1, c0, 4
 
 	// enable monitor mode (needed to set and use debug registers)
@@ -1162,12 +1181,27 @@ LEXT(reenable_async_aborts)
 	.align 2
 	.globl EXT(ml_get_speculative_timebase)
 LEXT(ml_get_speculative_timebase)
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/*
+	 * ARM1176 has no architectural generic timer. The BCM2835 system
+	 * timer is a free-running 64-bit, 1 MHz counter whose bus address
+	 * 0x7E003004/08 is ARM physical 0x20003004/08, mapped V=P by start.s.
+	 */
+	ldr		r12, =0x20003004
+1:
+	ldr		r1, [r12, #4]							// CHI
+	ldr		r0, [r12]							// CLO
+	ldr		r2, [r12, #4]							// CHI again
+	cmp		r1, r2
+	bne		1b
+#else
 1:
 	mrrc	p15, 0, r3, r1, c14							// Read the Time Base (CNTPCT), high => r1
 	mrrc	p15, 0, r0, r3, c14							// Read the Time Base (CNTPCT), low => r0
 	mrrc	p15, 0, r3, r2, c14							// Read the Time Base (CNTPCT), high => r2
 	cmp		r1, r2
 	bne		1b											// Loop until both high values are the same
+#endif
 
 	mrc		p15, 0, r12, c13, c0, 4						// Read TPIDRPRW
 	ldr		r3, [r12, ACT_CPUDATAP]						// Get current cpu data
@@ -1184,7 +1218,7 @@ LEXT(ml_get_speculative_timebase)
 	.align 2
 	.globl EXT(ml_get_timebase)
 LEXT(ml_get_timebase)
-	isb													// Required by ARMV7C.b section B8.1.2, ARMv8 section D6.1.2.
+	ISB_BARRIER													// Required by ARMV7C.b section B8.1.2, ARMv8 section D6.1.2.
 	b	EXT(ml_get_speculative_timebase)
 
 /*
@@ -1289,6 +1323,49 @@ LEXT(t8002_set_decrementer)
 	str		r0, [ip, r5]						// Store the new Decrementer
 	bx		lr
 #endif /* defined(ARM_BOARD_CLASS_T8002) */
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+/*
+ * The BCM2835 System Timer has no countdown register, just a free-running
+ * counter and four comparators, so the decrementer is kept as a deadline in
+ * compare channel 3 and converted back to a remaining count on demand.
+ *
+ * Both routines are reached by a tail branch from ml_get/set_decrementer with
+ * r3 holding the cpu_data pointer, so only the caller-saved registers are
+ * touched. CPU_TBD_HARDWARE_ADDR is the System Timer base.
+ */
+	.text
+	.align 2
+	.globl EXT(bcm2835_get_decrementer)
+LEXT(bcm2835_get_decrementer)
+	ldr		ip, [r3, CPU_TBD_HARDWARE_ADDR]				// System Timer base
+	ldr		r0, [ip, #BCM2835_ST_C3]					// Deadline
+	ldr		r1, [ip, #BCM2835_ST_CLO]					// Counter, low word
+	sub		r0, r0, r1									// Ticks remaining
+	bx		lr
+
+	.text
+	.align 2
+	.globl EXT(bcm2835_set_decrementer)
+LEXT(bcm2835_set_decrementer)
+	cmp		r0, #BCM2835_DEC_MIN						// Floor the deadline: the
+	movlt	r0, #BCM2835_DEC_MIN						// comparator matches only on
+														// equality, so a deadline in
+														// the past is missed until the
+														// counter wraps
+	str		r0, [r3, CPU_DECREMENTER]					// Save the new dec value
+	ldr		ip, [r3, CPU_TBD_HARDWARE_ADDR]				// System Timer base
+1:
+	ldr		r1, [ip, #BCM2835_ST_CLO]					// Counter, low word
+	add		r1, r1, r0									// Deadline = now + dec
+	str		r1, [ip, #BCM2835_ST_C3]					// Arm compare channel 3
+	ldr		r2, [ip, #BCM2835_ST_CLO]					// Re-read: if the counter got
+	sub		r2, r1, r2									// past the deadline while we
+	cmp		r2, #1										// were arming it, the equality
+	movlt	r0, #BCM2835_DEC_MIN						// match is gone for a whole
+	blt		1b											// wrap, so push it out and retry
+	bx		lr
+#endif /* defined(ARM_BOARD_CONFIG_BCM2835) */
 
 LOAD_ADDR_GEN_DEF(kernel_pmap_store)
 

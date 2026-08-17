@@ -34,7 +34,6 @@
   # to fit in RAM twice over on the way in, so anything that is not needed to
   # run the system is worth removing.
 , ramdiskPrune ? []
-, rawDebugLog ? false
   # xnu-loader reads this off the ESP at \EFI\BOOT\boot-args.txt
   # it falls back if it cannot find a boot-args.txt, so not strictly needed here
   # but generally nice to have so we can override things easily now
@@ -100,13 +99,6 @@ ${if rootFsType == "hfs" then ''
     mmd -i esp.img ::/EFI ::/EFI/BOOT
     mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}
     mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
-${lib.optionalString rawDebugLog ''
-    # Keep the log file's cluster chain fixed before boot. The kernel logger
-    # will overwrite data sectors only; it must never allocate FAT clusters
-    # or update directory metadata while handling an early failure.
-    truncate -s 4194304 pdlog.bin
-    mcopy -o -i esp.img pdlog.bin                           ::/EFI/BOOT/PDLOG.BIN
-''}
     printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
     mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt
     fi

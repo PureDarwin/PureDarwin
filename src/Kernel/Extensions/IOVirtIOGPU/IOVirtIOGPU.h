@@ -41,8 +41,10 @@ private:
     uint32_t     fPitch;
     uint32_t     fResourceId;
     uint32_t     fScanoutResourceId;
+    uint32_t     fScanoutWidth, fScanoutHeight; // geometry SET_SCANOUT was last given
     bool         fNativePresent;
     bool         fPresentPending;
+    uint32_t     fPresentIdleTicks;  // flush ticks with no client present
     uint32_t     fPresentX1, fPresentY1, fPresentX2, fPresentY2;
 
     // virgl/3D state. fVirglOK is set when the device offered
@@ -94,6 +96,10 @@ private:
     void     gpuProbeVirgl();
 
     bool     gpuSetupCursorResource();
+
+    // Notice a host-side display reconfiguration (config-space events_read)
+    // and re-point the scanout at it.
+    void     checkDisplayEvents();
 
     void     scheduleFlush();
     static void flushCallback(thread_call_param_t self, thread_call_param_t);

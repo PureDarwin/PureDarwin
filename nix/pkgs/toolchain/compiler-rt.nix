@@ -11,6 +11,7 @@
 , llvmVersion
 , targetTriple ? "x86_64-apple-darwin20.4"
 , targetArch ? "x86_64"
+, toolchainTriple ? targetTriple
 }:
 
 let
@@ -47,7 +48,10 @@ stdenv.mkDerivation {
     export PATH="${darwinCrossToolchain}/bin:$PATH"
 
     mkdir -p toolshim
-    for cand in ${targetTriple}-lipo arm64-apple-darwin20.4-lipo; do
+    # lipo is a host tool and arch-agnostic, so any of the triples in the
+    # toolchain will do - the armv6 build in particular has no lipo of its own.
+    for cand in ${targetTriple}-lipo arm64-apple-darwin20.4-lipo \
+                x86_64-apple-darwin20.4-lipo; do
       if [ -x "${darwinCrossToolchain}/bin/$cand" ]; then
         ln -sf "${darwinCrossToolchain}/bin/$cand" toolshim/lipo
         break
@@ -59,7 +63,7 @@ stdenv.mkDerivation {
     fi
     export PATH="$PWD/toolshim:$PATH"
 
-    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
+    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -arch ${targetArch}"
 
     # PureDarwin exports the builtins from libSystem (they are named in
     # libSystem.exports), and -exported_symbols_list cannot promote a hidden
@@ -70,14 +74,14 @@ stdenv.mkDerivation {
       -DCMAKE_SYSTEM_NAME=Darwin \
       -DCMAKE_SYSTEM_PROCESSOR=${targetArch} \
       -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-      -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang \
+      -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/${toolchainTriple}-clang \
       -DCMAKE_C_COMPILER_TARGET=${targetTriple} \
-      -DCMAKE_CXX_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang++ \
+      -DCMAKE_CXX_COMPILER=${darwinCrossToolchain}/bin/${toolchainTriple}-clang++ \
       -DCMAKE_CXX_COMPILER_TARGET=${targetTriple} \
-      -DCMAKE_ASM_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang \
+      -DCMAKE_ASM_COMPILER=${darwinCrossToolchain}/bin/${toolchainTriple}-clang \
       -DCMAKE_ASM_COMPILER_TARGET=${targetTriple} \
-      -DCMAKE_AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
-      -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
+      -DCMAKE_AR=${darwinCrossToolchain}/bin/${toolchainTriple}-ar \
+      -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/${toolchainTriple}-ranlib \
       -DCMAKE_INSTALL_NAME_TOOL=${nativeMesonTools}/bin/install_name_tool \
       -DCMAKE_C_FLAGS="$commonFlags" \
       -DCMAKE_ASM_FLAGS="$commonFlags" \

@@ -273,7 +273,7 @@ SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) dcc_serial_functions 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
-#define shmcon_barrier() do {__asm__ volatile("dmb ish" : : : "memory");} while(0)
+#define shmcon_barrier() do { ARM_DMB_ISH(); } while(0)
 
 struct shm_buffer_info {
 	uint64_t        base;
@@ -629,6 +629,17 @@ SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) dockchannel_uart_seri
 
 /****************************************************************************/
 #ifdef  PI3_UART
+/*
+ * The GPIO pull-up/pull-down sequence requires a wait of 150 core cycles with
+ * nothing else touching the bus. This file is shared by the arm and arm64
+ * builds, so the delay cannot be written in either ISA's assembly alone.
+ */
+#if defined (__arm64__)
+#define PI3_SPIN_ONE_CYCLE()    asm volatile ("add x0, x0, xzr")
+#else
+#define PI3_SPIN_ONE_CYCLE()    asm volatile ("mov r0, r0")
+#endif
+
 static vm_offset_t pi3_gpio_base_vaddr = 0;
 static vm_offset_t pi3_aux_base_vaddr = 0;
 static int
@@ -685,7 +696,7 @@ pi3_uart_init(void)
 	__builtin_arm_isb(ISB_SY);
 
 	for (i = 0; i < 150; i++) {
-		asm volatile ("add x0, x0, xzr");
+		PI3_SPIN_ONE_CYCLE();
 	}
 
 	__builtin_arm_isb(ISB_SY);
@@ -695,7 +706,7 @@ pi3_uart_init(void)
 	__builtin_arm_isb(ISB_SY);
 
 	for (i = 0; i < 150; i++) {
-		asm volatile ("add x0, x0, xzr");
+		PI3_SPIN_ONE_CYCLE();
 	}
 
 	__builtin_arm_isb(ISB_SY);
@@ -775,6 +786,12 @@ vmapple_uart_receive_data(void)
 static void
 vmapple_uart_init(void)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/* LK has already configured the Pi 1 PL011 and its clock for 115200 baud.
+	 * Preserve that setup so the kernel continues on the boot console without
+	 * changing speed underneath the user. */
+	return;
+#else
 	VMAPPLE_UART0_CR = 0x0;
 	VMAPPLE_UART0_ECR = 0x0;
 	VMAPPLE_UART0_LCR_H = (
@@ -793,6 +810,7 @@ vmapple_uart_init(void)
 		PL011_CR_TX_ENABLE |
 		PL011_CR_RX_ENABLE
 		);
+#endif
 }
 
 SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) vmapple_uart_serial_functions =

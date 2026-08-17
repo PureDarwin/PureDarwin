@@ -6,6 +6,7 @@ target_sources(PDArmPlatformExpert PRIVATE
     PDArmCPU.cpp
     PDArmGIC.cpp
     PDAppleAIC.cpp
+    PDBcm2835IC.cpp
 )
 
 install(TARGETS PDArmPlatformExpert DESTINATION System/Library/Extensions COMPONENT BaseSystem)

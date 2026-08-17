@@ -7,6 +7,14 @@ set(_puredarwin_prebuilt_libsystem_kernel "${_puredarwin_prebuilt_libsystem_root
 set(_puredarwin_prebuilt_libsyscall_traps "${_puredarwin_prebuilt_libsystem_root}/usr/lib/system/syscalls.a")
 set(_puredarwin_prebuilt_dyld "${_puredarwin_prebuilt_libsystem_root}/usr/lib/dyld")
 
+# libSystem.B.dylib reexports /usr/lib/system/libdyld.dylib. When linking
+# against a prebuilt libSystem with an SDK sysroot, ld otherwise resolves
+# that install name to the SDK's arm64/x86_64 TBD stub instead of the
+# architecture-matched dyld built alongside libSystem.
+add_link_options(
+    "-Wl,-L,${_puredarwin_prebuilt_libsystem_root}/usr/lib/system"
+    "-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${_puredarwin_prebuilt_libdyld}")
+
 foreach(_puredarwin_prebuilt_path
         "${_puredarwin_prebuilt_libsystem_b}"
         "${_puredarwin_prebuilt_libsystem}"

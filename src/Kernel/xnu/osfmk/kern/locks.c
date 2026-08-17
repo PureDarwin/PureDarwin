@@ -70,6 +70,7 @@
 #include <kern/thread.h>
 #include <kern/processor.h>
 #include <kern/sched_prim.h>
+#include <kern/startup.h>
 #include <kern/debug.h>
 #include <libkern/section_keywords.h>
 #include <machine/atomic.h>
@@ -141,7 +142,22 @@ __startup_func
 static void
 lck_mod_init(void)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+#define BCM2835_LCK_TAG(ch) do {                                              \
+	volatile uint32_t * const dr = (volatile uint32_t *)0x20201000;         \
+	volatile uint32_t * const fr = (volatile uint32_t *)0x20201018;         \
+	const char tag[] = { 'L', (ch), '\r', '\n' };                           \
+	for (unsigned int i = 0; i < sizeof(tag); i++) {                         \
+		while ((*fr & 0x20U) != 0) { }                                    \
+		*dr = (uint32_t)tag[i];                                           \
+	}                                                                        \
+} while (0)
+	BCM2835_LCK_TAG('0');
+#endif
 	queue_init(&lck_grp_queue);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_LCK_TAG('1');
+#endif
 
 	/*
 	 * Need to bootstrap the LockCompatGroup instead of calling lck_grp_init() here. This avoids
@@ -149,7 +165,13 @@ lck_mod_init(void)
 	 */
 
 	bzero(&LockCompatGroup, sizeof(lck_grp_t));
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_LCK_TAG('2');
+#endif
 	(void) strncpy(LockCompatGroup.lck_grp_name, "Compatibility APIs", LCK_GRP_MAX_NAME);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_LCK_TAG('3');
+#endif
 
 	LockCompatGroup.lck_grp_attr = LCK_ATTR_NONE;
 
@@ -161,14 +183,27 @@ lck_mod_init(void)
 	}
 
 	os_ref_init(&LockCompatGroup.lck_grp_refcnt, NULL);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_LCK_TAG('4');
+#endif
 
 	enqueue_tail(&lck_grp_queue, (queue_entry_t)&LockCompatGroup);
 	lck_grp_cnt = 1;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_LCK_TAG('5');
+#endif
 
 	lck_grp_attr_setdefault(&LockDefaultGroupAttr);
 	lck_attr_setdefault(&LockDefaultLckAttr);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_LCK_TAG('6');
+#endif
 
 	lck_mtx_init_ext(&lck_grp_lock, &lck_grp_lock_ext, &LockCompatGroup, &LockDefaultLckAttr);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	BCM2835_LCK_TAG('7');
+#undef BCM2835_LCK_TAG
+#endif
 }
 STARTUP(LOCKS_EARLY, STARTUP_RANK_FIRST, lck_mod_init);
 
@@ -293,10 +328,23 @@ lck_grp_init(lck_grp_t * grp, const char * grp_name, lck_grp_attr_t * attr)
 
 	os_ref_init(&grp->lck_grp_refcnt, NULL);
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	bool bootstrap_unlocked = startup_phase < STARTUP_SUB_KPRINTF;
+	if (!bootstrap_unlocked) {
+		lck_mtx_lock(&lck_grp_lock);
+	}
+#else
 	lck_mtx_lock(&lck_grp_lock);
+#endif
 	enqueue_tail(&lck_grp_queue, (queue_entry_t)grp);
 	lck_grp_cnt++;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	if (!bootstrap_unlocked) {
+		lck_mtx_unlock(&lck_grp_lock);
+	}
+#else
 	lck_mtx_unlock(&lck_grp_lock);
+#endif
 }
 
 /*
@@ -323,6 +371,14 @@ void
 lck_grp_reference(
 	lck_grp_t       *grp)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	if (startup_phase < STARTUP_SUB_KPRINTF) {
+		volatile uint32_t *ref =
+		    (volatile uint32_t *)&grp->lck_grp_refcnt.ref_count;
+		*ref = *ref + 1;
+		return;
+	}
+#endif
 	os_ref_retain(&grp->lck_grp_refcnt);
 }
 
@@ -370,6 +426,12 @@ lck_grp_lckcnt_incr(
 		return panic("lck_grp_lckcnt_incr(): invalid lock type: %d\n", lck_type);
 	}
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	*lckcnt = *lckcnt + 1;
+	(void)ml_set_interrupts_enabled(intr);
+	return;
+#endif
 	os_atomic_inc(lckcnt, relaxed);
 }
 
@@ -403,7 +465,13 @@ lck_grp_lckcnt_decr(
 		return;
 	}
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	updated = (int)(--*lckcnt);
+	(void)ml_set_interrupts_enabled(intr);
+#else
 	updated = os_atomic_dec(lckcnt, relaxed);
+#endif
 	assert(updated >= 0);
 }
 
@@ -506,7 +574,24 @@ hw_lock_init(hw_lock_t lock)
 static inline bool
 hw_lock_trylock_contended(hw_lock_t lock, uintptr_t newval)
 {
-#if OS_ATOMIC_USE_LLSC
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	uintptr_t oldval, scratch, saved_cpsr;
+	__asm__ volatile (
+	    "mrs %2, cpsr\n"
+	    "cpsid i\n"
+	    "swp %0, %3, [%4]\n"
+	    "cmp %0, #0\n"
+	    "swpne %1, %0, [%4]\n"
+	    "msr cpsr_c, %2\n"
+	    : "=&r" (oldval), "=&r" (scratch), "=&r" (saved_cpsr)
+	    : "r" (newval), "r" (&lock->lock_data)
+	    : "cc", "memory");
+	if (oldval != 0) {
+		return false;
+	}
+	__builtin_arm_dmb(DMB_ISH);
+	return true;
+#elif OS_ATOMIC_USE_LLSC
 	uintptr_t oldval;
 	os_atomic_rmw_loop(&lock->lock_data, oldval, newval, acquire, {
 		if (oldval != 0) {
@@ -524,7 +609,7 @@ hw_lock_trylock_contended(hw_lock_t lock, uintptr_t newval)
 	}
 #endif // OS_ATOMIC_HAS_LLSC
 	return os_atomic_cmpxchg(&lock->lock_data, 0, newval, acquire);
-#endif // !OS_ATOMIC_USE_LLSC
+#endif // ARM_BOARD_CONFIG_BCM2835 / !OS_ATOMIC_USE_LLSC
 }
 
 /*
@@ -947,7 +1032,15 @@ hw_unlock_bit_internal(hw_lock_bit_t *lock, unsigned int bit)
 {
 	uint32_t        mask = (1 << bit);
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/* Paired with the interrupt-serialized BCM2835 test-and-set primitive. */
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	*(volatile uint32_t *)lock &= ~mask;
+	__asm__ volatile ("" ::: "memory");
+	ml_set_interrupts_enabled(intr);
+#else
 	os_atomic_andnot(lock, mask, release);
+#endif
 #if __arm__
 	set_event();
 #endif
@@ -3208,10 +3301,27 @@ __startup_func
 void
 lck_grp_attr_startup_init(struct lck_grp_attr_startup_spec *sp)
 {
-	lck_grp_attr_t *attr = sp->grp_attr;
+	lck_grp_attr_t *attr;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('y');
+#endif
+	attr = sp->grp_attr;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('z');
+#endif
 	lck_grp_attr_setdefault(attr);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('A');
+#endif
 	attr->grp_attr_val |= sp->grp_attr_set_flags;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('B');
+#endif
 	attr->grp_attr_val &= ~sp->grp_attr_clear_flags;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('C');
+#endif
 }
 
 __startup_func
@@ -3235,7 +3345,24 @@ __startup_func
 void
 lck_spin_startup_init(struct lck_spin_startup_spec *sp)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	lck_spin_t *lck;
+	lck_grp_t *grp;
+	lck_attr_t *attr;
+
+	pd_bcm2835_early_uart_tag('t');
+	lck = sp->lck;
+	pd_bcm2835_early_uart_tag('u');
+	grp = sp->lck_grp;
+	pd_bcm2835_early_uart_tag('v');
+	attr = sp->lck_attr;
+	pd_bcm2835_early_uart_tag('w');
+	lck_spin_init(lck, grp, attr);
+	pd_bcm2835_early_uart_tag('x');
+#else
 	lck_spin_init(sp->lck, sp->lck_grp, sp->lck_attr);
+#endif
 }
 
 __startup_func

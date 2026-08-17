@@ -205,6 +205,14 @@ extern void thread_call_delayed_timer(timer_call_param_t p0, timer_call_param_t 
 
 LCK_GRP_DECLARE(thread_call_lck_grp, "thread_call");
 
+/*
+ * Set once the group queues exist and the daemon is running. Callers that can
+ * run before kernel_bootstrap_thread() reaches thread_call_initialize() have to
+ * consult this: enqueueing onto a group whose queue heads are still zero walks
+ * off a NULL next/prev and panics in __QUEUE_ELT_VALIDATE.
+ */
+static bool thread_call_ready = false;
+
 
 static void
 thread_call_lock_spin(thread_call_group_t group)
@@ -529,6 +537,14 @@ thread_call_initialize(void)
 	}
 
 	thread_deallocate(thread);
+
+	thread_call_ready = true;
+}
+
+bool
+thread_call_is_ready(void)
+{
+	return thread_call_ready;
 }
 
 void

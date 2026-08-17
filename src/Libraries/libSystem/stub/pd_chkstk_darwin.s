@@ -13,4 +13,8 @@
     .text
     .globl ____chkstk_darwin
 ____chkstk_darwin:
+#if defined(__arm__) || defined(__arm64__)
+    bx lr
+#else
     ret
+#endif

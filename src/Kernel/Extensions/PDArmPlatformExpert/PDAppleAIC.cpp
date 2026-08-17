@@ -129,7 +129,7 @@ PDAppleAIC::initAIC(void)
 	}
 
 	IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
-		phys, size, kIODirectionOutIn | kIOMemoryMapperNone);
+		phys, size, kIODirectionOutIn);
 	if (desc == NULL) {
 		return false;
 	}

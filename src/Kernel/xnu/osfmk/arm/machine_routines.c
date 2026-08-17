@@ -406,10 +406,10 @@ ml_parse_cpu_topology(void)
 	uint32_t cpu_boot_arg;
 	int err;
 
-#if defined(QEMUVIRT)
-	/* QEMU virt exposes generic ARM CPU nodes, not Apple's EDT topology
-	 * schema. The virt target currently boots one CPU; initialize the same
-	 * single-cluster topology without requiring Apple-only DT properties. */
+#if defined(QEMUVIRT) || defined(ARM_BOARD_CONFIG_BCM2835)
+       /* QEMU virt and BCM2835 do not expose Apple's EDT CPU-topology schema.
+        * Both targets currently boot one CPU; initialize a single SMP cluster
+        * without requiring Apple-only /cpus properties. */
 	cpu_boot_arg = 1;
 	PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));
 	if (cpu_boot_arg == 0) {
@@ -447,7 +447,7 @@ ml_parse_cpu_topology(void)
 	ml_topology_cluster_t *cluster = &topology_info.clusters[0];
 	unsigned int cpu_id = 0;
 	while (kSuccess == SecureDTIterateEntries(&iter, &child)) {
-#if MACH_ASSERT && !defined(QEMUVIRT)
+#if MACH_ASSERT && !defined(QEMUVIRT) && !defined(ARM_BOARD_CONFIG_BCM2835)
 		unsigned int propSize;
 		void const *prop = NULL;
 		if (cpu_id == 0) {

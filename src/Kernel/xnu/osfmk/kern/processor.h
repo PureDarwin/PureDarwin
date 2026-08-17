@@ -207,7 +207,9 @@ struct processor_set {
 	cpumap_t                cpu_running_foreign;
 	sched_bucket_t          cpu_running_buckets[MAX_CPUS];
 
+#if !defined(ARM_BOARD_CONFIG_BCM2835)
 #define SCHED_PSET_TLOCK (1)
+#endif
 #if     defined(SCHED_PSET_TLOCK)
 /* TODO: reorder struct for temporal cache locality */
 	__attribute__((aligned(128))) lck_ticket_t      sched_lock;

@@ -66,4 +66,37 @@
 // Parameter for __builtin_arm_isb
 #define ISB_SY          0xf
 
+#if defined (__arm__) && (__ARM_ARCH < 7)
+/*
+ * ARMv6 has no DMB/DSB/ISB instructions - the barriers are CP15 operations,
+ * and LLVM has no way to select the llvm.arm.{dmb,dsb,isb} intrinsics for a
+ * pre-v7 target ("Cannot select: intrinsic %llvm.arm.dmb"). Supply the CP15
+ * forms under the builtin names so the ~80 call sites across the tree need no
+ * changes.
+ *
+ * The shareability/ordering parameter is discarded deliberately: ARMv6 has no
+ * such encoding, and the CP15 operation is a full system barrier - stronger
+ * than any variant that could have been asked for, never weaker.
+ */
+#define __builtin_arm_dmb(_domain) \
+	__asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory")
+#define __builtin_arm_dsb(_domain) \
+	__asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (0) : "memory")
+#define __builtin_arm_isb(_domain) \
+	__asm__ volatile ("mcr p15, 0, %0, c7, c5, 4" : : "r" (0) : "memory")
+#endif /* __arm__ && __ARM_ARCH < 7 */
+
+/*
+ * Hand-written barriers in the shared arm/ sources spell out the ARMv7+
+ * mnemonics, which do not assemble for ARMv6. Route them through the builtins
+ * instead, which are real instructions on v7+ and CP15 operations above.
+ */
+#if defined (__arm__) && (__ARM_ARCH < 7)
+#define ARM_DMB_ISH()   __builtin_arm_dmb(DMB_ISH)
+#define ARM_DSB_LD()    __builtin_arm_dsb(DSB_LD)
+#else
+#define ARM_DMB_ISH()   __asm__ volatile ("dmb ish" : : : "memory")
+#define ARM_DSB_LD()    __asm__ volatile ("dsb ld"  : : : "memory")
+#endif
+
 #endif // _ARM_ATOMIC_H_

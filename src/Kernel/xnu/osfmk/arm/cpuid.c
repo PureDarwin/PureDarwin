@@ -286,6 +286,21 @@ arm_mvfp_info(void)
 void
 do_cacheid(void)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	cpuid_cache_info.c_unified = FALSE;
+	cpuid_cache_info.c_isize = 16 * 1024;
+	cpuid_cache_info.c_i_ppage = FALSE;
+	cpuid_cache_info.c_dsize = 16 * 1024;
+	cpuid_cache_info.c_d_ppage = FALSE;
+	cpuid_cache_info.c_type = CACHE_WRITE_BACK;
+	cpuid_cache_info.c_linesz = 32;
+	cpuid_cache_info.c_assoc = 4;
+	cpuid_cache_info.c_l2size = 0;
+	cpuid_cache_info.c_bulksize_op = cpuid_cache_info.c_dsize;
+	cpuid_cache_info.c_inner_cache_size = cpuid_cache_info.c_dsize;
+	vm_cache_geometry_colors = 1;
+	return;
+#else
 	arm_cache_clidr_info_t arm_cache_clidr_info;
 	arm_cache_ccsidr_info_t arm_cache_ccsidr_info;
 
@@ -386,6 +401,7 @@ do_cacheid(void)
 	    (cpuid_cache_info.c_unified) ? "unified" : "separate",
 	    cpuid_cache_info.c_assoc,
 	    cpuid_cache_info.c_linesz);
+#endif /* ARM_BOARD_CONFIG_BCM2835 */
 }
 
 cache_info_t   *

@@ -37,6 +37,7 @@
  *	Purpose:	Set up and export a RO/RW page
  */
 #include <libkern/section_keywords.h>
+#include <machine/atomic.h>
 #include <mach/mach_types.h>
 #include <mach/machine.h>
 #include <mach/vm_map.h>
@@ -260,7 +261,7 @@ commpage_set_timestamp(
 	commpage_timeofday_datap->TimeStamp_tick = 0x0ULL;
 
 #if     (__ARM_ARCH__ >= 7)
-	__asm__ volatile ("dmb ish");
+	ARM_DMB_ISH();
 #endif
 	commpage_timeofday_datap->TimeStamp_sec = secs;
 	commpage_timeofday_datap->TimeStamp_frac = frac;
@@ -268,7 +269,7 @@ commpage_set_timestamp(
 	commpage_timeofday_datap->Ticks_per_sec = tick_per_sec;
 
 #if     (__ARM_ARCH__ >= 7)
-	__asm__ volatile ("dmb ish");
+	ARM_DMB_ISH();
 #endif
 	commpage_timeofday_datap->TimeStamp_tick = tbr;
 
@@ -566,10 +567,10 @@ commpage_set_remotetime_params(double rate, uint64_t base_local_ts, uint64_t bas
 #ifdef __arm64__
 		struct bt_params *paramsp = (struct bt_params *)(_COMM_PAGE_REMOTETIME_PARAMS + _COMM_PAGE_RW_OFFSET);
 		paramsp->base_local_ts = 0;
-		__asm__ volatile ("dmb ish" ::: "memory");
+		ARM_DMB_ISH();
 		paramsp->rate = rate;
 		paramsp->base_remote_ts = base_remote_ts;
-		__asm__ volatile ("dmb ish" ::: "memory");
+		ARM_DMB_ISH();
 		paramsp->base_local_ts = base_local_ts;  //This will act as a generation count
 #else
 		(void)rate;

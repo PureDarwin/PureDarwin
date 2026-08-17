@@ -25,13 +25,29 @@
 # - /usr/local/lib/loaderd/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
 # - /usr/local/lib/dyld_stub/libsystem_kernel.a (copy of /usr/local/lib/dyld/libsystem_kernel.a)
 
+if(PUREDARWIN_ARM32)
+    # The Darwin 32-bit ARM syscall aliases are shared with iPhoneOS.  The
+    # MacOSX platform tree only contains the 64-bit ARM map.
+    set(_libsystem_kernel_syscall_platform iPhoneOS)
+else()
+    set(_libsystem_kernel_syscall_platform MacOSX)
+endif()
+
+if(PUREDARWIN_ARM32 OR PUREDARWIN_ARCH STREQUAL "x86_64")
+    # The C implementation covers ARMv6 and x86_64; the legacy assembly
+    # implementation is retained for the 32-bit ARM and i386 paths that use it.
+    set(_mach_approximate_time_source wrappers/mach_approximate_time.c)
+else()
+    set(_mach_approximate_time_source wrappers/mach_approximate_time.s)
+endif()
+
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=${PUREDARWIN_ARCH}
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
         ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd/kern/syscalls.master
         ${CMAKE_CURRENT_SOURCE_DIR}/custom ${CMAKE_CURRENT_SOURCE_DIR}/Platforms
-        MacOSX ${CMAKE_CURRENT_BINARY_DIR}/sys
+        ${_libsystem_kernel_syscall_platform} ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=${PUREDARWIN_ARCH}
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-syscalls.pl
         ${CMAKE_CURRENT_BINARY_DIR}/sys/stubs.list ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
@@ -112,8 +128,7 @@ target_sources(libsystem_kernel_static PRIVATE
     wrappers/kdebug_trace.c
     wrappers/kill.c
     wrappers/mach_absolute_time.s
-    wrappers/mach_approximate_time.c
-    wrappers/mach_approximate_time.s
+    ${_mach_approximate_time_source}
     wrappers/mach_boottime.c
     wrappers/mach_bridge_remote_time.c
     wrappers/mach_continuous_time.c

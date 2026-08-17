@@ -33,11 +33,19 @@
 #define _ARM_ARCH_7
 #endif
 
-#if defined (_ARM_ARCH_7) || defined (__ARM_ARCH_6K__) || defined (__ARM_ARCH_6ZK__)
+/*
+ * __ARM_ARCH_6KZ__ is the spelling current compilers use for what this file
+ * calls 6ZK (ARM1176JZF-S and friends: v6K plus TrustZone). Without it none of
+ * the umbrellas below are ever defined on such a target, which shows up far
+ * away as a missing ARCHNAME in OSKext.cpp.
+ */
+#if defined (_ARM_ARCH_7) || defined (__ARM_ARCH_6K__) || \
+        defined (__ARM_ARCH_6ZK__) || defined (__ARM_ARCH_6KZ__)
 #define _ARM_ARCH_6K
 #endif
 
-#if defined (_ARM_ARCH_7) || defined (__ARM_ARCH_6Z__) || defined (__ARM_ARCH_6ZK__)
+#if defined (_ARM_ARCH_7) || defined (__ARM_ARCH_6Z__) || \
+        defined (__ARM_ARCH_6ZK__) || defined (__ARM_ARCH_6KZ__)
 #define _ARM_ARCH_6Z
 #endif
 

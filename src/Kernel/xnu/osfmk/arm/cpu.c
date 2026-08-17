@@ -207,19 +207,42 @@ cpu_idle_exit(boolean_t from_reset __unused)
 void
 cpu_init(void)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	extern void pd_bcm2835_early_uart_tag(char phase);
+	pd_bcm2835_early_uart_tag('Q');
+#endif
 	cpu_data_t     *cdp = getCpuDatap();
 	arm_cpu_info_t *cpu_info_p;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('R');
+#endif
+
 	if (cdp->cpu_type != CPU_TYPE_ARM) {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('S');
+#endif
 		cdp->cpu_type = CPU_TYPE_ARM;
 
 		timer_call_queue_init(&cdp->rtclock_timer.queue);
 		cdp->rtclock_timer.deadline = EndOfAllTime;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('T');
+#endif
 
 		if (cdp == &BootCpuData) {
 			do_cpuid();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+			pd_bcm2835_early_uart_tag('U');
+#endif
 			do_cacheid();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+			pd_bcm2835_early_uart_tag('V');
+#endif
 			do_mvfpid();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+			pd_bcm2835_early_uart_tag('W');
+#endif
 		} else {
 			/*
 			 * We initialize non-boot CPUs here; the boot CPU is
@@ -229,8 +252,14 @@ cpu_init(void)
 		}
 		/* ARM_SMP: Assuming identical cpu */
 		do_debugid();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('X');
+#endif
 
 		cpu_info_p = cpuid_info();
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('Y');
+#endif
 
 		/* switch based on CPU's reported architecture */
 		switch (cpu_info_p->arm_info.arm_arch) {
@@ -267,12 +296,18 @@ cpu_init(void)
 		}
 
 		cdp->cpu_threadtype = CPU_THREADTYPE_NONE;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		pd_bcm2835_early_uart_tag('Z');
+#endif
 	}
 	cdp->cpu_stat.irq_ex_cnt_wake = 0;
 	cdp->cpu_stat.ipi_cnt_wake = 0;
 	cdp->cpu_running = TRUE;
 	cdp->cpu_sleep_token_last = cdp->cpu_sleep_token;
 	cdp->cpu_sleep_token = 0x0UL;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_early_uart_tag('P');
+#endif
 }
 
 void

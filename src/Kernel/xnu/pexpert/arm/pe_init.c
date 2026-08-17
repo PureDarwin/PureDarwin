@@ -4,6 +4,7 @@
  *    arm platform expert initialization.
  */
 #include <sys/types.h>
+#include <machine/atomic.h>
 #include <sys/kdebug.h>
 #include <mach/vm_param.h>
 #include <pexpert/protos.h>
@@ -387,7 +388,10 @@ PE_init_platform(boolean_t vm_initialized, void *args)
 	if (PE_state.initialized == FALSE) {
 		PE_state.initialized = TRUE;
 		PE_state.bootArgs = boot_args_ptr;
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(ARM_BOARD_CONFIG_BCM2835)
+		/* BCM2835 boot_args carries an ARM physical address.  The temporary
+		 * page tables expose it through the kernel's phys-to-virt window; the
+		 * raw low address is deliberately not identity mapped. */
 		PE_state.deviceTreeHead = (void *)ml_static_ptovirt((vm_offset_t)boot_args_ptr->deviceTreeP);
 #else
 		PE_state.deviceTreeHead = boot_args_ptr->deviceTreeP;
@@ -782,5 +786,5 @@ void
 PE_mark_hwaccess(uint64_t thread)
 {
 	last_hwaccess_thread = thread;
-	asm volatile ("dmb ish");
+	ARM_DMB_ISH();
 }

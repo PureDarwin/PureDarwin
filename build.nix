@@ -43,6 +43,7 @@
 , enableTcc ? false
 , enableIOGraphicsFamily ? false
 , installUserland ? true
+, installUserlandTargetsOnly ? false
 , installKernel ? false
 , installXnuHeaders ? false
 , installKexts ? false
@@ -280,7 +281,13 @@ EOF
   installPhase = ''
     runHook preInstall
     mkdir -p $out
-  '' + lib.optionalString (installUserland && !enableTcc) ''
+  '' + lib.optionalString (installUserland && !enableTcc && installUserlandTargetsOnly) ''
+    mkdir -p $out/bin
+    # Minimal images build a selected target list, while the generated CMake
+    # install script still contains install rules for every userspace target.
+    # Copy only executable artifacts that Ninja actually produced.
+    find build-nix/src/Userspace -type f -perm -0100 -exec cp '{}' $out/bin/ ';'
+  '' + lib.optionalString (installUserland && !enableTcc && !installUserlandTargetsOnly) ''
     cmake --install build-nix --component BaseSystem --prefix $out
   '' + lib.optionalString (installUserland && enableTcc) ''
     mkdir -p $out/bin $out/usr/lib/tcc/include

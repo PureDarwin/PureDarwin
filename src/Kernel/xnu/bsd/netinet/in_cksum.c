@@ -307,10 +307,17 @@ inet_cksum_buffer(const void *buffer, uint32_t nxt, uint32_t off,
 	return ~sum & 0xffff;
 }
 
-#if DEBUG || DEVELOPMENT
+/*
+ * Also built when there is no platform assembly implementation to validate
+ * against, because then this *is* the implementation - see
+ * bsd/dev/arm/cpu_in_cksum_novfp.c.
+ */
+#if DEBUG || DEVELOPMENT || (defined (__arm__) && (__ARM_VFP__ < 3))
 #include <pexpert/pexpert.h>
 
+#ifndef CKSUM_ERR
 #define CKSUM_ERR kprintf
+#endif
 
 /*
  * The following routines implement the portable, reference implementation
@@ -636,4 +643,4 @@ trailing_bytes:
 	return final_acc & 0xffff;
 }
 #endif /* __LP64 */
-#endif /* DEBUG || DEVELOPMENT */
+#endif /* DEBUG || DEVELOPMENT || (__arm__ && __ARM_VFP__ < 3) */

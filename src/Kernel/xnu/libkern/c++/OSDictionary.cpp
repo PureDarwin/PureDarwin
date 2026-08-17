@@ -38,6 +38,7 @@
 #include <libkern/c++/OSSerialize.h>
 #include <libkern/c++/OSSharedPtr.h>
 #include <libkern/c++/OSSymbol.h>
+#include <IOKit/IOLib.h>
 #include <os/cpp_util.h>
 
 #define super OSCollection
@@ -478,6 +479,8 @@ OSDictionary::removeObject(const OSSymbol *aKey)
 
 	if (exists) {
 		dictEntry oldEntry = dictionary[i];
+		IOLog("OSDictionary remove: dict=%p count=%u index=%u key=%p value=%p\n",
+		    this, count, i, oldEntry.key.get(), oldEntry.value.get());
 
 		haveUpdated();
 

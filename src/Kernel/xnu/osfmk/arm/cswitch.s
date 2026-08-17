@@ -44,7 +44,7 @@
 	vstmia.64	r3!, {d8-d11}
 	vstmia.64	r3!, {d12-d15}
 #else
-	fstmias		r3!, {s16-s31}
+	vstmia		r3!, {s16-s31}
 #endif /* __ARM_VFP__ >= 3 */
 #endif /* __ARM_VFP__ */
 .endmacro
@@ -62,7 +62,7 @@
 	vldmia.64	r2!, {d8-d11}
 	vldmia.64	r2!, {d12-d15}
 #else
-	fldmias		r2!, {s16-s31}
+	vldmia		r2!, {s16-s31}
 #endif /* __ARM_VFP__ >= 3 */
 	ldr			r3, [r3, VSS_FPSCR]				// Get our saved FPSCR value...
 	fmxr		fpscr, r3						// ...and restore it
@@ -266,7 +266,7 @@ LEXT(vfp_save)
 	vstmia.64   r0!, {d24-d27}
 	vstmia.64   r0!, {d28-d31}
 #else
-	fstmias     r0!, {s0-s31}                   // Save vfp registers
+	vstmia      r0!, {s0-s31}                   // Save vfp registers
 #endif
 #endif  /* __ARM_VFP__ */
 	bx          lr                              // Return
@@ -293,7 +293,7 @@ LEXT(vfp_load)
 	vldmia.64   r0!, {d24-d27}
 	vldmia.64   r0!, {d28-d31}
 #else
-	fldmias	    r0!, {s0-s31}                   // Restore vfp registers
+	vldmia	    r0!, {s0-s31}                   // Restore vfp registers
 #endif /* __ARM_VFP__ >= 3 */
 	ldr         r1, [r1, VSS_FPSCR]             // Get fpscr from the save state...
 	fmxr        fpscr, r1                       // ...and load it into the register

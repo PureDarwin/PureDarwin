@@ -43,10 +43,10 @@
 	.globl EXT(invalidate_mmu_cache)
 LEXT(invalidate_mmu_cache)
 	mov		r0, #0
-	dsb
+	DSB_BARRIER
 	mcr		p15, 0, r0, c7, c7, 0				// Invalidate caches
-	dsb
-	isb
+	DSB_BARRIER
+	ISB_BARRIER
 	bx		lr
 
 /*
@@ -59,9 +59,9 @@ LEXT(invalidate_mmu_cache)
 	.globl EXT(invalidate_mmu_dcache)
 LEXT(invalidate_mmu_dcache)
 	mov		r0, #0
-	dsb
+	DSB_BARRIER
 	mcr		p15, 0, r0, c7, c6, 0				// Invalidate dcache
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*
@@ -78,13 +78,13 @@ LEXT(invalidate_mmu_dcache_region)
 	add		r1, r1, r2
 	sub		r1, r1, #1
 	mov		r1, r1, LSR #MMU_CLINE				// Set cache line counter
-	dsb
+	DSB_BARRIER
 fmdr_loop:
 	mcr		p15, 0, r0, c7, c14, 1				// Invalidate dcache line
 	add		r0, r0, #1<<MMU_CLINE				// Get next cache aligned addr
 	subs	r1, r1, #1							// Decrementer cache line counter
 	bpl		fmdr_loop							// Loop in counter not null
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*
@@ -99,10 +99,10 @@ fmdr_loop:
 LEXT(InvalidatePoU_Icache)
 LEXT(invalidate_mmu_icache)
 	mov     r0, #0
-	dsb
+	DSB_BARRIER
 	mcr     p15, 0, r0, c7, c5, 0				// Invalidate icache
-	dsb
-	isb
+	DSB_BARRIER
+	ISB_BARRIER
 	bx		lr
 
 /*
@@ -127,8 +127,8 @@ fmir_loop:
 	add		r0, r0, #1<<MMU_I_CLINE				// Get next cache aligned addr
 	subs	r1, r1, #1							// Decrementer cache line counter
 	bpl		fmir_loop							// Loop in counter not null
-	dsb
-	isb
+	DSB_BARRIER
+	ISB_BARRIER
 	pop		{r7,pc}
 
 /*
@@ -144,7 +144,7 @@ LEXT(CleanPoC_Dcache)
 LEXT(clean_mmu_dcache)
 #if	!defined(__ARM_L1_WT_CACHE__)
 	mov		r0, #0
-	dsb
+	DSB_BARRIER
 clean_dcacheway:
 clean_dcacheline:		
 	mcr		p15, 0, r0, c7, c10, 2				 // clean dcache line by way/set
@@ -156,7 +156,7 @@ clean_dcacheline:
 	bcc		clean_dcacheway						 // loop
 #endif
 #if __ARM_L2CACHE__
-	dsb
+	DSB_BARRIER
 	mov		r0, #2
 clean_l2dcacheway:
 clean_l2dcacheline:		
@@ -168,7 +168,7 @@ clean_l2dcacheline:
 	adds	r0, r0, #1 << L2_I7WAY				 // increment way
 	bcc		clean_l2dcacheway					 // loop
 #endif
-	dsb
+	DSB_BARRIER
 	bx		lr
 		
 /*
@@ -182,7 +182,7 @@ clean_l2dcacheline:
 LEXT(CleanPoU_Dcache)
 #if	!defined(__ARM_PoU_WT_CACHE__)
 	mov		r0, #0
-	dsb
+	DSB_BARRIER
 clean_dcacheway_idle:
 clean_dcacheline_idle:		
 	mcr		p15, 0, r0, c7, c10, 2				 // clean dcache line by way/set
@@ -193,7 +193,7 @@ clean_dcacheline_idle:
 	adds	r0, r0, #1 << MMU_I7WAY				 // increment way
 	bcc		clean_dcacheway_idle				 // loop
 #endif
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*
@@ -212,7 +212,7 @@ LEXT(CleanPoU_DcacheRegion)
 	add		r12, r1, r2
 	sub		r12, r12, #1
 	mov		r12, r12, LSR #MMU_CLINE				// Set cache line counter
-	dsb
+	DSB_BARRIER
 cudr_loop:
 	mcr		p15, 0, r3, c7, c11, 1				// Clean dcache line to PoU
 	add		r3, r3, #1<<MMU_CLINE				// Get next cache aligned addr
@@ -220,7 +220,7 @@ cudr_loop:
 	bpl		cudr_loop							// Loop in counter not null
 
 #endif
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*
@@ -239,13 +239,13 @@ LEXT(CleanPoC_DcacheRegion_Force)
 	add		r1, r1, r2
 	sub		r1, r1, #1
 	mov		r1, r1, LSR #MMU_CLINE				// Set cache line counter
-	dsb
+	DSB_BARRIER
 ccdr_loop:
 	mcr		p15, 0, r0, c7, c10, 1				// Clean dcache line to PoC
 	add		r0, r0, #1<<MMU_CLINE				// Get next cache aligned addr
 	subs	r1, r1, #1							// Decrementer cache line counter
 	bpl		ccdr_loop							// Loop in counter not null
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*
@@ -258,7 +258,7 @@ ccdr_loop:
 	.globl EXT(FlushPoC_Dcache)
 LEXT(FlushPoC_Dcache)
 	mov		r0, #0
-	dsb
+	DSB_BARRIER
 cleanflush_dcacheway:
 cleanflush_dcacheline:		
 	mcr		p15, 0, r0, c7, c14, 2				 // cleanflush dcache line by way/set
@@ -269,7 +269,7 @@ cleanflush_dcacheline:
 	adds	r0, r0, #1 << MMU_I7WAY				 // increment way
 	bcc		cleanflush_dcacheway				 // loop
 #if __ARM_L2CACHE__
-	dsb
+	DSB_BARRIER
 	mov		r0, #2
 cleanflush_l2dcacheway:
 cleanflush_l2dcacheline:		
@@ -281,7 +281,7 @@ cleanflush_l2dcacheline:
 	adds	r0, r0, #1 << L2_I7WAY				 // increment way
 	bcc		cleanflush_l2dcacheway				 // loop
 #endif
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*
@@ -294,7 +294,7 @@ cleanflush_l2dcacheline:
 	.globl EXT(FlushPoU_Dcache)
 LEXT(FlushPoU_Dcache)
 	mov		r0, #0
-	dsb
+	DSB_BARRIER
 fpud_way:
 fpud_line:		
 	mcr		p15, 0, r0, c7, c14, 2				 // cleanflush dcache line by way/set
@@ -304,7 +304,7 @@ fpud_line:
 	bic		r0, r0, #1 << (MMU_NSET + MMU_I7SET) // clear set overflow
 	adds	r0, r0, #1 << MMU_I7WAY				 // increment way
 	bcc		fpud_way							 // loop
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*
@@ -321,13 +321,13 @@ LEXT(FlushPoC_DcacheRegion)
 	add		r1, r1, r2
 	sub		r1, r1, #1
 	mov		r1, r1, LSR #MMU_CLINE				// Set cache line counter
-	dsb
+	DSB_BARRIER
 cfmdr_loop:
 	mcr		p15, 0, r0, c7, c14, 1				// Clean & invalidate dcache line
 	add		r0, r0, #1<<MMU_CLINE				// Get next cache aligned addr
 	subs	r1, r1, #1							// Decrementer cache line counter
 	bpl		cfmdr_loop							// Loop in counter not null
-	dsb
+	DSB_BARRIER
 	bx		lr
 
 /*

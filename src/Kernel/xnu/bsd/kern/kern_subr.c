@@ -321,7 +321,8 @@ hashinit(int elements, int type __unused, u_long *hashmask)
 	vm_size_t hashsize;
 
 	if (elements <= 0) {
-		panic("hashinit: bad cnt");
+		panic("hashinit: bad cnt %d from %p", elements,
+		    __builtin_return_address(0));
 	}
 
 	hashsize = 1UL << (fls(elements) - 1);

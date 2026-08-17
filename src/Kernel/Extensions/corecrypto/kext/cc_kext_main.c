@@ -24,7 +24,9 @@ static struct cckprng_ctx cc_kprng_ctx = {
 
 kern_return_t cc_kext_start(kmod_info_t * ki, void *d)
 {
+	printf("corecrypto start\n");
 	int ret = register_crypto_functions(&pdcrypto_internal_functions);
+	printf("corecrypto register ret=%d\n", ret);
 	if (ret == -1) {
 		printf("warning: corecrypto could not be registered. Did another crypto handler beat us to it?\n");
 	} else {

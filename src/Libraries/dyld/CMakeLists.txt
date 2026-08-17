@@ -197,6 +197,22 @@ target_link_options(dyld PRIVATE
     # of which dyld's used call graph reaches.
     -Wl,-dead_strip
 )
+
+if(PUREDARWIN_ARM32)
+    target_link_options(dyld PRIVATE -Wl,-u,_fls)
+    if(PUREDARWIN_COMPILER_RT_PREFIX)
+        # Pull only the integer helpers dyld actually needs. Force-loading the
+        # archive also pulls compiler-rt's availability checker, which depends
+        # on libSystem and creates a cycle while dyld itself is being built.
+        target_link_options(dyld PRIVATE
+            -Wl,-u,___divdi3 -Wl,-u,___moddi3
+            -Wl,-u,___udivdi3 -Wl,-u,___umoddi3
+            -Wl,-u,___divsi3 -Wl,-u,___modsi3
+            -Wl,-u,___udivsi3 -Wl,-u,___umodsi3)
+        target_link_libraries(dyld PRIVATE
+            "${PUREDARWIN_COMPILER_RT_PREFIX}/lib/libcompiler_rt.a")
+    endif()
+endif()
 if(PUREDARWIN_USE_LD64_LLD)
     # ld64.lld diagnoses duplicate archive members before ordinary dead_strip
     # can discard them. Apple's ld64 accepts this dyld link as-is.

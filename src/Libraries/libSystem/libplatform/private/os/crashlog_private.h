@@ -45,7 +45,10 @@
 			:	[_msg] "r" (("" msg)) \
 		); })
 
-#elif defined(__arm__)
+#elif defined(__arm__) && \
+	!(defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_6J__) || \
+	  defined(__ARM_ARCH_6K__) || defined(__ARM_ARCH_6Z__) || \
+	  defined(__ARM_ARCH_6ZK__))
 
 #define __os_set_crash_log_cause_and_message_impl(msg, ac_expr, set_cause, ...) \
 		({ ac_expr; __asm__( \

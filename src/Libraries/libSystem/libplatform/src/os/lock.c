@@ -88,7 +88,11 @@ static const OSSpinLock _OSSpinLockLocked = -1;
 // Don't spin on UP
 #elif defined(__arm__) || defined(__arm64__)
 #define OS_LOCK_SPIN_SPIN_TRIES 100
+#if defined(__arm64__) || (defined(_ARM_ARCH_7) && defined(__thumb__))
 #define OS_LOCK_SPIN_PAUSE() os_hardware_wfe()
+#else
+#define OS_LOCK_SPIN_PAUSE() os_hardware_pause()
+#endif
 #else
 #define OS_LOCK_SPIN_SPIN_TRIES 1000
 #define OS_LOCK_SPIN_PAUSE() os_hardware_pause()
@@ -1212,4 +1216,3 @@ _os_once(os_once_t *val, void *ctxt, os_function_t func)
 	}
 	return _os_once_gate_wait(og, ctxt, func, self);
 }
-

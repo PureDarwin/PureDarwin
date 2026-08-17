@@ -589,6 +589,14 @@ let
     llvmVersion = pkgs.llvmPackages_21.llvm.version;
     targetArch = "arm64";
   };
+  # ARMv6 has no integer divide instruction and no 64-bit ALU, so the kernel
+  # genuinely needs the compiler-rt builtins (__divdi3, __divsi3, __moddi3,
+  # the float/int conversions) that a 64-bit target never references.
+  compilerRtArmv6Build = pkgs.callPackage ./pkgs/toolchain/compiler-rt-armv6.nix {
+    inherit darwinCrossToolchain nativeLd;
+    llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
+    llvmVersion = pkgs.llvmPackages_21.llvm.version;
+  };
   llvmCrossArm64Build = mkArm64Build ./pkgs/toolchain/llvm-cross.nix {
     libcxxDylib = libcxxDylibArm64Build;
     libcxxabiDylib = libcxxabiDylibArm64Build;
@@ -1469,6 +1477,16 @@ let
     puredarwinArch = "arm64";
     inherit arm64CrossToolchain;
   };
+  # First-stage 32-bit ARM userland for the BCM2835/Pi Zero target.  It needs
+  # an ARMv6 libSystem/dyld rather than the x86_64 or ARM64 runtime.
+  libSystemArmv6Build = libSystemBuild.override {
+    puredarwinArch = "armv6";
+    compilerRt = compilerRtArmv6Build;
+    extraCmakeFlags = [
+      "-DCMAKE_OSX_ARCHITECTURES=armv6"
+      "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
+    ];
+  };
   icuCoreArm64Build = icuCoreBuild.override {
     darwinCrossToolchain = arm64CrossToolchain;
     targetTriple = "arm64-apple-darwin20.4";
@@ -1966,6 +1984,26 @@ let
     inherit arm64CrossToolchain;
     prebuiltLibSystem = libSystemArm64Build;
   };
+  userlandArm32Bcm2835Build = userlandBuild.override {
+    pname = "puredarwin-userland-arm32-bcm2835";
+    puredarwinArch = "armv6";
+    compilerRt = compilerRtArmv6Build;
+    prebuiltLibSystem = libSystemArmv6Build;
+    buildTargets = [
+      "sw_vers" "dmesg" "reboot" "halt" "poweroff"
+      "echo" "false" "hostname" "kill" "printenv" "pwd" "sleep"
+      "test_cmd" "true" "uname" "cat" "head" "tail" "wc"
+    ];
+    installUserlandTargetsOnly = true;
+    # The ARMv6 bootstrap image does not build Xorg input/video modules.
+    # Keeping the generic include path here unnecessarily pulls Mesa/Xorg into
+    # the closure and can exhaust the build host before userland is packaged.
+    xorgDriverIncludes = null;
+    extraCmakeFlags = [
+      "-DCMAKE_OSX_ARCHITECTURES=armv6"
+      "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
+    ];
+  };
   kernelArm64Build = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm64";
     src = kernelSource;
@@ -2042,7 +2080,39 @@ let
     xnuKernelConfig = "RELEASE";
     puredarwinArch = "armv6";
     inherit arm64CrossToolchain;
-    extraCmakeFlags = [ "-DPUREDARWIN_ARM32_MACHINE_CONFIG=BCM2835" ];
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=BCM2835"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  # Raspberry Pi Zero kexts. Only corecrypto for now: without it the kernel's
+  # prng_funcs table is never registered and the first read_random() branches
+  # through a NULL pointer. Built ARMv6 and delivered through the classic
+  # __PRELINK_TEXT layout, which is what the arm32 XNU expects and what LK can
+  # load unchanged (a prelinked kernel is still a plain MH_EXECUTE Mach-O).
+  kextsArm32Bcm2835Build = mkPureDarwinBuild {
+    pname = "puredarwin-kexts-arm32-bcm2835";
+    src = kextsSource;
+    buildTargets = [
+      "corecrypto.kext" "pthread.kext" "ext4.kext"
+      "IOStorageFamily" "Ext4FileSystemDriver.kext" "PDBcm2835SD.kext"
+      "PDArmPlatformExpert"
+    ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = false;
+    installKexts = true;
+    installKextNames = [
+      "corecrypto.kext" "pthread.kext" "ext4.kext"
+      "IOStorageFamily.kext" "Ext4FileSystemDriver.kext" "PDBcm2835SD.kext"
+      "PDArmPlatformExpert.kext"
+    ];
+    puredarwinArch = "armv6";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=BCM2835"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
+    ];
   };
   kextsArm64Build = mkPureDarwinBuild {
     pname = "puredarwin-kexts-arm64";
@@ -2531,6 +2601,10 @@ in
     kernelArm64T8010Build
     kernelArm64T8010DebugBuild
     kernelArm32Bcm2835Build
+    kextsArm32Bcm2835Build
+    compilerRtArmv6Build
+    libSystemArmv6Build
+    userlandArm32Bcm2835Build
     kextsArm64Build
     splitBaseSystemArm64VirtMinimal
     splitBaseSystemArm64VirtMinimalRelease

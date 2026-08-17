@@ -1,7 +1,7 @@
 add_custom_command(
     OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/include/libc-features.h
-    COMMAND ${CMAKE_COMMAND} -E env "ARCHS=x86_64 arm64" SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} DERIVED_FILES_DIR=${CMAKE_CURRENT_BINARY_DIR}/include VARIANT_PLATFORM_NAME=macosx perl ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_features.pl
+    COMMAND ${CMAKE_COMMAND} -E env "ARCHS=${PUREDARWIN_ARCH}" SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} DERIVED_FILES_DIR=${CMAKE_CURRENT_BINARY_DIR}/include VARIANT_PLATFORM_NAME=macosx perl ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_features.pl
     COMMENT "Generating libc-features.h"
 )
 
@@ -21,7 +21,7 @@ set(libc_headers_dir ${CMAKE_CURRENT_BINARY_DIR}/headers)
 
 add_custom_command(
     OUTPUT ${libc_headers_dir}/libc_headers.stamp
-    COMMAND ${CMAKE_COMMAND} -E env "ARCHS=arm64 x86_64"
+    COMMAND ${CMAKE_COMMAND} -E env "ARCHS=${PUREDARWIN_ARCH}"
         SRCROOT=${CMAKE_CURRENT_SOURCE_DIR}
         DERIVED_FILES_DIR=${CMAKE_CURRENT_BINARY_DIR}
         VARIANT_PLATFORM_NAME=macosx
@@ -95,7 +95,7 @@ target_include_directories(libc_public_headers INTERFACE ${CMAKE_CURRENT_SOURCE_
 # as libc itself.
 target_include_directories(libc_public_headers INTERFACE
     ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd)
-if(PUREDARWIN_ARCH STREQUAL "arm64")
+if(PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_ARM32)
     target_compile_definitions(libc_public_headers INTERFACE
         __DARWIN_ONLY_VERS_1050=1
         __DARWIN_ONLY_UNIX_CONFORMANCE=1
@@ -110,7 +110,7 @@ target_include_directories(libc_kernel_headers INTERFACE ${libc_headers_dir}/Sys
 # END HEADER INTERFACE
 
 add_darwin_static_library(libc_static)
-if(PUREDARWIN_ARCH STREQUAL "arm64")
+if(PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_ARM32)
     target_compile_definitions(libc_static PRIVATE
         __DARWIN_ONLY_VERS_1050=1
         __DARWIN_ONLY_UNIX_CONFORMANCE=1
@@ -433,7 +433,7 @@ target_compile_definitions(libc_static PRIVATE __DARWIN_ONLY_UNIX_CONFORMANCE=1)
 target_link_libraries(libc_static PRIVATE xnu_private_headers)
 target_link_libraries(libc_static PUBLIC openlibm_static)
 add_dependencies(libc_static libc_features libsystem_kernel_static)
-if(PUREDARWIN_ARM64)
+if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     target_sources(libc_static PRIVATE darwin/pd_arm64_abi.c)
 endif()
 target_include_directories(libc_static PRIVATE
@@ -568,7 +568,7 @@ set_source_files_properties(
     PROPERTIES COMPILE_FLAGS "-DHAVE_CONFIG_H -I${CMAKE_CURRENT_SOURCE_DIR}/regex/TRE -I${CMAKE_CURRENT_SOURCE_DIR}/regex/TRE/lib -I${CMAKE_CURRENT_SOURCE_DIR}/regex/FreeBSD")
 
 add_darwin_static_library(libc_internal_static)
-if(PUREDARWIN_ARCH STREQUAL "arm64")
+if(PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_ARM32)
     target_compile_definitions(libc_internal_static PRIVATE
         __DARWIN_ONLY_VERS_1050=1
         __DARWIN_ONLY_UNIX_CONFORMANCE=1

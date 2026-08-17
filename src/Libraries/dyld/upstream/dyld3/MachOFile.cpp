@@ -212,6 +212,7 @@ bool FatFile::isFatFileWithSlice(Diagnostics& diag, uint64_t fileLen, const Grad
 #define GRADE_armv7       CPU_TYPE_ARM,        CPU_SUBTYPE_ARM64_ALL,   false
 #define GRADE_armv7s      CPU_TYPE_ARM,        CPU_SUBTYPE_ARM_V7,      false
 #define GRADE_armv7k      CPU_TYPE_ARM,        CPU_SUBTYPE_ARM_V7K,     false
+#define GRADE_armv6       CPU_TYPE_ARM,        CPU_SUBTYPE_ARM_V6,      false
 #define GRADE_arm64       CPU_TYPE_ARM64,      CPU_SUBTYPE_ARM64_ALL,   false
 #define GRADE_arm64e      CPU_TYPE_ARM64,      CPU_SUBTYPE_ARM64E,      false
 #define GRADE_arm64e_pb   CPU_TYPE_ARM64,      CPU_SUBTYPE_ARM64E,      true
@@ -230,6 +231,7 @@ const GradedArchs GradedArchs::arm64e_pb         = { {{GRADE_arm64e_pb, 1}} };
 const GradedArchs GradedArchs::armv7             = { {{GRADE_armv7,   1}} };
 const GradedArchs GradedArchs::armv7s            = { {{GRADE_armv7s,  2}, {GRADE_armv7, 1}} };
 const GradedArchs GradedArchs::armv7k            = { {{GRADE_armv7k,  1}} };
+const GradedArchs GradedArchs::armv6             = { {{GRADE_armv6,   1}} };
 #if SUPPORT_ARCH_arm64_32
 const GradedArchs GradedArchs::arm64_32          = { {{GRADE_arm64_32, 1}} };
 #endif
@@ -293,6 +295,8 @@ const GradedArchs& GradedArchs::forCurrentOS(bool keysOff, bool osBinariesOnly)
     return armv7s;
 #elif __ARM_ARCH_7A__
     return armv7;
+#elif __ARM_ARCH_6__ || __ARM_ARCH_6J__ || __ARM_ARCH_6K__ || __ARM_ARCH_6Z__ || __ARM_ARCH_6ZK__
+    return armv6;
 #elif __x86_64__
     return isHaswell() ? x86_64h : x86_64;
 #elif __i386__
@@ -320,6 +324,8 @@ const GradedArchs& GradedArchs::forName(const char* archName, bool keysOff)
         return armv7s;
     else if (strcmp(archName, "armv7") == 0 )
         return armv7;
+    else if (strcmp(archName, "armv6") == 0 )
+        return armv6;
 #if SUPPORT_ARCH_arm64_32
     else if (strcmp(archName, "arm64_32") == 0 )
         return arm64_32;
@@ -347,7 +353,8 @@ const MachOFile::ArchInfo MachOFile::_s_archInfos[] = {
 #endif
     { "armv7k",   CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V7K     },
     { "armv7s",   CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V7S     },
-    { "armv7",    CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V7      }
+    { "armv7",    CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V7      },
+    { "armv6",    CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V6      }
 };
 
 const MachOFile::PlatformInfo MachOFile::_s_platformInfos[] = {
@@ -616,6 +623,8 @@ const char* MachOFile::currentArchName()
     return "armv7";
 #elif __ARM_ARCH_7S__
     return "armv7s";
+#elif __ARM_ARCH_6__ || __ARM_ARCH_6J__ || __ARM_ARCH_6K__ || __ARM_ARCH_6Z__ || __ARM_ARCH_6ZK__
+    return "armv6";
 #elif __arm64e__
     return "arm64e";
 #elif __arm64__

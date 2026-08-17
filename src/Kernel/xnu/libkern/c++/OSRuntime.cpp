@@ -151,6 +151,19 @@ static const char *
 	{ kBuiltinInitSection, kBuiltinTermSection }
 };
 
+/*
+ * Under -fapple-kext clang follows the 32-bit Darwin kext ABI on arm, which
+ * puts static initializers in __TEXT,__constructor rather than
+ * __mod_init_func.  The kernel is built with that flag, so on arm32 its own
+ * C++ constructors land in a section OSRuntimeInitializeCPP would otherwise
+ * never look at, leaving every libkern and IOKit metaclass unconstructed -
+ * the first OSTypeAlloc then calls through a NULL vtable.  Scan both names.
+ */
+#if defined(__arm__)
+#define kOSSectionNameAppleKext32Init   "__constructor"
+#define kOSSectionNameAppleKext32Term   "__destructor"
+#endif /* defined(__arm__) */
+
 void
 OSlibkernInit(void)
 {
@@ -342,6 +355,12 @@ OSRuntimeFinalizeCPP(
 	    segment = nextsegfromheader(header, segment)) {
 		OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
 		    sectionNames[kOSSectionNameFinalizer], textStart, textEnd);
+#if defined(__arm__)
+		if (sectionNames == gOSStructorSectionNames[kOSSectionNamesDefault]) {
+			OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
+			    kOSSectionNameAppleKext32Term, textStart, textEnd);
+		}
+#endif /* defined(__arm__) */
 	}
 
 	(void)OSMetaClass::postModLoad(metaHandle);
@@ -513,6 +532,14 @@ OSRuntimeInitializeCPP(
 			theKext, kmodInfo, metaHandle, segment,
 			sectionNames[kOSSectionNameInitializer],
 			textStart, textEnd);
+#if defined(__arm__)
+		if (load_success && sectionNames == gOSStructorSectionNames[kOSSectionNamesDefault]) {
+			load_success = OSRuntimeCallStructorsInSection(
+				theKext, kmodInfo, metaHandle, segment,
+				kOSSectionNameAppleKext32Init,
+				textStart, textEnd);
+		}
+#endif /* defined(__arm__) */
 	} /* for (segment...) */
 
 	/* We failed so call all of the destructors. We must do this before
@@ -528,6 +555,12 @@ OSRuntimeInitializeCPP(
 		    segment = nextsegfromheader(header, segment)) {
 			OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
 			    sectionNames[kOSSectionNameFinalizer], textStart, textEnd);
+#if defined(__arm__)
+			if (sectionNames == gOSStructorSectionNames[kOSSectionNamesDefault]) {
+				OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
+				    kOSSectionNameAppleKext32Term, textStart, textEnd);
+			}
+#endif /* defined(__arm__) */
 		} /* for (segment...) */
 	}
 
@@ -566,6 +599,10 @@ OSRuntimeUnloadCPPForSegment(
 {
 	OSRuntimeCallStructorsInSection(NULL, &g_kernel_kmod_info, NULL, segment,
 	    gOSStructorSectionNames[kOSSectionNamesDefault][kOSSectionNameFinalizer], 0, 0);
+#if defined(__arm__)
+	OSRuntimeCallStructorsInSection(NULL, &g_kernel_kmod_info, NULL, segment,
+	    kOSSectionNameAppleKext32Term, 0, 0);
+#endif /* defined(__arm__) */
 }
 
 #if PRAGMA_MARK

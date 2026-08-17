@@ -210,6 +210,49 @@ __SECTION_END_SYM(STARTUP_HOOK_SEGMENT, STARTUP_HOOK_SECTION);
 
 static struct startup_entry *__startup_data startup_entry_cur = startup_entries;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+static void
+pd_bcm2835_startup_uart_tag(char phase)
+{
+	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x20201000;
+	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x20201018;
+	const char tag[] = { 'B', phase, '\r', '\n' };
+
+	for (unsigned int i = 0; i < sizeof(tag); i++) {
+		while ((*uart_fr & 0x20U) != 0) {
+			/* Poll until the PL011 TX FIFO has room. */
+		}
+		*uart_dr = (uint32_t)tag[i];
+	}
+}
+
+static void
+pd_bcm2835_startup_uart_hex(uint32_t value)
+{
+	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x20201000;
+	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x20201018;
+	static const char digits[] = "0123456789abcdef";
+
+	for (int shift = 28; shift >= 0; shift -= 4) {
+		while ((*uart_fr & 0x20U) != 0) {
+			/* Poll until the PL011 TX FIFO has room. */
+		}
+		*uart_dr = (uint32_t)digits[(value >> shift) & 0xf];
+	}
+}
+
+static void
+pd_bcm2835_startup_uart_entry(const struct startup_entry *entry)
+{
+	pd_bcm2835_startup_uart_tag('F');
+	pd_bcm2835_startup_uart_hex((uint32_t)(uintptr_t)entry->func);
+	pd_bcm2835_startup_uart_hex((uint32_t)(uintptr_t)entry->arg);
+	pd_bcm2835_startup_uart_hex((uint32_t)entry->subsystem);
+	pd_bcm2835_startup_uart_hex((uint32_t)entry->rank);
+	pd_bcm2835_startup_uart_tag('X');
+}
+#endif
+
 SECURITY_READ_ONLY_LATE(startup_subsystem_id_t) startup_phase = STARTUP_SUB_NONE;
 
 extern int serverperfmode;
@@ -269,10 +312,16 @@ __startup_func
 void
 kernel_startup_bootstrap(void)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_startup_uart_tag('0');
+#endif
 	/*
 	 * Sort the various STARTUP() entries by subsystem/rank.
 	 */
 	size_t n = startup_entries_end - startup_entries;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_startup_uart_tag('1');
+#endif
 
 	if (n == 0) {
 		panic("Section %s,%s missing",
@@ -283,13 +332,22 @@ kernel_startup_bootstrap(void)
 		panic("Section %s,%s has invalid size",
 		    STARTUP_HOOK_SEGMENT, STARTUP_HOOK_SECTION);
 	}
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_startup_uart_tag('2');
+#endif
 
 	qsort(startup_entries, n, sizeof(struct startup_entry), startup_entry_cmp);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_startup_uart_tag('3');
+#endif
 
 	/*
 	 * Then initialize all tunables, and early locks
 	 */
 	kernel_startup_initialize_upto(STARTUP_SUB_LOCKS_EARLY);
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bcm2835_startup_uart_tag('4');
+#endif
 }
 
 __startup_func

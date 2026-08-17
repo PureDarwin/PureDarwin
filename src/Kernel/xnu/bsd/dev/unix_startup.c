@@ -213,6 +213,13 @@ bsd_startupearly(void)
 			}
 #endif
 		}
+		{
+			extern uint64_t sane_size;
+			extern vm_offset_t mem_size;
+
+			printf("PD: desiredvnodes=%d sane_size=0x%llx mem_size=0x%lx\n",
+			    desiredvnodes, sane_size, (unsigned long)mem_size);
+		}
 		vnodes_sized = 1;
 	}
 }

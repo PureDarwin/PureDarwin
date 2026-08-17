@@ -14,6 +14,16 @@ endif()
 
 # XNU build arch. x86_64 installs the i386/ machine headers (machine/types.h
 # includes "i386/types.h"); arm64 installs arm/ and needs a MACHINE_CONFIGS.
+# ARMv6 has no integer divide and no 64-bit ALU, so the kernel references
+# compiler-rt builtins that no 64-bit target needs. -lcc_kext (the default
+# LD_KERNEL_LIBS) is Apple's kext-safe runtime, which we do not have; point the
+# link at the builtins archive this tree builds instead.
+if(PUREDARWIN_KERNEL_COMPILER_RT)
+    set(XNU_LD_KERNEL_LIBS "LD_KERNEL_LIBS=${PUREDARWIN_KERNEL_COMPILER_RT}")
+else()
+    set(XNU_LD_KERNEL_LIBS "")
+endif()
+
 if(PUREDARWIN_ARM32)
     # 32-bit ARM. Only board so far is BCM2835 (Raspberry Pi Zero, ARMv6).
     set(XNU_ARCH_CONFIGS ARM)
@@ -203,7 +213,7 @@ externalproject_add(xnu
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
     COMMAND
         ${CMAKE_COMMAND} -E env LD=${XNU_LD_PATH} STRIP=${XNU_STRIP_PATH} ${XNU_HOST_CC_ENV} --unset=CC --unset=CXX --unset=NM --unset=CTFCONVERT --unset=CTFMERGE --unset=CTFINSERT
-        make ${XNU_MAKE_OUTPUT_SYNC_FLAG} -C <SOURCE_DIR> install ARCH_CONFIGS=${XNU_ARCH_CONFIGS} ${XNU_MACHINE_CONFIGS} BUILD_LTO=0
+        make ${XNU_MAKE_OUTPUT_SYNC_FLAG} -C <SOURCE_DIR> install ARCH_CONFIGS=${XNU_ARCH_CONFIGS} ${XNU_MACHINE_CONFIGS} ${XNU_LD_KERNEL_LIBS} BUILD_LTO=0
             BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=${PUREDARWIN_XNU_KERNEL_CONFIG}
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu

@@ -27,6 +27,7 @@
  */
 
 #include <mach/mach_types.h>
+#include <machine/atomic.h>
 #include <machine/machine_routines.h>
 #include <kern/processor.h>
 #include <kern/thread.h>
@@ -545,7 +546,7 @@ save_regs(void)
 	int cpuid = cpu_number();
 	uint32_t PMCR = 0;
 
-	__asm__ volatile ("dmb ish");
+	ARM_DMB_ISH();
 
 	/* Clear master enable */
 	__asm__ volatile ("mcr p15, 0, %0, c9, c12, 0;" : : "r" (PMCR));

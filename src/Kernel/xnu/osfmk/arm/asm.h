@@ -232,11 +232,28 @@
 #define GLUE_LABEL_GUTS(label, tag) L_##label##_##tag##_glue
 #define GLUE_LABEL(label, tag) GLUE_LABEL_GUTS(label, tag)
 
+#if __ARM_ARCH < 7
+/*
+ * movw/movt are ARMv6T2 and later; ARM1176 has neither. Load the same
+ * PC-relative displacement out of a literal placed just past the branch,
+ * which costs one extra load and four bytes of .text but assembles for
+ * every ARM revision.
+ */
+#define LOAD_ADDR(reg, label)                                                                   \
+	ldr	reg, GLUE_LABEL(label, __LINE__) ;                                              \
+	b	1f ;                                                                            \
+	.align 2 ;                                                                              \
+GLUE_LABEL(label, __LINE__): ;                                                                  \
+	.long	label##$non_lazy_ptr - (1f + PC_INC) ;                                          \
+1: ;                                                                                            \
+	ldr	reg, [pc, reg]
+#else
 #define LOAD_ADDR(reg, label)                                                                   \
 	movw	reg, :lower16:(label##$non_lazy_ptr - (GLUE_LABEL(label, __LINE__) + PC_INC)) ; \
 	movt	reg, :upper16:(label##$non_lazy_ptr - (GLUE_LABEL(label, __LINE__) + PC_INC)) ; \
 GLUE_LABEL(label, __LINE__): ;                                                                  \
 	ldr	reg, [pc, reg]
+#endif
 
 /* Designed with the understanding that directly branching to thumb code
  *   is unreliable; this should allow for dealing with __thumb__ in
@@ -314,6 +331,64 @@ SHIM_LABEL(__LINE__):
 	ble	SHIM_LABEL(__LINE__) ; \
 	bl	EXT(label) ;           \
 SHIM_LABEL(__LINE__):
+
+/*
+ * Load a 32-bit constant into a register. ARMv6 has neither movw nor movt
+ * (both are ARMv6T2), and the low halfword on its own is frequently not an
+ * encodable ARM immediate either, so the movw/movt pair cannot simply be
+ * split. Build the value a byte at a time instead: every operand below is an
+ * 8-bit value at an even rotation, which is always encodable.
+ */
+#if __ARM_ARCH < 7
+#define LOAD_IMM32(reg, value)                  \
+	mov	reg, #((value) & 0x000000FF) ;  \
+	orr	reg, reg, #((value) & 0x0000FF00) ; \
+	orr	reg, reg, #((value) & 0x00FF0000) ; \
+	orr	reg, reg, #((value) & 0xFF000000)
+#else
+#define LOAD_IMM32(reg, value)                  \
+	movw	reg, #((value) & 0xFFFF) ;      \
+	movt	reg, #((value) >> 16)
+#endif
+
+/*
+ * Read another mode's banked LR or SPSR from the mode we are currently in.
+ *
+ * "mrs Rd, lr_und" and friends are MRS (banked register), which is an ARMv7
+ * Virtualization Extensions instruction - ARM1176 has no way to name another
+ * mode's registers at all. The portable sequence is to switch to that mode,
+ * read the register directly, and switch back; interrupts are already masked
+ * at every site that needs this, and the general registers have been saved,
+ * so the scratch register named by the caller is free.
+ *
+ * Note the mode switch also changes SP and LR to that mode's banked copies,
+ * so nothing between the cps and the restore may touch either.
+ */
+#if __ARM_ARCH < 7
+#define READ_BANKED_LR(dst, modename, modenum, tmp)     \
+	mrs	tmp, cpsr ;                             \
+	cps	#(modenum) ;                            \
+	mov	dst, lr ;                               \
+	msr	cpsr_c, tmp
+#define READ_BANKED_SPSR(dst, modename, modenum, tmp)   \
+	mrs	tmp, cpsr ;                             \
+	cps	#(modenum) ;                            \
+	mrs	dst, spsr ;                             \
+	msr	cpsr_c, tmp
+#else
+#define READ_BANKED_LR(dst, modename, modenum, tmp)     mrs dst, lr_##modename
+#define READ_BANKED_SPSR(dst, modename, modenum, tmp)   mrs dst, spsr_##modename
+#endif
+
+#if __ARM_ARCH < 7
+#define DSB_BARRIER     mov r12, #0 ; mcr p15, 0, r12, c7, c10, 4
+#define DMB_BARRIER     mov r12, #0 ; mcr p15, 0, r12, c7, c10, 5
+#define ISB_BARRIER     mov r12, #0 ; mcr p15, 0, r12, c7, c5, 4
+#else
+#define DSB_BARRIER     dsb
+#define DMB_BARRIER     dmb
+#define ISB_BARRIER     isb
+#endif
 
 #endif /* ASSEMBLER */
 

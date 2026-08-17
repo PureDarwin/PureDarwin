@@ -38,6 +38,7 @@
  */
 
 #include <mach/mach_types.h>
+#include <machine/atomic.h>
 
 #include <kern/clock.h>
 #include <kern/thread.h>
@@ -198,7 +199,7 @@ mach_absolute_time(void)
 			old_absolute_time = s_last_absolute_time;
 
 #if __arm64__
-			__asm__ volatile ("dsb ld" ::: "memory");
+			ARM_DSB_LD();
 #else
 			OSSynchronizeIO(); // See osfmk/arm64/rtclock.c
 #endif

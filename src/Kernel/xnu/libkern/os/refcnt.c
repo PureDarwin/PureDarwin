@@ -5,6 +5,9 @@
 #include <kern/btlog.h>
 #include <kern/backtrace.h>
 #include <libkern/libkern.h>
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+#include <arm/machine_routines.h>
+#endif
 #endif
 #include <os/atomic_private.h>
 
@@ -268,7 +271,15 @@ os_ref_init_count_internal(os_ref_atomic_t *rc, struct os_refgrp * __debug_only 
 void
 os_ref_retain_internal(os_ref_atomic_t *rc, struct os_refgrp * __debug_only grp)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	os_ref_count_t old = *(volatile os_ref_count_t *)rc;
+	*(volatile os_ref_count_t *)rc = old + 1;
+	__asm__ volatile("" ::: "memory");
+	(void)ml_set_interrupts_enabled(intr);
+#else
 	os_ref_count_t old = atomic_fetch_add_explicit(rc, 1, memory_order_relaxed);
+#endif
 	os_ref_check_retain(rc, old, 1);
 
 #if OS_REFCNT_DEBUG
@@ -283,6 +294,18 @@ os_ref_retain_try_internal(os_ref_atomic_t *rc, struct os_refgrp * __debug_only 
 {
 	os_ref_count_t cur, next;
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	cur = *(volatile os_ref_count_t *)rc;
+	if (__improbable(cur == 0)) {
+		(void)ml_set_interrupts_enabled(intr);
+		return false;
+	}
+	next = cur + 1;
+	*(volatile os_ref_count_t *)rc = next;
+	__asm__ volatile("" ::: "memory");
+	(void)ml_set_interrupts_enabled(intr);
+#else
 	os_atomic_rmw_loop(rc, cur, next, relaxed, {
 		if (__improbable(cur == 0)) {
 		        os_atomic_rmw_loop_give_up(return false);
@@ -290,6 +313,7 @@ os_ref_retain_try_internal(os_ref_atomic_t *rc, struct os_refgrp * __debug_only 
 
 		next = cur + 1;
 	});
+#endif
 
 	os_ref_check_overflow(rc, cur);
 
@@ -320,11 +344,23 @@ _os_ref_release_inline(os_ref_atomic_t *rc, os_ref_count_t n,
 	}
 #endif
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	boolean_t intr = ml_set_interrupts_enabled(FALSE);
+	val = *(volatile os_ref_count_t *)rc;
+	*(volatile os_ref_count_t *)rc = val - n;
+	__asm__ volatile("" ::: "memory");
+	(void)ml_set_interrupts_enabled(intr);
+#else
 	val = atomic_fetch_sub_explicit(rc, n, release_order);
+#endif
 	os_ref_check_underflow(rc, val, n);
 	val -= n;
 	if (__improbable(val < n)) {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+		__asm__ volatile("" ::: "memory");
+#else
 		atomic_load_explicit(rc, dealloc_order);
+#endif
 	}
 
 #if OS_REFCNT_DEBUG

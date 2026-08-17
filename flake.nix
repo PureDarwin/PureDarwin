@@ -3021,6 +3021,10 @@
             kernelArm64T8010Build
             kernelArm64T8010DebugBuild
             kernelArm32Bcm2835Build
+            kextsArm32Bcm2835Build
+            compilerRtArmv6Build
+            libSystemArmv6Build
+            userlandArm32Bcm2835Build
             kextsArm64Build
             splitBaseSystemArm64VirtMinimal
             splitBaseSystemArm64VirtMinimalRelease
@@ -3360,6 +3364,7 @@
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm32Bcm2835Build
+              kextsArm32Bcm2835Build compilerRtArmv6Build
               kernelBuild kernelDebugBuild kextsArm64Build kextsBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild wlrootsBuild swayBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
@@ -3445,6 +3450,11 @@
             freetype-shared = freetype2Build;
           };
           arm64Packages = lib.optionalAttrs (!isDarwin) {
+            libSystem-armv6 = arm64.libSystemArmv6Build;
+            userland-arm32-bcm2835 = arm64.userlandArm32Bcm2835Build;
+            compiler-rt-armv6 = arm64.compilerRtArmv6Build;
+            kernel-arm32-bcm2835 = arm64.kernelArm32Bcm2835Build;
+            kexts-arm32-bcm2835 = arm64.kextsArm32Bcm2835Build;
             zlib-arm64 = xvfbZlibArm64Build;
             toybox-arm64 = toyboxArm64Build;
             xz-arm64 = xzArm64Build;

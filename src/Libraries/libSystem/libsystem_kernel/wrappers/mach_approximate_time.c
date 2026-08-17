@@ -25,7 +25,7 @@
 
 extern uint64_t mach_absolute_time(void);
 
-#if defined(__arm64__) || defined(__x86_64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__x86_64__)
 
 uint64_t
 mach_approximate_time(void)

@@ -75,6 +75,8 @@
 , kernelArm64T8010Build
 , kernelArm64T8010DebugBuild
 , kernelArm32Bcm2835Build
+, kextsArm32Bcm2835Build
+, compilerRtArmv6Build
 , kernelBuild
 , kernelDebugBuild
 , kextsArm64Build
@@ -560,6 +562,8 @@ let
     kernel-arm64-t8010 = kernelArm64T8010Build;
     kernel-arm64-t8010-debug = kernelArm64T8010DebugBuild;
     kernel-arm32-bcm2835 = kernelArm32Bcm2835Build;
+    kexts-arm32-bcm2835 = kextsArm32Bcm2835Build;
+    compiler-rt-armv6 = compilerRtArmv6Build;
     kexts = kextsBuild;
     kexts-arm64 = kextsArm64Build;
     iographics = iographicsBuild;
@@ -665,6 +669,12 @@ let
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
+      prelinkedArm32Bcm2835Build =
+        pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
+          kernel = kernelArm32Bcm2835Build;
+          kexts = kextsArm32Bcm2835Build;
+          kcTools = kc-tools.packages.${system}.default;
+        };
       imageExtraPackages = lib.attrValues imageExtraPackageSet
         ++ lib.optional (fbdoomExternalSrc != null) fbdoomBuild;
       imageBuild = pkgs.callPackage ../image.nix {
@@ -817,7 +827,6 @@ let
         imageFileName = "puredarwin-minimal-debug.img";
         espMB = 64;
         rootMB = 384;
-        rawDebugLog = true;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 serial_video_mirror=1 pdtrace=1";
       };
       runVm = pkgs.writeShellApplication {
@@ -1094,6 +1103,7 @@ let
       kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
       ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
+      prelinked-arm32-bcm2835 = prelinkedArm32Bcm2835Build;
       corefoundation = coreFoundationBuild;
       icucore = icuCoreBuild;
       libcxxabi-dylib = libcxxabiDylibBuild;

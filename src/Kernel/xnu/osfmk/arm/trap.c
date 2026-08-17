@@ -243,7 +243,16 @@ sleh_undef(struct arm_saved_state * regs, struct arm_vfpsaved_state * vfp_ss __u
 			 * can see the original state of this thread).
 			 */
 			vm_offset_t kstackptr = current_thread()->machine.kstackptr;
-			copy_signed_thread_state((arm_saved_state_t *)kstackptr, regs);
+			/*
+			 * The bootstrap thread can take a breakpoint before its
+			 * kernel stack (and therefore kstackptr) has been assigned.
+			 * In that case regs already contains the complete exception
+			 * state. Do not turn the useful breakpoint into a recursive
+			 * data abort by copying it through a null kstackptr.
+			 */
+			if (kstackptr != 0) {
+				copy_signed_thread_state((arm_saved_state_t *)kstackptr, regs);
+			}
 
 			DebuggerCall(exception, regs);
 			(void) ml_set_interrupts_enabled(intr);
@@ -469,6 +478,20 @@ sleh_abort(struct arm_saved_state * regs, int type)
 			}
 		}
 		intr = ml_set_interrupts_enabled(FALSE);
+
+		if (status == FSR_AEXT) {
+			/*
+			 * An imprecise external abort: the bus rejected a write that had
+			 * already retired into the write buffer, so the CPU only learns of
+			 * it when the buffer drains.  pc, lr and far below are wherever
+			 * execution happened to be at that moment - they do not point at
+			 * the access that faulted, and far is not even written.  Look for
+			 * a store to an address outside RAM or to an unimplemented
+			 * peripheral register a short distance before pc.
+			 */
+			paniclog_append_noflush("imprecise (asynchronous) external abort: "
+			    "the faulting store is NOT at pc, and far is not valid\n");
+		}
 
 		panic_plain("kernel abort type %d at pc 0x%08x, lr 0x%08x: fault_type=0x%x, fault_addr=0x%x\n"
 		    "r0:   0x%08x  r1: 0x%08x  r2: 0x%08x  r3: 0x%08x\n"

@@ -300,6 +300,13 @@ IOVirtIOTransport::addDescChain(VirtQueue *vq, const VirtIOChainEntry *entries, 
     VRingDesc *desc = (VRingDesc *)vq->desc;
     uint16_t head = 0, prev = 0;
 
+    if (vq->stalled) {
+        volatile VRingUsedHdr *uh = (volatile VRingUsedHdr *)vq->used;
+        OSSynchronizeIO();
+        vq->lastUsedIdx = uh->idx;
+        vq->stalled = false;
+    }
+
     for (unsigned i = 0; i < count; i++) {
         uint16_t d = (uint16_t)((vq->nextFreeDesc + i) % vq->queueSize);
         if (i == 0) head = d;
@@ -358,8 +365,10 @@ IOVirtIOTransport::pollForCompletion(VirtQueue *vq, unsigned timeoutMs, uint32_t
         unsigned waited = 0;
         while (uh->idx == vq->lastUsedIdx) {
             IOSleep(1);
-            if (++waited >= timeoutMs)
+            if (++waited >= timeoutMs) {
+                vq->stalled = true; // resynced by the next addDescChain
                 return false;
+            }
         }
     }
 

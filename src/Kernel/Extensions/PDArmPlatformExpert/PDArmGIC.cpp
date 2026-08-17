@@ -55,7 +55,7 @@ static volatile uint8_t *
 map_phys(IOPhysicalAddress phys, IOByteCount size, IOMemoryMap **outMap)
 {
 	IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
-		phys, size, kIODirectionOutIn | kIOMemoryMapperNone);
+		phys, size, kIODirectionOutIn);
 	if (!desc) {
 		return NULL;
 	}
@@ -71,6 +71,11 @@ map_phys(IOPhysicalAddress phys, IOByteCount size, IOMemoryMap **outMap)
 bool
 PDArmGIC_init(void)
 {
+#if defined(__arm__) && !defined(__arm64__)
+	/* Pi Zero/BCM2835 is ARMv6 with a legacy interrupt controller, not GICv3. */
+	IOLog("PDArmGIC: skipped on ARM32 BCM2835\n");
+	return true;
+#else
 	if (gGicd != NULL) {
 		return true;
 	}
@@ -114,4 +119,5 @@ PDArmGIC_init(void)
 	IOLog("PDArmGIC: up (GICD_CTLR=0x%x GICR_WAKER=0x%x timer PPI %u Group1 enabled)\n",
 	    d_read(GICD_CTLR), r_read(GICR_WAKER), (unsigned)GIC_TIMER_PPI);
 	return true;
+#endif
 }

@@ -1,3 +1,9 @@
+#include <pexpert/arm/board_config.h>
+/*
+ * NEON and ARMv6T2 throughout; neither exists on ARM1176. See
+ * osfmk/arm/WKdm_arm1176.c for what stands in on that board.
+ */
+#if !defined (ARM1176)
 /*
  * Copyright (c) 2000-2013 Apple Inc. All rights reserved.
  *
@@ -708,3 +714,5 @@ L_Tab$non_lazy_ptr:
     .long   0
 #endif
 
+
+#endif /* !ARM1176 */

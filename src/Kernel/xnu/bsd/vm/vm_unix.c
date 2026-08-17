@@ -2734,7 +2734,13 @@ done:
  * a max value. The kernel will choose a random value based on that, then use it
  * for all shared regions.
  */
-#if defined (__x86_64__)
+/*
+ * The slide is aligned to the largest page size the platform can use for a
+ * shared region. SIXTEENK_PAGE_MASK is only defined where such a page size
+ * exists (vm_protos.h gates it on arm64 or armv7k), so key off that rather
+ * than naming architectures - a 4K-page ARM board needs the 4K mask too.
+ */
+#if defined (__x86_64__) || !defined (SIXTEENK_PAGE_MASK)
 #define SLIDE_AMOUNT_MASK ~FOURK_PAGE_MASK
 #else
 #define SLIDE_AMOUNT_MASK ~SIXTEENK_PAGE_MASK

@@ -71,3 +71,52 @@ _availability_version_check(uint32_t count, pd_dyld_build_version_t versions[])
 	}
 	return false;
 }
+
+/* launchd's vproc API is not present in the first PureDarwin userland. */
+int
+vproc_swap_integer(void *vp, int key, int64_t *inval, int64_t *outval)
+{
+	(void)vp;
+	(void)key;
+	(void)inval;
+	if (outval != NULL) {
+		*outval = 0;
+	}
+    return 0;
+}
+
+/* Small bootstrap fallbacks.  The full libSystem implementations are wired
+ * later; dyld only needs these while bringing up the first ARMv6 process. */
+int fls(int value)
+{
+    int result = 0;
+    while (value != 0) {
+        result++;
+        value = (unsigned)value >> 1;
+    }
+    return result;
+}
+
+long double nanl(const char *tagp)
+{
+    (void)tagp;
+    return (long double)__builtin_nan("");
+}
+
+int sandbox_check(int pid, const char *operation, unsigned int type, ...)
+{
+    (void)pid;
+    (void)operation;
+    (void)type;
+    return 0;
+}
+
+typedef long pd_dispatch_once_t;
+void dispatch_once_f(pd_dispatch_once_t *predicate, void *context,
+    void (*function)(void *))
+{
+    if (*predicate == 0) {
+        *predicate = 1;
+        function(context);
+    }
+}

@@ -148,7 +148,7 @@ struct m_hdr {
 	int32_t         mh_len;         /* amount of data in this mbuf */
 	u_int16_t       mh_type;        /* type of data in this mbuf */
 	u_int16_t       mh_flags;       /* flags; see below */
-#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4 || __ARM_ARCH < 7)
 /* This is needed because of how _MLEN is defined and used. Ideally, _MLEN
  * should be defined using the offsetof(struct mbuf, M_dat), since there is
  * no guarantee that mbuf.M_dat will start where mbuf.m_hdr ends. The compiler
@@ -477,6 +477,9 @@ struct pkthdr {
 
 	u_int32_t redzone;              /* red zone */
 	u_int32_t pkt_compl_callbacks;  /* Packet completion callbacks */
+#if __arm__ && (__ARM_ARCH < 7)
+	u_int32_t pkt_pad_armv6;
+#endif /* __arm__ && __ARM_ARCH < 7 */
 };
 
 /*

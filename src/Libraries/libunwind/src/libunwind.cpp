@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "libunwind_ext.h"
+#include "RWMutex.hpp"
 
 #include <stdlib.h>
 
@@ -351,6 +352,8 @@ void __unw_remove_dynamic_eh_frame_section(unw_word_t eh_frame_start) {
 
 #ifdef __APPLE__
 
+using namespace libunwind;
+
 namespace libunwind {
 
 static constexpr size_t MAX_DYNAMIC_UNWIND_SECTIONS_FINDERS = 8;
@@ -472,4 +475,3 @@ bool logDWARF() {
 }
 
 #endif // NDEBUG
-

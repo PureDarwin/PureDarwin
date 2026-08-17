@@ -1,5 +1,6 @@
 __ZN17IONVRAMController*
 __ZTV17IONVRAMController
+_bufattr_delayidlesleep
 _IOCPURunPlatformActiveActions
 _IOCPURunPlatformQuiesceActions
 _PE_get_default

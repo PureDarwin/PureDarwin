@@ -143,6 +143,7 @@ public:
     static const GradedArchs armv7k;          // watch thru series 3
     static const GradedArchs armv7s;          // deprecated
     static const GradedArchs armv7;           // deprecated
+    static const GradedArchs armv6;           // ARMv6 devices
 #if SUPPORT_ARCH_arm64_32
     static const GradedArchs arm64_32;        // watch series 4 and later
 #endif
