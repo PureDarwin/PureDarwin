@@ -44,6 +44,8 @@ let
     ];
   };
 
+  archDefines = lib.optionalString stdenv.hostPlatform.isAarch64 " -D__arm64__=1";
+
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -90,7 +92,7 @@ EOF
     mkdir -p .nix-native-stubs/sdk-shim-include
     echo '#include <machine/endian.h>' > .nix-native-stubs/sdk-shim-include/endian.h
 
-    export NIX_NATIVE_DARWIN_HEADER_FLAGS="-isysroot $DARWIN_SDK_ROOT -D__APPLE__ -D__MACH__ -D__APPLE_CC__=1"
+    export NIX_NATIVE_DARWIN_HEADER_FLAGS="-isysroot $DARWIN_SDK_ROOT -D__APPLE__ -D__MACH__ -D__APPLE_CC__=1${archDefines}"
     export NIX_NATIVE_DARWIN_HEADER_DIRS="$PWD/.nix-native-stubs/sdk-shim-include;$DARWIN_SDK_ROOT/usr/include"
 
     cat > CMakeLists.txt <<'EOF'
