@@ -65,6 +65,11 @@ IOVirtIOGPUUserClient::destroyAll()
     for (uint32_t i = 0; i < fCtxCount; i++)
         fOwner->gpu3DDestroyContext(fCtx[i]);
     fCtxCount = 0;
+
+    // Nothing is driving the framebuffer any more, so the driver has to go
+    // back to pushing it itself or the display freezes on this client's last
+    // frame.
+    fOwner->releasePresentOwnership();
 }
 
 IOReturn

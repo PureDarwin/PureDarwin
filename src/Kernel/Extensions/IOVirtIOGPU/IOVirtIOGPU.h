@@ -44,7 +44,6 @@ private:
     uint32_t     fScanoutWidth, fScanoutHeight; // geometry SET_SCANOUT was last given
     bool         fNativePresent;
     bool         fPresentPending;
-    uint32_t     fPresentIdleTicks;  // flush ticks with no client present
     uint32_t     fPresentX1, fPresentY1, fPresentX2, fPresentY2;
 
     // virgl/3D state. fVirglOK is set when the device offered
@@ -106,6 +105,17 @@ private:
 
 public:
     bool     gpuPresent(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+
+    // Hand the pixel-push cadence back to the driver. A client that presents
+    // owns it for as long as it lives; this is how that ownership ends.
+    void     releasePresentOwnership();
+
+private:
+    bool         fConsolePaused;
+    // Stop/resume the kernel graphics console, which draws into the very same
+    // framebuffer pages a client composites into.
+    void     setConsoleDrawing(bool enable);
+public:
     bool     gpuAttachBacking(uint32_t resourceId, uint64_t phys, uint32_t size);
     bool     gpuResourceUnref(uint32_t resId);
     bool     gpu3DCreateContext(uint32_t ctxId, const char *name);

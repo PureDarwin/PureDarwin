@@ -31,6 +31,8 @@ let
     "writeout.c"
   ];
 
+  archDefines = lib.optionalString stdenv.hostPlatform.isAarch64 " -D__arm64__=1";
+
   libxarSrcs = [
     "archive.c" "arcmod.c" "b64.c" "bzxar.c" "darwinattr.c" "data.c" "ea.c"
     "err.c" "ext2.c" "fbsdattr.c" "filetree.c" "hash.c" "io.c" "linuxattr.c"
@@ -52,7 +54,7 @@ stdenv.mkDerivation {
 
     mkdir -p obj
 
-    CFLAGS="-std=gnu99 -I${cctools}/include -I${cctools}/include/foreign -I${xar}/include -DPROGRAM_PREFIX=\"\" -D__LITTLE_ENDIAN__=1 -D__private_extern__=__attribute__((visibility(\"hidden\"))) -include mach/i386/_structs.h -w"
+    CFLAGS="-std=gnu99 -I${cctools}/include -I${cctools}/include/foreign -I${xar}/include -DPROGRAM_PREFIX=\"\" -D__LITTLE_ENDIAN__=1 -D__private_extern__=__attribute__((visibility(\"hidden\"))) -include mach/i386/_structs.h -w${archDefines}"
 
     for f in ${lib.concatStringsSep " " otoolSrcs}; do
       $CC $CFLAGS -c "${cctools}/otool/$f" -o "obj/otool_$f.o"

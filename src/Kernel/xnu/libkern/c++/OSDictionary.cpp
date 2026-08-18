@@ -479,8 +479,6 @@ OSDictionary::removeObject(const OSSymbol *aKey)
 
 	if (exists) {
 		dictEntry oldEntry = dictionary[i];
-		IOLog("OSDictionary remove: dict=%p count=%u index=%u key=%p value=%p\n",
-		    this, count, i, oldEntry.key.get(), oldEntry.value.get());
 
 		haveUpdated();
 

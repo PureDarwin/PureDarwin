@@ -72,6 +72,8 @@ IOVirtIOGPUSurfaceClient::destroyAll()
         }
     }
     fCount = 0;
+
+    fOwner->releasePresentOwnership();
 }
 
 IOReturn

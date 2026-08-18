@@ -1729,8 +1729,6 @@ OSKext::initWithPrelinkedInfoDict(
 	if (!setInfoDictionaryAndPath(anInfoDict, kextPath)) {
 		goto finish;
 	}
-	IOLog("OSKext prelink: dict=%p path=%s\n",
-	    anInfoDict, getIdentifierCString());
 
 #if KASLR_KEXT_DEBUG
 	IOLog("kaslr: doCoalescedSlides %d kext %s \n", doCoalescedSlides, getIdentifierCString());
@@ -1746,7 +1744,6 @@ OSKext::initWithPrelinkedInfoDict(
 
 	/* Don't need the paths to be in the info dictionary any more.
 	 */
-	IOLog("OSKext prelink: remove paths dict=%p\n", anInfoDict);
 	anInfoDict->removeObject(kPrelinkBundlePathKey);
 	anInfoDict->removeObject(kPrelinkExecutableRelativePathKey);
 
@@ -1760,10 +1757,6 @@ OSKext::initWithPrelinkedInfoDict(
 	 */
 	addressNum = OSDynamicCast(OSNumber,
 	    anInfoDict->getObject(kPrelinkExecutableLoadKey));
-	IOLog("OSKext prelink: load number=%p value=0x%llx dict=%p\n",
-	    addressNum,
-	    addressNum ? addressNum->unsigned64BitValue() : 0ULL,
-	    anInfoDict);
 	if (addressNum && addressNum->unsigned64BitValue() != kOSKextCodelessKextLoadAddr) {
 		lengthNum = OSDynamicCast(OSNumber,
 		    anInfoDict->getObject(kPrelinkExecutableSizeKey));
@@ -1786,8 +1779,6 @@ OSKext::initWithPrelinkedInfoDict(
 		    length);
 #endif
 
-		IOLog("OSKext prelink: remove load/size dict=%p data=%p length=0x%x\n",
-		    anInfoDict, data, length);
 		anInfoDict->removeObject(kPrelinkExecutableLoadKey);
 		anInfoDict->removeObject(kPrelinkExecutableSizeKey);
 

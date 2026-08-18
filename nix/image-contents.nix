@@ -694,6 +694,7 @@ let
         hfsprogs = pkgs.hfsprogs;
         libdmg-hfsplus = pkgs.callPackage ./pkgs/toolchain/libdmg-hfsplus.nix { };
         rootFsType = "hfs";
+        imageFileName = "puredarwin-hfs.img";
         #testAudioFile = /home/vali/development/darwin/stillalive.pcm;
       };
       imageDebugBuild = pkgs.callPackage ../image.nix {

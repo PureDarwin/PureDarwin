@@ -31,7 +31,6 @@ OSDefineMetaClassAndStructors(IOVirtIOGPU, IOFramebuffer);
 #define kDefaultWidth  1024
 #define kDefaultHeight 768
 #define kFlushIntervalMs 16   // fallback cadence; native presents wake it immediately
-#define kPresentLeaseTicks 32 // ~0.5s of silence before the fallback push resumes
 
 static bool gVGPUDebug;
 static bool gVGPUDebugChecked;
@@ -589,6 +588,29 @@ IOVirtIOGPU::gpuResourceFlush(uint32_t resourceId, uint32_t x, uint32_t y,
            resp.type == VIRTIO_GPU_RESP_OK_NODATA;
 }
 
+void
+IOVirtIOGPU::setConsoleDrawing(bool enable)
+{
+    IOPlatformExpert *pe = getPlatform();
+    if (!pe || enable == !fConsolePaused)
+        return;
+
+    pe->setConsoleInfo(NULL, enable ? kPEEnableScreen : kPEDisableScreen);
+    fConsolePaused = !enable;
+    DEBUG("kernel console %s\n", enable ? "resumed" : "paused for client");
+}
+
+void
+IOVirtIOGPU::releasePresentOwnership()
+{
+    IOLockLock(fCtrlLock);
+    fNativePresent = false;
+    fPresentPending = false;
+    IOLockUnlock(fCtrlLock);
+
+    setConsoleDrawing(true);
+}
+
 bool
 IOVirtIOGPU::gpuPresent(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
 {
@@ -606,8 +628,8 @@ IOVirtIOGPU::gpuPresent(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
      * which made XWayland clients block input while native Wayland appeared
      * responsive. */
     IOLockLock(fCtrlLock);
+    bool tookOver = !fNativePresent;
     fNativePresent = true;
-    fPresentIdleTicks = 0;
     if (!fPresentPending) {
         fPresentX1 = x;
         fPresentY1 = y;
@@ -621,6 +643,11 @@ IOVirtIOGPU::gpuPresent(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
         if (y + height > fPresentY2) fPresentY2 = y + height;
     }
     IOLockUnlock(fCtrlLock);
+
+    // Outside the lock: setConsoleInfo reaches into the console machinery and
+    // has no business running with a driver lock held.
+    if (tookOver)
+        setConsoleDrawing(false);
     return true;
 }
 
@@ -930,9 +957,7 @@ IOVirtIOGPU::checkDisplayEvents()
         return;
     }
 
-    // The host discards a scanout's contents across reconfiguration, so push
-    // the whole framebuffer back even if a client owns the present cadence.
-    if (fScanoutResourceId == fResourceId && fFbBase)
+    if (fScanoutResourceId == fResourceId && fFbBase && !fNativePresent)
         gpuTransferToHost2D(fResourceId, 0, 0, width, height);
     gpuResourceFlush(fScanoutResourceId, 0, 0, width, height);
 }
@@ -954,8 +979,6 @@ IOVirtIOGPU::scheduleFlush()
     uint32_t x2 = fPresentX2, y2 = fPresentY2;
     fPresentPending = false;
 
-    if (!pending && fNativePresent && ++fPresentIdleTicks >= kPresentLeaseTicks)
-        fNativePresent = false;
     bool nativePresent = fNativePresent;
     IOLockUnlock(fCtrlLock);
 
@@ -1067,7 +1090,7 @@ IOVirtIOGPU::start(IOService *provider)
     fHeight = kDefaultHeight;
     fNativePresent = false;
     fPresentPending = false;
-    fPresentIdleTicks = 0;
+    fConsolePaused = false;
     fPresentX1 = fPresentY1 = fPresentX2 = fPresentY2 = 0;
     gpuGetDisplayInfo(&fWidth, &fHeight); // best-effort; keep defaults on failure
     fPitch = fWidth * 4;
@@ -1156,6 +1179,10 @@ void
 IOVirtIOGPU::stop(IOService *provider)
 {
     DEBUG("stop %p\n", provider);
+
+    // Leaving the console parked would take the machine's last output path
+    // with the driver.
+    setConsoleDrawing(true);
 
     if (fFlushCall) {
         thread_call_cancel(fFlushCall);

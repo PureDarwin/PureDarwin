@@ -707,14 +707,25 @@ EOF
     truncate -s $((root_size * 512)) root.img
 
 ${lib.optionalString (rootFsType == "hfs") ''
-    # HFS+ root, built without mounting anything: mkfs.hfsplus (hfsprogs)
-    # formats the flat file, then libdmg-hfsplus's hfsplus tool unpacks a
-    # ustar archive of the staging tree into it (files, dirs, symlinks,
-    # mode/uid/gid all come from the tar headers).
-    #
     # HFS+ here is case-INSENSITIVE (hfsplus/libdmg only speak the
     # case-insensitive catalog order), so fail loudly on any staged paths
     # that would collide.
+    # A symlink whose name differs from its target only in case (Thunar ->
+    # thunar) is a compatibility alias for a name this filesystem already
+    # resolves, so it is redundant here rather than a conflict. Drop those
+    # before looking for collisions that actually cost content.
+    while IFS= read -r link; do
+      target=$(readlink "$staging/$link")
+      case "$target" in
+        */*) continue ;;  # not a sibling alias; leave it for the check below
+      esac
+      if [ "$(basename "$link" | tr 'A-Z' 'a-z')" = "$(echo "$target" | tr 'A-Z' 'a-z')" ] &&
+         [ "$(basename "$link")" != "$target" ]; then
+        echo "dropping case-alias symlink ./$link -> $target (HFS+ resolves it already)"
+        rm -f "$staging/$link"
+      fi
+    done < <(cd "$staging" && find . -type l -printf '%P\n')
+
     collisions=$( (cd "$staging" && find . | tr 'A-Z' 'a-z' | sort | uniq -d) || true)
     if [ -n "$collisions" ]; then
       echo "error: case-colliding paths in staging tree (HFS+ is case-insensitive):" >&2
