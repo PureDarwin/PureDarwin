@@ -23,11 +23,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1787000197,
-        "narHash": "sha256-7XkSu4KKZSsuXWpOjQr2diBxcXvLhjzDT+SSOkgI1i0=",
+        "lastModified": 1787028458,
+        "narHash": "sha256-VwH7tU5+/6La41B2xwVtm/SWWJvUt46fNOudIWP7UiI=",
         "owner": "PureDarwin",
         "repo": "kc-tools",
-        "rev": "52ad67ccc68f01128a4259698c62593885b4e955",
+        "rev": "802fbc70ef5431950f24e79b02f2d938385d91bd",
         "type": "github"
       },
       "original": {
