@@ -989,9 +989,9 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
             (USBToHostLong(_asyncQH->qTDFlags) & kEHCIqTDDataToggle) ? 1 : 0;
         if (!isWrite && moved)
             buffer->writeBytes(0, data, moved);
-        EHCI_Log("bulk ok addr=%u ep=%u %s len=%u moved=%u toggle=%u->%u",
-                 address, epNum, isWrite ? "OUT" : "IN", length, moved, toggle,
-                 _bulkDataToggle[address & 0x7fU][epNum][dirIndex]);
+        //EHCI_Log("bulk ok addr=%u ep=%u %s len=%u moved=%u toggle=%u->%u",
+        //         address, epNum, isWrite ? "OUT" : "IN", length, moved, toggle,
+        //         _bulkDataToggle[address & 0x7fU][epNum][dirIndex]);
     } else if (ret == kIOUSBPipeStalled) {
         _bulkDataToggle[address & 0x7fU][epNum][dirIndex] = 0;
         EHCI_Log("bulk STALL addr=%u ep=%u %s len=%u moved=%u qhFlags=%08x",

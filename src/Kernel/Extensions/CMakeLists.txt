@@ -1,5 +1,6 @@
 if(NOT PUREDARWIN_ARM64 AND NOT PUREDARWIN_ARM32)
     add_subdirectory(IOACPIFamily)
+    add_subdirectory(PDACPIPlatform)
     add_subdirectory(AppleAPIC)
     add_subdirectory(AppleI386GenericPlatform)
     add_subdirectory(AppleI386PCI)
@@ -78,5 +79,6 @@ if(NOT PUREDARWIN_ARM64 AND NOT PUREDARWIN_ARM32)
     add_dependencies(kexts
         AppleAPIC AppleI386GenericPlatform AppleI386PCI AppleIntelPIIXATA
         ApplePS2Controller IOACPIFamily IOATAFamily IOATABlockStorage.kext
+        PDACPIPlatform
     )
 endif()

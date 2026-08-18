@@ -429,7 +429,25 @@ console_ring_try_empty(void)
 
 		if (nchars_out > 0) {
 			total_chars_out += nchars_out;
+
+			/* kprintf writes this UART unbuffered under its own lock; take it
+			 * so a drain cannot land mid-line. Never block: if kprintf holds
+			 * it, write anyway. Skipped in the debugger (may be held by a
+			 * halted core). */
+#if defined(__i386__) || defined(__x86_64__)
+			boolean_t kp_locked = FALSE;
+			if (__probable(!in_debugger)) {
+				kp_locked = kprintf_serial_lock_try();
+			}
+#endif
+
 			_cnputs(flush_buf, nchars_out);
+
+#if defined(__i386__) || defined(__x86_64__)
+			if (kp_locked) {
+				kprintf_serial_unlock();
+			}
+#endif
 			/* Serial mirroring of video-console output happens in vcputc()
 			 * (osfmk/console/video_console.c), the single sink for the
 			 * VC_CONS_OPS console, so it catches the userland tty path too. */

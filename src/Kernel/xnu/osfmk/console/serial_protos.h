@@ -94,6 +94,12 @@ void console_printbuf_putc(int ch, void *arg);
 void console_printbuf_clear(struct console_printbuf_state * info);
 int console_write_try(char * str, int size);
 
+#if defined(__i386__) || defined(__x86_64__)
+/* kprintf's lock (pexpert/i386/pe_kprintf.c); try-only. */
+boolean_t kprintf_serial_lock_try(void);
+void kprintf_serial_unlock(void);
+#endif
+
 
 #endif /* XNU_KERNEL_PRIVATE */
 

@@ -66,6 +66,20 @@ SECURITY_READ_ONLY_LATE(unsigned int) disable_serial_output = TRUE;
 
 static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
 
+/* Held across a whole kprintf line; console_ring_try_empty() takes it too so a
+ * ring drain cannot interleave into that line on another CPU. Try-only. */
+boolean_t
+kprintf_serial_lock_try(void)
+{
+	return simple_lock_try(&kprintf_lock, LCK_GRP_NULL);
+}
+
+void
+kprintf_serial_unlock(void)
+{
+	simple_unlock(&kprintf_lock);
+}
+
 __startup_func
 static void
 PE_init_kprintf(void)

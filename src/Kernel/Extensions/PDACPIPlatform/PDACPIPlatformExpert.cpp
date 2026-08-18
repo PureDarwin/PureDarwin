@@ -38,7 +38,14 @@ extern "C" {
 }
 
 #include "../AppleAPIC/PICShared.h"
-#include "AppleI386PlatformExpert.h"
+#include "PDACPIPlatformExpert.h"
+
+extern "C" {
+#include <uacpi/uacpi.h>
+#include <uacpi/tables.h>
+#include <uacpi/acpi.h>
+#include <uacpi/status.h>
+}
 
 // kprintf writes straight to the serial console, bypassing os_log (which drops
 // IOLog output from prelinked kexts that aren't fully OSKext-registered).
@@ -58,35 +65,44 @@ static struct {
 
 static IOLock *ResourceLock;
 
-class AppleI386PlatformExpertGlobals {
+class PDACPIPlatformExpertGlobals {
 public:
 	bool isValid;
-	AppleI386PlatformExpertGlobals();
-	~AppleI386PlatformExpertGlobals();
+	PDACPIPlatformExpertGlobals();
+	~PDACPIPlatformExpertGlobals();
 };
 
-static AppleI386PlatformExpertGlobals AppleI386PlatformExpertGlobals;
-AppleI386PlatformExpertGlobals::AppleI386PlatformExpertGlobals() {
+static PDACPIPlatformExpertGlobals PDACPIPlatformExpertGlobals;
+PDACPIPlatformExpertGlobals::PDACPIPlatformExpertGlobals() {
 	ResourceLock = IOLockAlloc();
 	bzero(IRQ, sizeof(IRQ));
 }
 
-AppleI386PlatformExpertGlobals::~AppleI386PlatformExpertGlobals() {
+PDACPIPlatformExpertGlobals::~PDACPIPlatformExpertGlobals() {
 	if (ResourceLock) IOLockFree(ResourceLock);
 }
 
 #pragma mark -
 
-#define super IOPlatformExpert
+#define super IOACPIPlatformExpert
 
-OSDefineMetaClassAndStructors(AppleI386PlatformExpert, IOPlatformExpert);
+OSDefineMetaClassAndStructors(PDACPIPlatformExpert, IOACPIPlatformExpert);
 
-IOService *AppleI386PlatformExpert::probe(IOService *provider, SInt32 *score) {
+// Must match nothing: NULL makes IODTFindMatchingEntries detach the whole tree.
+const char *PDACPIPlatformExpert::deleteList(void) {
+	return "('pd-delete-none')";
+}
+
+const char *PDACPIPlatformExpert::excludeList(void) {
+	return NULL;
+}
+
+IOService *PDACPIPlatformExpert::probe(IOService *provider, SInt32 *score) {
 	if (score != 0) *score = 10000;
 	return this;
 }
 
-bool AppleI386PlatformExpert::init(OSDictionary *properties) {\
+bool PDACPIPlatformExpert::init(OSDictionary *properties) {\
 	if (!super::init(properties)) return false;
 
 	OSString *name = (OSString *)getProperty("InterruptControllerName");
@@ -111,16 +127,16 @@ bool AppleI386PlatformExpert::init(OSDictionary *properties) {\
  * SMBIOS, falling back to the boot volume UUID) on the device-tree /options
  * node, and we publish it here.
  */
-void AppleI386PlatformExpert::publishPlatformUUIDFromDeviceTree(void) {
+void PDACPIPlatformExpert::publishPlatformUUIDFromDeviceTree(void) {
 	IORegistryEntry *options = IORegistryEntry::fromPath("/options", gIODTPlane);
 	if (options == 0) {
-		IOLog("AppleI386PlatformExpert: no /options node, IOPlatformUUID unavailable\n");
+		IOLog("PDACPIPlatformExpert: no /options node, IOPlatformUUID unavailable\n");
 		return;
 	}
 
 	OSData *data = OSDynamicCast(OSData, options->getProperty("platform-uuid"));
 	if (data == 0 || data->getLength() != sizeof(uuid_t)) {
-		IOLog("AppleI386PlatformExpert: /options has no usable platform-uuid, "
+		IOLog("PDACPIPlatformExpert: /options has no usable platform-uuid, "
 		      "IOPlatformUUID unavailable\n");
 		options->release();
 		return;
@@ -137,15 +153,15 @@ void AppleI386PlatformExpert::publishPlatformUUIDFromDeviceTree(void) {
 	 * resource is what waitForService() in IOBSDGetPlatformUUID() blocks on. */
 	setProperty(kIOPlatformUUIDKey, string);
 	publishResource(kIOPlatformUUIDKey, string);
-	IOLog("AppleI386PlatformExpert: published IOPlatformUUID %s\n", uuid);
+	IOLog("PDACPIPlatformExpert: published IOPlatformUUID %s\n", uuid);
 	string->release();
 }
 
-UInt16 AppleI386PlatformExpert::sPM1aControlPort = 0;
-UInt16 AppleI386PlatformExpert::sPM1bControlPort = 0;
-UInt8  AppleI386PlatformExpert::sS5SleepTypeA = 0;
-UInt8  AppleI386PlatformExpert::sS5SleepTypeB = 0;
-bool   AppleI386PlatformExpert::sACPIPowerOffReady = false;
+UInt16 PDACPIPlatformExpert::sPM1aControlPort = 0;
+UInt16 PDACPIPlatformExpert::sPM1bControlPort = 0;
+UInt8  PDACPIPlatformExpert::sS5SleepTypeA = 0;
+UInt8  PDACPIPlatformExpert::sS5SleepTypeB = 0;
+bool   PDACPIPlatformExpert::sACPIPowerOffReady = false;
 
 /* Map a physical range long enough to read a table out of it. ACPI tables sit
  * in EFI reclaim memory, which is normal RAM by the time we run. */
@@ -188,11 +204,11 @@ static bool pd_acpi_parse_s5(const UInt8 *dsdt, UInt32 length,
 	return false;
 }
 
-void AppleI386PlatformExpert::cacheACPIPowerOffFromDeviceTree(void) {
+void PDACPIPlatformExpert::cacheACPIPowerOffFromDeviceTree(void) {
 	IORegistryEntry *cfg =
 	    IORegistryEntry::fromPath("/efi/configuration-table", gIODTPlane);
 	if (cfg == 0) {
-		IOLog("AppleI386PlatformExpert: no /efi/configuration-table, "
+		IOLog("PDACPIPlatformExpert: no /efi/configuration-table, "
 		      "ACPI power off unavailable\n");
 		return;
 	}
@@ -220,7 +236,7 @@ void AppleI386PlatformExpert::cacheACPIPowerOffFromDeviceTree(void) {
 	cfg->release();
 
 	if (rsdpPhys == 0) {
-		IOLog("AppleI386PlatformExpert: no ACPI RSDP in the device tree, "
+		IOLog("PDACPIPlatformExpert: no ACPI RSDP in the device tree, "
 		      "ACPI power off unavailable\n");
 		return;
 	}
@@ -268,7 +284,7 @@ void AppleI386PlatformExpert::cacheACPIPowerOffFromDeviceTree(void) {
 	sdtMap->release();
 
 	if (fadtPhys == 0) {
-		IOLog("AppleI386PlatformExpert: no FACP table, "
+		IOLog("PDACPIPlatformExpert: no FACP table, "
 		      "ACPI power off unavailable\n");
 		return;
 	}
@@ -283,7 +299,7 @@ void AppleI386PlatformExpert::cacheACPIPowerOffFromDeviceTree(void) {
 	fadtMap->release();
 
 	if (sPM1aControlPort == 0) {
-		IOLog("AppleI386PlatformExpert: FACP has no PM1a control block, "
+		IOLog("PDACPIPlatformExpert: FACP has no PM1a control block, "
 		      "ACPI power off unavailable\n");
 		return;
 	}
@@ -311,12 +327,12 @@ void AppleI386PlatformExpert::cacheACPIPowerOffFromDeviceTree(void) {
 	}
 
 	sACPIPowerOffReady = true;
-	IOLog("AppleI386PlatformExpert: ACPI power off via PM1a 0x%x "
+	IOLog("PDACPIPlatformExpert: ACPI power off via PM1a 0x%x "
 	      "(PM1b 0x%x), S5 type %u/%u\n", sPM1aControlPort, sPM1bControlPort,
 	      sS5SleepTypeA, sS5SleepTypeB);
 }
 
-bool AppleI386PlatformExpert::start(IOService *provider) {
+bool PDACPIPlatformExpert::start(IOService *provider) {
 	setBootROMType(kBootROMTypeNewWorld);
 
 	bool superOK = super::start(provider);
@@ -327,18 +343,37 @@ bool AppleI386PlatformExpert::start(IOService *provider) {
 	publishPlatformUUIDFromDeviceTree();
 	cacheACPIPowerOffFromDeviceTree();
 
+	// After the platform duties: a uACPI failure must not cost us the expert.
+	if (PDACPIGlueInit() && setupEarlyTables()) {
+		fUACPIStarted = true;
+		kprintf("PDACPIPlatform: ACPI tables available\n");
+		logTable(ACPI_FADT_SIGNATURE);
+		logTable(ACPI_MADT_SIGNATURE);
+		logTable(ACPI_MCFG_SIGNATURE);
+		logTable(ACPI_HPET_SIGNATURE);
+	} else {
+		kprintf("PDACPIPlatform: uACPI table access unavailable\n");
+	}
+
+	// Must precede the interrupt controller: initCPUInterruptController()
+	// calls ml_set_max_cpus(), which is what hw.ncpu reports.
+	fCPUCount = enumerateProcessorsFromMADT();
+	if (fCPUCount == 0) fCPUCount = 1;   // boot processor only
+
 	// Hack: Initialize AppleI386CPU ourself because no one else will.
 	bootCPU = new AppleI386CPU;
 	if (bootCPU == 0) return false;
 
 	bootCPU->init();
 	bootCPU->attach(0);
-	if (!bootCPU->startCommon()) return false;
+	if (!bootCPU->startCommon(fCPUCount)) return false;
+
+	if (fCPUCount > 1) registerProcessors();
 
 	return true;
 }
 
-bool AppleI386PlatformExpert::configure(IOService *provider) {
+bool PDACPIPlatformExpert::configure(IOService *provider) {
 	OSArray *topLevel;
 	OSDictionary *dict;
 	IOService *nub;
@@ -374,7 +409,7 @@ bool AppleI386PlatformExpert::configure(IOService *provider) {
 	return true;
 }
 
-bool AppleI386PlatformExpert::matchNubWithPropertyTable(IOService *nub, OSDictionary *table) {
+bool PDACPIPlatformExpert::matchNubWithPropertyTable(IOService *nub, OSDictionary *table) {
 	OSString *nameProp;
 	OSString *match;
 
@@ -384,10 +419,12 @@ bool AppleI386PlatformExpert::matchNubWithPropertyTable(IOService *nub, OSDictio
 	return match->isEqualTo(nameProp);
 }
 
-IOService *AppleI386PlatformExpert::createNub(OSDictionary *from) {
+IOService *PDACPIPlatformExpert::createNub(OSDictionary *from) {
 	IOService *nub;
 
-	nub = super::createNub(from);
+	// Named explicitly: IODTPlatformExpert introduces createNub(IORegistryEntry*),
+	// which hides the OSDictionary form this synthesises nubs with.
+	nub = IOPlatformExpert::createNub(from);
 	if (nub) {
 		const char *name = nub->getName();
 
@@ -408,7 +445,7 @@ IOService *AppleI386PlatformExpert::createNub(OSDictionary *from) {
 	return nub;
 }
 
-void AppleI386PlatformExpert::setupPIC(IOService *nub) {
+void PDACPIPlatformExpert::setupPIC(IOService *nub) {
 	int i;
 	OSDictionary *propTable;
 	OSArray *controller;
@@ -447,14 +484,14 @@ void AppleI386PlatformExpert::setupPIC(IOService *nub) {
 	controller->release();
 }
 
-void AppleI386PlatformExpert::setupBIOS(IOService *nub) {
+void PDACPIPlatformExpert::setupBIOS(IOService *nub) {
 	// TODO: Implement this function.
 	// This function is dependent upon being able to retrieve the
 	// PCI bus data. While the booter does collect some PCI data,
 	// but it does not include the data needed here.
 }
 
-bool AppleI386PlatformExpert::getMachineName(char *name, int maxLength) {
+bool PDACPIPlatformExpert::getMachineName(char *name, int maxLength) {
 	if (!name || maxLength <= 0) {
 		return false;
 	}
@@ -472,7 +509,7 @@ bool AppleI386PlatformExpert::getMachineName(char *name, int maxLength) {
 	return true;
 }
 
-bool AppleI386PlatformExpert::getModelName(char *name, int maxLengh) {
+bool PDACPIPlatformExpert::getModelName(char *name, int maxLengh) {
 	i386_cpu_info_t *cpuid_cpu_info = cpuid_info();
 
 	if (cpuid_cpu_info->cpuid_brand_string[0] != '\0') {
@@ -484,7 +521,7 @@ bool AppleI386PlatformExpert::getModelName(char *name, int maxLengh) {
 	return true;
 }
 
-int AppleI386PlatformExpert::handlePEHaltRestart(unsigned int type) {
+int PDACPIPlatformExpert::handlePEHaltRestart(unsigned int type) {
 	int ret = -1;
 	int temporary_sum = 0;
 
@@ -524,7 +561,7 @@ int AppleI386PlatformExpert::handlePEHaltRestart(unsigned int type) {
 				}
 			}
 
-			IOLog("AppleI386PlatformExpert: ACPI power off unavailable, "
+			IOLog("PDACPIPlatformExpert: ACPI power off unavailable, "
 			      "resetting instead\n");
 			outb(0xCF9, 0x02);
 			temporary_sum = 2;
@@ -541,7 +578,7 @@ int AppleI386PlatformExpert::handlePEHaltRestart(unsigned int type) {
 	return ret;
 }
 
-bool AppleI386PlatformExpert::setNubInterruptVectors(IOService *nub, const UInt32 *vectors, UInt32 vectorCount) {
+bool PDACPIPlatformExpert::setNubInterruptVectors(IOService *nub, const UInt32 *vectors, UInt32 vectorCount) {
 	OSArray *controller = 0;
 	OSArray *specifier = 0;
 	bool success = false;
@@ -583,11 +620,11 @@ done:
 	return success;
 }
 
-bool AppleI386PlatformExpert::setNubInterruptVector(IOService *nub, UInt32 vector) {
+bool PDACPIPlatformExpert::setNubInterruptVector(IOService *nub, UInt32 vector) {
 	return setNubInterruptVectors(nub, &vector, 1);
 }
 
-IOReturn AppleI386PlatformExpert::callPlatformFunction(const OSSymbol *functionName, bool waitForFunction, void *param1, void *param2, void *param3, void *param4) {
+IOReturn PDACPIPlatformExpert::callPlatformFunction(const OSSymbol *functionName, bool waitForFunction, void *param1, void *param2, void *param3, void *param4) {
 	bool ok;
 
 	if (functionName->isEqualTo("SetDeviceInterrupts")) {
@@ -622,7 +659,7 @@ IOReturn AppleI386PlatformExpert::callPlatformFunction(const OSSymbol *functionN
 		message[0] = 0xFEE00000U | (destAPICID << 12);  // MSI address low
 		message[1] = 0;                                 // MSI address high
 		message[2] = vector & 0xFFU;                    // MSI data
-		kprintf("AppleI386PlatformExpert: MSI msg vector=0x%x addr=0x%08x data=0x%x\n",
+		kprintf("PDACPIPlatformExpert: MSI msg vector=0x%x addr=0x%08x data=0x%x\n",
 			vector, message[0], message[2]);
 		return kIOReturnSuccess;
 	} else if (functionName->isEqualTo("SetBusClockRateMHz")) {
@@ -638,7 +675,7 @@ IOReturn AppleI386PlatformExpert::callPlatformFunction(const OSSymbol *functionN
 	return super::callPlatformFunction(functionName, waitForFunction, param1, param2, param3, param4);
 }
 
-bool AppleI386PlatformExpert::reserveSystemInterrupt(IOService *client, UInt32 vectorNumber, bool exclusive) {
+bool PDACPIPlatformExpert::reserveSystemInterrupt(IOService *client, UInt32 vectorNumber, bool exclusive) {
 	bool ok = false;
 	if (vectorNumber >= kSystemIRQCount) return ok;
 
@@ -662,7 +699,7 @@ bool AppleI386PlatformExpert::reserveSystemInterrupt(IOService *client, UInt32 v
 	return ok;
 }
 
-void AppleI386PlatformExpert::releaseSystemInterrupt(IOService *client, UInt32 vectorNumber, bool exclusive) {
+void PDACPIPlatformExpert::releaseSystemInterrupt(IOService *client, UInt32 vectorNumber, bool exclusive) {
 	if (vectorNumber >= kSystemIRQCount) return;
 	IOLockLock(ResourceLock);
 
@@ -740,7 +777,7 @@ daysFromEpoch(int year, int month, int day)
 }
 
 long
-AppleI386PlatformExpert::getGMTTimeOfDay(void)
+PDACPIPlatformExpert::getGMTTimeOfDay(void)
 {
 	uint8_t sec, min, hour, day, month, year, statusB;
 
@@ -779,7 +816,7 @@ AppleI386PlatformExpert::getGMTTimeOfDay(void)
 }
 
 void
-AppleI386PlatformExpert::setGMTTimeOfDay(long secs)
+PDACPIPlatformExpert::setGMTTimeOfDay(long secs)
 {
 	long days = secs / 86400;
 	long remainder = secs % 86400;
@@ -830,4 +867,242 @@ AppleI386PlatformExpert::setGMTTimeOfDay(long secs)
 	rtcWrite(RTC_MONTH, bMonth);
 	rtcWrite(RTC_YEAR, bYear);
 	rtcWrite(RTC_STATUS_B, statusB);
+}
+
+#pragma mark - SMP
+
+// XNU's x86 SMP entry point; no x86 IOKit code calls it, so a platform kext must.
+extern "C" kern_return_t ml_processor_register(cpu_id_t cpu_id, uint32_t lapic_id,
+                                               processor_t *processor_out,
+                                               boolean_t boot_cpu, boolean_t start);
+
+/* Local APIC id of the processor this code is running on, i.e. the BSP. */
+static uint32_t pd_boot_lapic_id(void) {
+	uint32_t eax, ebx, ecx, edx;
+	__asm__ volatile ("cpuid"
+	                  : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+	                  : "a"(1), "c"(0));
+	return (ebx >> 24) & 0xff;
+}
+
+// Enabled processors from the MADT, boot CPU first.
+unsigned PDACPIPlatformExpert::enumerateProcessorsFromMADT(void) {
+	if (!fUACPIStarted) return 0;
+
+	uacpi_table table;
+	if (uacpi_unlikely_error(uacpi_table_find_by_signature(ACPI_MADT_SIGNATURE,
+	                                                       &table))) {
+		kprintf("PDACPIPlatform: no MADT; staying uniprocessor\n");
+		return 0;
+	}
+
+	struct acpi_madt *madt = (struct acpi_madt *)table.ptr;
+	uint32_t len = madt->hdr.length;
+	uint32_t off = sizeof(*madt);
+	uint32_t bootLapic = pd_boot_lapic_id();
+	unsigned count = 0;
+	bool haveBoot = false;
+
+	while (off + sizeof(struct acpi_entry_hdr) <= len && count < kMaxCPUs) {
+		struct acpi_entry_hdr *e =
+		    (struct acpi_entry_hdr *)((uint8_t *)madt + off);
+
+		/* A zero length would spin here forever on a malformed table. */
+		if (e->length < sizeof(*e) || off + e->length > len) break;
+
+		if (e->type == ACPI_MADT_ENTRY_TYPE_LAPIC &&
+		    e->length >= sizeof(struct acpi_madt_lapic)) {
+			struct acpi_madt_lapic *l = (struct acpi_madt_lapic *)e;
+
+			if (l->flags & 1) {   /* enabled */
+				if (l->id == bootLapic) {
+					// XNU asserts the boot_cpu registration lands on cpu 0.
+					fLapicIds[count++] = fLapicIds[0];
+					fLapicIds[0] = l->id;
+					haveBoot = true;
+				} else {
+					fLapicIds[count++] = l->id;
+				}
+			}
+		}
+		off += e->length;
+	}
+
+	uacpi_table_unref(&table);
+
+	if (!haveBoot) {
+		kprintf("PDACPIPlatform: MADT lists no entry for boot LAPIC %u; "
+		        "staying uniprocessor\n", bootLapic);
+		return 0;
+	}
+
+	kprintf("PDACPIPlatform: MADT reports %u enabled processor%s (boot LAPIC %u)\n",
+	        count, count == 1 ? "" : "s", bootLapic);
+	return count;
+}
+
+// Two passes, as ml_processor_register requires: register every CPU so the
+// topology sort sees the full set, then start them.
+void PDACPIPlatformExpert::registerProcessors(void) {
+	processor_t procs[kMaxCPUs];
+	AppleI386CPU *cpus[kMaxCPUs];
+
+	// cpu_id is an IOCPU *, not an index: PE_cpu_machine_init() casts it back.
+	cpus[0] = bootCPU;
+	for (unsigned i = 1; i < fCPUCount; i++) {
+		cpus[i] = new AppleI386CPU;
+		if (cpus[i] == 0 || !cpus[i]->prepareSecondary(i)) {
+			kprintf("PDACPIPlatform: no IOCPU for LAPIC %u; capping at %u CPUs\n",
+			        fLapicIds[i], i);
+			fCPUCount = i;
+			break;
+		}
+	}
+
+	for (unsigned i = 0; i < fCPUCount; i++) {
+		procs[i] = NULL;
+		kern_return_t kr = ml_processor_register((cpu_id_t)cpus[i],
+		                                         fLapicIds[i], &procs[i],
+		                                         i == 0, FALSE);
+		if (kr != KERN_SUCCESS) {
+			kprintf("PDACPIPlatform: registering LAPIC %u failed (0x%x)\n",
+			        fLapicIds[i], kr);
+			fCPUCount = i;   // do not start what was never registered
+			break;
+		}
+	}
+
+	for (unsigned i = 0; i < fCPUCount; i++) {
+		kern_return_t kr = ml_processor_register((cpu_id_t)cpus[i],
+		                                         fLapicIds[i], &procs[i],
+		                                         i == 0, TRUE);
+		if (kr != KERN_SUCCESS) {
+			kprintf("PDACPIPlatform: starting LAPIC %u failed (0x%x)\n",
+			        fLapicIds[i], kr);
+		}
+	}
+}
+
+#pragma mark - ACPI (uACPI)
+
+// ~56 bytes per table; 4 KB covers about 73.
+static uint8_t gEarlyTableBuffer[4096] __attribute__((aligned(sizeof(void *))));
+
+bool PDACPIPlatformExpert::setupEarlyTables(void) {
+	uacpi_status st = uacpi_setup_early_table_access(gEarlyTableBuffer,
+	                                                 sizeof(gEarlyTableBuffer));
+	if (uacpi_unlikely_error(st)) {
+		kprintf("PDACPIPlatform: early table access failed: %s\n",
+		        uacpi_status_to_string(st));
+		return false;
+	}
+	return true;
+}
+
+// Log a table's presence and revision.
+void PDACPIPlatformExpert::logTable(const char *signature) {
+	uacpi_table table;
+
+	uacpi_status st = uacpi_table_find_by_signature(signature, &table);
+	if (uacpi_unlikely_error(st)) {
+		kprintf("PDACPIPlatform:   %.4s absent\n", signature);
+		return;
+	}
+
+	kprintf("PDACPIPlatform:   %.4s revision %u, %u bytes, OEM '%.6s'\n",
+	        table.hdr->signature, table.hdr->revision, table.hdr->length,
+	        table.hdr->oemid);
+
+	uacpi_table_unref(&table);
+}
+
+void PDACPIPlatformExpert::free(void) {
+	// Matching frees instances that never ran start(); their teardown must not
+	// touch the glue's global state.
+	if (fUACPIStarted) {
+		uacpi_state_reset();
+		PDACPIGlueFree();
+		fUACPIStarted = false;
+	}
+	super::free();
+}
+
+// The one family entry point that works without a namespace.
+const OSData *PDACPIPlatformExpert::getACPITableData(const char *tableName,
+                                                     UInt32 tableInstance) {
+	if (tableName == 0 || !fUACPIStarted) return 0;
+
+	uacpi_table table;
+	uacpi_status st = uacpi_table_find_by_signature_at(tableName, tableInstance,
+	                                                   &table);
+	if (uacpi_unlikely_error(st)) return 0;
+
+	// Copy: the caller outlives the mapping.
+	OSData *data = OSData::withBytes(table.ptr, table.hdr->length);
+	uacpi_table_unref(&table);
+	return data;
+}
+
+SInt32 PDACPIPlatformExpert::installDeviceInterruptForFixedEvent(IOService *, UInt32) {
+	return -1;
+}
+
+SInt32 PDACPIPlatformExpert::installDeviceInterruptForGPE(IOService *, UInt32, void *,
+                                                          IOOptionBits) {
+	return -1;
+}
+
+IOReturn PDACPIPlatformExpert::acquireGlobalLock(IOService *, UInt32 *,
+                                                 const mach_timespec_t *) {
+	return kIOReturnUnsupported;
+}
+
+void PDACPIPlatformExpert::releaseGlobalLock(IOService *, UInt32) {
+}
+
+IOReturn PDACPIPlatformExpert::validateObject(IOACPIPlatformDevice *, const OSSymbol *) {
+	return kIOReturnUnsupported;
+}
+
+IOReturn PDACPIPlatformExpert::evaluateObject(IOACPIPlatformDevice *, const OSSymbol *,
+                                              OSObject **, OSObject *[], IOItemCount,
+                                              IOOptionBits) {
+	return kIOReturnUnsupported;
+}
+
+IOReturn PDACPIPlatformExpert::registerAddressSpaceHandler(IOACPIPlatformDevice *,
+                                                           IOACPIAddressSpaceID,
+                                                           IOACPIAddressSpaceHandler,
+                                                           void *, IOOptionBits) {
+	return kIOReturnUnsupported;
+}
+
+void PDACPIPlatformExpert::unregisterAddressSpaceHandler(IOACPIPlatformDevice *,
+                                                         IOACPIAddressSpaceID,
+                                                         IOACPIAddressSpaceHandler,
+                                                         IOOptionBits) {
+}
+
+IOReturn PDACPIPlatformExpert::readAddressSpace(UInt64 *, IOACPIAddressSpaceID,
+                                                IOACPIAddress, UInt32, UInt32,
+                                                IOOptionBits) {
+	return kIOReturnUnsupported;
+}
+
+IOReturn PDACPIPlatformExpert::writeAddressSpace(UInt64, IOACPIAddressSpaceID,
+                                                 IOACPIAddress, UInt32, UInt32,
+                                                 IOOptionBits) {
+	return kIOReturnUnsupported;
+}
+
+IOReturn PDACPIPlatformExpert::setDevicePowerState(IOACPIPlatformDevice *, UInt32) {
+	return kIOReturnUnsupported;
+}
+
+IOReturn PDACPIPlatformExpert::getDevicePowerState(IOACPIPlatformDevice *, UInt32 *) {
+	return kIOReturnUnsupported;
+}
+
+IOReturn PDACPIPlatformExpert::setDeviceWakeEnable(IOACPIPlatformDevice *, bool) {
+	return kIOReturnUnsupported;
 }
