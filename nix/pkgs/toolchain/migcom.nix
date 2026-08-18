@@ -36,12 +36,16 @@ let
     # see tools/mig/CMakeLists.txt for the full explanation.
     mkdir -p mach_shim
     cp -r "$SDK/usr/include/mach" mach_shim/mach
+    # Both arch subtrees, because the SDK's machine/*.h dispatch on the host
+    # arch and an aarch64 builder lands in arm/ where an x86 one lands in
+    # i386/. They need the same glibc-vs-Apple typedef reconciliation.
     cp -r "$SDK/usr/include/i386" mach_shim/i386
+    cp -r "$SDK/usr/include/arm" mach_shim/arm
     sed -i \
       -e "/typedef long long *__int64_t;/d" \
       -e "/typedef unsigned long long *__uint64_t;/d" \
       -e "/^typedef union {/,/} __mbstate_t;/d" \
-      mach_shim/i386/_types.h
+      mach_shim/i386/_types.h mach_shim/arm/_types.h
     mkdir -p mach_shim/sys
     cp "$SDK/usr/include/sys/_types.h" \
        "$SDK/usr/include/sys/_endian.h" \
@@ -60,10 +64,12 @@ let
        mach_shim/
   '';
 
+  archDefines = lib.optionalString stdenv.hostPlatform.isAarch64 " -D__arm64__=1";
+
   hostCflags =
     if onDarwin
     then ''-I . -include sys/types.h''
-    else ''-I . -I mach_shim -include sys/types.h -include bits/types/__mbstate_t.h'';
+    else ''-I . -I mach_shim -include sys/types.h -include bits/types/__mbstate_t.h${archDefines}'';
 in
 stdenv.mkDerivation {
   pname = "puredarwin-migcom-native";
