@@ -1,0 +1,9 @@
+version: 2
+
+# Update CI once a month, or at least have a PR for it.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 1
