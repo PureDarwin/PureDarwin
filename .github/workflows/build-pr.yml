@@ -10,7 +10,7 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
       - name: Install Packages
         run: |
           export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
