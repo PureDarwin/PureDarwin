@@ -42,8 +42,24 @@
 , onyx2dBuild
 , coregraphicsBuild
 , cairoNoxBuild
+, pdEpollShimBuild
+, tllistBuild
+, fcftBuild
+, footBuild
+, userlandNoxBuild
+, pangoNoxBuild
+, netsurfNoxBuild
+, libepoxyNoxBuild
+, fastfetchNoxBuild
+, harfbuzzNoxBuild
+, atspi2CoreNoxBuild
+, cairoGobjectNoxBuild
+, xkbcommonNoxBuild
 , dbusNoxBuild
 , mesaNoxBuild
+, openglFrameworkNoxBuild
+, mesaDemosNoxBuild
+, librsvgNoxBuild
 , gtkLayerShellNoxBuild
 , harfbuzzBuild
 , i3Build
@@ -309,7 +325,7 @@ let
     chmod -R u+w "$out"
     cp -a ${libSystemBuild}/. "$out/"
     chmod -R u+w "$out"
-    cp -a ${userlandBuild}/. "$out/"
+    cp -a ${userlandNoxBuild}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${tccBuild}/. "$out/"
     chmod -R u+w "$out"
@@ -334,7 +350,7 @@ let
     chmod -R u+w "$out"
     cp -a ${xvfbFontsBuild}/. "$out/"
     chmod -R u+w "$out"
-    # startx has no X server to start on this image.
+    # startx builds as part of the userland, but there is no X server here.
     rm -f "$out/bin/startx" "$out/usr/bin/startx"
   '');
   splitBaseSystemStripped = pkgs.runCommand "puredarwin-basesystem-split-0.1" { } (''
@@ -603,6 +619,7 @@ let
     libcxx-dylib = libcxxDylibBuild;
     libcxxabi-dylib = libcxxabiDylibBuild;
     userland = userlandBuild;
+    userland-nox = userlandNoxBuild;
     tcc = tccBuild;
     cctools = cctoolsBuild;
     libsystem = libSystemBuild;
@@ -943,8 +960,23 @@ let
           gtk3 = gtk3NoxBuild;
           gtk-layer-shell = gtkLayerShellNoxBuild;
           cairo = cairoNoxBuild;
+          pango = pangoNoxBuild;
+          netsurf = netsurfNoxBuild;
+          libepoxy = libepoxyNoxBuild;
+          fastfetch = fastfetchNoxBuild;
+          harfbuzz = harfbuzzNoxBuild;
+          at-spi2-core = atspi2CoreNoxBuild;
+          cairo-gobject = cairoGobjectNoxBuild;
+          xkbcommon = xkbcommonNoxBuild;
+          foot = footBuild;
+          fcft = fcftBuild;
+          tllist = tllistBuild;
+          pd-epoll-shim = pdEpollShimBuild;
           dbus = dbusNoxBuild;
           mesa = mesaNoxBuild;
+          opengl-framework = openglFrameworkNoxBuild;
+          mesa-demos = mesaDemosNoxBuild;
+          librsvg = librsvgNoxBuild;
         };
       imageWaylandBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemWayland;
@@ -953,6 +985,7 @@ let
         xnuLoader = xnu-loader.packages.${system}.default;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland.img";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1";
       };
       strippedExtraPackages = [ zshBuild toyboxBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild coreServicesBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild foundationBuild securityBuild symptomReporterBuild systemConfigurationBuild diskArbitrationBuild ioregBuild ];
       imageStrippedBuild = pkgs.callPackage ../image.nix {
@@ -1294,9 +1327,15 @@ let
       image-stripped = imageStrippedBuild;
       onyx2d = onyx2dBuild;
       coregraphics = coregraphicsBuild;
+      pd-epoll-shim = pdEpollShimBuild;
+      tllist = tllistBuild;
+      fcft = fcftBuild;
+      foot = footBuild;
       cairo-nox = cairoNoxBuild;
       dbus-nox = dbusNoxBuild;
       mesa-nox = mesaNoxBuild;
+      opengl-framework-nox = openglFrameworkNoxBuild;
+      mesa-demos-nox = mesaDemosNoxBuild;
       image-wayland = imageWaylandBuild;
       wlroots-nox = wlrootsNoxBuild;
       sway-nox = swayNoxBuild;

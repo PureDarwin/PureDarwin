@@ -192,6 +192,26 @@
               "${xvfbPixmanBuild}/include/pixman-1"
             ];
           };
+          # Wayland-only image: the same userland without the Xorg DDX drivers,
+          # which are what drag the whole Xorg tree into the build graph.
+          # startx stays in the target list - it is plain libSystem and only
+          # execs Xorg at runtime, so it costs no dependency, and its install
+          # rule is unconditional in CMake. It is removed from the image in
+          # splitBaseSystemWayland instead.
+          userlandNoxBuild = mkPureDarwinBuild {
+            pname = "puredarwin-userland-nox";
+            src = userlandSource;
+            buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "ping" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" ]
+              ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
+              ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
+            enableProjects = false;
+            enableKernel = false;
+            enableLibraries = false;
+            enableTools = false;
+            installUserland = true;
+            installKernel = false;
+            prebuiltLibSystem = libSystemBuild;
+          };
           tccBuild = mkPureDarwinBuild {
             pname = "puredarwin-tcc";
             src = userlandSource;
@@ -1428,9 +1448,95 @@
               libX11 = null; libXext = null; libxcb = null; libXau = null;
               libXdmcp = null; libXxf86vm = null; xorgproto = null; xtrans = null;
             };
+          openglFrameworkNoxBuild =
+            if isDarwin then null else openglFrameworkBuild.override {
+              withX11 = false;
+              mesa = mesaNoxBuild;
+              libX11 = null; xorgproto = null; libXext = null;
+              libxcb = null; libXau = null; libXdmcp = null;
+            };
+          mesaDemosNoxBuild =
+            if isDarwin then null else mesaDemosBuild.override {
+              withX11 = false;
+              mesa = mesaNoxBuild;
+              wayland = waylandBuild;
+              xkbcommon = xkbcommonNoxBuild;
+              waylandScanner = waylandScannerBuild;
+              waylandProtocols = waylandProtocolsBuild;
+              libX11 = null; libXext = null; libxcb = null; libXau = null;
+              libXdmcp = null; xorgproto = null; xtrans = null;
+            };
+          # librsvg takes an explicit deps list rather than a cairo argument, so
+          # the nox cairo has to be substituted into it by hand.
+          librsvgNoxBuild =
+            if isDarwin then null else librsvgBuild.override {
+              deps = [
+                glibBuild gdkPixbufBuild cairoNoxBuild cairoGobjectNoxBuild pangoNoxBuild
+                libxml2Build libcrocoBuild libpngBuild freetype2Build fontconfigBuild
+                fribidiBuild harfbuzzNoxBuild expatBuild pcre2Build libffiBuild
+                libiconvBuild xvfbZlibBuild xvfbPixmanBuild
+              ];
+            };
+          netsurfNoxBuild =
+            if isDarwin then null else netsurfBuild.override {
+              withX11 = false;
+              gtk3 = gtk3NoxBuild;
+              cairo = cairoNoxBuild;
+              cairoGobject = cairoGobjectNoxBuild;
+              pango = pangoNoxBuild;
+              harfbuzz = harfbuzzNoxBuild;
+              libepoxy = libepoxyNoxBuild;
+              dbus = dbusNoxBuild;
+              atspi2Core = atspi2CoreNoxBuild;
+              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+              libXext = null; libXi = null; libXrender = null; libXrandr = null;
+              libXfixes = null; libXcursor = null; xorgproto = null;
+            };
+          libepoxyNoxBuild =
+            if isDarwin then null else libepoxyBuild.override {
+              withX11 = false;
+              mesa = mesaNoxBuild;
+              libX11 = null; xorgproto = null;
+            };
+          fastfetchNoxBuild =
+            if isDarwin then null else fastfetchBuild.override {
+              withX11 = false;
+              mesa = mesaNoxBuild;
+              openglFramework = openglFrameworkNoxBuild;
+              libX11 = null; libXext = null; libxcb = null;
+              libXau = null; libXdmcp = null;
+            };
+          harfbuzzNoxBuild =
+            if isDarwin then null else harfbuzzBuild.override { cairo = cairoNoxBuild; };
+          atspi2CoreNoxBuild =
+            if isDarwin then null else atspi2CoreBuild.override { dbus = dbusNoxBuild; };
+          cairoGobjectNoxBuild =
+            if isDarwin then null else cairoGobjectBuild.override { cairo = cairoNoxBuild; };
+          xkbcommonNoxBuild =
+            if isDarwin then null else xkbcommonBuild.override {
+              withX11 = false;
+              libxcb = null; libXau = null; libXdmcp = null;
+            };
+          pangoNoxBuild =
+            if isDarwin then null else pangoBuild.override {
+              withX11 = false;
+              cairo = cairoNoxBuild;
+              harfbuzz = harfbuzzNoxBuild;
+              libX11 = null; libxcb = null; libXext = null; libXrender = null;
+              xorgproto = null;
+            };
           gtk3NoxBuild =
             if isDarwin then null else gtk3Build.override {
               withX11 = false;
+              cairo = cairoNoxBuild;
+              cairoGobject = cairoGobjectNoxBuild;
+              pango = pangoNoxBuild;
+              harfbuzz = harfbuzzNoxBuild;
+              libepoxy = libepoxyNoxBuild;
+              mesa = mesaNoxBuild;
+              dbus = dbusNoxBuild;
+              atspi2Core = atspi2CoreNoxBuild;
+              xkbcommon = xkbcommonNoxBuild;
               libX11 = null;
               libxcb = null;
               libXau = null;
@@ -1444,7 +1550,22 @@
               xorgproto = null;
             };
           gtkLayerShellNoxBuild =
-            if isDarwin then null else gtkLayerShellBuild.override { gtk3 = gtk3NoxBuild; };
+            if isDarwin then null else gtkLayerShellBuild.override {
+              gtk3 = gtk3NoxBuild;
+              withX11 = false;
+              atspi2Core = atspi2CoreNoxBuild;
+              xkbcommon = xkbcommonNoxBuild;
+              cairo = cairoNoxBuild;
+              cairoGobject = cairoGobjectNoxBuild;
+              pango = pangoNoxBuild;
+              harfbuzz = harfbuzzNoxBuild;
+              libepoxy = libepoxyNoxBuild;
+              dbus = dbusNoxBuild;
+              mesa = mesaNoxBuild;
+              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+              libXext = null; libXi = null; libXrender = null; libXrandr = null;
+              libXfixes = null; libXcursor = null; xorgproto = null;
+            };
           libwnckBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/xfce/libwnck.nix {
               nativeMesonTools = nativeMesonToolsDir;
@@ -2714,13 +2835,71 @@
               xcb = null;
               xcbWm = null;
               xwayland = null;
+              xkbcommon = xkbcommonNoxBuild;
             };
           swayNoxBuild =
             if isDarwin then null else swayBuild.override {
               withXwayland = false;
               wlroots = wlrootsNoxBuild;
+              cairo = cairoNoxBuild;
+              xkbcommon = xkbcommonNoxBuild;
+              pango = pangoNoxBuild;
+              harfbuzz = harfbuzzNoxBuild;
               xcb = null;
               xcbWm = null;
+            };
+          tllistBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/tllist.nix { };
+          fcftBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/fcft.nix {
+              inherit darwinCrossToolchain nativeLd;
+              nativeMesonTools = nativeMesonToolsDir;
+              libSystem = libSystemBuild;
+              fontconfig = fontconfigBuild;
+              freetype = freetype2Build;
+              pixman = xvfbPixmanBuild;
+              harfbuzz = harfbuzzNoxBuild;
+              libutf8proc = libutf8procBuild;
+              tllist = tllistBuild;
+              expat = expatBuild;
+              zlib = xvfbZlibBuild;
+              libpng = libpngBuild;
+              libiconv = libiconvBuild;
+              glib = glibBuild;
+              pcre2 = pcre2Build;
+              libffi = libffiBuild;
+            };
+          footBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/foot.nix {
+              inherit darwinCrossToolchain nativeLd;
+              nativeMesonTools = nativeMesonToolsDir;
+              libSystem = libSystemBuild;
+              wayland = waylandBuild;
+              waylandProtocols = waylandProtocolsBuild;
+              waylandScanner = waylandScannerBuild;
+              xkbcommon = xkbcommonNoxBuild;
+              fontconfig = fontconfigBuild;
+              freetype = freetype2Build;
+              pixman = xvfbPixmanBuild;
+              harfbuzz = harfbuzzNoxBuild;
+              libutf8proc = libutf8procBuild;
+              tllist = tllistBuild;
+              fcft = fcftBuild;
+              epollShim = pdEpollShimBuild;
+              expat = expatBuild;
+              zlib = xvfbZlibBuild;
+              libpng = libpngBuild;
+              libiconv = libiconvBuild;
+              glib = glibBuild;
+              pcre2 = pcre2Build;
+              libffi = libffiBuild;
+              ncurses = ncursesBuild;
+            };
+          pdEpollShimBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/pd-epoll-shim.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              src = ./src/Libraries/pd-epoll-shim;
             };
           waylandBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wayland.nix {
@@ -3462,7 +3641,7 @@
               libXcursorSharedBuild libXrandrSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
-              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild cairoNoxBuild dbusNoxBuild mesaNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
+              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild

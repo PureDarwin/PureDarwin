@@ -35,17 +35,20 @@
 , libepoxy
 , atspi2Core
 , dbus
-, libX11
-, libxcb
-, libXau
-, libXdmcp
-, libXext
-, libXi
-, libXrender
-, libXrandr
-, libXfixes
-, libXcursor
-, xorgproto
+, libX11 ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
+, libXext ? null
+, libXi ? null
+, libXrender ? null
+, libXrandr ? null
+, libXfixes ? null
+, libXcursor ? null
+, xorgproto ? null
+  # Wayland-only image: gtk-layer-shell needs no X11 of its own; the deps were
+  # only there to match the X11-enabled gtk3 it links.
+, withX11 ? true
 , libpng
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
@@ -53,7 +56,11 @@
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
 
-  deps = [
+  xDeps = lib.optionals withX11 [
+    libX11 libxcb libXau libXdmcp libXext libXi libXrender libXrandr libXfixes
+    libXcursor xorgproto
+  ];
+  deps = xDeps ++ [
     glib pcre2 libffi zlib libiconv
     cairo cairoGobject pixman
     pango fribidi harfbuzz freetype2 fontconfig expat
@@ -61,8 +68,7 @@ let
     libepoxy
     atspi2Core
     dbus
-    libX11 libxcb libXau libXdmcp libXext libXi libXrender libXrandr libXfixes libXcursor
-    xorgproto libpng
+    libpng
     gtk3 wayland waylandProtocols xkbcommon
   ];
   depPcPaths = map lib.getDev deps;

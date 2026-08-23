@@ -15,14 +15,16 @@
 , iokit
 , openglFramework
 , mesa
-, libX11
-, libXext
-, libxcb
-, libXau
-, libXdmcp
+, libX11 ? null
+, libXext ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
   # The Pi has no GL stack worth shipping: linking OpenGL.framework drags Mesa
   # and llvmpipe into a 1GB root filesystem for one report line.
 , withOpenGL ? true
+  # Wayland-only image: no X11 libraries exist to name here.
+, withX11 ? true
 }:
 
 let
@@ -38,6 +40,8 @@ let
 
   glFrameworkFlag  = lib.optionalString withOpenGL "-F${openglFramework}/System/Library/Frameworks ";
   glIncludeFlag    = lib.optionalString withOpenGL "-I${mesa}/usr/include ";
+  xDylibFileFlags  = lib.optionalString withX11
+    "-Wl,-dylib_file,/usr/lib/libX11.6.dylib:${libX11}/lib/libX11.6.dylib -Wl,-dylib_file,/usr/lib/libXext.6.dylib:${libXext}/lib/libXext.6.dylib -Wl,-dylib_file,/usr/lib/libxcb.1.1.0.dylib:${libxcb}/lib/libxcb.1.1.0.dylib -Wl,-dylib_file,/usr/lib/libXau.6.dylib:${libXau}/lib/libXau.6.dylib -Wl,-dylib_file,/usr/lib/libXdmcp.6.dylib:${libXdmcp}/lib/libXdmcp.6.dylib ";
   glDylibFileFlag  = lib.optionalString withOpenGL "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib ";
   glLinkFlag       = lib.optionalString withOpenGL "-framework OpenGL ";
 in
@@ -267,7 +271,7 @@ GPUEOF
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export NIX_DARWIN_TOOLCHAIN_DIR="${darwinCrossToolchain}/bin"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}-Wl,-dylib_file,/usr/lib/libX11.6.dylib:${libX11}/lib/libX11.6.dylib -Wl,-dylib_file,/usr/lib/libXext.6.dylib:${libXext}/lib/libXext.6.dylib -Wl,-dylib_file,/usr/lib/libxcb.1.1.0.dylib:${libxcb}/lib/libxcb.1.1.0.dylib -Wl,-dylib_file,/usr/lib/libXau.6.dylib:${libXau}/lib/libXau.6.dylib -Wl,-dylib_file,/usr/lib/libXdmcp.6.dylib:${libXdmcp}/lib/libXdmcp.6.dylib ${glLinkFlag}-lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}${xDylibFileFlags}${glLinkFlag}-lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT ${glFrameworkFlag}${glIncludeFlag}-I${libSystem}/usr/include -I${corefoundation}/include -I${foundation}/usr/include -I${libobjc}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
   '';
 

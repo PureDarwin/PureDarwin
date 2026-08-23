@@ -6,13 +6,16 @@
 , targetTriple ? "x86_64-apple-darwin20.4"
 , libSystem
 , mesa
-, libX11
-, xorgproto
-, libXext
-, libxcb
-, libXau
-, libXdmcp
+, libX11 ? null
+, xorgproto ? null
+, libXext ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
 , src
+  # CGL is offscreen-only, so the EGL backend uses Mesa's surfaceless platform
+  # and needs no window system at all. The GLX backend needs an X server.
+, withX11 ? true
 }:
 
 let
@@ -29,7 +32,7 @@ let
   installName = "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL";
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-opengl-framework";
+  pname = "puredarwin-opengl-framework${lib.optionalString (!withX11) "-nox"}";
   version = "0.1";
 
   dontUnpack = true;
@@ -43,17 +46,20 @@ stdenv.mkDerivation {
 
     ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
-      -I${src}/include -I${mesa}/usr/include -I${libX11}/include -I${xorgproto}/include \
+      -I${src}/include -I${mesa}/usr/include \
+      ${lib.optionalString withX11 "-I${libX11}/include -I${xorgproto}/include"} \
+      ${lib.optionalString (!withX11) "-DPD_CGL_USE_EGL=1"} \
       -I${libSystem}/usr/include \
       -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${mesa}/usr/lib \
-      -L${libX11}/lib -L${libXext}/lib -L${libxcb}/lib -L${libXau}/lib -L${libXdmcp}/lib \
+      ${lib.optionalString withX11 "-L${libX11}/lib -L${libXext}/lib -L${libxcb}/lib -L${libXau}/lib -L${libXdmcp}/lib"} \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,${installName} \
       -Wl,-reexport-lGL \
-      -lX11 -lXext -lxcb -lXau -lXdmcp \
+      ${lib.optionalString withX11 "-lX11 -lXext -lxcb -lXau -lXdmcp"} \
+      ${lib.optionalString (!withX11) "-lEGL"} \
       -lSystem \
       ${src}/CGL.c \
       -o OpenGL

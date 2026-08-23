@@ -20,14 +20,17 @@
 , zlib
 , libiconv
 , pixman
-, libxcb
+, libxcb ? null
 , fontconfig
 , freetype
 , expat
-, libX11
-, libXext
-, libXrender
-, xorgproto
+, libX11 ? null
+, libXext ? null
+, libXrender ? null
+, xorgproto ? null
+  # pango builds with -Dxft=disabled, so it needs no X11 of its own; these were
+  # only here to satisfy cairo.pc back when cairo required the xlib backend.
+, withX11 ? true
 , libpng
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
@@ -35,7 +38,9 @@
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
 
-  deps = [ glib fribidi harfbuzz cairo pcre2 libffi zlib libiconv pixman libxcb fontconfig freetype expat libX11 libXext libXrender xorgproto libpng ];
+  deps = [ glib fribidi harfbuzz cairo pcre2 libffi zlib libiconv pixman
+           fontconfig freetype expat libpng ]
+    ++ lib.optionals withX11 [ libxcb libX11 libXext libXrender xorgproto ];
   depPcPaths = deps;
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
@@ -48,7 +53,7 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-pango";
+  pname = "puredarwin-pango${lib.optionalString (!withX11) "-nox"}";
   version = pango.version;
 
   src = pango.src;

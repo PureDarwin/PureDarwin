@@ -180,6 +180,8 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/setmode.c        # _setmode/_getmode (uudecode -m, chmod-style modes)
     string/FreeBSD/wcscoll.c     # _wcscoll (comm)
     string/FreeBSD/wcschr.c      # _wcschr
+    string/FreeBSD/wcscasecmp.c  # _wcscasecmp
+    string/FreeBSD/wcsncasecmp.c # _wcsncasecmp (foot)
     string/FreeBSD/wcsdup.c      # _wcsdup
     string/FreeBSD/wmemmove.c    # _wmemmove (fold)
     # wide-char + xlocale surface pulled in by the full libc++.dylib
@@ -652,6 +654,8 @@ target_sources(libc_internal_static PRIVATE
     stdio/FreeBSD/fgets.c         # _fgets
     stdio/FreeBSD/fread.c         # _fread (collate table loading)
     string/FreeBSD/wcsncmp.c      # _wcsncmp (collate's chainsearch)
+    string/FreeBSD/wcscasecmp.c   # _wcscasecmp
+    string/FreeBSD/wcsncasecmp.c  # _wcsncasecmp (foot)
     string/FreeBSD/strerror.c     # _strerror (collate's error-message path)
     string/FreeBSD/strcasecmp.c   # _strcasecmp/_strncasecmp
     string/FreeBSD/strcspn.c      # _strcspn

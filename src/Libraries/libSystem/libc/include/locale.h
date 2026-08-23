@@ -53,4 +53,11 @@ __BEGIN_DECLS
 char		*setlocale(int, const char *);
 __END_DECLS
 
+/* POSIX.1-2008 declares the per-thread locale API (locale_t, newlocale,
+ * uselocale, freelocale, duplocale) in <locale.h>. Apple keeps it in
+ * <xlocale.h> and only pulls that in for _USE_EXTENDED_LOCALES_, so ports
+ * written against POSIX or glibc fail to find it. The declarations and the
+ * symbols both already exist here - only the visibility was missing. */
+#include <xlocale.h>
+
 #endif /* _LOCALE_H_ */

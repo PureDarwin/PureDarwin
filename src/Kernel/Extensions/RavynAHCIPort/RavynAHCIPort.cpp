@@ -336,12 +336,7 @@ bool RavynAHCIPort::start(IOService *provider)
 
     fABAR = (volatile uint8_t *)fABARMap->getVirtualAddress();
 
-    /* A BAR the firmware left inside an unassigned bridge aperture reads back
-     * as all ones on every access. Writing GHC.AE into that and then trusting
-     * CAP/PI gets a controller that claims 32 populated ports and a 64-bit DMA
-     * capability it does not have, so refuse before the first write. The port
-     * register file also has to fit inside what actually got mapped. */
-    if (fABARMap->getLength() < PORT_REGS_BASE + 32 * PORT_REGS_SIZE) {
+    if (fABARMap->getLength() < PORT_REGS_BASE) {
         AHCI_Log("ABAR mapping is only 0x%llx bytes, refusing to attach",
                 (unsigned long long)fABARMap->getLength());
         return false;
@@ -387,7 +382,18 @@ bool RavynAHCIPort::start(IOService *provider)
     uint32_t pi  = hbaRead32(AHCI_PI);
     uint32_t vs  = hbaRead32(AHCI_VS);
 
-    /* Enumerate ports. Publish a nub for EVERY populated SATA port -- do not
+    /* Drop any implemented port whose register block falls outside what was
+     * actually mapped, so a short ABAR cannot become an out-of-bounds access. */
+    for (int p = 0; p < 32; p++) {
+        if (!(pi & (1U << p))) continue;
+        if (PORT_REGS_BASE + (p + 1) * PORT_REGS_SIZE > fABARMap->getLength()) {
+            AHCI_Log("port %d is outside the 0x%llx-byte ABAR mapping, ignoring",
+                    p, (unsigned long long)fABARMap->getLength());
+            pi &= ~(1U << p);
+        }
+    }
+
+    /* Enumerate ports. Publish a nub for EVERY populated SATA port - do not
      * stop at the first one. AHCI port order has no relationship to which
      * disk is "the" boot disk (e.g. under QEMU, an if=ide-defaulted drive
      * silently reassigned onto AHCI can land on an earlier port than the
@@ -424,7 +430,7 @@ bool RavynAHCIPort::start(IOService *provider)
         uint16_t identifyData[256];
         /*
          * IDENTIFY allocates physically contiguous DMA memory and waits for
-         * command completion.  IOKit may enter start() with interrupts
+         * command completion. IOKit may enter start() with interrupts
          * masked, but VM allocation and the AHCI interrupt path both need
          * them enabled while this synchronous operation runs.
          */
@@ -491,8 +497,6 @@ bool RavynAHCIPort::start(IOService *provider)
         disksPublished++;
     }
 
-    /* We return true past here regardless -- driver is attached even if no
-       (or only some) disks came up; upper layers see whichever nubs matched. */
     if (disksPublished == 0)
         AHCI_Debug("No usable SATA disk found on any port");
     else

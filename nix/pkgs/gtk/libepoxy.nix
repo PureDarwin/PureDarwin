@@ -10,16 +10,19 @@
 , nativeLd
 , libSystem
 , libepoxy
-, libX11
-, xorgproto
+, libX11 ? null
+, xorgproto ? null
 , mesa
+  # Wayland-only image: no X11 platform and no GLX in mesa-nox, so epoxy must
+  # not build its GLX resolver either - EGL is what GTK's Wayland backend uses.
+, withX11 ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
 
-  deps = [ libX11 xorgproto mesa ];
+  deps = [ mesa ] ++ lib.optionals withX11 [ libX11 xorgproto ];
   depPcPaths = map lib.getDev deps;
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
@@ -32,7 +35,7 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-libepoxy";
+  pname = "puredarwin-libepoxy${lib.optionalString (!withX11) "-nox"}";
   inherit (libepoxy) version src;
 
   nativeBuildInputs = [ meson ninja pkg-config python3 ];
@@ -91,9 +94,9 @@ EOF
       -Ddefault_library=shared \
       -Dtests=false \
       -Ddocs=false \
-      -Dglx=yes \
+      -Dglx=${if withX11 then "yes" else "no"} \
       -Degl=yes \
-      -Dx11=true
+      -Dx11=${lib.boolToString withX11}
 
     runHook postConfigure
   '';

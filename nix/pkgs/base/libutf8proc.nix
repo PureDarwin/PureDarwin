@@ -57,6 +57,10 @@ stdenv.mkDerivation {
     mkdir -p "$out/lib/pkgconfig" "$out/include/libutf8proc"
     install -m755 libutf8proc.dylib "$out/lib/libutf8proc.dylib"
     install -m644 include/libutf8proc/utf8proc.h "$out/include/libutf8proc/utf8proc.h"
+    # Upstream installs the header at the include root and libutf8proc.pc's
+    # Cflags points there, so ports that do #include <utf8proc.h> (fcft, foot)
+    # need it in both places.
+    install -m644 include/libutf8proc/utf8proc.h "$out/include/utf8proc.h"
 
     cat > "$out/lib/pkgconfig/libutf8proc.pc" <<EOF
 prefix=$out

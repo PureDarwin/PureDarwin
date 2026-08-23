@@ -280,6 +280,7 @@ export XCURSOR_THEME=''${XCURSOR_THEME:-DMZ-White}
 export NO_AT_BRIDGE=''${NO_AT_BRIDGE:-1}
 export GDK_PIXBUF_MODULE_FILE=''${GDK_PIXBUF_MODULE_FILE:-/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache}
 export GTK_A11Y=''${GTK_A11Y:-none}
+export XDG_RUNTIME_DIR=''${XDG_RUNTIME_DIR:-/var/run/user/0}
 export PS1='# '
 EOF
     cat > $staging/etc/zshenv <<'EOF'
@@ -298,6 +299,7 @@ export XCURSOR_THEME=''${XCURSOR_THEME:-DMZ-White}
 export NO_AT_BRIDGE=''${NO_AT_BRIDGE:-1}
 export GDK_PIXBUF_MODULE_FILE=''${GDK_PIXBUF_MODULE_FILE:-/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache}
 export GTK_A11Y=''${GTK_A11Y:-none}
+export XDG_RUNTIME_DIR=''${XDG_RUNTIME_DIR:-/var/run/user/0}
 EOF
     cat > $staging/etc/zprofile <<'EOF'
 test -r /etc/profile && . /etc/profile

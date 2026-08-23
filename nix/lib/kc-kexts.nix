@@ -10,6 +10,7 @@
     "PDACPIPlatform.kext"
     "IOPCIFamily.kext"
     "AppleAPIC.kext"
+    #"AppleI386GenericPlatform.kext"
     "AppleI386PCI.kext"
     "IOStorageFamily.kext"
     "IONVMEFamily.kext"
@@ -44,5 +45,6 @@
     "IOIntelFramebuffer.kext"
     "PDE1000.kext"
     "PDRealtek8111.kext"
+    "IOAudioFamily.kext"
     "RavynHDAudio.kext"
 ]

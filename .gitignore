@@ -136,6 +136,10 @@ CMakeCache.txt
 *.wav
 
 # Nix files
+# Unanchored on purpose: nix build drops a result symlink wherever it is run, and that
+# happens all over the tree (src/Kernel/xnu/result and so on). The cost is that a real
+# file named "result" is ignored too; use git add -f if you ever need one. A rule that
+# excludes only Nix store symlinks would be better, but gitignore cannot express it.
 *result
 *result-*
 */output.txt

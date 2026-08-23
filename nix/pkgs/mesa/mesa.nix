@@ -73,13 +73,20 @@ let
   xPkgConfigPath = lib.concatMapStringsSep ":"
     (p: "${p}/lib/pkgconfig:${p}/share/pkgconfig") xDeps;
 in
-stdenv.mkDerivation {
+stdenv.mkDerivation rec {
   pname = "puredarwin-mesa${lib.optionalString (!withX11) "-nox"}";
-  version = "26.1.5";
+  version = "26.1.6";
 
+  # archive.mesa3d.org and the rest of freedesktop have been unreachable, so
+  # Debian's pool is listed first - its .orig tarball is upstream's, unpacking
+  # to the same mesa-<version>/ layout. Upstream stays as a fallback for when
+  # it comes back.
   src = fetchurl {
-    url = "https://archive.mesa3d.org/mesa-26.1.5.tar.xz";
-    hash = "sha256-eeQhx84YzZ55C4N1kgMld58QeYYwvzDgsi8aIchhcSI=";
+    urls = [
+      "http://deb.debian.org/debian/pool/main/m/mesa/mesa_${version}.orig.tar.xz"
+      "https://archive.mesa3d.org/mesa-${version}.tar.xz"
+    ];
+    sha256 = "01l62p9a90rwnhmgp975h752ixxdpfi518ddp4n2w08y1y5bi5jj";
   };
 
   nativeBuildInputs = [ meson ninja pkg-config pythonEnv bison flex glslang spirv-tools waylandScanner ];
@@ -117,6 +124,18 @@ stdenv.mkDerivation {
     substituteInPlace meson.build \
       --replace "if with_gallium and (system_has_kms_drm or (freedreno_kmds.contains('kgsl') and with_gallium_zink))" \
                 "if with_gallium and (system_has_kms_drm or host_machine.system() == 'darwin' or (freedreno_kmds.contains('kgsl') and with_gallium_zink))"
+
+    # Mesa only builds a desktop GL library as part of the GLX target, so
+    # disabling GLX leaves libEGL/libGLESv2 and no libGL at all. The dispatch
+    # generator already has an "opengl" target (libglvnd's libOpenGL set: every
+    # desktop entry point, no GLX), so build that as libGL alongside es2api.
+    mkdir -p src/mesa/glapi/openglapi
+    cp ${./openglapi/meson.build} src/mesa/glapi/openglapi/meson.build
+    cp ${./openglapi/libopengl_public.c} src/mesa/glapi/openglapi/libopengl_public.c
+    # Appended rather than spliced into the gles2 block: by the end of
+    # src/meson.build every variable the target needs (shared_glapi_lib,
+    # glapi_xml_py_deps, inc_mesa, gl_priv_libs) is already in scope.
+    echo "subdir('mesa/glapi/openglapi')" >> src/meson.build
   '' + ''
     mkdir -p src/gallium/winsys/virgl/puredarwin
     cp ${virglWinsysSrc}/virgl_puredarwin_winsys.c src/gallium/winsys/virgl/puredarwin/

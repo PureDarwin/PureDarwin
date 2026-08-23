@@ -35,17 +35,20 @@
 , libnsbmp
 , libnsutils
 , libutf8proc
-, libX11
-, libxcb
-, libXau
-, libXdmcp
-, libXext
-, libXi
-, libXrender
-, libXrandr
-, libXfixes
-, libXcursor
-, xorgproto
+, libX11 ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
+, libXext ? null
+, libXi ? null
+, libXrender ? null
+, libXrandr ? null
+, libXfixes ? null
+, libXcursor ? null
+, xorgproto ? null
+  # NetSurf's GTK frontend goes through GDK, so it needs no X11 of its own;
+  # these matched the X11-enabled gtk3 it links.
+, withX11 ? true
 , expat
 , pcre2
 , libffi
@@ -62,8 +65,10 @@ let
     libcurl openssl zlib libpng libiconv
     libwapcaplet libparserutils libhubbub libcss libdom
     libnsgif libnsbmp libnsutils libutf8proc
-    libX11 libxcb libXau libXdmcp libXext libXi libXrender libXrandr libXfixes libXcursor
-    xorgproto expat pcre2 libffi fribidi harfbuzz freetype2 fontconfig
+    expat pcre2 libffi fribidi harfbuzz freetype2 fontconfig
+  ] ++ lib.optionals withX11 [
+    libX11 libxcb libXau libXdmcp libXext libXi libXrender libXrandr libXfixes
+    libXcursor xorgproto
   ];
   depPcPaths = map lib.getDev deps;
 
@@ -84,7 +89,7 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-netsurf";
+  pname = "puredarwin-netsurf${lib.optionalString (!withX11) "-nox"}";
   version = "3.11";
   inherit src;
 

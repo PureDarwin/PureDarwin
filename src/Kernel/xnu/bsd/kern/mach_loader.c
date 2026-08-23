@@ -58,6 +58,7 @@
 
 #include <mach/mach_types.h>
 extern void IOLog(const char *format, ...) __printflike(1, 2);
+extern boolean_t PE_parse_boot_argn(const char *arg_string, void *arg_ptr, int max_arg);
 #include <mach/vm_map.h>        /* vm_allocate() */
 #include <mach/mach_vm.h>       /* mach_vm_allocate() */
 #include <mach/vm_statistics.h>
@@ -3060,10 +3061,23 @@ load_dylinker(
 		result->dynlinker = TRUE;
 		result->entry_point = myresult->entry_point;
 		/* Where dyld landed, so a user fault's pc can be attributed to it.
-		 * RELEASE strips kprintf/printf strings; IOLog survives. */
-		IOLog("dyld: mach_header 0x%08x entry 0x%08x main 0x%08x\n",
-		    (unsigned)myresult->mach_header, (unsigned)myresult->entry_point,
-		    (unsigned)result->mach_header);
+		 * RELEASE strips kprintf/printf strings; IOLog survives. Off unless
+		 * asked for: this fires on every exec, which is far too noisy for a
+		 * working system. Boot with dyld_trace=1 to get it back. */
+		{
+			static int pd_dyld_trace = -1;
+			if (pd_dyld_trace < 0) {
+				int val = 0;
+				pd_dyld_trace = PE_parse_boot_argn("dyld_trace", &val,
+				    sizeof(val)) ? val : 0;
+			}
+			if (pd_dyld_trace) {
+				IOLog("dyld: mach_header 0x%08x entry 0x%08x main 0x%08x\n",
+				    (unsigned)myresult->mach_header,
+				    (unsigned)myresult->entry_point,
+				    (unsigned)result->mach_header);
+			}
+		}
 		result->validentry = myresult->validentry;
 		result->all_image_info_addr = myresult->all_image_info_addr;
 		result->all_image_info_size = myresult->all_image_info_size;

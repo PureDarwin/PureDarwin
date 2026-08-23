@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>IOAudioFamily</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>IOAudioFamily 300.6.1, Copyright © 2000-2023 Apple Inc. All rights reserved.</string>
+	<key>CFBundleGetInfoString</key>
+	<string>IOAudioFamily 300.6.1, Copyright © 2000-2023 Apple Inc. All rights reserved.</string>
+	<key>CFBundleVersion</key>
+	<string>300.6.1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>300.6.1</string>
+	<key>CFBundleIconFile</key>
+	<string></string>
+	<key>CFBundleIdentifier</key>
+	<string>com.apple.iokit.IOAudioFamily</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>IOAudioFamily</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleSignature</key>
+	<string>aaud</string>
+	<key>IOKitPersonalities</key>
+	<dict/>
+	<key>OSBundleCompatibleVersion</key>
+	<string>1.0.0b1</string>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.kpi.iokit</key>
+		<string>9.0.0</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>9.0.0</string>
+		<key>com.apple.kpi.mach</key>
+		<string>9.0.0</string>
+		<key>com.apple.kpi.bsd</key>
+		<string>8.0</string>
+		<key>com.apple.kpi.unsupported</key>
+		<string>8.0.0</string>
+	</dict>
+	<key>VBRSupported</key>
+	<string>YES</string>
+</dict>
+</plist>

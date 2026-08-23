@@ -38,6 +38,7 @@ add_subdirectory(IOHIDFamily)
 add_subdirectory(IONetworkingFamily)
 add_subdirectory(PDE1000)
 add_subdirectory(PDRealtek8111)
+add_subdirectory(IOAudioFamily)
 add_subdirectory(RavynHDAudio)
 add_subdirectory(corecrypto)
 add_subdirectory(ext4)
@@ -62,7 +63,7 @@ add_dependencies(kexts
     IOVirtIOBlock.kext
     IOIntelFramebuffer.kext
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
-    RavynHDAudio.kext
+    IOAudioFamily.kext RavynHDAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext
     AppleFileSystemDriver.kext Ext4FileSystemDriver.kext pthread.kext
 )

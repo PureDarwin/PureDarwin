@@ -3,30 +3,39 @@
  * playback-only, targeting QEMU's -device intel-hda + hda-duplex emulated
  * hardware (vendor 0x8086, device 0x2668). Written from the public Intel
  * High Definition Audio Specification register/verb layout, not derived
- * from any Apple driver - this does NOT use IOAudioFamily (doesn't exist
- * in this tree yet); it's a standalone IOService that programs the
- * controller directly and exposes a raw PCM write path at /dev/dsp0,
- * mirroring how IOGOPFramebuffer exposes /dev/fb0.
+ * from any Apple driver.
  *
- * Playback format is fixed at 48000 Hz / 16-bit / stereo (the one format
- * every HDA codec's default DAC is guaranteed to support) - no format
- * negotiation.
+ * This is an IOAudioDevice: it owns the PCI device, the controller (CORB/RIRB),
+ * the codec and the DMA ring, and hands those to RavynHDAudioEngine, which is
+ * where IOAudioFamily does per-client mixing, format conversion and timing.
+ *
+ * The raw /dev/dsp0 write path is still here. It predates the family and is
+ * what fbdoom and pcmplay use, and there is no userland audio API on top of
+ * IOAudioFamily yet, so removing it would leave the system with no usable audio
+ * path at all. The two cannot both drive the DMA engine, so they are mutually
+ * exclusive: whichever starts first holds the stream until it stops.
+ *
+ * The hardware is programmed for 48000 Hz / 16-bit / stereo (the one format
+ * every HDA codec's default DAC is guaranteed to support). The family
+ * rate-converts and mixes clients into that; /dev/dsp0 writers must match it.
  */
 
 #ifndef _RAVYNHDAUDIO_H
 #define _RAVYNHDAUDIO_H
 
-#include <IOKit/IOService.h>
+#include <IOKit/audio/IOAudioDevice.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOLocks.h>
 #include <IOKit/pci/IOPCIDevice.h>
+
+class RavynHDAudioEngine;
 
 #define kHDACorbEntries   32   // CORBSIZE=00 -> 2 entries is min; we request 256B/4=64 max, but keep it simple: 32 verbs at a time is plenty
 #define kHDARirbEntries   64
 #define kHDABDLEntries    4
 #define kHDARingBufBytes  (256 * 1024)   // ~1.37s of buffering at 48kHz/16bit/stereo
 
-class RavynHDAudio : public IOService
+class RavynHDAudio : public IOAudioDevice
 {
     OSDeclareDefaultStructors(RavynHDAudio);
 
@@ -34,8 +43,13 @@ public:
     bool init(OSDictionary *properties) override;
     void free() override;
     IOService *probe(IOService *provider, SInt32 *score) override;
-    bool start(IOService *provider) override;
+    bool initHardware(IOService *provider) override;
     void stop(IOService *provider) override;
+
+    /* Claim/release the DMA stream. Returns false if the other path already
+     * holds it; see the header comment for why both exist. */
+    bool claimStream(bool forEngine);
+    void releaseStream(bool forEngine);
 
     // Called from the /dev/dsp0 cdevsw write path.
     size_t writePCM(const uint8_t *data, size_t len);
@@ -68,6 +82,9 @@ private:
     uint64_t             fConsumedBase;    // LPIB wrap accumulator (bytes)
     uint32_t             fLastLpib;        // last LPIB sample, for wrap detection
     IOSimpleLock         *fLock;
+    RavynHDAudioEngine   *fEngine;
+    /* 0 = free, 1 = held by /dev/dsp0, 2 = held by the IOAudioEngine. */
+    volatile uint32_t     fStreamOwner;
 
     bool  resetController();
     bool  setupCorbRirb();

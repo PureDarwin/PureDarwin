@@ -1562,6 +1562,8 @@ _mbrlen
 _mbsrtowcs
 _wcscoll
 _wcschr
+_wcscasecmp
+_wcsncasecmp
 _wcscmp
 _wcsncmp
 _wcsrchr

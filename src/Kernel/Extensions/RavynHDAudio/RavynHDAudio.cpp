@@ -1,4 +1,5 @@
 #include "RavynHDAudio.h"
+#include "RavynHDAudioEngine.h"
 
 #include <miscfs/devfs/devfs.h>
 #include <sys/conf.h>
@@ -7,8 +8,8 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceMemory.h>
 
-#define super IOService
-OSDefineMetaClassAndStructors(RavynHDAudio, IOService);
+#define super IOAudioDevice
+OSDefineMetaClassAndStructors(RavynHDAudio, IOAudioDevice);
 
 // ---------------------------------------------------------------------
 // HDA controller register offsets (Intel HD Audio spec, byte offsets from
@@ -498,9 +499,9 @@ static bool readMemoryBAR(IOPCIDevice *pci, UInt8 reg, uint64_t *outBase, uint64
 static void dsp0_publish();
 static void dsp0_setDriver(RavynHDAudio *drv);
 
-bool RavynHDAudio::start(IOService *provider)
+bool RavynHDAudio::initHardware(IOService *provider)
 {
-    if (!super::start(provider))
+    if (!super::initHardware(provider))
         return false;
 
     fPCIDevice = OSDynamicCast(IOPCIDevice, provider);
@@ -569,14 +570,64 @@ bool RavynHDAudio::start(IOService *provider)
     dsp0_setDriver(this);
     dsp0_publish();
 
+    /* Hand the hardware to IOAudioFamily. The engine borrows the register
+     * mapping and the DMA ring; this object stays their owner. */
+    fEngine = new RavynHDAudioEngine;
+    if (fEngine != NULL) {
+        if (fEngine->initWithHDA(this, fRegs, fOutStreamIndex,
+                                 fPcmVirt, kHDARingBufBytes) &&
+            activateAudioEngine(fEngine) == kIOReturnSuccess) {
+            IOLog("RavynHDAudio: IOAudioFamily engine active\n");
+        } else {
+            IOLog("RavynHDAudio: audio engine init failed; /dev/dsp0 only\n");
+            fEngine->release();
+            fEngine = NULL;
+        }
+    }
+
     registerService();
     IOLog("RavynHDAudio: ready\n");
     return true;
 }
 
+/*
+ * The DMA engine has one output stream, so the legacy /dev/dsp0 path and the
+ * IOAudioEngine cannot both run it. First claim wins; the loser gets told.
+ */
+bool RavynHDAudio::claimStream(bool forEngine)
+{
+    uint32_t want = forEngine ? 2u : 1u;
+    bool got = false;
+
+    IOSimpleLockLock(fLock);
+    if (fStreamOwner == 0 || fStreamOwner == want) {
+        fStreamOwner = want;
+        got = true;
+    }
+    IOSimpleLockUnlock(fLock);
+
+    if (!got) {
+        IOLog("RavynHDAudio: stream busy (held by %s)\n",
+              fStreamOwner == 1 ? "/dev/dsp0" : "audio engine");
+    }
+    return got;
+}
+
+void RavynHDAudio::releaseStream(bool forEngine)
+{
+    uint32_t want = forEngine ? 2u : 1u;
+
+    IOSimpleLockLock(fLock);
+    if (fStreamOwner == want) {
+        fStreamOwner = 0;
+    }
+    IOSimpleLockUnlock(fLock);
+}
+
 void RavynHDAudio::stop(IOService *provider)
 {
     dsp0_setDriver(0);
+    if (fEngine) { fEngine->release(); fEngine = 0; }
     if (fRegs) {
         uint32_t sdBase = HDA_SD_BASE + fOutStreamIndex * HDA_SD_SIZE;
         *(volatile uint32_t *)(fRegs + sdBase + SD_CTL_STS) &= ~SD_CTL_RUN;
@@ -754,13 +805,20 @@ dsp0_iobsd_published(void *, void *, IOService *, IONotifier *notifier)
 
 static int dsp0_open(dev_t, int, int, struct proc *)
 {
-    return gDsp0Driver ? 0 : ENXIO;
+    if (!gDsp0Driver)
+        return ENXIO;
+    /* Refuse if IOAudioFamily is driving the stream. */
+    if (!gDsp0Driver->claimStream(false))
+        return EBUSY;
+    return 0;
 }
 
 static int dsp0_close(dev_t, int, int, struct proc *)
 {
-    if (gDsp0Driver)
+    if (gDsp0Driver) {
         gDsp0Driver->stopStream();
+        gDsp0Driver->releaseStream(false);
+    }
     return 0;
 }
 

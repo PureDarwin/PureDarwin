@@ -128,12 +128,42 @@ EOF
       -e '/^    position top$/i\\    swaybar_command \/bin\/swaybar' \
       -e '/^include .*config\.d\/\*$/c\\# PureDarwin has no system config.d overrides.' \
       "$out/etc/sway/config"
+    # Upstream's defaults name programs PureDarwin does not package yet: foot
+    # (no Wayland terminal is built) and wmenu-run. Point them at what is
+    # actually on the image so the bindings are not silently dead, and add a
+    # browser binding so a fresh session has something launchable.
+    # foot is packaged, so $term is live. wmenu-run is not, so Mod+D would be a
+    # dead key; point it at nothing rather than at a missing binary.
+    sed -i \
+      -e 's|^set \$term foot$|set $term /bin/foot|' \
+      -e 's|^set \$menu wmenu-run.*$|# wmenu-run is not packaged; Mod+D is inert.\nset $menu true|' \
+      "$out/etc/sway/config"
+    cat >> "$out/etc/sway/config" <<'CFGEOF'
+
+# PureDarwin: NetSurf is the one GUI client on the Wayland image, so give it a
+# binding. It is a GTK3 app and picks up GDK's Wayland backend automatically.
+bindsym $mod+Shift+b exec /bin/netsurf-gtk3
+CFGEOF
     cat > $out/bin/puredarwin-sway <<'EOF'
 #!/bin/sh
 :
 : "''${WLR_BACKENDS:=puredarwin}"
 : "''${WLR_RENDERER:=pixman}"
 export WLR_BACKENDS WLR_RENDERER
+
+# libwayland-server will not create its socket without XDG_RUNTIME_DIR, and
+# launchd empties /var/run during the system bootstrap, so the directory has to
+# be made here rather than baked into the image. 0700 is what the Wayland spec
+# requires; a looser mode only produces a warning, but the socket is per-user.
+: "''${XDG_RUNTIME_DIR:=/var/run/user/0}"
+export XDG_RUNTIME_DIR
+if [ ! -d "$XDG_RUNTIME_DIR" ]; then
+    /bin/mkdir -p -m 0700 "$XDG_RUNTIME_DIR" || {
+        echo "puredarwin-sway: cannot create $XDG_RUNTIME_DIR" >&2
+        exit 1
+    }
+fi
+
 if [ -f /etc/sway/config ]; then
     exec sway -c /etc/sway/config "$@"
 fi

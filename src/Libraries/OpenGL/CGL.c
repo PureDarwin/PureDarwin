@@ -1,6 +1,16 @@
 #include <OpenGL/OpenGL.h>
 
+/* Two backends. GLX is the original one and needs an X server; the EGL one is
+ * for images built without X11 at all, and uses Mesa's surfaceless platform so
+ * it needs no window system either - which suits CGL, whose contexts are always
+ * offscreen pbuffers. */
+#ifdef PD_CGL_USE_EGL
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GL/gl.h>
+#else
 #include <GL/glx.h>
+#endif
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -27,8 +37,13 @@ struct _CGLPixelFormatObject {
 
 struct _CGLContextObject {
 	unsigned int      retain_count;
+#ifdef PD_CGL_USE_EGL
+	EGLContext        glx;
+	EGLSurface        pbuffer;
+#else
 	GLXContext        glx;
 	GLXPbuffer        pbuffer;
+#endif
 	int               width;
 	int               height;
 	CGLPixelFormatObj pixel_format;
@@ -44,16 +59,39 @@ static _Thread_local CGLContextObj pd_cgl_current;
  * closing it while contexts remain alive would invalidate them, and CGL has no
  * "shut down" entry point where a refcounted one could be dropped.
  */
+#ifdef PD_CGL_USE_EGL
+static EGLDisplay      pd_cgl_display = EGL_NO_DISPLAY;
+#else
 static Display        *pd_cgl_display;
+#endif
 static pthread_once_t  pd_cgl_display_once = PTHREAD_ONCE_INIT;
 
 static void
 pd_cgl_open_display(void)
 {
+#ifdef PD_CGL_USE_EGL
+	/* Surfaceless first: it is the only platform that is guaranteed to exist
+	 * with no display server running at all. eglGetDisplay is the fallback for
+	 * an EGL that does not advertise the extension. */
+	pd_cgl_display = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA,
+	    EGL_DEFAULT_DISPLAY, NULL);
+	if (pd_cgl_display == EGL_NO_DISPLAY) {
+		pd_cgl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+	}
+	if (pd_cgl_display != EGL_NO_DISPLAY &&
+	    !eglInitialize(pd_cgl_display, NULL, NULL)) {
+		pd_cgl_display = EGL_NO_DISPLAY;
+	}
+#else
 	pd_cgl_display = XOpenDisplay(NULL);
+#endif
 }
 
+#ifdef PD_CGL_USE_EGL
+static EGLDisplay
+#else
 static Display *
+#endif
 pd_cgl_get_display(void)
 {
 	pthread_once(&pd_cgl_display_once, pd_cgl_open_display);
@@ -222,11 +260,19 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 		return kCGLBadAlloc;
 	}
 
+#ifdef PD_CGL_USE_EGL
+	EGLDisplay dpy = pd_cgl_get_display();
+	if (dpy == EGL_NO_DISPLAY) {
+		free(c);
+		return kCGLBadConnection;
+	}
+#else
 	Display *dpy = pd_cgl_get_display();
 	if (dpy == NULL) {
 		free(c);
 		return kCGLBadConnection;
 	}
+#endif
 
 	c->width  = PD_CGL_DEFAULT_WIDTH;
 	c->height = PD_CGL_DEFAULT_HEIGHT;
@@ -235,6 +281,72 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 	int stencil = pix != NULL ? pix->stencil_size : 8;
 	int accum   = pix != NULL ? pix->accum_size   : 0;
 
+#ifdef PD_CGL_USE_EGL
+	(void)accum;    /* no accumulation buffer in EGL configs */
+
+	/* Desktop GL, not GLES - this is what makes libGL's dispatch table the one
+	 * that gets populated when the context is made current. */
+	if (!eglBindAPI(EGL_OPENGL_API)) {
+		free(c);
+		return kCGLBadPixelFormat;
+	}
+
+	EGLint cfg_attribs[] = {
+		EGL_SURFACE_TYPE,    EGL_PBUFFER_BIT,
+		EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+		EGL_RED_SIZE,        8,
+		EGL_GREEN_SIZE,      8,
+		EGL_BLUE_SIZE,       8,
+		EGL_ALPHA_SIZE,      pix != NULL && pix->alpha_size ? pix->alpha_size : 8,
+		EGL_DEPTH_SIZE,      depth,
+		EGL_STENCIL_SIZE,    stencil,
+		EGL_NONE
+	};
+
+	EGLConfig config;
+	EGLint nconfigs = 0;
+	if (!eglChooseConfig(dpy, cfg_attribs, &config, 1, &nconfigs) ||
+	    nconfigs == 0) {
+		free(c);
+		return kCGLBadPixelFormat;
+	}
+
+	EGLint pb_attribs[] = {
+		EGL_WIDTH,  c->width,
+		EGL_HEIGHT, c->height,
+		EGL_NONE
+	};
+	c->pbuffer = eglCreatePbufferSurface(dpy, config, pb_attribs);
+	if (c->pbuffer == EGL_NO_SURFACE) {
+		free(c);
+		return kCGLBadAlloc;
+	}
+
+	/* As in the GLX path, a core-profile request is honoured so the version
+	 * string matches what was asked for; anything else takes the default. */
+	if (pix != NULL && pix->profile >= kCGLOGLPVersion_3_2_Core) {
+		EGLint ctx_attribs[] = {
+			EGL_CONTEXT_MAJOR_VERSION, (pix->profile >> 12) & 0xf,
+			EGL_CONTEXT_MINOR_VERSION, (pix->profile >> 8)  & 0xf,
+			EGL_CONTEXT_OPENGL_PROFILE_MASK,
+			    EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+			EGL_NONE
+		};
+		c->glx = eglCreateContext(dpy, config,
+		    share != NULL ? share->glx : EGL_NO_CONTEXT, ctx_attribs);
+	}
+
+	if (c->glx == EGL_NO_CONTEXT || c->glx == NULL) {
+		c->glx = eglCreateContext(dpy, config,
+		    share != NULL ? share->glx : EGL_NO_CONTEXT, NULL);
+	}
+
+	if (c->glx == EGL_NO_CONTEXT) {
+		eglDestroySurface(dpy, c->pbuffer);
+		free(c);
+		return kCGLBadContext;
+	}
+#else
 	int fb_attribs[] = {
 		GLX_DRAWABLE_TYPE, GLX_PBUFFER_BIT,
 		GLX_RENDER_TYPE,   GLX_RGBA_BIT,
@@ -306,6 +418,7 @@ CGLCreateContext(CGLPixelFormatObj pix, CGLContextObj share, CGLContextObj *ctx)
 		free(c);
 		return kCGLBadContext;
 	}
+#endif
 
 	c->retain_count = 1;
 	c->pixel_format = CGLRetainPixelFormat(pix);
@@ -330,6 +443,21 @@ CGLReleaseContext(CGLContextObj ctx)
 		return;
 	}
 
+#ifdef PD_CGL_USE_EGL
+	EGLDisplay dpy = pd_cgl_get_display();
+
+	if (pd_cgl_current == ctx) {
+		if (dpy != EGL_NO_DISPLAY) {
+			eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
+			    EGL_NO_CONTEXT);
+		}
+		pd_cgl_current = NULL;
+	}
+	if (dpy != EGL_NO_DISPLAY) {
+		eglDestroyContext(dpy, ctx->glx);
+		eglDestroySurface(dpy, ctx->pbuffer);
+	}
+#else
 	Display *dpy = pd_cgl_get_display();
 
 	if (pd_cgl_current == ctx) {
@@ -342,6 +470,7 @@ CGLReleaseContext(CGLContextObj ctx)
 		glXDestroyContext(dpy, ctx->glx);
 		glXDestroyPbuffer(dpy, ctx->pbuffer);
 	}
+#endif
 	CGLReleasePixelFormat(ctx->pixel_format);
 	free(ctx);
 }
@@ -362,6 +491,27 @@ CGLGetContextRetainCount(CGLContextObj ctx)
 CGLError
 CGLSetCurrentContext(CGLContextObj ctx)
 {
+#ifdef PD_CGL_USE_EGL
+	EGLDisplay dpy = pd_cgl_get_display();
+	if (dpy == EGL_NO_DISPLAY) {
+		return kCGLBadConnection;
+	}
+
+	if (ctx == NULL) {
+		/* CGL has no "unbind" entry point of its own; a NULL context here is
+		 * how callers release the current one. */
+		eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+		pd_cgl_current = NULL;
+		return kCGLNoError;
+	}
+
+	/* The API binding is per-thread, so it has to be re-asserted here and not
+	 * only where the context was created. */
+	eglBindAPI(EGL_OPENGL_API);
+	if (!eglMakeCurrent(dpy, ctx->pbuffer, ctx->pbuffer, ctx->glx)) {
+		return kCGLBadContext;
+	}
+#else
 	Display *dpy = pd_cgl_get_display();
 	if (dpy == NULL) {
 		return kCGLBadConnection;
@@ -378,6 +528,7 @@ CGLSetCurrentContext(CGLContextObj ctx)
 	if (!glXMakeContextCurrent(dpy, ctx->pbuffer, ctx->pbuffer, ctx->glx)) {
 		return kCGLBadContext;
 	}
+#endif
 
 	pd_cgl_current = ctx;
 	return kCGLNoError;
