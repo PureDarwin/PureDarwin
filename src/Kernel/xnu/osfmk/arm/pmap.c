@@ -4738,16 +4738,16 @@ pmap_bootstrap(
 	vm_size_t       asid_table_size;
 	unsigned int    npages;
 	vm_map_offset_t maxoffset;
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	extern void pd_bcm2835_early_uart_tag(char phase);
-	pd_bcm2835_early_uart_tag('A');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	extern void pd_bcm2835_early_uart_tag_sub(char sub, char phase);
+	pd_bcm2835_early_uart_tag_sub('P', 'A');
 #endif
 
 	PD_PMAP_MARK(33, 0x00ff6060);	/* salmon: entered pmap_bootstrap */
 
 	lck_grp_init(&pmap_lck_grp, "pmap", LCK_GRP_ATTR_NULL);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('B');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'B');
 #endif
 
 #if XNU_MONITOR
@@ -4802,8 +4802,8 @@ pmap_bootstrap(
 #else
 	kernel_pmap->stamp = os_atomic_inc(&pmap_stamp, relaxed);
 #endif
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('C');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'C');
 #endif
 
 #if ARM_PARAMETERIZED_PMAP
@@ -4823,16 +4823,16 @@ pmap_bootstrap(
 
 	pmap_lock_init(kernel_pmap);
 	memset((void *) &kernel_pmap->stats, 0, sizeof(kernel_pmap->stats));
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('D');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'D');
 #endif
 
 	/* allocate space for and initialize the bookkeeping structures */
 	PD_PMAP_MARK(34, 0x0060ff60);	/* mint: about to compute the I/O regions */
 
 	io_attr_table_size = pmap_compute_io_rgns();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('E');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'E');
 #endif
 
 	PD_PMAP_MARK(35, 0x006060ff);	/* periwinkle: I/O regions computed */
@@ -4854,8 +4854,8 @@ pmap_bootstrap(
 	asid_table_size = sizeof(*asid_bitmap) * BITMAP_LEN(pmap_max_asids);
 
 	pmap_compute_pv_targets();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('F');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'F');
 #endif
 
 	pmap_struct_start = avail_start;
@@ -4872,16 +4872,16 @@ pmap_bootstrap(
 	avail_start = round_page(avail_start + asid_table_size);
 
 	memset((char *)phystokv(pmap_struct_start), 0, avail_start - pmap_struct_start);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('G');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'G');
 #endif
 
 	PD_PMAP_MARK(36, 0x00ffff60);	/* butter: pmap structures zeroed */
 
 	pmap_load_io_rgns();
 	ptd_bootstrap(ptd_root_table, (unsigned int)(ptd_root_table_size / sizeof(pt_desc_t)));
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('H');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'H');
 #endif
 
 	PD_PMAP_MARK(37, 0x00ff60ff);	/* orchid: page table descriptors bootstrapped */
@@ -4907,8 +4907,8 @@ pmap_bootstrap(
 	pmap_ledger_refcnt_end = (void *)phystokv(avail_start);
 #endif
 	pmap_cpu_data_array_init();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('I');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'I');
 #endif
 
 	PD_PMAP_MARK(38, 0x0060ffff);	/* ice: per-cpu pmap data up */
@@ -4927,8 +4927,8 @@ pmap_bootstrap(
 	free_tt_list = TT_FREE_ENTRY_NULL;
 	free_tt_count = 0;
 	free_tt_max = 0;
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('J');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'J');
 #endif
 
 	PD_PMAP_MARK(39, 0x00ffa0a0);	/* rose quartz: pmap free lists initialised */
@@ -4948,8 +4948,8 @@ pmap_bootstrap(
 	bitmap_full(&asid_plru_bitmap[0], MAX_HW_ASIDS);
 	// Clear the highest-order bit, which corresponds to MAX_HW_ASIDS + 1
 	asid_plru_bitmap[MAX_HW_ASIDS >> 6] = ~(1ULL << 63);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('K');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'K');
 #endif
 
 
@@ -4989,8 +4989,8 @@ pmap_bootstrap(
 	/* Shadow the CPU copy windows, as they fall outside of the physical aperture */
 	kasan_map_shadow(CPUWINDOWS_BASE, CPUWINDOWS_TOP - CPUWINDOWS_BASE, true);
 #endif /* KASAN */
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('L');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('P', 'L');
 #endif
 }
 

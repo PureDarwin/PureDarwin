@@ -121,10 +121,7 @@ set(_abi_srcs
     abort_message
     pd_bootstrap_runtime
 )
-if(NOT PUREDARWIN_ARCH MATCHES "^arm")
-    # The existing x86_64 libSystem export table requires this definition.
-    # ARMv6 dyld supplies its own copy, so including it there would create a
-    # duplicate symbol when the ABI archive is force-loaded.
+if(NOT PUREDARWIN_ARM32)
     list(APPEND _abi_srcs cxa_virtual)
 endif()
 

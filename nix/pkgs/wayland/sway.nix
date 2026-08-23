@@ -23,15 +23,20 @@
 , waylandScanner
 , wlroots
 , xkbcommon
-, xcb
-, xcbWm
+, xcb ? null
+, xcbWm ? null
 , src
+  # Matches wlroots' withXwayland; a Wayland-only image has no xcb at all.
+, withXwayland ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
+assert withXwayland -> (xcb != null && xcbWm != null);
+
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-  deps = [ cairo fribidi freetype glib harfbuzz jsonc libdrm pango pcre2 pixman wayland waylandProtocols wlroots xkbcommon xcb xcbWm ];
+  deps = [ cairo fribidi freetype glib harfbuzz jsonc libdrm pango pcre2 pixman wayland waylandProtocols wlroots xkbcommon ]
+    ++ lib.optionals withXwayland [ xcb xcbWm ];
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -43,7 +48,7 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-sway";
+  pname = "puredarwin-sway${lib.optionalString (!withXwayland) "-nox"}";
   version = "1.12";
   inherit src;
 

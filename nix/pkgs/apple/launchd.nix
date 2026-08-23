@@ -7,6 +7,8 @@
 , libSystem
 , corefoundation
 , iokit
+, compilerRt ? null
+, isArmv6 ? lib.hasPrefix "armv6-" targetTriple
 , src
 }:
 
@@ -40,6 +42,7 @@ stdenv.mkDerivation {
       -I${corefoundation}/include \
       -I${iokit}/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
       -Wl,-dylinker_install_name,/usr/lib/dyld \
       -Wl,-platform_version,macos,11.0,11.5 \
@@ -52,18 +55,19 @@ stdenv.mkDerivation {
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libinfo_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libnv_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libCrashReporterClient.a \
-      -Wl,-fixup_chains \
-      -lCoreFoundation -lIOKitCF -lSystem \
+      ${lib.optionalString (!isArmv6) "-Wl,-fixup_chains"} \
+      -lCoreFoundation -lIOKitCF -lSystem ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} \
       ${src}/src/Libraries/XPC/launchd/pd_launchd_main.c \
       -o launchd
 
     ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib \
       -Wl,-dylinker_install_name,/usr/lib/dyld \
       -Wl,-platform_version,macos,11.0,11.5 \
-      -Wl,-fixup_chains \
+      ${lib.optionalString (!isArmv6) "-Wl,-fixup_chains"} \
       -lSystem \
       ${src}/src/Libraries/XPC/launchd/pd_console_login.c \
       -o pd-console-login

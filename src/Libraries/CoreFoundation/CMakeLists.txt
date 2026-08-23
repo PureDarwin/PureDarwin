@@ -213,6 +213,7 @@ add_framework(CoreFoundation
                 Base.subproj/CFAvailability.h
                 Bridging.subproj/CFXPCBridge.h
                 Base.subproj/CFBase.h
+                Base.subproj/CFCGTypes.h
                 Base.subproj/CFByteOrder.h
                 Base.subproj/CFUUID.h
                 Base.subproj/CFUtilities.h

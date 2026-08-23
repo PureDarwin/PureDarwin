@@ -5,7 +5,11 @@ set_property(TARGET PDBcm2835SD.kext PROPERTY OUTPUT_NAME PDBcm2835SD)
 target_sources(PDBcm2835SD.kext PRIVATE
     PDBcm2835SD.cpp
     PDBcm2835SDDisk.cpp
+    bcm2835_emmc_bringup.c
 )
+
+set_source_files_properties(bcm2835_emmc_bringup.c PROPERTIES
+    COMPILE_OPTIONS "-std=c11;-ffreestanding")
 
 target_include_directories(PDBcm2835SD.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

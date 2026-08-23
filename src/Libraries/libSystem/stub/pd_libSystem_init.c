@@ -61,6 +61,35 @@ extern int __pthread_init(const struct _libpthread_functions *pthread_funcs,
     const char *envp[], const char *apple[], const struct ProgramVars *vars);
 static void __libdarwin_init(void) { }
 
+/*
+ * The main executable's mach header, for when dyld hands us no ProgramVars (or
+ * ones with a NULL mh). _program_vars_init() stores this as
+ * _mh_execute_header_pointer, so leaving it NULL makes _NSGetMachExecuteHeader()
+ * return NULL - and libmalloc dereferences that during __malloc_init(), in its
+ * _dyld_get_image_slide() ASLR check.
+ *
+ * Goes through _dyld_func_lookup rather than _dyld_get_image_header() so a dyld
+ * without the entry yields NULL instead of a call through a NULL pointer. Image
+ * 0 is the main executable.
+ */
+static void *
+pd_main_executable_header(void)
+{
+	void *(*prog_header)(void) = NULL;
+	void *(*indexed_header)(unsigned) = NULL;
+
+	if (_dyld_func_lookup("__dyld_get_prog_image_header", (void **)&prog_header)
+	    && prog_header != NULL) {
+		void *mh = prog_header();
+		if (mh != NULL)
+			return mh;
+	}
+	if (_dyld_func_lookup("__dyld_get_image_header", (void **)&indexed_header)
+	    && indexed_header != NULL)
+		return indexed_header(0);
+	return NULL;
+}
+
 extern void libdispatch_init(void);
 /* Exported wrapper in libdyld.dylib (pd_libdyld_exports.c) for the hidden-
  * visibility tlv_initializer() -- see that file for why the bridge is needed. */
@@ -169,11 +198,15 @@ static void pd_libSystem_initializer(int argc, const char *argv[], const char *e
 		fallback_argv = argv;
 		fallback_envp = envp;
 		fallback_progname = (argv && argv[0]) ? (char *)argv[0] : NULL;
-		fallback_vars.mh = NULL;
+		fallback_vars.mh = pd_main_executable_header();
 		fallback_vars.NXArgcPtr = &fallback_argc;
 		fallback_vars.NXArgvPtr = (char ***)&fallback_argv;
 		fallback_vars.environPtr = (char ***)&fallback_envp;
 		fallback_vars.__prognamePtr = &fallback_progname;
+		vars = &fallback_vars;
+	} else if (vars->mh == NULL) {
+		fallback_vars = *vars;
+		fallback_vars.mh = pd_main_executable_header();
 		vars = &fallback_vars;
 	}
 

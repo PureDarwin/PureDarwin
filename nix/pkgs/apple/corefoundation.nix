@@ -12,6 +12,10 @@
 , src
 , pdCompatInclude
 , libobjc
+  # 32-bit ARM: the SDK stubs have no armv6 slice, so CMake's link test cannot
+  # produce an executable, and chained fixups are 64-bit only.
+, isArmv6 ? lib.hasPrefix "armv6-" targetTriple
+, compilerRt ? null
 , foundationSrc
 }:
 
@@ -64,9 +68,10 @@ stdenv.mkDerivation {
       -DNIX_DARWIN_HOST=${targetTriple} \
       -DNIX_DARWIN_SDK_ROOT=$DARWIN_SDK_ROOT \
       -DBUILD_SHARED_LIBS=ON \
+      ${lib.optionalString isArmv6 "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"} \
       -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
       -DCMAKE_OBJC_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -fno-objc-arc -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
-      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -lSystem -lobjc -Wl,-install_name,/usr/lib/libCoreFoundation.dylib -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains"
+      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${icu}/usr/lib -lSystem -lobjc ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-install_name,/usr/lib/libCoreFoundation.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains"}"
 
     runHook postConfigure
   '';
@@ -85,6 +90,11 @@ stdenv.mkDerivation {
     cp build/CoreFoundation.framework/libCoreFoundation.dylib $out/usr/lib/
     cp -a build/CoreFoundation.framework/Headers/. $out/include/
     cp -a build/CoreFoundation.framework/PrivateHeaders/. $out/include/
+
+    # The headers are flattened into include/ for callers that spell
+    # <CFString.h>, but Foundation's own headers use <CoreFoundation/CFString.h>.
+    # A self-referential subdirectory makes both spellings work off one -I.
+    ln -s . $out/include/CoreFoundation
 
     fwdir=$out/System/Library/Frameworks/CoreFoundation.framework
     mkdir -p "$fwdir/Versions/A/Resources"

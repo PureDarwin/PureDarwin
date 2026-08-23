@@ -10,11 +10,14 @@
 , libSystem
 , dbus
 , expat
-, libX11
-, libxcb
-, libXau
-, libXdmcp
-, xorgproto
+, libX11 ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
+, xorgproto ? null
+  # x11_autolaunch is the only thing pulling X into dbus; a Wayland-only image
+  # has no X display to autolaunch on.
+, withX11 ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
@@ -34,12 +37,12 @@ let
   rawClangxx = "/nix/store/h6wfr7hsc4013lzp1igizkcd1awx8mcm-clang-21.1.8/bin/clang++";
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-dbus";
+  pname = "puredarwin-dbus${lib.optionalString (!withX11) "-nox"}";
   inherit (dbus) version;
   src = dbus.src;
 
   nativeBuildInputs = [ meson ninja python3 pkg-config ];
-  buildInputs = [ expat libX11 libxcb libXau libXdmcp xorgproto ];
+  buildInputs = [ expat ] ++ lib.optionals withX11 [ libX11 libxcb libXau libXdmcp xorgproto ];
 
   postPatch = ''
     for fn in accept4 getrandom close_range clearenv prlimit setresuid \
@@ -59,7 +62,7 @@ stdenv.mkDerivation {
     # x11.pc pulls xcb/Xau/Xdmcp through Requires.private; without their .pc files
     # on the path pkg-config cannot resolve x11 at all and the x11_autolaunch
     # feature check fails with "X11 autolaunch support requested but not found".
-    export PKG_CONFIG_PATH="${expat}/lib/pkgconfig:${libX11}/lib/pkgconfig:${libxcb}/lib/pkgconfig:${libXau}/lib/pkgconfig:${libXdmcp}/lib/pkgconfig:${xorgproto}/share/pkgconfig"
+    export PKG_CONFIG_PATH="${expat}/lib/pkgconfig${lib.optionalString withX11 ":${libX11}/lib/pkgconfig:${libxcb}/lib/pkgconfig:${libXau}/lib/pkgconfig:${libXdmcp}/lib/pkgconfig:${xorgproto}/share/pkgconfig"}"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
     cat > cross.txt <<CROSSFILE
@@ -78,7 +81,7 @@ endian = '${targetInfo.mesonEndian}'
 
 [built-in options]
 c_args = ['-target', '${targetInfo.clangTarget}', '-isysroot', '$DARWIN_SDK_ROOT', '-I${libSystem}/usr/include', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector']
-c_link_args = ['-target', '${targetInfo.clangTarget}', '-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-undefined,dynamic_lookup', '-L${libX11}/lib', '-L${libxcb}/lib', '-L${libXau}/lib', '-L${libXdmcp}/lib', '-lX11', '-lxcb', '-lXau', '-lXdmcp', '-lSystem']
+c_link_args = ['-target', '${targetInfo.clangTarget}', '-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-undefined,dynamic_lookup', ${lib.optionalString withX11 "'-L${libX11}/lib', '-L${libxcb}/lib', '-L${libXau}/lib', '-L${libXdmcp}/lib', '-lX11', '-lxcb', '-lXau', '-lXdmcp', "}'-lSystem']
 
 [properties]
 needs_exe_wrapper = true
@@ -110,7 +113,7 @@ CROSSFILE
     # unchanged, since DESTDIR=$out still yields $out/{bin,lib,share}.
     meson setup build --cross-file cross.txt \
       -Dsystemd=disabled -Dselinux=disabled -Dapparmor=disabled -Dlibaudit=disabled \
-      -Depoll=disabled -Dkqueue=disabled -Dx11_autolaunch=enabled \
+      -Depoll=disabled -Dkqueue=disabled -Dx11_autolaunch=${if withX11 then "enabled" else "disabled"} \
       -Ddoxygen_docs=disabled -Dxml_docs=disabled -Dqt_help=disabled \
       -Dasserts=false -Dmodular_tests=disabled \
       -Dsystem_socket=/var/run/dbus/system_bus_socket \

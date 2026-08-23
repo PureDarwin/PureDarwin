@@ -1771,7 +1771,9 @@ _backtrace_symbols_fd
 _clock_gettime_nsec_np
 _dispatch_queue_get_label
 _fls
+_getsectdatafromheader
 _getsectdatafromheader_64
+_getsectbynamefromheader
 _getsectiondata
 _getsegmentdata
 _csr_check

@@ -273,6 +273,20 @@ TUNABLE(int, log_leaks, "-l", 0);
 static inline void
 kernel_bootstrap_log(const char *message)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	extern void pd_bcm2835_early_uart_str(const char *s);
+	pd_bcm2835_early_uart_str(message);
+#endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	{
+		/* Watch one __DATA_CONST word per stage: it is intact at the end of
+		 * arm_init and zero by the time IOKit dispatches through it. */
+		extern void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+		extern uint64_t pd_dataconst_first_zeroed(void);
+
+		pd_bcm2835_early_uart_hex("  dcz ", pd_dataconst_first_zeroed());
+	}
+#endif
 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
 	    startup_phase >= STARTUP_SUB_KPRINTF) {
 		kprintf("kernel_bootstrap: %s\n", message);
@@ -283,6 +297,10 @@ kernel_bootstrap_log(const char *message)
 static inline void
 kernel_bootstrap_thread_log(const char *message)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	extern void pd_bcm2835_early_uart_str(const char *s);
+	pd_bcm2835_early_uart_str(message);
+#endif
 	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
 	    startup_phase >= STARTUP_SUB_KPRINTF) {
 		kprintf("kernel_bootstrap_thread: %s\n", message);
@@ -802,9 +820,12 @@ kernel_bootstrap_thread(void)
 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
 	 * at the latest
 	 */
+	kernel_bootstrap_log("post-lockdown");
 	vm_set_restrictions(machine_info.max_cpus);
+	kernel_bootstrap_log("vm_set_restrictions-done");
 
 #ifdef CONFIG_XNUPOST
+	kernel_bootstrap_log("xnupost-start");
 	kern_return_t result = kernel_list_tests();
 	result = kernel_do_post();
 	if (result != KERN_SUCCESS) {
@@ -815,14 +836,18 @@ kernel_bootstrap_thread(void)
 
 
 #if KPERF
+	kernel_bootstrap_log("kperf_init_early");
 	kperf_init_early();
+	kernel_bootstrap_log("kperf_init_early-done");
 #endif
 
 	/*
 	 *	Start the user bootstrap.
 	 */
 #ifdef  MACH_BSD
+	kernel_bootstrap_log("bsd_init");
 	bsd_init();
+	kernel_bootstrap_log("bsd_init-done");
 #endif
 
 

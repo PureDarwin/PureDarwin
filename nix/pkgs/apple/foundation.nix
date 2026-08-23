@@ -42,6 +42,20 @@ let
     "Runtime.subproj/NSZone"
     "Runtime.subproj/NSLog"
     "Stream.subproj/NSStream"
+    "Runtime.subproj/NSObjCRuntime"
+    "Runtime.subproj/NSGeometry"
+    "Runtime.subproj/NSException"
+    "Runtime.subproj/NSValue"
+    "Runtime.subproj/NSNull"
+    "Runtime.subproj/NSDebug"
+    "Runtime.subproj/NSBundle"
+    "Runtime.subproj/NSProcessInfo"
+    "Runtime.subproj/NSUserDefaults"
+    "Collections.subproj/NSMapTable"
+    "String.subproj/NSCharacterSet"
+    "FileManager.subproj/NSPathUtilities"
+    "FileManager.subproj/NSFileManager"
+    "FileManager.subproj/NSFileHandle"
   ];
 in
 stdenv.mkDerivation {
@@ -66,7 +80,7 @@ stdenv.mkDerivation {
     # these sources and its own real Foundation.framework/*.h must not be
     # picked up here.
     mkdir -p foundation-headers/Foundation
-    find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
+    find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
 
     # corefoundation.nix installs its headers flattened into $out/include
     # (no "CoreFoundation/" subdirectory) - stage the same
@@ -106,7 +120,7 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/usr/lib $out/usr/include/Foundation
     cp libFoundation.dylib $out/usr/lib/
-    find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
+    find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
     runHook postInstall
   '';
 

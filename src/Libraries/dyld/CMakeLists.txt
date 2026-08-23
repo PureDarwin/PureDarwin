@@ -110,9 +110,10 @@ endif()
 # Ensure the MIG-generated mach public headers exist before dyld compiles.
 add_dependencies(dyld libsystem_kernel_static)
 
-# dyld uses C++ exceptions (throw/try) for its error path. It must be built with
-# -mno-red-zone like the rest of the low-level Darwin code, and needs the
-# bridgeos/TARGET_OS_BRIDGE availability shim force-included (see the header).
+if(PUREDARWIN_ARCH STREQUAL "armv6")
+    target_compile_options(dyld PRIVATE -fvisibility=hidden)
+endif()
+
 target_compile_options(dyld PRIVATE
     -mno-red-zone -fno-stack-protector
     $<$<COMPILE_LANGUAGE:CXX>:-std=c++17;-fno-rtti>

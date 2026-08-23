@@ -6393,6 +6393,30 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 	scratch_addr = USER_ADDR_ALIGN(scratch_addr + path_length, sizeof(user_addr_t));
 
 	/*
+	 * pid 1 otherwise starts with an empty environment, which makes dyld's own
+	 * diagnostics unreachable on a board with no other way in. One variable is
+	 * enough for that: initenv=DYLD_PRINT_SEGMENTS=1 and the like.
+	 */
+	{
+		char init_env[192];
+
+		init_env[0] = '\0';
+		if (PE_parse_boot_argn("initenv", init_env, sizeof(init_env)) &&
+		    init_env[0] != '\0') {
+			size_t init_env_length = strlen(init_env) + 1;
+
+			envp0 = scratch_addr;
+			error = copyout(init_env, envp0, init_env_length);
+			if (error) {
+				return error;
+			}
+
+			scratch_addr = USER_ADDR_ALIGN(scratch_addr + init_env_length,
+			    sizeof(user_addr_t));
+		}
+	}
+
+	/*
 	 * Put out first (and only) argument, similarly.
 	 * Assumes everything fits in a page as allocated above.
 	 */

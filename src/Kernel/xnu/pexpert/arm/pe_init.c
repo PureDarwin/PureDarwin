@@ -223,6 +223,15 @@ PE_initialize_console(PE_Video * info, int op)
 	return 0;
 }
 
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+extern void pd_bcm2835_early_uart_str(const char *s);
+extern void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+extern unsigned long long pd_dataconst_first_zeroed(void);
+#define PD_PE_TRACE(m)	do { pd_bcm2835_early_uart_str(m); pd_bcm2835_early_uart_hex("  dcz ", pd_dataconst_first_zeroed()); } while (0)
+#else
+#define PD_PE_TRACE(m)	do { } while (0)
+#endif
+
 void
 PE_init_iokit(void)
 {
@@ -238,6 +247,7 @@ PE_init_iokit(void)
 	uint32_t        populate_registry_time_value = 0;
 
 	PE_init_printf(TRUE);
+	PD_PE_TRACE("pe:printf");
 
 	printf("iBoot version: %s\n", firmware_version);
 
@@ -259,6 +269,7 @@ PE_init_iokit(void)
 	}
 
 	pe_prepare_images();
+	PD_PE_TRACE("pe:images");
 
 	scale = PE_state.video.v_scale;
 	flip = 1;
@@ -276,6 +287,12 @@ PE_init_iokit(void)
 	show_progress = FALSE;
 	PE_parse_boot_argn("-progress", &show_progress, sizeof(show_progress));
 #endif /* XNU_TARGET_OS_OSX */
+	/* No framebuffer: the centring loop below never terminates when
+	 * display_size is 0, so there is nothing to draw on. */
+	if (PE_state.video.v_baseAddr == 0 || PE_state.video.v_width == 0 ||
+	    PE_state.video.v_height == 0) {
+		show_progress = FALSE;
+	}
 	if (show_progress) {
 		/* Rotation: 0:normal, 1:right 90, 2:left 180, 3:left 90 */
 		switch (PE_state.video.v_rotate) {
@@ -312,6 +329,7 @@ PE_init_iokit(void)
 		    default_progress_data3x,
 		    (unsigned char *) appleClut8);
 		vc_progress_initialized = TRUE;
+		PD_PE_TRACE("pe:progress");
 	}
 
 	if (kdebug_enable && kdebug_debugid_enabled(IOKDBG_CODE(DBG_BOOTER, 0))) {
@@ -347,8 +365,11 @@ PE_init_iokit(void)
 		KDBG_RELEASE(IOKDBG_CODE(DBG_BOOTER, 0), start_time_value, debug_wait_start_value, load_kernel_start_value, populate_registry_time_value);
 	}
 
+	PD_PE_TRACE("pe:InitIOKit");
 	InitIOKit(PE_state.deviceTreeHead);
+	PD_PE_TRACE("pe:ConfigureIOKit");
 	ConfigureIOKit();
+	PD_PE_TRACE("pe:done");
 }
 
 void
@@ -367,6 +388,19 @@ PE_lockdown_iokit(void)
 	 * hardware protections.
 	 */
 	StartIOKitMatching();
+
+#if defined(ARM64_BOARD_CONFIG_BCM2837) || defined(ARM64_BOARD_CONFIG_QEMUVIRT)
+	/*
+	 * Upstream this is reached via IOCPUInterruptController::initCPUInterruptController(),
+	 * which the platform expert kext calls once every CPU has registered. These
+	 * boards have no such driver, so nothing ever marks max_cpus as settled and
+	 * ml_wait_max_cpus() sleeps forever -- kperf_init_early() calls it, so the
+	 * boot stops dead between vm_set_restrictions() and bsd_init().
+	 * ml_set_max_cpus() ignores its argument -- it only publishes that the
+	 * count is final -- so the value here is immaterial.
+	 */
+	ml_set_max_cpus(0);
+#endif
 }
 
 void
@@ -496,13 +530,16 @@ PE_create_console(void)
 	 * Check the head of VRAM for a panic log saved on last panic.
 	 * Do this before the VRAM is trashed.
 	 */
+	PD_PE_TRACE("pe:pre-panic-log");
 	check_for_panic_log();
+	PD_PE_TRACE("pe:post-panic-log");
 
 	if (PE_state.video.v_display) {
 		PE_initialize_console(&PE_state.video, kPEGraphicsMode);
 	} else {
 		PE_initialize_console(&PE_state.video, kPETextMode);
 	}
+	PD_PE_TRACE("pe:post-init-console");
 }
 
 int

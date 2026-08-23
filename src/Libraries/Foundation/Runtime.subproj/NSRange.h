@@ -23,4 +23,16 @@ NS_INLINE NSRange NSMakeRange(NSUInteger loc, NSUInteger len) {
     return r;
 }
 
+NS_INLINE NSUInteger NSMaxRange(NSRange range) {
+    return range.location + range.length;
+}
+
+NS_INLINE BOOL NSLocationInRange(NSUInteger loc, NSRange range) {
+    return loc >= range.location && loc < NSMaxRange(range);
+}
+
+NS_INLINE BOOL NSEqualRanges(NSRange a, NSRange b) {
+    return a.location == b.location && a.length == b.length;
+}
+
 #endif /* NSRange_h */

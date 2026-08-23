@@ -48,7 +48,8 @@ DECLARE_VAR(_mh_execute_header, struct mach_header);
 DECLARE_PROGNAME(__progname, char *);
 
 #if defined(PUREDARWIN_EARLY_USERLAND) && defined(__DYNAMIC__)
-char **environ;
+static char *pd_empty_environ[1] = { NULL };
+char **environ = pd_empty_environ;
 #endif
 
 char ***_NSGetArgv(void) {
@@ -60,6 +61,11 @@ int *_NSGetArgc(void) {
 }
 
 char ***_NSGetEnviron(void) {
+#if defined(PUREDARWIN_EARLY_USERLAND) && defined(__DYNAMIC__)
+    if (USE_VAR(environ) == NULL) {
+        return &environ;
+    }
+#endif
     return(USE_VAR(environ));
 }
 
@@ -102,7 +108,10 @@ _program_vars_init(const struct ProgramVars* vars) {
     NXArgv_pointer		= vars->NXArgvPtr;
     NXArgc_pointer		= vars->NXArgcPtr;
 #if defined(PUREDARWIN_EARLY_USERLAND)
-    environ			= vars->environPtr ? *vars->environPtr : NULL;
+    /* Never NULL - callers iterate this without checking; see pd_empty_environ. */
+    if (vars->environPtr != NULL && *vars->environPtr != NULL) {
+	environ			= *vars->environPtr;
+    }
     environ_pointer		= &environ;
 #else
     environ_pointer		= vars->environPtr;

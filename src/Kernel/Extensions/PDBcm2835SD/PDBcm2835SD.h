@@ -37,9 +37,20 @@ public:
 	UInt32   blockSize(void) const  { return 512; }
 	bool     isReadOnly(void) const { return fReadOnly; }
 
+	/* Used by the bcm2835_emmc_bringup ops table. */
+	uint32_t bringupRead(int blk, uint32_t off) const;
+	void     bringupWrite(int blk, uint32_t off, uint32_t val) const;
+
 private:
+	/* SoC peripheral base: 0x20000000 on BCM2835, 0x3f000000 on BCM2837. */
+	uint32_t          fPeriphBase;
 	IOMemoryMap      *fRegMap;
 	volatile uint8_t *fRegs;
+	volatile uint8_t *fGPIORegs;
+	volatile uint8_t *fCPRMANRegs;
+	IOMemoryMap      *fGPIOMap;
+	IOMemoryMap      *fCPRMANMap;
+	uint32_t          fBaseClockHz;
 	IOLock           *fLock;
 	PDBcm2835SDDisk  *fDisk;
 
@@ -57,7 +68,8 @@ private:
 		*(volatile uint32_t *)(fRegs + off) = val;
 	}
 
-	bool     resetHost(void);
+	bool     bringUpController(void);
+	volatile uint8_t *blockBase(int blk) const;
 	bool     setClock(uint32_t targetHz);
 	bool     waitForInterrupt(uint32_t mask, uint32_t timeoutUs);
 	bool     sendCommand(uint32_t cmd, uint32_t arg, uint32_t *resp);

@@ -115,6 +115,7 @@
 #include <vm/vm_page.h>
 #include <vm/memory_object.h>
 #include <vm/vm_pageout.h>
+extern void IOLog(const char *format, ...) __printflike(1, 2);
 #include <vm/vm_protos.h>
 #include <vm/vm_purgeable_internal.h>
 #include <vm/vm_init.h>

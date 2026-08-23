@@ -20,17 +20,23 @@
 , waylandProtocols
 , waylandScanner
 , xkbcommon
-, xcb
-, xcbWm
-, xwayland
+, xcb ? null
+, xcbWm ? null
+, xwayland ? null
 , pdsurface
 , src
+  # Wayland-only images drop X11 entirely, so xwayland (and the xcb libraries
+  # it needs) must come out of both the build and the runtime closure.
+, withXwayland ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
+assert withXwayland -> (xcb != null && xcbWm != null && xwayland != null);
+
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-  deps = [ libdrm pixman wayland waylandProtocols xkbcommon xcb xcbWm xwayland pdsurface ];
+  deps = [ libdrm pixman wayland waylandProtocols xkbcommon pdsurface ]
+    ++ lib.optionals withXwayland [ xcb xcbWm xwayland ];
   sdkTarball = requireFile {
     name = "MacOSX11.3.sdk.tar.xz";
     sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
@@ -42,7 +48,7 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-wlroots";
+  pname = "puredarwin-wlroots${lib.optionalString (!withXwayland) "-nox"}";
   version = "0.20.1";
   inherit src;
 
@@ -99,7 +105,7 @@ EOF
       -Ddefault_library=both \
       -Dauto_features=disabled \
       -Dexamples=false \
-      -Dxwayland=enabled \
+      -Dxwayland=${if withXwayland then "enabled" else "disabled"} \
       -Dsession=disabled \
       -Dcolor-management=disabled \
       -Dlibliftoff=disabled \

@@ -23,6 +23,12 @@
 
 #define PI3_UART
 
+/* Also compile in the generic PL011 driver in pe_serial.c (the VMAPPLE_UART /
+ * QEMUVIRT_UART block). PI3_UART above drives the mini-UART via the "aux" node,
+ * which is what Apple's Pi 3 support used; this loader configures the PL011 and
+ * publishes it as "uart0" instead, so that is the console to attach to. */
+#define VMAPPLE_UART
+
 #define PI3_BREAK                               asm volatile("brk #0");
 
 #define BCM2837_GPFSEL0_V               (pi3_gpio_base_vaddr + 0x0)
@@ -60,8 +66,16 @@
 #define BCM2837_PUT32(addr, value) do { *((volatile uint32_t *) addr) = value; } while(0)
 #define BCM2837_GET32(addr) *((volatile uint32_t *) addr)
 
-#define PLATFORM_PANIC_LOG_PADDR        0x3c0fc000
-#define PLATFORM_PANIC_LOG_SIZE         16384        // 16kb
+/*
+ * No panic log region. 0x3c0fc000 assumed a 1GB map with a reserved top, but
+ * the loader hands us memSize 0x4000000, so that address is outside physical
+ * memory: ml_io_map_wcomb() dropped the high bits and returned a VA aliasing
+ * __DATA_CONST at virtBase+0xfc000, which check_for_panic_log() then bzero'd.
+ * Leaving this undefined makes check_for_panic_log() take the device tree
+ * path, find no "pram" node, and return without mapping anything.
+ */
+/* #define PLATFORM_PANIC_LOG_PADDR     0x3c0fc000 */
+/* #define PLATFORM_PANIC_LOG_SIZE      16384 */
 #endif /* ! ASSEMBLER */
 
 #endif /* ! _PEXPERT_ARM_BCM2837_H */

@@ -606,6 +606,24 @@ static void socket_syslogv(int priority, const char* format, va_list list)
 
 
 
+// Early in boot - launchd's own bootstrap, before syslogd - useSyslog() picks
+// the syslog path because fd 2 is not open, and socket_syslogv() then finds no
+// /var/run/syslog to connect to and drops the message. dyld's errors and its
+// DYLD_PRINT_* output vanish exactly when they are most needed, so fall back to
+// the console. -2 means "not tried yet"; -1 means "tried and unavailable", so a
+// missing /dev/console costs one open() rather than one per message.
+static int sConsoleFd = -2;
+
+static bool console_logv(const char* format, va_list list)
+{
+	if ( sConsoleFd == -2 )
+		sConsoleFd = dyld3::open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC, 0);
+	if ( sConsoleFd < 0 )
+		return false;
+	_simple_vdprintf(sConsoleFd, format, list);
+	return true;
+}
+
 void vlog(const char* format, va_list list)
 {
 #if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
@@ -614,7 +632,10 @@ void vlog(const char* format, va_list list)
 #else
 	if ( !sLogToFile && useSyslog() )
 #endif
-		socket_syslogv(LOG_ERR, format, list);
+	{
+		if ( !console_logv(format, list) )
+			socket_syslogv(LOG_ERR, format, list);
+	}
 	else {
 		_simple_vdprintf(sLogfile, format, list);
 	}

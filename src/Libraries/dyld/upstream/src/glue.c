@@ -1162,8 +1162,10 @@ vm_size_t vm_page_size = 0x1000;
 #endif
 
 
-void* _NSConcreteStackBlock[32];
-void* _NSConcreteGlobalBlock[32];
+/* Referenced by every stack block dyld builds, including the ones rebaseDyld()
+ * needs before the GOT is usable; hidden keeps those references pc-relative. */
+__attribute__((visibility("hidden"))) void* _NSConcreteStackBlock[32];
+__attribute__((visibility("hidden"))) void* _NSConcreteGlobalBlock[32];
 
 void _Block_object_assign()
 {

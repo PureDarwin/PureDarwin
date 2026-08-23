@@ -16,6 +16,28 @@
  * BCM2837 on the arm64 side uses 0x3F000000).
  */
 #define BCM2835_ARMCTRL_PHYS     0x2000B000
+#define BCM283X_ARMCTRL_OFFSET   0x0000B000
+
+/*
+ * BCM2835 puts the peripherals at 0x20000000, BCM2837 at 0x3f000000. The
+ * loader publishes the correct base as "peripheral-base" on the device tree
+ * root, so one binary serves both; absent that, keep the BCM2835 value.
+ */
+static uint32_t
+pd_bcm283x_periph_base(void)
+{
+	IORegistryEntry *root = IORegistryEntry::fromPath("/", gIODTPlane);
+	uint32_t base = BCM2835_ARMCTRL_PHYS - BCM283X_ARMCTRL_OFFSET;
+
+	if (root == NULL) return base;
+
+	OSData *pb = OSDynamicCast(OSData, root->getProperty("peripheral-base"));
+	if (pb != NULL && pb->getLength() >= (unsigned)sizeof(uint32_t)) {
+		base = *(const uint32_t *)pb->getBytesNoCopy();
+	}
+	root->release();
+	return base;
+}
 #define BCM2835_ARMCTRL_SIZE     0x1000
 
 #define kIRQBasicPending         0x200
@@ -119,8 +141,10 @@ PDBcm2835IC::mapRegisters(void)
 		return true;
 	}
 
+	uint32_t armctrl_phys = pd_bcm283x_periph_base() + BCM283X_ARMCTRL_OFFSET;
+
 	IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
-		(IOPhysicalAddress)BCM2835_ARMCTRL_PHYS, BCM2835_ARMCTRL_SIZE,
+		(IOPhysicalAddress)armctrl_phys, BCM2835_ARMCTRL_SIZE,
 		kIODirectionOutIn);
 	if (desc == NULL) {
 		return false;
@@ -128,8 +152,7 @@ PDBcm2835IC::mapRegisters(void)
 	ctrlMap = desc->map(kIOMapAnywhere | kIOMapInhibitCache);
 	desc->release();
 	if (ctrlMap == NULL) {
-		IOLog("PDBcm2835IC: failed to map ARMCTRL at 0x%x\n",
-		    BCM2835_ARMCTRL_PHYS);
+		IOLog("PDBcm2835IC: failed to map ARMCTRL at 0x%x\n", armctrl_phys);
 		return false;
 	}
 	ctrl = (volatile uint8_t *)ctrlMap->getVirtualAddress();

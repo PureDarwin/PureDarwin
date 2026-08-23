@@ -34,9 +34,19 @@
 #define PTHREAD_OVERRIDE_SIGNATURE	(0x6f766572)
 #define PTHREAD_OVERRIDE_SIG_DEAD	(0x7265766f)
 
-#if !defined(VARIANT_STATIC)
+#if !defined(VARIANT_STATIC) && !defined(PD_PTHREAD_MERGED_INTO_LIBSYSTEM)
 // internally redirected upcalls in case qos overrides are used
 // before __pthread_init has run
+//
+// Not in PD's merged libSystem, where real libmalloc is in the same image (the
+// same reason pthread.c's memset/memcpy shims are skipped there). These are
+// hidden but they are still definitions of `malloc`/`free`, so every reference
+// to malloc from anywhere in libSystem.B.dylib binds to them instead of the
+// real allocator - including the `.malloc = malloc` that libSystem's own
+// initializer hands to __pthread_init(). That sets _pthread_malloc to this
+// shim, so the first malloc() call recurses into itself until the stack guard
+// page is hit. arm64's libSystem.B.dylib has no such symbol and a real
+// `T _malloc`; this makes the 32-bit build match it.
 PTHREAD_NOEXPORT void *
 malloc(size_t sz)
 {
@@ -54,7 +64,7 @@ free(void *p)
 		_pthread_free(p);
 	}
 }
-#endif // VARIANT_STATIC
+#endif // VARIANT_STATIC && PD_PTHREAD_MERGED_INTO_LIBSYSTEM
 
 struct pthread_override_s
 {

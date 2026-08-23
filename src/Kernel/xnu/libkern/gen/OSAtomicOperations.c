@@ -88,6 +88,22 @@ OSCompareAndSwap64(UInt64 oldValue, UInt64 newValue, volatile UInt64 *address)
 	 */
 	_Atomic UInt64 *aligned_addr = (_Atomic UInt64 *)(uintptr_t)address;
 
+#if defined(__arm__)
+	extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
+
+	/* See OSAddAtomic64: LDREXD needs 8-byte alignment, which some 64-bit
+	 * fields do not have on this port. */
+	if (__improbable((uintptr_t)address & (sizeof(UInt64) - 1))) {
+		boolean_t istate = ml_set_interrupts_enabled(FALSE);
+		Boolean matched = (*address == oldValue);
+		if (matched) {
+			*address = newValue;
+		}
+		ml_set_interrupts_enabled(istate);
+		return matched;
+	}
+#endif
+
 	ALIGN_TEST(address, UInt64);
 	return (Boolean)os_atomic_cmpxchg(aligned_addr, oldValue, newValue, acq_rel);
 }
@@ -124,6 +140,24 @@ SInt64
 OSAddAtomic64(SInt64 amount, volatile SInt64 *address)
 {
 	_Atomic SInt64* aligned_address = (_Atomic SInt64*)(uintptr_t)address;
+
+#if defined(__arm__)
+	extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
+
+	/*
+	 * LDREXD needs an 8-byte aligned address and faults otherwise once
+	 * SCTLR.U is set. Some 64-bit counters land 4-byte aligned despite their
+	 * aligned(8) attribute, so fall back to masking interrupts, which is
+	 * sufficient on this single-core part.
+	 */
+	if (__improbable((uintptr_t)address & (sizeof(SInt64) - 1))) {
+		boolean_t istate = ml_set_interrupts_enabled(FALSE);
+		SInt64 result = *address;
+		*address = result + amount;
+		ml_set_interrupts_enabled(istate);
+		return result;
+	}
+#endif
 
 	ALIGN_TEST(address, SInt64);
 	return os_atomic_add_orig(aligned_address, amount, relaxed);

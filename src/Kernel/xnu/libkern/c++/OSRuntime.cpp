@@ -35,6 +35,17 @@
 #include <libkern/c++/OSSymbol.h>
 #include <IOKit/IOKitDebug.h>
 
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+extern "C" void pd_bcm2835_early_uart_str(const char *s);
+extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+#define PD_RT_TRACE(m)		pd_bcm2835_early_uart_str(m)
+#define PD_RT_HEX(m, v)		pd_bcm2835_early_uart_hex(m, (uint64_t)(v))
+#else
+#define PD_RT_TRACE(m)		do { } while (0)
+#define PD_RT_HEX(m, v)		do { } while (0)
+#endif
+
+
 #include <sys/cdefs.h>
 #if defined(HAS_APPLE_PAC)
 #include <ptrauth.h>
@@ -168,6 +179,7 @@ void
 OSlibkernInit(void)
 {
 	// This must be called before calling OSRuntimeInitializeCPP.
+	PD_RT_TRACE("rt:metaclass-init");
 	OSMetaClassBase::initialize();
 
 	g_kernel_kmod_info.address = (vm_address_t) &_mh_execute_header;
@@ -176,6 +188,7 @@ OSlibkernInit(void)
 		panic("OSRuntime: C++ runtime failed to initialize.");
 	}
 
+	PD_RT_TRACE("rt:cpp-initialized");
 	gKernelCPPInitialized = true;
 
 	return;
@@ -541,6 +554,7 @@ OSRuntimeInitializeCPP(
 		}
 #endif /* defined(__arm__) */
 	} /* for (segment...) */
+	PD_RT_TRACE("rt:structors-done");
 
 	/* We failed so call all of the destructors. We must do this before
 	 * calling OSMetaClass::postModLoad() as the OSMetaClass destructors
@@ -569,6 +583,7 @@ OSRuntimeInitializeCPP(
 	 * destructors have removed classes from the stalled list so no
 	 * metaclasses will actually be registered.
 	 */
+	PD_RT_TRACE("rt:postModLoad");
 	result = OSMetaClass::postModLoad(metaHandle);
 
 	/* If we've otherwise been fine up to now, but OSMetaClass::postModLoad()
@@ -578,6 +593,7 @@ OSRuntimeInitializeCPP(
 	 * because it's only a fail when there are existing instances of libkern
 	 * classes, and there had better not be any created on the C++ init path.
 	 */
+	PD_RT_TRACE("rt:postModLoad-done");
 	if (load_success && result != KMOD_RETURN_SUCCESS) {
 		(void)OSRuntimeFinalizeCPP(theKext); //kmodInfo, sectionNames, textStart, textEnd);
 	}

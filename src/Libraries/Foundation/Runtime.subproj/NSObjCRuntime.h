@@ -97,9 +97,58 @@ typedef struct _NSZone NSZone;
 #define NS_ENUM_DEPRECATED_MAC(...)
 #define NS_ENUM_DEPRECATED_IOS(...)
 
+#ifndef FOUNDATION_EXPORT
+    #ifdef __cplusplus
+        #define FOUNDATION_EXPORT extern "C"
+    #else
+        #define FOUNDATION_EXPORT extern
+    #endif
+#endif
+
+#ifndef FOUNDATION_EXTERN
+    #define FOUNDATION_EXTERN FOUNDATION_EXPORT
+#endif
+
+typedef NS_CLOSED_ENUM(NSInteger, NSComparisonResult) {
+    NSOrderedAscending = -1,
+    NSOrderedSame = 0,
+    NSOrderedDescending = 1,
+};
+
+enum { NSNotFound = NSIntegerMax };
+
+/* Apple's NSObjCRuntime.h defines these, and ported ObjC code relies on
+ * getting them from Foundation rather than from a system header. */
+#if !defined(MIN)
+    #define MIN(A, B) __NSMinOrMax(A, B, <)
+#endif
+#if !defined(MAX)
+    #define MAX(A, B) __NSMinOrMax(A, B, >)
+#endif
+#if !defined(ABS)
+    #define ABS(A) ({ __typeof__(A) __a = (A); __a < 0 ? -__a : __a; })
+#endif
+
+#define __NSMinOrMax(A, B, OP) ({ \
+    __typeof__(A) __a = (A); \
+    __typeof__(B) __b = (B); \
+    __a OP __b ? __a : __b; \
+})
+
 @class NSString;
 
 void NSLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
 void NSLogv(NSString *format, va_list args) __attribute__((format(__NSString__, 1, 0)));
+
+FOUNDATION_EXPORT NSString *NSStringFromSelector(SEL selector);
+FOUNDATION_EXPORT SEL NSSelectorFromString(NSString *name);
+FOUNDATION_EXPORT NSString *NSStringFromClass(Class aClass);
+FOUNDATION_EXPORT Class NSClassFromString(NSString *name);
+FOUNDATION_EXPORT NSString *NSStringFromProtocol(Protocol *protocol);
+FOUNDATION_EXPORT Protocol *NSProtocolFromString(NSString *name);
+
+FOUNDATION_EXPORT const char *NSGetSizeAndAlignment(const char *typePtr,
+                                                    NSUInteger *sizep,
+                                                    NSUInteger *alignp);
 
 #endif /* ! __FOUNDATION_NSOBJCRUNTIME__ */

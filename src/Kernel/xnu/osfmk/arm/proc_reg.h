@@ -493,6 +493,7 @@
 #define SCTLR_ICACHE   0x00001000 /* Instruction cache enabled. */
 #define SCTLR_HIGHVEC  0x00002000 /* Vector table at 0xffff0000 */
 #define SCTLR_RROBIN   0x00004000 /* Round Robin replacement */
+#define SCTLR_UNALIGN  0x00400000 /* ARMv6 unaligned data access enable */
 #define SCTLR_XP       0x00800000 /* ARMv6 extended page-table format */
 #define SCTLR_HA       0x00020000 /* Hardware Access flag enable */
 #define SCTLR_NMFI     0x08000000 /* Non-maskable FIQ */

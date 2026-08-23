@@ -32,8 +32,16 @@
 #include "objc-config.h"
 #include "isa.h"
 
-#ifndef _ARM_ARCH_7
-#   error requires armv7
+#if !defined(_ARM_ARCH_7)  &&  __ARM_ARCH < 6
+#   error requires armv6 or later
+#endif
+
+// ARM1176 (ARMv6) has no Thumb-2, so this assembles as ARM there: no
+// movw/movt, no cbz, no wide-encoding suffixes.
+#if __ARM_ARCH < 7
+#   define MI_THUMB 0
+#else
+#   define MI_THUMB 1
 #endif
 
 // Set FP=1 on architectures that pass parameters in floating-point registers
@@ -70,6 +78,13 @@
 #endif
 
 .syntax unified	
+
+#if MI_THUMB
+#define MI_BNE_W bne.w
+#else
+#define MI_BNE_W bne
+#endif
+
 	
 #define MI_EXTERN(var) \
 	.non_lazy_symbol_pointer                        ;\
@@ -77,6 +92,7 @@ L##var##$$non_lazy_ptr:                                 ;\
 	.indirect_symbol var                            ;\
 	.long 0
 
+#if MI_THUMB
 #define MI_GET_EXTERN(reg,var)  \
 	movw	reg, :lower16:(L##var##$$non_lazy_ptr-7f-4)  ;\
 	movt	reg, :upper16:(L##var##$$non_lazy_ptr-7f-4)  ;\
@@ -87,6 +103,26 @@ L##var##$$non_lazy_ptr:                                 ;\
 	movw	reg, :lower16:(var-7f-4)  ;\
 	movt	reg, :upper16:(var-7f-4)  ;\
 7:	add	reg, pc                                     ;\
+
+#else
+/* ARM mode: materialise the pc-relative delta from an inline literal. The
+ * add sees pc = 7f + 8, so the literal is biased by 8 rather than 4. */
+#define MI_GET_EXTERN(reg,var)  \
+	ldr	reg, 8f                                      ;\
+7:	add	reg, pc                                      ;\
+	ldr	reg, [reg]                                   ;\
+	b	9f                                           ;\
+8:	.long	L##var##$$non_lazy_ptr-7b-8                  ;\
+9:
+
+#define MI_GET_ADDRESS(reg,var)  \
+	ldr	reg, 8f                                      ;\
+7:	add	reg, pc                                      ;\
+	b	9f                                           ;\
+8:	.long	var-7b-8                                     ;\
+9:
+
+#endif
 
 
 .data
@@ -190,19 +226,31 @@ _objc_restartableRanges:
 
 .macro ENTRY /* name */
 	.text
+#if MI_THUMB
 	.thumb
+#else
+	.arm
+#endif
 	.align 5
 	.globl $0
+#if MI_THUMB
 	.thumb_func
+#endif
 $0:	
 .endmacro
 
 .macro STATIC_ENTRY /*name*/
 	.text
+#if MI_THUMB
 	.thumb
+#else
+	.arm
+#endif
 	.align 5
 	.private_extern $0
+#if MI_THUMB
 	.thumb_func
+#endif
 $0:	
 .endmacro
 	
@@ -413,7 +461,8 @@ LCacheMiss$1:
 
 	ENTRY _objc_msgSend
 	
-	cbz	r0, LNilReceiver_f
+	cmp	r0, #0
+	beq	LNilReceiver_f
 
 	ldr	r9, [r0]		// r9 = self->isa
 	GetClassFromIsa			// r9 = class
@@ -440,7 +489,8 @@ LNilReceiver:
 	
 	ENTRY _objc_msgLookup
 
-	cbz	r0, LNilReceiver_f
+	cmp	r0, #0
+	beq	LNilReceiver_f
 
 	ldr	r9, [r0]		// r9 = self->isa
 	GetClassFromIsa			// r9 = class
@@ -488,7 +538,8 @@ LNilReceiver:
 
 	ENTRY _objc_msgSend_stret
 	
-	cbz	r1, LNilReceiver_f
+	cmp	r1, #0
+	beq	LNilReceiver_f
 
 	ldr	r9, [r1]		// r9 = self->isa
 	GetClassFromIsa			// r9 = class
@@ -510,7 +561,8 @@ LNilReceiver:
 
 	ENTRY _objc_msgLookup_stret
 	
-	cbz	r1, LNilReceiver_f
+	cmp	r1, #0
+	beq	LNilReceiver_f
 
 	ldr	r9, [r1]		// r9 = self->isa
 	GetClassFromIsa			// r9 = class
@@ -851,7 +903,7 @@ LNilReceiver:
 
 	// See if this is a small method.
 	lsls	r12, r1, #31
-	bne.w	L_method_invoke_small
+	MI_BNE_W	L_method_invoke_small
 
 	// We can directly load the IMP from big methods.
 	// r1 is method triplet instead of SEL
@@ -878,7 +930,7 @@ L_method_invoke_small:
 
 	// See if this is a small method.
 	lsls	r12, r2, #31
-	bne.w	L_method_invoke_stret_small
+	MI_BNE_W	L_method_invoke_stret_small
 
 	// We can directly load the IMP from big methods.
 	// r2 is method triplet instead of SEL

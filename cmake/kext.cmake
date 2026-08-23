@@ -36,6 +36,13 @@ function(add_kext_bundle name)
     # panic trampoline instead of giving it storage.
     target_compile_options(${name} PRIVATE -fno-common)
 
+    # ARMv6 only performs unaligned LDR/STR when SCTLR.U is set, and this port
+    # leaves it clear, so an unaligned load silently returns the aligned word
+    # rotated. Packed on-disk structures must be accessed byte-wise instead.
+    if(PUREDARWIN_ARCH STREQUAL "armv6")
+        target_compile_options(${name} PRIVATE -mno-unaligned-access)
+    endif()
+
 
     if(CMAKE_HOST_APPLE)
         # Real Apple ld rejects a plain MH_BUNDLE (-bundle) unless it links

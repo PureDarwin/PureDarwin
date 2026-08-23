@@ -345,8 +345,14 @@ CFLAGS_X86_64	= -Dx86_64 -DX86_64 -D__X86_64__ -DLP64 \
 
 CFLAGS_X86_64H = $(CFLAGS_X86_64)
 
+# -mno-unaligned-access: ARMv6 only does unaligned LDR/STR when SCTLR.U is set,
+# and setting it also makes LDRD/LDM/LDREXD alignment-checked, which this
+# codebase's 64-bit atomics violate. Leaving U clear means an unaligned LDR
+# silently returns the aligned word rotated, so the compiler must not emit one
+# for packed-struct fields in the first place.
 CFLAGS_ARM	= -Darm -DARM -D__ARM__ -DPAGE_SIZE_FIXED \
-			-momit-leaf-frame-pointer -fno-strict-aliasing -D__API__=v4
+			-momit-leaf-frame-pointer -fno-strict-aliasing -D__API__=v4 \
+			-mno-unaligned-access
 
 LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY
 ARM64_PLKSEG_ADDR  =0xfffffff004004000

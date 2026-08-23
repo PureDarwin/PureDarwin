@@ -29,25 +29,33 @@
 , libepoxy
 , atspi2Core
 , dbus
-, libX11
-, libxcb
-, libXau
-, libXdmcp
-, libXext
-, libXi
-, libXrender
-, libXrandr
-, libXfixes
-, libXcursor
-, xorgproto
+, libX11 ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
+, libXext ? null
+, libXi ? null
+, libXrender ? null
+, libXrandr ? null
+, libXfixes ? null
+, libXcursor ? null
+, xorgproto ? null
 , libpng
 , wayland ? null
 , waylandProtocols ? null
 , waylandScanner ? null
 , xkbcommon ? null
 , mesa ? null
+  # Wayland-only images have no X11 libraries at all, so GDK's X11 backend has
+  # to be compiled out rather than merely unused.
+, withX11 ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
+
+assert withX11 -> lib.all (d: d != null) [
+  libX11 libxcb libXau libXdmcp libXext libXi libXrender libXrandr libXfixes
+  libXcursor xorgproto
+];
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
@@ -70,8 +78,10 @@ let
     libepoxy
     atspi2Core
     dbus
-    libX11 libxcb libXau libXdmcp libXext libXi libXrender libXrandr libXfixes libXcursor
-    xorgproto libpng
+    libpng
+  ] ++ lib.optionals withX11 [
+    libX11 libxcb libXau libXdmcp libXext libXi libXrender libXrandr libXfixes
+    libXcursor xorgproto
   ] ++ lib.optionals waylandEnabled [ wayland waylandProtocols xkbcommon ];
   depPcPaths = map lib.getDev deps;
   sdkTarball = requireFile {
@@ -85,7 +95,7 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-gtk3";
+  pname = "puredarwin-gtk3${lib.optionalString (!withX11) "-nox"}";
   inherit (gtk3) version src;
 
   nativeBuildInputs = [ meson ninja pkg-config python3 glibNative ]
@@ -214,7 +224,7 @@ EOF
       --libdir=lib \
       --buildtype=release \
       -Ddefault_library=shared \
-      -Dx11_backend=true \
+      -Dx11_backend=${lib.boolToString withX11} \
       -Dwayland_backend=${lib.boolToString waylandEnabled} \
       -Dbroadway_backend=false \
       -Dwin32_backend=false \

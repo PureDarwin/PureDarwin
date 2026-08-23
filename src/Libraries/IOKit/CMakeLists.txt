@@ -1,9 +1,19 @@
 add_darwin_static_library(IOKit)
 
+# device.defs gates the 32-bit io_connect_map_memory routines on __ILP32__,
+# which mig only defines if it preprocesses for the real target arch rather
+# than its x86_64 default.
+if(PUREDARWIN_ARCH STREQUAL "armv6")
+    set(_iokit_mig_arch armv6)
+else()
+    set(_iokit_mig_arch x86_64)
+endif()
+
 mig(${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/device/device.defs
     INCLUDES_FROM_TARGET IOKit
     USER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/device_user.h
     USER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/device_user.c
+    ARCH ${_iokit_mig_arch}
     NOVOUCHERS)
 
 target_sources(IOKit PRIVATE

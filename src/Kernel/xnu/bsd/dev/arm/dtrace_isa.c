@@ -60,16 +60,23 @@ int dtrace_arm_condition_true(int condition, int cpsr);
 /*
  * Atomicity and synchronization
  */
+/* ARMv6 has no dmb mnemonic; the data memory barrier is a CP15 write. */
+#if __ARM_ARCH < 7
+#define DTRACE_DMB() __asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory")
+#else
+#define DTRACE_DMB() __asm__ volatile ("dmb ish" : : : "memory")
+#endif
+
 inline void
 dtrace_membar_producer(void)
 {
-	__asm__ volatile ("dmb ish" : : : "memory");
+	DTRACE_DMB();
 }
 
 inline void
 dtrace_membar_consumer(void)
 {
-	__asm__ volatile ("dmb ish" : : : "memory");
+	DTRACE_DMB();
 }
 
 /*

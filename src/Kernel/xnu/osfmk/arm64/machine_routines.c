@@ -998,10 +998,16 @@ ml_parse_cpu_topology(void)
 	uint32_t cpu_boot_arg;
 	int err;
 
-#if defined(QEMUVIRT)
+#if defined(QEMUVIRT) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	/* QEMU virt exposes a generic ARM device tree, not Apple's EDT topology
 	 * schema.  Avoid the Apple-only per-CPU properties here and provide the
-	 * complete one-CPU topology expected by the rest of arm64 XNU. */
+	 * complete one-CPU topology expected by the rest of arm64 XNU.
+	 *
+	 * The BCM2837 is in the same position: the loader builds a minimal Apple
+	 * flattened tree with no /cpus node, so the lookup below returns nothing
+	 * and the iterator walks garbage. One CPU is also the truth for now - the
+	 * loader's trampoline parks cores 1-3 in wfe, since nothing here brings
+	 * secondaries up yet. */
 	cpu_boot_arg = 1;
 	PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));
 	if (cpu_boot_arg == 0) {

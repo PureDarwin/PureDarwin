@@ -20,20 +20,23 @@
 , libxshmfence
 , zlib
 , expat
-, libX11
-, libXext
-, libxcb
-, libXau
-, libXdmcp
-, libXxf86vm
-, xorgproto
-, xtrans
+, libX11 ? null
+, libXext ? null
+, libxcb ? null
+, libXau ? null
+, libXdmcp ? null
+, libXxf86vm ? null
+, xorgproto ? null
+, xtrans ? null
 , wayland
 , waylandProtocols
 , waylandScanner
 , pdVirglShim
 , virglWinsysSrc
 , virglAbiHeader
+  # Wayland-only build: no x11 platform, no GLX, and no X11 library anywhere in
+  # the closure. See the with_dri patch in postPatch for why that needs help.
+, withX11 ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
 }:
 
@@ -64,13 +67,14 @@ let
     "-L${wayland}/lib"
   ];
 
-  xDeps = [ libX11 libXext libxcb libXau libXdmcp libXxf86vm xorgproto xtrans libxshmfence
-            wayland waylandProtocols ];
+  xDeps = [ wayland waylandProtocols ]
+    ++ lib.optionals withX11 [ libX11 libXext libxcb libXau libXdmcp libXxf86vm
+                               xorgproto xtrans libxshmfence ];
   xPkgConfigPath = lib.concatMapStringsSep ":"
     (p: "${p}/lib/pkgconfig:${p}/share/pkgconfig") xDeps;
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-mesa";
+  pname = "puredarwin-mesa${lib.optionalString (!withX11) "-nox"}";
   version = "26.1.5";
 
   src = fetchurl {
@@ -104,6 +108,16 @@ stdenv.mkDerivation {
       --replace "  with_dri_platform = 'apple'" \
                 "  with_dri_platform = 'pseudo-drm'"
 
+  '' + lib.optionalString (!withX11) ''
+    # with_dri is what EGL requires, and Mesa only sets it from
+    # system_has_kms_drm (false on Darwin) or glx=='dri' - and glx=dri in turn
+    # demands the x11 platform. That circle forces X11 into an otherwise
+    # Wayland-only build. Darwin already gets the pseudo-drm DRI platform
+    # above, so let it reach the same with_dri via the egl branch instead.
+    substituteInPlace meson.build \
+      --replace "if with_gallium and (system_has_kms_drm or (freedreno_kmds.contains('kgsl') and with_gallium_zink))" \
+                "if with_gallium and (system_has_kms_drm or host_machine.system() == 'darwin' or (freedreno_kmds.contains('kgsl') and with_gallium_zink))"
+  '' + ''
     mkdir -p src/gallium/winsys/virgl/puredarwin
     cp ${virglWinsysSrc}/virgl_puredarwin_winsys.c src/gallium/winsys/virgl/puredarwin/
     cp ${virglWinsysSrc}/virgl_puredarwin_public.h src/gallium/winsys/virgl/puredarwin/
@@ -208,7 +222,7 @@ objc_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-Qun
 cpp_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-Qunused-arguments', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-nostdinc++', '-I${libcxxDylib}/usr/include/c++/v1', '-I${libSystem}/usr/include', ${lib.concatMapStringsSep ", " (s: "'${s}'") depIncludes}]
 c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', ${lib.concatMapStringsSep ", " (s: "'${s}'") depLibs}, '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-fixup_chains', '-lSystem']
 objc_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', ${lib.concatMapStringsSep ", " (s: "'${s}'") depLibs}, '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-fixup_chains', '-lSystem']
-cpp_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${libcxxDylib}/usr/lib', '-L${libcxxabiDylib}/usr/lib', ${lib.concatMapStringsSep ", " (s: "'${s}'") depLibs}, '-L${libXau}/lib', '-L${libXdmcp}/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-fixup_chains', '-lXau', '-lXdmcp', '-lc++', '-lc++abi', '-lSystem']
+cpp_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${libcxxDylib}/usr/lib', '-L${libcxxabiDylib}/usr/lib', ${lib.concatMapStringsSep ", " (s: "'${s}'") depLibs}, ${lib.optionalString withX11 "'-L${libXau}/lib', '-L${libXdmcp}/lib', "} '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-fixup_chains', ${lib.optionalString withX11 "'-lXau', '-lXdmcp', "}'-lc++', '-lc++abi', '-lSystem']
 
 [host_machine]
 system = 'darwin'
@@ -233,11 +247,11 @@ EOF
       -Ddefault_library=shared \
       -Dgallium-drivers=llvmpipe,softpipe,virgl \
       -Dvulkan-drivers=swrast \
-      -Dplatforms=x11,wayland \
+      -Dplatforms=${if withX11 then "x11,wayland" else "wayland"} \
       -Dopengl=true \
       -Dgles1=disabled \
       -Dgles2=enabled \
-      -Dglx=dri \
+      -Dglx=${if withX11 then "dri" else "disabled"} \
       -Dglx-direct=true \
       -Degl=enabled \
       -Dgbm=disabled \

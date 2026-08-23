@@ -26,6 +26,9 @@ static SECURITY_READ_ONLY_LATE(unsigned int) disable_kprintf_output = TRUE;
 static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
 
 static void serial_putc_crlf(char c);
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+extern void pd_bcm2835_early_uart_tag(char phase);
+#endif
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 extern void vc_serial_record_early(char c);
@@ -59,9 +62,18 @@ PE_init_kprintf(void)
 	}
 #endif
 
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('W');	/* about to probe serial */
+#endif
 	if (serial_init()) {
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_bcm2835_early_uart_tag('X');	/* serial console attached */
+#endif
 		PE_kputc = serial_putc_crlf;
 	} else {
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_bcm2835_early_uart_tag('Y');	/* no serial device found */
+#endif
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 		PE_kputc = pd_early_kputc;
 #else

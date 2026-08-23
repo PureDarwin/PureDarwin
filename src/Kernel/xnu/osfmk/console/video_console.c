@@ -128,6 +128,18 @@ void noroot_icon_test(void);
 extern int       disableConsoleOutput;
 static boolean_t gc_enabled     = FALSE;
 static boolean_t gc_initialized = FALSE;
+
+/*
+ * Drawing a glyph means touching the framebuffer, and on the BCM2835 the
+ * D-cache is off during bring-up, so every character costs orders of magnitude
+ * more than the serial write beside it. Default the rendering off there and
+ * keep the serial mirror; vc_draw=1 puts the display back.
+ */
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+static boolean_t vc_draw_enabled = FALSE;
+#else
+static boolean_t vc_draw_enabled = TRUE;
+#endif
 static boolean_t vm_initialized = FALSE;
 
 static struct {
@@ -348,6 +360,14 @@ gc_clear_screen(unsigned int xx, unsigned int yy, int top, unsigned int bottom,
 static void
 gc_enable( boolean_t enable )
 {
+	/* With drawing off there is nothing for the text console to do, and
+	 * leaving it disabled keeps gc_clear_screen/gc_scroll off the framebuffer
+	 * entirely. vcputc() writes serial before consulting gc_enabled, so the
+	 * console stays fully visible on the UART. */
+	if (!vc_draw_enabled) {
+		return;
+	}
+
 	unsigned char *buffer_attributes = NULL;
 	unsigned char *buffer_characters = NULL;
 	unsigned char *buffer_colorcodes = NULL;
@@ -1327,10 +1347,16 @@ pd_early_fb_map(void)
 	if (pd_boot_mark_fb_va() != 0) {
 		return;
 	}
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	if (startup_phase < STARTUP_SUB_KMEM_ALLOC) {
 		return;
 	}
+	/*
+	 * On the BCM2837 the VideoCore firmware's framebuffer is ordinary DRAM
+	 * that sits above memSize, so an io mapping reaches it and every pixel
+	 * becomes a store rather than a pmap copy window (128 of those per glyph
+	 * makes a verbose boot unwatchable).
+	 */
 	pd_efb_va = (volatile uint32_t *)ml_io_map(pd_efb_phys, pd_efb_size);
 #else
 	/*
@@ -1487,9 +1513,17 @@ static boolean_t vc_early_replayed = FALSE;
 void
 vc_serial_record_early(char c)
 {
+	/*
+	 * Mirroring every serial character onto the framebuffer costs a glyph
+	 * blit per character with the D-cache off, which dominates boot time on
+	 * the BCM2835. The explicit pd_early_fb_puts() boot marks stay; only the
+	 * per-character mirror goes. The UART carries the same text.
+	 */
+#if !defined(ARM_BOARD_CONFIG_BCM2835)
 	if (!gc_enabled) {
 		pd_early_fb_putc(c);
 	}
+#endif
 
 	/*
 	 * The ring only needs to cover what the replay will redraw, so it does
@@ -1524,7 +1558,7 @@ vc_serial_replay_early(void)
 void
 vc_serial_putc(char c)
 {
-	if (gc_initialized && gc_enabled) {
+	if (gc_initialized && gc_enabled && vc_draw_enabled) {
 		VCPUTC_LOCK_LOCK();
 		if (gc_enabled) {
 			gc_hide_cursor(gc_x, gc_y);
@@ -1554,7 +1588,7 @@ vcputc(__unused int l, __unused int u, int c)
 	if (serialmode & SERIALMODE_OUTPUT) {
 		serial_putc((char)c);
 	}
-	if (gc_initialized && gc_enabled) {
+	if (gc_initialized && gc_enabled && vc_draw_enabled) {
 		VCPUTC_LOCK_LOCK();
 		if (gc_enabled) {
 			gc_hide_cursor(gc_x, gc_y);
@@ -2234,6 +2268,12 @@ vc_blit_rect(int x, int y, int bx,
     void * backBuffer,
     unsigned int flags)
 {
+	/* Every painter funnels through here - glyphs, screen clears, the progress
+	 * meter and the boot logo - so this is the one place that has to honour
+	 * vc_draw_enabled. */
+	if (!vc_draw_enabled) {
+		return;
+	}
 	if (!vinfo.v_depth) {
 		return;
 	}
@@ -3105,7 +3145,7 @@ gc_pause( boolean_t pause, boolean_t graphics_now )
 	/* Same serial-mirror consideration as gc_enable(). */
 	disableConsoleOutput = (pause && !console_is_serial() &&
 	    !(serialmode & SERIALMODE_OUTPUT));
-	gc_enabled           = (!pause && !graphics_now);
+	gc_enabled           = (!pause && !graphics_now && vc_draw_enabled);
 
 	VCPUTC_LOCK_UNLOCK();
 
@@ -3438,6 +3478,7 @@ vcattach(void)
 	const boot_args * bootargs  = (typeof(bootargs))PE_state.bootArgs;
 
 	PE_parse_boot_argn("meter", &vc_progress_withmeter, sizeof(vc_progress_withmeter));
+	PE_parse_boot_argn("vc_draw", &vc_draw_enabled, sizeof(vc_draw_enabled));
 
 #if defined(__x86_64__)
 	vc_progress_white = (0 != ((kBootArgsFlagBlackBg | kBootArgsFlagLoginUI)

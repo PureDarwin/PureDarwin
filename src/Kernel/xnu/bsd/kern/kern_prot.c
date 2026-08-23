@@ -170,6 +170,19 @@ int
 getpid(proc_t p, __unused struct getpid_args *uap, int32_t *retval)
 {
 	*retval = p->p_pid;
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	/* printf, not the early UART helper: that one writes the PL011 through the
+	 * bootstrap V=P mapping start.s makes, which is gone by the time userland
+	 * issues a syscall, and touching it there is a kernel data abort. */
+	{
+		extern void pd_trace_hex(const char *label, uint64_t v);
+		static int pd_getpid_seen = 0;
+		if (pd_getpid_seen < 4) {
+			pd_getpid_seen++;
+			pd_trace_hex("getpid -> ", (uint64_t)p->p_pid);
+		}
+	}
+#endif
 	return 0;
 }
 

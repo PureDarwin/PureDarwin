@@ -7,6 +7,7 @@
 , libSystem
 , corefoundation
 , iokitCFStatic
+, isArmv6 ? lib.hasPrefix "armv6-" targetTriple
 }:
 
 let
@@ -39,11 +40,12 @@ stdenv.mkDerivation {
     ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,/usr/lib/libIOKitCF.dylib \
       -Wl,-force_load,${iokitCFStatic}/usr/lib/system/libIOKitCF.a \
-      -Wl,-fixup_chains \
+      ${lib.optionalString (!isArmv6) "-Wl,-fixup_chains"} \
       -lCoreFoundation -lSystem \
       -o libIOKitCF.dylib
 

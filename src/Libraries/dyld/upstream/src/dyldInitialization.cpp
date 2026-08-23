@@ -84,17 +84,130 @@ static void runDyldInitializers(int argc, const char* argv[], const char* envp[]
 // On disk, all pointers in dyld's DATA segment are chained together.
 // They need to be fixed up to be real pointers to run.
 //
+#if __arm__
+// Both the magic and the filetype, so a stray 0xfeedface inside __TEXT that
+// happens to sit on a page boundary cannot be mistaken for the header.
+static bool isDyldMachHeader(const void* p)
+{
+    const uint32_t* w = (const uint32_t*)p;
+    return (w[0] == MH_MAGIC) && (w[3] == MH_DYLINKER);
+}
+#endif
+
+#if !__LP64__
+__attribute__((noinline))
+static void rebaseDyldChained32(const uint8_t* mh, uintptr_t slide)
+{
+    struct mh32     { uint32_t magic, cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags; };
+    struct lc       { uint32_t cmd, cmdsize; };
+    struct seg32    { uint32_t cmd, cmdsize; char segname[16]; uint32_t vmaddr, vmsize, fileoff, filesize; };
+    struct ledata   { uint32_t cmd, cmdsize, dataoff, datasize; };
+    struct chdr     { uint32_t fixups_version, starts_offset, imports_offset, symbols_offset,
+                               imports_count, imports_format, symbols_format; };
+    struct startsIn { uint32_t seg_count; uint32_t seg_info_offset[1]; };
+    struct startsSeg { uint32_t size; uint16_t page_size, pointer_format; uint64_t segment_offset;
+                       uint32_t max_valid_pointer; uint16_t page_count, page_start[1]; };
+
+    const struct mh32* h        = (const struct mh32*)mh;
+    uint32_t           fixupOff = 0;
+    uint32_t           leVmaddr = 0, leFileoff = 0;
+    bool               haveLE   = false;
+
+    const uint8_t* p = mh + sizeof(struct mh32);
+    for (uint32_t i = 0; i < h->ncmds; ++i) {
+        const struct lc* c = (const struct lc*)p;
+        if ( c->cmd == LC_SEGMENT ) {
+            const struct seg32* s = (const struct seg32*)p;
+            if ( s->segname[2] == 'L' && s->segname[3] == 'I' && s->segname[4] == 'N' ) {
+                leVmaddr = s->vmaddr;
+                leFileoff = s->fileoff;
+                haveLE = true;
+            }
+        }
+        else if ( c->cmd == LC_DYLD_CHAINED_FIXUPS ) {
+            fixupOff = ((const struct ledata*)p)->dataoff;
+        }
+        p += c->cmdsize;
+    }
+    if ( !haveLE || (fixupOff == 0) )
+        return;
+
+    // dyld links at base zero, so an unslid vmaddr is just an offset from mh.
+    const uint8_t*        fixups = mh + leVmaddr + (fixupOff - leFileoff);
+    const struct chdr*    fh     = (const struct chdr*)fixups;
+    if ( fh->fixups_version != 0 )
+        return;
+    const struct startsIn* si = (const struct startsIn*)(fixups + fh->starts_offset);
+
+    for (uint32_t s = 0; s < si->seg_count; ++s) {
+        if ( si->seg_info_offset[s] == 0 )
+            continue;
+        const struct startsSeg* ss = (const struct startsSeg*)((const uint8_t*)si + si->seg_info_offset[s]);
+        if ( ss->pointer_format != DYLD_CHAINED_PTR_32 )
+            continue;
+        const uint8_t* segBase = mh + (uintptr_t)ss->segment_offset;
+
+        for (uint32_t pg = 0; pg < ss->page_count; ++pg) {
+            uint16_t start = ss->page_start[pg];
+            if ( start == DYLD_CHAINED_PTR_START_NONE )
+                continue;
+
+            // A page whose chains do not all descend from one head lists its
+            // extra heads in an overflow array, terminated by START_LAST.
+            const uint16_t* multi = NULL;
+            if ( start & DYLD_CHAINED_PTR_START_MULTI ) {
+                multi = &ss->page_start[start & ~DYLD_CHAINED_PTR_START_MULTI];
+                start = *multi & ~DYLD_CHAINED_PTR_START_LAST;
+            }
+
+            for (;;) {
+                uint32_t* loc = (uint32_t*)(segBase + (pg * ss->page_size) + start);
+                for (;;) {
+                    uint32_t v    = *loc;
+                    uint32_t next = (v >> 26) & 0x1F;
+                    if ( (v & 0x80000000) == 0 ) {
+                        uint32_t target = v & 0x03FFFFFF;
+                        if ( (ss->max_valid_pointer != 0) && (target > ss->max_valid_pointer) ) {
+                            // Not a pointer: a plain value large enough that the
+                            // linker had to bias it to fit the target field.
+                            *loc = target - ((0x04000000 + ss->max_valid_pointer) / 2);
+                        }
+                        else {
+                            *loc = target + (uint32_t)slide;
+                        }
+                    }
+                    // A bind needs an import table dyld has none of; skip it but
+                    // keep following the chain it sits in.
+                    if ( next == 0 )
+                        break;
+                    loc += next;
+                }
+                if ( (multi == NULL) || (*multi & DYLD_CHAINED_PTR_START_LAST) )
+                    break;
+                ++multi;
+                start = *multi & ~DYLD_CHAINED_PTR_START_LAST;
+            }
+        }
+    }
+}
+#endif // !__LP64__
+
+
 static void rebaseDyld(const dyld3::MachOLoaded* dyldMH)
 {
     // walk all fixups chains and rebase dyld
     const dyld3::MachOAnalyzer* ma = (dyld3::MachOAnalyzer*)dyldMH;
-    assert(ma->hasChainedFixups());
     uintptr_t slide = (long)ma; // all fixup chain based images have a base address of zero, so slide == load address
+#if __LP64__
+    assert(ma->hasChainedFixups());
     __block Diagnostics diag;
     ma->withChainStarts(diag, 0, ^(const dyld_chained_starts_in_image* starts) {
         ma->fixupAllChainedFixups(diag, starts, slide, dyld3::Array<const void*>(), nullptr);
     });
     diag.assertNoError();
+#else
+    rebaseDyldChained32((const uint8_t*)ma, slide);
+#endif
 
     // now that rebasing done, initialize mach/syscall layer
     mach_init();
@@ -118,6 +231,25 @@ uintptr_t start(const dyld3::MachOLoaded* appsMachHeader, int argc, const char* 
 {
     // Emit kdebug tracepoint to indicate dyld bootstrap has started <rdar://46878536>
     dyld3::kdebug_trace_dyld_marker(DBG_DYLD_TIMING_BOOTSTRAP_START, 0, 0, 0, 0);
+
+#if __arm__
+    // dyldStartup.s computes dyld's mach header as "__dyld_start - 0x1000",
+    // which only holds if __dyld_start is the first thing in __TEXT. It is not
+    // here (it links at +0xdf39c), so the pointer lands somewhere in the middle
+    // of __TEXT - readable, but not a header, which left the fixup walk below
+    // reading garbage load commands. Recover the real header by scanning down
+    // page by page; it is at __TEXT's start and so is page aligned. No global
+    // is touched, because this runs before the rebase.
+    if ( !isDyldMachHeader(dyldsMachHeader) ) {
+        uintptr_t p = ((uintptr_t)dyldsMachHeader) & ~(uintptr_t)0xFFF;
+        for (unsigned i = 0; i < 0x4000; ++i, p -= 0x1000) {
+            if ( isDyldMachHeader((const void*)p) ) {
+                dyldsMachHeader = (const dyld3::MachOLoaded*)p;
+                break;
+            }
+        }
+    }
+#endif
 
 	// if kernel had to slide dyld, we need to fix up load sensitive locations
 	// we have to do this before using any global variables

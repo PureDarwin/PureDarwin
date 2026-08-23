@@ -40,6 +40,8 @@
 	</dict>
 	<key>OSBundleLibraries</key>
 	<dict>
+		<key>com.apple.iokit.IOStorageFamily</key>
+		<string>1.6</string>
 		<key>com.apple.kpi.iokit</key>
 		<string>8.0.0</string>
 		<key>com.apple.kpi.libkern</key>

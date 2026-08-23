@@ -29,6 +29,19 @@
 
 #include <string.h>
 
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+extern "C" void pd_bcm2835_early_uart_str(const char *s);
+extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+#define PD_MC_TRACE(m)		pd_bcm2835_early_uart_str(m)
+#define PD_MC_HEX(m, v)		pd_bcm2835_early_uart_hex(m, (uint64_t)(v))
+#define PD_MC_NAME(s)		pd_bcm2835_early_uart_str(s)
+#else
+#define PD_MC_TRACE(m)		do { } while (0)
+#define PD_MC_HEX(m, v)		do { } while (0)
+#define PD_MC_NAME(s)		do { } while (0)
+#endif
+
+
 #include <libkern/OSReturn.h>
 
 #include <libkern/c++/OSMetaClass.h>
@@ -838,6 +851,7 @@ OSMetaClass::postModLoad(void * loadHandle)
 			[[clang::fallthrough]];
 
 		case kMakingDictionaries:
+			PD_MC_TRACE("mc:dict");
 			sAllClassesDict = OSDictionary::withCapacity(kClassCapacityIncrement);
 			if (!sAllClassesDict) {
 				result = kOSMetaClassNoDicts;
@@ -851,14 +865,18 @@ OSMetaClass::postModLoad(void * loadHandle)
 		case kCompletedBootstrap:
 		{
 			unsigned int i;
+			PD_MC_TRACE("mc:kextname");
 			myKextName = const_cast<OSSymbol *>(OSSymbol::withCStringNoCopy(
 				    sStalled->kextIdentifier));
 
+			PD_MC_HEX("mc:count ", sStalled->count);
 			if (!sStalled->count) {
 				break; // Nothing to do so just get out
 			}
 
+			PD_MC_TRACE("mc:lookup");
 			myKext = OSKext::lookupKextWithIdentifier(myKextName);
+			PD_MC_HEX("mc:kext ", myKext);
 			if (!myKext) {
 				result = kOSMetaClassNoKext;
 
@@ -877,6 +895,7 @@ OSMetaClass::postModLoad(void * loadHandle)
 			 * Hack alert: me->className has been a C string until now.
 			 * We only release the OSSymbol if we store the kext.
 			 */
+			PD_MC_TRACE("mc:pass1");
 			IOLockLock(sAllClassesLock);
 			for (i = 0; i < sStalled->count; i++) {
 				const OSMetaClass * me = sStalled->classes[i];
@@ -908,6 +927,7 @@ OSMetaClass::postModLoad(void * loadHandle)
 				}
 			}
 			IOLockUnlock(sAllClassesLock);
+			PD_MC_TRACE("mc:pass1-done");
 
 			/* Bail if we didn't go through the entire list of new classes
 			 * (if we hit a duplicate).
@@ -916,6 +936,7 @@ OSMetaClass::postModLoad(void * loadHandle)
 			        break;
 			}
 
+			PD_MC_TRACE("mc:pass2");
 			// Second pass symbolling strings and inserting classes in dictionary
 			IOLockLock(sAllClassesLock);
 			for (i = 0; i < sStalled->count; i++) {
@@ -925,11 +946,31 @@ OSMetaClass::postModLoad(void * loadHandle)
 			         * We only release the OSSymbol in ~OSMetaClass()
 			         * if we set the reference to the kext.
 			         */
+			        PD_MC_HEX("mc:d ", i);
+			        PD_MC_HEX("mc:d:me ", me);
+			        PD_MC_NAME((const char *)me->className);
 			        me->className =
 			            OSSymbol::withCStringNoCopy((const char *)me->className);
 
+			        PD_MC_TRACE("mc:d:set");
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+			        extern bool pd_osdict_trace;
+			        pd_osdict_trace = (i >= 46);
+			        if (i >= 46) {
+				        /* vptr points at vtable index 2, so taggedRetain
+				         * (index 11) is 9 words in. */
+				        void * const * mevt = *(void * const * const *)me;
+				        for (unsigned int k = 8; k < 11; k++) {
+					        PD_MC_HEX("mc:d:vt ", mevt[k]);
+				        }
+			        }
+#endif
 			        // xxx - I suppose if these fail we're going to panic soon....
 			        sAllClassesDict->setObject(me->className, me);
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+			        pd_osdict_trace = false;
+#endif
+			        PD_MC_TRACE("mc:d:kext");
 
 			        /* Do not retain the kext object here.
 			         */
@@ -943,6 +984,7 @@ OSMetaClass::postModLoad(void * loadHandle)
 				}
 			}
 			IOLockUnlock(sAllClassesLock);
+			PD_MC_TRACE("mc:pass2-done");
 			sBootstrapState = kCompletedBootstrap;
 			break;
 		}

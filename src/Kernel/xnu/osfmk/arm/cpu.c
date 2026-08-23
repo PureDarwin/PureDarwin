@@ -207,41 +207,41 @@ cpu_idle_exit(boolean_t from_reset __unused)
 void
 cpu_init(void)
 {
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	extern void pd_bcm2835_early_uart_tag(char phase);
-	pd_bcm2835_early_uart_tag('Q');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	extern void pd_bcm2835_early_uart_tag_sub(char sub, char phase);
+	pd_bcm2835_early_uart_tag_sub('C', 'Q');
 #endif
 	cpu_data_t     *cdp = getCpuDatap();
 	arm_cpu_info_t *cpu_info_p;
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('R');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('C', 'R');
 #endif
 
 	if (cdp->cpu_type != CPU_TYPE_ARM) {
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-		pd_bcm2835_early_uart_tag('S');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_bcm2835_early_uart_tag_sub('C', 'S');
 #endif
 		cdp->cpu_type = CPU_TYPE_ARM;
 
 		timer_call_queue_init(&cdp->rtclock_timer.queue);
 		cdp->rtclock_timer.deadline = EndOfAllTime;
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-		pd_bcm2835_early_uart_tag('T');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_bcm2835_early_uart_tag_sub('C', 'T');
 #endif
 
 		if (cdp == &BootCpuData) {
 			do_cpuid();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-			pd_bcm2835_early_uart_tag('U');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+			pd_bcm2835_early_uart_tag_sub('C', 'U');
 #endif
 			do_cacheid();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-			pd_bcm2835_early_uart_tag('V');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+			pd_bcm2835_early_uart_tag_sub('C', 'V');
 #endif
 			do_mvfpid();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-			pd_bcm2835_early_uart_tag('W');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+			pd_bcm2835_early_uart_tag_sub('C', 'W');
 #endif
 		} else {
 			/*
@@ -252,13 +252,13 @@ cpu_init(void)
 		}
 		/* ARM_SMP: Assuming identical cpu */
 		do_debugid();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-		pd_bcm2835_early_uart_tag('X');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_bcm2835_early_uart_tag_sub('C', 'X');
 #endif
 
 		cpu_info_p = cpuid_info();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-		pd_bcm2835_early_uart_tag('Y');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_bcm2835_early_uart_tag_sub('C', 'Y');
 #endif
 
 		/* switch based on CPU's reported architecture */
@@ -296,8 +296,8 @@ cpu_init(void)
 		}
 
 		cdp->cpu_threadtype = CPU_THREADTYPE_NONE;
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-		pd_bcm2835_early_uart_tag('Z');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_bcm2835_early_uart_tag_sub('C', 'Z');
 #endif
 	}
 	cdp->cpu_stat.irq_ex_cnt_wake = 0;
@@ -305,8 +305,8 @@ cpu_init(void)
 	cdp->cpu_running = TRUE;
 	cdp->cpu_sleep_token_last = cdp->cpu_sleep_token;
 	cdp->cpu_sleep_token = 0x0UL;
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	pd_bcm2835_early_uart_tag('P');
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag_sub('C', 'P');
 #endif
 }
 
@@ -488,9 +488,18 @@ cpu_timebase_init(boolean_t from_boot __unused)
 		cdp->cpu_get_fiq_handler = rtclock_timebase_func.tbd_fiq_handler;
 		cdp->cpu_get_decrementer_func = rtclock_timebase_func.tbd_get_decrementer;
 		cdp->cpu_set_decrementer_func = rtclock_timebase_func.tbd_set_decrementer;
+	}
+	/*
+	 * Always refresh the timer base: pexpert only has a usable mapping for it
+	 * once VM is up, so latching it alongside the handler leaves it NULL if the
+	 * handler happened to be installed first.
+	 */
+	if (rtclock_timebase_addr != 0) {
 		cdp->cpu_tbd_hardware_addr = (void *)rtclock_timebase_addr;
 		cdp->cpu_tbd_hardware_val = (void *)rtclock_timebase_val;
 	}
+	kprintf("cpu_timebase_init: rtclock_timebase_addr 0x%lx tbd_hardware_addr %p\n",
+	    (unsigned long)rtclock_timebase_addr, cdp->cpu_tbd_hardware_addr);
 	cdp->cpu_decrementer = 0x7FFFFFFFUL;
 	cdp->cpu_timebase_low = 0x0UL;
 	cdp->cpu_timebase_high = 0x0UL;

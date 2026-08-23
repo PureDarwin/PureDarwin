@@ -837,6 +837,22 @@ __attribute__((noreturn))
 void
 exit(proc_t p, struct exit_args *uap, int *retval)
 {
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	/* Where did initproc call exit() from? The user PC/LR map back to a
+	 * function in the launchd binary, which is otherwise invisible: its
+	 * stderr is /dev/null this early. */
+	if (p->p_pid == 1) {
+		extern void pd_trace_hex(const char *label, uint64_t v);
+		extern struct arm_saved_state *find_user_regs(thread_t);
+		struct arm_saved_state *st = find_user_regs(current_thread());
+
+		pd_trace_hex("exit: status ", (uint64_t)(uint32_t)uap->rval);
+		if (st != NULL) {
+			pd_trace_hex("exit: user pc ", get_saved_state_pc(st));
+			pd_trace_hex("exit: user lr ", get_saved_state_lr(st));
+		}
+	}
+#endif
 	p->p_xhighbits = ((uint32_t)(uap->rval) & 0xFF000000) >> 24;
 	exit1(p, W_EXITCODE((uint32_t)uap->rval, 0), retval);
 

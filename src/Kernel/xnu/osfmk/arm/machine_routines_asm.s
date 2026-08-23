@@ -30,6 +30,9 @@
 #include <arm/proc_reg.h>
 #include <arm/pmap.h>
 #include <sys/errno.h>
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+#include <pexpert/arm/BCM2835.h>
+#endif
 #include "assym.s"
 
 	.align	2
@@ -1183,15 +1186,22 @@ LEXT(reenable_async_aborts)
 LEXT(ml_get_speculative_timebase)
 #if defined(ARM_BOARD_CONFIG_BCM2835)
 	/*
-	 * ARM1176 has no architectural generic timer. The BCM2835 system
-	 * timer is a free-running 64-bit, 1 MHz counter whose bus address
-	 * 0x7E003004/08 is ARM physical 0x20003004/08, mapped V=P by start.s.
+	 * ARM1176 has no architectural generic timer. The BCM2835 system timer is
+	 * a free-running 64-bit, 1 MHz counter at ARM physical 0x20003000.
+	 *
+	 * Use the mapped base the decrementer routines use: start.s maps the
+	 * peripheral window V=P only for bootstrap, and once arm_vm_init installs
+	 * the final tables the physical address faults. Before cpu_timebase_init
+	 * fills that in the V=P mapping is still live, so fall back to it.
 	 */
-	ldr		r12, =0x20003004
+	LOAD_ADDR(r12, bcm2835_st_base)					// pexpert's mapped base
+	ldr		r12, [r12]
+	cmp		r12, #0
+	ldreq	r12, =BCM2835_ST_BASE_V					// pre-VM: V=P still live
 1:
-	ldr		r1, [r12, #4]							// CHI
-	ldr		r0, [r12]							// CLO
-	ldr		r2, [r12, #4]							// CHI again
+	ldr		r1, [r12, #BCM2835_ST_CHI]				// CHI
+	ldr		r0, [r12, #BCM2835_ST_CLO]				// CLO
+	ldr		r2, [r12, #BCM2835_ST_CHI]				// CHI again
 	cmp		r1, r2
 	bne		1b
 #else
@@ -1368,6 +1378,9 @@ LEXT(bcm2835_set_decrementer)
 #endif /* defined(ARM_BOARD_CONFIG_BCM2835) */
 
 LOAD_ADDR_GEN_DEF(kernel_pmap_store)
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+LOAD_ADDR_GEN_DEF(bcm2835_st_base)
+#endif
 
 #include        "globals_asm.h"
 

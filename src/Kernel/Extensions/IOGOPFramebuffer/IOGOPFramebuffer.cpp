@@ -299,6 +299,11 @@ IOGOPFramebuffer::start(IOService *provider)
     DEBUG("successfully started\n");
 
     // Register the framebuffer with the kernel console system
+    /* Which mode the booter left the screen in. A loader that put up no splash
+     * hands over text mode, and taking the screen into graphics mode there just
+     * blanks the kernel's console (serial_video_mirror included). */
+    unsigned int consoleMode = bootDisplay.v_display ? kPEGraphicsMode : kPETextMode;
+
     PE_Video consoleInfo;
     consoleInfo.v_baseAddr   = bootDisplay.v_baseAddr | 1;  // Set low bit to force mapping
     consoleInfo.v_width      = bootDisplay.v_width;
@@ -308,7 +313,7 @@ IOGOPFramebuffer::start(IOService *provider)
     /* kPEGraphicsMode (pexpert.h) rather than GRAPHICS_MODE, which is only
      * defined in pexpert/i386/boot.h; both are 1, but the PE name is
      * arch-neutral so this file also builds for arm64. */
-    consoleInfo.v_display    = kPEGraphicsMode;
+    consoleInfo.v_display    = consoleMode;
     consoleInfo.v_offset     = 0;
     consoleInfo.v_length     = 0;  // Let kernel calculate from height * rowBytes
     consoleInfo.v_rotate     = 0;
@@ -316,7 +321,7 @@ IOGOPFramebuffer::start(IOService *provider)
 
     // Initialize graphics console with this framebuffer
     // Use the public IOPlatformExpert::setConsoleInfo() method
-    IOReturn ret = pe->setConsoleInfo(&consoleInfo, kPEGraphicsMode);
+    IOReturn ret = pe->setConsoleInfo(&consoleInfo, consoleMode);
     if (ret != kIOReturnSuccess) {
         DEBUG("setConsoleInfo failed: %d\n", ret);
         // Don't fail - we can still register the service.

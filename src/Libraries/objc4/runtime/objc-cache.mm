@@ -253,10 +253,18 @@ static inline mask_t cache_next(mask_t i, mask_t mask) {
 // mega_barrier doesn't really work, but it works enough on ARM that
 // we leave well enough alone and keep using it there.
 #if __arm__
+#if __ARM_ARCH < 7
+// ARMv6 has no dsb mnemonic; the data synchronization barrier is a CP15 write.
+#define mega_barrier() \
+    __asm__ __volatile__( \
+        "mcr p15, 0, %0, c7, c10, 4" \
+        : : "r" (0) : "memory")
+#else
 #define mega_barrier() \
     __asm__ __volatile__( \
         "dsb    ish" \
         : : : "memory")
+#endif
 
 #endif
 

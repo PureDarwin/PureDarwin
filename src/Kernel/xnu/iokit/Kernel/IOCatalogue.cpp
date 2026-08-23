@@ -45,6 +45,17 @@ extern "C" {
 #include <libkern/kernel_mach_header.h>
 #include <kern/host.h>
 #include <security/mac_data.h>
+
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+extern "C" void pd_bcm2835_early_uart_str(const char *s);
+extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+#define PD_CAT_TRACE(m)	pd_bcm2835_early_uart_str(m)
+#define PD_CAT_HEX(m, v)	pd_bcm2835_early_uart_hex(m, (uint64_t)(v))
+#else
+#define PD_CAT_TRACE(m)	do { } while (0)
+#define PD_CAT_HEX(m, v)	do { } while (0)
+#endif
+
 };
 
 #include <libkern/c++/OSContainers.h>
@@ -104,12 +115,14 @@ IOCatalogue::initialize(void)
 
 	extern const char * gIOKernelConfigTables;
 
+	PD_CAT_TRACE("cat:unserialize");
 	array = OSDynamicPtrCast<OSArray>(OSUnserialize(gIOKernelConfigTables, errorString));
 	if (!array && errorString) {
 		IOLog("KernelConfigTables syntax error: %s\n",
 		    errorString->getCStringNoCopy());
 	}
 
+	PD_CAT_TRACE("cat:symbols");
 	gIOClassKey                  = OSSymbol::withCStringNoCopy( kIOClassKey );
 	gIOProbeScoreKey             = OSSymbol::withCStringNoCopy( kIOProbeScoreKey );
 	gIOModuleIdentifierKey       = OSSymbol::withCStringNoCopy( kCFBundleIdentifierKey );
@@ -120,10 +133,19 @@ IOCatalogue::initialize(void)
 	assert( array && gIOClassKey && gIOProbeScoreKey
 	    && gIOModuleIdentifierKey);
 
-	gIOCatalogue = OSMakeShared<IOCatalogue>();
+	PD_CAT_HEX("cat:vt ", *(const void * const *)IOCatalogue::metaClass);
+	/* The vptr points at index 2, so alloc() (index 23) is 21 words in. */
+	for (unsigned int vs = 20; vs < 23; vs++) {
+		PD_CAT_HEX("cat:vs ", ((const void * const *)*(const void * const *)IOCatalogue::metaClass)[vs]);
+	}
+	PD_CAT_TRACE("cat:alloc");
+	IOCatalogue *rawCatalogue = OSTypeAlloc(IOCatalogue);
+	gIOCatalogue.reset(rawCatalogue, OSNoRetain);
 	assert(gIOCatalogue);
+	PD_CAT_TRACE("cat:init");
 	rc = gIOCatalogue->init(array.get());
 	assert(rc);
+	PD_CAT_TRACE("cat:done");
 }
 
 /*********************************************************************
@@ -170,29 +192,36 @@ IOCatalogue::init(OSArray * initArray)
 	OSDictionary         * dict;
 	OSObject * obj;
 
+	PD_CAT_TRACE("cat:init:super");
 	if (!super::init()) {
 		return false;
 	}
 
 	generation = 1;
 
+	PD_CAT_TRACE("cat:init:dict");
 	personalities = OSDictionary::withCapacity(32);
 	personalities->setOptions(OSCollection::kSort, OSCollection::kSort);
+	PD_CAT_TRACE("cat:init:loop");
 	for (unsigned int idx = 0; (obj = initArray->getObject(idx)); idx++) {
+		PD_CAT_HEX("cat:p ", idx);
 		dict = OSDynamicCast(OSDictionary, obj);
 		if (!dict) {
 			continue;
 		}
+		PD_CAT_TRACE("cat:p:unique");
 		OSKext::uniquePersonalityProperties(dict);
 		if (NULL == dict->getObject( gIOClassKey.get())) {
 			IOLog("Missing or bad \"%s\" key\n",
 			    gIOClassKey->getCStringNoCopy());
 			continue;
 		}
+		PD_CAT_TRACE("cat:p:add");
 		dict->setObject("KernelConfigTable", kOSBooleanTrue);
 		addPersonality(dict);
 	}
 
+	PD_CAT_TRACE("cat:init:lock");
 	gIOCatalogLock = IORWLockAlloc();
 	lock = gIOCatalogLock;
 

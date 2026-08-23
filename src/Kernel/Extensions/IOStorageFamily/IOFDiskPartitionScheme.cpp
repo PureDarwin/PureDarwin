@@ -103,6 +103,12 @@ IOService * IOFDiskPartitionScheme::probe(IOService * provider, SInt32 * score)
     // no partitions defined.  We don't consider this a match and return failure
     // from probe.
 
+    if ( _partitions )
+    {
+        IOLog("IOFDiskPartitionScheme: scan found %u partition(s)\n",
+              _partitions->getCount());
+    }
+
     if ( _partitions && _partitions->getCount() == 0 )
     {
         _partitions->release();
@@ -247,11 +253,19 @@ OSSet * IOFDiskPartitionScheme::scan(SInt32 * score)
 
     // Determine whether this media is formatted.
 
-    if ( media->isFormatted() == false )  goto scanErr;
+    if ( media->isFormatted() == false )
+    {
+        IOLog("IOFDiskPartitionScheme: media reports unformatted\n");
+        goto scanErr;
+    }
 
     // Determine whether this media has an appropriate block size.
 
-    if ( (mediaBlockSize % sizeof(disk_blk0)) )  goto scanErr;
+    if ( (mediaBlockSize % sizeof(disk_blk0)) )
+    {
+        IOLog("IOFDiskPartitionScheme: block size %llu unusable\n", mediaBlockSize);
+        goto scanErr;
+    }
 
     // Allocate a buffer large enough to hold one map, rounded to a media block.
 
@@ -269,7 +283,11 @@ OSSet * IOFDiskPartitionScheme::scan(SInt32 * score)
     // Open the media with read access.
 
     mediaIsOpen = open(this, 0, kIOStorageAccessReader);
-    if ( mediaIsOpen == false )  goto scanErr;
+    if ( mediaIsOpen == false )
+    {
+        IOLog("IOFDiskPartitionScheme: cannot open media for reading\n");
+        goto scanErr;
+    }
 
     // Scan the media for FDisk partition map(s).
 
@@ -278,7 +296,12 @@ OSSet * IOFDiskPartitionScheme::scan(SInt32 * score)
         // Read the next FDisk map into our buffer.
 
         status = media->read(this, fdiskBlock * mediaBlockSize, buffer);
-        if ( status != kIOReturnSuccess )  goto scanErr;
+        if ( status != kIOReturnSuccess )
+        {
+            IOLog("IOFDiskPartitionScheme: read of block %u failed (0x%x)\n",
+                  fdiskBlock, status);
+            goto scanErr;
+        }
 
         fdiskMap = (disk_blk0 *) buffer->getBytesNoCopy();
 
@@ -286,6 +309,8 @@ OSSet * IOFDiskPartitionScheme::scan(SInt32 * score)
 
         if ( OSSwapLittleToHostInt16(fdiskMap->signature) != DISK_SIGNATURE )
         {
+            IOLog("IOFDiskPartitionScheme: bad signature 0x%04x at block %u\n",
+                  OSSwapLittleToHostInt16(fdiskMap->signature), fdiskBlock);
             goto scanErr;
         }
 
@@ -345,6 +370,12 @@ OSSet * IOFDiskPartitionScheme::scan(SInt32 * score)
                                    /* partition   */ fdiskMap->parts + index,
                                    /* partitionID */ fdiskID,
                                    /* fdiskBlock  */ fdiskBlock );
+
+                if ( newMedia == 0 )
+                {
+                    IOLog("IOFDiskPartitionScheme:  [%u] could not instantiate "
+                          "media object\n", index);
+                }
 
                 if ( newMedia )
                 {

@@ -1747,6 +1747,14 @@ extern void pd_start_mark(unsigned slot, uint32_t colour, boot_args *args);
 extern void pd_start_mark_late(unsigned slot, uint32_t colour, boot_args *args);
 #endif
 
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+/* The same trace over the UART: this board has no framebuffer, so the bands
+ * above are unavailable. Uppercase phases keep them distinct from arm_init's
+ * lowercase run. Valid only while the bootstrap V=P mapping of the peripheral
+ * window survives - i.e. until set_mmu_ttb() installs the real tables. */
+extern void pd_bcm2835_early_uart_tag(char phase);
+#endif
+
 void
 arm_vm_init(uint64_t memory_size, boot_args * args)
 {
@@ -1762,6 +1770,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(21, 0x00ff0080, args);	/* rose: entered arm_vm_init */
+#endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('A');
 #endif
 
 	/*
@@ -1876,6 +1887,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(22, 0x0080ff00, args);	/* lime: memory sizes computed */
 #endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('B');
+#endif
 
 	avail_start = args->topOfKernelData;
 
@@ -1914,6 +1928,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(23, 0x000080ff, args);	/* azure: physical aperture page tables built */
+#endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('C');
 #endif
 
 #if defined(ARM_LARGE_MEMORY)
@@ -2020,6 +2037,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(24, 0x00c08040, args);	/* tan: segment layout checks passed */
 #endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('D');
+#endif
 
 	vm_set_page_size();
 
@@ -2045,11 +2065,17 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(25, 0x0040c080, args);	/* sea green: about to set segment protections */
 #endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('E');
+#endif
 
 	arm_vm_prot_init(args);
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(26, 0x00c04080, args);	/* plum: segment protections applied */
+#endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('F');
 #endif
 
 	vm_page_kernelcache_count = (unsigned int) (atop_64(end_kern - segLOWEST));
@@ -2099,6 +2125,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(27, 0x00808000, args);	/* dark yellow: dynamic page tables built */
 #endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('G');
+#endif
 
 	set_tbi();
 
@@ -2107,17 +2136,30 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(28, 0x00ff8000, args);	/* amber: about to switch to the real page tables */
 #endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('H');
+#endif
 
 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(29, 0x00ff00c0, args);	/* magenta-pink: real TTBR1 installed */
 #endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('I');
+#endif
 
 	ml_enable_monitor();
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(30, 0x0000c0ff, args);	/* sky: monitor enabled */
+#elif defined(ARM64_BOARD_CONFIG_BCM2837)
+	/* Bring-up: leave the bootstrap V=P table in TTBR0 rather than invalidating
+	 * it, so the raw-UART tags here and in arm_init can still reach the
+	 * peripheral window at 0x3F000000. Without this the trace necessarily ends
+	 * here and there is no way to tell progress from a hang, since XNU's own
+	 * console is not up yet. Same deviation the framebuffer-marker build makes
+	 * above; drop it once pe_serial has mapped the UART. */
 #else
 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
 #endif
@@ -2209,6 +2251,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 #endif
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	pd_start_mark(31, 0x00c0ff00, args);	/* chartreuse: about to bootstrap the pmap */
+#endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_tag('J');
 #endif
 
 	pmap_bootstrap(dynamic_memory_begin);

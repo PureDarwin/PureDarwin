@@ -11,6 +11,7 @@
 
 #import <objc/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
+#import <Foundation/NSZone.h>
 #include <CoreFoundation/CFBase.h>
 
 /* The two bridging casts ARC code uses to hand an object to CoreFoundation and
@@ -23,5 +24,13 @@ static inline CFTypeRef _Nullable CFBridgingRetain(id _Nullable object) {
 static inline id _Nullable CFBridgingRelease(CFTypeRef CF_RELEASES_ARGUMENT _Nullable value) {
     return (__bridge_transfer id)value;
 }
+
+@protocol NSCopying
+- (id)copyWithZone:(NSZone *)zone;
+@end
+
+@protocol NSMutableCopying
+- (id)mutableCopyWithZone:(NSZone *)zone;
+@end
 
 #endif /* ! __FOUNDATION_NSOBJECT__ */

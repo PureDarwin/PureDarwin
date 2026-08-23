@@ -71,6 +71,26 @@
 #endif
 .endmacro
 
+/* Like ARM_TTE_BOOT_BLOCK but Device memory, for the BCM2837 peripheral
+ * window mapped during bootstrap. */
+#define ARM_TTE_BOOT_BLOCK_DEVICE \
+	(ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | \
+	 ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_AF)
+
+/* Raw PL011 mark, pre-MMU, BCM2837 only. Clobbers x9-x11, which are dead
+ * everywhere it is used below. Bisects the window between the "E0" mark at
+ * start_first_cpu and the "M0" mark before the SCTLR_EL1 write. */
+.macro PD_MARK ch
+#if defined(BCM2837)
+	movz	x9, #0x3F20, lsl #16
+	movk	x9, #0x1000
+	movz	w10, #\ch
+1:	ldr		w11, [x9, #0x18]
+	tbnz	w11, #5, 1b
+	str		w10, [x9]
+#endif
+.endm
+
 .macro MSR_SCTLR_EL1_X0
 #if defined(KERNEL_INTEGRITY_KTRR)
 	mov		x1, lr
@@ -568,6 +588,7 @@ LEXT(start_first_cpu)
 	adrp	x0, EXT(LowExceptionVectorBase)@page
 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 	MSR_VBAR_EL1_X0
+	PD_MARK 'A'
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	// Red: the low exception vector is installed.
@@ -580,6 +601,22 @@ LEXT(start_first_cpu)
 	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+	PD_MARK 'B'
+#if defined(BCM2837)
+	/* Dump the boot_args pointer and the three values just read from it, before
+	 * any adjustment: x20, virtBase, physBase, memSize. x0 is dead here (it was
+	 * only the VBAR address), so only lr needs parking. */
+	mov		x27, x30
+	mov		x9, x20
+	bl		Lprint_hex32_dbg
+	mov		x9, x22
+	bl		Lprint_hex32_dbg
+	mov		x9, x23
+	bl		Lprint_hex32_dbg
+	mov		x9, x24
+	bl		Lprint_hex32_dbg
+	mov		x30, x27
+#endif
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	// Blue: the boot args have been read.
@@ -619,6 +656,7 @@ LEXT(start_first_cpu)
 	EARLY_FB_BAND 3, 0x00ffff00
 #endif
 
+	PD_MARK 'C'
 	// Load address to the C init routine into link register
 	adrp	lr, EXT(arm_init)@page
 	add		lr, lr, EXT(arm_init)@pageoff
@@ -650,6 +688,7 @@ Linvalidate_bootstrap:							// do {
 	str		x0, [x1], #(1 << TTE_SHIFT)			//   Invalidate and advance
 	subs	x2, x2, #1							//   entries--
 	b.ne	Linvalidate_bootstrap				// } while (entries != 0)
+	PD_MARK 'D'
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	// Red: the bootstrap page tables have been cleared.
@@ -696,6 +735,7 @@ Lkernelcache_base_found:
 	sub		x24, x24, x18
 	add		x22, x22, x18
 	add		x23, x23, x18
+	PD_MARK 'E'
 
 	/*
 	 * x0  - V=P virtual cursor
@@ -764,12 +804,68 @@ Lkernelcache_base_found:
 1:
 #endif
 
+	PD_MARK 'F'
+#if defined(BCM2837)
+	/* Dump the inputs to the V=P mapping before building it: memSize,
+	 * num_ents, pagetable root, free pointer, vbase, pbase. A num_ents of 0
+	 * makes create_l2_block_entries' "subs/b.ne" loop 2^64 times, which is
+	 * indistinguishable from a hang. Lprint_hex32_dbg clobbers w0, so the V=P
+	 * virtual cursor is parked in x28 across the calls (ARM_LARGE_MEMORY is
+	 * off here, so x27/x28 are free). */
+	mov		x27, x30
+	mov		x28, x0
+	mov		x9, x24
+	bl		Lprint_hex32_dbg
+	mov		x9, x5
+	bl		Lprint_hex32_dbg
+	mov		x9, x25
+	bl		Lprint_hex32_dbg
+	mov		x9, x2
+	bl		Lprint_hex32_dbg
+	mov		x9, x28
+	bl		Lprint_hex32_dbg
+	mov		x9, x4
+	bl		Lprint_hex32_dbg
+	mov		x0, x28
+	mov		x30, x27
+#endif
 	/* create_bootstrap_mapping(vbase, pbase, num_ents, L1 table, freeptr) */
 	create_bootstrap_mapping x0,  x4,  x5, x1, x2, x6, x10, x11, x12, x13
+
+#if defined(BCM2837)
+	/*
+	 * Map the peripheral window V=P as Device memory.
+	 *
+	 * The PL011 sits at physical 0x3F201000, far above the RAM this loader
+	 * reports, so it is outside the mapping built from memSize and every raw
+	 * UART access after the MMU comes on faults - which reads as a hang at M0.
+	 * It cannot simply be folded into the block above either: ARM_TTE_BOOT_BLOCK
+	 * is CACHE_ATTRINDX_WRITEBACK, and a cacheable UART swallows the status-
+	 * register reads and buffers the writes, so output arrives as fragments.
+	 *
+	 * x2 points at the L2 table the V=P mapping just filled (one page, covering
+	 * VA 0..1GB via L1[0]), so 0x3F000000..0x40000000 is entries 504..511 of
+	 * that same page. Lasts only until arm_vm_init/ml_io_map take over.
+	 */
+	MOV64	x6, ARM_TTE_BOOT_BLOCK_DEVICE
+	movz	x10, #0x3F00, lsl #16				// peripheral base
+	orr		x6, x6, x10
+	add		x11, x2, #(504 * 8)					// &L2[504]
+	mov		x12, #8								// 16MB / 2MB
+	MOV64	x13, ARM_TT_L2_SIZE
+1:
+	str		x6, [x11], #8
+	add		x6, x6, x13
+	subs	x12, x12, #1
+	b.ne	1b
+#endif /* BCM2837 */
+
+	PD_MARK 'G'
 
 	/* Setup the KVA bootstrap mapping */
 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+	PD_MARK 'H'
 
 #if defined(ARM_LARGE_MEMORY)
 	/*
@@ -1117,6 +1213,7 @@ common_start:
 
 	// Clear thread pointer
 	msr		TPIDR_EL1, xzr						// Set thread register
+	PD_MARK 'R'
 
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
@@ -1145,6 +1242,7 @@ common_start:
 	mrs x12, MIDR_EL1
 
 	APPLY_TUNABLES x12, x13
+	PD_MARK 'S'
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 	// Pale green: the per-SoC tunables survived.
@@ -1190,6 +1288,7 @@ common_start:
 	mov	lr, x21
 #endif
 
+	PD_MARK 'T'
 	// Return to arm_init()
 	ret
 

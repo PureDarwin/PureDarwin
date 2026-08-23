@@ -786,10 +786,11 @@ vmapple_uart_receive_data(void)
 static void
 vmapple_uart_init(void)
 {
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-	/* LK has already configured the Pi 1 PL011 and its clock for 115200 baud.
-	 * Preserve that setup so the kernel continues on the boot console without
-	 * changing speed underneath the user. */
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+	/* LK has already configured the PL011 and its clock for 115200 baud on both
+	 * Pi boards. Preserve that setup so the kernel continues on the boot console
+	 * without changing speed underneath the user - the IBRD/FBRD constants below
+	 * assume a UART clock this SoC does not have. */
 	return;
 #else
 	VMAPPLE_UART0_CR = 0x0;

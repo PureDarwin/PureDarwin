@@ -793,8 +793,22 @@ try_again:
 	if (freezer_incore_cseg_acct) {
 		/*
 		 * Add enough segments to track all frozen c_segs that can be stored in swap.
+		 *
+		 * The OSX defaults are 100 swap files of 1GB, so this alone reserves
+		 * ~100GB of submap address space regardless of how much memory the
+		 * machine has. A small board can neither host that much swap nor
+		 * reserve the VA for it, and because this term does not scale with
+		 * compressor_pool_size the retry loop below cannot recover: it halves
+		 * the pool three times and still asks for ~100GB. Never reserve more
+		 * freezer headroom than the compressor pool itself; on a machine large
+		 * enough for the default to be meaningful the pool exceeds it anyway.
 		 */
-		c_segments_limit += (uint32_t)(vm_swap_get_max_configured_space() / (vm_size_t)(C_SEG_ALLOCSIZE));
+		uint64_t swap_space = vm_swap_get_max_configured_space();
+
+		if (swap_space > compressor_pool_size) {
+			swap_space = compressor_pool_size;
+		}
+		c_segments_limit += (uint32_t)(swap_space / (vm_size_t)(C_SEG_ALLOCSIZE));
 	}
 #endif
 	/*
@@ -812,6 +826,20 @@ try_again:
 	c_compressed_record_sbuf_size = (vm_size_t)C_SEG_ALLOCSIZE + (PAGE_SIZE * 2);
 	compressor_submap_size += c_compressed_record_sbuf_size;
 #endif /* RECORD_THE_COMPRESSED_DATA */
+
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	{
+		extern void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+		pd_bcm2835_early_uart_hex("cmp:max_mem ", (uint64_t)max_mem);
+		pd_bcm2835_early_uart_hex("cmp:pool    ", (uint64_t)compressor_pool_size);
+		pd_bcm2835_early_uart_hex("cmp:maxpool ", (uint64_t)compressor_pool_max_size);
+		pd_bcm2835_early_uart_hex("cmp:segs    ", (uint64_t)c_segments_limit);
+		pd_bcm2835_early_uart_hex("cmp:allocsz ", (uint64_t)C_SEG_ALLOCSIZE);
+		pd_bcm2835_early_uart_hex("cmp:arr     ", (uint64_t)c_segments_arr_size);
+		pd_bcm2835_early_uart_hex("cmp:bufs    ", (uint64_t)c_buffers_size);
+		pd_bcm2835_early_uart_hex("cmp:submap  ", (uint64_t)compressor_submap_size);
+	}
+#endif
 
 	vmk_flags = VM_MAP_KERNEL_FLAGS_NONE;
 	vmk_flags.vmkf_permanent = TRUE;

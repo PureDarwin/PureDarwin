@@ -773,10 +773,14 @@ extern const uintptr_t objc_debug_isa_class_mask;
  */
 CF_INLINE Boolean CF_IS_OBJC(CFTypeID typeId, const void *obj)
 {
-    /* check that the object is a tagged pointer first */
+    /* check that the object is a tagged pointer first. Tagged pointers only
+     * exist on __LP64__, so on 32-bit there is nothing to check. */
+#if OBJC_HAVE_TAGGED_POINTERS
     if (_objc_isTaggedPointer(obj)) {
         return true;
-    } else {
+    } else
+#endif
+    {
         uintptr_t objIsa = (((const CFRuntimeBase *)obj)->_cfisa);
         
         if (objIsa && ((void *)objIsa) != __CFConstantStringClassReferencePtr) {

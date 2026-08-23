@@ -418,14 +418,35 @@ join_start:
 	/*
 	 * Select the extended VMSAv6 descriptor format and enable TEX remapping.
 	 * XNU's CACHE_ATTRINDX_DEFAULT descriptors encode region zero; PRRR/NMRR
-	 * above turn that region into normal memory while TRE is enabled. Keep
-	 * the ARM1176 D-cache disabled during bring-up: enabling it currently
-	 * produces a deferred external abort during the first dirty writeback,
-	 * while Normal memory with caching disabled still permits exclusives.
+	 * above turn that region into normal memory while TRE is enabled.
+	 *
+	 * Keep the ARM1176 D-cache disabled during bring-up: enabling it hangs the
+	 * kernel at this very instruction (the M0 tag prints, the SCTLR write does
+	 * not return), while Normal memory with caching disabled still permits
+	 * exclusives.
+	 *
+	 * Tried 2026-08-21 and reverted: it is NOT the bootloader's uncached
+	 * 0xc0000000 bus alias. Moving both LK aliases to the L2-cached
+	 * 0x80000000 one (matching the arm64 path) and enabling the D-cache still
+	 * hangs here. The remaining suspect is PRRR/NMRR: those values were copied
+	 * from the A7 config and have never been validated on an ARM1176, and with
+	 * the D-cache off wrong memory attributes are harmless because everything
+	 * is effectively uncached. Fix those before trying this again.
 	 */
 	mov		r7, #(SCTLR_XP | SCTLR_TRE)
-	orr		r7, r7, #(SCTLR_HIGHVEC | SCTLR_ICACHE | SCTLR_PREDIC)
+	orr		r7, r7, #SCTLR_HIGHVEC
 	orr		r7, r7, #SCTLR_ENABLE
+	/*
+	 * Diagnostic: userland dies at a different place on every boot (dyld
+	 * mapping a dylib, launchd's first pthread_create, ...), which is what an
+	 * instruction-cache coherency hole looks like rather than a logic bug.
+	 * I-cache on with D-cache off is the asymmetric case: data writes go
+	 * straight to RAM, so every path that writes or recycles executable memory
+	 * has to invalidate the I-cache by hand, and dyld relocating code pages
+	 * does exactly that. Drop the I-cache too and see if the failures become
+	 * deterministic. r11 already has SCTLR_ICACHE set from the early enable
+	 * above, so clear it after the or.
+	 */
 #else
 	mov		r7, #(SCTLR_AFE|SCTLR_TRE)			// Access flag, TEX remap
 	orr		r7, r7, #(SCTLR_HIGHVEC | SCTLR_ICACHE | SCTLR_PREDIC)
@@ -435,6 +456,12 @@ join_start:
 	orr		r7, r7, #SCTLR_SW					// SWP/SWPB Enable
 #endif
 	orr		r11, r11, r7						// or in the default settings
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/* Undo the early I-cache/branch-prediction enable above; see the comment
+	 * on the r7 setup for why this board runs with both caches off. */
+	bic		r11, r11, #SCTLR_ICACHE
+	bic		r11, r11, #SCTLR_PREDIC
+#endif
 	RPI1_EARLY_TAG 'M', '0'
 	mcr		p15, 0, r11, c1, c0, 0				// set mmu control
 

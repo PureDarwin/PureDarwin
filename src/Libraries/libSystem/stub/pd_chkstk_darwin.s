@@ -13,8 +13,9 @@
     .text
     .globl ____chkstk_darwin
 ____chkstk_darwin:
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__)
     bx lr
 #else
+    /* arm64 and x86 both return with ret; only arm32 uses bx lr. */
     ret
 #endif

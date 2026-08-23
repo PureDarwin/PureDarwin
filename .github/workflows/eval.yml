@@ -1,0 +1,108 @@
+name: Evaluate
+
+# Evaluation-only CI. Nothing here builds a derivation, so it needs no Apple SDK
+# and no secrets, which means it also runs on pull requests from forks.
+#
+# What it catches: flake outputs that stop evaluating. That is the common way a
+# change breaks the tree without the author noticing, because it is easy to
+# refactor the flake so x86_64 still evaluates and one arm64 target no longer
+# does. Actual builds need the SDK and happen elsewhere.
+
+on:
+  pull_request:
+    branches: [next, main]
+  push:
+    branches: [next]
+  workflow_dispatch:
+
+concurrency:
+  group: eval-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    name: Evaluate flake outputs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      # --all-systems so the aarch64 and Darwin outputs are checked too, not
+      # just the runner's own x86_64-linux.
+      - name: nix flake check
+        run: nix flake check --no-build --all-systems --show-trace
+
+      - name: Package sets evaluate on every system
+        run: |
+          set -euo pipefail
+          for system in x86_64-linux aarch64-linux x86_64-darwin aarch64-darwin; do
+            count=$(nix eval --raw ".#packages.$system" \
+              --apply 'ps: toString (builtins.length (builtins.attrNames ps))')
+            echo "$system: $count packages"
+            if [ "$count" -eq 0 ]; then
+              echo "::error::$system exposes no packages"
+              exit 1
+            fi
+          done
+
+      # Every exposed attribute must actually be a derivation. flake check
+      # covers this, but this reports every offender at once rather than
+      # stopping at the first.
+      - name: Every package is a derivation
+        run: |
+          set -euo pipefail
+          for system in x86_64-linux aarch64-linux x86_64-darwin aarch64-darwin; do
+            bad=$(nix eval --raw ".#packages.$system" --apply \
+              'ps: let bad = builtins.filter
+                     (n: !(builtins.isAttrs ps.${n} && ps.${n} ? drvPath))
+                     (builtins.attrNames ps);
+                   in builtins.concatStringsSep " " bad')
+            if [ -n "$bad" ]; then
+              echo "::error::$system exposes non-derivation attributes: $bad"
+              exit 1
+            fi
+            echo "$system: all attributes are derivations"
+          done
+
+      # The targets a release depends on. Named explicitly so that losing one
+      # is a hard failure rather than a package that quietly stops existing.
+      - name: Release targets evaluate
+        run: |
+          set -euo pipefail
+          targets="
+            kernel kexts kc userland libSystem
+            image image-minimal image-minimal-debug image-wayland image-hfs
+            kernel-arm64-virt kexts-arm64 kc-arm64 image-arm64-virt-minimal
+            kernel-arm64-t8010 kc-arm64-t8010 ramdisk-arm64-t8010
+            kernel-arm64-bcm2837 kc-arm64-bcm2837 image-arm64-bcm2837
+            kernel-arm32-bcm2835 prelinked-arm32-bcm2835
+          "
+          failed=0
+          for target in $targets; do
+            if nix eval --raw ".#$target.drvPath" >/dev/null 2>&1; then
+              echo "ok    $target"
+            else
+              echo "::error::$target does not evaluate"
+              failed=1
+            fi
+          done
+          exit $failed
+
+      - name: Runners evaluate
+        run: |
+          set -euo pipefail
+          for app in default vm kvm arm64-virt arm64-uefi arm64-uboot; do
+            nix eval --raw ".#apps.x86_64-linux.$app.program" >/dev/null
+            echo "ok    $app"
+          done

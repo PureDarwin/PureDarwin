@@ -435,11 +435,22 @@ ml_parse_cpu_topology(void)
 	return;
 #endif
 
+	/*
+	 * Checked rather than asserted: assert() compiles out of RELEASE, and a
+	 * bootloader that publishes no /cpus then leaves both `entry` and `iter`
+	 * uninitialized and the loop below walks whatever was on the stack. The
+	 * count that falls out of that is undefined, which is a far worse way to
+	 * find out the node is missing than a panic naming it.
+	 */
 	err = SecureDTLookupEntry(NULL, "/cpus", &entry);
-	assert(err == kSuccess);
+	if (err != kSuccess) {
+		panic("ml_parse_cpu_topology: no /cpus node in the device tree");
+	}
 
 	err = SecureDTInitEntryIterator(entry, &iter);
-	assert(err == kSuccess);
+	if (err != kSuccess) {
+		panic("ml_parse_cpu_topology: cannot iterate /cpus");
+	}
 
 	cpu_boot_arg = MAX_CPUS;
 	PE_parse_boot_argn("cpus", &cpu_boot_arg, sizeof(cpu_boot_arg));

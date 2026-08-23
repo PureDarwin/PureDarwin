@@ -3,13 +3,26 @@
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <stdarg.h>
+
+#include "bcm2835_emmc_bringup.h"
 
 #define super IOService
 OSDefineMetaClassAndStructors(PDBcm2835SD, IOService);
 
-/* Bus address 0x7E300000 is ARM physical 0x20300000. */
+/*
+ * Bus 0x7Exxxxxx is ARM physical 0x20xxxxxx on BCM2835 (Pi 1/Zero) but
+ * 0x3Fxxxxxx on BCM2837 (Pi 3). The peripheral base is taken from the
+ * "peripheral-base" property on our provider's device-tree node when present,
+ * so one binary serves both; these remain the BCM2835 fallback.
+ */
+#define kPeriphBaseDefault      0x20000000
 #define kEMMCPhys               0x20300000
 #define kEMMCSize               0x100
+#define kGPIOPhys               0x20200000
+#define kGPIOSize               0x100
+#define kCMPhys                 0x20101000
+#define kCMSize                 0x200
 
 #define kARG2                   0x00
 #define kBLKSIZECNT             0x04
@@ -89,12 +102,11 @@ OSDefineMetaClassAndStructors(PDBcm2835SD, IOService);
 #define kACMD_SD_SEND_OP_COND   CMD(41, kCMD_RSPNS_48)
 
 /*
- * The EMMC base clock comes from the VideoCore and is not discoverable through
- * any register. 250MHz is what the firmware programs on this SoC family; if it
- * were ever lower the dividers below would simply produce a slower card clock,
- * which is safe, so nothing here depends on the value being exact.
+ * The EMMC base clock is not discoverable through any register, so it has to
+ * match what enableEMMCClock() programs below. Too high a value here only
+ * yields a slower card clock, which is safe.
  */
-#define kBaseClockHz            250000000u
+
 #define kIdentClockHz           400000u
 #define kTransferClockHz        25000000u
 
@@ -107,15 +119,25 @@ PDBcm2835SD::start(IOService *provider)
 		return false;
 	}
 
+	fPeriphBase = kPeriphBaseDefault;
+	if (provider != NULL) {
+		OSData *pb = OSDynamicCast(OSData, provider->getProperty("peripheral-base"));
+		if (pb != NULL && pb->getLength() >= (unsigned)sizeof(uint32_t)) {
+			fPeriphBase = *(const uint32_t *)pb->getBytesNoCopy();
+		}
+	}
+	IOLog("PDBcm2835SD: peripheral base 0x%x\n", (unsigned)fPeriphBase);
+
 	IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
-		(IOPhysicalAddress)kEMMCPhys, kEMMCSize, kIODirectionOutIn);
+		(IOPhysicalAddress)(fPeriphBase + 0x300000), kEMMCSize, kIODirectionOutIn);
 	if (desc == NULL) {
 		return false;
 	}
 	fRegMap = desc->map(kIOMapAnywhere | kIOMapInhibitCache);
 	desc->release();
 	if (fRegMap == NULL) {
-		IOLog("PDBcm2835SD: cannot map EMMC at 0x%x\n", kEMMCPhys);
+		IOLog("PDBcm2835SD: cannot map EMMC at 0x%x\n",
+		      (unsigned)(fPeriphBase + 0x300000));
 		return false;
 	}
 	fRegs = (volatile uint8_t *)fRegMap->getVirtualAddress();
@@ -127,7 +149,7 @@ PDBcm2835SD::start(IOService *provider)
 
 	IOLog("PDBcm2835SD: EMMC host version 0x%x\n", read32(kSLOTISR_VER));
 
-	if (!resetHost() || !identifyCard()) {
+	if (!bringUpController() || !identifyCard()) {
 		IOLog("PDBcm2835SD: no usable card\n");
 		return false;
 	}
@@ -170,51 +192,119 @@ PDBcm2835SD::free(void)
 		fLock = NULL;
 	}
 	OSSafeReleaseNULL(fRegMap);
+	OSSafeReleaseNULL(fGPIOMap);
+	OSSafeReleaseNULL(fCPRMANMap);
 	fRegs = NULL;
+	fGPIORegs = NULL;
+	fCPRMANRegs = NULL;
 	super::free();
 }
 
-bool
-PDBcm2835SD::resetHost(void)
+static uint32_t
+pd_emmc_read32(void *ctx, enum bcm2835_emmc_block blk, uint32_t off)
 {
-	write32(kCONTROL0, 0);
-	write32(kCONTROL1, kC1_SRST_HC);
+	return ((PDBcm2835SD *)ctx)->bringupRead(blk, off);
+}
 
-	for (int i = 0; i < 1000; i++) {
-		IODelay(100);
-		if ((read32(kCONTROL1) & kC1_SRST_HC) == 0) {
-			break;
-		}
+static void
+pd_emmc_write32(void *ctx, enum bcm2835_emmc_block blk, uint32_t off,
+    uint32_t val)
+{
+	((PDBcm2835SD *)ctx)->bringupWrite(blk, off, val);
+}
+
+static void
+pd_emmc_udelay(void *ctx, uint32_t us)
+{
+	(void)ctx;
+	IODelay(us);
+}
+
+static void
+pd_emmc_log(void *ctx, const char *fmt, ...)
+{
+	(void)ctx;
+	va_list ap;
+	va_start(ap, fmt);
+	IOLogv(fmt, ap);
+	va_end(ap);
+	IOLog("\n");
+}
+
+uint32_t
+PDBcm2835SD::bringupRead(int blk, uint32_t off) const
+{
+	volatile uint8_t *base = blockBase(blk);
+	return base ? *(volatile uint32_t *)(base + off) : 0;
+}
+
+void
+PDBcm2835SD::bringupWrite(int blk, uint32_t off, uint32_t val) const
+{
+	volatile uint8_t *base = blockBase(blk);
+	if (base) *(volatile uint32_t *)(base + off) = val;
+}
+
+volatile uint8_t *
+PDBcm2835SD::blockBase(int blk) const
+{
+	switch (blk) {
+	case BCM2835_EMMC_BLOCK_EMMC:   return fRegs;
+	case BCM2835_EMMC_BLOCK_GPIO:   return fGPIORegs;
+	case BCM2835_EMMC_BLOCK_CPRMAN: return fCPRMANRegs;
+	default:                        return NULL;
 	}
-	if ((read32(kCONTROL1) & kC1_SRST_HC) != 0) {
-		IOLog("PDBcm2835SD: host reset timed out\n");
+}
+
+// Map a peripheral block; the caller owns the returned map.
+static IOMemoryMap *
+pd_map_block(IOPhysicalAddress phys, IOByteCount len, volatile uint8_t **outBase)
+{
+	IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
+		phys, len, kIODirectionOutIn);
+	if (desc == NULL) return NULL;
+
+	IOMemoryMap *map = desc->map(kIOMapAnywhere | kIOMapInhibitCache);
+	desc->release();
+	if (map == NULL) return NULL;
+
+	*outBase = (volatile uint8_t *)map->getVirtualAddress();
+	return map;
+}
+
+bool
+PDBcm2835SD::bringUpController(void)
+{
+	fGPIOMap = pd_map_block(fPeriphBase + 0x200000, kGPIOSize, &fGPIORegs);
+	fCPRMANMap = pd_map_block(fPeriphBase + 0x101000, kCMSize, &fCPRMANRegs);
+	if (fGPIOMap == NULL || fCPRMANMap == NULL) {
+		IOLog("PDBcm2835SD: cannot map the GPIO or CPRMAN block\n");
 		return false;
 	}
 
-	if (!setClock(kIdentClockHz)) {
+	struct bcm2835_emmc_ops ops;
+	ops.read32 = pd_emmc_read32;
+	ops.write32 = pd_emmc_write32;
+	ops.udelay = pd_emmc_udelay;
+	ops.log = pd_emmc_log;
+	ops.ctx = this;
+
+	uint32_t baseHz = 0;
+	int err = bcm2835_emmc_bringup(&ops, BCM2835_EMMC_CLOCK_OSC, 0, &baseHz);
+	if (err != BCM2835_EMMC_OK) {
+		IOLog("PDBcm2835SD: bring-up failed (%d)\n", err);
 		return false;
 	}
 
-	/*
-	 * Unmask every flag so the INTERRUPT register records them, but leave
-	 * IRPT_EN clear: the flags are polled and no interrupt is ever routed to
-	 * the CPU.
-	 */
-	write32(kIRPT_EN, 0);
-	write32(kIRPT_MASK, 0xffffffff);
-	write32(kINTERRUPT, 0xffffffff);
-	return true;
+	fBaseClockHz = baseHz;
+	return setClock(kIdentClockHz);
 }
 
 bool
 PDBcm2835SD::setClock(uint32_t targetHz)
 {
-	/*
-	 * Divided-clock mode: the divisor field holds half the actual divider, and
-	 * the hardware only implements powers of two, so round up to one.
-	 */
 	uint32_t divisor = 1;
-	while ((kBaseClockHz / divisor) > targetHz && divisor < 0x400) {
+	while ((fBaseClockHz / divisor) > targetHz && divisor < 0x400) {
 		divisor <<= 1;
 	}
 	uint32_t half = divisor >> 1;

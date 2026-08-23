@@ -99,6 +99,13 @@
             target = "arm64-apple-darwin20.4";
             clangTarget = "arm64-apple-macosx11.0";
           };
+          # The Pi Zero's ARM1176 is ARMv6; there is no macosx deployment
+          # target for 32-bit ARM, so the triple stays a plain darwin one.
+          armv6CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
+            inherit nativeLd;
+            target = "armv6-apple-darwin20.4";
+            clangTarget = "armv6-apple-darwin20.4";
+          };
           nativeUnifdef = pkgs.callPackage ./nix/pkgs/toolchain/unifdef.nix { };
           nativeMigcom = pkgs.callPackage ./nix/pkgs/toolchain/migcom.nix { };
           libapfsrwBuild = pkgs.callPackage ./nix/pkgs/apple/libapfsrw.nix { };
@@ -1374,6 +1381,70 @@
               mesa = mesaBuild;
               inherit (pkgs) gtk3 xorgproto;
             };
+          onyx2dBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/onyx2d.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              freetype2 = freetype2Build;
+              libpng = libpngBuild;
+              libjpeg = libjpegBuild;
+              zlib = xvfbZlibBuild;
+              src = ./src/Frameworks/Onyx2D;
+            };
+          coregraphicsBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coregraphics.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              onyx2d = onyx2dBuild;
+              freetype2 = freetype2Build;
+              libpng = libpngBuild;
+              libjpeg = libjpegBuild;
+              zlib = xvfbZlibBuild;
+              src = ./src/Frameworks/CoreGraphics;
+            };
+          # Wayland-only image: cairo/dbus/mesa each bake an libX11 path into
+          # their output unless their X11 backends are configured out.
+          cairoNoxBuild =
+            if isDarwin then null else cairoBuild.override {
+              withX11 = false;
+              xorgproto = null; libX11 = null; libXext = null;
+              libXrender = null; libxcb = null; libXau = null; libXdmcp = null;
+            };
+          dbusNoxBuild =
+            if isDarwin then null else dbusBuild.override {
+              withX11 = false;
+              libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+              xorgproto = null;
+            };
+          mesaNoxBuild =
+            if isDarwin then null else mesaBuild.override {
+              withX11 = false;
+              libX11 = null; libXext = null; libxcb = null; libXau = null;
+              libXdmcp = null; libXxf86vm = null; xorgproto = null; xtrans = null;
+            };
+          gtk3NoxBuild =
+            if isDarwin then null else gtk3Build.override {
+              withX11 = false;
+              libX11 = null;
+              libxcb = null;
+              libXau = null;
+              libXdmcp = null;
+              libXext = null;
+              libXi = null;
+              libXrender = null;
+              libXrandr = null;
+              libXfixes = null;
+              libXcursor = null;
+              xorgproto = null;
+            };
+          gtkLayerShellNoxBuild =
+            if isDarwin then null else gtkLayerShellBuild.override { gtk3 = gtk3NoxBuild; };
           libwnckBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/xfce/libwnck.nix {
               nativeMesonTools = nativeMesonToolsDir;
@@ -2323,7 +2394,12 @@
 
           wineToolsBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/wine-tools.nix {
-              inherit (pkgs) wine flex bison freetype;
+              # Only version and src are taken from it. nixpkgs' top-level `wine`
+              # is winePackages.full, which pulls in pkgsi686Linux and so cannot
+              # be evaluated on a non-x86 host; wine64 has the same version and
+              # the same src derivation and evaluates everywhere.
+              wine = pkgs.wine64;
+              inherit (pkgs) flex bison freetype;
             };
 
           wineBuild =
@@ -2336,7 +2412,10 @@
               mingwGcc32 = pkgs.pkgsCross.mingw32.buildPackages.gcc;
               mingwBintools32 = pkgs.pkgsCross.mingw32.buildPackages.bintools;
               inherit (pkgs) python3;
-              inherit (pkgs) wine xorgproto flex bison;
+              # See the note on wineToolsBuild above: wine64 for version/src so
+              # this evaluates on non-x86 hosts.
+              wine = pkgs.wine64;
+              inherit (pkgs) xorgproto flex bison;
               libX11 = libX11SharedBuild;
               libxcb = libxcbSharedBuild;
               libXau = libXauSharedBuild;
@@ -2627,6 +2706,22 @@
               xcbWm = xcbWmBuild;
               src = ./src/ThirdParty/sway;
             };
+          # Wayland-only image: wlroots/sway rebuilt without the Xwayland
+          # backend so nothing on the image links libxcb.
+          wlrootsNoxBuild =
+            if isDarwin then null else wlrootsBuild.override {
+              withXwayland = false;
+              xcb = null;
+              xcbWm = null;
+              xwayland = null;
+            };
+          swayNoxBuild =
+            if isDarwin then null else swayBuild.override {
+              withXwayland = false;
+              wlroots = wlrootsNoxBuild;
+              xcb = null;
+              xcbWm = null;
+            };
           waylandBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wayland.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -2785,6 +2880,7 @@
           arm64 = import ./nix/arm64.nix {
             inherit lib pkgs isDarwin;
             inherit arm64CrossToolchain;
+            inherit armv6CrossToolchain;
             inherit coreFoundationBuild;
             inherit darwinCrossToolchain;
             inherit fbdoomSource;
@@ -2843,6 +2939,8 @@
             dilloArm64Build
             dmenuArm64Build
             fastfetchArm64Build
+            fastfetchNoGLArm64Build
+            vmprobeArm64Build
             fltkArm64Build
             foundationArm64Build
             fribidiArm64Build
@@ -3020,7 +3118,11 @@
             kernelArm64VirtDebugBuild
             kernelArm64T8010Build
             kernelArm64T8010DebugBuild
+            kernelArm64Bcm2837Build
+            kernelArm64Bcm2837DebugBuild
             kernelArm32Bcm2835Build
+            kernelArm32Bcm2835DebugBuild
+            kernelArm32Bcm2835DevBuild
             kextsArm32Bcm2835Build
             compilerRtArmv6Build
             libSystemArmv6Build
@@ -3360,13 +3462,13 @@
               libXcursorSharedBuild libXrandrSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
-              gnumakeBuild gtk3Build gtkLayerShellBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
+              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild cairoNoxBuild dbusNoxBuild mesaNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
-              kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm32Bcm2835Build
+              kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
               kernelBuild kernelDebugBuild kextsArm64Build kextsBuild
-              launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild wlrootsBuild swayBuild
+              launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build
               libiconvBuild libnsbmpBuild libnsgifBuild libnsutilsBuild libobjcBuild libparserutilsBuild
@@ -3377,6 +3479,7 @@
               pangoBuild pcre2Build pdVirglShimBuild pkgconfBuild pkgs pythonBuild
               securityBuild symptomReporterBuild splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease
               startupNotificationBuild system systemConfigurationBuild systemStarterBuild tccBuild
+              fastfetchNoGLArm64Build foundationArm64Build vmprobeArm64Build
               toyboxArm64Build toyboxBuild userlandBuild vteBuild xcalcBuild xcbBuild xcbCursorBuild
               xcbImageBuild xcbKeysymsBuild xcbRenderUtilBuild xcbUtilBuild xcbWmBuild xcbXrmBuild
               xclockBuild xeyesBuild thunarBuild xfce4AppfinderBuild xfce4PanelBuild xfce4SessionBuild
@@ -3452,8 +3555,17 @@
           arm64Packages = lib.optionalAttrs (!isDarwin) {
             libSystem-armv6 = arm64.libSystemArmv6Build;
             userland-arm32-bcm2835 = arm64.userlandArm32Bcm2835Build;
+            libsystem-armv6 = arm64.libSystemArmv6Build;
+            libobjc-armv6 = arm64.libobjcArmv6Build;
+            libcxxabi-armv6 = arm64.libcxxabiDylibArmv6Build;
+            icu-armv6 = arm64.icuCoreArmv6Build;
+            corefoundation-armv6 = arm64.coreFoundationArmv6Build;
+            iokit-armv6 = arm64.iokitArmv6Build;
+            launchd-armv6 = arm64.launchdArmv6Build;
             compiler-rt-armv6 = arm64.compilerRtArmv6Build;
             kernel-arm32-bcm2835 = arm64.kernelArm32Bcm2835Build;
+            kernel-arm32-bcm2835-debug = arm64.kernelArm32Bcm2835DebugBuild;
+            kernel-arm32-bcm2835-dev = arm64.kernelArm32Bcm2835DevBuild;
             kexts-arm32-bcm2835 = arm64.kextsArm32Bcm2835Build;
             zlib-arm64 = xvfbZlibArm64Build;
             toybox-arm64 = toyboxArm64Build;
@@ -3565,6 +3677,8 @@
             dillo-arm64 = dilloArm64Build;
             dmenu-arm64 = dmenuArm64Build;
             fastfetch-arm64 = fastfetchArm64Build;
+            fastfetch-arm64-nogl = fastfetchNoGLArm64Build;
+            vmprobe-arm64 = vmprobeArm64Build;
             fltk-arm64 = fltkArm64Build;
             foundation-arm64 = foundationArm64Build;
             fribidi-arm64 = fribidiArm64Build;

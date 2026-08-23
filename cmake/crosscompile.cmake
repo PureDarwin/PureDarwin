@@ -144,22 +144,6 @@ function(add_darwin_shared_library name)
         message(AUTHOR_WARNING "Could not determine -mmacosx-version-min flag for target ${name}")
     endif()
 
-    # NB: our link-time `-install_name` flag (above/below) is NOT the whole
-    # story. CMake's OWN install(TARGETS) rule for SHARED_LIBRARY independently
-    # re-runs `install_name_tool -id` at install time, using the target's real
-    # CMake INSTALL_NAME_DIR property (a built-in property, unrelated to our
-    # SL_INSTALL_NAME_DIR macro argument above despite the name collision) --
-    # and if that property is unset, CMake's install rule passes just the bare
-    # filename ("libfoo.dylib"), silently clobbering whatever full path the
-    # link step embedded. <rdar://n/a, PD-local>: every dylib built through
-    # this helper had its correct /usr/lib/... install name overwritten with a
-    # bare filename at `cmake --install` time, e.g. libdyld.dylib installed
-    # with id "libdyld.dylib" instead of "/usr/lib/system/libdyld.dylib",
-    # which made real dyld's libDyldPath() identity check
-    # (ImageLoaderMachO.cpp's setupLazyPointerHandler) fail and throw
-    # "__dyld section not supported in ...". Setting the real INSTALL_NAME_DIR
-    # property here keeps CMake's own install-time rewrite consistent with our
-    # link-time flag instead of undoing it.
     if(SL_INSTALL_NAME_DIR)
         target_link_options(${name} PRIVATE -install_name "${SL_INSTALL_NAME_DIR}/$<TARGET_FILE_NAME:${name}>")
         set_property(TARGET ${name} PROPERTY INSTALL_NAME_DIR "${SL_INSTALL_NAME_DIR}")

@@ -20,6 +20,9 @@
 , libxcb
 , libXau
 , libXdmcp
+  # The Pi has no GL stack worth shipping: linking OpenGL.framework drags Mesa
+  # and llvmpipe into a 1GB root filesystem for one report line.
+, withOpenGL ? true
 }:
 
 let
@@ -32,9 +35,14 @@ let
         nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
     '';
   };
+
+  glFrameworkFlag  = lib.optionalString withOpenGL "-F${openglFramework}/System/Library/Frameworks ";
+  glIncludeFlag    = lib.optionalString withOpenGL "-I${mesa}/usr/include ";
+  glDylibFileFlag  = lib.optionalString withOpenGL "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib ";
+  glLinkFlag       = lib.optionalString withOpenGL "-framework OpenGL ";
 in
 stdenv.mkDerivation {
-  pname = "puredarwin-fastfetch";
+  pname = if withOpenGL then "puredarwin-fastfetch" else "puredarwin-fastfetch-nogl";
   inherit (fastfetch) version;
   src = fastfetch.src;
 
@@ -200,6 +208,31 @@ LOGOEOF
     sed -i -e '/^    \/\/ PacBSD$/e cat pd-logo-entry.c' src/logo/builtin.c
     rm pd-logo-entry.c
 
+    ${lib.optionalString (!withOpenGL) ''
+    # opengl_apple.c is in the Apple source list unconditionally - there is no
+    # ENABLE_OPENGL flag - so replace it the same way the other _apple files
+    # above are replaced.
+    cat > src/detection/opengl/opengl_nosupport.c <<'GLEOF'
+#include "opengl.h"
+
+const char* ffDetectOpenGL(FF_A_UNUSED FFOpenGLOptions* options, FF_A_UNUSED FFOpenGLResult* result)
+{
+    return "fastfetch was compiled without OpenGL support";
+}
+GLEOF
+    sed -i 's#src/detection/opengl/opengl_apple\.c#src/detection/opengl/opengl_nosupport.c#' CMakeLists.txt
+    ''}
+
+    # sysinfo.pageSize is only ever multiplied by vm_statistics64 counters,
+    # which are in *kernel* pages. hw.pagesize is the task map's allocation
+    # granularity - mach_loader.c pins every 64-bit arm64 map to 16K - so on a
+    # kernel whose PAGE_SIZE is not 16K the two disagree and the memory line
+    # underflows to 16 EiB. host_page_size() is what vm_stat(1) uses.
+    sed -i \
+      -e 's|^#include "FFPlatform_private.h"$|#include "FFPlatform_private.h"\n#ifdef __APPLE__\n#include <mach/mach.h>\n#endif|' \
+      -e 's|^    sysctl((int\[\]) { CTL_HW, HW_PAGESIZE }, 2, \&info->pageSize, \&length, NULL, 0);$|&\n#ifdef __APPLE__\n    { vm_size_t hps = 0; if (host_page_size(mach_host_self(), \&hps) == KERN_SUCCESS \&\& hps) info->pageSize = (uint32_t) hps; }\n#endif|' \
+      src/common/impl/FFPlatform_unix.c
+
     cat > src/detection/gpu/gpu_apple.m <<'GPUEOF'
 #include "gpu.h"
 
@@ -234,8 +267,8 @@ GPUEOF
     export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export NIX_DARWIN_TOOLCHAIN_DIR="${darwinCrossToolchain}/bin"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks -F${openglFramework}/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib -Wl,-dylib_file,/usr/lib/libX11.6.dylib:${libX11}/lib/libX11.6.dylib -Wl,-dylib_file,/usr/lib/libXext.6.dylib:${libXext}/lib/libXext.6.dylib -Wl,-dylib_file,/usr/lib/libxcb.1.1.0.dylib:${libxcb}/lib/libxcb.1.1.0.dylib -Wl,-dylib_file,/usr/lib/libXau.6.dylib:${libXau}/lib/libXau.6.dylib -Wl,-dylib_file,/usr/lib/libXdmcp.6.dylib:${libXdmcp}/lib/libXdmcp.6.dylib -framework OpenGL -lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
-    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -F${openglFramework}/System/Library/Frameworks -I${mesa}/usr/include -I${libSystem}/usr/include -I${corefoundation}/include -I${foundation}/usr/include -I${libobjc}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}-Wl,-dylib_file,/usr/lib/libX11.6.dylib:${libX11}/lib/libX11.6.dylib -Wl,-dylib_file,/usr/lib/libXext.6.dylib:${libXext}/lib/libXext.6.dylib -Wl,-dylib_file,/usr/lib/libxcb.1.1.0.dylib:${libxcb}/lib/libxcb.1.1.0.dylib -Wl,-dylib_file,/usr/lib/libXau.6.dylib:${libXau}/lib/libXau.6.dylib -Wl,-dylib_file,/usr/lib/libXdmcp.6.dylib:${libXdmcp}/lib/libXdmcp.6.dylib ${glLinkFlag}-lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
+    export CFLAGS="-isysroot $DARWIN_SDK_ROOT ${glFrameworkFlag}${glIncludeFlag}-I${libSystem}/usr/include -I${corefoundation}/include -I${foundation}/usr/include -I${libobjc}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
   '';
 
   dontFixup = true;

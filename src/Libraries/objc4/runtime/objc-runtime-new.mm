@@ -2585,13 +2585,30 @@ static void reconcileInstanceVariables(Class cls, Class supercls, const class_ro
 static void validateAlreadyRealizedClass(Class cls) {
     ASSERT(cls->isRealized());
 #if TARGET_OS_OSX
-    class_rw_t *rw = cls->data();
-    size_t rwSize = malloc_size(rw);
-
     // Note: this check will need some adjustment if class_rw_t's
     // size changes to not match the malloc bucket.
-    if (rwSize != sizeof(class_rw_t))
-        _objc_fatal("realized class %p has corrupt data pointer %p", cls, rw);
+    //
+    // It only means anything when class_rw_t is malloc-backed. objc::zalloc()
+    // dispatches on `sizeof(T) % MALLOC_ALIGNMENT == 0`: when that holds it
+    // calloc()s, and malloc_size() then returns exactly sizeof(class_rw_t).
+    // When it does not, allocation comes from Zone's own slab freelist, and
+    // malloc_size() of an interior slab pointer is 0 - so every realized class
+    // reads as corrupt.
+    //
+    // 64-bit takes the calloc() path (sizeof is 32, a multiple of 16), which is
+    // why this has only ever been exercised there. 32-bit class_rw_t is 20
+    // bytes - flags 4 + witness 2 + index 2 (SUPPORT_INDEXED_ISA) +
+    // ro_or_rw_ext 4 + firstSubclass 4 + nextSiblingClass 4 - so it takes the
+    // slab path and this check cannot be applied.
+    //
+    // God, this comment is long now, but it is needed.
+    if (sizeof(class_rw_t) % MALLOC_ALIGNMENT == 0) {
+        class_rw_t *rw = cls->data();
+        size_t rwSize = malloc_size(rw);
+
+        if (rwSize != sizeof(class_rw_t))
+            _objc_fatal("realized class %p has corrupt data pointer %p", cls, rw);
+    }
 #endif
 }
 

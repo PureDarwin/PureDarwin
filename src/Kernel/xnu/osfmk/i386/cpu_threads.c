@@ -266,6 +266,20 @@ initTopoParms(void)
 	topoParms.nPThreadsPerPackage = nonzero_u32(topoParms.nPThreadsPerPackage,
 	    nonzero_u32(cpuinfo->cpuid_logical_per_package, 1));
 
+	/*
+	 * The physical divisors above come from cpuid leaf 4, whose counts are
+	 * max-addressable ids rounded up, not actual ones. If the logical model
+	 * says the package is a single die, the physical grouping must not split
+	 * it either: with sparse apic ids (e.g. 0 and 2 on a 2-core part with no
+	 * SMT) a too-small nPThreadsPerDie puts cpus in separate dies and
+	 * x86_validate_topology() then finds a die short of cores.
+	 */
+	if (topoParms.nLDiesPerPackage == 1) {
+		topoParms.nPDiesPerPackage = 1;
+		topoParms.nPCoresPerDie = topoParms.nPCoresPerPackage;
+		topoParms.nPThreadsPerDie = topoParms.nPThreadsPerPackage;
+	}
+
 	TOPO_DBG("\nCache Topology Parameters:\n");
 	TOPO_DBG("\tLLC Depth:           %d\n", topoParms.LLCDepth);
 	TOPO_DBG("\tCores Sharing LLC:   %d\n", topoParms.nCoresSharingLLC);

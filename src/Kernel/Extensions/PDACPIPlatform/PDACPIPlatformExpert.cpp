@@ -360,6 +360,16 @@ bool PDACPIPlatformExpert::start(IOService *provider) {
 	fCPUCount = enumerateProcessorsFromMADT();
 	if (fCPUCount == 0) fCPUCount = 1;   // boot processor only
 
+	// cpus=1 is the escape hatch for a machine whose topology we get wrong;
+	// intermediate values still trip x86_validate_topology().
+	uint32_t cpusArg = 0;
+	if (PE_parse_boot_argn("cpus", &cpusArg, sizeof(cpusArg)) &&
+	    cpusArg > 0 && cpusArg < fCPUCount) {
+		kprintf("PDACPIPlatform: cpus=%u boot-arg caps %u processors\n",
+		        cpusArg, fCPUCount);
+		fCPUCount = cpusArg;
+	}
+
 	// Hack: Initialize AppleI386CPU ourself because no one else will.
 	bootCPU = new AppleI386CPU;
 	if (bootCPU == 0) return false;
@@ -879,6 +889,18 @@ extern "C" kern_return_t ml_processor_register(cpu_id_t cpu_id, uint32_t lapic_i
 /* Local APIC id of the processor this code is running on, i.e. the BSP. */
 static uint32_t pd_boot_lapic_id(void) {
 	uint32_t eax, ebx, ecx, edx;
+
+	// Leaf 0xB gives the full x2APIC id; leaf 1 only the low 8 bits.
+	__asm__ volatile ("cpuid"
+	                  : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+	                  : "a"(0), "c"(0));
+	if (eax >= 0xb) {
+		__asm__ volatile ("cpuid"
+		                  : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+		                  : "a"(0xb), "c"(0));
+		if (ebx & 0xffff) return edx;
+	}
+
 	__asm__ volatile ("cpuid"
 	                  : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
 	                  : "a"(1), "c"(0));
@@ -910,18 +932,38 @@ unsigned PDACPIPlatformExpert::enumerateProcessorsFromMADT(void) {
 		/* A zero length would spin here forever on a malformed table. */
 		if (e->length < sizeof(*e) || off + e->length > len) break;
 
+		// Firmware may describe a processor as a LAPIC entry, an x2APIC entry,
+		// or both; take either and drop the duplicate below.
+		uint32_t id = 0, uid = 0, flags = 0;
+		bool isCPU = false;
+
 		if (e->type == ACPI_MADT_ENTRY_TYPE_LAPIC &&
 		    e->length >= sizeof(struct acpi_madt_lapic)) {
 			struct acpi_madt_lapic *l = (struct acpi_madt_lapic *)e;
+			id = l->id; uid = l->uid; flags = l->flags; isCPU = true;
+		} else if (e->type == ACPI_MADT_ENTRY_TYPE_LOCAL_X2APIC &&
+		           e->length >= sizeof(struct acpi_madt_x2apic)) {
+			struct acpi_madt_x2apic *x = (struct acpi_madt_x2apic *)e;
+			id = x->id; uid = x->uid; flags = x->flags; isCPU = true;
+		}
 
-			if (l->flags & 1) {   /* enabled */
-				if (l->id == bootLapic) {
+		if (isCPU) {
+			bool dup = false;
+			for (unsigned i = 0; i < count; i++)
+				if (fLapicIds[i] == id) { dup = true; break; }
+
+			kprintf("PDACPIPlatform: MADT cpu type %u uid %u apic id %u "
+			        "flags 0x%x%s\n", e->type, uid, id, flags,
+			        (flags & 1) ? (dup ? " (duplicate)" : "") : " (disabled)");
+
+			if ((flags & 1) && !dup) {
+				if (id == bootLapic) {
 					// XNU asserts the boot_cpu registration lands on cpu 0.
 					fLapicIds[count++] = fLapicIds[0];
-					fLapicIds[0] = l->id;
+					fLapicIds[0] = id;
 					haveBoot = true;
 				} else {
-					fLapicIds[count++] = l->id;
+					fLapicIds[count++] = id;
 				}
 			}
 		}
@@ -934,6 +976,17 @@ unsigned PDACPIPlatformExpert::enumerateProcessorsFromMADT(void) {
 		kprintf("PDACPIPlatform: MADT lists no entry for boot LAPIC %u; "
 		        "staying uniprocessor\n", bootLapic);
 		return 0;
+	}
+
+	// xAPIC destinations are 8 bits wide; anything above that needs x2APIC mode,
+	// which the kernel is not in here.
+	for (unsigned i = 0; i < count; i++) {
+		if (fLapicIds[i] > 0xfe) {
+			kprintf("PDACPIPlatform: LAPIC id %u out of xAPIC range; "
+			        "capping at %u CPUs\n", fLapicIds[i], i);
+			count = i;
+			break;
+		}
 	}
 
 	kprintf("PDACPIPlatform: MADT reports %u enabled processor%s (boot LAPIC %u)\n",

@@ -501,6 +501,17 @@ int32_t NSVersionOfLinkTimeLibrary(const char* libraryName)
 #endif
 	if ( mh == NULL )
 	    mh = _NSGetMachExecuteHeader();
+	/*
+	 * _mh_execute_header_pointer is bss filled in by _program_vars_init(),
+	 * which dyld drives once per image whose initializer it runs - and it only
+	 * runs libSystem.B.dylib's. libdyld.dylib has its own hidden copy of that
+	 * variable (and of libmalloc, whose 32-bit set_flags_from_environment()
+	 * calls straight into here), so there it is still NULL and mh->ncmds below
+	 * faults. -1 is what this returns for a main executable it cannot read;
+	 * the header comment already says "or is malformed".
+	 */
+	if ( mh == NULL )
+	    return -1;
 #if __LP64__
 	const load_command* lc = (load_command*)((char*)mh + sizeof(mach_header_64));
 #else

@@ -6,6 +6,9 @@
 , nativeLd
 , libSystem
 , libcxxabiDylib
+  # 32-bit ARM has no hardware long-long-to-double, so the runtime needs the
+  # compiler-rt builtins that 64-bit targets never reference.
+, compilerRt ? null
 , src
 }:
 
@@ -48,6 +51,11 @@ let
   asmSrcs = if targetTriple == "arm64-apple-darwin20.4" then [
     "Messengers.subproj/objc-msg-arm64"
     "objc-blocktramps-arm64"
+    "objc-sel-table"
+  ] else if lib.hasPrefix "armv6-" targetTriple then [
+    # No block trampolines: they are built out of Thumb-2 and nothing in the
+    # sources above references them.
+    "Messengers.subproj/objc-msg-arm"
     "objc-sel-table"
   ] else [
     "Messengers.subproj/objc-msg-x86_64"
@@ -121,7 +129,9 @@ stdenv.mkDerivation {
     # Link. Flags mirror objc.xcconfig; -fixup_chains is PD's eager-bind fix.
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+      -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${libcxxabiDylib}/usr/lib \
+      ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,/usr/lib/libobjc.A.dylib \
       -Wl,-init,__objc_init \

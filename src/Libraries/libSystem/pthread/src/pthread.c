@@ -1759,17 +1759,16 @@ parse_ptr_munge_params(const char *envp[], const char *apple[])
 	}
 
 	if (!token) {
-		/* PureDarwin: real Darwin's kernel always supplies "ptr_munge" in the
-		 * apple[] vector at exec time; this from-scratch XNU/exec path does
-		 * not populate it yet. Rather than crash the whole boot on a missing
-		 * kernel-security-hardening value that has no equivalent threat model
-		 * here, self-generate a token. This only affects _OS_PTR_MUNGE/
-		 * _OS_PTR_UNMUNGE XOR obfuscation of internal pointers, not real
-		 * authentication -- safe to synthesize locally. */
-		token = (uintptr_t)arc4random() | 1;
+ 		/* PureDarwin: real Darwin's kernel always supplies "ptr_munge" in the
+ 		 * apple[] vector at exec time; this from-scratch XNU/exec path does
+		 * not populate it yet. Leave it at 0.
+		 */
 	}
 #endif // !DEBUG
 
+#if defined(__arm__) && !defined(__arm64__)
+	token = 0;
+#endif
 	_pthread_ptr_munge_token = token;
 	// we need to refresh the main thread signature now that we changed
 	// the munge token. We need to do it while TSAN will not look at it

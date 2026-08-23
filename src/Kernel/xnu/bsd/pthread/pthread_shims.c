@@ -331,11 +331,27 @@ pth_proc_hashdelete(proc_t p)
 	pthread_functions->pth_proc_hashdelete(p);
 }
 
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+extern void IOLog(const char *format, ...) __printflike(1, 2);
+#define pd_bsdthread_log(...) IOLog(__VA_ARGS__)
+#endif
+
 /* syscall shims */
 int
 bsdthread_create(struct proc *p, struct bsdthread_create_args *uap, user_addr_t *retval)
 {
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	pd_bsdthread_log("pd: bsdthread_create enter func 0x%llx stack 0x%llx pthread 0x%llx flags 0x%x\n",
+	    (uint64_t)uap->func, (uint64_t)uap->stack, (uint64_t)uap->pthread,
+	    uap->flags);
+	int pd_err = pthread_functions->bsdthread_create(p, uap->func, uap->func_arg,
+	    uap->stack, uap->pthread, uap->flags, retval);
+	pd_bsdthread_log("pd: bsdthread_create exit %d retval 0x%llx\n", pd_err,
+	    (uint64_t)(retval ? *retval : 0));
+	return pd_err;
+#else
 	return pthread_functions->bsdthread_create(p, uap->func, uap->func_arg, uap->stack, uap->pthread, uap->flags, retval);
+#endif
 }
 
 int
@@ -346,6 +362,13 @@ bsdthread_register(struct proc *p, struct bsdthread_register_args *uap, __unused
 	    offsetof(struct bsdthread_register_args, wqthread));
 	kr = machine_thread_function_pointers_convert_from_user(current_thread(), &uap->threadstart, 2);
 	assert(kr == KERN_SUCCESS);
+
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+	/* Runs during __pthread_init, well before the first pthread_create; if
+	 * this does not appear, launchd wedged earlier than we think. */
+	pd_bsdthread_log("pd: bsdthread_register threadstart 0x%llx wqthread 0x%llx tsd_offset 0x%x\n",
+	    (uint64_t)uap->threadstart, (uint64_t)uap->wqthread, uap->tsd_offset);
+#endif
 
 	if (pthread_functions->version >= 1) {
 		return pthread_functions->bsdthread_register2(p, uap->threadstart,

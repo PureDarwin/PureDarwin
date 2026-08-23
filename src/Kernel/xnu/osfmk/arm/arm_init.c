@@ -361,14 +361,27 @@ pd_start_mark_late(unsigned slot, uint32_t colour, boot_args *args)
 }
 #endif /* PUREDARWIN_EARLY_FB_MARK */
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+/* Where the loader parks its pristine __DATA_CONST copy; must match macho64.c. */
+#define PD_DC_SHADOW_PA 0x02000000
+
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 void
-pd_bcm2835_early_uart_tag(char phase)
+pd_bcm2835_early_uart_tag_sub(char sub, char phase)
 {
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	/* The BCM2837 moves the peripherals to 0x3F000000. Reachable here because
+	 * start.s maps that window V=P as Device memory during bootstrap, before
+	 * XNU's own console exists. */
+	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x3F201000;
+	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x3F201018;
+#else
+	/* Disabled on BCM2835: with the D-cache off, each tag costs a serial round
+	 * trip and dominates boot time. Drop the return to re-enable. */
 	return;
 	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x20201000;
 	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x20201018;
-	const char tag[] = { 'A', phase, '\r', '\n' };
+#endif
+	const char tag[] = { sub, phase, '\r', '\n' };
 
 	for (unsigned int i = 0; i < sizeof(tag); i++) {
 		while ((*uart_fr & 0x20U) != 0) {
@@ -376,6 +389,174 @@ pd_bcm2835_early_uart_tag(char phase)
 		}
 		*uart_dr = (uint32_t)tag[i];
 	}
+}
+
+void
+pd_bcm2835_early_uart_tag(char phase)
+{
+	pd_bcm2835_early_uart_tag_sub('A', phase);
+}
+
+/* Raw string trace for RELEASE, where printf/kprintf strings are stripped. */
+static void
+pd_bcm2835_early_uart_write(const char *s)
+{
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x3F201000;
+	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x3F201018;
+
+	for (; *s != '\0'; s++) {
+		while ((*uart_fr & 0x20U) != 0) {
+			/* Poll until the PL011 TX FIFO has room. */
+		}
+		*uart_dr = (uint32_t)*s;
+	}
+#else
+	(void)s;
+#endif
+}
+
+void
+pd_bcm2835_early_uart_str(const char *s)
+{
+	pd_bcm2835_early_uart_write(s);
+	pd_bcm2835_early_uart_write("\r\n");
+}
+
+/* Raw "label 0x...." trace, for tracing pointers before any printf exists. */
+void
+pd_bcm2835_early_uart_hex(const char *label, uint64_t v)
+{
+	static const char digits[] = "0123456789abcdef";
+	char buf[19];
+	unsigned int i;
+
+	buf[0] = '0';
+	buf[1] = 'x';
+	for (i = 0; i < 16; i++) {
+		buf[2 + i] = digits[(v >> ((15 - i) * 4)) & 0xfU];
+	}
+	buf[18] = '\0';
+
+	pd_bcm2835_early_uart_write(label);
+	pd_bcm2835_early_uart_str(buf);
+}
+#endif
+
+
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+/*
+ * Index of the first zero word in IOCatalogue's metaclass vtable, or 0xffff if
+ * it is wholly intact. Which word goes bad moves between builds, so scan the
+ * lot rather than watching a fixed index. Slots 0 and 1 are offset-to-top and
+ * RTTI, which are legitimately zero.
+ */
+/*
+ * Count the wholly-zero 64-byte lines in __DATA_CONST, and report the first.
+ * Which line goes bad - and so which class's vtable it lands in - moves between
+ * builds, so measure the segment rather than any one victim. Padding makes some
+ * lines legitimately zero; what matters is the count changing between calls.
+ */
+unsigned int
+pd_dataconst_zero_lines(uint64_t *first_out)
+{
+	kernel_segment_command_t *seg;
+	unsigned int zero_lines = 0;
+	uint64_t first = 0;
+
+	seg = getsegbynamefromheader(&_mh_execute_header, "__DATA_CONST");
+	if (seg == NULL) {
+		if (first_out != NULL) {
+			*first_out = 0;
+		}
+		return 0;
+	}
+
+	for (uint64_t off = 0; off + 64 <= seg->vmsize; off += 64) {
+		const volatile uint64_t *line =
+		    (const volatile uint64_t *)(uintptr_t)(seg->vmaddr + off);
+		unsigned int i;
+
+		for (i = 0; i < 8; i++) {
+			if (line[i] != 0) {
+				break;
+			}
+		}
+		if (i == 8) {
+			if (zero_lines == 0) {
+				first = seg->vmaddr + off;
+			}
+			zero_lines++;
+		}
+	}
+
+	if (first_out != NULL) {
+		*first_out = first;
+	}
+	return zero_lines;
+}
+
+/*
+ * First 64-byte line of __DATA_CONST that reads back wholly zero while the
+ * loader's pristine copy has every word of it non-zero, or 0 if there is none.
+ *
+ * Individual zeroed words are not a defect - pmap_bootstrap() and friends
+ * legitimately clear fields of SECURITY_READ_ONLY_LATE structures living here.
+ * A whole line going zero under an all-non-zero original is the signature of
+ * the damage we are chasing, and is what a vtable region looks like.
+ */
+bool pd_shadow_ready = false;
+
+/* Shared-memory trace channel; defined at the end of this file. These are
+ * unconditional so any translation unit can call them without needing the
+ * board-config macro in scope; they no-op unless the loader published a ring. */
+void pd_trace_init(void);
+void pd_trace_str(const char *s);
+void pd_trace_hex(const char *label, uint64_t v);
+
+uint64_t
+pd_dataconst_first_zeroed(void)
+{
+	const volatile uint64_t *live = (const volatile uint64_t *)0xfffffff00709c000ULL;
+	const volatile uint64_t *want;
+
+	/* ml_static_ptovirt() needs gVirtBase/gPhysBase, set further into arm_init. */
+	if (!pd_shadow_ready) {
+		return 0;
+	}
+	want = (const volatile uint64_t *)ml_static_ptovirt(PD_DC_SHADOW_PA);
+
+	for (uint64_t i = 0; i < (0x88000 / 8); i += 8) {
+		unsigned int j;
+
+		for (j = 0; j < 8; j++) {
+			if (live[i + j] != 0 || want[i + j] == 0) {
+				break;
+			}
+		}
+		if (j == 8) {
+			return (uint64_t)(uintptr_t)&live[i];
+		}
+	}
+	return 0;
+}
+
+static void
+pd_dump_iocat_vtable(const char *when)
+{
+	pd_bcm2835_early_uart_hex(when, pd_dataconst_first_zeroed());
+}
+#elif defined(ARM_BOARD_CONFIG_BCM2835)
+/*
+ * The shadow this diffs against is staged by the arm64 loader, so there is
+ * nothing to compare on the Pi Zero. The PD_PE_TRACE/PD_IOK_TRACE macros in
+ * pe_init.c and IOStartIOKit.cpp are shared by both boards and call this
+ * unconditionally, so it has to exist here or arm32 fails to link.
+ */
+unsigned long long
+pd_dataconst_first_zeroed(void)
+{
+	return 0;
 }
 #endif
 
@@ -389,7 +570,7 @@ arm_init(
 	uint64_t        xmaxmem;
 	thread_t        thread;
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('0');
 #endif
 
@@ -397,10 +578,19 @@ arm_init(
 	pd_start_mark(14, 0x00ff8080, args);	/* pink: reached arm_init */
 #endif
 
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	/* Bracket the chained-fixup slide: the __DATA_CONST vtables read back as
+	 * zero by the time IOKit runs, and this says whether they arrived that way. */
+	pd_dump_iocat_vtable("vt@entry ");
+#endif
+
 	arm_slide_rebase_and_sign_image();
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('1');
+#endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("vt@slide ");
 #endif
 
 #if defined(PUREDARWIN_EARLY_FB_MARK)
@@ -412,7 +602,7 @@ arm_init(
 	BootArgs = args = &const_boot_args;
 
 	cpu_data_init(&BootCpuData);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('2');
 #endif
 #if defined(HAS_APPLE_PAC)
@@ -460,11 +650,11 @@ arm_init(
 	pd_start_mark(16, 0x00c0c000, args);	/* olive: about to init the platform expert */
 #endif
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('3');
 #endif
 	PE_init_platform(FALSE, args); /* Get platform expert set up */
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('4');
 #endif
 
@@ -515,11 +705,11 @@ arm_init(
 	}
 #endif
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('5');
 #endif
 	ml_parse_cpu_topology();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('6');
 #endif
 
@@ -545,11 +735,11 @@ arm_init(
 	    + ((uintptr_t)&BootCpuData
 	    - (uintptr_t)(args->virtBase)));
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('7');
 #endif
 	thread = thread_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('8');
 #endif
 	thread->machine.CpuDatap = &BootCpuData;
@@ -576,25 +766,25 @@ arm_init(
 	boot_processor->kernel_timer = &thread->system_timer;
 	boot_processor->thread_timer = &thread->system_timer;
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('9');
 #endif
 	cpu_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('a');
 #endif
 
 	rtclock_early_init();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('b');
 #endif
 
 	kernel_debug_string_early("kernel_startup_bootstrap");
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('c');
 #endif
 	kernel_startup_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('d');
 #endif
 
@@ -602,17 +792,17 @@ arm_init(
 	 * Initialize the timer callout world
 	 */
 	timer_call_init();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('e');
 #endif
 
 	cpu_init();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('f');
 #endif
 
 	processor_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('g');
 	pd_bcm2835_early_uart_tag('h');
 #endif
@@ -624,7 +814,7 @@ arm_init(
 	} else {
 		xmaxmem = 0;
 	}
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('i');
 #endif
 
@@ -642,7 +832,7 @@ arm_init(
 #endif /* INTERRUPT_MASKED_DEBUG */
 
 	nanoseconds_to_absolutetime(XCALL_ACK_TIMEOUT_NS, &xcall_ack_timeout_abstime);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('j');
 #endif
 
@@ -687,11 +877,15 @@ MACRO_END
 	pd_start_mark(18, 0x00ffffff, args);	/* white again: about to build the real page tables */
 #endif
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('k');
 #endif
 	arm_vm_init(xmaxmem, args);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_shadow_ready = true;
+	pd_dump_iocat_vtable("vt@vm ");
+#endif
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('l');
 #endif
 
@@ -705,9 +899,15 @@ MACRO_END
 
 #if __arm64__ && WITH_CLASSIC_S2R
 	sleep_token_buffer_init();
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:sleep ");
+#endif
 #endif
 
 	PE_consistent_debug_inherit();
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:cdbg ");
+#endif
 
 	/*
 	 * rdar://54622819 Insufficient HSP purge window can cause incorrect translation when ASID and TTBR base address is changed at same time)
@@ -726,14 +926,20 @@ MACRO_END
 	pd_start_mark_late(20, 0x0000ffff, args);	/* cyan: about to bring kprintf up */
 #endif
 
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('m');
 #endif
 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:kpf ");
+#endif
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('n');
 #endif
 	kprintf("kprintf initialized\n");
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:kpf2 ");
+#endif
 
 	serialmode = 0;
 	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
@@ -750,31 +956,59 @@ MACRO_END
 			}
 		}
 	}
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_str("bootargs:[");
+	pd_bcm2835_early_uart_str(PE_boot_args());
+	pd_bcm2835_early_uart_str("]");
+	pd_bcm2835_early_uart_hex("serialmode-parsed ", serialmode);
+	pd_dump_iocat_vtable("w:parse ");
+#endif
 	if (kern_feature_override(KF_SERIAL_OVRD)) {
 		serialmode = 0;
 	}
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_bcm2835_early_uart_hex("serialmode-final ", serialmode);
+	pd_dump_iocat_vtable("w:ovrd ");
+#endif
 
 	if (serialmode & SERIALMODE_OUTPUT) {                 /* Start serial if requested */
 		serial_console_enabled = true;
 		(void)switch_to_serial_console(); /* Switch into serial mode */
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+		pd_dump_iocat_vtable("w:switch ");
+#endif
 		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
 	}
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:precons ");
+#endif
 	PE_create_console();
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_trace_init();
+	pd_trace_str("pd-trace: channel up\r\n");
+	pd_dump_iocat_vtable("w:cons ");
+#endif
 
 	/* setup console output */
 	PE_init_printf(FALSE);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('o');
 #endif
 
 #if __arm64__
 #if DEBUG
 	dump_kva_space();
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:kva ");
+#endif
 #endif
 #endif
 
 	cpu_machine_idle_init(TRUE);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:idle ");
+#endif
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('p');
 #endif
 
@@ -785,7 +1019,10 @@ MACRO_END
 #endif
 
 	PE_init_platform(TRUE, &BootCpuData);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	pd_dump_iocat_vtable("w:plat ");
+#endif
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('q');
 #endif
 
@@ -794,15 +1031,15 @@ MACRO_END
 #endif
 
 	cpu_timebase_init(TRUE);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('r');
 #endif
 	PE_init_cpu();
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('s');
 #endif
 	fiq_context_init(TRUE);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('t');
 #endif
 
@@ -834,7 +1071,7 @@ MACRO_END
 
 	gDramBase = *dram_base;
 	gDramSize = *dram_size;
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('u');
 #endif
 
@@ -850,8 +1087,15 @@ MACRO_END
 	 * against string vulnerabilities
 	 */
 	__stack_chk_guard &= ~(0xFFULL << 8);
-#if defined(ARM_BOARD_CONFIG_BCM2835)
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
 	pd_bcm2835_early_uart_tag('v');
+#endif
+#if defined(ARM64_BOARD_CONFIG_BCM2837)
+	/* Same __DATA_CONST vtable word IOCatalogue trips over, sampled before
+	 * any of IOKit runs, to tell a bad load from a later overwrite. The
+	 * shadow it diffs against is only staged by the arm64 loader, so this
+	 * has to match the guard the helper itself is defined under. */
+	pd_dump_iocat_vtable("vt@init ");
 #endif
 	machine_startup(args);
 }
@@ -1019,4 +1263,75 @@ arm_init_idle_cpu(
 	fiq_context_init(FALSE);
 
 	cpu_idle_exit(TRUE);
+}
+
+/*
+ * Shared-memory trace channel.
+ *
+ * pd_bcm2835_early_uart_* write the PL011 through the bootstrap V=P mapping
+ * start.s creates, so they stop working - and fault - once that mapping is
+ * torn down, which is well before userland runs. This writes into a ring the
+ * VPU loader reserved in DRAM and drains to its own console instead, so
+ * tracing keeps working for the whole boot.
+ *
+ * The VPU is not cache-coherent with us, so the ring is mapped write-combined
+ * (normal non-cacheable) rather than cached.
+ */
+#define PD_TRACE_MAGIC   0x50445452u
+#define PD_TRACE_HDR     16u
+
+static volatile uint8_t *pd_trace_buf;
+static uint32_t          pd_trace_capacity;
+
+void
+pd_trace_init(void)
+{
+	DTEntry chosen;
+	uint64_t const *params;
+	unsigned int size;
+
+	if (pd_trace_buf != NULL) return;
+	if (kSuccess != SecureDTLookupEntry(0, "/chosen", &chosen)) return;
+	if (kSuccess != SecureDTGetProperty(chosen, "pd-trace",
+	    (void const **)&params, &size)) return;
+	if (size < 2 * sizeof(uint64_t) || params[1] <= PD_TRACE_HDR) return;
+
+	vm_offset_t va = ml_io_map_wcomb((vm_offset_t)params[0], (vm_size_t)params[1]);
+	if (va == 0) return;
+
+	if (*(volatile uint32_t *)va != PD_TRACE_MAGIC) return;
+
+	pd_trace_capacity = (uint32_t)params[1] - PD_TRACE_HDR;
+	pd_trace_buf = (volatile uint8_t *)va;
+}
+
+void
+pd_trace_str(const char *s)
+{
+	if (pd_trace_buf == NULL || s == NULL) return;
+
+	volatile uint32_t *wp = (volatile uint32_t *)(pd_trace_buf + 8);
+	uint32_t w = *wp;
+
+	for (; *s != '\0'; s++) {
+		pd_trace_buf[PD_TRACE_HDR + (w % pd_trace_capacity)] = (uint8_t)*s;
+		w++;
+	}
+	__builtin_arm_dmb(0xb);   /* publish the bytes before the index */
+	*wp = w;
+}
+
+void
+pd_trace_hex(const char *label, uint64_t v)
+{
+	static const char hex[] = "0123456789abcdef";
+	char out[19];
+	int i;
+
+	pd_trace_str(label);
+	out[0] = '0'; out[1] = 'x';
+	for (i = 0; i < 16; i++) out[2 + i] = hex[(v >> ((15 - i) * 4)) & 0xf];
+	out[18] = '\0';
+	pd_trace_str(out);
+	pd_trace_str("\r\n");
 }

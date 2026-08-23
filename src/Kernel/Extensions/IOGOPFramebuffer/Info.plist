@@ -37,6 +37,19 @@
             <key>IOProviderClass</key>
             <string>IOPCIDevice</string>
         </dict>
+        <key>Platform Display</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.ravynos.iokit.IOGOPFramebuffer</string>
+            <key>IOClass</key>
+            <string>IOGOPFramebuffer</string>
+            <key>IONameMatch</key>
+            <string>framebuffer</string>
+            <key>IOProbeScore</key>
+            <integer>2000</integer>
+            <key>IOProviderClass</key>
+            <string>IOPlatformDevice</string>
+        </dict>
     </dict>
     <key>OSBundleLibraries</key>
     <dict>

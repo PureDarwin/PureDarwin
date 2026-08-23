@@ -27,6 +27,7 @@
  */
 
 #include <mach/mach_types.h>
+extern void IOLog(const char *format, ...) __printflike(1, 2);
 #include <mach/mach_traps.h>
 #include <mach/mach_vm_server.h>
 #include <mach/mach_port_server.h>
@@ -57,10 +58,13 @@ _kernelrpc_mach_vm_allocate_trap(struct _kernelrpc_mach_vm_allocate_trap_args *a
 	int rv = MACH_SEND_INVALID_DEST;
 
 	if (task != current_task()) {
+		IOLog("vm_allocate_trap: target 0x%x -> task %p, current %p (mismatch)\n",
+		    (unsigned)args->target, task, current_task());
 		goto done;
 	}
 
 	if (copyin(args->addr, (char *)&addr, sizeof(addr))) {
+		IOLog("vm_allocate_trap: copyin from 0x%08x failed\n", (unsigned)args->addr);
 		goto done;
 	}
 
@@ -123,10 +127,13 @@ _kernelrpc_mach_vm_map_trap(struct _kernelrpc_mach_vm_map_trap_args *args)
 	int rv = MACH_SEND_INVALID_DEST;
 
 	if (task != current_task()) {
+		IOLog("vm_map_trap: target 0x%x -> task %p, current %p (mismatch)\n",
+		    (unsigned)args->target, task, current_task());
 		goto done;
 	}
 
 	if (copyin(args->addr, (char *)&addr, sizeof(addr))) {
+		IOLog("vm_map_trap: copyin from 0x%08x failed\n", (unsigned)args->addr);
 		goto done;
 	}
 

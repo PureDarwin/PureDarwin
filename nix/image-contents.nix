@@ -19,6 +19,9 @@
 , exoBuild
 , expatBuild
 , fastfetchBuild
+, fastfetchNoGLArm64Build
+, vmprobeArm64Build
+, foundationArm64Build
 , fbdoomBuild
 , fbdoomExternalSrc
 , fileBuild
@@ -35,6 +38,13 @@
 , gnumakeBuild
 , gtk3Build
 , gtkLayerShellBuild
+, gtk3NoxBuild
+, onyx2dBuild
+, coregraphicsBuild
+, cairoNoxBuild
+, dbusNoxBuild
+, mesaNoxBuild
+, gtkLayerShellNoxBuild
 , harfbuzzBuild
 , i3Build
 , i3statusShimBuild
@@ -74,7 +84,11 @@
 , kernelArm64VirtDebugBuild
 , kernelArm64T8010Build
 , kernelArm64T8010DebugBuild
+, kernelArm64Bcm2837Build
+, kernelArm64Bcm2837DebugBuild
 , kernelArm32Bcm2835Build
+, kernelArm32Bcm2835DebugBuild
+, kernelArm32Bcm2835DevBuild
 , kextsArm32Bcm2835Build
 , compilerRtArmv6Build
 , kernelBuild
@@ -92,6 +106,8 @@
 , waylandProtocolsBuild
 , wlrootsBuild
 , swayBuild
+, wlrootsNoxBuild
+, swayNoxBuild
 , xwaylandBuild
 , libXftBuild
 , libapfsrwBuild
@@ -282,6 +298,45 @@ let
     chmod -R u+w "$out"
     cp -a ${xvfbFontsBuild}/. "$out/"
   '');
+  # splitBaseSystem bakes Xvfb/xeyes/xkbcomp straight into the base, so the
+  # Wayland-only image needs its own split. xkeyboard-config stays: libxkbcommon
+  # reads that data directly and never shells out to xkbcomp.
+  splitBaseSystemWayland = pkgs.runCommand "puredarwin-basesystem-split-wayland-0.1" { } (''
+    mkdir -p "$out"
+    cp -a ${kernelBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${kextsBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${libSystemBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${userlandBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${tccBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${cctoolsBuild}/. "$out/"
+  '' + lib.optionalString (!isDarwin && launchdBuild != null) ''
+    chmod -R u+w "$out"
+    cp -a ${launchdBuild}/. "$out/"
+    chmod -R u+w "$out"
+  '' + lib.optionalString (!isDarwin && launchctlBuild != null) ''
+    cp -a ${launchctlBuild}/. "$out/"
+    chmod -R u+w "$out"
+    if [ -e "$out/pd-sbin/launchd" ]; then
+      mkdir -p "$out/sbin"
+      cp "$out/pd-sbin/launchd" "$out/sbin/launchd"
+      rm -rf "$out/pd-sbin"
+    fi
+  '' + lib.optionalString (!isDarwin) ''
+    chmod -R u+w "$out"
+    cp -a ${bmakeBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${xkeyboardConfigBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${xvfbFontsBuild}/. "$out/"
+    chmod -R u+w "$out"
+    # startx has no X server to start on this image.
+    rm -f "$out/bin/startx" "$out/usr/bin/startx"
+  '');
   splitBaseSystemStripped = pkgs.runCommand "puredarwin-basesystem-split-0.1" { } (''
     mkdir -p "$out"
     cp -a ${kernelBuild}/. "$out/"
@@ -453,6 +508,8 @@ let
     xkbcommon = xkbcommonBuild;
     fastfetch = fastfetchBuild;
     corefoundation = coreFoundationBuild;
+    onyx2d = onyx2dBuild;
+    coregraphics = coregraphicsBuild;
     icucore = icuCoreBuild;
     libcxxabi-dylib = libcxxabiDylibBuild;
     libcxx-dylib = libcxxDylibBuild;
@@ -561,7 +618,11 @@ let
     kernel-arm64-virt-debug = kernelArm64VirtDebugBuild;
     kernel-arm64-t8010 = kernelArm64T8010Build;
     kernel-arm64-t8010-debug = kernelArm64T8010DebugBuild;
+    kernel-arm64-bcm2837 = kernelArm64Bcm2837Build;
+    kernel-arm64-bcm2837-debug = kernelArm64Bcm2837DebugBuild;
     kernel-arm32-bcm2835 = kernelArm32Bcm2835Build;
+    kernel-arm32-bcm2835-debug = kernelArm32Bcm2835DebugBuild;
+    kernel-arm32-bcm2835-dev = kernelArm32Bcm2835DevBuild;
     kexts-arm32-bcm2835 = kextsArm32Bcm2835Build;
     compiler-rt-armv6 = compilerRtArmv6Build;
     kexts = kextsBuild;
@@ -570,13 +631,20 @@ let
     basesystem = fullBuild;
     basesystem-split = splitBaseSystem;
     default = fullBuild;
+    # fbdoom (GPL) builds from an external checkout supplied via
+    # PUREDARWIN_FBDOOM_SOURCE_ENV. Without it the source is null, so only
+    # publish the attribute when it is set; otherwise the whole package set
+    # fails to evaluate for everyone who has not opted in.
+  } // lib.optionalAttrs (fbdoomExternalSrc != null) {
     fbdoom = fbdoomBuild;
+  } // imageExtraPackageSet // lib.optionalAttrs (!isDarwin) {
+    # The Wayland stack is built only on Linux hosts; on Darwin these
+    # evaluate to something that is not a derivation.
     wayland = waylandBuild;
     wayland-protocols = waylandProtocolsBuild;
     wlroots = wlrootsBuild;
     sway = swayBuild;
     xwayland = xwaylandBuild;
-  } // imageExtraPackageSet // lib.optionalAttrs (!isDarwin) {
     libX11 = xlibBuild;
     libxcb = xcbBuild;
     freetype2 = freetype2Build;
@@ -669,9 +737,31 @@ let
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
+      kcArm64Bcm2837ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-bcm2837.nix {
+        kernel = kernelArm64Bcm2837Build;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+      };
+      kcArm64Bcm2837DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64-bcm2837.nix {
+        kernel = kernelArm64Bcm2837DebugBuild;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+      };
       prelinkedArm32Bcm2835Build =
         pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
           kernel = kernelArm32Bcm2835Build;
+          kexts = kextsArm32Bcm2835Build;
+          kcTools = kc-tools.packages.${system}.default;
+        };
+      prelinkedArm32Bcm2835DevBuild =
+        pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
+          kernel = kernelArm32Bcm2835DevBuild;
+          kexts = kextsArm32Bcm2835Build;
+          kcTools = kc-tools.packages.${system}.default;
+        };
+      prelinkedArm32Bcm2835DebugBuild =
+        pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
+          kernel = kernelArm32Bcm2835DebugBuild;
           kexts = kextsArm32Bcm2835Build;
           kcTools = kc-tools.packages.${system}.default;
         };
@@ -775,6 +865,24 @@ let
         ];
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
       };
+      imageArm64Bcm2837Build = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtMinimal;
+        # fastfetch needs libFoundation, which the minimal base system does not
+        # carry; the no-GL build is the one that does not also want Mesa.
+        extraPackages = [
+          zshArm64Build libiconvArm64Build toyboxArm64Build
+          fastfetchNoGLArm64Build foundationArm64Build vmprobeArm64Build
+        ];
+        kc = kcArm64Bcm2837ReleaseBuild;
+        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        imageFileName = "puredarwin-rpi3.img";
+        espMB = 64;
+        rootMB = 1024;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=1 no_interrupt_masked_debug=1";
+      };
+
       imageArm64VirtFullBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimalRelease;
         extraPackages = imageExtraPackagesArm64;
@@ -799,6 +907,53 @@ let
         imageFileName = "puredarwin-arm64-virt-minimal-release.img";
         bootArgs = "-v serial=3 ahci_debug=1 kext=0xffff io=0xffff";
       };
+      # Wayland-only image: no X server, no X client, no X library anywhere on
+      # the image. Anything that links libX11/libxcb either gets dropped here
+      # or is rebuilt from a *NoxBuild variant below.
+      waylandOnlyDroppedPackages = [
+        # X server and Xwayland
+        "xorg" "xvfb" "xwayland" "xkbcomp" "libxcvt"
+        # X clients and X-only WM/session bits
+        "xeyes" "xclock" "xcalc" "xmessage" "xterm" "dmenu"
+        "i3" "i3status" "startup-notification"
+        "iceauth" "xrdb" "xrandr" "xinit"
+        # dillo is FLTK/X11; wine's driver set here is the X11 one
+        "dillo" "wine"
+        # X client libraries (both the static and -shared flavours)
+        "libX11" "libxcb" "libxcb-util" "libxcb-keysyms" "libxcb-wm"
+        "libxcb-render-util" "libxcb-image" "libxcb-cursor" "xcb-util-xrm"
+        "libXau" "libXdmcp" "libXext" "libXrender" "libXfixes" "libXcursor"
+        "libXrandr" "libXft" "libICE" "libSM" "libXinerama" "libXres"
+        "libXcomposite" "libXdamage" "libXpresent" "libxshmfence"
+        "libx11-locale"
+        "libX11-shared" "libxcb-shared" "libXau-shared" "libXdmcp-shared"
+        "libXext-shared" "libXrender-shared" "libXfixes-shared" "libXi-shared"
+        "libXcursor-shared" "libXrandr-shared"
+        # Xfce is an X11 desktop end to end
+        "libxfce4util" "xfconf" "libwnck" "libxfce4ui" "xfwm4"
+        "libxfce4windowing" "garcon" "exo" "xfce4-session" "xfce4-panel"
+        "xfdesktop" "xfce4-appfinder" "thunar" "xfce4-settings" "vte"
+        "xfce4-terminal"
+      ];
+      waylandOnlyExtraPackageSet =
+        (removeAttrs imageExtraPackageSet waylandOnlyDroppedPackages)
+        // {
+          wlroots = wlrootsNoxBuild;
+          sway = swayNoxBuild;
+          gtk3 = gtk3NoxBuild;
+          gtk-layer-shell = gtkLayerShellNoxBuild;
+          cairo = cairoNoxBuild;
+          dbus = dbusNoxBuild;
+          mesa = mesaNoxBuild;
+        };
+      imageWaylandBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemWayland;
+        extraPackages = lib.attrValues waylandOnlyExtraPackageSet;
+        kc = kcBuild;
+        xnuLoader = xnu-loader.packages.${system}.default;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-wayland.img";
+      };
       strippedExtraPackages = [ zshBuild toyboxBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild coreServicesBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild foundationBuild securityBuild symptomReporterBuild systemConfigurationBuild diskArbitrationBuild ioregBuild ];
       imageStrippedBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
@@ -815,8 +970,8 @@ let
         xnuLoader = xnu-loader.packages.${system}.default;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-minimal.img";
-        espMB = 64;
-        rootMB = 384;
+        espMB = 60;
+        rootMB = 200;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
@@ -1104,7 +1259,11 @@ let
       kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
       ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
+      kc-arm64-bcm2837 = kcArm64Bcm2837ReleaseBuild;
+      kc-arm64-bcm2837-debug = kcArm64Bcm2837DebugBuild;
       prelinked-arm32-bcm2835 = prelinkedArm32Bcm2835Build;
+      prelinked-arm32-bcm2835-debug = prelinkedArm32Bcm2835DebugBuild;
+      prelinked-arm32-bcm2835-dev = prelinkedArm32Bcm2835DevBuild;
       corefoundation = coreFoundationBuild;
       icucore = icuCoreBuild;
       libcxxabi-dylib = libcxxabiDylibBuild;
@@ -1125,6 +1284,7 @@ let
       launchctl = launchctlBuild;
       image = imageBuild;
       image-arm64-virt = imageArm64VirtBuild;
+      image-arm64-bcm2837 = imageArm64Bcm2837Build;
       image-arm64-virt-minimal = imageArm64VirtMinimalBuild;
       netboot-arm64-virt-minimal = netbootArm64VirtMinimalBuild;
       image-arm64-virt-minimal-release = imageArm64VirtMinimalReleaseBuild;
@@ -1132,6 +1292,15 @@ let
       image-hfs = imageHfsBuild;
       image-debug = imageDebugBuild;
       image-stripped = imageStrippedBuild;
+      onyx2d = onyx2dBuild;
+      coregraphics = coregraphicsBuild;
+      cairo-nox = cairoNoxBuild;
+      dbus-nox = dbusNoxBuild;
+      mesa-nox = mesaNoxBuild;
+      image-wayland = imageWaylandBuild;
+      wlroots-nox = wlrootsNoxBuild;
+      sway-nox = swayNoxBuild;
+      gtk3-nox = gtk3NoxBuild;
       image-minimal = imageMinimalBuild;
       image-minimal-debug = imageMinimalBuildDebug;
       xorg = xorgBuild;

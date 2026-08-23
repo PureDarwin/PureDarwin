@@ -33,9 +33,11 @@ else()
     set(_libsystem_kernel_syscall_platform MacOSX)
 endif()
 
-if(PUREDARWIN_ARM32 OR PUREDARWIN_ARCH STREQUAL "x86_64")
-    # The C implementation covers ARMv6 and x86_64; the legacy assembly
-    # implementation is retained for the 32-bit ARM and i386 paths that use it.
+if(PUREDARWIN_ARM32 OR PUREDARWIN_ARCH STREQUAL "x86_64" OR PUREDARWIN_ARCH STREQUAL "arm64")
+    # The C implementation guards on __arm__ || __arm64__ || __x86_64__, so it
+    # covers everything we build. The assembly is arm32-only (#if defined(__arm__)
+    # and it uses movw/movt), so sending arm64 there produced an empty object and
+    # an undefined _mach_approximate_time at link time.
     set(_mach_approximate_time_source wrappers/mach_approximate_time.c)
 else()
     set(_mach_approximate_time_source wrappers/mach_approximate_time.s)
@@ -478,15 +480,6 @@ set_property(TARGET libsystem_kernel PROPERTY OUTPUT_NAME system_kernel)
 set_property(TARGET libsystem_kernel PROPERTY EXCLUDE_FROM_ALL TRUE)
 
 target_sources(libsystem_kernel PRIVATE empty.c)
-
-# NB: no wrapper sources here -- every one of them is already compiled
-# into libsystem_kernel_static (see the target_sources(libsystem_kernel_static
-# ...) blocks earlier in this file); this target's own PUBLIC headers plus
-# -all_load'ing that static archive below is what produces the real .dylib.
-# A prior version of this file re-compiled the same sources into THIS target
-# directly (as well as linking the static lib that already contains them),
-# which -- once this target was actually built for the first time -- failed
-# with 45 duplicate-symbol errors (___bzero, __libkernel_strchr, etc).
 
 target_include_directories(libsystem_kernel PUBLIC include ${CMAKE_CURRENT_BINARY_DIR}/public_include)
 target_include_directories(libsystem_kernel PRIVATE wrappers/string)

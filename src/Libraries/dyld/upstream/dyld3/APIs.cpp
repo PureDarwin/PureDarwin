@@ -98,7 +98,9 @@ intptr_t _dyld_get_image_slide(const mach_header* mh)
     log_apis("_dyld_get_image_slide(%p)\n", mh);
 
     const MachOLoaded* mf = (MachOLoaded*)mh;
-    if ( !mf->hasMachOMagic() )
+    // NULL gets the same answer as any other non-Mach-O rather than a crash;
+    // libmalloc's ASLR check passes _NSGetMachExecuteHeader() straight in.
+    if ( (mf == nullptr) || !mf->hasMachOMagic() )
         return 0;
 
     return mf->getSlide();

@@ -48,6 +48,16 @@
 #include <IOKit/assert.h>
 #include <sys/conf.h>
 
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+extern "C" void pd_bcm2835_early_uart_str(const char *s);
+extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+extern "C" unsigned long long pd_dataconst_first_zeroed(void);
+#define PD_IOK_TRACE(m)	do { pd_bcm2835_early_uart_str(m); pd_bcm2835_early_uart_hex("  dcz ", pd_dataconst_first_zeroed()); } while (0)
+#else
+#define PD_IOK_TRACE(m)	do { } while (0)
+#endif
+
+
 #include "IOKitKernelInternal.h"
 
 const OSSymbol * gIOProgressBackbufferKey;
@@ -96,33 +106,48 @@ iokit_post_constructor_init(void)
 	IORegistryEntry *           root;
 	OSObject *                  obj;
 
+	PD_IOK_TRACE("pc:IOCPUInitialize");
 	IOCPUInitialize();
+	PD_IOK_TRACE("pc:IOPlatformActions");
 	IOPlatformActionsInitialize();
+	PD_IOK_TRACE("pc:IORegistryEntry");
 	root = IORegistryEntry::initialize();
 	assert( root );
+	PD_IOK_TRACE("pc:IOService");
 	IOService::initialize();
+	PD_IOK_TRACE("pc:IOCatalogue");
 	IOCatalogue::initialize();
+	PD_IOK_TRACE("pc:IOStatistics");
 	IOStatistics::initialize();
+	PD_IOK_TRACE("pc:OSKext");
 	OSKext::initialize();
+	PD_IOK_TRACE("pc:IOUserClient");
 	IOUserClient::initialize();
+	PD_IOK_TRACE("pc:IOMemoryDescriptor");
 	IOMemoryDescriptor::initialize();
+	PD_IOK_TRACE("pc:IORootParent");
 	IORootParent::initialize();
+	PD_IOK_TRACE("pc:IOReporter");
 	IOReporter::initialize();
 
 	// Initializes IOPMinformeeList class-wide shared lock
+	PD_IOK_TRACE("pc:IOPMinformeeList");
 	IOPMinformeeList::getSharedRecursiveLock();
 
+	PD_IOK_TRACE("pc:version");
 	obj = OSString::withCString( version );
 	assert( obj );
 	if (obj) {
 		root->setProperty( kIOKitBuildVersionKey, obj );
 		obj->release();
 	}
+	PD_IOK_TRACE("pc:diagnostics");
 	obj = IOKitDiagnostics::diagnostics();
 	if (obj) {
 		root->setProperty( kIOKitDiagnosticsKey, obj );
 		obj->release();
 	}
+	PD_IOK_TRACE("pc:done");
 }
 
 /*****
@@ -170,28 +195,36 @@ InitIOKit(void *dtTop)
 	// of iokit basic service initialisation, or better we have IOLib stuff
 	// initialise as basic OS services.
 	//
+	PD_IOK_TRACE("iok:IOLibInit");
 	IOLibInit();
+	PD_IOK_TRACE("iok:OSlibkernInit");
 	OSlibkernInit();
+	PD_IOK_TRACE("iok:IOMachPort");
 	IOMachPortInitialize();
 
 	gIOProgressBackbufferKey  = OSSymbol::withCStringNoCopy(kIOProgressBackbufferKey);
 	gIORemoveOnReadProperties = OSSet::withObjects((const OSObject **) &gIOProgressBackbufferKey, 1);
 
+	PD_IOK_TRACE("iok:intacct");
 	interruptAccountingInit();
 
+	PD_IOK_TRACE("iok:rootnub");
 	gRootNub = new IOPlatformExpertDevice;
 	if (__improbable(gRootNub == NULL)) {
 		panic("Failed to allocate IOKit root nub");
 	}
+	PD_IOK_TRACE("iok:rootnub-init");
 	bool ok = gRootNub->init(dtTop);
 	if (__improbable(!ok)) {
 		panic("Failed to initialize IOKit root nub");
 	}
+	PD_IOK_TRACE("iok:rootnub-attach");
 	gRootNub->attach(NULL);
 
 	/* If the bootstrap segment set up a function to record startup
 	 * extensions, call it now.
 	 */
+	PD_IOK_TRACE("iok:startup-ext");
 	if (record_startup_extensions_function) {
 		record_startup_extensions_function();
 	}
@@ -201,14 +234,18 @@ void
 ConfigureIOKit(void)
 {
 	assert(gRootNub != NULL);
+	PD_IOK_TRACE("iok:configureDefaults");
 	gRootNub->configureDefaults();
+	PD_IOK_TRACE("iok:configured");
 }
 
 void
 StartIOKitMatching(void)
 {
 	assert(gRootNub != NULL);
+	PD_IOK_TRACE("sm:pre-match");
 	bool ok = gRootNub->startIOServiceMatching();
+	PD_IOK_TRACE("sm:post-match");
 	if (__improbable(!ok)) {
 		panic("Failed to start IOService matching");
 	}
@@ -219,7 +256,9 @@ StartIOKitMatching(void)
 	 * messages the kernel after the in-kernel linker has been
 	 * removed and personalities have been sent.
 	 */
+	PD_IOK_TRACE("sm:pre-busy");
 	IOService::getServiceRoot()->adjustBusy(1);
+	PD_IOK_TRACE("sm:post-busy");
 
 	/*
 	 * PureDarwin has no IOKit daemon. Upstream, kernelmanagerd sends its
@@ -236,6 +275,7 @@ StartIOKitMatching(void)
 	 * report it as launched now rather than leaving the count unbalanced.
 	 */
 	IOService::iokitDaemonLaunched();
+	PD_IOK_TRACE("sm:daemon-launched");
 #endif
 }
 

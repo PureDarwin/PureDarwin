@@ -335,6 +335,10 @@ static struct tbd_ops    bcm2835_funcs = {&fleh_fiq_bcm2835, &bcm2835_get_decrem
 #endif /* defined(ARM_BOARD_CONFIG_BCM2835) */
 
 vm_offset_t     gPicBase;
+#if defined(ARM_BOARD_CONFIG_BCM2835)
+vm_offset_t     bcm2835_st_base;
+vm_offset_t     bcm2835_ic_base;
+#endif
 vm_offset_t     gTimerBase;
 vm_offset_t     gSocPhys;
 
@@ -731,12 +735,28 @@ pe_arm_init_timer(void *args)
 	soc_phys = gSocPhys;
 
 #if defined(ARM_BOARD_CONFIG_BCM2835)
-	BCM2835_PUT32(BCM2835_ST_BASE_V + BCM2835_ST_CS, BCM2835_ST_M3);
-	BCM2835_PUT32(BCM2835_ARMCTRL_BASE_V + BCM2835_ARMCTRL_FIQ_CONTROL,
+	/*
+	 * start.s maps the peripheral window V=P, but that mapping lives below the
+	 * TTBR0/TTBR1 split and goes away once real user pmaps are installed. Take
+	 * proper kernel mappings so the timer stays reachable from the FIQ handler
+	 * for the life of the system.
+	 */
+	if (bcm2835_st_base == 0) {
+		bcm2835_st_base = ml_io_map(BCM2835_ST_BASE_V, PAGE_SIZE);
+		bcm2835_ic_base = ml_io_map(BCM2835_ARMCTRL_BASE_V, PAGE_SIZE);
+	}
+	if (bcm2835_st_base == 0 || bcm2835_ic_base == 0) {
+		panic("pe_arm_init_timebase: could not map the BCM2835 timer");
+	}
+	kprintf("BCM2835 timer mapped: st 0x%lx ic 0x%lx\n",
+	    (unsigned long)bcm2835_st_base, (unsigned long)bcm2835_ic_base);
+
+	BCM2835_PUT32(bcm2835_st_base + BCM2835_ST_CS, BCM2835_ST_M3);
+	BCM2835_PUT32(bcm2835_ic_base + BCM2835_ARMCTRL_FIQ_CONTROL,
 	    BCM2835_FIQ_ENABLE | BCM2835_FIQ_SRC_SYSTEM_TIMER_3);
 
 	tbd_funcs = &bcm2835_funcs;
-	eoi_addr = BCM2835_ST_BASE_V;   /* CS is at offset 0, so this is both the
+	eoi_addr = bcm2835_st_base;     /* CS is at offset 0, so this is both the
 	                                 * timer base the decrementer routines want
 	                                 * and the address the FIQ acknowledges to */
 	eoi_value = BCM2835_ST_M3;

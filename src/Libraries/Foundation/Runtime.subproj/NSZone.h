@@ -9,8 +9,9 @@
 #ifndef _FOUNDATION_NSZONE_H_
 #define _FOUNDATION_NSZONE_H_
 
-#import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
+
+@class NSString;
 
 /* Zones are vestigial on Darwin: every allocation goes to the default malloc
  * zone and the NSZone * argument is ignored. The API is kept because ported

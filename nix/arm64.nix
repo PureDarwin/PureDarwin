@@ -8,6 +8,7 @@
 , pkgs
 , isDarwin
 , arm64CrossToolchain
+, armv6CrossToolchain
 , coreFoundationBuild
 , darwinCrossToolchain
 , fbdoomSource
@@ -167,6 +168,9 @@ let
     libXdmcp = xvfbLibXdmcpArm64Build;
     mesa = mesaArm64Build;
   };
+  # For boards with no GL stack (the Pi), so the image does not have to carry
+  # OpenGL.framework and Mesa just to satisfy dyld at launch.
+  fastfetchNoGLArm64Build = fastfetchArm64Build.override { withOpenGL = false; };
   fltkArm64Build = mkArm64Build ./pkgs/apps/fltk.nix {
     inherit (pkgs) fltk_1_3 util-macros;
     libX11 = xlibArm64Build;
@@ -468,7 +472,11 @@ let
     mingwGcc32 = pkgs.pkgsCross.mingw32.buildPackages.gcc;
     mingwBintools32 = pkgs.pkgsCross.mingw32.buildPackages.bintools;
     inherit (pkgs) python3;
-    inherit (pkgs) wine xorgproto flex bison;
+    # Only version and src are taken from it. nixpkgs' top-level `wine` is
+    # winePackages.full, which pulls in pkgsi686Linux and cannot be evaluated
+    # on a non-x86 host; wine64 has the same version and src derivation.
+    wine = pkgs.wine64;
+    inherit (pkgs) xorgproto flex bison;
     libX11 = libX11SharedArm64Build;
     libxcb = libxcbSharedArm64Build;
     libXau = libXauSharedArm64Build;
@@ -583,6 +591,7 @@ let
     libcxxabiDylib = libcxxabiDylibArm64Build;
     targetArch = "arm64";
   };
+  vmprobeArm64Build = mkArm64Build ./pkgs/apple/vmprobe.nix { };
   compilerRtArm64Build = mkArm64Build ./pkgs/toolchain/compiler-rt.nix {
     nativeMesonTools = nativeMesonToolsDir;
     llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
@@ -1531,6 +1540,62 @@ let
     corefoundation = coreFoundationArm64Build;
     iokitCFStatic = iokitCFStaticArm64Build;
   };
+  # ARMv6 (Pi Zero). launchd links CoreFoundation and IOKitCF, which in turn
+  # need ICU, libobjc and libc++abi, so the whole chain gets an armv6 build.
+  libcxxabiDylibArmv6Build = libcxxabiDylibBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+  };
+  libobjcArmv6Build = libobjcBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    libcxxabiDylib = libcxxabiDylibArmv6Build;
+    compilerRt = compilerRtArmv6Build;
+  };
+  icuCoreArmv6Build = icuCoreBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    compilerRt = compilerRtArmv6Build;
+    libcxxabiDylib = libcxxabiDylibArmv6Build;
+  };
+  coreFoundationArmv6Build = coreFoundationBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    icu = icuCoreArmv6Build;
+    libobjc = libobjcArmv6Build;
+    compilerRt = compilerRtArmv6Build;
+  };
+  # No prebuiltLibSystem here: that takes the prebuilt_libsystem.cmake branch in
+  # src/CMakeLists.txt, which skips Libraries/ entirely and with it IOKitCF.
+  iokitCFStaticArmv6Build = iokitCFStaticBuild.override {
+    puredarwinArch = "armv6";
+    compilerRt = compilerRtArmv6Build;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ENABLE_IOKITCF=ON"
+      "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationArmv6Build}"
+      "-DCMAKE_OSX_ARCHITECTURES=armv6"
+      "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
+    ];
+  };
+  iokitArmv6Build = iokitBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    corefoundation = coreFoundationArmv6Build;
+    iokitCFStatic = iokitCFStaticArmv6Build;
+  };
+  launchdArmv6Build = launchdBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    corefoundation = coreFoundationArmv6Build;
+    iokit = iokitArmv6Build;
+    compilerRt = compilerRtArmv6Build;
+  };
   launchdArm64Build = launchdBuild.override {
     darwinCrossToolchain = arm64CrossToolchain;
     targetTriple = "arm64-apple-darwin20.4";
@@ -1545,16 +1610,6 @@ let
     corefoundation = coreFoundationArm64Build;
     iokit = iokitArm64Build;
   };
-  # Re-instantiate a package file for arm64. The arm64 toolchain/triple/
-  # libSystem are filtered down to the arguments each package actually
-  # declares, so the same call works everywhere; callPackage still fills
-  # the plain nixpkgs inputs, and `deps` rewires that package's own
-  # PureDarwin dependencies onto their arm64 builds.
-  # Re-instantiate a package file for arm64. The arm64 toolchain/triple/
-  # libSystem are filtered down to the arguments each package actually
-  # declares, so the same call works everywhere; callPackage still fills
-  # the plain nixpkgs inputs, and `deps` rewires that package's own
-  # PureDarwin dependencies onto their arm64 builds.
   mkArm64Build = file: deps:
   if isDarwin then null else
   let
@@ -1571,7 +1626,7 @@ let
 
   # Counterpart of flake.nix's mkSharedXorgLib: the guest-prefixed, shared-library
   # flavour of the same generic autotools wrapper. Kept here so the arm64 set can
-  # mirror the x86 "…SharedBuild" packages without repeating the five common args.
+  # mirror the x86 "SharedBuild" packages without repeating the five common args.
   mkSharedArm64XorgLib = args: mkArm64Build ./pkgs/x11/xorg-cross-lib.nix ({
     nativeMesonTools = nativeMesonToolsDir;
     guestPrefix = true;
@@ -1874,9 +1929,6 @@ let
   # Core tools. autoconf/automake are host-side scripts with no
   # cross-compiled component, so they are shared with the x86 build
   # rather than re-instantiated.
-  # Core tools. autoconf/automake are host-side scripts with no
-  # cross-compiled component, so they are shared with the x86 build
-  # rather than re-instantiated.
   bmakeArm64Build = mkArm64Build ./pkgs/base/bmake.nix { };
   gnumakeArm64Build = mkArm64Build ./pkgs/base/gnumake.nix { };
   gnum4Arm64Build = mkArm64Build ./pkgs/base/gnum4.nix { };
@@ -1890,7 +1942,6 @@ let
     ncurses = ncursesArm64Build;
   };
 
-  # Core libraries.
   # Core libraries.
   libffiArm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
     pname = "puredarwin-libffi";
@@ -2039,6 +2090,30 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT" ];
   };
+  kernelArm64Bcm2837Build = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-bcm2837";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=BCM2837" ];
+  };
+  kernelArm64Bcm2837DebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-bcm2837-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=BCM2837" ];
+  };
   # Apple A10 (T8010) - iPad 6th gen / iPhone 7, booted by pongoOS over
   # checkm8 rather than by xnu-loader. The board config, AIC and the s5l
   # and dockchannel UARTs are Apple's own in-tree code; only the machine
@@ -2067,9 +2142,6 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=T8010" ];
   };
-  # Raspberry Pi Zero (BCM2835, ARM1176JZF-S / ARMv6Z). Kernel only: there is
-  # no 32-bit ARM userland, and XNU's arm tree has never been built for ARMv6
-  # in this generation - this target exists to find out what that costs.
   kernelArm32Bcm2835Build = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm32-bcm2835";
     src = kernelSource;
@@ -2085,11 +2157,36 @@ let
       "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
     ];
   };
-  # Raspberry Pi Zero kexts. Only corecrypto for now: without it the kernel's
-  # prng_funcs table is never registered and the first read_random() branches
-  # through a NULL pointer. Built ARMv6 and delivered through the classic
-  # __PRELINK_TEXT layout, which is what the arm32 XNU expects and what LK can
-  # load unchanged (a prelinked kernel is still a plain MH_EXECUTE Mach-O).
+  kernelArm32Bcm2835DevBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-bcm2835-dev";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEVELOPMENT";
+    puredarwinArch = "armv6";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=BCM2835"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
+    ];
+  };
+  kernelArm32Bcm2835DebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm32-bcm2835-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "armv6";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [
+      "-DPUREDARWIN_ARM32_MACHINE_CONFIG=BCM2835"
+      "-DPUREDARWIN_KERNEL_COMPILER_RT=${compilerRtArmv6Build}/lib/libcompiler_rt.a"
+    ];
+  };
   kextsArm32Bcm2835Build = mkPureDarwinBuild {
     pname = "puredarwin-kexts-arm32-bcm2835";
     src = kextsSource;
@@ -2134,12 +2231,14 @@ let
       "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext"
       "IONVMEFamily.kext"
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
+      "PDBcm2835SD.kext"
     ];
     enableUserspace = false;
     installUserland = false;
     installKernel = false;
     installKexts = true;
     installKextNames = [
+      "PDBcm2835SD.kext"
       "IOPCIFamily.kext" "IOStorageFamily.kext" "IOCDStorageFamily.kext"
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
@@ -2423,6 +2522,8 @@ in
     dilloArm64Build
     dmenuArm64Build
     fastfetchArm64Build
+    fastfetchNoGLArm64Build
+    vmprobeArm64Build
     fltkArm64Build
     foundationArm64Build
     fribidiArm64Build
@@ -2600,10 +2701,21 @@ in
     kernelArm64VirtDebugBuild
     kernelArm64T8010Build
     kernelArm64T8010DebugBuild
+    kernelArm64Bcm2837Build
+    kernelArm64Bcm2837DebugBuild
     kernelArm32Bcm2835Build
+    kernelArm32Bcm2835DebugBuild
+    kernelArm32Bcm2835DevBuild
     kextsArm32Bcm2835Build
     compilerRtArmv6Build
     libSystemArmv6Build
+    libcxxabiDylibArmv6Build
+    libobjcArmv6Build
+    icuCoreArmv6Build
+    coreFoundationArmv6Build
+    iokitCFStaticArmv6Build
+    iokitArmv6Build
+    launchdArmv6Build
     userlandArm32Bcm2835Build
     kextsArm64Build
     splitBaseSystemArm64VirtMinimal

@@ -41,6 +41,20 @@
 #include <IOKit/IOLib.h>
 #include <os/cpp_util.h>
 
+#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
+extern "C" void pd_bcm2835_early_uart_str(const char *s);
+extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
+/* Set around one specific setObject() call; this is far too hot to trace
+ * unconditionally. */
+bool pd_osdict_trace = false;
+#define PD_DT_TRACE(m)		do { if (pd_osdict_trace) { pd_bcm2835_early_uart_str(m); } } while (0)
+#define PD_DT_HEX(m, v)		do { if (pd_osdict_trace) { pd_bcm2835_early_uart_hex(m, (uint64_t)(v)); } } while (0)
+#else
+#define PD_DT_TRACE(m)		do { } while (0)
+#define PD_DT_HEX(m, v)		do { } while (0)
+#endif
+
+
 #define super OSCollection
 
 OSDefineMetaClassAndStructorsWithZone(OSDictionary, OSCollection,
@@ -389,7 +403,9 @@ setObject(const OSSymbol *aKey, const OSMetaClassBase *anObject, bool onlyAdd)
 	// if the key exists, replace the object
 
 	if (fOptions & kSort) {
+		PD_DT_TRACE("dt:bsearch");
 		i = OSSymbol::bsearch(aKey, &dictionary[0], count, sizeof(dictionary[0]));
+		PD_DT_HEX("dt:i ", i);
 		exists = (i < count) && (aKey == dictionary[i].key);
 	} else {
 		for (exists = false, i = 0; i < count; i++) {
@@ -413,17 +429,23 @@ setObject(const OSSymbol *aKey, const OSMetaClassBase *anObject, bool onlyAdd)
 	}
 
 	// add new key, possibly extending our capacity
+	PD_DT_HEX("dt:cap ", capacity);
 	if (count >= capacity && count >= ensureCapacity(count + 1)) {
 		return false;
 	}
 
+	PD_DT_TRACE("dt:updated");
 	haveUpdated();
 
 	new (&dictionary[count]) dictEntry();
+	PD_DT_TRACE("dt:move");
 	os::move_backward(&dictionary[i], &dictionary[count], &dictionary[count + 1]);
 
+	PD_DT_TRACE("dt:key");
 	dictionary[i].key.reset(aKey, OSRetain);
+	PD_DT_TRACE("dt:value");
 	dictionary[i].value.reset(anObject, OSRetain);
+	PD_DT_TRACE("dt:done");
 	count++;
 
 	return true;

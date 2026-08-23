@@ -51,6 +51,7 @@
 #include <kern/sched_prim.h>
 
 #include <sys/kdebug.h>
+extern void IOLog(const char *format, ...) __printflike(1, 2);
 #include <kperf/kperf.h>
 
 #include <arm/trap.h>
@@ -578,6 +579,16 @@ sleh_abort(struct arm_saved_state * regs, int type)
 	}
 
 	codes[1] = vaddr;
+	/*
+	 * A user fault that reaches here becomes a fatal signal, and RELEASE
+	 * strips the kprintf/printf strings that would otherwise say where. IOLog
+	 * survives, so report enough to locate the faulting instruction.
+	 */
+	if ((regs->cpsr & PSR_MODE_MASK) == PSR_USER_MODE) {
+		IOLog("user fault: pc 0x%08x lr 0x%08x sp 0x%08x addr 0x%08x fsr 0x%x exc %d code 0x%x\n",
+		    (unsigned)regs->pc, (unsigned)regs->lr, (unsigned)regs->sp,
+		    (unsigned)vaddr, (unsigned)status, exc, (unsigned)codes[0]);
+	}
 	exception_triage(exc, codes, 2);
 	/* NOTREACHED */
 
