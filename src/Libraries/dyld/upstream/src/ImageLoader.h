@@ -102,22 +102,12 @@
 #define MAX_MACH_O_HEADER_AND_LOAD_COMMANDS_SIZE (32*1024)
 
 
-// <rdar://problem/13590567> optimize away dyld's initializers
-#define VECTOR_NEVER_DESTRUCTED(type) \
-	namespace std { \
-		template <> \
-		__vector_base<type, std::allocator<type> >::~__vector_base() { } \
-	}
-#define VECTOR_NEVER_DESTRUCTED_EXTERN(type) \
-       namespace std { \
-               template <> \
-               __vector_base<type, std::allocator<type> >::~__vector_base(); \
-       }
-#define VECTOR_NEVER_DESTRUCTED_IMPL(type) \
-       namespace std { \
-               template <> \
-               __vector_base<type, std::allocator<type> >::~__vector_base() { } \
-       }
+// <rdar://problem/13590567> optimize away dyld's initializers. Neutered: these
+// specialized std::__vector_base, which libc++ 21 folded into vector and
+// deleted. Cost is the static-destructor registrations Apple was eliding.
+#define VECTOR_NEVER_DESTRUCTED(type)
+#define VECTOR_NEVER_DESTRUCTED_EXTERN(type)
+#define VECTOR_NEVER_DESTRUCTED_IMPL(type)
 
 // utilities
 namespace dyld {

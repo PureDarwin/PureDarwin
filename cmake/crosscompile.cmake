@@ -44,6 +44,11 @@ if(CMAKE_HOST_APPLE)
     endif()
 endif()
 
+# Left 0 by xnu's cdefs.h (no PLATFORM_* defined), which asm-renames 64-bit
+# calls to $UNIX2003 symbols that do not exist. Not PLATFORM_MacOSX: that also
+# flips __DARWIN_ONLY_64_BIT_INO_T on arm64, which exports cannot satisfy yet.
+add_compile_definitions(__DARWIN_ONLY_UNIX_CONFORMANCE=1)
+
 function(add_darwin_executable name)
     cmake_parse_arguments(SL "NO_STANDARD_LIBRARIES;USE_HOST_SDK" "MACOSX_VERSION_MIN" "" ${ARGN})
 

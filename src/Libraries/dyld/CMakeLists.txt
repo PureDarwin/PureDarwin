@@ -75,6 +75,14 @@ set_source_files_properties(
     PROPERTIES LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp"
 )
 
+# libc++ has to precede libc or its <cctype>/<cstdio> wrappers pick up the C
+# headers and hard-error. -isystem is searched after every -I, and CMake drops
+# this path as "implicit" because build.nix passes it in CMAKE_CXX_FLAGS.
+list(REMOVE_ITEM CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES
+    "${PUREDARWIN_MACOSX_SDK}/usr/include/c++/v1")
+target_include_directories(dyld BEFORE PRIVATE
+    ${PUREDARWIN_MACOSX_SDK}/usr/include/c++/v1)
+
 target_include_directories(dyld PRIVATE
     ${DYLD_SOURCE_DIR}
     ${DYLD_SOURCE_DIR}/include
@@ -116,7 +124,9 @@ endif()
 
 target_compile_options(dyld PRIVATE
     -mno-red-zone -fno-stack-protector
-    $<$<COMPILE_LANGUAGE:CXX>:-std=c++17;-fno-rtti>
+    # Without -nostdinc++ clang adds the sysroot's c++/v1 as a system dir and
+    # dedupes the -I above against it, which lands libc++ behind libc again.
+    $<$<COMPILE_LANGUAGE:CXX>:-std=c++17;-fno-rtti;-nostdinc++>
     # PD normally builds -nostdinc with explicit -I header dirs, so it sets no
     # sysroot. dyld compiles against the SDK's coherent libc/libc++ instead (its
     # wrapper headers #include_next into the C library), so it needs -isysroot.

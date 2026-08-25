@@ -324,7 +324,6 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/assert.c         # __assert_rtn
     secure/chk_fail.c            # ___chk_fail_overflow (needs mach-o/dyld_priv.h, now vendored)
     darwin/pd_os_crash.c         # __os_crash (minimal real report-then-let-caller-trap; see file comment)
-    darwin/pd_unix2003.c         # $UNIX2003 <-> plain forwarders; see file comment
     gen/FreeBSD/arc4random.c     # corecrypto-backed arc4random/arc4random_buf/arc4random_uniform
     net/FreeBSD/nsap_addr.c      # inet_nsap_addr/inet_nsap_ntoa (libresolv ns_print.c)
     net/FreeBSD/linkaddr.c      # link_ntoa (bootplib's ARP/link-layer printing)

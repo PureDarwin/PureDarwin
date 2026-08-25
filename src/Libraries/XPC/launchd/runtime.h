@@ -24,6 +24,10 @@
 #include <xpc/xpc.h>
 #include <mach/mach.h>
 #include <sys/types.h>
+/* Forward-declared rather than including <sys/event.h>: pulling that in this
+ * early fixes the guard before PRIVATE-gated types are configured. Without it
+ * struct kevent lands in prototype scope and conflicts with runtime.c. */
+struct kevent;
 #include <bsm/libbsm.h>
 #include <stdbool.h>
 #include <stdint.h>

@@ -978,6 +978,7 @@
                 ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
                   -dynamiclib -fuse-ld=${nativeLd}/bin/ld -nostdlib \
                   -L${libSystemBuild}/usr/lib \
+                  -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystemBuild}/usr/lib/system/libdyld.dylib \
                   -Wl,-install_name,/usr/lib/libpd_virgl_shim.dylib \
                   -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
                   repack/*.o -lSystem \
