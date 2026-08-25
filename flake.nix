@@ -14,10 +14,7 @@
 
       mkSystem = system:
         let
-          basePkgs = import nixpkgs {
-            inherit system;
-            config.allowUnfreePredicate = pkg: lib.getName pkg == "MacOSX11.3.sdk.tar.xz";
-          };
+          basePkgs = import nixpkgs { inherit system; };
 
           appleSdk = basePkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix { };
           pkgs = basePkgs.extend (_: _: { inherit appleSdk; });

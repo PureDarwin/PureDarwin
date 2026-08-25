@@ -1,0 +1,10 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ x86_64-macos, arm64-macos ]
+install-name: '/usr/lib/libz.1.dylib'
+current-version: 1.2.13
+compatibility-version: 1
+exports:
+  - targets: [ x86_64-macos, arm64-macos ]
+    symbols: [ _deflate, _deflateEnd, _deflateInit_, _inflate, _inflateEnd, _inflateInit_, _zError ]
+...
