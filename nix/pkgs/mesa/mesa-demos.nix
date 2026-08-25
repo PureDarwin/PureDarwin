@@ -1,6 +1,5 @@
 { stdenv
 , lib
-, requireFile
 , fetchurl
 , meson
 , ninja
@@ -27,19 +26,11 @@
   # that matters here.
 , withX11 ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary) not in your Nix store.
-      Register it with: nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 
   incs = [ "-I${mesa}/usr/include" ]
     ++ lib.optionals withX11 [
@@ -72,8 +63,7 @@ stdenv.mkDerivation {
     export PATH="${nativeMesonTools}/bin:$PATH"
 
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 ${lib.optionalString (!withX11 && waylandScanner != null) ''    export PATH="${waylandScanner}/bin:$PATH"
 ''}    export PKG_CONFIG_PATH="${xPkgConfigPath}"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"

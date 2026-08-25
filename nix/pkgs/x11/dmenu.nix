@@ -1,6 +1,5 @@
 { stdenv
 , lib
-, requireFile
 , gnumake
 , pkg-config
 , darwinCrossToolchain
@@ -18,6 +17,7 @@
 , fontconfig
 , expat
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
@@ -33,15 +33,6 @@ let
     fontconfig
     expat
   ];
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-dmenu";
@@ -61,8 +52,7 @@ stdenv.mkDerivation {
     runHook preConfigure
 
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -Qunused-arguments -std=c99 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") deps}"

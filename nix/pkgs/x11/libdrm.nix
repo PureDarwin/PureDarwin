@@ -4,7 +4,6 @@
 , ninja
 , pkg-config
 , python3
-, requireFile
 , darwinCrossToolchain
 , nativeLd
 , libSystem
@@ -13,15 +12,11 @@
 , puredarwinSource
 , src
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = "Register the local MacOSX11.3.sdk.tar.xz with nix-store.";
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-libdrm";
@@ -59,8 +54,6 @@ EOF
 
   configurePhase = ''
     runHook preConfigure
-    mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
     cat > puredarwin-cross.ini <<EOF
 [binaries]
 c = '${darwinCrossToolchain}/bin/${targetTriple}-clang'
@@ -69,8 +62,8 @@ strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
 
 [built-in options]
-c_args = ['-isysroot', '$PWD/sdk/MacOSX11.3.sdk', '-mmacosx-version-min=11.0', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include', '-I$PWD/compat']
-c_link_args = ['-isysroot', '$PWD/sdk/MacOSX11.3.sdk', '-mmacosx-version-min=11.0', '-F$PWD/sdk/MacOSX11.3.sdk/System/Library/Frameworks', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${corefoundation}/usr/lib', '-L${iokit}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-lIOKitCF', '-lCoreFoundation', '-lSystem']
+c_args = ['-isysroot', '${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk', '-mmacosx-version-min=11.0', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include', '-I$PWD/compat']
+c_link_args = ['-isysroot', '${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk', '-mmacosx-version-min=11.0', '-F${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${corefoundation}/usr/lib', '-L${iokit}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-lIOKitCF', '-lCoreFoundation', '-lSystem']
 
 [host_machine]
 system = 'darwin'

@@ -1,5 +1,5 @@
 /*
- * ____chkstk_darwin: Clang emits a call to this before any function whose
+ * ___chkstk_darwin: Clang emits a call to this before any function whose
  * stack frame exceeds a page, to probe (touch) each page of the
  * to-be-used stack space so a guard-page-based lazily-committed stack
  * grows safely instead of skipping straight past its guard page.
@@ -11,7 +11,9 @@
  * stack frame of its own) and return.
  */
     .text
+    .globl ___chkstk_darwin
     .globl ____chkstk_darwin
+___chkstk_darwin:
 ____chkstk_darwin:
 #if defined(__arm__)
     bx lr

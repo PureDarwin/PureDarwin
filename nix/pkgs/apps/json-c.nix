@@ -3,21 +3,16 @@
 , cmake
 , ninja
 , pkg-config
-, requireFile
 , darwinCrossToolchain
 , nativeLd
 , libSystem
 , src
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = "Register the local MacOSX11.3.sdk.tar.xz with nix-store.";
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-json-c";
@@ -29,8 +24,7 @@ stdenv.mkDerivation {
   configurePhase = ''
     runHook preConfigure
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     cat > puredarwin-toolchain.cmake <<EOF
 set(CMAKE_SYSTEM_NAME Darwin)
 set(CMAKE_SYSTEM_PROCESSOR ${targetInfo.mesonCpu})

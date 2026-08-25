@@ -1,19 +1,14 @@
 { stdenv
 , lib
-, requireFile
 , darwinCrossToolchain
 , nativeLd
 , libSystem
 , pdsurface
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = "Register the local MacOSX11.3.sdk.tar.xz with nix-store.";
-  };
   cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang";
 in
 stdenv.mkDerivation {
@@ -27,8 +22,7 @@ stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
       -D_DARWIN_C_SOURCE -Iinclude \

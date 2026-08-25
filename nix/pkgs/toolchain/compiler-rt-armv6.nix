@@ -1,22 +1,13 @@
 { stdenv
 , lib
-, requireFile
 , darwinCrossToolchain
 , nativeLd
 , llvmSrc
 , llvmVersion
+, appleSdk
 }:
 
 let
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-compiler-rt-armv6";
@@ -27,10 +18,7 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-
-    mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    SDK="$PWD/sdk/MacOSX11.3.sdk"
+    SDK="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     CC=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang
     AR=${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar

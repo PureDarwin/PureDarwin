@@ -289,6 +289,8 @@ main(int argc, char * const argv[])
 	kern_return_t		status;
 	CFStringRef		str;
 	const char		*testBundle	= NULL;
+	fprintf(stderr, "PD-CONFIGD: main begin\n");
+	fflush(stderr);
 
 	_plugins_allowed = CFSetCreateMutable(NULL, 0, &kCFTypeSetCallBacks);
 	_plugins_exclude = CFSetCreateMutable(NULL, 0, &kCFTypeSetCallBacks);
@@ -334,8 +336,10 @@ main(int argc, char * const argv[])
 				usage(prog);
 		}
 	}
-//	argc -= optind;
-//	argv += optind;
+	//	argc -= optind;
+	//	argv += optind;
+	fprintf(stderr, "PD-CONFIGD: options parsed\n");
+	fflush(stderr);
 
 	/* check credentials */
 #if	!TARGET_OS_SIMULATOR
@@ -347,6 +351,9 @@ main(int argc, char * const argv[])
 
 	/* check if we have been started by launchd */
 	vproc_swap_integer(NULL, VPROC_GSK_IS_MANAGED, NULL, &is_launchd_job);
+	fprintf(stderr, "PD-CONFIGD: launchd state queried managed=%lld\n",
+		(long long)is_launchd_job);
+	fflush(stderr);
 
 #if	TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR && !defined(DO_NOT_INFORM)
 	// if launchd job, check to see if we have been restarted
@@ -464,7 +471,11 @@ main(int argc, char * const argv[])
 		_SCDynamicStoreSetSessionWatchLimit(0);
 
 		/* initialize primary (store management) thread */
+		fprintf(stderr, "PD-CONFIGD: primary server init begin\n");
+		fflush(stderr);
 		server_init();
+		fprintf(stderr, "PD-CONFIGD: primary server init end\n");
+		fflush(stderr);
 
 		if (!forceForeground && !is_launchd_job) {
 			/* synchronize with parent process */
@@ -474,7 +485,11 @@ main(int argc, char * const argv[])
 
 	if ((testBundle != NULL) || loadBundles) {
 		/* load/initialize/start [specified] plug-ins */
+		fprintf(stderr, "PD-CONFIGD: plugin_exec dispatch\n");
+		fflush(stderr);
 		plugin_exec((void *)testBundle);
+		fprintf(stderr, "PD-CONFIGD: plugin_exec returned\n");
+		fflush(stderr);
 	}
 
 	SC_log(LOG_DEBUG, "starting main/plugin CFRunLoop");

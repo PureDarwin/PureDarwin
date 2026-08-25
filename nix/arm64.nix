@@ -395,7 +395,7 @@ let
     iokit = iokitArm64Build;
     puredarwinSource = ../src/Libraries/libdrm;
     src = pkgs.libdrm.src;
-    inherit (pkgs) meson ninja pkg-config python3 requireFile;
+    inherit (pkgs) meson ninja pkg-config python3;
   };
   xwaylandArm64Build = mkArm64Build ./pkgs/x11/xwayland.nix {
     xwayland = pkgs.xwayland;
@@ -500,7 +500,7 @@ let
   };
   jsoncArm64Build = mkArm64Build ./pkgs/apps/json-c.nix {
     src = pkgs.json_c.src;
-    inherit (pkgs) cmake ninja pkg-config requireFile;
+    inherit (pkgs) cmake ninja pkg-config;
   };
   wlrootsArm64Build = mkArm64Build ./pkgs/wayland/wlroots.nix {
     nativeMesonTools = nativeMesonToolsDir;
@@ -2035,6 +2035,177 @@ let
     inherit arm64CrossToolchain;
     prebuiltLibSystem = libSystemArm64Build;
   };
+
+  # ARM64 counterpart of the x86 Wayland-only package set. Keep the no-X
+  # variants here so their dependencies remain arm64 rather than accidentally
+  # reusing the x86 cross builds.
+  cairoArm64NoxBuild = cairoArm64Build.override {
+    withX11 = false;
+    xorgproto = null; libX11 = null; libXext = null; libXrender = null;
+    libxcb = null; libXau = null; libXdmcp = null;
+  };
+  dbusArm64NoxBuild = dbusArm64Build.override {
+    withX11 = false;
+    libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+    xorgproto = null;
+  };
+  mesaArm64NoxBuild = mesaArm64Build.override {
+    withX11 = false;
+    libX11 = null; libXext = null; libxcb = null; libXau = null;
+    libXdmcp = null; libXxf86vm = null; xorgproto = null; xtrans = null;
+    libxshmfence = null;
+  };
+  openglFrameworkArm64NoxBuild = openglFrameworkArm64Build.override {
+    withX11 = false;
+    mesa = mesaArm64NoxBuild;
+    libX11 = null; xorgproto = null; libXext = null;
+    libxcb = null; libXau = null; libXdmcp = null;
+  };
+  mesaDemosArm64NoxBuild = mesaDemosArm64Build.override {
+    withX11 = false;
+    mesa = mesaArm64NoxBuild;
+    wayland = waylandArm64Build;
+    xkbcommon = xkbcommonArm64NoxBuild;
+    waylandScanner = waylandScannerBuild;
+    waylandProtocols = waylandProtocolsBuild;
+    libX11 = null; libXext = null; libxcb = null; libXau = null;
+    libXdmcp = null; xorgproto = null; xtrans = null;
+  };
+  libepoxyArm64NoxBuild = libepoxyArm64Build.override {
+    withX11 = false;
+    mesa = mesaArm64NoxBuild;
+    libX11 = null; xorgproto = null;
+  };
+  fastfetchArm64NoxBuild = fastfetchArm64Build.override {
+    withX11 = false;
+    mesa = mesaArm64NoxBuild;
+    openglFramework = openglFrameworkArm64NoxBuild;
+    libX11 = null; libXext = null; libxcb = null;
+    libXau = null; libXdmcp = null;
+  };
+  harfbuzzArm64NoxBuild = harfbuzzArm64Build.override {
+    cairo = cairoArm64NoxBuild;
+  };
+  atspi2CoreArm64NoxBuild = atspi2CoreArm64Build.override {
+    dbus = dbusArm64NoxBuild;
+  };
+  cairoGobjectArm64NoxBuild = cairoGobjectArm64Build.override {
+    cairo = cairoArm64NoxBuild;
+  };
+  xkbcommonArm64NoxBuild = xkbcommonArm64Build.override {
+    withX11 = false;
+    libxcb = null; libXau = null; libXdmcp = null;
+  };
+  pangoArm64NoxBuild = pangoArm64Build.override {
+    withX11 = false;
+    cairo = cairoArm64NoxBuild;
+    harfbuzz = harfbuzzArm64NoxBuild;
+    libX11 = null; libxcb = null; libXext = null; libXrender = null;
+    xorgproto = null;
+  };
+  gtk3Arm64NoxBuild = gtk3Arm64Build.override {
+    withX11 = false;
+    cairo = cairoArm64NoxBuild;
+    cairoGobject = cairoGobjectArm64NoxBuild;
+    pango = pangoArm64NoxBuild;
+    harfbuzz = harfbuzzArm64NoxBuild;
+    libepoxy = libepoxyArm64NoxBuild;
+    mesa = mesaArm64NoxBuild;
+    dbus = dbusArm64NoxBuild;
+    atspi2Core = atspi2CoreArm64NoxBuild;
+    xkbcommon = xkbcommonArm64NoxBuild;
+    libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+    libXext = null; libXi = null; libXrender = null; libXrandr = null;
+    libXfixes = null; libXcursor = null; xorgproto = null;
+  };
+  gtkLayerShellArm64NoxBuild = gtkLayerShellArm64Build.override {
+    gtk3 = gtk3Arm64NoxBuild;
+    withX11 = false;
+    atspi2Core = atspi2CoreArm64NoxBuild;
+    xkbcommon = xkbcommonArm64NoxBuild;
+    cairo = cairoArm64NoxBuild;
+    cairoGobject = cairoGobjectArm64NoxBuild;
+    pango = pangoArm64NoxBuild;
+    harfbuzz = harfbuzzArm64NoxBuild;
+    libepoxy = libepoxyArm64NoxBuild;
+    dbus = dbusArm64NoxBuild;
+    mesa = mesaArm64NoxBuild;
+    libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+    libXext = null; libXi = null; libXrender = null; libXrandr = null;
+    libXfixes = null; libXcursor = null; xorgproto = null;
+  };
+  wlrootsArm64NoxBuild = wlrootsArm64Build.override {
+    withXwayland = false;
+    xcb = null; xcbWm = null; xwayland = null;
+  };
+  swayArm64NoxBuild = swayArm64Build.override {
+    withXwayland = false;
+    wlroots = wlrootsArm64NoxBuild;
+    xcb = null; xcbWm = null;
+  };
+  netsurfArm64NoxBuild = netsurfArm64Build.override {
+    withX11 = false;
+    gtk3 = gtk3Arm64NoxBuild;
+    cairo = cairoArm64NoxBuild;
+    cairoGobject = cairoGobjectArm64NoxBuild;
+    pango = pangoArm64NoxBuild;
+    harfbuzz = harfbuzzArm64NoxBuild;
+    libepoxy = libepoxyArm64NoxBuild;
+    dbus = dbusArm64NoxBuild;
+    atspi2Core = atspi2CoreArm64NoxBuild;
+    libX11 = null; libxcb = null; libXau = null; libXdmcp = null;
+    libXext = null; libXi = null; libXrender = null; libXrandr = null;
+    libXfixes = null; libXcursor = null; xorgproto = null;
+  };
+  librsvgArm64NoxBuild = librsvgArm64Build.override {
+    deps = [
+      glibArm64Build gdkPixbufArm64Build cairoArm64NoxBuild
+      cairoGobjectArm64NoxBuild pangoArm64NoxBuild libxml2Arm64Build
+      libcrocoArm64Build libpngArm64Build freetype2Arm64Build
+      fontconfigArm64Build fribidiArm64Build harfbuzzArm64NoxBuild
+      expatArm64Build pcre2Arm64Build libffiArm64Build libiconvArm64Build
+      xvfbZlibArm64Build xvfbPixmanArm64Build
+    ];
+  };
+  imageExtraPackageSetArm64Nox =
+    (removeAttrs imageExtraPackageSetArm64 [
+      "iceauth" "xrandr" "xrdb" "xinit" "xorg" "xwayland" "xvfb"
+      "libxcvt" "xeyes" "xclock" "xcalc" "xmessage" "dillo" "xterm"
+      "xkbcomp" "dmenu" "i3" "i3status" "startup-notification"
+      "libX11" "libxcb" "libxcb-util" "libxcb-keysyms" "libxcb-wm"
+      "libxcb-render-util" "libxcb-image" "libxcb-cursor" "xcb-util-xrm"
+      "libXau" "libXdmcp" "libXext" "libXrender" "libXfixes" "libXcursor"
+      "libXrandr" "libXft" "libICE" "libSM" "libXinerama" "libXres"
+      "libXcomposite" "libXdamage" "libXpresent" "libxshmfence"
+      "libX11-shared" "libxcb-shared" "libXau-shared" "libXdmcp-shared"
+      "libXext-shared" "libXrender-shared" "libXfixes-shared" "libXi-shared"
+      "libXcursor-shared" "libXrandr-shared" "libx11-locale"
+      "libxfce4util" "xfconf" "libwnck" "libxfce4ui" "xfwm4"
+      "libxfce4windowing" "garcon" "exo" "xfce4-session" "xfce4-panel"
+      "xfdesktop" "xfce4-appfinder" "thunar" "xfce4-settings"
+      "xfce4-terminal" "vte" "wine"
+    ]) // {
+      cairo = cairoArm64NoxBuild;
+      cairo-gobject = cairoGobjectArm64NoxBuild;
+      dbus = dbusArm64NoxBuild;
+      fastfetch = fastfetchArm64NoxBuild;
+      gtk3 = gtk3Arm64NoxBuild;
+      gtk-layer-shell = gtkLayerShellArm64NoxBuild;
+      harfbuzz = harfbuzzArm64NoxBuild;
+      libepoxy = libepoxyArm64NoxBuild;
+      librsvg = librsvgArm64NoxBuild;
+      mesa = mesaArm64NoxBuild;
+      mesa-demos = mesaDemosArm64NoxBuild;
+      netsurf = netsurfArm64NoxBuild;
+      opengl-framework = openglFrameworkArm64NoxBuild;
+      pango = pangoArm64NoxBuild;
+      sway = swayArm64NoxBuild;
+      wlroots = wlrootsArm64NoxBuild;
+      xkbcommon = xkbcommonArm64NoxBuild;
+    };
+  imageExtraPackagesArm64Nox = [
+    zshArm64Build libiconvArm64Build toyboxArm64Build asmjitTestArm64Build
+  ] ++ lib.attrValues imageExtraPackageSetArm64Nox;
   userlandArm32Bcm2835Build = userlandBuild.override {
     pname = "puredarwin-userland-arm32-bcm2835";
     puredarwinArch = "armv6";
@@ -2332,6 +2503,11 @@ let
     cp -a ${kextsArm64Build}/. "$out/"
     chmod -R u+w "$out"
   '';
+
+  # The minimal ARM64 base already contains no X11 components. The Wayland
+  # image layers its compositor and clients separately, so it can share this
+  # base without introducing the full X11 split.
+  splitBaseSystemArm64VirtWayland = splitBaseSystemArm64VirtMinimal;
 
   # The same package set as imageExtraPackageSet, resolved to the arm64
   # builds, so the two architectures ship the same userland.
@@ -2720,7 +2896,27 @@ in
     kextsArm64Build
     splitBaseSystemArm64VirtMinimal
     splitBaseSystemArm64VirtMinimalRelease
+    splitBaseSystemArm64VirtWayland
     imageExtraPackageSetArm64
     imageExtraPackagesArm64
+    imageExtraPackageSetArm64Nox
+    imageExtraPackagesArm64Nox
+    cairoArm64NoxBuild
+    cairoGobjectArm64NoxBuild
+    dbusArm64NoxBuild
+    fastfetchArm64NoxBuild
+    gtk3Arm64NoxBuild
+    gtkLayerShellArm64NoxBuild
+    harfbuzzArm64NoxBuild
+    libepoxyArm64NoxBuild
+    librsvgArm64NoxBuild
+    mesaArm64NoxBuild
+    mesaDemosArm64NoxBuild
+    netsurfArm64NoxBuild
+    openglFrameworkArm64NoxBuild
+    pangoArm64NoxBuild
+    swayArm64NoxBuild
+    wlrootsArm64NoxBuild
+    xkbcommonArm64NoxBuild
     ;
 }

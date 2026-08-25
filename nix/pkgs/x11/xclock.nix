@@ -1,6 +1,5 @@
 { stdenv
 , lib
-, requireFile
 , pkg-config
 , gnumake
 , autoconf
@@ -30,6 +29,7 @@
 , libSM
 , xorgproto
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
@@ -74,15 +74,6 @@ let
     "-Wl,-force_load,${libSM}/lib/libSM.a"
     "-Wl,-force_load,${libICE}/lib/libICE.a"
   ];
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-xclock";
@@ -108,8 +99,7 @@ stdenv.mkDerivation {
     autoreconf -fiv
 
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export PKG_CONFIG_PATH="${lib.makeSearchPath "lib/pkgconfig" (map lib.getDev xDeps)}:${lib.makeSearchPath "share/pkgconfig" (map lib.getDev xDeps)}:${util-macros}/share/pkgconfig"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"

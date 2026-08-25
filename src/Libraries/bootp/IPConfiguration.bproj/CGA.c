@@ -660,17 +660,50 @@ CGAInit(void)
 {
     CFDataRef		host_uuid;
 
-    if (G_is_netboot || cga_is_enabled() == FALSE) {
-	return;
+#if defined(PUREDARWIN_CONFIGD)
+    /*
+     * PureDarwin does not currently provide the IPv6 CGA sysctl handlers.
+     * Entering cga_is_enabled() can block during configd startup.
+     */
+    fprintf(stderr, "PD-IPCONFIG: CGA disabled for PureDarwin\n");
+    fflush(stderr);
+    return;
+#endif
+
+    fprintf(stderr, "PD-IPCONFIG: CGA netboot check begin\n");
+    fflush(stderr);
+    if (G_is_netboot) {
+        fprintf(stderr, "PD-IPCONFIG: CGA skipped netboot\n");
+        fflush(stderr);
+        return;
     }
+    fprintf(stderr, "PD-IPCONFIG: CGA enabled check begin\n");
+    fflush(stderr);
+    if (cga_is_enabled() == FALSE) {
+        fprintf(stderr, "PD-IPCONFIG: CGA disabled\n");
+        fflush(stderr);
+        return;
+    }
+    fprintf(stderr, "PD-IPCONFIG: CGA enabled check end\n");
+    fflush(stderr);
+    fprintf(stderr, "PD-IPCONFIG: HostUUID begin\n");
+    fflush(stderr);
     host_uuid = HostUUIDGet();
+    fprintf(stderr, "PD-IPCONFIG: HostUUID end\n");
+    fflush(stderr);
     if (host_uuid == NULL) {
 	my_log_fl(LOG_NOTICE, "Failed to get HostUUID");
 	return;
     }
+    fprintf(stderr, "PD-IPCONFIG: CGA parameters load begin\n");
+    fflush(stderr);
     if (CGAParametersLoad(host_uuid) == FALSE) {
-	return;
+        fprintf(stderr, "PD-IPCONFIG: CGA parameters load failed\n");
+        fflush(stderr);
+        return;
     }
+    fprintf(stderr, "PD-IPCONFIG: CGA parameters load end\n");
+    fflush(stderr);
     return;
     
 }

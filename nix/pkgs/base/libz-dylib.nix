@@ -1,23 +1,14 @@
 { stdenv
 , lib
-, requireFile
 , darwinCrossToolchain
 , nativeLd
 , libSystem
 , zlib
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
   srcs = [
     "adler32.c" "compress.c" "crc32.c" "deflate.c" "gzclose.c" "gzlib.c"
     "gzread.c" "gzwrite.c" "infback.c" "inffast.c" "inflate.c" "inftrees.c"
@@ -33,14 +24,11 @@ stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-
-    mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     # unistd.h for lseek()/off_t use in gzlib.c - not pulled in transitively
     # under our SDK header set the way it apparently is on real macOS.
-    CFLAGS="-isysroot $PWD/sdk/MacOSX11.3.sdk -I${libSystem}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -O2 -include unistd.h"
+    CFLAGS="-isysroot ${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk -I${libSystem}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -O2 -include unistd.h"
 
     mkdir -p obj
     for f in ${lib.concatStringsSep " " srcs}; do
@@ -48,7 +36,7 @@ stdenv.mkDerivation {
     done
 
     $CC -dynamiclib \
-      -isysroot "$PWD/sdk/MacOSX11.3.sdk" \
+      -isysroot "${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" \
       -fuse-ld=${nativeLd}/bin/ld \
       -nostdlib \
       -L${libSystem}/usr/lib \

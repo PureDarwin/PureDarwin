@@ -1,6 +1,5 @@
 { stdenv
 , lib
-, requireFile
 , meson
 , ninja
 , pkg-config
@@ -29,6 +28,7 @@
 , mesaGlHeaders
 , glHeaders
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 let
@@ -52,15 +52,6 @@ let
   # of x11, xext, xfixes, x11-xcb, xcb, xcb-glx and xcb-dri2 have to resolve.
   glxDeps = [ mesa libX11 libxcb libXext libXfixes glHeaders ];
   glxPkgConfigDeps = map lib.getDev glxDeps;
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-xorg";
@@ -117,8 +108,7 @@ stdenv.mkDerivation {
     runHook preConfigure
 
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     cat > puredarwin-cross.ini <<EOF
 [binaries]

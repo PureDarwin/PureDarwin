@@ -537,22 +537,28 @@ server_init()
     CFRunLoopSourceRef	rls;
     CFMachPortRef	ipconfigd_port;
     mach_port_t		server_port;
-    kern_return_t 	status;
+	kern_return_t 	status;
+	fprintf(stderr, "PD-IPCONFIG: bootstrap_check_in begin\n");
+	fflush(stderr);
 
     status = bootstrap_check_in(bootstrap_port, IPCONFIG_SERVER, 
 				&server_port);
-    if (status != BOOTSTRAP_SUCCESS) {
+	if (status != BOOTSTRAP_SUCCESS) {
 	my_log(LOG_NOTICE,
 	       "IPConfiguration: bootstrap_check_in failed, %s",
 	       mach_error_string(status));
-	return;
-    }
+		return;
+	}
+	fprintf(stderr, "PD-IPCONFIG: bootstrap_check_in success\n");
+	fflush(stderr);
     ipconfigd_port = _SC_CFMachPortCreateWithPort(NULL, server_port,
 						  S_ipconfig_server,
 						  NULL);
     rls = CFMachPortCreateRunLoopSource(NULL, ipconfigd_port, 0);
     CFRunLoopAddSource(CFRunLoopGetCurrent(), rls, kCFRunLoopDefaultMode);
     CFRelease(rls);
-    CFRelease(ipconfigd_port);
-    return;
+	CFRelease(ipconfigd_port);
+	fprintf(stderr, "PD-IPCONFIG: Mach server registered\n");
+	fflush(stderr);
+	return;
 }

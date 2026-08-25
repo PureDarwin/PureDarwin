@@ -1,6 +1,5 @@
 { stdenv
 , lib
-, requireFile
 , fetchurl
 , meson
 , ninja
@@ -30,6 +29,7 @@
 , libffi
 , ncurses
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 # foot is a Wayland-native terminal emulator - no X11 anywhere in it, which is
@@ -45,15 +45,6 @@ let
     libutf8proc tllist fcft epollShim expat zlib libpng libiconv glib pcre2
     libffi
   ];
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 in
 stdenv.mkDerivation rec {
   pname = "puredarwin-foot";
@@ -127,8 +118,7 @@ stdenv.mkDerivation rec {
     runHook preConfigure
 
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     cat > puredarwin-cross.ini <<EOF
 [binaries]

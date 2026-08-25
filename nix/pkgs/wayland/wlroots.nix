@@ -2,7 +2,6 @@
 
 { stdenv
 , lib
-, requireFile
 , meson
 , ninja
 , pkg-config
@@ -29,6 +28,7 @@
   # it needs) must come out of both the build and the runtime closure.
 , withXwayland ? true
 , targetTriple ? "x86_64-apple-darwin20.4"
+, appleSdk
 }:
 
 assert withXwayland -> (xcb != null && xcbWm != null && xwayland != null);
@@ -37,15 +37,6 @@ let
   targetInfo = import ../../lib/target-info.nix targetTriple;
   deps = [ libdrm pixman wayland waylandProtocols xkbcommon pdsurface ]
     ++ lib.optionals withXwayland [ xcb xcbWm xwayland ];
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 in
 stdenv.mkDerivation {
   pname = "puredarwin-wlroots${lib.optionalString (!withXwayland) "-nox"}";
@@ -66,8 +57,7 @@ stdenv.mkDerivation {
     runHook preConfigure
 
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     cp ${pdgopSource}/PDGOP.c backend/puredarwin/puredarwin-pdgop.c
     cp ${pdgopSource}/include/PDGOP.h backend/puredarwin/PDGOP.h
 

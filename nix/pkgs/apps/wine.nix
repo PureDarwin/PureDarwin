@@ -1,6 +1,5 @@
 { stdenv
 , lib
-, requireFile
 , pkg-config
 , gnumake
 , flex
@@ -46,6 +45,7 @@
 , mingwArm64ecCc ? null
   # FEX's ARM64 WoW64 CPU backend, installed beside Wine's ARM64 PE modules.
 , fexWow64 ? null
+, appleSdk
 }:
 
 assert targetArch == "arm64" -> mingwAarch64Cc != null;
@@ -67,15 +67,6 @@ let
     libXrender libXfixes libXi libXcursor libXrandr
   ];
   waylandDeps = [ wayland waylandProtocols xkbcommon ];
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
   # The 11.3 SDK carries AppKit/Metal headers, so Wine's configure would find
   # them and enable winemac.drv against frameworks PureDarwin does not have.
   # Pre-seed the header caches to no so the X11 driver is chosen instead.
@@ -139,8 +130,7 @@ stdenv.mkDerivation {
     runHook preConfigure
 
     mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    export DARWIN_SDK_ROOT="$PWD/sdk/MacOSX11.3.sdk"
+    export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     export PATH="${darwinCrossToolchain}/bin:${waylandScanner}/bin:$PATH"
     # expat is here only because fontconfig.pc lists it in Requires.private:
     # PKG_CONFIG_LIBDIR pins the search path, so a missing transitive .pc makes

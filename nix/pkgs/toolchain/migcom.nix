@@ -1,22 +1,12 @@
 { stdenv
 , lib
-, requireFile
 , bison
 , flex
+, appleSdk
 }:
 
 let
   onDarwin = stdenv.hostPlatform.isDarwin;
-
-  sdkTarball = requireFile {
-    name = "MacOSX11.3.sdk.tar.xz";
-    sha256 = "9adc1373d3879e1973d28ad9f17c9051b02931674a3ec2a2498128989ece2cb1";
-    message = ''
-      MacOSX11.3.sdk.tar.xz (Apple SDK, proprietary - not fetchable/redistributable)
-      is not yet in your Nix store. Register your local copy with:
-        nix-store --add-fixed sha256 /path/to/MacOSX11.3.sdk.tar.xz
-    '';
-  };
 
   migcomSrcs = [
     "error.c" "global.c" "header.c" "mig.c" "routine.c" "server.c"
@@ -27,9 +17,7 @@ let
   # i386/ and machine/ headers mig's sources expect, so none of the staging or
   # glibc-vs-Apple typedef reconciliation below is needed - just compile.
   sdkShimPhase = lib.optionalString (!onDarwin) ''
-    mkdir -p sdk
-    tar xf ${sdkTarball} -C sdk
-    SDK="$PWD/sdk/MacOSX11.3.sdk"
+    SDK="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     # Stage just the SDK's mach/ header subtree into an isolated shim dir
     # rather than adding the whole SDK usr/include to the search path -
@@ -41,6 +29,9 @@ let
     # i386/. They need the same glibc-vs-Apple typedef reconciliation.
     cp -r "$SDK/usr/include/i386" mach_shim/i386
     cp -r "$SDK/usr/include/arm" mach_shim/arm
+    # The SDK is immutable in the Nix store; sed -i needs a writable
+    # directory for its temporary replacement file.
+    chmod -R u+w mach_shim
     sed -i \
       -e "/typedef long long *__int64_t;/d" \
       -e "/typedef unsigned long long *__uint64_t;/d" \

@@ -108,6 +108,7 @@ target_sources(ipconfiguration_static PRIVATE
 
 target_include_directories(ipconfiguration_static PRIVATE ${_bootp_includes})
 target_compile_definitions(ipconfiguration_static PRIVATE
+    PUREDARWIN_CONFIGD=1
     ${_bootp_definitions}
     server_init=IPConfiguration_server_init)
 

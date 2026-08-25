@@ -5,6 +5,7 @@
 # where libSystem.B.dylib re-exports libsystem_c/pthread/kernel/malloc.
 # Expand this list as more of userland (launchd, etc.) comes online.
 #
+___chkstk_darwin
 ____chkstk_darwin
 _access
 _close

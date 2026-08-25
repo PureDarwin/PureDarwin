@@ -1,5 +1,6 @@
-# The MacOSX11.3 SDK, packaged in the layout nixpkgs' cc-wrapper expects from
-# an apple-sdk so a Darwin host can be pointed at it via DEVELOPER_DIR.
+# The MacOSX11.3 SDK, packaged once in the layout expected by the build
+# toolchain. The same derivation is used for native Darwin and Linux cross
+# builds so consumers do not unpack the SDK independently.
 { stdenvNoCC
 , lib
 , requireFile
@@ -45,6 +46,6 @@ stdenvNoCC.mkDerivation {
 
   meta = with lib; {
     description = "Pinned MacOSX11.3 SDK in apple-sdk layout, for Darwin-host PureDarwin builds";
-    platforms = platforms.darwin;
+    platforms = platforms.unix;
   };
 }

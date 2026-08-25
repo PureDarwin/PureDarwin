@@ -41,6 +41,7 @@
 , gtk3NoxBuild
 , onyx2dBuild
 , coregraphicsBuild
+, cgScreenDemoBuild
 , cairoNoxBuild
 , pdEpollShimBuild
 , tllistBuild
@@ -69,6 +70,7 @@
 , iconThemesBuild
 , icuCoreBuild
 , imageExtraPackagesArm64
+, imageExtraPackagesArm64Nox
 , iographicsBuild
 , iokitBuild
 , coreServicesBuild
@@ -194,6 +196,7 @@
 , symptomReporterBuild
 , splitBaseSystemArm64VirtMinimal
 , splitBaseSystemArm64VirtMinimalRelease
+, splitBaseSystemArm64VirtWayland
 , startupNotificationBuild
 , system
 , systemConfigurationBuild
@@ -526,6 +529,7 @@ let
     corefoundation = coreFoundationBuild;
     onyx2d = onyx2dBuild;
     coregraphics = coregraphicsBuild;
+    cg-screen-demo = cgScreenDemoBuild;
     icucore = icuCoreBuild;
     libcxxabi-dylib = libcxxabiDylibBuild;
     libcxx-dylib = libcxxDylibBuild;
@@ -813,9 +817,9 @@ let
         imageFileName = "puredarwin-debug.img";
       };
       imageArm64VirtBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystem;
-        extraPackages = imageExtraPackages;
-        kc = kcArm64DebugBuild;
+        baseSystem = splitBaseSystemArm64VirtWayland;
+        extraPackages = imageExtraPackagesArm64Nox;
+        kc = kcArm64ReleaseBuild;
         xnuLoader = xnu-loader.packages.${system}.arm64-virt;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";

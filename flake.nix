@@ -14,11 +14,13 @@
 
       mkSystem = system:
         let
-          pkgs = import nixpkgs {
+          basePkgs = import nixpkgs {
             inherit system;
             config.allowUnfreePredicate = pkg: lib.getName pkg == "MacOSX11.3.sdk.tar.xz";
           };
 
+          appleSdk = basePkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix { };
+          pkgs = basePkgs.extend (_: _: { inherit appleSdk; });
           isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
           # fbDOOM (GPL, opt-in - see src/Userspace/fbdoom/CMakeLists.txt) is
           # an external checkout, not a flake input: point PUREDARWIN_FBDOOM_SOURCE_ENV
@@ -161,10 +163,8 @@
             "tools/cctools/include/stuff/openstep_mach.h"
             "tools/cctools/include/mach/machine.h"
           ];
-          pinnedAppleSdk =
-            if isDarwin then pkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix { } else null;
           mkPureDarwinBuild = args: pkgs.callPackage ./build.nix ({
-            inherit darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig pinnedAppleSdk;
+            inherit appleSdk darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig;
             compilerRt = compilerRtBuild;
             compilerRtArm64 = arm64.compilerRtArm64Build or null;
           } // args);
@@ -1428,6 +1428,16 @@
               zlib = xvfbZlibBuild;
               src = ./src/Frameworks/CoreGraphics;
             };
+          cgScreenDemoBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/cg-screen-demo.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              pdsurface = pdsurfaceBuild;
+              coregraphics = coregraphicsBuild;
+              src = ./src/Userspace/cg-screen-demo;
+            };
           # Wayland-only image: cairo/dbus/mesa each bake an libX11 path into
           # their output unless their X11 backends are configured out.
           cairoNoxBuild =
@@ -1716,14 +1726,14 @@
               iokit = iokitBuild;
               puredarwinSource = ./src/Libraries/libdrm;
               src = pkgs.libdrm.src;
-              inherit (pkgs) meson ninja pkg-config python3 requireFile;
+              inherit (pkgs) meson ninja pkg-config python3;
             };
           jsoncBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/json-c.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               src = pkgs.json_c.src;
-              inherit (pkgs) cmake ninja pkg-config requireFile;
+              inherit (pkgs) cmake ninja pkg-config;
             };
           xwaylandBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/x11/xwayland.nix {
@@ -3309,7 +3319,9 @@
             kextsArm64Build
             splitBaseSystemArm64VirtMinimal
             splitBaseSystemArm64VirtMinimalRelease
+            splitBaseSystemArm64VirtWayland
             imageExtraPackageSetArm64
+            imageExtraPackagesArm64Nox
             ;
           # The XFCE desktop is instantiated in this file (it needs both the
           # arm64 builds and the shared sources), so it is appended here rather
@@ -3641,8 +3653,8 @@
               libXcursorSharedBuild libXrandrSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
-              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
-              cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 iographicsBuild iokitBuild asmjitTestArm64Build
+              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild cgScreenDemoBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
+              cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
@@ -3656,7 +3668,7 @@
               mesaDemosBuild migcomDarwinBuild mkPureDarwinBuild clangCrossBuild cmakeBuild kcToolsGuestBuild mesonBuild nanoBuild nativeLd ncursesBuild ninjaBuild
               netsurfBuild objcTestBuild openglFrameworkBuild opensshBuild opensslBuild
               pangoBuild pcre2Build pdVirglShimBuild pkgconfBuild pkgs pythonBuild
-              securityBuild symptomReporterBuild splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease
+              securityBuild symptomReporterBuild splitBaseSystemArm64VirtMinimal splitBaseSystemArm64VirtMinimalRelease splitBaseSystemArm64VirtWayland
               startupNotificationBuild system systemConfigurationBuild systemStarterBuild tccBuild
               fastfetchNoGLArm64Build foundationArm64Build vmprobeArm64Build
               toyboxArm64Build toyboxBuild userlandBuild vteBuild xcalcBuild xcbBuild xcbCursorBuild
@@ -3979,7 +3991,10 @@
             '';
           });
         in {
-          packages = commonPackages // arm64Packages // probePackages // lib.optionalAttrs (!isDarwin) linuxPackages;
+          packages = {
+            apple-sdk = appleSdk;
+            cg-screen-demo = cgScreenDemoBuild;
+          } // commonPackages // arm64Packages // probePackages // lib.optionalAttrs (!isDarwin) linuxPackages;
           apps = lib.optionalAttrs (!isDarwin) linuxApps;
           devShells = {
             kernel = devShell;
