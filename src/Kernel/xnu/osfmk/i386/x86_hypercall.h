@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -29,10 +29,8 @@
 #ifndef _I386_X86_HYPERCALL_H_
 #define _I386_X86_HYPERCALL_H_
 
-/*
- * Not gated on DEBUG || DEVELOPMENT as upstream: hypercalls are enabled on every
- * PureDarwin build, since the DEBUG-only path was broken.
- */
+#include <kern/hvg_hypercall.h>
+#include <i386/cpuid.h>
 
 /*
  * Apple Hypercall Calling Convention (x64)
@@ -85,11 +83,12 @@ typedef struct hvg_hcall_output_regs {
 
 #define HVG_HCALL_CODE(code) ('A' << 24 | (code & 0xFFFFFF))
 
-
 /*
  * Caller is responsible for checking the existence of Apple Hypercall
  * before invoking Apple hypercalls.
  */
+
+#if defined(MACH_KERNEL_PRIVATE)
 
 #define HVG_HCALL_RETURN(rax) {\
 	__asm__ __volatile__ goto (\
@@ -105,7 +104,7 @@ error:\
 	return (hvg_hcall_return_t)rax;\
 }
 
-static inline hvg_hcall_return_t
+static hvg_hcall_return_t
 hvg_hypercall6(uint64_t code, uint64_t rdi, uint64_t rsi, uint64_t rdx, uint64_t rcx, uint64_t r8, uint64_t r9,
     hvg_hcall_output_regs_t *output)
 {
@@ -179,4 +178,37 @@ hvg_hypercall5(const uint64_t code,
 	return hvg_hypercall6(code, rdi, rsi, rdx, rcx, r8, 0, output);
 }
 
+/*
+ * The KVM hypercall instruction is vendor-specific: VMX spells it "vmcall"
+ * (0f 01 c1), SVM spells it "vmmcall" (0f 01 d9), and each traps to #UD on the
+ * other vendor. Apple only ever shipped Intel, so upstream hardcodes vmcall.
+ *
+ * Getting this wrong is not a clean #UD: KVM catches the cross-vendor opcode
+ * and tries to rewrite the guest's instruction in place to the native one, so
+ * the guest sees a #PF with CR2 == RIP and a write error code, faulting on its
+ * own read-only kernel text.
+ */
+static inline long
+kvmcompat_hypercall2(unsigned long code, unsigned long a0, unsigned long a1)
+{
+	long retval;
+
+	if (cpuid_info()->cpuid_ven == CPUID_VEN_AMD) {
+		__asm__ __volatile__ (
+			"vmmcall"
+			: "=a" (retval)
+			: "a" (code), "b" (a0), "c" (a1)
+			: "memory"
+		);
+	} else {
+		__asm__ __volatile__ (
+			"vmcall"
+			: "=a" (retval)
+			: "a" (code), "b" (a0), "c" (a1)
+			: "memory"
+		);
+	}
+	return retval;
+}
+#endif /* MACH_KERNEL_PRIVATE */
 #endif /* _I386_X86_HYPERCALL_H_ */

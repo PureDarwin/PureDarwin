@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -63,6 +63,8 @@
 #ifndef _NETINET_UDP_VAR_H_
 #define _NETINET_UDP_VAR_H_
 
+#include <netinet/ip_var.h>
+#include <netinet/udp.h>
 #include <sys/appleapiopts.h>
 #include <sys/sysctl.h>
 
@@ -111,6 +113,9 @@ struct  udpstat {
 	u_int32_t udps_snd_swcsum_bytes;  /* udp swcksum (outbound), bytes */
 	u_int32_t udps_snd6_swcsum;       /* udp6 swcksum (outbound), packets */
 	u_int32_t udps_snd6_swcsum_bytes; /* udp6 swcksum (outbound), bytes */
+	/* Port unreachable duplicate suppression */
+	u_int64_t udps_port_unreach_dup_suppressed;
+	u_int64_t udps_port_unreach_not_suppressed;
 };
 
 /*
@@ -125,6 +130,7 @@ struct  udpstat {
 
 #ifdef BSD_KERNEL_PRIVATE
 #include <kern/locks.h>
+#include <kern/mem_acct.h>
 #include <sys/bitstring.h>
 
 #define UDPCTL_NAMES {                                                  \
@@ -150,6 +156,7 @@ struct udpstat_local {
 	u_int64_t       badmcast;
 	u_int64_t       cleanup;
 	u_int64_t       badipsec;
+	u_int64_t       linkheur_stealthdrop;
 };
 
 extern struct pr_usrreqs udp_usrreqs;
@@ -159,6 +166,20 @@ extern u_int32_t udp_sendspace;
 extern u_int32_t udp_recvspace;
 extern struct udpstat udpstat;
 extern int udp_log_in_vain;
+extern struct mem_acct *udp_memacct;
+
+static inline void
+udp_memacct_add(int size)
+{
+	mem_acct_add(udp_memacct, size);
+}
+
+static inline void
+udp_memacct_sub(int size)
+{
+	mem_acct_sub(udp_memacct, size);
+}
+
 
 __BEGIN_DECLS
 extern void udp_ctlinput(int, struct sockaddr *, void *, struct ifnet *);
@@ -173,12 +194,13 @@ extern int udp_shutdown(struct socket *so);
 extern int udp_lock(struct socket *, int, void *);
 extern int udp_unlock(struct socket *, int, void *);
 extern lck_mtx_t *udp_getlock(struct socket *, int);
-extern void udp_get_ports_used(u_int32_t, int, u_int32_t, bitstr_t *);
+extern void udp_get_ports_used(ifnet_t ifp, int, u_int32_t, bitstr_t *__counted_by(bitstr_size(IP_PORTRANGE_SIZE)));
 extern uint32_t udp_count_opportunistic(unsigned int, u_int32_t);
 extern uint32_t udp_find_anypcb_byaddr(struct ifaddr *);
 
 extern void udp_fill_keepalive_offload_frames(struct ifnet *,
-    struct ifnet_keepalive_offload_frame *, u_int32_t, size_t, u_int32_t *);
+    struct ifnet_keepalive_offload_frame *__counted_by(frames_count) frames_array,
+    uint32_t frames_count, size_t, u_int32_t *);
 
 __END_DECLS
 #endif /* BSD_KERNEL_PRIVATE */

@@ -45,16 +45,18 @@ extern "C" {
 
 #ifdef XNU_KERNEL_PRIVATE
 /*
- * The macro SAFE_CAST_PTR() casts one type of pointer to another type, making sure
- * the data the pointer is referencing is the same size. If it is not, it will cause
- * a division by zero compiler warning. This is to work around "SInt32" being defined
- * as "long" on ILP32 and as "int" on LP64, which would require an explicit cast to
- * "SInt32*" when for instance passing an "int*" to OSAddAtomic() - which masks size
- * mismatches.
+ * The macro SAFE_CAST_PTR() casts one type of pointer to another type,
+ * making sure the data the pointer is referencing is the same size.
+ * If it is not, it will cause a "size mismatch" assertion.
+ *
+ * This is to work around "SInt32" being defined as "long" on ILP32 and as "int"
+ * on LP64, which would require an explicit cast to "SInt32*" when for instance
+ * passing an "int*" to OSAddAtomic() - which masks size mismatches.
  * -- var is used, but sizeof does not evaluate the
  *    argument, i.e. we're safe against "++" etc. in var --
  */
-#define __SAFE_CAST_PTR(type, var) (((type)(var))+(0/(sizeof(*var) == sizeof(*(type)NULL) ? 1 : 0)))
+#define __SAFE_CAST_PTR(type, var) \
+	({ _Static_assert(sizeof(*(var)) == sizeof(*(type)NULL), "size mismatch"); ((type)(var)); })
 #else
 #define __SAFE_CAST_PTR(type, var) ((type)(var))
 #endif
@@ -692,14 +694,7 @@ OSSynchronizeIO(void)
 
 #if     defined(KERNEL_PRIVATE)
 
-#if     defined(__arm__) && (__ARM_ARCH < 7)
-static inline void
-OSMemoryBarrier(void)
-{
-	/* ARMv6 has no DMB instruction; the barrier is a CP15 operation. */
-	__asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory");
-}
-#elif     defined(__arm__) || defined(__arm64__)
+#if     defined(__arm__) || defined(__arm64__)
 static inline void
 OSMemoryBarrier(void)
 {

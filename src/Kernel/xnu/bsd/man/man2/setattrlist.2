@@ -185,6 +185,12 @@ ATTR_CMN_CHGTIME
 .El
 .Pp
 .
+.Pp
+If ATTR_CMN_MODTIME is set to a time before ATTR_CMN_CRTIME, the value of
+ATTR_CMN_CRTIME is set to the same value as ATTR_CMN_MODTIME.
+.El
+.Pp
+.
 You must be root (that is, your process's effective UID must be 0) in order to change the 
 .Dv ATTR_CMN_OWNERID
 attribute
@@ -231,7 +237,7 @@ parameter is a bit set that controls the behaviour of
 .Fn setattrlist .
 The following option bits are defined.
 .
-.Bl -tag -width XXXbitmapcount
+.Bl -tag -width FSOPT_RESOLVE_BENEATH
 .
 .It FSOPT_NOFOLLOW
 If this bit is set, 
@@ -239,6 +245,24 @@ If this bit is set,
 will not follow a symlink if it occurs as 
 the last component of
 .Fa path .
+.
+.It FSOPT_NOFOLLOW_ANY
+If this bit is set,
+.Fn setattrlist
+will not follow a symlink if it occurs as
+the last component of
+.Fa path .
+In addition, if a symbolic link is encountered
+before the final component, an error is
+returned
+.
+.It FSOPT_RESOLVE_BENEATH
+If this bit is set, path resolution must not escape the directory associated
+with the file descriptor.
+.
+.It FSOPT_UNIQUE
+If this bit is set, the path lookup will fail if the target file has multiple
+hard links.
 .
 .El
 .
@@ -319,6 +343,11 @@ Search permission is denied for a component of the path prefix for
 Too many symbolic links were encountered in translating the pathname for
 .Fn setattrlist .
 .
+.It Bq Er ELOOP
+FSOPT_NOFOLLOW_ANY was passed and a symbolic link was encountered in
+translating the pathname for
+.Fn setattrlist .
+.
 .It Bq Er EFAULT
 .Fa path ,
 .Fa attrList
@@ -387,6 +416,14 @@ argument is not an absolute path and
 is neither
 .Dv AT_FDCWD
 nor a file descriptor associated with a directory.
+.It Bq Er ENOTCAPABLE
+if FSOPT_RESOLVE_BENEATH was passed and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory.
+.It Bq Er ENOTCAPABLE
+if FSOPT_UNIQUE was passed and
+.Fa path
+has multiple hard links.
 .El
 .Pp
 .

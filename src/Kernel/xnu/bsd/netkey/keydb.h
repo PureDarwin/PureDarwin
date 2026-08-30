@@ -74,6 +74,8 @@ struct secashead {
 };
 
 #define MAX_REPLAY_WINDOWS 4
+#define PER_TC_REPLAY_WINDOW_RANGE ((1ULL << 32) / MAX_REPLAY_WINDOWS)
+#define PER_TC_REPLAY_WINDOW_SN_SHIFT 30
 
 /* Security Association */
 struct secasvar {
@@ -88,16 +90,20 @@ struct secasvar {
 	u_int32_t flags;                /* holder for SADB_KEY_FLAGS */
 	u_int16_t flags2;               /* holder for SADB_SA2_KEY_FLAGS */
 
-	struct sadb_key *key_auth;      /* Key for Authentication */
-	struct sadb_key *key_enc;       /* Key for Encryption */
-	caddr_t iv;                     /* Initilization Vector */
-	u_int ivlen;                    /* length of IV */
-	void *sched;                    /* intermediate encryption key */
-	size_t schedlen;
+	struct sadb_key *__sized_by(key_auth_len) key_auth;     /* Key for Authentication */
+	struct sadb_key *__sized_by(key_enc_len) key_enc;       /* Key for Encryption */
+	caddr_t __sized_by(ivlen) iv;                           /* Initialization Vector */
+	void *__sized_by(schedlen_auth) sched_auth;             /* intermediate authentication key */
+	void *__sized_by(schedlen_enc) sched_enc;               /* intermediate encryption key */
+	uint32_t key_auth_len;
+	uint32_t key_enc_len;
+	size_t schedlen_auth;
+	size_t schedlen_enc;
+	u_int ivlen;                                            /* length of IV */
 
 	struct secreplay *replay[MAX_REPLAY_WINDOWS]; /* replay prevention */
 
-	long created;                   /* for lifetime */
+	u_int64_t created;              /* for lifetime */
 
 	struct sadb_lifetime *lft_c;    /* CURRENT lifetime, it's constant. */
 	struct sadb_lifetime *lft_h;    /* HARD lifetime */
@@ -116,18 +122,23 @@ struct secasvar {
 	u_int16_t       natt_encapsulated_src_port;     /* network byte order */
 	u_int16_t       natt_interval; /* Interval in seconds */
 	u_int16_t       natt_offload_interval; /* Hardware Offload Interval in seconds */
+	/*
+	 * Globally unique flow identifier for the SA.
+	 * Added on outgoing packets by the IPSec driver.
+	 */
+	uint32_t        flowid;
 
 	u_int8_t        always_expire; /* Send expire/delete messages even if unused */
 };
 
 /* replay prevention */
 struct secreplay {
-	u_int8_t wsize;           /* window size */
-	u_int32_t count;
-	u_int32_t seq;          /* used by sender */
-	u_int32_t lastseq;      /* used by sender/receiver */
-	caddr_t bitmap;         /* used by receiver */
-	int overflow;           /* overflow flag */
+	u_int8_t wsize;                          /* window size */
+	u_int32_t count;                         /* used by sender/receiver */
+	u_int32_t seq;                           /* used by sender */
+	u_int32_t lastseq;                       /* used by sender/receiver */
+	caddr_t __sized_by(wsize) bitmap;        /* used by receiver */
+	int overflow;                            /* overflow flag */
 };
 
 /* socket table due to send PF_KEY messages. */
@@ -145,7 +156,7 @@ struct secacq {
 	struct secasindex saidx;
 
 	u_int32_t seq;          /* sequence number */
-	long created;           /* for lifetime */
+	u_int64_t created;      /* for lifetime */
 	int count;              /* for lifetime */
 };
 #endif

@@ -95,11 +95,12 @@
 #define _NETINET_IP6_H_
 #ifndef DRIVERKIT
 #include <sys/appleapiopts.h>
+#include <sys/types.h>
 #else
 #include <sys/_types.h>
-#include <netinet/in.h>
 #include <machine/endian.h>
 #endif /* DRIVERKIT */
+#include <netinet/in.h>
 
 /*
  * Definition for internet protocol version 6.
@@ -361,6 +362,9 @@ do {                                                                    \
 
 #define IP6_EXTHDR_GET0(val, typ, m, off, len)                          \
 	M_STRUCT_GET0(val, typ, m, off, len)
+
+#define IP6_EXT_LEN(ext)                                                \
+	 (((ext)->ip6e_len + 1) << 3)
 
 #endif /* BSD_KERNEL_PRIVATE */
 #endif /* !_NETINET_IP6_H_ */

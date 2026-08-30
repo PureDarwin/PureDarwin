@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -93,7 +93,6 @@
 #include <sys/time.h>
 #include <sys/systm.h>
 #include <sys/mman.h>
-#include <sys/kasl.h>
 
 #include <security/audit/audit.h>
 
@@ -107,11 +106,16 @@
 #include <kern/ast.h>
 #include <kern/zalloc.h>
 #include <kern/ux_handler.h>            /* for ux_handler_setup() */
+#include <kern/sched_hygiene.h>
+
+#if (DEVELOPMENT || DEBUG)
+#include <kern/debug.h>
+#endif
 
 #include <mach/vm_param.h>
 
-#include <vm/vm_map.h>
-#include <vm/vm_kern.h>
+#include <vm/vm_map_xnu.h>
+#include <vm/vm_kern_xnu.h>
 
 #include <sys/reboot.h>
 #include <dev/busvar.h>                 /* for pseudo_inits */
@@ -135,7 +139,6 @@
 #include <sys/aio_kern.h>               /* for aio_init() */
 #include <sys/semaphore.h>              /* for psem_cache_init() */
 #include <net/dlil.h>                   /* for dlil_init() */
-#include <net/kpi_protocol.h>           /* for proto_kpi_init() */
 #include <net/iptap.h>                  /* for iptap_init() */
 #include <sys/socketvar.h>              /* for socketinit() */
 #include <sys/protosw.h>                /* for domaininit() */
@@ -144,7 +147,6 @@
 #include <net/if_gif.h>                 /* for gif_init() */
 #include <miscfs/devfs/devfsdefs.h>     /* for devfs_kernel_mount() */
 #include <vm/vm_kern.h>                 /* for kmem_suballoc() */
-#include <sys/msgbuf.h>                 /* for log_setsize() */
 #include <sys/proc_uuid_policy.h>       /* proc_uuid_policy_init() */
 #include <netinet/flow_divert.h>        /* flow_divert_init() */
 #include <net/content_filter.h>         /* for cfil_init() */
@@ -152,14 +154,17 @@
 #include <net/network_agent.h>          /* for netagent_init() */
 #include <net/packet_mangler.h>         /* for pkt_mnglr_init() */
 #include <net/if_utun.h>                /* for utun_register_control() */
-#include <net/if_ipsec.h>               /* for ipsec_register_control() */
-#include <net/net_str_id.h>             /* for net_str_id_init() */
+#include <netinet6/ipsec.h>             /* for ipsec_init() */
+#include <net/if_redirect.h>            /* for if_redirect_init() */
 #include <net/netsrc.h>                 /* for netsrc_init() */
 #include <net/ntstat.h>                 /* for nstat_init() */
-#include <netinet/tcp_cc.h>                     /* for tcp_cc_init() */
 #include <netinet/mptcp_var.h>          /* for mptcp_control_register() */
 #include <net/nwk_wq.h>                 /* for nwk_wq_init */
-#include <net/restricted_in_port.h> /* for restricted_in_port_init() */
+#include <net/restricted_in_port.h>     /* for restricted_in_port_init() */
+#include <net/remote_vif.h>             /* for rvi_init() */
+#include <net/kctl_test.h>              /* for kctl_test_init() */
+#include <net/aop/kpi_aop.h>            /* for kern_aop_net_init() */
+#include <netinet/kpi_ipfilter_var.h>   /* for ipfilter_init() */
 #include <kern/assert.h>                /* for assert() */
 #include <sys/kern_overrides.h>         /* for init_system_override() */
 #include <sys/lockf.h>                  /* for lf_init() */
@@ -187,6 +192,9 @@
 #include <net/if_pflog.h>
 #endif
 
+#if SKYWALK
+#include <skywalk/os_skywalk_private.h>
+#endif /* SKYWALK */
 
 #include <pexpert/pexpert.h>
 #include <machine/pal_routines.h>
@@ -199,7 +207,10 @@
 void * get_user_regs(thread_t);         /* XXX kludge for <machine/thread.h> */
 void IOKitInitializeTime(void);         /* XXX */
 void IOSleep(unsigned int);             /* XXX */
+void IOSetImageBoot(void);              /* XXX */
 void loopattach(void);                  /* XXX */
+
+void ipc_task_enable(task_t task);
 
 const char *const copyright =
     "Copyright (c) 1982, 1986, 1989, 1991, 1993\n\t"
@@ -207,14 +218,11 @@ const char *const copyright =
     "All rights reserved.\n\n";
 
 /* Components of the first process -- never freed. */
-struct  proc proc0 = { .p_comm = "kernel_task", .p_name = "kernel_task" };
-struct  session session0;
-struct  pgrp pgrp0;
-struct  filedesc filedesc0;
-struct  plimit limit0;
-struct  pstats pstats0;
-struct  sigacts sigacts0;
-SECURITY_READ_ONLY_LATE(proc_t) kernproc = &proc0;
+SECURITY_READ_ONLY_LATE(struct vfs_context) vfs_context0;
+
+static struct plimit limit0;
+static struct pstats pstats0;
+SECURITY_READ_ONLY_LATE(proc_t) kernproc;
 proc_t XNU_PTRAUTH_SIGNED_PTR("initproc") initproc;
 
 long tk_cancc;
@@ -243,18 +251,15 @@ char    rootdevice[DEVMAXNAMESIZE];
 
 struct  vnode *rootvp;
 bool rootvp_is_ssd = false;
-int boothowto;
-int minimalboot = 0;
+SECURITY_READ_ONLY_LATE(int) boothowto;
+/*
+ * -minimalboot indicates that we want userspace to be bootstrapped to a
+ * minimal environment.  What constitutes minimal is up to the bootstrap
+ * process.
+ */
+TUNABLE(int, minimalboot, "-minimalboot", 0);
 #if CONFIG_DARKBOOT
 int darkboot = 0;
-#endif
-
-#if __arm64__
-int legacy_footprint_entitlement_mode = LEGACY_FOOTPRINT_ENTITLEMENT_IGNORE;
-#endif /* __arm64__ */
-
-#if PROC_REF_DEBUG
-__private_extern__ int proc_ref_tracking_disabled = 0; /* disable panics on leaked proc refs across syscall boundary */
 #endif
 
 extern kern_return_t IOFindBSDRoot(char *, unsigned int, dev_t *, u_int32_t *);
@@ -263,24 +268,12 @@ extern kern_return_t IOKitBSDInit(void );
 extern boolean_t IOSetRecoveryBoot(bsd_bootfail_mode_t, uuid_t, boolean_t);
 extern void kminit(void);
 extern void bsd_bufferinit(void);
-extern void oslog_setsize(int size);
 extern void throttle_init(void);
 
-#if CONFIG_LOCKERBOOT
-#define LOCKER_PROTOBOOT_MOUNT "/protoboot"
-
-const char kernel_protoboot_mount[] = LOCKER_PROTOBOOT_MOUNT;
-extern int mount_locker_protoboot(const char *fsname, const char *mntpoint,
-    const char *pbdevpath);
-#endif
-
-extern int ncl;
-#if DEVELOPMENT || DEBUG
-extern int syscallfilter_disable;
-#endif // DEVELOPMENT || DEBUG
-
 vm_map_t        bsd_pageable_map;
+#if CONFIG_MBUF_MCACHE
 vm_map_t        mb_map;
+#endif /* CONFIG_MBUF_MCACHE */
 
 static  int bsd_simul_execs;
 static int bsd_pageable_map_size;
@@ -293,23 +286,13 @@ void bsd_exec_setup(int);
 __private_extern__ int bootarg_execfailurereports = 0;
 
 #if __x86_64__
-__private_extern__ int bootarg_no32exec = 1;
+__private_extern__ TUNABLE(int, bootarg_no32exec, "no32exec", 1);
 #endif
-__private_extern__ int bootarg_vnode_cache_defeat = 0;
 
-#if CONFIG_JETSAM && (DEVELOPMENT || DEBUG)
-__private_extern__ int bootarg_no_vnode_jetsam = 0;
-#endif /* CONFIG_JETSAM && (DEVELOPMENT || DEBUG) */
-
-__private_extern__ int bootarg_no_vnode_drain = 0;
-
-/*
- * Prevent kernel-based ASLR from being used, for testing.
- */
 #if DEVELOPMENT || DEBUG
-__private_extern__ int bootarg_disable_aslr = 0;
+/* Prevent kernel-based ASLR from being used. */
+__private_extern__ TUNABLE(bool, bootarg_disable_aslr, "-disable_aslr", 0);
 #endif
-
 
 /*
  * Allow an alternate dyld to be used for testing.
@@ -318,7 +301,22 @@ __private_extern__ int bootarg_disable_aslr = 0;
 #if DEVELOPMENT || DEBUG
 char dyld_alt_path[MAXPATHLEN];
 int use_alt_dyld = 0;
-extern uint64_t dyld_flags;
+
+char dyld_suffix[NAME_MAX];
+int use_dyld_suffix = 0;
+#endif
+
+char panic_on_proc_crash[NAME_MAX];
+int use_panic_on_proc_crash = 0;
+
+char panic_on_proc_exit[NAME_MAX];
+int use_panic_on_proc_exit = 0;
+
+char panic_on_proc_spawn_fail[NAME_MAX];
+int use_panic_on_proc_spawn_fail = 0;
+
+#if DEVELOPMENT || DEBUG
+__private_extern__ bool bootarg_hide_process_traced = 0;
 #endif
 
 int     cmask = CMASK;
@@ -327,11 +325,9 @@ extern int customnbuf;
 kern_return_t bsd_autoconf(void);
 void bsd_utaskbootstrap(void);
 
-static void parse_bsd_args(void);
 #if CONFIG_DEV_KMEM
 extern void dev_kmem_init(void);
 #endif
-extern void select_waitq_init(void);
 static void process_name(const char *, proc_t);
 
 static void setconf(void);
@@ -341,7 +337,7 @@ static int bsd_find_basesystem_dmg(char *bsdmgpath_out, bool *rooted_dmg, bool *
 static boolean_t bsdmgroot_bootable(void);
 #endif // CONFIG_BASESYSTEMROOT
 
-static bool bsd_rooted_ramdisk(void);
+bool bsd_rooted_ramdisk(void);
 
 #if SYSV_SHM
 extern void sysv_shm_lock_init(void);
@@ -353,13 +349,9 @@ extern void sysv_sem_lock_init(void);
 extern void sysv_msg_lock_init(void);
 #endif
 
-extern void ulock_initialize(void);
-
 #if CONFIG_MACF
 #if defined (__i386__) || defined (__x86_64__)
 /* MACF policy_check configuration flags; see policy_check.c for details */
-int policy_check_flags = 0;
-
 extern int check_policy_init(int);
 #endif
 #endif  /* CONFIG_MACF */
@@ -399,7 +391,6 @@ struct rlimit vm_initial_limit_core = { .rlim_cur = DFLCSIZ, .rlim_max = MAXCSIZ
 
 extern struct os_refgrp rlimit_refgrp;
 
-extern thread_t cloneproc(task_t, coalition_t, proc_t, int, int);
 extern int      (*mountroot)(void);
 
 LCK_ATTR_DECLARE(proc_lck_attr, 0, 0);
@@ -424,6 +415,12 @@ void set_rootvnode(vnode_t);
 
 extern lck_rw_t rootvnode_rw_lock;
 
+SECURITY_READ_ONLY_LATE(struct mach_vm_range) bsd_pageable_range = {};
+KMEM_RANGE_REGISTER_DYNAMIC(bsd_pageable, &bsd_pageable_range, ^() {
+	assert(bsd_pageable_map_size != 0);
+	return (vm_map_size_t) bsd_pageable_map_size;
+});
+
 /* called with an iocount and usecount on new_rootvnode */
 void
 set_rootvnode(vnode_t new_rootvnode)
@@ -435,7 +432,7 @@ set_rootvnode(vnode_t new_rootvnode)
 	new_rootvnode->v_flag |= VROOT;
 	rootvp = new_devvp;
 	rootvnode = new_rootvnode;
-	filedesc0.fd_cdir = new_rootvnode;
+	kernproc->p_fd.fd_cdir = new_rootvnode;
 	if (new_devvp != NULL) {
 		rootdev = vnode_specrdev(new_devvp);
 	} else if (new_mount != NULL) {
@@ -457,7 +454,7 @@ bsd_rooted_ramdisk(void)
 	bool is_ramdisk = false;
 	char *dev_path = zalloc(ZV_NAMEI);
 	if (dev_path == NULL) {
-		panic("failed to allocate devpath string! \n");
+		panic("failed to allocate devpath string!");
 	}
 
 	if (PE_parse_boot_argn("rd", dev_path, MAXPATHLEN)) {
@@ -476,48 +473,32 @@ bsd_rooted_ramdisk(void)
  * in the context of the current (startup) task using a call to the
  * function kernel_thread_create() to jump into start_kernel_threads().
  * Internally, kernel_thread_create() calls thread_create_internal(),
- * which calls uthread_alloc().  The function of uthread_alloc() is
- * normally to allocate a uthread structure, and fill out the uu_sigmask,
- * uu_context fields.  It skips filling these out in the case of the "task"
+ * which calls uthread_init().  The function of uthread_init() is
+ * normally to init a uthread structure, and fill out the uu_sigmask,
+ * tro_ucred/tro_proc fields.  It skips filling these out in the case of the "task"
  * being "kernel_task", because the order of operation is inverted.  To
  * account for that, we need to manually fill in at least the contents
- * of the uu_context.vc_ucred field so that the uthread structure can be
+ * of the tro_ucred field so that the uthread structure can be
  * used like any other.
  */
-
 void
 bsd_init(void)
 {
 	struct uthread *ut;
-	unsigned int i;
-	struct vfs_context context;
-	kern_return_t   ret;
-	struct ucred temp_cred;
-	struct posix_cred temp_pcred;
 	vnode_t init_rootvnode = NULLVP;
+	struct proc_ro_data kernproc_ro_data = {
+		.p_csflags = CS_VALID,
+	};
+	struct task_ro_data kerntask_ro_data = { };
 #if CONFIG_NETBOOT || CONFIG_IMAGEBOOT
 	boolean_t       netboot = FALSE;
 #endif
-#if CONFIG_LOCKERBOOT
-	vnode_t pbvn = NULLVP;
-	mount_t pbmnt = NULL;
-	char *pbdevp = NULL;
-	char pbdevpath[64];
-	char pbfsname[MFSNAMELEN];
-	const char *slash_dev = NULL;
+
+#if HAS_UPSI_FAILURE_INJECTION
+	check_for_failure_injection(XNU_STAGE_BSD_INIT_START);
 #endif
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-/*
- * bsd_init() is otherwise silent until printf(copyright), and on a board still
- * being brought up it is where the boot stops - most of it is one-line calls
- * whose failure looks identical from outside. The trace it enables is the
- * only view into that.
- */
-#define DEBUG_BSDINIT 1
-#else
 #define DEBUG_BSDINIT 0
-#endif
 
 #if DEBUG_BSDINIT
 #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
@@ -529,9 +510,6 @@ bsd_init(void)
 
 	printf(copyright);
 
-	bsd_init_kprintf("calling parse_bsd_args\n");
-	parse_bsd_args();
-
 #if CONFIG_DEV_KMEM
 	bsd_init_kprintf("calling dev_kmem_init\n");
 	dev_kmem_init();
@@ -541,12 +519,29 @@ bsd_init(void)
 	bsd_init_kprintf("calling kauth_init\n");
 	kauth_init();
 
-	/* Initialize process and pgrp structures. */
-	bsd_init_kprintf("calling procinit\n");
-	procinit();
-
 	/* kernel_task->proc = kernproc; */
 	set_bsdtask_info(kernel_task, (void *)kernproc);
+
+	/* Set the parent of kernproc to itself */
+	kernproc->p_pptr = kernproc;
+
+	/* Set the state to SRUN */
+	kernproc->p_stat = SRUN;
+
+	/* Set the proc flags */
+#if defined(__LP64__)
+	kernproc->p_flag = P_SYSTEM | P_LP64;
+#else
+	kernproc->p_flag = P_SYSTEM;
+#endif
+
+	kernproc->p_nice = NZERO;
+	TAILQ_INIT(&kernproc->p_uthlist);
+
+	/* set the cred */
+	kauth_cred_set(&kernproc_ro_data.p_ucred.__smr_ptr, vfs_context0.vc_ucred);
+	kernproc->p_proc_ro = proc_ro_alloc(kernproc, &kernproc_ro_data,
+	    kernel_task, &kerntask_ro_data);
 
 	/* give kernproc a name */
 	bsd_init_kprintf("calling process_name\n");
@@ -555,10 +550,15 @@ bsd_init(void)
 	/* Allocate proc lock attribute */
 
 	lck_mtx_init(&kernproc->p_mlock, &proc_mlock_grp, &proc_lck_attr);
-	lck_mtx_init(&kernproc->p_fdmlock, &proc_fdmlock_grp, &proc_lck_attr);
 	lck_mtx_init(&kernproc->p_ucred_mlock, &proc_ucred_mlock_grp, &proc_lck_attr);
+#if CONFIG_AUDIT
+	lck_mtx_init(&kernproc->p_audit_mlock, &proc_ucred_mlock_grp, &proc_lck_attr);
+#endif /* CONFIG_AUDIT */
 	lck_spin_init(&kernproc->p_slock, &proc_slock_grp, &proc_lck_attr);
-	lck_rw_init(&kernproc->p_dirs_lock, &proc_dirslock_grp, &proc_lck_attr);
+
+	/* Init the file descriptor table. */
+	fdt_init(kernproc);
+	kernproc->p_fd.fd_cmask = (mode_t)cmask;
 
 	assert(bsd_simul_execs != 0);
 	execargs_cache_size = bsd_simul_execs;
@@ -572,7 +572,7 @@ bsd_init(void)
 	}
 
 	bsd_init_kprintf("calling get_bsdthread_info\n");
-	ut = (uthread_t)get_bsdthread_info(current_thread());
+	ut = current_uthread();
 
 #if CONFIG_MACF
 	/*
@@ -585,51 +585,45 @@ bsd_init(void)
 	 * We currently only support this on i386/x86_64, as that is the
 	 * only lock code we have instrumented so far.
 	 */
+	int policy_check_flags;
+	PE_parse_boot_argn("policy_check", &policy_check_flags, sizeof(policy_check_flags));
 	check_policy_init(policy_check_flags);
 #endif
 #endif /* MAC */
 
-	ulock_initialize();
+	/*
+	 * Make a session and group
+	 *
+	 * No need to hold the pgrp lock,
+	 * there are no other BSD threads yet.
+	 */
+	struct session *session0 = session_alloc(kernproc);
+	struct pgrp *pgrp0 = pgrp_alloc(0, PGRP_REF_NONE);
+	session0->s_ttypgrpid = 0;
+	pgrp0->pg_session = session0;
 
 	/*
 	 * Create process 0.
 	 */
 	proc_list_lock();
+	os_ref_init_mask(&kernproc->p_refcount, P_REF_BITS, &p_refgrp, P_REF_NONE);
+	os_ref_init_raw(&kernproc->p_waitref, &p_refgrp);
+	proc_ref_hold_proc_task_struct(kernproc);
+
+	/*
+	 * Make a group and session, then simulate pinsertchild(),
+	 * adjusted for the kernel.
+	 */
+	pghash_insert_locked(pgrp0);
+
+	LIST_INSERT_HEAD(&pgrp0->pg_members, kernproc, p_pglist);
+	smr_init_store(&kernproc->p_pgrp, pgrp0);
 	LIST_INSERT_HEAD(&allproc, kernproc, p_list);
-	kernproc->p_pgrp = &pgrp0;
-	LIST_INSERT_HEAD(PGRPHASH(0), &pgrp0, pg_hash);
-	LIST_INIT(&pgrp0.pg_members);
-	lck_mtx_init(&pgrp0.pg_mlock, &proc_mlock_grp, &proc_lck_attr);
-	/* There is no other bsd thread this point and is safe without pgrp lock */
-	LIST_INSERT_HEAD(&pgrp0.pg_members, kernproc, p_pglist);
-	kernproc->p_listflag |= P_LIST_INPGRP;
-	kernproc->p_pgrpid = 0;
-	kernproc->p_uniqueid = 0;
 
-	pgrp0.pg_session = &session0;
-	pgrp0.pg_membercnt = 1;
-
-	session0.s_count = 1;
-	session0.s_leader = kernproc;
-	session0.s_listflags = 0;
-	lck_mtx_init(&session0.s_mlock, &proc_mlock_grp, &proc_lck_attr);
-	LIST_INSERT_HEAD(SESSHASH(0), &session0, s_hash);
+	LIST_INSERT_HEAD(SESSHASH(0), session0, s_hash);
 	proc_list_unlock();
 
-#if CONFIG_PERSONAS
-	kernproc->p_persona = NULL;
-#endif
-
-	kernproc->task = kernel_task;
-
-	kernproc->p_stat = SRUN;
-	kernproc->p_flag = P_SYSTEM;
-	kernproc->p_lflag = 0;
-	kernproc->p_ladvflag = 0;
-
-#if defined(__LP64__)
-	kernproc->p_flag |= P_LP64;
-#endif
+	proc_set_task(kernproc, kernel_task);
 
 #if DEVELOPMENT || DEBUG
 	if (bootarg_disable_aslr) {
@@ -637,68 +631,22 @@ bsd_init(void)
 	}
 #endif
 
-	kernproc->p_nice = NZERO;
-	kernproc->p_pptr = kernproc;
-
-	TAILQ_INIT(&kernproc->p_uthlist);
 	TAILQ_INSERT_TAIL(&kernproc->p_uthlist, ut, uu_list);
 
-	kernproc->sigwait = FALSE;
-	kernproc->sigwait_thread = THREAD_NULL;
-	kernproc->exit_thread = THREAD_NULL;
-	kernproc->p_csflags = CS_VALID;
-
 	/*
-	 * Create credential.  This also Initializes the audit information.
+	 * Officially associate the kernel with vfs_context0.vc_ucred.
 	 */
-	bsd_init_kprintf("calling bzero\n");
-	bzero(&temp_cred, sizeof(temp_cred));
-	bzero(&temp_pcred, sizeof(temp_pcred));
-	temp_pcred.cr_ngroups = 1;
-	/* kern_proc, shouldn't call up to DS for group membership */
-	temp_pcred.cr_flags = CRF_NOMEMBERD;
-	temp_cred.cr_audit.as_aia_p = audit_default_aia_p;
-
-	bsd_init_kprintf("calling kauth_cred_create\n");
-	/*
-	 * We have to label the temp cred before we create from it to
-	 * properly set cr_ngroups, or the create will fail.
-	 */
-	posix_cred_label(&temp_cred, &temp_pcred);
-	kernproc->p_ucred = kauth_cred_create(&temp_cred);
-
-	/* update cred on proc */
-	PROC_UPDATE_CREDS_ONPROC(kernproc);
-
-	/* give the (already exisiting) initial thread a reference on it */
-	bsd_init_kprintf("calling kauth_cred_ref\n");
-	kauth_cred_ref(kernproc->p_ucred);
-	ut->uu_context.vc_ucred = kernproc->p_ucred;
-	ut->uu_context.vc_thread = current_thread();
-
-	vfs_set_context_kernel(&ut->uu_context);
+#if CONFIG_MACF
+	mac_cred_label_associate_kernel(vfs_context0.vc_ucred);
+#endif
+	proc_update_creds_onproc(kernproc, vfs_context0.vc_ucred);
 
 	TAILQ_INIT(&kernproc->p_aio_activeq);
 	TAILQ_INIT(&kernproc->p_aio_doneq);
 	kernproc->p_aio_total_count = 0;
 
-#if CONFIG_MACF
-	mac_cred_label_associate_kernel(kernproc->p_ucred);
-#endif
-
-	/* Create the file descriptor table. */
-	kernproc->p_fd = &filedesc0;
-	filedesc0.fd_cmask = (mode_t)cmask;
-	filedesc0.fd_knlistsize = 0;
-	filedesc0.fd_knlist = NULL;
-	filedesc0.fd_knhash = NULL;
-	filedesc0.fd_knhashmask = 0;
-	lck_mtx_init(&filedesc0.fd_kqhashlock, &proc_kqhashlock_grp, &proc_lck_attr);
-	lck_mtx_init(&filedesc0.fd_knhashlock, &proc_knhashlock_grp, &proc_lck_attr);
-
 	/* Create the limits structures. */
-	kernproc->p_limit = &limit0;
-	for (i = 0; i < sizeof(kernproc->p_limit->pl_rlimit) / sizeof(kernproc->p_limit->pl_rlimit[0]); i++) {
+	for (uint32_t i = 0; i < ARRAY_COUNT(limit0.pl_rlimit); i++) {
 		limit0.pl_rlimit[i].rlim_cur =
 		    limit0.pl_rlimit[i].rlim_max = RLIM_INFINITY;
 	}
@@ -710,8 +658,8 @@ bsd_init(void)
 	limit0.pl_rlimit[RLIMIT_CORE] = vm_initial_limit_core;
 	os_ref_init_count(&limit0.pl_refcnt, &rlimit_refgrp, 1);
 
+	smr_init_store(&kernproc->p_limit, &limit0);
 	kernproc->p_stats = &pstats0;
-	kernproc->p_sigacts = &sigacts0;
 	kernproc->p_subsystem_root_path = NULL;
 
 	/*
@@ -724,23 +672,14 @@ bsd_init(void)
 	 *	Allocate a kernel submap for pageable memory
 	 *	for temporary copying (execve()).
 	 */
-	{
-		vm_offset_t     minimum;
-
-		bsd_init_kprintf("calling kmem_suballoc\n");
-		assert(bsd_pageable_map_size != 0);
-		ret = kmem_suballoc(kernel_map,
-		    &minimum,
-		    (vm_size_t)bsd_pageable_map_size,
-		    TRUE,
-		    VM_FLAGS_ANYWHERE,
-		    VM_MAP_KERNEL_FLAGS_NONE,
-		    VM_KERN_MEMORY_BSD,
-		    &bsd_pageable_map);
-		if (ret != KERN_SUCCESS) {
-			panic("bsd_init: Failed to allocate bsd pageable map");
-		}
-	}
+	bsd_init_kprintf("calling kmem_suballoc\n");
+	bsd_pageable_map = kmem_suballoc(kernel_map,
+	    &bsd_pageable_range.min_address,
+	    (vm_size_t)bsd_pageable_map_size,
+	    VM_MAP_CREATE_DEFAULT,
+	    VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+	    KMS_NOFAIL,
+	    VM_KERN_MEMORY_BSD).kmr_submap;
 
 	/*
 	 * Initialize buffers and hash links for buffers
@@ -769,13 +708,15 @@ bsd_init(void)
 #endif
 
 #if SOCKETS
+	net_update_uptime();
+#if CONFIG_MBUF_MCACHE
 	/* Initialize per-CPU cache allocator */
 	mcache_init();
+#endif /* CONFIG_MBUF_MCACHE */
 
 	/* Initialize mbuf's. */
 	bsd_init_kprintf("calling mbinit\n");
 	mbinit();
-	net_str_id_init(); /* for mbuf tags */
 	restricted_in_port_init();
 #endif /* SOCKETS */
 
@@ -806,8 +747,6 @@ bsd_init(void)
 	pshm_cache_init();
 	bsd_init_kprintf("calling psem_cache_init\n");
 	psem_cache_init();
-	bsd_init_kprintf("calling select_waitq_init\n");
-	select_waitq_init();
 
 	/*
 	 * Initialize protocols.  Block reception of incoming packets
@@ -818,8 +757,6 @@ bsd_init(void)
 	nwk_wq_init();
 	bsd_init_kprintf("calling dlil_init\n");
 	dlil_init();
-	bsd_init_kprintf("calling proto_kpi_init\n");
-	proto_kpi_init();
 #endif /* NETWORKING */
 #if SOCKETS
 	bsd_init_kprintf("calling socketinit\n");
@@ -831,19 +768,18 @@ bsd_init(void)
 	flow_divert_init();
 #endif  /* FLOW_DIVERT */
 #endif /* SOCKETS */
+#if SKYWALK
+	bsd_init_kprintf("calling skywalk_init\n");
+	(void) skywalk_init();
+#endif /* SKYWALK */
 #if NETWORKING
 #if NECP
 	/* Initialize Network Extension Control Policies */
 	necp_init();
 #endif
 	netagent_init();
+	net_aop_init();
 #endif /* NETWORKING */
-	kernproc->p_fd->fd_cdir = NULL;
-	kernproc->p_fd->fd_rdir = NULL;
-
-#if defined (__x86_64__) && (DEBUG || DEVELOPMENT)
-	hvg_bsd_init();
-#endif /* DEBUG || DEVELOPMENT */
 
 #if CONFIG_FREEZE
 #ifndef CONFIG_MEMORYSTATUS
@@ -858,6 +794,11 @@ bsd_init(void)
 	/* Initialize kernel memory status notifications */
 	bsd_init_kprintf("calling memorystatus_init\n");
 	memorystatus_init();
+
+	/* Fixup memorystatus fields of the kernel process (only for logging purposes) */
+	kernproc->p_memstat_state |= P_MEMSTAT_INTERNAL;
+	kernproc->p_memstat_effectivepriority = JETSAM_PRIORITY_INTERNAL;
+	kernproc->p_memstat_requestedpriority = JETSAM_PRIORITY_INTERNAL;
 #endif /* CONFIG_MEMORYSTATUS */
 
 	bsd_init_kprintf("calling sysctl_mib_init\n");
@@ -910,14 +851,25 @@ bsd_init(void)
 	 */
 	utun_register_control();
 #if IPSEC
-	ipsec_register_control();
+	ipsec_init();
 #endif /* IPSEC */
 	netsrc_init();
 	nstat_init();
-	tcp_cc_init();
 #if MPTCP
 	mptcp_control_register();
 #endif /* MPTCP */
+
+#if REMOTE_VIF
+	rvi_init();
+#endif /* REMOTE_VIF */
+
+#if IF_REDIRECT
+	if_redirect_init();
+#endif /* REDIRECT */
+
+#if KCTL_TEST
+	kctl_test_init();
+#endif /* KCTL_TEST */
 
 	/*
 	 * The the networking stack is now initialized so it is a good time to call
@@ -949,7 +901,7 @@ bsd_init(void)
 		if (netboot) {
 			PE_display_icon( 0, "noroot");  /* XXX a netboot-specific icon would be nicer */
 			vc_progress_set(FALSE, 0);
-			for (i = 1; 1; i *= 2) {
+			for (uint32_t i = 1; 1; i *= 2) {
 				printf("bsd_init: failed to mount network root, error %d, %s\n",
 				    err, PE_boot_args());
 				printf("We are hanging here...\n");
@@ -959,18 +911,15 @@ bsd_init(void)
 		}
 #endif
 		printf("cannot mount root, errno = %d\n", err);
-		boothowto |= RB_ASKNAME;
 	}
 
 	IOSecureBSDRoot(rootdevice);
 
-	context.vc_thread = current_thread();
-	context.vc_ucred = kernproc->p_ucred;
 	mountlist.tqh_first->mnt_flag |= MNT_ROOTFS;
 
 	bsd_init_kprintf("calling VFS_ROOT\n");
 	/* Get the vnode for '/'.  Set fdp->fd_fd.fd_cdir to reference it. */
-	if (VFS_ROOT(mountlist.tqh_first, &init_rootvnode, &context)) {
+	if (VFS_ROOT(mountlist.tqh_first, &init_rootvnode, vfs_context_kernel())) {
 		panic("bsd_init: cannot find root vnode: %s", PE_boot_args());
 	}
 	(void)vnode_ref(init_rootvnode);
@@ -983,19 +932,25 @@ bsd_init(void)
 
 
 	if (!bsd_rooted_ramdisk()) {
-#if CONFIG_IMAGEBOOT
+		boolean_t require_rootauth = FALSE;
+
 #if XNU_TARGET_OS_OSX && defined(__arm64__)
+#if CONFIG_IMAGEBOOT
 		/* Apple Silicon MacOS */
-		if (!imageboot_desired()) {
+		require_rootauth = !imageboot_desired();
+#endif // CONFIG_IMAGEBOOT
+#elif !XNU_TARGET_OS_OSX
+		/* Non MacOS */
+		require_rootauth = TRUE;
+#endif // XNU_TARGET_OS_OSX && defined(__arm64__)
+
+		if (require_rootauth) {
 			/* enforce sealedness */
 			int autherr = VNOP_IOCTL(rootvnode, FSIOC_KERNEL_ROOTAUTH, NULL, 0, vfs_context_kernel());
 			if (autherr) {
-				panic("rootvp not authenticated after mounting \n");
+				panic("rootvp not authenticated after mounting");
 			}
 		}
-#endif // TARGET_OS_OSX && arm64
-#endif // config_imageboot
-		/* Otherwise, noop */
 	}
 
 
@@ -1008,7 +963,7 @@ bsd_init(void)
 		if ((err = netboot_setup()) != 0) {
 			PE_display_icon( 0, "noroot");  /* XXX a netboot-specific icon would be nicer */
 			vc_progress_set(FALSE, 0);
-			for (i = 1; 1; i *= 2) {
+			for (uint32_t i = 1; 1; i *= 2) {
 				printf("bsd_init: NetBoot could not find root, error %d: %s\n",
 				    err, PE_boot_args());
 				printf("We are hanging here...\n");
@@ -1021,38 +976,6 @@ bsd_init(void)
 
 
 #if CONFIG_IMAGEBOOT
-#if CONFIG_LOCKERBOOT
-	/*
-	 * Stash the protoboot vnode, mount, filesystem name, and device name for
-	 * later use. Note that the mount-from name may not have the "/dev/"
-	 * component, so we must sniff out this condition and add it as needed.
-	 */
-	pbvn = rootvnode;
-	pbmnt = pbvn->v_mount;
-	pbdevp = vfs_statfs(pbmnt)->f_mntfromname;
-	slash_dev = strnstr(pbdevp, "/dev/", strlen(pbdevp));
-	if (slash_dev) {
-		/*
-		 * If the old root is a snapshot mount, it will have the form:
-		 *
-		 *     com.apple.os.update-<boot manifest hash>@<dev node path>
-		 *
-		 * So we just search the mntfromname for any occurrence of "/dev/" and
-		 * grab that as the device path. The image boot code needs a dev node to
-		 * do the re-mount, so we cannot directly mount the snapshot as the
-		 * protoboot volume currently.
-		 */
-		strlcpy(pbdevpath, slash_dev, sizeof(pbdevpath));
-	} else {
-		snprintf(pbdevpath, sizeof(pbdevpath), "/dev/%s", pbdevp);
-	}
-
-	bsd_init_kprintf("protoboot mount-from: %s\n", pbdevp);
-	bsd_init_kprintf("protoboot dev path: %s\n", pbdevpath);
-
-	strlcpy(pbfsname, pbmnt->mnt_vtable->vfc_name, sizeof(pbfsname));
-#endif
-
 	/*
 	 * See if a system disk image is present. If so, mount it and
 	 * switch the root vnode to point to it
@@ -1065,17 +988,9 @@ bsd_init(void)
 		 */
 		bsd_init_kprintf("doing image boot: type = %d\n", imageboot_type);
 		imageboot_setup(imageboot_type);
+		IOSetImageBoot();
 	}
 
-#if CONFIG_LOCKERBOOT
-	if (imageboot_type == IMAGEBOOT_LOCKER) {
-		bsd_init_kprintf("booting from locker\n");
-		if (vnode_tag(rootvnode) != VT_LOCKERFS) {
-			panic("root filesystem not a locker: fsname = %s",
-			    rootvnode->v_mount->mnt_vtable->vfc_name);
-		}
-	}
-#endif /* CONFIG_LOCKERBOOT */
 #endif /* CONFIG_IMAGEBOOT */
 
 	/* set initial time; all other resource data is  already zero'ed */
@@ -1103,10 +1018,7 @@ bsd_init(void)
 #endif // DEVELOPMENT || DEBUG
 
 		char *dmgpath = NULL;
-		dmgpath = zalloc_flags(ZV_NAMEI, Z_ZERO | Z_WAITOK);
-		if (dmgpath == NULL) {
-			panic("%s: M_NAMEI zone exhausted", __FUNCTION__);
-		}
+		dmgpath = zalloc_flags(ZV_NAMEI, Z_ZERO | Z_WAITOK | Z_NOFAIL);
 
 		error = bsd_find_basesystem_dmg(dmgpath, &rooted_dmg, &skip_signature_check);
 		if (error) {
@@ -1119,6 +1031,8 @@ bsd_init(void)
 			error = imageboot_pivot_image(dmgpath, IMAGEBOOT_DMG, "/System/Volumes/BaseSystem", "System/Volumes/macOS", rooted_dmg, skip_signature_check);
 			if (error) {
 				bsd_init_kprintf("couldn't mount BaseSystem dmg: error = %d", error);
+			} else {
+				IOSetImageBoot();
 			}
 		}
 		zfree(ZV_NAMEI, dmgpath);
@@ -1127,22 +1041,6 @@ bsd_init(void)
 #error CONFIG_BASESYSTEMROOT requires CONFIG_IMAGEBOOT
 #endif /* CONFIG_IMAGEBOOT */
 #endif /* CONFIG_BASESYSTEMROOT */
-
-#if CONFIG_LOCKERBOOT
-	/*
-	 * We need to wait until devfs is up before remounting the protoboot volume
-	 * within the locker so that it can have a real devfs vnode backing it.
-	 */
-	if (imageboot_type == IMAGEBOOT_LOCKER) {
-		bsd_init_kprintf("re-mounting protoboot volume\n");
-		int error = mount_locker_protoboot(pbfsname, LOCKER_PROTOBOOT_MOUNT,
-		    pbdevpath);
-		if (error) {
-			panic("failed to mount protoboot volume: dev path = %s, error = %d",
-			    pbdevpath, error);
-		}
-	}
-#endif /* CONFIG_LOCKERBOOT */
 
 	/* Initialize signal state for process 0. */
 	bsd_init_kprintf("calling siginit\n");
@@ -1166,6 +1064,18 @@ bsd_init(void)
 	consider_zone_gc(FALSE);
 #endif
 
+#if DEVELOPMENT || DEBUG
+	/*
+	 * At this point, we consider the kernel "booted" enough to apply
+	 * stricter timeouts. Only used for debug timeouts.
+	 */
+	machine_timeout_bsd_init();
+#endif /* DEVELOPMENT || DEBUG */
+
+#if HAS_UPSI_FAILURE_INJECTION
+	check_for_failure_injection(XNU_STAGE_BSD_INIT_END);
+#endif
+
 	bsd_init_kprintf("done\n");
 }
 
@@ -1180,7 +1090,7 @@ bsdinit_task(void)
 	ux_handler_setup();
 
 #if CONFIG_MACF
-	mac_cred_label_associate_user(p->p_ucred);
+	mac_cred_label_associate_user(proc_ucred_unsafe(p)); /* in init */
 #endif
 
 	vm_init_before_launchd();
@@ -1189,7 +1099,7 @@ bsdinit_task(void)
 	int result = bsd_list_tests();
 	result = bsd_do_post();
 	if (result != 0) {
-		panic("bsd_do_post: Tests failed with result = 0x%08x\n", result);
+		panic("bsd_do_post: Tests failed with result = 0x%08x", result);
 	}
 #endif
 
@@ -1269,13 +1179,13 @@ bsd_utaskbootstrap(void)
 	 * Clone the bootstrap process from the kernel process, without
 	 * inheriting either task characteristics or memory from the kernel;
 	 */
-	thread = cloneproc(TASK_NULL, COALITION_NULL, kernproc, FALSE, TRUE);
+	thread = cloneproc(TASK_NULL, NULL, kernproc, CLONEPROC_INITPROC);
 
 	/* Hold the reference as it will be dropped during shutdown */
 	initproc = proc_find(1);
 #if __PROC_INTERNAL_DEBUG
 	if (initproc == PROC_NULL) {
-		panic("bsd_utaskbootstrap: initproc not set\n");
+		panic("bsd_utaskbootstrap: initproc not set");
 	}
 #endif
 
@@ -1291,14 +1201,19 @@ bsd_utaskbootstrap(void)
 	ut = (struct uthread *)get_bsdthread_info(thread);
 	ut->uu_sigmask = 0;
 	act_set_astbsd(thread);
-	task_clear_return_wait(get_threadtask(thread), TCRW_CLEAR_ALL_WAIT);
+
+	task_t task = get_threadtask(thread);
+	vm_map_setup(get_task_map(task), task);
+	task_set_ctrl_port_default(task, thread);
+	ipc_task_enable(task);
+
+	task_clear_return_wait(task, TCRW_CLEAR_ALL_WAIT);
 }
 
 static void
 parse_bsd_args(void)
 {
 	char namep[48];
-	int msgbuf;
 
 	if (PE_parse_boot_argn("-s", namep, sizeof(namep))) {
 		boothowto |= RB_SINGLE;
@@ -1308,72 +1223,9 @@ parse_bsd_args(void)
 		boothowto |= RB_SAFEBOOT;
 	}
 
-	if (PE_parse_boot_argn("-minimalboot", namep, sizeof(namep))) {
-		/*
-		 * -minimalboot indicates that we want userspace to be bootstrapped to a
-		 * minimal environment.  What constitutes minimal is up to the bootstrap
-		 * process.
-		 */
-		minimalboot = 1;
-	}
-
-#if __x86_64__
-	int no32exec;
-
-	/* disable 32 bit grading */
-	if (PE_parse_boot_argn("no32exec", &no32exec, sizeof(no32exec))) {
-		bootarg_no32exec = !!no32exec;
-	}
-#endif
-
-	int execfailure_crashreports;
-	/* enable crash reports on various exec failures */
-	if (PE_parse_boot_argn("execfailurecrashes", &execfailure_crashreports, sizeof(execfailure_crashreports))) {
-		bootarg_execfailurereports = !!execfailure_crashreports;
-	}
-
-	/* disable vnode_cache_is_authorized() by setting vnode_cache_defeat */
-	if (PE_parse_boot_argn("-vnode_cache_defeat", namep, sizeof(namep))) {
-		bootarg_vnode_cache_defeat = 1;
-	}
-
-#if DEVELOPMENT || DEBUG
-	if (PE_parse_boot_argn("-disable_aslr", namep, sizeof(namep))) {
-		bootarg_disable_aslr = 1;
-	}
-#endif
-
-
-
-	PE_parse_boot_argn("ncl", &ncl, sizeof(ncl));
 	if (PE_parse_boot_argn("nbuf", &max_nbuf_headers,
 	    sizeof(max_nbuf_headers))) {
 		customnbuf = 1;
-	}
-
-#if CONFIG_MACF
-#if defined (__i386__) || defined (__x86_64__)
-	PE_parse_boot_argn("policy_check", &policy_check_flags, sizeof(policy_check_flags));
-#endif
-#endif  /* CONFIG_MACF */
-
-	if (PE_parse_boot_argn("msgbuf", &msgbuf, sizeof(msgbuf))) {
-		log_setsize(msgbuf);
-		oslog_setsize(msgbuf);
-	}
-
-	if (PE_parse_boot_argn("-novfscache", namep, sizeof(namep))) {
-		nc_disabled = 1;
-	}
-
-#if CONFIG_JETSAM && (DEVELOPMENT || DEBUG)
-	if (PE_parse_boot_argn("-no_vnode_jetsam", namep, sizeof(namep))) {
-		bootarg_no_vnode_jetsam = 1;
-	}
-#endif /* CONFIG_JETSAM && (DEVELOPMENT || DEBUG) */
-
-	if (PE_parse_boot_argn("-no_vnode_drain", namep, sizeof(namep))) {
-		bootarg_no_vnode_drain = 1;
 	}
 
 #if CONFIG_DARKBOOT
@@ -1389,17 +1241,30 @@ parse_bsd_args(void)
 	}
 #endif
 
-#if PROC_REF_DEBUG
-	if (PE_parse_boot_argn("-disable_procref_tracking", namep, sizeof(namep))) {
-		proc_ref_tracking_disabled = 1;
-	}
-#endif
 
-	PE_parse_boot_argn("sigrestrict", &sigrestrict_arg, sizeof(sigrestrict_arg));
+	if (PE_parse_boot_arg_str("panic-on-proc-crash", panic_on_proc_crash, sizeof(panic_on_proc_crash))) {
+		if (strlen(panic_on_proc_crash) > 0) {
+			use_panic_on_proc_crash = 1;
+		}
+	}
+
+	if (PE_parse_boot_arg_str("panic-on-proc-exit", panic_on_proc_exit, sizeof(panic_on_proc_exit))) {
+		if (strlen(panic_on_proc_exit) > 0) {
+			use_panic_on_proc_exit = 1;
+		}
+	}
+
+	if (PE_parse_boot_arg_str("panic-on-proc-spawn-fail", panic_on_proc_spawn_fail, sizeof(panic_on_proc_spawn_fail))) {
+		if (strlen(panic_on_proc_spawn_fail) > 0) {
+			use_panic_on_proc_spawn_fail = 1;
+		}
+	}
 
 #if DEVELOPMENT || DEBUG
-	if (PE_parse_boot_argn("-no_sigsys", namep, sizeof(namep))) {
-		send_sigsys = false;
+	if (PE_parse_boot_argn("dyldsuffix", dyld_suffix, sizeof(dyld_suffix))) {
+		if (strlen(dyld_suffix) > 0) {
+			use_dyld_suffix = 1;
+		}
 	}
 
 	if (PE_parse_boot_argn("alt-dyld", dyld_alt_path, sizeof(dyld_alt_path))) {
@@ -1407,88 +1272,52 @@ parse_bsd_args(void)
 			use_alt_dyld = 1;
 		}
 	}
-	PE_parse_boot_argn("dyld_flags", &dyld_flags, sizeof(dyld_flags));
 
-	if (PE_parse_boot_argn("-disable_syscallfilter", &namep, sizeof(namep))) {
-		syscallfilter_disable = 1;
+	if (PE_i_can_has_debugger(NULL) && PE_parse_boot_argn("-hide_process_traced", namep, sizeof(namep))) {
+		bootarg_hide_process_traced = 1;
 	}
-
-#if __arm64__
-	if (PE_parse_boot_argn("legacy_footprint_entitlement_mode", &legacy_footprint_entitlement_mode, sizeof(legacy_footprint_entitlement_mode))) {
-		/*
-		 * legacy_footprint_entitlement_mode specifies the behavior we want associated
-		 * with the entitlement. The supported modes are:
-		 *
-		 * LEGACY_FOOTPRINT_ENTITLEMENT_IGNORE:
-		 *	Indicates that we want every process to have the memory accounting
-		 *	that is available in iOS 12.0 and beyond.
-		 *
-		 * LEGACY_FOOTPRINT_ENTITLEMENT_IOS11_ACCT:
-		 *	Indicates that for every process that has the 'legacy footprint entitlement',
-		 *      we want to give it the old iOS 11.0 accounting behavior which accounted some
-		 *	of the process's memory to the kernel.
-		 *
-		 * LEGACY_FOOTPRINT_ENTITLEMENT_LIMIT_INCREASE:
-		 *      Indicates that for every process that has the 'legacy footprint entitlement',
-		 *	we want it to have a higher memory limit which will help them acclimate to the
-		 *	iOS 12.0 (& beyond) accounting behavior that does the right accounting.
-		 *      The bonus added to the system-wide task limit to calculate this higher memory limit
-		 *      is available in legacy_footprint_bonus_mb.
-		 */
-
-		if (legacy_footprint_entitlement_mode < LEGACY_FOOTPRINT_ENTITLEMENT_IGNORE ||
-		    legacy_footprint_entitlement_mode > LEGACY_FOOTPRINT_ENTITLEMENT_LIMIT_INCREASE) {
-			legacy_footprint_entitlement_mode = LEGACY_FOOTPRINT_ENTITLEMENT_LIMIT_INCREASE;
-		}
-	}
-#endif /* __arm64__ */
 #endif /* DEVELOPMENT || DEBUG */
 }
+STARTUP(TUNABLES, STARTUP_RANK_MIDDLE, parse_bsd_args);
 
 #if CONFIG_BASESYSTEMROOT
 
-extern const char* IOGetBootUUID(void);
-extern const char* IOGetApfsPrebootUUID(void);
+extern bool IOGetBootUUID(char *);
+extern bool IOGetApfsPrebootUUID(char *);
 
-// Get the UUID of the Preboot (and Recovery) folder associated with the
+
+// This function returns the UUID of the Preboot (and Recovery) folder associated with the
 // current boot volume, if applicable. The meaning of the UUID can be
 // filesystem-dependent and not all kinds of boots will have a UUID.
-// If available, the string will be returned. It does not need to be
-// deallocate. (Future: if we need to return the string as a copy that the
-// caller must free, we'll introduce a new functcion for that.)
-// NULL will be returned if the current boot has no applicable Preboot UUID.
-static
-const char *
-get_preboot_uuid(void)
+// On success, the UUID is copied into the past-in parameter and TRUE is returned.
+// In case the current boot has no applicable Preboot UUID, FALSE is returned.
+static bool
+get_preboot_uuid(uuid_string_t maybe_uuid_string)
 {
-	const char *maybe_uuid_string;
-
 	// try IOGetApfsPrebootUUID
-	maybe_uuid_string = IOGetApfsPrebootUUID();
-	if (maybe_uuid_string) {
+	if (IOGetApfsPrebootUUID(maybe_uuid_string)) {
 		uuid_t maybe_uuid;
 		int error = uuid_parse(maybe_uuid_string, maybe_uuid);
 		if (error == 0) {
-			return maybe_uuid_string;
+			return true;
 		}
 	}
 
 	// try IOGetBootUUID
-	maybe_uuid_string = IOGetBootUUID();
-	if (maybe_uuid_string) {
+	if (IOGetBootUUID(maybe_uuid_string)) {
 		uuid_t maybe_uuid;
 		int error = uuid_parse(maybe_uuid_string, maybe_uuid);
 		if (error == 0) {
-			return maybe_uuid_string;
+			return true;
 		}
 	}
 
 	// didn't find it
-	return NULL;
+	return false;
 }
 
 #if defined(__arm64__)
-extern const char *IOGetBootObjectsPath(void);
+extern bool IOGetBootObjectsPath(char *);
 #endif
 
 // Find the BaseSystem.dmg to be used as the initial root volume during certain
@@ -1541,8 +1370,9 @@ bsd_find_basesystem_dmg(char *bsdmgpath_out, bool *rooted_dmg, bool *skip_signat
 	}
 
 #if defined(__arm64__)
-	const char *boot_obj_path = IOGetBootObjectsPath();
-	if (boot_obj_path) {
+	char boot_obj_path[MAXPATHLEN] = "";
+
+	if (IOGetBootObjectsPath(boot_obj_path)) {
 		if (boot_obj_path[0] == '/') {
 			dmgbasepath[len - 1] = '\0';
 		}
@@ -1602,8 +1432,8 @@ bsd_find_basesystem_dmg(char *bsdmgpath_out, bool *rooted_dmg, bool *skip_signat
 	}
 #endif // __arm64__
 
-	const char *preboot_uuid = get_preboot_uuid();
-	if (preboot_uuid == NULL) {
+	uuid_string_t preboot_uuid;
+	if (!get_preboot_uuid(preboot_uuid)) {
 		// no preboot? bail out
 		return EINVAL;
 	}

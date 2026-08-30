@@ -211,7 +211,7 @@ static void fasttrap_proc_release(fasttrap_proc_t *);
  * 20k elements allocated, the space saved is substantial.
  */
 
-ZONE_DECLARE(fasttrap_tracepoint_t_zone, "dtrace.fasttrap_tracepoint_t",
+ZONE_DEFINE(fasttrap_tracepoint_t_zone, "dtrace.fasttrap_tracepoint_t",
     sizeof(fasttrap_tracepoint_t), ZC_NONE);
 
 /*
@@ -464,7 +464,7 @@ fasttrap_tracepoint_retire(proc_t *p, fasttrap_tracepoint_t *tp)
 		return;
 	lck_mtx_lock(&fasttrap_retired_mtx);
 	fasttrap_tracepoint_spec_t *s = &fasttrap_retired_spec[fasttrap_cur_retired++];
-	s->fttps_pid = p->p_pid;
+	s->fttps_pid = proc_getpid(p);
 	s->fttps_pc = tp->ftt_pc;
 
 	if (fasttrap_cur_retired == fasttrap_retired_size) {
@@ -570,7 +570,7 @@ fasttrap_setdebug(proc_t *p)
 	 * when the process text is modified, so register the intent
 	 * to allow invalid access beforehand.
 	 */
-	if ((p->p_csflags & (CS_KILL|CS_HARD))) {
+	if ((proc_getcsflags(p) & (CS_KILL|CS_HARD))) {
 		proc_unlock(p);
 		for (int i = 0; i < DTRACE_NCLIENTS; i++) {
 			dtrace_state_t *state = dtrace_state_get(i);
@@ -592,7 +592,7 @@ fasttrap_setdebug(proc_t *p)
 			 * should not be possible for the process to actually
 			 * disappear.
 			 */
-			struct proc_ident pident = proc_ident(p);
+			struct proc_ident pident = proc_ident_with_policy(p, IDENT_VALIDATION_PROC_EXACT);
 			sprunlock(p);
 			p = PROC_NULL;
 
@@ -621,7 +621,7 @@ fasttrap_setdebug(proc_t *p)
 static void
 fasttrap_fork(proc_t *p, proc_t *cp)
 {
-	pid_t ppid = p->p_pid;
+	pid_t ppid = proc_getpid(p);
 	unsigned int i;
 
 	ASSERT(current_proc() == p);
@@ -643,8 +643,8 @@ fasttrap_fork(proc_t *p, proc_t *cp)
 	 * We don't have to worry about the child process disappearing
 	 * because we're in fork().
 	 */
-	if (cp != sprlock(cp->p_pid)) {
-		printf("fasttrap_fork: sprlock(%d) returned a different proc\n", cp->p_pid);
+	if (cp != sprlock(proc_getpid(cp))) {
+		printf("fasttrap_fork: sprlock(%d) returned a different proc\n", proc_getpid(cp));
 		return;
 	}
 
@@ -767,8 +767,6 @@ fasttrap_tracepoint_enable(proc_t *p, fasttrap_probe_t *probe, uint_t index)
 	id = &probe->ftp_tps[index].fit_id;
 
 	ASSERT(probe->ftp_tps[index].fit_tp->ftt_pid == pid);
-
-	//ASSERT(!(p->p_flag & SVFORK));
 
 	/*
 	 * Before we make any modifications, make sure we've imposed a barrier
@@ -1234,7 +1232,6 @@ fasttrap_pid_enable(void *arg, dtrace_id_t id, void *parg)
 		dtrace_ptss_enable(p);
 	}
 
-	// ASSERT(!(p->p_flag & SVFORK));
 	proc_unlock(p);
 
 	/*
@@ -1304,9 +1301,7 @@ fasttrap_pid_disable(void *arg, dtrace_id_t id, void *parg)
 	 * provider lock as a point of mutual exclusion to prevent other
 	 * DTrace consumers from disabling this probe.
 	 */
-	if ((p = sprlock(probe->ftp_pid)) != PROC_NULL) {
-		// ASSERT(!(p->p_flag & SVFORK));
-	}
+	p = sprlock(probe->ftp_pid);
 
 	lck_mtx_lock(&provider->ftp_mtx);
 
@@ -1370,6 +1365,7 @@ fasttrap_pid_getargdesc(void *arg, dtrace_id_t id, void *parg,
 	desc->dtargd_xlate[0] = '\0';
 
 	if (probe->ftp_prov->ftp_retired != 0 ||
+		desc->dtargd_ndx < 0 ||
 	    desc->dtargd_ndx >= probe->ftp_nargs) {
 		desc->dtargd_ndx = DTRACE_ARGNONE;
 		return;
@@ -1377,6 +1373,9 @@ fasttrap_pid_getargdesc(void *arg, dtrace_id_t id, void *parg,
 
 	ndx = (probe->ftp_argmap != NULL) ?
 		probe->ftp_argmap[desc->dtargd_ndx] : desc->dtargd_ndx;
+
+	if (probe->ftp_ntypes == NULL)
+		return;
 
 	str = probe->ftp_ntypes;
 	for (i = 0; i < ndx; i++) {
@@ -1594,7 +1593,7 @@ static fasttrap_provider_t *
 fasttrap_provider_lookup(proc_t *p, fasttrap_provider_type_t provider_type, const char *name,
     const dtrace_pattr_t *pattr)
 {
-	pid_t pid = p->p_pid;
+	pid_t pid = proc_getpid(p);
 	fasttrap_provider_t *fp, *new_fp = NULL;
 	fasttrap_bucket_t *bucket;
 	char provname[DTRACE_PROVNAMELEN];
@@ -1627,11 +1626,11 @@ fasttrap_provider_lookup(proc_t *p, fasttrap_provider_type_t provider_type, cons
 	lck_mtx_unlock(&bucket->ftb_mtx);
 
 	/*
-	 * Make sure the process isn't a child created as the result
-	 * of a vfork(2), and isn't a zombie (but may be in fork).
+	 * Make sure the process isn't a child
+	 * isn't a zombie (but may be in fork).
 	 */
 	proc_lock(p);
-	if (p->p_lflag & (P_LINVFORK | P_LEXIT)) {
+	if (p->p_lflag & P_LEXIT) {
 		proc_unlock(p);
 		return (NULL);
 	}
@@ -1654,7 +1653,7 @@ fasttrap_provider_lookup(proc_t *p, fasttrap_provider_type_t provider_type, cons
 
 	new_fp = kmem_zalloc(sizeof (fasttrap_provider_t), KM_SLEEP);
 	ASSERT(new_fp != NULL);
-	new_fp->ftp_pid = p->p_pid;
+	new_fp->ftp_pid = proc_getpid(p);
 	new_fp->ftp_proc = fasttrap_proc_lookup(pid);
 	new_fp->ftp_provider_type = provider_type;
 
@@ -1776,11 +1775,11 @@ fasttrap_provider_retire(proc_t *p, const char *name, int mprov)
 	dtrace_provider_id_t provid;
 	ASSERT(strlen(name) < sizeof (fp->ftp_name));
 
-	bucket = &fasttrap_provs.fth_table[FASTTRAP_PROVS_INDEX(p->p_pid, name)];
+	bucket = &fasttrap_provs.fth_table[FASTTRAP_PROVS_INDEX(proc_getpid(p), name)];
 	lck_mtx_lock(&bucket->ftb_mtx);
 
 	for (fp = bucket->ftb_data; fp != NULL; fp = fp->ftp_next) {
-		if (fp->ftp_pid == p->p_pid && strncmp(fp->ftp_name, name, sizeof(fp->ftp_name)) == 0 &&
+		if (fp->ftp_pid == proc_getpid(p) && strncmp(fp->ftp_name, name, sizeof(fp->ftp_name)) == 0 &&
 		    !fp->ftp_retired)
 			break;
 	}
@@ -1947,8 +1946,7 @@ fasttrap_add_probe(fasttrap_probe_spec_t *pdata)
 			}
 			provider->ftp_pcount++;
 
-			pp = zalloc(fasttrap_probe_t_zones[1]);
-			bzero(pp, sizeof (fasttrap_probe_t));
+			pp = zalloc_flags(fasttrap_probe_t_zones[1], Z_WAITOK | Z_ZERO);
 
 			pp->ftp_prov = provider;
 			pp->ftp_faddr = pdata->ftps_pc;
@@ -1956,14 +1954,13 @@ fasttrap_add_probe(fasttrap_probe_spec_t *pdata)
 			pp->ftp_pid = pdata->ftps_pid;
 			pp->ftp_ntps = 1;
 
-			tp = zalloc(fasttrap_tracepoint_t_zone);
-			bzero(tp, sizeof (fasttrap_tracepoint_t));
+			tp = zalloc_flags(fasttrap_tracepoint_t_zone, Z_WAITOK | Z_ZERO);
 
 			tp->ftt_proc = provider->ftp_proc;
 			tp->ftt_pc = pdata->ftps_offs[i] + pdata->ftps_pc;
 			tp->ftt_pid = pdata->ftps_pid;
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 			/*
 			 * On arm the subinfo is used to distinguish between arm
 			 * and thumb modes.  On arm64 there is no thumb mode, so
@@ -2007,8 +2004,8 @@ fasttrap_add_probe(fasttrap_probe_spec_t *pdata)
 		provider->ftp_pcount += pdata->ftps_noffs;
 		ASSERT(pdata->ftps_noffs > 0);
 		if (pdata->ftps_noffs < FASTTRAP_PROBE_T_ZONE_MAX_TRACEPOINTS) {
-			pp = zalloc(fasttrap_probe_t_zones[pdata->ftps_noffs]);
-			bzero(pp, offsetof(fasttrap_probe_t, ftp_tps[pdata->ftps_noffs]));
+			pp = zalloc_flags(fasttrap_probe_t_zones[pdata->ftps_noffs],
+			    Z_WAITOK | Z_ZERO);
 		} else {
 			pp = kmem_zalloc(offsetof(fasttrap_probe_t, ftp_tps[pdata->ftps_noffs]), KM_SLEEP);
 		}
@@ -2020,13 +2017,12 @@ fasttrap_add_probe(fasttrap_probe_spec_t *pdata)
 		pp->ftp_ntps = pdata->ftps_noffs;
 
 		for (i = 0; i < pdata->ftps_noffs; i++) {
-			tp = zalloc(fasttrap_tracepoint_t_zone);
-			bzero(tp, sizeof (fasttrap_tracepoint_t));
+			tp = zalloc_flags(fasttrap_tracepoint_t_zone, Z_WAITOK | Z_ZERO);
 			tp->ftt_proc = provider->ftp_proc;
 			tp->ftt_pc = pdata->ftps_offs[i] + pdata->ftps_pc;
 			tp->ftt_pid = pdata->ftps_pid;
 
-#if defined(__arm__) || defined (__arm64__)
+#if defined (__arm64__)
 			/*
 			 * On arm the subinfo is used to distinguish between arm
 			 * and thumb modes.  On arm64 there is no thumb mode, so
@@ -2144,7 +2140,7 @@ fasttrap_meta_provide(void *arg, dtrace_helper_provdesc_t *dhpv, proc_t *p)
 	if ((provider = fasttrap_provider_lookup(p, DTFTP_PROVIDER_USDT, dhpv->dthpv_provname,
 	    &dhpv->dthpv_pattr)) == NULL) {
 		cmn_err(CE_WARN, "failed to instantiate provider %s for "
-		    "process %u",  dhpv->dthpv_provname, (uint_t)p->p_pid);
+		    "process %u",  dhpv->dthpv_provname, (uint_t)proc_getpid(p));
 		return (NULL);
 	}
 
@@ -2250,8 +2246,7 @@ fasttrap_meta_create_probe(void *arg, void *parg,
 	provider->ftp_pcount += ntps;
 
 	if (ntps < FASTTRAP_PROBE_T_ZONE_MAX_TRACEPOINTS) {
-		pp = zalloc(fasttrap_probe_t_zones[ntps]);
-		bzero(pp, offsetof(fasttrap_probe_t, ftp_tps[ntps]));
+		pp = zalloc_flags(fasttrap_probe_t_zones[ntps], Z_WAITOK | Z_ZERO);
 	} else {
 		pp = kmem_zalloc(offsetof(fasttrap_probe_t, ftp_tps[ntps]), KM_SLEEP);
 	}
@@ -2267,8 +2262,7 @@ fasttrap_meta_create_probe(void *arg, void *parg,
 	 * First create a tracepoint for each actual point of interest.
 	 */
 	for (i = 0; i < dhpb->dthpb_noffs; i++) {
-		tp = zalloc(fasttrap_tracepoint_t_zone);
-		bzero(tp, sizeof (fasttrap_tracepoint_t));
+		tp = zalloc_flags(fasttrap_tracepoint_t_zone, Z_WAITOK | Z_ZERO);
 
 		tp->ftt_proc = provider->ftp_proc;
 
@@ -2282,7 +2276,7 @@ fasttrap_meta_create_probe(void *arg, void *parg,
 		 * Both 32 & 64 bit want to go back one byte, to point at the first NOP
 		 */
 		tp->ftt_pc = dhpb->dthpb_base + (int64_t)dhpb->dthpb_offs[i] - 1;
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm64__)
 		/*
 		 * All ARM and ARM64 probes are zero offset. We need to zero out the
 		 * thumb bit because we still support 32bit user processes.
@@ -2305,8 +2299,7 @@ fasttrap_meta_create_probe(void *arg, void *parg,
 	 * Then create a tracepoint for each is-enabled point.
 	 */
 	for (j = 0; i < ntps; i++, j++) {
-		tp = zalloc(fasttrap_tracepoint_t_zone);
-		bzero(tp, sizeof (fasttrap_tracepoint_t));
+		tp = zalloc_flags(fasttrap_tracepoint_t_zone, Z_WAITOK | Z_ZERO);
 
 		tp->ftt_proc = provider->ftp_proc;
 
@@ -2320,7 +2313,7 @@ fasttrap_meta_create_probe(void *arg, void *parg,
 		 * Both 32 & 64 bit want to go forward two bytes, to point at a single byte nop.
 		 */
 		tp->ftt_pc = dhpb->dthpb_base + (int64_t)dhpb->dthpb_enoffs[j] + 2;
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm64__)
 		/*
 		 * All ARM and ARM64 probes are zero offset. We need to zero out the
 		 * thumb bit because we still support 32bit user processes.
@@ -2435,8 +2428,8 @@ fasttrap_check_cred_priv(cred_t *cr, proc_t *p)
 
 #if CONFIG_MACF
 	/* Check with MAC framework when enabled. */
-	struct proc_ident cur_ident = proc_ident(current_proc());
-	struct proc_ident p_ident = proc_ident(p);
+	struct proc_ident cur_ident = proc_ident_with_policy(current_proc(), IDENT_VALIDATION_PROC_EXACT);
+	struct proc_ident p_ident = proc_ident_with_policy(p, IDENT_VALIDATION_PROC_EXACT);
 
 	/* Do not hold ref to proc here to avoid deadlock. */
 	proc_rele(p);
@@ -2741,8 +2734,8 @@ static const struct cdevsw fasttrap_cdevsw =
 	.d_read = eno_rdwrt,
 	.d_write = eno_rdwrt,
 	.d_ioctl = _fasttrap_ioctl,
-	.d_stop = (stop_fcn_t *)nulldev,
-	.d_reset = (reset_fcn_t *)nulldev,
+	.d_stop = eno_stop,
+	.d_reset = eno_reset,
 	.d_select = eno_select,
 	.d_mmap = eno_mmap,
 	.d_strategy = eno_strat,
@@ -2771,7 +2764,7 @@ fasttrap_init( void )
 		}
 
 		dev_t device = makedev( (uint32_t)majdevno, 0 );
-		if (NULL == devfs_make_node( device, DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "fasttrap", 0 )) {
+		if (NULL == devfs_make_node( device, DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "fasttrap" )) {
 			return;
 		}
 

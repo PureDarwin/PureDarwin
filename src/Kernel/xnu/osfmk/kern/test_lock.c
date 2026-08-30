@@ -5,7 +5,10 @@
 #include <mach/mach_host_server.h>
 #include <mach_debug/lockgroup_info.h>
 
+#include <os/atomic.h>
+
 #include <kern/locks.h>
+#include <kern/smr_hash.h>
 #include <kern/misc_protos.h>
 #include <kern/kalloc.h>
 #include <kern/thread.h>
@@ -18,1007 +21,543 @@
 #include <machine/atomic.h>
 #include <string.h>
 #include <kern/kalloc.h>
+#include <vm/vm_kern_xnu.h>
 
 #include <sys/kdebug.h>
+#include <sys/errno.h>
 
-static lck_mtx_t        test_mtx;
-static lck_grp_t        test_mtx_grp;
-static lck_grp_attr_t   test_mtx_grp_attr;
-static lck_attr_t       test_mtx_attr;
+#if SCHED_HYGIENE_DEBUG
+static uint64_t
+sane_us2abs(uint64_t us)
+{
+	uint64_t t;
+	nanoseconds_to_absolutetime(us * NSEC_PER_USEC, &t);
+	return t;
+}
+#endif
 
-static lck_grp_t        test_mtx_stats_grp;
-static lck_grp_attr_t   test_mtx_stats_grp_attr;
-static lck_attr_t       test_mtx_stats_attr;
+#if !KASAN
+static void
+hw_lck_ticket_test_wait_for_delta(hw_lck_ticket_t *lck, uint8_t delta, int msec)
+{
+	hw_lck_ticket_t tmp;
 
-struct lck_mtx_test_stats_elem {
-	lck_spin_t      lock;
-	uint64_t        samples;
-	uint64_t        avg;
-	uint64_t        max;
-	uint64_t        min;
-	uint64_t        tot;
+	delta *= HW_LCK_TICKET_LOCK_INCREMENT;
+	for (int i = 0; i < msec * 1000; i++) {
+		tmp.lck_value = os_atomic_load(&lck->lck_value, relaxed);
+#if CONFIG_PV_TICKET
+		const uint8_t cticket = tmp.cticket &
+		    ~HW_LCK_TICKET_LOCK_PVWAITFLAG;
+#else
+		const uint8_t cticket = tmp.cticket;
+#endif
+		if ((uint8_t)(tmp.nticket - cticket) == delta) {
+			return;
+		}
+		delay(1);
+	}
+	release_assert(false);
+}
+
+__dead2
+static void
+hw_lck_ticket_allow_invalid_worker(void *arg, wait_result_t __unused wr)
+{
+	hw_lck_ticket_t *lck = arg;
+	hw_lock_status_t rc;
+
+	/* wait until we can observe the test take the lock */
+	hw_lck_ticket_test_wait_for_delta(lck, 1, 10);
+
+	rc = hw_lck_ticket_lock_allow_invalid(lck,
+	    &hw_lock_test_give_up_policy, NULL);
+	release_assert(rc == HW_LOCK_INVALID); // because the other thread invalidated it
+	release_assert(preemption_enabled());
+
+	thread_terminate_self();
+	__builtin_unreachable();
+}
+#endif /* !KASAN */
+
+static int
+hw_lck_ticket_allow_invalid_test(__unused int64_t in, int64_t *out)
+{
+	vm_offset_t addr = 0;
+	hw_lck_ticket_t *lck;
+	kern_return_t kr;
+	hw_lock_status_t rc;
+
+	printf("%s: STARTING\n", __func__);
+
+	kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE,
+	    KMA_ZERO | KMA_KOBJECT, VM_KERN_MEMORY_DIAG);
+	if (kr != KERN_SUCCESS) {
+		printf("%s: kma failed (%d)\n", __func__, kr);
+		return ENOMEM;
+	}
+
+	lck = (hw_lck_ticket_t *)addr;
+	rc = hw_lck_ticket_lock_allow_invalid(lck,
+	    &hw_lock_test_give_up_policy, NULL);
+	release_assert(rc == HW_LOCK_INVALID); // because the lock is 0
+	release_assert(preemption_enabled());
+
+	hw_lck_ticket_init(lck, NULL);
+
+	release_assert(hw_lck_ticket_lock_try(lck, NULL));
+	release_assert(!hw_lck_ticket_lock_try(lck, NULL));
+	hw_lck_ticket_unlock(lck);
+
+	rc = hw_lck_ticket_lock_allow_invalid(lck,
+	    &hw_lock_test_give_up_policy, NULL);
+	release_assert(rc == HW_LOCK_ACQUIRED); // because the lock is initialized
+	release_assert(!preemption_enabled());
+
+#if SCHED_HYGIENE_DEBUG
+	if (os_atomic_load(&sched_preemption_disable_threshold_mt, relaxed) < sane_us2abs(20 * 1000)) {
+		/*
+		 * This test currently relies on timeouts that cannot always
+		 * be guaranteed (rdar://84691107). Abandon the measurement if
+		 * we have a tight timeout.
+		 */
+		abandon_preemption_disable_measurement();
+	}
+#endif
+
+	hw_lck_ticket_unlock(lck);
+	release_assert(preemption_enabled());
+
+#if !KASAN
+	thread_t th;
+
+	kr = kernel_thread_start_priority(hw_lck_ticket_allow_invalid_worker, lck,
+	    BASEPRI_KERNEL, &th);
+	release_assert(kr == KERN_SUCCESS);
+	thread_deallocate(th);
+
+	/* invalidate the lock */
+	hw_lck_ticket_lock(lck, NULL);
+
+	/* wait for the worker thread to take the reservation */
+	hw_lck_ticket_test_wait_for_delta(lck, 2, 20);
+	hw_lck_ticket_invalidate(lck);
+	hw_lck_ticket_unlock(lck);
+	hw_lck_ticket_destroy(lck, NULL);
+
+	hw_lck_ticket_init(lck, NULL);
+#endif /* !KASAN */
+
+	kernel_memory_depopulate(addr, PAGE_SIZE, KMA_KOBJECT,
+	    VM_KERN_MEMORY_DIAG);
+
+	rc = hw_lck_ticket_lock_allow_invalid(lck,
+	    &hw_lock_test_give_up_policy, NULL);
+	release_assert(rc == HW_LOCK_INVALID); // because the memory is unmapped
+
+	kmem_free(kernel_map, addr, PAGE_SIZE);
+
+	printf("%s: SUCCESS\n", __func__);
+
+	*out = 1;
+	return 0;
+}
+SYSCTL_TEST_REGISTER(hw_lck_ticket_allow_invalid, hw_lck_ticket_allow_invalid_test);
+
+
+struct smrh_elem {
+	struct smrq_slink link;
+	uintptr_t         val;
 };
 
-#define TEST_MTX_LOCK_STATS                     0
-#define TEST_MTX_TRY_LOCK_STATS                 1
-#define TEST_MTX_LOCK_SPIN_STATS                2
-#define TEST_MTX_LOCK_SPIN_ALWAYS_STATS         3
-#define TEST_MTX_TRY_LOCK_SPIN_STATS            4
-#define TEST_MTX_TRY_LOCK_SPIN_ALWAYS_STATS     5
-#define TEST_MTX_UNLOCK_MTX_STATS               6
-#define TEST_MTX_UNLOCK_SPIN_STATS              7
-#define TEST_MTX_MAX_STATS                      8
-
-struct lck_mtx_test_stats_elem lck_mtx_test_stats[TEST_MTX_MAX_STATS];
-atomic_bool enabled = TRUE;
-
-static void
-init_test_mtx_stats(void)
+static bool
+smrh_elem_try_get(void *arg __unused)
 {
-	int i;
-
-	lck_grp_attr_setdefault(&test_mtx_stats_grp_attr);
-	lck_grp_init(&test_mtx_stats_grp, "testlck_stats_mtx", &test_mtx_stats_grp_attr);
-	lck_attr_setdefault(&test_mtx_stats_attr);
-
-	atomic_store(&enabled, TRUE);
-	for (i = 0; i < TEST_MTX_MAX_STATS; i++) {
-		memset(&lck_mtx_test_stats[i], 0, sizeof(struct lck_mtx_test_stats_elem));
-		lck_mtx_test_stats[i].min = ~0;
-		lck_spin_init(&lck_mtx_test_stats[i].lock, &test_mtx_stats_grp, &test_mtx_stats_attr);
-	}
+	return true;
 }
 
-static void
-update_test_mtx_stats(
-	uint64_t start,
-	uint64_t end,
-	uint type)
+SMRH_TRAITS_DEFINE_SCALAR(smrh_test_traits, struct smrh_elem, val, link,
+    .domain      = &smr_system,
+    .obj_try_get = smrh_elem_try_get);
+
+LCK_GRP_DECLARE(smrh_test_grp, "foo");
+LCK_MTX_DECLARE(smrh_test_lck, &smrh_test_grp);
+
+static int
+smr_hash_basic_test(__unused int64_t in, int64_t *out)
 {
-	if (atomic_load(&enabled) == TRUE) {
-		assert(type < TEST_MTX_MAX_STATS);
-		assert(start <= end);
+	__auto_type T = &smrh_test_traits;
+	const size_t nelems = 64;
+	struct smrh_elem e_buf[nelems];
+	struct smr_hash h_buf;
 
-		uint64_t elapsed = end - start;
-		struct lck_mtx_test_stats_elem* stat = &lck_mtx_test_stats[type];
+	struct smrh_elem *elems = e_buf;
+	struct smr_hash *h = &h_buf;
 
-		lck_spin_lock(&stat->lock);
+	__auto_type check_content = ^{
+		struct smrh_elem *e;
+		smrh_key_t key;
+		bool seen[nelems] = { };
 
-		stat->samples++;
-		stat->tot += elapsed;
-		stat->avg = stat->tot / stat->samples;
-		if (stat->max < elapsed) {
-			stat->max = elapsed;
+		assert3u(smr_hash_serialized_count(h), ==, nelems / 2);
+
+		for (int i = 0; i < nelems / 2; i++) {
+			key = SMRH_SCALAR_KEY(elems[i].val);
+			release_assert(smr_hash_entered_find(h, key, T));
+
+			key = SMRH_SCALAR_KEY(elems[i + nelems / 2].val);
+			release_assert(!smr_hash_entered_find(h, key, T));
 		}
-		if (stat->min > elapsed) {
-			stat->min = elapsed;
+
+		smr_hash_foreach(e, h, T) {
+			for (int i = 0; i < nelems / 2; i++) {
+				if (e->val == elems[i].val) {
+					release_assert(!seen[i]);
+					seen[i] = true;
+					break;
+				}
+			}
 		}
-		lck_spin_unlock(&stat->lock);
+
+		for (int i = 0; i < nelems / 2; i++) {
+			release_assert(seen[i]);
+		}
+	};
+
+	printf("%s: STARTING\n", __func__);
+
+	smr_hash_init_empty(h);
+
+	assert3u(smr_hash_serialized_count(h), ==, 0);
+	release_assert(!smr_hash_entered_find(h, SMRH_SCALAR_KEY(0ul), T));
+	release_assert(!smr_hash_entered_find(h, SMRH_SCALAR_KEY(42ul), T));
+	release_assert(!smr_hash_entered_find(h, SMRH_SCALAR_KEY(314ul), T));
+	release_assert(smr_hash_is_empty_initialized(h));
+
+	smr_hash_init(h, 4);
+
+	release_assert(!smr_hash_is_empty_initialized(h));
+
+	printf("%s: populating the hash with unique entries\n", __func__);
+
+	uintptr_t base = early_random();
+	for (size_t i = 0; i < nelems; i++) {
+		elems[i].val = base + (uint16_t)early_random() + 1;
+		base = elems[i].val;
 	}
-}
 
-static void
-erase_test_mtx_stats(
-	uint type)
-{
-	assert(type < TEST_MTX_MAX_STATS);
-	struct lck_mtx_test_stats_elem* stat = &lck_mtx_test_stats[type];
-
-	lck_spin_lock(&stat->lock);
-
-	stat->samples = 0;
-	stat->tot = 0;
-	stat->avg = 0;
-	stat->max = 0;
-	stat->min = ~0;
-
-	lck_spin_unlock(&stat->lock);
-}
-
-void
-erase_all_test_mtx_stats(void)
-{
-	int i;
-	for (i = 0; i < TEST_MTX_MAX_STATS; i++) {
-		erase_test_mtx_stats(i);
+	for (int i = 0; i < nelems / 2; i++) {
+		smr_hash_serialized_insert(h, &elems[i].link, T);
 	}
+	check_content();
+
+	static bool progression[4] = {
+		1, 1, 0, 0,
+	};
+
+	for (int step = 0; step < ARRAY_COUNT(progression); step++) {
+		if (progression[step]) {
+			printf("%s: growing the hash\n", __func__);
+			lck_mtx_lock(&smrh_test_lck);
+			smr_hash_grow_and_unlock(h, &smrh_test_lck, T);
+		} else {
+			printf("%s: shrinking the hash\n", __func__);
+			lck_mtx_lock(&smrh_test_lck);
+			smr_hash_shrink_and_unlock(h, &smrh_test_lck, T);
+		}
+		check_content();
+	}
+
+	printf("%s: destroying the hash\n", __func__);
+	smr_hash_destroy(h);
+
+	printf("%s: SUCCESS\n", __func__);
+
+	*out = 1;
+	return 0;
+}
+SYSCTL_TEST_REGISTER(smr_hash_basic, smr_hash_basic_test);
+
+static int
+smr_shash_basic_test(__unused int64_t in, int64_t *out)
+{
+	__auto_type T = &smrh_test_traits;
+	const size_t nelems = 8192;
+	const size_t never  =  512; /* never inserted elements */
+	struct smr_shash h_buf;
+
+	struct smrh_elem *elems;
+	struct smr_shash *h = &h_buf;
+
+	elems = kalloc_type(struct smrh_elem, nelems, Z_WAITOK | Z_ZERO);
+	if (elems == 0) {
+		return ENOMEM;
+	}
+
+	__auto_type check_content = ^(size_t max_inserted){
+		smrh_key_t key;
+		size_t n = 0;
+
+		assert3u(counter_load(&h->smrsh_count), ==, max_inserted);
+
+		smrht_enter(T);
+
+		for (size_t i = 0; i < nelems; i++, n++) {
+			if (n > 0 && n % 32 == 0) {
+				smrht_leave(T);
+				smrht_enter(T);
+			}
+			key = SMRH_SCALAR_KEY(elems[i].val);
+			if (i < max_inserted) {
+				release_assert(smr_shash_entered_find(h, key, T));
+			} else {
+				release_assert(!smr_shash_entered_find(h, key, T));
+			}
+		}
+
+		smrht_leave(T);
+	};
+
+	printf("%s: STARTING\n", __func__);
+
+	smr_shash_init(h, SMRSH_COMPACT, 8);
+
+	printf("%s: populating the hash with unique entries\n", __func__);
+
+	uintptr_t base = early_random();
+	for (size_t i = 0; i < nelems; i++) {
+		elems[i].val = base + (uint32_t)early_random();
+		base = elems[i].val;
+	}
+
+	printf("%s: insert into the hash, triggering several resizes\n", __func__);
+
+	for (size_t i = 0; i < nelems - never; i++) {
+		smrh_key_t key = SMRH_SCALAR_KEY(elems[i].val);
+		struct smrh_elem *dupe;
+
+		if (i > 0 && i % 32 == 0) {
+			check_content(i);
+		}
+
+		dupe = smr_shash_get_or_insert(h, key, &elems[i].link, T);
+		release_assert(dupe == NULL);
+	}
+	check_content(nelems - never);
+
+	printf("%s: remove from the hash, triggering several resizes\n", __func__);
+
+	for (size_t i = nelems - never; i-- > 0;) {
+		smr_shash_remove(h, &elems[i].link, T);
+
+		if (i % 32 == 0) {
+			check_content(i);
+		}
+	}
+
+	printf("%s: destroying the hash\n", __func__);
+	smr_shash_destroy(h, T, NULL);
+
+	printf("%s: SUCCESS\n", __func__);
+
+	kfree_type(struct smrh_elem, nelems, elems);
+
+	*out = 1;
+	return 0;
+}
+SYSCTL_TEST_REGISTER(smr_shash_basic, smr_shash_basic_test);
+
+struct smr_ctx {
+	thread_t        driver;
+	smr_t           smr;
+	uint32_t        active;
+	uint32_t        idx;
+	uint64_t        deadline;
+	uint32_t        calls_sent;
+	uint32_t        calls_done;
+	uint32_t        syncs_done;
+	uint32_t        barriers_done;
+};
+
+struct smr_call_ctx {
+	struct smr_node node;
+	struct smr_ctx *ctx;
+};
+
+static void
+smr_sleepable_stress_cb(smr_node_t node)
+{
+	struct smr_call_ctx *cctx;
+
+	cctx = __container_of(node, struct smr_call_ctx, node);
+	os_atomic_inc(&cctx->ctx->calls_done, relaxed);
+
+	kfree_type(struct smr_call_ctx, cctx);
 }
 
 static void
-disable_all_test_mtx_stats(void)
+smr_sleepable_stress_make_call(struct smr_ctx *ctx)
 {
-	atomic_store(&enabled, FALSE);
+	struct smr_call_ctx *cctx;
+
+	cctx = kalloc_type(struct smr_call_ctx, Z_WAITOK);
+	cctx->ctx = ctx;
+	os_atomic_inc(&ctx->calls_sent, relaxed);
+	smr_call(ctx->smr, &cctx->node, sizeof(*cctx), smr_sleepable_stress_cb);
 }
 
 static void
-enable_all_test_mtx_stats(void)
+smr_sleepable_stress_log(struct smr_ctx *ctx, uint64_t n)
 {
-	atomic_store(&enabled, TRUE);
+	printf("%s[%lld]: "
+	    "%d/%d calls, %d syncs, %d barriers, "
+	    "rd-seq: %ld, wr-seq: %ld\n",
+	    __func__, n,
+	    ctx->calls_done, ctx->calls_sent,
+	    ctx->syncs_done,
+	    ctx->barriers_done,
+	    ctx->smr->smr_clock.s_rd_seq / SMR_SEQ_INC,
+	    ctx->smr->smr_clock.s_wr_seq / SMR_SEQ_INC);
+}
+
+static uint32_t
+smr_sleepable_stress_idx(struct smr_ctx *ctx, thread_t self)
+{
+	if (ctx->driver == self) {
+		return 0;
+	}
+	return os_atomic_inc(&ctx->idx, relaxed);
+}
+
+
+static void
+smr_sleepable_stress_worker(void *arg, wait_result_t wr __unused)
+{
+	thread_t self = current_thread();
+	struct smr_ctx *ctx = arg;
+	smr_t smr = ctx->smr;
+
+	const uint64_t step = NSEC_PER_SEC / 4;
+	const uint64_t start = mach_absolute_time();
+	const uint32_t idx = smr_sleepable_stress_idx(ctx, self);
+
+	uint64_t now, delta, last = 0;
+
+	printf("%s: thread %p starting\n", __func__, self);
+
+	while ((now = mach_absolute_time()) < ctx->deadline) {
+		struct smr_tracker smrt;
+		uint64_t what;
+
+		if (idx == 0) {
+			absolutetime_to_nanoseconds(now - start, &delta);
+			if (delta >= (last + 1) * step) {
+				last = delta / step;
+				smr_sleepable_stress_log(ctx, last);
+			}
+		}
+
+		smr_enter_sleepable(smr, &smrt);
+		release_assert(smr_entered(smr));
+
+		what = early_random() % 100;
+		if (what == 0 && idx == 1) {
+			/* 1% of the time, sleep for a long time */
+			delay_for_interval(1, NSEC_PER_MSEC);
+		} else if (what < 10) {
+			/* 9% of the time, just yield */
+			thread_block_reason(THREAD_CONTINUE_NULL, NULL, AST_YIELD);
+		} else if (what < 30) {
+			/* 20% of the time, do some longer work on core */
+			uint64_t busy_start = mach_absolute_time();
+
+			do {
+				now = mach_absolute_time();
+				absolutetime_to_nanoseconds(now - busy_start, &delta);
+			} while (delta < (what + 50) * NSEC_PER_USEC);
+		}
+
+		release_assert(smr_entered(smr));
+		smr_leave_sleepable(smr, &smrt);
+
+		what = early_random() % 100;
+		if (what < 20) {
+			/* smr_call 20% of the time */
+			smr_sleepable_stress_make_call(ctx);
+		} else if (what < 22 && (idx & 1)) {
+			/* smr_synchronize 2% of the time for half the threads */
+			smr_synchronize(smr);
+			os_atomic_inc(&ctx->syncs_done, relaxed);
+		} else if (what < 23 && (idx & 1)) {
+			/* smr_barrier 1% of the time for half the threads */
+			smr_barrier(smr);
+			os_atomic_inc(&ctx->barriers_done, relaxed);
+		}
+	}
+
+	printf("%s: thread %p done\n", __func__, self);
+
+	if (idx != 0) {
+		if (os_atomic_dec(&ctx->active, relaxed) == 0) {
+			thread_wakeup(ctx);
+		}
+
+		thread_terminate_self();
+		__builtin_unreachable();
+	}
 }
 
 static int
-print_test_mtx_stats_string_name(
-	int type_num,
-	char* buffer,
-	int size)
+smr_sleepable_stress_test(int64_t seconds, int64_t *out)
 {
-	char* type = "";
-	switch (type_num) {
-	case TEST_MTX_LOCK_STATS:
-		type = "TEST_MTX_LOCK_STATS";
-		break;
-	case TEST_MTX_TRY_LOCK_STATS:
-		type = "TEST_MTX_TRY_LOCK_STATS";
-		break;
-	case TEST_MTX_LOCK_SPIN_STATS:
-		type = "TEST_MTX_LOCK_SPIN_STATS";
-		break;
-	case TEST_MTX_LOCK_SPIN_ALWAYS_STATS:
-		type = "TEST_MTX_LOCK_SPIN_ALWAYS_STATS";
-		break;
-	case TEST_MTX_TRY_LOCK_SPIN_STATS:
-		type = "TEST_MTX_TRY_LOCK_SPIN_STATS";
-		break;
-	case TEST_MTX_TRY_LOCK_SPIN_ALWAYS_STATS:
-		type = "TEST_MTX_TRY_LOCK_SPIN_ALWAYS_STATS";
-		break;
-	case TEST_MTX_UNLOCK_MTX_STATS:
-		type = "TEST_MTX_UNLOCK_MTX_STATS";
-		break;
-	case TEST_MTX_UNLOCK_SPIN_STATS:
-		type = "TEST_MTX_UNLOCK_SPIN_STATS";
-		break;
-	default:
-		break;
+	thread_pri_floor_t token;
+	struct smr_ctx ctx = { };
+	thread_t th;
+
+	if (seconds > 60) {
+		return EINVAL;
 	}
 
-	return scnprintf(buffer, size, "%s ", type);
-}
+	printf("%s: STARTING\n", __func__);
 
-int
-get_test_mtx_stats_string(
-	char* buffer,
-	int size)
-{
-	int string_off = 0;
-	int ret = 0;
+	ctx.active = zpercpu_count() * 2; /* overcommit the system on purpose */
+	ctx.driver = current_thread();
+	ctx.smr    = smr_domain_create(SMR_SLEEPABLE, "test (sleepable)");
+	assert3p(ctx.smr, !=, NULL);
 
-	ret = scnprintf(&buffer[string_off], size, "\n");
-	size -= ret;
-	string_off += ret;
-
-	int i;
-	for (i = 0; i < TEST_MTX_MAX_STATS; i++) {
-		struct lck_mtx_test_stats_elem* stat = &lck_mtx_test_stats[i];
-
-		ret = scnprintf(&buffer[string_off], size, "{ ");
-		size -= ret;
-		string_off += ret;
-
-		lck_spin_lock(&stat->lock);
-		uint64_t time;
-
-		ret = scnprintf(&buffer[string_off], size, "samples %llu, ", stat->samples);
-		size -= ret;
-		string_off += ret;
-
-		absolutetime_to_nanoseconds(stat->tot, &time);
-		ret = scnprintf(&buffer[string_off], size, "tot %llu ns, ", time);
-		size -= ret;
-		string_off += ret;
-
-		absolutetime_to_nanoseconds(stat->avg, &time);
-		ret = scnprintf(&buffer[string_off], size, "avg %llu ns, ", time);
-		size -= ret;
-		string_off += ret;
-
-		absolutetime_to_nanoseconds(stat->max, &time);
-		ret = scnprintf(&buffer[string_off], size, "max %llu ns, ", time);
-		size -= ret;
-		string_off += ret;
-
-		absolutetime_to_nanoseconds(stat->min, &time);
-		ret = scnprintf(&buffer[string_off], size, "min %llu ns", time);
-		size -= ret;
-		string_off += ret;
-
-		lck_spin_unlock(&stat->lock);
-
-		ret = scnprintf(&buffer[string_off], size, " } ");
-		size -= ret;
-		string_off += ret;
-
-		ret = print_test_mtx_stats_string_name(i, &buffer[string_off], size);
-		size -= ret;
-		string_off += ret;
-
-		ret = scnprintf(&buffer[string_off], size, "\n");
-		size -= ret;
-		string_off += ret;
-	}
-
-	return string_off;
-}
-
-void
-lck_mtx_test_init(void)
-{
-	static int first = 0;
+	clock_interval_to_deadline((uint32_t)seconds, NSEC_PER_SEC, &ctx.deadline);
 
 	/*
-	 * This should be substituted with a version
-	 * of dispatch_once for kernel (rdar:39537874)
+	 * We will relatively massively hammer the system,
+	 * stay above that crowd.
 	 */
-	if (os_atomic_load(&first, acquire) >= 2) {
-		return;
+	token = thread_priority_floor_start();
+
+	for (uint32_t i = 1; i < ctx.active; i++) {
+		kernel_thread_start_priority(smr_sleepable_stress_worker,
+		    &ctx, BASEPRI_DEFAULT, &th);
+		thread_deallocate(th);
 	}
 
-	if (os_atomic_cmpxchg(&first, 0, 1, relaxed)) {
-		lck_grp_attr_setdefault(&test_mtx_grp_attr);
-		lck_grp_init(&test_mtx_grp, "testlck_mtx", &test_mtx_grp_attr);
-		lck_attr_setdefault(&test_mtx_attr);
-		lck_mtx_init(&test_mtx, &test_mtx_grp, &test_mtx_attr);
+	smr_sleepable_stress_worker(&ctx, THREAD_AWAKENED);
 
-		init_test_mtx_stats();
+	thread_priority_floor_end(&token);
 
-		os_atomic_inc(&first, release);
+	assert_wait(&ctx, THREAD_UNINT);
+	if (os_atomic_dec(&ctx.active, relaxed) == 0) {
+		clear_wait(ctx.driver, THREAD_AWAKENED);
+	} else {
+		thread_block(THREAD_CONTINUE_NULL);
 	}
 
-	while (os_atomic_load(&first, acquire) < 2) {
-		;
-	}
+	smr_barrier(ctx.smr); /* to get accurate stats */
+	smr_sleepable_stress_log(&ctx, seconds * 4);
+	smr_domain_free(ctx.smr);
+
+	assert3u(ctx.calls_done, ==, ctx.calls_sent);
+
+	printf("%s: SUCCESS\n", __func__);
+
+	*out = 1;
+	return 0;
 }
-
-void
-lck_mtx_test_lock(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_lock(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_LOCK_STATS);
-}
-
-static void
-lck_mtx_test_try_lock(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_try_lock(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_TRY_LOCK_STATS);
-}
-
-static void
-lck_mtx_test_lock_spin(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_lock_spin(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_LOCK_SPIN_STATS);
-}
-
-static void
-lck_mtx_test_lock_spin_always(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_lock_spin_always(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_LOCK_SPIN_ALWAYS_STATS);
-}
-
-static void
-lck_mtx_test_try_lock_spin(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_try_lock_spin(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_TRY_LOCK_SPIN_STATS);
-}
-
-static void
-lck_mtx_test_try_lock_spin_always(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_try_lock_spin_always(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_TRY_LOCK_SPIN_ALWAYS_STATS);
-}
-
-void
-lck_mtx_test_unlock(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_unlock(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_UNLOCK_MTX_STATS);
-}
-
-static void
-lck_mtx_test_unlock_mtx(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_unlock(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_UNLOCK_MTX_STATS);
-}
-
-static void
-lck_mtx_test_unlock_spin(void)
-{
-	uint64_t start;
-
-	start = mach_absolute_time();
-
-	lck_mtx_unlock(&test_mtx);
-
-	update_test_mtx_stats(start, mach_absolute_time(), TEST_MTX_UNLOCK_SPIN_STATS);
-}
-
-#define WARMUP_ITER     1000
-
-int
-lck_mtx_test_mtx_uncontended_loop_time(
-	int iter, char *buffer, int size)
-{
-	int i;
-	uint64_t tot_time[TEST_MTX_MAX_STATS];
-	uint64_t run_time[TEST_MTX_MAX_STATS];
-	uint64_t start;
-	uint64_t start_run;
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_lock(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	start_run = thread_get_runtime_self();
-	start = mach_absolute_time();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_lock(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	absolutetime_to_nanoseconds(mach_absolute_time() - start, &tot_time[TEST_MTX_LOCK_STATS]);
-	absolutetime_to_nanoseconds(thread_get_runtime_self() - start_run, &run_time[TEST_MTX_LOCK_STATS]);
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_try_lock(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	start_run = thread_get_runtime_self();
-	start = mach_absolute_time();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_try_lock(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	absolutetime_to_nanoseconds(mach_absolute_time() - start, &tot_time[TEST_MTX_TRY_LOCK_STATS]);
-	absolutetime_to_nanoseconds(thread_get_runtime_self() - start_run, &run_time[TEST_MTX_TRY_LOCK_STATS]);
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_lock_spin(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	start_run = thread_get_runtime_self();
-	start = mach_absolute_time();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_lock_spin(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	absolutetime_to_nanoseconds(mach_absolute_time() - start, &tot_time[TEST_MTX_LOCK_SPIN_STATS]);
-	absolutetime_to_nanoseconds(thread_get_runtime_self() - start_run, &run_time[TEST_MTX_LOCK_SPIN_STATS]);
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_lock_spin_always(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	start_run = thread_get_runtime_self();
-	start = mach_absolute_time();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_lock_spin_always(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	absolutetime_to_nanoseconds(mach_absolute_time() - start, &tot_time[TEST_MTX_LOCK_SPIN_ALWAYS_STATS]);
-	absolutetime_to_nanoseconds(thread_get_runtime_self() - start_run, &run_time[TEST_MTX_LOCK_SPIN_ALWAYS_STATS]);
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_try_lock_spin(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	start_run = thread_get_runtime_self();
-	start = mach_absolute_time();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_try_lock_spin(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	absolutetime_to_nanoseconds(mach_absolute_time() - start, &tot_time[TEST_MTX_TRY_LOCK_SPIN_STATS]);
-	absolutetime_to_nanoseconds(thread_get_runtime_self() - start_run, &run_time[TEST_MTX_TRY_LOCK_SPIN_STATS]);
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_try_lock_spin_always(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	start_run = thread_get_runtime_self();
-	start = mach_absolute_time();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_try_lock_spin_always(&test_mtx);
-		lck_mtx_unlock(&test_mtx);
-	}
-
-	absolutetime_to_nanoseconds(mach_absolute_time() - start, &tot_time[TEST_MTX_TRY_LOCK_SPIN_ALWAYS_STATS]);
-	absolutetime_to_nanoseconds(thread_get_runtime_self() - start_run, &run_time[TEST_MTX_TRY_LOCK_SPIN_ALWAYS_STATS]);
-
-	int string_off = 0;
-	int ret = 0;
-
-	ret = scnprintf(&buffer[string_off], size, "\n");
-	size -= ret;
-	string_off += ret;
-
-	for (i = 0; i < TEST_MTX_MAX_STATS - 2; i++) {
-		ret = scnprintf(&buffer[string_off], size, "total time %llu ns total run time %llu ns ", tot_time[i], run_time[i]);
-		size -= ret;
-		string_off += ret;
-
-		ret = print_test_mtx_stats_string_name(i, &buffer[string_off], size);
-		size -= ret;
-		string_off += ret;
-
-		ret = scnprintf(&buffer[string_off], size, "\n");
-		size -= ret;
-		string_off += ret;
-	}
-
-	return string_off;
-}
-
-static kern_return_t
-lck_mtx_test_mtx_lock_uncontended(
-	int iter)
-{
-	int i;
-
-	disable_all_test_mtx_stats();
-
-	//warming up the test for lock
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_test_lock();
-		lck_mtx_test_unlock_mtx();
-	}
-
-	enable_all_test_mtx_stats();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_test_lock();
-		lck_mtx_test_unlock_mtx();
-	}
-
-	disable_all_test_mtx_stats();
-
-	//warming up the test for try_lock
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_test_try_lock();
-		lck_mtx_test_unlock_mtx();
-	}
-
-	enable_all_test_mtx_stats();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_test_try_lock();
-		lck_mtx_test_unlock_mtx();
-	}
-
-	return KERN_SUCCESS;
-}
-
-static kern_return_t
-lck_mtx_test_mtx_spin_uncontended(
-	int iter)
-{
-	int i;
-
-	disable_all_test_mtx_stats();
-
-	//warming up the test for lock_spin
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_test_lock_spin();
-		lck_mtx_test_unlock_spin();
-	}
-
-	enable_all_test_mtx_stats();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_test_lock_spin();
-		lck_mtx_test_unlock_spin();
-	}
-
-	disable_all_test_mtx_stats();
-
-	//warming up the test for try_lock_spin
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_test_try_lock_spin();
-		lck_mtx_test_unlock_spin();
-	}
-
-	enable_all_test_mtx_stats();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_test_try_lock_spin();
-		lck_mtx_test_unlock_spin();
-	}
-
-	disable_all_test_mtx_stats();
-
-	//warming up the test for lock_spin_always
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_test_lock_spin_always();
-		lck_mtx_test_unlock_spin();
-	}
-
-	enable_all_test_mtx_stats();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_test_lock_spin_always();
-		lck_mtx_test_unlock_spin();
-	}
-
-	disable_all_test_mtx_stats();
-
-	//warming up the test for try_lock_spin_always
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_test_try_lock_spin_always();
-		lck_mtx_test_unlock_spin();
-	}
-
-	enable_all_test_mtx_stats();
-
-	for (i = 0; i < iter; i++) {
-		lck_mtx_test_try_lock_spin_always();
-		lck_mtx_test_unlock_spin();
-	}
-
-	return KERN_SUCCESS;
-}
-
-int
-lck_mtx_test_mtx_uncontended(
-	int iter,
-	char *buffer,
-	int size)
-{
-	erase_all_test_mtx_stats();
-	lck_mtx_test_mtx_lock_uncontended(iter);
-	lck_mtx_test_mtx_spin_uncontended(iter);
-
-	return get_test_mtx_stats_string(buffer, size);
-}
-
-static int synch;
-static int wait_barrier;
-static int iterations;
-static uint64_t start_loop_time;
-static uint64_t start_loop_time_run;
-static uint64_t end_loop_time;
-static uint64_t end_loop_time_run;
-
-struct lck_mtx_thread_arg {
-	int my_locked;
-	int* other_locked;
-	thread_t other_thread;
-	int type;
-};
-
-static void
-test_mtx_lock_unlock_contended_thread(
-	void *arg,
-	__unused wait_result_t wr)
-{
-	int i, val;
-	struct lck_mtx_thread_arg *info = (struct lck_mtx_thread_arg *) arg;
-	thread_t other_thread;
-	int* my_locked;
-	int* other_locked;
-	int type;
-	uint64_t start, stop;
-
-	printf("Starting thread %p\n", current_thread());
-
-	while (os_atomic_load(&info->other_thread, acquire) == NULL) {
-		;
-	}
-	other_thread = info->other_thread;
-
-	printf("Other thread %p\n", other_thread);
-
-	my_locked = &info->my_locked;
-	other_locked = info->other_locked;
-	type = info->type;
-
-	*my_locked = 0;
-	val = os_atomic_inc(&synch, relaxed);
-	while (os_atomic_load(&synch, relaxed) < 2) {
-		;
-	}
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_test_lock();
-		int prev = os_atomic_load(other_locked, relaxed);
-		os_atomic_add(my_locked, 1, relaxed);
-		if (i != WARMUP_ITER - 1) {
-			if (type == FULL_CONTENDED) {
-				while (os_atomic_load(&other_thread->state, relaxed) & TH_RUN) {
-					;
-				}
-			} else {
-				start = mach_absolute_time();
-				stop = start + (MutexSpin / 2);
-				while (mach_absolute_time() < stop) {
-					;
-				}
-			}
-		}
-
-		lck_mtx_test_unlock();
-
-		if (i != WARMUP_ITER - 1) {
-			while (os_atomic_load(other_locked, relaxed) == prev) {
-				;
-			}
-		}
-	}
-
-	printf("warmup done %p\n", current_thread());
-	os_atomic_inc(&synch, relaxed);
-	while (os_atomic_load(&synch, relaxed) < 4) {
-		;
-	}
-
-	//erase statistics
-	if (val == 1) {
-		erase_all_test_mtx_stats();
-	}
-
-	*my_locked = 0;
-	/*
-	 * synch the threads so they start
-	 * concurrently.
-	 */
-	os_atomic_inc(&synch, relaxed);
-	while (os_atomic_load(&synch, relaxed) < 6) {
-		;
-	}
-
-	for (i = 0; i < iterations; i++) {
-		lck_mtx_test_lock();
-		int prev = os_atomic_load(other_locked, relaxed);
-		os_atomic_add(my_locked, 1, relaxed);
-		if (i != iterations - 1) {
-			if (type == FULL_CONTENDED) {
-				while (os_atomic_load(&other_thread->state, relaxed) & TH_RUN) {
-					;
-				}
-			} else {
-				start = mach_absolute_time();
-				stop = start + (MutexSpin / 2);
-				while (mach_absolute_time() < stop) {
-					;
-				}
-			}
-		}
-		lck_mtx_test_unlock_mtx();
-
-		if (i != iterations - 1) {
-			while (os_atomic_load(other_locked, relaxed) == prev) {
-				;
-			}
-		}
-	}
-
-	os_atomic_inc(&wait_barrier, relaxed);
-	thread_wakeup((event_t) &wait_barrier);
-	thread_terminate_self();
-}
-
-
-kern_return_t
-lck_mtx_test_mtx_contended(
-	int iter,
-	char* buffer,
-	int buffer_size,
-	int type)
-{
-	thread_t thread1, thread2;
-	kern_return_t result;
-	struct lck_mtx_thread_arg targs[2] = {};
-	synch = 0;
-	wait_barrier = 0;
-	iterations = iter;
-
-	if (type < 0 || type > MAX_CONDENDED) {
-		printf("%s invalid type %d\n", __func__, type);
-		return 0;
-	}
-
-	erase_all_test_mtx_stats();
-
-	targs[0].other_thread = NULL;
-	targs[1].other_thread = NULL;
-	targs[0].type = type;
-	targs[1].type = type;
-
-	result = kernel_thread_start((thread_continue_t)test_mtx_lock_unlock_contended_thread, &targs[0], &thread1);
-	if (result != KERN_SUCCESS) {
-		return 0;
-	}
-
-	result = kernel_thread_start((thread_continue_t)test_mtx_lock_unlock_contended_thread, &targs[1], &thread2);
-	if (result != KERN_SUCCESS) {
-		thread_deallocate(thread1);
-		return 0;
-	}
-
-	/* this are t1 args */
-	targs[0].my_locked = 0;
-	targs[0].other_locked = &targs[1].my_locked;
-
-	os_atomic_xchg(&targs[0].other_thread, thread2, release);
-
-	/* this are t2 args */
-	targs[1].my_locked = 0;
-	targs[1].other_locked = &targs[0].my_locked;
-
-	os_atomic_xchg(&targs[1].other_thread, thread1, release);
-
-	while (os_atomic_load(&wait_barrier, relaxed) != 2) {
-		assert_wait((event_t) &wait_barrier, THREAD_UNINT);
-		if (os_atomic_load(&wait_barrier, relaxed) != 2) {
-			(void) thread_block(THREAD_CONTINUE_NULL);
-		} else {
-			clear_wait(current_thread(), THREAD_AWAKENED);
-		}
-	}
-
-	thread_deallocate(thread1);
-	thread_deallocate(thread2);
-
-	return get_test_mtx_stats_string(buffer, buffer_size);
-}
-
-static void
-test_mtx_lck_unlock_contended_loop_time_thread(
-	__unused void *arg,
-	__unused wait_result_t wr)
-{
-	int i, val;
-	struct lck_mtx_thread_arg *info = (struct lck_mtx_thread_arg *) arg;
-	thread_t other_thread;
-	int* my_locked;
-	int* other_locked;
-	int type;
-	uint64_t start, stop;
-
-	printf("Starting thread %p\n", current_thread());
-
-	while (os_atomic_load(&info->other_thread, acquire) == NULL) {
-		;
-	}
-	other_thread = info->other_thread;
-
-	printf("Other thread %p\n", other_thread);
-
-	my_locked = &info->my_locked;
-	other_locked = info->other_locked;
-	type = info->type;
-
-	*my_locked = 0;
-	val = os_atomic_inc(&synch, relaxed);
-	while (os_atomic_load(&synch, relaxed) < 2) {
-		;
-	}
-
-	//warming up the test
-	for (i = 0; i < WARMUP_ITER; i++) {
-		lck_mtx_lock(&test_mtx);
-
-		int prev = os_atomic_load(other_locked, relaxed);
-		os_atomic_add(my_locked, 1, relaxed);
-		if (i != WARMUP_ITER - 1) {
-			if (type == FULL_CONTENDED) {
-				while (os_atomic_load(&other_thread->state, relaxed) & TH_RUN) {
-					;
-				}
-			} else {
-				start = mach_absolute_time();
-				stop = start + (MutexSpin / 2);
-				while (mach_absolute_time() < stop) {
-					;
-				}
-			}
-		}
-
-		lck_mtx_unlock(&test_mtx);
-
-		if (i != WARMUP_ITER - 1) {
-			while (os_atomic_load(other_locked, relaxed) == prev) {
-				;
-			}
-		}
-	}
-
-	printf("warmup done %p\n", current_thread());
-
-	os_atomic_inc(&synch, relaxed);
-	while (os_atomic_load(&synch, relaxed) < 4) {
-		;
-	}
-
-	*my_locked = 0;
-
-	/*
-	 * synch the threads so they start
-	 * concurrently.
-	 */
-	os_atomic_inc(&synch, relaxed);
-	while (os_atomic_load(&synch, relaxed) < 6) {
-		;
-	}
-
-	if (val == 1) {
-		start_loop_time_run = thread_get_runtime_self();
-		start_loop_time = mach_absolute_time();
-	}
-
-	for (i = 0; i < iterations; i++) {
-		lck_mtx_lock(&test_mtx);
-
-		int prev = os_atomic_load(other_locked, relaxed);
-		os_atomic_add(my_locked, 1, relaxed);
-		if (i != iterations - 1) {
-			if (type == FULL_CONTENDED) {
-				while (os_atomic_load(&other_thread->state, relaxed) & TH_RUN) {
-					;
-				}
-			} else {
-				start = mach_absolute_time();
-				stop = start + (MutexSpin / 2);
-				while (mach_absolute_time() < stop) {
-					;
-				}
-			}
-		}
-
-		lck_mtx_unlock(&test_mtx);
-
-		if (i != iterations - 1) {
-			while (os_atomic_load(other_locked, relaxed) == prev) {
-				;
-			}
-		}
-	}
-
-	if (val == 1) {
-		end_loop_time = mach_absolute_time();
-		end_loop_time_run = thread_get_runtime_self();
-	}
-
-	os_atomic_inc(&wait_barrier, relaxed);
-	thread_wakeup((event_t) &wait_barrier);
-	thread_terminate_self();
-}
-
-
-int
-lck_mtx_test_mtx_contended_loop_time(
-	int iter,
-	char *buffer,
-	int buffer_size,
-	int type)
-{
-	thread_t thread1, thread2;
-	kern_return_t result;
-	int ret;
-	struct lck_mtx_thread_arg targs[2] = {};
-	synch = 0;
-	wait_barrier = 0;
-	iterations = iter;
-	uint64_t time, time_run;
-
-	if (type < 0 || type > MAX_CONDENDED) {
-		printf("%s invalid type %d\n", __func__, type);
-		return 0;
-	}
-
-	targs[0].other_thread = NULL;
-	targs[1].other_thread = NULL;
-
-	result = kernel_thread_start((thread_continue_t)test_mtx_lck_unlock_contended_loop_time_thread, &targs[0], &thread1);
-	if (result != KERN_SUCCESS) {
-		return 0;
-	}
-
-	result = kernel_thread_start((thread_continue_t)test_mtx_lck_unlock_contended_loop_time_thread, &targs[1], &thread2);
-	if (result != KERN_SUCCESS) {
-		thread_deallocate(thread1);
-		return 0;
-	}
-
-	/* this are t1 args */
-	targs[0].my_locked = 0;
-	targs[0].other_locked = &targs[1].my_locked;
-	targs[0].type = type;
-	targs[1].type = type;
-
-	os_atomic_xchg(&targs[0].other_thread, thread2, release);
-
-	/* this are t2 args */
-	targs[1].my_locked = 0;
-	targs[1].other_locked = &targs[0].my_locked;
-
-	os_atomic_xchg(&targs[1].other_thread, thread1, release);
-
-	while (os_atomic_load(&wait_barrier, acquire) != 2) {
-		assert_wait((event_t) &wait_barrier, THREAD_UNINT);
-		if (os_atomic_load(&wait_barrier, acquire) != 2) {
-			(void) thread_block(THREAD_CONTINUE_NULL);
-		} else {
-			clear_wait(current_thread(), THREAD_AWAKENED);
-		}
-	}
-
-	thread_deallocate(thread1);
-	thread_deallocate(thread2);
-
-	absolutetime_to_nanoseconds(end_loop_time - start_loop_time, &time);
-	absolutetime_to_nanoseconds(end_loop_time_run - start_loop_time_run, &time_run);
-
-	ret = scnprintf(buffer, buffer_size, "\n");
-	ret += scnprintf(&buffer[ret], buffer_size - ret, "total time %llu ns total run time %llu ns ", time, time_run);
-	ret += print_test_mtx_stats_string_name(TEST_MTX_LOCK_STATS, &buffer[ret], buffer_size - ret);
-	ret += scnprintf(&buffer[ret], buffer_size - ret, "\n");
-
-	return ret;
-}
+SYSCTL_TEST_REGISTER(smr_sleepable_stress, smr_sleepable_stress_test);

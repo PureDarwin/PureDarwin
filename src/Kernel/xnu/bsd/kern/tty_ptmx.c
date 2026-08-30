@@ -227,8 +227,8 @@ ptmx_init( __unused int config_count)
 	    DEVFS_CHAR, UID_ROOT, GID_TTY, 0666,
 	    ptmx_clone, PTMX_TEMPLATE);
 
-	_ptmx_driver.master = ptmx_major;
-	_ptmx_driver.slave = ptsd_major;
+	_ptmx_driver.primary = ptmx_major;
+	_ptmx_driver.replica = ptsd_major;
 	_ptmx_driver.fix_7828447 = 1;
 	_ptmx_driver.fix_7070978 = 1;
 #if CONFIG_MACF
@@ -257,8 +257,8 @@ static struct _ptmx_ioctl_state {
  * one if possible.
  *
  * Parameters:	minor			Minor number of ptmx device
- *		open_flag		PF_OPEN_M	First open of master
- *					PF_OPEN_S	First open of slave
+ *		open_flag		PF_OPEN_M	First open of primary
+ *					PF_OPEN_S	First open of replica
  *					0		Just want ioctl struct
  *
  * Returns:	NULL			Did not exist/could not create
@@ -286,18 +286,16 @@ ptmx_get_ioctl(int minor, int open_flag)
 		 */
 		if ((_state.pis_total - _state.pis_free) >= ptmx_max) {
 			DEVFS_UNLOCK();
+			printf("ptmx_get_ioctl failed due to ptmx_max limit %d\n", ptmx_max);
 			return NULL;
 		}
 		DEVFS_UNLOCK();
 
-		new_ptmx_ioctl = kheap_alloc(KM_TTYS, sizeof(struct ptmx_ioctl),
-		    Z_WAITOK | Z_ZERO);
-		if (new_ptmx_ioctl == NULL) {
-			return NULL;
-		}
+		new_ptmx_ioctl = kalloc_type(struct ptmx_ioctl,
+		    Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 		if ((new_ptmx_ioctl->pt_tty = ttymalloc()) == NULL) {
-			kheap_free(KM_TTYS, new_ptmx_ioctl, sizeof(struct ptmx_ioctl));
+			kfree_type(struct ptmx_ioctl, new_ptmx_ioctl);
 			return NULL;
 		}
 
@@ -316,7 +314,8 @@ ptmx_get_ioctl(int minor, int open_flag)
 		if ((_state.pis_total - _state.pis_free) >= ptmx_max) {
 			ttyfree(new_ptmx_ioctl->pt_tty);
 			DEVFS_UNLOCK();
-			kheap_free(KM_TTYS, new_ptmx_ioctl, sizeof(struct ptmx_ioctl));
+			kfree_type(struct ptmx_ioctl, new_ptmx_ioctl);
+			printf("ptmx_get_ioctl failed due to ptmx_max limit %d\n", ptmx_max);
 			return NULL;
 		}
 
@@ -327,13 +326,12 @@ ptmx_get_ioctl(int minor, int open_flag)
 			size_t old_pis_total = 0;
 
 			/* Yes. */
-			new_pis_ioctl_list = kheap_alloc(KM_TTYS,
-			    sizeof(struct ptmx_ioctl *) * (_state.pis_total + PTMX_GROW_VECTOR),
-			    Z_WAITOK | Z_ZERO);
+			new_pis_ioctl_list = kalloc_type(struct ptmx_ioctl *,
+			    _state.pis_total + PTMX_GROW_VECTOR, Z_WAITOK | Z_ZERO);
 			if (new_pis_ioctl_list == NULL) {
 				ttyfree(new_ptmx_ioctl->pt_tty);
 				DEVFS_UNLOCK();
-				kheap_free(KM_TTYS, new_ptmx_ioctl, sizeof(struct ptmx_ioctl));
+				kfree_type(struct ptmx_ioctl, new_ptmx_ioctl);
 				return NULL;
 			}
 
@@ -344,24 +342,25 @@ ptmx_get_ioctl(int minor, int open_flag)
 			_state.pis_ioctl_list = new_pis_ioctl_list;
 			_state.pis_free += PTMX_GROW_VECTOR;
 			_state.pis_total += PTMX_GROW_VECTOR;
-			kheap_free(KM_TTYS, old_pis_ioctl_list,
-			    sizeof(struct ptmx_ioctl *) * old_pis_total);
+			kfree_type(struct ptmx_ioctl *, old_pis_total, old_pis_ioctl_list);
 		}
 
 		/* is minor in range now? */
 		if (minor < 0 || minor >= _state.pis_total) {
 			ttyfree(new_ptmx_ioctl->pt_tty);
 			DEVFS_UNLOCK();
-			kheap_free(KM_TTYS, new_ptmx_ioctl, sizeof(struct ptmx_ioctl));
+			kfree_type(struct ptmx_ioctl, new_ptmx_ioctl);
+			printf("ptmx_get_ioctl failed because minor number %d was out of range\n", minor);
 			return NULL;
 		}
 
 		if (_state.pis_ioctl_list[minor] != NULL) {
 			ttyfree(new_ptmx_ioctl->pt_tty);
 			DEVFS_UNLOCK();
-			kheap_free(KM_TTYS, new_ptmx_ioctl, sizeof(struct ptmx_ioctl));
+			kfree_type(struct ptmx_ioctl, new_ptmx_ioctl);
 
 			/* Special error value so we know to redrive the open, we've been raced */
+			/* XXX Can this still occur? */
 			return (struct ptmx_ioctl*)-1;
 		}
 
@@ -377,11 +376,11 @@ ptmx_get_ioctl(int minor, int open_flag)
 		DEVFS_UNLOCK();
 
 		/* Create the /dev/ttysXXX device {<major>,XXX} */
-		_state.pis_ioctl_list[minor]->pt_devhandle = devfs_make_node(
+		new_ptmx_ioctl->pt_devhandle = devfs_make_node(
 			makedev(ptsd_major, minor),
 			DEVFS_CHAR, UID_ROOT, GID_TTY, 0620,
 			PTSD_TEMPLATE, minor);
-		if (_state.pis_ioctl_list[minor]->pt_devhandle == NULL) {
+		if (new_ptmx_ioctl->pt_devhandle == NULL) {
 			printf("devfs_make_node() call failed for ptmx_get_ioctl()!!!!\n");
 		}
 	}
@@ -393,6 +392,9 @@ ptmx_get_ioctl(int minor, int open_flag)
 	DEVFS_LOCK();
 	if (minor >= 0 && minor < _state.pis_total) {
 		ptmx_ioctl = _state.pis_ioctl_list[minor];
+		if (ptmx_ioctl && (open_flag & PF_OPEN_S)) {
+			ptmx_ioctl->pt_flags |= PF_OPEN_S;
+		}
 	}
 	DEVFS_UNLOCK();
 
@@ -419,7 +421,7 @@ ptmx_free_ioctl(int minor, int open_flag)
 	/*
 	 * Was this the last close?  We will recognize it because we only get
 	 * a notification on the last close of a device, and we will have
-	 * cleared both the master and the slave open bits in the flags.
+	 * cleared both the primary and the replica open bits in the flags.
 	 */
 	if (!(_state.pis_ioctl_list[minor]->pt_flags & (PF_OPEN_M | PF_OPEN_S))) {
 		/* Mark as free so it can be reallocated later */
@@ -441,7 +443,7 @@ ptmx_free_ioctl(int minor, int open_flag)
 			devfs_remove(old_ptmx_ioctl->pt_devhandle);
 		}
 		ttyfree(old_ptmx_ioctl->pt_tty);
-		kheap_free(KM_TTYS, old_ptmx_ioctl, sizeof(struct ptmx_ioctl));
+		kfree_type(struct ptmx_ioctl, old_ptmx_ioctl);
 	}
 
 	return 0;     /* Success */
@@ -528,7 +530,7 @@ SECURITY_READ_ONLY_EARLY(struct filterops) ptsd_kqops = {
 
 /*
  * In the normal case, by the time the driver_close() routine is called
- * on the slave, all knotes have been detached.  However in the revoke(2)
+ * on the replica, all knotes have been detached.  However in the revoke(2)
  * case, the driver's close routine is called while there are knotes active
  * that reference the handlers below.  And we have no obvious means to
  * reach from the driver out to the kqueue's that reference them to get
@@ -538,15 +540,17 @@ SECURITY_READ_ONLY_EARLY(struct filterops) ptsd_kqops = {
 static void
 ptsd_kqops_detach(struct knote *kn)
 {
-	struct tty *tp = kn->kn_hook;
-
+	struct tty *tp = knote_kn_hook_get_raw(kn);
 	tty_lock(tp);
 
-	/*
-	 * Only detach knotes from open ttys -- ttyclose detaches all knotes
-	 * under the lock and unsets TS_ISOPEN.
-	 */
-	if (tp->t_state & TS_ISOPEN) {
+	if (!KNOTE_IS_AUTODETACHED(kn)) {
+		/*
+		 * If we got here, it must be due to the fact that we are referencing an open
+		 * tty - ttyclose always autodetaches knotes under the tty lock and marks
+		 * the state as closed
+		 */
+		assert(tp->t_state & TS_ISOPEN);
+
 		switch (kn->kn_filter) {
 		case EVFILT_READ:
 			KNOTE_DETACH(&tp->t_rsel.si_note, kn);
@@ -559,6 +563,8 @@ ptsd_kqops_detach(struct knote *kn)
 			break;
 		}
 	}
+
+	knote_kn_hook_set_raw(kn, NULL);
 
 	tty_unlock(tp);
 	ttyfree(tp);
@@ -611,7 +617,7 @@ ptsd_kqops_common(struct knote *kn, struct kevent_qos_s *kev, struct tty *tp)
 static int
 ptsd_kqops_event(struct knote *kn, long hint)
 {
-	struct tty *tp = kn->kn_hook;
+	struct tty *tp = knote_kn_hook_get_raw(kn);
 	int ret;
 
 	TTY_LOCK_OWNED(tp);
@@ -629,7 +635,7 @@ ptsd_kqops_event(struct knote *kn, long hint)
 static int
 ptsd_kqops_touch(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct tty *tp = kn->kn_hook;
+	struct tty *tp = knote_kn_hook_get_raw(kn);
 	int ret;
 
 	tty_lock(tp);
@@ -649,7 +655,7 @@ ptsd_kqops_touch(struct knote *kn, struct kevent_qos_s *kev)
 static int
 ptsd_kqops_process(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct tty *tp = kn->kn_hook;
+	struct tty *tp = knote_kn_hook_get_raw(kn);
 	int ret;
 
 	tty_lock(tp);
@@ -685,7 +691,7 @@ ptsd_kqfilter(dev_t dev, struct knote *kn)
 	kn->kn_filtid = EVFILTID_PTSD;
 	/* the tty will be freed when detaching the knote */
 	ttyhold(tp);
-	kn->kn_hook = tp;
+	knote_kn_hook_set_raw(kn, tp);
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
@@ -718,11 +724,11 @@ ptsd_revoke_knotes(__unused int minor, struct tty *tp)
 
 	ttwakeup(tp);
 	assert((tp->t_rsel.si_flags & SI_KNPOSTING) == 0);
-	KNOTE(&tp->t_rsel.si_note, NOTE_REVOKE);
+	knote(&tp->t_rsel.si_note, NOTE_REVOKE, true);
 
 	ttwwakeup(tp);
 	assert((tp->t_wsel.si_flags & SI_KNPOSTING) == 0);
-	KNOTE(&tp->t_wsel.si_note, NOTE_REVOKE);
+	knote(&tp->t_wsel.si_note, NOTE_REVOKE, true);
 
 	tty_unlock(tp);
 }
@@ -754,7 +760,7 @@ SECURITY_READ_ONLY_EARLY(struct filterops) ptmx_kqops = {
 static struct ptmx_ioctl *
 ptmx_knote_ioctl(struct knote *kn)
 {
-	return (struct ptmx_ioctl *)kn->kn_hook;
+	return (struct ptmx_ioctl *)knote_kn_hook_get_raw(kn);
 }
 
 static struct tty *
@@ -787,7 +793,7 @@ ptmx_kqfilter(dev_t dev, struct knote *kn)
 	kn->kn_filtid = EVFILTID_PTMX;
 	/* the tty will be freed when detaching the knote */
 	ttyhold(tp);
-	kn->kn_hook = pti;
+	knote_kn_hook_set_raw(kn, pti);
 
 	/*
 	 * Attach to the ptmx's selinfo structures.  This is the major difference
@@ -818,22 +824,26 @@ ptmx_kqfilter(dev_t dev, struct knote *kn)
 static void
 ptmx_kqops_detach(struct knote *kn)
 {
-	struct ptmx_ioctl *pti = kn->kn_hook;
+	struct ptmx_ioctl *pti = knote_kn_hook_get_raw(kn);
 	struct tty *tp = pti->pt_tty;
 
 	tty_lock(tp);
 
-	switch (kn->kn_filter) {
-	case EVFILT_READ:
-		KNOTE_DETACH(&pti->pt_selr.si_note, kn);
-		break;
-	case EVFILT_WRITE:
-		KNOTE_DETACH(&pti->pt_selw.si_note, kn);
-		break;
-	default:
-		panic("invalid knote %p detach, filter: %d", kn, kn->kn_filter);
-		break;
+	if (!KNOTE_IS_AUTODETACHED(kn)) {
+		switch (kn->kn_filter) {
+		case EVFILT_READ:
+			KNOTE_DETACH(&pti->pt_selr.si_note, kn);
+			break;
+		case EVFILT_WRITE:
+			KNOTE_DETACH(&pti->pt_selw.si_note, kn);
+			break;
+		default:
+			panic("invalid knote %p detach, filter: %d", kn, kn->kn_filter);
+			break;
+		}
 	}
+
+	knote_kn_hook_set_raw(kn, NULL);
 
 	tty_unlock(tp);
 	ttyfree(tp);
@@ -861,18 +871,12 @@ ptmx_kqops_common(struct knote *kn, struct kevent_qos_s *kev,
 		break;
 
 	case EVFILT_WRITE:
-		if (pti->pt_flags & PF_REMOTE) {
-			if (tp->t_canq.c_cc == 0) {
-				retval = TTYHOG - 1;
-			}
-		} else {
-			retval = (TTYHOG - 2) - (tp->t_rawq.c_cc + tp->t_canq.c_cc);
-			if (tp->t_canq.c_cc == 0 && (tp->t_lflag & ICANON)) {
-				retval = 1;
-			}
-			if (retval < 0) {
-				retval = 0;
-			}
+		retval = (TTYHOG - 2) - (tp->t_rawq.c_cc + tp->t_canq.c_cc);
+		if (tp->t_canq.c_cc == 0 && (tp->t_lflag & ICANON)) {
+			retval = 1;
+		}
+		if (retval < 0) {
+			retval = 0;
 		}
 		break;
 

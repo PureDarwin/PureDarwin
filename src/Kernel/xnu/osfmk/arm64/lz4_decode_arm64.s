@@ -81,7 +81,7 @@
 
 .macro clear_frame_and_return
     ldp     fp, lr,    [sp], #16
-    ARM64_STACK_EPILOG
+    ARM64_STACK_EPILOG _lz4_decode_asm
 .endm
 
 // copy_1x16 SOURCE_ADDR DESTINATION_ADDR

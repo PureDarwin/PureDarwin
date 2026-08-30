@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -38,7 +38,6 @@
  */
 
 #include <mach/mach_types.h>
-#include <machine/atomic.h>
 
 #include <kern/clock.h>
 #include <kern/thread.h>
@@ -55,8 +54,6 @@
 #include <arm/cpu_data_internal.h>
 #if __arm64__
 #include <arm64/proc_reg.h>
-#elif __arm__
-#include <arm/proc_reg.h>
 #else
 #error Unsupported arch
 #endif
@@ -78,7 +75,7 @@ static void
 timebase_callback(struct timebase_freq_t * freq);
 
 #if DEVELOPMENT || DEBUG
-uint32_t absolute_time_validation = 0;
+uint32_t timebase_validation = 0;
 #endif
 
 /*
@@ -91,16 +88,16 @@ rtclock_early_init(void)
 #if DEVELOPMENT || DEBUG
 	uint32_t tmp_mv = 1;
 
-#if defined(APPLE_ARM64_ARCH_FAMILY)
+#if defined(APPLE_ARM64_ARCH_FAMILY) && !APPLEVIRTUALPLATFORM
 	/* Enable MAT validation on A0 hardware by default. */
-	absolute_time_validation = ml_get_topology_info()->chip_revision == CPU_VERSION_A0;
+	timebase_validation = ml_get_topology_info()->chip_revision == CPU_VERSION_A0;
 #endif
 
 	if (kern_feature_override(KF_MATV_OVRD)) {
-		absolute_time_validation = 0;
+		timebase_validation = 0;
 	}
 	if (PE_parse_boot_argn("timebase_validation", &tmp_mv, sizeof(tmp_mv))) {
-		absolute_time_validation = tmp_mv;
+		timebase_validation = tmp_mv;
 	}
 #endif
 }
@@ -155,10 +152,6 @@ rtclock_init(void)
 
 	clock_timebase_init();
 
-	if (cpu_number() == master_cpu) {
-		ml_init_lock_timeout();
-	}
-
 	cdp = getCpuDatap();
 
 	abstime = mach_absolute_time();
@@ -168,11 +161,62 @@ rtclock_init(void)
 	return 1;
 }
 
+
 uint64_t
 mach_absolute_time(void)
 {
 #if DEVELOPMENT || DEBUG
-	if (__improbable(absolute_time_validation == 1)) {
+	if (__improbable(timebase_validation)) {
+#if __ARM_ARCH_8_6__ || HAS_ACNTVCT
+		static _Atomic uint64_t s_last_absolute_time = 1;
+
+		uint64_t old_absolute_time = os_atomic_load(&s_last_absolute_time, relaxed);
+
+		/*
+		 * Because this timebase read is nonspeculative, it cannot begin reading
+		 * the timebase value until after the load of the old value completes.
+		 */
+
+		if (old_absolute_time == 0) {
+			timebase_validation = 0; // we know it's bad, now prevent nested panics
+			panic("old_absolute_time was 0");
+		}
+
+		uint64_t new_absolute_time = ml_get_timebase();
+
+		if (old_absolute_time > new_absolute_time) {
+			timebase_validation = 0; // prevent nested panics
+			panic("mach_absolute_time returning non-monotonically increasing value 0x%llx (old value 0x%llx)",
+			    new_absolute_time, old_absolute_time);
+		}
+
+		if (old_absolute_time < new_absolute_time) {
+			/* read again, to pretest the atomic max */
+			uint64_t pretest_absolute_time = os_atomic_load(&s_last_absolute_time, relaxed);
+			if (pretest_absolute_time < new_absolute_time) {
+				uint64_t fresh_last_absolute_time = os_atomic_max_orig(&s_last_absolute_time, new_absolute_time, relaxed);
+
+				if (fresh_last_absolute_time != pretest_absolute_time) {
+					/*
+					 * Someone else published a newer time after we loaded s_last_absolute_time.
+					 * Enforce that our timebase is not behind this new one.
+					 * We can't compare it with our previous timebase read, as it is too old.
+					 */
+
+					uint64_t newest_absolute_time = ml_get_timebase();
+
+					if (fresh_last_absolute_time > newest_absolute_time) {
+						timebase_validation = 0; // prevent nested panics
+						panic("mach_absolute_time returning non-monotonically increasing value 0x%llx (old values 0x%llx, 0x%llx, 0x%llx, 0x%llx)\n",
+						    newest_absolute_time, fresh_last_absolute_time, pretest_absolute_time, old_absolute_time, new_absolute_time);
+					}
+				}
+			}
+		}
+
+		return new_absolute_time;
+
+#else /* !(__ARM_ARCH_8_6__ || HAS_ACNTVCT) */
 		static volatile uint64_t s_last_absolute_time = 0;
 		uint64_t                 new_absolute_time, old_absolute_time;
 		int                      attempts = 0;
@@ -198,26 +242,22 @@ mach_absolute_time(void)
 			attempts++;
 			old_absolute_time = s_last_absolute_time;
 
-#if __arm64__
-			ARM_DSB_LD();
-#else
-			OSSynchronizeIO(); // See osfmk/arm64/rtclock.c
-#endif
+			__builtin_arm_dsb(DSB_ISHLD);
 
 			new_absolute_time = ml_get_timebase();
 		} while (attempts < MAX_TIMEBASE_TRIES && !OSCompareAndSwap64(old_absolute_time, new_absolute_time, &s_last_absolute_time));
 
 		if (attempts < MAX_TIMEBASE_TRIES && old_absolute_time > new_absolute_time) {
-			panic("mach_absolute_time returning non-monotonically increasing value 0x%llx (old value 0x%llx\n)\n",
+			timebase_validation = 0; // we know it's bad, now prevent nested panics
+			panic("mach_absolute_time returning non-monotonically increasing value 0x%llx (old value 0x%llx\n)",
 			    new_absolute_time, old_absolute_time);
 		}
 		return new_absolute_time;
-	} else {
-		return ml_get_timebase();
+#endif /* __ARM_ARCH_8_6__ || HAS_ACNTVCT */
 	}
-#else
+#endif /* DEVELOPMENT || DEBUG */
+
 	return ml_get_timebase();
-#endif
 }
 
 uint64_t
@@ -313,8 +353,6 @@ rtclock_intr(__unused unsigned int is_user_context)
 
 #if __arm64__
 		user_mode = PSR64_IS_USER(get_saved_state_cpsr(regs));
-#else
-		user_mode = (regs->cpsr & PSR_MODE_MASK) == PSR_USER_MODE;
 #endif
 	} else {
 		pc = 0;
@@ -322,10 +360,9 @@ rtclock_intr(__unused unsigned int is_user_context)
 	}
 	if (abstime >= cdp->rtcPop) {
 		/* Log the interrupt service latency (-ve value expected by tool) */
-		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
-		    MACHDBG_CODE(DBG_MACH_EXCP_DECI, 0) | DBG_FUNC_NONE,
+		KDBG_RELEASE(DECR_TRAP_LATENCY | DBG_FUNC_NONE,
 		    -(abstime - cdp->rtcPop),
-		    user_mode ? pc : VM_KERNEL_UNSLIDE(pc), user_mode, 0, 0);
+		    user_mode ? pc : VM_KERNEL_UNSLIDE(pc), user_mode);
 	}
 
 	/* call the generic etimer */
@@ -403,15 +440,11 @@ void
 ClearIdlePop(
 	boolean_t wfi)
 {
-#if !__arm64__
-#pragma unused(wfi)
-#endif
 	cpu_data_t * cdp;
 
 	cdp = getCpuDatap();
 	cdp->cpu_idle_pop = 0x0ULL;
 
-#if __arm64__
 	/*
 	 * Don't update the HW timer if there's a pending
 	 * interrupt (we can lose interrupt assertion);
@@ -420,9 +453,7 @@ ClearIdlePop(
 	 *
 	 * ARM64_TODO: consider this more carefully.
 	 */
-	if (!(wfi && ml_get_timer_pending()))
-#endif
-	{
+	if (!(wfi && ml_get_timer_pending())) {
 		setPop(cdp->rtcPop);
 	}
 }
@@ -492,10 +523,7 @@ machine_delay_until(uint64_t interval,
 	uint64_t now;
 
 	do {
-#if     __ARM_ENABLE_WFE_
 		__builtin_arm_wfe();
-#endif /* __ARM_ENABLE_WFE_ */
-
 		now = mach_absolute_time();
 	} while (now < deadline);
 }

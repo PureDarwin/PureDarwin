@@ -27,6 +27,7 @@
  */
 
 #include <kern/monotonic.h>
+#include <kern/recount.h>
 #include <machine/machine_routines.h>
 #include <machine/monotonic.h>
 #include <pexpert/pexpert.h>
@@ -34,11 +35,15 @@
 #include <sys/stat.h> /* dev_t */
 #include <miscfs/devfs/devfs.h> /* must come after sys/stat.h */
 #include <sys/conf.h> /* must come after sys/stat.h */
+#include <sys/resource_private.h>
 #include <sys/sysctl.h>
 #include <sys/sysproto.h>
 #include <sys/systm.h>
 #include <sys/types.h>
 #include <sys/monotonic.h>
+#include <kern/cpc.h>
+
+#if MT_NDEVS
 
 static int mt_cdev_open(dev_t dev, int flags, int devtype, proc_t p);
 static int mt_cdev_close(dev_t dev, int flags, int devtype, proc_t p);
@@ -66,7 +71,11 @@ static int mt_dev_major;
 static mt_device_t
 mt_get_device(dev_t devnum)
 {
-	return &mt_devices[minor(devnum)];
+	const int minor_dev = minor(devnum);
+	if (minor_dev < 0 || minor_dev >= MT_NDEVS) {
+		return NULL;
+	}
+	return &mt_devices[minor_dev];
 }
 
 static void
@@ -93,13 +102,15 @@ mt_device_assert_inuse(__assert_only mt_device_t dev)
 	assert(dev->mtd_inuse == true);
 }
 
+#endif // MT_NDEVS
+
 int
 mt_dev_init(void)
 {
+#if MT_NDEVS
 	mt_dev_major = cdevsw_add(-1 /* allocate a major number */, &mt_cdevsw);
 	if (mt_dev_major < 0) {
 		panic("monotonic: cdevsw_add failed: %d", mt_dev_major);
-		__builtin_unreachable();
 	}
 
 	for (int i = 0; i < MT_NDEVS; i++) {
@@ -110,21 +121,22 @@ mt_dev_init(void)
 		assert(mt_devices[i].mtd_ncounters > 0);
 
 		dev_t dev = makedev(mt_dev_major, i);
-		char name[128];
-		snprintf(name, sizeof(name), MT_NODE "/%s", mt_devices[i].mtd_name);
 		void *node = devfs_make_node(dev, DEVFS_CHAR, UID_ROOT,
-		    GID_WINDOWSERVER, 0666, name);
+		    GID_WINDOWSERVER, 0666, MT_NODE "/%s",
+		    mt_devices[i].mtd_name);
 		if (!node) {
 			panic("monotonic: devfs_make_node failed for '%s'",
 			    mt_devices[i].mtd_name);
-			__builtin_unreachable();
 		}
 
 		lck_mtx_init(&mt_devices[i].mtd_lock, &mt_lock_grp, LCK_ATTR_NULL);
 	}
+#endif // MT_NDEVS
 
 	return 0;
 }
+
+#if MT_NDEVS
 
 static int
 mt_cdev_open(dev_t devnum, __unused int flags, __unused int devtype,
@@ -133,10 +145,14 @@ mt_cdev_open(dev_t devnum, __unused int flags, __unused int devtype,
 	int error = 0;
 
 	mt_device_t dev = mt_get_device(devnum);
+	if (!dev) {
+		return ENODEV;
+	}
 	mt_device_lock(dev);
 	if (dev->mtd_inuse) {
-		error = EBUSY;
+		error = EALREADY;
 	} else {
+		dev->mtd_reset();
 		dev->mtd_inuse = true;
 	}
 	mt_device_unlock(dev);
@@ -149,6 +165,9 @@ mt_cdev_close(dev_t devnum, __unused int flags, __unused int devtype,
     __unused struct proc *p)
 {
 	mt_device_t dev = mt_get_device(devnum);
+	if (!dev) {
+		return ENODEV;
+	}
 
 	mt_device_lock(dev);
 	mt_device_assert_inuse(dev);
@@ -257,6 +276,9 @@ mt_cdev_ioctl(dev_t devnum, unsigned long cmd, char *arg, __unused int flags,
 	user_addr_t uptr = *(user_addr_t *)(void *)arg;
 
 	mt_device_t dev = mt_get_device(devnum);
+	if (!dev) {
+		return ENODEV;
+	}
 	mt_device_lock(dev);
 
 	switch (cmd) {
@@ -297,28 +319,7 @@ mt_cdev_ioctl(dev_t devnum, unsigned long cmd, char *arg, __unused int flags,
 	return error;
 }
 
-int
-thread_selfcounts(__unused struct proc *p,
-    struct thread_selfcounts_args *uap, __unused int *ret_out)
-{
-	switch (uap->type) {
-	case 1: {
-		uint64_t counts[2] = { 0 };
-		uint64_t thread_counts[MT_CORE_NFIXED] = { 0 };
-
-		mt_cur_thread_fixed_counts(thread_counts);
-
-#ifdef MT_CORE_INSTRS
-		counts[0] = thread_counts[MT_CORE_INSTRS];
-#endif /* defined(MT_CORE_INSTRS) */
-		counts[1] = thread_counts[MT_CORE_CYCLES];
-
-		return copyout(counts, uap->buf, MIN(sizeof(counts), uap->nbytes));
-	}
-	default:
-		return EINVAL;
-	}
-}
+#endif // MT_NDEVS
 
 enum mt_sysctl {
 	MT_SUPPORTED,
@@ -336,66 +337,43 @@ static int
 mt_sysctl SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg2)
-	uint64_t start[MT_CORE_NFIXED] = { 0 }, end[MT_CORE_NFIXED] = { 0 };
 	uint64_t counts[2] = { 0 };
+	struct recount_usage start_usage = { 0 };
+	struct recount_usage end_usage = { 0 };
+	struct cpc_cycles_instrs start_cpi = { 0 };
+	struct cpc_cycles_instrs end_cpi = { 0 };
 
 	switch ((enum mt_sysctl)arg1) {
 	case MT_SUPPORTED:
-		return sysctl_io_number(req, (int)mt_core_supported, sizeof(int), NULL, NULL);
+		return sysctl_io_number(req, (int)cpc_cpmu_supported, sizeof(int), NULL, NULL);
 	case MT_PMIS:
-		return sysctl_io_number(req, mt_count_pmis(), sizeof(uint64_t), NULL, NULL);
-	case MT_RETROGRADE: {
-		uint64_t value = os_atomic_load_wide(&mt_retrograde, relaxed);
-		return sysctl_io_number(req, value, sizeof(mt_retrograde), NULL, NULL);
-	}
+		return sysctl_io_number(req, cpc_hw_pmi_count(CPC_HW_CPMU), sizeof(uint64_t), NULL, NULL);
 	case MT_TASK_THREAD:
-		return sysctl_io_number(req, (int)mt_core_supported, sizeof(int), NULL, NULL);
-	case MT_DEBUG: {
-		int value = mt_debug;
-
-		int r = sysctl_io_number(req, value, sizeof(value), &value, NULL);
-		if (r) {
-			return r;
-		}
-		mt_debug = value;
-
-		return 0;
-	}
-	case MT_KDBG_TEST: {
-		if (req->newptr == USER_ADDR_NULL) {
-			return EINVAL;
-		}
-
-		int intrs_en = ml_set_interrupts_enabled(FALSE);
-		MT_KDBG_TMPCPU_START(0x3fff);
-		MT_KDBG_TMPCPU_END(0x3fff);
-
-		MT_KDBG_TMPTH_START(0x3fff);
-		MT_KDBG_TMPTH_END(0x3fff);
-		ml_set_interrupts_enabled(intrs_en);
-
-		return 0;
-	}
+		return sysctl_io_number(req, (int)cpc_cpmu_supported, sizeof(int), NULL, NULL);
 	case MT_FIX_CPU_PERF: {
 		int intrs_en = ml_set_interrupts_enabled(FALSE);
-		mt_fixed_counts(start);
-		mt_fixed_counts(end);
+		start_cpi = cpc_cycles_instrs();
+		end_cpi = cpc_cycles_instrs();
 		ml_set_interrupts_enabled(intrs_en);
 
+		start_usage.ru_metrics[RCT_LVL_KERNEL].rm_instructions = start_cpi.instrs;
+		start_usage.ru_metrics[RCT_LVL_KERNEL].rm_cycles = start_cpi.cycles;
+		end_usage.ru_metrics[RCT_LVL_KERNEL].rm_instructions = end_cpi.instrs;
+		end_usage.ru_metrics[RCT_LVL_KERNEL].rm_cycles = end_cpi.cycles;
 		goto copyout_counts;
 	}
 	case MT_FIX_THREAD_PERF: {
 		int intrs_en = ml_set_interrupts_enabled(FALSE);
-		mt_cur_thread_fixed_counts(start);
-		mt_cur_thread_fixed_counts(end);
+		recount_current_thread_usage(&start_usage);
+		recount_current_thread_usage(&end_usage);
 		ml_set_interrupts_enabled(intrs_en);
 
 		goto copyout_counts;
 	}
 	case MT_FIX_TASK_PERF: {
 		int intrs_en = ml_set_interrupts_enabled(FALSE);
-		mt_cur_task_fixed_counts(start);
-		mt_cur_task_fixed_counts(end);
+		recount_current_task_usage(&start_usage);
+		recount_current_task_usage(&end_usage);
 		ml_set_interrupts_enabled(intrs_en);
 
 		goto copyout_counts;
@@ -405,11 +383,10 @@ mt_sysctl SYSCTL_HANDLER_ARGS
 	}
 
 copyout_counts:
-
-#ifdef MT_CORE_INSTRS
-	counts[0] = end[MT_CORE_INSTRS] - start[MT_CORE_INSTRS];
-#endif /* defined(MT_CORE_INSTRS) */
-	counts[1] = end[MT_CORE_CYCLES] - start[MT_CORE_CYCLES];
+	counts[0] = end_usage.ru_metrics[RCT_LVL_KERNEL].rm_instructions -
+	    start_usage.ru_metrics[RCT_LVL_KERNEL].rm_instructions;
+	counts[1] = end_usage.ru_metrics[RCT_LVL_KERNEL].rm_cycles -
+	    start_usage.ru_metrics[RCT_LVL_KERNEL].rm_cycles;
 
 	return copyout(counts, req->oldptr, MIN(req->oldlen, sizeof(counts)));
 }

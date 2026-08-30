@@ -30,6 +30,7 @@
 #define _OBJC_OS_H
 
 #include <atomic>
+#include <utility>
 #include <TargetConditionals.h>
 #include "objc-config.h"
 #include "objc-private.h"
@@ -146,6 +147,48 @@ static inline uintptr_t mask16ShiftBits(uint16_t mask)
 #   include <os/lock_private.h>
 #   include <libkern/OSAtomic.h>
 #   include <libkern/OSCacheControl.h>
+
+extern "C" {
+extern kern_return_t vm_allocate(vm_map_t, vm_address_t *, vm_size_t, int);
+extern kern_return_t vm_deallocate(vm_map_t, vm_address_t, vm_size_t);
+extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
+extern kern_return_t vm_remap(mach_port_name_t, vm_address_t *, vm_size_t,
+    vm_offset_t, int, mach_port_name_t, vm_address_t, boolean_t,
+    vm_prot_t *, vm_prot_t *, vm_inherit_t);
+}
+
+/* The open SDK omits this deprecated OSAtomic entry point. */
+static __inline BOOL
+OSAtomicCompareAndSwap32Barrier(int32_t oldl, int32_t newl, volatile int32_t *dst)
+{
+    int32_t expected = oldl;
+    return __atomic_compare_exchange_n((int32_t *)dst, &expected, newl,
+                                       false, __ATOMIC_SEQ_CST,
+                                       __ATOMIC_SEQ_CST);
+}
+static __inline BOOL
+OSAtomicCompareAndSwapPtr(void *oldp, void *newp, void * volatile *dst)
+{
+    void *expected = oldp;
+    return __atomic_compare_exchange_n((void **)dst, &expected, newp,
+                                       false, __ATOMIC_SEQ_CST,
+                                       __ATOMIC_SEQ_CST);
+}
+static __inline BOOL
+OSAtomicCompareAndSwapPtrBarrier(void *oldp, void *newp, void * volatile *dst)
+{
+    return OSAtomicCompareAndSwapPtr(oldp, newp, dst);
+}
+static __inline int32_t
+OSAtomicDecrement32Barrier(volatile int32_t *dst)
+{
+    return __atomic_sub_fetch((int32_t *)dst, 1, __ATOMIC_SEQ_CST);
+}
+static __inline int32_t
+OSAtomicIncrement32Barrier(volatile int32_t *dst)
+{
+    return __atomic_add_fetch((int32_t *)dst, 1, __ATOMIC_SEQ_CST);
+}
 //#   include <System/pthread_machdep.h>
 #   include "objc-probes.h"  // generated dtrace probe definitions.
 

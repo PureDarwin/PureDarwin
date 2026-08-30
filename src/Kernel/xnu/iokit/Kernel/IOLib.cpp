@@ -36,7 +36,8 @@
 #include <IOKit/system.h>
 #include <mach/sync_policy.h>
 #include <machine/machine_routines.h>
-#include <vm/vm_kern.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_xnu.h>
 #include <libkern/c++/OSCPPDebug.h>
 
 #include <IOKit/assert.h>
@@ -94,13 +95,13 @@ __doprnt(
 	int                     radix,
 	int                     is_log);
 
-extern void cons_putc_locked(char);
 extern bool bsd_log_lock(bool);
 extern void bsd_log_unlock(void);
 
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+lck_grp_t        io_lck_grp;
 lck_grp_t       *IOLockGroup;
 
 /*
@@ -114,7 +115,9 @@ void *_giDebugLogDataInternal   = NULL;
 void *_giDebugReserved1         = NULL;
 void *_giDebugReserved2         = NULL;
 
+#if defined(__x86_64__)
 iopa_t gIOBMDPageAllocator;
+#endif /* defined(__x86_64__) */
 
 /*
  * Static variables for this module.
@@ -124,13 +127,11 @@ static queue_head_t gIOMallocContiguousEntries;
 static lck_mtx_t *  gIOMallocContiguousEntriesLock;
 
 #if __x86_64__
-enum { kIOMaxPageableMaps    = 8 };
-enum { kIOPageableMapSize    = 512 * 1024 * 1024 };
-enum { kIOPageableMaxMapSize = 512 * 1024 * 1024 };
+enum { kIOPageableMaxAllocSize = 512ULL * 1024 * 1024 };
+enum { kIOPageableMapSize      = 8ULL * kIOPageableMaxAllocSize  };
 #else
-enum { kIOMaxPageableMaps    = 16 };
-enum { kIOPageableMapSize    = 96 * 1024 * 1024 };
-enum { kIOPageableMaxMapSize = 96 * 1024 * 1024 };
+enum { kIOPageableMaxAllocSize = 96ULL * 1024 * 1024 };
+enum { kIOPageableMapSize      = 16ULL * kIOPageableMaxAllocSize  };
 #endif
 
 typedef struct {
@@ -139,16 +140,18 @@ typedef struct {
 	vm_offset_t end;
 } IOMapData;
 
-static struct {
-	UInt32      count;
-	UInt32      hint;
-	IOMapData   maps[kIOMaxPageableMaps];
-	lck_mtx_t * lock;
-} gIOKitPageableSpace;
+#ifndef __BUILDING_XNU_LIBRARY__
+/* this makes clang emit a C and C++ symbol which confuses lldb rdar://135688747 */
+static
+#endif /* __BUILDING_XNU_LIBRARY__ */
+SECURITY_READ_ONLY_LATE(struct mach_vm_range) gIOKitPageableFixedRange;
+IOMapData gIOKitPageableMap;
 
+#if defined(__x86_64__)
 static iopa_t gIOPageablePageAllocator;
 
 uint32_t  gIOPageAllocChunkBytes;
+#endif /* defined(__x86_64__) */
 
 #if IOTRACKING
 IOTrackingQueue * gIOMallocTracking;
@@ -158,18 +161,19 @@ IOTrackingQueue * gIOMapTracking;
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+KMEM_RANGE_REGISTER_STATIC(gIOKitPageableFixed,
+    &gIOKitPageableFixedRange, kIOPageableMapSize);
 void
 IOLibInit(void)
 {
-	kern_return_t ret;
-
 	static bool libInitialized;
 
 	if (libInitialized) {
 		return;
 	}
 
-	IOLockGroup = lck_grp_alloc_init("IOKit", LCK_GRP_ATTR_NULL);
+	lck_grp_init(&io_lck_grp, "IOKit", LCK_GRP_ATTR_NULL);
+	IOLockGroup = &io_lck_grp;
 
 #if IOTRACKING
 	IOTrackingInit();
@@ -186,31 +190,27 @@ IOLibInit(void)
 	    0);
 #endif
 
-	gIOKitPageableSpace.maps[0].address = 0;
-	ret = kmem_suballoc(kernel_map,
-	    &gIOKitPageableSpace.maps[0].address,
+	gIOKitPageableMap.map = kmem_suballoc(kernel_map,
+	    &gIOKitPageableFixedRange.min_address,
 	    kIOPageableMapSize,
-	    TRUE,
-	    VM_FLAGS_ANYWHERE,
-	    VM_MAP_KERNEL_FLAGS_NONE,
-	    VM_KERN_MEMORY_IOKIT,
-	    &gIOKitPageableSpace.maps[0].map);
-	if (ret != KERN_SUCCESS) {
-		panic("failed to allocate iokit pageable map\n");
-	}
+	    VM_MAP_CREATE_DEFAULT,
+	    VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+	    (kms_flags_t)(KMS_DATA | KMS_NOFAIL | KMS_NOSOFTLIMIT),
+	    VM_KERN_MEMORY_IOKIT).kmr_submap;
 
-	gIOKitPageableSpace.lock            = lck_mtx_alloc_init(IOLockGroup, LCK_ATTR_NULL);
-	gIOKitPageableSpace.maps[0].end     = gIOKitPageableSpace.maps[0].address + kIOPageableMapSize;
-	gIOKitPageableSpace.hint            = 0;
-	gIOKitPageableSpace.count           = 1;
+	gIOKitPageableMap.address = gIOKitPageableFixedRange.min_address;
+	gIOKitPageableMap.end     = gIOKitPageableFixedRange.max_address;
 
 	gIOMallocContiguousEntriesLock      = lck_mtx_alloc_init(IOLockGroup, LCK_ATTR_NULL);
 	queue_init( &gIOMallocContiguousEntries );
 
+#if defined(__x86_64__)
 	gIOPageAllocChunkBytes = PAGE_SIZE / 64;
+
 	assert(sizeof(iopa_page_t) <= gIOPageAllocChunkBytes);
 	iopa_init(&gIOBMDPageAllocator);
 	iopa_init(&gIOPageablePageAllocator);
+#endif /* defined(__x86_64__) */
 
 
 	libInitialized = true;
@@ -218,7 +218,7 @@ IOLibInit(void)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-static vm_size_t
+vm_size_t
 log2up(vm_size_t size)
 {
 	if (size <= 1) {
@@ -241,7 +241,7 @@ IOCreateThread(IOThreadFunc fcn, void *arg)
 	kern_return_t   result;
 	thread_t                thread;
 
-	result = kernel_thread_start((thread_continue_t)fcn, arg, &thread);
+	result = kernel_thread_start((thread_continue_t)(void (*)(void))fcn, arg, &thread);
 	if (result != KERN_SUCCESS) {
 		return NULL;
 	}
@@ -256,39 +256,6 @@ void
 IOExitThread(void)
 {
 	(void) thread_terminate(current_thread());
-}
-
-void *
-IOMalloc_external(
-	vm_size_t size);
-void *
-IOMalloc_external(
-	vm_size_t size)
-{
-	return IOMalloc_internal(KHEAP_KEXT, size);
-}
-
-void *
-IOMallocZero_external(
-	vm_size_t size);
-void *
-IOMallocZero_external(
-	vm_size_t size)
-{
-	return IOMallocZero_internal(KHEAP_KEXT, size);
-}
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-void *
-IOMallocZero_internal(struct kalloc_heap *kalloc_heap_cfg, vm_size_t size)
-{
-	void * result;
-	result = IOMalloc_internal(kalloc_heap_cfg, size);
-	if (result) {
-		bzero(result, size);
-	}
-	return result;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -307,8 +274,11 @@ struct IOLibMallocHeader {
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+__typed_allocators_ignore_push // allocator implementation
+
 void *
-IOMalloc_internal(struct kalloc_heap *kheap, vm_size_t size)
+(IOMalloc_internal)(struct kalloc_heap *kheap, vm_size_t size,
+zalloc_flags_t flags)
 {
 	void * address;
 	vm_size_t allocSize;
@@ -319,7 +289,8 @@ IOMalloc_internal(struct kalloc_heap *kheap, vm_size_t size)
 		return NULL;                                          // overflow
 	}
 #endif
-	address = kheap_alloc_tag_bt(kheap, allocSize, Z_WAITOK, VM_KERN_MEMORY_IOKIT);
+	address = kheap_alloc(kheap, allocSize,
+	    Z_VM_TAG(Z_WAITOK | flags, VM_KERN_MEMORY_IOKIT));
 
 	if (address) {
 #if IOTRACKING
@@ -344,7 +315,7 @@ IOMalloc_internal(struct kalloc_heap *kheap, vm_size_t size)
 }
 
 void
-IOFree(void * inAddress, vm_size_t size)
+IOFree_internal(struct kalloc_heap *kheap, void * inAddress, vm_size_t size)
 {
 	void * address;
 
@@ -363,20 +334,49 @@ IOFree(void * inAddress, vm_size_t size)
 
 			hdr = (typeof(hdr))address;
 			if (size != hdr->tracking.size) {
-				OSReportWithBacktrace("bad IOFree size 0x%lx should be 0x%lx", size, hdr->tracking.size);
+				OSReportWithBacktrace("bad IOFree size 0x%zx should be 0x%zx",
+				    (size_t)size, (size_t)hdr->tracking.size);
 				size = hdr->tracking.size;
 			}
-			IOTrackingRemove(gIOMallocTracking, &hdr->tracking.tracking, size);
+			IOTrackingRemoveAddress(gIOMallocTracking, &hdr->tracking, size);
 			ptr.ptr = NULL;
 		}
 #endif
 
-		kfree(address, size + sizeofIOLibMallocHeader);
+		kheap_free(kheap, address, size + sizeofIOLibMallocHeader);
 #if IOALLOCDEBUG
 		OSAddAtomicLong(-size, &debug_iomalloc_size);
 #endif
 		IOStatisticsAlloc(kIOStatisticsFree, size);
 	}
+}
+
+void *
+IOMalloc_external(
+	vm_size_t size);
+void *
+IOMalloc_external(
+	vm_size_t size)
+{
+	return IOMalloc_internal(KHEAP_DEFAULT, size, Z_VM_TAG_BT_BIT);
+}
+
+void
+IOFree(void * inAddress, vm_size_t size)
+{
+	IOFree_internal(KHEAP_DEFAULT, inAddress, size);
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+void *
+IOMallocZero_external(
+	vm_size_t size);
+void *
+IOMallocZero_external(
+	vm_size_t size)
+{
+	return IOMalloc_internal(KHEAP_DEFAULT, size, Z_ZERO_VM_TAG_BT_BIT);
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -401,8 +401,8 @@ IOMemoryTag(vm_map_t map)
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 struct IOLibPageMallocHeader {
-	mach_vm_size_t    allocationSize;
-	mach_vm_address_t allocationAddress;
+	mach_vm_size_t    alignMask;
+	mach_vm_offset_t  allocationOffset;
 #if IOTRACKING
 	IOTrackingAddress tracking;
 #endif
@@ -415,19 +415,89 @@ struct IOLibPageMallocHeader {
 #endif
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-void *
-IOMallocAligned_external(
-	vm_size_t size, vm_size_t alignment);
-void *
-IOMallocAligned_external(
-	vm_size_t size, vm_size_t alignment)
+
+static __header_always_inline void
+IOMallocAlignedSetHdr(
+	IOLibPageMallocHeader  *hdr,
+	mach_vm_size_t          alignMask,
+	mach_vm_address_t       allocationStart,
+	mach_vm_address_t       alignedStart)
 {
-	return IOMallocAligned_internal(KHEAP_KEXT, size, alignment);
+	mach_vm_offset_t        offset = alignedStart - allocationStart;
+#if __has_feature(ptrauth_calls)
+	offset = (mach_vm_offset_t) ptrauth_sign_unauthenticated((void *)offset,
+	    ptrauth_key_process_independent_data,
+	    ptrauth_blend_discriminator((void *)(alignedStart | alignMask),
+	    OS_PTRAUTH_DISCRIMINATOR("IOLibPageMallocHeader.allocationOffset")));
+#endif /* __has_feature(ptrauth_calls) */
+	hdr->allocationOffset = offset;
+	hdr->alignMask = alignMask;
+}
+
+__abortlike
+static void
+IOMallocAlignedHdrCorruptionPanic(
+	mach_vm_offset_t        offset,
+	mach_vm_size_t          alignMask,
+	mach_vm_address_t       alignedStart,
+	vm_size_t               size)
+{
+	mach_vm_address_t       address = 0;
+	mach_vm_address_t       recalAlignedStart = 0;
+
+	if (os_sub_overflow(alignedStart, offset, &address)) {
+		panic("Invalid offset %p for aligned addr %p", (void *)offset,
+		    (void *)alignedStart);
+	}
+	if (os_add3_overflow(address, sizeofIOLibPageMallocHeader, alignMask,
+	    &recalAlignedStart)) {
+		panic("alignMask 0x%llx overflows recalAlignedStart %p for provided addr "
+		    "%p", alignMask, (void *)recalAlignedStart, (void *)alignedStart);
+	}
+	if (((recalAlignedStart &= ~alignMask) != alignedStart) &&
+	    (round_page(recalAlignedStart) != alignedStart)) {
+		panic("Recalculated aligned addr %p doesn't match provided addr %p",
+		    (void *)recalAlignedStart, (void *)alignedStart);
+	}
+	if (offset < sizeofIOLibPageMallocHeader) {
+		panic("Offset %zd doesn't accomodate IOLibPageMallocHeader for aligned "
+		    "addr %p", (size_t)offset, (void *)alignedStart);
+	}
+	panic("alignMask 0x%llx overflows adjusted size %zd for aligned addr %p",
+	    alignMask, (size_t)size, (void *)alignedStart);
+}
+
+static __header_always_inline mach_vm_address_t
+IOMallocAlignedGetAddress(
+	IOLibPageMallocHeader  *hdr,
+	mach_vm_address_t       alignedStart,
+	vm_size_t              *size)
+{
+	mach_vm_address_t       address = 0;
+	mach_vm_address_t       recalAlignedStart = 0;
+	mach_vm_offset_t        offset = hdr->allocationOffset;
+	mach_vm_size_t          alignMask = hdr->alignMask;
+#if __has_feature(ptrauth_calls)
+	offset = (mach_vm_offset_t) ptrauth_auth_data((void *)offset,
+	    ptrauth_key_process_independent_data,
+	    ptrauth_blend_discriminator((void *)(alignedStart | alignMask),
+	    OS_PTRAUTH_DISCRIMINATOR("IOLibPageMallocHeader.allocationOffset")));
+#endif /* __has_feature(ptrauth_calls) */
+	if (os_sub_overflow(alignedStart, offset, &address) ||
+	    os_add3_overflow(address, sizeofIOLibPageMallocHeader, alignMask,
+	    &recalAlignedStart) ||
+	    (((recalAlignedStart &= ~alignMask) != alignedStart) &&
+	    (round_page(recalAlignedStart) != alignedStart)) ||
+	    (offset < sizeofIOLibPageMallocHeader) ||
+	    os_add_overflow(*size, alignMask, size)) {
+		IOMallocAlignedHdrCorruptionPanic(offset, alignMask, alignedStart, *size);
+	}
+	return address;
 }
 
 void *
-IOMallocAligned_internal(struct kalloc_heap *kheap, vm_size_t size,
-    vm_size_t alignment)
+(IOMallocAligned_internal)(struct kalloc_heap *kheap, vm_size_t size,
+vm_size_t alignment, zalloc_flags_t flags)
 {
 	kern_return_t           kr;
 	vm_offset_t             address;
@@ -435,12 +505,23 @@ IOMallocAligned_internal(struct kalloc_heap *kheap, vm_size_t size,
 	vm_size_t               adjustedSize;
 	uintptr_t               alignMask;
 	IOLibPageMallocHeader * hdr;
+	kma_flags_t kma_flags = KMA_NONE;
 
 	if (size == 0) {
 		return NULL;
 	}
 	if (((uint32_t) alignment) != alignment) {
 		return NULL;
+	}
+
+	if (flags & Z_ZERO) {
+		kma_flags = KMA_ZERO;
+	}
+
+	if (kheap == KHEAP_DATA_PRIVATE) {
+		kma_flags = (kma_flags_t) (kma_flags | KMA_DATA);
+	} else if (kheap == KHEAP_DATA_SHARED) {
+		kma_flags = (kma_flags_t) (kma_flags | KMA_DATA_SHARED);
 	}
 
 	alignment = (1UL << log2up((uint32_t) alignment));
@@ -451,7 +532,7 @@ IOMallocAligned_internal(struct kalloc_heap *kheap, vm_size_t size,
 		address = 0; /* overflow detected */
 	} else if (adjustedSize >= page_size) {
 		kr = kernel_memory_allocate(kernel_map, &address,
-		    size, alignMask, KMA_NONE, IOMemoryTag(kernel_map));
+		    size, alignMask, kma_flags, IOMemoryTag(kernel_map));
 		if (KERN_SUCCESS != kr) {
 			address = 0;
 		}
@@ -464,14 +545,14 @@ IOMallocAligned_internal(struct kalloc_heap *kheap, vm_size_t size,
 		adjustedSize += alignMask;
 
 		if (adjustedSize >= page_size) {
-			kr = kernel_memory_allocate(kernel_map, &allocationAddress,
-			    adjustedSize, 0, KMA_NONE, IOMemoryTag(kernel_map));
+			kr = kmem_alloc(kernel_map, &allocationAddress,
+			    adjustedSize, kma_flags, IOMemoryTag(kernel_map));
 			if (KERN_SUCCESS != kr) {
 				allocationAddress = 0;
 			}
 		} else {
-			allocationAddress = (vm_address_t) kheap_alloc_tag_bt(kheap,
-			    adjustedSize, Z_WAITOK, VM_KERN_MEMORY_IOKIT);
+			allocationAddress = (vm_address_t) kheap_alloc(kheap,
+			    adjustedSize, Z_VM_TAG(Z_WAITOK | flags, VM_KERN_MEMORY_IOKIT));
 		}
 
 		if (allocationAddress) {
@@ -479,8 +560,7 @@ IOMallocAligned_internal(struct kalloc_heap *kheap, vm_size_t size,
 			    & (~alignMask);
 
 			hdr = (typeof(hdr))(address - sizeofIOLibPageMallocHeader);
-			hdr->allocationSize    = adjustedSize;
-			hdr->allocationAddress = allocationAddress;
+			IOMallocAlignedSetHdr(hdr, alignMask, allocationAddress, address);
 #if IOTRACKING
 			if (TRACK_ALLOC) {
 				bzero(&hdr->tracking, sizeof(hdr->tracking));
@@ -507,7 +587,7 @@ IOMallocAligned_internal(struct kalloc_heap *kheap, vm_size_t size,
 }
 
 void
-IOFreeAligned(void * address, vm_size_t size)
+IOFreeAligned_internal(kalloc_heap_t kheap, void * address, vm_size_t size)
 {
 	vm_address_t            allocationAddress;
 	vm_size_t               adjustedSize;
@@ -526,25 +606,26 @@ IOFreeAligned(void * address, vm_size_t size)
 			IOTrackingFree(gIOMallocTracking, (uintptr_t) address, size);
 		}
 #endif
-		kmem_free( kernel_map, (vm_offset_t) address, size);
+		kmem_free(kernel_map, (vm_offset_t) address, size);
 	} else {
 		hdr = (typeof(hdr))(((uintptr_t)address) - sizeofIOLibPageMallocHeader);
-		adjustedSize = hdr->allocationSize;
-		allocationAddress = hdr->allocationAddress;
+		allocationAddress = IOMallocAlignedGetAddress(hdr,
+		    (mach_vm_address_t)address, &adjustedSize);
 
 #if IOTRACKING
 		if (TRACK_ALLOC) {
 			if (size != hdr->tracking.size) {
-				OSReportWithBacktrace("bad IOFreeAligned size 0x%lx should be 0x%lx", size, hdr->tracking.size);
+				OSReportWithBacktrace("bad IOFreeAligned size 0x%zx should be 0x%zx",
+				    (size_t)size, (size_t)hdr->tracking.size);
 				size = hdr->tracking.size;
 			}
-			IOTrackingRemove(gIOMallocTracking, &hdr->tracking.tracking, size);
+			IOTrackingRemoveAddress(gIOMallocTracking, &hdr->tracking, size);
 		}
 #endif
 		if (adjustedSize >= page_size) {
-			kmem_free( kernel_map, allocationAddress, adjustedSize);
+			kmem_free(kernel_map, allocationAddress, adjustedSize);
 		} else {
-			kfree(allocationAddress, adjustedSize);
+			kheap_free(kheap, allocationAddress, adjustedSize);
 		}
 	}
 
@@ -555,10 +636,34 @@ IOFreeAligned(void * address, vm_size_t size)
 	IOStatisticsAlloc(kIOStatisticsFreeAligned, size);
 }
 
+void *
+IOMallocAligned_external(
+	vm_size_t size, vm_size_t alignment);
+void *
+IOMallocAligned_external(
+	vm_size_t size, vm_size_t alignment)
+{
+	return IOMallocAligned_internal(KHEAP_DATA_SHARED, size, alignment,
+	           Z_VM_TAG_BT_BIT);
+}
+
+void
+IOFreeAligned(
+	void                  * address,
+	vm_size_t               size)
+{
+	IOFreeAligned_internal(KHEAP_DATA_SHARED, address, size);
+}
+
+__typed_allocators_ignore_pop
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 void
-IOKernelFreePhysical(mach_vm_address_t address, mach_vm_size_t size)
+IOKernelFreePhysical(
+	kalloc_heap_t         kheap,
+	mach_vm_address_t     address,
+	mach_vm_size_t        size)
 {
 	vm_address_t       allocationAddress;
 	vm_size_t          adjustedSize;
@@ -577,17 +682,16 @@ IOKernelFreePhysical(mach_vm_address_t address, mach_vm_size_t size)
 			IOTrackingFree(gIOMallocTracking, address, size);
 		}
 #endif
-		kmem_free( kernel_map, (vm_offset_t) address, size);
+		kmem_free(kernel_map, (vm_offset_t) address, size);
 	} else {
 		hdr = (typeof(hdr))(((uintptr_t)address) - sizeofIOLibPageMallocHeader);
-		adjustedSize = hdr->allocationSize;
-		allocationAddress = hdr->allocationAddress;
+		allocationAddress = IOMallocAlignedGetAddress(hdr, address, &adjustedSize);
 #if IOTRACKING
 		if (TRACK_ALLOC) {
-			IOTrackingRemove(gIOMallocTracking, &hdr->tracking.tracking, size);
+			IOTrackingRemoveAddress(gIOMallocTracking, &hdr->tracking, size);
 		}
 #endif
-		kfree(allocationAddress, adjustedSize);
+		__typed_allocators_ignore(kheap_free(kheap, allocationAddress, adjustedSize));
 	}
 
 	IOStatisticsAlloc(kIOStatisticsFreeContiguous, size);
@@ -596,13 +700,18 @@ IOKernelFreePhysical(mach_vm_address_t address, mach_vm_size_t size)
 #endif
 }
 
-#if __arm__ || __arm64__
+#if __arm64__
 extern unsigned long gPhysBase, gPhysSize;
 #endif
 
 mach_vm_address_t
-IOKernelAllocateWithPhysicalRestrict(mach_vm_size_t size, mach_vm_address_t maxPhys,
-    mach_vm_size_t alignment, bool contiguous)
+IOKernelAllocateWithPhysicalRestrict(
+	kalloc_heap_t         kheap,
+	mach_vm_size_t        size,
+	mach_vm_address_t     maxPhys,
+	mach_vm_size_t        alignment,
+	bool                  contiguous,
+	bool                  noSoftLimit)
 {
 	kern_return_t           kr;
 	mach_vm_address_t       address;
@@ -628,15 +737,25 @@ IOKernelAllocateWithPhysicalRestrict(mach_vm_size_t size, mach_vm_address_t maxP
 	    || (alignment > page_size);
 
 	if (contiguous || maxPhys) {
-		kma_flags_t options = KMA_NONE;
+		kma_flags_t options = KMA_ZERO;
 		vm_offset_t virt;
+
+		if (kheap == KHEAP_DATA_PRIVATE) {
+			options = (kma_flags_t) (options | KMA_DATA);
+		} else if (kheap == KHEAP_DATA_SHARED) {
+			options = (kma_flags_t) (options | KMA_DATA_SHARED);
+		}
+
+		if (noSoftLimit) {
+			options = (kma_flags_t) (options | KMA_NOSOFTLIMIT);
+		}
 
 		adjustedSize = size;
 		contiguous = (contiguous && (adjustedSize > page_size))
 		    || (alignment > page_size);
 
 		if (!contiguous) {
-#if __arm__ || __arm64__
+#if __arm64__
 			if (maxPhys >= (mach_vm_address_t)(gPhysBase + gPhysSize)) {
 				maxPhys = 0;
 			} else
@@ -651,7 +770,7 @@ IOKernelAllocateWithPhysicalRestrict(mach_vm_size_t size, mach_vm_address_t maxP
 		if (contiguous || maxPhys) {
 			kr = kmem_alloc_contig(kernel_map, &virt, size,
 			    alignMask, (ppnum_t) atop(maxPhys), (ppnum_t) atop(alignMask),
-			    KMA_NONE, IOMemoryTag(kernel_map));
+			    options, IOMemoryTag(kernel_map));
 		} else {
 			kr = kernel_memory_allocate(kernel_map, &virt,
 			    size, alignMask, options, IOMemoryTag(kernel_map));
@@ -667,12 +786,23 @@ IOKernelAllocateWithPhysicalRestrict(mach_vm_size_t size, mach_vm_address_t maxP
 			address = 0;
 		}
 	} else {
+		zalloc_flags_t zflags = Z_WAITOK;
+
+		if (noSoftLimit) {
+			zflags = (zalloc_flags_t)(zflags | Z_NOSOFTLIMIT);
+		}
+
 		adjustedSize += alignMask;
 		if (adjustedSize < size) {
 			return 0;
 		}
-		allocationAddress = (mach_vm_address_t) kheap_alloc_tag_bt(KHEAP_KEXT,
-		    adjustedSize, Z_WAITOK, VM_KERN_MEMORY_IOKIT);
+
+		/* BEGIN IGNORE CODESTYLE */
+		__typed_allocators_ignore_push // allocator implementation
+		allocationAddress = (mach_vm_address_t) kheap_alloc(kheap,
+		    adjustedSize, Z_VM_TAG_BT(zflags, VM_KERN_MEMORY_IOKIT));
+		__typed_allocators_ignore_pop
+		/* END IGNORE CODESTYLE */
 
 		if (allocationAddress) {
 			address = (allocationAddress + alignMask + sizeofIOLibPageMallocHeader)
@@ -683,8 +813,7 @@ IOKernelAllocateWithPhysicalRestrict(mach_vm_size_t size, mach_vm_address_t maxP
 			}
 
 			hdr = (typeof(hdr))(address - sizeofIOLibPageMallocHeader);
-			hdr->allocationSize    = adjustedSize;
-			hdr->allocationAddress = allocationAddress;
+			IOMallocAlignedSetHdr(hdr, alignMask, allocationAddress, address);
 #if IOTRACKING
 			if (TRACK_ALLOC) {
 				bzero(&hdr->tracking, sizeof(hdr->tracking));
@@ -733,7 +862,8 @@ IOMallocContiguous(vm_size_t size, vm_size_t alignment,
 
 	/* Do we want a physical address? */
 	if (!physicalAddress) {
-		address = IOKernelAllocateWithPhysicalRestrict(size, 0 /*maxPhys*/, alignment, true);
+		address = IOKernelAllocateWithPhysicalRestrict(KHEAP_DEFAULT,
+		    size, 0 /*maxPhys*/, alignment, true, false /* noSoftLimit */);
 	} else {
 		do {
 			IOBufferMemoryDescriptor * bmd;
@@ -750,7 +880,7 @@ IOMallocContiguous(vm_size_t size, vm_size_t alignment,
 			}
 
 			_IOMallocContiguousEntry *
-			    entry = IONew(_IOMallocContiguousEntry, 1);
+			    entry = IOMallocType(_IOMallocContiguousEntry);
 			if (!entry) {
 				bmd->release();
 				break;
@@ -799,9 +929,9 @@ IOFreeContiguous(void * _address, vm_size_t size)
 
 	if (md) {
 		md->release();
-		IODelete(entry, _IOMallocContiguousEntry, 1);
+		IOFreeType(entry, _IOMallocContiguousEntry);
 	} else {
-		IOKernelFreePhysical((mach_vm_address_t) address, size);
+		IOKernelFreePhysical(KHEAP_DEFAULT, (mach_vm_address_t) address, size);
 	}
 }
 
@@ -811,74 +941,10 @@ kern_return_t
 IOIteratePageableMaps(vm_size_t size,
     IOIteratePageableMapsCallback callback, void * ref)
 {
-	kern_return_t       kr = kIOReturnNotReady;
-	vm_size_t           segSize;
-	UInt32              attempts;
-	UInt32              index;
-	vm_offset_t         min;
-	vm_map_t            map;
-
-	if (size > kIOPageableMaxMapSize) {
+	if (size > kIOPageableMaxAllocSize) {
 		return kIOReturnBadArgument;
 	}
-
-	do {
-		index = gIOKitPageableSpace.hint;
-		attempts = gIOKitPageableSpace.count;
-		while (attempts--) {
-			kr = (*callback)(gIOKitPageableSpace.maps[index].map, ref);
-			if (KERN_SUCCESS == kr) {
-				gIOKitPageableSpace.hint = index;
-				break;
-			}
-			if (index) {
-				index--;
-			} else {
-				index = gIOKitPageableSpace.count - 1;
-			}
-		}
-		if (KERN_NO_SPACE != kr) {
-			break;
-		}
-
-		lck_mtx_lock( gIOKitPageableSpace.lock );
-
-		index = gIOKitPageableSpace.count;
-		if (index >= (kIOMaxPageableMaps - 1)) {
-			lck_mtx_unlock( gIOKitPageableSpace.lock );
-			break;
-		}
-
-		if (size < kIOPageableMapSize) {
-			segSize = kIOPageableMapSize;
-		} else {
-			segSize = size;
-		}
-
-		min = 0;
-		kr = kmem_suballoc(kernel_map,
-		    &min,
-		    segSize,
-		    TRUE,
-		    VM_FLAGS_ANYWHERE,
-		    VM_MAP_KERNEL_FLAGS_NONE,
-		    VM_KERN_MEMORY_IOKIT,
-		    &map);
-		if (KERN_SUCCESS != kr) {
-			lck_mtx_unlock( gIOKitPageableSpace.lock );
-			break;
-		}
-
-		gIOKitPageableSpace.maps[index].map     = map;
-		gIOKitPageableSpace.maps[index].address = min;
-		gIOKitPageableSpace.maps[index].end     = min + segSize;
-		gIOKitPageableSpace.hint                = index;
-		gIOKitPageableSpace.count               = index + 1;
-
-		lck_mtx_unlock( gIOKitPageableSpace.lock );
-	} while (true);
-
-	return kr;
+	return (*callback)(gIOKitPageableMap.map, ref);
 }
 
 struct IOMallocPageableRef {
@@ -891,11 +957,9 @@ static kern_return_t
 IOMallocPageableCallback(vm_map_t map, void * _ref)
 {
 	struct IOMallocPageableRef * ref = (struct IOMallocPageableRef *) _ref;
-	kern_return_t                kr;
+	kma_flags_t flags = (kma_flags_t)(KMA_PAGEABLE | KMA_DATA_SHARED);
 
-	kr = kmem_alloc_pageable( map, &ref->address, ref->size, ref->tag );
-
-	return kr;
+	return kmem_alloc( map, &ref->address, ref->size, flags, ref->tag );
 }
 
 static void *
@@ -907,7 +971,7 @@ IOMallocPageablePages(vm_size_t size, vm_size_t alignment, vm_tag_t tag)
 	if (alignment > page_size) {
 		return NULL;
 	}
-	if (size > kIOPageableMaxMapSize) {
+	if (size > kIOPageableMaxAllocSize) {
 		return NULL;
 	}
 
@@ -922,23 +986,12 @@ IOMallocPageablePages(vm_size_t size, vm_size_t alignment, vm_tag_t tag)
 }
 
 vm_map_t
-IOPageableMapForAddress( uintptr_t address )
+IOPageableMapForAddress(uintptr_t address)
 {
-	vm_map_t    map = NULL;
-	UInt32      index;
-
-	for (index = 0; index < gIOKitPageableSpace.count; index++) {
-		if ((address >= gIOKitPageableSpace.maps[index].address)
-		    && (address < gIOKitPageableSpace.maps[index].end)) {
-			map = gIOKitPageableSpace.maps[index].map;
-			break;
-		}
+	if (address < gIOKitPageableMap.address || address >= gIOKitPageableMap.end) {
+		panic("IOPageableMapForAddress: address out of range");
 	}
-	if (!map) {
-		panic("IOPageableMapForAddress: null");
-	}
-
-	return map;
+	return gIOKitPageableMap.map;
 }
 
 static void
@@ -952,11 +1005,13 @@ IOFreePageablePages(void * address, vm_size_t size)
 	}
 }
 
+#if defined(__x86_64__)
 static uintptr_t
-IOMallocOnePageablePage(iopa_t * a)
+IOMallocOnePageablePage(kalloc_heap_t kheap __unused, iopa_t * a)
 {
 	return (uintptr_t) IOMallocPageablePages(page_size, page_size, VM_KERN_MEMORY_IOKIT);
 }
+#endif /* defined(__x86_64__) */
 
 static void *
 IOMallocPageableInternal(vm_size_t size, vm_size_t alignment, bool zeroed)
@@ -966,16 +1021,26 @@ IOMallocPageableInternal(vm_size_t size, vm_size_t alignment, bool zeroed)
 	if (((uint32_t) alignment) != alignment) {
 		return NULL;
 	}
+#if defined(__x86_64__)
 	if (size >= (page_size - 4 * gIOPageAllocChunkBytes) ||
 	    alignment > page_size) {
 		addr = IOMallocPageablePages(size, alignment, IOMemoryTag(kernel_map));
 		/* Memory allocated this way will already be zeroed. */
 	} else {
-		addr = ((void *) iopa_alloc(&gIOPageablePageAllocator, &IOMallocOnePageablePage, size, (uint32_t) alignment));
-		if (zeroed) {
+		addr = ((void *) iopa_alloc(&gIOPageablePageAllocator,
+		    &IOMallocOnePageablePage, KHEAP_DEFAULT, size, (uint32_t) alignment));
+		if (addr && zeroed) {
 			bzero(addr, size);
 		}
 	}
+#else /* !defined(__x86_64__) */
+	vm_size_t allocSize = size;
+	if (allocSize == 0) {
+		allocSize = 1;
+	}
+	addr = IOMallocPageablePages(allocSize, alignment, IOMemoryTag(kernel_map));
+	/* already zeroed */
+#endif /* defined(__x86_64__) */
 
 	if (addr) {
 #if IOALLOCDEBUG
@@ -1007,6 +1072,7 @@ IOFreePageable(void * address, vm_size_t size)
 #endif
 	IOStatisticsAlloc(kIOStatisticsFreePageable, size);
 
+#if defined(__x86_64__)
 	if (size < (page_size - 4 * gIOPageAllocChunkBytes)) {
 		address = (void *) iopa_free(&gIOPageablePageAllocator, (uintptr_t) address, size);
 		size = page_size;
@@ -1014,9 +1080,160 @@ IOFreePageable(void * address, vm_size_t size)
 	if (address) {
 		IOFreePageablePages(address, size);
 	}
+#else /* !defined(__x86_64__) */
+	if (size == 0) {
+		size = 1;
+	}
+	if (address) {
+		IOFreePageablePages(address, size);
+	}
+#endif /* defined(__x86_64__) */
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+
+__typed_allocators_ignore_push
+
+void *
+IOMallocData_external(
+	vm_size_t size);
+void *
+IOMallocData_external(vm_size_t size)
+{
+	return IOMalloc_internal(KHEAP_DATA_PRIVATE, size, Z_VM_TAG_BT_BIT);
+}
+
+void *
+IOMallocZeroData_external(
+	vm_size_t size);
+void *
+IOMallocZeroData_external(vm_size_t size)
+{
+	return IOMalloc_internal(KHEAP_DATA_PRIVATE, size, Z_ZERO_VM_TAG_BT_BIT);
+}
+
+void *
+IOMallocDataShareable_external(
+	vm_size_t size);
+void *
+IOMallocDataShareable_external(vm_size_t size)
+{
+	return IOMalloc_internal(KHEAP_DATA_SHARED, size, Z_VM_TAG_BT_BIT);
+}
+
+void *
+IOMallocZeroDataShareable_external(
+	vm_size_t size);
+void *
+IOMallocZeroDataShareable_external(vm_size_t size)
+{
+	return IOMalloc_internal(KHEAP_DATA_SHARED, size, Z_ZERO_VM_TAG_BT_BIT);
+}
+
+void
+IOFreeData(void * address, vm_size_t size)
+{
+	return IOFree_internal(KHEAP_DATA_PRIVATE, address, size);
+}
+
+void
+IOFreeDataShareable(void * address, vm_size_t size)
+{
+	return IOFree_internal(KHEAP_DATA_SHARED, address, size);
+}
+
+__typed_allocators_ignore_pop
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+__typed_allocators_ignore_push // allocator implementation
+
+void *
+IOMallocTypeImpl(kalloc_type_view_t kt_view)
+{
+#if IOTRACKING
+	/*
+	 * When leak detection is on default to using IOMalloc as kalloc
+	 * type infrastructure isn't aware of needing additional space for
+	 * the header.
+	 */
+	if (TRACK_ALLOC) {
+		uint32_t kt_size = kalloc_type_get_size(kt_view->kt_size);
+		void *mem = IOMalloc_internal(KHEAP_DEFAULT, kt_size, Z_ZERO);
+		if (!IOMallocType_from_vm(kt_view)) {
+			assert(mem);
+		}
+		return mem;
+	}
+#endif
+	zalloc_flags_t kt_flags = (zalloc_flags_t) (Z_WAITOK | Z_ZERO);
+	if (!IOMallocType_from_vm(kt_view)) {
+		kt_flags = (zalloc_flags_t) (kt_flags | Z_NOFAIL);
+	}
+	/*
+	 * Use external symbol for kalloc_type_impl as
+	 * kalloc_type_views generated at some external callsites
+	 * many not have been processed during boot.
+	 */
+	return kalloc_type_impl_external(kt_view, kt_flags);
+}
+
+void
+IOFreeTypeImpl(kalloc_type_view_t kt_view, void * address)
+{
+#if IOTRACKING
+	if (TRACK_ALLOC) {
+		return IOFree_internal(KHEAP_DEFAULT, address,
+		           kalloc_type_get_size(kt_view->kt_size));
+	}
+#endif
+	/*
+	 * Use external symbol for kalloc_type_impl as
+	 * kalloc_type_views generated at some external callsites
+	 * many not have been processed during boot.
+	 */
+	return kfree_type_impl_external(kt_view, address);
+}
+
+void *
+IOMallocTypeVarImpl(kalloc_type_var_view_t kt_view, vm_size_t size)
+{
+#if IOTRACKING
+	/*
+	 * When leak detection is on default to using IOMalloc as kalloc
+	 * type infrastructure isn't aware of needing additional space for
+	 * the header.
+	 */
+	if (TRACK_ALLOC) {
+		return IOMalloc_internal(KHEAP_DEFAULT, size, Z_ZERO);
+	}
+#endif
+	zalloc_flags_t kt_flags = (zalloc_flags_t) (Z_WAITOK | Z_ZERO);
+
+	kt_flags = Z_VM_TAG_BT(kt_flags, VM_KERN_MEMORY_KALLOC_TYPE);
+	return kalloc_type_var_impl(kt_view, size, kt_flags, NULL);
+}
+
+void
+IOFreeTypeVarImpl(kalloc_type_var_view_t kt_view, void * address,
+    vm_size_t size)
+{
+#if IOTRACKING
+	if (TRACK_ALLOC) {
+		return IOFree_internal(KHEAP_DEFAULT, address, size);
+	}
+#endif
+
+	return kfree_type_var_impl(kt_view, address, size);
+}
+
+__typed_allocators_ignore_pop
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#if defined(__x86_64__)
+
 
 extern "C" void
 iopa_init(iopa_t * a)
@@ -1056,7 +1273,12 @@ iopa_allocinpage(iopa_page_t * pa, uint32_t count, uint64_t align)
 }
 
 uintptr_t
-iopa_alloc(iopa_t * a, iopa_proc_t alloc, vm_size_t bytes, vm_size_t balign)
+iopa_alloc(
+	iopa_t          * a,
+	iopa_proc_t       alloc,
+	kalloc_heap_t     kheap,
+	vm_size_t         bytes,
+	vm_size_t         balign)
 {
 	static const uint64_t align_masks[] = {
 		0xFFFFFFFFFFFFFFFF,
@@ -1098,7 +1320,7 @@ iopa_alloc(iopa_t * a, iopa_proc_t alloc, vm_size_t bytes, vm_size_t balign)
 	IOLockUnlock(a->lock);
 
 	if (!addr) {
-		addr = alloc(a);
+		addr = alloc(kheap, a);
 		if (addr) {
 			pa = (typeof(pa))(addr + page_size - gIOPageAllocChunkBytes);
 			pa->signature = kIOPageAllocSignature;
@@ -1165,6 +1387,8 @@ iopa_free(iopa_t * a, uintptr_t addr, vm_size_t bytes)
 
 	return (uintptr_t) pa;
 }
+
+#endif /* defined(__x86_64__) */
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -1299,13 +1523,21 @@ _IOLogv(const char *format, va_list ap, void *caller)
 
 	va_copy(ap2, ap);
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat"
 	os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, format, ap, caller);
+#pragma clang diagnostic pop
 
-	__doprnt(format, ap2, console_printbuf_putc, &info_data, 16, TRUE);
-	console_printbuf_clear(&info_data);
+	if (!disable_iolog_serial_output) {
+		__doprnt(format, ap2, console_printbuf_putc, &info_data, 16, TRUE);
+		console_printbuf_clear(&info_data);
+	}
 	va_end(ap2);
 
-	assertf(ml_get_interrupts_enabled() || ml_is_quiescing() || debug_mode_active() || !gCPUsRunning, "IOLog called with interrupts disabled");
+	assertf(ml_get_interrupts_enabled() || ml_is_quiescing() ||
+	    debug_mode_active() || !gCPUsRunning,
+	    "IOLog called with interrupts disabled");
 }
 
 #if !__LP64__

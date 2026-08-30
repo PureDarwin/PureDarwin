@@ -85,6 +85,7 @@
 #endif
 
 #include <security/_label.h>
+#include <kern/cs_blobs.h>
 
 struct attrlist;
 struct auditinfo;
@@ -116,6 +117,7 @@ struct tty;
 struct ucred;
 struct vfs_attr;
 struct vnode;
+struct sockaddr;
 /** @struct dummy */
 
 
@@ -124,7 +126,15 @@ struct vnode;
  * Should be removed once all dependent parties adopt
  * proc_ident_t.
  */
-#define MAC_PROC_IDENT_SUPPORT
+#define MAC_PROC_IDENT_SUPPORT 1
+
+/*
+ * rdar://146696727
+ *
+ * Support for opaque lookup policy on proc_ident
+ * when using proc_find_ident
+ */
+#define MAC_PROC_IDENT_POLICY_SUPPORT 1
 
 #ifndef _KAUTH_CRED_T
 #define _KAUTH_CRED_T
@@ -553,6 +563,32 @@ typedef void mpo_cred_label_update_t(
 	struct label *newlabel
 	);
 /**
+ *  @brief Access control for launching a process with constraints
+ *  @param curr_p The new process
+ *  @param original_parent_id The pid of the original parent that spawned this process
+ *  @param responsible_pid  The pid of the responsible process that spawned this process
+ *  @param macpolicyattr MAC policy-specific spawn attribute data
+ *  @param macpolicyattrlen Length of policy-specific spawn attribute data
+ *  @param fatal_failure_desc Description of fatal failure
+ *  @param fatal_failure_desc_len Failure description len, failure is fatal if non-0
+ *
+ *  Detemine whether the process being spawned adheres to the launch
+ *  constraints (e.g. whether the process is spawned by launchd) and should
+ *  be allowed to execute. This call occurs during execve or posix_spawn.
+ *
+ *  @return Return 0 if process can be created, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_launch_constraints_t(
+	proc_t curr_p,
+	pid_t original_parent_id,
+	pid_t responsible_pid,
+	void *macpolicyattr,
+	size_t macpolicyattrlen,
+	launch_constraint_data_t lcd,
+	char **fatal_failure_desc, size_t *fatal_failure_desc_len
+	);
+/**
  *  @brief Create a new devfs device
  *  @param dev Major and minor numbers of special file
  *  @param de "inode" of new device file
@@ -901,18 +937,18 @@ typedef int mpo_file_check_lock_t(
 	struct flock *fl
 	);
 /**
- *  @brief Check with library validation if a macho slice is allowed to be combined into a proc.
+ *  @brief Check with library validation if a Mach-O slice is allowed to be combined into a proc.
  *  @param p Subject process
  *  @param fg Fileglob structure
  *  @param slice_offset offset of the code slice
  *  @param error_message error message returned to user-space in case of error (userspace pointer)
  *  @param error_message_size error message size
  *
- *  Its a little odd that the MAC/kext writes into userspace since this
+ *  It's a little odd that the MAC/kext writes into userspace since this
  *  implies there is only one MAC module that implements this, however
- *  the alterantive is to allocate memory in xnu, on the hope that
- *  the MAC module will use it, or allocated in the MAC module and then
- *  free it in xnu. Either of these are very appeling, so lets go with
+ *  the alternative is to allocate memory in xnu, in the hope that
+ *  the MAC module will use it, or allocate in the MAC module and then
+ *  free it in xnu. Neither of these is very appealing, so let's go with
  *  the slightly more hacky way.
  *
  *  @return Return 0 if access is granted, otherwise an appropriate value for
@@ -1368,6 +1404,7 @@ typedef int mpo_mount_check_snapshot_revert_t(
  *  @param cred Subject credential
  *  @param mp The mount point
  *  @param mlabel Label currently associated with the mount point
+ *  @param flags Requested updated flags
  *
  *  Determine whether the subject identified by the credential can perform
  *  the remount operation on the target vnode.
@@ -1375,10 +1412,33 @@ typedef int mpo_mount_check_snapshot_revert_t(
  *  @return Return 0 if access is granted, otherwise an appropriate value for
  *  errno should be returned.
  */
+#define NEEDS_RDAR_103115865 1 // Required until both EndpointSecurity & Sandbox are updated
 typedef int mpo_mount_check_remount_t(
 	kauth_cred_t cred,
 	struct mount *mp,
-	struct label *mlabel
+	struct label *mlabel,
+	uint64_t flags
+	);
+/**
+ *  @brief Access control check for remounting a filesystem with modifiable flags
+ *  @param cred Subject credential
+ *  @param mp The mount point
+ *  @param mlabel Label currently associated with the mount point
+ *  @param flagsp A pointer to requested update flags. This can be modified by the function
+ *                to reflect changes in the operation flags.
+ *
+ *  This function is a variant of mpo_mount_check_remount_t, allowing
+ *  the caller to specify and potentially overwrite the flags via a
+ *  pointer to an integer.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_mount_check_remount_with_flags_t(
+	kauth_cred_t cred,
+	struct mount *mp,
+	struct label *mlabel,
+	int *flagsp
 	);
 /**
  *  @brief Access control check for the settting of file system attributes
@@ -1528,6 +1588,22 @@ typedef int mpo_mount_label_internalize_t(
 	struct label *label,
 	char *element_name,
 	char *element_data
+	);
+/**
+ *  @brief Notify on successful filesystem mount
+ *  @param cred Subject credential
+ *  @param mp Mount point of file system being mounted
+ *  @param mntlabel Label to associate with the new mount point
+ *  @see mpo_mount_label_init_t
+ *
+ *  Notify on  successful filesystem mount. The mntlabel associated
+ *  to this mount point should be initalized with mac_mount_label_init
+ *  prior to this call.
+ */
+typedef void mpo_mount_notify_mount_t(
+	kauth_cred_t cred,
+	struct mount *mp,
+	struct label *mntlabel
 	);
 /**
  *  @brief Access control check for opening an NECP file descriptor
@@ -2226,6 +2302,68 @@ typedef int mpo_proc_check_set_host_exception_port_t(
 	unsigned int exception
 	);
 /**
+ *  @brief Access control check for getting task special ports.
+ *  @param cred Subject credential
+ *  @param pident Object unique process identifier, NULL if target is a corpse task
+ *  @param which The task special port to get
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_get_task_special_port_t(
+	kauth_cred_t cred,
+	struct proc_ident *pident,
+	int which
+	);
+/**
+ *  @brief Access control check for setting task special ports.
+ *  @param cred Subject credential
+ *  @param pident Object unique process identifier
+ *  @param which The task special port to set
+ *  @param port The new value to set for the special port
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_set_task_special_port_t(
+	kauth_cred_t cred,
+	struct proc_ident *pident,
+	int which,
+	struct ipc_port *port
+	);
+/**
+ *  @brief Access control check for setting task exception ports for current task.
+ *  @param cred Subject credential
+ *  @param pident Object unique process identifier
+ *  @param exception Exception port to set
+ *  @param new_behavior exception_behavior_t value
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_set_task_exception_port_t(
+	kauth_cred_t cred,
+	struct proc_ident *pident,
+	unsigned int exception,
+	int new_behavior
+	);
+/**
+ *  @brief Access control check for setting thread exception ports.
+ *  @param cred Subject credential
+ *  @param pident Object unique process identifier
+ *  @param exception Exception port to set
+ *  @param new_behavior exception_behavior_t value
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_set_thread_exception_port_t(
+	kauth_cred_t cred,
+	struct proc_ident *pident,
+	unsigned int exception,
+	int new_behavior
+	);
+/**
  *  @brief Access control check for getting movable task/thread control port for current task.
  *  @param cred Subject credential
  *
@@ -2295,25 +2433,6 @@ typedef int mpo_proc_check_getaudit_t(
  */
 typedef int mpo_proc_check_getauid_t(
 	kauth_cred_t cred
-	);
-/**
- *  @brief Access control check for retrieving Login Context ID
- *  @param p0 Calling process
- *  @param p Effected process
- *  @param pid syscall PID argument
- *
- *  Determine if getlcid(2) system call is permitted.
- *
- *  Information returned by this system call is similar to that returned via
- *  process listings etc.
- *
- *  @return Return 0 if access is granted, otherwise an appropriate value for
- *  errno should be returned.
- */
-typedef int mpo_proc_check_getlcid_t(
-	struct proc *p0,
-	struct proc *p,
-	pid_t pid
 	);
 /**
  *  @brief Access control check for retrieving ledger information
@@ -2504,32 +2623,10 @@ typedef int mpo_proc_check_setauid_t(
 	uid_t auid
 	);
 /**
- *  @brief Access control check for setting the Login Context
- *  @param p0 Calling process
- *  @param p Effected process
- *  @param pid syscall PID argument
- *  @param lcid syscall LCID argument
- *
- *  Determine if setlcid(2) system call is permitted.
- *
- *  See xnu/bsd/kern/kern_prot.c:setlcid() implementation for example of
- *  decoding syscall arguments to determine action desired by caller.
- *
- *  Five distinct actions are possible: CREATE JOIN LEAVE ADOPT ORPHAN
- *
- *  @return Return 0 if access is granted, otherwise an appropriate value for
- *  errno should be returned.
- */
-typedef int mpo_proc_check_setlcid_t(
-	struct proc *p0,
-	struct proc *p,
-	pid_t pid,
-	pid_t lcid
-	);
-/**
  *  @brief Access control check for delivering signal
  *  @param cred Subject credential
- *  @param proc Object process
+ *  @param instigator Process which instigated the signal (optional)
+ *  @param target Object process
  *  @param signum Signal number; see kill(2)
  *
  *  Determine whether the subject identified by the credential can deliver
@@ -2539,14 +2636,38 @@ typedef int mpo_proc_check_setlcid_t(
  *  signals as part or their normal process lifecycle; caution should be
  *  exercised when implementing access controls over signal events.
  *
+ *  @note Caller will always be current_proc(). But the instigator may be NULL,
+ *  may not be the current proc, and may no longer be running.
+ *
+ *  @warning Policy implementations must avoid obtaining proc refs of
+ *  two different processes simultaneously.
+ *
  *  @return Return 0 if access is granted, otherwise an appropriate value for
  *  errno should be returned. Suggested failure: EACCES for label mismatch,
  *  EPERM for lack of privilege, or ESRCH to limit visibility.
  */
+#define NEEDS_RDAR_132584934 1 // Required until both EndpointSecurity & Sandbox are updated
 typedef int mpo_proc_check_signal_t(
 	kauth_cred_t cred,
-	struct proc *proc,
+	proc_ident_t instigator,
+	proc_ident_t target,
 	int signum
+	);
+/**
+ *  @brief Access control check for MAC syscalls.
+ *  @param proc Subject process
+ *  @param policy MAC policy name
+ *  @param callnum MAC policy-specific syscall number
+ *
+ *  Determine whether the subject process can perform the passed MAC syscall.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned. Suggested failure: EPERM for lack of privilege.
+ */
+typedef int mpo_proc_check_syscall_mac_t(
+	struct proc *proc,
+	const char *policy,
+	int callnum
 	);
 /**
  *  @brief Access control check for Unix syscalls.
@@ -2585,21 +2706,6 @@ typedef int mpo_proc_check_syscall_unix_t(
 typedef int mpo_proc_check_wait_t(
 	kauth_cred_t cred,
 	struct proc *proc
-	);
-/**
- *  @brief Access control check for work_interval_ctl(2)
- *  @param cred Subject credential
- *  @param operation Work interval operation
- *
- *  Determine whether the subject identified by the credential can perform
- *  the specified work interval operation.
- *
- *  @return Return 0 if access is granted, otherwise an appropriate value for
- *  errno should be returned.
- */
-typedef int mpo_proc_check_work_interval_ctl_t(
-	kauth_cred_t cred,
-	uint32_t operation
 	);
 /**
  *  @brief Inform MAC policies that a process has exited.
@@ -3224,7 +3330,7 @@ typedef int mpo_sysvmsq_check_msgrcv_t(
  *  @param msglabel The message's label
  *
  *  System V message queues are removed using the msgctl() system call.
- *  The system will iterate over each messsage in the queue, calling this
+ *  The system will iterate over each message in the queue, calling this
  *  function for each, to determine whether the caller has the appropriate
  *  credentials.
  *
@@ -3585,40 +3691,6 @@ typedef void mpo_sysvshm_label_init_t(
 typedef void mpo_sysvshm_label_recycle_t(
 	struct label *shmlabel
 	);
-/**
- *  @brief Access control check for getting a process's task name
- *  @param cred Subject credential
- *  @param pident Object unique process identifier
- *
- *  Determine whether the subject identified by the credential can get
- *  the passed process's task name port.
- *  This call is used by the task_name_for_pid(2) API.
- *
- *  @return Return 0 if access is granted, otherwise an appropriate value for
- *  errno should be returned. Suggested failure: EACCES for label mismatch,
- *  EPERM for lack of privilege, or ESRCH to hide visibility of the target.
- */
-typedef int mpo_proc_check_get_task_name_t(
-	kauth_cred_t cred,
-	struct proc_ident *pident
-	);
-/**
- *  @brief Access control check for getting a process's task port
- *  @param cred Subject credential
- *  @param pident Object unique process identifier
- *
- *  Determine whether the subject identified by the credential can get
- *  the passed process's task control port.
- *  This call is used by the task_for_pid(2) API.
- *
- *  @return Return 0 if access is granted, otherwise an appropriate value for
- *  errno should be returned. Suggested failure: EACCES for label mismatch,
- *  EPERM for lack of privilege, or ESRCH to hide visibility of the target.
- */
-typedef int mpo_proc_check_get_task_t(
-	kauth_cred_t cred,
-	struct proc_ident *pident
-	);
 
 /**
  *  @brief Access control check for getting a process's task ports of different flavors
@@ -3641,25 +3713,6 @@ typedef int mpo_proc_check_get_task_with_flavor_t(
 	);
 
 /**
- *  @brief Access control check for exposing a process's task port
- *  @param cred Subject credential
- *  @param pident Object unique process identifier
- *
- *  Determine whether the subject identified by the credential can expose
- *  the passed process's task control port.
- *  This call is used by the accessor APIs like processor_set_tasks() and
- *  processor_set_threads().
- *
- *  @return Return 0 if access is granted, otherwise an appropriate value for
- *  errno should be returned. Suggested failure: EACCES for label mismatch,
- *  EPERM for lack of privilege, or ESRCH to hide visibility of the target.
- */
-typedef int mpo_proc_check_expose_task_t(
-	kauth_cred_t cred,
-	struct proc_ident *pident
-	);
-
-/**
  *  @brief Access control check for exposing a process's task ports of different flavors
  *  @param cred Subject credential
  *  @param pident Object unique process identifier
@@ -3667,8 +3720,7 @@ typedef int mpo_proc_check_expose_task_t(
  *
  *  Determine whether the subject identified by the credential can expose
  *  the passed process's task port of given flavor.
- *  This call is used by the accessor APIs like processor_set_tasks() and
- *  processor_set_threads().
+ *  This call is used by the accessor APIs like processor_set_tasks().
  *
  *  @return Return 0 if access is granted, otherwise an appropriate value for
  *  errno should be returned. Suggested failure: EACCES for label mismatch,
@@ -3683,7 +3735,7 @@ typedef int mpo_proc_check_expose_task_with_flavor_t(
 /**
  *  @brief Access control check for upgrading to task port with a task identity token
  *  @param cred Subject credential
- *  @param pident Object unique process identifier
+ *  @param pident Object unique process identifier, NULL if token represents a corpse task
  *  @param flavor Requested task port flavor
  *
  *  Determine whether the subject identified by the credential can upgrade to task port
@@ -3696,7 +3748,7 @@ typedef int mpo_proc_check_expose_task_with_flavor_t(
  */
 typedef int mpo_proc_check_task_id_token_get_task_t(
 	kauth_cred_t cred,
-	struct proc_ident *pident,
+	struct proc_ident *pident, /* Nullable */
 	mach_task_flavor_t flavor
 	);
 
@@ -3719,6 +3771,30 @@ typedef int mpo_proc_check_inherit_ipc_ports_t(
 	struct vnode *img_vp,
 	off_t img_offset,
 	struct vnode *scriptvp
+	);
+
+/**
+ *  @brief Access control check for iopolicysys
+ *  @param p current process instance
+ *  @param cred Subject credential
+ *  @param type Type of I/O policy (e.g. IOPOL_TYPE_DISK)
+ *  @param cmd Command into I/O policy (e.g. IOPOL_CMD_GET or IOPOL_CMD_SET)
+ *  @param scope Scope of the I/O policy (e.g IOPOL_SCOPE_PROCESS)
+ *  @param policy Priority of the I/O policy (e.g. IOPOL_IMPORTANT)
+ *
+ *  Determine whether the subject identified by the credential can perform
+ *  the I/O policy type within the scope.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_iopolicysys_t(
+	struct proc *p,
+	kauth_cred_t cred,
+	int cmd,
+	int type,
+	int scope,
+	int policy
 	);
 
 /**
@@ -3766,6 +3842,171 @@ typedef void mpo_proc_notify_cs_invalidated_t(
  */
 typedef void mpo_proc_notify_exec_complete_t(
 	struct proc *p
+	);
+
+/**
+ *  @brief Access control check for setting user ID
+ *  @param cred Subject credential
+ *  @param uid Requested user ID
+ *
+ *  Determine whether the subject identified by the credential can set the
+ *  real and effective user ID and the saved set-user-ID of the current
+ *  process, using the setuid() system call.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_setuid_t(
+	kauth_cred_t cred,
+	uid_t uid
+	);
+
+/**
+ *  @brief Access control check for setting effective user ID
+ *  @param cred Subject credential
+ *  @param euid Requested effective user ID
+ *
+ *  Determine whether the subject identified by the credential can set the
+ *  effective user ID of the current process, using the seteuid() system call.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_seteuid_t(
+	kauth_cred_t cred,
+	uid_t euid
+	);
+
+/**
+ *  @brief Access control check for setting real and effective user ID
+ *  @param cred Subject credential
+ *  @param ruid Requested real user ID
+ *  @param euid Requested effective user ID
+ *
+ *  Determine whether the subject identified by the credential can set the
+ *  real and effective user ID of the current process, using the setreuid()
+ *  system call.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_setreuid_t(
+	kauth_cred_t cred,
+	uid_t ruid,
+	uid_t euid
+	);
+
+/**
+ *  @brief Access control check for setting group ID
+ *  @param cred Subject credential
+ *  @param gid Requested group ID
+ *
+ *  Determine whether the subject identified by the credential can set the
+ *  real and effective group IDs and the saved set-group-ID of the current
+ *  process, using the setgid() system call.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_setgid_t(
+	kauth_cred_t cred,
+	gid_t gid
+	);
+
+/**
+ *  @brief Access control check for setting effective group ID
+ *  @param cred Subject credential
+ *  @param egid Requested effective group ID
+ *
+ *  Determine whether the subject identified by the credential can set the
+ *  effective group ID of the current process, using the setegid() system call.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_setegid_t(
+	kauth_cred_t cred,
+	gid_t egid
+	);
+
+/**
+ *  @brief Access control check for setting real and effective group ID
+ *  @param cred Subject credential
+ *  @param rgid Requested real group ID or KAUTH_UID_NONE for none
+ *  @param egid Requested effective group ID or KAUTH_GID_NONE for none
+ *
+ *  Determine whether the subject identified by the credential can set the
+ *  real and effective group ID of the current process, using the setregid()
+ *  system call.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_setregid_t(
+	kauth_cred_t cred,
+	gid_t rgid,
+	gid_t egid
+	);
+
+/**
+ *  @brief Access control check for setting thread assumed identity
+ *  @param pcred Subject process credential
+ *  @param tcred Subject thread credential
+ *  @param uid Requested user ID or KAUTH_UID_NONE for none
+ *  @param gid Requested group ID or KAUTH_GID_NONE for none
+ *
+ *  Determine whether the subject identified by the credential can set the
+ *  user and group ID of the current thread, using the settid() or
+ *  settid_with_pid() system call.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_proc_check_settid_t(
+	kauth_cred_t pcred,
+	kauth_cred_t tcred,
+	uid_t uid,
+	gid_t gid
+	);
+
+/**
+ *  @brief Notification of connection port derivation from service port
+ *  @param cred Subject process credential
+ *  @param sp_info Service port info
+ *
+ *  Called when a process derives a connection port from a service port.
+ *
+ *  Notes:
+ *  - Port derivation is only mandatory if the receiving end of the
+ *    connection performs validation of that fact.
+ *  - MAC policies should not perform upcalls or expensive operations in
+ *    this hook.
+ *  - Only called on macOS.
+ */
+typedef void mpo_proc_notify_service_port_derive_t(
+	kauth_cred_t cred,
+	struct mach_service_port_info *sp_info
+	);
+
+/**
+ *  @brief Perform MAC-related analysis of telemetry data.
+ *  @param thread The Mach thread that was sampled.
+ *
+ *  Notifies MAC policies that telemetry data was just collected from a
+ *  process's user thread and that it is ready to be analyzed. The analysis is
+ *  performed shortly before a thread is about to return to userspace via a
+ *  syscall or mach trap.
+ *
+ *  Note that sometimes the scheduled telemetry can fail. In the case of
+ *  failure, the function will be called with a non-zero `err` value, in which
+ *  case it is expected that the client will cleanup any necessary state
+ *  recorded back when the telemetry was first scheduled.
+ */
+typedef void mpo_thread_telemetry_t(
+	struct thread *thread,
+	int err,
+	const void *data,
+	size_t length
 	);
 
 /**
@@ -4219,6 +4460,32 @@ typedef int mpo_vnode_check_lookup_preflight_t(
 	const char *path,
 	size_t pathlen
 	);
+
+/**
+ *  @brief Access control check for lookup
+ *  @param cred Subject credential
+ *  @param vp Object vnode
+ *  @param label Policy label for vp
+ *  @param resolve_flags The resolve prefix flags
+ *
+ *   This MACF hook, invoked during lookup after vnode acquisition,
+ *   provides resolve flags. This enables kernel extensions (like
+ *   Sandbox) to handle relevant policies.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned. Suggested failure: EACCES for label mismatch or
+ *  EPERM for lack of privilege.
+ *
+ *  @note This hook will be called only for a defined subset of specific flags, not
+ *  for the entire set of valid resolve flags.
+ */
+typedef int mpo_vnode_check_lookup_postflight_t(
+	kauth_cred_t cred,
+	struct vnode *vp,
+	struct label *label,
+	uint32_t resolve_flags
+	);
+
 /**
  *  @brief Access control check for lookup
  *  @param cred Subject credential
@@ -4323,11 +4590,11 @@ typedef int mpo_vnode_check_readlink_t(
 /**
  *  @brief Access control check for rename
  *  @param cred Subject credential
- *  @param dvp Directory vnode
- *  @param dlabel Policy label associated with dvp
- *  @param vp vnode to be renamed
- *  @param label Policy label associated with vp
- *  @param cnp Component name for vp
+ *  @param fdvp Directory vnode
+ *  @param fdlabel Policy label associated with dvp
+ *  @param fvp vnode to be renamed
+ *  @param flabel Policy label associated with vp
+ *  @param fcnp Component name for vp
  *  @param tdvp Destination directory vnode
  *  @param tdlabel Policy label associated with tdvp
  *  @param tvp Overwritten vnode
@@ -4342,11 +4609,11 @@ typedef int mpo_vnode_check_readlink_t(
  */
 typedef int mpo_vnode_check_rename_t(
 	kauth_cred_t cred,
-	struct vnode *dvp,
-	struct label *dlabel,
-	struct vnode *vp,
-	struct label *label,
-	struct componentname *cnp,
+	struct vnode *fdvp,
+	struct label *fdlabel,
+	struct vnode *fvp,
+	struct label *flabel,
+	struct componentname *fcnp,
 	struct vnode *tdvp,
 	struct label *tdlabel,
 	struct vnode *tvp,
@@ -4660,28 +4927,6 @@ typedef int mpo_vnode_check_signature_t(
 	unsigned int platform,
 	char **fatal_failure_desc, size_t *fatal_failure_desc_len
 	);
-
-/**
- *  @brief Access control check for supplemental signature attachement
- *  @param vp the vnode to which the signature will be attached
- *  @param label label associated with the vnode
- *  @param cs_blob the code signature to check
- *  @param linked_vp vnode to which this new vp is related
- *  @param linked_cs_blob the code signature of the linked vnode
- *  @param signer_type output parameter for the signer type of the code signature being checked.
- *
- *  @return Return 0 if access is granted, otherwise an appropriate value for
- *  errno should be returned.
- */
-typedef int mpo_vnode_check_supplemental_signature_t(
-	struct vnode *vp,
-	struct label *label,
-	struct cs_blob *cs_blob,
-	struct vnode *linked_vp,
-	struct cs_blob *linked_cs_blob,
-	unsigned int *signer_type
-	);
-
 /**
  *  @brief Access control check for stat
  *  @param active_cred Subject credential
@@ -4704,6 +4949,62 @@ typedef int mpo_vnode_check_stat_t(
 	struct ucred *file_cred,        /* NULLOK */
 	struct vnode *vp,
 	struct label *label
+	);
+/**
+ *  @brief Access control check for supplemental signature attachement
+ *  @param vp the vnode to which the signature will be attached
+ *  @param label label associated with the vnode
+ *  @param cs_blob the code signature to check
+ *  @param linked_vp vnode to which this new vp is related
+ *  @param linked_cs_blob the code signature of the linked vnode
+ *  @param signer_type output parameter for the signer type of the code signature being checked.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_vnode_check_supplemental_signature_t(
+	struct vnode *vp,
+	struct label *label,
+	struct cs_blob *cs_blob,
+	struct vnode *linked_vp,
+	struct cs_blob *linked_cs_blob,
+	unsigned int *signer_type
+	);
+/**
+ *  @brief Access control check for atomically swapping two vnodes.
+ *  @param cred User credential for the swapping process
+ *  @param v1 vnode 1 to swap
+ *  @param vl1 Policy label for v1
+ *  @param v2 vnode 2 to swap
+ *  @param vl2 Policy label for v2
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned. Suggested failure: EACCES for label mismatch or
+ *  EPERM for lack of privilege.
+ */
+typedef int mpo_vnode_check_swap_t(
+	kauth_cred_t cred,
+	struct vnode *v1,
+	struct label *vl1,
+	struct vnode *v2,
+	struct label *vl2
+	);
+/**
+ * @brief Access control and clamping for changing dataprotection class of a vnode.
+ * @param cred User credential for process changing dataprotection class
+ * @param vp the vnode that is being changed
+ * @param dataprotect_class a pointer to the desired new dataprotection class
+ *
+ * The hook may override the requested data protection class by altering the
+ * value referenced by dataprotect_class.
+ *
+ * @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_vnode_check_dataprotect_set_t(
+	kauth_cred_t cred,
+	struct vnode *vp,
+	uint32_t *dataprotect_class
 	);
 /**
  *  @brief Access control check for vnode trigger resolution
@@ -4843,6 +5144,38 @@ typedef int mpo_vnode_check_write_t(
 	kauth_cred_t file_cred, /* NULLOK */
 	struct vnode *vp,
 	struct label *label
+	);
+/**
+ *  @brief Access control check for copyfile
+ *  @param cred Subject credential
+ *  @param dvp Vnode of directory to create the copy in
+ *  @param dlabel Policy label associated with dvp
+ *  @param tvp Vnode of the file at the target path that will be unlinked to
+ *         make room for the copy being created, if file exists
+ *  @param tlabel Policy label associated with tvp
+ *  @param fvp Vnode of the file to copy from
+ *  @param flabel Policy label associated with fvp
+ *  @param cnp Component name for the copy being created
+ *  @param mode Corresponds to mode argument to the copyfile syscall
+ *  @param flags Corresponds to flags argument to the copyfile syscall
+ *
+ *  Determine whether the subject identified by the credential should be
+ *  allowed to create a copy of the vnode fvp with the name specified by cnp.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_vnode_check_copyfile_t(
+	kauth_cred_t cred,
+	struct vnode *dvp,
+	struct label *dlabel,
+	struct vnode *tvp,      /* NULLOK */
+	struct label *tlabel,   /* NULLOK */
+	struct vnode *fvp,
+	struct label *flabel,
+	struct componentname *cnp,
+	mode_t mode,
+	int flags
 	);
 /**
  *  @brief Associate a vnode with a devfs entry
@@ -5208,7 +5541,7 @@ typedef void mpo_vnode_label_update_t(
  *  @brief Find deatched signatures for a shared library
  *  @param p file trying to find the signature
  *  @param vp The vnode to relabel
- *  @param offset offset in the macho that the signature is requested for (for fat binaries)
+ *  @param offset offset in the Mach-O that the signature is requested for (for fat binaries)
  *  @param label Existing vnode label
  *
  */
@@ -5284,6 +5617,48 @@ typedef void mpo_vnode_notify_rename_t(
 	struct vnode *dvp,
 	struct label *dlabel,
 	struct componentname *cnp
+	);
+
+/**
+ *  @brief Inform MAC policies that two vnodes were atomically swapped.
+ *  @param cred User credential for the renaming process
+ *  @param v1 vnode 1 to swap
+ *  @param vl1 Policy label for v1
+ *  @param v2 vnode 2 to swap
+ *  @param vl2 Policy label for v2
+ *
+ *  Inform MAC policies that two vnodes were atomically swapped.
+ *  NOTE: If a policy implements this notify hook, then this hook will be
+ *  called instead of two calls to the vnode_notify_rename hook (one for each
+ *  member of the swap).
+ */
+typedef void mpo_vnode_notify_swap_t(
+	kauth_cred_t cred,
+	struct vnode *v1,
+	struct label *vl1,
+	struct vnode *v2,
+	struct label *vl2
+	);
+
+/**
+ *  @brief Notification that a vnode rename swap is about to be performed
+ *  @param cred User credential for the swapping process
+ *  @param v1 First vnode about to be swapped
+ *  @param vl1 Policy label for v1
+ *  @param v2 Second vnode about to be swapped
+ *  @param vl2 Policy label for v2
+ *
+ *  This hook is called immediately before the filesystem rename swap
+ *  operation, after all access control checks have completed successfully.
+ *  Policies may use this hook to prepare state that must be held across
+ *  the rename operation itself.
+ */
+typedef void mpo_vnode_notify_will_rename_swap_t(
+	kauth_cred_t cred,
+	struct vnode *v1,
+	struct label *vl1,
+	struct vnode *v2,
+	struct label *vl2
 	);
 
 /**
@@ -5546,6 +5921,83 @@ typedef void mpo_vnode_notify_reclaim_t(
 	struct vnode *vp
 	);
 
+/**
+ *  @brief Inform MAC policies that a vnode has been deleted
+ *  @param cred Subject credential
+ *  @param dvp Parent directory vnode
+ *  @param dlabel Policy label for dvp
+ *  @param vp Object vnode to delete
+ *  @param label Policy label for vp
+ *  @param cnp Component name for vp
+ *
+ *  Inform Mac policies that a vnode have been successfully deleted
+ *  (passing all MAC polices and DAC).
+ */
+typedef void mpo_vnode_notify_unlink_t(
+	kauth_cred_t cred,
+	struct vnode *dvp,
+	struct label *dlabel,
+	struct vnode *vp,
+	struct label *label,
+	struct componentname *cnp
+	);
+
+/**
+ *  @brief Access control check for grafting a Cryptex
+ *  @param cred Subject credential
+ *  @param graft_dir_vp Vnode that is to be the graft point
+ *
+ *  Determine whether the subject identified by the credential can perform
+ *  the graft operation on the target vnode.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_graft_check_graft_t(
+	kauth_cred_t cred,
+	struct vnode *graft_dir_vp
+	);
+
+/**
+ *  @brief Access control check for ungrafting a Cryptex
+ *  @param cred Subject credential
+ *  @param graft_dir_vp Vnode of graft point to be ungrafted
+ *
+ *  Determine whether the subject identified by the credential can perform
+ *  the ungraft operation on the target vnode.
+ *
+ *  @return Return 0 if access is granted, otherwise an appropriate value for
+ *  errno should be returned.
+ */
+typedef int mpo_graft_check_ungraft_t(
+	kauth_cred_t cred,
+	struct vnode *graft_dir_vp
+	);
+
+/**
+ *  @brief Notify on successful Cryptex graft
+ *  @param cred Subject credential
+ *  @param graft_dir_vp Vnode of graft point
+ *
+ *  Notify on successful Cryptex graft.
+ */
+typedef void mpo_graft_notify_graft_t(
+	kauth_cred_t cred,
+	struct vnode *graft_dir_vp
+	);
+
+/**
+ *  @brief Notify on successful Cryptex ungraft
+ *  @param cred Subject credential
+ *  @param graft_dir_vp Vnode of graft point
+ *
+ *  Notify on successful Cryptex ungraft.
+ */
+typedef void mpo_graft_notify_ungraft_t(
+	kauth_cred_t cred,
+	struct vnode *graft_dir_vp
+	);
+
 /*
  * Placeholder for future events that may need mac hooks.
  */
@@ -5557,15 +6009,15 @@ typedef void mpo_reserved_hook_t(void);
  * Please note that this should be kept in sync with the check assumptions
  * policy in bsd/kern/policy_check.c (policy_ops struct).
  */
-#define MAC_POLICY_OPS_VERSION 75 /* inc when new reserved slots are taken */
+#define MAC_POLICY_OPS_VERSION 93 /* inc when new reserved slots are taken */
 struct mac_policy_ops {
 	mpo_audit_check_postselect_t            *mpo_audit_check_postselect;
 	mpo_audit_check_preselect_t             *mpo_audit_check_preselect;
 
-	mpo_reserved_hook_t                     *mpo_reserved01;
-	mpo_reserved_hook_t                     *mpo_reserved02;
-	mpo_reserved_hook_t                     *mpo_reserved03;
-	mpo_reserved_hook_t                     *mpo_reserved04;
+	mpo_graft_check_graft_t                 *mpo_graft_check_graft;
+	mpo_graft_check_ungraft_t               *mpo_graft_check_ungraft;
+	mpo_graft_notify_graft_t                *mpo_graft_notify_graft;
+	mpo_graft_notify_ungraft_t              *mpo_graft_notify_ungraft;
 
 	mpo_cred_check_label_update_execve_t    *mpo_cred_check_label_update_execve;
 	mpo_cred_check_label_update_t           *mpo_cred_check_label_update;
@@ -5602,13 +6054,16 @@ struct mac_policy_ops {
 	mpo_file_check_mmap_t                   *mpo_file_check_mmap;
 	mpo_file_check_receive_t                *mpo_file_check_receive;
 	mpo_file_check_set_t                    *mpo_file_check_set;
-	mpo_file_label_init_t                   *mpo_file_label_init;
-	mpo_file_label_destroy_t                *mpo_file_label_destroy;
-	mpo_file_label_associate_t              *mpo_file_label_associate;
+	mpo_file_label_init_t                   *mpo_file_label_init;       /* deprecated not called anymore */
+	mpo_file_label_destroy_t                *mpo_file_label_destroy;    /* deprecated not called anymore */
+	mpo_file_label_associate_t              *mpo_file_label_associate;  /* deprecated not called anymore */
 	mpo_file_notify_close_t                 *mpo_file_notify_close;
 
-	mpo_reserved_hook_t                     *mpo_reserved06;
-	mpo_reserved_hook_t                     *mpo_reserved07;
+	mpo_proc_check_launch_constraints_t     *mpo_proc_check_launch_constraints;
+	mpo_proc_notify_service_port_derive_t   *mpo_proc_notify_service_port_derive;
+	mpo_proc_check_set_task_exception_port_t *mpo_proc_check_set_task_exception_port;
+	mpo_proc_check_set_thread_exception_port_t *mpo_proc_check_set_thread_exception_port;
+
 	mpo_reserved_hook_t                     *mpo_reserved08;
 	mpo_reserved_hook_t                     *mpo_reserved09;
 	mpo_reserved_hook_t                     *mpo_reserved10;
@@ -5620,12 +6075,10 @@ struct mac_policy_ops {
 	mpo_reserved_hook_t                     *mpo_reserved16;
 	mpo_reserved_hook_t                     *mpo_reserved17;
 	mpo_reserved_hook_t                     *mpo_reserved18;
-	mpo_reserved_hook_t                     *mpo_reserved19;
+	mpo_vnode_notify_will_rename_swap_t     *mpo_vnode_notify_will_rename_swap;
 	mpo_reserved_hook_t                     *mpo_reserved20;
 	mpo_reserved_hook_t                     *mpo_reserved21;
 	mpo_reserved_hook_t                     *mpo_reserved22;
-	mpo_reserved_hook_t                     *mpo_reserved23;
-	mpo_reserved_hook_t                     *mpo_reserved24;
 
 	mpo_necp_check_open_t                   *mpo_necp_check_open;
 	mpo_necp_check_client_action_t          *mpo_necp_check_client_action;
@@ -5642,15 +6095,16 @@ struct mac_policy_ops {
 	mpo_vnode_notify_truncate_t             *mpo_vnode_notify_truncate;
 	mpo_vnode_check_getattrlistbulk_t       *mpo_vnode_check_getattrlistbulk;
 
-	mpo_reserved_hook_t                     *mpo_reserved28;
-	mpo_reserved_hook_t                     *mpo_reserved29;
-	mpo_reserved_hook_t                     *mpo_reserved30;
-	mpo_reserved_hook_t                     *mpo_reserved31;
-	mpo_reserved_hook_t                     *mpo_reserved32;
-	mpo_reserved_hook_t                     *mpo_reserved33;
-	mpo_reserved_hook_t                     *mpo_reserved34;
-	mpo_reserved_hook_t                     *mpo_reserved35;
-	mpo_reserved_hook_t                     *mpo_reserved36;
+	mpo_proc_check_get_task_special_port_t  *mpo_proc_check_get_task_special_port;
+	mpo_proc_check_set_task_special_port_t  *mpo_proc_check_set_task_special_port;
+
+	mpo_vnode_notify_swap_t                 *mpo_vnode_notify_swap;
+	mpo_vnode_notify_unlink_t               *mpo_vnode_notify_unlink;
+	mpo_vnode_check_swap_t                  *mpo_vnode_check_swap;
+	mpo_vnode_check_dataprotect_set_t       *mpo_vnode_check_dataprotect_set;
+	mpo_mount_check_remount_with_flags_t    *mpo_mount_check_remount_with_flags;
+	mpo_mount_notify_mount_t                *mpo_mount_notify_mount;
+	mpo_vnode_check_copyfile_t              *mpo_vnode_check_copyfile;
 
 	mpo_mount_check_quotactl_t              *mpo_mount_check_quotactl;
 	mpo_mount_check_fsctl_t                 *mpo_mount_check_fsctl;
@@ -5684,7 +6138,7 @@ struct mac_policy_ops {
 	mpo_reserved_hook_t                     *mpo_reserved43;
 	mpo_pipe_label_init_t                   *mpo_pipe_label_init;
 	mpo_reserved_hook_t                     *mpo_reserved44;
-	mpo_reserved_hook_t                     *mpo_reserved45;
+	mpo_proc_check_syscall_mac_t            *mpo_proc_check_syscall_mac;
 
 	mpo_policy_destroy_t                    *mpo_policy_destroy;
 	mpo_policy_init_t                       *mpo_policy_init;
@@ -5698,7 +6152,7 @@ struct mac_policy_ops {
 	mpo_proc_notify_exec_complete_t         *mpo_proc_notify_exec_complete;
 	mpo_proc_notify_cs_invalidated_t        *mpo_proc_notify_cs_invalidated;
 	mpo_proc_check_syscall_unix_t           *mpo_proc_check_syscall_unix;
-	mpo_proc_check_expose_task_t            *mpo_proc_check_expose_task;            /* Deprecating, use mpo_proc_check_expose_task_with_flavor instead */
+	mpo_vnode_check_lookup_postflight_t     *mpo_vnode_check_lookup_postflight;
 	mpo_proc_check_set_host_special_port_t  *mpo_proc_check_set_host_special_port;
 	mpo_proc_check_set_host_exception_port_t *mpo_proc_check_set_host_exception_port;
 	mpo_exc_action_check_exception_send_t   *mpo_exc_action_check_exception_send;
@@ -5735,16 +6189,16 @@ struct mac_policy_ops {
 
 	mpo_proc_check_debug_t                  *mpo_proc_check_debug;
 	mpo_proc_check_fork_t                   *mpo_proc_check_fork;
-	mpo_proc_check_get_task_name_t          *mpo_proc_check_get_task_name; /* Deprecating, use mpo_proc_check_get_task_with_flavor instead */
-	mpo_proc_check_get_task_t               *mpo_proc_check_get_task;      /* Deprecating, use mpo_proc_check_get_task_with_flavor instead */
+	mpo_reserved_hook_t                     *mpo_reserved61;
+	mpo_reserved_hook_t                     *mpo_reserved62;
 	mpo_proc_check_getaudit_t               *mpo_proc_check_getaudit;
 	mpo_proc_check_getauid_t                *mpo_proc_check_getauid;
-	mpo_proc_check_getlcid_t                *mpo_proc_check_getlcid;
+	mpo_reserved_hook_t                     *mpo_reserved63;
 	mpo_proc_check_mprotect_t               *mpo_proc_check_mprotect;
 	mpo_proc_check_sched_t                  *mpo_proc_check_sched;
 	mpo_proc_check_setaudit_t               *mpo_proc_check_setaudit;
 	mpo_proc_check_setauid_t                *mpo_proc_check_setauid;
-	mpo_proc_check_setlcid_t                *mpo_proc_check_setlcid;
+	mpo_proc_check_iopolicysys_t            *mpo_proc_check_iopolicysys;
 	mpo_proc_check_signal_t                 *mpo_proc_check_signal;
 	mpo_proc_check_wait_t                   *mpo_proc_check_wait;
 	mpo_proc_check_dump_core_t              *mpo_proc_check_dump_core;
@@ -5769,18 +6223,17 @@ struct mac_policy_ops {
 
 	mpo_proc_check_get_movable_control_port_t *mpo_proc_check_get_movable_control_port;
 	mpo_proc_check_dyld_process_info_notify_register_t *mpo_proc_check_dyld_process_info_notify_register;
-	mpo_reserved_hook_t                     *mpo_reserved52;
-	mpo_reserved_hook_t                     *mpo_reserved53;
-	mpo_reserved_hook_t                     *mpo_reserved54;
-	mpo_reserved_hook_t                     *mpo_reserved55;
-	mpo_reserved_hook_t                     *mpo_reserved56;
-	mpo_reserved_hook_t                     *mpo_reserved57;
-	mpo_reserved_hook_t                     *mpo_reserved58;
-
+	mpo_proc_check_setuid_t                 *mpo_proc_check_setuid;
+	mpo_proc_check_seteuid_t                *mpo_proc_check_seteuid;
+	mpo_proc_check_setreuid_t               *mpo_proc_check_setreuid;
+	mpo_proc_check_setgid_t                 *mpo_proc_check_setgid;
+	mpo_proc_check_setegid_t                *mpo_proc_check_setegid;
+	mpo_proc_check_setregid_t               *mpo_proc_check_setregid;
+	mpo_proc_check_settid_t                 *mpo_proc_check_settid;
 	mpo_proc_check_memorystatus_control_t   *mpo_proc_check_memorystatus_control;
-	mpo_proc_check_work_interval_ctl_t      *mpo_proc_check_work_interval_ctl;
+	mpo_reserved_hook_t                     *mpo_reserved60;
 
-	mpo_reserved_hook_t                     *mpo_reserved61;
+	mpo_thread_telemetry_t                  *mpo_thread_telemetry;
 
 	mpo_iokit_check_open_service_t          *mpo_iokit_check_open_service;
 
@@ -5975,7 +6428,7 @@ typedef unsigned int mac_policy_handle_t;
  *  The mpc_list field is used by the Framework and should not be
  *  modified by policies.
  */
-/* XXX - reorder these for better aligment on 64bit platforms */
+/* XXX - reorder these for better alignment on 64bit platforms */
 struct mac_policy_conf {
 	const char              *mpc_name;              /** policy name */
 	const char              *mpc_fullname;          /** full name */
@@ -6002,7 +6455,7 @@ int     mac_policy_register(struct mac_policy_conf *mpc,
 /**
  *  @brief MAC policy module de-registration routine
  *
- *  This function is called to de-register a policy with theD
+ *  This function is called to de-register a policy with the
  *  MAC framework.  A policy module will typically call this from the
  *  Darwin KEXT de-registration routine.
  */
@@ -6188,17 +6641,26 @@ int     mac_file_removexattr(struct fileglob *fg, const char *name);
 	kmod_stop_func_t *_antimain = kmod_stop;                        \
 	int _kext_apple_cc = __APPLE_CC__
 
-
-#define LABEL_TO_SLOT(l, s)     (l)->l_perpolicy[s]
-
 /*
  * Policy interface to map a struct label pointer to per-policy data.
  * Typically, policies wrap this in their own accessor macro that casts an
  * intptr_t to a policy-specific data type.
  */
 #ifdef KERNEL_PRIVATE
+struct label *  mac_label_verify(struct label **labelp);
 intptr_t        mac_label_get(struct label *l, int slot);
+/*
+ * Sets a label slot to the given pointer value, `v`.  `v` cannot be `~0ULL`.
+ */
 void            mac_label_set(struct label *l, int slot, intptr_t v);
+struct label *  mac_labelzone_alloc(int flags);
+struct label *  mac_labelzone_alloc_for_owner(struct label **labelp, int flags,
+    void (^extra_setup)(struct label *));
+struct label *  mac_labelzone_alloc_owned(struct label **labelp, int flags,
+    void (^extra_setup)(struct label *));
+void            mac_labelzone_free(struct label *l);
+void            mac_labelzone_free_owned(struct label **labelp,
+    void (^extra_deinit)(struct label *));
 intptr_t        mac_vnode_label_get(struct vnode *vp, int slot, intptr_t sentinel);
 void            mac_vnode_label_set(struct vnode *vp, int slot, intptr_t v);
 #endif

@@ -65,7 +65,7 @@
 
 #include <types.h>
 #include <i386/eflags.h>
-#include <i386/trap.h>
+#include <i386/trap_internal.h>
 #include <i386/pmap.h>
 #include <i386/fpu.h>
 #include <i386/panic_notify.h>
@@ -78,20 +78,25 @@
 
 #include <vm/vm_kern.h>
 #include <vm/vm_fault.h>
+#include <vm/vm_map_xnu.h>
 
 #include <kern/kern_types.h>
 #include <kern/processor.h>
 #include <kern/thread.h>
 #include <kern/task.h>
+#include <kern/restartable.h>
 #include <kern/sched.h>
 #include <kern/sched_prim.h>
 #include <kern/exception.h>
 #include <kern/spl.h>
 #include <kern/misc_protos.h>
 #include <kern/debug.h>
+#include <kern/startup.h>
 #if CONFIG_TELEMETRY
 #include <kern/telemetry.h>
+#include <kern/trap_telemetry.h>
 #endif
+#include <kern/zalloc_internal.h>
 #include <sys/kdebug.h>
 #include <kperf/kperf.h>
 #include <prng/random.h>
@@ -111,6 +116,7 @@
 #include <libkern/OSDebug.h>
 #include <i386/cpu_threads.h>
 #include <machine/pal_routines.h>
+#include <i386/lbr.h>
 
 extern void throttle_lowpri_io(int);
 extern void kprint_state(x86_saved_state64_t *saved_state);
@@ -124,9 +130,18 @@ extern uint32_t panic_on_trap_mask;
 extern int insn_copyin_count;
 
 /*
+ * Dump rip/fault address and a user backtrace to the console for the faults
+ * that kill a process outright (#UD, #GP, fatal #PF). There is no debugger in
+ * the guest, so this serial output is often the only way to locate a userland
+ * crash; it is off by default because it is chatty and runs copyin() loops in
+ * the trap path.
+ */
+static TUNABLE(bool, pd_fault_trace, "pd_fault_trace", false);
+
+/*
  * Forward declarations
  */
-static void panic_trap(x86_saved_state64_t *saved_state, uint32_t pl, kern_return_t fault_result) __dead2;
+static void panic_trap(x86_saved_state64_t *saved_state, uint16_t comment, const char *trapreason, uint32_t pl, kern_return_t fault_result) __dead2;
 static void set_recovery_ip(x86_saved_state64_t *saved_state, vm_offset_t ip);
 #if DEVELOPMENT || DEBUG
 static __attribute__((noinline)) void copy_instruction_stream(thread_t thread, uint64_t rip, int trap_code, bool inspect_cacheline);
@@ -144,7 +159,6 @@ extern boolean_t dtrace_handle_trap(int, x86_saved_state_t *);
 
 #ifdef MACH_BSD
 extern char *   proc_name_address(void *p);
-extern int      proc_pid(struct proc *p);
 #endif /* MACH_BSD */
 
 extern boolean_t pmap_smep_enabled;
@@ -356,6 +370,7 @@ interrupt(x86_saved_state_t *state)
 	int             itype = DBG_INTR_TYPE_UNKNOWN;
 	int             handled;
 
+
 	x86_saved_state64_t     *state64 = saved_state64(state);
 	rip = state64->isf.rip;
 	rsp = state64->isf.rsp;
@@ -389,12 +404,6 @@ interrupt(x86_saved_state_t *state)
 
 	SCHED_STATS_INC(interrupt_count);
 
-#if CONFIG_TELEMETRY
-	if (telemetry_needs_record) {
-		telemetry_mark_curthread(user_mode, FALSE);
-	}
-#endif
-
 	ipl = get_preemption_level();
 
 	/*
@@ -419,7 +428,7 @@ interrupt(x86_saved_state_t *state)
 	}
 
 	if (__improbable(get_preemption_level() != ipl)) {
-		panic("Preemption level altered by interrupt vector 0x%x: initial 0x%x, final: 0x%x\n", interrupt_num, ipl, get_preemption_level());
+		panic("Preemption level altered by interrupt vector 0x%x: initial 0x%x, final: 0x%x", interrupt_num, ipl, get_preemption_level());
 	}
 
 
@@ -475,7 +484,7 @@ interrupt(x86_saved_state_t *state)
 		}
 	}
 
-	if (cnum == master_cpu) {
+	if (cnum == boot_cpu_id) {
 		entropy_collect();
 	}
 
@@ -507,6 +516,154 @@ unsigned kdp_has_active_watchpoints = 0;
 #else
 #define NO_WATCHPOINTS 1
 #endif
+
+static uint32_t bound_chk_violations_event;
+
+static const char *
+xnu_soft_trap_handle_breakpoint(void *tstate, uint16_t comment)
+{
+#pragma unused(tstate)
+	if (comment == CLANG_SOFT_TRAP_BOUND_CHK) {
+		os_atomic_inc(&bound_chk_violations_event, relaxed);
+	}
+
+	return NULL;
+}
+
+static const char *
+xnu_hard_trap_handle_breakpoint(void *tstate, uint16_t comment)
+{
+	kernel_panic_reason_t pr = PERCPU_GET(panic_reason);
+	x86_saved_state64_t *state = tstate;
+
+	switch (comment) {
+	case XNU_HARD_TRAP_SAFE_UNLINK:
+		snprintf(pr->buf, sizeof(pr->buf),
+		    "panic: corrupt list around element %p",
+		    (void *)state->rax);
+		return pr->buf;
+
+	case XNU_HARD_TRAP_STRING_CHK:
+		return "panic: string operation caused an overflow";
+
+	case XNU_HARD_TRAP_ASSERT_FAILURE:
+		/*
+		 * Read the implicit assert arguments, see:
+		 * ML_TRAP_REGISTER_1: rax
+		 * ML_TRAP_REGISTER_2: r10
+		 * ML_TRAP_REGISTER_3: r11
+		 */
+		panic_assert_format(pr->buf, sizeof(pr->buf),
+		    (struct mach_assert_hdr *)state->rax,
+		    state->r10, state->r11);
+		return pr->buf;
+
+	default:
+		return NULL;
+	}
+}
+
+KERNEL_BRK_DESCRIPTOR_DEFINE(clang_desc,
+    .type                = TRAP_TELEMETRY_TYPE_KERNEL_BRK_CLANG,
+    .base                = CLANG_X86_TRAP_START,
+    .max                 = CLANG_X86_TRAP_END,
+    .options             = BRK_TELEMETRY_OPTIONS_FATAL_DEFAULT,
+    .handle_breakpoint   = NULL);
+
+KERNEL_BRK_DESCRIPTOR_DEFINE(xnu_soft_traps_desc,
+    .type                = TRAP_TELEMETRY_TYPE_KERNEL_BRK_TELEMETRY,
+    .base                = XNU_SOFT_TRAP_START,
+    .max                 = XNU_SOFT_TRAP_END,
+    .options             = BRK_TELEMETRY_OPTIONS_RECOVERABLE_DEFAULT(
+	    /* enable_telemetry */ true),
+    .handle_breakpoint   = xnu_soft_trap_handle_breakpoint);
+
+KERNEL_BRK_DESCRIPTOR_DEFINE(libcxx_desc,
+    .type                = TRAP_TELEMETRY_TYPE_KERNEL_BRK_LIBCXX,
+    .base                = LIBCXX_TRAP_START,
+    .max                 = LIBCXX_TRAP_END,
+    .options             = BRK_TELEMETRY_OPTIONS_FATAL_DEFAULT,
+    .handle_breakpoint   = NULL);
+
+KERNEL_BRK_DESCRIPTOR_DEFINE(xnu_hard_traps_desc,
+    .type                = TRAP_TELEMETRY_TYPE_KERNEL_BRK_XNU,
+    .base                = XNU_HARD_TRAP_START,
+    .max                 = XNU_HARD_TRAP_END,
+    .options             = BRK_TELEMETRY_OPTIONS_FATAL_DEFAULT,
+    .handle_breakpoint   = xnu_hard_trap_handle_breakpoint);
+
+static bool
+handle_kernel_breakpoint(
+	x86_saved_state64_t    *state,
+	const char            **reason,
+	uint16_t               *out_comment)
+{
+	uint16_t comment;
+	const struct kernel_brk_descriptor *desc;
+	uint8_t inst_buf[8];
+	uint32_t prefix16 = 0x80B90F67; /* Encoding prefix for ud1 <16-bit code>(%eax), %eax */
+	uint32_t prefix8 = 0x40B90F67; /* Encoding prefix for ud1 <8-bit code>(%eax), %eax */
+	bool found_prefix8 = false;
+
+	vm_size_t sz = ml_nofault_copy(state->isf.rip, (vm_offset_t)inst_buf, sizeof(inst_buf));
+	if (sz != sizeof(inst_buf)) {
+		return false;
+	}
+
+	if (bcmp(inst_buf, &prefix16, sizeof(prefix16)) == 0) {
+		/* The two bytes following the prefix is our code */
+		comment = inst_buf[5] << 8 | inst_buf[4];
+	} else if (bcmp(inst_buf, &prefix8, sizeof(prefix8)) == 0) {
+		/* The one byte following the prefix is our code */
+		found_prefix8 = true;
+		comment = inst_buf[4];
+	} else {
+		return false;
+	}
+
+	if (out_comment) {
+		*out_comment = comment;
+	}
+	desc = find_kernel_brk_descriptor_by_comment(comment);
+
+	if (!desc) {
+		return false;
+	}
+
+	if (desc->options.enable_trap_telemetry) {
+		trap_telemetry_report_exception(
+			/* trap_type   */ desc->type,
+			/* trap_code   */ comment,
+			/* options     */ desc->options.telemetry_options,
+			/* saved_state */ (void *)state);
+	}
+
+	if (desc->handle_breakpoint) {
+		*reason = desc->handle_breakpoint(state, comment);
+	}
+
+	/* Still alive? Check if we should recover. */
+	if (desc->options.recoverable) {
+		/* ud1 can be five or eight-byte long depending on the prefix */
+		set_recovery_ip(state, state->isf.rip + (found_prefix8 ? 5 : 8));
+		return true;
+	}
+
+	return false;
+}
+
+// Find a recovery entry for an instruction address if one is present.
+static struct recovery const*
+find_recovery_entry(vm_offset_t kern_ip)
+{
+	for (struct recovery const* rp = recover_table; rp < recover_table_end; rp++) {
+		if (kern_ip == rp->fault_addr) {
+			return rp;
+		}
+	}
+	return NULL;
+}
+
 /*
  * Trap from kernel mode.  Only page-fault errors are recoverable,
  * and then only in special circumstances.  All other errors are
@@ -518,6 +675,9 @@ kernel_trap(
 	x86_saved_state_t       *state,
 	uintptr_t *lo_spp)
 {
+	const char             *reason = NULL;
+	uint16_t                trapcomment = 0;
+
 	x86_saved_state64_t     *saved_state;
 	int                     code;
 	user_addr_t             vaddr;
@@ -528,7 +688,7 @@ kernel_trap(
 	thread_t                thread;
 	boolean_t               intr;
 	vm_prot_t               prot;
-	struct recovery         *rp;
+	struct recovery const   *rp = NULL;
 	vm_offset_t             kern_ip;
 	int                     is_user;
 	int                     trap_pl = get_preemption_level();
@@ -672,10 +832,17 @@ kernel_trap(
 		goto common_return;
 
 	case T_INVALID_OPCODE:
+		if (handle_kernel_breakpoint(saved_state, &reason, &trapcomment)) {
+			goto common_return;
+		}
 		fpUDflt(kern_ip);
 		goto debugger_entry;
 
 	case T_DEBUG:
+		/*
+		 * Re-enable LBR tracing for core/panic files if necessary. i386_lbr_enable confirms LBR should be re-enabled.
+		 */
+		i386_lbr_enable();
 		if ((saved_state->isf.rflags & EFL_TF) == 0 && NO_WATCHPOINTS) {
 			/* We've somehow encountered a debug
 			 * register match that does not belong
@@ -712,42 +879,54 @@ kernel_trap(
 			prot |= VM_PROT_EXECUTE;
 		}
 
+		/**
+		 * vm_fault() can be called with preemption disabled (and indeed this is expected for
+		 * certain copyio() scenarios), but can't safely be called with interrupts disabled
+		 * once the system has gone multi-threaded.  Other than some early-boot situations
+		 * such as startup kext loading, kernel paging operations should never be triggered
+		 * by non-interruptible code in the first place, so a fault from such a context will
+		 * ultimately produce a kernel page fault panic anyway.  In these cases, skip calling
+		 * vm_fault() to avoid masking the real kernel panic with a failed VM locking assertion.
+		 */
+		if (__improbable(!(intr ||
+		    startup_phase < STARTUP_SUB_EARLY_BOOT ||
+		    current_cpu_datap()->cpu_hibernate))) {
+			fault_result = result = KERN_FAILURE;
+			goto FALL_THROUGH;
+		}
+
+		// VM will query this property when deciding to throttle this fault, we don't want to
+		// throttle kernel faults for copyio faults. The presence of a recovery entry is used as a
+		// proxy for being in copyio code.
+		rp = find_recovery_entry(kern_ip);
+		const bool was_recover = thread->recover;
+		thread->recover = was_recover || (rp != NULL);
+
 		fault_result = result = vm_fault(map,
 		    vaddr,
 		    prot,
 		    FALSE, VM_KERN_MEMORY_NONE,
 		    THREAD_UNINT, NULL, 0);
 
+		thread->recover = was_recover;
 		if (result == KERN_SUCCESS) {
 			goto common_return;
 		}
 		/*
 		 * fall through
 		 */
-#if CONFIG_DTRACE
 FALL_THROUGH:
-#endif /* CONFIG_DTRACE */
 
 	case T_GENERAL_PROTECTION:
 		/*
 		 * If there is a failure recovery address
 		 * for this fault, go there.
 		 */
-		for (rp = recover_table; rp < recover_table_end; rp++) {
-			if (kern_ip == rp->fault_addr) {
-				set_recovery_ip(saved_state, rp->recover_addr);
-				goto common_return;
-			}
-		}
-
-		/*
-		 * Check thread recovery address also.
-		 */
-		if (thread != THREAD_NULL && thread->recover) {
-			set_recovery_ip(saved_state, thread->recover);
-			thread->recover = 0;
+		if ((rp != NULL) || (rp = find_recovery_entry(kern_ip))) {
+			set_recovery_ip(saved_state, rp->recover_addr);
 			goto common_return;
 		}
+
 		/*
 		 * Unanticipated page-fault errors in kernel
 		 * should not happen.
@@ -777,8 +956,12 @@ debugger_entry:
 		}
 #endif
 	}
+	if (type == T_PAGE_FAULT) {
+		panic_fault_address = vaddr;
+	}
 	pal_cli();
-	panic_trap(saved_state, trap_pl, fault_result);
+
+	panic_trap(saved_state, trapcomment, reason, trap_pl, fault_result);
 	/*
 	 * NO RETURN
 	 */
@@ -799,9 +982,14 @@ set_recovery_ip(x86_saved_state64_t  *saved_state, vm_offset_t ip)
 }
 
 static void
-panic_trap(x86_saved_state64_t *regs, uint32_t pl, kern_return_t fault_result)
+panic_trap(
+	x86_saved_state64_t    *regs,
+	uint16_t                trapcomment,
+	const char             *trapreason,
+	uint32_t                pl,
+	kern_return_t           fault_result)
 {
-	const char      *trapname = "Unknown";
+	char            trapbuf[64];
 	pal_cr_t        cr0, cr2, cr3, cr4;
 	boolean_t       potential_smep_fault = FALSE, potential_kernel_NX_fault = FALSE;
 	boolean_t       potential_smap_fault = FALSE;
@@ -820,10 +1008,6 @@ panic_trap(x86_saved_state64_t *regs, uint32_t pl, kern_return_t fault_result)
 	kprintf("cr0 0x%016llx cr2 0x%016llx cr3 0x%016llx cr4 0x%016llx\n",
 	    cr0, cr2, cr3, cr4);
 
-	if (regs->isf.trapno < TRAP_TYPES) {
-		trapname = trap_type[regs->isf.trapno];
-	}
-
 	if ((regs->isf.trapno == T_PAGE_FAULT) && (regs->isf.err == (T_PF_PROT | T_PF_EXECUTE)) && (regs->isf.rip == regs->cr2)) {
 		if (pmap_smep_enabled && (regs->isf.rip < VM_MAX_USER_PAGE_ADDRESS)) {
 			potential_smep_fault = TRUE;
@@ -838,8 +1022,30 @@ panic_trap(x86_saved_state64_t *regs, uint32_t pl, kern_return_t fault_result)
 		potential_smap_fault = TRUE;
 	}
 
+	if (trapreason == NULL) {
+		const char *traptype = "Unknown";
+
+		if (regs->isf.trapno < TRAP_TYPES) {
+			traptype = trap_type[regs->isf.trapno];
+		}
+
+		trapreason = "Kernel trap";
+
+		if (trapcomment == 0) {
+			snprintf(trapbuf, sizeof(trapbuf),
+			    "type = %d=%s, ",
+			    regs->isf.trapno, traptype);
+		} else {
+			snprintf(trapbuf, sizeof(trapbuf),
+			    "type = %d=%s #%#04hx, ",
+			    regs->isf.trapno, traptype, trapcomment);
+		}
+	} else {
+		trapbuf[0] = '\0';
+	}
+
 #undef panic
-	panic("Kernel trap at 0x%016llx, type %d=%s, registers:\n"
+	panic("%s at 0x%016llx, %sregisters:\n"
 	    "CR0: 0x%016llx, CR2: 0x%016llx, CR3: 0x%016llx, CR4: 0x%016llx\n"
 	    "RAX: 0x%016llx, RBX: 0x%016llx, RCX: 0x%016llx, RDX: 0x%016llx\n"
 	    "RSP: 0x%016llx, RBP: 0x%016llx, RSI: 0x%016llx, RDI: 0x%016llx\n"
@@ -847,7 +1053,7 @@ panic_trap(x86_saved_state64_t *regs, uint32_t pl, kern_return_t fault_result)
 	    "R12: 0x%016llx, R13: 0x%016llx, R14: 0x%016llx, R15: 0x%016llx\n"
 	    "RFL: 0x%016llx, RIP: 0x%016llx, CS:  0x%016llx, SS:  0x%016llx\n"
 	    "Fault CR2: 0x%016llx, Error code: 0x%016llx, Fault CPU: 0x%x%s%s%s%s, PL: %d, VF: %d\n",
-	    regs->isf.rip, regs->isf.trapno, trapname,
+	    trapreason, regs->isf.rip, trapbuf,
 	    cr0, cr2, cr3, cr4,
 	    regs->rax, regs->rbx, regs->rcx, regs->rdx,
 	    regs->isf.rsp, regs->rbp, regs->rsi, regs->rdi,
@@ -961,6 +1167,10 @@ user_trap(
 		i386_lbr_enable();
 	}
 
+	if (type == T_PAGE_FAULT) {
+		thread_reset_pcs_will_fault(thread);
+	}
+
 	pal_sti();
 
 	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
@@ -1039,127 +1249,18 @@ user_trap(
 
 	case T_INVALID_OPCODE:
 		if (fpUDflt(rip) == 1) {
-			/* Same diagnostic as the fatal #PF path: ud2 is how abort()/
-			 * malloc_zone_error()/__builtin_trap() surface in userland, and
-			 * with no debugger in the guest this serial line is the only
-			 * way to find out where. */
-			printf("PD-DIAG: FATAL user #UD -> SIGILL: proc=%s pid=%d rip=0x%llx\n",
-			    thread->task->bsd_info ? proc_name_address(thread->task->bsd_info) : "?",
-			    thread->task->bsd_info ? proc_pid(thread->task->bsd_info) : -1,
-			    (unsigned long long)rip);
-			if (is_saved_state64(saved_state)) {
-				x86_saved_state64_t *r = saved_state64(saved_state);
-				/* Deliberate traps carry their argument in a register -
-				 * DISPATCH_INTERNAL_CRASH and friends park it there so it
-				 * survives into a crash report. gsbase says which structure
-				 * %gs-relative TSD reads were hitting, which Wine changes
-				 * under us as it switches between Windows and unix code. */
-				printf("PD-DIAG: rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx rdi=0x%llx rsi=0x%llx rbp=0x%llx gsbase=0x%llx\n",
-				    (unsigned long long)r->rax, (unsigned long long)r->rbx,
-				    (unsigned long long)r->rcx, (unsigned long long)r->rdx,
-				    (unsigned long long)r->rdi, (unsigned long long)r->rsi,
-				    (unsigned long long)r->rbp,
-				    (unsigned long long)THREAD_TO_PCB(thread)->cthread_self);
-				/*
-				 * The trap argument is usually an object. Dump its first few
-				 * words, and for any word that is a readable pointer to a
-				 * printable string, print the string too - that names the
-				 * object outright (a dispatch queue carries dq_label).
-				 */
-				{
-					/*
-					 * gsbase is the thread's TSD base, so the %gs-relative
-					 * slots can be read directly. Slots 16..31 cover
-					 * libdispatch's reserved keys: 20 is the current queue and
-					 * 21 the thread frame, and those two are set as a pair -
-					 * a queue with no frame was set by a bare
-					 * _dispatch_queue_set_current rather than by an unbalanced
-					 * thread-frame push.
-					 */
-					uint64_t tsd = THREAD_TO_PCB(thread)->cthread_self;
-					if (tsd > 0x1000ULL && tsd < 0x800000000000ULL) {
-						printf("PD-DIAG: tsd[16..31]:");
-						for (int i = 16; i < 32; i++) {
-							uint64_t w = 0;
-							if (copyin((user_addr_t)(tsd + (uint64_t)i * 8),
-							    (char *)&w, 8) != 0) {
-								printf(" <unreadable>");
-								break;
-							}
-							printf(" %d=0x%llx", i, (unsigned long long)w);
-						}
-						printf("\n");
-					}
-				}
-				if (r->rdi > 0x1000ULL && r->rdi < 0x800000000000ULL) {
-					printf("PD-DIAG: [rdi]:");
-					for (int i = 0; i < 12; i++) {
-						uint64_t w = 0;
-						if (copyin((user_addr_t)(r->rdi + (uint64_t)i * 8),
-						    (char *)&w, 8) != 0) {
-							printf(" <unreadable>");
-							break;
-						}
-						printf(" 0x%llx", (unsigned long long)w);
-					}
-					printf("\n");
-					for (int i = 0; i < 12; i++) {
-						uint64_t w = 0;
-						char s[40];
-						int ok = 1;
-						if (copyin((user_addr_t)(r->rdi + (uint64_t)i * 8),
-						    (char *)&w, 8) != 0) {
-							break;
-						}
-						if (w <= 0x1000ULL || w >= 0x800000000000ULL) {
-							continue;
-						}
-						for (int j = 0; j < (int)sizeof(s); j++) {
-							if (copyin((user_addr_t)(w + (uint64_t)j),
-							    &s[j], 1) != 0) {
-								ok = 0;
-								break;
-							}
-							if (s[j] == '\0') {
-								break;
-							}
-							if (s[j] < 0x20 || s[j] > 0x7e) {
-								ok = 0;
-								break;
-							}
-						}
-						s[sizeof(s) - 1] = '\0';
-						if (ok && s[0] != '\0') {
-							printf("PD-DIAG: [rdi+0x%x] -> \"%s\"\n", i * 8, s);
-						}
-					}
-				}
+			/* ud2 is how abort()/malloc_zone_error()/__builtin_trap()
+			 * surface in userland. */
+			if (pd_fault_trace) {
+				printf("user #UD -> SIGILL: rip=0x%llx\n",
+				    (unsigned long long)rip);
 			}
-			{
-				uint8_t insn[16];
-				int ok = 1;
-				for (int i = 0; i < 16; i++) {
-					if (copyin((user_addr_t)(rip + (uint64_t)i), (char *)&insn[i], 1) != 0) {
-						ok = 0;
-						break;
-					}
-				}
-				if (ok) {
-					printf("PD-DIAG: insn bytes at rip:");
-					for (int i = 0; i < 16; i++) {
-						printf(" %02x", insn[i]);
-					}
-					printf("\n");
-				} else {
-					printf("PD-DIAG: insn bytes at rip: <unreadable>\n");
-				}
-			}
-			if (is_saved_state64(saved_state)) {
+			if (pd_fault_trace && is_saved_state64(saved_state)) {
 				/* Walk the rbp frame-pointer chain: [rbp] = caller rbp,
 				 * [rbp+8] = return address. Darwin userland keeps frame
 				 * pointers, so this yields a real backtrace. */
 				uint64_t urbp = saved_state64(saved_state)->rbp;
-				printf("PD-DIAG: rbp-chain backtrace:");
+				printf("rbp-chain backtrace:");
 				for (int i = 0; i < 32 && urbp != 0; i++) {
 					uint64_t frame[2] = { 0, 0 };
 					if (copyin((user_addr_t)urbp, (char *)frame, 16) != 0) {
@@ -1228,43 +1329,10 @@ user_trap(
 		 * EXC_BAD_INSTRUCTION which is more accurate. We just can't
 		 * win!
 		 */
-		printf("PD-DIAG: user #GP -> SIGSEGV: proc=%s pid=%d rip=0x%llx err=0x%x rsp=0x%llx (non-canonical deref?)\n",
-		    thread->task->bsd_info ? proc_name_address(thread->task->bsd_info) : "?",
-		    thread->task->bsd_info ? proc_pid(thread->task->bsd_info) : -1,
-		    (unsigned long long)rip, err,
-		    (unsigned long long)(is_saved_state64(saved_state) ? saved_state64(saved_state)->isf.rsp : 0));
-		if (is_saved_state64(saved_state)) {
-			uint64_t ursp = saved_state64(saved_state)->isf.rsp;
-			uint8_t insn[16];
-			int ok = 1;
-			for (int i = 0; i < 16; i++) {
-				if (copyin((user_addr_t)(rip + (uint64_t)i), (char *)&insn[i], 1) != 0) {
-					ok = 0;
-					break;
-				}
-			}
-			if (ok) {
-				printf("PD-DIAG: insn bytes at rip:");
-				for (int i = 0; i < 16; i++) {
-					printf(" %02x", insn[i]);
-				}
-				printf("\n");
-			} else {
-				printf("PD-DIAG: insn bytes at rip: <unreadable>\n");
-			}
-			printf("PD-DIAG: rsp=0x%llx user-stack code addrs:", (unsigned long long)ursp);
-			int shown = 0;
-			for (int i = 0; i < 2048 && shown < 24; i++) {
-				uint64_t w = 0;
-				if (copyin((user_addr_t)(ursp + (uint64_t)i * 8), (char *)&w, 8) != 0) {
-					continue;
-				}
-				if (w > 0x100000000ULL && w < 0x800000000000ULL) {
-					printf(" 0x%llx", (unsigned long long)w);
-					shown++;
-				}
-			}
-			printf("\n");
+		if (pd_fault_trace) {
+			printf("user #GP -> SIGSEGV: rip=0x%llx err=0x%x rsp=0x%llx (non-canonical deref?)\n",
+			    (unsigned long long)rip, err,
+			    (unsigned long long)(is_saved_state64(saved_state) ? saved_state64(saved_state)->isf.rsp : 0));
 		}
 		exc = EXC_BAD_ACCESS;
 		code = EXC_I386_GPFLT;
@@ -1282,8 +1350,9 @@ user_trap(
 			prot |= VM_PROT_EXECUTE;
 		}
 #if DEVELOPMENT || DEBUG
+		bool do_simd_hash = thread_fpsimd_hash_enabled();
 		uint32_t fsig = 0;
-		fsig = thread_fpsimd_hash(thread);
+		fsig = do_simd_hash ? thread_fpsimd_hash(thread) : 0;
 #if DEBUG
 		fsigs[0] = fsig;
 #endif
@@ -1293,7 +1362,7 @@ user_trap(
 		    prot, FALSE, VM_KERN_MEMORY_NONE,
 		    THREAD_ABORTSAFE, NULL, 0);
 #if DEVELOPMENT || DEBUG
-		if (fsig) {
+		if (do_simd_hash && fsig) {
 			uint32_t fsig2 = thread_fpsimd_hash(thread);
 #if DEBUG
 			fsigcs++;
@@ -1320,71 +1389,13 @@ user_trap(
 
 		/* PAL debug hook (empty on x86) */
 		pal_dbg_page_fault(thread, vaddr, kret);
-		printf("PD-DIAG: FATAL user #PF -> SIGSEGV: proc=%s pid=%d rip=0x%llx fault_addr=0x%llx err=0x%x kret=%d\n",
-		    thread->task->bsd_info ? proc_name_address(thread->task->bsd_info) : "?",
-		    thread->task->bsd_info ? proc_pid(thread->task->bsd_info) : -1,
-		    (unsigned long long)rip, (unsigned long long)vaddr, err, kret);
-		if (is_saved_state64(saved_state)) {
-			x86_saved_state64_t *r = saved_state64(saved_state);
-			printf("PD-DIAG: rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx rdi=0x%llx rsi=0x%llx rbp=0x%llx\n",
-			    (unsigned long long)r->rax, (unsigned long long)r->rbx,
-			    (unsigned long long)r->rcx, (unsigned long long)r->rdx,
-			    (unsigned long long)r->rdi, (unsigned long long)r->rsi,
-			    (unsigned long long)r->rbp);
-			/*
-			 * A %gs-relative fault whose address is exactly the offset means
-			 * the segment base is zero. Print all three views of it: what the
-			 * thread should have, what the hardware actually has (swapgs put
-			 * the user base in KERNEL_GS_BASE on entry), and what this cpu
-			 * last cached. A valid cthread_self with a zero MSR is the kernel
-			 * failing to restore the base; a zero cthread_self means userspace
-			 * never set one on this thread.
-			 */
-			printf("PD-DIAG: gs cthread_self=0x%llx msr_kernel_gs=0x%llx cpu_user_gs=0x%llx gs_sel=0x%x\n",
-			    (unsigned long long)THREAD_TO_PCB(thread)->cthread_self,
-			    (unsigned long long)rdmsr64(MSR_IA32_KERNEL_GS_BASE),
-			    (unsigned long long)current_cpu_datap()->cpu_uber.cu_user_gs_base,
-			    (unsigned int)r->gs);
+		if (pd_fault_trace) {
+			printf("fatal user #PF -> SIGSEGV: rip=0x%llx fault_addr=0x%llx err=0x%x kret=%d\n",
+			    (unsigned long long)rip, (unsigned long long)vaddr, err, kret);
 		}
-		{
-			uint8_t insn[16];
-			int ok = 1;
-			for (int i = 0; i < 16; i++) {
-				if (copyin((user_addr_t)(rip + (uint64_t)i), (char *)&insn[i], 1) != 0) {
-					ok = 0;
-					break;
-				}
-			}
-			if (ok) {
-				printf("PD-DIAG: insn bytes at rip:");
-				for (int i = 0; i < 16; i++) {
-					printf(" %02x", insn[i]);
-				}
-				printf("\n");
-			} else {
-				printf("PD-DIAG: insn bytes at rip: <unreadable>\n");
-			}
-		}
-		if (is_saved_state64(saved_state)) {
-			uint64_t urbp = saved_state64(saved_state)->rbp;
-			printf("PD-DIAG: rbp-chain backtrace:");
-			for (int i = 0; i < 32 && urbp != 0; i++) {
-				uint64_t frame[2] = { 0, 0 };
-				if (copyin((user_addr_t)urbp, (char *)frame, 16) != 0) {
-					break;
-				}
-				if (frame[1] < 0x1000ULL || frame[1] > 0x800000000000ULL) {
-					break;
-				}
-				printf(" 0x%llx", (unsigned long long)frame[1]);
-				if (frame[0] <= urbp) {
-					break;
-				}
-				urbp = frame[0];
-			}
-			printf("\n");
+		if (pd_fault_trace && is_saved_state64(saved_state)) {
 			uint64_t ursp = saved_state64(saved_state)->isf.rsp;
-			printf("PD-DIAG: rsp=0x%llx user-stack code addrs:", (unsigned long long)ursp);
+			printf("rsp=0x%llx user-stack code addrs:", (unsigned long long)ursp);
 			int shown = 0;
 			for (int i = 0; i < 2048 && shown < 24; i++) {
 				uint64_t w = 0;
@@ -1441,6 +1452,10 @@ user_trap(
 		panic("Unexpected user trap, type %d", type);
 	}
 
+	if (type == T_PAGE_FAULT) {
+		thread_reset_pcs_done_faulting(thread);
+	}
+
 	if (exc != 0) {
 		uint16_t cs;
 		boolean_t intrs;
@@ -1451,7 +1466,7 @@ user_trap(
 			cs = saved_state32(saved_state)->cs;
 		}
 
-		if (last_branch_support_enabled) {
+		if (last_branch_enabled_modes == LBR_ENABLED_USERMODE) {
 			intrs = ml_set_interrupts_enabled(FALSE);
 			/*
 			 * This is a bit racy (it's possible for this thread to migrate to another CPU, then
@@ -1570,7 +1585,7 @@ copy_instruction_stream(thread_t thread, uint64_t rip, int __unused trap_code
 		enable_preemption();
 
 		if (pcb->insn_state == 0) {
-			pcb->insn_state = kalloc(sizeof(x86_instruction_state_t));
+			pcb->insn_state = kalloc_data(sizeof(x86_instruction_state_t), Z_WAITOK);
 		}
 
 		if (pcb->insn_state != 0) {
@@ -1635,10 +1650,11 @@ copy_instruction_stream(thread_t thread, uint64_t rip, int __unused trap_code
 
 #if defined(MACH_BSD) && (DEVELOPMENT || DEBUG)
 			if (panic_on_trap_procname[0] != 0) {
+				task_t task = get_threadtask(thread);
 				char procnamebuf[65] = {0};
 
-				if (thread->task->bsd_info != NULL) {
-					procname = proc_name_address(thread->task->bsd_info);
+				if (get_bsdtask_info(task) != NULL) {
+					procname = proc_name_address(get_bsdtask_info(task));
 					strlcpy(procnamebuf, procname, sizeof(procnamebuf));
 
 					if (strcasecmp(panic_on_trap_procname, procnamebuf) == 0 &&
@@ -1657,7 +1673,7 @@ copy_instruction_stream(thread_t thread, uint64_t rip, int __unused trap_code
 		pcb->insn_state_copyin_failure_errorcode = copyin_err;
 #if DEVELOPMENT || DEBUG
 		if (inspect_cacheline && pcb->insn_state == 0) {
-			pcb->insn_state = kalloc(sizeof(x86_instruction_state_t));
+			pcb->insn_state = kalloc_data(sizeof(x86_instruction_state_t), Z_WAITOK);
 		}
 		if (pcb->insn_state != 0) {
 			pcb->insn_state->insn_stream_valid_bytes = 0;
@@ -1802,9 +1818,12 @@ void
 thread_exception_return(void)
 {
 	thread_t thread = current_thread();
+	task_t   task   = current_task();
+
 	ml_set_interrupts_enabled(FALSE);
-	if (thread_is_64bit_addr(thread) != task_has_64Bit_addr(thread->task)) {
-		panic("Task/thread bitness mismatch %p %p, task: %d, thread: %d", thread, thread->task, thread_is_64bit_addr(thread), task_has_64Bit_addr(thread->task));
+	if (thread_is_64bit_addr(thread) != task_has_64Bit_addr(task)) {
+		panic("Task/thread bitness mismatch %p %p, task: %d, thread: %d",
+		    thread, task, thread_is_64bit_addr(thread), task_has_64Bit_addr(task));
 	}
 
 	if (thread_is_64bit_addr(thread)) {
@@ -1819,4 +1838,40 @@ thread_exception_return(void)
 	assert(get_preemption_level() == 0);
 	thread_exception_return_internal();
 }
+#endif
+
+#if DEVELOPMENT || DEBUG
+static int trap_handled;
+
+static const char *
+handle_recoverable_kernel_trap(
+	__unused void     *tstate,
+	uint16_t          comment)
+{
+	assert(comment == TEST_RECOVERABLE_SOFT_TRAP);
+
+	printf("Recoverable trap handled.\n");
+	trap_handled = 1;
+
+	return NULL;
+}
+
+KERNEL_BRK_DESCRIPTOR_DEFINE(test_desc,
+    .type                = TRAP_TELEMETRY_TYPE_KERNEL_BRK_TEST,
+    .base                = TEST_RECOVERABLE_SOFT_TRAP,
+    .max                 = TEST_RECOVERABLE_SOFT_TRAP,
+    .options             = BRK_TELEMETRY_OPTIONS_RECOVERABLE_DEFAULT(
+	    /* enable_telemetry */ false),
+    .handle_breakpoint   = handle_recoverable_kernel_trap);
+
+static int
+recoverable_kernel_trap_test(__unused int64_t in, int64_t *out)
+{
+	ml_recoverable_trap(TEST_RECOVERABLE_SOFT_TRAP);
+
+	*out = trap_handled;
+	return 0;
+}
+
+SYSCTL_TEST_REGISTER(recoverable_kernel_trap, recoverable_kernel_trap_test);
 #endif

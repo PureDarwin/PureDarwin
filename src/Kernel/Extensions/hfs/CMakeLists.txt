@@ -51,7 +51,7 @@ target_include_directories(hfs.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../IOStorageFamily/include)
 target_link_libraries(hfs.kext PRIVATE xnu_kernel_private_headers)
 target_compile_options(hfs.kext PRIVATE
-    -include ${CMAKE_CURRENT_SOURCE_DIR}/core/kext-config.h
+    -include${CMAKE_CURRENT_SOURCE_DIR}/core/kext-config.h
     -DKERNEL=1 -DKERNEL_PRIVATE=1
     -Wno-sign-conversion -Wno-implicit-int-conversion -Wno-shorten-64-to-32
     -Wno-unused-variable -Wno-unused-function -Wno-cast-qual

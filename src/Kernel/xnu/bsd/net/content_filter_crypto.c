@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 Apple Inc.
+ * Copyright (c) 2019-2022 Apple Inc.
  * All rights reserved.
  */
 
@@ -72,10 +72,15 @@ cfil_crypto_print_data(cfil_crypto_data_t data, const char *prefix)
 	ptr = (u_int8_t *)&data->effective_pid;
 	CFIL_CRYPTO_LOG_4BYTES("effective_pid");
 
+	ptr = (u_int8_t *)&data->responsible_pid;
+	CFIL_CRYPTO_LOG_4BYTES("responsible_pid");
+
 	ptr = (u_int8_t *)&data->uuid;
 	CFIL_CRYPTO_LOG_16BYTES("uuid");
 	ptr = (u_int8_t *)&data->effective_uuid;
 	CFIL_CRYPTO_LOG_16BYTES("effective_uuid");
+	ptr = (u_int8_t *)&data->responsible_uuid;
+	CFIL_CRYPTO_LOG_16BYTES("responsible_uuid");
 
 	ptr = (u_int8_t *)&data->byte_count_in;
 	CFIL_CRYPTO_LOG_8BYTES("byte_count_in");
@@ -92,11 +97,8 @@ cfil_crypto_init_client(cfil_crypto_key client_key)
 	}
 
 	struct cfil_crypto_state *state;
-	MALLOC(state, struct cfil_crypto_state *, sizeof(struct cfil_crypto_state),
-	    M_TEMP, M_WAITOK | M_ZERO);
-	if (state == NULL) {
-		return NULL;
-	}
+	state = kalloc_type(struct cfil_crypto_state,
+	    Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	memcpy(state->key, client_key, sizeof(cfil_crypto_key));
 	state->digest_info = ccsha256_di();
@@ -109,26 +111,32 @@ void
 cfil_crypto_cleanup_state(cfil_crypto_state_t state)
 {
 	if (state != NULL) {
-		FREE(state, M_TEMP);
+		kfree_type(struct cfil_crypto_state, state);
 	}
 }
 
 static void
 cfil_crypto_update_context(const struct ccdigest_info *di,
-    cchmac_ctx_t ctx,
-    cfil_crypto_data_t data)
+    cchmac_ctx_t ctx, cfil_crypto_data_t data,
+    const struct iovec *__counted_by(extra_data_count)extra_data, size_t extra_data_count)
 {
 	const uint8_t context[32] = {[0 ... 31] = 0x20}; // 0x20 repeated 32 times
-	const char *context_string = "NEFilterCrypto";
+	const char context_string[] = "NEFilterCrypto";
 	uint8_t separator = 0;
 	cchmac_update(di, ctx, sizeof(context), context);
-	cchmac_update(di, ctx, strlen(context_string), context_string);
+	cchmac_update(di, ctx, sizeof(context_string) - 1, context_string);
 	cchmac_update(di, ctx, sizeof(separator), &separator);
 	cchmac_update(di, ctx, sizeof(struct cfil_crypto_data), data);
+	for (size_t extra_idx = 0; extra_idx < extra_data_count; extra_idx++) {
+		if (extra_data[extra_idx].iov_base != NULL && extra_data[extra_idx].iov_len > 0) {
+			cchmac_update(di, ctx, extra_data[extra_idx].iov_len, extra_data[extra_idx].iov_base);
+		}
+	}
 }
 
 int
 cfil_crypto_sign_data(cfil_crypto_state_t state, cfil_crypto_data_t data,
+    const struct iovec *__counted_by(extra_data_count)extra_data, size_t extra_data_count,
     cfil_crypto_signature signature, u_int32_t *signature_length)
 {
 	u_int8_t *ptr = NULL;
@@ -155,7 +163,7 @@ cfil_crypto_sign_data(cfil_crypto_state_t state, cfil_crypto_data_t data,
 	cchmac_init(state->digest_info, ctx,
 	    sizeof(state->key),
 	    state->key);
-	cfil_crypto_update_context(state->digest_info, ctx, data);
+	cfil_crypto_update_context(state->digest_info, ctx, data, extra_data, extra_data_count);
 	cchmac_final(state->digest_info, ctx, signature);
 
 	if (cfil_log_level >= LOG_DEBUG) {

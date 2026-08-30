@@ -21,12 +21,11 @@ INSTINC_SUBDIRS = \
 	netkey \
 	nfs \
 	security \
+	skywalk \
 	pthread \
 	sys \
-	sys_private \
 	uuid \
 	vfs
-
 
 INSTINC_SUBDIRS_X86_64 = \
 	i386 \
@@ -36,9 +35,6 @@ INSTINC_SUBDIRS_X86_64H = \
 	i386 \
 	crypto
 
-INSTINC_SUBDIRS_ARM = \
-	arm
-
 INSTINC_SUBDIRS_ARM64 = \
 	arm
 
@@ -46,6 +42,7 @@ EXPINC_SUBDIRS = \
 	bsm \
 	crypto/entropy \
 	dev \
+	kern \
 	libkern \
 	machine \
 	miscfs \
@@ -54,22 +51,18 @@ EXPINC_SUBDIRS = \
 	netinet6 \
 	netkey \
 	security \
+	skywalk \
 	pthread \
 	sys \
-	sys_private \
 	uuid \
 	vfs \
 	vm
-
 
 EXPINC_SUBDIRS_X86_64 = \
 	i386
 
 EXPINC_SUBDIRS_X86_64H = \
 	i386
-
-EXPINC_SUBDIRS_ARM = \
-	arm
 
 EXPINC_SUBDIRS_ARM64 = \
 	arm
@@ -86,9 +79,6 @@ INSTTEXTFILES_SUBDIRS_X86_64 = \
 	dev
 
 INSTTEXTFILES_SUBDIRS_X86_64H = \
-	dev
-
-INSTTEXTFILES_SUBDIRS_ARM = \
 	dev
 
 INSTTEXTFILES_SUBDIRS_ARM64 = \

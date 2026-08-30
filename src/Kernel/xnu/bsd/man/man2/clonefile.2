@@ -16,7 +16,7 @@
 .\" 
 .\"     @(#)clonefile.2
 .
-.Dd December 04, 2015
+.Dd June 3, 2021
 .Dt CLONEFILE 2
 .Os Darwin
 .Sh NAME
@@ -33,6 +33,11 @@
 .
 .Fn fclonefileat "int srcfd" "int dst_dirfd" "const char * dst" "int flags"
 .
+.Sh LIMITATIONS
+Cloning directories with these functions is strongly discouraged.  Use
+.Xr copyfile 3
+to clone directories instead.
+.
 .Sh DESCRIPTION
 The
 .Fn clonefile
@@ -47,7 +52,7 @@ shares its data blocks with the
 file but has its own copy of attributes and extended attributes which are identical to
 those of the named file
 .Fa src
-with the exceptions listed below
+with the exceptions listed below:
 .Pp
 .
 .Bl -enum
@@ -63,11 +68,13 @@ or
 .Xr symlinkat 2
 if the current user does not have privileges to change ownership. If the optional
 flag CLONE_NOOWNERCOPY is passed, the ownership information is the same as if the
-the current user does not have privileges to change ownership
-
+the current user does not have privileges to change ownership.
 .
 .It
 setuid and setgid bits are turned off in the mode bits for regular files.
+.It
+inherit target directory's access control lists. If the optional flag CLONE_ACL is passed, it will additionally
+copy the ACLs from the source file and also apply the inherited ACLs from the target directory.
 .El
 .Pp
 Subsequent writes to either the original or cloned file are private to the file being modified (copy-on-write).
@@ -78,9 +85,10 @@ allocate new storage for data blocks, it is possible for a subsequent overwrite 
 return ENOSPC.  If
 .Fa src
 names a directory, the directory hierarchy is cloned as if each item was cloned individually.  However, the use of
-.Xr copyfile 3
-is more appropriate for copying large directory hierarchies instead of
 .Xr clonefile 2
+to clone directory hierarchies is strongly discouraged.  Use
+.Xr copyfile 3
+instead for copying directories.
 .Pp
 The
 .Fn clonefileat
@@ -117,7 +125,8 @@ except that the source is identified by file descriptor
 rather than a path (as in
 .Fn clonefile
 or
-.Fn clonefileat )
+.Fn clonefileat
+).
 .Pp
 The
 .Fa flags
@@ -125,7 +134,7 @@ parameter specifies the options that can be passed. Options are specified in the
 .Fa flags
 argument by or'ing the following values:
 .
-.Bl -tag -width CLONE_NOFOLLOW 
+.Bl -tag -width CLONE_RESOLVE_BENEATH
 .
 .It CLONE_NOFOLLOW 
 Don't follow the src file if it is a symbolic link (applicable only if the source is not a directory).
@@ -135,7 +144,7 @@ names a symbolic link.
 .
 .El
 .Pp
-.Bl -tag -width CLONE_NOOWNERCOPY 
+.Bl -tag -width CLONE_RESOLVE_BENEATH
 .
 .It CLONE_NOOWNERCOPY 
 Don't copy ownership information from the source when run called with superuser privileges.
@@ -145,7 +154,32 @@ names a symbolic link.
 .
 .El
 .Pp
-The
+.Bl -tag -width CLONE_RESOLVE_BENEATH
+.
+.It CLONE_ACL
+Copy ACLs from the source file.
+.El
+.Pp
+.Bl -tag -width CLONE_RESOLVE_BENEATH
+.
+.It CLONE_NOFOLLOW_ANY
+do not follow any symbolic links encountered during pathname resolution. An error is returned if a symlink is encountered before the last component of either
+.Fa src
+or
+.Fa dst.
+.El
+.Pp
+.Bl -tag -width CLONE_RESOLVE_BENEATH
+.
+.It CLONE_RESOLVE_BENEATH
+If
+.Fa src
+and
+.Fa dst
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
+.El
+.Pp
 The
 .Fn clonefile ,
 .Fn clonefileat
@@ -218,6 +252,19 @@ or
 .Fa dst
 path arguments.
 .
+.It Bq Er ELOOP
+If CLONE_NOFOLLOW_ANY option was passed and a symbolic link was encountered in
+translating the pathname of either
+.Fa src
+or
+.Fa dst
+arguments.
+.It Bq Er ENOTCAPABLE
+If CLONE_RESOLVE_BENEATH was passed and either
+.Fa src
+or
+.Fa dst
+does not reside in the directory hierarchy beneath the starting directory.
 .It Bq Er EROFS
 The requested operation requires writing in a directory on a read-only file system.
 .
@@ -240,13 +287,33 @@ names an  existing file that is  neither a directory nor a symbolic link to a di
 or the path argument contains at least one non <slash> character and ends with one or
 more trailing <slash> characters and the last pathname component names an existing file that
 is neither a directory nor a symbolic link to a directory.
+.
+.It Bq Er EDEADLK
+A component of either pathname refers to a
+.Dq dataless
+directory that requires materialization and the I/O policy of the current
+thread or process disallows dataless directory materialization
+.Po see
+.Xr getiopolicy_np 3
+.Pc .
+.
+.It Bq Er EDEADLK
+The
+.Fa src
+pathname refers to a
+.Dq dataless
+file that must be materialized before being cloned and the I/O policy of
+the current thread or process disallows file materialization
+.Po see
+.Xr getiopolicy_np 3
+.Pc .
 .El
 .Pp
 In addition, the
 .Fn clonefileat
 or
 .Fn fclonefileat
-functions may fail with the following errors
+functions may fail with the following errors:
 .Bl -tag -width Er                                                                 
 .It Bq Er EBADF                                                                    
 The                                                                                
@@ -273,6 +340,7 @@ or
 is neither                                                                         
 .Dv AT_FDCWD                                                                       
 nor a file descriptor associated with a directory.                              
+.
 .El  
 .
 .Pp

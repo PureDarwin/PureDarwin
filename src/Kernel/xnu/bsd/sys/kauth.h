@@ -42,7 +42,18 @@
 #include <sys/_types.h>         /* __offsetof() */
 #include <sys/_types/_uid_t.h>  /* uid_t */
 #include <sys/_types/_gid_t.h>     /* gid_t */
+#include <sys/_types/_guid_t.h>
 #include <sys/syslimits.h>      /* NGROUPS_MAX */
+#ifdef KERNEL
+#include <stdbool.h>
+#include <sys/ucred.h>
+#include <sys/lock.h>   /* lck_grp_t */
+#endif /* KERNEL */
+#if KERNEL_PRIVATE
+#include <kern/smr_types.h>
+#endif
+
+__BEGIN_DECLS
 
 #ifdef __APPLE_API_EVOLVING
 
@@ -52,8 +63,6 @@
 
 #define KAUTH_UID_NONE  (~(uid_t)0 - 100)       /* not a valid UID */
 #define KAUTH_GID_NONE  (~(gid_t)0 - 100)       /* not a valid GID */
-
-#include <sys/_types/_guid_t.h>
 
 /* NT Security Identifier, structure as defined by Microsoft */
 #pragma pack(1)    /* push packing of 1 byte */
@@ -143,182 +152,432 @@ struct kauth_cache_sizes {
 
 #define IDENTITYSVC_ENTITLEMENT         "com.apple.private.identitysvc"
 
-
 #ifdef KERNEL
-/*
- * Credentials.
- */
+#pragma mark - kauth_cred
 
-#if 0
-/*
- * Supplemental credential data.
+/*!
+ * @brief
+ * Retains a credential data structure.
  *
- * This interface allows us to associate arbitrary data with a credential.
- * As with the credential, the data is considered immutable.
+ * @Description
+ * The reference returned must be released with @c kauth_cred_unref().
  */
-struct kauth_cred_supplement {
-	TAILQ_ENTRY(kauth_cred_supplement) kcs_link;
+extern void         kauth_cred_ref(kauth_cred_t cred);
 
-	int     kcs_ref;                /* reference count */
-	int     kcs_id;                 /* vended identifier */
-	size_t  kcs_size;               /* size of data field */
-	char    kcs_data[0];
-};
-
-typedef struct kauth_cred_supplement *kauth_cred_supplement_t;
-
-struct kauth_cred {
-	TAILQ_ENTRY(kauth_cred) kc_link;
-
-	int     kc_ref;                 /* reference count */
-	uid_t   kc_uid;                 /* effective user id */
-	uid_t   kc_ruid;                /* real user id */
-	uid_t   kc_svuid;               /* saved user id */
-	gid_t   kc_gid;                 /* effective group id */
-	gid_t   kc_rgid;                /* real group id */
-	gid_t   kc_svgid;               /* saved group id */
-
-	int     kc_flags;
-#define KAUTH_CRED_GRPOVERRIDE          (1<<0)  /* private group list is authoritative */
-
-	int     kc_npvtgroups;          /* private group list, advisory or authoritative */
-	gid_t   kc_pvtgroups[NGROUPS];  /* based on KAUTH_CRED_GRPOVERRIDE flag */
-
-	int     kc_nsuppgroups;         /* supplementary group list */
-	gid_t   *kc_suppgroups;
-
-	int     kc_nwhtgroups;          /* whiteout group list */
-	gid_t   *kc_whtgroups;
-
-	struct au_session cr_audit;     /* user auditing data */
-
-	int     kc_nsupplement;         /* entry count in supplemental data pointer array */
-	kauth_cred_supplement_t *kc_supplement;
-};
-#else
-
-/* XXX just for now */
-#include <sys/ucred.h>
-// typedef struct ucred *kauth_cred_t;
-#endif
-
-/* Kernel SPI for now */
-__BEGIN_DECLS
-/*
- * Routines specific to credentials with POSIX credential labels attached
+/*!
+ * @brief
+ * Releases a credential data structure, and nils out the pointer.
  *
- * XXX	Should be in policy_posix.h, with struct posix_cred
+ * @Description
+ * @c credp must be non NULL, but can point to a NULL/NOCRED credential.
  */
-extern kauth_cred_t posix_cred_create(posix_cred_t pcred);
-extern posix_cred_t posix_cred_get(kauth_cred_t cred);
-extern void posix_cred_label(kauth_cred_t cred, posix_cred_t pcred);
-extern int posix_cred_access(kauth_cred_t cred, id_t object_uid, id_t object_gid, mode_t object_mode, mode_t mode_req);
+extern void         kauth_cred_unref(kauth_cred_t *credp);
 
-extern uid_t    kauth_getuid(void);
-extern uid_t    kauth_getruid(void);
-extern gid_t    kauth_getgid(void);
-extern kauth_cred_t kauth_cred_get(void);
+
+/*!
+ * @brief
+ * Returns the current thread assumed credentials.
+ *
+ * @discussion
+ * These might differ from the proc's credential if settid() has been called.
+ * This never returns NULL/NOCRED.
+ *
+ * This function doesn't take a reference, and the returned pointer is valid
+ * for the duration of the current syscall.
+ *
+ * This function returns cached credentials without a reference which are valid
+ * for the duration of a MACF hook.  If a copy of this pointer has to be stashed,
+ * the credentials must be retained with kauth_cred_ref().
+ *
+ * (this function should really be called @c current_thread_cred())
+ */
+extern kauth_cred_t kauth_cred_get(void) __pure2;
+#define current_thread_cred()           kauth_cred_get()
+
+/*!
+ * @brief
+ * Returns the current MAC label slot value for the thread assumed credentials.
+ *
+ * @discussion
+ * These might differ from the proc's credential if settid() has been called.
+ */
+extern intptr_t current_thread_cred_label_get(int slot) __pure2;
+
+/*!
+ * @brief
+ * Returns the current thread assumed credentials, with a reference.
+ *
+ * @discussion
+ * These might differ from the proc's credential if settid() has been called.
+ * This never returns NULL/NOCRED.
+ *
+ * The caller must call kauth_cred_unref() to dispose of the returned value.
+ *
+ * This is equivalent to @c kauth_cred_ref(kauth_cred_get())
+ *
+ * (this function should really be called @c current_thread_cred_ref())
+ */
 extern kauth_cred_t kauth_cred_get_with_ref(void);
-extern kauth_cred_t kauth_cred_proc_ref(proc_t procp);
-extern kauth_cred_t kauth_cred_create(kauth_cred_t cred);
-extern void     kauth_cred_ref(kauth_cred_t _cred);
-#ifndef __LP64__
-/* Use kauth_cred_unref(), not kauth_cred_rele() */
-extern void     kauth_cred_rele(kauth_cred_t _cred) __deprecated;
-#endif
-extern void     kauth_cred_unref(kauth_cred_t *_cred);
+#define current_thread_cred_ref()       kauth_cred_get_with_ref()
 
-#if CONFIG_MACF
-struct label;
-extern kauth_cred_t     kauth_cred_label_update(kauth_cred_t cred, struct label *label);
-extern int kauth_proc_label_update(struct proc *p, struct label *label);
-#else
-/* this is a temp hack to cover us when MAC is not built in a kernel configuration.
- * Since we cannot build our export list based on the kernel configuration we need
- * to define a stub.
+/*!
+ * @brief
+ * Returns the current cached proc credentials.
+ *
+ * @discussion
+ * This function will panic if its argument is neither PROC_NULL nor
+ * current_proc() (this can be used to protect against programming mistakes
+ * assuming the incorrect context).
+ *
+ * Note that this function returns the credential the proc had
+ * at the time of the last syscall this thread performed.
+ *
+ * This function returns cached credentials without a reference which are valid
+ * for the duration of a syscall only. If a copy of this pointer has to be
+ * stashed, the credentials must be retained with kauth_cred_ref().
+ *
+ * For the freshest credentials, kauth_cred_proc_ref()
+ * must be used against @c current_proc().
+ *
+ * This never returns NULL/NOCRED.
  */
-extern kauth_cred_t     kauth_cred_label_update(kauth_cred_t cred, void *label);
-extern int kauth_proc_label_update(struct proc *p, void *label);
-#endif
+extern kauth_cred_t current_cached_proc_cred(proc_t) __pure2;
 
-__deprecated_msg("Unsafe interface: requires lock holds that aren't exposed")
-extern kauth_cred_t kauth_cred_find(kauth_cred_t cred);
-extern uid_t    kauth_cred_getuid(kauth_cred_t _cred);
-extern uid_t    kauth_cred_getruid(kauth_cred_t _cred);
-extern uid_t    kauth_cred_getsvuid(kauth_cred_t _cred);
-extern gid_t    kauth_cred_getgid(kauth_cred_t _cred);
-extern gid_t    kauth_cred_getrgid(kauth_cred_t _cred);
-extern gid_t    kauth_cred_getsvgid(kauth_cred_t _cred);
-extern int      kauth_cred_pwnam2guid(char *pwnam, guid_t *guidp);
-extern int      kauth_cred_grnam2guid(char *grnam, guid_t *guidp);
-extern int      kauth_cred_guid2pwnam(guid_t *guidp, char *pwnam);
-extern int      kauth_cred_guid2grnam(guid_t *guidp, char *grnam);
-extern int      kauth_cred_guid2uid(guid_t *_guid, uid_t *_uidp);
-extern int      kauth_cred_guid2gid(guid_t *_guid, gid_t *_gidp);
-extern int      kauth_cred_ntsid2uid(ntsid_t *_sid, uid_t *_uidp);
-extern int      kauth_cred_ntsid2gid(ntsid_t *_sid, gid_t *_gidp);
-extern int      kauth_cred_ntsid2guid(ntsid_t *_sid, guid_t *_guidp);
-extern int      kauth_cred_uid2guid(uid_t _uid, guid_t *_guidp);
-extern int      kauth_cred_getguid(kauth_cred_t _cred, guid_t *_guidp);
-extern int      kauth_cred_gid2guid(gid_t _gid, guid_t *_guidp);
-extern int      kauth_cred_uid2ntsid(uid_t _uid, ntsid_t *_sidp);
-extern int      kauth_cred_getntsid(kauth_cred_t _cred, ntsid_t *_sidp);
-extern int      kauth_cred_gid2ntsid(gid_t _gid, ntsid_t *_sidp);
-extern int      kauth_cred_guid2ntsid(guid_t *_guid, ntsid_t *_sidp);
-extern int      kauth_cred_ismember_gid(kauth_cred_t _cred, gid_t _gid, int *_resultp);
-extern int      kauth_cred_ismember_guid(kauth_cred_t _cred, guid_t *_guidp, int *_resultp);
-extern int      kauth_cred_nfs4domain2dsnode(char *nfs4domain, char *dsnode);
-extern int      kauth_cred_dsnode2nfs4domain(char *dsnode, char *nfs4domain);
+/*!
+ * @brief
+ * Returns the current MAC label slot value for the cached proc credentials.
+ */
+extern intptr_t current_cached_proc_label_get(int slot) __pure2;
 
-extern int      groupmember(gid_t gid, kauth_cred_t cred);
+/*!
+ * @brief
+ * Returns the current cached proc credentials, with a reference.
+ *
+ * @discussion
+ * This function will panic if its argument is neither PROC_NULL nor
+ * current_proc() (this can be used to protect against programming mistakes
+ * assuming the incorrect context).
+ *
+ * Note that this function returns the credential the proc had
+ * at the time of the last syscall this thread performed.
+ *
+ * For the freshest credentials, kauth_cred_proc_ref()
+ * must be used against @c current_proc().
+ *
+ * The caller must call kauth_cred_unref() to dispose of the returned value.
+ *
+ * This never returns NULL/NOCRED.
+ */
+extern kauth_cred_t current_cached_proc_cred_ref(proc_t);
 
-/* currently only exported in unsupported for use by seatbelt */
-extern int      kauth_cred_issuser(kauth_cred_t _cred);
+/*!
+ * @brief
+ * Returns the specified proc credentials, with a reference.
+ *
+ * @discussion
+ * The caller must call kauth_cred_unref() to dispose of the returned value.
+ * This never returns NULL/NOCRED.
+ *
+ * The caller must call kauth_cred_unref() to dispose of the returned value.
+ */
+extern kauth_cred_t kauth_cred_proc_ref(proc_t procp);
+
+/*!
+ * @brief
+ * Returns the specified proc credentials, with a reference, or NOCRED.
+ *
+ * @discussion
+ * The caller must call kauth_cred_unref() to dispose of the returned value.
+ */
+extern kauth_cred_t kauth_cred_proc_ref_for_pid(pid_t pid);
+
+/*!
+ * @brief
+ * Returns the specified proc credentials, with a reference, or NOCRED.
+ *
+ * @discussion
+ * The caller must call kauth_cred_unref() to dispose of the returned value.
+ */
+extern kauth_cred_t kauth_cred_proc_ref_for_pidversion(pid_t pid, uint32_t version);
 
 
-/* GUID, NTSID helpers */
-extern guid_t   kauth_null_guid;
-extern int      kauth_guid_equal(guid_t *_guid1, guid_t *_guid2);
+/*!
+ * @brief
+ * Obsolete way to create a valid posix-only credential structure out of
+ * a model, DO NOT USE.
+ */
+extern kauth_cred_t kauth_cred_create(kauth_cred_t cred);
+
+
+#pragma mark kauth_cred: accessors
+
+/*!
+ * @brief
+ * Returns the effective user ID for the specified @c kauth_cred_t.
+ */
+extern uid_t        kauth_cred_getuid(kauth_cred_t _cred);
+
+/*!
+ * @brief
+ * Returns the real user ID for the specified @c kauth_cred_t.
+ */
+extern uid_t        kauth_cred_getruid(kauth_cred_t _cred);
+
+/*!
+ * @brief
+ * Returns the saved user ID for the specified @c kauth_cred_t.
+ */
+extern uid_t        kauth_cred_getsvuid(kauth_cred_t _cred);
+
+/*!
+ * @brief
+ * Returns whether the current credential effective user ID is the super user.
+ */
+extern int          kauth_cred_issuser(kauth_cred_t _cred);
+
+/*!
+ * @brief
+ * Returns the effective group ID for the specified @c kauth_cred_t.
+ */
+extern gid_t        kauth_cred_getgid(kauth_cred_t _cred);
+
+/*!
+ * @brief
+ * Returns the real group ID for the specified @c kauth_cred_t.
+ */
+extern gid_t        kauth_cred_getrgid(kauth_cred_t _cred);
+
+/*!
+ * @brief
+ * Returns the saved group ID for the specified @c kauth_cred_t.
+ */
+extern gid_t        kauth_cred_getsvgid(kauth_cred_t _cred);
+
+/*!
+ * @brief
+ * Returns the effective user ID for the current thread.
+ *
+ * @Description
+ * Equivalent to @c kauth_getuid(kauth_cred_get())
+ */
+extern uid_t        kauth_getuid(void);
+
+/*!
+ * @brief
+ * Returns the real user ID for the current thread.
+ *
+ * @Description
+ * Equivalent to @c kauth_getruid(kauth_cred_get())
+ */
+extern uid_t        kauth_getruid(void);
+
+/*!
+ * @brief
+ * Returns the effective group ID for the current thread.
+ *
+ * @Description
+ * Equivalent to @c kauth_getgid(kauth_cred_get())
+ */
+extern gid_t        kauth_getgid(void);
+
+/*!
+ * @brief
+ * Returns the real group ID for the current thread.
+ *
+ * @Description
+ * Equivalent to @c kauth_getrgid(kauth_cred_get())
+ */
+extern gid_t        kauth_getrgid(void);
+
+
+#pragma mark kauth_cred: MACF label updates
+
+struct label;
+
+/*!
+ * @brief
+ * Updates the MAC label associated with a credential.
+ *
+ * @discussion
+ * This function returns a new credential where the passed
+ * in label is updated with the specified one.
+ *
+ * This will cause the @c cred_label_associate() MAC hook to be invoked
+ * first (so that all MAC policies have a chance to make the newly formed
+ * credential inherit labels) then the @c cred_label_update() hook
+ * (which will allow the newly made credential labels to be overridden).
+ *
+ * This never returns NULL/NOCRED.
+ *
+ * @param cred          (ref consumed) the credentials to use as a model.
+ * @param label         the model label to copy from.
+ */
+extern kauth_cred_t kauth_cred_label_update(
+	kauth_cred_t            cred,
+	struct label           *label);
+
+
+/*!
+ * @brief
+ * Updates the MAC label insde the proc's credentials.
+ *
+ * @discussion
+ * This function applies @c kauth_cred_label_update() to the specified
+ * process's credntials, and updates the process's credentials
+ * with the outcome.
+ *
+ * This function never fails (returns 0 all the time).
+ *
+ * @param proc          the process which creedntials must be updated.
+ * @param label         the model label to copy from.
+ */
+extern int          kauth_proc_label_update(
+	struct proc            *proc,
+	struct label           *label);
+
+
+#pragma mark kauth_cred: group membership (private API)
+/*
+ * This part of the kernel is considered private and prototypes
+ * will be eventually be removed from the public headers.
+ */
+
+extern int          kauth_cred_pwnam2guid(char *pwnam, guid_t *guidp);
+extern int          kauth_cred_grnam2guid(char *grnam, guid_t *guidp);
+extern int          kauth_cred_guid2pwnam(guid_t *guidp, char *pwnam);
+extern int          kauth_cred_guid2grnam(guid_t *guidp, char *grnam);
+extern int          kauth_cred_guid2uid(guid_t *_guid, uid_t *_uidp);
+extern int          kauth_cred_guid2gid(guid_t *_guid, gid_t *_gidp);
+extern int          kauth_cred_ntsid2uid(ntsid_t *_sid, uid_t *_uidp);
+extern int          kauth_cred_ntsid2gid(ntsid_t *_sid, gid_t *_gidp);
+extern int          kauth_cred_ntsid2guid(ntsid_t *_sid, guid_t *_guidp);
+extern int          kauth_cred_uid2guid(uid_t _uid, guid_t *_guidp);
+extern int          kauth_cred_getguid(kauth_cred_t _cred, guid_t *_guidp);
+extern int          kauth_cred_gid2guid(gid_t _gid, guid_t *_guidp);
+extern int          kauth_cred_uid2ntsid(uid_t _uid, ntsid_t *_sidp);
+extern int          kauth_cred_getntsid(kauth_cred_t _cred, ntsid_t *_sidp);
+extern int          kauth_cred_gid2ntsid(gid_t _gid, ntsid_t *_sidp);
+extern int          kauth_cred_guid2ntsid(guid_t *_guid, ntsid_t *_sidp);
+extern int          kauth_cred_ismember_gid(kauth_cred_t _cred, gid_t _gid, int *_resultp);
+extern int          kauth_cred_ismember_guid(kauth_cred_t _cred, guid_t *_guidp, int *_resultp);
+extern int          kauth_cred_nfs4domain2dsnode(char *nfs4domain, char *dsnode);
+extern int          kauth_cred_dsnode2nfs4domain(char *dsnode, char *nfs4domain);
+
+extern int          groupmember(gid_t gid, kauth_cred_t cred);
+
+
+#ifdef KERNEL_PRIVATE
+#pragma mark kauth_cred: private KPI
+
+extern int          kauth_cred_getgroups(kauth_cred_t _cred, gid_t *_groups, size_t *_groupcount);
+
+#endif /* KERNEL_PRIVATE */
 #ifdef XNU_KERNEL_PRIVATE
-extern int      kauth_ntsid_equal(ntsid_t *_sid1, ntsid_t *_sid2);
+#pragma mark kauth_cred: XNU only
+#pragma GCC visibility push(hidden)
 
-extern int      kauth_wellknown_guid(guid_t *_guid);
-#define KAUTH_WKG_NOT           0       /* not a well-known GUID */
-#define KAUTH_WKG_OWNER         1
-#define KAUTH_WKG_GROUP         2
-#define KAUTH_WKG_NOBODY        3
-#define KAUTH_WKG_EVERYBODY     4
+extern lck_grp_t    kauth_lck_grp;
 
-extern gid_t    kauth_getrgid(void);
-extern int      cantrace(proc_t cur_procp, kauth_cred_t creds, proc_t traced_procp, int *errp);
+extern void         kauth_init(void);
+
+#pragma mark XNU only: kauth_cred interfaces
+
+extern kauth_cred_t posix_cred_create(posix_cred_t pcred);
+extern posix_cred_t posix_cred_get(kauth_cred_t cred) __pure2;
+extern int          posix_cred_access(kauth_cred_t cred, id_t object_uid, id_t object_gid, mode_t object_mode, mode_t mode_req);
+
+extern int          cantrace(proc_t cur_procp, kauth_cred_t creds, proc_t traced_procp, int *errp);
 extern kauth_cred_t kauth_cred_copy_real(kauth_cred_t cred);
-extern kauth_cred_t kauth_cred_setresuid(kauth_cred_t cred, uid_t ruid, uid_t euid, uid_t svuid, uid_t gmuid);
-extern kauth_cred_t kauth_cred_setresgid(kauth_cred_t cred, gid_t rgid, gid_t egid, gid_t svgid);
-extern kauth_cred_t kauth_cred_setuidgid(kauth_cred_t cred, uid_t uid, gid_t gid);
-extern kauth_cred_t kauth_cred_setsvuidgid(kauth_cred_t cred, uid_t uid, gid_t gid);
-extern kauth_cred_t kauth_cred_setgroups(kauth_cred_t cred, gid_t *groups, size_t groupcount, uid_t gmuid);
-struct uthread;
-extern void     kauth_cred_uthread_update(struct uthread *, proc_t);
+
+
+/*!
+ * @brief
+ * Type of functions used to derive credentials from an original one.
+ *
+ * @description
+ * The @c model argument is an on-stack template that is to be mutated
+ * in place, and that will be used to make the derived credential.
+ *
+ * The function should return false if it made no modifications,
+ * and true if it did (it is OK to return true incorrectly,
+ * it is just a little less efficient).
+ */
+typedef bool (^kauth_cred_derive_t)(kauth_cred_t parent, kauth_cred_t model);
+
+/*!
+ * @brief
+ * Derive a credential from a given cred.
+ *
+ * @description
+ * This function never returns NULL.
+ */
+extern kauth_cred_t kauth_cred_derive(kauth_cred_t cred, kauth_cred_derive_t fn);
+
+__enum_decl(proc_settoken_t, uint32_t, {
+	PROC_SETTOKEN_NONE       = 0x0000,
+	PROC_SETTOKEN_LAZY       = 0x0001, /* set the security token on change */
+	PROC_SETTOKEN_ALWAYS     = 0x0002, /* set the security token all the time */
+	PROC_SETTOKEN_SETUGID    = 0x0003, /* PROC_SETTOKEN_LAZY + set P_SUGID */
+});
+
+/*!
+ * @brief
+ * Update the credential on the specified proc.
+ *
+ * @description
+ * The function returns true if an update took place.
+ */
+extern bool         kauth_cred_proc_update(proc_t p, proc_settoken_t action, kauth_cred_derive_t fn);
+
+extern bool         kauth_cred_model_setresuid(kauth_cred_t model, uid_t ruid, uid_t euid, uid_t svuid, uid_t gmuid);
+extern bool         kauth_cred_model_setresgid(kauth_cred_t model, gid_t rgid, gid_t egid, gid_t svgid);
+extern bool         kauth_cred_model_setuidgid(kauth_cred_t model, uid_t uid, gid_t gid);
+extern bool         kauth_cred_model_setgroups(kauth_cred_t model, gid_t *groups, size_t groupcount, uid_t gmuid);
+extern bool         kauth_cred_model_setauditinfo(kauth_cred_t model, au_session_t *);
+
+extern void         kauth_cred_thread_update(struct thread *, proc_t);
 #ifdef CONFIG_MACF
-extern void kauth_proc_label_update_execve(struct proc *p, struct vfs_context *ctx, struct vnode *vp, off_t offset, struct vnode *scriptvp, struct label *scriptlabel, struct label *execlabel, unsigned int *csflags, void *psattr, int *disjoint, int *update_return);
+extern void         kauth_proc_label_update_execve(struct proc *p, struct vfs_context *ctx, struct vnode *vp, off_t offset, struct vnode *scriptvp, struct label *scriptlabel, struct label *execlabel, unsigned int *csflags, void *psattr, int *disjoint, int *update_return);
 #endif
-extern int      kauth_cred_getgroups(kauth_cred_t _cred, gid_t *_groups, size_t *_groupcount);
-extern int      kauth_cred_gid_subset(kauth_cred_t _cred1, kauth_cred_t _cred2, int *_resultp);
-struct auditinfo_addr;
-extern kauth_cred_t kauth_cred_setauditinfo(kauth_cred_t, au_session_t *);
-extern int      kauth_cred_supplementary_register(const char *name, int *ident);
-extern int      kauth_cred_supplementary_add(kauth_cred_t cred, int ident, const void *data, size_t datasize);
-extern int      kauth_cred_supplementary_remove(kauth_cred_t cred, int ident);
+extern int          kauth_cred_gid_subset(kauth_cred_t _cred1, kauth_cred_t _cred2, int *_resultp);
 
-#endif /* XNU_KERNEL_PRIVATE */
-__END_DECLS
+extern kauth_cred_t kauth_cred_require(kauth_cred_t cred) __pure2;
 
-#endif /* KERNEL */
+extern void         kauth_cred_set(kauth_cred_t *credp, kauth_cred_t new_cred);
+#if CONFIG_EXT_RESOLVER
+extern void         kauth_resolver_identity_reset(void);
+#endif
+
+/* update the thread's proc cred cache, called on syscall entry */
+extern void         current_cached_proc_cred_update(void);
 
 /*
- * Generic Access Control Lists.
+ * `kauth_cred_set` and `kauth_cred_unref` take pointers to a
+ * `kauth_cred_t`, which the compiler considers strictly different from a
+ * pointer to a signed `kauth_cred_t` (as it should do).  These macros
+ * therefore authenticate the arguments into naked locals, pass them to the
+ * function and then write back the results, signing them in the process.
  */
+#define kauth_cred_set(credp, new_cred) \
+    do { \
+	    kauth_cred_t _cred __single = *(credp); \
+	    (kauth_cred_set)(&_cred, (new_cred)); \
+	    *(credp) = _cred; \
+    } while (0)
+
+#define kauth_cred_unref(credp) \
+    do { \
+	    kauth_cred_t _credp __single = *(credp); \
+	    (kauth_cred_unref)(&_credp); \
+	    *(credp) = _credp; \
+    } while (0)
+
+#pragma GCC visibility pop
+#endif /* XNU_KERNEL_PRIVATE */
+#endif /* KERNEL */
 #if defined(KERNEL) || defined (_SYS_ACL_H)
+#pragma mark - kauth
+#pragma mark kauth: Generic Access Control Lists.
 
 typedef u_int32_t kauth_ace_rights_t;
 
@@ -408,10 +667,8 @@ typedef struct kauth_acl *kauth_acl_t;
 #endif
 
 #ifdef KERNEL
-__BEGIN_DECLS
 kauth_acl_t     kauth_acl_alloc(int size);
 void            kauth_acl_free(kauth_acl_t fsp);
-__END_DECLS
 #endif
 
 
@@ -456,14 +713,9 @@ typedef struct kauth_filesec *kauth_filesec_t;
 #define KAUTH_ENDIAN_DISK       0x00000002      /* set disk endianness */
 
 #endif /* KERNEL || <sys/acl.h> */
-
-
 #ifdef KERNEL
+#pragma mark kauth: Scope management
 
-
-/*
- * Scope management.
- */
 struct kauth_scope;
 typedef struct kauth_scope *kauth_scope_t;
 struct kauth_listener;
@@ -505,7 +757,6 @@ struct kauth_acl_eval {
 
 typedef struct kauth_acl_eval *kauth_acl_eval_t;
 
-__BEGIN_DECLS
 kauth_filesec_t kauth_filesec_alloc(int size);
 void            kauth_filesec_free(kauth_filesec_t fsp);
 extern kauth_scope_t kauth_register_scope(const char *_identifier, kauth_scope_callback_t _callback, void *_idata);
@@ -517,22 +768,6 @@ extern void     kauth_unlisten_scope(kauth_listener_t _scope);
 extern int      kauth_authorize_action(kauth_scope_t _scope, kauth_cred_t _credential, kauth_action_t _action,
     uintptr_t _arg0, uintptr_t _arg1, uintptr_t _arg2, uintptr_t _arg3);
 
-/* default scope handlers */
-extern int      kauth_authorize_allow(kauth_cred_t _credential, void *_idata, kauth_action_t _action,
-    uintptr_t _arg0, uintptr_t _arg1, uintptr_t _arg2, uintptr_t _arg3);
-
-
-#ifdef XNU_KERNEL_PRIVATE
-void            kauth_filesec_acl_setendian(int, kauth_filesec_t, kauth_acl_t);
-int             kauth_copyinfilesec(user_addr_t xsecurity, kauth_filesec_t *xsecdestpp);
-extern int      kauth_acl_evaluate(kauth_cred_t _credential, kauth_acl_eval_t _eval);
-extern int      kauth_acl_inherit(vnode_t _dvp, kauth_acl_t _initial, kauth_acl_t *_product, int _isdir, vfs_context_t _ctx);
-
-#endif /* XNU_KERNEL_PRIVATE */
-
-
-__END_DECLS
-
 /*
  * Generic scope.
  */
@@ -540,12 +775,6 @@ __END_DECLS
 
 /* Actions */
 #define KAUTH_GENERIC_ISSUSER                   1
-
-#ifdef XNU_KERNEL_PRIVATE
-__BEGIN_DECLS
-extern int      kauth_authorize_generic(kauth_cred_t credential, kauth_action_t action);
-__END_DECLS
-#endif /* XNU_KERNEL_PRIVATE */
 
 /*
  * Process/task scope.
@@ -556,10 +785,8 @@ __END_DECLS
 #define KAUTH_PROCESS_CANSIGNAL                 1
 #define KAUTH_PROCESS_CANTRACE                  2
 
-__BEGIN_DECLS
 extern int      kauth_authorize_process(kauth_cred_t _credential, kauth_action_t _action,
     struct proc *_process, uintptr_t _arg1, uintptr_t _arg2, uintptr_t _arg3);
-__END_DECLS
 
 /*
  * Vnode operation scope.
@@ -616,14 +843,44 @@ __END_DECLS
 /* Flag values returned to close listeners. */
 #define KAUTH_FILEOP_CLOSE_MODIFIED                     (1<<1)
 
-__BEGIN_DECLS
+/* GUID, NTSID helpers */
+extern guid_t   kauth_null_guid;
+extern int      kauth_guid_equal(guid_t *_guid1, guid_t *_guid2);
+
+#ifdef KERNEL_PRIVATE
+
+extern int      kauth_acl_evaluate(kauth_cred_t _credential, kauth_acl_eval_t _eval);
+
+#endif /* KERNEL_PRIVATE */
 #ifdef XNU_KERNEL_PRIVATE
+#pragma mark kauth: XNU only
+#pragma GCC visibility push(hidden)
+
+void            kauth_filesec_acl_setendian(int, kauth_filesec_t, kauth_acl_t);
+int             kauth_copyinfilesec(user_addr_t xsecurity, kauth_filesec_t *xsecdestpp);
+extern int      kauth_acl_inherit(vnode_t _dvp, kauth_acl_t _initial, kauth_acl_t *_product, int _isdir, vfs_context_t _ctx);
+
+extern int      kauth_authorize_allow(kauth_cred_t _credential, void *_idata, kauth_action_t _action,
+    uintptr_t _arg0, uintptr_t _arg1, uintptr_t _arg2, uintptr_t _arg3);
+
+extern int      kauth_authorize_generic(kauth_cred_t credential, kauth_action_t action);
+
 extern int      kauth_authorize_fileop_has_listeners(void);
-#endif /* XNU_KERNEL_PRIVATE */
+
 extern int      kauth_authorize_fileop(kauth_cred_t _credential, kauth_action_t _action,
     uintptr_t _arg0, uintptr_t _arg1);
-__END_DECLS
 
+extern int      kauth_ntsid_equal(ntsid_t *_sid1, ntsid_t *_sid2);
+
+extern int      kauth_wellknown_guid(guid_t *_guid);
+#define KAUTH_WKG_NOT           0       /* not a well-known GUID */
+#define KAUTH_WKG_OWNER         1
+#define KAUTH_WKG_GROUP         2
+#define KAUTH_WKG_NOBODY        3
+#define KAUTH_WKG_EVERYBODY     4
+
+#pragma GCC visibility pop
+#endif /* XNU_KERNEL_PRIVATE */
 #endif /* KERNEL */
 
 /* Actions, also rights bits in an ACE */
@@ -749,8 +1006,6 @@ __END_DECLS
 #endif /* KERNEL || <sys/acl.h> */
 
 #ifdef KERNEL
-#include <sys/lock.h>   /* lck_grp_t */
-
 /*
  * Debugging
  *
@@ -759,7 +1014,7 @@ __END_DECLS
 #if 0
 # ifndef _FN_KPRINTF
 #  define       _FN_KPRINTF
-void kprintf(const char *fmt, ...);
+void kprintf(const char *fmt, ...) __printflike(1, 2);
 # endif /* !_FN_KPRINTF */
 # define KAUTH_DEBUG_ENABLE
 # define K_UUID_FMT "%08x:%08x:%08x:%08x"
@@ -778,29 +1033,10 @@ void kprintf(const char *fmt, ...);
 # define KAUTH_DEBUG(fmt, args...)              do { } while (0)
 # define VFS_DEBUG(ctx, vp, fmt, args...)       do { } while(0)
 #endif  /* !0 */
-
-/*
- * Initialisation.
- */
-#ifdef XNU_KERNEL_PRIVATE
-__BEGIN_DECLS
-
-extern lck_grp_t kauth_lck_grp;
-
-extern void     kauth_init(void);
-extern void     kauth_cred_init(void);
-/*
- * If you need accounting for KM_KAUTH consider using
- * KALLOC_HEAP_DEFINE to define a view.
- */
-#define KM_KAUTH     KHEAP_DEFAULT
-#if CONFIG_EXT_RESOLVER
-extern void     kauth_resolver_identity_reset(void);
-#endif
-__END_DECLS
-#endif /* XNU_KERNEL_PRIVATE */
-
 #endif  /* KERNEL */
 
 #endif /* __APPLE_API_EVOLVING */
+
+__END_DECLS
+
 #endif /* _SYS_KAUTH_H */

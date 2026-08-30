@@ -479,7 +479,7 @@ IOInterruptController::timeStampInterruptHandlerInternal(bool isStart, IOInterru
 
 
 	if (isStart) {
-#if INTERRUPT_MASKED_DEBUG
+#if SCHED_HYGIENE_DEBUG
 		ml_irq_debug_start((uintptr_t)vector->handler, (uintptr_t)vector);
 #endif
 		IOTimeStampStartConstant(IODBG_INTC(IOINTC_HANDLER), (uintptr_t)vectorNumber, (uintptr_t)unslidHandler,
@@ -487,7 +487,7 @@ IOInterruptController::timeStampInterruptHandlerInternal(bool isStart, IOInterru
 	} else {
 		IOTimeStampEndConstant(IODBG_INTC(IOINTC_HANDLER), (uintptr_t)vectorNumber, (uintptr_t)unslidHandler,
 		    (uintptr_t)unslidTarget, (uintptr_t)providerID);
-#if INTERRUPT_MASKED_DEBUG
+#if SCHED_HYGIENE_DEBUG
 		ml_irq_debug_end();
 #endif
 	}
@@ -535,7 +535,7 @@ IOSharedInterruptController::initInterruptController(IOInterruptController *pare
 	provider = this;
 
 	// Allocate the IOInterruptSource so this can act like a nub.
-	_interruptSources = (IOInterruptSource *)IOMalloc(sizeof(IOInterruptSource));
+	_interruptSources = IONew(IOInterruptSource, 1);
 	if (_interruptSources == NULL) {
 		return kIOReturnNoMemory;
 	}
@@ -557,12 +557,11 @@ IOSharedInterruptController::initInterruptController(IOInterruptController *pare
 
 	// Allocate the memory for the vectors
 	numVectors = kIOSharedInterruptControllerDefaultVectors; // For now a constant number.
-	vectors = (IOInterruptVector *)IOMalloc(numVectors * sizeof(IOInterruptVector));
+	vectors = IONewZero(IOInterruptVector, numVectors);
 	if (vectors == NULL) {
-		IOFree(_interruptSources, sizeof(IOInterruptSource));
+		IODelete(_interruptSources, IOInterruptSource, 1);
 		return kIOReturnNoMemory;
 	}
-	bzero(vectors, numVectors * sizeof(IOInterruptVector));
 
 	// Allocate the lock for the controller.
 	controllerLock = IOSimpleLockAlloc();
@@ -635,7 +634,7 @@ IOSharedInterruptController::registerInterrupt(IOService *nub,
 	}
 
 	// Create the vectorData for the IOInterruptSource.
-	vectorData = OSData::withBytes(&vectorNumber, sizeof(vectorNumber));
+	vectorData = OSData::withValue(vectorNumber);
 	if (vectorData == NULL) {
 		IOLockUnlock(vector->interruptLock);
 		return kIOReturnNoMemory;
@@ -690,6 +689,10 @@ IOSharedInterruptController::unregisterInterrupt(IOService *nub,
 
 		// Soft disable the source and the controller too.
 		disableInterrupt(nub, source);
+
+		// Free vectorData
+		IOInterruptSource *interruptSources = nub->_interruptSources;
+		OSSafeReleaseNULL(interruptSources[source].vectorData);
 
 		// Clear all the storage for the vector except for interruptLock.
 		vector->interruptActive = 0;

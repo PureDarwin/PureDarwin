@@ -26,7 +26,9 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 /*!
- * ARM64-specific functions required to support hibernation exit.
+ * ARM64-specific functions required to support hibernation exit. Most of this
+ * logic won't get used on SPTM-based systems (the SPTM takes over the
+ * responsibilities usually handled by HIBTEXT and restoring pages).
  */
 
 #include <mach/mach_types.h>
@@ -86,33 +88,25 @@ pal_hib_restore_pal_state(__unused uint32_t *arg)
 void
 pal_hib_resume_init(pal_hib_ctx_t *ctx, hibernate_page_list_t *map, uint32_t *nextFree)
 {
+#pragma unused(ctx, map, nextFree)
+
 }
 
 void
 pal_hib_restored_page(pal_hib_ctx_t *ctx, pal_hib_restore_stage_t stage, ppnum_t ppnum)
 {
+#pragma unused(ctx, stage, ppnum)
+
 }
 
 void
 pal_hib_patchup(pal_hib_ctx_t *ctx)
 {
+#pragma unused(ctx)
 
-	/* Reinit the ppl hib lock as it was saved to the hibernation image held. */
-	ppl_hib_lock_reinit();
-
-	// DRAM pages are captured from a PPL context, so here we restore all cpu_data structures to a non-PPL context
-	for (int i = 0; i < MAX_CPUS; i++) {
-		pmap_cpu_data_array[i].cpu_data.ppl_state = PPL_STATE_KERNEL;
-		pmap_cpu_data_array[i].cpu_data.ppl_kern_saved_sp = 0;
-	}
 
 	// cluster CTRR state needs to be reconfigured
 	init_ctrr_cluster_states();
-
-	// Calls into the pmap that could potentially modify pmap data structures
-	// during image copying were explicitly blocked on hibernation entry.
-	// Resetting this variable to false allows those calls to be made again.
-	hib_entry_pmap_lockdown = false;
 }
 
 void
@@ -136,6 +130,11 @@ pal_hib_decompress_page(void *src, void *dst, void *scratch, unsigned int compre
 		uint32_t reserved3:14;
 	} result = { .status = ~0u };
 	__asm__ volatile ("wkdmd %0, %1" : "=r"(result): "r"(dst), "0"(wkdmSrc));
+
+#if defined APPLEH16 || defined APPLEACC8
+	__builtin_arm_dmb(DMB_ISH);
+#endif /* defined APPLEH16 || defined APPLEACC8 */
+
 	HIB_ASSERT(result.status == 0);
 }
 
@@ -160,20 +159,22 @@ typedef struct {
 static void
 hib_bzero(volatile void *s, size_t n)
 {
+	uintptr_t p = (uintptr_t)s;
+
 	// can't use __nosan_bzero while the MMU is off, so do it manually
 	while (n > sizeof(uint64_t)) {
-		*(volatile uint64_t *)s = 0;
-		s += sizeof(uint64_t);
+		*(volatile uint64_t *)p = 0;
+		p += sizeof(uint64_t);
 		n -= sizeof(uint64_t);
 	}
 	while (n > sizeof(uint32_t)) {
-		*(volatile uint32_t *)s = 0;
-		s += sizeof(uint32_t);
+		*(volatile uint32_t *)p = 0;
+		p += sizeof(uint32_t);
 		n -= sizeof(uint32_t);
 	}
 	while (n) {
-		*(volatile char *)s = 0;
-		s++;
+		*(volatile char *)p = 0;
+		p++;
 		n--;
 	}
 }
@@ -418,12 +419,13 @@ pal_hib_resume_tramp(uint32_t headerPpnum)
 	map_range_start_end(&ctx, image_start, image_end, 0, MAP_RO);
 
 	// map some device register pages
-	if (gHibernateGlobals.dockChannelRegBase) {
-#define dockchannel_uart_base gHibernateGlobals.dockChannelRegBase
-		vm_address_t dockChannelRegBase = trunc_page(&rDOCKCHANNELS_DEV_WSTAT(DOCKCHANNEL_UART_CHANNEL));
-		map_register_page(&ctx, dockChannelRegBase);
+	if (gHibernateGlobals.dockChannelRegPhysBase) {
+#define dockchannel_uart_base gHibernateGlobals.dockChannelRegPhysBase
+		vm_address_t dockChannelRegPhysBase =
+		    (vm_address_t)rDOCKCHANNELS_DEV_WSTAT(dockchannel_uart_base, DOCKCHANNEL_UART_CHANNEL);
+		map_register_page(&ctx, dockChannelRegPhysBase);
 	}
-	map_register_page(&ctx, gHibernateGlobals.hibUartRegBase);
+	map_register_page(&ctx, gHibernateGlobals.hibUartRegPhysBase);
 	map_register_page(&ctx, gHibernateGlobals.hmacRegBase);
 
 	gHibTramp.memSlide = mem_slide;

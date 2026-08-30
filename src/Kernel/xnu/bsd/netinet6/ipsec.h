@@ -43,16 +43,12 @@
 #include <uuid/uuid.h>
 #ifdef BSD_KERNEL_PRIVATE
 #include <netkey/keydb.h>
+#include <netinet/in_var.h>
 #include <netinet/ip_var.h>
 
+#include <skywalk/packet/os_packet.h>
+
 #include <os/log.h>
-
-/* lock for IPsec stats */
-extern lck_grp_t         *sadb_stat_mutex_grp;
-extern lck_grp_attr_t    *sadb_stat_mutex_grp_attr;
-extern lck_attr_t        *sadb_stat_mutex_attr;
-extern lck_mtx_t         *sadb_stat_mutex;
-
 
 #define IPSEC_STAT_INCREMENT(x) \
 	OSIncrementAtomic64((SInt64 *)&x)
@@ -114,10 +110,10 @@ struct secpolicy {
 	 * "lifetime" is passed by sadb_lifetime.sadb_lifetime_addtime.
 	 * "validtime" is passed by sadb_lifetime.sadb_lifetime_usetime.
 	 */
-	long created;           /* time created the policy */
-	long lastused;          /* updated every when kernel sends a packet */
-	long lifetime;          /* duration of the lifetime of this policy */
-	long validtime;         /* duration this policy is valid without use */
+	u_int64_t created;      /* time created the policy */
+	u_int64_t lastused;     /* updated every when kernel sends a packet */
+	u_int64_t lifetime;     /* duration of the lifetime of this policy */
+	u_int64_t validtime;    /* duration this policy is valid without use */
 };
 
 /* Request for IPsec */
@@ -145,7 +141,7 @@ struct secspacq {
 
 	struct secpolicyindex spidx;
 
-	long created;           /* for lifetime */
+	u_int64_t created;      /* for lifetime */
 	int count;              /* for lifetime */
 	/* XXX: here is mbuf place holder to be sent ? */
 };
@@ -205,6 +201,15 @@ struct secspacq {
  */
 #define IPSEC_REPLAYWSIZE  32
 
+/*
+ * Maximum key sizes in bytes expected to be passed from userspace.
+ *
+ * These values are based on the NULL algorithms for AH and ESP,
+ * which both specify a keymax of 2048 bits.
+ */
+#define IPSEC_KEY_AUTH_MAX_BYTES    256
+#define IPSEC_KEY_ENCRYPT_MAX_BYTES 256
+
 /* statistics for ipsec processing */
 struct ipsecstat {
 	u_quad_t in_success __attribute__ ((aligned(8)));  /* succeeded inbound process */
@@ -228,7 +233,7 @@ struct ipsecstat {
 	/* security policy violation for outbound process */
 	u_quad_t out_nosa __attribute__ ((aligned(8)));     /* outbound SA is unavailable */
 	u_quad_t out_inval __attribute__ ((aligned(8)));    /* outbound process failed due to EINVAL */
-	u_quad_t out_nomem __attribute__ ((aligned(8)));     /* inbound processing failed due to ENOBUFS */
+	u_quad_t out_nomem __attribute__ ((aligned(8)));     /* outbound processing failed due to ENOBUFS */
 	u_quad_t out_noroute __attribute__ ((aligned(8)));  /* there is no route */
 	u_quad_t out_esphist[256] __attribute__ ((aligned(8)));
 	u_quad_t out_ahhist[256] __attribute__ ((aligned(8)));
@@ -320,6 +325,7 @@ struct ipsec_output_state {
 	struct route_in6 ro;
 	struct sockaddr *dst;
 	u_int outgoing_if;
+	u_int32_t dscp_mapping;
 };
 
 struct ipsec_history {
@@ -340,8 +346,6 @@ extern int ip4_ah_offsetmask;
 extern int ip4_ipsec_dfbit;
 extern int ip4_ipsec_ecn;
 extern int ip4_esp_randpad;
-
-extern bool ipsec_save_wake_pkt;
 
 #define _ipsec_log(level, fmt, ...) do {                            \
 	os_log_type_t type;                                         \
@@ -379,7 +383,7 @@ extern int ipsec_copy_policy(struct inpcbpolicy *, struct inpcbpolicy *);
 extern u_int ipsec_get_reqlevel(struct ipsecrequest *);
 
 extern int ipsec4_set_policy(struct inpcb *inp, int optname,
-    caddr_t request, size_t len, int priv);
+    caddr_t __sized_by(len)request, size_t len, int priv);
 extern int ipsec4_delete_pcbpolicy(struct inpcb *);
 extern int ipsec4_in_reject_so(struct mbuf *, struct socket *);
 extern int ipsec4_in_reject(struct mbuf *, struct inpcb *);
@@ -412,11 +416,43 @@ extern struct mbuf *ipsec_copypkt(struct mbuf *);
 extern void ipsec_delaux(struct mbuf *);
 extern int ipsec_setsocket(struct mbuf *, struct socket *);
 extern struct socket *ipsec_getsocket(struct mbuf *);
-extern int ipsec_addhist(struct mbuf *, int, u_int32_t);
-extern struct ipsec_history *ipsec_gethist(struct mbuf *, int *);
-extern void ipsec_clearhist(struct mbuf *);
+extern int ipsec_incr_history_count(struct mbuf *, int, u_int32_t);
+extern u_int32_t ipsec_get_history_count(struct mbuf *);
 extern void ipsec_monitor_sleep_wake(void);
-extern void ipsec_save_wake_packet(struct mbuf *, u_int32_t, u_int32_t);
+extern void ipsec_get_local_ports(void);
+extern void ipsec_init(void);
+
+extern void ipsec_register_m_tag(void);
+
+extern int ipsec4_interface_kpipe_output(ifnet_t, kern_packet_t, kern_packet_t);
+extern int ipsec6_interface_kpipe_output(ifnet_t, kern_packet_t, kern_packet_t);
+
+extern void ipsec_fill_ip6_sockaddr_4_6_with_ifscope(union sockaddr_in_4_6 *sin46,
+    struct in6_addr *ip6, u_int16_t port, uint32_t ifscope);
+extern void ipsec_fill_ip6_sockaddr_4_6(union sockaddr_in_4_6 *sin46,
+    struct in6_addr *ip6, u_int16_t port);
+extern void ipsec_fill_ip_sockaddr_4_6(union sockaddr_in_4_6 *sin46,
+    struct in_addr ip, u_int16_t port);
+
+__attribute__((always_inline))
+static inline uint8_t *__header_bidi_indexable
+ipsec_kern_buflet_to_buffer(kern_buflet_t buflet)
+{
+	uint8_t *__single buf = NULL;
+	uint32_t buf_lim = 0;
+
+	VERIFY(buflet != NULL);
+
+	buf_lim = kern_buflet_get_data_limit(buflet);
+	VERIFY(buf_lim > 0);
+
+	buf = kern_buflet_get_data_address(buflet);
+	VERIFY(buf != NULL);
+
+	return __unsafe_forge_bidi_indexable(uint8_t *,
+	           buf, buf_lim);
+}
+
 #endif /* BSD_KERNEL_PRIVATE */
 
 #ifndef KERNEL

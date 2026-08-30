@@ -5,14 +5,12 @@ set_property(TARGET IOUSBHIDDriver.kext PROPERTY OUTPUT_NAME IOUSBHIDDriver)
 target_sources(IOUSBHIDDriver.kext PRIVATE
     IOUSBHIDKeyboard.cpp
     IOUSBHIDMouse.cpp
-    IOUSBHIDEventQueue.cpp
 )
 
 target_include_directories(IOUSBHIDDriver.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../IOHIDFamily/IOHIDSystem
     ${CMAKE_CURRENT_SOURCE_DIR}/../../IOHIDFamily/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../ApplePS2Controller
 )
 target_link_libraries(IOUSBHIDDriver.kext PRIVATE IOUSBFamilyHeaders xnu_kernel_private_headers)
 target_compile_options(IOUSBHIDDriver.kext PRIVATE

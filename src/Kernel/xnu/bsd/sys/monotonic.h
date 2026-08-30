@@ -33,15 +33,6 @@
 #include <stdint.h>
 #include <sys/cdefs.h>
 
-__BEGIN_DECLS
-
-struct mt_cpu_inscyc {
-	uint64_t mtci_instructions;
-	uint64_t mtci_cycles;
-};
-
-__END_DECLS
-
 #if !MACH_KERNEL_PRIVATE
 
 #include <sys/ioccom.h>
@@ -110,7 +101,7 @@ __END_DECLS
 
 #if XNU_KERNEL_PRIVATE
 
-#if MONOTONIC
+#if CONFIG_CPU_COUNTERS
 
 #include <kern/monotonic.h>
 #include <machine/monotonic.h>
@@ -118,63 +109,6 @@ __END_DECLS
 #include <kern/locks.h>
 
 __BEGIN_DECLS
-
-#ifdef MT_CORE_INSTRS
-#define COUNTS_INSTRS __counts[MT_CORE_INSTRS]
-#else /* defined(MT_CORE_INSTRS) */
-#define COUNTS_INSTRS 0
-#endif /* !defined(MT_CORE_INSTRS) */
-
-/*
- * MT_KDBG_TMP* macros are meant for temporary (i.e. not checked-in)
- * performance investigations.
- */
-
-/*
- * Record the current CPU counters.
- *
- * Preemption must be disabled.
- */
-#define MT_KDBG_TMPCPU_EVT(CODE) \
-	KDBG_EVENTID(DBG_MONOTONIC, DBG_MT_TMPCPU, CODE)
-
-#define MT_KDBG_TMPCPU_(CODE, FUNC) \
-	do { \
-	        if (kdebug_enable && \
-	                        kdebug_debugid_enabled(MT_KDBG_TMPCPU_EVT(CODE))) { \
-	                uint64_t __counts[MT_CORE_NFIXED]; \
-	                mt_fixed_counts(__counts); \
-	                KDBG(MT_KDBG_TMPCPU_EVT(CODE) | (FUNC), COUNTS_INSTRS, \
-	                                __counts[MT_CORE_CYCLES]); \
-	        } \
-	} while (0)
-
-#define MT_KDBG_TMPCPU(CODE) MT_KDBG_TMPCPU_(CODE, DBG_FUNC_NONE)
-#define MT_KDBG_TMPCPU_START(CODE) MT_KDBG_TMPCPU_(CODE, DBG_FUNC_START)
-#define MT_KDBG_TMPCPU_END(CODE) MT_KDBG_TMPCPU_(CODE, DBG_FUNC_END)
-
-/*
- * Record the current thread counters.
- *
- * Interrupts must be disabled.
- */
-#define MT_KDBG_TMPTH_EVT(CODE) \
-	KDBG_EVENTID(DBG_MONOTONIC, DBG_MT_TMPTH, CODE)
-
-#define MT_KDBG_TMPTH_(CODE, FUNC) \
-	do { \
-	        if (kdebug_enable && \
-	                        kdebug_debugid_enabled(MT_KDBG_TMPTH_EVT(CODE))) { \
-	                uint64_t __counts[MT_CORE_NFIXED]; \
-	                mt_cur_thread_fixed_counts(__counts); \
-	                KDBG(MT_KDBG_TMPTH_EVT(CODE) | (FUNC), COUNTS_INSTRS, \
-	                                __counts[MT_CORE_CYCLES]); \
-	        } \
-	} while (0)
-
-#define MT_KDBG_TMPTH(CODE) MT_KDBG_TMPTH_(CODE, DBG_FUNC_NONE)
-#define MT_KDBG_TMPTH_START(CODE) MT_KDBG_TMPTH_(CODE, DBG_FUNC_START)
-#define MT_KDBG_TMPTH_END(CODE) MT_KDBG_TMPTH_(CODE, DBG_FUNC_END)
 
 extern lck_grp_t mt_lock_grp;
 
@@ -199,7 +133,7 @@ extern struct mt_device mt_devices[];
 
 __END_DECLS
 
-#endif /* MONOTONIC */
+#endif /* CONFIG_CPU_COUNTERS */
 
 #endif /* XNU_KERNEL_PRIVATE */
 

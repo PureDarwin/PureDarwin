@@ -1,5 +1,6 @@
 _file_vnode
 _mbuf_data
+_mbuf_data_len
 _mbuf_len
 _mbuf_next
 _mbuf_nextpkt
@@ -10,7 +11,6 @@ _mbuf_pkthdr_setheader
 _mbuf_setlen
 _mbuf_setnextpkt
 _mbuf_type
-_proc_ucred
+_proc_ucred:_proc_ucred_unsafe
 _rootvnode
 _suser
-_ubc_setcred

@@ -36,6 +36,7 @@
 #include <kern/task.h>
 #include <kern/kern_cdata.h>
 #include <kern/kalloc.h>
+#include <kern/ipc_kobject.h>
 #include <mach/mach_vm.h>
 
 static kern_return_t kcdata_get_memory_addr_with_flavor(kcdata_descriptor_t data, uint32_t type, uint32_t size, uint64_t flags, mach_vm_address_t *user_addr);
@@ -44,6 +45,11 @@ static kern_return_t kcdata_compress_chunk_with_flags(kcdata_descriptor_t data, 
 static kern_return_t kcdata_compress_chunk(kcdata_descriptor_t data, uint32_t type, const void *input_data, uint32_t input_size);
 static kern_return_t kcdata_write_compression_stats(kcdata_descriptor_t data);
 static kern_return_t kcdata_get_compression_stats(kcdata_descriptor_t data, uint64_t *totalout, uint64_t *totalin);
+static void kcdata_object_no_senders(ipc_port_t port, mach_port_mscount_t mscount);
+
+#ifndef ROUNDUP
+#define ROUNDUP(x, y)            ((((x)+(y)-1)/(y))*(y))
+#endif
 
 /*
  * zlib will need to store its metadata and this value is indifferent from the
@@ -68,6 +74,202 @@ struct _uint32_with_description_data {
 };
 
 #pragma pack(pop)
+
+int _Atomic lw_corpse_obj_cnt = 0;
+
+IPC_KOBJECT_DEFINE(IKOT_KCDATA,
+    .iko_op_movable_send = true,
+    .iko_op_stable     = true,
+    .iko_op_no_senders = kcdata_object_no_senders);
+
+KALLOC_TYPE_DEFINE(KCDATA_OBJECT, struct kcdata_object, KT_DEFAULT);
+
+os_refgrp_decl(static, kcdata_object_refgrp, "kcdata_object", NULL);
+
+/* Grab a throttle slot for rate-limited kcdata object type(s) */
+kern_return_t
+kcdata_object_throttle_get(
+	kcdata_obj_flags_t flags)
+{
+	int oval, nval;
+
+	/* Currently only lightweight corpse is rate-limited */
+	assert(flags & KCDATA_OBJECT_TYPE_LW_CORPSE);
+	if (flags & KCDATA_OBJECT_TYPE_LW_CORPSE) {
+		os_atomic_rmw_loop(&lw_corpse_obj_cnt, oval, nval, relaxed, {
+			if (oval >= MAX_INFLIGHT_KCOBJECT_LW_CORPSE) {
+			        printf("Too many lightweight corpse in flight: %d\n", oval);
+			        os_atomic_rmw_loop_give_up(return KERN_RESOURCE_SHORTAGE);
+			}
+			nval = oval + 1;
+		});
+	}
+
+	return KERN_SUCCESS;
+}
+
+/* Release a throttle slot for rate-limited kcdata object type(s) */
+void
+kcdata_object_throttle_release(
+	kcdata_obj_flags_t flags)
+{
+	int oval, nval;
+
+	/* Currently only lightweight corpse is rate-limited */
+	assert(flags & KCDATA_OBJECT_TYPE_LW_CORPSE);
+	if (flags & KCDATA_OBJECT_TYPE_LW_CORPSE) {
+		os_atomic_rmw_loop(&lw_corpse_obj_cnt, oval, nval, relaxed, {
+			nval = oval - 1;
+			if (__improbable(nval < 0)) {
+			        os_atomic_rmw_loop_give_up(panic("Lightweight corpse kcdata object over-released"));
+			}
+		});
+	}
+}
+
+/*
+ * Create an object representation for the given kcdata.
+ *
+ * Captures kcdata descripter ref in object. If the object creation
+ * should be rate-limited, kcdata_object_throttle_get() must be called
+ * manually before invoking kcdata_create_object(), so as to save
+ * work (of creating the enclosed kcdata blob) if a throttled reference
+ * cannot be obtained in the first place.
+ */
+kern_return_t
+kcdata_create_object(
+	kcdata_descriptor_t data,
+	kcdata_obj_flags_t flags,
+	uint32_t        size,
+	kcdata_object_t *objp)
+{
+	kcdata_object_t obj;
+
+	if (data == NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	obj = zalloc_flags(KCDATA_OBJECT,
+	    Z_ZERO | Z_WAITOK | Z_NOFAIL | Z_SET_NOT_EARLY);
+
+	obj->ko_data = data;
+	obj->ko_flags = flags;
+	obj->ko_alloc_size = size;
+	obj->ko_port = IP_NULL;
+
+	os_ref_init_count(&obj->ko_refs, &kcdata_object_refgrp, 1);
+
+	*objp = obj;
+
+	return KERN_SUCCESS;
+}
+
+void
+kcdata_object_reference(kcdata_object_t obj)
+{
+	if (obj == KCDATA_OBJECT_NULL) {
+		return;
+	}
+
+	os_ref_retain(&obj->ko_refs);
+}
+
+static void
+kcdata_object_destroy(kcdata_object_t obj)
+{
+	void *begin_addr;
+	ipc_port_t port;
+	kcdata_obj_flags_t flags;
+
+	if (obj == KCDATA_OBJECT_NULL) {
+		return;
+	}
+
+	port = obj->ko_port;
+	flags = obj->ko_flags;
+
+	/* Release the port */
+	if (IP_VALID(port)) {
+		ipc_kobject_dealloc_port(port, IPC_KOBJECT_NO_MSCOUNT,
+		    IKOT_KCDATA);
+	}
+
+	/* Release the ref for rate-limited kcdata object type(s) */
+	kcdata_object_throttle_release(flags);
+
+	/* Destroy the kcdata backing captured in the object */
+	begin_addr = kcdata_memory_get_begin_addr(obj->ko_data);
+	kfree_data(begin_addr, obj->ko_alloc_size);
+	kcdata_memory_destroy(obj->ko_data);
+
+	/* Free the object */
+	zfree(KCDATA_OBJECT, obj);
+}
+
+void
+kcdata_object_release(kcdata_object_t obj)
+{
+	if (obj == KCDATA_OBJECT_NULL) {
+		return;
+	}
+
+	if (os_ref_release(&obj->ko_refs) > 0) {
+		return;
+	}
+	/* last ref */
+
+	kcdata_object_destroy(obj);
+}
+
+/* Produces kcdata object ref */
+kcdata_object_t
+convert_port_to_kcdata_object(ipc_port_t port)
+{
+	kcdata_object_t obj = KCDATA_OBJECT_NULL;
+
+	if (IP_VALID(port)) {
+		obj = ipc_kobject_get_stable(port, IKOT_KCDATA);
+		if (obj != KCDATA_OBJECT_NULL) {
+			zone_require(KCDATA_OBJECT->kt_zv.zv_zone, obj);
+			kcdata_object_reference(obj);
+		}
+	}
+
+	return obj;
+}
+
+/* Consumes kcdata object ref */
+ipc_port_t
+convert_kcdata_object_to_port(kcdata_object_t obj)
+{
+	if (obj == KCDATA_OBJECT_NULL) {
+		return IP_NULL;
+	}
+
+	zone_require(KCDATA_OBJECT->kt_zv.zv_zone, obj);
+
+	if (!ipc_kobject_make_send_lazy_alloc_port(&obj->ko_port,
+	    obj, IKOT_KCDATA)) {
+		kcdata_object_release(obj);
+	}
+	/* object ref consumed */
+
+	return obj->ko_port;
+}
+
+static void
+kcdata_object_no_senders(
+	ipc_port_t port,
+	__unused mach_port_mscount_t mscount)
+{
+	kcdata_object_t obj;
+
+	obj = ipc_kobject_get_stable(port, IKOT_KCDATA);
+	assert(obj != KCDATA_OBJECT_NULL);
+
+	/* release the ref given by no-senders notification */
+	kcdata_object_release(obj);
+}
 
 /*
  * Estimates how large of a buffer that should be allocated for a buffer that will contain
@@ -109,14 +311,12 @@ kcdata_memory_alloc_init(mach_vm_address_t buffer_addr_p, unsigned data_type, un
 	mach_vm_address_t user_addr = 0;
 	uint16_t clamped_flags = (uint16_t) flags;
 
-	data = kalloc_flags(sizeof(struct kcdata_descriptor), Z_WAITOK | Z_ZERO);
-	if (data == NULL) {
-		return NULL;
-	}
+	data = kalloc_type(struct kcdata_descriptor, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 	data->kcd_addr_begin = buffer_addr_p;
 	data->kcd_addr_end = buffer_addr_p;
 	data->kcd_flags = (clamped_flags & KCFLAG_USE_COPYOUT) ? clamped_flags : clamped_flags | KCFLAG_USE_MEMCOPY;
 	data->kcd_length = size;
+	data->kcd_endalloced = 0;
 
 	/* Initialize the BEGIN header */
 	if (KERN_SUCCESS != kcdata_get_memory_addr(data, data_type, 0, &user_addr)) {
@@ -141,9 +341,46 @@ kcdata_memory_static_init(kcdata_descriptor_t data, mach_vm_address_t buffer_add
 	data->kcd_addr_end = buffer_addr_p;
 	data->kcd_flags = (clamped_flags & KCFLAG_USE_COPYOUT) ? clamped_flags : clamped_flags | KCFLAG_USE_MEMCOPY;
 	data->kcd_length = size;
+	data->kcd_endalloced = 0;
 
 	/* Initialize the BEGIN header */
 	return kcdata_get_memory_addr(data, data_type, 0, &user_addr);
+}
+
+void *
+kcdata_endalloc(kcdata_descriptor_t data, size_t length)
+{
+	/*
+	 * We do not support endalloc with a space allocation callback - the
+	 * callback may need to free the remaining free space in the buffer,
+	 * trampling endallocs and complicating things.
+	 */
+	if (data->kcd_alloc_callback != NULL) {
+		return NULL;
+	}
+	mach_vm_address_t curend = data->kcd_addr_begin + data->kcd_length;
+	/* round up allocation and ensure return value is uint64-aligned */
+	size_t toalloc = ROUNDUP(length, sizeof(uint64_t)) + (curend % sizeof(uint64_t));
+	/* an arbitrary limit: make sure we don't allocate more then 1/4th of the remaining buffer. */
+	if (data->kcd_length / 4 <= toalloc) {
+		return NULL;
+	}
+	data->kcd_length -= toalloc;
+	data->kcd_endalloced += toalloc;
+	return (void *)(curend - toalloc);
+}
+
+/* Zeros and releases data allocated from the end of the buffer */
+static void
+kcdata_release_endallocs(kcdata_descriptor_t data)
+{
+	mach_vm_address_t curend = data->kcd_addr_begin + data->kcd_length;
+	size_t endalloced = data->kcd_endalloced;
+	if (endalloced > 0) {
+		bzero((void *)curend, endalloced);
+		data->kcd_length += endalloced;
+		data->kcd_endalloced = 0;
+	}
 }
 
 void *
@@ -198,7 +435,7 @@ kcdata_memory_destroy(kcdata_descriptor_t data)
 	 * data->kcd_addr_begin points to memory in not tracked by
 	 * kcdata lib. So not clearing that here.
 	 */
-	kfree(data, sizeof(struct kcdata_descriptor));
+	kfree_type(struct kcdata_descriptor, data);
 	return KERN_SUCCESS;
 }
 
@@ -210,7 +447,7 @@ kcdata_compress_zalloc(void *opaque, u_int items, u_int size)
 	struct kcdata_compress_descriptor *cd = opaque;
 	int alloc_size = ~31L & (31 + (items * size));
 
-	result = (void *)(cd->kcd_cd_base + cd->kcd_cd_offset);
+	result = (void *)((uintptr_t)cd->kcd_cd_base + cd->kcd_cd_offset);
 	if ((uintptr_t) result + alloc_size > (uintptr_t) cd->kcd_cd_base + cd->kcd_cd_maxoffset) {
 		result = Z_NULL;
 	} else {
@@ -258,8 +495,8 @@ kcdata_init_compress_state(kcdata_descriptor_t data, void (*memcpy_f)(void *, co
 		size = round_page(ZLIB_METADATA_SIZE + zlib_deflate_memory_size(wbits, memlevel));
 		kcdata_debug_printf("%s: size = %zu kcd_length: %d\n", __func__, size, data->kcd_length);
 		kcdata_debug_printf("%s: kcd buffer [%p - %p]\n", __func__, (void *) data->kcd_addr_begin, (void *) data->kcd_addr_begin + data->kcd_length);
-
-		if (4 * size > data->kcd_length) {
+		void *buf = kcdata_endalloc(data, size);
+		if (buf == NULL) {
 			return KERN_INSUFFICIENT_BUFFER_SIZE;
 		}
 
@@ -270,7 +507,7 @@ kcdata_init_compress_state(kcdata_descriptor_t data, void (*memcpy_f)(void *, co
 		cd->kcd_cd_zs.opaque = cd;
 		cd->kcd_cd_zs.zalloc = kcdata_compress_zalloc;
 		cd->kcd_cd_zs.zfree = kcdata_compress_zfree;
-		cd->kcd_cd_base = (void *) data->kcd_addr_begin + data->kcd_length - size;
+		cd->kcd_cd_base = (void *)(data->kcd_addr_begin + data->kcd_length - size);
 		data->kcd_length -= size;
 		cd->kcd_cd_offset = 0;
 		cd->kcd_cd_maxoffset = size;
@@ -393,7 +630,7 @@ kcdata_do_compress_zlib(kcdata_descriptor_t data, void *inbuffer,
 		 * Should only fail with catastrophic, unrecoverable cases (i.e.,
 		 * corrupted z_stream, or incorrect configuration)
 		 */
-		panic("zlib kcdata compression ret = %d\n", ret);
+		panic("zlib kcdata compression ret = %d", ret);
 	}
 
 	kcdata_debug_printf("%s: %p (%zu) <- %p (%zu); flush: %d; ret = %ld\n",
@@ -537,7 +774,7 @@ kcdata_compress_chunk_with_flags(kcdata_descriptor_t data, uint32_t type, const 
 		return kr;
 	}
 	kcdata_debug_printf("%s: first wrote = %zu\n", __func__, wrote);
-	space_ptr  += wrote;
+	space_ptr = (void *)((uintptr_t)space_ptr + wrote);
 	total_uncompressed_space_remaining -= wrote;
 
 	/* If there is input provided, compress that here */
@@ -550,7 +787,7 @@ kcdata_compress_chunk_with_flags(kcdata_descriptor_t data, uint32_t type, const 
 			return kr;
 		}
 		kcdata_debug_printf("%s: 2nd wrote = %zu\n", __func__, wrote);
-		space_ptr  += wrote;
+		space_ptr = (void *)((uintptr_t)space_ptr + wrote);
 		total_uncompressed_space_remaining -= wrote;
 	}
 
@@ -567,14 +804,14 @@ kcdata_compress_chunk_with_flags(kcdata_descriptor_t data, uint32_t type, const 
 		if (wrote == 0) {
 			return KERN_FAILURE;
 		}
-		space_ptr  += wrote;
+		space_ptr = (void *)((uintptr_t)space_ptr + wrote);
 		total_uncompressed_space_remaining -= wrote;
 	}
 
-	assert((size_t)(space_ptr - space_start) <= total_uncompressed_size);
+	assert((size_t)((uintptr_t)space_ptr - (uintptr_t)space_start) <= total_uncompressed_size);
 
 	/* move the end marker forward */
-	data->kcd_addr_end = (mach_vm_address_t) (space_start + (total_uncompressed_size - total_uncompressed_space_remaining));
+	data->kcd_addr_end = (mach_vm_address_t) space_start + (total_uncompressed_size - total_uncompressed_space_remaining);
 
 	return KERN_SUCCESS;
 }
@@ -742,10 +979,10 @@ kcdata_compression_window_close(kcdata_descriptor_t data)
 	if (wrote == 0) {
 		return KERN_FAILURE;
 	}
-	space_ptr   += wrote;
+	space_ptr = (void *)((uintptr_t)space_ptr + wrote);
 	total_uncompressed_space_remaining  -= wrote;
 
-	assert((size_t)(space_ptr - space_start) <= max_size);
+	assert((size_t)((uintptr_t)space_ptr - (uintptr_t)space_start) <= max_size);
 
 	/* copy to the original location */
 	kcdata_memcpy(data, cd->kcd_cd_mark_begin, space_start, (uint32_t) (max_size - total_uncompressed_space_remaining));
@@ -780,6 +1017,7 @@ kcdata_get_compression_stats(kcdata_descriptor_t data, uint64_t *totalout, uint6
 		kr = kcdata_get_compression_stats_zlib(data, totalout, totalin);
 		break;
 	case KCDCT_NONE:
+		*totalout = *totalin = kcdata_memory_get_used_bytes(data);
 		kr = KERN_SUCCESS;
 		break;
 	default:
@@ -818,6 +1056,7 @@ kcdata_finish_compression_zlib(kcdata_descriptor_t data)
 	 * buffer but only the portion with valid panic data is sent to iBoot via the SMC. When iBoot
 	 * calculates the CRC to compare with the value in the header it uses a zero-filled buffer.
 	 * The stackshot compression leaves non-zero bytes behind so those must be cleared prior to the CRC calculation.
+	 * This doesn't get the compression metadata; that's zeroed by kcdata_release_endallocs().
 	 *
 	 * All other contexts: The stackshot compression artifacts are present in its panic buffer but the CRC check
 	 * is done on the same buffer for the before and after calculation so there's nothing functionally
@@ -836,20 +1075,30 @@ kcdata_finish_compression_zlib(kcdata_descriptor_t data)
 	}
 }
 
-kern_return_t
+static kern_return_t
 kcdata_finish_compression(kcdata_descriptor_t data)
 {
 	kcdata_write_compression_stats(data);
 
 	switch (data->kcd_comp_d.kcd_cd_compression_type) {
 	case KCDCT_ZLIB:
-		data->kcd_length += data->kcd_comp_d.kcd_cd_maxoffset;
 		return kcdata_finish_compression_zlib(data);
 	case KCDCT_NONE:
 		return KERN_SUCCESS;
 	default:
 		panic("invalid compression type 0x%llxin kcdata_finish_compression", data->kcd_comp_d.kcd_cd_compression_type);
 	}
+}
+
+kern_return_t
+kcdata_finish(kcdata_descriptor_t data)
+{
+	int ret = KERN_SUCCESS;
+	if (data->kcd_flags & KCFLAG_USE_COMPRESSION) {
+		ret = kcdata_finish_compression(data);
+	}
+	kcdata_release_endallocs(data);
+	return ret;
 }
 
 void
@@ -936,6 +1185,14 @@ kcdata_get_memory_addr_with_flavor(
 	/* check available memory, including trailer size for KCDATA_TYPE_BUFFER_END */
 	if (total_size + sizeof(info) > data->kcd_length ||
 	    data->kcd_length - (total_size + sizeof(info)) < data->kcd_addr_end - data->kcd_addr_begin) {
+		if (data->kcd_alloc_callback) {
+			size_t const hdr_ftr_sz = 2 * sizeof(info);
+			kcdata_descriptor_t new_data = data->kcd_alloc_callback(data, total_size + hdr_ftr_sz);
+			if (new_data != NULL) {
+				*data = *new_data;
+				return kcdata_get_memory_addr_with_flavor(data, type, size, flags, user_addr);
+			}
+		}
 		return KERN_INSUFFICIENT_BUFFER_SIZE;
 	}
 

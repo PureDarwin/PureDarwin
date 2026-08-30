@@ -112,61 +112,44 @@
 #define T_PF_RSVD               0x8             /* reserved bit set to 1 */
 #define T_PF_EXECUTE            0x10            /* instruction fetch when NX */
 
-#if defined(MACH_KERNEL_PRIVATE)
+#if !defined(ASSEMBLER)
 
-#if !defined(ASSEMBLER) && defined(MACH_KERNEL)
+#define ML_TRAP_REGISTER_1      "rax"
+#define ML_TRAP_REGISTER_2      "r10"
+#define ML_TRAP_REGISTER_3      "r11"
 
-#include <i386/thread.h>
+#define ml_recoverable_trap(code) \
+	__asm__ volatile ("ud1l %0(%%eax), %%eax" : : "p"(code))
 
-#define DEFAULT_PANIC_ON_TRAP_MASK ((1U << T_INVALID_OPCODE) |  \
-	(1U << T_GENERAL_PROTECTION) |                          \
-	(1U << T_PAGE_FAULT) |                                  \
-	(1U << T_SEGMENT_NOT_PRESENT) |                         \
-	(1U << T_STACK_FAULT))
+#define ml_fatal_trap(code)  ({ \
+	ml_recoverable_trap(code); \
+	__builtin_unreachable(); \
+})
 
+#if defined(XNU_KERNEL_PRIVATE)
+__attribute__((cold, always_inline))
+static inline void
+ml_trap(unsigned int code)
+{
+	__asm__ volatile ("ud1l %0(%%eax), %%eax" : : "p"((void *)((unsigned long long)code)));
+}
 
-extern void             i386_exception(
-	int                     exc,
-	mach_exception_code_t   code,
-	mach_exception_subcode_t subcode);
+/* For use by clang option -ftrap-function only */
+__attribute__((cold, always_inline))
+static inline void
+ml_bound_chk_soft_trap(unsigned char code)
+{
+	/* clang mandates arg to be unsigned char */
+	unsigned int code32 = code;
+	if (code32 == 0x19) {
+		/* if we see a bound check trap, implicitly make it soft */
+		code32 += 0xFF00; /* code defined in kern/telemetry.h */
+	}
 
-extern void             sync_iss_to_iks(x86_saved_state_t *regs);
-
-extern void             sync_iss_to_iks_unconditionally(
-	x86_saved_state_t       *regs);
-
-extern void             kernel_trap(x86_saved_state_t *regs, uintptr_t *lo_spp);
-
-extern void             user_trap(x86_saved_state_t *regs);
-
-extern void             interrupt(x86_saved_state_t *regs);
-
-extern void             panic_double_fault64(x86_saved_state_t *regs) __abortlike;
-extern void             panic_machine_check64(x86_saved_state_t *regs) __abortlike;
-
-typedef kern_return_t (*perfCallback)(
-	int                     trapno,
-	void                    *regs,
-	uintptr_t               *lo_spp,
-	int);
-
-extern void             panic_i386_backtrace(void *, int, const char *, boolean_t, x86_saved_state_t *);
-extern void     print_one_backtrace(pmap_t pmap, vm_offset_t topfp, const char *cur_marker, boolean_t is_64_bit);
-extern void     print_thread_num_that_crashed(task_t task);
-extern void     print_tasks_user_threads(task_t task);
-extern void     print_threads_registers(thread_t thread);
-extern void     print_uuid_info(task_t task);
-extern void     print_launchd_info(void);
-
-#if MACH_KDP
-extern boolean_t        kdp_i386_trap(
-	unsigned int,
-	x86_saved_state64_t *,
-	kern_return_t,
-	vm_offset_t);
-#endif /* MACH_KDP */
-#endif  /* !ASSEMBLER && MACH_KERNEL */
-
-#endif /* MACH_KERNEL_PRIVATE */
+	/* let other codes fall through */
+	ml_trap(code32);
+}
+#endif /* XNU_KERNEL_PRIVATE */
+#endif /* !ASSEMBLER */
 
 #endif  /* _I386_TRAP_H_ */

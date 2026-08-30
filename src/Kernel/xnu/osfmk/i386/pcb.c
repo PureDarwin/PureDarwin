@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -54,7 +54,6 @@
  * the rights to redistribute these changes.
  */
 
-#include <mach_debug.h>
 #include <mach_ldebug.h>
 
 #include <sys/kdebug.h>
@@ -64,6 +63,7 @@
 #include <mach/vm_param.h>
 
 #include <kern/kalloc.h>
+#include <kern/ledger.h>
 #include <kern/mach_param.h>
 #include <kern/processor.h>
 #include <kern/cpu_data.h>
@@ -78,7 +78,7 @@
 #include <kern/kpc.h>
 #include <ipc/ipc_port.h>
 #include <vm/vm_kern.h>
-#include <vm/vm_map.h>
+#include <vm/vm_map_xnu.h>
 #include <vm/pmap.h>
 #include <vm/vm_protos.h>
 
@@ -98,10 +98,13 @@
 #include <kern/hv_support.h>
 #endif
 
+#include <san/kcov_stksz.h>
+
+
 /*
  * Maps state flavor to number of words in the state:
  */
-unsigned int _MachineStateCount[] = {
+unsigned int _MachineStateCount[THREAD_STATE_FLAVORS] = {
 	[x86_THREAD_STATE32]            = x86_THREAD_STATE32_COUNT,
 	[x86_THREAD_STATE64]            = x86_THREAD_STATE64_COUNT,
 	[x86_THREAD_FULL_STATE64]       = x86_THREAD_FULL_STATE64_COUNT,
@@ -121,14 +124,16 @@ unsigned int _MachineStateCount[] = {
 	[x86_AVX512_STATE32]            = x86_AVX512_STATE32_COUNT,
 	[x86_AVX512_STATE64]            = x86_AVX512_STATE64_COUNT,
 	[x86_AVX512_STATE]              = x86_AVX512_STATE_COUNT,
-	[x86_PAGEIN_STATE]              = x86_PAGEIN_STATE_COUNT
+	[x86_PAGEIN_STATE]              = x86_PAGEIN_STATE_COUNT,
+	[x86_INSTRUCTION_STATE]         = x86_INSTRUCTION_STATE_COUNT,
+	[x86_LAST_BRANCH_STATE]         = x86_LAST_BRANCH_STATE_COUNT
 };
 
-ZONE_DECLARE(iss_zone, "x86_64 saved state",
-    sizeof(x86_saved_state_t), ZC_NONE);
+ZONE_DEFINE_TYPE(iss_zone, "x86_64 saved state",
+    x86_saved_state_t, ZC_NONE);
 
-ZONE_DECLARE(ids_zone, "x86_64 debug state",
-    sizeof(x86_debug_state64_t), ZC_NONE);
+ZONE_DEFINE_TYPE(ids_zone, "x86_64 debug state",
+    x86_debug_state64_t, ZC_NONE);
 
 /* Forward */
 
@@ -153,20 +158,6 @@ set_thread_state32(thread_t thread, x86_thread_state32_t *ts);
 
 static int
 set_thread_state64(thread_t thread, void *ts, boolean_t full);
-
-#if HYPERVISOR
-static inline void
-ml_hv_cswitch(thread_t old, thread_t new)
-{
-	if (old->hv_thread_target) {
-		hv_callbacks.preempt(old->hv_thread_target);
-	}
-
-	if (new->hv_thread_target) {
-		hv_callbacks.dispatch(new->hv_thread_target);
-	}
-}
-#endif
 
 /*
  * Don't let an illegal value for the lower 32-bits of dr7 get set.
@@ -304,8 +295,7 @@ set_debug_state32(thread_t thread, x86_debug_state32_t *ds)
 	}
 
 	if (pcb->ids == NULL) {
-		new_ids = zalloc(ids_zone);
-		bzero(new_ids, sizeof *new_ids);
+		new_ids = zalloc_flags(ids_zone, Z_WAITOK | Z_ZERO);
 
 		simple_lock(&pcb->lock, LCK_GRP_NULL);
 		/* make sure it wasn't already alloc()'d elsewhere */
@@ -337,8 +327,7 @@ set_debug_state64(thread_t thread, x86_debug_state64_t *ds)
 	}
 
 	if (pcb->ids == NULL) {
-		new_ids = zalloc(ids_zone);
-		bzero(new_ids, sizeof *new_ids);
+		new_ids = zalloc_flags(ids_zone, Z_WAITOK | Z_ZERO);
 
 #if HYPERVISOR
 		if (thread->hv_thread_target) {
@@ -418,6 +407,36 @@ machine_load_context(
 	Load_context(new);
 }
 
+static void
+machine_rsb_stuff(void)
+{
+#define RSB_STUFF_SPACE_REQD (256 + 16) /* 256 bytes plus a buffer of another 16 for misc. */
+
+	asm volatile (
+".macro RSBST from=0, to=15\n"
+"       call    1f\n"
+"2:\n"
+"       pause\n"
+"       lfence\n"
+"       jmp 2b\n"
+"1:\n"
+"       call    1f\n"
+"2:\n"
+"       pause\n"
+"       lfence\n"
+"       jmp 2b\n"
+"1:\n"
+"       .if     \\to - \\from \n"
+"       RSBST   \"(\\from + 1)\", \\to \n"
+"       .endif \n"
+".endmacro \n"
+"\n"
+"L_rsbst:\n"
+"       RSBST \n"
+"       addq	$(16 * 2 * 8), %%rsp\n"
+ ::: "memory", "cc");
+}
+
 static inline void
 pmap_switch_context(thread_t ot, thread_t nt, int cnum)
 {
@@ -426,6 +445,10 @@ pmap_switch_context(thread_t ot, thread_t nt, int cnum)
 	if ((omap != nmap) || (nmap->pmap->pagezero_accessible)) {
 		PMAP_DEACTIVATE_MAP(omap, ot, cnum);
 		PMAP_ACTIVATE_MAP(nmap, nt, cnum);
+		if (__improbable((nt->machine.mthr_do_segchk & MTHR_RSBST) &&
+		    (current_kernel_stack_depth() + RSB_STUFF_SPACE_REQD) < kernel_stack_size)) {
+			machine_rsb_stuff();
+		}
 	}
 }
 
@@ -442,9 +465,15 @@ machine_switch_context(
 {
 	assert(current_cpu_datap()->cpu_active_stack == old->kernel_stack);
 
-#if KPC
+#if HYPERVISOR
+	if (old->hv_thread_target) {
+		hv_callbacks.preempt(old->hv_thread_target);
+	}
+#endif
+
+#if CONFIG_CPU_COUNTERS
 	kpc_off_cpu(old);
-#endif /* KPC */
+#endif /* CONFIG_CPU_COUNTERS */
 
 	/*
 	 *	Save FP registers if in use.
@@ -458,7 +487,7 @@ machine_switch_context(
 	 * Monitor the stack depth and report new max,
 	 * not worrying about races.
 	 */
-	vm_offset_t     depth = current_stack_depth();
+	vm_offset_t     depth = current_kernel_stack_depth();
 	if (depth > kernel_stack_depth_max) {
 		kernel_stack_depth_max = depth;
 		KERNEL_DEBUG_CONSTANT(
@@ -478,7 +507,9 @@ machine_switch_context(
 	act_machine_switch_pcb(old, new);
 
 #if HYPERVISOR
-	ml_hv_cswitch(old, new);
+	if (new->hv_thread_target) {
+		hv_callbacks.dispatch(new->hv_thread_target);
+	}
 #endif
 
 	return Switch_context(old, continuation, new);
@@ -488,6 +519,28 @@ boolean_t
 machine_thread_on_core(thread_t thread)
 {
 	return thread->machine.specFlags & OnProc;
+}
+
+boolean_t
+machine_thread_on_core_allow_invalid(thread_t thread)
+{
+	extern int _copyin_atomic32(const char *src, uint32_t *dst);
+	uint32_t flags;
+
+	/*
+	 * Utilize that the thread zone is sequestered which means
+	 * that this kernel-to-kernel copyin can't read data
+	 * from anything but a thread, zeroed or freed memory.
+	 */
+	assert(get_preemption_level() > 0);
+	if (thread == THREAD_NULL) {
+		return false;
+	}
+	thread_require(thread);
+	if (_copyin_atomic32((void *)&thread->machine.specFlags, &flags) == 0) {
+		return flags & OnProc;
+	}
+	return false;
 }
 
 thread_t
@@ -509,7 +562,7 @@ machine_processor_shutdown(
  * This is where registers that are not normally specified by the mach-o
  * file on an execve would be nullified, perhaps to avoid a covert channel.
  */
-kern_return_t
+void
 machine_thread_state_initialize(
 	thread_t thread)
 {
@@ -530,8 +583,6 @@ machine_thread_state_initialize(
 		zfree(ids_zone, thread->machine.ids);
 		thread->machine.ids = NULL;
 	}
-
-	return KERN_SUCCESS;
 }
 
 uint32_t
@@ -803,7 +854,8 @@ machine_thread_state_convert_to_user(
 	__unused thread_t thread,
 	__unused thread_flavor_t flavor,
 	__unused thread_state_t tstate,
-	__unused mach_msg_type_number_t *count)
+	__unused mach_msg_type_number_t *count,
+	__unused thread_set_status_flags_t tssf_flags)
 {
 	// No conversion to userspace representation on this platform
 	return KERN_SUCCESS;
@@ -814,7 +866,10 @@ machine_thread_state_convert_from_user(
 	__unused thread_t thread,
 	__unused thread_flavor_t flavor,
 	__unused thread_state_t tstate,
-	__unused mach_msg_type_number_t count)
+	__unused mach_msg_type_number_t count,
+	__unused thread_state_t old_tstate,
+	__unused mach_msg_type_number_t old_count,
+	__unused thread_set_status_flags_t tssf_flags)
 {
 	// No conversion from userspace representation on this platform
 	return KERN_SUCCESS;
@@ -1116,7 +1171,7 @@ machine_thread_set_state(
 		}
 
 		/* If this process does not have a custom LDT, return failure */
-		if (thr_act->task->i386_ldt == 0) {
+		if (get_threadtask(thr_act)->i386_ldt == 0) {
 			return KERN_INVALID_ARGUMENT;
 		}
 
@@ -1139,7 +1194,7 @@ machine_thread_set_state(
 			return set_thread_state64(thr_act, &state->uts.ts64, FALSE);
 		} else if (state->tsh.flavor == x86_THREAD_FULL_STATE64 &&
 		    state->tsh.count == x86_THREAD_FULL_STATE64_COUNT &&
-		    thread_is_64bit_addr(thr_act) && thr_act->task->i386_ldt != 0) {
+		    thread_is_64bit_addr(thr_act) && get_threadtask(thr_act)->i386_ldt != 0) {
 			return set_thread_state64(thr_act, &state->uts.ts64, TRUE);
 		} else if (state->tsh.flavor == x86_THREAD_STATE32 &&
 		    state->tsh.count == x86_THREAD_STATE32_COUNT &&
@@ -1549,7 +1604,7 @@ machine_thread_get_state(
 		}
 
 		/* If this process does not have a custom LDT, return failure */
-		if (thr_act->task->i386_ldt == 0) {
+		if (get_threadtask(thr_act)->i386_ldt == 0) {
 			return KERN_INVALID_ARGUMENT;
 		}
 
@@ -1772,20 +1827,12 @@ machine_thread_get_state(
 
 	case x86_LAST_BRANCH_STATE:
 	{
-		boolean_t istate;
-
-		if (!last_branch_support_enabled || *count < x86_LAST_BRANCH_STATE_COUNT) {
+		if (last_branch_enabled_modes != LBR_ENABLED_USERMODE || *count < x86_LAST_BRANCH_STATE_COUNT) {
 			return KERN_INVALID_ARGUMENT;
 		}
 
-		istate = ml_set_interrupts_enabled(FALSE);
-		/* If the current thread is asking for its own LBR data, synch the LBRs first */
-		if (thr_act == current_thread()) {
-			i386_lbr_synch(thr_act);
-		}
-		ml_set_interrupts_enabled(istate);
-
-		if (i386_lbr_native_state_to_mach_thread_state(THREAD_TO_PCB(thr_act), (last_branch_state_t *)tstate) < 0) {
+		/* Callers to this function are assumed to be from user space and the LBR values will be filtered accordingly */
+		if (i386_filtered_lbr_state_to_mach_thread_state(thr_act, (last_branch_state_t *)tstate, true) < 0) {
 			*count = 0;
 			return KERN_INVALID_ARGUMENT;
 		}
@@ -1977,6 +2024,8 @@ machine_thread_get_kern_state(
 void
 machine_thread_switch_addrmode(thread_t thread)
 {
+	task_t task = get_threadtask(thread);
+
 	/*
 	 * We don't want to be preempted until we're done
 	 * - particularly if we're switching the current thread
@@ -1987,10 +2036,10 @@ machine_thread_switch_addrmode(thread_t thread)
 	 * Reset the state saveareas. As we're resetting, we anticipate no
 	 * memory allocations in this path.
 	 */
-	machine_thread_create(thread, thread->task);
+	machine_thread_create(thread, task, false);
 
 	/* Adjust FPU state */
-	fpu_switch_addrmode(thread, task_has_64Bit_addr(thread->task));
+	fpu_switch_addrmode(thread, task_has_64Bit_addr(task));
 
 	/* If we're switching ourselves, reset the pcb addresses etc. */
 	if (thread == current_thread()) {
@@ -2070,6 +2119,9 @@ machine_stack_detach(thread_t thread)
 	    0);
 
 	stack = thread->kernel_stack;
+#if CONFIG_STKSZ
+	kcov_stksz_set_thread_stack(thread, stack);
+#endif
 	thread->kernel_stack = 0;
 
 	return stack;
@@ -2092,6 +2144,9 @@ machine_stack_attach(
 
 	assert(stack);
 	thread->kernel_stack = stack;
+#if CONFIG_STKSZ
+	kcov_stksz_set_thread_stack(thread, 0);
+#endif
 	thread_initialize_kernel_state(thread);
 
 	statep = STACK_IKS(stack);
@@ -2122,6 +2177,12 @@ machine_stack_handoff(thread_t old,
 	assert(new);
 	assert(old);
 
+#if HYPERVISOR
+	if (old->hv_thread_target) {
+		hv_callbacks.preempt(old->hv_thread_target);
+	}
+#endif
+
 	kpc_off_cpu(old);
 
 	stack = old->kernel_stack;
@@ -2130,12 +2191,18 @@ machine_stack_handoff(thread_t old,
 		old->reserved_stack = new->reserved_stack;
 		new->reserved_stack = stack;
 	}
+#if CONFIG_STKSZ
+	kcov_stksz_set_thread_stack(old, old->kernel_stack);
+#endif
 	old->kernel_stack = 0;
 	/*
 	 * A full call to machine_stack_attach() is unnecessry
 	 * because old stack is already initialized.
 	 */
 	new->kernel_stack = stack;
+#if CONFIG_STKSZ
+	kcov_stksz_set_thread_stack(new, 0);
+#endif
 
 	fpu_switch_context(old, new);
 
@@ -2146,7 +2213,9 @@ machine_stack_handoff(thread_t old,
 	act_machine_switch_pcb(old, new);
 
 #if HYPERVISOR
-	ml_hv_cswitch(old, new);
+	if (new->hv_thread_target) {
+		hv_callbacks.dispatch(new->hv_thread_target);
+	}
 #endif
 
 	machine_set_current_thread(new);
@@ -2182,7 +2251,7 @@ act_thread_csave(void)
 	if (thread_is_64bit_addr(thr_act)) {
 		struct x86_act_context64 *ic64;
 
-		ic64 = (struct x86_act_context64 *)kalloc(sizeof(struct x86_act_context64));
+		ic64 = kalloc_data(sizeof(struct x86_act_context64), Z_WAITOK);
 
 		if (ic64 == (struct x86_act_context64 *)NULL) {
 			return (void *)0;
@@ -2192,14 +2261,14 @@ act_thread_csave(void)
 		kret = machine_thread_get_state(thr_act, x86_SAVED_STATE64,
 		    (thread_state_t) &ic64->ss, &val);
 		if (kret != KERN_SUCCESS) {
-			kfree(ic64, sizeof(struct x86_act_context64));
+			kfree_data(ic64, sizeof(struct x86_act_context64));
 			return (void *)0;
 		}
 		val = x86_FLOAT_STATE64_COUNT;
 		kret = machine_thread_get_state(thr_act, x86_FLOAT_STATE64,
 		    (thread_state_t) &ic64->fs, &val);
 		if (kret != KERN_SUCCESS) {
-			kfree(ic64, sizeof(struct x86_act_context64));
+			kfree_data(ic64, sizeof(struct x86_act_context64));
 			return (void *)0;
 		}
 
@@ -2209,14 +2278,14 @@ act_thread_csave(void)
 		    (thread_state_t)&ic64->ds,
 		    &val);
 		if (kret != KERN_SUCCESS) {
-			kfree(ic64, sizeof(struct x86_act_context64));
+			kfree_data(ic64, sizeof(struct x86_act_context64));
 			return (void *)0;
 		}
 		return ic64;
 	} else {
 		struct x86_act_context32 *ic32;
 
-		ic32 = (struct x86_act_context32 *)kalloc(sizeof(struct x86_act_context32));
+		ic32 = kalloc_data(sizeof(struct x86_act_context32), Z_WAITOK);
 
 		if (ic32 == (struct x86_act_context32 *)NULL) {
 			return (void *)0;
@@ -2226,14 +2295,14 @@ act_thread_csave(void)
 		kret = machine_thread_get_state(thr_act, x86_SAVED_STATE32,
 		    (thread_state_t) &ic32->ss, &val);
 		if (kret != KERN_SUCCESS) {
-			kfree(ic32, sizeof(struct x86_act_context32));
+			kfree_data(ic32, sizeof(struct x86_act_context32));
 			return (void *)0;
 		}
 		val = x86_FLOAT_STATE32_COUNT;
 		kret = machine_thread_get_state(thr_act, x86_FLOAT_STATE32,
 		    (thread_state_t) &ic32->fs, &val);
 		if (kret != KERN_SUCCESS) {
-			kfree(ic32, sizeof(struct x86_act_context32));
+			kfree_data(ic32, sizeof(struct x86_act_context32));
 			return (void *)0;
 		}
 
@@ -2243,7 +2312,7 @@ act_thread_csave(void)
 		    (thread_state_t)&ic32->ds,
 		    &val);
 		if (kret != KERN_SUCCESS) {
-			kfree(ic32, sizeof(struct x86_act_context32));
+			kfree_data(ic32, sizeof(struct x86_act_context32));
 			return (void *)0;
 		}
 		return ic32;
@@ -2272,7 +2341,7 @@ act_thread_catt(void *ctx)
 			machine_thread_set_state(thr_act, x86_FLOAT_STATE64,
 			    (thread_state_t) &ic64->fs, x86_FLOAT_STATE64_COUNT);
 		}
-		kfree(ic64, sizeof(struct x86_act_context64));
+		kfree_data(ic64, sizeof(struct x86_act_context64));
 	} else {
 		struct x86_act_context32 *ic32;
 
@@ -2284,7 +2353,7 @@ act_thread_catt(void *ctx)
 			(void) machine_thread_set_state(thr_act, x86_FLOAT_STATE32,
 			    (thread_state_t) &ic32->fs, x86_FLOAT_STATE32_COUNT);
 		}
-		kfree(ic32, sizeof(struct x86_act_context32));
+		kfree_data(ic32, sizeof(struct x86_act_context32));
 	}
 }
 

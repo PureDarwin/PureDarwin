@@ -162,9 +162,11 @@ __END_DECLS
 #define CPU_TYPE_POWERPC                ((cpu_type_t) 18)
 #define CPU_TYPE_POWERPC64              (CPU_TYPE_POWERPC | CPU_ARCH_ABI64)
 /* skip				((cpu_type_t) 19)	*/
-/* skip				((cpu_type_t) 20 */
-/* skip				((cpu_type_t) 21 */
-/* skip				((cpu_type_t) 22 */
+/* skip				((cpu_type_t) 20) */
+/* skip				((cpu_type_t) 21) */
+/* skip				((cpu_type_t) 22) */
+/* skip				((cpu_type_t) 23) */
+/* skip				((cpu_type_t) 24) */
 
 /*
  *	Machine subtypes (these are defined here, instead of in a machine
@@ -374,6 +376,9 @@ __END_DECLS
 #define CPU_SUBTYPE_ARM_V7M             ((cpu_subtype_t) 15) /* Not meant to be run under xnu */
 #define CPU_SUBTYPE_ARM_V7EM            ((cpu_subtype_t) 16) /* Not meant to be run under xnu */
 #define CPU_SUBTYPE_ARM_V8M             ((cpu_subtype_t) 17) /* Not meant to be run under xnu */
+#define CPU_SUBTYPE_ARM_V8M_MAIN        CPU_SUBTYPE_ARM_V8M  /* Not meant to be run under xnu */
+#define CPU_SUBTYPE_ARM_V8M_BASE        ((cpu_subtype_t) 18) /* Not meant to be run under xnu */
+#define CPU_SUBTYPE_ARM_V8_1M_MAIN      ((cpu_subtype_t) 19) /* Not meant to be run under xnu */
 
 /*
  *  ARM64 subtypes
@@ -386,7 +391,14 @@ __END_DECLS
 #define CPU_SUBTYPE_ARM64_PTR_AUTH_MASK 0x0f000000
 #define CPU_SUBTYPE_ARM64_PTR_AUTH_VERSION(x) (((x) & CPU_SUBTYPE_ARM64_PTR_AUTH_MASK) >> 24)
 #ifdef PRIVATE
-#define CPU_SUBTYPE_ARM64_PTR_AUTH_CURRENT_VERSION 0
+#define CPU_SUBTYPE_ARM64_PTR_AUTHV0_VERSION 0
+#define CPU_SUBTYPE_ARM64_PTR_AUTHV1_VERSION 1
+#define CPU_SUBTYPE_ARM64_PTR_AUTH_CURRENT_VERSION CPU_SUBTYPE_ARM64_PTR_AUTHV0_VERSION
+#if XNU_TARGET_OS_OSX
+#define CPU_SUBTYPE_ARM64_PTR_AUTH_MAX_PREFERRED_VERSION CPU_SUBTYPE_ARM64_PTR_AUTHV1_VERSION
+#else /* XNU_TARGET_OS_OSX */
+#define CPU_SUBTYPE_ARM64_PTR_AUTH_MAX_PREFERRED_VERSION CPU_SUBTYPE_ARM64_PTR_AUTHV0_VERSION
+#endif /* XNU_TARGET_OS_OSX */
 #endif /* PRIVATE */
 
 /*
@@ -394,6 +406,7 @@ __END_DECLS
  */
 #define CPU_SUBTYPE_ARM64_32_ALL        ((cpu_subtype_t) 0)
 #define CPU_SUBTYPE_ARM64_32_V8 ((cpu_subtype_t) 1)
+
 
 #endif /* !__ASSEMBLER__ */
 
@@ -419,26 +432,25 @@ __END_DECLS
 #define CPUFAMILY_INTEL_SANDYBRIDGE     0x5490b78c
 #define CPUFAMILY_INTEL_IVYBRIDGE       0x1f65e835
 #define CPUFAMILY_INTEL_HASWELL         0x10b282dc
-
+#define CPUFAMILY_INTEL_BROADWELL       0x582ed09c
+#define CPUFAMILY_INTEL_SKYLAKE         0x37fc219f
+#define CPUFAMILY_INTEL_KABYLAKE        0x0f817246
+#define CPUFAMILY_INTEL_ICELAKE         0x38435547
+#define CPUFAMILY_INTEL_COMETLAKE       0x1cf8a03e
 /*
  * Families Apple never shipped hardware for, added so cpuid.c can identify the
  * CPUs QEMU emulates and AMD hosts report. These are just random values, as they
- * only need to be coherent identifiers
+ * only need to be coherent identifiers.
  */
 #define CPUFAMILY_INTEL_SILVERMONT      0x35e4dae6
-#define CPUFAMILY_INTEL_BROADWELL       0x582ed09c
 #define CPUFAMILY_INTEL_AIRMONT         0x65403882
-#define CPUFAMILY_INTEL_SKYLAKE         0x37fc219f
 #define CPUFAMILY_INTEL_GOLDMONT        0x5aa3af84
-#define CPUFAMILY_INTEL_KABYLAKE        0x0f817246
 #define CPUFAMILY_INTEL_GOLDMONTPLUS    0x7579609d
-#define CPUFAMILY_INTEL_ICELAKE         0x38435547
-#define CPUFAMILY_INTEL_METEORLAKE      0x2d9c6c3a
-#define CPUFAMILY_INTEL_COMETLAKE       0x1cf8a03e
 #define CPUFAMILY_INTEL_TIGERLAKE       0xfd59ea01
 #define CPUFAMILY_INTEL_ROCKETLAKE      0x42bf2585
 #define CPUFAMILY_INTEL_ALDERLAKE       0xd30ad9b9
 #define CPUFAMILY_INTEL_RAPTORLAKE      0x072b3824
+#define CPUFAMILY_INTEL_METEORLAKE      0x2d9c6c3a
 #define CPUFAMILY_INTEL_SAPPHIRERAPIDS  0xadbf08de
 #define CPUFAMILY_INTEL_EMERALDRAPIDS   0xb1812dab
 #define CPUFAMILY_AMD_BULLDOZER         0xa67cf51c
@@ -468,10 +480,23 @@ __END_DECLS
 #define CPUFAMILY_ARM_MONSOON_MISTRAL   0xe81e7ef6
 #define CPUFAMILY_ARM_VORTEX_TEMPEST    0x07d34b9f
 #define CPUFAMILY_ARM_LIGHTNING_THUNDER 0x462504d2
-#ifndef RC_HIDE_XNU_FIRESTORM
 #define CPUFAMILY_ARM_FIRESTORM_ICESTORM 0x1b588bb3
-#endif /* !RC_HIDE_XNU_FIRESTORM */
+#define CPUFAMILY_ARM_BLIZZARD_AVALANCHE 0xda33d83d
+#define CPUFAMILY_ARM_EVEREST_SAWTOOTH  0x8765edea
+#define CPUFAMILY_ARM_IBIZA             0xfa33415e
+#define CPUFAMILY_ARM_PALMA 0x72015832
+#define CPUFAMILY_ARM_COLL 0x2876f5b5
+#define CPUFAMILY_ARM_LOBOS 0x5f4dea93
+#define CPUFAMILY_ARM_DONAN 0x6f5129ac
+#define CPUFAMILY_ARM_BRAVA 0x17d5b93a
+#define CPUFAMILY_ARM_TAHITI 0x75d4acb9
+#define CPUFAMILY_ARM_TUPAI 0x204526d0
+#define CPUFAMILY_ARM_HIDRA 0x1d5a87e8
+#define CPUFAMILY_ARM_SOTRA 0xf76c5b1a
+#define CPUFAMILY_ARM_THERA 0xab345f09
+#define CPUFAMILY_ARM_TILOS 0x01d7a72b
 
+/* Described in rdar://64125549 */
 #define CPUSUBFAMILY_UNKNOWN            0
 #define CPUSUBFAMILY_ARM_HP             1
 #define CPUSUBFAMILY_ARM_HG             2

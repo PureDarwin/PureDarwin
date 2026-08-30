@@ -57,11 +57,12 @@
 #ifndef	_ARM_ASM_H_
 #define	_ARM_ASM_H_
 
-#include <arm/arch.h>
+#ifdef __arm64__
 
-#ifndef __arm64__
-#error Why are we  including this?
-#endif 
+#include <arm/arch.h>
+#if XNU_KERNEL_PRIVATE
+#include <pexpert/arm64/board_config.h>
+#endif /* XNU_KERNEL_PRIVATE */
 
 /* There is another definition of ALIGN for .c sources */
 #ifdef __ASSEMBLER__
@@ -171,13 +172,39 @@
 #endif
 .endmacro
 
+
+/**
+ * Push a stack frame.
+ *
+ * Most callers should invoke ARM64_STACK_PROLOG first, since otherwise this will
+ * push an unsigned return address onto the stack.
+ */
 #define PUSH_FRAME			\
 	stp fp, lr, [sp, #-16]!		%% \
 	mov fp, sp			%%
 
+/**
+ * Pop the most recent stack frame.
+ *
+ * Note: if the complementary PUSH_FRAME was not preceded by ARM64_STACK_PROLOG,
+ * then this operation could load an attacker-controlled return address from
+ * memory!  Either add ARM64_STACK_PROLOG, or use POP_FRAME_WITHOUT_LR if there
+ * are no plans to ever use the popped LR.
+ */
 #define POP_FRAME			\
 	mov sp, fp			%% \
 	ldp fp, lr, [sp], #16		%%
+
+/**
+ * Pop the most recent stack frame, but do not update LR.
+ *
+ * This macro is intended for situations like kernel entry, where the caller
+ * doesn't actually need to preserve LR, but wants to push a stack frame
+ * anyway for the benefit of unwinders.
+ */
+#define POP_FRAME_WITHOUT_LR		\
+	mov sp, fp			%% \
+	ldp fp, xzr, [sp], #16		%%
 
 #define EXT(x) _ ## x
 
@@ -185,8 +212,35 @@
 .macro PANIC_UNIMPLEMENTED
 	bl EXT(panic_unimplemented)
 .endmacro
-#endif
 
+/**
+ * Marks the first instruction of an externally callable assembly routine.
+ *
+ * Callable functions which might be executed via indirect branches (i.e. any 
+ * function which could be invoked from C/C++) MUST use either this macro or 
+ * ARM64_STACK_PROLOG, depending on whether LR will be spilled to the stack. 
+ * Failure to use one of these macros may cause unexpected runtime BTI 
+ * exceptions when invoking a function.
+ */
+.macro ARM64_PROLOG
+#if BTI_ENFORCED
+    bti c
+#endif /* BTI_ENFORCED */
+.endmacro
+
+/**
+ * Marks the first instruction of an indirect branch target.
+ *
+ * This macro is not required if the location is only ever branched to by direct
+ * branches (as is most common). This macro is necessary for computed
+ * branches (i.e. switch cases) and other forms of dynamic dispatch.
+ */
+.macro ARM64_JUMP_TARGET
+#if BTI_ENFORCED
+    bti j
+#endif /* BTI_ENFORCED */
+.endmacro
+#endif /* XNU_KERNEL_PRIVATE */
 #else /* NOT __ASSEMBLER__ */
 
 /* These defines are here for .c files that wish to reference global symbols
@@ -204,5 +258,7 @@
 # define BRANCH_EXTERN(x)	b	EXT(x)
 
 #endif /* __ASSEMBLER__ */
+
+#endif /* __arm64__ */
 
 #endif /* _ARM_ASM_H_ */

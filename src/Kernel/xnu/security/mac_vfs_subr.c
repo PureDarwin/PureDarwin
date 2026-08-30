@@ -61,7 +61,7 @@ vnode_label(struct mount *mp, struct vnode *dvp, struct vnode *vp,
 			error = mac_vnode_notify_create(ctx,
 			    mp, dvp, vp, cnp);
 		}
-		return 0;
+		return error;
 	}
 
 	/* if already VL_LABELED */
@@ -87,8 +87,8 @@ vnode_label(struct mount *mp, struct vnode *dvp, struct vnode *vp,
 		/* Could sleep on disk I/O, drop lock. */
 		vnode_unlock(vp);
 
-		if (vp->v_label == NULL) {
-			vp->v_label = mac_vnode_label_alloc();
+		if (mac_vnode_label(vp) == NULL) {
+			mac_vnode_label_init(vp);
 		}
 
 		if (flags & VNODE_LABEL_CREATE) {
@@ -167,7 +167,7 @@ mac_vnop_setxattr(struct vnode *vp, const char *name, char *buf, size_t len)
 {
 	vfs_context_t ctx;
 	int options = XATTR_NOSECURITY;
-	char uio_buf[UIO_SIZEOF(1)];
+	UIO_STACKBUF(uio_buf, 1);
 	uio_t auio;
 	int error;
 
@@ -198,7 +198,7 @@ mac_vnop_getxattr(struct vnode *vp, const char *name, char *buf, size_t len,
 {
 	vfs_context_t ctx = vfs_context_current();
 	int options = XATTR_NOSECURITY;
-	char uio_buf[UIO_SIZEOF(1)];
+	UIO_STACKBUF(uio_buf, 1);
 	uio_t auio;
 	int error;
 

@@ -193,6 +193,28 @@ WriteMyIncludes(FILE *file, statement_t *stats)
       "(MACH_SEND_SYNC_OVERRIDE|MACH_SEND_SYNC_USE_THRPRI|MACH_RCV_SYNC_WAIT)\n");
     fprintf(file, "#endif /* __MigSpecialReplyPortMsgOption */\n");
   }
+  if (IsKernelServer) {
+    fprintf(file, "\n");
+    fprintf(file, "#include <TargetConditionals.h>\n");
+    fprintf(file, "#if defined(MACH_SEND_AUX_TOO_SMALL) && (defined(__arm64__) || defined(__LP64__))\n");
+    fprintf(file, "#undef mach_msg\n");
+    fprintf(file, "#define mach_msg mig_mach_msg\n");
+    fprintf(file, "static inline mach_msg_return_t\n");
+    fprintf(file, "mig_mach_msg(\n");
+    fprintf(file, "\tmach_msg_header_t *msg,\n");
+    fprintf(file, "\tmach_msg_option_t option,\n");
+    fprintf(file, "\tmach_msg_size_t send_size,\n");
+    fprintf(file, "\tmach_msg_size_t rcv_size,\n");
+    fprintf(file, "\tmach_port_name_t rcv_name,\n");
+    fprintf(file, "\tmach_msg_timeout_t timeout,\n");
+    fprintf(file, "\tmach_port_name_t notify)\n");
+    fprintf(file, "{\n");
+    fprintf(file, "\t(void)notify;\n");
+    fprintf(file, "\treturn mach_msg2(msg, option | MACH64_SEND_KOBJECT_CALL,\n");
+    fprintf(file, "\t\t*msg, send_size, rcv_size, rcv_name, timeout, 0);\n");
+    fprintf(file, "}\n");
+    fprintf(file, "#endif\n");
+  }
   /*
    * extern the definition of mach_msg_destroy
    * (to avoid inserting mach/mach.h everywhere)
@@ -320,31 +342,6 @@ WriteRequestHead(FILE *file, routine_t *rt)
       fprintf(file, "\tInP = &Mess%sIn;\n", (rtMessOnStack(rt) ? "." : "->"));
   }
 
-  fprintf(file, "\tInP->Head.msgh_bits =");
-  if (rt->rtRetCArg == argNULL && !rt->rtSimpleRequest)
-    fprintf(file, " MACH_MSGH_BITS_COMPLEX|");
-  fprintf(file, "\n");
-  fprintf(file, "\t\tMACH_MSGH_BITS(%s, %s);\n", WriteHeaderPortType(rt->rtRequestPort), WriteHeaderPortType(rt->rtReplyPort));
-  if (rt->rtRetCArg != argNULL && !rt->rtSimpleRequest) {
-    fprintf(file, "\tif (!%s)\n", rt->rtRetCArg->argVarName);
-    fprintf(file, "\t\tInP->Head.msgh_bits |= MACH_MSGH_BITS_COMPLEX;\n");
-  }
-
-
-  fprintf(file, "\t/* msgh_size passed as argument */\n");
-
-  /*
-   * KernelUser stubs need to cast the request and reply ports
-   * from ipc_port_t to mach_port_t.
-   */
-
-#ifdef MIG_KERNEL_PORT_CONVERSION
-  if (IsKernelUser)
-    fprintf(file, "\tInP->%s = (mach_port_t) %s;\n", rt->rtRequestPort->argMsgField, rt->rtRequestPort->argVarName);
-  else
-#endif
-    fprintf(file, "\tInP->%s = %s;\n", rt->rtRequestPort->argMsgField, rt->rtRequestPort->argVarName);
-
   if (akCheck(rt->rtReplyPort->argKind, akbUserArg)) {
 #ifdef MIG_KERNEL_PORT_CONVERSION
     if (IsKernelUser)
@@ -359,6 +356,36 @@ WriteRequestHead(FILE *file, routine_t *rt)
     fprintf(file, "\tInP->%s = mig_get_special_reply_port();\n", rt->rtReplyPort->argMsgField);
   else
     fprintf(file, "\tInP->%s = mig_get_reply_port();\n", rt->rtReplyPort->argMsgField);
+
+  fprintf(file, "\tInP->Head.msgh_bits =");
+  if (rt->rtRetCArg == argNULL && !rt->rtSimpleRequest)
+    fprintf(file, " MACH_MSGH_BITS_COMPLEX|");
+  fprintf(file, "\n");
+  fprintf(file, "\t\tMACH_MSGH_BITS(%s, %s);\n", WriteHeaderPortType(rt->rtRequestPort), WriteHeaderPortType(rt->rtReplyPort));
+  if (rt->rtRetCArg != argNULL && !rt->rtSimpleRequest) {
+    fprintf(file, "\tif (!%s)\n", rt->rtRetCArg->argVarName);
+    fprintf(file, "\t\tInP->Head.msgh_bits |= MACH_MSGH_BITS_COMPLEX;\n");
+  }
+
+  if (!IsKernelServer) {
+    fprintf(file, "\t/* msgh_size passed as argument */\n");
+  } else if (rt->rtNumRequestVar == 0) {
+    fprintf(file, "\tInP->Head.msgh_size = (mach_msg_size_t)sizeof(Request);\n");
+  } else {
+    fprintf(file, "\tInP->Head.msgh_size = msgh_size;\n");
+  }
+
+  /*
+   * KernelUser stubs need to cast the request and reply ports
+   * from ipc_port_t to mach_port_t.
+   */
+
+#ifdef MIG_KERNEL_PORT_CONVERSION
+  if (IsKernelUser)
+    fprintf(file, "\tInP->%s = (mach_port_t) %s;\n", rt->rtRequestPort->argMsgField, rt->rtRequestPort->argVarName);
+  else
+#endif
+    fprintf(file, "\tInP->%s = %s;\n", rt->rtRequestPort->argMsgField, rt->rtRequestPort->argVarName);
 
   fprintf(file, "\tInP->Head.msgh_id = %d;\n", rt->rtNumber + SubsystemBase);
   fprintf(file, "\tInP->Head.msgh_reserved = 0;\n");
@@ -1931,6 +1958,8 @@ static void
 WriteCheckMsgSize(FILE *file, argument_t *arg)
 {
   routine_t *rt = arg->argRoutine;
+  ipc_type_t *it = arg->argType;
+  ipc_type_t *btype = it->itElement;
 
   /* If there aren't any more Out args after this, then
      we can use the msgh_size_delta value directly in
@@ -1945,7 +1974,8 @@ WriteCheckMsgSize(FILE *file, argument_t *arg)
     /*
      * emit code to verify that the server-code-provided count does not exceed the maximum count allowed by the type.
      */
-    fprintf(file, "\t" "if ( Out%dP->%s > %d )\n", arg->argCount->argReplyPos, arg->argCount->argMsgField, arg->argType->itNumber);
+    fprintf(file, "\t" "if ( Out%dP->%s > %d )\n", arg->argCount->argReplyPos,
+	    arg->argCount->argMsgField, it->itNumber/btype->itNumber);
     fputs("\t\t" "return MIG_TYPE_ERROR;\n", file);
     /* ...end... */
 
@@ -1974,7 +2004,8 @@ WriteCheckMsgSize(FILE *file, argument_t *arg)
     /*
      * emit code to verify that the server-code-provided count does not exceed the maximum count allowed by the type.
      */
-    fprintf(file, "\t" "if ( Out%dP->%s > %d )\n", arg->argCount->argReplyPos, arg->argCount->argMsgField, arg->argType->itNumber);
+    fprintf(file, "\t" "if ( Out%dP->%s > %d )\n", arg->argCount->argReplyPos,
+	  arg->argCount->argMsgField, it->itNumber/btype->itNumber);
     fputs("\t\t" "return MIG_TYPE_ERROR;\n", file);
     /* ...end... */
 

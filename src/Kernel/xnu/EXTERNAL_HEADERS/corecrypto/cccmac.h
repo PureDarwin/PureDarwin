@@ -1,20 +1,22 @@
-/* Copyright (c) (2013,2014,2015,2016,2017,2019) Apple Inc. All rights reserved.
+/* Copyright (c) (2013-2017,2019,2021,2022) Apple Inc. All rights reserved.
  *
  * corecrypto is licensed under Apple Inc.’s Internal Use License Agreement (which
- * is contained in the License.txt file distributed with corecrypto) and only to 
- * people who accept that license. IMPORTANT:  Any license rights granted to you by 
- * Apple Inc. (if any) are limited to internal use within your organization only on 
- * devices and computers you own or control, for the sole purpose of verifying the 
- * security characteristics and correct functioning of the Apple Software.  You may 
+ * is contained in the License.txt file distributed with corecrypto) and only to
+ * people who accept that license. IMPORTANT:  Any license rights granted to you by
+ * Apple Inc. (if any) are limited to internal use within your organization only on
+ * devices and computers you own or control, for the sole purpose of verifying the
+ * security characteristics and correct functioning of the Apple Software.  You may
  * not, directly or indirectly, redistribute the Apple Software or any portions thereof.
  */
 
-#ifndef _CORECRYPTO_cccmac_H_
-#define _CORECRYPTO_cccmac_H_
+#ifndef _CORECRYPTO_CCCMAC_H_
+#define _CORECRYPTO_CCCMAC_H_
 
 #include <corecrypto/cc.h>
 #include <corecrypto/ccmode.h>
 #include <corecrypto/ccaes.h>
+
+CC_PTRCHECK_CAPABLE_HEADER()
 
 #define CMAC_BLOCKSIZE   16
 
@@ -32,14 +34,13 @@ typedef struct cccmac_ctx* cccmac_ctx_t;
 
 #define cccmac_hdr_size sizeof(struct cccmac_ctx)
 
-
 #define cccmac_iv_size(_mode_)  ((_mode_)->block_size)
 #define cccmac_cbc_size(_mode_) ((_mode_)->size)
 
 #define cccmac_ctx_size(_mode_) (cccmac_hdr_size + cccmac_iv_size(_mode_) + cccmac_cbc_size(_mode_))
 #define cccmac_ctx_n(_mode_)  ccn_nof_size(cccmac_ctx_size(_mode_))
 
-#define cccmac_mode_decl(_mode_, _name_) cc_ctx_decl(struct cccmac_ctx, cccmac_ctx_size(_mode_), _name_)
+#define cccmac_mode_decl(_mode_, _name_) cc_ctx_decl_vla(struct cccmac_ctx, cccmac_ctx_size(_mode_), _name_)
 #define cccmac_mode_clear(_mode_, _name_) cc_clear(cccmac_ctx_size(_mode_), _name_)
 
 /* Return a cccbc_ctx * which can be accesed with the macros in ccmode.h */
@@ -81,9 +82,9 @@ typedef struct cccmac_ctx* cccmac_ctx_t;
  @discussion Only supports CMAC_BLOCKSIZE block ciphers
  */
 int cccmac_one_shot_generate(const struct ccmode_cbc *cbc,
-                        size_t key_nbytes, const void *key,
-                        size_t data_nbytes, const void *data,
-                        size_t mac_nbytes, void *mac);
+                        size_t key_nbytes, const void *cc_sized_by(key_nbytes) key,
+                        size_t data_nbytes, const void *cc_sized_by(data_nbytes) data,
+                        size_t mac_nbytes, void *cc_sized_by(mac_nbytes) mac);
 
 /*!
  @function   cccmac_one_shot_verify
@@ -102,9 +103,9 @@ int cccmac_one_shot_generate(const struct ccmode_cbc *cbc,
  @discussion Only supports CMAC_BLOCKSIZE block ciphers
  */
 int cccmac_one_shot_verify(const struct ccmode_cbc *cbc,
-                           size_t key_nbytes, const void *key,
-                           size_t data_nbytes, const void *data,
-                           size_t expected_mac_nbytes, const void *expected_mac);
+                           size_t key_nbytes, const void *cc_sized_by(key_nbytes) key,
+                           size_t data_nbytes, const void *cc_sized_by(data_nbytes) data,
+                           size_t expected_mac_nbytes, const void *cc_sized_by(expected_mac_nbytes) expected_mac);
 
 /* =============================================================================
 
@@ -130,7 +131,7 @@ int cccmac_one_shot_verify(const struct ccmode_cbc *cbc,
 
 int cccmac_init(const struct ccmode_cbc *cbc,
                 cccmac_ctx_t ctx,
-                size_t key_nbytes, const void *key);
+                size_t key_nbytes, const void *cc_sized_by(key_nbytes) key);
 
 /*!
  @function   cccmac_update
@@ -146,7 +147,7 @@ int cccmac_init(const struct ccmode_cbc *cbc,
  */
 
 int cccmac_update(cccmac_ctx_t ctx,
-                  size_t data_nbytes, const void *data);
+                  size_t data_nbytes, const void *cc_sized_by(data_nbytes) data);
 
 /*!
  @function   cccmac_final_generate
@@ -161,7 +162,7 @@ int cccmac_update(cccmac_ctx_t ctx,
  @discussion Only supports CMAC_BLOCKSIZE block ciphers
  */
 int cccmac_final_generate(cccmac_ctx_t ctx,
-                     size_t mac_nbytes, void *mac);
+                     size_t mac_nbytes, void *cc_sized_by(mac_nbytes) mac);
 
 /*!
  @function   cccmac_final_verify
@@ -176,6 +177,6 @@ int cccmac_final_generate(cccmac_ctx_t ctx,
  @discussion Only supports CMAC_BLOCKSIZE block ciphers
  */
 int cccmac_final_verify(cccmac_ctx_t ctx,
-                        size_t expected_mac_nbytes, const void *expected_mac);
+                        size_t expected_mac_nbytes, const void *cc_sized_by(expected_mac_nbytes) expected_mac);
 
-#endif /* _CORECRYPTO_cccmac_H_ */
+#endif // _CORECRYPTO_CCCMAC_H_

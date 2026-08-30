@@ -79,13 +79,18 @@ struct pd_launch_xpc_object {
 	pd_launch_xpc_u xo_u;
 };
 
+/* Boot tracing to /dev/console, off unless PD_LIBLAUNCH_TRACE is set in the
+ * environment. Chatty enough to change launchd's timing when it is on. */
 static void
 pd_liblaunch_phase(const char *fmt, ...)
 {
-	return; /* PD-DIAG boot traces silenced; remove to re-enable */
 	int fd;
 	va_list ap;
 	char buf[1024];
+
+	if (getenv("PD_LIBLAUNCH_TRACE") == NULL) {
+		return;
+	}
 
 	fd = open("/dev/console", O_WRONLY | O_NOCTTY);
 	if (fd < 0) {

@@ -94,11 +94,32 @@ The values for the
 are constructed by a bitwise-inclusive OR of flags from the following list, defined
 in
 .In fcntl.h :
-.Bl -tag -width indent
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
 .It Dv AT_SYMLINK_NOFOLLOW
 If
 .Fa path
 names a symbolic link, then the mode of the symbolic link is changed.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_SYMLINK_NOFOLLOW_ANY
+If
+.Fa path
+names a symbolic link, then the mode of the symbolic link is changed and if
+if the path has any other symbolic links, an error is returned.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_RESOLVE_BENEATH
+If
+.Fa path
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_UNIQUE
+If
+.Fa path
+resolves to a vnode with multiple hard links,
+an error is returned.
 .El
 .Pp
 If
@@ -192,6 +213,10 @@ An I/O error occurred while reading from or writing to the file system.
 Too many symbolic links were encountered in translating the pathname.
 This is taken to be indicative of a looping symbolic link.
 .\" ==========
+.It Bq Er ELOOP
+If AT_SYMLINK_NOFOLLOW_ANY was passed and a symbolic link was encountered
+in translating the pathname.
+.\" ==========
 .It Bq Er ENAMETOOLONG
 A component of a pathname exceeded 
 .Dv {NAME_MAX}
@@ -269,6 +294,14 @@ argument is not an absolute path and
 is neither
 .Dv AT_FDCWD
 nor a file descriptor associated with a directory.
+.It Bq Er ENOTCAPABLE
+if AT_RESOLVE_BENEATH was passed and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory.
+.It Bq Er ENOTCAPABLE
+if AT_UNIQUE was passed and
+.Fa path
+resolves to a vnode with multiple links.
 .El
 .Sh LEGACY SYNOPSIS
 .Fd #include <sys/types.h>

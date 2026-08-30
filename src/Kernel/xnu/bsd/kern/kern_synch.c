@@ -95,7 +95,7 @@ _sleep_continue( __unused void *parameter, wait_result_t wresult)
 				error = EINTR;
 			} else if (SHOULDissignal(p, ut)) {
 				if ((sig = CURSIG(p)) != 0) {
-					if (p->p_sigacts->ps_sigintr & sigmask(sig)) {
+					if (p->p_sigacts.ps_sigintr & sigmask(sig)) {
 						error = EINTR;
 					} else {
 						error = ERESTART;
@@ -189,7 +189,7 @@ _sleep(
 	ut->uu_wchan = chan;
 	ut->uu_wmesg = wmsg ? wmsg : "unknown";
 
-	if (mtx != NULL && chan != NULL && (thread_continue_t)continuation == THREAD_CONTINUE_NULL) {
+	if (mtx != NULL && chan != NULL && continuation == NULL) {
 		int     flags;
 
 		if (dropmutex) {
@@ -221,7 +221,7 @@ _sleep(
 					if (clear_wait(self, THREAD_INTERRUPTED) == KERN_FAILURE) {
 						goto block;
 					}
-					if (p->p_sigacts->ps_sigintr & sigmask(sig)) {
+					if (p->p_sigacts.ps_sigintr & sigmask(sig)) {
 						error = EINTR;
 					} else {
 						error = ERESTART;
@@ -255,7 +255,7 @@ _sleep(
 
 
 block:
-		if ((thread_continue_t)continuation != THREAD_CONTINUE_NULL) {
+		if (continuation != NULL) {
 			ut->uu_continuation = continuation;
 			ut->uu_pri  = (uint16_t)pri;
 			ut->uu_mtx  = mtx;
@@ -295,7 +295,7 @@ block:
 				error = EINTR;
 			} else if (SHOULDissignal(p, ut)) {
 				if ((sig = CURSIG(p)) != 0) {
-					if (p->p_sigacts->ps_sigintr & sigmask(sig)) {
+					if (p->p_sigacts.ps_sigintr & sigmask(sig)) {
 						error = EINTR;
 					} else {
 						error = ERESTART;
@@ -449,7 +449,7 @@ wakeup_one(caddr_t chan)
 void
 resetpriority(struct proc *p)
 {
-	(void)task_importance(p->task, -p->p_nice);
+	(void)task_importance(proc_task(p), -p->p_nice);
 }
 
 struct loadavg averunnable =

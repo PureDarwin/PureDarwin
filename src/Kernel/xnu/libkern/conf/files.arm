@@ -1,7 +1,0 @@
-# The libkern/zlib/arm directory is not part of this XNU drop, and ASMINF is
-# not defined for any configuration here, so libkern/zlib/inffast.c already
-# provides inflate_fast and adler32.c provides adler32 - listing the assembly
-# would be both a missing file and a duplicate symbol.
-#libkern/zlib/arm/inffastS.s			optional zlib
-#libkern/zlib/arm/adler32vec.s		optional zlib
-

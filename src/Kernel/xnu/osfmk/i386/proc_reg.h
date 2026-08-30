@@ -184,7 +184,9 @@
 #define XFEM_OPMASK     XCR0_OPMASK
 #define XFEM_ZMM_HI256  XCR0_ZMM_HI256
 #define XFEM_HI16_ZMM   XCR0_HI16_ZMM
-#define XFEM_ZMM        (XFEM_ZMM_HI256 | XFEM_HI16_ZMM | XFEM_OPMASK)
+#define XFEM_ZMM_OPMASK (XFEM_ZMM_HI256 | XFEM_HI16_ZMM | XFEM_OPMASK)
+/* Legacy name for Hypervisor.  Remove once it has updated. rdar://85833887&85613709 */
+#define XFEM_ZMM        XFEM_ZMM_OPMASK
 #define XCR0 (0)
 
 #define PMAP_PCID_PRESERVE (1ULL << 63)
@@ -196,16 +198,8 @@
  * If thread groups are needed for x86, set this to 1
  */
 #define CONFIG_THREAD_GROUPS 0
-
-/*
- * MAX_PSETS allows the scheduler to create statically sized
- * scheduling data structures (such as an array of processor sets, clutch
- * buckets in Edge scheduler etc.).
- *
- * <Edge Multi-cluster Support Needed>
- */
-#define MAX_PSETS 64
 #define MAX_CPUS 64
+#define MAX_PSETS 64
 
 #ifndef ASSEMBLER
 

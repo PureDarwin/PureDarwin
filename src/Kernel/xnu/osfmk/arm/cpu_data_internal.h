@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -38,51 +38,44 @@
 #include <kern/kern_types.h>
 #include <kern/percpu.h>
 #include <kern/processor.h>
+#include <os/base.h>
 #include <pexpert/pexpert.h>
 #include <arm/dbgwrap.h>
 #include <arm/machine_routines.h>
-#include <arm/proc_reg.h>
+#include <arm64/proc_reg.h>
 #include <arm/thread.h>
 #include <arm/pmap.h>
-
-#if MONOTONIC
 #include <machine/monotonic.h>
-#endif /* MONOTONIC */
+#include <san/kcov_data.h>
+#include <arm64/cpc_arm64.h>
 
 #define NSEC_PER_HZ     (NSEC_PER_SEC / 100)
 
 typedef struct reset_handler_data {
 	vm_offset_t     assist_reset_handler;           /* Assist handler phys address */
 	vm_offset_t     cpu_data_entries;                       /* CpuDataEntries phys address */
-#if !__arm64__
-	vm_offset_t     boot_args;                                      /* BootArgs phys address */
-#endif
 } reset_handler_data_t;
 
+#if !CONFIG_SPTM
 extern  reset_handler_data_t    ResetHandlerData;
+#endif
 
 /* Put the static check for cpumap_t here as it's defined in <kern/processor.h> */
 static_assert(sizeof(cpumap_t) * CHAR_BIT >= MAX_CPUS, "cpumap_t bitvector is too small for current MAX_CPUS value");
 
-#ifdef  __arm__
-#define CPUWINDOWS_BASE_MASK            0xFFF00000UL
-#else
-#define CPUWINDOWS_BASE_MASK            0xFFFFFFFFFFE00000UL
-#endif
+#define CPUWINDOWS_BASE_MASK            0xFFFFFFFFFFD00000UL
 #define CPUWINDOWS_BASE                 (VM_MAX_KERNEL_ADDRESS & CPUWINDOWS_BASE_MASK)
 #define CPUWINDOWS_TOP                  (CPUWINDOWS_BASE + (MAX_CPUS * CPUWINDOWS_MAX * ARM_PGBYTES))
 
+#ifndef __BUILDING_XNU_LIBRARY__  /* in user-mode kernel addresses are low */
 static_assert((CPUWINDOWS_BASE >= VM_MIN_KERNEL_ADDRESS) && ((CPUWINDOWS_TOP - 1) <= VM_MAX_KERNEL_ADDRESS),
     "CPU copy windows too large for CPUWINDOWS_BASE_MASK value");
+#endif
 
 typedef struct cpu_data_entry {
 	void                           *cpu_data_paddr;         /* Cpu data physical address */
 	struct  cpu_data               *cpu_data_vaddr;         /* Cpu data virtual address */
-#if __arm__
-	uint32_t                        cpu_data_offset_8;
-	uint32_t                        cpu_data_offset_12;
-#elif __arm64__
-#else
+#if !defined(__arm64__)
 #error Check cpu_data_entry padding for this architecture
 #endif
 } cpu_data_entry_t;
@@ -105,9 +98,9 @@ typedef struct {
 	uint64_t ipi_cnt;
 	uint64_t ipi_cnt_wake;
 	uint64_t timer_cnt;
-#if MONOTONIC
+#if CONFIG_CPU_COUNTERS
 	uint64_t pmi_cnt_wake;
-#endif /* MONOTONIC */
+#endif /* CONFIG_CPU_COUNTERS */
 	uint64_t undef_ex_cnt;
 	uint64_t unaligned_cnt;
 	uint64_t vfp_cnt;
@@ -115,63 +108,63 @@ typedef struct {
 	uint64_t instr_ex_cnt;
 } cpu_stat_t;
 
+__options_closed_decl(cpu_flags_t, uint16_t, {
+	SleepState      = 0x0800,
+	/* For the boot processor, StartedState means 'interrupts initialized' - it is already running */
+	StartedState    = 0x1000,
+	/* For the boot processor, InitState means 'cpu_data fully initialized' - it is already running */
+	InitState       = 0x2000,
+});
+
+__options_closed_decl(cpu_signal_t, unsigned int, {
+	SIGPnop         = 0x00000000U,     /* Send IPI with no service */
+	SIGPMaintenance = 0x00000001U,     /* SMR, Ledger flush        */
+	/* 0x2U unused */
+	SIGPxcall       = 0x00000004U,     /* Call a function on a processor */
+	SIGPast         = 0x00000008U,     /* Request AST check */
+	SIGPdebug       = 0x00000010U,     /* Request Debug call */
+	SIGPLWFlush     = 0x00000020U,     /* Request LWFlush call */
+	SIGPLWClean     = 0x00000040U,     /* Request LWClean call */
+	/* 0x80U unused */
+	SIGPkppet       = 0x00000100U,     /* Request kperf PET handler */
+	SIGPxcallImm    = 0x00000200U,     /* Send a cross-call, fail if already pending */
+	SIGPTimerLocal  = 0x00000400U,     /* Update the decrementer via timer_queue_expire_local */
+	SIGPdeferred    = 0x00000800U,     /* Scheduler deferred IPI to wake core */
+#if DEVELOPMENT || DEBUG
+	SIGPtest        = 0x00002000U,     /* Test signal for panic testing */
+#endif
+
+	SIGPdisabled    = 0x80000000U,     /* Signal disabled */
+});
+
 typedef struct cpu_data {
 	unsigned short                  cpu_number;
-	unsigned short                  cpu_flags;
+	_Atomic cpu_flags_t             cpu_flags;
 	int                             cpu_type;
 	int                             cpu_subtype;
 	int                             cpu_threadtype;
 
-	vm_offset_t                     istackptr;
+	void *                          XNU_PTRAUTH_SIGNED_PTR("cpu_data.istackptr") istackptr;
 	vm_offset_t                     intstack_top;
 #if __arm64__
-	vm_offset_t                     excepstackptr;
+	void *                          XNU_PTRAUTH_SIGNED_PTR("cpu_data.excepstackptr") excepstackptr;
 	vm_offset_t                     excepstack_top;
-#else
-	vm_offset_t                     fiqstackptr;
-	vm_offset_t                     fiqstack_top;
 #endif
 	thread_t                        cpu_active_thread;
 	vm_offset_t                     cpu_active_stack;
 	cpu_id_t                        cpu_id;
-	unsigned volatile int           cpu_signal;
+	volatile cpu_signal_t           cpu_signal;
 	ast_t                           cpu_pending_ast;
 	cache_dispatch_t                cpu_cache_dispatch;
 
 #if __arm64__
 	uint64_t                        cpu_base_timebase;
 	uint64_t                        cpu_timebase;
-#else
-	union {
-		struct {
-			uint32_t        low;
-			uint32_t        high;
-		} split;
-		struct {
-			uint64_t        val;
-		} raw;
-	} cbtb;
-#define cpu_base_timebase_low cbtb.split.low
-#define cpu_base_timebase_high cbtb.split.high
-
-	union {
-		struct {
-			uint32_t        low;
-			uint32_t        high;
-		} split;
-		struct {
-			uint64_t        val;
-		} raw;
-	} ctb;
-#define cpu_timebase_low ctb.split.low
-#define cpu_timebase_high ctb.split.high
 #endif
 	bool                            cpu_hibernate; /* This cpu is currently hibernating the system */
 	bool                            cpu_running;
 	bool                            cluster_master;
-#if __ARM_ARCH_8_5__
 	bool                            sync_on_cswitch;
-#endif /* __ARM_ARCH_8_5__ */
 	/* true if processor_start() or processor_exit() is operating on this CPU */
 	bool                            in_state_transition;
 
@@ -183,13 +176,11 @@ typedef struct cpu_data {
 	void                            *cpu_tbd_hardware_addr;
 	void                            *cpu_tbd_hardware_val;
 
-	void                            *cpu_console_buf;
-
 	processor_idle_t                cpu_idle_notify;
 	uint64_t                        cpu_idle_latency;
 	uint64_t                        cpu_idle_pop;
 
-#if     __arm__ || __ARM_KERNEL_PROTECT__
+#if     __ARM_KERNEL_PROTECT__
 	vm_offset_t                     cpu_exc_vectors;
 #endif /* __ARM_KERNEL_PROTECT__ */
 	vm_offset_t                     cpu_reset_handler;
@@ -222,23 +213,19 @@ typedef struct cpu_data {
 	void                            *cpu_imm_xcall_p0;
 	void                            *cpu_imm_xcall_p1;
 
-#if     defined(ARMA7)
-	volatile uint32_t               cpu_CLW_active;
-	volatile uint64_t               cpu_CLWFlush_req;
-	volatile uint64_t               cpu_CLWFlush_last;
-	volatile uint64_t               cpu_CLWClean_req;
-	volatile uint64_t               cpu_CLWClean_last;
-#endif
 
 #if     __arm64__
 	vm_offset_t                     coresight_base[CORESIGHT_REGIONS];
+#endif
+
+#if NEEDS_MTE_IRG_RESEED
+	uint64_t                        cpu_irg_reseed_counter;
 #endif
 
 	/* CCC ARMv8 registers */
 	uint64_t                        cpu_regmap_paddr;
 
 	uint32_t                        cpu_phys_id;
-	uint32_t                        cpu_l2_access_penalty;
 	platform_error_handler_t        platform_error_handler;
 
 	int                             cpu_mcount_off;
@@ -248,6 +235,7 @@ typedef struct cpu_data {
 	unsigned int                    cpu_sleep_token_last;
 
 	cluster_type_t                  cpu_cluster_type;
+
 	uint32_t                        cpu_cluster_id;
 	uint32_t                        cpu_l2_id;
 	uint32_t                        cpu_l2_size;
@@ -264,17 +252,12 @@ typedef struct cpu_data {
 	uint64_t                        jop_key;
 #endif /* defined(HAS_APPLE_PAC) */
 
-	/* large structs with large alignment requirements */
-#if KPC
-	/* double-buffered performance counter data */
-	uint64_t                        *cpu_kpc_buf[2];
-	/* PMC shadow and reload value buffers */
-	uint64_t                        *cpu_kpc_shadow;
-	uint64_t                        *cpu_kpc_reload;
-#endif
-#if MONOTONIC
-	struct mt_cpu                   cpu_monotonic;
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	struct cpc_cpu                  cpu_cpc;
+	// For thread counting in kpc.
+	uint64_t                       *cpu_kpc_buf[2];
+#endif /* CONFIG_CPU_COUNTERS */
+
 	cpu_stat_t                      cpu_stat;
 #if !XNU_MONITOR
 	struct pmap_cpu_data            cpu_pmap_cpu_data;
@@ -285,23 +268,41 @@ typedef struct cpu_data {
 	uint64_t                        wfe_deadline_checks;
 	uint64_t                        wfe_terminations;
 #endif
-} cpu_data_t;
+#if CONFIG_KCOV
+	kcov_cpu_data_t                 cpu_kcov_data;
+#endif
+#if __arm64__
+	/**
+	 * Stash the state of the system when an IPI is received. This will be
+	 * dumped in the case a panic is getting triggered.
+	 */
+	uint64_t ipi_pc;
+	uint64_t ipi_lr;
+	uint64_t ipi_fp;
 
-/*
- * cpu_flags
- */
-#define SleepState                      0x0800
-#define StartedState                    0x1000
+	/* Encoded data to store in TPIDR_EL0 on context switch */
+	uint64_t                        cpu_tpidr_el0;
+#endif
+
+#ifdef APPLEEVEREST
+	/* PAs used to apply pio locks in early boot. */
+	uint64_t cpu_reg_paddr;
+	uint64_t acc_reg_paddr;
+	uint64_t cpm_reg_paddr;
+#endif
+
+#if HAS_MTE
+	uint64_t mte_rgsr_el1_seed;
+#endif
+
+} cpu_data_t;
 
 extern  cpu_data_entry_t                CpuDataEntries[MAX_CPUS];
 PERCPU_DECL(cpu_data_t, cpu_data);
 #define BootCpuData                     __PERCPU_NAME(cpu_data)
 extern  boot_args                      *BootArgs;
 
-#if __arm__
-extern  unsigned int                   *ExceptionLowVectorsBase;
-extern  unsigned int                   *ExceptionVectorsTable;
-#elif __arm64__
+#if __arm64__
 extern  unsigned int                    LowResetVectorBase;
 extern  unsigned int                    LowResetVectorEnd;
 #if WITH_CLASSIC_S2R
@@ -316,16 +317,7 @@ extern cpu_data_t      *cpu_datap(int cpu);
 extern cpu_data_t      *cpu_data_alloc(boolean_t is_boot);
 extern void             cpu_stack_alloc(cpu_data_t*);
 extern void             cpu_data_init(cpu_data_t *cpu_data_ptr);
-extern void             cpu_data_free(cpu_data_t *cpu_data_ptr);
-extern kern_return_t    cpu_data_register(cpu_data_t *cpu_data_ptr);
+extern void             cpu_data_register(cpu_data_t *cpu_data_ptr);
 extern cpu_data_t      *processor_to_cpu_datap( processor_t processor);
-
-#if __arm64__
-typedef struct sysreg_restore {
-	uint64_t                tcr_el1;
-} sysreg_restore_t;
-
-extern sysreg_restore_t sysreg_restore;
-#endif  /* __arm64__ */
 
 #endif  /* ARM_CPU_DATA_INTERNAL */

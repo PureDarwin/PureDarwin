@@ -117,7 +117,7 @@ __BEGIN_DECLS
 __END_DECLS
 
 #ifdef BSD_KERNEL_PRIVATE
-extern char version[];                  /* system version */
+extern char version[__null_terminated]; /* system version */
 extern const char *const copyright;     /* system copyright */
 
 
@@ -156,11 +156,9 @@ void    nullsys(void);
 int     errsys(void);
 int     seltrue(dev_t dev, int which, struct proc *p);
 void    ttyprintf(struct tty *, const char *, ...) __printflike(2, 3);
-void    realitexpire(struct proc *);
+void    realitexpire(struct proc *, void*);
 int     hzto(struct timeval *tv);
 void    tablefull(const char *);
-int     kvprintf(char const *, void (*)(int, void*), void *, int,
-    __darwin_va_list) __printflike(1, 0);
 void    uprintf(const char *, ...) __printflike(1, 2);
 int     copywithin(void *saddr, void *daddr, size_t len);
 int64_t fulong(user_addr_t addr);
@@ -191,8 +189,8 @@ void    timeout(void (*)(void *), void *arg, int ticks);
 void    timeout_with_leeway(void (*)(void *), void *arg, int ticks, int leeway_ticks);
 void    untimeout(void (*)(void *), void *arg);
 int     bsd_hostname(char *, size_t, size_t*);
-int     vslock(user_addr_t addr, user_size_t len);
-int     vsunlock(user_addr_t addr, user_size_t len, int dirtied);
+int     vslock(user_addr_ut addr, user_size_ut len);
+int     vsunlock(user_addr_ut addr, user_size_ut len, int dirtied);
 #endif /* KERNEL_PRIVATE */
 
 int     nullop(void);
@@ -202,6 +200,18 @@ int     enosys(void);
 int     enxio(void);
 int     eopnotsupp(void);
 void    *hashinit(int count, int type, u_long *hashmask);
+#if XNU_KERNEL_PRIVATE
+LIST_HEAD(generic_hash_head, generic);
+void    hashinit_generic(int elements,
+    struct generic_hash_head *__counted_by(*out_count) *out_ptr, size_t *out_count);
+#define hashinit_counted_by(_elements, _out_ptr, _out_count) do {         \
+	size_t __hashinit_out_count = 0;                                \
+	struct generic_hash_head *__counted_by(__hashinit_out_count) __hashinit_out_hash = NULL; \
+	hashinit_generic((_elements), &__hashinit_out_hash, &__hashinit_out_count); \
+	(_out_ptr) = (typeof(*(_out_ptr)) *)__hashinit_out_hash;        \
+	(_out_count) = __hashinit_out_count;                            \
+} while (0)
+#endif /* XNU_KERNEL_PRIVATE */
 void    hashdestroy(void *, int type, u_long hashmask);
 void    ovbcopy(const void *from, void *to, size_t len);
 int     fubyte(user_addr_t addr);
@@ -216,7 +226,7 @@ int    suiword(user_addr_t addr, long word);
 #define susize(_a, _s)  sulong((_a), (_s))
 #define fuptr(a)        ((user_addr_t)fulong(_a)
 #define suptr(_a, _p)   sulong((_a), (_p))
-int     useracc(user_addr_t addr, user_size_t len, int prot);
+int     useracc(user_addr_ut addr, user_size_ut len, int prot);
 typedef void (*timeout_fcn_t)(void *);
 void    bsd_timeout(void (*)(void *), void *arg, struct timespec * ts);
 void    bsd_untimeout(void (*)(void *), void *arg);
@@ -258,6 +268,7 @@ int  throttle_io_will_be_throttled(int lowpri_window_msecs, mount_t mp);
 int throttle_lowpri_window(void) __attribute__((pure));
 struct uthread;
 void throttle_info_reset_window(struct uthread *ut);
+void throttle_info_update_with_type(void *throttle_info, int flags, boolean_t isssd);
 
 #endif
 

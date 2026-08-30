@@ -35,18 +35,10 @@
 #include <sys/systm.h>
 #include <sys/mcache.h>
 
-MALLOC_DEFINE(M_NWKWQ, "nwkwq", "Network work-queue");
-
-static TAILQ_HEAD(, nwk_wq_entry) nwk_wq_head;
-decl_lck_mtx_data(static, nwk_wq_lock);
-
-/* Lock group and attributes */
-static lck_grp_attr_t *nwk_wq_lock_grp_attributes = NULL;
-static lck_grp_t *nwk_wq_lock_group = NULL;
-
-/* Lock and lock attributes */
-static lck_attr_t *nwk_wq_lock_attributes = NULL;
-decl_lck_mtx_data(static, nwk_wq_lock);
+static TAILQ_HEAD(, nwk_wq_entry) nwk_wq_head =
+    TAILQ_HEAD_INITIALIZER(nwk_wq_head);
+static LCK_GRP_DECLARE(nwk_wq_lock_group, "Network work queue lock");
+static LCK_MTX_DECLARE(nwk_wq_lock, &nwk_wq_lock_group);
 
 /* Wait channel for Network work queue */
 static void *nwk_wq_waitch = NULL;
@@ -58,15 +50,8 @@ static void nwk_wq_thread_func(void *v, wait_result_t w);
 void
 nwk_wq_init(void)
 {
-	thread_t nwk_wq_thread = THREAD_NULL;
+	thread_t nwk_wq_thread __single = THREAD_NULL;
 
-	TAILQ_INIT(&nwk_wq_head);
-	nwk_wq_lock_grp_attributes = lck_grp_attr_alloc_init();
-	nwk_wq_lock_group = lck_grp_alloc_init("Network work queue lock",
-	    nwk_wq_lock_grp_attributes);
-
-	nwk_wq_lock_attributes = lck_attr_alloc_init();
-	lck_mtx_init(&nwk_wq_lock, nwk_wq_lock_group, nwk_wq_lock_attributes);
 	if (kernel_thread_start(nwk_wq_thread_func,
 	    NULL, &nwk_wq_thread) != KERN_SUCCESS) {
 		panic_plain("%s: couldn't create network work queue thread", __func__);
@@ -79,8 +64,8 @@ static int
 nwk_wq_thread_cont(int err)
 {
 	TAILQ_HEAD(, nwk_wq_entry) temp_nwk_wq_head;
-	struct nwk_wq_entry *nwk_item;
-	struct nwk_wq_entry *nwk_item_next;
+	struct nwk_wq_entry *nwk_item __single;
+	struct nwk_wq_entry *nwk_item_next __single;
 
 #pragma unused(err)
 	for (;;) {
@@ -102,11 +87,8 @@ nwk_wq_thread_cont(int err)
 
 		VERIFY(TAILQ_FIRST(&temp_nwk_wq_head) != NULL);
 		TAILQ_FOREACH_SAFE(nwk_item, &temp_nwk_wq_head, nwk_wq_link, nwk_item_next) {
-			nwk_item->func(nwk_item->arg);
-			if (nwk_item->is_arg_managed == FALSE) {
-				FREE(nwk_item->arg, M_NWKWQ);
-			}
-			FREE(nwk_item, M_NWKWQ);
+			nwk_item->func(nwk_item);
+			/* nwk_item has been freed by the callback */
 		}
 		lck_mtx_lock(&nwk_wq_lock);
 	}

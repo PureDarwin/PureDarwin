@@ -30,6 +30,8 @@
 #define _NETINET_MP_PCB_H_
 
 #ifdef BSD_KERNEL_PRIVATE
+#include <netinet/in_pcb.h>
+
 #include <sys/domain.h>
 #include <sys/protosw.h>
 #include <sys/socketvar.h>
@@ -58,6 +60,7 @@ struct mppcb {
 
 #if NECP
 	uuid_t necp_client_uuid;
+	struct inp_necp_attributes inp_necp_attributes;
 	void (*necp_cb)(void *, int, uint32_t, uint32_t, bool *);
 #endif
 };
@@ -79,6 +82,7 @@ mpsotomppcb(struct socket *mp_so)
 #define MPP_SHOULD_RWAKEUP      0x040           /* MPTCP-stack should call sorwakeup */
 #define MPP_SHOULD_WWAKEUP      0x080           /* MPTCP-stack should call sowwakeup */
 #define MPP_CREATE_SUBFLOWS     0x100           /* This connection needs to create subflows */
+#define MPP_INSIDE_SETGETOPT    0x200           /* MPTCP-stack is inside mptcp_setopt/mptcp_getopt */
 
 static inline boolean_t
 mptcp_should_defer_upcall(struct mppcb *mpp)
@@ -93,18 +97,16 @@ struct mppcbinfo {
 	TAILQ_ENTRY(mppcbinfo)  mppi_entry;     /* glue to all PCB info */
 	TAILQ_HEAD(, mppcb)     mppi_pcbs;      /* list of PCBs */
 	uint32_t                mppi_count;     /* # of PCBs in list */
-	struct zone             *mppi_zone;     /* zone for this PCB */
-	uint32_t                mppi_size;      /* size of PCB structure */
-	lck_grp_t               *mppi_lock_grp; /* lock grp */
-	lck_attr_t              *mppi_lock_attr; /* lock attr */
-	lck_grp_attr_t          *mppi_lock_grp_attr; /* lock grp attr */
+	lck_attr_t              mppi_lock_attr; /* lock attr */
+	struct mppcb         *(*mppi_alloc)(void);
+	void                  (*mppi_free)(struct mppcb *);
+	lck_grp_t              *mppi_lock_grp;  /* lock grp */
 	decl_lck_mtx_data(, mppi_lock);         /* global PCB lock */
 	uint32_t (*mppi_gc)(struct mppcbinfo *); /* garbage collector func */
 	uint32_t (*mppi_timer)(struct mppcbinfo *); /* timer func */
 };
 
 __BEGIN_DECLS
-extern void mp_pcbinit(void);
 extern void mp_pcbinfo_attach(struct mppcbinfo *);
 extern int mp_pcbinfo_detach(struct mppcbinfo *);
 extern int mp_pcballoc(struct socket *, struct mppcbinfo *);

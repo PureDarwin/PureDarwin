@@ -68,6 +68,9 @@
 #define _NETINET_IGMP_VAR_H_
 #include <sys/appleapiopts.h>
 
+#include <stdint.h>
+#include <sys/types.h>
+
 /*
  * Internet Group Management Protocol (IGMP),
  * implementation-specific definitions.
@@ -186,10 +189,10 @@ extern int igmp_debug;
 #define IGMP_PRINTF(x)
 #endif
 
-#define OIGMPSTAT_ADD(name, val)        atomic_add_32(&igmpstat.name , (val))
+#define OIGMPSTAT_ADD(name, val)        os_atomic_add(&igmpstat.name, (val), relaxed)
 #define OIGMPSTAT_INC(name)             OIGMPSTAT_ADD(name, 1)
 
-#define IGMPSTAT_ADD(name, val)         atomic_add_64(&igmpstat_v3.name , (val))
+#define IGMPSTAT_ADD(name, val)         os_atomic_add(&igmpstat_v3.name, (val), relaxed)
 #define IGMPSTAT_INC(name)              IGMPSTAT_ADD(name, 1)
 
 #define IGMP_RANDOM_DELAY(X) (random() % (X) + 1)
@@ -314,6 +317,7 @@ struct igmp_tparams {
 	int     it;     /* interface_timers_running */
 	int     cst;    /* current_state_timers_running */
 	int     sct;    /* state_change_timers_running */
+	bool    fast;   /* fast timer */
 };
 
 extern void igmp_init(struct protosw *, struct domain *);
@@ -325,6 +329,7 @@ extern void igmp_input(struct mbuf *, int);
 extern int igmp_joingroup(struct in_multi *);
 extern void igmp_leavegroup(struct in_multi *);
 extern void igmp_set_timeout(struct igmp_tparams *);
+extern void igmp_set_fast_timeout(struct igmp_tparams *);
 extern void igi_addref(struct igmp_ifinfo *, int);
 extern void igi_remref(struct igmp_ifinfo *);
 __private_extern__ void igmp_initsilent(struct ifnet *, struct igmp_ifinfo *);

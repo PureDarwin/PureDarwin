@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2012-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -33,20 +33,38 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 
+#if SKYWALK
+#include <skywalk/os_skywalk.h>
+#endif /* SKYWALK */
 
 #define FADV_SUCCESS            0       /* success */
 #define FADV_FLOW_CONTROLLED    1       /* regular flow control */
 #define FADV_SUSPENDED          2       /* flow control due to suspension */
+#define FADV_CONGESTED          3       /* AQM gives congestion notification signal */
 
 struct flowadv {
 	int32_t         code;           /* FADV advisory code */
 };
 
+typedef enum fce_event_type {
+	FCE_EVENT_TYPE_FLOW_CONTROL_FEEDBACK   = 0,
+	FCE_EVENT_TYPE_CONGESTION_EXPERIENCED  = 1,
+} fce_event_type_t;
+
 #ifdef BSD_KERNEL_PRIVATE
 struct flowadv_fcentry {
 	STAILQ_ENTRY(flowadv_fcentry) fce_link;
-	u_int32_t       fce_flowsrc_type;       /* FLOWSRC values */
-	u_int32_t       fce_flowid;
+	u_int32_t        fce_flowsrc_type;       /* FLOWSRC values */
+	u_int32_t        fce_flowid;
+	u_int32_t        fce_congestion_cnt;
+	u_int32_t        l4s_ce_cnt;
+	u_int32_t        fce_pkts_since_last_report;
+	fce_event_type_t fce_event_type;
+#if SKYWALK
+	flowadv_token_t fce_flowsrc_token;
+	flowadv_idx_t   fce_flowsrc_fidx;
+	struct ifnet    *fce_ifp;
+#endif /* SKYWALK */
 };
 
 STAILQ_HEAD(flowadv_fclist, flowadv_fcentry);
@@ -58,7 +76,6 @@ extern struct flowadv_fcentry *flowadv_alloc_entry(int);
 extern void flowadv_free_entry(struct flowadv_fcentry *);
 extern void flowadv_add(struct flowadv_fclist *);
 extern void flowadv_add_entry(struct flowadv_fcentry *);
-extern void flowadv_reap_caches(boolean_t);
 
 __END_DECLS
 

@@ -88,16 +88,18 @@
 #include <kern/clock.h>
 #include <kern/cpu_data.h>
 #include <kern/machine.h>
+#include <kern/iotrace.h>
+#include <kern/kern_stackshot.h>
 #include <i386/postcode.h>
 #include <i386/mp_desc.h>
 #include <i386/misc_protos.h>
 #include <i386/panic_notify.h>
 #include <i386/thread.h>
-#include <i386/trap.h>
+#include <i386/trap_internal.h>
 #include <i386/machine_routines.h>
-#include <i386/mp.h>            /* mp_rendezvous_break_lock */
-#include <i386/tsc.h>           /* tsc_sync_init_deferred */
+#include <i386/mp.h>
 #include <i386/cpuid.h>
+#include <i386/cpu_threads.h>  /* x86_topo_lock */
 #include <i386/fpu.h>
 #include <i386/machine_cpu.h>
 #include <i386/pmap.h>
@@ -107,14 +109,16 @@
 #include <i386/ucode.h>
 #include <i386/pmCPU.h>
 #include <i386/panic_hooks.h>
+#include <i386/lbr.h>
 
 #include <architecture/i386/pio.h> /* inb() */
 #include <pexpert/i386/boot.h>
 
 #include <kdp/kdp_dyld.h>
 #include <kdp/kdp_core.h>
+#include <kdp/kdp_common.h>
 #include <vm/pmap.h>
-#include <vm/vm_map.h>
+#include <vm/vm_map_xnu.h>
 #include <vm/vm_kern.h>
 
 #include <IOKit/IOBSD.h>
@@ -163,7 +167,14 @@ extern char             osversion[];
 extern int              max_poll_quanta;
 extern unsigned int     panic_is_inited;
 
-extern int      proc_pid(struct proc *);
+extern uint64_t roots_installed;
+
+#define MAX_PROCNAME_LEN 32
+/* #include <sys/proc.h> */
+struct proc;
+extern int              proc_pid(struct proc *p);
+extern void             proc_name_kdp(struct proc *p, char * buf, int size);
+
 
 /* Definitions for frame pointers */
 #define FP_ALIGNMENT_MASK      ((uint32_t)(0x3))
@@ -192,22 +203,16 @@ boolean_t coprocessor_paniclog_flush = FALSE;
 
 struct kcdata_descriptor kc_panic_data;
 static boolean_t begun_panic_stackshot = FALSE;
-extern kern_return_t    do_stackshot(void *);
 
-extern void                    kdp_snapshot_preflight(int pid, void * tracebuf,
-    uint32_t tracebuf_size, uint64_t flags,
-    kcdata_descriptor_t data_p,
-    uint64_t since_timestamp, uint32_t pagetable_mask);
-extern int              kdp_stack_snapshot_bytes_traced(void);
-extern int              kdp_stack_snapshot_bytes_uncompressed(void);
-
-extern void             stackshot_memcpy(void *dst, const void *src, size_t len);
 vm_offset_t panic_stackshot_buf = 0;
 size_t panic_stackshot_buf_len = 0;
 
 size_t panic_stackshot_len = 0;
 
 boolean_t is_clock_configured = FALSE;
+
+static struct lbr_data lbrs[MAX_CPUS];
+static uint32_t lbr_stack_size;
 
 /*
  * Backtrace a single frame.
@@ -216,22 +221,12 @@ void
 print_one_backtrace(pmap_t pmap, vm_offset_t topfp, const char *cur_marker,
     boolean_t is_64_bit)
 {
-	int                 i = 0;
-	addr64_t        lr;
-	addr64_t        fp;
-	addr64_t        fp_for_ppn;
-	ppnum_t         ppn;
-	boolean_t       dump_kernel_stack;
-
-	fp = topfp;
-	fp_for_ppn = 0;
-	ppn = (ppnum_t)NULL;
-
-	if (fp >= VM_MIN_KERNEL_ADDRESS) {
-		dump_kernel_stack = TRUE;
-	} else {
-		dump_kernel_stack = FALSE;
-	}
+	unsigned int    i = 0;
+	addr64_t        lr = 0;
+	addr64_t        fp = topfp;
+	addr64_t        fp_for_ppn = 0;
+	ppnum_t         ppn = (ppnum_t)NULL;
+	bool            dump_kernel_stack = (fp >= VM_MIN_KERNEL_ADDRESS);
 
 	do {
 		if ((fp == 0) || ((fp & FP_ALIGNMENT_MASK) != 0)) {
@@ -284,13 +279,25 @@ print_one_backtrace(pmap_t pmap, vm_offset_t topfp, const char *cur_marker,
 			}
 			break;
 		}
-
-		if (is_64_bit) {
-			paniclog_append_noflush("%s\t0x%016llx\n", cur_marker, lr);
-		} else {
-			paniclog_append_noflush("%s\t0x%08x\n", cur_marker, (uint32_t)lr);
+		/*
+		 * Counter 'i' may == FP_MAX_NUM_TO_EVALUATE when running one
+		 * extra round to check whether we have all frames in order to
+		 * indicate (in)complete backtrace below. This happens in a case
+		 * where total frame count and FP_MAX_NUM_TO_EVALUATE are equal.
+		 * Do not capture anything.
+		 */
+		if (i < FP_MAX_NUM_TO_EVALUATE && lr) {
+			if (is_64_bit) {
+				paniclog_append_noflush("%s\t0x%016llx\n", cur_marker, lr);
+			} else {
+				paniclog_append_noflush("%s\t0x%08x\n", cur_marker, (uint32_t)lr);
+			}
 		}
-	} while ((++i < FP_MAX_NUM_TO_EVALUATE) && (fp != topfp));
+	} while ((++i <= FP_MAX_NUM_TO_EVALUATE) && (fp != topfp));
+
+	if (i > FP_MAX_NUM_TO_EVALUATE && fp != 0) {
+		paniclog_append_noflush("Backtrace continues...\n");
+	}
 }
 void
 machine_startup(void)
@@ -457,8 +464,15 @@ efi_init(void)
 			}
 		}
 
-		if (args->Version != kBootArgsVersion2) {
-			panic("Incompatible boot args version %d revision %d\n", args->Version, args->Revision);
+		/*
+		 * Version 1 is the boot-args format used by older x86 EFI
+		 * loaders (including the 20.x-era path).  Version 2 only adds
+		 * fields at the tail of the fixed-size structure, and the EFI
+		 * setup below does not consume those fields.  Keep accepting both
+		 * formats; the KC-specific field is gated separately in i386_init.
+		 */
+		if (args->Version < kBootArgsVersion1 || args->Version > kBootArgsVersion2) {
+			panic("Incompatible boot args version %d revision %d", args->Version, args->Revision);
 		}
 
 		DPRINTF("Boot args version %d revision %d mode %d\n", args->Version, args->Revision, args->efiMode);
@@ -550,8 +564,8 @@ hibernate_newruntime_map(void * map, vm_size_t map_size, uint32_t system_table_o
 			}
 		}
 
-		if (args->Version != kBootArgsVersion2) {
-			panic("Incompatible boot args version %d revision %d\n", args->Version, args->Revision);
+		if (args->Version < kBootArgsVersion1 || args->Version > kBootArgsVersion2) {
+			panic("Incompatible boot args version %d revision %d", args->Version, args->Revision);
 		}
 
 		kprintf("Boot args version %d revision %d mode %d\n", args->Version, args->Revision, args->efiMode);
@@ -573,6 +587,18 @@ hibernate_newruntime_map(void * map, vm_size_t map_size, uint32_t system_table_o
 void
 machine_init(void)
 {
+	/*
+	 * Initialize x86_topo_lock as early as possible.  On the boot CPU it is
+	 * otherwise only initialized in cpu_thread_init() from smp_init(), which
+	 * runs AFTER efi_init() below.  Any panic before that (e.g. inside
+	 * efi_init) enters mp_kdp_enter(), which does simple_lock_try(&x86_topo_lock)
+	 * on the still-uninitialized lock; usld_lock_common_checks() then panics
+	 * ("... is not a usimple lock"), turning every early panic into an
+	 * invisible nested-panic storm that hides the real message.  Re-initializing
+	 * an unheld lock is harmless (cpu_thread_init re-inits it later).
+	 */
+	simple_lock_init(&x86_topo_lock, 0);
+
 	/* Now with VM up, switch to dynamically allocated cpu data */
 	cpu_data_realloc();
 
@@ -620,11 +646,6 @@ machine_init(void)
 	 * Free lowmem pages and complete other setup
 	 */
 	pmap_lowmem_finalize();
-
-	/*
-	 * Arm the periodic AMD TSC resync, which tsc_init() deliberately deferred.
-	 */
-	tsc_sync_init_deferred();
 }
 
 /*
@@ -693,7 +714,7 @@ RecordPanicStackshot()
 		return;
 	}
 
-	if (stackshot_active()) {
+	if (panic_stackshot_active()) {
 		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_NESTED;
 		panic_info->mph_other_log_offset = PE_get_offset_into_panic_region(debug_buf_ptr);
 		kdb_printf("Panicked during stackshot, skipping panic stackshot\n");
@@ -728,7 +749,7 @@ RecordPanicStackshot()
 	    STACKSHOT_ENABLE_BT_FAULTING | STACKSHOT_ENABLE_UUID_FAULTING | STACKSHOT_FROM_PANIC | STACKSHOT_DO_COMPRESS |
 	    STACKSHOT_NO_IO_STATS | STACKSHOT_THREAD_WAITINFO | STACKSHOT_DISABLE_LATENCY_INFO | STACKSHOT_GET_DQ);
 
-	err = kcdata_init_compress(&kc_panic_data, KCDATA_BUFFER_BEGIN_STACKSHOT, stackshot_memcpy, KCDCT_ZLIB);
+	err = kcdata_init_compress(&kc_panic_data, KCDATA_BUFFER_BEGIN_STACKSHOT, kdp_memcpy, KCDCT_ZLIB);
 	if (err != KERN_SUCCESS) {
 		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_COMPRESS;
 		stackshot_flags &= ~STACKSHOT_DO_COMPRESS;
@@ -743,7 +764,7 @@ RecordPanicStackshot()
 #endif
 
 	kdp_snapshot_preflight(-1, (void *) stackshot_begin_loc, (uint32_t) bytes_remaining, stackshot_flags, &kc_panic_data, 0, 0);
-	err = do_stackshot(NULL);
+	err = do_panic_stackshot(NULL);
 	bytes_traced = (size_t) kdp_stack_snapshot_bytes_traced();
 	bytes_uncompressed = (size_t) kdp_stack_snapshot_bytes_uncompressed();
 	bytes_used = (size_t) kcdata_memory_get_used_bytes(&kc_panic_data);
@@ -780,7 +801,7 @@ RecordPanicStackshot()
 #endif
 
 		kdp_snapshot_preflight(-1, (void *) stackshot_begin_loc, (uint32_t) bytes_remaining, stackshot_flags, &kc_panic_data, 0, 0);
-		err = do_stackshot(NULL);
+		err = do_panic_stackshot(NULL);
 		bytes_traced = (size_t) kdp_stack_snapshot_bytes_traced();
 		bytes_uncompressed = (size_t) kdp_stack_snapshot_bytes_uncompressed();
 		bytes_used = (size_t) kcdata_memory_get_used_bytes(&kc_panic_data);
@@ -838,7 +859,7 @@ RecordPanicStackshot()
 
 void
 SavePanicInfo(
-	__unused const char *message, void *panic_data, uint64_t panic_options)
+	__unused const char *message, void *panic_data, uint64_t panic_options, __unused const char* panic_initiator)
 {
 	void *stackptr  = NULL;
 	thread_t thread_to_trace = (thread_t) panic_data;
@@ -885,9 +906,37 @@ SavePanicInfo(
 		panic_i386_backtrace(stackptr, ((panic_double_fault_cpu == cn) ? 80 : 48), debugger_msg, FALSE, NULL);
 	}
 
-	if (panic_options & DEBUGGER_OPTION_COPROC_INITIATED_PANIC) {
-		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_COPROC_INITIATED_PANIC;
+	if (panic_options & DEBUGGER_OPTION_COMPANION_PROC_INITIATED_PANIC) {
+		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_COMPANION_PROC_INITIATED_PANIC;
 	}
+
+	if (panic_options & DEBUGGER_OPTION_INTEGRATED_COPROC_INITIATED_PANIC) {
+		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_INTEGRATED_COPROC_INITIATED_PANIC;
+	}
+
+	if (panic_options & DEBUGGER_OPTION_USERSPACE_INITIATED_PANIC) {
+		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_USERSPACE_INITIATED_PANIC;
+	}
+
+#if MACH_KDP
+	/*
+	 * If this panic is due to a PTE corruption event, use the kdp cross-cpu calling machinery to ask
+	 * each CPU to dump their backtraces before proceeding.  This mechanism was preferred to adding new
+	 * synchronization operations in NMIInterruptHandler and the normal panic flow; this mechanism allows
+	 * each CPU to add their backtraces after all other primary panic output is complete while not adding
+	 * additional complexity to the common panic path.
+	 */
+	if (NMI_panic_reason == PTE_CORRUPTION) {
+		for (uint64_t cpu = 0; cpu < real_ncpus; cpu++) {
+			if (cpu == cpu_number() || !cpu_is_running(cpu)) {
+				continue;
+			}
+			(void) kdp_x86_xcpu_invoke(cpu, NMI_pte_corruption_callback, NULL, NULL, NSEC_PER_SEC /* 1 second timeout */);
+		}
+	}
+#else
+#error NMI PTE Corruption panic flow requires KDP
+#endif
 
 	if (PE_get_offset_into_panic_region(debug_buf_ptr) < panic_info->mph_panic_log_offset) {
 		kdb_printf("Invalid panic log offset found (not properly initialized?): debug_buf_ptr : 0x%p, panic_info: 0x%p mph_panic_log_offset: 0x%x\n",
@@ -902,6 +951,8 @@ SavePanicInfo(
 
 	/* Try to take a panic stackshot */
 	RecordPanicStackshot();
+
+	panic_info->mph_roots_installed = roots_installed;
 
 	/*
 	 * Flush the panic log again with the stackshot or any relevant logging
@@ -1179,7 +1230,7 @@ panic_display_shutdown_status(void)
 		 * If we haven't marked the corefile as explicitly disabled, and we've made it past initialization, then we know the current
 		 * system was configured to use disk based diagnostics at some point.
 		 */
-		paniclog_append_noflush("Panic diags file available: %s (0x%x)\n", (gIOPolledCoreFileMode != kIOPolledCoreFileModeClosed) ? "YES" : "NO", kdp_polled_corefile_error());
+		paniclog_append_noflush("Panic diags file available: %s (0x%x)\n", (gIOPolledCoreFileMode != kIOPolledCoreFileModeClosed && gIOPolledCoreFileMode != kIOPolledCoreFileModeUnlinked) ? "YES" : "NO", kdp_polled_corefile_error());
 	}
 #endif
 }
@@ -1204,6 +1255,7 @@ panic_display_system_configuration(boolean_t launchd_exit)
 		    (osversion[0] != 0) ? osversion : "Not yet set");
 		paniclog_append_noflush("\nKernel version:\n%s\n", version);
 		panic_display_kernel_uuid();
+		paniclog_append_noflush("roots installed: %lld\n", roots_installed);
 		if (!launchd_exit) {
 			panic_display_kernel_aslr();
 			panic_display_hibb();
@@ -1216,10 +1268,8 @@ panic_display_system_configuration(boolean_t launchd_exit)
 			panic_display_hib_count();
 			panic_display_uptime();
 			panic_display_times();
-			panic_display_zprint();
-#if CONFIG_ZLEAKS
-			panic_display_ztrace();
-#endif /* CONFIG_ZLEAKS */
+			panic_display_compressor_stats();
+			panic_display_zalloc();
 			kext_dump_panic_lists(&paniclog_append_noflush);
 		}
 	}
@@ -1246,6 +1296,125 @@ panic_print_kmod_symbol_name(vm_address_t search)
 			}
 			break;
 		}
+	}
+}
+
+static void
+read_lbr_empty(void)
+{
+}
+
+void (*read_lbr)(void) = read_lbr_empty;
+
+static void
+capture_lbr_state(void)
+{
+	thread_t thr_act = current_thread();
+	int i;
+	last_branch_state_t thread_lbr_data;
+	struct lbr_data *lbr = &lbrs[cpu_number()];
+
+	if (lbr_stack_size > 0) {
+		i386_lbr_disable();
+
+		if (i386_filtered_lbr_state_to_mach_thread_state(thr_act, &thread_lbr_data, false) == 0) {
+			for (i = 0; i < thread_lbr_data.lbr_count; i++) {
+				lbr->from[i] = thread_lbr_data.lbrs[i].from_ip;
+				lbr->to[i] = thread_lbr_data.lbrs[i].to_ip;
+			}
+		}
+	}
+
+	i386_lbr_enable();
+}
+
+struct panic_lbr_header_s {
+	uint32_t id;
+	uint8_t ncpus;
+	uint8_t lbr_count;
+	uint64_t pcarveout_va;
+};
+struct panic_lbr_header_s panic_lbr_header = {0};
+
+static void
+copy_lbr_data_for_core(void)
+{
+	unsigned int cpu;
+
+	if (phys_carveout) {
+		// The minimum size of phys_carveout is 1MiB but just in case
+		if (phys_carveout_size >= sizeof(last_branch_state_t) * max_ncpus) {
+			for (cpu = 0; cpu < real_ncpus; cpu++) {
+				void *buf = (void *)(phys_carveout + lbr_stack_size * sizeof(uint64_t) * cpu);
+				memcpy(buf, lbrs[cpu].from, sizeof(uint64_t) * lbr_stack_size);
+				memcpy((uint64_t *)buf + lbr_stack_size * sizeof(uint64_t), lbrs[cpu].to,
+				    sizeof(uint64_t) * lbr_stack_size);
+			}
+			/* Write 'LBRS' identifier, the number of CPUs and the LBR stack size */
+			panic_lbr_header.id = LBR_MAGIC; /* 'LBRS' */
+			panic_lbr_header.ncpus = real_ncpus;
+			panic_lbr_header.lbr_count = lbr_stack_size;
+			panic_lbr_header.pcarveout_va = phys_carveout;
+		}
+	}
+}
+
+void
+lbr_for_kmode_init(uint32_t lbr_count)
+{
+	uint32_t size;
+	int i;
+
+	lbr_stack_size = lbr_count;
+
+	/* Cannot use real_ncpus here as only one CPU is registered yet*/
+
+	size = sizeof(uint64_t) * lbr_stack_size;
+	for (i = 0; i < max_ncpus; i++) {
+		lbrs[i].from = kalloc_data(size, Z_WAITOK | Z_ZERO);
+		lbrs[i].to = kalloc_data(size, Z_WAITOK | Z_ZERO);
+		if (!lbrs[i].from || !lbrs[i].to) {
+			kprintf("LBR: Kalloc failed for lbrs.from/to\n");
+			if (lbrs[i].from) {
+				kfree_data(lbrs[i].from, size);
+			}
+			if (lbrs[i].to) {
+				kfree_data(lbrs[i].to, size);
+			}
+			while (--i >= 0) {
+				kfree_data(lbrs[i].from, size);
+				kfree_data(lbrs[i].to, size);
+			}
+			goto err;
+		}
+	}
+
+	read_lbr = capture_lbr_state;
+
+	return;
+
+err:
+	last_branch_enabled_modes = LBR_ENABLED_NONE;
+	return;
+}
+
+static void
+write_lbr_to_panic_log(void)
+{
+	unsigned int cpu;
+	int i;
+
+	for (cpu = 0; cpu < real_ncpus; cpu++) {
+		paniclog_append_noflush("LBR Stack (CPU %d):\n", cpu);
+		for (i = 0; i < lbr_stack_size; i++) {
+			if (lbrs[cpu].from[i] == 0x0 && lbrs[cpu].to[i] == 0x0) {
+				continue;
+			}
+			paniclog_append_noflush("0x%llx : 0x%llx\n", lbrs[cpu].from[i], lbrs[cpu].to[i]);
+		}
+	}
+	if (debug_can_coredump_phys_carveout()) {
+		copy_lbr_data_for_core();
 	}
 }
 
@@ -1279,18 +1448,19 @@ panic_i386_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdu
 	boolean_t keepsyms = FALSE;
 	int cn = cpu_number();
 	boolean_t old_doprnt_hide_pointers = doprnt_hide_pointers;
+	thread_t cur_thread = current_thread();
+	task_t task;
+	struct proc *proc;
 
-#if DEVELOPMENT || DEBUG
 	/* Turn off I/O tracing now that we're panicking */
-	mmiotrace_enabled = 0;
-#endif
+	iotrace_disable();
 
 	if (pbtcpu != cn) {
 		os_atomic_inc(&pbtcnt, relaxed);
 		/* Spin on print backtrace lock, which serializes output
 		 * Continue anyway if a timeout occurs.
 		 */
-		hw_lock_to(&pbtlock, ~0U, LCK_GRP_NULL);
+		(void)hw_lock_to(&pbtlock, &hw_lock_spin_panic_policy, LCK_GRP_NULL);
 		pbtcpu = cn;
 	}
 
@@ -1325,12 +1495,28 @@ panic_i386_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdu
 		PC = ss64p->isf.rip;
 	}
 
-	paniclog_append_noflush("Backtrace (CPU %d), "
+	// print current task info
+	if (panic_get_thread_proc_task(cur_thread, &task, &proc)) {
+		paniclog_append_noflush("Panicked task %p: %d threads: ",
+		    task, task->thread_count);
+		if (proc) {
+			char name[MAX_PROCNAME_LEN + 1];
+			proc_name_kdp(proc, name, sizeof(name));
+			paniclog_append_noflush("pid %d: %s", proc_pid(proc), name);
+		} else {
+			paniclog_append_noflush("unknown task");
+		}
+
+		paniclog_append_noflush("\n");
+	}
+
+	paniclog_append_noflush("Backtrace (CPU %d), panicked thread: %p, "
 #if PRINT_ARGS_FROM_STACK_FRAME
-	    "Frame : Return Address (4 potential args on stack)\n", cn);
+	    "Frame : Return Address (4 potential args on stack)\n",
 #else
-	    "Frame : Return Address\n", cn);
+	    "Frame : Return Address\n",
 #endif
+	    cn, cur_thread);
 
 	for (frame_index = 0; frame_index < nframes; frame_index++) {
 		vm_offset_t curframep = (vm_offset_t) frame;
@@ -1377,7 +1563,7 @@ panic_i386_backtrace(void *_frame, int nframes, const char *msg, boolean_t regdu
 		frame = frame->prev;
 	}
 
-	if (frame_index >= nframes) {
+	if (frame_index >= nframes && (vm_offset_t)frame != 0) {
 		paniclog_append_noflush("\tBacktrace continues...\n");
 	}
 
@@ -1397,6 +1583,10 @@ out:
 
 	if (PC != 0) {
 		kmod_panic_dump(&PC, 1);
+	}
+
+	if (last_branch_enabled_modes == LBR_ENABLED_KERNELMODE) {
+		write_lbr_to_panic_log();
 	}
 
 	panic_display_system_configuration(FALSE);
@@ -1484,6 +1674,12 @@ print_tasks_user_threads(task_t task)
 		print_one_backtrace(pmap, (vm_offset_t)rbp, cur_marker, TRUE);
 		paniclog_append_noflush("\n");
 	}
+}
+
+void
+print_curr_backtrace(void)
+{
+	/*  Not implemented for i386 */
 }
 
 void
@@ -1591,7 +1787,7 @@ print_launchd_info(void)
 		/* Spin on print backtrace lock, which serializes output
 		 * Continue anyway if a timeout occurs.
 		 */
-		hw_lock_to(&pbtlock, ~0U, LCK_GRP_NULL);
+		(void)hw_lock_to(&pbtlock, &hw_lock_spin_panic_policy, LCK_GRP_NULL);
 		pbtcpu = cn;
 	}
 

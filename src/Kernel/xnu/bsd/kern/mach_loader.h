@@ -45,6 +45,16 @@
 
 typedef int load_return_t;
 
+/* libmalloc relies on these values not changing. If they change,
+ * you need to update the values in that project as well */
+__options_decl(hardened_browser_flags_t, uint32_t, {
+	BrowserHostEntitlementMask       = 0x01,
+	BrowserGPUEntitlementMask        = 0x02,
+	BrowserNetworkEntitlementMask    = 0x04,
+	BrowserWebContentEntitlementMask = 0x08,
+});
+ #define HR_FLAGS_NUM_NIBBLES (sizeof(hardened_browser_flags_t) / 2)
+
 /*
  * Structure describing the result from calling load_machfile(), if that
  * function returns LOAD_SUCCESS.
@@ -78,12 +88,22 @@ typedef struct _load_result {
 	is_64bit_addr           : 1,
 	    is_64bit_data           : 1,
 	    custom_stack            : 1,
-	    is_cambria              : 1;
+	    is_rosetta              : 1,
+	    hardened_heap           : 1,
+	    is_ipc_containment_vessel   : 1;
+	// 0 if not entitled, non-zero otherwise
+	uint8_t hardened_process_version;
 	unsigned int            csflags;
 	unsigned char           uuid[16];
 	mach_vm_address_t       min_vm_addr;
 	mach_vm_address_t       max_vm_addr;
+	mach_vm_address_t       ro_vm_start;
+	mach_vm_address_t       ro_vm_end;
 	unsigned int            platform_binary;
+
+	/* Flags denoting which type of platform restrictions binary this is */
+	hardened_browser_flags_t hardened_browser;
+
 	off_t                   cs_end_offset;
 	void                    *threadstate;
 	size_t                  threadstate_sz;
@@ -92,7 +112,10 @@ typedef struct _load_result {
 	uint32_t                lr_sdk;
 	user_addr_t             dynlinker_mach_header;
 	user_addr_t             dynlinker_max_vm_addr;
+	mach_vm_address_t       dynlinker_ro_vm_start;
+	mach_vm_address_t       dynlinker_ro_vm_end;
 	int                     dynlinker_fd;
+	struct fileproc*        dynlinker_fp;
 } load_result_t;
 
 struct image_params;

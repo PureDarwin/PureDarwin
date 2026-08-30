@@ -9,19 +9,9 @@
 #error "Please #include <img4/firmware.h> instead of this file directly"
 #endif // __IMG4_INDIRECT
 
-#if IMG4_TAPI
-#include "tapi.h"
-#endif
-
+__BEGIN_DECLS
 OS_ASSUME_NONNULL_BEGIN
-
-/*!
- * @typedef img4_chip_t
- * An opaque type describing a destination chip environment for the firmware
- * image.
- */
-IMG4_API_AVAILABLE_20200508
-typedef struct _img4_chip img4_chip_t;
+OS_ASSUME_PTR_ABI_SINGLE_BEGIN
 
 /*!
  * @typedef img4_chip_select_array_t
@@ -35,7 +25,7 @@ typedef const img4_chip_t *_Nullable const *img4_chip_select_array_t;
  * The version of the {@link img4_chip_instance_t} supported by the
  * implementation.
  */
-#define IMG4_CHIP_INSTANCE_STRUCT_VERSION (1u)
+#define IMG4_CHIP_INSTANCE_STRUCT_VERSION (6u)
 
 /*!
  * @typedef img4_chip_instance_omit_t
@@ -76,6 +66,27 @@ typedef const img4_chip_t *_Nullable const *img4_chip_select_array_t;
  *
  * @const IMG4_CHIP_INSTANCE_OMIT_EUOU
  * The chip instance has no engineering-use-only-unit property.
+ *
+ * @const IMG4_CHIP_INSTANCE_OMIT_ESDM
+ * The chip instance has no extended security domain property.
+ *
+ * @const IMG4_CHIP_INSTANCE_OMIT_FPGT
+ * The chip instance has no factory pre-release global trust property.
+ *
+ * @const IMG4_CHIP_INSTANCE_OMIT_UDID
+ * The chip instance has no universal device identifier property.
+ *
+ * @const IMG4_CHIP_INSTANCE_OMIT_FCHP
+ * The chip instance has no cryptex chip identifier property.
+ *
+ * @const IMG4_CHIP_INSTANCE_OMIT_TYPE
+ * The chip instance has no cryptex type identifier property.
+ *
+ * @const IMG4_CHIP_INSTANCE_OMIT_STYP
+ * The chip instance has no cryptex subtype identifier property.
+ *
+ * @const IMG4_CHIP_INSTANCE_OMIT_CLAS
+ * The chip instance has no product class property.
  */
 OS_CLOSED_OPTIONS(img4_chip_instance_omit, uint64_t,
 	IMG4_CHIP_INSTANCE_OMIT_CEPO = (1 << 0),
@@ -90,6 +101,13 @@ OS_CLOSED_OPTIONS(img4_chip_instance_omit, uint64_t,
 	IMG4_CHIP_INSTANCE_OMIT_IUOU = (1 << 9),
 	IMG4_CHIP_INSTANCE_OMIT_RSCH = (1 << 10),
 	IMG4_CHIP_INSTANCE_OMIT_EUOU = (1 << 11),
+	IMG4_CHIP_INSTANCE_OMIT_ESDM = (1 << 12),
+	IMG4_CHIP_INSTANCE_OMIT_FPGT = (1 << 13),
+	IMG4_CHIP_INSTANCE_OMIT_UDID = (1 << 14),
+	IMG4_CHIP_INSTANCE_OMIT_FCHP = (1 << 15),
+	IMG4_CHIP_INSTANCE_OMIT_TYPE = (1 << 16),
+	IMG4_CHIP_INSTANCE_OMIT_STYP = (1 << 17),
+	IMG4_CHIP_INSTANCE_OMIT_CLAS = (1 << 18),
 );
 
 /*!
@@ -143,6 +161,41 @@ OS_CLOSED_OPTIONS(img4_chip_instance_omit, uint64_t,
  * The engineering use-only unit status of the chip instance.
  *
  * Added in version 1 of the structure.
+ *
+ * @field chid_esdm
+ * The extended security domain of the chip instance.
+ *
+ * Added in version 3 of the structure.
+ *
+ * @field chid_fpgt
+ * The factory pre-release global trust status of the chip instance.
+ *
+ * Added in version 4 of the structure.
+ *
+ * @field chid_udid
+ * The universal device identifier of the chip instance.
+ *
+ * Added in version 5 of the structure.
+ *
+ * @const chid_fchp
+ * The cryptex chip identifier of the chip instance.
+ *
+ * Added in version 6 of the structure.
+ *
+ * @const chid_type
+ * The cryptex type identifier of the chip instance.
+ *
+ * Added in version 6 of the structure.
+ *
+ * @const chid_styp
+ * The cryptex subtype identifier of the chip instance.
+ *
+ * Added in version 6 of the structure.
+ *
+ * @field chid_clas
+ * The product class of the chip instance.
+ *
+ * Added in version 6 of the structure.
  */
 IMG4_API_AVAILABLE_20200508
 typedef struct _img4_chip_instance {
@@ -161,195 +214,51 @@ typedef struct _img4_chip_instance {
 	bool chid_iuou;
 	bool chid_rsch;
 	bool chid_euou;
+	uint32_t chid_esdm;
+	bool chid_fpgt;
+	img4_dgst_t chid_udid;
+	uint32_t chid_fchp;
+	uint32_t chid_type;
+	uint32_t chid_styp;
+	uint32_t chid_clas;
 } img4_chip_instance_t;
 
 /*!
- * @const IMG4_CHIP_AP_SHA1
- * The Application Processor on an Apple ARM SoC with an embedded sha1
- * certifcate chain.
+ * @function IMG4_CHIP_INSTANCE_INIT
+ * A convenience initializer which can be used to initialize a chip instance to
+ * a given family.
  *
- * This chip environment represents one unique instance of such a chip.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_sha1;
-#define IMG4_CHIP_AP_SHA1 (&_img4_chip_ap_sha1)
-#else
-#define IMG4_CHIP_AP_SHA1 (img4if->i4if_v7.chip_ap_sha1)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_SHA2_384
- * The Application Processor on an Apple ARM SoC with an embedded sha2-384
- * certifcate chain.
+ * @param _family
+ * The family of chip.
  *
- * This chip environment represents one unique instance of such a chip.
+ * @result
+ * A fully-initialized structure of the appropriate version supported by the
+ * implementation. The resulting chip instance omits no identifiers.
  */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_sha2_384;
-#define IMG4_CHIP_AP_SHA2_384 (&_img4_chip_ap_sha2_384)
-#else
-#define IMG4_CHIP_AP_SHA2_384 (img4if->i4if_v7.chip_ap_sha2_384)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_HYBRID
- * An Intel x86 processor whose chain of trust is rooted in an
- * {@link IMG4_CHIP_AP_SHA2_384} environment. Firmwares executed on this chip
- * are authenticated against the characteristics of the corresponding AP chip
- * environment.
- *
- * This chip environment represents one unique instance of such a chip pair.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_hybrid;
-#define IMG4_CHIP_AP_HYBRID (&_img4_chip_ap_hybrid)
-#else
-#define IMG4_CHIP_AP_HYBRID (img4if->i4if_v7.chip_ap_hybrid)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_REDUCED
- * An Application Processor on an Apple ARM SoC operating in a reduced security
- * configuration.
- *
- * This chip cannot be uniquely identified.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_reduced;
-#define IMG4_CHIP_AP_REDUCED (&_img4_chip_ap_reduced)
-#else
-#define IMG4_CHIP_AP_REDUCED (img4if->i4if_v7.chip_ap_reduced)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_PERMISSIVE
- * An Application Processor on an Apple ARM SoC operating with no secure boot
- * enforcement.
- *
- * This chip cannot be uniquely identified.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_permissive;
-#define IMG4_CHIP_AP_PERMISSIVE (&_img4_chip_ap_permissive)
-#else
-#define IMG4_CHIP_AP_PERMISSIVE (img4if->i4if_v8.chip_ap_permissive)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_HYBRID_MEDIUM
- * An Intel x86 processor whose chain of trust is rooted in an
- * {@link IMG4_CHIP_AP_SHA2_384} environment and is operating in a "medium
- * security" mode due to a user-approved security degradation.
- *
- * This chip cannot be uniquely identified.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_hybrid_medium;
-#define IMG4_CHIP_AP_HYBRID_MEDIUM (&_img4_chip_ap_hybrid_medium)
-#else
-#define IMG4_CHIP_AP_HYBRID_MEDIUM (img4if->i4if_v8.chip_ap_hybrid_medium)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_HYBRID_RELAXED
- * An Intel x86 processor whose chain of trust is rooted in an
- * {@link IMG4_CHIP_AP_SHA2_384} environment and is operating with no secure
- * boot enforcement due to a user-approved security degradation.
- *
- * This chip cannot be uniquely identified.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_hybrid_relaxed;
-#define IMG4_CHIP_AP_HYBRID_RELAXED (&_img4_chip_ap_hybrid_relaxed)
-#else
-#define IMG4_CHIP_AP_HYBRID_RELAXED (img4if->i4if_v8.chip_ap_hybrid_relaxed)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_SOFTWARE_FF00
- * A software-defined chip environment whose firmwares are executed on any
- * Application Processor on an Apple ARM SoC. The firmwares are loadable trust
- * caches shipped with OTA update brains.
- *
- * This chip cannot be uniquely identified.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_software_ff00;
-#define IMG4_CHIP_AP_SOFTWARE_FF00 (&_img4_chip_ap_software_ff00)
-#else
-#define IMG4_CHIP_AP_SOFTWARE_FF00 (img4if->i4if_v7.chip_ap_software_ff00)
-#endif
-
-/*!
- * @const IMG4_CHIP_AP_SOFTWARE_FF01
- * A software-defined chip environment whose firmwares are executed on any
- * Application Processor on an Apple ARM SoC. The firmwares are loadable trust
- * caches which are shipped in the Install Assistant and loaded by an
- * unprivileged trampoline.
- *
- * This chip cannot be uniquely identified.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_ap_software_ff01;
-#define IMG4_CHIP_AP_SOFTWARE_FF01 (&_img4_chip_ap_software_ff01)
-#else
-#define IMG4_CHIP_AP_SOFTWARE_FF01 (img4if->i4if_v7.chip_ap_software_ff01)
-#endif
-
-/*!
- * @const IMG4_CHIP_X86
- * An Intel x86 processor which cannot be uniquely identified.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_x86;
-#define IMG4_CHIP_X86 (&_img4_chip_x86)
-#else
-#define IMG4_CHIP_X86 (img4if->i4if_v7.chip_x86)
-#endif
-
-/*!
- * @const IMG4_CHIP_X86_SOFTWARE_8012
- * A software-defined chip environment describing a virtualized x86 processor.
- * Since the virtual machine is at the mercy of the VM, support for any sort of
- * chip identity may not be available. Therefore this environment is returned
- * from {@link img4_chip_select_personalized_ap} and
- * {@link img4_chip_select_effective_ap} when it is called on a virtual machine
- * so that the appropriate chip environment is present entirely in software.
- *
- * This environment provides an equivalent software identity to that of
- * the {@link IMG4_CHIP_X86} chip environment on non-Gibraltar Macs.
- *
- * @discussion
- * Do not use this environment directly.
- */
-#if !XNU_KERNEL_PRIVATE
-IMG4_API_AVAILABLE_20200508
-OS_EXPORT
-const img4_chip_t _img4_chip_x86_software_8012;
-#define IMG4_CHIP_X86_SOFTWARE_8012 (&_img4_chip_x86_software_8012)
-#else
-#define IMG4_CHIP_X86_SOFTWARE_8012 (img4if->i4if_v7.chip_x86_software_8012)
-#endif
+#define IMG4_CHIP_INSTANCE_INIT(_family) (img4_chip_instance_t){ \
+	.chid_version = IMG4_CHIP_INSTANCE_STRUCT_VERSION, \
+	.chid_chip_family = (_family), \
+	.chid_omit = 0, \
+	.chid_cepo = 0, \
+	.chid_bord = 0, \
+	.chid_chip = 0, \
+	.chid_sdom = 0, \
+	.chid_ecid = 0, \
+	.chid_cpro = false, \
+	.chid_csec = false, \
+	.chid_epro = false, \
+	.chid_esec = false, \
+	.chid_iuou = false, \
+	.chid_rsch = false, \
+	.chid_euou = false, \
+	.chid_esdm = 0, \
+	.chid_fpgt = false, \
+	.chid_udid = {0}, \
+	.chid_fchp = 0, \
+	.chid_type = 0, \
+	.chid_styp = 0, \
+	.chid_clas = 0, \
+}
 
 /*!
  * @function img4_chip_init_from_buff
@@ -376,7 +285,7 @@ const img4_chip_t _img4_chip_x86_software_8012;
 IMG4_API_AVAILABLE_20200508
 OS_EXPORT OS_WARN_RESULT OS_NONNULL1
 img4_chip_t *
-img4_chip_init_from_buff(void *buff, size_t len);
+img4_chip_init_from_buff(void *__sized_by(len) buff, size_t len);
 #else
 #define img4_chip_init_from_buff (img4if->i4if_v7.chip_init_from_buff)
 #endif
@@ -401,6 +310,50 @@ img4_chip_select_personalized_ap(void);
 #endif
 
 /*!
+ * @function img4_chip_select_personalized_sep
+ * Returns the chip appropriate for personalized verification against the host
+ * SEP.
+ *
+ * @result
+ * The personalized chip environment for the host's SEP which corresponds to its
+ * silicon identity. This will return NULL when called outside of the SEP
+ * runtime.
+ */
+#if !XNU_KERNEL_PRIVATE
+IMG4_API_AVAILABLE_20211119
+OS_EXPORT OS_WARN_RESULT
+const img4_chip_t *_Nullable
+img4_chip_select_personalized_sep(void);
+#else
+#define img4_chip_select_personalized_sep(...) \
+		(img4if->i4if_v16.chip_select_personalized_sep(__VA_ARGS__))
+#endif
+
+/*!
+ * @function img4_chip_select_categorized_ap
+ * Returns the chip appropriate for categorized verification against the host
+ * AP.
+ *
+ * @result
+ * The categorized chip environment for the host which corresponds to its
+ * silicon identity. If the host has no AP category defined for it, NULL will be
+ * returned.
+ *
+ * @discussion
+ * Categorized chip environments have been scuttled and were never used. Please
+ * remove all uses of this function.
+ */
+#if !XNU_KERNEL_PRIVATE
+IMG4_API_AVAILABLE_20210305
+OS_EXPORT OS_WARN_RESULT
+const img4_chip_t *_Nullable
+img4_chip_select_categorized_ap(void);
+#else
+#define img4_chip_select_categorized_ap(...) \
+		(img4if->i4if_v12.chip_select_categorized_ap(__VA_ARGS__))
+#endif
+
+/*!
  * @function img4_chip_select_effective_ap
  * Returns the chip appropriate for verification against the host AP.
  *
@@ -416,6 +369,87 @@ img4_chip_select_effective_ap(void);
 #else
 #define img4_chip_select_effective_ap(...) \
 		(img4if->i4if_v7.chip_select_effective_ap(__VA_ARGS__))
+#endif
+
+/*!
+ * @function img4_chip_select_cryptex1_boot
+ * Returns the appropriate Cryptex1 boot chip environment for the currently-
+ * booted effective AP environment.
+ *
+ * @result
+ * The chip environment to use for verification.
+ */
+#if !XNU_KERNEL_PRIVATE
+IMG4_API_AVAILABLE_20211126
+OS_EXPORT OS_WARN_RESULT
+const img4_chip_t *
+img4_chip_select_cryptex1_boot(void);
+#else
+#define img4_chip_select_cryptex1_boot(...) \
+		(img4if->i4if_v17.chip_select_cryptex1_boot(__VA_ARGS__))
+#endif
+
+/*!
+ * @function img4_chip_select_cryptex1_preboot
+ * Returns the appropriate Cryptex1 pre-reboot chip environment for the
+ * currently-booted effective AP environment.
+ *
+ * @result
+ * The chip environment to use for verification.
+ */
+#if !XNU_KERNEL_PRIVATE
+IMG4_API_AVAILABLE_20211126
+OS_EXPORT OS_WARN_RESULT
+const img4_chip_t *
+img4_chip_select_cryptex1_preboot(void);
+#else
+#define img4_chip_select_cryptex1_preboot(...) \
+		(img4if->i4if_v17.chip_select_cryptex1_preboot(__VA_ARGS__))
+#endif
+
+/*!
+ * @function img4_chip_get_cryptex1_boot
+ * Returns the appropriate Cryptex1 boot chip environment associated with a
+ * given AP environment.
+ *
+ * @param chip
+ * The AP environment for which to obtain the associated Cryptex1 environment.
+ *
+ * @result
+ * The Cryptex1 chip environment associated with {@link chip}. If there is no
+ * Cryptex1 association, NULL is returned.
+ */
+#if !XNU_KERNEL_PRIVATE
+IMG4_API_AVAILABLE_20220401
+OS_EXPORT OS_WARN_RESULT OS_NONNULL1
+const img4_chip_t *_Nullable
+img4_chip_get_cryptex1_boot(const img4_chip_t *chip);
+#else
+#define img4_chip_get_cryptex1_boot(...) \
+		(img4if->i4if_v18.chip_get_cryptex1_boot(__VA_ARGS__))
+#endif
+
+/*!
+ * @function img4_chip_get_cryptex1_boot_proposal
+ * Returns the appropriate Cryptex1 boot proposal chip environment associated
+ * with a given AP environment.
+ *
+ * @param chip
+ * The AP environment for which to obtain the associated Cryptex1 proposal
+ * environment.
+ *
+ * @result
+ * The Cryptex1 proposal chip environment associated with {@link chip}. If
+ * there is no Cryptex1 association, NULL is returned.
+ */
+#if !XNU_KERNEL_PRIVATE
+IMG4_API_AVAILABLE_20220401
+OS_EXPORT OS_WARN_RESULT OS_NONNULL1
+const img4_chip_t *_Nullable
+img4_chip_get_cryptex1_boot_proposal(const img4_chip_t *chip);
+#else
+#define img4_chip_get_cryptex1_boot_proposal(...) \
+		(img4if->i4if_v18.chip_get_cryptex1_boot_proposal(__VA_ARGS__))
 #endif
 
 /*!
@@ -485,6 +519,8 @@ img4_chip_custom(const img4_chip_instance_t *chip_instance, img4_chip_t *chip);
 #define img4_chip_custom(...) (img4if->i4if_v7.chip_custom(__VA_ARGS__))
 #endif
 
+OS_ASSUME_PTR_ABI_SINGLE_END
 OS_ASSUME_NONNULL_END
+__END_DECLS
 
 #endif // __IMG4_CHIP_H

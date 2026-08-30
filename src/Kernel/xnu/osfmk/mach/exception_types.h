@@ -102,26 +102,37 @@
 
 #define EXC_CORPSE_NOTIFY       13      /* Abnormal process exited to corpse state */
 
-#define EXC_CORPSE_VARIANT_BIT  0x100  /* bit set for EXC_*_CORPSE variants of EXC_* */
-
 
 /*
  *	Machine-independent exception behaviors
  */
 
-# define EXCEPTION_DEFAULT              1
+#define EXCEPTION_DEFAULT              1
 /*	Send a catch_exception_raise message including the identity.
  */
 
-# define EXCEPTION_STATE                2
+#define EXCEPTION_STATE                2
 /*	Send a catch_exception_raise_state message including the
  *	thread state.
  */
 
-# define EXCEPTION_STATE_IDENTITY       3
+#define EXCEPTION_STATE_IDENTITY       3
 /*	Send a catch_exception_raise_state_identity message including
  *	the thread identity and state.
  */
+
+#define EXCEPTION_IDENTITY_PROTECTED   4
+/*	Send a catch_exception_raise_identity_protected message including protected task
+ *  and thread identity.
+ */
+
+#define EXCEPTION_STATE_IDENTITY_PROTECTED   5
+/*	Send a catch_exception_raise_state_identity_protected message including protected task
+ *  and thread identity plus the thread state.
+ */
+
+#define MACH_EXCEPTION_BACKTRACE_PREFERRED   0x20000000
+/* Prefer sending a catch_exception_raise_backtrace message, if applicable */
 
 #define MACH_EXCEPTION_ERRORS           0x40000000
 /*	include additional exception specific errors, not used yet.  */
@@ -129,7 +140,9 @@
 #define MACH_EXCEPTION_CODES            0x80000000
 /*	Send 64-bit code and subcode in the exception header */
 
-#define MACH_EXCEPTION_MASK             (MACH_EXCEPTION_CODES | MACH_EXCEPTION_ERRORS)
+#define MACH_EXCEPTION_MASK             (MACH_EXCEPTION_CODES | \
+	                                    MACH_EXCEPTION_ERRORS | \
+	                                    MACH_EXCEPTION_BACKTRACE_PREFERRED)
 /*
  * Masks for exception definitions, above
  * bit zero is unused, therefore 1 word = 31 exception types
@@ -164,6 +177,13 @@
 
 #ifdef  KERNEL_PRIVATE
 #define EXC_MASK_VALID  (EXC_MASK_ALL | EXC_MASK_CRASH | EXC_MASK_CORPSE_NOTIFY)
+
+/*
+ * Additional mask for use with EXC_BREAKPOINT.
+ * Note this is used just while the exception is shuffled around within xnu.
+ * It's wiped off before we reach exception_triage_thread().
+ */
+#define EXC_MAY_BE_UNRECOVERABLE_BIT    0x400   /* Set if this exception may be uncatchable by userspace */
 #endif /* KERNEL_PRIVATE */
 
 #define FIRST_EXCEPTION         1       /* ZERO is illegal */

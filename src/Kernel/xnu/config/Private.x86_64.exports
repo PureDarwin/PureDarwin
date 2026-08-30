@@ -13,6 +13,10 @@ __ZN14IOPMrootDomain20claimSystemWakeEventEP9IOServicejPKcP8OSObject
 __ZN14IOPMrootDomain20restartWithStackshotEv
 __ZN14IOPMrootDomain24claimSystemShutdownEventEP9IOServicejPKcP8OSObject
 __ZN22IOInterruptEventSource7warmCPUEy
+__ZN24IOBufferMemoryDescriptor18initWithGuardPagesEP4taskjy
+__ZN24IOBufferMemoryDescriptor20inTaskWithGuardPagesEP4taskjy
+__ZN27IOGuardPageMemoryDescriptor12initWithSizeEm
+__ZN27IOGuardPageMemoryDescriptor8withSizeEm
 _acpi_install_wake_handler
 _acpi_sleep_kernel
 _acpi_idle_kernel
@@ -28,6 +32,7 @@ _csr_get_active_config
 _lapic_end_of_interrupt
 _lapic_get_cmci_vector
 _lapic_unmask_perfcnt_interrupt
+_ml_page_protection_type
 _ml_port_io_read
 _ml_port_io_read16
 _ml_port_io_read32
@@ -85,7 +90,7 @@ _dqreclaim
 
 # HFS Kext Requirements
 _file_vnode
-_proc_ucred
+_proc_ucred:_proc_ucred_unsafe
 _suser
 
 #For copyout_shim private KPI
@@ -117,6 +122,5 @@ _hv_get*
 _hv_io_notifier*
 _hv_release*
 _hv_set*
-_hv_trace*
 _thread_set_no_smt
 _vm_map_disable_hole_optimization

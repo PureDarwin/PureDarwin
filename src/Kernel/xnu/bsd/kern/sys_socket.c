@@ -113,14 +113,14 @@ static int
 soo_read(struct fileproc *fp, struct uio *uio, __unused int flags,
     __unused vfs_context_t ctx)
 {
-	struct socket *so;
+	struct socket *__single so;
 	int stat;
 
 	int (*fsoreceive)(struct socket *so2, struct sockaddr **paddr,
 	    struct uio *uio2, struct mbuf **mp0, struct mbuf **controlp,
 	    int *flagsp);
 
-	if ((so = (struct socket *)fp->fp_glob->fg_data) == NULL) {
+	if ((so = (struct socket *)fp_get_data(fp)) == NULL) {
 		/* This is not a valid open file descriptor */
 		return EBADF;
 	}
@@ -136,14 +136,14 @@ static int
 soo_write(struct fileproc *fp, struct uio *uio, __unused int flags,
     vfs_context_t ctx)
 {
-	struct socket *so;
+	struct socket *__single so;
 	int stat;
 	int (*fsosend)(struct socket *so2, struct sockaddr *addr,
 	    struct uio *uio2, struct mbuf *top, struct mbuf *control,
 	    int flags2);
 	proc_t procp;
 
-	if ((so = (struct socket *)fp->fp_glob->fg_data) == NULL) {
+	if ((so = (struct socket *)fp_get_data(fp)) == NULL) {
 		/* This is not a valid open file descriptor */
 		return EBADF;
 	}
@@ -162,7 +162,7 @@ soo_write(struct fileproc *fp, struct uio *uio, __unused int flags,
 }
 
 __private_extern__ int
-soioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
+soioctl(struct socket *so, u_long cmd, caddr_t __sized_by(IOCPARM_LEN(cmd)) data, struct proc *p)
 {
 	int error = 0;
 	int int_arg;
@@ -240,10 +240,6 @@ soioctl(struct socket *so, u_long cmd, caddr_t data, struct proc *p)
 		bcopy(&int_arg, data, sizeof(int_arg));
 		goto out;
 
-	case SIOCSETOT:                 /* int; deprecated */
-		error = EOPNOTSUPP;
-		goto out;
-
 	case SIOCGASSOCIDS32:           /* so_aidreq32 */
 	case SIOCGASSOCIDS64:           /* so_aidreq64 */
 	case SIOCGCONNIDS32:            /* so_cidreq32 */
@@ -284,12 +280,12 @@ out:
 }
 
 int
-soo_ioctl(struct fileproc *fp, u_long cmd, caddr_t data, vfs_context_t ctx)
+soo_ioctl(struct fileproc *fp, u_long cmd, caddr_t __sized_by(IOCPARM_LEN(cmd)) data, vfs_context_t ctx)
 {
-	struct socket *so;
+	struct socket *__single so;
 	proc_t procp = vfs_context_proc(ctx);
 
-	if ((so = (struct socket *)fp->fp_glob->fg_data) == NULL) {
+	if ((so = (struct socket *)fp_get_data(fp)) == NULL) {
 		/* This is not a valid open file descriptor */
 		return EBADF;
 	}
@@ -300,7 +296,7 @@ soo_ioctl(struct fileproc *fp, u_long cmd, caddr_t data, vfs_context_t ctx)
 int
 soo_select(struct fileproc *fp, int which, void *wql, vfs_context_t ctx)
 {
-	struct socket *so = (struct socket *)fp->fp_glob->fg_data;
+	struct socket *__single so = (struct socket *)fp_get_data(fp);
 	int retnum = 0;
 	proc_t procp;
 
@@ -409,10 +405,10 @@ static int
 soo_close(struct fileglob *fg, __unused vfs_context_t ctx)
 {
 	int error = 0;
-	struct socket *sp;
+	struct socket *__single sp;
 
-	sp = (struct socket *)fg->fg_data;
-	fg->fg_data = NULL;
+	sp = (struct socket *)fg_get_data(fg);
+	fg_set_data(fg, NULL);
 
 	if (sp) {
 		error = soclose(sp);
@@ -425,7 +421,7 @@ static int
 soo_drain(struct fileproc *fp, __unused vfs_context_t ctx)
 {
 	int error = 0;
-	struct socket *so = (struct socket *)fp->fp_glob->fg_data;
+	struct socket *__single so = (struct socket *)fp_get_data(fp);
 
 	if (so) {
 		socket_lock(so, 1);
@@ -457,7 +453,7 @@ static __attribute__((unused)) void
 soioctl_cassert(void)
 {
 	/*
-	 * This is equivalent to _CASSERT() and the compiler wouldn't
+	 * This is equivalent to static_assert() and the compiler wouldn't
 	 * generate any instructions, thus for compile time only.
 	 */
 	switch ((u_long)0) {
@@ -471,7 +467,6 @@ soioctl_cassert(void)
 	case SIOCATMARK:
 	case SIOCSPGRP:
 	case SIOCGPGRP:
-	case SIOCSETOT:
 	case SIOCGASSOCIDS32:
 	case SIOCGASSOCIDS64:
 	case SIOCGCONNIDS32:

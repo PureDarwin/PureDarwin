@@ -1,5 +1,6 @@
 _in6_cksum:_inet6_cksum
 _mbuf_data
+_mbuf_data_len
 _mbuf_inet6_cksum
 _mbuf_len
 _mbuf_next

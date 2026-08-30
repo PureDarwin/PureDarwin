@@ -48,7 +48,7 @@
 #define LogFixups 0
 
 // cannot safely callout out to functions like strcmp before initial fixup
-static inline int
+static inline __attribute__((__always_inline__)) int
 strings_are_equal(const char* a, const char* b)
 {
 	while (*a && *b) {
@@ -71,7 +71,7 @@ union ChainedFixupPointerOnDisk {
 	struct dyld_chained_ptr_64_kernel_cache_rebase fixup64;
 };
 
-static uint64_t __unused
+static inline __attribute__((__always_inline__)) uint64_t __unused
 sign_pointer(struct dyld_chained_ptr_64_kernel_cache_rebase pointer __unused,
     void *loc __unused,
     uint64_t target __unused)
@@ -274,15 +274,6 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
 		return 0;
 	}
 
-	/* The primary boot KC is cache level zero for the kernel-cache pointer
-	 * format. Keep the early ARM path usable even if its caller has not yet
-	 * published that base in the shared KC table. */
-	const void *effectiveBasePointers[KCNumKinds];
-	memcpy(effectiveBasePointers, basePointers, sizeof(effectiveBasePointers));
-	if (effectiveBasePointers[0] == NULL) {
-		effectiveBasePointers[0] = mh;
-	}
-
 	if (LogFixups) {
 		dyldLogFunc("[LOG] kernel-fixups: found chained fixups %p\n", chainedFixups);
 		dyldLogFunc("[LOG] kernel-fixups: found linkeditVMAddr %p\n", (void*)linkeditVMAddr);
@@ -319,27 +310,13 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
 				continue;
 			}
 			if (offsetInPage & DYLD_CHAINED_PTR_START_MULTI) {
-				/* A page may contain several independent chains when the
-				 * distance between fixups exceeds the 12-bit next field.
-				 * The page_start value indexes the trailing chain_starts
-				 * array; its final entry carries DYLD_CHAINED_PTR_START_LAST. */
-				uint16_t chainIndex = offsetInPage & ~DYLD_CHAINED_PTR_START_MULTI;
-				const uint16_t *chainStarts = segInfo->page_start + segInfo->page_count;
-				for (;;) {
-					uint16_t chainStart = chainStarts[chainIndex++];
-					bool last = (chainStart & DYLD_CHAINED_PTR_START_LAST) != 0;
-					chainStart &= ~DYLD_CHAINED_PTR_START_LAST;
-					/* A malformed chain must not prevent later KC segments from
-					 * being rebased. The walker has already stopped this chain. */
-					(void)walk_chain(mh, segInfo, pageIndex, chainStart, slide, effectiveBasePointers);
-					if (last) {
-						break;
-					}
-				}
+				// FIXME: Implement this
+				return 1;
 			} else {
 				// one chain per page
-				/* Keep processing independent pages after a bad chain. */
-				(void)walk_chain(mh, segInfo, pageIndex, offsetInPage, slide, effectiveBasePointers);
+				if (walk_chain(mh, segInfo, pageIndex, offsetInPage, slide, basePointers)) {
+					stopped = 1;
+				}
 			}
 		}
 	}
@@ -352,7 +329,7 @@ kernel_collection_slide(const struct mach_header_64* mh, const void* basePointer
  * of an MH_FILESET kernel collection.
  */
 
-static void
+MARK_AS_FIXUP_TEXT static void
 kernel_collection_adjust_fileset_entry_addrs(struct mach_header_64 *mh, uintptr_t adj)
 {
 	struct load_command *lc;
@@ -371,7 +348,7 @@ kernel_collection_adjust_fileset_entry_addrs(struct mach_header_64 *mh, uintptr_
 		if (lc->cmd != LC_SEGMENT_64) {
 			continue;
 		}
-		if (strcmp(((struct segment_command_64 *)(uintptr_t)lc)->segname, SEG_LINKEDIT) == 0) {
+		if (strings_are_equal(((struct segment_command_64 *)(uintptr_t)lc)->segname, SEG_LINKEDIT)) {
 			linkedit_cmd = ((struct segment_command_64 *)(uintptr_t)lc);
 		}
 
@@ -413,7 +390,7 @@ kernel_collection_adjust_fileset_entry_addrs(struct mach_header_64 *mh, uintptr_
 	}
 }
 
-static void
+MARK_AS_FIXUP_TEXT static void
 kernel_collection_adjust_mh_addrs(struct mach_header_64 *kc_mh, uintptr_t adj,
     bool pageable, uintptr_t *kc_lowest_vmaddr, uintptr_t *kc_highest_vmaddr,
     uintptr_t *kc_lowest_ro_vmaddr, uintptr_t *kc_highest_ro_vmaddr,

@@ -89,7 +89,7 @@ struct IODMACommandSpecification {
  *
 */
 
-/* source class IODMACommand IODMACommand.iig:90-189 */
+/* source class IODMACommand IODMACommand.iig:90-190 */
 
 #if __DOCUMENTATION__
 #define KERNEL IIG_KERNEL
@@ -133,7 +133,8 @@ public:
 	 * @param       flags Returned bit mask of flags 
 					kIOMemoryDirectionOut the memory is readable
 					kIOMemoryDirectionIn the memory is writable
-	 * @param       segmentsCount Returned count of segements returned in segments
+	 * @param       segmentsCount In/out parameter - size of segments array on input,
+					and number of valid segments returned
 	 * @param       segments Returned DMA physical address and length segments covering the DMA
      * @return      kIOReturnSuccess on success. See IOReturn.h for error codes.
      */
@@ -198,7 +199,7 @@ public:
 #undef KERNEL
 #else /* __DOCUMENTATION__ */
 
-/* generated class IODMACommand IODMACommand.iig:90-189 */
+/* generated class IODMACommand IODMACommand.iig:90-190 */
 
 #define IODMACommand_Create_ID            0xaee3e66d8ba7da5bULL
 #define IODMACommand_PrepareForDMA_ID            0xd7b6d75c679018feULL

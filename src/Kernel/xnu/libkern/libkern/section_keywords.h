@@ -44,6 +44,7 @@
 #define SECURITY_SECTION_NAME           "__const"
 #define SECURITY_SEGMENT_SECTION_NAME   "__DATA,__const"
 
+#ifndef __BUILDING_XNU_LIBRARY__
 #define __security_const_early const
 #define __security_const_late __attribute__((section(SECURITY_SEGMENT_SECTION_NAME)))
 #define __security_read_write
@@ -53,6 +54,17 @@
 #define MARK_AS_HIBERNATE_DATA __attribute__((section("__HIB, __data")))
 #define MARK_AS_HIBERNATE_DATA_CONST_LATE __attribute__((section("__HIB, __const")))
 #endif /* HIBERNATION */
+
+#else /* __BUILDING_XNU_LIBRARY__ */
+/* Special segments are not used when building for user-mode */
+#define __security_const_early
+#define __security_const_late
+#define __security_read_write
+#define MARK_AS_HIBERNATE_TEXT
+#define MARK_AS_HIBERNATE_DATA
+#define MARK_AS_HIBERNATE_DATA_CONST_LATE
+#endif /* __BUILDING_XNU_LIBRARY__ */
+
 #endif /* __arm64__ || __x86_64__ */
 
 #ifndef __security_const_early
@@ -70,12 +82,25 @@
 #ifndef MARK_AS_HIBERNATE_DATA
 #define MARK_AS_HIBERNATE_DATA
 #endif
-
-#define SECURITY_READ_ONLY_SPECIAL_SECTION(_t, __segment__section) \
-	__security_const_early _t __PLACE_IN_SECTION(__segment__section)
+#ifndef MARK_AS_HIBERNATE_DATA_CONST_LATE
+#define MARK_AS_HIBERNATE_DATA_CONST_LATE
+#endif
 
 #define SECURITY_READ_ONLY_EARLY(_t) _t __security_const_early __attribute__((used))
 #define SECURITY_READ_ONLY_LATE(_t)  _t __security_const_late  __attribute__((used))
 #define SECURITY_READ_WRITE(_t)      _t __security_read_write  __attribute__((used))
+
+#if CONFIG_SPTM
+/*
+ * Place a function in a special segment, __TEXT_BOOT_EXEC. Code placed
+ * in this segment will be allowed by the SPTM to execute during the fixups
+ * phase; the rest of the code will be mapped as RW, so that it can be overwritten.
+ * Code that is required to execute in order to apply fixups MUST be contained
+ * in this special segment.
+ */
+#define MARK_AS_FIXUP_TEXT __attribute__((used, section("__TEXT_BOOT_EXEC,__bootcode,regular,pure_instructions")))
+#else
+#define MARK_AS_FIXUP_TEXT
+#endif
 
 #endif /* _SECTION_KEYWORDS_H_ */

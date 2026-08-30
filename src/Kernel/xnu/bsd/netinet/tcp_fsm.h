@@ -110,7 +110,7 @@
 	                         (s) == TCPS_TIME_WAIT)
 
 #ifdef KERNEL_PRIVATE
-#ifdef  TCPOUTFLAGS
+#include <netinet/tcp.h>
 /*
  * Flags used when sending segments in tcp_output.
  * Basic flags (TH_RST,TH_ACK,TH_SYN,TH_FIN) are totally
@@ -130,7 +130,6 @@ static u_char   tcp_outflags[TCP_NSTATES] = {
 	TH_ACK,                 /* 9, FIN_WAIT_2 */
 	TH_ACK,                 /* 10, TIME_WAIT */
 };
-#endif
 #endif /* KERNEL_PRIVATE */
 
 #if KPROF
@@ -140,7 +139,7 @@ int     tcp_acounts[TCP_NSTATES][PRU_NREQ];
 #endif
 
 #ifdef  TCPSTATES
-char *tcpstates[] = {
+static char *tcpstates[] = {
 	"CLOSED", "LISTEN", "SYN_SENT", "SYN_RCVD",
 	"ESTABLISHED", "CLOSE_WAIT", "FIN_WAIT_1", "CLOSING",
 	"LAST_ACK", "FIN_WAIT_2", "TIME_WAIT"

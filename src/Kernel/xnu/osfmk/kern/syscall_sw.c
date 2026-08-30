@@ -60,7 +60,7 @@
 #include <mach/mach_traps.h>
 
 #include <kern/syscall_sw.h>
-#if CONFIG_REQUIRES_U32_MUNGING || (__arm__ && (__BIGGEST_ALIGNMENT__ > 4))
+#if CONFIG_REQUIRES_U32_MUNGING
 #include <sys/munge.h>
 #endif
 
@@ -101,6 +101,7 @@ int kern_invalid_debug = 0;
 #include <kern/clock.h>
 #include <mach/mk_timer.h>
 
+
 const mach_trap_t       mach_trap_table[MACH_TRAP_TABLE_COUNT] = {
 /* 0 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 1 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
@@ -128,10 +129,10 @@ const mach_trap_t       mach_trap_table[MACH_TRAP_TABLE_COUNT] = {
 /* 23 */ MACH_TRAP(_kernelrpc_mach_port_extract_member_trap, 3, 3, munge_www),
 /* 24 */ MACH_TRAP(_kernelrpc_mach_port_construct_trap, 4, 5, munge_wwlw),
 /* 25 */ MACH_TRAP(_kernelrpc_mach_port_destruct_trap, 4, 5, munge_wwwl),
-/* 26 */ MACH_TRAP(mach_reply_port, 0, 0, NULL),
-/* 27 */ MACH_TRAP(thread_self_trap, 0, 0, NULL),
-/* 28 */ MACH_TRAP(task_self_trap, 0, 0, NULL),
-/* 29 */ MACH_TRAP(host_self_trap, 0, 0, NULL),
+/* 26 */ MACH_TRAP(mach_reply_port, 0, 0, NULL, .mach_trap_returns_port = 1),
+/* 27 */ MACH_TRAP(thread_self_trap, 0, 0, NULL, .mach_trap_returns_port = 1),
+/* 28 */ MACH_TRAP(task_self_trap, 0, 0, NULL, .mach_trap_returns_port = 1),
+/* 29 */ MACH_TRAP(host_self_trap, 0, 0, NULL, .mach_trap_returns_port = 1),
 /* 30 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 31 */ MACH_TRAP(mach_msg_trap, 7, 7, munge_wwwwwww),
 /* 32 */ MACH_TRAP(mach_msg_overwrite_trap, 8, 8, munge_wwwwwwww),
@@ -149,10 +150,14 @@ const mach_trap_t       mach_trap_table[MACH_TRAP_TABLE_COUNT] = {
 /* 44 */ MACH_TRAP(task_name_for_pid, 3, 3, munge_www),
 /* 45 */ MACH_TRAP(task_for_pid, 3, 3, munge_www),
 /* 46 */ MACH_TRAP(pid_for_task, 2, 2, munge_ww),
-/* 47 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
+#if defined(__LP64__) || defined(__arm64__)
+/* 47 */ MACH_TRAP(mach_msg2_trap, 8, 16, munge_llllllll),
+#else
+/* 47 */ MACH_TRAP(kern_invalid, 0, 0, NULL), /* Do not take */
+#endif
 /* 48 */ MACH_TRAP(macx_swapon, 4, 5, munge_lwww),
 /* 49 */ MACH_TRAP(macx_swapoff, 2, 3, munge_lw),
-/* 50 */ MACH_TRAP(thread_get_special_reply_port, 0, 0, NULL),
+/* 50 */ MACH_TRAP(thread_get_special_reply_port, 0, 0, NULL, .mach_trap_returns_port = 1),
 /* 51 */ MACH_TRAP(macx_triggers, 4, 4, munge_wwww),
 /* 52 */ MACH_TRAP(macx_backing_store_suspend, 1, 1, munge_w),
 /* 53 */ MACH_TRAP(macx_backing_store_recovery, 1, 1, munge_w),
@@ -165,7 +170,11 @@ const mach_trap_t       mach_trap_table[MACH_TRAP_TABLE_COUNT] = {
 /* 60 */ MACH_TRAP(swtch, 0, 0, NULL),
 /* 61 */ MACH_TRAP(thread_switch, 3, 3, munge_www),
 /* 62 */ MACH_TRAP(clock_sleep_trap, 5, 5, munge_wwwww),
+#if __LP64__
+/* 63 */ MACH_TRAP(mach_vm_reclaim_update_kernel_accounting_trap, 3, 5, munge_wll),
+#else
 /* 63 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
+#endif
 /* 64 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 65 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 66 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
@@ -190,10 +199,10 @@ const mach_trap_t       mach_trap_table[MACH_TRAP_TABLE_COUNT] = {
 /* 85 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 86 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 87 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
-/* 88 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
+/* 88 */ MACH_TRAP(_exclaves_ctl_trap, 8, 14, munge_wwllllll),
 /* 89 */ MACH_TRAP(mach_timebase_info_trap, 1, 1, munge_w),
 /* 90 */ MACH_TRAP(mach_wait_until_trap, 1, 2, munge_l),
-/* 91 */ MACH_TRAP(mk_timer_create_trap, 0, 0, NULL),
+/* 91 */ MACH_TRAP(mk_timer_create_trap, 0, 0, NULL, .mach_trap_returns_port = 1),
 /* 92 */ MACH_TRAP(mk_timer_destroy_trap, 1, 1, munge_w),
 /* 93 */ MACH_TRAP(mk_timer_arm_trap, 2, 3, munge_wl),
 /* 94 */ MACH_TRAP(mk_timer_cancel_trap, 2, 2, munge_ww),
@@ -212,6 +221,7 @@ const mach_trap_t       mach_trap_table[MACH_TRAP_TABLE_COUNT] = {
 /* 106 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 107 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 108 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
+/* traps 109-127 unused */
 /* 109 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 110 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
 /* 111 */ MACH_TRAP(kern_invalid, 0, 0, NULL),
@@ -245,7 +255,7 @@ const char * const mach_syscall_name_table[MACH_TRAP_TABLE_COUNT] = {
 /* 8 */ "kern_invalid",
 /* 9 */ "kern_invalid",
 /* 10 */ "_kernelrpc_mach_vm_allocate_trap",
-/* 11 */ "kern_invalid",
+/* 11 */ "_kernelrpc_mach_vm_purgable_control_trap",
 /* 12 */ "_kernelrpc_mach_vm_deallocate_trap",
 /* 13 */ "task_dyld_process_info_notify_get_trap",
 /* 14 */ "_kernelrpc_mach_vm_protect_trap",
@@ -274,14 +284,18 @@ const char * const mach_syscall_name_table[MACH_TRAP_TABLE_COUNT] = {
 /* 37 */ "semaphore_wait_signal_trap",
 /* 38 */ "semaphore_timedwait_trap",
 /* 39 */ "semaphore_timedwait_signal_trap",
-/* 40 */ "kern_invalid",
+/* 40 */ "_kernelrpc_mach_port_get_attributes_trap",
 /* 41 */ "_kernelrpc_mach_port_guard_trap",
 /* 42 */ "_kernelrpc_mach_port_unguard_trap",
 /* 43 */ "mach_generate_activity_id",
 /* 44 */ "task_name_for_pid",
 /* 45 */ "task_for_pid",
 /* 46 */ "pid_for_task",
+#if defined(__LP64__) || defined(__arm64__)
+/* 47 */ "mach_msg2_trap",
+#else
 /* 47 */ "kern_invalid",
+#endif
 /* 48 */ "macx_swapon",
 /* 49 */ "macx_swapoff",
 /* 50 */ "thread_get_special_reply_port",
@@ -297,7 +311,11 @@ const char * const mach_syscall_name_table[MACH_TRAP_TABLE_COUNT] = {
 /* 60 */ "swtch",
 /* 61 */ "thread_switch",
 /* 62 */ "clock_sleep_trap",
+#if __LP64__
+/* 63 */ "mach_vm_reclaim_update_kernel_accounting_trap",
+#else
 /* 63 */ "kern_invalid",
+#endif
 /* traps 64 - 95 reserved (debo) */
 /* 64 */ "kern_invalid",
 /* 65 */ "kern_invalid",
@@ -323,14 +341,14 @@ const char * const mach_syscall_name_table[MACH_TRAP_TABLE_COUNT] = {
 /* 85 */ "kern_invalid",
 /* 86 */ "kern_invalid",
 /* 87 */ "kern_invalid",
-/* 88 */ "kern_invalid",
+/* 88 */ "_exclaves_ctl_trap",
 /* 89 */ "mach_timebase_info_trap",
 /* 90 */ "mach_wait_until_trap",
 /* 91 */ "mk_timer_create_trap",
 /* 92 */ "mk_timer_destroy_trap",
 /* 93 */ "mk_timer_arm_trap",
 /* 94 */ "mk_timer_cancel_trap",
-/* 95 */ "kern_invalid",
+/* 95 */ "mk_timer_arm_leeway_trap",
 /* traps 64 - 95 reserved (debo) */
 /* 96 */ "debug_control_port_for_pid",
 /* 97 */ "kern_invalid",
@@ -345,8 +363,8 @@ const char * const mach_syscall_name_table[MACH_TRAP_TABLE_COUNT] = {
 /* 105 */ "kern_invalid",
 /* 106 */ "kern_invalid",
 /* 107 */ "kern_invalid",
-/* traps 108-127 unused */
 /* 108 */ "kern_invalid",
+/* traps 109-127 unused */
 /* 109 */ "kern_invalid",
 /* 110 */ "kern_invalid",
 /* 111 */ "kern_invalid",

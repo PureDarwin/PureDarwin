@@ -37,6 +37,10 @@ stdenv.mkDerivation {
     substituteInPlace lib/sha256.c \
       --replace-fail '#elif (defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && \' \
                       '#elif 0 && (defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && \'
+    # There is no CoreServices here, and configure adds it to LDFLAGS before the
+    # pthread_create check, so every later link test fails instead.
+    substituteInPlace m4/curl-sysconfig.m4 \
+      --replace-fail ' -framework CoreServices' ""
   '';
 
   configurePhase = ''

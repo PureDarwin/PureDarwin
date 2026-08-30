@@ -73,8 +73,11 @@ mach_host_special_port_description(int port)
 		[HOST_FILECOORDINATIOND_PORT] = "filecoordinationd",
 		[HOST_FAIRPLAYD_PORT] = "fairplayd",
 		[HOST_IOCOMPRESSIONSTATS_PORT] = "I/O compression stats",
+		[HOST_MEMORY_ERROR_PORT] = "memory error",
+		[HOST_MANAGEDAPPDISTD_PORT] = "managed app distribution",
+		[HOST_DOUBLEAGENTD_PORT] = "double agent",
 	};
-	_Static_assert(HOST_IOCOMPRESSIONSTATS_PORT == HOST_MAX_SPECIAL_PORT,
+	_Static_assert(HOST_DOUBLEAGENTD_PORT == HOST_MAX_SPECIAL_PORT,
 	    "all host special ports must have descriptions");
 
 	return hsp_descs[port_index];
@@ -176,6 +179,11 @@ mach_host_special_port_for_id(const char *id)
 		SP_ENTRY(HOST_CLOSURED_PORT),
 		SP_ENTRY(HOST_SYSPOLICYD_PORT),
 		SP_ENTRY(HOST_FILECOORDINATIOND_PORT),
+		SP_ENTRY(HOST_FAIRPLAYD_PORT),
+		SP_ENTRY(HOST_IOCOMPRESSIONSTATS_PORT),
+		SP_ENTRY(HOST_MEMORY_ERROR_PORT),
+		SP_ENTRY(HOST_MANAGEDAPPDISTD_PORT),
+		SP_ENTRY(HOST_DOUBLEAGENTD_PORT),
 	};
 
 	return port_for_id_internal(id, hsp_ids,

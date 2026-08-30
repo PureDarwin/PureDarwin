@@ -75,7 +75,7 @@
 
 #if CONFIG_AUDIT
 
-ZONE_DECLARE(mac_audit_data_zone, "mac_audit_data_zone",
+ZONE_DEFINE(mac_audit_data_zone, "mac_audit_data_zone",
     MAC_AUDIT_DATA_LIMIT, ZC_NONE);
 
 int
@@ -102,7 +102,7 @@ int
 mac_system_check_auditctl(struct ucred *cred, struct vnode *vp)
 {
 	int error;
-	struct label *vl = vp ? vp->v_label : NULL;
+	struct label *vl = vp ? mac_vnode_label(vp) : NULL;
 
 	MAC_CHECK(system_check_auditctl, cred, vp, vl);
 
@@ -112,7 +112,6 @@ mac_system_check_auditctl(struct ucred *cred, struct vnode *vp)
 int
 mac_proc_check_getauid(struct proc *curp)
 {
-	kauth_cred_t cred;
 	int error;
 
 #if SECURITY_MAC_CHECK_ENFORCE
@@ -126,9 +125,7 @@ mac_proc_check_getauid(struct proc *curp)
 		return 0;
 	}
 
-	cred = kauth_cred_proc_ref(curp);
-	MAC_CHECK(proc_check_getauid, cred);
-	kauth_cred_unref(&cred);
+	MAC_CHECK(proc_check_getauid, current_cached_proc_cred(curp));
 
 	return error;
 }
@@ -136,7 +133,6 @@ mac_proc_check_getauid(struct proc *curp)
 int
 mac_proc_check_setauid(struct proc *curp, uid_t auid)
 {
-	kauth_cred_t cred;
 	int error;
 
 #if SECURITY_MAC_CHECK_ENFORCE
@@ -149,9 +145,7 @@ mac_proc_check_setauid(struct proc *curp, uid_t auid)
 		return 0;
 	}
 
-	cred = kauth_cred_proc_ref(curp);
-	MAC_CHECK(proc_check_setauid, cred, auid);
-	kauth_cred_unref(&cred);
+	MAC_CHECK(proc_check_setauid, current_cached_proc_cred(curp), auid);
 
 	return error;
 }
@@ -159,7 +153,6 @@ mac_proc_check_setauid(struct proc *curp, uid_t auid)
 int
 mac_proc_check_getaudit(struct proc *curp)
 {
-	kauth_cred_t cred;
 	int error;
 
 #if SECURITY_MAC_CHECK_ENFORCE
@@ -172,9 +165,7 @@ mac_proc_check_getaudit(struct proc *curp)
 		return 0;
 	}
 
-	cred = kauth_cred_proc_ref(curp);
-	MAC_CHECK(proc_check_getaudit, cred);
-	kauth_cred_unref(&cred);
+	MAC_CHECK(proc_check_getaudit, current_cached_proc_cred(curp));
 
 	return error;
 }
@@ -182,7 +173,6 @@ mac_proc_check_getaudit(struct proc *curp)
 int
 mac_proc_check_setaudit(struct proc *curp, struct auditinfo_addr *ai)
 {
-	kauth_cred_t cred;
 	int error;
 
 #if SECURITY_MAC_CHECK_ENFORCE
@@ -195,9 +185,7 @@ mac_proc_check_setaudit(struct proc *curp, struct auditinfo_addr *ai)
 		return 0;
 	}
 
-	cred = kauth_cred_proc_ref(curp);
-	MAC_CHECK(proc_check_setaudit, cred, ai);
-	kauth_cred_unref(&cred);
+	MAC_CHECK(proc_check_setaudit, current_cached_proc_cred(curp), ai);
 
 	return error;
 }

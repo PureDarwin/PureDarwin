@@ -38,18 +38,71 @@
 #ifndef _KERN_TASK_IDENT_H
 #define _KERN_TASK_IDENT_H
 
-#if XNU_KERNEL_PRIVATE
+#if KERNEL_PRIVATE
 
 #include <kern/kern_types.h>
 #include <mach/mach_types.h>
+/* struct proc_ident uses pid_t and the prototypes below use task_grp_t;
+ * upstream relies on both already being visible. */
+#include <sys/_types/_pid_t.h>
+#include <kern/task_ref.h>
 
-void task_id_token_notify(mach_msg_header_t *msg);
+__BEGIN_DECLS
+
+#define TASK_IDENTITY_TOKEN_KPI_VERSION 1
+
+/*!
+ * @function task_id_token_port_name_to_task()
+ *
+ * @abstract
+ * Produces a task reference from task identity token port name.
+ *
+ * For export to kexts only. _DO NOT_ use in kenel proper for correct task
+ * reference counting.
+ *
+ * @param name     port name for the task identity token to operate on
+ * @param taskp    task_t pointer
+ *
+ * @returns        KERN_SUCCESS           A valid task reference is produced.
+ *                 KERN_NOT_FOUND         Cannot find task represented by token.
+ *                 KERN_INVALID_ARGUMENT  Passed identity token is invalid.
+ */
+#if XNU_KERNEL_PRIVATE
+kern_return_t task_id_token_port_name_to_task(mach_port_name_t name, task_t *taskp)
+__XNU_INTERNAL(task_id_token_port_name_to_task);
+
+struct proc_ident {
+	uint64_t        p_uniqueid;
+	pid_t           p_pid;
+	int             p_idversion;
+};
+
+struct task_id_token {
+	struct proc_ident ident;
+	ipc_port_t        port;
+	uint64_t          task_uniqueid; /* for corpse task */
+	os_refcnt_t       tidt_refs;
+};
+
 void task_id_token_release(task_id_token_t token);
 
 ipc_port_t convert_task_id_token_to_port(task_id_token_t token);
 
 task_id_token_t convert_port_to_task_id_token(ipc_port_t port);
 
-#endif /* XNU_KERNEL_PRIVATE */
+#if MACH_KERNEL_PRIVATE
+kern_return_t task_identity_token_get_task_grp(
+	task_id_token_t token,
+	task_t *taskp,
+	task_grp_t grp);
+#endif /* MACH_KERNEL_PRIVATE */
+
+#else  /* !XNU_KERNEL_PRIVATE */
+kern_return_t task_id_token_port_name_to_task(mach_port_name_t name, task_t *taskp);
+#endif /* !XNU_KERNEL_PRIVATE */
+
+__END_DECLS
+
+#endif /* KERNEL_PRIVATE */
 
 #endif /* _KERN_TASK_IDENT_H */

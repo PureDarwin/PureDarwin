@@ -31,36 +31,36 @@
 
 #define NO_MONITOR                1
 #define NO_ECORE                  1
+#define HAS_PARAVIRTUALIZED_CTRR  1
 
 #define VMAPPLE                   1
 #define APPLEVIRTUALPLATFORM      1
 
 #define CPU_HAS_APPLE_PAC         1
 #define HAS_PARAVIRTUALIZED_PAC   1
-#define 1
 #define HAS_GIC_V3                1
+#define HAS_ARM_FEAT_SSBS2        1
+#define HAS_ARM_FEAT_SME          1
+#define HAS_ARM_FEAT_SME2         1
+#define HAS_ARM_FEAT_PAN3         1
 
 #define __ARM_PAN_AVAILABLE__     1
 #define __ARM_16K_PG__            1
+#define __ARM_RANGE_TLBI__        1
 
 #define ARM_PARAMETERIZED_PMAP    1
 #define __ARM_MIXED_PAGE_SIZE__   1
 
+
 #include <pexpert/arm64/apple_arm64_common.h>
 #undef  __ARM64_PMAP_SUBPAGE_L1__
+#undef  __ARM64_PMAP_KERN_SUBPAGE_L1__
 
 #ifndef ASSEMBLER
-#define VMAPPLE_UART
+#define PL011_UART
 #define PLATFORM_PANIC_LOG_DISABLED
 #endif /* ! ASSEMBLER */
 
-#ifdef ASSEMBLER
-#define ASPSR_EL1                 S3_6_c15_c8_3
-#define AFPCR_EL0                 S3_6_c15_c2_5
-#else
-#define ASPSR_EL1                 "S3_6_c15_c8_3"
-#define AFPCR_EL0                 "S3_6_c15_c2_5"
-#endif /* ASSEMBLER */
 
 #define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
 
@@ -87,13 +87,5 @@
 
 #define ICC_SRE_SRE                             0x1
 /* End of GICv3 register definitions */
-
-#define VMAPPLE_HVC_NAMESPACE                   0xC1000000
-#define VMAPPLE_PAC_SET_INITIAL_STATE           (VMAPPLE_HVC_NAMESPACE | 0x0)
-#define VMAPPLE_PAC_GET_DEFAULT_KEYS            (VMAPPLE_HVC_NAMESPACE | 0x1)
-#define VMAPPLE_PAC_SET_A_KEYS                  (VMAPPLE_HVC_NAMESPACE | 0x2)
-#define VMAPPLE_PAC_SET_B_KEYS                  (VMAPPLE_HVC_NAMESPACE | 0x3)
-#define VMAPPLE_PAC_SET_EL0_DIVERSIFIER         (VMAPPLE_HVC_NAMESPACE | 0x4)
-#define VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1  (VMAPPLE_HVC_NAMESPACE | 0x5)
 
 #endif /* ! _PEXPERT_ARM64_VMAPPLE_H */

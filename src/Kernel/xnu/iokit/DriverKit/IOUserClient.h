@@ -62,6 +62,8 @@ enum {
 	kIOUserClientMemoryReadOnly  = 0x00000001,
 };
 
+#define kIOUserClientQueueNameExternalMethod  "IOUserClientQueueExternalMethod"
+
 
 /*! @enum
  *   @abstract Constant to denote a variable length structure argument to IOUserClient.
@@ -172,7 +174,7 @@ struct IOUserClientMethodDispatch {
         
 */
 
-/* source class IOUserClient IOUserClient.iig:173-288 */
+/* source class IOUserClient IOUserClient.iig:175-301 */
 
 #if __DOCUMENTATION__
 #define KERNEL IIG_KERNEL
@@ -190,21 +192,20 @@ public:
 	 * @brief       Receive arguments from IOKit.framework IOConnectMethod calls.
 	 * @discussion  IOConnectMethod calls from the owner of the connection come here.
 	 *              Any argument may be passed as NULL if not passed by the caller.
+	 *              The method runs on a queue set by IOService::SetDispatchQueuue()
+	 *              with the name kIOUserClientQueueNameExternalMethod, or the default
+	 *              queue for the IOUserClient object if one was not set.
 	 * @param       selector Selector argument to IOConnectMethod.
-	 * @param       scalarInput Array of scalars from caller.
-	 * @param       scalarInputCount Count of valid scalars in scalarInput.
-	 * @param       structureInput OSData object containing structure input from IOConnectMethod.
-	 * @param       structureInputDescriptor IOMemoryDescriptor containing structure input from IOConnectMethod.
-	 *				This parameter is only set for large structures, and if set structureInput will be NULL.
-	 * @param       scalarOutput Array of scalars to return to the caller.
-	 * @param       scalarOutputCount Count of scalars to return to the caller in scalarOutput.
-	 * @param       structureOutput An OSData to be returned to the caller as structureOutput.
-	 *				A reference will be consumed by the caller.
-	 * @param       structureOutputDescriptor An IOMemoryDescriptor to be returned to the caller as structureOutput.
-	 * 				A reference will be consumed by the caller.
-	 *				Only one of structureOutput and structureOutputDescriptor may set.
-	 * @param       completion For IOConnectAsyncMethod, an OSAction used to deliver async data to the caller.
-	 *              It should be passed to the AsyncCompletion() method and released.
+	 * @param       arguments Structure describing all arguments being passed to IOConnectMethod.
+	 * 				          See the IOUserClientMethodArguments definition.
+	 * @param       dispatch NULL when called in the driver. The IOUserClient::ExternalMethod()
+	 *				         implementation may be called with a non-NULL argument to check
+	 *				         certain fields of the arguments structure before calling a target procedure
+	 *				         specified by the dispatch structure 'function' field, and the
+	 *				         'target' and 'reference' parameters to this method.
+	 *				         See the IOUserClientMethodDispatch definition.
+	 * @param       target Target for the dispatch function
+	 * @param       reference Reference constant for the dispatch function
 	 * @return      kIOReturnSuccess on success. See IOReturn.h for error codes.
 	 */
 
@@ -214,7 +215,8 @@ public:
 	    IOUserClientMethodArguments       * arguments,
 	    const IOUserClientMethodDispatch  * dispatch,
 	    OSObject                          * target,
-	    void                              * reference) LOCALONLY;
+	    void                              * reference) LOCALONLY
+	QUEUENAME(IOUserClientQueueExternalMethod);
 
 
     /*!
@@ -269,6 +271,16 @@ public:
 		const IOAddressSegment segments[32],
 		IOMemoryDescriptor ** memory) __attribute__((availability(driverkit,introduced=20.0)));
 
+   /*!
+    * @function CopyClientEntitlements
+    * @abstract Return owning task's entitlements dictionary.
+    * @param    entitlements Dictionary of entitlements given to the owning task. To be released by caller.
+    * @return   kIOReturnSuccess on success. See IOReturn.h for error codes.
+	*/
+	virtual kern_return_t
+	CopyClientEntitlements(OSDictionary ** entitlements) LOCAL;
+
+
 private:
 	virtual kern_return_t
 	_ExternalMethod(
@@ -282,7 +294,8 @@ private:
 		uint64_t                              structureOutputMaximumSize,
 		OSData                             ** structureOutput,
 		IOMemoryDescriptor                  * structureOutputDescriptor,
-        OSAction                            * completion TYPE(IOUserClient::AsyncCompletion)) LOCAL;
+        OSAction                            * completion TYPE(IOUserClient::AsyncCompletion)) LOCAL
+	QUEUENAME(IOUserClientQueueExternalMethod);
 
     virtual void
     KernelCompletion(
@@ -297,11 +310,12 @@ private:
 #undef KERNEL
 #else /* __DOCUMENTATION__ */
 
-/* generated class IOUserClient IOUserClient.iig:173-288 */
+/* generated class IOUserClient IOUserClient.iig:175-301 */
 
 #define IOUserClient_AsyncCompletion_ID            0x728fcc2c879c4ca4ULL
 #define IOUserClient_CopyClientMemoryForType_ID            0xcc81607b851a64ceULL
 #define IOUserClient_CreateMemoryDescriptorFromClient_ID            0x4db5062124fecf48ULL
+#define IOUserClient_CopyClientEntitlements_ID            0x7b871b722cf20a0aULL
 #define IOUserClient__ExternalMethod_ID            0x25cb76ca08158b14ULL
 #define IOUserClient_KernelCompletion_ID            0xc9160ea7b9501339ULL
 
@@ -321,6 +335,9 @@ private:
         uint32_t segmentsCount, \
         const IOAddressSegment * segments, \
         IOMemoryDescriptor ** memory
+
+#define IOUserClient_CopyClientEntitlements_Args \
+        OSDictionary ** entitlements
 
 #define IOUserClient__ExternalMethod_Args \
         uint64_t selector, \
@@ -375,6 +392,11 @@ public:\
         OSDispatchMethod supermethod = NULL);\
 \
     kern_return_t\
+    CopyClientEntitlements(\
+        OSDictionary ** entitlements,\
+        OSDispatchMethod supermethod = NULL);\
+\
+    kern_return_t\
     _ExternalMethod(\
         uint64_t selector,\
         const IOUserClientScalarArray scalarInput,\
@@ -395,6 +417,9 @@ public:\
 \
 protected:\
     /* _Impl methods */\
+\
+    kern_return_t\
+    CopyClientEntitlements_Impl(IOUserClient_CopyClientEntitlements_Args);\
 \
     kern_return_t\
     _ExternalMethod_Impl(IOUserClient__ExternalMethod_Args);\
@@ -426,6 +451,12 @@ public:\
     CreateMemoryDescriptorFromClient_Invoke(const IORPC rpc,\
         OSMetaClassBase * target,\
         CreateMemoryDescriptorFromClient_Handler func);\
+\
+    typedef kern_return_t (*CopyClientEntitlements_Handler)(OSMetaClassBase * target, IOUserClient_CopyClientEntitlements_Args);\
+    static kern_return_t\
+    CopyClientEntitlements_Invoke(const IORPC rpc,\
+        OSMetaClassBase * target,\
+        CopyClientEntitlements_Handler func);\
 \
     typedef kern_return_t (*_ExternalMethod_Handler)(OSMetaClassBase * target, IOUserClient__ExternalMethod_Args);\
     static kern_return_t\

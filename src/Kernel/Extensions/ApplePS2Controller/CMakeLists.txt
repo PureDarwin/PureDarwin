@@ -4,6 +4,7 @@ target_sources(ApplePS2Controller PRIVATE
     ApplePS2KeyboardDevice.cpp
     ApplePS2MouseDevice.cpp
     ApplePS2Keyboard.cpp
+    ApplePS2Mouse.cpp
 )
 
 # ApplePS2Keyboard subclasses IOHIKeyboard (IOKit/hidsystem headers + class

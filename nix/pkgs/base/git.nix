@@ -14,7 +14,7 @@
 
 let
 
-  makeFlags = "uname_S=Darwin uname_R=20.5.0 uname_M=x86_64 uname_O=Darwin prefix=/usr"
+  makeFlags = "uname_S=Darwin uname_R=26.5.0 uname_M=x86_64 uname_O=Darwin prefix=/usr"
     + " NO_GETTEXT=YesPlease NO_TCLTK=YesPlease NO_PYTHON=YesPlease NO_PERL=YesPlease"
     + " NO_ICONV=YesPlease NO_UNIX_SOCKETS=YesPlease NO_OPENSSL=YesPlease NO_EXPAT=YesPlease"
     + " NO_APPLE_COMMON_CRYPTO=YesPlease NO_INSTALL_HARDLINKS=YesPlease"

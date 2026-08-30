@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -64,6 +64,7 @@ typedef struct cqrq_throttle {
 /* classq service class stats request argument */
 typedef struct cqrq_stat_sc {
 	mbuf_svc_class_t        sc;     /* (in) service class */
+	u_int8_t                grp_idx; /* group index */
 	u_int32_t               packets; /* (out) packets enqueued */
 	u_int32_t               bytes;  /* (out) bytes enqueued */
 } cqrq_stat_sc_t;
@@ -102,19 +103,14 @@ enum cqrq;
 
 #if DEBUG || DEVELOPMENT
 extern uint32_t ifclassq_flow_control_adv;
+extern uint32_t ifclassq_congestion_feedback;
 #endif /* DEBUG || DEVELOPMENT */
 
-typedef int (*ifclassq_enq_func)(struct ifclassq *, classq_pkt_t *,
-    boolean_t *);
-typedef void  (*ifclassq_deq_func)(struct ifclassq *, classq_pkt_t *);
-typedef void (*ifclassq_deq_sc_func)(struct ifclassq *, mbuf_svc_class_t,
-    classq_pkt_t *);
-typedef int (*ifclassq_deq_multi_func)(struct ifclassq *, u_int32_t,
-    u_int32_t, classq_pkt_t *, classq_pkt_t *, u_int32_t *, u_int32_t *);
-typedef int (*ifclassq_deq_sc_multi_func)(struct ifclassq *,
-    mbuf_svc_class_t, u_int32_t, u_int32_t, classq_pkt_t *, classq_pkt_t *,
-    u_int32_t *, u_int32_t *);
-typedef int (*ifclassq_req_func)(struct ifclassq *, enum cqrq, void *);
+typedef struct ifcq_sysctl_oid {
+	struct sysctl_oid_list  ifcq_oid_list;   /* oid & properties */
+	struct sysctl_oid       ifcq_oid;        /* sysctl oid storage */
+	char                    ifcq_name[32];   /* name */
+} ifcq_oid_t;
 
 /*
  * Structure defining a queue for a network interface.
@@ -122,6 +118,7 @@ typedef int (*ifclassq_req_func)(struct ifclassq *, enum cqrq, void *);
 struct ifclassq {
 	decl_lck_mtx_data(, ifcq_lock);
 
+	os_refcnt_t     ifcq_refcnt;
 	struct ifnet    *ifcq_ifp;      /* back pointer to interface */
 	u_int32_t       ifcq_len;       /* packet count */
 	u_int32_t       ifcq_maxlen;
@@ -135,6 +132,7 @@ struct ifclassq {
 	u_int32_t       ifcq_bytes;     /* bytes count */
 	u_int32_t       ifcq_pkt_drop_limit;
 	void            *ifcq_disc;     /* for scheduler-specific use */
+	struct pktsched_ops  *ifcq_ops;
 	/*
 	 * ifcq_disc_slots[] represents the leaf classes configured for the
 	 * corresponding discpline/scheduler, ordered by their corresponding
@@ -161,16 +159,20 @@ struct ifclassq {
 
 	/* token bucket regulator */
 	struct tb_regulator     ifcq_tbr;       /* TBR */
+	ifcq_oid_t              ifcq_oid;
 };
 
 /* ifcq_flags */
 #define IFCQF_READY      0x01           /* ifclassq supports discipline */
 #define IFCQF_ENABLED    0x02           /* ifclassq is in use */
 #define IFCQF_TBR        0x04           /* Token Bucket Regulator is in use */
+#define IFCQF_DESTROYED  0x08           /* ifclassq torndown */
+#define IFCQF_LOCKLESS   0x10           /* lockless */
 
 #define IFCQ_IS_READY(_ifcq)            ((_ifcq)->ifcq_flags & IFCQF_READY)
 #define IFCQ_IS_ENABLED(_ifcq)          ((_ifcq)->ifcq_flags & IFCQF_ENABLED)
 #define IFCQ_TBR_IS_ENABLED(_ifcq)      ((_ifcq)->ifcq_flags & IFCQF_TBR)
+#define IFCQ_IS_DESTROYED(_ifcq)        ((_ifcq)->ifcq_flags & IFCQF_DESTROYED)
 
 /* classq enqueue return value */
 /* packet has to be dropped */
@@ -186,6 +188,8 @@ struct ifclassq {
 /* packet has been compressed with another one */
 #define CLASSQEQ_COMPRESSED     4
 
+#define CLASSQEQ_CONGESTED      5
+
 /* interface event argument for CLASSQRQ_EVENT */
 typedef enum cqev {
 	CLASSQ_EV_INIT = 0,
@@ -197,6 +201,13 @@ typedef enum cqev {
 } cqev_t;
 #endif /* BSD_KERNEL_PRIVATE */
 
+#define IF_CLASSQ_DEF                   0x0
+#define IF_CLASSQ_LOW_LATENCY           0x1
+#define IF_CLASSQ_L4S                   0x2
+#define IF_DEFAULT_GRP                  0x4
+
+#define IF_CLASSQ_ALL_GRPS              UINT8_MAX
+
 #include <net/classq/classq.h>
 #include <net/pktsched/pktsched_fq_codel.h>
 
@@ -206,10 +217,13 @@ extern "C" {
 struct if_ifclassq_stats {
 	u_int32_t       ifqs_len;
 	u_int32_t       ifqs_maxlen;
+	uint64_t        ifqs_doorbells;
 	struct pktcntr  ifqs_xmitcnt;
 	struct pktcntr  ifqs_dropcnt;
 	u_int32_t       ifqs_scheduler;
-	struct fq_codel_classstats      ifqs_fq_codel_stats;
+	union {
+		struct fq_codel_classstats      ifqs_fq_codel_stats;
+	};
 } __attribute__((aligned(8)));
 
 #ifdef __cplusplus
@@ -243,12 +257,12 @@ struct if_ifclassq_stats {
 /*
  * For ifclassq operations
  */
-#define IFCQ_TBR_DEQUEUE(_ifcq, _p) do {                                \
-	ifclassq_tbr_dequeue(_ifcq, _p);                                \
+#define IFCQ_TBR_DEQUEUE(_ifcq, _p, _idx) do {                      \
+	ifclassq_tbr_dequeue(_ifcq, _p, _idx);                          \
 } while (0)
 
-#define IFCQ_TBR_DEQUEUE_SC(_ifcq, _sc, _p) do {                        \
-	ifclassq_tbr_dequeue_sc(_ifcq, _sc, _p);                        \
+#define IFCQ_TBR_DEQUEUE_SC(_ifcq, _sc, _p, _idx) do {                        \
+	ifclassq_tbr_dequeue_sc(_ifcq, _sc, _p, _idx);                        \
 } while (0)
 
 #define IFCQ_LEN(_ifcq)         ((_ifcq)->ifcq_len)
@@ -277,39 +291,38 @@ struct if_ifclassq_stats {
 
 #define IFCQ_PKT_DROP_LIMIT(_ifcq)      ((_ifcq)->ifcq_pkt_drop_limit)
 
-extern int ifclassq_setup(struct ifnet *, u_int32_t, boolean_t);
-extern void ifclassq_teardown(struct ifnet *);
+extern int ifclassq_setup(struct ifclassq *, struct ifnet *, uint32_t);
+extern int ifclassq_change(struct ifclassq *ifq, uint32_t model);
+extern void ifclassq_teardown(struct ifclassq *);
 extern int ifclassq_pktsched_setup(struct ifclassq *);
 extern void ifclassq_set_maxlen(struct ifclassq *, u_int32_t);
 extern u_int32_t ifclassq_get_maxlen(struct ifclassq *);
 extern int ifclassq_get_len(struct ifclassq *, mbuf_svc_class_t,
-    u_int32_t *, u_int32_t *);
+    u_int8_t, u_int32_t *, u_int32_t *);
 extern errno_t ifclassq_enqueue(struct ifclassq *, classq_pkt_t *,
     classq_pkt_t *, u_int32_t, u_int32_t, boolean_t *);
-extern errno_t ifclassq_dequeue(struct ifclassq *, u_int32_t, u_int32_t,
-    classq_pkt_t *, classq_pkt_t *, u_int32_t *, u_int32_t *);
-extern errno_t ifclassq_dequeue_sc(struct ifclassq *, mbuf_svc_class_t,
+extern errno_t ifclassq_dequeue(struct ifclassq *, mbuf_svc_class_t,
     u_int32_t, u_int32_t, classq_pkt_t *, classq_pkt_t *, u_int32_t *,
-    u_int32_t *);
-extern void *ifclassq_poll(struct ifclassq *, classq_pkt_type_t *);
-extern void *ifclassq_poll_sc(struct ifclassq *, mbuf_svc_class_t,
-    classq_pkt_type_t *);
-extern void ifclassq_update(struct ifclassq *, cqev_t);
+    u_int32_t *, u_int8_t);
+extern void ifclassq_update(struct ifclassq *, cqev_t, bool);
 extern int ifclassq_attach(struct ifclassq *, u_int32_t, void *);
 extern void ifclassq_detach(struct ifclassq *);
-extern int ifclassq_getqstats(struct ifclassq *, u_int32_t,
+extern int ifclassq_getqstats(struct ifclassq *, u_int8_t, u_int32_t,
     void *, u_int32_t *);
-extern const char *ifclassq_ev2str(cqev_t);
+extern const char *__null_terminated ifclassq_ev2str(cqev_t);
 extern int ifclassq_tbr_set(struct ifclassq *, struct tb_profile *, boolean_t);
-extern void ifclassq_tbr_dequeue(struct ifclassq *, classq_pkt_t *);
+extern void ifclassq_tbr_get(struct ifclassq *, u_int32_t *, u_int64_t *, u_int64_t *);
+extern void ifclassq_tbr_dequeue(struct ifclassq *, classq_pkt_t *, u_int8_t);
 extern void ifclassq_tbr_dequeue_sc(struct ifclassq *, mbuf_svc_class_t,
-    classq_pkt_t *);
-extern void ifclassq_calc_target_qdelay(struct ifnet *ifp,
-    u_int64_t *if_target_qdelay);
-extern void ifclassq_calc_update_interval(u_int64_t *update_interval);
+    classq_pkt_t *, u_int8_t);
 extern void ifclassq_set_packet_metadata(struct ifclassq *ifq,
     struct ifnet *ifp, classq_pkt_t *p);
-extern void ifclassq_reap_caches(boolean_t);
+extern struct ifclassq *ifclassq_alloc(void);
+extern void ifclassq_retain(struct ifclassq *);
+extern void ifclassq_release(struct ifclassq **);
+extern int ifclassq_setup_group(struct ifclassq *ifcq, uint8_t grp_idx,
+    uint8_t flags);
+extern int ifclassq_request(struct ifclassq *, enum cqrq, void *, bool);
 
 #endif /* BSD_KERNEL_PRIVATE */
 #endif /* PRIVATE */

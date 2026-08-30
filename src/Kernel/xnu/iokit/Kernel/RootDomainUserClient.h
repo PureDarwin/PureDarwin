@@ -42,7 +42,7 @@
 #include <IOKit/pwr_mgt/IOPMLibDefs.h>
 
 
-class RootDomainUserClient : public IOUserClient
+class RootDomainUserClient : public IOUserClient2022
 {
 	OSDeclareDefaultStructors(RootDomainUserClient);
 
@@ -50,6 +50,7 @@ class RootDomainUserClient : public IOUserClient
 private:
 	IOPMrootDomain *    fOwner;
 	task_t              fOwningTask;
+	bool                fAssertionLogNotificationPortRegistered;
 
 	IOReturn            secureSleepSystem( uint32_t *return_code );
 
@@ -69,15 +70,25 @@ private:
 
 	IOReturn            secureGetSystemSleepType( uint32_t *sleepType, uint32_t *sleepTimer);
 
+	IOReturn            secureAttemptIdleSleepAbort( uint32_t *outReverted);
+
+	IOReturn            secureSetLockdownModeHibernation( uint32_t status);
+
+	IOReturn            secureGetAssertionLog(IOPMAssertionLogData *outLog);
+	IOReturn            secureSetAssertionLogNotificationThreshold(uint64_t threshold);
+	IOReturn            secureSetAssertionLogNotificationPort(mach_port_t port);
+
 public:
 
 	virtual IOReturn clientClose( void ) APPLE_KEXT_OVERRIDE;
 
-	virtual IOReturn externalMethod( uint32_t selector,
-	    IOExternalMethodArguments * arguments,
-	    IOExternalMethodDispatch * dispatch,
-	    OSObject * target,
-	    void * reference ) APPLE_KEXT_OVERRIDE;
+	virtual IOReturn externalMethod(uint32_t selector,
+	    IOExternalMethodArgumentsOpaque * args) APPLE_KEXT_OVERRIDE;
+
+	virtual IOReturn registerNotificationPort(mach_port_t port,
+	    UInt32 type, UInt32 refCon) APPLE_KEXT_OVERRIDE;
+
+	static IOReturn externalMethodDispatched(OSObject * target, void * reference, IOExternalMethodArguments * args);
 
 	virtual bool start( IOService * provider ) APPLE_KEXT_OVERRIDE;
 

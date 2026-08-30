@@ -63,6 +63,7 @@
 #define RESOURCE_TYPE_MEMORY    3
 #define RESOURCE_TYPE_IO        4
 #define RESOURCE_TYPE_THREADS   5
+#define RESOURCE_TYPE_PORTS     6
 
 /* RESOURCE_TYPE_CPU flavors */
 #define FLAVOR_CPU_MONITOR              1
@@ -134,21 +135,24 @@
 	((subcode) & 0xFFFFFULL)
 
 /* RESOURCE_TYPE_MEMORY flavors */
-#define FLAVOR_HIGH_WATERMARK   1
+#define FLAVOR_HIGH_WATERMARK   1       /* Indicates that the exception is due to memory limit warning */
+#define FLAVOR_DIAG_MEMLIMIT    2       /* Indicates that the exception is due to a preset diagnostics memory consumption threshold */
+#define FLAVOR_CONCLAVE_LIMIT   3       /* Indicates that the exception is due to the hard conclave memory limit */
 
 /*
  * RESOURCE_TYPE_MEMORY / FLAVOR_HIGH_WATERMARK
  * exception code & subcode.
  *
  * This is sent by the kernel when a task crosses its high
- * watermark memory limit.
+ * watermark memory limit or when a preset memory consumption
+ * threshold is crossed.
  *
  * code:
  * +------------------------------------------------+
  * |[63:61] RESOURCE |[60:58] FLAVOR_HIGH_ |[57:32] |
  * |_TYPE_MEMORY     |WATERMARK            |Unused  |
  * +------------------------------------------------+
- * |                         | [12:0] HWM limit (MB)|
+ * |[31:17] Unused | [16] Active | [15:0] HWM limit |
  * +------------------------------------------------+
  *
  * subcode:
@@ -158,8 +162,13 @@
  *
  */
 
+#define EXC_RESOURCE_HWM_LIMIT_MASK  0xFFFFULL     /* Bits 0-15 */
+#define EXC_RESOURCE_HWM_ACTIVE_BIT (0x1ULL << 16) /* Bit 16 */
+
 #define EXC_RESOURCE_HWM_DECODE_LIMIT(code) \
-	((code) & 0x1FFFULL)
+	((code) & EXC_RESOURCE_HWM_LIMIT_MASK)
+#define EXC_RESOURCE_HWM_IS_ACTIVE(code) \
+	(!!((code) & EXC_RESOURCE_HWM_ACTIVE_BIT))
 
 /* RESOURCE_TYPE_IO flavors */
 #define FLAVOR_IO_PHYSICAL_WRITES               1
@@ -209,6 +218,34 @@
 /* RESOURCE_TYPE_THREADS flavors */
 #define FLAVOR_THREADS_HIGH_WATERMARK 1
 
+/* RESOURCE_TYPE_PORTS flavors */
+#define FLAVOR_PORT_SPACE_FULL 1
+
+/*
+ * RESOURCE_TYPE_PORTS exception code & subcode.
+ *
+ * This is sent by the kernel when the process is
+ * leaking ipc ports and has filled its port space
+ *
+ * code:
+ * +-----------------------------------------------+
+ * |[63:61] RESOURCE |[60:58] FLAVOR_     |[57:32] |
+ * |_TYPE_PORTS      |PORT_SPACE_FULL      |Unused  |
+ * +-----------------------------------------------+
+ * | [31:24] Unused          | [23:0] # of ports   |
+ * |                         | allocated           |
+ * +-----------------------------------------------+
+ *
+ * subcode:
+ * +-----------------------------------------------+
+ * |                         | Unused              |
+ * |                         |                     |
+ * +-----------------------------------------------+
+ *
+ */
+#define EXC_RESOURCE_THREADS_DECODE_PORTS(code) \
+	((code) & 0xFFFFFFULL)
+
 #ifdef KERNEL
 
 /* EXC_RESOURCE type and flavor encoding macros */
@@ -233,7 +270,7 @@
 
 /* RESOURCE_TYPE_MEMORY::FLAVOR_HIGH_WATERMARK specific encoding macros */
 #define EXC_RESOURCE_HWM_ENCODE_LIMIT(code, num) \
-	((code) |= ((uint64_t)(num) & 0x1FFFULL))
+	((code) |= ((uint64_t)(num) & EXC_RESOURCE_HWM_LIMIT_MASK))
 
 /* RESOURCE_TYPE_IO::FLAVOR_IO_PHYSICAL_WRITES/FLAVOR_IO_LOGICAL_WRITES specific encoding macros */
 #define EXC_RESOURCE_IO_ENCODE_INTERVAL(code, interval) \
@@ -246,6 +283,10 @@
 /* RESOURCE_TYPE_THREADS specific encoding macros */
 #define EXC_RESOURCE_THREADS_ENCODE_THREADS(code, threads) \
 	((code) |= (((uint64_t)(threads) & 0x7FFFULL)))
+
+/* RESOURCE_TYPE_PORTS::FLAVOR_PORT_SPACE_FULL specific encoding macros */
+#define EXC_RESOURCE_PORTS_ENCODE_PORTS(code, num) \
+	((code) |= ((uint64_t)(num) & 0xFFFFFFULL))
 
 #endif /* KERNEL */
 

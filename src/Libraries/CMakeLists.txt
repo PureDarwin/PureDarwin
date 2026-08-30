@@ -1,3 +1,8 @@
+# Left 0 by xnu's cdefs.h (no PLATFORM_* defined), which asm-renames 64-bit calls
+# to $UNIX2003 symbols that do not exist. Userland only: the kernel's own cdefs.h
+# KERNEL branch defines it as 0 and would collide.
+add_compile_definitions(__DARWIN_ONLY_UNIX_CONFORMANCE=1)
+
 foreach(_puredarwin_library_dir
     AvailabilityVersions
     architecture

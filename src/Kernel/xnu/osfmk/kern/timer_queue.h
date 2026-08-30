@@ -39,27 +39,6 @@
 #include <kern/mpqueue.h>
 #include <kern/queue.h>
 
-/* Kernel trace events associated with timers and timer queues */
-#define DECR_TRAP_LATENCY       MACHDBG_CODE(DBG_MACH_EXCP_DECI, 0)
-#define DECR_SET_DEADLINE       MACHDBG_CODE(DBG_MACH_EXCP_DECI, 1)
-#define DECR_TIMER_CALLOUT      MACHDBG_CODE(DBG_MACH_EXCP_DECI, 2)
-#define DECR_PM_DEADLINE        MACHDBG_CODE(DBG_MACH_EXCP_DECI, 3)
-#define DECR_TIMER_MIGRATE      MACHDBG_CODE(DBG_MACH_EXCP_DECI, 4)
-#if defined(i386) || defined(x86_64)
-#define DECR_RDHPET             MACHDBG_CODE(DBG_MACH_EXCP_DECI, 5)
-#define DECR_SET_TSC_DEADLINE   MACHDBG_CODE(DBG_MACH_EXCP_DECI, 6)
-#define DECR_SET_APIC_DEADLINE  MACHDBG_CODE(DBG_MACH_EXCP_DECI, 16)
-#endif
-#define DECR_TIMER_ENTER        MACHDBG_CODE(DBG_MACH_EXCP_DECI, 7)
-#define DECR_TIMER_CANCEL       MACHDBG_CODE(DBG_MACH_EXCP_DECI, 8)
-#define DECR_TIMER_QUEUE        MACHDBG_CODE(DBG_MACH_EXCP_DECI, 9)
-#define DECR_TIMER_EXPIRE       MACHDBG_CODE(DBG_MACH_EXCP_DECI,10)
-#define DECR_TIMER_ASYNC_DEQ    MACHDBG_CODE(DBG_MACH_EXCP_DECI,11)
-#define DECR_TIMER_UPDATE       MACHDBG_CODE(DBG_MACH_EXCP_DECI,12)
-#define DECR_TIMER_ESCALATE     MACHDBG_CODE(DBG_MACH_EXCP_DECI,13)
-#define DECR_TIMER_OVERDUE      MACHDBG_CODE(DBG_MACH_EXCP_DECI,14)
-#define DECR_TIMER_RESCAN       MACHDBG_CODE(DBG_MACH_EXCP_DECI,15)
-
 /*
  *	Invoked by kernel, implemented by platform.
  */
@@ -151,8 +130,9 @@ extern uint64_t         timer_queue_expire_with_options(
 	boolean_t);
 
 /* Shutdown a timer queue and reassign existing activities */
-extern void             timer_queue_shutdown(
-	mpqueue_head_t          *queue);
+extern void             timer_queue_shutdown(int target_cpu,
+    mpqueue_head_t          *queue,
+    mpqueue_head_t          *new_queue);
 
 /* Move timer requests from one queue to another */
 extern int              timer_queue_migrate(
@@ -185,7 +165,7 @@ extern void             timer_queue_trace(
 extern void             timer_queue_trace_cpu(int cpu);
 
 extern uint64_t         timer_sysctl_get(int oid);
-extern int              timer_sysctl_set(int oid, uint64_t value);
+extern kern_return_t    timer_sysctl_set(int oid, uint64_t value);
 
 #endif  /* MACH_KERNEL_PRIVATE */
 

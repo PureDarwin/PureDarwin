@@ -246,11 +246,30 @@ bool ApplePS2Controller::start(IOService * provider)
   writeCommandPort(kCP_GetCommandByte);
   commandByte  =  readDataPort(kDT_Keyboard);
   commandByte &= ~(kCB_EnableMouseIRQ | kCB_DisableMouseClock);
+  //
+  // The reset below puts the keyboard back in set 2, so the controller has to
+  // translate for ApplePS2Keyboard's set-1 decoder.
+  //
+  commandByte |= kCB_TranslateMode;
   writeCommandPort(kCP_SetCommandByte);
   writeDataPort(commandByte);
 
   writeDataPort(kDP_SetDefaultsAndDisable);
   readDataPort(kDT_Keyboard);       // (discard acknowledge; success irrelevant)
+
+  //
+  // An 8042 without translation just drops the bit, so ask the keyboard for
+  // set 1 directly instead.
+  //
+  writeCommandPort(kCP_GetCommandByte);
+  if ((readDataPort(kDT_Keyboard) & kCB_TranslateMode) == 0)
+  {
+    IOLog("ApplePS2Controller: no translation, selecting scan code set 1\n");
+    writeDataPort(kDP_GetSetKeyboardASCs);
+    readDataPort(kDT_Keyboard);     // (discard acknowledge)
+    writeDataPort(1);
+    readDataPort(kDT_Keyboard);     // (discard acknowledge)
+  }
 
   writeCommandPort(kCP_TransmitToMouse);
   writeDataPort(kDP_SetDefaultsAndDisable);
@@ -322,6 +341,17 @@ bool ApplePS2Controller::start(IOService * provider)
   //
 
   provider->joinPMtree(this);
+
+  //
+  // Both devices are still disabled, so nothing can arrive until a driver
+  // enables one; the IRQs have to be on in the command byte before it does.
+  //
+
+  writeCommandPort(kCP_GetCommandByte);
+  commandByte  = readDataPort(kDT_Keyboard);
+  commandByte |= (kCB_EnableKeyboardIRQ | kCB_EnableMouseIRQ);
+  writeCommandPort(kCP_SetCommandByte);
+  writeDataPort(commandByte);
 
   //
   // Create the keyboard nub and the mouse nub. The keyboard and mouse drivers

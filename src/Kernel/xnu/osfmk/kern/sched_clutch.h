@@ -30,44 +30,32 @@
 #define _KERN_SCHED_CLUTCH_H_
 
 #include <kern/sched.h>
-#include <machine/atomic.h>
 #include <kern/priority_queue.h>
-#include <kern/thread_group.h>
 #include <kern/bits.h>
+#include <kern/kern_types.h>
+#include <kern/sched_common.h>
+
+#if !SCHED_TEST_HARNESS
+
+#include <machine/atomic.h>
+#include <kern/thread_group.h>
+
+#endif /* !SCHED_TEST_HARNESS */
 
 #if CONFIG_SCHED_CLUTCH
 
 /*
- * Clutch ordering based on thread group flags (specified
- * by the thread grouping mechanism). These properties
- * define a thread group specific priority boost.
- *
- * The current implementation gives a slight boost to
- * HIGH & MED thread groups which effectively deprioritizes
- * daemon thread groups which are marked "Efficient" on AMP
- * systems.
- */
-__enum_decl(sched_clutch_tg_priority_t, uint8_t, {
-	SCHED_CLUTCH_TG_PRI_LOW           = 0,
-	SCHED_CLUTCH_TG_PRI_MED           = 1,
-	SCHED_CLUTCH_TG_PRI_HIGH          = 2,
-	SCHED_CLUTCH_TG_PRI_MAX           = 3,
-});
-
-/*
- * For the current implementation, bound threads are not managed
- * in the clutch hierarchy. This helper macro is used to indicate
- * if the thread should be in the hierarchy.
+ * Threads hard-bound to specific processors are not managed in
+ * the Clutch hierarchy. This helper macro is used to indicate
+ * whether a thread should be enqueued in the hierarchy.
  */
 #define SCHED_CLUTCH_THREAD_ELIGIBLE(thread)    ((thread->bound_processor) == PROCESSOR_NULL)
 
 #if CONFIG_SCHED_EDGE
-#define SCHED_CLUTCH_THREAD_CLUSTER_BOUND(thread)       ((thread->sched_flags & (TH_SFLAG_ECORE_ONLY | TH_SFLAG_PCORE_ONLY)) != 0)
-#define SCHED_CLUTCH_THREAD_CLUSTER_BOUND_SOFT(thread)  ((thread->sched_flags & TH_SFLAG_BOUND_SOFT) != 0)
+#define SCHED_CLUTCH_THREAD_PSET_BOUND(thread)       (thread->th_bound_pset_id != THREAD_BOUND_PSET_NONE)
 
 #else /* CONFIG_SCHED_EDGE */
-#define SCHED_CLUTCH_THREAD_CLUSTER_BOUND(thread)       (0)
-#define SCHED_CLUTCH_THREAD_CLUSTER_BOUND_SOFT(thread)  (0)
+#define SCHED_CLUTCH_THREAD_PSET_BOUND(thread)       (0)
 #endif /* CONFIG_SCHED_EDGE */
 
 /*
@@ -87,10 +75,14 @@ typedef struct sched_clutch_bucket_runq *sched_clutch_bucket_runq_t;
  *
  * The scheduler clutch hierarchy is protected by a combination of
  * atomics and pset lock.
- * - All fields protected by the pset lock are annotated with (P)
- * - All fields updated using atomics are annotated with (A)
- * - All fields that are unprotected and are not updated after
- *   initialization are annotated with (I)
+ * See the legend of field annotations below:
+ *
+ * (P): Reads/writes protected by the pset lock.
+ * (A): Reads/writes done atomically.
+ * (I): Safe to read unprotected because values are not updated
+ *      after initialization.
+ * (W): Reads/writes done atomically, but writes are only
+ *      published with the pset lock held.
  */
 
 /*
@@ -128,6 +120,24 @@ struct sched_clutch_root_bucket {
 };
 typedef struct sched_clutch_root_bucket *sched_clutch_root_bucket_t;
 
+#if CONFIG_SCHED_EDGE
+
+struct sched_edge_steal_silo {
+	/*
+	 * (P) priority queue per QoS bucket, containing runnable
+	 * clutch buckets enqueued in the owning clutch hierarchy
+	 * and recommended to the same preferred pset (may be
+	 * different from the clutch hierarchy where the clutch
+	 * buckets are enqueued).
+	 */
+	struct priority_queue_sched_max sess_steal_queues[TH_BUCKET_SCHED_MAX];
+	/* (W) bitmap of which steal queues contain threads */
+	bitmap_t _Atomic                sess_populated_steal_queues[BITMAP_LEN(TH_BUCKET_SCHED_MAX)];
+};
+typedef struct sched_edge_steal_silo *sched_edge_steal_silo_t;
+
+#endif /* CONFIG_SCHED_EDGE */
+
 /*
  * struct sched_clutch_root
  *
@@ -146,8 +156,12 @@ struct sched_clutch_root {
 	uint16_t                        scr_thr_count;
 	/* (P) root level urgency; represents the urgency of the whole hierarchy for pre-emption purposes */
 	int16_t                         scr_urgency;
+#if CONFIG_SCHED_EDGE
+	/* (P) runnable shared resource load enqueued in this cluster/root hierarchy */
+	uint16_t                        scr_shared_rsrc_load_runnable[CLUSTER_SHARED_RSRC_TYPE_COUNT];
+#endif /* CONFIG_SCHED_EDGE */
 
-	uint32_t                        scr_cluster_id;
+	pset_id_t                       scr_pset_id;
 	/* (I) processor set this hierarchy belongs to */
 	processor_set_t                 scr_pset;
 	/*
@@ -156,12 +170,20 @@ struct sched_clutch_root {
 	 */
 	queue_head_t                    scr_clutch_buckets;
 
+#if CONFIG_SCHED_EDGE
 	/*
-	 * (P) priority queue of all runnable foreign buckets in this hierarchy;
-	 * used for tracking thread groups which need to be migrated when
-	 * psets are available or rebalancing threads on CPU idle.
+	 * (P) silo per pset recommendation, consisting of steal (priority)
+	 * queues per QoS bucket that track runnable clutch buckets enqueued
+	 * in this hierarchy. This allows other psets to steal threads of
+	 * specific recommendations/QoSes from this pset in a fine-grained
+	 * manner, respecting the Edge matrix.
 	 */
-	struct priority_queue_sched_max scr_foreign_buckets;
+	struct sched_edge_steal_silo    scr_steal_silos[MAX_PSETS];
+	/* (W) bitmap of which steal silos contain threads */
+	bitmap_t _Atomic                scr_populated_steal_silos[BITMAP_LEN(MAX_PSETS)];
+	/* (W) bitmap of which pset recommendations can migrate here */
+	bitmap_t _Atomic                scr_incoming_migration_allowed[TH_BUCKET_SCHED_MAX][BITMAP_LEN(MAX_PSETS)];
+#endif /* CONFIG_SCHED_EDGE */
 
 	/* Root level bucket management */
 
@@ -198,24 +220,10 @@ struct sched_clutch;
  * Used for maintaining clutch bucket used and blocked time. The
  * values are used for calculating the interactivity score for the
  * clutch bucket.
- *
- * Since the CPU used/blocked calculation uses wide atomics, the data
- * types used are different based on the platform.
  */
-
-#if __LP64__
-
 #define CLUTCH_CPU_DATA_MAX             (UINT64_MAX)
 typedef uint64_t                        clutch_cpu_data_t;
 typedef unsigned __int128               clutch_cpu_data_wide_t;
-
-#else /* __LP64__ */
-
-#define CLUTCH_CPU_DATA_MAX             (UINT32_MAX)
-typedef uint32_t                        clutch_cpu_data_t;
-typedef uint64_t                        clutch_cpu_data_wide_t;
-
-#endif /* __LP64__ */
 
 typedef union sched_clutch_bucket_cpu_data {
 	struct {
@@ -242,8 +250,8 @@ typedef union sched_clutch_bucket_cpu_data {
  */
 struct sched_clutch_bucket {
 #if CONFIG_SCHED_EDGE
-	/* (P) flag to indicate if the bucket is a foreign bucket */
-	bool                            scb_foreign;
+	/* (P) preferred pset id when the clutch_bucket was enqueued */
+	pset_id_t                       scb_preferred_pset_when_enqueued;
 #endif /* CONFIG_SCHED_EDGE */
 	/* (I) bucket for the clutch_bucket */
 	uint8_t                         scb_bucket;
@@ -254,7 +262,7 @@ struct sched_clutch_bucket {
 
 	/* Pointer to the clutch bucket group this clutch bucket belongs to */
 	struct sched_clutch_bucket_group *scb_group;
-	/* (A) pointer to the root of the hierarchy this bucket is in */
+	/* (P) pointer to the root of the hierarchy this bucket is in */
 	struct sched_clutch_root        *scb_root;
 	/* (P) priority queue of threads based on their promoted/base priority */
 	struct priority_queue_sched_max scb_clutchpri_prioq;
@@ -268,8 +276,8 @@ struct sched_clutch_bucket {
 	/* (P) queue of threads for timesharing purposes */
 	queue_head_t                    scb_thread_timeshare_queue;
 #if CONFIG_SCHED_EDGE
-	/* (P) linkage for all "foreign" clutch buckets in the root clutch */
-	struct priority_queue_entry_sched     scb_foreignlink;
+	/* (P) linkage for clutch_bucket in its steal_queue */
+	struct priority_queue_entry_sched     scb_stealqlink;
 #endif /* CONFIG_SCHED_EDGE */
 };
 typedef struct sched_clutch_bucket *sched_clutch_bucket_t;
@@ -285,9 +293,7 @@ typedef union sched_clutch_counter_time {
 		uint64_t                scct_count;
 		uint64_t                scct_timestamp;
 	};
-#if __LP64__
 	unsigned __int128               scct_packed;
-#endif /* __LP64__ */
 } __attribute__((aligned(16))) sched_clutch_counter_time_t;
 
 /*
@@ -305,15 +311,11 @@ struct sched_clutch_bucket_group {
 	uint32_t _Atomic                scbg_timeshare_tick;
 	/* (A) priority shifts for threads in the clutch_bucket_group */
 	uint32_t _Atomic                scbg_pri_shift;
-	/* (A) preferred cluster ID for clutch bucket */
-	uint32_t _Atomic                scbg_preferred_cluster;
+	/* (A) preferred pset ID for clutch bucket */
+	pset_id_t _Atomic               scbg_preferred_pset;
 	/* (I) clutch to which this clutch bucket_group belongs */
 	struct sched_clutch             *scbg_clutch;
-#if !__LP64__
-	/* Lock for synchronizing updates to blocked data (only on platforms without 128-atomics) */
-	lck_spin_t                      scbg_stats_lock;
-#endif /* !__LP64__ */
-	/* (A/L depending on arch) holds blcked timestamp and runnable/running count */
+	/* (A) holds blocked timestamp and runnable/running count */
 	sched_clutch_counter_time_t     scbg_blocked_data;
 	/* (P/A depending on scheduler) holds pending timestamp and thread count */
 	sched_clutch_counter_time_t     scbg_pending_data;
@@ -321,19 +323,8 @@ struct sched_clutch_bucket_group {
 	sched_clutch_counter_time_t     scbg_interactivity_data;
 	/* (A) CPU usage information for the clutch bucket group */
 	sched_clutch_bucket_cpu_data_t  scbg_cpu_data;
-
-	/*
-	 * Edge Scheduler Optimization
-	 *
-	 * Currently the array is statically sized based on MAX_PSETS.
-	 * If that definition does not exist (or has a large theoretical
-	 * max value), this could be a dynamic array based on ml_topology_info*
-	 * routines.
-	 *
-	 * <Edge Multi-cluster Support Needed>
-	 */
 	/* Storage for all clutch buckets for a thread group at scbg_bucket */
-	struct sched_clutch_bucket      scbg_clutch_buckets[MAX_PSETS];
+	struct sched_clutch_bucket      *scbg_clutch_buckets;
 };
 typedef struct sched_clutch_bucket_group *sched_clutch_bucket_group_t;
 
@@ -356,10 +347,6 @@ struct sched_clutch {
 	 * supports thread_group based grouping.
 	 */
 	union {
-		/* (A) priority specified by the thread grouping mechanism */
-		sched_clutch_tg_priority_t _Atomic sc_tg_priority;
-	};
-	union {
 		/* (I) Pointer to thread group */
 		struct thread_group     *sc_tg;
 	};
@@ -375,7 +362,7 @@ void sched_clutch_destroy(sched_clutch_t);
 
 /* Clutch thread membership management */
 void sched_clutch_thread_clutch_update(thread_t, sched_clutch_t, sched_clutch_t);
-uint32_t sched_edge_thread_preferred_cluster(thread_t);
+pset_id_t sched_edge_thread_preferred_pset(thread_t);
 
 /* Clutch timesharing stats management */
 uint32_t sched_clutch_thread_run_bucket_incr(thread_t, sched_bucket_t);
@@ -390,28 +377,54 @@ uint32_t sched_clutch_root_count(sched_clutch_root_t);
 extern sched_clutch_t sched_clutch_for_thread(thread_t);
 extern sched_clutch_t sched_clutch_for_thread_group(struct thread_group *);
 
+#if DEVELOPMENT || DEBUG
+
+extern kern_return_t sched_clutch_thread_group_cpu_time_for_thread(thread_t thread, int sched_bucket, uint64_t *cpu_stats);
+
+#endif /* DEVELOPMENT || DEBUG */
+
 #if CONFIG_SCHED_EDGE
 
 /*
  * Getter and Setter for Edge configuration. Used by CLPC to affect thread migration behavior.
  */
-void sched_edge_matrix_get(sched_clutch_edge *edge_matrix, bool *edge_request_bitmap, uint64_t flags, uint64_t matrix_order);
-void sched_edge_matrix_set(sched_clutch_edge *edge_matrix, bool *edge_changes_bitmap, uint64_t flags, uint64_t matrix_order);
-void sched_edge_tg_preferred_cluster_change(struct thread_group *tg, uint32_t *tg_bucket_preferred_cluster, sched_perfcontrol_preferred_cluster_options_t options);
+void sched_edge_matrix_get(sched_clutch_edge *edge_matrix, bool *edge_request_bitmap, uint64_t flags, uint64_t num_psets);
+void sched_edge_matrix_set(sched_clutch_edge *edge_matrix, bool *edge_changes_bitmap, uint64_t flags, uint64_t num_psets);
+void sched_edge_tg_preferred_pset_change(struct thread_group *tg, pset_id_t tg_bucket_preferred_pset[TH_BUCKET_SCHED_MAX], sched_perfcontrol_preferred_cluster_options_t options);
 
-uint16_t sched_edge_cluster_cumulative_count(sched_clutch_root_t root_clutch, sched_bucket_t bucket);
-
-#if DEVELOPMENT || DEBUG
 /*
- * Sysctl support for dynamically configuring edge properties.
- *
- * <Edge Multi-cluster Support Needed>
+ * Iterate through the entire edge matrix by src pset, dst pset, and scheduling
+ * bucket (dimension: num_psets X num_psets X TH_BUCKET_SCHED_MAX)
  */
-kern_return_t sched_edge_sysctl_configure_e_to_p(uint64_t);
-kern_return_t sched_edge_sysctl_configure_p_to_e(uint64_t);
-sched_clutch_edge sched_edge_e_to_p(void);
-sched_clutch_edge sched_edge_p_to_e(void);
-#endif /* DEVELOPMENT || DEBUG */
+#define sched_edge_matrix_iterate(src_id, dst_id, bucket, ...) \
+	for (pset_id_t src_id = 0; src_id < sched_num_psets; src_id++) { \
+	    for (pset_id_t dst_id = 0; dst_id < sched_num_psets; dst_id++) { \
+	        for (sched_bucket_t bucket = 0; bucket < TH_BUCKET_SCHED_MAX; bucket++) { \
+	            __VA_ARGS__; \
+	        } \
+	    } \
+	}
+
+uint16_t sched_edge_pset_cumulative_count(sched_clutch_root_t root_clutch, sched_bucket_t bucket);
+uint16_t sched_edge_shared_rsrc_runnable_load(sched_clutch_root_t root_clutch, cluster_shared_rsrc_type_t load_type);
+
+/*
+ * sched_edge_search_order_weight_then_locality_cmp()
+ *
+ * Search order that prioritizes outgoing edges with a lower
+ * migration weight, then breaks ties with die-locality followed
+ * by least pset id.
+ */
+extern int (*sched_edge_search_order_weight_then_locality_cmp)(const void *a, const void *b);
+
+/*
+ * Used to keep stir-the-pot state up-to-date for the current
+ * processor, as new threads come on-core.
+ */
+extern void sched_edge_stir_the_pot_update_registry_state(thread_t thread, bool thread_is_new);
+extern void sched_edge_stir_the_pot_clear_registry_entry(void);
+
+extern void sched_edge_update_running_foreign_state(processor_t processor, thread_t thread);
 
 #endif /* CONFIG_SCHED_EDGE */
 

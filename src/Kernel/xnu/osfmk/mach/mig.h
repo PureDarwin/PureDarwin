@@ -128,6 +128,38 @@ typedef struct mig_subsystem {
 	    routine[1];                                         /* Routine descriptor array */
 } *mig_subsystem_t;
 
+#ifdef XNU_KERNEL_PRIVATE
+/* KernelServer MIG routine/subsystem types */
+typedef void    (*mig_stub_kern_routine_t) (mach_msg_header_t *InHeadP, void *InDataP,
+    mach_msg_max_trailer_t *InTrailerP, mach_msg_header_t *OutHeadP, void *OutDataP);
+
+typedef mig_stub_kern_routine_t mig_kern_routine_t;
+
+typedef mig_kern_routine_t (*mig_kern_server_routine_t) (mach_msg_header_t *InHeadP);
+
+struct kern_routine_descriptor {
+	mig_impl_routine_t      impl_routine;      /* Server work func pointer   */
+	mig_stub_kern_routine_t kstub_routine;     /* Unmarshalling func pointer */
+	unsigned int            argc;              /* Number of argument words   */
+	unsigned int            descr_count;       /* Number complex descriptors */
+	unsigned int            reply_descr_count; /* Number descriptors in reply */
+	unsigned int            max_reply_msg;     /* Max size for reply msg */
+};
+
+typedef struct kern_routine_descriptor mig_kern_routine_descriptor;
+typedef struct kern_routine_descriptor *kern_routine_descriptor_t;
+
+typedef struct mig_kern_subsystem {
+	mig_kern_server_routine_t     kserver;     /* pointer to kernel demux routine */
+	mach_msg_id_t            start;            /* Min routine number */
+	mach_msg_id_t            end;              /* Max routine number + 1 */
+	mach_msg_size_t          maxsize;          /* Max reply message size */
+	vm_address_t             reserved;         /* reserved for MIG use */
+	mig_kern_routine_descriptor
+	    kroutine[1];                           /* Kernel routine descriptor array */
+} *mig_kern_subsystem_t;
+#endif /* XNU_KERNEL_PRIVATE */
+
 #define MIG_SUBSYSTEM_NULL              ((mig_subsystem_t)0)
 
 typedef struct mig_symtab {
@@ -150,126 +182,6 @@ typedef struct mig_symtab {
 #else
 #define MIG_SERVER_ROUTINE
 #endif
-
-#ifdef  PRIVATE
-
-/* MIG object runtime - not ready for public consumption */
-
-#ifdef  KERNEL_PRIVATE
-
-/*
- * MIG object runtime definitions
- *
- * Conforming MIG subsystems may enable this support to get
- * significant assistance from the base mig_object_t implementation.
- *
- * Support includes:
- *	- Transparency from port manipulation.
- *	- Dymanic port allocation on first "remoting" of an object.
- *	- Reference conversions from object to port and vice versa.
- *	- Automatic port deallocation on no-more-senders.
- *	- Support for multiple server implementations in a single space.
- *	- Messaging bypass for local servers.
- *	- Automatic hookup to base dispatch mechanism.
- *	- General notification support
- * Coming soon:
- *	- User-level support
- */
-typedef unsigned int                    mig_notify_type_t;
-
-typedef struct MIGIID {
-	unsigned long                           data1;
-	unsigned short                          data2;
-	unsigned short                          data3;
-	unsigned char                           data4[8];
-} MIGIID;
-
-typedef struct IMIGObjectVtbl                   IMIGObjectVtbl;
-typedef struct IMIGNotifyObjectVtbl             IMIGNotifyObjectVtbl;
-
-typedef struct IMIGObject {
-	const IMIGObjectVtbl                    *pVtbl;
-} IMIGObject;
-
-typedef struct IMIGNotifyObject {
-	const IMIGNotifyObjectVtbl              *pVtbl;
-} IMIGNotifyObject;
-
-struct IMIGObjectVtbl {
-	kern_return_t (*QueryInterface)(
-		IMIGObject              *object,
-		const MIGIID            *iid,
-		void                    **ppv);
-
-	unsigned long (*AddRef)(
-		IMIGObject              *object);
-
-	unsigned long (*Release)(
-		IMIGObject              *object);
-
-	unsigned long (*GetServer)(
-		IMIGObject              *object,
-		mig_server_routine_t    *server);
-
-	boolean_t (*RaiseNotification)(
-		IMIGObject              *object,
-		mig_notify_type_t       notify_type);
-
-	boolean_t (*RequestNotification)(
-		IMIGObject              *object,
-		IMIGNotifyObject        *notify,
-		mig_notify_type_t       notify_type);
-};
-
-/*
- * IMIGNotifyObject
- *
- * A variant of the IMIGObject interface that is a sink for
- * MIG notifications.
- *
- * A reference is held on both the subject MIGObject and the target
- * MIGNotifyObject. Because of this, care must be exercised to avoid
- * reference cycles.  Once a notification is raised, the object
- * reference is returned and the request must be re-requested (if
- * desired).
- *
- * One interesting note:  because this interface is itself a MIG
- * object, one may request notification about state changes in
- * the MIGNotifyObject itself.
- */
-struct IMIGNotifyObjectVtbl {
-	kern_return_t (*QueryInterface)(
-		IMIGNotifyObject        *notify,
-		const MIGIID            *iid,
-		void                    **ppv);
-
-	unsigned long (*AddRef)(
-		IMIGNotifyObject        *notify);
-
-	unsigned long (*Release)(
-		IMIGNotifyObject        *notify);
-
-	unsigned long (*GetServer)(
-		IMIGNotifyObject        *notify,
-		mig_server_routine_t    *server);
-
-	boolean_t (*RaiseNotification)(
-		IMIGNotifyObject        *notify,
-		mig_notify_type_t       notify_type);
-
-	boolean_t (*RequestNotification)(
-		IMIGNotifyObject        *notify,
-		IMIGNotifyObject        *notify_notify,
-		mig_notify_type_t       notify_type);
-
-	void (*HandleNotification)(
-		IMIGNotifyObject        *notify,
-		IMIGObject              *object,
-		mig_notify_type_t       notify_type);
-};
-
-#endif  /* KERNEL_PRIVATE */
-#endif  /* PRIVATE */
 
 __BEGIN_DECLS
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2004-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -44,6 +44,13 @@
 #ifdef KERNEL_PRIVATE
 struct if_interface_state;
 struct ifnet_interface_advisory;
+#include <net/if_var_status.h>
+
+struct ifnet_rx_steering_rule {
+	uint32_t                                identifier;
+	struct ifnet_traffic_descriptor_inet    descriptor;
+};
+
 #include <sys/kpi_mbuf.h>
 #endif /* KERNEL_PRIVATE */
 
@@ -57,7 +64,7 @@ struct ifnet_interface_advisory;
 #endif /* PRIVATE */
 
 #ifdef XNU_KERNEL_PRIVATE
-#if !XNU_TARGET_OS_OSX || (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
+#if !XNU_TARGET_OS_OSX
 #define KPI_INTERFACE_EMBEDDED 1
 #else /* XNU_TARGET_OS_OSX && !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR) */
 #define KPI_INTERFACE_EMBEDDED 0
@@ -96,7 +103,6 @@ struct ifnet_demux_desc;
  *       @constant IFNET_FAMILY_FIREWIRE An IEEE 1394 [Firewire] interface.
  *       @constant IFNET_FAMILY_BOND A virtual bonded interface.
  *       @constant IFNET_FAMILY_CELLULAR A cellular interface.
- *       @constant IFNET_FAMILY_6LOWPAN A 6LoWPAN interface.
  *       @constant IFNET_FAMILY_UTUN A utun interface.
  *       @constant IFNET_FAMILY_IPSEC An IPsec interface.
  */
@@ -117,7 +123,7 @@ enum {
 	IFNET_FAMILY_FIREWIRE           = 13,
 	IFNET_FAMILY_BOND               = 14,
 	IFNET_FAMILY_CELLULAR           = 15,
-	IFNET_FAMILY_6LOWPAN            = 16,
+	IFNET_FAMILY_UNUSED_16          = 16,   /* Un-used */
 	IFNET_FAMILY_UTUN               = 17,
 	IFNET_FAMILY_IPSEC              = 18
 };
@@ -148,6 +154,9 @@ enum {
 	IFNET_SUBFAMILY_QUICKRELAY      = 7,
 	IFNET_SUBFAMILY_DEFAULT         = 8,
 	IFNET_SUBFAMILY_VMNET           = 9,
+	IFNET_SUBFAMILY_SIMCELL         = 10,
+	IFNET_SUBFAMILY_REDIRECT        = 11,
+	IFNET_SUBFAMILY_MANAGEMENT      = 12,
 };
 
 /*
@@ -215,19 +224,24 @@ typedef u_int32_t protocol_family_t;
  *       @constant IFNET_TSO_IPV4 Hardware supports IPv4 TCP Segment Offloading.
  *               If the Interface driver sets this flag, TCP will send larger frames (up to 64KB) as one
  *               frame to the adapter which will perform the final packetization. The maximum TSO segment
- *               supported by the interface can be set with "ifnet_set_tso_mtu". To retreive the real MTU
+ *               supported by the interface can be set with "ifnet_set_tso_mtu". To retrieve the real MTU
  *               for the TCP connection the function "mbuf_get_tso_requested" is used by the driver. Note
  *               that if TSO is active, all the packets will be flagged for TSO, not just large packets.
  *       @constant IFNET_TSO_IPV6 Hardware supports IPv6 TCP Segment Offloading.
  *               If the Interface driver sets this flag, TCP IPv6 will send larger frames (up to 64KB) as one
  *               frame to the adapter which will perform the final packetization. The maximum TSO segment
- *               supported by the interface can be set with "ifnet_set_tso_mtu". To retreive the real MTU
+ *               supported by the interface can be set with "ifnet_set_tso_mtu". To retrieve the real MTU
  *               for the TCP IPv6 connection the function "mbuf_get_tso_requested" is used by the driver.
  *               Note that if TSO is active, all the packets will be flagged for TSO, not just large packets.
  *       @constant IFNET_TX_STATUS Driver supports returning a per packet
  *               transmission status (pass, fail or other errors) of whether
  *               the packet was successfully transmitted on the link, or the
  *               transmission was aborted, or transmission failed.
+ *       @constant IFNET_HW_TIMESTAMP Driver supports time stamping in hardware.
+ *       @constant IFNET_SW_TIMESTAMP Driver supports time stamping in software.
+ *       @constant IFNET_LRO Driver supports TCP Large Receive Offload.
+ *       @constant IFNET_RX_CSUM Driver supports receive checksum offload.
+ *       @constant IFNET_LRO_NUM_SEG Driver is able to report number of segments in LRO packet.
  *
  */
 
@@ -252,7 +266,10 @@ enum {
 	IFNET_TSO_IPV6          = 0x00400000,
 	IFNET_TX_STATUS         = 0x00800000,
 	IFNET_HW_TIMESTAMP      = 0x01000000,
-	IFNET_SW_TIMESTAMP      = 0x02000000
+	IFNET_SW_TIMESTAMP      = 0x02000000,
+	IFNET_LRO               = 0x10000000,
+	IFNET_RX_CSUM           = 0x20000000,
+	IFNET_LRO_NUM_SEG       = 0x40000000,
 };
 /*!
  *       @typedef ifnet_offload_t
@@ -261,16 +278,14 @@ enum {
 typedef u_int32_t ifnet_offload_t;
 
 #ifdef KERNEL_PRIVATE
-#define IFNET_OFFLOADF_BITS \
-	"\020\1CSUM_IP\2CSUM_TCP\3CSUM_UDP\4CSUM_IP_FRAGS\5IP_FRAGMENT" \
-	"\6CSUM_TCPIPV6\7CSUM_UDPIPV6\10IPV6_FRAGMENT\15CSUM_PARTIAL"   \
-	"\16CSUM_ZERO_INVERT\20VLAN_TAGGING\21VLAN_MTU\25MULTIPAGES"    \
-	"\26TSO_IPV4\27TSO_IPV6\30TXSTATUS\31HW_TIMESTAMP\32SW_TIMESTAMP"
 
 #define IFNET_CHECKSUMF                                                 \
 	(IFNET_CSUM_IP | IFNET_CSUM_TCP | IFNET_CSUM_UDP |              \
 	IFNET_CSUM_FRAGMENT | IFNET_CSUM_TCPIPV6 | IFNET_CSUM_UDPIPV6 | \
 	IFNET_CSUM_PARTIAL | IFNET_CSUM_ZERO_INVERT)
+
+#define IFNET_UDP_TCP_TX_CHECKSUMF \
+	(IFNET_CSUM_TCP | IFNET_CSUM_UDP | IFNET_CSUM_TCPIPV6 | IFNET_CSUM_UDPIPV6)
 
 #define IFNET_TSOF                                                      \
 	(IFNET_TSO_IPV4	| IFNET_TSO_IPV6)
@@ -406,19 +421,60 @@ typedef void (*ifnet_event_func)(ifnet_t interface, const struct kev_msg *msg);
  *               If the result is anything else, the processing will stop and
  *                       the packet will be freed.
  */
+
+#define IFNET_MAX_FRAME_TYPE_BUFFER_SIZE 16
+
+#define IFNET_MAX_LINKADDR_BUFFER_SIZE 16
+
+#if defined(__sized_by_or_null)
+#define IFNET_LLADDR_T     const char *__sized_by_or_null (IFNET_MAX_LINKADDR_BUFFER_SIZE)
+#define IFNET_FRAME_TYPE_T const char *__sized_by_or_null (IFNET_MAX_FRAME_TYPE_BUFFER_SIZE)
+#define IFNET_LLADDR_RW_T        char *__sized_by_or_null (IFNET_MAX_LINKADDR_BUFFER_SIZE)
+#define IFNET_FRAME_TYPE_RW_T    char *__sized_by_or_null (IFNET_MAX_FRAME_TYPE_BUFFER_SIZE)
+#else
+#define IFNET_LLADDR_T     const char *
+#define IFNET_FRAME_TYPE_T const char *
+#define IFNET_LLADDR_RW_T        char *
+#define IFNET_FRAME_TYPE_RW_T    char *
+#endif
+
 typedef errno_t (*ifnet_framer_func)(ifnet_t interface, mbuf_t *packet,
-    const struct sockaddr *dest, const char *dest_linkaddr,
-    const char *frame_type
+    const struct sockaddr *dest,
+    IFNET_LLADDR_T dest_linkaddr,
+    IFNET_FRAME_TYPE_T frame_type
 #if KPI_INTERFACE_EMBEDDED
     , u_int32_t *prepend_len, u_int32_t *postpend_len
 #endif /* KPI_INTERFACE_EMBEDDED */
     );
 #ifdef KERNEL_PRIVATE
 typedef errno_t (*ifnet_framer_extended_func)(ifnet_t interface, mbuf_t *packet,
-    const struct sockaddr *dest, const char *dest_linkaddr,
-    const char *frame_type, u_int32_t *prepend_len,
+    const struct sockaddr *dest,
+    IFNET_LLADDR_T dest_linkaddr,
+    IFNET_FRAME_TYPE_T frame_type,
+    u_int32_t *prepend_len,
     u_int32_t *postpend_len);
 #endif /* KERNEL_PRIVATE */
+
+/*!
+ *       @struct ifnet_demux_desc
+ *       @discussion This structure is to identify packets that belong to a
+ *               specific protocol. The types supported are interface specific.
+ *               Ethernet supports ETHER_DESC_ETYPE2, ETHER_DESC_SAP, and
+ *               ETHER_DESC_SNAP. The type defines the offset in the packet where
+ *               the data will be matched as well as context. For example, if
+ *               ETHER_DESC_SNAP is specified, the only valid datalen is 5 and
+ *               only in the 5 bytes will only be matched when the packet header
+ *               indicates that the packet is a SNAP packet.
+ *       @field type The type of identifier data (i.e. ETHER_DESC_ETYPE2)
+ *       @field data A pointer to an entry of type (i.e. pointer to 0x0800).
+ *       @field datalen The number of bytes of data used to describe the
+ *               packet.
+ */
+struct ifnet_demux_desc {
+	u_int32_t       type;
+	void            *__sized_by(datalen) data;
+	u_int32_t       datalen;
+};
 
 /*!
  *       @typedef ifnet_add_proto_func
@@ -439,7 +495,7 @@ typedef errno_t (*ifnet_framer_extended_func)(ifnet_t interface, mbuf_t *packet,
  */
 typedef errno_t (*ifnet_add_proto_func)(ifnet_t interface,
     protocol_family_t protocol_family,
-    const struct ifnet_demux_desc *demux_array, u_int32_t demux_count);
+    const struct ifnet_demux_desc *__counted_by(demux_count) demux_array, u_int32_t demux_count);
 
 /*!
  *       @typedef if_del_proto_func
@@ -536,8 +592,9 @@ typedef errno_t (*proto_media_input_v2)(ifnet_t ifp, protocol_family_t protocol,
  *               caller.
  */
 typedef errno_t (*proto_media_preout)(ifnet_t ifp, protocol_family_t protocol,
-    mbuf_t *packet, const struct sockaddr *dest, void *route, char *frame_type,
-    char *link_layer_dest);
+    mbuf_t *packet, const struct sockaddr *dest, void *route,
+    IFNET_FRAME_TYPE_RW_T frame_type,
+    IFNET_LLADDR_RW_T link_layer_dest);
 
 /*!
  *       @typedef proto_media_event
@@ -692,7 +749,7 @@ struct ifnet_stat_increment_param {
  */
 struct ifnet_init_params {
 	/* used to match recycled interface */
-	const void              *uniqueid;              /* optional */
+	const void *__sized_by(uniqueid_len) uniqueid;  /* optional */
 	u_int32_t               uniqueid_len;           /* optional */
 
 	/* used to fill out initial values for interface */
@@ -711,7 +768,7 @@ struct ifnet_init_params {
 	ifnet_set_bpf_tap       set_bpf_tap;            /* deprecated */
 	ifnet_detached_func     detach;                 /* optional */
 	ifnet_event_func        event;                  /* optional */
-	const void              *broadcast_addr;        /* required for non point-to-point interfaces */
+	const void *__sized_by(broadcast_len) broadcast_addr; /* required for non point-to-point interfaces */
 	u_int32_t               broadcast_len;          /* required for non point-to-point interfaces */
 };
 
@@ -725,6 +782,8 @@ struct ifnet_init_params {
 #define IFNET_INIT_INPUT_POLL   0x2     /* opportunistic input polling model */
 #define IFNET_INIT_NX_NOAUTO    0x4     /* do not auto config nexus */
 #define IFNET_INIT_ALLOC_KPI    0x8     /* allocated via the ifnet_alloc() KPI */
+#define IFNET_INIT_IF_ADV               0x40000000      /* Supports Interface advisory reporting */
+#define IFNET_INIT_SKYWALK_NATIVE       0x80000000      /* native Skywalk driver */
 
 /*
  *       @typedef ifnet_pre_enqueue_func
@@ -908,9 +967,6 @@ enum {
 	(IFNET_LOGF_DLIL | IFNET_LOGF_FAMILY | IFNET_LOGF_DRIVER |      \
 	IFNET_LOGF_FIRMWARE)
 
-#define IFNET_LOGF_BITS \
-	"\020\1DLIL\21FAMILY\31DRIVER\35FIRMWARE"
-
 #endif /* BSD_KERNEL_PRIVATE */
 
 /*
@@ -1088,7 +1144,7 @@ struct ifnet_init_eparams {
 	u_int32_t               flags;                  /* optional */
 
 	/* used to match recycled interface */
-	const void              *uniqueid;              /* optional */
+	const void *__sized_by(uniqueid_len) uniqueid;  /* optional */
 	u_int32_t               uniqueid_len;           /* optional */
 
 	/* used to fill out initial values for interface */
@@ -1129,7 +1185,7 @@ struct ifnet_init_eparams {
 	ifnet_set_bpf_tap       set_bpf_tap;            /* deprecated */
 	ifnet_detached_func     detach;                 /* optional */
 	ifnet_event_func        event;                  /* optional */
-	const void              *broadcast_addr;        /* required for non point-to-point interfaces */
+	const void *__sized_by(broadcast_len) broadcast_addr; /* required for non point-to-point interfaces */
 	u_int32_t               broadcast_len;          /* required for non point-to-point interfaces */
 	ifnet_framer_extended_func framer_extended;     /* optional */
 	ifnet_subfamily_t       subfamily;              /* optional */
@@ -1177,27 +1233,6 @@ struct ifnet_stats_param {
 };
 
 /*!
- *       @struct ifnet_demux_desc
- *       @discussion This structure is to identify packets that belong to a
- *               specific protocol. The types supported are interface specific.
- *               Ethernet supports ETHER_DESC_ETYPE2, ETHER_DESC_SAP, and
- *               ETHER_DESC_SNAP. The type defines the offset in the packet where
- *               the data will be matched as well as context. For example, if
- *               ETHER_DESC_SNAP is specified, the only valid datalen is 5 and
- *               only in the 5 bytes will only be matched when the packet header
- *               indicates that the packet is a SNAP packet.
- *       @field type The type of identifier data (i.e. ETHER_DESC_ETYPE2)
- *       @field data A pointer to an entry of type (i.e. pointer to 0x0800).
- *       @field datalen The number of bytes of data used to describe the
- *               packet.
- */
-struct ifnet_demux_desc {
-	u_int32_t       type;
-	void            *data;
-	u_int32_t       datalen;
-};
-
-/*!
  *       @struct ifnet_attach_proto_param
  *       @discussion This structure is used to attach a protocol to an
  *               interface. This structure provides the various functions for
@@ -1217,7 +1252,7 @@ struct ifnet_demux_desc {
 #endif /* KERNEL_PRIVATE */
 
 struct ifnet_attach_proto_param {
-	struct ifnet_demux_desc         *demux_array;   /* interface may/may not require */
+	struct ifnet_demux_desc         *__counted_by(demux_count) demux_array; /* interface may/may not require */
 	u_int32_t                       demux_count;    /* interface may/may not require */
 
 	proto_media_input               input;          /* required */
@@ -1230,7 +1265,7 @@ struct ifnet_attach_proto_param {
 };
 
 struct ifnet_attach_proto_param_v2 {
-	struct ifnet_demux_desc         *demux_array;   /* interface may/may not require */
+	struct ifnet_demux_desc         *__counted_by(demux_count) demux_array;   /* interface may/may not require */
 	u_int32_t                       demux_count;    /* interface may/may not require */
 
 	proto_media_input_v2            input;          /* required */
@@ -2130,6 +2165,19 @@ extern errno_t ifnet_set_offload(ifnet_t interface, ifnet_offload_t offload)
 __NKE_API_DEPRECATED;
 
 /*!
+ *       @function ifnet_set_offload_enabled
+ *       @discussion Sets the enabled capabilities of the specified interface.
+ *               The supported capabilities (set by ifnet_set_offload()) are
+ *               left unmodified.
+ *       @param interface The interface.
+ *       @param offload The new set of flags indicating which supported offload
+ *               options should be enabled.
+ *       @result 0 on success otherwise the errno error.
+ */
+extern errno_t ifnet_set_offload_enabled(ifnet_t interface, ifnet_offload_t offload)
+__NKE_API_DEPRECATED;
+
+/*!
  *       @function ifnet_offload
  *       @discussion Returns flags indicating which operations can be
  *               offloaded to the interface.
@@ -2214,7 +2262,7 @@ __NKE_API_DEPRECATED;
  *       @param mibLen Length of data pointed to.
  *       @result 0 on success otherwise the errno error.
  */
-extern errno_t ifnet_set_link_mib_data(ifnet_t interface, void *mibData,
+extern errno_t ifnet_set_link_mib_data(ifnet_t interface, void *__sized_by(mibLen) mibData,
     u_int32_t mibLen)
 __NKE_API_DEPRECATED;
 
@@ -2232,7 +2280,7 @@ __NKE_API_DEPRECATED;
  *       @result Returns an error if the buffer size is too small or there is
  *               no data.
  */
-extern errno_t ifnet_get_link_mib_data(ifnet_t interface, void *mibData,
+extern errno_t ifnet_get_link_mib_data(ifnet_t interface, void *__sized_by(*mibLen) mibData,
     u_int32_t *mibLen)
 __NKE_API_DEPRECATED;
 
@@ -2686,7 +2734,7 @@ __NKE_API_DEPRECATED;
  *               promiscuous mode only once for every time you enable it.
  *       @param interface The interface to toggle promiscuous mode on.
  *       @param on If set, the number of promicuous on requests will be
- *               incremented. If this is the first requrest, promiscuous mode
+ *               incremented. If this is the first request, promiscuous mode
  *               will be enabled. If this is not set, the number of promiscous
  *               clients will be decremented. If this causes the number to reach
  *               zero, promiscuous mode will be disabled.
@@ -2726,7 +2774,25 @@ __NKE_API_DEPRECATED;
  *       @param addresses A pointer to a NULL terminated array of ifaddr_ts.
  *       @result 0 on success otherwise the errno error.
  */
-extern errno_t ifnet_get_address_list(ifnet_t interface, ifaddr_t **addresses)
+extern errno_t ifnet_get_address_list(ifnet_t interface, ifaddr_t *__null_terminated *addresses)
+__NKE_API_DEPRECATED;
+
+/*!
+ *       @function ifnet_get_address_list_with_count
+ *       @discussion Get a list of addresses on the interface. Passing NULL
+ *               for the interface will return a list of all addresses. The
+ *               addresses will have their reference count bumped so they will
+ *               not go away. Calling ifnet_free_address_list will decrement the
+ *               refcount and free the array. If you wish to hold on to a
+ *               reference to an ifaddr_t, be sure to bump the reference count
+ *               before calling ifnet_free_address_list.
+ *       @param interface The interface.
+ *       @param addresses A pointer to a NULL terminated array of ifaddr_ts.
+ *       @param addresses_count Count of ifaddr_ts in addresses.
+ *       @result 0 on success otherwise the errno error.
+ */
+extern errno_t ifnet_get_address_list_with_count(ifnet_t interface,
+    ifaddr_t *__counted_by(*addresses_count) * addresses, uint16_t *addresses_count)
 __NKE_API_DEPRECATED;
 
 /*!
@@ -2745,10 +2811,30 @@ __NKE_API_DEPRECATED;
  *       @result 0 on success otherwise the errno error.
  */
 extern errno_t ifnet_get_address_list_family(ifnet_t interface,
-    ifaddr_t **addresses, sa_family_t family)
+    ifaddr_t *__null_terminated *addresses, sa_family_t family)
 __NKE_API_DEPRECATED;
 
 #ifdef KERNEL_PRIVATE
+/*!
+ *       @function ifnet_get_address_list_family_with_count
+ *       @discussion Get a list of addresses on the interface. Passing NULL
+ *               for the interface will return a list of all addresses. The
+ *               addresses will have their reference count bumped so they will
+ *               not go away. Calling ifnet_free_address_list will decrement the
+ *               refcount and free the array. If you wish to hold on to a
+ *               reference to an ifaddr_t, be sure to bump the reference count
+ *               before calling ifnet_free_address_list. Unlike
+ *               ifnet_get_address_list, this function lets the caller specify
+ *               the address family to get a list of only a specific address type.
+ *       @param interface The interface.
+ *       @param addresses A pointer to a NULL terminated array of ifaddr_ts.
+ *       @param addresses_count Count of ifaddr_ts in addresses.
+ *       @result 0 on success otherwise the errno error.
+ */
+extern errno_t ifnet_get_address_list_family_with_count(ifnet_t interface,
+    ifaddr_t *__counted_by(*addresses_count) * addresses, uint16_t *addresses_count,
+    sa_family_t family);
+
 /*!
  *       @function ifnet_get_inuse_address_list
  *       @discussion Get a list of addresses on the interface that are in
@@ -2761,10 +2847,20 @@ __NKE_API_DEPRECATED;
  *       @result 0 on success otherwise the errno error.
  */
 extern errno_t ifnet_get_inuse_address_list(ifnet_t interface,
-    ifaddr_t **addresses);
+    ifaddr_t *__null_terminated *addresses);
 
 __private_extern__ errno_t ifnet_get_address_list_family_internal(ifnet_t,
-    ifaddr_t **, sa_family_t, int, int, int);
+    ifaddr_t *__counted_by(*addresses_count) *, uint16_t *addresses_count,
+    sa_family_t, int, int, int);
+
+extern void ifnet_address_list_free_counted_by_internal(ifaddr_t * __counted_by(addresses_count) addresses,
+    uint16_t addresses_count);
+
+#define ifnet_address_list_free_counted_by(_addresses, _addresses_count) ({        \
+	ifnet_address_list_free_counted_by_internal(_addresses, _addresses_count); \
+	_addresses = NULL;                                                         \
+	_addresses_count = 0;                                                      \
+})
 #endif /* KERNEL_PRIVATE */
 
 /*!
@@ -2774,7 +2870,7 @@ __private_extern__ errno_t ifnet_get_address_list_family_internal(ifnet_t,
  *               memory used for the array of references.
  *       @param addresses An array of ifaddr_ts.
  */
-extern void ifnet_free_address_list(ifaddr_t *addresses)
+extern void ifnet_free_address_list(ifaddr_t *__null_terminated addresses)
 __NKE_API_DEPRECATED;
 
 /*!
@@ -2786,7 +2882,7 @@ __NKE_API_DEPRECATED;
  *               the 6 byte ethernet address for ethernet).
  *       @param lladdr_len The length, in bytes, of the link layer address.
  */
-extern errno_t ifnet_set_lladdr(ifnet_t interface, const void *lladdr,
+extern errno_t ifnet_set_lladdr(ifnet_t interface, const void *__sized_by(lladdr_len) lladdr,
     size_t lladdr_len)
 __NKE_API_DEPRECATED;
 
@@ -2799,7 +2895,7 @@ __NKE_API_DEPRECATED;
  *       @param length The length of the buffer. This value must match the
  *               length of the link-layer address.
  */
-extern errno_t ifnet_lladdr_copy_bytes(ifnet_t interface, void *lladdr,
+extern errno_t ifnet_lladdr_copy_bytes(ifnet_t interface, void *__sized_by(length) lladdr,
     size_t length)
 __NKE_API_DEPRECATED;
 
@@ -2814,7 +2910,7 @@ __NKE_API_DEPRECATED;
  *       @param length The length of the buffer. This value must match the
  *               length of the link-layer address.
  */
-extern errno_t ifnet_guarded_lladdr_copy_bytes(ifnet_t interface, void *lladdr,
+extern errno_t ifnet_guarded_lladdr_copy_bytes(ifnet_t interface, void *__sized_by(length) lladdr,
     size_t length);
 
 /*!
@@ -2835,7 +2931,7 @@ extern void *ifnet_lladdr(ifnet_t interface);
  *       @param bufferlen The length of the buffer at addr.
  *       @param out_len On return, the length of the broadcast address.
  */
-extern errno_t ifnet_llbroadcast_copy_bytes(ifnet_t interface, void *addr,
+extern errno_t ifnet_llbroadcast_copy_bytes(ifnet_t interface, void *__sized_by(bufferlen) addr,
     size_t bufferlen, size_t *out_len)
 __NKE_API_DEPRECATED;
 
@@ -2852,7 +2948,7 @@ __NKE_API_DEPRECATED;
  *       @param length The length, in bytes, of the link layer address.
  *       @param type The link-layer address type.
  */
-extern errno_t ifnet_set_lladdr_and_type(ifnet_t interface, const void *lladdr,
+extern errno_t ifnet_set_lladdr_and_type(ifnet_t interface, const void *__sized_by(length) lladdr,
     size_t length, u_char type)
 __NKE_API_DEPRECATED;
 #endif /* KERNEL_PRIVATE */
@@ -2934,7 +3030,7 @@ __NKE_API_DEPRECATED;
  *       @result 0 on success otherwise the errno error.
  */
 extern errno_t ifnet_get_multicast_list(ifnet_t interface,
-    ifmultiaddr_t **addresses)
+    ifmultiaddr_t *__null_terminated *addresses)
 __NKE_API_DEPRECATED;
 
 /*!
@@ -2944,7 +3040,7 @@ __NKE_API_DEPRECATED;
  *               multicast address and frees the array.
  *       @param multicasts An array of references to the multicast addresses.
  */
-extern void ifnet_free_multicast_list(ifmultiaddr_t *multicasts)
+extern void ifnet_free_multicast_list(ifmultiaddr_t *__null_terminated multicasts)
 __NKE_API_DEPRECATED;
 
 /*!
@@ -2975,8 +3071,9 @@ __NKE_API_DEPRECATED;
  *               matching interfaces in the array.
  *       @result 0 on success otherwise the errno error.
  */
-extern errno_t ifnet_list_get(ifnet_family_t family, ifnet_t **interfaces,
-    u_int32_t *count)
+extern errno_t ifnet_list_get(ifnet_family_t family,
+    ifnet_t *__counted_by(*count) * interfaces,
+    uint32_t *count)
 __NKE_API_DEPRECATED;
 
 #ifdef KERNEL_PRIVATE
@@ -2995,8 +3092,8 @@ __NKE_API_DEPRECATED;
  *               matching interfaces in the array.
  *       @result 0 on success otherwise the errno error.
  */
-extern errno_t ifnet_list_get_all(ifnet_family_t family, ifnet_t **interfaces,
-    u_int32_t *count);
+extern errno_t ifnet_list_get_all(ifnet_family_t family,
+    ifnet_t *__counted_by(*count) * interfaces, u_int32_t *count);
 
 #endif /* KERNEL_PRIVATE */
 
@@ -3009,8 +3106,20 @@ extern errno_t ifnet_list_get_all(ifnet_family_t family, ifnet_t **interfaces,
  *               ifnet_list_free.
  *       @param interfaces An array of interface references from ifnet_list_get.
  */
-extern void ifnet_list_free(ifnet_t *interfaces)
+extern void ifnet_list_free(ifnet_t *__null_terminated interfaces)
 __NKE_API_DEPRECATED;
+
+#ifdef KERNEL_PRIVATE
+
+extern void ifnet_list_free_counted_by_internal(ifnet_t * __counted_by(count) interfaces, uint32_t count);
+
+#define ifnet_list_free_counted_by(_interfaces, _count) ({              \
+	ifnet_list_free_counted_by_internal(_interfaces, _count);       \
+	_interfaces = NULL;                                             \
+	_count = 0;                                                     \
+})
+
+#endif /* KERNEL_PRIVATE */
 
 /******************************************************************************/
 /* ifaddr_t accessors                                                         */
@@ -3157,6 +3266,15 @@ extern ifaddr_t ifaddr_findbestforaddr(const struct sockaddr *addr,
     ifnet_t interface)
 __NKE_API_DEPRECATED;
 
+/*!
+ *       @function ifaddr_get_ia6_flags
+ *       @discussion Copies the ia6 flags out of the ifaddr if it's AF_INET6
+ *       @param ifaddr The interface address.
+ *       @param out_flags On return, the IA6 flags of the ifaddr
+ *       @result 0 upon success
+ */
+extern errno_t ifaddr_get_ia6_flags(ifaddr_t ifaddr, u_int32_t *out_flags);
+
 /******************************************************************************/
 /* ifmultiaddr_t accessors                                                    */
 /******************************************************************************/
@@ -3281,6 +3399,7 @@ extern errno_t ifnet_clone_detach(if_clone_t ifcloner);
 /* misc                                                                       */
 /******************************************************************************/
 
+#define IP_PORTRANGE_BITFIELD_LEN 8192
 /*
  *       @function ifnet_get_local_ports
  *       @discussion Returns a bitfield indicating which ports of PF_INET
@@ -3296,7 +3415,7 @@ extern errno_t ifnet_clone_detach(if_clone_t ifcloner);
  *       @param bitfield A pointer to 8192 bytes.
  *       @result Returns 0 on success.
  */
-extern errno_t ifnet_get_local_ports(ifnet_t ifp, u_int8_t *bitfield);
+extern errno_t ifnet_get_local_ports(ifnet_t ifp, u_int8_t bitfield[IP_PORTRANGE_BITFIELD_LEN]);
 
 #define IFNET_GET_LOCAL_PORTS_WILDCARDOK        0x01
 #define IFNET_GET_LOCAL_PORTS_NOWAKEUPOK        0x02
@@ -3306,6 +3425,8 @@ extern errno_t ifnet_get_local_ports(ifnet_t ifp, u_int8_t *bitfield);
 #define IFNET_GET_LOCAL_PORTS_EXTBGIDLEONLY     0x20
 #define IFNET_GET_LOCAL_PORTS_ACTIVEONLY        0x40
 #define IFNET_GET_LOCAL_PORTS_ANYTCPSTATEOK     0x80
+#define IFNET_GET_LOCAL_PORTS_BOUNDIF           0x100
+
 /*
  *       @function ifnet_get_local_ports_extended
  *       @discussion Returns a bitfield indicating which local ports of the
@@ -3350,7 +3471,7 @@ extern errno_t ifnet_get_local_ports(ifnet_t ifp, u_int8_t *bitfield);
  *       @result Returns 0 on success.
  */
 extern errno_t ifnet_get_local_ports_extended(ifnet_t ifp,
-    protocol_family_t protocol, u_int32_t flags, u_int8_t *bitfield);
+    protocol_family_t protocol, u_int32_t flags, u_int8_t bitfield[IP_PORTRANGE_BITFIELD_LEN]);
 
 /******************************************************************************/
 /* for reporting issues							      */
@@ -3480,13 +3601,19 @@ ifnet_notice_node_presence_v2(ifnet_t ifp, struct sockaddr *sa, struct sockaddr_
     int lqm, int npm, u_int8_t srvinfo[48]);
 
 /*
- *       @function ifnet_notice_master_elected
+ *       @function ifnet_notice_primary_elected
  *       @discussion Provided for network interface drivers to notify the system
  *               that the nodes with a locally detected presence on the attached
- *               link have elected a new master.
- *       @param ifp The interface attached to the link where the new master has
+ *               link have elected a new primary.
+ *       @param ifp The interface attached to the link where the new primary has
  *               been elected.
  *       @result Returns 0 on success, or EINVAL if arguments are invalid.
+ */
+extern errno_t ifnet_notice_primary_elected(ifnet_t ifp);
+
+/*
+ *       @function ifnet_notice_master_elected
+ *       @discussion Obsolete, use ifnet_notice_primary_elected instead
  */
 extern errno_t ifnet_notice_master_elected(ifnet_t ifp);
 
@@ -3627,7 +3754,7 @@ struct ifnet_keepalive_offload_frame {
  *       @result Returns 0 on success, error number otherwise.
  */
 extern errno_t ifnet_get_keepalive_offload_frames(ifnet_t ifp,
-    struct ifnet_keepalive_offload_frame *frames_array,
+    struct ifnet_keepalive_offload_frame *__counted_by(frames_array_count) frames_array,
     u_int32_t frames_array_count, size_t frame_data_offset,
     u_int32_t *used_frames_count);
 
@@ -3670,7 +3797,7 @@ extern errno_t ifnet_notify_tcp_keepalive_offload_timeout(ifnet_t ifp,
  *       @param buffer_len Valid length of the buffer provided by the caller
  *       @result Returns 0 on success, error number otherwise.
  */
-extern errno_t ifnet_link_status_report(ifnet_t ifp, const void *buffer,
+extern errno_t ifnet_link_status_report(ifnet_t ifp, const void *__sized_by(buffer_len) buffer,
     size_t buffer_len);
 
 /*************************************************************************/
@@ -3729,7 +3856,7 @@ extern errno_t ifnet_get_buffer_status(const ifnet_t interface,
 extern void ifnet_normalise_unsent_data(void);
 
 /*************************************************************************/
-/* Low Power Mode                                                        */
+/* Miscellaneous                                                        */
 /*************************************************************************/
 
 /*!
@@ -3766,20 +3893,102 @@ extern errno_t ifnet_touch_lastupdown(ifnet_t interface);
  */
 extern errno_t ifnet_updown_delta(ifnet_t interface, struct timeval *updown_delta);
 
-/*************************************************************************/
-/* Interface advisory notifications                                      */
-/*************************************************************************/
 /*!
- *       @function ifnet_interface_advisory_report
- *       @discussion KPI to let the driver provide interface advisory
- *       notifications to the user space.
- *       @param ifp The interface that is generating the advisory report.
- *       @param advisory structure containing the advisory notification
- *              information.
+ *       @function ifnet_set_management
+ *       @param interface The interface.
+ *       @param on Set the truth value that the interface is management restricted.
  *       @result Returns 0 on success, error number otherwise.
  */
-extern errno_t ifnet_interface_advisory_report(ifnet_t ifp,
-    const struct ifnet_interface_advisory *advisory);
+extern errno_t ifnet_set_management(ifnet_t interface, boolean_t on);
+
+/*!
+ *       @function ifnet_set_congested_link
+ *       @param interface The interface.
+ *       @param on Set the truth value that the interface link is congested.
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_set_congested_link(ifnet_t interface, boolean_t on);
+
+/*!
+ *       @function ifnet_get_congested_link
+ *       @param interface The interface.
+ *       @param on On output contains the truth value that the interface
+ *               link is congested.
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_get_congested_link(ifnet_t interface, boolean_t *on);
+
+/*!
+ *       @function ifnet_set_rx_flow_steering
+ *       @param interface The interface.
+ *       @param on Set the truth value that the interface supports Rx flow steering.
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_set_rx_flow_steering(ifnet_t interface, boolean_t on);
+
+/*!
+ *       @function ifnet_get_rx_flow_steering
+ *       @param interface The interface.
+ *       @param on On output contains the truth value that the interface
+ *               supports Rx flow steering
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_get_rx_flow_steering(ifnet_t interface, boolean_t *on);
+
+/*!
+ *       @function ifnet_set_inband_wake_packet_tagging
+ *       @param interface The interface.
+ *       @param on Set the truth value that the interface supports inband tagging of
+ *              the wake packet flag.
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_set_inband_wake_packet_tagging(ifnet_t interface, boolean_t on);
+
+/*!
+ *       @function ifnet_get_inband_wake_packet_tagging
+ *       @param interface The interface.
+ *       @param on On output contains the truth value whether the interface supports
+ *              inband tagging of the wake packet flag.
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_get_inband_wake_packet_tagging(ifnet_t interface, boolean_t *on);
+
+/*!
+ *       @function ifnet_set_low_power_wake
+ *       @param interface The interface.
+ *       @param on Set the truth value that the interface supports LPW.
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_set_low_power_wake(ifnet_t interface, boolean_t on);
+
+#define HAS_IFNET_SET_LOW_POWER_WAKE 1
+
+/*!
+ *       @function ifnet_get_low_power_wake
+ *       @param interface The interface.
+ *       @param on On output contains the truth value whether the interface supports LPW.
+ *       @result Returns 0 on success, error number otherwise.
+ */
+extern errno_t ifnet_get_low_power_wake(ifnet_t interface, boolean_t *on);
+
+/*!
+ *       @function ifnet_enable_cellular_thread_group
+ *       @param interface The interface.
+ */
+extern void ifnet_enable_cellular_thread_group(ifnet_t interface);
+
+/*!
+ *       @function ifnet_get_rx_steering_rules
+ *       @discussion Get RX flow steering rules from the interface's flowswitch.
+ *       @param interface The interface.
+ *       @param rules_buffer Preallocated buffer to store the rules.
+ *       @param buffer_count Number of ifnet_rx_steering_rule structures the buffer can hold.
+ *       @param count_out On output, contains the actual number of rules found.
+ *       @result Returns 0 on success, EINVAL for invalid parameters, ENXIO if interface
+ *               is not available, ENODEV if interface has no associated flowswitch.
+ */
+extern errno_t ifnet_get_rx_steering_rules(ifnet_t interface,
+    struct ifnet_rx_steering_rule *__counted_by(buffer_count) rules_buffer, uint32_t buffer_count, uint32_t *count_out);
 
 #endif /* KERNEL_PRIVATE */
 

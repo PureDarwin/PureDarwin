@@ -36,12 +36,30 @@
 #ifndef _I386_LIMITS_H_
 #define _I386_LIMITS_H_
 
+#if defined (__i386__) || defined (__x86_64__)
+
 #include <sys/cdefs.h>
 #ifndef DRIVERKIT
 #include <i386/_limits.h>
 #endif
 
-#define CHAR_BIT        8               /* number of bits in a char */
+#if defined(KERNEL)
+#ifdef XNU_KERNEL_PRIVATE
+/*
+ * Xcode doesn't currently set up search paths correctly for Kernel extensions,
+ * so the clang headers are not seen in the correct order to use their limits.
+ */
+#endif
+#define USE_CLANG_LIMITS 0
+#else
+#if defined(__has_feature) && __has_feature(modules)
+#define USE_CLANG_LIMITS 1
+#else
+#define USE_CLANG_LIMITS 0
+#endif
+#endif
+
+#undef  MB_LEN_MAX
 #define MB_LEN_MAX      6               /* Allow 31 bit UTF2 */
 
 #ifndef DRIVERKIT
@@ -49,6 +67,18 @@
 #define CLK_TCK         __DARWIN_CLK_TCK        /* ticks per second */
 #endif /* !_ANSI_SOURCE && (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 #endif
+
+#if (defined(__has_include) && __has_include(<__xnu_libcxx_sentinel.h>))
+
+#if !__has_include_next(<limits.h>)
+#error Do not build with -nostdinc (use GCC_USE_STANDARD_INCLUDE_SEARCHING=NO)
+#else
+#include_next <limits.h>
+#endif /* __has_include_next */
+
+#elif !USE_CLANG_LIMITS
+
+#define CHAR_BIT        8               /* number of bits in a char */
 
 /*
  * According to ANSI (section 2.2.4.2), the values below must be usable by
@@ -89,6 +119,8 @@
 #define LLONG_MAX       0x7fffffffffffffffLL    /* max signed long long */
 #define LLONG_MIN       (-0x7fffffffffffffffLL-1) /* min signed long long */
 
+#endif /* !USE_CLANG_LIMITS */
+
 #if !defined(_ANSI_SOURCE)
 #ifdef __LP64__
 #define LONG_BIT        64
@@ -107,5 +139,9 @@
 
 #endif /* (!_POSIX_C_SOURCE && !_XOPEN_SOURCE) || _DARWIN_C_SOURCE */
 #endif /* !_ANSI_SOURCE */
+
+#undef USE_CLANG_LIMITS
+
+#endif /* defined (__i386__) || defined (__x86_64__) */
 
 #endif /* _I386_LIMITS_H_ */

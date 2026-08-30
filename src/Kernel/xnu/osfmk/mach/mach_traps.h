@@ -68,6 +68,7 @@
 
 #include <stdint.h>
 
+#include <mach/error.h>
 #include <mach/std_types.h>
 #include <mach/mach_types.h>
 #include <mach/kern_return.h>
@@ -101,6 +102,18 @@ extern mach_msg_return_t mach_msg_trap(
 	mach_port_name_t rcv_name,
 	mach_msg_timeout_t timeout,
 	mach_port_name_t notify);
+
+#if defined(__LP64__) || defined(__arm64__)
+extern mach_msg_return_t mach_msg2_trap(
+	void *data,
+	mach_msg_option64_t options,
+	uint64_t msgh_bits_and_send_size,
+	uint64_t msgh_remote_and_local_port,
+	uint64_t msgh_voucher_and_id,
+	uint64_t desc_count_and_rcv_name,
+	uint64_t rcv_size_and_priority,
+	uint64_t timeout);
+#endif
 
 extern mach_msg_return_t mach_msg_overwrite_trap(
 	mach_msg_header_t *msg,
@@ -356,6 +369,14 @@ extern kern_return_t debug_control_port_for_pid(
 	int pid,
 	mach_port_name_t *t);
 
+extern mach_error_t mach_vm_reclaim_update_kernel_accounting_trap(
+	mach_port_name_t target_tport,
+	uint64_t *bytes_reclaimed,
+	uint64_t *next_deadline);
+
+extern kern_return_t thread_set_x86_64_compat(
+	uint32_t enable);
+
 #else   /* KERNEL */
 
 #ifdef  XNU_KERNEL_PRIVATE
@@ -448,6 +469,22 @@ extern mach_msg_return_t mach_msg_trap(
 	struct mach_msg_overwrite_trap_args *args);
 extern mach_msg_return_t mach_msg_overwrite_trap(
 	struct mach_msg_overwrite_trap_args *args);
+
+#if defined(__LP64__) || defined(__arm64__)
+struct mach_msg2_trap_args {
+	PAD_ARG_(mach_vm_address_t, data);
+	PAD_ARG_(mach_msg_option64_t, options);
+	PAD_ARG_(uint64_t, msgh_bits_and_send_size);
+	PAD_ARG_(uint64_t, msgh_remote_and_local_port);
+	PAD_ARG_(uint64_t, msgh_voucher_and_id);
+	PAD_ARG_(uint64_t, desc_count_and_rcv_name);
+	PAD_ARG_(uint64_t, rcv_size_and_priority);
+	PAD_ARG_(uint64_t, timeout);
+};
+
+extern mach_msg_return_t mach_msg2_trap(
+	struct mach_msg2_trap_args *args);
+#endif
 
 struct semaphore_signal_trap_args {
 	PAD_ARG_(mach_port_name_t, signal_name);
@@ -602,6 +639,19 @@ struct thread_switch_args {
 extern kern_return_t thread_switch(
 	struct thread_switch_args *args);
 
+struct exclaves_ctl_trap_args {
+	PAD_ARG_(mach_port_name_t, name);
+	PAD_ARG_(uint32_t, operation_and_flags);
+	PAD_ARG_(uint64_t, identifier);
+	PAD_ARG_(mach_vm_address_t, buffer);
+	PAD_ARG_(mach_vm_size_t, size);
+	PAD_ARG_(uint64_t, param1);
+	PAD_ARG_(uint64_t, param2);
+	PAD_ARG_(mach_vm_address_t, status);
+};
+extern kern_return_t _exclaves_ctl_trap(
+	struct exclaves_ctl_trap_args *args);
+
 struct mach_timebase_info_trap_args {
 	PAD_ARG_(user_addr_t, info);
 };
@@ -652,7 +702,7 @@ extern kern_return_t mk_timer_cancel_trap(
 struct _kernelrpc_mach_vm_allocate_trap_args {
 	PAD_ARG_(mach_port_name_t, target);     /* 1 word */
 	PAD_ARG_(user_addr_t, addr);            /* 1 word */
-	PAD_ARG_(mach_vm_size_t, size);         /* 2 words */
+	PAD_ARG_(mach_vm_size_ut, size);        /* 2 words */
 	PAD_ARG_(int, flags);                   /* 1 word */
 };                                              /* Total: 5 */
 
@@ -661,8 +711,8 @@ extern kern_return_t _kernelrpc_mach_vm_allocate_trap(
 
 struct _kernelrpc_mach_vm_deallocate_args {
 	PAD_ARG_(mach_port_name_t, target);     /* 1 word */
-	PAD_ARG_(mach_vm_address_t, address);   /* 2 words */
-	PAD_ARG_(mach_vm_size_t, size);         /* 2 words */
+	PAD_ARG_(mach_vm_address_ut, address);  /* 2 words */
+	PAD_ARG_(mach_vm_size_ut, size);        /* 2 words */
 };                                              /* Total: 5 */
 extern kern_return_t _kernelrpc_mach_vm_deallocate_trap(
 	struct _kernelrpc_mach_vm_deallocate_args *args);
@@ -677,10 +727,10 @@ extern kern_return_t task_dyld_process_info_notify_get_trap(
 
 struct _kernelrpc_mach_vm_protect_args {
 	PAD_ARG_(mach_port_name_t, target);     /* 1 word */
-	PAD_ARG_(mach_vm_address_t, address);   /* 2 words */
-	PAD_ARG_(mach_vm_size_t, size);         /* 2 words */
+	PAD_ARG_(mach_vm_address_ut, address);  /* 2 words */
+	PAD_ARG_(mach_vm_size_ut, size);        /* 2 words */
 	PAD_ARG_(boolean_t, set_maximum);       /* 1 word */
-	PAD_ARG_(vm_prot_t, new_protection);    /* 1 word */
+	PAD_ARG_(vm_prot_ut, new_protection);   /* 1 word */
 };                                              /* Total: 7 */
 extern kern_return_t _kernelrpc_mach_vm_protect_trap(
 	struct _kernelrpc_mach_vm_protect_args *args);
@@ -688,11 +738,11 @@ extern kern_return_t _kernelrpc_mach_vm_protect_trap(
 struct _kernelrpc_mach_vm_map_trap_args {
 	PAD_ARG_(mach_port_name_t, target);
 	PAD_ARG_(user_addr_t, addr);
-	PAD_ARG_(mach_vm_size_t, size);
-	PAD_ARG_(mach_vm_offset_t, mask);
+	PAD_ARG_(mach_vm_size_ut, size);
+	PAD_ARG_(mach_vm_offset_ut, mask);
 	PAD_ARG_(int, flags);
 	PAD_ARG_8
-	    PAD_ARG_(vm_prot_t, cur_protection);
+	    PAD_ARG_(vm_prot_ut, cur_protection);
 };
 extern kern_return_t _kernelrpc_mach_vm_map_trap(
 	struct _kernelrpc_mach_vm_map_trap_args *args);
@@ -875,6 +925,22 @@ struct iokit_user_client_trap_args {
 };
 kern_return_t iokit_user_client_trap(
 	struct iokit_user_client_trap_args *args);
+
+#if __LP64__
+struct mach_vm_reclaim_update_kernel_accounting_trap_args {
+	PAD_ARG_(mach_port_name_t, target_task);
+	PAD_ARG_(user_addr_t, bytes_reclaimed_out);
+	PAD_ARG_(user_addr_t, next_deadline_out);
+};
+extern mach_error_t mach_vm_reclaim_update_kernel_accounting_trap(
+	struct mach_vm_reclaim_update_kernel_accounting_trap_args *args);
+#endif /* __LP64__ */
+
+struct thread_set_x86_64_compat_trap_args {
+	PAD_ARG_(uint32_t, enable);
+};
+extern kern_return_t thread_set_x86_64_compat_trap(
+	struct thread_set_x86_64_compat_trap_args *args);
 
 #undef PAD_
 #undef PADL_

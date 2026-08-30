@@ -1,10 +1,5 @@
-from __future__ import absolute_import
-from __future__ import print_function
 import os
-import sys
 import re
-
-PY3 = sys.version_info > (3,)
 
 def GetSettingsValues(debugger, setting_variable_name):
     """ Queries the lldb internal settings
@@ -65,19 +60,40 @@ def GetSourcePathSettings(binary_path, symbols_path):
     retval =  cmd.format(srcpath, new_path)
     return retval
 
+def CheckMissingLibs(debugger):
+    """ Check that required modules are installed. """
+
+    # Convert LLDB version string to version tuple.
+    # A version string may be of form: lldb_host-1403.2.6.11 (iPhoneOS)
+    # Code below only matches 1403.2.6.11 and ignores rest of the string.
+    ver_str = debugger.GetVersionString()
+    lldb_ver = re.search("^lldb.*-([0-9.]+)", ver_str, re.MULTILINE).group(1)
+    ver = tuple(map(int, lldb_ver.split('.')))
+
+    # Display correct command to install missing packages.
+    if ver[1] == 2:
+        cmd_fmt = "Please install {mod:s}: xcrun --sdk <sdk> python3 -m pip install --user --ignore-installed {mod:s}"
+    else:
+        cmd_fmt = "Please install {mod:s}: xcrun pip3 install --user --ignore-installed {mod:s}"
+
+    try:
+        import macholib
+    except:
+        print(cmd_fmt.format(mod="macholib"))
+        return False
+
+    return True
 
 def __lldb_init_module(debugger, internal_dict):
+
+    if not CheckMissingLibs(debugger):
+        print("Can't load LLDB macros. Please install dependencies first.")
+        return
+
     debug_session_enabled = False
     if "DEBUG_XNU_LLDBMACROS" in os.environ and len(os.environ['DEBUG_XNU_LLDBMACROS']) > 0:
         debug_session_enabled = True
     prev_os_plugin = "".join(GetSettingsValues(debugger, 'target.process.python-os-plugin-path'))
-    if PY3:
-        print("#" * 30)
-        print("WARNING! Python version 3 is not supported for xnu lldbmacros.")
-        print("Please restart your debugging session with the following workaround")
-        print("\ndefaults write com.apple.dt.lldb DefaultPythonVersion 2\n")
-        print("#" * 30)
-        print("\n")
     print("Loading kernel debugging from %s" % __file__)
     print("LLDB version %s" % debugger.GetVersionString())
     self_path = "{}".format(__file__)
@@ -90,6 +106,10 @@ def __lldb_init_module(debugger, internal_dict):
     xnu_debug_path = base_dir_name + "/lldbmacros/xnu.py"
     xnu_load_cmd = "command script import \"%s\"" % xnu_debug_path
     disable_optimization_warnings_cmd = "settings set target.process.optimization-warnings false"
+
+    # Single stepping support
+    report_all_threads_cmd = "settings set target.process.experimental.os-plugin-reports-all-threads false"
+    step_mode_cmd = "settings set target.process.run-all-threads true"
 
     source_map_cmd = ""
     try:
@@ -112,6 +132,10 @@ def __lldb_init_module(debugger, internal_dict):
         debugger.HandleCommand(xnu_load_cmd)
         print(disable_optimization_warnings_cmd)
         debugger.HandleCommand(disable_optimization_warnings_cmd)
+        print(report_all_threads_cmd)
+        debugger.HandleCommand(report_all_threads_cmd)
+        print(step_mode_cmd)
+        debugger.HandleCommand(step_mode_cmd)
         if source_map_cmd:
             print(source_map_cmd)
             debugger.HandleCommand(source_map_cmd)
@@ -124,10 +148,14 @@ def __lldb_init_module(debugger, internal_dict):
             kexts = os.listdir(builtinkexts_path)
             if len(kexts) > 0:
                 print("\nBuiltin kexts: %s\n" % kexts)
-                if load_kexts == False:
+                if not load_kexts:
                     print("XNU_LLDBMACROS_NOBUILTINKEXTS is set, not loading:\n")
                 for kextdir in kexts:
-                    script = os.path.join(builtinkexts_path, kextdir, kextdir.split('.')[-1] + ".py")
+                    # Python does not handle well modules that contain '-' in their names.
+                    # Remap such scripts to use '_' instead.
+                    script_name = kextdir.split('.')[-1].replace('-', '_') + ".py"
+                    script = os.path.join(builtinkexts_path, kextdir, script_name)
+
                     import_kext_cmd = "command script import \"%s\"" % script
                     print("%s" % import_kext_cmd)
                     if load_kexts:

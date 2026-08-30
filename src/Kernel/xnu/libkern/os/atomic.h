@@ -76,9 +76,19 @@
 #define OS_ATOMIC_STD
 #define os_atomic_std(op)                op
 #define os_atomic(type)                  type volatile _Atomic
+#if __has_ptrcheck
+#define os_cast_to_atomic_pointer(p)     (__typeof__(*(p)) volatile _Atomic * __single)(p)
+#define os_cast_to_nonatomic_pointer(p)                             \
+	_Pragma("clang diagnostic push")                        \
+	_Pragma("clang diagnostic ignored \"-Wcast-qual\"")     \
+	(os_atomic_basetypeof(p) * __single)(p)                 \
+	_Pragma("clang diagnostic pop")
+#else /* !__has_ptrcheck */
 #define os_cast_to_atomic_pointer(p)     (__typeof__(*(p)) volatile _Atomic *)(uintptr_t)(p)
-#define os_atomic_basetypeof(p)          __typeof__(atomic_load(os_cast_to_atomic_pointer(p)))
 #define os_cast_to_nonatomic_pointer(p)  (os_atomic_basetypeof(p) *)(uintptr_t)(p)
+#endif /* !__has_ptrcheck */
+#define os_atomic_basetypeof(p)          __typeof__(atomic_load(os_cast_to_atomic_pointer(p)))
+
 #endif /* !OS_ATOMIC_USES_CXX */
 
 /*!
@@ -91,21 +101,27 @@
 #include <type_traits>
 
 namespace os {
-template <class T> using add_volatile_t = typename std::add_volatile<T>::type;
 template <class T> using remove_volatile_t = typename std::remove_volatile<T>::type;
 
 template <class T>
-inline add_volatile_t<std::atomic<remove_volatile_t<T> > > *
+inline volatile std::atomic<remove_volatile_t<T> > *
 cast_to_atomic_pointer(T *v)
 {
-	return reinterpret_cast<add_volatile_t<std::atomic<remove_volatile_t<T> > > *>(v);
+	return reinterpret_cast<volatile std::atomic<remove_volatile_t<T> > *>(v);
 }
 
 template <class T>
-inline add_volatile_t<std::atomic<remove_volatile_t<T> > > *
+inline volatile std::atomic<remove_volatile_t<T> > *
 cast_to_atomic_pointer(std::atomic<T> *v)
 {
-	return reinterpret_cast<add_volatile_t<std::atomic<remove_volatile_t<T> > > *>(v);
+	return reinterpret_cast<volatile std::atomic<remove_volatile_t<T> > *>(v);
+}
+
+template <class T>
+inline volatile std::atomic<remove_volatile_t<T> > *
+cast_to_atomic_pointer(volatile std::atomic<T> *v)
+{
+	return reinterpret_cast<volatile std::atomic<remove_volatile_t<T> > *>(v);
 }
 
 template <class T>

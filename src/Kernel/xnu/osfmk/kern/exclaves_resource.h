@@ -1,0 +1,1025 @@
+/*
+ * Copyright (c) 2023 Apple Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
+
+#if CONFIG_EXCLAVES
+
+#pragma once
+
+#include <kern/bits.h>
+#include <kern/locks.h>
+#include <kern/queue.h>
+#include <mach/exclaves.h>
+#include <mach/kern_return.h>
+#include <sys/event.h>
+
+#include <stdint.h>
+#include <os/base.h>
+
+#include "kern/exclaves.tightbeam.h"
+
+__BEGIN_DECLS
+
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Exclaves Resources
+
+#define EXCLAVES_DOMAIN_KERNEL "com.apple.kernel"
+#define EXCLAVES_DOMAIN_DARWIN "com.apple.darwin"
+
+#define EXCLAVES_FORWARDING_RESOURCE_ID_BASE (1ULL << 48)
+
+/*
+ * Data associated with a conclave.
+ */
+
+/*
+ * Conclave State Machine:
+ *
+ *                 Launch Syscall
+ *       +---------+         +--------------+
+ *       |Attached | ------->|   Running    |
+ *       |         |         |              |
+ *       +---------+         +--------------+
+ *          ^ |                 |       ^
+ *    Spawn | |proc_exit        |       |
+ *          | |                 |       |
+ *          | v                 |       |
+ *      +---------+    Suspend  |       | Unsuspend
+ * *--> |  None   |     IPC to  |       |   IPC to
+ *      |         |    Conclave |       | Conclave
+ *      +---------+    Manager  |       | Manager
+ *           ^                  |       |
+ *  proc_exit|                  |       |
+ *           |                  |       |
+ *           |                  v       |
+ *         +---------+       +------------+
+ *         | Stopped |<------|  Suspended |
+ *         |         |       |            |
+ *         +---------+       +------------+
+ *                    Stop IPC
+ *                   to Conclave Manager
+ */
+typedef enum {
+	CONCLAVE_S_NONE = 0,
+	CONCLAVE_S_ATTACHED = 0x1,
+	CONCLAVE_S_RUNNING = 0x2,
+	CONCLAVE_S_STOPPED = 0x3,
+	CONCLAVE_S_SUSPENDED = 0x4,
+} conclave_state_t;
+
+typedef enum __attribute__((flag_enum)) {
+	CONCLAVE_R_NONE = 0,
+	CONCLAVE_R_LAUNCH_REQUESTED = 0x1,
+	CONCLAVE_R_SUSPEND_REQUESTED = 0x2,
+	CONCLAVE_R_STOP_REQUESTED = 0x4,
+} conclave_request_t;
+
+/*
+ * Data associated with Always-On Exclaves endpoints stashed in the conclave
+ * resource.
+ */
+typedef struct {
+	uint64_t aoei_serviceid;
+	uint8_t aoei_message_count;
+	uint8_t aoei_messenger_count;
+	uint8_t aoei_work_count;
+	uint8_t aoei_worker_count;
+	bool aoei_associated;
+	queue_chain_t aoei_chain;
+	uint64_t aoei_assertion_id;
+} aoe_item_t;
+
+/* The highest service identifier in any conclave. Needs to be raised together
+ * with the number of IDs in xnuproxy_exclaves_t on
+ * xnu-proxy/xnu_proxy_endpoints_defs.h in ExclaveCoreBundle
+ */
+#define CONCLAVE_SERVICE_MAX 768
+
+typedef struct {
+	conclave_state_t       c_state;
+	conclave_request_t     c_request;
+	bool                   c_active_downcall;
+	bool                   c_active_stopcall;
+	bool                   c_active_detach;
+	tb_client_connection_t c_control;
+	task_t XNU_PTRAUTH_SIGNED_PTR("conclave.task") c_task;
+	thread_t XNU_PTRAUTH_SIGNED_PTR("conclave.thread") c_downcall_thread;
+	bitmap_t               c_service_bitmap[BITMAP_LEN(CONCLAVE_SERVICE_MAX)];
+
+	/*
+	 * Always-On Exclaves specific.
+	 */
+	queue_head_t           c_aoe_q;
+	bool                   c_aoe_using_free_agents;
+} conclave_resource_t;
+
+typedef struct {
+	size_t sm_size;
+	exclaves_buffer_perm_t sm_perm;
+	char *sm_addr;
+	sharedmemorybase_mapping_s sm_mapping;
+	sharedmemorybase_segxnuaccess_s sm_client;
+} shared_memory_resource_t;
+
+typedef struct {
+	/* how many times *this* sensor resource handle has been
+	 * used to call sensor_start */
+	uint64_t s_startcount;
+	bool s_initialised;
+} sensor_resource_t;
+
+/*
+ * Notification resource structure for kqueue-based notifications.
+ * Used with XNUPROXY_RESOURCETYPE_NOTIFICATION.
+ * One resource per notification ID, indexed in kernel domain's ID table for
+ * upcall lookup, but accessible by name from multiple domains' name tables.
+ */
+typedef struct {
+	struct klist notification_klist;        /* List of knotes for kqueue-based notifications */
+} exclaves_notification_t;
+
+/* Port list entry for daemon notifications */
+typedef struct daemon_notification_port_entry {
+	queue_chain_t link;                      /* Queue linkage */
+	ipc_port_t    port;                      /* Send right for mach port-based Daemon notification */
+} daemon_notification_port_entry_t;
+
+/*
+ * Daemon notification resource structure for Mach message-based notifications.
+ * Used with XNUPROXY_RESOURCETYPE_DAEMONNOTIFICATION.
+ * One resource per notification ID, indexed in kernel domain's ID table for
+ * upcall lookup, but accessible by name from multiple domains' name tables,
+ * where each listener needs to have a registration.
+ */
+typedef struct {
+	queue_head_t registered_ports; /* Queue of daemon_notification_port_entry_t (wrapping ipc_port_t) */
+} exclaves_daemon_notification_resource_t;
+
+/*
+ * Every resource has an associated name and some other common state.
+ * Additionally there may be type specific data associated with the resource.
+ */
+#define EXCLAVES_RESOURCE_NAME_MAX 128
+typedef struct exclaves_resource {
+	char                r_name[EXCLAVES_RESOURCE_NAME_MAX];
+	xnuproxy_resourcetype_s r_type;
+	uint64_t            r_id;
+	_Atomic uint32_t    r_usecnt;
+	ipc_port_t          r_port;
+	lck_mtx_t           r_mutex;
+	bool                r_active;
+	bool                r_connected;
+
+	union {
+		conclave_resource_t                      r_conclave;
+		sensor_resource_t                        r_sensor;
+		exclaves_notification_t                  r_notification;
+		exclaves_daemon_notification_resource_t  r_daemon_notification;
+		shared_memory_resource_t                 r_shared_memory;
+	};
+} exclaves_resource_t;
+
+/*!
+ * @function exclaves_resource_init
+ *
+ * @abstract
+ * Called during exclaves_boot to dump the resource information from xnu proxy
+ * and build the xnu-side tables.
+ *
+ * @return
+ * KERN_SUCCESS on success otherwise an error code.
+ */
+extern kern_return_t
+exclaves_resource_init(void);
+
+/*!
+ * @function exclaves_resource_name
+ *
+ * @abstract
+ * Return the name associated with a resource.
+ *
+ * @param resource
+ * Conclave manager resource.
+ *
+ * @return
+ * The name of the resource or NULL.
+ */
+extern const char *
+exclaves_resource_name(const exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_resource_retain
+ *
+ * @abstract
+ * Grab a reference to the specified resource
+ *
+ * @param resource
+ * The resource to retain.
+ *
+ * @return
+ * The value of the use count before the retain
+ */
+extern uint32_t
+exclaves_resource_retain(exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_resource_release
+ *
+ * @abstract
+ * Drop a reference to the specified resource
+ *
+ * @param resource
+ * The resource to release.
+ *
+ * @discussion
+ * This may result in a resource type specific release function being called
+ * which can grab locks, free memory etc.
+ * After this function has been called, the resource should not be accessed as
+ * it may be in an uninitialized state.
+ */
+extern void
+exclaves_resource_release(exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_resource_from_port_name
+ *
+ * @abstract
+ * Find the resource associated with a port name in the specified space.
+ *
+ * @param space
+ * IPC space to search
+ *
+ * @param name
+ * Port name of the resource.
+ *
+ * @param resource
+ * Out parameter holding a pointer to the resource.
+ *
+ * @return
+ * KERN_SUCCESS or error code on failure.
+ *
+ * @discussion
+ * Returns with a +1 use-count on the resource which must be dropped with
+ * exclaves_resource_release().
+ */
+extern kern_return_t
+exclaves_resource_from_port_name(ipc_space_t space, mach_port_name_t name,
+    exclaves_resource_t **resource);
+
+
+/*!
+ * @function exclaves_resource_create_port_name
+ *
+ * @abstract
+ * Create a port name for the given resource in the specified space.
+ *
+ * @param name
+ * Our parameter for holding a pointer to the port name.
+ *
+ * @param space
+ * IPC space in which to create the name
+ *
+ * @param resource
+ * Resource for which to create a port name for.
+ *
+ * @return
+ * KERN_SUCCESS or error code on failure.
+ *
+ * @discussion
+ * Returns with a +1 use-count on the resource which is associated with the life
+ * of the newly created send right.
+ */
+extern kern_return_t
+exclaves_resource_create_port_name(exclaves_resource_t *resource, ipc_space_t space,
+    mach_port_name_t *name);
+
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Conclaves
+
+/*!
+ * @function exclaves_conclave_attach
+ *
+ * @abstract
+ * Attach a conclave to a task. The conclave must not already be attached to any
+ * task. Once attached, this conclave is exclusively associated with the task.
+ *
+ * @param name
+ * The name of conclave resource.
+ *
+ * @param task
+ * Task to attach the conclave to.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_attach(const char *name, task_t task);
+
+/*!
+ * @function exclaves_conclave_detach
+ *
+ * @abstract
+ * Detach a conclave from a task. The conclave must already be attached to the
+ * task and stopped. Once detached, this conclave is available for other tasks.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @param task
+ * Task to detach the conclave from.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_detach(exclaves_resource_t *resource, task_t task);
+
+/*!
+ * @function exclaves_conclave_inherit
+ *
+ * @abstract
+ * Pass an attached conclave from one task to another.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @param old_task
+ * Task with attached conclave.
+ *
+ * @param new_task
+ * Task which will inherit the conclave.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_inherit(exclaves_resource_t *resource, task_t old_task,
+    task_t new_task);
+
+
+/*!
+ * @function exclaves_conclave_is_attached
+ *
+ * @abstract
+ * Returns true if the conclave is in the ATTACHED state.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @return
+ * True if conclave is attached, false otherwise
+ */
+extern bool
+exclaves_conclave_is_attached(const exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_conclave_launch
+ *
+ * @abstract
+ * Launch a conclave. The conclave must be attached to a task and not already
+ * launched.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_launch(exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_conclave_lookup_resources
+ *
+ * @abstract
+ * Lookup conclave resource. The conclave must be attached to a task and
+ * launched.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @param conclave_resource_user
+ * Array to fill user resources for Conclave
+ *
+ * @param resource_count
+ * Number of resources in array
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_lookup_resources(exclaves_resource_t *resource,
+    struct exclaves_resource_user *conclave_resource_user, int resource_count);
+
+/*!
+ * @function exclaves_conclave_stop
+ *
+ * @abstract
+ * Stop a conclave. The conclave must be launched and attached.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @param gather_crash_bt
+ * Conclave Manager needs to gather backtraces
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_stop(exclaves_resource_t *resource, bool gather_crash_bt);
+
+/*!
+ * @function exclaves_conclave_suspend
+ *
+ * @abstract
+ * Suspend a conclave. The conclave must be attached.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_suspend(exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_conclave_resume
+ *
+ * @abstract
+ * Resume a conclave. The conclave must be attached.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_resume(exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_conclave_stop_upcall
+ *
+ * @abstract
+ * Stop a conclave. The conclave must be launched and attached.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_stop_upcall(exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_conclave_stop_upcall_complete
+ *
+ * @abstract
+ * Complete the Conclave stop once back in regular context.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @param task
+ * Conclave Host task
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_conclave_stop_upcall_complete(exclaves_resource_t *resource, task_t task);
+
+/*!
+ * @function exclaves_conclave_get_domain
+ *
+ * @abstract
+ * Return the domain associated with the specified conclave resource. Or the
+ * kernel domain if the conclave resource is NULL.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @return
+ * The domain of the conclave or the kernel domain.
+ */
+extern const char *
+exclaves_conclave_get_domain(exclaves_resource_t *resource);
+
+
+/*!
+ * @function exclaves_conclave_has_service
+ *
+ * @abstract
+ * Return true if the service ID is associated with the specified conclave
+ * resource.
+ *
+ * @param resource
+ * Conclave Manager resource.
+ *
+ * @params id
+ * ID of a SERVICE resource.
+ *
+ * @return
+ * true if the ID is available to conclave, false otherwise
+ */
+extern bool
+exclaves_conclave_has_service(exclaves_resource_t *resource, uint64_t id);
+
+/*!
+ * @function exclaves_conclave_lookup_by_aoeserviceid
+ *
+ * @abstract
+ * Find a conclave by Always-On Exclaves service ID.
+ *
+ * @param id
+ * The AOE service ID.
+ *
+ * @return
+ * Pointer to the resource
+ */
+exclaves_resource_t *
+exclaves_conclave_lookup_by_aoeserviceid(uint64_t id);
+
+/*!
+ * @function exclaves_is_forwarding_resource
+ *
+ * @abstract
+ * Check if the resource is a forwarding conclave, i.e. the conclave
+ * manager isn't hosting an actual exclave resource
+ *
+ * @param resource
+ * Conclave Manager resource
+ *
+ * @return
+ * true if resource is a forwarding conclave, false otherwise
+ *
+ */
+extern bool
+exclaves_is_forwarding_resource(exclaves_resource_t *resource);
+
+/*!
+ * @function exclaves_conclave_prepare_teardown
+ *
+ * @bastract
+ * Before we can start tearing down the conclave,
+ * we may want to clear up some machine context.
+ *
+ * @param task is the pointer to owner of conclave resource.
+ *
+ */
+extern void
+exclaves_conclave_prepare_teardown(
+	task_t task);
+
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Sensors
+
+/*!
+ * @function exclaves_resource_sensor_open
+ *
+ * @abstract
+ * Open a sensor resource.
+ *
+ * @param domain
+ * The domain to search.
+ *
+ * @param name
+ * The name of the sensor resource.
+ *
+ * @param resource
+ * Out parameter which holds the resource on success.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ *
+ * @discussion
+ * Returns with a +1 use-count on the resource which must be dropped with
+ * exclaves_resource_release().
+ */
+extern kern_return_t
+exclaves_resource_sensor_open(const char *domain, const char *name,
+    exclaves_resource_t **resource);
+
+/*!
+ * @function exclaves_resource_sensor_start
+ *
+ * @abstract
+ * Start accessing a sensor.
+ *
+ * @param resource
+ * Sensor resource.
+ *
+ * @param flags
+ * Flags to pass to implementation.
+ *
+ * @param status
+ * output parameter for status of sensor after this operation.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+kern_return_t
+exclaves_resource_sensor_start(exclaves_resource_t *resource, uint64_t flags,
+    exclaves_sensor_status_t *status);
+
+/*!
+ * @function exclaves_resource_sensor_stop
+ *
+ * @abstract
+ * Stop accessing a sensor.
+ *
+ * @param resource
+ * Sensor resource.
+ *
+ * @param flags
+ * Flags to pass to implementation.
+ *
+ * @param status
+ * output parameter for status of sensor after this operation.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+kern_return_t
+exclaves_resource_sensor_stop(exclaves_resource_t *resource, uint64_t flags,
+    exclaves_sensor_status_t *status);
+
+/*!
+ * @function exclaves_resource_sensor_status
+ *
+ * @abstract
+ * Query the status of access to a sensor.
+ *
+ * @param resource
+ * Sensor resource.
+ *
+ * @param flags
+ * Flags to pass to implementation.
+ *
+ * @param status
+ * output parameter for status of sensor after this operation.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+kern_return_t
+exclaves_resource_sensor_status(exclaves_resource_t *resource, uint64_t flags,
+    exclaves_sensor_status_t *status);
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Notifications
+
+/*!
+ * @function exclaves_notification_create
+ *
+ * @abstract
+ * Set up an exclave notification from the specified resource.
+ *
+ * @param domain
+ * The domain to search.
+ *
+ * @param name
+ * The name of the notification resource.
+ *
+ * @return
+ * A notification resource or NULL.
+ *
+ * @discussion
+ * Returns with a +1 use-count on the resource which must be dropped with
+ * exclaves_resource_release().
+ */
+extern kern_return_t
+exclaves_notification_create(const char *domain, const char *name,
+    exclaves_resource_t **resource);
+
+/*!
+ * @function exclaves_notification_signal
+ *
+ * @abstract
+ * To be called from upcall context when the specified notification resource is signaled.
+ *
+ * @param resource
+ * Notification resource.
+ *
+ * @param event_mask
+ * Bit mask of events for the notification.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_notification_signal(exclaves_resource_t *resource, long event_mask);
+
+/*!
+ * @function exclaves_daemon_notification_signal
+ *
+ * @abstract
+ * To be called to send a mach message notification to a registered daemon port.
+ *
+ * @param resource
+ * Notification resource.
+ *
+ * @return
+ * KERN_SUCCESS on success, error code otherwise.
+ */
+extern kern_return_t
+exclaves_daemon_notification_signal(exclaves_resource_t *resource);
+
+
+/*!
+ * @function exclaves_notificatione_lookup_by_id
+ *
+ * @abstract
+ * Find an exclave notification  by ID.
+ *
+ * @param id
+ * The resource ID.
+ *
+ * @return
+ * Pointer to the resource
+ */
+exclaves_resource_t *
+exclaves_notification_lookup_by_id(uint64_t id);
+
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Services
+
+/*
+ * Indicates an invalid service. */
+#define  EXCLAVES_INVALID_ID UINT64_C(~0)
+
+/*!
+ * @function exclaves_service_lookup
+ *
+ * @abstract
+ * Look up a service resource
+ *
+ * @param domain
+ * The domain to search.
+ *
+ * @param name
+ * The name of the service resource.
+ *
+ * @return
+ * ID of service or EXCLAVES_INVALID_ID if the service cannot be found.
+ */
+extern uint64_t
+exclaves_service_lookup(const char *domain, const char *name);
+
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Shared Memory
+
+/*!
+ * @function exclaves_resource_shared_memory_map
+ *
+ * @abstract
+ * Map a shared memory resource.
+ *
+ * @param domain
+ * The domain to search.
+ *
+ * @param name
+ * The name of the shared memory resource.
+ *
+ * @param size
+ * Size of shared memory region to map.
+ *
+ * @param perm
+ * The permissions of the shared memory.
+ *
+ * @param resource
+ * Out parameter which holds the resource on success.
+ *
+ * @return
+ * KERN_SUCCESS or an error code.
+ *
+ * @discussion
+ * Returns with a +1 use-count on the resource which must be dropped with
+ * exclaves_resource_release().
+ */
+extern kern_return_t
+exclaves_resource_shared_memory_map(const char *domain, const char *name,
+    size_t size, exclaves_buffer_perm_t perm, exclaves_resource_t **resource);
+
+/*!
+ * @function exclaves_resource_shared_memory_copyin
+ *
+ * @abstract
+ * Copy user data into a shared memory.
+ *
+ * @param resource
+ * Shared memory resource.
+ *
+ * @param ubuffer
+ * Source of data to copy.
+ *
+ * @param usize1
+ * Size of data to copy.
+ *
+ * @param uoffset1
+ * Offset into the shared memory.
+ *
+ * @param usize2
+ * Size of 2nd range of data to copy (can be 0).
+ *
+ * @param uoffset2
+ * Offset of 2nd range into the shared memory.
+ *
+ * @return
+ * KERN_SUCCESS or error code on failure.
+ */
+extern kern_return_t
+exclaves_resource_shared_memory_copyin(exclaves_resource_t *resource,
+    user_addr_t ubuffer, mach_vm_size_t usize1, mach_vm_size_t uoffset1,
+    mach_vm_size_t usize2, mach_vm_size_t uoffset2);
+
+/*!
+ * @function exclaves_resource_shared_memory_copyout
+ *
+ * @abstract
+ * Copy user data into a shared memory.
+ *
+ * @param resource
+ * Shared memory resource.
+ *
+ * @param ubuffer
+ * Destination to copy data to.
+ *
+ * @param usize1
+ * Size of data to copy.
+ *
+ * @param uoffset1
+ * Offset into the shared memory.
+ *
+ * @param usize2
+ * Size of 2nd range of data to copy (can be 0).
+ *
+ * @param uoffset2
+ * Offset of 2nd range into the shared memory.
+ *
+ * @return
+ * KERN_SUCCESS or error code on failure.
+ */
+extern kern_return_t
+exclaves_resource_shared_memory_copyout(exclaves_resource_t *resource,
+    user_addr_t ubuffer, mach_vm_size_t usize1, mach_vm_size_t uoffset1,
+    mach_vm_size_t usize2, mach_vm_size_t uoffset2);
+
+/*!
+ * @function exclaves_resource_shared_memory_get_buffer
+ *
+ * @abstract
+ * Return a pointer to the shared memory buffer. Must already be mapped.
+ *
+ * @param resource
+ * Shared memory resource.
+ *
+ * @param buffer_len
+ * Returns the length of the returned buffer.
+ *
+ * @return
+ * Pointer to shared memory.
+ */
+extern char *
+exclaves_resource_shared_memory_get_buffer(exclaves_resource_t *resource,
+    size_t *buffer_len);
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Arbitrated Memory
+
+/*!
+ * @function exclaves_resource_arbitrated_memory_map
+ *
+ * @abstract
+ * Map an arbitrated memory resource.
+ *
+ * @param type
+ * The resourcetype being mapped, supported types:
+ * XNUPROXY_RESOURCETYPE_ARBITRATEDMEMORY,
+ * XNUPROXY_RESOURCETYPE_ARBITRATEDAUDIOMEMORY
+ *
+ * @param domain
+ * The domain to search.
+ *
+ * @param name
+ * The name of the arbitrated memory resource.
+ *
+ * @param size
+ * Size of named buffer region to map.
+ *
+ * @param resource
+ * Out parameter which holds the resource on success.
+ *
+ * @return
+ * KERN_SUCCESS or error code on failure.
+ *
+ * @discussion
+ * Returns with a +1 use-count on the resource which must be dropped with
+ * exclaves_resource_release().
+ */
+extern kern_return_t
+exclaves_resource_arbitrated_memory_map(xnuproxy_resourcetype_s type,
+    const char *domain, const char *name, size_t size,
+    exclaves_resource_t **resource);
+
+/*!
+ * @function exclaves_resource_arbitrated_memory_copyout
+ *
+ * @abstract
+ * Copyout from an arbitrated memory resource buffer into user memory
+ *
+ * @param resource
+ * Arbitrated memory resource.
+ *
+ * @param ubuffer
+ * Destination to copy data out to.
+ *
+ * @param usize
+ * Size of data to copy.
+ *
+ * @param uoffset
+ * Start copy offset in the arbitrated buffer.
+ *
+ * @param uparam1
+ * Additional user param.
+ *
+ * @param uparam2
+ * Additional user param.
+ *
+ * @param ustatus
+ * Destination to copy status to.
+ *
+ * @return
+ * KERN_SUCCESS or error code on failure.
+ */
+extern kern_return_t
+exclaves_resource_arbitrated_memory_copyout(exclaves_resource_t *resource,
+    user_addr_t ubuffer, mach_vm_size_t usize, mach_vm_size_t uoffset,
+    uint64_t uparam1, uint64_t uparam2, user_addr_t ustatus);
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Always-On Exclaves Services
+
+/*!
+ * @function exclaves_resource_aoeservice_iterate
+ *
+ * @abstract
+ * Iterate through all AOE Services for the given domain.
+ *
+ * @param domain
+ * The domain to search.
+ *
+ * @param cb
+ * The callback to call on each found AOE Service. Return true to break out
+ * early.
+ */
+/* BEGIN IGNORE CODESTYLE */
+extern void
+exclaves_resource_aoeservice_iterate(const char *domain,
+    bool (^cb)(exclaves_resource_t *));
+/* END IGNORE CODESTYLE */
+
+
+extern exclaves_resource_t *
+exclaves_resource_lookup_by_name(const char *domain_name, const char *name,
+    xnuproxy_resourcetype_s type);
+
+extern exclaves_resource_t *
+exclaves_resource_lookup_by_id(const char *domain_name, uint64_t id,
+    xnuproxy_resourcetype_s type);
+
+__END_DECLS
+
+#endif /* CONFIG_EXCLAVES */

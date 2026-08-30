@@ -84,6 +84,7 @@
 #include <vm/vm_kern.h>
 #include <sys/vnode.h>
 #include <sys/namei.h>
+#include <kern/smr.h>
 #include <sys/vfs_context.h>
 #include <sys/sysctl.h>
 
@@ -116,6 +117,37 @@ typedef struct vnode_resolve *vnode_resolve_t;
 
 #endif /* CONFIG_TRIGGERS */
 
+#if CONFIG_IOCOUNT_TRACE
+#define IOCOUNT_TRACE_VGET          0
+#define IOCOUNT_TRACE_VPUT          1
+#define IOCOUNT_TRACE_MAX_TYPES     2
+#define IOCOUNT_TRACE_MAX_IDX       32
+#define IOCOUNT_TRACE_MAX_FRAMES    16
+
+struct vnode_iocount_trace {
+	int idx;
+	int counts[IOCOUNT_TRACE_MAX_IDX];
+	void *stacks[IOCOUNT_TRACE_MAX_IDX][IOCOUNT_TRACE_MAX_FRAMES];
+};
+typedef struct vnode_iocount_trace *vnode_iocount_trace_t;
+#endif /* CONFIG_IOCOUNT_TRACE */
+
+#if CONFIG_FILE_LEASES
+#define FL_FLAG_RELEASE_PENDING     0x00000001
+#define FL_FLAG_DOWNGRADE_PENDING   0x00000002
+
+struct file_lease {
+	LIST_ENTRY(file_lease) fl_link;
+	struct fileglob *fl_fg;         /* The file that the lease is placed on */
+	pid_t       fl_pid;             /* The process's pid that owns the lease */
+	int         fl_type;            /* The file lease type: F_RDLCK, F_WRLCK */
+	uint32_t    fl_flags;           /* The file lease flags */
+	uint64_t    fl_release_start;   /* The lease release start time */
+	uint64_t    fl_downgrade_start; /* The lease downgrade start time */
+};
+typedef struct file_lease *file_lease_t;
+#endif /* CONFIG_FILE_LEASES */
+
 /*
  * Reading or writing any of these items requires holding the appropriate lock.
  * v_freelist is locked by the global vnode_list_lock
@@ -140,7 +172,8 @@ struct vnode {
 	int32_t  v_usecount;                    /* reference count of users */
 	int32_t  v_iocount;                     /* iocounters */
 	void *   XNU_PTRAUTH_SIGNED_PTR("vnode.v_owner") v_owner; /* act that owns the vnode */
-	uint16_t v_type;                        /* vnode type */
+	uint8_t _Atomic v_ext_flag;             /* additional vnode flags, (v_flags is not enough) */
+	uint8_t  v_type;                        /* vnode type */
 	uint16_t v_tag;                         /* type of underlying data */
 	uint32_t v_id;                          /* identity of vnode contents */
 	union {
@@ -165,8 +198,9 @@ struct vnode {
 	/*
 	 * back to the vnode lock for protection
 	 */
-	int32_t         v_numoutput;                    /* num of writes in progress */
-	int32_t         v_writecount;                   /* reference count of writers */
+	int32_t         v_numoutput;            /* num of writes in progress */
+	int32_t         v_writecount;           /* reference count of writers */
+	uint32_t        v_holdcount;            /* reference to keep vnode from being freed after reclaim */
 	const char *v_name;                     /* name component of the vnode */
 	vnode_t XNU_PTRAUTH_SIGNED_PTR("vnode.v_parent") v_parent;                       /* pointer to parent vnode */
 	struct lockf    *v_lockf;               /* advisory lock list head */
@@ -174,7 +208,7 @@ struct vnode {
 	mount_t XNU_PTRAUTH_SIGNED_PTR("vnode.v_mount") v_mount;                        /* ptr to vfs we are in */
 	void *  v_data;                         /* private data for fs */
 #if CONFIG_MACF
-	struct label *v_label;                  /* MAC security label */
+	struct label *_Atomic v_label;          /* MAC security label */
 #endif
 #if CONFIG_TRIGGERS
 	vnode_resolve_t v_resolve;              /* trigger vnode resolve info (VDIR only) */
@@ -187,6 +221,14 @@ struct vnode {
 #if CONFIG_IO_COMPRESSION_STATS
 	io_compression_stats_t io_compression_stats;            /* IO compression statistics */
 #endif /* CONFIG_IO_COMPRESSION_STATS */
+
+#if CONFIG_IOCOUNT_TRACE
+	vnode_iocount_trace_t v_iocount_trace;
+#endif /* CONFIG_IOCOUNT_TRACE */
+
+#if CONFIG_FILE_LEASES
+	LIST_HEAD(fl_head, file_lease) v_leases; /* list of leases in place */
+#endif /* CONFIG_FILE_LEASES */
 };
 
 #define v_mountedhere   v_un.vu_mountedhere
@@ -211,6 +253,7 @@ struct vnode {
 #define VLIST_RAGE                0x01          /* vnode is currently in the rapid age list */
 #define VLIST_DEAD                0x02          /* vnode is currently in the dead list */
 #define VLIST_ASYNC_WORK          0x04          /* vnode is currently on the deferred async work queue */
+#define VLIST_NO_REUSE            0x08          /* vnode should not be reused, will be deallocated */
 
 /*
  * v_lflags
@@ -221,6 +264,7 @@ struct vnode {
 #define VL_TERMWANT     0x0008          /* there's a waiter  for recycle finish (vnode_getiocount)*/
 #define VL_DEAD         0x0010          /* vnode is dead, cleaned of filesystem-specific info */
 #define VL_MARKTERM     0x0020          /* vnode should be recycled when no longer referenced */
+#define VL_OPSCHANGE    0x0040          /* device vnode is changing vnodeops */
 #define VL_NEEDINACTIVE 0x0080          /* delay VNOP_INACTIVE until iocount goes to 0 */
 
 #define VL_LABEL        0x0100          /* vnode is marked for labeling */
@@ -263,16 +307,24 @@ struct vnode {
 #define VISUNION        0x200000        /* union special processing */
 #define VISNAMEDSTREAM  0x400000        /* vnode is a named stream (eg HFS resource fork) */
 #define VOPENEVT        0x800000        /* if process is P_CHECKOPENEVT, then or in the O_EVTONLY flag on open */
-#define VNEEDSSNAPSHOT 0x1000000
+#define VCANDEALLOC     0x1000000
 #define VNOCS          0x2000000        /* is there no code signature available */
 #define VISDIRTY       0x4000000        /* vnode will need IO if reclaimed */
 #define VFASTDEVCANDIDATE  0x8000000        /* vnode is a candidate to store on a fast device */
 #define VAUTOCANDIDATE 0x10000000       /* vnode was automatically marked as a fast-dev candidate */
 #define VFMLINKTARGET  0x20000000       /* vnode is firmlink target */
+#define VMOUNTEDHERE   0x40000000       /* vnode is a mountpoint */
 /*
- *  0x40000000 not used
  *  0x80000000 not used.
  */
+
+/* v_ext_flags (8 bits) */
+#define VE_LINKCHANGE            0x01
+#define VE_LINKCHANGEWAIT        0x02
+#define VE_NOT_HARDLINK          0x04
+#define VE_APPENDONLY            0x08   /* UF_APPEND / SF_APPEND flag set */
+#define VE_CHOWN_CHMOD_BUSY      0x10   /* chown/chmod operation in progress */
+#define VE_CHOWN_CHMOD_WAITING   0x20   /* thread waiting for chown/chmod to complete */
 
 /*
  * This structure describes vnode data which is specific to a file descriptor.
@@ -375,15 +427,8 @@ extern struct vnodeop_desc *vnodeop_descs[];
 
 /*
  * This macro is very helpful in defining those offsets in the vdesc struct.
- *
- * This is stolen from X11R4.  I ingored all the fancy stuff for
- * Crays, so if you decide to port this to such a serious machine,
- * you might want to consult Intrisics.h's XtOffset{,Of,To}.
  */
-#define VOPARG_OFFSET(p_type, field) \
-	((int) (((char *) (&(((p_type)NULL)->field))) - ((char *) NULL)))
-#define VOPARG_OFFSETOF(s_type, field) \
-	VOPARG_OFFSET(s_type*,field)
+#define VOPARG_OFFSETOF(s_type, field) (int)offsetof(s_type, field)
 #define VOPARG_OFFSETTO(S_TYPE, S_OFFSET, STRUCT_P) \
 	((S_TYPE)(((char*)(STRUCT_P))+(S_OFFSET)))
 
@@ -408,13 +453,9 @@ struct ostat;
 /* bdevvp moved to vnode.h as private KPI */
 void    cvtstat(struct stat *st, struct ostat *ost);
 void    vprint(const char *label, struct vnode *vp);
-
+void    vprint_path(const char *label, struct vnode *vp);
 
 __private_extern__ int set_package_extensions_table(user_addr_t data, int nentries, int maxwidth);
-int     vn_rdwr_64(enum uio_rw rw, struct vnode *vp, uint64_t base,
-    int64_t len, off_t offset, enum uio_seg segflg,
-    int ioflg, kauth_cred_t cred, int64_t *aresid,
-    struct proc *p);
 #if CONFIG_MACF
 int     vn_setlabel(struct vnode *vp, struct label *intlabel,
     vfs_context_t context);
@@ -422,7 +463,7 @@ int     vn_setlabel(struct vnode *vp, struct label *intlabel,
 void    fifo_printinfo(struct vnode *vp);
 int     vn_open(struct nameidata *ndp, int fmode, int cmode);
 int     vn_open_modflags(struct nameidata *ndp, int *fmode, int cmode);
-int     vn_open_auth(struct nameidata *ndp, int *fmode, struct vnode_attr *);
+int     vn_open_auth(struct nameidata *ndp, int *fmode, struct vnode_attr *, vnode_t authvp);
 int     vn_close(vnode_t, int flags, vfs_context_t ctx);
 errno_t vn_remove(vnode_t dvp, vnode_t *vpp, struct nameidata *ndp, int32_t flags, struct vnode_attr *vap, vfs_context_t ctx);
 errno_t vn_rename(struct vnode *fdvp, struct vnode **fvpp, struct componentname *fcnp, struct vnode_attr *fvap,
@@ -461,7 +502,7 @@ int vnode_attr_authorize_dir_clone(struct vnode_attr *vap, kauth_action_t action
     uint32_t flags, vfs_context_t ctx, void *reserved);
 /* End of authorization subroutines */
 
-void vnode_attr_handle_mnt_ignore_ownership(struct vnode_attr *vap, mount_t mp, vfs_context_t ctx);
+void vnode_attr_handle_uid_and_gid(struct vnode_attr *vap, mount_t mp, vfs_context_t ctx);
 
 #define VN_CREATE_NOAUTH                (1<<0)
 #define VN_CREATE_NOINHERIT             (1<<1)
@@ -490,6 +531,7 @@ errno_t  vnode_verifynamedstream(vnode_t vp);
 void    nchinit(void);
 int     resize_namecache(int newsize);
 void    name_cache_lock_shared(void);
+boolean_t    name_cache_lock_shared_to_exclusive(void);
 void    name_cache_lock(void);
 void    name_cache_unlock(void);
 void    cache_enter_with_gen(vnode_t dvp, vnode_t vp, struct componentname *cnp, int gen);
@@ -514,11 +556,16 @@ int     vnode_getalways(vnode_t);
 int     vnode_getalways_from_pager(vnode_t);
 int     vget_internal(vnode_t, int, int);
 errno_t vnode_getiocount(vnode_t, unsigned int, int);
+vnode_t vnode_getparent_if_different(vnode_t, vnode_t);
+void    vnode_link_lock(vnode_t);
+void    vnode_link_unlock(vnode_t);
 #endif /* BSD_KERNEL_PRIVATE */
 int     vnode_get_locked(vnode_t);
 int     vnode_put_locked(vnode_t);
 #ifdef BSD_KERNEL_PRIVATE
 int     vnode_put_from_pager(vnode_t);
+vnode_t vnode_drop_and_unlock(vnode_t);
+bool    vnode_isappendonly(vnode_t);
 #endif /* BSD_KERNEL_PRIVATE */
 
 int     vnode_issock(vnode_t);
@@ -539,6 +586,9 @@ errno_t vnode_setsize(vnode_t, off_t, int ioflag, vfs_context_t);
 int     vnode_setattr_fallback(vnode_t vp, struct vnode_attr *vap, vfs_context_t ctx);
 int     vnode_isspec(vnode_t vp);
 
+/* Serialize chmod/chown operations to prevent race conditions */
+int     vnode_chmod_chown_busy(vnode_t vp);
+void    vnode_chmod_chown_unbusy(vnode_t vp);
 
 #ifdef BSD_KERNEL_PRIVATE
 
@@ -563,6 +613,7 @@ void vn_clearunionwait(vnode_t, int);
 
 void SPECHASH_LOCK(void);
 void SPECHASH_UNLOCK(void);
+lck_mtx_t * SPECHASH_LOCK_ADDR(void);
 
 void    vnode_authorize_init(void);
 
@@ -618,9 +669,11 @@ int     build_path_with_parent(vnode_t, vnode_t /* parent */, char *, int, int *
 void    nspace_resolver_init(void);
 void    nspace_resolver_exited(struct proc *);
 
-int     vnode_materialize_dataless_file(vnode_t, uint64_t);
-
 int     vnode_isinuse_locked(vnode_t, int, int );
+
+kauth_cred_t vnode_cred(vnode_t);
+
+int     fsgetpath_internal(vfs_context_t, int, uint64_t, vm_size_t, caddr_t, uint32_t options, int *);
 
 #endif /* BSD_KERNEL_PRIVATE */
 
@@ -638,5 +691,26 @@ int vnode_updateiocompressionbufferstats(vnode_t vp, uint64_t uncompressed_size,
 #endif /* CONFIG_IO_COMPRESSION_STATS */
 
 extern bool rootvp_is_ssd;
+
+#if CONFIG_FILE_LEASES
+int vnode_setlease(vnode_t vp, struct fileglob *fg, int fl_type, int expcounts,
+    vfs_context_t ctx);
+int vnode_getlease(vnode_t vp);
+int vnode_breaklease(vnode_t vp, uint32_t oflags, vfs_context_t ctx);
+void vnode_breakdirlease(vnode_t vp, bool need_parent, uint32_t oflags);
+void vnode_revokelease(vnode_t vp, bool locked);
+#endif /* CONFIG_FILE_LEASES */
+
+bool vfs_context_allow_fs_blksize_nocache_write(vfs_context_t);
+
+#define VFS_SMR_DECLARE                         \
+	extern smr_t vfs_smr
+
+#define VFS_SMR()       vfs_smr
+#define vfs_smr_enter() smr_enter(VFS_SMR())
+#define vfs_smr_leave() smr_leave(VFS_SMR())
+#define vfs_smr_synchronize()   smr_synchronize(VFS_SMR())
+
+bool vnode_hold_smr(vnode_t);
 
 #endif /* !_SYS_VNODE_INTERNAL_H_ */

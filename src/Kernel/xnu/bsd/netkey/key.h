@@ -39,6 +39,8 @@
 #define KEY_SADB_LOCKED         1
 
 extern struct key_cb key_cb;
+extern lck_mtx_t sadb_mutex_data;
+#define sadb_mutex (&sadb_mutex_data)
 
 struct secpolicy;
 struct secpolicyindex;
@@ -62,17 +64,14 @@ extern struct secasvar *key_alloc_outbound_sav_for_interface(ifnet_t interface, 
     struct sockaddr *dst);
 extern int key_checkrequest(struct ipsecrequest *isr, struct secasindex *,
     struct secasvar **sav);
-extern struct secasvar *key_allocsa(u_int, caddr_t, caddr_t,
-    u_int, u_int32_t);
-struct secasvar *
-key_allocsa_extended(u_int family, caddr_t src, caddr_t dst,
+struct secasvar *key_allocsa(union sockaddr_in_4_6 *src, union sockaddr_in_4_6 *dst,
     u_int proto, u_int32_t spi, ifnet_t interface);
-extern bool key_checksa_present(u_int family, caddr_t src, caddr_t dst, u_int16_t src_port, u_int16_t dst_port);
+extern bool key_checksa_present(union sockaddr_in_4_6 *src, union sockaddr_in_4_6 *dst);
 extern u_int16_t key_natt_get_translated_port(struct secasvar *);
 extern void key_freesp(struct secpolicy *, int);
 extern void key_freesav(struct secasvar *, int);
 extern struct secpolicy *key_newsp(void);
-extern struct secpolicy *key_msg2sp(struct sadb_x_policy *, size_t, int *);
+extern struct secpolicy *key_msg2sp(struct sadb_x_policy *__sized_by(len), size_t len, int *);
 extern struct mbuf *key_sp2msg(struct secpolicy *);
 extern int key_ismyaddr(struct sockaddr *);
 extern int key_spdacquire(struct secpolicy *);
@@ -82,7 +81,7 @@ extern void key_randomfill(void *, size_t);
 extern void key_freereg(struct socket *);
 extern int key_parse(struct mbuf *, struct socket *);
 extern int key_checktunnelsanity(struct secasvar *, u_int, caddr_t, caddr_t);
-extern void key_sa_recordxfer(struct secasvar *, struct mbuf *);
+extern void key_sa_recordxfer(struct secasvar *, size_t);
 extern void key_sa_routechange(struct sockaddr *);
 extern void key_sa_chgstate(struct secasvar *, u_int8_t);
 extern void key_sa_stir_iv(struct secasvar *);
@@ -95,7 +94,7 @@ extern void key_delsp_for_ipsec_if(ifnet_t ipsec_if);
 struct ifnet;
 struct ifnet_keepalive_offload_frame;
 extern u_int32_t key_fill_offload_frames_for_savs(struct ifnet *,
-    struct ifnet_keepalive_offload_frame *frames_array, u_int32_t, size_t);
+    struct ifnet_keepalive_offload_frame *__counted_by(frames_count)frames_array, u_int32_t frames_count, size_t);
 
 extern bool key_custom_ipsec_token_is_valid(void *);
 extern int key_reserve_custom_ipsec(void **, union sockaddr_in_4_6 *, union sockaddr_in_4_6 *, u_int8_t proto);

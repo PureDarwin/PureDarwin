@@ -4533,7 +4533,8 @@ void IOFramebuffer::free()
         // thisName starts off as a static string "IOFB?"; thisNameLen = 0 then.
         // Later, thisName is allocated on the heap to contain a unique value;
         // thisNameLen tracks the size of the heap allocation, if it exists.
-        IODelete((void *)thisName, char, thisNameLen);
+        void *nameAllocation = (void *)thisName;
+        IODelete(nameAllocation, char, thisNameLen);
         thisName = NULL;
     }
     OSSafeReleaseNULL(userAccessRanges);

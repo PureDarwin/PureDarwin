@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2022 Apple Inc. All rights reserved.
  */
 /*
  * CDDL HEADER START
@@ -187,7 +187,7 @@ end:
 static void
 fasttrap_return_common(proc_t *p, arm_saved_state_t *regs, user_addr_t pc, user_addr_t new_pc)
 {
-	pid_t pid = p->p_pid;
+	pid_t pid = proc_getpid(p);
 	fasttrap_tracepoint_t *tp;
 	fasttrap_bucket_t *bucket;
 	fasttrap_id_t *id;
@@ -292,7 +292,7 @@ fasttrap_sigsegv(proc_t *p, uthread_t t, user_addr_t addr, arm_saved_state_t *re
 	proc_unlock(p);
 
 	/* raise signal */
-	signal_setast(t->uu_context.vc_thread);
+	signal_setast(get_machthread(t));
 #endif
 }
 
@@ -322,10 +322,10 @@ static int
 condition_true(int cond, int cpsr)
 {
 	int taken = 0;
-	int zf = (cpsr & PSR_ZF) ? 1 : 0,
-	    nf = (cpsr & PSR_NF) ? 1 : 0,
-	    cf = (cpsr & PSR_CF) ? 1 : 0,
-	    vf = (cpsr & PSR_VF) ? 1 : 0;
+	int zf = (cpsr & PSR64_Z) ? 1 : 0,
+	    nf = (cpsr & PSR64_N) ? 1 : 0,
+	    cf = (cpsr & PSR64_C) ? 1 : 0,
+	    vf = (cpsr & PSR64_V) ? 1 : 0;
 
 	switch (cond) {
 	case 0: taken = zf; break;
@@ -452,23 +452,23 @@ get_saved_state64_regno(arm_saved_state64_t *regs64, uint32_t regno, int use_xzr
 }
 
 static void
-set_saved_state64_regno(arm_saved_state64_t *regs64, uint32_t regno, int use_xzr, register_t value)
+set_saved_state_regno(arm_saved_state_t *state, uint32_t regno, int use_xzr, register_t value)
 {
 	/* Set PC to register value */
 	switch (regno) {
 	case 29:
-		regs64->fp = value;
+		set_saved_state_fp(state, value);
 		break;
 	case 30:
-		regs64->lr = value;
+		set_saved_state_lr(state, value);
 		break;
 	case 31:
 		if (!use_xzr) {
-			regs64->sp = value;
+			set_saved_state_sp(state, value);
 		}
 		break;
 	default:
-		regs64->x[regno] = value;
+		set_saved_state_reg(state, regno, value);
 		break;
 	}
 }
@@ -556,24 +556,22 @@ static void
 fasttrap_pid_probe_handle_patched_instr64(arm_saved_state_t *state, fasttrap_tracepoint_t *tp __unused, uthread_t uthread,
     proc_t *p, uint_t is_enabled, int *was_simulated)
 {
+	thread_t th = get_machthread(uthread);
 	int res1, res2;
 	arm_saved_state64_t *regs64 = saved_state64(state);
 	uint32_t instr = tp->ftt_instr;
 	user_addr_t new_pc = 0;
 
-	/* Neon state should be threaded throw, but hack it until we have better arm/arm64 integration */
-	arm_neon_saved_state64_t *ns64 = &(get_user_neon_regs(uthread->uu_thread)->ns_64);
-
 	/* is-enabled probe: set x0 to 1 and step forwards */
 	if (is_enabled) {
 		regs64->x[0] = 1;
-		set_saved_state_pc(state, regs64->pc + 4);
+		add_saved_state_pc(state, 4);
 		return;
 	}
 
 	/* For USDT probes, bypass all the emulation logic for the nop instruction */
 	if (IS_ARM64_NOP(tp->ftt_instr)) {
-		set_saved_state_pc(state, regs64->pc + 4);
+		add_saved_state_pc(state, 4);
 		return;
 	}
 
@@ -673,22 +671,22 @@ fasttrap_pid_probe_handle_patched_instr64(arm_saved_state_t *state, fasttrap_tra
 		/* Stash in correct register slot */
 		switch (tp->ftt_type) {
 		case FASTTRAP_T_ARM64_LDR_W_PC_REL:
-			set_saved_state64_regno(regs64, regno, 1, value.val32);
+			set_saved_state_regno(state, regno, 1, value.val32);
 			break;
 		case FASTTRAP_T_ARM64_LDRSW_PC_REL:
-			set_saved_state64_regno(regs64, regno, 1, sign_extend(value.val32, 31));
+			set_saved_state_regno(state, regno, 1, sign_extend(value.val32, 31));
 			break;
 		case FASTTRAP_T_ARM64_LDR_X_PC_REL:
-			set_saved_state64_regno(regs64, regno, 1, value.val64);
+			set_saved_state_regno(state, regno, 1, value.val64);
 			break;
 		case FASTTRAP_T_ARM64_LDR_S_PC_REL:
-			ns64->v.s[regno][0] = value.val32;
+			set_user_neon_reg(th, regno, (uint128_t)value.val32);
 			break;
 		case FASTTRAP_T_ARM64_LDR_D_PC_REL:
-			ns64->v.d[regno][0] = value.val64;
+			set_user_neon_reg(th, regno, (uint128_t)value.val64);
 			break;
 		case FASTTRAP_T_ARM64_LDR_Q_PC_REL:
-			ns64->v.q[regno] = value.val128;
+			set_user_neon_reg(th, regno, value.val128);
 			break;
 		default:
 			panic("Should never get here!");
@@ -801,7 +799,7 @@ fasttrap_pid_probe_handle_patched_instr64(arm_saved_state_t *state, fasttrap_tra
 
 		/* Update LR if appropriate */
 		if (tp->ftt_type == FASTTRAP_T_ARM64_BL) {
-			regs64->lr = regs64->pc + 4;
+			set_saved_state_lr(state, regs64->pc + 4);
 		}
 
 		/* Compute PC (unsigned addition for defined overflow) */
@@ -821,7 +819,7 @@ fasttrap_pid_probe_handle_patched_instr64(arm_saved_state_t *state, fasttrap_tra
 
 		/* Update LR if appropriate */
 		if (tp->ftt_type == FASTTRAP_T_ARM64_BLR) {
-			regs64->lr = regs64->pc + 4;
+			set_saved_state_lr(state, regs64->pc + 4);
 		}
 
 		/* Update PC in saved state */
@@ -890,7 +888,7 @@ fasttrap_pid_probe_handle_patched_instr64(arm_saved_state_t *state, fasttrap_tra
 		}
 
 		/* xzr, not sp */
-		set_saved_state64_regno(regs64, regno, 1, result);
+		set_saved_state_regno(state, regno, 1, result);
 
 		/* Move PC forward */
 		new_pc = regs64->pc + 4;
@@ -913,7 +911,7 @@ fasttrap_pid_probe_handle_patched_instr64(arm_saved_state_t *state, fasttrap_tra
 	}
 	default:
 	{
-		panic("An instruction DTrace doesn't expect: %d\n", tp->ftt_type);
+		panic("An instruction DTrace doesn't expect: %d", tp->ftt_type);
 		break;
 	}
 	}
@@ -938,7 +936,7 @@ fasttrap_pid_probe(arm_saved_state_t *state)
 
 	assert(is_saved_state64(state));
 
-	uthread_t uthread = (uthread_t) get_bsdthread_info(current_thread());
+	uthread_t uthread = current_uthread();
 
 	/*
 	 * It's possible that a user (in a veritable orgy of bad planning)
@@ -962,20 +960,8 @@ fasttrap_pid_probe(arm_saved_state_t *state)
 	uthread->t_dtrace_astpc = 0;
 	uthread->t_dtrace_reg = 0;
 
-	/*
-	 * Treat a child created by a call to vfork(2) as if it were its
-	 * parent. We know that there's only one thread of control in such a
-	 * process: this one.
-	 */
-	if (p->p_lflag & P_LINVFORK) {
-		proc_list_lock();
-		while (p->p_lflag & P_LINVFORK) {
-			p = p->p_pptr;
-		}
-		proc_list_unlock();
-	}
 
-	pid = p->p_pid;
+	pid = proc_getpid(p);
 	pid_mtx = &cpu_core[CPU->cpu_id].cpuc_pid_lock;
 	lck_mtx_lock(pid_mtx);
 	bucket = &fasttrap_tpoints.fth_table[FASTTRAP_TPOINTS_INDEX(pid, pc)];
@@ -1140,7 +1126,7 @@ int
 fasttrap_return_probe(arm_saved_state_t *regs)
 {
 	proc_t *p = current_proc();
-	uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());
+	uthread_t uthread = current_uthread();
 	user_addr_t pc = uthread->t_dtrace_pc;
 	user_addr_t npc = uthread->t_dtrace_npc;
 
@@ -1149,18 +1135,6 @@ fasttrap_return_probe(arm_saved_state_t *regs)
 	uthread->t_dtrace_scrpc = 0;
 	uthread->t_dtrace_astpc = 0;
 
-	/*
-	 * Treat a child created by a call to vfork(2) as if it were its
-	 * parent. We know that there's only one thread of control in such a
-	 * process: this one.
-	 */
-	if (p->p_lflag & P_LINVFORK) {
-		proc_list_lock();
-		while (p->p_lflag & P_LINVFORK) {
-			p = p->p_pptr;
-		}
-		proc_list_unlock();
-	}
 
 	/*
 	 * We set rp->r_pc to the address of the traced instruction so

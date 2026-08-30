@@ -60,6 +60,9 @@ const uint32_t gIOHibernateHandoffPageCount = sizeof(gIOHibernateHandoffPages)
     / sizeof(gIOHibernateHandoffPages[0]);
 
 #if CONFIG_DEBUG
+#if defined(__arm64__)
+extern void serial_hibernation_init(void);
+#endif /* defined(__arm64__) */
 void hibprintf(const char *fmt, ...);
 #else
 #define hibprintf(x...)
@@ -163,25 +166,10 @@ debug_probe( void )
 
 #define DBGLOG  1
 
-#include <pexpert/arm/dockchannel.h>
-#include <pexpert/arm/S3cUART.h>
-#define dockchannel_uart_base gHibernateGlobals.dockChannelRegBase
-#define uart_base gHibernateGlobals.hibUartRegBase
-
 static void
 hib_uart_putc(char c)
 {
-	if (dockchannel_uart_base) {
-		while ((rDOCKCHANNELS_DEV_WSTAT(DOCKCHANNEL_UART_CHANNEL) & gHibernateGlobals.dockChannelWstatMask) == 0) {
-		}
-		rDOCKCHANNELS_DEV_WDATA1(DOCKCHANNEL_UART_CHANNEL) = c;
-	}
-	if (uart_base) {
-		while ((rUTRSTAT0 & 0x04) == 0) {
-			// wait for space in the uart
-		}
-		rUTXH0 = c;
-	}
+	uart_putc(c);
 }
 
 static int
@@ -514,7 +502,7 @@ hibernate_scratch_io(hibernate_scratch_t * scratch, void * buffer, size_t size, 
 		}
 		scratch->curPos += toCopy;
 		scratch->curPagePos += toCopy;
-		buffer += toCopy;
+		buffer = (void *)((uintptr_t)buffer + toCopy);
 		size -= toCopy;
 	}
 }
@@ -610,11 +598,15 @@ hibernate_kernel_entrypoint(uint32_t p1,
 	uint32_t handoffPages;
 	uint32_t handoffPageCount;
 	uint8_t * wkdmScratch;
-	hibernate_scratch_t conflictList;
+	hibernate_scratch_t conflictList = {};
 	pal_hib_ctx_t palHibCtx;
 
 	uint64_t timeStart;
 	timeStart = rdtsc64();
+
+#if defined(__arm64__)
+	serial_hibernation_init();
+#endif /* defined(__arm64__) */
 
 #if !defined(__arm64__)
 	static_assert(sizeof(IOHibernateImageHeader) == 512);
@@ -769,7 +761,7 @@ hibernate_kernel_entrypoint(uint32_t p1,
 				ppnum = gIOHibernateHandoffPages[page];
 			} else if (stage == pal_hib_restore_stage_dram_pages) {
 				tag = *src++;
-				HIB_ASSERT((tag & ~kIOHibernateTagLength) == kIOHibernateTagSignature);
+				HIB_ASSERT((tag & kIOHibernateTagSigMask) == kIOHibernateTagSignature);
 //		debug_code(kIOHibernateRestoreCodeTag, (uintptr_t) tag);
 				srcPhys += sizeof(*src);
 				compressedSize = kIOHibernateTagLength & tag;

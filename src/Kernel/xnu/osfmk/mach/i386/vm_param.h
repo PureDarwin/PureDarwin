@@ -90,6 +90,8 @@
 #ifndef _MACH_I386_VM_PARAM_H_
 #define _MACH_I386_VM_PARAM_H_
 
+#if defined (__i386__) || defined (__x86_64__)
+
 #if !defined(KERNEL) && !defined(__ASSEMBLER__)
 
 #include <mach/vm_page_size.h>
@@ -162,9 +164,11 @@
 
 #define VM_MIN_ADDRESS64        ((user_addr_t) 0x0000000000000000ULL)
 /*
- * default top of user stack... it grows down from here
+ * Default top of user stack, grows down from here.
+ * Address chosen to be 1G (3rd level page table entry) below SHARED_REGION_BASE_X86_64
+ * minus additional 1Meg (1/2 1st level page table coverage) to allow a redzone after it.
  */
-#define VM_USRSTACK64           ((user_addr_t) 0x00007FFEEFC00000ULL)
+#define VM_USRSTACK64           ((user_addr_t) (0x00007FF7C0000000ull - (1024 * 1024)))
 
 /*
  * XXX TODO: Obsolete?
@@ -206,17 +210,8 @@
 /*
  * Maximum physical memory supported.
  */
-#define K32_MAXMEM      (32*GB)
-#define K64_MAXMEM      (1536*GB)
+#define K64_MAXMEM      (2048*GB)
 #define KERNEL_MAXMEM   K64_MAXMEM
-
-/*
- * XXX
- * The kernel max VM address is limited to 0xFF3FFFFF for now because
- * some data structures are explicitly allocated at 0xFF400000 without
- * VM's knowledge (see osfmk/i386/locore.s for the allocation of PTmap and co.).
- * We can't let VM allocate memory from there.
- */
 
 /*
  * +-----------------------+--------+--------+------------------------+
@@ -238,7 +233,9 @@
 #define KEXT_ALLOC_BASE(x)              ((x) - KEXT_ALLOC_MAX_OFFSET)
 #define KEXT_ALLOC_SIZE(x)              (KEXT_ALLOC_MAX_OFFSET - (x))
 
+#define VM_USER_STRIP_PTR(_v) (_v)
 #define VM_KERNEL_STRIP_PTR(_v) (_v)
+#define VM_KERNEL_STRIP_UPTR(_v) (_v)
 
 #define VM_KERNEL_ADDRESS(va) \
 	(((vm_address_t)(va) >= VM_MIN_KERNEL_AND_KEXT_ADDRESS) && \
@@ -288,8 +285,6 @@
  *
  * The common alignment for LP64 is for longs and pointers i.e. 8 bytes.
  */
-
-
 #define KALLOC_MINSIZE          16      /* minimum allocation size */
 #define KALLOC_LOG2_MINALIGN    4       /* log2 minimum alignment */
 
@@ -298,7 +293,6 @@
 #define VM_MIN_KERNEL_LOADED_ADDRESS    ((vm_offset_t) 0xFFFFFF8000000000UL)
 #define VM_MAX_KERNEL_LOADED_ADDRESS    ((vm_offset_t) 0xFFFFFF801FFFFFFFUL)
 
-
 /*
  *	Conversion between 80386 pages and VM pages
  */
@@ -306,7 +300,6 @@
 #define trunc_i386_to_vm(p)     (atop(trunc_page(i386_ptob(p))))
 #define round_i386_to_vm(p)     (atop(round_page(i386_ptob(p))))
 #define vm_to_i386(p)           (i386_btop(ptoa(p)))
-
 
 #define PMAP_SET_CACHE_ATTR(mem, object, cache_attr, batch_pmap_op)     \
 	MACRO_BEGIN                                                     \
@@ -325,13 +318,16 @@
 #define IS_USERADDR64_CANONICAL(addr)                   \
 	((addr) < (VM_MAX_USER_PAGE_ADDRESS))
 
-/*
- * This now limits the physical pages in the zone map
- */
-#define ZONE_MAP_MAX (64ULL << 30) /* 64GB */
-
 #endif  /* MACH_KERNEL_PRIVATE */
 
+#ifdef XNU_KERNEL_PRIVATE
+
+#define ML_ADDRPERM(addr, slide) ((addr) + (slide))
+
+#endif /* XNU_KERNEL_PRIVATE */
+
 #endif  /* KERNEL_PRIVATE */
+
+#endif /* defined (__i386__) || defined (__x86_64__) */
 
 #endif  /* _MACH_I386_VM_PARAM_H_ */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2013-2019, 2022 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -38,6 +38,10 @@
 #include <sys/socketvar.h>
 #endif /* BSD_KERNEL_PRIVATE */
 
+#ifndef XNU_KERNEL_PRIVATE
+#include <TargetConditionals.h>
+#endif
+
 __BEGIN_DECLS
 
 #ifdef PRIVATE
@@ -72,6 +76,12 @@ typedef uint64_t cfil_sock_id_t;
 #define CFIL_OPT_GET_SOCKET_INFO        2       /* uint32_t */
 
 /*
+ * CFIL_OPT_PRESERVE_CONNECTIONS
+ * To set or get the preserve-connections setting for the filter
+ */
+#define CFIL_OPT_PRESERVE_CONNECTIONS   3       /* uint32_t */
+
+/*
  * struct cfil_opt_sock_info
  *
  * Contains information about a socket that is being filtered.
@@ -85,19 +95,17 @@ struct cfil_opt_sock_info {
 	union sockaddr_in_4_6   cfs_remote;
 	pid_t                   cfs_pid;
 	pid_t                   cfs_e_pid;
+	pid_t                   cfs_r_pid;
 	uuid_t                  cfs_uuid;
 	uuid_t                  cfs_e_uuid;
+	uuid_t                  cfs_r_uuid;
 };
 
 /*
  * How many filter may be active simultaneously
  */
-#if !TARGET_OS_OSX && !defined(XNU_TARGET_OS_OSX)
-#define CFIL_MAX_FILTER_COUNT   2
-#else
-#define CFIL_MAX_FILTER_COUNT   8
-#endif
 
+#define CFIL_MAX_FILTER_COUNT   8
 
 /*
  * Crypto Support
@@ -123,11 +131,18 @@ typedef struct cfil_crypto_data {
 	u_int32_t socketProtocol;
 	pid_t pid;
 	pid_t effective_pid;
+	pid_t responsible_pid;
 	uuid_t uuid;
 	uuid_t effective_uuid;
+	uuid_t responsible_uuid;
 	u_int64_t byte_count_in;
 	u_int64_t byte_count_out;
 } *cfil_crypto_data_t;
+
+/*
+ * Responsible pid/uuid support
+ */
+#define CFIL_RESPONSIBLE_PID_SUPPORT 1
 
 /*
  * Types of messages
@@ -158,6 +173,7 @@ typedef struct cfil_crypto_data {
 #define CFM_OP_DROP 17                  /* shutdown socket, no more data */
 #define CFM_OP_BLESS_CLIENT 18          /* mark a client flow as already filtered, passes a uuid */
 #define CFM_OP_SET_CRYPTO_KEY 19        /* assign client crypto key for message signing */
+#define CFM_OP_QUALIFY_FLOW 20          /* qualify this flow for this provider */
 
 /*
  * struct cfil_msg_hdr
@@ -180,7 +196,10 @@ struct cfil_msg_hdr {
 #define CFS_CONNECTION_DIR_IN  0
 #define CFS_CONNECTION_DIR_OUT 1
 
-#define CFS_AUDIT_TOKEN            1
+#define CFS_REAL_AUDIT_TOKEN            1
+
+#define CFS_MAX_DOMAIN_NAME_LENGTH 256
+
 
 /*
  * struct cfil_msg_sock_attached
@@ -202,21 +221,25 @@ struct cfil_msg_sock_attached {
 	int                     cfs_unused;             /* padding */
 	pid_t                   cfs_pid;
 	pid_t                   cfs_e_pid;
+	pid_t                   cfs_r_pid;
 	uuid_t                  cfs_uuid;
 	uuid_t                  cfs_e_uuid;
+	uuid_t                  cfs_r_uuid;
 	union sockaddr_in_4_6   cfs_src;
 	union sockaddr_in_4_6   cfs_dst;
 	int                     cfs_conn_dir;
 	unsigned int            cfs_audit_token[8];             /* Must match audit_token_t */
+	unsigned int            cfs_real_audit_token[8];        /* Must match audit_token_t */
 	cfil_crypto_signature   cfs_signature;
 	uint32_t                cfs_signature_length;
+	char                    cfs_remote_domain_name[CFS_MAX_DOMAIN_NAME_LENGTH];
 };
 
 /*
  * CFIL data flags
  */
 #define CFD_DATA_FLAG_IP_HEADER         0x00000001          /* Data includes IP header */
-
+#define CFIL_DATA_HAS_DELEGATED_PID     1
 /*
  * struct cfil_msg_data_event
  *
@@ -241,6 +264,8 @@ struct cfil_msg_data_event {
 	cfil_crypto_signature   cfd_signature;
 	uint32_t                cfd_signature_length;
 	uint32_t                cfd_flags;
+	pid_t                   cfd_delegated_pid;
+	unsigned int            cfd_delegated_audit_token[8];
 	/* Actual content data immediatly follows */
 };
 
@@ -265,6 +290,8 @@ struct cfil_msg_sock_closed {
 	unsigned char           cfc_op_list[CFI_MAX_TIME_LOG_ENTRY];
 	uint64_t                cfc_byte_inbound_count;
 	uint64_t                cfc_byte_outbound_count;
+#define CFC_CLOSED_EVENT_LADDR 1
+	union sockaddr_in_4_6   cfc_laddr;
 	cfil_crypto_signature   cfc_signature;
 	uint32_t                cfc_signature_length;
 } __attribute__((aligned(8)));
@@ -345,6 +372,24 @@ struct cfil_msg_bless_client {
 struct cfil_msg_set_crypto_key {
 	struct cfil_msg_hdr     cfb_msghdr;
 	cfil_crypto_key         crypto_key;
+};
+
+/*
+ * struct cfil_msg_qualify_flow
+ *
+ * Filter qualify flow for traffic, data path will drop traffic
+ * until all filter qualifications have been received
+ *
+ * Valid Type: CFM_TYPE_ACTION
+ *
+ * Valid Ops: CFM_OP_QUALIFY_FLOW
+ */
+struct cfil_msg_qualify_flow {
+	struct cfil_msg_hdr     cfb_msghdr;
+	uuid_t                  flow_uuid;
+	int                     flow_protocol;
+	union sockaddr_in_4_6   flow_local;
+	union sockaddr_in_4_6   flow_remote;
 };
 
 #define CFM_MAX_OFFSET  UINT64_MAX
@@ -495,30 +540,41 @@ struct cfil_stats {
 
 #define M_SKIPCFIL      M_PROTO5
 
+extern uint32_t cfil_active_count;
+/*
+ * Check if flows on socket should be filtered
+ */
+#define CFIL_DGRAM_HAS_FILTERED_FLOWS(so) ((so->so_flags & SOF_CONTENT_FILTER) && (so->so_flow_db != NULL))
+#define CFIL_DGRAM_FILTERED(so) (!IS_TCP(so) && (cfil_active_count > 0) && (CFIL_DGRAM_HAS_FILTERED_FLOWS(so) || necp_socket_get_content_filter_control_unit(so)))
+
 extern int cfil_log_level;
 
 #define CFIL_LOG(level, fmt, ...) \
 do { \
 	if (cfil_log_level >= level) \
-	        printf("%s:%d " fmt "\n",\
+	        os_log(OS_LOG_DEFAULT, "%s:%d " fmt "\n",\
 	                __FUNCTION__, __LINE__, ##__VA_ARGS__); \
 } while (0)
 
+
+extern void cfil_register_m_tag(void);
 
 extern void cfil_init(void);
 
 extern boolean_t cfil_filter_present(void);
 extern boolean_t cfil_sock_connected_pending_verdict(struct socket *so);
+extern boolean_t cfil_sock_is_dead(struct socket *so);
+extern boolean_t cfil_sock_tcp_add_time_wait(struct socket *so);
 extern errno_t cfil_sock_attach(struct socket *so,
     struct sockaddr *local, struct sockaddr *remote, int dir);
 extern errno_t cfil_sock_detach(struct socket *so);
 
 extern int cfil_sock_data_out(struct socket *so, struct sockaddr  *to,
     struct mbuf *data, struct mbuf *control,
-    uint32_t flags);
+    uint32_t flags, struct soflow_hash_entry *);
 extern int cfil_sock_data_in(struct socket *so, struct sockaddr *from,
     struct mbuf *data, struct mbuf *control,
-    uint32_t flags);
+    uint32_t flags, struct soflow_hash_entry *);
 
 extern int cfil_sock_shutdown(struct socket *so, int *how);
 extern void cfil_sock_is_closed(struct socket *so);

@@ -324,6 +324,32 @@ void    buf_reset(buf_t bp, int32_t flags);
 errno_t buf_map(buf_t bp, caddr_t *io_addr);
 
 /*!
+ *  @function buf_map_range
+ *  @abstract Get virtual mappings for buffer data.
+ *  @discussion Similar to buf_map but the focus is on a range
+ *  of the UPL. The b_uploffset and b_count control what part of the UPL will be mapped.
+ *  This function is paired with buf_unmap_range which must be called from the same
+ *  thread.
+ *  @param bp Buffer whose mapping to find or create.
+ *  @param io_addr Destination for mapping address.
+ *  @return 0 for success, ENOMEM if unable to map the buffer.
+ */
+errno_t buf_map_range(buf_t bp, caddr_t *io_addr);
+
+/*!
+ *  @function buf_map_range_with_prot
+ *  @abstract Get virtual mappings for buffer data.
+ *  @discussion Similar to buf_map_range but also takes protection so that part of the UPL
+ *  will be mapped with the requested protection.
+ *  This function is paired with buf_unmap_range which must be called from the same
+ *  thread.
+ *  @param bp Buffer whose mapping to find or create.
+ *  @param io_addr Destination for mapping address.
+ *  @return 0 for success, ENOMEM if unable to map the buffer.
+ */
+errno_t buf_map_range_with_prot(buf_t bp, caddr_t *io_addr, vm_prot_t prot);
+
+/*!
  *  @function buf_unmap
  *  @abstract Release mappings for buffer data.
  *  @discussion For buffers created through buf_getblk() (i.e. traditional buffer cache usage),
@@ -337,6 +363,18 @@ errno_t buf_map(buf_t bp, caddr_t *io_addr);
  *  @return 0 for success, EINVAL if unable to unmap buffer.
  */
 errno_t buf_unmap(buf_t bp);
+
+/*!
+ *  @function buf_unmap_range
+ *  @abstract Release mappings for buffer data.
+ *  @discussion Similar to buf_unmap but the focus is on a range
+ *  of the UPL. The b_uploffset and b_count control what part of the UPL will be unmapped.
+ *  This function must be called from the same thread that called the corresponding
+ *  buf_map_range/buf_map_range_with_prot.
+ *  @param bp Buffer whose mapping to find or create.
+ *  @return 0 for success, EINVAL if unable to unmap buffer.
+ */
+errno_t buf_unmap_range(buf_t bp);
 
 /*!
  *  @function buf_setdrvdata
@@ -393,6 +431,16 @@ daddr64_t buf_blkno(buf_t bp);
 daddr64_t buf_lblkno(buf_t bp);
 
 /*!
+ *  @function buf_lblksize
+ *  @abstract Get the block size used to calculate the logical block number associated with a buffer.
+ *  @discussion Logical block number is set on traditionally-used buffers by an argument passed to buf_getblk(),
+ *  for example by buf_bread(). Block size is the block size used to calculate the file offset.
+ *  @param bp Buffer whose logical block size to get.
+ *  @return Block size.
+ */
+uint32_t buf_lblksize(buf_t bp);
+
+/*!
  *  @function buf_setblkno
  *  @abstract Set physical block number associated with a buffer.
  *  @discussion Physical block number is generally set by the cluster layer or by buf_getblk().
@@ -410,6 +458,16 @@ void    buf_setblkno(buf_t bp, daddr64_t blkno);
  *  @param lblkno Block number to set.
  */
 void    buf_setlblkno(buf_t bp, daddr64_t lblkno);
+
+/*!
+ *  @function buf_setlblksize
+ *  @abstract Set block size used to set the logical block number associated with a buffer.
+ *  @discussion Logical block number is set on traditionally-used buffers by an argument passed to buf_getblk(),
+ *  for example by buf_bread().
+ *  @param bp Buffer whose logical block size to set.
+ *  @param lblksize Block size to set.
+ */
+void    buf_setlblksize(buf_t bp, uint32_t lblksize);
 
 /*!
  *  @function buf_count
@@ -1020,6 +1078,33 @@ void buf_markstatic(buf_t bp);
  */
 int     buf_static(buf_t bp);
 
+__options_decl(vnode_verify_kind_t, uint32_t, {
+	VK_HASH_NONE = 0x00,
+	VK_HASH_SHA3_256 = 0x01,
+	VK_HASH_SHA3_384 = 0x02,
+	VK_HASH_SHA3_512 = 0x03,
+});
+
+#define NUM_VERIFY_KIND 4
+
+/*!
+ *  @function buf_verify_enable
+ *  @abstract Set up buf to retrieve hashes alongwith data.
+ *  @param bp buf pointer.
+ *  @param verify_kind specific algorithm to be used for the hash calculation.
+ *  @return 0 if successful, error otherwise.
+ */
+errno_t buf_verify_enable(buf_t bp, vnode_verify_kind_t verify_kind);
+
+/*!
+ *  @function buf_verifyptr
+ *  @abstract Gets pointer to the buffer to store the hash calculated for the data.
+ *  @param bp buf pointer.
+ *  @param len pointer to uint32_t variable to store the length.
+ *  @return Pointer to a buffer (of length passed in second argument), NULL if there is no hash needed.
+ */
+uint8_t * buf_verifyptr(buf_t bp, uint32_t *len);
+
 /*!
  *  @function bufattr_markiosched
  *  @abstract Mark a buffer as belonging to an io scheduled mount point
@@ -1142,6 +1227,38 @@ int     bufattr_isochronous(bufattr_t bap);
 int bufattr_throttled(bufattr_t bap);
 
 /*!
+ *  @function bufattr_willverify
+ *  @abstract Check if a buffer is verified by the cluster layer.
+ *  @param bap Buffer attribute to test.
+ *  @return Nonzero if the buffer will be verified, 0 otherwise.
+ */
+int bufattr_willverify(bufattr_t bap);
+
+/*!
+ *  @function bufattr_verifykind
+ *  @abstract Get type of hash requested.
+ *  @param bap Buffer attribute to test.
+ *  @return Values from the vnode_verify_kind_t enum.
+ */
+vnode_verify_kind_t bufattr_verifykind(bufattr_t bap);
+
+/*!
+ *  @function bufattr_verifyptr
+ *  @abstract Gets pointer to the buffer to store the hash calculated for the data.
+ *  @param bap Buffer attribute to get pointer for.
+ *  @param len pointer to uint32_t variable to store the length.
+ *  @return Pointer to a buffer (of length passed in second argument), NULL if there is no hash needed.
+ */
+uint8_t * bufattr_verifyptr(bufattr_t bap, uint32_t *len);
+
+/*!
+ *  @function bufattr_setverifyvalid
+ *  @abstract Set the values stored in verify buffer as valid
+ *  @param bap Buffer attribute to set valid.
+ */
+void bufattr_setverifyvalid(bufattr_t bap);
+
+/*!
  *  @function bufattr_passive
  *  @abstract Check if a buffer is marked passive.
  *  @param bap Buffer attribute to test.
@@ -1224,6 +1341,7 @@ errno_t buf_acquire(buf_t, int, int, int);
 buf_t   buf_create_shadow_priv(buf_t bp, boolean_t force_copy, uintptr_t external_storage, void (*iodone)(buf_t, void *), void *arg);
 
 void    buf_drop(buf_t);
+
 
 #endif /* KERNEL_PRIVATE */
 

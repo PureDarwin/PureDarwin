@@ -10,16 +10,74 @@
 #include <mach/host_info.h>
 #include <mach/mach_host.h>
 #include <arm/cpuid.h>
+#include <kern/hvg_hypercall.h>
+#include <vm/pmap.h>
 #include <kern/zalloc.h>
 #include <libkern/libkern.h>
 #include <pexpert/device_tree.h>
+#include <kern/task.h>
+#include <vm/vm_protos.h>
 
 #if HYPERVISOR
 #include <kern/hv_support.h>
+#include <kern/bits.h>
 #endif
 
+#define __STR(x)        #x
+#define STRINGIFY(x)    __STR(x)
+
 extern uint64_t wake_abstime;
-extern int      lck_mtx_adaptive_spin_mode;
+
+#if DEVELOPMENT || DEBUG
+/* Various tuneables to modulate selection of WFE in the idle path */
+extern int wfe_rec_max;
+extern int wfe_allowed;
+
+extern int wfe_rec_none;
+extern uint32_t idle_proximate_timer_wfe;
+extern uint32_t idle_proximate_io_wfe_masked;
+extern uint32_t idle_proximate_io_wfe_unmasked;
+
+static
+SYSCTL_INT(_machdep, OID_AUTO, wfe_rec_max,
+    CTLFLAG_RW, &wfe_rec_max, 0,
+    "");
+
+static
+SYSCTL_INT(_machdep, OID_AUTO, wfe_allowed,
+    CTLFLAG_RW, &wfe_allowed, 0,
+    "");
+
+static
+SYSCTL_INT(_machdep, OID_AUTO, idle_timer_wfe,
+    CTLFLAG_RW, &idle_proximate_timer_wfe, 0,
+    "");
+
+static
+SYSCTL_INT(_machdep, OID_AUTO, idle_io_wfe_masked,
+    CTLFLAG_RW, &idle_proximate_io_wfe_masked, 0,
+    "");
+static
+SYSCTL_INT(_machdep, OID_AUTO, idle_io_wfe_unmasked,
+    CTLFLAG_RW, &idle_proximate_io_wfe_unmasked, 0,
+    "");
+
+static
+SYSCTL_INT(_machdep, OID_AUTO, wfe_rec_none,
+    CTLFLAG_RW, &wfe_rec_none, 0,
+    "");
+
+extern uint64_t wfe_rec_override_mat;
+SYSCTL_QUAD(_machdep, OID_AUTO, wfe_rec_override_mat,
+    CTLFLAG_RW, &wfe_rec_override_mat,
+    "");
+
+extern uint64_t wfe_rec_clamp;
+SYSCTL_QUAD(_machdep, OID_AUTO, wfe_rec_clamp,
+    CTLFLAG_RW, &wfe_rec_clamp,
+    "");
+
+#endif
 
 static
 SYSCTL_QUAD(_machdep, OID_AUTO, wake_abstime,
@@ -231,7 +289,6 @@ make_brand_string SYSCTL_HANDLER_ARGS
 		break;
 	}
 
-
 	char buf[80];
 	snprintf(buf, sizeof(buf), "%s processor", impl);
 	return SYSCTL_OUT(req, buf, strlen(buf) + 1);
@@ -241,11 +298,6 @@ SYSCTL_PROC(_machdep_cpu, OID_AUTO, brand_string,
     CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
     0, 0, make_brand_string, "A", "CPU brand string");
 
-
-static
-SYSCTL_INT(_machdep, OID_AUTO, lck_mtx_adaptive_spin_mode,
-    CTLFLAG_RW, &lck_mtx_adaptive_spin_mode, 0,
-    "Enable adaptive spin behavior for kernel mutexes");
 
 static int
 virtual_address_size SYSCTL_HANDLER_ARGS
@@ -267,6 +319,29 @@ extern uint64_t TLockTimeOut;
 SYSCTL_QUAD(_machdep, OID_AUTO, tlto,
     CTLFLAG_RW | CTLFLAG_LOCKED, &TLockTimeOut,
     "Ticket spinlock timeout (MATUs): use with care");
+
+extern uint32_t timebase_validation;
+SYSCTL_UINT(_machdep, OID_AUTO, timebase_validation,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &timebase_validation, 0,
+    "Monotonicity validation of kernel mach_absolute_time()");
+
+#if __WKDM_ISA_2P_WORKAROUND__
+extern uint64_t wkdmdretries, wkdmdretriespb;
+extern uint32_t simulate_wkdm2p_error, wkdm_isa_2p_war_required;
+SYSCTL_QUAD(_machdep, OID_AUTO, wkdmdretries,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &wkdmdretries,
+    "Number of WKDM errata retries");
+SYSCTL_QUAD(_machdep, OID_AUTO, wkdmdretriespb,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &wkdmdretriespb,
+    "Number of retries where payload was on page boundary");
+SYSCTL_UINT(_machdep, OID_AUTO, simulate_wkdm2p_error,
+    CTLFLAG_RW | CTLFLAG_LOCKED,
+    &simulate_wkdm2p_error, 0, "");
+SYSCTL_UINT(_machdep, OID_AUTO, wkdm_isa_2p_war_required,
+    CTLFLAG_RW | CTLFLAG_LOCKED,
+    &wkdm_isa_2p_war_required, 0, "");
+#endif /* __WKDM_ISA_2P_WORKAROUND__ */
+
 
 /*
  * macro to generate a sysctl machdep.cpu.sysreg_* for a given system register
@@ -301,6 +376,97 @@ SYSCTL_PROC_MACHDEP_CPU_SYSREG(TCR_EL1);
 SYSCTL_PROC_MACHDEP_CPU_SYSREG(ID_AA64MMFR0_EL1);
 // ARM64: AArch64 Instruction Set Attribute Register 1
 SYSCTL_PROC_MACHDEP_CPU_SYSREG(ID_AA64ISAR1_EL1);
+#if APPLE_ARM64_ARCH_FAMILY
+// Apple ID Register
+SYSCTL_PROC_MACHDEP_CPU_SYSREG(AIDR_EL1);
+#endif /* APPLE_ARM64_ARCH_FAMILY */
 
 #endif /* DEVELOPMENT || DEBUG */
+
+
+#ifdef ML_IO_TIMEOUTS_ENABLED
+/*
+ * Timeouts for ml_{io|phys}_{read|write}...
+ * RO on DEVELOPMENT/DEBUG kernels.
+ */
+
+#if DEVELOPMENT || DEBUG
+#define MMIO_TIMEOUT_FLAGS (CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED)
+#else
+#define MMIO_TIMEOUT_FLAGS (CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED)
+#endif
+
+SYSCTL_QUAD(_machdep, OID_AUTO, report_phy_read_delay, MMIO_TIMEOUT_FLAGS,
+    &report_phy_read_delay_to, "Maximum time before io/phys read gets reported or panics");
+SYSCTL_QUAD(_machdep, OID_AUTO, report_phy_write_delay, MMIO_TIMEOUT_FLAGS,
+    &report_phy_write_delay_to, "Maximum time before io/phys write gets reported or panics");
+SYSCTL_QUAD(_machdep, OID_AUTO, trace_phy_read_delay, MMIO_TIMEOUT_FLAGS,
+    &trace_phy_read_delay_to, "Maximum time before io/phys read gets ktraced");
+SYSCTL_QUAD(_machdep, OID_AUTO, trace_phy_write_delay, MMIO_TIMEOUT_FLAGS,
+    &trace_phy_write_delay_to, "Maximum time before io/phys write gets ktraced");
+
+SYSCTL_INT(_machdep, OID_AUTO, phy_read_delay_panic, CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &phy_read_panic, 0, "if set, report-phy-read-delay timeout panics");
+SYSCTL_INT(_machdep, OID_AUTO, phy_write_delay_panic, CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &phy_write_panic, 0, "if set, report-phy-write-delay timeout panics");
+
+#if ML_IO_SIMULATE_STRETCHED_ENABLED
+SYSCTL_QUAD(_machdep, OID_AUTO, sim_stretched_io_ns, CTLFLAG_KERN | CTLFLAG_RW | CTLFLAG_LOCKED,
+    &simulate_stretched_io, "simulate stretched io in ml_read_io, ml_write_io");
+#endif /* ML_IO_SIMULATE_STRETCHED_ENABLED */
+
+#endif /* ML_IO_TIMEOUTS_ENABLED */
+
+int opensource_kernel = 1;
+SYSCTL_INT(_kern, OID_AUTO, opensource_kernel, CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
+    &opensource_kernel, 0, "Opensource Kernel");
+
+static int
+machdep_ptrauth_enabled SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2, oidp)
+
+#if __has_feature(ptrauth_calls)
+	task_t task = current_task();
+	int ret = !ml_task_get_disable_user_jop(task);
+#else
+	const int ret = 0;
+#endif
+
+	return SYSCTL_OUT(req, &ret, sizeof(ret));
+}
+
+SYSCTL_PROC(_machdep, OID_AUTO, ptrauth_enabled,
+    CTLTYPE_INT | CTLFLAG_KERN | CTLFLAG_RD,
+    0, 0,
+    machdep_ptrauth_enabled, "I", "");
+
+static const char _ctrr_type[] =
+#if defined(KERNEL_CTRR_VERSION)
+    "ctrrv" STRINGIFY(KERNEL_CTRR_VERSION);
+#elif defined(KERNEL_INTEGRITY_KTRR)
+    "ktrr";
+#elif defined(KERNEL_INTEGRITY_PV_CTRR)
+    "pv";
+#else
+    "none";
+#endif
+
+SYSCTL_STRING(_machdep, OID_AUTO, ctrr_type,
+    CTLFLAG_KERN | CTLFLAG_RD | CTLFLAG_LOCKED,
+    __DECONST(char *, _ctrr_type), 0,
+    "CTRR type supported by hardware/kernel");
+
+#if CONFIG_TELEMETRY && (DEBUG || DEVELOPMENT)
+extern unsigned long trap_telemetry_reported_events;
+SYSCTL_ULONG(_debug, OID_AUTO, trap_telemetry_reported_events,
+    CTLFLAG_RD | CTLFLAG_LOCKED, &trap_telemetry_reported_events,
+    "Number of trap telemetry events successfully reported");
+
+extern unsigned long trap_telemetry_capacity_dropped_events;
+SYSCTL_ULONG(_debug, OID_AUTO, trap_telemetry_capacity_dropped_events,
+    CTLFLAG_RD | CTLFLAG_LOCKED, &trap_telemetry_capacity_dropped_events,
+    "Number of trap telemetry events which were dropped due to a full RSB");
+#endif /* CONFIG_TELEMETRY && (DEBUG || DEVELOPMENT) */
+
 

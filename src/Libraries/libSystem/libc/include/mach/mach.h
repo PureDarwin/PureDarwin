@@ -70,6 +70,25 @@
 #include <mach/mach_host.h>
 #include <mach/thread_switch.h>
 
+/* Public libc wrappers generated from the Mach interfaces. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern kern_return_t mach_port_type(ipc_space_t, mach_port_name_t, mach_port_type_t *);
+extern kern_return_t mach_port_allocate(ipc_space_t, mach_port_right_t, mach_port_name_t *);
+extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
+extern kern_return_t mach_port_mod_refs(ipc_space_t, mach_port_name_t, mach_port_right_t, mach_port_delta_t);
+extern kern_return_t mach_port_insert_right(ipc_space_t, mach_port_name_t, mach_port_t, mach_msg_type_name_t);
+extern kern_return_t mach_port_get_attributes(ipc_space_read_t, mach_port_name_t, mach_port_flavor_t, mach_port_info_t, mach_msg_type_number_t *);
+extern kern_return_t mach_port_insert_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
+extern kern_return_t mach_port_extract_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
+extern kern_return_t mach_port_space_info(ipc_space_read_t, ipc_info_space_t *, ipc_info_name_array_t *, mach_msg_type_number_t *, ipc_info_tree_name_array_t *, mach_msg_type_number_t *);
+extern kern_return_t mach_port_construct(ipc_space_t, mach_port_options_ptr_t, mach_port_context_t, mach_port_name_t *);
+extern kern_return_t mach_port_destruct(ipc_space_t, mach_port_name_t, mach_port_delta_t, mach_port_context_t);
+#ifdef __cplusplus
+}
+#endif
+
 #include <mach/rpc.h>           /* for compatibility only */
 #include <mach/mig.h>
 

@@ -61,16 +61,20 @@ struct pal_hib_ctx {
  * @typedef      pal_hib_globals_t
  * @discussion  ARM64-specific state preserved pre-hibernation and needed during hibernation resume.
  *
- * @field       dockChannelRegBase   Physical address of the dockchannel registers
- * @field       dockChannelWstatMask Mask to apply to dockchannel WSTAT register to compute available FIFO entries
- * @field       hibUartRegBase       Physical address of the UART registers
- * @field       hmacRegBase          Physical address of the hmac block registers
- * @field       kernelSlide          Offset from physical address to virtual address in the kernel map
+ * @field       dockChannelRegPhysBase  Physical address of the dockchannel registers
+ * @field       dockChannelRegVirtBase  Virtual address of the dockchannel registers
+ * @field       dockChannelWstatMask    Mask to apply to dockchannel WSTAT register to compute available FIFO entries
+ * @field       hibUartRegPhysBase      Physical address of the UART registers
+ * @field       hibUartRegVirtBase      Virtual address of the UART registers
+ * @field       hmacRegBase             Physical address of the hmac block registers
+ * @field       kernelSlide             Offset from physical address to virtual address in the kernel map
  */
 typedef struct {
-	uint64_t dockChannelRegBase;
-	uint64_t dockChannelWstatMask;
-	uint64_t hibUartRegBase;
+	uint64_t dockChannelRegPhysBase;
+	uint64_t dockChannelRegVirtBase;
+	uint32_t dockChannelWstatMask;
+	uint64_t hibUartRegPhysBase;
+	uint64_t hibUartRegVirtBase;
 	uint64_t hmacRegBase;
 	uint64_t kernelSlide;
 } pal_hib_globals_t;

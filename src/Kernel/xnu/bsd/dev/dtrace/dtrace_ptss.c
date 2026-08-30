@@ -40,12 +40,13 @@
 #include <kern/task.h>
 
 #include <vm/vm_map.h>
+#include <vm/vm_kern_xnu.h>
 
 /*
  * This function requires the sprlock to be held
  *
  * In general, it will not block. If it needs to allocate a new
- * page of memory, the underlying kernel _MALLOC may block.
+ * page of memory, the underlying kernel kalloc may block.
  */
 struct dtrace_ptss_page_entry*
 dtrace_ptss_claim_entry_locked(struct proc* p)
@@ -161,13 +162,13 @@ struct dtrace_ptss_page*
 dtrace_ptss_allocate_page(struct proc* p)
 {
 	// Allocate the kernel side data
-	struct dtrace_ptss_page* ptss_page = _MALLOC(sizeof(struct dtrace_ptss_page), M_TEMP, M_ZERO | M_WAITOK);
+	struct dtrace_ptss_page* ptss_page = kalloc_type(struct dtrace_ptss_page, Z_ZERO | Z_WAITOK);
 	if (ptss_page == NULL) {
 		return NULL;
 	}
 
 	// Now allocate a page in user space and set its protections to allow execute.
-	task_t task = p->task;
+	task_t task = proc_task(p);
 	vm_map_t map = get_task_map_reference(task);
 	if (map == NULL) {
 		goto err;
@@ -181,17 +182,41 @@ dtrace_ptss_allocate_page(struct proc* p)
 	 * To ensure correct permissions, we must set the page protections separately.
 	 */
 	vm_prot_t cur_protection = VM_PROT_READ | VM_PROT_EXECUTE;
-	vm_prot_t max_protection = VM_PROT_READ | VM_PROT_EXECUTE | VM_PROT_WRITE;
+	vm_prot_t max_protection = VM_PROT_READ | VM_PROT_EXECUTE;
+	kern_return_t kr;
 
-	kern_return_t kr = mach_vm_map_kernel(map, &addr, size, 0, VM_FLAGS_ANYWHERE, VM_MAP_KERNEL_FLAGS_NONE, VM_KERN_MEMORY_NONE, IPC_PORT_NULL, 0, FALSE, cur_protection, max_protection, VM_INHERIT_DEFAULT);
+	kr = mach_vm_map_kernel(map, &addr, size, 0,
+	    VM_MAP_KERNEL_FLAGS_ANYWHERE(), IPC_PORT_NULL, 0, FALSE,
+	    cur_protection, max_protection, VM_INHERIT_DEFAULT);
 	if (kr != KERN_SUCCESS) {
 		goto err;
 	}
+
+	/*
+	 * To ensure the page is properly marked as user debug, temporarily change
+	 * the permissions to rw and then back again to rx. The VM will keep track
+	 * of this remapping and on fault will pass PMAP_OPTIONS_XNU_USER_DEBUG
+	 * properly to the PMAP layer.
+	 */
+	kr = mach_vm_protect(map, (mach_vm_offset_t)addr, (mach_vm_size_t)size, 0,
+	    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+	if (kr != KERN_SUCCESS) {
+		goto err;
+	}
+
+	kr = mach_vm_protect(map, (mach_vm_offset_t)addr, (mach_vm_size_t)size, 0,
+	    VM_PROT_READ | VM_PROT_EXECUTE);
+	if (kr != KERN_SUCCESS) {
+		goto err;
+	}
+
 	/*
 	 * If on embedded, remap the scratch space as writable at another
 	 * virtual address
 	 */
-	kr = mach_vm_remap_kernel(map, &write_addr, size, 0, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE, map, addr, FALSE, &cur_protection, &max_protection, VM_INHERIT_DEFAULT);
+	kr = mach_vm_remap(map, &write_addr, size, 0,
+	    VM_FLAGS_ANYWHERE, map, addr, FALSE,
+	    &cur_protection, &max_protection, VM_INHERIT_DEFAULT);
 	if (kr != KERN_SUCCESS || !(max_protection & VM_PROT_WRITE)) {
 		goto err;
 	}
@@ -217,7 +242,7 @@ dtrace_ptss_allocate_page(struct proc* p)
 	return ptss_page;
 
 err:
-	_FREE(ptss_page, M_TEMP);
+	kfree_type(struct dtrace_ptss_page, ptss_page);
 
 	if (map) {
 		vm_map_deallocate(map);
@@ -237,17 +262,17 @@ void
 dtrace_ptss_free_page(struct proc* p, struct dtrace_ptss_page* ptss_page)
 {
 	// Grab the task and get a reference to its vm_map
-	task_t task = p->task;
+	task_t task = proc_task(p);
 	vm_map_t map = get_task_map_reference(task);
 
 	mach_vm_address_t addr = ptss_page->entries[0].addr;
 	mach_vm_size_t size = PAGE_SIZE; // We need some way to assert that this matches vm_map_round_page() !!!
 
 	// Silent failures, no point in checking return code.
-	mach_vm_deallocate(map, addr, size);
+	mach_vm_deallocate_kernel(map, addr, size);
 
 	mach_vm_address_t write_addr = ptss_page->entries[0].write_addr;
-	mach_vm_deallocate(map, write_addr, size);
+	mach_vm_deallocate_kernel(map, write_addr, size);
 
 	vm_map_deallocate(map);
 }
@@ -301,13 +326,13 @@ dtrace_ptss_exec_exit(struct proc* p)
 		// vm_map_t may already be toast.
 
 		// Must be certain to free the kernel memory!
-		_FREE(temp, M_TEMP);
+		kfree_type(struct dtrace_ptss_page, temp);
 		temp = next;
 	}
 }
 
 /*
- * This function is not thread safe. It is not used for vfork.
+ * This function is not thread safe.
  *
  * The child proc ptss fields are initialized to NULL at fork time.
  * Pages allocated in the parent are copied as part of the vm_map copy, though.

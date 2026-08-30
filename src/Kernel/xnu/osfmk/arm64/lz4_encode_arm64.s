@@ -393,7 +393,7 @@ L_done:
 
     // clear frame
     ldp     fp, lr,    [sp], #16
-    ARM64_STACK_EPILOG
+    ARM64_STACK_EPILOG _lz4_encode_2gb
 
 L_revert_x9_and_done:
     sub x9, x9, #1

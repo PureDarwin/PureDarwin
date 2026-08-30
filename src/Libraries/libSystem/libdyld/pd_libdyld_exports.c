@@ -4,6 +4,27 @@ void *pd_libdyld_getStartGlueToCallExit(void) { return (void *)&start; }
 extern void tlv_initializer(void);
 void pd_libdyld_tlv_initializer(void) { tlv_initializer(); }
 
+/*
+ * libdyld links libsystem_kernel statically, so it has its own hidden-visibility
+ * _libkernel_functions and its own __libkernel_init(). libSystem.B initialising
+ * its copy does nothing for this one, and until it is set libdyld's malloc/free
+ * come from the small bootstrap pool in _libc_funcptr.c. Bridge it out under a
+ * PD name (same reason as pd_libdyld_tlv_initializer above) so
+ * pd_libSystem_initializer() can hand libdyld the real allocator once libmalloc
+ * is up.
+ */
+struct _libkernel_functions;
+struct ProgramVars;
+extern void __libkernel_init(const struct _libkernel_functions *fns,
+    const char *envp[], const char *apple[], const struct ProgramVars *vars);
+
+void
+pd_libdyld_libkernel_init(const struct _libkernel_functions *fns,
+    const char *envp[], const char *apple[], const struct ProgramVars *vars)
+{
+	__libkernel_init(fns, envp, apple, vars);
+}
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>

@@ -27,9 +27,9 @@
  */
 
 subsystem
-#if KERNEL_SERVER
-    KernelServer
-#endif /* KERNEL_SERVER */
+#if	KERNEL_SERVER || KOBJECT_SERVER
+	KernelServer
+#endif	/* KERNEL_SERVER || KOBJECT_SERVER */
        memory_entry 4900;
 
 #include <mach/std_types.defs>
@@ -47,8 +47,32 @@ routine mach_memory_entry_access_tracking(
 	out	access_tracking_reads	: uint32_t;
 	out	access_tracking_writes	: uint32_t);
 
+#if KERNEL_SERVER && !SANDBOX_COMPILER
+routine mach_memory_entry_ownership_from_user(
+		mem_entry	: mem_entry_name_port_t;
+		owner       : mach_port_t; /* Task identity token or task control */
+#else
 routine mach_memory_entry_ownership(
 		mem_entry	: mem_entry_name_port_t;
 		owner		: task_t;
+#endif
 		ledger_tag	: int;
 		ledger_flags	: int);
+
+/// Query the residency of the physical memory backing a given memory entry.
+///
+/// This operation is only supported on "named" memory entries created with
+/// `MAP_MEM_NAMED_CREATE`. It is unsupported on "mappings" created with
+/// `MAP_MEM_COPY` or `MAM_MEM_SHARED`
+///
+/// - Parameters
+///   - mem_entry: The memory entry to query
+///   - resident_cnt: If non-null, the number of resident pages written out
+///   - dirty_cnt: If non-null, the number of resident, modified pages written out
+///   - swapped_cnt: If non-null, the number of evicted pages written out
+routine mach_memory_entry_get_page_counts(
+		mem_entry	: mem_entry_name_port_t;
+	out	resident_cnt	: uint64_t;
+	out	dirty_cnt	: uint64_t;
+	out	swapped_cnt	: uint64_t);
+

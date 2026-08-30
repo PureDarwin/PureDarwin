@@ -15,7 +15,12 @@ target_sources(IOStorageFamily PRIVATE
     IOStorage.cpp
 )
 target_include_directories(IOStorageFamily PRIVATE include)
-target_compile_options(IOStorageFamily PRIVATE -Wno-implicit-int-conversion -Wno-sign-conversion -Wno-deprecated-declarations)
+target_include_directories(IOStorageFamily PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/iokit
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/libkern)
+target_compile_options(IOStorageFamily PRIVATE
+    -include${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/libkern/libkern/OSMalloc.h
+    -Wno-implicit-int-conversion -Wno-sign-conversion -Wno-deprecated-declarations)
 set_property(TARGET IOStorageFamily PROPERTY CXX_STANDARD 17)
 install(TARGETS IOStorageFamily DESTINATION System/Library/Extensions COMPONENT BaseSystem)
 

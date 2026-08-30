@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -29,21 +29,32 @@
 #include <kern/kalloc.h>
 #include <libkern/OSAtomic.h>
 #include <sys/errno.h>
+#include <sys/sysctl.h>
 #include <net/init.h>
 #include <libkern/libkern.h>
+#include <os/atomic_private.h>
+#include <pexpert/pexpert.h>
 #include <string.h>
+
+#if (DEBUG | DEVELOPMENT)
+SYSCTL_DECL(_net_diagnose);
+SYSCTL_NODE(_net, OID_AUTO, diagnose, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "");
+
+static int net_diagnose_on = 0;
+SYSCTL_INT(_net_diagnose, OID_AUTO, on,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &net_diagnose_on, 0, "");
+#endif /* (DEBUG | DEVELOPMENT) */
 
 struct init_list_entry {
 	struct init_list_entry  *next;
 	net_init_func_ptr               func;
 };
 
-#define LIST_RAN ((struct init_list_entry*)0xffffffff)
-static struct init_list_entry   *list_head = 0;
+static struct init_list_entry *LIST_RAN = __unsafe_forge_single(struct init_list_entry *, ~(uintptr_t)0);
+static struct init_list_entry *list_head = NULL;
 
 errno_t
-net_init_add(
-	net_init_func_ptr init_func)
+net_init_add(net_init_func_ptr init_func)
 {
 	struct init_list_entry  *entry;
 
@@ -56,13 +67,9 @@ net_init_add(
 		return EALREADY;
 	}
 
-	entry = kalloc(sizeof(*entry));
-	if (entry == 0) {
-		printf("net_init_add: no memory\n");
-		return ENOMEM;
-	}
+	entry = kalloc_type(struct init_list_entry,
+	    Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
-	bzero(entry, sizeof(*entry));
 	entry->func = init_func;
 
 	do {
@@ -70,10 +77,10 @@ net_init_add(
 
 		if (entry->next == LIST_RAN) {
 			/* List already ran, cleanup and call the function */
-			kfree(entry, sizeof(*entry));
+			kfree_type(struct init_list_entry, entry);
 			return EALREADY;
 		}
-	} while (!OSCompareAndSwapPtr(entry->next, entry, &list_head));
+	} while (!os_atomic_cmpxchg(&list_head, entry->next, entry, acq_rel));
 
 	return 0;
 }
@@ -81,9 +88,9 @@ net_init_add(
 __private_extern__ void
 net_init_run(void)
 {
-	struct init_list_entry  *backward_head = 0;
-	struct init_list_entry  *forward_head = 0;
-	struct init_list_entry  *current = 0;
+	struct init_list_entry  *__single backward_head = NULL;
+	struct init_list_entry  *__single forward_head = NULL;
+	struct init_list_entry  *__single current = NULL;
 
 	/*
 	 * Grab the list, replacing the head with 0xffffffff to indicate
@@ -91,7 +98,7 @@ net_init_run(void)
 	 */
 	do {
 		backward_head = list_head;
-	} while (!OSCompareAndSwapPtr(backward_head, LIST_RAN, &list_head));
+	} while (!os_atomic_cmpxchg(&list_head, backward_head, LIST_RAN, acq_rel));
 
 	/* Reverse the order of the list */
 	while (backward_head != 0) {
@@ -106,6 +113,10 @@ net_init_run(void)
 		current = forward_head;
 		forward_head = current->next;
 		current->func();
-		kfree(current, sizeof(*current));
+		kfree_type(struct init_list_entry, current);
 	}
+
+#if (DEBUG || DEVELOPMENT)
+	(void) PE_parse_boot_argn("net_diagnose_on", &net_diagnose_on, sizeof(net_diagnose_on));
+#endif /* (DEBUG || DEVELOPMENT) */
 }

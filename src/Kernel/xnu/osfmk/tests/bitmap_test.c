@@ -37,6 +37,7 @@
 extern void dump_bitmap_next(bitmap_t *map, uint nbits);
 extern void dump_bitmap_lsb(bitmap_t *map, uint nbits);
 extern void test_bitmap(void);
+extern void test_bits(void);
 extern kern_return_t bitmap_post_test(void);
 
 void
@@ -140,6 +141,13 @@ test_bitmap(void)
 		bitmap_and(map, map1, map1, nbits);
 		assert(bitmap_is_full(map, nbits));
 
+		/* bitmap_or */
+		bitmap_or(map, map1, map0, nbits);
+		assert(bitmap_is_full(map, nbits));
+
+		bitmap_or(map, map0, map0, nbits);
+		assert(bitmap_first(map, nbits) == -1);
+
 		/* bitmap_and_not */
 		bitmap_and_not(map, map0, map1, nbits);
 		assert(bitmap_first(map, nbits) == -1);
@@ -172,9 +180,37 @@ test_bitmap(void)
 	}
 }
 
+void
+test_bits(void)
+{
+	bitmap_t map = 0;
+
+	for (int i = 0; i < 64; i++) {
+		__assert_only bool changed = bit_set_if_clear(map, i);
+		assert(changed);
+	}
+	assert(map == ~0);
+	for (int i = 0; i < 64; i++) {
+		__assert_only bool changed = bit_set_if_clear(map, i);
+		assert(!changed);
+	}
+
+	for (int i = 0; i < 64; i++) {
+		__assert_only bool changed = bit_clear_if_set(map, i);
+		assert(changed);
+	}
+	assert(map == 0);
+	for (int i = 0; i < 64; i++) {
+		__assert_only bool changed = bit_clear_if_set(map, i);
+		assert(!changed);
+	}
+}
+
 kern_return_t
 bitmap_post_test(void)
 {
+	test_bits();
+
 	test_bitmap();
 
 	kern_return_t ret = KERN_SUCCESS;

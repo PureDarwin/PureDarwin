@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2020,2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -42,54 +42,30 @@
 #include <kern/assert.h>
 #include <kern/host.h>
 #include <kern/ledger.h>
+#include <kern/telemetry.h>
 #include <kern/thread.h>
 #include <kern/ipc_kobject.h>
 #include <os/refcnt.h>
 
-#include <ipc/ipc_port.h>
-#include <ipc/ipc_space.h>
-
-#include <vm/vm_map.h>
+#include <vm/vm_map_internal.h>
+#include <vm/vm_map_lock_internal.h>
+#include <vm/vm_pageout_internal.h>
+#include <vm/memory_object_internal.h>
 #include <vm/vm_pageout.h>
-#include <vm/memory_object.h>
-#include <vm/vm_pageout.h>
-#include <vm/vm_protos.h>
+#include <vm/vm_protos_internal.h>
 #include <vm/vm_purgeable_internal.h>
+#include <vm/vm_ubc.h>
+#include <vm/vm_page_internal.h>
+#include <vm/vm_object_internal.h>
 
+#include <sys/kdebug_triage.h>
 
 /* BSD VM COMPONENT INTERFACES */
-int
-get_map_nentries(
-	vm_map_t);
-
-vm_offset_t
-get_map_start(
-	vm_map_t);
-
-vm_offset_t
-get_map_end(
-	vm_map_t);
-
-/*
- *
- */
 int
 get_map_nentries(
 	vm_map_t map)
 {
 	return map->hdr.nentries;
-}
-
-mach_vm_offset_t
-mach_get_vm_start(vm_map_t map)
-{
-	return vm_map_first_entry(map)->vme_start;
-}
-
-mach_vm_offset_t
-mach_get_vm_end(vm_map_t map)
-{
-	return vm_map_last_entry(map)->vme_end;
 }
 
 /*
@@ -104,11 +80,8 @@ const struct memory_object_pager_ops vnode_pager_ops = {
 	.memory_object_data_request = vnode_pager_data_request,
 	.memory_object_data_return = vnode_pager_data_return,
 	.memory_object_data_initialize = vnode_pager_data_initialize,
-	.memory_object_data_unlock = vnode_pager_data_unlock,
-	.memory_object_synchronize = vnode_pager_synchronize,
 	.memory_object_map = vnode_pager_map,
 	.memory_object_last_unmap = vnode_pager_last_unmap,
-	.memory_object_data_reclaim = NULL,
 	.memory_object_backing_object = NULL,
 	.memory_object_pager_name = "vnode pager"
 };
@@ -157,8 +130,8 @@ struct vnode *
 vnode_pager_lookup_vnode(               /* forward */
 	memory_object_t);
 
-ZONE_DECLARE(vnode_pager_zone, "vnode pager structures",
-    sizeof(struct vnode_pager), ZC_NOENCRYPT);
+ZONE_DEFINE_TYPE(vnode_pager_zone, "vnode pager structures",
+    struct vnode_pager, ZC_NOENCRYPT);
 
 #define VNODE_PAGER_NULL        ((vnode_pager_t) 0)
 
@@ -213,7 +186,7 @@ memory_object_control_uiomove(
 
 	vm_object_lock(object);
 
-	if (mark_dirty && object->copy != VM_OBJECT_NULL) {
+	if (mark_dirty && object->vo_copy != VM_OBJECT_NULL) {
 		/*
 		 * We can't modify the pages without honoring
 		 * copy-on-write obligations first, so fall off
@@ -234,11 +207,27 @@ memory_object_control_uiomove(
 		}
 
 		for (cur_run = 0; cur_run < cur_needed;) {
+			if (mark_dirty && object->vo_copy != VM_OBJECT_NULL) {
+				/*
+				 * We checked that this file-backed object did not have
+				 * a copy object when we entered this routine but it now has
+				 * one, so we can't stay on this optimized path.
+				 * We can finish processing the pages we have already grabbed
+				 * because they were made "busy" before the copy object was
+				 * created so they can't have been seen through that copy
+				 * object yet.
+				 */
+				break;
+			}
+
 			if ((dst_page = vm_page_lookup(object, offset)) == VM_PAGE_NULL) {
 				break;
 			}
 
-
+			if (__improbable(dst_page->vmp_error || dst_page->vmp_restart)) {
+				retval = EIO;
+				break;
+			}
 			if (dst_page->vmp_busy || dst_page->vmp_cleaning) {
 				/*
 				 * someone else is playing with the page... if we've
@@ -250,14 +239,34 @@ memory_object_control_uiomove(
 				if (cur_run) {
 					break;
 				}
-				PAGE_SLEEP(object, dst_page, THREAD_UNINT);
+				vm_page_sleep(object, dst_page, THREAD_UNINT, LCK_SLEEP_EXCLUSIVE);
 				continue;
 			}
 			if (dst_page->vmp_laundry) {
 				vm_pageout_steal_laundry(dst_page, FALSE);
 			}
+			if (__improbable(dst_page->vmp_absent)) {
+				printf("absent page %p (obj %p offset 0x%llx) -> EIO",
+				    dst_page, object, offset);
+				retval = EIO;
+				break;
+			}
 
 			if (mark_dirty) {
+#if CONFIG_SPTM
+				if (__improbable(PMAP_PAGE_IS_USER_EXECUTABLE(dst_page))) {
+					/*
+					 * This is analogous to the PMAP_OPTIONS_RETYPE disconnect we perform
+					 * in vm_object_upl_request() when setting up a UPL to overwrite the
+					 * destination pages, which is the UPL-based analogue of this path.
+					 * See the comment there for the gory details, but it essentially boils
+					 * down to the same situation of being asked to overwrite page contents
+					 * that were already marked executable from some prior use of the vnode
+					 * associated with this VM object.
+					 */
+					pmap_disconnect_options(VM_PAGE_GET_PHYS_PAGE(dst_page), PMAP_OPTIONS_RETYPE, NULL);
+				}
+#endif /* CONFIG_SPTM */
 				if (dst_page->vmp_dirty == FALSE) {
 					dirty_count++;
 				}
@@ -298,6 +307,11 @@ memory_object_control_uiomove(
 
 			if ((xsize = PAGE_SIZE - start_offset) > io_requested) {
 				xsize = io_requested;
+			}
+
+			/* Such phyiscal pages should never be restricted pages */
+			if (vm_page_is_restricted(dst_page)) {
+				panic("%s: cannot uiomove64 into restricted page", __func__);
 			}
 
 			if ((retval = uiomove64((addr64_t)(((addr64_t)(VM_PAGE_GET_PHYS_PAGE(dst_page)) << PAGE_SHIFT) + start_offset), xsize, uio))) {
@@ -342,17 +356,25 @@ memory_object_control_uiomove(
 				VM_PAGE_CONSUME_CLUSTERED(dst_page);
 			}
 
-			PAGE_WAKEUP_DONE(dst_page);
+			vm_page_wakeup_done(object, dst_page);
 		}
 		orig_offset = 0;
-	}
-	if (object->pager) {
-		task_update_logical_writes(current_task(), (dirty_count * PAGE_SIZE), TASK_WRITE_DEFERRED, vnode_pager_lookup_vnode(object->pager));
 	}
 	vm_object_unlock(object);
 	return retval;
 }
 
+
+bool
+memory_object_is_vnode_pager(
+	memory_object_t mem_obj)
+{
+	if (mem_obj != NULL &&
+	    mem_obj->mo_pager_ops == &vnode_pager_ops) {
+		return true;
+	}
+	return false;
+}
 
 /*
  *
@@ -452,16 +474,6 @@ vnode_pager_data_initialize(
 	return KERN_FAILURE;
 }
 
-kern_return_t
-vnode_pager_data_unlock(
-	__unused memory_object_t                mem_obj,
-	__unused memory_object_offset_t offset,
-	__unused memory_object_size_t           size,
-	__unused vm_prot_t              desired_access)
-{
-	return KERN_FAILURE;
-}
-
 void
 vnode_pager_dirtied(
 	memory_object_t         mem_obj,
@@ -527,6 +539,25 @@ vnode_pager_get_isSSD(
 	*isSSD = vnode_pager_isSSD(vnode_object->vnode_handle);
 	return KERN_SUCCESS;
 }
+
+#if FBDP_DEBUG_OBJECT_NO_PAGER
+kern_return_t
+vnode_pager_get_forced_unmount(
+	memory_object_t         mem_obj,
+	bool                    *forced_unmount)
+{
+	vnode_pager_t   vnode_object;
+
+	if (mem_obj->mo_pager_ops != &vnode_pager_ops) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	vnode_object = vnode_pager_lookup(mem_obj);
+
+	*forced_unmount = vnode_pager_forced_unmount(vnode_object->vnode_handle);
+	return KERN_SUCCESS;
+}
+#endif /* FBDP_DEBUG_OBJECT_NO_PAGER */
 
 kern_return_t
 vnode_pager_get_object_size(
@@ -697,20 +728,6 @@ vnode_pager_terminate(
  *
  */
 kern_return_t
-vnode_pager_synchronize(
-	__unused memory_object_t        mem_obj,
-	__unused memory_object_offset_t offset,
-	__unused memory_object_size_t   length,
-	__unused vm_sync_t              sync_flags)
-{
-	panic("vnode_pager_synchronize: memory_object_synchronize no longer supported\n");
-	return KERN_FAILURE;
-}
-
-/*
- *
- */
-kern_return_t
 vnode_pager_map(
 	memory_object_t         mem_obj,
 	vm_prot_t               prot)
@@ -863,7 +880,7 @@ vnode_pager_cluster_read(
 /*
  *       if(kret == PAGER_ABSENT) {
  *       Need to work out the defs here, 1 corresponds to PAGER_ABSENT
- *       defined in bsd/vm/vm_pager.h  However, we should not be including
+ *       defined in bsd/vm/vm_pager_xnu.h  However, we should not be including
  *       that file here it is a layering violation.
  */
 	if (kret == 1) {
@@ -893,6 +910,9 @@ vnode_pager_cluster_read(
 			 */
 		}
 
+		ktriage_record(thread_tid(current_thread()),
+		    KDBG_TRIAGE_EVENTID(KDBG_TRIAGE_SUBSYS_VM, KDBG_TRIAGE_RESERVED, KDBG_TRIAGE_VM_VNODEPAGER_CLREAD_NO_UPL),
+		    0);
 		return KERN_FAILURE;
 	}
 
@@ -908,21 +928,19 @@ vnode_object_create(
 {
 	vnode_pager_t  vnode_object;
 
-	vnode_object = (struct vnode_pager *) zalloc(vnode_pager_zone);
-	if (vnode_object == VNODE_PAGER_NULL) {
-		return VNODE_PAGER_NULL;
-	}
+	vnode_object = zalloc_flags(vnode_pager_zone, Z_WAITOK | Z_NOFAIL);
 
 	/*
 	 * The vm_map call takes both named entry ports and raw memory
 	 * objects in the same parameter.  We need to make sure that
 	 * vm_map does not see this object as a named entry port.  So,
-	 * we reserve the first word in the object for a fake ip_kotype
+	 * we reserve the first word in the object for a fake object type
 	 * setting - that will tell vm_map to use it as a memory object.
 	 */
 	vnode_object->vn_pgr_hdr.mo_ikot = IKOT_MEMORY_OBJECT;
 	vnode_object->vn_pgr_hdr.mo_pager_ops = &vnode_pager_ops;
 	vnode_object->vn_pgr_hdr.mo_control = MEMORY_OBJECT_CONTROL_NULL;
+	vnode_object->vn_pgr_hdr.mo_last_unmap_ctid = 0;
 
 	os_ref_init_raw(&vnode_object->vn_pgr_hdr_ref, NULL);
 	vnode_object->vnode_handle = vp;
@@ -962,25 +980,34 @@ vnode_pager_lookup_vnode(
 
 #include <sys/bsdtask_info.h>
 
-static int fill_vnodeinfoforaddr( vm_map_entry_t entry, uintptr_t * vnodeaddr, uint32_t * vid);
+__static_testable int fill_vnodeinfoforaddr( vm_map_entry_t entry, uintptr_t * vnodeaddr, uint32_t * vid, bool *is_map_shared);
 
 int
-fill_procregioninfo(task_t task, uint64_t arg, struct proc_regioninfo_internal *pinfo, uintptr_t *vnodeaddr, uint32_t  *vid)
+fill_procregioninfo(
+	task_t                  task,
+	uint64_t                arg,
+	struct proc_regioninfo_internal *pinfo,
+	uintptr_t              *vnodeaddr,
+	uint32_t               *vid)
 {
-	vm_map_t map;
-	vm_map_offset_t address = (vm_map_offset_t)arg;
-	vm_map_entry_t          tmp_entry;
-	vm_map_entry_t          entry;
-	vm_map_offset_t         start;
-	vm_region_extended_info_data_t extended;
-	vm_region_top_info_data_t top;
-	boolean_t do_region_footprint;
-	int       effective_page_shift, effective_page_size;
+	vm_map_t            map;
+	vm_map_offset_t     address = (vm_map_offset_t)arg;
+	struct vm_map_entry fake;
+	vm_map_offset_t     start;
+	vm_map_entry_t      entry;
+	boolean_t           do_region_footprint;
+	int                 effective_page_shift, effective_page_size;
+	vm_map_address_t    final_entry_end;
+	kern_return_t       resolve_kr;
+	VM_MAP_FIND_LOCK_CTX_DECLARE(ctx);
+
+	vmlp_api_start(FILL_PROCREGIONINFO);
 
 	task_lock(task);
 	map = task->map;
 	if (map == VM_MAP_NULL) {
 		task_unlock(task);
+		vmlp_api_end(FILL_PROCREGIONINFO, 0);
 		return 0;
 	}
 
@@ -992,72 +1019,73 @@ fill_procregioninfo(task_t task, uint64_t arg, struct proc_regioninfo_internal *
 
 	do_region_footprint = task_self_region_footprint();
 
-	vm_map_lock_read(map);
+	vm_map_ilk_lock(map);
+	final_entry_end = vm_map_last_entry(map)->vme_end;
 
-	start = address;
+	entry = vm_map_region_resolve_entry(ctx, &map, address,
+	    VMRL_SH_NO_MIN_MAX_CHECK | VMRL_SH_ILK_LOCKED |
+	    VMRL_SH_NO_DESCEND_TRANSPARENT,
+	    &fake, &resolve_kr);
 
-	if (!vm_map_lookup_entry(map, start, &tmp_entry)) {
-		if ((entry = tmp_entry->vme_next) == vm_map_to_entry(map)) {
-			if (do_region_footprint &&
-			    address == tmp_entry->vme_end) {
-				ledger_amount_t ledger_resident;
-				ledger_amount_t ledger_compressed;
+	if (entry == VM_MAP_ENTRY_NULL) {
+		/* There's no entry after address in the map. */
+		assert3u(resolve_kr, ==, KERN_INVALID_ADDRESS);
+		if (do_region_footprint && address == final_entry_end) {
+			ledger_amount_t ledger_resident;
+			ledger_amount_t ledger_compressed;
 
-				/*
-				 * This request is right after the last valid
-				 * memory region;  instead of reporting the
-				 * end of the address space, report a fake
-				 * memory region to account for non-volatile
-				 * purgeable and/or ledger-tagged memory
-				 * owned by this task.
-				 */
-				task_ledgers_footprint(task->ledger,
-				    &ledger_resident,
-				    &ledger_compressed);
-				if (ledger_resident + ledger_compressed == 0) {
-					/* nothing to report */
-					vm_map_unlock_read(map);
-					vm_map_deallocate(map);
-					return 0;
-				}
-
-				/* provide fake region for purgeable */
-				pinfo->pri_offset = address;
-				pinfo->pri_protection = VM_PROT_DEFAULT;
-				pinfo->pri_max_protection = VM_PROT_DEFAULT;
-				pinfo->pri_inheritance = VM_INHERIT_NONE;
-				pinfo->pri_behavior = VM_BEHAVIOR_DEFAULT;
-				pinfo->pri_user_wired_count = 0;
-				pinfo->pri_user_tag = -1;
-				pinfo->pri_pages_resident =
-				    (uint32_t) (ledger_resident / effective_page_size);
-				pinfo->pri_pages_shared_now_private = 0;
-				pinfo->pri_pages_swapped_out =
-				    (uint32_t) (ledger_compressed / effective_page_size);
-				pinfo->pri_pages_dirtied =
-				    (uint32_t) (ledger_resident / effective_page_size);
-				pinfo->pri_ref_count = 1;
-				pinfo->pri_shadow_depth = 0;
-				pinfo->pri_share_mode = SM_PRIVATE;
-				pinfo->pri_private_pages_resident =
-				    (uint32_t) (ledger_resident / effective_page_size);
-				pinfo->pri_shared_pages_resident = 0;
-				pinfo->pri_obj_id = VM_OBJECT_ID_FAKE(map, task_ledgers.purgeable_nonvolatile);
-				pinfo->pri_address = address;
-				pinfo->pri_size =
-				    (uint64_t) (ledger_resident + ledger_compressed);
-				pinfo->pri_depth = 0;
-
-				vm_map_unlock_read(map);
+			/*
+			 * This request is right after the last valid
+			 * memory region;  instead of reporting the
+			 * end of the address space, report a fake
+			 * memory region to account for non-volatile
+			 * purgeable and/or ledger-tagged memory
+			 * owned by this task.
+			 */
+			task_ledgers_footprint(task->ledger,
+			    &ledger_resident,
+			    &ledger_compressed);
+			if (ledger_resident + ledger_compressed == 0) {
+				/* nothing to report */
 				vm_map_deallocate(map);
-				return 1;
+				vmlp_api_end(FILL_PROCREGIONINFO, 0);
+				return 0;
 			}
-			vm_map_unlock_read(map);
+
+			/* provide fake region for purgeable */
+			pinfo->pri_offset = address;
+			pinfo->pri_protection = VM_PROT_DEFAULT;
+			pinfo->pri_max_protection = VM_PROT_DEFAULT;
+			pinfo->pri_inheritance = VM_INHERIT_NONE;
+			pinfo->pri_behavior = VM_BEHAVIOR_DEFAULT;
+			pinfo->pri_user_wired_count = 0;
+			pinfo->pri_user_tag = -1;
+			pinfo->pri_pages_resident =
+			    (uint32_t) (ledger_resident / effective_page_size);
+			pinfo->pri_pages_shared_now_private = 0;
+			pinfo->pri_pages_swapped_out =
+			    (uint32_t) (ledger_compressed / effective_page_size);
+			pinfo->pri_pages_dirtied =
+			    (uint32_t) (ledger_resident / effective_page_size);
+			pinfo->pri_ref_count = 1;
+			pinfo->pri_shadow_depth = 0;
+			pinfo->pri_share_mode = SM_PRIVATE;
+			pinfo->pri_private_pages_resident =
+			    (uint32_t) (ledger_resident / effective_page_size);
+			pinfo->pri_shared_pages_resident = 0;
+			pinfo->pri_obj_id = VM_OBJECT_ID_FAKE(map, task_ledgers.purgeable_nonvolatile);
+			pinfo->pri_address = address;
+			pinfo->pri_size =
+			    (uint64_t) (ledger_resident + ledger_compressed);
+			pinfo->pri_depth = 0;
+
 			vm_map_deallocate(map);
-			return 0;
+			vmlp_api_end(FILL_PROCREGIONINFO, 1);
+			return 1;
 		}
-	} else {
-		entry = tmp_entry;
+		vmlp_api_end(FILL_PROCREGIONINFO, 0);
+		vm_map_deallocate(map);
+		return 0;
 	}
 
 	start = entry->vme_start;
@@ -1078,26 +1106,17 @@ fill_procregioninfo(task_t task, uint64_t arg, struct proc_regioninfo_internal *
 		}
 	}
 
+	vm_region_extended_info_data_t extended = {
+		.protection = entry->protection,
+		.user_tag = VME_ALIAS(entry),
+	};
+	vm_region_top_info_data_t top = { };
 
-	extended.protection = entry->protection;
-	extended.user_tag = VME_ALIAS(entry);
-	extended.pages_resident = 0;
-	extended.pages_swapped_out = 0;
-	extended.pages_shared_now_private = 0;
-	extended.pages_dirtied = 0;
-	extended.external_pager = 0;
-	extended.shadow_depth = 0;
+	vm_map_region_walk(ctx->vmlc_map, start, entry,
+	    VME_OFFSET(entry), entry->vme_end - start, &extended,
+	    TRUE, VM_REGION_EXTENDED_INFO_COUNT);
 
-	vm_map_region_walk(map, start, entry, VME_OFFSET(entry), entry->vme_end - start, &extended, TRUE, VM_REGION_EXTENDED_INFO_COUNT);
-
-	if (extended.external_pager && extended.ref_count == 2 && extended.share_mode == SM_SHARED) {
-		extended.share_mode = SM_PRIVATE;
-	}
-
-	top.private_pages_resident = 0;
-	top.shared_pages_resident = 0;
 	vm_map_region_top_walk(entry, &top);
-
 
 	pinfo->pri_pages_resident = extended.pages_resident;
 	pinfo->pri_pages_shared_now_private = extended.pages_shared_now_private;
@@ -1115,18 +1134,14 @@ fill_procregioninfo(task_t task, uint64_t arg, struct proc_regioninfo_internal *
 	pinfo->pri_size = (uint64_t)(entry->vme_end - start);
 	pinfo->pri_depth = 0;
 
-	if ((vnodeaddr != 0) && (entry->is_sub_map == 0)) {
+	if ((vnodeaddr != 0) && (!entry->is_sub_map)) {
 		*vnodeaddr = (uintptr_t)0;
-
-		if (fill_vnodeinfoforaddr(entry, vnodeaddr, vid) == 0) {
-			vm_map_unlock_read(map);
-			vm_map_deallocate(map);
-			return 1;
-		}
+		fill_vnodeinfoforaddr(entry, vnodeaddr, vid, NULL);
 	}
 
-	vm_map_unlock_read(map);
+	vm_map_region_resolve_done(ctx, &map, resolve_kr);
 	vm_map_deallocate(map);
+	vmlp_api_end(FILL_PROCREGIONINFO, 1);
 	return 1;
 }
 
@@ -1135,36 +1150,34 @@ fill_procregioninfo_onlymappedvnodes(task_t task, uint64_t arg, struct proc_regi
 {
 	vm_map_t map;
 	vm_map_offset_t address = (vm_map_offset_t)arg;
-	vm_map_entry_t          tmp_entry;
 	vm_map_entry_t          entry;
+	VM_MAP_LOCK_CTX_DECLARE(ctx);
+
+	vmlp_api_start(FILL_PROCREGIONINFO_ONLYMAPPEDVNODES);
 
 	task_lock(task);
 	map = task->map;
 	if (map == VM_MAP_NULL) {
 		task_unlock(task);
+		vmlp_api_end(FILL_PROCREGIONINFO_ONLYMAPPEDVNODES, 0);
 		return 0;
 	}
 	vm_map_reference(map);
 	task_unlock(task);
 
-	vm_map_lock_read(map);
-
-	if (!vm_map_lookup_entry(map, address, &tmp_entry)) {
-		if ((entry = tmp_entry->vme_next) == vm_map_to_entry(map)) {
-			vm_map_unlock_read(map);
-			vm_map_deallocate(map);
-			return 0;
-		}
-	} else {
-		entry = tmp_entry;
+	if (KERN_SUCCESS != vm_map_range_sh_lock(ctx, &map, address, VMRL_END_VA(map),
+	    VMRL_SH_STREAM | VMRL_SH_NO_MIN_MAX_CHECK | VMRL_SH_NO_DESCEND_TRANSPARENT)) {
+		vm_map_deallocate(map);
+		vmlp_api_end(FILL_PROCREGIONINFO_ONLYMAPPEDVNODES, 0);
+		return 0;
 	}
 
-	while (entry != vm_map_to_entry(map)) {
+	while ((entry = vm_map_range_stream_next(ctx))) {
 		*vnodeaddr = 0;
 		*vid = 0;
 
-		if (entry->is_sub_map == 0) {
-			if (fill_vnodeinfoforaddr(entry, vnodeaddr, vid)) {
+		if (!entry->is_sub_map) {
+			if (fill_vnodeinfoforaddr(entry, vnodeaddr, vid, NULL)) {
 				pinfo->pri_offset = VME_OFFSET(entry);
 				pinfo->pri_protection = entry->protection;
 				pinfo->pri_max_protection = entry->max_protection;
@@ -1193,84 +1206,117 @@ fill_procregioninfo_onlymappedvnodes(task_t task, uint64_t arg, struct proc_regi
 				pinfo->pri_size = (uint64_t)(entry->vme_end - entry->vme_start);
 				pinfo->pri_depth = 0;
 
-				vm_map_unlock_read(map);
+				vm_map_range_sh_unlock(ctx, &map);
 				vm_map_deallocate(map);
+				vmlp_api_end(FILL_PROCREGIONINFO_ONLYMAPPEDVNODES, 1);
 				return 1;
 			}
 		}
 
 		/* Keep searching for a vnode-backed mapping */
-		entry = entry->vme_next;
 	}
 
-	vm_map_unlock_read(map);
+	vm_map_range_sh_unlock(ctx, &map);
+
 	vm_map_deallocate(map);
+	vmlp_api_end(FILL_PROCREGIONINFO_ONLYMAPPEDVNODES, 0);
 	return 0;
 }
 
+extern int vnode_get(struct vnode *vp);
 int
-find_region_details(task_t task, vm_map_offset_t offset,
-    uintptr_t *vnodeaddr, uint32_t *vid,
-    uint64_t *start, uint64_t *len)
+task_find_region_details(
+	task_t task,
+	vm_map_offset_t offset,
+	find_region_details_options_t options,
+	uintptr_t *vp_p,
+	uint32_t *vid_p,
+	bool *is_map_shared_p,
+	uint64_t *start_p,
+	uint64_t *len_p)
 {
+	VM_MAP_LOCK_CTX_DECLARE(ctx);
 	vm_map_t        map;
-	vm_map_entry_t  tmp_entry, entry;
-	int             rc = 0;
+	vm_map_entry_t  entry;
+	int             rc;
+
+	vmlp_api_start(TASK_FIND_REGION_DETAILS);
+
+	rc = 0;
+	*vp_p = 0;
+	*vid_p = 0;
+	*is_map_shared_p = false;
+	*start_p = 0;
+	*len_p = 0;
+	if (options & ~FIND_REGION_DETAILS_OPTIONS_ALL) {
+		vmlp_api_end(TASK_FIND_REGION_DETAILS, 0);
+		return 0;
+	}
 
 	task_lock(task);
 	map = task->map;
 	if (map == VM_MAP_NULL) {
 		task_unlock(task);
+		vmlp_api_end(TASK_FIND_REGION_DETAILS, 0);
 		return 0;
 	}
 	vm_map_reference(map);
 	task_unlock(task);
 
-	vm_map_lock_read(map);
-	if (!vm_map_lookup_entry(map, offset, &tmp_entry)) {
-		if ((entry = tmp_entry->vme_next) == vm_map_to_entry(map)) {
-			rc = 0;
-			goto ret;
-		}
-	} else {
-		entry = tmp_entry;
+	if (KERN_SUCCESS != vm_map_range_sh_lock(ctx, &map, vm_map_trunc_page(offset, VM_MAP_PAGE_MASK(map)),
+	    VMRL_END_VA(map), VMRL_SH_STREAM | VMRL_SH_NO_MIN_MAX_CHECK | VMRL_SH_NO_DESCEND_TRANSPARENT)) {
+		vm_map_deallocate(map);
+		vmlp_api_end(TASK_FIND_REGION_DETAILS, 0);
+		return 0;
 	}
 
-	while (entry != vm_map_to_entry(map)) {
-		*vnodeaddr = 0;
-		*vid = 0;
-		*start = 0;
-		*len = 0;
-
-		if (entry->is_sub_map == 0) {
-			if (fill_vnodeinfoforaddr(entry, vnodeaddr, vid)) {
-				*start = entry->vme_start;
-				*len = entry->vme_end - entry->vme_start;
-				rc = 1;
-				goto ret;
+	while ((entry = vm_map_range_stream_next(ctx))) {
+		if (options & FIND_REGION_DETAILS_AT_OFFSET) {
+			if ((offset < entry->vme_start || offset >= entry->vme_end)) {
+				/* looking at an entry past the offset, caller is not interested */
+				break;
 			}
 		}
 
-		entry = entry->vme_next;
+		if (entry->is_sub_map) {
+			/* fallthru to check next entry */
+		} else if (fill_vnodeinfoforaddr(entry, vp_p, vid_p, is_map_shared_p)) {
+			if ((options & FIND_REGION_DETAILS_GET_VNODE) &&
+			    vnode_get((struct vnode *)*vp_p)) {
+				/* tried but could not get an iocount */
+				*vp_p = 0;
+				*vid_p = 0;
+				/* check next entry */
+				continue;
+			}
+			*start_p = entry->vme_start;
+			*len_p = entry->vme_end - entry->vme_start;
+			rc = 1; /* success */
+			break;
+		}
+		/* check next entry */
 	}
 
-ret:
-	vm_map_unlock_read(map);
+	vm_map_range_sh_unlock(ctx, &map);
 	vm_map_deallocate(map);
+	vmlp_api_end(TASK_FIND_REGION_DETAILS, rc);
 	return rc;
 }
 
-static int
+__static_testable int
 fill_vnodeinfoforaddr(
 	vm_map_entry_t                  entry,
 	uintptr_t * vnodeaddr,
-	uint32_t * vid)
+	uint32_t * vid,
+	bool *is_map_shared)
 {
 	vm_object_t     top_object, object;
 	memory_object_t memory_object;
 	memory_object_pager_ops_t pager_ops;
 	kern_return_t   kr;
 	int             shadow_depth;
+
+	vm_entry_assert_owner(entry);
 
 
 	if (entry->is_sub_map) {
@@ -1302,7 +1348,8 @@ fill_vnodeinfoforaddr(
 		return 0;
 	} else if (!object->pager_ready ||
 	    object->terminating ||
-	    !object->alive) {
+	    !object->alive ||
+	    object->pager == NULL) {
 		vm_object_unlock(object);
 		return 0;
 	} else {
@@ -1320,6 +1367,9 @@ fill_vnodeinfoforaddr(
 			vm_object_unlock(object);
 			return 0;
 		}
+	}
+	if (is_map_shared) {
+		*is_map_shared = (shadow_depth == 0);
 	}
 	vm_object_unlock(object);
 	return 1;
@@ -1394,8 +1444,12 @@ find_vnode_object(
 				vm_object_unlock(object);
 			}
 
-			if (object && !object->internal && object->pager_ready && !object->terminating &&
-			    object->alive) {
+			if (object &&
+			    !object->internal &&
+			    object->pager_ready &&
+			    !object->terminating &&
+			    object->alive &&
+			    object->pager != NULL) {
 				memory_object = object->pager;
 				pager_ops = memory_object->mo_pager_ops;
 

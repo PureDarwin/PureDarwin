@@ -10,6 +10,27 @@
 }:
 
 let
+  # Every consumer that pulls in src/Kernel/xnu/osfmk (directly, or via
+  # libSystemSourcePaths) uses it purely as a header search path (-I), never
+  # as compiled sources - grep confirms no CMakeLists.txt under src/Libraries
+  # or src/Userspace adds osfmk/*.c to target_sources (only kernelSource and
+  # kextsSource, which are left untouched, actually compile it). Stripping
+  # implementation files from osfmk here means an unrelated kernel-only
+  # change (e.g. osfmk/ipc/ipc_policy.c) doesn't invalidate every downstream
+  # userland derivation that transitively pulls in one of these sources.
+  stripOsfmkImpl = src:
+    pkgs.lib.cleanSourceWith {
+      inherit src;
+      filter = path: type:
+        let
+          rel = pkgs.lib.removePrefix "${toString src}/" (toString path);
+          isOsfmkImpl =
+            type == "regular"
+            && pkgs.lib.hasPrefix "src/Kernel/xnu/osfmk/" rel
+            && pkgs.lib.any (ext: pkgs.lib.hasSuffix ext rel) [ ".c" ".cpp" ".cc" ".m" ".mm" ".s" ".S" ];
+        in
+          !isOsfmkImpl;
+    };
   fbdoomExternalSrc =
     if fbdoomExternalSrcEnv == "" then null
     else builtins.path { path = /. + fbdoomExternalSrcEnv; name = "fbdoom-external-src"; };
@@ -40,7 +61,7 @@ let
     "src/Libraries/libSystem/pthread"
     "tools"
   ];
-  libSystemSource = sourceWith "puredarwin-libsystem-source" libSystemSourcePaths;
+  libSystemSource = stripOsfmkImpl (sourceWith "puredarwin-libsystem-source" libSystemSourcePaths);
   kextsSource = sourceWith "puredarwin-kexts-source" [
     "projects"
     "src/Kernel/CMakeLists.txt"
@@ -52,7 +73,7 @@ let
     "src/Libraries"
     "tools"
   ];
-  userlandSource = sourceWith "puredarwin-userland-source" [
+  userlandSource = stripOsfmkImpl (sourceWith "puredarwin-userland-source" [
     # nohup detaches from the console session through _vprocmgr_detach_from_console;
     # vproc_priv.h is private and not in the SDK.
     "src/Libraries/XPC/libxpc/include"
@@ -75,8 +96,8 @@ let
     "src/Libraries/mDNSResponder"
     "src/Userspace"
     "tools/mig"
-  ];
-  fbdoomSource = sourceWith "puredarwin-fbdoom-source" [
+  ]);
+  fbdoomSource = stripOsfmkImpl (sourceWith "puredarwin-fbdoom-source" [
     "src/Kernel/xnu/EXTERNAL_HEADERS"
     "src/Kernel/xnu/osfmk"
     "src/Kernel/xnu/libkern/libkern"
@@ -109,8 +130,8 @@ let
     "tools/cctools/include/mach-o/arch.h"
     "tools/cctools/include/stuff/openstep_mach.h"
     "tools/cctools/include/mach/machine.h"
-  ];
-  cctoolsSource = sourceWith "puredarwin-cctools-source" [
+  ]);
+  cctoolsSource = stripOsfmkImpl (sourceWith "puredarwin-cctools-source" [
     "src/Kernel/xnu/osfmk"
     "src/Libraries/IOKit"
     "src/Libraries/PDGOP"
@@ -119,6 +140,8 @@ let
     "src/Libraries/libcxx/include"
     # the hand-resolved __config_site every libc++ header needs
     "src/Libraries/libcxxabi/config"
+    # cxxabi.h, which ld64 includes directly
+    "src/Libraries/libcxxabi/include"
     "src/Libraries/libSystem/corecrypto/include"
     "src/Libraries/CommonCrypto/include"
     "src/Libraries/CommonCrypto/libcn/pd_cc_digest_bridge.c"
@@ -126,7 +149,7 @@ let
     "src/Libraries/libSystem/libc/string/FreeBSD/strmode.c"
     "src/Userspace"
     "tools"
-  ];
+  ]);
   coreFoundationSource = sourceWith "puredarwin-corefoundation-source" [
     "src/Libraries/CoreFoundation"
     "src/Libraries/libSystem/libc/pd-compat-include"
@@ -134,7 +157,7 @@ let
   coreServicesSource = sourceWith "puredarwin-coreservices-source" [
     "src/Libraries/CoreServices"
   ];
-  securitySource = sourceWith "puredarwin-security-source"
+  securitySource = stripOsfmkImpl (sourceWith "puredarwin-security-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/Security"
       "src/Libraries/libDER"
@@ -155,8 +178,8 @@ let
       # SecTask.c includes <IOKit/IOKitLib.h> and <bsm/libbsm.h>
       "src/Libraries/IOKit"
       "src/Libraries/libdarwin/pd-compat-include"
-    ]);
-  systemConfigurationSource = sourceWith "puredarwin-systemconfiguration-source"
+    ]));
+  systemConfigurationSource = stripOsfmkImpl (sourceWith "puredarwin-systemconfiguration-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/SystemConfiguration"
       # configd links bootp's IPConfiguration plugin
@@ -179,20 +202,20 @@ let
       "src/Kernel/Extensions/IOSerialFamily/include"
       "src/Kernel/Extensions/IOUSBFamily/include"
       "src/Libraries/dyld/upstream/include"
-    ]);
-  iokitCFSource = sourceWith "puredarwin-iokitcf-source"
-    (libSystemSourcePaths ++ [ "src/Kernel/xnu/iokit" ]);
-  symptomReporterSource = sourceWith "puredarwin-symptomreporter-source"
+    ]));
+  iokitCFSource = stripOsfmkImpl (sourceWith "puredarwin-iokitcf-source"
+    (libSystemSourcePaths ++ [ "src/Kernel/xnu/iokit" ]));
+  symptomReporterSource = stripOsfmkImpl (sourceWith "puredarwin-symptomreporter-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/SymptomReporter"
-    ]);
+    ]));
   protocolBufferSource = sourceWith "puredarwin-protocolbuffer-source" [
     "src/Libraries/ProtocolBuffer"
   ];
   wirelessDiagnosticsSource = sourceWith "puredarwin-wirelessdiagnostics-source" [
     "src/Libraries/WirelessDiagnostics"
   ];
-  diskArbitrationSource = sourceWith "puredarwin-diskarbitration-source"
+  diskArbitrationSource = stripOsfmkImpl (sourceWith "puredarwin-diskarbitration-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/DiskArbitration"
       # DAServer.defs imports <Security/Authorization.h>.
@@ -211,9 +234,10 @@ let
       "src/Libraries/libdarwin"
       "src/Libraries/architecture"
       "src/Libraries/libsystem_trace"
-    ]);
+    ]));
   objcSource = sourceWith "puredarwin-objc-source" [
     "src/Libraries/objc4"
+    "src/Libraries/libunwind"
   ];
   libcxxDylibSource = sourceWith "puredarwin-libcxx-dylib-source" [
     "src/Libraries/libcxxabi"

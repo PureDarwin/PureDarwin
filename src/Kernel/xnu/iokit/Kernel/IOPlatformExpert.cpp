@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2022 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -84,7 +84,7 @@ static void getCStringForObject(OSObject *inObj, char *outStr, size_t outStrLen)
  *
  * <rdar://problem/33831837> tracks turning this on by default.
  */
-uint32_t gEnforceQuiesceSafety = 0;
+uint32_t gEnforcePlatformActionSafety = 0;
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -170,6 +170,7 @@ IOPlatformExpert::start( IOService * provider )
 	    IORangeAllocator::kLocking);
 	assert(physicalRanges);
 	setProperty("Platform Memory Ranges", physicalRanges);
+	OSSafeReleaseNULL(physicalRanges);
 
 	setPlatform( this );
 	gIOPlatform = this;
@@ -187,8 +188,8 @@ IOPlatformExpert::start( IOService * provider )
 	}
 #endif
 
-	PE_parse_boot_argn("enforce_quiesce_safety", &gEnforceQuiesceSafety,
-	    sizeof(gEnforceQuiesceSafety));
+	PE_parse_boot_argn("enforce_platform_action_safety", &gEnforcePlatformActionSafety,
+	    sizeof(gEnforcePlatformActionSafety));
 
 	return configure(provider);
 }
@@ -198,7 +199,7 @@ IOPlatformExpert::configure( IOService * provider )
 {
 	OSSet *             topLevel;
 	OSDictionary *      dict;
-	IOService *         nub;
+	IOService *         nub = NULL;
 
 	topLevel = OSDynamicCast( OSSet, getProperty("top-level"));
 
@@ -207,16 +208,17 @@ IOPlatformExpert::configure( IOService * provider )
 		    topLevel->getAnyObject()))) {
 			dict->retain();
 			topLevel->removeObject( dict );
+			OSSafeReleaseNULL(nub);
 			nub = createNub( dict );
+			dict->release();
 			if (NULL == nub) {
 				continue;
 			}
-			dict->release();
 			nub->attach( this );
 			nub->registerService();
 		}
 	}
-
+	OSSafeReleaseNULL(nub);
 	return true;
 }
 
@@ -342,6 +344,7 @@ IOPlatformExpert::haltRestart(unsigned int type)
 
 	if (type == kPEHangCPU) {
 		while (true) {
+			asm volatile ("");
 		}
 	}
 
@@ -964,6 +967,19 @@ PEGetPlatformEpoch(void)
 	}
 }
 
+#if defined(__arm64__)
+__attribute__((noinline))
+static void
+force_hard_hang_if_transaction_pending(void)
+{
+	/*
+	 * Intentionally force a hang if all CPUs cannot complete it
+	 * so that we get an AP watchdog hang *here*  instead of later in the panic flow.
+	 */
+	arm64_sync_tlb(true);
+}
+#endif // defined(__arm64__)
+
 /* Handle necessary platform specific actions prior to panic */
 void
 PEInitiatePanic(void)
@@ -973,8 +989,9 @@ PEInitiatePanic(void)
 	 * Trigger a TLB flush so any hard hangs exercise the SoC diagnostic
 	 * collection flow rather than hanging late in panic (see rdar://58062030)
 	 */
-	flush_mmu_tlb_entry(0);
-#endif
+	flush_mmu_tlb_entries_async(0, PAGE_SIZE, PAGE_SIZE, true, true);
+	force_hard_hang_if_transaction_pending();
+#endif // defined(__arm64__)
 }
 
 int
@@ -1007,7 +1024,7 @@ PEHaltRestartInternal(unsigned int type, uint32_t details)
 		 *  the timer expires. If the device wants a different
 		 *  timeout, use that value instead of 30 seconds.
 		 */
-#if  defined(__arm__) || defined(__arm64__)
+#if  defined(__arm64__)
 #define RESTART_NODE_PATH    "/defaults"
 #else
 #define RESTART_NODE_PATH    "/chosen"
@@ -1018,6 +1035,7 @@ PEHaltRestartInternal(unsigned int type, uint32_t details)
 			if (data && data->getLength() == 4) {
 				timeout = *((uint32_t *) data->getBytesNoCopy());
 			}
+			OSSafeReleaseNULL(node);
 		}
 
 #if (DEVELOPMENT || DEBUG)
@@ -1082,12 +1100,14 @@ PEHaltRestartInternal(unsigned int type, uint32_t details)
 				IOCPURunPlatformPanicActions(type, details);
 			}
 		}
-	} else if (type == kPEPanicDiagnosticsDone) {
+	} else if (type == kPEPanicDiagnosticsDone || type == kPEPanicDiagnosticsInProgress) {
 		IOCPURunPlatformPanicActions(type, details);
 	}
 
 skip_to_haltRestart:
 	if (gIOPlatform) {
+		// note that this will not necessarily halt or restart the system...
+		// Implementors of this function will check the type and take action accordingly
 		return gIOPlatform->haltRestart(type);
 	} else {
 		return -1;
@@ -1191,10 +1211,43 @@ PEReadNVRAMProperty(const char *symbol, void *value,
 	}
 
 	*len  = data->getLength();
-	vlen  = min(vlen, *len);
+	vlen  = IOMin(vlen, *len);
 	if (value && vlen) {
 		memcpy((void *) value, data->getBytesNoCopy(), vlen);
 	}
+
+	return TRUE;
+
+err:
+	return FALSE;
+}
+
+boolean_t
+PEReadNVRAMBooleanProperty(const char *symbol, boolean_t *value)
+{
+	OSObject  *obj;
+	OSBoolean *data;
+
+	if (!symbol || !value) {
+		goto err;
+	}
+
+	if (init_gIOOptionsEntry() < 0) {
+		goto err;
+	}
+
+	obj = gIOOptionsEntry->getProperty(symbol);
+	if (!obj) {
+		return TRUE;
+	}
+
+	/* convert to bool */
+	data = OSDynamicCast(OSBoolean, obj);
+	if (!data) {
+		goto err;
+	}
+
+	*value = data->isTrue() ? TRUE : FALSE;
 
 	return TRUE;
 
@@ -1324,6 +1377,16 @@ err:
 	return FALSE;
 }
 
+boolean_t
+PESyncNVRAM(void)
+{
+	if (gIOOptionsEntry != nullptr) {
+		gIOOptionsEntry->sync();
+	}
+
+	return TRUE;
+}
+
 long
 PEGetGMTTimeOfDay(void)
 {
@@ -1432,11 +1495,12 @@ IOPlatformExpert::registerNVRAMController(IONVRAMController * caller)
 	IORegistryEntry * entry;
 
 	/*
-	 * If we have panic debugging enabled and a prod-fused coprocessor,
-	 * disable cross panics so that the co-processor doesn't cause the system
+	 * If we have panic debugging enabled WITHOUT behavior to reboot after any crash (DB_REBOOT_ALWAYS)
+	 * and we are on a co-processor system that has the panic SoC watchdog enabled, disable
+	 * cross panics so that the co-processor doesn't cause the system
 	 * to reset when we enter the debugger or hit a panic on the x86 side.
 	 */
-	if (panicDebugging) {
+	if (panicDebugging && !(debug_boot_arg & DB_REBOOT_ALWAYS)) {
 		entry = IORegistryEntry::fromPath( "/options", gIODTPlane );
 		if (entry) {
 			data = OSDynamicCast( OSData, entry->getProperty( APPLE_VENDOR_VARIABLE_GUID":BridgeOSPanicWatchdogEnabled" ));
@@ -1483,16 +1547,19 @@ IOPlatformExpert::callPlatformFunction(const OSSymbol *functionName,
     void *param3, void *param4)
 {
 	IOService *service, *_resources;
+	OSObject  *prop = NULL;
+	IOReturn   ret;
 
 	if (functionName == gIOPlatformQuiesceActionKey ||
-	    functionName == gIOPlatformActiveActionKey) {
+	    functionName == gIOPlatformActiveActionKey ||
+	    functionName == gIOPlatformPanicActionKey) {
 		/*
-		 * Services which register for IOPlatformQuiesceAction / IOPlatformActiveAction
+		 * Services which register for IOPlatformQuiesceAction / IOPlatformActiveAction / IOPlatformPanicAction
 		 * must consume that event themselves, without passing it up to super/IOPlatformExpert.
 		 */
-		if (gEnforceQuiesceSafety) {
-			panic("Class %s passed the quiesce/active action to IOPlatformExpert",
-			    getMetaClass()->getClassName());
+		if (gEnforcePlatformActionSafety) {
+			panic("Class %s passed the %s action to IOPlatformExpert",
+			    getMetaClass()->getClassName(), functionName->getCStringNoCopy());
 		}
 	}
 
@@ -1505,13 +1572,19 @@ IOPlatformExpert::callPlatformFunction(const OSSymbol *functionName,
 		return kIOReturnUnsupported;
 	}
 
-	service = OSDynamicCast(IOService, _resources->getProperty(functionName));
+	prop = _resources->copyProperty(functionName);
+	service = OSDynamicCast(IOService, prop);
 	if (service == NULL) {
-		return kIOReturnUnsupported;
+		ret = kIOReturnUnsupported;
+		goto finish;
 	}
 
-	return service->callPlatformFunction(functionName, waitForFunction,
-	           param1, param2, param3, param4);
+	ret = service->callPlatformFunction(functionName, waitForFunction,
+	    param1, param2, param3, param4);
+
+finish:
+	OSSafeReleaseNULL(prop);
+	return ret;
 }
 
 IOByteCount
@@ -1585,11 +1658,13 @@ bool
 IODTPlatformExpert::createNubs( IOService * parent, OSIterator * iter )
 {
 	IORegistryEntry *   next;
-	IOService *         nub;
+	IOService *         nub = NULL;
 	bool                ok = true;
 
 	if (iter) {
 		while ((next = (IORegistryEntry *) iter->getNextObject())) {
+			OSSafeReleaseNULL(nub);
+
 			if (NULL == (nub = createNub( next ))) {
 				continue;
 			}
@@ -1636,6 +1711,7 @@ IODTPlatformExpert::createNubs( IOService * parent, OSIterator * iter )
 #endif
 			nub->registerService();
 		}
+		OSSafeReleaseNULL(nub);
 		iter->release();
 	}
 
@@ -1829,10 +1905,6 @@ IODTPlatformExpert::registerNVRAMController( IONVRAMController * nvram )
 int
 IODTPlatformExpert::haltRestart(unsigned int type)
 {
-	if (dtNVRAM) {
-		dtNVRAM->sync();
-	}
-
 	return super::haltRestart(type);
 }
 
@@ -2137,8 +2209,8 @@ IOPlatformExpertDevice::createNVRAM( void )
 	assert(gIOOptionsEntry != NULL);
 
 	gIOOptionsEntry->init(options, gIODTPlane);
-
 	gIOOptionsEntry->attach(this);
+	gIOOptionsEntry->start(this);
 	options->release();
 }
 
@@ -2244,17 +2316,8 @@ bool
 IOPlatformDevice::compareName( OSString * name,
     OSString ** matched ) const
 {
-	/*
-	 * See IOPlatformDevice::getResources: on this split-platform-expert port a
-	 * nub's provider may be the root IOPlatformExpertDevice rather than an
-	 * IOPlatformExpert, so guard the cast and fall back to the plain name
-	 * comparison instead of dispatching through the wrong vtable.
-	 */
-	IOPlatformExpert *platform = OSDynamicCast( IOPlatformExpert, getProvider() );
-	if (platform == NULL) {
-		return super::compareName( name, matched );
-	}
-	return platform->compareNubName( this, name, matched );
+	return ((IOPlatformExpert *)getProvider())->
+	       compareNubName( this, name, matched );
 }
 
 IOService *
@@ -2266,20 +2329,7 @@ IOPlatformDevice::matchLocation( IOService * /* client */ )
 IOReturn
 IOPlatformDevice::getResources( void )
 {
-	/*
-	 * Apple platforms guarantee an IOPlatformExpert provider here, but this
-	 * port splits the root nub (IOPlatformExpertDevice) from the concrete
-	 * platform expert (PDArmPlatformExpert).  Nubs parented directly under the
-	 * root (e.g. the NVRAM "options" node) therefore have a provider that is
-	 * not an IOPlatformExpert; casting and dispatching getNubResources through
-	 * it lands on the wrong vtable slot and faults.  Such nubs simply have no
-	 * platform-expert-resolved resources.
-	 */
-	IOPlatformExpert *platform = OSDynamicCast( IOPlatformExpert, getProvider() );
-	if (platform == NULL) {
-		return kIOReturnSuccess;
-	}
-	return platform->getNubResources( this );
+	return ((IOPlatformExpert *)getProvider())->getNubResources( this );
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -2311,7 +2361,7 @@ IOPanicPlatform::start(IOService * provider)
 		platform_name = provider->getName();
 	}
 
-	panic("Unable to find driver for this platform: \"%s\".\n",
+	panic("Unable to find driver for this platform: \"%s\".",
 	    platform_name);
 
 	return false;

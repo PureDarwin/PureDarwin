@@ -111,7 +111,8 @@ target_compile_options(libdyld PRIVATE
     # bridgeos availability shim: threadLocalVariables.c pulls mach-o/dyld.h,
     # whose bridgeos __API_UNAVAILABLE entries neither the SDK nor PD define
     # (same fix dyld's own CMakeLists applies via dyld_sdk_compat.h).
-    $<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_SOURCE_DIR}/src/Libraries/dyld/dyld_sdk_compat.h>)
+    $<$<COMPILE_LANGUAGE:C,CXX>:-include${CMAKE_SOURCE_DIR}/src/Libraries/dyld/dyld_sdk_compat.h>
+    )
 
 # Code archives that satisfy the helper table's references (malloc/free/pthread_*/
 # mmap/vm_allocate/__cxa_*) plus the raw syscall traps. Linked by path so their

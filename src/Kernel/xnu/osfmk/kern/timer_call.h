@@ -149,6 +149,13 @@ extern boolean_t        timer_call_enter_with_leeway(
 extern boolean_t        timer_call_cancel(
 	timer_call_t    call);
 
+extern timer_call_t     timer_call_alloc(
+	timer_call_func_t       func,
+	timer_call_param_t      param0);
+
+extern void             timer_call_free(
+	timer_call_t            call);
+
 extern void             timer_call_setup(
 	timer_call_t            call,
 	timer_call_func_t       func,
@@ -203,9 +210,11 @@ uint64_t timer_call_past_deadline_timer_handle(uint64_t deadline,
 
 enum running_timer {
 	RUNNING_TIMER_QUANTUM,
+	RUNNING_TIMER_PREEMPT,
 #if KPERF
 	RUNNING_TIMER_KPERF,
 #endif /* KPERF */
+	RUNNING_TIMER_PERFCONTROL,
 	RUNNING_TIMER_MAX,
 };
 

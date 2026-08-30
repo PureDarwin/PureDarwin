@@ -4,10 +4,6 @@ _VNOP_IOCTL
 _VNOP_READ
 _VNOP_STRATEGY
 _VNOP_WRITE
-__FREE:__FREE_external
-__FREE_ZONE:__FREE_ZONE_external
-__MALLOC:__MALLOC_external
-__MALLOC_ZONE:__MALLOC_external
 _advisory_read
 _advisory_read_ext
 _bcd2bin_data
@@ -56,7 +52,10 @@ _buf_invalblkno
 _buf_invalidateblks
 _buf_iterate
 _buf_lblkno
+_buf_lblksize
 _buf_map
+_buf_map_range
+_buf_map_range_with_prot
 _buf_markaged
 _buf_markclean
 _buf_markdelayed
@@ -82,6 +81,7 @@ _buf_seterror
 _buf_setflags
 _buf_setfsprivate
 _buf_setlblkno
+_buf_setlblksize
 _buf_set_redundancy_flags
 _buf_setresid
 _buf_setsize
@@ -90,6 +90,7 @@ _buf_setvnode
 _buf_size
 _buf_strategy
 _buf_unmap
+_buf_unmap_range
 _buf_upl
 _buf_uploffset
 _buf_valid
@@ -127,9 +128,12 @@ _ctl_enqueuedata
 _ctl_enqueuembuf
 _ctl_getenqueuespace
 _ctl_register
+_current_cached_proc_cred
+_current_cached_proc_cred_ref
+_current_cached_proc_label_get
 _current_proc
+_current_thread_cred_label_get
 _desiredvnodes
-_devfs_is_ready
 _devfs_make_node
 _devfs_make_node_clone
 _devfs_remove
@@ -157,6 +161,7 @@ _err_link
 _err_mkdir
 _err_mknod
 _err_mmap
+_err_monitor
 _err_offtoblk
 _err_open
 _err_pagein
@@ -210,6 +215,7 @@ _ifaddr_address
 _ifaddr_address_family
 _ifaddr_dstaddress
 _ifaddr_findbestforaddr
+_ifaddr_get_ia6_flags
 _ifaddr_ifnet
 _ifaddr_netmask
 _ifaddr_reference
@@ -280,6 +286,7 @@ _ifnet_set_lladdr
 _ifnet_set_metric
 _ifnet_set_mtu
 _ifnet_set_offload
+_ifnet_set_offload_enabled
 _ifnet_set_tso_mtu
 _ifnet_get_tso_mtu
 _ifnet_get_wake_flags
@@ -312,7 +319,6 @@ _kauth_acl_free
 _kauth_authorize_action
 _kauth_authorize_process
 _kauth_cred_create
-_kauth_cred_find
 _kauth_cred_get
 _kauth_cred_get_with_ref
 _kauth_cred_getgid
@@ -342,6 +348,7 @@ _kauth_deregister_scope
 _kauth_filesec_alloc
 _kauth_filesec_free
 _kauth_getgid
+_kauth_getrgid
 _kauth_getruid
 _kauth_getuid
 _kauth_listen_scope
@@ -357,6 +364,7 @@ _kernel_debug1
 _kernel_debug_filtered
 _kernel_debug_enter
 _kernel_debug_register_callback
+_kdebug_register_coproc
 _kernproc
 _kev_msg_post
 _kev_vendor_code_find
@@ -432,9 +440,12 @@ _microtime
 _microuptime
 _minphys
 _msleep
+_msleep0
 _nanotime
 _nanouptime
 _nd6_lookup_ipv6
+_net_aop_register_provider
+_net_aop_deregister_provider
 _net_init_add
 _nop_access
 _nop_advlock
@@ -454,6 +465,7 @@ _nop_link
 _nop_mkdir
 _nop_mknod
 _nop_mmap
+_nop_monitor
 _nop_offtoblk
 _nop_open
 _nop_pagein
@@ -482,6 +494,7 @@ _proc_chrooted
 _proc_exiting
 _proc_find
 _proc_find_ident
+_proc_find_audit_token
 _proc_forcequota
 _proc_is64bit
 _proc_is64bit_data
@@ -536,6 +549,8 @@ _sock_listen
 _sock_nointerrupt
 _sock_receive
 _sock_receivembuf
+_sock_release
+_sock_retain
 _sock_send
 _sock_sendmbuf
 _sock_setpriv
@@ -601,9 +616,11 @@ _ubc_upl_abort_range
 _ubc_upl_commit
 _ubc_upl_commit_range
 _ubc_upl_map
+_ubc_upl_map_range
 _ubc_upl_maxbufsize
 _ubc_upl_pageinfo
 _ubc_upl_unmap
+_ubc_upl_unmap_range
 _uio_addiov
 _uio_create
 _uio_curriovbase
@@ -667,6 +684,7 @@ _vfs_fsremove
 _vfs_get_notify_attributes
 _vfs_getnewfsid
 _vfs_getvfs
+_vfs_getvfs_with_vfsops
 _vfs_init_io_attributes
 _vfs_ioattr
 _vfs_isforce
@@ -705,6 +723,7 @@ _vn_default_error
 _vn_getpath
 _vn_path_package_check
 _vn_rdwr
+_vn_rdwr_64
 _vn_revoke
 _vnode_addfsref
 _vnode_authattr
@@ -770,9 +789,11 @@ _vnode_vfsmaxsymlen
 _vnode_vfsname
 _vnode_vfstypenum
 _vnode_vid
+_vnode_ismonitored
 _vnode_isonexternalstorage
 _vnode_vtype
 _vnode_waitforwrites
+_vnode_willberecycled
 _vnode_writedone
 _vnop_access_desc
 _vnop_advlock_desc
@@ -799,6 +820,7 @@ _vnop_mknod_desc
 _vnop_mmap_check_desc
 _vnop_mmap_desc
 _vnop_mnomap_desc
+_vnop_monitor_desc
 _vnop_offtoblk_desc
 _vnop_open_desc
 _vnop_pagein_desc

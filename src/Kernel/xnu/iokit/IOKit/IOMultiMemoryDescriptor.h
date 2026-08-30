@@ -32,6 +32,11 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <libkern/c++/OSPtr.h>
 
+#if KERNEL_PRIVATE
+#define IOMULTIMEMORYDESCRIPTOR_EXPORTED        1
+#endif /* KERNEL_PRIVATE */
+
+
 /*! @class IOMultiMemoryDescriptor : public IOMemoryDescriptor
  *   @abstract The IOMultiMemoryDescriptor object describes a memory area made up of several other IOMemoryDescriptors.
  *   @discussion The IOMultiMemoryDescriptor object represents multiple ranges of memory, specified as an ordered list of IOMemoryDescriptors.  The descriptors are chained end-to-end to make up a single contiguous buffer. */
@@ -120,6 +125,17 @@ public:
 
 	IOReturn getPageCounts(IOByteCount * residentPageCount,
 	    IOByteCount * dirtyPageCount);
+
+/*! @function getPageCounts
+ *   @abstract Retrieve the number of resident, dirty, and swapped pages encompassed by an IOMemoryDescriptor.
+ *   @param residentPageCount - If non-null, a pointer to a byte count that will return the number of resident pages encompassed by this IOMemoryDescriptor.
+ *   @param dirtyPageCount - If non-null, a pointer to a byte count that will return the number of resident, dirty pages encompassed by this IOMemoryDescriptor.
+ *   @param swappedPageCount - If non-null, a pointer to a byte count that will return the number of swapped pages encompassed by this IOMemoryDescriptor.
+ *   @result An IOReturn code. */
+
+	IOReturn getPageCounts( IOByteCount * residentPageCount,
+	    IOByteCount * dirtyPageCount,
+	    IOByteCount * swappedPageCount );
 
 	virtual uint64_t getPreparationID( void ) APPLE_KEXT_OVERRIDE;
 

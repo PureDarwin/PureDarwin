@@ -108,7 +108,7 @@
 
 
 #if CONFIG_VOLFS
-static int vfs_getrealpath(const char * path, char * realpath, size_t bufsize, vfs_context_t ctx);
+__static_testable int vfs_getrealpath_with_vp(const char * path, char * realpath, size_t bufsize, vfs_context_t ctx, vnode_t *volfs_vpp);
 #define MAX_VOLFS_RESTARTS 5
 #endif
 
@@ -126,6 +126,105 @@ static int              lookup_handle_rsrc_fork(vnode_t dp, struct nameidata *nd
 #endif
 
 extern lck_rw_t rootvnode_rw_lock;
+
+#define RESOLVE_CHECKED       0x80000000
+
+/*
+ * This function handles setting up the starting directory in case the user has
+ * specified one via the at syscalls. This function also implements the namedfork
+ * handling specific to a fd and in that case, no further processing by namei
+ * is required.
+ * return values :
+ * 0 -> at directory set up successfully
+ * EJUSTRETURN -> resource fork handled in this function, namei should "just return"
+ *                success to the caller.
+ * all other values -> return error to caller.
+ */
+static errno_t
+namei_setup_at_dir(struct nameidata *ndp, struct componentname *cnp, bool *put_usedvp)
+{
+	vnode_t dvp_at;
+	errno_t error = 0;
+
+	*put_usedvp = false;
+
+	if (*cnp->cn_pnbuf != '/') {
+		error = vnode_getfromfd(cnp->cn_context, ndp->ni_atfd,
+		    &dvp_at);
+		if (error) {
+			goto error_out;
+		}
+
+#if NAMEDRSRCFORK
+		if ((ndp->ni_pathlen == (sizeof(_PATH_RSRCFORKSPEC) - 1)) &&
+		    (vnode_vtype(dvp_at) == VREG) && !mount_skip_rsrc_lookup(vnode_mount(dvp_at)) &&
+		    (cnp->cn_pnbuf[0] == '.' && cnp->cn_pnbuf[1] == '.') &&
+		    (bcmp(cnp->cn_pnbuf, &_PATH_RSRCFORKSPEC[1], sizeof(_PATH_RSRCFORKSPEC) - 1) == 0)) {
+			ndp->ni_next = cnp->cn_pnbuf;
+			cnp->cn_nameptr = cnp->cn_pnbuf;
+			cnp->cn_namelen = ndp->ni_pathlen;
+			cnp->cn_flags &= ~(MAKEENTRY | ISDOTDOT);
+			cnp->cn_flags |= CN_WANTSRSRCFORK | ISLASTCN;
+			ndp->ni_next[0] = '\0';
+			ndp->ni_pathlen = 1;
+
+			/*
+			 * This function will release the iocount on dvp_at unless
+			 * the caller requested the parent.
+			 */
+			error = lookup_handle_rsrc_fork(dvp_at, ndp, cnp,
+			    cnp->cn_flags & (LOCKPARENT | WANTPARENT),
+			    cnp->cn_context);
+
+			if (kdebug_enable) {
+				kdebug_lookup(ndp->ni_vp, cnp);
+			}
+
+			if (error) {
+				vnode_put(dvp_at);
+				goto error_out;
+			}
+
+			return EJUSTRETURN;
+		}
+#endif /* NAMEDRSRCFORK */
+
+		if (vnode_vtype(dvp_at) != VDIR) {
+			vnode_put(dvp_at);
+			error = ENOTDIR;
+			goto error_out;
+		}
+
+		ndp->ni_dvp = dvp_at;
+		cnp->cn_flags |= USEDVP;
+		*put_usedvp = true;
+	}
+
+error_out:
+	return error;
+}
+
+static KALLOC_HEAP_DEFINE(KHEAP_VFS_NAMEI, "vfs_namei", KHEAP_ID_DATA_PRIVATE);
+
+/* namei allocation/free methods */
+
+__typed_allocators_ignore_push
+
+static void *
+namei_alloc(size_t size)
+{
+	assert(size <= MAXLONGPATHLEN);
+	return kheap_alloc(KHEAP_VFS_NAMEI, size, Z_WAITOK_ZERO_NOFAIL);
+}
+
+static void
+namei_free(void *addr, size_t size)
+{
+	assert(size <= MAXLONGPATHLEN);
+	kheap_free(KHEAP_VFS_NAMEI, addr, size);
+}
+
+__typed_allocators_ignore_pop
 
 /*
  * Convert a pathname into a pointer to a locked inode.
@@ -165,7 +264,6 @@ extern lck_rw_t rootvnode_rw_lock;
 int
 namei(struct nameidata *ndp)
 {
-	struct filedesc *fdp;   /* pointer to file descriptor state */
 	struct vnode *dp;       /* the directory we are searching */
 	struct vnode *usedvp = ndp->ni_dvp;  /* store pointer to vp in case we must loop due to
 	                                      *                                          heavy vnode pressure */
@@ -176,20 +274,24 @@ namei(struct nameidata *ndp)
 	proc_t p = vfs_context_proc(ctx);
 #if CONFIG_AUDIT
 /* XXX ut should be from context */
-	uthread_t ut = (struct uthread *)get_bsdthread_info(current_thread());
+	uthread_t ut = current_uthread();
 #endif
 
 #if CONFIG_VOLFS
 	int volfs_restarts = 0;
 #endif
 	size_t bytes_copied = 0;
+	size_t resolve_prefix_len = 0;
 	vnode_t rootdir_with_usecount = NULLVP;
 	vnode_t startdir_with_usecount = NULLVP;
 	vnode_t usedvp_dp = NULLVP;
+	vnode_t volfs_vp = NULLVP;
 	int32_t old_count = 0;
+	uint32_t resolve_flags = 0;
+	int resolve_error = 0;
 	bool dp_has_iocount = false;
-
-	fdp = p->p_fd;
+	bool clear_usedvp = false;
+	bool put_usedvp = false;
 
 #if DIAGNOSTIC
 	if (!vfs_context_ucred(ctx) || !p) {
@@ -224,7 +326,7 @@ namei(struct nameidata *ndp)
 		}
 		if (keep_going) {
 			if ((cnp->cn_flags & ISSYMLINK) == 0) {
-				panic("We need to keep going on a continued lookup, but for vp type %d (tag %d)\n", ndp->ni_vp->v_type, ndp->ni_vp->v_tag);
+				panic("We need to keep going on a continued lookup, but for vp type %d (tag %d)", ndp->ni_vp->v_type, ndp->ni_vp->v_tag);
 			}
 			goto continue_symlink;
 		}
@@ -233,6 +335,12 @@ namei(struct nameidata *ndp)
 	}
 
 vnode_recycled:
+	/*
+	 * Init the resolve states to 0 to ensure that the resolve prefix path got
+	 * stripped in case we are retrying lookup due to vnode got recycled.
+	 */
+	resolve_flags = 0;
+	resolve_prefix_len = 0;
 
 	/*
 	 * Get a buffer for the name to be translated, and copy the
@@ -242,13 +350,6 @@ vnode_recycled:
 		cnp->cn_pnbuf = ndp->ni_pathbuf;
 		cnp->cn_pnlen = PATHBUFLEN;
 	}
-#if LP64_DEBUG
-	if ((UIO_SEG_IS_USER_SPACE(ndp->ni_segflg) == 0)
-	    && (ndp->ni_segflg != UIO_SYSSPACE)
-	    && (ndp->ni_segflg != UIO_SYSSPACE32)) {
-		panic("%s :%d - invalid ni_segflg\n", __FILE__, __LINE__);
-	}
-#endif /* LP64_DEBUG */
 
 retry_copy:
 	if (UIO_SEG_IS_USER_SPACE(ndp->ni_segflg)) {
@@ -259,19 +360,90 @@ retry_copy:
 		    cnp->cn_pnlen, &bytes_copied);
 	}
 	if (error == ENAMETOOLONG && !(cnp->cn_flags & HASBUF)) {
-		cnp->cn_pnbuf = zalloc(ZV_NAMEI);
+		if (bytes_copied == PATHBUFLEN) {
+			resolve_error = lookup_check_for_resolve_prefix(cnp->cn_pnbuf, PATHBUFLEN,
+			    PATHBUFLEN, &resolve_flags, &resolve_prefix_len);
+			/* errors from copyinstr take precedence over resolve_error */
+			if (!resolve_error && resolve_prefix_len) {
+				ndp->ni_dirp += resolve_prefix_len;
+				resolve_prefix_len = 0;
+			}
+		}
+
+		cnp->cn_pnbuf = namei_alloc(MAXPATHLEN);
 		cnp->cn_flags |= HASBUF;
 		cnp->cn_pnlen = MAXPATHLEN;
+		bytes_copied = 0;
+
+		goto retry_copy;
+	} else if (error == ENAMETOOLONG && (cnp->cn_flags & HASBUF) &&
+	    (cnp->cn_pnlen * 2) <= MAXLONGPATHLEN && proc_support_long_paths(p)) {
+		/* First time we arrive here, the buffer came from namei_alloc */
+		namei_free(cnp->cn_pnbuf, cnp->cn_pnlen);
+
+		resolve_error = 0;
+
+		cnp->cn_pnlen *= 2;
+		cnp->cn_pnbuf = namei_alloc(cnp->cn_pnlen);
 		bytes_copied = 0;
 
 		goto retry_copy;
 	}
 	if (error) {
 		goto error_out;
+	} else if (resolve_error) {
+		error = resolve_error;
+		goto error_out;
 	}
-	assert(bytes_copied <= MAXPATHLEN);
+	assert(bytes_copied <= cnp->cn_pnlen);
 	ndp->ni_pathlen = (u_int)bytes_copied;
 	bytes_copied = 0;
+
+	if (!(resolve_flags & RESOLVE_CHECKED)) {
+		assert(!(cnp->cn_flags & HASBUF) && (cnp->cn_pnlen == PATHBUFLEN));
+		error = lookup_check_for_resolve_prefix(cnp->cn_pnbuf, cnp->cn_pnlen, ndp->ni_pathlen,
+		    &resolve_flags, &resolve_prefix_len);
+		if (error) {
+			goto error_out;
+		}
+		if (resolve_prefix_len) {
+			/*
+			 * Since this is pointing to the static path buffer instead of a zalloc'ed memorry,
+			 * we're not going to attempt to free this, so it is perfectly fine to change the
+			 * value of cnp->cn_pnbuf.
+			 */
+			cnp->cn_pnbuf += resolve_prefix_len;
+			cnp->cn_pnlen -= resolve_prefix_len;
+			ndp->ni_pathlen -= resolve_prefix_len;
+			resolve_prefix_len = 0;
+
+			/* Update ndp with the resolve flags */
+			if (resolve_flags & RESOLVE_NODOTDOT) {
+				ndp->ni_flag |= NAMEI_NODOTDOT;
+			}
+			if (resolve_flags & RESOLVE_LOCAL) {
+				ndp->ni_flag |= NAMEI_LOCAL;
+			}
+			if (resolve_flags & RESOLVE_NODEVFS) {
+				ndp->ni_flag |= NAMEI_NODEVFS;
+			}
+			if (resolve_flags & RESOLVE_IMMOVABLE) {
+				ndp->ni_flag |= NAMEI_IMMOVABLE;
+			}
+			if (resolve_flags & RESOLVE_UNIQUE) {
+				ndp->ni_flag |= NAMEI_UNIQUE;
+			}
+			if (resolve_flags & RESOLVE_NOXATTRS) {
+				ndp->ni_flag |= NAMEI_NOXATTRS;
+			}
+			if (resolve_flags & RESOLVE_NOUNION) {
+				ndp->ni_flag |= NAMEI_NOUNION;
+			}
+		}
+	}
+
+	/* At this point we should have stripped off the prefix from the path that has to be looked up */
+	assert((resolve_flags & RESOLVE_CHECKED) && (resolve_prefix_len == 0));
 
 	/*
 	 * Since the name cache may contain positive entries of
@@ -299,32 +471,59 @@ retry_copy:
 	    cnp->cn_pnbuf[4] == 'l' &&
 	    cnp->cn_pnbuf[5] == '/') {
 		char * realpath;
+		size_t realpathlen;
 		int realpath_err;
 		/* Attempt to resolve a legacy volfs style pathname. */
-		realpath = zalloc(ZV_NAMEI);
-		/*
-		 * We only error out on the ENAMETOOLONG cases where we know that
-		 * vfs_getrealpath translation succeeded but the path could not fit into
-		 * MAXPATHLEN characters.  In other failure cases, we may be dealing with a path
-		 * that legitimately looks like /.vol/1234/567 and is not meant to be translated
-		 */
-		if ((realpath_err = vfs_getrealpath(&cnp->cn_pnbuf[6], realpath, MAXPATHLEN, ctx))) {
-			zfree(ZV_NAMEI, realpath);
-			if (realpath_err == ENOSPC || realpath_err == ENAMETOOLONG) {
-				error = ENAMETOOLONG;
-				goto error_out;
+
+		realpathlen = MAXPATHLEN;
+		do {
+			/*
+			 * To be consistent with the behavior of openbyid_np, which always supports
+			 * long paths, do not gate our support on proc_support_long_paths either.
+			 */
+			realpath = namei_alloc(realpathlen);
+
+			/*
+			 * We only error out on the ENAMETOOLONG cases where we know that
+			 * vfs_getrealpath translation succeeded but the path could not fit into
+			 * realpathlen characters.  In other failure cases, we may be dealing with a path
+			 * that legitimately looks like /.vol/1234/567 and is not meant to be translated
+			 */
+			if ((realpath_err = vfs_getrealpath_with_vp(&cnp->cn_pnbuf[6], realpath, realpathlen, ctx, &volfs_vp))) {
+				namei_free(realpath, realpathlen);
+				if (realpath_err == ENOSPC || realpath_err == ENAMETOOLONG) {
+					error = ENAMETOOLONG;
+				}
+			} else {
+				size_t tmp_len;
+				if (cnp->cn_flags & HASBUF) {
+					namei_free(cnp->cn_pnbuf, cnp->cn_pnlen);
+				}
+				cnp->cn_pnbuf = realpath;
+				cnp->cn_pnlen = (int)realpathlen;
+				tmp_len = strlen(realpath) + 1;
+				assert(tmp_len <= UINT_MAX);
+				ndp->ni_pathlen = (u_int)tmp_len;
+				cnp->cn_flags |= HASBUF | CN_VOLFSPATH;
+				error = 0;
 			}
-		} else {
-			size_t tmp_len;
-			if (cnp->cn_flags & HASBUF) {
-				zfree(ZV_NAMEI, cnp->cn_pnbuf);
-			}
-			cnp->cn_pnbuf = realpath;
-			cnp->cn_pnlen = MAXPATHLEN;
-			tmp_len = strlen(realpath) + 1;
-			assert(tmp_len <= UINT_MAX);
-			ndp->ni_pathlen = (u_int)tmp_len;
-			cnp->cn_flags |= HASBUF | CN_VOLFSPATH;
+		} while (error == ENAMETOOLONG && (realpathlen *= 2) && realpathlen <= MAXLONGPATHLEN);
+
+		if (error) {
+			assert(!volfs_vp);
+			goto error_out;
+		} else if (volfs_vp && (vnode_vtype(volfs_vp) == VLNK) && (cnp->cn_flags & FOLLOW)) {
+			/*
+			 * we can't cross check if the result of the lookup will the same as volfs_vp
+			 * since it will be the target of the symlink and not the symlink vnode itself.
+			 */
+			vnode_put(volfs_vp);
+			volfs_vp = NULLVP;
+		}
+
+		if (volfs_vp) {
+			error = vnode_ref_ext(volfs_vp, O_EVTONLY, VNODE_REF_FORCE);
+			vnode_put(volfs_vp);
 		}
 	}
 #endif /* CONFIG_VOLFS */
@@ -346,7 +545,19 @@ retry_copy:
 		error = ENOENT;
 		goto error_out;
 	}
-	if (ndp->ni_flag & NAMEI_NOFOLLOW_ANY) {
+
+	if (ndp->ni_flag & NAMEI_ATFD && !(cnp->cn_flags & USEDVP)) {
+		error = namei_setup_at_dir(ndp, cnp, &put_usedvp);
+		if (error) {
+			if (error == EJUSTRETURN) {
+				return 0;
+			} else {
+				goto error_out;
+			}
+		}
+	}
+
+	if (ndp->ni_flag & NAMEI_NOFOLLOW_ANY || (resolve_flags & RESOLVE_NOFOLLOW_ANY)) {
 		ndp->ni_loopcnt = MAXSYMLINKS;
 	} else {
 		ndp->ni_loopcnt = 0;
@@ -358,18 +569,22 @@ retry_copy:
 	proc_dirs_lock_shared(p);
 	lck_rw_lock_shared(&rootvnode_rw_lock);
 
-	if (!(fdp->fd_flags & FD_CHROOT)) {
-		ndp->ni_rootdir = rootvnode;
-	} else {
-		ndp->ni_rootdir = fdp->fd_rdir;
+	if (!(ndp->ni_flag & NAMEI_ROOTDIR)) {
+		if (fdt_flag_test(&p->p_fd, FD_CHROOT)) {
+			ndp->ni_rootdir = p->p_fd.fd_rdir;
+		} else {
+			ndp->ni_rootdir = rootvnode;
+		}
 	}
 
 	if (!ndp->ni_rootdir) {
-		if (!(fdp->fd_flags & FD_CHROOT)) {
-			printf("rootvnode is not set\n");
-		} else {
+		if (ndp->ni_flag & NAMEI_ROOTDIR) {
+			panic("NAMEI_ROOTDIR is set but ni_rootdir is not\n");
+		} else if (fdt_flag_test(&p->p_fd, FD_CHROOT)) {
 			/* This should be a panic */
-			printf("fdp->fd_rdir is not set\n");
+			printf("p->p_fd.fd_rdir is not set\n");
+		} else {
+			printf("rootvnode is not set\n");
 		}
 		lck_rw_unlock_shared(&rootvnode_rw_lock);
 		proc_dirs_unlock_shared(p);
@@ -386,6 +601,13 @@ retry_copy:
 			cnp->cn_nameptr++;
 			ndp->ni_pathlen--;
 		}
+		if (ndp->ni_flag & NAMEI_RESOLVE_BENEATH) {
+			/* Absolute paths are never allowed in NAMEI_RESOLVE_BENEATH */
+			lck_rw_unlock_shared(&rootvnode_rw_lock);
+			proc_dirs_unlock_shared(p);
+			error = ENOTCAPABLE;
+			goto error_out;
+		}
 		dp = ndp->ni_rootdir;
 	} else if (cnp->cn_flags & USEDVP) {
 		dp = ndp->ni_dvp;
@@ -393,6 +615,11 @@ retry_copy:
 		usedvp_dp = dp;
 	} else {
 		dp = vfs_context_cwd(ctx);
+		if (ndp->ni_flag & NAMEI_RESOLVE_BENEATH) {
+			/* Store the starting directory because it can change after a symlink traversal */
+			ndp->ni_usedvp = dp;
+			clear_usedvp = true;
+		}
 	}
 
 	if (dp == NULLVP || (dp->v_lflag & VL_DEAD)) {
@@ -417,7 +644,7 @@ retry_copy:
 	 * and will be highly contended and degrade performance. Since we have
 	 * an existing usecount protected by the locks we hold, we'll just use
 	 * an atomic op to increment the usecount on a vnode which already has one
-	 * and can't be released becasue we have the locks which protect against that
+	 * and can't be released because we have the locks which protect against that
 	 * happening.
 	 */
 	rootdir_with_usecount = ndp->ni_rootdir;
@@ -472,6 +699,25 @@ retry_copy:
 		 * Check for symbolic link
 		 */
 		if ((cnp->cn_flags & ISSYMLINK) == 0) {
+			if ((ndp->ni_flag & NAMEI_UNIQUE) && ndp->ni_vp && vnode_hasmultipath(ndp->ni_vp)) {
+				error = ENOTCAPABLE;
+				goto out_drop;
+			}
+
+#if CONFIG_MACF
+			/*
+			 * This MACF hook, invoked during lookup after vnode acquisition,
+			 * provides resolve flags. This enables kernel extensions (like
+			 * Sandbox) to handle relevant policies.
+			 */
+			if (ndp->ni_vp && (resolve_flags & RESOLVE_RESERVED_NONVFS_MASK)) {
+				error = mac_vnode_check_lookup_postflight(ctx, ndp->ni_vp, resolve_flags);
+				if (error) {
+					goto out_drop;
+				}
+			}
+#endif /* CONFIG_MACF */
+
 			if (startdir_with_usecount) {
 				vnode_rele(startdir_with_usecount);
 				startdir_with_usecount = NULLVP;
@@ -494,6 +740,22 @@ retry_copy:
 					vnode_rele(rootdir_with_usecount);
 					rootdir_with_usecount = NULLVP;
 				}
+			}
+
+			if (put_usedvp) {
+				vnode_put(ndp->ni_usedvp);
+				ndp->ni_usedvp = NULLVP;
+			} else if (clear_usedvp) {
+				ndp->ni_usedvp = NULLVP;
+			}
+
+			if (volfs_vp) {
+				if (ndp->ni_vp != volfs_vp) {
+					error = ENOENT;
+					goto out_drop;
+				}
+				vnode_rele_ext(volfs_vp, O_EVTONLY, 0);
+				volfs_vp = NULLVP;
 			}
 
 			return 0;
@@ -555,14 +817,29 @@ error_out:
 		rootdir_with_usecount = NULLVP;
 	}
 
+	if (put_usedvp) {
+		vnode_put(ndp->ni_usedvp);
+		ndp->ni_usedvp = NULLVP;
+		put_usedvp = false;
+	} else if (clear_usedvp) {
+		ndp->ni_usedvp = NULLVP;
+		clear_usedvp = false;
+	}
+
+	if (volfs_vp) {
+		vnode_rele_ext(volfs_vp, O_EVTONLY, 0);
+		volfs_vp = NULLVP;
+	}
+
 	if ((cnp->cn_flags & HASBUF)) {
 		cnp->cn_flags &= ~HASBUF;
-		zfree(ZV_NAMEI, cnp->cn_pnbuf);
+		namei_free(cnp->cn_pnbuf, cnp->cn_pnlen);
 	}
 	cnp->cn_pnbuf = NULL;
 	ndp->ni_vp = NULLVP;
 	ndp->ni_dvp = NULLVP;
-
+	resolve_prefix_len = 0;
+	resolve_flags = 0;
 #if CONFIG_VOLFS
 	/*
 	 * Deal with volfs fallout.
@@ -616,6 +893,49 @@ namei_compound_available(vnode_t dp, struct nameidata *ndp)
 	return 0;
 }
 
+int
+lookup_check_for_resolve_prefix(char *path, size_t pathbuflen, size_t len, uint32_t *resolve_flags, size_t *prefix_len)
+{
+	int error = 0;
+	*resolve_flags = (uint32_t)RESOLVE_CHECKED;
+	*prefix_len = 0;
+
+	if (len < (sizeof("/.nofollow/") - 1) || path[0] != '/' || path[1] != '.') {
+		return 0;
+	}
+
+	if ((strncmp(&path[2], "nofollow/", (sizeof("nofollow/") - 1)) == 0)) {
+		*resolve_flags |= RESOLVE_NOFOLLOW_ANY;
+		*prefix_len = sizeof("/.nofollow") - 1;
+	} else if ((len >= sizeof("/.resolve/1/") - 1) &&
+	    strncmp(&path[2], "resolve/", (sizeof("resolve/") - 1)) == 0) {
+		char * flag = path + (sizeof("/.resolve/") - 1);
+		char *next = flag;
+		char last_char = path[pathbuflen - 1];
+
+		/* no leading zeroes or non digits */
+		if ((flag[0] == '0' && flag[1] != '/') ||
+		    flag[0] < '0' || flag[0] > '9') {
+			error = EINVAL;
+			goto out;
+		}
+
+		path[pathbuflen - 1] = '\0';
+		unsigned long flag_val = strtoul(flag, &next, 10);
+		path[pathbuflen - 1] = last_char;
+		if (next[0] != '/' || (flag_val & ~RESOLVE_VALIDMASK)) {
+			error = EINVAL;
+			goto out;
+		}
+		assert(next >= flag);
+		*resolve_flags |= (uint32_t)flag_val;
+		*prefix_len = (size_t)(next - path);
+	}
+out:
+	assert(*prefix_len <= sizeof("/.resolve/2147483647"));
+	return error;
+}
+
 static int
 lookup_authorize_search(vnode_t dp, struct componentname *cnp, int dp_authorized_in_cache, vfs_context_t ctx)
 {
@@ -626,9 +946,14 @@ lookup_authorize_search(vnode_t dp, struct componentname *cnp, int dp_authorized
 	int error;
 
 	if (!dp_authorized_in_cache) {
-		error = vnode_authorize(dp, NULL, KAUTH_VNODE_SEARCH, ctx);
-		if (error) {
-			return error;
+		/* Skip search authorization for resource fork access on regular files */
+		if (vnode_isreg(dp) && (cnp->cn_flags & CN_ALLOWRSRCFORK)) {
+			/* Resource fork access on regular files doesn't require search permissions */
+		} else {
+			error = vnode_authorize(dp, NULL, KAUTH_VNODE_SEARCH, ctx);
+			if (error) {
+				return error;
+			}
 		}
 	}
 #if CONFIG_MACF
@@ -698,7 +1023,7 @@ lookup_handle_rsrc_fork(vnode_t dp, struct nameidata *ndp, struct componentname 
 	int error;
 
 	if (dp->v_type != VREG) {
-		error = ENOENT;
+		error = (cnp->cn_nameiop == CREATE) ? EPERM : ENOENT;
 		goto out;
 	}
 	switch (cnp->cn_nameiop) {
@@ -811,7 +1136,7 @@ lookup_handle_found_vnode(struct nameidata *ndp, struct componentname *cnp, int 
 	*keep_going = 0;
 
 	if (ndp->ni_vp == NULLVP) {
-		panic("NULL ni_vp in %s\n", __FUNCTION__);
+		panic("NULL ni_vp in %s", __FUNCTION__);
 	}
 
 	if (atroot) {
@@ -866,6 +1191,15 @@ lookup_handle_found_vnode(struct nameidata *ndp, struct componentname *cnp, int 
 	 */
 	if ((ndp->ni_flag & NAMEI_TRAILINGSLASH)) {
 		if (dp->v_type != VDIR) {
+#if CONFIG_MACF
+			/*
+			 * Prevent the information disclosure on the vnode
+			 */
+			if (mac_vnode_check_stat(ctx, NOCRED, dp) == EPERM) {
+				error = EPERM;
+				goto out;
+			}
+#endif /* CONFIG_MACF */
 			error = ENOTDIR;
 			goto out;
 		}
@@ -992,6 +1326,10 @@ lookup_handle_emptyname(struct nameidata *ndp, struct componentname *cnp, int wa
 	 */
 	if (dp->v_type != VDIR) {
 		error = ENOTDIR;
+		goto out;
+	}
+	if (cnp->cn_nameiop == CREATE && dp == rootvnode) {
+		error = EEXIST;
 		goto out;
 	}
 	if (cnp->cn_nameiop != LOOKUP) {
@@ -1173,17 +1511,40 @@ dirloop:
 		goto returned_from_lookup_path;
 	}
 
+#if NAMEDRSRCFORK
+	/* return ENOTCAPABLE if path lookup on named streams is prohibited. */
+	if ((ndp->ni_flag & NAMEI_NOXATTRS) &&
+	    (ndp->ni_pathlen == sizeof(_PATH_RSRCFORKSPEC)) &&
+	    (ndp->ni_next[1] == '.' && ndp->ni_next[2] == '.') &&
+	    bcmp(ndp->ni_next, _PATH_RSRCFORKSPEC, sizeof(_PATH_RSRCFORKSPEC)) == 0) {
+		error = ENOTCAPABLE;
+		goto bad;
+	}
+#endif /* NAMEDRSRCFORK */
+
 	/*
-	 * Handle "..": two special cases.
-	 * 1. If at root directory (e.g. after chroot)
+	 * Handle "..": three special cases.
+	 * 1. if at starting directory (e.g. the cwd/usedvp)
+	 *    and RESOLVE_BENEATH, then return ENOTCAPABLE.
+	 * 2. If at root directory (e.g. after chroot)
 	 *    or at absolute root directory
 	 *    then ignore it so can't get out.
-	 * 2. If this vnode is the root of a mounted
+	 * 3. If this vnode is the root of a mounted
 	 *    filesystem, then replace it with the
 	 *    vnode which was mounted on so we take the
 	 *    .. in the other file system.
 	 */
 	if ((cnp->cn_flags & ISDOTDOT)) {
+		/* if dp is the starting directory and RESOLVE_BENEATH, we should return ENOTCAPABLE */
+		if ((ndp->ni_flag & NAMEI_RESOLVE_BENEATH) && (dp == ndp->ni_usedvp)) {
+			error = ENOTCAPABLE;
+			goto bad;
+		}
+		/* return ENOTCAPABLE if '..' path traversal is prohibited */
+		if ((ndp->ni_flag & NAMEI_NODOTDOT)) {
+			error = ENOTCAPABLE;
+			goto bad;
+		}
 		/*
 		 * if this is a chroot'ed process, check if the current
 		 * directory is still a subdirectory of the process's
@@ -1206,12 +1567,10 @@ dirloop:
 				vnode_put(dp);
 				dp = ndp->ni_rootdir;
 				/*
-				 * There's a ref on the process's root directory
-				 * but we can't use vnode_getwithref here as
-				 * there is nothing preventing that ref being
-				 * released by another thread.
+				 * namei takes a ref on ndp->ni_rootdir
 				 */
-				if (vnode_get(dp)) {
+				if (vnode_getwithref(dp)) {
+					dp = NULLVP;
 					error = ENOENT;
 					goto bad;
 				}
@@ -1230,7 +1589,7 @@ dirloop:
 				 * if we fail to get the new reference, we'll
 				 * drop our original down in 'bad'
 				 */
-				if ((vnode_get(dp))) {
+				if (vnode_get(dp)) {
 					error = ENOENT;
 					goto bad;
 				}
@@ -1243,6 +1602,11 @@ dirloop:
 			}
 			if (dp->v_mount == NULL) {      /* forced umount */
 				error = EBADF;
+				goto bad;
+			}
+			if ((ndp->ni_flag & NAMEI_RESOLVE_BENEATH) && (cnp->cn_flags & ISDOTDOT) && (dp->v_mount->mnt_vnodecovered == ndp->ni_usedvp)) {
+				/* Ensure ".." doesn't escape after mount point traversal */
+				error = ENOTCAPABLE;
 				goto bad;
 			}
 			tdp = dp;
@@ -1265,10 +1629,21 @@ dirloop:
 	/*
 	 * We now have a segment name to search for, and a directory to search.
 	 */
+#if CONFIG_UNION_MOUNTS
 unionlookup:
+#endif /* CONFIG_UNION_MOUNTS */
 	ndp->ni_vp = NULLVP;
 
-	if (dp->v_type != VDIR) {
+	if (dp->v_type != VDIR && !(cnp->cn_flags & CN_WANTSRSRCFORK)) {
+#if CONFIG_MACF
+		/*
+		 * Prevent the information disclosure on the vnode
+		 */
+		if (mac_vnode_check_stat(ctx, NOCRED, dp) == EPERM) {
+			error = EPERM;
+			goto lookup_error;
+		}
+#endif /* CONFIG_MACF */
 		error = ENOTDIR;
 		goto lookup_error;
 	}
@@ -1322,9 +1697,11 @@ unionlookup:
 
 	if (error) {
 lookup_error:
+#if CONFIG_UNION_MOUNTS
 		if ((error == ENOENT) &&
 		    (dp->v_mount != NULL) &&
-		    (dp->v_mount->mnt_flag & MNT_UNION)) {
+		    (dp->v_mount->mnt_flag & MNT_UNION) &&
+		    !(ndp->ni_flag & NAMEI_NOUNION)) {
 			tdp = dp;
 			error = lookup_traverse_union(tdp, &dp, ctx);
 			vnode_put(tdp);
@@ -1337,6 +1714,7 @@ lookup_error:
 			dp_authorized = 0;
 			goto unionlookup;
 		}
+#endif /* CONFIG_UNION_MOUNTS */
 
 		if (error != EJUSTRETURN) {
 			goto bad;
@@ -1443,6 +1821,7 @@ bad:
 	return error;
 }
 
+#if CONFIG_UNION_MOUNTS
 /*
  * Given a vnode in a union mount, traverse to the equivalent
  * vnode in the underlying mount.
@@ -1467,11 +1846,7 @@ lookup_traverse_union(vnode_t dvp, vnode_t *new_dvp, vfs_context_t ctx)
 		return 0;
 	}
 
-	path = (char *) zalloc(ZV_NAMEI);
-	if (path == NULL) {
-		error = ENOMEM;
-		goto done;
-	}
+	path = namei_alloc(MAXPATHLEN);
 
 	/*
 	 * Walk back up to the mountpoint following the
@@ -1515,10 +1890,11 @@ lookup_traverse_union(vnode_t dvp, vnode_t *new_dvp, vfs_context_t ctx)
 	nameidone(&nd);
 done:
 	if (path) {
-		zfree(ZV_NAMEI, path);
+		namei_free(path, MAXPATHLEN);
 	}
 	return error;
 }
+#endif /* CONFIG_UNION_MOUNTS */
 
 int
 lookup_validate_creation_path(struct nameidata *ndp)
@@ -1578,11 +1954,36 @@ restart:
 			break;
 		}
 
+		if ((ndp->ni_flag & NAMEI_RESOLVE_BENEATH) && (cnp->cn_flags & ISDOTDOT) && (dp == ndp->ni_usedvp)) {
+			/* Ensure ".." doesn't escape after mount point traversal */
+			mount_dropcrossref(mp, dp, 0);
+			error = ENOTCAPABLE;
+			goto out;
+		}
+
 		if (ISSET(mp->mnt_lflag, MNT_LFORCE)) {
 			mount_dropcrossref(mp, dp, 0);
 			break;  // don't traverse into a forced unmount
 		}
 
+		if ((ndp->ni_flag & NAMEI_LOCAL) && !(mp->mnt_flag & MNT_LOCAL)) {
+			/* Prevent a path lookup from ever crossing into a network filesystem */
+			mount_dropcrossref(mp, dp, 0);
+			error = ENOTCAPABLE;
+			goto out;
+		}
+		if ((ndp->ni_flag & NAMEI_NODEVFS) && (strcmp(mp->mnt_vfsstat.f_fstypename, "devfs") == 0)) {
+			/* Prevent a path lookup into `devfs` filesystem */
+			mount_dropcrossref(mp, dp, 0);
+			error = ENOTCAPABLE;
+			goto out;
+		}
+		if ((ndp->ni_flag & NAMEI_IMMOVABLE) && (mp->mnt_flag & MNT_REMOVABLE) && !(mp->mnt_kern_flag & MNTK_VIRTUALDEV)) {
+			/* Prevent a path lookup into a removable filesystem */
+			mount_dropcrossref(mp, dp, 0);
+			error = ENOTCAPABLE;
+			goto out;
+		}
 
 		if (vfs_busy(mp, vbusyflags)) {
 			mount_dropcrossref(mp, dp, 0);
@@ -1607,7 +2008,7 @@ restart:
 		ndp->ni_vp = dp = tdp;
 		if (dp->v_type != VDIR) {
 #if DEVELOPMENT || DEBUG
-			panic("%s : Root of filesystem not a directory\n",
+			panic("%s : Root of filesystem not a directory",
 			    __FUNCTION__);
 #else
 			break;
@@ -1665,18 +2066,12 @@ static int
 lookup_handle_symlink(struct nameidata *ndp, vnode_t *new_dp, bool *new_dp_has_iocount, vfs_context_t ctx)
 {
 	int error;
-	char *cp;               /* pointer into pathname argument */
+	char *cp = NULL;               /* pointer into pathname argument */
+	u_int cplen = 0;
 	uio_t auio;
-	union {
-		union {
-			struct user_iovec s_uiovec;
-			struct kern_iovec s_kiovec;
-		} u_iovec;
-		struct uio s_uio;
-		char uio_buf[UIO_SIZEOF(1)];
-	} u_uio_buf; /* union only for aligning uio_buf correctly */
+	UIO_STACKBUF(uio_buf, 1);
 	int need_newpathbuf;
-	u_int linklen;
+	u_int linklen = 0;
 	struct componentname *cnp = &ndp->ni_cnd;
 	vnode_t dp;
 	char *tmppn;
@@ -1684,6 +2079,11 @@ lookup_handle_symlink(struct nameidata *ndp, vnode_t *new_dp, bool *new_dp_has_i
 	bool dp_has_iocount = false;
 
 	if (ndp->ni_loopcnt++ >= MAXSYMLINKS) {
+#if CONFIG_MACF
+		if (mac_vnode_check_stat(ctx, NOCRED, ndp->ni_vp) == EPERM) {
+			return EPERM;
+		}
+#endif /* CONFIG_MACF */
 		return ELOOP;
 	}
 #if CONFIG_MACF
@@ -1698,44 +2098,63 @@ lookup_handle_symlink(struct nameidata *ndp, vnode_t *new_dp, bool *new_dp_has_i
 	}
 
 	if (need_newpathbuf) {
-		cp = zalloc(ZV_NAMEI);
+		if (!(cnp->cn_flags & HASBUF) || cnp->cn_pnlen == MAXPATHLEN) {
+			cplen = MAXPATHLEN;
+		} else {
+			assert(proc_support_long_paths(vfs_context_proc(ctx)));
+			cplen = cnp->cn_pnlen;
+		}
+		cp = namei_alloc(cplen);
 	} else {
 		cp = cnp->cn_pnbuf;
 	}
-	auio = uio_createwithbuffer(1, 0, UIO_SYSSPACE, UIO_READ,
-	    &u_uio_buf.uio_buf[0], sizeof(u_uio_buf.uio_buf));
+	auio = uio_createwithbuffer(1, 0, UIO_SYSSPACE, UIO_READ, &uio_buf[0], sizeof(uio_buf));
 
 	uio_addiov(auio, CAST_USER_ADDR_T(cp), MAXPATHLEN);
 
 	error = VNOP_READLINK(ndp->ni_vp, auio, ctx);
+
+	if (!error) {
+		user_ssize_t resid = uio_resid(auio);
+
+		assert(resid <= MAXPATHLEN);
+
+		if (resid == MAXPATHLEN) {
+			linklen = 0;
+		} else {
+			/*
+			 * Safe to set unsigned with a [larger] signed type here
+			 * because 0 <= uio_resid <= MAXPATHLEN and MAXPATHLEN
+			 * is only 1024.
+			 */
+			linklen = (u_int)strnlen(cp, MAXPATHLEN - (u_int)resid);
+		}
+
+		size_t maxlen = proc_support_long_paths(vfs_context_proc(ctx)) ? MAXLONGPATHLEN : MAXPATHLEN;
+
+		if (linklen == 0) {
+			error = ENOENT;
+		} else if (linklen + ndp->ni_pathlen + rsrclen > maxlen) {
+			error = ENAMETOOLONG;
+		}
+	}
+
 	if (error) {
 		if (need_newpathbuf) {
-			zfree(ZV_NAMEI, cp);
+			namei_free(cp, cplen);
 		}
 		return error;
 	}
 
-	/*
-	 * Safe to set unsigned with a [larger] signed type here
-	 * because 0 <= uio_resid <= MAXPATHLEN and MAXPATHLEN
-	 * is only 1024.
-	 */
-	linklen = MAXPATHLEN - (u_int)uio_resid(auio);
-	if (linklen + ndp->ni_pathlen + rsrclen > MAXPATHLEN) {
-		if (need_newpathbuf) {
-			zfree(ZV_NAMEI, cp);
-		}
-
-		return ENAMETOOLONG;
-	}
 	if (need_newpathbuf) {
 		tmppn = cnp->cn_pnbuf;
+		u_int tmplen = cnp->cn_pnlen;
 		bcopy(ndp->ni_next, cp + linklen, ndp->ni_pathlen);
 		cnp->cn_pnbuf = cp;
-		cnp->cn_pnlen = MAXPATHLEN;
+		cnp->cn_pnlen = cplen;
 
 		if ((cnp->cn_flags & HASBUF)) {
-			zfree(ZV_NAMEI, tmppn);
+			namei_free(tmppn, tmplen);
 		} else {
 			cnp->cn_flags |= HASBUF;
 		}
@@ -1760,20 +2179,29 @@ lookup_handle_symlink(struct nameidata *ndp, vnode_t *new_dp, bool *new_dp_has_i
 	ndp->ni_vp = NULLVP;
 	ndp->ni_dvp = NULLVP;
 
+	dp_has_iocount = true;
+
 	/*
 	 * Check if symbolic link restarts us at the root
 	 */
 	if (*(cnp->cn_nameptr) == '/') {
-		vnode_put(dp); /* ALWAYS have a dvp for a symlink */
+		/* return ENOTCAPABLE if resolve beneath and the symlink restarts at root */
+		if (ndp->ni_flag & NAMEI_RESOLVE_BENEATH) {
+			vnode_put(dp); /* ALWAYS have a dvp for a symlink */
+			return ENOTCAPABLE;
+		}
+		ndp->ni_flag &= ~NAMEI_FIRMLINK_FOLLOWED; /* previously followed firmlinks no longer matter */
 		while (*(cnp->cn_nameptr) == '/') {
 			cnp->cn_nameptr++;
 			ndp->ni_pathlen--;
 		}
-		if ((dp = ndp->ni_rootdir) == NULLVP) {
-			return ENOENT;
+		if (linklen != 0) {
+			vnode_put(dp); /* ALWAYS have a dvp for a symlink */
+			dp_has_iocount = false;
+			if ((dp = ndp->ni_rootdir) == NULLVP) {
+				return ENOENT;
+			}
 		}
-	} else {
-		dp_has_iocount = true;
 	}
 
 	*new_dp = dp;
@@ -1797,7 +2225,7 @@ relookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp)
 	int i, newhash;                 /* DEBUG: check name hash */
 	char *cp;                       /* DEBUG: check name ptr/len */
 #endif
-	vfs_context_t ctx = cnp->cn_context;;
+	vfs_context_t ctx = cnp->cn_context;
 
 	/*
 	 * Setup: break out flag bits into variables.
@@ -1873,7 +2301,7 @@ relookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp)
 	 * Check for symbolic link
 	 */
 	if (dp->v_type == VLNK && (cnp->cn_flags & FOLLOW)) {
-		panic("relookup: symlink found.\n");
+		panic("relookup: symlink found.");
 	}
 #endif
 
@@ -1908,7 +2336,7 @@ nameidone(struct nameidata *ndp)
 
 		ndp->ni_cnd.cn_pnbuf = NULL;
 		ndp->ni_cnd.cn_flags &= ~HASBUF;
-		zfree(ZV_NAMEI, tmp);
+		namei_free(tmp, ndp->ni_cnd.cn_pnlen);
 	}
 }
 
@@ -1939,9 +2367,12 @@ nameidone(struct nameidata *ndp)
 #if (KDEBUG_LEVEL >= KDEBUG_LEVEL_IST)
 
 void
-kdebug_vfs_lookup(unsigned long *path_words, int path_len, void *vnp,
+kdebug_vfs_lookup(const char *path, size_t path_len, void *vnp,
     uint32_t flags)
 {
+	unsigned long path_words[4] = {};
+	size_t trace_len = MIN(sizeof(path_words) - sizeof(path_words[0]), path_len);
+	size_t path_next = 0;
 	bool noprocfilt = flags & KDBG_VFS_LOOKUP_FLAG_NOPROCFILT;
 
 	assert(path_len >= 0);
@@ -1952,6 +2383,8 @@ kdebug_vfs_lookup(unsigned long *path_words, int path_len, void *vnp,
 	if (path_len <= (3 * (int)sizeof(long))) {
 		code |= DBG_FUNC_END;
 	}
+	memcpy(path_words, path, trace_len);
+	path_next += trace_len;
 
 	if (noprocfilt) {
 		KDBG_RELEASE_NOPROCFILT(code, kdebug_vnode(vnp), path_words[0],
@@ -1964,16 +2397,21 @@ kdebug_vfs_lookup(unsigned long *path_words, int path_len, void *vnp,
 	code &= ~DBG_FUNC_START;
 
 	for (int i = 3; i * (int)sizeof(long) < path_len; i += 4) {
+		trace_len = sizeof(path_words);
 		if ((i + 4) * (int)sizeof(long) >= path_len) {
 			code |= DBG_FUNC_END;
+			trace_len = path_len - path_next;
+			memset(path_words, 0, sizeof(path_words));
 		}
+		memcpy(path_words, &path[path_next], trace_len);
+		path_next += trace_len;
 
 		if (noprocfilt) {
-			KDBG_RELEASE_NOPROCFILT(code, path_words[i], path_words[i + 1],
-			    path_words[i + 2], path_words[i + 3]);
+			KDBG_RELEASE_NOPROCFILT(code, path_words[0], path_words[1],
+			    path_words[2], path_words[3]);
 		} else {
-			KDBG_RELEASE(code, path_words[i], path_words[i + 1],
-			    path_words[i + 2], path_words[i + 3]);
+			KDBG_RELEASE(code, path_words[0], path_words[1],
+			    path_words[2], path_words[3]);
 		}
 	}
 }
@@ -1982,42 +2420,21 @@ void
 kdebug_lookup_gen_events(long *path_words, int path_len, void *vnp, bool lookup)
 {
 	assert(path_len >= 0);
-	kdebug_vfs_lookup((unsigned long *)path_words, path_len, vnp,
+	kdebug_vfs_lookup((const char *)path_words, path_len, vnp,
 	    lookup ? KDBG_VFS_LOOKUP_FLAG_LOOKUP : 0);
 }
 
 void
 kdebug_lookup(vnode_t vnp, struct componentname *cnp)
 {
-	unsigned long path_words[NUMPARMS];
-
-	/*
-	 * Truncate the leading portion of the path to fit in path_words.
-	 */
-	char *path_end = cnp->cn_nameptr + cnp->cn_namelen;
-	size_t path_len = MIN(path_end - cnp->cn_pnbuf,
-	    (ssize_t)sizeof(path_words));
-	assert(path_len >= 0);
-	char *path_trunc = path_end - path_len;
-
-	memcpy(path_words, path_trunc, path_len);
-
-	/*
-	 * Pad with '\0' or '>'.
-	 */
-	if (path_len < (ssize_t)sizeof(path_words)) {
-		bool complete_str = *(cnp->cn_nameptr + cnp->cn_namelen) == '\0';
-		memset((char *)path_words + path_len, complete_str ? '\0' : '>',
-		    sizeof(path_words) - path_len);
-	}
-	kdebug_vfs_lookup(path_words, (int)path_len, vnp, KDBG_VFS_LOOKUP_FLAG_LOOKUP);
+	kdebug_vfs_lookup(cnp->cn_pnbuf, strnlen(cnp->cn_pnbuf, cnp->cn_pnlen), vnp, KDBG_VFS_LOOKUP_FLAG_LOOKUP);
 }
 
 #else /* (KDEBUG_LEVEL >= KDEBUG_LEVEL_IST) */
 
 void
-kdebug_vfs_lookup(long *dbg_parms __unused, int dbg_namelen __unused,
-    void *dp __unused, __unused uint32_t flags)
+kdebug_vfs_lookup(const char *dbg_parms __unused, size_t dbg_namelen __unused,
+    void *dp __unused, __unused kdebug_vfs_lookup_flags_t flags)
 {
 }
 
@@ -2065,8 +2482,8 @@ vfs_getbyid(fsid_t *fsid, ino64_t ino, vnode_t *vpp, vfs_context_t ctx)
  *	"foobar" represents a file name
  */
 #if CONFIG_VOLFS
-static int
-vfs_getrealpath(const char * path, char * realpath, size_t bufsize, vfs_context_t ctx)
+__static_testable int
+vfs_getrealpath_with_vp(const char * path, char * realpath, size_t bufsize, vfs_context_t ctx, vnode_t *volfs_vpp)
 {
 	vnode_t vp;
 	struct mount *mp = NULL;
@@ -2076,6 +2493,10 @@ vfs_getrealpath(const char * path, char * realpath, size_t bufsize, vfs_context_
 	ino64_t ino;
 	int error;
 	int length;
+
+	if (volfs_vpp) {
+		*volfs_vpp = NULLVP;
+	}
 
 	/* Get file system id and move str to next component. */
 	id = strtoul(path, &str, 10);
@@ -2095,7 +2516,7 @@ vfs_getrealpath(const char * path, char * realpath, size_t bufsize, vfs_context_
 		return EINVAL;  /* unexpected failure */
 	}
 	/* Check for an alias to a file system root. */
-	if (ch == '@' && str[1] == '\0') {
+	if (ch == '@' && (str[1] == '\0' || str[1] == '/')) {
 		ino = 2;
 		str++;
 	} else {
@@ -2134,13 +2555,20 @@ vfs_getrealpath(const char * path, char * realpath, size_t bufsize, vfs_context_
 
 	/* Get the absolute path to this vnode. */
 	error = build_path(vp, realpath, (int)bufsize, &length, 0, ctx);
-	vnode_put(vp);
 
 	if (error == 0 && *str != '\0') {
+		vnode_put(vp);
+		vp = NULLVP;
 		size_t attempt = strlcat(realpath, str, MAXPATHLEN);
 		if (attempt > MAXPATHLEN) {
 			error = ENAMETOOLONG;
 		}
+	}
+
+	if (!error && volfs_vpp) {
+		*volfs_vpp = vp;
+	} else if (vp) {
+		vnode_put(vp);
 	}
 out:
 	return error;
@@ -2151,7 +2579,7 @@ void
 lookup_compound_vnop_post_hook(int error, vnode_t dvp, vnode_t vp, struct nameidata *ndp, int did_create)
 {
 	if (error == 0 && vp == NULLVP) {
-		panic("NULL vp with error == 0.\n");
+		panic("NULL vp with error == 0.");
 	}
 
 	/*

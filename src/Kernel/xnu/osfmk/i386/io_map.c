@@ -57,49 +57,52 @@
  */
 
 #include <mach/vm_param.h>
-#include <vm/vm_kern.h>
-#include <vm/vm_map.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_xnu.h>
 #include <i386/pmap.h>
-#include <i386/io_map_entries.h>
 #include <san/kasan.h>
 
-extern vm_offset_t      virtual_avail;
+extern vm_offset_t virtual_avail;
 
 /*
  * Allocate and map memory for devices that may need to be mapped before
  * Mach VM is running.
  */
 vm_offset_t
-io_map(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags)
+io_map(
+	vm_map_offset_t         phys_addr,
+	vm_size_t               size,
+	unsigned int            flags,
+	vm_prot_t               prot,
+	bool                    unmappable)
 {
-	vm_offset_t     start;
+	vm_offset_t start_offset = phys_addr - trunc_page(phys_addr);
+	vm_offset_t alloc_size   = round_page(size + start_offset);
+	vm_offset_t start;
 
-	if (kernel_map == VM_MAP_NULL) {
+	phys_addr = trunc_page(phys_addr);
+
+	if (startup_phase < STARTUP_SUB_KMEM) {
 		/*
 		 * VM is not initialized.  Grab memory.
 		 */
 		start = virtual_avail;
 		virtual_avail += round_page(size);
 
+		pmap_map_bd(start, phys_addr, phys_addr + alloc_size, prot, flags);
 #if KASAN
 		kasan_notify_address(start, size);
 #endif
-		(void) pmap_map_bd(start, phys_addr, phys_addr + round_page(size),
-		    VM_PROT_READ | VM_PROT_WRITE,
-		    flags);
 	} else {
-		(void) kmem_alloc_pageable(kernel_map, &start, round_page(size), VM_KERN_MEMORY_IOKIT);
-		(void) pmap_map(start, phys_addr, phys_addr + round_page(size),
-		    VM_PROT_READ | VM_PROT_WRITE,
-		    flags);
+		kma_flags_t kmaflags = KMA_NOFAIL | KMA_PAGEABLE | KMA_IO;
+
+		if (!unmappable) {
+			kmaflags |= KMA_PERMANENT;
+		}
+
+		kmem_alloc(kernel_map, &start, alloc_size, kmaflags,
+		    VM_KERN_MEMORY_IOKIT);
+		pmap_map(start, phys_addr, phys_addr + alloc_size, prot, flags);
 	}
-	return start;
-}
-
-/* just wrap this since io_map handles it */
-
-vm_offset_t
-io_map_spec(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags)
-{
-	return io_map(phys_addr, size, flags);
+	return start + start_offset;
 }

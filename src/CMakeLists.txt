@@ -8,9 +8,8 @@ if(PUREDARWIN_ENABLE_KERNEL)
     add_subdirectory(Kernel)
 endif()
 
-if(PUREDARWIN_PREBUILT_LIBSYSTEM_ROOT)
-    include(${CMAKE_SOURCE_DIR}/cmake/prebuilt_libsystem.cmake)
-elseif(PUREDARWIN_ENABLE_LIBRARIES)
+# The prebuilt case is handled at the top level, before tools/ is added.
+if(NOT PUREDARWIN_PREBUILT_LIBSYSTEM_ROOT AND PUREDARWIN_ENABLE_LIBRARIES)
     add_subdirectory(Libraries)
 endif()
 

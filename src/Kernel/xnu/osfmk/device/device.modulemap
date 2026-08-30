@@ -1,0 +1,17 @@
+module Darwin.device {
+  #ifdef XNU_KERNEL_PRIVATE
+  // device_port.h is in the public SDK for macOS, but
+  // mastered out of the public SDK for the other OSes.
+  #endif
+  #ifdef XNU_PLATFORM_MacOSX
+  module device_port {
+    header "device/device_port.h"
+    export *
+  }
+
+  #endif
+  module device_types {
+    header "device/device_types.h"
+    export *
+  }
+}

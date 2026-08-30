@@ -43,13 +43,12 @@
 
 #include <IOKit/IOReturn.h>
 #include <IOKit/IOTypes.h>
+#include <machine/machine_routines.h>
+#include <libkern/locks.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <libkern/locks.h>
-#include <machine/machine_routines.h>
 
 /*! @var IOLockGroup
  *   Global lock group used by all IOKit locks.  To simplify kext debugging and lock-heat analysis, consider using lck_* locks with a per-driver lock group, as defined in kern/locks.h.
@@ -149,8 +148,24 @@ typedef enum {
 	kIOLockAssertNotOwned = LCK_ASSERT_NOTOWNED
 } IOLockAssertState;
 
+int     IOLockSleepWithInheritor( IOLock * lock, UInt32 lck_sleep_action,
+    void *event, thread_t inheritor, UInt32 interType, uint64_t deadline);
+
+void    IOLockWakeupAllWithInheritor(IOLock * lock, void *event);
+
 #ifdef IOLOCKS_INLINE
 #define IOLockAssert(l, type) LCK_MTX_ASSERT(l, type)
+
+/*! @function   IOLockInlineInit()
+ * @abstract    Initializes an inline lock.
+ */
+void    IOLockInlineInit(IOLock *);
+
+/*! @function   IOLockInlineDestroy()
+ * @abstract    Destroys an inline lock.
+ */
+void    IOLockInlineDestroy(IOLock *);
+
 #else
 /*! @function   IOLockAssert
  *  @abstract   Assert that lock is either held or not held by current thread.
@@ -355,6 +370,17 @@ typedef enum {
 
 #ifdef IOLOCKS_INLINE
 #define IORWLockAssert(l, type) LCK_RW_ASSERT(l, type)
+
+/*! @function   IORWLockInlineInit()
+ * @abstract    Initializes an inline lock.
+ */
+void    IORWLockInlineInit(IORWLock *);
+
+/*! @function   IORWLockInlineDestroy()
+ * @abstract    Destroys an inline lock.
+ */
+void    IORWLockInlineDestroy(IORWLock *);
+
 #else
 /*! @function   IORWLockAssert
  *  @abstract   Assert that a reader-writer lock is either held or not held

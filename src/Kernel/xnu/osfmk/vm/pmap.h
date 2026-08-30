@@ -73,9 +73,11 @@
 #include <mach/vm_attributes.h>
 #include <mach/boolean.h>
 #include <mach/vm_prot.h>
-
 #include <kern/trustcache.h>
 
+#if __has_include(<CoreEntitlements/CoreEntitlements.h>)
+#include <CoreEntitlements/CoreEntitlements.h>
+#endif
 
 #ifdef  KERNEL_PRIVATE
 
@@ -98,29 +100,76 @@ extern kern_return_t    copypv(
 	addr64_t sink,
 	unsigned int size,
 	int which);
-#define cppvPsnk        1
-#define cppvPsnkb      31
-#define cppvPsrc        2
-#define cppvPsrcb      30
-#define cppvFsnk        4
-#define cppvFsnkb      29
-#define cppvFsrc        8
-#define cppvFsrcb      28
-#define cppvNoModSnk   16
-#define cppvNoModSnkb  27
-#define cppvNoRefSrc   32
-#define cppvNoRefSrcb  26
-#define cppvKmap       64       /* Use the kernel's vm_map */
-#define cppvKmapb      25
+
+/* bcopy_phys and bzero_phys flags. */
+#define cppvPsnk                0x000000001     /* Destination is a physical address */
+#define cppvPsnkb               31
+#define cppvPsrc                0x000000002     /* Source is a physical address */
+#define cppvPsrcb               30
+#define cppvFsnk                0x000000004     /* Destination requires flushing (only on non-coherent I/O) */
+#define cppvFsnkb               29
+#define cppvFsrc                0x000000008     /* Source requires flushing (only on non-coherent I/O) */
+#define cppvFsrcb               28
+#define cppvNoModSnk            0x000000010     /* Ignored in bcopy_phys() */
+#define cppvNoModSnkb           27
+#define cppvNoRefSrc            0x000000020     /* Ignored in bcopy_phys() */
+#define cppvNoRefSrcb           26
+#define cppvKmap                0x000000040     /* Use the kernel's vm_map */
+#define cppvKmapb               25
+#if HAS_MTE
+#define cppvCopyTags                0x000000080     /* Copy tag metadata along with the physical copy operation */
+#define cppvDisableTagCheck         0x000000100     /* Perform the physical copy operation with tag checking disabled */
+#define cppvFixupPhysmapTag         0x000000200     /* Fixup the physmap address with the tag stashed on the input pointer */
+#define cppvZeroPageTags            0x000000400     /* Zero ATags as part of the operation. Operates in page sized chunks  */
+#define cppvDenoteAccessMayFault    0x000000800     /* Hint that we expect a possibility of TCF during the copy */
+#endif /* HAS_MTE */
 
 extern boolean_t pmap_has_managed_page(ppnum_t first, ppnum_t last);
+
+#if HAS_MTE
+extern bool pmap_is_tagged_page(ppnum_t);
+extern bool pmap_is_tagged_mapping(pmap_t, vm_map_offset_t);
+#endif /* HAS_MTE */
+
+#if MACH_KERNEL_PRIVATE || BSD_KERNEL_PRIVATE
+#include <mach/mach_types.h>
+#include <vm/memory_types.h>
+
+/*
+ * Routines used during BSD process creation.
+ */
+
+extern pmap_t           pmap_create_options(    /* Create a pmap_t. */
+	ledger_t        ledger,
+	vm_map_size_t   size,
+	unsigned int    flags);
+
+#if __has_feature(ptrauth_calls) && (defined(XNU_TARGET_OS_OSX) || (DEVELOPMENT || DEBUG))
+/**
+ * Informs the pmap layer that a process will be running with user JOP disabled,
+ * as if PMAP_CREATE_DISABLE_JOP had been passed during pmap creation.
+ *
+ * @note This function cannot be used once the target process has started
+ * executing code.  It is intended for cases where user JOP is disabled based on
+ * the code signature (e.g., special "keys-off" entitlements), which is too late
+ * to change the flags passed to pmap_create_options.
+ *
+ * @param pmap	The pmap belonging to the target process
+ */
+extern void             pmap_disable_user_jop(
+	pmap_t          pmap);
+#endif /* __has_feature(ptrauth_calls) && (defined(XNU_TARGET_OS_OSX) || (DEVELOPMENT || DEBUG)) */
+#endif /* MACH_KERNEL_PRIVATE || BSD_KERNEL_PRIVATE */
 
 #ifdef  MACH_KERNEL_PRIVATE
 
 #include <mach_assert.h>
 
 #include <machine/pmap.h>
-#include <vm/memory_types.h>
+
+#if CONFIG_SPTM
+#include <arm64/sptm/sptm.h>
+#endif
 
 /*
  *	Routines used for initialization.
@@ -134,11 +183,15 @@ extern boolean_t pmap_has_managed_page(ppnum_t first, ppnum_t last);
  *	vm_offset_t, etc... types.
  */
 
-extern void *pmap_steal_memory(vm_size_t size); /* Early memory allocation */
+extern void *pmap_steal_memory(vm_size_t size, vm_size_t alignment); /* Early memory allocation */
 extern void *pmap_steal_freeable_memory(vm_size_t size); /* Early memory allocation */
+#if HAS_MTE
+extern void *pmap_steal_zone_memory(vm_size_t size, vm_size_t alignment); /* Early zone-specific allocations */
+#endif /* HAS_MTE */
 
 extern uint_t pmap_free_pages(void); /* report remaining unused physical pages */
 #if defined(__arm__) || defined(__arm64__)
+extern ppnum_t pmap_first_pnum;           /* the first valid physical page on the system == atop(gDramBase) */
 extern uint_t pmap_free_pages_span(void); /* report phys address range of unused physical pages */
 #endif /* defined(__arm__) || defined(__arm64__) */
 
@@ -177,6 +230,33 @@ extern kern_return_t pmap_next_page_large(ppnum_t *pnum);
 extern void pmap_hi_pages_done(void);
 #endif
 
+#if CONFIG_SPTM
+__enum_decl(pmap_mapping_type_t, uint8_t, {
+	PMAP_MAPPING_TYPE_INFER = SPTM_UNTYPED,
+	PMAP_MAPPING_TYPE_DEFAULT = XNU_DEFAULT,
+	PMAP_MAPPING_TYPE_ROZONE = XNU_ROZONE,
+	PMAP_MAPPING_TYPE_RESTRICTED = XNU_KERNEL_RESTRICTED
+});
+
+#define PMAP_PAGE_IS_USER_EXECUTABLE(m) \
+({ \
+	const sptm_paddr_t __paddr = ptoa(VM_PAGE_GET_PHYS_PAGE(m)); \
+	const sptm_frame_type_t __frame_type = sptm_get_frame_type(__paddr); \
+	sptm_type_is_user_executable(__frame_type); \
+})
+
+extern bool pmap_will_retype(pmap_t pmap, vm_map_address_t vaddr, ppnum_t pn,
+    vm_prot_t prot, unsigned int options, pmap_mapping_type_t mapping_type);
+
+#else
+__enum_decl(pmap_mapping_type_t, uint8_t, {
+	PMAP_MAPPING_TYPE_INFER = 0,
+	PMAP_MAPPING_TYPE_DEFAULT,
+	PMAP_MAPPING_TYPE_ROZONE,
+	PMAP_MAPPING_TYPE_RESTRICTED
+});
+#endif
+
 /*
  * Report virtual space available for the kernel.
  */
@@ -188,15 +268,10 @@ extern void pmap_virtual_space(
 /*
  * Routines to manage the physical map data structure.
  */
-extern pmap_t           pmap_create_options(    /* Create a pmap_t. */
-	ledger_t        ledger,
-	vm_map_size_t   size,
-	unsigned int    flags);
-
 extern pmap_t(pmap_kernel)(void);               /* Return the kernel's pmap */
 extern void             pmap_reference(pmap_t pmap);    /* Gain a reference. */
 extern void             pmap_destroy(pmap_t pmap); /* Release a reference. */
-extern void             pmap_switch(pmap_t);
+extern void             pmap_switch(pmap_t pmap, thread_t thread);
 extern void             pmap_require(pmap_t pmap);
 
 #if MACH_ASSERT
@@ -212,7 +287,8 @@ extern kern_return_t    pmap_enter(     /* Enter a mapping */
 	vm_prot_t       prot,
 	vm_prot_t       fault_type,
 	unsigned int    flags,
-	boolean_t       wired);
+	boolean_t       wired,
+	pmap_mapping_type_t mapping_type);
 
 extern kern_return_t    pmap_enter_options(
 	pmap_t pmap,
@@ -223,7 +299,8 @@ extern kern_return_t    pmap_enter_options(
 	unsigned int flags,
 	boolean_t wired,
 	unsigned int options,
-	void *arg);
+	void *arg,
+	pmap_mapping_type_t mapping_type);
 extern kern_return_t    pmap_enter_options_addr(
 	pmap_t pmap,
 	vm_map_offset_t v,
@@ -233,7 +310,8 @@ extern kern_return_t    pmap_enter_options_addr(
 	unsigned int flags,
 	boolean_t wired,
 	unsigned int options,
-	void *arg);
+	void *arg,
+	pmap_mapping_type_t mapping_type);
 
 extern void             pmap_remove_some_phys(
 	pmap_t          pmap,
@@ -263,6 +341,10 @@ extern void             pmap_page_protect_options(      /* Restrict access to pa
 extern void(pmap_zero_page)(
 	ppnum_t         pn);
 
+extern void(pmap_zero_page_with_options)(
+	ppnum_t         pn,
+	int             options);
+
 extern void(pmap_zero_part_page)(
 	ppnum_t         pn,
 	vm_offset_t     offset,
@@ -270,7 +352,8 @@ extern void(pmap_zero_part_page)(
 
 extern void(pmap_copy_page)(
 	ppnum_t         src,
-	ppnum_t         dest);
+	ppnum_t         dest,
+	int             options);
 
 extern void(pmap_copy_part_page)(
 	ppnum_t         src,
@@ -324,35 +407,143 @@ extern void             pmap_unmap_compressor_page(
 	ppnum_t,
 	void*);
 
-#if defined(__arm__) || defined(__arm64__)
-/* ARM64_TODO */
-extern  boolean_t       pmap_batch_set_cache_attributes(
-	ppnum_t,
-	unsigned int,
-	unsigned int,
-	unsigned int,
-	boolean_t,
-	unsigned int*);
-#endif
+/**
+ * The following declarations are meant to provide a uniform interface by which the VM layer can
+ * pass batches of pages to the pmap layer directly, in the various page list formats natively
+ * used by the VM.  If a new type of list is to be added, the various structures and iterator
+ * functions below should be updated to understand it, and then it should "just work" with the
+ * pmap layer.
+ */
+
+/* The various supported page list types. */
+__enum_decl(unified_page_list_type_t, uint8_t, {
+	/* Universal page list array, essentially an array of ppnum_t. */
+	UNIFIED_PAGE_LIST_TYPE_UPL_ARRAY,
+	/**
+	 * Singly-linked list of vm_page_t, using vmp_snext field.
+	 * This is typically used to construct local lists of pages to be freed.
+	 */
+	UNIFIED_PAGE_LIST_TYPE_VM_PAGE_LIST,
+	/* Doubly-linked queue of vm_page_t's associated with a VM object, using vmp_listq field. */
+	UNIFIED_PAGE_LIST_TYPE_VM_PAGE_OBJ_Q,
+	/* Doubly-linked queue of vm_page_t's in a FIFO queue or global free list, using vmp_pageq field. */
+	UNIFIED_PAGE_LIST_TYPE_VM_PAGE_FIFO_Q,
+});
+
+/* Uniform data structure encompassing the various page list types handled by the VM layer. */
+typedef struct {
+	union {
+		/* Base address and size (in pages) of UPL array for type UNIFIED_PAGE_LIST_TYPE_UPL_ARRAY */
+		struct {
+			upl_page_info_array_t upl_info;
+			unsigned int upl_size;
+		} upl;
+		/* Head of singly-linked vm_page_t list for UNIFIED_PAGE_LIST_TYPE_VM_PAGE_LIST */
+		vm_page_t page_slist;
+		/* Head of queue for UNIFIED_PAGE_LIST_TYPE_VM_PAGE_OBJ_Q and UNIFIED_PAGE_LIST_TYPE_VM_PAGE_FIFO_Q */
+		void *pageq; /* vm_page_queue_head_t* */
+	};
+	unified_page_list_type_t type;
+} unified_page_list_t;
+
+/* Uniform data structure representing an iterator position within a unified_page_list_t object. */
+typedef struct {
+	/* Pointer to list structure from which this iterator was created. */
+	const unified_page_list_t *list;
+	union {
+		/* Position within UPL array, for UNIFIED_PAGE_LIST_TYPE_UPL_ARRAY */
+		unsigned int upl_index;
+		/* Position within page list or page queue, for all other types */
+		vm_page_t pageq_pos;
+	};
+} unified_page_list_iterator_t;
+
+extern void unified_page_list_iterator_init(
+	const unified_page_list_t *page_list,
+	unified_page_list_iterator_t *iter);
+
+extern void unified_page_list_iterator_next(unified_page_list_iterator_t *iter);
+
+extern bool unified_page_list_iterator_end(const unified_page_list_iterator_t *iter);
+
+extern ppnum_t unified_page_list_iterator_page(
+	const unified_page_list_iterator_t *iter,
+	bool *is_fictitious);
+
+extern vm_page_t unified_page_list_iterator_vm_page(
+	const unified_page_list_iterator_t *iter);
+
+extern void pmap_batch_set_cache_attributes(
+	const unified_page_list_t *,
+	unsigned int);
 extern void pmap_sync_page_data_phys(ppnum_t pa);
 extern void pmap_sync_page_attributes_phys(ppnum_t pa);
+
+#if HAS_MTE
+extern pmap_paddr_t mte_tag_storage_start;
+extern pmap_paddr_t mte_tag_storage_end;
+extern uint_t       mte_tag_storage_count; /* in number of pages */
+extern uint_t       mte_tag_storage_discarded; /* in number of pages */
+extern ppnum_t      mte_tag_storage_start_pnum;
+
+extern uint_t pmap_tag_storage_in_range_count(void);
+extern void pmap_make_tag_storage_page(ppnum_t);
+extern void pmap_unmake_tag_storage_page(ppnum_t);
+extern ppnum_t map_tag_ppnum_to_first_covered_ppnum(ppnum_t tag_ppnum);
+extern void pmap_make_tagged_page(ppnum_t);
+extern void pmap_make_tagged_pages(const unified_page_list_t *page_list);
+extern void pmap_unmake_tagged_page(ppnum_t);
+extern void pmap_unmake_tagged_pages(const unified_page_list_t *page_list);
+extern bool pmap_is_tag_storage_page(ppnum_t pnum);
+extern bool pmap_in_tag_storage_range(ppnum_t pnum) __pure2;
+
+/*
+ * Routines for classifying tag storage pages.  Recursive and unmanaged tag
+ * storage pages should never be used for tag storage.
+ */
+
+/*
+ * pmap_tag_storage_is_recursive:
+ * Given a tag storage page number, returns whether the tag storage page is
+ * recursive.
+ */
+extern bool pmap_tag_storage_is_recursive(ppnum_t pnum) __pure2;
+
+/*
+ * pmap_tag_storage_is_unmanaged:
+ * Given a tag storage page number, returns whether the tag storage page is
+ * for unmanaged memory.
+ */
+extern bool pmap_tag_storage_is_unmanaged(ppnum_t pnum) __pure2;
+
+/*
+ * pmap_tag_storage_is_discarded:
+ * Given a tag storage page number, returns whether the tag storage (and the associated
+ * pages) have been discarded by a maxmem= boot-arg.
+ */
+extern bool pmap_tag_storage_is_discarded(ppnum_t pnum) __pure2;
+#endif /* HAS_MTE */
+
+/**
+ * pmap entry point for performing platform-specific integrity checks and cleanup when
+ * the VM is about to free a page.  This function will typically at least validate
+ * that the page has no outstanding mappings or other references, and depending
+ * upon the platform may also take additional steps to reset page state.
+ *
+ * @param pn The page that is about to be freed by the VM.
+ */
+extern void pmap_recycle_page(ppnum_t pn);
 
 /*
  * debug/assertions. pmap_verify_free returns true iff
  * the given physical page is mapped into no pmap.
  * pmap_assert_free() will panic() if pn is not free.
  */
-extern boolean_t        pmap_verify_free(ppnum_t pn);
+extern bool pmap_verify_free(ppnum_t pn);
 #if MACH_ASSERT
 extern void pmap_assert_free(ppnum_t pn);
 #endif
 
-/*
- *	Statistics routines
- */
-extern int(pmap_compressed)(pmap_t pmap);
-extern int(pmap_resident_count)(pmap_t pmap);
-extern int(pmap_resident_max)(pmap_t pmap);
 
 /*
  *	Sundry required (internal) routines
@@ -371,14 +562,6 @@ extern void(pmap_copy)(                         /* Copy range of mappings,
 	vm_map_offset_t dest_va,
 	vm_map_size_t   size,
 	vm_map_offset_t source_va);
-
-extern kern_return_t(pmap_attribute)(           /* Get/Set special memory
-                                                 * attributes */
-	pmap_t          pmap,
-	vm_map_offset_t va,
-	vm_map_size_t   size,
-	vm_machine_attribute_t  attribute,
-	vm_machine_attribute_val_t* value);
 
 /*
  * Routines defined as macros.
@@ -429,148 +612,33 @@ extern kern_return_t(pmap_attribute)(           /* Get/Set special memory
 #endif  /* PMAP_DEACTIVATE */
 #endif  /* PMAP_DEACTIVATE_KERNEL */
 
-#ifndef PMAP_ENTER
-/*
- *	Macro to be used in place of pmap_enter()
- */
-#define PMAP_ENTER(pmap, virtual_address, page, protection, fault_type, \
-	    flags, wired, result)                                \
-	MACRO_BEGIN                                                     \
-	pmap_t		__pmap = (pmap);                                \
-	vm_page_t	__page = (page);                                \
-	int		__options = 0;                                  \
-	vm_object_t	__obj;                                          \
-                                                                        \
-	PMAP_ENTER_CHECK(__pmap, __page)                                \
-	__obj = VM_PAGE_OBJECT(__page);                                 \
-	if (__obj->internal) {                                          \
-	        __options |= PMAP_OPTIONS_INTERNAL;                     \
-	}                                                               \
-	if (__page->vmp_reusable || __obj->all_reusable) {              \
-	        __options |= PMAP_OPTIONS_REUSABLE;                     \
-	}                                                               \
-	result = pmap_enter_options(__pmap,                             \
-	                            (virtual_address),                  \
-	                            VM_PAGE_GET_PHYS_PAGE(__page),      \
-	                            (protection),                               \
-	                            (fault_type),                               \
-	                            (flags),                            \
-	                            (wired),                            \
-	                            __options,                          \
-	                            NULL);                              \
-	MACRO_END
-#endif  /* !PMAP_ENTER */
-
-#ifndef PMAP_ENTER_OPTIONS
-#define PMAP_ENTER_OPTIONS(pmap, virtual_address, fault_phys_offset,   \
-	    page, protection,                                           \
-	    fault_type, flags, wired, options, result)                  \
-	MACRO_BEGIN                                                     \
-	pmap_t		__pmap = (pmap);                                \
-	vm_page_t	__page = (page);                                \
-	int		__extra_options = 0;                            \
-	vm_object_t	__obj;                                          \
-                                                                        \
-	PMAP_ENTER_CHECK(__pmap, __page)                                \
-	__obj = VM_PAGE_OBJECT(__page);                                 \
-	if (__obj->internal) {                                          \
-	        __extra_options |= PMAP_OPTIONS_INTERNAL;               \
-	}                                                               \
-	if (__page->vmp_reusable || __obj->all_reusable) {              \
-	        __extra_options |= PMAP_OPTIONS_REUSABLE;               \
-	}                                                               \
-	result = pmap_enter_options_addr(__pmap,                        \
-	                            (virtual_address),                  \
-	                            (((pmap_paddr_t)                    \
-	                              VM_PAGE_GET_PHYS_PAGE(__page)     \
-	                              << PAGE_SHIFT)                    \
-	                             + fault_phys_offset),             \
-	                            (protection),                       \
-	                            (fault_type),                       \
-	                            (flags),                            \
-	                            (wired),                            \
-	                            (options) | __extra_options,        \
-	                            NULL);                              \
-	MACRO_END
-#endif  /* !PMAP_ENTER_OPTIONS */
-
 #ifndef PMAP_SET_CACHE_ATTR
 #define PMAP_SET_CACHE_ATTR(mem, object, cache_attr, batch_pmap_op)             \
 	MACRO_BEGIN                                                             \
 	        if (!batch_pmap_op) {                                           \
 	                pmap_set_cache_attributes(VM_PAGE_GET_PHYS_PAGE(mem), cache_attr); \
-	                object->set_cache_attr = TRUE;                          \
+	                (object)->set_cache_attr = TRUE;                        \
 	        }                                                               \
 	MACRO_END
 #endif  /* PMAP_SET_CACHE_ATTR */
 
 #ifndef PMAP_BATCH_SET_CACHE_ATTR
-#if     defined(__arm__) || defined(__arm64__)
-#define PMAP_BATCH_SET_CACHE_ATTR(object, user_page_list,                       \
-	    cache_attr, num_pages, batch_pmap_op)   \
+#define PMAP_BATCH_SET_CACHE_ATTR(object, user_page_list,                   \
+	    cache_attr, num_pages, batch_pmap_op)                               \
 	MACRO_BEGIN                                                             \
 	        if ((batch_pmap_op)) {                                          \
-	                unsigned int __page_idx=0;                              \
-	                unsigned int res=0;                                     \
-	                boolean_t batch=TRUE;                                   \
-	                while (__page_idx < (num_pages)) {                      \
-	                        if (!pmap_batch_set_cache_attributes(           \
-	                                user_page_list[__page_idx].phys_addr,   \
-	                                (cache_attr),                           \
-	                                (num_pages),                            \
-	                                (__page_idx),                           \
-	                                FALSE,                                  \
-	                                (&res))) {                              \
-	                                batch = FALSE;                          \
-	                                break;                                  \
-	                        }                                               \
-	                        __page_idx++;                                   \
-	                }                                                       \
-	                __page_idx=0;                                           \
-	                res=0;                                                  \
-	                while (__page_idx < (num_pages)) {                      \
-	                        if (batch)                                      \
-	                                (void)pmap_batch_set_cache_attributes(  \
-	                                user_page_list[__page_idx].phys_addr,   \
-	                                (cache_attr),                           \
-	                                (num_pages),                            \
-	                                (__page_idx),                           \
-	                                TRUE,                                   \
-	                                (&res));                                \
-	                        else                                            \
-	                                pmap_set_cache_attributes(              \
-	                                user_page_list[__page_idx].phys_addr,   \
+	                const unified_page_list_t __pmap_batch_list = {         \
+	                        .upl = {.upl_info = (user_page_list),           \
+	                                .upl_size = (num_pages),},              \
+	                        .type = UNIFIED_PAGE_LIST_TYPE_UPL_ARRAY,       \
+	                };                                                      \
+	                pmap_batch_set_cache_attributes(                        \
+	                                &__pmap_batch_list,                     \
 	                                (cache_attr));                          \
-	                                __page_idx++;                           \
-	                }                                                       \
 	                (object)->set_cache_attr = TRUE;                        \
 	        }                                                               \
 	MACRO_END
-#else
-#define PMAP_BATCH_SET_CACHE_ATTR(object, user_page_list,                       \
-	    cache_attr, num_pages, batch_pmap_op)   \
-	MACRO_BEGIN                                                             \
-	        if ((batch_pmap_op)) {                                          \
-	                unsigned int __page_idx=0;                              \
-	                while (__page_idx < (num_pages)) {                      \
-	                        pmap_set_cache_attributes(                      \
-	                                user_page_list[__page_idx].phys_addr,   \
-	                                (cache_attr));                          \
-	                        __page_idx++;                                   \
-	                }                                                       \
-	                (object)->set_cache_attr = TRUE;                        \
-	        }                                                               \
-	MACRO_END
-#endif
 #endif  /* PMAP_BATCH_SET_CACHE_ATTR */
-
-#define PMAP_ENTER_CHECK(pmap, page)                                    \
-{                                                                       \
-	if ((page)->vmp_error) {                                        \
-	        panic("VM page %p should not have an error\n",          \
-	                (page));                                        \
-	}                                                               \
-}
 
 /*
  *	Routines to manage reference/modify bits based on
@@ -647,9 +715,11 @@ extern void(pmap_pageable)(
 
 extern uint64_t pmap_shared_region_size_min(pmap_t map);
 
-/* TODO: <rdar://problem/65247502> Completely remove pmap_nesting_size_max() */
-extern uint64_t pmap_nesting_size_max(pmap_t map);
-
+extern void
+    pmap_set_shared_region(pmap_t,
+    pmap_t,
+    addr64_t,
+    uint64_t);
 extern kern_return_t pmap_nest(pmap_t,
     pmap_t,
     addr64_t,
@@ -659,6 +729,10 @@ extern kern_return_t pmap_unnest(pmap_t,
     uint64_t);
 
 #define PMAP_UNNEST_CLEAN       1
+
+extern kern_return_t pmap_fork_nest(
+	pmap_t old_pmap,
+	pmap_t new_pmap);
 
 extern kern_return_t pmap_unnest_options(pmap_t,
     addr64_t,
@@ -678,11 +752,14 @@ extern void             pmap_clear_noencrypt(ppnum_t pn);
  * is provided in a cleaner manner.
  */
 
-extern pmap_t   kernel_pmap;                    /* The kernel's map */
-#define         pmap_kernel()   (kernel_pmap)
+extern const pmap_t     kernel_pmap;            /* The kernel's map */
+#define pmap_kernel()   (kernel_pmap)
 
 #define VM_MEM_SUPERPAGE        0x100           /* map a superpage instead of a base page */
 #define VM_MEM_STACK            0x200
+#if HAS_MTE
+#define VM_MEM_MAP_MTE          0x400           /* map an MTE enabled page */
+#endif /* HAS_MTE */
 
 /* N.B. These use the same numerical space as the PMAP_EXPAND_OPTIONS
  * definitions in i386/pmap_internal.h
@@ -692,7 +769,10 @@ extern pmap_t   kernel_pmap;                    /* The kernel's map */
 #if __x86_64__
 
 #define PMAP_CREATE_EPT            0x2
-#define PMAP_CREATE_KNOWN_FLAGS (PMAP_CREATE_64BIT | PMAP_CREATE_EPT)
+#define PMAP_CREATE_TEST           0x4 /* pmap will be used for testing purposes only */
+#define PMAP_CREATE_KNOWN_FLAGS (PMAP_CREATE_64BIT | PMAP_CREATE_EPT | PMAP_CREATE_TEST)
+
+#define PMAP_CREATE_NESTED         0   /* this flag is a nop on x86 */
 
 #else
 
@@ -707,14 +787,20 @@ extern pmap_t   kernel_pmap;                    /* The kernel's map */
 #else
 #define PMAP_CREATE_FORCE_4K_PAGES 0
 #endif /* __ARM_MIXED_PAGE_SIZE__ */
-#if __arm64__
 #define PMAP_CREATE_X86_64         0
+#if CONFIG_ROSETTA
+#define PMAP_CREATE_ROSETTA        0x20
 #else
-#define PMAP_CREATE_X86_64         0
-#endif
+#define PMAP_CREATE_ROSETTA        0
+#endif /* CONFIG_ROSETTA */
+
+#define PMAP_CREATE_TEST           0x40 /* pmap will be used for testing purposes only */
+
+#define PMAP_CREATE_NESTED         0x80 /* pmap will not try to allocate a subpage root table to save space */
 
 /* Define PMAP_CREATE_KNOWN_FLAGS in terms of optional flags */
-#define PMAP_CREATE_KNOWN_FLAGS (PMAP_CREATE_64BIT | PMAP_CREATE_STAGE2 | PMAP_CREATE_DISABLE_JOP | PMAP_CREATE_FORCE_4K_PAGES | PMAP_CREATE_X86_64)
+#define PMAP_CREATE_KNOWN_FLAGS (PMAP_CREATE_64BIT | PMAP_CREATE_STAGE2 | PMAP_CREATE_DISABLE_JOP | \
+    PMAP_CREATE_FORCE_4K_PAGES | PMAP_CREATE_X86_64 | PMAP_CREATE_ROSETTA | PMAP_CREATE_TEST | PMAP_CREATE_NESTED)
 
 #endif /* __x86_64__ */
 
@@ -744,6 +830,19 @@ extern pmap_t   kernel_pmap;                    /* The kernel's map */
 #define PMAP_OPTIONS_FF_LOCKED  0x8000
 #define PMAP_OPTIONS_FF_WIRED   0x10000
 #endif
+#define PMAP_OPTIONS_XNU_USER_DEBUG 0x20000
+
+/* Indicates that pmap_enter() or pmap_remove() is being called with preemption already disabled. */
+#define PMAP_OPTIONS_NOPREEMPT  0x80000
+
+#if CONFIG_SPTM
+/* Requests pmap_disconnect() to reset the page frame type (only meaningful for SPTM systems) */
+#define PMAP_OPTIONS_RETYPE 0x100000
+#endif /* CONFIG_SPTM */
+
+#define PMAP_OPTIONS_MAP_TPRO 0x40000
+
+#define PMAP_OPTIONS_RESERVED_MASK 0xFF000000   /* encoding space reserved for internal pmap use */
 
 #if     !defined(__LP64__)
 extern vm_offset_t      pmap_extract(pmap_t pmap,
@@ -788,11 +887,19 @@ extern void pmap_set_jit_entitled(pmap_t pmap);
 /* Ask the pmap layer if there is a JIT entry in this map. */
 extern bool pmap_get_jit_entitled(pmap_t pmap);
 
+/* Inform the pmap layer that the XO register is repurposed for this map */
+extern void pmap_set_tpro(pmap_t pmap);
+
+/* Ask the pmap layer if there is a TPRO entry in this map. */
+extern bool pmap_get_tpro(pmap_t pmap);
+
 /*
  * Tell the pmap layer what range within the nested region the VM intends to
  * use.
  */
 extern void pmap_trim(pmap_t grand, pmap_t subord, addr64_t vstart, uint64_t size);
+
+extern bool pmap_is_nested(pmap_t pmap);
 
 /*
  * Dump page table contents into the specified buffer.  Returns KERN_INSUFFICIENT_BUFFER_SIZE
@@ -802,6 +909,10 @@ extern void pmap_trim(pmap_t grand, pmap_t subord, addr64_t vstart, uint64_t siz
  */
 
 extern kern_return_t pmap_dump_page_tables(pmap_t pmap, void *bufp, void *buf_end, unsigned int level_mask, size_t *bytes_copied);
+
+/* Asks the pmap layer for number of bits used for VA address. */
+extern uint32_t pmap_user_va_bits(pmap_t pmap);
+extern uint32_t pmap_kernel_va_bits(void);
 
 /*
  * Indicates if any special policy is applied to this protection by the pmap
@@ -826,106 +937,208 @@ extern kern_return_t pmap_query_page_info(
 	vm_map_offset_t va,
 	int             *disp);
 
-#if CONFIG_PGTRACE
-int pmap_pgtrace_add_page(pmap_t pmap, vm_map_offset_t start, vm_map_offset_t end);
-int pmap_pgtrace_delete_page(pmap_t pmap, vm_map_offset_t start, vm_map_offset_t end);
-kern_return_t pmap_pgtrace_fault(pmap_t pmap, vm_map_offset_t va, arm_saved_state_t *ss);
-#endif
+extern bool pmap_in_ppl(void);
 
-
-#ifdef PLATFORM_BridgeOS
-struct pmap_legacy_trust_cache {
-	struct pmap_legacy_trust_cache *next;
-	uuid_t uuid;
-	uint32_t num_hashes;
-	uint8_t hashes[][CS_CDHASH_LEN];
-};
-#else
-struct pmap_legacy_trust_cache;
-#endif
-
-extern kern_return_t pmap_load_legacy_trust_cache(struct pmap_legacy_trust_cache *trust_cache,
-    const vm_size_t trust_cache_len);
-
-typedef enum {
-	PMAP_TC_TYPE_PERSONALIZED,
-	PMAP_TC_TYPE_PDI,
-	PMAP_TC_TYPE_CRYPTEX,
-	PMAP_TC_TYPE_ENGINEERING,
-	PMAP_TC_TYPE_GLOBAL_FF00,
-	PMAP_TC_TYPE_GLOBAL_FF01,
-} pmap_tc_type_t;
-
-#define PMAP_IMAGE4_TRUST_CACHE_HAS_TYPE 1
-struct pmap_image4_trust_cache {
-	// Filled by pmap layer.
-	struct pmap_image4_trust_cache const *next;             // linked list linkage
-	struct trust_cache_module1 const *module;                       // pointer into module (within data below)
-
-	// Filled by caller.
-	// data is either an image4,
-	// or just the trust cache payload itself if the image4 manifest is external.
-	pmap_tc_type_t type;
-	size_t bnch_len;
-	uint8_t const bnch[48];
-	size_t data_len;
-	uint8_t const data[];
-};
-
-typedef enum {
-	PMAP_TC_SUCCESS = 0,
-	PMAP_TC_UNKNOWN_FORMAT = -1,
-	PMAP_TC_TOO_SMALL_FOR_HEADER = -2,
-	PMAP_TC_TOO_SMALL_FOR_ENTRIES = -3,
-	PMAP_TC_UNKNOWN_VERSION = -4,
-	PMAP_TC_ALREADY_LOADED = -5,
-	PMAP_TC_TOO_BIG = -6,
-	PMAP_TC_RESOURCE_SHORTAGE = -7,
-	PMAP_TC_MANIFEST_TOO_BIG = -8,
-	PMAP_TC_MANIFEST_VIOLATION = -9,
-	PMAP_TC_PAYLOAD_VIOLATION = -10,
-	PMAP_TC_EXPIRED = -11,
-	PMAP_TC_CRYPTO_WRONG = -12,
-	PMAP_TC_OBJECT_WRONG = -13,
-	PMAP_TC_UNKNOWN_CALLER = -14,
-	PMAP_TC_UNKNOWN_FAILURE = -15,
-} pmap_tc_ret_t;
-
-#define PMAP_HAS_LOCKDOWN_IMAGE4_SLAB 1
-extern void pmap_lockdown_image4_slab(vm_offset_t slab, vm_size_t slab_len, uint64_t flags);
-
-extern pmap_tc_ret_t pmap_load_image4_trust_cache(
-	struct pmap_image4_trust_cache *trust_cache, vm_size_t trust_cache_len,
-	uint8_t const *img4_manifest,
-	vm_size_t img4_manifest_buffer_len,
-	vm_size_t img4_manifest_actual_len,
-	bool dry_run);
-
-extern bool pmap_is_trust_cache_loaded(const uuid_t uuid);
 extern uint32_t pmap_lookup_in_static_trust_cache(const uint8_t cdhash[CS_CDHASH_LEN]);
 extern bool pmap_lookup_in_loaded_trust_caches(const uint8_t cdhash[CS_CDHASH_LEN]);
 
-extern void pmap_set_compilation_service_cdhash(const uint8_t cdhash[CS_CDHASH_LEN]);
-extern bool pmap_match_compilation_service_cdhash(const uint8_t cdhash[CS_CDHASH_LEN]);
+/**
+ * Indicates whether the device supports register-level MMIO access control.
+ *
+ * @note Unlike the pmap-io-ranges mechanism, which enforces PPL-only register
+ *       writability at page granularity, this mechanism allows specific registers
+ *       on a read-mostly page to be written using a dedicated guarded mode trap
+ *       without requiring a full PPL driver extension.
+ *
+ * @return True if the device supports register-level MMIO access control.
+ */
+extern bool pmap_has_iofilter_protected_write(void);
 
-extern bool pmap_in_ppl(void);
+/**
+ * Performs a write to the I/O register specified by addr on supported devices.
+ *
+ * @note On supported devices (determined by pmap_has_iofilter_protected_write()), this
+ *       function goes over the sorted I/O filter entry table. If there is a hit, the
+ *       write is performed from Guarded Mode. Otherwise, the write is performed from
+ *       Normal Mode (kernel mode). Note that you can still hit an exception if the
+ *       register is owned by PPL but not allowed by an io-filter-entry in the device tree.
+ *
+ * @note On unsupported devices, this function will panic.
+ *
+ * @param addr The address of the register.
+ * @param value The value to be written.
+ * @param width The width of the I/O register, supported values are 1, 2, 4 and 8.
+ */
+extern void pmap_iofilter_protected_write(vm_address_t addr, uint64_t value, uint64_t width);
 
 extern void *pmap_claim_reserved_ppl_page(void);
 extern void pmap_free_reserved_ppl_page(void *kva);
 
-extern void pmap_ledger_alloc_init(size_t);
+extern void pmap_ledger_verify_size(size_t);
 extern ledger_t pmap_ledger_alloc(void);
 extern void pmap_ledger_free(ledger_t);
 
-extern bool pmap_is_bad_ram(ppnum_t ppn);
-extern void pmap_retire_page(ppnum_t ppn);
-extern kern_return_t pmap_cs_allow_invalid(pmap_t pmap);
+
+extern bool pmap_is_page_restricted(ppnum_t pn);
 
 #if __arm64__
 extern bool pmap_is_exotic(pmap_t pmap);
 #else /* __arm64__ */
 #define pmap_is_exotic(pmap) false
 #endif /* __arm64__ */
+
+
+/*
+ * Returns a subset of pmap_cs non-default configuration,
+ * e.g. loosening up of some restrictions through pmap_cs or amfi
+ * boot-args. The return value is a bit field with possible bits
+ * described below. If default, the function will return 0. Note that
+ * this does not work the other way: 0 does not imply that pmap_cs
+ * runs in default configuration, and only a small configuration
+ * subset is returned by this function.
+ *
+ * Never assume the system is "secure" if this returns 0.
+ */
+extern int pmap_cs_configuration(void);
+
+#if XNU_KERNEL_PRIVATE
+
+typedef enum {
+	PMAP_FEAT_UEXEC = 1
+} pmap_feature_flags_t;
+
+#if defined(__x86_64__)
+
+extern bool             pmap_supported_feature(pmap_t pmap, pmap_feature_flags_t feat);
+
+#endif
+#if defined(__arm64__)
+
+/**
+ * Check if a particular pmap is used for stage2 translations or not.
+ */
+extern bool
+pmap_performs_stage2_translations(const pmap_t pmap);
+
+#endif /* defined(__arm64__) */
+
+extern ppnum_t          kernel_pmap_present_mapping(uint64_t vaddr, uint64_t * pvincr, uintptr_t * pvphysaddr);
+
+#endif /* XNU_KERNEL_PRIVATE */
+
+#if CONFIG_SPTM
+/*
+ * The TrustedExecutionMonitor address space data structure is kept within the
+ * pmap structure in order to provide a coherent API to the rest of the kernel
+ * for working with code signing monitors.
+ *
+ * However, a lot of parts of the kernel don't have visibility into the pmap
+ * data structure as they are opaque unless you're in the Mach portion of the
+ * kernel. To allievate this, we provide pmap APIs to the rest of the kernel.
+ */
+#include <TrustedExecutionMonitor/API.h>
+
+/*
+ * All pages allocated by TXM are also kept within the TXM VM object, which allows
+ * tracking it for accounting and debugging purposes.
+ */
+extern vm_object_t txm_vm_object;
+
+/**
+ * Acquire the pointer of the kernel pmap being used for the system.
+ */
+extern pmap_t
+pmap_txm_kernel_pmap(void);
+
+/**
+ * Acquire the TXM address space object stored within the pmap.
+ */
+extern TXMAddressSpace_t*
+pmap_txm_addr_space(const pmap_t pmap);
+
+/**
+ * Set the TXM address space object within the pmap.
+ */
+extern void
+pmap_txm_set_addr_space(
+	pmap_t pmap,
+	TXMAddressSpace_t *txm_addr_space);
+
+/**
+ * Set the trust level of the TXM address space object within the pmap.
+ */
+extern void
+pmap_txm_set_trust_level(
+	pmap_t pmap,
+	CSTrust_t trust_level);
+
+/**
+ * Get the trust level of the TXM address space object within the pmap.
+ */
+extern kern_return_t
+pmap_txm_get_trust_level_kdp(
+	pmap_t pmap,
+	CSTrust_t *trust_level);
+
+/**
+ * Get the address range of the JIT region within the pmap, if any.
+ */
+kern_return_t
+pmap_txm_get_jit_address_range_kdp(
+	pmap_t pmap,
+	uintptr_t *jit_region_start,
+	uintptr_t *jit_region_end);
+
+/**
+ * Take a shared lock on the pmap in order to enforce safe concurrency for
+ * an operation on the TXM address space object. Passing in NULL takes the lock
+ * on the current pmap.
+ */
+extern void
+pmap_txm_acquire_shared_lock(pmap_t pmap);
+
+/**
+ * Release the shared lock which was previously acquired for operations on
+ * the TXM address space object. Passing in NULL releases the lock for the
+ * current pmap.
+ */
+extern void
+pmap_txm_release_shared_lock(pmap_t pmap);
+
+/**
+ * Take an exclusive lock on the pmap in order to enforce safe concurrency for
+ * an operation on the TXM address space object. Passing in NULL takes the lock
+ * on the current pmap.
+ */
+extern void
+pmap_txm_acquire_exclusive_lock(pmap_t pmap);
+
+/**
+ * Release the exclusive lock which was previously acquired for operations on
+ * the TXM address space object. Passing in NULL releases the lock for the
+ * current pmap.
+ */
+extern void
+pmap_txm_release_exclusive_lock(pmap_t pmap);
+
+/**
+ * Transfer a page to the TXM_DEFAULT type after resolving its mapping from its
+ * virtual to physical address.
+ */
+extern void
+pmap_txm_transfer_page(const vm_address_t addr);
+
+/**
+ * Grab an available page from the VM free list, add it to the TXM VM object and
+ * then transfer it to be owned by TXM.
+ *
+ * Returns the physical address of the page allocated.
+ */
+extern vm_map_address_t
+pmap_txm_allocate_page(void);
+
+#endif /* CONFIG_SPTM */
+
 
 #endif  /* KERNEL_PRIVATE */
 

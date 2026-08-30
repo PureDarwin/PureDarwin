@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2026 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -54,7 +54,7 @@
  * $FreeBSD: src/sys/netinet/ip_dummynet.c,v 1.84 2004/08/25 09:31:30 pjd Exp $
  */
 
-#define DUMMYNET_DEBUG
+#define DUMMYNET_DEBUG 0
 
 /*
  * This module implements IP dummynet, a bandwidth limiter/delay emulator
@@ -89,6 +89,7 @@
 #include <sys/socketvar.h>
 #include <sys/time.h>
 #include <sys/sysctl.h>
+#include <kern/debug.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <net/kpi_protocol.h>
@@ -106,6 +107,9 @@
 
 #include <netinet/ip6.h>       /* for ip6_input, ip6_output prototypes */
 #include <netinet6/ip6_var.h>
+
+#include <stdbool.h>
+#include <net/sockaddr_utils.h>
 
 /*
  * We keep a private variable for the simulation time, but we could
@@ -143,8 +147,8 @@ static int serialize = 0;
 static struct dn_heap ready_heap, extract_heap, wfq_ready_heap;
 
 static int heap_init(struct dn_heap *h, int size);
-static int heap_insert(struct dn_heap *h, dn_key key1, void *p);
-static void heap_extract(struct dn_heap *h, void *obj);
+static int heap_insert(struct dn_heap *h, dn_key key1, void *__sized_by_or_null(size)p, size_t size);
+static void heap_extract(struct dn_heap *h, void *__sized_by_or_null(size)obj, size_t size);
 
 
 static void     transmit_event(struct dn_pipe *pipe, struct mbuf **head,
@@ -153,6 +157,13 @@ static void     ready_event(struct dn_flow_queue *q, struct mbuf **head,
     struct mbuf **tail);
 static void     ready_event_wfq(struct dn_pipe *p, struct mbuf **head,
     struct mbuf **tail);
+
+#ifdef SYSCTL_NODE
+/*
+ * Sysctl handler for reading the heap sizes.
+ */
+static int dn_heap_size_sysctl SYSCTL_HANDLER_ARGS;
+#endif /* SYSCTL_NODE */
 
 /*
  * Packets are retrieved from queues in Dummynet in chains instead of
@@ -167,16 +178,49 @@ static struct dn_pipe_head      pipehash[HASHSIZE];     /* all pipes */
 static struct dn_flow_set_head  flowsethash[HASHSIZE];  /* all flowsets */
 
 #ifdef SYSCTL_NODE
+
+const caddr_t SYSCTL_READY_HEAP_ARG = __unsafe_forge_single(caddr_t, &ready_heap);
+const caddr_t SYSCTL_EXTRACT_HEAP_ARG = __unsafe_forge_single(caddr_t, &extract_heap);
+
+static int
+dn_heap_size_sysctl SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg2)
+	int error = 0;
+	int heap_size;
+	const caddr_t heap_selector =
+	    __unsafe_forge_single(const caddr_t, arg1);
+
+	if (heap_selector == SYSCTL_READY_HEAP_ARG) {
+		heap_size = ready_heap.size;
+	} else if (heap_selector == SYSCTL_EXTRACT_HEAP_ARG) {
+		heap_size = extract_heap.size;
+	} else {
+		error = EINVAL;
+		os_log_error(OS_LOG_DEFAULT, "Unrecognized heap selector");
+	}
+
+	if (error == 0) {
+		error = SYSCTL_OUT(req, &heap_size, sizeof(heap_size));
+	}
+
+	return error;
+}
+
 SYSCTL_NODE(_net_inet_ip, OID_AUTO, dummynet,
     CTLFLAG_RW | CTLFLAG_LOCKED, 0, "Dummynet");
 SYSCTL_INT(_net_inet_ip_dummynet, OID_AUTO, hash_size,
     CTLFLAG_RW | CTLFLAG_LOCKED, &dn_hash_size, 0, "Default hash table size");
 SYSCTL_QUAD(_net_inet_ip_dummynet, OID_AUTO, curr_time,
     CTLFLAG_RD | CTLFLAG_LOCKED, &curr_time, "Current tick");
-SYSCTL_INT(_net_inet_ip_dummynet, OID_AUTO, ready_heap,
-    CTLFLAG_RD | CTLFLAG_LOCKED, &ready_heap.size, 0, "Size of ready heap");
-SYSCTL_INT(_net_inet_ip_dummynet, OID_AUTO, extract_heap,
-    CTLFLAG_RD | CTLFLAG_LOCKED, &extract_heap.size, 0, "Size of extract heap");
+SYSCTL_PROC(_net_inet_ip_dummynet, OID_AUTO, ready_heap,
+    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED,
+    SYSCTL_READY_HEAP_ARG, 0, dn_heap_size_sysctl,
+    "I", "Size of ready heap");
+SYSCTL_PROC(_net_inet_ip_dummynet, OID_AUTO, extract_heap,
+    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_LOCKED,
+    SYSCTL_EXTRACT_HEAP_ARG, 0, dn_heap_size_sysctl,
+    "I", "Size of extract heap");
 SYSCTL_INT(_net_inet_ip_dummynet, OID_AUTO, searches,
     CTLFLAG_RD | CTLFLAG_LOCKED, &searches, 0, "Number of queue searches");
 SYSCTL_INT(_net_inet_ip_dummynet, OID_AUTO, search_steps,
@@ -201,16 +245,16 @@ SYSCTL_INT(_net_inet_ip_dummynet, OID_AUTO, debug, CTLFLAG_RW | CTLFLAG_LOCKED, 
     0, "control debugging printfs");
 #endif
 #define DPRINTF(X)      if (dummynet_debug) printf X
+#define IP_DN_DBG_LOG(fmt, ...) os_log_error(OS_LOG_DEFAULT, "ip_dn_debug %s:%d : " fmt "\n", __func__, __LINE__, ## __VA_ARGS__)
 #else
 #define DPRINTF(X)
+#define IP_DN_DBG_LOG(fmt, ...) do {} while (0)
 #endif
+#define IP_DN_ERR_LOG(fmt, ...) os_log_error(OS_LOG_DEFAULT, fmt, ## __VA_ARGS__)
 
 /* dummynet lock */
-static lck_grp_t         *dn_mutex_grp;
-static lck_grp_attr_t    *dn_mutex_grp_attr;
-static lck_attr_t        *dn_mutex_attr;
-decl_lck_mtx_data(static, dn_mutex_data);
-static lck_mtx_t         *dn_mutex = &dn_mutex_data;
+static LCK_GRP_DECLARE(dn_mutex_grp, "dn");
+static LCK_MTX_DECLARE(dn_mutex, &dn_mutex_grp);
 
 static int config_pipe(struct dn_pipe *p);
 static int ip_dn_ctl(struct sockopt *sopt);
@@ -220,17 +264,25 @@ static void dummynet_flush(void);
 void dummynet_drain(void);
 static ip_dn_io_t dummynet_io;
 
+/*
+ * Functions to copy dat from/to userspace.
+ * Functions that operate with buffers use `__ended_by' sentinel
+ * to avoid out-of-bounds memory accesses.
+ */
 static void cp_flow_set_to_64_user(struct dn_flow_set *set, struct dn_flow_set_64 *fs_bp);
 static void cp_queue_to_64_user( struct dn_flow_queue *q, struct dn_flow_queue_64 *qp);
-static char *cp_pipe_to_64_user(struct dn_pipe *p, struct dn_pipe_64 *pipe_bp);
-static char* dn_copy_set_64(struct dn_flow_set *set, char *bp);
+static char *cp_pipe_to_64_user(struct dn_pipe *p, char *bp __ended_by(bp_end), char *bp_end);
+static char *dn_copy_set_64(struct dn_flow_set *set, char *bp __ended_by(bp_end), char *bp_end);
 static int cp_pipe_from_user_64( struct sockopt *sopt, struct dn_pipe *p );
 
 static void cp_flow_set_to_32_user(struct dn_flow_set *set, struct dn_flow_set_32 *fs_bp);
 static void cp_queue_to_32_user( struct dn_flow_queue *q, struct dn_flow_queue_32 *qp);
-static char *cp_pipe_to_32_user(struct dn_pipe *p, struct dn_pipe_32 *pipe_bp);
-static char* dn_copy_set_32(struct dn_flow_set *set, char *bp);
+static char *cp_pipe_to_32_user(struct dn_pipe *p, char *bp __ended_by(bp_end), char *bp_end);
+static char *dn_copy_set_32(struct dn_flow_set *set, char *bp __ended_by(bp_end), char *bp_end);
 static int cp_pipe_from_user_32( struct sockopt *sopt, struct dn_pipe *p );
+
+static struct m_tag * m_tag_kalloc_dummynet(u_int32_t id, u_int16_t type, uint16_t len, int wait);
+static void m_tag_kfree_dummynet(struct m_tag *tag);
 
 struct eventhandler_lists_ctxt dummynet_evhdlr_ctxt;
 
@@ -280,6 +332,7 @@ cp_pipe_from_user_32( struct sockopt *sopt, struct dn_pipe *p )
 		p->numbytes = user_pipe_32.numbytes;
 		p->sched_time = user_pipe_32.sched_time;
 		bcopy( user_pipe_32.if_name, p->if_name, IFNAMSIZ);
+		p->if_name[IFNAMSIZ - 1] = '\0';
 		p->ready = user_pipe_32.ready;
 
 		p->fs.fs_nr = user_pipe_32.fs.fs_nr;
@@ -289,6 +342,7 @@ cp_pipe_from_user_32( struct sockopt *sopt, struct dn_pipe *p )
 		p->fs.qsize = user_pipe_32.fs.qsize;
 		p->fs.plr = user_pipe_32.fs.plr;
 		p->fs.flow_mask = user_pipe_32.fs.flow_mask;
+		p->fs.rq = NULL;
 		p->fs.rq_size = user_pipe_32.fs.rq_size;
 		p->fs.rq_elements = user_pipe_32.fs.rq_elements;
 		p->fs.last_expired = user_pipe_32.fs.last_expired;
@@ -301,6 +355,7 @@ cp_pipe_from_user_32( struct sockopt *sopt, struct dn_pipe *p )
 		p->fs.c_2 = user_pipe_32.fs.c_2;
 		p->fs.c_3 = user_pipe_32.fs.c_3;
 		p->fs.c_4 = user_pipe_32.fs.c_4;
+		p->fs.w_q_lookup = NULL;
 		p->fs.lookup_depth = user_pipe_32.fs.lookup_depth;
 		p->fs.lookup_step = user_pipe_32.fs.lookup_step;
 		p->fs.lookup_weight = user_pipe_32.fs.lookup_weight;
@@ -327,6 +382,7 @@ cp_pipe_from_user_64( struct sockopt *sopt, struct dn_pipe *p )
 		p->numbytes = user_pipe_64.numbytes;
 		p->sched_time = user_pipe_64.sched_time;
 		bcopy( user_pipe_64.if_name, p->if_name, IFNAMSIZ);
+		p->if_name[IFNAMSIZ - 1] = '\0';
 		p->ready = user_pipe_64.ready;
 
 		p->fs.fs_nr = user_pipe_64.fs.fs_nr;
@@ -336,6 +392,7 @@ cp_pipe_from_user_64( struct sockopt *sopt, struct dn_pipe *p )
 		p->fs.qsize = user_pipe_64.fs.qsize;
 		p->fs.plr = user_pipe_64.fs.plr;
 		p->fs.flow_mask = user_pipe_64.fs.flow_mask;
+		p->fs.rq = NULL;
 		p->fs.rq_size = user_pipe_64.fs.rq_size;
 		p->fs.rq_elements = user_pipe_64.fs.rq_elements;
 		p->fs.last_expired = user_pipe_64.fs.last_expired;
@@ -348,11 +405,14 @@ cp_pipe_from_user_64( struct sockopt *sopt, struct dn_pipe *p )
 		p->fs.c_2 = user_pipe_64.fs.c_2;
 		p->fs.c_3 = user_pipe_64.fs.c_3;
 		p->fs.c_4 = user_pipe_64.fs.c_4;
+		p->fs.w_q_lookup = NULL;
 		p->fs.lookup_depth = user_pipe_64.fs.lookup_depth;
 		p->fs.lookup_step = user_pipe_64.fs.lookup_step;
 		p->fs.lookup_weight = user_pipe_64.fs.lookup_weight;
 		p->fs.avg_pkt_size = user_pipe_64.fs.avg_pkt_size;
 		p->fs.max_pkt_size = user_pipe_64.fs.max_pkt_size;
+	} else {
+		IP_DN_ERR_LOG("Error copying pipe from user, %d", error);
 	}
 	return error;
 }
@@ -379,7 +439,7 @@ cp_flow_set_to_32_user(struct dn_flow_set *set, struct dn_flow_set_32 *fs_bp)
 	fs_bp->c_2 = set->c_2;
 	fs_bp->c_3 = set->c_3;
 	fs_bp->c_4 = set->c_4;
-	fs_bp->w_q_lookup = CAST_DOWN_EXPLICIT(user32_addr_t, set->w_q_lookup);
+	fs_bp->w_q_lookup = CAST_DOWN_EXPLICIT(user32_addr_t, VM_KERNEL_ADDRHIDE(set->w_q_lookup));
 	fs_bp->lookup_depth = set->lookup_depth;
 	fs_bp->lookup_step = set->lookup_step;
 	fs_bp->lookup_weight = set->lookup_weight;
@@ -409,7 +469,7 @@ cp_flow_set_to_64_user(struct dn_flow_set *set, struct dn_flow_set_64 *fs_bp)
 	fs_bp->c_2 = set->c_2;
 	fs_bp->c_3 = set->c_3;
 	fs_bp->c_4 = set->c_4;
-	fs_bp->w_q_lookup = CAST_DOWN(user64_addr_t, set->w_q_lookup);
+	fs_bp->w_q_lookup = CAST_DOWN(user64_addr_t, VM_KERNEL_ADDRHIDE(set->w_q_lookup));
 	fs_bp->lookup_depth = set->lookup_depth;
 	fs_bp->lookup_step = set->lookup_step;
 	fs_bp->lookup_weight = set->lookup_weight;
@@ -432,7 +492,7 @@ cp_queue_to_32_user( struct dn_flow_queue *q, struct dn_flow_queue_32 *qp)
 	qp->avg = q->avg;
 	qp->count = q->count;
 	qp->random = q->random;
-	qp->q_time = q->q_time;
+	qp->q_time = (u_int32_t)q->q_time;
 	qp->heap_pos = q->heap_pos;
 	qp->sched_time = q->sched_time;
 	qp->S = q->S;
@@ -454,7 +514,7 @@ cp_queue_to_64_user( struct dn_flow_queue *q, struct dn_flow_queue_64 *qp)
 	qp->avg = q->avg;
 	qp->count = q->count;
 	qp->random = q->random;
-	qp->q_time = q->q_time;
+	qp->q_time = (u_int32_t)q->q_time;
 	qp->heap_pos = q->heap_pos;
 	qp->sched_time = q->sched_time;
 	qp->S = q->S;
@@ -463,30 +523,39 @@ cp_queue_to_64_user( struct dn_flow_queue *q, struct dn_flow_queue_64 *qp)
 
 static
 char *
-cp_pipe_to_32_user(struct dn_pipe *p, struct dn_pipe_32 *pipe_bp)
+cp_pipe_to_32_user(struct dn_pipe *p, char *bp0 __ended_by(bp_end), char *bp_end)
 {
-	char    *bp;
+	struct dn_pipe_32 *pipe_bp = NULL; /* Pipe header */
+	caddr_t bp; /* Pointer after the pipe header */
+
+	/* Check for overflow, and assign `pipe_bp' and `bp' pointers, if safe */
+	if (bp_end - bp0 < sizeof(*pipe_bp)) {
+		/* Will overflow, can not proceed */
+		return NULL;
+	}
+	pipe_bp = __unsafe_forge_single(struct dn_pipe_32 *, bp0);
+	bp = bp0 + sizeof(*pipe_bp);
 
 	pipe_bp->pipe_nr = p->pipe_nr;
 	pipe_bp->bandwidth = p->bandwidth;
 	pipe_bp->delay = p->delay;
 	bcopy( &(p->scheduler_heap), &(pipe_bp->scheduler_heap), sizeof(struct dn_heap_32));
-	pipe_bp->scheduler_heap.p = CAST_DOWN_EXPLICIT(user32_addr_t, pipe_bp->scheduler_heap.p);
+	pipe_bp->scheduler_heap.p = CAST_DOWN_EXPLICIT(user32_addr_t, VM_KERNEL_ADDRHIDE(pipe_bp->scheduler_heap.p));
 	bcopy( &(p->not_eligible_heap), &(pipe_bp->not_eligible_heap), sizeof(struct dn_heap_32));
-	pipe_bp->not_eligible_heap.p = CAST_DOWN_EXPLICIT(user32_addr_t, pipe_bp->not_eligible_heap.p);
+	pipe_bp->not_eligible_heap.p = CAST_DOWN_EXPLICIT(user32_addr_t, VM_KERNEL_ADDRHIDE(pipe_bp->not_eligible_heap.p));
 	bcopy( &(p->idle_heap), &(pipe_bp->idle_heap), sizeof(struct dn_heap_32));
-	pipe_bp->idle_heap.p = CAST_DOWN_EXPLICIT(user32_addr_t, pipe_bp->idle_heap.p);
+	pipe_bp->idle_heap.p = CAST_DOWN_EXPLICIT(user32_addr_t, VM_KERNEL_ADDRHIDE(pipe_bp->idle_heap.p));
 	pipe_bp->V = p->V;
 	pipe_bp->sum = p->sum;
 	pipe_bp->numbytes = p->numbytes;
 	pipe_bp->sched_time = p->sched_time;
 	bcopy( p->if_name, pipe_bp->if_name, IFNAMSIZ);
-	pipe_bp->ifp = CAST_DOWN_EXPLICIT(user32_addr_t, p->ifp);
+	pipe_bp->ifp = CAST_DOWN_EXPLICIT(user32_addr_t, VM_KERNEL_ADDRHIDE(p->ifp));
 	pipe_bp->ready = p->ready;
 
 	cp_flow_set_to_32_user( &(p->fs), &(pipe_bp->fs));
 
-	pipe_bp->delay = (pipe_bp->delay * 1000) / (hz * 10);
+	pipe_bp->delay = (int)((int64_t)pipe_bp->delay * 1000 / (hz * 10));
 	/*
 	 * XXX the following is a hack based on ->next being the
 	 * first field in dn_pipe and dn_flow_set. The correct
@@ -499,36 +568,49 @@ cp_pipe_to_32_user(struct dn_pipe *p, struct dn_pipe_32 *pipe_bp)
 	pipe_bp->fs.next = (user32_addr_t)0;
 	pipe_bp->fs.pipe = (user32_addr_t)0;
 	pipe_bp->fs.rq = (user32_addr_t)0;
-	bp = ((char *)pipe_bp) + sizeof(struct dn_pipe_32);
-	return dn_copy_set_32( &(p->fs), bp);
+	return dn_copy_set_32( &(p->fs), bp, bp_end);
 }
 
+/*
+ * Returns NULL on error.
+ */
 static
 char *
-cp_pipe_to_64_user(struct dn_pipe *p, struct dn_pipe_64 *pipe_bp)
+cp_pipe_to_64_user(struct dn_pipe *p, char *bp0 __ended_by(bp_end), char *bp_end)
 {
-	char    *bp;
+	struct dn_pipe_64 *pipe_bp = NULL; /* Pipe header */
+	caddr_t bp; /* Pointer after the pipe header */
 
+	/* Check for overflow, and assign `pipe_bp' and `bp' pointers, if safe */
+	if (bp_end - bp0 < sizeof(*pipe_bp)) {
+		IP_DN_DBG_LOG("Would overflow: available=%ld", bp_end - bp0);
+		/* Will overflow, can not proceed */
+		return NULL;
+	}
+	pipe_bp = __unsafe_forge_single(struct dn_pipe_64 *, bp0);
+	bp = bp0 + sizeof(*pipe_bp);
+
+	/* Populate the pipe header */
 	pipe_bp->pipe_nr = p->pipe_nr;
 	pipe_bp->bandwidth = p->bandwidth;
 	pipe_bp->delay = p->delay;
 	bcopy( &(p->scheduler_heap), &(pipe_bp->scheduler_heap), sizeof(struct dn_heap_64));
-	pipe_bp->scheduler_heap.p = CAST_DOWN(user64_addr_t, pipe_bp->scheduler_heap.p);
+	pipe_bp->scheduler_heap.p = CAST_DOWN(user64_addr_t, VM_KERNEL_ADDRHIDE(pipe_bp->scheduler_heap.p));
 	bcopy( &(p->not_eligible_heap), &(pipe_bp->not_eligible_heap), sizeof(struct dn_heap_64));
-	pipe_bp->not_eligible_heap.p = CAST_DOWN(user64_addr_t, pipe_bp->not_eligible_heap.p);
+	pipe_bp->not_eligible_heap.p = CAST_DOWN(user64_addr_t, VM_KERNEL_ADDRHIDE(pipe_bp->not_eligible_heap.p));
 	bcopy( &(p->idle_heap), &(pipe_bp->idle_heap), sizeof(struct dn_heap_64));
-	pipe_bp->idle_heap.p = CAST_DOWN(user64_addr_t, pipe_bp->idle_heap.p);
+	pipe_bp->idle_heap.p = CAST_DOWN(user64_addr_t, VM_KERNEL_ADDRHIDE(pipe_bp->idle_heap.p));
 	pipe_bp->V = p->V;
 	pipe_bp->sum = p->sum;
 	pipe_bp->numbytes = p->numbytes;
 	pipe_bp->sched_time = p->sched_time;
 	bcopy( p->if_name, pipe_bp->if_name, IFNAMSIZ);
-	pipe_bp->ifp = CAST_DOWN(user64_addr_t, p->ifp);
+	pipe_bp->ifp = CAST_DOWN(user64_addr_t, VM_KERNEL_ADDRHIDE(p->ifp));
 	pipe_bp->ready = p->ready;
 
 	cp_flow_set_to_64_user( &(p->fs), &(pipe_bp->fs));
 
-	pipe_bp->delay = (pipe_bp->delay * 1000) / (hz * 10);
+	pipe_bp->delay = (int)((int64_t)pipe_bp->delay * 1000 / (hz * 10));
 	/*
 	 * XXX the following is a hack based on ->next being the
 	 * first field in dn_pipe and dn_flow_set. The correct
@@ -541,8 +623,7 @@ cp_pipe_to_64_user(struct dn_pipe *p, struct dn_pipe_64 *pipe_bp)
 	pipe_bp->fs.next = USER_ADDR_NULL;
 	pipe_bp->fs.pipe = USER_ADDR_NULL;
 	pipe_bp->fs.rq = USER_ADDR_NULL;
-	bp = ((char *)pipe_bp) + sizeof(struct dn_pipe_64);
-	return dn_copy_set_64( &(p->fs), bp);
+	return dn_copy_set_64( &(p->fs), bp, bp_end);
 }
 
 static int
@@ -556,19 +637,76 @@ heap_init(struct dn_heap *h, int new_size)
 		return 0;
 	}
 	new_size = (new_size + HEAP_INCREMENT) & ~HEAP_INCREMENT;
-	p = _MALLOC(new_size * sizeof(*p), M_DUMMYNET, M_DONTWAIT );
+	p = krealloc_type(struct dn_heap_entry, h->size, new_size,
+	    h->p, Z_NOWAIT | Z_ZERO);
 	if (p == NULL) {
 		printf("dummynet: heap_init, resize %d failed\n", new_size );
-		return 1; /* error */
-	}
-	if (h->size > 0) {
-		bcopy(h->p, p, h->size * sizeof(*p));
-		FREE(h->p, M_DUMMYNET);
+		return ENOMEM; /* error */
 	}
 	h->p = p;
 	h->size = new_size;
 	return 0;
 }
+
+/*
+ * Routines to safely manage node offsets.
+ *
+ * If `heap->offset' > 0, the offset of the node in the heap
+ * is also stored in the heap entries at the given offset.
+ *
+ * Otherwise, the heap entries do not contain heap offsets.
+ */
+static inline void
+dn_heap_update_node_offset(struct dn_heap *heap, int node, int pos)
+{
+	caddr_t offset_ptr, obj_bytes;
+	struct dn_heap_entry *ent;
+
+	if (heap->offset <= 0) {
+		/* Heap entries don't contain offsets, nothing to do. */
+		return;
+	}
+	VERIFY(node >= 0 && heap->size > node);
+	ent = &(heap->p[node]);
+	VERIFY(heap->offset + sizeof(int) <= ent->obj_size);
+	obj_bytes = ent->object;
+	offset_ptr = obj_bytes + heap->offset;
+
+	memcpy(offset_ptr, &pos, sizeof(int));
+}
+
+#define DN_INVALID_OFFSET (-1)
+
+static inline int
+dn_heap_get_node_offset(struct dn_heap *heap, char *obj_bytes __sized_by(obj_size), size_t obj_size)
+{
+	int obj_offset;
+	caddr_t offset_ptr;
+	if (heap->offset <= 0) {
+		/* Heap entries don't contain offsets, nothing to do. */
+		os_log(OS_LOG_DEFAULT,
+		    "dummynet: dn_heap_get_node_offset from middle not supported on this heap!!!");
+		return DN_INVALID_OFFSET;
+	}
+	VERIFY(heap->offset + sizeof(int) <= obj_size);
+	offset_ptr = obj_bytes + heap->offset;
+	memcpy(&obj_offset, offset_ptr, sizeof(int));
+	if (obj_offset < 0 || obj_offset >= heap->elements) {
+		printf("dummynet: dn_heap_get_node_offset, offset %d out of bound 0..%d\n",
+		    obj_offset, heap->elements);
+		return DN_INVALID_OFFSET;
+	}
+	return obj_offset;
+}
+
+#define GET_OFFSET(heap, obj, obj_size) dn_heap_get_node_offset((heap), (obj), (obj_size))
+
+#define SET_OFFSET(heap, node) dn_heap_update_node_offset((heap), (node), (node))
+
+/*
+ * RESET_OFFSET is used for sanity checks. It sets offset to an invalid value.
+ */
+#define RESET_OFFSET(heap, node) dn_heap_update_node_offset((heap), (node), DN_INVALID_OFFSET)
 
 /*
  * Insert element in heap. Normally, p != NULL, we insert p in
@@ -580,22 +718,14 @@ heap_init(struct dn_heap *h, int new_size)
  * If offset > 0 the position (index, int) of the element in the heap is
  * also stored in the element itself at the given offset in bytes.
  */
-#define SET_OFFSET(heap, node) \
-    if (heap->offset > 0) \
-	    *((int *)((char *)(heap->p[node].object) + heap->offset)) = node ;
-/*
- * RESET_OFFSET is used for sanity checks. It sets offset to an invalid value.
- */
-#define RESET_OFFSET(heap, node) \
-    if (heap->offset > 0) \
-	    *((int *)((char *)(heap->p[node].object) + heap->offset)) = -1 ;
 static int
-heap_insert(struct dn_heap *h, dn_key key1, void *p)
+heap_insert(struct dn_heap *h, dn_key key1, void *__sized_by_or_null(obj_size)object, size_t obj_size)
 {
 	int son = h->elements;
 
-	if (p == NULL) { /* data already there, set starting point */
-		son = key1;
+	if (object == NULL) { /* data already there, set starting point */
+		VERIFY(key1 < INT_MAX);
+		son = (int)key1;
 	} else {        /* insert new element at the end, possibly resize */
 		son = h->elements;
 		if (son == h->size) { /* need resize... */
@@ -603,7 +733,8 @@ heap_insert(struct dn_heap *h, dn_key key1, void *p)
 				return 1; /* failure... */
 			}
 		}
-		h->p[son].object = p;
+		h->p[son].object = object;
+		h->p[son].obj_size = obj_size;
 		h->p[son].key = key1;
 		h->elements++;
 	}
@@ -627,7 +758,7 @@ heap_insert(struct dn_heap *h, dn_key key1, void *p)
  * remove top element from heap, or obj if obj != NULL
  */
 static void
-heap_extract(struct dn_heap *h, void *obj)
+heap_extract(struct dn_heap *h, void *__sized_by_or_null(obj_size)obj, size_t obj_size)
 {
 	int child, father, maxelt = h->elements - 1;
 
@@ -638,13 +769,8 @@ heap_extract(struct dn_heap *h, void *obj)
 	}
 	father = 0; /* default: move up smallest child */
 	if (obj != NULL) { /* extract specific element, index is at offset */
-		if (h->offset <= 0) {
-			panic("dummynet: heap_extract from middle not supported on this heap!!!\n");
-		}
-		father = *((int *)((char *)obj + h->offset));
-		if (father < 0 || father >= h->elements) {
-			printf("dummynet: heap_extract, father %d out of bound 0..%d\n",
-			    father, h->elements);
+		father = GET_OFFSET(h, obj, obj_size);
+		if (father == DN_INVALID_OFFSET) {
 			panic("dummynet: heap_extract");
 		}
 	}
@@ -665,7 +791,7 @@ heap_extract(struct dn_heap *h, void *obj)
 		 * Fill hole with last entry and bubble up, reusing the insert code
 		 */
 		h->p[father] = h->p[maxelt];
-		heap_insert(h, father, NULL); /* this one cannot fail */
+		heap_insert(h, father, NULL, 0); /* this one cannot fail */
 	}
 }
 
@@ -679,7 +805,7 @@ heapify(struct dn_heap *h)
 	int i;
 
 	for (i = 0; i < h->elements; i++) {
-		heap_insert(h, i, NULL);
+		heap_insert(h, i, NULL, 0);
 	}
 }
 
@@ -689,9 +815,7 @@ heapify(struct dn_heap *h)
 static void
 heap_free(struct dn_heap *h)
 {
-	if (h->size > 0) {
-		FREE(h->p, M_DUMMYNET);
-	}
+	kfree_type_counted_by(struct dn_heap_entry, h->size, h->p);
 	bzero(h, sizeof(*h));
 }
 
@@ -711,12 +835,13 @@ dn_tag_get(struct mbuf *m)
 
 	if (!(mtag != NULL &&
 	    mtag->m_tag_id == KERNEL_MODULE_TAG_ID &&
-	    mtag->m_tag_type == KERNEL_TAG_TYPE_DUMMYNET)) {
+	    mtag->m_tag_type == KERNEL_TAG_TYPE_DUMMYNET &&
+	    sizeof(struct dn_pkt_tag) <= mtag->m_tag_len)) {
 		panic("packet on dummynet queue w/o dummynet tag: 0x%llx",
 		    (uint64_t)VM_KERNEL_ADDRPERM(m));
 	}
 
-	return (struct dn_pkt_tag *)(mtag + 1);
+	return (struct dn_pkt_tag *)(mtag->m_tag_data);
 }
 
 /*
@@ -744,7 +869,7 @@ transmit_event(struct dn_pipe *pipe, struct mbuf **head, struct mbuf **tail)
 	struct dn_pkt_tag *pkt = NULL;
 	u_int64_t schedule_time;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
 	ASSERT(serialize >= 0);
 	if (serialize == 0) {
 		while ((m = pipe->head) != NULL) {
@@ -776,7 +901,7 @@ transmit_event(struct dn_pipe *pipe, struct mbuf **head, struct mbuf **tail)
 		/* XXX should check errors on heap_insert, by draining the
 		 * whole pipe p and hoping in the future we are more successful
 		 */
-		heap_insert(&extract_heap, schedule_time, pipe);
+		heap_insert(&extract_heap, schedule_time, pipe, sizeof(struct dn_pipe));
 	}
 }
 
@@ -793,7 +918,7 @@ transmit_event(struct dn_pipe *pipe, struct mbuf **head, struct mbuf **tail)
  * equal to 1000.
  */
 #define SET_TICKS(_m, q, p)     \
-    ((_m)->m_pkthdr.len*8*(hz*10) - (q)->numbytes + p->bandwidth - 1 ) / \
+    ((int64_t)(_m)->m_pkthdr.len*8*(hz*10) - (q)->numbytes + p->bandwidth - 1 ) / \
 	    p->bandwidth ;
 
 /*
@@ -835,7 +960,7 @@ ready_event(struct dn_flow_queue *q, struct mbuf **head, struct mbuf **tail)
 	struct dn_pipe *p = q->fs->pipe;
 	int p_was_empty;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
 
 	if (p == NULL) {
 		printf("dummynet: ready_event pipe is gone\n");
@@ -854,7 +979,7 @@ ready_event(struct dn_flow_queue *q, struct mbuf **head, struct mbuf **tail)
 	q->numbytes += (curr_time - q->sched_time) * p->bandwidth;
 	while ((pkt = q->head) != NULL) {
 		int len = pkt->m_pkthdr.len;
-		int len_scaled = p->bandwidth ? len * 8 * (hz * 10) : 0;
+		int64_t len_scaled = p->bandwidth ? (int64_t)len * 8 * (hz * 10) : 0;
 		if (len_scaled > q->numbytes) {
 			break;
 		}
@@ -871,7 +996,7 @@ ready_event(struct dn_flow_queue *q, struct mbuf **head, struct mbuf **tail)
 	if ((pkt = q->head) != NULL) { /* this implies bandwidth != 0 */
 		dn_key t = SET_TICKS(pkt, q, p); /* ticks i have to wait */
 		q->sched_time = curr_time;
-		heap_insert(&ready_heap, curr_time + t, (void *)q );
+		heap_insert(&ready_heap, curr_time + t, q, sizeof(struct dn_flow_queue));
 		/* XXX should check errors on heap_insert, and drain the whole
 		 * queue on error hoping next time we are luckier.
 		 */
@@ -904,12 +1029,12 @@ ready_event_wfq(struct dn_pipe *p, struct mbuf **head, struct mbuf **tail)
 	struct dn_heap *neh = &(p->not_eligible_heap);
 	int64_t p_numbytes = p->numbytes;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
 
 	if (p->if_name[0] == 0) { /* tx clock is simulated */
 		p_numbytes += (curr_time - p->sched_time) * p->bandwidth;
 	} else { /* tx clock is for real, the ifq must be empty or this is a NOP */
-		if (p->ifp && !IFCQ_IS_EMPTY(&p->ifp->if_snd)) {
+		if (p->ifp && !IFCQ_IS_EMPTY(p->ifp->if_snd)) {
 			return;
 		} else {
 			DPRINTF(("dummynet: pipe %d ready from %s --\n",
@@ -926,10 +1051,10 @@ ready_event_wfq(struct dn_pipe *p, struct mbuf **head, struct mbuf **tail)
 			struct dn_flow_queue *q = sch->p[0].object;
 			struct mbuf *pkt = q->head;
 			struct dn_flow_set *fs = q->fs;
-			u_int64_t len = pkt->m_pkthdr.len;
-			int len_scaled = p->bandwidth ? len * 8 * (hz * 10) : 0;
+			u_int32_t len = pkt->m_pkthdr.len;
+			u_int64_t len_scaled = p->bandwidth ? (u_int64_t)len * 8 * (hz * 10) : 0;
 
-			heap_extract(sch, NULL); /* remove queue from heap */
+			heap_extract(sch, NULL, 0); /* remove queue from heap */
 			p_numbytes -= len_scaled;
 			move_pkt(pkt, q, p, len);
 
@@ -937,7 +1062,7 @@ ready_event_wfq(struct dn_pipe *p, struct mbuf **head, struct mbuf **tail)
 			q->S = q->F; /* update start time */
 			if (q->len == 0) { /* Flow not backlogged any more */
 				fs->backlogged--;
-				heap_insert(&(p->idle_heap), q->F, q);
+				heap_insert(&(p->idle_heap), q->F, q, sizeof(struct dn_flow_queue));
 			} else { /* still backlogged */
 				/*
 				 * update F and position in backlogged queue, then
@@ -946,9 +1071,9 @@ ready_event_wfq(struct dn_pipe *p, struct mbuf **head, struct mbuf **tail)
 				len = (q->head)->m_pkthdr.len;
 				q->F += (len << MY_M) / (u_int64_t) fs->weight;
 				if (DN_KEY_LEQ(q->S, p->V)) {
-					heap_insert(neh, q->S, q);
+					heap_insert(neh, q->S, q, sizeof(struct dn_flow_queue));
 				} else {
-					heap_insert(sch, q->F, q);
+					heap_insert(sch, q->F, q, sizeof(struct dn_flow_queue));
 				}
 			}
 		}
@@ -964,8 +1089,8 @@ ready_event_wfq(struct dn_pipe *p, struct mbuf **head, struct mbuf **tail)
 		/* move from neh to sch any packets that have become eligible */
 		while (neh->elements > 0 && DN_KEY_LEQ(neh->p[0].key, p->V)) {
 			struct dn_flow_queue *q = neh->p[0].object;
-			heap_extract(neh, NULL);
-			heap_insert(sch, q->F, q);
+			heap_extract(neh, NULL, 0);
+			heap_insert(sch, q->F, q, sizeof(struct dn_flow_queue));
 		}
 
 		if (p->if_name[0] != '\0') {/* tx clock is from a real thing */
@@ -1003,7 +1128,7 @@ ready_event_wfq(struct dn_pipe *p, struct mbuf **head, struct mbuf **tail)
 		}
 		dn_tag_get(p->tail)->dn_output_time += t;
 		p->sched_time = curr_time;
-		heap_insert(&wfq_ready_heap, curr_time + t, (void *)p);
+		heap_insert(&wfq_ready_heap, curr_time + t, p, sizeof(struct dn_pipe));
 		/* XXX should check errors on heap_insert, and drain the whole
 		 * queue on error hoping next time we are luckier.
 		 */
@@ -1015,7 +1140,7 @@ ready_event_wfq(struct dn_pipe *p, struct mbuf **head, struct mbuf **tail)
 	} else if (p_numbytes < INT_MIN) {
 		p->numbytes = INT_MIN;
 	} else {
-		p->numbytes = p_numbytes;
+		p->numbytes = (int)p_numbytes;
 	}
 
 	/*
@@ -1037,7 +1162,7 @@ dummynet(__unused void * unused)
 	void *p; /* generic parameter to handler */
 	struct dn_heap *h;
 	struct dn_heap *heaps[3];
-	struct mbuf *head = NULL, *tail = NULL;
+	struct mbuf * __single head = NULL, * __single tail = NULL;
 	int i;
 	struct dn_pipe *pe;
 	struct timespec ts;
@@ -1047,7 +1172,7 @@ dummynet(__unused void * unused)
 	heaps[1] = &wfq_ready_heap;     /* wfq queues */
 	heaps[2] = &extract_heap;       /* delay line */
 
-	lck_mtx_lock(dn_mutex);
+	lck_mtx_lock(&dn_mutex);
 
 	/* make all time measurements in milliseconds (ms) -
 	 * here we convert secs and usecs to msecs (just divide the
@@ -1064,7 +1189,7 @@ dummynet(__unused void * unused)
 				    i, (int)(curr_time - h->p[0].key));
 			}
 			p = h->p[0].object; /* store a copy before heap_extract */
-			heap_extract(h, NULL); /* need to extract before processing */
+			heap_extract(h, NULL, 0); /* need to extract before processing */
 			if (i == 0) {
 				ready_event(p, &head, &tail);
 			} else if (i == 1) {
@@ -1087,7 +1212,7 @@ dummynet(__unused void * unused)
 			    DN_KEY_LT(pe->idle_heap.p[0].key, pe->V)) {
 				struct dn_flow_queue *q = pe->idle_heap.p[0].object;
 
-				heap_extract(&(pe->idle_heap), NULL);
+				heap_extract(&(pe->idle_heap), NULL, 0);
 				q->S = q->F + 1; /* mark timestamp as invalid */
 				pe->sum -= q->fs->weight;
 			}
@@ -1113,14 +1238,14 @@ dummynet(__unused void * unused)
 		serialize++;
 	}
 
-	lck_mtx_unlock(dn_mutex);
+	lck_mtx_unlock(&dn_mutex);
 
 	/* Send out the de-queued list of ready-to-send packets */
 	if (head != NULL) {
 		dummynet_send(head);
-		lck_mtx_lock(dn_mutex);
+		lck_mtx_lock(&dn_mutex);
 		serialize--;
-		lck_mtx_unlock(dn_mutex);
+		lck_mtx_unlock(&dn_mutex);
 	}
 }
 
@@ -1158,6 +1283,14 @@ dummynet_send(struct mbuf *m)
 			break;
 		case DN_TO_IP6_OUT: {
 			/* routes already in the packet's dn_{ro6,pmtu} */
+			if (pkt->dn_origifp != NULL) {
+				ip6_output_setsrcifscope(m, pkt->dn_origifp->if_index, NULL);
+				ip6_output_setdstifscope(m, pkt->dn_origifp->if_index, NULL);
+			} else {
+				ip6_output_setsrcifscope(m, IFSCOPE_UNKNOWN, NULL);
+				ip6_output_setdstifscope(m, IFSCOPE_UNKNOWN, NULL);
+			}
+
 			ip6_output(m, NULL, NULL, IPV6_FORWARDING, NULL, NULL, NULL);
 			break;
 		}
@@ -1189,7 +1322,7 @@ expire_queues(struct dn_flow_set *fs)
 	if (fs->last_expired == timenow.tv_sec) {
 		return 0;
 	}
-	fs->last_expired = timenow.tv_sec;
+	fs->last_expired = (int)timenow.tv_sec;
 	for (i = 0; i <= fs->rq_size; i++) { /* last one is overflow */
 		for (prev = NULL, q = fs->rq[i]; q != NULL;) {
 			if (q->head != NULL || q->S != q->F + 1) {
@@ -1204,7 +1337,7 @@ expire_queues(struct dn_flow_set *fs)
 					fs->rq[i] = q = q->next;
 				}
 				fs->rq_elements--;
-				FREE(old_q, M_DUMMYNET);
+				kfree_type(struct dn_flow_queue, old_q);
 			}
 		}
 	}
@@ -1230,7 +1363,7 @@ create_queue(struct dn_flow_set *fs, int i)
 			return fs->rq[i];
 		}
 	}
-	q = _MALLOC(sizeof(*q), M_DUMMYNET, M_DONTWAIT | M_ZERO);
+	q = kalloc_type(struct dn_flow_queue, Z_NOWAIT | Z_ZERO);
 	if (q == NULL) {
 		printf("dummynet: sorry, cannot allocate queue for new flow\n");
 		return NULL;
@@ -1337,7 +1470,7 @@ find_queue(struct dn_flow_set *fs, struct ip_flow_id *id)
 					fs->rq[i] = q = q->next;
 				}
 				fs->rq_elements--;
-				FREE(old_q, M_DUMMYNET);
+				kfree_type(struct dn_flow_queue, old_q);
 				continue;
 			}
 			prev = q;
@@ -1403,7 +1536,7 @@ red_drops(struct dn_flow_set *fs, struct dn_flow_queue *q, int len)
 		 * XXX check wraps...
 		 */
 		if (q->avg) {
-			u_int t = (curr_time - q->q_time) / fs->lookup_step;
+			u_int64_t t = (curr_time - q->q_time) / fs->lookup_step;
 
 			q->avg = (t < fs->lookup_depth) ?
 			    SCALE_MUL(q->avg, fs->w_q_lookup[t]) : 0;
@@ -1510,12 +1643,12 @@ locate_pipe(int pipe_nr)
 static int
 dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 {
-	struct mbuf *head = NULL, *tail = NULL;
+	struct mbuf *__single head = NULL, *__single tail = NULL;
 	struct dn_pkt_tag *pkt;
 	struct m_tag *mtag;
 	struct dn_flow_set *fs = NULL;
 	struct dn_pipe *pipe;
-	u_int64_t len = m->m_pkthdr.len;
+	u_int32_t len = m->m_pkthdr.len;
 	struct dn_flow_queue *q = NULL;
 	int is_pipe = 0;
 	struct timespec ts;
@@ -1531,7 +1664,7 @@ dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 
 	pipe_nr &= 0xffff;
 
-	lck_mtx_lock(dn_mutex);
+	lck_mtx_lock(&dn_mutex);
 
 	/* make all time measurements in milliseconds (ms) -
 	 * here we convert secs and usecs to msecs (just divide the
@@ -1601,7 +1734,7 @@ dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 	}
 	m_tag_prepend(m, mtag); /* attach to mbuf chain */
 
-	pkt = (struct dn_pkt_tag *)(mtag + 1);
+	pkt = (struct dn_pkt_tag *)(mtag->m_tag_data);
 	bzero(pkt, sizeof(struct dn_pkt_tag));
 	/* ok, i can handle the pkt now... */
 	/* build and enqueue packet + parameters */
@@ -1619,11 +1752,11 @@ dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 			route_copyout(&pkt->dn_ro, fwa->fwa_ro, sizeof(pkt->dn_ro));
 		}
 		if (fwa->fwa_dst) {
-			if (fwa->fwa_dst == (struct sockaddr_in *)&fwa->fwa_ro->ro_dst) { /* dst points into ro */
-				fwa->fwa_dst = (struct sockaddr_in *)&(pkt->dn_ro.ro_dst);
+			if (fwa->fwa_dst == SIN(&fwa->fwa_ro->ro_dst)) { /* dst points into ro */
+				fwa->fwa_dst = SIN(&(pkt->dn_ro.ro_dst));
 			}
 
-			bcopy(fwa->fwa_dst, &pkt->dn_dst, sizeof(pkt->dn_dst));
+			SOCKADDR_COPY(fwa->fwa_dst, &pkt->dn_dst, sizeof(pkt->dn_dst));
 		}
 	} else if (dir == DN_TO_IP6_OUT) {
 		if (fwa->fwa_ro6) {
@@ -1635,11 +1768,11 @@ dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 			    (struct route *)fwa->fwa_ro6_pmtu, sizeof(pkt->dn_ro6_pmtu));
 		}
 		if (fwa->fwa_dst6) {
-			if (fwa->fwa_dst6 == (struct sockaddr_in6 *)&fwa->fwa_ro6->ro_dst) { /* dst points into ro */
-				fwa->fwa_dst6 = (struct sockaddr_in6 *)&(pkt->dn_ro6.ro_dst);
+			if (fwa->fwa_dst6 == SIN6(&fwa->fwa_ro6->ro_dst)) { /* dst points into ro */
+				fwa->fwa_dst6 = SIN6(&(pkt->dn_ro6.ro_dst));
 			}
 
-			bcopy(fwa->fwa_dst6, &pkt->dn_dst6, sizeof(pkt->dn_dst6));
+			SOCKADDR_COPY(fwa->fwa_dst6, &pkt->dn_dst6, sizeof(pkt->dn_dst6));
 		}
 		pkt->dn_origifp = fwa->fwa_origifp;
 		pkt->dn_mtu = fwa->fwa_mtu;
@@ -1688,7 +1821,7 @@ dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 		if (t == 0) { /* must process it now */
 			ready_event( q, &head, &tail );
 		} else {
-			heap_insert(&ready_heap, curr_time + t, q );
+			heap_insert(&ready_heap, curr_time + t, q, sizeof(struct dn_flow_queue));
 		}
 	} else {
 		/*
@@ -1704,7 +1837,7 @@ dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 			q->S = pipe->V;
 			pipe->sum += fs->weight; /* add weight of new queue */
 		} else {
-			heap_extract(&(pipe->idle_heap), q);
+			heap_extract(&(pipe->idle_heap), q, sizeof(struct dn_flow_queue));
 			q->S = MAX64(q->F, pipe->V );
 		}
 		q->F = q->S + (len << MY_M) / (u_int64_t) fs->weight;
@@ -1731,9 +1864,9 @@ dummynet_io(struct mbuf *m, int pipe_nr, int dir, struct ip_fw_args *fwa)
 			if (pipe->scheduler_heap.elements == 0) {
 				printf("dummynet: ++ ouch! not eligible but empty scheduler!\n");
 			}
-			heap_insert(&(pipe->not_eligible_heap), q->S, q);
+			heap_insert(&(pipe->not_eligible_heap), q->S, q, sizeof(struct dn_flow_queue));
 		} else {
-			heap_insert(&(pipe->scheduler_heap), q->F, q);
+			heap_insert(&(pipe->scheduler_heap), q->F, q, sizeof(struct dn_flow_queue));
 			if (pipe->numbytes >= 0) { /* pipe is idle */
 				if (pipe->scheduler_heap.elements != 1) {
 					printf("dummynet: OUCH! pipe should have been idle!\n");
@@ -1754,7 +1887,7 @@ done:
 		bsd_timeout(dummynet, NULL, &ts);
 	}
 
-	lck_mtx_unlock(dn_mutex);
+	lck_mtx_unlock(&dn_mutex);
 
 	if (head != NULL) {
 		dummynet_send(head);
@@ -1766,7 +1899,7 @@ dropit:
 	if (q) {
 		q->drops++;
 	}
-	lck_mtx_unlock(dn_mutex);
+	lck_mtx_unlock(&dn_mutex);
 	m_freem(m);
 	return (fs && (fs->flags_fs & DN_NOERROR)) ? 0 : ENOBUFS;
 }
@@ -1775,14 +1908,16 @@ dropit:
  * Below, the ROUTE_RELEASE is only needed when (pkt->dn_dir == DN_TO_IP_OUT)
  * Doing this would probably save us the initial bzero of dn_pkt
  */
-#define DN_FREE_PKT(_m) do {                                    \
-	struct m_tag *tag = m_tag_locate(m, KERNEL_MODULE_TAG_ID, KERNEL_TAG_TYPE_DUMMYNET, NULL); \
-	if (tag) {                                              \
-	        struct dn_pkt_tag *n = (struct dn_pkt_tag *)(tag+1);    \
-	        ROUTE_RELEASE(&n->dn_ro);                       \
-	}                                                       \
-	m_tag_delete(_m, tag);                                  \
-	m_freem(_m);                                            \
+#define DN_FREE_PKT(_m) do {                                                  \
+	struct m_tag *tag = m_tag_locate(                                         \
+	    (_m), KERNEL_MODULE_TAG_ID, KERNEL_TAG_TYPE_DUMMYNET);                \
+	if (tag) {                                                                \
+	    VERIFY(sizeof(struct dn_pkt_tag) <= tag->m_tag_len);                  \
+	    struct dn_pkt_tag *n = (struct dn_pkt_tag *)(tag->m_tag_data);        \
+	    ROUTE_RELEASE(&n->dn_ro);                                             \
+	}                                                                         \
+	m_tag_delete((_m), tag);                                                  \
+	m_freem((_m));                                                            \
 } while (0)
 
 /*
@@ -1797,7 +1932,7 @@ purge_flow_set(struct dn_flow_set *fs, int all)
 	struct dn_flow_queue *q, *qn;
 	int i;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
 
 	for (i = 0; i <= fs->rq_size; i++) {
 		for (q = fs->rq[i]; q; q = qn) {
@@ -1809,7 +1944,7 @@ purge_flow_set(struct dn_flow_set *fs, int all)
 				DN_FREE_PKT(m);
 			}
 			qn = q->next;
-			FREE(q, M_DUMMYNET);
+			kfree_type(struct dn_flow_queue, q);
 		}
 		fs->rq[i] = NULL;
 	}
@@ -1817,14 +1952,19 @@ purge_flow_set(struct dn_flow_set *fs, int all)
 	if (all) {
 		/* RED - free lookup table */
 		if (fs->w_q_lookup) {
-			FREE(fs->w_q_lookup, M_DUMMYNET);
+			kfree_data_counted_by(fs->w_q_lookup, fs->lookup_depth);
 		}
-		if (fs->rq) {
-			FREE(fs->rq, M_DUMMYNET);
-		}
+		/*
+		 * Can not use `kfree_type_counted_by' `for fs->rq',
+		 * because the latter is counted by `fs->rq_size + 1'
+		 */
+		struct dn_flow_queue ** rq = fs->rq;
+		kfree_type(struct dn_flow_queue *, fs->rq_size + 1, rq);
+		fs->rq = NULL;
+		fs->rq_size = 0;
 		/* if this fs is not part of a pipe, free it */
 		if (fs->pipe && fs != &(fs->pipe->fs)) {
-			FREE(fs, M_DUMMYNET);
+			kfree_type(struct dn_flow_set, fs);
 		}
 	}
 }
@@ -1862,7 +2002,7 @@ dummynet_flush(void)
 	struct dn_flow_set *fs, *fs1;
 	int i;
 
-	lck_mtx_lock(dn_mutex);
+	lck_mtx_lock(&dn_mutex);
 
 
 	/* Free heaps so we don't have unwanted events. */
@@ -1885,10 +2025,10 @@ dummynet_flush(void)
 		SLIST_FOREACH_SAFE(pipe, &pipehash[i], next, pipe1) {
 			SLIST_REMOVE(&pipehash[i], pipe, dn_pipe, next);
 			purge_pipe(pipe);
-			FREE(pipe, M_DUMMYNET);
+			kfree_type(struct dn_pipe, pipe);
 		}
 	}
-	lck_mtx_unlock(dn_mutex);
+	lck_mtx_unlock(&dn_mutex);
 }
 
 /*
@@ -1913,21 +2053,18 @@ config_red(struct dn_flow_set *p, struct dn_flow_set * x)
 
 	/* if the lookup table already exist, free and create it again */
 	if (x->w_q_lookup) {
-		FREE(x->w_q_lookup, M_DUMMYNET);
-		x->w_q_lookup = NULL;
+		kfree_data_counted_by(x->w_q_lookup, x->lookup_depth);
 	}
 	if (red_lookup_depth == 0) {
 		printf("\ndummynet: net.inet.ip.dummynet.red_lookup_depth must be > 0\n");
-		FREE(x, M_DUMMYNET);
 		return EINVAL;
 	}
+	x->w_q_lookup = (u_int *) kalloc_data(red_lookup_depth * sizeof(int),
+	    Z_WAITOK | Z_ZERO);
 	x->lookup_depth = red_lookup_depth;
-	x->w_q_lookup = (u_int *) _MALLOC(x->lookup_depth * sizeof(int),
-	    M_DUMMYNET, M_DONTWAIT);
 	if (x->w_q_lookup == NULL) {
 		printf("dummynet: sorry, cannot allocate red lookup table\n");
-		FREE(x, M_DUMMYNET);
-		return ENOSPC;
+		return ENOMEM;
 	}
 
 	/* fill the lookup table with (1 - w_q)^x */
@@ -1962,21 +2099,24 @@ alloc_hash(struct dn_flow_set *x, struct dn_flow_set *pfs)
 		} else if (l > DN_MAX_HASH_SIZE) {
 			l = DN_MAX_HASH_SIZE;
 		}
+		x->rq = kalloc_type(struct dn_flow_queue *, l + 1,
+		    Z_NOWAIT | Z_ZERO);
 		x->rq_size = l;
 	} else {            /* one is enough for null mask */
+		x->rq = kalloc_type(struct dn_flow_queue *, 1 + 1,
+		    Z_NOWAIT | Z_ZERO);
 		x->rq_size = 1;
 	}
-	x->rq = _MALLOC((1 + x->rq_size) * sizeof(struct dn_flow_queue *),
-	    M_DUMMYNET, M_DONTWAIT | M_ZERO);
+
 	if (x->rq == NULL) {
 		printf("dummynet: sorry, cannot allocate queue\n");
-		return ENOSPC;
+		return ENOMEM;
 	}
 	x->rq_elements = 0;
 	return 0;
 }
 
-static void
+static int
 set_fs_parms(struct dn_flow_set *x, struct dn_flow_set *src)
 {
 	x->flags_fs = src->flags_fs;
@@ -1997,8 +2137,9 @@ set_fs_parms(struct dn_flow_set *x, struct dn_flow_set *src)
 	}
 	/* configuring RED */
 	if (x->flags_fs & DN_IS_RED) {
-		config_red(src, x); /* XXX should check errors */
+		return config_red(src, x); /* XXX should check errors */
 	}
+	return 0;
 }
 
 /*
@@ -2010,6 +2151,7 @@ config_pipe(struct dn_pipe *p)
 	int i, r;
 	struct dn_flow_set *pfs = &(p->fs);
 	struct dn_flow_queue *q;
+	bool is_new = false;
 
 	/*
 	 * The config program passes parameters as follows:
@@ -2017,7 +2159,10 @@ config_pipe(struct dn_pipe *p)
 	 * delay = ms, must be translated into ticks.
 	 * qsize = slots/bytes
 	 */
-	p->delay = (p->delay * (hz * 10)) / 1000;
+	if (p->delay < 0 || p->bandwidth < 0) {
+		return EINVAL;
+	}
+	p->delay = (int)((int64_t)p->delay * (hz * 10) / 1000);
 	/* We need either a pipe number or a flow_set number */
 	if (p->pipe_nr == 0 && pfs->fs_nr == 0) {
 		return EINVAL;
@@ -2028,22 +2173,24 @@ config_pipe(struct dn_pipe *p)
 	if (p->pipe_nr != 0) { /* this is a pipe */
 		struct dn_pipe *x, *b;
 		struct dummynet_event dn_event;
-		lck_mtx_lock(dn_mutex);
+		lck_mtx_lock(&dn_mutex);
 
 		/* locate pipe */
 		b = locate_pipe(p->pipe_nr);
 
 		if (b == NULL || b->pipe_nr != p->pipe_nr) { /* new pipe */
-			x = _MALLOC(sizeof(struct dn_pipe), M_DUMMYNET, M_DONTWAIT | M_ZERO);
+			is_new = true;
+			x = kalloc_type(struct dn_pipe, Z_WAITOK | Z_ZERO);
 			if (x == NULL) {
-				lck_mtx_unlock(dn_mutex);
+				lck_mtx_unlock(&dn_mutex);
 				printf("dummynet: no memory for new pipe\n");
-				return ENOSPC;
+				return ENOMEM;
 			}
 			x->pipe_nr = p->pipe_nr;
 			x->fs.pipe = x;
 			/* idle_heap is the only one from which we extract from the middle.
 			 */
+			x->idle_heap.p = NULL;
 			x->idle_heap.size = x->idle_heap.elements = 0;
 			x->idle_heap.offset = offsetof(struct dn_flow_queue, heap_pos);
 		} else {
@@ -2061,20 +2208,28 @@ config_pipe(struct dn_pipe *p)
 		bcopy(p->if_name, x->if_name, sizeof(p->if_name));
 		x->ifp = NULL; /* reset interface ptr */
 		x->delay = p->delay;
-		set_fs_parms(&(x->fs), pfs);
-
+		r = set_fs_parms(&(x->fs), pfs);
+		if (r != 0) {
+			lck_mtx_unlock(&dn_mutex);
+			if (is_new) { /* a new pipe */
+				kfree_type(struct dn_pipe, x);
+			}
+			return r;
+		}
 
 		if (x->fs.rq == NULL) { /* a new pipe */
 			r = alloc_hash(&(x->fs), pfs);
 			if (r) {
-				lck_mtx_unlock(dn_mutex);
-				FREE(x, M_DUMMYNET);
+				lck_mtx_unlock(&dn_mutex);
+				if (is_new) {
+					kfree_type(struct dn_pipe, x);
+				}
 				return r;
 			}
 			SLIST_INSERT_HEAD(&pipehash[HASH(x->pipe_nr)],
 			    x, next);
 		}
-		lck_mtx_unlock(dn_mutex);
+		lck_mtx_unlock(&dn_mutex);
 
 		bzero(&dn_event, sizeof(dn_event));
 		dn_event.dn_event_code = DUMMYNET_PIPE_CONFIG;
@@ -2086,20 +2241,21 @@ config_pipe(struct dn_pipe *p)
 	} else { /* config queue */
 		struct dn_flow_set *x, *b;
 
-		lck_mtx_lock(dn_mutex);
+		lck_mtx_lock(&dn_mutex);
 		/* locate flow_set */
 		b = locate_flowset(pfs->fs_nr);
 
 		if (b == NULL || b->fs_nr != pfs->fs_nr) { /* new  */
+			is_new = true;
 			if (pfs->parent_nr == 0) { /* need link to a pipe */
-				lck_mtx_unlock(dn_mutex);
+				lck_mtx_unlock(&dn_mutex);
 				return EINVAL;
 			}
-			x = _MALLOC(sizeof(struct dn_flow_set), M_DUMMYNET, M_DONTWAIT | M_ZERO);
+			x = kalloc_type(struct dn_flow_set, Z_WAITOK | Z_ZERO);
 			if (x == NULL) {
-				lck_mtx_unlock(dn_mutex);
+				lck_mtx_unlock(&dn_mutex);
 				printf("dummynet: no memory for new flow_set\n");
-				return ENOSPC;
+				return ENOMEM;
 			}
 			x->fs_nr = pfs->fs_nr;
 			x->parent_nr = pfs->parent_nr;
@@ -2112,24 +2268,32 @@ config_pipe(struct dn_pipe *p)
 		} else {
 			/* Change parent pipe not allowed; must delete and recreate */
 			if (pfs->parent_nr != 0 && b->parent_nr != pfs->parent_nr) {
-				lck_mtx_unlock(dn_mutex);
+				lck_mtx_unlock(&dn_mutex);
 				return EINVAL;
 			}
 			x = b;
 		}
-		set_fs_parms(x, pfs);
+		r = set_fs_parms(x, pfs);
+		if (r != 0) {
+			lck_mtx_unlock(&dn_mutex);
+			printf("dummynet: no memory for new flow_set\n");
+			if (is_new) {
+				kfree_type(struct dn_flow_set, x);
+			}
+			return r;
+		}
 
 		if (x->rq == NULL) { /* a new flow_set */
 			r = alloc_hash(x, pfs);
 			if (r) {
-				lck_mtx_unlock(dn_mutex);
-				FREE(x, M_DUMMYNET);
+				lck_mtx_unlock(&dn_mutex);
+				kfree_type(struct dn_flow_set, x);
 				return r;
 			}
 			SLIST_INSERT_HEAD(&flowsethash[HASH(x->fs_nr)],
 			    x, next);
 		}
-		lck_mtx_unlock(dn_mutex);
+		lck_mtx_unlock(&dn_mutex);
 	}
 	return 0;
 }
@@ -2186,7 +2350,7 @@ dummynet_drain(void)
 	struct mbuf *m, *mnext;
 	int i;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
 
 	heap_free(&ready_heap);
 	heap_free(&wfq_ready_heap);
@@ -2229,11 +2393,11 @@ delete_pipe(struct dn_pipe *p)
 		struct dn_flow_set *fs;
 		int i;
 
-		lck_mtx_lock(dn_mutex);
+		lck_mtx_lock(&dn_mutex);
 		/* locate pipe */
 		b = locate_pipe(p->pipe_nr);
 		if (b == NULL) {
-			lck_mtx_unlock(dn_mutex);
+			lck_mtx_unlock(&dn_mutex);
 			return EINVAL; /* not found */
 		}
 
@@ -2258,17 +2422,17 @@ delete_pipe(struct dn_pipe *p)
 		/* remove reference to here from extract_heap and wfq_ready_heap */
 		pipe_remove_from_heap(&extract_heap, b);
 		pipe_remove_from_heap(&wfq_ready_heap, b);
-		lck_mtx_unlock(dn_mutex);
+		lck_mtx_unlock(&dn_mutex);
 
-		FREE(b, M_DUMMYNET);
+		kfree_type(struct dn_pipe, b);
 	} else { /* this is a WF2Q queue (dn_flow_set) */
 		struct dn_flow_set *b;
 
-		lck_mtx_lock(dn_mutex);
+		lck_mtx_lock(&dn_mutex);
 		/* locate set */
 		b = locate_flowset(p->fs.fs_nr);
 		if (b == NULL) {
-			lck_mtx_unlock(dn_mutex);
+			lck_mtx_unlock(&dn_mutex);
 			return EINVAL; /* not found */
 		}
 
@@ -2286,7 +2450,7 @@ delete_pipe(struct dn_pipe *p)
 #endif
 		}
 		purge_flow_set(b, 1);
-		lck_mtx_unlock(dn_mutex);
+		lck_mtx_unlock(&dn_mutex);
 	}
 	return 0;
 }
@@ -2296,16 +2460,34 @@ delete_pipe(struct dn_pipe *p)
  */
 static
 char*
-dn_copy_set_32(struct dn_flow_set *set, char *bp)
+dn_copy_set_32(struct dn_flow_set *set, char *bp __ended_by(bp_end), char *bp_end)
 {
-	int i, copied = 0;
+	int i, copied = 0, overflow = 0;
 	struct dn_flow_queue *q;
-	struct dn_flow_queue_32 *qp = (struct dn_flow_queue_32 *)bp;
+	struct dn_flow_queue_32 *qp;
+	caddr_t bp_inner = bp;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+	IP_DN_DBG_LOG("Asked to copy set_32: available=%ld, required=%lu",
+	    bp_end - bp_inner, sizeof(*qp));
+	if (bp_end - bp_inner < sizeof(*qp)) {
+		IP_DN_DBG_LOG("Insufficient space to copy: available=%ld, required=%lu",
+		    bp_end - bp_inner, sizeof(*qp));
+		return NULL;
+	}
 
-	for (i = 0; i <= set->rq_size; i++) {
-		for (q = set->rq[i]; q; q = q->next, qp++) {
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
+
+	for (i = 0; i <= set->rq_size && !overflow; i++) {
+		for (q = set->rq[i]; q && !overflow; q = q->next) {
+			/* Check for overflow before attempting to write to `bp_inner' */
+			if (bp_end - bp_inner < sizeof(*qp)) {
+				os_log_error(OS_LOG_DEFAULT,
+				    "Stoping flow set copy after %d elements to avoid overflow; "
+				    "mem: available=%lu, required=%lu", copied, bp_end - bp_inner, sizeof(*qp));
+				overflow = 1;
+				break;
+			}
+
 			if (q->hash_slot != i) {
 				printf("dummynet: ++ at %d: wrong slot (have %d, "
 				    "should be %d)\n", copied, q->hash_slot, i);
@@ -2317,6 +2499,13 @@ dn_copy_set_32(struct dn_flow_set *set, char *bp)
 				    (uint64_t)VM_KERNEL_ADDRPERM(set));
 			}
 			copied++;
+			qp = (struct dn_flow_queue_32 *)(void *)bp_inner;
+			bp_inner += sizeof(*qp);
+			IP_DN_DBG_LOG("Advancing bp_inner old=0x%llx new=0x%llx end=0x%llx available=%lu",
+			    (uint64_t)VM_KERNEL_ADDRPERM(qp),
+			    (uint64_t)VM_KERNEL_ADDRPERM(bp_inner),
+			    (uint64_t)VM_KERNEL_ADDRPERM(bp_end),
+			    bp_end - bp_inner);
 			cp_queue_to_32_user( q, qp );
 			/* cleanup pointers */
 			qp->next = (user32_addr_t)0;
@@ -2328,21 +2517,47 @@ dn_copy_set_32(struct dn_flow_set *set, char *bp)
 		printf("dummynet: ++ wrong count, have %d should be %d\n",
 		    copied, set->rq_elements);
 	}
-	return (char *)qp;
+	return overflow ? NULL : bp_inner;
 }
 
+/*
+ * Returns NULL on overflow.
+ */
 static
 char*
-dn_copy_set_64(struct dn_flow_set *set, char *bp)
+dn_copy_set_64(struct dn_flow_set *set, char *bp __ended_by(bp_end), char *bp_end)
 {
-	int i, copied = 0;
+	int i, copied = 0, overflow = 0, total_required = 0;
 	struct dn_flow_queue *q;
-	struct dn_flow_queue_64 *qp = (struct dn_flow_queue_64 *)bp;
+	struct dn_flow_queue_64 *qp;
+	caddr_t bp_inner = bp;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+	IP_DN_DBG_LOG("Asked to copy set_64: available=%ld", bp_end - bp_inner);
+	if (bp_end - bp_inner < sizeof(*qp)) {
+		IP_DN_DBG_LOG("Insufficient space to copy: available=%ld, required=%lu",
+		    bp_end - bp_inner, sizeof(*qp));
+		return NULL;
+	}
 
-	for (i = 0; i <= set->rq_size; i++) {
-		for (q = set->rq[i]; q; q = q->next, qp++) {
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
+
+	for (i = 0; i <= set->rq_size && !overflow; i++) {
+		for (q = set->rq[i]; q && !overflow; q = q->next) {
+			IP_DN_DBG_LOG("Iter=%d to copied=%d available=%ld",
+			    i, copied, bp_end - bp_inner);
+			/* Check for overflow before attempting to write to `bp_inner' */
+			if (bp_end - bp_inner < sizeof(*qp)) {
+				os_log_error(OS_LOG_DEFAULT,
+				    "Stoping flow set copy after %d elements to avoid overflow; "
+				    "mem: available=%lu, required=%lu", copied, bp_end - bp_inner, sizeof(*qp));
+				overflow = 1;
+			}
+			/* If overflow bit is set, continue the iteration only to count the total required memory */
+			total_required += sizeof(*qp);
+			if (overflow) {
+				continue; /* to next q, we are only counting memory here. */
+			}
+
 			if (q->hash_slot != i) {
 				printf("dummynet: ++ at %d: wrong slot (have %d, "
 				    "should be %d)\n", copied, q->hash_slot, i);
@@ -2355,6 +2570,13 @@ dn_copy_set_64(struct dn_flow_set *set, char *bp)
 			}
 			copied++;
 			//bcopy(q, qp, sizeof(*q));
+			qp = (struct dn_flow_queue_64 *)(void *)bp_inner;
+			bp_inner += sizeof(*qp);
+			IP_DN_DBG_LOG("Advancing bp_inner old=0x%llx new=0x%llx end=0x%llx available=%lu",
+			    (uint64_t)VM_KERNEL_ADDRPERM(qp),
+			    (uint64_t)VM_KERNEL_ADDRPERM(bp_inner),
+			    (uint64_t)VM_KERNEL_ADDRPERM(bp_end),
+			    bp_end - bp_inner);
 			cp_queue_to_64_user( q, qp );
 			/* cleanup pointers */
 			qp->next = USER_ADDR_NULL;
@@ -2366,7 +2588,18 @@ dn_copy_set_64(struct dn_flow_set *set, char *bp)
 		printf("dummynet: ++ wrong count, have %d should be %d\n",
 		    copied, set->rq_elements);
 	}
-	return (char *)qp;
+
+	char * ret = overflow ? NULL : bp_inner;
+	IP_DN_DBG_LOG("Returning 0x%llx overflow=%d bp=0x%llx bp_inner=0x%llx bp_end=0x%llx available=%ld total_required=%d total_available=%lu",
+	    (uint64_t)VM_KERNEL_ADDRPERM(ret),
+	    overflow,
+	    (uint64_t)VM_KERNEL_ADDRPERM(bp),
+	    (uint64_t)VM_KERNEL_ADDRPERM(bp_inner),
+	    (uint64_t)VM_KERNEL_ADDRPERM(bp_end),
+	    bp_end - bp_inner,
+	    total_required,
+	    bp_end - bp);
+	return ret;
 }
 
 static size_t
@@ -2380,7 +2613,12 @@ dn_calc_size(int is64user)
 	size_t setsize;
 	int i;
 
-	LCK_MTX_ASSERT(dn_mutex, LCK_MTX_ASSERT_OWNED);
+#if DUMMYNET_DEBUG
+	unsigned pq_count = 0, pqe_count = 0;
+	unsigned fsq_count = 0, fsqe_count = 0;
+#endif /* DUMMYNET_DEBUG */
+
+	LCK_MTX_ASSERT(&dn_mutex, LCK_MTX_ASSERT_OWNED);
 	if (is64user) {
 		pipesize = sizeof(struct dn_pipe_64);
 		queuesize = sizeof(struct dn_flow_queue_64);
@@ -2395,29 +2633,47 @@ dn_calc_size(int is64user)
 	 */
 	for (i = 0; i < HASHSIZE; i++) {
 		SLIST_FOREACH(p, &pipehash[i], next) {
+#if DUMMYNET_DEBUG
+			pq_count++;
+			pqe_count += p->fs.rq_elements;
+#endif /* DUMMYNET_DEBUG */
 			size += sizeof(*p) +
 			    p->fs.rq_elements * sizeof(struct dn_flow_queue);
 		}
 		SLIST_FOREACH(set, &flowsethash[i], next) {
+#if DUMMYNET_DEBUG
+			fsq_count++;
+			fsqe_count += set->rq_elements;
+#endif /* DUMMYNET_DEBUG */
 			size += sizeof(*set) +
 			    set->rq_elements * sizeof(struct dn_flow_queue);
 		}
 	}
+
+#if DUMMYNET_DEBUG
+	IP_DN_DBG_LOG("dn_size=%lu (pipe queues: count=%u elements=%u; flowset queues: count=%u elemnts=%u)",
+	    size, pq_count, pqe_count, fsq_count, fsqe_count);
+#endif /* DUMMYNET_DEBUG */
+
 	return size;
 }
 
 static int
 dummynet_get(struct sockopt *sopt)
 {
-	char *buf = NULL, *bp = NULL; /* bp is the "copy-pointer" */
+	char *buf = NULL;
+	char *bp_end = NULL; /* sentinel pointer */
+	char *bp __ended_by(bp_end) = bp_end; /* "copy-pointer" */
+	char *bp_next = NULL; /* next value for copy-pointer, may overflow */
 	size_t size = 0;
 	struct dn_flow_set *set;
 	struct dn_pipe *p;
 	int error = 0, i;
+	int overflow = 0;
 	int is64user = 0;
 
 	/* XXX lock held too long */
-	lck_mtx_lock(dn_mutex);
+	lck_mtx_lock(&dn_mutex);
 	/*
 	 * XXX: Ugly, but we need to allocate memory with M_WAITOK flag
 	 * and we cannot use this flag while holding a mutex.
@@ -2427,25 +2683,32 @@ dummynet_get(struct sockopt *sopt)
 	}
 	for (i = 0; i < 10; i++) {
 		size = dn_calc_size(is64user);
-		lck_mtx_unlock(dn_mutex);
-		buf = _MALLOC(size, M_TEMP, M_WAITOK | M_ZERO);
+		lck_mtx_unlock(&dn_mutex);
+		buf = kalloc_data(size, Z_WAITOK | Z_ZERO);
 		if (buf == NULL) {
-			return ENOBUFS;
+			return ENOMEM;
 		}
-		lck_mtx_lock(dn_mutex);
+		lck_mtx_lock(&dn_mutex);
 		if (size == dn_calc_size(is64user)) {
+			/*
+			 * This check is necessary, because pipes/flowsets can change
+			 * while we weren't holding the lock
+			 */
 			break;
 		}
-		FREE(buf, M_TEMP);
+		kfree_data(buf, size);
 		buf = NULL;
 	}
 	if (buf == NULL) {
-		lck_mtx_unlock(dn_mutex);
-		return ENOBUFS;
+		lck_mtx_unlock(&dn_mutex);
+		return ENOMEM;
 	}
 
-	bp = buf;
-	for (i = 0; i < HASHSIZE; i++) {
+	/* TODO: follow up why without this forge `bp' gets fishy bounds. */
+	bp = __unsafe_forge_bidi_indexable(char *, buf, size);
+	bp_end = buf + size;
+
+	for (i = 0; i < HASHSIZE && !overflow; i++) {
 		SLIST_FOREACH(p, &pipehash[i], next) {
 			/*
 			 * copy pipe descriptor into *bp, convert delay
@@ -2454,31 +2717,68 @@ dummynet_get(struct sockopt *sopt)
 			 * queue descriptor it owns.
 			 */
 			if (is64user) {
-				bp = cp_pipe_to_64_user(p,
-				    (struct dn_pipe_64 *)bp);
+				bp_next = cp_pipe_to_64_user(p, bp, bp_end);
 			} else {
-				bp = cp_pipe_to_32_user(p,
-				    (struct dn_pipe_32 *)bp);
+				bp_next = cp_pipe_to_32_user(p, bp, bp_end);
 			}
+			if (bp_next == NULL) {
+				IP_DN_DBG_LOG("Overflow detected old=0x%llx end=0x%llx",
+				    (uint64_t)VM_KERNEL_ADDRPERM(bp),
+				    (uint64_t)VM_KERNEL_ADDRPERM(bp_end));
+				overflow = 1;
+				break;
+			}
+			IP_DN_DBG_LOG("advancing bp: old=0x%llx new=0x%llx end=0x%llx",
+			    (uint64_t)VM_KERNEL_ADDRPERM(bp),
+			    (uint64_t)VM_KERNEL_ADDRPERM(bp_next),
+			    (uint64_t)VM_KERNEL_ADDRPERM(bp_end));
+			bp = bp_next;
+			bp_end = bp_end;
 		}
 	}
-	for (i = 0; i < HASHSIZE; i++) {
+
+#if DUMMYNET_DEBUG
+	if (overflow) {
+		IP_DN_DBG_LOG("Overflow detected old=0x%llx end=0x%llx",
+		    (uint64_t)VM_KERNEL_ADDRPERM(bp),
+		    (uint64_t)VM_KERNEL_ADDRPERM(bp_end));
+	}
+#endif
+
+	for (i = 0; i < HASHSIZE && !overflow; i++) {
 		SLIST_FOREACH(set, &flowsethash[i], next) {
-			struct dn_flow_set_64 *fs_bp =
-			    (struct dn_flow_set_64 *)bp;
+			struct dn_flow_set_64 *fs_bp;
+			bp_next = bp + sizeof(*fs_bp);
+			if (bp_end < bp_next) {
+				IP_DN_DBG_LOG("Overflow detected old=0x%llx end=0x%llx available=%lu required=%lu",
+				    (uint64_t)VM_KERNEL_ADDRPERM(bp),
+				    (uint64_t)VM_KERNEL_ADDRPERM(bp_end),
+				    bp_end - bp,
+				    sizeof(*fs_bp));
+				overflow = 1;
+				break;
+			}
+			fs_bp = (struct dn_flow_set_64 *)(void *)bp;
+			bp = bp_next;
+			bp_end = bp_end;
 			cp_flow_set_to_64_user(set, fs_bp);
 			/* XXX same hack as above */
 			fs_bp->next = CAST_DOWN(user64_addr_t,
 			    DN_IS_QUEUE);
 			fs_bp->pipe = USER_ADDR_NULL;
 			fs_bp->rq = USER_ADDR_NULL;
-			bp += sizeof(struct dn_flow_set_64);
-			bp = dn_copy_set_64( set, bp );
+			bp_next = dn_copy_set_64( set, bp, bp_end);
+			if (bp_next == NULL) {
+				overflow = 1;
+				break;
+			}
+			bp = bp_next;
+			bp_end = bp_end;
 		}
 	}
-	lck_mtx_unlock(dn_mutex);
+	lck_mtx_unlock(&dn_mutex);
 	error = sooptcopyout(sopt, buf, size);
-	FREE(buf, M_TEMP);
+	kfree_data(buf, size);
 	return error;
 }
 
@@ -2550,17 +2850,15 @@ void
 ip_dn_init(void)
 {
 	/* setup locks */
-	dn_mutex_grp_attr = lck_grp_attr_alloc_init();
-	dn_mutex_grp = lck_grp_alloc_init("dn", dn_mutex_grp_attr);
-	dn_mutex_attr = lck_attr_alloc_init();
-	lck_mtx_init(dn_mutex, dn_mutex_grp, dn_mutex_attr);
-
+	ready_heap.p = NULL;
 	ready_heap.size = ready_heap.elements = 0;
 	ready_heap.offset = 0;
 
+	wfq_ready_heap.p = NULL;
 	wfq_ready_heap.size = wfq_ready_heap.elements = 0;
 	wfq_ready_heap.offset = 0;
 
+	extract_heap.p = NULL;
 	extract_heap.size = extract_heap.elements = 0;
 	extract_heap.offset = 0;
 	ip_dn_ctl_ptr = ip_dn_ctl;
@@ -2573,28 +2871,95 @@ struct dn_event_nwk_wq_entry {
 };
 
 static void
-dummynet_event_callback(void *arg)
+dummynet_event_callback(struct nwk_wq_entry *nwk_item)
 {
-	struct dummynet_event *p_dn_ev = (struct dummynet_event *)arg;
+	struct dn_event_nwk_wq_entry *p_ev;
 
-	EVENTHANDLER_INVOKE(&dummynet_evhdlr_ctxt, dummynet_event, p_dn_ev);
-	return;
+	p_ev = __container_of(nwk_item, struct dn_event_nwk_wq_entry, nwk_wqe);
+
+	EVENTHANDLER_INVOKE(&dummynet_evhdlr_ctxt, dummynet_event, &p_ev->dn_ev_arg);
+
+	kfree_type(struct dn_event_nwk_wq_entry, p_ev);
 }
 
 void
 dummynet_event_enqueue_nwk_wq_entry(struct dummynet_event *p_dn_event)
 {
-	struct dn_event_nwk_wq_entry *p_dn_ev = NULL;
+	struct dn_event_nwk_wq_entry *p_ev = NULL;
 
-	MALLOC(p_dn_ev, struct dn_event_nwk_wq_entry *,
-	    sizeof(struct dn_event_nwk_wq_entry),
-	    M_NWKWQ, M_WAITOK | M_ZERO);
+	evhlog(debug, "%s: eventhandler enqueuing event of type=dummynet_event event_code=%s",
+	    __func__, dummynet_event2str(p_dn_event->dn_event_code));
 
-	p_dn_ev->nwk_wqe.func = dummynet_event_callback;
-	p_dn_ev->nwk_wqe.is_arg_managed = TRUE;
-	p_dn_ev->nwk_wqe.arg = &p_dn_ev->dn_ev_arg;
+	p_ev = kalloc_type(struct dn_event_nwk_wq_entry,
+	    Z_WAITOK | Z_ZERO | Z_NOFAIL);
+	p_ev->nwk_wqe.func = dummynet_event_callback;
+	p_ev->dn_ev_arg = *p_dn_event;
+	nwk_wq_enqueue(&p_ev->nwk_wqe);
+}
 
-	bcopy(p_dn_event, &(p_dn_ev->dn_ev_arg),
-	    sizeof(struct dummynet_event));
-	nwk_wq_enqueue((struct nwk_wq_entry*)p_dn_ev);
+const char *
+dummynet_event2str(int event)
+{
+	switch (event) {
+#define DUMMYNET_EVENT_TO_STRING(type) case type: return #type;
+		DUMMYNET_EVENT_TO_STRING(DUMMYNET_RULE_CONFIG)
+		DUMMYNET_EVENT_TO_STRING(DUMMYNET_RULE_DELETE)
+		DUMMYNET_EVENT_TO_STRING(DUMMYNET_PIPE_CONFIG)
+		DUMMYNET_EVENT_TO_STRING(DUMMYNET_PIPE_DELETE)
+		DUMMYNET_EVENT_TO_STRING(DUMMYNET_NLC_DISABLED)
+#undef DUMMYNET_EVENT_TO_STRING
+	}
+	return "UNKNOWN_DUMMYNET_EVENT";
+}
+
+struct dummynet_tag_container {
+	struct m_tag            dtc_m_tag;
+	struct dn_pkt_tag       dtc_dn_pkt_tag;
+};
+
+struct m_tag *
+m_tag_kalloc_dummynet(u_int32_t id, u_int16_t type, uint16_t len, int wait)
+{
+	struct dummynet_tag_container *tag_container;
+	struct m_tag *tag = NULL;
+
+	assert3u(id, ==, KERNEL_MODULE_TAG_ID);
+	assert3u(type, ==, KERNEL_TAG_TYPE_DUMMYNET);
+	assert3u(len, ==, sizeof(struct dn_pkt_tag));
+
+	if (len != sizeof(struct dn_pkt_tag)) {
+		return NULL;
+	}
+
+	tag_container = kalloc_type(struct dummynet_tag_container, wait | M_ZERO);
+	if (tag_container != NULL) {
+		tag =  &tag_container->dtc_m_tag;
+
+		assert3p(tag, ==, tag_container);
+
+		M_TAG_INIT(tag, id, type, len, &tag_container->dtc_dn_pkt_tag, NULL);
+	}
+
+	return tag;
+}
+
+void
+m_tag_kfree_dummynet(struct m_tag *tag)
+{
+	struct dummynet_tag_container *tag_container;
+
+	assert3u(tag->m_tag_len, ==, sizeof(struct dn_pkt_tag));
+	tag_container = __container_of(tag, struct dummynet_tag_container, dtc_m_tag);
+	kfree_type(struct dummynet_tag_container, tag_container);
+}
+
+void
+dummynet_register_m_tag(void)
+{
+	int error;
+
+	error = m_register_internal_tag_type(KERNEL_TAG_TYPE_DUMMYNET, sizeof(struct dn_pkt_tag),
+	    m_tag_kalloc_dummynet, m_tag_kfree_dummynet);
+
+	assert3u(error, ==, 0);
 }

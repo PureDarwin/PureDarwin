@@ -1,3 +1,10 @@
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../xnu/pd_apple_builtins.h")
+    add_compile_options(-include "${CMAKE_CURRENT_SOURCE_DIR}/../xnu/pd_apple_builtins.h")
+endif()
+
+# The legacy extension sources use the MacOSX branch of the XNU KPI headers.
+add_compile_definitions(XNU_PLATFORM_MacOSX=1)
+
 if(NOT PUREDARWIN_ARM64 AND NOT PUREDARWIN_ARM32)
     add_subdirectory(IOACPIFamily)
     add_subdirectory(PDACPIPlatform)
@@ -48,7 +55,6 @@ add_subdirectory(HFSEncodings)
 add_subdirectory(hfs)
 add_subdirectory(AppleFileSystemDriver)
 add_subdirectory(Ext4FileSystemDriver)
-add_subdirectory(pthread)
 add_subdirectory(PDBcm2835SD)
 
 add_custom_target(kexts)
@@ -65,7 +71,7 @@ add_dependencies(kexts
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
     IOAudioFamily.kext RavynHDAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext
-    AppleFileSystemDriver.kext Ext4FileSystemDriver.kext pthread.kext
+    AppleFileSystemDriver.kext Ext4FileSystemDriver.kext
 )
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     add_dependencies(kexts PDArmPlatformExpert)
@@ -83,3 +89,12 @@ if(NOT PUREDARWIN_ARM64 AND NOT PUREDARWIN_ARM32)
         PDACPIPlatform
     )
 endif()
+
+add_subdirectory(pthread)
+add_dependencies(kexts pthread.kext)
+
+# Permissive AppleMobileFileIntegrity stand-in: PureDarwin does not enforce
+# Apple code signing, so this registers the amfi_t/TrustCache vtables that
+# xnu 12377 requires a real AMFI kext to provide, with allow-all semantics.
+add_subdirectory(amfi)
+add_dependencies(kexts amfi.kext)

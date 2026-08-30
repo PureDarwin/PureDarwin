@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2015-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_APACHE_LICENSE_HEADER_START@
  *
@@ -36,7 +36,7 @@ __BEGIN_DECLS
  * The lower 8 bits are or-ed in the upper 8 bits of Activity ID and propagated
  * to children activities
  */
-    OS_OPTIONS(firehose_activity_flags, unsigned long,
+OS_OPTIONS(firehose_activity_flags, unsigned long,
     firehose_activity_flags_default             = 0x0000,
 
     firehose_activity_flags_info_mode           = 0x0001,
@@ -76,6 +76,7 @@ OS_ENUM(firehose_stream, uint8_t,
     firehose_stream_signpost                    = 4,
     firehose_stream_memory_wifi                 = 5,
     firehose_stream_memory_baseband             = 6,
+    firehose_stream_metric                      = 7,
 
     _firehose_stream_max,
     _firehose_stream_disabled = (uint8_t)-1,
@@ -94,6 +95,7 @@ OS_ENUM(firehose_tracepoint_namespace, uint8_t,
     firehose_tracepoint_namespace_metadata      = 0x05,
     firehose_tracepoint_namespace_signpost      = 0x06,
     firehose_tracepoint_namespace_loss          = 0x07,
+    firehose_tracepoint_namespace_metric        = 0x08,
     );
 
 /*!
@@ -103,10 +105,12 @@ OS_ENUM(firehose_tracepoint_namespace, uint8_t,
  * Codes of tracepoints.
  */
 OS_ENUM(firehose_tracepoint_code, uint32_t,
-    firehose_tracepoint_code_load               = 0x01,
-    firehose_tracepoint_code_unload             = 0x02,
-    firehose_tracepoint_code_load_filesystem    = 0x04,
-    firehose_tracepoint_code_load_memory        = 0x08,
+    firehose_tracepoint_code_invalid              = 0x00,
+    firehose_tracepoint_code_load                 = 0x01,
+    firehose_tracepoint_code_unload               = 0x02,
+    firehose_tracepoint_code_load_memory          = 0x08,
+    firehose_tracepoint_code_load_filesystem_ftab = 0x10,
+    firehose_tracepoint_code_load_exclavekit_dsc  = 0x20,
     );
 
 /*!
@@ -136,6 +140,7 @@ OS_OPTIONS(firehose_tracepoint_flags, uint16_t,
         _firehose_tracepoint_flags_pc_style__unused7            = 0x0007 << 1,
         _firehose_tracepoint_flags_base_has_unique_pid          = 0x0010,
         _firehose_tracepoint_flags_base_has_large_offset        = 0x0020,
+        _firehose_tracepoint_flags_base_has_persona             = 0x0040,
     );
 
 /*
@@ -241,6 +246,7 @@ OS_ENUM(_firehose_tracepoint_type_metadata, firehose_tracepoint_type_t,
     _firehose_tracepoint_type_metadata_subsystem            = 0x02,
     _firehose_tracepoint_type_metadata_kext                 = 0x03,
     _firehose_tracepoint_type_metadata_coprocessor          = 0x04,
+    _firehose_tracepoint_type_metadata_exclave              = 0x05,
     );
 
 /*!
@@ -278,6 +284,34 @@ OS_OPTIONS(_firehose_tracepoint_flags_signpost, uint16_t,
 
     // specific to signpost
     _firehose_tracepoint_flags_signpost_has_name            = 0x8000,
+    );
+
+/*!
+ * @enum _firehose_tracepoint_type_metric_t
+ *
+ * @abstract
+ * Types of Metric tracepoints (namespace metric).
+ */
+OS_ENUM(_firehose_tracepoint_type_metric, firehose_tracepoint_type_t,
+    _firehose_tracepoint_type_metric_integer                = 0x00,
+    _firehose_tracepoint_type_metric_double                 = 0x01,
+    );
+
+/*!
+ * @enum firehose_tracepoint_flags_metric_t
+ *
+ * @abstract
+ * Flags for Metric tracepoints (namespace metric).
+ *
+ * When flags are shared with the log type, they should have the same values.
+ */
+OS_OPTIONS(_firehose_tracepoint_flags_metric, uint16_t,
+    // shared with log
+    _firehose_tracepoint_flags_metric_has_private_data      = 0x0100,
+    _firehose_tracepoint_flags_metric_has_subsystem         = 0x0200,
+    _firehose_tracepoint_flags_metric_has_rules             = 0x0400,
+    _firehose_tracepoint_flags_metric_has_oversize          = 0x0800,
+    _firehose_tracepoint_flags_metric_has_context_data      = 0x1000,
     );
 
 /* MIG firehose push reply structure */

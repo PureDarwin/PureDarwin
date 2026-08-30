@@ -42,9 +42,6 @@
 
 #if defined(__arm64__)
 #include <pexpert/arm64/board_config.h>
-#if XNU_MONITOR_PPL_HIB
-#include <IOKit/SEPHibernator.h>
-#endif /* XNU_MONITOR_PPL_HIB */
 #endif /* defined(__arm64__) */
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -73,8 +70,6 @@ OSMetaClassDefineReservedUnused(IOPolledInterface, 15);
 #ifndef kIOMediaPreferredBlockSizeKey
 #define kIOMediaPreferredBlockSizeKey   "Preferred Block Size"
 #endif
-
-enum { kDefaultIOSize = 128 * 1024 };
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -109,7 +104,11 @@ IOPolledFilePollers::copyPollers(IOService * media)
 	IORegistryEntry * child;
 
 	if ((obj = media->copyProperty(kIOPolledInterfaceStackKey))) {
-		return OSDynamicCast(IOPolledFilePollers, obj);
+		IOPolledFilePollers * ioPFPObj = OSDynamicCast(IOPolledFilePollers, obj);
+		if (!ioPFPObj) {
+			OSSafeReleaseNULL(obj);
+		}
+		return ioPFPObj;
 	}
 
 	do{
@@ -207,7 +206,7 @@ IOPolledFilePollersOpen(IOPolledFileIOVars * filevars, uint32_t state, bool abor
 		ioBuffer = vars->ioBuffer;
 		if (!ioBuffer) {
 			vars->ioBuffer = ioBuffer = IOBufferMemoryDescriptor::withOptions(kIODirectionInOut,
-			    2 * kDefaultIOSize, page_size);
+			    kDefaultIONumBuffers * kDefaultIOSize, page_size);
 			if (!ioBuffer) {
 				return kIOReturnNoMemory;
 			}
@@ -447,7 +446,7 @@ file_extent_callback(void * ref, uint64_t start, uint64_t length)
 
 	extent.start  = start;
 	extent.length = length;
-	ctx->extents->appendBytes(&extent, sizeof(extent));
+	ctx->extents->appendValue(extent);
 	ctx->size += length;
 }
 
@@ -600,7 +599,7 @@ IOGetHibernationCryptKey(uint8_t * hibernationKey,
 IOReturn
 IOPolledFileOpen(const char * filename,
     uint32_t flags,
-    uint64_t setFileSize, uint64_t fsFreeSize,
+    uint64_t setFileSizeMin, uint64_t setFileSizeMax, uint64_t fsFreeSize,
     void * write_file_addr, size_t write_file_len,
     IOPolledFileIOVars ** fileVars,
     OSData ** imagePath,
@@ -617,11 +616,7 @@ IOPolledFileOpen(const char * filename,
 	AbsoluteTime         startTime, endTime;
 	uint64_t             nsec;
 
-	vars = IONew(IOPolledFileIOVars, 1);
-	if (!vars) {
-		return kIOReturnNoMemory;
-	}
-	bzero(vars, sizeof(*vars));
+	vars = IOMallocType(IOPolledFileIOVars);
 	vars->allocated = true;
 
 	do{
@@ -633,7 +628,8 @@ IOPolledFileOpen(const char * filename,
 		vars->fileRef = kern_open_file_for_direct_io(filename,
 		    flags,
 		    &file_extent_callback, &ctx,
-		    setFileSize,
+		    setFileSizeMin,
+		    setFileSizeMax,
 		    fsFreeSize,
 		    // write file:
 		    0, write_file_addr, write_file_len,
@@ -670,7 +666,9 @@ IOPolledFileOpen(const char * filename,
 			break;
 		}
 
-		vars->fileSize = ctx.size;
+		vars->fileSizeMin = setFileSizeMin;
+		vars->fileSizeMax = setFileSizeMax;
+		vars->fileSize    = ctx.size;
 		vars->extentMap = (IOPolledFileExtent *) extentsData->getBytesNoCopy();
 
 		part = IOCopyMediaForDev(image_dev);
@@ -750,21 +748,19 @@ IOPolledFileOpen(const char * filename,
 #endif
 			if (kIOReturnSuccess != err) {
 				HIBLOG("error 0x%x getting path\n", err);
+				OSSafeReleaseNULL(keyUUID);
 				break;
 			}
 			*imagePath = data;
 		}
 
 		// Release key UUID if we have one
-		if (keyUUID) {
-			keyUUID->release();
-			keyUUID = NULL; // Just in case
-		}
+		OSSafeReleaseNULL(keyUUID);
 	}while (false);
 
 	if (kIOReturnSuccess != err) {
 		HIBLOG("error 0x%x opening polled file\n", err);
-		IOPolledFileClose(&vars, 0, NULL, 0, 0, 0);
+		IOPolledFileClose(&vars, 0, NULL, 0, 0, 0, false);
 		if (extentsData) {
 			extentsData->release();
 		}
@@ -777,28 +773,12 @@ IOPolledFileOpen(const char * filename,
 	return err;
 }
 
-IOReturn
-IOPolledFileOpen(const char * filename,
-    uint32_t flags,
-    uint64_t setFileSize, uint64_t fsFreeSize,
-    void * write_file_addr, size_t write_file_len,
-    IOPolledFileIOVars ** fileVars,
-    OSSharedPtr<OSData>& imagePath,
-    uint8_t * volumeCryptKey, size_t * keySize)
-{
-	OSData* imagePathRaw = NULL;
-	IOReturn result = IOPolledFileOpen(filename, flags, setFileSize, fsFreeSize, write_file_addr, write_file_len,
-	    fileVars, &imagePathRaw, volumeCryptKey, keySize);
-	imagePath.reset(imagePathRaw, OSNoRetain);
-	return result;
-}
-
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 IOReturn
 IOPolledFileClose(IOPolledFileIOVars ** pVars,
     off_t write_offset, void * addr, size_t write_length,
-    off_t discard_offset, off_t discard_end)
+    off_t discard_offset, off_t discard_end, bool unlink)
 {
 	IOPolledFileIOVars * vars;
 
@@ -809,7 +789,7 @@ IOPolledFileClose(IOPolledFileIOVars ** pVars,
 
 	if (vars->fileRef) {
 		kern_close_file_for_direct_io(vars->fileRef, write_offset, addr, write_length,
-		    discard_offset, discard_end);
+		    discard_offset, discard_end, vars->fileSizeMin, unlink);
 		vars->fileRef = NULL;
 	}
 	if (vars->fileExtents) {
@@ -822,7 +802,7 @@ IOPolledFileClose(IOPolledFileIOVars ** pVars,
 	}
 
 	if (vars->allocated) {
-		IODelete(vars, IOPolledFileIOVars, 1);
+		IOFreeType(vars, IOPolledFileIOVars);
 	} else {
 		bzero(vars, sizeof(IOPolledFileIOVars));
 	}

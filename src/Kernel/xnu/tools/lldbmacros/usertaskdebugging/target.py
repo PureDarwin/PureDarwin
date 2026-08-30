@@ -1,3 +1,4 @@
+import binascii
 import logging
 import struct
 
@@ -16,7 +17,7 @@ class Process(object):
         - readMemory
     """
     def __init__(self, cputype, cpusubtype, ptrsize):
-        super(Process, self).__init__()
+        super().__init__()
         self.hinfo = {
             'cputype': cputype, 'cpusubtype': cpusubtype,
             'triple': None, 'vendor': 'apple', 'ostype': 'macosx',
@@ -34,7 +35,7 @@ class Process(object):
 
     def getHostInfo(self):
         retval = ''
-        for i in self.hinfo.keys():
+        for i in list(self.hinfo.keys()):
             if self.hinfo[i] is None:
                 continue
             retval += '%s:%s;' % (str(i), str(self.hinfo[i]))
@@ -127,7 +128,7 @@ class Process(object):
         if bytesize > 4:
             format = '<Q'
         packed_data = struct.pack(format, intdata)
-        return packed_data.encode('hex')
+        return binascii.hexlify(packed_data).decode()
 
     def encodePointerRegisterData(self, ptrdata):
         """ encodes pointer data based on ptrsize defined for the target """
@@ -135,7 +136,7 @@ class Process(object):
 
     def encodeThreadID(self, intdata):
         format = '>Q'
-        return struct.pack(format, intdata).encode('hex')
+        return binascii.hexlify(struct.pack(format, intdata)).decode()
 
     def encodeByteString(self, bytestr):
-        return bytestr.encode('hex')
+        return binascii.hexlify(bytestr).decode()

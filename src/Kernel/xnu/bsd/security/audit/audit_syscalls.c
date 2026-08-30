@@ -49,7 +49,6 @@
 #include <sys/vnode_internal.h>
 #include <sys/user.h>
 #include <sys/syscall.h>
-#include <sys/malloc.h>
 #include <sys/un.h>
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
@@ -177,8 +176,7 @@ audit(proc_t p, struct audit_args *uap, __unused int32_t *retval)
 		 * If a process is not running as root but is properly
 		 * entitled, allow it to audit non-kernel events only.
 		 */
-		if (!IOTaskHasEntitlement(current_task(),
-		    AU_AUDIT_USER_ENTITLEMENT)) {
+		if (!IOCurrentTaskHasEntitlement(AU_AUDIT_USER_ENTITLEMENT)) {
 			goto free_out;
 		}
 	} else {
@@ -189,8 +187,7 @@ audit(proc_t p, struct audit_args *uap, __unused int32_t *retval)
 	max_record_length = MIN(audit_qctrl.aq_bufsz, MAX_AUDIT_RECORD_SIZE);
 	mtx_unlock(&audit_mtx);
 
-	if (IOTaskHasEntitlement(current_task(),
-	    AU_CLASS_RESERVED_ENTITLEMENT)) {
+	if (IOCurrentTaskHasEntitlement(AU_CLASS_RESERVED_ENTITLEMENT)) {
 		/* Entitled tasks are trusted to add appropriate identity info */
 		add_identity_token = 0;
 	} else {
@@ -233,7 +230,7 @@ audit(proc_t p, struct audit_args *uap, __unused int32_t *retval)
 		ar = uthr->uu_ar;
 	}
 
-	rec = malloc(uap->length, M_AUDITDATA, M_WAITOK);
+	rec = kalloc_data(uap->length, Z_WAITOK);
 	if (!rec) {
 		error = ENOMEM;
 		goto free_out;
@@ -273,7 +270,7 @@ audit(proc_t p, struct audit_args *uap, __unused int32_t *retval)
 		}
 
 		/* Splice the record together using a new buffer */
-		full_rec = malloc(uap->length + id_tok->len, M_AUDITDATA, M_WAITOK);
+		full_rec = kalloc_data(uap->length + id_tok->len, Z_WAITOK);
 		if (!full_rec) {
 			error = ENOMEM;
 			goto free_out;
@@ -287,12 +284,13 @@ audit(proc_t p, struct audit_args *uap, __unused int32_t *retval)
 		bytes_copied = uap->length - AUDIT_TRAILER_SIZE;
 
 		/* Copy the identity token */
-		memcpy(full_rec + bytes_copied, id_tok->t_data, id_tok->len);
+		memcpy((void *)((uintptr_t)full_rec + bytes_copied), id_tok->t_data, id_tok->len);
 		bytes_copied += id_tok->len;
 
 		/* Copy the old trailer */
-		memcpy(full_rec + bytes_copied,
-		    rec + (uap->length - AUDIT_TRAILER_SIZE), AUDIT_TRAILER_SIZE);
+		memcpy((void *)((uintptr_t)full_rec + bytes_copied),
+		    (const void *)((uintptr_t)rec + (uap->length - AUDIT_TRAILER_SIZE)),
+		    AUDIT_TRAILER_SIZE);
 		bytes_copied += AUDIT_TRAILER_SIZE;
 
 		/* Fix the record size stored in the header token */
@@ -301,7 +299,7 @@ audit(proc_t p, struct audit_args *uap, __unused int32_t *retval)
 
 		/* Fix the record size stored in the trailer token */
 		trl = (struct trl_tok_partial*)
-		    (full_rec + bytes_copied - AUDIT_TRAILER_SIZE);
+		    ((uintptr_t)full_rec + bytes_copied - AUDIT_TRAILER_SIZE);
 		trl->len = htonl(bytes_copied);
 
 		udata = full_rec;
@@ -344,20 +342,18 @@ free_out:
 	 * will be attached to the kernel structure).
 	 */
 	if (rec && (add_identity_token || error)) {
-		free(rec, M_AUDITDATA);
+		kfree_data_addr(rec);
 	}
 
 	/* Only free full_rec if an error occurred */
 	if (full_rec && error) {
-		free(full_rec, M_AUDITDATA);
+		kfree_data_addr(full_rec);
 	}
 
 	audit_identity_info_destruct(&id_info);
 	if (id_tok) {
-		if (id_tok->t_data) {
-			free(id_tok->t_data, M_AUDITBSM);
-		}
-		free(id_tok, M_AUDITBSM);
+		kfree_data(id_tok->t_data, id_tok->len);
+		kfree_type(struct au_token, id_tok);
 	}
 
 	return error;
@@ -453,8 +449,7 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		break;
 	case A_SETCTLMODE:
 	case A_SETEXPAFTER:
-		if (!IOTaskHasEntitlement(current_task(),
-		    AU_CLASS_RESERVED_ENTITLEMENT)) {
+		if (!IOCurrentTaskHasEntitlement(AU_CLASS_RESERVED_ENTITLEMENT)) {
 			error = EPERM;
 		}
 		break;
@@ -476,8 +471,7 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		case A_SETFSIZE:
 		case A_SETPOLICY:
 		case A_SETQCTRL:
-			if (!IOTaskHasEntitlement(current_task(),
-			    AU_CLASS_RESERVED_ENTITLEMENT)) {
+			if (!IOCurrentTaskHasEntitlement(AU_CLASS_RESERVED_ENTITLEMENT)) {
 				error = EPERM;
 			}
 			break;
@@ -748,14 +742,14 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		    IS_NOT_VALID_PID(udata.au_aupinfo.ap_pid)) {
 			return EINVAL;
 		}
-		if ((tp = proc_find(udata.au_aupinfo.ap_pid)) == NULL) {
+
+		scred = kauth_cred_proc_ref_for_pid(udata.au_aupinfo.ap_pid);
+		if (scred == NOCRED) {
 			return ESRCH;
 		}
 
-		scred = kauth_cred_proc_ref(tp);
 		if (scred->cr_audit.as_aia_p->ai_termid.at_type == AU_IPv6) {
 			kauth_cred_unref(&scred);
-			proc_rele(tp);
 			return EINVAL;
 		}
 
@@ -771,9 +765,8 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		    scred->cr_audit.as_aia_p->ai_termid.at_port;
 		udata.au_aupinfo.ap_asid =
 		    scred->cr_audit.as_aia_p->ai_asid;
+
 		kauth_cred_unref(&scred);
-		proc_rele(tp);
-		tp = PROC_NULL;
 		break;
 
 	case A_SETPMASK:
@@ -784,9 +777,13 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		if ((tp = proc_find(udata.au_aupinfo.ap_pid)) == NULL) {
 			return ESRCH;
 		}
-		scred = kauth_cred_proc_ref(tp);
+
+		smr_proc_task_enter();
+		scred = proc_ucred_smr(tp);
 		bcopy(scred->cr_audit.as_aia_p, &aia, sizeof(aia));
-		kauth_cred_unref(&scred);
+		scred = NOCRED;
+		smr_proc_task_leave();
+
 		aia.ai_mask.am_success =
 		    udata.au_aupinfo.ap_mask.am_success;
 		aia.ai_mask.am_failure =
@@ -826,13 +823,15 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		    IS_NOT_VALID_PID(udata.au_aupinfo_addr.ap_pid)) {
 			return EINVAL;
 		}
-		if ((tp = proc_find(udata.au_aupinfo.ap_pid)) == NULL) {
+		scred = kauth_cred_proc_ref_for_pid(udata.au_aupinfo.ap_pid);
+		if (scred == NOCRED) {
 			return ESRCH;
 		}
+
 		WARN_IF_AINFO_ADDR_CHANGED(uap->length,
 		    sizeof(auditpinfo_addr_t), "auditon(A_GETPINFO_ADDR,...)",
 		    "auditpinfo_addr_t");
-		scred = kauth_cred_proc_ref(tp);
+
 		udata.au_aupinfo_addr.ap_auid =
 		    scred->cr_audit.as_aia_p->ai_auid;
 		udata.au_aupinfo_addr.ap_asid =
@@ -846,9 +845,8 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		    sizeof(au_tid_addr_t));
 		udata.au_aupinfo_addr.ap_flags =
 		    scred->cr_audit.as_aia_p->ai_flags;
+
 		kauth_cred_unref(&scred);
-		proc_rele(tp);
-		tp = PROC_NULL;
 		break;
 
 	case A_GETKAUDIT:
@@ -891,7 +889,9 @@ auditon(proc_t p, struct auditon_args *uap, __unused int32_t *retval)
 		if (sizeof(udata.au_flags) != uap->length) {
 			return EINVAL;
 		}
-		bcopy(kauth_cred_get()->cr_audit.as_aia_p, &aia, sizeof(aia));
+		scred = kauth_cred_get();
+		bcopy(scred->cr_audit.as_aia_p, &aia, sizeof(aia));
+		bcopy(&scred->cr_audit.as_mask, &aia.ai_mask, sizeof(au_mask_t));
 		aia.ai_flags = udata.au_flags;
 		error = audit_session_setaia(p, &aia);
 		if (error) {
@@ -995,7 +995,6 @@ getauid(proc_t p, struct getauid_args *uap, __unused int32_t *retval)
 {
 	au_id_t id;
 	int error;
-	kauth_cred_t scred;
 
 #if CONFIG_MACF
 	error = mac_proc_check_getauid(p);
@@ -1003,9 +1002,7 @@ getauid(proc_t p, struct getauid_args *uap, __unused int32_t *retval)
 		return error;
 	}
 #endif
-	scred = kauth_cred_proc_ref(p);
-	id = scred->cr_audit.as_aia_p->ai_auid;
-	kauth_cred_unref(&scred);
+	id = current_cached_proc_cred(p)->cr_audit.as_aia_p->ai_auid;
 
 	error = copyout((void *)&id, uap->auid, sizeof(id));
 	if (error) {
@@ -1037,10 +1034,9 @@ setauid(proc_t p, struct setauid_args *uap, __unused int32_t *retval)
 	}
 #endif
 
-	scred = kauth_cred_proc_ref(p);
+	scred = current_cached_proc_cred(p);
 	error = suser(scred, &p->p_acflag);
 	if (error) {
-		kauth_cred_unref(&scred);
 		return error;
 	}
 
@@ -1049,7 +1045,7 @@ setauid(proc_t p, struct setauid_args *uap, __unused int32_t *retval)
 		aia.ai_asid = AU_ASSIGN_ASID;
 	}
 	bcopy(&scred->cr_audit.as_mask, &aia.ai_mask, sizeof(au_mask_t));
-	kauth_cred_unref(&scred);
+
 	aia.ai_auid = id;
 	error = audit_session_setaia(p, &aia);
 
@@ -1057,21 +1053,21 @@ setauid(proc_t p, struct setauid_args *uap, __unused int32_t *retval)
 }
 
 static int
-getaudit_addr_internal(proc_t p, user_addr_t user_addr, size_t length)
+getaudit_addr_internal(proc_t p, kauth_cred_t scred, user_addr_t user_addr, size_t length)
 {
-	kauth_cred_t scred;
 	auditinfo_addr_t aia;
 
-	scred = kauth_cred_proc_ref(p);
 	bcopy(scred->cr_audit.as_aia_p, &aia, sizeof(auditinfo_addr_t));
+
 	/*
 	 * Only superuser gets to see the real mask.
 	 */
 	if (suser(scred, &p->p_acflag)) {
 		aia.ai_mask.am_success = ~0;
 		aia.ai_mask.am_failure = ~0;
+	} else {
+		bcopy(&scred->cr_audit.as_mask, &aia.ai_mask, sizeof(au_mask_t));
 	}
-	kauth_cred_unref(&scred);
 
 	return copyout(&aia, user_addr, min(sizeof(aia), length));
 }
@@ -1081,6 +1077,7 @@ int
 getaudit_addr(proc_t p, struct getaudit_addr_args *uap,
     __unused int32_t *retval)
 {
+	kauth_cred_t scred;
 #if CONFIG_MACF
 	int error = mac_proc_check_getaudit(p);
 
@@ -1091,7 +1088,8 @@ getaudit_addr(proc_t p, struct getaudit_addr_args *uap,
 	WARN_IF_AINFO_ADDR_CHANGED(uap->length, sizeof(auditinfo_addr_t),
 	    "getaudit_addr(2)", "auditinfo_addr_t");
 
-	return getaudit_addr_internal(p, uap->auditinfo_addr, uap->length);
+	scred = current_cached_proc_cred(p);
+	return getaudit_addr_internal(p, scred, uap->auditinfo_addr, uap->length);
 }
 
 /* ARGSUSED */
@@ -1100,7 +1098,6 @@ setaudit_addr(proc_t p, struct setaudit_addr_args *uap,
     __unused int32_t *retval)
 {
 	struct auditinfo_addr aia;
-	kauth_cred_t scred;
 	int error;
 
 	bzero(&aia, sizeof(auditinfo_addr_t));
@@ -1126,17 +1123,14 @@ setaudit_addr(proc_t p, struct setaudit_addr_args *uap,
 	}
 #endif
 
-	scred = kauth_cred_proc_ref(p);
-	error = suser(scred, &p->p_acflag);
+	error = suser(current_cached_proc_cred(p), &p->p_acflag);
 	if (error) {
-		kauth_cred_unref(&scred);
 		return error;
 	}
 
 	WARN_IF_AINFO_ADDR_CHANGED(uap->length, sizeof(auditinfo_addr_t),
 	    "setaudit_addr(2)", "auditinfo_addr_t");
 	WARN_IF_BAD_ASID(aia.ai_asid, "setaudit_addr(2)");
-	kauth_cred_unref(&scred);
 
 	AUDIT_CHECK_IF_KEVENTS_MASK(aia.ai_mask);
 	if (aia.ai_asid == AU_DEFAUDITSID) {
@@ -1151,10 +1145,17 @@ setaudit_addr(proc_t p, struct setaudit_addr_args *uap,
 	/*
 	 * If asked to assign an ASID then let the user know what the ASID is
 	 * by copying the auditinfo_addr struct back out.
+	 *
+	 * Note: because we just updated the proc cred, we can't use
+	 * current_cached_proc_cred_ref() here.
 	 */
 	if (aia.ai_asid == AU_ASSIGN_ASID) {
-		error = getaudit_addr_internal(p, uap->auditinfo_addr,
+		kauth_cred_t scred;
+
+		scred = kauth_cred_proc_ref(p);
+		error = getaudit_addr_internal(p, scred, uap->auditinfo_addr,
 		    uap->length);
+		kauth_cred_unref(&scred);
 	}
 
 	return error;
@@ -1185,7 +1186,7 @@ auditctl(proc_t p, struct auditctl_args *uap, __unused int32_t *retval)
 	 * Do not allow setting of a path when auditing is in reserved mode
 	 */
 	if (ctlmode == AUDIT_CTLMODE_EXTERNAL &&
-	    !IOTaskHasEntitlement(current_task(), AU_AUDITCTL_RESERVED_ENTITLEMENT)) {
+	    !IOCurrentTaskHasEntitlement(AU_AUDITCTL_RESERVED_ENTITLEMENT)) {
 		return EPERM;
 	}
 

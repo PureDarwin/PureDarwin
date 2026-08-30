@@ -62,17 +62,21 @@
  */
 
 subsystem
-#if	KERNEL_SERVER
-	  KernelServer
-#endif	/* KERNEL_SERVER */
+#if	KERNEL_SERVER || KOBJECT_SERVER
+	KernelServer
+#endif	/* KERNEL_SERVER || KOBJECT_SERVER */
 	  vm_map 3800;
+
+#if KERNEL_SERVER
+#define VM_KERNEL_SERVER 1
+#endif
 
 #include <mach/std_types.defs>
 #include <mach/mach_types.defs>
 #include <mach_debug/mach_debug_types.defs>
 
 #define CONCAT(a,b) a ## b
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 #define PREFIX(NAME) CONCAT(_kernelrpc_, NAME)
 #else
 #define PREFIX(NAME) NAME
@@ -82,6 +86,13 @@ subsystem
 #define KERNEL_SERVER_SUFFIX(NAME) CONCAT(NAME, _external)
 #else
 #define KERNEL_SERVER_SUFFIX(NAME) NAME
+#endif
+
+/* If building for Sandbox, keep NAME unchanged */
+#if SANDBOX_COMPILER
+#define KERNEL_SERVER_SUFFIX_SANDBOX(NAME) NAME
+#else
+#define KERNEL_SERVER_SUFFIX_SANDBOX(NAME) KERNEL_SERVER_SUFFIX(NAME)
 #endif
 
 /*
@@ -96,7 +107,7 @@ subsystem
  *      the one specified are allocated, the call returns KERN_NO_SPACE.]
  */
 routine vm_region(
-                target_task     : vm_map_t;
+                target_task     : vm_map_read_t;
 	inout	address		: vm_address_t;
         out     size            : vm_size_t;
 		flavor		: vm_region_flavor_t;
@@ -113,7 +124,7 @@ routine vm_region(
  *	allocation actually took place is returned.
  */
 
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 skip;
 #else
 routine PREFIX(KERNEL_SERVER_SUFFIX(vm_allocate))(
@@ -129,7 +140,7 @@ routine PREFIX(KERNEL_SERVER_SUFFIX(vm_allocate))(
  *	address space of the target task.
  */
 
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 skip;
 #else
 routine PREFIX(vm_deallocate)(
@@ -150,7 +161,7 @@ routine PREFIX(vm_deallocate)(
  *	*permissions*.
  */
 
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 skip;
 #else
 routine PREFIX(vm_protect)(
@@ -182,7 +193,7 @@ routine vm_inherit(
  *	protection on the specified range must permit reading.]
  */
 routine PREFIX(vm_read) (
-		target_task	: vm_map_t;
+		target_task	: vm_map_read_t;
 		address		: vm_address_t;
 		size		: vm_size_t;
 	out	data		: pointer_t);
@@ -192,7 +203,7 @@ routine PREFIX(vm_read) (
  * ranges within target address space.
  */
 routine vm_read_list(
-		target_task 	: vm_map_t;
+		target_task 	: vm_map_read_t;
 	inout	data_list   	: vm_read_entry_t;
 		count		: natural_t);
 
@@ -233,7 +244,7 @@ routine vm_copy(
  *	must permit reading.]
  */
 routine vm_read_overwrite(
-		target_task	: vm_map_t;
+		target_task	: vm_map_read_t;
 		address		: vm_address_t;
 		size		: vm_size_t;
 		data		: vm_address_t;
@@ -244,7 +255,7 @@ routine vm_msync(
 		target_task	: vm_map_t;
 		address		: vm_address_t;
 		size		: vm_size_t;
-		sync_flags	: vm_sync_t );
+		sync_flags	: vm_sync_t);
 
 /*
  *	Set the paging behavior attribute for the specified range
@@ -361,7 +372,7 @@ routine mach_make_memory_entry(
  *      address space.  If a page is mapped return ref and dirty info.
  */
 routine vm_map_page_query(
-                target_map      :vm_map_t;
+                target_map      :vm_map_read_t;
                 offset          :vm_offset_t;
         out     disposition     :integer_t;
         out     ref_count       :integer_t);
@@ -373,37 +384,23 @@ routine vm_map_page_query(
  *      otherwise returns KERN_FAILURE.
  */
 routine mach_vm_region_info(
-		task		: vm_map_t;
+		task		: vm_map_read_t;
 		address		: vm_address_t;
 	out	region		: vm_info_region_t;
 	out	objects		: vm_info_object_array_t);
 
-routine	vm_mapped_pages_info(
-		task		: vm_map_t;
+routine	vm_mapped_pages_info(  /* OBSOLETE */
+		task		: vm_map_read_t;
 	out	pages		: page_address_array_t);
 
-#if 0
-/*
- *    Allow application level processes to create named entries which
- *    are backed by sub-maps which describe regions of address space.
- *    These regions of space can have objects mapped into them and
- *    in turn, can be mapped into target address spaces 
- */
-
-routine	vm_region_object_create(
-		target_task	:vm_map_t;
-	in	size		:vm_size_t;
-	out	region_object	:mach_port_move_send_t);
-#else
 skip; /* was vm_region_object_create */
-#endif
 
 /*
  *	A recursive form of vm_region which probes submaps withint the
  *	address space.
  */
 routine vm_region_recurse(
-                target_task     : vm_map_t;
+                target_task     : vm_map_read_t;
 	inout	address		: vm_address_t;
         out     size            : vm_size_t;
 	inout	nesting_depth	: natural_t;
@@ -417,20 +414,20 @@ routine vm_region_recurse(
 
 
 routine vm_region_recurse_64(
-                target_task     : vm_map_t;
+                target_task     : vm_map_read_t;
 	inout	address		: vm_address_t;
         out     size            : vm_size_t;
 	inout	nesting_depth	: natural_t;
 	out	info		: vm_region_recurse_info_t,CountInOut);
 
-routine mach_vm_region_info_64(
-		task		: vm_map_t;
+routine mach_vm_region_info_64( /* OBSOLETE */
+		task		: vm_map_read_t;
 		address		: vm_address_t;
 	out	region		: vm_info_region_64_t;
 	out	objects		: vm_info_object_array_t);
 
 routine vm_region_64(
-                target_task     : vm_map_t;
+                target_task     : vm_map_read_t;
 	inout	address		: vm_address_t;
         out     size            : vm_size_t;
 		flavor		: vm_region_flavor_t;
@@ -462,32 +459,9 @@ routine KERNEL_SERVER_SUFFIX(vm_map_64)(
 		max_protection	: vm_prot_t;
 		inheritance	: vm_inherit_t);
 
-#if 0
-/*
- * The UPL interfaces are not ready for user-level export.
- */
-routine vm_map_get_upl(
-		target_task	: vm_map_t;
-		address		: vm_map_offset_t;
-	inout	size		: vm_size_t;
-	out	upl		: upl_t;
-	out	page_info	: upl_page_info_array_t, CountInOut;
-	inout	flags		: integer_t;
-		force_data_sync	: integer_t);
-
-routine vm_upl_map(
-		target_task	: vm_map_t;
-		upl		: upl_t;
-	inout	address		: vm_address_t);
-
-routine vm_upl_unmap(
-		target_task	: vm_map_t;
-		upl		: upl_t);
-#else
 skip; /* was vm_map_get_upl */
 skip; /* was vm_upl_map */
 skip; /* was vm_upl_unmap */
-#endif		
 
 /*
  *	Control behavior and investigate state of a "purgable" object in
@@ -496,8 +470,12 @@ skip; /* was vm_upl_unmap */
  *	specified.  See the routine implementation for a complete
  *	definition of the routine.
  */
-routine PREFIX(vm_purgable_control) (
+routine PREFIX(KERNEL_SERVER_SUFFIX_SANDBOX(vm_purgable_control)) (
+#if KERNEL_SERVER
+		target_tport: mach_port_t;
+#else
 		target_task	: vm_map_t;
+#endif
 		address		: vm_address_t;
 		control		: vm_purgable_t;
 	inout	state		: int);
@@ -508,19 +486,33 @@ routine vm_map_exec_lockdown(
 
 routine PREFIX(KERNEL_SERVER_SUFFIX(vm_remap_new)) (
 		target_task	: vm_map_t;
-inout	target_address	: vm_address_t;
+	inout	target_address	: vm_address_t;
 		size		: vm_size_t;
 		mask		: vm_address_t;
 		flags		: int;
 #ifdef KERNEL_SERVER
-		src_tport   : mach_port_t;
+		src_tport	: mach_port_t;
 #else
 		src_task	: vm_map_read_t;
 #endif
 		src_address	: vm_address_t;
 		copy		: boolean_t;
-inout	cur_protection	: vm_prot_t;
-inout	max_protection	: vm_prot_t;
+	inout	cur_protection	: vm_prot_t;
+	inout	max_protection	: vm_prot_t;
 		inheritance	: vm_inherit_t);
+
+/*
+ * Relocate the pages of the source range of the specified map to a new range
+ * of the given size in bytes within the same map.
+ */
+routine PREFIX(vm_reallocate) (
+			target_task		: vm_map_t;
+			src				: vm_address_t;
+			src_size		: vm_size_t;
+	inout	dst				: vm_address_t;
+  			dst_size 		: vm_size_t;
+			align_mask		: vm_offset_t;
+			options		    : int;
+			flags			: int);
 
 /* vim: set ft=c : */

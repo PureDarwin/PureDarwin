@@ -35,16 +35,29 @@
 #endif /* __has_feature(ptrauth_calls) */
 
 #include "log_encode.h"
+#include "log_internal.h"
 #include "log_mem.h"
 
-#define isdigit(ch) (((ch) >= '0') && ((ch) <= '9'))
+#define LOG_FMT_MAX_PRECISION (1024)
 #define log_context_cursor(ctx) &(ctx)->ctx_hdr->hdr_data[(ctx)->ctx_content_off]
+#define TRACEPOINT_BUF_MAX_SIZE (64)
 
-extern boolean_t doprnt_hide_pointers;
+typedef struct {
+	uint8_t *tp_buf;
+	size_t  tp_size;
+} tracepoint_buf_t;
 
 SCALABLE_COUNTER_DEFINE(oslog_p_fmt_invalid_msgcount);
 SCALABLE_COUNTER_DEFINE(oslog_p_fmt_max_args_msgcount);
 SCALABLE_COUNTER_DEFINE(oslog_p_truncated_msgcount);
+
+extern boolean_t doprnt_hide_pointers;
+
+static bool
+is_digit(char ch)
+{
+	return (ch >= '0') && (ch <= '9');
+}
 
 static bool
 is_kernel_pointer(void *arg, size_t arg_len)
@@ -57,15 +70,7 @@ is_kernel_pointer(void *arg, size_t arg_len)
 	assert(arg_len <= sizeof(value));
 	(void) memcpy(&value, arg, arg_len);
 
-#if __has_feature(ptrauth_calls)
-	/**
-	 * Strip out the pointer authentication code before
-	 * checking whether the pointer is a kernel address.
-	 */
-	value = (unsigned long long)VM_KERNEL_STRIP_PTR(value);
-#endif /* __has_feature(ptrauth_calls) */
-
-	return value >= VM_MIN_KERNEL_AND_KEXT_ADDRESS && value <= VM_MAX_KERNEL_ADDRESS;
+	return VM_KERNEL_ADDRESS(value);
 }
 
 static void
@@ -239,7 +244,7 @@ log_expand(os_log_context_t ctx, size_t new_size)
 
 	size_t final_size = new_size;
 
-	void *buf = logmem_alloc(ctx->ctx_logmem, &final_size);
+	void *buf = logmem_alloc_locked(ctx->ctx_logmem, &final_size);
 	if (!buf) {
 		return false;
 	}
@@ -252,7 +257,7 @@ log_expand(os_log_context_t ctx, size_t new_size)
 	(void) memcpy(buf, ctx->ctx_buffer, copy_size);
 
 	if (ctx->ctx_allocated) {
-		logmem_free(ctx->ctx_logmem, ctx->ctx_buffer, ctx->ctx_buffer_sz);
+		logmem_free_locked(ctx->ctx_logmem, ctx->ctx_buffer, ctx->ctx_buffer_sz);
 	}
 
 	ctx->ctx_buffer = buf;
@@ -294,25 +299,26 @@ log_encode_fmt_arg(void *arg, size_t arg_len, os_log_fmt_cmd_type_t type, os_log
 static int
 log_encode_fmt(os_log_context_t ctx, const char *format, va_list args)
 {
-	const char *percent = strchr(format, '%');
+	const char *position = format;
 
-	while (percent != NULL) {
-		++percent;
+	while ((position = strchr(position, '%'))) {
+		position++; // Look at character(s) after %.
 
-		if (percent[0] == '%') {
-			percent = strchr(percent + 1, '%'); // Find next format after %%
-			continue;
-		}
+		int type = OST_INT;
+		boolean_t has_precision = false;
+		int precision = 0;
 
-		struct os_log_format_value_s value;
-		int     type = OST_INT;
-		int     prec = 0;
-		char    ch;
-
-		for (bool done = false; !done; percent++) {
+		for (bool done = false; !done; position++) {
+			union os_log_fmt_types_u value;
+			size_t str_length;
 			int err = 0;
 
-			switch (ch = percent[0]) {
+			switch (position[0]) {
+			case '%':
+				// %% prints % character
+				done = true;
+				break;
+
 			/* type of types or other */
 			case 'l': // longer
 				type++;
@@ -339,27 +345,25 @@ log_encode_fmt(os_log_context_t ctx, const char *format, va_list args)
 				break;
 
 			case '.': // precision
-				if ((percent[1]) == '*') {
-					prec = va_arg(args, int);
-					err = log_encode_fmt_arg(&prec, sizeof(prec), OSLF_CMD_TYPE_COUNT, ctx);
-					if (slowpath(err)) {
-						return err;
-					}
-					percent++;
-					continue;
+				if (position[1] == '*') {
+					// Dynamic precision, argument holds actual value.
+					precision = va_arg(args, int);
+					position++;
 				} else {
-					// we have to read the precision and do the right thing
-					const char *fmt = percent + 1;
-					prec = 0;
-					while (isdigit(ch = *fmt++)) {
-						prec = 10 * prec + (ch - '0');
+					// Static precision, the value follows in the fmt.
+					precision = 0;
+					while (is_digit(position[1])) {
+						if (precision < LOG_FMT_MAX_PRECISION) {
+							precision = 10 * precision + (position[1] - '0');
+						}
+						position++;
 					}
-
-					if (prec > 1024) {
-						prec = 1024;
-					}
-
-					err = log_encode_fmt_arg(&prec, sizeof(prec), OSLF_CMD_TYPE_COUNT, ctx);
+					precision = MIN(precision, LOG_FMT_MAX_PRECISION);
+				}
+				err = log_encode_fmt_arg(&precision, sizeof(precision), OSLF_CMD_TYPE_COUNT, ctx);
+				// A negative precision is treated as though it were missing.
+				if (precision >= 0) {
+					has_precision = true;
 				}
 				break;
 
@@ -379,43 +383,43 @@ log_encode_fmt(os_log_context_t ctx, const char *format, va_list args)
 			case 'X': // upper-hex
 				switch (type) {
 				case OST_CHAR:
-					value.type.ch = (char) va_arg(args, int);
-					err = log_encode_fmt_arg(&value.type.ch, sizeof(value.type.ch), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.ch = (char) va_arg(args, int);
+					err = log_encode_fmt_arg(&value.ch, sizeof(value.ch), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				case OST_SHORT:
-					value.type.s = (short) va_arg(args, int);
-					err = log_encode_fmt_arg(&value.type.s, sizeof(value.type.s), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.s = (short) va_arg(args, int);
+					err = log_encode_fmt_arg(&value.s, sizeof(value.s), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				case OST_INT:
-					value.type.i = va_arg(args, int);
-					err = log_encode_fmt_arg(&value.type.i, sizeof(value.type.i), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.i = va_arg(args, int);
+					err = log_encode_fmt_arg(&value.i, sizeof(value.i), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				case OST_LONG:
-					value.type.l = va_arg(args, long);
-					err = log_encode_fmt_arg(&value.type.l, sizeof(value.type.l), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.l = va_arg(args, long);
+					err = log_encode_fmt_arg(&value.l, sizeof(value.l), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				case OST_LONGLONG:
-					value.type.ll = va_arg(args, long long);
-					err = log_encode_fmt_arg(&value.type.ll, sizeof(value.type.ll), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.ll = va_arg(args, long long);
+					err = log_encode_fmt_arg(&value.ll, sizeof(value.ll), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				case OST_SIZE:
-					value.type.z = va_arg(args, size_t);
-					err = log_encode_fmt_arg(&value.type.z, sizeof(value.type.z), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.z = va_arg(args, size_t);
+					err = log_encode_fmt_arg(&value.z, sizeof(value.z), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				case OST_INTMAX:
-					value.type.im = va_arg(args, intmax_t);
-					err = log_encode_fmt_arg(&value.type.im, sizeof(value.type.im), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.im = va_arg(args, intmax_t);
+					err = log_encode_fmt_arg(&value.im, sizeof(value.im), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				case OST_PTRDIFF:
-					value.type.pd = va_arg(args, ptrdiff_t);
-					err = log_encode_fmt_arg(&value.type.pd, sizeof(value.type.pd), OSLF_CMD_TYPE_SCALAR, ctx);
+					value.pd = va_arg(args, ptrdiff_t);
+					err = log_encode_fmt_arg(&value.pd, sizeof(value.pd), OSLF_CMD_TYPE_SCALAR, ctx);
 					break;
 
 				default:
@@ -425,47 +429,59 @@ log_encode_fmt(os_log_context_t ctx, const char *format, va_list args)
 				break;
 
 			case 'p': // pointer
-				value.type.p = va_arg(args, void *);
-				err = log_encode_fmt_arg(&value.type.p, sizeof(value.type.p), OSLF_CMD_TYPE_SCALAR, ctx);
+				value.p = va_arg(args, void *);
+				err = log_encode_fmt_arg(&value.p, sizeof(value.p), OSLF_CMD_TYPE_SCALAR, ctx);
 				done = true;
 				break;
 
 			case 'c': // char
-				value.type.ch = (char) va_arg(args, int);
-				err = log_encode_fmt_arg(&value.type.ch, sizeof(value.type.ch), OSLF_CMD_TYPE_SCALAR, ctx);
+				value.ch = (char) va_arg(args, int);
+				err = log_encode_fmt_arg(&value.ch, sizeof(value.ch), OSLF_CMD_TYPE_SCALAR, ctx);
 				done = true;
 				break;
 
 			case 's': // string
-				value.type.pch = va_arg(args, char *);
-				if (prec == 0 && value.type.pch) {
-					prec = (int) strlen(value.type.pch) + 1;
+				value.pch = va_arg(args, char *);
+				if (!value.pch) {
+					str_length = 0;
+				} else if (has_precision) {
+					assert(precision >= 0);
+					str_length = strnlen(value.pch, precision);
+				} else {
+					str_length = strlen(value.pch) + 1;
 				}
-				err = log_encode_fmt_arg(value.type.pch, prec, OSLF_CMD_TYPE_STRING, ctx);
-				prec = 0;
+				err = log_encode_fmt_arg(value.pch, str_length, OSLF_CMD_TYPE_STRING, ctx);
 				done = true;
 				break;
 
 			case 'm':
-				value.type.i = 0; // Does %m make sense in the kernel?
-				err = log_encode_fmt_arg(&value.type.i, sizeof(value.type.i), OSLF_CMD_TYPE_SCALAR, ctx);
+				value.i = 0; // Does %m make sense in the kernel?
+				err = log_encode_fmt_arg(&value.i, sizeof(value.i), OSLF_CMD_TYPE_SCALAR, ctx);
+				done = true;
+				break;
+
+			case '0' ... '9':
+				// Skipping field width, libtrace takes care of it.
+				break;
+
+			case 'e':
+			case 'E':
+			case 'a': // float hex
+			case 'A': // float hex upper
+			case 'g':
+			case 'f':
+				// floats are always promoted to doubles
+				value.f = va_arg(args, double);
+				err = log_encode_fmt_arg(&value.f, sizeof(value.f), OSLF_CMD_TYPE_SCALAR, ctx);
 				done = true;
 				break;
 
 			default:
-				if (isdigit(ch)) { // [0-9]
-					continue;
-				}
 				return EINVAL;
 			}
 
 			if (slowpath(err)) {
 				return err;
-			}
-
-			if (done) {
-				percent = strchr(percent, '%'); // Find next format
-				break;
 			}
 		}
 	}
@@ -473,52 +489,35 @@ log_encode_fmt(os_log_context_t ctx, const char *format, va_list args)
 	return 0;
 }
 
-static inline size_t
-write_address_location(uint8_t buf[static sizeof(uint64_t)],
-    void *dso, const void *address, firehose_tracepoint_flags_t *flags, bool driverKit)
+OS_ALWAYS_INLINE
+static inline void
+tracepoint_buf_add(tracepoint_buf_t *tp, const void *data, size_t size)
 {
-	uintptr_t shift_addr = (uintptr_t)address - (uintptr_t)dso;
-
-	kc_format_t kcformat = KCFormatUnknown;
-	__assert_only bool result = PE_get_primary_kc_format(&kcformat);
-	assert(result);
-
-	if (kcformat == KCFormatStatic || kcformat == KCFormatKCGEN) {
-		*flags = _firehose_tracepoint_flags_pc_style_shared_cache;
-		memcpy(buf, (uint32_t[]){ (uint32_t)shift_addr }, sizeof(uint32_t));
-		return sizeof(uint32_t);
-	}
-
-	/*
-	 * driverKit will have the dso set as MH_EXECUTE (it is logging from a
-	 * syscall in the kernel) but needs logd to parse the address as an
-	 * absolute pc.
-	 */
-	kernel_mach_header_t *mh = dso;
-	if (mh->filetype == MH_EXECUTE && !driverKit) {
-		*flags = _firehose_tracepoint_flags_pc_style_main_exe;
-		memcpy(buf, (uint32_t[]){ (uint32_t)shift_addr }, sizeof(uint32_t));
-		return sizeof(uint32_t);
-	}
-
-	*flags = _firehose_tracepoint_flags_pc_style_absolute;
-	shift_addr = driverKit ? (uintptr_t)address : VM_KERNEL_UNSLIDE(address);
-	size_t len = sizeof(uintptr_t);
-
-#if __LP64__
-	len = 6; // 48 bits are enough
-#endif
-	memcpy(buf, (uintptr_t[]){ shift_addr }, len);
-
-	return len;
+	assert((tp->tp_size + size) <= TRACEPOINT_BUF_MAX_SIZE);
+	memcpy(&tp->tp_buf[tp->tp_size], data, size);
+	tp->tp_size += size;
 }
 
 static void
-os_log_encode_location(os_log_context_t ctx, void *addr, void *dso, bool driverKit,
-    firehose_tracepoint_flags_t *ft_flags)
+tracepoint_buf_location(tracepoint_buf_t *tpb, uintptr_t loc, size_t loc_size)
 {
-	const size_t hdr_size = write_address_location(ctx->ctx_buffer, dso, addr, ft_flags, driverKit);
+	if (loc_size == sizeof(uintptr_t)) {
+#if __LP64__
+		loc_size = 6; // 48 bits are enough
+#endif
+		tracepoint_buf_add(tpb, (uintptr_t[]){ loc }, loc_size);
+	} else {
+		assert(loc_size == sizeof(uint32_t));
+		tracepoint_buf_add(tpb, (uint32_t[]){ (uint32_t)loc }, loc_size);
+	}
+}
+
+static void
+os_log_context_prepare_header(os_log_context_t ctx, size_t hdr_size)
+{
+	assert(hdr_size > 0 && hdr_size <= TRACEPOINT_BUF_MAX_SIZE);
 	ctx->ctx_hdr = (os_log_fmt_hdr_t)&ctx->ctx_buffer[hdr_size];
+	bzero(ctx->ctx_hdr, sizeof(*ctx->ctx_hdr));
 	ctx->ctx_content_sz = (uint16_t)(ctx->ctx_buffer_sz - hdr_size - sizeof(*ctx->ctx_hdr));
 }
 
@@ -529,9 +528,19 @@ os_log_encode_location(os_log_context_t ctx, void *addr, void *dso, bool driverK
  * metadata (like strings).
  */
 bool
-os_log_context_encode(os_log_context_t ctx, const char *fmt, va_list args, void *addr, void *dso, bool driverKit)
+os_log_context_encode(os_log_context_t ctx, const char *fmt, va_list args,
+    uintptr_t loc, size_t loc_size, uint16_t subsystem_id)
 {
-	os_log_encode_location(ctx, addr, dso, driverKit, &ctx->ctx_ft_flags);
+	tracepoint_buf_t tpb = {
+		.tp_buf     = ctx->ctx_buffer,
+		.tp_size    = 0
+	};
+
+	tracepoint_buf_location(&tpb, loc, loc_size);
+	if (os_log_subsystem_id_valid(subsystem_id)) {
+		tracepoint_buf_add(&tpb, &subsystem_id, sizeof(subsystem_id));
+	}
+	os_log_context_prepare_header(ctx, tpb.tp_size);
 
 	va_list args_copy;
 	va_copy(args_copy, args);
@@ -564,7 +573,11 @@ os_log_context_encode(os_log_context_t ctx, const char *fmt, va_list args, void 
 		goto finish;
 	}
 
-	if (!log_fits(ctx, ctx->ctx_pubdata_sz)) {
+	/*
+	 * Logmem may not have been set up yet when logging very early during
+	 * the boot. Be sure to check its state.
+	 */
+	if (!log_fits(ctx, ctx->ctx_pubdata_sz) && logmem_ready(ctx->ctx_logmem)) {
 		size_t space_needed = log_context_cursor(ctx) + ctx->ctx_pubdata_sz - ctx->ctx_buffer;
 		space_needed = MIN(space_needed, logmem_max_size(ctx->ctx_logmem));
 		(void) log_expand(ctx, space_needed);
@@ -598,6 +611,6 @@ void
 os_log_context_free(os_log_context_t ctx)
 {
 	if (ctx->ctx_allocated) {
-		logmem_free(ctx->ctx_logmem, ctx->ctx_buffer, ctx->ctx_buffer_sz);
+		logmem_free_locked(ctx->ctx_logmem, ctx->ctx_buffer, ctx->ctx_buffer_sz);
 	}
 }

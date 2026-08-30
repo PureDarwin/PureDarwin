@@ -15,6 +15,7 @@
 , libXrandr
 , libXrender
 , xorgproto
+, corefoundation
 , vulkanLoader
 , vulkanHeaders
 , targetTriple ? "x86_64-apple-darwin20.4"
@@ -55,7 +56,7 @@ stdenv.mkDerivation {
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
     commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (d: "-I${lib.getDev d}/include") xDeps}"
-    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib ${lib.concatMapStringsSep " " (d: "-L${d}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -lSystem"
+    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib ${lib.concatMapStringsSep " " (d: "-L${d}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -F${corefoundation}/System/Library/Frameworks -lSystem"
 
     cmake -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Darwin \

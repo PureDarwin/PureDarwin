@@ -41,6 +41,7 @@
 .Nm mount ,
 .Nm fmount,
 .Nm unmount
+.Nm funmount
 .Nd mount or dismount a filesystem
 .Sh SYNOPSIS
 .Fd #include <sys/param.h>
@@ -51,6 +52,8 @@
 .Fn fmount "const char *type" "int fd" "int flags" "void *data"
 .Ft int
 .Fn unmount "const char *dir" "int flags"
+.Ft int
+.Fn funmount "int fd" "int flags"
 .Sh DESCRIPTION
 The
 .Fn mount
@@ -129,7 +132,7 @@ The
 function call is equivalent to the
 .Fn mount
 function call, except in the use of the second argument.
-It takes an open file descriptor representing mount point
+It takes an open file descriptor representing the mount point
 instead of the string literal containing full path to the mount
 point in the filesystem hierarchy.
 .Pp
@@ -148,6 +151,15 @@ still active.
 Active special devices continue to work,
 but any further accesses to any other active files result in errors
 even if the filesystem is later remounted.
+.Pp
+The
+.Fn funmount
+function call is equivalent to the
+.Fn unmount
+function call, except in the use of the first argument.
+It takes an open file descriptor representing the mount point
+instead of the string literal containing full path to the mount
+point in the filesystem hierarchy.
 .Sh RETURN VALUES
 The
 .Fn mount
@@ -158,7 +170,9 @@ and the variable
 .Va errno
 is set to indicate the error.
 .Pp
-.Nm unmount
+.Fn unmount
+and
+.Fn funmount
 returns the value 0 if the unmount succeeded; otherwise -1 is returned
 and the variable
 .Va errno
@@ -199,9 +213,13 @@ Another process currently holds a reference to
 .It Bq Er EFAULT
 .Fa Dir
 points outside the process's allocated address space.
+.It Bq Er ENOTSUP
+The operation is not supported for the '/dev/fd' filesystem.
 .El
 .Pp
-.Nm unmount
+.Fn unmount
+and
+.Fn funmount
 may fail with one of the following errors:
 .Bl -tag -width [ENAMETOOLONG]
 .It Bq Er EPERM
@@ -222,6 +240,10 @@ characters, or an entire path name exceeded
 characters.
 .It Bq Er ELOOP
 Too many symbolic links were encountered in translating the pathname.
+.It Bq Er ENOENT
+A component of
+.Fa dir
+does not exist.
 .It Bq Er EINVAL
 The requested directory is not in the mount table.
 .It Bq Er EBUSY
@@ -232,6 +254,8 @@ An I/O error occurred while writing cached filesystem information.
 .It Bq Er EFAULT
 .Fa Dir
 points outside the process's allocated address space.
+.It Bq Er ENOTSUP
+The operation is not supported for the '/dev/fd' filesystem.
 .El
 .Sh SEE ALSO
 .Xr mount 8 ,
@@ -247,3 +271,5 @@ function calls appeared in
 .At v6 .
 .Fn fmount
 function call first appeared in macOS version 10.13.
+.Fn funmount
+function call first appeared in macOS version 16.

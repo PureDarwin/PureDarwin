@@ -72,9 +72,12 @@
 #include <mach/kern_return.h>
 
 #include <kern/kern_types.h>
-#include <kern/zalloc.h>
+#include <kern/kalloc.h>
+#include <kern/smr_types.h>
 
 #include <ipc/ipc_types.h>
+
+#include <prng/random.h>
 
 /*
  *	Spaces hold capabilities for ipc_object_t's.
@@ -100,27 +103,38 @@
 
 #define IPC_ENTRY_DIST_BITS   12
 #define IPC_ENTRY_DIST_MAX    ((1 << IPC_ENTRY_DIST_BITS) - 1)
-#ifdef __LP64__
 #define IPC_ENTRY_INDEX_BITS  32
 #define IPC_ENTRY_INDEX_MAX   (UINT32_MAX)
-#else
-#define IPC_ENTRY_INDEX_BITS  20
-#define IPC_ENTRY_INDEX_MAX   ((1 << IPC_ENTRY_INDEX_BITS) - 1)
-#endif
 
 struct ipc_entry {
-	struct ipc_object  *XNU_PTRAUTH_SIGNED_PTR("ipc_entry.ie_object") ie_object;
-	ipc_entry_bits_t    ie_bits;
-	uint32_t            ie_dist  : IPC_ENTRY_DIST_BITS;
-	mach_port_index_t   ie_index : IPC_ENTRY_INDEX_BITS;
 	union {
-		mach_port_index_t next;         /* next in freelist, or...  */
-		ipc_table_index_t request;      /* dead name request notify */
-	} index;
+		struct ipc_object *XNU_PTRAUTH_SIGNED_PTR("ipc_entry.ie_object") ie_object;
+		struct ipc_port   *XNU_PTRAUTH_SIGNED_PTR("ipc_entry.ie_object") ie_port;
+		struct ipc_pset   *XNU_PTRAUTH_SIGNED_PTR("ipc_entry.ie_object") ie_pset;
+		struct ipc_object *XNU_PTRAUTH_SIGNED_PTR("ipc_entry.ie_object") volatile ie_volatile_object;
+		struct ipc_entry_table *XNU_PTRAUTH_SIGNED_PTR("ipc_entry.ie_self") ie_self;
+	};
+	union {
+		struct {
+			ipc_entry_bits_t    ie_bits;
+			union {
+				mach_port_index_t ie_next;         /* next in freelist, or...  */
+				ipc_table_index_t ie_request;      /* dead name request notify */
+			};
+
+			/* hash fields */
+			uint32_t            ie_dist;
+			mach_port_index_t   ie_index;
+		};
+		struct smr_node             ie_smr_node;
+	};
 };
 
-#define ie_request      index.request
-#define ie_next         index.next
+typedef struct bool_gen        *ipc_entry_prng_t;
+
+#define IPC_ENTRY_TABLE_MIN     32
+#define IPC_ENTRY_TABLE_PERIOD  16
+KALLOC_ARRAY_TYPE_DECL(ipc_entry_table, struct ipc_entry);
 
 #define IE_REQ_NONE             0               /* no request */
 
@@ -130,94 +144,28 @@ struct ipc_entry {
 #define IE_BITS_TYPE_MASK       0x001f0000      /* 5 bits of capability type */
 #define IE_BITS_TYPE(bits)      ((bits) & IE_BITS_TYPE_MASK)
 
-#define IE_BITS_EXTYPE_MASK     0x00200000      /* 1 bit for extended capability */
+#define IE_BITS_EXTYPE_MASK     0x00e00000      /* 3 bit for extended capability */
+#define IE_BITS_EX_RECEIVE      0x00200000      /* entry used to be a receive right */
+#define IE_BITS_PINNED_SEND     0x00400000      /* last send right can't be destroyed */
+#define IE_BITS_IMMOVABLE_SEND  0x00800000      /* send right can't be moved */
 
-#ifndef NO_PORT_GEN
-#define IE_BITS_GEN_MASK        0xff000000      /* 8 bits for generation */
-#define IE_BITS_GEN(bits)       ((bits) & IE_BITS_GEN_MASK)
+#define IE_BITS_ROLL_MASK       0x03000000      /* 2 bits for rollover period */
+#define IE_BITS_GEN_MASK        0xfc000000      /* 6 bits for generation */
+#define IE_BITS_GEN(bits)       (((bits) & IE_BITS_GEN_MASK) | IE_BITS_ROLL_MASK)
 #define IE_BITS_GEN_ONE         0x04000000      /* low bit of generation */
-#define IE_BITS_ROLL_POS        22              /* LSB pos of generation rollover */
 #define IE_BITS_ROLL_BITS       2               /* number of generation rollover bits */
-#define IE_BITS_ROLL_MASK       (((1 << IE_BITS_ROLL_BITS) - 1) << IE_BITS_ROLL_POS)
-#define IE_BITS_ROLL(bits)      ((((bits) & IE_BITS_ROLL_MASK) << 8) ^ IE_BITS_GEN_MASK)
+#define IE_BITS_GEN_INIT        IE_BITS_GEN_MASK
+#define IE_BITS_RIGHT_MASK      0x00ffffff      /* relevant to the right */
 
-/*
- * Restart a generation counter with the specified bits for the rollover point.
- * There are 4 different rollover points:
- * bits    rollover period
- * 0 0     64
- * 0 1     48
- * 1 0     32
- * 1 1     16
- */
-static inline ipc_entry_bits_t
-ipc_entry_new_rollpoint(
-	ipc_entry_bits_t rollbits)
-{
-	rollbits = (rollbits << IE_BITS_ROLL_POS) & IE_BITS_ROLL_MASK;
-	ipc_entry_bits_t newgen = IE_BITS_GEN_MASK + IE_BITS_GEN_ONE;
-	return newgen | rollbits;
-}
-
-/*
- * Get the next gencount, modulo the entry's rollover point. If the sum rolls over,
- * the caller should re-start the generation counter with a different rollpoint.
- */
-static inline ipc_entry_bits_t
-ipc_entry_new_gen(
-	ipc_entry_bits_t oldgen)
-{
-	ipc_entry_bits_t sum  = (oldgen + IE_BITS_GEN_ONE) & IE_BITS_GEN_MASK;
-	ipc_entry_bits_t roll = oldgen & IE_BITS_ROLL_MASK;
-	ipc_entry_bits_t newgen = (sum % IE_BITS_ROLL(oldgen)) | roll;
-	return newgen;
-}
-
-/* Determine if a gencount has rolled over or not. */
-static inline boolean_t
-ipc_entry_gen_rolled(
-	ipc_entry_bits_t oldgen,
-	ipc_entry_bits_t newgen)
-{
-	return (oldgen & IE_BITS_GEN_MASK) > (newgen & IE_BITS_GEN_MASK);
-}
-
-#else
-#define IE_BITS_GEN_MASK        0
-#define IE_BITS_GEN(bits)       0
-#define IE_BITS_GEN_ONE         0
-#define IE_BITS_ROLL_POS        0
-#define IE_BITS_ROLL_MASK       0
-#define IE_BITS_ROLL(bits)      (bits)
-
-static inline ipc_entry_bits_t
-ipc_entry_new_rollpoint(
-	ipc_entry_bits_t rollbits)
-{
-	return 0;
-}
-
-static inline ipc_entry_bits_t
-ipc_entry_new_gen(
-	ipc_entry_bits_t oldgen)
-{
-	return 0;
-}
-
-static inline boolean_t
-ipc_entry_gen_rolled(
-	ipc_entry_bits_t oldgen,
-	ipc_entry_bits_t newgen)
-{
-	return FALSE;
-}
-
-#endif  /* !USE_PORT_GEN */
-
-#define IE_BITS_RIGHT_MASK      0x007fffff      /* relevant to the right */
 /*
  * Exported interfaces
  */
+
+extern unsigned int ipc_entry_table_count_max(void) __pure2;
+
+/* mask on/off default entry generation bits */
+extern mach_port_name_t ipc_entry_name_mask(
+	mach_port_name_t        name);
 
 /* Search for entry in a space by name */
 extern ipc_entry_t ipc_entry_lookup(
@@ -232,12 +180,14 @@ extern kern_return_t ipc_entries_hold(
 /* claim and initialize a held entry in a locked space */
 extern kern_return_t ipc_entry_claim(
 	ipc_space_t             space,
+	ipc_object_t            object,
 	mach_port_name_t        *namep,
 	ipc_entry_t             *entryp);
 
 /* Allocate an entry in a space, growing the space if necessary */
 extern kern_return_t ipc_entry_alloc(
 	ipc_space_t             space,
+	ipc_object_t            object,
 	mach_port_name_t        *namep,
 	ipc_entry_t             *entryp);
 
@@ -250,6 +200,7 @@ extern kern_return_t ipc_entry_alloc_name(
 /* Deallocate an entry from a space */
 extern void ipc_entry_dealloc(
 	ipc_space_t             space,
+	ipc_object_t            object,
 	mach_port_name_t        name,
 	ipc_entry_t             entry);
 
@@ -264,7 +215,4 @@ extern kern_return_t ipc_entry_grow_table(
 	ipc_space_t             space,
 	ipc_table_elems_t       target_size);
 
-/* mask on/off default entry generation bits */
-extern mach_port_name_t ipc_entry_name_mask(
-	mach_port_name_t name);
 #endif  /* _IPC_IPC_ENTRY_H_ */

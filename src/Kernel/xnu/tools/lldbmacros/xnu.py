@@ -1,9 +1,13 @@
-import sys, subprocess, os, re, time, getopt, shlex, xnudefines
+import sys, os, re, time, getopt, shlex, inspect, xnudefines
 import lldb
+import uuid
+import base64
+import json
+from importlib import reload
+from importlib.util import find_spec
 from functools import wraps
 from ctypes import c_ulonglong as uint64_t
 from ctypes import c_void_p as voidptr_t
-import code
 import core
 from core import caching
 from core.standard import *
@@ -11,6 +15,12 @@ from core.configuration import *
 from core.kernelcore import *
 from utils import *
 from core.lazytarget import *
+from core import lldbwrap
+
+if os.environ.get('DEBUG_LLDB_PYTHON'):
+    import debugpy
+    debugpy.listen(5678, in_process_debug_adapter=True)
+    debugpy.wait_for_client()
 
 MODULE_NAME=__name__
 
@@ -47,6 +57,16 @@ def header(initial_value):
         return obj
     return _set_header
 
+def md_header(fmt, args):
+    def _set_md_header(obj):
+        header = "|" + "|".join(fmt.split(" ")).format(*args) + "|"
+        
+        colhead = map(lambda fmt, col: "-"*len(fmt.format(col)), fmt.split(" "), args)
+        sub_header = "|" + "|".join(colhead) + "|"
+        setattr(obj, 'markdown', "\n".join([header, sub_header]))
+        return obj
+    return _set_md_header
+
 # holds type declarations done by xnu.
 #DONOTTOUCHME: Exclusive use of lldb_type_summary only.
 lldb_summary_definitions = {}
@@ -56,15 +76,23 @@ def lldb_type_summary(types_list):
         returns: Nothing. This is a decorator.
     """
     def _get_summary(obj):
+        summary_function_name = "LLDBSummary" + obj.__name__
+
         def _internal_summary_function(lldbval, internal_dict):
-            out_string= ""
+            sig = inspect.signature(obj)
+            if 'O' in sig.parameters:
+                stream = CommandOutput(summary_function_name, fhandle=sys.stdout)
+                with RedirectStdStreams(stdout=stream), caching.ImplicitContext(lldbval):
+                    return '\n' + obj.header + '\n' + obj(core.value(lldbwrap.SBValue(lldbval)), O=stream)
+
+            out_string = ""
             if internal_dict != None and len(obj.header) > 0 :
                 out_string += "\n" + obj.header +"\n"
-            out_string += obj( core.value(lldbval) )
+            with caching.ImplicitContext(lldbval):
+                out_string += obj(core.value(lldbwrap.SBValue(lldbval)))
             return out_string
 
         myglobals = globals()
-        summary_function_name = "LLDBSummary" + obj.__name__
         myglobals[summary_function_name] = _internal_summary_function
         summary_function = myglobals[summary_function_name]
         summary_function.__doc__ = obj.__doc__
@@ -72,7 +100,7 @@ def lldb_type_summary(types_list):
         global lldb_summary_definitions
         for single_type in types_list:
             if config['showTypeSummary']:
-                if single_type in lldb_summary_definitions.keys():
+                if single_type in lldb_summary_definitions:
                     lldb.debugger.HandleCommand("type summary delete --category kernel \""+ single_type + "\"")
                 lldb.debugger.HandleCommand("type summary add \""+ single_type +"\" --category kernel --python-function " + MODULE_NAME + "." + summary_function_name)
             lldb_summary_definitions[single_type] = obj
@@ -80,12 +108,181 @@ def lldb_type_summary(types_list):
         return obj
     return _get_summary
 
+#
+# Exception handling from commands
+#
+
+_LLDB_WARNING = (
+    "*********************  LLDB found an exception  *********************\n"
+    "{lldb_version}\n\n"
+    "  There has been an uncaught exception.\n"
+    "  It could be because the debugger was disconnected.\n"
+    "\n"
+    "  In order to debug the macro being run, run the macro again\n"
+    "  with the `--debug` flag to get richer information, for example:\n"
+    "\n"
+    "      (lldb) showtask --debug 0x1234\n"
+    "\n"
+    "  In order to file a bug report instead, run the macro again\n"
+    "  with the `--radar` flag which will produce a tarball to\n"
+    "  attach to your report, for example:\n"
+    "\n"
+    "      (lldb) showtask --radar 0x1234\n"
+    "********************************************************************\n"
+)
+
+def _format_exc(exc, vt):
+    import traceback, textwrap
+
+    out_str = ""
+
+    w = textwrap.TextWrapper(width=100, placeholder="...", max_lines=3)
+    tb = traceback.TracebackException.from_exception(exc, limit=None, lookup_lines=True, capture_locals=True)
+
+    for frame in tb.stack:
+        out_str += (
+            f"File \"{vt.DarkBlue}{frame.filename}\"{vt.Magenta}@{frame.lineno}{vt.Reset} "
+            f"in {vt.Bold}{vt.DarkCyan}{frame.name}{vt.Reset}\n"
+        )
+        out_str += "  Locals:\n"
+        for name, value in frame.locals.items():
+            variable = f"    {vt.Bold}{vt.DarkGreen}{name}{vt.Reset} = "
+            first = True
+            for wline in w.wrap(str(value)):
+                if first:
+                    out_str += variable + f"{vt.Oblique}{wline}\n"
+                    first = False
+                else:
+                    out_str += " " * (len(name) + 7) + wline + "\n"
+                out_str += vt.EndOblique
+
+        out_str += "  " + "-" * 100 + "\n"
+        try:
+            src = open(frame.filename, "r")
+        except IOError:
+            out_str += "    < Sources not available >\n"
+        else:
+            with src:
+                lines = src.readlines()
+
+                startline = frame.lineno - 3 if frame.lineno > 2 else 0
+                endline = min(frame.lineno + 2, len(lines))
+                for lineno in range(startline, endline):
+
+                    if lineno + 1 == frame.lineno:
+                        fmt = vt.Bold + vt.Default
+                        marker = '>'
+                    else:
+                        fmt = vt.Default
+                        marker = ' '
+
+                    out_str += f"{fmt}  {marker} {lineno + 1:5}  {lines[lineno].rstrip()}{vt.Reset}\n"
+
+        out_str += "  " + "-" * 100 + "\n"
+        out_str += "\n"
+
+    return out_str
+
+_RADAR_URL = "rdar://new/problem?title=LLDB%20macro%20failed%3A%20{}&attachments={}"
+
+def diagnostic_report(result, exc, stream, cmd_name, debug_opts, lldb_log_fname=None):
+    """ Collect diagnostic report for radar submission.
+
+        @param exc (Exception type)
+            Exception being reported.
+
+        @param stream (OutputObject)
+            Command's output stream to support formattting.
+
+        @param cmd_name (str)
+            Name of command being executed.
+
+        @param debug_opts ([str])
+            List of active debugging options (--debug, --radar, --pdb)
+
+        @param lldb_log_fname (str)
+            LLDB log file name to collect (optional)
+    """
+
+    # Print prologue common to all exceptions handling modes.
+    print(stream.VT.DarkRed + _LLDB_WARNING.format(lldb_version=lldb.SBDebugger.GetVersionString()))
+    print(stream.VT.Bold + stream.VT.DarkGreen + type(exc).__name__ +
+          stream.VT.Default + ": {}".format(str(exc)) + stream.VT.Reset)
+    print()
+
+    if not debug_opts:
+        result.SetError(f"{type(exc).__name__}: {exc}")
+        raise exc
+
+    #
+    # Display enhanced diagnostics when requested.
+    #
+    if "--debug" in debug_opts:
+        # Format exception for terminal
+        print(_format_exc(exc, stream.VT))
+
+        print("version:")
+        print(lldb.SBDebugger.GetVersionString())
+        print()
+
+    #
+    # Construct tar bundle for radar attachement
+    #
+    if "--radar" in debug_opts:
+        import tarfile, urllib.parse
+        print("Creating radar bundle ...")
+
+        itime = int(time.time())
+        tar_fname = "/tmp/debug.{:d}.tar".format(itime)
+
+        with tarfile.open(tar_fname, "w") as tar:
+            # Collect LLDB log. It can't be unlinked here because it is still used
+            # for the whole duration of xnudebug debug enable.
+            if lldb_log_fname is not None:
+                print("  Adding {}".format(lldb_log_fname))
+                tar.add(lldb_log_fname, "radar/lldb.log")
+                os.unlink(lldb_log_fname)
+
+            # Collect traceback
+            tb_fname = "/tmp/tb.{:d}.log".format(itime)
+            print("  Adding {}".format(tb_fname))
+            with open(tb_fname,"w") as f:
+                f.write(f"{type(exc).__name__}: {str(exc)}\n\n")
+                f.write(_format_exc(exc, NOVT()))
+                f.write("version:\n")
+                f.write(f"{lldb.SBDebugger.GetVersionString()}\n")
+                f.write("loaded images:\n")
+                f.write(lldb_run_command("image list") + "\n")
+                f.write("lldb settings:\n")
+                f.write(lldb_run_command("settings show") + "\n")
+            tar.add(tb_fname, "radar/traceback.log")
+            os.unlink(tb_fname)
+
+        # Radar submission
+        print()
+        print(stream.VT.DarkRed + "Please attach {} to your radar or open the URL below to create one:".format(tar_fname) + stream.VT.Reset)
+        print()
+        print("  " + _RADAR_URL.format(urllib.parse.quote(cmd_name),urllib.parse.quote(tar_fname)))
+        print()
+        print("Don't forget to mention where the coredump came from (e.g. original Radar ID), or attach it :)")
+        print()
+
+    # Enter pdb when requested.
+    if "--pdb" in debug_opts:
+        print("Starting debugger ...")
+        import pdb
+        pdb.post_mortem(exc.__traceback__)
+
+    return False
+
 #global cache of documentation for lldb commands exported by this module
 #DONOTTOUCHME: Exclusive use of lldb_command only.
 lldb_command_documentation = {}
 
+_DEBUG_OPTS = { "--debug", "--radar", "--pdb" }
+
 def lldb_command(cmd_name, option_string = '', fancy=False):
-    """ A function decorator to define a command with namd 'cmd_name' in the lldb scope to call python function.
+    """ A function decorator to define a command with name 'cmd_name' in the lldb scope to call python function.
         params: cmd_name - str : name of command to be set in lldb prompt.
             option_string - str: getopt like option string. Only CAPITAL LETTER options allowed.
                                  see README on Customizing command options.
@@ -95,7 +292,7 @@ def lldb_command(cmd_name, option_string = '', fancy=False):
         raise RuntimeError("Cannot setup command with lowercase option args. %s" % option_string)
 
     def _cmd(obj):
-        def _internal_command_function(debugger, command, result, internal_dict):
+        def _internal_command_function(debugger, command, exe_ctx, result, internal_dict):
             global config, lldb_run_command_state
             stream = CommandOutput(cmd_name, result)
             # need to avoid printing on stdout if called from lldb_run_command.
@@ -105,14 +302,25 @@ def lldb_command(cmd_name, option_string = '', fancy=False):
                 result.SetImmediateOutputFile(sys.__stdout__)
 
             command_args = shlex.split(command)
-            lldb.debugger.HandleCommand('type category disable kernel' )
+            lldb.debugger.HandleCommand('type category disable kernel')
             def_verbose_level = config['verbosity']
+
+            # Filter out debugging arguments and enable logging
+            debug_opts = [opt for opt in command_args if opt in _DEBUG_OPTS]
+            command_args = [opt for opt in command_args if opt not in _DEBUG_OPTS]
+            lldb_log_filename = None
+
+            if "--radar" in debug_opts:
+                lldb_log_filename = "/tmp/lldb.{:d}.log".format(int(time.time()))
+                lldb_run_command("log enable --file {:s} lldb api".format(lldb_log_filename))
+                lldb_run_command("log enable --file {:s} gdb-remote packets".format(lldb_log_filename))
+                lldb_run_command("log enable --file {:s} kdp-remote packets".format(lldb_log_filename))
 
             try:
                 stream.setOptions(command_args, option_string)
                 if stream.verbose_level != 0:
                     config['verbosity'] +=  stream.verbose_level
-                with RedirectStdStreams(stdout=stream) :
+                with RedirectStdStreams(stdout=stream), caching.ImplicitContext(exe_ctx):
                     args = { 'cmd_args': stream.target_cmd_args }
                     if option_string:
                         args['cmd_options'] = stream.target_cmd_options
@@ -120,21 +328,17 @@ def lldb_command(cmd_name, option_string = '', fancy=False):
                         args['O'] = stream
                     obj(**args)
             except KeyboardInterrupt:
-                print "Execution interrupted by user"
-            except ArgumentError as arg_error:
-                if str(arg_error) != "HELP":
-                    print "Argument Error: " + str(arg_error)
-                print "{0:s}:\n        {1:s}".format(cmd_name, obj.__doc__.strip())
+                print("Execution interrupted by user")
+            except (ArgumentError, NotImplementedError) as arg_error:
+                if str(arg_error) != HELP_ARGUMENT_EXCEPTION_SENTINEL:
+                    formatted_err = f"{type(arg_error).__name__}: {arg_error}"
+                    print(formatted_err)
+                    result.SetError(formatted_err)
+                print("{0:s}:\n        {1:s}".format(cmd_name, obj.__doc__.strip()))
                 return False
             except Exception as exc:
-                if not config['debug']:
-                    print """
-************ LLDB found an exception ************
-There has been an uncaught exception. A possible cause could be that remote connection has been disconnected.
-However, it is recommended that you report the exception to lldb/kernel debugging team about it.
-************ Please run 'xnudebug debug enable' to start collecting logs. ************
-                          """
-                raise
+                if "--radar" in debug_opts: lldb_run_command("log disable")
+                return diagnostic_report(result, exc, stream, cmd_name, debug_opts, lldb_log_filename)
 
             if config['showTypeSummary']:
                 lldb.debugger.HandleCommand('type category enable kernel' )
@@ -142,7 +346,7 @@ However, it is recommended that you report the exception to lldb/kernel debuggin
             if stream.pluginRequired :
                 plugin = LoadXNUPlugin(stream.pluginName)
                 if plugin == None :
-                    print "Could not load plugins."+stream.pluginName
+                    print("Could not load plugins."+stream.pluginName)
                     return
                 plugin.plugin_init(kern, config, lldb, kern.IsDebuggerConnected())
                 return_data = plugin.plugin_execute(cmd_name, result.GetOutput())
@@ -157,29 +361,33 @@ However, it is recommended that you report the exception to lldb/kernel debuggin
         myglobals = globals()
         command_function_name = obj.__name__+"Command"
         myglobals[command_function_name] =  _internal_command_function
+        myglobals[f"XnuCommandSentinel{cmd_name}"] = None
         command_function = myglobals[command_function_name]
-        if not obj.__doc__ :
-            print "ERROR: Cannot register command({:s}) without documentation".format(cmd_name)
+        if not obj.__doc__:
+            print("ERROR: Cannot register command({:s}) without documentation".format(cmd_name))
             return obj
         obj.__doc__ += "\n" + COMMON_HELP_STRING
         command_function.__doc__ = obj.__doc__
         global lldb_command_documentation
-        if cmd_name in lldb_command_documentation:
-            lldb.debugger.HandleCommand("command script delete "+cmd_name)
         lldb_command_documentation[cmd_name] = (obj.__name__, obj.__doc__.lstrip(), option_string)
-        lldb.debugger.HandleCommand("command script add -f " + MODULE_NAME + "." + command_function_name + " " + cmd_name)
 
+        script_add_command = f"command script add -o -f {MODULE_NAME}.{command_function_name} {cmd_name}"
+        lldb.debugger.HandleCommand(script_add_command)
+
+        setattr(obj, 'fancy', fancy)
         if fancy:
+            @wraps(obj)
             def wrapped_fun(cmd_args=None, cmd_options={}, O=None):
                 if O is None:
                     stream = CommandOutput(cmd_name, fhandle=sys.stdout)
                     with RedirectStdStreams(stdout=stream):
-                        return obj(cmd_args, cmd_options, stream)
+                        return obj(cmd_args, cmd_options, O=stream)
                 else:
                     return obj(cmd_args, cmd_options, O)
             return wrapped_fun
         return obj
     return _cmd
+
 
 def lldb_alias(alias_name, cmd_line):
     """ define an alias in the lldb command line.
@@ -194,9 +402,9 @@ def lldb_alias(alias_name, cmd_line):
 
 def SetupLLDBTypeSummaries(reset=False):
     global lldb_summary_definitions, MODULE_NAME
-    if reset == True:
+    if reset:
             lldb.debugger.HandleCommand("type category delete  kernel ")
-    for single_type in lldb_summary_definitions.keys():
+    for single_type in list(lldb_summary_definitions.keys()):
         summary_function = lldb_summary_definitions[single_type]
         lldb_cmd = "type summary add \""+ single_type +"\" --category kernel --python-function " + MODULE_NAME + ".LLDBSummary" + summary_function.__name__
         debuglog(lldb_cmd)
@@ -220,9 +428,9 @@ def LoadXNUPlugin(name):
         if 'plugin_init' in defs and 'plugin_execute' in defs and 'plugin_cleanup' in defs:
             retval = module_obj
         else:
-            print "Plugin is not correctly implemented. Please read documentation on implementing plugins"
+            print("Plugin is not correctly implemented. Please read documentation on implementing plugins")
     except:
-        print "plugin not found :"+name
+        print("plugin not found :"+name)
 
     return retval
 
@@ -234,13 +442,13 @@ def ProcessXNUPluginResult(result_data):
     ret_string = result_data[1]
     ret_commands = result_data[2]
 
-    if ret_status == False:
-        print "Plugin failed: " + ret_string
+    if not ret_status:
+        print("Plugin failed: " + ret_string)
         return
-    print ret_string
+    print(ret_string)
     if len(ret_commands) >= 0:
         for cmd in ret_commands:
-            print "Running command on behalf of plugin:" + cmd
+            print("Running command on behalf of plugin:" + cmd)
             lldb.debugger.HandleCommand(cmd)
     return
 
@@ -256,7 +464,7 @@ def xnudebug_test(test_name):
     def _test(obj):
         global lldb_command_tests
         if obj.__name__.find("Test") != 0 :
-            print "Test name ", obj.__name__ , " should start with Test"
+            print("Test name ", obj.__name__ , " should start with Test")
             raise ValueError
         lldb_command_tests[test_name] = (test_name, obj.__name__, obj, obj.__doc__)
         return obj
@@ -268,7 +476,7 @@ def xnudebug_test(test_name):
 
 # global access object for target kernel
 
-def GetObjectAtIndexFromArray(array_base, index):
+def GetObjectAtIndexFromArray(array_base: value, index: int):
     """ Subscript indexing for arrays that are represented in C as pointers.
         for ex. int *arr = malloc(20*sizeof(int));
         now to get 3rd int from 'arr' you'd do
@@ -281,14 +489,14 @@ def GetObjectAtIndexFromArray(array_base, index):
             core.value : core.value of the same type as array_base_val but pointing to index'th element
     """
     array_base_val = array_base.GetSBValue()
-    base_address = array_base_val.GetValueAsUnsigned()
+    base_address = array_base_val.GetValueAsAddress()
     size = array_base_val.GetType().GetPointeeType().GetByteSize()
     obj_address = base_address + (index * size)
-    obj = kern.GetValueFromAddress(obj_address, array_base_val.GetType().GetName())
-    return Cast(obj, array_base_val.GetType())
+    obj = kern.CreateValueFromAddress(obj_address, array_base_val.GetType().GetPointeeType().name)
+    return addressof(obj)
 
 
-kern = None
+kern: KernelTarget = None
 
 def GetLLDBThreadForKernelThread(thread_obj):
     """ Get a reference to lldb.SBThread representation for kernel thread.
@@ -333,23 +541,20 @@ def GetKextSymbolInfo(load_addr):
         return "{:#018x} {:s} + {:#x} \n".format(load_addr, symbol_name, symbol_offset)
 
     # only for arm64 we do lookup for split kexts.
-    cached_kext_info = caching.GetDynamicCacheData("kern.kexts.loadinformation", [])
-    if not cached_kext_info and str(GetConnectionProtocol()) == "core":
-        cached_kext_info = GetKextLoadInformation()
+    if not GetAllKextSummaries.cached():
+        if str(GetConnectionProtocol()) != "core":
+            return "{:#018x} ~ kext info not available. please run 'showallkexts' once ~ \n".format(load_addr)
 
-    if not cached_kext_info:
-        return "{:#018x} ~ kext info not available. please run 'showallkexts' once ~ \n".format(load_addr)
-
-    for kval in cached_kext_info:
-        text_seg = kval[5]
+    for kval in GetAllKextSummaries():
+        text_seg = text_segment(kval.segments)
         if load_addr >= text_seg.vmaddr and \
             load_addr <= (text_seg.vmaddr + text_seg.vmsize):
-            symbol_name = kval[2]
+            symbol_name = kval.name
             symbol_offset = load_addr - text_seg.vmaddr
             break
     return "{:#018x} {:s} + {:#x} \n".format(load_addr, symbol_name, symbol_offset)
 
-def GetThreadBackTrace(thread_obj, verbosity = vHUMAN, prefix = ""):
+def GetThreadBackTrace(thread_obj: value, verbosity = vHUMAN, prefix = ""):
     """ Get a string to display back trace for a thread.
         params:
             thread_obj - core.cvalue : a thread object of type thread_t.
@@ -359,15 +564,15 @@ def GetThreadBackTrace(thread_obj, verbosity = vHUMAN, prefix = ""):
         returns:
             str - a multi line string showing each frame in backtrace.
     """
-    is_continuation = not bool(unsigned(thread_obj.kernel_stack))
+    kernel_stack = unsigned(thread_obj.kernel_stack)
+    is_continuation = not bool(kernel_stack)
     thread_val = GetLLDBThreadForKernelThread(thread_obj)
     out_string = ""
-    kernel_stack = unsigned(thread_obj.kernel_stack)
     reserved_stack = unsigned(thread_obj.reserved_stack)
     if not is_continuation:
         if kernel_stack and reserved_stack:
-            out_string += prefix + "reserved_stack = {:#018x}\n".format(reserved_stack)
-        out_string += prefix + "kernel_stack = {:#018x}\n".format(kernel_stack)
+            out_string += f"{prefix}reserved_stack = {reserved_stack:#018x}\n"
+        out_string += f"{prefix}kernel_stack = {kernel_stack:#018x}\n"
     else:
         out_string += prefix + "continuation ="
     iteration = 0
@@ -380,13 +585,13 @@ def GetThreadBackTrace(thread_obj, verbosity = vHUMAN, prefix = ""):
         mod_name = frame.GetModule().GetFileSpec().GetFilename()
 
         if iteration == 0 and not is_continuation:
-            out_string += prefix +"stacktop = {:#018x}\n".format(frame_p)
+            out_string += f"{prefix}stacktop = {frame_p:#018x}\n"
 
         if not function:
             # No debug info for 'function'.
             out_string += prefix
             if not is_continuation:
-                out_string += "{fp:#018x} ".format(fp = frame_p)
+                out_string += f"{frame_p:#018x} "
 
             symbol = frame.GetSymbol()
             if not symbol:
@@ -396,24 +601,26 @@ def GetThreadBackTrace(thread_obj, verbosity = vHUMAN, prefix = ""):
                 start_addr = symbol.GetStartAddress().GetFileAddress()
                 symbol_name = symbol.GetName()
                 symbol_offset = file_addr - start_addr
-                out_string += "{addr:#018x} {mod}`{symbol} + {offset:#x} \n".format(addr=load_addr,
-                    mod=mod_name, symbol=symbol_name, offset=symbol_offset)
+                out_string += f"{load_addr:#018x} {mod_name}`{symbol_name} + {symbol_offset:#x} \n"
         else:
             # Debug info is available for 'function'.
-            func_name = frame.GetFunctionName()
-            file_name = frame.GetLineEntry().GetFileSpec().GetFilename()
-            line_num = frame.GetLineEntry().GetLine()
-            func_name = '%s [inlined]' % func_name if frame.IsInlined() else func_name
+            inlined_suffix= " [inlined]" if frame.IsInlined() else ''
+            func_name = f"{frame.GetFunctionName()}{inlined_suffix}"
+            # file_name = frame.GetLineEntry().GetFileSpec().GetFilename()
+            # line_num = frame.GetLineEntry().GetLine()
             if is_continuation and frame.IsInlined():
                 debuglog("Skipping frame for thread {:#018x} since its inlined".format(thread_obj))
                 continue
             out_string += prefix
             if not is_continuation:
-                out_string += "{fp:#018x} ".format(fp=frame_p)
-            out_string += "{addr:#018x} {func}{args} \n".format(addr=load_addr,
-                                    func=func_name,
-                                    file=file_name, line=line_num,
-                                    args="(" + (str(frame.arguments).replace("\n", ", ") if len(frame.arguments) > 0 else "void") + ")")
+                out_string += f"{frame_p:#018x} "
+
+            if len(frame.arguments) > 0:
+                func_args = str(frame.arguments).replace('\n', ', ')
+                out_string += f"{load_addr:#018x} {func_name}({func_args}) \n"
+            else:
+                out_string += f"{load_addr:#018x} {func_name}(void) \n"
+
         iteration += 1
         if frame_p:
             last_frame_p = frame_p
@@ -428,17 +635,10 @@ def GetSourceInformationForAddress(addr):
         params: addr - int address in the binary to be symbolicated
         returns: string of format "0xaddress: function + offset"
     """
-    symbols = kern.SymbolicateFromAddress(addr)
-    format_string = "{0:#018x} <{1:s} + {2:#0x}>"
-    offset = 0
-    function_name = ""
-    if len(symbols) > 0:
-        s = symbols[0]
-        function_name = str(s.name)
-        offset = addr - s.GetStartAddress().GetLoadAddress(LazyTarget.GetTarget())
-    if function_name == "":
-        function_name = "???"
-    return format_string.format(addr, function_name, offset)
+    try:
+        return str(kern.SymbolicateFromAddress(addr, fullSymbol=True)[0])
+    except:
+        return '{0:<#x} <unknown: use `addkextaddr {0:#x}` to resolve>'.format(addr)
 
 def GetFrameLocalVariable(variable_name, frame_no=0):
     """ Find a local variable by name
@@ -467,17 +667,17 @@ def KernelDebugCommandsHelp(cmd_args=None):
     """ Show a list of registered commands for kenel debugging.
     """
     global lldb_command_documentation
-    print "List of commands provided by " + MODULE_NAME + " for kernel debugging."
-    cmds = lldb_command_documentation.keys()
+    print("List of commands provided by " + MODULE_NAME + " for kernel debugging.")
+    cmds = list(lldb_command_documentation.keys())
     cmds.sort()
     for cmd in cmds:
-        if type(lldb_command_documentation[cmd][-1]) == type(""):
-            print " {0: <20s} - {1}".format(cmd , lldb_command_documentation[cmd][1].split("\n")[0].strip())
+        if isinstance(lldb_command_documentation[cmd][-1], str):
+            print(" {0: <20s} - {1}".format(cmd , lldb_command_documentation[cmd][1].split("\n")[0].strip()))
         else:
-            print " {0: <20s} - {1}".format(cmd , "No help string found.")
-    print 'Each of the functions listed here accept the following common options. '
-    print COMMON_HELP_STRING
-    print 'Additionally, each command implementation may have more options. "(lldb) help <command> " will show these options.'
+            print(" {0: <20s} - {1}".format(cmd , "No help string found."))
+    print('Each of the functions listed here accept the following common options. ')
+    print(COMMON_HELP_STRING)
+    print('Additionally, each command implementation may have more options. "(lldb) help <command> " will show these options.')
     return None
 
 
@@ -485,10 +685,15 @@ def KernelDebugCommandsHelp(cmd_args=None):
 def ShowRawCommand(cmd_args=None):
     """ A command to disable the kernel summaries and show data as seen by the system.
         This is useful when trying to read every field of a struct as compared to brief summary
+
+        Usage: showraw foo_command foo_arg1 foo_arg2 ...
     """
+    if cmd_args is None or len(cmd_args) == 0:
+        raise ArgumentError("'showraw' requires a command to run")
+
     command = " ".join(cmd_args)
     lldb.debugger.HandleCommand('type category disable kernel' )
-    lldb.debugger.HandleCommand( command )
+    lldb.debugger.HandleCommand(command)
     lldb.debugger.HandleCommand('type category enable kernel' )
 
 
@@ -508,12 +713,23 @@ def XnuDebugCommand(cmd_args=None):
             Go through all registered tests and run them
         debug:
             Toggle state of debug configuration flag.
+        profile:
+            Profile an lldb command and write its profile info to a file.
+            usage: xnudebug profile <path_to_profile> <cmd...>
+
+            e.g. `xnudebug profile /tmp/showallstacks_profile.prof showallstacks
+        coverage:
+            Collect coverage for an lldb command and save it to a file.
+            usage: xnudebug coverage <path_to_coverage_file> <cmd ...>
+
+            e.g. `xnudebug coverage /tmp/showallstacks_coverage.cov showallstacks`
+            An HTML report can then be generated via `coverage html --data-file=<path>` 
     """
     global config
     command_args = cmd_args
     if len(command_args) == 0:
         raise ArgumentError("No command specified.")
-    supported_subcommands = ['debug', 'reload', 'test', 'testall', 'flushcache']
+    supported_subcommands = ['debug', 'reload', 'test', 'testall', 'flushcache', 'profile', 'coverage']
     subcommand = GetLongestMatchOption(command_args[0], supported_subcommands, True)
 
     if len(subcommand) == 0:
@@ -523,48 +739,101 @@ def XnuDebugCommand(cmd_args=None):
     if subcommand == 'debug':
         if command_args[-1].lower().find('dis') >=0 and config['debug']:
             config['debug'] = False
-            print "Disabled debug logging."
+            print("Disabled debug logging.")
         elif command_args[-1].lower().find('dis') < 0 and not config['debug']:
             config['debug'] = True
             EnableLLDBAPILogging()  # provided by utils.py
-            print "Enabled debug logging. \nPlease run 'xnudebug debug disable' to disable it again. "
+            print("Enabled debug logging. \nPlease run 'xnudebug debug disable' to disable it again. ")
+
     if subcommand == 'flushcache':
-        print "Current size of cache: {}".format(caching.GetSizeOfCache())
+        print("Current size of cache: {}".format(caching.GetSizeOfCache()))
         caching.ClearAllCache()
 
     if subcommand == 'reload':
         module_name = command_args[-1]
         if module_name in sys.modules:
             reload(sys.modules[module_name])
-            print module_name + " is reloaded from " + sys.modules[module_name].__file__
+            print(module_name + " is reloaded from " + sys.modules[module_name].__file__)
         else:
-            print "Unable to locate module named ", module_name
+            print("Unable to locate module named ", module_name)
+
     if subcommand == 'testall':
-        for test_name in lldb_command_tests.keys():
-            print "[BEGIN]", test_name
+        for test_name in list(lldb_command_tests.keys()):
+            print("[BEGIN]", test_name)
             res = lldb_command_tests[test_name][2](kern, config, lldb, True)
             if res:
-                print "[PASSED] {:s}".format(test_name)
+                print("[PASSED] {:s}".format(test_name))
             else:
-                print "[FAILED] {:s}".format(test_name)
+                print("[FAILED] {:s}".format(test_name))
+
     if subcommand == 'test':
         test_name = command_args[-1]
         if test_name in lldb_command_tests:
             test = lldb_command_tests[test_name]
-            print "Running test {:s}".format(test[0])
+            print("Running test {:s}".format(test[0]))
             if test[2](kern, config, lldb, True) :
-                print "[PASSED] {:s}".format(test[0])
+                print("[PASSED] {:s}".format(test[0]))
             else:
-                print "[FAILED] {:s}".format(test[0])
+                print("[FAILED] {:s}".format(test[0]))
             return ""
         else:
-            print "No such test registered with name: {:s}".format(test_name)
-            print "XNUDEBUG Available tests are:"
-            for i in lldb_command_tests.keys():
-                print i
+            print("No such test registered with name: {:s}".format(test_name))
+            print("XNUDEBUG Available tests are:")
+            for i in list(lldb_command_tests.keys()):
+                print(i)
         return None
 
+    if subcommand == 'profile':
+        save_path = command_args[1]
+
+        import cProfile, pstats, io
+
+        pr = cProfile.Profile()
+        pr.enable()
+
+        lldb.debugger.HandleCommand(" ".join(command_args[2:]))
+
+        pr.disable()
+        pr.dump_stats(save_path)
+
+        print("")
+        print("=" * 80)
+        print("")
+
+        s = io.StringIO()
+        ps = pstats.Stats(pr, stream=s)
+        ps.strip_dirs()
+        ps.sort_stats('cumulative')
+        ps.print_stats(30)
+        print(s.getvalue().rstrip())
+        print("")
+
+        print(f"Profile info saved to \"{save_path}\"")
+
+    if subcommand == 'coverage':
+        coverage_module = find_spec('coverage')
+        if not coverage_module:
+            print("Missing 'coverage' module. Please install it for the interpreter currently running.`")
+            return
+        
+        save_path = command_args[1]
+
+        import coverage
+        cov = coverage.Coverage(data_file=save_path)
+        cov.start()
+
+        lldb.debugger.HandleCommand(" ".join(command_args[2:]))
+
+        cov.stop()
+        cov.save()
+
+        print(cov.report())
+        print(f"Coverage info saved to: \"{save_path}\"")
+        
+
     return False
+
+
 
 @lldb_command('showversion')
 def ShowVersion(cmd_args=None):
@@ -577,40 +846,52 @@ def ShowVersion(cmd_args=None):
         correctly.
 
     """
-    print kern.version
+    print(kern.version)
 
-def ProcessPanicStackshot(panic_stackshot_addr, panic_stackshot_len):
+def ProcessPanicStackshot(panic_stackshot_addr, panic_stackshot_len, cmd_options):
     """ Process the panic stackshot from the panic header, saving it to a file if it is valid
         params: panic_stackshot_addr : start address of the panic stackshot binary data
                 panic_stackshot_len : length of the stackshot binary data
         returns: nothing
     """
     if not panic_stackshot_addr:
-        print "No panic stackshot available (invalid addr)"
+        print("No panic stackshot available (invalid addr)")
         return
 
     if not panic_stackshot_len:
-        print "No panic stackshot available (zero length)"
+        print("No panic stackshot available (zero length)")
         return;
 
-    ts = int(time.time())
-    ss_binfile = "/tmp/panic_%d.bin" % ts
-    ss_ipsfile = "/tmp/stacks_%d.ips" % ts
+    if "-D" in cmd_options:
+        dir_ = cmd_options["-D"]
+        if os.path.exists(dir_):
+            if not os.access(dir_, os.W_OK):
+                print("Write access to {} denied".format(dir_))
+                return
+        else:
+            try:
+                os.makedirs(dir_)
+            except OSError as e:
+                print("An error occurred {} while creating a folder : {}".format(e, dir_))
+                return
+    else:
+        dir_ = "/tmp"
+
+    id = str(uuid.uuid4())[:8]
+    ss_binfile = os.path.join(dir_, "panic_%s.bin" % id)
+    ss_ipsfile = os.path.join(dir_, "panic_%s.ips" % id)
 
     if not SaveDataToFile(panic_stackshot_addr, panic_stackshot_len, ss_binfile, None):
-        print "Failed to save stackshot binary data to file"
+        print("Failed to save stackshot binary data to file")
         return
 
-    self_path = str(__file__)
-    base_dir_name = self_path[:self_path.rfind("/")]
-    print "python %s/kcdata.py %s -s %s" % (base_dir_name, ss_binfile, ss_ipsfile)
-    (c,so,se) = RunShellCommand("python %s/kcdata.py %s -s %s" % (base_dir_name, ss_binfile, ss_ipsfile))
-    if c == 0:
-        print "Saved ips stackshot file as %s" % ss_ipsfile
-        return
-    else:
-        print "Failed to run command: exit code: %d, SO: %s SE: %s" % (c, so, se)
-        return
+    from kcdata import decode_kcdata_file
+    try:
+        with open(ss_binfile, "rb") as binfile:
+            decode_kcdata_file(binfile, ss_ipsfile)
+        print("Saved ips stackshot file as %s" % ss_ipsfile)
+    except Exception as e:
+        print("Failed to decode the stackshot: %s" % str(e))
 
 def ParseEmbeddedPanicLog(panic_header, cmd_options={}):
     panic_buf = Cast(panic_header, 'char *')
@@ -632,15 +913,18 @@ def ParseEmbeddedPanicLog(panic_header, cmd_options={}):
                     expected_panic_magic)
 
     if warn_str:
-        print "\n %s" % warn_str
+        print("\n %s" % warn_str)
         if panic_log_begin_offset == 0:
             return
 
     if "-S" in cmd_options:
         if panic_header_flags & xnudefines.EMBEDDED_PANIC_STACKSHOT_SUCCEEDED_FLAG:
-            ProcessPanicStackshot(panic_stackshot_addr, panic_stackshot_len)
+            ProcessPanicStackshot(panic_stackshot_addr, panic_stackshot_len, cmd_options)
         else:
-            print "No panic stackshot available"
+            print("No panic stackshot available")
+    elif "-D" in cmd_options:
+        print("-D option must be specified along with the -S option")
+        return
 
     panic_log_curindex = 0
     while panic_log_curindex < panic_log_len:
@@ -655,7 +939,7 @@ def ParseEmbeddedPanicLog(panic_header, cmd_options={}):
             out_str += p_char
             other_log_curindex += 1
 
-    print out_str
+    print(out_str)
     return
 
 def ParseMacOSPanicLog(panic_header, cmd_options={}):
@@ -688,15 +972,18 @@ def ParseMacOSPanicLog(panic_header, cmd_options={}):
                     expected_panic_magic)
 
     if warn_str:
-        print "\n %s" % warn_str
+        print("\n %s" % warn_str)
         if panic_log_begin_offset == 0:
             return
 
     if "-S" in cmd_options:
         if panic_header_flags & xnudefines.MACOS_PANIC_STACKSHOT_SUCCEEDED_FLAG:
-            ProcessPanicStackshot(panic_stackshot_addr, panic_stackshot_len)
+            ProcessPanicStackshot(panic_stackshot_addr, panic_stackshot_len, cmd_options)
         else:
-            print "No panic stackshot available"
+            print("No panic stackshot available")
+    elif "-D" in cmd_options:
+        print("-D option must be specified along with the -S option")
+        return
 
     panic_log_curindex = 0
     while panic_log_curindex < panic_log_len:
@@ -711,7 +998,7 @@ def ParseMacOSPanicLog(panic_header, cmd_options={}):
             out_str += p_char
             other_log_curindex += 1
 
-    print out_str
+    print(out_str)
     return
 
 def ParseAURRPanicLog(panic_header, cmd_options={}):
@@ -737,8 +1024,8 @@ def ParseAURRPanicLog(panic_header, cmd_options={}):
         panic_log_reset_log_offset = unsigned(aurr_panic_header.efi_aurr_reset_log_offset)
         panic_log_reset_log_len = unsigned(aurr_panic_header.efi_aurr_reset_log_len)
     except Exception as e:
-        print "*** Warning: kernel symbol file has no type information for 'struct efi_aurr_panic_header'..."
-        print "*** Warning: trying to manually parse..."
+        print("*** Warning: kernel symbol file has no type information for 'struct efi_aurr_panic_header'...")
+        print("*** Warning: trying to manually parse...")
         aurr_panic_header = Cast(panic_header, "uint32_t *")
         panic_log_magic = unsigned(aurr_panic_header[0])
         # panic_log_crc = unsigned(aurr_panic_header[1])
@@ -748,18 +1035,18 @@ def ParseAURRPanicLog(panic_header, cmd_options={}):
         panic_log_reset_log_len = unsigned(aurr_panic_header[5])
 
     if panic_log_magic != 0 and panic_log_magic != expected_panic_magic:
-        print "BAD MAGIC! Found 0x%x expected 0x%x" % (panic_log_magic,
-                    expected_panic_magic)
+        print("BAD MAGIC! Found 0x%x expected 0x%x" % (panic_log_magic,
+                    expected_panic_magic))
         return
 
-    print "AURR Panic Version: %d" % (panic_log_version)
+    print("AURR Panic Version: %d" % (panic_log_version))
 
     # When it comes time to extend this in the future, please follow the
     # construct used below in ShowPanicLog()
     if panic_log_version in (xnudefines.AURR_PANIC_VERSION, xnudefines.AURR_CRASHLOG_PANIC_VERSION):
         # AURR Report Version 1 (AURR/MacEFI) or 2 (Crashlog)
         # see macefifirmware/Vendor/Apple/EfiPkg/AppleDebugSupport/Library/Debugger.h
-        print "Reset Cause: 0x%x (%s)" % (panic_log_reset_cause, reset_cause.get(panic_log_reset_cause, "UNKNOWN"))
+        print("Reset Cause: 0x%x (%s)" % (panic_log_reset_cause, reset_cause.get(panic_log_reset_cause, "UNKNOWN")))
 
         # Adjust panic log string length (cap to maximum supported values)
         if panic_log_version == xnudefines.AURR_PANIC_VERSION:
@@ -775,7 +1062,7 @@ def ParseAURRPanicLog(panic_header, cmd_options={}):
             out_str += p_char
             panic_str_offset += 1
 
-        print out_str
+        print(out_str)
 
         # Save Crashlog Binary Data (if available)
         if "-S" in cmd_options and panic_log_version == xnudefines.AURR_CRASHLOG_PANIC_VERSION:
@@ -783,7 +1070,7 @@ def ParseAURRPanicLog(panic_header, cmd_options={}):
             crashlog_binary_size = (panic_log_reset_log_len > xnudefines.CRASHLOG_PANIC_STRING_LEN) and (panic_log_reset_log_len - xnudefines.CRASHLOG_PANIC_STRING_LEN) or 0
 
             if 0 == crashlog_binary_size:
-                print "No crashlog data found..."
+                print("No crashlog data found...")
                 return
 
             # Save to file
@@ -791,7 +1078,7 @@ def ParseAURRPanicLog(panic_header, cmd_options={}):
             ss_binfile = "/tmp/crashlog_%d.bin" % ts
 
             if not SaveDataToFile(panic_buf + crashlog_binary_offset, crashlog_binary_size, ss_binfile, None):
-                print "Failed to save crashlog binary data to file"
+                print("Failed to save crashlog binary data to file")
                 return
     else:
         return ParseUnknownPanicLog(panic_header, cmd_options)
@@ -801,28 +1088,30 @@ def ParseAURRPanicLog(panic_header, cmd_options={}):
 def ParseUnknownPanicLog(panic_header, cmd_options={}):
     magic_ptr = Cast(panic_header, 'uint32_t *')
     panic_log_magic = dereference(magic_ptr)
-    print "Unrecognized panic header format. Magic: 0x%x..." % unsigned(panic_log_magic)
-    print "Panic region starts at 0x%08x" % int(panic_header)
-    print "Hint: To dump this panic header in order to try manually parsing it, use this command:"
-    print " (lldb) memory read -fx -s4 -c64 0x%08x" % int(panic_header)
-    print " ^ that will dump the first 256 bytes of the panic region"
+    print("Unrecognized panic header format. Magic: 0x%x..." % unsigned(panic_log_magic))
+    print("Panic region starts at 0x%08x" % int(panic_header))
+    print("Hint: To dump this panic header in order to try manually parsing it, use this command:")
+    print(" (lldb) memory read -fx -s4 -c64 0x%08x" % int(panic_header))
+    print(" ^ that will dump the first 256 bytes of the panic region")
     ## TBD: Hexdump some bits here to allow folks to poke at the region manually?
     return
 
 
-@lldb_command('paniclog', 'SM')
+@lldb_command('paniclog', 'SMD:')
 def ShowPanicLog(cmd_args=None, cmd_options={}):
     """ Display the paniclog information
         usage: (lldb) paniclog
         options:
             -v : increase verbosity
             -S : parse stackshot data (if panic stackshot available)
+            -D : Takes a folder name for stackshot. This must be specified along with the -S option.
             -M : parse macOS panic area (print panic string (if available), and/or capture crashlog info)
+            -E : Takes a file name and redirects the ext paniclog output to the file
     """
 
     if "-M" in cmd_options:
         if not hasattr(kern.globals, "mac_panic_header"):
-            print "macOS panic data requested but unavailable on this device"
+            print("macOS panic data requested but unavailable on this device")
             return
         panic_header = kern.globals.mac_panic_header
         # DEBUG HACK FOR TESTING
@@ -835,7 +1124,7 @@ def ShowPanicLog(cmd_args=None, cmd_options={}):
     elif hasattr(panic_header, "mph_magic"):
         panic_log_magic = unsigned(panic_header.mph_magic)
     else:
-        print "*** Warning: unsure of panic header format, trying anyway"
+        print("*** Warning: unsure of panic header format, trying anyway")
         magic_ptr = Cast(panic_header, 'uint32_t *')
         panic_log_magic = int(dereference(magic_ptr))
 
@@ -855,53 +1144,109 @@ def ShowPanicLog(cmd_args=None, cmd_options={}):
     # execute it
     return parser(panic_header, cmd_options)
 
+@lldb_command('extpaniclog', 'F:')
+def ProcessExtensiblePaniclog(cmd_args=None, cmd_options={}):
+    """ Write the extensible paniclog information to a file
+        usage: (lldb) paniclog
+        options:
+            -F : Output file name
+    """
+
+    if not "-F" in cmd_options:
+        print("Output file name is needed: Use -F")
+        return
+
+    panic_header = kern.globals.panic_info
+    process = LazyTarget().GetProcess()
+    error = lldb.SBError()
+    EXT_PANICLOG_MAX_SIZE = 32 # 32 is the max size of the string in Data ID
+
+    ext_paniclog_len = unsigned(panic_header.eph_ext_paniclog_len)
+    if ext_paniclog_len == 0:
+        print("Cannot find extensible paniclog")
+        return
+
+    ext_paniclog_addr = unsigned(panic_header) + unsigned(panic_header.eph_ext_paniclog_offset)
+
+    ext_paniclog_bytes = process.chkReadMemory(ext_paniclog_addr, ext_paniclog_len);
+
+    idx = 0;
+    ext_paniclog_ver_bytes = ext_paniclog_bytes[idx:idx+sizeof('uint32_t')]
+    ext_paniclog_ver = int.from_bytes(ext_paniclog_ver_bytes, 'little')
+
+    idx += sizeof('uint32_t')
+    no_of_logs_bytes = ext_paniclog_bytes[idx:idx+sizeof('uint32_t')]
+    no_of_logs = int.from_bytes(no_of_logs_bytes, 'little')
+
+    idx += sizeof('uint32_t')
+
+    ext_paniclog = dict()
+
+    logs_processed = 0
+    for _ in range(no_of_logs):
+        uuid_bytes = ext_paniclog_bytes[idx:idx+sizeof('uuid_t')]
+        ext_uuid = str(uuid.UUID(bytes=uuid_bytes))
+
+        idx += sizeof('uuid_t')
+        flags_bytes = ext_paniclog_bytes[idx:idx+sizeof('uint32_t')]
+        flags = int.from_bytes(flags_bytes, 'little')
+
+        idx += sizeof('ext_paniclog_flags_t')
+        data_id_bytes = ext_paniclog_bytes[idx:idx + EXT_PANICLOG_MAX_SIZE].split(b'\0')[0]
+        data_id = data_id_bytes.decode('utf-8')
+        data_id_len = len(data_id_bytes)
+
+        idx += data_id_len + 1
+        data_len_bytes = ext_paniclog_bytes[idx:idx+sizeof('uint32_t')]
+        data_len = int.from_bytes(data_len_bytes, 'little')
+
+        idx += sizeof('uint32_t')
+        data_bytes = ext_paniclog_bytes[idx:idx+data_len]
+        data = base64.b64encode(data_bytes).decode('ascii')
+
+        idx += data_len
+
+        temp_dict = dict(Data_Id=data_id, Data=data)
+
+        ext_paniclog.setdefault(ext_uuid, []).append(temp_dict)
+
+        logs_processed += 1
+
+    if logs_processed < no_of_logs:
+        print("** Warning: Extensible paniclog might be corrupted **")
+
+    with open(cmd_options['-F'], 'w') as out_file:
+        out_file.write(json.dumps(ext_paniclog))
+        print("Wrote extensible paniclog to %s" % cmd_options['-F'])
+
+    return
+
 @lldb_command('showbootargs')
 def ShowBootArgs(cmd_args=None):
     """ Display boot arguments passed to the target kernel
     """
     bootargs = Cast(kern.GetGlobalVariable('PE_state').bootArgs, 'boot_args *')
     bootargs_cmd = bootargs.CommandLine
-    print str(bootargs_cmd)
-
-@static_var("last_process_uniq_id", 1)
-def GetDebuggerStopIDValue():
-    """ Create a unique session identifier.
-        returns:
-            int - a unique number identified by processid and stopid.
-    """
-    stop_id = 0
-    process_obj = LazyTarget.GetProcess()
-    if hasattr(process_obj, "GetStopID"):
-        stop_id = process_obj.GetStopID()
-    proc_uniq_id = 0
-    if hasattr(process_obj, 'GetUniqueID'):
-        proc_uniq_id = process_obj.GetUniqueID()
-        #FIXME <rdar://problem/13034329> forces us to do this twice
-        proc_uniq_id = process_obj.GetUniqueID()
-    else:
-        GetDebuggerStopIDValue.last_process_uniq_id +=1
-        proc_uniq_id = GetDebuggerStopIDValue.last_process_uniq_id + 1
-
-    stop_id_str = "{:d}:{:d}".format(proc_uniq_id, stop_id)
-    return hash(stop_id_str)
+    print(str(bootargs_cmd))
 
 # The initialization code to add your commands
 _xnu_framework_init = False
-def __lldb_init_module(debugger, internal_dict):
+def __lldb_init_module(debugger: lldb.SBDebugger, internal_dict):
     global kern, lldb_command_documentation, config, _xnu_framework_init
     if _xnu_framework_init:
         return
     _xnu_framework_init = True
-    caching._GetDebuggerSessionID = GetDebuggerStopIDValue
-    debugger.HandleCommand('type summary add --regex --summary-string "${var%s}" -C yes -p -v "char \[[0-9]*\]"')
+    debugger.HandleCommand('type summary add --regex --summary-string "${var%s}" -C yes -p -v "char *\[[0-9]*\]"')
     debugger.HandleCommand('type format add --format hex -C yes uintptr_t')
+    debugger.HandleCommand('type format add --format hex -C yes cpumap_t')
     kern = KernelTarget(debugger)
     if not hasattr(lldb.SBValue, 'GetValueAsAddress'):
         warn_str = "WARNING: lldb version is too old. Some commands may break. Please update to latest lldb."
         if os.isatty(sys.__stdout__.fileno()):
             warn_str = VT.DarkRed + warn_str + VT.Default
-        print warn_str
-    print "xnu debug macros loaded successfully. Run showlldbtypesummaries to enable type summaries."
+        print(warn_str)
+    print("xnu debug macros loaded successfully. Run showlldbtypesummaries to enable type summaries.")
+    # print(f"xnu debugger ID: {debugger.GetID()}")
 
 __lldb_init_module(lldb.debugger, None)
 
@@ -923,7 +1268,7 @@ def ShowLLDBTypeSummaries(cmd_args=[]):
         SetupLLDBTypeSummaries(True)
         trailer_msg = "Please run 'showlldbtypesummaries disable' to disable the summary feature."
     lldb_run_command("type category "+ action +" kernel")
-    print "Successfully "+action+"d the kernel type summaries. %s" % trailer_msg
+    print("Successfully "+action+"d the kernel type summaries. %s" % trailer_msg)
 
 @lldb_command('walkqueue_head', 'S')
 def WalkQueueHead(cmd_args=[], cmd_options={}):
@@ -934,7 +1279,7 @@ def WalkQueueHead(cmd_args=[], cmd_options={}):
 
     """
     global lldb_summary_definitions
-    if not cmd_args:
+    if cmd_args is None or len(cmd_args) == 0:
         raise ArgumentError("invalid arguments")
     if len(cmd_args) != 3:
         raise ArgumentError("insufficient arguments")
@@ -949,9 +1294,9 @@ def WalkQueueHead(cmd_args=[], cmd_options={}):
 
     for i in IterateQueue(queue_head, el_type, field_name):
         if showsummary:
-            print lldb_summary_definitions[el_type](i)
+            print(lldb_summary_definitions[el_type](i))
         else:
-            print "{0: <#020x}".format(i)
+            print("{0: <#020x}".format(i))
 
 
 
@@ -971,7 +1316,7 @@ def WalkList(cmd_args=[], cmd_options={}):
 
     """
     global lldb_summary_definitions
-    if not cmd_args:
+    if cmd_args is None or len(cmd_args) == 0:
         raise ArgumentError("invalid arguments")
     if len(cmd_args) != 3:
         raise ArgumentError("insufficient arguments")
@@ -992,9 +1337,9 @@ def WalkList(cmd_args=[], cmd_options={}):
         i = elt
         elt = elt.__getattr__(field_name).__getattr__(prefix + 'le_next')
         if showsummary:
-            print lldb_summary_definitions[el_type](i)
+            print(lldb_summary_definitions[el_type](i))
         else:
-            print "{0: <#020x}".format(i)
+            print("{0: <#020x}".format(i))
 
 def trace_parse_Copt(Copt):
     """Parses the -C option argument and returns a list of CPUs
@@ -1032,14 +1377,14 @@ def trace_parse_Copt(Copt):
 IDX_CPU = 0
 IDX_RINGPOS = 1
 IDX_RINGENTRY = 2
-def Trace_cmd(cmd_args=[], cmd_options={}, headerString=lambda:"", entryString=lambda x:"", ring=[], entries_per_cpu=0, max_backtraces=0):
+def Trace_cmd(cmd_args=[], cmd_options={}, headerString=lambda:"", entryString=lambda x:"", ring='', entries_per_cpu=0, max_backtraces=0):
     """Generic trace dumper helper function
     """
 
     if '-S' in cmd_options:
         field_arg = cmd_options['-S']
         try:
-            getattr(ring[0][0], field_arg)
+            getattr(kern.PERCPU_GET(ring, 0)[0], field_arg)
             sort_key_field_name = field_arg
         except AttributeError:
             raise ArgumentError("Invalid sort key field name `%s'" % field_arg)
@@ -1065,7 +1410,7 @@ def Trace_cmd(cmd_args=[], cmd_options={}, headerString=lambda:"", entryString=l
     # the original ring index, and the iotrace entry. 
     entries = []
     for x in chosen_cpus:
-        ring_slice = [(x, y, ring[x][y]) for y in range(entries_per_cpu)]
+        ring_slice = [(x, y, kern.PERCPU_GET(ring, x)[y]) for y in range(entries_per_cpu)]
         entries.extend(ring_slice)
 
     total_entries = len(entries)
@@ -1077,25 +1422,25 @@ def Trace_cmd(cmd_args=[], cmd_options={}, headerString=lambda:"", entryString=l
         limit_output_count = total_entries
 
     if len(chosen_cpus) < kern.globals.real_ncpus:
-        print "NOTE: Limiting to entries from cpu%s %s" % ("s" if len(chosen_cpus) > 1 else "", str(chosen_cpus))
+        print("NOTE: Limiting to entries from cpu%s %s" % ("s" if len(chosen_cpus) > 1 else "", str(chosen_cpus)))
 
     if limit_output_count is not None and limit_output_count < total_entries:
         entries_to_display = limit_output_count
-        print "NOTE: Limiting to the %s" % ("first entry" if entries_to_display == 1 else ("first %d entries" % entries_to_display))
+        print("NOTE: Limiting to the %s" % ("first entry" if entries_to_display == 1 else ("first %d entries" % entries_to_display)))
     else:
         entries_to_display = total_entries
 
-    print headerString()
+    print(headerString())
 
-    for x in xrange(entries_to_display):
-        print entryString(entries[x])
+    for x in range(entries_to_display):
+        print(entryString(entries[x]))
 
         if backtraces:
             for btidx in range(max_backtraces):
                 nextbt = entries[x][IDX_RINGENTRY].backtrace[btidx]
                 if nextbt == 0:
                     break
-                print "\t" + GetSourceInformationForAddress(nextbt)
+                print("\t" + GetSourceInformationForAddress(nextbt))
 
 
 @lldb_command('iotrace', 'C:N:S:RB')
@@ -1111,8 +1456,12 @@ def IOTrace_cmd(cmd_args=[], cmd_options={}):
     """
     MAX_IOTRACE_BACKTRACES = 16
 
-    if kern.arch != "x86_64":
-        print "Sorry, iotrace is an x86-only command."
+    if not hasattr(kern.globals, 'iotrace_entries_per_cpu'):
+        print("Sorry, iotrace is not supported.")
+        return
+
+    if kern.globals.iotrace_entries_per_cpu == 0:
+        print("Sorry, iotrace is disabled.")
         return
 
     hdrString = lambda : "%-19s %-8s %-10s %-20s SZ  %-18s %-17s DATA" % (
@@ -1134,7 +1483,8 @@ def IOTrace_cmd(cmd_args=[], cmd_options={}):
         x[IDX_RINGENTRY].paddr,
         x[IDX_RINGENTRY].val)
 
-    Trace_cmd(cmd_args, cmd_options, hdrString, entryString, kern.globals.iotrace_ring, kern.globals.iotrace_entries_per_cpu, MAX_IOTRACE_BACKTRACES)
+    Trace_cmd(cmd_args, cmd_options, hdrString, entryString, 'iotrace_ring',
+        kern.globals.iotrace_entries_per_cpu, MAX_IOTRACE_BACKTRACES)
 
 
 @lldb_command('ttrace', 'C:N:S:RB')
@@ -1151,7 +1501,7 @@ def TrapTrace_cmd(cmd_args=[], cmd_options={}):
     MAX_TRAPTRACE_BACKTRACES = 8
 
     if kern.arch != "x86_64":
-        print "Sorry, ttrace is an x86-only command."
+        print("Sorry, ttrace is an x86-only command.")
         return
 
     hdrString = lambda : "%-30s CPU#[RIDX] VECT INTERRUPTED_THREAD PREMLV INTRLV INTERRUPTED_PC" % (
@@ -1167,9 +1517,37 @@ def TrapTrace_cmd(cmd_args=[], cmd_options={}):
         x[IDX_RINGENTRY].curil,
         GetSourceInformationForAddress(x[IDX_RINGENTRY].interrupted_pc))
 
-    Trace_cmd(cmd_args, cmd_options, hdrString, entryString, kern.globals.traptrace_ring,
+    Trace_cmd(cmd_args, cmd_options, hdrString, entryString, 'traptrace_ring',
         kern.globals.traptrace_entries_per_cpu, MAX_TRAPTRACE_BACKTRACES)
-                
+
+# Yields an iterator over all the sysctls from the provided root.
+# Can optionally filter by the given prefix
+def IterateSysctls(root_oid, prefix="", depth = 0, parent = ""):
+    headp = root_oid
+    for pp in IterateListEntry(headp, 'oid_link', 's'):
+        node_str = ""
+        if prefix != "":
+            node_str = str(pp.oid_name)
+            if parent != "":
+                node_str = parent + "." + node_str
+                if node_str.startswith(prefix):
+                    yield pp, depth, parent
+        else:
+            yield pp, depth, parent
+        type = pp.oid_kind & 0xf
+        if type == 1 and pp.oid_arg1 != 0:
+            if node_str == "":
+                next_parent = str(pp.oid_name)
+                if parent != "":
+                    next_parent = parent + "." + next_parent
+            else:
+                next_parent = node_str
+            # Only recurse if the next parent starts with our allowed prefix.
+            # Note that it's OK if the parent string is too short (because the prefix might be for a deeper node).
+            prefix_len = min(len(prefix), len(next_parent))
+            if next_parent[:prefix_len] == prefix[:prefix_len]:
+                for x in IterateSysctls(Cast(pp.oid_arg1, "struct sysctl_oid_list *"), prefix, depth + 1, next_parent):
+                    yield x
 
 @lldb_command('showsysctls', 'P:')
 def ShowSysctls(cmd_args=[], cmd_options={}):
@@ -1181,32 +1559,67 @@ def ShowSysctls(cmd_args=[], cmd_options={}):
         _ShowSysctl_prefix = cmd_options['-P']
         allowed_prefixes = _ShowSysctl_prefix.split('.')
         if allowed_prefixes:
-            for x in xrange(1, len(allowed_prefixes)):
+            for x in range(1, len(allowed_prefixes)):
                 allowed_prefixes[x] = allowed_prefixes[x - 1] + "." + allowed_prefixes[x]
     else:
         _ShowSysctl_prefix = ''
         allowed_prefixes = []
-    def IterateSysctls(oid, parent_str, i):
-        headp = oid
-        parentstr = "<none>" if parent_str is None else parent_str
-        for pp in IterateListEntry(headp, 'struct sysctl_oid *', 'oid_link', 's'):
-            type = pp.oid_kind & 0xf
-            next_parent = str(pp.oid_name)
-            if parent_str is not None:
-                next_parent = parent_str + "." + next_parent
-            st = (" " * i) + str(pp.GetSBValue().Dereference()).replace("\n", "\n" + (" " * i))
-            if type == 1 and pp.oid_arg1 != 0:
-                # Check allowed_prefixes to see if we can recurse from root to the allowed prefix.
-                # To recurse further, we need to check only the the next parent starts with the user-specified
-                # prefix
-                if next_parent not in allowed_prefixes and next_parent.startswith(_ShowSysctl_prefix) is False:
-                    continue
-                print 'parent = "%s"' % parentstr, st[st.find("{"):]
-                IterateSysctls(Cast(pp.oid_arg1, "struct sysctl_oid_list *"), next_parent, i + 2)
-            elif _ShowSysctl_prefix == '' or next_parent.startswith(_ShowSysctl_prefix):
-                print ('parent = "%s"' % parentstr), st[st.find("{"):]
-    IterateSysctls(kern.globals.sysctl__children, None, 0)
 
+    for sysctl, depth, parentstr in IterateSysctls(kern.globals.sysctl__children, _ShowSysctl_prefix):
+        if parentstr == "":
+            parentstr = "<none>"
+        headp = sysctl
+        st = (" " * depth * 2) + str(sysctl.GetSBValue().Dereference()).replace("\n", "\n" + (" " * depth * 2))
+        print('parent = "%s"' % parentstr, st[st.find("{"):])
+
+@lldb_command('showexperiments', 'F')
+def ShowExperiments(cmd_args=[], cmd_options={}):
+    """ Shows any active kernel experiments being run on the device via trial.
+        Arguments:
+        -F: Scan for changed experiment values even if no trial identifiers have been set.
+    """
+    treatment_id = str(kern.globals.trial_treatment_id)
+    experiment_id = str(kern.globals.trial_experiment_id)
+    deployment_id = kern.globals.trial_deployment_id._GetValueAsSigned()
+    if treatment_id == "" and experiment_id == "" and deployment_id == -1:
+        print("Device is not enrolled in any kernel experiments.")
+        if not '-F' in cmd_options:
+            return
+    else:
+        print("""Device is enrolled in a kernel experiment:
+    treatment_id: %s
+    experiment_id: %s
+    deployment_id: %d""" % (treatment_id, experiment_id, deployment_id))
+
+    print("Scanning sysctl tree for modified factors...")
+
+    kExperimentFactorFlag = 0x00100000
+    
+    formats = {
+            "IU": gettype("unsigned int *"),
+            "I": gettype("int *"),
+            "LU": gettype("unsigned long *"),
+            "L": gettype("long *"),
+            "QU": gettype("uint64_t *"),
+            "Q": gettype("int64_t *")
+    }
+
+    for sysctl, depth, parentstr in IterateSysctls(kern.globals.sysctl__children):
+        if sysctl.oid_kind & kExperimentFactorFlag:
+            spec = cast(sysctl.oid_arg1, "struct experiment_spec *")
+            # Skip if arg2 isn't set to 1 (indicates an experiment factor created without an experiment_spec).
+            if sysctl.oid_arg2 == 1:
+                if spec.modified == 1:
+                    fmt = str(sysctl.oid_fmt)
+                    ptr = spec.ptr
+                    t = formats.get(fmt, None)
+                    if t:
+                        value = cast(ptr, t)
+                    else:
+                        # Unknown type
+                        continue
+                    name = str(parentstr) + "." + str(sysctl.oid_name)
+                    print("%s = %d (Default value is %d)" % (name, dereference(value), spec.original_value))
 
 
 from memory import *
@@ -1217,26 +1630,38 @@ from ioreg import *
 from mbufs import *
 from net import *
 from skywalk import *
+from kext import *
 from kdp import *
 from userspace import *
 from pci import *
+from scheduler import *
+from recount import *
 from misc import *
 from apic import *
-from scheduler import *
 from structanalyze import *
 from ipcimportancedetail import *
 from bank import *
 from turnstile import *
 from kasan import *
-from kauth import *
 from waitq import *
 from usertaskgdbserver import *
 from ktrace import *
-from pgtrace import *
+from cpc import *
+from microstackshot import *
 from xnutriage import *
+from kmtriage import *
 from kevent import *
 from workqueue import *
 from ulock import *
 from ntstat import *
 from zonetriage import *
 from sysreg import *
+from counter import *
+from refgrp import *
+from workload import *
+from log import showLogStream, show_log_stream_info
+from nvram import *
+from exclaves import *
+from memorystatus import *
+from vm_pageout import *
+from taskinfo import *

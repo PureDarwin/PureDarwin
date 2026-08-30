@@ -29,6 +29,9 @@ endif()
 set(_ld_src "${CMAKE_CURRENT_SOURCE_DIR}/../ld64/src")
 set(_ld_libcxx "${CMAKE_SOURCE_DIR}/src/Libraries/libcxx")
 set(_ld_libcxx_config "${CMAKE_SOURCE_DIR}/src/Libraries/libcxxabi/config")
+# ld.cpp and Options.cpp include <cxxabi.h>, which -nostdinc++ below takes the
+# SDK's copy out of reach of.
+set(_ld_libcxxabi_include "${CMAKE_SOURCE_DIR}/src/Libraries/libcxxabi/include")
 set(_ld_corecrypto_include "${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/corecrypto/include")
 set(_ld_commoncrypto_include "${CMAKE_SOURCE_DIR}/src/Libraries/CommonCrypto/include/Private")
 set(_ld_commoncrypto_public_include "${CMAKE_SOURCE_DIR}/src/Libraries/CommonCrypto/include")
@@ -58,9 +61,11 @@ set(_ld_cxx_flags
     ${_ld_includes}
 )
 if((CMAKE_HOST_APPLE AND NOT CMAKE_CROSSCOMPILING) OR PUREDARWIN_NIX_TOOLCHAIN)
-    list(APPEND _ld_cxx_flags -I ${_ld_libcxx_config} -I ${_ld_libcxx}/include)
+    list(APPEND _ld_cxx_flags -I ${_ld_libcxx_config} -I ${_ld_libcxx}/include
+        -I ${_ld_libcxxabi_include})
 else()
-    list(APPEND _ld_cxx_flags -idirafter ${_ld_libcxx_config} -idirafter ${_ld_libcxx}/include)
+    list(APPEND _ld_cxx_flags -idirafter ${_ld_libcxx_config} -idirafter ${_ld_libcxx}/include
+        -idirafter ${_ld_libcxxabi_include})
 endif()
 
 set(_ld_c_flags
@@ -199,6 +204,7 @@ add_custom_command(
             -isysroot ${_ld_sdk}
             -nostdlib
             -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
+            -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:$<TARGET_FILE:libdyld>
             -Wl,-dylinker_install_name,/usr/lib/dyld
             -Wl,-platform_version,macos,11.0,11.5
             ${_ld_objs} ${_ld_extra_archives}

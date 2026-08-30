@@ -48,9 +48,9 @@
 	mov       fp,      sp
 .endm
 
-.macro ClearFrameAndReturn
+.macro ClearFrameAndReturn label:req
 	ldp       fp, lr, [sp], #16
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG \label
 .endm
 
 /*****************************************************************************
@@ -72,9 +72,11 @@ _strnlen:
 //	that it exceeds the size of any buffer that can be allocted, jump into a
 //	simpler implementation that omits all length checks.  This is both faster
 //	and lets us avoid some messy edgecases in the mainline.
+	ARM64_PROLOG
 	tst       x1,      x1
 	b.mi      _strlen
 	b.eq      L_maxlenIsZero
+L_strnlen_frame:
 	EstablishFrame
 //	Load the 16-byte aligned vector containing the start of the string.
 	and       x2,      x0, #-16
@@ -116,7 +118,7 @@ _strnlen:
 	sub       x0,      x2, x0
 	add       x1,      x1, #16
 	add       x0,      x0, x1
-	ClearFrameAndReturn
+	ClearFrameAndReturn L_strnlen_frame
 
 L_maxlenIsZero:
 	mov       x0,      #0
@@ -135,7 +137,7 @@ L_foundNUL:
 	cmp       x1,      x3      // if NUL occurs before maxlen bytes
 	csel      x1,      x1, x3, cc // return strlen, else maxlen
 	add       x0,      x0, x1
-	ClearFrameAndReturn
+	ClearFrameAndReturn L_strnlen_frame
 
 /*****************************************************************************
  *  strlen entrypoint                                                        *
@@ -198,4 +200,4 @@ _strlen:
 	fmov      w2,      s1
 	sub       x0,      x1, x0
 	add       x0,      x0, x2
-	ClearFrameAndReturn
+	ClearFrameAndReturn _strlen

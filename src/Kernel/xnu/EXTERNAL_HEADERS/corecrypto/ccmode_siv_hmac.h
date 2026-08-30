@@ -1,18 +1,16 @@
-/* Copyright (c) (2019) Apple Inc. All rights reserved.
+/* Copyright (c) (2019-2022) Apple Inc. All rights reserved.
  *
  * corecrypto is licensed under Apple Inc.’s Internal Use License Agreement (which
- * is contained in the License.txt file distributed with corecrypto) and only to 
- * people who accept that license. IMPORTANT:  Any license rights granted to you by 
- * Apple Inc. (if any) are limited to internal use within your organization only on 
- * devices and computers you own or control, for the sole purpose of verifying the 
- * security characteristics and correct functioning of the Apple Software.  You may 
+ * is contained in the License.txt file distributed with corecrypto) and only to
+ * people who accept that license. IMPORTANT:  Any license rights granted to you by
+ * Apple Inc. (if any) are limited to internal use within your organization only on
+ * devices and computers you own or control, for the sole purpose of verifying the
+ * security characteristics and correct functioning of the Apple Software.  You may
  * not, directly or indirectly, redistribute the Apple Software or any portions thereof.
  */
-//  Created by Apple on 12/10/18.
-//
 
-#ifndef ccmode_siv_hmac_h
-#define ccmode_siv_hmac_h
+#ifndef _CORECRYPTO_CCMODE_SIV_HMAC_H
+#define _CORECRYPTO_CCMODE_SIV_HMAC_H
 
 #include <corecrypto/cc.h>
 #include <corecrypto/ccmode.h>
@@ -21,33 +19,7 @@
 #include <corecrypto/cchmac.h>
 #include <corecrypto/ccsha2.h>
 
-/* This provides an implementation of SIV using AES CTR mode with HMAC as the MAC,
- allowing for a tagging mechanism with collision resistant tags. This is a modification of the
- standard specified in https://tools.ietf.org/html/rfc5297
- also in http://csrc.nist.gov/groups/ST/toolkit/BCM/documents/proposedmodes/siv/siv.pdf
- Counter Mode where IV is based on HMAC.
- */
-
-cc_aligned_struct(16) ccsiv_hmac_ctx;
-
-struct ccmode_siv_hmac {
-    size_t size; /* first argument to ccsiv_hmac_ctx_decl(). */
-    size_t block_size;
-    
-    int (*CC_SPTR(ccmode_siv_hmac, init))(const struct ccmode_siv_hmac *sivhmac,
-                ccsiv_hmac_ctx *ctx,
-                size_t key_len,
-                const uint8_t *key,
-                const size_t tag_size);
-    int (*CC_SPTR(ccmode_siv_hmac, set_nonce))(ccsiv_hmac_ctx *ctx, size_t nbytes, const uint8_t *in);
-    int (*CC_SPTR(ccmode_siv_hmac, auth))(ccsiv_hmac_ctx *ctx, size_t nbytes, const uint8_t *in);
-    int (*CC_SPTR(ccmode_siv_hmac, crypt))(ccsiv_hmac_ctx *ctx, size_t nbytes, const uint8_t *in, uint8_t *out);
-    int (*CC_SPTR(ccmode_siv_hmac, reset))(ccsiv_hmac_ctx *ctx);
-    const struct ccdigest_info *hmac_digest; // Digest to be used in HMAC;
-    const struct ccmode_ctr *ctr;
-};
-
-#define ccsiv_hmac_ctx_decl(_size_, _name_) cc_ctx_decl(ccsiv_hmac_ctx, _size_, _name_)
+#define ccsiv_hmac_ctx_decl(_size_, _name_) cc_ctx_decl_vla(ccsiv_hmac_ctx, _size_, _name_)
 #define ccsiv_hmac_ctx_clear(_size_, _name_) cc_clear(_size_, _name_)
 
 /*!
@@ -56,10 +28,7 @@ struct ccmode_siv_hmac {
  
  @param      mode       Descriptor for the mode
  */
-CC_INLINE size_t ccsiv_hmac_context_size(const struct ccmode_siv_hmac *mode)
-{
-    return mode->size;
-}
+size_t ccsiv_hmac_context_size(const struct ccmode_siv_hmac *mode);
 
 /*!
  @function   ccsiv_hmac_block_size
@@ -67,10 +36,7 @@ CC_INLINE size_t ccsiv_hmac_context_size(const struct ccmode_siv_hmac *mode)
  
  @param      mode       Descriptor for the mode
  */
-CC_INLINE size_t ccsiv_hmac_block_size(const struct ccmode_siv_hmac *mode)
-{
-    return mode->block_size;
-}
+size_t ccsiv_hmac_block_size(const struct ccmode_siv_hmac *mode);
 
 /*!
  @function   ccsiv_hmac_ciphertext_size
@@ -103,7 +69,7 @@ size_t ccsiv_hmac_plaintext_size(ccsiv_hmac_ctx *ctx, size_t ciphertext_size);
  @param      ctx                Alocated context to be intialized
  @param      key_byte_len       Length of the key:  Supported key sizes are 32, 48, 64 bytes
  @param      key                key for siv_hmac
- @param      tag_size           The length of the output tag requested. Must be at least 20 bytes, and can be as larged as the
+ @param      tag_size           The length of the output tag requested. Must be at least 20 bytes, and can be as large as the
  associated digest's output
  
  @discussion In order to  compute HMAC_SIV_Enc_k(a1,...,am, n, x) where ai is the ith piece of associated data, n is a nonce and x
@@ -118,8 +84,8 @@ int ccsiv_hmac_init(const struct ccmode_siv_hmac *mode, ccsiv_hmac_ctx *ctx, siz
  @function   ccsiv_hmac_aad
  @abstract   Add the next piece of associated data to the hmac_siv's computation of the tag. Note this call is optional and no
  associated data needs to be provided. Multiple pieces of associated data can be provided by multiple calls to this
- function. Each input is regarded as a seperate piece of associated data, and the mac is NOT simply computed on the
- concatenation of all of the associated data inputs. Therefore on decryption the same inputs must be prodivded and in
+ function. Each input is regarded as a separate piece of associated data, and the mac is NOT simply computed on the
+ concatenation of all of the associated data inputs. Therefore on decryption the same inputs must be provided in
  the same order.
  
  @param      mode               Descriptor for the mode
@@ -141,7 +107,7 @@ int ccsiv_hmac_aad(const struct ccmode_siv_hmac *mode, ccsiv_hmac_ctx *ctx, size
  @param      in                 Nonce data to be authenticated.
  
  @discussion The nonce is a special form of authenticated data. If provided ( a call to hmac_nonce is optional) it allows
- randomization of the of ciphertext (preventing deterministic encryption). While the length of the nonce is not limimited, the
+ randomization of the ciphertext (preventing deterministic encryption). While the length of the nonce is not limited, the
  amount of entropy that can be provided is limited by the number of bits in the block of the associated block-cipher in mode.
  */
 int ccsiv_hmac_set_nonce(const struct ccmode_siv_hmac *mode, ccsiv_hmac_ctx *ctx, size_t nbytes, const uint8_t *in);
@@ -172,7 +138,7 @@ int ccsiv_hmac_crypt(const struct ccmode_siv_hmac *mode, ccsiv_hmac_ctx *ctx, si
 
 /*!
  @function   ccsiv_hmac_reset
- @abstract   Resets the state of the siv_hamc ctx, maintaing the key, but preparing  the
+ @abstract   Resets the state of the siv_hamc ctx, maintaining the key, but preparing  the
  ctx to preform a new Associated Data Authenticated (En)/(De)cryption.
  @param      mode               Descriptor for the mode
  @param      ctx                Intialized ctx
@@ -199,15 +165,15 @@ int ccsiv_hmac_reset(const struct ccmode_siv_hmac *mode, ccsiv_hmac_ctx *ctx);
 
 // One shot AEAD with only one input for adata, and a nonce.
 int ccsiv_hmac_one_shot(const struct ccmode_siv_hmac *mode,
-                                  size_t key_len,
-                                  const uint8_t *key,
-                                  size_t tag_length,
-                                  unsigned nonce_nbytes,
-                                  const uint8_t *nonce,
-                                  unsigned adata_nbytes,
-                                  const uint8_t *adata,
-                                  size_t in_nbytes,
-                                  const uint8_t *in,
+                        size_t key_len,
+                        const uint8_t *key,
+                        size_t tag_length,
+                        unsigned nonce_nbytes,
+                        const uint8_t *nonce,
+                        unsigned adata_nbytes,
+                        const uint8_t *adata,
+                        size_t in_nbytes,
+                        const uint8_t *in,
                         uint8_t *out);
 
-#endif /* ccmode_siv_hmac_h */
+#endif /* _CORECRYPTO_CCMODE_SIV_HMAC_H */

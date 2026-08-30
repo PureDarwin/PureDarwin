@@ -1,5 +1,5 @@
 .\"
-.\" Copyright (c) 2008-2016 Apple Inc.  All rights reserved.
+.\" Copyright (c) 2008-2024 Apple Inc.  All rights reserved.
 .\"
 .\" @APPLE_LICENSE_HEADER_START@
 .\" 
@@ -462,9 +462,15 @@ Note that this filter is not supported for vnodes.
 For sockets, the low water mark and socket error handling is
 identical to the EVFILT_READ case.
 .It EVFILT_AIO
-This filter is currently unsupported.
+Events for this filter are not registered with
+.Fn kevent64
+directly but are registered via the
+.Va aio_sigevent
+member of an asynchronous
+I/O request when it is scheduled via an asynchronous I/O system call such as
+.Fn aio_read .
 .\"The sigevent portion of the AIO request is filled in, with
-.\".Va sigev_notify_kqueue
+.\".Va sigev_signo
 .\"containing the descriptor of the kqueue that the event should
 .\"be attached to,
 .\".Va sigev_value
@@ -520,6 +526,10 @@ The file was unlocked by calling
 .Xr flock 2
 or
 .Xr close 2
+.It NOTE_LEASE_DOWNGRADE
+A lease break to downgrade the lease to read lease is requested on the file referenced by the descriptor.
+.It NOTE_LEASE_RELEASE
+A lease break to release the lease is requested on the file or directory referenced by the descriptor.
 .El
 .Pp
 On return,

@@ -126,7 +126,7 @@ parameter is a bit set that controls the behaviour of
 .Fn getattrlistbulk .
 The following option bits are defined.
 .
-.Bl -tag -width FSOPT_PACK_INVAL_ATTRS
+.Bl -tag -width FSOPT_ATTR_CMN_EXTENDED
 .
 .It FSOPT_PACK_INVAL_ATTRS
 If this is bit is set, then all requested  attributes,
@@ -138,8 +138,13 @@ attribute_set_t structure returned for the
 attribute. Default values will be returned for invalid
 attributes and should be ignored.
 .Pp
-Please see the discussion of this flag in
+.It FSOPT_ATTR_CMN_EXTENDED
+If this is bit is set, forkattrs are reinterpreted as a set of extended common attributes.
+.El
+.Pp
+Please refer to the
 .Xr getattrlist 2
+manual page for a discussion of the option flags.
 .
 .El
 .Pp

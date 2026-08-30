@@ -48,16 +48,6 @@
 #include <IOKit/assert.h>
 #include <sys/conf.h>
 
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-extern "C" void pd_bcm2835_early_uart_str(const char *s);
-extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
-extern "C" unsigned long long pd_dataconst_first_zeroed(void);
-#define PD_IOK_TRACE(m)	do { pd_bcm2835_early_uart_str(m); pd_bcm2835_early_uart_hex("  dcz ", pd_dataconst_first_zeroed()); } while (0)
-#else
-#define PD_IOK_TRACE(m)	do { } while (0)
-#endif
-
-
 #include "IOKitKernelInternal.h"
 
 const OSSymbol * gIOProgressBackbufferKey;
@@ -87,11 +77,8 @@ IOKitInitializeTime( void )
 	t.tv_sec = 30;
 	t.tv_nsec = 0;
 
-// RTC is not present on this target
-#if !defined(BCM2837) && !defined(QEMUVIRT)
 	IOService::waitForService(
 		IOService::resourceMatching("IORTC"), &t );
-#endif
 #if defined(__i386__) || defined(__x86_64__)
 	IOService::waitForService(
 		IOService::resourceMatching("IONVRAM"), &t );
@@ -106,48 +93,33 @@ iokit_post_constructor_init(void)
 	IORegistryEntry *           root;
 	OSObject *                  obj;
 
-	PD_IOK_TRACE("pc:IOCPUInitialize");
 	IOCPUInitialize();
-	PD_IOK_TRACE("pc:IOPlatformActions");
 	IOPlatformActionsInitialize();
-	PD_IOK_TRACE("pc:IORegistryEntry");
 	root = IORegistryEntry::initialize();
 	assert( root );
-	PD_IOK_TRACE("pc:IOService");
 	IOService::initialize();
-	PD_IOK_TRACE("pc:IOCatalogue");
 	IOCatalogue::initialize();
-	PD_IOK_TRACE("pc:IOStatistics");
 	IOStatistics::initialize();
-	PD_IOK_TRACE("pc:OSKext");
 	OSKext::initialize();
-	PD_IOK_TRACE("pc:IOUserClient");
 	IOUserClient::initialize();
-	PD_IOK_TRACE("pc:IOMemoryDescriptor");
 	IOMemoryDescriptor::initialize();
-	PD_IOK_TRACE("pc:IORootParent");
 	IORootParent::initialize();
-	PD_IOK_TRACE("pc:IOReporter");
 	IOReporter::initialize();
 
 	// Initializes IOPMinformeeList class-wide shared lock
-	PD_IOK_TRACE("pc:IOPMinformeeList");
 	IOPMinformeeList::getSharedRecursiveLock();
 
-	PD_IOK_TRACE("pc:version");
 	obj = OSString::withCString( version );
 	assert( obj );
 	if (obj) {
 		root->setProperty( kIOKitBuildVersionKey, obj );
 		obj->release();
 	}
-	PD_IOK_TRACE("pc:diagnostics");
 	obj = IOKitDiagnostics::diagnostics();
 	if (obj) {
 		root->setProperty( kIOKitDiagnosticsKey, obj );
 		obj->release();
 	}
-	PD_IOK_TRACE("pc:done");
 }
 
 /*****
@@ -158,35 +130,8 @@ void (*record_startup_extensions_function)(void) = NULL;
 void
 InitIOKit(void *dtTop)
 {
-	int                         debugFlags = 0;
-
-	if (PE_parse_boot_argn( "io", &debugFlags, sizeof(debugFlags))) {
-		gIOKitDebug = debugFlags;
-	}
-	// Enable IOWaitQuiet panics on arm64 macOS except on KASAN.
-	// existing 3rd party KEXTs may hold the registry busy on x86 RELEASE kernels.
-	// Enabling this on other platforms is tracked in rdar://66364108
-#if XNU_TARGET_OS_OSX && defined(__arm64__) && !KASAN
-	else {
-		gIOKitDebug |= kIOWaitQuietPanics;
-	}
-#endif
-
-	if (PE_parse_boot_argn( "iotrace", &debugFlags, sizeof(debugFlags))) {
-		gIOKitTrace = debugFlags;
-	}
-
 	// Compat for boot-args
 	gIOKitTrace |= (gIOKitDebug & kIOTraceCompatBootArgs);
-
-	if (PE_parse_boot_argn( "pmtimeout", &debugFlags, sizeof(debugFlags))) {
-		gCanSleepTimeout = debugFlags;
-	}
-
-	if (PE_parse_boot_argn( "dk", &debugFlags, sizeof(debugFlags))) {
-		gIODKDebug = debugFlags;
-	}
-
 
 	//
 	// Have to start IOKit environment before we attempt to start
@@ -195,36 +140,28 @@ InitIOKit(void *dtTop)
 	// of iokit basic service initialisation, or better we have IOLib stuff
 	// initialise as basic OS services.
 	//
-	PD_IOK_TRACE("iok:IOLibInit");
 	IOLibInit();
-	PD_IOK_TRACE("iok:OSlibkernInit");
 	OSlibkernInit();
-	PD_IOK_TRACE("iok:IOMachPort");
 	IOMachPortInitialize();
 
 	gIOProgressBackbufferKey  = OSSymbol::withCStringNoCopy(kIOProgressBackbufferKey);
 	gIORemoveOnReadProperties = OSSet::withObjects((const OSObject **) &gIOProgressBackbufferKey, 1);
 
-	PD_IOK_TRACE("iok:intacct");
 	interruptAccountingInit();
 
-	PD_IOK_TRACE("iok:rootnub");
 	gRootNub = new IOPlatformExpertDevice;
 	if (__improbable(gRootNub == NULL)) {
 		panic("Failed to allocate IOKit root nub");
 	}
-	PD_IOK_TRACE("iok:rootnub-init");
 	bool ok = gRootNub->init(dtTop);
 	if (__improbable(!ok)) {
 		panic("Failed to initialize IOKit root nub");
 	}
-	PD_IOK_TRACE("iok:rootnub-attach");
 	gRootNub->attach(NULL);
 
 	/* If the bootstrap segment set up a function to record startup
 	 * extensions, call it now.
 	 */
-	PD_IOK_TRACE("iok:startup-ext");
 	if (record_startup_extensions_function) {
 		record_startup_extensions_function();
 	}
@@ -234,48 +171,28 @@ void
 ConfigureIOKit(void)
 {
 	assert(gRootNub != NULL);
-	PD_IOK_TRACE("iok:configureDefaults");
 	gRootNub->configureDefaults();
-	PD_IOK_TRACE("iok:configured");
 }
 
 void
 StartIOKitMatching(void)
 {
+	SOCD_TRACE_XNU(START_IOKIT, SOCD_TRACE_MODE_NONE);
 	assert(gRootNub != NULL);
-	PD_IOK_TRACE("sm:pre-match");
 	bool ok = gRootNub->startIOServiceMatching();
-	PD_IOK_TRACE("sm:post-match");
 	if (__improbable(!ok)) {
 		panic("Failed to start IOService matching");
 	}
 
 #if !NO_KEXTD
-	/* Add a busy count to keep the registry busy until kextd has
-	 * completely finished launching. This is decremented when kextd
-	 * messages the kernel after the in-kernel linker has been
-	 * removed and personalities have been sent.
-	 */
-	PD_IOK_TRACE("sm:pre-busy");
-	IOService::getServiceRoot()->adjustBusy(1);
-	PD_IOK_TRACE("sm:post-busy");
-
-	/*
-	 * PureDarwin has no IOKit daemon. Upstream, kernelmanagerd sends its
-	 * personalities and the kext_request handler answers by calling
-	 * IOService::iokitDaemonLaunched(), which drops the busy count taken
-	 * just above, releases any deferred matches and publishes the "IOKit"
-	 * resource. Here every kext is already in the kernel collection before
-	 * matching starts, so that message never arrives: without this the
-	 * registry stays busy forever, IOKitWaitQuiet never returns, and
-	 * anything waiting for quiescence (configd's InterfaceNamer, so no enN
-	 * is ever named) blocks until its own timeout.
-	 *
-	 * Everything the daemon would have delivered is present already, so
-	 * report it as launched now rather than leaving the count unbalanced.
-	 */
-	IOService::iokitDaemonLaunched();
-	PD_IOK_TRACE("sm:daemon-launched");
+	if (OSKext::iokitDaemonAvailable()) {
+		/* Add a busy count to keep the registry busy until the IOKit daemon has
+		 * completely finished launching. This is decremented when the IOKit daemon
+		 * messages the kernel after the in-kernel linker has been
+		 * removed and personalities have been sent.
+		 */
+		IOService::getServiceRoot()->adjustBusy(1);
+	}
 #endif
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -54,6 +54,23 @@
 #else
 #define __NKE_API_DEPRECATED
 #endif /* PRIVATE */
+
+#ifdef KERNEL_PRIVATE
+#include <Availability.h>
+#if __has_feature(attribute_unavailable_with_message)
+#define __EXTENSION_ONLY_KPI_DEPRECATED_BY(REPLACEMENT)                                              \
+__attribute__((__unavailable__(                                                                      \
+	    "Only available outside of the kernel. Use " #REPLACEMENT " in the kernel instead.")))
+#define __BOUNDS_SAFETY_DEPRECATED_BY(REPLACEMENT)
+#else  /*! __has_feature(attribute_unavailable_with_message) */
+#define __EXTENSION_ONLY_KPI_DEPRECATED_BY(REPLACEMENT)
+#define __BOUNDS_SAFETY_DEPRECATED_BY(REPLACEMENT)
+#endif /*! __has_feature(attribute_unavailable_with_message) */
+#else /* !KERNEL_PRIVATE */
+#define __EXTENSION_ONLY_KPI_DEPRECATED_BY(REPLACEMENT)
+#define __BOUNDS_SAFETY_DEPRECATED_BY(REPLACEMENT)                                                     \
+__ptrcheck_unavailable_r(REPLACEMENT)
+#endif /* !KERNEL_PRIVATE */
 
 #ifdef KERNEL_PRIVATE
 #include <mach/kern_return.h>
@@ -284,6 +301,36 @@ struct mbuf_stat {
 
 __BEGIN_DECLS
 /* Data access */
+
+/*!
+ *       @function mbuf_data_len
+ *       @discussion Returns a pointer to the start of data along with the data length in this mbuf.
+ *               There may be additional data on chained mbufs. The data you're
+ *               looking for may not be virtually contiguous if it spans more
+ *               than one mbuf.  In addition, data that is virtually contiguous
+ *               might not be represented by physically contiguous pages; see
+ *               further comments in `mbuf_data_to_physical'.
+ *               If the data structure you want to access stradles multiple
+ *               mbufs in a chain, the useable data length (returned by `*out_len')
+ *               will be smaller than the expected size.
+ *               In this case, either use `mbuf_pullup', which will create
+ *               a new mbuf with the data structure in a congigous buffer,
+ *               or alternatively copy the pieces of the data structure
+ *               from the mbufs comprised by the chain into a separately allocated
+ *               buffer with a sufficient capacity.
+ *               Using `mbuf_pullup' has the advantage of not having to
+ *               copy the data; however if the size of the requred data exceeds
+ *               the maximal mbuf size, `mbuf_pullup' will fail, and free the chain.
+ *       @param mbuf The mbuf.
+ *       @param out_buf Pointer to the data buffer in this mbuf.
+ *       @param out_len Pointer to the amount of available data in the buffer pointed to by `out_buf'.
+ *       @result EINVAL if one of the parameters is NULL.
+ *               ENOENT if the mbuf does not have valid data buffer.
+ *               0      if successful.
+ */
+extern errno_t mbuf_data_len(mbuf_t mbuf, void *__sized_by(*out_len) * out_buf, size_t *out_len)
+__NKE_API_DEPRECATED;
+
 /*!
  *       @function mbuf_data
  *       @discussion Returns a pointer to the start of data in this mbuf.
@@ -291,19 +338,70 @@ __BEGIN_DECLS
  *               looking for may not be virtually contiguous if it spans more
  *               than one mbuf.  In addition, data that is virtually contiguous
  *               might not be represented by physically contiguous pages; see
- *               further comments in mbuf_data_to_physical.  Use mbuf_len to
- *               determine the length of data available in this mbuf. If a data
- *               structure you want to access stradles two mbufs in a chain,
- *               either use mbuf_pullup to get the data contiguous in one mbuf
- *               or copy the pieces of data from each mbuf in to a contiguous
- *               buffer. Using mbuf_pullup has the advantage of not having to
- *               copy the data. On the other hand, if you don't make sure there
- *               is space in the mbuf, mbuf_pullup may fail and free the mbuf.
+ *               further comments in `mbuf_data_to_physical'.
+ *               To determine the usable length of the data available in this mbuf,
+ *               use `mbuf_len', or replace the invocation of `mbuf_data'
+ *               with `mbuf_data_len', which will return the length of available
+ *               data along with the data pointer.
+ *               If the data structure you want to access stradles multiple
+ *               mbufs in a chain, the returned length will be smaller than
+ *               the expected size. In this case, either use `mbuf_pullup',
+ *               which will create an mbuf containing the data structure
+ *               in a congigous buffer, or alternatively copy the pieces
+ *               of the data structure from the mbufs comprised by the chain
+ *               into a separately allocated buffer with a sufficient capacity.
+ *               Using `mbuf_pullup' has the advantage of not having to
+ *               copy the data; however if the size of the requred data exceeds
+ *               the maximal mbuf size, `mbuf_pullup' will fail, and free the chain.
+ *       @warning This function is NOT SAFE to use with `-fbounds-safety'.
+ *               Use `mbuf_data_safe' or `mbuf_data_len' instead.
+ *               Inside the kernel, the recommended replacement is `mtod'.
  *       @param mbuf The mbuf.
  *       @result A pointer to the data in the mbuf.
  */
-extern void *mbuf_data(mbuf_t mbuf)
+extern void * __unsafe_indexable mbuf_data(mbuf_t mbuf)
+__BOUNDS_SAFETY_DEPRECATED_BY('mbuf_data_safe, mbuf_data_len')
 __NKE_API_DEPRECATED;
+
+/*!
+ *       @function mbuf_data_safe
+ *       @discussion Returns a checked pointer to the start of data in this mbuf.
+ *               There may be additional data on chained mbufs. The data you're
+ *               looking for may not be virtually contiguous if it spans more
+ *               than one mbuf.  In addition, data that is virtually contiguous
+ *               might not be represented by physically contiguous pages; see
+ *               further comments in `mbuf_data_to_physical'.
+ *               To determine the usable length of the data available in this mbuf,
+ *               use `mbuf_len', or replace the invocation of `mbuf_data_safe'
+ *               with `mbuf_data_len', which will return the length of available
+ *               data along with the data pointer.
+ *               If the data structure you want to access stradles multiple
+ *               mbufs in a chain, the useable data length (see above) will be
+ *               smaller than the expected size.
+ *               In this case, either use `mbuf_pullup', which will create
+ *               a new mbuf with the data structure in a congigous buffer,
+ *               or alternatively copy the pieces of the data structure
+ *               from the mbufs comprised by the chain into a separately allocated
+ *               buffer with a sufficient capacity.
+ *               Using `mbuf_pullup' has the advantage of not having to
+ *               copy the data; however if the size of the requred data exceeds
+ *               the maximal mbuf size, `mbuf_pullup' will fail, and free the chain.
+ *       @param mbuf The mbuf.
+ *       @result A pointer to the data in the mbuf.
+ */
+static inline void * __header_indexable
+mbuf_data_safe(mbuf_t mbuf)
+{
+	size_t len = 0;
+	void * __sized_by(len) buf = 0;
+	errno_t err;
+	err = mbuf_data_len(mbuf, &buf, &len);
+	if (err != 0) {
+		return 0;
+	}
+	return buf;
+}
+#define __KPI_MBUF_HAS_MBUF_DATA_SAFE (1)
 
 /*!
  *       @function mbuf_datastart
@@ -424,7 +522,7 @@ __NKE_API_DEPRECATED;
  *               ENOMEM - Not enough memory available
  */
 extern errno_t mbuf_attachcluster(mbuf_how_t how, mbuf_type_t type,
-    mbuf_t *mbuf, caddr_t extbuf, void (*extfree)(caddr_t, u_int, caddr_t),
+    mbuf_t *mbuf, caddr_t extbuf __sized_by_or_null(extsize), void (*extfree)(caddr_t, u_int, caddr_t),
     size_t extsize, caddr_t extarg)
 __NKE_API_DEPRECATED;
 
@@ -451,7 +549,7 @@ __NKE_API_DEPRECATED;
  *               In this case, the caller is advised to use 4096 bytes or
  *               smaller during subseqent requests.
  */
-extern errno_t mbuf_alloccluster(mbuf_how_t how, size_t *size, caddr_t *addr)
+extern errno_t mbuf_alloccluster(mbuf_how_t how, size_t *size, char * __sized_by_or_null(*size) * addr)
 __NKE_API_DEPRECATED;
 
 /*!
@@ -478,6 +576,7 @@ extern errno_t mbuf_ring_cluster_activate(mbuf_t mbuf);
 extern errno_t mbuf_cluster_set_prop(mbuf_t mbuf, u_int32_t oldprop,
     u_int32_t newprop);
 extern errno_t mbuf_cluster_get_prop(mbuf_t mbuf, u_int32_t *prop);
+
 #endif /* BSD_KERNEL_PRIVATE */
 
 /*!
@@ -829,7 +928,7 @@ __NKE_API_DEPRECATED;
  *       @result 0 upon success otherwise the errno error.
  */
 extern errno_t mbuf_copydata(const mbuf_t mbuf, size_t offset, size_t length,
-    void *out_data)
+    void *out_data __sized_by_or_null(length))
 __NKE_API_DEPRECATED;
 
 /*!
@@ -855,7 +954,7 @@ __NKE_API_DEPRECATED;
  *       @result 0 upon success, EINVAL or ENOBUFS upon failure.
  */
 extern errno_t mbuf_copyback(mbuf_t mbuf, size_t offset, size_t length,
-    const void *data, mbuf_how_t how)
+    const void *data __sized_by_or_null(length), mbuf_how_t how)
 __NKE_API_DEPRECATED;
 
 /*!
@@ -1187,7 +1286,7 @@ __NKE_API_DEPRECATED;
  *       @discussion This function is used by the stack to indicate which
  *               checksums should be calculated in hardware. The stack normally
  *               sets these flags as the packet is processed in the outbound
- *               direction. Just before send the packe to the interface, the
+ *               direction. Just before sending the packet to the interface, the
  *               stack will look at these flags and perform any checksums in
  *               software that are not supported by the interface.
  *       @param mbuf The mbuf containing the packet.
@@ -1216,17 +1315,94 @@ __NKE_API_DEPRECATED;
 
 /*!
  *       @function mbuf_get_tso_requested
- *       @discussion This function is used by the driver to determine which
- *               checksum operations should be performed in hardware.
+ *       @discussion This function is used by the driver to determine
+ *               whether TSO should be performed.
  *       @param mbuf The mbuf containing the packet.
- *       @param request Flags indicating which values are being requested
+ *       @param request Flags indicating which TSO offload is requested
  *               for this packet.
- *       @param value The requested value.
+ *       @param mss The returned MSS.
  *       @result 0 upon success otherwise the errno error.
  */
 extern errno_t mbuf_get_tso_requested(mbuf_t mbuf,
-    mbuf_tso_request_flags_t *request, u_int32_t *value)
+    mbuf_tso_request_flags_t *request, u_int32_t *mss)
 __NKE_API_DEPRECATED;
+
+
+#ifdef KERNEL_PRIVATE
+
+enum {
+	MBUF_GSO_TYPE_NONE      = 0,
+	MBUF_GSO_TYPE_IPV4      = 1,
+	MBUF_GSO_TYPE_IPV6      = 2,
+};
+
+#define MBUF_GSO_TYPE_NONE      MBUF_GSO_TYPE_NONE
+
+typedef uint8_t mbuf_gso_type_t;
+
+/*!
+ *       @function mbuf_get_gso_info
+ *       @discussion This function is used by the driver to determine
+ *              whether segmentation offload (GSO) should be performed.
+ *       @param mbuf The packet to get the offload from.
+ *       @param type The type of offload that is requested for this
+ *              packet (see `mbuf_gso_type_t` above). If none is requested,
+ *              `type` is set to MBUF_GSO_TYPE_NONE.
+ *              `type` must not be NULL.
+ *       @param seg_size The returned segment size.
+ *              `seg_size` must not be NULL.
+ *       @param hdr_len The returned protocol (e.g. IP+TCP) header size,
+ *              `hdr_len` must not be NULL.
+ *       @result 0 upon success otherwise the errno error.
+ */
+extern errno_t mbuf_get_gso_info(mbuf_t mbuf, mbuf_gso_type_t *type,
+    uint16_t *seg_size, uint16_t *hdr_len)
+__NKE_API_DEPRECATED;
+
+/*!
+ *       @function mbuf_set_gso_info
+ *       @discussion This function is used to set the segmentation
+ *              offload (GSO/TSO) for a packet.
+ *       @param mbuf The packet to set the offload on.
+ *       @param type The type of offload to perform on this packet
+ *              (see `mbuf_gso_type_t` above). Use `MBUF_GSO_TYPE_NONE`
+ *              to clear segmentation offload.
+ *       @param seg_size The segment size.
+ *       @param hdr_len The protocol (e.g. IP+TCP) header size.
+ *       @result 0 upon success otherwise the errno error.
+ */
+extern errno_t mbuf_set_gso_info(mbuf_t mbuf,
+    mbuf_gso_type_t type, uint16_t seg_size, uint16_t hdr_len)
+__NKE_API_DEPRECATED;
+
+/*!
+ *       @function mbuf_get_lro_info
+ *       @discussion This function is used to retrieve LRO information.
+ *       @param mbuf The mbuf containing the packet.
+ *       @param seg_cnt The number of packets that were coalesced, may be zero.
+ *		If non-zero, will be 2 or greater.
+ *       @param dup_ack_cnt The number of duplicated ACKs (TBD), currently
+ *              always zero.
+ *       @result 0 upon success otherwise the errno error.
+ */
+extern errno_t mbuf_get_lro_info(mbuf_t mbuf, uint8_t *seg_cnt,
+    uint8_t *dup_ack_cnt)
+__NKE_API_DEPRECATED;
+
+/*!
+ *       @function mbuf_set_lro_info
+ *       @discussion This function is used to set the LRO offload values.
+ *       @param mbuf The mbuf containing the packet.
+ *       @param seg_cnt The number of packets that were coalesced, may be zero.
+ *		If non-zero, must be 2 or greater.
+ *       @param dup_ack_cnt The number of duplicated ACKs (TBD). Must be zero.
+ *       @result 0 upon success otherwise the errno error.
+ */
+extern errno_t mbuf_set_lro_info(mbuf_t mbuf, uint8_t seg_cnt,
+    uint8_t dup_ack_cnt)
+__NKE_API_DEPRECATED;
+
+#endif /* KERNEL_PRIVATE */
 
 /*!
  *       @function mbuf_clear_csum_requested
@@ -1299,6 +1475,15 @@ __NKE_API_DEPRECATED;
  */
 extern u_int32_t mbuf_get_minclsize(void)
 __NKE_API_DEPRECATED;
+
+#ifdef XNU_KERNEL_PRIVATE
+/*
+ *      @function   mbuf_get_minclsize
+ *      @discussion Kernel internal function that returns the size of an mbuf
+ *      @result     The size of an mbuf
+ */
+extern u_int32_t mbuf_get_msize(void);
+#endif /* XNU_KERNEL_PRIVATE */
 
 /*!
  *       @function mbuf_clear_csum_performed
@@ -2014,6 +2199,28 @@ extern errno_t mbuf_get_keepalive_flag(mbuf_t mbuf, boolean_t *is_keepalive);
  *               code will be EINVAL
  */
 extern errno_t mbuf_set_keepalive_flag(mbuf_t mbuf, boolean_t is_keepalive);
+
+/*!
+ *       @function mbuf_get_wake_packet_flag
+ *       @discussion Tell if the wake packet flag is set.
+ *       @param mbuf The mbuf representing the packet.
+ *       @param is_wake_packet A pointer that returns the truth value.
+ *       @result 0 upon success otherwise the errno error. If the mbuf
+ *               packet header does not have valid data bytes, the error
+ *               code will be EINVAL.
+ */
+extern errno_t mbuf_get_wake_packet_flag(mbuf_t mbuf, boolean_t *is_wake_packet);
+
+/*!
+ *       @function mbuf_set_wake_packet_flag
+ *       @discussion Set or clear the wake packet flag.
+ *       @param mbuf The mbuf representing the packet.
+ *       @param is_wake_packet The boolean value.
+ *       @result 0 upon success otherwise the errno error. If the mbuf
+ *               packet header does not have valid data bytes, the error
+ *               code will be EINVAL.
+ */
+extern errno_t mbuf_set_wake_packet_flag(mbuf_t mbuf, boolean_t is_wake_packet);
 
 #endif /* KERNEL_PRIVATE */
 

@@ -31,12 +31,12 @@
  */
 #include "lz4.h"
 #include "WKdm_new.h"
-#include <vm/vm_compressor_algorithms.h>
-#include <vm/vm_compressor.h>
+#include <vm/vm_compressor_algorithms_internal.h>
+#include <vm/vm_compressor_internal.h>
 
 #define MZV_MAGIC (17185)
 #if defined(__arm64__)
-#include <arm/proc_reg.h>
+#include <arm64/proc_reg.h>
 #endif
 
 #define LZ4_SCRATCH_ALIGN (64)
@@ -44,9 +44,6 @@
 
 #define LZ4_SCRATCH_ALIGN (64)
 #define WKC_SCRATCH_ALIGN (64)
-
-#define memcpy_T_NT memcpy
-#define memcpy_NT_T memcpy
 
 typedef union {
 	uint8_t lz4state[lz4_encode_scratch_size]__attribute((aligned(LZ4_SCRATCH_ALIGN)));
@@ -102,6 +99,7 @@ enum compressor_preselect_t {
 	CPRESELWK = 2,
 };
 
+/* changeable via sysctl */
 vm_compressor_mode_t vm_compressor_current_codec = VM_COMPRESSOR_DEFAULT_CODEC;
 
 boolean_t vm_compressor_force_sw_wkdm = FALSE;
@@ -222,7 +220,7 @@ WKdm_hv(uint32_t *wkbuf)
 	uint32_t *inw = (uint32_t *) wkbuf;
 	if (*inw != MZV_MAGIC) {
 		if ((*inw | *(inw + 1) | *(inw + 2)) & 0xFFFF0000) {
-			panic("WKdm(%p): invalid header 0x%x 0x%x 0x%x\n", wkbuf, *inw, *(inw + 1), *(inw + 2));
+			panic("WKdm(%p): invalid header 0x%x 0x%x 0x%x", wkbuf, *inw, *(inw + 1), *(inw + 2));
 		}
 	}
 #else /* DEVELOPMENT || DEBUG */
@@ -245,9 +243,12 @@ WKdmD(WK_word* src_buf, WK_word* dest_buf, WK_word* scratch, unsigned int bytes,
 #endif
 	WKdm_hv(src_buf);
 #if defined(__arm64__)
+#ifndef __ARM_16K_PG__
 	if (PAGE_SIZE == 4096) {
 		WKdm_decompress_4k(src_buf, dest_buf, scratch, bytes);
-	} else {
+	} else
+#endif /* !____ARM_16K_PG__ */
+	{
 		__unused uint64_t wdsstart;
 
 		VM_COMPRESSOR_STAT_DBG(wdsstart = mach_absolute_time());
@@ -272,9 +273,12 @@ WKdmC(WK_word* src_buf, WK_word* dest_buf, WK_word* scratch,
 	(void)incomp_copy;
 	int wkcval;
 #if defined(__arm64__)
+#ifndef __ARM_16K_PG__
 	if (PAGE_SIZE == 4096) {
 		wkcval = WKdm_compress_4k(src_buf, dest_buf, scratch, limit);
-	} else {
+	} else
+#endif /* !____ARM_16K_PG__ */
+	{
 		__unused uint64_t wcswstart;
 
 		VM_COMPRESSOR_STAT_DBG(wcswstart = mach_absolute_time());
@@ -393,9 +397,8 @@ metadecompressor(const uint8_t *source, uint8_t *dest, uint32_t csize,
 		rval = (int)lz4raw_decode_buffer(dest, PAGE_SIZE, source, csize, &compressor_dscratch->lz4decodestate[0]);
 		VM_DECOMPRESSOR_STAT(compressor_stats.lz4_decompressions += 1);
 		VM_DECOMPRESSOR_STAT(compressor_stats.lz4_decompressed_bytes += csize);
-#if DEVELOPMENT || DEBUG
-		uint32_t *d32 = dest;
-#endif
+
+		__assert_only uint32_t *d32 = dest;
 		assertf(rval == PAGE_SIZE, "LZ4 decode: size != pgsize %d, header: 0x%x, 0x%x, 0x%x",
 		    rval, *d32, *(d32 + 1), *(d32 + 2));
 		success = (rval == PAGE_SIZE);
@@ -459,7 +462,7 @@ vm_compressor_algorithm_init(void)
 	    (new_codec == CMODE_LZ4) || (new_codec == CMODE_HYB)),
 	    "Invalid VM compression codec: %u", new_codec);
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 	uint32_t tmpc;
 	if (PE_parse_boot_argn("-vm_compressor_wk", &tmpc, sizeof(tmpc))) {
 		new_codec = VM_COMPRESSOR_DEFAULT_CODEC;

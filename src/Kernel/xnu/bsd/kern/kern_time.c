@@ -85,6 +85,7 @@
 #include <kern/clock.h>
 #include <kern/task.h>
 #include <kern/thread_call.h>
+#include <kern/uipc_domain.h>
 #if CONFIG_MACF
 #include <security/mac_framework.h>
 #endif
@@ -176,7 +177,7 @@ settimeofday(__unused struct proc *p, struct settimeofday_args  *uap, __unused i
 	bzero(&atv, sizeof(atv));
 
 	/* Check that this task is entitled to set the time or it is root */
-	if (!IOTaskHasEntitlement(current_task(), SETTIME_ENTITLEMENT)) {
+	if (!IOCurrentTaskHasEntitlement(SETTIME_ENTITLEMENT)) {
 #if CONFIG_MACF
 		error = mac_system_check_settime(kauth_cred_get());
 		if (error) {
@@ -450,9 +451,9 @@ setitimer(struct proc *p, struct setitimer_args *uap, int32_t *retval)
 
 	case ITIMER_VIRTUAL:
 		if (timerisset(&aitv.it_value)) {
-			task_vtimer_set(p->task, TASK_VTIMER_USER);
+			task_vtimer_set(proc_task(p), TASK_VTIMER_USER);
 		} else {
-			task_vtimer_clear(p->task, TASK_VTIMER_USER);
+			task_vtimer_clear(proc_task(p), TASK_VTIMER_USER);
 		}
 
 		proc_spinlock(p);
@@ -462,9 +463,9 @@ setitimer(struct proc *p, struct setitimer_args *uap, int32_t *retval)
 
 	case ITIMER_PROF:
 		if (timerisset(&aitv.it_value)) {
-			task_vtimer_set(p->task, TASK_VTIMER_PROF);
+			task_vtimer_set(proc_task(p), TASK_VTIMER_PROF);
 		} else {
-			task_vtimer_clear(p->task, TASK_VTIMER_PROF);
+			task_vtimer_clear(proc_task(p), TASK_VTIMER_PROF);
 		}
 
 		proc_spinlock(p);
@@ -474,6 +475,52 @@ setitimer(struct proc *p, struct setitimer_args *uap, int32_t *retval)
 	}
 
 	return 0;
+}
+
+void
+proc_inherit_itimers(struct proc *old_proc, struct proc *new_proc)
+{
+	struct itimerval real_itv, vuser_itv, vprof_itv;
+
+	/* Snapshot the old timer values */
+	proc_spinlock(old_proc);
+	real_itv = old_proc->p_realtimer;
+	vuser_itv = old_proc->p_vtimer_user;
+	vprof_itv = old_proc->p_vtimer_prof;
+	proc_spinunlock(old_proc);
+
+	if (timerisset(&vuser_itv.it_value)) {
+		task_vtimer_set(proc_task(new_proc), TASK_VTIMER_USER);
+	} else {
+		task_vtimer_clear(proc_task(new_proc), TASK_VTIMER_USER);
+	}
+
+	if (timerisset(&vprof_itv.it_value)) {
+		task_vtimer_set(proc_task(new_proc), TASK_VTIMER_PROF);
+	} else {
+		task_vtimer_clear(proc_task(new_proc), TASK_VTIMER_PROF);
+	}
+
+	/* Update the timer values on new proc */
+	proc_spinlock(new_proc);
+
+	if (timerisset(&real_itv.it_value)) {
+		microuptime(&new_proc->p_rtime);
+		timevaladd(&new_proc->p_rtime, &real_itv.it_value);
+		new_proc->p_realtimer = real_itv;
+		if (!thread_call_enter_delayed_with_leeway(new_proc->p_rcall, NULL,
+		    tvtoabstime(&new_proc->p_rtime), 0, THREAD_CALL_DELAY_USER_NORMAL)) {
+			new_proc->p_ractive++;
+		}
+	} else {
+		timerclear(&new_proc->p_rtime);
+		new_proc->p_realtimer = real_itv;
+	}
+
+	new_proc->p_vtimer_user = vuser_itv;
+	new_proc->p_vtimer_prof = vprof_itv;
+
+	proc_spinunlock(new_proc);
 }
 
 /*
@@ -486,12 +533,13 @@ setitimer(struct proc *p, struct setitimer_args *uap, int32_t *retval)
  */
 void
 realitexpire(
-	struct proc *p)
+	struct proc *p,
+	__unused void *p2)
 {
 	struct proc *r;
 	struct timeval t;
 
-	r = proc_find(p->p_pid);
+	r = proc_find(proc_getpid(p));
 
 	proc_spinlock(p);
 
@@ -585,7 +633,7 @@ proc_free_realitimer(proc_t p)
 	proc_spinlock(p);
 
 	assert(p->p_rcall != NULL);
-	assert(p->p_refcount == 0);
+	assert(proc_list_exited(p));
 
 	timerclear(&p->p_realtimer.it_interval);
 
@@ -898,21 +946,10 @@ ppsratecheck(struct timeval *lasttime, int *curpps, int maxpps)
 		rv = 0;
 	}
 
-#if 1 /* DIAGNOSTIC? */
 	/* be careful about wrap-around */
-	if (*curpps + 1 > 0) {
+	if (*curpps < INT_MAX) {
 		*curpps = *curpps + 1;
 	}
-#else
-	/*
-	 * assume that there's not too many calls to this function.
-	 * not sure if the assumption holds, as it depends on *caller's*
-	 * behavior, not the behavior of this function.
-	 * IMHO it is wrong to make assumption on the caller's behavior,
-	 * so the above #if is #if 1, not #ifdef DIAGNOSTIC.
-	 */
-	*curpps = *curpps + 1;
-#endif
 
 	return rv;
 }

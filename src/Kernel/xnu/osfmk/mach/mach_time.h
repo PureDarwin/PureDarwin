@@ -54,35 +54,38 @@ kern_return_t           mach_wait_until(
 
 uint64_t                        mach_absolute_time(void);
 
+#ifndef KERNEL
 __OSX_AVAILABLE_STARTING(__MAC_10_10, __IPHONE_8_0)
+#endif
 uint64_t                        mach_approximate_time(void);
 
 /*
  * like mach_absolute_time, but advances during sleep
  */
+#ifndef KERNEL
 __OSX_AVAILABLE(10.12) __IOS_AVAILABLE(10.0) __TVOS_AVAILABLE(10.0) __WATCHOS_AVAILABLE(3.0)
+#endif
 uint64_t                        mach_continuous_time(void);
 
 /*
  * like mach_approximate_time, but advances during sleep
  */
+#ifndef KERNEL
 __OSX_AVAILABLE(10.12) __IOS_AVAILABLE(10.0) __TVOS_AVAILABLE(10.0) __WATCHOS_AVAILABLE(3.0)
+#endif
 uint64_t                        mach_continuous_approximate_time(void);
 
-#if !defined(KERNEL) && defined(PRIVATE)
-// Forward definition because this is a BSD value
-struct timespec;
-
-__OSX_AVAILABLE(10.12) __IOS_AVAILABLE(10.0) __TVOS_AVAILABLE(10.0) __WATCHOS_AVAILABLE(3.0)
-kern_return_t           mach_get_times(uint64_t* absolute_time,
-    uint64_t* continuous_time,
-    struct timespec *tp);
-
-__OSX_AVAILABLE(10.12) __IOS_AVAILABLE(10.0) __TVOS_AVAILABLE(10.0) __WATCHOS_AVAILABLE(3.0)
-uint64_t                mach_boottime_usec(void);
-
-#endif /* KERNEL */
+/*
+ * variant of mach_continuous_time that uses speculative timebase
+ */
+#ifdef KERNEL
+uint64_t                        mach_continuous_speculative_time(void);
+#endif
 
 __END_DECLS
+
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <mach/mach_time_private.h>
+#endif
 
 #endif /* _MACH_MACH_TIME_H_ */

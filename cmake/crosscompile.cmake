@@ -15,6 +15,12 @@ if(PUREDARWIN_NIX_TOOLCHAIN AND NOT NATIVE_LD64_EXECUTABLE)
     set(PUREDARWIN_USE_LD64_LLD TRUE)
 endif()
 
+if(DEFINED ENV{DARWIN_SDK_ROOT})
+    set(PUREDARWIN_SDK_INCLUDE "$ENV{DARWIN_SDK_ROOT}/usr/include")
+elseif(CMAKE_OSX_SYSROOT)
+    set(PUREDARWIN_SDK_INCLUDE "${CMAKE_OSX_SYSROOT}/usr/include")
+endif()
+
 if(NOT CMAKE_HOST_APPLE AND NOT NATIVE_LD64_EXECUTABLE)
     get_filename_component(_ld64_ar_name "${CMAKE_AR}" NAME)
     if(_ld64_ar_name MATCHES "^(.+)-ar$")
@@ -44,11 +50,6 @@ if(CMAKE_HOST_APPLE)
     endif()
 endif()
 
-# Left 0 by xnu's cdefs.h (no PLATFORM_* defined), which asm-renames 64-bit
-# calls to $UNIX2003 symbols that do not exist. Not PLATFORM_MacOSX: that also
-# flips __DARWIN_ONLY_64_BIT_INO_T on arm64, which exports cannot satisfy yet.
-add_compile_definitions(__DARWIN_ONLY_UNIX_CONFORMANCE=1)
-
 function(add_darwin_executable name)
     cmake_parse_arguments(SL "NO_STANDARD_LIBRARIES;USE_HOST_SDK" "MACOSX_VERSION_MIN" "" ${ARGN})
 
@@ -67,6 +68,10 @@ function(add_darwin_executable name)
 
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+    if(PUREDARWIN_SDK_INCLUDE)
+        target_compile_options(${name} PRIVATE "-I${PUREDARWIN_SDK_INCLUDE}")
+        target_compile_options(${name} PRIVATE "-include" "mach/pd_mach_compat.h")
+    endif()
         target_link_options(${name} PRIVATE -nostdlib)
         set_property(TARGET ${name} PROPERTY OSX_ARCHITECTURES "${PUREDARWIN_ARCH}")
     endif()
@@ -101,6 +106,9 @@ function(add_darwin_static_library name)
 
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+        if(PUREDARWIN_SDK_INCLUDE)
+            target_compile_options(${name} PRIVATE "-I${PUREDARWIN_SDK_INCLUDE}")
+        endif()
         set_property(TARGET ${name} PROPERTY OSX_ARCHITECTURES "${PUREDARWIN_ARCH}")
     endif()
 endfunction()
@@ -136,6 +144,9 @@ function(add_darwin_shared_library name)
 
     if(NOT SL_USE_HOST_SDK)
         target_compile_options(${name} PRIVATE -nostdlib -nostdinc)
+        if(PUREDARWIN_SDK_INCLUDE)
+            target_compile_options(${name} PRIVATE "-I${PUREDARWIN_SDK_INCLUDE}")
+        endif()
         target_link_options(${name} PRIVATE -nostdlib)
 
         set_property(TARGET ${name} PROPERTY OSX_ARCHITECTURES "${PUREDARWIN_ARCH}")

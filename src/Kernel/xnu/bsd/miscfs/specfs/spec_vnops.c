@@ -95,7 +95,6 @@
 #include <kern/waitq.h>
 
 #include <pexpert/pexpert.h>
-#include <IOKit/IOBSD.h>
 
 #include <sys/kdebug.h>
 #include <libkern/section_keywords.h>
@@ -104,6 +103,11 @@
 #include <vfs/vfs_io_compression_stats.h>
 #endif /* CONFIG_IO_COMPRESSION_STATS */
 
+#if CONFIG_IOSCHED
+#include <vm/vm_pageout_xnu.h>
+#include <vm/vm_object_xnu.h>
+#endif /* CONFIG_IOSCHED */
+
 /* XXX following three prototypes should be in a header file somewhere */
 extern dev_t    chrtoblk(dev_t dev);
 extern boolean_t        iskmemdev(dev_t dev);
@@ -111,7 +115,7 @@ extern int bpfkqfilter(dev_t dev, struct knote *kn);
 extern int ptsd_kqfilter(dev_t, struct knote *);
 extern int ptmx_kqfilter(dev_t, struct knote *);
 #if CONFIG_PHYS_WRITE_ACCT
-uint64_t kernel_pm_writes;    // to track the sync writes occuring during power management transitions
+uint64_t kernel_pm_writes;    // to track the sync writes occurring during power management transitions
 #endif /* CONFIG_PHYS_WRITE_ACCT */
 
 
@@ -130,7 +134,7 @@ char    devcls[] = "devcls";
 
 int(**spec_vnodeop_p)(void *);
 const struct vnodeopv_entry_desc spec_vnodeop_entries[] = {
-	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)vn_default_error },
+	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)(void (*)(void))vn_default_error },
 	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC)spec_lookup },            /* lookup */
 	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC)err_create },             /* create */
 	{ .opve_op = &vnop_mknod_desc, .opve_impl = (VOPFUNC)err_mknod },               /* mknod */
@@ -245,6 +249,7 @@ struct _throttle_io_info_t _throttle_io_info[LOWPRI_MAX_NUM_DEV];
 
 int     lowpri_throttle_enabled = 1;
 
+static int spec_close_internal(struct vnode *vp, dev_t dev, int flags, vfs_context_t ctx);
 
 static void throttle_info_end_io_internal(struct _throttle_io_info_t *info, int throttle_level);
 static int throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t ut, int flags, boolean_t isssd, boolean_t inflight, struct bufattr *bap);
@@ -297,6 +302,48 @@ set_fsblocksize(struct vnode *vp)
 	}
 }
 
+static void
+spec_init_bsdunit(vnode_t vp, vfs_context_t ctx, const char* caller)
+{
+	int     isssd = 0;
+	uint64_t throttle_mask = 0;
+	uint32_t devbsdunit = 0;
+
+	if (VNOP_IOCTL(vp, DKIOCISSOLIDSTATE, (caddr_t)&isssd, 0, ctx)) {
+		isssd = 0;
+	}
+	if (VNOP_IOCTL(vp, DKIOCGETTHROTTLEMASK, (caddr_t)&throttle_mask, 0, NULL)) {
+		throttle_mask = 0;
+	}
+
+	if (throttle_mask != 0) {
+		/*
+		 * as a reasonable approximation, only use the lowest bit of the mask
+		 * to generate a disk unit number
+		 */
+		devbsdunit = num_trailing_0(throttle_mask);
+	} else {
+		devbsdunit = 0;
+	}
+
+	if (vp->v_un.vu_specinfo->si_initted == 0) {
+		vnode_lock(vp);
+		if (vp->v_un.vu_specinfo->si_initted == 0) {
+			vp->v_un.vu_specinfo->si_isssd = isssd ? 1 : 0;
+			vp->v_un.vu_specinfo->si_devbsdunit = devbsdunit;
+			vp->v_un.vu_specinfo->si_throttle_mask = throttle_mask;
+			vp->v_un.vu_specinfo->si_throttleable = 1;
+			vp->v_un.vu_specinfo->si_initted = 1;
+		}
+		vnode_unlock(vp);
+		printf("%s : si_devbsdunit initialized to (%d), throttle_mask is (0x%llx), isssd is (%d)\n",
+		    caller, vp->v_un.vu_specinfo->si_devbsdunit,
+		    vp->v_un.vu_specinfo->si_throttle_mask,
+		    vp->v_un.vu_specinfo->si_isssd);
+	}
+}
+
+#define SPEC_INIT_BSDUNIT(vp, ctx) spec_init_bsdunit((vp), (ctx), __FUNCTION__)
 
 /*
  * Open a special file.
@@ -304,8 +351,6 @@ set_fsblocksize(struct vnode *vp)
 int
 spec_open(struct vnop_open_args *ap)
 {
-	static const char *OPEN_MOUNTED_ENTITLEMENT = "com.apple.private.vfs.open-mounted";
-
 	struct proc *p = vfs_context_proc(ap->a_context);
 	kauth_cred_t cred = vfs_context_ucred(ap->a_context);
 	struct vnode *vp = ap->a_vp;
@@ -410,10 +455,8 @@ spec_open(struct vnop_open_args *ap)
 		 * Do not allow opens of block devices that are
 		 * currently mounted.
 		 */
-		if (!IOTaskHasEntitlement(current_task(), OPEN_MOUNTED_ENTITLEMENT)) {
-			if ((error = vfs_mountedon(vp))) {
-				return error;
-			}
+		if ((error = vfs_mountedon(vp))) {
+			return error;
 		}
 
 		devsw_lock(dev, S_IFBLK);
@@ -429,6 +472,9 @@ spec_open(struct vnop_open_args *ap)
 			int setsize = 0;
 			u_int32_t size512 = 512;
 
+			if (bdevsw[maj].d_type == D_DISK && !vp->v_un.vu_specinfo->si_initted) {
+				SPEC_INIT_BSDUNIT(vp, ap->a_context);
+			}
 
 			if (!VNOP_IOCTL(vp, DKIOCGETBLOCKSIZE, (caddr_t)&blksize, 0, ap->a_context)) {
 				/* Switch to 512 byte sectors (temporarily) */
@@ -441,6 +487,9 @@ spec_open(struct vnop_open_args *ap)
 				}
 				/* If it doesn't set back, we can't recover */
 				if (VNOP_IOCTL(vp, DKIOCSETBLOCKSIZE, (caddr_t)&blksize, FWRITE, ap->a_context)) {
+					/* Perform an explicit close on the block device, as the device is already open */
+					spec_close_internal(vp, dev, ap->a_mode, ap->a_context);
+
 					error = ENXIO;
 				}
 			}
@@ -505,7 +554,7 @@ spec_read(struct vnop_read_args *ap)
 		int ddisk = 0;
 		int ktrace_code = DKIO_READ;
 		devBlockSize = vp->v_specsize;
-		uintptr_t our_id;
+		uintptr_t our_id = 0;
 
 		if (cdevsw[major(vp->v_rdev)].d_type == D_DISK) {
 			ddisk = 1;
@@ -646,7 +695,7 @@ spec_write(struct vnop_write_args *ap)
 		uint64_t blkno = 0;
 		int ddisk = 0;
 		int ktrace_code = 0;  // write is implied; read must be OR'd in.
-		uintptr_t our_id;
+		uintptr_t our_id = 0;
 
 		if (cdevsw[major(dev)].d_type == D_DISK) {
 			ddisk = 1;
@@ -780,6 +829,27 @@ spec_write(struct vnop_write_args *ap)
 	return 0;
 }
 
+static void
+vnode_spec_revoke_wait(vnode_t vp)
+{
+	vnode_lock_spin(vp);
+	while (vp->v_specinfo->si_flags & SI_REVOKEWAIT) {
+		msleep(&vp->v_specinfo->si_flags, &vp->v_lock, PVFS | PSPIN,
+		    "vnode_spec_revokewait", 0);
+	}
+	vp->v_specinfo->si_flags |= SI_REVOKEWAIT;
+	vnode_unlock(vp);
+}
+
+static void
+vnode_spec_revoke_done(vnode_t vp)
+{
+	vnode_lock_spin(vp);
+	vp->v_specinfo->si_flags &= ~SI_REVOKEWAIT;
+	vnode_unlock(vp);
+	wakeup(&vp->v_specinfo->si_flags);
+}
+
 /*
  * Device ioctl operation.
  */
@@ -787,22 +857,51 @@ int
 spec_ioctl(struct vnop_ioctl_args *ap)
 {
 	proc_t p = vfs_context_proc(ap->a_context);
-	dev_t dev = ap->a_vp->v_rdev;
+	vnode_t vp = ap->a_vp;
+	dev_t dev = vp->v_rdev;
 	int     retval = 0;
+	bool revoke_done_needed = false;
 
 	KERNEL_DEBUG_CONSTANT(FSDBG_CODE(DBG_IOCTL, 0) | DBG_FUNC_START,
-	    dev, ap->a_command, ap->a_fflag, ap->a_vp->v_type, 0);
+	    dev, ap->a_command, ap->a_fflag, vp->v_type, 0);
 
-	switch (ap->a_vp->v_type) {
+	switch (vp->v_type) {
 	case VCHR:
+		if (vnode_istty(vp) && (ap->a_command == TIOCREVOKE)) {
+			/*
+			 * TIOCREVOKE is called while revoking a tty vnode.
+			 * However, at the point where it is called, it is not
+			 * possible to detect whether the device is still open
+			 * or not to be able to make the call to the device
+			 * safely. We detect that here and serialize with a
+			 * close on the device through the revoke wait
+			 * flag (if needed).
+			 */
+			if (vp->v_specinfo->si_opencount == 0) {
+				goto out;
+			}
+			devsw_lock(dev, S_IFCHR);
+			if (vp->v_specinfo->si_opencount == 0) {
+				devsw_unlock(dev, S_IFCHR);
+				goto out;
+			}
+			vnode_spec_revoke_wait(vp);
+			devsw_unlock(dev, S_IFCHR);
+			revoke_done_needed = true;
+		}
+
 		retval = (*cdevsw[major(dev)].d_ioctl)(dev, ap->a_command, ap->a_data,
 		    ap->a_fflag, p);
+
+		if (revoke_done_needed) {
+			vnode_spec_revoke_done(vp);
+		}
 		break;
 
 	case VBLK:
 		retval = (*bdevsw[major(dev)].d_ioctl)(dev, ap->a_command, ap->a_data, ap->a_fflag, p);
 		if (!retval && ap->a_command == DKIOCSETBLOCKSIZE) {
-			ap->a_vp->v_specsize = *(uint32_t *)ap->a_data;
+			vp->v_specsize = *(uint32_t *)ap->a_data;
 		}
 		break;
 
@@ -810,6 +909,7 @@ spec_ioctl(struct vnop_ioctl_args *ap)
 		panic("spec_ioctl");
 		/* NOTREACHED */
 	}
+out:
 	KERNEL_DEBUG_CONSTANT(FSDBG_CODE(DBG_IOCTL, 0) | DBG_FUNC_END,
 	    dev, ap->a_command, ap->a_fflag, retval, 0);
 
@@ -831,8 +931,6 @@ spec_select(struct vnop_select_args *ap)
 		return (*cdevsw[major(dev)].d_select)(dev, ap->a_which, ap->a_wql, p);
 	}
 }
-
-static int filt_specattach(struct knote *kn, struct kevent_qos_s *kev);
 
 int
 spec_kqfilter(vnode_t vp, struct knote *kn, struct kevent_qos_s *kev)
@@ -862,7 +960,7 @@ spec_kqfilter(vnode_t vp, struct knote *kn, struct kevent_qos_s *kev)
 	kn->kn_sdata = tmp_sdata;
 #endif
 
-	if (major(dev) > nchrdev) {
+	if (major(dev) >= nchrdev) {
 		knote_set_error(kn, ENXIO);
 		return 0;
 	}
@@ -883,11 +981,12 @@ spec_kqfilter(vnode_t vp, struct knote *kn, struct kevent_qos_s *kev)
 		 * counts, so it must go through the select fallback.
 		 */
 		kn->kn_filtid = EVFILTID_TTY;
-		return knote_fops(kn)->f_attach(kn, kev);
+	} else {
+		/* Try to attach to other char special devices */
+		kn->kn_filtid = EVFILTID_SPEC;
 	}
 
-	/* Try to attach to other char special devices */
-	return filt_specattach(kn, kev);
+	return knote_fops(kn)->f_attach(kn, kev);
 }
 
 /*
@@ -996,11 +1095,11 @@ throttle_info_rel(struct _throttle_io_info_t *info)
 	 * Once reference count is zero, no one else should be able to take a
 	 * reference
 	 */
-	if ((info->throttle_refcnt == 0) && (info->throttle_alloc)) {
+	if ((oldValue == 1) && (info->throttle_alloc)) {
 		DEBUG_ALLOC_THROTTLE_INFO("Freeing info = %p\n", info);
 
 		lck_mtx_destroy(&info->throttle_lock, &throttle_lock_grp);
-		FREE(info, M_TEMP);
+		kfree_type(struct _throttle_io_info_t, info);
 	}
 	return oldValue;
 }
@@ -1020,7 +1119,7 @@ throttle_info_ref(struct _throttle_io_info_t *info)
 	    info, (int)(oldValue - 1), info );
 	/* Allocated items should never have a reference of zero */
 	if (info->throttle_alloc && (oldValue == 0)) {
-		panic("Taking a reference without calling create throttle info!\n");
+		panic("Taking a reference without calling create throttle info!");
 	}
 
 	return oldValue;
@@ -1183,7 +1282,7 @@ throttle_timer_start(struct _throttle_io_info_t *info, boolean_t update_io_count
 
 
 static void
-throttle_timer(struct _throttle_io_info_t *info)
+throttle_timer(struct _throttle_io_info_t *info, __unused thread_call_param_t p)
 {
 	uthread_t       ut, utlist;
 	struct timeval  elapsed;
@@ -1326,6 +1425,13 @@ throttle_init_throttle_window(void)
 	 * All values are specified in msecs.
 	 */
 
+#if (XNU_TARGET_OS_OSX && __arm64__)
+	/*
+	 * IO Tier EDT overrides are meant for
+	 * some arm platforms but not for
+	 * macs.
+	 */
+#else /* (XNU_TARGET_OS_OSX && __arm64__) */
 	/* Override global values with device-tree properties */
 	if (PE_get_default("kern.io_throttle_window_tier1", &throttle_window_size, sizeof(throttle_window_size))) {
 		throttle_windows_msecs[THROTTLE_LEVEL_TIER1] = throttle_window_size;
@@ -1338,6 +1444,7 @@ throttle_init_throttle_window(void)
 	if (PE_get_default("kern.io_throttle_window_tier3", &throttle_window_size, sizeof(throttle_window_size))) {
 		throttle_windows_msecs[THROTTLE_LEVEL_TIER3] = throttle_window_size;
 	}
+#endif /* (XNU_TARGET_OS_OSX && __arm64__) */
 
 	/* Override with boot-args */
 	if (PE_parse_boot_argn("io_throttle_window_tier1", &throttle_window_size, sizeof(throttle_window_size))) {
@@ -1373,6 +1480,13 @@ throttle_init_throttle_period(struct _throttle_io_info_t *info, boolean_t isssd)
 		info->throttle_io_periods = &throttle_io_period_msecs[0];
 	}
 
+#if (XNU_TARGET_OS_OSX && __arm64__)
+	/*
+	 * IO Tier EDT overrides are meant for
+	 * some arm platforms but not for
+	 * macs.
+	 */
+#else /* (XNU_TARGET_OS_OSX && __arm64__) */
 	/* Override global values with device-tree properties */
 	if (PE_get_default("kern.io_throttle_period_tier1", &throttle_period_size, sizeof(throttle_period_size))) {
 		info->throttle_io_periods[THROTTLE_LEVEL_TIER1] = throttle_period_size;
@@ -1385,6 +1499,7 @@ throttle_init_throttle_period(struct _throttle_io_info_t *info, boolean_t isssd)
 	if (PE_get_default("kern.io_throttle_period_tier3", &throttle_period_size, sizeof(throttle_period_size))) {
 		info->throttle_io_periods[THROTTLE_LEVEL_TIER3] = throttle_period_size;
 	}
+#endif /* (XNU_TARGET_OS_OSX && __arm64__) */
 
 	/* Override with boot-args */
 	if (PE_parse_boot_argn("io_throttle_period_tier1", &throttle_period_size, sizeof(throttle_period_size))) {
@@ -1401,7 +1516,6 @@ throttle_init_throttle_period(struct _throttle_io_info_t *info, boolean_t isssd)
 }
 
 #if CONFIG_IOSCHED
-extern  void vm_io_reprioritize_init(void);
 int     iosched_enabled = 1;
 #endif
 
@@ -1509,7 +1623,8 @@ rethrottle_thread(uthread_t ut)
 			wakeup(&ut->uu_on_throttlelist);
 
 			rethrottle_wakeups++;
-			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 102)), thread_tid(ut->uu_thread), ut->uu_on_throttlelist, my_new_level, 0, 0);
+			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 102)),
+			    uthread_tid(ut), ut->uu_on_throttlelist, my_new_level, 0, 0);
 		}
 	}
 	lck_spin_unlock(&ut->uu_rethrottle_lock);
@@ -1530,11 +1645,8 @@ throttle_info_create(void)
 	struct _throttle_io_info_t *info;
 	int     level;
 
-	MALLOC(info, struct _throttle_io_info_t *, sizeof(*info), M_TEMP, M_ZERO | M_WAITOK);
-	/* Should never happen but just in case */
-	if (info == NULL) {
-		return NULL;
-	}
+	info = kalloc_type(struct _throttle_io_info_t,
+	    Z_ZERO | Z_WAITOK | Z_NOFAIL);
 	/* Mark that this one was allocated and needs to be freed */
 	DEBUG_ALLOC_THROTTLE_INFO("Creating info = %p\n", info, info );
 	info->throttle_alloc = TRUE;
@@ -1714,7 +1826,7 @@ int
 throttle_get_io_policy(uthread_t *ut)
 {
 	if (ut != NULL) {
-		*ut = get_bsdthread_info(current_thread());
+		*ut = current_uthread();
 	}
 
 	return proc_get_effective_thread_policy(current_thread(), TASK_POLICY_IO);
@@ -1724,7 +1836,7 @@ int
 throttle_get_passive_io_policy(uthread_t *ut)
 {
 	if (ut != NULL) {
-		*ut = get_bsdthread_info(current_thread());
+		*ut = current_uthread();
 	}
 
 	return proc_get_effective_thread_policy(current_thread(), TASK_POLICY_PASSIVE_IO);
@@ -1859,7 +1971,7 @@ throttle_io_will_be_throttled(__unused int lowpri_window_msecs, mount_t mp)
 	}
 
 	if (info->throttle_is_fusion_with_priority) {
-		uthread_t ut = get_bsdthread_info(current_thread());
+		uthread_t ut = current_uthread();
 		if (ut->uu_lowpri_window == 0) {
 			return THROTTLE_DISENGAGED;
 		}
@@ -1911,9 +2023,13 @@ throttle_lowpri_io(int sleep_amount)
 	boolean_t insert_tail = TRUE;
 	boolean_t s;
 
-	ut = get_bsdthread_info(current_thread());
+	ut = current_uthread();
 
 	if (ut->uu_lowpri_window == 0) {
+		return 0;
+	}
+	if (current_thread_in_kernel_fault()) {
+		/* do not throttle kernel faults */
 		return 0;
 	}
 
@@ -1985,7 +2101,8 @@ throttle_lowpri_io(int sleep_amount)
 			ml_set_interrupts_enabled(s);
 			lck_mtx_yield(&info->throttle_lock);
 
-			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 103)), thread_tid(ut->uu_thread), ut->uu_on_throttlelist, 0, 0, 0);
+			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_FSRW, 103)),
+			    uthread_tid(ut), ut->uu_on_throttlelist, 0, 0, 0);
 
 			ut->uu_was_rethrottled = false;
 			continue;
@@ -2066,7 +2183,7 @@ throttle_lowpri_io_will_be_throttled(int sleep_amount)
 		return FALSE;
 	}
 
-	uthread_t ut = get_bsdthread_info(current_thread());
+	uthread_t ut = current_uthread();
 	if (ut->uu_lowpri_window == 0) {
 		return FALSE;
 	}
@@ -2131,7 +2248,7 @@ throttle_info_reset_window(uthread_t ut)
 	struct _throttle_io_info_t *info;
 
 	if (ut == NULL) {
-		ut = get_bsdthread_info(current_thread());
+		ut = current_uthread();
 	}
 
 	if ((info = ut->uu_throttle_info)) {
@@ -2173,6 +2290,7 @@ throttle_info_set_initial_window(uthread_t ut, struct _throttle_io_info_t *info,
 void
 throttle_info_end_io(buf_t bp)
 {
+	vnode_t vp;
 	mount_t mp;
 	struct bufattr *bap;
 	struct _throttle_io_info_t *info;
@@ -2184,8 +2302,12 @@ throttle_info_end_io(buf_t bp)
 	}
 	CLR(bap->ba_flags, BA_STRATEGY_TRACKED_IO);
 
-	mp = buf_vnode(bp)->v_mount;
-	if (mp != NULL) {
+	vp = buf_vnode(bp);
+	mp = vp->v_mount;
+
+	if (vp && (vp->v_type == VBLK || vp->v_type == VCHR)) {
+		info = &_throttle_io_info[vp->v_un.vu_specinfo->si_devbsdunit];
+	} else if (mp != NULL) {
 		info = &_throttle_io_info[mp->mnt_devbsdunit];
 	} else {
 		info = &_throttle_io_info[LOWPRI_MAX_NUM_DEV - 1];
@@ -2230,7 +2352,7 @@ throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t ut, in
 	}
 
 	if (ut == NULL) {
-		ut = get_bsdthread_info(current_thread());
+		ut = current_uthread();
 	}
 
 	if (bap && inflight && !ut->uu_throttle_bc) {
@@ -2254,7 +2376,7 @@ throttle_info_update_internal(struct _throttle_io_info_t *info, uthread_t ut, in
 				microuptime(&info->throttle_window_start_timestamp[thread_throttle_level]);
 			}
 			KERNEL_DEBUG_CONSTANT((FSDBG_CODE(DBG_THROTTLE, OPEN_THROTTLE_WINDOW)) | DBG_FUNC_NONE,
-			    current_proc()->p_pid, thread_throttle_level, 0, 0, 0);
+			    proc_getpid(current_proc()), thread_throttle_level, 0, 0, 0);
 		}
 		microuptime(&info->throttle_last_IO_timestamp[thread_throttle_level]);
 	}
@@ -2286,7 +2408,7 @@ throttle_info_update_by_mount(mount_t mp)
 	uthread_t ut;
 	boolean_t isssd = FALSE;
 
-	ut = get_bsdthread_info(current_thread());
+	ut = current_uthread();
 
 	if (mp != NULL) {
 		if (disk_conditioner_mount_is_ssd(mp)) {
@@ -2316,6 +2438,20 @@ throttle_info_update(void *throttle_info, int flags)
 {
 	if (throttle_info) {
 		throttle_info_update_internal(throttle_info, NULL, flags, FALSE, FALSE, NULL);
+	}
+}
+
+/*
+ * KPI routine (private)
+ *
+ * similar to throttle_info_update() but takes an additional argument to
+ * indicate if the backing device type is SSD or not.
+ */
+void
+throttle_info_update_with_type(void *throttle_info, int flags, boolean_t isssd)
+{
+	if (throttle_info) {
+		throttle_info_update_internal(throttle_info, NULL, flags, isssd, FALSE, NULL);
 	}
 }
 
@@ -2422,14 +2558,8 @@ throttle_info_io_will_be_throttled(void * throttle_info, int policy)
 int
 throttle_lowpri_window(void)
 {
-	struct uthread *ut = get_bsdthread_info(current_thread());
-	return ut->uu_lowpri_window;
+	return current_uthread()->uu_lowpri_window;
 }
-
-
-#if CONFIG_IOSCHED
-int upl_get_cached_tier(void *);
-#endif
 
 #if CONFIG_PHYS_WRITE_ACCT
 extern thread_t pm_sync_thread;
@@ -2444,6 +2574,7 @@ spec_strategy(struct vnop_strategy_args *ap)
 	int     passive;
 	dev_t   bdev;
 	uthread_t ut;
+	vnode_t vp;
 	mount_t mp;
 	struct  bufattr *bap;
 	int     strategy_ret;
@@ -2459,7 +2590,8 @@ spec_strategy(struct vnop_strategy_args *ap)
 
 	bp = ap->a_bp;
 	bdev = buf_device(bp);
-	mp = buf_vnode(bp)->v_mount;
+	vp = buf_vnode(bp);
+	mp = vp ? vp->v_mount : NULL;
 	bap = &bp->b_attr;
 
 #if CONFIG_PHYS_WRITE_ACCT
@@ -2597,11 +2729,28 @@ spec_strategy(struct vnop_strategy_args *ap)
 	}
 
 #if CONFIG_IO_COMPRESSION_STATS
-	io_compression_stats(bp);
+	// Do not run IO Compression Stats when a privilege thread is active
+	if (!is_vm_privileged() && !is_external_pageout_thread()) {
+		io_compression_stats(bp);
+	}
 #endif /* CONFIG_IO_COMPRESSION_STATS */
 	thread_update_io_stats(current_thread(), buf_count(bp), code);
 
-	if (mp != NULL) {
+	if (vp && (vp->v_type == VBLK || vp->v_type == VCHR)) {
+		if (!vp->v_un.vu_specinfo->si_initted) {
+			SPEC_INIT_BSDUNIT(vp, vfs_context_current());
+		}
+		if (vp->v_un.vu_specinfo->si_devbsdunit > (LOWPRI_MAX_NUM_DEV - 1)) {
+			panic("Invalid value (%d) for si_devbsdunit for vnode %p",
+			    vp->v_un.vu_specinfo->si_devbsdunit, vp);
+		}
+		if (vp->v_un.vu_specinfo->si_isssd > 1) {
+			panic("Invalid value (%d) for si_isssd for vnode %p",
+			    vp->v_un.vu_specinfo->si_isssd, vp);
+		}
+		throttle_info = &_throttle_io_info[vp->v_un.vu_specinfo->si_devbsdunit];
+		isssd = vp->v_un.vu_specinfo->si_isssd;
+	} else if (mp != NULL) {
 		if (disk_conditioner_mount_is_ssd(mp)) {
 			isssd = TRUE;
 		}
@@ -2623,11 +2772,11 @@ spec_strategy(struct vnop_strategy_args *ap)
 	if ((bflags & B_READ) == 0) {
 		microuptime(&throttle_info->throttle_last_write_timestamp);
 
-		if (mp) {
+		if (!(vp && (vp->v_type == VBLK || vp->v_type == VCHR)) && mp) {
 			mp->mnt_last_write_issued_timestamp = throttle_info->throttle_last_write_timestamp;
 			INCR_PENDING_IO(buf_count(bp), mp->mnt_pending_write_size);
 		}
-	} else if (mp) {
+	} else if (!(vp && (vp->v_type == VBLK || vp->v_type == VCHR)) && mp) {
 		INCR_PENDING_IO(buf_count(bp), mp->mnt_pending_read_size);
 	}
 	/*
@@ -2652,9 +2801,14 @@ spec_strategy(struct vnop_strategy_args *ap)
 	 */
 #define IO_SATISFIED_BY_CACHE  ((int)0xcafefeed)
 #define IO_SHOULD_BE_THROTTLED ((int)0xcafebeef)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-function-type"
+
 	typedef int strategy_fcn_ret_t(struct buf *bp);
 
 	strategy_ret = (*(strategy_fcn_ret_t*)bdevsw[major(bdev)].d_strategy)(bp);
+
+#pragma clang diagnostic pop
 
 	// disk conditioner needs to track when this I/O actually starts
 	// which means track it after `strategy` which may include delays
@@ -2687,19 +2841,13 @@ spec_blockmap(__unused struct vnop_blockmap_args *ap)
 	return ENOTSUP;
 }
 
-
-/*
- * Device close routine
- */
-int
-spec_close(struct vnop_close_args *ap)
+static int
+spec_close_internal(struct vnode *vp, dev_t dev, int flags, vfs_context_t ctx)
 {
-	struct vnode *vp = ap->a_vp;
-	dev_t dev = vp->v_rdev;
 	int error = 0;
-	int flags = ap->a_fflag;
-	struct proc *p = vfs_context_proc(ap->a_context);
+	struct proc *p = vfs_context_proc(ctx);
 	struct session *sessp;
+	struct pgrp *pg;
 
 	switch (vp->v_type) {
 	case VCHR:
@@ -2712,7 +2860,7 @@ spec_close(struct vnop_close_args *ap)
 		 * if the reference count is 1 (this is the very
 		 * last close)
 		 */
-		sessp = proc_session(p);
+		pg = proc_pgrp(p, &sessp);
 		devsw_lock(dev, S_IFCHR);
 		if (sessp != SESSION_NULL) {
 			if (vp == sessp->s_ttyvp && vcount(vp) == 1) {
@@ -2721,11 +2869,7 @@ spec_close(struct vnop_close_args *ap)
 				devsw_unlock(dev, S_IFCHR);
 				session_lock(sessp);
 				if (vp == sessp->s_ttyvp) {
-					tp = SESSION_TP(sessp);
-					sessp->s_ttyvp = NULL;
-					sessp->s_ttyvid = 0;
-					sessp->s_ttyp = TTY_NULL;
-					sessp->s_ttypgrpid = NO_PID;
+					tp = session_clear_tty_locked(sessp);
 				}
 				session_unlock(sessp);
 
@@ -2734,8 +2878,8 @@ spec_close(struct vnop_close_args *ap)
 				}
 				devsw_lock(dev, S_IFCHR);
 			}
-			session_rele(sessp);
 		}
+		pgrp_rele(pg);
 
 		if (--vp->v_specinfo->si_opencount < 0) {
 			panic("negative open count (c, %u, %u)", major(dev), minor(dev));
@@ -2745,7 +2889,18 @@ spec_close(struct vnop_close_args *ap)
 		 * close on last reference or on vnode revoke call
 		 */
 		if (vcount(vp) == 0 || (flags & IO_REVOKE) != 0) {
+			bool revoke_done_needed = false;
+
+			if (vnode_istty(vp) && vnode_isrecycled(vp)) {
+				vnode_spec_revoke_wait(vp);
+				revoke_done_needed = true;
+			}
+
 			error = cdevsw[major(dev)].d_close(dev, flags, S_IFCHR, p);
+
+			if (revoke_done_needed) {
+				vnode_spec_revoke_done(vp);
+			}
 		}
 
 		devsw_unlock(dev, S_IFCHR);
@@ -2769,7 +2924,7 @@ spec_close(struct vnop_close_args *ap)
 		 * we must invalidate any in core blocks, so that
 		 * we can, for instance, change floppy disks.
 		 */
-		if ((error = spec_fsync_internal(vp, MNT_WAIT, ap->a_context))) {
+		if ((error = spec_fsync_internal(vp, MNT_WAIT, ctx))) {
 			return error;
 		}
 
@@ -2797,6 +2952,15 @@ spec_close(struct vnop_close_args *ap)
 	}
 
 	return error;
+}
+
+/*
+ * Device close routine
+ */
+int
+spec_close(struct vnop_close_args *ap)
+{
+	return spec_close_internal(ap->a_vp, ap->a_vp->v_rdev, ap->a_fflag, ap->a_context);
 }
 
 /*
@@ -2887,11 +3051,11 @@ spec_offtoblk(struct vnop_offtoblk_args *ap)
 	return 0;
 }
 
+static int filt_specattach(struct knote *kn, struct kevent_qos_s *kev);
 static void filt_specdetach(struct knote *kn);
 static int filt_specevent(struct knote *kn, long hint);
 static int filt_spectouch(struct knote *kn, struct kevent_qos_s *kev);
 static int filt_specprocess(struct knote *kn, struct kevent_qos_s *kev);
-static int filt_specpeek(struct knote *kn);
 
 SECURITY_READ_ONLY_EARLY(struct filterops) spec_filtops = {
 	.f_isfd    = 1,
@@ -2900,171 +3064,101 @@ SECURITY_READ_ONLY_EARLY(struct filterops) spec_filtops = {
 	.f_event   = filt_specevent,
 	.f_touch   = filt_spectouch,
 	.f_process = filt_specprocess,
-	.f_peek    = filt_specpeek
 };
 
-
-/*
- * Given a waitq that is assumed to be embedded within a selinfo structure,
- * return the containing selinfo structure. While 'wq' is not really a queue
- * element, this macro simply does the offset_of calculation to get back to a
- * containing struct given the struct type and member name.
- */
-#define selinfo_from_waitq(wq) \
-	qe_element((wq), struct selinfo, si_waitq)
-
-static int
-spec_knote_select_and_link(struct knote *kn)
+static void
+filt_spec_make_eof(struct knote *kn)
 {
-	uthread_t uth;
-	vfs_context_t ctx;
-	vnode_t vp;
-	struct waitq_set *old_wqs;
-	uint64_t rsvd, rsvd_arg;
-	uint64_t *rlptr = NULL;
-	struct selinfo *si = NULL;
-	int selres = 0;
-
-	uth = get_bsdthread_info(current_thread());
-
-	ctx = vfs_context_current();
-	vp = (vnode_t)kn->kn_fp->fp_glob->fg_data;
-
-	int error = vnode_getwithvid(vp, vnode_vid(vp));
-	if (error != 0) {
-		knote_set_error(kn, ENOENT);
-		return 0;
-	}
-
 	/*
-	 * This function may be called many times to link or re-link the
-	 * underlying vnode to the kqueue.  If we've already linked the two,
-	 * we will have a valid kn_hook_waitqid which ties us to the underlying
-	 * device's waitq via a the waitq's prepost table object. However,
-	 * devices can abort any select action by calling selthreadclear().
-	 * This is OK because the table object will be invalidated by the
-	 * driver (through a call to selthreadclear), so any attempt to access
-	 * the associated waitq will fail because the table object is invalid.
-	 *
-	 * Even if we've already registered, we need to pass a pointer
-	 * to a reserved link structure. Otherwise, selrecord() will
-	 * infer that we're in the second pass of select() and won't
-	 * actually do anything!
+	 * The spec filter might touch kn_flags from f_event
+	 * without holding "the primitive lock", so make it atomic.
 	 */
-	rsvd = rsvd_arg = waitq_link_reserve(NULL);
-	rlptr = (void *)&rsvd_arg;
-
-	/*
-	 * Trick selrecord() into hooking kqueue's wait queue set into the device's
-	 * selinfo wait queue.
-	 */
-	old_wqs = uth->uu_wqset;
-	uth->uu_wqset = &(knote_get_kq(kn)->kq_wqs);
-
-	/*
-	 * Be sure that the waitq set is linked
-	 * before calling select to avoid possible
-	 * allocation under spinlocks.
-	 */
-	waitq_set_lazy_init_link(uth->uu_wqset);
-
-	/*
-	 * Now these are the laws of VNOP_SELECT, as old and as true as the sky,
-	 * And the device that shall keep it may prosper, but the device that shall
-	 * break it must receive ENODEV:
-	 *
-	 * 1. Take a lock to protect against other selects on the same vnode.
-	 * 2. Return 1 if data is ready to be read.
-	 * 3. Return 0 and call `selrecord` on a handy `selinfo` structure if there
-	 *    is no data.
-	 * 4. Call `selwakeup` when the vnode has an active `selrecord` and data
-	 *    can be read or written (depending on the seltype).
-	 * 5. If there's a `selrecord` and no corresponding `selwakeup`, but the
-	 *    vnode is going away, call `selthreadclear`.
-	 */
-	selres = VNOP_SELECT(vp, knote_get_seltype(kn), 0, rlptr, ctx);
-	uth->uu_wqset = old_wqs;
-
-	/*
-	 * Make sure to cleanup the reserved link - this guards against
-	 * drivers that may not actually call selrecord().
-	 */
-	waitq_link_release(rsvd);
-	if (rsvd != rsvd_arg) {
-		/* The driver / handler called selrecord() */
-		struct waitq *wq;
-		memcpy(&wq, rlptr, sizeof(void *));
-
-		/*
-		 * The waitq is part of the selinfo structure managed by the
-		 * driver. For certain drivers, we want to hook the knote into
-		 * the selinfo structure's si_note field so selwakeup can call
-		 * KNOTE.
-		 */
-		si = selinfo_from_waitq(wq);
-
-		/*
-		 * The waitq_get_prepost_id() function will (potentially)
-		 * allocate a prepost table object for the waitq and return
-		 * the table object's ID to us.  It will also set the
-		 * waitq_prepost_id field within the waitq structure.
-		 *
-		 * We can just overwrite kn_hook_waitqid because it's simply a
-		 * table ID used to grab a reference when needed.
-		 *
-		 * We have a reference on the vnode, so we know that the
-		 * device won't go away while we get this ID.
-		 *
-		 * Note: on 32bit this field is 32bit only.
-		 */
-		kn->kn_hook_waitqid = (typeof(kn->kn_hook_waitqid))waitq_get_prepost_id(wq);
-	} else if (selres == 0) {
-		/*
-		 * The device indicated that there's no data to read, but didn't call
-		 * `selrecord`.  Nothing will be notified of changes to this vnode, so
-		 * return an error back to user space, to make it clear that the knote
-		 * is not attached.
-		 */
-		knote_set_error(kn, ENODEV);
-	}
-
-	vnode_put(vp);
-
-	return selres;
+	os_atomic_or(&kn->kn_flags, EV_EOF | EV_ONESHOT, relaxed);
 }
 
 static int
-filt_spec_common(struct knote *kn, struct kevent_qos_s *kev, int selres)
+filt_spec_common(struct knote *kn, struct kevent_qos_s *kev, bool attach)
 {
-	int64_t data;
-	int ret;
+	uthread_t uth = current_uthread();
+	vfs_context_t ctx = vfs_context_current();
+	vnode_t vp = (vnode_t)fp_get_data(kn->kn_fp);
+	__block bool selrecorded = false;
+	struct select_set *old_wqs;
+	int64_t data = 0;
+	int ret, selret;
+
+	if (kn->kn_flags & EV_EOF) {
+		ret = FILTER_ACTIVE;
+		goto out;
+	}
+
+	if (!attach && vnode_getwithvid(vp, vnode_vid(vp)) != 0) {
+		filt_spec_make_eof(kn);
+		ret = FILTER_ACTIVE;
+		goto out;
+	}
+
+	selspec_record_hook_t cb = ^(struct selinfo *si) {
+		selspec_attach(kn, si);
+		selrecorded = true;
+	};
+
+	old_wqs = uth->uu_selset;
+	uth->uu_selset = SELSPEC_RECORD_MARKER;
+	selret = VNOP_SELECT(vp, knote_get_seltype(kn), 0, cb, ctx);
+	uth->uu_selset = old_wqs;
+
+	if (!attach) {
+		vnode_put(vp);
+	}
+
+	if (!selrecorded && selret == 0) {
+		/*
+		 * The device indicated that there's no data to read,
+		 * but didn't call `selrecord`.
+		 *
+		 * Nothing will be notified of changes to this vnode,
+		 * so return an error back to user space on attach,
+		 * or pretend the knote disappeared for other cases,
+		 * to make it clear that the knote is not attached.
+		 */
+		if (attach) {
+			knote_set_error(kn, ENODEV);
+			return 0;
+		}
+
+		filt_spec_make_eof(kn);
+		ret = FILTER_ACTIVE;
+		goto out;
+	}
 
 	if (kn->kn_vnode_use_ofst) {
-		if (kn->kn_fp->fp_glob->fg_offset >= (uint32_t)selres) {
+		if (kn->kn_fp->fp_glob->fg_offset >= (uint32_t)selret) {
 			data = 0;
 		} else {
-			data = ((uint32_t)selres) - kn->kn_fp->fp_glob->fg_offset;
+			data = ((uint32_t)selret) - kn->kn_fp->fp_glob->fg_offset;
 		}
 	} else {
-		data = selres;
+		data = selret;
 	}
 
-	ret = data >= knote_low_watermark(kn);
-
-	if (ret && kev) {
+	if (data >= knote_low_watermark(kn)) {
+		ret = FILTER_ACTIVE;
+	} else {
+		ret = 0;
+	}
+out:
+	if (ret) {
 		knote_fill_kevent(kn, kev, data);
 	}
-
 	return ret;
 }
 
 static int
 filt_specattach(struct knote *kn, __unused struct kevent_qos_s *kev)
 {
-	vnode_t vp;
+	vnode_t vp = (vnode_t)fp_get_data(kn->kn_fp); /* Already have iocount, and vnode is alive */
 	dev_t dev;
-
-	vp = (vnode_t)kn->kn_fp->fp_glob->fg_data; /* Already have iocount, and vnode is alive */
 
 	assert(vnode_ischr(vp));
 
@@ -3083,55 +3177,27 @@ filt_specattach(struct knote *kn, __unused struct kevent_qos_s *kev)
 		return 0;
 	}
 
-	/*
-	 * This forces the select fallback to call through VNOP_SELECT and hook
-	 * up selinfo on every filter routine.
-	 *
-	 * Pseudo-terminal controllers are opted out of native kevent support --
-	 * remove this when they get their own EVFILTID.
-	 */
-	if (cdevsw_flags[major(dev)] & CDEVSW_IS_PTC) {
-		kn->kn_vnode_kqok = 0;
-	}
-
-	kn->kn_filtid = EVFILTID_SPEC;
-	kn->kn_hook_waitqid = 0;
-
-	knote_markstayactive(kn);
-	return spec_knote_select_and_link(kn);
+	return filt_spec_common(kn, kev, true);
 }
 
 static void
 filt_specdetach(struct knote *kn)
 {
-	knote_clearstayactive(kn);
-
-	/*
-	 * This is potentially tricky: the device's selinfo waitq that was
-	 * tricked into being part of this knote's waitq set may not be a part
-	 * of any other set, and the device itself may have revoked the memory
-	 * in which the waitq was held. We use the knote's kn_hook_waitqid field
-	 * to keep the ID of the waitq's prepost table object. This
-	 * object keeps a pointer back to the waitq, and gives us a safe way
-	 * to decouple the dereferencing of driver allocated memory: if the
-	 * driver goes away (taking the waitq with it) then the prepost table
-	 * object will be invalidated. The waitq details are handled in the
-	 * waitq API invoked here.
-	 */
-	if (kn->kn_hook_waitqid) {
-		waitq_unlink_by_prepost_id(kn->kn_hook_waitqid, &(knote_get_kq(kn)->kq_wqs));
-		kn->kn_hook_waitqid = 0;
-	}
+	selspec_detach(kn);
 }
 
 static int
-filt_specevent(struct knote *kn, __unused long hint)
+filt_specevent(struct knote *kn, long hint)
 {
-	/*
-	 * Nothing should call knote or knote_vanish on this knote.
-	 */
-	panic("filt_specevent(%p)", kn);
-	return 0;
+	/* Due to selwakeup_internal() on SI_SELSPEC */
+	assert(KNOTE_IS_AUTODETACHED(kn));
+	knote_kn_hook_set_raw(kn, NULL);
+
+	/* called by selwakeup with the selspec_lock lock held */
+	if (hint & NOTE_REVOKE) {
+		filt_spec_make_eof(kn);
+	}
+	return FILTER_ACTIVE;
 }
 
 static int
@@ -3140,47 +3206,11 @@ filt_spectouch(struct knote *kn, struct kevent_qos_s *kev)
 	kn->kn_sdata = kev->data;
 	kn->kn_sfflags = kev->fflags;
 
-	if (kev->flags & EV_ENABLE) {
-		return spec_knote_select_and_link(kn);
-	}
-
-	return 0;
+	return filt_spec_common(kn, kev, false);
 }
 
 static int
 filt_specprocess(struct knote *kn, struct kevent_qos_s *kev)
 {
-	vnode_t vp;
-	uthread_t uth;
-	vfs_context_t ctx;
-	int res;
-	int selres;
-	int error;
-
-	uth = get_bsdthread_info(current_thread());
-	ctx = vfs_context_current();
-	vp = (vnode_t)kn->kn_fp->fp_glob->fg_data;
-
-	error = vnode_getwithvid(vp, vnode_vid(vp));
-	if (error != 0) {
-		kn->kn_flags |= (EV_EOF | EV_ONESHOT);
-		knote_fill_kevent(kn, kev, 0);
-		return 1;
-	}
-
-	selres = spec_knote_select_and_link(kn);
-	res = filt_spec_common(kn, kev, selres);
-
-	vnode_put(vp);
-
-	return res;
-}
-
-static int
-filt_specpeek(struct knote *kn)
-{
-	int selres = 0;
-
-	selres = spec_knote_select_and_link(kn);
-	return filt_spec_common(kn, NULL, selres);
+	return filt_spec_common(kn, kev, false);
 }

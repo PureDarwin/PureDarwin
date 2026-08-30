@@ -2390,7 +2390,7 @@ let
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
       "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
-      "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext"
+      "AppleFileSystemDriver.kext" "corecrypto.kext"
       "PDArmPlatformExpert" "PDArmPCI"
       # Arch-neutral drivers, matching what x86 builds: filesystems,
       # USB, the rest of VirtIO, and the remaining storage families.
@@ -2414,7 +2414,7 @@ let
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
       "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
-      "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext"
+      "AppleFileSystemDriver.kext" "corecrypto.kext"
       "PDArmPlatformExpert.kext" "PDArmPCI.kext"
       "msdosfs.kext" "apfs.kext" "hfs.kext" "HFSEncodings.kext"
       "IOUSBFamily.kext" "AppleUSBEHCI.kext" "AppleUSBOHCI.kext"

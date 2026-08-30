@@ -432,7 +432,7 @@ public:
  * panic on cast failure.
  */
 #define OSRequiredCast(type, inst)  \
-    (type *) OSMetaClassBase::requiredMetaCast((inst), OSTypeID(type))
+    ((type *) OSMetaClassBase::requiredMetaCast((inst), OSTypeID(type)))
 
 /*!
  * @define OSCheckTypeInst
@@ -1146,7 +1146,7 @@ protected:
  * for as long as its kernel extension is loaded,
  * OSMetaClass does not use reference-counting.
  */
-	virtual void retain() const;
+	virtual void retain() const override;
 
 
 /*!
@@ -1160,7 +1160,7 @@ protected:
  * for as long as its kernel extension is loaded,
  * OSMetaClass does not use reference-counting.
  */
-	virtual void release() const;
+	virtual void release() const override;
 
 
 /*!
@@ -1177,7 +1177,7 @@ protected:
  * for as long as its kernel extension is loaded,
  * OSMetaClass does not use reference-counting.
  */
-	virtual void release(int freeWhen) const;
+	virtual void release(int freeWhen) const override;
 
 
 /*!
@@ -1194,7 +1194,7 @@ protected:
  * for as long as its kernel extension is loaded,
  * OSMetaClass does not use reference-counting.
  */
-	virtual void taggedRetain(const void * tag = NULL) const;
+	virtual void taggedRetain(const void * tag = NULL) const override;
 
 
 /*!
@@ -1211,7 +1211,7 @@ protected:
  * for as long as its kernel extension is loaded,
  * OSMetaClass does not use reference-counting.
  */
-	virtual void taggedRelease(const void * tag = NULL) const;
+	virtual void taggedRelease(const void * tag = NULL) const override;
 
 
 /*!
@@ -1231,7 +1231,7 @@ protected:
  */
 	virtual void taggedRelease(
 		const void * tag,
-		const int    freeWhen) const;
+		const int    freeWhen) const override;
 
 
 /*!
@@ -1249,7 +1249,7 @@ protected:
  * for as long as its kernel extension is loaded,
  * OSMetaClass does not use reference-counting.
  */
-	virtual int getRetainCount() const;
+	virtual int getRetainCount() const override;
 
 
 /* Not to be included in headerdoc.
@@ -1262,7 +1262,7 @@ protected:
  * @result
  * The metaclass of the OSMetaClass object.
  */
-	virtual const OSMetaClass * getMetaClass() const;
+	virtual const OSMetaClass * getMetaClass() const override;
 
 
 /*!
@@ -1334,7 +1334,7 @@ protected:
  * from the run-time type information system.
  */
 	virtual
-	~OSMetaClass();
+	~OSMetaClass() override;
 
 // Needs to be overriden as NULL as all OSMetaClass objects are allocated
 // statically at compile time, don't accidently try to free them.
@@ -2074,34 +2074,42 @@ public:
 	className :: className () : superclassName (&gMetaClass)    \
 	{ gMetaClass.instanceConstructed(); }
 
+#ifdef KERNEL_PRIVATE
 #define OSDefineOperatorMethods(className)                      \
-	void * className::operator new(size_t size)                 \
-	{ return OSObject::operator new(size); }                    \
-	void className::operator delete(void *mem, size_t size)     \
-	{ return OSObject::operator delete(mem, size); }
+	static KALLOC_TYPE_DEFINE(className ## _ktv, className,     \
+	    KT_DEFAULT);                                            \
+	void * className::operator new(size_t size) {               \
+	  return OSObject_typed_operator_new(className ## _ktv,     \
+	      size);                                                \
+	}                                                           \
+	void className::operator delete(void *mem, size_t size) {   \
+	  return OSObject_typed_operator_delete(className ## _ktv,  \
+	      mem, size);                                           \
+	}
+#else
+#define OSDefineOperatorMethods(className)                      \
+	void * className::operator new(size_t size) {               \
+	  return OSObject::operator new(size);                      \
+	}                                                           \
+	void className::operator delete(void *mem, size_t size) {   \
+	  return OSObject::operator delete(mem, size);              \
+	}
+#endif
 
 #ifdef KERNEL_PRIVATE
 #define OSDefineOperatorMethodsWithZone(className)              \
 	void * className :: operator new(size_t size) {             \
-	    if(className ## _zone) {                                \
+	    if (className ## _zone) {                               \
 	        return zalloc_flags(className ## _zone,             \
 	                        (zalloc_flags_t) (Z_WAITOK | Z_ZERO));\
 	    } else {                                                \
-	/*
-	 * kIOTracking is on, disabling zones
-	 * for iokit objects
-	 */                                                         \
 	        return OSObject::operator new(size);                \
 	    }                                                       \
 	}                                                           \
 	void className :: operator delete(void *mem, size_t size) { \
-	    if(className ## _zone) {                                \
+	    if (className ## _zone) {                               \
 	        kern_os_zfree(className ## _zone, mem, size);       \
 	    } else {                                                \
-	/*
-	 * kIOTracking is on, disabling zones
-	 * for iokit objects
-	 */                                                         \
 	        return OSObject::operator delete(mem, size);        \
 	    }                                                       \
 	}
@@ -2604,7 +2612,7 @@ public:
 private:
 // Obsolete APIs
 	static OSDictionary * getClassDictionary();
-	virtual bool serialize(OSSerialize * serializer) const;
+	virtual bool serialize(OSSerialize * serializer) const override;
 
 // Virtual Padding functions for MetaClass's
 	OSMetaClassDeclareReservedUnused(OSMetaClass, 0);

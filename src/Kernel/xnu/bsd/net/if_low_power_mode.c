@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2018-2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -62,12 +62,6 @@ struct eventhandler_lists_ctxt if_low_power_evhdlr_ctx;
 static void if_low_power_evhdlr_callback(__unused struct eventhandler_entry_arg arg,
     struct ifnet *ifp, if_low_power_ev_code_t event_code);
 
-#if 0
-static void if_low_power_nwk_ev_callback(void *arg);
-static void if_low_power_event_enqueue_nwk_wq_entry(struct ifnet *ifp,
-    if_low_power_ev_code_t event_code);
-#endif
-
 extern void shutdown_sockets_on_interface(struct ifnet *ifp);
 
 SYSCTL_DECL(_net_link_generic_system);
@@ -93,7 +87,7 @@ if_low_power_evhdlr_callback(__unused struct eventhandler_entry_arg arg,
 {
 	struct kev_dl_low_power_mode kev;
 
-	if (!IF_FULLY_ATTACHED(ifp)) {
+	if (!ifnet_is_fully_attached(ifp)) {
 		return;
 	}
 
@@ -110,7 +104,7 @@ if_low_power_evhdlr_callback(__unused struct eventhandler_entry_arg arg,
 	}
 
 	if (event_code == IF_LOW_POWER_EVENT_ON) {
-		atomic_add_32(&ifp->if_low_power_gencnt, 1);
+		os_atomic_inc(&ifp->if_low_power_gencnt, relaxed);
 
 		if (if_low_power_restricted != 0) {
 			shutdown_sockets_on_interface(ifp);
@@ -125,7 +119,7 @@ if_low_power_evhdlr_callback(__unused struct eventhandler_entry_arg arg,
 	    KEV_DL_SUBCLASS,
 	    KEV_DL_LOW_POWER_MODE_CHANGED,
 	    (struct net_event_data *)&kev,
-	    sizeof(struct kev_dl_low_power_mode));
+	    sizeof(struct kev_dl_low_power_mode), FALSE);
 }
 
 void
@@ -135,44 +129,10 @@ if_low_power_evhdlr_init(void)
 
 	(void)EVENTHANDLER_REGISTER(&if_low_power_evhdlr_ctx,
 	    if_low_power_event,
-	    if_low_power_evhdlr_callback,
+	    &if_low_power_evhdlr_callback,
 	    eventhandler_entry_dummy_arg,
 	    EVENTHANDLER_PRI_ANY);
 }
-
-#if 0
-static void
-if_low_power_nwk_ev_callback(void *arg)
-{
-	struct if_low_power_ev_args *if_low_power_ev_args =
-	    (struct if_low_power_ev_args *)arg;
-
-	EVENTHANDLER_INVOKE(&if_low_power_evhdlr_ctx,
-	    if_low_power_event,
-	    if_low_power_ev_args->ifp,
-	    if_low_power_ev_args->event_code);
-}
-
-static void
-if_low_power_event_enqueue_nwk_wq_entry(struct ifnet *ifp,
-    if_low_power_ev_code_t event_code)
-{
-	struct if_low_power_ev_nwk_wq_entry *event_nwk_wq_entry = NULL;
-
-	MALLOC(event_nwk_wq_entry, struct if_low_power_ev_nwk_wq_entry *,
-	    sizeof(struct if_low_power_ev_nwk_wq_entry),
-	    M_NWKWQ, M_WAITOK | M_ZERO);
-
-	event_nwk_wq_entry->ev_args.ifp = ifp;
-	event_nwk_wq_entry->ev_args.event_code = event_code;
-
-	event_nwk_wq_entry->nwk_wqe.func = if_low_power_nwk_ev_callback;
-	event_nwk_wq_entry->nwk_wqe.is_arg_managed = TRUE;
-	event_nwk_wq_entry->nwk_wqe.arg = &event_nwk_wq_entry->ev_args;
-
-	nwk_wq_enqueue((struct nwk_wq_entry*)event_nwk_wq_entry);
-}
-#endif
 
 int
 if_set_low_power(ifnet_t ifp, bool on)

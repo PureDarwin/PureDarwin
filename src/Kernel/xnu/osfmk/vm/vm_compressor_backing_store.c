@@ -26,16 +26,24 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#include "vm_compressor_backing_store.h"
-#include <vm/vm_pageout.h>
-#include <vm/vm_protos.h>
+#include "vm_compressor_backing_store_internal.h"
+#include <vm/vm_pageout_xnu.h>
+#include <vm/vm_protos_internal.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_xnu.h>
+#include <vm/vm_compressor_internal.h>
+#include <vm/vm_iokit.h>
+#include <vm/vm_map_internal.h>
+#include <vm/vm_log.h>
+#include <vm/vm_page_internal.h>
 
 #include <IOKit/IOHibernatePrivate.h>
-
+#include <kern/counter.h>
 #include <kern/policy_internal.h>
+#include <sys/kern_memorystatus_xnu.h>
 
 LCK_GRP_DECLARE(vm_swap_data_lock_grp, "vm_swap_data");
-LCK_MTX_EARLY_DECLARE(vm_swap_data_lock, &vm_swap_data_lock_grp);
+LCK_MTX_DECLARE(vm_swap_data_lock, &vm_swap_data_lock_grp);
 
 #if defined(XNU_TARGET_OS_OSX)
 /*
@@ -50,7 +58,9 @@ boolean_t       vm_swapfile_create_needed = FALSE;
 boolean_t       vm_swapfile_gc_needed = FALSE;
 
 int             vm_swapper_throttle = -1;
-uint64_t        vm_swapout_thread_id;
+SECURITY_READ_ONLY_LATE(thread_t) vm_swapout_thread;
+SECURITY_READ_ONLY_LATE(thread_t) vm_swapfile_create_thread;
+SECURITY_READ_ONLY_LATE(thread_t) vm_swapfile_gc_thread;
 
 uint64_t        vm_swap_put_failures = 0; /* Likely failed I/O. Data is still in memory. */
 uint64_t        vm_swap_get_failures = 0; /* Fatal */
@@ -58,9 +68,10 @@ uint64_t        vm_swap_put_failures_no_swap_file = 0; /* Possibly not fatal bec
 int             vm_num_swap_files_config = 0;
 int             vm_num_swap_files = 0;
 int             vm_num_pinned_swap_files = 0;
+uint64_t        vm_swap_volume_capacity = 0;
 int             vm_swapout_thread_processed_segments = 0;
 int             vm_swapout_thread_awakened = 0;
-bool            vm_swapout_thread_running = FALSE;
+sched_cond_atomic_t vm_swapout_cond = SCHED_COND_INIT;
 int             vm_swapfile_create_thread_awakened = 0;
 int             vm_swapfile_create_thread_running = 0;
 int             vm_swapfile_gc_thread_awakened = 0;
@@ -69,12 +80,14 @@ int             vm_swapfile_gc_thread_running = 0;
 int64_t         vm_swappin_avail = 0;
 boolean_t       vm_swappin_enabled = FALSE;
 unsigned int    vm_swapfile_total_segs_alloced = 0;
+unsigned int    vm_swapfile_total_segs_alloced_max = 0;
 unsigned int    vm_swapfile_total_segs_used = 0;
+unsigned int    vm_swapfile_total_segs_used_max = 0;
 
 char            swapfilename[MAX_SWAPFILENAME_LEN + 1] = SWAP_FILE_NAME;
 
 extern vm_map_t compressor_map;
-
+extern uint32_t c_seg_bufsize, c_seg_allocsize, c_seg_off_limit;
 
 #define SWAP_READY      0x1     /* Swap file is ready to be used */
 #define SWAP_RECLAIM    0x2     /* Swap file is marked to be reclaimed */
@@ -105,23 +118,24 @@ struct swapfile {
 queue_head_t    swf_global_queue;
 boolean_t       swp_trim_supported = FALSE;
 
-extern clock_sec_t      dont_trim_until_ts;
-clock_sec_t             vm_swapfile_last_failed_to_create_ts = 0;
-clock_sec_t             vm_swapfile_last_successful_create_ts = 0;
-int                     vm_swapfile_can_be_created = FALSE;
-boolean_t               delayed_trim_handling_in_progress = FALSE;
+extern uint64_t         dont_trim_until_ts;
+uint64_t                vm_swapfile_last_failed_to_create_ts = 0;
+uint64_t                vm_swapfile_last_successful_create_ts = 0;
+static bool             vm_swapfile_can_be_created = false;
+static bool             delayed_trim_handling_in_progress = false;
 
 boolean_t               hibernate_in_progress_with_pinned_swap = FALSE;
 
 static void vm_swapout_thread_throttle_adjust(void);
 static void vm_swap_free_now(struct swapfile *swf, uint64_t f_offset);
-static void vm_swapout_thread(void);
-static void vm_swapfile_create_thread(void);
-static void vm_swapfile_gc_thread(void);
+static void vm_swapfile_create_thread_continue(void *, wait_result_t);
+static void vm_swapfile_gc_thread_continue(void *, wait_result_t);
 static void vm_swap_defragment(void);
 static void vm_swap_handle_delayed_trims(boolean_t);
 static void vm_swap_do_delayed_trim(struct swapfile *);
 static void vm_swap_wait_on_trim_handling_in_progress(void);
+static void vm_swapout_finish(c_segment_t c_seg, uint64_t f_offset, uint32_t size, kern_return_t kr);
+static void vm_swapout_thread_continue(void *arg, wait_result_t wr);
 
 extern int vnode_getwithref(struct vnode* vp);
 
@@ -136,13 +150,24 @@ boolean_t vm_swap_force_defrag = FALSE, vm_swap_force_reclaim = FALSE;
  * that the memory overhead is similar for performance comparisons.
  */
 #define VM_MAX_SWAP_FILE_NUM            5
+#if defined(__arm64__) && defined(ARM_LARGE_MEMORY)
+#define VM_MAX_SWAP_FILE_SWAP_ENABLED_NUM (64ULL * (1ULL << 30) / MAX_SWAP_FILE_SIZE)
+#define VM_MIN_SWAP_FILE_SWAP_ENABLED_NUM (16ULL * (1ULL << 30) / MAX_SWAP_FILE_SIZE)
+#else /* defined(__arm64__) && defined(ARM_LARGE_MEMORY) */
+/*
+ * We reserve compressor pool VA at boot for the max # of swap files. If someone
+ * has enabled app swap but we're not an arm large memory device we can't hog
+ * all of the VA so we only go up to 4GB.
+ */
+#define VM_MAX_SWAP_FILE_SWAP_ENABLED_NUM (4ULL * (1ULL << 30) / MAX_SWAP_FILE_SIZE)
+#define VM_MIN_SWAP_FILE_SWAP_ENABLED_NUM (4ULL * (1ULL << 30) / MAX_SWAP_FILE_SIZE)
+#endif /* defined(__arm64__) && defined(ARM_LARGE_MEMORY) */
+#define VM_SWAP_MIN_VOLUME_CAPACITY (128ULL * (1ULL << 30))
 
 #define VM_SWAPFILE_DELAYED_TRIM_MAX    4
 
 #define VM_SWAP_SHOULD_DEFRAGMENT()     (((vm_swap_force_defrag == TRUE) || (c_swappedout_sparse_count > (vm_swapfile_total_segs_used / 16))) ? 1 : 0)
 #define VM_SWAP_SHOULD_PIN(_size)       FALSE
-#define VM_SWAP_SHOULD_CREATE(cur_ts)   ((vm_num_swap_files < vm_num_swap_files_config) && ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) < (unsigned int)VM_SWAPFILE_HIWATER_SEGS) && \
-	                                 ((cur_ts - vm_swapfile_last_failed_to_create_ts) > VM_SWAPFILE_DELAYED_CREATE) ? 1 : 0)
 #define VM_SWAP_SHOULD_TRIM(swf)        ((swf->swp_delayed_trim_count >= VM_SWAPFILE_DELAYED_TRIM_MAX) ? 1 : 0)
 
 #else /* !XNU_TARGET_OS_OSX */
@@ -152,17 +177,14 @@ boolean_t vm_swap_force_defrag = FALSE, vm_swap_force_reclaim = FALSE;
 
 #define VM_SWAP_SHOULD_DEFRAGMENT()     (((vm_swap_force_defrag == TRUE) || (c_swappedout_sparse_count > (vm_swapfile_total_segs_used / 4))) ? 1 : 0)
 #define VM_SWAP_SHOULD_PIN(_size)       (vm_swappin_avail > 0 && vm_swappin_avail >= (int64_t)(_size))
-#define VM_SWAP_SHOULD_CREATE(cur_ts)   ((vm_num_swap_files < vm_num_swap_files_config) && ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) < (unsigned int)VM_SWAPFILE_HIWATER_SEGS) && \
-	                                 ((cur_ts - vm_swapfile_last_failed_to_create_ts) > VM_SWAPFILE_DELAYED_CREATE) ? 1 : 0)
 #define VM_SWAP_SHOULD_TRIM(swf)        ((swf->swp_delayed_trim_count >= VM_SWAPFILE_DELAYED_TRIM_MAX) ? 1 : 0)
 
 #endif /* !XNU_TARGET_OS_OSX */
 
-#define VM_SWAP_SHOULD_RECLAIM()        (((vm_swap_force_reclaim == TRUE) || ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) >= SWAPFILE_RECLAIM_THRESHOLD_SEGS)) ? 1 : 0)
-#define VM_SWAP_SHOULD_ABORT_RECLAIM()  (((vm_swap_force_reclaim == FALSE) && ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) <= SWAPFILE_RECLAIM_MINIMUM_SEGS)) ? 1 : 0)
-#define VM_SWAPFILE_DELAYED_CREATE      15
+#define VM_SWAP_SHOULD_RECLAIM()        (((vm_swap_force_reclaim == TRUE) || ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) >= swapfile_reclaim_threshold_segs)) ? 1 : 0)
+#define VM_SWAP_SHOULD_ABORT_RECLAIM()  (((vm_swap_force_reclaim == FALSE) && ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) <= swapfile_reclam_minimum_segs)) ? 1 : 0)
 
-#define VM_SWAP_BUSY()  ((c_swapout_count && (vm_swapper_throttle == THROTTLE_LEVEL_COMPRESSOR_TIER0)) ? 1 : 0)
+#define VM_SWAP_BUSY()  (((c_early_swapout_count + c_regular_swapout_count + c_late_swapout_count) && (vm_swapper_throttle == THROTTLE_LEVEL_COMPRESSOR_TIER0)) ? 1 : 0)
 
 
 #if CHECKSUM_THE_SWAP
@@ -170,10 +192,10 @@ extern unsigned int hash_string(char *cp, int len);
 #endif
 
 #if RECORD_THE_COMPRESSED_DATA
-boolean_t       c_compressed_record_init_done = FALSE;
+boolean_t       c_compressed_record_init_done = FALSE;  /* was the record file opened? */
 int             c_compressed_record_write_error = 0;
-struct vnode    *c_compressed_record_vp = NULL;
-uint64_t        c_compressed_record_file_offset = 0;
+struct vnode    *c_compressed_record_vp = NULL;         /* the file opened for record write */
+uint64_t        c_compressed_record_file_offset = 0;    /* next write offset */
 void    c_compressed_record_init(void);
 void    c_compressed_record_write(char *, int);
 #endif
@@ -347,6 +369,13 @@ vm_swap_encrypt(c_segment_t c_seg)
 		swap_crypt_initialize();
 	}
 
+	/*
+	 * Data stored in the compressor should never need to be faulted in.
+	 * Make sure pages storing data that we're encrypting cannot
+	 * be stolen out from under us in the off chance that the mapping
+	 * gets disconnected while we're actively encrypting.
+	 */
+	c_page_replacement_disallowed_start();
 #if DEVELOPMENT || DEBUG
 	C_SEG_MAKE_WRITEABLE(c_seg);
 #endif
@@ -365,10 +394,11 @@ vm_swap_encrypt(c_segment_t c_seg)
 #if DEVELOPMENT || DEBUG
 	C_SEG_WRITE_PROTECT(c_seg);
 #endif
+	c_page_replacement_disallowed_end();
 }
 
 void
-vm_swap_decrypt(c_segment_t c_seg)
+vm_swap_decrypt(c_segment_t c_seg, bool disallow_page_replacement)
 {
 	uint8_t *ptr;
 	uint8_t *iv;
@@ -377,6 +407,15 @@ vm_swap_decrypt(c_segment_t c_seg)
 	int rc   = 0;
 
 	assert(swap_crypt_initialized);
+
+	/*
+	 * See comment in vm_swap_encrypt().
+	 * The page replacement lock may already be held, though, which is why we
+	 * don't do c_page_replacement_disallowed_start()  and do a try_lock instead.
+	 */
+	if (disallow_page_replacement) {
+		c_page_replacement_disallowed_start();
+	}
 
 #if DEVELOPMENT || DEBUG
 	C_SEG_MAKE_WRITEABLE(c_seg);
@@ -396,67 +435,41 @@ vm_swap_decrypt(c_segment_t c_seg)
 #if DEVELOPMENT || DEBUG
 	C_SEG_WRITE_PROTECT(c_seg);
 #endif
+	if (disallow_page_replacement) {
+		c_page_replacement_disallowed_end();
+	}
 }
 #endif /* ENCRYPTED_SWAP */
 
+uint64_t compressed_swap_chunk_size, vm_swapfile_hiwater_segs, swapfile_reclaim_threshold_segs, swapfile_reclam_minimum_segs;
+extern bool memorystatus_swap_all_apps;
 
 void
-vm_compressor_swap_init()
+vm_compressor_swap_init_swap_file_limit(void)
 {
-	thread_t        thread = NULL;
-
-	queue_init(&swf_global_queue);
-
-	if (kernel_thread_start_priority((thread_continue_t)vm_swapout_thread, NULL,
-	    BASEPRI_VM, &thread) != KERN_SUCCESS) {
-		panic("vm_swapout_thread: create failed");
-	}
-	thread_set_thread_name(thread, "VM_swapout");
-	vm_swapout_thread_id = thread->thread_id;
-
-	thread_deallocate(thread);
-
-	if (kernel_thread_start_priority((thread_continue_t)vm_swapfile_create_thread, NULL,
-	    BASEPRI_VM, &thread) != KERN_SUCCESS) {
-		panic("vm_swapfile_create_thread: create failed");
-	}
-
-	thread_set_thread_name(thread, "VM_swapfile_create");
-	thread_deallocate(thread);
-
-	if (kernel_thread_start_priority((thread_continue_t)vm_swapfile_gc_thread, NULL,
-	    BASEPRI_VM, &thread) != KERN_SUCCESS) {
-		panic("vm_swapfile_gc_thread: create failed");
-	}
-	thread_set_thread_name(thread, "VM_swapfile_gc");
-
-	/*
-	 * Swapfile garbage collection will need to allocate memory
-	 * to complete its swap reclaim and in-memory compaction.
-	 * So allow it to dip into the reserved VM page pool.
-	 */
-	thread_lock(thread);
-	thread->options |= TH_OPT_VMPRIV;
-	thread_unlock(thread);
-
-	thread_deallocate(thread);
-
-	proc_set_thread_policy_with_tid(kernel_task, thread->thread_id,
-	    TASK_POLICY_INTERNAL, TASK_POLICY_IO, THROTTLE_LEVEL_COMPRESSOR_TIER2);
-	proc_set_thread_policy_with_tid(kernel_task, thread->thread_id,
-	    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
-
-#if !XNU_TARGET_OS_OSX
-	/*
-	 * dummy value until the swap file gets created
-	 * when we drive the first c_segment_t to the
-	 * swapout queue... at that time we will
-	 * know the true size we have to work with
-	 */
-	c_overage_swapped_limit = 16;
-#endif /* !XNU_TARGET_OS_OSX */
-
 	vm_num_swap_files_config = VM_MAX_SWAP_FILE_NUM;
+#if CONFIG_JETSAM
+	if (memorystatus_swap_all_apps) {
+		if (vm_swap_volume_capacity == 0) {
+			/*
+			 * Early in boot we don't know the swap volume capacity.
+			 * That's fine. Reserve space for the maximum config
+			 * and we'll lower this later in boot once we have the capacity.
+			 */
+			vm_num_swap_files_config = VM_MAX_SWAP_FILE_SWAP_ENABLED_NUM;
+		} else {
+			static uint64_t kFixedPointFactor = 100;
+			/*
+			 * Scale the max number of swap files linearly.
+			 * But we can never go above VM_MAX_SWAP_FILE_SWAP_ENABLED_NUM.
+			 */
+			vm_num_swap_files_config = vm_swap_volume_capacity * kFixedPointFactor / VM_SWAP_MIN_VOLUME_CAPACITY
+			    * VM_MIN_SWAP_FILE_SWAP_ENABLED_NUM / kFixedPointFactor;
+			vm_num_swap_files_config = MAX(vm_num_swap_files_config, VM_MIN_SWAP_FILE_SWAP_ENABLED_NUM);
+			vm_num_swap_files_config = MIN(vm_num_swap_files_config, VM_MAX_SWAP_FILE_SWAP_ENABLED_NUM);
+		}
+	}
+#endif /* CONFIG_JETSAM */
 #if DEVELOPMENT || DEBUG
 	typeof(vm_num_swap_files_config) parsed_vm_max_num_swap_files = 0;
 	if (PE_parse_boot_argn("vm_max_num_swap_files", &parsed_vm_max_num_swap_files, sizeof(parsed_vm_max_num_swap_files))) {
@@ -468,7 +481,91 @@ vm_compressor_swap_init()
 	}
 #endif
 	printf("Maximum number of VM swap files: %d\n", vm_num_swap_files_config);
+}
 
+__startup_func
+static void
+vm_swapout_create_threads(void)
+{
+	/*
+	 * Create the threads necessary for the swap subsystem. They will be started
+	 * if swap is configured by the pageout daemon.
+	 */
+	thread_t thread;
+
+	vm_log("creating swapout thread\n");
+
+	sched_cond_init(&vm_swapout_cond);
+	if (kernel_thread_create(vm_swapout_thread_continue, NULL,
+	    BASEPRI_VM, &thread) != KERN_SUCCESS) {
+		panic("vm_swapout_thread: create failed");
+	}
+	thread_set_thread_name(thread, "VM_swapout");
+	vm_swapout_thread = thread;
+	thread = THREAD_NULL;
+
+	vm_log("creating swapfile creation thread\n");
+	if (kernel_thread_create(vm_swapfile_create_thread_continue, NULL,
+	    BASEPRI_VM, &thread) != KERN_SUCCESS) {
+		panic("vm_swapfile_create_thread: create failed");
+	}
+	thread_set_thread_name(thread, "VM_swapfile_create");
+	vm_swapfile_create_thread = thread;
+	thread = THREAD_NULL;
+
+	vm_log("creating swapfile GC thread\n");
+	if (kernel_thread_create(vm_swapfile_gc_thread_continue, NULL,
+	    BASEPRI_VM, &thread) != KERN_SUCCESS) {
+		panic("vm_swapfile_gc_thread: create failed");
+	}
+	thread_set_thread_name(thread, "VM_swapfile_gc");
+	/*
+	 * Swapfile garbage collection will need to allocate memory
+	 * to complete its swap reclaim and in-memory compaction.
+	 * So allow it to dip into the reserved VM page pool.
+	 */
+	thread_lock(thread);
+	thread->options |= TH_OPT_VMPRIV;
+	thread_unlock(thread);
+	proc_set_thread_policy(thread,
+	    TASK_POLICY_INTERNAL, TASK_POLICY_IO, THROTTLE_LEVEL_COMPRESSOR_TIER2);
+	proc_set_thread_policy(thread,
+	    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
+
+	vm_swapfile_gc_thread = thread;
+	thread = THREAD_NULL;
+}
+STARTUP(EARLY_BOOT, STARTUP_RANK_MIDDLE, vm_swapout_create_threads);
+
+int vm_swap_enabled = 0;
+void
+vm_compressor_swap_init(void)
+{
+	vm_log("initializing swap\n");
+
+	queue_init(&swf_global_queue);
+
+	compressed_swap_chunk_size = c_seg_bufsize;
+	vm_swapfile_hiwater_segs = (MIN_SWAP_FILE_SIZE / compressed_swap_chunk_size);
+	swapfile_reclaim_threshold_segs = ((17 * (MAX_SWAP_FILE_SIZE / compressed_swap_chunk_size)) / 10);
+	swapfile_reclam_minimum_segs = ((13 * (MAX_SWAP_FILE_SIZE / compressed_swap_chunk_size)) / 10);
+
+	vm_log("starting swapout thread\n");
+	thread_mtx_lock(vm_swapout_thread);
+	thread_start(vm_swapout_thread);
+	thread_mtx_unlock(vm_swapout_thread);
+
+	vm_log("starting swapfile creation thread\n");
+	thread_mtx_lock(vm_swapfile_create_thread);
+	thread_start(vm_swapfile_create_thread);
+	thread_mtx_unlock(vm_swapfile_create_thread);
+
+	vm_log("starting swapfile GC thread\n");
+	thread_mtx_lock(vm_swapfile_gc_thread);
+	thread_start(vm_swapfile_gc_thread);
+	thread_mtx_unlock(vm_swapfile_gc_thread);
+
+	vm_swap_enabled = 1;
 	printf("VM Swap Subsystem is ON\n");
 }
 
@@ -516,7 +613,7 @@ vm_compaction_swapper_do_init(void)
 
 	if (!compaction_swapper_inited) {
 		namelen = (int)strlen(swapfilename) + SWAPFILENAME_INDEX_LEN + 1;
-		pathname = kheap_alloc(KHEAP_TEMP, namelen, Z_WAITOK | Z_ZERO);
+		pathname = kalloc_data(namelen, Z_WAITOK | Z_ZERO);
 		snprintf(pathname, namelen, "%s%d", swapfilename, 0);
 
 		vm_swapfile_open(pathname, &vp);
@@ -555,7 +652,7 @@ vm_compaction_swapper_do_init(void)
 #endif /* XNU_TARGET_OS_OSX */
 			vm_swapfile_close((uint64_t)pathname, vp);
 		}
-		kheap_free(KHEAP_TEMP, pathname, namelen);
+		kfree_data(pathname, namelen);
 
 		compaction_swapper_inited = 1;
 	}
@@ -597,27 +694,16 @@ int vm_swap_defragment_swapin = 0;
 int vm_swap_defragment_free = 0;
 int vm_swap_defragment_busy = 0;
 
-#if CONFIG_FREEZE
-extern uint32_t c_segment_pages_compressed_incore;
-extern uint32_t c_segment_pages_compressed_nearing_limit;
-extern uint32_t c_segment_count;
-extern uint32_t c_segments_nearing_limit;
-
-boolean_t       memorystatus_kill_on_VM_compressor_space_shortage(boolean_t);
-
-extern bool freezer_incore_cseg_acct;
-#endif /* CONFIG_FREEZE */
-
 static void
 vm_swap_defragment()
 {
 	c_segment_t     c_seg;
 
 	/*
-	 * have to grab the master lock w/o holding
+	 * have to grab the page replacement lock w/o holding
 	 * any locks in spin mode
 	 */
-	PAGE_REPLACEMENT_DISALLOWED(TRUE);
+	c_page_replacement_disallowed_start();
 
 	lck_mtx_lock_spin_always(c_list_lock);
 
@@ -635,13 +721,13 @@ vm_swap_defragment()
 		if (c_seg->c_busy) {
 			lck_mtx_unlock_always(c_list_lock);
 
-			PAGE_REPLACEMENT_DISALLOWED(FALSE);
+			c_page_replacement_disallowed_end();
 			/*
 			 * c_seg_wait_on_busy consumes c_seg->c_lock
 			 */
-			c_seg_wait_on_busy(c_seg);
+			c_seg_sleep(c_seg);
 
-			PAGE_REPLACEMENT_DISALLOWED(TRUE);
+			c_page_replacement_disallowed_start();
 
 			lck_mtx_lock_spin_always(c_list_lock);
 
@@ -653,7 +739,10 @@ vm_swap_defragment()
 			 * c_seg_free_locked consumes the c_list_lock
 			 * and c_seg->c_lock
 			 */
-			C_SEG_BUSY(c_seg);
+			uint64_t pages_swap = atop_64(C_SEG_OFFSET_TO_BYTES(c_seg->c_populated_offset));
+			VM_COUNTER_ATOMIC_SUB(&vm_page_swap_count, pages_swap);
+			VM_COUNTER_ATOMIC_SUB(&c_pages_swap_by_reason[c_seg->c_swapout_reason], pages_swap);
+			c_seg_mark_busy(c_seg);
 			c_seg_free_locked(c_seg);
 
 			vm_swap_defragment_free++;
@@ -662,6 +751,20 @@ vm_swap_defragment()
 
 #if CONFIG_FREEZE
 			if (freezer_incore_cseg_acct) {
+				/*
+				 * TODO(jason): These two are tricky because they're pre-emptive jetsams.
+				 * The system is not unhealthy, but we know that it's about to become unhealthy once
+				 * we do this swapin.
+				 * So we're waking up the memorystatus thread to make space
+				 * (hopefully) before this segment comes in.
+				 *
+				 * I think the compressor_backing_store needs to keep track of
+				 * two new globals that will track the number of segments
+				 * being swapped in due to defrag and the number of slots used
+				 * in those segments.
+				 * Then the health check below can be called from the memorystatus
+				 * thread.
+				 */
 				if ((c_seg->c_slots_used + c_segment_pages_compressed_incore) >= c_segment_pages_compressed_nearing_limit) {
 					memorystatus_kill_on_VM_compressor_space_shortage(TRUE /* async */);
 				}
@@ -673,40 +776,60 @@ vm_swap_defragment()
 			}
 #endif /* CONFIG_FREEZE */
 			if (c_seg_swapin(c_seg, TRUE, FALSE) == 0) {
-				lck_mtx_unlock_always(&c_seg->c_lock);
 				vmcs_stats.defrag_swapins += (round_page_32(C_SEG_OFFSET_TO_BYTES(c_seg->c_populated_offset))) >> PAGE_SHIFT;
+				lck_mtx_unlock_always(&c_seg->c_lock);
 			}
 
 			vm_swap_defragment_swapin++;
 		}
-		PAGE_REPLACEMENT_DISALLOWED(FALSE);
+		c_page_replacement_disallowed_end();
 
 		vm_pageout_io_throttle();
 
 		/*
 		 * because write waiters have privilege over readers,
-		 * dropping and immediately retaking the master lock will
+		 * dropping and immediately retaking the page replacement lock will
 		 * still allow any thread waiting to acquire the
-		 * master lock exclusively an opportunity to take it
+		 * page replacement lock exclusively an opportunity to take it
 		 */
-		PAGE_REPLACEMENT_DISALLOWED(TRUE);
+		c_page_replacement_disallowed_start();
 
 		lck_mtx_lock_spin_always(c_list_lock);
 	}
 	lck_mtx_unlock_always(c_list_lock);
 
-	PAGE_REPLACEMENT_DISALLOWED(FALSE);
+	c_page_replacement_disallowed_end();
 }
 
+TUNABLE(uint64_t, vm_swapfile_creation_delay_ns, "vm_swapfile_creation_delay_ns", 15 * NSEC_PER_SEC);
 
-
-static void
-vm_swapfile_create_thread(void)
+static inline bool
+vm_swapfile_should_create(uint64_t now)
 {
-	clock_sec_t     sec;
-	clock_nsec_t    nsec;
+	uint64_t delta_failed_creation_ns;
+	absolutetime_to_nanoseconds(now - vm_swapfile_last_failed_to_create_ts, &delta_failed_creation_ns);
 
-	current_thread()->options |= TH_OPT_VMPRIV;
+	return (vm_num_swap_files < vm_num_swap_files_config) &&
+	       ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) < (unsigned int)vm_swapfile_hiwater_segs) &&
+	       (delta_failed_creation_ns > vm_swapfile_creation_delay_ns);
+}
+
+bool vm_swapfile_create_thread_inited = false;
+
+OS_NORETURN
+static void
+vm_swapfile_create_thread_continue(__unused void *arg, __unused wait_result_t wr)
+{
+	uint64_t now;
+
+	if (!vm_swapfile_create_thread_inited) {
+#if CONFIG_THREAD_GROUPS
+		thread_group_vm_add();
+#endif /* CONFIG_THREAD_GROUPS */
+		current_thread()->options |= TH_OPT_VMPRIV;
+
+		vm_swapfile_create_thread_inited = true;
+	}
 
 	vm_swapfile_create_thread_awakened++;
 	vm_swapfile_create_thread_running = 1;
@@ -730,19 +853,19 @@ vm_swapfile_create_thread(void)
 			break;
 		}
 
-		clock_get_system_nanotime(&sec, &nsec);
+		now = mach_absolute_time();
 
-		if (VM_SWAP_SHOULD_CREATE(sec) == 0) {
+		if (!vm_swapfile_should_create(now)) {
 			break;
 		}
 
 		lck_mtx_unlock(&vm_swap_data_lock);
 
 		if (vm_swap_create_file() == FALSE) {
-			vm_swapfile_last_failed_to_create_ts = sec;
-			HIBLOG("vm_swap_create_file failed @ %lu secs\n", (unsigned long)sec);
+			vm_swapfile_last_failed_to_create_ts = now;
+			HIBLOG("low swap: failed to create swapfile\n");
 		} else {
-			vm_swapfile_last_successful_create_ts = sec;
+			vm_swapfile_last_successful_create_ts = now;
 		}
 	}
 	vm_swapfile_create_thread_running = 0;
@@ -759,9 +882,8 @@ vm_swapfile_create_thread(void)
 
 	lck_mtx_unlock(&vm_swap_data_lock);
 
-	thread_block((thread_continue_t)vm_swapfile_create_thread);
-
-	/* NOTREACHED */
+	thread_block(vm_swapfile_create_thread_continue);
+	__builtin_unreachable();
 }
 
 
@@ -814,12 +936,21 @@ hibernate_pin_swap(boolean_t start)
 	return KERN_SUCCESS;
 }
 #endif
+bool vm_swapfile_gc_thread_inited = false;
 
+OS_NORETURN
 static void
-vm_swapfile_gc_thread(void)
+vm_swapfile_gc_thread_continue(__unused void *arg, __unused wait_result_t wr)
 {
 	boolean_t       need_defragment;
 	boolean_t       need_reclaim;
+
+	if (!vm_swapfile_gc_thread_inited) {
+#if CONFIG_THREAD_GROUPS
+		thread_group_vm_add();
+#endif /* CONFIG_THREAD_GROUPS */
+		vm_swapfile_gc_thread_inited = true;
+	}
 
 	vm_swapfile_gc_thread_awakened++;
 	vm_swapfile_gc_thread_running = 1;
@@ -876,9 +1007,8 @@ vm_swapfile_gc_thread(void)
 
 	lck_mtx_unlock(&vm_swap_data_lock);
 
-	thread_block((thread_continue_t)vm_swapfile_gc_thread);
-
-	/* NOTREACHED */
+	thread_block(vm_swapfile_gc_thread_continue);
+	__builtin_unreachable();
 }
 
 
@@ -913,9 +1043,9 @@ vm_swapout_thread_throttle_adjust(void)
 		vm_swapper_throttle = THROTTLE_LEVEL_COMPRESSOR_TIER2;
 		vm_swapper_entered_T2P++;
 
-		proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+		proc_set_thread_policy(vm_swapout_thread,
 		    TASK_POLICY_INTERNAL, TASK_POLICY_IO, vm_swapper_throttle);
-		proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+		proc_set_thread_policy(vm_swapout_thread,
 		    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
 		vm_swapout_limit = VM_SWAPOUT_LIMIT_T2P;
 		vm_swapout_state = VM_SWAPOUT_T2_PASSIVE;
@@ -928,9 +1058,9 @@ vm_swapout_thread_throttle_adjust(void)
 			vm_swapper_throttle = THROTTLE_LEVEL_COMPRESSOR_TIER0;
 			vm_swapper_entered_T0P++;
 
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_IO, vm_swapper_throttle);
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
 			vm_swapout_limit = VM_SWAPOUT_LIMIT_T0P;
 			vm_swapout_state = VM_SWAPOUT_T0_PASSIVE;
@@ -941,9 +1071,9 @@ vm_swapout_thread_throttle_adjust(void)
 			vm_swapper_throttle = THROTTLE_LEVEL_COMPRESSOR_TIER1;
 			vm_swapper_entered_T1P++;
 
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_IO, vm_swapper_throttle);
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
 			vm_swapout_limit = VM_SWAPOUT_LIMIT_T1P;
 			vm_swapout_state = VM_SWAPOUT_T1_PASSIVE;
@@ -956,9 +1086,9 @@ vm_swapout_thread_throttle_adjust(void)
 			vm_swapper_throttle = THROTTLE_LEVEL_COMPRESSOR_TIER0;
 			vm_swapper_entered_T0P++;
 
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_IO, vm_swapper_throttle);
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
 			vm_swapout_limit = VM_SWAPOUT_LIMIT_T0P;
 			vm_swapout_state = VM_SWAPOUT_T0_PASSIVE;
@@ -969,9 +1099,9 @@ vm_swapout_thread_throttle_adjust(void)
 			vm_swapper_throttle = THROTTLE_LEVEL_COMPRESSOR_TIER2;
 			vm_swapper_entered_T2P++;
 
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_IO, vm_swapper_throttle);
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
 			vm_swapout_limit = VM_SWAPOUT_LIMIT_T2P;
 			vm_swapout_state = VM_SWAPOUT_T2_PASSIVE;
@@ -984,9 +1114,9 @@ vm_swapout_thread_throttle_adjust(void)
 			vm_swapper_throttle = THROTTLE_LEVEL_COMPRESSOR_TIER2;
 			vm_swapper_entered_T2P++;
 
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_IO, vm_swapper_throttle);
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
 			vm_swapout_limit = VM_SWAPOUT_LIMIT_T2P;
 			vm_swapout_state = VM_SWAPOUT_T2_PASSIVE;
@@ -996,7 +1126,7 @@ vm_swapout_thread_throttle_adjust(void)
 		if (SWAPPER_NEEDS_TO_CATCHUP()) {
 			vm_swapper_entered_T0++;
 
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_DISABLE);
 			vm_swapout_limit = VM_SWAPOUT_LIMIT_T0;
 			vm_swapout_state = VM_SWAPOUT_T0;
@@ -1008,7 +1138,7 @@ vm_swapout_thread_throttle_adjust(void)
 		if (SWAPPER_HAS_CAUGHTUP()) {
 			vm_swapper_entered_T0P++;
 
-			proc_set_thread_policy_with_tid(kernel_task, vm_swapout_thread_id,
+			proc_set_thread_policy(vm_swapout_thread,
 			    TASK_POLICY_INTERNAL, TASK_POLICY_PASSIVE_IO, TASK_POLICY_ENABLE);
 			vm_swapout_limit = VM_SWAPOUT_LIMIT_T0P;
 			vm_swapout_state = VM_SWAPOUT_T0_PASSIVE;
@@ -1080,141 +1210,210 @@ vm_swapout_complete_soc(struct swapout_io_completion *soc)
 	vm_swapout_soc_done--;
 }
 
+bool vm_swapout_thread_inited = false;
+extern uint32_t c_donate_swapout_count;
+#if CONFIG_JETSAM
+bool memorystatus_swap_over_trigger(uint64_t adjustment_factor);
+/*
+ * swapout_sleep_threshold sets the percentage of the swapout threshold at which
+ * the swap thread will stop processing the swapout queue.
+ * By default this is 90 which means we will swap until the
+ * swapout queue size is at 90% of the threshold to wake the swap thread.
+ * By definition the queue  length must be >= 100% of the threshold when the.
+ * swap thread is woken up. On development builds this can be adjusted with
+ * the vm.swapout_sleep_threshold sysctl.
+ */
+uint32_t swapout_sleep_threshold = 90;
+#endif /* CONFIG_JETSAM */
+static bool
+should_process_swapout_queue(const queue_head_t *swapout_list_head)
+{
+	bool process_queue = !queue_empty(swapout_list_head) &&
+	    vm_swapout_soc_busy < vm_swapout_limit &&
+	    !compressor_store_stop_compaction;
+#if CONFIG_JETSAM
+	if (memorystatus_swap_all_apps && swapout_list_head == &c_late_swapout_list_head) {
+		process_queue = process_queue && memorystatus_swap_over_trigger(swapout_sleep_threshold);
+	}
+#endif /* CONFIG_JETSAM */
+	return process_queue;
+}
 
+bool
+vm_swapout_is_running(void)
+{
+	sched_cond_t cond = os_atomic_load(&vm_swapout_cond, relaxed);
+	return (cond & (SCHED_COND_WAKEUP | SCHED_COND_ACTIVE)) != 0;
+}
+
+void
+vm_swapout_wakeup(void)
+{
+	__assert_only kern_return_t kr;
+	kr = sched_cond_signal(&vm_swapout_cond, vm_swapout_thread);
+	assert3u(kr, ==, KERN_SUCCESS);
+}
+
+OS_NORETURN
 static void
-vm_swapout_thread(void)
+vm_swapout_thread_continue(__unused void *arg, __unused wait_result_t wr)
 {
 	uint32_t        size = 0;
 	c_segment_t     c_seg = NULL;
 	kern_return_t   kr = KERN_SUCCESS;
 	struct swapout_io_completion *soc;
+	queue_head_t    *swapout_list_head = NULL;
 
-	current_thread()->options |= TH_OPT_VMPRIV;
+	if (!vm_swapout_thread_inited) {
+#if CONFIG_THREAD_GROUPS
+		thread_group_vm_add();
+#endif /* CONFIG_THREAD_GROUPS */
+		current_thread()->options |= TH_OPT_VMPRIV;
+		vm_swapout_thread_inited = true;
+		sched_cond_wait(&vm_swapout_cond, THREAD_UNINT, vm_swapout_thread_continue);
+	}
 
 	vm_swapout_thread_awakened++;
 
+	sched_cond_ack(&vm_swapout_cond);
+
 	lck_mtx_lock_spin_always(c_list_lock);
 
-	vm_swapout_thread_running = TRUE;
-again:
-	while (!queue_empty(&c_swapout_list_head) && vm_swapout_soc_busy < vm_swapout_limit && !compressor_store_stop_compaction) {
-		c_seg = (c_segment_t)queue_first(&c_swapout_list_head);
-
-		lck_mtx_lock_spin_always(&c_seg->c_lock);
-
-		assert(c_seg->c_state == C_ON_SWAPOUT_Q);
-
-		if (c_seg->c_busy) {
-			lck_mtx_unlock_always(c_list_lock);
-
-			c_seg_wait_on_busy(c_seg);
-
-			lck_mtx_lock_spin_always(c_list_lock);
-
-			continue;
+	while (true) {
+		if (swapout_list_head == NULL) {
+			swapout_list_head = &c_early_swapout_list_head;
 		}
-		vm_swapout_thread_processed_segments++;
 
-		size = round_page_32(C_SEG_OFFSET_TO_BYTES(c_seg->c_populated_offset));
+		while (should_process_swapout_queue(swapout_list_head)) {
+			c_seg = (c_segment_t)queue_first(swapout_list_head);
 
-		if (size == 0) {
-			assert(c_seg->c_bytes_used == 0);
+			lck_mtx_lock_spin_always(&c_seg->c_lock);
 
-			if (!c_seg->c_on_minorcompact_q) {
-				c_seg_need_delayed_compaction(c_seg, TRUE);
+			assert(c_seg->c_state == C_ON_SWAPOUT_Q);
+
+			if (c_seg->c_busy) {
+				lck_mtx_unlock_always(c_list_lock);
+
+				c_seg_sleep(c_seg);
+
+				lck_mtx_lock_spin_always(c_list_lock);
+
+				continue;
 			}
+			vm_swapout_thread_processed_segments++;
 
-			c_seg_switch_state(c_seg, C_IS_EMPTY, FALSE);
-			lck_mtx_unlock_always(&c_seg->c_lock);
+			size = round_page_32(C_SEG_OFFSET_TO_BYTES(c_seg->c_populated_offset));
+
+			if (size == 0) {
+				assert(c_seg->c_bytes_used == 0);
+
+				/*
+				 * c_seg_free_locked will drop the c_list_lock and
+				 * the c_seg->c_lock.
+				 */
+				c_seg_mark_busy(c_seg);
+				c_seg_free_locked(c_seg);
+				c_seg = NULL;
+
+				vm_swapout_found_empty++;
+				goto c_seg_is_empty;
+			}
+			c_seg_mark_busy(c_seg);
+			c_seg->c_busy_swapping = 1;
+
+			c_seg_switch_state(c_seg, C_ON_SWAPIO_Q, FALSE);
+
 			lck_mtx_unlock_always(c_list_lock);
-
-			vm_swapout_found_empty++;
-			goto c_seg_is_empty;
-		}
-		C_SEG_BUSY(c_seg);
-		c_seg->c_busy_swapping = 1;
-
-		c_seg_switch_state(c_seg, C_ON_SWAPIO_Q, FALSE);
-
-		lck_mtx_unlock_always(c_list_lock);
-		lck_mtx_unlock_always(&c_seg->c_lock);
+			lck_mtx_unlock_always(&c_seg->c_lock);
 
 #if CHECKSUM_THE_SWAP
-		c_seg->cseg_hash = hash_string((char *)c_seg->c_store.c_buffer, (int)size);
-		c_seg->cseg_swap_size = size;
+			c_seg->cseg_hash = hash_string((char *)c_seg->c_store.c_buffer, (int)size);
+			c_seg->cseg_swap_size = size;
 #endif /* CHECKSUM_THE_SWAP */
 
 #if ENCRYPTED_SWAP
-		vm_swap_encrypt(c_seg);
+			vm_swap_encrypt(c_seg);
 #endif /* ENCRYPTED_SWAP */
 
-		soc = vm_swapout_find_free_soc();
-		assert(soc);
+			soc = vm_swapout_find_free_soc();
+			assert(soc);
 
-		soc->swp_upl_ctx.io_context = (void *)soc;
-		soc->swp_upl_ctx.io_done = (void *)vm_swapout_iodone;
-		soc->swp_upl_ctx.io_error = 0;
+			soc->swp_upl_ctx.io_context = (void *)soc;
+			soc->swp_upl_ctx.io_done = (void *)vm_swapout_iodone;
+			soc->swp_upl_ctx.io_error = 0;
 
-		kr = vm_swap_put((vm_offset_t)c_seg->c_store.c_buffer, &soc->swp_f_offset, size, c_seg, soc);
+			kr = vm_swap_put((vm_offset_t)c_seg->c_store.c_buffer, &soc->swp_f_offset, size, c_seg, soc);
 
-		if (kr != KERN_SUCCESS) {
-			if (soc->swp_io_done) {
-				lck_mtx_lock_spin_always(c_list_lock);
+			if (kr != KERN_SUCCESS) {
+				if (soc->swp_io_done) {
+					lck_mtx_lock_spin_always(c_list_lock);
 
-				soc->swp_io_done = 0;
-				vm_swapout_soc_done--;
+					soc->swp_io_done = 0;
+					vm_swapout_soc_done--;
 
-				lck_mtx_unlock_always(c_list_lock);
+					lck_mtx_unlock_always(c_list_lock);
+				}
+				vm_swapout_finish(c_seg, soc->swp_f_offset, size, kr);
+			} else {
+				soc->swp_io_busy = 1;
+				vm_swapout_soc_busy++;
 			}
-			vm_swapout_finish(c_seg, soc->swp_f_offset, size, kr);
-		} else {
-			soc->swp_io_busy = 1;
-			vm_swapout_soc_busy++;
-		}
 
 c_seg_is_empty:
-		if (c_swapout_count == 0) {
-			vm_swap_consider_defragmenting(VM_SWAP_FLAGS_NONE);
+			if (!(c_early_swapout_count + c_regular_swapout_count + c_late_swapout_count)) {
+				vm_swap_consider_defragmenting(VM_SWAP_FLAGS_NONE);
+			}
+
+			lck_mtx_lock_spin_always(c_list_lock);
+
+			while ((soc = vm_swapout_find_done_soc())) {
+				vm_swapout_complete_soc(soc);
+			}
+			lck_mtx_unlock_always(c_list_lock);
+
+			vm_swapout_thread_throttle_adjust();
+
+			lck_mtx_lock_spin_always(c_list_lock);
 		}
-
-		lck_mtx_lock_spin_always(c_list_lock);
-
 		while ((soc = vm_swapout_find_done_soc())) {
 			vm_swapout_complete_soc(soc);
 		}
 		lck_mtx_unlock_always(c_list_lock);
 
-		vm_swapout_thread_throttle_adjust();
+		vm_pageout_io_throttle();
+
+		lck_mtx_lock_spin_always(c_list_lock);
+
+		/*
+		 * Recheck if we have some c_segs to wakeup
+		 * post throttle. And, check to see if we
+		 * have any more swapouts needed.
+		 */
+		if (vm_swapout_soc_done) {
+			continue;
+		}
+
+		swapout_list_head = NULL;
+		if (!queue_empty(&c_early_swapout_list_head)) {
+			swapout_list_head = &c_early_swapout_list_head;
+		} else if (!queue_empty(&c_regular_swapout_list_head)) {
+			swapout_list_head = &c_regular_swapout_list_head;
+		} else if (!queue_empty(&c_late_swapout_list_head)) {
+			swapout_list_head = &c_late_swapout_list_head;
+		}
+
+		if (swapout_list_head && should_process_swapout_queue(swapout_list_head)) {
+			continue;
+		}
+		swapout_list_head = NULL;
+
+		lck_mtx_unlock_always(c_list_lock);
+
+		sched_cond_wait(&vm_swapout_cond, THREAD_UNINT, vm_swapout_thread_continue);
 
 		lck_mtx_lock_spin_always(c_list_lock);
 	}
-	while ((soc = vm_swapout_find_done_soc())) {
-		vm_swapout_complete_soc(soc);
-	}
-	lck_mtx_unlock_always(c_list_lock);
-
-	vm_pageout_io_throttle();
-
-	lck_mtx_lock_spin_always(c_list_lock);
-
-	/*
-	 * Recheck if we have some c_segs to wakeup
-	 * post throttle. And, check to see if we
-	 * have any more swapouts needed.
-	 */
-	if (vm_swapout_soc_done) {
-		goto again;
-	}
-
-	assert_wait((event_t)&c_swapout_list_head, THREAD_UNINT);
-
-	vm_swapout_thread_running = FALSE;
-
-	lck_mtx_unlock_always(c_list_lock);
-
-	thread_block((thread_continue_t)vm_swapout_thread);
-
-	/* NOTREACHED */
+	__builtin_unreachable();
 }
 
 
@@ -1231,9 +1430,7 @@ vm_swapout_iodone(void *io_context, int error)
 	soc->swp_io_error = error;
 	vm_swapout_soc_done++;
 
-	if (!vm_swapout_thread_running) {
-		thread_wakeup((event_t)&c_swapout_list_head);
-	}
+	vm_swapout_wakeup();
 
 	lck_mtx_unlock_always(c_list_lock);
 }
@@ -1242,15 +1439,15 @@ vm_swapout_iodone(void *io_context, int error)
 static void
 vm_swapout_finish(c_segment_t c_seg, uint64_t f_offset, uint32_t size, kern_return_t kr)
 {
-	PAGE_REPLACEMENT_DISALLOWED(TRUE);
+	c_page_replacement_disallowed_start();
 
 	if (kr == KERN_SUCCESS) {
-		kernel_memory_depopulate(compressor_map, (vm_offset_t)c_seg->c_store.c_buffer, size,
+		kernel_memory_depopulate((vm_offset_t)c_seg->c_store.c_buffer, size,
 		    KMA_COMPRESSOR, VM_KERN_MEMORY_COMPRESSOR);
 	}
 #if ENCRYPTED_SWAP
 	else {
-		vm_swap_decrypt(c_seg);
+		vm_swap_decrypt(c_seg, false);
 	}
 #endif /* ENCRYPTED_SWAP */
 	lck_mtx_lock_spin_always(c_list_lock);
@@ -1273,19 +1470,51 @@ vm_swapout_finish(c_segment_t c_seg, uint64_t f_offset, uint32_t size, kern_retu
 
 		c_seg->c_store.c_swap_handle = f_offset;
 
-		counter_add(&vm_statistics_swapouts, size >> PAGE_SHIFT);
+		uint64_t size_pages = atop_64(size);
+		counter_add(&vm_statistics_swapouts, size_pages);
+		VM_COUNTER_ATOMIC_ADD(&vm_page_swap_count, size_pages);
+		VM_COUNTER_ATOMIC_ADD(&vm_page_swapped_count, c_seg->c_slots_used);
+		VM_COUNTER_ATOMIC_ADD(&c_pages_swapped_by_reason[c_seg->c_swapout_reason], c_seg->c_slots_used);
+		VM_COUNTER_ATOMIC_ADD(&c_pages_swap_by_reason[c_seg->c_swapout_reason], size_pages);
 
-		if (c_seg->c_bytes_used) {
-			OSAddAtomic64(-c_seg->c_bytes_used, &compressor_bytes_used);
+		switch (c_seg->c_swapout_reason) {
+		case C_SWAPOUT_REG:
+			counter_add(&vm_pageout_vminfo.vm_regular_swapouts, size_pages);
+			break;
+		case C_SWAPOUT_FREEZER:
+			counter_add(&vm_pageout_vminfo.vm_freezer_swapouts, size_pages);
+			break;
+		case C_SWAPOUT_DARKWAKE:
+			counter_add(&vm_pageout_vminfo.vm_darkwake_swapouts, size_pages);
+			break;
+		case C_SWAPOUT_DONATE:
+			counter_add(&vm_pageout_vminfo.vm_donate_swapouts, size_pages);
+			break;
+		case C_SWAPOUT_RIPE:
+			counter_add(&vm_pageout_vminfo.vm_scavenger_swapouts, size_pages);
+			break;
+		case C_SWAPOUT_NONE:
+#if MACH_ASSERT
+			panic("swapped outd segment with unknown swapout reason %u",
+			    c_seg->c_swapout_reason);
+#else
+			break;
+#endif
 		}
 
-#if CONFIG_FREEZE
+		c_seg->c_swappedin = false;
+
+		if (c_seg->c_bytes_used) {
+			VM_COUNTER_ATOMIC_SUB(&compressor_bytes_used, c_seg->c_bytes_used);
+		}
+
 		/*
 		 * Successful swapout. Decrement the in-core compressed pages count.
 		 */
-		OSAddAtomic(-(c_seg->c_slots_used), &c_segment_pages_compressed_incore);
-		assertf(c_segment_pages_compressed_incore >= 0, "-ve incore count %p 0x%x", c_seg, c_segment_pages_compressed_incore);
-#endif /* CONFIG_FREEZE */
+		VM_COUNTER_ATOMIC_SUB(&c_segment_pages_compressed_incore, c_seg->c_slots_used);
+		if (c_seg->c_has_donated_pages) {
+			VM_COUNTER_ATOMIC_SUB(&c_segment_pages_compressed_incore_late_swapout, c_seg->c_slots_used);
+		}
 	} else {
 		if (c_seg->c_overage_swap == TRUE) {
 			c_seg->c_overage_swap = FALSE;
@@ -1293,12 +1522,27 @@ vm_swapout_finish(c_segment_t c_seg, uint64_t f_offset, uint32_t size, kern_retu
 		}
 
 #if CONFIG_FREEZE
-		if (c_seg->c_task_owner) {
-			c_seg_update_task_owner(c_seg, NULL);
-		}
+		if (c_seg->c_has_freezer_pages) {
+			if (c_seg->c_task_owner) {
+				c_seg_update_task_owner(c_seg, NULL);
+			}
+			/*
+			 * We failed to swapout a frozen cseg. We need
+			 * to put it back in the queues, specifically the
+			 * AGE_Q. So clear the donated bit otherwise it'll
+			 * land on the swapped_in Q.
+			 */
+			c_seg->c_has_donated_pages = 0;
+			c_seg_switch_state(c_seg, C_ON_AGE_Q, FALSE);
+		} else
 #endif /* CONFIG_FREEZE */
-
-		c_seg_switch_state(c_seg, C_ON_AGE_Q, FALSE);
+		{
+			if (c_seg->c_has_donated_pages) {
+				c_seg_switch_state(c_seg, C_ON_SWAPPEDIN_Q, FALSE);
+			} else {
+				c_seg_switch_state(c_seg, C_ON_AGE_Q, FALSE);
+			}
+		}
 
 		if (!c_seg->c_on_minorcompact_q && C_SEG_UNUSED_BYTES(c_seg) >= PAGE_SIZE) {
 			c_seg_need_delayed_compaction(c_seg, TRUE);
@@ -1310,10 +1554,10 @@ vm_swapout_finish(c_segment_t c_seg, uint64_t f_offset, uint32_t size, kern_retu
 	c_seg->c_busy_swapping = 0;
 	lck_mtx_unlock_always(c_list_lock);
 
-	C_SEG_WAKEUP_DONE(c_seg);
+	c_seg_wakeup_done(c_seg);
 	lck_mtx_unlock_always(&c_seg->c_lock);
 
-	PAGE_REPLACEMENT_DISALLOWED(FALSE);
+	c_page_replacement_disallowed_end();
 }
 
 
@@ -1357,11 +1601,10 @@ vm_swap_create_file()
 	if (swap_file_reuse == FALSE) {
 		namelen = (int)strlen(swapfilename) + SWAPFILENAME_INDEX_LEN + 1;
 
-		swf = kalloc_flags(sizeof *swf, Z_WAITOK | Z_ZERO);
+		swf = kalloc_type(struct swapfile, Z_WAITOK | Z_ZERO);
 		swf->swp_index = vm_num_swap_files + 1;
 		swf->swp_pathlen = namelen;
-		swf->swp_path = kheap_alloc(KHEAP_DATA_BUFFERS, swf->swp_pathlen,
-		    Z_WAITOK | Z_ZERO);
+		swf->swp_path = kalloc_data(swf->swp_pathlen, Z_WAITOK | Z_ZERO);
 
 		snprintf(swf->swp_path, namelen, "%s%d", swapfilename, vm_num_swap_files);
 	}
@@ -1370,12 +1613,12 @@ vm_swap_create_file()
 
 	if (swf->swp_vp == NULL) {
 		if (swap_file_reuse == FALSE) {
-			kheap_free(KHEAP_DATA_BUFFERS, swf->swp_path, swf->swp_pathlen);
-			kfree(swf, sizeof *swf);
+			kfree_data(swf->swp_path, swf->swp_pathlen);
+			kfree_type(struct swapfile, swf);
 		}
 		return FALSE;
 	}
-	vm_swapfile_can_be_created = TRUE;
+	vm_swapfile_can_be_created = true;
 
 	size = MAX_SWAP_FILE_SIZE;
 
@@ -1388,7 +1631,7 @@ vm_swap_create_file()
 			swap_file_created = TRUE;
 
 			swf->swp_size = size;
-			swf->swp_nsegs = (unsigned int) (size / COMPRESSED_SWAP_CHUNK_SIZE);
+			swf->swp_nsegs = (unsigned int) (size / compressed_swap_chunk_size);
 			swf->swp_nseginuse = 0;
 			swf->swp_free_hint = 0;
 
@@ -1397,10 +1640,10 @@ vm_swap_create_file()
 			 * Allocate a bitmap that describes the
 			 * number of segments held by this swapfile.
 			 */
-			swf->swp_bitmap = kheap_alloc(KHEAP_DATA_BUFFERS,
-			    num_bytes_for_bitmap, Z_WAITOK | Z_ZERO);
+			swf->swp_bitmap = kalloc_data(num_bytes_for_bitmap,
+			    Z_WAITOK | Z_ZERO);
 
-			swf->swp_csegs = kalloc_flags(swf->swp_nsegs * sizeof(c_segment_t),
+			swf->swp_csegs = kalloc_type(c_segment_t, swf->swp_nsegs,
 			    Z_WAITOK | Z_ZERO);
 
 			/*
@@ -1423,6 +1666,9 @@ vm_swap_create_file()
 			vm_num_swap_files++;
 
 			vm_swapfile_total_segs_alloced += swf->swp_nsegs;
+			if (vm_swapfile_total_segs_alloced > vm_swapfile_total_segs_alloced_max) {
+				vm_swapfile_total_segs_alloced_max = vm_swapfile_total_segs_alloced;
+			}
 
 			if (swap_file_pin == TRUE) {
 				vm_num_pinned_swap_files++;
@@ -1433,15 +1679,6 @@ vm_swap_create_file()
 			lck_mtx_unlock(&vm_swap_data_lock);
 
 			thread_wakeup((event_t) &vm_num_swap_files);
-#if !XNU_TARGET_OS_OSX
-			if (vm_num_swap_files == 1) {
-				c_overage_swapped_limit = (uint32_t)size / C_SEG_BUFSIZE;
-
-				if (VM_CONFIG_FREEZER_SWAP_IS_ACTIVE) {
-					c_overage_swapped_limit /= 2;
-				}
-			}
-#endif /* !XNU_TARGET_OS_OSX */
 			break;
 		} else {
 			size = size / 2;
@@ -1453,8 +1690,8 @@ vm_swap_create_file()
 		swf->swp_vp = NULL;
 
 		if (swap_file_reuse == FALSE) {
-			kheap_free(KHEAP_DATA_BUFFERS, swf->swp_path, swf->swp_pathlen);
-			kfree(swf, sizeof *swf);
+			kfree_data(swf->swp_path, swf->swp_pathlen);
+			kfree_type(struct swapfile, swf);
 		}
 	}
 	return swap_file_created;
@@ -1539,8 +1776,7 @@ vm_swap_put(vm_offset_t addr, uint64_t *f_offset, uint32_t size, c_segment_t c_s
 	boolean_t       waiting = FALSE;
 	boolean_t       retried = FALSE;
 	int             error = 0;
-	clock_sec_t     sec;
-	clock_nsec_t    nsec;
+	uint64_t        now;
 	void            *upl_ctx = NULL;
 	boolean_t       drop_iocount = FALSE;
 
@@ -1567,19 +1803,22 @@ retry:
 					continue;
 				}
 
-				(swf->swp_bitmap)[byte_for_segidx] |= (1 << offset_within_byte);
+				(swf->swp_bitmap)[byte_for_segidx] |= (uint8_t)(1 << offset_within_byte);
 
-				file_offset = segidx * COMPRESSED_SWAP_CHUNK_SIZE;
+				file_offset = segidx * compressed_swap_chunk_size;
 				swf->swp_nseginuse++;
 				swf->swp_io_count++;
 				swf->swp_csegs[segidx] = c_seg;
 
 				swapfile_index = swf->swp_index;
 				vm_swapfile_total_segs_used++;
+				if (vm_swapfile_total_segs_used > vm_swapfile_total_segs_used_max) {
+					vm_swapfile_total_segs_used_max = vm_swapfile_total_segs_used;
+				}
 
-				clock_get_system_nanotime(&sec, &nsec);
+				now = mach_absolute_time();
 
-				if (VM_SWAP_SHOULD_CREATE(sec) && !vm_swapfile_create_thread_running) {
+				if (vm_swapfile_should_create(now) && !vm_swapfile_create_thread_running) {
 					thread_wakeup((event_t) &vm_swapfile_create_needed);
 				}
 
@@ -1607,17 +1846,18 @@ retry:
 	 * no need to block... setting hibernate_no_swapspace to TRUE,
 	 * will cause "vm_compressor_compact_and_swap" to immediately abort
 	 */
-	clock_get_system_nanotime(&sec, &nsec);
+	now = mach_absolute_time();
 
-	if (VM_SWAP_SHOULD_CREATE(sec) && !vm_swapfile_create_thread_running) {
-		thread_wakeup((event_t) &vm_swapfile_create_needed);
-	}
-
-	if (hibernate_flushing == FALSE || VM_SWAP_SHOULD_CREATE(sec)) {
+	if (vm_swapfile_should_create(now)) {
+		if (!vm_swapfile_create_thread_running) {
+			thread_wakeup((event_t) &vm_swapfile_create_needed);
+		}
 		waiting = TRUE;
 		assert_wait_timeout((event_t) &vm_num_swap_files, THREAD_INTERRUPTIBLE, 1000, 1000 * NSEC_PER_USEC);
 	} else {
-		hibernate_no_swapspace = TRUE;
+		if (hibernate_flushing) {
+			hibernate_no_swapspace = TRUE;
+		}
 	}
 
 	lck_mtx_unlock(&vm_swap_data_lock);
@@ -1706,7 +1946,7 @@ vm_swap_free_now(struct swapfile *swf, uint64_t f_offset)
 		unsigned int offset_within_byte = 0;
 
 		file_offset = (f_offset & SWAP_SLOT_MASK);
-		segidx = (unsigned int) (file_offset / COMPRESSED_SWAP_CHUNK_SIZE);
+		segidx = (unsigned int) (file_offset / compressed_swap_chunk_size);
 
 		byte_for_segidx = segidx >> 3;
 		offset_within_byte = segidx % 8;
@@ -1739,11 +1979,10 @@ vm_swap_free(uint64_t f_offset)
 {
 	struct swapfile *swf = NULL;
 	struct trim_list *tl = NULL;
-	clock_sec_t     sec;
-	clock_nsec_t    nsec;
+	uint64_t now;
 
 	if (swp_trim_supported == TRUE) {
-		tl = kalloc(sizeof(struct trim_list));
+		tl = kalloc_type(struct trim_list, Z_WAITOK);
 	}
 
 	lck_mtx_lock(&vm_swap_data_lock);
@@ -1764,7 +2003,7 @@ vm_swap_free(uint64_t f_offset)
 			goto done;
 		}
 		tl->tl_offset = f_offset & SWAP_SLOT_MASK;
-		tl->tl_length = COMPRESSED_SWAP_CHUNK_SIZE;
+		tl->tl_length = compressed_swap_chunk_size;
 
 		tl->tl_next = swf->swp_delayed_trim_list_head;
 		swf->swp_delayed_trim_list_head = tl;
@@ -1772,9 +2011,9 @@ vm_swap_free(uint64_t f_offset)
 		tl = NULL;
 
 		if (VM_SWAP_SHOULD_TRIM(swf) && !vm_swapfile_create_thread_running) {
-			clock_get_system_nanotime(&sec, &nsec);
+			now = mach_absolute_time();
 
-			if (sec > dont_trim_until_ts) {
+			if (now > dont_trim_until_ts) {
 				thread_wakeup((event_t) &vm_swapfile_create_needed);
 			}
 		}
@@ -1784,7 +2023,7 @@ done:
 	lck_mtx_unlock(&vm_swap_data_lock);
 
 	if (tl != NULL) {
-		kfree(tl, sizeof(struct trim_list));
+		kfree_type(struct trim_list, tl);
 	}
 }
 
@@ -1792,7 +2031,7 @@ done:
 static void
 vm_swap_wait_on_trim_handling_in_progress()
 {
-	while (delayed_trim_handling_in_progress == TRUE) {
+	while (delayed_trim_handling_in_progress) {
 		assert_wait((event_t) &delayed_trim_handling_in_progress, THREAD_UNINT);
 		lck_mtx_unlock(&vm_swap_data_lock);
 
@@ -1822,7 +2061,7 @@ vm_swap_handle_delayed_trims(boolean_t force_now)
 
 	lck_mtx_lock(&vm_swap_data_lock);
 
-	delayed_trim_handling_in_progress = TRUE;
+	delayed_trim_handling_in_progress = true;
 
 	lck_mtx_unlock(&vm_swap_data_lock);
 
@@ -1844,7 +2083,7 @@ vm_swap_handle_delayed_trims(boolean_t force_now)
 	}
 	lck_mtx_lock(&vm_swap_data_lock);
 
-	delayed_trim_handling_in_progress = FALSE;
+	delayed_trim_handling_in_progress = false;
 	thread_wakeup((event_t) &delayed_trim_handling_in_progress);
 
 	if (VM_SWAP_SHOULD_RECLAIM() && !vm_swapfile_gc_thread_running) {
@@ -1888,7 +2127,7 @@ vm_swap_do_delayed_trim(struct swapfile *swf)
 
 		lck_mtx_lock(&vm_swap_data_lock);
 
-		segidx = (unsigned int) (tl->tl_offset / COMPRESSED_SWAP_CHUNK_SIZE);
+		segidx = (unsigned int) (tl->tl_offset / compressed_swap_chunk_size);
 
 		byte_for_segidx = segidx >> 3;
 		offset_within_byte = segidx % 8;
@@ -1909,7 +2148,7 @@ vm_swap_do_delayed_trim(struct swapfile *swf)
 
 		tl_head = tl->tl_next;
 
-		kfree(tl, sizeof(struct trim_list));
+		kfree_type(struct trim_list, tl);
 	}
 }
 
@@ -1937,9 +2176,8 @@ vm_swap_reclaim(void)
 
 	c_segment_t     c_seg = NULL;
 
-	if (kernel_memory_allocate(compressor_map, (vm_offset_t *)(&addr), C_SEG_BUFSIZE, 0, KMA_KOBJECT, VM_KERN_MEMORY_COMPRESSOR) != KERN_SUCCESS) {
-		panic("vm_swap_reclaim: kernel_memory_allocate failed\n");
-	}
+	kmem_alloc(compressor_map, (vm_offset_t *)&addr, c_seg_bufsize,
+	    KMA_NOFAIL | KMA_KOBJECT | KMA_DATA_SHARED, VM_KERN_MEMORY_COMPRESSOR);
 
 	lck_mtx_lock(&vm_swap_data_lock);
 
@@ -1958,7 +2196,7 @@ vm_swap_reclaim(void)
 	 * will not consider this swapfile for processing
 	 */
 	swf = (struct swapfile*) queue_first(&swf_global_queue);
-	min_nsegs = MAX_SWAP_FILE_SIZE / COMPRESSED_SWAP_CHUNK_SIZE;
+	min_nsegs = MAX_SWAP_FILE_SIZE / compressed_swap_chunk_size;
 	smallest_swf = NULL;
 
 	while (queue_end(&swf_global_queue, (queue_entry_t)swf) == FALSE) {
@@ -2031,14 +2269,10 @@ ReTry_for_cseg:
 			 * at that point, we re-look up the swap state which will now indicate that
 			 * this c_segment no longer exists.
 			 */
-			c_seg->c_wanted = 1;
-
-			assert_wait((event_t) (c_seg), THREAD_UNINT);
-			lck_mtx_unlock_always(&c_seg->c_lock);
-
 			lck_mtx_unlock(&vm_swap_data_lock);
 
-			thread_block(THREAD_CONTINUE_NULL);
+			/* Consumes c_seg->c_lock */
+			c_seg_sleep(c_seg);
 
 			lck_mtx_lock(&vm_swap_data_lock);
 
@@ -2046,7 +2280,7 @@ ReTry_for_cseg:
 		}
 		(swf->swp_bitmap)[byte_for_segidx] &= ~(1 << offset_within_byte);
 
-		f_offset = segidx * COMPRESSED_SWAP_CHUNK_SIZE;
+		f_offset = segidx * compressed_swap_chunk_size;
 
 		assert(c_seg == swf->swp_csegs[segidx]);
 		swf->swp_csegs[segidx] = NULL;
@@ -2058,14 +2292,14 @@ ReTry_for_cseg:
 
 		assert(C_SEG_IS_ONDISK(c_seg));
 
-		C_SEG_BUSY(c_seg);
+		c_seg_mark_busy(c_seg);
 		c_seg->c_busy_swapping = 1;
 #if !CHECKSUM_THE_SWAP
 		c_seg_trim_tail(c_seg);
 #endif
 		c_size = round_page_32(C_SEG_OFFSET_TO_BYTES(c_seg->c_populated_offset));
 
-		assert(c_size <= C_SEG_BUFSIZE && c_size);
+		assert(c_size <= c_seg_bufsize && c_size);
 
 		lck_mtx_unlock_always(&c_seg->c_lock);
 
@@ -2102,13 +2336,15 @@ ReTry_for_cseg:
 			 */
 			c_buffer = (vm_offset_t)C_SEG_BUFFER_ADDRESS(c_seg->c_mysegno);
 
-			kernel_memory_populate(compressor_map, c_buffer, c_size, KMA_COMPRESSOR, VM_KERN_MEMORY_COMPRESSOR);
+			kernel_memory_populate(c_buffer, c_size,
+			    KMA_NOFAIL | KMA_COMPRESSOR,
+			    VM_KERN_MEMORY_COMPRESSOR);
 
 			memcpy((char *)c_buffer, (char *)addr, c_size);
 
 			c_seg->c_store.c_buffer = (int32_t *)c_buffer;
 #if ENCRYPTED_SWAP
-			vm_swap_decrypt(c_seg);
+			vm_swap_decrypt(c_seg, true);
 #endif /* ENCRYPTED_SWAP */
 			c_seg_swapin_requeue(c_seg, TRUE, TRUE, FALSE);
 			/*
@@ -2122,6 +2358,8 @@ ReTry_for_cseg:
 
 		lck_mtx_lock_spin_always(&c_seg->c_lock);
 
+		c_seg->c_swappedin = false;
+
 		assert(C_SEG_IS_ONDISK(c_seg));
 		/*
 		 * The c_seg will now know about the new location on disk.
@@ -2131,8 +2369,7 @@ ReTry_for_cseg:
 		assert(c_seg->c_busy_swapping);
 		c_seg->c_busy_swapping = 0;
 swap_io_failed:
-		assert(c_seg->c_busy);
-		C_SEG_WAKEUP_DONE(c_seg);
+		c_seg_wakeup_done(c_seg);
 
 		lck_mtx_unlock_always(&c_seg->c_lock);
 		lck_mtx_lock(&vm_swap_data_lock);
@@ -2158,9 +2395,8 @@ swap_io_failed:
 
 	vm_swapfile_close((uint64_t)(swf->swp_path), swf->swp_vp);
 
-	kfree(swf->swp_csegs, swf->swp_nsegs * sizeof(c_segment_t));
-	kheap_free(KHEAP_DATA_BUFFERS, swf->swp_bitmap,
-	    MAX((swf->swp_nsegs >> 3), 1));
+	kfree_type(c_segment_t, swf->swp_nsegs, swf->swp_csegs);
+	kfree_data(swf->swp_bitmap, MAX((swf->swp_nsegs >> 3), 1));
 
 	lck_mtx_lock(&vm_swap_data_lock);
 
@@ -2181,7 +2417,7 @@ done:
 	thread_wakeup((event_t) &swf->swp_flags);
 	lck_mtx_unlock(&vm_swap_data_lock);
 
-	kmem_free(compressor_map, (vm_offset_t) addr, C_SEG_BUFSIZE);
+	kmem_free(compressor_map, (vm_offset_t) addr, c_seg_bufsize);
 }
 
 
@@ -2190,7 +2426,7 @@ vm_swap_get_total_space(void)
 {
 	uint64_t total_space = 0;
 
-	total_space = (uint64_t)vm_swapfile_total_segs_alloced * COMPRESSED_SWAP_CHUNK_SIZE;
+	total_space = (uint64_t)vm_swapfile_total_segs_alloced * compressed_swap_chunk_size;
 
 	return total_space;
 }
@@ -2200,7 +2436,7 @@ vm_swap_get_used_space(void)
 {
 	uint64_t used_space = 0;
 
-	used_space = (uint64_t)vm_swapfile_total_segs_used * COMPRESSED_SWAP_CHUNK_SIZE;
+	used_space = (uint64_t)vm_swapfile_total_segs_used * compressed_swap_chunk_size;
 
 	return used_space;
 }
@@ -2218,38 +2454,57 @@ vm_swap_get_max_configured_space(void)
 	return num_swap_files * MAX_SWAP_FILE_SIZE;
 }
 
-int
+bool
 vm_swap_low_on_space(void)
 {
-	if (vm_num_swap_files == 0 && vm_swapfile_can_be_created == FALSE) {
-		return 0;
+	if (vm_num_swap_files == 0 &&
+	    (!vm_swapfile_can_be_created || !SWAPPER_NEEDS_TO_UNTHROTTLE())) {
+		/* We haven't started creating swap files yet */
+		return false;
 	}
 
-	if (((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) < ((unsigned int)VM_SWAPFILE_HIWATER_SEGS) / 8)) {
-		if (vm_num_swap_files == 0 && !SWAPPER_NEEDS_TO_UNTHROTTLE()) {
-			return 0;
-		}
-
+	if (vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used <
+	    (unsigned int)vm_swapfile_hiwater_segs / 8) {
+		/*
+		 * We're running low on swapfile segments
+		 */
 		if (vm_swapfile_last_failed_to_create_ts >= vm_swapfile_last_successful_create_ts) {
-			return 1;
+			/*
+			 * We've recently failed to create a new swapfile, likely due to disk
+			 * space exhaustion
+			 */
+			return true;
+		}
+
+		if (vm_num_swap_files == vm_num_swap_files_config) {
+			/* We've reached the swapfile limit */
+			return true;
 		}
 	}
-	return 0;
+	return false;
 }
 
-int
+bool
 vm_swap_out_of_space(void)
 {
-	if ((vm_num_swap_files == vm_num_swap_files_config) &&
-	    ((vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used) < VM_SWAPOUT_LIMIT_MAX)) {
-		/*
-		 * Last swapfile and we have only space for the
-		 * last few swapouts.
-		 */
-		return 1;
+	if (vm_num_swap_files == 0 &&
+	    (!vm_swapfile_can_be_created || !SWAPPER_NEEDS_TO_UNTHROTTLE())) {
+		/* We haven't started creating swap files yet */
+		return false;
 	}
 
-	return 0;
+	if (vm_swapfile_total_segs_alloced - vm_swapfile_total_segs_used <
+	    VM_SWAPOUT_LIMIT_MAX) {
+		/*
+		 * We have run out of swapfile segments
+		 */
+		if (vm_num_swap_files == vm_num_swap_files_config) {
+			/* And we can't create any more swapfiles */
+			return true;
+		}
+	}
+
+	return false;
 }
 
 boolean_t
@@ -2318,3 +2573,17 @@ vm_swap_max_budget(uint64_t *freeze_daily_budget)
 	return use_device_value;
 }
 #endif /* CONFIG_FREEZE */
+
+void
+vm_swap_reset_max_segs_tracking(uint64_t *alloced_max, uint64_t *used_max)
+{
+	lck_mtx_lock(&vm_swap_data_lock);
+
+	*alloced_max = (uint64_t) vm_swapfile_total_segs_alloced_max * compressed_swap_chunk_size;
+	*used_max = (uint64_t) vm_swapfile_total_segs_used_max * compressed_swap_chunk_size;
+
+	vm_swapfile_total_segs_alloced_max = vm_swapfile_total_segs_alloced;
+	vm_swapfile_total_segs_used_max = vm_swapfile_total_segs_used;
+
+	lck_mtx_unlock(&vm_swap_data_lock);
+}

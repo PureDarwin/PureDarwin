@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -36,7 +36,11 @@
 
 #include <libkern/section_keywords.h>
 
-#if defined(__arm__) || defined(__arm64__)
+#if CONFIG_SPTM
+#include <sptm/sptm_xnu.h>
+#endif
+
+#if defined(__arm64__)
 SECURITY_READ_ONLY_LATE(static uint32_t) gPEKernelConfigurationBitmask;
 #else
 static uint32_t gPEKernelConfigurationBitmask;
@@ -125,51 +129,87 @@ PE_putc_t PE_putc;
 SECURITY_READ_ONLY_LATE(PE_putc_t) PE_putc;
 #endif
 
+extern void console_write_char(char);
+
 void
 PE_init_printf(boolean_t vm_initialized)
 {
 	if (!vm_initialized) {
-		PE_putc = cnputc;
+		PE_putc = console_write_char;
 	} else {
 		vcattach();
 	}
 }
 
-uint32_t
+__mockable uint32_t
 PE_get_random_seed(unsigned char *dst_random_seed, uint32_t request_size)
 {
-	DTEntry         entryP;
 	uint32_t        size = 0;
-	void            *dt_random_seed;
+	uint8_t         *random_seed;
 
-	if ((SecureDTLookupEntry(NULL, "/chosen", &entryP) == kSuccess)
-	    && (SecureDTGetProperty(entryP, "random-seed",
+#if CONFIG_SPTM
+	char const prefix[] = "randseed";
+	size_t const prefix_len = sizeof(prefix) - 1;
+
+	extern const sptm_bootstrap_args_xnu_t *SPTMArgs;
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-qual"
+	/* Legal, because we are not locked down yet. */
+	random_seed = (uint8_t*)&SPTMArgs->random_seed;
+#pragma GCC diagnostic pop
+
+	size = (uint32_t)SPTMArgs->random_seed_length;
+
+	if (size < prefix_len) {
+		panic("random seed field too short");
+	}
+
+	if (memcmp(random_seed, prefix, prefix_len) != 0) {
+		panic("random seed corrupted");
+	}
+
+	random_seed += prefix_len;
+	size -= prefix_len;
+#else /* CONFIG_SPTM */
+	DTEntry         entryP;
+
+	if ((SecureDTLookupEntry(NULL, "/chosen", &entryP) != kSuccess)
+	    || (SecureDTGetProperty(entryP, "random-seed",
 	    /* casting away the const is permissible here, since
 	     * this function runs before lockdown. */
-	    (const void **)(uintptr_t)&dt_random_seed, &size) == kSuccess)) {
-		unsigned char *src_random_seed;
-		unsigned int i;
-		unsigned int null_count = 0;
+	    (const void **)(uintptr_t)&random_seed, &size) != kSuccess)) {
+		random_seed = NULL;
+		size = 0;
+	}
+#endif /* CONFIG_SPTM */
 
-		src_random_seed = (unsigned char *)dt_random_seed;
+	if (random_seed == NULL || size == 0) {
+		panic("no random seed");
+	}
 
-		if (size > request_size) {
-			size = request_size;
-		}
+	unsigned char *src_random_seed;
+	unsigned int i;
+	unsigned int null_count = 0;
 
-		/*
-		 * Copy from the device tree into the destination buffer,
-		 * count the number of null bytes and null out the device tree.
-		 */
-		for (i = 0; i < size; i++, src_random_seed++, dst_random_seed++) {
-			*dst_random_seed = *src_random_seed;
-			null_count += *src_random_seed == (unsigned char)0;
-			*src_random_seed = (unsigned char)0;
-		}
-		if (null_count == size) {
-			/* All nulls is no seed - return 0 */
-			size = 0;
-		}
+	src_random_seed = (unsigned char *)random_seed;
+
+	if (size > request_size) {
+		size = request_size;
+	}
+
+	/*
+	 * Copy from the device tree into the destination buffer,
+	 * count the number of null bytes and null out the device tree.
+	 */
+	for (i = 0; i < size; i++, src_random_seed++, dst_random_seed++) {
+		*dst_random_seed = *src_random_seed;
+		null_count += *src_random_seed == (unsigned char)0;
+		*src_random_seed = (unsigned char)0;
+	}
+	if (null_count == size) {
+		/* All nulls is no seed - return 0 */
+		size = 0;
 	}
 
 	return size;

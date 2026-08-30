@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <os/assumes.h>
+#include <TargetConditionals.h>
 
 #else /* !KERNEL */
 #define TARGET_OS_WIN32 0
@@ -24,20 +25,34 @@ __BEGIN_DECLS
 #include <kern/kalloc.h>
 __END_DECLS
 
-static inline void *
-malloc(size_t size)
+/* void * is a bit of a lie, but that will have to do */
+KALLOC_TYPE_VAR_DEFINE(KT_BLOCK_LAYOUT, struct Block_layout, void *, KT_DEFAULT);
+KALLOC_TYPE_VAR_DEFINE(KT_BLOCK_BYREF, struct Block_byref, void *, KT_DEFAULT);
+
+static inline struct Block_layout *
+block_layout_alloc(size_t size)
 {
-	if (size == 0) {
-		return NULL;
-	}
-	return kheap_alloc_tag_bt(KHEAP_DEFAULT, size,
-	           (zalloc_flags_t) (Z_WAITOK | Z_ZERO), VM_KERN_MEMORY_LIBKERN);
+	return (struct Block_layout *)kalloc_type_var_impl(KT_BLOCK_LAYOUT,
+	           size, Z_WAITOK_ZERO_NOFAIL, NULL);
 }
 
 static inline void
-free(void *addr)
+block_layout_free(Block_layout *ptr, size_t size)
 {
-	kheap_free_addr(KHEAP_DEFAULT, addr);
+	kfree_type_var_impl(KT_BLOCK_LAYOUT, ptr, size);
+}
+
+static inline struct Block_byref *
+block_byref_alloc(size_t size)
+{
+	return (struct Block_byref *)kalloc_type_var_impl(KT_BLOCK_BYREF,
+	           size, Z_WAITOK_ZERO_NOFAIL, NULL);
+}
+
+static inline void
+block_byref_free(Block_byref *ptr, size_t size)
+{
+	kfree_type_var_impl(KT_BLOCK_BYREF, ptr, size);
 }
 
 #endif /* KERNEL */
@@ -201,6 +216,7 @@ _Block_use_RR2(const Block_callbacks_RR *callbacks)
  *  Accessors for block descriptor fields
  *****************************************************************************/
 
+#if BLOCK_SMALL_DESCRIPTOR_SUPPORTED
 template <class T>
 static T *
 unwrap_relative_pointer(int32_t &offset)
@@ -214,6 +230,7 @@ unwrap_relative_pointer(int32_t &offset)
 	uintptr_t pointer = base + extendedOffset;
 	return (T *)pointer;
 }
+#endif
 
 #if 0
 static struct Block_descriptor_2 *
@@ -281,10 +298,7 @@ _Block_copy(const void *arg)
 	} else {
 		// Its a stack block.  Make a copy.
 		size_t size = Block_size(aBlock);
-		struct Block_layout *result = (struct Block_layout *)malloc(size);
-		if (!result) {
-			return NULL;
-		}
+		struct Block_layout *result = block_layout_alloc(size);
 		memmove(result, aBlock, size); // bitcopy first
 #if __has_feature(ptrauth_calls)
 		// Resign the invoke pointer as it uses address authentication.
@@ -328,7 +342,7 @@ _Block_byref_copy(const void *arg)
 
 	if ((src->forwarding->flags & BLOCK_REFCOUNT_MASK) == 0) {
 		// src points to stack
-		struct Block_byref *copy = (struct Block_byref *)malloc(src->size);
+		struct Block_byref *copy = block_byref_alloc(src->size);
 		copy->isa = NULL;
 		// byref value 4 is logical refcount of 2: one for caller, one for stack
 		copy->flags = src->flags | BLOCK_BYREF_NEEDS_FREE | 4;
@@ -381,7 +395,7 @@ _Block_byref_release(const void *arg)
 				struct Block_byref_2 *byref2 = (struct Block_byref_2 *)(byref + 1);
 				(*byref2->byref_destroy)(byref);
 			}
-			free(byref);
+			block_byref_free(byref, byref->size);
 		}
 	}
 }
@@ -417,7 +431,7 @@ _Block_release(const void *arg)
 	if (latching_decr_int_should_deallocate(&aBlock->flags)) {
 		_Block_call_dispose_helper(aBlock);
 		_Block_destructInstance(aBlock);
-		free(aBlock);
+		block_layout_free(aBlock, Block_size(aBlock));
 	}
 }
 
@@ -447,9 +461,11 @@ Block_size(void *aBlock)
 {
 	auto *layout = (Block_layout *)aBlock;
 	void *desc = _Block_get_descriptor(layout);
+#if BLOCK_SMALL_DESCRIPTOR_SUPPORTED
 	if (layout->flags & BLOCK_SMALL_DESCRIPTOR) {
 		return ((Block_descriptor_small *)desc)->size;
 	}
+#endif
 	return ((Block_descriptor_1 *)desc)->size;
 }
 
@@ -477,10 +493,12 @@ _Block_signature(void *aBlock)
 		return nullptr;
 	}
 
+#if BLOCK_SMALL_DESCRIPTOR_SUPPORTED
 	if (layout->flags & BLOCK_SMALL_DESCRIPTOR) {
 		auto *bds = (Block_descriptor_small *)_Block_get_descriptor(layout);
 		return unwrap_relative_pointer<const char>(bds->signature);
 	}
+#endif
 
 	struct Block_descriptor_3 *desc3 = _Block_descriptor_3(layout);
 	return desc3->signature;
@@ -496,10 +514,12 @@ _Block_layout(void *aBlock)
 		return nullptr;
 	}
 
+#if BLOCK_SMALL_DESCRIPTOR_SUPPORTED
 	if (layout->flags & BLOCK_SMALL_DESCRIPTOR) {
 		auto *bds = (Block_descriptor_small *)_Block_get_descriptor(layout);
 		return unwrap_relative_pointer<const char>(bds->layout);
 	}
+#endif
 
 	Block_descriptor_3 *desc = _Block_descriptor_3(layout);
 	return desc->layout;
@@ -516,6 +536,7 @@ _Block_extended_layout(void *aBlock)
 	}
 
 	const char *extLayout;
+#if BLOCK_SMALL_DESCRIPTOR_SUPPORTED
 	if (layout->flags & BLOCK_SMALL_DESCRIPTOR) {
 		auto *bds = (Block_descriptor_small *)_Block_get_descriptor(layout);
 		if (layout->flags & BLOCK_INLINE_LAYOUT_STRING) {
@@ -523,7 +544,9 @@ _Block_extended_layout(void *aBlock)
 		} else {
 			extLayout = unwrap_relative_pointer<const char>(bds->layout);
 		}
-	} else {
+	} else
+#endif
+	{
 		Block_descriptor_3 *desc3 = _Block_descriptor_3(layout);
 		extLayout = desc3->layout;
 	}

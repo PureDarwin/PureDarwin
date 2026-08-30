@@ -107,6 +107,17 @@ extern void WriteStructDecl( FILE *file, argument_t *args,
         boolean_t isuser,
         boolean_t template_only );
 
+extern void WriteUDataStructDecl(
+        FILE *file,
+        argument_t *args,
+        void (*func)(FILE *, argument_t *),
+        u_int mask,
+        char *name,
+        boolean_t simple,
+        boolean_t trailer,
+        boolean_t trailer_t,
+        boolean_t template_only);
+
 extern void WriteStaticDecl( FILE *file, argument_t *arg );
 
 extern void WriteCopyType(FILE *file, ipc_type_t *it, boolean_t mig_allocated_buf, char *left, char *right, ...);
@@ -120,8 +131,6 @@ extern void WriteCheckTrailerHead( FILE *file, routine_t *rt, boolean_t isuser )
 extern void WriteCheckTrailerSize( FILE *file, boolean_t isuser, argument_t *arg );
 
 extern void WriteReturnMsgError( FILE *file, routine_t *rt, boolean_t isuser, argument_t *arg, string_t error );
-
-extern void  WriteRPCRoutineDescriptor( FILE *file, routine_t *rt,  int arg_count, int descr_count, string_t stub_routine, string_t sig_array );
 
 extern void WriteRPCRoutineArgDescriptor( FILE *file, routine_t *rt );
 

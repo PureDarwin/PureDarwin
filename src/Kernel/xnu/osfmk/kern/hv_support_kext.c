@@ -232,55 +232,33 @@ hv_resume(void)
 kern_return_t
 hv_task_trap(uint64_t index, uint64_t arg)
 {
-	return HV_TRAP_DISPATCH(HV_TASK_TRAP, index, hv_get_task_target(), arg);
+	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_X86_TRAP_TASK) | DBG_FUNC_START, index, arg);
+	DTRACE_HV2(task__trap__begin, uint64_t, index, uint64_t, arg);
+
+	kern_return_t ret = HV_TRAP_DISPATCH(HV_TASK_TRAP, index, hv_get_task_target(), arg);
+
+	DTRACE_HV2(task__trap__end, uint64_t, index, uint64_t, ret);
+	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_X86_TRAP_TASK) | DBG_FUNC_END, index, ret);
+
+	return ret;
 }
 
 kern_return_t
 hv_thread_trap(uint64_t index, uint64_t arg)
 {
-	return HV_TRAP_DISPATCH(HV_THREAD_TRAP, index, hv_get_thread_target(), arg);
+	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_X86_TRAP_THREAD) | DBG_FUNC_START, index, arg);
+	DTRACE_HV2(thread__trap__begin, uint64_t, index, uint64_t, arg);
+
+	kern_return_t ret = HV_TRAP_DISPATCH(HV_THREAD_TRAP, index, hv_get_thread_target(), arg);
+
+	DTRACE_HV2(thread__trap__end, uint64_t, index, uint64_t, ret);
+	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_X86_TRAP_THREAD) | DBG_FUNC_END, index, ret);
+
+	return ret;
 }
 
 boolean_t
 hv_ast_pending(void)
 {
 	return current_cpu_datap()->cpu_pending_ast != 0;
-}
-
-void __attribute__((__noreturn__))
-hv_port_notify(mach_msg_header_t *msg __unused)
-{
-	panic("%s: not supported in this configuration", __func__);
-}
-
-void
-hv_trace_guest_enter(uint32_t vcpu_id, uint64_t *vcpu_regs)
-{
-	DTRACE_HV2(guest__enter, uint32_t, vcpu_id, uint64_t *, vcpu_regs);
-
-	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_GUEST_ENTER) | DBG_FUNC_START, vcpu_id);
-}
-
-void
-hv_trace_guest_exit(uint32_t vcpu_id, uint64_t *vcpu_regs, uint32_t reason)
-{
-	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_GUEST_ENTER) | DBG_FUNC_END, vcpu_id,
-	    reason);
-
-	DTRACE_HV2(guest__exit, uint32_t, vcpu_id, uint64_t *, vcpu_regs);
-}
-
-void
-hv_trace_guest_error(uint32_t vcpu_id, uint64_t *vcpu_regs, uint32_t failure,
-    uint32_t error)
-{
-	/*
-	 * An error indicates that the guest enter failed so there will be no
-	 * guest exit. Close the guest enter interval.
-	 */
-	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_GUEST_ENTER) | DBG_FUNC_END, vcpu_id,
-	    -1, failure, error);
-	KDBG(MACHDBG_CODE(DBG_MACH_HV, HV_GUEST_ERROR), vcpu_id, failure, error);
-
-	DTRACE_HV3(guest__error, uint32_t, vcpu_id, uint64_t *, vcpu_regs, uint32_t, failure);
 }

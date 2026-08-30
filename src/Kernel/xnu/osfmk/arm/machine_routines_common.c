@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -29,6 +29,7 @@
 #include <arm/machine_cpu.h>
 #include <arm/cpu_internal.h>
 #include <arm/cpuid.h>
+#include <arm/cpuid_internal.h>
 #include <arm/cpu_data.h>
 #include <arm/cpu_data_internal.h>
 #include <arm/misc_protos.h>
@@ -39,17 +40,21 @@
 #include <kern/thread.h>
 #include <kern/thread_group.h>
 #include <kern/policy_internal.h>
+#include <kern/processor.h>
+#include <kern/sched_hygiene.h>
 #include <kern/startup.h>
+#include <kern/monotonic.h>
+#include <kern/timeout.h>
+#include <kern/cpc.h>
 #include <machine/config.h>
 #include <machine/atomic.h>
-#include <pexpert/pexpert.h>
-
-#if MONOTONIC
-#include <kern/monotonic.h>
 #include <machine/monotonic.h>
-#endif /* MONOTONIC */
+#include <pexpert/pexpert.h>
+#include <pexpert/device_tree.h>
+#include <pexpert/arm64/apple_arm64_cpu.h>
 
 #include <mach/machine.h>
+#include <mach/machine/sdt.h>
 
 #if !HAS_CONTINUOUS_HWCLOCK
 extern uint64_t mach_absolutetime_asleep;
@@ -59,6 +64,17 @@ static uint64_t wake_conttime = UINT64_MAX;
 #endif
 
 extern volatile uint32_t debug_enabled;
+extern _Atomic unsigned int cluster_type_num_active_cpus[MAX_CPU_TYPES];
+const char *cluster_type_names[MAX_CPU_TYPES] = {
+	[CLUSTER_TYPE_SMP] = "Standard",
+	[CLUSTER_TYPE_E] = "Efficiency",
+#if HAS_MCORE || defined(ARM64_BOARD_CONFIG_T8142)
+	[CLUSTER_TYPE_M] = "Performance",
+	[CLUSTER_TYPE_P] = "Super",
+#else /* HAS_MCORE || defined(ARM64_BOARD_CONFIG_T8142) */
+	[CLUSTER_TYPE_P] = "Performance",
+#endif /* HAS_MCORE || defined(ARM64_BOARD_CONFIG_T8142) */
+};
 
 static int max_cpus_initialized = 0;
 #define MAX_CPUS_SET    0x1
@@ -68,7 +84,6 @@ LCK_GRP_DECLARE(max_cpus_grp, "max_cpus");
 LCK_MTX_DECLARE(max_cpus_lock, &max_cpus_grp);
 uint32_t lockdown_done = 0;
 boolean_t is_clock_configured = FALSE;
-
 
 static void
 sched_perfcontrol_oncore_default(perfcontrol_state_t new_thread_state __unused, going_on_core_t on __unused)
@@ -117,7 +132,7 @@ sched_perfcontrol_csw_default(
 	__unused perfcontrol_event event, __unused uint32_t cpu_id, __unused uint64_t timestamp,
 	__unused uint32_t flags, __unused struct perfcontrol_thread_data *offcore,
 	__unused struct perfcontrol_thread_data *oncore,
-	__unused struct perfcontrol_cpu_counters *cpu_counters, __unused void *unused)
+	__unused struct perfcontrol_cpu_counters *cpu_counters, __unused uint64_t *timeout_ticks)
 {
 }
 
@@ -125,7 +140,7 @@ static void
 sched_perfcontrol_state_update_default(
 	__unused perfcontrol_event event, __unused uint32_t cpu_id, __unused uint64_t timestamp,
 	__unused uint32_t flags, __unused struct perfcontrol_thread_data *thr_data,
-	__unused void *unused)
+	__unused uint64_t *timeout_ticks)
 {
 }
 
@@ -143,6 +158,12 @@ sched_perfcontrol_thread_group_unblocked_default(
 {
 }
 
+static void
+sched_perfcontrol_running_timer_expire_default(
+	__unused uint64_t now, __unused uint32_t flags, __unused uint32_t cpu_id, __unused uint64_t *timeout_ticks)
+{
+}
+
 sched_perfcontrol_offcore_t                     sched_perfcontrol_offcore = sched_perfcontrol_offcore_default;
 sched_perfcontrol_context_switch_t              sched_perfcontrol_switch = sched_perfcontrol_switch_default;
 sched_perfcontrol_oncore_t                      sched_perfcontrol_oncore = sched_perfcontrol_oncore_default;
@@ -157,6 +178,8 @@ sched_perfcontrol_csw_t                         sched_perfcontrol_csw = sched_pe
 sched_perfcontrol_state_update_t                sched_perfcontrol_state_update = sched_perfcontrol_state_update_default;
 sched_perfcontrol_thread_group_blocked_t        sched_perfcontrol_thread_group_blocked = sched_perfcontrol_thread_group_blocked_default;
 sched_perfcontrol_thread_group_unblocked_t      sched_perfcontrol_thread_group_unblocked = sched_perfcontrol_thread_group_unblocked_default;
+sched_perfcontrol_running_timer_expire_t        sched_perfcontrol_running_timer_expire = sched_perfcontrol_running_timer_expire_default;
+boolean_t sched_perfcontrol_thread_shared_rsrc_flags_enabled = false;
 
 void
 sched_perfcontrol_register_callbacks(sched_perfcontrol_callbacks_t callbacks, unsigned long size_of_state)
@@ -206,6 +229,13 @@ sched_perfcontrol_register_callbacks(sched_perfcontrol_callbacks_t callbacks, un
 			}
 		}
 #endif
+		if (callbacks->version >= SCHED_PERFCONTROL_CALLBACKS_VERSION_9) {
+			sched_perfcontrol_thread_shared_rsrc_flags_enabled = true;
+		}
+
+		if (callbacks->version >= SCHED_PERFCONTROL_CALLBACKS_VERSION_10) {
+			sched_perfcontrol_running_timer_expire = callbacks->running_timer_expire;
+		}
 
 		if (callbacks->version >= SCHED_PERFCONTROL_CALLBACKS_VERSION_7) {
 			if (callbacks->work_interval_ctl != NULL) {
@@ -309,46 +339,44 @@ machine_switch_populate_perfcontrol_thread_data(struct perfcontrol_thread_data *
 static void
 machine_switch_populate_perfcontrol_cpu_counters(struct perfcontrol_cpu_counters *cpu_counters)
 {
-#if MONOTONIC
-	mt_perfcontrol(&cpu_counters->instructions, &cpu_counters->cycles);
-#else /* MONOTONIC */
-	cpu_counters->instructions = 0;
-	cpu_counters->cycles = 0;
-#endif /* !MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	struct cpc_cycles_instrs counts = cpc_cycles_instrs_raw_approx();
+	cpu_counters->instructions = counts.instrs;
+	cpu_counters->cycles = counts.cycles;
+#else /* CONFIG_CPU_COUNTERS */
+	*cpu_counters = (struct perfcontrol_cpu_counters){ 0 };
+#endif /* !CONFIG_CPU_COUNTERS */
 }
 
 int perfcontrol_callout_stats_enabled = 0;
 static _Atomic uint64_t perfcontrol_callout_stats[PERFCONTROL_CALLOUT_MAX][PERFCONTROL_STAT_MAX];
 static _Atomic uint64_t perfcontrol_callout_count[PERFCONTROL_CALLOUT_MAX];
 
-#if MONOTONIC
+#if CONFIG_CPU_COUNTERS
 static inline
 bool
-perfcontrol_callout_counters_begin(uint64_t *counters)
+perfcontrol_callout_counters_begin(struct cpc_cycles_instrs *start)
 {
 	if (!perfcontrol_callout_stats_enabled) {
 		return false;
 	}
-	mt_fixed_counts(counters);
+	*start = cpc_cycles_instrs();
 	return true;
 }
 
 static inline
 void
-perfcontrol_callout_counters_end(uint64_t *start_counters,
+perfcontrol_callout_counters_end(struct cpc_cycles_instrs *start,
     perfcontrol_callout_type_t type)
 {
-	uint64_t end_counters[MT_CORE_NFIXED];
-	mt_fixed_counts(end_counters);
+	struct cpc_cycles_instrs end = cpc_cycles_instrs();
 	os_atomic_add(&perfcontrol_callout_stats[type][PERFCONTROL_STAT_CYCLES],
-	    end_counters[MT_CORE_CYCLES] - start_counters[MT_CORE_CYCLES], relaxed);
-#ifdef MT_CORE_INSTRS
+	    end.cycles - start->cycles, relaxed);
 	os_atomic_add(&perfcontrol_callout_stats[type][PERFCONTROL_STAT_INSTRS],
-	    end_counters[MT_CORE_INSTRS] - start_counters[MT_CORE_INSTRS], relaxed);
-#endif /* defined(MT_CORE_INSTRS) */
+	    end.instrs - start->instrs, relaxed);
 	os_atomic_inc(&perfcontrol_callout_count[type], relaxed);
 }
-#endif /* MONOTONIC */
+#endif /* CONFIG_CPU_COUNTERS */
 
 uint64_t
 perfcontrol_callout_stat_avg(perfcontrol_callout_type_t type,
@@ -361,6 +389,42 @@ perfcontrol_callout_stat_avg(perfcontrol_callout_type_t type,
 	       os_atomic_load_wide(&perfcontrol_callout_count[type], relaxed);
 }
 
+#if CONFIG_SCHED_EDGE
+
+/*
+ * The Edge scheduler allows the performance controller to update properties about the
+ * threads as part of the callouts. These properties typically include shared cluster
+ * resource usage. This allows the scheduler to manage specific threads within the
+ * workload more optimally.
+ */
+static void
+sched_perfcontrol_thread_flags_update(thread_t thread,
+    struct perfcontrol_thread_data *thread_data,
+    shared_rsrc_policy_agent_t agent)
+{
+	kern_return_t kr = KERN_SUCCESS;
+	if (thread_data->thread_flags_mask & PERFCTL_THREAD_FLAGS_MASK_CLUSTER_SHARED_RSRC_RR) {
+		if (thread_data->thread_flags & PERFCTL_THREAD_FLAGS_MASK_CLUSTER_SHARED_RSRC_RR) {
+			kr = thread_shared_rsrc_policy_set(thread, 0, CLUSTER_SHARED_RSRC_TYPE_RR, agent);
+		} else {
+			kr = thread_shared_rsrc_policy_clear(thread, CLUSTER_SHARED_RSRC_TYPE_RR, agent);
+		}
+	}
+	if (thread_data->thread_flags_mask & PERFCTL_THREAD_FLAGS_MASK_CLUSTER_SHARED_RSRC_NATIVE_FIRST) {
+		if (thread_data->thread_flags & PERFCTL_THREAD_FLAGS_MASK_CLUSTER_SHARED_RSRC_NATIVE_FIRST) {
+			kr = thread_shared_rsrc_policy_set(thread, 0, CLUSTER_SHARED_RSRC_TYPE_NATIVE_FIRST, agent);
+		} else {
+			kr = thread_shared_rsrc_policy_clear(thread, CLUSTER_SHARED_RSRC_TYPE_NATIVE_FIRST, agent);
+		}
+	}
+	/*
+	 * The thread_shared_rsrc_policy_* routines only fail if the performance controller is
+	 * attempting to double set/clear a policy on the thread.
+	 */
+	assert(kr == KERN_SUCCESS);
+}
+
+#endif /* CONFIG_SCHED_EDGE */
 
 void
 machine_switch_perfcontrol_context(perfcontrol_event event,
@@ -385,23 +449,31 @@ machine_switch_perfcontrol_context(perfcontrol_event event,
 		machine_switch_populate_perfcontrol_thread_data(&oncore, new,
 		    new_thread_same_pri_latency);
 		machine_switch_populate_perfcontrol_cpu_counters(&cpu_counters);
+		uint64_t timeout_ticks = 0;
 
-#if MONOTONIC
-		uint64_t counters[MT_CORE_NFIXED];
-		bool ctrs_enabled = perfcontrol_callout_counters_begin(counters);
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+		struct cpc_cycles_instrs start;
+		bool ctrs_enabled = perfcontrol_callout_counters_begin(&start);
+#endif /* CONFIG_CPU_COUNTERS */
 		sched_perfcontrol_csw(event, cpu_id, timestamp, flags,
-		    &offcore, &oncore, &cpu_counters, NULL);
-#if MONOTONIC
+		    &offcore, &oncore, &cpu_counters, &timeout_ticks);
+#if CONFIG_CPU_COUNTERS
 		if (ctrs_enabled) {
-			perfcontrol_callout_counters_end(counters, PERFCONTROL_CALLOUT_CONTEXT);
+			perfcontrol_callout_counters_end(&start, PERFCONTROL_CALLOUT_CONTEXT);
 		}
-#endif /* MONOTONIC */
+#endif /* CONFIG_CPU_COUNTERS */
 
-#if __arm64__
-		old->machine.energy_estimate_nj += offcore.energy_estimate_nj;
-		new->machine.energy_estimate_nj += oncore.energy_estimate_nj;
-#endif
+		recount_add_energy(old, get_threadtask(old),
+		    offcore.energy_estimate_nj);
+
+#if CONFIG_SCHED_EDGE
+		if (sched_perfcontrol_thread_shared_rsrc_flags_enabled) {
+			sched_perfcontrol_thread_flags_update(old, &offcore, SHARED_RSRC_POLICY_AGENT_PERFCTL_CSW);
+		}
+		if (timeout_ticks != 0) {
+			cpu_set_perfcontrol_timer(timestamp, timeout_ticks);
+		}
+#endif /* CONFIG_SCHED_EDGE */
 	}
 }
 
@@ -411,6 +483,17 @@ machine_switch_perfcontrol_state_update(perfcontrol_event event,
     uint32_t flags,
     thread_t thread)
 {
+#if USE_SME_PRIORITY
+	if (event == QUANTUM_EXPIRY) {
+		/*
+		 * The machine thread SME priority will synchronize at context switch.
+		 * In order to bound the case of a long-running thread that hasn't gone
+		 * off core in awhile, we also want to synchronize it here.
+		 */
+		machine_thread_update_sme_priority(thread);
+	}
+#endif /* USE_SME_PRIORITY */
+
 
 	if (sched_perfcontrol_state_update == sched_perfcontrol_state_update_default) {
 		return;
@@ -418,22 +501,34 @@ machine_switch_perfcontrol_state_update(perfcontrol_event event,
 	uint32_t cpu_id = (uint32_t)cpu_number();
 	struct perfcontrol_thread_data data;
 	machine_switch_populate_perfcontrol_thread_data(&data, thread, 0);
+	uint64_t timeout_ticks = 0;
 
-#if MONOTONIC
-	uint64_t counters[MT_CORE_NFIXED];
-	bool ctrs_enabled = perfcontrol_callout_counters_begin(counters);
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	struct cpc_cycles_instrs start;
+	bool ctrs_enabled = perfcontrol_callout_counters_begin(&start);
+#endif /* CONFIG_CPU_COUNTERS */
 	sched_perfcontrol_state_update(event, cpu_id, timestamp, flags,
-	    &data, NULL);
-#if MONOTONIC
+	    &data, &timeout_ticks);
+#if CONFIG_CPU_COUNTERS
 	if (ctrs_enabled) {
-		perfcontrol_callout_counters_end(counters, PERFCONTROL_CALLOUT_STATE_UPDATE);
+		perfcontrol_callout_counters_end(&start, PERFCONTROL_CALLOUT_STATE_UPDATE);
 	}
-#endif /* MONOTONIC */
+#endif /* CONFIG_CPU_COUNTERS */
 
-#if __arm64__
-	thread->machine.energy_estimate_nj += data.energy_estimate_nj;
-#endif
+#if CONFIG_PERVASIVE_ENERGY
+	recount_add_energy(thread, get_threadtask(thread), data.energy_estimate_nj);
+#endif /* CONFIG_PERVASIVE_ENERGY */
+
+#if CONFIG_SCHED_EDGE
+	if (sched_perfcontrol_thread_shared_rsrc_flags_enabled && (event == QUANTUM_EXPIRY)) {
+		sched_perfcontrol_thread_flags_update(thread, &data, SHARED_RSRC_POLICY_AGENT_PERFCTL_QUANTUM);
+	} else {
+		assert(data.thread_flags_mask == 0);
+	}
+	if (timeout_ticks != 0) {
+		cpu_set_perfcontrol_timer(timestamp, timeout_ticks);
+	}
+#endif /* CONFIG_SCHED_EDGE */
 }
 
 void
@@ -454,7 +549,7 @@ machine_thread_going_on_core(thread_t   new_thread,
 	on_core.qos_class = (uint16_t)proc_get_effective_thread_policy(new_thread, TASK_POLICY_QOS);
 	on_core.urgency = (uint16_t)urgency;
 	on_core.is_32_bit = thread_is_64bit_data(new_thread) ? FALSE : TRUE;
-	on_core.is_kernel_thread = new_thread->task == kernel_task;
+	on_core.is_kernel_thread = get_threadtask(new_thread) == kernel_task;
 #if CONFIG_THREAD_GROUPS
 	struct thread_group *tg = thread_group_get(new_thread);
 	on_core.thread_group_id = thread_group_get_id(tg);
@@ -464,20 +559,16 @@ machine_thread_going_on_core(thread_t   new_thread,
 	on_core.start_time = timestamp;
 	on_core.scheduling_latency_at_same_basepri = same_pri_latency;
 
-#if MONOTONIC
-	uint64_t counters[MT_CORE_NFIXED];
-	bool ctrs_enabled = perfcontrol_callout_counters_begin(counters);
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	struct cpc_cycles_instrs start;
+	bool ctrs_enabled = perfcontrol_callout_counters_begin(&start);
+#endif /* CONFIG_CPU_COUNTERS */
 	sched_perfcontrol_oncore(state, &on_core);
-#if MONOTONIC
+#if CONFIG_CPU_COUNTERS
 	if (ctrs_enabled) {
-		perfcontrol_callout_counters_end(counters, PERFCONTROL_CALLOUT_ON_CORE);
+		perfcontrol_callout_counters_end(&start, PERFCONTROL_CALLOUT_ON_CORE);
 	}
-#endif /* MONOTONIC */
-
-#if __arm64__
-	new_thread->machine.energy_estimate_nj += on_core.energy_estimate_nj;
-#endif
+#endif /* CONFIG_CPU_COUNTERS */
 }
 
 void
@@ -499,20 +590,16 @@ machine_thread_going_off_core(thread_t old_thread, boolean_t thread_terminating,
 	off_core.thread_group_data = thread_group_get_machine_data(tg);
 #endif
 
-#if MONOTONIC
-	uint64_t counters[MT_CORE_NFIXED];
-	bool ctrs_enabled = perfcontrol_callout_counters_begin(counters);
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	struct cpc_cycles_instrs start;
+	bool ctrs_enabled = perfcontrol_callout_counters_begin(&start);
+#endif /* CONFIG_CPU_COUNTERS */
 	sched_perfcontrol_offcore(state, &off_core, thread_terminating);
-#if MONOTONIC
+#if CONFIG_CPU_COUNTERS
 	if (ctrs_enabled) {
-		perfcontrol_callout_counters_end(counters, PERFCONTROL_CALLOUT_OFF_CORE);
+		perfcontrol_callout_counters_end(&start, PERFCONTROL_CALLOUT_OFF_CORE);
 	}
-#endif /* MONOTONIC */
-
-#if __arm64__
-	old_thread->machine.energy_estimate_nj += off_core.energy_estimate_nj;
-#endif
+#endif /* CONFIG_CPU_COUNTERS */
 }
 
 #if CONFIG_THREAD_GROUPS
@@ -645,6 +732,17 @@ machine_thread_group_unblocked(struct thread_group *unblocked_tg,
 #endif /* CONFIG_THREAD_GROUPS */
 
 void
+machine_perfcontrol_running_timer_expire(uint64_t now,
+    uint32_t flags,
+    int cpu_id,
+    uint64_t *timeout_ticks)
+{
+	if (sched_perfcontrol_running_timer_expire != sched_perfcontrol_running_timer_expire_default) {
+		sched_perfcontrol_running_timer_expire(now, flags, cpu_id, timeout_ticks);
+	}
+}
+
+void
 machine_max_runnable_latency(uint64_t bg_max_latency,
     uint64_t default_max_latency,
     uint64_t realtime_max_latency)
@@ -702,33 +800,66 @@ machine_perfcontrol_deadline_passed(uint64_t deadline)
 	}
 }
 
-#if INTERRUPT_MASKED_DEBUG
+/*
+ * Get a character representing the current thread's type of CPU core.
+ */
+char
+ml_get_current_core_type(void)
+{
+	const thread_t thread = current_thread();
+
+#if __AMP__
+	processor_t processor = thread->last_processor;
+	if (!processor) {
+		return '!';
+	}
+	switch (processor->processor_set->pset_type) {
+	case PSET_AMP_P:
+		return 'P';
+	case PSET_AMP_M:
+		return 'M';
+	case PSET_AMP_E:
+		return 'E';
+	default:
+		return '?';
+	}
+#else // __AMP__
+#pragma unused(thread)
+	return '-';
+#endif // !__AMP__
+}
+
+#if SCHED_HYGIENE_DEBUG
+
+__options_decl(int_mask_hygiene_flags_t, uint8_t, {
+	INT_MASK_BASE = 0x00,
+	INT_MASK_FROM_HANDLER = 0x01,
+	INT_MASK_IS_STACKSHOT = 0x02,
+});
+
 /*
  * ml_spin_debug_reset()
  * Reset the timestamp on a thread that has been unscheduled
  * to avoid false alarms. Alarm will go off if interrupts are held
  * disabled for too long, starting from now.
- *
- * Call ml_get_timebase() directly to prevent extra overhead on newer
- * platforms that's enabled in DEVELOPMENT kernel configurations.
  */
 void
 ml_spin_debug_reset(thread_t thread)
 {
-	if (thread->machine.intmask_timestamp) {
-		thread->machine.intmask_timestamp = ml_get_timebase();
-	}
+	const timeout_flags_t flags = ML_TIMEOUT_TIMEBASE_FLAGS | ML_TIMEOUT_PMC_FLAGS;
+
+	kern_timeout_restart(&thread->machine.int_timeout, flags);
 }
 
 /*
  * ml_spin_debug_clear()
- * Clear the timestamp on a thread that has been unscheduled
- * to avoid false alarms
+ * Clear the timestamp and cycle/instruction counts on a thread that
+ * has been unscheduled to avoid false alarms
  */
 void
 ml_spin_debug_clear(thread_t thread)
 {
-	thread->machine.intmask_timestamp = 0;
+	kern_timeout_override(&thread->machine.int_timeout);
 }
 
 /*
@@ -737,110 +868,251 @@ ml_spin_debug_clear(thread_t thread)
  * false alarms
  */
 void
-ml_spin_debug_clear_self()
+ml_spin_debug_clear_self(void)
 {
 	ml_spin_debug_clear(current_thread());
 }
 
-static inline void
-__ml_check_interrupts_disabled_duration(thread_t thread, uint64_t timeout, bool is_int_handler)
+void
+_ml_interrupt_masked_debug_start(uintptr_t handler_addr, int type)
 {
-	uint64_t start;
-	uint64_t now;
+	const timeout_flags_t flags = ML_TIMEOUT_TIMEBASE_FLAGS | ML_TIMEOUT_PMC_FLAGS;
+	const thread_t thread = current_thread();
 
-	start = is_int_handler ? thread->machine.inthandler_timestamp : thread->machine.intmask_timestamp;
-	if (start != 0) {
-		now = ml_get_timebase();
+	thread->machine.int_type = type;
+	thread->machine.int_handler_addr = (uintptr_t)VM_KERNEL_STRIP_UPTR(handler_addr);
+	thread->machine.int_vector = (uintptr_t)NULL;
+	kern_timeout_start(&thread->machine.int_timeout, flags);
+}
 
-		if ((now - start) > timeout * debug_cpu_performance_degradation_factor) {
-			mach_timebase_info_data_t timebase;
-			clock_timebase_info(&timebase);
+void
+_ml_interrupt_masked_debug_end(void)
+{
+	const timeout_flags_t flags = ML_TIMEOUT_TIMEBASE_FLAGS;
+	const thread_t thread = current_thread();
+
+	kern_timeout_end(&thread->machine.int_timeout, flags);
+	if (os_atomic_load(&interrupt_masked_timeout, relaxed) > 0) {
+		ml_handle_interrupt_handler_duration(thread);
+	}
+	os_compiler_barrier();
+	thread->machine.int_type = 0;
+	thread->machine.int_handler_addr = (uintptr_t)NULL;
+	thread->machine.int_vector = (uintptr_t)NULL;
+}
 
 #ifndef KASAN
-			/*
-			 * Disable the actual panic for KASAN due to the overhead of KASAN itself, leave the rest of the
-			 * mechanism enabled so that KASAN can catch any bugs in the mechanism itself.
-			 */
-			if (is_int_handler) {
-				panic("Processing of an interrupt (type = %u, handler address = %p, vector = %p) took %llu nanoseconds (timeout = %llu ns)",
-				    thread->machine.int_type, (void *)thread->machine.int_handler_addr, (void *)thread->machine.int_vector,
-				    (((now - start) * timebase.numer) / timebase.denom),
-				    ((timeout * debug_cpu_performance_degradation_factor) * timebase.numer) / timebase.denom);
-			} else {
-				panic("Interrupts held disabled for %llu nanoseconds (timeout = %llu ns)",
-				    (((now - start) * timebase.numer) / timebase.denom),
-				    ((timeout * debug_cpu_performance_degradation_factor) * timebase.numer) / timebase.denom);
+
+#define PREFIX_STRING_SIZE 256
+
+static void
+__ml_trigger_interrupts_disabled_handle(thread_t thread, uint64_t timeout, int_mask_hygiene_flags_t int_flags)
+{
+#if __AMP__
+	if (int_flags == INT_MASK_IS_STACKSHOT && interrupt_masked_debug_mode == SCHED_HYGIENE_MODE_PANIC) {
+		/*
+		 * If there are no recommended performance cores, we double the timeout to compensate
+		 * for the difference in time it takes Stackshot to run on efficiency cores, and then
+		 * recheck if we still exceeded the adjusted timeout.
+		 */
+		int cpu;
+		int max_cpu;
+
+		max_cpu = ml_get_max_cpu_number();
+		for (cpu = 0; cpu <= max_cpu; cpu++) {
+			processor_t processor = cpu_to_processor(cpu);
+			if (processor->is_recommended &&
+			    processor->processor_set->pset_type == PSET_AMP_P) {
+				break;
 			}
-#endif
+		}
+		if (cpu > max_cpu) {
+			uint64_t time_elapsed = kern_timeout_gross_duration(&thread->machine.int_timeout);
+			if (time_elapsed < timeout * 2) {
+				return;
+			}
 		}
 	}
+#endif /* __AMP__ */
 
-	return;
+	if (interrupt_masked_debug_mode == SCHED_HYGIENE_MODE_PANIC) {
+		char prefix_string[PREFIX_STRING_SIZE] = { '\0' };
+
+		if (int_flags & INT_MASK_FROM_HANDLER) {
+			snprintf(prefix_string, PREFIX_STRING_SIZE,
+			    "Processing of an interrupt (type = %u, handler address = %p, vector = %p) "
+			    "timed out:", thread->machine.int_type,
+			    (void *)thread->machine.int_handler_addr,
+			    (void *)thread->machine.int_vector);
+		} else if (int_flags & INT_MASK_IS_STACKSHOT) {
+			snprintf(prefix_string, PREFIX_STRING_SIZE,
+			    "Stackshot duration timed out:");
+		} else {
+			snprintf(prefix_string, PREFIX_STRING_SIZE,
+			    "Interrupts held disabled timed out:");
+		}
+		kern_timeout_try_panic(KERN_TIMEOUT_INTERRUPT, thread->machine.int_type,
+		    &thread->machine.int_timeout, prefix_string, timeout);
+	} else if (interrupt_masked_debug_mode == SCHED_HYGIENE_MODE_TRACE) {
+		uint64_t time_elapsed = kern_timeout_gross_duration(&thread->machine.int_timeout);
+		uint64_t cycles_elapsed;
+		uint64_t instrs_elapsed;
+
+		kern_timeout_cycles_instrs(&thread->machine.int_timeout,
+		    &cycles_elapsed, &instrs_elapsed);
+
+		if (int_flags != INT_MASK_BASE) {
+			static const uint32_t interrupt_handled_dbgid =
+			    MACHDBG_CODE(DBG_MACH_SCHED, MACH_INT_HANDLED_EXPIRED);
+			DTRACE_SCHED3(interrupt_handled_dbgid, uint64_t, time_elapsed,
+			    uint64_t, cycles_elapsed, uint64_t, instrs_elapsed);
+			KDBG(interrupt_handled_dbgid, time_elapsed,
+			    cycles_elapsed, instrs_elapsed);
+		} else {
+			static const uint32_t interrupt_masked_dbgid =
+			    MACHDBG_CODE(DBG_MACH_SCHED, MACH_INT_MASKED_EXPIRED);
+			DTRACE_SCHED3(interrupt_masked_dbgid, uint64_t, time_elapsed,
+			    uint64_t, cycles_elapsed, uint64_t, instrs_elapsed);
+			KDBG(interrupt_masked_dbgid, time_elapsed,
+			    cycles_elapsed, instrs_elapsed);
+		}
+	}
 }
+#endif // !defined(KASAN)
 
-void
-ml_check_interrupts_disabled_duration(thread_t thread)
+static inline void
+__ml_handle_interrupts_disabled_duration(thread_t thread, uint64_t timeout, int_mask_hygiene_flags_t int_flags)
 {
-	__ml_check_interrupts_disabled_duration(thread, interrupt_masked_timeout, false);
+	const timeout_flags_t flags = ML_TIMEOUT_TIMEBASE_FLAGS;
+
+	if (timeout == 0) {
+		return; // 0 means timeout disabled.
+	}
+
+	kern_timeout_end(&thread->machine.int_timeout, flags);
+
+	if (__improbable(interrupt_masked_debug_mode &&
+	    kern_timeout_gross_duration(&thread->machine.int_timeout)
+	    >= timeout * debug_cpu_performance_degradation_factor)) {
+		/*
+		 * Disable the actual panic for KASAN due to the overhead of KASAN itself, leave the rest of the
+		 * mechanism enabled so that KASAN can catch any bugs in the mechanism itself.
+		 */
+#ifndef KASAN
+		__ml_trigger_interrupts_disabled_handle(thread, timeout, int_flags);
+#endif
+	}
+
+	if (int_flags != INT_MASK_BASE) {
+		uint64_t const duration = kern_timeout_gross_duration(&thread->machine.int_timeout);
+		/*
+		 * No need for an atomic add, the only thread modifying
+		 * this is ourselves. Other threads querying will just see
+		 * either the old or the new value. (This will also just
+		 * resolve to regular loads and stores on relevant
+		 * platforms.)
+		 */
+		uint64_t const old_duration = os_atomic_load(&thread->machine.int_time_mt, relaxed);
+		os_atomic_store(&thread->machine.int_time_mt, old_duration + duration, relaxed);
+	}
+
+	/*
+	 * There are some circumstances where interrupts will be disabled
+	 * outside of the KPIs and then re-enabled, so we don't want to reuse
+	 * an old start time in that case (which will blow up with timeout
+	 * exceeded), so we just unconditionally reset the start time here.
+	 */
+	kern_timeout_override(&thread->machine.int_timeout);
 }
 
 void
-ml_check_stackshot_interrupt_disabled_duration(thread_t thread)
+ml_handle_interrupts_disabled_duration(thread_t thread)
+{
+	__ml_handle_interrupts_disabled_duration(thread, os_atomic_load(&interrupt_masked_timeout, relaxed), INT_MASK_BASE);
+}
+
+void
+ml_handle_stackshot_interrupt_disabled_duration(thread_t thread)
 {
 	/* Use MAX() to let the user bump the timeout further if needed */
-	__ml_check_interrupts_disabled_duration(thread, MAX(stackshot_interrupt_masked_timeout, interrupt_masked_timeout), false);
+	uint64_t stackshot_timeout = os_atomic_load(&stackshot_interrupt_masked_timeout, relaxed);
+	uint64_t normal_timeout = os_atomic_load(&interrupt_masked_timeout, relaxed);
+	uint64_t timeout = MAX(stackshot_timeout, normal_timeout);
+	__ml_handle_interrupts_disabled_duration(thread, timeout, INT_MASK_IS_STACKSHOT);
 }
 
 void
-ml_check_interrupt_handler_duration(thread_t thread)
+ml_handle_interrupt_handler_duration(thread_t thread)
 {
-	__ml_check_interrupts_disabled_duration(thread, interrupt_masked_timeout, true);
+	__ml_handle_interrupts_disabled_duration(thread, os_atomic_load(&interrupt_masked_timeout, relaxed), INT_MASK_FROM_HANDLER);
 }
 
 void
 ml_irq_debug_start(uintptr_t handler, uintptr_t vector)
 {
-	INTERRUPT_MASKED_DEBUG_START(handler, DBG_INTR_TYPE_OTHER);
+	ml_interrupt_masked_debug_start((void *)handler, DBG_INTR_TYPE_OTHER);
 	current_thread()->machine.int_vector = (uintptr_t)VM_KERNEL_STRIP_PTR(vector);
 }
 
 void
 ml_irq_debug_end()
 {
-	INTERRUPT_MASKED_DEBUG_END();
+	ml_interrupt_masked_debug_end();
 }
-#endif // INTERRUPT_MASKED_DEBUG
 
+/*
+ * Abandon a potential timeout when handling an interrupt. It is important to
+ * continue to keep track of the interrupt time so the time-stamp can't be
+ * reset. (Interrupt time is subtracted from preemption time to maintain
+ * accurate preemption time measurement).
+ * When `inthandler_abandon` is true, a timeout will be ignored when the
+ * interrupt handler finishes.
+ */
+void
+ml_irq_debug_abandon(void)
+{
+	assert(!ml_get_interrupts_enabled());
 
-boolean_t
-ml_set_interrupts_enabled(boolean_t enable)
+	thread_t thread = current_thread();
+	kern_timeout_override(&thread->machine.int_timeout);
+}
+
+static void
+ml_interrupt_masked_debug_timestamp(thread_t thread)
+{
+	const timeout_flags_t flags = ML_TIMEOUT_TIMEBASE_FLAGS | ML_TIMEOUT_PMC_FLAGS;
+
+	kern_timeout_start(&thread->machine.int_timeout, flags);
+}
+#endif /* SCHED_HYGIENE_DEBUG */
+
+__mockable boolean_t
+ml_set_interrupts_enabled_with_debug(boolean_t enable, boolean_t __unused debug)
 {
 	thread_t        thread;
 	uint64_t        state;
 
-#if __arm__
-#define INTERRUPT_MASK PSR_IRQF
-	state = __builtin_arm_rsr("cpsr");
-#else
-#define INTERRUPT_MASK DAIF_IRQF
+	thread = current_thread();
+
 	state = __builtin_arm_rsr("DAIF");
-#endif
-	if (enable && (state & INTERRUPT_MASK)) {
+
+	if (__improbable(!(state & DAIF_DEBUGF))) {
+		panic("%s: debug exceptions enabled in kernel mode", __func__);
+	}
+	if (enable && (state & DAIF_STANDARD_DISABLE)) {
+		assert3u(state & DAIF_STANDARD_DISABLE, ==, DAIF_STANDARD_DISABLE);
 		assert(getCpuDatap()->cpu_int_state == NULL); // Make sure we're not enabling interrupts from primary interrupt context
-#if INTERRUPT_MASKED_DEBUG
-		if (interrupt_masked_debug) {
+#if SCHED_HYGIENE_DEBUG
+		if (__probable(debug && static_if(sched_debug_interrupt_disable))) {
 			// Interrupts are currently masked, we will enable them (after finishing this check)
-			thread = current_thread();
 			if (stackshot_active()) {
-				ml_check_stackshot_interrupt_disabled_duration(thread);
+				ml_handle_stackshot_interrupt_disabled_duration(thread);
 			} else {
-				ml_check_interrupts_disabled_duration(thread);
+				ml_handle_interrupts_disabled_duration(thread);
 			}
-			thread->machine.intmask_timestamp = 0;
 		}
-#endif  // INTERRUPT_MASKED_DEBUG
+#endif  // SCHED_HYGIENE_DEBUG
 		if (get_preemption_level() == 0) {
-			thread = current_thread();
 			while (thread->machine.CpuDatap->cpu_pending_ast & AST_URGENT) {
 #if __ARM_USER_PROTECT__
 				uintptr_t up = arm_user_protect_begin(thread);
@@ -851,31 +1123,43 @@ ml_set_interrupts_enabled(boolean_t enable)
 #endif
 			}
 		}
-#if __arm__
-		__asm__ volatile ("cpsie if" ::: "memory"); // Enable IRQ FIQ
-#else
 		__builtin_arm_wsr("DAIFClr", DAIFSC_STANDARD_DISABLE);
-#endif
-	} else if (!enable && ((state & INTERRUPT_MASK) == 0)) {
-#if __arm__
-		__asm__ volatile ("cpsid if" ::: "memory"); // Mask IRQ FIQ
-#else
+	} else if (!enable && ((state & DAIF_STANDARD_DISABLE) != DAIF_STANDARD_DISABLE)) {
+		assert3u(state & DAIF_STANDARD_DISABLE, ==, 0);
 		__builtin_arm_wsr("DAIFSet", DAIFSC_STANDARD_DISABLE);
-#endif
-#if INTERRUPT_MASKED_DEBUG
-		if (interrupt_masked_debug) {
+
+#if SCHED_HYGIENE_DEBUG
+		if (__probable(debug && static_if(sched_debug_interrupt_disable))) {
 			// Interrupts were enabled, we just masked them
-			current_thread()->machine.intmask_timestamp = ml_get_timebase();
+			ml_interrupt_masked_debug_timestamp(thread);
 		}
 #endif
 	}
-	return (state & INTERRUPT_MASK) == 0;
+	return (state & DAIF_STANDARD_DISABLE) != DAIF_STANDARD_DISABLE;
+}
+
+boolean_t
+ml_set_interrupts_enabled(boolean_t enable)
+{
+	return ml_set_interrupts_enabled_with_debug(enable, true);
 }
 
 boolean_t
 ml_early_set_interrupts_enabled(boolean_t enable)
 {
 	return ml_set_interrupts_enabled(enable);
+}
+
+/*
+ * Interrupt enable function exported for AppleCLPC without
+ * measurements enabled.
+ *
+ * Only for AppleCLPC!
+ */
+boolean_t
+sched_perfcontrol_ml_set_interrupts_without_measurement(boolean_t enable)
+{
+	return ml_set_interrupts_enabled_with_debug(enable, false);
 }
 
 /*
@@ -897,6 +1181,27 @@ ml_at_interrupt_context(void)
 	return !ml_get_interrupts_enabled() && (getCpuDatap()->cpu_int_state != NULL);
 }
 
+/*
+ * This answers the question
+ * "after returning from this interrupt handler with the AST_URGENT bit set,
+ * will I end up in ast_taken_user or ast_taken_kernel?"
+ *
+ * If it's called in non-interrupt context (e.g. regular syscall), it should
+ * return false.
+ *
+ * Must be called with interrupts disabled.
+ */
+bool
+ml_did_interrupt_userspace(void)
+{
+	assert(ml_get_interrupts_enabled() == false);
+
+	struct arm_saved_state *state = getCpuDatap()->cpu_int_state;
+
+	return state && PSR64_IS_USER(get_saved_state_cpsr(state));
+}
+
+
 vm_offset_t
 ml_stack_remaining(void)
 {
@@ -911,7 +1216,13 @@ ml_stack_remaining(void)
 	if ((local < intstack_top_ptr) && (local > intstack_top_ptr - INTSTACK_SIZE)) {
 		return local - (getCpuDatap()->intstack_top - INTSTACK_SIZE);
 	} else {
-		return local - current_thread()->kernel_stack;
+		vm_offset_t bottom = current_thread()->kernel_stack;
+#if CONFIG_SPTM
+		if (current_thread()->machine.kredzonestack) {
+			bottom -= PAGE_SIZE;
+		}
+#endif /* CONFIG_SPTM */
+		return local - bottom;
 	}
 }
 
@@ -920,6 +1231,7 @@ static boolean_t ml_quiescing = FALSE;
 void
 ml_set_is_quiescing(boolean_t quiescing)
 {
+	assert(ml_quiescing != quiescing);
 	ml_quiescing = quiescing;
 	os_atomic_thread_fence(release);
 }
@@ -934,18 +1246,36 @@ ml_is_quiescing(void)
 uint64_t
 ml_get_booter_memory_size(void)
 {
+#if CONFIG_SPTM
+	extern uint64_t memSize;
+#endif /* CONFIG_SPTM */
 	uint64_t size;
 	uint64_t roundsize = 512 * 1024 * 1024ULL;
 	size = BootArgs->memSizeActual;
 	if (!size) {
-		size  = BootArgs->memSize;
+#if CONFIG_SPTM
+		/*
+		 * SPTM systems cache [memSize] in a CTRR-protected variable rather
+		 * than relying on [BootArgs]. This is to enable the possibility
+		 * for XNU to modify it before machine lockdown, which happens in
+		 * KASAN kernels. If we did not do this, XNU would fault on the first
+		 * attempt to overwrite [BootArgs->memSize].
+		 */
+		size = memSize;
+#else
+		size = BootArgs->memSize;
+#endif /* CONFIG_SPTM */
 		if (size < (2 * roundsize)) {
 			roundsize >>= 1;
 		}
 		size  = (size + roundsize - 1) & ~(roundsize - 1);
 	}
 
+#if CONFIG_SPTM
+	size -= memSize;
+#else
 	size -= BootArgs->memSize;
+#endif /* CONFIG_SPTM */
 
 	return size;
 }
@@ -1061,6 +1391,130 @@ ml_wait_max_cpus(void)
 	lck_mtx_unlock(&max_cpus_lock);
 	return machine_info.max_cpus;
 }
+
+void
+ml_cpu_get_info_type(ml_cpu_info_t * ml_cpu_info, cluster_type_t cluster_type)
+{
+	cache_info_t   *cpuid_cache_info;
+
+	cpuid_cache_info = cache_info_type(cluster_type);
+	ml_cpu_info->vector_unit = 0;
+	ml_cpu_info->cache_line_size = cpuid_cache_info->c_linesz;
+	ml_cpu_info->l1_icache_size = cpuid_cache_info->c_isize;
+	ml_cpu_info->l1_dcache_size = cpuid_cache_info->c_dsize;
+
+#if (__ARM_ARCH__ >= 8)
+	ml_cpu_info->l2_settings = 1;
+	ml_cpu_info->l2_cache_size = cpuid_cache_info->c_l2size;
+#else
+#error Unsupported arch
+#endif
+	ml_cpu_info->l3_settings = 0;
+	ml_cpu_info->l3_cache_size = 0xFFFFFFFF;
+}
+
+/*
+ *	Routine:        ml_cpu_get_info
+ *	Function: Fill out the ml_cpu_info_t structure with parameters associated
+ *	with the boot cluster.
+ */
+void
+ml_cpu_get_info(ml_cpu_info_t * ml_cpu_info)
+{
+	ml_cpu_get_info_type(ml_cpu_info, ml_get_topology_info()->boot_cpu->cluster_type);
+}
+
+unsigned int
+ml_get_cpu_number_type(cluster_type_t cluster_type, bool logical, bool available)
+{
+	/*
+	 * At present no supported ARM system features SMT, so the "logical"
+	 * parameter doesn't have an impact on the result.
+	 */
+	if (logical && available) {
+		return os_atomic_load(&cluster_type_num_active_cpus[cluster_type], relaxed);
+	} else if (logical && !available) {
+		return ml_get_topology_info()->cluster_type_num_cpus[cluster_type];
+	} else if (!logical && available) {
+		return os_atomic_load(&cluster_type_num_active_cpus[cluster_type], relaxed);
+	} else {
+		return ml_get_topology_info()->cluster_type_num_cpus[cluster_type];
+	}
+}
+
+void
+ml_get_cluster_type_name(cluster_type_t cluster_type, char *name, size_t name_size)
+{
+	strlcpy(name, cluster_type_names[cluster_type], name_size);
+}
+
+unsigned int
+ml_get_cluster_number_type(cluster_type_t cluster_type)
+{
+	return ml_get_topology_info()->cluster_type_num_clusters[cluster_type];
+}
+
+unsigned int
+ml_cpu_cache_sharing(unsigned int level, cluster_type_t cluster_type, bool include_all_cpu_types __unused)
+{
+	unsigned int cpu_number = 0;
+	uint64_t cluster_types = 0;
+
+	/*
+	 * Level 0 corresponds to main memory, which is shared across all cores.
+	 */
+	if (level == 0) {
+		return ml_get_topology_info()->num_cpus;
+	}
+
+	/*
+	 * At present no supported ARM system features more than 2 levels of caches.
+	 */
+	if (level > 2) {
+		return 0;
+	}
+
+	/*
+	 * L1 caches are always per core.
+	 */
+	if (level == 1) {
+		return 1;
+	}
+
+	/* BEGIN IGNORE CODESTYLE */
+	cluster_types = BIT(cluster_type);
+	/* END IGNORE CODESTYLE */
+
+	/*
+	 * Traverse clusters until we find the one(s) of the desired type(s).
+	 */
+	const ml_topology_info_t * topo = ml_get_topology_info();
+	for (int i = 0; i < topo->num_clusters; i++) {
+		ml_topology_cluster_t *cluster = &topo->clusters[i];
+		uint64_t found = BIT(cluster->cluster_type);
+		if (bit_test(cluster_types, cluster->cluster_type)) {
+			for (int j = cluster->first_cpu_id; j < cluster->first_cpu_id + cluster->num_cpus; j++) {
+				if (bit_test(cluster_types, topo->cpus[j].cluster_type)) {
+					cpu_number++;
+					bit_set(found, topo->cpus[j].cluster_type);
+				}
+			}
+		}
+		cluster_types &= ~found;
+		if (cluster_types == 0) {
+			break;
+		}
+	}
+
+	return cpu_number;
+}
+
+unsigned int
+ml_get_cpu_types(void)
+{
+	return ml_get_topology_info()->cluster_types;
+}
+
 void
 machine_conf(void)
 {

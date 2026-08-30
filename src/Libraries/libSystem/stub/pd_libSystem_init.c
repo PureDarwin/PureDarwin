@@ -57,6 +57,37 @@ struct _libpthread_functions {
 	void *(*malloc)(size_t);
 	void (*free)(void *);
 };
+
+/*
+ * Mirrors _libkernel_functions in libsystem_kernel/wrappers/_libkernel_init.h,
+ * which lives in the DeveloperInternal headers and is not on this stub's include
+ * path. The layout has to stay in sync with it; the version field guards any
+ * later additions.
+ */
+struct _libkernel_functions {
+	unsigned long version;
+	void  *(*dlsym)(void *, const char *);
+	void  *(*malloc)(size_t);
+	void   (*free)(void *);
+	void  *(*realloc)(void *, size_t);
+	void   (*_pthread_exit_if_canceled)(int);
+	void  *reserved1;
+	void  *reserved2;
+	void  *reserved3;
+	void  *reserved4;
+	void  *reserved5;
+	void   (*pthread_clear_qos_tsd)(mach_port_t);
+	int    (*pthread_current_stack_contains_np)(const void *, size_t);
+};
+extern void __libkernel_init(const struct _libkernel_functions *fns,
+    const char *envp[], const char *apple[], const struct ProgramVars *vars);
+/* Same call, into libdyld.dylib's own copy - see pd_libdyld_exports.c. */
+extern void pd_libdyld_libkernel_init(const struct _libkernel_functions *fns,
+    const char *envp[], const char *apple[], const struct ProgramVars *vars);
+extern void _pthread_exit_if_canceled(int error);
+extern void _pthread_clear_qos_tsd(mach_port_t thread_port);
+extern int pthread_current_stack_contains_np(const void *addr, size_t len);
+extern void *dlsym(void *handle, const char *symbol);
 extern int __pthread_init(const struct _libpthread_functions *pthread_funcs,
     const char *envp[], const char *apple[], const struct ProgramVars *vars);
 static void __libdarwin_init(void) { }
@@ -210,7 +241,35 @@ static void pd_libSystem_initializer(int argc, const char *argv[], const char *e
 		vars = &fallback_vars;
 	}
 
-	mach_init();
+	/*
+	 * Apple's libSystem_initializer() runs this first, and it is what fills in
+	 * _libkernel_functions - the table every weak trampoline in
+	 * libsystem_kernel's _libc_funcptr.c dispatches through. Skipping it left
+	 * that pointer NULL, so those trampolines faulted at the struct offset of
+	 * whichever slot they wanted (0x10 for malloc, 0x28 for
+	 * _pthread_exit_if_canceled). It also calls mach_init() for us.
+	 */
+	{
+		static const struct _libkernel_functions libkernel_funcs = {
+			.version                          = 4,
+			.dlsym                            = dlsym,
+			.malloc                           = malloc,
+			.free                             = free,
+			.realloc                          = realloc,
+			._pthread_exit_if_canceled        = _pthread_exit_if_canceled,
+			.pthread_clear_qos_tsd            = _pthread_clear_qos_tsd,
+			.pthread_current_stack_contains_np = pthread_current_stack_contains_np,
+		};
+		__libkernel_init(&libkernel_funcs, envp, apple, vars);
+		/*
+		 * libdyld.dylib has a separate, private copy of the same table (hidden
+		 * visibility), which the call above does not reach. Hand it the real
+		 * allocator too, so it stops serving allocations out of the bootstrap
+		 * pool it has been using since image loading.
+		 */
+		pd_libdyld_libkernel_init(&libkernel_funcs, envp, apple, vars);
+	}
+
 	/* Real dyld seeds this minimal TSD itself, in its own separately-linked
 	 * copy of pthread_static, before any dylib initializer (including this
 	 * one) ever runs - see _pthread_set_self_dyld() in pthread.c. PD's dyld

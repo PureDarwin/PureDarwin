@@ -34,10 +34,6 @@ OSDefineMetaClass(IONVRAMController, IOService);
 OSDefineAbstractStructors(IONVRAMController, IOService);
 
 
-// ****************************************************************************
-// init
-//
-// ****************************************************************************
 void
 IONVRAMController::registerService(IOOptionBits options)
 {
@@ -46,12 +42,19 @@ IONVRAMController::registerService(IOOptionBits options)
 	getPlatform()->registerNVRAMController(this);
 }
 
-// ****************************************************************************
-// syncNVRAM
-//
-//
-// ****************************************************************************
 void
 IONVRAMController::sync(void)
 {
+}
+
+IOReturn
+IONVRAMController::select(uint32_t bank)
+{
+	return kIOReturnUnsupported;
+}
+
+IOReturn
+IONVRAMController::eraseBank(void)
+{
+	return kIOReturnUnsupported;
 }

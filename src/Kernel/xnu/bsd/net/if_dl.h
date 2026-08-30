@@ -65,6 +65,7 @@
 #define _NET_IF_DL_H_
 #include <sys/appleapiopts.h>
 
+#include <sys/_types.h> /* __offsetof() */
 #include <sys/types.h>
 
 #ifdef BSD_KERNEL_PRIVATE
@@ -100,8 +101,9 @@ struct sockaddr_dl {
 	u_char  sdl_nlen;       /* interface name length, no trailing 0 reqd. */
 	u_char  sdl_alen;       /* link level address length */
 	u_char  sdl_slen;       /* link layer selector length */
-	char    sdl_data[12];   /* minimum work area, can be larger;
-	                         *  contains both if name and ll address */
+	char    sdl_data[12];
+	/* minimum work area, can be larger;
+	 *  contains both if name and ll address */
 #ifndef __APPLE__
 	/* For TokenRing */
 	u_short sdl_rcf;        /* source routing control */
@@ -109,9 +111,9 @@ struct sockaddr_dl {
 #endif
 };
 
-#define LLADDR(s) ((caddr_t)((s)->sdl_data + (s)->sdl_nlen))
+#define LLADDR(s) ((caddr_t)(s) + __offsetof(struct sockaddr_dl, sdl_data) + (s)->sdl_nlen)
 #ifdef KERNEL_PRIVATE
-#define CONST_LLADDR(s) ((const u_char*)((s)->sdl_data + (s)->sdl_nlen))
+#define CONST_LLADDR(s) ((const u_char*)(s) + __offsetof(struct sockaddr_dl, sdl_data) + (s)->sdl_nlen)
 #endif
 
 #ifdef BSD_KERNEL_PRIVATE

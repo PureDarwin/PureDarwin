@@ -65,6 +65,8 @@
 #include <sys/semaphore.h>
 #include <sys/sysproto.h>
 #include <sys/proc_info.h>
+#include <sys/random.h>
+#include <net/siphash.h>
 
 #if CONFIG_MACF
 #include <sys/vnode_internal.h>
@@ -85,9 +87,9 @@
 
 #define f_flag fp_glob->fg_flag
 #define f_ops fp_glob->fg_ops
-#define f_data fp_glob->fg_data
 
 #define PSEMNAMLEN      31      /* maximum name segment length we bother with */
+#define PSEMTEAMIDLEN   31      /* maximum length of team ID we consider */
 
 struct pseminfo {
 	unsigned int    psem_flags;
@@ -115,8 +117,10 @@ struct pseminfo {
 struct  psemcache {
 	LIST_ENTRY(psemcache) psem_hash;        /* hash chain */
 	struct  pseminfo *pseminfo;             /* vnode the name refers to */
-	size_t  psem_nlen;              /* length of name */
+	size_t  psem_nlen;                      /* length of name */
+	size_t  psem_teamidlen;                 /* length of team ID */
 	char    psem_name[PSEMNAMLEN + 1];      /* segment name */
+	char    psem_teamid[PSEMTEAMIDLEN + 1]; /* team ID of users, if any */
 };
 #define PSEMCACHE_NULL (struct psemcache *)0
 
@@ -125,18 +129,27 @@ struct  psemcache {
 #define PSEMCACHE_NEGATIVE (ENOENT)
 
 struct  psemstats {
-	long    goodhits;               /* hits that we can really use */
-	long    neghits;                /* negative hits that we can use */
-	long    badhits;                /* hits we must drop */
-	long    falsehits;              /* hits with id mismatch */
-	long    miss;           /* misses */
-	long    longnames;              /* long names that ignore cache */
+	long pstats_hits;
+	long pstats_miss;
+	long pstats_local_hits;
+	long pstats_global_hits;
+	long pstats_local_miss;
+	long pstats_global_miss;
+	long pstats_local_collisions;
+	long pstats_global_collisions;
+	long pstats_fallback_hits;     /* hits that missed local but hit global */
+	long pstats_fallback_miss;     /* hits that missed both local and global */
+	long pstats_neghits;           /* hits to 'negative entries' (return ENOENT) */
+	long pstats_longnames;         /* semaphore or team ID ENAMETOOLONG */
 };
 
 struct psemname {
-	char    *psem_nameptr;  /* pointer to looked up name */
-	size_t  psem_namelen;   /* length of looked up component */
-	u_int32_t       psem_hash;      /* hash value of looked up name */
+	char *psem_nameptr;        /* pointer to looked up name */
+	size_t psem_namelen;       /* length of looked up component */
+	uint64_t psem_hash_local;  /* hash value of looked up name and team */
+	uint64_t psem_hash_global; /* hash value of looked up name, without team */
+	const char *psem_teamidptr;
+	size_t psem_teamidlen;
 };
 
 struct psemnode {
@@ -148,19 +161,44 @@ struct psemnode {
 };
 #define PSEMNODE_NULL (struct psemnode *)0
 
+LIST_HEAD(psemhashhead, psemcache);
 
-#define PSEMHASH(pnp) \
-	(&psemhashtbl[(pnp)->psem_hash & psemhash])
-LIST_HEAD(psemhashhead, psemcache) * psemhashtbl;        /* Hash Table */
-u_long  psemhash;                               /* size of hash table - 1 */
-long    psemnument;                     /* number of cache entries allocated */
-long    posix_sem_max = 10000;          /* tunable for max POSIX semaphores */
-                                        /* 10000 limits to ~1M of memory */
+struct psemhashtable {
+	struct psemhashhead *psem_table;
+
+	/* Hash table mask, i.e size - 1 */
+	u_long psem_table_mask;
+
+	/* SipHash key, randomly assigned at boot */
+	uint8_t psem_siphash_key[SIPHASH_KEY_LENGTH];
+};
+#define PSEMHASH(table, hash) (&(table).psem_table[(hash) & (table).psem_table_mask])
+
+struct psemhashtable psem_global, psem_local;
+
+long posix_sem_num;         /* number of POSIX semaphores on the system */
+long posix_sem_max = 10000; /* max number of POSIX semaphores on the system */
+
 SYSCTL_NODE(_kern, KERN_POSIX, posix, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "Posix");
 SYSCTL_NODE(_kern_posix, OID_AUTO, sem, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "Semaphores");
 SYSCTL_LONG(_kern_posix_sem, OID_AUTO, max, CTLFLAG_RW | CTLFLAG_LOCKED, &posix_sem_max, "max");
 
 struct psemstats psemstats;             /* cache effectiveness statistics */
+
+#if DEBUG || DEVELOPMENT
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, hits, CTLFLAG_RD, &psemstats.pstats_hits, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, miss, CTLFLAG_RD, &psemstats.pstats_miss, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, local_hits, CTLFLAG_RD, &psemstats.pstats_local_hits, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, local_miss, CTLFLAG_RD, &psemstats.pstats_local_miss, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, global_hits, CTLFLAG_RD, &psemstats.pstats_global_hits, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, global_miss, CTLFLAG_RD, &psemstats.pstats_global_miss, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, fallback_hits, CTLFLAG_RD, &psemstats.pstats_fallback_hits, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, fallback_miss, CTLFLAG_RD, &psemstats.pstats_fallback_miss, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, local_collisions, CTLFLAG_RD, &psemstats.pstats_local_collisions, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, global_collisions, CTLFLAG_RD, &psemstats.pstats_global_collisions, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, neghits, CTLFLAG_RD, &psemstats.pstats_neghits, "");
+SYSCTL_LONG(_kern_posix_sem, OID_AUTO, longnames, CTLFLAG_RD, &psemstats.pstats_longnames, "");
+#endif
 
 static int psem_access(struct pseminfo *pinfo, mode_t mode, kauth_cred_t cred);
 static int psem_cache_search(struct pseminfo **,
@@ -169,6 +207,8 @@ static int psem_delete(struct pseminfo * pinfo);
 
 static int psem_closefile(struct fileglob *fp, vfs_context_t ctx);
 static int psem_unlink_internal(struct pseminfo *pinfo, struct psemcache *pcache);
+
+static const char *psem_get_teamid(proc_t p);
 
 static const struct fileops psemops = {
 	.fo_type     = DTYPE_PSXSEM,
@@ -191,7 +231,62 @@ static LCK_MTX_DECLARE(psx_sem_subsys_mutex, &psx_sem_subsys_lck_grp);
 
 static int psem_cache_add(struct pseminfo *psemp, struct psemname *pnp, struct psemcache *pcp);
 static void psem_cache_delete(struct psemcache *pcp);
-int psem_cache_purge_all(proc_t);
+int psem_cache_purge_all(void);
+
+static struct psemname
+psem_cache_hash(char *name, size_t len, const char *teamid, size_t teamidlen)
+{
+	SIPHASH_CTX ctx;
+	struct psemname nd;
+
+	nd.psem_nameptr = name;
+	nd.psem_namelen = len;
+	nd.psem_teamidptr = teamid;
+	nd.psem_teamidlen = teamidlen;
+	nd.psem_hash_local = 0;
+	nd.psem_hash_global = 0;
+
+	_Static_assert(sizeof(nd.psem_hash_local) == SIPHASH_DIGEST_LENGTH, "hash field is wrong size for SipHash");
+	_Static_assert(sizeof(nd.psem_hash_global) == SIPHASH_DIGEST_LENGTH, "hash field is wrong size for SipHash");
+
+	/*
+	 * This routine is called before taking the subsystem lock, so we'll prepare hashes
+	 * for both global and local tables up front.
+	 */
+	SipHash24_Init(&ctx);
+	SipHash_SetKey(&ctx, psem_global.psem_siphash_key);
+	SipHash_Update(&ctx, name, len);
+	SipHash_Final((u_int8_t *)&nd.psem_hash_global, &ctx);
+
+	if (teamidlen > 0) {
+		SipHash24_Init(&ctx);
+		SipHash_SetKey(&ctx, psem_local.psem_siphash_key);
+		SipHash_Update(&ctx, name, len);
+		SipHash_Update(&ctx, teamid, teamidlen);
+		SipHash_Final((u_int8_t *)&nd.psem_hash_local, &ctx);
+	}
+
+	return nd;
+}
+
+/*
+ * Returns 1 if the semaphore name matches what we're looking for, otherwise 0.
+ * When searching the local table, the team ID must match too.
+ */
+static int
+psem_cache_is_match(struct psemcache *sem, struct psemname *target, bool local)
+{
+	bool name_matches = target->psem_namelen == sem->psem_nlen &&
+	    !bcmp(target->psem_nameptr, sem->psem_name, target->psem_namelen);
+
+	if (local) {
+		bool teamid_matches = target->psem_teamidlen == sem->psem_teamidlen &&
+		    !bcmp(target->psem_teamidptr, sem->psem_teamid, target->psem_teamidlen);
+		return name_matches && teamid_matches;
+	}
+
+	return name_matches;
+}
 
 /*
  * Lookup an entry in the cache
@@ -207,31 +302,66 @@ static int
 psem_cache_search(struct pseminfo **psemp, struct psemname *pnp,
     struct psemcache **pcache)
 {
-	struct psemcache *pcp, *nnp;
+	struct psemcache *pcp = NULL, *nnp;
 	struct psemhashhead *pcpp;
 
-	if (pnp->psem_namelen > PSEMNAMLEN) {
-		psemstats.longnames++;
+	if (pnp->psem_namelen > PSEMNAMLEN || pnp->psem_teamidlen > PSEMTEAMIDLEN) {
+		os_atomic_inc(&psemstats.pstats_longnames, relaxed);
 		return PSEMCACHE_NOTFOUND;
 	}
 
-	pcpp = PSEMHASH(pnp);
-	for (pcp = pcpp->lh_first; pcp != 0; pcp = nnp) {
-		nnp = pcp->psem_hash.le_next;
-		if (pcp->psem_nlen == pnp->psem_namelen &&
-		    !bcmp(pcp->psem_name, pnp->psem_nameptr, pcp->psem_nlen)) {
-			break;
+	/* If Team ID is present, try to look up in the local table first. */
+	if (pnp->psem_teamidlen > 0) {
+		pcpp = PSEMHASH(psem_local, pnp->psem_hash_local);
+
+		for (pcp = pcpp->lh_first; pcp != 0; pcp = nnp) {
+			nnp = pcp->psem_hash.le_next;
+			if (psem_cache_is_match(pcp, pnp, true)) {
+				break;
+			}
+			os_atomic_inc(&psemstats.pstats_local_collisions, relaxed);
+		}
+
+		if (pcp == 0) {
+			os_atomic_inc(&psemstats.pstats_local_miss, relaxed);
+		} else {
+			os_atomic_inc(&psemstats.pstats_local_hits, relaxed);
+		}
+	}
+
+	/* Otherwise, or if the local lookup failed, search the global table. */
+	if (pcp == 0) {
+		pcpp = PSEMHASH(psem_global, pnp->psem_hash_global);
+
+		for (pcp = pcpp->lh_first; pcp != 0; pcp = nnp) {
+			nnp = pcp->psem_hash.le_next;
+			if (psem_cache_is_match(pcp, pnp, false)) {
+				break;
+			}
+			os_atomic_inc(&psemstats.pstats_global_collisions, relaxed);
+		}
+
+		if (pcp == 0) {
+			os_atomic_inc(&psemstats.pstats_global_miss, relaxed);
+			if (pnp->psem_teamidlen > 0) {
+				os_atomic_inc(&psemstats.pstats_fallback_miss, relaxed);
+			}
+		} else {
+			os_atomic_inc(&psemstats.pstats_global_hits, relaxed);
+			if (pnp->psem_teamidlen > 0) {
+				os_atomic_inc(&psemstats.pstats_fallback_hits, relaxed);
+			}
 		}
 	}
 
 	if (pcp == 0) {
-		psemstats.miss++;
+		os_atomic_inc(&psemstats.pstats_miss, relaxed);
 		return PSEMCACHE_NOTFOUND;
 	}
 
 	/* We found a "positive" match, return the vnode */
 	if (pcp->pseminfo) {
-		psemstats.goodhits++;
+		os_atomic_inc(&psemstats.pstats_hits, relaxed);
 		/* TOUCH(ncp); */
 		*psemp = pcp->pseminfo;
 		*pcache = pcp;
@@ -242,7 +372,7 @@ psem_cache_search(struct pseminfo **psemp, struct psemname *pnp,
 	 * We found a "negative" match, ENOENT notifies client of this match.
 	 * The nc_vpid field records whether this is a whiteout.
 	 */
-	psemstats.neghits++;
+	os_atomic_inc(&psemstats.pstats_neghits, relaxed);
 	return PSEMCACHE_NEGATIVE;
 }
 
@@ -253,24 +383,20 @@ static int
 psem_cache_add(struct pseminfo *psemp, struct psemname *pnp, struct psemcache *pcp)
 {
 	struct psemhashhead *pcpp;
-	struct pseminfo *dpinfo;
-	struct psemcache *dpcp;
 
 #if DIAGNOSTIC
 	if (pnp->psem_namelen > PSEMNAMLEN) {
 		panic("cache_enter: name too long");
 	}
+	if (pnp->psem_teamidlen > PSEMTEAMIDLEN) {
+		panic("cache_enter: teamid too long");
+	}
 #endif
 
-
-	/*  if the entry has already been added by some one else return */
-	if (psem_cache_search(&dpinfo, pnp, &dpcp) == PSEMCACHE_FOUND) {
-		return EEXIST;
-	}
-	if (psemnument >= posix_sem_max) {
+	if (posix_sem_num >= posix_sem_max) {
 		return ENOSPC;
 	}
-	psemnument++;
+	posix_sem_num++;
 	/*
 	 * Fill in cache info, if vp is NULL this is a "negative" cache entry.
 	 * For negative entries, we have to record whether it is a whiteout.
@@ -280,7 +406,16 @@ psem_cache_add(struct pseminfo *psemp, struct psemname *pnp, struct psemcache *p
 	pcp->pseminfo = psemp;
 	pcp->psem_nlen = pnp->psem_namelen;
 	bcopy(pnp->psem_nameptr, pcp->psem_name, pcp->psem_nlen);
-	pcpp = PSEMHASH(pnp);
+	pcp->psem_teamidlen = pnp->psem_teamidlen;
+	bcopy(pnp->psem_teamidptr, pcp->psem_teamid, pcp->psem_teamidlen);
+
+	/* Insert into the right table based on Team ID. */
+	if (pcp->psem_teamidlen > 0) {
+		pcpp = PSEMHASH(psem_local, pnp->psem_hash_local);
+	} else {
+		pcpp = PSEMHASH(psem_global, pnp->psem_hash_global);
+	}
+
 #if DIAGNOSTIC
 	{
 		struct psemcache *p;
@@ -302,7 +437,15 @@ psem_cache_add(struct pseminfo *psemp, struct psemname *pnp, struct psemcache *p
 void
 psem_cache_init(void)
 {
-	psemhashtbl = hashinit((int)(posix_sem_max / 2), M_SHM, &psemhash);
+	/*
+	 * The global table stores semaphores created by processes without a Team
+	 * ID (such as platform binaries). The local table stores all other semaphores.
+	 */
+	psem_global.psem_table = hashinit((int)(posix_sem_max / 2), M_SHM, &psem_global.psem_table_mask);
+	psem_local.psem_table = hashinit((int)(posix_sem_max / 2), M_SHM, &psem_local.psem_table_mask);
+
+	read_frandom(psem_global.psem_siphash_key, sizeof(psem_global.psem_siphash_key));
+	read_frandom(psem_local.psem_siphash_key, sizeof(psem_local.psem_siphash_key));
 }
 
 static void
@@ -318,7 +461,29 @@ psem_cache_delete(struct psemcache *pcp)
 #endif /* DIAGNOSTIC */
 	LIST_REMOVE(pcp, psem_hash);
 	pcp->psem_hash.le_prev = NULL;
-	psemnument--;
+	posix_sem_num--;
+}
+
+static int
+psem_cache_purge_table(struct psemhashtable *table)
+{
+	struct psemcache *pcp, *tmppcp;
+	struct psemhashhead *pcpp;
+
+	for (pcpp = &table->psem_table[table->psem_table_mask]; pcpp >= table->psem_table; pcpp--) {
+		LIST_FOREACH_SAFE(pcp, pcpp, psem_hash, tmppcp) {
+			assert(pcp->psem_nlen);
+			/*
+			 * unconditionally unlink the cache entry
+			 */
+			int error = psem_unlink_internal(pcp->pseminfo, pcp);
+			if (error) {
+				return error;
+			}
+		}
+	}
+
+	return 0;
 }
 
 /*
@@ -327,10 +492,8 @@ psem_cache_delete(struct psemcache *pcp)
  * name/path will be removed making all future lookups on the name fail.
  */
 int
-psem_cache_purge_all(__unused proc_t p)
+psem_cache_purge_all(void)
 {
-	struct psemcache *pcp, *tmppcp;
-	struct psemhashhead *pcpp;
 	int error = 0;
 
 	if (kauth_cred_issuser(kauth_cred_get()) == 0) {
@@ -338,26 +501,22 @@ psem_cache_purge_all(__unused proc_t p)
 	}
 
 	PSEM_SUBSYS_LOCK();
-	for (pcpp = &psemhashtbl[psemhash]; pcpp >= psemhashtbl; pcpp--) {
-		LIST_FOREACH_SAFE(pcp, pcpp, psem_hash, tmppcp) {
-			assert(pcp->psem_nlen);
-			/*
-			 * unconditionally unlink the cache entry
-			 */
-			error = psem_unlink_internal(pcp->pseminfo, pcp);
-			if (error) {
-				goto out;
-			}
-		}
+	error = psem_cache_purge_table(&psem_global);
+	if (error) {
+		goto out;
 	}
-	assert(psemnument == 0);
+	error = psem_cache_purge_table(&psem_local);
+	if (error) {
+		goto out;
+	}
+	assert(posix_sem_num == 0);
 
 out:
 	PSEM_SUBSYS_UNLOCK();
 
 	if (error) {
 		printf("%s: Error %d removing all semaphores: %ld remain!\n",
-		    __func__, error, psemnument);
+		    __func__, error, posix_sem_num);
 	}
 	return error;
 }
@@ -375,18 +534,17 @@ out:
 int
 sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 {
-	size_t i;
 	int indx, error;
 	struct psemname nd;
 	struct pseminfo *pinfo;
 	struct fileproc *fp = NULL;
 	char *pnbuf = NULL;
+	const char *teamid = NULL;
 	struct pseminfo *new_pinfo = PSEMINFO_NULL;
 	struct psemnode *new_pnode = PSEMNODE_NULL;
 	struct psemcache *pcache = PSEMCACHE_NULL;
 	char * nameptr;
-	char * cp;
-	size_t pathlen, plen;
+	size_t pathlen, plen, teamidlen;
 	mode_t fmode;
 	mode_t cmode = (mode_t)uap->mode;
 	int value = uap->value;
@@ -433,19 +591,19 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 
 	plen = pathlen;
 	nameptr = pnbuf;
-	nd.psem_nameptr = nameptr;
-	nd.psem_namelen = plen;
-	nd.psem_hash = 0;
-
-	for (cp = nameptr, i = 1; *cp != 0 && i <= plen; i++, cp++) {
-		nd.psem_hash += (unsigned char)*cp * i;
+	teamid = psem_get_teamid(p);
+	teamidlen = teamid ? strlen(teamid) : 0;
+	if (teamidlen > PSEMTEAMIDLEN) {
+		error = ENAMETOOLONG;
+		goto bad;
 	}
+	nd = psem_cache_hash(nameptr, plen, teamid, teamidlen);
 
 	/*
 	 * attempt to allocate a new fp; if unsuccessful, the fp will be
 	 * left unmodified (NULL).
 	 */
-	error = falloc(p, &fp, &indx, vfs_context_current());
+	error = falloc(p, &fp, &indx);
 	if (error) {
 		goto bad;
 	}
@@ -455,17 +613,8 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 	 * allowed and the one at the front of the LRU list is in use.
 	 * Otherwise we use the one at the front of the LRU list.
 	 */
-	pcp = kheap_alloc(KM_SHM, sizeof(struct psemcache), Z_WAITOK | Z_ZERO);
-	if (pcp == PSEMCACHE_NULL) {
-		error = ENOMEM;
-		goto bad;
-	}
-
-	new_pinfo = kheap_alloc(KM_SHM, sizeof(struct pseminfo), Z_WAITOK | Z_ZERO);
-	if (new_pinfo == NULL) {
-		error = ENOSPC;
-		goto bad;
-	}
+	pcp = kalloc_type(struct psemcache, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+	new_pinfo = kalloc_type(struct pseminfo, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 #if CONFIG_MACF
 	mac_posixsem_label_init(new_pinfo);
 #endif
@@ -502,11 +651,7 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 		}
 	}
 
-	new_pnode = kheap_alloc(KM_SHM, sizeof(struct psemnode), Z_WAITOK | Z_ZERO);
-	if (new_pnode == NULL) {
-		error = ENOSPC;
-		goto bad;
-	}
+	new_pnode = kalloc_type(struct psemnode, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	PSEM_SUBSYS_LOCK();
 	error = psem_cache_search(&pinfo, &nd, &pcache);
@@ -552,8 +697,8 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 		pinfo->psem_name[PSEMNAMLEN] = 0;
 		pinfo->psem_flags &= ~PSEM_DEFINED;
 		pinfo->psem_flags |= PSEM_ALLOCATED;
-		pinfo->psem_creator_pid = p->p_pid;
-		pinfo->psem_creator_uniqueid = p->p_uniqueid;
+		pinfo->psem_creator_pid = proc_getpid(p);
+		pinfo->psem_creator_uniqueid = proc_uniqueid(p);
 
 #if CONFIG_MACF
 		error = mac_posixsem_check_create(kauth_cred_get(), nameptr);
@@ -601,7 +746,7 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 	 * new . and we must free them.
 	 */
 	if (incache) {
-		kheap_free(KM_SHM, pcp, sizeof(struct psemcache));
+		kfree_type(struct psemcache, pcp);
 		pcp = PSEMCACHE_NULL;
 		if (new_pinfo != PSEMINFO_NULL) {
 			/* return value ignored - we can't _not_ do this */
@@ -609,7 +754,7 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 #if CONFIG_MACF
 			mac_posixsem_label_destroy(new_pinfo);
 #endif
-			kheap_free(KM_SHM, new_pinfo, sizeof(struct pseminfo));
+			kfree_type(struct pseminfo, new_pinfo);
 			new_pinfo = PSEMINFO_NULL;
 		}
 	}
@@ -617,7 +762,7 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 	proc_fdlock(p);
 	fp->f_flag = fmode & FMASK;
 	fp->f_ops = &psemops;
-	fp->f_data = (caddr_t)new_pnode;
+	fp_set_data(fp, new_pnode);
 	procfdtbl_releasefd(p, indx, NULL);
 	fp_drop(p, indx, fp, 1);
 	proc_fdunlock(p);
@@ -629,9 +774,9 @@ sem_open(proc_t p, struct sem_open_args *uap, user_addr_t *retval)
 bad_locked:
 	PSEM_SUBSYS_UNLOCK();
 bad:
-	kheap_free(KM_SHM, pcp, sizeof(struct psemcache));
+	kfree_type(struct psemcache, pcp);
 
-	kheap_free(KM_SHM, new_pnode, sizeof(struct psemnode));
+	kfree_type(struct psemnode, new_pnode);
 
 	if (fp != NULL) {
 		fp_free(p, indx, fp);
@@ -650,7 +795,7 @@ bad:
 #if CONFIG_MACF
 		mac_posixsem_label_destroy(new_pinfo);
 #endif
-		kheap_free(KM_SHM, new_pinfo, sizeof(struct pseminfo));
+		kfree_type(struct pseminfo, new_pinfo);
 	}
 
 	if (pnbuf != NULL) {
@@ -701,28 +846,38 @@ psem_unlink_internal(struct pseminfo *pinfo, struct psemcache *pcache)
 
 	if (!pinfo->psem_usecount) {
 		psem_delete(pinfo);
-		kheap_free(KM_SHM, pinfo, sizeof(struct pseminfo));
+		kfree_type(struct pseminfo, pinfo);
 	} else {
 		pinfo->psem_flags |= PSEM_REMOVED;
 	}
 
 	psem_cache_delete(pcache);
-	kheap_free(KM_SHM, pcache, sizeof(struct psemcache));
+	kfree_type(struct psemcache, pcache);
 	return 0;
+}
+
+static const char *
+psem_get_teamid(proc_t p)
+{
+#if XNU_TARGET_OS_OSX
+#pragma unused(p)
+	return NULL;
+#else
+	return csproc_get_teamid(p);
+#endif
 }
 
 
 int
 sem_unlink(__unused proc_t p, struct sem_unlink_args *uap, __unused int32_t *retval)
 {
-	size_t i;
 	int error = 0;
 	struct psemname nd;
 	struct pseminfo *pinfo;
 	char * nameptr;
-	char * cp;
 	char * pnbuf;
-	size_t pathlen;
+	const char *teamid;
+	size_t pathlen, teamidlen;
 	struct psemcache *pcache = PSEMCACHE_NULL;
 
 	pinfo = PSEMINFO_NULL;
@@ -755,13 +910,13 @@ sem_unlink(__unused proc_t p, struct sem_unlink_args *uap, __unused int32_t *ret
 	}
 #endif /* PSXSEM_NAME_RESTRICT */
 
-	nd.psem_nameptr = nameptr;
-	nd.psem_namelen = pathlen;
-	nd.psem_hash = 0;
-
-	for (cp = nameptr, i = 1; *cp != 0 && i <= pathlen; i++, cp++) {
-		nd.psem_hash += (unsigned char)*cp * i;
+	teamid = psem_get_teamid(p);
+	teamidlen = teamid ? strlen(teamid) : 0;
+	if (teamidlen > PSEMTEAMIDLEN) {
+		error = ENAMETOOLONG;
+		goto bad;
 	}
+	nd = psem_cache_hash(nameptr, pathlen, teamid, teamidlen);
 
 	PSEM_SUBSYS_LOCK();
 	error = psem_cache_search(&pinfo, &nd, &pcache);
@@ -796,6 +951,7 @@ int
 sem_close(proc_t p, struct sem_close_args *uap, __unused int32_t *retval)
 {
 	int fd = CAST_DOWN_EXPLICIT(int, uap->sem);
+	kauth_cred_t p_cred;
 	struct fileproc *fp;
 
 	AUDIT_ARG(fd, fd); /* XXX This seems wrong; uap->sem is a pointer */
@@ -809,7 +965,9 @@ sem_close(proc_t p, struct sem_close_args *uap, __unused int32_t *retval)
 		proc_fdunlock(p);
 		return EBADF;
 	}
-	return fp_close_and_unlock(p, fd, fp, 0);
+
+	p_cred = current_cached_proc_cred(p);
+	return fp_close_and_unlock(p, p_cred, fd, fp, 0);
 }
 
 int
@@ -833,7 +991,7 @@ sem_wait_nocancel(proc_t p, struct sem_wait_nocancel_args *uap, __unused int32_t
 	if (error) {
 		return error;
 	}
-	pnode = (struct psemnode *)fp->f_data;
+	pnode = (struct psemnode *)fp_get_data(fp);
 
 	PSEM_SUBSYS_LOCK();
 	if ((pinfo = pnode->pinfo) == PSEMINFO_NULL) {
@@ -892,7 +1050,7 @@ sem_trywait(proc_t p, struct sem_trywait_args *uap, __unused int32_t *retval)
 	if (error) {
 		return error;
 	}
-	pnode = (struct psemnode *)fp->f_data;
+	pnode = (struct psemnode *)fp_get_data(fp);
 
 	PSEM_SUBSYS_LOCK();
 	if ((pinfo = pnode->pinfo) == PSEMINFO_NULL) {
@@ -955,7 +1113,7 @@ sem_post(proc_t p, struct sem_post_args *uap, __unused int32_t *retval)
 	if (error) {
 		return error;
 	}
-	pnode = (struct psemnode *)fp->f_data;
+	pnode = (struct psemnode *)fp_get_data(fp);
 
 	PSEM_SUBSYS_LOCK();
 	if ((pinfo = pnode->pinfo) == PSEMINFO_NULL) {
@@ -1026,12 +1184,12 @@ psem_close(struct psemnode *pnode)
 		PSEM_SUBSYS_UNLOCK();
 		/* lock dropped as only semaphore is destroyed here */
 		error = psem_delete(pinfo);
-		kheap_free(KM_SHM, pinfo, sizeof(struct pseminfo));
+		kfree_type(struct pseminfo, pinfo);
 	} else {
 		PSEM_SUBSYS_UNLOCK();
 	}
 	/* subsystem lock is dropped when we get here */
-	kheap_free(KM_SHM, pnode, sizeof(struct psemnode));
+	kfree_type(struct psemnode, pnode);
 	return error;
 }
 
@@ -1042,7 +1200,7 @@ psem_closefile(struct fileglob *fg, __unused vfs_context_t ctx)
 	 * Not locked as psem_close is called only from here and is locked
 	 * properly
 	 */
-	return psem_close((struct psemnode *)fg->fg_data);
+	return psem_close((struct psemnode *)fg_get_data(fg));
 }
 
 static int
@@ -1109,13 +1267,14 @@ psem_label_associate(struct fileproc *fp, struct vnode *vp, vfs_context_t ctx)
 	struct pseminfo *psem;
 
 	PSEM_SUBSYS_LOCK();
-	pnode = (struct psemnode *)fp->fp_glob->fg_data;
+	pnode = (struct psemnode *)fp_get_data(fp);
 	if (pnode != NULL) {
 		psem = pnode->pinfo;
 		if (psem != NULL) {
 			mac_posixsem_vnode_label_associate(
-				vfs_context_ucred(ctx), psem, psem->psem_label,
-				vp, vp->v_label);
+				vfs_context_ucred(ctx), psem,
+				mac_posixsem_label(psem),
+				vp, mac_vnode_label(vp));
 		}
 	}
 	PSEM_SUBSYS_UNLOCK();

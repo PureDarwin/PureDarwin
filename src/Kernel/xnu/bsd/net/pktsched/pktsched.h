@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2011-2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -43,7 +43,8 @@ extern "C" {
 #define PKTSCHEDT_TCQ           5       /* traffic class queue */
 #define PKTSCHEDT_QFQ           6       /* quick fair queueing */
 #define PKTSCHEDT_FQ_CODEL      7       /* Flow queues with CoDel */
-#define PKTSCHEDT_MAX           8       /* should be max sched type + 1 */
+#define PKTSCHEDT_FQ_CODEL_NEW  8       /* Flow queues with RFC compliant CoDel */
+#define PKTSCHEDT_MAX           9       /* should be max sched type + 1 */
 
 #ifdef BSD_KERNEL_PRIVATE
 #include <mach/mach_time.h>
@@ -51,11 +52,10 @@ extern "C" {
 #include <libkern/libkern.h>
 
 /* flags for pktsched_setup */
-#define PKTSCHEDF_QALG_SFB      0x01    /* use SFB */
-#define PKTSCHEDF_QALG_ECN      0x02    /* enable ECN */
-#define PKTSCHEDF_QALG_FLOWCTL  0x04    /* enable flow control advisories */
-#define PKTSCHEDF_QALG_DELAYBASED       0x08    /* Delay based queueing */
-#define PKTSCHEDF_QALG_DRIVER_MANAGED   0x10    /* driver managed */
+#define PKTSCHEDF_QALG_ECN      0x01    /* enable ECN */
+#define PKTSCHEDF_QALG_FLOWCTL  0x02    /* enable flow control advisories */
+#define PKTSCHEDF_QALG_DELAYBASED       0x04    /* Delay based queueing */
+#define PKTSCHEDF_QALG_DRIVER_MANAGED   0x08    /* driver managed */
 
 typedef struct _pktsched_pkt_ {
 	classq_pkt_t            __pkt;
@@ -126,6 +126,13 @@ pktsched_bit_clr(u_int32_t ix, pktsched_bitmap_t *pData)
 	*pData &= ~(1 << ix);
 }
 
+static inline void
+pktsched_bit_cpy(u_int32_t ix, pktsched_bitmap_t *pData_dst,
+    pktsched_bitmap_t *pData_src)
+{
+	*pData_dst ^= (-(*pData_src & (1 << ix)) ^ *pData_dst) & (1 << ix);
+}
+
 static inline pktsched_bitmap_t
 pktsched_ffs(pktsched_bitmap_t pData)
 {
@@ -151,6 +158,13 @@ pktsched_get_pkt_len(pktsched_pkt_t *pkt)
 	return pkt->pktsched_plen;
 }
 
+static inline void
+pktsched_bit_move(u_int32_t ix, pktsched_bitmap_t *pData_dst,
+    pktsched_bitmap_t *pData_src)
+{
+	*pData_dst |= (*pData_src & (1 << ix));
+}
+
 /*
  * We can use mach_absolute_time which returns a 64-bit value with
  * granularity less than a microsecond even on the slowest processor.
@@ -169,26 +183,31 @@ SYSCTL_DECL(_net_pktsched);
 
 struct if_ifclassq_stats;
 
+extern void pktsched_register_m_tag(void);
+
 extern void pktsched_init(void);
-extern int pktsched_setup(struct ifclassq *, u_int32_t, u_int32_t,
+extern int pktsched_setup(struct ifclassq *, u_int8_t, u_int32_t,
     classq_pkt_type_t);
 extern void pktsched_teardown(struct ifclassq *);
-extern int pktsched_getqstats(struct ifclassq *, u_int32_t,
+extern int pktsched_getqstats(struct ifclassq *, u_int32_t, u_int32_t,
     struct if_ifclassq_stats *);
 extern u_int64_t pktsched_abs_to_nsecs(u_int64_t);
 extern u_int64_t pktsched_nsecs_to_abstime(u_int64_t);
 extern void pktsched_free_pkt(pktsched_pkt_t *);
+extern void pktsched_drop_pkt(pktsched_pkt_t *, struct ifnet *, uint32_t, const char *, uint16_t,
+    uint16_t);
 extern int pktsched_clone_pkt(pktsched_pkt_t *, pktsched_pkt_t *);
 extern void pktsched_corrupt_packet(pktsched_pkt_t *pkt);
 extern void pktsched_get_pkt_vars(pktsched_pkt_t *, volatile uint32_t **,
-    uint64_t **, uint32_t *, uint8_t *, uint8_t *, uint32_t *);
-extern uint32_t *pktsched_get_pkt_sfb_vars(pktsched_pkt_t *, uint32_t **);
+    uint64_t **, uint32_t *, uint8_t *, uint8_t *, uint32_t *, uint64_t *);
 extern void pktsched_pkt_encap(pktsched_pkt_t *, classq_pkt_t *);
 extern void pktsched_pkt_encap_chain(pktsched_pkt_t *, classq_pkt_t *,
     classq_pkt_t *, uint32_t, uint32_t);
 extern mbuf_svc_class_t pktsched_get_pkt_svc(pktsched_pkt_t *);
 extern struct flowadv_fcentry *pktsched_alloc_fcentry(pktsched_pkt_t *,
     struct ifnet *, int);
+extern int pktsched_mark_ecn(pktsched_pkt_t *pkt);
+extern boolean_t pktsched_is_pkt_l4s(pktsched_pkt_t *pkt);
 #endif /* BSD_KERNEL_PRIVATE */
 
 #ifdef __cplusplus

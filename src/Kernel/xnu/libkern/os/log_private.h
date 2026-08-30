@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2015-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -27,6 +27,10 @@
 #include <os/log.h>
 #include <firehose/tracepoint_private.h>
 #include <sys/queue.h>
+
+#define OS_LOG_XNU_SUBSYSTEM  "com.apple.xnu"
+#define OS_LOG_SUBSYSTEM      "com.apple.xnu.oslog"
+#define OS_LOG_MAX_SIZE_ORDER 10 // Maximum log size order (1024 bytes)
 
 __BEGIN_DECLS
 
@@ -64,30 +68,28 @@ __BEGIN_DECLS
  * va_list from variadic arguments.  The caller must be the same binary
  * that generated the message and provided the format string.
  */
-    __OSX_AVAILABLE_STARTING(__MAC_10_12, __IPHONE_10_0)
-OS_EXPORT OS_NOTHROW OS_LOG_NOTAILCALL
 void
-os_log_with_args(os_log_t oslog, os_log_type_t type, const char *format, va_list args, void *ret_addr);
+os_log_with_args(os_log_t oslog, os_log_type_t type, const char *format, va_list args, void *ret_addr)
+__osloglike(3, 0);
 
-/*!
- * @enum oslog_stream_link_type_t
+/*
+ * A private interface allowing to emit already encoded log messages.
  */
-OS_ENUM(oslog_stream_link_type, uint8_t,
-    oslog_stream_link_type_log       = 0x0,
-    oslog_stream_link_type_metadata  = 0x1,
-    );
+bool os_log_encoded_metadata(firehose_tracepoint_id_u, uint64_t, const void *, size_t);
+bool os_log_encoded_signpost(firehose_stream_t, firehose_tracepoint_id_u, uint64_t, const void *, size_t, size_t);
+bool os_log_encoded_log(firehose_stream_t, firehose_tracepoint_id_u, uint64_t, const void *, size_t, size_t);
 
-/*!
- * @typedef oslog_stream_buf_entry_t
+typedef enum {
+	// Request the default capacity for the underlying log buffers.
+	LOG_BUFFERING_CAPACITY_DEFAULT,
+	// Request the maximum capacity for the underlying log buffers.
+	LOG_BUFFERING_CAPACITY_MAX,
+} os_log_buffering_capacity_t;
+
+/*
+ * Adjust the buffering capacity for logging based on the specified type.
  */
-typedef struct oslog_stream_buf_entry_s {
-	STAILQ_ENTRY(oslog_stream_buf_entry_s) buf_entries;
-	uint64_t timestamp;
-	int offset;
-	uint16_t size;
-	oslog_stream_link_type_t type;
-	struct firehose_tracepoint_s metadata[];
-} *oslog_stream_buf_entry_t;
+void os_log_adjust_buffering_capacity(os_log_buffering_capacity_t type);
 
 __END_DECLS
 

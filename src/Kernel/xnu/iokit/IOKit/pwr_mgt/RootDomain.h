@@ -121,12 +121,24 @@ enum {
 #define kIOPMRootDomainBatPowerCString      "BatPower"
 
 /*
+ * String constants to use as keys for a dictionary passed to IOPMRootDomain::claimSystemShutdownEvent
+ */
+#define kIOPMRootDomainShutdownTime         "IOPMShutdownTime"
+
+/*
  * Supported Feature bitfields for IOPMrootDomain::publishFeature()
  */
 enum {
 	kIOPMSupportedOnAC      = (1 << 0),
 	kIOPMSupportedOnBatt    = (1 << 1),
 	kIOPMSupportedOnUPS     = (1 << 2)
+};
+
+/*
+ * Supported run mode bitfields for IOPMrootDomain::requestRunMode()
+ */
+enum {
+	kIOPMRunModeFullWake = UINT64_MAX,
 };
 
 typedef IOReturn (*IOPMSettingControllerCallback)
@@ -406,7 +418,23 @@ public:
  */
 	IOReturn restartWithStackshot();
 
+#ifdef KERNEL_PRIVATE
 	IOReturn    setWakeTime(uint64_t wakeContinuousTime);
+	bool        isAOTMode(void);
+	bool        isLPWMode(void);
+#endif /* KERNEL_PRIVATE */
+
+#if XNU_KERNEL_PRIVATE
+	IOReturn     _setWakeTime(uint64_t wakeContinuousTime);
+	IOReturn acquireDriverKitMatchingAssertion();
+	void releaseDriverKitMatchingAssertion();
+	IOReturn acquireDriverKitSyncedAssertion(IOService * from, IOPMDriverAssertionID * assertionID);
+	void releaseDriverKitSyncedAssertion(IOPMDriverAssertionID assertionID);
+	int32_t considerRunMode(IOService * service, uint64_t pmDriverClass);
+	void handleRegisterPowerDriver(IOService * child);
+#endif
+
+	void        copyWakeReasonString( char * outBuf, size_t bufSize );
 
 private:
 	unsigned long getRUN_STATE(void);
@@ -514,6 +542,7 @@ public:
 	void        handleSetDisplayPowerOn(bool powerOn);
 
 	void        willNotifyPowerChildren( IOPMPowerStateIndex newPowerState );
+	void        willNotifyInterested( IOPMPowerStateIndex newPowerState );
 
 	IOReturn    setMaintenanceWakeCalendar(
 		const IOPMCalendarStruct * calendar );
@@ -529,6 +558,7 @@ public:
 	IOReturn    shutdownSystem( void );
 	IOReturn    restartSystem( void );
 	void        handleSleepTimerExpiration( void );
+	void        setIdleSleepRevertible( bool revertible );
 
 	bool        activitySinceSleep(void);
 	bool        abortHibernation(void);
@@ -578,8 +608,8 @@ public:
 		IOPMPowerStateIndex ps = 0,
 		bool                async = false);
 
-	void        copyWakeReasonString( char * outBuf, size_t bufSize );
 	void        copyShutdownReasonString( char * outBuf, size_t bufSize );
+	void        copyShutdownTime(uint64_t *time);
 	void        lowLatencyAudioNotify(uint64_t time, boolean_t state);
 
 #if HIBERNATION
@@ -599,6 +629,14 @@ public:
 	uint32_t    getWatchdogTimeout();
 	void        deleteStackshot();
 
+	IOReturn    createPMAssertionSafe(
+		IOPMDriverAssertionID *assertionID,
+		IOPMDriverAssertionType whichAssertionsBits,
+		IOPMDriverAssertionLevel assertionLevel,
+		IOService *ownerService,
+		const char *ownerDescription);
+	IOReturn    requestRunMode(uint64_t runModeMask);
+	IOReturn    handleRequestRunMode(uint64_t runModeMask);
 private:
 	friend class PMSettingObject;
 	friend class RootDomainUserClient;
@@ -623,6 +661,7 @@ private:
 	OSPtr<IOService>        wrangler;
 	OSPtr<OSDictionary>     wranglerIdleSettings;
 
+	OSPtr<IOCommandGate>    commandGate;
 	IOLock                  *featuresDictLock;// guards supportedFeatures
 	IOLock                  *wakeEventLock;
 	IOPMPowerStateQueue     *pmPowerStateQueue;
@@ -666,7 +705,8 @@ private:
 // Pref: idle time before idle sleep
 	bool                    idleSleepEnabled;
 	uint32_t                sleepSlider;
-	uint32_t                idleSeconds;
+	uint32_t                idleMilliSeconds;
+	bool                    idleSleepRevertible;
 
 // Difference between sleepSlider and longestNonSleepSlider
 	uint32_t                extraSleepDelay;
@@ -696,14 +736,20 @@ private:
 	};
 	uint32_t                _systemMessageClientMask;
 
-// Power state and capability change transitions.
-	enum {
+	// Power state and capability change transitions.
+	enum SystemTransitionType {
 		kSystemTransitionNone         = 0,
 		kSystemTransitionSleep        = 1,
 		kSystemTransitionWake         = 2,
 		kSystemTransitionCapability   = 3,
 		kSystemTransitionNewCapClient = 4
 	}                       _systemTransitionType;
+
+	// Update the current systemTransitionType and wakeup any waiters blocking on transitions.
+	void setSystemTransitionTypeGated(SystemTransitionType type);
+
+	// Block until no system transitions are in progress and the current power state has reached at a minimum state.
+	void waitForSystemTransitionToMinPowerState(IOPMRootDomainPowerState state);
 
 	unsigned int            systemBooting           :1;
 	unsigned int            systemShutdown          :1;
@@ -735,6 +781,7 @@ private:
 	unsigned int            sleepTimerMaintenance   :1;
 	unsigned int            sleepToStandby          :1;
 	unsigned int            lowBatteryCondition     :1;
+	unsigned int            ldmHibernateDisable     :1;
 	unsigned int            hibernateDisabled       :1;
 	unsigned int            hibernateRetry          :1;
 	unsigned int            wranglerTickled         :1;
@@ -838,31 +885,41 @@ private:
 	clock_sec_t          _aotWakeTimeUTC;
 	uint64_t             _aotTestTime;
 	uint64_t             _aotTestInterval;
+	uint64_t             _aotEndTime;
 	uint32_t             _aotPendingFlags;
 public:
-	IOPMAOTMetrics     * _aotMetrics;
-	uint8_t              _aotMode;
+	IOPMAOTMetrics      * _aotMetrics;
+	uint64_t              _aotMode;
 private:
+	uint32_t             _aotLingerTime;
 	uint8_t              _aotNow;
 	uint8_t              _aotTasksSuspended;
-	uint8_t              _aotExit;
 	uint8_t              _aotTimerScheduled;
 	uint8_t              _aotReadyToFullWake;
 	uint64_t             _aotLastWakeTime;
 	uint64_t             _aotWakeTimeContinuous;
 	uint64_t             _aotWakePreWindow;
 	uint64_t             _aotWakePostWindow;
-	uint64_t             _aotLingerTime;
+	uint64_t             _aotRunMode;
+	uint64_t             _aotWakeEventRunMode;
+	uint64_t             _aotWakeEventRunModeImpliesStorage;
 
-	bool        aotShouldExit(bool checkTimeSet, bool software);
+	size_t               _driverKitMatchingAssertionCount;
+	IOPMDriverAssertionID _driverKitMatchingAssertion;
+	size_t               _driverKitSyncedAssertionCount;
+
+	bool        aotShouldExit(bool software);
 	void        aotExit(bool cps);
 	void        aotEvaluate(IOTimerEventSource * timer);
 public:
-	bool        isAOTMode(void);
-private:
 	// -- AOT
-
-	void        updateTasksSuspend(void);
+	enum {
+		kTasksSuspendUnsuspended = 0,
+		kTasksSuspendSuspended   = 1,
+		kTasksSuspendNoChange    = -1,
+	};
+private:
+	bool        updateTasksSuspend(int newTasksSuspended, int newAOTTasksSuspended);
 	int         findSuspendedPID(uint32_t pid, uint32_t *outRefCount);
 
 // IOPMrootDomain internal sleep call
@@ -876,8 +933,9 @@ private:
 	bool        checkSystemSleepEnabled( void );
 	bool        checkSystemCanSleep( uint32_t sleepReason );
 	bool        checkSystemCanSustainFullWake( void );
-
+	bool        checkSystemCanAbortIdleSleep( void );
 	void        adjustPowerState( bool sleepASAP = false );
+	bool        attemptIdleSleepAbort( void );
 	void        setQuickSpinDownTimeout( void );
 	void        restoreUserSpinDownTimeout( void );
 
@@ -893,7 +951,7 @@ private:
 
 	IOReturn    setPMSetting(const OSSymbol *, OSObject *);
 
-	void        startIdleSleepTimer( uint32_t inSeconds );
+	void        startIdleSleepTimer( uint32_t inMilliSeconds );
 	void        cancelIdleSleepTimer( void );
 	uint32_t    getTimeToIdleSleep( void );
 
@@ -943,7 +1001,12 @@ private:
 	    int phase, uint32_t * hibMode );
 	void        evaluateSystemSleepPolicyEarly( void );
 	void        evaluateSystemSleepPolicyFinal( void );
+	void        setLockdownModeHibernation(uint32_t status);
 #endif /* HIBERNATION */
+
+	IOReturn    getAssertionLog(IOPMAssertionLogData *outLog);
+	IOReturn    setAssertionLogNotificationPort(mach_port_t port);
+	IOReturn    setAssertionLogNotificationThreshold(uint64_t threshold);
 
 	bool        latchDisplayWranglerTickle( bool latch );
 	void        setDisplayPowerOn( uint32_t options );
@@ -955,6 +1018,7 @@ private:
 	void        copySleepPreventersList(OSArray  **idleSleepList, OSArray  **systemSleepList);
 	void        copySleepPreventersListWithID(OSArray  **idleSleepList, OSArray  **systemSleepList);
 	void        recordRTCAlarm(const OSSymbol *type, OSObject *object);
+	void        scheduleImmediateDebugWake( void );
 
 	// Used to inform interested clients about low latency audio activity in the system
 	OSPtr<OSDictionary>   lowLatencyAudioNotifierDict;
@@ -981,6 +1045,19 @@ public:
 	void sleepToDoze( void );
 	void wakeSystem( void );
 };
+
+void     IOHibernateSystemInit(IOPMrootDomain * rootDomain);
+
+IOReturn IOHibernateSystemSleep(void);
+IOReturn IOHibernateIOKitSleep(void);
+IOReturn IOHibernateSystemHasSlept(void);
+IOReturn IOHibernateSystemWake(void);
+IOReturn IOHibernateSystemPostWake(bool now);
+uint32_t IOHibernateWasScreenLocked(void);
+void     IOHibernateSetScreenLocked(uint32_t lockState);
+void     IOHibernateSetWakeCapabilities(uint32_t capability);
+void     IOHibernateSystemRestart(void);
+
 #endif /* XNU_KERNEL_PRIVATE */
 
 #endif /* _IOKIT_ROOTDOMAIN_H */

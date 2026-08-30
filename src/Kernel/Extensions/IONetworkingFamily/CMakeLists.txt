@@ -42,7 +42,8 @@ endforeach()
 target_include_directories(IONetworkingFamily.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PUREDARWIN_IONF_SHIM_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/EXTERNAL_HEADERS)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/EXTERNAL_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/bsd)
 target_link_libraries(IONetworkingFamily.kext PRIVATE xnu_kernel_private_headers)
 # The .cpp sources define members (outputStart, pollInputPackets,
 # actionInputCtl, ...) that the public header only declares when
@@ -51,6 +52,8 @@ target_link_libraries(IONetworkingFamily.kext PRIVATE xnu_kernel_private_headers
 # private SPI enabled, matching how it ships as part of the OS.
 target_compile_definitions(IONetworkingFamily.kext PRIVATE __PRIVATE_SPI__)
 target_compile_options(IONetworkingFamily.kext PRIVATE
+    -include${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/bsd/net/if_private.h
+    -include${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/bsd/sys/sockio_private.h
     -Wno-sign-conversion -Wno-implicit-int-conversion -Wno-shorten-64-to-32
     -Wno-unused-variable -Wno-unused-function -Wno-cast-qual
     -Wno-deprecated-declarations -Wno-reorder -Wno-unused-private-field)

@@ -13,14 +13,14 @@ def GetMemMappedPciCfgAddrFromRegistry():
     acpi_pe_obj = FindRegistryObjectRecurse(kern.globals.gRegistryRoot,
         "AppleACPIPlatformExpert")
     if acpi_pe_obj is None:
-        print "Could not find AppleACPIPlatformExpert in registry, \
-        using default base address for memory mapped PCI config space"
+        print("Could not find AppleACPIPlatformExpert in registry, \
+        using default base address for memory mapped PCI config space")
         return kgm_pci_cfg_base_default
     entry = kern.GetValueFromAddress(int(acpi_pe_obj), 'IOService *')
     acpi_mmcfg_seg_prop = LookupKeyInPropTable(entry.fPropertyTable, "acpi-mmcfg-seg0")
     if acpi_mmcfg_seg_prop is None:
-        print "Could not find acpi-mmcfg-seg0 property, \
-        using default base address for memory mapped PCI config space"
+        print("Could not find acpi-mmcfg-seg0 property, \
+        using default base address for memory mapped PCI config space")
         return kgm_pci_cfg_base_default
     else:
         return int(GetNumber(acpi_mmcfg_seg_prop))
@@ -86,7 +86,7 @@ def ShowPciCfgBytes(bus, dev, func, offset):
     # over, but each call to print results in a newline which 
     # would prevent us from printing all 16 bytes on one line.
     bytes_fmt = "{:08x}:" + "{:02x} " * 16
-    print bytes_fmt.format(
+    print(bytes_fmt.format(
         phys_addr,
         read_vals[0] & 0xff, (read_vals[0] >> 8) & 0xff,
         (read_vals[0] >> 16) & 0xff, (read_vals[0] >> 24) & 0xff,
@@ -95,7 +95,7 @@ def ShowPciCfgBytes(bus, dev, func, offset):
         read_vals[2] & 0xff, (read_vals[2] >> 8) & 0xff,
         (read_vals[2] >> 16) & 0xff, (read_vals[2] >> 24) & 0xff,
         read_vals[3] & 0xff, (read_vals[3] >> 8) & 0xff,
-        (read_vals[3] >> 16) & 0xff, (read_vals[3] >> 24) & 0xff)
+        (read_vals[3] >> 16) & 0xff, (read_vals[3] >> 24) & 0xff))
 
 def DoPciCfgDump(bus, dev, func):
     """ Dumps PCI config space of the PCI device specified by bus, dev, function
@@ -107,13 +107,13 @@ def DoPciCfgDump(bus, dev, func):
     if (vendor_id == 0xbad10ad) or not (vendor_id > 0 and vendor_id < 0xffff):
         return
     # Show the standard PCI config space
-    print "address: 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n"
-    print "--------------------------------------------------------"
+    print("address: 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n")
+    print("--------------------------------------------------------")
     for offset in range(0, 256, 16):
         ShowPciCfgBytes(bus, dev, func, offset)
     # Check for PCIE extended capability config space
     if DoPciCfgRead(8, bus, dev, func, 256) < 0xff:
-        print " \n"
+        print(" \n")
         for offset in range(256, 4096, 16):
             ShowPciCfgBytes(bus, dev, func, offset)
 
@@ -141,16 +141,16 @@ def DoPciCfgScan(max_bus, dump):
         vend_dev_id = DoPciCfgRead(32, bus, dev, func, 0)
         if not (vend_dev_id > 0 and vend_dev_id < 0xffffffff):
             continue
-        if dump == False:
+        if not dump:
             class_rev_id = DoPciCfgRead(32, bus, dev, func, 8)
-            print fmt_string.format(
+            print(fmt_string.format(
                 bus, dev, func,
                 (vend_dev_id >> 8) & 0xff, vend_dev_id & 0xff,
                 (vend_dev_id >> 24) & 0xff, (vend_dev_id >> 16) & 0xff,
                 class_rev_id & 0xff, (class_rev_id >> 24) & 0xff,
-                (class_rev_id >> 16) & 0xff, (class_rev_id >> 8) & 0xff)
+                (class_rev_id >> 16) & 0xff, (class_rev_id >> 8) & 0xff))
         else:
-            print "{:03x}:{:03x}:{:03x}".format(bus, dev, func)
+            print("{:03x}:{:03x}:{:03x}".format(bus, dev, func))
             DoPciCfgDump(bus, dev, func)
 
 ######################################
@@ -162,9 +162,9 @@ def PciCfgRead(cmd_args=None):
         Syntax: pci_cfg_read <bits> <bus> <device> <function> <offset>
             bits: 8, 16, 32
     """
-    if cmd_args == None or len(cmd_args) < 5:
-        print PciCfgRead.__doc__
-        return
+    if cmd_args is None or len(cmd_args) < 5:
+        raise ArgumentError()
+
     
     bits = ArgumentStringToInt(cmd_args[0])
     bus  = ArgumentStringToInt(cmd_args[1])
@@ -174,13 +174,13 @@ def PciCfgRead(cmd_args=None):
 
     read_val = DoPciCfgRead(bits, bus, dev, func, offs)
     if read_val == 0xbad10ad:
-        print "ERROR: Failed to read PCI config space"
+        print("ERROR: Failed to read PCI config space")
         return
 
     format_for_bits = {8:"{:#04x}", 16:"{:#06x}", 32:"{:#010x}"}
     phys_addr = MakeMemMappedPciCfgAddr(bus, dev, func, offs)
     fmt_string = "{:08x}: " + format_for_bits[bits]
-    print fmt_string.format(phys_addr, read_val)
+    print(fmt_string.format(phys_addr, read_val))
 
 lldb_alias('pci_cfg_read8', 'pci_cfg_read 8')
 lldb_alias('pci_cfg_read16', 'pci_cfg_read 16')
@@ -195,9 +195,9 @@ def PciCfgWrite(cmd_args=None):
         Prints an error message if there was a problem
         Prints nothing upon success.
     """
-    if cmd_args == None or len(cmd_args) < 6:
-        print PciCfgWrite.__doc__
-        return
+    if cmd_args is None or len(cmd_args) < 6:
+        raise ArgumentError()
+
 
     bits = ArgumentStringToInt(cmd_args[0])
     bus  = ArgumentStringToInt(cmd_args[1])
@@ -206,8 +206,8 @@ def PciCfgWrite(cmd_args=None):
     offs = ArgumentStringToInt(cmd_args[4])
     write_val = ArgumentStringToInt(cmd_args[5])
 
-    if DoPciCfgWrite(bits, bus, dev, func, offs, write_val) == False:
-        print "ERROR: Failed to write PCI config space"
+    if not DoPciCfgWrite(bits, bus, dev, func, offs, write_val):
+        print("ERROR: Failed to write PCI config space")
 
 lldb_alias('pci_cfg_write8', 'pci_cfg_write 8')
 lldb_alias('pci_cfg_write16', 'pci_cfg_write 16')
@@ -220,9 +220,9 @@ def PciCfgDump(cmd_args=None):
         be printed out.
         Syntax: pci_cfg_dump <bus> <dev> <fuction>
     """
-    if cmd_args == None or len(cmd_args) < 3:
-        print PciCfgDump.__doc__
-        return
+    if cmd_args is None or len(cmd_args) < 3:
+        raise ArgumentError()
+
 
     bus  = ArgumentStringToInt(cmd_args[0])
     dev  = ArgumentStringToInt(cmd_args[1])
@@ -236,16 +236,20 @@ def PciCfgScan(cmd_args=None):
         but can be specified as an argument
         Syntax: pci_cfg_scan [max bus number]
     """
-    if cmd_args == None or len(cmd_args) == 0:
+    if cmd_args is None or len(cmd_args) == 0:
         max_bus = 8
     elif len(cmd_args) == 1:
         max_bus = ArgumentStringToInt(cmd_args[0])
     else:
-        print PciCfgScan.__doc__
+        raise ArgumentError()
+
+    if IsDebuggingCore():
+        print("Can't run command when debugging a coredump")
         return
 
-    print "bus:dev:fcn: vendor device rev | class"
-    print "--------------------------------------"
+
+    print("bus:dev:fcn: vendor device rev | class")
+    print("--------------------------------------")
     DoPciCfgScan(max_bus, False)
 
 @lldb_command('pci_cfg_dump_all')
@@ -254,12 +258,15 @@ def PciCfgDumpAll(cmd_args=None):
         be scanned defaults to 8, but can be specified as an argument
         Syntax: pci_cfg_dump_all [max bus number]
     """
-    if cmd_args == None or len(cmd_args) == 0:
+    if cmd_args is None or len(cmd_args) == 0:
         max_bus = 8
     elif len(cmd_args) == 1:
         max_bus = ArgumentStringToInt(cmd_args[0])
     else:
-        print PciCfgDumpAll.__doc__
+        raise ArgumentError()
+
+    if IsDebuggingCore():
+        print("Can't run command when debugging a coredump")
         return
-    
+
     DoPciCfgScan(max_bus, True)

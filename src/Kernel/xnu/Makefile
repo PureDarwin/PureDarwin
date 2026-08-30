@@ -42,6 +42,17 @@ else
 	export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
 endif
 
+.DEFAULT_GOAL := default
+
+export PATCH_PREFIX ?= change-under-test_
+export PATCH_GLOB ?= $(PATCH_PREFIX)*.diff
+
+
+skip:
+	@echo "Skipping $(RC_ProjectName)"
+
+.PHONY: skip
+
 #
 # Dispatch non-xnu build aliases to their own build
 # systems. All xnu variants start with MakeInc_top.
@@ -50,6 +61,8 @@ endif
 ifneq ($(findstring Libsyscall,$(RC_ProjectName)),)
 
 include $(MakeInc_cmd)
+include $(MakeInc_def)
+include $(MakeInc_rule)
 
 ifeq ($(RC_ProjectName),Libsyscall_headers_Sim)
 TARGET=-target Libsyscall_headers_Sim
@@ -59,12 +72,16 @@ ifeq ($(RC_ProjectName),Libsyscall_driverkit)
 TARGET=-target Libsyscall_driverkit
 endif
 
-default: install
-
 # default to OS X
 SDKROOT ?= macosx.internal
 
-installhdrs install:
+default: install
+
+Libsyscall_driverkit: install
+
+.PHONY: Libsyscall_driverkit
+
+installhdrs install::
 	cd libsyscall ; \
 		xcodebuild $@ $(TARGET)	\
 			$(MAKEOVERRIDES)	\
@@ -74,9 +91,14 @@ installhdrs install:
 			"DSTROOT=$(DSTROOT)"						\
 			"SDKROOT=$(SDKROOT)"
 
-Libsyscall_driverkit: install
+installhdrs install:: do_unifdef_headers
 
-.PHONY: Libsyscall_driverkit
+$(eval $(call LIBSYSCALL_DO_UNIFDEF_HEADERS_RULE_template,$(DSTROOT)/$(INCDIR),$(SINCFRAME_UNIFDEF)))
+$(eval $(call LIBSYSCALL_DO_UNIFDEF_HEADERS_RULE_template,$(DSTROOT)/$(LCLDIR),$(SPINCFRAME_UNIFDEF)))
+ifeq ($(DRIVERKIT),1)
+$(eval $(call LIBSYSCALL_DO_UNIFDEF_HEADERS_RULE_template,$(DSTROOT)/$(DRIVERKITINCDIR),$(DKINCFRAME_UNIFDEF)))
+$(eval $(call LIBSYSCALL_DO_UNIFDEF_HEADERS_RULE_template,$(DSTROOT)/$(DRIVERKITLCLDIR),$(DKPINCFRAME_UNIFDEF)))
+endif
 
 clean:
 
@@ -94,7 +116,7 @@ installhdrs install clean:
 
 installsrc:
 	$(_v)$(MKDIR) $(SRCROOT)
-	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
+	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name compile_commands.json -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
 	$(_v)$(CHMOD) -R go+rX $(SRCROOT)
 
 else ifneq ($(findstring libkxld,$(RC_ProjectName)),)
@@ -108,7 +130,7 @@ installhdrs install clean:
 
 installsrc:
 	$(_v)$(MKDIR) $(SRCROOT)
-	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
+	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -name compile_commands.json -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
 	$(_v)$(CHMOD) -R go+rX $(SRCROOT)
 
 else ifneq ($(findstring libkmod,$(RC_ProjectName)),)
@@ -186,10 +208,14 @@ TOP_TARGETS = \
 	exporthdrs \
 	all all_desktop all_embedded \
 	all_release_embedded all_development_embedded \
+	all_release_desktop all_development_desktop \
 	installhdrs installhdrs_desktop installhdrs_embedded \
 	installhdrs_release_embedded installhdrs_development_embedded \
+	installhdrs_release_desktop installhdrs_development_desktop \
 	install install_desktop install_embedded \
 	install_release_embedded install_development_embedded \
+	install_release_desktop install_development_desktop \
+	install_release_embedded_nohdrs install_release_desktop_nohdrs \
 	install_kernels \
 	cscope tags TAGS \
 	help
@@ -204,11 +230,6 @@ TOP_TARGETS += \
 	config \
 	install_textfiles \
 	install_config
-
-ifeq ($(BUILD_JSON_COMPILATION_DATABASE),1)
-MAKEARGS += -B
-DEFAULT_TARGET := build
-endif
 
 .PHONY: $(TOP_TARGETS)
 
@@ -239,31 +260,29 @@ ALL_SUBDIRS = \
 	san
 
 CONFIG_SUBDIRS = config tools san
+# Hack to handle san external dependency on config_all allsymbols target
+config_all_recurse_into_san: config_all_recurse_into_config
 
 INSTINC_SUBDIRS = $(ALL_SUBDIRS) EXTERNAL_HEADERS
 INSTINC_SUBDIRS_X86_64 = $(INSTINC_SUBDIRS)
 INSTINC_SUBDIRS_X86_64H = $(INSTINC_SUBDIRS)
-INSTINC_SUBDIRS_ARM = $(INSTINC_SUBDIRS)
 INSTINC_SUBDIRS_ARM64 = $(INSTINC_SUBDIRS)
 
 EXPINC_SUBDIRS = $(ALL_SUBDIRS)
 EXPINC_SUBDIRS_X86_64 = $(EXPINC_SUBDIRS)
 EXPINC_SUBDIRS_X86_64H = $(EXPINC_SUBDIRS)
-EXPINC_SUBDIRS_ARM = $(EXPINC_SUBDIRS)
 EXPINC_SUBDIRS_ARM64 = $(EXPINC_SUBDIRS)
 
 SETUP_SUBDIRS = SETUP san bsd
 
 COMP_SUBDIRS_X86_64 = $(ALL_SUBDIRS)
 COMP_SUBDIRS_X86_64H = $(ALL_SUBDIRS)
-COMP_SUBDIRS_ARM = $(ALL_SUBDIRS)
 COMP_SUBDIRS_ARM64 = $(ALL_SUBDIRS)
 
 INSTTEXTFILES_SUBDIRS =	\
 	bsd
 INSTTEXTFILES_SUBDIRS_X86_64 = $(INSTTEXTFILES_SUBDIRS)
 INSTTEXTFILES_SUBDIRS_X86_64H = $(INSTTEXTFILES_SUBDIRS)
-INSTTEXTFILES_SUBDIRS_ARM = $(INSTTEXTFILES_SUBDIRS)
 INSTTEXTFILES_SUBDIRS_ARM64 = $(INSTTEXTFILES_SUBDIRS)
 
 include $(MakeInc_kernel)
@@ -316,10 +335,21 @@ xnu_tests:
 		SRCROOT=$(SRCROOT)/tools/tests
 	$(MAKE) -C $(SRCROOT)/tests	$(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) \
 		SRCROOT=$(SRCROOT)/tests
+	$(MAKE) -C $(SRCROOT)/tools/lldbmacros/tests $(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) \
+		SRCROOT=$(SRCROOT)/tools/lldbmacros
 
 xnu_tests_driverkit:
 	$(MAKE) -C $(SRCROOT)/tests/driverkit $(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) \
 		SRCROOT=$(SRCROOT)/tests/driverkit
+
+# Notice when building xnu_unittests target from the main makefile, the executables are
+# created at BUILD/sym, whereas if you run the makefile directly with make -C
+# the executables are created at tests/unit/build/sym
+xnu_unittests:
+	$(MAKE) -C $(SRCROOT)/tests/unit	$(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) \
+		SRCROOT=$(SRCROOT)/tests/unit
+	$(MAKE) -C $(SRCROOT)/tests	$(if $(filter -j,$(MAKEFLAGS)),,$(MAKEJOBS)) sched/install_userspace_unit_tests \
+		SRCROOT=$(SRCROOT)/tests
 
 
 include $(MakeInc_cmd)
@@ -356,7 +386,16 @@ analyze:
 		-disable-checker deadcode.DeadStores \
 		-disable-checker core.NullDereference \
 		-disable-checker core.DivideZero \
+		--exclude BUILD \
 		$(STATIC_ANALYZER_EXTRA_FLAGS) \
 		$(MAKE) $(STATIC_ANALYZER_TARGET) QUIET=1 2>&1 | $(GREP) "^scan-build:"
 
 .PHONY: analyze
+
+.PHONY: empty
+
+# Add an empty target which is useful for bringing up new build aliases
+# Aliases can be created with this as their target, then later move to their
+# required target in coordination with other aliases
+empty:
+	$(_v)$(MKDIR) $(DSTROOT)/AppleInternal

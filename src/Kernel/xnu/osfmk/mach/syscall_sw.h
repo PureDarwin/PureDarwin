@@ -124,6 +124,10 @@ kernel_trap(task_name_for_pid,-44,3)
 kernel_trap(task_for_pid,-45,3)
 kernel_trap(pid_for_task,-46,2)
 
+#if defined(__LP64__) || defined(__arm64__)
+kernel_trap(mach_msg2_trap, -47, 8)
+#endif
+
 #if defined(__LP64__)
 kernel_trap(macx_swapon,-48, 4)
 kernel_trap(macx_swapoff,-49, 2)
@@ -143,6 +147,9 @@ kernel_trap(swtch,-60,0)
 
 kernel_trap(syscall_thread_switch,-61,3)
 kernel_trap(clock_sleep_trap,-62,5)
+#if defined(__LP64__)
+kernel_trap(mach_vm_reclaim_update_kernel_accounting_trap,-63,3)
+#endif /* __LP64__ */
 
 /* voucher traps */
 kernel_trap(host_create_mach_voucher_trap,-70,4)
@@ -156,10 +163,16 @@ kernel_trap(mach_voucher_extract_attr_recipe_trap,-72,4)
 kernel_trap(_kernelrpc_mach_port_type_trap,-76,3)
 kernel_trap(_kernelrpc_mach_port_request_notification_trap,-77,7)
 
+#if defined(__LP64__)
+kernel_trap(_exclaves_ctl_trap,-88,8)
+#else	/* __LP64__ */
+kernel_trap(_exclaves_ctl_trap,-88,14)
+#endif	/* __LP64__ */
+
 kernel_trap(mach_timebase_info_trap,-89,1)
 
 #if		defined(__LP64__)
-/* unit64_t arguments passed in one register in LP64 */
+/* uint64_t arguments passed in one register in LP64 */
 kernel_trap(mach_wait_until,-90,1)
 #else	/* __LP64__ */
 kernel_trap(mach_wait_until,-90,2)
@@ -169,7 +182,7 @@ kernel_trap(mk_timer_create,-91,0)
 kernel_trap(mk_timer_destroy,-92,1)
 
 #if		defined(__LP64__)
-/* unit64_t arguments passed in one register in LP64 */
+/* uint64_t arguments passed in one register in LP64 */
 kernel_trap(mk_timer_arm,-93,2)
 #else	/* __LP64__ */
 kernel_trap(mk_timer_arm,-93,3)
@@ -187,6 +200,9 @@ kernel_trap(debug_control_port_for_pid,-96,3)
  * N.B: Trap #-100 is in use by IOTrap.s in the IOKit Framework
  * (iokit_user_client_trap)
  */
+
+kernel_trap(thread_set_x86_64_compat,-108,1)
+
 #endif	/* _MACH_SYSCALL_SW_H_ */
 
 #endif	/* PRIVATE */

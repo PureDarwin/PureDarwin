@@ -37,55 +37,65 @@
 #include <prng/random.h>
 #include <prng/entropy.h>
 #include <corecrypto/ccdigest.h>
+#include <corecrypto/ccdigest_priv.h>
 #include <corecrypto/ccdrbg.h>
 #include <corecrypto/cckprng.h>
 #include <corecrypto/ccsha2.h>
+#include <corecrypto/cchmac.h>
 
 static struct cckprng_ctx *prng_ctx;
 
 static SECURITY_READ_ONLY_LATE(struct cckprng_funcs) prng_funcs;
 static SECURITY_READ_ONLY_LATE(int) prng_ready;
 
-#define SEED_SIZE (SHA256_DIGEST_LENGTH)
-static uint8_t bootseed[SEED_SIZE];
+#define SEED_SIZE SHA512_DIGEST_LENGTH
+
+#if defined(__x86_64__)
+	#define BOOTLOADER_ENTROPY_REQUEST_SIZE 64 // efiboot max
+#else
+	#define BOOTLOADER_ENTROPY_REQUEST_SIZE 4*SEED_SIZE
+#endif
+
+static uint8_t kprngseed[SEED_SIZE];
+static uint8_t earlyseed[SEED_SIZE];
+static uint8_t entropyseed[SEED_SIZE];
+static uint8_t kprng_reseed[SEED_SIZE];
 
 static void
-bootseed_init_bootloader(const struct ccdigest_info * di, ccdigest_ctx_t ctx)
+bootseed_init_bootloader(uint32_t request_size, uint8_t *dst)
 {
-	uint8_t seed[64];
 	uint32_t n;
 
-	n = PE_get_random_seed(seed, sizeof(seed));
-	if (n < sizeof(seed)) {
+	n = PE_get_random_seed(dst, request_size);
+	if (n < request_size) {
 		/*
 		 * Insufficient entropy is fatal.  We must fill the
 		 * entire entropy buffer during initializaton.
 		 */
-		panic("Expected %lu seed bytes from bootloader, but got %u.\n", sizeof(seed), n);
+		panic("Expected %u seed bytes from bootloader, but got %u.\n", request_size, n);
 	}
-
-	ccdigest_update(di, ctx, sizeof(seed), seed);
-	cc_clear(sizeof(seed), seed);
 }
 
 #if defined(__x86_64__)
 #include <i386/cpuid.h>
 
 static void
-bootseed_init_native(const struct ccdigest_info * di, ccdigest_ctx_t ctx)
+bootseed_init_native(uint32_t request_size, uint8_t *dst)
 {
 	uint64_t x;
 	uint8_t ok;
 	size_t i = 0;
 	size_t n;
 
+	assert3u(request_size % sizeof(x), ==, 0);
+
 	if (cpuid_leaf7_features() & CPUID_LEAF7_FEATURE_RDSEED) {
-		n = SEED_SIZE / sizeof(x);
+		n = request_size / sizeof(x);
 
 		while (i < n) {
 			asm volatile ("rdseed %0; setc %1" : "=r"(x), "=qm"(ok) : : "cc");
 			if (ok) {
-				ccdigest_update(di, ctx, sizeof(x), &x);
+				cc_memcpy(&dst[i * sizeof(x)], &x, sizeof(x));
 				i += 1;
 			} else {
 				// Intel recommends to pause between unsuccessful rdseed attempts.
@@ -94,12 +104,14 @@ bootseed_init_native(const struct ccdigest_info * di, ccdigest_ctx_t ctx)
 		}
 	} else if (cpuid_features() & CPUID_FEATURE_RDRAND) {
 		// The Intel documentation guarantees a reseed every 512 rdrand calls.
-		n = (SEED_SIZE / sizeof(x)) * 512;
+		n = (request_size / sizeof(x)) * 512;
 
 		while (i < n) {
 			asm volatile ("rdrand %0; setc %1" : "=r"(x), "=qm"(ok) : : "cc");
 			if (ok) {
-				ccdigest_update(di, ctx, sizeof(x), &x);
+				if (i % 512 == 0) {
+					cc_memcpy(&dst[(i / 512) * sizeof(x)], &x, sizeof(x));
+				}
 				i += 1;
 			} else {
 				// Intel does not recommend pausing between unsuccessful rdrand attempts.
@@ -113,8 +125,11 @@ bootseed_init_native(const struct ccdigest_info * di, ccdigest_ctx_t ctx)
 #else
 
 static void
-bootseed_init_native(__unused const struct ccdigest_info * di, __unused ccdigest_ctx_t ctx)
+bootseed_init_native(uint32_t request_size, uint8_t *dst)
 {
+	// Even if we don't have any input, the second input needs to be a fixed input of the same size
+	// to maintain dual-PRF security for HKDF/HMAC. All zero is fine as long as it is fixed.
+	cc_clear(request_size, dst);
 }
 
 #endif
@@ -122,16 +137,53 @@ bootseed_init_native(__unused const struct ccdigest_info * di, __unused ccdigest
 static void
 bootseed_init(void)
 {
-	const struct ccdigest_info * di = &ccsha256_ltc_di;
+	// Request our starting entropy from the bootloader
+	uint8_t bootloader_rand[4 * SEED_SIZE];
+	bootseed_init_bootloader(BOOTLOADER_ENTROPY_REQUEST_SIZE, bootloader_rand);
 
-	ccdigest_di_decl(di, ctx);
-	ccdigest_init(di, ctx);
+	#if defined(__x86_64__) && BOOTLOADER_ENTROPY_REQUEST_SIZE == 64
+	// efiboot can only provide 64 bytes of entropy, so fill the rest of the buffer with zero.
+	// We compensate for this by sampling from RDRAND/RDSEED in bootseed_init_native.
+	cc_clear(sizeof(bootloader_rand) - BOOTLOADER_ENTROPY_REQUEST_SIZE, bootloader_rand + BOOTLOADER_ENTROPY_REQUEST_SIZE);
+	#endif
 
-	bootseed_init_bootloader(di, ctx);
-	bootseed_init_native(di, ctx);
+	/*
+	 *  First, we copy out a direct seed for the kprng from the TRNG packet then clear it to prevent reuse.
+	 *   | BOOTLOADER_ENTROPY_REQUEST_SIZE |
+	 *   | KPRNG |     OPAQUE  ENTROPY     |
+	 *   | 00000 |     OPAQUE  ENTROPY     |
+	 */
+	memcpy(kprngseed, bootloader_rand, SEED_SIZE);
+	cc_clear(SEED_SIZE, bootloader_rand);
 
-	ccdigest_final(di, ctx, bootseed);
-	ccdigest_di_clear(di, ctx);
+	uint8_t native_rand[3 * SEED_SIZE];
+	bootseed_init_native(sizeof(native_rand), native_rand);
+
+	const struct ccdigest_info *di = &ccsha512_ltc_di;
+	assert3u(SEED_SIZE, <, di->block_size);
+
+	uint8_t zero_salt[SEED_SIZE] = {0};
+	uint8_t combined_input[2 * SEED_SIZE];
+
+	// First subkey: bootloader_rand[64-127] || native_rand[0-63]
+	memcpy(combined_input, &bootloader_rand[1 * SEED_SIZE], SEED_SIZE);
+	memcpy(&combined_input[SEED_SIZE], &native_rand[0 * SEED_SIZE], SEED_SIZE);
+	cchmac(di, SEED_SIZE, zero_salt, 2 * SEED_SIZE, combined_input, earlyseed);
+
+	// Second subkey: bootloader_rand[128-191] || native_rand[64-127]
+	memcpy(combined_input, &bootloader_rand[2 * SEED_SIZE], SEED_SIZE);
+	memcpy(&combined_input[SEED_SIZE], &native_rand[1 * SEED_SIZE], SEED_SIZE);
+	cchmac(di, SEED_SIZE, zero_salt, 2 * SEED_SIZE, combined_input, entropyseed);
+
+	// Third subkey: bootloader_rand[192-255] || native_rand[128-191]
+	memcpy(combined_input, &bootloader_rand[3 * SEED_SIZE], SEED_SIZE);
+	memcpy(&combined_input[SEED_SIZE], &native_rand[2 * SEED_SIZE], SEED_SIZE);
+	cchmac(di, SEED_SIZE, zero_salt, 2 * SEED_SIZE, combined_input, kprng_reseed);
+
+	cc_clear(sizeof(combined_input), combined_input);
+
+	cc_clear(BOOTLOADER_ENTROPY_REQUEST_SIZE, bootloader_rand);
+	cc_clear(BOOTLOADER_ENTROPY_REQUEST_SIZE, native_rand);
 }
 
 #define EARLY_RANDOM_STATE_STATIC_SIZE (264)
@@ -145,7 +197,36 @@ static struct {
 		     .strictFIPS = 0,
 	     }};
 
-static void read_erandom(void * buf, size_t nbytes);
+__attribute__((noinline))
+static void
+early_random_init(void)
+{
+	uint64_t nonce;
+	int rc;
+	const char ps[] = "xnu early random";
+
+	bootseed_init();
+
+	/* Init DRBG for NIST HMAC */
+	ccdrbg_factory_nisthmac(&erandom.drbg_info, &erandom.drbg_custom);
+	assert3u(erandom.drbg_info.size, <=, sizeof(erandom.drbg_state));
+
+	/*
+	 * Init our DBRG from the boot entropy and a timestamp as nonce
+	 * and the cpu number as personalization.
+	 */
+	assert3u(sizeof(earlyseed), >, sizeof(nonce));
+	nonce = ml_get_timebase();
+	rc = ccdrbg_init(&erandom.drbg_info, (struct ccdrbg_state *)erandom.drbg_state, sizeof(earlyseed), earlyseed, sizeof(nonce), &nonce, sizeof(ps) - 1, ps);
+	if (rc != CCDRBG_STATUS_OK) {
+		panic("ccdrbg_init() returned %d", rc);
+	}
+
+	cc_clear(sizeof(nonce), &nonce);
+	cc_clear(sizeof(earlyseed), earlyseed);
+}
+
+__static_testable void read_erandom(void * buf, size_t nbytes);
 
 /*
  * Return a uniformly distributed 64-bit random number.
@@ -164,13 +245,13 @@ static void read_erandom(void * buf, size_t nbytes);
  *    are being built) early_random() calls ccdrbg_factory_hmac() to
  *    set-up a ccdbrg info structure.
  *
- *  - The boot seed (64 bytes) is hashed with SHA256. Where available,
- *    hardware RNG outputs are mixed into the seed. (See
- *    bootseed_init.) The resulting seed is 32 bytes.
+ *  - A 64-byte seed from the bootloader is hashed with HMAC-SHA512.
+ *    Where available, hardware RNG outputs are mixed into the seed.
+ *    (See bootseed_init.) The resulting seed is 64 bytes.
  *
  *  - The ccdrbg state structure is a statically allocated area which
  *    is then initialized by calling the ccdbrg_init method. The
- *    initial entropy is the 32-byte seed described above. The nonce
+ *    initial entropy is the 64-byte seed described above. The nonce
  *    is an 8-byte timestamp from ml_get_timebase(). The
  *    personalization data provided is a fixed string.
  *
@@ -186,31 +267,10 @@ uint64_t
 early_random(void)
 {
 	uint64_t result;
-	uint64_t nonce;
-	int rc;
-	const char ps[] = "xnu early random";
 	static int init = 0;
 
-	if (init == 0) {
-		bootseed_init();
-
-		/* Init DRBG for NIST HMAC */
-		ccdrbg_factory_nisthmac(&erandom.drbg_info, &erandom.drbg_custom);
-		assert(erandom.drbg_info.size <= sizeof(erandom.drbg_state));
-
-		/*
-		 * Init our DBRG from the boot entropy and a timestamp as nonce
-		 * and the cpu number as personalization.
-		 */
-		assert(sizeof(bootseed) > sizeof(nonce));
-		nonce = ml_get_timebase();
-		rc = ccdrbg_init(&erandom.drbg_info, (struct ccdrbg_state *)erandom.drbg_state, sizeof(bootseed), bootseed, sizeof(nonce), &nonce, sizeof(ps) - 1, ps);
-		if (rc != CCDRBG_STATUS_OK) {
-			panic("ccdrbg_init() returned %d", rc);
-		}
-
-		cc_clear(sizeof(nonce), &nonce);
-
+	if (__improbable(init == 0)) {
+		early_random_init();
 		init = 1;
 	}
 
@@ -222,20 +282,15 @@ early_random(void)
 static void
 read_random_generate(uint8_t *buffer, size_t numbytes);
 
+// This code is used only during early boot (until corecrypto kext is
+// loaded), so it's better not to inline it.
+__attribute__((noinline))
 static void
-read_erandom(void * buf, size_t nbytes)
+read_erandom_generate(void * buf, size_t nbytes)
 {
 	uint8_t * buffer_bytes = buf;
 	size_t n;
 	int rc;
-
-	// We defer to the kernel PRNG after it has been installed and
-	// initialized. This happens during corecrypto kext
-	// initialization.
-	if (prng_ready) {
-		read_random_generate(buf, nbytes);
-		return;
-	}
 
 	// The DBRG request size is limited, so we break the request into
 	// chunks.
@@ -246,11 +301,24 @@ read_erandom(void * buf, size_t nbytes)
 		// request a reseed; therefore, we panic on any error
 		rc = ccdrbg_generate(&erandom.drbg_info, (struct ccdrbg_state *)erandom.drbg_state, n, buffer_bytes, 0, NULL);
 		if (rc != CCDRBG_STATUS_OK) {
-			panic("read_erandom ccdrbg error %d\n", rc);
+			panic("read_erandom ccdrbg error %d", rc);
 		}
 
 		buffer_bytes += n;
 		nbytes -= n;
+	}
+}
+
+__static_testable __mockable void
+read_erandom(void * buf, size_t nbytes)
+{
+	// We defer to the kernel PRNG after it has been installed and
+	// initialized. This happens during corecrypto kext
+	// initialization.
+	if (__probable(prng_ready)) {
+		read_random_generate(buf, nbytes);
+	} else {
+		read_erandom_generate(buf, nbytes);
 	}
 }
 
@@ -263,27 +331,36 @@ read_frandom(void * buffer, u_int numBytes)
 void
 register_and_init_prng(struct cckprng_ctx *ctx, const struct cckprng_funcs *funcs)
 {
-	assert(cpu_number() == master_cpu);
+	assert3s(cpu_number(), ==, boot_cpu_id);
 	assert(!prng_ready);
 
-	entropy_init();
+	entropy_init(sizeof(entropyseed), entropyseed);
 
 	prng_ctx = ctx;
 	prng_funcs = *funcs;
+	printf("PD-PRNG: registered ctx=%p init=%p initgen=%p reseed=%p refresh=%p generate=%p\n",
+	    prng_ctx, prng_funcs.init, prng_funcs.initgen, prng_funcs.reseed,
+	    prng_funcs.refresh, prng_funcs.generate);
 
 	uint64_t nonce = ml_get_timebase();
-	prng_funcs.init_with_getentropy(prng_ctx, MAX_CPUS, sizeof(bootseed), bootseed, sizeof(nonce), &nonce, entropy_provide, NULL);
-	prng_funcs.initgen(prng_ctx, master_cpu);
+	prng_funcs.init_with_getentropy(prng_ctx, MAX_CPUS, sizeof(kprngseed), kprngseed, sizeof(nonce), &nonce, entropy_provide, NULL);
+	prng_funcs.initgen(prng_ctx, boot_cpu_id);
 	prng_ready = 1;
 
-	cc_clear(sizeof(bootseed), bootseed);
+	// Reseed with a key that has been securely combined with kernel-sourced platform randomness, where it was available.
+	// Otherwise this is just more randomness from the bootloader.
+	prng_funcs.reseed(prng_ctx, sizeof(kprng_reseed), kprng_reseed);
+
+	cc_clear(sizeof(entropyseed), entropyseed);
+	cc_clear(sizeof(kprngseed), kprngseed);
+	cc_clear(sizeof(kprng_reseed), kprng_reseed);
 	cc_clear(sizeof(erandom), &erandom);
 }
 
 void
 random_cpu_init(int cpu)
 {
-	assert(cpu != master_cpu);
+	assert3s(cpu, !=, boot_cpu_id);
 
 	if (!prng_ready) {
 		panic("random_cpu_init: kernel prng has not been installed");
@@ -293,7 +370,7 @@ random_cpu_init(int cpu)
 }
 
 /* export good random numbers to the rest of the kernel */
-void
+__mockable void
 read_random(void * buffer, u_int numbytes)
 {
 	prng_funcs.refresh(prng_ctx);
@@ -338,13 +415,21 @@ read_random_generate(uint8_t *buffer, size_t numbytes)
 int
 write_random(void * buffer, u_int numbytes)
 {
-	uint8_t seed[SHA256_DIGEST_LENGTH];
-	SHA256_CTX ctx;
+	/*
+	 * The reseed function requires at least 16 bytes of input entropy,
+	 * hence we always pass the entire seed below, even if it isn't "full".
+	 */
+	uint8_t seed[SHA512_DIGEST_LENGTH] = {0};
 
-	/* hash the input to minimize the time we need to hold the lock */
-	SHA256_Init(&ctx);
-	SHA256_Update(&ctx, buffer, numbytes);
-	SHA256_Final(seed, &ctx);
+	if (numbytes > SHA512_DIGEST_LENGTH) {
+		/* hash the input to minimize the time we need to hold the lock */
+		SHA512_CTX ctx;
+		SHA512_Init(&ctx);
+		SHA512_Update(&ctx, buffer, numbytes);
+		SHA512_Final(seed, &ctx);
+	} else {
+		memcpy(seed, buffer, numbytes);
+	}
 
 	prng_funcs.reseed(prng_ctx, sizeof(seed), seed);
 	cc_clear(sizeof(seed), seed);

@@ -9,7 +9,8 @@
 #include <DriverKit/DriverKit.h>
 #endif /* KERNEL */
 #include <DriverKit/IOReturn.h>
-#include <DriverKit/IOUserClient.h>
+#include <IOKit/IORPC.h>
+#include "IOUserClient.h"
 
 /* @iig implementation */
 #include <DriverKit/IOBufferMemoryDescriptor.h>
@@ -163,6 +164,48 @@ typedef union
     };
 }
 IOUserClient_CreateMemoryDescriptorFromClient_Invocation;
+struct IOUserClient_CopyClientEntitlements_Msg_Content
+{
+    IORPCMessage __hdr;
+    OSObjectRef  __object;
+};
+#pragma pack(4)
+struct IOUserClient_CopyClientEntitlements_Msg
+{
+    IORPCMessageMach           mach;
+    mach_msg_port_descriptor_t __object__descriptor;
+    IOUserClient_CopyClientEntitlements_Msg_Content content;
+};
+#pragma pack()
+#define IOUserClient_CopyClientEntitlements_Msg_ObjRefs (1)
+
+struct IOUserClient_CopyClientEntitlements_Rpl_Content
+{
+    IORPCMessage __hdr;
+    OSObjectRef  entitlements;
+};
+#pragma pack(4)
+struct IOUserClient_CopyClientEntitlements_Rpl
+{
+    IORPCMessageMach           mach;
+    mach_msg_port_descriptor_t entitlements__descriptor;
+    IOUserClient_CopyClientEntitlements_Rpl_Content content;
+};
+#pragma pack()
+#define IOUserClient_CopyClientEntitlements_Rpl_ObjRefs (1)
+
+typedef union
+{
+    const IORPC rpc;
+    struct
+    {
+        const struct IOUserClient_CopyClientEntitlements_Msg * message;
+        struct IOUserClient_CopyClientEntitlements_Rpl       * reply;
+        uint32_t sendSize;
+        uint32_t replySize;
+    };
+}
+IOUserClient_CopyClientEntitlements_Invocation;
 struct IOUserClient__ExternalMethod_Msg_Content
 {
     IORPCMessage __hdr;
@@ -295,6 +338,13 @@ IOUserClient::_Dispatch(IOUserClient * self, const IORPC rpc)
         case IOUserClient_CreateMemoryDescriptorFromClient_ID:
         {
             ret = IOUserClient::CreateMemoryDescriptorFromClient_Invoke(rpc, self, SimpleMemberFunctionCast(IOUserClient::CreateMemoryDescriptorFromClient_Handler, *self, &IOUserClient::CreateMemoryDescriptorFromClient_Impl));
+            break;
+        }
+#endif /* !KERNEL */
+#if KERNEL
+        case IOUserClient_CopyClientEntitlements_ID:
+        {
+            ret = IOUserClient::CopyClientEntitlements_Invoke(rpc, self, SimpleMemberFunctionCast(IOUserClient::CopyClientEntitlements_Handler, *self, &IOUserClient::CopyClientEntitlements_Impl));
             break;
         }
 #endif /* !KERNEL */
@@ -591,6 +641,87 @@ IOUserClient::CreateMemoryDescriptorFromClient_Invoke(const IORPC _rpc,
     rpc.reply->mach.msgh_body.msgh_descriptor_count = 1;
     rpc.reply->content.__hdr.objectRefs = IOUserClient_CreateMemoryDescriptorFromClient_Rpl_ObjRefs;
     rpc.reply->memory__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
+
+    return (ret);
+}
+
+kern_return_t
+IOUserClient::CopyClientEntitlements(
+        OSDictionary ** entitlements,
+        OSDispatchMethod supermethod)
+{
+    kern_return_t ret;
+    union
+    {
+        IOUserClient_CopyClientEntitlements_Msg msg;
+        struct
+        {
+            IOUserClient_CopyClientEntitlements_Rpl rpl;
+            mach_msg_max_trailer_t trailer;
+        } rpl;
+    } buf;
+    struct IOUserClient_CopyClientEntitlements_Msg * msg = &buf.msg;
+    struct IOUserClient_CopyClientEntitlements_Rpl * rpl = &buf.rpl.rpl;
+
+    memset(msg, 0, sizeof(struct IOUserClient_CopyClientEntitlements_Msg));
+    msg->mach.msgh.msgh_id   = kIORPCVersion190615;
+    msg->mach.msgh.msgh_size = sizeof(*msg);
+    msg->content.__hdr.flags = 0*kIORPCMessageOneway
+                             | 0*kIORPCMessageSimpleReply
+                             | 0*kIORPCMessageLocalHost
+                             | 0*kIORPCMessageOnqueue;
+    msg->content.__hdr.msgid = IOUserClient_CopyClientEntitlements_ID;
+    msg->content.__object = (OSObjectRef) this;
+    msg->content.__hdr.objectRefs = IOUserClient_CopyClientEntitlements_Msg_ObjRefs;
+    msg->mach.msgh_body.msgh_descriptor_count = 1;
+
+    msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
+
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    if (supermethod) ret = supermethod((OSObject *)this, _rpc);
+    else             ret = ((OSObject *)this)->Invoke(_rpc);
+
+    if (kIOReturnSuccess == ret)
+    do {
+        {
+            if (rpl->mach.msgh.msgh_size                  != sizeof(*rpl)) { ret = kIOReturnIPCError; break; };
+            if (rpl->content.__hdr.msgid                  != IOUserClient_CopyClientEntitlements_ID) { ret = kIOReturnIPCError; break; };
+            if (rpl->mach.msgh_body.msgh_descriptor_count != 1) { ret = kIOReturnIPCError; break; };
+            if (IOUserClient_CopyClientEntitlements_Rpl_ObjRefs   != rpl->content.__hdr.objectRefs) { ret = kIOReturnIPCError; break; };
+        }
+    }
+    while (false);
+    if (kIOReturnSuccess == ret)
+    {
+        *entitlements = OSDynamicCast(OSDictionary, (OSObject *) rpl->content.entitlements);
+        if (rpl->content.entitlements && !*entitlements) ret = kIOReturnBadArgument;
+    }
+
+    return (ret);
+}
+
+kern_return_t
+IOUserClient::CopyClientEntitlements_Invoke(const IORPC _rpc,
+        OSMetaClassBase * target,
+        CopyClientEntitlements_Handler func)
+{
+    IOUserClient_CopyClientEntitlements_Invocation rpc = { _rpc };
+    kern_return_t ret;
+
+    if (IOUserClient_CopyClientEntitlements_Msg_ObjRefs != rpc.message->content.__hdr.objectRefs) return (kIOReturnIPCError);
+
+    ret = (*func)(target,
+        (OSDictionary **)&rpc.reply->content.entitlements);
+
+    if (kIOReturnSuccess != ret) return (ret);
+
+    rpc.reply->content.__hdr.msgid = IOUserClient_CopyClientEntitlements_ID;
+    rpc.reply->content.__hdr.flags = kIORPCMessageOneway;
+    rpc.reply->mach.msgh.msgh_id   = kIORPCVersion190615Reply;
+    rpc.reply->mach.msgh.msgh_size = sizeof(*rpc.reply);
+    rpc.reply->mach.msgh_body.msgh_descriptor_count = 1;
+    rpc.reply->content.__hdr.objectRefs = IOUserClient_CopyClientEntitlements_Rpl_ObjRefs;
+    rpc.reply->entitlements__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
 
     return (ret);
 }

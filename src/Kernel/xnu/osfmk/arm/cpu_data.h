@@ -41,22 +41,38 @@
 #include <kern/processor.h>
 #include <pexpert/pexpert.h>
 #include <arm/thread.h>
-#include <arm/proc_reg.h>
+#include <arm64/proc_reg.h>
 
 #include <mach/mach_types.h>
 #include <machine/thread.h>
 
-#define current_thread()        current_thread_fast()
+__ASSUME_PTR_ABI_SINGLE_BEGIN
 
+
+#ifndef __BUILDING_XNU_LIB_UNITTEST__
 static inline __attribute__((const)) thread_t
 current_thread_fast(void)
 {
 #if defined(__arm64__)
-	return (thread_t)(__builtin_arm_rsr64("TPIDR_EL1"));
+	/*
+	 * rdar://73762648 clang nowadays insists that this is not constant
+	 *
+	 *     __builtin_arm_rsr64("TPIDR_EL1")
+	 *
+	 * and ignores the "attribute const", so do it the "dumb" way.
+	 */
+	unsigned long result;
+	__asm__ ("mrs %0, TPIDR_EL1" : "=r" (result));
+	return __unsafe_forge_single(thread_t, result);
 #else
-	return (thread_t)(__builtin_arm_mrc(15, 0, 13, 0, 4));  // TPIDRPRW
+	// TPIDRPRW
+	return __unsafe_forge_single(thread_t, __builtin_arm_mrc(15, 0, 13, 0, 4));
 #endif
 }
+#else /* __BUILDING_XNU_LIB_UNITTEST__ */
+__attribute__((const)) thread_t current_thread_fast(void);
+#endif /* __BUILDING_XNU_LIB_UNITTEST__ */
+
 
 /*
  * The "volatile" flavor of current_thread() is intended for use by
@@ -76,16 +92,20 @@ current_thread_fast(void)
 static inline thread_t
 current_thread_volatile(void)
 {
-	/* The compiler treats rsr64 as const, which can allow
-	 *  it to eliminate redundant calls, which we don't want here.
-	 *  Thus we use volatile asm.  The mrc used for arm32 should be
-	 *  treated as volatile however. */
+	/*
+	 * The compiler might decide to treat rsr64 as const (comes and goes),
+	 * which can allow it to eliminate redundant calls, which we don't want
+	 * here. Thus we use volatile asm. Which gives us control on semantics.
+	 *
+	 * The mrc used for arm32 should be treated as volatile however.
+	 */
 #if defined(__arm64__)
-	thread_t result;
+	unsigned long result;
 	__asm__ volatile ("mrs %0, TPIDR_EL1" : "=r" (result));
-	return result;
+	return __unsafe_forge_single(thread_t, result);
 #else
-	return (thread_t)(__builtin_arm_mrc(15, 0, 13, 0, 4));  // TPIDRPRW
+	// TPIDRPRW
+	return __unsafe_forge_single(thread_t, __builtin_arm_mrc(15, 0, 13, 0, 4));
 #endif
 }
 
@@ -110,9 +130,12 @@ exception_stack_pointer(void)
 #define current_cpu_datap()      getCpuDatap()
 
 extern int                       get_preemption_level(void);
+extern unsigned int              get_preemption_level_for_thread(thread_t);
 
 #define mp_disable_preemption()  _disable_preemption()
 #define mp_enable_preemption()   _enable_preemption()
+
+__ASSUME_PTR_ABI_SINGLE_END
 
 #endif  /* MACH_KERNEL_PRIVATE */
 

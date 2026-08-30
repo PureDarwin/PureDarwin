@@ -2,12 +2,9 @@ include ../Makefile.common
 
 OBJROOT?=$(shell /bin/pwd)
 
-CC:=$(shell xcrun -sdk "$(SDKROOT)" -find cc)
-
 DSTROOT?=$(shell /bin/pwd)
 
 CFLAGS:=$(ARCH_FLAGS) -g -Wall -Os -isysroot $(SDKROOT) -framework CoreFoundation
-CFLAGS += -Wl,-sectcreate,__INFO_FILTER,__disable,/dev/null
 
 all: $(DSTROOT)/mktimer_test
 

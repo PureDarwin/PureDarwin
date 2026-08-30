@@ -31,6 +31,7 @@
 #ifndef _OS_OSSYMBOL_H
 #define _OS_OSSYMBOL_H
 
+#include <kern/smr_types.h>
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSPtr.h>
 
@@ -84,13 +85,14 @@ typedef OSSymbol const* OSSymbolConstPtr;
  * handle synchronization via defined member functions for setting
  * properties.
  */
-class OSSymbol : public OSString
+class OSSymbol final : public OSString
 {
 	friend class OSSymbolPool;
 
-	OSDeclareAbstractStructors(OSSymbol);
+	OSDeclareDefaultStructors(OSSymbol);
 
 private:
+	struct smrq_slink hashlink;
 
 	static void initialize();
 
@@ -149,7 +151,21 @@ private:
 
 protected:
 
-// xx-review: should we just omit this from headerdoc?
+/*!
+ * @function taggedRetain
+ *
+ * @abstract
+ * Overrides
+ * <code>@link
+ * //apple_ref/cpp/instm/OSObject/taggedRetain/virtualvoid/(constvoid*)
+ * OSObject::taggedRetain(const void *) const@/link</code>
+ * to synchronize with the symbol pool.
+ *
+ * @param tag      Used for tracking collection references.
+ */
+	virtual void taggedRetain(
+		const void * tag) const APPLE_KEXT_OVERRIDE;
+
 /*!
  * @function taggedRelease
  *
@@ -364,7 +380,11 @@ public:
  * Two OSSymbol objects are considered equal if they have the same address;
  * that is, this function is equivalent to the <code>==</code> operator.
  */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wunnecessary-virtual-specifier"
 	virtual bool isEqualTo(const OSSymbol * aSymbol) const;
+#pragma clang diagnostic pop
 
 
 /*!
@@ -414,8 +434,16 @@ public:
 		const void *  array,
 		unsigned int  arrayCount,
 		size_t        memberSize);
+
+	inline void smr_free();
+
+	inline uint32_t hash() const;
+
 #endif /* XNU_KERNEL_PRIVATE */
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wunnecessary-virtual-specifier"
 	OSMetaClassDeclareReservedUnused(OSSymbol, 0);
 	OSMetaClassDeclareReservedUnused(OSSymbol, 1);
 	OSMetaClassDeclareReservedUnused(OSSymbol, 2);
@@ -424,6 +452,7 @@ public:
 	OSMetaClassDeclareReservedUnused(OSSymbol, 5);
 	OSMetaClassDeclareReservedUnused(OSSymbol, 6);
 	OSMetaClassDeclareReservedUnused(OSSymbol, 7);
+#pragma clang diagnostic pop
 };
 
 #endif /* !_OS_OSSYMBOL_H */

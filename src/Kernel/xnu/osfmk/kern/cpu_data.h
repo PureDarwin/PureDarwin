@@ -46,12 +46,19 @@
 __BEGIN_DECLS
 
 extern void             _disable_preemption(void);
+extern void             _disable_preemption_without_measurements(void);
 extern void             _enable_preemption(void);
 
 #ifndef MACHINE_PREEMPTION_MACROS
 #define disable_preemption()                    _disable_preemption()
+#define disable_preemption_without_measurements() _disable_preemption_without_measurements()
 #define enable_preemption()                     _enable_preemption()
 #endif
+
+#if SCHED_HYGIENE_DEBUG
+#define SCHED_HYGIENE_MARKER (1u << 31)
+#endif
+extern void abandon_preemption_disable_measurement(void);
 
 __END_DECLS
 

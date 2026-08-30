@@ -1,4 +1,9 @@
 find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
+# xnu 12377 dropped config/MasterVersion and derives this from a System.kext
+# Info.plist in the SDK/KDK, which PureDarwin has neither of. This is the Darwin
+# version PD advertises, not the xnu tag - the toolchain triples depend on it.
+set(PUREDARWIN_DARWIN_KERNEL_VERSION "26.5.0" CACHE STRING "Darwin kernel version reported by the build")
+
 
 execute_process(
     COMMAND make --version
@@ -125,6 +130,7 @@ externalproject_add(xnu_headers.extproj
     BUILD_COMMAND
         ${CMAKE_COMMAND}
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
+            -D DARWIN_KERNEL_VERSION=${PUREDARWIN_DARWIN_KERNEL_VERSION}
             -D XNU_OBJ=<BINARY_DIR>
             -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:host_codesign_allocate>
             -D CTFCONVERT_PATH=$<TARGET_FILE:host_ctfconvert>
@@ -148,7 +154,8 @@ externalproject_add(xnu_headers.extproj
         # ld64 correctly rejects.
         ${CMAKE_COMMAND} -E env ${XNU_HOST_CC_ENV} --unset=LD --unset=CC --unset=CXX --unset=STRIP --unset=NM --unset=CTFCONVERT --unset=CTFMERGE --unset=CTFINSERT
         make -C <SOURCE_DIR> installhdrs ARCH_CONFIGS=${XNU_ARCH_CONFIGS} ${XNU_MACHINE_CONFIGS} BUILD_LTO=0
-            BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=${PUREDARWIN_XNU_KERNEL_CONFIG}
+            RC_DARWIN_KERNEL_VERSION=${PUREDARWIN_DARWIN_KERNEL_VERSION}
+            BUILD_WERROR=0 BUILD_DSYM=0 PUREDARWIN_SKIP_SYMBOLSETS=1 DO_CTFMERGE=0 KERNEL_CONFIGS=${PUREDARWIN_XNU_KERNEL_CONFIG}
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_header_install
     INSTALL_COMMAND "" # installed during build
@@ -214,7 +221,8 @@ externalproject_add(xnu
     COMMAND
         ${CMAKE_COMMAND} -E env LD=${XNU_LD_PATH} STRIP=${XNU_STRIP_PATH} ${XNU_HOST_CC_ENV} --unset=CC --unset=CXX --unset=NM --unset=CTFCONVERT --unset=CTFMERGE --unset=CTFINSERT
         make ${XNU_MAKE_OUTPUT_SYNC_FLAG} -C <SOURCE_DIR> install ARCH_CONFIGS=${XNU_ARCH_CONFIGS} ${XNU_MACHINE_CONFIGS} ${XNU_LD_KERNEL_LIBS} BUILD_LTO=0
-            BUILD_WERROR=0 DO_CTFMERGE=0 KERNEL_CONFIGS=${PUREDARWIN_XNU_KERNEL_CONFIG}
+            RC_DARWIN_KERNEL_VERSION=${PUREDARWIN_DARWIN_KERNEL_VERSION}
+            BUILD_WERROR=0 BUILD_DSYM=0 PUREDARWIN_SKIP_SYMBOLSETS=1 DO_CTFMERGE=0 KERNEL_CONFIGS=${PUREDARWIN_XNU_KERNEL_CONFIG}
             SRCROOT=${CMAKE_CURRENT_SOURCE_DIR} OBJROOT=<BINARY_DIR>
             SYMROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu_sym DSTROOT=${CMAKE_CURRENT_BINARY_DIR}/xnu
     INSTALL_COMMAND "" # installed during build

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2013-2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -83,7 +83,7 @@ uint64_t coalition_id(coalition_t coal);
  *          Otherwise: the number of coalitions whose type matches
  *                     the 'type' parameter (all coalitions if type == -1)
  */
-extern int coalitions_get_list(int type, struct procinfo_coalinfo *coal_list, int list_sz);
+extern size_t coalitions_get_list(int type, struct procinfo_coalinfo *coal_list, size_t list_sz);
 
 
 /*
@@ -195,6 +195,17 @@ extern uint64_t coalition_get_page_count(coalition_t coal, int *ntasks);
 extern int coalition_get_pid_list(coalition_t coal, uint32_t rolemask,
     int sort_order, int *pid_list, int list_sz);
 
+/*
+ * task_coalition_role_for_type;
+ * Get the role of the given task within the given type of coalition.
+ *
+ * Parameters:
+ *      task           : The task to investigate
+ *      coalition_type : The coalition type to check
+ *
+ * Returns: This task's role or COALITION_TASKROLE_NONE.
+ */
+extern int task_coalition_role_for_type(task_t task, int coalition_type);
 #else /* !CONFIG_COALITIONS */
 static inline uint64_t
 coalition_id(__unused coalition_t coal)
@@ -202,10 +213,10 @@ coalition_id(__unused coalition_t coal)
 	return 0;
 }
 
-static inline int
+static inline size_t
 coalitions_get_list(__unused int type,
     __unused struct procinfo_coalinfo *coal_list,
-    __unused int list_sz)
+    __unused size_t list_sz)
 {
 	return 0;
 }
@@ -251,5 +262,9 @@ coalition_get_pid_list(__unused coalition_t coal,
 #endif /* KERNEL */
 
 __END_DECLS
+
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <sys/coalition_private.h>
+#endif /* PRIVATE && !MODULES_SUPPORTED */
 
 #endif /* _SYS_COALITION_H_ */

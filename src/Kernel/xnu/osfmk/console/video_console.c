@@ -94,19 +94,14 @@
 #include <kern/kern_types.h>
 #include <kern/kalloc.h>
 #include <kern/debug.h>
-#include <kern/spl.h>
 #include <kern/thread_call.h>
-#include <kern/startup.h>	/* startup_phase, for the early framebuffer mapping */
 
 #include <vm/pmap.h>
-#include <vm/vm_kern.h>
-#include <machine/io_map_entries.h>
+#include <vm/vm_kern_xnu.h>
 #include <machine/machine_cpu.h>
-#include <machine/machine_routines.h>	/* ml_phys_write_word, for the early framebuffer */
 
 #include <pexpert/pexpert.h>
 #include <sys/kdebug.h>
-#include <libkern/OSAtomic.h>
 
 #include "iso_font.c"
 #if defined(XNU_TARGET_OS_OSX)
@@ -128,18 +123,6 @@ void noroot_icon_test(void);
 extern int       disableConsoleOutput;
 static boolean_t gc_enabled     = FALSE;
 static boolean_t gc_initialized = FALSE;
-
-/*
- * Drawing a glyph means touching the framebuffer, and on the BCM2835 the
- * D-cache is off during bring-up, so every character costs orders of magnitude
- * more than the serial write beside it. Default the rendering off there and
- * keep the serial mirror; vc_draw=1 puts the display back.
- */
-#if defined(ARM_BOARD_CONFIG_BCM2835)
-static boolean_t vc_draw_enabled = FALSE;
-#else
-static boolean_t vc_draw_enabled = TRUE;
-#endif
 static boolean_t vm_initialized = FALSE;
 
 static struct {
@@ -168,6 +151,7 @@ static uint32_t gc_buffer_size;
 
 LCK_GRP_DECLARE(vconsole_lck_grp, "vconsole");
 static lck_ticket_t vcputc_lock;
+
 
 #define VCPUTC_LOCK_INIT()                              \
 MACRO_BEGIN                                             \
@@ -234,11 +218,8 @@ enum vt100state_e {
 enum{
 	/* secs */
 	kProgressAcquireDelay   = 0,
-#if !defined(XNU_TARGET_OS_OSX)
-	kProgressReacquireDelay = 5,
-#else
-	kProgressReacquireDelay = 5,
-#endif
+	kProgressReacquireDelay = (12 * 60 * 60),     /* 12 hrs, ie. disabled unless overridden
+	                                               * by kVCAcquireImmediate */
 };
 
 static int8_t vc_rotate_matr[4][2][2] = {
@@ -261,7 +242,6 @@ static void gc_clear_line(unsigned int xx, unsigned int yy, int which);
 static void gc_clear_screen(unsigned int xx, unsigned int yy, int top,
     unsigned int bottom, int which);
 static void gc_enable(boolean_t enable);
-static void vc_serial_replay_early(void);
 static void gc_hide_cursor(unsigned int xx, unsigned int yy);
 static void gc_initialize(struct vc_info * info);
 static boolean_t gc_is_tab_stop(unsigned int column);
@@ -360,14 +340,6 @@ gc_clear_screen(unsigned int xx, unsigned int yy, int top, unsigned int bottom,
 static void
 gc_enable( boolean_t enable )
 {
-	/* With drawing off there is nothing for the text console to do, and
-	 * leaving it disabled keeps gc_clear_screen/gc_scroll off the framebuffer
-	 * entirely. vcputc() writes serial before consulting gc_enabled, so the
-	 * console stays fully visible on the UART. */
-	if (!vc_draw_enabled) {
-		return;
-	}
-
 	unsigned char *buffer_attributes = NULL;
 	unsigned char *buffer_characters = NULL;
 	unsigned char *buffer_colorcodes = NULL;
@@ -375,7 +347,6 @@ gc_enable( boolean_t enable )
 	uint32_t buffer_columns = 0;
 	uint32_t buffer_rows = 0;
 	uint32_t buffer_size = 0;
-	spl_t s;
 
 	if (enable == FALSE) {
 		/* Only disable console output if it goes solely to the graphics
@@ -392,7 +363,6 @@ gc_enable( boolean_t enable )
 		gc_ops.enable(FALSE);
 	}
 
-	s = splhigh();
 	VCPUTC_LOCK_LOCK();
 
 	if (gc_buffer_size) {
@@ -413,15 +383,13 @@ gc_enable( boolean_t enable )
 		gc_buffer_size       = 0;
 
 		VCPUTC_LOCK_UNLOCK();
-		splx( s );
 
-		kheap_free( KHEAP_DATA_BUFFERS, buffer_attributes, buffer_size );
-		kheap_free( KHEAP_DATA_BUFFERS, buffer_characters, buffer_size );
-		kheap_free( KHEAP_DATA_BUFFERS, buffer_colorcodes, buffer_size );
-		kheap_free( KHEAP_DATA_BUFFERS, buffer_tab_stops, buffer_columns );
+		kfree_data(buffer_attributes, buffer_size);
+		kfree_data(buffer_characters, buffer_size);
+		kfree_data(buffer_colorcodes, buffer_size);
+		kfree_data(buffer_tab_stops, buffer_columns);
 	} else {
 		VCPUTC_LOCK_UNLOCK();
-		splx( s );
 	}
 
 	if (enable) {
@@ -431,27 +399,19 @@ gc_enable( boolean_t enable )
 			buffer_size    = buffer_columns * buffer_rows;
 
 			if (buffer_size) {
-				buffer_attributes = kheap_alloc( KHEAP_DATA_BUFFERS, buffer_size, Z_WAITOK );
-				buffer_characters = kheap_alloc( KHEAP_DATA_BUFFERS, buffer_size, Z_WAITOK );
-				buffer_colorcodes = kheap_alloc( KHEAP_DATA_BUFFERS, buffer_size, Z_WAITOK );
-				buffer_tab_stops  = kheap_alloc( KHEAP_DATA_BUFFERS, buffer_columns, Z_WAITOK );
+				buffer_attributes = kalloc_data(buffer_size, Z_WAITOK);
+				buffer_characters = kalloc_data(buffer_size, Z_WAITOK);
+				buffer_colorcodes = kalloc_data(buffer_size, Z_WAITOK);
+				buffer_tab_stops  = kalloc_data(buffer_columns, Z_WAITOK);
 
 				if (buffer_attributes == NULL ||
 				    buffer_characters == NULL ||
 				    buffer_colorcodes == NULL ||
 				    buffer_tab_stops == NULL) {
-					if (buffer_attributes) {
-						kheap_free( KHEAP_DATA_BUFFERS, buffer_attributes, buffer_size );
-					}
-					if (buffer_characters) {
-						kheap_free( KHEAP_DATA_BUFFERS, buffer_characters, buffer_size );
-					}
-					if (buffer_colorcodes) {
-						kheap_free( KHEAP_DATA_BUFFERS, buffer_colorcodes, buffer_size );
-					}
-					if (buffer_tab_stops) {
-						kheap_free( KHEAP_DATA_BUFFERS, buffer_tab_stops, buffer_columns );
-					}
+					kfree_data(buffer_attributes, buffer_size);
+					kfree_data(buffer_characters, buffer_size);
+					kfree_data(buffer_colorcodes, buffer_size);
+					kfree_data(buffer_tab_stops, buffer_columns);
 
 					buffer_attributes = NULL;
 					buffer_characters = NULL;
@@ -469,7 +429,6 @@ gc_enable( boolean_t enable )
 			}
 		}
 
-		s = splhigh();
 		VCPUTC_LOCK_LOCK();
 
 		gc_buffer_attributes = buffer_attributes;
@@ -483,7 +442,6 @@ gc_enable( boolean_t enable )
 		gc_reset_screen();
 
 		VCPUTC_LOCK_UNLOCK();
-		splx( s );
 
 		gc_ops.clear_screen(gc_x, gc_y, 0, vinfo.v_rows, 2);
 		gc_ops.show_cursor(gc_x, gc_y);
@@ -491,8 +449,6 @@ gc_enable( boolean_t enable )
 		gc_ops.enable(TRUE);
 		gc_enabled           = TRUE;
 		disableConsoleOutput = FALSE;
-
-		vc_serial_replay_early();
 	}
 }
 
@@ -1277,326 +1233,44 @@ gc_update_color(int color, boolean_t fore)
 	gc_ops.update_color(color, fore);
 }
 
-/* serial_putc has no shared prototype (serial_console.c declares it the same
- * way); used below to mirror the video console to the UART. */
 extern void serial_putc(char);
 
-static uint64_t  pd_efb_phys   = 0;    /* physical base of the framebuffer */
-static volatile uint32_t *pd_efb_va = NULL; /* mapped view, once one is possible */
-static uint64_t  pd_efb_size   = 0;
-static uint32_t  pd_efb_stride = 0;    /* in pixels, not bytes */
-static uint32_t  pd_efb_cols   = 0;
-static uint32_t  pd_efb_rows   = 0;
-static uint32_t  pd_efb_x      = 0;
-static uint32_t  pd_efb_y      = 0;
-
-#if defined(__x86_64__)
-extern uintptr_t pd_boot_mark_fb_va(void);
-#else
-#define pd_boot_mark_fb_va()    ((uintptr_t)0)
-#endif
-
-void pd_early_fb_init(void);
-void pd_early_fb_putc(char c);
-void pd_early_fb_puts(const char *s);
-
 void
-pd_early_fb_init(void)
+vcputc_options(char c, __unused bool poll)
 {
-	if (pd_efb_phys != 0) {
-		return;
-	}
-	if (!PE_state.video.v_baseAddr || PE_state.video.v_depth != 32) {
-		return;
-	}
-#if defined(__x86_64__)
-	if (PE_state.video.v_baseAddr > UINT32_MAX &&
-	    startup_phase < STARTUP_SUB_VM_KERNEL &&
-	    pd_boot_mark_fb_va() == 0) {
-		return;
-	}
-#endif
-	if (!PE_state.video.v_rowBytes || !PE_state.video.v_width) {
-		return;
-	}
-
-	pd_efb_phys   = PE_state.video.v_baseAddr & ~3ULL;
-	pd_efb_size   = (uint64_t)PE_state.video.v_rowBytes * PE_state.video.v_height;
-	pd_efb_stride = PE_state.video.v_rowBytes / 4;
-	pd_efb_cols   = PE_state.video.v_width  / ISO_CHAR_WIDTH;
-	pd_efb_rows   = PE_state.video.v_height / ISO_CHAR_HEIGHT;
-	pd_efb_x      = 0;
-#if defined(__x86_64__)
-	/* 16 bands of 16 rows each; see PD_BAND_* in i386/postcode.h. */
-	pd_efb_y      = (16 * 16) / ISO_CHAR_HEIGHT + 1;
-#else
-	/* arm64 start.s paints at most two bands, and text over them is fine. */
-	pd_efb_y      = 0;
-#endif
-	if (pd_efb_y >= pd_efb_rows) {
-		pd_efb_y = 0;
-	}
-}
-
-static void
-pd_early_fb_map(void)
-{
-	if (pd_efb_va != NULL || pd_efb_phys == 0) {
-		return;
-	}
-	if (pd_boot_mark_fb_va() != 0) {
-		return;
-	}
-#if defined(__x86_64__) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	if (startup_phase < STARTUP_SUB_KMEM_ALLOC) {
-		return;
-	}
-	/*
-	 * On the BCM2837 the VideoCore firmware's framebuffer is ordinary DRAM
-	 * that sits above memSize, so an io mapping reaches it and every pixel
-	 * becomes a store rather than a pmap copy window (128 of those per glyph
-	 * makes a verbose boot unwatchable).
-	 */
-	pd_efb_va = (volatile uint32_t *)ml_io_map(pd_efb_phys, pd_efb_size);
-#else
-	/*
-	 * arm64 keeps writing through ml_phys_write_word. On these boards the
-	 * framebuffer can sit above the memory the bootloader reports (iBoot
-	 * carves the display buffer out past memSize on T8010), so it is not
-	 * covered by the physical aperture an io mapping would be built from,
-	 * and taking this path silently kills the console at the exact moment
-	 * startup reaches kmem_alloc.
-	 */
-#endif
-}
-
-static void
-pd_early_fb_pixel(uint32_t x, uint32_t y, uint32_t colour)
-{
-	uint64_t index = (uint64_t)y * pd_efb_stride + x;
-	uintptr_t band_va;
-
-	if (pd_efb_va != NULL) {
-		pd_efb_va[index] = colour;
-		return;
-	}
-	band_va = pd_boot_mark_fb_va();
-	if (band_va != 0) {
-		((volatile uint32_t *)band_va)[index] = colour;
-		return;
-	}
-	ml_phys_write_word((vm_offset_t)(pd_efb_phys + index * 4), colour);
-}
-
-static void
-pd_early_fb_clear_line(uint32_t line)
-{
-	uint32_t row, col;
-
-	for (row = 0; row < ISO_CHAR_HEIGHT; row++) {
-		for (col = 0; col < pd_efb_cols * ISO_CHAR_WIDTH; col++) {
-			pd_early_fb_pixel(col, line * ISO_CHAR_HEIGHT + row, 0);
-		}
-	}
-}
-
-/*
- * Only worth doing when there is a direct view of the framebuffer to store
- * through. Without one every pixel is an ml_phys_write_word(), i.e. a pmap
- * copy window per word: a 1536x2048 panel is over three million of them, which
- * takes seconds and changes the timing of whatever is being debugged. In that
- * case wrap the way this console always used to - clear only the line about to
- * be written and leave the rest of the previous pass on screen.
- */
-static void
-pd_early_fb_clear_screen(void)
-{
-	uint32_t row, col;
-
-	if (pd_efb_va == NULL && pd_boot_mark_fb_va() == 0) {
-		pd_early_fb_clear_line(0);
-		return;
-	}
-
-	for (row = 0; row < pd_efb_rows * ISO_CHAR_HEIGHT; row++) {
-		for (col = 0; col < pd_efb_cols * ISO_CHAR_WIDTH; col++) {
-			pd_early_fb_pixel(col, row, 0);
-		}
-	}
-}
-
-void
-pd_early_fb_putc(char c)
-{
-	const unsigned char *glyph;
-	uint32_t row, col;
-
-	if (pd_efb_phys == 0) {
-		pd_early_fb_init();
-		if (pd_efb_phys == 0) {
-			return;
-		}
-		pd_early_fb_clear_line(0);
-	}
-
-	pd_early_fb_map();
-
-	if (c == '\r') {
-		pd_efb_x = 0;
-		return;
-	}
-	if (c == '\n') {
-		pd_efb_x = 0;
-		pd_efb_y++;
-		if (pd_efb_y >= pd_efb_rows) {
-			pd_efb_y = 0;
-			pd_early_fb_clear_screen();
-		} else {
-			pd_early_fb_clear_line(pd_efb_y);
-		}
-		return;
-	}
-	if (pd_efb_x >= pd_efb_cols) {
-		pd_early_fb_putc('\n');
-	}
-
-	glyph = iso_font + ((unsigned char)c * ISO_CHAR_HEIGHT);
-	for (row = 0; row < ISO_CHAR_HEIGHT; row++) {
-		unsigned char bits = glyph[row];
-
-		for (col = 0; col < ISO_CHAR_WIDTH; col++) {
-			pd_early_fb_pixel(pd_efb_x * ISO_CHAR_WIDTH + col,
-			    pd_efb_y * ISO_CHAR_HEIGHT + row,
-			    (bits & (1 << col)) ? 0x00FFFFFF : 0);
-		}
-	}
-	pd_efb_x++;
-}
-
-#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
-static void
-pd_early_fb_rebase(uint64_t newphys)
-{
-	extern uint64_t pd_boot_mark_base;
-
-	if (newphys == 0 || newphys == (pd_efb_phys & ~3ULL)) {
-		return;
-	}
-	pd_efb_phys = 0;
-	pd_efb_va   = NULL;
-	pd_early_fb_init();
-	/*
-	 * No clear here: until pd_early_fb_map() runs, every pixel goes through
-	 * ml_phys_write_word(), and a full screen of those is millions of pmap
-	 * copy windows. The first newline clears a line at a time soon enough.
-	 */
-}
-#endif
-
-void
-pd_early_fb_puts(const char *s)
-{
-	while (*s != '\0') {
-		pd_early_fb_putc(*s++);
-	}
-}
-
-#define VC_EARLY_RING_SIZE 16384
-
-extern bool console_serial_video_mirror(void);
-void vc_serial_putc(char c);
-
-static char vc_early_ring[VC_EARLY_RING_SIZE];
-static uint32_t vc_early_len = 0;
-static boolean_t vc_early_replayed = FALSE;
-
-void
-vc_serial_record_early(char c)
-{
-	/*
-	 * Mirroring every serial character onto the framebuffer costs a glyph
-	 * blit per character with the D-cache off, which dominates boot time on
-	 * the BCM2835. The explicit pd_early_fb_puts() boot marks stay; only the
-	 * per-character mirror goes. The UART carries the same text.
-	 */
-#if !defined(ARM_BOARD_CONFIG_BCM2835)
-	if (!gc_enabled) {
-		pd_early_fb_putc(c);
-	}
-#endif
-
-	/*
-	 * The ring only needs to cover what the replay will redraw, so it does
-	 * stop once the console exists.
-	 */
-	if (gc_initialized || vc_early_replayed) {
-		return;
-	}
-	if (vc_early_len < VC_EARLY_RING_SIZE) {
-		vc_early_ring[vc_early_len++] = c;
-	}
-}
-
-static void
-vc_serial_replay_early(void)
-{
-	uint32_t i;
-
-	if (vc_early_replayed) {
-		return;
-	}
-	vc_early_replayed = TRUE;
-
-	if (!console_serial_video_mirror()) {
-		return;
-	}
-	for (i = 0; i < vc_early_len; i++) {
-		vc_serial_putc(vc_early_ring[i]);
-	}
-}
-
-void
-vc_serial_putc(char c)
-{
-	if (gc_initialized && gc_enabled && vc_draw_enabled) {
+	if (gc_initialized && gc_enabled) {
 		VCPUTC_LOCK_LOCK();
 		if (gc_enabled) {
 			gc_hide_cursor(gc_x, gc_y);
 			gc_putchar(c);
 			gc_show_cursor(gc_x, gc_y);
 		}
+#if SCHED_HYGIENE_DEBUG
+		abandon_preemption_disable_measurement();
+#endif /* SCHED_HYGIENE_DEBUG */
 		VCPUTC_LOCK_UNLOCK();
 	}
-}
 
-void
-vcputc(__unused int l, __unused int u, int c)
-{
 	/*
-	 * PureDarwin: mirror everything rendered on the video console to the serial
-	 * port. vcputc is the single sink for the VC_CONS_OPS console, so once
-	 * IOFramebuffer flips the active console to video, ALL output that would
-	 * otherwise only reach the framebuffer - including userland printf via
-	 * /dev/console (e.g. launchd) - passes through here. Mirroring at this
-	 * choke point (rather than the kprintf/ring paths, which miss the
-	 * userland tty path) is what makes the full boot visible on serial.
-	 * _cnputs() already injects '\r' before '\n', so no CR handling here.
-	 * Gated on serial output being requested; kprintf no longer emits its
-	 * own serial copy (PE_kputc is plain cnputc_unbuffered), so no doubling.
+	 * PD: video is the active console whenever this runs (cons_ops only
+	 * dispatches here for VC_CONS_OPS), so it's the only place framebuffer
+	 * text is produced. Mirror it to the UART too whenever serial output
+	 * is configured, so a serial terminal shows the same boot log as the
+	 * on-screen console. gc_enable()'s disableConsoleOutput comment above
+	 * already assumes this mirror exists.
 	 */
-
 	if (serialmode & SERIALMODE_OUTPUT) {
-		serial_putc((char)c);
-	}
-	if (gc_initialized && gc_enabled && vc_draw_enabled) {
-		VCPUTC_LOCK_LOCK();
-		if (gc_enabled) {
-			gc_hide_cursor(gc_x, gc_y);
-			gc_putchar(c);
-			gc_show_cursor(gc_x, gc_y);
+		if (c == '\n') {
+			serial_putc('\r');
 		}
-		VCPUTC_LOCK_UNLOCK();
+		serial_putc(c);
 	}
+}
+
+void
+vcputc(char c)
+{
+	vcputc_options(c, false);
 }
 
 /*
@@ -1993,7 +1667,6 @@ vc_render_font(short newdepth)
 	unsigned char *rendered_font;
 	unsigned int rendered_font_size;
 	int rendered_char_size;
-	spl_t s;
 
 	if (vm_initialized == FALSE) {
 		return; /* nothing to do */
@@ -2002,7 +1675,6 @@ vc_render_font(short newdepth)
 		return; /* nothing to do */
 	}
 
-	s = splhigh();
 	VCPUTC_LOCK_LOCK();
 
 	rendered_font      = vc_rendered_font;
@@ -2014,17 +1686,13 @@ vc_render_font(short newdepth)
 	vc_rendered_char_size = 0;
 
 	VCPUTC_LOCK_UNLOCK();
-	splx(s);
 
-	if (rendered_font) {
-		kheap_free(KHEAP_DATA_BUFFERS, rendered_font, rendered_font_size);
-		rendered_font = NULL;
-	}
+	kfree_data(rendered_font, rendered_font_size);
 
 	if (newdepth) {
 		rendered_char_size = ISO_CHAR_HEIGHT * (((newdepth + 7) / 8) * ISO_CHAR_WIDTH);
 		rendered_font_size = (ISO_CHAR_MAX - ISO_CHAR_MIN + 1) * rendered_char_size;
-		rendered_font = kheap_alloc(KHEAP_DATA_BUFFERS, rendered_font_size, Z_WAITOK);
+		rendered_font = kalloc_data(rendered_font_size, Z_WAITOK);
 	}
 
 	if (rendered_font == NULL) {
@@ -2037,7 +1705,6 @@ vc_render_font(short newdepth)
 
 	olddepth = newdepth;
 
-	s = splhigh();
 	VCPUTC_LOCK_LOCK();
 
 	vc_rendered_font      = rendered_font;
@@ -2045,7 +1712,6 @@ vc_render_font(short newdepth)
 	vc_rendered_char_size = rendered_char_size;
 
 	VCPUTC_LOCK_UNLOCK();
-	splx(s);
 }
 
 static void
@@ -2268,12 +1934,6 @@ vc_blit_rect(int x, int y, int bx,
     void * backBuffer,
     unsigned int flags)
 {
-	/* Every painter funnels through here - glyphs, screen clears, the progress
-	 * meter and the boot logo - so this is the one place that has to honour
-	 * vc_draw_enabled. */
-	if (!vc_draw_enabled) {
-		return;
-	}
 	if (!vinfo.v_depth) {
 		return;
 	}
@@ -2350,22 +2010,8 @@ vc_blit_rect_8(int x, int y, __unused int bx,
 	}
 }
 
-/* For ARM, 16-bit is 565 (RGB); it is 1555 (XRGB) on other platforms */
+/* 16-bit is 1555 (XRGB) on all platforms */
 
-#ifdef __arm__
-#define CLUT_MASK_R     0xf8
-#define CLUT_MASK_G     0xfc
-#define CLUT_MASK_B     0xf8
-#define CLUT_SHIFT_R    << 8
-#define CLUT_SHIFT_G    << 3
-#define CLUT_SHIFT_B    >> 3
-#define MASK_R          0xf800
-#define MASK_G          0x07e0
-#define MASK_B          0x001f
-#define MASK_R_8        0x7f800
-#define MASK_G_8        0x01fe0
-#define MASK_B_8        0x000ff
-#else
 #define CLUT_MASK_R     0xf8
 #define CLUT_MASK_G     0xf8
 #define CLUT_MASK_B     0xf8
@@ -2378,7 +2024,6 @@ vc_blit_rect_8(int x, int y, __unused int bx,
 #define MASK_R_8        0x3fc00
 #define MASK_G_8        0x01fe0
 #define MASK_B_8        0x000ff
-#endif
 
 static void
 vc_blit_rect_16( int x, int y, int bx,
@@ -2846,7 +2491,6 @@ vc_progress_initialize( vc_progress_element * desc,
 void
 vc_progress_set(boolean_t enable, uint32_t vc_delay)
 {
-	spl_t            s;
 	void             *saveBuf = NULL;
 	vm_size_t        saveLen = 0;
 	unsigned int     count;
@@ -2874,7 +2518,6 @@ vc_progress_set(boolean_t enable, uint32_t vc_delay)
 			internal_enable_progressmeter(kProgressMeterKernel);
 		}
 
-		s = splhigh();
 		simple_lock(&vc_progress_lock, LCK_GRP_NULL);
 
 		if (vc_progress_enable != enable) {
@@ -2891,7 +2534,6 @@ vc_progress_set(boolean_t enable, uint32_t vc_delay)
 		}
 
 		simple_unlock(&vc_progress_lock);
-		splx(s);
 
 		if (!enable) {
 			internal_enable_progressmeter(kProgressMeterOff);
@@ -2903,7 +2545,7 @@ vc_progress_set(boolean_t enable, uint32_t vc_delay)
 
 	if (enable) {
 		saveLen = (vc_progress->width * vc_uiscale) * (vc_progress->height * vc_uiscale) * ((vinfo.v_depth + 7) / 8);
-		saveBuf = kheap_alloc( KHEAP_DATA_BUFFERS, saveLen, Z_WAITOK );
+		saveBuf = kalloc_data(saveLen, Z_WAITOK);
 
 		switch (vinfo.v_depth) {
 		case 8:
@@ -2944,7 +2586,6 @@ vc_progress_set(boolean_t enable, uint32_t vc_delay)
 		}
 	}
 
-	s = splhigh();
 	simple_lock(&vc_progress_lock, LCK_GRP_NULL);
 
 	if (vc_progress_enable != enable) {
@@ -2975,11 +2616,8 @@ vc_progress_set(boolean_t enable, uint32_t vc_delay)
 	}
 
 	simple_unlock(&vc_progress_lock);
-	splx(s);
 
-	if (saveBuf) {
-		kheap_free( KHEAP_DATA_BUFFERS, saveBuf, saveLen );
-	}
+	kfree_data(saveBuf, saveLen);
 }
 
 #if defined(XNU_TARGET_OS_OSX)
@@ -3001,10 +2639,8 @@ vc_progressmeter_range(uint32_t pos)
 static void
 vc_progressmeter_task(__unused void *arg0, __unused void *arg)
 {
-	spl_t    s;
 	uint64_t interval;
 
-	s = splhigh();
 	simple_lock(&vc_progress_lock, LCK_GRP_NULL);
 	if (kProgressMeterKernel == vc_progressmeter_enable) {
 		uint32_t pos = (vc_progressmeter_count >> 13);
@@ -3021,7 +2657,6 @@ vc_progressmeter_task(__unused void *arg0, __unused void *arg)
 		}
 	}
 	simple_unlock(&vc_progress_lock);
-	splx(s);
 }
 
 void
@@ -3035,12 +2670,10 @@ vc_progress_setdiskspeed(uint32_t speed)
 static void
 vc_progress_task(__unused void *arg0, __unused void *arg)
 {
-	spl_t     s;
 	int       x, y, width, height;
 	uint64_t  x_pos, y_pos;
 	const unsigned char * data;
 
-	s = splhigh();
 	simple_lock(&vc_progress_lock, LCK_GRP_NULL);
 
 	if (vc_progress_enable) {
@@ -3112,8 +2745,12 @@ vc_progress_task(__unused void *arg0, __unused void *arg)
 			thread_call_enter_delayed(&vc_progress_call, vc_progress_deadline);
 		}while (FALSE);
 	}
+
+#if SCHED_HYGIENE_DEBUG
+	abandon_preemption_disable_measurement();
+#endif /* SCHED_HYGIENE_DEBUG */
+
 	simple_unlock(&vc_progress_lock);
-	splx(s);
 }
 
 /*
@@ -3137,15 +2774,12 @@ static boolean_t    lastVideoMapKmap = FALSE;
 static void
 gc_pause( boolean_t pause, boolean_t graphics_now )
 {
-	spl_t s;
-
-	s = splhigh();
 	VCPUTC_LOCK_LOCK();
 
 	/* Same serial-mirror consideration as gc_enable(). */
 	disableConsoleOutput = (pause && !console_is_serial() &&
 	    !(serialmode & SERIALMODE_OUTPUT));
-	gc_enabled           = (!pause && !graphics_now && vc_draw_enabled);
+	gc_enabled           = (!pause && !graphics_now);
 
 	VCPUTC_LOCK_UNLOCK();
 
@@ -3168,27 +2802,11 @@ gc_pause( boolean_t pause, boolean_t graphics_now )
 	}
 
 	simple_unlock(&vc_progress_lock);
-	splx(s);
 }
 
 static void
 vc_initialize(__unused struct vc_info * vinfo_p)
 {
-#ifdef __arm__
-	unsigned long cnt, data16, data32;
-
-	if (vinfo.v_depth == 16) {
-		for (cnt = 0; cnt < 8; cnt++) {
-			data32 = vc_colors[cnt][2];
-			data16  = (data32 & 0x0000F8) <<  8;
-			data16 |= (data32 & 0x00FC00) >>  5;
-			data16 |= (data32 & 0xF80000) >> 19;
-			data16 |= data16 << 16;
-			vc_colors[cnt][1] = data16;
-		}
-	}
-#endif
-
 	vinfo.v_rows = vinfo.v_height / ISO_CHAR_HEIGHT;
 	vinfo.v_columns = vinfo.v_width / ISO_CHAR_WIDTH;
 	vinfo.v_rowscanbytes = ((vinfo.v_depth + 7) / 8) * vinfo.v_width;
@@ -3265,13 +2883,24 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 			gc_acquired = TRUE;
 		} else {
 			if (makeMapping) {
+#if HAS_UCNORMAL_MEM || APPLEVIRTUALPLATFORM
+				/*
+				 * Framebuffers would normally use VM_WIMG_RT, which
+				 * io_map doesn't support.  However this buffer is set up
+				 * by the bootloader and doesn't require D$ cleaning, so
+				 * VM_WIMG_RT and VM_WIMG_WCOMB are functionally
+				 * equivalent.
+				 */
+				unsigned int flags = VM_WIMG_WCOMB;
+#else
 				unsigned int flags = VM_WIMG_IO;
+#endif
 				if (boot_vinfo->v_length != 0) {
 					newMapSize = (unsigned int) round_page(boot_vinfo->v_length);
 				} else {
 					newMapSize = (unsigned int) round_page(new_vinfo.v_height * new_vinfo.v_rowbytes);                      /* Remember size */
 				}
-				newVideoVirt = io_map_spec((vm_map_offset_t)new_vinfo.v_physaddr, newMapSize, flags);   /* Allocate address space for framebuffer */
+				newVideoVirt = ml_io_map_unmappable((vm_map_offset_t)new_vinfo.v_physaddr, newMapSize, flags);   /* Allocate address space for framebuffer */
 			}
 			new_vinfo.v_baseaddr = newVideoVirt + boot_vinfo->v_offset;                     /* Set the new framebuffer address */
 		}
@@ -3279,12 +2908,6 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 #if defined(__x86_64__)
 		// Adjust the video buffer pointer to point to where it is in high virtual (above the hole)
 		new_vinfo.v_baseaddr |= (VM_MIN_KERNEL_ADDRESS & ~LOW_4GB_MASK);
-#endif
-
-#if defined(PUREDARWIN_EARLY_FB_MARK) && defined(__x86_64__)
-		if (new_vinfo.v_physaddr != 0) {
-			pd_early_fb_rebase(new_vinfo.v_physaddr);
-		}
 #endif
 
 		/* Update the vinfo structure atomically with respect to the vc_progress task if running */
@@ -3331,20 +2954,6 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 	}
 
 	graphics_now = gc_graphics_boot && !gc_desire_text;
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	/*
-	 * The console handoff is where output has repeatedly stopped, and from the
-	 * outside "the driver wedged" and "the driver took the screen and cannot
-	 * draw on it" look the same. Report what each op is handed, so the geometry
-	 * vc will use can be checked against what the bootloader found.
-	 */
-	kprintf("initialize_screen: op=%u vinfo base=0x%lx phys=0x%llx "
-	    "%ux%u depth=%u rowbytes=%u type=%u scale=%u "
-	    "(gc_acquired=%d graphics_now=%d)\n",
-	    op, (unsigned long)vinfo.v_baseaddr, (uint64_t)vinfo.v_physaddr,
-	    vinfo.v_width, vinfo.v_height, vinfo.v_depth, vinfo.v_rowbytes,
-	    vinfo.v_type, vinfo.v_scale, (int)gc_acquired, (int)graphics_now);
-#endif
 	switch (op) {
 	case kPEGraphicsMode:
 		gc_graphics_boot = TRUE;
@@ -3439,7 +3048,6 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 #if defined(__x86_64__)
 	case kPERefreshBootGraphics:
 	{
-		spl_t     s;
 		boolean_t save;
 
 		if (kBootArgsFlagBlack & ((boot_args *) PE_state.bootArgs)->flags) {
@@ -3451,14 +3059,12 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 
 		internal_enable_progressmeter(kProgressMeterKernel);
 
-		s = splhigh();
 		simple_lock(&vc_progress_lock, LCK_GRP_NULL);
 
 		vc_progressmeter_drawn = 0;
 		internal_set_progressmeter(vc_progressmeter_range(vc_progressmeter_count >> 13));
 
 		simple_unlock(&vc_progress_lock);
-		splx(s);
 
 		internal_enable_progressmeter(kProgressMeterOff);
 		vc_progress_white = save;
@@ -3478,7 +3084,6 @@ vcattach(void)
 	const boot_args * bootargs  = (typeof(bootargs))PE_state.bootArgs;
 
 	PE_parse_boot_argn("meter", &vc_progress_withmeter, sizeof(vc_progress_withmeter));
-	PE_parse_boot_argn("vc_draw", &vc_draw_enabled, sizeof(vc_draw_enabled));
 
 #if defined(__x86_64__)
 	vc_progress_white = (0 != ((kBootArgsFlagBlackBg | kBootArgsFlagLoginUI)
@@ -3511,10 +3116,10 @@ vcattach(void)
 				continue;
 			}
 
-			vcputc( 0, 0, msgbufp->msg_bufc[index] );
+			vcputc( msgbufp->msg_bufc[index] );
 
 			if (msgbufp->msg_bufc[index] == '\n') {
-				vcputc( 0, 0, '\r' );
+				vcputc( '\r' );
 			}
 		}
 	}
@@ -3567,7 +3172,7 @@ vc_draw_progress_meter(unsigned int flags, int start, int end, int pos)
 		case kDataRotate90: // left middle, bar goes down
 			rectW   = barHeight;
 			rectH   = width;
-			rectX   = ((vinfo.v_width / 3) - (barHeight / 2));
+			rectX   = (6 * vinfo.v_width) / 100 + 34 * vc_uiscale - (barHeight / 2);
 			rectY   = ((vinfo.v_height - barWidth) / 2) + i;
 			bx      = i * barHeight;
 			backRow = barHeight;
@@ -3576,14 +3181,14 @@ vc_draw_progress_meter(unsigned int flags, int start, int end, int pos)
 			rectW   = width;
 			rectH   = barHeight;
 			rectX   = ((vinfo.v_width - barWidth) / 2) + barWidth - width - i;
-			rectY   = (vinfo.v_height / 3) - (barHeight / 2);
+			rectY   = (6 * vinfo.v_height) / 100 + 34 * vc_uiscale - (barHeight / 2);
 			bx      = barWidth - width - i;
 			backRow = barWidth;
 			break;
 		case kDataRotate270: // right middle, bar goes up
 			rectW   = barHeight;
 			rectH   = width;
-			rectX   = (vinfo.v_width - (vinfo.v_width / 3) - (barHeight / 2));
+			rectX   = (94 * vinfo.v_width) / 100 - 34 * vc_uiscale - (barHeight / 2);
 			rectY   = ((vinfo.v_height - barWidth) / 2) + barWidth - width - i;
 			bx      = (barWidth - width - i) * barHeight;
 			backRow = barHeight;
@@ -3593,7 +3198,7 @@ vc_draw_progress_meter(unsigned int flags, int start, int end, int pos)
 			rectW   = width;
 			rectH   = barHeight;
 			rectX   = ((vinfo.v_width - barWidth) / 2) + i;
-			rectY   = vinfo.v_height - (vinfo.v_height / 3) - (barHeight / 2);
+			rectY   = (94 * vinfo.v_height) / 100 - 34 * vc_uiscale - (barHeight / 2);
 			bx      = i;
 			backRow = barWidth;
 			break;
@@ -3608,7 +3213,6 @@ extern void IORecordProgressBackbuffer(void * buffer, size_t size, uint32_t them
 static void
 internal_enable_progressmeter(int new_value)
 {
-	spl_t     s;
 	void    * new_buffer;
 	boolean_t stashBackbuffer;
 	int flags = vinfo.v_rotate;
@@ -3616,12 +3220,10 @@ internal_enable_progressmeter(int new_value)
 	stashBackbuffer = FALSE;
 	new_buffer = NULL;
 	if (new_value) {
-		new_buffer = kheap_alloc(KHEAP_DATA_BUFFERS,
-		    (kProgressBarWidth * vc_uiscale) *
+		new_buffer = kalloc_data((kProgressBarWidth * vc_uiscale) *
 		    (kProgressBarHeight * vc_uiscale) * sizeof(int), Z_WAITOK);
 	}
 
-	s = splhigh();
 	simple_lock(&vc_progress_lock, LCK_GRP_NULL);
 
 	if (kProgressMeterUser == new_value) {
@@ -3652,7 +3254,6 @@ internal_enable_progressmeter(int new_value)
 	}
 
 	simple_unlock(&vc_progress_lock);
-	splx(s);
 
 	if (new_buffer) {
 		if (stashBackbuffer) {
@@ -3662,8 +3263,7 @@ internal_enable_progressmeter(int new_value)
 			    * sizeof(int),
 			    vc_progress_white);
 		}
-		kheap_free(KHEAP_DATA_BUFFERS, new_buffer,
-		    (kProgressBarWidth * vc_uiscale) *
+		kfree_data(new_buffer, (kProgressBarWidth * vc_uiscale) *
 		    (kProgressBarHeight * vc_uiscale) * sizeof(int));
 	}
 }
@@ -3710,9 +3310,6 @@ vc_enable_progressmeter(int new_value)
 void
 vc_set_progressmeter(int new_value)
 {
-	spl_t s;
-
-	s = splhigh();
 	simple_lock(&vc_progress_lock, LCK_GRP_NULL);
 
 	if (vc_progressmeter_enable) {
@@ -3724,7 +3321,6 @@ vc_set_progressmeter(int new_value)
 	}
 
 	simple_unlock(&vc_progress_lock);
-	splx(s);
 }
 
 #endif /* defined(XNU_TARGET_OS_OSX) */

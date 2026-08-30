@@ -1118,13 +1118,13 @@ lookupMatchingInterface(SCNetworkInterfaceRef	interface,
 			CFIndex			if_list_index,
 			CFBooleanRef		builtin)
 {
-    CFStringRef	    if_type;
+    CFStringRef	    interface_type;
     CFStringRef	    if_prefix;
     CFDictionaryRef match	    = NULL;
     matchContext    match_context;
 
-    if_type = SCNetworkInterfaceGetInterfaceType(interface);
-    if (if_type == NULL) {
+    interface_type = SCNetworkInterfaceGetInterfaceType(interface);
+    if (interface_type == NULL) {
 	return NULL;
     }
     if_prefix = _SCNetworkInterfaceGetIOInterfaceNamePrefix(interface);
@@ -1132,7 +1132,7 @@ lookupMatchingInterface(SCNetworkInterfaceRef	interface,
 	return NULL;
     }
 
-    match_context.match_type	= if_type;
+    match_context.match_type	= interface_type;
     match_context.match_prefix	= if_prefix;
     match_context.match_info	= _SCNetworkInterfaceCopyInterfaceInfo(interface);
     match_context.match_builtin	= builtin;
@@ -4082,4 +4082,3 @@ main(int argc, char ** argv)
     return 0;
 }
 #endif	/* TEST_SNAPSHOT */
-

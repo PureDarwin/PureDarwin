@@ -21,6 +21,7 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
+#include "../../xnu/libkern/libkern/OSMalloc.h"
 #include <sys/types.h>                       // (miscfs/devfs/devfs.h, ...)
 
 #include <miscfs/devfs/devfs.h>              // (devfs_make_node, ...)
@@ -45,6 +46,13 @@
 #include <IOKit/storage/IOBlockStorageDriver.h>
 #include <IOKit/storage/IOMedia.h>
 #include <IOKit/storage/IOMediaBSDClient.h>
+
+/* xnu's generated private header can pre-empt the legacy OSMalloc header. */
+typedef struct __OSMallocTag__ * OSMallocTag;
+extern "C" OSMallocTag OSMalloc_Tagalloc(const char *, uint32_t);
+extern "C" void OSMalloc_Tagfree(OSMallocTag);
+extern "C" void *OSMalloc_noblock(uint32_t, OSMallocTag);
+extern "C" void OSFree(void *, uint32_t, OSMallocTag);
 ///w:start
 #if TARGET_OS_OSX
 #include <IOKit/pwr_mgt/RootDomain.h>

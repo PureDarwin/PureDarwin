@@ -58,6 +58,10 @@
 #define _NETINET6_ND6_VAR_H_
 
 #ifdef BSD_KERNEL_PRIVATE
+#include <kern/locks.h>
+#include <sys/types.h>
+#include <mach/boolean.h>
+
 struct nd_ifinfo {
 	decl_lck_mtx_data(, lock);
 	boolean_t initialized;          /* Flag to see the entry is initialized */
@@ -71,7 +75,7 @@ struct nd_ifinfo {
 	u_int8_t chlim;                 /* CurHopLimit */
 	u_int8_t _pad[3];
 	/* the following 3 members are for privacy extension for addrconf */
-	u_int8_t randomseed0[8]; /* upper 64 bits of SHA1 digest */
+	u_int8_t randomseed0[8]; /* upper 64 bits of SHA256 digest */
 	u_int8_t randomseed1[8]; /* lower 64 bits (usually the EUI64 IFID) */
 	u_int8_t randomid[8];   /* current random ID */
 	/* keep track of routers and prefixes on this link */

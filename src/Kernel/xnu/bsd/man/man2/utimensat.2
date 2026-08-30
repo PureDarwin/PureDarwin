@@ -127,7 +127,7 @@ system call
 are constructed by a bitwise-inclusive OR of flags from the following list,
 defined in
 .In fcntl.h :
-.Bl -tag -width indent
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
 .It Dv AT_SYMLINK_NOFOLLOW
 If
 .Fa path
@@ -135,6 +135,28 @@ names a symbolic link, the symbolic link's times are changed.
 By default,
 .Fn utimensat
 changes the times of the file referenced by the symbolic link.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_SYMLINK_NOFOLLOW_ANY
+If
+.Fa path
+names a symbolic link, the symbolic link's times are changed.
+In addition, if any symbolic link is enountered during pathname
+resolution, an error is returned.
+By default,
+.Fn utimensat
+changes the times of the file referenced by the symbolic link.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_RESOLVE_BENEATH
+If
+.Fa path
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
+.It Dv AT_UNIQUE
+If
+.Fa path
+has multiple hard links, an error is returned.
 .El
 .Sh RETURN VALUES
 .Rv -std
@@ -239,6 +261,14 @@ argument is not an absolute path and
 is neither
 .Dv AT_FDCWD
 nor a file descriptor associated with a directory.
+.It Bq Er ENOTCAPABLE
+if AT_RESOLVE_BENEATH is passed and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory.
+.It Bq Er ENOTCAPABLE
+if AT_UNIQUE is passed and
+.Fa path
+has multiple hard links.
 .El
 .Sh SEE ALSO
 .Xr chflags 2 ,

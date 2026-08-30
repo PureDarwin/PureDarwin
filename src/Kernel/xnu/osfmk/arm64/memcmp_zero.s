@@ -53,7 +53,7 @@
 
 .macro ClearFrameAndReturn
 	ldp       fp, lr, [sp], #16
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG _memcmp_zero_ptr_aligned
 .endm
 
 /*****************************************************************************

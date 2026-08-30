@@ -120,10 +120,11 @@ enum guard_fd_exception_codes {
 #define VNG_TRUNC_OTHER         (1u << 4)
 #define VNG_LINK                (1u << 5)
 #define VNG_EXCHDATA            (1u << 6)
+#define VNG_PERMISSIONS         (1u << 7)
 
 #define VNG_ALL \
 	(VNG_RENAME_TO | VNG_RENAME_FROM | VNG_UNLINK | VNG_LINK | \
-	 VNG_WRITE_OTHER | VNG_TRUNC_OTHER | VNG_EXCHDATA)
+	 VNG_WRITE_OTHER | VNG_TRUNC_OTHER | VNG_EXCHDATA | VNG_PERMISSIONS)
 
 struct vnguard_set {
 	int vns_fd;
@@ -165,11 +166,16 @@ enum guard_vn_exception_codes {
 #define kVNG_POLICY_EXC_CORPSE  (1u << 3)
 #define kVNG_POLICY_SIGKILL     (1u << 4)
 #define kVNG_POLICY_UPRINTMSG   (1u << 5)
+#define kVNG_POLICY_EXC_CORE    (1u << 6)
 
-#if defined(KERNEL)
+#if BSD_KERNEL_PRIVATE
+struct fileglob;
 extern int vnguard_exceptions_active(void);
 extern void vnguard_policy_init(void);
-#endif /* KERNEL */
+#if CONFIG_MACF && CONFIG_VNGUARD
+extern void vng_file_label_destroy(struct fileglob *fg);
+#endif /* CONFIG_MACF && CONFIG_VNGUARD */
+#endif /* BSD_KERNEL_PRIVATE */
 
 #endif /* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 

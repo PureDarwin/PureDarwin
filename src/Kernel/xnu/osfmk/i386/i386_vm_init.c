@@ -81,6 +81,7 @@
 #include <i386/misc_protos.h>
 #include <x86_64/lowglobals.h>
 #include <i386/pal_routines.h>
+#include <vm/vm_page_internal.h>
 
 #include <mach-o/loader.h>
 #include <libkern/kernel_mach_header.h>
@@ -594,7 +595,7 @@ i386_vm_init(uint64_t   maxmem,
 
 			if (mptr->Attribute & EFI_MEMORY_KERN_RESERVED) {
 				if (++pmap_reserved_ranges > PMAP_MAX_RESERVED_RANGES) {
-					panic("Too many reserved ranges %u\n", pmap_reserved_ranges);
+					panic("Too many reserved ranges %u", pmap_reserved_ranges);
 				}
 			}
 
@@ -720,7 +721,7 @@ i386_vm_init(uint64_t   maxmem,
 	sane_size = mem_actual;
 
 	/*
-	 * We cap at KERNEL_MAXMEM bytes (currently 1536GB).
+	 * We cap at KERNEL_MAXMEM bytes (see vm_param.h).
 	 * Unless overriden by the maxmem= boot-arg
 	 * -- which is a non-zero maxmem argument to this function.
 	 */
@@ -824,8 +825,8 @@ i386_vm_init(uint64_t   maxmem,
 				vm_lopage_lowater = vm_lopage_free_limit / 16;
 			}
 
-			vm_lopage_refill = TRUE;
-			vm_lopage_needed = TRUE;
+			vm_lopage_refill = true;
+			vm_lopage_needed = true;
 		}
 	}
 
@@ -1078,4 +1079,13 @@ pmap_valid_page(
 		}
 	}
 	return FALSE;
+}
+
+/*
+ * Returns true if the address lies in the kernel __TEXT segment range.
+ */
+bool
+kernel_text_contains(vm_offset_t addr)
+{
+	return vm_kernel_stext <= addr && addr < vm_kernel_etext;
 }

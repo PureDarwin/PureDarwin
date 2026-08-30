@@ -86,7 +86,6 @@ extern void hv_resume(void);
 extern kern_return_t hv_task_trap(uint64_t index, uint64_t arg);
 extern kern_return_t hv_thread_trap(uint64_t index, uint64_t arg);
 extern boolean_t hv_ast_pending(void);
-extern void hv_port_notify(mach_msg_header_t *msg);
 
 extern void hv_trace_guest_enter(uint32_t vcpu_id, uint64_t *vcpu_regs);
 extern void hv_trace_guest_exit(uint32_t vcpu_id, uint64_t *vcpu_regs,

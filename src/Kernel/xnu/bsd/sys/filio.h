@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2023 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -84,6 +84,8 @@
 #ifdef KERNEL_PRIVATE
 #define FIODEVICELOCKED _IO('f', 121)   /* device locked/unlocked */
 #define FIOPINSWAP              _IO('f', 120)   /* pin swap file to fast device */
+#define FIODEVICEEPSTATE _IOR('f', 119, int)  /* get device ephemeral state */
+#define FIODEVICECXSTATE _IO('f', 118)  /* cx class expired */
 #endif
 
 #endif /* !_SYS_FILIO_H_ */

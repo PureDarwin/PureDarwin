@@ -179,10 +179,9 @@ struct ip6protosw {
 	 * utility hooks
 	 */
 	void    (*pr_init)              /* initialization hook */
-	(struct ip6protosw *, struct domain *);
+	(struct protosw *, struct domain *);
 	void    (*pr_drain)(void);      /* flush any excess space possible */
 	/* for compat. with IPv4 protosw */
-	int     (*pr_sysctl)(void);     /* sysctl for protocol */
 	int     (*pr_lock)              /* lock function for protocol */
 	(struct socket *so, int refcnt, void *debug);
 	int     (*pr_unlock)            /* unlock for protocol */
@@ -200,6 +199,9 @@ struct ip6protosw {
 
 	void    (*pr_copy_last_owner) /* copy last socket from listener */
 	(struct socket *so, struct socket *head);
+
+	/* Memory Accounting instance for this subsystem. */
+	struct mem_acct *pr_mem_acct;
 };
 #endif /* BSD_KERNEL_PRIVATE */
 #endif /* _NETINET6_IP6PROTOSW_H_ */

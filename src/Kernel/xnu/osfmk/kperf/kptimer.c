@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2018 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2011-2021 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -115,25 +115,20 @@ const uint64_t kptimer_minperiods_ns[KTPL_MAX] = {
 #if defined(__x86_64__)
 	[KTPL_FG] = 20 * NSEC_PER_USEC, /* The minimum timer period in xnu, period. */
 	[KTPL_BG] = 1 * NSEC_PER_MSEC,
-	[KTPL_FG_PET] = 2 * NSEC_PER_MSEC,
-	[KTPL_BG_PET] = 5 * NSEC_PER_MSEC,
+	[KTPL_FG_PET] = 1 * NSEC_PER_MSEC,
+	[KTPL_BG_PET] = 1 * NSEC_PER_MSEC,
 #elif defined(__arm64__)
 	[KTPL_FG] = 50 * NSEC_PER_USEC,
 	[KTPL_BG] = 1 * NSEC_PER_MSEC,
-	[KTPL_FG_PET] = 2 * NSEC_PER_MSEC,
-	[KTPL_BG_PET] = 10 * NSEC_PER_MSEC,
-#elif defined(__arm__)
-	[KTPL_FG] = 100 * NSEC_PER_USEC,
-	[KTPL_BG] = 10 * NSEC_PER_MSEC,
-	[KTPL_FG_PET] = 2 * NSEC_PER_MSEC,
-	[KTPL_BG_PET] = 50 * NSEC_PER_MSEC,
+	[KTPL_FG_PET] = 1 * NSEC_PER_MSEC,
+	[KTPL_BG_PET] = 1 * NSEC_PER_MSEC,
 #else
 #error unexpected architecture
 #endif
 };
 
 static void kptimer_pet_handler(void * __unused param1, void * __unused param2);
-static void kptimer_stop_curcpu(processor_t processor);
+static void kptimer_stop_cpu(processor_t processor);
 
 void
 kptimer_init(void)
@@ -161,9 +156,8 @@ kptimer_setup(void)
 	lck_grp_init(&kptimer_lock_grp, "kptimer", LCK_GRP_ATTR_NULL);
 
 	const size_t timers_size = KPTIMER_MAX * sizeof(struct kptimer);
-	kptimer.g_timers = kalloc_tag(timers_size, VM_KERN_MEMORY_DIAG);
-	assert(kptimer.g_timers != NULL);
-	memset(kptimer.g_timers, 0, timers_size);
+	kptimer.g_timers = zalloc_permanent_tag(timers_size,
+	    ZALIGN(struct kptimer), VM_KERN_MEMORY_DIAG);
 	for (int i = 0; i < KPTIMER_MAX; i++) {
 		lck_spin_init(&kptimer.g_timers[i].kt_lock, &kptimer_lock_grp,
 		    LCK_ATTR_NULL);
@@ -171,9 +165,8 @@ kptimer_setup(void)
 
 	const size_t deadlines_size = machine_info.logical_cpu_max * KPTIMER_MAX *
 	    sizeof(kptimer.g_cpu_deadlines[0]);
-	kptimer.g_cpu_deadlines = kalloc_tag(deadlines_size, VM_KERN_MEMORY_DIAG);
-	assert(kptimer.g_cpu_deadlines != NULL);
-	memset(kptimer.g_cpu_deadlines, 0, deadlines_size);
+	kptimer.g_cpu_deadlines = zalloc_permanent_tag(deadlines_size,
+	    ZALIGN_64, VM_KERN_MEMORY_DIAG);
 	for (int i = 0; i < KPTIMER_MAX; i++) {
 		for (int j = 0; j < machine_info.logical_cpu_max; j++) {
 			kptimer_set_cpu_deadline(j, i, EndOfAllTime);
@@ -289,9 +282,6 @@ kptimer_fire(struct kptimer *timer, unsigned int timerid,
 		 */
 		timer->kt_fire_time = mach_absolute_time();
 #endif /* DEVELOPMENT || DEBUG */
-		if (timerid == kptimer.g_pet_timerid && kppet_get_lightweight_pet()) {
-			os_atomic_inc(&kppet_gencount, relaxed);
-		}
 	} else {
 		/*
 		 * In case this CPU has missed several timer fires, get it back on track
@@ -324,15 +314,17 @@ kptimer_expire(processor_t processor, int cpuid, uint64_t now)
 {
 	uint64_t min_deadline = UINT64_MAX;
 
-	if (kperf_status != KPERF_SAMPLING_ON) {
-		if (kperf_status == KPERF_SAMPLING_SHUTDOWN) {
-			kptimer_stop_curcpu(processor);
-			return;
-		} else if (kperf_status == KPERF_SAMPLING_OFF) {
-			panic("kperf: timer fired at %llu, but sampling is disabled", now);
-		} else {
-			panic("kperf: unknown sampling state 0x%x", kperf_status);
-		}
+	enum kperf_sampling status = os_atomic_load(&kperf_status, acquire);
+	switch (status) {
+	case KPERF_SAMPLING_ON:
+		break;
+	case KPERF_SAMPLING_SHUTDOWN:
+	// Treat off the same as shutdown: this CPU just missed the shutdown request.
+	case KPERF_SAMPLING_OFF:
+		kptimer_stop_cpu(processor);
+		return;
+	default:
+		panic("kperf: unknown sampling state 0x%x", status);
 	}
 
 	for (unsigned int i = 0; i < kptimer.g_ntimers; i++) {
@@ -526,20 +518,25 @@ kptimer_running_setup(processor_t processor, uint64_t now)
 }
 
 static void
-kptimer_start_remote(void *arg)
+kptimer_start_cpu(processor_t processor)
 {
-	processor_t processor = current_processor();
 	uint64_t now = mach_absolute_time();
 	uint64_t deadline = kptimer_earliest_deadline(processor, now);
 	if (deadline < UINT64_MAX) {
 		running_timer_enter(processor, RUNNING_TIMER_KPERF, NULL, deadline,
 		    now);
 	}
+}
+
+static void
+kptimer_start_remote(void *arg)
+{
+	kptimer_start_cpu(current_processor());
 	kptimer_broadcast_ack(arg);
 }
 
 static void
-kptimer_stop_curcpu(processor_t processor)
+kptimer_stop_cpu(processor_t processor)
 {
 	for (unsigned int i = 0; i < kptimer.g_ntimers; i++) {
 		kptimer_set_cpu_deadline(processor->cpu_id, i, EndOfAllTime);
@@ -547,12 +544,49 @@ kptimer_stop_curcpu(processor_t processor)
 	running_timer_cancel(processor, RUNNING_TIMER_KPERF);
 }
 
+void
+kptimer_stop_curcpu(void)
+{
+	kptimer_stop_cpu(current_processor());
+}
+
 static void
 kptimer_stop_remote(void * __unused arg)
 {
 	assert(ml_get_interrupts_enabled() == FALSE);
-	kptimer_stop_curcpu(current_processor());
+	kptimer_stop_cpu(current_processor());
 	kptimer_broadcast_ack(arg);
+}
+
+/*
+ * Called when a CPU is brought online.  Handles the cases where the kperf timer may have
+ * been either enabled or disabled while the CPU was offline (preventing the enabling/disabling
+ * IPIs from reaching this CPU).
+ */
+void
+kptimer_curcpu_up(void)
+{
+	enum kperf_sampling status = os_atomic_load(&kperf_status, acquire);
+	processor_t processor = current_processor();
+
+	assert(ml_get_interrupts_enabled() == FALSE);
+
+	/*
+	 * If the CPU was taken offline, THEN kperf was enabled, this CPU would have missed
+	 * the enabling IPI, so fix that here.  Also, if the CPU was taken offline (after having
+	 * enabled kperf), recompute the deadline (since we may have missed a timer update) and
+	 * keep the timer enabled.
+	 */
+	if (status == KPERF_SAMPLING_ON) {
+		kptimer_start_cpu(processor);
+	} else {
+		/*
+		 * Similarly, If the CPU is resuming after having previously armed the kperf timer
+		 * before going down, and kperf is currently disabled, disable the kperf running
+		 * timer on this CPU.
+		 */
+		kptimer_stop_cpu(processor);
+	}
 }
 
 void
@@ -574,15 +608,18 @@ kptimer_start(void)
 			 * No period or action means the timer is inactive.
 			 */
 			continue;
-		} else if (!kppet_get_lightweight_pet() &&
-		    i == kptimer.g_pet_timerid) {
-			kptimer.g_pet_active = true;
-			timer_call_enter(&kptimer.g_pet_timer, now + timer->kt_period_abs,
-			    TIMER_CALL_SYS_CRITICAL);
-		} else {
-			timer->kt_cur_deadline = now + timer->kt_period_abs;
-			ntimers_active++;
 		}
+		if (i == kptimer.g_pet_timerid) {
+			kppet_set_period(timer->kt_period_abs);
+			if (!kppet_get_lightweight_pet()) {
+				kptimer.g_pet_active = true;
+				timer_call_enter(&kptimer.g_pet_timer, now + timer->kt_period_abs,
+				    TIMER_CALL_SYS_CRITICAL);
+				continue;
+			}
+		}
+		timer->kt_cur_deadline = now + timer->kt_period_abs;
+		ntimers_active++;
 	}
 	if (ntimers_active > 0) {
 		kptimer_broadcast(kptimer_start_remote);

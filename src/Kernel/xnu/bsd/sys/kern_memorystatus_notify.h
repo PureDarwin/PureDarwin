@@ -33,16 +33,20 @@
 #include <sys/proc.h>
 #include <sys/param.h>
 
+#if BSD_KERNEL_PRIVATE
+
 #if VM_PRESSURE_EVENTS
 
 extern vm_pressure_level_t memorystatus_vm_pressure_level;
-extern boolean_t memorystatus_hwm_candidates;
+extern _Atomic bool memorystatus_hwm_candidates;
+extern unsigned int memstat_sustained_pressure_max_pri;
 
-boolean_t memorystatus_warn_process(const proc_t p, __unused boolean_t is_active, __unused boolean_t is_fatal, boolean_t exceeded);
+boolean_t memorystatus_warn_process(const proc_t p, boolean_t is_active,
+    boolean_t is_fatal, boolean_t exceeded);
 int memorystatus_send_note(int event_code, void *data, uint32_t data_length);
-int memorystatus_send_dirty_status_change_note(void *data, uint32_t data_length);
 void memorystatus_send_low_swap_note(void);
 void consider_vm_pressure_events(void);
+void memorystatus_notify_init(void);
 
 #if CONFIG_MEMORYSTATUS
 
@@ -50,8 +54,9 @@ int memorystatus_low_mem_privileged_listener(uint32_t op_flags);
 int memorystatus_send_pressure_note(int pid);
 boolean_t memorystatus_is_foreground_locked(proc_t p);
 boolean_t memorystatus_bg_pressure_eligible(proc_t p);
-void memorystatus_proc_flags_unsafe(void * v, boolean_t *is_dirty, boolean_t *is_dirty_tracked, boolean_t *allow_idle_exit);
-extern void memorystatus_issue_fg_band_notify(void);
+void memorystatus_proc_flags_unsafe(void * v, boolean_t *is_dirty, boolean_t *is_dirty_tracked, boolean_t *allow_idle_exit, boolean_t *is_active, boolean_t *is_managed, boolean_t *has_assertion);
+void memorystatus_broadcast_jetsam_pressure(
+	vm_pressure_level_t pressure_level);
 
 #endif /* CONFIG_MEMORYSTATUS */
 
@@ -65,5 +70,7 @@ if (cond) { printf(format, ##__VA_ARGS__); } \
 #endif
 
 #endif /* VM_PRESSURE_EVENTS */
+
+#endif /* BSD_KERNEL_PRIVATE */
 
 #endif /* SYS_MEMORYSTATUS_NOTIFY_H */

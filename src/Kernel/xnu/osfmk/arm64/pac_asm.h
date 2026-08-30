@@ -36,6 +36,7 @@
 #include <pexpert/arm64/board_config.h>
 #include <arm64/proc_reg.h>
 #if HAS_PARAVIRTUALIZED_PAC
+#include <arm64/hv_hvc.h>
 #include "smccc_asm.h"
 #endif
 #include "assym.s"
@@ -110,6 +111,7 @@
 	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER
 	mov		x1, \new_jop_key
 	hvc		#0
+	cbnz		x0, .
 	LOAD_SMCCC_CLOBBERED_REGISTERS
 #endif /* HAS_PARAVIRTUALIZED_PAC */
 .endmacro
@@ -130,9 +132,118 @@
 	MOV64	x0, VMAPPLE_PAC_SET_B_KEYS
 	mov		x1, \new_rop_key
 	hvc		#0
+	cbnz		x0, .
 	LOAD_SMCCC_CLOBBERED_REGISTERS
 #endif /* HAS_PARAVIRTUALIZED_PAC */
 .endmacro
+
+/**
+ * PAC_INIT_KEY_STATE
+ *
+ * Sets the initial PAC key state, but does not enable the keys.
+ *
+ *   tmp - scratch register
+ *   tmp2 - scratch register
+ */
+.macro PAC_INIT_KEY_STATE	tmp, tmp2
+#if HAS_PARAVIRTUALIZED_PAC
+#if HIBERNATION
+	#error PAC_INIT_KEY_STATE is not implemented for HAS_PARAVIRTUALIZED_PAC && HIBERNATION
+#endif
+	/*
+	 * This call clobbers x0-x3.  However we only initialize PAC at a point in
+	 * common_start where x0-x3 are safe to clobber, and where we don't yet have
+	 * a working stack to stash the existing values anyway.
+	 */
+	mov		x0, #VMAPPLE_PAC_SET_INITIAL_STATE
+	hvc		#0
+	cbnz		x0, .
+#endif /* HAS_PARAVIRTUALIZED_PAC */
+.endmacro
+
+/*
+ * For pacga diversification we always put the tag type in the
+ * lowest 4 bits of the first source to pacga.
+ *
+ * We diversify by use case, to prevent attackers from using
+ * pacga results from one usecase to attack another usecase.
+ *
+ * First pacga when using a context:
+ * pacga chain_reg, (context << 4) + PACGA_TAG_xxx, first_data
+ *
+ * First pacga without context:
+ * pacga chain_reg, PACGA_TAG_xxx, first_data
+ *
+ * Subsequent pacga's:
+ * pacga chain_reg, chain_reg + PACGA_TAG_xxx, next_data
+ *
+ * chain_reg layout
+ * 63 .. 32    || 31 .. 4                | 3 .. 0
+ * chain value || available per use case | TAG
+ */
+#define PACGA_TAG_0         0b0000
+#define PACGA_TAG_BLOB      0b0001
+#define PACGA_TAG_THREAD    0b0010
+#define PACGA_TAG_IRG       0b0011
+#define PACGA_TAG_HV        0b0100
+#define PACGA_TAG_ADDRPERM  0b0101
+#define PACGA_TAG_6         0b0110
+#define PACGA_TAG_7         0b0111
+#define PACGA_TAG_8         0b1000
+#define PACGA_TAG_9         0b1001
+/*
+ * This one is never actually used, it is here to effectively made the THREAD TAG
+ * 3 bits, so we can sign enough of PC there for the foreseeable future (up to 128M of kernel .text)
+ */
+#define PACGA_TAG_THREAD_2  0b1010
+#define PACGA_TAG_b         0b1011
+#define PACGA_TAG_c         0b1100
+#define PACGA_TAG_d         0b1101
+#define PACGA_TAG_e         0b1110
+#define PACGA_TAG_f         0b1111
+
+
+
+#if NEEDS_MTE_IRG_RESEED
+/*
+ * This generates a new 48 bit seed, based on the reseed_counter.
+ * We use the PACGA_TAG_IRG here. and we generate two 32bit values
+ * using pacga twice. using:
+ * cpu_number || 0b0000 || TAG_IRG(0b0011), counter
+ * cpu_number || 0b0001 || TAG_IRG(0b0011), counter
+ *
+ * Needs three registers to use, all will be clobbered
+ * Expects interrupts to be disabled.
+ */
+.macro PACGA_IRG_RESEED x, y, z
+	mrs     \x, TPIDR_EL1
+	ldr     \x, [\x, ACT_CPUDATAP]
+
+	// No need for atomic - These are per CPU and interrupts are disabled
+	ldr     \z, [\x, CPU_IRG_RESEED_COUNTER]
+	add     \y, \z, #1
+	str     \y, [\x, CPU_IRG_RESEED_COUNTER]
+
+	ldrsh   \y, [\x, CPU_NUMBER_GS]
+	lsl     \y, \y, 8
+	add     \y, \y, #0x3                    // Will be resolved after rdar://123719761
+
+	pacga   \x, \y, \z                      // PACGA_TAG_IRG
+	add     \y, \y, 0x10
+	pacga   \y, \y, \z                      // PACGA_TAG_IRG
+	eor     \y, \x, \y, LSR #32
+
+#if APPLEVIRTUALPLATFORM
+	mrs		\x, GCR_EL1
+	tbz		\x, GCR_EL1_RRND_OFFSET, Lpacga_irg_reseed_arm_mode_\@
+#endif
+	orr		\y, \y, (0b111 << RGSR_EL1_SEED_OFFSET)
+#if APPLEVIRTUALPLATFORM
+Lpacga_irg_reseed_arm_mode_\@:
+#endif
+	msr     RGSR_EL1, \y
+.endmacro
+#endif /* NEEDS_MTE_IRG_RESEED */
 
 /* END IGNORE CODESTYLE */
 

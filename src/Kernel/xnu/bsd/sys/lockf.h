@@ -65,6 +65,7 @@
 
 #include <sys/queue.h>
 #include <sys/cdefs.h>
+#include <sys/types.h>
 
 struct vnop_advlock_args;
 struct vnode;
@@ -92,7 +93,7 @@ struct lockf {
 	off_t   lf_start;           /* Byte # of the start of the lock */
 	off_t   lf_end;             /* Byte # of the end of the lock (-1=EOF) */
 	caddr_t lf_id;              /* Id of the resource holding the lock */
-	struct  lockf **lf_head;    /* Back pointer to the head of the locf list */
+	struct  lockf **lf_head;    /* Back pointer to the head of the lockf list */
 	struct  vnode *lf_vnode;    /* Back pointer to the inode */
 	struct  lockf *lf_next;     /* Pointer to the next lock on this inode */
 	struct  locklist lf_blkhd;  /* List of requests blocked on this lock */

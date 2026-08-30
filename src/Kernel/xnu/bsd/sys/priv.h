@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2010-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -116,7 +116,7 @@
 #define PRIV_NET_QOSMARKING_POLICY_OVERRIDE     10007   /* Privilege verified by Network Extension policies */
 #define PRIV_NET_RESTRICTED_INTCOPROC           10008   /* Access to internal co-processor network interfaces */
 
-#define PRIV_NET_PRIVILEGED_MULTIPATH           10009   /* Multipath usage */
+/* unused 10009 */
 #define PRIV_NET_RESTRICTED_MULTIPATH_EXTENDED  10010   /* Extended multipath (more aggressive on cell) */
 #define PRIV_NET_RESTRICTED_ROUTE_NC_READ       10011   /* Enable route neighbhor cache read operations */
 
@@ -129,12 +129,24 @@
 #define PRIV_NET_PRIVILEGED_NECP_DROP_ALL_BYPASS 10016  /* Privilege to bypass NECP drop-all */
 #define PRIV_NET_PRIVILEGED_IPSEC_WAKE_PACKET   10017   /* Privilege to get IPsec wake packet */
 
+#define PRIV_NET_RESTRICTED_MANAGEMENT_DATA     10018   /* Privilege to send/receive data over a management interface */
+
 /*
  * IPv4 and IPv6 privileges.
  */
 #define PRIV_NETINET_RESERVEDPORT       11000   /* Bind low port number. */
 #define PRIV_NETINET_TCP_KA_OFFLOAD     11001   /* Can set TCP keep alive offload option */
 
+/*
+ * Skywalk privileges.
+ */
+#define PRIV_SKYWALK_REGISTER_USER_PIPE         12000   /* Register a user pipe nexus */
+#define PRIV_SKYWALK_REGISTER_KERNEL_PIPE       12001   /* Register a kernel pipe nexus */
+#define PRIV_SKYWALK_REGISTER_NET_IF            12002   /* Register a net_if nexus */
+#define PRIV_SKYWALK_REGISTER_FLOW_SWITCH       12003   /* Register a flow switch nexus */
+#define PRIV_SKYWALK_LOW_LATENCY_CHANNEL        12004   /* open a low latency channel */
+#define PRIV_SKYWALK_OBSERVE_ALL                        12010   /* Observe stats and data on channels */
+#define PRIV_SKYWALK_OBSERVE_STATS                      12011   /* Observe stats only on channels */
 
 /*
  * VFS privileges
@@ -142,20 +154,8 @@
 #define PRIV_VFS_OPEN_BY_ID             14000   /* Allow calling openbyid_np() */
 #define PRIV_VFS_MOVE_DATA_EXTENTS      14001   /* Allow F_MOVEDATAEXTENTS fcntl */
 #define PRIV_VFS_SNAPSHOT               14002   /* Allow create/rename/delete of snapshots */
-#define PRIV_VFS_SNAPSHOT_REVERT        14003   /* Allow reverting filesystem to a previous snapshot */
 #define PRIV_VFS_DATALESS_RESOLVER      14004   /* Allow registration as dataless file resolver */
-#define PRIV_VFS_DATALESS_MANIPULATION  14005   /* Allow process to inspect dataless directories / manipulate dataless objects */
 #define PRIV_VFS_SETSIZE                14006   /* Allow resizing a file without zeroing space */
-
-#define PRIV_APFS_EMBED_DRIVER          14100   /* Allow embedding an EFI driver into the APFS container */
-#define PRIV_APFS_DEBUG                 14101   /* Allow to control a debugging features of the APFS container */
-#define PRIV_APFS_FUSION_DEBUG          14101   /* Old constant name, superceded by PRIV_APFS_DEBUG.
-	                                         * I had to use a numeric value instead of a name because this file is parsed by some
-	                                         * script in the Sandbox project and it may produce a non-compilable output */
-#define PRIV_APFS_FUSION_ALLOW_PIN_FASTPROMOTE  14102   /* Allow changing pinned/fastPromote inode flags in APFS Fusion container */
-// #define PRIV_APFS_UNUSED              14103
-#define PRIV_APFS_SET_FREE_SPACE_CHANGE_THRESHOLD       14104   /* Allow setting the free space change notification threshold */
-#define PRIV_APFS_SET_FIRMLINK       14105   /* Allow setting the SF_FIRM_LINK bsd flag */
 
 #ifdef KERNEL
 /*

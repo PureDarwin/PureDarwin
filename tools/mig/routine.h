@@ -376,6 +376,13 @@ typedef struct argument
     boolean_t argTempOnStack; /* A temporary for the short-circuiting
                                * code when -maxonstack is used.
                                */
+    
+    /*
+     * For kernel server routines:
+     * whether the arg is in kernel or user segment of the message
+     */
+    string_t  argInSegment;
+    string_t  argOutSegment;
 } argument_t;
 
 /*

@@ -94,6 +94,8 @@ type ipc_info_name_array_t = array[] of ipc_info_name_t;
 type ipc_info_tree_name_t = struct[9] of natural_t;
 type ipc_info_tree_name_array_t = array[] of ipc_info_tree_name_t;
 
+type ipc_info_object_type_t = natural_t;
+
 type vm_info_region_t = struct[10] of natural_t;
 type vm_info_region_64_t = struct[11] of natural_t;
 type mach_vm_info_region_t = struct[14] of natural_t;

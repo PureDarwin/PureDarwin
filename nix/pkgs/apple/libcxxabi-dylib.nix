@@ -20,7 +20,10 @@ let
     "stdlib_typeinfo" "stdlib_exception" "stdlib_stdexcept" "fallback_malloc"
     "abort_message" "pd_bootstrap_runtime"
   ];
-  cxxSrcs = [ ];
+  # objc4 uses std::function's bad_function_call path, but libobjc links
+  # against libc++abi directly. Keep the required libc++ support object in
+  # this small runtime dylib rather than depending on the full libc++ build.
+  cxxSrcs = [ "functional" ];
 in
 stdenv.mkDerivation {
   pname = "puredarwin-libcxxabi-dylib";

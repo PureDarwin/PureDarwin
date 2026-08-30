@@ -41,6 +41,7 @@
 #include <kern/queue.h>
 #include <kern/sched.h>
 #include <kern/sched_prim.h>
+#include <kern/sched_rt.h>
 #include <kern/task.h>
 #include <kern/thread.h>
 
@@ -87,16 +88,16 @@ static void
 sched_dualq_processor_init(processor_t processor);
 
 static thread_t
-sched_dualq_choose_thread(processor_t processor, int priority, ast_t reason);
+sched_dualq_choose_thread(processor_t processor, int priority, __unused thread_t prev, ast_t reason);
 
 static void
-sched_dualq_processor_queue_shutdown(processor_t processor);
+sched_dualq_processor_queue_shutdown(processor_t processor, struct pulled_thread_queue * threadq);
 
 static sched_mode_t
 sched_dualq_initial_thread_sched_mode(task_t parent_task);
 
 static bool
-sched_dualq_thread_avoid_processor(processor_t processor, thread_t thread);
+sched_dualq_thread_avoid_processor(processor_t processor, thread_t thread, __unused ast_t reason);
 
 const struct sched_dispatch_table sched_dualq_dispatch = {
 	.sched_name                                     = "dualq",
@@ -110,7 +111,11 @@ const struct sched_dispatch_table sched_dualq_dispatch = {
 	.steal_thread                                   = sched_dualq_steal_thread,
 	.compute_timeshare_priority                     = sched_compute_timeshare_priority,
 	.choose_node                                    = sched_choose_node,
+#if CONFIG_SCHED_SMT
+	.choose_processor                               = choose_processor_smt,
+#else /* CONFIG_SCHED_SMT */
 	.choose_processor                               = choose_processor,
+#endif /* CONFIG_SCHED_SMT */
 	.processor_enqueue                              = sched_dualq_processor_enqueue,
 	.processor_queue_shutdown                       = sched_dualq_processor_queue_shutdown,
 	.processor_queue_remove                         = sched_dualq_processor_queue_remove,
@@ -129,16 +134,21 @@ const struct sched_dispatch_table sched_dualq_dispatch = {
 	.processor_bound_count                          = sched_dualq_processor_bound_count,
 	.thread_update_scan                             = sched_dualq_thread_update_scan,
 	.multiple_psets_enabled                         = TRUE,
-	.sched_groups_enabled                           = FALSE,
 	.avoid_processor_enabled                        = TRUE,
 	.thread_avoid_processor                         = sched_dualq_thread_avoid_processor,
 	.processor_balance                              = sched_SMT_balance,
 
-	.rt_runq                                        = sched_rtlocal_runq,
-	.rt_init                                        = sched_rtlocal_init,
-	.rt_queue_shutdown                              = sched_rtlocal_queue_shutdown,
-	.rt_runq_scan                                   = sched_rtlocal_runq_scan,
-	.rt_runq_count_sum                              = sched_rtlocal_runq_count_sum,
+#if CONFIG_SCHED_SMT
+	.rt_choose_processor                            = sched_rtlocal_choose_processor_smt,
+#else /* !CONFIG_SCHED_SMT */
+	.rt_choose_processor                            = sched_rt_choose_processor,
+#endif /* !CONFIG_SCHED_SMT */
+	.rt_steal_thread                                = NULL,
+	.rt_init_pset                                   = sched_rt_init_pset,
+	.rt_init_completed                              = sched_rt_init_completed,
+	.rt_queue_shutdown                              = sched_rt_queue_shutdown,
+	.rt_runq_scan                                   = sched_rt_runq_scan,
+	.rt_runq_count_sum                              = sched_rt_runq_count_sum,
 
 	.qos_max_parallelism                            = sched_qos_max_parallelism,
 	.check_spill                                    = sched_check_spill,
@@ -148,6 +158,10 @@ const struct sched_dispatch_table sched_dualq_dispatch = {
 	.run_count_decr                                 = sched_smt_run_decr,
 	.update_thread_bucket                           = sched_smt_update_thread_bucket,
 	.pset_made_schedulable                          = sched_pset_made_schedulable,
+	.cpu_init_completed                             = NULL,
+	.thread_eligible_for_pset                       = NULL,
+	.update_pset_load_average                       = sched_update_pset_load_average,
+	.update_pset_avg_execution_time                 = sched_update_pset_avg_execution_time,
 };
 
 __attribute__((always_inline))
@@ -213,6 +227,7 @@ static thread_t
 sched_dualq_choose_thread(
 	processor_t      processor,
 	int              priority,
+	__unused thread_t         prev_thread,
 	__unused ast_t            reason)
 {
 	run_queue_t main_runq  = dualq_main_runq(processor);
@@ -242,6 +257,7 @@ sched_dualq_choose_thread(
 		return run_queue_dequeue(chosen_runq, SCHED_HEADQ);
 	}
 
+#if CONFIG_SCHED_SMT
 	if (processor->is_SMT) {
 		thread_t potential_thread = run_queue_peek(chosen_runq);
 		if (potential_thread == THREAD_NULL) {
@@ -277,6 +293,7 @@ sched_dualq_choose_thread(
 			}
 		}
 	}
+#endif /* CONFIG_SCHED_SMT */
 
 	return run_queue_dequeue(chosen_runq, SCHED_HEADQ);
 }
@@ -291,7 +308,7 @@ sched_dualq_processor_enqueue(
 	boolean_t       result;
 
 	result = run_queue_enqueue(rq, thread, options);
-	thread->runq = processor;
+	thread_set_runq_locked(thread, processor);
 
 	return result;
 }
@@ -309,7 +326,7 @@ sched_dualq_processor_csw_check(processor_t processor)
 	boolean_t       has_higher;
 	int             pri;
 
-	if (sched_dualq_thread_avoid_processor(processor, current_thread())) {
+	if (sched_dualq_thread_avoid_processor(processor, current_thread(), AST_NONE)) {
 		return AST_PREEMPT | AST_URGENT;
 	}
 
@@ -382,37 +399,20 @@ sched_dualq_processor_bound_count(processor_t processor)
 }
 
 static void
-sched_dualq_processor_queue_shutdown(processor_t processor)
+sched_dualq_processor_queue_shutdown(processor_t processor, struct pulled_thread_queue * threadq)
 {
 	processor_set_t pset = processor->processor_set;
 	run_queue_t     rq   = dualq_main_runq(processor);
-	thread_t        thread;
-	queue_head_t    tqueue;
 
 	/* We only need to migrate threads if this is the last active processor in the pset */
-	if (pset->online_processor_count > 0) {
-		pset_unlock(pset);
-		return;
-	}
-
-	queue_init(&tqueue);
-
-	while (rq->count > 0) {
-		thread = run_queue_dequeue(rq, SCHED_HEADQ);
-		enqueue_tail(&tqueue, &thread->runq_links);
+	if (pset->online_processor_count == 0) {
+		while (rq->count > 0) {
+			thread_t thread = run_queue_dequeue(rq, SCHED_HEADQ);
+			pulled_thread_queue_enqueue(threadq, thread);
+		}
 	}
 
 	pset_unlock(pset);
-
-	qe_foreach_element_safe(thread, &tqueue, runq_links) {
-		remqueue(&thread->runq_links);
-
-		thread_lock(thread);
-
-		thread_setrun(thread, SCHED_TAILQ);
-
-		thread_unlock(thread);
-	}
 }
 
 static boolean_t
@@ -427,7 +427,7 @@ sched_dualq_processor_queue_remove(
 
 	rq = dualq_runq_for_thread(processor, thread);
 
-	if (processor == thread->runq) {
+	if (processor == thread_get_runq_locked(thread)) {
 		/*
 		 * Thread is on a run queue and we have a lock on
 		 * that run queue.
@@ -438,7 +438,7 @@ sched_dualq_processor_queue_remove(
 		 * The thread left the run queue before we could
 		 * lock the run queue.
 		 */
-		assert(thread->runq == PROCESSOR_NULL);
+		thread_assert_runq_null(thread);
 		processor = PROCESSOR_NULL;
 	}
 
@@ -454,8 +454,10 @@ sched_dualq_steal_thread(processor_set_t pset)
 	processor_set_t nset = next_pset(cset);
 	thread_t        thread;
 
+#if CONFIG_SCHED_SMT
 	/* Secondary processors on SMT systems never steal */
 	assert(current_processor()->processor_primary == current_processor());
+#endif /* CONFIG_SCHED_SMT */
 
 	while (nset != pset) {
 		pset_unlock(cset);
@@ -508,7 +510,7 @@ sched_dualq_thread_update_scan(sched_update_scan_context_t scan_context)
 			}
 
 			thread = processor->idle_thread;
-			if (thread != THREAD_NULL && thread->sched_stamp != sched_tick) {
+			if (thread != THREAD_NULL && thread->sched_stamp != os_atomic_load(&sched_tick, relaxed)) {
 				if (thread_update_add_thread(thread) == FALSE) {
 					restart_needed = TRUE;
 					break;
@@ -520,7 +522,7 @@ sched_dualq_thread_update_scan(sched_update_scan_context_t scan_context)
 		thread_update_process_threads();
 	} while (restart_needed);
 
-	pset = &pset0;
+	pset = sched_boot_pset;
 
 	do {
 		do {
@@ -546,13 +548,14 @@ extern int sched_allow_rt_smt;
 
 /* Return true if this thread should not continue running on this processor */
 static bool
-sched_dualq_thread_avoid_processor(processor_t processor, thread_t thread)
+sched_dualq_thread_avoid_processor(processor_t processor, thread_t thread, __unused ast_t reason)
 {
 	if (thread->bound_processor == processor) {
 		/* Thread is bound here */
 		return false;
 	}
 
+#if CONFIG_SCHED_SMT
 	if (processor->processor_primary != processor) {
 		/*
 		 * This is a secondary SMT processor.  If the primary is running
@@ -589,6 +592,7 @@ sched_dualq_thread_avoid_processor(processor_t processor, thread_t thread)
 			}
 		}
 	}
+#endif /* CONFIG_SCHED_SMT */
 
 	return false;
 }

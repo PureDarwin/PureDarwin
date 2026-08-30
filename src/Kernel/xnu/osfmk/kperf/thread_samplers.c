@@ -30,9 +30,9 @@
 
 #include <kern/debug.h> /* panic */
 #include <kern/thread.h> /* thread_* */
-#include <kern/timer.h> /* timer_data_t */
 #include <kern/policy_internal.h> /* TASK_POLICY_* */
 #include <mach/mach_types.h>
+#include <sys/errno.h>
 
 #include <kperf/kperf.h>
 #include <kperf/buffer.h>
@@ -40,10 +40,8 @@
 #include <kperf/thread_samplers.h>
 #include <kperf/ast.h>
 
-#if MONOTONIC
 #include <kern/monotonic.h>
 #include <machine/monotonic.h>
-#endif /* MONOTONIC */
 
 extern boolean_t stackshot_thread_is_idle_worker_unsafe(thread_t thread);
 
@@ -140,15 +138,16 @@ kperf_thread_scheduling_sample(struct kperf_thread_scheduling *thsc,
 
 	BUF_INFO(PERF_TI_SCHEDSAMPLE | DBG_FUNC_START, (uintptr_t)thread_tid(thread));
 
-	thsc->kpthsc_user_time = timer_grab(&thread->user_timer);
-	uint64_t system_time = timer_grab(&thread->system_timer);
-
-	if (thread->precise_user_kernel_time) {
-		thsc->kpthsc_system_time = system_time;
+	struct recount_times_mach times = { 0 };
+	if (thread == current_thread()) {
+		boolean_t interrupt_state = ml_set_interrupts_enabled(FALSE);
+		times = recount_current_thread_times();
+		ml_set_interrupts_enabled(interrupt_state);
 	} else {
-		thsc->kpthsc_user_time += system_time;
-		thsc->kpthsc_system_time = 0;
+		times = recount_thread_times(thread);
 	}
+	thsc->kpthsc_user_time = times.rtm_user;
+	thsc->kpthsc_system_time = times.rtm_system;
 
 	thsc->kpthsc_runnable_time = timer_grab(&thread->runnable_timer);
 	thsc->kpthsc_state = thread->state;
@@ -213,10 +212,11 @@ kperf_thread_scheduling_log(struct kperf_thread_scheduling *thsc)
  * miscellaneous information about threads.
  */
 
-#define KPERF_THREAD_SNAPSHOT_DARWIN_BG  (1U << 0);
-#define KPERF_THREAD_SNAPSHOT_PASSIVE_IO (1U << 1);
-#define KPERF_THREAD_SNAPSHOT_GFI        (1U << 2);
-#define KPERF_THREAD_SNAPSHOT_IDLE_WQ    (1U << 3);
+#define KPERF_THREAD_SNAPSHOT_DARWIN_BG    (1U << 0);
+#define KPERF_THREAD_SNAPSHOT_PASSIVE_IO   (1U << 1);
+#define KPERF_THREAD_SNAPSHOT_GFI          (1U << 2);
+#define KPERF_THREAD_SNAPSHOT_IDLE_WQ      (1U << 3);
+#define KPERF_THREAD_SNAPSHOT_EXCLAVES_RPC (1U << 4);
 /* max is 1U << 7 */
 
 void
@@ -245,6 +245,11 @@ kperf_thread_snapshot_sample(struct kperf_thread_snapshot *thsn,
 	if (stackshot_thread_is_idle_worker_unsafe(thread)) {
 		thsn->kpthsn_flags |= KPERF_THREAD_SNAPSHOT_IDLE_WQ;
 	}
+#if CONFIG_EXCLAVES
+	if (thread->th_exclaves_state & TH_EXCLAVES_RPC) {
+		thsn->kpthsn_flags |= KPERF_THREAD_SNAPSHOT_EXCLAVES_RPC;
+	}
+#endif /* CONFIG_EXCLAVES */
 
 	thsn->kpthsn_suspend_count = thread->suspend_count;
 	/*
@@ -287,40 +292,83 @@ kperf_thread_dispatch_sample(struct kperf_thread_dispatch *thdi,
 
 	thread_t thread = context->cur_thread;
 
-	BUF_INFO(PERF_TI_DISPSAMPLE | DBG_FUNC_START, (uintptr_t)thread_tid(thread));
+	BUF_INFO(PERF_TI_DISPSAMPLE | DBG_FUNC_START,
+	    (uintptr_t)thread_tid(thread));
 
-	task_t task = thread->task;
-	boolean_t task_64 = task_has_64Bit_addr(task);
-	size_t user_addr_size = task_64 ? 8 : 4;
+	task_t task = get_threadtask(thread);
+	size_t user_addr_size = task_has_64Bit_addr(task) ? 8 : 4;
+	thdi->kpthdi_dq_serialno = 0;
+	thdi->kpthdi_dq_label[0] = '\0';
+	int error = 0;
 
-	assert(thread->task != kernel_task);
+	/*
+	 * The dispatch queue address points to a struct that contains
+	 * information about the dispatch queue.  Use task-level offsets to
+	 * find the serial number and label of the dispatch queue.
+	 */
+	assert(task != kernel_task);
 	uint64_t user_dq_key_addr = thread_dispatchqaddr(thread);
 	if (user_dq_key_addr == 0) {
-		goto error;
-	}
-
-	uint64_t user_dq_addr;
-	if ((copyin((user_addr_t)user_dq_key_addr,
-	    (char *)&user_dq_addr,
-	    user_addr_size) != 0) ||
-	    (user_dq_addr == 0)) {
-		goto error;
-	}
-
-	uint64_t user_dq_serialno_addr =
-	    user_dq_addr + get_task_dispatchqueue_serialno_offset(task);
-
-	if (copyin((user_addr_t)user_dq_serialno_addr,
-	    (char *)&(thdi->kpthdi_dq_serialno),
-	    user_addr_size) == 0) {
+		error = ENOENT;
 		goto out;
 	}
 
-error:
-	thdi->kpthdi_dq_serialno = 0;
+	uint64_t user_dq_addr = 0;
+	if ((error = copyin((user_addr_t)user_dq_key_addr, &user_dq_addr,
+	    user_addr_size)) != 0) {
+		goto out;
+	}
+
+	if (user_dq_addr == 0) {
+		error = EINVAL;
+		goto out;
+	}
+
+	uint64_t serialno_offset = get_task_dispatchqueue_serialno_offset(task);
+	uint64_t user_dq_serialno_addr = 0;
+	if (os_add_overflow(user_dq_addr, serialno_offset,
+	    &user_dq_serialno_addr)) {
+		error = EOVERFLOW;
+		goto out;
+	}
+
+	if ((error = copyin((user_addr_t)user_dq_serialno_addr,
+	    &(thdi->kpthdi_dq_serialno), user_addr_size)) != 0) {
+		goto out;
+	}
+
+	uint64_t lbl_offset = get_task_dispatchqueue_label_offset(task);
+	if (lbl_offset == 0) {
+		error = ENOBUFS;
+		goto out;
+	}
+
+	uint64_t user_dqlbl_ptr_addr = 0;
+	if (os_add_overflow(user_dq_addr, lbl_offset, &user_dqlbl_ptr_addr)) {
+		error = EOVERFLOW;
+		goto out;
+	}
+
+	uint64_t user_dqlbl_addr = 0;
+	/*
+	 * The label isn't embedded in the struct -- it just holds a
+	 * pointer to the label string, NUL-terminated.
+	 */
+	if ((error = copyin((user_addr_t)user_dqlbl_ptr_addr, &user_dqlbl_addr,
+	    user_addr_size)) != 0) {
+		goto out;
+	}
+
+	vm_size_t copied = 0;
+	if ((error = copyinstr((user_addr_t)user_dqlbl_addr,
+	    thdi->kpthdi_dq_label, sizeof(thdi->kpthdi_dq_label),
+	    &copied)) != 0) {
+		goto out;
+	}
+	thdi->kpthdi_dq_label[sizeof(thdi->kpthdi_dq_label) - 1] = '\0';
 
 out:
-	BUF_VERB(PERF_TI_DISPSAMPLE | DBG_FUNC_END);
+	BUF_VERB(PERF_TI_DISPSAMPLE | DBG_FUNC_END, error);
 }
 
 int
@@ -341,6 +389,10 @@ kperf_thread_dispatch_log(struct kperf_thread_dispatch *thdi)
 	BUF_DATA(PERF_TI_DISPDATA_32, UPPER_32(thdi->kpthdi_dq_serialno),
 	    LOWER_32(thdi->kpthdi_dq_serialno));
 #endif /* defined(__LP64__) */
+
+	if (thdi->kpthdi_dq_label[0] != '\0') {
+		kernel_debug_string_simple(PERF_TI_DISPLABEL, thdi->kpthdi_dq_label);
+	}
 }
 
 /*
@@ -350,7 +402,7 @@ kperf_thread_dispatch_log(struct kperf_thread_dispatch *thdi)
 void
 kperf_thread_inscyc_log(struct kperf_context *context)
 {
-#if MONOTONIC
+#if CONFIG_PERVASIVE_CPI
 	thread_t cur_thread = current_thread();
 
 	if (context->cur_thread != cur_thread) {
@@ -358,18 +410,18 @@ kperf_thread_inscyc_log(struct kperf_context *context)
 		return;
 	}
 
-	uint64_t counts[MT_CORE_NFIXED] = { 0 };
-	mt_cur_thread_fixed_counts(counts);
-
-#if defined(__LP64__)
-	BUF_DATA(PERF_TI_INSCYCDATA, counts[MT_CORE_INSTRS], counts[MT_CORE_CYCLES]);
-#else /* defined(__LP64__) */
-	/* 32-bit platforms don't count instructions */
-	BUF_DATA(PERF_TI_INSCYCDATA_32, 0, 0, UPPER_32(counts[MT_CORE_CYCLES]),
-	    LOWER_32(counts[MT_CORE_CYCLES]));
-#endif /* !defined(__LP64__) */
-
-#else
+	struct recount_usage usage_all = { 0 };
+	struct recount_usage usage_perf = { 0 };
+	struct recount_usage usage_mp = { 0 };
+	recount_current_thread_usage_cpu_kinds(&usage_all, &usage_perf, &usage_mp);
+	BUF_DATA(PERF_TI_INSCYCDATA, recount_usage_instructions(&usage_all),
+	    recount_usage_cycles(&usage_all), recount_usage_instructions(&usage_perf),
+	    recount_usage_cycles(&usage_perf));
+#if HAS_MCORE
+	BUF_DATA(PERF_TI_INSCYCDATA_2, recount_usage_instructions(&usage_mp),
+	    recount_usage_cycles(&usage_mp));
+#endif // HAS_MCORE
+#else /* CONFIG_PERVASIVE_CPI */
 #pragma unused(context)
-#endif /* MONOTONIC */
+#endif /* !CONFIG_PERVASIVE_CPI */
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -75,6 +75,7 @@
 #include <kern/locks.h>
 
 #include <net/if.h>
+#include <net/multi_layer_pkt_log.h>
 #include <net/route.h>
 
 #include <netinet/in.h>
@@ -104,7 +105,6 @@
 #define DBG_FNC_ESPAUTH         NETDBG_CODE(DBG_NETIPSEC, (8 << 8))
 #define MAX_SBUF_LEN            2000
 
-extern lck_mtx_t *sadb_mutex;
 os_log_t esp_mpkl_log_object = NULL;
 
 static int esp_null_mature(struct secasvar *);
@@ -119,17 +119,21 @@ static int esp_des_schedule(const struct esp_algorithm *,
     struct secasvar *);
 static size_t esp_des_schedlen(const struct esp_algorithm *);
 static int esp_des_blockdecrypt(const struct esp_algorithm *,
-    struct secasvar *, u_int8_t *, u_int8_t *);
+    struct secasvar *, u_int8_t *__sized_by(sizeof(DES_LONG) * 2),
+    u_int8_t *__sized_by(sizeof(DES_LONG) * 2));
 static int esp_des_blockencrypt(const struct esp_algorithm *,
-    struct secasvar *, u_int8_t *, u_int8_t *);
+    struct secasvar *, u_int8_t *__sized_by(sizeof(DES_LONG) * 2),
+    u_int8_t *__sized_by(sizeof(DES_LONG) * 2));
 static int esp_cbc_mature(struct secasvar *);
 static int esp_3des_schedule(const struct esp_algorithm *,
     struct secasvar *);
 static size_t esp_3des_schedlen(const struct esp_algorithm *);
 static int esp_3des_blockdecrypt(const struct esp_algorithm *,
-    struct secasvar *, u_int8_t *, u_int8_t *);
+    struct secasvar *, u_int8_t *__sized_by(sizeof(DES_LONG) * 2),
+    u_int8_t *__sized_by(sizeof(DES_LONG) * 2));
 static int esp_3des_blockencrypt(const struct esp_algorithm *,
-    struct secasvar *, u_int8_t *, u_int8_t *);
+    struct secasvar *, u_int8_t *__sized_by(sizeof(DES_LONG) * 2),
+    u_int8_t *__sized_by(sizeof(DES_LONG) * 2));
 static int esp_common_ivlen(const struct esp_algorithm *,
     struct secasvar *);
 static int esp_cbc_decrypt(struct mbuf *, size_t,
@@ -137,6 +141,36 @@ static int esp_cbc_decrypt(struct mbuf *, size_t,
 static int esp_cbc_encrypt(struct mbuf *, size_t, size_t,
     struct secasvar *, const struct esp_algorithm *, int);
 static int esp_gcm_mature(struct secasvar *);
+static int esp_cbc_des_encrypt_data(struct secasvar *,
+    uint8_t *__sized_by(input_data_len), size_t input_data_len,
+    struct newesp *,
+    uint8_t *__sized_by(ivlen), size_t ivlen,
+    uint8_t *__sized_by(output_data_len), size_t output_data_len);
+static int esp_cbc_des_decrypt_data(struct secasvar *,
+    uint8_t *__sized_by(input_data_len), size_t input_data_len,
+    struct newesp *,
+    uint8_t *__sized_by(ivlen), size_t ivlen,
+    uint8_t *__sized_by(output_data_len), size_t output_data_len);
+static int esp_cbc_3des_encrypt_data(struct secasvar *,
+    uint8_t *__sized_by(input_data_len), size_t input_data_len,
+    struct newesp *,
+    uint8_t *__sized_by(ivlen), size_t ivlen,
+    uint8_t *__sized_by(output_data_len), size_t output_data_len);
+static int esp_cbc_3des_decrypt_data(struct secasvar *,
+    uint8_t *__sized_by(input_data_len), size_t input_data_len,
+    struct newesp *,
+    uint8_t *__sized_by(ivlen), size_t ivlen,
+    uint8_t *__sized_by(output_data_len), size_t output_data_len);
+static int esp_null_encrypt_data(struct secasvar *,
+    uint8_t *__sized_by(input_data_len), size_t input_data_len,
+    struct newesp *,
+    uint8_t *__sized_by(out_ivlen), size_t out_ivlen,
+    uint8_t *__sized_by(output_data_len), size_t output_data_len);
+static int esp_null_decrypt_data(struct secasvar *,
+    uint8_t *__sized_by(input_data_len), size_t input_data_len,
+    struct newesp *,
+    uint8_t *__sized_by(ivlen), size_t ivlen,
+    uint8_t *__sized_by(output_data_len), size_t output_data_len);
 
 #define MAXIVLEN        16
 
@@ -160,7 +194,9 @@ static const struct esp_algorithm des_cbc = {
 	.blockencrypt = esp_des_blockencrypt,
 	.icvlen = 0,
 	.finalizedecrypt = NULL,
-	.finalizeencrypt = NULL
+	.finalizeencrypt = NULL,
+	.encrypt_pkt = esp_cbc_des_encrypt_data,
+	.decrypt_pkt = esp_cbc_des_decrypt_data
 };
 
 static const struct esp_algorithm des3_cbc = {
@@ -179,7 +215,9 @@ static const struct esp_algorithm des3_cbc = {
 	.blockencrypt = esp_3des_blockencrypt,
 	.icvlen = 0,
 	.finalizedecrypt = NULL,
-	.finalizeencrypt = NULL
+	.finalizeencrypt = NULL,
+	.encrypt_pkt = esp_cbc_3des_encrypt_data,
+	.decrypt_pkt = esp_cbc_3des_decrypt_data
 };
 
 static const struct esp_algorithm null_esp = {
@@ -198,7 +236,9 @@ static const struct esp_algorithm null_esp = {
 	.blockencrypt = NULL,
 	.icvlen = 0,
 	.finalizedecrypt = NULL,
-	.finalizeencrypt = NULL
+	.finalizeencrypt = NULL,
+	.encrypt_pkt = esp_null_encrypt_data,
+	.decrypt_pkt = esp_null_decrypt_data
 };
 
 static const struct esp_algorithm aes_cbc = {
@@ -217,7 +257,9 @@ static const struct esp_algorithm aes_cbc = {
 	.blockencrypt = NULL,
 	.icvlen = 0,
 	.finalizedecrypt = NULL,
-	.finalizeencrypt = NULL
+	.finalizeencrypt = NULL,
+	.encrypt_pkt = esp_aes_cbc_encrypt_data,
+	.decrypt_pkt = esp_aes_cbc_decrypt_data
 };
 
 static const struct esp_algorithm aes_gcm = {
@@ -228,7 +270,7 @@ static const struct esp_algorithm aes_gcm = {
 	.keymax = ESP_AESGCM_KEYLEN256,
 	.schedlen = esp_gcm_schedlen,
 	.name = "aes-gcm",
-	.ivlen = esp_common_ivlen,
+	.ivlen = esp_gcm_ivlen,
 	.decrypt = esp_gcm_decrypt_aes,
 	.encrypt = esp_gcm_encrypt_aes,
 	.schedule = esp_gcm_schedule,
@@ -236,7 +278,9 @@ static const struct esp_algorithm aes_gcm = {
 	.blockencrypt = NULL,
 	.icvlen = 16,
 	.finalizedecrypt = esp_gcm_decrypt_finalize,
-	.finalizeencrypt = esp_gcm_encrypt_finalize
+	.finalizeencrypt = esp_gcm_encrypt_finalize,
+	.encrypt_pkt = esp_aes_gcm_encrypt_data,
+	.decrypt_pkt = esp_aes_gcm_decrypt_data
 };
 
 static const struct esp_algorithm chacha_poly = {
@@ -255,9 +299,15 @@ static const struct esp_algorithm chacha_poly = {
 	.blockencrypt = NULL,
 	.icvlen = ESP_CHACHAPOLY_ICV_LEN,
 	.finalizedecrypt = esp_chachapoly_decrypt_finalize,
-	.finalizeencrypt = esp_chachapoly_encrypt_finalize
+	.finalizeencrypt = esp_chachapoly_encrypt_finalize,
+	.encrypt_pkt = esp_chachapoly_encrypt_data,
+	.decrypt_pkt = esp_chachapoly_decrypt_data
 };
 
+/*
+ * If any algorithm requires more than 2048 bits (256 bytes) of key material,
+ * update IPSEC_KEY_ENCRYPT_MAX_BYTES in ipsec.h
+ */
 static const struct esp_algorithm *esp_algorithms[] = {
 	&des_cbc,
 	&des3_cbc,
@@ -280,6 +330,7 @@ esp_algorithm_lookup(int idx)
 	case SADB_X_EALG_RIJNDAELCBC:
 		return &aes_cbc;
 	case SADB_X_EALG_AES_GCM:
+	case SADB_X_EALG_AES_GMAC:
 		return &aes_gcm;
 	case SADB_X_EALG_CHACHA20POLY1305:
 		return &chacha_poly;
@@ -308,6 +359,8 @@ esp_max_ivlen(void)
 int
 esp_schedule(const struct esp_algorithm *algo, struct secasvar *sav)
 {
+	void *sched = NULL;
+	size_t schedlen = 0;
 	int error;
 
 	/* check for key length */
@@ -322,7 +375,7 @@ esp_schedule(const struct esp_algorithm *algo, struct secasvar *sav)
 
 	lck_mtx_lock(sadb_mutex);
 	/* already allocated */
-	if (sav->sched && sav->schedlen != 0) {
+	if (sav->sched_enc && sav->schedlen_enc != 0) {
 		lck_mtx_unlock(sadb_mutex);
 		return 0;
 	}
@@ -344,28 +397,28 @@ esp_schedule(const struct esp_algorithm *algo, struct secasvar *sav)
 		return 0;
 	}
 
-	sav->schedlen = (*algo->schedlen)(algo);
-	if ((signed) sav->schedlen < 0) {
+	schedlen = (*algo->schedlen)(algo);
+	if ((signed)schedlen < 0) {
 		lck_mtx_unlock(sadb_mutex);
 		return EINVAL;
 	}
 
 //#### that malloc should be replaced by a saved buffer...
-	sav->sched = _MALLOC(sav->schedlen, M_SECA, M_DONTWAIT);
-	if (!sav->sched) {
-		sav->schedlen = 0;
+	sched = kalloc_data(schedlen, Z_NOWAIT);
+	if (sched == NULL) {
 		lck_mtx_unlock(sadb_mutex);
 		return ENOBUFS;
 	}
+
+	sav->sched_enc = sched;
+	sav->schedlen_enc = schedlen;
 
 	error = (*algo->schedule)(algo, sav);
 	if (error) {
 		ipseclog((LOG_ERR, "esp_schedule %s: error %d\n",
 		    algo->name, error));
-		bzero(sav->sched, sav->schedlen);
-		FREE(sav->sched, M_SECA);
-		sav->sched = NULL;
-		sav->schedlen = 0;
+		bzero(sav->sched_enc, sav->schedlen_enc);
+		kfree_data_sized_by(sav->sched_enc, sav->schedlen_enc);
 	}
 	lck_mtx_unlock(sadb_mutex);
 	return error;
@@ -398,6 +451,32 @@ esp_null_encrypt(
 	__unused struct secasvar *sav,
 	__unused const struct esp_algorithm *algo,
 	__unused int ivlen)
+{
+	return 0; /* do nothing */
+}
+
+static int
+esp_null_encrypt_data(__unused struct secasvar *sav,
+    __unused uint8_t *__sized_by(input_data_len)input_data,
+    __unused size_t input_data_len,
+    __unused struct newesp *esp_hdr,
+    __unused uint8_t *__sized_by(out_ivlen)out_iv,
+    __unused size_t out_ivlen,
+    __unused uint8_t *__sized_by(output_data_len)output_data,
+    __unused size_t output_data_len)
+{
+	return 0; /* do nothing */
+}
+
+static int
+esp_null_decrypt_data(__unused struct secasvar *sav,
+    __unused uint8_t *__sized_by(input_data_len)input_data,
+    __unused size_t input_data_len,
+    __unused struct newesp *esp_hdr,
+    __unused uint8_t *__sized_by(ivlen)iv,
+    __unused size_t ivlen,
+    __unused uint8_t *__sized_by(output_data_len)output_data,
+    __unused size_t output_data_len)
 {
 	return 0; /* do nothing */
 }
@@ -474,7 +553,7 @@ esp_des_schedule(
 {
 	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_OWNED);
 	if (des_ecb_key_sched((des_cblock *)_KEYBUF(sav->key_enc),
-	    (des_ecb_key_schedule *)sav->sched)) {
+	    (des_ecb_key_schedule *)sav->sched_enc)) {
 		return EINVAL;
 	} else {
 		return 0;
@@ -485,26 +564,26 @@ static int
 esp_des_blockdecrypt(
 	__unused const struct esp_algorithm *algo,
 	struct secasvar *sav,
-	u_int8_t *s,
-	u_int8_t *d)
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)s,
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)d)
 {
 	/* assumption: d has a good alignment */
 	bcopy(s, d, sizeof(DES_LONG) * 2);
 	return des_ecb_encrypt((des_cblock *)d, (des_cblock *)d,
-	           (des_ecb_key_schedule *)sav->sched, DES_DECRYPT);
+	           (des_ecb_key_schedule *)sav->sched_enc, DES_DECRYPT);
 }
 
 static int
 esp_des_blockencrypt(
 	__unused const struct esp_algorithm *algo,
 	struct secasvar *sav,
-	u_int8_t *s,
-	u_int8_t *d)
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)s,
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)d)
 {
 	/* assumption: d has a good alignment */
 	bcopy(s, d, sizeof(DES_LONG) * 2);
 	return des_ecb_encrypt((des_cblock *)d, (des_cblock *)d,
-	           (des_ecb_key_schedule *)sav->sched, DES_ENCRYPT);
+	           (des_ecb_key_schedule *)sav->sched_enc, DES_ENCRYPT);
 }
 
 static int
@@ -585,11 +664,6 @@ esp_gcm_mature(struct secasvar *sav)
 		    "esp_gcm_mature: algorithm incompatible with derived\n"));
 		return 1;
 	}
-	if (sav->flags & SADB_X_EXT_IIV) {
-		ipseclog((LOG_ERR,
-		    "esp_gcm_mature: implicit IV not currently implemented\n"));
-		return 1;
-	}
 
 	if (!sav->key_enc) {
 		ipseclog((LOG_ERR, "esp_gcm_mature: no key is given.\n"));
@@ -612,6 +686,7 @@ esp_gcm_mature(struct secasvar *sav)
 	}
 	switch (sav->alg_enc) {
 	case SADB_X_EALG_AES_GCM:
+	case SADB_X_EALG_AES_GMAC:
 		/* allows specific key sizes only */
 		if (!(keylen == ESP_AESGCM_KEYLEN128 || keylen == ESP_AESGCM_KEYLEN192 || keylen == ESP_AESGCM_KEYLEN256)) {
 			ipseclog((LOG_ERR,
@@ -644,7 +719,7 @@ esp_3des_schedule(
 	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_OWNED);
 
 	if (des3_ecb_key_sched((des_cblock *)_KEYBUF(sav->key_enc),
-	    (des3_ecb_key_schedule *)sav->sched)) {
+	    (des3_ecb_key_schedule *)sav->sched_enc)) {
 		return EINVAL;
 	} else {
 		return 0;
@@ -655,26 +730,26 @@ static int
 esp_3des_blockdecrypt(
 	__unused const struct esp_algorithm *algo,
 	struct secasvar *sav,
-	u_int8_t *s,
-	u_int8_t *d)
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)s,
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)d)
 {
 	/* assumption: d has a good alignment */
 	bcopy(s, d, sizeof(DES_LONG) * 2);
 	return des3_ecb_encrypt((des_cblock *)d, (des_cblock *)d,
-	           (des3_ecb_key_schedule *)sav->sched, DES_DECRYPT);
+	           (des3_ecb_key_schedule *)sav->sched_enc, DES_DECRYPT);
 }
 
 static int
 esp_3des_blockencrypt(
 	__unused const struct esp_algorithm *algo,
 	struct secasvar *sav,
-	u_int8_t *s,
-	u_int8_t *d)
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)s,
+	u_int8_t *__sized_by(sizeof(DES_LONG) * 2)d)
 {
 	/* assumption: d has a good alignment */
 	bcopy(s, d, sizeof(DES_LONG) * 2);
 	return des3_ecb_encrypt((des_cblock *)d, (des_cblock *)d,
-	           (des3_ecb_key_schedule *)sav->sched, DES_ENCRYPT);
+	           (des3_ecb_key_schedule *)sav->sched_enc, DES_ENCRYPT);
 }
 
 static int
@@ -698,7 +773,7 @@ esp_cbc_decrypt(struct mbuf *m, size_t off, struct secasvar *sav,
 	int sn, dn;     /* offset from the head of the mbuf, to meat */
 	size_t ivoff, bodyoff;
 	u_int8_t iv[MAXIVLEN] __attribute__((aligned(4))), *ivp;
-	u_int8_t *sbuf = NULL, *sp, *sp_unaligned;
+	u_int8_t *__bidi_indexable sbuf = NULL, *sp, *sp_unaligned;
 	u_int8_t *p, *q;
 	struct mbuf *scut;
 	int scutoff;
@@ -807,7 +882,7 @@ esp_cbc_decrypt(struct mbuf *m, size_t off, struct secasvar *sav,
 	}
 
 	// Allocate blocksized buffer for unaligned or non-contiguous access
-	sbuf = (u_int8_t *)_MALLOC(blocklen, M_SECA, M_DONTWAIT);
+	sbuf = (u_int8_t *)kalloc_data(blocklen, Z_NOWAIT);
 	if (sbuf == NULL) {
 		return ENOBUFS;
 	}
@@ -916,7 +991,7 @@ esp_cbc_decrypt(struct mbuf *m, size_t off, struct secasvar *sav,
 	bzero(sbuf, blocklen);
 end:
 	if (sbuf != NULL) {
-		FREE(sbuf, M_SECA);
+		kfree_data(sbuf, blocklen);
 	}
 	return result;
 }
@@ -936,7 +1011,7 @@ esp_cbc_encrypt(
 	int sn, dn;     /* offset from the head of the mbuf, to meat */
 	size_t ivoff, bodyoff;
 	u_int8_t iv[MAXIVLEN] __attribute__((aligned(4))), *ivp;
-	u_int8_t *sbuf = NULL, *sp, *sp_unaligned;
+	u_int8_t *__bidi_indexable sbuf = NULL, *sp, *sp_unaligned;
 	u_int8_t *p, *q;
 	struct mbuf *scut;
 	int scutoff;
@@ -1052,7 +1127,7 @@ esp_cbc_encrypt(
 	}
 
 	// Allocate blocksized buffer for unaligned or non-contiguous access
-	sbuf = (u_int8_t *)_MALLOC(blocklen, M_SECA, M_DONTWAIT);
+	sbuf = (u_int8_t *)kalloc_data(blocklen, Z_NOWAIT);
 	if (sbuf == NULL) {
 		return ENOBUFS;
 	}
@@ -1158,9 +1233,223 @@ esp_cbc_encrypt(
 	key_sa_stir_iv(sav);
 end:
 	if (sbuf != NULL) {
-		FREE(sbuf, M_SECA);
+		kfree_data(sbuf, blocklen);
 	}
 	return result;
+}
+
+#define ESP_CBC_DES_BLOCKLEN 8
+static int
+esp_cbc_des_encrypt_data(struct secasvar *sav,
+    uint8_t *__sized_by(input_data_len)input_data,
+    size_t input_data_len,
+    struct newesp *esp_hdr,
+    uint8_t *__sized_by(ivlen)out_iv,
+    size_t ivlen,
+    uint8_t *__sized_by(output_data_len)output_data,
+    size_t output_data_len)
+{
+	uint8_t *ivp = NULL;
+	size_t soff = 0;
+	int rc = 0;
+
+	ESP_CHECK_ARG(sav);
+	ESP_CHECK_ARG(input_data);
+	ESP_CHECK_ARG(esp_hdr);
+	ESP_CHECK_ARG(output_data);
+
+	VERIFY(input_data_len > 0);
+	VERIFY(output_data_len >= input_data_len);
+	VERIFY(sav->ivlen == ivlen);
+	VERIFY(ivlen == ESP_CBC_DES_BLOCKLEN);
+
+	if (input_data_len % ESP_CBC_DES_BLOCKLEN) {
+		esp_log_err("payload length %zu must be a multiple of "
+		    "ESP_CBC_DES_BLOCKLEN, SPI 0x%08x", input_data_len, ntohl(sav->spi));
+		return EINVAL;
+	}
+
+	memcpy(out_iv, sav->iv, ivlen);
+	ivp = out_iv;
+
+	while (soff < input_data_len) {
+		for (int i = 0; i < ESP_CBC_DES_BLOCKLEN; i++) {
+			input_data[soff + i] ^= ivp[i];
+		}
+
+		/* encrypt */
+		if (__improbable((rc = des_ecb_encrypt((des_cblock *)&input_data[soff],
+		    (des_cblock *)&output_data[soff], (des_ecb_key_schedule *)sav->sched_enc,
+		    DES_ENCRYPT)) != 0)) {
+			esp_log_err("encrypt failed %d, SPI 0x%08x", rc, ntohl(sav->spi));
+			return rc;
+		}
+
+		ivp = &output_data[soff];
+		soff += ESP_CBC_DES_BLOCKLEN;
+	}
+
+	key_sa_stir_iv(sav);
+	return 0;
+}
+
+static int
+esp_cbc_des_decrypt_data(struct secasvar *sav,
+    uint8_t *__sized_by(input_data_len)input_data,
+    size_t input_data_len,
+    struct newesp *esp_hdr,
+    uint8_t *__sized_by(ivlen)iv,
+    size_t ivlen,
+    uint8_t *__sized_by(output_data_len)output_data,
+    size_t output_data_len)
+{
+	uint8_t *ivp = NULL;
+	size_t soff = 0;
+	int rc = 0;
+
+	ESP_CHECK_ARG(sav);
+	ESP_CHECK_ARG(input_data);
+	ESP_CHECK_ARG(esp_hdr);
+	ESP_CHECK_ARG(output_data);
+
+	VERIFY(input_data_len > 0);
+	VERIFY(output_data_len >= input_data_len);
+	VERIFY(sav->ivlen == ivlen);
+	VERIFY(ivlen == ESP_CBC_DES_BLOCKLEN);
+
+	if (input_data_len % ESP_CBC_DES_BLOCKLEN) {
+		esp_packet_log_err("payload length %zu must be a multiple of "
+		    "ESP_CBC_DES_BLOCKLEN, SPI 0x%08x", input_data_len, ntohl(sav->spi));
+		return EINVAL;
+	}
+
+	ivp = iv;
+
+	while (soff < input_data_len) {
+		/* decrypt */
+		if (__improbable((rc = des_ecb_encrypt((des_cblock *)&input_data[soff],
+		    (des_cblock *)&output_data[soff], (des_ecb_key_schedule *)sav->sched_enc,
+		    DES_DECRYPT)) != 0)) {
+			esp_log_err("decrypt failed %d, SPI 0x%08x", rc, ntohl(sav->spi));
+			return rc;
+		}
+
+		for (int i = 0; i < ESP_CBC_DES_BLOCKLEN; i++) {
+			output_data[soff + i] ^= ivp[i];
+		}
+
+		ivp = &input_data[soff];
+		soff += ESP_CBC_DES_BLOCKLEN;
+	}
+
+	return 0;
+}
+
+#define ESP_CBC_3DES_BLOCKLEN 8
+static int
+esp_cbc_3des_encrypt_data(struct secasvar *sav,
+    uint8_t *__sized_by(input_data_len)input_data,
+    size_t input_data_len,
+    struct newesp *esp_hdr,
+    uint8_t *__sized_by(ivlen)out_iv,
+    size_t ivlen,
+    uint8_t *__sized_by(output_data_len)output_data,
+    size_t output_data_len)
+{
+	uint8_t *ivp = NULL;
+	size_t soff = 0;
+	int rc = 0;
+
+	ESP_CHECK_ARG(sav);
+	ESP_CHECK_ARG(input_data);
+	ESP_CHECK_ARG(esp_hdr);
+	ESP_CHECK_ARG(output_data);
+
+	VERIFY(input_data_len > 0);
+	VERIFY(output_data_len >= input_data_len);
+	VERIFY(sav->ivlen == ivlen);
+	VERIFY(ivlen == ESP_CBC_3DES_BLOCKLEN);
+
+	if (input_data_len % ESP_CBC_3DES_BLOCKLEN) {
+		esp_log_err("payload length %zu must be a multiple of "
+		    "ESP_CBC_3DES_BLOCKLEN, SPI 0x%08x", input_data_len, ntohl(sav->spi));
+		return EINVAL;
+	}
+
+	memcpy(out_iv, sav->iv, ivlen);
+	ivp = out_iv;
+
+	while (soff < input_data_len) {
+		for (int i = 0; i < ESP_CBC_3DES_BLOCKLEN; i++) {
+			input_data[soff + i] ^= ivp[i];
+		}
+
+		/* encrypt */
+		if (__improbable((rc = des3_ecb_encrypt((des_cblock *)&input_data[soff],
+		    (des_cblock *)&output_data[soff], (des3_ecb_key_schedule *)sav->sched_enc,
+		    DES_ENCRYPT)) != 0)) {
+			esp_log_err("encrypt failed %d, SPI 0x%08x", rc, ntohl(sav->spi));
+			return rc;
+		}
+
+		ivp = &output_data[soff];
+		soff += ESP_CBC_3DES_BLOCKLEN;
+	}
+
+	key_sa_stir_iv(sav);
+	return 0;
+}
+
+static int
+esp_cbc_3des_decrypt_data(struct secasvar *sav,
+    uint8_t *__sized_by(input_data_len)input_data,
+    size_t input_data_len,
+    struct newesp *esp_hdr,
+    uint8_t *__sized_by(ivlen)iv,
+    size_t ivlen,
+    uint8_t *__sized_by(output_data_len)output_data,
+    size_t output_data_len)
+{
+	uint8_t *ivp = NULL;
+	size_t soff = 0;
+	int rc = 0;
+
+	ESP_CHECK_ARG(sav);
+	ESP_CHECK_ARG(input_data);
+	ESP_CHECK_ARG(esp_hdr);
+	ESP_CHECK_ARG(output_data);
+
+	VERIFY(input_data_len > 0);
+	VERIFY(output_data_len >= input_data_len);
+	VERIFY(sav->ivlen == ivlen);
+	VERIFY(ivlen == ESP_CBC_3DES_BLOCKLEN);
+
+	if (input_data_len % ESP_CBC_3DES_BLOCKLEN) {
+		esp_packet_log_err("payload length %zu must be a multiple of "
+		    "ESP_CBC_3DES_BLOCKLEN, SPI 0x%08x", input_data_len, ntohl(sav->spi));
+		return EINVAL;
+	}
+
+	ivp = iv;
+
+	while (soff < input_data_len) {
+		/* decrypt */
+		if (__improbable((rc = des3_ecb_encrypt((des_cblock *)&input_data[soff],
+		    (des_cblock *)&output_data[soff], (des3_ecb_key_schedule *)sav->sched_enc,
+		    DES_DECRYPT)) != 0)) {
+			esp_log_err("decrypt failed %d, SPI 0x%08x", rc, ntohl(sav->spi));
+			return rc;
+		}
+
+		for (int i = 0; i < ESP_CBC_3DES_BLOCKLEN; i++) {
+			output_data[soff + i] ^= ivp[i];
+		}
+
+		ivp = &input_data[soff];
+		soff += ESP_CBC_3DES_BLOCKLEN;
+	}
+
+	return 0;
 }
 
 /*------------------------------------------------------------*/
@@ -1172,15 +1461,17 @@ esp_auth(
 	size_t skip,    /* offset to ESP header */
 	size_t length,  /* payload length */
 	struct secasvar *sav,
-	u_char *sum)
+	u_char *__sized_by(ESP_AUTH_MAXSUMSIZE)sum)
 {
 	struct mbuf *m;
 	size_t off;
 	struct ah_algorithm_state s;
-	u_char sumbuf[AH_MAXSUMSIZE] __attribute__((aligned(4)));
+	u_char sumbuf[ESP_AUTH_MAXSUMSIZE] __attribute__((aligned(4)));
 	const struct ah_algorithm *algo;
 	size_t siz;
 	int error;
+
+	static_assert(ESP_AUTH_MAXSUMSIZE == AH_MAXSUMSIZE);
 
 	/* sanity checks */
 	if (m0->m_pkthdr.len < skip) {
@@ -1244,9 +1535,18 @@ esp_auth(
 		}
 	}
 
+	/*
+	 * pre-compute and cache intermediate key
+	 */
+	if (__improbable((error = ah_schedule(algo, sav)) != 0)) {
+		esp_log_info("ah schedule failed %d, SPI 0x%08x\n", error, ntohl(sav->spi));
+		KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 5, error, 0, 0, 0);
+		return error;
+	}
+
 	error = (*algo->init)(&s, sav);
 	if (error) {
-		KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 5, 0, 0, 0, 0);
+		KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 6, error, 0, 0, 0);
 		return error;
 	}
 	while (0 < length) {
@@ -1267,7 +1567,69 @@ esp_auth(
 	}
 	(*algo->result)(&s, (caddr_t) sumbuf, sizeof(sumbuf));
 	bcopy(sumbuf, sum, siz);        /*XXX*/
-	KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 6, 0, 0, 0, 0);
+	KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 7, 0, 0, 0, 0);
+	return 0;
+}
+
+int
+esp_auth_data(struct secasvar *sav, uint8_t *input_data, size_t input_data_len,
+    uint8_t *out_auth, size_t auth_size)
+{
+	struct ah_algorithm_state state = {};
+	const struct ah_algorithm *algo = NULL;
+	size_t siz = 0;
+	int err = 0;
+
+	ESP_CHECK_ARG(sav);
+	ESP_CHECK_ARG(input_data);
+	ESP_CHECK_ARG(out_auth);
+
+	VERIFY(input_data_len > 0);
+
+	KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_START, 0, length, 0, 0, 0);
+
+	/*
+	 * Length of ESP part (excluding authentication data) must be 4n,
+	 * since nexthdr must be at offset 4n + 3.
+	 */
+	if (__improbable(input_data_len % 4)) {
+		esp_packet_log_err("esp auth: input data length %zu is not a multiple 4, "
+		    "SPI 0x%08x\n", input_data_len, ntohl(sav->spi));
+		KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 1, EINVAL, 0, 0, 0);
+		return EINVAL;
+	}
+
+	algo = ah_algorithm_lookup(sav->alg_auth);
+	VERIFY(algo != NULL);
+
+	siz = (((*algo->sumsiz)(sav) + 3) & ~(4 - 1));
+	if (__improbable(auth_size < siz)) {
+		esp_log_err("esp auth: auth size=%zu is lesser than siz=%zu "
+		    "SPI 0x%08x\n", input_data_len, siz, ntohl(sav->spi));
+		KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 2, EINVAL, 0, 0, 0);
+		return EINVAL;
+	}
+
+	/*
+	 * pre-compute and cache intermediate key
+	 */
+	if (__improbable((err = ah_schedule(algo, sav)) != 0)) {
+		esp_log_info("ah schedule failed %d, SPI 0x%08x\n", err, ntohl(sav->spi));
+		KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 3, err, 0, 0, 0);
+		return err;
+	}
+
+	err = (*algo->init)(&state, sav);
+	if (__improbable(err != 0)) {
+		esp_log_err("esp auth: algo init failed with error %d, "
+		    "SPI 0x%08x\n", err, ntohl(sav->spi));
+		KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 4, err, 0, 0, 0);
+		return err;
+	}
+
+	(*algo->update)(&state, (caddr_t)input_data, input_data_len);
+	(*algo->result)(&state, (caddr_t)out_auth, auth_size);
+	KERNEL_DEBUG(DBG_FNC_ESPAUTH | DBG_FUNC_END, 5, 0, 0, 0, 0);
 	return 0;
 }
 
@@ -1284,7 +1646,7 @@ esp_init(void)
 
 	esp_mpkl_log_object = MPKL_CREATE_LOGOBJECT("com.apple.xnu.esp");
 	if (esp_mpkl_log_object == NULL) {
-		panic("MPKL_CREATE_LOGOBJECT for ESP failed");
+		printf("esp_init: MPKL logging unavailable; continuing without ESP packet logging\n");
 	}
 
 	return;

@@ -58,6 +58,13 @@
 #include <kern/thread.h>
 #include <arm/misc_protos.h>
 
+#include <IOKit/IOBSD.h>
+
+#include <arm64/x86_64_compat.h>
+
+#if HYPERVISOR
+#include <arm64/hv/hv.h>
+#endif
 
 extern zone_t ads_zone;
 
@@ -79,10 +86,8 @@ machine_task_set_state(
 		}
 
 		if (task->task_debug == NULL) {
-			task->task_debug = zalloc(ads_zone);
-			if (task->task_debug == NULL) {
-				return KERN_FAILURE;
-			}
+			task->task_debug = zalloc_flags(ads_zone,
+			    Z_WAITOK | Z_NOFAIL);
 		}
 
 		copy_legacy_debug_state(tstate, (arm_legacy_debug_state_t *) task->task_debug, FALSE); /* FALSE OR TRUE doesn't matter since we are ignoring it for arm */
@@ -99,10 +104,8 @@ machine_task_set_state(
 		}
 
 		if (task->task_debug == NULL) {
-			task->task_debug = zalloc(ads_zone);
-			if (task->task_debug == NULL) {
-				return KERN_FAILURE;
-			}
+			task->task_debug = zalloc_flags(ads_zone,
+			    Z_WAITOK | Z_NOFAIL);
 		}
 
 		copy_debug_state32(tstate, (arm_debug_state32_t *) task->task_debug, FALSE); /* FALSE OR TRUE doesn't matter since we are ignoring it for arm */
@@ -120,10 +123,8 @@ machine_task_set_state(
 		}
 
 		if (task->task_debug == NULL) {
-			task->task_debug = zalloc(ads_zone);
-			if (task->task_debug == NULL) {
-				return KERN_FAILURE;
-			}
+			task->task_debug = zalloc_flags(ads_zone,
+			    Z_WAITOK | Z_NOFAIL);
 		}
 
 		copy_debug_state64(tstate, (arm_debug_state64_t *) task->task_debug, FALSE); /* FALSE OR TRUE doesn't matter since we are ignoring it for arm */
@@ -217,6 +218,12 @@ machine_task_terminate(task_t task)
 {
 	if (task) {
 		void *task_debug;
+#if HYPERVISOR
+		if (task->hv_task_target) {
+			hv_callback_task_destroy(task->hv_task_target);
+			task->hv_task_target = NULL;
+		}
+#endif
 		task_debug = task->task_debug;
 		if (task_debug != NULL) {
 			task->task_debug = NULL;
@@ -231,6 +238,8 @@ machine_thread_inherit_taskwide(
 	thread_t thread,
 	task_t parent_task)
 {
+	kern_return_t kr = KERN_SUCCESS;
+
 	if (parent_task->task_debug) {
 		int flavor;
 		mach_msg_type_number_t count;
@@ -238,10 +247,10 @@ machine_thread_inherit_taskwide(
 		flavor = task_has_64Bit_data(parent_task) ? ARM_DEBUG_STATE64 : ARM_DEBUG_STATE32;
 		count = task_has_64Bit_data(parent_task) ? ARM_DEBUG_STATE64_COUNT : ARM_DEBUG_STATE32_COUNT;
 
-		return machine_thread_set_state(thread, flavor, parent_task->task_debug, count);
+		kr = machine_thread_set_state(thread, flavor, parent_task->task_debug, count);
 	}
 
-	return KERN_SUCCESS;
+	return kr;
 }
 
 
@@ -250,4 +259,130 @@ machine_task_init(__unused task_t new_task,
     __unused task_t parent_task,
     __unused boolean_t memory_inherit)
 {
+}
+
+/**
+ * Converts an OS version maj.min.patch into the format embedded in code
+ * signatures.
+ *
+ * @param maj_version major version number (x)
+ * @param min_version minor version number (y)
+ * @param patch_version patch version number (z)
+ * @return the version number encoded as xxxx.yy.zz
+ */
+static inline uint32_t
+sdk_version(uint16_t maj_version, uint8_t min_version, uint8_t patch_version)
+{
+	return (maj_version << 16) | (min_version << 8) | (patch_version << 0);
+}
+
+/**
+ * Determines whether the process was compiled with an SDK targeting an OS from
+ * fall 2024 or later.
+ *
+ * @param platform one of PLATFORM_*
+ * @param sdk the SDK version embedded in the code signature
+ */
+static bool
+platform_and_sdk_fall_2024_os_or_later(uint32_t platform, uint32_t sdk)
+{
+	switch (platform) {
+	case PLATFORM_MACOS:
+		return sdk >= sdk_version(15, 0, 0);
+	case PLATFORM_IOS:
+	case PLATFORM_IOSSIMULATOR:
+	case PLATFORM_MACCATALYST:
+		return sdk >= sdk_version(18, 0, 0);
+	case PLATFORM_TVOS:
+	case PLATFORM_TVOSSIMULATOR:
+		return sdk >= sdk_version(18, 0, 0);
+	case PLATFORM_WATCHOS:
+	case PLATFORM_WATCHOSSIMULATOR:
+		return sdk >= sdk_version(11, 0, 0);
+	case PLATFORM_XROS:
+	case PLATFORM_XROSSIMULATOR:
+		return sdk >= sdk_version(2, 0, 0);
+	case PLATFORM_DRIVERKIT:
+		return sdk >= sdk_version(24, 0, 0);
+	default:
+		return true;
+	}
+}
+
+/*
+ * machine_task_process_signature
+ *
+ * Called to allow code signature dependent adjustments to the task
+ * state. It is not safe to assume that this function is only called
+ * once per task, as a signature may be attached later.
+ *
+ * On error, this function should point error_msg to a static error
+ * string (the caller will not free it).
+ */
+kern_return_t
+machine_task_process_signature(
+	task_t task,
+	uint32_t const __unused platform,
+	uint32_t const __unused sdk,
+	char const ** __unused error_msg)
+{
+	assert(error_msg != NULL);
+
+	kern_return_t kr = KERN_SUCCESS;
+
+	bool const x18_entitled =
+	    IOTaskHasEntitlement(task, "com.apple.security.custom-x18-abi-toggle") ||
+	    ml_satisfies_x86_64_requirements(^bool (const char * ent) {
+		return IOTaskHasEntitlement(task, ent);
+	});
+
+	bool const x18_entitled_always =
+	    IOTaskHasEntitlement(task, "com.apple.private.custom-x18-abi") ||
+	    IOTaskHasEntitlement(task, "com.apple.private.uexc");
+
+#if !__ARM_KERNEL_PROTECT__
+	task->preserve_x18_entitled = x18_entitled || x18_entitled_always;
+	task->preserve_x18_always = x18_entitled_always;
+
+	/*
+	 * Temporary override for tasks before macOS 13.
+	 * Those were allowed to use x18 for their purposes on Apple Silicon.
+	 */
+
+	if (platform == PLATFORM_MACOS && sdk < sdk_version(13, 0, 0)) {
+		task->preserve_x18_always = true;
+	}
+#else /* !__ARM_KERNEL_PROTECT__ */
+	if (x18_entitled || x18_entitled_always) {
+		/*
+		 * This *will* make you sad, because it means you are trying
+		 * to use x18 on a device where that's just not possible. As
+		 * this is either through private entitlements, or an
+		 * entitlement that was created long after those devices were
+		 * new, we can prevent confusing damage now.
+		 */
+
+		*error_msg = "process has entitlement that indicates custom x18 ABI usage, not available on this device";
+		kr = KERN_FAILURE;
+	}
+#endif /* !__ARM_KERNEL_PROTECT__ */
+
+	/* The task defaults to enable ARMv9.4 extensions if the SDK is recent. */
+	bool uses_1ghz_timebase = platform_and_sdk_fall_2024_os_or_later(platform, sdk);
+
+#if CONFIG_ROSETTA
+	/* Rosetta tasks expect Apple timebase. */
+	uses_1ghz_timebase = uses_1ghz_timebase && (!task_is_translated(task));
+#endif /* CONFIG_ROSETTA */
+
+	task->uses_1ghz_timebase = uses_1ghz_timebase;
+
+
+	return kr;
+}
+
+bool
+ml_task_uses_1ghz_timebase(const task_t task)
+{
+	return task->uses_1ghz_timebase;
 }

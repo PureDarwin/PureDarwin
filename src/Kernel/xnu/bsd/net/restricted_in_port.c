@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2019-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -36,6 +36,9 @@
 #include <net/restricted_in_port.h>
 #include <netinet/in.h>
 #include <os/log.h>
+#if SKYWALK
+#include <skywalk/namespace/netns.h>
+#endif /* SKYWALK */
 
 /*
  * Entitlement required for using the port of the test entry
@@ -50,7 +53,7 @@
 /*
  * Use a single bitmap for quickly checking if a TCP or UDP port is restricted
  */
-bitmap_t *restricted_port_bitmap = NULL;
+bitmap_t *__sized_by_or_null(BITMAP_SIZE(UINT16_MAX)) restricted_port_bitmap;
 
 struct restricted_port_entry {
 	const char      *rpe_entitlement;   // entitlement to check for this port
@@ -218,7 +221,7 @@ sysctl_restricted_port_enforced SYSCTL_HANDLER_ARGS
 	}
 #if (DEBUG || DEVELOPMENT)
 	if (proc_suser(current_proc()) != 0 &&
-	    !IOTaskHasEntitlement(current_task(), ENTITLEMENT_TEST_CONTROL)) {
+	    !IOCurrentTaskHasEntitlement(ENTITLEMENT_TEST_CONTROL)) {
 		return EPERM;
 	}
 	restricted_port_enforced = value;
@@ -244,7 +247,7 @@ sysctl_restricted_port_verbose SYSCTL_HANDLER_ARGS
 		return error;
 	}
 	if (proc_suser(current_proc()) != 0 &&
-	    !IOTaskHasEntitlement(current_task(), ENTITLEMENT_TEST_CONTROL)) {
+	    !IOCurrentTaskHasEntitlement(ENTITLEMENT_TEST_CONTROL)) {
 		return EPERM;
 	}
 	restricted_port_verbose = value;
@@ -271,7 +274,7 @@ sysctl_restricted_port_test_common(struct sysctl_oid *oidp,
 		return error;
 	}
 	if (proc_suser(current_proc()) != 0 &&
-	    !IOTaskHasEntitlement(current_task(), ENTITLEMENT_TEST_CONTROL)) {
+	    !IOCurrentTaskHasEntitlement(ENTITLEMENT_TEST_CONTROL)) {
 		return EPERM;
 	}
 	if (value < 0 || value > UINT16_MAX) {
@@ -283,7 +286,7 @@ sysctl_restricted_port_test_common(struct sysctl_oid *oidp,
 		 */
 		if (restricted_port_test != 0) {
 			for (i = 0; i < RPE_ENTRY_COUNT; i++) {
-				struct restricted_port_entry *rpe = &restricted_port_list[i];
+				struct restricted_port_entry *__single rpe = &restricted_port_list[i];
 
 				if (rpe->rpe_entitlement == NULL) {
 					break;
@@ -364,6 +367,13 @@ restricted_in_port_init(void)
 {
 	unsigned int i;
 
+#if SKYWALK
+	static_assert(PORT_FLAGS_LISTENER == NETNS_LISTENER);
+	static_assert(PORT_FLAGS_SKYWALK == NETNS_SKYWALK);
+	static_assert(PORT_FLAGS_BSD == NETNS_BSD);
+	static_assert(PORT_FLAGS_PF == NETNS_PF);
+	static_assert(PORT_FLAGS_MAX == NETNS_OWNER_MAX);
+#endif /* SKYWALK */
 
 	restricted_port_bitmap = bitmap_alloc(UINT16_MAX);
 
@@ -372,7 +382,7 @@ restricted_in_port_init(void)
 	}
 
 	for (i = 0; i < RPE_ENTRY_COUNT; i++) {
-		struct restricted_port_entry *rpe = &restricted_port_list[i];
+		struct restricted_port_entry *__single rpe = &restricted_port_list[i];
 
 		if (rpe->rpe_entitlement == NULL) {
 			break;
@@ -390,6 +400,10 @@ port_flag_str(uint32_t port_flags)
 	switch (port_flags) {
 	case PORT_FLAGS_LISTENER:
 		return "listener";
+#if SKYWALK
+	case PORT_FLAGS_SKYWALK:
+		return "skywalk";
+#endif /* SKYWALK */
 	case PORT_FLAGS_BSD:
 		return "bsd";
 	case PORT_FLAGS_PF:
@@ -407,7 +421,7 @@ bool
 current_task_can_use_restricted_in_port(in_port_t port, uint8_t protocol, uint32_t port_flags)
 {
 	unsigned int i;
-	struct proc *p = current_proc();
+	struct proc *__single p = current_proc();
 	pid_t pid = proc_pid(p);
 
 	/*
@@ -423,7 +437,7 @@ current_task_can_use_restricted_in_port(in_port_t port, uint8_t protocol, uint32
 	}
 
 	for (i = 0; i < RPE_ENTRY_COUNT; i++) {
-		struct restricted_port_entry *rpe = &restricted_port_list[i];
+		struct restricted_port_entry *__single rpe = &restricted_port_list[i];
 
 		if (rpe->rpe_entitlement == NULL) {
 			break;
@@ -446,7 +460,7 @@ current_task_can_use_restricted_in_port(in_port_t port, uint8_t protocol, uint32
 		 * - The process has the required entitlement
 		 * - The port is marked as usable by root
 		 */
-		task_t task = current_task();
+		task_t __single task = current_task();
 		if (rpe->rpe_flags & RPE_FLAG_SUPERUSER) {
 			if (task == kernel_task || proc_suser(current_proc()) == 0) {
 				os_log(OS_LOG_DEFAULT,
@@ -466,7 +480,7 @@ current_task_can_use_restricted_in_port(in_port_t port, uint8_t protocol, uint32
 				    ntohs(port), protocol, port_flag_str(port_flags));
 				return false;
 			}
-			if (!IOTaskHasEntitlement(current_task(), rpe->rpe_entitlement)) {
+			if (!IOCurrentTaskHasEntitlement(rpe->rpe_entitlement)) {
 				os_log(OS_LOG_DEFAULT,
 				    "entitlement restricted port %u for protocol %u via %s cannot be used by process %s:%u -- IOTaskHasEntitlement(%s) failed",
 				    ntohs(port), protocol, port_flag_str(port_flags), proc_best_name(p), pid, rpe->rpe_entitlement);

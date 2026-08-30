@@ -50,11 +50,63 @@ extern void mig_os_release(void* ptr);
  * malloc, so every dyld allocation dereferenced the NULL table: fault_addr=0x10,
  * the malloc slot offset). Normal libSystem clients still get these as the only
  * (weak) definition and route through the initialized table as before.
+ *
+ * libSystem.B.dylib is not affected either way: libmalloc's strong malloc wins
+ * that link, so these weak definitions are dropped there entirely.
+ *
+ * libdyld.dylib is the one image that really does run on these. It links
+ * libsystem_kernel statically and has no strong allocator of its own, and
+ * _libkernel_functions is per-image (hidden visibility), so libSystem.B calling
+ * __libkernel_init() does nothing for libdyld's private copy. libdyld allocates
+ * while it is still loading images - dyld3::GrowableArray::growTo(),
+ * tlv_set_key_for_image(), setErrorString() - which is before any initializer
+ * has run and therefore before any real allocator exists.
+ *
+ * So this is the same two-phase scheme dyld itself uses in dyldNew.cpp: serve
+ * allocations from a static pool until a real allocator is registered, then
+ * hand off to it. pd_libSystem_initializer() performs the handoff by calling
+ * libdyld's exported __libkernel_init() bridge. Pool chunks stay valid across
+ * the handoff and are simply never reclaimed, exactly as dyld's pool behaves.
  */
+#define PD_BOOTSTRAP_POOL_SIZE (64 * 1024)
+static char pd_bootstrap_pool[PD_BOOTSTRAP_POOL_SIZE] __attribute__((aligned(16)));
+static size_t pd_bootstrap_pool_used;
+
+struct pd_bootstrap_chunk_hdr {
+	size_t size;
+};
+
+static void *
+pd_bootstrap_malloc(size_t size)
+{
+	size_t body = (size + 15) & ~(size_t)15;
+	size_t total = sizeof(struct pd_bootstrap_chunk_hdr) + body;
+
+	if (total > sizeof(pd_bootstrap_pool) - pd_bootstrap_pool_used) {
+		return 0;
+	}
+
+	struct pd_bootstrap_chunk_hdr *h =
+	    (struct pd_bootstrap_chunk_hdr *)(pd_bootstrap_pool + pd_bootstrap_pool_used);
+	h->size = size;
+	pd_bootstrap_pool_used += total;
+	return (void *)(h + 1);
+}
+
+static int
+pd_bootstrap_owns(const void *ptr)
+{
+	return (const char *)ptr > pd_bootstrap_pool &&
+	       (const char *)ptr < pd_bootstrap_pool + sizeof(pd_bootstrap_pool);
+}
+
 __attribute__((visibility("hidden"), weak))
 void *
 malloc(size_t size)
 {
+	if (_libkernel_functions == 0) {
+		return pd_bootstrap_malloc(size);
+	}
 	return _libkernel_functions->malloc(size);
 }
 
@@ -62,6 +114,13 @@ __attribute__((visibility("hidden"), weak))
 void
 free(void *ptr)
 {
+	/* Pool chunks outlive the handoff; never hand one to the real free(). */
+	if (pd_bootstrap_owns(ptr)) {
+		return;
+	}
+	if (_libkernel_functions == 0) {
+		return;
+	}
 	return _libkernel_functions->free(ptr);
 }
 
@@ -69,6 +128,18 @@ __attribute__((visibility("hidden"), weak))
 void *
 realloc(void *ptr, size_t size)
 {
+	if (pd_bootstrap_owns(ptr)) {
+		/* Grows out of the pool and into the real allocator once available. */
+		void *newp = malloc(size);
+		if (newp != 0) {
+			size_t oldsize = ((const struct pd_bootstrap_chunk_hdr *)ptr - 1)->size;
+			_libkernel_memmove(newp, ptr, oldsize < size ? oldsize : size);
+		}
+		return newp;
+	}
+	if (_libkernel_functions == 0) {
+		return pd_bootstrap_malloc(size);
+	}
 	return _libkernel_functions->realloc(ptr, size);
 }
 
@@ -76,6 +147,15 @@ PD_LIBKERNEL_FUNCPTR_ATTR
 void
 _pthread_exit_if_canceled(int error)
 {
+	/*
+	 * Images that link libsystem_kernel statically but not libpthread - dyld
+	 * and libdyld.dylib - resolve this to the trampoline and never populate the
+	 * table. There is no thread to cancel in that context, so returning is the
+	 * correct answer rather than a NULL dereference at slot offset 0x28.
+	 */
+	if (_libkernel_functions == 0) {
+		return;
+	}
 	return _libkernel_functions->_pthread_exit_if_canceled(error);
 }
 
@@ -89,7 +169,7 @@ PD_LIBKERNEL_FUNCPTR_ATTR
 void
 _pthread_clear_qos_tsd(mach_port_t thread_port)
 {
-	if (_libkernel_functions->version >= 3 &&
+	if (_libkernel_functions != 0 && _libkernel_functions->version >= 3 &&
 	    _libkernel_functions->pthread_clear_qos_tsd) {
 		return _libkernel_functions->pthread_clear_qos_tsd(thread_port);
 	}
@@ -99,7 +179,7 @@ PD_LIBKERNEL_FUNCPTR_ATTR
 int
 pthread_current_stack_contains_np(const void *addr, size_t len)
 {
-	if (_libkernel_functions->version >= 4 &&
+	if (_libkernel_functions != 0 && _libkernel_functions->version >= 4 &&
 	    _libkernel_functions->pthread_current_stack_contains_np) {
 		return _libkernel_functions->pthread_current_stack_contains_np(addr, len);
 	}

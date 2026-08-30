@@ -4,3 +4,8 @@ configure_file(${XNU_SRC}/cmake/MakeInc.def.in ${XNU_OBJ}/makedefs/MakeInc.def @
 
 file(MAKE_DIRECTORY ${XNU_OBJ}/bsd/sys)
 configure_file(${XNU_SRC}/cmake/make_symbol_aliasing.sh.in ${XNU_OBJ}/bsd/sys/make_symbol_aliasing.sh @ONLY)
+
+# xnu 12377 derives this from a System.kext Info.plist in an SDK/KDK, which we
+# do not have; MakeInc.kernel only writes it during kernel builds, so exporthdrs
+# would not find it.
+file(WRITE ${XNU_OBJ}/xnuVersion "${DARWIN_KERNEL_VERSION}\n")

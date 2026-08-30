@@ -38,9 +38,11 @@ libkern/c++/OSSymbol.cpp				optional libkerncpp
 libkern/c++/OSUnserialize.cpp				optional libkerncpp
 libkern/c++/OSUnserializeXML.cpp			optional libkerncpp
 libkern/c++/OSSerializeBinary.cpp			optional libkerncpp
+libkern/c++/OSValueObject.cpp				optional libkerncpp
 
 libkern/c++/priority_queue.cpp				standard
 
+libkern/coreanalytics/coreanalytics_shim.cpp		standard
 libkern/OSKextLib.cpp					optional libkerncpp
 libkern/mkext.c						standard
 libkern/OSKextVersion.c					standard
@@ -57,9 +59,11 @@ libkern/uuid/uuid.c					standard
 libkern/os/log.c					standard
 libkern/os/log_encode.c					standard
 libkern/os/log_mem.c					standard
+libkern/os/log_queue.c					standard
 libkern/os/object.c					standard
 libkern/os/internal.c					standard
 libkern/os/refcnt.c					standard
+libkern/os/system_event_log.c					standard
 
 libkern/kernel_mach_header.c                            standard
 
@@ -100,13 +104,19 @@ libkern/crypto/corecrypto_chacha20poly1305.c	optional	crypto
 
 libkern/coretrust/coretrust.c   standard
 
+libkern/apple_encrypted_archive/apple_encrypted_archive.c	standard
+
 libkern/img4/interface.c 		standard
+libkern/image4/dlxk.c 		standard
+
+libkern/amfi/amfi.c 		standard
 
 libkern/stack_protector.c       standard
 libkern/ptrauth_utils.c         standard
 
 libkern/kxld/kxld.c             optional config_kxld
 libkern/kxld/kxld_array.c       optional config_kxld
+libkern/kxld/kxld_copyright.c   optional config_kxld
 libkern/kxld/kxld_demangle.c    optional config_kxld
 libkern/kxld/kxld_dict.c        optional config_kxld
 libkern/kxld/kxld_kext.c        optional config_kxld
@@ -125,3 +135,5 @@ libkern/kxld/kxld_vtable.c      optional config_kxld
 
 libkern/libclosure/runtime.cpp      optional config_blocks
 libkern/libclosure/libclosuredata.c optional config_blocks
+
+libkern/compression/compression.c	standard

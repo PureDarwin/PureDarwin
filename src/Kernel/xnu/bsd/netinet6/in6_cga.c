@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2013-2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -189,7 +189,7 @@ in6_cga_generate_iid(const struct in6_cga_prepare *prepare,
 void
 in6_cga_init(void)
 {
-	lck_mtx_init(&in6_cga.cga_mutex, ifa_mtx_grp, ifa_mtx_attr);
+	lck_mtx_init(&in6_cga.cga_mutex, &ifa_mtx_grp, &ifa_mtx_attr);
 	in6_cga.cga_initialized = TRUE;
 }
 
@@ -221,7 +221,7 @@ int
 in6_cga_start(const struct in6_cga_nodecfg *cfg)
 {
 	struct iovec privkey, pubkey;
-	const struct in6_cga_prepare *prepare;
+	const struct in6_cga_prepare *__single prepare;
 	caddr_t pubkeycopy, privkeycopy;
 
 	VERIFY(cfg != NULL);
@@ -245,30 +245,32 @@ in6_cga_start(const struct in6_cga_nodecfg *cfg)
 
 	in6_cga.cga_prepare = *prepare;
 
-	MALLOC(privkeycopy, caddr_t, privkey.iov_len, M_IP6CGA, M_WAITOK);
+	privkeycopy = (caddr_t)kalloc_data(privkey.iov_len, Z_WAITOK);
 	if (privkeycopy == NULL) {
 		return ENOMEM;
 	}
 
-	MALLOC(pubkeycopy, caddr_t, pubkey.iov_len, M_IP6CGA, M_WAITOK);
+	pubkeycopy = (caddr_t)kalloc_data(pubkey.iov_len, Z_WAITOK);
 	if (pubkeycopy == NULL) {
 		if (privkeycopy != NULL) {
-			FREE(privkeycopy, M_IP6CGA);
+			kfree_data(privkeycopy, privkey.iov_len);
 		}
 		return ENOMEM;
 	}
 
-	bcopy(privkey.iov_base, privkeycopy, privkey.iov_len);
+	bcopy(__unsafe_forge_bidi_indexable(void *, privkey.iov_base, privkey.iov_len), privkeycopy, privkey.iov_len);
+
 	privkey.iov_base = privkeycopy;
 	if (in6_cga.cga_privkey.iov_base != NULL) {
-		FREE(in6_cga.cga_privkey.iov_base, M_IP6CGA);
+		kfree_data(in6_cga.cga_privkey.iov_base, in6_cga.cga_privkey.iov_len);
 	}
 	in6_cga.cga_privkey = privkey;
 
-	bcopy(pubkey.iov_base, pubkeycopy, pubkey.iov_len);
+	bcopy(__unsafe_forge_bidi_indexable(void *, pubkey.iov_base, pubkey.iov_len), pubkeycopy, pubkey.iov_len);
+
 	pubkey.iov_base = pubkeycopy;
 	if (in6_cga.cga_pubkey.iov_base != NULL) {
-		FREE(in6_cga.cga_pubkey.iov_base, M_IP6CGA);
+		kfree_data(in6_cga.cga_pubkey.iov_base, in6_cga.cga_pubkey.iov_len);
 	}
 	in6_cga.cga_pubkey = pubkey;
 
@@ -281,13 +283,13 @@ in6_cga_stop(void)
 	in6_cga_node_lock_assert(LCK_MTX_ASSERT_OWNED);
 
 	if (in6_cga.cga_privkey.iov_base != NULL) {
-		FREE(in6_cga.cga_privkey.iov_base, M_IP6CGA);
+		kfree_data(in6_cga.cga_privkey.iov_base, in6_cga.cga_privkey.iov_len);
 		in6_cga.cga_privkey.iov_base = NULL;
 		in6_cga.cga_privkey.iov_len = 0;
 	}
 
 	if (in6_cga.cga_pubkey.iov_base != NULL) {
-		FREE(in6_cga.cga_pubkey.iov_base, M_IP6CGA);
+		kfree_data(in6_cga.cga_pubkey.iov_base, in6_cga.cga_pubkey.iov_len);
 		in6_cga.cga_pubkey.iov_base = NULL;
 		in6_cga.cga_pubkey.iov_len = 0;
 	}
@@ -295,57 +297,12 @@ in6_cga_stop(void)
 	return 0;
 }
 
-ssize_t
-in6_cga_parameters_prepare(void *output, size_t max,
-    const struct in6_addr *prefix, u_int8_t collisions,
-    const struct in6_cga_modifier *modifier)
-{
-	caddr_t cursor;
-
-	in6_cga_node_lock_assert(LCK_MTX_ASSERT_OWNED);
-
-	if (in6_cga.cga_pubkey.iov_len == 0) {
-		/* No public key */
-		return EINVAL;
-	}
-
-	if (output == NULL ||
-	    max < in6_cga.cga_pubkey.iov_len + sizeof(modifier->octets) + 9) {
-		/* Output buffer error */
-		return EINVAL;
-	}
-
-	cursor = output;
-	if (modifier == NULL) {
-		modifier = &in6_cga.cga_prepare.cga_modifier;
-	}
-	if (prefix == NULL) {
-		static const struct in6_addr llprefix = {{{ 0xfe, 0x80 }}};
-		prefix = &llprefix;
-	}
-
-	bcopy(&modifier->octets, cursor, sizeof(modifier->octets));
-	cursor += sizeof(modifier->octets);
-
-	*cursor++ = (char) collisions;
-
-	bcopy(&prefix->s6_addr[0], cursor, 8);
-	cursor += 8;
-
-	bcopy(in6_cga.cga_pubkey.iov_base, cursor, in6_cga.cga_pubkey.iov_len);
-	cursor += in6_cga.cga_pubkey.iov_len;
-
-	/* FUTURE: Extension fields */
-
-	return (ssize_t)(cursor - (caddr_t)output);
-}
-
 int
 in6_cga_generate(struct in6_cga_prepare *prepare, u_int8_t collisions,
     struct in6_addr *in6, struct ifnet *ifp)
 {
 	int error;
-	const struct iovec *pubkey;
+	const struct iovec *__single pubkey;
 
 	in6_cga_node_lock_assert(LCK_MTX_ASSERT_OWNED);
 	VERIFY(in6 != NULL);

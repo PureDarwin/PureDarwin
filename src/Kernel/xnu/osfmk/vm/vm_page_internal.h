@@ -1,0 +1,1282 @@
+/*
+ * Copyright (c) 2023 Apple Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
+
+#ifndef _VM_VM_PAGE_INTERNAL_H_
+#define _VM_VM_PAGE_INTERNAL_H_
+
+#include <sys/cdefs.h>
+#include <vm/vm_page.h>
+
+__BEGIN_DECLS
+#ifdef XNU_KERNEL_PRIVATE
+
+/*!
+ * @abstract
+ * The type for per-cpu free queues and related info.
+ *
+ * @field start_color
+ * The next color to allocate a page for on this CPU.
+ *
+ * @field free_pages
+ * The per-cpu free list of pages.
+ * Pages on this list have the @c VM_PAGE_ON_FREE_LOCAL_Q state.
+ * This list is only accessed by the current CPU with preemption disabled.
+ */
+#if HAS_MTE
+/*
+ *
+ * @field free_tagged_pages
+ * The per-cpu free list of tagged pages.
+ * Pages on this list have the @c VM_PAGE_ON_FREE_LOCAL_Q state.
+ * Their associated cell will have state @c MTE_STATE_ACTIVE.
+ * This list is only accessed by the current CPU with preemption disabled.
+ *
+ * @field free_claimed_pages
+ * The per-cpu free queue of claimed pages.
+ * Pages on this list have the @c VM_PAGE_ON_FREE_LOCAL_Q state.
+ * Their associated cell will have state @c MTE_STATE_CLAIMED.
+ * Access to this queue is protected by the @c free_claimed_lock.
+ *
+ * @field free_claimed_lock
+ * The lock protecting the per-cpu free queue of claimed pages.
+ * This allows for the refill thread to steal claimed pages from this queue.
+ *
+ * @field deactivate_suspend
+ * Per-cpu marker that suspends page deactivations until the current CPU
+ * has finished some untagging (see mteinfo_tag_storage_deactivate_barrier()).
+ */
+#endif
+typedef struct vm_page_pcpu {
+#if HAS_MTE
+	vm_page_queue_head_t   free_claimed_pages VM_PAGE_PACKED_ALIGNED;
+	lck_ticket_t           free_claimed_lock;
+	uint32_t               deactivate_suspend;
+	vm_page_t              free_tagged_zero_page;
+	vm_page_t              free_tagged_pages;
+#endif
+	vm_page_t              free_zero_page;
+	vm_page_t              free_pages;
+	unsigned int           start_color;
+} *vm_page_pcpu_t;
+PERCPU_DECL(struct vm_page_pcpu, vm_page_pcpu);
+
+
+extern struct vm_page_free_queue vm_page_queue_free;
+
+/*
+ * @var vm_page_deactivate_behind
+ * @brief Whether the system should proactively deactivate pages in large
+ *        sequential vm-objects/xfers to prevent file-cache/compressor
+ *        thrashing.
+ */
+extern bool vm_page_deactivate_behind;
+
+/*
+ * @var vm_page_deactivate_behind_min_resident_ratio
+ * @brief The minimum size of an xfer/vm-object at which proactive deactivation
+ *        should be engaged to prevent file-cache/compressor thrashing.
+ */
+extern uint32_t vm_page_deactivate_behind_min_resident_ratio;
+
+
+/*!
+ * @abstract
+ * Applies a signed delta to a VM counter that is not meant to ever overflow.
+ *
+ * @discussion
+ * This is not meant for counters counting "events", but for counters that
+ * maintain how many objects there is in a given state (free pages, ...).
+ *
+ * @param counter         A pointer to a counter of any integer type.
+ * @param value           The signed delta to apply.
+ * @returns               The new value of the counter.
+ */
+#define VM_COUNTER_DELTA(counter, value)  ({ \
+	__auto_type __counter = (counter);                                      \
+	release_assert(!os_add_overflow(*__counter, value, __counter));         \
+	*__counter;                                                             \
+})
+#define VM_COUNTER_ATOMIC_DELTA(counter, value)  ({ \
+	__auto_type __value = (value);                                          \
+	__auto_type __orig  = os_atomic_add_orig(counter, __value, relaxed);    \
+	release_assert(!os_add_overflow(__orig, __value, &__orig));             \
+	__orig + __value;                                                       \
+})
+
+
+/*!
+ * @abstract
+ * Applies an unsigned increment to a VM counter that is not meant to ever
+ * overflow.
+ *
+ * @discussion
+ * This is not meant for counters counting "events", but for counters that
+ * maintain how many objects there is in a given state (free pages, ...).
+ *
+ * @param counter         A pointer to a counter of any integer type.
+ * @param value           The unsigned value to add.
+ * @returns               The new value of the counter.
+ */
+#define VM_COUNTER_ADD(counter, value)  ({ \
+	__auto_type __counter = (counter);                                      \
+	release_assert(!os_add_overflow(*__counter, value, __counter));         \
+	*__counter;                                                             \
+})
+#define VM_COUNTER_ATOMIC_ADD(counter, value)  ({ \
+	__auto_type __value = (value);                                          \
+	__auto_type __orig  = os_atomic_add_orig(counter, __value, relaxed);    \
+	release_assert(!os_add_overflow(__orig, __value, &__orig));             \
+	__orig + __value;                                                       \
+})
+
+/*!
+ * @abstract
+ * Applies an unsigned decrement to a VM counter that is not meant to ever
+ * overflow.
+ *
+ * @discussion
+ * This is not meant for counters counting "events", but for counters that
+ * maintain how many objects there is in a given state (free pages, ...).
+ *
+ * @param counter         A pointer to a counter of any integer type.
+ * @param value           The unsigned value to substract.
+ * @returns               The new value of the counter.
+ */
+#define VM_COUNTER_SUB(counter, value)  ({ \
+	__auto_type __counter = (counter);                                      \
+	release_assert(!os_sub_overflow(*__counter, value, __counter));         \
+	*__counter;                                                             \
+})
+#define VM_COUNTER_ATOMIC_SUB(counter, value)  ({ \
+	__auto_type __value = (value);                                          \
+	__auto_type __orig  = os_atomic_sub_orig(counter, __value, relaxed);    \
+	release_assert(!os_sub_overflow(__orig, __value, &__orig));             \
+	__orig - __value;                                                       \
+})
+
+
+/*!
+ * @abstract
+ * Convenience wrapper to increment a VM counter.
+ *
+ * @discussion
+ * This is not meant for counters counting "events", but for counters that
+ * maintain how many objects there is in a given state (free pages, ...).
+ *
+ * @param counter         A pointer to a counter of any integer type.
+ * @returns               The new value of the counter.
+ */
+#define VM_COUNTER_INC(counter)         VM_COUNTER_ADD(counter, 1)
+#define VM_COUNTER_ATOMIC_INC(counter)  VM_COUNTER_ATOMIC_ADD(counter, 1)
+
+/*!
+ * @abstract
+ * Convenience wrapper to decrement a VM counter.
+ *
+ * @discussion
+ * This is not meant for counters counting "events", but for counters that
+ * maintain how many objects there is in a given state (free pages, ...).
+ *
+ * @param counter         A pointer to a counter of any integer type.
+ * @returns               The new value of the counter.
+ */
+#define VM_COUNTER_DEC(counter)         VM_COUNTER_SUB(counter, 1)
+#define VM_COUNTER_ATOMIC_DEC(counter)  VM_COUNTER_ATOMIC_SUB(counter, 1)
+
+static inline int
+VMP_CS_FOR_OFFSET(
+	vm_map_offset_t fault_phys_offset)
+{
+	assertf(fault_phys_offset < PAGE_SIZE &&
+	    !(fault_phys_offset & FOURK_PAGE_MASK),
+	    "offset 0x%llx\n", (uint64_t)fault_phys_offset);
+	return 1 << (fault_phys_offset >> FOURK_PAGE_SHIFT);
+}
+static inline bool
+VMP_CS_VALIDATED(
+	vm_page_t p,
+	vm_map_size_t fault_page_size,
+	vm_map_offset_t fault_phys_offset)
+{
+	assertf(fault_page_size <= PAGE_SIZE,
+	    "fault_page_size 0x%llx fault_phys_offset 0x%llx\n",
+	    (uint64_t)fault_page_size, (uint64_t)fault_phys_offset);
+	if (fault_page_size == PAGE_SIZE) {
+		return p->vmp_cs_validated == VMP_CS_ALL_TRUE;
+	}
+	return p->vmp_cs_validated & VMP_CS_FOR_OFFSET(fault_phys_offset);
+}
+static inline bool
+VMP_CS_TAINTED(
+	vm_page_t p,
+	vm_map_size_t fault_page_size,
+	vm_map_offset_t fault_phys_offset)
+{
+	assertf(fault_page_size <= PAGE_SIZE,
+	    "fault_page_size 0x%llx fault_phys_offset 0x%llx\n",
+	    (uint64_t)fault_page_size, (uint64_t)fault_phys_offset);
+	if (fault_page_size == PAGE_SIZE) {
+		return p->vmp_cs_tainted != VMP_CS_ALL_FALSE;
+	}
+	return p->vmp_cs_tainted & VMP_CS_FOR_OFFSET(fault_phys_offset);
+}
+static inline bool
+VMP_CS_NX(
+	vm_page_t p,
+	vm_map_size_t fault_page_size,
+	vm_map_offset_t fault_phys_offset)
+{
+	assertf(fault_page_size <= PAGE_SIZE,
+	    "fault_page_size 0x%llx fault_phys_offset 0x%llx\n",
+	    (uint64_t)fault_page_size, (uint64_t)fault_phys_offset);
+	if (fault_page_size == PAGE_SIZE) {
+		return p->vmp_cs_nx != VMP_CS_ALL_FALSE;
+	}
+	return p->vmp_cs_nx & VMP_CS_FOR_OFFSET(fault_phys_offset);
+}
+static inline void
+VMP_CS_SET_VALIDATED(
+	vm_page_t p,
+	vm_map_size_t fault_page_size,
+	vm_map_offset_t fault_phys_offset,
+	boolean_t value)
+{
+	assertf(fault_page_size <= PAGE_SIZE,
+	    "fault_page_size 0x%llx fault_phys_offset 0x%llx\n",
+	    (uint64_t)fault_page_size, (uint64_t)fault_phys_offset);
+	if (value) {
+		if (fault_page_size == PAGE_SIZE) {
+			p->vmp_cs_validated = VMP_CS_ALL_TRUE;
+		}
+		p->vmp_cs_validated |= VMP_CS_FOR_OFFSET(fault_phys_offset);
+	} else {
+		if (fault_page_size == PAGE_SIZE) {
+			p->vmp_cs_validated = VMP_CS_ALL_FALSE;
+		}
+		p->vmp_cs_validated &= ~VMP_CS_FOR_OFFSET(fault_phys_offset);
+	}
+}
+static inline void
+VMP_CS_SET_TAINTED(
+	vm_page_t p,
+	vm_map_size_t fault_page_size,
+	vm_map_offset_t fault_phys_offset,
+	boolean_t value)
+{
+	assertf(fault_page_size <= PAGE_SIZE,
+	    "fault_page_size 0x%llx fault_phys_offset 0x%llx\n",
+	    (uint64_t)fault_page_size, (uint64_t)fault_phys_offset);
+	if (value) {
+		if (fault_page_size == PAGE_SIZE) {
+			p->vmp_cs_tainted = VMP_CS_ALL_TRUE;
+		}
+		p->vmp_cs_tainted |= VMP_CS_FOR_OFFSET(fault_phys_offset);
+	} else {
+		if (fault_page_size == PAGE_SIZE) {
+			p->vmp_cs_tainted = VMP_CS_ALL_FALSE;
+		}
+		p->vmp_cs_tainted &= ~VMP_CS_FOR_OFFSET(fault_phys_offset);
+	}
+}
+static inline void
+VMP_CS_SET_NX(
+	vm_page_t p,
+	vm_map_size_t fault_page_size,
+	vm_map_offset_t fault_phys_offset,
+	boolean_t value)
+{
+	assertf(fault_page_size <= PAGE_SIZE,
+	    "fault_page_size 0x%llx fault_phys_offset 0x%llx\n",
+	    (uint64_t)fault_page_size, (uint64_t)fault_phys_offset);
+	if (value) {
+		if (fault_page_size == PAGE_SIZE) {
+			p->vmp_cs_nx = VMP_CS_ALL_TRUE;
+		}
+		p->vmp_cs_nx |= VMP_CS_FOR_OFFSET(fault_phys_offset);
+	} else {
+		if (fault_page_size == PAGE_SIZE) {
+			p->vmp_cs_nx = VMP_CS_ALL_FALSE;
+		}
+		p->vmp_cs_nx &= ~VMP_CS_FOR_OFFSET(fault_phys_offset);
+	}
+}
+
+
+#if defined(__LP64__)
+static __inline__ void
+vm_page_enqueue_tail(
+	vm_page_queue_t         que,
+	vm_page_queue_entry_t   elt)
+{
+	vm_page_queue_entry_t   old_tail;
+
+	old_tail = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(que->prev);
+	elt->next = VM_PAGE_PACK_PTR(que);
+	elt->prev = que->prev;
+	que->prev = old_tail->next = VM_PAGE_PACK_PTR(elt);
+}
+
+static __inline__ void
+vm_page_remque(
+	vm_page_queue_entry_t elt)
+{
+	vm_page_queue_entry_t next;
+	vm_page_queue_entry_t prev;
+	vm_page_packed_t      next_pck = elt->next;
+	vm_page_packed_t      prev_pck = elt->prev;
+
+	next = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(next_pck);
+
+	/* next may equal prev (and the queue head) if elt was the only element */
+	prev = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(prev_pck);
+
+	next->prev = prev_pck;
+	prev->next = next_pck;
+
+	elt->next = 0;
+	elt->prev = 0;
+}
+
+#if defined(__x86_64__)
+/*
+ * Insert a new page into a free queue and clump pages within the same 16K boundary together
+ */
+static inline void
+vm_page_queue_enter_clump(
+	vm_page_queue_t       head,
+	vm_page_t             elt)
+{
+	vm_page_queue_entry_t first = NULL;    /* first page in the clump */
+	vm_page_queue_entry_t last = NULL;     /* last page in the clump */
+	vm_page_queue_entry_t prev = NULL;
+	vm_page_queue_entry_t next;
+	uint_t                n_free = 1;
+	extern unsigned int   vm_clump_size, vm_clump_promote_threshold;
+	extern unsigned long  vm_clump_allocs, vm_clump_inserts, vm_clump_inrange, vm_clump_promotes;
+
+	/*
+	 * If elt is part of the vm_pages[] array, find its neighboring buddies in the array.
+	 */
+	if (vm_page_in_array(elt)) {
+		vm_page_t p;
+		uint_t    i;
+		uint_t    n;
+		ppnum_t   clump_num;
+
+		first = last = (vm_page_queue_entry_t)elt;
+		clump_num = VM_PAGE_GET_CLUMP(elt);
+		n = VM_PAGE_GET_PHYS_PAGE(elt) & vm_clump_mask;
+
+		/*
+		 * Check for preceeding vm_pages[] entries in the same chunk
+		 */
+		for (i = 0, p = elt - 1; i < n && vm_page_get(0) <= p; i++, p--) {
+			if (p->vmp_q_state == VM_PAGE_ON_FREE_Q && clump_num == VM_PAGE_GET_CLUMP(p)) {
+				if (prev == NULL) {
+					prev = (vm_page_queue_entry_t)p;
+				}
+				first = (vm_page_queue_entry_t)p;
+				n_free++;
+			}
+		}
+
+		/*
+		 * Check the following vm_pages[] entries in the same chunk
+		 */
+		for (i = n + 1, p = elt + 1; i < vm_clump_size && p < vm_page_get(vm_pages_count); i++, p++) {
+			if (p->vmp_q_state == VM_PAGE_ON_FREE_Q && clump_num == VM_PAGE_GET_CLUMP(p)) {
+				if (last == (vm_page_queue_entry_t)elt) {               /* first one only */
+					__DEBUG_CHECK_BUDDIES(prev, p, vmp_pageq);
+				}
+
+				if (prev == NULL) {
+					prev = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(p->vmp_pageq.prev);
+				}
+				last = (vm_page_queue_entry_t)p;
+				n_free++;
+			}
+		}
+		__DEBUG_STAT_INCREMENT_INRANGE;
+	}
+
+	/* if elt is not part of vm_pages or if 1st page in clump, insert at tail */
+	if (prev == NULL) {
+		prev = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(head->prev);
+	}
+
+	/* insert the element */
+	next = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(prev->next);
+	elt->vmp_pageq.next = prev->next;
+	elt->vmp_pageq.prev = next->prev;
+	prev->next = next->prev = VM_PAGE_PACK_PTR(elt);
+	__DEBUG_STAT_INCREMENT_INSERTS;
+
+	/*
+	 * Check if clump needs to be promoted to head.
+	 */
+	if (n_free >= vm_clump_promote_threshold && n_free > 1) {
+		vm_page_queue_entry_t first_prev;
+
+		first_prev = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(first->prev);
+
+		/* If not at head already */
+		if (first_prev != head) {
+			vm_page_queue_entry_t last_next;
+			vm_page_queue_entry_t head_next;
+
+			last_next = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(last->next);
+
+			/* verify that the links within the clump are consistent */
+			__DEBUG_VERIFY_LINKS(first, n_free, last_next);
+
+			/* promote clump to head */
+			first_prev->next = last->next;
+			last_next->prev = first->prev;
+			first->prev = VM_PAGE_PACK_PTR(head);
+			last->next = head->next;
+
+			head_next = (vm_page_queue_entry_t)VM_PAGE_UNPACK_PTR(head->next);
+			head_next->prev = VM_PAGE_PACK_PTR(last);
+			head->next = VM_PAGE_PACK_PTR(first);
+			__DEBUG_STAT_INCREMENT_PROMOTES(n_free);
+		}
+	}
+}
+#endif /* __x86_64__ */
+#endif /* __LP64__ */
+
+/*!
+ * @abstract
+ * The number of pages to try to free/process at once while under
+ * the free page queue lock.
+ *
+ * @discussion
+ * The value is chosen to be a trade off between:
+ * - creating a lot of contention on the free page queue lock
+ *   taking and dropping it all the time,
+ * - avoiding to hold the free page queue lock for too long periods of time.
+ */
+#define VMP_FREE_BATCH_SIZE     64
+
+/*!
+ * @function vm_page_free_queue_init()
+ *
+ * @abstract
+ * Initialize a free queue.
+ *
+ * @param free_queue    The free queue to initialize.
+ */
+extern void vm_page_free_queue_init(
+	vm_page_free_queue_t    free_queue);
+
+/*!
+ * @function vm_page_free_queue_enter()
+ *
+ * @abstract
+ * Add a page to a free queue.
+ *
+ * @discussion
+ * Internally, the free queue is not synchronized, so any locking must be done
+ * outside of this function.
+ *
+ * The page queue state will be set to the appropriate free queue state for the
+ * memory class (typically VM_PAGE_ON_FREE_Q).
+ *
+ * Note that the callers are responsible for making sure that this operation is
+ * a valid transition.  This is a helper to abstract handling of the several
+ * free page queues on the system which sits above vm_page_queue_enter() and
+ * maintains counters as well, but is otherwise oblivious to the page state
+ * machine.
+ *
+ * Most clients should use a wrapper around this function (typically
+ * vm_page_release() or vm_page_free_list()) and not call it directly.
+ *
+ * @param mem_class     The memory class to free pages to.
+ * @param page          The page to free.
+ * @param pnum          the physical address of @c page
+ */
+extern void vm_page_free_queue_enter(
+	vm_memory_class_t       mem_class,
+	vm_page_t               page,
+	ppnum_t                 pnum);
+
+/*!
+ * @function vm_page_free_queue_remove()
+ *
+ * @abstract
+ * Removes an arbitrary free page from the given free queue.
+ *
+ * @discussion
+ * The given page must be in the given free queue, or state may be corrupted.
+ *
+ * Internally, the free queue is not synchronized, so any locking must be done
+ * outside of this function.
+ *
+ * Note that the callers are responsible for making sure that the requested
+ * queue state corresponds to a valid transition. This is a helper to abstract
+ * handling of the several free page queues on the system which sits above
+ * vm_page_queue_remove() and maintains counters as well, but is otherwise
+ * oblivious to the page state machine.
+ *
+ * Most clients should use a wrapper around this function (typically
+ * vm_page_free_queue_steal()) and not call it directly.
+ *
+ * @param class         The memory class corresponding to the free queue
+ *                      @c page is enqueued on.
+ * @param mem           The page to remove.
+ * @param pnum          The physical address of @c page
+ * @param q_state       The desired queue state for the page.
+ */
+__attribute__((always_inline))
+extern void vm_page_free_queue_remove(
+	vm_memory_class_t       class,
+	vm_page_t               mem,
+	ppnum_t                 pnum,
+	vm_page_q_state_t       q_state);
+
+/*!
+ * @function vm_page_free_queue_grab()
+ *
+ * @abstract
+ * Gets pages from the free queue.
+ *
+ * @discussion
+ * Clients cannot get more pages than the free queue has; attempting to do so
+ * will cause a panic.
+ *
+ * Internally, the free queue is not synchronized, so any locking must be done
+ * outside of this function.
+ *
+ * Note that the callers are responsible for making sure that the requested
+ * queue state corresponds to a valid transition. This is a helper to abstract
+ * handling of the several free page queues on the system which sits above
+ * vm_page_queue_remove() and maintains counters as well, but is otherwise
+ * oblivious to the page state machine.
+ *
+ * Most clients should use a wrapper (typically vm_page_grab_options())
+ * around this function and not call it directly.
+ *
+ * @param vmp_pcpu      The per-cpu vm page structure for the current CPU.
+ * @param options       The grab options.
+ * @param mem_class     The memory class to allocate from.
+ * @param num_pages     The number of pages to grab.
+ * @param q_state       The vmp_q_state to set on the page.
+ *
+ * @returns
+ * A list of pages; the list will be num_pages long.
+ */
+extern vm_page_list_t vm_page_free_queue_grab(
+	vm_page_pcpu_t          vmp_pcpu,
+	vm_grab_options_t       options,
+	vm_memory_class_t       mem_class,
+	unsigned int            num_pages,
+	vm_page_q_state_t       q_state);
+
+/*!
+ * @abstract
+ * Perform a wakeup for a free page queue wait event.
+ *
+ * @param event         the free page queue event to wake up
+ * @param n             the number of threads to try to wake up
+ *                      (UINT32_MAX means all).
+ */
+extern void vm_page_free_wakeup(event_t event, uint32_t n);
+
+
+extern  void    vm_page_assign_special_state(vm_page_t mem, vm_page_specialq_t mode);
+extern  void    vm_page_update_special_state(vm_page_t mem);
+extern  void    vm_page_add_to_specialq(vm_page_t mem, boolean_t first);
+extern  void    vm_page_remove_from_specialq(vm_page_t mem);
+
+
+/*
+ * Prototypes for functions exported by this module.
+ */
+extern void             vm_page_bootstrap(
+	vm_offset_t     *startp,
+	vm_offset_t     *endp);
+
+extern vm_page_t        kdp_vm_page_lookup(
+	vm_object_t             object,
+	vm_object_offset_t      offset);
+
+extern vm_page_t        vm_page_lookup(
+	vm_object_t             object,
+	vm_object_offset_t      offset);
+
+/*!
+ * @abstract
+ * Creates a fictitious page.
+ *
+ * @discussion
+ * This function never returns VM_PAGE_NULL;
+ *
+ * Pages made by this function have the @c vm_page_fictitious_addr
+ * fake physical address.
+ */
+extern vm_page_t        vm_page_create_fictitious(void);
+
+/*!
+ * @abstract
+ * Returns a kernel guard page (used by @c kmem_alloc_guard()).
+ *
+ * @discussion
+ * Pages returned by this function have the @c vm_page_guard_addr
+ * fake physical address.
+ *
+ * @param canwait       Whether the caller can wait, if true,
+ *                      this function never returns VM_PAGE_NULL.
+ */
+extern vm_page_t        vm_page_create_guard(bool canwait);
+
+/*!
+ * @abstract
+ * Create a private VM page.
+ *
+ * @discussion
+ * These pages allow for non canonical references to the same physical page.
+ * Its @c VM_PAGE_GET_PHYS_PAGE() will be @c base_page.
+ *
+ * Such pages must not be released back to the free queues directly,
+ * @c vm_page_reset_private() must be called first.
+ *
+ * This function never returns VM_PAGE_NULL
+ *
+ * @param base_page     The physical page this private page represents.
+ */
+extern vm_page_t        vm_page_create_private(ppnum_t base_page);
+
+/*!
+ * @abstract
+ * Returns whether this is the canonical page for a regular managed kernel page.
+ *
+ * @discussion
+ * A kernel page is the canonical @c vm_page_t for a given pmap managed physical
+ * page.  These pages are made at startup, or when @c ml_static_mfree() is
+ * called, and are never freed.
+ *
+ * Its @c VM_PAGE_GET_PHYS_PAGE() will be a valid @c ppnum_t value.
+ *
+ * A page can either be:
+ * - a canonical page (@c vm_page_is_canonical())
+ * - a fictitious page (@c vm_page_is_fictitious()),
+ *   of which guard pages are a special case (@c vm_page_is_guard())
+ * - a private page (@c vm_page_is_private())
+ */
+extern bool             vm_page_is_canonical(const struct vm_page *m) __pure2;
+
+/*!
+ * @abstract
+ * Returns whether this page is fictitious (made by @c vm_page_create_guard()
+ * or by @c vm_page_create_fictitious()).
+ *
+ * @discussion
+ * A page can either be:
+ * - a canonical page (@c vm_page_is_canonical())
+ * - a fictitious page (@c vm_page_is_fictitious()),
+ *   of which guard pages are a special case (@c vm_page_is_guard())
+ * - a private page (@c vm_page_is_private())
+ */
+extern bool             vm_page_is_fictitious(const struct vm_page *m);
+
+/*!
+ * @abstract
+ * Returns whether this is a kernel guard page that was made by
+ * @c vm_page_create_guard().
+ */
+extern bool             vm_page_is_guard(const struct vm_page *m) __pure2;
+
+/*!
+ * @abstract
+ * Returns whether a page is private (made by @c vm_page_create_private(),
+ * or converted from a fictitious page by @c vm_page_make_private()).
+ *
+ * @discussion
+ * A page can either be:
+ * - a canonical page (@c vm_page_is_canonical())
+ * - a fictitious page (@c vm_page_is_fictitious()),
+ *   of which guard pages are a special case (@c vm_page_is_guard())
+ * - a private page (@c vm_page_is_private())
+ */
+extern bool             vm_page_is_private(const struct vm_page *m);
+
+/*!
+ * @abstract
+ * Converts a fictitious page made by @c vm_page_create_fictitious()
+ * into a private page.
+ *
+ * @param m             The fictitious page to convert into a private one.
+ * @param base_page     The physical page that this page will represent
+ *                      (@c vm_page_create_private()).
+ */
+extern void             vm_page_make_private(vm_page_t m, ppnum_t base_page);
+
+/*!
+ * @abstract
+ * Converts a private page into a fictitious page (as if made by
+ * @c vm_page_create_fictitious()).
+ *
+ * @discussion
+ * Private pages can't be released with @c vm_page_release()
+ * without being turned into a fictitious page first using this function.
+ */
+extern void             vm_page_reset_private(vm_page_t m);
+
+#if HAS_MTE
+
+/*!
+ * @abstract
+ * Returns whether the specified physical page number is actual tag storage.
+ *
+ * @discussion
+ * This returns fails for pages in the tag storage range that is recursive or
+ * unmanaged, unlike pmap_in_tag_storage_range().
+ *
+ * Note that it might return "true" for pages that the MTE Info data structure
+ * considers covering "unmanaged" memory.
+ *
+ * @param page          A canonical VM page.
+ * @param pnum          The page physical number for @c page.
+ */
+extern bool vm_page_is_tag_storage_pnum(vm_page_t page, ppnum_t pnum) __pure2;
+
+static inline bool
+vm_page_is_tag_storage(vm_page_t page)
+{
+	return vm_page_is_tag_storage_pnum(page, VM_PAGE_GET_PHYS_PAGE(page));
+}
+
+#endif /* HAS_MTE */
+
+extern bool             vm_pool_low(void);
+
+/*!
+ * @abstract
+ * Grabs a page.
+ *
+ * @discussion
+ * Allocate a page by looking at:
+ * - per-cpu queues,
+ * - global free queues,
+ * - magical queues (delayed, secluded, ...)
+ *
+ * This function always succeeds for VM privileged threads,
+ * unless VM_PAGE_GRAB_NOPAGEWAIT is passed.
+ *
+ * This function might return VM_PAGE_NULL if there are no pages left.
+ */
+extern vm_page_t        vm_page_grab_options(vm_grab_options_t options);
+
+static inline vm_page_t
+vm_page_grab(void)
+{
+	return vm_page_grab_options(VM_PAGE_GRAB_OPTIONS_NONE);
+}
+
+/*!
+ * @abstract
+ * Returns the proper grab options for the specified object.
+ */
+extern vm_grab_options_t vm_page_grab_options_for_object(vm_object_t object);
+
+/*!
+ * @absstract
+ * Prime the per-cpu vm page data structure
+ *
+ * @discussion
+ * This function quickly makes sure that there is a zerofilled page ready to go,
+ * as well as free pages on the per-CPU queue.
+ *
+ * This is meant to be used for scenarios when the VM code knows it's committing
+ * to a path that is likely to allocate a page (typically the faulting path),
+ * so that at the time a page is grabbed, the fastpath is taken and no slow
+ * operation happens with VM map or VM object locks held.
+ */
+extern void vm_page_grab_prime(void);
+
+#if XNU_VM_HAS_LOPAGE
+extern vm_page_t vm_page_grablo(vm_grab_options_t options);
+#else
+static inline vm_page_t
+vm_page_grablo(vm_grab_options_t options)
+{
+	return vm_page_grab_options(options);
+}
+#endif
+
+
+__options_closed_decl(vmp_release_options_t, uint32_t, {
+	VMP_RELEASE_NONE                = 0x00,
+	VMP_RELEASE_Q_LOCKED            = 0x01,
+	VMP_RELEASE_SKIP_FREE_CHECK     = 0x02,
+	VMP_RELEASE_HIBERNATE           = 0x04,
+	VMP_RELEASE_STARTUP             = 0x08,
+});
+
+extern void vm_page_release(
+	vm_page_t               page,
+	vmp_release_options_t   options);
+
+extern boolean_t        vm_page_wait(
+	int             interruptible);
+
+extern void             vm_page_init(
+	vm_page_t       page,
+	ppnum_t         phys_page);
+
+extern void             vm_page_free(
+	vm_page_t       page);
+
+extern void             vm_page_free_unlocked(
+	vm_page_t       page);
+
+
+extern void             vm_page_balance_inactive(
+	int             max_to_move);
+
+extern void             vm_page_activate(
+	vm_page_t       page);
+
+extern void             vm_page_deactivate(
+	vm_page_t       page);
+
+extern void             vm_page_deactivate_internal(
+	vm_page_t       page,
+	boolean_t       clear_hw_reference);
+
+extern void             vm_page_enqueue_cleaned(vm_page_t page);
+
+extern void             vm_page_lru(
+	vm_page_t       page);
+
+extern void             vm_page_speculate(
+	vm_page_t       page,
+	boolean_t       new);
+
+extern void             vm_page_speculate_ageit(
+	struct vm_speculative_age_q *aq);
+
+extern void             vm_page_reactivate_local(uint32_t lid, boolean_t force, boolean_t nolocks);
+
+extern void             vm_page_rename(
+	vm_page_t               page,
+	vm_object_t             new_object,
+	vm_object_offset_t      new_offset);
+
+extern void             vm_page_hash_insert(
+	vm_page_t               page,
+	vm_object_t             object,
+	vm_object_offset_t      offset);
+
+struct vmpi_acct {
+	uint32_t                vmpi_inserted;
+	uint32_t                vmpi_nonvolatile;
+	uint32_t                vmpi_volatile;
+	uint32_t                vmpi_external_wired;
+};
+
+__options_closed_decl(vmpi_flags_t, uint32_t, {
+	VMPI_NONE               = 0x0000,
+	VMPI_Q_LOCKED           = 0x0001, /* vm page queues are locked   */
+	VMPI_REPLACE            = 0x0002, /* page is replaced,
+	                                   * incompatible with VMPI_DELAY_HASH
+	                                   */
+	VMPI_BATCH_PMAP_OP      = 0x0004, /* pmap operations are delayed */
+	VMPI_DELAY_HASH         = 0x0008, /* delay hash insertion        */
+});
+
+extern void             vm_page_insert_internal(
+	vm_page_t               page,
+	vm_object_t             object,
+	vm_object_offset_t      offset,
+	vm_tag_t                tag,
+	vmpi_flags_t            flags,
+	struct vmpi_acct       *delayed_acct);
+
+extern void vm_page_insert_flush_accounting(
+	vm_object_t             object,
+	struct vmpi_acct       *delayed_acct);
+
+extern void             vm_page_insert(
+	vm_page_t               page,
+	vm_object_t             object,
+	vm_object_offset_t      offset);
+
+extern void             vm_page_insert_wired(
+	vm_page_t               page,
+	vm_object_t             object,
+	vm_object_offset_t      offset,
+	vm_tag_t                tag);
+
+extern void             vm_page_replace(
+	vm_page_t               mem,
+	vm_object_t             object,
+	vm_object_offset_t      offset);
+
+extern void             vm_page_remove(
+	vm_page_t               page);
+
+extern void             vm_page_zero_fill(
+	vm_page_t               page);
+
+extern void             vm_page_part_zero_fill(
+	vm_page_t       m,
+	vm_offset_t     m_pa,
+	vm_size_t       len);
+
+extern void             vm_page_copy(
+	vm_page_t       src_page,
+	vm_page_t       dest_page);
+
+extern void             vm_page_part_copy(
+	vm_page_t       src_m,
+	vm_offset_t     src_pa,
+	vm_page_t       dst_m,
+	vm_offset_t     dst_pa,
+	vm_size_t       len);
+
+extern void             vm_page_wire(
+	vm_page_t       page,
+	vm_tag_t        tag,
+	boolean_t       check_memorystatus);
+
+extern void             vm_page_unwire(
+	vm_page_t       page,
+	boolean_t       queueit);
+
+extern void             vm_set_page_size(void);
+
+extern void             vm_page_validate_cs(
+	vm_page_t       page,
+	vm_map_size_t   fault_page_size,
+	vm_map_offset_t fault_phys_offset);
+
+extern void             vm_page_validate_cs_mapped(
+	vm_page_t       page,
+	vm_map_size_t   fault_page_size,
+	vm_map_offset_t fault_phys_offset,
+	const void      *kaddr);
+extern void             vm_page_validate_cs_mapped_slow(
+	vm_page_t       page,
+	const void      *kaddr);
+extern void             vm_page_validate_cs_mapped_chunk(
+	vm_page_t       page,
+	const void      *kaddr,
+	vm_offset_t     chunk_offset,
+	vm_size_t       chunk_size,
+	boolean_t       *validated,
+	unsigned        *tainted);
+
+extern void             vm_page_free_prepare_queues(
+	vm_page_t       page);
+
+extern void             vm_page_free_prepare_object(
+	vm_page_t               page);
+
+extern wait_result_t    vm_page_sleep(
+	vm_object_t        object,
+	vm_page_t          m,
+	wait_interrupt_t   interruptible,
+	lck_sleep_action_t action);
+
+extern void             vm_page_wakeup(
+	vm_object_t        object,
+	vm_page_t          m);
+
+extern void             vm_page_wakeup_done(
+	vm_object_t        object,
+	vm_page_t          m);
+
+typedef struct page_worker_token {
+	thread_pri_floor_t pwt_floor_token;
+	bool pwt_did_register_inheritor;
+} page_worker_token_t;
+
+extern void             vm_page_wakeup_done_with_inheritor(
+	vm_object_t        object,
+	vm_page_t          m,
+	page_worker_token_t *token);
+
+extern void             page_worker_register_worker(
+	event_t            event,
+	page_worker_token_t *out_token);
+
+extern boolean_t        vm_page_is_relocatable(
+	vm_page_t            m,
+	vm_relocate_reason_t reloc_reason);
+
+extern kern_return_t    vm_page_relocate(
+	vm_page_t            m1,
+	int *                compressed_pages,
+	vm_relocate_reason_t reason,
+	vm_page_t*           new_page);
+
+extern bool             vm_page_is_restricted(
+	vm_page_t mem);
+
+/*
+ * Functions implemented as macros. m->vmp_wanted and m->vmp_busy are
+ * protected by the object lock.
+ */
+
+#if !XNU_TARGET_OS_OSX
+#define SET_PAGE_DIRTY(m, set_pmap_modified)                            \
+	        MACRO_BEGIN                                             \
+	        vm_page_t __page__ = (m);                               \
+	        if (__page__->vmp_pmapped == TRUE &&                    \
+	            __page__->vmp_wpmapped == TRUE &&                   \
+	            __page__->vmp_dirty == FALSE &&                     \
+	            (set_pmap_modified)) {                              \
+	                pmap_set_modify(VM_PAGE_GET_PHYS_PAGE(__page__)); \
+	        }                                                       \
+	        __page__->vmp_dirty = TRUE;                             \
+	        MACRO_END
+#else /* !XNU_TARGET_OS_OSX */
+#define SET_PAGE_DIRTY(m, set_pmap_modified)                            \
+	        MACRO_BEGIN                                             \
+	        vm_page_t __page__ = (m);                               \
+	        __page__->vmp_dirty = TRUE;                             \
+	        MACRO_END
+#endif /* !XNU_TARGET_OS_OSX */
+
+#define VM_PAGE_FREE(p) \
+	vm_page_free_unlocked(p)
+
+#define VM_PAGE_WAIT()          ((void)vm_page_wait(THREAD_UNINT))
+
+static inline void
+vm_free_page_lock(void)
+{
+	lck_mtx_lock(&vm_page_queue_free_lock);
+}
+
+static inline void
+vm_free_page_lock_spin(void)
+{
+	lck_mtx_lock_spin(&vm_page_queue_free_lock);
+}
+
+static inline void
+vm_free_page_lock_convert(void)
+{
+	lck_mtx_convert_spin(&vm_page_queue_free_lock);
+}
+
+static inline void
+vm_free_page_unlock(void)
+{
+	lck_mtx_unlock(&vm_page_queue_free_lock);
+}
+
+
+#define vm_page_lockconvert_queues()    lck_mtx_convert_spin(&vm_page_queue_lock)
+
+
+#ifdef  VPL_LOCK_SPIN
+extern lck_grp_t vm_page_lck_grp_local;
+
+#define VPL_LOCK_INIT(vlq, vpl_grp, vpl_attr) lck_spin_init(&vlq->vpl_lock, vpl_grp, vpl_attr)
+#define VPL_LOCK(vpl) lck_spin_lock_grp(vpl, &vm_page_lck_grp_local)
+#define VPL_UNLOCK(vpl) lck_spin_unlock(vpl)
+#else
+#define VPL_LOCK_INIT(vlq, vpl_grp, vpl_attr) lck_mtx_init(&vlq->vpl_lock, vpl_grp, vpl_attr)
+#define VPL_LOCK(vpl) lck_mtx_lock_spin(vpl)
+#define VPL_UNLOCK(vpl) lck_mtx_unlock(vpl)
+#endif
+
+#if DEVELOPMENT || DEBUG
+#define VM_PAGE_SPECULATIVE_USED_ADD()                          \
+	MACRO_BEGIN                                             \
+	OSAddAtomic(1, &vm_page_speculative_used);              \
+	MACRO_END
+#else
+#define VM_PAGE_SPECULATIVE_USED_ADD()
+#endif
+
+#define VM_PAGE_CONSUME_CLUSTERED(mem)                          \
+	MACRO_BEGIN                                             \
+	ppnum_t	__phys_page;                                    \
+	__phys_page = VM_PAGE_GET_PHYS_PAGE(mem);               \
+	pmap_lock_phys_page(__phys_page);                       \
+	if (mem->vmp_clustered) {                               \
+	        vm_object_t o;                                  \
+	        o = VM_PAGE_OBJECT(mem);                        \
+	        assert(o);                                      \
+	        o->pages_used++;                                \
+	        mem->vmp_clustered = FALSE;                     \
+	        VM_PAGE_SPECULATIVE_USED_ADD();                 \
+	}                                                       \
+	pmap_unlock_phys_page(__phys_page);                     \
+	MACRO_END
+
+
+#define VM_PAGE_COUNT_AS_PAGEIN(mem)                            \
+	MACRO_BEGIN                                             \
+	{                                                       \
+	vm_object_t o;                                          \
+	o = VM_PAGE_OBJECT(mem);                                \
+	DTRACE_VM2(pgin, int, 1, (uint64_t *), NULL);           \
+	counter_inc(&current_task()->pageins);                  \
+	if (o->internal) {                                      \
+	        DTRACE_VM2(anonpgin, int, 1, (uint64_t *), NULL);       \
+	} else {                                                \
+	        DTRACE_VM2(fspgin, int, 1, (uint64_t *), NULL); \
+	}                                                       \
+	}                                                       \
+	MACRO_END
+
+
+/* adjust for stolen pages accounted elsewhere */
+#define VM_PAGE_MOVE_STOLEN(page_count)                         \
+	MACRO_BEGIN                                             \
+	vm_page_stolen_count -=	(page_count);                   \
+	vm_page_wire_count_initial -= (page_count);             \
+	MACRO_END
+
+kern_return_t
+pmap_enter_object_options_check(
+	pmap_t           pmap,
+	vm_map_address_t virtual_address,
+	vm_map_offset_t  fault_phys_offset,
+	vm_object_t      object,
+	ppnum_t          pn,
+	vm_prot_t        protection,
+	vm_prot_t        fault_type,
+	boolean_t        wired,
+	unsigned int     options);
+
+extern kern_return_t pmap_enter_options_check(
+	pmap_t           pmap,
+	vm_map_address_t virtual_address,
+	vm_map_offset_t  fault_phys_offset,
+	vm_page_t        page,
+	vm_prot_t        protection,
+	vm_prot_t        fault_type,
+	boolean_t        wired,
+	unsigned int     options);
+
+extern kern_return_t pmap_enter_check(
+	pmap_t           pmap,
+	vm_map_address_t virtual_address,
+	vm_page_t        page,
+	vm_prot_t        protection,
+	vm_prot_t        fault_type,
+	boolean_t        wired);
+
+#define DW_vm_page_unwire               0x01
+#define DW_vm_page_wire                 0x02
+#define DW_vm_page_free                 0x04
+#define DW_vm_page_activate             0x08
+#define DW_vm_page_deactivate_internal  0x10
+#define DW_vm_page_speculate            0x20
+#define DW_vm_page_lru                  0x40
+#define DW_vm_pageout_throttle_up       0x80
+#define DW_PAGE_WAKEUP                  0x100
+#define DW_clear_busy                   0x200
+#define DW_clear_reference              0x400
+#define DW_set_reference                0x800
+#define DW_move_page                    0x1000
+#define DW_VM_PAGE_QUEUES_REMOVE        0x2000
+#define DW_enqueue_cleaned              0x4000
+#define DW_vm_phantom_cache_update      0x8000
+#if HAS_MTE
+/*
+ * Wake up a tag storage page if it's done being used
+ * in a UPL. This requires the page queues lock.
+ */
+#define DW_vm_page_wakeup_tag_storage   0x10000
+#endif /* HAS_MTE */
+#define DW_vm_page_iopl_wire            0x20000
+#define DW_vm_page_iopl_wire_write      0x40000
+
+struct vm_page_delayed_work {
+	vm_page_t       dw_m;
+	int             dw_mask;
+};
+
+#define DEFAULT_DELAYED_WORK_LIMIT      32
+
+struct vm_page_delayed_work_ctx {
+	struct vm_page_delayed_work dwp[DEFAULT_DELAYED_WORK_LIMIT];
+	thread_t                    delayed_owner;
+};
+
+kern_return_t vm_page_do_delayed_work(vm_object_t object, vm_tag_t tag, struct vm_page_delayed_work *dwp, int dw_count);
+
+#define DELAYED_WORK_LIMIT(max) ((vm_max_delayed_work_limit >= max ? max : vm_max_delayed_work_limit))
+
+/*
+ * vm_page_do_delayed_work may need to drop the object lock...
+ * if it does, we need the pages it's looking at to
+ * be held stable via the busy bit, so if busy isn't already
+ * set, we need to set it and ask vm_page_do_delayed_work
+ * to clear it and wakeup anyone that might have blocked on
+ * it once we're done processing the page.
+ */
+
+#define VM_PAGE_ADD_DELAYED_WORK(dwp, mem, dw_cnt)              \
+	MACRO_BEGIN                                             \
+	if (mem->vmp_busy == FALSE) {                           \
+	        mem->vmp_busy = TRUE;                           \
+	        if ( !(dwp->dw_mask & DW_vm_page_free))         \
+	                dwp->dw_mask |= (DW_clear_busy | DW_PAGE_WAKEUP); \
+	}                                                       \
+	dwp->dw_m = mem;                                        \
+	dwp++;                                                  \
+	dw_cnt++;                                               \
+	MACRO_END
+
+
+//todo int
+extern vm_page_t vm_object_page_grab(vm_object_t);
+
+//todo int
+#if VM_PAGE_BUCKETS_CHECK
+extern void vm_page_buckets_check(void);
+#endif /* VM_PAGE_BUCKETS_CHECK */
+
+//todo int
+extern void vm_page_queues_remove(vm_page_t mem, boolean_t remove_from_specialq);
+extern void vm_page_remove_internal(vm_page_t page);
+extern void vm_page_enqueue_inactive(vm_page_t mem, boolean_t first);
+extern void vm_page_enqueue_active(vm_page_t mem, boolean_t first);
+extern void vm_page_check_pageable_safe(vm_page_t page);
+//end int
+
+//todo int
+extern void vm_retire_boot_pages(void);
+
+//todo all int
+
+#define VMP_ERROR_GET(p) ((p)->vmp_error)
+
+
+#endif /* XNU_KERNEL_PRIVATE */
+__END_DECLS
+
+#endif  /* _VM_VM_PAGE_INTERNAL_H_ */

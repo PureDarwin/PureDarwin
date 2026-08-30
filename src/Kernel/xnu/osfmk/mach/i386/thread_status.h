@@ -67,10 +67,12 @@
 #ifndef _MACH_I386_THREAD_STATUS_H_
 #define _MACH_I386_THREAD_STATUS_H_
 
+#if defined (__i386__) || defined (__x86_64__)
+
 #include <mach/machine/_structs.h>
+#include <mach/machine/thread_state.h>
 #include <mach/message.h>
 #include <mach/i386/fp_reg.h>
-#include <mach/i386/thread_state.h>
 #include <i386/eflags.h>
 
 #ifdef KERNEL_PRIVATE
@@ -126,12 +128,19 @@
 #define x86_THREAD_FULL_STATE64         23
 #define x86_INSTRUCTION_STATE           24
 #define x86_LAST_BRANCH_STATE           25
+#define THREAD_STATE_FLAVORS            26     /* This must be updated to 1 more than the highest numerical state flavor */
 
 /*
  * Largest state on this machine:
  * (be sure mach/machine/thread_state.h matches!)
  */
 #define THREAD_MACHINE_STATE_MAX        THREAD_STATE_MAX
+
+#define FLAVOR_MODIFIES_CORE_CPU_REGISTERS(x) \
+((x == x86_THREAD_STATE) ||     \
+ (x == x86_THREAD_STATE32) ||   \
+ (x == x86_THREAD_STATE64) ||   \
+ (x == x86_THREAD_FULL_STATE64))
 
 /*
  * VALID_THREAD_STATE_FLAVOR is a platform specific macro that when passed
@@ -499,5 +508,7 @@ saved_state64(x86_saved_state_t *iss)
 }
 
 #endif /* XNU_KERNEL_PRIVATE */
+
+#endif /* defined (__i386__) || defined (__x86_64__) */
 
 #endif  /* _MACH_I386_THREAD_STATUS_H_ */

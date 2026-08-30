@@ -39,23 +39,35 @@
 #define __ARM_ENABLE_SWAP__                  1
 #define __ARM_V8_CRYPTO_EXTENSIONS__         1
 
-#ifndef ARM_LARGE_MEMORY
-#define __ARM64_PMAP_SUBPAGE_L1__            1
+/*
+ * If we're using a parameterized PMAP + SPTM, we can enable kernel-only large
+ * memory. Otherwise, large memory is either enabled for both user and kernel or
+ * neither.
+ */
+#if ARM_PARAMETERIZED_PMAP && CONFIG_SPTM
+#define HAS_ARM_INDEPENDENT_TNSZ 1
 #endif
+
+#if !ARM_LARGE_MEMORY
+#define __ARM64_PMAP_SUBPAGE_L1__            1
+#define __ARM64_PMAP_KERN_SUBPAGE_L1__       1
+#elif ARM_LARGE_MEMORY_KERNONLY && HAS_ARM_INDEPENDENT_TNSZ
+/* Kernel-only large memory */
+#define __ARM64_PMAP_SUBPAGE_L1__            1
+#endif /* ARM_LARGE_MEMORY */
 
 #define APPLE_ARM64_ARCH_FAMILY              1
 #define ARM_ARCH_TIMER
-#define ARM_BOARD_WFE_TIMEOUT_NS             1000
 
-/*
- * PUREDARWIN_NO_KERNEL_INTEGRITY: on boards we boot through pongoOS after a
- * checkm8 exploit, the region registers are already unlocked by the time the
- * kernel runs, and the in-kernel lockdown path needs iBoot's memmap_types.h,
- * which is not part of the open-source tree.
- */
-#if defined(HAS_CTRR) && !defined(PUREDARWIN_NO_KERNEL_INTEGRITY)
+#if defined(HAS_CTRR3)
 #define KERNEL_INTEGRITY_CTRR                1
-#elif defined(HAS_KTRR) && !defined(PUREDARWIN_NO_KERNEL_INTEGRITY)
+#define KERNEL_CTRR_VERSION                  3
+#elif defined(HAS_CTRR)
+#define KERNEL_INTEGRITY_CTRR                1
+#define KERNEL_CTRR_VERSION                  2
+#elif defined(HAS_PARAVIRTUALIZED_CTRR)
+#define KERNEL_INTEGRITY_PV_CTRR             1
+#elif defined(HAS_KTRR)
 #define KERNEL_INTEGRITY_KTRR                1
 #elif defined(MONITOR)
 #define KERNEL_INTEGRITY_WT                  1
@@ -66,12 +78,11 @@
 #endif
 
 #include <pexpert/arm64/apple_arm64_regs.h>
+#include <pexpert/arm64/apple_arm64_cpu.h>
 #include <pexpert/arm64/AIC.h>
 
 #ifndef ASSEMBLER
-#ifndef APPLEVIRTUALPLATFORM
-#include <pexpert/arm/S3cUART.h>
-#endif
+#include <pexpert/arm/apple_uart_regs.h>
 
 #if !defined(APPLETYPHOON) && !defined(APPLETWISTER) && !defined(APPLEVIRTUALPLATFORM)
 #include <pexpert/arm/dockchannel.h>
@@ -92,5 +103,12 @@
 #define CPU_VERSION_B1                       0x11
 #define CPU_VERSION_C0                       0x20
 #define CPU_VERSION_UNKNOWN                  0xff
+
+
+/*
+ * Conservatively assume that BTI will be enforced.
+ * Individual SoCs and kernel configurations may have different behavior.
+ */
+#define BTI_ENFORCED 1
 
 #endif /* !_PEXPERT_ARM64_APPLE_ARM64_COMMON_H */

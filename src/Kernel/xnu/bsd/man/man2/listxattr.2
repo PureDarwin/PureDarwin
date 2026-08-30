@@ -57,7 +57,7 @@ the size of the list of names.
 .Fa options
 controls how the attribute list is generated:
 .Pp
-.Bl -tag -width XATTR_NOFOLLOW
+.Bl -tag -width XATTR_RESOLVE_BENEATH
 .It Dv XATTR_NOFOLLOW
 do not follow symbolic links.
 .Fn listxattr
@@ -66,6 +66,14 @@ normally lists attributes of the target of
 if it is a symbolic link.  With this option,
 .Fn listxattr
 will list attributes of the link itself.
+.It Dv XATTR_NOFOLLOW_ANY
+do not follow any symbolic links encountered during pathname resolution. An
+error is returned if a symlink is encountered before the last component of path.
+.It Dv XATTR_RESOLVE_BENEATH
+If
+.Fa path
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
 .It Dv XATTR_SHOWCOMPRESSION
 .Fn listxattr
 and 
@@ -141,6 +149,9 @@ or permission is denied to read the list of attributes from this file.
 .It Bq Er ELOOP
 Too many symbolic links were encountered resolving
 .Fa path .
+.It Bq Er ELOOP
+If XATTR_NOFOLLOW_ANY option was passed and a symbolic link was encountered in
+translating the pathname.
 .It Bq Er EFAULT
 .Fa path
 points to an invalid address.
@@ -148,7 +159,14 @@ points to an invalid address.
 An I/O error occurred.
 .It Bq Er EINVAL
 .Fa options
-does not make sense.
+has an unsupported bit set.
+.It Bq Er EINVAL
+XATTR_NOFOLLOW, XATTR_NOFOLLOW_ANY or XATTR_RESOLVE_BENEATH option was passed in
+.Fn flistxattr .
+.It Bq Er ENOTCAPABLE
+If XATTR_RESOLVE_BENEATH was passed and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory.
 .El
 .Sh SEE ALSO
 .Xr getxattr 2 ,

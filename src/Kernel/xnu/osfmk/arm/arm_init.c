@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2009 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -39,30 +39,30 @@
 #include <kern/processor.h>
 #include <kern/startup.h>
 #include <kern/debug.h>
+#include <kern/monotonic.h>
 #include <prng/random.h>
 #include <machine/machine_routines.h>
 #include <machine/commpage.h>
+#include <machine/config.h>
 #if HIBERNATION
 #include <machine/pal_hibernate.h>
 #endif /* HIBERNATION */
 /* ARM64_TODO unify boot.h */
 #if __arm64__
-#include <pexpert/arm64/apple_arm64_common.h>
+#include <pexpert/arm64/apt_msg.h>
 #include <pexpert/arm64/boot.h>
-#elif __arm__
-#include <pexpert/arm/boot.h>
+#include <arm64/amcc_rorgn.h>
 #else
 #error Unsupported arch
 #endif
 #include <pexpert/arm/consistent_debug.h>
 #include <pexpert/device_tree.h>
-#include <arm/proc_reg.h>
+#include <arm64/proc_reg.h>
 #include <arm/pmap.h>
 #include <arm/caches_internal.h>
 #include <arm/cpu_internal.h>
 #include <arm/cpu_data_internal.h>
 #include <arm/cpuid_internal.h>
-#include <arm/io_map_entries.h>
 #include <arm/misc_protos.h>
 #include <arm/machine_cpu.h>
 #include <arm/rtclock.h>
@@ -81,9 +81,10 @@
 #if CONFIG_TELEMETRY
 #include <kern/telemetry.h>
 #endif
-#if MONOTONIC
-#include <kern/monotonic.h>
-#endif /* MONOTONIC */
+
+#if KPERF
+#include <kperf/kptimer.h>
+#endif /* KPERF */
 
 #if HIBERNATION
 #include <IOKit/IOPlatformExpert.h>
@@ -96,8 +97,6 @@ extern void sleep_token_buffer_init(void);
 extern vm_offset_t intstack_top;
 #if __arm64__
 extern vm_offset_t excepstack_top;
-#else
-extern vm_offset_t fiqstack_top;
 #endif
 
 extern const char version[];
@@ -108,8 +107,9 @@ int             pc_trace_buf[PC_TRACE_BUF_SIZE] = {0};
 int             pc_trace_cnt = PC_TRACE_BUF_SIZE;
 int             debug_task;
 
-bool need_wa_rdar_55577508 = false;
 SECURITY_READ_ONLY_LATE(bool) static_kernelcache = false;
+
+TUNABLE(bool, restore_boot, "-restore", false);
 
 #if HAS_BP_RET
 /* Enable both branch target retention (0x2) and branch direction retention (0x1) across sleep */
@@ -117,11 +117,32 @@ uint32_t bp_ret = 3;
 extern void set_bp_ret(void);
 #endif
 
-#if INTERRUPT_MASKED_DEBUG
-boolean_t interrupt_masked_debug = 1;
-/* the following are in mach timebase units */
-uint64_t interrupt_masked_timeout = 0xd0000;
-uint64_t stackshot_interrupt_masked_timeout = 0xf9999;
+#if SCHED_HYGIENE_DEBUG
+
+#if XNU_PLATFORM_iPhoneOS
+#define DEFAULT_INTERRUPT_MASKED_TIMEOUT 12000   /* 500us */
+#elif XNU_PLATFORM_XROS
+#define DEFAULT_INTERRUPT_MASKED_TIMEOUT 12000   /* 500us */
+#else
+#define DEFAULT_INTERRUPT_MASKED_TIMEOUT 0xd0000 /* 35.499ms */
+#endif /* XNU_PLATFORM_iPhoneOS */
+
+TUNABLE_DT_WRITEABLE(sched_hygiene_mode_t, interrupt_masked_debug_mode,
+    "machine-timeouts", "interrupt-masked-debug-mode",
+    "interrupt-masked-debug-mode",
+    SCHED_HYGIENE_MODE_PANIC,
+    TUNABLE_DT_CHECK_CHOSEN);
+
+MACHINE_TIMEOUT_DEV_WRITEABLE(interrupt_masked_timeout, "interrupt-masked",
+    DEFAULT_INTERRUPT_MASKED_TIMEOUT, MACHINE_TIMEOUT_UNIT_TIMEBASE,
+    NULL);
+#if __arm64__
+#define SSHOT_INTERRUPT_MASKED_TIMEOUT 0xf9999 /* 64-bit: 42.599ms */
+#endif
+MACHINE_TIMEOUT_DEV_WRITEABLE(stackshot_interrupt_masked_timeout, "sshot-interrupt-masked",
+    SSHOT_INTERRUPT_MASKED_TIMEOUT, MACHINE_TIMEOUT_UNIT_TIMEBASE,
+    NULL);
+#undef SSHOT_INTERRUPT_MASKED_TIMEOUT
 #endif
 
 /*
@@ -131,12 +152,15 @@ uint64_t stackshot_interrupt_masked_timeout = 0xf9999;
 #define XCALL_ACK_TIMEOUT_NS ((uint64_t) 6000000000)
 uint64_t xcall_ack_timeout_abstime;
 
-#if APPLEVIRTUALPLATFORM
-extern uint64_t debug_ack_timeout;
-#endif
+#ifndef __BUILDING_XNU_LIBRARY__
+#define BOOTARGS_SECTION_ATTR __attribute__((section("__DATA, __const")))
+#else /* __BUILDING_XNU_LIBRARY__ */
+/* Special segments are not used when building for user-mode */
+#define BOOTARGS_SECTION_ATTR
+#endif /* __BUILDING_XNU_LIBRARY__ */
 
-boot_args const_boot_args __attribute__((section("__DATA, __const")));
-boot_args      *BootArgs __attribute__((section("__DATA, __const")));
+boot_args const_boot_args BOOTARGS_SECTION_ATTR;
+boot_args      *BootArgs BOOTARGS_SECTION_ATTR;
 
 TUNABLE(uint32_t, arm_diag, "diag", 0);
 #ifdef  APPLETYPHOON
@@ -156,8 +180,17 @@ SECURITY_READ_ONLY_LATE(boolean_t) diversify_user_jop = TRUE;
 
 SECURITY_READ_ONLY_LATE(uint64_t) gDramBase;
 SECURITY_READ_ONLY_LATE(uint64_t) gDramSize;
+SECURITY_READ_ONLY_LATE(ppnum_t)  pmap_first_pnum;
 
 SECURITY_READ_ONLY_LATE(bool) serial_console_enabled = false;
+
+#if HAS_ARM_FEAT_SME
+static SECURITY_READ_ONLY_LATE(bool) enable_sme = true;
+#endif
+
+#if APPLEVIRTUALPLATFORM
+SECURITY_READ_ONLY_LATE(vm_offset_t) reset_vector_vaddr = 0;
+#endif /* APPLEVIRTUALPLATFORM */
 
 /*
  * Forward definition
@@ -168,7 +201,9 @@ void arm_init(boot_args * args);
 unsigned int page_shift_user32; /* for page_size as seen by a 32-bit task */
 
 extern void configure_misc_apple_boot_args(void);
-extern void configure_misc_apple_regs(void);
+extern void configure_misc_apple_regs(bool is_boot_cpu);
+extern void configure_timer_apple_regs(void);
+extern void configure_late_apple_regs(bool cold_boot);
 #endif /* __arm64__ */
 
 
@@ -256,7 +291,6 @@ arm_slide_rebase_and_sign_image(void)
 			    &__thread_starts_sect_end[0],
 			    (uintptr_t)k_mh, (uintptr_t)k_mh - slide, slide);
 		}
-
 #if defined(HAS_APPLE_PAC)
 		OSRuntimeSignStructors(&_mh_execute_header);
 #endif /* defined(HAS_APPLE_PAC) */
@@ -268,6 +302,13 @@ arm_slide_rebase_and_sign_image(void)
 	 * arm_vm_init()
 	 */
 	vm_kernel_slide = slide;
+}
+
+void arm_static_if_init(boot_args *args);
+MARK_AS_FIXUP_TEXT void
+arm_static_if_init(boot_args *args)
+{
+	static_if_init(args->CommandLine);
 }
 
 void
@@ -303,263 +344,6 @@ arm_auxkc_init(void *mh, void *base)
  *		Function:		Runs on the boot CPU, once, on entry from iBoot.
  */
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-/*
- * The C continuation of the bands in start.s. Legal only while the V=P
- * bootstrap mapping is still live under TTBR0 - from the entry to arm_init
- * until arm_vm_init() installs the real page tables. The framebuffer sits
- * above the memory iBoot reports in memSize, so it is outside the kernel's
- * physical aperture and phystokv() cannot reach it; writing the physical
- * address straight through the bootstrap mapping is the only way to draw
- * this early.
- */
-void pd_start_mark(unsigned slot, uint32_t colour, boot_args *args);
-void
-pd_start_mark(unsigned slot, uint32_t colour, boot_args *args)
-{
-	volatile uint32_t *fb;
-	uint32_t stride, row, col;
-
-	if (args == NULL || args->Video.v_baseAddr == 0 ||
-	    args->Video.v_rowBytes == 0) {
-		return;
-	}
-	fb = (volatile uint32_t *)(uintptr_t)args->Video.v_baseAddr;
-	stride = (uint32_t)(args->Video.v_rowBytes / 4);
-
-	for (row = 0; row < 16; row++) {
-		for (col = 0; col < stride; col++) {
-			fb[(slot * 16 + row) * stride + col] = colour;
-		}
-	}
-}
-/*
- * The same marker after arm_vm_init() has replaced the bootstrap tables. The
- * framebuffer is outside the physical aperture, so this goes the long way
- * round through the pmap copy windows, which exist only once pmap_bootstrap()
- * has run - that is, not before arm_vm_init() returns.
- */
-void
-pd_start_mark_late(unsigned slot, uint32_t colour, boot_args *args)
-{
-	uint64_t base;
-	uint32_t stride, row, col;
-
-	if (args == NULL || args->Video.v_baseAddr == 0 ||
-	    args->Video.v_rowBytes == 0) {
-		return;
-	}
-	base = args->Video.v_baseAddr;
-	stride = (uint32_t)(args->Video.v_rowBytes / 4);
-
-	for (row = 0; row < 16; row++) {
-		for (col = 0; col < stride; col++) {
-			ml_phys_write_word((vm_offset_t)(base +
-			    ((uint64_t)(slot * 16 + row) * stride + col) * 4), colour);
-		}
-	}
-}
-#endif /* PUREDARWIN_EARLY_FB_MARK */
-
-/* Where the loader parks its pristine __DATA_CONST copy; must match macho64.c. */
-#define PD_DC_SHADOW_PA 0x02000000
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-void
-pd_bcm2835_early_uart_tag_sub(char sub, char phase)
-{
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	/* The BCM2837 moves the peripherals to 0x3F000000. Reachable here because
-	 * start.s maps that window V=P as Device memory during bootstrap, before
-	 * XNU's own console exists. */
-	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x3F201000;
-	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x3F201018;
-#else
-	/* Disabled on BCM2835: with the D-cache off, each tag costs a serial round
-	 * trip and dominates boot time. Drop the return to re-enable. */
-	return;
-	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x20201000;
-	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x20201018;
-#endif
-	const char tag[] = { sub, phase, '\r', '\n' };
-
-	for (unsigned int i = 0; i < sizeof(tag); i++) {
-		while ((*uart_fr & 0x20U) != 0) {
-			/* Poll until the PL011 TX FIFO has room. */
-		}
-		*uart_dr = (uint32_t)tag[i];
-	}
-}
-
-void
-pd_bcm2835_early_uart_tag(char phase)
-{
-	pd_bcm2835_early_uart_tag_sub('A', phase);
-}
-
-/* Raw string trace for RELEASE, where printf/kprintf strings are stripped. */
-static void
-pd_bcm2835_early_uart_write(const char *s)
-{
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	volatile uint32_t * const uart_dr = (volatile uint32_t *)0x3F201000;
-	volatile uint32_t * const uart_fr = (volatile uint32_t *)0x3F201018;
-
-	for (; *s != '\0'; s++) {
-		while ((*uart_fr & 0x20U) != 0) {
-			/* Poll until the PL011 TX FIFO has room. */
-		}
-		*uart_dr = (uint32_t)*s;
-	}
-#else
-	(void)s;
-#endif
-}
-
-void
-pd_bcm2835_early_uart_str(const char *s)
-{
-	pd_bcm2835_early_uart_write(s);
-	pd_bcm2835_early_uart_write("\r\n");
-}
-
-/* Raw "label 0x...." trace, for tracing pointers before any printf exists. */
-void
-pd_bcm2835_early_uart_hex(const char *label, uint64_t v)
-{
-	static const char digits[] = "0123456789abcdef";
-	char buf[19];
-	unsigned int i;
-
-	buf[0] = '0';
-	buf[1] = 'x';
-	for (i = 0; i < 16; i++) {
-		buf[2 + i] = digits[(v >> ((15 - i) * 4)) & 0xfU];
-	}
-	buf[18] = '\0';
-
-	pd_bcm2835_early_uart_write(label);
-	pd_bcm2835_early_uart_str(buf);
-}
-#endif
-
-
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-/*
- * Index of the first zero word in IOCatalogue's metaclass vtable, or 0xffff if
- * it is wholly intact. Which word goes bad moves between builds, so scan the
- * lot rather than watching a fixed index. Slots 0 and 1 are offset-to-top and
- * RTTI, which are legitimately zero.
- */
-/*
- * Count the wholly-zero 64-byte lines in __DATA_CONST, and report the first.
- * Which line goes bad - and so which class's vtable it lands in - moves between
- * builds, so measure the segment rather than any one victim. Padding makes some
- * lines legitimately zero; what matters is the count changing between calls.
- */
-unsigned int
-pd_dataconst_zero_lines(uint64_t *first_out)
-{
-	kernel_segment_command_t *seg;
-	unsigned int zero_lines = 0;
-	uint64_t first = 0;
-
-	seg = getsegbynamefromheader(&_mh_execute_header, "__DATA_CONST");
-	if (seg == NULL) {
-		if (first_out != NULL) {
-			*first_out = 0;
-		}
-		return 0;
-	}
-
-	for (uint64_t off = 0; off + 64 <= seg->vmsize; off += 64) {
-		const volatile uint64_t *line =
-		    (const volatile uint64_t *)(uintptr_t)(seg->vmaddr + off);
-		unsigned int i;
-
-		for (i = 0; i < 8; i++) {
-			if (line[i] != 0) {
-				break;
-			}
-		}
-		if (i == 8) {
-			if (zero_lines == 0) {
-				first = seg->vmaddr + off;
-			}
-			zero_lines++;
-		}
-	}
-
-	if (first_out != NULL) {
-		*first_out = first;
-	}
-	return zero_lines;
-}
-
-/*
- * First 64-byte line of __DATA_CONST that reads back wholly zero while the
- * loader's pristine copy has every word of it non-zero, or 0 if there is none.
- *
- * Individual zeroed words are not a defect - pmap_bootstrap() and friends
- * legitimately clear fields of SECURITY_READ_ONLY_LATE structures living here.
- * A whole line going zero under an all-non-zero original is the signature of
- * the damage we are chasing, and is what a vtable region looks like.
- */
-bool pd_shadow_ready = false;
-
-/* Shared-memory trace channel; defined at the end of this file. These are
- * unconditional so any translation unit can call them without needing the
- * board-config macro in scope; they no-op unless the loader published a ring. */
-void pd_trace_init(void);
-void pd_trace_str(const char *s);
-void pd_trace_hex(const char *label, uint64_t v);
-
-uint64_t
-pd_dataconst_first_zeroed(void)
-{
-	const volatile uint64_t *live = (const volatile uint64_t *)0xfffffff00709c000ULL;
-	const volatile uint64_t *want;
-
-	/* ml_static_ptovirt() needs gVirtBase/gPhysBase, set further into arm_init. */
-	if (!pd_shadow_ready) {
-		return 0;
-	}
-	want = (const volatile uint64_t *)ml_static_ptovirt(PD_DC_SHADOW_PA);
-
-	for (uint64_t i = 0; i < (0x88000 / 8); i += 8) {
-		unsigned int j;
-
-		for (j = 0; j < 8; j++) {
-			if (live[i + j] != 0 || want[i + j] == 0) {
-				break;
-			}
-		}
-		if (j == 8) {
-			return (uint64_t)(uintptr_t)&live[i];
-		}
-	}
-	return 0;
-}
-
-static void
-pd_dump_iocat_vtable(const char *when)
-{
-	pd_bcm2835_early_uart_hex(when, pd_dataconst_first_zeroed());
-}
-#elif defined(ARM_BOARD_CONFIG_BCM2835)
-/*
- * The shadow this diffs against is staged by the arm64 loader, so there is
- * nothing to compare on the Pi Zero. The PD_PE_TRACE/PD_IOK_TRACE macros in
- * pe_init.c and IOStartIOKit.cpp are shared by both boards and call this
- * unconditionally, so it has to exist here or arm32 fails to link.
- */
-unsigned long long
-pd_dataconst_first_zeroed(void)
-{
-	return 0;
-}
-#endif
-
 __startup_func
 void
 arm_init(
@@ -569,114 +353,78 @@ arm_init(
 	uint32_t        memsize;
 	uint64_t        xmaxmem;
 	thread_t        thread;
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('0');
-#endif
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_start_mark(14, 0x00ff8080, args);	/* pink: reached arm_init */
-#endif
-
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	/* Bracket the chained-fixup slide: the __DATA_CONST vtables read back as
-	 * zero by the time IOKit runs, and this says whether they arrived that way. */
-	pd_dump_iocat_vtable("vt@entry ");
-#endif
+	DTEntry chosen = NULL;
+	unsigned int dt_entry_size = 0;
 
 	arm_slide_rebase_and_sign_image();
 
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('1');
-#endif
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("vt@slide ");
-#endif
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_start_mark(15, 0x008080ff, args);	/* periwinkle: image rebased and signed */
-#endif
+	arm_static_if_init(args);
 
 	/* If kernel integrity is supported, use a constant copy of the boot args. */
 	const_boot_args = *args;
 	BootArgs = args = &const_boot_args;
 
+#if APPLEVIRTUALPLATFORM
+	reset_vector_vaddr = (vm_offset_t) &LowResetVectorBase;
+#endif /* APPLEVIRTUALPLATFORM */
+
 	cpu_data_init(&BootCpuData);
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('2');
-#endif
 #if defined(HAS_APPLE_PAC)
 	/* bootstrap cpu process dependent key for kernel has been loaded by start.s */
 	BootCpuData.rop_key = ml_default_rop_pid();
 	BootCpuData.jop_key = ml_default_jop_pid();
 #endif /* defined(HAS_APPLE_PAC) */
 
-	/*
-	 * PureDarwin: PE_init_platform(FALSE, args) below calls phystokv() (via
-	 * ml_static_ptovirt()) on the device tree pointer before arm_vm_init()
-	 * (called much further down, ~line 490) has set gPhysBase/gVirtBase/
-	 * real_phys_size. Without them, phystokv()'s fallback formula
-	 * (pa - gPhysBase + gVirtBase) degenerates to the identity function
-	 * (both operands still zero), handing PE_state.deviceTreeHead a raw
-	 * *physical* address instead of a real kernel VA. That's usable only if
-	 * TTBR0's V=P bootstrap mapping (start.s) is still reachable from
-	 * TTBR1-mode high-VA kernel code, which it isn't once kernel execution
-	 * has trampolined to the high VA range (__ARM_KERNEL_PROTECT__-style
-	 * setups stop using TTBR0 from EL1 at that point) - SecureDTInit's
-	 * FindChild/GetNextComponent then dereference that bogus "VA" and fault.
-	 * Populate the real values now instead of waiting for arm_vm_init():
-	 * they don't change between here and there, so this is exactly the
-	 * value arm_vm_init() would compute anyway, just available earlier.
-	 */
-	{
-		extern unsigned long gVirtBase, gPhysBase, gPhysSize;
-		gPhysBase = args->physBase;
-		gVirtBase = args->virtBase;
-		gPhysSize = args->memSize;
-#if __arm64__
-		/*
-		 * Only the arm64 arm_vm_init.c has real_phys_size; the 32-bit
-		 * one derives everything from gPhysBase/gPhysSize, which are
-		 * set just above.
-		 */
-		{
-			extern unsigned long real_phys_size;
-			real_phys_size = args->memSize;
-		}
-#endif /* __arm64__ */
-	}
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_start_mark(16, 0x00c0c000, args);	/* olive: about to init the platform expert */
-#endif
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('3');
-#endif
 	PE_init_platform(FALSE, args); /* Get platform expert set up */
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('4');
-#endif
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_start_mark(17, 0x0000c000, args);	/* dark green: platform expert is up */
-#endif
 
 #if __arm64__
+	configure_timer_apple_regs();
 	wfe_timeout_configure();
+	wfe_timeout_init();
 
 	configure_misc_apple_boot_args();
-	configure_misc_apple_regs();
+	configure_misc_apple_regs(true);
+
+#if HAS_UPSI_FAILURE_INJECTION
+	/* UPSI (Universal Panic and Stall Injection) Logic
+	 * iBoot/XNU are both configured for failure injection at specific stages
+	 * The injected failure and stage is populated through EDT properties by iBoot
+	 *
+	 * iBoot populates the EDT properties for XNU based upon PMU scratch bits
+	 * This is done because the EDT is available sooner in XNU than the PMU Kext
+	 */
+	uint64_t const *upsi_info = NULL;
+
+	/* Not usable TUNABLE here because TUNABLEs are parsed at a later point. */
+	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
+		panic("%s: Unable to find 'chosen' DT node", __FUNCTION__);
+	}
+
+	/* Check if there is a requested injection stage */
+	if (SecureDTGetProperty(chosen, "injection_stage", (void const **)&upsi_info,
+	    &dt_entry_size) == kSuccess) {
+		assert3u(dt_entry_size, ==, 8);
+		xnu_upsi_injection_stage = *upsi_info;
+	}
+
+	/* Check if there is a requested injection action */
+	if (SecureDTGetProperty(chosen, "injection_action", (void const **)&upsi_info,
+	    &dt_entry_size) == kSuccess) {
+		assert3u(dt_entry_size, ==, 8);
+		xnu_upsi_injection_action = *upsi_info;
+	}
+
+	check_for_failure_injection(XNU_STAGE_ARM_INIT);
+
+	chosen = NULL; // Force a re-lookup later on since VM addresses are not final at this point
+	dt_entry_size = 0;
+#endif // HAS_UPSI_FAILURE_INJECTION
 
 
 	{
 		/*
 		 * Select the advertised kernel page size.
 		 */
-		#if defined(QEMUVIRT)
-		/* QEMU virt exposes a 4 KB translation granule even with 4 GB RAM. */
-		PAGE_SHIFT_CONST = ARM_PGSHIFT;
-		#else
 		if (args->memSize > 1ULL * 1024 * 1024 * 1024) {
 			/*
 			 * arm64 device with > 1GB of RAM:
@@ -691,7 +439,6 @@ arm_init(
 			 */
 			PAGE_SHIFT_CONST = ARM_PGSHIFT;
 		}
-		#endif
 
 		/* 32-bit apps always see 16KB page size */
 		page_shift_user32 = PAGE_MAX_SHIFT;
@@ -704,46 +451,35 @@ arm_init(
 #endif
 	}
 #endif
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('5');
+#if HAS_ARM_FEAT_SME
+	(void)PE_parse_boot_argn("enable_sme", &enable_sme, sizeof(enable_sme));
+	if (enable_sme) {
+		arm_sme_init(true);
+	}
 #endif
+
 	ml_parse_cpu_topology();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('6');
-#endif
 
-	master_cpu = ml_get_boot_cpu_number();
-	assert(master_cpu >= 0 && master_cpu <= ml_get_max_cpu_number());
 
-	BootCpuData.cpu_number = (unsigned short)master_cpu;
-#if     __arm__
-	BootCpuData.cpu_exc_vectors = (vm_offset_t)&ExceptionVectorsTable;
-#endif
+	boot_cpu_id = ml_get_boot_cpu_number();
+	assert(boot_cpu_id >= 0 && boot_cpu_id <= ml_get_max_cpu_number());
+
+	BootCpuData.cpu_number = (unsigned short)boot_cpu_id;
 	BootCpuData.intstack_top = (vm_offset_t) &intstack_top;
-	BootCpuData.istackptr = BootCpuData.intstack_top;
+	BootCpuData.istackptr = &intstack_top;
 #if __arm64__
 	BootCpuData.excepstack_top = (vm_offset_t) &excepstack_top;
-	BootCpuData.excepstackptr = BootCpuData.excepstack_top;
-#else
-	BootCpuData.fiqstack_top = (vm_offset_t) &fiqstack_top;
-	BootCpuData.fiqstackptr = BootCpuData.fiqstack_top;
+	BootCpuData.excepstackptr = &excepstack_top;
 #endif
-	BootCpuData.cpu_console_buf = (void *)NULL;
-	CpuDataEntries[master_cpu].cpu_data_vaddr = &BootCpuData;
-	CpuDataEntries[master_cpu].cpu_data_paddr = (void *)((uintptr_t)(args->physBase)
+	CpuDataEntries[boot_cpu_id].cpu_data_vaddr = &BootCpuData;
+	CpuDataEntries[boot_cpu_id].cpu_data_paddr = (void *)((uintptr_t)(args->physBase)
 	    + ((uintptr_t)&BootCpuData
 	    - (uintptr_t)(args->virtBase)));
 
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('7');
-#endif
 	thread = thread_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('8');
-#endif
 	thread->machine.CpuDatap = &BootCpuData;
-	thread->machine.pcpu_data_base = (vm_offset_t)0;
+	thread->machine.pcpu_data_base_and_cpu_number =
+	    ml_make_pcpu_base_and_cpu_number(0, BootCpuData.cpu_number);
 	machine_set_current_thread(thread);
 
 	/*
@@ -753,59 +489,21 @@ arm_init(
 	 * preemption level is not really meaningful for the bootstrap thread.
 	 */
 	thread->machine.preemption_count = 0;
-#if     __arm__ && __ARM_USER_PROTECT__
-	{
-		unsigned int ttbr0_val, ttbr1_val;
-		__asm__ volatile ("mrc p15,0,%0,c2,c0,0\n" : "=r"(ttbr0_val));
-		__asm__ volatile ("mrc p15,0,%0,c2,c0,1\n" : "=r"(ttbr1_val));
-		thread->machine.uptw_ttb = ttbr0_val;
-		thread->machine.kptw_ttb = ttbr1_val;
-	}
-#endif
-	processor_t boot_processor = PERCPU_GET_MASTER(processor);
-	boot_processor->kernel_timer = &thread->system_timer;
-	boot_processor->thread_timer = &thread->system_timer;
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('9');
-#endif
 	cpu_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('a');
-#endif
 
 	rtclock_early_init();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('b');
-#endif
 
 	kernel_debug_string_early("kernel_startup_bootstrap");
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('c');
-#endif
 	kernel_startup_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('d');
-#endif
 
 	/*
 	 * Initialize the timer callout world
 	 */
 	timer_call_init();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('e');
-#endif
 
 	cpu_init();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('f');
-#endif
 
 	processor_bootstrap();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('g');
-	pd_bcm2835_early_uart_tag('h');
-#endif
 
 	if (PE_parse_boot_argn("maxmem", &maxmem, sizeof(maxmem))) {
 		xmaxmem = (uint64_t) maxmem * (1024 * 1024);
@@ -814,51 +512,23 @@ arm_init(
 	} else {
 		xmaxmem = 0;
 	}
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('i');
-#endif
 
-#if INTERRUPT_MASKED_DEBUG
-	int wdt_boot_arg = 0;
-	/* Disable if WDT is disabled or no_interrupt_mask_debug in boot-args */
-	if (PE_parse_boot_argn("no_interrupt_masked_debug", &interrupt_masked_debug,
-	    sizeof(interrupt_masked_debug)) || (PE_parse_boot_argn("wdt", &wdt_boot_arg,
-	    sizeof(wdt_boot_arg)) && (wdt_boot_arg == -1)) || kern_feature_override(KF_INTERRUPT_MASKED_DEBUG_OVRD)) {
-		interrupt_masked_debug = 0;
+#if SCHED_HYGIENE_DEBUG
+	{
+		int wdt_boot_arg = 0;
+		bool const wdt_disabled = (PE_parse_boot_argn("wdt", &wdt_boot_arg, sizeof(wdt_boot_arg)) && (wdt_boot_arg == -1));
+
+		/* Disable if WDT is disabled */
+		if (wdt_disabled || kern_feature_override(KF_INTERRUPT_MASKED_DEBUG_OVRD)) {
+			interrupt_masked_debug_mode = SCHED_HYGIENE_MODE_OFF;
+		}
+		if (wdt_disabled || kern_feature_override(KF_PREEMPTION_DISABLED_DEBUG_OVRD)) {
+			sched_preemption_disable_debug_mode = SCHED_HYGIENE_MODE_OFF;
+		}
 	}
-
-	PE_parse_boot_argn("interrupt_masked_debug_timeout", &interrupt_masked_timeout, sizeof(interrupt_masked_timeout));
-
-#endif /* INTERRUPT_MASKED_DEBUG */
+#endif /* SCHED_HYGIENE_DEBUG */
 
 	nanoseconds_to_absolutetime(XCALL_ACK_TIMEOUT_NS, &xcall_ack_timeout_abstime);
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('j');
-#endif
-
-#if APPLEVIRTUALPLATFORM
-	unsigned int vti;
-
-	if (!PE_parse_boot_argn("vti", &vti, sizeof(vti))) {
-		vti = 6;
-	}
-
-#define VIRTUAL_TIMEOUT_INFLATE_ABS(_timeout)              \
-MACRO_BEGIN                                                \
-	_timeout = virtual_timeout_inflate_abs(vti, _timeout); \
-MACRO_END
-
-#define VIRTUAL_TIMEOUT_INFLATE_NS(_timeout)              \
-MACRO_BEGIN                                                \
-	_timeout = virtual_timeout_inflate_ns(vti, _timeout); \
-MACRO_END
-
-#if INTERRUPT_MASKED_DEBUG
-	VIRTUAL_TIMEOUT_INFLATE_ABS(interrupt_masked_timeout);
-	VIRTUAL_TIMEOUT_INFLATE_ABS(stackshot_interrupt_masked_timeout);
-#endif /* INTERRUPT_MASKED_DEBUG */
-	VIRTUAL_TIMEOUT_INFLATE_NS(debug_ack_timeout);
-#endif /* APPLEVIRTUALPLATFORM */
 
 #if HAS_BP_RET
 	PE_parse_boot_argn("bpret", &bp_ret, sizeof(bp_ret));
@@ -871,192 +541,18 @@ MACRO_END
 	__builtin_arm_wsr("pan", 1);
 #endif  /* __ARM_PAN_AVAILABLE__ */
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	/* Last marker of this kind: arm_vm_init() replaces the bootstrap tables,
-	 * and the V=P mapping the marker relies on goes with them. */
-	pd_start_mark(18, 0x00ffffff, args);	/* white again: about to build the real page tables */
-#endif
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('k');
-#endif
-	arm_vm_init(xmaxmem, args);
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_shadow_ready = true;
-	pd_dump_iocat_vtable("vt@vm ");
-#endif
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('l');
-#endif
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_start_mark_late(19, 0x00ff00ff, args);	/* magenta: the real page tables are up */
-#endif
-
-	if (debug_boot_arg) {
-		patch_low_glo();
-	}
-
-#if __arm64__ && WITH_CLASSIC_S2R
-	sleep_token_buffer_init();
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:sleep ");
-#endif
-#endif
-
-	PE_consistent_debug_inherit();
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:cdbg ");
-#endif
-
-	/*
-	 * rdar://54622819 Insufficient HSP purge window can cause incorrect translation when ASID and TTBR base address is changed at same time)
-	 * (original info on HSP purge window issues can be found in rdar://55577508)
-	 * We need a flag to check for this, so calculate and set it here. We'll use it in machine_switch_amx_context().
-	 */
-#if __arm64__
-	need_wa_rdar_55577508 = cpuid_get_cpufamily() == CPUFAMILY_ARM_LIGHTNING_THUNDER;
-#ifndef RC_HIDE_XNU_FIRESTORM
-	need_wa_rdar_55577508 |= (cpuid_get_cpufamily() == CPUFAMILY_ARM_FIRESTORM_ICESTORM && get_arm_cpu_version() == CPU_VERSION_A0);
-#endif
-#endif
-
-	/* setup debugging output if one has been chosen */
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_start_mark_late(20, 0x0000ffff, args);	/* cyan: about to bring kprintf up */
-#endif
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('m');
-#endif
-	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:kpf ");
-#endif
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('n');
-#endif
-	kprintf("kprintf initialized\n");
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:kpf2 ");
-#endif
-
-	serialmode = 0;
-	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
-		/* Do we want a serial keyboard and/or console? */
-		kprintf("Serial mode specified: %08X\n", serialmode);
-		int force_sync = serialmode & SERIALMODE_SYNCDRAIN;
-		if (force_sync || PE_parse_boot_argn("drain_uart_sync", &force_sync, sizeof(force_sync))) {
-			if (force_sync) {
-				serialmode |= SERIALMODE_SYNCDRAIN;
-				kprintf(
-					"WARNING: Forcing uart driver to output synchronously."
-					"printf()s/IOLogs will impact kernel performance.\n"
-					"You are advised to avoid using 'drain_uart_sync' boot-arg.\n");
-			}
-		}
-	}
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_str("bootargs:[");
-	pd_bcm2835_early_uart_str(PE_boot_args());
-	pd_bcm2835_early_uart_str("]");
-	pd_bcm2835_early_uart_hex("serialmode-parsed ", serialmode);
-	pd_dump_iocat_vtable("w:parse ");
-#endif
-	if (kern_feature_override(KF_SERIAL_OVRD)) {
-		serialmode = 0;
-	}
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_hex("serialmode-final ", serialmode);
-	pd_dump_iocat_vtable("w:ovrd ");
-#endif
-
-	if (serialmode & SERIALMODE_OUTPUT) {                 /* Start serial if requested */
-		serial_console_enabled = true;
-		(void)switch_to_serial_console(); /* Switch into serial mode */
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-		pd_dump_iocat_vtable("w:switch ");
-#endif
-		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
-	}
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:precons ");
-#endif
-	PE_create_console();
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_trace_init();
-	pd_trace_str("pd-trace: channel up\r\n");
-	pd_dump_iocat_vtable("w:cons ");
-#endif
-
-	/* setup console output */
-	PE_init_printf(FALSE);
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('o');
-#endif
-
-#if __arm64__
-#if DEBUG
-	dump_kva_space();
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:kva ");
-#endif
-#endif
-#endif
-
-	cpu_machine_idle_init(TRUE);
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:idle ");
-#endif
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('p');
-#endif
-
-#if     (__ARM_ARCH__ == 7)
-	if (arm_diag & 0x8000) {
-		set_mmu_control((get_mmu_control()) ^ SCTLR_PREDIC);
-	}
-#endif
-
-	PE_init_platform(TRUE, &BootCpuData);
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_dump_iocat_vtable("w:plat ");
-#endif
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('q');
-#endif
-
-#if __arm64__
-	ml_map_cpu_pio();
-#endif
-
-	cpu_timebase_init(TRUE);
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('r');
-#endif
-	PE_init_cpu();
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('s');
-#endif
-	fiq_context_init(TRUE);
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('t');
-#endif
-
-
-#if HIBERNATION
-	pal_hib_init();
-#endif /* HIBERNATION */
+#if HAS_MTE
+	panic("This code path should never be hit: MTE devices should always flow through the SPTM-assisted init");
+#endif /* HAS_MTE */
 
 	/*
 	 * gPhysBase/Size only represent kernel-managed memory. These globals represent
 	 * the actual DRAM base address and size as reported by iBoot through the
 	 * device tree.
 	 */
-	DTEntry chosen;
-	unsigned int dt_entry_size;
 	unsigned long const *dram_base;
 	unsigned long const *dram_size;
+
 	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess) {
 		panic("%s: Unable to find 'chosen' DT node", __FUNCTION__);
 	}
@@ -1071,9 +567,113 @@ MACRO_END
 
 	gDramBase = *dram_base;
 	gDramSize = *dram_size;
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('u');
+	pmap_first_pnum = (ppnum_t)atop(gDramBase);
+
+	arm_vm_init(xmaxmem, args);
+
+	if (debug_boot_arg) {
+		patch_low_glo();
+	}
+
+#if __arm64__ && WITH_CLASSIC_S2R
+	sleep_token_buffer_init();
 #endif
+
+	PE_consistent_debug_inherit();
+
+	/* Setup debugging output. */
+	const unsigned int serial_exists = serial_init();
+	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
+	kprintf("kprintf initialized\n");
+
+	serialmode = 0;
+	if (PE_parse_boot_argn("serial", &serialmode, sizeof(serialmode))) {
+		/* Do we want a serial keyboard and/or console? */
+		kprintf("Serial mode specified: %08X\n", serialmode);
+		disable_iolog_serial_output = (serialmode & SERIALMODE_NO_IOLOG) != 0;
+		enable_dklog_serial_output = restore_boot || (serialmode & SERIALMODE_DKLOG) != 0;
+		int force_sync = serialmode & SERIALMODE_SYNCDRAIN;
+		if (force_sync || PE_parse_boot_argn("drain_uart_sync", &force_sync, sizeof(force_sync))) {
+			if (force_sync) {
+				serialmode |= SERIALMODE_SYNCDRAIN;
+				kprintf(
+					"WARNING: Forcing uart driver to output synchronously."
+					"printf()s/IOLogs will impact kernel performance.\n"
+					"You are advised to avoid using 'drain_uart_sync' boot-arg.\n");
+			}
+		}
+		/* If on-demand is selected, disable serials until reception. */
+		bool on_demand = !!(serialmode & SERIALMODE_ON_DEMAND);
+		if (on_demand && !(serialmode & SERIALMODE_INPUT)) {
+			kprintf(
+				"WARNING: invalid serial boot-args : ON_DEMAND (0x%x) flag "
+				"requires INPUT(0x%x). Ignoring ON_DEMAND.\n",
+				SERIALMODE_ON_DEMAND, SERIALMODE_INPUT
+				);
+			on_demand = 0;
+		}
+		serial_set_on_demand(on_demand);
+	}
+	if (kern_feature_override(KF_SERIAL_OVRD)) {
+		serialmode = 0;
+	}
+
+	/* Start serial if requested and a serial device was enumerated in serial_init(). */
+	if ((serialmode & SERIALMODE_OUTPUT) && serial_exists) {
+		serial_console_enabled = true;
+		(void)switch_to_serial_console(); /* Switch into serial mode from video console */
+		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
+	}
+	PE_create_console();
+
+	/* setup console output */
+	PE_init_printf(FALSE);
+
+#if __arm64__
+#if DEBUG
+	dump_kva_space();
+#endif
+#endif
+
+	cpu_machine_idle_init(TRUE);
+
+	PE_init_platform(TRUE, &BootCpuData);
+
+	/* Initialize the debug infrastructure system-wide and on the local core. */
+	pe_arm_debug_init_early(&BootCpuData);
+
+#if __arm64__
+	extern bool cpu_config_correct;
+	if (!cpu_config_correct) {
+		panic("The cpumask=N boot arg cannot be used together with cpus=N, and the boot CPU must be enabled");
+	}
+
+	ml_map_cpu_pio();
+
+#if APPLE_ARM64_ARCH_FAMILY
+	configure_late_apple_regs(true);
+#endif
+
+#endif
+
+	cpu_timebase_init(TRUE);
+
+#if KPERF
+	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
+	kptimer_curcpu_up();
+#endif /* KPERF */
+
+	PE_init_cpu();
+#if __arm64__
+	apt_msg_init();
+	apt_msg_init_cpu();
+#endif
+	fiq_context_init(TRUE);
+
+
+#if HIBERNATION
+	pal_hib_init();
+#endif /* HIBERNATION */
 
 	/*
 	 * Initialize the stack protector for all future calls
@@ -1087,16 +687,6 @@ MACRO_END
 	 * against string vulnerabilities
 	 */
 	__stack_chk_guard &= ~(0xFFULL << 8);
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('v');
-#endif
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	/* Same __DATA_CONST vtable word IOCatalogue trips over, sampled before
-	 * any of IOKit runs, to tell a bad load from a later overwrite. The
-	 * shadow it diffs against is only staged by the arm64 loader, so this
-	 * has to match the guard the helper itself is defined under. */
-	pd_dump_iocat_vtable("vt@init ");
-#endif
 	machine_startup(args);
 }
 
@@ -1108,25 +698,34 @@ MACRO_END
 
 void
 arm_init_cpu(
-	cpu_data_t      *cpu_data_ptr)
+	cpu_data_t      *cpu_data_ptr,
+	uint64_t __unused hib_header_phys)
 {
 #if __ARM_PAN_AVAILABLE__
 	__builtin_arm_wsr("pan", 1);
 #endif
 
 #ifdef __arm64__
-	configure_misc_apple_regs();
+	configure_timer_apple_regs();
+	configure_misc_apple_regs(false);
+#endif
+#if HAS_ARM_FEAT_SME
+	if (enable_sme) {
+		arm_sme_init(false);
+	}
 #endif
 
-	cpu_data_ptr->cpu_flags &= ~SleepState;
-#if     defined(ARMA7)
-	cpu_data_ptr->cpu_CLW_active = 1;
-#endif
+	os_atomic_andnot(&cpu_data_ptr->cpu_flags, SleepState, relaxed);
+
 
 	machine_set_current_thread(cpu_data_ptr->cpu_active_thread);
 
+#if APPLE_ARM64_ARCH_FAMILY
+	configure_late_apple_regs(false);
+#endif
+
 #if HIBERNATION
-	if ((cpu_data_ptr == &BootCpuData) && (gIOHibernateState == kIOHibernateStateWakingFromHibernate)) {
+	if ((cpu_data_ptr == &BootCpuData) && (gIOHibernateState == kIOHibernateStateWakingFromHibernate) && ml_is_quiescing()) {
 		// the "normal" S2R code captures wake_abstime too early, so on a hibernation resume we fix it up here
 		extern uint64_t wake_abstime;
 		wake_abstime = gIOHibernateCurrentHeader->lastHibAbsTime;
@@ -1138,10 +737,11 @@ arm_init_cpu(
 
 		// during hibernation, we captured the idle thread's state from inside the PPL context, so we have to
 		// fix up its preemption count
-		unsigned int expected_preemption_count = (gEnforceQuiesceSafety ? 2 : 1);
-		if (cpu_data_ptr->cpu_active_thread->machine.preemption_count != expected_preemption_count) {
-			panic("unexpected preemption count %u on boot cpu thread (should be %u)\n",
-			    cpu_data_ptr->cpu_active_thread->machine.preemption_count,
+		unsigned int expected_preemption_count = (gEnforcePlatformActionSafety ? 2 : 1);
+		if (get_preemption_level_for_thread(cpu_data_ptr->cpu_active_thread) !=
+		    expected_preemption_count) {
+			panic("unexpected preemption count %u on boot cpu thread (should be %u)",
+			    get_preemption_level_for_thread(cpu_data_ptr->cpu_active_thread),
 			    expected_preemption_count);
 		}
 		cpu_data_ptr->cpu_active_thread->machine.preemption_count--;
@@ -1158,11 +758,6 @@ arm_init_cpu(
 
 	cpu_init();
 
-#if     (__ARM_ARCH__ == 7)
-	if (arm_diag & 0x8000) {
-		set_mmu_control((get_mmu_control()) ^ SCTLR_PREDIC);
-	}
-#endif
 #ifdef  APPLETYPHOON
 	if ((cpus_defeatures & (0xF << 4 * cpu_data_ptr->cpu_number)) != 0) {
 		cpu_defeatures_set((cpus_defeatures >> 4 * cpu_data_ptr->cpu_number) & 0xF);
@@ -1173,7 +768,12 @@ arm_init_cpu(
 	 */
 	cpu_timebase_init(FALSE);
 
-	if (cpu_data_ptr == &BootCpuData) {
+#if KPERF
+	/* kptimer_curcpu_up() must be called after cpu_timebase_init */
+	kptimer_curcpu_up();
+#endif /* KPERF */
+
+	if (cpu_data_ptr == &BootCpuData && ml_is_quiescing()) {
 #if __arm64__ && __ARM_GLOBAL_SLEEP_BIT__
 		/*
 		 * Prevent CPUs from going into deep sleep until all
@@ -1186,19 +786,32 @@ arm_init_cpu(
 		commpage_update_timebase();
 	}
 	PE_init_cpu();
+#if __arm64__
+	apt_msg_init_cpu();
+#endif
 
 	fiq_context_init(TRUE);
 	cpu_data_ptr->rtcPop = EndOfAllTime;
 	timer_resync_deadlines();
 
+	processor_t processor = PERCPU_GET_RELATIVE(processor, cpu_data, cpu_data_ptr);
+	bool should_kprintf = processor_should_kprintf(processor, true);
+
+	/* Start tracing (secondary CPU). */
 #if DEVELOPMENT || DEBUG
-	PE_arm_debug_enable_trace();
+	PE_arm_debug_enable_trace(should_kprintf);
+#endif /* DEVELOPMENT || DEBUG */
+
+#if KERNEL_INTEGRITY_KTRR || KERNEL_INTEGRITY_CTRR || KERNEL_INTEGRITY_PV_CTRR
+	rorgn_validate_core();
 #endif
 
 
-	kprintf("arm_cpu_init(): cpu %d online\n", cpu_data_ptr->cpu_number);
+	if (should_kprintf) {
+		kprintf("arm_cpu_init(): cpu %d online\n", cpu_data_ptr->cpu_number);
+	}
 
-	if (cpu_data_ptr == &BootCpuData) {
+	if (cpu_data_ptr == &BootCpuData && ml_is_quiescing()) {
 		if (kdebug_enable == 0) {
 			__kdebug_only uint64_t elapsed = kdebug_wake();
 			KDBG(IOKDBG_CODE(DBG_HIBERNATE, 15), mach_absolute_time() - elapsed);
@@ -1208,9 +821,9 @@ arm_init_cpu(
 		bootprofile_wake_from_sleep();
 #endif /* CONFIG_TELEMETRY */
 	}
-#if MONOTONIC && defined(__arm64__)
+#if CONFIG_CPU_COUNTERS
 	mt_wake_per_core();
-#endif /* MONOTONIC && defined(__arm64__) */
+#endif /* CONFIG_CPU_COUNTERS */
 
 #if defined(KERNEL_INTEGRITY_CTRR)
 	if (ctrr_cluster_locked[cpu_data_ptr->cpu_cluster_id] != CTRR_LOCKED) {
@@ -1221,7 +834,7 @@ arm_init_cpu(
 	}
 #endif
 
-	slave_main(NULL);
+	secondary_cpu_main(NULL);
 }
 
 /*
@@ -1235,9 +848,6 @@ arm_init_idle_cpu(
 #if __ARM_PAN_AVAILABLE__
 	__builtin_arm_wsr("pan", 1);
 #endif
-#if     defined(ARMA7)
-	cpu_data_ptr->cpu_CLW_active = 1;
-#endif
 
 	machine_set_current_thread(cpu_data_ptr->cpu_active_thread);
 
@@ -1245,93 +855,24 @@ arm_init_idle_cpu(
 	wfe_timeout_init();
 	pmap_clear_user_ttb();
 	flush_mmu_tlb();
-	/* Enable asynchronous exceptions */
-	__builtin_arm_wsr("DAIFClr", DAIFSC_ASYNCF);
 #endif
 
-#if     (__ARM_ARCH__ == 7)
-	if (arm_diag & 0x8000) {
-		set_mmu_control((get_mmu_control()) ^ SCTLR_PREDIC);
-	}
-#endif
 #ifdef  APPLETYPHOON
 	if ((cpus_defeatures & (0xF << 4 * cpu_data_ptr->cpu_number)) != 0) {
 		cpu_defeatures_set((cpus_defeatures >> 4 * cpu_data_ptr->cpu_number) & 0xF);
 	}
 #endif
 
+	/*
+	 * Update the active debug object to reflect that debug registers have been reset.
+	 * This will force any thread with active debug state to resync the debug registers
+	 * if it returns to userspace on this CPU.
+	 */
+	if (cpu_data_ptr->cpu_user_debug != NULL) {
+		arm_debug_set(NULL);
+	}
+
 	fiq_context_init(FALSE);
 
 	cpu_idle_exit(TRUE);
-}
-
-/*
- * Shared-memory trace channel.
- *
- * pd_bcm2835_early_uart_* write the PL011 through the bootstrap V=P mapping
- * start.s creates, so they stop working - and fault - once that mapping is
- * torn down, which is well before userland runs. This writes into a ring the
- * VPU loader reserved in DRAM and drains to its own console instead, so
- * tracing keeps working for the whole boot.
- *
- * The VPU is not cache-coherent with us, so the ring is mapped write-combined
- * (normal non-cacheable) rather than cached.
- */
-#define PD_TRACE_MAGIC   0x50445452u
-#define PD_TRACE_HDR     16u
-
-static volatile uint8_t *pd_trace_buf;
-static uint32_t          pd_trace_capacity;
-
-void
-pd_trace_init(void)
-{
-	DTEntry chosen;
-	uint64_t const *params;
-	unsigned int size;
-
-	if (pd_trace_buf != NULL) return;
-	if (kSuccess != SecureDTLookupEntry(0, "/chosen", &chosen)) return;
-	if (kSuccess != SecureDTGetProperty(chosen, "pd-trace",
-	    (void const **)&params, &size)) return;
-	if (size < 2 * sizeof(uint64_t) || params[1] <= PD_TRACE_HDR) return;
-
-	vm_offset_t va = ml_io_map_wcomb((vm_offset_t)params[0], (vm_size_t)params[1]);
-	if (va == 0) return;
-
-	if (*(volatile uint32_t *)va != PD_TRACE_MAGIC) return;
-
-	pd_trace_capacity = (uint32_t)params[1] - PD_TRACE_HDR;
-	pd_trace_buf = (volatile uint8_t *)va;
-}
-
-void
-pd_trace_str(const char *s)
-{
-	if (pd_trace_buf == NULL || s == NULL) return;
-
-	volatile uint32_t *wp = (volatile uint32_t *)(pd_trace_buf + 8);
-	uint32_t w = *wp;
-
-	for (; *s != '\0'; s++) {
-		pd_trace_buf[PD_TRACE_HDR + (w % pd_trace_capacity)] = (uint8_t)*s;
-		w++;
-	}
-	__builtin_arm_dmb(0xb);   /* publish the bytes before the index */
-	*wp = w;
-}
-
-void
-pd_trace_hex(const char *label, uint64_t v)
-{
-	static const char hex[] = "0123456789abcdef";
-	char out[19];
-	int i;
-
-	pd_trace_str(label);
-	out[0] = '0'; out[1] = 'x';
-	for (i = 0; i < 16; i++) out[2 + i] = hex[(v >> ((15 - i) * 4)) & 0xf];
-	out[18] = '\0';
-	pd_trace_str(out);
-	pd_trace_str("\r\n");
 }

@@ -18,7 +18,11 @@ target_compile_options(libfirehose_kernel PRIVATE -mkernel -Wno-packed -Wno-erro
 if(PUREDARWIN_ARM64_MACHINE_CONFIG STREQUAL "T8010")
     target_compile_options(libfirehose_kernel PRIVATE -mcpu=apple-a10)
 endif()
-target_link_libraries(libfirehose_kernel PRIVATE AvailabilityHeaders xnu_private_headers)
+# Kernel.framework first: this is a KERNEL=1 component, and xnu 12377's
+# System.framework copy of firehose/tracepoint_private.h takes the userspace
+# branch, which reads _COMM_PAGE_ATM_DIAGNOSTIC_CONFIG - kernel-private, and not
+# exported by the userspace machine/cpu_capabilities.h.
 target_link_libraries(libfirehose_kernel PRIVATE xnu_kernel_headers xnu_kernel_private_headers)
+target_link_libraries(libfirehose_kernel PRIVATE AvailabilityHeaders xnu_private_headers)
 target_link_libraries(libfirehose_kernel PRIVATE libplatform_headers libplatform_private_headers)
 target_link_libraries(libfirehose_kernel PRIVATE pthread_common_headers pthread_common_private_headers)

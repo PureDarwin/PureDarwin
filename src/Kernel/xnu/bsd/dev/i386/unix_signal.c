@@ -63,6 +63,7 @@
 
 #include <sys/kdebug.h>
 #include <sys/sdt.h>
+#include <sys/random.h>
 
 
 /* Forward: */
@@ -180,7 +181,7 @@ sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint
 	user_addr_t     ua_mctxp;
 	user_siginfo_t  sinfo64;
 
-	struct sigacts *ps = p->p_sigacts;
+	struct sigacts *ps = &p->p_sigacts;
 	int oonstack, flavor;
 	user_addr_t trampact;
 	int sigonstack;
@@ -204,7 +205,7 @@ sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint
 	}
 
 	oonstack = ut->uu_sigstk.ss_flags & SA_ONSTACK;
-	trampact = ps->ps_trampact[sig];
+	trampact = SIGTRAMP(p, sig);
 	sigonstack = (ps->ps_sigonstack & sigmask(sig));
 
 	/*
@@ -218,6 +219,12 @@ sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint
 	bzero(mctxp, sizeof(*mctxp));
 
 	sig_xstate = current_xstate();
+
+	if (ut->uu_pending_sigreturn == 0) {
+		/* Generate random token value used to validate sigreturn arguments */
+		read_random(&ut->uu_sigreturn_token, sizeof(ut->uu_sigreturn_token));
+	}
+	ut->uu_pending_sigreturn++;
 
 	if (proc_is64bit(p)) {
 		x86_thread_state64_t    *tstate64;
@@ -323,7 +330,7 @@ sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint
 		token_uctx = ua_uctxp;
 		kr = machine_thread_siguctx_pointer_convert_to_user(thread, &token_uctx);
 		assert(kr == KERN_SUCCESS);
-		token = (user64_addr_t)token_uctx ^ (user64_addr_t)ps->ps_sigreturn_token;
+		token = (user64_addr_t)token_uctx ^ (user64_addr_t)ut->uu_sigreturn_token;
 
 		/*
 		 * Build the signal context to be used by sigreturn.
@@ -466,7 +473,7 @@ sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint
 		kr = machine_thread_siguctx_pointer_convert_to_user(thread, &token_uctx);
 		assert(kr == KERN_SUCCESS);
 		token = CAST_DOWN_EXPLICIT(user32_addr_t, token_uctx) ^
-		    CAST_DOWN_EXPLICIT(user32_addr_t, ps->ps_sigreturn_token);
+		    CAST_DOWN_EXPLICIT(user32_addr_t, ut->uu_sigreturn_token);
 
 		/*
 		 * Build the argument list for the signal handler.
@@ -735,8 +742,10 @@ sendsig(struct proc *p, user_addr_t ua_catcher, int sig, int mask, __unused uint
 
 bad:
 
+	assert(ut->uu_pending_sigreturn > 0);
+	ut->uu_pending_sigreturn--;
 	proc_lock(p);
-	SIGACTION(p, SIGILL) = SIG_DFL;
+	proc_set_sigact(p, SIGILL, SIG_DFL);
 	sig = sigmask(SIGILL);
 	p->p_sigignore &= ~sig;
 	p->p_sigcatch &= ~sig;
@@ -773,7 +782,7 @@ sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
 
 	thread_t thread = current_thread();
 	struct uthread * ut;
-	struct sigacts *ps = p->p_sigacts;
+	struct sigacts *ps = &p->p_sigacts;
 	int     error;
 	int     onstack = 0;
 
@@ -792,7 +801,8 @@ sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
 	ut = (struct uthread *)get_bsdthread_info(thread);
 
 	/* see osfmk/kern/restartable.c */
-	act_set_ast_reset_pcs(thread);
+	act_set_ast_reset_pcs(TASK_NULL, thread);
+
 	/*
 	 * If we are being asked to change the altstack flag on the thread, we
 	 * just set/reset it and return (the uap->uctx is not used).
@@ -847,11 +857,11 @@ sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
 		fs_flavor = thread_state64[sig_xstate].flavor;
 		fs_count  = thread_state64[sig_xstate].state_count;
 
-		token = (user64_addr_t)token_uctx ^ (user64_addr_t)ps->ps_sigreturn_token;
+		token = (user64_addr_t)token_uctx ^ (user64_addr_t)ut->uu_sigreturn_token;
 		if ((user64_addr_t)uap->token != token) {
 #if DEVELOPMENT || DEBUG
 			printf("process %s[%d] sigreturn token mismatch: received 0x%llx expected 0x%llx\n",
-			    p->p_comm, p->p_pid, (user64_addr_t)uap->token, token);
+			    p->p_comm, proc_getpid(p), (user64_addr_t)uap->token, token);
 #endif /* DEVELOPMENT || DEBUG */
 			if (sigreturn_validation != PS_SIGRETURN_VALIDATION_DISABLED) {
 				rval = EINVAL;
@@ -881,11 +891,11 @@ sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
 		fs = (void *)&mctxp->mctx_avx32.fs;
 
 		token = CAST_DOWN_EXPLICIT(user32_addr_t, uap->uctx) ^
-		    CAST_DOWN_EXPLICIT(user32_addr_t, ps->ps_sigreturn_token);
+		    CAST_DOWN_EXPLICIT(user32_addr_t, ut->uu_sigreturn_token);
 		if ((user32_addr_t)uap->token != token) {
 #if DEVELOPMENT || DEBUG
 			printf("process %s[%d] sigreturn token mismatch: received 0x%x expected 0x%x\n",
-			    p->p_comm, p->p_pid, (user32_addr_t)uap->token, token);
+			    p->p_comm, proc_getpid(p), (user32_addr_t)uap->token, token);
 #endif /* DEVELOPMENT || DEBUG */
 			if (sigreturn_validation != PS_SIGRETURN_VALIDATION_DISABLED) {
 				rval = EINVAL;
@@ -915,9 +925,14 @@ sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
 		rval = EINVAL;
 #if DEVELOPMENT || DEBUG
 		printf("process %s[%d] sigreturn thread_setstatus error %d\n",
-		    p->p_comm, p->p_pid, rval);
+		    p->p_comm, proc_getpid(p), rval);
 #endif /* DEVELOPMENT || DEBUG */
 		goto error_ret;
+	}
+
+	/* Decrement the pending sigreturn count */
+	if (ut->uu_pending_sigreturn > 0) {
+		ut->uu_pending_sigreturn--;
 	}
 
 	ml_fp_setvalid(TRUE);
@@ -926,7 +941,7 @@ sigreturn(struct proc *p, struct sigreturn_args *uap, __unused int *retval)
 		rval = EINVAL;
 #if DEVELOPMENT || DEBUG
 		printf("process %s[%d] sigreturn thread_setstatus error %d\n",
-		    p->p_comm, p->p_pid, rval);
+		    p->p_comm, proc_getpid(p), rval);
 #endif /* DEVELOPMENT || DEBUG */
 		goto error_ret;
 	}

@@ -39,8 +39,11 @@
  *	@(#)types.h	8.3 (Berkeley) 1/5/94
  */
 
-#ifndef _MACHTYPES_H_
+#ifndef _ARM_MACHTYPES_H_
+#define _ARM_MACHTYPES_H_
 #define _MACHTYPES_H_
+
+#if defined (__arm__) || defined (__arm64__)
 
 #ifndef __ASSEMBLER__
 #include <arm/_types.h>
@@ -87,6 +90,13 @@ typedef u_int32_t               user_ulong_t;
 typedef int32_t                 user_time_t;
 typedef int64_t                 user_off_t;
 #endif
+
+#if KERNEL
+#ifndef VM_UNSAFE_TYPES
+typedef user_addr_t             user_addr_ut;
+typedef user_size_t             user_size_ut;
+#endif /* VM_SAFE_TYPES */
+#endif /* KERNEL */
 
 #define USER_ADDR_NULL  ((user_addr_t) 0)
 #define CAST_USER_ADDR_T(a_ptr)   ((user_addr_t)((uintptr_t)(a_ptr)))
@@ -155,4 +165,5 @@ typedef u_int64_t               syscall_arg_t;
 #endif
 
 #endif /* __ASSEMBLER__ */
-#endif  /* _MACHTYPES_H_ */
+#endif /* defined (__arm__) || defined (__arm64__) */
+#endif  /* _ARM_MACHTYPES_H_ */

@@ -59,26 +59,32 @@ SECURITY_READ_ONLY_LATE(PE_kputc_t) PE_kputc;
 /* DEBUG kernel starts with true serial, but
  * may later disable or switch to video
  * console */
-SECURITY_READ_ONLY_LATE(unsigned int) disable_serial_output = FALSE;
+SECURITY_READ_ONLY_LATE(bool) disable_serial_output = false;
 #else
-SECURITY_READ_ONLY_LATE(unsigned int) disable_serial_output = TRUE;
+SECURITY_READ_ONLY_LATE(bool) disable_serial_output = true;
 #endif
+SECURITY_READ_ONLY_LATE(bool) disable_iolog_serial_output = false;
+SECURITY_READ_ONLY_LATE(bool) enable_dklog_serial_output = false;
 
 static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
 
-/* Held across a whole kprintf line; console_ring_try_empty() takes it too so a
- * ring drain cannot interleave into that line on another CPU. Try-only. */
-boolean_t
-kprintf_serial_lock_try(void)
-{
-	return simple_lock_try(&kprintf_lock, LCK_GRP_NULL);
-}
-
-void
-kprintf_serial_unlock(void)
-{
-	simple_unlock(&kprintf_lock);
-}
+/*
+ * PD: kprintf (debug=... DB_KPRT boot-arg) picking pal_serial_putc means
+ * kprintf output goes ONLY to the UART, never the video/GOP console, with
+ * gopconsole=1 that leaves the on-screen console completely silent even
+ * though serial is full of kprintf output. Mirror both here, scoped
+ * strictly to this kprintf/PE_kputc path (NOT cnputc/_cnputs, which drive
+ * interactive BSDConsole tty I/O and previously had its own separate
+ * mirroring that caused doubled characters there, reverted).
+ *
+ * cons_ops_index (osfmk/console/serial_console.c) starts as SERIAL_CONS_OPS
+ * whenever the "serial=" boot-arg is set, only flipping to VC_CONS_OPS once
+ * IOFramebuffer::start() actually runs. Until then, cnputc_unbuffered()
+ * ALSO routes to the same UART as pal_serial_putc(), mirroring
+ * unconditionally double-wrote every character during all of early boot.
+ * Only call cnputc_unbuffered() when the active console isn't already
+ * serial.
+ */
 
 __startup_func
 static void
@@ -88,10 +94,10 @@ PE_init_kprintf(void)
 		panic("Platform Expert not initialized");
 	}
 
-	unsigned int new_disable_serial_output = TRUE;
+	bool new_disable_serial_output = true;
 
 	if (debug_boot_arg & DB_KPRT) {
-		new_disable_serial_output = FALSE;
+		new_disable_serial_output = false;
 	}
 
 	/* If we are newly enabling serial, make sure we only
@@ -104,9 +110,9 @@ PE_init_kprintf(void)
 		 * vcputc() now mirrors every character to serial. So kprintf reaches
 		 * serial on both, with exactly one serial write per char (no separate
 		 * pal_serial_putc mirror that would double it). */
-		PE_kputc = cnputc_unbuffered;
+		PE_kputc = pal_serial_putc;
 	} else {
-		PE_kputc = cnputc_unbuffered;
+		PE_kputc = console_write_unbuffered;
 	}
 
 	disable_serial_output = new_disable_serial_output;
@@ -166,7 +172,11 @@ kprintf(const char *fmt, ...)
 
 			// If interrupts are enabled
 			if (ml_get_interrupts_enabled()) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat"
 				os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
+#pragma clang diagnostic pop
 			}
 			va_end(listp2);
 			return;
@@ -203,13 +213,21 @@ kprintf(const char *fmt, ...)
 
 		// If interrupts are enabled
 		if (ml_get_interrupts_enabled()) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat"
 			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
+#pragma clang diagnostic pop
 		}
 		va_end(listp2);
 	} else {
 		if (ml_get_interrupts_enabled()) {
 			va_start(listp, fmt);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat"
 			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp, caller);
+#pragma clang diagnostic pop
 			va_end(listp);
 		}
 	}

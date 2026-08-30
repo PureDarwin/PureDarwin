@@ -31,20 +31,34 @@
 
 #include <kern/kcdata.h>
 
+#include <sys/appleapiopts.h>
 #include <sys/cdefs.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <uuid/uuid.h>
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
+#include <mach/vm_types.h>
+#include <kern/panic_call.h>
 
-#ifndef XNU_KERNEL_PRIVATE
+#ifdef XNU_KERNEL_PRIVATE
+#include <kern/percpu.h>
+#include <kern/upsi.h>
+#else
 #include <TargetConditionals.h>
 #endif
+
+__BEGIN_DECLS
 
 #ifdef __APPLE_API_PRIVATE
 #ifdef __APPLE_API_UNSTABLE
 
+/*
+ * An old-style snapshot for a thread.  See `struct microstackshot_thread` for
+ * microstackshot-specific fields.
+ *
+ * XXX This is ABI for tools and the order of its fields must not change.
+ */
 struct thread_snapshot {
 	uint32_t                snapshot_magic;
 	uint32_t                nkern_frames;
@@ -67,8 +81,8 @@ struct thread_snapshot {
 
 	/*
 	 * I/O Statistics
-	 * XXX: These fields must be together
 	 */
+
 	uint64_t                disk_reads_count;
 	uint64_t                disk_reads_size;
 	uint64_t                disk_writes_count;
@@ -83,14 +97,18 @@ struct thread_snapshot {
 	uint64_t                data_size;
 	uint64_t                metadata_count;
 	uint64_t                metadata_size;
-	/* XXX: I/O Statistics end */
 
 	uint64_t                voucher_identifier; /* obfuscated voucher identifier */
 	uint64_t                total_syscalls;
 	char                    pth_name[STACKSHOT_MAX_THREAD_NAME_SIZE];
 } __attribute__((packed));
 
-/* old, non kcdata format */
+/*
+ * An old-style snapshot for a task.  See `struct microstackshot_task` for the
+ * microstackshot-specific field meanings.
+ *
+ * XXX This is ABI for tools and the order of its fields must not change.
+ */
 struct task_snapshot {
 	uint32_t snapshot_magic;
 	int32_t pid;
@@ -206,11 +224,23 @@ struct _dyld_cache_image_text_info {
 
 
 enum micro_snapshot_flags {
-	kInterruptRecord        = 0x1,
-	kTimerArmingRecord      = 0x2,
-	kUserMode               = 0x4, /* interrupted usermode, or armed by usermode */
-	kIORecord               = 0x8,
-	kPMIRecord              = 0x10,
+	kPageGrabRecord         = 0x02, /* triggered by a page grab */
+	kUserMode               = 0x04, /* interrupted user space */
+	kIORecord               = 0x08, /* triggered by I/O writes */
+	kPMIRecord              = 0x10, /* triggered by a CPU Performance Monitor Interrupt */
+	kMACFRecord             = 0x20, /* armed by MACF policy */
+	kKernelThread           = 0x40, /* sampled a kernel thread */
+	kVMFaultRecord          = 0x80, /* triggered by VM fault */
+	/*
+	 * XXX: This must fit in a byte, see `struct micro_snapshot`.
+	 */
+
+	/*
+	 * Obsolete flags, no longer supported.
+	 */
+
+	kInterruptRecord        = 0x01, /* triggered by a timer interrupt */
+	kTimerArmingRecord      = 0x02, /* triggered by arming a timer, repurposed */
 };
 
 /*
@@ -237,6 +267,7 @@ __options_decl(stackshot_flags_t, uint64_t, {
 	STACKSHOT_ACTIVE_KERNEL_THREADS_ONLY       = 0x100,
 	STACKSHOT_GET_BOOT_PROFILE                 = 0x200,
 	STACKSHOT_DO_COMPRESS                      = 0x400,
+	/* Now on by default/unused */
 	STACKSHOT_SAVE_IMP_DONATION_PIDS           = 0x2000,
 	STACKSHOT_SAVE_IN_KERNEL_BUFFER            = 0x4000,
 	STACKSHOT_RETRIEVE_EXISTING_BUFFER         = 0x8000,
@@ -261,13 +292,44 @@ __options_decl(stackshot_flags_t, uint64_t, {
 	STACKSHOT_ASID                             = 0x10000000,
 	STACKSHOT_PAGE_TABLES                      = 0x20000000,
 	STACKSHOT_DISABLE_LATENCY_INFO             = 0x40000000,
-});
+	STACKSHOT_SAVE_DYLD_COMPACTINFO            = 0x80000000,
+	STACKSHOT_INCLUDE_DRIVER_THREADS_IN_KERNEL = 0x100000000,
+	/* Include all Exclaves address space layouts, instead of just on-core ones (default) */
+	STACKSHOT_EXCLAVES                         = 0x200000000,
+	/* Skip Exclaves stack collection */
+	STACKSHOT_SKIP_EXCLAVES                    = 0x400000000,
+	STACKSHOT_MTEINFO                          = 0x800000000,
+}); // Note: Add any new flags to kcdata.py (stackshot_in_flags)
 
 __options_decl(microstackshot_flags_t, uint32_t, {
-	STACKSHOT_GET_MICROSTACKSHOT               = 0x10,
-	STACKSHOT_GLOBAL_MICROSTACKSHOT_ENABLE     = 0x20,
-	STACKSHOT_GLOBAL_MICROSTACKSHOT_DISABLE    = 0x40,
-	STACKSHOT_SET_MICROSTACKSHOT_MARK          = 0x80,
+	/*
+	 * Collect and consume kernel thread microstackshots.
+	 */
+	STACKSHOT_GET_KERNEL_MICROSTACKSHOT        = 0x0008,
+	/*
+	 * Collect user thread microstackshots.
+	 */
+	STACKSHOT_GET_MICROSTACKSHOT               = 0x0010,
+	/*
+	 * Enable and disable are longer supported; use telemetry(2) instead.
+	 */
+	STACKSHOT_GLOBAL_MICROSTACKSHOT_ENABLE     = 0x0020,
+	STACKSHOT_GLOBAL_MICROSTACKSHOT_DISABLE    = 0x0040,
+	/*
+	 * For user thread microstackshots, set a mark to consume the entries.
+	 */
+	STACKSHOT_SET_MICROSTACKSHOT_MARK          = 0x0080,
+});
+
+__options_decl(telemetry_notice_t, uint32_t, {
+	/*
+	 * User space microstackshots should be read.
+	 */
+	TELEMETRY_NOTICE_BASE                 = 0x00,
+	/*
+	 * Kernel microstackshots should be read.
+	 */
+	TELEMETRY_NOTICE_KERNEL_MICROSTACKSHOT = 0x01,
 });
 
 #define STACKSHOT_THREAD_SNAPSHOT_MAGIC     0xfeedface
@@ -277,19 +339,71 @@ __options_decl(microstackshot_flags_t, uint32_t, {
 
 #define STACKSHOT_PAGETABLES_MASK_ALL           ~0
 
-#define KF_INITIALIZED (0x1)
-#define KF_SERIAL_OVRD (0x2)
-#define KF_PMAPV_OVRD (0x4)
-#define KF_MATV_OVRD (0x8)
-#define KF_STACKSHOT_OVRD (0x10)
-#define KF_COMPRSV_OVRD (0x20)
-#define KF_INTERRUPT_MASKED_DEBUG_OVRD (0x40)
-#define KF_TRAPTRACE_OVRD (0x80)
-#define KF_IOTRACE_OVRD (0x100)
-#define KF_INTERRUPT_MASKED_DEBUG_STACKSHOT_OVRD (0x200)
+__options_closed_decl(kf_override_flag_t, uint32_t, {
+	KF_SERIAL_OVRD                            = 0x2,
+	KF_PMAPV_OVRD                             = 0x4,
+	KF_MATV_OVRD                              = 0x8,
+	KF_STACKSHOT_OVRD                         = 0x10,
+	KF_COMPRSV_OVRD                           = 0x20,
+	KF_INTERRUPT_MASKED_DEBUG_OVRD            = 0x40,
+	KF_TRAPTRACE_OVRD                         = 0x80,
+	KF_IOTRACE_OVRD                           = 0x100,
+	KF_INTERRUPT_MASKED_DEBUG_STACKSHOT_OVRD  = 0x200,
+	KF_SCHED_HYGIENE_DEBUG_PMC_OVRD           = 0x400,
+	KF_MACH_ASSERT_OVRD                       = 0x800,
+	KF_MADVISE_FREE_DEBUG_OVRD                = 0x1000,
+	KF_DISABLE_FP_POPC_ON_PGFLT               = 0x2000,
+	KF_DISABLE_PROD_TRC_VALIDATION            = 0x4000,
+	KF_IO_TIMEOUT_OVRD                        = 0x8000,
+	KF_PREEMPTION_DISABLED_DEBUG_OVRD         = 0x10000,
+	/*
+	 * Disable panics (with retaining backtraces) on leaked proc refs across syscall boundary.
+	 */
+	KF_DISABLE_PROCREF_TRACKING_OVRD          = 0x20000,
+});
 
-boolean_t kern_feature_override(uint32_t fmask);
+#define KF_SERVER_PERF_MODE_OVRD ( \
+	KF_SERIAL_OVRD | \
+	KF_PMAPV_OVRD | \
+	KF_MATV_OVRD | \
+	KF_COMPRSV_OVRD | \
+	KF_INTERRUPT_MASKED_DEBUG_OVRD | \
+	KF_TRAPTRACE_OVRD | \
+	KF_IOTRACE_OVRD  | \
+	KF_SCHED_HYGIENE_DEBUG_PMC_OVRD | \
+	KF_MACH_ASSERT_OVRD | \
+	KF_MADVISE_FREE_DEBUG_OVRD | \
+	KF_DISABLE_PROD_TRC_VALIDATION | \
+	0)
 
+boolean_t kern_feature_override(kf_override_flag_t fmask);
+
+__options_decl(eph_panic_flags_t, uint64_t, {
+	EMBEDDED_PANIC_HEADER_FLAG_COREDUMP_COMPLETE              = 0x01,                               /* INFO: coredump completed */
+	EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_SUCCEEDED            = 0x02,                               /* INFO: stackshot completed */
+	EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_DEBUGGERSYNC  = 0x04,                               /* ERROR: stackshot failed to sync with external debugger */
+	EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_ERROR         = 0x08,                               /* ERROR: stackshot failed */
+	EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_INCOMPLETE    = 0x10,                               /* ERROR: stackshot is partially complete */
+	EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_NESTED        = 0x20,                               /* ERROR: stackshot caused a nested panic */
+	EMBEDDED_PANIC_HEADER_FLAG_NESTED_PANIC                   = 0x40,                               /* ERROR: panic handler encountered a panic */
+	EMBEDDED_PANIC_HEADER_FLAG_BUTTON_RESET_PANIC             = 0x80,                               /* INFO: force-reset panic: user held power button to force shutdown */
+	EMBEDDED_PANIC_HEADER_FLAG_COMPANION_PROC_INITIATED_PANIC = 0x100,                              /* INFO: panic was triggered by a companion processor (external to the SOC) */
+	EMBEDDED_PANIC_HEADER_FLAG_COREDUMP_FAILED                = 0x200,                              /* ERROR: coredump failed to complete */
+	EMBEDDED_PANIC_HEADER_FLAG_COMPRESS_FAILED                = 0x400,                              /* ERROR: stackshot failed to compress */
+	EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_DATA_COMPRESSED      = 0x800,                              /* INFO: stackshot data is compressed */
+	EMBEDDED_PANIC_HEADER_FLAG_ENCRYPTED_COREDUMP_SKIPPED     = 0x1000,                             /* ERROR: coredump policy requires encryption, but encryptions is not initialized or available */
+	EMBEDDED_PANIC_HEADER_FLAG_KERNEL_COREDUMP_SKIPPED_EXCLUDE_REGIONS_UNAVAILABLE   = 0x2000,      /* ERROR: coredump region exclusion list is not available */
+	EMBEDDED_PANIC_HEADER_FLAG_COREFILE_UNLINKED              = 0x4000,                             /* ERROR: coredump output file is not linked */
+	EMBEDDED_PANIC_HEADER_FLAG_INCOHERENT_PANICLOG            = 0x8000,                             /* ERROR: paniclog integrity check failed (a warning to consumer code i.e. DumpPanic) */
+	EMBEDDED_PANIC_HEADER_FLAG_EXCLAVE_PANIC                  = 0x10000,                            /* INFO: panic originated from exclaves */
+	EMBEDDED_PANIC_HEADER_FLAG_USERSPACE_INITIATED_PANIC      = 0x20000,                            /* INFO: panic was initiated by userspace */
+	EMBEDDED_PANIC_HEADER_FLAG_INTEGRATED_COPROC_INITIATED_PANIC = 0x40000,                         /* INFO: panic was initiated by an SOC-integrated coprocessor */
+});
+
+#define MAX_PANIC_INITIATOR_SIZE 256
+
+#define EMBEDDED_PANIC_HEADER_CURRENT_VERSION 8
+#define EMBEDDED_PANIC_MAGIC 0x46554E4B /* FUNK */
 #define EMBEDDED_PANIC_HEADER_OSVERSION_LEN 32
 
 /*
@@ -304,7 +418,7 @@ struct embedded_panic_header {
 	uint32_t eph_magic;                /* EMBEDDED_PANIC_MAGIC if valid */
 	uint32_t eph_crc;                  /* CRC of everything following the ph_crc in the header and the contents */
 	uint32_t eph_version;              /* embedded_panic_header version */
-	uint64_t eph_panic_flags;          /* Flags indicating any state or relevant details */
+	eph_panic_flags_t eph_panic_flags; /* Flags indicating any state or relevant details */
 	uint32_t eph_panic_log_offset;     /* Offset of the beginning of the panic log from the beginning of the header */
 	uint32_t eph_panic_log_len;        /* length of the panic log */
 	uint32_t eph_stackshot_offset;     /* Offset of the beginning of the panic stackshot from the beginning of the header */
@@ -319,57 +433,59 @@ struct embedded_panic_header {
 			    eph_x86_unused_bits:40;
 		}; // anonymous struct to group the bitfields together.
 		uint64_t eph_x86_do_not_use; /* Used for offsetof/sizeof when parsing header */
-	};
+	} __attribute__((packed));
 	char eph_os_version[EMBEDDED_PANIC_HEADER_OSVERSION_LEN];
 	char eph_macos_version[EMBEDDED_PANIC_HEADER_OSVERSION_LEN];
+	uuid_string_t eph_bootsessionuuid_string;                      /* boot session UUID */
+	uint64_t eph_roots_installed;                                  /* bitmap indicating which roots are installed on this system */
+	uint32_t eph_ext_paniclog_offset;
+	uint32_t eph_ext_paniclog_len;
+	uint32_t eph_panic_initiator_offset;
+	uint32_t eph_panic_initiator_len;
+	char eph_device_target_type[16];                               /* Device-specific target type buffer */
+	char eph_device_model_type[32];                                /* Device-specific model type buffer */
 } __attribute__((packed));
 
-#define EMBEDDED_PANIC_HEADER_FLAG_COREDUMP_COMPLETE             0x01
-#define EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_SUCCEEDED           0x02
-#define EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_DEBUGGERSYNC 0x04
-#define EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_ERROR        0x08
-#define EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_INCOMPLETE   0x10
-#define EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_FAILED_NESTED       0x20
-#define EMBEDDED_PANIC_HEADER_FLAG_NESTED_PANIC                  0x40
-#define EMBEDDED_PANIC_HEADER_FLAG_BUTTON_RESET_PANIC            0x80
-#define EMBEDDED_PANIC_HEADER_FLAG_COPROC_INITIATED_PANIC        0x100
-#define EMBEDDED_PANIC_HEADER_FLAG_COREDUMP_FAILED               0x200
-#define EMBEDDED_PANIC_HEADER_FLAG_COMPRESS_FAILED               0x400
-#define EMBEDDED_PANIC_HEADER_FLAG_STACKSHOT_DATA_COMPRESSED     0x800
 
-#define EMBEDDED_PANIC_HEADER_CURRENT_VERSION 2
-#define EMBEDDED_PANIC_MAGIC 0x46554E4B /* FUNK */
+#define MACOS_PANIC_HEADER_CURRENT_VERSION 3
+#define MACOS_PANIC_MAGIC 0x44454544 /* DEED */
+
+__options_decl(mph_panic_flags_t, uint64_t, {
+	MACOS_PANIC_HEADER_FLAG_NESTED_PANIC                   = 0x01,                                /* ERROR: panic handler encountered a panic */
+	MACOS_PANIC_HEADER_FLAG_COMPANION_PROC_INITIATED_PANIC = 0x02,                                /* INFO: panic was triggered by a companion processor (external to the SOC) */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_SUCCEEDED            = 0x04,                                /* INFO: stackshot completed */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_DATA_COMPRESSED      = 0x08,                                /* INFO: stackshot data is compressed */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_DEBUGGERSYNC  = 0x10,                                /* ERROR: stackshot failed to sync with external debugger */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_ERROR         = 0x20,                                /* ERROR: stackshot failed */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_INCOMPLETE    = 0x40,                                /* ERROR: stackshot is partially complete */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_NESTED        = 0x80,                                /* ERROR: stackshot caused a nested panic */
+	MACOS_PANIC_HEADER_FLAG_COREDUMP_COMPLETE              = 0x100,                               /* INFO: coredump completed */
+	MACOS_PANIC_HEADER_FLAG_COREDUMP_FAILED                = 0x200,                               /* ERROR: coredump failed to complete */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_KERNEL_ONLY          = 0x400,                               /* ERROR: stackshot contains only kernel data (e.g. due to space limitations) */
+	MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_COMPRESS      = 0x800,                               /* ERROR: stackshot failed to compress */
+	MACOS_PANIC_HEADER_FLAG_ENCRYPTED_COREDUMP_SKIPPED     = 0x1000,                              /* ERROR: coredump policy requires encryption, but encryptions is not initialized or available */
+	MACOS_PANIC_HEADER_FLAG_KERNEL_COREDUMP_SKIPPED_EXCLUDE_REGIONS_UNAVAILABLE     = 0x2000,     /* ERROR: coredump region exclusion list is not available */
+	MACOS_PANIC_HEADER_FLAG_COREFILE_UNLINKED              = 0x4000,                              /* ERROR: coredump output file is not linked */
+	MACOS_PANIC_HEADER_FLAG_INCOHERENT_PANICLOG            = 0x8000,                              /* ERROR: paniclog integrity check failed (a warning to consumer code i.e. DumpPanic) */
+	MACOS_PANIC_HEADER_FLAG_USERSPACE_INITIATED_PANIC      = 0x10000,                             /* INFO: panic was initiated by userspace */
+	MACOS_PANIC_HEADER_FLAG_INTEGRATED_COPROC_INITIATED_PANIC = 0x20000,                          /* INFO: panic was initiated by an SOC-integrated coprocessor */
+});
 
 struct macos_panic_header {
 	uint32_t mph_magic;                   /* MACOS_PANIC_MAGIC if valid */
 	uint32_t mph_crc;                     /* CRC of everything following mph_crc in the header and the contents */
 	uint32_t mph_version;                 /* macos_panic_header version */
 	uint32_t mph_padding;                 /* unused */
-	uint64_t mph_panic_flags;             /* Flags indicating any state or relevant details */
+	mph_panic_flags_t mph_panic_flags;    /* Flags indicating any state or relevant details */
 	uint32_t mph_panic_log_offset;        /* Offset of the panic log from the beginning of the header */
 	uint32_t mph_panic_log_len;           /* length of the panic log */
-	uint32_t mph_stackshot_offset;  /* Offset of the panic stackshot from the beginning of the header */
-	uint32_t mph_stackshot_len;     /* length of the panic stackshot */
+	uint32_t mph_stackshot_offset;        /* Offset of the panic stackshot from the beginning of the header */
+	uint32_t mph_stackshot_len;           /* length of the panic stackshot */
 	uint32_t mph_other_log_offset;        /* Offset of the other log (any logging subsequent to the stackshot) from the beginning of the header */
 	uint32_t mph_other_log_len;           /* length of the other log */
+	uint64_t mph_roots_installed;         /* bitmap indicating which roots are installed on this system */
 	char     mph_data[];                  /* panic data -- DO NOT ACCESS THIS FIELD DIRECTLY. Use the offsets above relative to the beginning of the header */
 } __attribute__((packed));
-
-#define MACOS_PANIC_HEADER_CURRENT_VERSION 2
-#define MACOS_PANIC_MAGIC 0x44454544 /* DEED */
-
-#define MACOS_PANIC_HEADER_FLAG_NESTED_PANIC                  0x01
-#define MACOS_PANIC_HEADER_FLAG_COPROC_INITIATED_PANIC        0x02
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_SUCCEEDED           0x04
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_DATA_COMPRESSED     0x08
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_DEBUGGERSYNC 0x10
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_ERROR        0x20
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_INCOMPLETE   0x40
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_NESTED       0x80
-#define MACOS_PANIC_HEADER_FLAG_COREDUMP_COMPLETE             0x100
-#define MACOS_PANIC_HEADER_FLAG_COREDUMP_FAILED               0x200
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_KERNEL_ONLY         0x400
-#define MACOS_PANIC_HEADER_FLAG_STACKSHOT_FAILED_COMPRESS     0x800
 
 /*
  * Any change to the below structure should mirror the structure defined in MacEFIFirmware
@@ -403,16 +519,10 @@ struct efi_aurr_extended_panic_log {
 #endif /* __APPLE_API_UNSTABLE */
 #endif /* __APPLE_API_PRIVATE */
 
-#ifdef KERNEL
-
-__BEGIN_DECLS
-
-__abortlike __printflike(1, 2)
-extern void panic(const char *string, ...);
-
-__END_DECLS
-
-#endif /* KERNEL */
+/*
+ * If non-zero, this physical address had an ECC error that led to a panic.
+ */
+extern uint64_t ecc_panic_physical_address;
 
 #ifdef KERNEL_PRIVATE
 #if DEBUG
@@ -468,7 +578,7 @@ enum {
 
 /* Debug boot-args */
 #define DB_HALT         0x1
-//#define DB_PRT          0x2 -- obsolete
+#define DB_PRT          0x2 // enable always-on panic print to serial
 #define DB_NMI          0x4
 #define DB_KPRT         0x8
 #define DB_KDB          0x10
@@ -496,51 +606,51 @@ enum {
 	                                 */
 #define DB_REBOOT_ALWAYS        0x100000 /* Don't wait for debugger connection */
 #define DB_DISABLE_STACKSHOT_TO_DISK 0x200000 /* Disable writing stackshot to local disk */
+#define DB_DEBUG_IP_INIT        0x400000 /* iBoot specific: Allow globally enabling debug IPs during init */
+#define DB_SOC_HALT_ENABLE      0x800000 /* iBoot specific: Enable SoC Halt during init */
 
 /*
  * Values for a 64-bit mask that's passed to the debugger.
  */
-#define DEBUGGER_OPTION_NONE                        0x0ULL
-#define DEBUGGER_OPTION_PANICLOGANDREBOOT           0x1ULL /* capture a panic log and then reboot immediately */
-#define DEBUGGER_OPTION_RECURPANIC_ENTRY            0x2ULL
-#define DEBUGGER_OPTION_RECURPANIC_PRELOG           0x4ULL
-#define DEBUGGER_OPTION_RECURPANIC_POSTLOG          0x8ULL
-#define DEBUGGER_OPTION_RECURPANIC_POSTCORE         0x10ULL
-#define DEBUGGER_OPTION_INITPROC_PANIC              0x20ULL
-#define DEBUGGER_OPTION_COPROC_INITIATED_PANIC      0x40ULL /* panic initiated by a co-processor */
-#define DEBUGGER_OPTION_SKIP_LOCAL_COREDUMP         0x80ULL /* don't try to save local coredumps for this panic */
-#define DEBUGGER_OPTION_ATTEMPTCOREDUMPANDREBOOT    0x100ULL /* attempt to save coredump. always reboot */
-#define DEBUGGER_INTERNAL_OPTION_THREAD_BACKTRACE   0x200ULL /* backtrace the specified thread in the paniclog (x86 only) */
-#define DEBUGGER_OPTION_PRINT_CPU_USAGE_PANICLOG    0x400ULL /* print extra CPU usage data in the panic log */
-#define DEBUGGER_OPTION_SKIP_PANICEND_CALLOUTS      0x800ULL /* (bridgeOS) skip the kPEPanicEnd callouts -- don't wait for x86 to finish sending panic data */
+#define DEBUGGER_OPTION_NONE                              0x0ULL
+#define DEBUGGER_OPTION_PANICLOGANDREBOOT                 0x1ULL /* capture a panic log and then reboot immediately */
+#define DEBUGGER_OPTION_INITPROC_PANIC                    0x20ULL
+#define DEBUGGER_OPTION_COMPANION_PROC_INITIATED_PANIC    0x40ULL /* panic triggered by a companion processor (external to the SOC) */
+#define DEBUGGER_OPTION_SKIP_LOCAL_COREDUMP               0x80ULL /* don't try to save local coredumps for this panic */
+#define DEBUGGER_OPTION_ATTEMPTCOREDUMPANDREBOOT          0x100ULL /* attempt to save coredump. always reboot */
+#define DEBUGGER_INTERNAL_OPTION_THREAD_BACKTRACE         0x200ULL /* backtrace the specified thread in the paniclog (x86 only) */
+#define DEBUGGER_OPTION_PRINT_CPU_USAGE_PANICLOG          0x400ULL /* print extra CPU usage data in the panic log */
+#define DEBUGGER_OPTION_SKIP_PANICEND_CALLOUTS            0x800ULL /* (bridgeOS) skip the kPEPanicEnd callouts -- don't wait for x86 to finish sending panic data */
+#define DEBUGGER_OPTION_SYNC_ON_PANIC_UNSAFE              0x1000ULL /* sync() early in Panic - Can add unbounded delay, may be unsafe for some panic scenarios. Intended for userspace, watchdogs and RTBuddy panics */
+#define DEBUGGER_OPTION_USERSPACE_INITIATED_PANIC         0x2000ULL /* panic initiated by userspace */
+#define DEBUGGER_OPTION_INTEGRATED_COPROC_INITIATED_PANIC 0x4000ULL /* panic initiated by an SOC-integrated coprocessor */
+#define DEBUGGER_OPTION_USER_WATCHDOG                     0x8000ULL /* A watchdog panic caused by an unresponsive user daemon */
 
 #define DEBUGGER_INTERNAL_OPTIONS_MASK              (DEBUGGER_INTERNAL_OPTION_THREAD_BACKTRACE)
 
-__BEGIN_DECLS
-
-#define panic_plain(ex, ...)  (panic)(ex, ## __VA_ARGS__)
-
 #define __STRINGIFY(x) #x
 #define LINE_NUMBER(x) __STRINGIFY(x)
-#define PANIC_LOCATION __FILE__ ":" LINE_NUMBER(__LINE__)
-
-#if defined(__arm__) || defined(__arm64__)
-#define panic(ex, ...)  ({ \
-	        __asm__("" ::: "memory"); \
-	        (panic)(# ex, ## __VA_ARGS__); \
-	})
+#ifdef __FILE_NAME__
+#define PANIC_LOCATION __FILE_NAME__ ":" LINE_NUMBER(__LINE__)
 #else
-#define panic(ex, ...)  ({ \
-	        __asm__("" ::: "memory"); \
-	        (panic)(# ex "@" PANIC_LOCATION, ## __VA_ARGS__); \
-	})
+#define PANIC_LOCATION __FILE__ ":" LINE_NUMBER(__LINE__)
+#define __FILE_NAME__ __FILE__
 #endif
 
-__abortlike __printflike(4, 5)
-void panic_with_options(unsigned int reason, void *ctx,
-    uint64_t debugger_options_mask, const char *str, ...);
+struct task;
+struct thread;
+struct proc;
+
 void Debugger(const char * message);
 void populate_model_name(char *);
+
+boolean_t panic_validate_ptr(void *ptr, vm_size_t size, const char *what);
+
+boolean_t panic_get_thread_proc_task(struct thread *thread, struct task **task, struct proc **proc);
+
+#define PANIC_VALIDATE_PTR(expr) \
+	panic_validate_ptr(expr, sizeof(*(expr)), #expr)
+
 
 #if defined(__arm__) || defined(__arm64__)
 /* Note that producer_name and buf should never be de-allocated as we reference these during panic */
@@ -549,19 +659,9 @@ void register_additional_panic_data_buffer(const char *producer_name, void *buf,
 
 unsigned panic_active(void);
 
-__END_DECLS
-
 #endif  /* KERNEL_PRIVATE */
 
 #if XNU_KERNEL_PRIVATE
-
-#if defined (__x86_64__)
-struct thread;
-
-__abortlike __printflike(5, 6)
-void panic_with_thread_context(unsigned int reason, void *ctx,
-    uint64_t debugger_options_mask, struct thread* th, const char *str, ...);
-#endif
 
 /* limit the max size to a reasonable length */
 #define ADDITIONAL_PANIC_DATA_BUFFER_MAX_LEN 64
@@ -571,6 +671,11 @@ struct additional_panic_data_buffer {
 	void *buf;
 	int len;
 };
+
+typedef struct kernel_panic_reason {
+	char            buf[1024];
+} *kernel_panic_reason_t;
+PERCPU_DECL(struct kernel_panic_reason, panic_reason);
 
 extern struct additional_panic_data_buffer *panic_data_buffers;
 
@@ -593,9 +698,6 @@ void panic_stackshot_reset_state(void);
  * @bytes_traced  a pointer to be filled with the length of the stackshot
  *
  */
-#ifdef __cplusplus
-extern "C" {
-#endif
 kern_return_t
 stack_snapshot_from_kernel(int pid, void *buf, uint32_t size, uint64_t flags,
     uint64_t delta_since_timestamp, uint32_t pagetable_mask, unsigned *bytes_traced);
@@ -611,10 +713,6 @@ boolean_t on_device_corefile_enabled(void);
  * and boot configuration.
  */
 boolean_t panic_stackshot_to_disk_enabled(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #if defined(__x86_64__)
 extern char debug_buf[];
@@ -633,8 +731,9 @@ extern char     kernel_uuid_string[];
 extern char     panic_disk_error_description[];
 extern size_t   panic_disk_error_description_size;
 
-extern unsigned char    *kernel_uuid;
+extern unsigned char    *__counted_by(sizeof(uuid_t)) kernel_uuid;
 extern unsigned int     debug_boot_arg;
+extern unsigned int     verbose_panic_flow_logging;
 
 extern boolean_t kernelcache_uuid_valid;
 extern uuid_t kernelcache_uuid;
@@ -648,15 +747,7 @@ extern boolean_t auxkc_uuid_valid;
 extern uuid_t auxkc_uuid;
 extern uuid_string_t auxkc_uuid_string;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 extern boolean_t        doprnt_hide_pointers;
-
-#ifdef __cplusplus
-}
-#endif
 
 extern unsigned int     halt_in_debugger; /* pending halt in debugger after boot */
 extern unsigned int     current_debugger;
@@ -684,10 +775,21 @@ extern boolean_t debug_is_current_cpu_in_panic_state(void);
  */
 extern void phys_carveout_init(void);
 
+/*
+ * Check whether a kernel virtual address points within the physical carveout.
+ */
+extern boolean_t debug_is_in_phys_carveout(vm_map_offset_t va);
+
+/*
+ * Check whether the physical carveout should be included in a coredump.
+ */
+extern boolean_t debug_can_coredump_phys_carveout(void);
+
+extern vm_offset_t phys_carveout;
 extern uintptr_t phys_carveout_pa;
 extern size_t phys_carveout_size;
 
-extern boolean_t kernel_debugging_allowed(void);
+extern boolean_t kernel_debugging_restricted(void);
 
 #if defined (__x86_64__)
 extern void extended_debug_log_init(void);
@@ -703,20 +805,23 @@ extern size_t panic_stackshot_buf_len;
 extern size_t panic_stackshot_len;
 #endif /* defined (__x86_64__) */
 
-void    SavePanicInfo(const char *message, void *panic_data, uint64_t panic_options);
+void    SavePanicInfo(const char *message, void *panic_data, uint64_t panic_options, const char* panic_initiator);
+void    print_curr_backtrace(void);
 void    paniclog_flush(void);
-void    panic_display_zprint(void);
+void    panic_display_zalloc(void); /* in zalloc.c */
 void    panic_display_kernel_aslr(void);
 void    panic_display_hibb(void);
 void    panic_display_model_name(void);
 void    panic_display_kernel_uuid(void);
 void    panic_display_process_name(void);
-#if CONFIG_ZLEAKS
-void    panic_display_ztrace(void);
-#endif /* CONFIG_ZLEAKS */
+void    panic_print_symbol_name(vm_address_t search);
 #if CONFIG_ECC_LOGGING
 void    panic_display_ecc_errors(void);
 #endif /* CONFIG_ECC_LOGGING */
+void    panic_display_compressor_stats(void);
+
+struct mach_assert_hdr;
+void    panic_assert_format(char *buf, size_t len, struct mach_assert_hdr *hdr, long a, long b);
 
 /*
  * @var not_in_kdp
@@ -737,11 +842,15 @@ typedef enum {
 	DBOP_BREAKPOINT,
 } debugger_op;
 
+__printflike(3, 0)
 kern_return_t DebuggerTrapWithState(debugger_op db_op, const char *db_message, const char *db_panic_str, va_list *db_panic_args,
-    uint64_t db_panic_options, void *db_panic_data_ptr, boolean_t db_proceed_on_sync_failure, unsigned long db_panic_caller);
+    uint64_t db_panic_options, void *db_panic_data_ptr, boolean_t db_proceed_on_sync_failure, unsigned long db_panic_caller, const char *db_panic_initiator);
 void handle_debugger_trap(unsigned int exception, unsigned int code, unsigned int subcode, void *state);
 
-void DebuggerWithContext(unsigned int reason, void *ctx, const char *message, uint64_t debugger_options_mask);
+void DebuggerWithContext(unsigned int reason, void *ctx, const char *message, uint64_t debugger_options_mask, unsigned long debugger_caller);
+
+const char *sysctl_debug_get_preoslog(size_t *size);
+void sysctl_debug_free_preoslog(void);
 
 #if DEBUG || DEVELOPMENT
 /* leak pointer scan definitions */
@@ -755,26 +864,124 @@ enum{
 #define INSTANCE_GET(x) ((x) & ~kInstanceFlags)
 #define INSTANCE_PUT(x) ((x) ^ ~kInstanceFlags)
 
-typedef void (*leak_site_proc)(void * refCon, uint32_t siteCount, uint32_t zoneSize,
-    uintptr_t * backtrace, uint32_t btCount);
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+typedef void (^leak_site_proc)(uint32_t siteCount, uint32_t elem_size, uint32_t btref);
 
 extern kern_return_t
-zone_leaks(const char * zoneName, uint32_t nameLen, leak_site_proc proc, void * refCon);
+zone_leaks(const char * zoneName, uint32_t nameLen, leak_site_proc proc);
 
 extern void
 zone_leaks_scan(uintptr_t * instances, uint32_t count, uint32_t zoneSize, uint32_t * found);
 
-#ifdef __cplusplus
-}
-#endif
+/* panic testing hooks */
 
-const char *sysctl_debug_get_preoslog(size_t *size);
+#define PANIC_TEST_CASE_DISABLED                    0
+#define PANIC_TEST_CASE_RECURPANIC_ENTRY            0x2    // recursive panic at panic entrypoint, before panic data structures are initialized
+#define PANIC_TEST_CASE_RECURPANIC_PRELOG           0x4    // recursive panic prior to paniclog being written
+#define PANIC_TEST_CASE_RECURPANIC_POSTLOG          0x8    // recursive panic after paniclog has been written
+#define PANIC_TEST_CASE_RECURPANIC_POSTCORE         0x10   // recursive panic after corefile has been written
+#define PANIC_TEST_CASE_COREFILE_IO_ERR             0x20   // single IO error in the corefile write path
+#define PANIC_TEST_CASE_HIBERNATION_ENTRY           0x40   // panic on hibernation entry
+extern unsigned int    panic_test_case;
+
+#define PANIC_TEST_FAILURE_MODE_BADPTR 0x1                 // dereference a bad pointer
+#define PANIC_TEST_FAILURE_MODE_SPIN   0x2                 // spin until watchdog kicks in
+#define PANIC_TEST_FAILURE_MODE_PANIC  0x4                 // explicit panic
+extern unsigned int    panic_test_failure_mode;    // panic failure mode
+
+extern unsigned int    panic_test_action_count;    // test parameter, depends on test case
 
 #endif  /* DEBUG || DEVELOPMENT */
+
+/*
+ * A callback that reads or writes data from a given offset into the corefile. It is understood that this
+ * callback should only be used from within the context where it is given. It should never be stored and
+ * reused later on.
+ */
+typedef kern_return_t (*IOCoreFileAccessCallback)(void *context, boolean_t write, uint64_t offset, int length, void *buffer);
+
+/*
+ * A callback that receives temporary file-system access to the kernel corefile
+ *
+ * Parameters:
+ *  - access:            A function to call for reading/writing the kernel corefile.
+ *  - access_context:    The context that should be passed to the 'access' function.
+ *  - recipient_context: The recipient-specific context. Can be anything.
+ */
+typedef kern_return_t (*IOCoreFileAccessRecipient)(IOCoreFileAccessCallback access, void *access_context, void *recipient_context);
+
+/*
+ * Provides safe and temporary file-system access to the kernel corefile to the given recipient callback.
+ * It does so by opening the kernel corefile, then calling the 'recipient' callback, passing it an IOCoreFileAccessCallback
+ * function that it can use to read/write data, then closing the kernel corefile as soon as the recipient returns.
+ *
+ * Parameters:
+ *  - recipient:         A function to call, providing it access to the kernel corefile.
+ *  - recipient_context: Recipient-specific context. Can be anything.
+ */
+extern kern_return_t
+IOProvideCoreFileAccess(IOCoreFileAccessRecipient recipient, void *recipient_context);
+
+struct kdp_core_encryption_key_descriptor {
+	uint64_t kcekd_format;
+	uint16_t kcekd_size;
+	void *   kcekd_key;
+};
+
+/*
+ * Registers a new kernel (and co-processor) coredump encryption key. The key format should be one of the
+ * supported "next" key formats in mach_debug_types.h. The recipient context pointer should point to a kdp_core_encryption_key_descriptor
+ * structure.
+ *
+ * Note that the given key pointer should be allocated using `kmem_alloc(kernel_map, <pointer>, <size>, VM_KERN_MEMORY_DIAG)`
+ *
+ * Note that upon successful completion, this function will adopt the given public key pointer
+ * and the caller should NOT release it.
+ */
+kern_return_t kdp_core_handle_new_encryption_key(IOCoreFileAccessCallback access_data, void *access_context, void *recipient_context);
+
+/*
+ * Enum of allowed values for the 'lbr_support' boot-arg
+ */
+typedef enum {
+	LBR_ENABLED_NONE,
+	LBR_ENABLED_USERMODE,
+	LBR_ENABLED_KERNELMODE,
+	LBR_ENABLED_ALLMODES
+} lbr_modes_t;
+
+extern lbr_modes_t last_branch_enabled_modes;
+
+/* Exclaves stackshot tests support */
+#define STACKSHOT_EXCLAVES_TESTING ((DEVELOPMENT || DEBUG) && CONFIG_EXCLAVES)
+
+#if CONFIG_SPTM && (DEVELOPMENT || DEBUG)
+struct panic_lockdown_initiator_state {
+	/** The PC from which panic lockdown was initiated. */
+	uint64_t initiator_pc;
+	/** The SP from which panic lockdown was initiated. */
+	uint64_t initiator_sp;
+	/** The TPIDR of the initiating CPU. */
+	uint64_t initiator_tpidr;
+	/** The MPIDR of the initating CPU. */
+	uint64_t initiator_mpidr;
+
+	/** The timestamp (from CNTVCT_EL0) at which panic lockdown was initiated. */
+	uint64_t timestamp;
+
+	/*
+	 * Misc. exception information.
+	 */
+	uint64_t esr;
+	uint64_t elr;
+	uint64_t far;
+};
+
+/** Attempt to record debug state for a panic lockdown event */
+extern void panic_lockdown_record_debug_data(void);
+#endif /* CONFIG_SPTM && (DEVELOPMENT || DEBUG) */
+
 #endif  /* XNU_KERNEL_PRIVATE */
+
+__END_DECLS
 
 #endif  /* _KERN_DEBUG_H_ */

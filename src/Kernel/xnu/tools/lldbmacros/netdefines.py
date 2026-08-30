@@ -1,45 +1,3 @@
-def enum(*sequential, **named):
-    enums = dict(zip(sequential, range(len(sequential))), **named)
-    reverse = dict((value, key) for key, value in enums.iteritems())
-    enums['reverse_mapping'] = reverse
-    return type('Enum', (), enums)
-
-Mbuf_Type = enum(
-    'MT_FREE',
-    'MT_DATA',
-    'MT_HEADER',
-    'MT_SOCKET',
-    'MT_PCB',
-    'MT_RTABLE',
-    'MT_HTABLE',
-    'MT_ATABLE',
-    'MT_SONAME',
-    'MT_SOOPTS',
-    'MT_FTABLE',
-    'MT_RIGHTS',
-    'MT_IFADDR',
-    'MT_CONTROL',
-    'MT_OOBDATA',
-    'MT_TAG',
-    'MT_LAST')
-
-M_EXT           = 0x0001
-M_PKTHDR        = 0x0002
-M_EOR           = 0x0004
-M_PROTO1        = 0x0008
-M_PROTO2        = 0x0010
-M_PROTO3        = 0x0020
-M_LOOP          = 0x0040
-M_PROTO5        = 0x0080
-
-M_BCAST         = 0x0100
-M_MCAST         = 0x0200
-M_FRAG          = 0x0400
-M_FIRSTFRAG     = 0x0800
-M_LASTFRAG      = 0x1000
-M_PROMISC       = 0x2000
-M_HASFCS        = 0x4000
-M_TAGHDR        = 0x8000
 
 dlil_if_flags_strings = ["DLIF_INUSE",
                          "DLIF_REUSE",
@@ -83,24 +41,25 @@ if_flags_strings = ["UP",
 
 if_refflags_strings = ["IFRF_EMBRYONIC",
                        "IFRF_ATTACHED",
-                       "IFRF_DETACHING"
+                       "IFRF_DETACHING",
+                       "IFRF_READY"
                       ]
 
 if_eflags_strings = ["AUTOCONFIGURING",
-                     "unused",
-                     "unused",
-                     "unused",
-                     "unused",
-                     "DVR_REENTRY_OK (deprecated)",
+                     "ENQUEUE_MULTI",
+                     "DELAY_START",
+                     "PROBE_CONNECTIVITY",
+                     "ADV_REPORT ",
+                     "IPV6_DISABLED",
                      "ACCEPT_RTADV",
                      "TXSTART",
                      "RXPOLL",
                      "VLAN",
                      "BOND",
                      "ARPLL",
-                     "NOWINDOWSCALE",
+                     "CLAT46",
                      "NOAUTOIPV6LL",
-                     "unused",
+                     "EXPENSIVE",
                      "IPV4_ROUTER",
                      "IPV6_ROUTER",
                      "LOCALNET_PRIVATE",
@@ -108,17 +67,62 @@ if_eflags_strings = ["AUTOCONFIGURING",
                      "RESTRICTED_RECV",
                      "AWDL",
                      "NOACKPRI",
-                     "unused",
-                     "unused",
-                     "unused",
-                     "unused",
-                     "unused",
-                     "unused",
+                     "AWDL_RESTRICTED",
+                     "2KCL",
+                     "ECN_ENABLE",
+                     "ECN_DISABLE",
+                     "SKYWALK_NATIVE",
+                     "3CA",
                      "SENDLIST",
                      "REUSE (deprecated)",
                      "INUSE (deprecated)",
                      "UPDOWNCHANGE"
                      ]
+
+if_xflags_strings = ["WAKE_ON_MAGIC_PACKET",
+                     "TIMESTAMP_ENABLED",
+                     "NX_NOAUTO",
+                     "LEGACY",
+                     "LOW_INTERNET_UL",
+                     "LOW_INTERNET_DL",
+                     "ALLOC_KPI",
+                     "LOW_POWER",
+                     "MPK_LOG",
+                     "CONSTRAINED",
+                     "LOW_LATENCY",
+                     "MARK_WAKE_PKT",
+                     "FAST_PACKET_DELIVERY",
+                     "NO_TRAFFIC_SHAPING",
+                     "MANAGEMENT",
+                     "ULTA_CONSTRAINED",
+                     "IS_VPN",
+                     "DELAY_WAKE_PACKET_EVENTS",
+                     "DISABLE_INPUT",
+                     "CONGESTED_LINK",
+                     "IS_COMPANIONLINK",
+                     "RX_FLOW_STEERING",
+                     "UNUSED_0x00400000",
+                     "LINK_HEURISTICS",
+                     "LINK_HEUR_OFF_PENDING",
+                     "POINTOPOINT_MDNS",
+                     "INBAND_WAKE_PKT_TAGGING",
+                     "LOW_POWER_WAKE",
+                     "REQUIRE_CELL_THREAD_GROUP"
+                     ]
+
+tcp_timer_strings = ["TCPT_PTO",
+                    "TCPT_DELAYFR",
+                    "TCPT_REORDER",
+                    "TCPT_REXMT",
+                    "TCPT_DELACK",
+                    "TCPT_PERSIST",
+                    "TCPT_KEEP",
+                    "TCPT_2MSL",
+                    "TCPT_JACK_RXMT",
+                    "TCPT_CELLICON"
+                    ]
+
+TCPT_MAX = 9
 
 AF_INET = 2
 AF_INET6 = 30

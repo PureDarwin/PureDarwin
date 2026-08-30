@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -76,6 +76,7 @@
 
 #ifdef KERNEL
 #include <sys/mbuf.h>
+#include <net/sockaddr_utils.h>
 #endif
 #include <net/bpf.h>
 #ifdef KERNEL
@@ -83,7 +84,7 @@
 extern unsigned int bpf_maxbufsize;
 
 static inline u_int32_t
-get_word_from_buffers(u_char * cp, u_char * np, size_t num_from_cp)
+get_word_from_buffers(u_char *__indexable cp, u_char *__indexable np, size_t num_from_cp)
 {
 	u_int32_t       val;
 
@@ -111,19 +112,20 @@ get_word_from_buffers(u_char * cp, u_char * np, size_t num_from_cp)
 	return val;
 }
 
-static u_char *
-m_hdr_offset(struct mbuf **m_p, void * hdr, size_t hdrlen, bpf_u_int32 * k_p,
+static u_char *__indexable
+m_hdr_offset(struct mbuf **m_p, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 * k_p,
     size_t * len_p)
 {
-	u_char  *cp;
-	bpf_u_int32 k = *k_p;
 	size_t len;
+	u_char *cp;
+	bpf_u_int32 k = *k_p;
 
 	if (k >= hdrlen) {
 		struct mbuf *m = *m_p;
 
 		/* there's no header or the offset we want is past the header */
 		k -= hdrlen;
+
 		len = m->m_len;
 		while (k >= len) {
 			k -= len;
@@ -149,7 +151,7 @@ m_hdr_offset(struct mbuf **m_p, void * hdr, size_t hdrlen, bpf_u_int32 * k_p,
 }
 
 static u_int32_t
-m_xword(struct mbuf *m, void * hdr, size_t hdrlen, bpf_u_int32 k, int *err)
+m_xword(struct mbuf *m, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 k, int *err)
 {
 	size_t len;
 	u_char *cp, *np;
@@ -175,7 +177,7 @@ bad:
 }
 
 static uint16_t
-m_xhalf(struct mbuf *m, void * hdr, size_t hdrlen, bpf_u_int32 k, int *err)
+m_xhalf(struct mbuf *m, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 k, int *err)
 {
 	size_t len;
 	u_char *cp;
@@ -199,7 +201,7 @@ bad:
 }
 
 static u_int8_t
-m_xbyte(struct mbuf *m, void * hdr, size_t hdrlen, bpf_u_int32 k, int *err)
+m_xbyte(struct mbuf *m, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 k, int *err)
 {
 	size_t len;
 	u_char *cp;
@@ -215,16 +217,158 @@ bad:
 	return 0;
 }
 
+#if SKYWALK
+
+#include <skywalk/os_skywalk_private.h>
+
+static void *__indexable
+buflet_get_address(kern_buflet_t buflet)
+{
+	uint8_t *addr;
+	uint32_t offset;
+	uint32_t limit;
+
+	limit = kern_buflet_get_data_limit(buflet);
+	addr = __unsafe_forge_bidi_indexable(uint8_t *,
+	    kern_buflet_get_data_address(buflet),
+	    limit);
+	if (addr == NULL) {
+		return NULL;
+	}
+	offset = kern_buflet_get_data_offset(buflet);
+	return __unsafe_forge_bidi_indexable(uint8_t *,
+	           addr + offset,
+	           limit - offset);
+}
+
+static u_char *__indexable
+p_hdr_offset(kern_packet_t p, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 * k_p,
+    size_t * len_p, kern_buflet_t * buflet_p)
+{
+	u_char          *cp = NULL;
+	bpf_u_int32     k = *k_p;
+	size_t          len;
+	kern_buflet_t __single  buflet = NULL;
+
+	if (k >= hdrlen) {
+		k -= hdrlen;
+		for (;;) {
+			buflet = kern_packet_get_next_buflet(p, buflet);
+			if (buflet == NULL) {
+				break;
+			}
+			len = kern_buflet_get_data_length(buflet);
+			if (k < len) {
+				break;
+			}
+			k -= len;
+		}
+		if (buflet == NULL) {
+			return NULL;
+		}
+		cp = (u_char *)buflet_get_address(buflet) + k;
+		/* update the offset */
+		*k_p = k;
+	} else {
+		len = hdrlen;
+		cp = (u_char *)hdr + k;
+	}
+	*len_p = len;
+	*buflet_p = buflet;
+	return cp;
+}
+
+static u_int32_t
+p_xword(kern_packet_t p, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 k, int *err)
+{
+	kern_buflet_t __single buflet = NULL;
+	u_char          *cp;
+	size_t          len = 0;
+	u_char          *np;
+
+	cp = p_hdr_offset(p, hdr, hdrlen, &k, &len, &buflet);
+	if (cp == NULL) {
+		goto bad;
+	}
+	if ((len - k) >= 4) {
+		*err = 0;
+		return EXTRACT_LONG(cp);
+	}
+	buflet = kern_packet_get_next_buflet(p, buflet);
+	if (buflet == NULL ||
+	    (kern_buflet_get_data_length(buflet) + len - k) < 4) {
+		goto bad;
+	}
+	*err = 0;
+	np = (u_char *)buflet_get_address(buflet);
+	return get_word_from_buffers(cp, np, len - k);
+
+bad:
+	*err = 1;
+	return 0;
+}
+
+static uint16_t
+p_xhalf(kern_packet_t p, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 k, int *err)
+{
+	kern_buflet_t __single buflet = NULL;
+	u_char          *cp;
+	size_t          len = 0;
+	u_char          *np;
+
+	cp = p_hdr_offset(p, hdr, hdrlen, &k, &len, &buflet);
+	if (cp == NULL) {
+		goto bad;
+	}
+	if ((len - k) >= 2) {
+		*err = 0;
+		return EXTRACT_SHORT(cp);
+	}
+	buflet = kern_packet_get_next_buflet(p, buflet);
+	if (buflet == NULL || kern_buflet_get_data_length(buflet) == 0) {
+		goto bad;
+	}
+	np = (u_char *)buflet_get_address(buflet);
+	*err = 0;
+	return (uint16_t)((cp[0] << 8) | np[0]);
+bad:
+	*err = 1;
+	return 0;
+}
+
+static u_int8_t
+p_xbyte(kern_packet_t p, void *__sized_by(hdrlen) hdr, size_t hdrlen, bpf_u_int32 k, int *err)
+{
+	kern_buflet_t __single buflet = NULL;
+	u_char          *cp;
+	size_t          len = 0;
+
+	cp = p_hdr_offset(p, hdr, hdrlen, &k, &len, &buflet);
+	if (cp == NULL) {
+		goto bad;
+	}
+	*err = 0;
+	return *cp;
+bad:
+	*err = 1;
+	return 0;
+}
+
+#endif /* SKYWALK */
 
 static u_int32_t
 bp_xword(struct bpf_packet *bp, bpf_u_int32 k, int *err)
 {
-	void *  hdr = bp->bpfp_header;
-	size_t  hdrlen = bp->bpfp_header_length;
+	size_t hdrlen = bp->bpfp_header_length;
+	void *hdr = bp->bpfp_header;
 
 	switch (bp->bpfp_type) {
 	case BPF_PACKET_TYPE_MBUF:
 		return m_xword(bp->bpfp_mbuf, hdr, hdrlen, k, err);
+#if SKYWALK
+	case BPF_PACKET_TYPE_PKT:
+		return p_xword(bp->bpfp_pkt, hdr, hdrlen, k, err);
+#endif /* SKYWALK */
 	default:
 		break;
 	}
@@ -235,12 +379,16 @@ bp_xword(struct bpf_packet *bp, bpf_u_int32 k, int *err)
 static u_int16_t
 bp_xhalf(struct bpf_packet *bp, bpf_u_int32 k, int *err)
 {
-	void *  hdr = bp->bpfp_header;
-	size_t  hdrlen = bp->bpfp_header_length;
+	size_t hdrlen = bp->bpfp_header_length;
+	void *hdr = bp->bpfp_header;
 
 	switch (bp->bpfp_type) {
 	case BPF_PACKET_TYPE_MBUF:
 		return m_xhalf(bp->bpfp_mbuf, hdr, hdrlen, k, err);
+#if SKYWALK
+	case BPF_PACKET_TYPE_PKT:
+		return p_xhalf(bp->bpfp_pkt, hdr, hdrlen, k, err);
+#endif /* SKYWALK */
 	default:
 		break;
 	}
@@ -251,12 +399,16 @@ bp_xhalf(struct bpf_packet *bp, bpf_u_int32 k, int *err)
 static u_int8_t
 bp_xbyte(struct bpf_packet *bp, bpf_u_int32 k, int *err)
 {
-	void *  hdr = bp->bpfp_header;
-	size_t  hdrlen = bp->bpfp_header_length;
+	size_t hdrlen = bp->bpfp_header_length;
+	void *hdr = bp->bpfp_header;
 
 	switch (bp->bpfp_type) {
 	case BPF_PACKET_TYPE_MBUF:
 		return m_xbyte(bp->bpfp_mbuf, hdr, hdrlen, k, err);
+#if SKYWALK
+	case BPF_PACKET_TYPE_PKT:
+		return p_xbyte(bp->bpfp_pkt, hdr, hdrlen, k, err);
+#endif /* SKYWALK */
 	default:
 		break;
 	}
@@ -272,15 +424,19 @@ bp_xbyte(struct bpf_packet *bp, bpf_u_int32 k, int *err)
  * buflen is the amount of data present
  */
 u_int
-bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
+bpf_filter(const struct bpf_insn *__counted_by(pc_len) pc_orig, u_int pc_len,
+    u_char *__sized_by(sizeof(struct bpf_packet)) p, u_int wirelen, u_int buflen)
 {
 	u_int32_t A = 0, X = 0;
 	bpf_u_int32 k;
 	int32_t mem[BPF_MEMWORDS];
+	const struct bpf_insn *pc = pc_orig;
 #ifdef KERNEL
 	int merr;
 	struct bpf_packet * bp = (struct bpf_packet *)(void *)p;
 #endif /* KERNEL */
+	/* Ignore warning without -fbounds-safety. */
+	(void)pc_len;
 
 	bzero(mem, sizeof(mem));
 
@@ -628,7 +784,7 @@ bpf_filter(const struct bpf_insn *pc, u_char *p, u_int wirelen, u_int buflen)
  * Otherwise, a bogus program could easily crash the system.
  */
 int
-bpf_validate(const struct bpf_insn *f, int len)
+bpf_validate(const struct bpf_insn *__counted_by(len) f, int len)
 {
 	u_int i, from;
 	const struct bpf_insn *p;

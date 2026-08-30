@@ -53,7 +53,7 @@ void
 usage(void)
 {
 	fprintf(stderr, "Usage: %s <threadcount> <count> <program> [<arg1> [<arg2> ...]]\n",
-	    "execperf");
+	    getprogname());
 	exit(1);
 }
 

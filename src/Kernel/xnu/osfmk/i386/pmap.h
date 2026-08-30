@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -80,8 +80,9 @@
 #include <kern/simple_lock.h>
 
 #include <i386/mp.h>
+#include <i386/cpu_number.h>
 #include <i386/proc_reg.h>
-
+#include <os/atomic_private.h>
 #include <i386/pal_routines.h>
 
 /*
@@ -160,7 +161,7 @@ typedef uint64_t        pt_entry_t;
 #define PTMASK          (NBPT-1)
 #define PT_ENTRY_NULL   ((pt_entry_t *) 0)
 
-typedef uint64_t  pmap_paddr_t;
+typedef uint64_t  pmap_paddr_t __kernel_ptr_semantics;
 
 #if     DEVELOPMENT || DEBUG
 #define PMAP_ASSERT 1
@@ -169,7 +170,7 @@ extern int pmap_asserts_traced;
 #endif
 
 #if PMAP_ASSERT
-#define pmap_assert(ex) (pmap_asserts_enabled ? ((ex) ? (void)0 : Assert(__FILE__, __LINE__, # ex)) : (void)0)
+#define pmap_assert(ex) (pmap_asserts_enabled ? ((ex) ? (void)0 : Assert(__FILE_NAME__, __LINE__, # ex)) : (void)0)
 
 #define pmap_assert2(ex, fmt, args...)                                  \
 	do {                                                            \
@@ -178,8 +179,8 @@ extern int pmap_asserts_traced;
 	                        KERNEL_DEBUG_CONSTANT(0xDEAD1000, __builtin_return_address(0), __LINE__, 0, 0, 0); \
 	                        kdebug_enable = 0;                      \
 	                } else {                                        \
-	                                kprintf("Assertion %s failed (%s:%d, caller %p) " fmt , #ex, __FILE__, __LINE__, __builtin_return_address(0),  ##args); \
-	                                panic("Assertion %s failed (%s:%d, caller %p) " fmt , #ex, __FILE__, __LINE__, __builtin_return_address(0),  ##args); \
+	                                kprintf("Assertion %s failed (%s:%d, caller %p) " fmt , #ex, __FILE_NAME__, __LINE__, __builtin_return_address(0),  ##args); \
+	                                panic("Assertion %s failed (%s:%d, caller %p) " fmt , #ex, __FILE_NAME__, __LINE__, __builtin_return_address(0),  ##args); \
 	                }                                               \
 	        }                                                       \
 	} while(0)
@@ -190,19 +191,6 @@ extern int pmap_asserts_traced;
 
 /* superpages */
 #define SUPERPAGE_NBASEPAGES 512
-
-/*
- * Atomic 64-bit store of a page table entry.
- */
-static inline void
-pmap_store_pte(pt_entry_t *entryp, pt_entry_t value)
-{
-	/*
-	 * In the 32-bit kernel a compare-and-exchange loop was
-	 * required to provide atomicity. For K64, life is easier:
-	 */
-	*entryp = value;
-}
 
 /* in 64 bit spaces, the number of each type of page in the page tables */
 #define NPML4PGS        (1ULL * (PAGE_SIZE/(sizeof (pml4_entry_t))))
@@ -335,11 +323,12 @@ extern int      kernPhysPML4EntryCount;
 
 #define INTEL_EPT_READ          0x00000001ULL
 #define INTEL_EPT_WRITE         0x00000002ULL
-#define INTEL_EPT_EX            0x00000004ULL
+#define INTEL_EPT_EX            0x00000004ULL   /* Supervisor-execute when MBE is enabled */
 #define INTEL_EPT_IPAT          0x00000040ULL
 #define INTEL_EPT_PS            0x00000080ULL
 #define INTEL_EPT_REF           0x00000100ULL
 #define INTEL_EPT_MOD           0x00000200ULL
+#define INTEL_EPT_UEX           0x00000400ULL   /* User-execute when MBE is enabled (ignored otherwise) */
 
 #define INTEL_EPT_CACHE_MASK    0x00000038ULL
 #define INTEL_EPT_NCACHE        0x00000000ULL
@@ -370,6 +359,12 @@ pte_set_ex(pt_entry_t pte, boolean_t is_ept)
 	}
 
 	return pte | INTEL_EPT_EX;
+}
+
+static inline pt_entry_t
+pte_set_uex(pt_entry_t pte)
+{
+	return pte | INTEL_EPT_UEX;
 }
 
 static inline pt_entry_t
@@ -413,10 +408,10 @@ ept_refmod_to_physmap(pt_entry_t ept_pte)
  */
 extern boolean_t pmap_ept_support_ad;
 
-#define PTE_VALID_MASK(is_ept)  ((is_ept) ? (INTEL_EPT_READ | INTEL_EPT_WRITE | INTEL_EPT_EX) : INTEL_PTE_VALID)
+#define PTE_VALID_MASK(is_ept)  ((is_ept) ? (INTEL_EPT_READ | INTEL_EPT_WRITE | INTEL_EPT_EX | INTEL_EPT_UEX) : INTEL_PTE_VALID)
 #define PTE_READ(is_ept)        ((is_ept) ? INTEL_EPT_READ : INTEL_PTE_VALID)
 #define PTE_WRITE(is_ept)       ((is_ept) ? INTEL_EPT_WRITE : INTEL_PTE_WRITE)
-#define PTE_IS_EXECUTABLE(is_ept, pte)  ((is_ept) ? (((pte) & INTEL_EPT_EX) != 0) : (((pte) & INTEL_PTE_NX) == 0))
+#define PTE_IS_EXECUTABLE(is_ept, pte)  ((is_ept) ? (((pte) & (INTEL_EPT_EX | INTEL_EPT_UEX)) != 0) : (((pte) & INTEL_PTE_NX) == 0))
 #define PTE_PS                  INTEL_PTE_PS
 #define PTE_COMPRESSED          INTEL_PTE_COMPRESSED
 #define PTE_COMPRESSED_ALT      INTEL_PTE_COMPRESSED_ALT
@@ -434,8 +429,8 @@ extern boolean_t pmap_ept_support_ad;
 #define PMAP_NO_GUARD_CACHE     8
 
 /* Per-pmap ledger operations */
-#define pmap_ledger_debit(p, e, a) ledger_debit((p)->ledger, e, a)
-#define pmap_ledger_credit(p, e, a) ledger_credit((p)->ledger, e, a)
+#define pmap_ledger_debit(p, e, a) ledger_debit_scalable(&task_ledger_template, (p)->ledger, e, a)
+#define pmap_ledger_credit(p, e, a) ledger_credit_scalable(&task_ledger_template, (p)->ledger, e, a)
 
 #ifndef ASSEMBLER
 
@@ -462,6 +457,53 @@ extern uint32_t         pmap_kernel_text_ps;
 extern  uint64_t physmap_base, physmap_max;
 
 #define NPHYSMAP (MAX(((physmap_max - physmap_base) / GB), 4))
+
+extern pt_entry_t *PTE_corrupted_ptr;
+
+#if DEVELOPMENT || DEBUG
+extern int pmap_inject_pte_corruption;
+#endif
+
+static inline void
+pmap_corrupted_pte_detected(pt_entry_t *ptep, uint64_t clear_bits, uint64_t set_bits)
+{
+	if (__c11_atomic_compare_exchange_strong((_Atomic(pt_entry_t *)*) & PTE_corrupted_ptr, &PTE_corrupted_ptr, ptep,
+	    memory_order_acq_rel_smp, memory_order_relaxed)) {
+		force_immediate_debugger_NMI = TRUE;
+		NMIPI_panic(CPUMASK_REAL_OTHERS, PTE_CORRUPTION);
+		if (clear_bits == 0 && set_bits == 0) {
+			panic("PTE Corruption detected: ptep 0x%llx pte value 0x%llx", (unsigned long long)(uintptr_t)ptep, *(uint64_t *)ptep);
+		} else {
+			panic("PTE Corruption detected: ptep 0x%llx pte value 0x%llx clear 0x%llx set 0x%llx",
+			    (unsigned long long)(uintptr_t)ptep, *(uint64_t *)ptep, clear_bits, set_bits);
+		}
+	}
+}
+
+/*
+ * Atomic 64-bit store of a page table entry.
+ */
+static inline void
+pmap_store_pte(boolean_t is_ept, pt_entry_t *entryp, pt_entry_t value)
+{
+	/*
+	 * In the 32-bit kernel a compare-and-exchange loop was
+	 * required to provide atomicity. For K64, life is easier:
+	 */
+	*entryp = value;
+
+#if DEVELOPMENT || DEBUG
+	if (__improbable(pmap_inject_pte_corruption != 0 && is_ept == FALSE && (value & PTE_COMPRESSED))) {
+		pmap_inject_pte_corruption = 0;
+		/* Inject a corruption event */
+		value |= INTEL_PTE_NX;
+	}
+#endif
+
+	if (__improbable((is_ept == FALSE) && (value & PTE_COMPRESSED) && (value & INTEL_PTE_NX))) {
+		pmap_corrupted_pte_detected(entryp, 0, 0);
+	}
+}
 
 static inline boolean_t
 physmap_enclosed(addr64_t a)
@@ -539,7 +581,7 @@ pmap_tlbi_range(uint64_t startv, uint64_t endv, bool global, uint16_t pcid);
  */
 
 struct pmap {
-	lck_rw_t        pmap_rwl __attribute((aligned(64)));
+	lck_rw_new_t    pmap_rwl __attribute((aligned(64)));
 	pmap_paddr_t    pm_cr3 __attribute((aligned(64))); /* Kernel+user shared PML4 physical*/
 	pmap_paddr_t    pm_ucr3;        /* Mirrored user PML4 physical */
 	pml4_entry_t    *pm_pml4;       /* VKA of top level */
@@ -562,7 +604,6 @@ struct pmap {
 	int             nx_enabled;
 #endif
 	ledger_t        ledger;         /* ledger tracking phys mappings */
-	struct pmap_statistics  stats;  /* map statistics */
 	uint64_t        corrected_compressed_ptes_count;
 #if MACH_ASSERT
 	boolean_t       pmap_stats_assert;
@@ -691,10 +732,6 @@ extern void             pmap_bootstrap(
 extern boolean_t        pmap_valid_page(
 	ppnum_t pn);
 
-extern int              pmap_list_resident_pages(
-	struct pmap     *pmap,
-	vm_offset_t     *listp,
-	int             space);
 extern void             x86_filter_TLB_coherency_interrupts(boolean_t);
 
 extern void
@@ -740,6 +777,18 @@ extern void x86_64_protect_data_const(void);
 
 extern uint64_t pmap_commpage_size_min(pmap_t pmap);
 
+static inline vm_offset_t
+pmap_ro_zone_align(vm_offset_t value)
+{
+	return value;
+}
+
+extern void pmap_ro_zone_memcpy(zone_id_t zid, vm_offset_t va, vm_offset_t offset,
+    vm_offset_t new_data, vm_size_t new_data_size);
+extern uint64_t pmap_ro_zone_atomic_op(zone_id_t zid, vm_offset_t va, vm_offset_t offset,
+    uint32_t op, uint64_t value);
+extern void pmap_ro_zone_bzero(zone_id_t zid, vm_offset_t va, vm_offset_t offset, vm_size_t size);
+
 /*
  *	Macros for speed.
  */
@@ -748,12 +797,13 @@ extern uint64_t pmap_commpage_size_min(pmap_t pmap);
 #include <kern/spl.h>
 
 
-#define PMAP_ACTIVATE_MAP(map, thread, my_cpu)  {                               \
-	pmap_t		tpmap;                                  \
+#define PMAP_ACTIVATE_MAP(map, thread, my_cpu)  ({                      \
+	pmap_t		tpmap;                                          \
                                                                         \
 	tpmap = vm_map_pmap(map);                                       \
-	set_dirbase(tpmap, thread, my_cpu);                                     \
-}
+	ledger_tab_open(&task_ledger_template, tpmap->ledger);          \
+	set_dirbase(tpmap, thread, my_cpu);                             \
+})
 
 #if   defined(__x86_64__)
 #define PMAP_DEACTIVATE_MAP(map, thread, ccpu)                          \
@@ -762,7 +812,7 @@ extern uint64_t pmap_commpage_size_min(pmap_t pmap);
 #define PMAP_DEACTIVATE_MAP(map, thread)
 #endif
 
-#define PMAP_SWITCH_USER(th, new_map, my_cpu) {                         \
+#define PMAP_SWITCH_USER(th, new_map, my_cpu)  ({                       \
 	spl_t		spl;                                            \
                                                                         \
 	spl = splhigh();                                                \
@@ -770,7 +820,7 @@ extern uint64_t pmap_commpage_size_min(pmap_t pmap);
 	th->map = new_map;                                              \
 	PMAP_ACTIVATE_MAP(th->map, th, my_cpu);                         \
 	splx(spl);                                                      \
-}
+})
 
 /*
  * Marking the current cpu's cr3 inactive is achieved by setting its lsb.
@@ -831,16 +881,10 @@ extern uint64_t pmap_commpage_size_min(pmap_t pmap);
 	 (((vm_offset_t) (VA)) <= vm_max_kernel_address))
 
 
-#define pmap_compressed(pmap)           ((pmap)->stats.compressed)
-#define pmap_resident_count(pmap)       ((pmap)->stats.resident_count)
-#define pmap_resident_max(pmap)         ((pmap)->stats.resident_max)
 #define pmap_copy(dst_pmap, src_pmap, dst_addr, len, src_addr)
-#define pmap_attribute(pmap, addr, size, attr, value) \
-	                                (KERN_INVALID_ADDRESS)
 #define pmap_attribute_cache_sync(addr, size, attr, value) \
 	                                (KERN_INVALID_ADDRESS)
 
-#define MACHINE_PMAP_IS_EMPTY   1
 extern boolean_t pmap_is_empty(pmap_t           pmap,
     vm_map_offset_t  start,
     vm_map_offset_t  end);

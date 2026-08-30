@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 1999-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -94,23 +94,19 @@
 #include <sys/queue.h>
 #include <machine/endian.h>
 /*
- * Mbufs are of a single size, MSIZE (machine/param.h), which
- * includes overhead.  An mbuf may add a single "mbuf cluster" of size
+ * Mbufs are of a single size, which includes overhead.
+ * An mbuf may add a single "mbuf cluster" of size
  * MCLBYTES/MBIGCLBYTES/M16KCLBYTES (also in machine/param.h), which has
  * no additional overhead and is used instead of the internal data area;
  * this is done when at least MINCLSIZE of data must be stored.
  */
-
-/*
- * The following _MLEN and _MHLEN macros are private to xnu.  Private code
- * that are outside of xnu must use the mbuf_get_{mlen,mhlen} routines since
- * the sizes of the structures are dependent upon specific xnu configs.
- */
-#define _MLEN           (MSIZE - sizeof(struct m_hdr))  /* normal data len */
-#define _MHLEN          (_MLEN - sizeof(struct pkthdr)) /* data len w/pkthdr */
-
-#define NMBPGSHIFT      (PAGE_SHIFT - MSIZESHIFT)
-#define NMBPG           (1 << NMBPGSHIFT)       /* # of mbufs per page */
+#if CONFIG_MBUF_MCACHE
+#include <sys/mcache.h>
+#define _MSIZESHIFT      8                       /* 256 */
+#define _MSIZE           (1 << _MSIZESHIFT)       /* size of an mbuf */
+#else /* CONFIG_MBUF_MCACHE */
+#define _MSIZE           512
+#endif  /* CONFIG_MBUF_MCACHE */
 
 #define NCLPGSHIFT      (PAGE_SHIFT - MCLSHIFT)
 #define NCLPG           (1 << NCLPGSHIFT)       /* # of cl per page */
@@ -118,8 +114,7 @@
 #define NBCLPGSHIFT     (PAGE_SHIFT - MBIGCLSHIFT)
 #define NBCLPG          (1 << NBCLPGSHIFT)      /* # of big cl per page */
 
-#define NMBPCLSHIFT     (MCLSHIFT - MSIZESHIFT)
-#define NMBPCL          (1 << NMBPCLSHIFT)      /* # of mbufs per cl */
+#define NMBPCL             (MCLBYTES / _MSIZE)
 
 #define NCLPJCLSHIFT    (M16KCLSHIFT - MCLSHIFT)
 #define NCLPJCL         (1 << NCLPJCLSHIFT)     /* # of cl per jumbo cl */
@@ -127,28 +122,23 @@
 #define NCLPBGSHIFT     (MBIGCLSHIFT - MCLSHIFT)
 #define NCLPBG          (1 << NCLPBGSHIFT)      /* # of cl per big cl */
 
-#define NMBPBGSHIFT     (MBIGCLSHIFT - MSIZESHIFT)
-#define NMBPBG          (1 << NMBPBGSHIFT)      /* # of mbufs per big cl */
-
 /*
  * Macros for type conversion
  * mtod(m,t) -	convert mbuf pointer to data pointer of correct type
  * mtodo(m, o) -- Same as above but with offset 'o' into data.
- * dtom(x) -	convert data pointer within mbuf to mbuf pointer (XXX)
  */
-#define mtod(m, t)      ((t)m_mtod(m))
+#define mtod(m, t)      ((t)(void *)m_mtod_current(m))
 #define mtodo(m, o)     ((void *)(mtod(m, uint8_t *) + (o)))
-#define dtom(x)         m_dtom(x)
 
 /* header at beginning of each mbuf: */
 struct m_hdr {
-	struct mbuf     *mh_next;       /* next buffer in chain */
-	struct mbuf     *mh_nextpkt;    /* next chain in queue/record */
-	caddr_t         mh_data;        /* location of data */
-	int32_t         mh_len;         /* amount of data in this mbuf */
-	u_int16_t       mh_type;        /* type of data in this mbuf */
-	u_int16_t       mh_flags;       /* flags; see below */
-#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4 || __ARM_ARCH < 7)
+	struct mbuf                *mh_next;       /* next buffer in chain */
+	struct mbuf                *mh_nextpkt;    /* next chain in queue/record */
+	uintptr_t                  mh_data;        /* location of data */
+	int32_t                    mh_len;         /* amount of data in this mbuf */
+	u_int16_t                  mh_type;        /* type of data in this mbuf */
+	u_int16_t                  mh_flags;       /* flags; see below */
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
 /* This is needed because of how _MLEN is defined and used. Ideally, _MLEN
  * should be defined using the offsetof(struct mbuf, M_dat), since there is
  * no guarantee that mbuf.M_dat will start where mbuf.m_hdr ends. The compiler
@@ -166,30 +156,42 @@ struct m_hdr {
  */
 struct m_tag {
 	uint64_t               m_tag_cookie;   /* Error checking */
-#ifndef __LP64__
-	uint32_t               pad;            /* For structure alignment */
-#endif /* !__LP64__ */
-	SLIST_ENTRY(m_tag)      m_tag_link;     /* List of packet tags */
+	SLIST_ENTRY(m_tag)     m_tag_link;     /* List of packet tags */
+	void                   *__sized_by(m_tag_len) m_tag_data;
 	uint16_t               m_tag_type;     /* Module specific type */
 	uint16_t               m_tag_len;      /* Length of data */
 	uint32_t               m_tag_id;       /* Module ID */
+	void                   *m_tag_mb_cl;    /* pointer to mbuf or cluster container */
+#ifndef __LP64__
+	u_int32_t              m_tag_pad;
+#endif /* !__LP64__ */
 };
 
 #define M_TAG_ALIGN(len) \
 	(P2ROUNDUP(len, sizeof (u_int64_t)) + sizeof (struct m_tag))
 
+#define M_TAG_INIT(tag, id, type, len, data, mb_cl) {   \
+	VERIFY(IS_P2ALIGNED((tag), sizeof(u_int64_t)));     \
+	(tag)->m_tag_type = (type);                         \
+	(tag)->m_tag_len = (uint16_t)(len);                 \
+	(tag)->m_tag_id = (id);                             \
+	(tag)->m_tag_data = (data);                         \
+	(tag)->m_tag_mb_cl = (mb_cl);                       \
+	m_tag_create_cookie(tag);                           \
+}
+
 #define M_TAG_VALID_PATTERN     0xfeedfacefeedfaceULL
 #define M_TAG_FREE_PATTERN      0xdeadbeefdeadbeefULL
 
 /*
- * Packet tag header structure (at the top of mbuf).  Pointers are
- * 32-bit in ILP32; m_tag needs 64-bit alignment, hence padded.
+ * Packet tag header structure at the top of mbuf whe mbufs are use for m_tag
+ * Pointers are 32-bit in ILP32; m_tag needs 64-bit alignment, hence padded.
  */
 struct m_taghdr {
 #ifndef __LP64__
 	u_int32_t               pad;            /* For structure alignment */
 #endif /* !__LP64__ */
-	u_int64_t               refcnt;         /* Number of tags in this mbuf */
+	u_int64_t               mth_refcnt;         /* Number of tags in this mbuf */
 };
 
 /*
@@ -246,8 +248,9 @@ struct pf_fragment_tag {
 struct tcp_pktinfo {
 	union {
 		struct {
-			uint32_t segsz;        /* segment size (actual MSS) */
-			uint32_t start_seq;    /* start seq of this packet */
+			uint16_t  seg_size;  /* segment size (actual MSS) */
+			uint16_t  hdr_len;   /* size of IP+TCP header, might be zero */
+			uint32_t  start_seq; /* start seq of this packet */
 			pid_t     pid;
 			pid_t     e_pid;
 		} __tx;
@@ -255,11 +258,14 @@ struct tcp_pktinfo {
 			uint8_t  seg_cnt;    /* # of coalesced TCP pkts */
 		} __rx;
 	} __offload;
-#define tso_segsz       proto_mtag.__pr_u.tcp.tm_tcp.__offload.__tx.segsz
+#define tx_seg_size     proto_mtag.__pr_u.tcp.tm_tcp.__offload.__tx.seg_size
+#define tso_segsz       tx_seg_size
+#define tx_hdr_len      proto_mtag.__pr_u.tcp.tm_tcp.__offload.__tx.hdr_len
 #define tx_start_seq    proto_mtag.__pr_u.tcp.tm_tcp.__offload.__tx.start_seq
 #define tx_tcp_pid      proto_mtag.__pr_u.tcp.tm_tcp.__offload.__tx.pid
 #define tx_tcp_e_pid    proto_mtag.__pr_u.tcp.tm_tcp.__offload.__tx.e_pid
-#define seg_cnt         proto_mtag.__pr_u.tcp.tm_tcp.__offload.__rx.seg_cnt
+
+#define rx_seg_cnt      proto_mtag.__pr_u.tcp.tm_tcp.__offload.__rx.seg_cnt
 };
 
 /*
@@ -441,6 +447,7 @@ struct pkthdr {
 #define bufstatus_sndbuf        _pkt_bsr.sndbuf_data
 	};
 	u_int64_t pkt_timestamp;        /* TX: enqueue time, RX: receive timestamp */
+	u_int64_t pkt_deadline;         /* In Mach time. */
 
 	/*
 	 * Tags (external and built-in)
@@ -449,7 +456,10 @@ struct pkthdr {
 	union builtin_mtag builtin_mtag;
 
 	uint32_t comp_gencnt;
-	uint32_t padding;
+	uint32_t pkt_crumbs:16,
+	    pkt_compl_callbacks:8,
+	    pkt_ext_flags:6,
+	    pkt_unused:2; /* Currently unused - feel free to grab those 2 bits */
 	/*
 	 * Module private scratch space (32-bit aligned), currently 16-bytes
 	 * large. Anything stored here is not guaranteed to survive across
@@ -470,16 +480,14 @@ struct pkthdr {
 			u_int64_t       __mpriv64[2];
 		} __mpriv_u;
 	} pkt_mpriv __attribute__((aligned(4)));
-#define pkt_mpriv_hash  pkt_mpriv.__mpriv_u.__mpriv32[0].__mpriv32_u.__val32
-#define pkt_mpriv_flags pkt_mpriv.__mpriv_u.__mpriv32[1].__mpriv32_u.__val32
-#define pkt_mpriv_srcid pkt_mpriv.__mpriv_u.__mpriv32[2].__mpriv32_u.__val32
-#define pkt_mpriv_fidx  pkt_mpriv.__mpriv_u.__mpriv32[3].__mpriv32_u.__val32
-
-	u_int32_t redzone;              /* red zone */
-	u_int32_t pkt_compl_callbacks;  /* Packet completion callbacks */
-#if __arm__ && (__ARM_ARCH < 7)
-	u_int32_t pkt_pad_armv6;
-#endif /* __arm__ && __ARM_ARCH < 7 */
+/*
+ * While qset_id takes 64 bits here, as upper 32 bits of qset_id are reserved
+ * currently, there is a scope to limit to 32 bits if other use cases need
+ * pkt_mpriv
+ */
+#define pkt_mpriv_qsetid  pkt_mpriv.__mpriv_u.__mpriv64[0]
+#define pkt_mpriv_srcid   pkt_mpriv.__mpriv_u.__mpriv32[2].__mpriv32_u.__val32
+#define pkt_mpriv_fidx    pkt_mpriv.__mpriv_u.__mpriv32[3].__mpriv32_u.__val32
 };
 
 /*
@@ -539,6 +547,7 @@ struct pkthdr {
 #define PKTF_INET6_RESOLVE      0x80    /* IPv6 resolver packet */
 #define PKTF_RESOLVE_RTR        0x100   /* pkt is for resolving router */
 #define PKTF_SKIP_PKTAP         0x200   /* pkt has already passed through pktap */
+#define PKTF_WAKE_PKT           0x400   /* packet caused system to wake from sleep */
 #define PKTF_MPTCP              0x800   /* TCP with MPTCP metadata */
 #define PKTF_MPSO               0x1000  /* MPTCP socket meta data */
 #define PKTF_LOOP               0x2000  /* loopbacked packet */
@@ -561,6 +570,32 @@ struct pkthdr {
 #define PKTF_MPTCP_DFIN         0x40000000 /* Packet is a data-fin */
 #define PKTF_HBH_CHKED          0x80000000 /* HBH option is checked */
 
+#define PKTF_EXT_OUTPUT_SCOPE   0x1     /* outgoing packet has ipv6 address scope id */
+#define PKTF_EXT_L4S            0x2     /* pkts is from a L4S connection */
+#define PKTF_EXT_QUIC           0x4     /* flag to denote a QUIC packet */
+#define PKTF_EXT_QSET_ID_VALID  0x8     /* flag to denote if traffic rules are run */
+#define PKTF_EXT_ULPN           0x10    /* packet transitted coprocessor */
+#define PKTF_EXT_LPW            0x20    /* packet received in low power wake */
+
+#define PKT_CRUMB_TS_COMP_REQ   0x0001 /* timestamp completion requested */
+#define PKT_CRUMB_TS_COMP_CB    0x0002 /* timestamp callback called */
+#define PKT_CRUMB_DLIL_OUTPUT   0x0004 /* dlil_output called */
+#define PKT_CRUMB_FLOW_TX       0x0008 /* dp_flow_tx_process called */
+#define PKT_CRUMB_FQ_ENQUEUE    0x0010 /* fq_enqueue called */
+#define PKT_CRUMB_FQ_DEQUEUE    0x0020 /* fq_dequeue called */
+#define PKT_CRUMB_SK_PKT_COPY   0x0040 /* copy from mbuf to skywalk packet */
+#define PKT_CRUMB_TCP_OUTPUT    0x0080
+#define PKT_CRUMB_UDP_OUTPUT    0x0100
+#define PKT_CRUMB_SOSEND        0x0200
+#define PKT_CRUMB_DLIL_INPUT    0x0400
+#define PKT_CRUMB_IP_INPUT      0x0800
+#define PKT_CRUMB_TCP_INPUT     0x1000
+#define PKT_CRUMB_UDP_INPUT     0x2000
+
+/* m_hdr_common crumbs flags */
+#define CRUMB_INPUT_FLAG 0x0000000000010000
+#define CRUMB_INTERFACE_FLAG 0x000000000001ffff
+
 /* flags related to flow control/advisory and identification */
 #define PKTF_FLOW_MASK  \
 	(PKTF_FLOW_ID | PKTF_FLOW_ADV | PKTF_FLOW_LOCALSRC | PKTF_FLOW_RAWSOCK)
@@ -568,12 +603,12 @@ struct pkthdr {
 /*
  * Description of external storage mapped into mbuf, valid only if M_EXT set.
  */
-typedef void (*m_ext_free_func_t)(caddr_t, u_int, caddr_t);
+typedef void (*__single m_ext_free_func_t)(caddr_t, u_int, caddr_t);
 struct m_ext {
-	caddr_t ext_buf;                /* start of buffer */
-	m_ext_free_func_t ext_free;     /* free routine if not the usual */
-	u_int   ext_size;               /* size of buffer, for ext_free */
-	caddr_t ext_arg;                /* additional ext_free argument */
+	caddr_t __counted_by(ext_size) ext_buf;   /* start of buffer */
+	m_ext_free_func_t              ext_free;  /* free routine (plain-text), if not the usual */
+	u_int                          ext_size;  /* size of the external buffer */
+	caddr_t                        ext_arg;   /* additional ext_free argument (plain-text) */
 	struct ext_ref {
 		struct mbuf *paired;
 		u_int16_t minref;
@@ -581,12 +616,25 @@ struct m_ext {
 		u_int16_t prefcnt;
 		u_int16_t flags;
 		u_int32_t priv;
-		uintptr_t ext_token;
 	} *ext_refflags;
 };
 
 /* define m_ext to a type since it gets redefined below */
 typedef struct m_ext _m_ext_t;
+
+#if CONFIG_MBUF_MCACHE
+/*
+ * The following _MLEN and _MHLEN macros are private to xnu.  Private code
+ * that are outside of xnu must use the mbuf_get_{mlen,mhlen} routines since
+ * the sizes of the structures are dependent upon specific xnu configs.
+ */
+#define _MLEN           (_MSIZE - sizeof(struct m_hdr))  /* normal data len */
+#define _MHLEN          (_MLEN - sizeof(struct pkthdr)) /* data len w/pkthdr */
+
+#define NMBPGSHIFT      (PAGE_SHIFT - _MSIZESHIFT)
+#define NMBPG           (1 << NMBPGSHIFT)       /* # of mbufs per page */
+
+#define NMBPCLSHIFT     (MCLSHIFT - _MSIZESHIFT)
 
 /*
  * The mbuf object
@@ -612,9 +660,61 @@ struct mbuf {
 #define m_flags         m_hdr.mh_flags
 #define m_nextpkt       m_hdr.mh_nextpkt
 #define m_act           m_nextpkt
-#define m_pkthdr        M_dat.MH.MH_pkthdr
+
 #define m_ext           M_dat.MH.MH_dat.MH_ext
+#define m_pkthdr        M_dat.MH.MH_pkthdr
 #define m_pktdat        M_dat.MH.MH_dat.MH_databuf
+
+#else /* !CONFIG_MBUF_MCACHE */
+/*
+ * The following _MLEN and _MHLEN macros are private to xnu.  Private code
+ * that are outside of xnu must use the mbuf_get_{mlen,mhlen} routines since
+ * the sizes of the structures are dependent upon specific xnu configs.
+ */
+#define _MLEN           (_MSIZE - sizeof(struct m_hdr_common))  /* normal data len */
+#define _MHLEN          (_MLEN)                                /* data len w/pkthdr */
+
+struct m_hdr_common {
+	struct m_hdr M_hdr;
+	struct m_ext M_ext  __attribute__((aligned(16)));             /* M_EXT set */
+#if defined(__arm64__)
+	uint64_t m_hdr_crumbs;
+#endif
+	struct pkthdr M_pkthdr  __attribute__((aligned(16)));         /* M_PKTHDR set */
+};
+
+_Static_assert(sizeof(struct m_hdr_common) == 224, "Crumbs effecting size of struct");
+#if defined(__arm64__)
+_Static_assert(sizeof(struct m_hdr_common) == 224, "Crumbs effecting size of struct");
+#endif
+
+/*
+ * The mbuf object
+ */
+struct mbuf {
+	struct m_hdr_common             M_hdr_common;
+	union {
+		char                    MH_databuf[_MHLEN];
+		char                    M_databuf[_MLEN];           /* !M_PKTHDR, !M_EXT */
+	} M_dat __attribute__((aligned(16)));
+};
+
+#define m_next          M_hdr_common.M_hdr.mh_next
+#define m_len           M_hdr_common.M_hdr.mh_len
+#define m_data          M_hdr_common.M_hdr.mh_data
+#define m_type          M_hdr_common.M_hdr.mh_type
+#define m_flags         M_hdr_common.M_hdr.mh_flags
+#define m_nextpkt       M_hdr_common.M_hdr.mh_nextpkt
+
+#define m_ext           M_hdr_common.M_ext
+#define m_pkthdr        M_hdr_common.M_pkthdr
+#define m_pktdat        M_dat.MH_databuf
+#if defined(__arm64__)
+#define m_mhdrcommon_crumbs M_hdr_common.m_hdr_crumbs
+#endif /* __arm64__ */
+#endif /* CONFIG_MBUF_MCACHE */
+
+#define m_act           m_nextpkt
 #define m_dat           M_dat.M_databuf
 #define m_pktlen(_m)    ((_m)->m_pkthdr.len)
 #define m_pftag(_m)     (&(_m)->m_pkthdr.builtin_mtag._net_mtag._pf_mtag)
@@ -741,6 +841,25 @@ struct mbuf {
 #define MT_TAG          16      /* volatile metadata associated to pkts */
 #define MT_MAX          32      /* enough? */
 
+enum {
+	MTF_FREE        = (1 << MT_FREE),
+	MTF_DATA        = (1 << MT_DATA),
+	MTF_HEADER      = (1 << MT_HEADER),
+	MTF_SOCKET      = (1 << MT_SOCKET),
+	MTF_PCB         = (1 << MT_PCB),
+	MTF_RTABLE      = (1 << MT_RTABLE),
+	MTF_HTABLE      = (1 << MT_HTABLE),
+	MTF_ATABLE      = (1 << MT_ATABLE),
+	MTF_SONAME      = (1 << MT_SONAME),
+	MTF_SOOPTS      = (1 << MT_SOOPTS),
+	MTF_FTABLE      = (1 << MT_FTABLE),
+	MTF_RIGHTS      = (1 << MT_RIGHTS),
+	MTF_IFADDR      = (1 << MT_IFADDR),
+	MTF_CONTROL     = (1 << MT_CONTROL),
+	MTF_OOBDATA     = (1 << MT_OOBDATA),
+	MTF_TAG         = (1 << MT_TAG),
+};
+
 #ifdef XNU_KERNEL_PRIVATE
 /*
  * mbuf allocation/deallocation macros:
@@ -752,12 +871,6 @@ struct mbuf {
  * allocates an mbuf and initializes it to contain a packet header
  * and internal data.
  */
-
-#if 1
-#define MCHECK(m) m_mcheck(m)
-#else
-#define MCHECK(m)
-#endif
 
 #define MGET(m, how, type) ((m) = m_get((how), (type)))
 
@@ -779,10 +892,6 @@ union mcluster {
 	union   mcluster *mcl_next;
 	char    mcl_buf[MCLBYTES];
 };
-
-#define MCLALLOC(p, how)        ((p) = m_mclalloc(how))
-
-#define MCLFREE(p)              m_mclfree(p)
 
 #define MCLGET(m, how)          ((m) = m_mclget(m, how))
 
@@ -837,15 +946,21 @@ union m16kcluster {
  * can be simply recompiled in order to be forward-compatible with future
  * changes toward the struture sizes.
  */
+#ifdef XNU_KERNEL_PRIVATE
+#define MLEN            _MLEN
+#define MHLEN           _MHLEN
+#define MINCLSIZE       (MLEN + MHLEN)
+#else
 #define MLEN            mbuf_get_mlen()         /* normal mbuf data len */
 #define MHLEN           mbuf_get_mhlen()        /* data len in an mbuf w/pkthdr */
 #define MINCLSIZE       mbuf_get_minclsize()    /* cluster usage threshold */
+#endif
 /*
  * Return the address of the start of the buffer associated with an mbuf,
  * handling external storage, packet-header mbufs, and regular data mbufs.
  */
 #define M_START(m)                                                      \
-	(((m)->m_flags & M_EXT) ? (m)->m_ext.ext_buf :                  \
+	(((m)->m_flags & M_EXT) ? (caddr_t)(m)->m_ext.ext_buf :             \
 	 ((m)->m_flags & M_PKTHDR) ? &(m)->m_pktdat[0] :                \
 	 &(m)->m_dat[0])
 
@@ -870,7 +985,7 @@ union m16kcluster {
  * of checking writability of the mbuf data area rests solely with the caller.
  */
 #define M_LEADINGSPACE(m)                                               \
-	(M_WRITABLE(m) ? ((m)->m_data - M_START(m)) : 0)
+	(M_WRITABLE(m) ? ((m)->m_data - (uintptr_t)M_START(m)) : 0)
 
 /*
  * Compute the amount of space available after the end of data in an mbuf.
@@ -880,7 +995,7 @@ union m16kcluster {
  */
 #define M_TRAILINGSPACE(m)                                              \
 	(M_WRITABLE(m) ?                                                \
-	    ((M_START(m) + M_SIZE(m)) - ((m)->m_data + (m)->m_len)) : 0)
+	    ((M_START(m) + M_SIZE(m)) - (mtod(m, caddr_t) + (m)->m_len)) : 0)
 
 /*
  * Arrange to prepend space of size plen to mbuf m.
@@ -954,13 +1069,15 @@ do {                                                                    \
 do {                                                                    \
 	if (!(m->m_flags & MBUF_PKTHDR) ||                              \
 	    m->m_len < 0 ||                                             \
-	    m->m_len > ((njcl > 0) ? njclbytes : MBIGCLBYTES) ||        \
+	    m->m_len > njclbytes ||                                     \
 	    m->m_type == MT_FREE ||                                     \
 	    ((m->m_flags & M_EXT) != 0 && m->m_ext.ext_buf == NULL)) {  \
 	        panic_plain("Failed mbuf validity check: mbuf %p len %d "  \
-	            "type %d flags 0x%x data %p rcvif %s ifflags 0x%x",  \
-	            m, m->m_len, m->m_type, m->m_flags,                    \
-	            ((m->m_flags & M_EXT) ? m->m_ext.ext_buf : m->m_data), \
+	            "type %d flags 0x%x data %p rcvif %s ifflags 0x%x", \
+	            m, m->m_len, m->m_type, m->m_flags,                 \
+	            ((m->m_flags & M_EXT)                               \
+	                                ? m->m_ext.ext_buf                              \
+	                                : (caddr_t __unsafe_indexable)m->m_data),       \
 	            if_name(rcvif),                                     \
 	            (rcvif->if_flags & 0xffff));                        \
 	}                                                               \
@@ -1035,6 +1152,16 @@ struct name {                                                   \
 	(q)->mq_last = &MBUFQ_FIRST(q);                         \
 } while (0)
 
+#define MBUFQ_DROP_AND_DRAIN(q, d, r) do {                  \
+	struct mbuf *__m0;                                      \
+	while ((__m0 = MBUFQ_FIRST(q)) != NULL) {               \
+	        MBUFQ_FIRST(q) = MBUFQ_NEXT(__m0);              \
+	        MBUFQ_NEXT(__m0) = NULL;                        \
+	        m_drop(__m0, (d) | DROPTAP_FLAG_L2_MISSING, (r), NULL, 0); \
+	}                                                       \
+	(q)->mq_last = &MBUFQ_FIRST(q);                         \
+} while (0)
+
 #define MBUFQ_FOREACH(m, q)                                     \
 	for ((m) = MBUFQ_FIRST(q);                              \
 	    (m);                                                \
@@ -1056,11 +1183,66 @@ struct name {                                                   \
  */
 #define MBUFQ_LAST(head)                                        \
 	(((head)->mq_last == &MBUFQ_FIRST(head)) ? NULL :       \
-	((struct mbuf *)(void *)((char *)(head)->mq_last -      \
-	     __builtin_offsetof(struct mbuf, m_nextpkt))))
+	__container_of((head)->mq_last, struct mbuf, m_nextpkt))
 
-#define max_linkhdr     (int)P2ROUNDUP(_max_linkhdr, sizeof (uint32_t))
-#define max_protohdr    (int)P2ROUNDUP(_max_protohdr, sizeof (uint32_t))
+#if (DEBUG || DEVELOPMENT)
+#define MBUFQ_ADD_CRUMB_MULTI(_q, _h, _t, _f) do {              \
+	struct mbuf * _saved = (_t)->m_nextpkt;                 \
+	struct mbuf * _m;                                       \
+	for (_m = (_h); _m != NULL; _m = MBUFQ_NEXT(_m)) {      \
+	        m_add_crumb((_m), (_f));                        \
+	}                                                       \
+	(_t)->m_nextpkt = _saved;                               \
+} while (0)
+
+#define MBUFQ_ADD_CRUMB(_q, _m, _f) do {                \
+	m_add_crumb((_m), (_f));                        \
+} while (0)
+#else
+#define MBUFQ_ADD_CRUMB_MULTI(_q, _h, _t, _f)
+#define MBUFQ_ADD_CRUMB(_q, _m, _f)
+#endif /* (DEBUG || DEVELOPMENT) */
+
+struct mbufq {
+	MBUFQ_HEAD(counted_mbufq) mq;
+	uint32_t count;
+	uint32_t bytes;
+};
+
+static inline void
+mbufq_init(struct mbufq *q)
+{
+	MBUFQ_INIT(&q->mq);
+	q->bytes = q->count = 0;
+}
+
+static inline void
+mbufq_enqueue(struct mbufq *q, struct mbuf *head, struct mbuf *tail,
+    uint32_t cnt, uint32_t bytes)
+{
+	MBUFQ_ENQUEUE_MULTI(&q->mq, head, tail);
+	q->count += cnt;
+	q->bytes += bytes;
+}
+
+static inline boolean_t
+mbufq_empty(struct mbufq *q)
+{
+	return q->count == 0;
+}
+
+static inline struct mbuf*
+mbufq_first(struct mbufq *q)
+{
+	return MBUFQ_FIRST(&q->mq);
+}
+
+static inline struct mbuf*
+mbufq_last(struct mbufq *q)
+{
+	return MBUFQ_LAST(&q->mq);
+}
+
 #endif /* XNU_KERNEL_PRIVATE */
 
 /*
@@ -1121,6 +1303,7 @@ struct omb_class_stat {
 	u_int32_t       mbcl_active;    /* # of active buffers */
 	u_int32_t       mbcl_infree;    /* # of available buffers */
 	u_int32_t       mbcl_slab_cnt;  /* # of available slabs */
+	u_int32_t       mbcl_pad;       /* padding */
 	u_int64_t       mbcl_alloc_cnt; /* # of times alloc is called */
 	u_int64_t       mbcl_free_cnt;  /* # of times free is called */
 	u_int64_t       mbcl_notified;  /* # of notified wakeups */
@@ -1136,7 +1319,7 @@ struct omb_class_stat {
 	u_int32_t       mbcl_mc_waiter_cnt;  /* # waiters on the cache */
 	u_int32_t       mbcl_mc_wretry_cnt;  /* # of wait retries */
 	u_int32_t       mbcl_mc_nwretry_cnt; /* # of no-wait retry attempts */
-	u_int64_t       mbcl_reserved[4];    /* for future use */
+	u_int32_t       mbcl_reserved[7];    /* for future use */
 } __attribute__((__packed__));
 #endif /* XNU_KERNEL_PRIVATE */
 
@@ -1165,7 +1348,6 @@ typedef struct mb_class_stat {
 	u_int32_t       mbcl_mc_waiter_cnt;  /* # waiters on the cache */
 	u_int32_t       mbcl_mc_wretry_cnt;  /* # of wait retries */
 	u_int32_t       mbcl_mc_nwretry_cnt; /* # of no-wait retry attempts */
-	u_int32_t       mbcl_peak_reported; /* last usage peak reported */
 	u_int32_t       mbcl_reserved[7];    /* for future use */
 } mb_class_stat_t;
 
@@ -1175,10 +1357,15 @@ typedef struct mb_class_stat {
 #define MCS_OFFLINE     3       /* cache is offline (resizing) */
 
 #if defined(XNU_KERNEL_PRIVATE)
+#define MB_STAT_MAX_MB_CLASSES 8 /* Max number of distinct Mbuf classes. */
+#endif /* XNU_KERNEL_PRIVATE */
+
+#if defined(XNU_KERNEL_PRIVATE)
 /* For backwards compatibility with 32-bit userland process */
 struct omb_stat {
 	u_int32_t               mbs_cnt;        /* number of classes */
-	struct omb_class_stat   mbs_class[1];   /* class array */
+	u_int32_t               mbs_pad;        /* padding */
+	struct omb_class_stat   mbs_class[MB_STAT_MAX_MB_CLASSES];   /* class array */
 } __attribute__((__packed__));
 #endif /* XNU_KERNEL_PRIVATE */
 
@@ -1187,7 +1374,11 @@ typedef struct mb_stat {
 #if defined(KERNEL) || defined(__LP64__)
 	u_int32_t       mbs_pad;        /* padding */
 #endif /* KERNEL || __LP64__ */
+#if defined(XNU_KERNEL_PRIVATE)
+	mb_class_stat_t mbs_class[MB_STAT_MAX_MB_CLASSES];
+#else /* XNU_KERNEL_PRIVATE */
 	mb_class_stat_t mbs_class[1];   /* class array */
+#endif /* XNU_KERNEL_PRIVATE */
 } mb_stat_t;
 
 #ifdef PRIVATE
@@ -1229,6 +1420,22 @@ struct mleak_table {
 	/* Times mleak_log returned false because couldn't acquire the lock */
 	u_int64_t total_conflicts;
 };
+
+#define HAS_M_TAG_STATS 1
+
+struct m_tag_stats {
+	u_int32_t mts_id;
+	u_int16_t mts_type;
+	u_int16_t mts_len;
+	u_int64_t mts_alloc_count;
+	u_int64_t mts_alloc_failed;
+	u_int64_t mts_free_count;
+};
+
+
+#define M_TAG_TYPE_NAMES \
+    "other,dummynet,ipfilt,encap,inet6,ipsec,cfil_udp,pf_reass,aqm,drvaux"
+
 #endif /* PRIVATE */
 
 #ifdef KERNEL_PRIVATE
@@ -1270,51 +1477,106 @@ struct mbuf;
 #define M_COPYM_MUST_MOVE_HDR   4       /* MUST move pkthdr from old to new */
 
 extern void m_freem(struct mbuf *) __XNU_INTERNAL(m_freem);
+extern void m_drop(mbuf_t, uint16_t, uint32_t, const char *, uint16_t);
+extern void m_drop_if(mbuf_t, struct ifnet *, uint16_t, uint32_t, const char *, uint16_t);
+extern void m_drop_list(mbuf_t, struct ifnet *, uint16_t, uint32_t, const char *, uint16_t);
+extern void m_drop_extended(mbuf_t, struct ifnet *, char *,
+    uint16_t, uint32_t, const char *, uint16_t);
+
 extern u_int64_t mcl_to_paddr(char *);
 extern void m_adj(struct mbuf *, int);
 extern void m_cat(struct mbuf *, struct mbuf *);
-extern void m_copydata(struct mbuf *, int, int, void *);
+extern void m_copydata(struct mbuf *, int, int len, void * __sized_by(len));
 extern struct mbuf *m_copym(struct mbuf *, int, int, int);
-extern struct mbuf *m_copym_mode(struct mbuf *, int, int, int, uint32_t);
+extern struct mbuf *m_copym_mode(struct mbuf *, int, int, int, struct mbuf **, int *, uint32_t);
 extern struct mbuf *m_get(int, int);
 extern struct mbuf *m_gethdr(int, int);
 extern struct mbuf *m_getpacket(void);
 extern struct mbuf *m_getpackets(int, int, int);
 extern struct mbuf *m_mclget(struct mbuf *, int);
-extern void *m_mtod(struct mbuf *);
+extern void *__unsafe_indexable m_mtod(struct mbuf *);
 extern struct mbuf *m_prepend_2(struct mbuf *, int, int, int);
 extern struct mbuf *m_pullup(struct mbuf *, int);
 extern struct mbuf *m_split(struct mbuf *, int, int);
 extern void m_mclfree(caddr_t p);
-extern int mbuf_get_class(struct mbuf *m);
 extern bool mbuf_class_under_pressure(struct mbuf *m);
+extern int m_chain_capacity(const struct mbuf *m);
+
+/*
+ * Accessors for the mbuf data range.
+ * The "lower bound" is the start of the memory range that m->m_data is allowed
+ * to point into. The "start" is where m->m_data points to; equivalent to the
+ * late m_mtod. The end is where m->m_data + m->m_len points to. The upper bound
+ * is the end of the memory range that m->m_data + m->m_len is allowed to point
+ * into.
+ * In a well-formed range, lower bound <= start <= end <= upper bound. An
+ * ill-formed range always means a programming error.
+ */
+__stateful_pure static inline caddr_t __header_bidi_indexable
+m_mtod_lower_bound(struct mbuf *m)
+{
+	return M_START(m);
+}
+
+__stateful_pure static inline caddr_t __header_bidi_indexable
+m_mtod_current(struct mbuf *m)
+{
+	caddr_t data = m_mtod_lower_bound(m);
+	return data + (m->m_data - (uintptr_t)data);
+}
+
+__stateful_pure static inline caddr_t __header_bidi_indexable
+m_mtod_end(struct mbuf *m)
+{
+	return m_mtod_current(m) + m->m_len;
+}
+
+__stateful_pure static inline caddr_t __header_bidi_indexable
+m_mtod_upper_bound(struct mbuf *m)
+{
+	return m_mtod_lower_bound(m) + M_SIZE(m);
+}
+
+static inline bool
+m_has_mtype(const struct mbuf *m, int mtype_flags)
+{
+	return (1 << m->m_type) & mtype_flags;
+}
+
+static inline int
+m_capacity(const struct mbuf *m)
+{
+	return _MSIZE + ((m->m_flags & M_EXT) ? m->m_ext.ext_size : 0);
+}
 
 /*
  * On platforms which require strict alignment (currently for anything but
- * i386 or x86_64), this macro checks whether the data pointer of an mbuf
+ * i386 or x86_64 or arm64), this macro checks whether the data pointer of an mbuf
  * is 32-bit aligned (this is the expected minimum alignment for protocol
  * headers), and assert otherwise.
  */
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__)
 #define MBUF_STRICT_DATA_ALIGNMENT_CHECK_32(_m)
-#else /* !__i386__ && !__x86_64__ */
+#else /* !__i386__ && !__x86_64__ && !__arm64__ */
 #define MBUF_STRICT_DATA_ALIGNMENT_CHECK_32(_m) do {                    \
 	if (!IS_P2ALIGNED((_m)->m_data, sizeof (u_int32_t))) {          \
 	        if (((_m)->m_flags & M_PKTHDR) &&                       \
 	            (_m)->m_pkthdr.rcvif != NULL) {                     \
 	                panic_plain("\n%s: mbuf %p data ptr %p is not " \
 	                    "32-bit aligned [%s: alignerrs=%lld]\n",    \
-	                    __func__, (_m), (_m)->m_data,               \
+	                    __func__, (_m),                             \
+	                    (caddr_t __unsafe_indexable)(_m)->m_data,   \
 	                    if_name((_m)->m_pkthdr.rcvif),              \
 	                    (_m)->m_pkthdr.rcvif->if_alignerrs);        \
 	        } else {                                                \
 	                panic_plain("\n%s: mbuf %p data ptr %p is not " \
 	                    "32-bit aligned\n",                         \
-	                    __func__, (_m), (_m)->m_data);              \
+	                    __func__, (_m),                             \
+	                    (caddr_t __unsafe_indexable)(_m)->m_data);  \
 	        }                                                       \
 	}                                                               \
 } while (0)
-#endif /* !__i386__ && !__x86_64__ */
+#endif /* !__i386__ && !__x86_64__ && !__arm64__ */
 
 /* Maximum number of MBUF_SC values (excluding MBUF_SC_UNSPEC) */
 #define MBUF_SC_MAX_CLASSES     10
@@ -1397,28 +1659,27 @@ extern bool mbuf_class_under_pressure(struct mbuf *m);
 	c == SCVAL_RV || c == SCVAL_VI || c == SCVAL_SIG ||             \
 	c == SCVAL_VO || SCVAL_CTL)
 
-extern unsigned char *mbutl;    /* start VA of mbuf pool */
-extern unsigned char *embutl;   /* end VA of mbuf pool */
 extern unsigned int nmbclusters;        /* number of mapped clusters */
 extern int njcl;                /* # of jumbo clusters  */
 extern int njclbytes;   /* size of a jumbo cluster */
 extern int max_hdr;             /* largest link+protocol header */
 extern int max_datalen; /* MHLEN - max_hdr */
 
-/* Use max_linkhdr instead of _max_linkhdr */
-extern int _max_linkhdr;        /* largest link-level header */
+extern int max_linkhdr;        /* largest link-level header */
 
 /* Use max_protohdr instead of _max_protohdr */
-extern int _max_protohdr;       /* largest protocol header */
+extern int max_protohdr;       /* largest protocol header */
+
+extern uint32_t high_sb_max;
 
 __private_extern__ unsigned int mbuf_default_ncl(uint64_t);
 __private_extern__ void mbinit(void);
-__private_extern__ struct mbuf *m_clattach(struct mbuf *, int, caddr_t,
-    void (*)(caddr_t, u_int, caddr_t), u_int, caddr_t, int, int);
-__private_extern__ caddr_t m_bigalloc(int);
+__private_extern__ struct mbuf *m_clattach(struct mbuf *, int, caddr_t __sized_by(extsize),
+    void (*)(caddr_t, u_int, caddr_t), size_t extsize, caddr_t, int, int);
+__private_extern__ char * __sized_by_or_null(MBIGCLBYTES) m_bigalloc(int);
 __private_extern__ void m_bigfree(caddr_t, u_int, caddr_t);
 __private_extern__ struct mbuf *m_mbigget(struct mbuf *, int);
-__private_extern__ caddr_t m_16kalloc(int);
+__private_extern__ char * __sized_by_or_null(M16KCLBYTES) m_16kalloc(int);
 __private_extern__ void m_16kfree(caddr_t, u_int, caddr_t);
 __private_extern__ struct mbuf *m_m16kget(struct mbuf *, int);
 __private_extern__ int m_reinit(struct mbuf *, int);
@@ -1435,16 +1696,15 @@ __private_extern__ struct mbuf *m_copyup(struct mbuf *, int, int);
 __private_extern__ struct mbuf *m_retry(int, int);
 __private_extern__ struct mbuf *m_retryhdr(int, int);
 __private_extern__ int m_freem_list(struct mbuf *);
-__private_extern__ int m_append(struct mbuf *, int, caddr_t);
+__private_extern__ int m_append(struct mbuf *, int len, caddr_t __sized_by(len));
 __private_extern__ struct mbuf *m_last(struct mbuf *);
-__private_extern__ struct mbuf *m_devget(char *, int, int, struct ifnet *,
-    void (*)(const void *, void *, size_t));
 __private_extern__ struct mbuf *m_pulldown(struct mbuf *, int, int, int *);
 
 __private_extern__ struct mbuf *m_getcl(int, int, int);
-__private_extern__ caddr_t m_mclalloc(int);
+__private_extern__ char * __sized_by_or_null(MCLBYTES) m_mclalloc(int);
 __private_extern__ int m_mclhasreference(struct mbuf *);
 __private_extern__ void m_copy_pkthdr(struct mbuf *, struct mbuf *);
+__private_extern__ int m_dup_pkthdr(struct mbuf *, struct mbuf *, int);
 __private_extern__ void m_copy_pftag(struct mbuf *, struct mbuf *);
 __private_extern__ void m_copy_necptag(struct mbuf *, struct mbuf *);
 __private_extern__ void m_copy_classifier(struct mbuf *, struct mbuf *);
@@ -1457,11 +1717,10 @@ __private_extern__ void m_align(struct mbuf *, int);
 
 __private_extern__ struct mbuf *m_normalize(struct mbuf *m);
 __private_extern__ void m_mchtype(struct mbuf *m, int t);
-__private_extern__ void m_mcheck(struct mbuf *);
 
-__private_extern__ void m_copyback(struct mbuf *, int, int, const void *);
-__private_extern__ struct mbuf *m_copyback_cow(struct mbuf *, int, int,
-    const void *, int);
+__private_extern__ void m_copyback(struct mbuf *, int, int len, const void * __sized_by(len));
+__private_extern__ struct mbuf *m_copyback_cow(struct mbuf *, int, int len,
+    const void * __sized_by(len), int);
 __private_extern__ int m_makewritable(struct mbuf **, int, int, int);
 __private_extern__ struct mbuf *m_dup(struct mbuf *m, int how);
 __private_extern__ struct mbuf *m_copym_with_hdrs(struct mbuf *, int, int, int,
@@ -1478,6 +1737,29 @@ __private_extern__ uint32_t m_ext_get_prop(struct mbuf *);
 __private_extern__ int m_ext_paired_is_active(struct mbuf *);
 __private_extern__ void m_ext_paired_activate(struct mbuf *);
 
+__private_extern__ void m_add_crumb(struct mbuf *, uint16_t);
+__private_extern__ void m_add_hdr_crumb(struct mbuf *, uint64_t, uint64_t);
+__private_extern__ void m_add_hdr_crumb_chain(struct mbuf *, uint64_t, uint64_t);
+
+static inline void
+m_add_hdr_crumb_interface_output(mbuf_t m, int index, bool chain)
+{
+	if (chain) {
+		m_add_hdr_crumb_chain(m, index, CRUMB_INTERFACE_FLAG);
+	} else {
+		m_add_hdr_crumb(m, index, CRUMB_INTERFACE_FLAG);
+	}
+}
+
+static inline void
+m_add_hdr_crumb_interface_input(mbuf_t m, int index, bool chain)
+{
+	if (chain) {
+		m_add_hdr_crumb_chain(m, index | CRUMB_INPUT_FLAG, CRUMB_INTERFACE_FLAG);
+	} else {
+		m_add_hdr_crumb(m, index | CRUMB_INPUT_FLAG, CRUMB_INTERFACE_FLAG);
+	}
+}
 __private_extern__ void mbuf_drain(boolean_t);
 
 /*
@@ -1488,23 +1770,36 @@ __private_extern__ void mbuf_drain(boolean_t);
  * identifies it. The id identifies the module and the type identifies the
  * type of data for that module. The id of zero is reserved for the kernel.
  *
- * Note that the packet tag returned by m_tag_allocate has the default
- * memory alignment implemented by malloc.  To reference private data one
- * can use a construct like:
+ * By default packet tags are allocated via kalloc except on Intel that still
+ * uses the legacy implementation of using mbufs for packet tags.
  *
+ * When kalloc is used for allocation, packet tags returned by m_tag_allocate have
+ * the default memory alignment implemented by kalloc.
+ *
+ * When mbufs are used for allocation packets tag returned by m_tag_allocate has
+ * the default memory alignment implemented by malloc.
+ *
+ * To reference the private data one should use a construct like:
  *      struct m_tag *mtag = m_tag_allocate(...);
- *      struct foo *p = (struct foo *)(mtag+1);
+ *      struct foo *p = (struct foo *)(mtag->m_tag_data);
  *
- * if the alignment of struct m_tag is sufficient for referencing members
- * of struct foo.  Otherwise it is necessary to embed struct m_tag within
- * the private data structure to insure proper alignment; e.g.
+ * There should be no assumption on the location of the private data relative to the
+ * 'struct m_tag'
  *
- *      struct foo {
- *              struct m_tag    tag;
- *              ...
- *      };
- *      struct foo *p = (struct foo *) m_tag_allocate(...);
- *      struct m_tag *mtag = &p->tag;
+ * When kalloc is used, packet tags that are internal to xnu use KERNEL_MODULE_TAG_ID and
+ * they are allocated with kalloc_type using a single container data structure that has
+ * the 'struct m_tag' followed by a data structure for the private data
+ *
+ * Packet tags that are allocated by KEXTs are external to xnu and type of the private data
+ * is unknown to xnu, so they are allocated in two chunks:
+ *  - one allocation with kalloc_type for the 'struct m_tag'
+ *  - one allocation using kheap_alloc as for the private data
+ *
+ * Note that packet tags of type KERNEL_TAG_TYPE_DRVAUX are allocated by KEXTs with
+ * a variable length so they are allocated in two chunks
+ *
+ * In all cases the 'struct m_tag' is allocated using kalloc_type to avoid type
+ * confusion.
  */
 
 #define KERNEL_MODULE_TAG_ID    0
@@ -1512,37 +1807,41 @@ __private_extern__ void mbuf_drain(boolean_t);
 enum {
 	KERNEL_TAG_TYPE_NONE                    = 0,
 	KERNEL_TAG_TYPE_DUMMYNET                = 1,
-	KERNEL_TAG_TYPE_DIVERT                  = 2,
-	KERNEL_TAG_TYPE_IPFORWARD               = 3,
-	KERNEL_TAG_TYPE_IPFILT                  = 4,
-	KERNEL_TAG_TYPE_MACLABEL                = 5,
-	KERNEL_TAG_TYPE_MAC_POLICY_LABEL        = 6,
-	KERNEL_TAG_TYPE_ENCAP                   = 8,
-	KERNEL_TAG_TYPE_INET6                   = 9,
-	KERNEL_TAG_TYPE_IPSEC                   = 10,
-	KERNEL_TAG_TYPE_DRVAUX                  = 11,
-	KERNEL_TAG_TYPE_CFIL_UDP                = 13,
-	KERNEL_TAG_TYPE_PF_REASS                = 14,
+	KERNEL_TAG_TYPE_IPFILT                  = 2,
+	KERNEL_TAG_TYPE_ENCAP                   = 3,
+	KERNEL_TAG_TYPE_INET6                   = 4,
+	KERNEL_TAG_TYPE_IPSEC                   = 5,
+	KERNEL_TAG_TYPE_CFIL_UDP                = 6,
+	KERNEL_TAG_TYPE_PF_REASS                = 7,
+	KERNEL_TAG_TYPE_AQM                     = 8,
+	KERNEL_TAG_TYPE_DRVAUX                  = 9,
+	KERNEL_TAG_TYPE_COUNT                   = 10
 };
 
 /* Packet tag routines */
-__private_extern__ struct  m_tag *m_tag_alloc(u_int32_t, u_int16_t, int, int);
 __private_extern__ struct  m_tag *m_tag_create(u_int32_t, u_int16_t, int, int,
     struct mbuf *);
 __private_extern__ void m_tag_free(struct m_tag *);
 __private_extern__ void m_tag_prepend(struct mbuf *, struct m_tag *);
 __private_extern__ void m_tag_unlink(struct mbuf *, struct m_tag *);
 __private_extern__ void m_tag_delete(struct mbuf *, struct m_tag *);
-__private_extern__ void m_tag_delete_chain(struct mbuf *, struct m_tag *);
+__private_extern__ void m_tag_delete_chain(struct mbuf *);
 __private_extern__ struct m_tag *m_tag_locate(struct mbuf *, u_int32_t,
-    u_int16_t, struct m_tag *);
+    u_int16_t);
 __private_extern__ struct m_tag *m_tag_copy(struct m_tag *, int);
 __private_extern__ int m_tag_copy_chain(struct mbuf *, struct mbuf *, int);
 __private_extern__ void m_tag_init(struct mbuf *, int);
 __private_extern__ struct  m_tag *m_tag_first(struct mbuf *);
 __private_extern__ struct  m_tag *m_tag_next(struct mbuf *, struct m_tag *);
 
-__private_extern__ void m_scratch_init(struct mbuf *);
+typedef struct m_tag * (*m_tag_kalloc_func_t)(u_int32_t id, u_int16_t type, uint16_t len, int wait);
+typedef void (*m_tag_kfree_func_t)(struct m_tag *tag);
+
+int m_register_internal_tag_type(uint16_t type, uint16_t len, m_tag_kalloc_func_t alloc_func, m_tag_kfree_func_t free_func);
+void m_tag_create_cookie(struct m_tag *);
+
+void mbuf_tag_init(void);
+
 __private_extern__ u_int32_t m_scratch_get(struct mbuf *, u_int8_t **);
 
 __private_extern__ void m_classifier_init(struct mbuf *, uint32_t);
@@ -1554,6 +1853,8 @@ __private_extern__ mbuf_svc_class_t m_service_class_from_val(u_int32_t);
 __private_extern__ int m_set_traffic_class(struct mbuf *, mbuf_traffic_class_t);
 __private_extern__ mbuf_traffic_class_t m_get_traffic_class(struct mbuf *);
 
+__private_extern__ void mbuf_tag_init(void);
+
 #define ADDCARRY(_x)  do {                                              \
 	while (((_x) >> 16) != 0)                                       \
 	        (_x) = ((_x) >> 16) + ((_x) & 0xffff);                  \
@@ -1563,15 +1864,188 @@ __private_extern__ u_int16_t m_adj_sum16(struct mbuf *, u_int32_t,
     u_int32_t, u_int32_t, u_int32_t);
 __private_extern__ u_int16_t m_sum16(struct mbuf *, u_int32_t, u_int32_t);
 
-__private_extern__ void m_set_ext(struct mbuf *, struct ext_ref *,
-    m_ext_free_func_t, caddr_t);
+__private_extern__ void mbuf_set_tx_time(struct mbuf *m, uint64_t tx_time);
+
 __private_extern__ struct ext_ref *m_get_rfa(struct mbuf *);
 __private_extern__ m_ext_free_func_t m_get_ext_free(struct mbuf *);
-__private_extern__ caddr_t m_get_ext_arg(struct mbuf *);
 
 __private_extern__ void m_do_tx_compl_callback(struct mbuf *, struct ifnet *);
 __private_extern__ mbuf_tx_compl_func m_get_tx_compl_callback(u_int32_t);
 
 __END_DECLS
+
+/* START - the following can be moved to uipc_mbuf.c once we got rid of CONFIG_MBUF_MCACHE */
+typedef enum {
+	MC_MBUF = 0,    /* Regular mbuf */
+	MC_CL,          /* Cluster */
+	MC_BIGCL,       /* Large (4KB) cluster */
+	MC_16KCL,       /* Jumbo (16KB) cluster */
+	MC_MBUF_CL,     /* mbuf + cluster */
+	MC_MBUF_BIGCL,  /* mbuf + large (4KB) cluster */
+	MC_MBUF_16KCL,  /* mbuf + jumbo (16KB) cluster */
+	MC_MAX
+} mbuf_class_t;
+
+typedef struct {
+	mbuf_class_t    mtbl_class;     /* class type */
+#if CONFIG_MBUF_MCACHE
+	mcache_t        *mtbl_cache;    /* mcache for this buffer class */
+	TAILQ_HEAD(mcl_slhead, mcl_slab) mtbl_slablist; /* slab list */
+	mcache_obj_t    *mtbl_cobjlist; /* composite objects freelist */
+#endif
+	mb_class_stat_t *mtbl_stats;    /* statistics fetchable via sysctl */
+	u_int32_t       mtbl_maxsize;   /* maximum buffer size */
+	int             mtbl_minlimit;  /* minimum allowed */
+	int             mtbl_maxlimit;  /* maximum allowed */
+	u_int32_t       mtbl_wantpurge; /* purge during next reclaim */
+	uint32_t        mtbl_avgtotal;  /* average total on iOS */
+	u_int32_t       mtbl_expand;    /* worker should expand the class */
+} mbuf_table_t;
+
+/*
+ * Allocation statistics related to mbuf types (up to MT_MAX-1) are updated
+ * atomically and stored in a per-CPU structure which is lock-free; this is
+ * done in order to avoid writing to the global mbstat data structure which
+ * would cause false sharing.  During sysctl request for kern.ipc.mbstat,
+ * the statistics across all CPUs will be converged into the mbstat.m_mtypes
+ * array and returned to the application.  Any updates for types greater or
+ * equal than MT_MAX would be done atomically to the mbstat; this slows down
+ * performance but is okay since the kernel uses only up to MT_MAX-1 while
+ * anything beyond that (up to type 255) is considered a corner case.
+ */
+typedef struct {
+	unsigned int cpu_mtypes[MT_MAX];
+} mbuf_mtypes_t;
+
+#define MBUF_CLASS_MIN          MC_MBUF
+#define MBUF_CLASS_MAX          MC_MBUF_16KCL
+#define MBUF_CLASS_LAST         MC_16KCL
+
+#define MBUF_CLASS_COMPOSITE(c) \
+	((int)(c) > MBUF_CLASS_LAST)
+
+#define m_class(c)      mbuf_table[c].mtbl_class
+#define m_maxsize(c)    mbuf_table[c].mtbl_maxsize
+#define m_minlimit(c)   mbuf_table[c].mtbl_minlimit
+#define m_maxlimit(c)   mbuf_table[c].mtbl_maxlimit
+#define m_cname(c)      mbuf_table[c].mtbl_stats->mbcl_cname
+#define m_size(c)       mbuf_table[c].mtbl_stats->mbcl_size
+#define m_total(c)      mbuf_table[c].mtbl_stats->mbcl_total
+#define m_infree(c)     mbuf_table[c].mtbl_stats->mbcl_infree
+
+#define NELEM(a)        (sizeof (a) / sizeof ((a)[0]))
+#define MB_WDT_MAXTIME  10              /* # of secs before watchdog panic */
+
+/*
+ * This flag is set for all mbufs that come out of and into the composite
+ * mbuf + cluster caches, i.e. MC_MBUF_CL and MC_MBUF_BIGCL.  mbufs that
+ * are marked with such a flag have clusters attached to them, and will be
+ * treated differently when they are freed; instead of being placed back
+ * into the mbuf and cluster freelists, the composite mbuf + cluster objects
+ * are placed back into the appropriate composite cache's freelist, and the
+ * actual freeing is deferred until the composite objects are purged.  At
+ * such a time, this flag will be cleared from the mbufs and the objects
+ * will be freed into their own separate freelists.
+ */
+#define EXTF_COMPOSITE  0x1
+
+/*
+ * This flag indicates that the external cluster is read-only, i.e. it is
+ * or was referred to by more than one mbufs.  Once set, this flag is never
+ * cleared.
+ */
+#define EXTF_READONLY   0x2
+
+/*
+ * This flag indicates that the external cluster is paired with the mbuf.
+ * Pairing implies an external free routine defined which will be invoked
+ * when the reference count drops to the minimum at m_free time.  This
+ * flag is never cleared.
+ */
+#define EXTF_PAIRED     0x4
+
+#define EXTF_MASK       \
+	(EXTF_COMPOSITE | EXTF_READONLY | EXTF_PAIRED)
+
+#define MEXT_MINREF(m)          ((m_get_rfa(m))->minref)
+#define MEXT_REF(m)             ((m_get_rfa(m))->refcnt)
+#define MEXT_PREF(m)            ((m_get_rfa(m))->prefcnt)
+#define MEXT_FLAGS(m)           ((m_get_rfa(m))->flags)
+#define MEXT_PRIV(m)            ((m_get_rfa(m))->priv)
+#define MEXT_PMBUF(m)           ((m_get_rfa(m))->paired)
+#define MBUF_IS_COMPOSITE(m)                                            \
+	(MEXT_REF(m) == MEXT_MINREF(m) &&                               \
+	(MEXT_FLAGS(m) & EXTF_MASK) == EXTF_COMPOSITE)
+
+/*
+ * This macro can be used to test if the mbuf is paired to an external
+ * cluster.  The test for MEXT_PMBUF being equal to the mbuf in subject
+ * is important, as EXTF_PAIRED alone is insufficient since it is immutable,
+ * and thus survives calls to m_free_paired.
+ */
+#define MBUF_IS_PAIRED(m)                                               \
+	(((m)->m_flags & M_EXT) &&                                      \
+	(MEXT_FLAGS(m) & EXTF_MASK) == EXTF_PAIRED &&                   \
+	MEXT_PMBUF(m) == (m))
+
+#define MBUF_CL_INIT(m, buf, rfa, ref, flag)    \
+	mext_init(m, buf, m_maxsize(MC_CL), NULL, NULL, rfa, 0,         \
+	    ref, 0, flag, 0, NULL)
+
+#define MBUF_BIGCL_INIT(m, buf, rfa, ref, flag) \
+	mext_init(m, buf, m_maxsize(MC_BIGCL), m_bigfree, NULL, rfa, 0, \
+	    ref, 0, flag, 0, NULL)
+
+#define MBUF_16KCL_INIT(m, buf, rfa, ref, flag) \
+	mext_init(m, buf, m_maxsize(MC_16KCL), m_16kfree, NULL, rfa, 0, \
+	    ref, 0, flag, 0, NULL)
+
+#define MBSTAT_MTYPES_MAX \
+	(sizeof (mbstat.m_mtypes) / sizeof (mbstat.m_mtypes[0]))
+
+#define mtype_stat_add(type, n) {                                       \
+	if ((unsigned)(type) < MT_MAX) {                                \
+	        mbuf_mtypes_t *mbs = PERCPU_GET(mbuf_mtypes);           \
+	        os_atomic_add(&mbs->cpu_mtypes[type], n, relaxed);               \
+	} else if ((unsigned)(type) < (unsigned)MBSTAT_MTYPES_MAX) {    \
+	        os_atomic_add((int16_t *)&mbstat.m_mtypes[type], n, relaxed);    \
+	}                                                               \
+}
+
+#define mtype_stat_sub(t, n)    mtype_stat_add(t, -(n))
+#define mtype_stat_inc(t)       mtype_stat_add(t, 1)
+#define mtype_stat_dec(t)       mtype_stat_sub(t, 1)
+/* END - the following can be moved to uipc_mbuf.c once we got rid of CONFIG_MBUF_MCACHE */
+
+#if CONFIG_MBUF_MCACHE
+extern lck_mtx_t *const mbuf_mlock;
+extern int nclusters;                  /* # of clusters for non-jumbo (legacy) sizes */
+extern unsigned char *mbutl;    /* start VA of mbuf pool */
+extern unsigned int mb_memory_pressure_percentage;
+extern struct mb_stat *mb_stat;
+PERCPU_DECL(mbuf_mtypes_t, mbuf_mtypes);
+
+extern mbuf_table_t mbuf_table[];
+
+extern void mbuf_mtypes_sync(void);
+extern void mbuf_stat_sync(void);
+extern void mbuf_table_init(void);
+extern void m_incref(struct mbuf *m);
+extern uint16_t m_decref(struct mbuf *m);
+extern struct mbuf *m_get_common(int wait, short type, int hdr);
+extern int m_free_paired(struct mbuf *m);
+extern caddr_t m_get_ext_arg(struct mbuf *m);
+extern int mbuf_watchdog_defunct_iterate(proc_t p, void *arg);
+extern void m_set_ext(struct mbuf *m, struct ext_ref *rfa, m_ext_free_func_t ext_free,
+    caddr_t ext_arg);
+extern void mext_init(struct mbuf *m, void *__sized_by(size)buf, u_int size,
+    m_ext_free_func_t free, caddr_t free_arg, struct ext_ref *rfa,
+    u_int16_t min, u_int16_t ref, u_int16_t pref, u_int16_t flag,
+    u_int32_t priv, struct mbuf *pm);
+extern int mbuf_get_class(struct mbuf *m);
+extern void mbuf_init(struct mbuf *m, int pkthdr, int type);
+extern void mbuf_mcheck(struct mbuf *m);
+#endif /* CONFIG_MBUF_MCACHE */
+
 #endif /* XNU_KERNEL_PRIVATE */
 #endif  /* !_SYS_MBUF_H_ */

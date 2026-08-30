@@ -54,7 +54,6 @@
  * the rights to redistribute these changes.
  */
 
-#include <mach_debug.h>
 #include <mach_ldebug.h>
 
 #include <sys/kdebug.h>
@@ -96,6 +95,14 @@ pmap_zero_page(
 	assert(pn != vm_page_fictitious_addr);
 	assert(pn != vm_page_guard_addr);
 	bzero_phys((addr64_t)i386_ptob(pn), PAGE_SIZE);
+}
+
+void
+pmap_zero_page_with_options(
+	ppnum_t pn,
+	__unused int options)
+{
+	pmap_zero_page(pn);
 }
 
 /*
@@ -195,7 +202,7 @@ kvtophys(
 }
 
 extern pt_entry_t *debugger_ptep;
-extern vm_map_offset_t debugger_window_kva;
+extern vm_offset_t debugger_window_kva;
 extern int _bcopy(const void *, void *, vm_size_t);
 extern int _bcopy2(const void *, void *);
 extern int _bcopy4(const void *, void *);
@@ -237,7 +244,7 @@ ml_copy_phys(addr64_t src64, addr64_t dst64, vm_size_t bytes)
 		/* Establish a cache-inhibited physical window; some platforms
 		 * may not cover arbitrary ranges with MTRRs
 		 */
-		pmap_store_pte(debugger_ptep, debug_pa | INTEL_PTE_NCACHE | INTEL_PTE_RW | INTEL_PTE_REF | INTEL_PTE_MOD | INTEL_PTE_VALID);
+		pmap_store_pte(FALSE, debugger_ptep, debug_pa | INTEL_PTE_NCACHE | INTEL_PTE_RW | INTEL_PTE_REF | INTEL_PTE_MOD | INTEL_PTE_VALID);
 		pmap_tlbi_range(0, ~0ULL, true, 0);
 #if     DEBUG
 		kprintf("Remapping debugger physical window at %p to 0x%llx\n", (void *)debugger_window_kva, debug_pa);

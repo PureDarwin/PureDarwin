@@ -178,7 +178,9 @@ ifeq ($(UNAME_S),Darwin)
 		export MIGCC := $(CC)
 	endif
 	ifeq ($(IIG),)
-		export IIG := false
+		# Real iig (iig-tools) is on PATH; xnu 12377's iokit/Tests has .iig
+		# sources with no vendored output to fall back on.
+		export IIG := iig
 	endif
 	ifeq ($(STRIP),)
 		export STRIP := @STRIP_PATH@
@@ -236,6 +238,11 @@ else ifeq ($(UNAME_S),Linux)
 	ifeq ($(MIGCOM),)
 		export MIGCOM := $(shell $(XCRUN) -sdk $(SDKROOT) -find migcom)
 	endif
+	ifeq ($(IIG),)
+		# Real iig (iig-tools), on PATH via build.nix. Needed by xnu 12377's
+		# iokit/Tests, which has .iig sources with no vendored output.
+		export IIG := iig
+	endif
 	ifeq ($(MIGCC),)
 		export MIGCC := $(CC)
 	endif
@@ -280,6 +287,20 @@ else
 	echo "Error: Unsupported build host: $(UNAME_S)"
 	exit 1
 endif
+
+# xnu 12377: bsd/conf/Makefile passes -platform $(PLATFORM_FOR_CONFIG) to doconf.
+# Left empty the argument list shifts and the MASTER lookup silently finds
+# nothing ("MASTER_CPU: Undefined variable"). Same value as PLATFORM here; it
+# only differs for Apple's user-space unit tests.
+ifeq ($(origin PLATFORM_FOR_CONFIG),undefined)
+	export PLATFORM_FOR_CONFIG := $(PLATFORM)
+endif
+
+# xnu 12377 runs a python VM-sanitization check from osfmk/mach/Makefile.
+ifeq ($(PYTHON),)
+	export PYTHON := python3
+endif
+VM_SANITIZE_ADOPTION_CHECK = $(SRCROOT)/tools/vm_sanitize_enforcement.py
 
 #
 # Platform options

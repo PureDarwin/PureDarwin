@@ -85,11 +85,19 @@ ENTRY(bcopy_no_overwrite)
  */
 ENTRY(bcopy)
 	xchgq	%rsi,%rdi
+	jmp	EXT(memmove)
+
+/*
+ * memmove(dst, src, cnt)
+ *        rdi, rsi, rdx
+ */
+ENTRY(memmove)
 	movq	%rdx,%rcx
 
 	movq	%rdi,%rax
 	subq	%rsi,%rax
 	cmpq	%rcx,%rax			/* overlapping && src < dst? */
+	movq    %rdi,%rax      		/* restore the return value */
 	jb	1f
 
 	cld					/* nope, copy forwards */

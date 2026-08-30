@@ -39,13 +39,13 @@
  * Why do we need Corpses?
  * -----------------------
  * For crash inspection we need to inspect the state and data that is associated with process so that
- * crash reporting infrastructure can build backtraces, find leaks etc. For example a crash
+ * crash reporting infrastructure can build backtraces, find leaks etc.
  *
  * Corpses functionality in kernel
  * ===============================
  * The corpse functionality is an extension of existing exception reporting mechanisms we have. The
  * exception_triage calls will try to deliver the first round of exceptions allowing
- * task/debugger/ReportCrash/launchd level exception handlers to  respond to exception. If even after
+ * task/debugger/ReportCrash/launchd level exception handlers to respond to exception. If even after
  * notification the exception is not handled, then the process begins the death operations and during
  * proc_prepareexit, we decide to create a corpse for inspection. Following is a sample run through
  * of events and data shuffling that happens when corpses is enabled.
@@ -65,7 +65,7 @@
  *       prevents task_terminate from stripping important data from task.
  *     - It marks all the threads to terminate and return to AST for termination.
  *     - The allocation logic takes into account the rate limiting policy of allowing only
- *       TOTAL_CORPSES_ALLOWED in flight.
+ *       `total_corpses_allowed` in flight.
  *   * The proc exit threads continues and collects required information in the allocated vm region.
  *     Once complete it marks itself for termination.
  *   * In the thread_terminate_self(), the last thread to enter will do a call to proc_exit().
@@ -93,9 +93,9 @@
  * =================================
  *   boot-arg: -no_corpses disables the corpse generation. This can be added/removed without affecting
  *     any other subsystem.
- *   TOTAL_CORPSES_ALLOWED : (recompilation required) - Changing this number allows for controlling
- *     the number of corpse instances to be held for inspection before allowing memory to be reclaimed
- *     by system.
+ *   DEFAULT_TOTAL_CORPSES_ALLOWED: Controls the number of corpse instances to be held for
+ *         inspection before allowing memory to be reclaimed by the system.
+ *     On a live system, the maximum corpse count can be reconfigured via the `kern.total_corpses_allowed` sysctl.
  *   CORPSEINFO_ALLOCATION_SIZE: is the default size of vm allocation. If in future there is much more
  *     data to be put in, then please re-tune this parameter.
  *
@@ -111,18 +111,22 @@
  * ======================
  *   With holding off memory for inspection, it creates vm pressure which might not be desirable
  *   on low memory devices. There are limits to max corpses being inspected at a time which is
- *   marked by TOTAL_CORPSES_ALLOWED.
+ *   marked by `total_corpses_allowed`.
  *
  */
-
 
 #include <stdatomic.h>
 #include <kern/assert.h>
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
 #include <mach/vm_param.h>
+#include <mach/task.h>
+#include <mach/thread_act.h>
+#include <mach/host_priv.h>
+#include <kern/host.h>
 #include <kern/kern_types.h>
 #include <kern/mach_param.h>
+#include <kern/policy_internal.h>
 #include <kern/thread.h>
 #include <kern/task.h>
 #include <corpses/task_corpse.h>
@@ -131,6 +135,10 @@
 #include <mach/mach_vm.h>
 #include <kern/exc_guard.h>
 #include <os/log.h>
+#include <sys/kdebug_triage.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_xnu.h>
+#include <ipc/ipc_space.h>
 
 #if CONFIG_MACF
 #include <security/mac_mach_internal.h>
@@ -151,63 +159,47 @@ union corpse_creation_gate {
 
 static _Atomic uint32_t inflight_corpses;
 unsigned long  total_corpses_created = 0;
-boolean_t corpse_enabled_config = TRUE;
 
+uint32_t total_corpses_allowed = DEFAULT_TOTAL_CORPSES_ALLOWED;
+
+static TUNABLE(bool, corpses_disabled, "-no_corpses", false);
+
+#if !XNU_TARGET_OS_OSX
+/* Use lightweight corpse on embedded */
+static TUNABLE(bool, lw_corpses_enabled, "lw_corpses", true);
+#else
+static TUNABLE(bool, lw_corpses_enabled, "lw_corpses", false);
+#endif
+
+#if DEBUG || DEVELOPMENT
 /* bootarg to generate corpse with size up to max_footprint_mb */
-boolean_t corpse_threshold_system_limit = FALSE;
+TUNABLE(bool, corpse_threshold_system_limit, "corpse_threshold_system_limit", false);
+#endif /* DEBUG || DEVELOPMENT */
 
 /* bootarg to turn on corpse forking for EXC_RESOURCE */
-int exc_via_corpse_forking = 1;
+TUNABLE(bool, exc_via_corpse_forking, "exc_via_corpse_forking", true);
 
 /* bootarg to generate corpse for fatal high memory watermark violation */
-int corpse_for_fatal_memkill = 1;
+TUNABLE(bool, corpse_for_fatal_memkill, "corpse_for_fatal_memkill", true);
 
-#ifdef  __arm__
-static inline int
-IS_64BIT_PROCESS(__unused void *p)
-{
-	return 0;
-}
-#else
 extern int IS_64BIT_PROCESS(void *);
-#endif /* __arm__ */
 extern void gather_populate_corpse_crashinfo(void *p, task_t task,
     mach_exception_data_type_t code, mach_exception_data_type_t subcode,
-    uint64_t *udata_buffer, int num_udata, void *reason);
+    uint64_t *udata_buffer, int num_udata, void *reason, exception_type_t etype);
 extern void *proc_find(int pid);
 extern int proc_rele(void *p);
+extern task_t proc_get_task_raw(void *proc);
+extern const char *proc_best_name(struct proc *proc);
 
-
-void
-corpses_init()
-{
-	char temp_buf[20];
-	int exc_corpse_forking;
-	int fatal_memkill;
-	if (PE_parse_boot_argn("-no_corpses", temp_buf, sizeof(temp_buf))) {
-		corpse_enabled_config = FALSE;
-	}
-	if (PE_parse_boot_argn("exc_via_corpse_forking", &exc_corpse_forking, sizeof(exc_corpse_forking))) {
-		exc_via_corpse_forking = exc_corpse_forking;
-	}
-	if (PE_parse_boot_argn("corpse_for_fatal_memkill", &fatal_memkill, sizeof(fatal_memkill))) {
-		corpse_for_fatal_memkill = fatal_memkill;
-	}
-#if DEBUG || DEVELOPMENT
-	if (PE_parse_boot_argn("-corpse_threshold_system_limit", &corpse_threshold_system_limit, sizeof(corpse_threshold_system_limit))) {
-		corpse_threshold_system_limit = TRUE;
-	}
-#endif /* DEBUG || DEVELOPMENT */
-}
 
 /*
  * Routine: corpses_enabled
  * returns FALSE if not enabled
  */
 boolean_t
-corpses_enabled()
+corpses_enabled(void)
 {
-	return corpse_enabled_config;
+	return !corpses_disabled;
 }
 
 unsigned long
@@ -219,7 +211,6 @@ total_corpses_count(void)
 	return gate.corpses;
 }
 
-extern char *proc_best_name(struct proc *);
 extern int proc_pid(struct proc *);
 
 /*
@@ -245,7 +236,7 @@ task_crashinfo_get_ref(corpse_flags_t kcd_u_flags)
 				return KERN_RESOURCE_SHORTAGE;
 			}
 		}
-		if (newgate.corpses++ >= TOTAL_CORPSES_ALLOWED) {
+		if (newgate.corpses++ >= total_corpses_allowed) {
 			os_log(OS_LOG_DEFAULT, "%s[%d] Corpse failure, too many %d\n",
 			    proc_best_name(p), proc_pid(p), newgate.corpses);
 			return KERN_RESOURCE_SHORTAGE;
@@ -256,7 +247,7 @@ task_crashinfo_get_ref(corpse_flags_t kcd_u_flags)
 		    &oldgate.value, newgate.value, memory_order_relaxed,
 		    memory_order_relaxed)) {
 			os_log(OS_LOG_DEFAULT, "%s[%d] Corpse allowed %d of %d\n",
-			    proc_best_name(p), proc_pid(p), newgate.corpses, TOTAL_CORPSES_ALLOWED);
+			    proc_best_name(p), proc_pid(p), newgate.corpses, total_corpses_allowed);
 			return KERN_SUCCESS;
 		}
 	}
@@ -314,6 +305,16 @@ task_crashinfo_alloc_init(mach_vm_address_t crash_data_p, unsigned size,
 	} else if (kc_u_flags & CORPSE_CRASHINFO_HAS_REF) {
 		task_crashinfo_release_ref(kc_u_flags);
 	}
+	return kcdata;
+}
+
+kcdata_descriptor_t
+task_btinfo_alloc_init(mach_vm_address_t addr, unsigned size)
+{
+	kcdata_descriptor_t kcdata;
+
+	kcdata = kcdata_memory_alloc_init(addr, TASK_BTINFO_BEGIN, size, KCFLAG_USE_MEMCOPY);
+
 	return kcdata;
 }
 
@@ -385,26 +386,45 @@ task_purge_all_corpses(void)
 {
 	task_t task;
 
-	printf("Purging corpses......\n\n");
-
 	lck_mtx_lock(&tasks_corpse_lock);
 	/* Iterate through all the corpse tasks and clear all map entries */
 	queue_iterate(&corpse_tasks, task, task_t, corpse_tasks) {
-		vm_map_remove(task->map,
-		    task->map->min_offset,
-		    task->map->max_offset,
-		    /*
-		     * Final cleanup:
-		     * + no unnesting
-		     * + remove immutable mappings
-		     * + allow gaps in the range
-		     */
-		    (VM_MAP_REMOVE_NO_UNNESTING |
-		    VM_MAP_REMOVE_IMMUTABLE |
-		    VM_MAP_REMOVE_GAPS_OK));
+		os_log(OS_LOG_DEFAULT, "Memory pressure corpse purge for pid %d.\n", task_pid(task));
+		vm_map_terminate(task->map);
+	}
+	lck_mtx_unlock(&tasks_corpse_lock);
+}
+
+/*
+ * Routine: find_corpse_task_by_uniqueid_grp
+ * params: task_uniqueid - uniqueid of the corpse
+ *         target - target task [Out Param]
+ *         grp - task reference group
+ * returns:
+ *         KERN_SUCCESS if a matching corpse if found, gives a ref.
+ *         KERN_FAILURE corpse with given uniqueid is not found.
+ */
+kern_return_t
+find_corpse_task_by_uniqueid_grp(
+	uint64_t   task_uniqueid,
+	task_t     *target,
+	task_grp_t grp)
+{
+	task_t task;
+
+	lck_mtx_lock(&tasks_corpse_lock);
+
+	queue_iterate(&corpse_tasks, task, task_t, corpse_tasks) {
+		if (task->task_uniqueid == task_uniqueid) {
+			task_reference_grp(task, grp);
+			lck_mtx_unlock(&tasks_corpse_lock);
+			*target = task;
+			return KERN_SUCCESS;
+		}
 	}
 
 	lck_mtx_unlock(&tasks_corpse_lock);
+	return KERN_FAILURE;
 }
 
 /*
@@ -425,7 +445,6 @@ task_generate_corpse(
 	kern_return_t kr;
 	thread_t thread, th_iter;
 	ipc_port_t corpse_port;
-	ipc_port_t old_notify;
 
 	if (task == kernel_task || task == TASK_NULL) {
 		return KERN_INVALID_ARGUMENT;
@@ -438,8 +457,10 @@ task_generate_corpse(
 	}
 	task_unlock(task);
 
+	thread_set_exec_promotion(current_thread());
 	/* Generate a corpse for the given task, will return with a ref on corpse task */
 	kr = task_generate_corpse_internal(task, &new_task, &thread, 0, 0, 0, NULL);
+	thread_clear_exec_promotion(current_thread());
 	if (kr != KERN_SUCCESS) {
 		return kr;
 	}
@@ -462,17 +483,76 @@ task_generate_corpse(
 	task_unlock(new_task);
 
 	/* transfer the task ref to port and arm the no-senders notification */
-	corpse_port = convert_task_to_port(new_task);
+	corpse_port = convert_corpse_to_port_and_nsrequest(new_task);
 	assert(IP_NULL != corpse_port);
 
-	ip_lock(corpse_port);
-	require_ip_active(corpse_port);
-	ipc_port_nsrequest(corpse_port, corpse_port->ip_mscount, ipc_port_make_sonce_locked(corpse_port), &old_notify);
-	/* port unlocked */
-
-	assert(IP_NULL == old_notify);
 	*corpse_task_port = corpse_port;
 	return KERN_SUCCESS;
+}
+
+/*
+ * Only generate lightweight corpse if any of thread, task, or host level registers
+ * EXC_CORPSE_NOTIFY with behavior EXCEPTION_BACKTRACE.
+ *
+ * Save a send right and behavior of those ports on out param EXC_PORTS.
+ */
+static boolean_t
+task_should_generate_lightweight_corpse(
+	task_t task,
+	ipc_port_t exc_ports[static BT_EXC_PORTS_COUNT])
+{
+	kern_return_t kr;
+	boolean_t should_generate = FALSE;
+
+	exception_mask_t mask;
+	mach_msg_type_number_t nmasks;
+	exception_port_t exc_port = IP_NULL;
+	exception_behavior_t behavior;
+	thread_state_flavor_t flavor;
+
+	if (task != current_task()) {
+		return FALSE;
+	}
+
+	if (!lw_corpses_enabled) {
+		return FALSE;
+	}
+
+	for (unsigned int i = 0; i < BT_EXC_PORTS_COUNT; i++) {
+		nmasks = 1;
+
+		/* thread, task, and host level, in this order */
+		if (i == 0) {
+			kr = thread_get_exception_ports(current_thread(), EXC_MASK_CORPSE_NOTIFY,
+			    &mask, &nmasks, &exc_port, &behavior, &flavor);
+		} else if (i == 1) {
+			kr = task_get_exception_ports(current_task(), EXC_MASK_CORPSE_NOTIFY,
+			    &mask, &nmasks, &exc_port, &behavior, &flavor);
+		} else {
+			kr = host_get_exception_ports(host_priv_self(), EXC_MASK_CORPSE_NOTIFY,
+			    &mask, &nmasks, &exc_port, &behavior, &flavor);
+		}
+
+		if (kr != KERN_SUCCESS || nmasks == 0) {
+			exc_port = IP_NULL;
+		}
+
+		/* thread level can return KERN_SUCCESS && nmasks 0 */
+		assert(nmasks == 1 || i == 0);
+
+		if (IP_VALID(exc_port) && (behavior & MACH_EXCEPTION_BACKTRACE_PREFERRED)) {
+			assert(behavior & MACH_EXCEPTION_CODES);
+			exc_ports[i] = exc_port; /* transfers right to array */
+			exc_port = NULL;
+			should_generate = TRUE;
+		} else {
+			exc_ports[i] = IP_NULL;
+		}
+
+		ipc_port_release_send(exc_port);
+	}
+
+	return should_generate;
 }
 
 /*
@@ -494,27 +574,72 @@ task_enqueue_exception_with_corpse(
 	exception_type_t etype,
 	mach_exception_data_t code,
 	mach_msg_type_number_t codeCnt,
-	void *reason)
+	void *reason,
+	boolean_t lightweight)
 {
-	task_t new_task = TASK_NULL;
-	thread_t thread = THREAD_NULL;
 	kern_return_t kr;
+	ipc_port_t exc_ports[BT_EXC_PORTS_COUNT]; /* send rights in thread, task, host order */
+	const char *procname = proc_best_name(get_bsdtask_info(task));
 
 	if (codeCnt < 2) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
-	/* Generate a corpse for the given task, will return with a ref on corpse task */
-	kr = task_generate_corpse_internal(task, &new_task, &thread,
-	    etype, code[0], code[1], reason);
-	if (kr == KERN_SUCCESS) {
-		if (thread == THREAD_NULL) {
-			return KERN_FAILURE;
+	if (lightweight && task_should_generate_lightweight_corpse(task, exc_ports)) {
+		/* port rights captured in exc_ports */
+		kcdata_descriptor_t desc = NULL;
+		kcdata_object_t obj = KCDATA_OBJECT_NULL;
+		bool lw_corpse_enqueued = false;
+
+		assert(task == current_task());
+		assert(etype == EXC_GUARD);
+
+		kr = kcdata_object_throttle_get(KCDATA_OBJECT_TYPE_LW_CORPSE);
+		if (kr != KERN_SUCCESS) {
+			goto out;
 		}
-		assert(new_task != TASK_NULL);
-		assert(etype == EXC_RESOURCE || etype == EXC_GUARD);
-		thread_exception_enqueue(new_task, thread, etype);
+
+		kr = current_thread_collect_backtrace_info(&desc, etype, code, codeCnt, reason);
+		if (kr != KERN_SUCCESS) {
+			kcdata_object_throttle_release(KCDATA_OBJECT_TYPE_LW_CORPSE);
+			goto out;
+		}
+
+		kr = kcdata_create_object(desc, KCDATA_OBJECT_TYPE_LW_CORPSE, BTINFO_ALLOCATION_SIZE, &obj);
+		assert(kr == KERN_SUCCESS);
+		/* desc ref and throttle slot captured in obj ref */
+
+		thread_backtrace_enqueue(obj, exc_ports, etype);
+		os_log(OS_LOG_DEFAULT, "Lightweight corpse enqueued for %s\n", procname);
+		/* obj ref and exc_ports send rights consumed */
+		lw_corpse_enqueued = true;
+
+out:
+		if (!lw_corpse_enqueued) {
+			for (unsigned int i = 0; i < BT_EXC_PORTS_COUNT; i++) {
+				ipc_port_release_send(exc_ports[i]);
+			}
+		}
+	} else {
+		task_t corpse = TASK_NULL;
+		thread_t thread = THREAD_NULL;
+
+		thread_set_exec_promotion(current_thread());
+		/* Generate a corpse for the given task, will return with a ref on corpse task */
+		kr = task_generate_corpse_internal(task, &corpse, &thread, etype,
+		    code[0], code[1], reason);
+		thread_clear_exec_promotion(current_thread());
+		if (kr == KERN_SUCCESS) {
+			if (thread == THREAD_NULL) {
+				return KERN_FAILURE;
+			}
+			assert(corpse != TASK_NULL);
+			assert(etype == EXC_RESOURCE || etype == EXC_GUARD);
+			thread_exception_enqueue(corpse, thread, etype);
+			os_log(OS_LOG_DEFAULT, "Full corpse enqueued for %s\n", procname);
+		}
 	}
+
 	return kr;
 }
 
@@ -548,18 +673,30 @@ task_generate_corpse_internal(
 	struct proc *p = NULL;
 	int is_64bit_addr;
 	int is_64bit_data;
-	int t_flags;
+	uint32_t t_flags;
+	uint32_t t_flags_ro;
 	uint64_t *udata_buffer = NULL;
 	int size = 0;
 	int num_udata = 0;
 	corpse_flags_t kc_u_flags = CORPSE_CRASHINFO_HAS_REF;
+	void *corpse_proc = NULL;
+	thread_t self = current_thread();
+	int pid = task_pid(task);
+	const char *proc_name;
 
 #if CONFIG_MACF
 	struct label *label = NULL;
 #endif
 
 	if (!corpses_enabled()) {
+		ktriage_record(thread_tid(self), KDBG_TRIAGE_EVENTID(KDBG_TRIAGE_SUBSYS_CORPSE, KDBG_TRIAGE_RESERVED, KDBG_TRIAGE_CORPSES_DISABLED), 0 /* arg */);
 		return KERN_NOT_SUPPORTED;
+	}
+
+	if (task_corpse_forking_disabled(task)) {
+		os_log(OS_LOG_DEFAULT, "corpse for pid %d disabled via SPI\n", pid);
+		ktriage_record(thread_tid(self), KDBG_TRIAGE_EVENTID(KDBG_TRIAGE_SUBSYS_CORPSE, KDBG_TRIAGE_RESERVED, KDBG_TRIAGE_CORPSE_DISABLED_FOR_PROC), 0 /* arg */);
+		return KERN_FAILURE;
 	}
 
 	if (etype == EXC_GUARD && EXC_GUARD_DECODE_GUARD_TYPE(code) == GUARD_TYPE_USER) {
@@ -572,43 +709,64 @@ task_generate_corpse_internal(
 	}
 
 	/* Having a task reference does not guarantee a proc reference */
-	p = proc_find(task_pid(task));
+	p = proc_find(pid);
 	if (p == NULL) {
+		os_log(OS_LOG_DEFAULT, "Failed to generate corpse: proc_find returned \
+			NULL for task pid %d\n", pid);
 		kr = KERN_INVALID_TASK;
 		goto error_task_generate_corpse;
 	}
+	proc_name = proc_best_name(p);
+
 
 	is_64bit_addr = IS_64BIT_PROCESS(p);
 	is_64bit_data = (task == TASK_NULL) ? is_64bit_addr : task_get_64bit_data(task);
 	t_flags = TF_CORPSE_FORK |
 	    TF_PENDING_CORPSE |
-	    TF_CORPSE |
 	    (is_64bit_addr ? TF_64B_ADDR : TF_NONE) |
 	    (is_64bit_data ? TF_64B_DATA : TF_NONE);
+	t_flags_ro = TFRO_CORPSE;
 
 #if CONFIG_MACF
 	/* Create the corpse label credentials from the process. */
 	label = mac_exc_create_label_for_proc(p);
 #endif
 
+	corpse_proc = zalloc_flags(proc_task_zone, Z_WAITOK | Z_ZERO);
+	new_task = proc_get_task_raw(corpse_proc);
+
 	/* Create a task for corpse */
 	kr = task_create_internal(task,
+	    NULL,
 	    NULL,
 	    TRUE,
 	    is_64bit_addr,
 	    is_64bit_data,
 	    t_flags,
+	    t_flags_ro,
 	    TPF_NONE,
 	    TWF_NONE,
-	    &new_task);
+	    new_task);
 	if (kr != KERN_SUCCESS) {
+		os_log(OS_LOG_DEFAULT, "Failed to generate corpse for %s[%d]: \
+			task_create_internal returned %#x\n", proc_name, pid, kr);
+		new_task = TASK_NULL;
 		goto error_task_generate_corpse;
 	}
 
+	/* Enable IPC access to the corpse task */
+	vm_map_setup(get_task_map(new_task), new_task);
+	ipc_task_enable(new_task);
+
+	/* new task is now referenced, do not free the struct in error case */
+	corpse_proc = NULL;
+
 	/* Create and copy threads from task, returns a ref to thread */
 	kr = task_duplicate_map_and_threads(task, p, new_task, &thread,
-	    &udata_buffer, &size, &num_udata);
+	    &udata_buffer, &size, &num_udata, (etype != 0));
 	if (kr != KERN_SUCCESS) {
+		os_log(OS_LOG_DEFAULT, "Failed to generate corpse for %s[%d]: \
+			task_duplicate_map_and_threads returned %#x\n", proc_name, pid, kr);
 		goto error_task_generate_corpse;
 	}
 
@@ -618,6 +776,8 @@ task_generate_corpse_internal(
 #endif
 	    TRUE);
 	if (kr != KERN_SUCCESS) {
+		os_log(OS_LOG_DEFAULT, "Failed to generate corpse for %s[%d]: \
+			task_collect_crash_info returned %#x\n", proc_name, pid, kr);
 		goto error_task_generate_corpse;
 	}
 
@@ -628,6 +788,8 @@ task_generate_corpse_internal(
 
 	kr = task_start_halt(new_task);
 	if (kr != KERN_SUCCESS) {
+		os_log(OS_LOG_DEFAULT, "Failed to generate corpse for %s[%d]: \
+			task_start_halt returned %#x\n", proc_name, pid, kr);
 		goto error_task_generate_corpse;
 	}
 
@@ -636,7 +798,7 @@ task_generate_corpse_internal(
 
 	/* Populate the corpse blob, use the proc struct of task instead of corpse task */
 	gather_populate_corpse_crashinfo(p, new_task,
-	    code, subcode, udata_buffer, num_udata, reason);
+	    code, subcode, udata_buffer, num_udata, reason, etype);
 
 	/* Add it to global corpse task list */
 	task_add_to_corpse_task_list(new_task);
@@ -656,6 +818,10 @@ error_task_generate_corpse:
 		proc_rele(p);
 	}
 
+	if (corpse_proc != NULL) {
+		zfree(proc_task_zone, corpse_proc);
+	}
+
 	if (kr != KERN_SUCCESS) {
 		if (thread != THREAD_NULL) {
 			thread_deallocate(thread);
@@ -665,7 +831,7 @@ error_task_generate_corpse:
 			/* Terminate all the other threads in the task. */
 			queue_iterate(&new_task->threads, thread_next, thread_t, task_threads)
 			{
-				thread_terminate_internal(thread_next, TH_TERMINATE_OPTION_NONE);
+				thread_terminate_internal(thread_next);
 			}
 			/* wait for all the threads in the task to terminate */
 			task_wait_till_threads_terminate_locked(new_task);
@@ -680,11 +846,31 @@ error_task_generate_corpse:
 		}
 	}
 	/* Free the udata buffer allocated in task_duplicate_map_and_threads */
-	if (udata_buffer != NULL) {
-		kheap_free(KHEAP_DATA_BUFFERS, udata_buffer, size);
-	}
+	kfree_data(udata_buffer, size);
 
 	return kr;
+}
+
+static kern_return_t
+task_map_kcdata_64(
+	task_t task,
+	void *kcdata_addr,
+	mach_vm_address_t *uaddr,
+	mach_vm_size_t kcd_size,
+	vm_tag_t tag)
+{
+	kern_return_t kr;
+	mach_vm_offset_t udata_ptr;
+
+	kr = mach_vm_allocate_kernel(task->map, &udata_ptr, (size_t)kcd_size,
+	    VM_MAP_KERNEL_FLAGS_ANYWHERE(.vm_tag = tag));
+	if (kr != KERN_SUCCESS) {
+		return kr;
+	}
+	copyout(kcdata_addr, (user_addr_t)udata_ptr, (size_t)kcd_size);
+	*uaddr = udata_ptr;
+
+	return KERN_SUCCESS;
 }
 
 /*
@@ -724,7 +910,7 @@ task_map_corpse_info(
  * params: task - Map the corpse info in task's address space
  *         corpse_task - task port of the corpse
  *         kcd_addr_begin - address of the mapped corpse info (takes mach_vm_addess_t *)
- *         kcd_addr_begin - size of the mapped corpse info (takes mach_vm_size_t *)
+ *         kcd_size - size of the mapped corpse info (takes mach_vm_size_t *)
  * returns: KERN_SUCCESS on Success.
  *          KERN_FAILURE on Failure.
  *          KERN_INVALID_ARGUMENT on invalid arguments.
@@ -741,25 +927,68 @@ task_map_corpse_info_64(
 	const mach_vm_size_t size = CORPSEINFO_ALLOCATION_SIZE;
 	void *corpse_info_kernel = NULL;
 
-	if (task == TASK_NULL || task_is_a_corpse_fork(task)) {
+	if (task == TASK_NULL || task_is_a_corpse(task) ||
+	    corpse_task == TASK_NULL || !task_is_a_corpse(corpse_task)) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
-	if (corpse_task == TASK_NULL || !task_is_a_corpse(corpse_task) ||
-	    kcdata_memory_get_begin_addr(corpse_task->corpse_info) == NULL) {
-		return KERN_INVALID_ARGUMENT;
-	}
 	corpse_info_kernel = kcdata_memory_get_begin_addr(corpse_task->corpse_info);
-	kr = mach_vm_allocate_kernel(task->map, &crash_data_ptr, size,
-	    VM_FLAGS_ANYWHERE, VM_MEMORY_CORPSEINFO);
-	if (kr != KERN_SUCCESS) {
-		return kr;
+	if (corpse_info_kernel == NULL) {
+		return KERN_INVALID_ARGUMENT;
 	}
-	copyout(corpse_info_kernel, (user_addr_t)crash_data_ptr, (size_t)size);
-	*kcd_addr_begin = crash_data_ptr;
-	*kcd_size = size;
 
-	return KERN_SUCCESS;
+	kr = task_map_kcdata_64(task, corpse_info_kernel, &crash_data_ptr, size,
+	    VM_MEMORY_CORPSEINFO);
+
+	if (kr == KERN_SUCCESS) {
+		*kcd_addr_begin = crash_data_ptr;
+		*kcd_size = size;
+	}
+
+	return kr;
+}
+
+/*
+ * Routine: task_map_kcdata_object_64
+ * params: task - Map the underlying kcdata in task's address space
+ *         kcdata_obj - Object representing the data
+ *         kcd_addr_begin - Address of the mapped kcdata
+ *         kcd_size - Size of the mapped kcdata
+ * returns: KERN_SUCCESS on Success.
+ *          KERN_FAILURE on Failure.
+ *          KERN_INVALID_ARGUMENT on invalid arguments.
+ */
+kern_return_t
+task_map_kcdata_object_64(
+	task_t task,
+	kcdata_object_t kcdata_obj,
+	mach_vm_address_t *kcd_addr_begin,
+	mach_vm_size_t *kcd_size)
+{
+	kern_return_t kr;
+	mach_vm_offset_t bt_data_ptr = 0;
+	const mach_vm_size_t size = BTINFO_ALLOCATION_SIZE;
+	void *bt_info_kernel = NULL;
+
+	if (task == TASK_NULL || task_is_a_corpse(task) ||
+	    kcdata_obj == KCDATA_OBJECT_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	bt_info_kernel = kcdata_memory_get_begin_addr(kcdata_obj->ko_data);
+	if (bt_info_kernel == NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	kr = task_map_kcdata_64(task, bt_info_kernel, &bt_data_ptr, size,
+	    VM_MEMORY_BTINFO);
+
+	if (kr == KERN_SUCCESS) {
+		*kcd_addr_begin = bt_data_ptr;
+		*kcd_size = size;
+	}
+
+	return kr;
 }
 
 uint64_t

@@ -39,6 +39,13 @@
 #ifndef _MACH_INTERFACE_H_
 #define _MACH_INTERFACE_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* The generated client headers below use types declared by mach_types.h
+ * before they include their own generated type headers. */
+#include <mach/mach_types.h>
 #include <mach/clock_priv.h>
 #include <mach/host_priv.h>
 #include <mach/host_security.h>
@@ -49,5 +56,9 @@
 #include <mach/task.h>
 #include <mach/thread_act.h>
 #include <mach/vm_map.h>
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _MACH_INTERFACE_H_ */

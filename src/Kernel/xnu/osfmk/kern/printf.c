@@ -160,7 +160,6 @@
 #include <kern/cpu_number.h>
 #include <kern/thread.h>
 #include <kern/debug.h>
-#include <kern/startup.h>
 #include <kern/sched_prim.h>
 #include <kern/misc_protos.h>
 #include <stdarg.h>
@@ -176,7 +175,7 @@
 #include <i386/cpu_data.h>
 #endif /* __x86_64__ */
 
-#if __arm__ || __arm64__
+#if __arm64__
 #include <arm/cpu_data_internal.h>
 #endif
 
@@ -184,6 +183,10 @@
 #include <mach/vm_param.h>
 #include <ptrauth.h>
 #endif /* HAS_APPLE_PAC */
+
+#if CONFIG_SPTM
+#include <sptm/sptm_xnu.h>
+#endif /* CONFIG_SPTM */
 
 #define isdigit(d) ((d) >= '0' && (d) <= '9')
 #define Ctod(c) ((c) - '0')
@@ -367,6 +370,16 @@ __doprnt(
 		if (c == 'z' || c == 'Z') {
 			c = *++fmt;
 			if (sizeof(size_t) == sizeof(unsigned long long)) {
+				long_long = 1;
+			}
+		} else if (c == 't') {
+			c = *++fmt;
+			if (sizeof(ptrdiff_t) == sizeof(unsigned long long)) {
+				long_long = 1;
+			}
+		} else if (c == 'j') {
+			c = *++fmt;
+			if (sizeof(intmax_t) == sizeof(unsigned long long)) {
 				long_long = 1;
 			}
 		}
@@ -638,16 +651,16 @@ print_num:
 					const char str[] = "<ptr>";
 					const char* strp = str;
 					int strl = sizeof(str) - 1;
-
+					unsigned long long u_stripped = u;
 #ifdef HAS_APPLE_PAC
 					/**
 					 * Strip out the pointer authentication code before
 					 * checking whether the pointer is a kernel address.
 					 */
-					u = (unsigned long long)VM_KERNEL_STRIP_PTR(u);
+					u_stripped = (unsigned long long)VM_KERNEL_STRIP_PTR(u);
 #endif /* HAS_APPLE_PAC */
 
-					if (u >= VM_MIN_KERNEL_AND_KEXT_ADDRESS && u <= VM_MAX_KERNEL_ADDRESS) {
+					if (u_stripped >= VM_MIN_KERNEL_AND_KEXT_ADDRESS && u_stripped <= VM_MAX_KERNEL_ADDRESS) {
 						while (*strp != '\0') {
 							(*putc)(*strp, arg);
 							strp++;
@@ -777,7 +790,13 @@ _doprnt_log(
 boolean_t       new_printf_cpu_number = FALSE;
 #endif  /* MP_PRINTF */
 
-SIMPLE_LOCK_DECLARE(bsd_log_spinlock, 0);
+LCK_GRP_DECLARE(log_lock_grp, "log_group");
+
+#if defined(__x86_64__)
+SIMPLE_LOCK_DECLARE(log_lock, 0);
+#else
+LCK_TICKET_DECLARE(log_lock, &log_lock_grp);
+#endif /* __x86_64__ */
 
 bool bsd_log_lock(bool);
 void bsd_log_lock_safe(void);
@@ -801,9 +820,17 @@ bsd_log_lock(bool safe)
 {
 	if (!safe) {
 		assert(!oslog_is_safe());
-		return simple_lock_try(&bsd_log_spinlock, LCK_GRP_NULL);
+#if defined(__x86_64__)
+		return simple_lock_try(&log_lock, &log_lock_grp);
+#else
+		return lck_ticket_lock_try(&log_lock, &log_lock_grp);
+#endif /* __x86_64__ */
 	}
-	simple_lock(&bsd_log_spinlock, LCK_GRP_NULL);
+#if defined(__x86_64__)
+	simple_lock(&log_lock, &log_lock_grp);
+#else
+	lck_ticket_lock(&log_lock, &log_lock_grp);
+#endif /* __x86_64__ */
 	return true;
 }
 
@@ -820,68 +847,19 @@ bsd_log_lock_safe(void)
 void
 bsd_log_unlock(void)
 {
-	simple_unlock(&bsd_log_spinlock);
+#if defined(__x86_64__)
+	simple_unlock(&log_lock);
+#else
+	lck_ticket_unlock(&log_lock);
+#endif /* __x86_64__ */
 }
 
-/* derived from boot_gets */
 void
-safe_gets(
-	char    *str,
-	int     maxlen)
+conslog_putc(char c)
 {
-	char *lp;
-	char c;
-	char *strmax = str + maxlen - 1; /* allow space for trailing 0 */
+	console_write_char(c);
 
-	lp = str;
-	for (;;) {
-		c = (char)cngetc();
-		switch (c) {
-		case '\n':
-		case '\r':
-			printf("\n");
-			*lp++ = 0;
-			return;
-
-		case '\b':
-		case '#':
-		case '\177':
-			if (lp > str) {
-				printf("\b \b");
-				lp--;
-			}
-			continue;
-
-		case '@':
-		case 'u'&037:
-			lp = str;
-			printf("\n\r");
-			continue;
-
-		default:
-			if (c >= ' ' && c < '\177') {
-				if (lp < strmax) {
-					*lp++ = c;
-					printf("%c", c);
-				} else {
-					printf("%c", '\007'); /* beep */
-				}
-			}
-		}
-	}
-}
-
-extern int disableConsoleOutput;
-
-void
-conslog_putc(
-	char c)
-{
-	if (!disableConsoleOutput) {
-		cnputc(c);
-	}
-
-#ifdef  MACH_BSD
+#ifdef MACH_BSD
 	if (!kernel_debugger_entry_count) {
 		log_putc(c);
 	}
@@ -889,66 +867,32 @@ conslog_putc(
 }
 
 void
-cons_putc_locked(
-	char c)
+cons_putc_locked(char c)
 {
-	if (!disableConsoleOutput) {
-		cnputc(c);
-	}
+	console_write_char(c);
 }
 
+__printflike(1, 0)
 static int
 vprintf_internal(const char *fmt, va_list ap_in, void *caller)
 {
-	cpu_data_t * cpu_data_p;
 	if (fmt) {
 		struct console_printbuf_state info_data;
-#if defined(__arm64__) || defined(__aarch64__)
-		/*
-		 * Early in boot the current thread may not have per-CPU data assigned
-		 * yet; fall back to direct console output. thread->machine.CpuDatap is
-		 * arm64-specific (x86's machine_thread has no such member), so x86 keeps
-		 * using current_cpu_datap() as before.
-		 */
-		thread_t thread = current_thread_fast();
-		if (thread == THREAD_NULL || thread->machine.CpuDatap == NULL) {
-			va_list early_ap;
-			va_copy(early_ap, ap_in);
-			_doprnt_log(fmt, &early_ap, cons_putc_locked, 16);
-			va_end(early_ap);
-			return 0;
-		}
-		cpu_data_p = thread->machine.CpuDatap;
-#else
-		cpu_data_p = current_cpu_datap();
-#endif
 
 		va_list ap;
 		va_copy(ap, ap_in);
-		/*
-		 * for early boot printf()s console may not be setup,
-		 * fallback to good old cnputc
-		 */
-		if (cpu_data_p->cpu_console_buf != NULL) {
-			console_printbuf_state_init(&info_data, TRUE, TRUE);
-			__doprnt(fmt, ap, console_printbuf_putc, &info_data, 16, TRUE);
-			console_printbuf_clear(&info_data);
-		} else {
-			disable_preemption();
-			_doprnt_log(fmt, &ap, cons_putc_locked, 16);
-			enable_preemption();
-			/* OS log is not initialized until after the early CPU setup. */
-			va_end(ap);
-			return 0;
-		}
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat"
+		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, ap_in, caller);
+#pragma clang diagnostic pop
+
+		console_printbuf_state_init(&info_data, TRUE, TRUE);
+		__doprnt(fmt, ap, console_printbuf_putc, &info_data, 16, TRUE);
+		console_printbuf_clear(&info_data);
 
 		va_end(ap);
-
-		if (startup_phase < STARTUP_SUB_OSLOG) {
-			return 0;
-		}
-
-		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, ap_in, caller);
 	}
 	return 0;
 }
@@ -974,32 +918,40 @@ vprintf(const char *fmt, va_list ap)
 	return vprintf_internal(fmt, ap, __builtin_return_address(0));
 }
 
+#if !CONFIG_SPTM
+#define sptm_serial_putc(c)
+#endif
+
 void
 consdebug_putc(char c)
 {
-	if (!disableConsoleOutput) {
-		cnputc(c);
-	}
+	console_write_char(c);
 
 	debug_putc(c);
 
-	/* No separate PE_kputc() serial re-emit: cnputc() above already reaches
-	 * the serial port (via the serial cons_ops early, or vcputc()'s serial
-	 * mirror once the video console is active), so re-emitting here would
-	 * double every panic character on both screen and serial. */
+	/* Ignore `disable_serial_output` for early panic serial output from `sptm_serial_putc()`. */
+	if (!console_is_serial() && !disable_serial_output && (PE_kputc != NULL)) {
+		PE_kputc(c);
+	} else if (!console_is_serial() && (PE_kputc == NULL)) {
+		/* Use SPTM's serial interface for early serial output. */
+		sptm_serial_putc(c);
+	}
 }
 
 void
 consdebug_putc_unbuffered(char c)
 {
-	if (!disableConsoleOutput) {
-		cnputc_unbuffered(c);
-	}
+	console_write_unbuffered(c);
 
 	debug_putc(c);
 
-	/* See consdebug_putc(): cnputc_unbuffered() already reaches serial via
-	 * vcputc(), so no separate PE_kputc() re-emit (it would double). */
+	/* Ignore `disable_serial_output` for early panic serial output from `sptm_serial_putc()`. */
+	if (!console_is_serial() && !disable_serial_output && (PE_kputc != NULL)) {
+		PE_kputc(c);
+	} else if (!console_is_serial() && (PE_kputc == NULL)) {
+		/* Use SPTM's serial interface for early serial output. */
+		sptm_serial_putc(c);
+	}
 }
 
 void
@@ -1035,7 +987,7 @@ kdb_printf(const char *fmt, ...)
 	_doprnt_log(fmt, &listp, consdebug_putc, 16);
 	va_end(listp);
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 	paniclog_flush();
 #endif
 
@@ -1051,7 +1003,7 @@ kdb_log(const char *fmt, ...)
 	_doprnt(fmt, &listp, consdebug_log, 16);
 	va_end(listp);
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 	paniclog_flush();
 #endif
 
@@ -1067,7 +1019,7 @@ kdb_printf_unbuffered(const char *fmt, ...)
 	_doprnt(fmt, &listp, consdebug_putc_unbuffered, 16);
 	va_end(listp);
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 	paniclog_flush();
 #endif
 

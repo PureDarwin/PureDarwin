@@ -54,6 +54,8 @@
 #include <kdp/kdp_serial.h>
 #endif
 
+#include <kdp/sk_core.h>
+
 #include <vm/vm_map.h>
 #include <vm/vm_protos.h>
 #include <vm/vm_kern.h> /* kernel_map */
@@ -417,7 +419,7 @@ kdp_register_send_receive(
 {
 	unsigned int debug = debug_boot_arg;
 
-	if (!kernel_debugging_allowed()) {
+	if (kernel_debugging_restricted()) {
 		return;
 	}
 
@@ -500,7 +502,7 @@ kdp_unregister_send_receive(
 static void
 kdp_schedule_debugger_reentry(unsigned interval)
 {
-	uint64_t deadline;;
+	uint64_t deadline;
 
 	clock_interval_to_deadline(interval, 1000 * 1000, &deadline);
 	thread_call_enter_delayed(kdp_timer_call, deadline);
@@ -556,7 +558,7 @@ kdp_reply(
 
 	/* Packet size cannot be larger than the static space allocated for it. */
 	if (pkt.len > KDP_MAXPACKET) {
-		kdp_panic("kdp_send: packet too large (%d > %u)", pkt.len, KDP_MAXPACKET);
+		kdp_panic("kdp_send: packet too large (%u > %d)", pkt.len, KDP_MAXPACKET);
 	}
 
 	pkt.off -= (unsigned int)sizeof(struct kdp_udpiphdr);
@@ -589,7 +591,7 @@ kdp_reply(
 	ip->ip_hl = sizeof(struct kdp_ip) >> 2;
 	ip->ip_ttl = udp_ttl;
 	ip->ip_sum = 0;
-	ip->ip_sum = htons(~ip_sum((unsigned char *)ip, ip->ip_hl));
+	ip->ip_sum = htons((ushort_t)(~ip_sum((unsigned char *)ip, ip->ip_hl)));
 #if DO_ALIGN
 	bcopy((char *)ip, (char *)&pkt.data[pkt.off], sizeof(*ip));
 #endif
@@ -634,7 +636,7 @@ kdp_send(
 
 	/* Packet size cannot be larger than the static space allocated for it. */
 	if (pkt.len > KDP_MAXPACKET) {
-		kdp_panic("kdp_send: packet too large (%d > %u)", pkt.len, KDP_MAXPACKET);
+		kdp_panic("kdp_send: packet too large (%u > %d)", pkt.len, KDP_MAXPACKET);
 	}
 
 	pkt.off -= (unsigned int)sizeof(struct kdp_udpiphdr);
@@ -666,7 +668,7 @@ kdp_send(
 	ip->ip_hl = sizeof(struct kdp_ip) >> 2;
 	ip->ip_ttl = udp_ttl;
 	ip->ip_sum = 0;
-	ip->ip_sum = htons(~ip_sum((unsigned char *)ip, ip->ip_hl));
+	ip->ip_sum = htons((ushort_t)(~ip_sum((unsigned char *)ip, ip->ip_hl)));
 #if DO_ALIGN
 	bcopy((char *)ip, (char *)&pkt.data[pkt.off], sizeof(*ip));
 #endif
@@ -1227,13 +1229,13 @@ kdp_connection_wait(void)
 		    kdp_mac_addr.ether_addr_octet[4] & 0xff,
 		    kdp_mac_addr.ether_addr_octet[5] & 0xff);
 
-		printf("ip address: %d.%d.%d.%d\n",
+		printf("ip address: %u.%u.%u.%u\n",
 		    (ip_addr & 0xff000000) >> 24,
 		    (ip_addr & 0xff0000) >> 16,
 		    (ip_addr & 0xff00) >> 8,
 		    (ip_addr & 0xff));
 
-		kprintf("ip address: %d.%d.%d.%d\n",
+		kprintf("ip address: %u.%u.%u.%u\n",
 		    (ip_addr & 0xff000000) >> 24,
 		    (ip_addr & 0xff0000) >> 16,
 		    (ip_addr & 0xff00) >> 8,
@@ -1468,7 +1470,7 @@ again:
 
 	if (kdp_reentry_deadline) {
 		kdp_schedule_debugger_reentry(kdp_reentry_deadline);
-		printf("Debugger re-entry scheduled in %d milliseconds\n", kdp_reentry_deadline);
+		printf("Debugger re-entry scheduled in %u milliseconds\n", kdp_reentry_deadline);
 		kdp_reentry_deadline = 0;
 	}
 
@@ -1497,6 +1499,18 @@ kdp_reset(void)
 	kdp.session_key = 0;
 	pkt.input = manual_pkt.input = FALSE;
 	pkt.len = pkt.off = manual_pkt.len = 0;
+}
+
+static void
+kdp_setup_packet_size(void)
+{
+	/* Override default packet size from boot arguments (if present). */
+	kdp_crashdump_pkt_size = KDP_LARGE_CRASHDUMP_PKT_SIZE;
+	if (PE_parse_boot_argn("kdp_crashdump_pkt_size", &kdp_crashdump_pkt_size, sizeof(kdp_crashdump_pkt_size)) &&
+	    (kdp_crashdump_pkt_size > KDP_LARGE_CRASHDUMP_PKT_SIZE)) {
+		kdp_crashdump_pkt_size = KDP_LARGE_CRASHDUMP_PKT_SIZE;
+		printf("kdp_crashdump_pkt_size is too large. Reverting to %u\n", kdp_crashdump_pkt_size);
+	}
 }
 
 struct corehdr *
@@ -1544,7 +1558,7 @@ create_panic_header(unsigned int request, const char *corename,
 	ip->ip_hl = sizeof(struct kdp_ip) >> 2;
 	ip->ip_ttl = udp_ttl;
 	ip->ip_sum = 0;
-	ip->ip_sum = htons(~ip_sum((unsigned char *)ip, ip->ip_hl));
+	ip->ip_sum = htons((ushort_t)(~ip_sum((unsigned char *)ip, ip->ip_hl)));
 #if DO_ALIGN
 	bcopy((char *)ip, (char *)&pkt.data[pkt.off], sizeof(*ip));
 #endif
@@ -1563,7 +1577,7 @@ create_panic_header(unsigned int request, const char *corename,
 		    - sizeof(kdp_crashdump_feature_mask) - sizeof(kdp_crashdump_pkt_size));
 
 		/* account for the extra NULL characters that have been added historically */
-		int len = snprintf(cp, length_remaining, "%s%c%s%c%s", corename, '\0', mode, '\0', KDP_FEATURE_MASK_STRING);
+		int len = snprintf(cp, length_remaining, "%s%c%s%c%s%c", corename, '\0', mode, '\0', KDP_FEATURE_MASK_STRING, '\0');
 		if (len < 0) {
 			kdb_printf("Unable to create core header packet.\n");
 			return NULL;
@@ -1577,13 +1591,8 @@ create_panic_header(unsigned int request, const char *corename,
 		bcopy(&kdp_crashdump_feature_mask, cp, sizeof(kdp_crashdump_feature_mask));
 		cp += sizeof(kdp_crashdump_feature_mask);
 
-		/* Override default packet size from boot arguments (if present). */
-		kdp_crashdump_pkt_size = KDP_LARGE_CRASHDUMP_PKT_SIZE;
-		if (PE_parse_boot_argn("kdp_crashdump_pkt_size", &kdp_crashdump_pkt_size, sizeof(kdp_crashdump_pkt_size)) &&
-		    (kdp_crashdump_pkt_size > KDP_LARGE_CRASHDUMP_PKT_SIZE)) {
-			kdp_crashdump_pkt_size = KDP_LARGE_CRASHDUMP_PKT_SIZE;
-			kdb_printf("kdp_crashdump_pkt_size is too large. Reverting to %d\n", kdp_crashdump_pkt_size);
-		}
+		// Make sure we advertise the maximum supported packet size
+		kdp_setup_packet_size();
 
 		uint32_t pktsz = htonl(kdp_crashdump_pkt_size);
 		bcopy(&pktsz, cp, sizeof(uint32_t));
@@ -1755,7 +1764,7 @@ RECEIVE_RETRY:
 		if (ntohs(th->th_opcode) == KDP_ACK && ntohl(th->th_block) == panic_block) {
 		} else {
 			if (ntohs(th->th_opcode) == KDP_ERROR) {
-				printf("Panic server returned error %d, retrying\n", ntohl(th->th_code));
+				printf("Panic server returned error %u, retrying\n", ntohl(th->th_code));
 				poll_count = 1000;
 				goto TRANSMIT_RETRY;
 			} else if (ntohl(th->th_block) == (panic_block - 1)) {
@@ -1795,7 +1804,7 @@ RECEIVE_RETRY:
 	}
 
 	if (request == KDP_EOF) {
-		printf("\nTotal number of packets transmitted: %d\n", panic_block);
+		printf("\nTotal number of packets transmitted: %u\n", panic_block);
 		printf("Avg. superblock transfer abstime 0x%llx\n", ((mach_absolute_time() - kdp_dump_start_time) / panic_block) * SBLOCKSZ);
 		printf("Minimum superblock transfer abstime: 0x%llx\n", kdp_min_superblock_dump_time);
 		printf("Maximum superblock transfer abstime: 0x%llx\n", kdp_max_superblock_dump_time);
@@ -1878,7 +1887,7 @@ kdp_set_dump_info(const uint32_t flags, const char *filename,
 	if (port && port <= USHRT_MAX) {
 		panicd_port = (unsigned short)port;
 	} else {
-		kdb_printf("kdp_set_dump_info: Skipping invalid panicd port %d (using %d)\n", port, panicd_port);
+		kdb_printf("kdp_set_dump_info: Skipping invalid panicd port %u (using %d)\n", port, panicd_port);
 	}
 
 	/* on a disconnect, should we stay in KDP or not? */
@@ -2018,7 +2027,7 @@ kdp_panic_dump(void)
 		pkt.data[20] = '\0';
 		snprintf(corename_str,
 		    sizeof(corename_str),
-		    "%s-%s-%d.%d.%d.%d-%x%s",
+		    "%s-%s-%u.%u.%u.%u-%x%s",
 		    coreprefix, &pkt.data[0],
 		    (current_ip & 0xff000000) >> 24,
 		    (current_ip & 0xff0000) >> 16,
@@ -2050,7 +2059,7 @@ kdp_panic_dump(void)
 				router_ip = parsed_router_ip;
 				if (kdp_arp_resolve(router_ip, &temp_mac)) {
 					destination_mac = temp_mac;
-					kdb_printf("Routing through specified router IP %s (%d)\n", router_ip_str, router_ip);
+					kdb_printf("Routing through specified router IP %s (%u)\n", router_ip_str, router_ip);
 				}
 			}
 		}
@@ -2231,7 +2240,7 @@ kdp_init(void)
 
 	debug_log_init();
 
-#if defined(__x86_64__) || defined(__arm__) || defined(__arm64__)
+#if defined(__x86_64__) || defined(__arm64__)
 	if (vm_kernel_slide) {
 		char    KASLR_stext[19];
 		strlcat(kdp_kernelversion_string, "; stext=", sizeof(kdp_kernelversion_string));
@@ -2249,7 +2258,13 @@ kdp_init(void)
 
 	kdp_timer_callout_init();
 	kdp_crashdump_feature_mask = htonl(kdp_crashdump_feature_mask);
+	// Figure out the initial packet size
+	kdp_setup_packet_size();
 	kdp_core_init();
+
+#if EXCLAVES_COREDUMP
+	sk_core_init();
+#endif /* EXCLAVES_COREDUMP */
 
 #if CONFIG_SERIAL_KDP
 	char kdpname[80];
@@ -2259,25 +2274,25 @@ kdp_init(void)
 	boolean_t kdp_match_name_found = PE_parse_boot_argn("kdp_match_name", kdpname, sizeof(kdpname));
 	boolean_t kdp_not_serial = kdp_match_name_found ? (strncmp(kdpname, "serial", sizeof(kdpname))) : TRUE;
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 	//respect any custom debugger boot-args
 	if (kdp_match_name_found && kdp_not_serial) {
 		return;
 	}
-#else /* defined(__arm__) || defined(__arm64__) */
+#else /* defined(__arm64__) */
 	// serial must be explicitly requested
 	if (!kdp_match_name_found || kdp_not_serial) {
 		return;
 	}
-#endif /* defined(__arm__) || defined(__arm64__) */
+#endif /* defined(__arm64__) */
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 	if (kdp_not_serial && PE_consistent_debug_enabled() && debug_boot_arg) {
 		return;
 	} else {
 		printf("Serial requested, consistent debug disabled or debug boot arg not present, configuring debugging over serial\n");
 	}
-#endif /* defined(__arm__) || defined(__arm64__) */
+#endif /* defined(__arm64__) */
 
 	kprintf("Initializing serial KDP\n");
 
@@ -2396,8 +2411,8 @@ kdp_raise_exception(
 	)
 #endif
 {
-#if defined(__arm__) || defined(__arm64__)
-	assert(kernel_debugging_allowed());
+#if defined(__arm64__)
+	assert(!kernel_debugging_restricted());
 #endif
 
 #if CONFIG_KDP_INTERACTIVE_DEBUGGING

@@ -108,6 +108,11 @@ EOF
     mkdir -p "$out/usr/include"
     install -m644 include/iconv.h.inst "$out/usr/include/iconv.h"
 
+    # Everything else here installs into $out/{include,lib}, and consumers map
+    # dependencies as -I$dep/include -L$dep/lib without special-casing.
+    ln -s usr/include "$out/include"
+    ln -s usr/lib "$out/lib"
+
     runHook postInstall
   '';
 

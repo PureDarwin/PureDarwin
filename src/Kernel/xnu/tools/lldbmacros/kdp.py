@@ -29,7 +29,7 @@ def KDPDumpInfo(subcmd, file_name="", dest_ip="", router_ip="", port=0):
     """ Setup the state for DUMP INFO commands for sending coredump etc
     """
     if "kdp" != GetConnectionProtocol():
-        print "Target is not connected over kdp. Nothing to do here."
+        print("Target is not connected over kdp. Nothing to do here.")
         return False
     input_address = unsigned(addressof(kern.globals.manual_pkt.input))
     len_address = unsigned(addressof(kern.globals.manual_pkt.len))
@@ -80,19 +80,19 @@ def KDPSendCore(cmd_args=None):
     optionally specify the filename to be used for the generated core file.
 
     """
-    if cmd_args == None or len(cmd_args) < 1:
-        print KDPSendCore.__doc__
-        return False
+    if cmd_args is None or len(cmd_args) == 0:
+        raise ArgumentError()
+
     ip_address = cmd_args[0]
     filename=""
     if len(cmd_args) >=2:
         filename = cmd_args[1].strip()
     retval = KDPDumpInfo(GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_CORE'), file_name=filename, dest_ip=ip_address)
     if retval:
-        print "Remote system has been setup for coredump. Please detach/continue the system. "
+        print("Remote system has been setup for coredump. Please detach/continue the system. ")
         return True
     else:
-        print "Something went wrong. Failed to setup the coredump on the target."
+        print("Something went wrong. Failed to setup the coredump on the target.")
         return False
 
     
@@ -106,19 +106,19 @@ def KDPSendSyslog(cmd_args=None):
         will resume waiting in the debugger after completion. You can optionally
         specify the name to be used for the generated system log.
     """
-    if cmd_args == None or len(cmd_args) < 1:
-        print KDPSendSyslog.__doc__
-        return False
+    if cmd_args is None or len(cmd_args) == 0:
+        raise ArgumentError()
+
     ip_address = cmd_args[0]
     filename =""
     if len(cmd_args) >=2:
         filename = cmd_args[1].strip()
     retval = KDPDumpInfo(GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_SYSTEMLOG'), file_name = filename, dest_ip = ip_address)
     if retval:
-        print "Remote system has been setup to send system log. please detach/continue the system."
+        print("Remote system has been setup to send system log. please detach/continue the system.")
         return True
     else:
-        print "Something went wrong. Failed to setup the systemlog on the target."
+        print("Something went wrong. Failed to setup the systemlog on the target.")
         return False
 
 @lldb_command('sendpaniclog')
@@ -131,19 +131,19 @@ def KDPSendPaniclog(cmd_args=None):
         will resume waiting in the debugger after completion. You can optionally
         specify the name to be used for the generated panic log.
     """
-    if cmd_args == None or len(cmd_args) < 1:
-        print KDPSendPaniclog.__doc__
-        return False
+    if cmd_args is None or len(cmd_args) == 0:
+        raise ArgumentError()
+
     ip_address = cmd_args[0]
     filename =""
     if len(cmd_args) >=2:
         filename = cmd_args[1].strip()
     retval = KDPDumpInfo(GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_PANICLOG'), file_name = filename, dest_ip = ip_address)
     if retval:
-        print "Remote system has been setup to send panic log. please detach/continue the system."
+        print("Remote system has been setup to send panic log. please detach/continue the system.")
         return True
     else:
-        print "Something went wrong. Failed to setup the paniclog on the target."
+        print("Something went wrong. Failed to setup the paniclog on the target.")
         return False
 
 
@@ -157,9 +157,9 @@ def KDPDisableCore(cmd_args=None):
     """
     retval = KDPDumpInfo(GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_DISABLE'))
     if retval :
-        print "Disabled coredump functionality on remote system."
+        print("Disabled coredump functionality on remote system.")
     else:
-        print "Failed to disable coredump functionality."
+        print("Failed to disable coredump functionality.")
     return retval
 
 @lldb_command('resume_on')
@@ -170,9 +170,9 @@ def KDPResumeON(cmd_args=None):
     subcmd = GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_SETINFO') | GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_RESUME') 
     retval = KDPDumpInfo(subcmd)
     if retval :
-        print "Target system will resume on detaching from lldb."
+        print("Target system will resume on detaching from lldb.")
     else:
-        print "Failed to enable resume functionality."
+        print("Failed to enable resume functionality.")
     return retval
 
 @lldb_command('resume_off')
@@ -182,9 +182,9 @@ def KDPResumeOFF(cmd_args=None):
     subcmd = GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_SETINFO') | GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_NORESUME') 
     retval = KDPDumpInfo(subcmd)
     if retval :
-        print "Target system will not resume on detaching from lldb."
+        print("Target system will not resume on detaching from lldb.")
     else:
-        print "Failed to disable resume functionality."
+        print("Failed to disable resume functionality.")
     return retval
 
 
@@ -194,21 +194,21 @@ def KDPGetDumpInfo(cmd_args=None):
     """ Retrieve the current remote dump settings.
     """
     if not KDPDumpInfo(GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_GETINFO')):
-        print "Failed to get dump settings."
+        print("Failed to get dump settings.")
         return False
     dumpinfo = Cast(addressof(kern.globals.manual_pkt.data), 'kdp_dumpinfo_reply_t *')
     target_dump_type = int(dumpinfo.type)
     if target_dump_type & GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_REBOOT'):
-        print "System will reboot after kernel info gets dumped."
+        print("System will reboot after kernel info gets dumped.")
     else:
-        print "System will not reboot after kernel info gets dumped."
+        print("System will not reboot after kernel info gets dumped.")
     if target_dump_type & GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_RESUME'):
-        print "System will allow a re-attach after KDP disconnect."
+        print("System will allow a re-attach after KDP disconnect.")
     else:
-        print "System will not allow a re-attach after KDP disconnect."
+        print("System will not allow a re-attach after KDP disconnect.")
     target_dump_type = target_dump_type & GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_MASK')
     if target_dump_type == GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_DISABLE'):
-        print "Kernel not setup for remote dumps."
+        print("Kernel not setup for remote dumps.")
     else:
         kern_dump_type = ''
         if target_dump_type == GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_CORE'):
@@ -217,12 +217,12 @@ def KDPGetDumpInfo(cmd_args=None):
             kern_dump_type = "Panic Log"
         elif target_dump_type == GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_SYSTEMLOG'):
             kern_dump_type = "System Log"
-        print "Kernel dump type:" + kern_dump_type
+        print("Kernel dump type:" + kern_dump_type)
         fname = "(autogenerated)"
         if int(dumpinfo.name[0]) != 0:
             fname = str(dumpinfo.name)
-        print "Filename: " + fname
-        print "Network Info: {:s} [{:d}] , Router: {:s}".format(dumpinfo.destip, dumpinfo.port, dumpinfo.routerip)
+        print("Filename: " + fname)
+        print("Network Info: {:s} [{:d}] , Router: {:s}".format(dumpinfo.destip, dumpinfo.port, dumpinfo.routerip))
     # end of get dump info
 
 
@@ -233,12 +233,10 @@ def KDPReenter(cmd_args=None):
         usage: kdp-reenter <seconds>
     """
     if len(cmd_args) < 1:
-        print "Please provide valid time in seconds"
-        print KDPReenter.__doc__
-        return False
+        raise ArgumentError("Please provide valid time in seconds")
 
     if "kdp" != GetConnectionProtocol():
-        print "Target is not connected over kdp. Nothing to do here."
+        print("Target is not connected over kdp. Nothing to do here.")
         return False
 
     num_seconds = ArgumentStringToInt(cmd_args[0])
@@ -246,7 +244,7 @@ def KDPReenter(cmd_args=None):
     if WriteInt32ToMemoryAddress(milliseconds_to_sleep, addressof(kern.globals.kdp_reentry_deadline)):
         lldb.debugger.HandleCommand('process continue')
         return True
-    print "Failed to setup kdp-reentry."
+    print("Failed to setup kdp-reentry.")
     return False
 
 @lldb_command('kdp-reboot')
@@ -254,10 +252,10 @@ def KDPReboot(cmd_args=None):
     """ Restart the remote target
     """
     if "kdp" != GetConnectionProtocol():
-        print "Target is not connected over kdp. Nothing to do here."
+        print("Target is not connected over kdp. Nothing to do here.")
         return False
 
-    print "Rebooting the remote machine."
+    print("Rebooting the remote machine.")
     lldb.debugger.HandleCommand('process plugin packet send --command 0x13')
     lldb.debugger.HandleCommand('detach')
     return True
@@ -270,19 +268,18 @@ def KDPSetDumpInfo(cmd_args=None):
         use the previously configured/default setting for that.
         Syntax: setdumpinfo <filename> <ip> <router> <port>
     """
-    if not cmd_args:
-        print KDPSetDumpInfo.__doc__
-        return False
+    if cmd_args is None or len(cmd_args) == 0:
+        raise ArgumentError()
+
     if len(cmd_args) < 4:
-        print "Not enough arguments."
-        print KDPSetDumpInfo.__doc__
-        return False
+        raise ArgumentError("Not enough arguments.")
+
     portnum = ArgumentStringToInt(cmd_args[3])
     retval = KDPDumpInfo(GetEnumValue('kdp_dumpinfo_t::KDP_DUMPINFO_SETINFO'), cmd_args[0], cmd_args[1], cmd_args[2], portnum)
     if retval:
-        print "Successfully saved the dumpinfo."
+        print("Successfully saved the dumpinfo.")
     else:
-        print "Failed to save the dumpinfo."
+        print("Failed to save the dumpinfo.")
     return retval
 
 @lldb_command('kdpmode')
@@ -300,10 +297,10 @@ def KDPMode(cmd_args=None):
     """
     global current_KDP_mode
 
-    if cmd_args == None or len(cmd_args) == 0:
+    if cmd_args is None or len(cmd_args) == 0:
         return current_KDP_mode
     if len(cmd_args) > 1 or cmd_args[0] not in {'swhosted', 'hwprobe'}:
-        print "Invalid Arguments", KDPMode.__doc__
+        raise ArgumentError()
     else:
         current_KDP_mode = cmd_args[0]
     return

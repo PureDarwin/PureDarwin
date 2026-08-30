@@ -16,7 +16,7 @@
 .\"
 .\"     @(#)getattrlist.2
 .
-.Dd February 11, 2020
+.Dd March 7, 2025
 .Dt GETATTRLIST 2
 .Os Darwin
 .Sh NAME
@@ -163,9 +163,6 @@ See below for a description of these attributes.
 A bit set that specifies the volume attributes that you require.
 Volume attributes relate to volumes (that is, mounted file systems).
 See below for a description of these attributes.
-If you request volume attributes,
-.Fa path
-must reference the root of a volume.
 You must set ATTR_VOL_INFO in the volattr field if you request any 
 other volume attributes.
 In addition, you can't request volume attributes if you also request
@@ -218,7 +215,7 @@ parameter is a bit set that controls the behaviour of
 the functions.
 The following option bits are defined.
 .
-.Bl -tag -width FSOPT_PACK_INVAL_ATTRS
+.Bl -tag -width FSOPT_ATTR_CMN_EXTENDED
 .
 .It FSOPT_NOFOLLOW
 If this bit is set,
@@ -226,6 +223,24 @@ If this bit is set,
 will not follow a symlink if it occurs as
 the last component of
 .Fa path .
+.
+.It FSOPT_NOFOLLOW_ANY
+If this bit is set,
+.Fn getattrlist
+will not follow a symlink if it occurs as
+the last component of
+.Fa path .
+In addition an error is returned if a symlink
+is encountered before the last component of
+.Fa path .
+.
+.It FSOPT_RESOLVE_BENEATH
+If this bit is set, path resolution must not escape the directory associated
+with the file descriptor.
+.
+.It FSOPT_UNIQUE
+If this bit is set, the path lookup will fail if the target file has multiple
+hard links.
 .
 .It FSOPT_REPORT_FULLSIZE
 The size of the attributes reported (in the first
@@ -356,7 +371,7 @@ is a pointer to the
 ) +
 .Fa attr_dataoffset
 +
-.Fa attr_datalength
+.Fa attr_length
 ) > ( ( (char *)
 .Fa attrBuf
 ) +
@@ -382,7 +397,7 @@ be the first attribute returned. By default, unsupported attributes
 will be skipped (i.e. not packed into the output buffer). This behavior
 can be over-ridden using the FSOPT_PACK_INVAL_ATTRS option flag. Both
 .Xr getattrlist 2 and
-.Xr getatttrlistbulk 2 support this attribute while
+.Xr getattrlistbulk 2 support this attribute while
 .Xr searchfs 2 does not.
 .
 .It ATTR_CMN_NAME
@@ -453,7 +468,7 @@ ATTR_CMN_OBJID of a file system object may appear similar (in whole
 or in part) to it's ATTR_CMN_FILEID (see description of ATTR_CMN_FILEID below), 
 \fBno relation between the two attributes should ever be implied.\fP
 .Pp
-ATTR_CMN_OBJID is deprecated sarting with macOS 10.13, iOS 11.0, watchOS 4.0 and
+ATTR_CMN_OBJID is deprecated starting with macOS 10.13, iOS 11.0, watchOS 4.0 and
 tvOS 11.0 and ATTR_CMNEXT_LINKID should be used in its place.
 ATTR_CMN_OBJID can only be used on older operating systems only if the file
 system doesn't 64 bit IDs. See the
@@ -676,7 +691,7 @@ structure, of which only the ACL entry is used.
 .It ATTR_CMN_UUID
 A
 .Vt guid_t
-of the owner of the file system object.  Analoguous to
+of the owner of the file system object.  Analogous to
 .Dv ATTR_CMN_OWNERID .
 .
 .It ATTR_CMN_GRPUUID
@@ -790,6 +805,13 @@ is to
 .Fa f_bfree
 in
 .Xr statfs 2 .
+.
+.It ATTR_VOL_SPACEUSED
+An
+.Vt off_t
+containing the total space used on the volume in bytes.
+On space sharing volumes, this value may not be identical to the difference
+between the volume's size and its free space.
 .
 .It ATTR_VOL_MINALLOCATION
 An
@@ -916,6 +938,17 @@ A
 containing the file system UUID.  Typically this will be a
 version 5 UUID.
 .
+.It ATTR_VOL_MOUNTEXTFLAGS
+A
+.Vt u_int32_t
+containing the volume extended mount flags.
+Equivalent to the
+.Fa f_flags_ext
+field of the
+.Vt statfs
+structure returned by
+.Xr statfs 2 .
+.
 .It ATTR_VOL_QUOTA_SIZE
 An
 .Vt off_t
@@ -931,6 +964,36 @@ A
 .Vt vol_attributes_attr_t
 structure describing the attributes supported by this volume.
 This structure is discussed below, along with volume capabilities.
+.
+.It ATTR_VOL_FSTYPENAME
+An
+.Vt attrreference
+structure containing the file system type name as a
+UTF-8 encoded, null terminated C string.
+The attribute data length will not be greater than
+.Dv MFSTYPENAMELEN .
+.
+.It ATTR_VOL_FSSUBTYPE
+A
+.Vt u_int32_t
+containing the file system sub-type.
+Equivalent to the
+.Fa f_fssubtype
+field of the
+.Vt statfs
+structure returned by
+.Xr statfs 2 .
+.
+.It ATTR_VOL_OWNER
+A
+.Vt uid_t
+containing the user that mounted the filesystem.
+Equivalent to the
+.Fa f_owner
+field of the
+.Vt statfs
+structure returned by
+.Xr statfs 2 .
 .
 .El
 .
@@ -1158,7 +1221,7 @@ in the forkattr field and can only be used if the FSOPT_ATTR_CMN_EXTENDED
 option is given. Use of these attributes is mutually exclusive with the above
 fork attributes.
 .
-.Bl -tag -width ATTR_VOL_ALLOCATIONCLUMP
+.Bl -tag -width ATTR_CMNEXT_RECURSIVE_GENCOUNT
 .
 .It ATTR_CMNEXT_RELPATH
 An
@@ -1183,7 +1246,8 @@ or snapshot, and which would be freed immediately if the file were deleted.
 A
 .Vt u_int64_t
 that uniquely identifies the file system object within a mounted volume for the
-duration of its mount.
+duration of its mount. This identifier is persistent on volumes that support the
+VOL_CAP_FMT_PERSISTENTOBJECTIDS capability, such as HFS+ and APFS.
 .Pp
 On HFS+ and APFS volumes, the ATTR_CMNEXT_LINKID of a file system
 object is distinct from the ATTR_CMNEXT_LINKID of any hard link to that file
@@ -1240,11 +1304,11 @@ A
 that contains additional flags with information about the file.  The
 flags are:
 .
-.Bl -tag -width EF_MAY_SHARE_BLOCKS
+.Bl -tag -width EF_SHARES_ALL_BLOCKS
 .
 .It EF_MAY_SHARE_BLOCKS
 If this bit is set then the file may share blocks with another file
-(i.e. it is a clone of another file).
+(i.e. it may be a clone of another file).
 .
 .It EF_NO_XATTRS
 If this bit is set then the file has no extended attributes.  Useful
@@ -1264,6 +1328,11 @@ If this bit is set the item has sparse regions.
 .It EF_IS_SYNTHETIC
 If this bit is set the item is a synthetic directory/symlink.
 .
+.It EF_SHARES_ALL_BLOCKS
+If this bit is set then the file shares all of its blocks with another
+file (i.e. it is a full clone of another file). For compatibility reasons,
+EF_SHARES_ALL_BLOCKS means EF_MAY_SHARE_BLOCKS as well.
+.
 .El
 .
 .It ATTR_CMNEXT_RECURSIVE_GENCOUNT
@@ -1274,6 +1343,18 @@ been marked as maintain-dir-stats in an apfs file system.  This
 gencount is updated any time any child is modified (as part of the
 contract that a maintain-dir-stats directory manages).  If the
 directory is not marked maintain-dir-stats, a zero is returned.
+.
+.It ATTR_CMNEXT_ATTRIBUTION_TAG
+An optional
+.Vt u_int64_t
+id that represents the bundle id (owner) associated with the file
+(zero means the file isn't attributed yet)
+.
+.It ATTR_CMNEXT_CLONE_REFCNT
+A
+.Vt u_int32_t
+that represents the number of full clones
+(each shares all of its blocks with this file).
 .
 .El
 .Pp
@@ -1511,6 +1592,9 @@ obtaining object IDs from this volume. The values returned by ATTR_CMN_OBJID,
 ATTR_CMN_OBJPERMANENTID, and ATTR_CMN_PAROBJID can be interpreted as 64-bit
 object IDs instead of fsobj_id_t.
 .
+.It VOL_CAP_FMT_DOCUMENT_ID
+If this bit is set, the volume format supports document IDs
+(an ID which persists across object ID changes) for document revisions.
 .It VOL_CAP_FMT_NO_IMMUTABLE_FILES
 If this bit is set, the volume format does not support setting the UF_IMMUTABLE
 flag.
@@ -1529,6 +1613,12 @@ identifier information.
 .It VOL_CAP_FMT_SEALED
 If this bit is set, the volume is cryptographically sealed and any modifications
 may render the volume unusable.
+.It VOL_CAP_FMT_CLONE_MAPPING
+If this bit is set, the volume format supports full clone tracking.
+See ATTR_CMNEXT_CLONE_REFCNT and ATTR_CMNEXT_CLONEID for more details.
+Other features like extended directory statistics, for fast directory sizing,
+and attribution tags may be supported as well.
+See VOL_CAP_INT_ATTRIBUTION_TAG for more details related to tagging.
 .
 .
 .El
@@ -1676,6 +1766,25 @@ See
 .Xr rename 2
 for more details.
 .
+.It VOL_CAP_INT_ATTRIBUTION_TAG
+If this bit is set, the file system supports establishing an owner relationship between
+a file (excluding small files) and a process on the first read/write/truncate/clone operation.
+See ATTR_CMNEXT_ATTRIBUTION_TAG for more details.
+.
+.It VOL_CAP_INT_PUNCHHOLE
+If this bit is set, the file system supports the
+.Dv F_PUNCHOLE operation.
+See
+.Xr fcntl 2
+for more details.
+.
+.It VOL_CAP_INT_BARRIERFSYNC
+If this bit is set, the file system supports the
+.Dv F_BARRIERFSYNC operation.
+See
+.Xr fcntl 2
+for more details.
+.
 .El
 .Pp
 .
@@ -1804,6 +1913,11 @@ Too many symbolic links were encountered in translating the pathname
 for
 .Fn getattrlist .
 .
+.It Bq Er ELOOP
+FSOPT_NOFOLLOW_ANY was passed and a symbolic link was encountered in
+translating the pathname for
+.Fn getattrlist .
+.
 .It Bq Er EFAULT
 .Fa path ,
 .Fa attrList
@@ -1866,6 +1980,14 @@ argument is not an absolute path and
 is neither
 .Dv AT_FDCWD
 nor a file descriptor associated with a directory.
+.It Bq Er ENOTCAPABLE
+if FSOPT_RESOLVE_BENEATH was passed and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory.
+.It Bq Er ENOTCAPABLE
+if FSOPT_UNIQUE was passed and
+.Fa path
+has multiple hard links.
 .El
 .Pp
 .

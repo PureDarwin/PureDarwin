@@ -70,7 +70,7 @@
 #include <ipc/ipc_space.h>
 #include <ipc/ipc_port.h>
 #include <ipc/ipc_pset.h>
-#include <vm/vm_map.h>
+#include <vm/vm_map_xnu.h>
 #include <i386/pmap.h>
 #include <i386/Diagnostics.h>
 #include <i386/mp_desc.h>
@@ -121,28 +121,6 @@ main(
 
 	/* Simple Lock structure */
 	DECLARE("SLOCK_ILK", offsetof(usimple_lock_data_t, interlock));
-#if     MACH_LDEBUG
-	DECLARE("SLOCK_TYPE", offsetof(usimple_lock_data_t, lock_type));
-	DECLARE("SLOCK_PC", offsetof(usimple_lock_data_t, debug.lock_pc));
-	DECLARE("SLOCK_THREAD", offsetof(usimple_lock_data_t, debug.lock_thread));
-	DECLARE("SLOCK_DURATIONH", offsetof(usimple_lock_data_t, debug.duration[0]));
-	DECLARE("SLOCK_DURATIONL", offsetof(usimple_lock_data_t, debug.duration[1]));
-	DECLARE("USLOCK_TAG", USLOCK_TAG);
-#endif  /* MACH_LDEBUG */
-
-	/* Mutex structure */
-	DECLARE("MUTEX_OWNER", offsetof(lck_mtx_t, lck_mtx_owner));
-	DECLARE("MUTEX_PTR", offsetof(lck_mtx_t, lck_mtx_ptr));
-	DECLARE("MUTEX_STATE", offsetof(lck_mtx_t, lck_mtx_state));
-	DECLARE("MUTEX_IND", LCK_MTX_TAG_INDIRECT);
-	DECLARE("MUTEX_ASSERT_OWNED", LCK_MTX_ASSERT_OWNED);
-	DECLARE("MUTEX_ASSERT_NOTOWNED", LCK_MTX_ASSERT_NOTOWNED);
-
-	/* x86 only */
-	DECLARE("MUTEX_DESTROYED", LCK_MTX_TAG_DESTROYED);
-
-	/* Per-mutex statistic element */
-	DECLARE("MTX_ACQ_TSC", offsetof(lck_mtx_ext_t, lck_mtx_stat));
 
 	/* Reader writer lock types */
 	DECLARE("RW_SHARED", LCK_RW_TYPE_SHARED);
@@ -151,7 +129,6 @@ main(
 	DECLARE("TH_RECOVER", offsetof(struct thread, recover));
 	DECLARE("TH_CONTINUATION", offsetof(struct thread, continuation));
 	DECLARE("TH_KERNEL_STACK", offsetof(struct thread, kernel_stack));
-	DECLARE("TH_MUTEX_COUNT", offsetof(struct thread, mutex_count));
 	DECLARE("TH_IOTIER_OVERRIDE", offsetof(struct thread, iotier_override));
 
 	DECLARE("TH_SYSCALLS_MACH", offsetof(struct thread, syscalls_mach));
@@ -162,15 +139,13 @@ main(
 	DECLARE("TASK_VTIMERS", offsetof(struct task, vtimers));
 
 	/* These fields are being added on demand */
-	DECLARE("TH_TASK", offsetof(struct thread, task));
+	DECLARE("TH_TASK", offsetof(struct thread, t_task));
 	DECLARE("TH_AST", offsetof(struct thread, ast));
 	DECLARE("TH_MAP", offsetof(struct thread, map));
 	DECLARE("TH_SPF", offsetof(struct thread, machine.specFlags));
 	DECLARE("TH_PCB_ISS", offsetof(struct thread, machine.iss));
 	DECLARE("TH_PCB_IDS", offsetof(struct thread, machine.ids));
 	DECLARE("TH_PCB_FPS", offsetof(struct thread, machine.ifps));
-	DECLARE("TH_RWLOCK_COUNT", offsetof(struct thread, rwlock_count));
-	DECLARE("TH_TMP_ALLOC_CNT", offsetof(struct thread, t_temp_alloc_count));
 
 	DECLARE("MAP_PMAP", offsetof(struct _vm_map, pmap));
 
@@ -329,6 +304,7 @@ main(
 	    offsetof(cpu_data_t, cpu_interrupt_level));
 	DECLARE("CPU_NEED_SEGCHK",
 	    offsetof(cpu_data_t, cpu_curthread_do_segchk));
+	DECLARE("MTHR_SEGCHK", MTHR_SEGCHK);
 	DECLARE("CPU_NESTED_ISTACK",
 	    offsetof(cpu_data_t, cpu_nested_istack));
 	DECLARE("CPU_NUMBER_GS",
@@ -451,11 +427,6 @@ main(
 	DECLARE("USL_INTERLOCK", offsetof(usimple_lock_data_t, interlock));
 
 	DECLARE("INTSTACK_SIZE", INTSTACK_SIZE);
-	DECLARE("BA_VIDEO_BASE", offsetof(struct boot_args, Video.v_baseAddr));
-	DECLARE("BA_VIDEO_ROWBYTES", offsetof(struct boot_args, Video.v_rowBytes));
-	DECLARE("BA_VIDEO_WIDTH", offsetof(struct boot_args, Video.v_width));
-	DECLARE("BA_VIDEO_HEIGHT", offsetof(struct boot_args, Video.v_height));
-	DECLARE("BA_VIDEO_DEPTH", offsetof(struct boot_args, Video.v_depth));
 	DECLARE("KADDR", offsetof(struct boot_args, kaddr));
 	DECLARE("KSIZE", offsetof(struct boot_args, ksize));
 	DECLARE("MEMORYMAP", offsetof(struct boot_args, MemoryMap));
@@ -475,30 +446,9 @@ main(
 	/* values from kern/timer.h */
 #ifdef __LP64__
 	DECLARE("TIMER_ALL", offsetof(struct timer, all_bits));
-#else
-	DECLARE("TIMER_LOW", offsetof(struct timer, low_bits));
-	DECLARE("TIMER_HIGH", offsetof(struct timer, high_bits));
-	DECLARE("TIMER_HIGHCHK", offsetof(struct timer, high_bits_check));
 #endif
 	DECLARE("TIMER_TSTAMP",
 	    offsetof(struct timer, tstamp));
-
-	DECLARE("THREAD_TIMER",
-	    offsetof(struct processor, thread_timer));
-	DECLARE("KERNEL_TIMER",
-	    offsetof(struct processor, kernel_timer));
-	DECLARE("SYSTEM_TIMER",
-	    offsetof(struct thread, system_timer));
-	DECLARE("USER_TIMER",
-	    offsetof(struct thread, user_timer));
-	DECLARE("SYSTEM_STATE",
-	    offsetof(struct processor, system_state));
-	DECLARE("USER_STATE",
-	    offsetof(struct processor, user_state));
-	DECLARE("IDLE_STATE",
-	    offsetof(struct processor, idle_state));
-	DECLARE("CURRENT_STATE",
-	    offsetof(struct processor, current_state));
 
 	DECLARE("OnProc", OnProc);
 

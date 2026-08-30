@@ -31,6 +31,7 @@
 
 #define MAX_KCALLSTACK_FRAMES (128)
 #define MAX_UCALLSTACK_FRAMES (256)
+#define MAX_EXCALLSTACK_FRAMES (128)
 
 /* the callstack contains valid data */
 #define CALLSTACK_VALID        (1U << 0)
@@ -50,10 +51,14 @@
 #define CALLSTACK_TRANSLATED   (1U << 7)
 /* the last frame could be the real PC */
 #define CALLSTACK_FIXUP_PC     (1U << 8)
+/* the stack also contains an async stack */
+#define CALLSTACK_HAS_ASYNC    (1U << 9)
 
 struct kp_ucallstack {
 	uint32_t kpuc_flags;
 	uint32_t kpuc_nframes;
+	uint32_t kpuc_async_index;
+	uint32_t kpuc_async_nframes;
 	uintptr_t kpuc_frames[MAX_UCALLSTACK_FRAMES];
 };
 
@@ -62,8 +67,9 @@ struct kp_kcallstack {
 	uint32_t kpkc_nframes;
 	union {
 		uintptr_t kpkc_word_frames[MAX_KCALLSTACK_FRAMES];
-		uint64_t kpkc_frames[MAX_KCALLSTACK_FRAMES];
+		uint64_t kpkc_frames[MAX_KCALLSTACK_FRAMES] __kernel_ptr_semantics;
 	};
+	uint32_t kpkc_exclaves_offset;
 };
 
 struct kperf_context;
@@ -77,5 +83,11 @@ void kperf_ucallstack_sample(struct kp_ucallstack *cs, struct kperf_context *);
 int kperf_ucallstack_pend(struct kperf_context *, uint32_t depth,
     unsigned int actionid);
 void kperf_ucallstack_log(struct kp_ucallstack *cs);
+
+#if CONFIG_EXCLAVES
+#include <kern/exclaves.tightbeam.h>
+void kperf_excallstack_log(const stackshottypes_ipcstackentry_s *ipcstack);
+bool kperf_exclave_callstack_pend(struct kperf_context *context, unsigned int actionid);
+#endif /* CONFIG_EXCLAVES */
 
 #endif /* !defined(KPERF_CALLSTACK_H) */

@@ -110,25 +110,7 @@ typedef __uint64_t      rlim_t;
 #if __DARWIN_C_LEVEL >= __DARWIN_C_FULL
 #define PRIO_DARWIN_THREAD      3               /* Second argument is always 0 (current thread) */
 #define PRIO_DARWIN_PROCESS     4               /* Second argument is a PID */
-
-#ifdef PRIVATE
-
-#define PRIO_DARWIN_GPU         5               /* Second argument is a PID */
-
-#define PRIO_DARWIN_GPU_ALLOW   0x1
-#define PRIO_DARWIN_GPU_DENY    0x2
-
-#define PRIO_DARWIN_ROLE        6               /* Second argument is a PID */
-
-#define PRIO_DARWIN_ROLE_DEFAULT        0x0     /* Reset to default state */
-#define PRIO_DARWIN_ROLE_UI_FOCAL       0x1     /* On  screen,     focal UI */
-#define PRIO_DARWIN_ROLE_UI             0x2     /* On  screen UI,  focal unknown */
-#define PRIO_DARWIN_ROLE_NON_UI         0x3     /* Off screen, non-focal UI */
-#define PRIO_DARWIN_ROLE_UI_NON_FOCAL   0x4     /* On  screen, non-focal UI */
-#define PRIO_DARWIN_ROLE_TAL_LAUNCH     0x5     /* Throttled-launch (for OS X TAL resume) */
-#define PRIO_DARWIN_ROLE_DARWIN_BG      0x6     /* Throttled for running in the background */
-
-#endif /* PRIVATE */
+/* Additional private parameters to getpriority()/setpriority() are in resource_private.h */
 
 /*
  * Range limitations for the value of the third parameter to setpriority().
@@ -213,7 +195,8 @@ struct  rusage {
 #define RUSAGE_INFO_V3  3
 #define RUSAGE_INFO_V4  4
 #define RUSAGE_INFO_V5  5
-#define RUSAGE_INFO_CURRENT     RUSAGE_INFO_V5
+#define RUSAGE_INFO_V6  6
+#define RUSAGE_INFO_CURRENT RUSAGE_INFO_V6
 
 /*
  * Flags for RUSAGE_INFO_V5
@@ -388,14 +371,66 @@ struct rusage_info_v5 {
 	uint64_t ri_flags;
 };
 
-typedef struct rusage_info_v5 rusage_info_current;
+struct rusage_info_v6 {
+	uint8_t  ri_uuid[16];
+	uint64_t ri_user_time;
+	uint64_t ri_system_time;
+	uint64_t ri_pkg_idle_wkups;
+	uint64_t ri_interrupt_wkups;
+	uint64_t ri_pageins;
+	uint64_t ri_wired_size;
+	uint64_t ri_resident_size;
+	uint64_t ri_phys_footprint;
+	uint64_t ri_proc_start_abstime;
+	uint64_t ri_proc_exit_abstime;
+	uint64_t ri_child_user_time;
+	uint64_t ri_child_system_time;
+	uint64_t ri_child_pkg_idle_wkups;
+	uint64_t ri_child_interrupt_wkups;
+	uint64_t ri_child_pageins;
+	uint64_t ri_child_elapsed_abstime;
+	uint64_t ri_diskio_bytesread;
+	uint64_t ri_diskio_byteswritten;
+	uint64_t ri_cpu_time_qos_default;
+	uint64_t ri_cpu_time_qos_maintenance;
+	uint64_t ri_cpu_time_qos_background;
+	uint64_t ri_cpu_time_qos_utility;
+	uint64_t ri_cpu_time_qos_legacy;
+	uint64_t ri_cpu_time_qos_user_initiated;
+	uint64_t ri_cpu_time_qos_user_interactive;
+	uint64_t ri_billed_system_time;
+	uint64_t ri_serviced_system_time;
+	uint64_t ri_logical_writes;
+	uint64_t ri_lifetime_max_phys_footprint;
+	uint64_t ri_instructions;
+	uint64_t ri_cycles;
+	uint64_t ri_billed_energy;
+	uint64_t ri_serviced_energy;
+	uint64_t ri_interval_max_phys_footprint;
+	uint64_t ri_runnable_time;
+	uint64_t ri_flags;
+	uint64_t ri_user_ptime;
+	uint64_t ri_system_ptime;
+	uint64_t ri_pinstructions;
+	uint64_t ri_pcycles;
+	uint64_t ri_energy_nj;
+	uint64_t ri_penergy_nj;
+	uint64_t ri_secure_time_in_system;
+	uint64_t ri_secure_ptime_in_system;
+	uint64_t ri_neural_footprint;
+	uint64_t ri_lifetime_max_neural_footprint;
+	uint64_t ri_interval_max_neural_footprint;
+	uint64_t ri_reserved[9];
+};
+
+typedef struct rusage_info_v6 rusage_info_current;
 
 #endif /* __DARWIN_C_LEVEL >= __DARWIN_C_FULL */
 
 #ifdef KERNEL
 
 struct rusage_superset {
-	struct rusage                   ru;
+	struct rusage           ru;
 	rusage_info_current     ri;
 };
 
@@ -527,21 +562,10 @@ struct proc_rlimit_control_wakeupmon {
 	int32_t wm_rate;
 };
 
-#if PRIVATE
-/*
- * Flags for I/O monitor control.
- */
-#define IOMON_ENABLE                    0x01
-#define IOMON_DISABLE                   0x02
-
-#endif /* PRIVATE */
-
+/* Additional private I/O policies are in resource_private.h */
 
 /* I/O type */
 #define IOPOL_TYPE_DISK 0
-#if PRIVATE
-#define IOPOL_TYPE_VFS_HFS_CASE_SENSITIVITY 1
-#endif
 #define IOPOL_TYPE_VFS_ATIME_UPDATES 2
 #define IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES 3
 #define IOPOL_TYPE_VFS_STATFS_NO_DATA_VOLUME 4
@@ -549,6 +573,9 @@ struct proc_rlimit_control_wakeupmon {
 #define IOPOL_TYPE_VFS_IGNORE_CONTENT_PROTECTION 6
 #define IOPOL_TYPE_VFS_IGNORE_PERMISSIONS 7
 #define IOPOL_TYPE_VFS_SKIP_MTIME_UPDATE 8
+#define IOPOL_TYPE_VFS_ALLOW_LOW_SPACE_WRITES 9
+#define IOPOL_TYPE_VFS_DISALLOW_RW_FOR_O_EVTONLY 10
+#define IOPOL_TYPE_VFS_ENTITLED_RESERVE_ACCESS 14
 
 /* scope */
 #define IOPOL_SCOPE_PROCESS   0
@@ -567,17 +594,15 @@ struct proc_rlimit_control_wakeupmon {
 #define IOPOL_APPLICATION       IOPOL_STANDARD
 #define IOPOL_NORMAL            IOPOL_IMPORTANT
 
-#if PRIVATE
-#define IOPOL_VFS_HFS_CASE_SENSITIVITY_DEFAULT  0
-#define IOPOL_VFS_HFS_CASE_SENSITIVITY_FORCE_CASE_SENSITIVE     1
-#endif
-
 #define IOPOL_ATIME_UPDATES_DEFAULT     0
 #define IOPOL_ATIME_UPDATES_OFF         1
 
 #define IOPOL_MATERIALIZE_DATALESS_FILES_DEFAULT 0
 #define IOPOL_MATERIALIZE_DATALESS_FILES_OFF     1
 #define IOPOL_MATERIALIZE_DATALESS_FILES_ON      2
+#define IOPOL_MATERIALIZE_DATALESS_FILES_ORIG    4
+
+#define IOPOL_MATERIALIZE_DATALESS_FILES_BASIC_MASK 3
 
 #define IOPOL_VFS_STATFS_NO_DATA_VOLUME_DEFAULT 0
 #define IOPOL_VFS_STATFS_FORCE_NO_DATA_VOLUME   1
@@ -591,31 +616,22 @@ struct proc_rlimit_control_wakeupmon {
 #define IOPOL_VFS_IGNORE_PERMISSIONS_OFF 0
 #define IOPOL_VFS_IGNORE_PERMISSIONS_ON  1
 
-#define IOPOL_VFS_SKIP_MTIME_UPDATE_OFF 0
-#define IOPOL_VFS_SKIP_MTIME_UPDATE_ON 1
+#define IOPOL_VFS_SKIP_MTIME_UPDATE_OFF    0
+#define IOPOL_VFS_SKIP_MTIME_UPDATE_ON     1
+#define IOPOL_VFS_SKIP_MTIME_UPDATE_IGNORE 2
 
-#ifdef PRIVATE
-/*
- * Structures for use in communicating via iopolicysys() between Libc and the
- * kernel.  Not to be used by user programs directly.
- */
+#define IOPOL_VFS_ALLOW_LOW_SPACE_WRITES_OFF 0
+#define IOPOL_VFS_ALLOW_LOW_SPACE_WRITES_ON 1
 
-/*
- * the command to iopolicysys()
- */
-#define IOPOL_CMD_GET           0x00000001      /* Get I/O policy */
-#define IOPOL_CMD_SET           0x00000002      /* Set I/O policy */
+#define IOPOL_VFS_DISALLOW_RW_FOR_O_EVTONLY_DEFAULT 0
+#define IOPOL_VFS_DISALLOW_RW_FOR_O_EVTONLY_ON 1
 
-/*
- * Second parameter to iopolicysys()
- */
-struct _iopol_param_t {
-	int iop_scope;  /* current process or a thread */
-	int iop_iotype;
-	int iop_policy;
-};
+#define IOPOL_VFS_NOCACHE_WRITE_FS_BLKSIZE_DEFAULT 0
+#define IOPOL_VFS_NOCACHE_WRITE_FS_BLKSIZE_ON 1
 
-#endif  /* PRIVATE */
+#define IOPOL_VFS_ENTITLED_RESERVE_ACCESS_OFF 0
+#define IOPOL_VFS_ENTITLED_RESERVE_ACCESS_ON 1
+
 #endif /* __DARWIN_C_LEVEL >= __DARWIN_C_FULL */
 
 #ifndef KERNEL
@@ -635,4 +651,9 @@ int     setrlimit(int, const struct rlimit *) __DARWIN_ALIAS(setrlimit);
 __END_DECLS
 
 #endif  /* !KERNEL */
+
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <sys/resource_private.h>
+#endif
+
 #endif  /* !_SYS_RESOURCE_H_ */

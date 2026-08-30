@@ -31,10 +31,13 @@ extern "C" {
 #include <libkern/mkext.h>
 };
 
+#include <kern/telemetry.h>
 #include <libkern/c++/OSContainers.h>
 #include <libkern/c++/OSKext.h>
 #include <libkern/OSKextLib.h>
 #include <libkern/OSKextLibPrivate.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_xnu.h>
 
 extern "C" {
 #if PRAGMA_MARK
@@ -379,7 +382,6 @@ finish:
 extern vm_offset_t segPRELINKTEXTB;
 extern vm_offset_t segLINKB;
 extern unsigned long segSizePRELINKTEXT;
-extern vm_map_t g_kext_map;
 
 vm_map_t
 kext_get_vm_map(kmod_info_t *info)
@@ -417,7 +419,7 @@ kext_get_vm_map(kmod_info_t *info)
 void
 kext_weak_symbol_referenced(void)
 {
-	panic("A kext referenced an unresolved weak symbol\n");
+	panic("A kext referenced an unresolved weak symbol");
 }
 
 const void * const gOSKextUnresolved = (const void *)&kext_weak_symbol_referenced;
@@ -481,6 +483,36 @@ kmod_panic_dump(vm_offset_t * addr, unsigned int cnt)
 	return;
 }
 
+void
+telemetry_backtrace_add_kexts(
+	char                 *buf,
+	size_t                buflen,
+	uintptr_t            *frames,
+	uint32_t              framecnt)
+{
+	__block size_t pos = 0;
+
+	OSKext::foreachKextInBacktrace(frames, framecnt, OSKext::kPrintKextsLock,
+	    ^(OSKextLoadedKextSummary *summary, uint32_t index __unused){
+			uuid_string_t uuid;
+			uint64_t tmpAddr;
+			uint64_t tmpSize;
+
+			(void) uuid_unparse(summary->uuid, uuid);
+
+#if defined(__arm__) || defined(__arm64__)
+			tmpAddr = summary->text_exec_address;
+			tmpSize = summary->text_exec_size;
+#else
+			tmpAddr = summary->address;
+			tmpSize = summary->size;
+#endif
+			tmpAddr -= vm_kernel_stext;
+			pos += scnprintf(buf + pos, buflen - pos, "%s@%llx:%llx\n",
+			uuid, tmpAddr, tmpAddr + tmpSize - 1);
+		});
+}
+
 /********************************************************************/
 void kmod_dump_log(vm_offset_t *addr, unsigned int cnt, boolean_t doUnslide);
 
@@ -503,6 +535,13 @@ OSKextKextForAddress(const void *addr)
 	return OSKext::kextForAddress(addr);
 }
 
+kern_return_t
+OSKextGetLoadedKextSummaryForAddress(
+	const void              * addr,
+	OSKextLoadedKextSummary * summary)
+{
+	return OSKext::summaryForAddressExt(addr, summary);
+}
 
 /*********************************************************************
 * Compatibility implementation for kmod_get_info() host_priv routine.

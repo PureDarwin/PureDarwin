@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 1999-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -178,8 +178,12 @@ struct dlil_threading_info {
 	struct thread   *dlth_poller_thread;    /* poll thread */
 
 	lck_grp_t       *dlth_lock_grp; /* lock group (for lock stats) */
-	char            dlth_name[DLIL_THREADNAME_LEN]; /* name storage */
-
+	char            dlth_name_storage[DLIL_THREADNAME_LEN]; /* name storage */
+	const char * __null_terminated dlth_name;
+	/* Accounting for trimming of input queues that exceed their limits */
+	uint32_t        dlth_trim_cnt;          /* # of trim events */
+	uint32_t        dlth_trim_pkts_dropped; /* # of packets dropped
+	                                         * when trimming */
 #if IFNET_INPUT_SANITY_CHK
 	/*
 	 * For debugging.
@@ -187,6 +191,7 @@ struct dlil_threading_info {
 	uint64_t        dlth_pkts_cnt;          /* total # of packets */
 #endif
 };
+__CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct dlil_threading_info, dlil_threading_info);
 
 /*
  * DLIL input thread info (for main/loopback input thread)
@@ -195,6 +200,7 @@ struct dlil_main_threading_info {
 	struct dlil_threading_info      inp;
 	class_queue_t                   lo_rcvq_pkts; /* queue of lo0 pkts */
 };
+__CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct dlil_main_threading_info, dlil_main_threading_info);
 
 /*
  * Valid values for dlth_flags.
@@ -215,10 +221,7 @@ struct dlil_main_threading_info {
  */
 #define DLIL_IFF_TSO            0x01    /* Interface filter supports TSO */
 #define DLIL_IFF_INTERNAL       0x02    /* Apple internal -- do not count towards stats */
-
-/* Input poll interval definitions */
-#define IF_RXPOLL_INTERVALTIME_MIN      (1ULL * 1000)           /* 1 us */
-#define IF_RXPOLL_INTERVALTIME          (1ULL * 1000 * 1000)    /* 1 ms */
+#define DLIL_IFF_BRIDGE         0x04    /* bridge interface filter */
 
 extern int dlil_verbose;
 extern uint32_t hwcksum_dbg;
@@ -254,13 +257,22 @@ extern errno_t dlil_send_arp_internal(ifnet_t, u_int16_t,
 #define NET_THREAD_HELD_PF      0x1     /* thread is holding PF lock */
 #define NET_THREAD_HELD_DOMAIN  0x2     /* thread is holding domain_proto_mtx */
 #define NET_THREAD_CKREQ_LLADDR 0x4     /* thread reqs MACF check for LLADDR */
+#if SKYWALK
+#define NET_THREAD_CHANNEL_SYNC 0x10000 /* thread is doing channel sync */
+#define NET_THREAD_CACHE_UPDATE 0x20000 /* thread is doing cache update */
+#define NET_THREAD_REGION_UPDATE 0x40000 /* thread is doing region update */
+#define NET_THREAD_RX_NOTIFY    0x80000 /* thread is doing RX notify */
+#define NET_THREAD_TX_NOTIFY    0x100000 /* thread is doing TX notify */
+#define NET_THREAD_AYSYNC_TX    0x200000 /* require use of starter thread */
+#define NET_THREAD_SYNC_RX      0x400000 /* request synchronous Rx handler */
+#endif /* SKYWALK */
 
 /*
  * net_thread_marks_t is a pointer to a phantom structure type used for
  * manipulating the uthread:uu_network_marks field.  As an example...
  *
  *   static const u_int32_t bits = NET_THREAD_CKREQ_LLADDR;
- *   struct uthread *uth = get_bsdthread_info(current_thread());
+ *   struct uthread *uth = current_uthread();
  *
  *   net_thread_marks_t marks = net_thread_marks_push(bits);
  *   VERIFY((uth->uu_network_marks & NET_THREAD_CKREQ_LLADDR) != 0);
@@ -287,7 +299,7 @@ extern errno_t dlil_send_arp_internal(ifnet_t, u_int16_t,
  * compare as equal to the NULL pointer.
  */
 struct net_thread_marks;
-typedef const struct net_thread_marks *net_thread_marks_t;
+typedef const struct net_thread_marks *__single net_thread_marks_t;
 
 extern const net_thread_marks_t net_thread_marks_none;
 
@@ -297,6 +309,10 @@ extern void net_thread_marks_pop(net_thread_marks_t);
 extern void net_thread_unmarks_pop(net_thread_marks_t);
 extern u_int32_t net_thread_is_marked(u_int32_t);
 extern u_int32_t net_thread_is_unmarked(u_int32_t);
+
+#define DLIL_OUTPUT_FLAGS_NONE                  0x0
+#define DLIL_OUTPUT_FLAGS_RAW                   0x1
+#define DLIL_OUTPUT_FLAGS_SKIP_IF_FILTERS       0x2
 
 extern int dlil_output(ifnet_t, protocol_family_t, mbuf_t, void *,
     const struct sockaddr *, int, struct flowadv *);
@@ -321,7 +337,7 @@ extern boolean_t dlil_has_if_filter(struct ifnet *);
 extern void dlil_proto_unplumb_all(ifnet_t);
 
 extern int dlil_post_msg(struct ifnet *, u_int32_t, u_int32_t,
-    struct net_event_data *, u_int32_t);
+    struct net_event_data *, u_int32_t, boolean_t);
 
 extern void dlil_post_sifflags_msg(struct ifnet *);
 
@@ -329,7 +345,7 @@ extern int dlil_post_complete_msg(struct ifnet *, struct kev_msg *);
 
 extern int dlil_alloc_local_stats(struct ifnet *);
 
-extern void ifnet_filter_update_tso(boolean_t filter_enable);
+extern void ifnet_filter_update_tso(struct ifnet *, boolean_t filter_enable);
 extern errno_t dlil_rxpoll_validate_params(struct ifnet_poll_params *);
 extern void dlil_rxpoll_update_params(struct ifnet *,
     struct ifnet_poll_params *);
@@ -337,11 +353,41 @@ extern void ifnet_poll(struct ifnet *);
 extern errno_t ifnet_input_poll(struct ifnet *, struct mbuf *,
     struct mbuf *, const struct ifnet_stat_increment_param *);
 
+#if SKYWALK
+extern boolean_t ifnet_needs_fsw_transport_netagent(ifnet_t ifp);
+extern boolean_t ifnet_needs_fsw_ip_netagent(ifnet_t ifp);
+extern boolean_t ifnet_needs_netif_netagent(ifnet_t ifp);
+extern boolean_t ifnet_needs_compat(ifnet_t ifp);
+extern boolean_t ifnet_nx_noauto(ifnet_t ifp);
+extern boolean_t ifnet_nx_noauto_flowswitch(ifnet_t ifp);
+extern boolean_t ifnet_is_low_latency(ifnet_t ifp);
+extern boolean_t ifnet_attach_flowswitch_nexus(ifnet_t ifp);
+extern boolean_t ifnet_detach_flowswitch_nexus(ifnet_t ifp);
+extern boolean_t ifnet_add_netagent(ifnet_t ifp);
+extern boolean_t ifnet_remove_netagent(ifnet_t ifp);
+extern void      ifnet_attach_native_flowswitch(ifnet_t ifp);
+extern void      ifnet_start_ignore_delay(ifnet_t interface);
+extern int       ifnet_set_flowswitch_rx_callback(ifnet_t ifp, ifnet_fsw_rx_cb_t cb, void *arg);
+extern int       ifnet_get_flowswitch_rx_callback(ifnet_t ifp, ifnet_fsw_rx_cb_t *cbp, void **argp);
+extern void      ifnet_release_flowswitch_rx_callback(ifnet_t ifp);
+extern int       ifnet_set_delegate_parent(ifnet_t difp, ifnet_t parent);
+extern int       ifnet_get_delegate_parent(ifnet_t difp, ifnet_t *parent);
+extern void      ifnet_release_delegate_parent(ifnet_t difp);
+extern void      ifnet_set_detach_notify_locked(ifnet_t ifp,
+    ifnet_detach_notify_cb_t cb, void *arg);
+extern void      ifnet_get_detach_notify_locked(ifnet_t ifp,
+    ifnet_detach_notify_cb_t *cbp, void **argp);
+extern void      ifnet_set_detach_notify(ifnet_t ifp,
+    ifnet_detach_notify_cb_t cb, void *arg);
+extern void      ifnet_get_detach_notify(ifnet_t ifp,
+    ifnet_detach_notify_cb_t *cbp, void **argp);
+
+#endif /* SKYWALK */
 
 /*
  * dlil_if_acquire is obsolete. Use ifnet_allocate.
  */
-extern int dlil_if_acquire(u_int32_t, const void *, size_t, const char *, struct ifnet **);
+extern int dlil_if_acquire(u_int32_t, const void * __sized_by(uniqueid_len), size_t uniqueid_len, const char * __null_terminated, struct ifnet **);
 /*
  * dlil_if_release is obsolete. The equivalent is called automatically when
  * an interface is detached.
@@ -360,10 +406,18 @@ extern int dlil_node_present_v2(struct ifnet *, struct sockaddr *, struct sockad
 extern const void *dlil_ifaddr_bytes(const struct sockaddr_dl *, size_t *,
     kauth_cred_t *);
 
+static inline const void *__header_indexable
+__attribute__((always_inline))
+dlil_ifaddr_bytes_indexable(const struct sockaddr_dl * sdl, size_t *sizep, kauth_cred_t *cred)
+{
+	const void *__unsafe_indexable raw_bytes = dlil_ifaddr_bytes(sdl, sizep, cred);
+	return __unsafe_forge_bidi_indexable(const void*, raw_bytes, *sizep);
+}
+
 extern void dlil_report_issues(struct ifnet *, u_int8_t[DLIL_MODIDLEN],
     u_int8_t[DLIL_MODARGLEN]);
 
-#define PROTO_HASH_SLOTS        5
+#define PROTO_HASH_SLOTS       4
 
 extern int proto_hash_value(u_int32_t);
 
@@ -378,7 +432,14 @@ extern errno_t dlil_output_handler(struct ifnet *, struct mbuf *);
 extern errno_t dlil_input_handler(struct ifnet *, struct mbuf *,
     struct mbuf *, const struct ifnet_stat_increment_param *,
     boolean_t, struct thread *);
+extern void dlil_ifclassq_setup(struct ifnet *, struct ifclassq *);
 
+#if SKYWALK
+extern errno_t dlil_set_input_handler(struct ifnet *ifp, dlil_input_func fn);
+extern errno_t dlil_set_output_handler(struct ifnet *ifp, dlil_output_func fn);
+extern void dlil_reset_input_handler(struct ifnet *ifp);
+extern void dlil_reset_output_handler(struct ifnet *ifp);
+#endif /* SKYWALK */
 
 /*
  * This is mostly called from the context of the DLIL input thread;
@@ -458,6 +519,18 @@ ifp_inc_traffic_class_out(struct ifnet *ifp, struct mbuf *m)
 		ifp->if_tc.ifi_opvbytes += (u_int64_t)m->m_pkthdr.len;
 	}
 }
+
+extern void ifnet_ioctl_async(struct ifnet *, u_long);
+
+extern int bridge_enable_early_input;
+extern mbuf_t bridge_early_input(struct ifnet *ifp, mbuf_t m, u_int32_t cnt);
+
+
+__private_extern__ int ifnet_set_nat64prefix(struct ifnet *,
+    struct ipv6_prefix *__counted_by(NAT64_MAX_NUM_PREFIXES));
+__private_extern__ int ifnet_get_nat64prefix(struct ifnet *,
+    struct ipv6_prefix *__counted_by(NAT64_MAX_NUM_PREFIXES));
+
 #endif /* BSD_KERNEL_PRIVATE */
 #endif /* KERNEL_PRIVATE */
 #endif /* KERNEL */

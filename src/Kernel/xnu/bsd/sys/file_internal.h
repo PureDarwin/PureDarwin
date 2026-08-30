@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -72,6 +72,7 @@
 #include <sys/errno.h>
 #include <sys/queue.h>
 #include <sys/cdefs.h>
+#include <sys/constrained_ctypes.h>
 #include <sys/lock.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -80,7 +81,7 @@
 
 __BEGIN_DECLS
 
-#pragma GCC visibility push(hidden)
+__exported_push_hidden
 
 struct proc;
 struct uio;
@@ -98,35 +99,37 @@ __options_decl(fileproc_vflags_t, unsigned int, {
 	FPV_DRAIN       = 0x01,
 });
 
+__options_decl(fileproc_flags_t, uint16_t, {
+	FP_NONE         = 0,
+	FP_CLOEXEC      = 0x01,
+	FP_CLOFORK      = 0x02,
+	FP_INSELECT     = 0x04,
+	FP_AIOISSUED    = 0x08,
+	FP_SELCONFLICT  = 0x10,  /* select conflict on an individual fp */
+});
+
+struct fileproc_guard {
+	struct select_set *fpg_wset;
+	guardid_t         fpg_guard;
+};
+
 /*
  * Kernel descriptor table.
  * One entry for each open kernel vnode and socket.
  */
 struct fileproc {
-	unsigned int fp_flags;
+	os_refcnt_t      fp_iocount;
 	_Atomic fileproc_vflags_t fp_vflags;
-	os_refcnt_t fp_iocount;
-	struct fileglob * fp_glob;
-	void *fp_wset;
+	fileproc_flags_t fp_flags;
+	uint16_t         fp_guard_attrs;
+	struct fileglob *XNU_PTRAUTH_SIGNED_PTR("fileproc.fp_glob") fp_glob;
+	union {
+		struct select_set     *fp_wset;   /* fp_guard_attrs == 0 */
+		struct fileproc_guard *XNU_PTRAUTH_SIGNED_PTR("fileproc.fp_guard") fp_guard;  /* fp_guard_attrs != 0 */
+	};
 };
-
-#define FILEPROC_NULL (struct fileproc *)0
-
-#define FP_INSELECT     0x0004
-#define FP_AIOISSUED    0x0080
-#define FP_SELCONFLICT  0x0200  /* select conflict on an individual fp */
-
-/* squeeze a "type" value into the upper flag bits */
-
-#define _FP_TYPESHIFT   24
-#define FP_TYPEMASK     (0x7 << _FP_TYPESHIFT)  /* 8 "types" of fileproc */
-
-#define FILEPROC_TYPE(fp)       ((fp)->fp_flags & FP_TYPEMASK)
-
-typedef enum {
-	FTYPE_SIMPLE    = 0,
-	FTYPE_GUARDED   = (1 << _FP_TYPESHIFT)
-} fileproc_type_t;
+__CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct fileproc, fileproc);
+#define FILEPROC_NULL ((struct fileproc *)0)
 
 /* file types */
 typedef enum {
@@ -139,6 +142,8 @@ typedef enum {
 	DTYPE_FSEVENTS,         /* fsevents */
 	DTYPE_ATALK,            /* (obsolete) */
 	DTYPE_NETPOLICY,        /* networking policy */
+	DTYPE_CHANNEL,          /* Skywalk Channel */
+	DTYPE_NEXUS             /* Skywalk Nexus */
 } file_type_t;
 
 /* defines for fg_lflags */
@@ -161,7 +166,6 @@ struct fileops {
 	int (*fo_write)     (struct fileproc *fp, struct uio *uio,
 	    int flags, vfs_context_t ctx);
 #define FOF_OFFSET      0x00000001      /* offset supplied to vn_write */
-#define FOF_PCRED       0x00000002      /* cred from proc, not current thread */
 	int (*fo_ioctl)(struct fileproc *fp, u_long com,
 	    caddr_t data, vfs_context_t ctx);
 	int (*fo_select)    (struct fileproc *fp, int which,
@@ -177,16 +181,24 @@ struct fileglob {
 	os_ref_atomic_t      fg_count;      /* reference count */
 	uint32_t             fg_msgcount;   /* references from message queue */
 	int32_t              fg_lflags;     /* file global flags */
-	kauth_cred_t         fg_cred;       /* credentials associated with descriptor */
-	const struct fileops *fg_ops;
+	kauth_cred_t         XNU_PTRAUTH_SIGNED_PTR("fileglob.fg_cred") fg_cred;        /* credentials associated with descriptor */
+	const struct fileops *XNU_PTRAUTH_SIGNED_PTR("fileglob.fg_ops") fg_ops;
 	off_t                fg_offset;
-	void                *fg_data;       /* vnode or socket or SHM or semaphore */
-	void                *fg_vn_data;    /* Per fd vnode data, used for directories */
+	uintptr_t            fg_data;       /* vnode or socket or SHM or semaphore */
+	struct fd_vn_data   *XNU_PTRAUTH_SIGNED_PTR("fileglob.fg_vn_data") fg_vn_data;  /* Per fd vnode data, used for directories */
 	lck_mtx_t            fg_lock;
-#if CONFIG_MACF
-	struct label        *fg_label;      /* JMM - use the one in the cred? */
+#if CONFIG_MACF && CONFIG_VNGUARD
+	struct vng_owner    *fg_vgo;        /* Used by the vnode guard MAC hook */
 #endif
 };
+
+/* Disambiguate OFD ids from flock ids (fileglobs) */
+__pure2
+static inline caddr_t __unsafe_indexable
+ofd_to_id(const struct fileglob *fg)
+{
+	return (caddr_t __unsafe_indexable)~(uintptr_t)fg;
+}
 
 extern int maxfiles;                    /* kernel limit on number of open files */
 extern int nfiles;                      /* actual number of open files */
@@ -195,7 +207,23 @@ os_refgrp_decl_extern(f_refgrp);        /* os_refgrp_t for file refcounts */
 
 #define FILEGLOB_DTYPE(fg)              ((const file_type_t)((fg)->fg_ops->fo_type))
 
+/* Special value to indicate "no process association". */
+#define FG_NOPROC       ((struct proc *)~0UL)
+
 #pragma mark files (struct fileglob)
+
+/*!
+ * @function fg_alloc_init
+ *
+ * @brief
+ * Allocate and minimally initialize a file structure.
+ *
+ * @description
+ * The fileglob is allocated as if with falloc_withinit(), but is not
+ * assocated with any fileproc.
+ */
+struct fileglob *
+fg_alloc_init(vfs_context_t ctx);
 
 /*!
  * @function fg_ref
@@ -208,7 +236,8 @@ os_refgrp_decl_extern(f_refgrp);        /* os_refgrp_t for file refcounts */
  * to avoid races with setting the FG_CONFINED flag.
  *
  * @param proc
- * The proc this file reference is taken on behalf of.
+ * The proc this file reference is taken on behalf of, or FG_NOPROC
+ * if the file is guaranteed to not be associated with any fileproc.
  *
  * @param fg
  * The specified file
@@ -239,7 +268,7 @@ fg_drop_live(struct fileglob *fg);
  *
  * @param p
  * The process making the request,
- * or PROC_NULL if the file belongs to a message/fileport.
+ * or FG_NOPROC if the file belongs to a message/fileport.
  *
  * @param fg
  * The file being closed.
@@ -260,7 +289,117 @@ fg_drop(proc_t p, struct fileglob *fg);
 bool
 fg_sendable(struct fileglob *fg);
 
+/*!
+ * @function fg_get_data_volatile
+ *
+ * @brief
+ * Returns the fileglob opaque data pointer.
+ *
+ * @discussion
+ * Unlike @c fg_get_data() this variant will
+ * not be hoisted by the compiler.
+ *
+ * @param fg
+ * The file whose data is being requested.
+ */
+void *
+fg_get_data_volatile(struct fileglob *fg);
+
+/*!
+ * @function fg_get_data
+ *
+ * @brief
+ * Returns the fileglob opaque data pointer.
+ *
+ * @discussion
+ * Unlike @c fg_get_data_volatile() this variant
+ * will be hoisted by the compiler if it is called
+ * repeatedly.
+ *
+ * @param fg
+ * The file whose data is being requested.
+ */
+__pure2
+static inline void *
+fg_get_data(struct fileglob *fg)
+{
+	return fg_get_data_volatile(fg);
+}
+
+/*!
+ * @function fg_set_data
+ *
+ * @brief
+ * Sets the fileglob opaque data pointer.
+ *
+ * @param fg
+ * The file whose data is being set.
+ *
+ * @param fg_data
+ * Opaque file data value
+ */
+void
+fg_set_data(struct fileglob *fg, void *fg_data);
+
 #pragma mark file descriptor entries (struct fileproc)
+
+/*!
+ * @function fg_get_data
+ *
+ * @brief
+ * Returns the fileproc fileglob opaque data pointer.
+ *
+ * @discussion
+ * Unlike @c fp_get_data_volatile() this variant
+ * will be hoisted by the compiler if it is called
+ * repeatedly.
+ *
+ * @param fp
+ * The fileproc whose data is being requested.
+ */
+__pure2
+static inline void *
+fp_get_data(struct fileproc *fp)
+{
+	return fg_get_data(fp->fp_glob);
+}
+
+/*!
+ * @function fp_get_data
+ *
+ * @brief
+ * Returns the fileproc fileglob opaque data pointer.
+ *
+ * @discussion
+ * Unlike @c fp_get_data() this variant will
+ * not be hoisted by the compiler.
+ *
+ * @param fp
+ * The fileproc whose data is being requested.
+ */
+static inline void *
+fp_get_data_volatile(struct fileproc *fp)
+{
+	return fg_get_data_volatile(fp->fp_glob);
+}
+
+/*!
+ * @function fp_set_data
+ *
+ * @brief
+ * Sets the fileproc opaque data pointer.
+ *
+ * @param fp
+ * The fileproc whose data is being set.
+ *
+ * @param fg_data
+ * Opaque file data value
+ */
+static inline void
+fp_set_data(struct fileproc *fp, void *fg_data)
+{
+	fg_set_data(fp->fp_glob, fg_data);
+}
 
 /*!
  * @function fp_get_ftype
@@ -359,14 +498,11 @@ fp_get_noref_locked_with_iocount(proc_t p, int fd);
  *
  * The @c proc_fdlock is unlocked upon return.
  *
- * @param p
- * The process in which fd lives.
- *
- * @param fd
- * The file descriptor index being closed.
- *
- * @param fp
- * The fileproc entry associated with @c fd.
+ * @param p             The process in which fd lives.
+ * @param p_cred        The proc's cred for this operation.
+ * @param fd            The file descriptor index being closed.
+ * @param fp            The fileproc entry associated with @c fd.
+ * @param flags         FD_DUP2RESV or 0.
  *
  * @returns
  * 0            Success
@@ -374,7 +510,7 @@ fp_get_noref_locked_with_iocount(proc_t p, int fd);
  * ???          Any error that @c fileops::fo_close can return.
  */
 extern int
-fp_close_and_unlock(proc_t p, int fd, struct fileproc *fp, int flags);
+fp_close_and_unlock(proc_t p, kauth_cred_t p_cred, int fd, struct fileproc *fp, int flags);
 
 /* wrappers for fp->f_ops->fo_... */
 int fo_read(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx);
@@ -399,21 +535,25 @@ int fp_tryswap(proc_t, int fd, struct fileproc *nfp);
 int fp_drop(struct proc *p, int fd, struct fileproc *fp, int locked);
 void fp_free(struct proc * p, int fd, struct fileproc * fp);
 int fp_lookup(struct proc *p, int fd, struct fileproc **resultfp, int locked);
+int fp_lookup_guarded(struct proc *p, int fd, guardid_t guard, struct fileproc **resultfp, int locked);
 int fp_isguarded(struct fileproc *fp, u_int attribs);
 int fp_guard_exception(proc_t p, int fd, struct fileproc *fp, u_int attribs);
 struct nameidata;
 struct vnode_attr;
 int open1(vfs_context_t ctx, struct nameidata *ndp, int uflags,
-    struct vnode_attr *vap, fp_allocfn_t fp_zalloc, void *cra,
-    int32_t *retval);
+    struct vnode_attr *vap, fp_initfn_t fp_init, void *initarg,
+    int32_t *retval, int authfd);
 int chdir_internal(proc_t p, vfs_context_t ctx, struct nameidata *ndp, int per_thread);
-int kqueue_internal(struct proc *p, fp_allocfn_t, void *cra, int32_t *retval);
+int kqueue_internal(struct proc *p, fp_initfn_t, void *initarg, int32_t *retval);
 void procfdtbl_releasefd(struct proc * p, int fd, struct fileproc * fp);
-extern struct fileproc *fileproc_alloc_init(void *crargs);
+extern struct fileproc *fileproc_alloc_init(void);
 extern void fileproc_free(struct fileproc *fp);
-extern void guarded_fileproc_free(struct fileproc *fp);
+extern void guarded_fileproc_copy_guard(struct fileproc *ofp, struct fileproc *nfp);
+extern void guarded_fileproc_unguard(struct fileproc *fp);
 extern void fg_vn_data_free(void *fgvndata);
 extern int nameiat(struct nameidata *ndp, int dirfd);
+extern void vn_offset_lock(struct fileglob *fg);
+extern void vn_offset_unlock(struct fileglob *fg);
 extern int falloc_guarded(struct proc *p, struct fileproc **fp, int *fd,
     vfs_context_t ctx, const guardid_t *guard, u_int attrs);
 extern void fileproc_modify_vflags(struct fileproc *fp, fileproc_vflags_t vflags, boolean_t clearflags);
@@ -421,11 +561,12 @@ fileproc_vflags_t fileproc_get_vflags(struct fileproc *fp);
 
 #pragma mark internal version of syscalls
 
-int fileport_makefd(proc_t p, ipc_port_t port, int uf_flags, int *fd);
-int dup2(proc_t p, int from, int to, int *fd);
-int close_nocancel(proc_t p, int fd);
+int fileport_makefd(proc_t p, ipc_port_t port, fileproc_flags_t fp_flags, int *fd);
+int dup2(proc_t p, kauth_cred_t p_cred, int from, int to, int *fd);
+int close_nocancel(proc_t p, kauth_cred_t p_cred, int fd);
+int fchdir(proc_t p, vfs_context_t ctx, int fd, bool per_thread);
 
-#pragma GCC visibility pop
+__exported_pop
 
 __END_DECLS
 

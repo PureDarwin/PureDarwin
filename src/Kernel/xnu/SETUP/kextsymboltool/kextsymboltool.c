@@ -23,10 +23,10 @@
 #include <errno.h>
 #include <ctype.h>
 
-
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+
 #ifdef __APPLE__
 #include <libc.h>
 #include <mach/mach_init.h>
@@ -82,20 +82,19 @@ extern char* __cxa_demangle(const char* mangled_name,
 __private_extern__ ToolError
 writeFile(int fd, const void * data, size_t length)
 {
-    const char *p = (const char *)data;
-    ssize_t written;
-    size_t total_written = 0;
+	ToolError err;
 
-    while (total_written < length) {
-        written = write(fd, p + total_written, length - total_written);
-        if (written < 0) {
-            perror("couldn't write output, writeFile");
-            return -1;
-        }
-        total_written += written;
-    }
-	
-    return 0;
+	if (length != (size_t)write(fd, data, length)) {
+		err = kErrorDiskFull;
+	} else {
+		err = kErrorNone;
+	}
+
+	if (kErrorNone != err) {
+		perror("kextsymboltool: error: couldn't write output");
+	}
+
+	return err;
 }
 
 /*********************************************************************
@@ -103,16 +102,16 @@ writeFile(int fd, const void * data, size_t length)
 __private_extern__ ToolError
 seekFile(int fd, off_t offset)
 {
-	ToolError err = kErrorNone;
-	off_t result = lseek(fd, offset, SEEK_SET);
+	ToolError err;
 
-	if (result == -1) {
-		perror("couldn't seek in output file");
-		err = kError;
-	} else if (result != offset) {
-		fprintf(stderr, "couldn't seek in output file: requested 0x%llx, got 0x%llx\n",
-		        (unsigned long long)offset, (unsigned long long)result);
-		err = kError;
+	if (offset != lseek(fd, offset, SEEK_SET)) {
+		err = kErrorDiskFull;
+	} else {
+		err = kErrorNone;
+	}
+
+	if (kErrorNone != err) {
+		perror("kextsymboltool: error: couldn't write output");
 	}
 
 	return err;
@@ -170,7 +169,7 @@ readFile(const char *path, vm_offset_t * objAddr, vm_size_t * objSize)
 		close(fd);
 	}
 	if (kErrorNone != err) {
-		fprintf(stderr, "couldn't read %s: %s\n", path, strerror(errno));
+		fprintf(stderr, "kextsymboltool: error: couldn't read %s: %s\n", path, strerror(errno));
 	}
 
 	return err;
@@ -395,11 +394,11 @@ store_symbols(char * file, vm_size_t file_size, struct symbol * symbols, uint32_
 					 */
 					indirect_len = indirect_term - indirect + 1;
 				} else if (*scan == '\0') {
-					fprintf(stderr, "bad format in symbol line: %s\n", line);
+					fprintf(stderr, "kextsymboltool: error: bad format in symbol line: %s\n", line);
 					exit(1);
 				}
 			} else if (*scan != '\0' && *scan != '-') {
-				fprintf(stderr, "bad format in symbol line: %s\n", line);
+				fprintf(stderr, "kextsymboltool: error: bad format in symbol line: %s\n", line);
 				exit(1);
 			}
 		}
@@ -429,7 +428,7 @@ store_symbols(char * file, vm_size_t file_size, struct symbol * symbols, uint32_
 					option_len = option_term - option;
 
 					if (option_len >= sizeof(optionstr)) {
-						fprintf(stderr, "option too long in symbol line: %s\n", line);
+						fprintf(stderr, "kextsymboltool: error: option too long in symbol line: %s\n", line);
 						exit(1);
 					}
 					memcpy(optionstr, option, option_len);
@@ -441,14 +440,14 @@ store_symbols(char * file, vm_size_t file_size, struct symbol * symbols, uint32_
 						obsolete = TRUE;
 					}
 				} else if (*scan == '\0') {
-					fprintf(stderr, "bad format in symbol line: %s\n", line);
+					fprintf(stderr, "kextsymboltool: error: bad format in symbol line: %s\n", line);
 					exit(1);
 				}
 			}
 		}
 
 		if (idx >= max_symbols) {
-			fprintf(stderr, "symbol[%d/%d] overflow: %s\n", idx, max_symbols, line);
+			fprintf(stderr, "kextsymboltool: error: symbol[%d/%d] overflow: %s\n", idx, max_symbols, line);
 			exit(1);
 		}
 
@@ -470,6 +469,10 @@ store_symbols(char * file, vm_size_t file_size, struct symbol * symbols, uint32_
 	return strtabsize;
 }
 
+/* NXArchInfo and friends are deprecated */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 static const NXArchInfo *
 lookup_arch(const char *archstring)
 {
@@ -480,7 +483,6 @@ lookup_arch(const char *archstring)
 	static const NXArchInfo archlist[] = {
 		{ "x86_64", 0x01000007 /* CPU_TYPE_X86_64 */, 3 /* CPU_SUBTYPE_X86_64_ALL */, NX_LittleEndian, NULL },
 		{ "x86_64h", 0x01000007 /* CPU_TYPE_X86_64 */, 8 /* CPU_SUBTYPE_X86_64_H */, NX_LittleEndian, NULL },
-		{ "armv6", 12 /* CPU_TYPE_ARM */, 6 /* CPU_SUBTYPE_ARM_V6 */, NX_LittleEndian, NULL },
 		{ "armv7", 12 /* CPU_TYPE_ARM */, 9 /* CPU_SUBTYPE_ARM_V7 */, NX_LittleEndian, NULL },
 		{ "armv7s", 12 /* CPU_TYPE_ARM */, 11 /* CPU_SUBTYPE_ARM_V7S */, NX_LittleEndian, NULL },
 		{ "armv7k", 12 /* CPU_TYPE_ARM */, 12 /* CPU_SUBTYPE_ARM_V7K */, NX_LittleEndian, NULL },
@@ -548,14 +550,14 @@ main(int argc, char * argv[])
 		}
 
 		if (i == (argc - 1)) {
-			fprintf(stderr, "bad arguments: %s\n", argv[i]);
+			fprintf(stderr, "kextsymboltool: error: bad arguments: %s\n", argv[i]);
 			exit(1);
 		}
 
 		if (!strcmp("-arch", argv[i])) {
 			target_arch = lookup_arch(argv[i + 1]);
 			if (!target_arch) {
-				fprintf(stderr, "unknown architecture name: %s\n", argv[i + 1]);
+				fprintf(stderr, "kextsymboltool: error: unknown architecture name: %s\n", argv[i + 1]);
 				exit(1);
 			}
 			continue;
@@ -570,7 +572,7 @@ main(int argc, char * argv[])
 		} else if (!strcmp("-export", argv[i])) {
 			import = false;
 		} else {
-			fprintf(stderr, "unknown option: %s\n", argv[i]);
+			fprintf(stderr, "kextsymboltool: error: unknown option: %s\n", argv[i]);
 			exit(1);
 		}
 
@@ -587,7 +589,7 @@ main(int argc, char * argv[])
 	}
 
 	if (!output_name) {
-		fprintf(stderr, "no output file\n");
+		fprintf(stderr, "kextsymboltool: error: no output file\n");
 		exit(1);
 	}
 
@@ -619,7 +621,7 @@ main(int argc, char * argv[])
 			export_idx += files[filenum].nsyms;
 		}
 		if (false && !files[filenum].nsyms) {
-			fprintf(stderr, "warning: file %s contains no names\n", files[filenum].path);
+			fprintf(stderr, "kextsymboltool: warning: file %s contains no names\n", files[filenum].path);
 		}
 	}
 
@@ -688,7 +690,7 @@ main(int argc, char * argv[])
 				int status;
 				char * demangled_result =
 				    __cxa_demangle(export_symbols[export_idx].name + 1, NULL, NULL, &status);
-				fprintf(stderr, "exported name not in import list: %s\n",
+				fprintf(stderr, "kextsymboltool: error: exported name not in import list: %s\n",
 				    demangled_result ? demangled_result : export_symbols[export_idx].name);
 //		fprintf(stderr, "                                : %s\n", export_symbols[export_idx].name);
 				if (demangled_result) {
@@ -721,7 +723,7 @@ main(int argc, char * argv[])
 
 	fd = open(output_name, O_WRONLY | O_CREAT | O_TRUNC, 0755);
 	if (-1 == fd) {
-		perror("couldn't write output, open");
+		perror("kextsymboltool: error: couldn't write output");
 		err = kErrorFileAccess;
 		goto finish;
 	}
@@ -834,12 +836,6 @@ main(int argc, char * argv[])
 		goto finish;
 	}
 
-	symsoffset = lseek(fd, 0, SEEK_CUR);
-	if (symsoffset == -1) {
-		perror("failed to get symsoffset");
-		err = kError;
-		goto finish;
-	}
 	err = seekFile(fd, symsoffset);
 	if (kErrorNone != err) {
 		goto finish;
@@ -857,7 +853,7 @@ main(int argc, char * argv[])
 		if (export_idx
 		    && export_symbols[export_idx - 1].name
 		    && !strcmp(export_symbols[export_idx - 1].name, export_symbols[export_idx].name)) {
-			fprintf(stderr, "duplicate export: %s\n", export_symbols[export_idx - 1].name);
+			fprintf(stderr, "kextsymboltool: error: duplicate export: %s\n", export_symbols[export_idx - 1].name);
 			err = kErrorDuplicate;
 			goto finish;
 		}
@@ -982,3 +978,5 @@ finish:
 	}
 	return 0;
 }
+
+#pragma clang diagnostic pop // -Wdeprecated-declarations

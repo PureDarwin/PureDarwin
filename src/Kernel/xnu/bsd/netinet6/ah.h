@@ -38,6 +38,13 @@
 #define _NETINET6_AH_H_
 #include <sys/appleapiopts.h>
 
+#include <sys/types.h>
+
+#ifdef BSD_KERNEL_PRIVATE
+#include <corecrypto/cchmac.h>
+#include <corecrypto/ccsha2.h>
+#endif /* BSD_KERNEL_PRIVATE */
+
 struct ah {
 	u_int8_t        ah_nxt;         /* Next Header */
 	u_int8_t        ah_len;         /* Length of data, in 32bit */
@@ -59,8 +66,8 @@ struct newah {
 struct secasvar;
 
 struct ah_algorithm_state {
-	struct secasvar *sav;
-	void* foo;      /*per algorithm data - maybe*/
+	const struct ccdigest_info *digest;
+	cchmac_ctx_decl(CCSHA512_STATE_SIZE, CCSHA512_BLOCK_SIZE, hmac_ctx);
 };
 
 struct ah_algorithm {
@@ -72,6 +79,10 @@ struct ah_algorithm {
 	int (*init)(struct ah_algorithm_state *, struct secasvar *);
 	void (*update)(struct ah_algorithm_state *, caddr_t, size_t);
 	void (*result)(struct ah_algorithm_state *, caddr_t, size_t);
+	/* not supposed to be called directly */
+	const struct ccdigest_info *(*digest)(void);
+	size_t (*schedlen)(const struct ah_algorithm *);
+	int (*schedule)(const struct ah_algorithm *, struct secasvar *);
 };
 
 #define AH_MAXSUMSIZE   64 // sha2-512's output size
@@ -80,11 +91,12 @@ extern const struct ah_algorithm *ah_algorithm_lookup(int);
 
 /* cksum routines */
 extern size_t ah_hdrlen(struct secasvar *);
-
 extern size_t ah_hdrsiz(struct ipsecrequest *);
+extern int ah_schedule(const struct ah_algorithm *, struct secasvar *);
+
 extern void ah4_input(struct mbuf *, int);
 extern int ah4_output(struct mbuf *, struct secasvar *);
-extern int ah4_calccksum(struct mbuf *, caddr_t, size_t,
+extern int ah4_calccksum(struct mbuf *, caddr_t __sized_by(len), size_t len,
     const struct ah_algorithm *, struct secasvar *);
 #endif /* BSD_KERNEL_PRIVATE */
 

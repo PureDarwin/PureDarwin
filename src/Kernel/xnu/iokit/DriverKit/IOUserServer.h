@@ -42,7 +42,7 @@
         
 */
 
-/* source class IOUserServer IOUserServer.iig:43-64 */
+/* source class IOUserServer IOUserServer.iig:43-68 */
 
 #if __DOCUMENTATION__
 #define KERNEL IIG_KERNEL
@@ -55,6 +55,7 @@ public:
 		const char      name[64],
 		uint64_t        tag,
 		uint64_t        options,
+		OSString      * bundleID,
 		IOUserServer ** server);
 
 	virtual bool
@@ -68,14 +69,17 @@ public:
 
 	virtual kern_return_t
 	LoadModule(const char path[1024]) LOCAL;
+
+	virtual kern_return_t
+	RegisterService() override;
 };
 
 #undef KERNEL
 #else /* __DOCUMENTATION__ */
 
-/* generated class IOUserServer IOUserServer.iig:43-64 */
+/* generated class IOUserServer IOUserServer.iig:43-68 */
 
-#define IOUserServer_Create_ID            0x6753b49ad1ed53e9ULL
+#define IOUserServer_Create_ID            0x73ce4bbec8e2d8f0ULL
 #define IOUserServer_Exit_ID            0xcf69d54dd97a4817ULL
 #define IOUserServer_LoadModule_ID            0x50bdabda4bac3143ULL
 
@@ -83,6 +87,7 @@ public:
         const char * name, \
         uint64_t tag, \
         uint64_t options, \
+        OSString * bundleID, \
         IOUserServer ** server
 
 #define IOUserServer_Exit_Args \
@@ -90,6 +95,9 @@ public:
 
 #define IOUserServer_LoadModule_Args \
         const char * path
+
+#define IOUserServer_RegisterService_Args \
+
 
 #define IOUserServer_Methods \
 \
@@ -106,6 +114,7 @@ public:\
         const char * name,\
         uint64_t tag,\
         uint64_t options,\
+        OSString * bundleID,\
         IOUserServer ** server);\
 \
     kern_return_t\
@@ -158,6 +167,9 @@ protected:\
 \
     static kern_return_t\
     Create_Impl(IOUserServer_Create_Args);\
+\
+    kern_return_t\
+    RegisterService_Impl(IOService_RegisterService_Args);\
 \
 
 

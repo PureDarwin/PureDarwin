@@ -10,11 +10,21 @@ include $(MakeInc_def)
 DATAFILES = \
 	uuid.h
 
+DRIVERKIT_DATAFILES = \
+	uuid.h
+
+MODULEMAPFILES = \
+	uuid.modulemap
+
 # KERNELFILES will appear only in the kernel framework
 KERNELFILES = \
 	uuid.h
 
 INSTALL_MI_LIST	= ${DATAFILES}
+
+INSTALL_MODULEMAP_MI_LIST = ${MODULEMAPFILES}
+
+INSTALL_SF_MI_LCL_LIST = ${DATAFILES}
 
 INSTALL_MI_DIR = uuid
 
@@ -29,6 +39,10 @@ INSTALL_KF_MI_LCL_LIST =  ${KERNELFILES}
 # /System/Library/Frameworks/Kernel.framework/Headers
 
 INSTALL_KF_MI_LIST = ${KERNELFILES}
+
+# DriverKit SDK: System/DriverKit/usr/local/include
+
+INSTALL_DRIVERKIT_MI_LCL_LIST = ${DRIVERKIT_DATAFILES}
 
 include $(MakeInc_rule)
 include $(MakeInc_dir)

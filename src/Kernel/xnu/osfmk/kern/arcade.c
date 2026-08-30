@@ -30,6 +30,7 @@
 #include <kern/kern_types.h>
 #include <mach/notify.h>
 #include <mach/resource_monitors.h>
+#include <os/log.h>
 
 #include <mach/host_special_ports.h>
 #include <mach/mach_host_server.h>
@@ -47,6 +48,10 @@
 #include <mach/arcade_register_server.h>
 
 #include <IOKit/IOBSD.h>
+
+/* ipc_kobject_alloc_port()/vm_map_copyin(); transitive in Apple's build. */
+#include <kern/ipc_kobject.h>
+#include <vm/vm_map_xnu.h>
 
 #if !defined(MAXPATHLEN)
 #define MAXPATHLEN 4096
@@ -73,13 +78,18 @@ struct arcade_register {
 };
 typedef struct arcade_register *arcade_register_t;
 
-static struct arcade_register arcade_register_global;
+IPC_KOBJECT_DEFINE(IKOT_ARCADE_REG,
+    .iko_op_movable_send = true,
+    .iko_op_stable    = true,
+    .iko_op_permanent = true);
+
+static SECURITY_READ_ONLY_LATE(struct arcade_register) arcade_register_global;
 
 void
 arcade_prepare(task_t task, thread_t thread)
 {
 	/* Platform binaries are exempt */
-	if (task->t_flags & TF_PLATFORM) {
+	if (task_get_platform_binary(task)) {
 		return;
 	}
 
@@ -117,10 +127,8 @@ convert_port_to_arcade_register(
 	arcade_register_t arcade_reg = ARCADE_REG_NULL;
 
 	if (IP_VALID(port)) {
-		/* No need to lock port because of how refs managed */
-		if (ip_kotype(port) == IKOT_ARCADE_REG) {
-			assert(ip_active(port));
-			arcade_reg = (arcade_register_t)ip_get_kobject(port);
+		arcade_reg = ipc_kobject_get_stable(port, IKOT_ARCADE_REG);
+		if (arcade_reg) {
 			assert(arcade_reg == &arcade_register_global);
 			assert(arcade_reg->ar_port == port);
 		}
@@ -145,13 +153,14 @@ arcade_register_new_upcall(
 	arcade_register_t arcade_reg,
 	mach_port_t port)
 {
+	os_log(OS_LOG_DEFAULT, "arcade: received register request");
 	if (arcade_reg == ARCADE_REG_NULL) {
 		return KERN_INVALID_ARGUMENT;
 	}
 	assert(arcade_reg == &arcade_register_global);
 
 	/* Check to see if this is the real arcade subscription service */
-	if (!IOTaskHasEntitlement(current_task(), "com.apple.arcade.fpsd")) {
+	if (!IOCurrentTaskHasEntitlement("com.apple.arcade.fpsd")) {
 		return KERN_INVALID_VALUE;
 	}
 
@@ -170,7 +179,6 @@ arcade_register_new_upcall(
 		thread_wakeup(&arcade_upcall_port);
 		return KERN_SUCCESS;
 	}
-
 	lck_mtx_unlock(&arcade_upcall_mutex);
 	return KERN_FAILURE;
 }
@@ -276,7 +284,7 @@ arcade_ast(__unused thread_t thread)
 
 restart:
 	lck_mtx_lock(&arcade_upcall_mutex);
-	port = ipc_port_copy_send(arcade_upcall_port);
+	port = ipc_port_copy_send_mqueue(arcade_upcall_port);
 	/*
 	 * if the arcade_upcall_port was inactive, "port" will be IP_DEAD.
 	 * Otherwise, it holds a send right to the arcade_upcall_port.
@@ -292,7 +300,7 @@ restart:
 			lck_mtx_unlock(&arcade_upcall_mutex);
 			goto fail;
 		}
-		port = ipc_port_copy_send(arcade_upcall_port);
+		port = ipc_port_copy_send_mqueue(arcade_upcall_port);
 	}
 	lck_mtx_unlock(&arcade_upcall_mutex);
 
@@ -304,27 +312,19 @@ restart:
 	char *path;
 	vm_map_copy_t copy;
 
-	kr = kmem_alloc(ipc_kernel_map, (vm_offset_t *)&path, MAXPATHLEN, VM_KERN_MEMORY_IPC);
-	if (kr != KERN_SUCCESS) {
-		ipc_port_release_send(port);
-		return;
-	}
-	bzero(path, MAXPATHLEN);
+	path = kalloc_data(MAXPATHLEN, Z_WAITOK | Z_ZERO);
 	retval = proc_pidpathinfo_internal(p, 0, path, MAXPATHLEN, NULL);
 	assert(!retval);
-	kr = vm_map_unwire(ipc_kernel_map,
-	    vm_map_trunc_page((vm_offset_t)path, VM_MAP_PAGE_MASK(ipc_kernel_map)),
-	    vm_map_round_page((vm_offset_t)path + MAXPATHLEN, VM_MAP_PAGE_MASK(ipc_kernel_map)),
-	    FALSE);
+	kr = vm_map_copyin(kernel_map, (vm_map_address_t)path, MAXPATHLEN, FALSE, &copy);
 	assert(kr == KERN_SUCCESS);
-	kr = vm_map_copyin(ipc_kernel_map, (vm_map_address_t)path, MAXPATHLEN, TRUE, &copy);
-	assert(kr == KERN_SUCCESS);
+	kfree_data(path, MAXPATHLEN);
 
 	offset = proc_getexecutableoffset(p);
 
 	/* MAKE THE UPCALL */
 	boolean_t should_kill = TRUE;
 	kr = __MAKING_UPCALL_TO_ARCADE_VALIDATION_SERVICE__(port, copy, MAXPATHLEN, offset, &should_kill);
+	os_log(OS_LOG_DEFAULT, "arcade: subscription validation upcall returned %#x", kr);
 	ipc_port_release_send(port);
 
 	switch (kr) {
@@ -350,6 +350,7 @@ fail:
 		 * process didn't launch. We might want this to be an exit_with_reason()
 		 * in the future.
 		 */
+		os_log(OS_LOG_DEFAULT, "arcade: unable to make subscription upcall, error %#x", kr);
 		task_terminate_internal(current_task());
 		break;
 	}

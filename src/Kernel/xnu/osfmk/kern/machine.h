@@ -35,11 +35,11 @@
 #include <mach/kern_return.h>
 #include <mach/processor_info.h>
 #include <kern/kern_types.h>
+#include <kern/sched_urgency.h>
+#include <kern/startup.h>
 #include <kern/thread_group.h>
-
 #include <kern/work_interval.h>
 
-#include <kern/sched_urgency.h>
 
 /*
  * Machine support declarations.
@@ -63,6 +63,9 @@ extern void init_ast_check(
 extern void cause_ast_check(
 	processor_t         processor);
 
+extern void cause_maintenance_ipi(
+	int                 cpu);
+
 extern kern_return_t cpu_control(
 	int                 slot_num,
 	processor_info_t    info,
@@ -70,13 +73,10 @@ extern kern_return_t cpu_control(
 
 extern void     cpu_sleep(void);
 
-extern kern_return_t cpu_start(
+extern void cpu_start(
 	int                 slot_num);
 
 extern void cpu_exit_wait(
-	int                 slot_num);
-
-extern boolean_t cpu_can_exit(
 	int                 slot_num);
 
 extern kern_return_t cpu_info(
@@ -118,14 +118,6 @@ extern void halt_all_cpus(
 extern char *machine_boot_info(
 	char                *buf,
 	vm_size_t           buf_len);
-
-/*
- * Machine-dependent routine to fill in an array with up to callstack_max
- * levels of return pc information.
- */
-extern void machine_callstack(
-	uintptr_t           *buf,
-	vm_size_t           callstack_max);
 
 extern void consider_machine_collect(void);
 
@@ -171,5 +163,7 @@ extern void machine_thread_group_flags_update(struct thread_group *tg, uint32_t 
 extern void machine_thread_group_blocked(struct thread_group *tg_blocked, struct thread_group *tg_blocking, uint32_t flags, thread_t blocked_thread);
 extern void machine_thread_group_unblocked(struct thread_group *tg_unblocked, struct thread_group *tg_unblocking, uint32_t flags, thread_t unblocked_thread);
 #endif
+
+extern void machine_perfcontrol_running_timer_expire(uint64_t now, uint32_t flags, int cpu_id, uint64_t *timeout_ticks);
 
 #endif  /* _KERN_MACHINE_H_ */

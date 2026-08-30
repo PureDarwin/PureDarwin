@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -63,6 +63,7 @@
 
 #ifndef _NETINET_TCP_VAR_H_
 #define _NETINET_TCP_VAR_H_
+#include <stdint.h>
 #include <sys/types.h>
 #include <sys/appleapiopts.h>
 #include <sys/queue.h>
@@ -85,6 +86,7 @@ struct name {                           \
 #endif
 
 #ifdef KERNEL_PRIVATE
+#include <sys/tree.h>
 
 #define TCP_RETRANSHZ   1000    /* granularity of TCP timestamps, 1ms */
 /* Minimum time quantum within which the timers are coalesced */
@@ -148,6 +150,29 @@ struct name {                           \
 
 #define TCP_CONNECTIVITY_PROBES_MAX     5
 
+/* 3 bit mask used for Accurate ECN ACE field */
+#define TCP_ACE_MASK (0x7)
+/* Divisor used for Accurate ECN ACE field */
+#define TCP_ACE_DIV (1 << 3)
+
+/* 24 bit mask used for Accurate ECN option */
+#define TCP_ACO_MASK (0xFFFFFF)
+/* Divisor used for Accurate ECN options field */
+#define TCP_ACO_DIV (1 << 24)
+
+static __inline uint16_t
+tcp_get_flags(const struct tcphdr *th)
+{
+	return (uint16_t)((th->th_x2 << 8) | th->th_flags);
+}
+
+static __inline void
+tcp_set_flags(struct tcphdr *th, uint16_t flags)
+{
+	th->th_x2 = (flags >> 8) & 0x0f;
+	th->th_flags = flags & 0xff;
+}
+
 /*
  * Kernel variables for tcp.
  */
@@ -186,9 +211,40 @@ struct tcp_rxt_seg {
 	u_int16_t rx_count;
 	u_int16_t rx_flags;
 #define TCP_RXT_SPURIOUS        0x1     /* received DSACK notification */
-#define TCP_RXT_DSACK_FOR_TLP   0x2
 	SLIST_ENTRY(tcp_rxt_seg) rx_link;
 };
+
+/* TCP state of a segment that was sent */
+struct tcp_seg_sent {
+	tcp_seq start_seq;
+	tcp_seq end_seq;        /* last seq sent + 1 */
+	uint32_t xmit_ts;
+	uint8_t flags;
+	uint8_t pad[3];
+#define TCP_SEGMENT_SACKED                  0x1
+#define TCP_SEGMENT_LOST                    0x2
+#define TCP_RACK_RETRANSMITTED              0x4
+#define TCP_SEGMENT_RETRANSMITTED_ATLEAST_ONCE      0x8 /* If a segment was retransmitted at least once; used for reordering detection and to avoid spurious inferences for RACK.rtt */
+#define TCP_SEGMENT_RETRANSMITTED           (TCP_RACK_RETRANSMITTED | TCP_SEGMENT_RETRANSMITTED_ATLEAST_ONCE)
+
+	TAILQ_ENTRY(tcp_seg_sent) tx_link; /* Time ordered list of segments */
+	RB_ENTRY(tcp_seg_sent)    seg_link; /* RB tree to keep track of S/ACKed segments */
+	TAILQ_ENTRY(tcp_seg_sent) ack_link; /* List of ACKed segments to be deleted from time ordered list and RB tree */
+	TAILQ_ENTRY(tcp_seg_sent) free_link; /* List of free segments from the pool */
+};
+
+typedef struct tcp_seg_pool {
+	TAILQ_HEAD(, tcp_seg_sent) free_segs;
+	uint32_t free_segs_count;
+	char pad[4];
+} *tcp_seg_pool_t;
+
+#define TCP_SEG_POOL_MAX_ITEM_COUNT (64)
+
+int tcp_seg_cmp(const struct tcp_seg_sent *, const struct tcp_seg_sent *);
+
+RB_HEAD(tcp_seg_sent_tree_head, tcp_seg_sent);
+RB_PROTOTYPE(tcp_seg_sent_tree_head, tcp_seg_sent, seg_link, tcp_seg_cmp)
 
 struct tcp_notify_ack_marker {
 	tcp_seq notify_snd_una; /* Notify when snd_una crosses this seq */
@@ -199,6 +255,32 @@ struct tcp_notify_ack_marker {
 struct tcptemp {
 	u_char  tt_ipgen[40]; /* the size must be of max ip header, now IPv6 */
 	struct  tcphdr tt_t;
+};
+
+struct tcp_inp {
+	struct socket *so;
+	struct inpcb **inp;
+	struct tcpcb **tp;
+	struct mbuf *m;
+	struct tcphdr *th;
+	struct tcpopt *to;
+	u_char *optp __counted_by(optlen);
+	struct ip6_hdr *ip6;
+	struct ip *ip;
+	struct ifnet *ifp;
+	struct proc *kernel_proc;
+	tcp_seq iss;
+	tcp_seq irs;
+	uint32_t tiwin;
+	uint32_t ts_offset;
+	int optlen;
+	unsigned int ifscope;
+	uint16_t peer_mss;
+	uint8_t peer_wscale;
+	bool sackok;
+	bool ecnok;
+	uint8_t ip_ecn;
+	bool isipv6;
 };
 
 struct bwmeas {
@@ -244,7 +326,93 @@ struct tcp_ccstate {
 #define cub_epoch_period __u__._cubic_state_.tc_epoch_period
 #define cub_avg_lastmax __u__._cubic_state_.tc_avg_lastmax
 #define cub_mean_dev __u__._cubic_state_.tc_mean_deviation
+		struct tcp_prague_state {
+			uint16_t num_cong_events_loss;
+			uint16_t num_cong_events_ce;
+			uint32_t packets_acked;   /* cumulative packets ack'ed updated at round start for alpha */
+			uint32_t packets_marked;  /* cumulative CE counts updated at round start for alpha */
+			uint32_t ce_counter;      /* cumulative CE counts updated on every ACK,
+			                           *                        used for calculating non-CE acked and performing any CE related action */
+			uint32_t bytes_acked;     /* bytes acked in this ACK that were not CE marked, used for cwnd increase */
+			uint32_t snd_nxt_alpha;   /* snd_nxt at round start to track 1 RTT elapsed for alpha */
+			uint32_t snd_nxt_cwr;     /* snd_nxt at round start to track 1 RTT elapsed for CWR */
+			uint8_t ever_saw_ce:1,       /* To test if there is a AQM on path */
+			    in_loss:1,                       /* Are we in loss recovery */
+			    reduced_due_to_ce:1,             /* Was the last reduction due to CE */
+			    unused:5;
+			uint8_t pad[3];
+			uint64_t scaled_alpha;    /* Scaled value of DCTCP.alpha */
+			uint64_t alpha_ai;        /* AI.alpha used after CE for additive increase */
+			/* After reduction due to loss CUBIC window increase state */
+			struct tcp_cubic_state cubic_state;
+		} _prague_state_;
+#define num_cong_events_loss __u__._prague_state_.num_cong_events_loss
+#define num_cong_events_ce __u__._prague_state_.num_cong_events_ce
+#define prague_packets_acked __u__._prague_state_.packets_acked
+#define prague_packets_marked __u__._prague_state_.packets_marked
+#define prague_ce_counter __u__._prague_state_.ce_counter
+#define prague_bytes_acked __u__._prague_state_.bytes_acked
+#define snd_nxt_alpha __u__._prague_state_.snd_nxt_alpha
+#define snd_nxt_cwr __u__._prague_state_.snd_nxt_cwr
+#define prague_scaled_alpha __u__._prague_state_.scaled_alpha
+#define prague_alpha_ai __u__._prague_state_.alpha_ai
+#define ever_saw_ce __u__._prague_state_.ever_saw_ce
+#define in_loss __u__._prague_state_.in_loss
+#define reduced_due_to_ce __u__._prague_state_.reduced_due_to_ce
+#define cubic_K __u__._prague_state_.cubic_state.tc_epoch_period
+#define cubic_epoch_start __u__._prague_state_.cubic_state.tc_epoch_start
+#define cubic_origin_point __u__._prague_state_.cubic_state.tc_origin_point
+#define cubic_W_max __u__._prague_state_.cubic_state.tc_last_max
+#define reno_acked __u__._prague_state_.cubic_state.tc_tcp_bytes_acked
+#define reno_cwnd __u__._prague_state_.cubic_state.tc_tcp_win
+		struct tcp_ledbat_state {
+			uint32_t num_slowdown_events;
+			uint32_t slowdown_ts;
+			uint32_t slowdown_begin;
+			uint32_t md_bytes_acked;
+		} _ledbat_state_;
+#define ledbat_slowdown_events __u__._ledbat_state_.num_slowdown_events
+#define ledbat_slowdown_ts __u__._ledbat_state_.slowdown_ts
+#define ledbat_slowdown_begin __u__._ledbat_state_.slowdown_begin
+#define ledbat_md_bytes_acked __u__._ledbat_state_.md_bytes_acked
 	} __u__;
+};
+
+struct tcp_rledbat_state {
+	uint32_t num_slowdown_events;  /* Number of slowdown events until reset */
+	uint32_t slowdown_ts;          /* Next slowdown timestamp */
+	uint32_t slowdown_begin;       /* Slowdown begin time */
+	uint32_t reduction_end;        /* Used to track rl_win reduction once per RTT */
+	uint32_t rcvd_bytes;           /* bytes received used for byte counting */
+	uint32_t md_rcvd_bytes;        /* bytes received during MD used for byte counting */
+	uint32_t win;                  /* receive Ledbat window size */
+	uint32_t ssthresh;             /* receive Ledbat ssthresh */
+	uint32_t drained_bytes;        /* bytes drained from the flight-size */
+	uint32_t win_ws;               /* receive Ledbat window after avoiding window shrinking */
+};
+
+struct accecn {
+	/* ACE CE packet counters */
+	uint32_t        t_rcv_ce_packets;                  /* Number of CE received packets at the receiver */
+	uint32_t        t_snd_ce_packets;                  /* Synced number of CE received feedback at the sender */
+	uint32_t        t_delta_ce_packets;                /* Change in CE count between previous and current ACK */
+	uint8_t         accecn_processed:1,                /* Accurate ECN feedback has already been processed */
+	    unused:7;
+
+	/* AccECN option byte counters */
+	uint64_t        t_rcv_ect1_bytes;                  /* ECT1 byte counter at the receiver, used for AccECN option feedback */
+	uint64_t        t_rcv_ect0_bytes;                  /* ECT0 byte counter at the receiver, used for AccECN option feedback */
+	uint64_t        t_rcv_ce_bytes;                    /* CE byte counter at the receiver, used for AccECN option feedback */
+	uint64_t        t_snd_ect1_bytes;                  /* Synced ECT1 byte counter at the sender */
+	uint64_t        t_snd_ect0_bytes;                  /* Synced ECT0 byte counter at the sender */
+	uint64_t        t_snd_ce_bytes;                    /* Synced CE byte counter at the sender */
+};
+
+struct pacer {
+	uint64_t rate;
+	uint32_t tso_burst_size; /* maximum allowed burst size, segments that fit in a burst have the same Tx timestamp */
+	uint32_t current_size; /* track how many bytes have been accumulated in a burst */
+	uint64_t packet_tx_time;
 };
 
 /*
@@ -252,9 +420,9 @@ struct tcp_ccstate {
  * Organized for 16 byte cacheline efficiency.
  */
 struct tcpcb {
-	struct  tsegqe_head t_segq;
-	int     t_dupacks;              /* consecutive dup acks recd */
-	int     t_state;                /* state of this connection */
+	struct tsegqe_head t_segq;
+	uint32_t t_dupacks;             /* consecutive dup acks recd */
+	int      t_state;               /* state of this connection */
 	uint32_t t_timer[TCPT_NTIMERS]; /* tcp timers */
 	struct tcptimerentry tentry;    /* entry in timer list */
 
@@ -273,9 +441,9 @@ struct tcpcb {
 #define TF_NEEDSYN      0x00400         /* send SYN (implicit state) - unused but needed for backwards compatibility */
 #define TF_NEEDFIN      0x00800         /* send FIN (implicit state) */
 #define TF_NOPUSH       0x01000         /* don't push */
-#define TF_REQ_CC       0x02000         /* have/will request CC */
-#define TF_RCVD_CC      0x04000         /* a CC was received in SYN */
-#define TF_SENDCCNEW    0x08000         /* Unused */
+#define TF_UNUSED1      0x02000         /* Unused */
+#define TF_UNUSED2      0x04000         /* Unused */
+#define TF_UNUSED3      0x08000         /* Unused */
 #define TF_MORETOCOME   0x10000         /* More data to be appended to sock */
 #define TF_LOCAL        0x20000         /* connection to a host on local link */
 #define TF_RXWIN0SENT   0x40000         /* sent a receiver win 0 in response */
@@ -285,13 +453,13 @@ struct tcpcb {
 #define TF_WASFRECOVERY 0x400000        /* was in NewReno Fast Recovery */
 #define TF_SIGNATURE    0x800000        /* require MD5 digests (RFC2385) */
 #define TF_MAXSEGSNT    0x1000000       /* last segment sent was a full segment */
-#define TF_STREAMING_ON 0x2000000       /* Receiver detected streaming */
+/* Unused 0x2000000 */
 #define TF_PMTUD        0x4000000       /* Perform Path MTU Discovery for this connection */
 #define TF_CLOSING      0x8000000       /* pending tcp close */
 #define TF_TSO          0x10000000      /* TCP Segment Offloading is enable on this connection */
 #define TF_BLACKHOLE    0x20000000      /* Path MTU Discovery Black Hole detection */
 #define TF_TIMER_ONLIST 0x40000000      /* pcb is on tcp_timer_list */
-#define TF_STRETCHACK   0x80000000      /* receiver is going to delay acks */
+/* Unused 0x80000000 */
 
 	tcp_seq snd_una;                /* send unacknowledged */
 	tcp_seq snd_max;                /* highest sequence number sent;
@@ -310,6 +478,7 @@ struct tcpcb {
 	uint32_t        rcv_wnd;        /* receive window */
 	uint32_t        t_last_recwin;
 	tcp_seq rcv_up;                 /* receive urgent pointer */
+	uint32_t        t_latest_tx;    /* Most recent transmit scheduled (including potential pacing) */
 
 	uint32_t        snd_wnd;        /* send window */
 	uint32_t        snd_cwnd;       /* congestion-controlled window */
@@ -336,7 +505,8 @@ struct tcpcb {
 	int            t_rttvar;        /* variance in round-trip time */
 
 	uint64_t t_accsleep_ms;         /* accumulated sleep time since last boot */
-	uint16_t t_reassqlen;           /* length of reassembly queue */
+	uint32_t t_reassqlen;           /* length of reassembly queue */
+	uint32_t t_reassq_mbcnt;        /* amount in bytes of mbuf space used */
 	uint16_t t_rxtshift;            /* log(2) of rexmt exp. backoff */
 	uint32_t t_rttmin;              /* minimum rtt allowed */
 	uint32_t t_rttbest;             /* best rtt we've seen */
@@ -353,28 +523,31 @@ struct tcpcb {
 #define TCPOOB_HAVEDATA 0x01
 #define TCPOOB_HADDATA  0x02
 /* RFC 1323 variables */
-	u_int8_t        snd_scale;      /* window scaling for send window */
-	u_int8_t        rcv_scale;      /* window scaling for recv window */
-	u_int8_t        request_r_scale; /* pending window scaling */
-	u_int8_t        requested_s_scale;
-	u_int8_t        tcp_cc_index;   /* index of congestion control algorithm */
-	u_int8_t        t_adaptive_rtimo;       /* Read timeout used as a multiple of RTT */
-	u_int8_t        t_adaptive_wtimo;       /* Write timeout used as a multiple of RTT */
-	u_int8_t        t_stretchack_delayed;   /* stretch ack delayed */
+	uint8_t         snd_scale;      /* window scaling for send window */
+	uint8_t         rcv_scale;      /* window scaling for recv window */
+	uint8_t         request_r_scale; /* pending window scaling */
+	uint8_t         requested_s_scale;
+	uint8_t         tcp_cc_index;   /* index of congestion control algorithm */
+	uint8_t         t_adaptive_rtimo;       /* Read timeout used as a multiple of RTT */
+	uint8_t         t_adaptive_wtimo;       /* Write timeout used as a multiple of RTT */
 
 /* State for limiting early retransmits when SACK is not enabled */
-	u_int16_t       t_early_rexmt_count; /* count of early rexmts */
-	u_int32_t       t_early_rexmt_win; /* window for limiting early rexmts */
+	uint16_t        t_early_rexmt_count; /* count of early rexmts */
+	uint32_t        t_early_rexmt_win; /* window for limiting early rexmts */
 
-	u_int32_t       ts_recent;      /* timestamp echo data */
+	uint32_t        ts_recent;      /* timestamp echo data */
+	uint32_t        t_ts_offset; /* Randomized timestamp offset to hide on-the-wire timestamp */
 
-	u_int32_t       ts_recent_age;  /* when last updated */
-	tcp_seq last_ack_sent;
-/* RFC 3465 variables */
-	u_int32_t       t_bytes_acked;  /* ABC "bytes_acked" parameter */
+	uint32_t        ts_recent_age;  /* when last updated */
+	tcp_seq         last_ack_sent;
+
+	uint32_t        t_bytes_acked;  /* RFC 3465 variable for ABC, used by CCA only */
+	uint32_t        total_ect_packets_marked; /* Cumulative count of total ECT packets marked */
+	uint32_t        total_ect_packets_acked;  /* Cumulative count of total ECT packets acked */
 
 	int             t_lastchain;    /* amount of packets chained last time around */
 	uint16_t        t_unacksegs;    /* received but unacked segments for delaying acks */
+	uint16_t        t_unacksegs_ce; /* received but unacked segments/pure ACKs that were CE marked */
 
 	/*
 	 * Pretty arbitrary value ;-)
@@ -389,95 +562,114 @@ struct tcpcb {
 	uint32_t        t_persist_stop;    /* persistence limit deadline if triggered by ZWP */
 	uint32_t        t_notsent_lowat;   /* Low water for not sent data */
 
-/* Receiver state for stretch-ack algorithm */
-	u_int32_t       rcv_unackwin;   /* to measure win for stretching acks */
-	u_int32_t       rcv_by_unackwin; /* bytes seen during the last ack-stretching win */
-	u_int32_t       rcv_by_unackhalfwin;
-	u_int32_t       rcv_nostrack_ts; /* timestamp when stretch ack was disabled automatically */
-	u_int32_t       rcv_nostrack_pkts; /* pkts received since strech ack was disabled */
-	u_int16_t       rcv_waitforss;  /* wait for packets during slow-start */
-
 /* ECN stats */
-	u_int16_t       ecn_flags;
-#define TE_SETUPSENT            0x0001  /* Indicate we have sent ECN-SETUP SYN or SYN-ACK */
-#define TE_SETUPRECEIVED        0x0002  /* Indicate we have received ECN-SETUP SYN or SYN-ACK */
-#define TE_SENDIPECT            0x0004  /* Indicate we haven't sent or received non-ECN-setup SYN or SYN-ACK */
-#define TE_SENDCWR              0x0008  /* Indicate that the next non-retransmit should have the TCP CWR flag set */
-#define TE_SENDECE              0x0010  /* Indicate that the next packet should have the TCP ECE flag set */
-#define TE_INRECOVERY           0x0020  /* connection entered recovery after receiving ECE */
-#define TE_RECV_ECN_CE          0x0040  /* Received IPTOS_ECN_CE marking atleast once */
-#define TE_RECV_ECN_ECE         0x0080  /* Received ECE marking atleast once */
-#define TE_LOST_SYN             0x0100  /* Lost SYN with ECN setup */
-#define TE_LOST_SYNACK          0x0200  /* Lost SYN-ACK with ECN setup */
-#define TE_ECN_MODE_ENABLE      0x0400  /* Option ECN mode set to enable */
-#define TE_ECN_MODE_DISABLE     0x0800  /* Option ECN mode set to disable */
-#define TE_ENABLE_ECN           0x1000  /* Enable negotiation of ECN */
-#define TE_ECN_ON               (TE_SETUPSENT | TE_SETUPRECEIVED) /* Indicate ECN was successfully negotiated on a connection) */
-#define TE_CEHEURI_SET          0x2000 /* We did our CE-probing at the beginning */
-#define TE_CLIENT_SETUP         0x4000  /* setup from client side */
-#define TE_RCVD_SYN_RST         0x8000  /* Received RST to the first ECN enabled SYN */
+	uint32_t        ecn_flags;
+#define TE_SETUPSENT            0x00000001  /* We have sent classic ECN-SETUP SYN or SYN-ACK */
+#define TE_SETUPRECEIVED        0x00000002  /* We have received classic ECN-SETUP SYN or SYN-ACK */
+#define TE_SENDIPECT            0x00000004  /* We haven't sent or received non-ECN-setup SYN or SYN-ACK, set IP ECT on outbound packet */
+#define TE_SENDCWR              0x00000008  /* Next non-retransmit should have TCP CWR set, only used for classic ECN */
+#define TE_SENDECE              0x00000010  /* Next packet should have TCP ECE set, only used for classic ECN */
+#define TE_INRECOVERY           0x00000020  /* connection entered recovery after receiving ECE */
+#define TE_RECV_ECN_CE          0x00000040  /* Received IPTOS_ECN_CE marking atleast once */
+#define TE_RECV_ECN_ECE         0x00000080  /* Received ECE marking atleast once */
+#define TE_LOST_SYN             0x00000100  /* Lost SYN with ECN setup */
+#define TE_LOST_SYNACK          0x00000200  /* Lost SYN-ACK with ECN setup */
+#define TE_ECN_MODE_ENABLE      0x00000400  /* Option ECN mode set to enable */
+#define TE_ECN_MODE_DISABLE     0x00000800  /* Option ECN mode set to disable */
+#define TE_ENABLE_ECN           0x00001000  /* Enable negotiation of ECN */
+#define TE_ECN_ON               (TE_SETUPSENT | TE_SETUPRECEIVED) /* ECN was successfully negotiated on a connection */
+#define TE_ECEHEURI_SET         0x00002000 /* We did our E/CE-probing at the beginning */
+#define TE_CLIENT_SETUP         0x00004000  /* setup from client side */
+#define TE_RCVD_SYN_RST         0x00008000  /* Received RST to the first ECN enabled SYN */
+#define TE_ACE_SETUP_NON_ECT    0x00010000  /* Encode received non-ECT either for SYN-ACK (server) or final ACK (client) */
+#define TE_ACE_SETUP_ECT1       0x00020000  /* Encode received ECT1 either for SYN-ACK (server) or final ACK (client) */
+#define TE_ACE_SETUP_ECT0       0x00040000  /* Encode received ECT0 either for SYN-ACK (server) or final ACK (client) */
+#define TE_ACE_SETUP_CE         0x00080000  /* Encode received CE either for SYN-ACK (server) or final ACK (client) */
+#define TE_ACE_SETUPSENT        0x00100000  /* We have sent Accurate ECN setup SYN or SYN-ACK */
+#define TE_ACE_SETUPRECEIVED    0x00200000  /* We have received Accurate ECN setup SYN or SYN-ACK */
+#define TE_ACC_ECN_ON          (TE_ACE_SETUPSENT | TE_ACE_SETUPRECEIVED) /* Accurate ECN was negotiated */
+#define TE_ACE_FINAL_ACK_3WHS   0x00400000  /* Client has received SYN-ACK and will now send final ACK of 3WHS, only used for AccECN */
+#define TE_ACO_ECT1             0x00800000  /* ECT1 counter changed flag, used to decide ordering for AccECN option */
+#define TE_ACO_ECT0             0x01000000  /* ECT0 counter changed flag, used to decide ordering for AccECN option */
+#define TE_RETRY_WITHOUT_ACO    0x02000000  /* Data segment with AccECN option was not acknowledged, retry without AccECN option */
+#define TE_FORCE_ECT1           0x40000000  /* Force setting ECT1 on outgoing packets for testing purpose */
+#define TE_FORCE_ECT0           0x80000000  /* Force setting ECT0 on outgoing packets for testing purpose */
 
-	u_int32_t       t_ecn_recv_ce;  /* Received CE from the network */
-	u_int32_t       t_ecn_recv_cwr; /* Packets received with CWR */
+	uint32_t        t_ecn_recv_ce;  /* Received CE from the network */
+	uint32_t        t_ecn_recv_cwr; /* Packets received with CWR */
+	uint32_t        t_client_accecn_state;    /* Client's Accurate ECN state */
+	uint32_t        t_server_accecn_state;    /* Server's Accurate ECN state */
+	uint64_t        t_ecn_capable_packets_sent;     /* Packets sent with ECT */
+	uint64_t        t_ecn_capable_packets_acked;    /* Packets sent with ECT that were acked */
+	uint64_t        t_ecn_capable_packets_marked;   /* Packets sent with ECT that were marked */
+	uint64_t        t_ecn_capable_packets_lost;     /* Packets sent with ECT that were lost */
+
+	uint32_t        t_last_ack_tsecr;       /* TS Echo Reply for last ACK that acknowledged a data or control packet */
+	uint16_t        t_prev_ace_flags;   /* ACE flags that were sent in previous packet, used for retransmitting after timeout */
+	uint8_t         t_prev_ip_ecn;      /* IP ECN flag on the previous packet, used for change-triggered ACKs */
+
+	struct accecn   t_aecn;         /* AccECN related byte counters */
+
+	struct pacer    t_pacer;        /* Pacer state used to pace packets */
 
 /* state for bad retransmit recovery */
-	u_int32_t       snd_cwnd_prev;  /* cwnd prior to retransmit */
-	u_int32_t       snd_ssthresh_prev; /* ssthresh prior to retransmit */
-	tcp_seq snd_recover_prev;       /* snd_recover prior to retransmit */
-	int     t_srtt_prev;            /* srtt prior to retransmit */
-	int     t_rttvar_prev;          /* rttvar prior to retransmit */
-	u_int32_t       t_badrexmt_time; /* bad rexmt detection time */
+	uint32_t        snd_cwnd_prev;  /* cwnd prior to retransmit */
+	uint32_t        snd_ssthresh_prev; /* ssthresh prior to retransmit */
+	tcp_seq         snd_recover_prev;       /* snd_recover prior to retransmit */
+	int             t_srtt_prev;            /* srtt prior to retransmit */
+	int             t_rttvar_prev;          /* rttvar prior to retransmit */
+	uint32_t        t_badrexmt_time; /* bad rexmt detection time */
 
 /* Packet reordering metric */
-	u_int32_t       t_reorderwin; /* Reordering late time offset */
+	uint32_t        t_reorderwin; /* Reordering late time offset */
 
 /* SACK related state */
 	int16_t snd_numholes;           /* number of holes seen by sender */
-	tcp_seq sack_newdata;           /* New data xmitted in this recovery
-	                                 *   episode starts at this seq number */
 	TAILQ_HEAD(sackhole_head, sackhole) snd_holes;
 	/* SACK scoreboard (sorted) */
 	tcp_seq snd_fack;               /* last seq number(+1) sack'd by rcv'r*/
 	int     rcv_numsacks;           /* # distinct sack blks present */
 	struct sackblk sackblks[MAX_SACK_BLKS]; /* seq nos. of sack blocks */
 	struct sackhint sackhint;       /* SACK scoreboard hint */
-	tcp_seq         send_highest_sack; /* Sequence number of fresh data sent after the most recent fast-retransmit */
-	int             t_new_dupacks; /* Dupacks received above send_highest_sack */
 
 	struct mbuf     *t_pktlist_head; /* First packet in transmit chain */
 	struct mbuf     *t_pktlist_tail; /* Last packet in transmit chain */
-	u_int32_t       t_pktlist_sentlen; /* total bytes in transmit chain */
+	uint32_t        t_pktlist_sentlen; /* total bytes in transmit chain */
 
-	u_int32_t       t_keepidle;     /* keepalive idle timer (override global if > 0) */
-	u_int32_t       t_keepinit;     /* connection timeout, i.e. idle time
+	uint32_t        t_keepidle;     /* keepalive idle timer (override global if > 0) */
+	uint32_t        t_keepinit;     /* connection timeout, i.e. idle time
 	                                 *  in SYN_SENT or SYN_RECV state */
-	u_int32_t       t_keepintvl;    /* interval between keepalives */
-	u_int32_t       t_keepcnt;      /* number of keepalives before close */
+	uint32_t        t_keepintvl;    /* interval between keepalives */
+	uint32_t        t_keepcnt;      /* number of keepalives before close */
 
-	u_int32_t       tso_max_segment_size;   /* TSO maximum segment unit for NIC */
-	u_int16_t       t_pmtud_lastseg_size;   /* size of the last sent segment */
-	u_int32_t       t_pmtud_saved_maxopd;   /* MSS saved before performing PMTU-D BlackHole detection */
-	u_int32_t       t_pmtud_start_ts;       /* Time of PMTUD blackhole detection */
+	uint32_t        tso_max_segment_size;   /* TSO maximum segment unit for NIC */
+	uint16_t        t_pmtud_lastseg_size;   /* size of the last sent segment */
+	uint32_t        t_pmtud_saved_maxopd;   /* MSS saved before performing PMTU-D BlackHole detection */
+	uint32_t        t_pmtud_start_ts;       /* Time of PMTUD blackhole detection */
 
 	struct{
-		u_int32_t       rxduplicatebytes;
-		u_int32_t       rxoutoforderbytes;
-		u_int32_t       txretransmitbytes;
-		u_int16_t       synrxtshift;
-		u_int16_t       rxmitsyns;
-		u_int16_t       unused_pad_to_8;
-		u_int32_t       rxmitpkts;
+		uint32_t        rxduplicatebytes;
+		uint32_t        rxoutoforderbytes;
+		uint32_t        txretransmitbytes;
+		uint16_t        synrxtshift;
+		uint16_t        rxmitsyns;
+		uint16_t        unused_pad_to_8;
+		uint32_t        rxmitpkts;
 		uint32_t        delayed_acks_sent;
 		uint32_t        acks_delayed;
+		uint64_t        bytes_acked;
 	} t_stat;
-	u_int8_t        t_notify_ack_count;
-	u_int8_t        t_ecn_recv_ce_pkt; /* Received packet with CE-bit set (independent from last_ack_sent) */
-	u_int32_t       t_cached_maxopd; /* default for MSS adjustment using link status report */
+	uint8_t         t_syn_sent;
+	uint8_t         t_syn_rcvd;
+	uint8_t         t_notify_ack_count;
+	uint8_t         t_ecn_recv_ce_pkt; /* Received data packet with CE bit set */
+	uint8_t         t_ecn_recv_ece_pkt; /* Received ACK packet with ECE bit set */
+	uint32_t        t_cached_maxopd; /* default for MSS adjustment using link status report */
 
 	uint32_t        bg_ssthresh;            /* Slow start threshold until delay increases */
 	uint32_t        t_flagsext;             /* Another field to accommodate more flags */
-#define TF_RXTFINDROP           0x1                     /* Drop conn after retransmitting FIN 3 times */
-#define TF_RCVUNACK_WAITSS      0x2             /* set when the receiver should not stretch acks */
+#define TF_RXTFINDROP           0x1             /* Drop conn after retransmitting FIN 3 times */
+/* Unused 0x2 */
 #define TF_BWMEAS_INPROGRESS    0x4             /* Indicate BW meas is happening */
 #define TF_MEASURESNDBW         0x8             /* Measure send bw on this connection */
 #define TF_LAST_IS_PSH          0x10            /* Indicates whether the last packet in the rcv socket buffer had the PUSH-flag set */
@@ -485,60 +677,74 @@ struct tcpcb {
 #define TF_RECOMPUTE_RTT        0x40            /* recompute RTT after spurious retransmit */
 #define TF_DETECT_READSTALL     0x80            /* Used to detect a stall during read operation */
 #define TF_RECV_THROTTLE        0x100           /* Input throttling active */
-#define TF_NOSTRETCHACK         0x200           /* ack every other packet */
+#define TF_QUICKACK             0x200           /* Force-ACK every other packet */
+#define TF_SYN_COOKIE_ENABLED   0x400           /* SYN cookie is enabled for listener when max backlog is reached */
 #define TF_NOTIMEWAIT           0x800           /* Avoid going into time-wait */
 #define TF_SENT_TLPROBE         0x1000          /* Sent data in PTO */
 #define TF_PKTS_REORDERED       0x2000          /* Detected reordering */
 #define TF_DELAY_RECOVERY       0x4000          /* delay fast recovery */
 #define TF_FORCE                0x8000          /* force 1 byte out */
-#define TF_DISABLE_STRETCHACK   0x10000         /* auto-disable stretch ack */
+/* Unused 0x10000 */
 #define TF_NOBLACKHOLE_DETECTION 0x20000        /* Disable PMTU blackhole detection */
+#define TF_SYN_COOKIE_FORCE_ENABLED 0x40000     /* SYN cookie is enabled for listener unconditionally */
 #define TF_RESCUE_RXT           0x80000         /* SACK rescue retransmit */
 #define TF_CWND_NONVALIDATED    0x100000        /* cwnd non validated */
 #define TF_IF_PROBING           0x200000        /* Trigger interface probe timeout */
 #define TF_FASTOPEN             0x400000        /* TCP Fastopen is enabled */
 #define TF_REASS_INPROG         0x800000        /* Reassembly is in progress */
 #define TF_FASTOPEN_FORCE_ENABLE 0x1000000      /* Force-enable TCP Fastopen */
-#define TF_LOGGED_CONN_SUMMARY  0x2000000       /* Connection summary was logged */
+#define TF_USR_OUTPUT           0x2000000       /* In connect() or send() so tcp_output() can log */
+#define TF_L4S_ENABLED          0x8000000       /* L4S was force enabled */
+#define TF_L4S_DISABLED         0x10000000      /* L4S was force disabled */
+#define TF_RACK_ENABLED         0x20000000      /* RACK is enabled */
+#define TF_TLP_IS_RETRANS       0x40000000      /* Is TLP-probe a retransmission ? (field TLP.is_retrans in RFC 8985) */
 
 #if TRAFFIC_MGT
 	/* Inter-arrival jitter related state */
 	uint32_t        iaj_rcv_ts;             /* tcp clock when the first packet was received */
-	uint16_t        iaj_size;               /* Size of packet for iaj measurement */
+	int             iaj_size;               /* Size of packet for iaj measurement */
 	uint8_t         iaj_small_pkt;          /* Count of packets smaller than iaj_size */
 	uint8_t         t_pipeack_ind;          /* index for next pipeack sample */
 	uint16_t        iaj_pktcnt;             /* packet count, to avoid throttling initially */
-	uint16_t        acc_iaj;                /* Accumulated iaj */
+	uint32_t        acc_iaj;                /* Accumulated iaj */
 	uint32_t        avg_iaj;                /* Mean */
 	uint32_t        std_dev_iaj;            /* Standard deviation */
 #endif /* TRAFFIC_MGT */
 	struct bwmeas   *t_bwmeas;              /* State for bandwidth measurement */
 	tcp_seq         t_idleat;               /* rcv_nxt at idle time */
+	uint8_t         t_fin_sent;
+	uint8_t         t_fin_rcvd;
+	uint8_t         t_rst_sent;
+	uint8_t         t_rst_rcvd;
 	TAILQ_ENTRY(tcpcb) t_twentry;           /* link for time wait queue */
 	struct tcp_ccstate      *t_ccstate;     /* congestion control related state */
+	struct tcp_ccstate      _t_ccstate;     /* congestion control related state, non-allocated */
 /* Tail loss probe related state */
 	tcp_seq         t_tlphighrxt;           /* snd_nxt after PTO */
-	u_int32_t       t_tlpstart;             /* timestamp at PTO */
+	tcp_seq         t_tlphightrxt_persist;  /* like t_tlphighrxt but persists over ACKs until DSACK (if any) is processed */
+	uint32_t        t_tlpstart;             /* timestamp at PTO */
 /* DSACK data receiver state */
 	tcp_seq         t_dsack_lseq;           /* DSACK left sequence */
 	tcp_seq         t_dsack_rseq;           /* DSACK right sequence */
 /* DSACK data sender state */
 	SLIST_HEAD(tcp_rxt_seghead, tcp_rxt_seg) t_rxt_segments;
+	uint32_t        t_rxt_seg_count;
+	uint32_t        t_rxt_seg_drop;
 	tcp_seq         t_dsack_lastuna;        /* snd_una when last recovery episode started */
 /* state for congestion window validation (draft-ietf-tcpm-newcwv-07) */
 #define TCP_PIPEACK_SAMPLE_COUNT        3
-	u_int32_t       t_pipeack_sample[TCP_PIPEACK_SAMPLE_COUNT];     /* pipeack, bytes acked within RTT */
+	uint32_t        t_pipeack_sample[TCP_PIPEACK_SAMPLE_COUNT];     /* pipeack, bytes acked within RTT */
 	tcp_seq         t_pipeack_lastuna; /* una when pipeack measurement started */
-	u_int32_t       t_pipeack;
-	u_int32_t       t_lossflightsize;
+	uint32_t        t_pipeack;
+	uint32_t        t_lossflightsize;
 
 #if MPTCP
-	u_int32_t       t_mpflags;              /* flags for multipath TCP */
+	uint32_t        t_mpflags;              /* flags for multipath TCP */
 
 #define TMPF_PREESTABLISHED     0x00000001 /* conn in pre-established state */
 #define TMPF_SND_KEYS           0x00000002 /* indicates that keys should be send */
 #define TMPF_MPTCP_TRUE         0x00000004 /* negotiated MPTCP successfully */
-#define TMPF_MPTCP_RCVD_KEY     0x00000008 /* state for 3-way handshake */
+/* UNUSED */
 #define TMPF_SND_MPPRIO         0x00000010 /* send priority of subflow */
 #define TMPF_SND_REM_ADDR       0x00000020 /* initiate address removal */
 #define TMPF_RCVD_DACK          0x00000040 /* received a data-ack */
@@ -559,16 +765,16 @@ struct tcpcb {
 #define TMPF_SND_MPFAIL         0x00200000 /* Received mapping csum failure */
 #define TMPF_SND_JACK           0x00400000 /* Send a Join-ACK */
 #define TMPF_TFO_REQUEST        0x00800000 /* TFO Requested */
+#define TMPF_MPTCP_ECHO_ADDR    0x01000000 /* MPTCP echoes add_addr */
 
-#define TMPF_MPTCP_SIGNALS      (TMPF_SND_MPPRIO | TMPF_SND_REM_ADDR | TMPF_SND_MPFAIL | TMPF_SND_KEYS | TMPF_SND_JACK)
+#define TMPF_MPTCP_SIGNALS      (TMPF_SND_MPPRIO | TMPF_SND_REM_ADDR | TMPF_SND_MPFAIL | TMPF_SND_JACK | TMPF_MPTCP_ECHO_ADDR)
 
 	tcp_seq                 t_mpuna;        /* unacknowledged sequence */
 	struct mptcb            *t_mptcb;       /* pointer to MPTCP TCB */
 	struct mptsub           *t_mpsub;       /* pointer to the MPTCP subflow */
-	struct mpt_dsn_map      t_rcv_map;      /* Receive mapping list */
-	u_int8_t                t_local_aid;    /* Addr Id for authentication */
-	u_int8_t                t_rem_aid;      /* Addr ID of another subflow */
-	u_int8_t                t_mprxtshift;   /* join retransmission */
+	uint8_t                 t_local_aid;    /* Addr Id for authentication */
+	uint8_t                 t_rem_aid;      /* Addr ID of another subflow */
+	uint8_t                 t_mprxtshift;   /* join retransmission */
 #endif /* MPTCP */
 
 #define TFO_F_OFFER_COOKIE      0x01 /* We will offer a cookie */
@@ -578,7 +784,7 @@ struct tcpcb {
 #define TFO_F_SYN_LOSS          0x10 /* A SYN-loss triggered a fallback to regular TCP on the client-side */
 #define TFO_F_NO_SNDPROBING     0x20 /* This network is guaranteed to support TFO in the upstream direction */
 #define TFO_F_HEURISTIC_DONE    0x40 /* We have already marked this network as bad */
-	u_int8_t                t_tfo_flags;
+	uint8_t                 t_tfo_flags;
 #define TFO_S_SYNDATA_RCV       0x01 /* SYN+data has been received */
 #define TFO_S_COOKIEREQ_RECV    0x02 /* TFO-cookie request received */
 #define TFO_S_COOKIE_SENT       0x04 /* TFO-cookie announced in SYN/ACK */
@@ -594,9 +800,9 @@ struct tcpcb {
 #define TFO_S_SEND_BLACKHOLE    0x1000 /* TFO got blackholed in the send direction */
 #define TFO_S_RECV_BLACKHOLE    0x2000 /* TFO got blackholed in the recv direction */
 #define TFO_S_ONE_BYTE_PROXY    0x4000 /* TFO failed because of a proxy acknowledging just one byte */
-	u_int16_t               t_tfo_stats;
+	uint16_t                t_tfo_stats;
 
-	u_int8_t                t_tfo_probes; /* TFO-probes we did send */
+	uint8_t                 t_tfo_probes; /* TFO-probes we did send */
 /*
  * This here is the TFO-probing state-machine. Transitions are as follows:
  *
@@ -624,35 +830,120 @@ struct tcpcb {
 #define TFO_PROBE_NONE          0 /* Not probing now */
 #define TFO_PROBE_PROBING       1 /* Sending out TCP-keepalives waiting for reply */
 #define TFO_PROBE_WAIT_DATA     2 /* Received reply, waiting for data */
-	u_int8_t                t_tfo_probe_state;
+	uint8_t                t_tfo_probe_state;
 
-	u_int32_t       t_rcvoopack;            /* out-of-order packets received */
-	u_int32_t       t_pawsdrop;             /* segments dropped due to PAWS */
-	u_int32_t       t_sack_recovery_episode; /* SACK recovery episodes */
-	u_int32_t       t_reordered_pkts;       /* packets reorderd */
-	u_int32_t       t_dsack_sent;           /* Sent DSACK notification */
-	u_int32_t       t_dsack_recvd;          /* Received a valid DSACK option */
+	uint32_t        t_rcvoopack;            /* out-of-order packets received */
+	uint32_t        t_pawsdrop;             /* segments dropped due to PAWS */
+	uint32_t        t_sack_recovery_episode; /* SACK recovery episodes */
+	uint32_t        t_rack_recovery_episode; /* RACK recovery episodes */
+	uint32_t        t_rack_reo_timeout_recovery_episode; /* RACK recovery triggered by reordering timeout */
+	uint32_t        t_reordered_pkts;       /* packets reorderd */
+	uint32_t        t_dsack_sent;           /* Sent DSACK notification */
+	uint32_t        t_dsack_recvd;          /* Received a valid DSACK option */
 	SLIST_HEAD(, tcp_notify_ack_marker) t_notify_ack; /* state for notifying data acknowledgements */
-	u_int32_t       t_recv_throttle_ts;     /* TS for start of recv throttle */
-	u_int32_t       t_rxt_minimum_timeout;  /* minimum retransmit timeout in ms */
+	uint32_t        t_recv_throttle_ts;     /* TS for start of recv throttle */
+	uint32_t        t_rxt_minimum_timeout;  /* minimum retransmit timeout in ms */
 	uint32_t        t_challengeack_last;    /* last time challenge ACK was sent per sec */
 	uint32_t        t_challengeack_count;   /* # of challenge ACKs already sent per sec */
 
-	u_int32_t       t_log_flags;            /* TCP logging flags*/
-	u_int32_t       t_connect_time;         /* time when the connection started */
+	uint32_t        t_connect_time;         /* time when the connection started */
 
-	uint32_t        t_comp_gencnt; /* Current compression generation-count */
-	uint32_t        t_comp_lastinc; /* Last time the gen-count was changed - should change every TCP_COMP_CHANGE_RATE ms */
+	uint64_t        t_rcvwnd_limited_total_time;
+	uint64_t        t_rcvwnd_limited_start_time;
+
+
+	uint32_t        t_comp_rxmt_gencnt; /* Current compression generation-count for segments */
+
+	uint32_t        t_comp_ack_gencnt; /* Current compression generation-count for ACKs */
+	uint32_t        t_comp_ack_lastinc; /* Last time the gen-count was changed - should change every TCP_COMP_CHANGE_RATE ms */
 #define TCP_COMP_CHANGE_RATE    5 /* Intervals at which we change the gencnt. Means that worst-case we send one ACK every TCP_COMP_CHANGE_RATE ms */
 
-	uint32_t        t_ts_offset; /* Randomized timestamp offset to hide on-the-wire timestamp */
+#define NCURR_RTT_HIST 4                         /* Number of current RTT samples (k) */
+	uint32_t curr_rtt_hist[NCURR_RTT_HIST];  /* last k current RTT samples */
+	uint32_t curr_rtt_min;                   /* Minimum current RTT from last k samples */
+	uint32_t curr_rtt_index;                 /* Index for current RTT samples */
+
+	tcp_seq rcv_high;                   /* highest sequence number received */
+	uint32_t tsv_high;                  /* timestamp value of highest received sequence number */
+	struct tcp_rledbat_state t_rlstate; /* State used by rLedbat */
+
+	uint32_t rcv_srtt;                  /* receiver's SRTT, coarse when Timestamp not supported */
+	uint32_t rcv_rtt_est_ts;            /* start of measurement for estimating RTT when Timestamp not supported */
+	uint32_t rcv_rtt_est_seq;           /* expected sequence number for completion of 1RTT when Timestamp not supported */
+
+	TAILQ_HEAD(tcp_seg_sent_head, tcp_seg_sent) t_segs_sent; /* Time ordered segment list used for RACK */
+	struct tcp_seg_sent_tree_head t_segs_sent_tree; /* RB tree to track S/ACKED segments used for RACK */
+	TAILQ_HEAD(tcp_seg_acked_head, tcp_seg_sent) t_segs_acked; /* Temporary storage for ACKed segments used for RACK */
+	struct tcp_seg_pool seg_pool;
+
+# define TCP_RACK_RECOVERY_PERSIST_MAX (16)
+	struct tcp_rack {
+		uint32_t        xmit_ts;
+		uint32_t        end_seq;
+		uint32_t        rtt; /* RTT of the most recently delivered segment that was not marked as invalid as a possible spurious retransmission. */
+		tcp_seq         dsack_round_end;
+		uint32_t        reo_wnd;
+		uint8_t         reo_wnd_multi;
+		uint8_t         reo_wnd_persist:5,
+		    advanced:1,
+		    dsack_round_seen:1,
+		    segs_retransmitted:1;
+	} rack;
+
+	/*
+	 * Below counters are used to estmitate current flight size,
+	 * hence these counters reflect current values instead of total
+	 */
+	uint32_t bytes_lost;
+	uint32_t bytes_retransmitted;
+	uint32_t bytes_sacked;
+
+	uint8_t l4s_enabled:1,
+	    accurate_ecn_on:1,
+	    _pad:6;
 
 	uuid_t          t_fsw_uuid;
 	uuid_t          t_flow_uuid;
 };
 
+__CCT_DECLARE_CONSTRAINED_PTR_TYPES(struct tcpcb, tcpcb);
+
 #define IN_FASTRECOVERY(tp)     (tp->t_flags & TF_FASTRECOVERY)
 #define SACK_ENABLED(tp)        (tp->t_flagsext & TF_SACK_ENABLE)
+#define TFO_ENABLED(tp)         (tp->t_flagsext & TF_FASTOPEN)
+#define TCP_RACK_ENABLED(tp)    ((tp->t_flagsext & TF_RACK_ENABLED) && SACK_ENABLED(tp) && !TFO_ENABLED(tp))
+
+extern int tcp_syncookie;
+extern int soqlimitcompat;
+extern int mptcp_enable;
+
+#define LOOPBACK_INTERFACE(tp) (tp->t_inpcb->inp_boundifp != NULL && \
+    (tp->t_inpcb->inp_boundifp->if_flags & IFF_LOOPBACK))
+
+#define TCP_SYN_COOKIE_DISABLED(tp) (TFO_ENABLED(tp) || tp->t_mpflags & TMPF_MPTCP_TRUE || LOOPBACK_INTERFACE(tp))
+
+#define TCP_SYN_COOKIE_FORCE_ENABLED(tp) ((tp->t_flagsext & TF_SYN_COOKIE_FORCE_ENABLED) \
+    && !TCP_SYN_COOKIE_DISABLED(tp))
+
+#define TCP_SYN_COOKIE_ENABLED(tp) ((tp->t_flagsext & (TF_SYN_COOKIE_ENABLED | TF_SYN_COOKIE_FORCE_ENABLED)) \
+    && !TCP_SYN_COOKIE_DISABLED(tp))
+
+static __inline bool
+tcp_can_send_syncookie(const struct socket *head, const struct tcpcb *tp, const uint8_t th_flags)
+{
+	int backlog = soqlimitcompat ? head->so_qlimit : (3 * head->so_qlimit / 2);
+	backlog = backlog - (backlog >> 3);
+	bool backlog_reached = head->so_incqlen >= (backlog >> 1) || head->so_qlen >= backlog;
+	bool can_send_syncookie = (TCP_SYN_COOKIE_FORCE_ENABLED(tp) || (TCP_SYN_COOKIE_ENABLED(tp) && backlog_reached));
+	can_send_syncookie &=  ((th_flags & (TH_RST | TH_ACK | TH_SYN)) == TH_SYN);
+	return can_send_syncookie;
+}
+
+static inline bool
+tcp_sent_tlp_retrans(const struct tcpcb *tp)
+{
+	return (tp->t_flagsext & (TF_SENT_TLPROBE | TF_TLP_IS_RETRANS)) == (TF_SENT_TLPROBE | TF_TLP_IS_RETRANS);
+}
 
 /*
  * If the connection is in a throttled state due to advisory feedback from
@@ -667,13 +958,11 @@ struct tcpcb {
 	        inp_reset_fc_state((_tp_)->t_inpcb);                            \
 	if (!SLIST_EMPTY(&tp->t_rxt_segments))                                  \
 	        tcp_rxtseg_clean(tp);                                           \
-	(_tp_)->t_new_dupacks = 0;                                              \
 } while(0)
 
 #define EXIT_FASTRECOVERY(_tp_) do {                                            \
 	(_tp_)->t_flags &= ~TF_FASTRECOVERY;                                    \
 	(_tp_)->t_dupacks = 0;                                                  \
-	(_tp_)->t_new_dupacks = 0;                                              \
 	(_tp_)->t_rexmtthresh = (uint8_t)tcprexmtthresh;                        \
 	(_tp_)->t_bytes_acked = 0;                                              \
 	(_tp_)->ecn_flags &= ~TE_INRECOVERY;                                    \
@@ -687,7 +976,7 @@ struct tcpcb {
  * When the number of duplicate acks received is less than
  * the retransmit threshold, use Limited Transmit algorithm
  */
-extern int tcprexmtthresh;
+extern uint8_t tcprexmtthresh;
 #define ALLOW_LIMITED_TRANSMIT(_tp_)                                            \
 	((_tp_)->t_dupacks > 0 &&                                               \
 	(_tp_)->t_dupacks < (_tp_)->t_rexmtthresh &&                            \
@@ -695,7 +984,7 @@ extern int tcprexmtthresh;
 	    != (TF_PKTS_REORDERED|TF_DELAY_RECOVERY))
 
 /*
- * This condition is true is timestamp option is supported
+ * This condition is true if timestamp option is supported
  * on a connection.
  */
 #define TSTMP_SUPPORTED(_tp_) \
@@ -710,9 +999,19 @@ extern int tcprexmtthresh;
 	(((_tp_)->t_flags & (TF_RCVD_SCALE|TF_REQ_SCALE)) == \
 	        (TF_RCVD_SCALE|TF_REQ_SCALE))
 
-/* Is ECN enabled end-to-end */
+/* Is ECN negotiated end-to-end */
 #define TCP_ECN_ENABLED(_tp_) \
 	(((_tp_)->ecn_flags & (TE_ECN_ON)) == (TE_ECN_ON))
+
+extern int tcp_l4s;
+extern int tcp_l4s_developer;
+
+/* L4S Developer setting will override system setting */
+typedef enum {
+	tcp_l4s_system = 0,
+	tcp_l4s_developer_enable = 1,
+	tcp_l4s_developer_disable = 2
+} tcp_l4s_t;
 
 /*
  * Gives number of bytes acked by this ack
@@ -750,6 +1049,15 @@ extern int tcprexmtthresh;
 	(probe_if_index > 0 && tp->t_inpcb->inp_last_outifp != NULL &&  \
 	probe_if_index == tp->t_inpcb->inp_last_outifp->if_index)
 
+#define TCP_RLEDBAT_ENABLED(_tp) \
+    (tcp_rledbat == 1 && TSTMP_SUPPORTED(_tp))
+
+#define TCP_RECV_BG(_so) \
+    (tcp_recv_bg == 1 || IS_TCP_RECV_BG(_so))
+
+#define TCP_USE_RLEDBAT(_tp, _so) \
+    TCP_RLEDBAT_ENABLED(_tp) && TCP_RECV_BG(_so)
+
 /*
  * Structure to hold TCP options that are only used during segment
  * processing (in tcp_input), but not held in the tcpcb.
@@ -757,23 +1065,31 @@ extern int tcprexmtthresh;
  * to tcp_dooptions.
  */
 struct tcpopt {
-	u_int32_t       to_flags;               /* which options are present */
-#define TOF_TS          0x0001          /* timestamp */
+	uint32_t        to_flags;   /* which options are present */
+#define TOF_TS          0x0001  /* timestamp */
+#define TOF_SACKPERM    0x0004  /* SACK permitted (only in SYN/ACK) */
 #define TOF_MSS         0x0010
 #define TOF_SCALE       0x0020
 #define TOF_SIGNATURE   0x0040  /* signature option present */
 #define TOF_SIGLEN      0x0080  /* signature length valid (RFC2385) */
-#define TOF_SACK        0x0100          /* Peer sent SACK option */
+#define TOF_SACK        0x0100  /* SACK option present */
 #define TOF_MPTCP       0x0200  /* MPTCP options to be dropped */
 #define TOF_TFO         0x0400  /* TFO cookie option present */
 #define TOF_TFOREQ      0x0800  /* TFO cookie request present */
-	u_int32_t               to_tsval;
-	u_int32_t               to_tsecr;
-	u_int16_t       to_mss;
-	u_int8_t        to_requested_s_scale;
-	u_int8_t        to_nsacks;      /* number of SACK blocks */
-	u_char          *to_sacks;      /* pointer to the first SACK blocks */
-	u_char          *to_tfo;        /* pointer to the TFO cookie */
+#define TOF_MAXOPT      0x1000
+	uint32_t        to_tsval;
+	uint32_t        to_tsecr;
+	uint16_t        to_mss;
+	uint8_t         to_wscale;
+	uint8_t         to_nsacks;                                                              /* number of SACK blocks */
+	u_char          *to_sacks __sized_by(to_sacks_size);        /* pointer to the first SACK blocks */
+	uint32_t                to_sacks_size;                                                          /* boundary for to_sacks */
+	u_char          *to_tfo  __sized_by(to_tfo_size);                       /* pointer to the TFO cookie */
+	uint32_t                to_tfo_size;                                                            /* boundary for to_tfo */
+	uint8_t         to_num_accecn;                                                          /* number of Accurate ECN counters */
+	uint8_t         *to_accecn __sized_by(to_accecn_size);      /* pointer to the first Accurate ECN counter */
+	uint32_t                to_accecn_size;                                                         /* boundary for to_accecn */
+	uint8_t         to_accecn_order;                                                        /* Accurate ECN ordering */
 };
 
 #define intotcpcb(ip)   ((struct tcpcb *)(ip)->inp_ppcb)
@@ -783,26 +1099,6 @@ struct tcpopt {
 #define TFO_COOKIE_LEN_MIN      4
 #define TFO_COOKIE_LEN_DEFAULT  8
 #define TFO_COOKIE_LEN_MAX      16
-
-/*
- * The initial retransmission should happen at rtt + 4 * rttvar.
- * Because of the way we do the smoothing, srtt and rttvar
- * will each average +1/2 tick of bias.  When we compute
- * the retransmit timer, we want 1/2 tick of rounding and
- * 1 extra tick because of +-1/2 tick uncertainty in the
- * firing of the timer.  The bias will give us exactly the
- * 1.5 tick we need.  But, because the bias is
- * statistical, we have to test that we don't drop below
- * the minimum feasible timer (which is 2 ticks).
- * This version of the macro adapted from a paper by Lawrence
- * Brakmo and Larry Peterson which outlines a problem caused
- * by insufficient precision in the original implementation,
- * which results in inappropriately large RTO values for very
- * fast networks.
- */
-#define TCP_REXMTVAL(tp) \
-	max((tp)->t_rttmin, (((tp)->t_srtt >> (TCP_RTT_SHIFT - TCP_DELTA_SHIFT))  \
-	  + (tp)->t_rttvar) >> TCP_DELTA_SHIFT)
 
 /*
  * Jaguar compatible TCP control block, for xtcpcb
@@ -978,7 +1274,6 @@ struct  tcpstat {
 	u_int32_t       tcps_pawsdrop;          /* segments dropped due to PAWS */
 	u_int32_t       tcps_predack;           /* times hdr predict ok for acks */
 	u_int32_t       tcps_preddat;           /* times hdr predict ok for data pkts */
-	u_int32_t       tcps_pcbcachemiss;
 	u_int32_t       tcps_cachedrtt;         /* times cached RTT in route updated */
 	u_int32_t       tcps_cachedrttvar;      /* times cached rttvar updated */
 	u_int32_t       tcps_cachedssthresh;    /* times cached ssthresh updated */
@@ -998,24 +1293,11 @@ struct  tcpstat {
 	u_int32_t       tcps_sndrexmitbad;      /* unnecessary packet retransmissions */
 	u_int32_t       tcps_badrst;            /* ignored RSTs in the window */
 
-	u_int32_t       tcps_sc_added;          /* entry added to syncache */
-	u_int32_t       tcps_sc_retransmitted;  /* syncache entry was retransmitted */
-	u_int32_t       tcps_sc_dupsyn;         /* duplicate SYN packet */
 	u_int32_t       tcps_sc_dropped;        /* could not reply to packet */
 	u_int32_t       tcps_sc_completed;      /* successful extraction of entry */
-	u_int32_t       tcps_sc_bucketoverflow; /* syncache per-bucket limit hit */
-	u_int32_t       tcps_sc_cacheoverflow;  /* syncache cache limit hit */
-	u_int32_t       tcps_sc_reset;          /* RST removed entry from syncache */
-	u_int32_t       tcps_sc_stale;          /* timed out or listen socket gone */
 	u_int32_t       tcps_sc_aborted;        /* syncache entry aborted */
-	u_int32_t       tcps_sc_badack;         /* removed due to bad ACK */
-	u_int32_t       tcps_sc_unreach;        /* ICMP unreachable received */
-	u_int32_t       tcps_sc_zonefail;       /* zalloc() failed */
 	u_int32_t       tcps_sc_sendcookie;     /* SYN cookie sent */
 	u_int32_t       tcps_sc_recvcookie;     /* SYN cookie received */
-
-	u_int32_t       tcps_hc_added;          /* entry added to hostcache */
-	u_int32_t       tcps_hc_bucketoverflow; /* hostcache per bucket limit hit */
 
 	/* SACK related stats */
 	u_int32_t       tcps_sack_recovery_episode; /* SACK recovery episodes */
@@ -1024,6 +1306,11 @@ struct  tcpstat {
 	u_int32_t       tcps_sack_rcv_blocks;       /* SACK blocks (options) received */
 	u_int32_t       tcps_sack_send_blocks;      /* SACK blocks (options) sent     */
 	u_int32_t       tcps_sack_sboverflow;       /* SACK sendblock overflow   */
+
+	/* RACK related stats */
+	u_int32_t       tcps_rack_recovery_episode; /* RACK recovery episodes */
+	u_int32_t       tcps_rack_reordering_timeout_recovery_episode; /* RACK recovery episodes due to reordering timeout */
+	u_int32_t       tcps_rack_rexmits;          /* RACK rexmit segments   */
 
 	u_int32_t       tcps_bg_rcvtotal;       /* total background packets received */
 	u_int32_t       tcps_rxtfindrop;        /* drop conn after retransmitting FIN */
@@ -1042,9 +1329,6 @@ struct  tcpstat {
 	u_int32_t       tcps_snd_swcsum_bytes;  /* tcp swcksum (outbound), bytes */
 	u_int32_t       tcps_snd6_swcsum;       /* tcp6 swcksum (outbound), packets */
 	u_int32_t       tcps_snd6_swcsum_bytes; /* tcp6 swcksum (outbound), bytes */
-	u_int32_t       tcps_unused_1;
-	u_int32_t       tcps_unused_2;
-	u_int32_t       tcps_unused_3;
 
 	/* MPTCP Related stats */
 	u_int32_t       tcps_invalid_mpcap;     /* Invalid MPTCP capable opts */
@@ -1053,8 +1337,6 @@ struct  tcpstat {
 	u_int32_t       tcps_join_fallback;     /* No MPTCP in secondary */
 	u_int32_t       tcps_estab_fallback;    /* DSS option dropped */
 	u_int32_t       tcps_invalid_opt;       /* Catchall error stat */
-	u_int32_t       tcps_mp_outofwin;       /* Packet lies outside the
-	                                         *  shared recv window */
 	u_int32_t       tcps_mp_reducedwin;     /* Reduced subflow window */
 	u_int32_t       tcps_mp_badcsum;        /* Bad DSS csum */
 	u_int32_t       tcps_mp_oodata;         /* Out of order data */
@@ -1077,14 +1359,10 @@ struct  tcpstat {
 	u_int32_t       tcps_detect_reordering; /* Detect pkt reordering */
 	u_int32_t       tcps_delay_recovery;    /* Delay fast recovery */
 	u_int32_t       tcps_avoid_rxmt;        /* Retransmission was avoided */
-	u_int32_t       tcps_unnecessary_rxmt;  /* Retransmission was not needed */
-	u_int32_t       tcps_nostretchack;      /* disabled stretch ack algorithm on a connection */
-	u_int32_t       tcps_rescue_rxmt;       /* SACK rescue retransmit */
 	u_int32_t       tcps_pto_in_recovery;   /* rescue retransmit in fast recovery */
 	u_int32_t       tcps_pmtudbh_reverted;  /* PMTU Blackhole detection, segment size reverted */
 
 	/* DSACK related statistics */
-	u_int32_t       tcps_dsack_disable;     /* DSACK disabled due to n/w duplication */
 	u_int32_t       tcps_dsack_ackloss;     /* ignore DSACK due to ack loss */
 	u_int32_t       tcps_dsack_badrexmt;    /* DSACK based bad rexmt recovery */
 	u_int32_t       tcps_dsack_sent;        /* Sent DSACK notification */
@@ -1092,23 +1370,26 @@ struct  tcpstat {
 	u_int32_t       tcps_dsack_recvd_old;   /* Received an out of window DSACK option */
 
 	/* MPTCP Subflow selection stats */
-	u_int32_t       tcps_mp_sel_symtomsd;   /* By symptomsd */
 	u_int32_t       tcps_mp_sel_rtt;        /* By RTT comparison */
 	u_int32_t       tcps_mp_sel_rto;        /* By RTO comparison */
-	u_int32_t       tcps_mp_sel_peer;       /* By peer's output pattern */
 	u_int32_t       tcps_mp_num_probes;     /* Number of probes sent */
 	u_int32_t       tcps_mp_verdowngrade;   /* MPTCP version downgrade */
 	u_int32_t       tcps_drop_after_sleep;  /* drop after long AP sleep */
 	u_int32_t       tcps_probe_if;          /* probe packets after interface availability */
 	u_int32_t       tcps_probe_if_conflict; /* Can't send probe packets for interface */
 
-	u_int32_t       tcps_ecn_client_setup;  /* Attempted ECN setup from client side */
-	u_int32_t       tcps_ecn_server_setup;  /* Attempted ECN setup from server side */
-	u_int32_t       tcps_ecn_server_success; /* server-side connection negotiated ECN */
+	u_int32_t       tcps_ecn_client_setup;    /* Attempted ECN setup from client side */
+	u_int32_t       tcps_ecn_server_setup;    /* Attempted ECN setup from server side */
+	u_int32_t       tcps_ecn_server_success;  /* server-side connection negotiated ECN */
+	u_int32_t       tcps_ecn_ace_syn_not_ect; /* received AccECN SYN packet with Not-ECT */
+	u_int32_t       tcps_ecn_ace_syn_ect1;    /* received AccECN SYN packet with ECT1 */
+	u_int32_t       tcps_ecn_ace_syn_ect0;    /* received AccECN SYN packet with ECT0 */
+	u_int32_t       tcps_ecn_ace_syn_ce;      /* received AccECN SYN packet with CE */
 	u_int32_t       tcps_ecn_lost_synack;   /* Lost SYN-ACK with ECN setup */
 	u_int32_t       tcps_ecn_lost_syn;      /* Lost SYN with ECN setup */
 	u_int32_t       tcps_ecn_not_supported; /* Server did not support ECN setup */
 	u_int32_t       tcps_ecn_recv_ce;       /* Received CE from the network */
+	u_int32_t       tcps_ecn_ace_recv_ce;   /* CE count received in ACE field */
 	u_int32_t       tcps_ecn_conn_recv_ce;  /* Number of connections received CE atleast once */
 	u_int32_t       tcps_ecn_conn_recv_ece; /* Number of connections received ECE atleast once */
 	u_int32_t       tcps_ecn_conn_plnoce;   /* Number of connections that received no CE and sufferred packet loss */
@@ -1188,8 +1469,17 @@ struct  tcpstat {
 	u_int32_t       tcps_ka_offload_drops;  /* Keep alive drops for timeout reported by firmware */
 
 	u_int32_t       tcps_mptcp_triggered_cell;      /* Total number of times an MPTCP-connection triggered cell bringup */
+
+	u_int32_t       tcps_fin_timeout_drops;
+
+	/* RST compression statistics */
+	u_int64_t       tcps_rst_dup_suppressed;
+	u_int64_t       tcps_rst_not_suppressed;
 };
 
+#ifdef PRIVATE
+#define HAS_TCPSTAT_RST_SUPPRESSION 1
+#endif /* PRIVATE */
 
 struct tcpstat_local {
 	u_int64_t badformat;
@@ -1206,6 +1496,11 @@ struct tcpstat_local {
 	u_int64_t dospacket;
 	u_int64_t cleanup;
 	u_int64_t synwindow;
+	u_int64_t linkheur_stealthdrop;
+	u_int64_t linkheur_noackpri;
+	u_int64_t linkheur_comprxmt;
+	u_int64_t linkheur_synrxmt;
+	u_int64_t linkheur_rxmtfloor;
 };
 
 #pragma pack(4)
@@ -1409,34 +1704,12 @@ struct  xtcpcb_n {
 #define TCP_RTTVAR_SHIFT        4       /* shift for rttvar; 4 bits */
 #define TCP_DELTA_SHIFT         2       /* see tcp_input.c */
 
-
-/*
- * TCP structure with information that gives insight into forward progress on an interface,
- * exported to user-land via sysctl(3).
- */
-struct  xtcpprogress_indicators {
-	u_int32_t       xp_numflows;            /* Total number of flows */
-	u_int32_t       xp_conn_probe_fails;    /* Count of connection failures */
-	u_int32_t       xp_read_probe_fails;    /* Count of read probe failures */
-	u_int32_t       xp_write_probe_fails;   /* Count of write failures */
-	u_int32_t       xp_recentflows;         /* Total of "recent" flows */
-	u_int32_t       xp_recentflows_unacked; /* Total of "recent" flows with unacknowledged data */
-	u_int64_t       xp_recentflows_rxbytes; /* Total of "recent" flows received bytes */
-	u_int64_t       xp_recentflows_txbytes; /* Total of "recent" flows transmitted bytes */
-	u_int64_t       xp_recentflows_rxooo;   /* Total of "recent" flows received out of order bytes */
-	u_int64_t       xp_recentflows_rxdup;   /* Total of "recent" flows received duplicate bytes */
-	u_int64_t       xp_recentflows_retx;    /* Total of "recent" flows retransmitted bytes */
-	u_int64_t       xp_reserved1;           /* Expansion */
-	u_int64_t       xp_reserved2;           /* Expansion */
-	u_int64_t       xp_reserved3;           /* Expansion */
-	u_int64_t       xp_reserved4;           /* Expansion */
-};
-
-struct tcpprogressreq {
-	u_int64_t       ifindex;                /* Interface index for progress indicators */
-	u_int64_t       recentflow_maxduration; /* In mach_absolute_time, max duration for flow to be counted as "recent" */
-	u_int64_t       filter_flags;           /* Optional additional filtering, values are interface properties per ntstat.h */
-	u_int64_t       xp_reserved2;           /* Expansion */
+struct tcpprobereq {
+	u_int64_t       ifindex;                /* Optional interface index for TCP keep-alive probing */
+	u_int64_t       enable;                 /* Flag to enable or disable probing (1=on, 0=off)*/
+	u_int64_t       filter_flags;           /* Optional flags for filtering interfaces per ntstat.h (NSTAT_IFNET_IS_*) */
+	u_int32_t       reserved;               /* Expansion */
+	u_int32_t       reserved2;              /* Expansion */
 };
 
 #endif /* PRIVATE */
@@ -1488,31 +1761,63 @@ extern int tcp_tfo_backlog;
 extern int tcp_fastopen;
 extern int ss_fltsz_local;
 extern int target_qdelay;
-extern u_int32_t tcp_now;               /* for RFC 1323 timestamps */
-extern struct timeval tcp_uptime;
-extern lck_spin_t *tcp_uptime_lock;
+extern uint32_t tcp_now;               /* for RFC 1323 timestamps */
 extern int tcp_delack_enabled;
 extern int maxseg_unacked;
-extern int tcp_use_newreno;
-extern struct zone *tcp_reass_zone;
-extern struct zone *tcp_rxt_seg_zone;
-extern int tcp_ecn_outbound;
-extern int tcp_ecn_inbound;
+extern int tcp_ecn;
 extern uint32_t tcp_do_autorcvbuf;
 extern uint32_t tcp_autorcvbuf_max;
 extern int tcp_recv_bg;
 extern int tcp_do_ack_compression;
 extern int tcp_randomize_timestamps;
+extern int tcp_rledbat;
+extern int tcp_use_min_curr_rtt;
+extern int tcp_do_timestamps;
+
+/*
+ * Feature flags for LQM heuristics
+ * Can be useful for testing
+ */
+#define TCP_LINK_HEUR_RXMT_COMP          0x0001
+#define TCP_LINK_HEUR_NOACKPRI           0x0002
+#define TCP_LINK_HEUR_SYNRMXT            0x0004
+#define TCP_LINK_HEUR_STEALTH            0x0008
+#define TCP_LINK_HEUR_RTOMIN             0x0010
+#define TCP_LINK_HEUR_NOTLP              0x0020
+
+#define TCP_LINK_HEURISTICS_DEFAULT (\
+    TCP_LINK_HEUR_RXMT_COMP | \
+    TCP_LINK_HEUR_NOACKPRI | \
+    TCP_LINK_HEUR_SYNRMXT | \
+    TCP_LINK_HEUR_STEALTH | \
+    TCP_LINK_HEUR_RTOMIN | \
+    TCP_LINK_HEUR_NOTLP)
+
+extern int32_t tcp_link_heuristics_flags;
+extern int32_t tcp_link_heuristics_rto_min;
+
+#define TCP_COMP_RXMT_GENCNT_MASK       0x80000000
+
+/* 3 seconds is conservative value (see RFC 2988 and RFC 6298) */
+#define TCP_DEFAULT_LINK_HEUR_RTOMIN 3000
+
 /*
  * Dummy value used for when there is no flow and we want to ensure that compression
  * can happen.
  */
 #define TCP_ACK_COMPRESSION_DUMMY 1
 
-extern int tcp_do_better_lr;
-extern int tcp_cubic_minor_fixes;
-extern int tcp_cubic_rfc_compliant;
-extern int tcp_flow_control_response;
+extern struct tseg_qent *tcp_create_reass_qent(struct tcpcb *tp, struct mbuf *m,
+    struct tcphdr *th, int len);
+extern struct mbuf *tcp_destroy_reass_qent(struct tcpcb *tp,
+    struct tseg_qent *q);
+KALLOC_TYPE_DECLARE(tcp_reass_zone);
+extern struct tseg_qent *tcp_reass_qent_alloc(struct protosw *proto);
+extern void tcp_reass_qent_free(struct protosw *proto, struct tseg_qent *te);
+
+extern int tcp_rack;
+
+extern int tcp_reass_total_qlen;
 
 struct protosw;
 struct domain;
@@ -1524,10 +1829,13 @@ struct tcp_respond_args {
 	    awdl_unrestricted:1,
 	    intcoproc_allowed:1,
 	    keep_alive:1,
-	    noconstrained:1;
+	    noconstrained:1,
+	    management_allowed:1,
+	    ultra_constrained_allowed:1;
 };
 
 void     tcp_canceltimers(struct tcpcb *);
+uint8_t tcp_addoptions(struct tcpopt *to, u_char * __ended_by(optend) optp, u_char * optend);
 struct tcpcb *
 tcp_close(struct tcpcb *);
 void     tcp_ctlinput(int, struct sockaddr *, void *, struct ifnet *);
@@ -1537,16 +1845,24 @@ tcp_drop(struct tcpcb *, int);
 void     tcp_drain(void);
 void     tcp_getrt_rtt(struct tcpcb *tp, struct rtentry *rt);
 void     tcp_init(struct protosw *, struct domain *);
+bool tcp_create_server_socket(struct tcp_inp *tpi, struct socket **so2, bool *syn_cookie_sent, int *dropsocket);
+bool tcp_setup_server_socket(struct tcp_inp *tpi, struct socket *so, bool syn_cookie_used);
 void     tcp_input(struct mbuf *, int);
 void     tcp_mss(struct tcpcb *, int, unsigned int);
+uint32_t tcp_ceil(double a);
+uint32_t tcp_round_to(uint32_t val, uint32_t round);
+uint32_t tcp_round_up(uint32_t val, uint32_t base);
+uint32_t ntoh24(u_char * p __sized_by(3));
+uint32_t tcp_packets_this_ack(struct tcpcb *tp, uint32_t acked);
 int      tcp_mssopt(struct tcpcb *);
 void     tcp_drop_syn_sent(struct inpcb *, int);
+uint32_t tcp_get_effective_mtu(struct rtentry *, uint32_t);
 void     tcp_mtudisc(struct inpcb *, int);
 struct tcpcb *
 tcp_newtcpcb(struct inpcb *);
 int      tcp_output(struct tcpcb *);
-void     tcp_respond(struct tcpcb *, void *, struct tcphdr *, struct mbuf *,
-    tcp_seq, tcp_seq, uint8_t, struct tcp_respond_args *);
+void     tcp_respond(struct tcpcb *, void *ipgen __sized_by(ipgen_size), size_t ipgen_size, struct tcphdr *, struct mbuf *,
+    tcp_seq, tcp_seq, uint32_t, uint16_t, struct tcpopt *, uint16_t, uint8_t, uint32_t, struct tcp_respond_args *, bool send_syncookie);
 struct rtentry *
 tcp_rtlookup(struct inpcb *, unsigned int);
 void     tcp_setpersist(struct tcpcb *);
@@ -1556,37 +1872,63 @@ void     tcp_check_timer_state(struct tcpcb *tp);
 void     tcp_run_timerlist(void *arg1, void *arg2);
 void     tcp_sched_timers(struct tcpcb *tp);
 
-struct tcptemp *tcp_maketemplate(struct tcpcb *);
-void     tcp_fillheaders(struct tcpcb *, void *, void *);
+struct tcptemp *tcp_maketemplate(struct tcpcb *, struct mbuf **, struct sockaddr *, struct sockaddr *);
+void     tcp_fillheaders(struct mbuf *, struct tcpcb *, void *, void *, struct sockaddr *, struct sockaddr *);
 struct tcpcb *tcp_timers(struct tcpcb *, int);
 void     tcp_trace(int, int, struct tcpcb *, void *, struct tcphdr *, int);
 
 void tcp_fill_info(struct tcpcb *, struct tcp_info *);
 void tcp_sack_doack(struct tcpcb *, struct tcpopt *, struct tcphdr *,
-    u_int32_t *, uint32_t *);
+    uint32_t *, uint32_t *);
 extern boolean_t tcp_sack_process_dsack(struct tcpcb *, struct tcpopt *,
-    struct tcphdr *);
+    struct tcphdr *, boolean_t *);
 int tcp_detect_bad_rexmt(struct tcpcb *, struct tcphdr *, struct tcpopt *,
     u_int32_t rxtime);
 void     tcp_update_sack_list(struct tcpcb *tp, tcp_seq rcv_laststart, tcp_seq rcv_lastend);
 void     tcp_clean_sackreport(struct tcpcb *tp);
-void     tcp_sack_adjust(struct tcpcb *tp);
+uint32_t tcp_sack_adjust(struct tcpcb *tp);
 struct sackhole *tcp_sack_output(struct tcpcb *tp, int *sack_bytes_rexmt);
 void     tcp_sack_partialack(struct tcpcb *, struct tcphdr *);
 void     tcp_free_sackholes(struct tcpcb *tp);
-void     tcp_sack_lost_rexmit(struct tcpcb *tp);
 int32_t  tcp_sbspace(struct tcpcb *tp);
 void     tcp_set_tso(struct tcpcb *tp, struct ifnet *ifp);
-void     tcp_set_ecn(struct tcpcb *tp, struct ifnet *ifp);
-int      tcp_flight_size(struct tcpcb *tp);
-void     tcp_reset_stretch_ack(struct tcpcb *tp);
-extern void tcp_get_ports_used(u_int32_t, int, u_int32_t, bitstr_t *);
+void     tcp_set_ecn(struct tcpcb *tp);
+void     tcp_set_l4s(struct tcpcb *tp, struct ifnet *ifp);
+void     tcp_set_accurate_ecn(struct tcpcb *tp);
+bool tcp_ecn_enabled(uint32_t ecn_flags);
+uint8_t  tcp_get_ace(struct tcphdr *th);
+uint32_t tcp_flight_size(struct tcpcb *tp);
+extern void tcp_get_ports_used(ifnet_t ifp, int, u_int32_t, bitstr_t *__counted_by(bitstr_size(IP_PORTRANGE_SIZE)));
 uint32_t tcp_count_opportunistic(unsigned int ifindex, u_int32_t flags);
 uint32_t tcp_find_anypcb_byaddr(struct ifaddr *ifa);
-void tcp_set_max_rwinscale(struct tcpcb *tp, struct socket *so);
+uint8_t tcp_get_max_rwinscale(struct tcpcb *tp, struct socket *so);
 struct bwmeas* tcp_bwmeas_alloc(struct tcpcb *tp);
 void tcp_bwmeas_free(struct tcpcb *tp);
 extern int32_t timer_diff(uint32_t t1, uint32_t toff1, uint32_t t2, uint32_t toff2);
+
+/* RACK related functions */
+void tcp_rack_transmit_seg(struct tcpcb *tp, struct tcp_seg_sent *seg, tcp_seq start, tcp_seq end, uint32_t xmit_ts, uint8_t flags);
+void tcp_rack_update_reordering_window(struct tcpcb *tp, tcp_seq highest_acked_sacked);
+void tcp_rack_update_reordering_win_persist(struct tcpcb *tp);
+void tcp_rack_bad_rexmt_restore(struct tcpcb *tp);
+void tcp_rack_reset_segs_retransmitted(struct tcpcb *tp);
+void tcp_rack_update_segment_acked(struct tcpcb *tp, uint32_t tsecr, uint32_t xmit_ts, uint32_t end_seq, bool retransmitted);
+bool tcp_rack_detect_loss_and_arm_timer(struct tcpcb *tp, uint32_t dup_acks);
+void tcp_rack_reordering_timeout(struct tcpcb *tp, uint32_t dup_acks);
+struct tcp_seg_sent * tcp_rack_output(struct tcpcb *tp, uint32_t cwin, uint16_t *rack_seg_len);
+void tcp_rack_loss_on_rto(struct tcpcb *tp, bool in_rto);
+uint32_t tcp_rack_adjust(struct tcpcb *tp, uint32_t cwin);
+void tcp_rack_detect_reordering_dsack(struct tcpcb *tp, tcp_seq start, tcp_seq end);
+void tcp_rack_detect_reordering_acked(struct tcpcb *tp, struct tcp_seg_sent *seg);
+/* RACK segment related functions */
+uint32_t tcp_seg_len(struct tcp_seg_sent *seg);
+void tcp_seg_sent_insert(struct tcpcb *tp, struct tcp_seg_sent *seg, tcp_seq start, tcp_seq end, uint32_t xmit_ts, uint8_t flags);
+void tcp_segs_doack(struct tcpcb *tp, tcp_seq th_ack, struct tcpopt *to);
+void tcp_segs_dosack(struct tcpcb *tp, tcp_seq sblk_start, tcp_seq sblk_end, uint32_t tsecr, uint32_t *newbytes_sacked);
+void tcp_segs_clear_sacked(struct tcpcb *tp);
+void tcp_mark_seg_lost(struct tcpcb *tp, struct tcp_seg_sent *seg);
+void tcp_seg_delete(struct tcpcb *tp, struct tcp_seg_sent *seg);
+void tcp_segs_sent_clean(struct tcpcb *tp, bool free_segs);
 
 extern void tcp_set_background_cc(struct socket *);
 extern void tcp_set_foreground_cc(struct socket *);
@@ -1614,14 +1956,15 @@ lck_mtx_t *      tcp_getlock(struct socket *, int);
 void *   tcp_getlock(struct socket *, int);
 #endif
 
-extern  struct pr_usrreqs tcp_usrreqs;
-extern  u_int32_t tcp_sendspace;
-extern  u_int32_t tcp_recvspace;
-tcp_seq tcp_new_isn(struct tcpcb *);
+extern struct pr_usrreqs tcp_usrreqs;
+extern uint32_t tcp_sendspace;
+extern uint32_t tcp_recvspace;
+extern tcp_seq tcp_new_isn(struct tcpcb *tp);
 
 extern int tcp_input_checksum(int, struct mbuf *, struct tcphdr *, int, int);
 extern void tcp_getconninfo(struct socket *, struct conninfo_tcp *);
 extern void add_to_time_wait(struct tcpcb *, uint32_t delay);
+extern void add_to_time_wait_now(struct tcpcb *tp, uint32_t delay);
 extern void tcp_pmtud_revert_segment_size(struct tcpcb *tp);
 extern void tcp_rxtseg_insert(struct tcpcb *, tcp_seq, tcp_seq);
 extern struct tcp_rxt_seg *tcp_rxtseg_find(struct tcpcb *, tcp_seq, tcp_seq);
@@ -1631,6 +1974,8 @@ extern boolean_t tcp_rxtseg_detect_bad_rexmt(struct tcpcb *, tcp_seq);
 extern boolean_t tcp_rxtseg_dsack_for_tlp(struct tcpcb *);
 extern u_int32_t tcp_rxtseg_total_size(struct tcpcb *tp);
 extern void tcp_rexmt_save_state(struct tcpcb *tp);
+void tcp_local_congestion_notification(struct tcpcb *tp);
+void tcp_enter_fast_recovery(struct tcpcb *tp);
 extern void tcp_interface_send_probe(u_int16_t if_index_available);
 extern void tcp_probe_connectivity(struct ifnet *ifp, u_int32_t enable);
 extern void tcp_get_connectivity_status(struct tcpcb *,
@@ -1638,15 +1983,13 @@ extern void tcp_get_connectivity_status(struct tcpcb *,
 
 extern void tcp_clear_keep_alive_offload(struct socket *so);
 extern void tcp_fill_keepalive_offload_frames(struct ifnet *,
-    struct ifnet_keepalive_offload_frame *, u_int32_t, size_t, u_int32_t *);
+    struct ifnet_keepalive_offload_frame * frames_array __counted_by(frames_array_count), u_int32_t frames_array_count, size_t, u_int32_t *);
 extern int tcp_notify_kao_timeout(ifnet_t ifp,
     struct ifnet_keepalive_offload_frame *frame);
 
-extern boolean_t tfo_enabled(const struct tcpcb *tp);
 extern void tcp_disable_tfo(struct tcpcb *tp);
-extern void tcp_tfo_gen_cookie(struct inpcb *inp, u_char *out, size_t blk_size);
+extern void tcp_tfo_gen_cookie(struct inpcb *inp, u_char *out __sized_by(blk_size), size_t blk_size);
 #define TCP_FASTOPEN_KEYLEN 16
-extern int tcp_freeq(struct tcpcb *tp);
 extern errno_t tcp_notify_ack_id_valid(struct tcpcb *, struct socket *, u_int32_t);
 extern errno_t tcp_add_notify_ack_marker(struct tcpcb *, u_int32_t);
 extern void tcp_notify_ack_free(struct tcpcb *);
@@ -1657,29 +2000,79 @@ extern void tcp_get_notify_ack_ids(struct tcpcb *tp,
     struct tcp_notify_ack_complete *);
 extern void tcp_update_mss_locked(struct socket *, struct ifnet *);
 
-extern int get_tcp_inp_list(struct inpcb **, int, inp_gen_t);
+extern int get_tcp_inp_list(struct inpcb * __single * __counted_by(n), size_t n, inp_gen_t);
 extern bool tcp_notify_ack_active(struct socket *so);
+extern void tcp_set_finwait_timeout(struct tcpcb *);
 
 #if MPTCP
-extern int mptcp_input_preproc(struct tcpcb *tp, struct mbuf *m,
-    struct tcphdr *th, int drop_hdrlen);
 extern uint16_t mptcp_output_csum(struct mbuf *m, uint64_t dss_val,
     uint32_t sseq, uint16_t dlen);
 extern int mptcp_adj_mss(struct tcpcb *, boolean_t);
 extern void mptcp_insert_rmap(struct tcpcb *tp, struct mbuf *m, struct tcphdr *th);
 #endif
 
+extern uint32_t tcp_reass_qlen_space(struct socket *);
+
 __private_extern__ void tcp_update_stats_per_flow(
 	struct ifnet_stats_per_flow *, struct ifnet *);
 
-#define TCP_ACK_STRATEGY_LEGACY 0
-#define TCP_ACK_STRATEGY_MODERN 1
+extern void tcp_set_rto(struct tcpcb *tp);
+extern void tcp_set_pto(struct tcpcb *tp);
 
-extern int tcp_ack_strategy;
+extern bool tcp_rst_rlc_compress(void *ipgen __sized_by(ipgen_size), size_t ipgen_size, struct tcphdr *th);
 
+extern struct mem_acct *tcp_memacct;
+
+#if SKYWALK
+void tcp_add_fsw_flow(struct tcpcb *, struct ifnet *);
+void tcp_del_fsw_flow(struct tcpcb *);
+#else /* !SKYWALK */
 #define tcp_add_fsw_flow(...)
 #define tcp_del_fsw_flow(...)
+#endif /* !SKYWALK */
 
+typedef void *__single lr_ref_t;
+#define TCP_INIT_LR_SAVED(lr) ((lr) == NULL                                             \
+	? __unsafe_forge_single(void *, __builtin_return_address(0))    \
+	: (lr))
+
+/*
+ * The initial retransmission should happen at rtt + 4 * rttvar.
+ * Because of the way we do the smoothing, srtt and rttvar
+ * will each average +1/2 tick of bias.  When we compute
+ * the retransmit timer, we want 1/2 tick of rounding and
+ * 1 extra tick because of +-1/2 tick uncertainty in the
+ * firing of the timer.  The bias will give us exactly the
+ * 1.5 tick we need.  But, because the bias is
+ * statistical, we have to test that we don't drop below
+ * the minimum feasible timer (which is 2 ticks).
+ * This version of the macro adapted from a paper by Lawrence
+ * Brakmo and Larry Peterson which outlines a problem caused
+ * by insufficient precision in the original implementation,
+ * which results in inappropriately large RTO values for very
+ * fast networks.
+ */
+static inline uint32_t
+tcp_rto_formula(uint32_t rttmin, uint32_t srtt, uint32_t rttvar)
+{
+	return max(rttmin,
+	           ((srtt >> (TCP_RTT_SHIFT - TCP_DELTA_SHIFT)) + rttvar) >> TCP_DELTA_SHIFT);
+}
+
+static inline uint32_t
+_tcp_offset_from_start(const struct tcpcb *tp, uint32_t offset,
+    uint32_t tcp_now_var)
+{
+	return tcp_now_var + offset - tp->tentry.te_timer_start;
+}
+
+static inline uint32_t
+tcp_offset_from_start(const struct tcpcb *tp, uint32_t offset)
+{
+	return _tcp_offset_from_start(tp, offset, tcp_now);
+}
+
+#define TCP_REXMTVAL(tp) tcp_rto_formula((tp)->t_rttmin, (tp)->t_srtt, (tp)->t_rttvar)
 #endif /* BSD_KERNEL_PRIVATE */
 
 #endif /* _NETINET_TCP_VAR_H_ */

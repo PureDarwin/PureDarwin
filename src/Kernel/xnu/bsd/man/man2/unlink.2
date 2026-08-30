@@ -83,13 +83,40 @@ The values for
 are constructed by a bitwise-inclusive OR of flags from the following list,
 defined in
 .In fcntl.h :
-.Bl -tag -width indent
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
 .It Dv AT_REMOVEDIR
 Remove the directory entry specified by
 .Fa fd
 and
 .Fa path
 as a directory, not a normal file.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_SYMLINK_NOFOLLOW_ANY
+If
+.Fa path
+contains a symbolic link in any intermediate directory of the path, it is not
+followed and an error is returned instead.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_RESOLVE_BENEATH
+If
+.Fa path
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_NODELETEBUSY
+If
+.Fa path
+refers to a file with any open file descriptors, an error is returned.
+.El
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
+.It Dv AT_UNIQUE
+If
+.Fa path
+resolves to a vnode with multiple hard links,
+an error is returned.
 .El
 .Pp
 If
@@ -133,6 +160,11 @@ The file named by the
 .Fa path
 argument cannot be unlinked
 because it is being used by the system or by another process.
+.\" ===========
+.It Bq Er EBUSY
+The flag parameter has the AT_NODELETEBUSY bit set and the file referred to by
+.Fa path
+has one or more open file descriptors.
 .\" ===========
 .It Bq Er EFAULT
 .Fa Path
@@ -216,6 +248,26 @@ argument is not an absolute path and
 is neither
 .Dv AT_FDCWD
 nor a file descriptor associated with a directory.
+.It Bq Er ELOOP
+The
+.Fa flag
+parameter has the
+.Dv AT_SYMLINK_NOFOLLOW_ANY
+bit set and one of the intermediate directories in the
+.Fa path
+argument is a symbolic link.
+.It Bq Er ENOTCAPABLE
+The flag parameter has the
+.Dv AT_RESOLVE_BENEATH
+bit set and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory.
+.It Bq Er ENOTCAPABLE
+The flag parameter has the
+.Dv  AT_UNIQUE
+bit set and
+.Fa path
+resolves to a vnode with multiple links.
 .El
 .Sh SEE ALSO
 .Xr close 2 ,

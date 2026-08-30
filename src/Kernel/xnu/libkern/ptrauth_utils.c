@@ -31,67 +31,27 @@
 
 #include <libkern/ptrauth_utils.h>
 
-
-#if __has_feature(ptrauth_calls)
-
 /*
- * ptrauth_utils_sign_blob_generic
- *
- * Sign a blob of data with the GA key
- *
+ * On ptrauth systems, ptrauth_utils_sign_blob_generic is implemented
+ * in osfmk/arm64/machine_routines_asm.s
  */
-__attribute__((noinline))
+
+#if !__has_feature(ptrauth_calls)
 ptrauth_generic_signature_t
-ptrauth_utils_sign_blob_generic(const void * ptr, size_t len_bytes, uint64_t data, int flags)
+ptrauth_utils_sign_blob_generic(__unused const void * ptr, __unused size_t len_bytes, __unused uint64_t data, __unused int flags)
 {
-	ptrauth_generic_signature_t sig = 0;
-
-	uint64_t rounds = len_bytes / sizeof(uintptr_t);
-	size_t ntrailing = len_bytes % sizeof(uintptr_t);
-	uintptr_t trailing = 0;
-
-	if (ptr == NULL) {
-		return 0;
-	}
-
-	/* If address diversification is requested, mix the blob address with the salt */
-	if (flags & PTRAUTH_ADDR_DIVERSIFY) {
-		data ^= (uint64_t)ptr;
-	}
-
-	/* First round adds ptrauth_utils_sign_blob_generic discrimination. */
-	sig = ptrauth_sign_generic_data(sig, ptrauth_string_discriminator("ptrauth_utils_sign_blob_generic-prologue") | 0x01);
-
-	/* Second round adds salt */
-	sig = ptrauth_sign_generic_data(sig, data);
-
-	/* Calculate an additive signature of the buffer */
-	for (uint64_t i = 0; i < rounds; i++) {
-		sig = ptrauth_sign_generic_data(*(const uintptr_t *)ptr, sig);
-		ptr += sizeof(uintptr_t);
-	}
-
-	/* ptrauth_sign_generic_data operates on pointer-sized values only,
-	 * so we need to handle trailing bytes for the non-pointer-aligned case */
-	if (ntrailing) {
-		for (int i = 0; i < ntrailing; i++) {
-			((uint8_t *)&trailing)[i] = ((const uint8_t *)ptr)[i];
-		}
-		sig = ptrauth_sign_generic_data(trailing, sig);
-	}
-
-
-	/* Final round to add an additional cookie */
-	sig = ptrauth_sign_generic_data(sig, ptrauth_string_discriminator("ptrauth_utils_sign_blob_generic-epilogue") | 0x01);
-
-	return sig;
+	return 0;
 }
+#endif // __has_feature(ptrauth_calls)
+
 
 /*
  * ptrauth_utils_auth_blob_generic
  *
  * Authenticate signature produced by ptrauth_utils_sign_blob_generic
  */
+
+#if __has_feature(ptrauth_calls)
 __attribute__((noinline))
 void
 ptrauth_utils_auth_blob_generic(const void * ptr, size_t len_bytes, uint64_t data, int flags, ptrauth_generic_signature_t signature)
@@ -115,5 +75,10 @@ ptrauth_utils_auth_blob_generic(const void * ptr, size_t len_bytes, uint64_t dat
 		    signature);
 	}
 }
-
-#endif //!ptrauth_calls
+#else
+void
+ptrauth_utils_auth_blob_generic(__unused const void * ptr, __unused size_t len_bytes, __unused uint64_t data, __unused int flags, __unused ptrauth_generic_signature_t signature)
+{
+	return;
+}
+#endif // __has_feature(ptrauth_calls)

@@ -16,6 +16,7 @@ target_sources(IOHIDFamily.kext PRIVATE
     IOHIDSystem/IOHIDSystemCursorHelper.cpp
     IOHIDSystem/IOHIDUserClient.cpp
     IOHIDSystem/IOHIDWorkLoop.cpp
+    IOHIDSystem/PDHIDEventQueue.cpp
 )
 
 target_include_directories(IOHIDFamily.kext PRIVATE

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -63,13 +63,35 @@
 
 #ifndef _RADIX_H_
 #define _RADIX_H_
+
 #include <sys/appleapiopts.h>
+#include <sys/cdefs.h>
+#include <sys/socket.h>
+#include <stdint.h>
+
+#if KERNEL_PRIVATE
+#include <kern/kalloc.h>
+#endif /* KERNEL_PRIVATE */
 
 #ifdef PRIVATE
 
 #ifdef MALLOC_DECLARE
 MALLOC_DECLARE(M_RTABLE);
 #endif
+
+
+#define __RN_INLINE_LENGTHS (__BIGGEST_ALIGNMENT__ > 4)
+
+#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
+/*
+ * For the newer ARMv7k ABI where 64-bit types are 64-bit aligned, but pointers
+ * are 32-bit:
+ * Aligned to 64-bit since this is cast to rtentry, which is 64-bit aligned.
+ */
+#define __RN_NODE_ALIGNMENT_ATTR__ __attribute__((aligned(8)))
+#else /* __arm__ && (__BIGGEST_ALIGNMENT__ > 4) */
+#define __RN_NODE_ALIGNMENT_ATTR__
+#endif /* __arm__ && (__BIGGEST_ALIGNMENT__ > 4) */
 
 /*
  * Radix search tree node layout.
@@ -84,6 +106,11 @@ struct radix_node {
 #define RNF_NORMAL      1               /* leaf contains normal route */
 #define RNF_ROOT        2               /* leaf is root leaf for tree */
 #define RNF_ACTIVE      4               /* This node is alive (for rtfree) */
+#if __RN_INLINE_LENGTHS
+	u_char  __rn_keylen;
+	u_char  __rn_masklen;
+	short   pad2;
+#endif /* __RN_INLINE_LENGTHS */
 	union {
 		struct {                        /* leaf only data: */
 			caddr_t rn_Key;         /* object of search */
@@ -101,55 +128,263 @@ struct radix_node {
 	struct radix_node *rn_twin;
 	struct radix_node *rn_ybro;
 #endif
-
-#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
-/* For the newer ARMv7k ABI where 64-bit types are 64-bit aligned, but pointers
- * are 32-bit:
- * Aligned to 64-bit since this is cast to rtentry, which is 64-bit aligned.
- */
-} __attribute__ ((aligned(8)));
-#else
-};
-#endif
+} __RN_NODE_ALIGNMENT_ATTR__;
 
 #define rn_dupedkey     rn_u.rn_leaf.rn_Dupedkey
-#define rn_key          rn_u.rn_leaf.rn_Key
-#define rn_mask         rn_u.rn_leaf.rn_Mask
 #define rn_offset       rn_u.rn_node.rn_Off
 #define rn_left         rn_u.rn_node.rn_L
 #define rn_right        rn_u.rn_node.rn_R
 
 /*
+ * The `__rn_key' and `__rn_mask' fields are considered
+ * private in the BSD codebase, and should not be accessed directly.
+ * Outside of the BSD codebase these fields are exposed for the
+ * backwards compatibility.
+ */
+#define __rn_key          rn_u.rn_leaf.rn_Key
+#define __rn_mask         rn_u.rn_leaf.rn_Mask
+
+#if !defined(BSD_KERNEL_PRIVATE)
+#define rn_key __rn_key
+#define rn_mask __rn_mask
+#endif /* !defined(BSD_KERNEL_PRIVATE) */
+
+typedef struct radix_node * __single radix_node_ref_t;
+
+#define rn_is_leaf(r) ((r)->rn_bit < 0)
+
+
+/*
+ * Sets the routing key bytes and length.
+ */
+static inline void
+__attribute__((always_inline))
+__attribute__((overloadable))
+rn_set_key(struct radix_node *rn, void *key __sized_by(keylen), uint8_t keylen)
+{
+#if __RN_INLINE_LENGTHS
+	rn->__rn_keylen = keylen;
+#else /* !__RN_INLINE_LENGTHS */
+	(void)keylen;
+#endif /* !__RN_INLINE_LENGTHS */
+	rn->__rn_key = key;
+}
+
+static inline void
+__attribute__((always_inline))
+__attribute__((overloadable))
+rn_set_key(struct radix_node *rn, const void *key __sized_by(keylen), uint8_t keylen)
+{
+#if __RN_INLINE_LENGTHS
+	rn->__rn_keylen = keylen;
+#else /* !__RN_INLINE_LENGTHS */
+	(void)keylen;
+#endif /* !__RN_INLINE_LENGTHS */
+	rn->__rn_key = __DECONST(void *, key);
+}
+
+/*
+ * Returns the routing key length.
+ */
+static inline uint8_t
+__attribute__((always_inline)) __stateful_pure
+rn_get_keylen(struct radix_node *rn)
+{
+#if __RN_INLINE_LENGTHS
+	return rn->__rn_keylen;
+#else /* !__RN_INLINE_LENGTHS */
+	if (rn->__rn_key != NULL) {
+		return *((uint8_t *)rn->__rn_key);
+	} else {
+		return 0;
+	}
+#endif /* !__RN_INLINE_LENGTHS */
+}
+
+/*
+ * Returns the pointer to the routing key associated with
+ * the radix tree node.
+ * If the `-fbounds-safety' feature is both available and enabled,
+ * the returned value is sized by the corresponding key len.
+ * Otherwise, the returned value is a plain C pointer.
+ */
+static inline char * __header_indexable
+__attribute__((always_inline)) __stateful_pure
+__attribute__((overloadable))
+rn_get_key(struct radix_node *rn)
+{
+	return __unsafe_forge_bidi_indexable(char *, rn->rn_u.rn_leaf.rn_Key,
+	           rn_get_keylen(rn));
+}
+
+static inline char * __header_indexable
+__attribute__((always_inline)) __stateful_pure
+__attribute__((overloadable))
+rn_get_key(struct radix_node *rn, uint8_t *plen)
+{
+	uint8_t keylen = rn_get_keylen(rn);
+	caddr_t key = __unsafe_forge_bidi_indexable(char *, rn->rn_u.rn_leaf.rn_Key, keylen);
+	*plen = keylen;
+	return key;
+}
+
+/*
+ * Sets the routing mask bytes and length.
+ */
+static inline void
+__attribute__((always_inline))
+rn_set_mask(struct radix_node *rn, void *mask __sized_by(masklen), uint8_t masklen)
+{
+#if __RN_INLINE_LENGTHS
+	/*
+	 * The first byte is the length of the addressable bytes,
+	 * whereas the second is the address family.
+	 *
+	 * To avoid memory traps, we are taking into the consideration
+	 * both the addressable length and the address family.
+	 */
+	uint8_t sa_len = *((uint8_t*)mask);
+	uint8_t sa_family = *(((uint8_t*)mask) + 1);
+	uint8_t allocation_size =
+	    (sa_family == AF_INET)    ? 16     /* sizeof(struct sockaddr_in) */
+	    : (sa_family == AF_INET6) ? 28     /* sizeof(struct sockaddr_in6) */
+	    : masklen;
+	/* Set the allocation size to be the max(sa_len, masklen, allocation_size) */
+	allocation_size = allocation_size < sa_len ? sa_len : allocation_size;
+	allocation_size = allocation_size < masklen ? masklen : allocation_size;
+	rn->__rn_masklen = allocation_size;
+#else /* !__RN_INLINE_LENGTHS */
+	(void)masklen;
+#endif /* !__RN_INLINE_LENGTHS */
+	rn->__rn_mask = mask;
+}
+
+/*
+ * Returns the routing mask length.
+ */
+static inline uint8_t
+__attribute__((always_inline)) __stateful_pure
+rn_get_masklen(struct radix_node *rn)
+{
+#if __RN_INLINE_LENGTHS
+	return rn->__rn_masklen;
+#else /* !__RN_INLINE_LENGTHS */
+	if (rn->__rn_mask != NULL) {
+		return *((uint8_t *)rn->__rn_mask);
+	} else {
+		return 0;
+	}
+#endif /* !__RN_INLINE_LENGTHS */
+}
+
+/*
+ * Returns the pointer to the routing mask associated with
+ * the radix tree node.
+ * If the `-fbounds-safety' feature is both available and enabled,
+ * the returned value is sized by the corresponding mask len.
+ * Otherwise, the returned value is a plain C pointer.
+ */
+static inline char * __header_indexable
+__attribute__((always_inline)) __stateful_pure
+rn_get_mask(struct radix_node *rn)
+{
+	return __unsafe_forge_bidi_indexable(char *, rn->rn_u.rn_leaf.rn_Mask,
+	           rn_get_masklen(rn));
+}
+
+/*
  * Annotations to tree concerning potential routes applying to subtrees.
  */
-
 struct radix_mask {
 	short   rm_bit;                 /* bit offset; -1-index(netmask) */
 	char    rm_unused;              /* cf. rn_bmask */
 	u_char  rm_flags;               /* cf. rn_flags */
+#if __RN_INLINE_LENGTHS
+	u_char  __rm_masklen;
+	u_char  pad[3];
+#endif /* __RN_INNLINE_LENGTHS */
 	struct  radix_mask *rm_mklist;  /* more masks to try */
 	union   {
-		caddr_t rmu_mask;               /* the mask */
-		struct  radix_node *rmu_leaf;   /* for normal routes */
-	}       rm_rmu;
+		caddr_t __rm_mask;              /* the mask, see note below. */
+		struct  radix_node *rm_leaf;    /* for normal routes */
+	};
 	int     rm_refs;                /* # of references to this struct */
 };
 
-#define rm_mask rm_rmu.rmu_mask
-#define rm_leaf rm_rmu.rmu_leaf         /* extra field would make 32 bytes */
+typedef struct radix_mask * __single radix_mask_ref_t;
 
+/*
+ * The `__rm_mask' field is considered private in the BSD
+ * codebase, and should not be accessed directly.
+ * Outside of the BSD codebase it is exposed for the
+ * backwards compatibility.
+ */
+#if !defined(BSD_KERNEL_PRIVATE)
+#define rm_mask __rm_mask
+#endif /* !defined(BSD_KERNEL_PRIVATE) */
+
+static inline void
+rm_set_mask(struct radix_mask *rm, void *mask __sized_by(masklen), uint8_t masklen)
+{
+#if __RN_INLINE_LENGTHS
+	rm->__rm_masklen = masklen;
+#else /* !__RN_INLINE_LENGTHS */
+	(void)masklen;
+#endif /* !__RN_INLINE_LENGTHS */
+	rm->__rm_mask = mask;
+}
+
+
+/*
+ * Returns the routing mask length.
+ */
+static inline uint8_t
+__attribute__((always_inline)) __stateful_pure
+rm_get_masklen(struct radix_mask *rm)
+{
+#if __RN_INLINE_LENGTHS
+	return rm->__rm_masklen;
+#else /* !__RN_INLINE_LENGTHS */
+	if (rn->__rn_mask != NULL) {
+		return *((uint8_t *)rm->__rm_mask);
+	} else {
+		return 0;
+	}
+#endif /* !__RN_INLINE_LENGTHS */
+}
+
+/*
+ * Returns the pointer to the routing mask associated with
+ * the radix tree mask node.
+ * If the `-fbounds-safety' feature is both available and enabled,
+ * the returned value is sized by the corresponding mask len.
+ * Otherwise, the returned value is a plain C pointer.
+ */
+static inline char * __header_indexable
+__attribute__((always_inline)) __stateful_pure
+rm_get_mask(struct radix_mask *rm)
+{
+	return __unsafe_forge_bidi_indexable(char *, rm->__rm_mask,
+	           rm_get_masklen(rm));
+}
 
 #define MKGet(m) {\
 	if (rn_mkfreelist) {\
 	        m = rn_mkfreelist; \
 	        rn_mkfreelist = (m)->rm_mklist; \
-	} else \
-	        R_Malloc(m, struct radix_mask *, sizeof (*(m))); }\
+	} else { \
+	        m = kalloc_type(struct radix_mask, Z_WAITOK_ZERO_NOFAIL); \
+	} \
+}
 
 #define MKFree(m) { (m)->rm_mklist = rn_mkfreelist; rn_mkfreelist = (m);}
 
 typedef int walktree_f_t(struct radix_node *, void *);
 typedef int rn_matchf_t(struct radix_node *, void *);
+
+#if KERNEL_PRIVATE
+KALLOC_TYPE_DECLARE(radix_node_head_zone);
+#endif
 
 struct radix_node_head {
 	struct  radix_node *rnh_treetop;
@@ -190,33 +425,30 @@ struct radix_node_head {
 	int     rnh_cnt;                        /* tree dimension */
 };
 
+typedef struct radix_node_head * __single radix_node_head_ref_t;
+
 #ifndef KERNEL
 #define Bcmp(a, b, n) bcmp(((char *)(a)), ((char *)(b)), (n))
 #define Bcopy(a, b, n) bcopy(((char *)(a)), ((char *)(b)), (unsigned)(n))
 #define Bzero(p, n) bzero((char *)(p), (int)(n));
-#define R_Malloc(p, t, n) (p = (t) malloc((unsigned int)(n)))
-#define R_Free(p) free((char *)p);
 #else
 #define Bcmp(a, b, n) bcmp(((caddr_t)(a)), ((caddr_t)(b)), (unsigned)(n))
 #define Bcopy(a, b, n) bcopy(((caddr_t)(a)), ((caddr_t)(b)), (unsigned)(n))
 #define Bzero(p, n) bzero((caddr_t)(p), (unsigned)(n));
-#define R_Malloc(p, t, n) (p = (t) _MALLOC((uint32_t)(n), M_RTABLE, M_WAITOK))
-#define R_Free(p) _FREE((caddr_t)p, M_RTABLE);
 #endif /*KERNEL*/
 
 void     rn_init(void);
 int      rn_inithead(void **, int);
 int      rn_refines(void *, void *);
-struct radix_node
-*rn_addmask(void *, int, int),
-*rn_addroute(void *, void *, struct radix_node_head *,
-    struct radix_node [2]),
-*rn_delete(void *, void *, struct radix_node_head *),
-*rn_lookup(void *v_arg, void *m_arg, struct radix_node_head *head),
-*rn_lookup_args(void *v_arg, void *m_arg, struct radix_node_head *head,
-    rn_matchf_t *, void *),
-*rn_match(void *, struct radix_node_head *),
-*rn_match_args(void *, struct radix_node_head *, rn_matchf_t *, void *);
+struct radix_node *rn_addmask(void *, int, int);
+struct radix_node *rn_addroute(void *, void *, struct radix_node_head *,
+    struct radix_node [2]);
+struct radix_node *rn_delete(void *, void *, struct radix_node_head *);
+struct radix_node *rn_lookup(void *v_arg, void *m_arg, struct radix_node_head *head);
+struct radix_node *rn_lookup_args(void *v_arg, void *m_arg, struct radix_node_head *head,
+    rn_matchf_t *, void *);
+struct radix_node *rn_match(void *, struct radix_node_head *);
+struct radix_node *rn_match_args(void *, struct radix_node_head *, rn_matchf_t *, void *);
 
 #endif /* PRIVATE */
 #endif /* _RADIX_H_ */

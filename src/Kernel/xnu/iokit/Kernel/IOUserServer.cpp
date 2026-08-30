@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2014 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -29,6 +29,7 @@
 #include <IOKit/IORPC.h>
 #include <IOKit/IOKitServer.h>
 #include <IOKit/IOKitKeysPrivate.h>
+#include <IOKit/IOKernelReportStructs.h>
 #include <IOKit/IOUserClient.h>
 #include <IOKit/IOService.h>
 #include <IOKit/IORegistryEntry.h>
@@ -39,18 +40,31 @@
 #include <IOKit/IOMultiMemoryDescriptor.h>
 #include <IOKit/IOMapper.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOHibernatePrivate.h>
 #include <IOKit/IOBSD.h>
 #include <IOKit/system.h>
+#include "IOServicePrivate.h"
 #include <IOKit/IOUserServer.h>
 #include <IOKit/IOInterruptEventSource.h>
 #include <IOKit/IOTimerEventSource.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/pwr_mgt/RootDomain.h>
+#include <IOKit/pwr_mgt/IOPowerConnection.h>
+#include <libkern/c++/OSAllocation.h>
 #include <libkern/c++/OSKext.h>
 #include <libkern/c++/OSSharedPtr.h>
 #include <libkern/OSDebug.h>
 #include <libkern/Block.h>
+#include <kern/cs_blobs.h>
+#include <kern/thread_call.h>
+#include <os/atomic_private.h>
 #include <sys/proc.h>
+#include <sys/reboot.h>
+#include <sys/codesign.h>
+#include <vm/vm_iokit.h>
+#include <mach_debug/mach_debug_types.h>
 #include "IOKitKernelInternal.h"
+#include "IOServicePMPrivate.h"
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -65,6 +79,9 @@
 #include <DriverKit/IOMemoryMap.h>
 #include <DriverKit/IODataQueueDispatchSource.h>
 #include <DriverKit/IOServiceNotificationDispatchSource.h>
+#include <DriverKit/IOServiceStateNotificationDispatchSource.h>
+#include <DriverKit/IOEventLink.h>
+#include <DriverKit/IOWorkGroup.h>
 #include <DriverKit/IOUserServer.h>
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -73,7 +90,41 @@
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-SECURITY_READ_ONLY_LATE(SInt64)    gIODKDebug = kIODKEnable;
+enum{
+	kIOUserServerCheckInTimeoutMSecs = 120000ULL,
+	kIOUserServerCheckInMaxRetry     = 3,
+};
+
+TUNABLE(SInt64, gIODKDebug, "dk", kIODKEnable);
+
+#if DEBUG || DEVELOPMENT
+uint64_t driverkit_checkin_timed_out = 0;
+TUNABLE(bool, disable_dext_crash_reboot, "disable_dext_crash_reboot", 0);
+extern "C" kern_return_t kern_register_userspace_coredump(task_t task, const char * name, boolean_t emergency);
+#endif /* DEBUG || DEVELOPMENT */
+
+extern bool restore_boot;
+
+static OSString       * gIOSystemStateSleepDescriptionKey;
+static const OSSymbol * gIOSystemStateSleepDescriptionReasonKey;
+static const OSSymbol * gIOSystemStateSleepDescriptionHibernateStateKey;
+
+static OSString       * gIOSystemStateWakeDescriptionKey;
+static const OSSymbol * gIOSystemStateWakeDescriptionWakeReasonKey;
+static const OSSymbol * gIOSystemStateWakeDescriptionContinuousTimeOffsetKey;
+
+static OSString       * gIOSystemStateHaltDescriptionKey;
+static const OSSymbol * gIOSystemStateHaltDescriptionHaltStateKey;
+
+static OSString       * gIOSystemStatePowerSourceDescriptionKey;
+static const OSSymbol * gIOSystemStatePowerSourceDescriptionACAttachedKey;
+
+extern bool gInUserspaceReboot;
+
+extern void iokit_clear_registered_ports(task_t task);
+
+static IORPCMessage *
+IORPCMessageFromMachReply(IORPCMessageMach * msg);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -115,24 +166,8 @@ OSDefineMetaClassAndStructors(IOUserService, IOService)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-class IOUserUserClient : public IOUserClient
-{
-	OSDeclareDefaultStructors(IOUserUserClient);
-public:
-	task_t          fTask;
-
-	IOReturn                   setTask(task_t task);
-	virtual void           stop(IOService * provider) APPLE_KEXT_OVERRIDE;
-	virtual IOReturn       clientClose(void) APPLE_KEXT_OVERRIDE;
-	virtual IOReturn       setProperties(OSObject * properties) APPLE_KEXT_OVERRIDE;
-	virtual IOReturn       externalMethod(uint32_t selector, IOExternalMethodArguments * args,
-	    IOExternalMethodDispatch * dispatch, OSObject * target, void * reference) APPLE_KEXT_OVERRIDE;
-	virtual IOReturn           clientMemoryForType(UInt32 type,
-	    IOOptionBits * options,
-	    IOMemoryDescriptor ** memory) APPLE_KEXT_OVERRIDE;
-};
-
 OSDefineMetaClassAndStructors(IOUserServerCheckInToken, OSObject);
+OSDefineMetaClassAndStructors(_IOUserServerCheckInCancellationHandler, OSObject);
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -170,10 +205,24 @@ struct OSAction_IVars {
 	OSObject             * target;
 	uint64_t               targetmsgid;
 	uint64_t               msgid;
+	IOUserServer         * userServer;
 	OSActionAbortedHandler abortedHandler;
-	size_t                 referenceSize;
 	OSString             * typeName;
-	void                 * reference[0];
+	void                 * reference;
+	size_t                 referenceSize;
+	bool                   aborted;
+};
+
+struct IOWorkGroup_IVars {
+	IOUserServer * userServer;
+	OSString * name;
+	IOUserUserClient * userClient;
+};
+
+struct IOEventLink_IVars {
+	IOUserServer * userServer;
+	OSString * name;
+	IOUserUserClient * userClient;
 };
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -201,6 +250,16 @@ IOService::SetName_Impl(
 }
 
 kern_return_t
+IOService::CopyName_Impl(
+	OSString ** name)
+{
+	const OSString * str = copyName();
+	*name = __DECONST(OSString *, str);
+	return str ? kIOReturnSuccess : kIOReturnError;
+}
+
+
+kern_return_t
 IOService::Start_Impl(
 	IOService * provider)
 {
@@ -208,12 +267,123 @@ IOService::Start_Impl(
 	return ret;
 }
 
+
+IOReturn
+IOService::UpdateReport_Impl(OSData *channels, uint32_t action,
+    uint32_t *outElementCount,
+    uint64_t offset, uint64_t capacity,
+    IOMemoryDescriptor *buffer)
+{
+	return kIOReturnUnsupported;
+}
+
+IOReturn
+IOService::ConfigureReport_Impl(OSData *channels, uint32_t action, uint32_t *outCount)
+{
+	return kIOReturnUnsupported;
+}
+
+// adapt old signature of configureReport to the iig-friendly signature of ConfigureReport
+IOReturn
+IOService::_ConfigureReport(IOReportChannelList    *channelList,
+    IOReportConfigureAction action,
+    void                   *result,
+    void                   *destination)
+{
+	if (action != kIOReportEnable && action != kIOReportGetDimensions && action != kIOReportDisable) {
+		return kIOReturnUnsupported;
+	}
+	static_assert(sizeof(IOReportChannelList) == 8);
+	static_assert(sizeof(IOReportChannel) == 16);
+	unsigned int size_of_channels;
+	bool overflow = os_mul_and_add_overflow(channelList->nchannels, sizeof(IOReportChannel), sizeof(IOReportChannelList), &size_of_channels);
+	if (overflow) {
+		return kIOReturnOverrun;
+	}
+	OSSharedPtr<OSData> sp_channels(OSData::withBytesNoCopy(channelList, size_of_channels), libkern::no_retain);
+	if (!sp_channels) {
+		return kIOReturnNoMemory;
+	}
+	int *resultp = (int*) result;
+	uint32_t count = 0;
+	IOReturn r = ConfigureReport(sp_channels.get(), action, &count);
+	int new_result;
+	overflow = os_add_overflow(*resultp, count, &new_result);
+	if (overflow) {
+		return kIOReturnOverrun;
+	}
+	*resultp = new_result;
+	return r;
+}
+
+// adapt old signature of updateReport to the iig-friendly signature of UpdateReport
+IOReturn
+IOService::_UpdateReport(IOReportChannelList      *channelList,
+    IOReportUpdateAction      action,
+    void                     *result,
+    void                     *destination)
+{
+	if (action != kIOReportCopyChannelData) {
+		return kIOReturnUnsupported;
+	}
+	unsigned int size_of_channels;
+	bool overflow = os_mul_and_add_overflow(channelList->nchannels, sizeof(IOReportChannel), sizeof(IOReportChannelList), &size_of_channels);
+	if (overflow) {
+		return kIOReturnOverrun;
+	}
+	OSSharedPtr<OSData> sp_channels(OSData::withBytesNoCopy(channelList, size_of_channels), libkern::no_retain);
+	if (!sp_channels) {
+		return kIOReturnNoMemory;
+	}
+	int *resultp = (int*) result;
+	uint32_t count = 0;
+	auto buffer = (IOBufferMemoryDescriptor*) destination;
+	uint64_t length = buffer->getLength();
+	buffer->setLength(buffer->getCapacity());
+	IOReturn r = UpdateReport(sp_channels.get(), action, &count, length, buffer->getCapacity() - length, buffer);
+	int new_result;
+	overflow = os_add_overflow(*resultp, count, &new_result);
+	size_t new_length;
+	overflow = overflow || os_mul_and_add_overflow(count, sizeof(IOReportElement), length, &new_length);
+	if (overflow || new_length > buffer->getCapacity()) {
+		buffer->setLength(length);
+		return kIOReturnOverrun;
+	}
+	*resultp = new_result;
+	buffer->setLength(new_length);
+	return r;
+}
+
+
+IOReturn
+IOService::SetLegend_Impl(OSArray *legend, bool is_public)
+{
+	bool ok = setProperty(kIOReportLegendKey, legend);
+	ok = ok && setProperty(kIOReportLegendPublicKey, is_public);
+	return ok ? kIOReturnSuccess : kIOReturnError;
+}
+
+
 kern_return_t
 IOService::RegisterService_Impl()
 {
 	IOReturn ret = kIOReturnSuccess;
+	bool started;
 
-	registerService();
+	IOUserServer *us = (typeof(us))thread_iokit_tls_get(0);
+	if (reserved != NULL && reserved->uvars != NULL && reserved->uvars->userServer == us) {
+		started = reserved->uvars->started;
+	} else {
+		// assume started
+		started = true;
+	}
+
+	if (OSDynamicCast(IOUserServer, this) != NULL || started) {
+		registerService(kIOServiceAsynchronous);
+	} else {
+		assert(reserved != NULL && reserved->uvars != NULL);
+		reserved->uvars->deferredRegisterService = true;
+	}
 
 	return ret;
 }
@@ -229,6 +399,11 @@ IOService::CopyDispatchQueue_Impl(
 	uint32_t index;
 
 	if (!reserved->uvars) {
+		return kIOReturnError;
+	}
+
+	if (!reserved->uvars->queueArray) {
+		// CopyDispatchQueue should not be called after the service has stopped
 		return kIOReturnError;
 	}
 
@@ -255,6 +430,31 @@ IOService::CopyDispatchQueue_Impl(
 			ret = kIOReturnSuccess;
 		}
 	}
+
+	return ret;
+}
+
+kern_return_t
+IOService::CreateDefaultDispatchQueue_Impl(
+	IODispatchQueue ** queue)
+{
+	return kIOReturnError;
+}
+
+kern_return_t
+IOService::CoreAnalyticsSendEvent_Impl(
+	uint64_t       options,
+	OSString     * eventName,
+	OSDictionary * eventPayload)
+{
+	kern_return_t ret;
+
+	if (NULL == gIOCoreAnalyticsSendEventProc) {
+		// perhaps save for later?
+		return kIOReturnNotReady;
+	}
+
+	ret = (*gIOCoreAnalyticsSendEventProc)(options, eventName, eventPayload);
 
 	return ret;
 }
@@ -295,6 +495,12 @@ IOService::SetDispatchQueue_Impl(
 	return ret;
 }
 
+IOService *
+IOService::GetProvider() const
+{
+	return getProvider();
+}
+
 kern_return_t
 IOService::SetProperties_Impl(
 	OSDictionary * properties)
@@ -303,11 +509,24 @@ IOService::SetProperties_Impl(
 	OSDictionary   * dict;
 	IOReturn         ret;
 
+	us = (typeof(us))thread_iokit_tls_get(0);
+	dict = OSDynamicCast(OSDictionary, properties);
+	if (NULL == us) {
+		if (!dict) {
+			return kIOReturnBadArgument;
+		}
+		bool ok __block = true;
+		dict->iterateObjects(^bool (const OSSymbol * key, OSObject * value) {
+			ok = setProperty(key, value);
+			return !ok;
+		});
+		ret = ok ? kIOReturnSuccess : kIOReturnNotWritable;
+		return ret;
+	}
+
 	ret = setProperties(properties);
 
 	if (kIOReturnUnsupported == ret) {
-		dict = OSDynamicCast(OSDictionary, properties);
-		us = (typeof(us))thread_iokit_tls_get(0);
 		if (dict && reserved->uvars && (reserved->uvars->userServer == us)) {
 			ret = runPropertyActionBlock(^IOReturn (void) {
 				OSDictionary   * userProps;
@@ -338,12 +557,63 @@ IOService::SetProperties_Impl(
 }
 
 kern_return_t
+IOService::RemoveProperty_Impl(OSString * propertyName)
+{
+	IOUserServer * us  = (IOUserServer *)thread_iokit_tls_get(0);
+	IOReturn       ret = kIOReturnUnsupported;
+
+	if (NULL == propertyName) {
+		return kIOReturnUnsupported;
+	}
+	if (NULL == us) {
+		removeProperty(propertyName);
+		return kIOReturnSuccess;
+	}
+	if (reserved && reserved->uvars && reserved->uvars->userServer == us) {
+		ret = runPropertyActionBlock(^IOReturn (void) {
+			OSDictionary * userProps;
+			userProps = OSDynamicCast(OSDictionary, getProperty(gIOUserServicePropertiesKey));
+			if (userProps) {
+			        userProps = (OSDictionary *)userProps->copyCollection();
+			        if (!userProps) {
+			                return kIOReturnNoMemory;
+				}
+			        userProps->removeObject(propertyName);
+			        bool ok = setProperty(gIOUserServicePropertiesKey, userProps);
+			        OSSafeReleaseNULL(userProps);
+			        return ok ? kIOReturnSuccess : kIOReturnNotWritable;
+			} else {
+			        return kIOReturnNotFound;
+			}
+		});
+	}
+	return ret;
+}
+
+kern_return_t
+IOService::CopyProperties_Local(
+	OSDictionary ** properties)
+{
+	OSDictionary * props;
+	OSDictionary * userProps;
+
+	props = dictionaryWithProperties();
+	userProps = OSDynamicCast(OSDictionary, props->getObject(gIOUserServicePropertiesKey));
+	if (userProps) {
+		props->merge(userProps);
+		props->removeObject(gIOUserServicePropertiesKey);
+	}
+
+	*properties = props;
+
+	return props ? kIOReturnSuccess : kIOReturnNoMemory;
+}
+
+kern_return_t
 IOService::CopyProperties_Impl(
 	OSDictionary ** properties)
 {
-	IOReturn ret = kIOReturnSuccess;
-	*properties = dictionaryWithProperties();
-	return ret;
+	return CopyProperties_Local(properties);
 }
 
 kern_return_t
@@ -358,8 +628,23 @@ IOService::RequireMaxBusStall_Impl(
 	}
 	ret = requireMaxBusStall(ns);
 
-	return kIOReturnSuccess;
+	return ret;
 }
+
+#if PRIVATE_WIFI_ONLY
+kern_return_t
+IOService::UserSetProperties_Impl(
+	OSContainer * properties)
+{
+	return kIOReturnUnsupported;
+}
+
+kern_return_t
+IOService::SendIOMessageServicePropertyChange_Impl(void)
+{
+	return messageClients(kIOMessageServicePropertyChange);
+}
+#endif /* PRIVATE_WIFI_ONLY */
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -407,11 +692,25 @@ IOMemoryDescriptor::CreateMapping_Impl(
 		atAddress   = address;
 		koptions    = 0;
 	} else {
+		switch (kIOMemoryMapGuardedMask & options) {
+		default:
+		case kIOMemoryMapGuardedDefault:
+			koptions |= kIOMapGuardedSmall;
+			break;
+		case kIOMemoryMapGuardedNone:
+			break;
+		case kIOMemoryMapGuardedSmall:
+			koptions |= kIOMapGuardedSmall;
+			break;
+		case kIOMemoryMapGuardedLarge:
+			koptions |= kIOMapGuardedLarge;
+			break;
+		}
 		atAddress   = 0;
 		koptions   |= kIOMapAnywhere;
 	}
 
-	if (kIOMemoryMapReadOnly & options || (kIODirectionOut == getDirection())) {
+	if ((kIOMemoryMapReadOnly & options) || (kIODirectionOut == getDirection())) {
 		if (!reserved || (current_task() != reserved->creator)) {
 			koptions   |= kIOMapReadOnly;
 		}
@@ -429,6 +728,9 @@ IOMemoryDescriptor::CreateMapping_Impl(
 		break;
 	case kIOMemoryMapCacheModeWriteThrough:
 		koptions |= kIOMapWriteThruCache;
+		break;
+	case kIOMemoryMapCacheModeRealTime:
+		koptions |= kIOMapRealTimeCache;
 		break;
 	default:
 		ret = kIOReturnBadArgument;
@@ -558,7 +860,7 @@ IOUserClient::CreateMemoryDescriptorFromClient_Impl(
 		return kIOReturnNotReady;
 	}
 
-	mdOptions = 0;
+	mdOptions = kIOMemoryThreadSafe;
 	if (kIOMemoryDirectionOut & memoryDescriptorCreateOptions) {
 		mdOptions |= kIODirectionOut;
 	}
@@ -623,7 +925,7 @@ IOBufferMemoryDescriptor::Create_Impl(
 		// no other options currently defined
 		return kIOReturnBadArgument;
 	}
-	bmdOptions = (options & kIOMemoryDirectionOutIn) | kIOMemoryKernelUserShared;
+	bmdOptions = (options & kIOMemoryDirectionOutIn) | kIOMemoryKernelUserShared | kIOMemoryThreadSafe;
 	bmd = IOBufferMemoryDescriptor::inTaskWithOptions(
 		kernel_task, bmdOptions, capacity, alignment);
 
@@ -685,6 +987,7 @@ IODMACommand::Create_Impl(
 	dma = IODMACommand::withSpecification(
 		kIODMACommandOutputHost64,
 		&segmentOptions,
+		kIODMAMapOptionDextOwner |
 		kIODMAMapOptionMapped,
 		mapper,
 		NULL);
@@ -699,6 +1002,8 @@ IODMACommand::Create_Impl(
 
 	return ret;
 }
+
+#define fInternalState reserved
 
 kern_return_t
 IODMACommand::PrepareForDMA_Impl(
@@ -720,43 +1025,57 @@ IODMACommand::PrepareForDMA_Impl(
 		return kIOReturnBadArgument;
 	}
 
+	if (memory == NULL) {
+		return kIOReturnBadArgument;
+	}
+
+	assert(fInternalState->fDextLock);
+	IOLockLock(fInternalState->fDextLock);
+
 	// uses IOMD direction
 	ret = memory->prepare();
 	if (kIOReturnSuccess != ret) {
-		return ret;
+		goto exit;
 	}
 
 	ret = setMemoryDescriptor(memory, false);
 	if (kIOReturnSuccess != ret) {
 		memory->complete();
-		return ret;
+		goto exit;
 	}
 
 	ret = prepare(offset, length);
 	if (kIOReturnSuccess != ret) {
 		clearMemoryDescriptor(false);
 		memory->complete();
-		return ret;
+		goto exit;
 	}
 
 	static_assert(sizeof(IODMACommand::Segment64) == sizeof(IOAddressSegment));
 
 	numSegments = *segmentsCount;
-	genOffset   = offset;
+	genOffset   = 0;
 	ret = genIOVMSegments(&genOffset, segments, &numSegments);
 
-	if (kIOReturnSuccess == ret) {
-		mdFlags = fMemory->getFlags();
-		lflags  = 0;
-		if (kIODirectionOut & mdFlags) {
-			lflags |= kIOMemoryDirectionOut;
-		}
-		if (kIODirectionIn & mdFlags) {
-			lflags |= kIOMemoryDirectionIn;
-		}
-		*flags = lflags;
-		*segmentsCount = numSegments;
+	if (kIOReturnSuccess != ret) {
+		clearMemoryDescriptor(true);
+		memory->complete();
+		goto exit;
 	}
+
+	mdFlags = fMemory->getFlags();
+	lflags  = 0;
+	if (kIODirectionOut & mdFlags) {
+		lflags |= kIOMemoryDirectionOut;
+	}
+	if (kIODirectionIn & mdFlags) {
+		lflags |= kIOMemoryDirectionIn;
+	}
+	*flags = lflags;
+	*segmentsCount = numSegments;
+
+exit:
+	IOLockUnlock(fInternalState->fDextLock);
 
 	return ret;
 }
@@ -772,8 +1091,13 @@ IODMACommand::CompleteDMA_Impl(
 		// no other options currently defined
 		return kIOReturnBadArgument;
 	}
-	if (!fActive) {
-		return kIOReturnNotReady;
+
+	assert(fInternalState->fDextLock);
+	IOLockLock(fInternalState->fDextLock);
+
+	if (!fInternalState->fPrepared) {
+		ret = kIOReturnNotReady;
+		goto exit;
 	}
 
 	md = __DECONST(IOMemoryDescriptor *, fMemory);
@@ -790,6 +1114,8 @@ IODMACommand::CompleteDMA_Impl(
 			ret = completeRet;
 		}
 	}
+exit:
+	IOLockUnlock(fInternalState->fDextLock);
 
 	return ret;
 }
@@ -833,7 +1159,7 @@ IODMACommand::PerformOperation_Impl(
 	IOMemoryDescriptor * data)
 {
 	IOReturn ret;
-	void * buffer;
+	OSDataAllocation<uint8_t> buffer;
 	UInt64 copiedDMA;
 	IOByteCount mdOffset, mdLength, copied;
 
@@ -857,15 +1183,15 @@ IODMACommand::PerformOperation_Impl(
 	if (length > fMemory->getLength()) {
 		return kIOReturnBadArgument;
 	}
-	buffer = IONew(uint8_t, length);
-	if (NULL == buffer) {
+	buffer = OSDataAllocation<uint8_t>(length, OSAllocateMemory);
+	if (!buffer) {
 		return kIOReturnNoMemory;
 	}
 
 	switch (options) {
 	case kIODMACommandPerformOperationOptionZero:
-		bzero(buffer, length);
-		copiedDMA = writeBytes(dmaOffset, buffer, length);
+		bzero(buffer.data(), length);
+		copiedDMA = writeBytes(dmaOffset, buffer.data(), length);
 		if (copiedDMA != length) {
 			ret = kIOReturnUnderrun;
 			break;
@@ -885,23 +1211,23 @@ IODMACommand::PerformOperation_Impl(
 			break;
 		}
 		if (kIODMACommandPerformOperationOptionWrite == options) {
-			copied = data->readBytes(mdOffset, buffer, mdLength);
+			copied = data->readBytes(mdOffset, buffer.data(), mdLength);
 			if (copied != mdLength) {
 				ret = kIOReturnUnderrun;
 				break;
 			}
-			copiedDMA = writeBytes(dmaOffset, buffer, length);
+			copiedDMA = writeBytes(dmaOffset, buffer.data(), length);
 			if (copiedDMA != length) {
 				ret = kIOReturnUnderrun;
 				break;
 			}
 		} else {       /* kIODMACommandPerformOperationOptionRead */
-			copiedDMA = readBytes(dmaOffset, buffer, length);
+			copiedDMA = readBytes(dmaOffset, buffer.data(), length);
 			if (copiedDMA != length) {
 				ret = kIOReturnUnderrun;
 				break;
 			}
-			copied = data->writeBytes(mdOffset, buffer, mdLength);
+			copied = data->writeBytes(mdOffset, buffer.data(), mdLength);
 			if (copied != mdLength) {
 				ret = kIOReturnUnderrun;
 				break;
@@ -914,8 +1240,6 @@ IODMACommand::PerformOperation_Impl(
 		break;
 	}
 
-	IODelete(buffer, uint8_t, length);
-
 	return ret;
 }
 
@@ -926,16 +1250,11 @@ static kern_return_t
 OSActionCreateWithTypeNameInternal(OSObject * target, uint64_t targetmsgid, uint64_t msgid, size_t referenceSize, OSString * typeName, bool fromKernel, OSAction ** action)
 {
 	OSAction * inst = NULL;
-	vm_size_t  allocsize;
+	void * reference = NULL; // must release
 	const OSSymbol *sym = NULL; // must release
 	OSObject *obj = NULL; // must release
 	const OSMetaClass *actionMetaClass = NULL; // do not release
 	kern_return_t ret;
-
-	if (os_add_overflow(referenceSize, sizeof(OSAction_IVars), &allocsize)) {
-		ret = kIOReturnBadArgument;
-		goto finish;
-	}
 
 	if (fromKernel && typeName) {
 		/* The action is being constructed in the kernel with a type name */
@@ -963,16 +1282,37 @@ OSActionCreateWithTypeNameInternal(OSObject * target, uint64_t targetmsgid, uint
 		}
 	}
 
-	inst->ivars = (typeof(inst->ivars))(uintptr_t) IONewZero(uint8_t, allocsize);
+	if (referenceSize != 0) {
+		reference = IONewZeroData(uint8_t, referenceSize);
+		if (reference == NULL) {
+			ret = kIOReturnNoMemory;
+			goto finish;
+		}
+	}
+
+	inst->ivars = IONewZero(OSAction_IVars, 1);
 	if (!inst->ivars) {
 		ret = kIOReturnNoMemory;
 		goto finish;
 	}
-	target->retain();
+	if (target) {
+		target->retain();
+		if (!fromKernel && !OSDynamicCast(IOService, target)) {
+			IOUserServer * us;
+			us = (typeof(us))thread_iokit_tls_get(0);
+			inst->ivars->userServer = OSDynamicCast(IOUserServer, us);
+			assert(inst->ivars->userServer);
+			inst->ivars->userServer->retain();
+		}
+	}
 	inst->ivars->target        = target;
 	inst->ivars->targetmsgid   = targetmsgid;
 	inst->ivars->msgid         = msgid;
+
+	inst->ivars->reference     = reference;
 	inst->ivars->referenceSize = referenceSize;
+	reference = NULL; // prevent release
+
 	if (typeName) {
 		typeName->retain();
 	}
@@ -986,6 +1326,9 @@ finish:
 	OSSafeReleaseNULL(obj);
 	OSSafeReleaseNULL(sym);
 	OSSafeReleaseNULL(inst);
+	if (reference) {
+		IODeleteData(reference, uint8_t, referenceSize);
+	}
 
 	return ret;
 }
@@ -1035,7 +1378,12 @@ OSAction::free()
 		}
 		OSSafeReleaseNULL(ivars->target);
 		OSSafeReleaseNULL(ivars->typeName);
-		IOSafeDeleteNULL(ivars, uint8_t, ivars->referenceSize + sizeof(OSAction_IVars));
+		OSSafeReleaseNULL(ivars->userServer);
+		if (ivars->reference) {
+			assert(ivars->referenceSize > 0);
+			IODeleteData(ivars->reference, uint8_t, ivars->referenceSize);
+		}
+		IOSafeDeleteNULL(ivars, OSAction_IVars, 1);
 	}
 	return super::free();
 }
@@ -1043,8 +1391,8 @@ OSAction::free()
 void *
 OSAction::GetReference()
 {
-	assert(ivars && ivars->referenceSize);
-	return &ivars->reference[0];
+	assert(ivars && ivars->referenceSize && ivars->reference);
+	return ivars->reference;
 }
 
 kern_return_t
@@ -1057,6 +1405,10 @@ OSAction::SetAbortedHandler(OSActionAbortedHandler handler)
 void
 OSAction::Aborted_Impl(void)
 {
+	if (!os_atomic_cmpxchg(&ivars->aborted, false, true, relaxed)) {
+		// already aborted
+		return;
+	}
 	if (ivars->abortedHandler) {
 		ivars->abortedHandler();
 	}
@@ -1079,7 +1431,7 @@ IODispatchSource::init()
 		return false;
 	}
 
-	ivars = IONewZero(IODispatchSource_IVars, 1);
+	ivars = IOMallocType(IODispatchSource_IVars);
 
 	ivars->source = this;
 
@@ -1089,7 +1441,7 @@ IODispatchSource::init()
 void
 IODispatchSource::free()
 {
-	IOSafeDeleteNULL(ivars, IODispatchSource_IVars, 1);
+	IOFreeType(ivars, IODispatchSource_IVars);
 	super::free();
 }
 
@@ -1105,6 +1457,7 @@ IODispatchSource::SetEnable_Impl(
 struct IOInterruptDispatchSource_IVars {
 	IOService    * provider;
 	uint32_t       intIndex;
+	uint32_t       flags;
 	int            interruptType;
 	IOSimpleLock * lock;
 	thread_t       waiter;
@@ -1112,9 +1465,14 @@ struct IOInterruptDispatchSource_IVars {
 	uint64_t       time;
 	OSAction     * action;
 	bool           enable;
+	bool           canceled;
 };
 
-static void
+void
+IOInterruptDispatchSourceInterrupt(OSObject * target, void * refCon,
+    IOService * nub, int source );
+
+void
 IOInterruptDispatchSourceInterrupt(OSObject * target, void * refCon,
     IOService * nub, int source )
 {
@@ -1123,8 +1481,9 @@ IOInterruptDispatchSourceInterrupt(OSObject * target, void * refCon,
 
 	is = IOSimpleLockLockDisableInterrupt(ivars->lock);
 	ivars->count++;
+	ivars->time = (kIOInterruptSourceContinuousTime & ivars->flags)
+	    ? mach_continuous_time() : mach_absolute_time();
 	if (ivars->waiter) {
-		ivars->time = mach_absolute_time();
 		thread_wakeup_thread((event_t) ivars, ivars->waiter);
 		ivars->waiter = NULL;
 	}
@@ -1137,12 +1496,17 @@ IOInterruptDispatchSourceInterrupt(OSObject * target, void * refCon,
 kern_return_t
 IOInterruptDispatchSource::Create_Impl(
 	IOService * provider,
-	uint32_t index,
+	uint32_t indexAndFlags,
 	IODispatchQueue * queue,
 	IOInterruptDispatchSource ** source)
 {
 	IOReturn ret;
 	IOInterruptDispatchSource * inst;
+	uint32_t index;
+	uint32_t flags;
+
+	index = indexAndFlags & kIOInterruptSourceIndexMask;
+	flags = indexAndFlags & ~kIOInterruptSourceIndexMask;
 
 	inst = OSTypeAlloc(IOInterruptDispatchSource);
 	if (!inst->init()) {
@@ -1160,6 +1524,7 @@ IOInterruptDispatchSource::Create_Impl(
 	ret = provider->registerInterrupt(index, inst, IOInterruptDispatchSourceInterrupt, inst->ivars);
 	if (kIOReturnSuccess == ret) {
 		inst->ivars->intIndex = index;
+		inst->ivars->flags    = flags;
 		inst->ivars->provider = provider;
 		inst->ivars->provider->retain();
 		*source = inst;
@@ -1191,10 +1556,7 @@ IOInterruptDispatchSource::init()
 	if (!super::init()) {
 		return false;
 	}
-	ivars = IONewZero(IOInterruptDispatchSource_IVars, 1);
-	if (!ivars) {
-		return false;
-	}
+	ivars = IOMallocType(IOInterruptDispatchSource_IVars);
 
 	return true;
 }
@@ -1202,11 +1564,8 @@ IOInterruptDispatchSource::init()
 void
 IOInterruptDispatchSource::free()
 {
-	IOReturn ret;
-
 	if (ivars && ivars->provider) {
-		ret = ivars->provider->unregisterInterrupt(ivars->intIndex);
-		assert(kIOReturnSuccess == ret);
+		(void) ivars->provider->unregisterInterrupt(ivars->intIndex);
 		ivars->provider->release();
 	}
 
@@ -1214,7 +1573,7 @@ IOInterruptDispatchSource::free()
 		IOSimpleLockFree(ivars->lock);
 	}
 
-	IOSafeDeleteNULL(ivars, IOInterruptDispatchSource_IVars, 1);
+	IOFreeType(ivars, IOInterruptDispatchSource_IVars);
 
 	super::free();
 }
@@ -1250,6 +1609,11 @@ IOInterruptDispatchSource::SetEnableWithCompletion_Impl(
 		return kIOReturnSuccess;
 	}
 
+	if (ivars->canceled) {
+		return kIOReturnUnsupported;
+	}
+	assert(ivars->provider != NULL);
+
 	if (enable) {
 		is = IOSimpleLockLockDisableInterrupt(ivars->lock);
 		ivars->enable = enable;
@@ -1269,7 +1633,27 @@ kern_return_t
 IOInterruptDispatchSource::Cancel_Impl(
 	IODispatchSourceCancelHandler handler)
 {
-	return kIOReturnUnsupported;
+	IOInterruptState is;
+	IOService * provider;
+
+	is = IOSimpleLockLockDisableInterrupt(ivars->lock);
+	ivars->canceled = true;
+	if (ivars->waiter) {
+		thread_wakeup_thread((event_t) ivars, ivars->waiter);
+		ivars->waiter = NULL;
+	}
+	provider = ivars->provider;
+	if (provider) {
+		ivars->provider = NULL;
+	}
+	IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+
+	if (provider) {
+		(void) provider->unregisterInterrupt(ivars->intIndex);
+		provider->release();
+	}
+
+	return kIOReturnSuccess;
 }
 
 kern_return_t
@@ -1280,6 +1664,7 @@ IOInterruptDispatchSource::CheckForWork_Impl(
 	IOReturn         ret = kIOReturnNotReady;
 	IOInterruptState is;
 	bool             willWait;
+	bool             canceled;
 	wait_result_t    waitResult;
 	uint64_t         icount;
 	uint64_t         itime;
@@ -1288,31 +1673,40 @@ IOInterruptDispatchSource::CheckForWork_Impl(
 	self = current_thread();
 	icount = 0;
 	do {
+		willWait = false;
 		is = IOSimpleLockLockDisableInterrupt(ivars->lock);
-		if ((icount = ivars->count)) {
-			itime = ivars->time;
-			ivars->count = 0;
-			waitResult = THREAD_AWAKENED;
-		} else if (synchronous) {
-			assert(NULL == ivars->waiter);
-			ivars->waiter = self;
-			waitResult = assert_wait((event_t) ivars, THREAD_INTERRUPTIBLE);
+		canceled = ivars->canceled;
+		if (!canceled) {
+			if ((icount = ivars->count)) {
+				itime = ivars->time;
+				ivars->count = 0;
+				waitResult = THREAD_AWAKENED;
+			} else if (synchronous) {
+				assert(NULL == ivars->waiter);
+				ivars->waiter = self;
+				waitResult = assert_wait((event_t) ivars, THREAD_INTERRUPTIBLE);
+			}
+			willWait = (synchronous && (waitResult == THREAD_WAITING));
+			if (willWait && (kIOInterruptTypeLevel & ivars->interruptType) && ivars->enable) {
+				IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+				ivars->provider->enableInterrupt(ivars->intIndex);
+			} else {
+				IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+			}
+		} else {
+			IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
 		}
-		willWait = (synchronous && (waitResult == THREAD_WAITING));
-		if (willWait && (kIOInterruptTypeLevel & ivars->interruptType) && ivars->enable) {
-			ivars->provider->enableInterrupt(ivars->intIndex);
-		}
-		IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
 		if (willWait) {
 			waitResult = thread_block(THREAD_CONTINUE_NULL);
 			if (THREAD_INTERRUPTED == waitResult) {
 				is = IOSimpleLockLockDisableInterrupt(ivars->lock);
 				ivars->waiter = NULL;
 				IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+				canceled = true;
 				break;
 			}
 		}
-	} while (synchronous && !icount);
+	} while (synchronous && !icount && !canceled);
 
 	if (icount && ivars->action) {
 		ret = InterruptOccurred(rpc, ivars->action, icount, itime);
@@ -1329,6 +1723,28 @@ IOInterruptDispatchSource::InterruptOccurred_Impl(
 {
 }
 
+kern_return_t
+IOInterruptDispatchSource::GetLastInterrupt_Impl(
+	uint64_t  * pCount,
+	uint64_t  * pTime)
+{
+	IOInterruptState is;
+	uint64_t count, time;
+
+	is = IOSimpleLockLockDisableInterrupt(ivars->lock);
+	count = ivars->count;
+	time  = ivars->time;
+	IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+
+	if (pCount) {
+		*pCount = count;
+	}
+	if (pTime) {
+		*pTime = time;
+	}
+	return kIOReturnSuccess;
+}
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 enum {
@@ -1341,7 +1757,7 @@ struct IOServiceNotificationDispatchSource_IVars {
 	IOLock       * lock;
 	IONotifier   * notifier;
 	OSDictionary * interestNotifiers;
-	OSArray      * pending[kIOServiceNotificationTypeCount];
+	OSBoundedArray<OSArray *, kIOServiceNotificationTypeCount> pending;
 	bool           enable;
 };
 
@@ -1395,7 +1811,7 @@ IOServiceNotificationDispatchSource::Create_Impl(
 	inst->ivars->notifier = IOService::addMatchingNotification(gIOMatchedNotification, matching, 0 /*priority*/,
 	    ^bool (IOService * newService, IONotifier * notifier) {
 		bool         notifyReady = false;
-		IONotifier * interest;
+		IONotifier * interest = NULL;
 		OSObject   * serverName;
 		bool         okToUse;
 
@@ -1403,39 +1819,78 @@ IOServiceNotificationDispatchSource::Create_Impl(
 		okToUse = (serverName && inst->ivars->serverName->isEqualTo(serverName));
 		OSSafeReleaseNULL(serverName);
 		if (!okToUse) {
-		        return false;
+		        OSObject * prop;
+		        OSObject * str;
+
+		        if (!newService->reserved->uvars || !newService->reserved->uvars->userServer) {
+		                return false;
+			}
+		        str = OSString::withCStringNoCopy(kIODriverKitAllowsPublishEntitlementsKey);
+		        if (!str) {
+		                return false;
+			}
+		        okToUse = newService->reserved->uvars->userServer->checkEntitlements(str, NULL, NULL);
+		        if (!okToUse) {
+		                if (kIODKLogSetup & gIODKDebug) {
+		                        DKLOG(DKS ": publisher entitlements check failed\n", DKN(newService));
+				}
+		                return false;
+			}
+		        prop = newService->copyProperty(kIODriverKitPublishEntitlementsKey);
+		        if (!prop) {
+		                return false;
+			}
+		        okToUse = us->checkEntitlements(prop, NULL, NULL);
+		        if (!okToUse) {
+		                if (kIODKLogSetup & gIODKDebug) {
+		                        DKLOG(DKS ": subscriber entitlements check failed\n", DKN(newService));
+				}
+		                return false;
+			}
 		}
 
 		IOLockLock(inst->ivars->lock);
 		notifyReady = (0 == inst->ivars->pending[kIOServiceNotificationTypeMatched]->getCount());
 		inst->ivars->pending[kIOServiceNotificationTypeMatched]->setObject(newService);
+		bool needInterest = (NULL == inst->ivars->interestNotifiers->getObject((const OSSymbol *) newService));
 		IOLockUnlock(inst->ivars->lock);
 
-		interest = newService->registerInterest(gIOGeneralInterest,
-		^IOReturn (uint32_t messageType, IOService * provider,
-		void * messageArgument, size_t argSize) {
-			IONotifier * interest;
-			bool         notifyReady = false;
+		if (needInterest) {
+		        interest = newService->registerInterest(gIOGeneralInterest,
+		        ^IOReturn (uint32_t messageType, IOService * provider,
+		        void * messageArgument, size_t argSize) {
+				IONotifier * interest;
+				bool         notifyReady = false;
 
-			switch (messageType) {
-			case kIOMessageServiceIsTerminated:
-				IOLockLock(inst->ivars->lock);
-				notifyReady = (0 == inst->ivars->pending[kIOServiceNotificationTypeTerminated]->getCount());
-				inst->ivars->pending[kIOServiceNotificationTypeTerminated]->setObject(provider);
-				interest = (typeof(interest))inst->ivars->interestNotifiers->getObject((const OSSymbol *) newService);
-				assert(interest);
-				interest->remove();
-				inst->ivars->interestNotifiers->removeObject((const OSSymbol *) newService);
-				IOLockUnlock(inst->ivars->lock);
-				break;
-			default:
-				break;
-			}
-			if (notifyReady && inst->ivars->action) {
-			        inst->ServiceNotificationReady(inst->ivars->action);
-			}
-			return kIOReturnSuccess;
-		});
+				// after the notifier remove, IOServiceNotificationDispatchSource::free
+				// will not wait for this code to complete
+				if (!inst->taggedTryRetain(NULL)) {
+				        return kIOReturnSuccess;
+				}
+
+				switch (messageType) {
+				case kIOMessageServiceIsTerminated:
+					IOLockLock(inst->ivars->lock);
+					notifyReady = (0 == inst->ivars->pending[kIOServiceNotificationTypeTerminated]->getCount());
+					inst->ivars->pending[kIOServiceNotificationTypeTerminated]->setObject(provider);
+					if (inst->ivars->interestNotifiers != NULL) {
+					        interest = (typeof(interest))inst->ivars->interestNotifiers->getObject((const OSSymbol *) newService);
+					        assert(interest);
+					        interest->remove();
+					        inst->ivars->interestNotifiers->removeObject((const OSSymbol *) newService);
+					}
+					IOLockUnlock(inst->ivars->lock);
+					break;
+				default:
+					break;
+				}
+				if (notifyReady && inst->ivars->action) {
+				        inst->ServiceNotificationReady(inst->ivars->action);
+				}
+				inst->release();
+				return kIOReturnSuccess;
+			});
+		}
 		if (interest) {
 		        IOLockLock(inst->ivars->lock);
 		        inst->ivars->interestNotifiers->setObject((const OSSymbol *) newService, interest);
@@ -1496,10 +1951,7 @@ IOServiceNotificationDispatchSource::init()
 	if (!super::init()) {
 		return false;
 	}
-	ivars = IONewZero(IOServiceNotificationDispatchSource_IVars, 1);
-	if (!ivars) {
-		return false;
-	}
+	ivars = IOMallocType(IOServiceNotificationDispatchSource_IVars);
 
 	return true;
 }
@@ -1508,27 +1960,40 @@ void
 IOServiceNotificationDispatchSource::free()
 {
 	if (ivars) {
-		OSSafeReleaseNULL(ivars->serverName);
-		if (ivars->interestNotifiers) {
-			ivars->interestNotifiers->iterateObjects(^bool (const OSSymbol * key, OSObject * object) {
-				IONotifier * interest = (typeof(interest))object;
-				interest->remove();
-				return false;
-			});
-			OSSafeReleaseNULL(ivars->interestNotifiers);
-		}
-		for (uint32_t idx = 0; idx < kIOServiceNotificationTypeCount; idx++) {
-			OSSafeReleaseNULL(ivars->pending[idx]);
-		}
-		if (ivars->lock) {
-			IOLockFree(ivars->lock);
-			ivars->lock = NULL;
-		}
 		if (ivars->notifier) {
 			ivars->notifier->remove();
 			ivars->notifier = NULL;
 		}
-		IOSafeDeleteNULL(ivars, IOServiceNotificationDispatchSource_IVars, 1);
+		if (ivars->interestNotifiers) {
+			OSDictionary * savedInterestNotifiers = NULL;
+
+			// the lock is always initialized first, so it should exist
+			assert(ivars->lock);
+
+			// Prevent additional changes to interestNotifiers
+			IOLockLock(ivars->lock);
+			savedInterestNotifiers = ivars->interestNotifiers;
+			ivars->interestNotifiers = NULL;
+			IOLockUnlock(ivars->lock);
+
+			// Remove all interest notifiers
+			savedInterestNotifiers->iterateObjects(^bool (const OSSymbol * key, OSObject * object) {
+				IONotifier * interest = (typeof(interest))object;
+				interest->remove();
+				return false;
+			});
+			OSSafeReleaseNULL(savedInterestNotifiers);
+		}
+		for (uint32_t idx = 0; idx < kIOServiceNotificationTypeCount; idx++) {
+			OSSafeReleaseNULL(ivars->pending[idx]);
+		}
+		OSSafeReleaseNULL(ivars->action);
+		if (ivars->lock) {
+			IOLockFree(ivars->lock);
+			ivars->lock = NULL;
+		}
+		OSSafeReleaseNULL(ivars->serverName);
+		IOFreeType(ivars, IOServiceNotificationDispatchSource_IVars);
 	}
 
 	super::free();
@@ -1602,6 +2067,109 @@ IOServiceNotificationDispatchSource::DeliverNotifications(IOServiceNotificationB
 	return kIOReturnUnsupported;
 }
 
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+OSDictionary *
+IOService::CreatePropertyMatchingDictionary(const char * key, OSObjectPtr value, OSDictionary * matching)
+{
+	OSDictionary   * result;
+	const OSSymbol * keySym;
+
+	keySym = OSSymbol::withCString(key);
+	result = propertyMatching(keySym, (const OSObject *) value, matching);
+	OSSafeReleaseNULL(keySym);
+
+	return result;
+}
+
+OSDictionary *
+IOService::CreatePropertyMatchingDictionary(const char * key, const char * stringValue, OSDictionary * matching)
+{
+	OSDictionary * result;
+	OSString     * value;
+
+	value = OSString::withCString(stringValue);
+	result = CreatePropertyMatchingDictionary(key, value, matching);
+	OSSafeReleaseNULL(value);
+
+	return result;
+}
+
+OSDictionary *
+IOService::CreateKernelClassMatchingDictionary(OSString * className, OSDictionary * matching)
+{
+	if (!className) {
+		return NULL;
+	}
+	if (!matching) {
+		matching = OSDictionary::withCapacity(2);
+		if (!matching) {
+			return NULL;
+		}
+	}
+	matching->setObject(kIOProviderClassKey, className);
+
+	return matching;
+}
+
+OSDictionary *
+IOService::CreateKernelClassMatchingDictionary(const char * className, OSDictionary * matching)
+{
+	OSDictionary * result;
+	OSString     * string;
+
+	string = OSString::withCString(className);
+	result = CreateKernelClassMatchingDictionary(string, matching);
+	OSSafeReleaseNULL(string);
+
+	return result;
+}
+
+OSDictionary *
+IOService::CreateUserClassMatchingDictionary(OSString * className, OSDictionary * matching)
+{
+	return CreatePropertyMatchingDictionary(kIOUserClassKey, className, matching);
+}
+
+OSDictionary *
+IOService::CreateUserClassMatchingDictionary(const char * className, OSDictionary * matching)
+{
+	return CreatePropertyMatchingDictionary(kIOUserClassKey, className, matching);
+}
+
+OSDictionary *
+IOService::CreateNameMatchingDictionary(OSString * serviceName, OSDictionary * matching)
+{
+	if (!serviceName) {
+		return NULL;
+	}
+	if (!matching) {
+		matching = OSDictionary::withCapacity(2);
+		if (!matching) {
+			return NULL;
+		}
+	}
+	matching->setObject(kIONameMatchKey, serviceName);
+
+	return matching;
+}
+
+OSDictionary *
+IOService::CreateNameMatchingDictionary(const char * serviceName, OSDictionary * matching)
+{
+	OSDictionary * result;
+	OSString     * string;
+
+	string = OSString::withCString(serviceName);
+	result = CreateNameMatchingDictionary(string, matching);
+	OSSafeReleaseNULL(string);
+
+	return result;
+}
+
+
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 kern_return_t
@@ -1614,6 +2182,7 @@ IOUserServer::waitInterruptTrap(void * p1, void * p2, void * p3, void * p4, void
 	IOInterruptDispatchSourcePayload payload;
 
 	bool             willWait;
+	bool             canceled;
 	wait_result_t    waitResult;
 	thread_t         self;
 
@@ -1631,31 +2200,40 @@ IOUserServer::waitInterruptTrap(void * p1, void * p2, void * p3, void * p4, void
 		ivars = interrupt->ivars;
 		payload.count = 0;
 		do {
+			willWait = false;
 			is = IOSimpleLockLockDisableInterrupt(ivars->lock);
-			if ((payload.count = ivars->count)) {
-				payload.time = ivars->time;
-				ivars->count = 0;
-				waitResult = THREAD_AWAKENED;
+			canceled = ivars->canceled;
+			if (!canceled) {
+				if ((payload.count = ivars->count)) {
+					payload.time = ivars->time;
+					ivars->count = 0;
+					waitResult = THREAD_AWAKENED;
+				} else {
+					assert(NULL == ivars->waiter);
+					ivars->waiter = self;
+					waitResult = assert_wait((event_t) ivars, THREAD_INTERRUPTIBLE);
+				}
+				willWait = (waitResult == THREAD_WAITING);
+				if (willWait && (kIOInterruptTypeLevel & ivars->interruptType) && ivars->enable) {
+					IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+					ivars->provider->enableInterrupt(ivars->intIndex);
+				} else {
+					IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+				}
 			} else {
-				assert(NULL == ivars->waiter);
-				ivars->waiter = self;
-				waitResult = assert_wait((event_t) ivars, THREAD_INTERRUPTIBLE);
+				IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
 			}
-			willWait = (waitResult == THREAD_WAITING);
-			if (willWait && (kIOInterruptTypeLevel & ivars->interruptType) && ivars->enable) {
-				ivars->provider->enableInterrupt(ivars->intIndex);
-			}
-			IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
 			if (willWait) {
 				waitResult = thread_block(THREAD_CONTINUE_NULL);
 				if (THREAD_INTERRUPTED == waitResult) {
 					is = IOSimpleLockLockDisableInterrupt(ivars->lock);
 					ivars->waiter = NULL;
 					IOSimpleLockUnlockEnableInterrupt(ivars->lock, is);
+					canceled = true;
 					break;
 				}
 			}
-		} while (!payload.count);
+		} while (!payload.count && !canceled);
 		ret = (payload.count ? kIOReturnSuccess : kIOReturnAborted);
 	}
 
@@ -1678,6 +2256,7 @@ IOUserServer::Create_Impl(
 	const char * name,
 	uint64_t tag,
 	uint64_t options,
+	OSString * bundleID,
 	IOUserServer ** server)
 {
 	IOReturn          ret;
@@ -1685,6 +2264,7 @@ IOUserServer::Create_Impl(
 	const OSSymbol  * sym;
 	OSNumber        * serverTag;
 	io_name_t         rname;
+	OSKext          * kext;
 
 	us = (typeof(us))thread_iokit_tls_get(0);
 	assert(OSDynamicCast(IOUserServer, us));
@@ -1693,6 +2273,22 @@ IOUserServer::Create_Impl(
 	}
 	if (!us) {
 		return kIOReturnError;
+	}
+
+	if (bundleID) {
+		kext = OSKext::lookupKextWithIdentifier(bundleID->getCStringNoCopy());
+		if (kext) {
+			us->setTaskLoadTag(kext);
+			us->setDriverKitUUID(kext);
+			us->setDriverKitStatistics(kext);
+			OSKext::OSKextLogDriverKitInfoLoad(kext);
+			OSSafeReleaseNULL(kext);
+		} else {
+			DKLOG(DKS "::Create(" DKS "): could not find OSKext for %s\n", DKN(us), name, tag, bundleID->getCStringNoCopy());
+		}
+
+		us->fAllocationName = kern_allocation_name_allocate(bundleID->getCStringNoCopy(), 0);
+		assert(us->fAllocationName);
 	}
 
 	sym       = OSSymbol::withCString(name);
@@ -1710,6 +2306,14 @@ IOUserServer::Create_Impl(
 	us->retain();
 	*server = us;
 	ret = kIOReturnSuccess;
+
+	return ret;
+}
+
+kern_return_t
+IOUserServer::RegisterService_Impl()
+{
+	kern_return_t ret = IOService::RegisterService_Impl();
 
 	return ret;
 }
@@ -1746,6 +2350,7 @@ IODispatchQueue::Create_Impl(
 		return kIOReturnNoMemory;
 	}
 	if (!result->init()) {
+		OSSafeReleaseNULL(result);
 		return kIOReturnNoMemory;
 	}
 
@@ -1771,18 +2376,17 @@ IODispatchQueue::SetPort_Impl(
 	if (MACH_PORT_NULL != ivars->serverPort) {
 		return kIOReturnNotReady;
 	}
-
-	ivars->serverPort = port;
+	ivars->serverPort = ipc_port_copy_send_mqueue(port);
+	if (ivars->serverPort == MACH_PORT_NULL) {
+		return kIOReturnBadArgument;
+	}
 	return kIOReturnSuccess;
 }
 
 bool
 IODispatchQueue::init()
 {
-	ivars = IONewZero(IODispatchQueue_IVars, 1);
-	if (!ivars) {
-		return false;
-	}
+	ivars = IOMallocType(IODispatchQueue_IVars);
 	ivars->queue = this;
 
 	return true;
@@ -1795,7 +2399,7 @@ IODispatchQueue::free()
 		ipc_port_release_send(ivars->serverPort);
 		ivars->serverPort = MACH_PORT_NULL;
 	}
-	IOSafeDeleteNULL(ivars, IODispatchQueue_IVars, 1);
+	IOFreeType(ivars, IODispatchQueue_IVars);
 	super::free();
 }
 
@@ -1825,7 +2429,7 @@ OSMetaClassBase::Invoke(IORPC rpc)
 	IORPCMessage    * message;
 
 	assert(rpc.sendSize >= (sizeof(IORPCMessageMach) + sizeof(IORPCMessage)));
-	message = IORPCMessageFromMach(rpc.message, false);
+	message = rpc.kernelContent;
 	if (!message) {
 		return kIOReturnIPCError;
 	}
@@ -1835,6 +2439,9 @@ OSMetaClassBase::Invoke(IORPC rpc)
 	if (!(kIORPCMessageLocalHost & message->flags)) {
 		us = OSDynamicCast(IOUserServer, this);
 		if (!us) {
+			IOEventLink * eventLink = NULL;
+			IOWorkGroup * workgroup = NULL;
+
 			if ((action = OSDynamicCast(OSAction, this))) {
 				object = IOUserServer::target(action, message);
 			} else {
@@ -1844,6 +2451,12 @@ OSMetaClassBase::Invoke(IORPC rpc)
 			    && service->reserved->uvars) {
 				// xxx other classes
 				us = service->reserved->uvars->userServer;
+			} else if (action) {
+				us = action->ivars->userServer;
+			} else if ((eventLink = OSDynamicCast(IOEventLink, object))) {
+				us = eventLink->ivars->userServer;
+			} else if ((workgroup = OSDynamicCast(IOWorkGroup, object))) {
+				us = workgroup->ivars->userServer;
 			}
 		}
 	}
@@ -1859,7 +2472,10 @@ OSMetaClassBase::Invoke(IORPC rpc)
 		if (kIODKLogIPC & gIODKDebug) {
 			DKLOG("OSMetaClassBase::Invoke kernel %s 0x%qx\n", getMetaClass()->getClassName(), message->msgid);
 		}
+		void * prior = thread_iokit_tls_get(0);
+		thread_iokit_tls_set(0, NULL);
 		ret = Dispatch(rpc);
+		thread_iokit_tls_set(0, prior);
 	}
 
 	return ret;
@@ -1887,14 +2503,14 @@ void
 OSUserMetaClass::free()
 {
 	if (queueNames) {
-		IOFree(queueNames, sizeof(IOPStrings) + queueNames->dataSize * sizeof(char));
+		IOFreeData(queueNames, sizeof(IOPStrings) + queueNames->dataSize * sizeof(char));
 		queueNames = NULL;
 	}
 	if (description) {
-		IOFree(description, description->descriptionSize);
+		IOFreeData(description, description->descriptionSize);
 		description = NULL;
 	}
-	IOSafeDeleteNULL(methods, uint64_t, 2 * methodCount);
+	IODeleteData(methods, uint64_t, 2 * methodCount);
 	if (meta) {
 		meta->releaseMetaClass();
 	}
@@ -1969,32 +2585,53 @@ IOUserServer::setDriverKitUUID(OSKext *kext)
 	}
 
 	uuid_unparse(p_uuid, uuid_string);
-	new_uuid = OSData::withBytes(p_uuid, sizeof(p_uuid));
+	new_uuid = OSData::withValue(p_uuid);
 	kext->setDriverKitUUID(new_uuid);
 }
 
 void
+IOUserServer::setDriverKitStatistics(OSKext *kext)
+{
+	OSDextStatistics * statistics = kext->copyDextStatistics();
+	if (statistics == NULL) {
+		panic("Kext %s was not a DriverKit OSKext", kext->getIdentifierCString());
+	}
+	fStatistics = statistics;
+}
+
+IOReturn
 IOUserServer::setCheckInToken(IOUserServerCheckInToken *token)
 {
+	IOReturn ret = kIOReturnError;
 	if (token != NULL && fCheckInToken == NULL) {
 		token->retain();
 		fCheckInToken = token;
+		ret = fCheckInToken->complete();
+		iokit_clear_registered_ports(fOwningTask);
 	} else {
 		printf("%s: failed to set check in token. token=%p, fCheckInToken=%p\n", __FUNCTION__, token, fCheckInToken);
 	}
+	return ret;
 }
 
 bool
 IOUserServer::serviceMatchesCheckInToken(IOUserServerCheckInToken *token)
 {
 	if (token != NULL) {
-		return token == fCheckInToken;
+		bool result = token == fCheckInToken;
+		return result;
 	} else {
 		printf("%s: null check in token\n", __FUNCTION__);
 		return false;
 	}
 }
 
+// entitlements - dict of entitlements to check
+// prop - string - if present return true
+//      - array of strings - if any present return true
+//      - array of arrays of strings - in each leaf array all must be present
+//                                   - if any top level array succeeds return true
+// consumes one reference of prop
 bool
 IOUserServer::checkEntitlements(
 	OSDictionary * entitlements, OSObject * prop,
@@ -2006,6 +2643,7 @@ IOUserServer::checkEntitlements(
 		return true;
 	}
 	if (!entitlements) {
+		OSSafeReleaseNULL(prop);
 		return false;
 	}
 
@@ -2013,11 +2651,12 @@ IOUserServer::checkEntitlements(
 	if (dext) {
 		matching = dext->dictionaryWithProperties();
 		if (!matching) {
+			OSSafeReleaseNULL(prop);
 			return false;
 		}
 	}
 
-	bool allPresent __block;
+	bool allPresent __block = false;
 	prop->iterateObjects(^bool (OSObject * object) {
 		allPresent = false;
 		object->iterateObjects(^bool (OSObject * object) {
@@ -2029,8 +2668,10 @@ IOUserServer::checkEntitlements(
 			        matching->setObject(string, value);
 			}
 			allPresent = (NULL != value);
+			// early terminate if not found
 			return !allPresent;
 		});
+		// early terminate if found
 		return allPresent;
 	});
 
@@ -2042,6 +2683,12 @@ IOUserServer::checkEntitlements(
 	OSSafeReleaseNULL(prop);
 
 	return allPresent;
+}
+
+bool
+IOUserServer::checkEntitlements(OSObject * prop, IOService * provider, IOService * dext)
+{
+	return checkEntitlements(fEntitlements, prop, provider, dext);
 }
 
 bool
@@ -2073,9 +2720,40 @@ IOUserServer::checkEntitlements(IOService * provider, IOService * dext)
 IOReturn
 IOUserServer::exit(const char * reason)
 {
-	DKLOG("%s::exit(%s)\n", getName(), reason);
+	DKLOG(DKS "::exit(%s)\n", DKN(this), reason);
 	Exit(reason);
 	return kIOReturnSuccess;
+}
+
+IOReturn
+IOUserServer::kill(const char * reason)
+{
+	IOReturn ret = kIOReturnError;
+	if (fOwningTask != NULL) {
+		DKLOG(DKS"::kill(%s)\n", DKN(this), reason);
+		proc_t unsafe_proc = (proc_t)get_bsdtask_info(fOwningTask);
+		proc_t p = proc_ref_nowait(unsafe_proc);
+		if (p) {
+			taskbsd_kill_and_release(p);
+		}
+		ret = kIOReturnSuccess;
+	}
+	return ret;
+}
+
+void
+IOUserServer::emergencyPanicCoreDumpEnable()
+{
+#if DEVELOPMENT || DEBUG
+	if (isPlatformDriver()) {
+		// Enable coredump for the first party dext that is causing an imminent panic
+		// This is enabled on non-release without requiring an entitlement,
+		// so this coredump has only a generic name
+		char core_name[MACH_CORE_FILEHEADER_NAMELEN];
+		snprintf(core_name, sizeof(core_name), "dext-%d", pid_from_task(fOwningTask));
+		kern_register_userspace_coredump(fOwningTask, core_name, TRUE);
+	}
+#endif /* DEVELOPMENT || DEBUG */
 }
 
 OSObjectUserVars *
@@ -2096,8 +2774,8 @@ IOUserServer::copyInStringArray(const char * string, uint32_t userSize)
 	IOPStrings * array;
 	vm_size_t    alloc;
 	size_t       len;
-	const char * cstr;
 	const char * end;
+	OSBoundedPtr<const char> cstr;
 
 	if (userSize <= 1) {
 		return NULL;
@@ -2111,7 +2789,7 @@ IOUserServer::copyInStringArray(const char * string, uint32_t userSize)
 		assert(false);
 		return NULL;
 	}
-	array = (typeof(array))IOMalloc(alloc);
+	array = (typeof(array))IOMallocData(alloc);
 	if (!array) {
 		return NULL;
 	}
@@ -2119,8 +2797,8 @@ IOUserServer::copyInStringArray(const char * string, uint32_t userSize)
 	bcopy(string, (void *) &array->strings[0], userSize);
 
 	array->count = 0;
-	cstr = &array->strings[0];
 	end =  &array->strings[array->dataSize];
+	cstr = OSBoundedPtr<const char>(&array->strings[0], &array->strings[0], end);
 	while ((len = (unsigned char)cstr[0])) {
 		cstr++;
 		if ((cstr + len) >= end) {
@@ -2130,7 +2808,7 @@ IOUserServer::copyInStringArray(const char * string, uint32_t userSize)
 		array->count++;
 	}
 	if (len) {
-		IOFree(array, alloc);
+		IOFreeData(array, alloc);
 		array = NULL;
 	}
 
@@ -2142,19 +2820,20 @@ IOUserServer::stringArrayIndex(IOPStrings * array, const char * look)
 {
 	uint32_t     idx;
 	size_t       len, llen;
-	const char * cstr;
+	OSBoundedPtr<const char> cstr;
 	const char * end;
 
 	idx  = 0;
-	cstr = &array->strings[0];
 	end  =  &array->strings[array->dataSize];
+	cstr = OSBoundedPtr<const char>(&array->strings[0], &array->strings[0], end);
+
 	llen = strlen(look);
 	while ((len = (unsigned char)cstr[0])) {
 		cstr++;
 		if ((cstr + len) >= end) {
 			break;
 		}
-		if ((len == llen) && !strncmp(cstr, look, len)) {
+		if ((len == llen) && !strncmp(cstr.discard_bounds(), look, len)) {
 			return idx;
 		}
 		cstr += len;
@@ -2231,9 +2910,10 @@ IOUserServer::objectInstantiate(OSObject * obj, IORPC rpc, IORPCMessage * messag
 	OSObjectUserVars * uvars;
 	uint32_t           idx;
 	ipc_port_t         sendPort;
+	bool               serviceInactive;
 
 	OSObject_Instantiate_Rpl_Content * reply;
-
+	IODispatchQueue ** unboundedQueueArray = NULL;
 	queueCount      = 0;
 	methodCount     = 0;
 	methods         = NULL;
@@ -2251,7 +2931,14 @@ IOUserServer::objectInstantiate(OSObject * obj, IORPC rpc, IORPCMessage * messag
 		resultFlags |= kOSObjectRPCKernel;
 		resultFlags |= kOSObjectRPCRemote;
 	} else {
-		if (service->isInactive()) {
+		serviceInactive = false;
+		if (service->lockForArbitration()) {
+			if (service->isInactive() && (service->__state[1] & kIOServiceStartState) == 0) {
+				serviceInactive = true;
+			}
+			service->unlockForArbitration();
+		}
+		if (serviceInactive) {
 			DKLOG(DKS "::instantiate inactive\n", DKN(service));
 			return kIOReturnOffline;
 		}
@@ -2265,7 +2952,13 @@ IOUserServer::objectInstantiate(OSObject * obj, IORPC rpc, IORPCMessage * messag
 			resultFlags |= kOSObjectRPCRemote;
 		}
 		if (service->reserved->uvars && service->reserved->uvars->userServer) {
+			if (!str) {
+				DKLOG("no IOUserClass defined for " DKS "\n", DKN(service));
+				OSSafeReleaseNULL(prop);
+				return kIOReturnError;
+			}
 			IOLockLock(service->reserved->uvars->userServer->fLock);
+			service->reserved->uvars->instantiated = true;
 			userMeta = (typeof(userMeta))service->reserved->uvars->userServer->fClasses->getObject(str);
 			IOLockUnlock(service->reserved->uvars->userServer->fLock);
 		}
@@ -2316,8 +3009,9 @@ IOUserServer::objectInstantiate(OSObject * obj, IORPC rpc, IORPCMessage * messag
 				if (userMeta->queueNames) {
 					queueAlloc += userMeta->queueNames->count;
 				}
+				unboundedQueueArray = IONewZero(IODispatchQueue *, queueAlloc);
 				service->reserved->uvars->queueArray =
-				    IONewZero(IODispatchQueue *, queueAlloc);
+				    OSBoundedArrayRef<IODispatchQueue *>(unboundedQueueArray, queueAlloc);
 				resultClassName = str->getCStringNoCopy();
 				ret = kIOReturnSuccess;
 			}
@@ -2343,27 +3037,31 @@ IOUserServer::objectInstantiate(OSObject * obj, IORPC rpc, IORPCMessage * messag
 				resultFlags |= kOSObjectRPCKernel;
 			} else {
 				resultFlags &= ~kOSObjectRPCKernel;
-				target = action->ivars->target;
-
-				queueCount = 1;
-				queue = queueForObject(target, action->ivars->targetmsgid);
-				idx = 0;
-				sendPort = NULL;
-				if (queue && (kIODispatchQueueStopped != queue)) {
-					sendPort = ipc_port_copy_send(queue->ivars->serverPort);
+				if (action->ivars->target) {
+					target = action->ivars->target;
+					queueCount = 1;
+					queue = queueForObject(target, action->ivars->targetmsgid);
+					if (!queue && action->ivars->userServer) {
+						queue = action->ivars->userServer->fRootQueue;
+					}
+					idx = 0;
+					sendPort = NULL;
+					if (queue && (kIODispatchQueueStopped != queue)) {
+						sendPort = ipc_port_copy_send_mqueue(queue->ivars->serverPort);
+					}
+					replySize = sizeof(OSObject_Instantiate_Rpl)
+					    + queueCount * sizeof(machReply->objects[0])
+					    + 2 * methodCount * sizeof(reply->methods[0]);
+					if (replySize > rpc.replySize) {
+						assert(false);
+						return kIOReturnIPCError;
+					}
+					machReply->objects[idx].type        = MACH_MSG_PORT_DESCRIPTOR;
+					machReply->objects[idx].disposition = MACH_MSG_TYPE_MOVE_SEND;
+					machReply->objects[idx].name        = sendPort;
+					machReply->objects[idx].pad2        = 0;
+					machReply->objects[idx].pad_end     = 0;
 				}
-				replySize = sizeof(OSObject_Instantiate_Rpl)
-				    + queueCount * sizeof(machReply->objects[0])
-				    + 2 * methodCount * sizeof(reply->methods[0]);
-				if (replySize > rpc.replySize) {
-					assert(false);
-					return kIOReturnIPCError;
-				}
-				machReply->objects[idx].type        = MACH_MSG_PORT_DESCRIPTOR;
-				machReply->objects[idx].disposition = MACH_MSG_TYPE_MOVE_SEND;
-				machReply->objects[idx].name        = sendPort;
-				machReply->objects[idx].pad2        = 0;
-				machReply->objects[idx].pad_end     = 0;
 			}
 		} else {
 			uvars = varsForObject(target);
@@ -2385,7 +3083,7 @@ IOUserServer::objectInstantiate(OSObject * obj, IORPC rpc, IORPCMessage * messag
 					queue = uvars->queueArray[idx];
 					sendPort = NULL;
 					if (queue) {
-						sendPort = ipc_port_copy_send(queue->ivars->serverPort);
+						sendPort = ipc_port_copy_send_mqueue(queue->ivars->serverPort);
 					}
 					machReply->objects[idx].type        = MACH_MSG_PORT_DESCRIPTOR;
 					machReply->objects[idx].disposition = MACH_MSG_TYPE_MOVE_SEND;
@@ -2410,7 +3108,7 @@ IOUserServer::objectInstantiate(OSObject * obj, IORPC rpc, IORPCMessage * messag
 	machReply->msgh.msgh_size                  = replySize;
 	machReply->msgh_body.msgh_descriptor_count = queueCount;
 
-	reply = (typeof(reply))IORPCMessageFromMach(machReply, true);
+	reply = (typeof(reply))IORPCMessageFromMachReply(machReply);
 	if (!reply) {
 		return kIOReturnIPCError;
 	}
@@ -2438,7 +3136,7 @@ IOUserServer::kernelDispatch(OSObject * obj, IORPC rpc)
 	IOReturn       ret;
 	IORPCMessage * message;
 
-	message = IORPCMessageFromMach(rpc.message, false);
+	message = rpc.kernelContent;
 	if (!message) {
 		return kIOReturnIPCError;
 	}
@@ -2446,15 +3144,15 @@ IOUserServer::kernelDispatch(OSObject * obj, IORPC rpc)
 	if (OSObject_Instantiate_ID == message->msgid) {
 		ret = objectInstantiate(obj, rpc, message);
 		if (kIOReturnSuccess != ret) {
-			DKLOG("%s: instantiate failed 0x%x\n", obj->getMetaClass()->getClassName(), ret);
+			DKLOG(DKS ": %s: instantiate failed 0x%x\n", DKN(this), obj->getMetaClass()->getClassName(), ret);
 		}
 	} else {
 		if (kIODKLogIPC & gIODKDebug) {
-			DKLOG("%s::Dispatch kernel 0x%qx\n", obj->getMetaClass()->getClassName(), message->msgid);
+			DKLOG(DKS ": %s::Dispatch kernel 0x%qx\n", DKN(this), obj->getMetaClass()->getClassName(), message->msgid);
 		}
 		ret = obj->Dispatch(rpc);
 		if (kIODKLogIPC & gIODKDebug) {
-			DKLOG("%s::Dispatch kernel 0x%qx result 0x%x\n", obj->getMetaClass()->getClassName(), message->msgid, ret);
+			DKLOG(DKS ": %s::Dispatch kernel 0x%qx result 0x%x\n", DKN(this), obj->getMetaClass()->getClassName(), message->msgid, ret);
 		}
 	}
 
@@ -2472,7 +3170,10 @@ IOUserServer::target(OSAction * action, IORPCMessage * message)
 	if (message->msgid != action->ivars->msgid) {
 		return action;
 	}
-	object              = action->ivars->target;
+	object = action->ivars->target;
+	if (!object) {
+		return action;
+	}
 	message->msgid      = action->ivars->targetmsgid;
 	message->objects[0] = (OSObjectRef) object;
 	if (kIORPCMessageRemote & message->flags) {
@@ -2495,37 +3196,41 @@ IOUserServer::target(OSAction * action, IORPCMessage * message)
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 kern_return_t
-uext_server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
+uext_server(ipc_port_t receiver, ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 {
 	kern_return_t      ret;
-	IORPCMessageMach * msgin;
 	OSObject         * object;
 	IOUserServer     * server;
 
-	msgin   = (typeof(msgin))ipc_kmsg_msg_header(requestkmsg);
-
-	object = IOUserServer::copyObjectForSendRight(msgin->msgh.msgh_remote_port, IKOT_UEXT_OBJECT);
+	object = IOUserServer::copyObjectForSendRight(receiver, IKOT_UEXT_OBJECT);
 	server = OSDynamicCast(IOUserServer, object);
 	if (!server) {
 		OSSafeReleaseNULL(object);
 		return KERN_INVALID_NAME;
 	}
-	ret = server->server(requestkmsg, pReply);
+
+	IORPCMessage * message = (typeof(message))ikm_udata_from_header(requestkmsg);
+
+	ret = server->server(requestkmsg, message, pReply);
 	object->release();
 
 	return ret;
 }
 
+/*
+ * Chosen to hit kalloc zones (as opposed to the VM).
+ * doesn't include the trailer size which ipc_kmsg_alloc() will add
+ */
 #define MAX_UEXT_REPLY_SIZE     0x17c0
+static_assert(MAX_UEXT_REPLY_SIZE + MAX_TRAILER_SIZE <= KALLOC_SAFE_ALLOC_SIZE);
 
 kern_return_t
-IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
+IOUserServer::server(ipc_kmsg_t requestkmsg, IORPCMessage * message, ipc_kmsg_t * pReply)
 {
 	kern_return_t      ret;
 	mach_msg_size_t    replyAlloc;
 	ipc_kmsg_t         replykmsg;
 	IORPCMessageMach * msgin;
-	IORPCMessage     * message;
 	IORPCMessageMach * msgout;
 	IORPCMessage     * reply;
 	uint32_t           replySize;
@@ -2534,7 +3239,7 @@ IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 	bool               oneway;
 	uint64_t           msgid;
 
-	msgin   = (typeof(msgin))ipc_kmsg_msg_header(requestkmsg);
+	msgin   = (typeof(msgin))ikm_header(requestkmsg);
 	replyAlloc = 0;
 	msgout = NULL;
 	replykmsg = NULL;
@@ -2549,7 +3254,6 @@ IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 	if (!(MACH_MSGH_BITS_COMPLEX & msgin->msgh.msgh_bits)) {
 		msgin->msgh_body.msgh_descriptor_count = 0;
 	}
-	message = IORPCMessageFromMach(msgin, false);
 	if (!message) {
 		return kIOReturnIPCError;
 	}
@@ -2561,6 +3265,9 @@ IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 		if (kIODKLogIPC & gIODKDebug) {
 			DKLOG("UEXT copyin(0x%x) %x\n", ret, msgin->msgh.msgh_id);
 		}
+		// release objects and ports
+		consumeObjects(msgin, message, msgin->msgh.msgh_size);
+		copyInObjects(msgin, message, msgin->msgh.msgh_size, false, true);
 		return KERN_NOT_SUPPORTED;
 	}
 
@@ -2580,39 +3287,44 @@ IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 	oneway = (0 != (kIORPCMessageOneway & message->flags));
 	assert(oneway || (MACH_PORT_NULL != msgin->msgh.msgh_local_port));
 
-	// includes trailer size
 	replyAlloc = oneway ? 0 : MAX_UEXT_REPLY_SIZE;
-	if (replyAlloc) {
-		replykmsg = ipc_kmsg_alloc(replyAlloc);
-		if (replykmsg == NULL) {
-//			printf("uext_server: dropping request\n");
-			//	ipc_kmsg_trace_send(request, option);
-			consumeObjects(message, msgin->msgh.msgh_size);
-			ipc_kmsg_destroy(requestkmsg);
-			return KERN_MEMORY_FAILURE;
-		}
 
-		msgout = (typeof(msgout))ipc_kmsg_msg_header(replykmsg);
+
+
+
+	if (replyAlloc) {
 		/*
-		 * MIG should really assure no data leakage -
-		 * but until it does, pessimistically zero the
-		 * whole reply buffer.
+		 * Same as:
+		 *    ipc_kmsg_alloc(MAX_UEXT_REPLY_SIZE_MACH, MAX_UEXT_REPLY_SIZE_MESSAGE,
+		 *        IPC_KMSG_ALLOC_KERNEL | IPC_KMSG_ALLOC_ZERO | IPC_KMSG_ALLOC_LINEAR |
+		 *        IPC_KMSG_ALLOC_NOFAIL);
 		 */
-		bzero((void *)msgout, replyAlloc);
+		replykmsg = ipc_kmsg_alloc_uext_reply(MAX_UEXT_REPLY_SIZE);
+		msgout = (typeof(msgout))ikm_header(replykmsg);
 	}
 
-	IORPC rpc = { .message = msgin, .reply = msgout, .sendSize = msgin->msgh.msgh_size, .replySize = replyAlloc };
+	IORPC rpc = { .message = msgin, .reply = msgout, .sendSize = msgin->msgh.msgh_size, .replySize = replyAlloc, .kernelContent = message };
 
 	if (object) {
+		kern_allocation_name_t prior;
+		bool                   setAllocationName;
+
+		setAllocationName = (NULL != fAllocationName);
+		if (setAllocationName) {
+			prior = thread_set_allocation_name(fAllocationName);
+		}
 		thread_iokit_tls_set(0, this);
 		ret = kernelDispatch(object, rpc);
 		thread_iokit_tls_set(0, NULL);
+		if (setAllocationName) {
+			thread_set_allocation_name(prior);
+		}
 	} else {
 		ret = kIOReturnBadArgument;
 	}
 
 	// release objects
-	consumeObjects(message, msgin->msgh.msgh_size);
+	consumeObjects(msgin, message, msgin->msgh.msgh_size);
 
 	// release ports
 	copyInObjects(msgin, message, msgin->msgh.msgh_size, false, true);
@@ -2620,7 +3332,7 @@ IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 	if (!oneway) {
 		if (kIOReturnSuccess == ret) {
 			replySize = msgout->msgh.msgh_size;
-			reply = IORPCMessageFromMach(msgout, true);
+			reply = IORPCMessageFromMachReply(msgout);
 			if (!reply) {
 				ret = kIOReturnIPCError;
 			} else {
@@ -2632,7 +3344,7 @@ IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 
 			msgout->msgh_body.msgh_descriptor_count = 0;
 			msgout->msgh.msgh_id                    = kIORPCVersionCurrentReply;
-			errorMsg = (typeof(errorMsg))IORPCMessageFromMach(msgout, true);
+			errorMsg = (typeof(errorMsg))IORPCMessageFromMachReply(msgout);
 			errorMsg->hdr.msgid      = message->msgid;
 			errorMsg->hdr.flags      = kIORPCMessageOneway | kIORPCMessageError;
 			errorMsg->hdr.objectRefs = 0;
@@ -2652,14 +3364,36 @@ IOUserServer::server(ipc_kmsg_t requestkmsg, ipc_kmsg_t * pReply)
 	}
 
 	*pReply = replykmsg;
-
-	return oneway ? MIG_NO_REPLY : KERN_SUCCESS;
+	return KERN_SUCCESS;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#define MAX_OBJECT_COUNT(mach, size, message) \
-	((uint32_t)(((((size) + ((uintptr_t) (mach))) - ((uintptr_t) (&message->objects[0]))) / sizeof(OSObjectRef))))
+static inline uint32_t
+MAX_OBJECT_COUNT(IORPCMessageMach *mach, size_t size, IORPCMessage *message __unused)
+{
+	assert(mach->msgh.msgh_size == size);
+	size_t used_size;
+	size_t remaining_size;
+	if (os_mul_and_add_overflow(
+		    mach->msgh_body.msgh_descriptor_count,
+		    sizeof(mach_msg_port_descriptor_t),
+		    sizeof(mach->msgh) + sizeof(mach->msgh_body) + offsetof(IORPCMessage, objects[0]),
+		    &used_size)) {
+		return 0;
+	}
+	if (os_sub_overflow(size, used_size, &remaining_size)) {
+		return 0;
+	}
+	return (uint32_t)(remaining_size / sizeof(OSObjectRef));
+}
+
+#pragma pack(push, 4)
+struct UEXTTrapReply {
+	uint64_t replySize;
+	IORPCMessage replyMessage;
+};
+#pragma pack(pop)
 
 kern_return_t
 IOUserServerUEXTTrap(OSObject * object, void * p1, void * p2, void * p3, void * p4, void * p5, void * p6)
@@ -2693,7 +3427,7 @@ IOUserServerUEXTTrap(OSObject * object, void * p1, void * p2, void * p3, void * 
 	uint64_t           refs;
 	uint32_t           maxObjectCount;
 	size_t             copySize;
-	uint64_t         * replyHdr;
+	UEXTTrapReply    * replyHdr;
 	uintptr_t          p;
 
 	bzero(&buffer, sizeof(buffer));
@@ -2721,6 +3455,7 @@ IOUserServerUEXTTrap(OSObject * object, void * p1, void * p2, void * p3, void * 
 	if (!(kIORPCMessageSimpleReply & message->flags)) {
 		return kIOReturnUnsupported;
 	}
+	message->flags &= ~(kIORPCMessageKernel | kIORPCMessageRemote);
 
 	descs = (typeof(descs))(p - refs * sizeof(*descs));
 	mach  = (typeof(mach))(p - refs * sizeof(*descs) - sizeof(*mach));
@@ -2733,11 +3468,16 @@ IOUserServerUEXTTrap(OSObject * object, void * p1, void * p2, void * p3, void * 
 	rpc.sendSize  = mach->msgh.msgh_size;
 	rpc.reply     = (IORPCMessageMach *) (p + inSize);
 	rpc.replySize = ((uint32_t) (sizeof(buffer.buffer) - inSize));    // inSize was checked
+	rpc.kernelContent = message;
 
 	message->objects[0] = 0;
 	if ((action = OSDynamicCast(OSAction, object))) {
 		maxObjectCount = MAX_OBJECT_COUNT(rpc.message, rpc.sendSize, message);
 		if (refs > maxObjectCount) {
+			return kIOReturnBadArgument;
+		}
+		if (refs < 2) {
+			DKLOG("invalid refs count %qd in message id 0x%qx\n", refs, message->msgid);
 			return kIOReturnBadArgument;
 		}
 		object = IOUserServer::target(action, message);
@@ -2770,7 +3510,7 @@ IOUserServerUEXTTrap(OSObject * object, void * p1, void * p2, void * p3, void * 
 			if (rpc.reply->msgh_body.msgh_descriptor_count) {
 				return kIOReturnIPCError;
 			}
-			reply = IORPCMessageFromMach(rpc.reply, rpc.reply->msgh.msgh_size);
+			reply = IORPCMessageFromMachReply(rpc.reply);
 			if (!reply) {
 				return kIOReturnIPCError;
 			}
@@ -2778,9 +3518,8 @@ IOUserServerUEXTTrap(OSObject * object, void * p1, void * p2, void * p3, void * 
 			if (copySize > outSize) {
 				return kIOReturnIPCError;
 			}
-			replyHdr = (uint64_t *) reply;
-			replyHdr--;
-			replyHdr[0] = copySize;
+			replyHdr = (UEXTTrapReply *) ((uintptr_t)reply - sizeof(uint64_t));
+			replyHdr->replySize = copySize;
 			copyerr = copyout(replyHdr, out, copySize);
 			if (copyerr) {
 				return kIOReturnVMError;
@@ -2822,7 +3561,7 @@ IOUserServer::rpc(IORPC rpc)
 
 	assert(sendSize >= (sizeof(IORPCMessageMach) + sizeof(IORPCMessage)));
 
-	message = IORPCMessageFromMach(mach, false);
+	message = rpc.kernelContent;
 	if (!message) {
 		return kIOReturnIPCError;
 	}
@@ -2844,7 +3583,7 @@ IOUserServer::rpc(IORPC rpc)
 		port = queue->ivars->serverPort;
 	}
 	if (port) {
-		sendPort = ipc_port_copy_send(port);
+		sendPort = ipc_port_copy_send_mqueue(port);
 	}
 	IOLockUnlock(gIOUserServerLock);
 	if (!sendPort) {
@@ -2866,11 +3605,10 @@ IOUserServer::rpc(IORPC rpc)
 
 	if (oneway) {
 		ret = kernel_mach_msg_send(&mach->msgh, sendSize,
-		    MACH_SEND_MSG | MACH_SEND_ALWAYS | MACH_SEND_NOIMPORTANCE,
-		    0, &message_moved);
+		    MACH_SEND_KERNEL_DEFAULT, 0, &message_moved);
 	} else {
 		assert(replySize >= (sizeof(IORPCMessageMach) + sizeof(IORPCMessage)));
-		ret = kernel_mach_msg_rpc(&mach->msgh, sendSize, replySize, FALSE, FALSE, &message_moved);
+		ret = kernel_mach_msg_rpc(&mach->msgh, sendSize, replySize, FALSE, &message_moved);
 	}
 
 	ipc_port_release_send(sendPort);
@@ -2895,7 +3633,7 @@ IOUserServer::rpc(IORPC rpc)
 			if (!(MACH_MSGH_BITS_COMPLEX & mach->msgh.msgh_bits)) {
 				mach->msgh_body.msgh_descriptor_count = 0;
 			}
-			message = IORPCMessageFromMach(mach, true);
+			message = IORPCMessageFromMachReply(mach);
 			if (!message) {
 				ret = kIOReturnIPCError;
 			} else if (message->msgid != msgid) {
@@ -2907,6 +3645,10 @@ IOUserServer::rpc(IORPC rpc)
 				if (kIOReturnSuccess != ret) {
 					if (kIODKLogIPC & gIODKDebug) {
 						DKLOG("rpc copyin(0x%x) %x\n", ret, mach->msgh.msgh_id);
+					}
+					if (!isError) {
+						consumeObjects(mach, message, replySize);
+						copyInObjects(mach, message, replySize, false, true);
 					}
 					return KERN_NOT_SUPPORTED;
 				}
@@ -2923,14 +3665,15 @@ IOUserServer::rpc(IORPC rpc)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-IORPCMessage *
-IORPCMessageFromMach(IORPCMessageMach * msg, bool reply)
+static IORPCMessage *
+IORPCMessageFromMachReply(IORPCMessageMach * msg)
 {
 	mach_msg_size_t              idx, count;
 	mach_msg_port_descriptor_t * desc;
 	mach_msg_port_descriptor_t * maxDesc;
 	size_t                       size, msgsize;
 	bool                         upgrade;
+	bool                         reply = true;
 
 	msgsize = msg->msgh.msgh_size;
 	count   = msg->msgh_body.msgh_descriptor_count;
@@ -2962,27 +3705,30 @@ IORPCMessageFromMach(IORPCMessageMach * msg, bool reply)
 	return (IORPCMessage *)(uintptr_t) desc;
 }
 
+extern "C" IORPCMessage *
+IORPCMessageFromMach(IORPCMessageMach * msg, bool reply)
+{
+	if (reply) {
+		return IORPCMessageFromMachReply(msg);
+	}
+
+	if (!msg || msg->msgh.msgh_size < sizeof(IORPCMessageMach)) {
+		return NULL;
+	}
+
+	return (IORPCMessage *)(uintptr_t)(((uint8_t *)msg) + sizeof(IORPCMessageMach));
+}
+
 ipc_port_t
 IOUserServer::copySendRightForObject(OSObject * object, ipc_kobject_type_t type)
 {
-	ipc_port_t port;
-	ipc_port_t sendPort = NULL;
-
-	port = iokit_port_for_object(object, type);
-	if (port) {
-		sendPort = ipc_port_make_send(port);
-		iokit_release_port(port);
-	}
-
-	return sendPort;
+	return iokit_port_make_send_for_object(object, type);
 }
 
 OSObject *
 IOUserServer::copyObjectForSendRight(ipc_port_t port, ipc_kobject_type_t type)
 {
-	OSObject * object;
-	object = iokit_lookup_io_object(port, type);
-	return object;
+	return iokit_lookup_io_object(port, type);
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -3046,6 +3792,15 @@ IOUserServer::copyOutObjects(IORPCMessageMach * mach, IORPCMessage * message,
 			descsize = sizeof(mach_msg_port_descriptor_t);
 			port = NULL;
 			if (object) {
+#if DEVELOPMENT || DEBUG
+				if (kIODKLogIPC & gIODKDebug) {
+					IOMemoryDescriptor * iomd = OSDynamicCast(IOMemoryDescriptor, object);
+					if (iomd != NULL && (iomd->getFlags() & kIOMemoryThreadSafe) == 0) {
+						OSReportWithBacktrace("IOMemoryDescriptor %p was created without kIOMemoryThreadSafe flag", iomd);
+					}
+				}
+#endif /* DEVELOPMENT || DEBUG */
+
 				port = copySendRightForObject(object, IKOT_UEXT_OBJECT);
 				if (!port) {
 					break;
@@ -3173,8 +3928,14 @@ IOUserServer::copyInObjects(IORPCMessageMach * mach, IORPCMessage * message,
 		return kIOReturnBadArgument;
 	}
 
-	desc = &mach->objects[0];
 	for (idx = 0; idx < refs; idx++) {
+		message->objects[idx] = (OSObjectRef) NULL;
+	}
+
+	desc = &mach->objects[0];
+	for (idx = 0; idx < mach->msgh_body.msgh_descriptor_count; idx++) {
+		bool isObjectPort = idx < refs;
+
 		switch (desc->type) {
 		case MACH_MSG_PORT_DESCRIPTOR:
 			descsize = sizeof(mach_msg_port_descriptor_t);
@@ -3182,7 +3943,7 @@ IOUserServer::copyInObjects(IORPCMessageMach * mach, IORPCMessage * message,
 			object = NULL;
 			port = desc->name;
 			if (port) {
-				if (copyObjects) {
+				if (isObjectPort && copyObjects) {
 					object = copyObjectForSendRight(port, IKOT_UEXT_OBJECT);
 					if (!object) {
 						descsize = -1UL;
@@ -3191,6 +3952,7 @@ IOUserServer::copyInObjects(IORPCMessageMach * mach, IORPCMessage * message,
 				}
 				if (consumePorts) {
 					ipc_port_release_send(port);
+					desc->name = MACH_PORT_NULL;
 				}
 			}
 			break;
@@ -3200,15 +3962,15 @@ IOUserServer::copyInObjects(IORPCMessageMach * mach, IORPCMessage * message,
 			ool = (typeof(ool))desc;
 
 			object = NULL;
-			if (copyObjects && ool->size && ool->address) {
+			if (isObjectPort && copyObjects && ool->size && ool->address) {
 				kr = vm_map_copyout(kernel_map, &copyoutdata, (vm_map_copy_t) ool->address);
 				if (KERN_SUCCESS == kr) {
 					object = OSUnserializeXML((const char *) copyoutdata, ool->size);
+					kr = vm_deallocate(kernel_map, copyoutdata, ool->size);
+					assert(KERN_SUCCESS == kr);
 					// vm_map_copyout() has consumed the vm_map_copy_t in the message
 					ool->size = 0;
 					ool->address = NULL;
-					kr = vm_deallocate(kernel_map, copyoutdata, ool->size);
-					assert(KERN_SUCCESS == kr);
 				}
 				if (!object) {
 					descsize = -1UL;
@@ -3224,7 +3986,7 @@ IOUserServer::copyInObjects(IORPCMessageMach * mach, IORPCMessage * message,
 		if (-1UL == descsize) {
 			break;
 		}
-		if (copyObjects) {
+		if (isObjectPort && copyObjects) {
 			message->objects[idx] = (OSObjectRef) object;
 		}
 		desc = (typeof(desc))(((uintptr_t) desc) + descsize);
@@ -3236,7 +3998,7 @@ IOUserServer::copyInObjects(IORPCMessageMach * mach, IORPCMessage * message,
 
 	while (idx--) {
 		object = (OSObject *) message->objects[idx];
-		object->release();
+		OSSafeReleaseNULL(object);
 		message->objects[idx] = 0;
 	}
 
@@ -3244,12 +4006,20 @@ IOUserServer::copyInObjects(IORPCMessageMach * mach, IORPCMessage * message,
 }
 
 IOReturn
-IOUserServer::consumeObjects(IORPCMessage * message, size_t messageSize)
+IOUserServer::consumeObjects(IORPCMessageMach *mach, IORPCMessage * message, size_t messageSize)
 {
 	uint64_t    refs, idx;
 	OSObject  * object;
 
 	refs   = message->objectRefs;
+	uint32_t maxObjectCount = MAX_OBJECT_COUNT(mach, messageSize, message);
+	if (refs > mach->msgh_body.msgh_descriptor_count) {
+		return kIOReturnBadArgument;
+	}
+	if (refs > maxObjectCount) {
+		return kIOReturnBadArgument;
+	}
+
 	for (idx = 0; idx < refs; idx++) {
 		object = (OSObject *) message->objects[idx];
 		if (object) {
@@ -3263,13 +4033,16 @@ IOUserServer::consumeObjects(IORPCMessage * message, size_t messageSize)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+static kern_return_t
+acknowledgeSetPowerState(IOService * service);
+
 bool
 IOUserServer::finalize(IOOptionBits options)
 {
 	OSArray   * services;
 
 	if (kIODKLogSetup & gIODKDebug) {
-		DKLOG("%s::finalize(%p)\n", getName(), this);
+		DKLOG(DKS "::finalize(%p)\n", DKN(this), this);
 	}
 
 	IOLockLock(gIOUserServerLock);
@@ -3283,28 +4056,64 @@ IOUserServer::finalize(IOOptionBits options)
 	}
 	IOLockUnlock(fLock);
 
+	IOOptionBits terminateFlags = kIOServiceTerminateNeedWillTerminate | kIOServiceTerminateWithRematch;
+	if (fCheckInToken) {
+		bool can_rematch = fCheckInToken->dextTerminate();
+		if (can_rematch) {
+			terminateFlags |= kIOServiceTerminateWithRematchCurrentDext;
+		} else {
+			DKLOG(DKS "::finalize(%p) dext was replaced, do not rematch current dext\n", DKN(this), this);
+		}
+	} else {
+		terminateFlags |= kIOServiceTerminateWithRematchCurrentDext;
+		DKLOG(DKS "::finalize(%p) could not find fCheckInToken\n", DKN(this), this);
+	}
+
 	if (services) {
 		services->iterateObjects(^bool (OSObject * obj) {
-			IOService * service;
+			int         service __unused;       // hide outer defn
+			IOService * nextService;
 			IOService * provider;
 			bool        started = false;
+			bool        instantiated = false;
 
-			service = (IOService *) obj;
+			nextService = (IOService *) obj;
 			if (kIODKLogSetup & gIODKDebug) {
-			        DKLOG("%s::terminate(" DKS ")\n", getName(), DKN(service));
+			        DKLOG(DKS "::terminate(" DKS ")\n", DKN(this), DKN(nextService));
 			}
-			if (service->reserved->uvars) {
-			        started = service->reserved->uvars->started;
-			        service->reserved->uvars->serverDied = true;
+			if (nextService->reserved->uvars) {
+			        IOUserClient * nextUserClient = OSDynamicCast(IOUserClient, nextService);
+			        provider = nextService->getProvider();
+			        if (nextUserClient) {
+			                nextUserClient->setTerminateDefer(provider, false);
+				}
+			        (void)::acknowledgeSetPowerState(nextService);
+			        started = nextService->reserved->uvars->started;
+			        instantiated = nextService->reserved->uvars->instantiated;
+			        nextService->reserved->uvars->serverDied = true;
+
+			        serviceDidStop(nextService, provider);
+			        if (provider != NULL && (terminateFlags & kIOServiceTerminateWithRematchCurrentDext) == 0) {
+			                provider->resetRematchProperties();
+				}
 			        if (started) {
-			                provider = service->getProvider();
-			                serviceDidStop(service, provider);
-			                service->terminate(kIOServiceTerminateNeedWillTerminate | kIOServiceTerminateWithRematch);
+			                IOService * provider = nextService;
+			                while ((provider = provider->getProvider())) {
+			                        if (-1U != services->getNextIndexOfObject(provider, 0)) {
+			                                break;
+						}
+					}
+			                if (!provider) {
+			                        // this service is the root of the set, so only terminate it
+			                        nextService->terminate(terminateFlags);
+					}
 				}
 			}
-			if (!started) {
-			        DKLOG("%s::terminate(" DKS ") server exit before start()\n", getName(), DKN(service));
-			        serviceStop(service, NULL);
+			if (!started || !instantiated) {
+			        DKLOG(DKS "::terminate(" DKS ") server exit before start() instantiated %d\n", DKN(this), DKN(nextService), instantiated);
+			        // Override started since we are forcing serviceStop to happen
+			        nextService->reserved->uvars->started = true;
+			        serviceStop(nextService, NULL);
 			}
 			return false;
 		});
@@ -3317,9 +4126,9 @@ IOUserServer::finalize(IOOptionBits options)
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #undef super
-#define super IOUserClient
+#define super IOUserClient2022
 
-OSDefineMetaClassAndStructors(IOUserServer, IOUserClient)
+OSDefineMetaClassAndStructors(IOUserServer, IOUserClient2022)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -3327,27 +4136,55 @@ IOUserClient * IOUserServer::withTask(task_t owningTask)
 {
 	IOUserServer * inst;
 
+	assert(owningTask == current_task());
+	if (!task_is_driver(owningTask)) {
+		DKLOG("IOUserServer may only be created with driver tasks\n");
+		return NULL;
+	}
+
 	inst = new IOUserServer;
 	if (inst && !inst->init()) {
 		inst->release();
 		inst = NULL;
 		return inst;
 	}
-	inst->PMinit();
+	OS_ANALYZER_SUPPRESS("82033761") inst->PMinit();
 
 	inst->fOwningTask = current_task();
+	task_reference(inst->fOwningTask);
+
 	inst->fEntitlements = IOUserClient::copyClientEntitlements(inst->fOwningTask);
 
 	if (!(kIODKDisableEntitlementChecking & gIODKDebug)) {
-		if (!inst->fEntitlements || !inst->fEntitlements->getObject(gIODriverKitEntitlementKey)) {
-			proc_t p;
-			pid_t  pid;
+		proc_t p;
+		pid_t  pid;
+		const char * name;
+		p = (proc_t)get_bsdtask_info(inst->fOwningTask);
+		if (p) {
+			name = proc_best_name(p);
+			pid = proc_pid(p);
+		} else {
+			name = "unknown";
+			pid = 0;
+		}
 
-			p = (proc_t)get_bsdtask_info(inst->fOwningTask);
-			if (p) {
-				pid = proc_pid(p);
-				IOLog(kIODriverKitEntitlementKey " entitlement check failed for %s[%d]\n", proc_best_name(p), pid);
-			}
+		if (inst->fEntitlements == NULL) {
+#if DEVELOPMENT || DEBUG
+			panic("entitlements are missing for %s[%d]\n", name, pid);
+#else
+			DKLOG("entitlements are missing for %s[%d]\n", name, pid);
+#endif /* DEVELOPMENT || DEBUG */
+		}
+
+
+		const char * dextTeamID = csproc_get_teamid(p);
+		if (dextTeamID != NULL) {
+			inst->fTeamIdentifier = OSString::withCString(dextTeamID);
+			DKLOG("%s[%d] has team identifier %s\n", name, pid, dextTeamID);
+		}
+
+		if (!IOCurrentTaskHasEntitlement(gIODriverKitEntitlementKey->getCStringNoCopy())) {
+			IOLog(kIODriverKitEntitlementKey " entitlement check failed for %s[%d]\n", name, pid);
 			inst->release();
 			inst = NULL;
 			return inst;
@@ -3361,19 +4198,89 @@ IOUserClient * IOUserServer::withTask(task_t owningTask)
 	inst->fServices = OSArray::withCapacity(4);
 	inst->fClasses  = OSDictionary::withCapacity(16);
 	inst->fClasses->setOptions(OSCollection::kSort, OSCollection::kSort);
+	inst->fPlatformDriver = task_get_platform_binary(inst->fOwningTask);
+	if (csproc_get_validation_category(current_proc(), &inst->fCSValidationCategory) != KERN_SUCCESS) {
+		inst->fCSValidationCategory = CS_VALIDATION_CATEGORY_INVALID;
+	}
+	inst->fWorkLoop = IOWorkLoop::workLoop();
+
+	inst->setProperty(kIOUserClientDefaultLockingKey, kOSBooleanTrue);
+	inst->setProperty(kIOUserClientDefaultLockingSetPropertiesKey, kOSBooleanTrue);
+	inst->setProperty(kIOUserClientDefaultLockingSingleThreadExternalMethodKey, kOSBooleanTrue);
+	//requirement for gIODriverKitEntitlementKey is enforced elsewhere conditionally
+	inst->setProperty(kIOUserClientEntitlementsKey, kOSBooleanFalse);
 
 	return inst;
+}
+
+static bool gIOUserServerLeakObjects = false;
+
+bool
+IOUserServer::shouldLeakObjects()
+{
+	return gIOUserServerLeakObjects;
+}
+
+void
+IOUserServer::beginLeakingObjects()
+{
+	gIOUserServerLeakObjects = true;
+}
+
+bool
+IOUserServer::isPlatformDriver()
+{
+	return fPlatformDriver;
+}
+
+int
+IOUserServer::getCSValidationCategory()
+{
+	return fCSValidationCategory;
+}
+
+
+struct IOUserServerRecordExitReasonContext {
+	task_t task;
+	os_reason_t reason;
+};
+
+static bool
+IOUserServerRecordExitReasonMatch(const OSObject *obj, void * context)
+{
+	IOUserServerRecordExitReasonContext * ctx = (IOUserServerRecordExitReasonContext *)context;
+	IOUserServer * us = OSDynamicCast(IOUserServer, obj);
+	if (us == NULL) {
+		return false;
+	}
+
+	if (us->fOwningTask == ctx->task) {
+		assert(us->fTaskCrashReason == OS_REASON_NULL);
+		assert(ctx->reason != OS_REASON_NULL);
+		os_reason_ref(ctx->reason);
+		us->fTaskCrashReason = ctx->reason;
+		return true;
+	}
+
+	return false;
+}
+
+extern "C" void
+IOUserServerRecordExitReason(task_t task, os_reason_t reason)
+{
+	IOUserServerRecordExitReasonContext ctx { task, reason };
+	IOUserServer::gMetaClass.applyToInstances(IOUserServerRecordExitReasonMatch, &ctx);
 }
 
 IOReturn
 IOUserServer::clientClose(void)
 {
 	OSArray   * services;
+	bool __block unexpectedExit = false;
 
 	if (kIODKLogSetup & gIODKDebug) {
-		DKLOG("%s::clientClose(%p)\n", getName(), this);
+		DKLOG(DKS "::clientClose(%p)\n", DKN(this), this);
 	}
-
 	services = NULL;
 	IOLockLock(fLock);
 	if (fServices) {
@@ -3386,24 +4293,55 @@ IOUserServer::clientClose(void)
 	// the ClientCrashed() notification
 	if (services) {
 		services->iterateObjects(^bool (OSObject * obj) {
-			IOService * service;
+			int         service __unused;       // hide outer defn
+			IOService * nextService;
 			IOService * provider;
 
-			service = (IOService *) obj;
-			if (service->isInactive()) {
+			nextService = (IOService *) obj;
+			if (nextService->isInactive()) {
 			        return false;
 			}
-			provider = service->getProvider();
+			if (nextService->reserved && nextService->reserved->uvars && nextService->reserved->uvars->started) {
+			        unexpectedExit = true;
+			}
+			provider = nextService->getProvider();
 			if (provider
 			&& (!provider->reserved->uvars || (provider->reserved->uvars->userServer != this))) {
 			        if (kIODKLogSetup & gIODKDebug) {
-			                DKLOG(DKS "::ClientCrashed(" DKS ")\n", DKN(provider), DKN(service));
+			                DKLOG(DKS "::ClientCrashed(" DKS ")\n", DKN(provider), DKN(nextService));
 				}
-			        provider->ClientCrashed(service, 0);
+			        if (unexpectedExit) {
+			                provider->unregisterAllInterrupts();
+				}
+			        provider->ClientCrashed(nextService, 0);
 			}
 			return false;
 		});
 		services->release();
+	}
+
+	if (unexpectedExit &&
+	    !gInUserspaceReboot &&
+	    (fTaskCrashReason != OS_REASON_NULL && fTaskCrashReason->osr_namespace != OS_REASON_JETSAM && fTaskCrashReason->osr_namespace != OS_REASON_RUNNINGBOARD) &&
+	    fStatistics != NULL) {
+		OSDextCrashPolicy policy = fStatistics->recordCrash();
+		bool allowPanic;
+#if DEVELOPMENT || DEBUG
+		allowPanic = !restore_boot && fPlatformDriver && fEntitlements->getObject(gIODriverKitTestDriverEntitlementKey) != kOSBooleanTrue && !disable_dext_crash_reboot;
+#else
+		allowPanic = !restore_boot && fPlatformDriver;
+#endif /* DEVELOPMENT || DEBUG */
+
+		if (policy == kOSDextCrashPolicyReboot && allowPanic) {
+			emergencyPanicCoreDumpEnable();
+			panic("Driver %s has crashed too many times (reason %u:%llu)\n",
+			    getName(), fTaskCrashReason->osr_namespace, fTaskCrashReason->osr_code);
+		}
+
+		IOPMrootDomain *rootDomain = IOService::getPMRootDomain();
+		if (rootDomain) {
+			rootDomain->requestRunMode(kIOPMRunModeFullWake);
+		}
 	}
 
 	terminate();
@@ -3420,7 +4358,10 @@ IOUserServer::setProperties(OSObject * properties)
 void
 IOUserServer::stop(IOService * provider)
 {
-	fOwningTask = TASK_NULL;
+	if (fOwningTask) {
+		task_deallocate(fOwningTask);
+		fOwningTask = TASK_NULL;
+	}
 
 	PMstop();
 
@@ -3433,16 +4374,36 @@ IOUserServer::stop(IOService * provider)
 	}
 }
 
+IOWorkLoop *
+IOUserServer::getWorkLoop() const
+{
+	return fWorkLoop;
+}
+
 void
 IOUserServer::free()
 {
 	OSSafeReleaseNULL(fEntitlements);
 	OSSafeReleaseNULL(fClasses);
+	if (fOwningTask) {
+		task_deallocate(fOwningTask);
+		fOwningTask = TASK_NULL;
+	}
 	if (fLock) {
 		IOLockFree(fLock);
 	}
 	OSSafeReleaseNULL(fServices);
 	OSSafeReleaseNULL(fCheckInToken);
+	OSSafeReleaseNULL(fStatistics);
+	OSSafeReleaseNULL(fTeamIdentifier);
+	if (fAllocationName) {
+		kern_allocation_name_release(fAllocationName);
+		fAllocationName = NULL;
+	}
+	if (fTaskCrashReason != OS_REASON_NULL) {
+		os_reason_free(fTaskCrashReason);
+	}
+	OSSafeReleaseNULL(fWorkLoop);
 	IOUserClient::free();
 }
 
@@ -3462,7 +4423,7 @@ IOUserServer::registerClass(OSClassDescription * desc, uint32_t size, OSUserMeta
 	}
 
 	if (kIODKLogSetup & gIODKDebug) {
-		DKLOG("%s::registerClass %s, %d, %d\n", getName(), desc->name, desc->queueNamesSize, desc->methodNamesSize);
+		DKLOG(DKS "::registerClass %s, %d, %d\n", DKN(this), desc->name, desc->queueNamesSize, desc->methodNamesSize);
 	}
 
 	if (desc->descriptionSize != size) {
@@ -3514,7 +4475,7 @@ IOUserServer::registerClass(OSClassDescription * desc, uint32_t size, OSUserMeta
 		return kIOReturnNoMemory;
 	}
 
-	cls->description = (typeof(cls->description))IOMalloc(size);
+	cls->description = (typeof(cls->description))IOMallocData(size);
 	assert(cls->description);
 	if (!cls->description) {
 		assert(false);
@@ -3524,7 +4485,7 @@ IOUserServer::registerClass(OSClassDescription * desc, uint32_t size, OSUserMeta
 	bcopy(desc, cls->description, size);
 
 	cls->methodCount = desc->methodOptionsSize / (2 * sizeof(uint64_t));
-	cls->methods = IONew(uint64_t, 2 * cls->methodCount);
+	cls->methods = IONewData(uint64_t, 2 * cls->methodCount);
 	if (!cls->methods) {
 		assert(false);
 		cls->release();
@@ -3589,72 +4550,91 @@ IOUserServer::setRootQueue(IODispatchQueue * queue)
 	return kIOReturnSuccess;
 }
 
+
 IOReturn
-IOUserServer::externalMethod(uint32_t selector, IOExternalMethodArguments * args,
-    IOExternalMethodDispatch * dispatch, OSObject * target, void * reference)
+IOUserServer::externalMethod(uint32_t selector, IOExternalMethodArgumentsOpaque * args)
+{
+	static const IOExternalMethodDispatch2022 dispatchArray[] = {
+		[kIOUserServerMethodRegisterClass] = {
+			.function                 = &IOUserServer::externalMethodRegisterClass,
+			.checkScalarInputCount    = 0,
+			.checkStructureInputSize  = kIOUCVariableStructureSize,
+			.checkScalarOutputCount   = 2,
+			.checkStructureOutputSize = 0,
+			.allowAsync               = false,
+			.checkEntitlement         = NULL,
+		},
+		[kIOUserServerMethodStart] = {
+			.function                 = &IOUserServer::externalMethodStart,
+			.checkScalarInputCount    = 1,
+			.checkStructureInputSize  = 0,
+			.checkScalarOutputCount   = 1,
+			.checkStructureOutputSize = 0,
+			.allowAsync               = false,
+			.checkEntitlement         = NULL,
+		},
+	};
+
+	return dispatchExternalMethod(selector, args, dispatchArray, sizeof(dispatchArray) / sizeof(dispatchArray[0]), this, NULL);
+}
+
+IOReturn
+IOUserServer::externalMethodRegisterClass(OSObject * target, void * reference, IOExternalMethodArguments * args)
 {
 	IOReturn ret = kIOReturnBadArgument;
 	mach_port_name_t portname;
 
-	switch (selector) {
-	case kIOUserServerMethodRegisterClass:
-	{
-		OSUserMetaClass * cls;
-		if (!args->structureInputSize) {
-			return kIOReturnBadArgument;
-		}
-		if (args->scalarOutputCount != 2) {
-			return kIOReturnBadArgument;
-		}
-		ret = registerClass((OSClassDescription *) args->structureInput, args->structureInputSize, &cls);
-		if (kIOReturnSuccess == ret) {
-			portname = iokit_make_send_right(fOwningTask, cls, IKOT_UEXT_OBJECT);
-			assert(portname);
-			args->scalarOutput[0] = portname;
-			args->scalarOutput[1] = kOSObjectRPCRemote;
-		}
-		break;
+	IOUserServer * me = (typeof(me))target;
+
+	OSUserMetaClass * cls;
+	if (!args->structureInputSize) {
+		return kIOReturnBadArgument;
 	}
-	case kIOUserServerMethodStart:
-	{
-		if (args->scalarOutputCount != 1) {
-			return kIOReturnBadArgument;
-		}
-		if (!(kIODKDisableCheckInTokenVerification & gIODKDebug)) {
-			if (args->scalarInputCount != 1) {
-				return kIOReturnBadArgument;
-			}
-			mach_port_name_t checkInPortName = ((typeof(checkInPortName))args->scalarInput[0]);
-			OSObject * obj = iokit_lookup_object_with_port_name(checkInPortName, IKOT_IOKIT_IDENT, fOwningTask);
-			IOUserServerCheckInToken * retrievedToken = OSDynamicCast(IOUserServerCheckInToken, obj);
-			if (retrievedToken != NULL) {
-				setCheckInToken(retrievedToken);
-			} else {
-				OSSafeReleaseNULL(obj);
-				return kIOReturnBadArgument;
-			}
-			OSSafeReleaseNULL(obj);
-		}
-		portname = iokit_make_send_right(fOwningTask, this, IKOT_UEXT_OBJECT);
+
+	ret = me->registerClass((OSClassDescription *) args->structureInput, args->structureInputSize, &cls);
+	if (kIOReturnSuccess == ret) {
+		portname = iokit_make_send_right(me->fOwningTask, cls, IKOT_UEXT_OBJECT);
 		assert(portname);
 		args->scalarOutput[0] = portname;
-		ret = kIOReturnSuccess;
-		break;
-	}
-	default:
-		break;
+		args->scalarOutput[1] = kOSObjectRPCRemote;
 	}
 
 	return ret;
 }
 
+IOReturn
+IOUserServer::externalMethodStart(OSObject * target, void * reference, IOExternalMethodArguments * args)
+{
+	mach_port_name_t portname = 0;
+	IOReturn ret = kIOReturnSuccess;
+
+	IOUserServer * me = (typeof(me))target;
+
+	if (!(kIODKDisableCheckInTokenVerification & gIODKDebug)) {
+		mach_port_name_t checkInPortName = ((typeof(checkInPortName))args->scalarInput[0]);
+		OSObject * obj = iokit_lookup_object_with_port_name(checkInPortName, IKOT_IOKIT_IDENT, me->fOwningTask);
+		IOUserServerCheckInToken * retrievedToken = OSDynamicCast(IOUserServerCheckInToken, obj);
+		if (retrievedToken != NULL) {
+			ret = me->setCheckInToken(retrievedToken);
+		} else {
+			ret = kIOReturnBadArgument;
+		}
+		OSSafeReleaseNULL(obj);
+	}
+	if (ret == kIOReturnSuccess) {
+		portname = iokit_make_send_right(me->fOwningTask, me, IKOT_UEXT_OBJECT);
+		assert(portname);
+	}
+	args->scalarOutput[0] = portname;
+	return ret;
+}
 IOExternalTrap *
 IOUserServer::getTargetAndTrapForIndex( IOService **targetP, UInt32 index )
 {
-	static const IOExternalTrap trapTemplate[] = {
-		{ NULL, (IOTrap) & IOUserServer::waitInterruptTrap},
-	};
-	if (index >= (sizeof(trapTemplate) / sizeof(IOExternalTrap))) {
+	static const OSBoundedArray<IOExternalTrap, 1> trapTemplate = {{
+									       { NULL, (IOTrap) & IOUserServer::waitInterruptTrap},
+								       }};
+	if (index >= trapTemplate.size()) {
 		return NULL;
 	}
 	*targetP = this;
@@ -3662,6 +4642,12 @@ IOUserServer::getTargetAndTrapForIndex( IOService **targetP, UInt32 index )
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+void
+IOUserServer::pageout()
+{
+	fPageout = 1;
+}
 
 IOReturn
 IOUserServer::serviceAttach(IOService * service, IOService * provider)
@@ -3673,14 +4659,54 @@ IOUserServer::serviceAttach(IOService * service, IOService * provider)
 	OSSymbol const*   bundleID;
 	char               execPath[1024];
 
-	vars = IONewZero(OSObjectUserVars, 1);
+	vars = IOMallocType(OSObjectUserVars);
 	service->reserved->uvars = vars;
 
 	vars->userServer = this;
 	vars->userServer->retain();
+	vars->uvarsLock = IOLockAlloc();
+	vars->originalProperties = service->dictionaryWithProperties();
 	IOLockLock(fLock);
 	if (-1U == fServices->getNextIndexOfObject(service, 0)) {
 		fServices->setObject(service);
+
+		// Add to IOAssociatedServices
+		OSObject * serviceArrayObj = copyProperty(gIOAssociatedServicesKey);
+		OSArray * serviceArray = OSDynamicCast(OSArray, serviceArrayObj);
+		if (!serviceArray) {
+			serviceArray = OSArray::withCapacity(0);
+		} else {
+			serviceArray = OSDynamicCast(OSArray, serviceArray->copyCollection());
+			assert(serviceArray != NULL);
+		}
+
+		OSNumber * registryEntryNumber = OSNumber::withNumber(service->getRegistryEntryID(), 64);
+		serviceArray->setObject(registryEntryNumber);
+		setProperty(gIOAssociatedServicesKey, serviceArray);
+		OSSafeReleaseNULL(registryEntryNumber);
+		OSSafeReleaseNULL(serviceArray);
+		OSSafeReleaseNULL(serviceArrayObj);
+
+		// populate kIOUserClassesKey
+
+		OSUserMetaClass * userMeta;
+		OSArray         * classesArray;
+		const OSString  * str2;
+
+		classesArray = OSArray::withCapacity(4);
+		prop = service->copyProperty(gIOUserClassKey);
+		str2 = OSDynamicCast(OSString, prop);
+		userMeta = (typeof(userMeta))service->reserved->uvars->userServer->fClasses->getObject(str2);
+		while (str2 && userMeta) {
+			classesArray->setObject(str2);
+			userMeta = userMeta->superMeta;
+			if (userMeta) {
+				str2 = userMeta->name;
+			}
+		}
+		service->setProperty(gIOUserClassesKey, classesArray);
+		OSSafeReleaseNULL(classesArray);
+		OSSafeReleaseNULL(prop);
 	}
 	IOLockUnlock(fLock);
 
@@ -3699,20 +4725,21 @@ IOUserServer::serviceAttach(IOService * service, IOService * provider)
 		if (ok) {
 			ret = LoadModule(execPath);
 			if (kIODKLogSetup & gIODKDebug) {
-				DKLOG("%s::LoadModule 0x%x %s\n", getName(), ret, execPath);
+				DKLOG(DKS "::LoadModule 0x%x %s\n", DKN(this), ret, execPath);
 			}
 		}
 	}
 	OSSafeReleaseNULL(prop);
 
 	ret = kIOReturnSuccess;
+	if (kIODKLogSetup & gIODKDebug) {
+		DKLOG(DKS "::serviceAttach(" DKS ", " DKS ")\n", DKN(this), DKN(service), DKN(provider));
+	}
 
 	return ret;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-#define kDriverKitUCPrefix "com.apple.developer.driverkit.userclient-access."
 
 IOReturn
 IOUserServer::serviceNewUserClient(IOService * service, task_t owningTask, void * securityID,
@@ -3724,27 +4751,99 @@ IOUserServer::serviceNewUserClient(IOService * service, task_t owningTask, void 
 	OSDictionary     * entitlements;
 	OSObject         * prop;
 	OSObject         * bundleID;
-	bool               ok;
+	bool               ok = false;
+
+	entitlements = IOUserClient::copyClientEntitlements(owningTask);
+	if (!entitlements) {
+		entitlements = OSDictionary::withCapacity(8);
+	}
+	if (entitlements) {
+		if (kIOReturnSuccess == clientHasPrivilege((void *) owningTask, kIOClientPrivilegeAdministrator)) {
+			entitlements->setObject(kIODriverKitUserClientEntitlementAdministratorKey, kOSBooleanTrue);
+		}
+		OSString * creatorName = IOCopyLogNameForPID(proc_selfpid());
+		if (creatorName) {
+			entitlements->setObject(kIOUserClientCreatorKey, creatorName);
+			OSSafeReleaseNULL(creatorName);
+		}
+	}
 
 	*handler = NULL;
-	ret = service->NewUserClient(type, &uc);
-	if (kIOReturnSuccess != ret) {
+	ret = service->_NewUserClient(type, entitlements, &uc);
+	if (kIOReturnSuccess != ret || uc == NULL) {
+		OSSafeReleaseNULL(uc);
+		OSSafeReleaseNULL(entitlements);
 		return ret;
 	}
 	userUC = OSDynamicCast(IOUserUserClient, uc);
 	if (!userUC) {
-		uc->terminate();
-		OSSafeReleaseNULL(uc);
+		if (uc) {
+			uc->terminate(kIOServiceTerminateNeedWillTerminate);
+			uc->setTerminateDefer(service, false);
+			OSSafeReleaseNULL(uc);
+		}
+		OSSafeReleaseNULL(entitlements);
 		return kIOReturnUnsupported;
 	}
 	userUC->setTask(owningTask);
 
 	if (!(kIODKDisableEntitlementChecking & gIODKDebug)) {
-		bundleID = NULL;
-		entitlements = IOUserClient::copyClientEntitlements(owningTask);
-		if (fEntitlements && fEntitlements->getObject(gIODriverKitUserClientEntitlementAllowAnyKey)) {
-			ok = true;
-		} else {
+		do {
+			bool checkiOS3pEntitlements;
+
+			// check if client has com.apple.private.driverkit.driver-access and the required entitlements match the driver's entitlements
+			if (entitlements && (prop = entitlements->getObject(gIODriverKitRequiredEntitlementsKey))) {
+				prop->retain();
+				ok = checkEntitlements(fEntitlements, prop, NULL, NULL);
+				if (ok) {
+					break;
+				} else {
+					DKLOG(DKS ":UC failed required entitlement check\n", DKN(userUC));
+				}
+			}
+
+#if XNU_TARGET_OS_IOS
+			checkiOS3pEntitlements = !fPlatformDriver;
+			if (checkiOS3pEntitlements && fTeamIdentifier == NULL) {
+				DKLOG("warning: " DKS " does not have a team identifier\n", DKN(this));
+			}
+#else
+			checkiOS3pEntitlements = false;
+#endif
+			if (checkiOS3pEntitlements) {
+				// App must have com.apple.developer.driverkit.communicates-with-drivers
+				ok = entitlements && entitlements->getObject(gIODriverKitUserClientEntitlementCommunicatesWithDriversKey) == kOSBooleanTrue;
+				if (ok) {
+					// check team ID
+					const char * clientTeamID = csproc_get_teamid(current_proc());
+					bool sameTeam = fTeamIdentifier != NULL && clientTeamID != NULL && strncmp(fTeamIdentifier->getCStringNoCopy(), clientTeamID, CS_MAX_TEAMID_LEN) == 0;
+
+					if (sameTeam) {
+						ok = true;
+					} else {
+						// different team IDs, dext must have com.apple.developer.driverkit.allow-third-party-userclients
+						ok = fEntitlements && fEntitlements->getObject(gIODriverKitUserClientEntitlementAllowThirdPartyUserClientsKey) == kOSBooleanTrue;
+					}
+					if (!ok) {
+						DKLOG(DKS ":UC failed team ID check. client team=%s, driver team=%s\n", DKN(userUC), clientTeamID ? clientTeamID : "(null)", fTeamIdentifier ? fTeamIdentifier->getCStringNoCopy() : "(null)");
+					}
+				} else {
+					DKLOG(DKS ":UC entitlement check failed, app does not have %s entitlement\n", DKN(userUC), gIODriverKitUserClientEntitlementCommunicatesWithDriversKey->getCStringNoCopy());
+				}
+
+				// When checking iOS 3rd party entitlements, do not fall through to other entitlement checks
+				break;
+			}
+
+			// first party dexts and third party macOS dexts
+
+			// check if driver has com.apple.developer.driverkit.allow-any-userclient-access
+			if (fEntitlements && fEntitlements->getObject(gIODriverKitUserClientEntitlementAllowAnyKey)) {
+				ok = true;
+				break;
+			}
+
+			// check if client has com.apple.developer.driverkit.userclient-access and its value matches the bundle ID of the service
 			bundleID = service->copyProperty(gIOModuleIdentifierKey);
 			ok = (entitlements
 			    && bundleID
@@ -3756,22 +4855,29 @@ IOUserServer::serviceNewUserClient(IOService * service, task_t owningTask, void 
 					return found;
 				});
 				ok = found;
+			} else {
+				OSString * bundleIDStr = OSDynamicCast(OSString, bundleID);
+				DKLOG(DKS ":UC failed userclient-access check, needed bundle ID %s\n", DKN(userUC), bundleIDStr ? bundleIDStr->getCStringNoCopy() : "(null)");
 			}
-		}
+			OSSafeReleaseNULL(bundleID);
+		} while (false);
+
 		if (ok) {
 			prop = userUC->copyProperty(gIOServiceDEXTEntitlementsKey);
 			ok = checkEntitlements(entitlements, prop, NULL, NULL);
 		}
-		OSSafeReleaseNULL(bundleID);
-		OSSafeReleaseNULL(entitlements);
+
 		if (!ok) {
 			DKLOG(DKS ":UC entitlements check failed\n", DKN(userUC));
-			uc->terminate();
+			uc->terminate(kIOServiceTerminateNeedWillTerminate);
+			uc->setTerminateDefer(service, false);
 			OSSafeReleaseNULL(uc);
+			OSSafeReleaseNULL(entitlements);
 			return kIOReturnNotPermitted;
 		}
 	}
 
+	OSSafeReleaseNULL(entitlements);
 	*handler = userUC;
 
 	return ret;
@@ -3800,10 +4906,105 @@ static IOPMPowerState
 	    .outputPowerCharacter   = kIOPMLowPower,
 	    .inputPowerRequirement  = kIOPMLowPower},
 	{   .version                = kIOPMPowerStateVersion1,
+	    .capabilityFlags        = kIOPMAOTPower,
+	    .outputPowerCharacter   = kIOPMAOTPower,
+	    .inputPowerRequirement  = kIOPMAOTPower},
+	{   .version                = kIOPMPowerStateVersion1,
 	    .capabilityFlags        = kIOPMPowerOn,
 	    .outputPowerCharacter   = kIOPMPowerOn,
 	    .inputPowerRequirement  = kIOPMPowerOn},
 };
+
+enum {
+	kUserServerMaxPowerState    = 3
+};
+
+IOReturn
+IOUserServer::serviceJoinPMTree(IOService * service)
+{
+	IOReturn    ret;
+	IOService * pmProvider;
+	bool        joinTree;
+
+	if (service->reserved->uvars->userServerPM) {
+		return kIOReturnSuccess;
+	}
+
+	if (!fRootNotifier) {
+		ret = registerPowerDriver(this, sPowerStates, sizeof(sPowerStates) / sizeof(sPowerStates[0]));
+		assert(kIOReturnSuccess == ret);
+		IOServicePH::serverAdd(this);
+		fRootNotifier = true;
+	}
+
+	joinTree = false;
+	if (!(kIODKDisablePM & gIODKDebug) && !service->pm_vars) {
+		kern_return_t  kr;
+		OSDictionary * props;
+		kr = service->CopyProperties_Local(&props);
+		if (kIOReturnSuccess == kr) {
+			if (props->getObject(kIOPMResetPowerStateOnWakeKey) == kOSBooleanTrue) {
+				service->setProperty(kIOPMResetPowerStateOnWakeKey, kOSBooleanTrue);
+			}
+			fAOTAllow |= (NULL != props->getObject(kIOPMAOTAllowKey));
+			if (!(kIODKDisableIOPMSystemOffPhase2Allow & gIODKDebug)) {
+				fSystemOffPhase2Allow |= (NULL != props->getObject(kIOPMSystemOffPhase2AllowKey));
+			}
+			OSSafeReleaseNULL(props);
+		}
+		service->PMinit();
+		ret = service->registerPowerDriver(this, sPowerStates, sizeof(sPowerStates) / sizeof(sPowerStates[0]));
+		assert(kIOReturnSuccess == ret);
+		joinTree = true;
+	}
+
+	pmProvider = service;
+	while (pmProvider && !pmProvider->inPlane(gIOPowerPlane)) {
+		pmProvider = pmProvider->getProvider();
+	}
+	if (!pmProvider) {
+		pmProvider = getPMRootDomain();
+	}
+	if (pmProvider) {
+		IOService * entry;
+		OSObject  * prop;
+		OSObject  * nextProp;
+		OSString  * str;
+
+		entry = pmProvider;
+		prop  = NULL;
+		do {
+			nextProp = entry->copyProperty("non-removable");
+			if (nextProp) {
+				OSSafeReleaseNULL(prop);
+				prop = nextProp;
+			}
+			entry = entry->getProvider();
+		} while (entry);
+		if (prop) {
+			str = OSDynamicCast(OSString, prop);
+			if (str && str->isEqualTo("yes")) {
+				pmProvider = NULL;
+			}
+			prop->release();
+		}
+	}
+
+	if (!(kIODKDisablePM & gIODKDebug) && pmProvider) {
+		IOLockLock(fLock);
+		service->reserved->uvars->powerState = true;
+		IOLockUnlock(fLock);
+
+		if (joinTree) {
+			pmProvider->joinPMtree(service);
+			service->reserved->uvars->userServerPM = true;
+			service->reserved->uvars->resetPowerOnWake = service->propertyExists(kIOPMResetPowerStateOnWakeKey);
+		}
+	}
+
+	service->registerInterestedDriver(this);
+	return kIOReturnSuccess;
+}
 
 IOReturn
 IOUserServer::setPowerState(unsigned long state, IOService * service)
@@ -3814,25 +5015,59 @@ IOUserServer::setPowerState(unsigned long state, IOService * service)
 	return kIOPMAckImplied;
 }
 
+
 IOReturn
 IOUserServer::serviceSetPowerState(IOService * controllingDriver, IOService * service, IOPMPowerFlags flags, unsigned long state)
 {
 	IOReturn ret;
+	bool sendIt = false;
 
+	IOLockLock(fLock);
 	if (service->reserved->uvars) {
 		if (!fSystemOff && !(kIODKDisablePM & gIODKDebug)) {
 			service->reserved->uvars->willPower = true;
 			service->reserved->uvars->willPowerState = state;
 			service->reserved->uvars->controllingDriver = controllingDriver;
-			if (kIODKLogPM & gIODKDebug) {
-				DKLOG(DKS "::serviceSetPowerState(%ld) 0x%qx, %d\n", DKN(service), state, fPowerStates, fSystemPowerAck);
-			}
-			ret = service->SetPowerState((uint32_t) flags);
-			if (kIOReturnSuccess == ret) {
-				return 20 * 1000 * 1000;
+			sendIt = true;
+		} else {
+			service->reserved->uvars->willPower = false;
+		}
+	}
+	IOLockUnlock(fLock);
+
+	if (sendIt) {
+		uint32_t driverFlags = (uint32_t) flags;
+		if (kIODKLogPM & gIODKDebug) {
+			DKLOG(DKS "::serviceSetPowerState(%ld, 0x%x) %d\n", DKN(service), state, driverFlags, fSystemPowerAck);
+		}
+#if DEBUG || DEVELOPMENT
+		bool pageout = false;
+		uint64_t pageincount = 0;
+		if (gLPWFlags) {
+			pageout = fPageout;
+			if (pageout) {
+				fPageout = false;
+				DKLOG(DKS " pageout\n", DKN(service));
+				pageincount = vm_task_evict_shared_cache(fOwningTask);
 			}
 		}
-		service->reserved->uvars->willPower = false;
+#endif /* DEBUG || DEVELOPMENT */
+
+		ret = service->SetPowerState(driverFlags);
+
+#if DEBUG || DEVELOPMENT
+		if (pageout) {
+			DKLOG(DKS " state %ld pageins %qd\n", DKN(service), state, vm_task_pageins(fOwningTask) - pageincount);
+		}
+#endif /* DEBUG || DEVELOPMENT */
+
+		if (kIOReturnSuccess == ret) {
+			return 20 * 1000 * 1000;
+		} else {
+			IOLockLock(fLock);
+			service->reserved->uvars->willPower = false;
+			IOLockUnlock(fLock);
+		}
 	}
 
 	return kIOPMAckImplied;
@@ -3857,27 +5092,185 @@ IOUserServer::powerStateDidChangeTo(IOPMPowerFlags flags, unsigned long state, I
 		IOLockUnlock(fLock);
 		return kIOPMAckImplied;
 	}
-	assert(idx <= 63);
 
-	if (state) {
-		fPowerStates |= (1ULL << idx);
-	} else {
-		fPowerStates &= ~(1ULL << idx);
+	service->reserved->uvars->powerState = (0 != state);
+	bool allPowerStates __block = service->reserved->uvars->powerState;
+	if (!allPowerStates) {
+		// any service on?
+		fServices->iterateObjects(^bool (OSObject * obj) {
+			int         service __unused;       // hide outer defn
+			IOService * nextService;
+			nextService = (IOService *) obj;
+			allPowerStates = nextService->reserved->uvars->powerState;
+			// early terminate if true
+			return allPowerStates;
+		});
 	}
 	if (kIODKLogPM & gIODKDebug) {
-		DKLOG(DKS "::powerStateDidChangeTo(%ld) 0x%qx, %d\n", DKN(service), state, fPowerStates, fSystemPowerAck);
+		DKLOG(DKS "::powerStateDidChangeTo(%ld) %d, %d\n", DKN(service), state, allPowerStates, fSystemPowerAck);
 	}
-	if (!fPowerStates && (pmAck = fSystemPowerAck)) {
+	if (!allPowerStates && (pmAck = fSystemPowerAck)) {
 		fSystemPowerAck = false;
 		fSystemOff      = true;
 	}
 	IOLockUnlock(fLock);
 
 	if (pmAck) {
-		IOServicePH::serverAck(this);
+		serverAck();
 	}
 
 	return kIOPMAckImplied;
+}
+
+bool
+IOUserServer::checkPMReady()
+{
+	bool __block ready = true;
+
+	IOLockLock(fLock);
+	// Check if any services have not completely joined the PM tree (i.e.
+	// addPowerChild has not compeleted).
+	fServices->iterateObjects(^bool (OSObject * obj) {
+		IOPowerConnection *conn;
+		IOService *service = (IOService *) obj;
+		IORegistryEntry *parent = service->getParentEntry(gIOPowerPlane);
+		if ((conn = OSDynamicCast(IOPowerConnection, parent))) {
+		        if (!conn->getReadyFlag()) {
+		                ready = false;
+		                return true;
+			}
+		}
+		return false;
+	});
+	IOLockUnlock(fLock);
+
+	return ready;
+}
+
+IOReturn
+IOUserServer::serviceCreatePMAssertion(IOService * service, uint32_t assertionBits, uint64_t * assertionID, bool synced)
+{
+	IOReturn ret = kIOReturnSuccess;
+
+	*assertionID = kIOPMUndefinedDriverAssertionID;
+
+	if (!service->reserved->uvars || service->reserved->uvars->userServer != this) {
+		return kIOReturnError;
+	}
+
+	if (!service->reserved->uvars->userServerPM) {
+		// Cannot create PM assertion unless joined PM tree
+		return kIOReturnNotReady;
+	}
+
+	// Check to make sure the bits are allowed
+	uint32_t userAllowedBits = kIOPMDriverAssertionCPUBit |
+	    kIOPMDriverAssertionForceFullWakeupBit;
+	if (synced) {
+		userAllowedBits = kIOPMDriverAssertionCPUBit;
+	}
+	if (0 == (assertionBits & ~userAllowedBits)) {
+		if (synced) {
+			ret = getPMRootDomain()->acquireDriverKitSyncedAssertion(service, assertionID);
+			assert(ret != kIOReturnSuccess || *assertionID != kIOPMUndefinedDriverAssertionID);
+		} else {
+			*assertionID = getPMRootDomain()->createPMAssertion(assertionBits,
+			    kIOPMDriverAssertionLevelOn,
+			    getPMRootDomain(),
+			    service->getName());
+			if (!*assertionID) {
+				ret = kIOReturnInternalError;
+			}
+		}
+	} else {
+		ret = kIOReturnBadArgument;
+	}
+	if (*assertionID != kIOPMUndefinedDriverAssertionID) {
+		IOLockLock(fLock);
+		OSNumber * assertionIDNumber = OSNumber::withNumber(*assertionID, 64);
+		OSArray ** pmAssertions = (synced ? &service->reserved->uvars->pmAssertionsSynced : &service->reserved->uvars->pmAssertions);
+		if (!*pmAssertions) {
+			*pmAssertions = OSArray::withCapacity(1);
+		}
+		(*pmAssertions)->setObject(assertionIDNumber);
+		assertionIDNumber->release();
+		IOLockUnlock(fLock);
+	}
+
+	return ret;
+}
+
+IOReturn
+IOUserServer::serviceReleasePMAssertion(IOService * service, IOPMDriverAssertionID assertionID)
+{
+	kern_return_t ret = kIOReturnSuccess;
+	bool synced = false;
+
+	bool (^findAndRemoveAssertionID)(OSArray *) = ^(OSArray * assertions) {
+		unsigned index;
+		if (!assertions) {
+			return false;
+		}
+		for (index = 0; index < assertions->getCount(); index++) {
+			OSNumber * theID = (OSNumber *)assertions->getObject(index);
+			if (theID->unsigned64BitValue() == assertionID) {
+				break;
+			}
+		}
+		if (index == assertions->getCount()) {
+			return false;
+		}
+		assertions->removeObject(index);
+		return true;
+	};
+
+	if (!service->reserved->uvars || !service->reserved->uvars->userServer) {
+		return kIOReturnError;
+	}
+
+	IOLockLock(fLock);
+	if (findAndRemoveAssertionID(service->reserved->uvars->pmAssertionsSynced)) {
+		synced = true;
+	} else if (!findAndRemoveAssertionID(service->reserved->uvars->pmAssertions)) {
+		ret = kIOReturnNotFound;
+	}
+	IOLockUnlock(fLock);
+
+	if (ret == kIOReturnSuccess) {
+		if (synced) {
+			getPMRootDomain()->releaseDriverKitSyncedAssertion(assertionID);
+		} else {
+			getPMRootDomain()->releasePMAssertion(assertionID);
+		}
+	}
+
+	return ret;
+}
+
+kern_return_t
+IOService::JoinPMTree_Impl(void)
+{
+	if (!reserved->uvars || !reserved->uvars->userServer) {
+		return kIOReturnNotReady;
+	}
+	return reserved->uvars->userServer->serviceJoinPMTree(this);
+}
+
+static kern_return_t
+acknowledgeSetPowerState(IOService * service)
+{
+	if (service->reserved->uvars
+	    && service->reserved->uvars->userServer
+	    && service->reserved->uvars->willPower) {
+		IOReturn ret;
+		service->reserved->uvars->willPower = false;
+		ret = service->reserved->uvars->controllingDriver->setPowerState(service->reserved->uvars->willPowerState, service);
+		if (kIOPMAckImplied == ret) {
+			service->acknowledgeSetPowerState();
+		}
+		return kIOReturnSuccess;
+	}
+	return kIOReturnNotReady;
 }
 
 kern_return_t
@@ -3887,18 +5280,7 @@ IOService::SetPowerState_Impl(
 	if (kIODKLogPM & gIODKDebug) {
 		DKLOG(DKS "::SetPowerState(%d), %d\n", DKN(this), powerFlags, reserved->uvars->willPower);
 	}
-	if (reserved->uvars
-	    && reserved->uvars->userServer
-	    && reserved->uvars->willPower) {
-		IOReturn ret;
-		reserved->uvars->willPower = false;
-		ret = reserved->uvars->controllingDriver->setPowerState(reserved->uvars->willPowerState, this);
-		if (kIOPMAckImplied == ret) {
-			acknowledgeSetPowerState();
-		}
-		return kIOReturnSuccess;
-	}
-	return kIOReturnNotReady;
+	return ::acknowledgeSetPowerState(this);
 }
 
 kern_return_t
@@ -3913,11 +5295,48 @@ IOService::ChangePowerState_Impl(
 		changePowerStateToPriv(1);
 		break;
 	case kIOServicePowerCapabilityOn:
-		changePowerStateToPriv(2);
+		changePowerStateToPriv(kUserServerMaxPowerState);
 		break;
 	default:
 		return kIOReturnBadArgument;
 	}
+
+	return kIOReturnSuccess;
+}
+
+kern_return_t
+IOService::SetPowerOverride_Impl(
+	bool enable)
+{
+	kern_return_t ret;
+
+	if (enable) {
+		ret = powerOverrideOnPriv();
+	} else {
+		ret = powerOverrideOffPriv();
+	}
+
+	return ret == IOPMNoErr ? kIOReturnSuccess : kIOReturnError;
+}
+
+kern_return_t
+IOService::_ClaimSystemWakeEvent_Impl(
+	IOService          * device,
+	uint64_t             flags,
+	const char         * reason,
+	OSContainer        * details)
+{
+	IOPMrootDomain * rootDomain;
+	IOOptionBits     pmFlags;
+
+	rootDomain = getPMRootDomain();
+	if (!rootDomain) {
+		return kIOReturnNotReady;
+	}
+	if (os_convert_overflow(flags, &pmFlags)) {
+		return kIOReturnBadArgument;
+	}
+	rootDomain->claimSystemWakeEvent(device, pmFlags, reason, details);
 
 	return kIOReturnSuccess;
 }
@@ -3932,11 +5351,17 @@ IOService::Create_Impl(
 	IOService      * service;
 	OSString       * str;
 	const OSSymbol * sym;
-	OSObject       * prop;
-	OSDictionary   * properties;
+	OSObject       * prop = NULL;
+	OSObject       * moduleIdentifier = NULL;
+	OSObject       * userServerName = NULL;
+	OSDictionary   * properties = NULL;
+	OSDictionary   * copyProperties = NULL;
 	kern_return_t    ret;
 
 	if (provider != this) {
+		return kIOReturnUnsupported;
+	}
+	if (reserved == NULL || reserved->uvars == NULL) {
 		return kIOReturnUnsupported;
 	}
 
@@ -3944,27 +5369,53 @@ IOService::Create_Impl(
 	inst = NULL;
 	service = NULL;
 
-	prop = copyProperty(propertiesKey);
+	prop = reserved->uvars->originalProperties->getObject(propertiesKey);
+	if (!prop) {
+		return kIOReturnBadArgument;
+	}
+	prop->retain();
 	properties = OSDynamicCast(OSDictionary, prop);
-	assert(properties);
-	if (properties) {
-		str = OSDynamicCast(OSString, properties->getObject(gIOClassKey));
-		assert(str);
-		sym = OSSymbol::withString(str);
-		if (sym) {
-			inst = OSMetaClass::allocClassWithName(sym);
-			service = OSDynamicCast(IOService, inst);
-			if (service && service->init(properties) && service->attach(this)) {
-				reserved->uvars->userServer->serviceAttach(service, this);
-				service->reserved->uvars->started = true;
-				ret = kIOReturnSuccess;
-				*result = service;
-			}
-			OSSafeReleaseNULL(sym);
-		}
+	if (!properties) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+	copyProperties = OSDynamicCast(OSDictionary, properties->copyCollection());
+	if (!copyProperties) {
+		ret = kIOReturnNoMemory;
+		goto finish;
+	}
+	moduleIdentifier = copyProperty(gIOModuleIdentifierKey);
+	if (moduleIdentifier) {
+		copyProperties->setObject(gIOModuleIdentifierKey, moduleIdentifier);
+	}
+	userServerName = reserved->uvars->userServer->copyProperty(gIOUserServerNameKey);
+	if (userServerName) {
+		copyProperties->setObject(gIOUserServerNameKey, userServerName);
 	}
 
+	str = OSDynamicCast(OSString, copyProperties->getObject(gIOClassKey));
+	if (!str) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+	sym = OSSymbol::withString(str);
+	if (sym) {
+		inst = OSMetaClass::allocClassWithName(sym);
+		service = OSDynamicCast(IOService, inst);
+		if (service && service->init(copyProperties) && service->attach(this)) {
+			reserved->uvars->userServer->serviceAttach(service, this);
+			service->reserved->uvars->started = true;
+			ret = kIOReturnSuccess;
+			*result = service;
+		}
+		OSSafeReleaseNULL(sym);
+	}
+
+finish:
 	OSSafeReleaseNULL(prop);
+	OSSafeReleaseNULL(copyProperties);
+	OSSafeReleaseNULL(moduleIdentifier);
+	OSSafeReleaseNULL(userServerName);
 	if (kIOReturnSuccess != ret) {
 		OSSafeReleaseNULL(inst);
 	}
@@ -3983,8 +5434,8 @@ IOService::Terminate_Impl(
 	}
 
 	us = (typeof(us))thread_iokit_tls_get(0);
-	if (!reserved->uvars
-	    || (reserved->uvars->userServer != us)) {
+	if (us && (!reserved->uvars
+	    || (reserved->uvars->userServer != us))) {
 		return kIOReturnNotPermitted;
 	}
 	terminate(kIOServiceTerminateNeedWillTerminate);
@@ -4001,13 +5452,23 @@ IOService::NewUserClient_Impl(
 }
 
 kern_return_t
+IOService::_NewUserClient_Impl(
+	uint32_t type,
+	OSDictionary * entitlements,
+	IOUserClient ** userClient)
+{
+	return kIOReturnError;
+}
+
+kern_return_t
 IOService::SearchProperty_Impl(
 	const char * name,
 	const char * plane,
 	uint64_t options,
 	OSContainer ** property)
 {
-	OSObject   * object;
+	OSObject   * object __block;
+	IOService  * provider;
 	IOOptionBits regOptions;
 
 	if (kIOServiceSearchPropertyParents & options) {
@@ -4017,10 +5478,50 @@ IOService::SearchProperty_Impl(
 	}
 
 	object = copyProperty(name, IORegistryEntry::getPlane(plane), regOptions);
+
+	if (NULL == object) {
+		for (provider = this; provider; provider = provider->getProvider()) {
+			provider->runPropertyActionBlock(^IOReturn (void) {
+				OSDictionary * userProps;
+				object = provider->getProperty(name);
+				if (!object
+				&& (userProps = OSDynamicCast(OSDictionary, provider->getProperty(gIOUserServicePropertiesKey)))) {
+				        object = userProps->getObject(name);
+				}
+				if (object) {
+				        object->retain();
+				}
+				return kIOReturnSuccess;
+			});
+			if (object || !(kIORegistryIterateParents & regOptions)) {
+				break;
+			}
+		}
+	}
+
 	*property = object;
 
 	return object ? kIOReturnSuccess : kIOReturnNotFound;
 }
+
+kern_return_t
+IOService::StringFromReturn_Impl(
+	IOReturn retval,
+	OSString ** str)
+{
+	OSString *obj = OSString::withCString(stringFromReturn(retval));
+	*str = obj;
+	return obj ? kIOReturnSuccess : kIOReturnError;
+}
+
+#if PRIVATE_WIFI_ONLY
+const char *
+IOService::StringFromReturn(
+	IOReturn retval)
+{
+	return stringFromReturn(retval);
+}
+#endif /* PRIVATE_WIFI_ONLY */
 
 kern_return_t
 IOService::CopyProviderProperties_Impl(
@@ -4051,6 +5552,7 @@ IOService::CopyProviderProperties_Impl(
 			ret = kIOReturnNoMemory;
 			break;
 		}
+
 		bool __block addClass = true;
 		if (propertyKeys) {
 			OSDictionary * retProps;
@@ -4058,6 +5560,7 @@ IOService::CopyProviderProperties_Impl(
 			addClass = false;
 			if (!retProps) {
 				ret = kIOReturnNoMemory;
+				OSSafeReleaseNULL(props);
 				break;
 			}
 			propertyKeys->iterateObjects(^bool (OSObject * _key) {
@@ -4075,6 +5578,7 @@ IOService::CopyProviderProperties_Impl(
 		if (addClass) {
 			OSArray * classes = OSArray::withCapacity(8);
 			if (!classes) {
+				OSSafeReleaseNULL(props);
 				ret = kIOReturnNoMemory;
 				break;
 			}
@@ -4098,70 +5602,252 @@ IOService::CopyProviderProperties_Impl(
 	return ret;
 }
 
+IOReturn
+IOService::AdjustBusy_Impl(int32_t delta)
+{
+	adjustBusy(delta);
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOService::GetBusyState_Impl(uint32_t *busyState)
+{
+	*busyState = getBusyState();
+	return kIOReturnSuccess;
+}
+
+kern_return_t
+IOService::CreatePMAssertion_Impl(uint32_t assertionBits, uint64_t * assertionID, bool synced)
+{
+	*assertionID = kIOPMUndefinedDriverAssertionID;
+
+	if (!reserved->uvars || !reserved->uvars->userServer) {
+		return kIOReturnError;
+	}
+
+	return reserved->uvars->userServer->serviceCreatePMAssertion(this, assertionBits, assertionID, synced);
+}
+
+kern_return_t
+IOService::ReleasePMAssertion_Impl(uint64_t assertionID)
+{
+	if (!reserved->uvars || !reserved->uvars->userServer) {
+		return kIOReturnError;
+	}
+
+	return reserved->uvars->userServer->serviceReleasePMAssertion(this, assertionID);
+}
+
 void
-IOUserServer::systemPower(bool powerOff)
+IOUserServer::serverAck(void)
+{
+	IOServicePH::serverAck(this);
+}
+
+OSArray *
+IOUserServer::servicesWithPowerState(bool state)
+{
+	OSArray * result = OSArray::withCapacity(1);
+	if (!result) {
+		return NULL;
+	}
+	IOLockLock(fLock);
+	fServices->iterateObjects(^(OSObject * object) {
+		IOService * service = OSDynamicCast(IOService, object);
+		if (service && service->reserved->uvars->powerState == state) {
+		        result->setObject(service);
+		}
+		return false;
+	});
+	IOLockUnlock(fLock);
+	if (!result->getCount()) {
+		OSSafeReleaseNULL(result);
+	}
+	return result;
+}
+
+void
+IOUserServer::systemSuspend()
+{
+	if (fSystemOff && !fSuspended) {
+		KDBG(MACHDBG_CODE(DBG_MACH_SCHED, MACH_SUSPEND_DRIVERKIT_USERSPACE) | DBG_FUNC_START,
+		    task_pid(fOwningTask));
+		task_suspend_internal(fOwningTask);
+		DKLOG(DKS " did task_suspend_internal\n", DKN(this));
+		fSuspended = true;
+	}
+}
+
+void
+IOUserServer::systemPower(uint8_t systemState, bool hibernate)
 {
 	OSArray * services;
+	{
+		OSDictionary * sleepDescription;
+		OSObject     * prop;
 
-	if (kIODKLogPM & gIODKDebug) {
-		DKLOG("%s::powerOff(%d) 0x%qx\n", getName(), powerOff, fPowerStates);
+		sleepDescription = OSDictionary::withCapacity(3);
+		if (sleepDescription) {
+			prop = getPMRootDomain()->copyProperty(kRootDomainSleepReasonKey);
+			if (prop) {
+				sleepDescription->setObject(gIOSystemStateSleepDescriptionReasonKey, prop);
+				OSSafeReleaseNULL(prop);
+			}
+			prop = getPMRootDomain()->copyProperty(kIOHibernateStateKey);
+			if (prop) {
+				sleepDescription->setObject(gIOSystemStateSleepDescriptionHibernateStateKey, prop);
+				OSSafeReleaseNULL(prop);
+			}
+			if (hibernate) {
+				uint32_t correctHibernateState = kIOSystemStateSleepDescriptionHibernateStateHibernating;
+				OSData *correctHibernateStateData = OSData::withValue(correctHibernateState);
+				assert(correctHibernateStateData != NULL);
+				sleepDescription->setObject(gIOSystemStateSleepDescriptionHibernateStateKey, correctHibernateStateData);
+				OSSafeReleaseNULL(correctHibernateStateData);
+			}
+			getSystemStateNotificationService()->StateNotificationItemSet(gIOSystemStateSleepDescriptionKey, sleepDescription);
+			OSSafeReleaseNULL(sleepDescription);
+		}
+	}
+	if (!IsIOServiceSystemStateOff(systemState)) {
+		OSDictionary * wakeDescription;
+		OSObject     * prop;
+		char           wakeReasonString[128];
+
+		wakeDescription = OSDictionary::withCapacity(2);
+		if (wakeDescription) {
+			wakeReasonString[0] = 0;
+			getPMRootDomain()->copyWakeReasonString(wakeReasonString, sizeof(wakeReasonString));
+
+			if (wakeReasonString[0]) {
+				prop = OSString::withCString(&wakeReasonString[0]);
+				wakeDescription->setObject(gIOSystemStateWakeDescriptionWakeReasonKey, prop);
+				OSSafeReleaseNULL(prop);
+			}
+#if defined(__arm__) || defined(__arm64__)
+			prop = OSNumber::withNumber(ml_get_conttime_offset(), sizeof(uint64_t) * CHAR_BIT);
+			wakeDescription->setObject(gIOSystemStateWakeDescriptionContinuousTimeOffsetKey, prop);
+			OSSafeReleaseNULL(prop);
+#endif /* defined(__arm__) || defined(__arm64__) */
+			getSystemStateNotificationService()->StateNotificationItemSet(gIOSystemStateWakeDescriptionKey, wakeDescription);
+			OSSafeReleaseNULL(wakeDescription);
+		}
 	}
 
 	IOLockLock(fLock);
+
 	services = OSArray::withArray(fServices);
 
-	if (powerOff) {
-		fSystemPowerAck = (0 != fPowerStates);
+	bool allPowerStates __block = 0;
+	// any service on?
+	fServices->iterateObjects(^bool (OSObject * obj) {
+		int         service __unused;       // hide outer defn
+		IOService * nextService;
+		nextService = (IOService *) obj;
+		allPowerStates = nextService->reserved->uvars->powerState;
+		// early terminate if true
+		return allPowerStates;
+	});
+
+	// figure what phase this DK server process will be suspended in,
+	// and make sure its power changes complete before suspension
+
+	bool effectiveOff = IsIOServiceSystemStateOff(systemState) && !allPowerStates;
+	effectiveOff |= ((kIOServiceSystemStateOffPhase1 == systemState) && !fSystemOffPhase2Allow);
+	effectiveOff |= (kIOServiceSystemStateOffPhase2 == systemState);
+	effectiveOff |= ((kIOServiceSystemStateAOT == systemState) && !fAOTAllow);
+
+	DKLOG(DKS "::systemPower(0x%x) effective %d current %d\n", DKN(this), systemState, !effectiveOff, allPowerStates != 0);
+
+	if (effectiveOff) {
+		fSystemPowerAck = allPowerStates;
 		if (!fSystemPowerAck) {
 			fSystemOff = true;
 		}
 		IOLockUnlock(fLock);
 
 		if (!fSystemPowerAck) {
-			IOServicePH::serverAck(this);
+			serverAck();
 		} else {
 			if (services) {
 				services->iterateObjects(^bool (OSObject * obj) {
-					IOService * service;
-					service = (IOService *) obj;
+					int         service __unused;       // hide outer defn
+					IOService * nextService;
+					nextService = (IOService *) obj;
 					if (kIODKLogPM & gIODKDebug) {
-					        DKLOG("changePowerStateWithOverrideTo(" DKS ", %d)\n", DKN(service), 0);
+					        DKLOG("changePowerStateWithOverrideTo(" DKS ", %d)\n", DKN(nextService), 0);
 					}
-					service->reserved->uvars->powerOverride = service->getPowerState();
-					service->changePowerStateWithOverrideTo(0, 0);
+					nextService->reserved->uvars->powerOverride = nextService->reserved->uvars->userServerPM ? kUserServerMaxPowerState : nextService->getPowerState();
+					nextService->changePowerStateWithOverrideTo(0, 0);
 					return false;
 				});
 			}
 		}
-	} else {
+	} else if (fSystemOff) {
 		fSystemOff = false;
+
+		if (fSuspended) {
+			KDBG(MACHDBG_CODE(DBG_MACH_SCHED, MACH_SUSPEND_DRIVERKIT_USERSPACE) | DBG_FUNC_END,
+			    task_pid(fOwningTask));
+			task_resume_internal(fOwningTask);
+			DKLOG(DKS " did task_resume_internal\n", DKN(this));
+			fSuspended = false;
+		}
+
 		IOLockUnlock(fLock);
 		if (services) {
 			services->iterateObjects(^bool (OSObject * obj) {
-				IOService * service;
-				service = (IOService *) obj;
-				if (-1U != service->reserved->uvars->powerOverride) {
+				int         service __unused;       // hide outer defn
+				IOService * nextService;
+				nextService = (IOService *) obj;
+				if (-1U != nextService->reserved->uvars->powerOverride) {
 				        if (kIODKLogPM & gIODKDebug) {
-				                DKLOG("changePowerStateWithOverrideTo(" DKS ", %d)\n", DKN(service), service->reserved->uvars->powerOverride);
+				                DKLOG("%schangePowerStateWithOverrideTo(" DKS ", %d)\n", nextService->reserved->uvars->resetPowerOnWake ? "!" : "", DKN(nextService), nextService->reserved->uvars->powerOverride);
 					}
-				        service->changePowerStateWithOverrideTo(service->reserved->uvars->powerOverride, 0);
-				        service->reserved->uvars->powerOverride = -1U;
+				        if (!nextService->reserved->uvars->resetPowerOnWake) {
+				                nextService->changePowerStateWithOverrideTo(nextService->reserved->uvars->powerOverride, 0);
+					}
+				        nextService->reserved->uvars->powerOverride = -1U;
 				}
 				return false;
 			});
 		}
+	} else {
+		IOLockUnlock(fLock);
+		serverAck();
 	}
 	OSSafeReleaseNULL(services);
 }
 
-
 void
-IOUserServer::systemHalt(void)
+IOUserServer::systemHalt(int howto)
 {
 	OSArray * services;
 
 	if (true || (kIODKLogPM & gIODKDebug)) {
-		DKLOG("%s::systemHalt()\n", getName());
+		DKLOG(DKS "::systemHalt()\n", DKN(this));
+	}
+
+	{
+		OSDictionary * haltDescription;
+		OSNumber     * state;
+		uint64_t       haltStateFlags;
+
+		haltDescription = OSDictionary::withCapacity(4);
+		if (haltDescription) {
+			haltStateFlags = 0;
+			if (RB_HALT & howto) {
+				haltStateFlags |= kIOServiceHaltStatePowerOff;
+			} else {
+				haltStateFlags |= kIOServiceHaltStateRestart;
+			}
+			state = OSNumber::withNumber(haltStateFlags, 64);
+			haltDescription->setObject(gIOSystemStateHaltDescriptionHaltStateKey, state);
+			getSystemStateNotificationService()->StateNotificationItemSet(gIOSystemStateHaltDescriptionKey, haltDescription);
+
+			OSSafeReleaseNULL(state);
+			OSSafeReleaseNULL(haltDescription);
+		}
 	}
 
 	IOLockLock(fLock);
@@ -4170,27 +5856,34 @@ IOUserServer::systemHalt(void)
 
 	if (services) {
 		services->iterateObjects(^bool (OSObject * obj) {
-			IOService  * service;
+			int         service __unused;       // hide outer defn
+			IOService  * nextService;
 			IOService  * provider;
 			IOOptionBits terminateOptions;
 			bool         root;
 
-			service = (IOService *) obj;
-			provider = service->getProvider();
+			nextService = (IOService *) obj;
+			provider = nextService->getProvider();
 			if (!provider) {
-			        DKLOG("stale service " DKS " found, skipping termination\n", DKN(service));
+			        DKLOG("stale service " DKS " found, skipping termination\n", DKN(nextService));
 			        return false;
 			}
 			root = (NULL == provider->getProperty(gIOUserServerNameKey, gIOServicePlane));
 			if (true || (kIODKLogPM & gIODKDebug)) {
-			        DKLOG("%d: terminate(" DKS ")\n", root, DKN(service));
+			        DKLOG("%d: terminate(" DKS ")\n", root, DKN(nextService));
 			}
 			if (!root) {
 			        return false;
 			}
-			terminateOptions = kIOServiceRequired | kIOServiceTerminateNeedWillTerminate;
-			if (!service->terminate(terminateOptions)) {
-			        IOLog("failed to terminate service %s-0x%llx\n", service->getName(), service->getRegistryEntryID());
+			if (nextService->reserved && nextService->reserved->uvars) {
+			        if (nextService->reserved->uvars->started) {
+			                terminateOptions = kIOServiceRequired | kIOServiceTerminateNeedWillTerminate;
+			                if (!nextService->terminate(terminateOptions)) {
+			                        IOLog("failed to terminate service %s-0x%llx\n", nextService->getName(), nextService->getRegistryEntryID());
+					}
+				} else {
+			                IOLog("service %s-0x%llx not started, skipped termination\n", nextService->getName(), nextService->getRegistryEntryID());
+				}
 			}
 			return false;
 		});
@@ -4198,79 +5891,63 @@ IOUserServer::systemHalt(void)
 	OSSafeReleaseNULL(services);
 }
 
+void
+IOUserServer::powerSourceChanged(bool acAttached)
+{
+	OSDictionary * powerSourceDescription;
+
+	powerSourceDescription = OSDictionary::withCapacity(4);
+	if (!powerSourceDescription) {
+		return;
+	}
+	powerSourceDescription->setObject(gIOSystemStatePowerSourceDescriptionACAttachedKey, acAttached ? kOSBooleanTrue : kOSBooleanFalse);
+	getSystemStateNotificationService()->StateNotificationItemSet(gIOSystemStatePowerSourceDescriptionKey, powerSourceDescription);
+
+	OSSafeReleaseNULL(powerSourceDescription);
+}
+
 IOReturn
 IOUserServer::serviceStarted(IOService * service, IOService * provider, bool result)
 {
 	IOReturn    ret;
-	IOService * pmProvider;
-	bool        joinTree;
+	bool        needStop = false;
 
 	DKLOG(DKS "::start(" DKS ") %s\n", DKN(service), DKN(provider), result ? "ok" : "fail");
 
 	if (!result) {
+		if (!service->reserved->uvars->instantiated && provider) {
+			// Object instantiation did not happen. This can happen if,
+			// 1. Dext crashed, in which case the user server has been terminated when the task is marked as corpse
+			// 2. Kernel IOService failed start, and it did not attempt Start
+			// A rematch should be attempted for 1, not 2
+			bool shouldReRegister = true;
+			if (lockForArbitration()) {
+				shouldReRegister = (__state[0] & kIOServiceInactiveState);
+				unlockForArbitration();
+			}
+			if (shouldReRegister) {
+				provider->registerService(kIOServiceAsynchronous);
+			}
+		}
 		ret = kIOReturnSuccess;
 		return ret;
 	}
 
-	if (!fRootNotifier) {
-		ret = registerPowerDriver(this, sPowerStates, sizeof(sPowerStates) / sizeof(sPowerStates[0]));
-		assert(kIOReturnSuccess == ret);
-		IOServicePH::serverAdd(this);
-		fRootNotifier = true;
-	}
+	ret = serviceJoinPMTree(service);
 
-	joinTree = false;
-	if (!(kIODKDisablePM & gIODKDebug) && !service->pm_vars) {
-		service->PMinit();
-		ret = service->registerPowerDriver(this, sPowerStates, sizeof(sPowerStates) / sizeof(sPowerStates[0]));
-		assert(kIOReturnSuccess == ret);
-		joinTree = true;
-	}
-
-	pmProvider = service;
-	while (pmProvider && !pmProvider->inPlane(gIOPowerPlane)) {
-		pmProvider = pmProvider->getProvider();
-	}
-	if (pmProvider) {
-		IOService * entry;
-		OSObject  * prop;
-		OSObject  * nextProp;
-		OSString  * str;
-
-		entry = pmProvider;
-		prop  = NULL;
-		do {
-			nextProp = entry->copyProperty("non-removable");
-			if (nextProp) {
-				OSSafeReleaseNULL(prop);
-				prop = nextProp;
-			}
-			entry = entry->getProvider();
-		} while (entry);
-		if (prop) {
-			str = OSDynamicCast(OSString, prop);
-			if (str && str->isEqualTo("yes")) {
-				pmProvider = NULL;
-			}
-			prop->release();
-		}
-	}
-
-	if (!(kIODKDisablePM & gIODKDebug) && pmProvider) {
-		IOLockLock(fLock);
-		unsigned int idx = fServices->getNextIndexOfObject(service, 0);
-		assert(idx <= 63);
-		fPowerStates |= (1ULL << idx);
-		IOLockUnlock(fLock);
-
-		if (joinTree) {
-			pmProvider->joinPMtree(service);
-			service->reserved->uvars->userServerPM = true;
-		}
-	}
-
-	service->registerInterestedDriver(this);
+	IOLockLock(service->reserved->uvars->uvarsLock);
 	service->reserved->uvars->started = true;
+	needStop = service->reserved->uvars->needStop;
+	IOLockUnlock(service->reserved->uvars->uvarsLock);
+	if (needStop) {
+		serviceStop(service, provider);
+		return kIOReturnSuccess;
+	}
+
+	if (service->reserved->uvars->deferredRegisterService) {
+		service->registerService(kIOServiceAsynchronous | kIOServiceDextRequirePowerForMatching);
+		service->reserved->uvars->deferredRegisterService = false;
+	}
 
 	return kIOReturnSuccess;
 }
@@ -4280,15 +5957,25 @@ IOReturn
 IOUserServer::serviceOpen(IOService * provider, IOService * client)
 {
 	OSObjectUserVars * uvars;
+	IOReturn ret;
 
+	IOLockLock(client->reserved->uvars->uvarsLock);
 	uvars = client->reserved->uvars;
-	if (!uvars->openProviders) {
-		uvars->openProviders = OSArray::withObjects((const OSObject **) &provider, 1);
-	} else if (-1U == uvars->openProviders->getNextIndexOfObject(client, 0)) {
-		uvars->openProviders->setObject(provider);
+	if (uvars->willTerminate || uvars->stopped) {
+		DKLOG(DKS "- " DKS " blocked attempt to open " DKS "\n", DKN(this), DKN(client), DKN(provider));
+		ret = kIOReturnBadArgument;
+	} else {
+		if (!uvars->openProviders) {
+			uvars->openProviders = OSArray::withObjects((const OSObject **) &provider, 1);
+		} else if (-1U == uvars->openProviders->getNextIndexOfObject(provider, 0)) {
+			uvars->openProviders->setObject(provider);
+		}
+		ret = kIOReturnSuccess;
 	}
 
-	return kIOReturnSuccess;
+	IOLockUnlock(client->reserved->uvars->uvarsLock);
+
+	return ret;
 }
 
 IOReturn
@@ -4296,55 +5983,135 @@ IOUserServer::serviceClose(IOService * provider, IOService * client)
 {
 	OSObjectUserVars * uvars;
 	unsigned int       idx;
+	IOReturn           ret;
 
+	IOLockLock(client->reserved->uvars->uvarsLock);
 	uvars = client->reserved->uvars;
 	if (!uvars->openProviders) {
-		return kIOReturnNotOpen;
+		ret = kIOReturnNotOpen;
+		goto finish;
 	}
-	idx = uvars->openProviders->getNextIndexOfObject(client, 0);
+	idx = uvars->openProviders->getNextIndexOfObject(provider, 0);
 	if (-1U == idx) {
-		return kIOReturnNotOpen;
+		ret = kIOReturnNotOpen;
+		goto finish;
 	}
 	uvars->openProviders->removeObject(idx);
+	if (!uvars->openProviders->getCount()) {
+		OSSafeReleaseNULL(uvars->openProviders);
+	}
 
-	return kIOReturnSuccess;
+	ret = kIOReturnSuccess;
+
+finish:
+	IOLockUnlock(client->reserved->uvars->uvarsLock);
+	if (kIODKLogSetup & gIODKDebug) {
+		DKLOG(DKS "::serviceClose(" DKS ", " DKS ") -> %x\n", DKN(this), DKN(provider), DKN(client), ret);
+	}
+
+	return ret;
 }
 
 
 IOReturn
-IOUserServer::serviceStop(IOService * service, IOService *)
+IOUserServer::serviceStop(IOService * service, IOService *provider)
 {
 	IOReturn           ret;
-	uint32_t           idx, queueAlloc;
-	OSObjectUserVars * uvars;
+	uint32_t           idx;
+	bool               pmAck;
+	bool               deferred = false;
+	OSObjectUserVars * uvars = service->reserved->uvars;
 
+	IOLockLock(uvars->uvarsLock);
+	if (!uvars->started) {
+		// started will be set, at a later point
+		uvars->needStop = true;
+		deferred = true;
+	}
+	IOLockUnlock(uvars->uvarsLock);
+	if (deferred) {
+		return kIOReturnSuccess;
+	}
+
+	pmAck = false;
 	IOLockLock(fLock);
 	idx = fServices->getNextIndexOfObject(service, 0);
 	if (-1U != idx) {
 		fServices->removeObject(idx);
-		uvars = service->reserved->uvars;
+
+		// Remove the service from IOAssociatedServices
+		OSObject * serviceArrayObj = copyProperty(gIOAssociatedServicesKey);
+		OSArray * serviceArray = OSDynamicCast(OSArray, serviceArrayObj);
+		assert(serviceArray != NULL);
+
+		serviceArray = OSDynamicCast(OSArray, serviceArray->copyCollection());
+		assert(serviceArray != NULL);
+
+		// Index should be the same as it was in fServices
+		OSNumber * __assert_only registryEntryID = OSDynamicCast(OSNumber, serviceArray->getObject(idx));
+		assert(registryEntryID);
+
+		// ensure it is the right service
+		assert(registryEntryID->unsigned64BitValue() == service->getRegistryEntryID());
+		serviceArray->removeObject(idx);
+
+		setProperty(gIOAssociatedServicesKey, serviceArray);
+		OSSafeReleaseNULL(serviceArray);
+		OSSafeReleaseNULL(serviceArrayObj);
+
 		uvars->stopped = true;
+		uvars->powerState = 0;
+
+		bool allPowerStates __block = 0;
+		// any service on?
+		fServices->iterateObjects(^bool (OSObject * obj) {
+			int         service __unused;       // hide outer defn
+			IOService * nextService;
+			nextService = (IOService *) obj;
+			allPowerStates = nextService->reserved->uvars->powerState;
+			// early terminate if true
+			return allPowerStates;
+		});
+
+		if (!allPowerStates && (pmAck = fSystemPowerAck)) {
+			fSystemPowerAck = false;
+			fSystemOff      = true;
+		}
 	}
 	IOLockUnlock(fLock);
-
-	if (-1U == idx) {
-		return kIOReturnSuccess;
+	if (pmAck) {
+		serverAck();
 	}
 
-	if (uvars->queueArray && uvars->userMeta) {
-		queueAlloc = 1;
-		if (uvars->userMeta->queueNames) {
-			queueAlloc += uvars->userMeta->queueNames->count;
+	if (-1U == idx) {
+		if (kIODKLogSetup & gIODKDebug) {
+			DKLOG(DKS "::serviceStop(" DKS ", " DKS "): could not find service\n", DKN(this), DKN(service), DKN(provider));
 		}
-		for (idx = 0; idx < queueAlloc; idx++) {
-			OSSafeReleaseNULL(uvars->queueArray[idx]);
-		}
-		IOSafeDeleteNULL(uvars->queueArray, IODispatchQueue *, queueAlloc);
+		return kIOReturnSuccess;
 	}
 
 	(void) service->deRegisterInterestedDriver(this);
 	if (uvars->userServerPM) {
+		IOPMrootDomain * rootDomain = getPMRootDomain();
 		service->PMstop();
+		service->acknowledgeSetPowerState();
+		if (uvars->pmAssertions) {
+			uvars->pmAssertions->iterateObjects(^(OSObject * obj) {
+				rootDomain->releasePMAssertion(((OSNumber *)obj)->unsigned64BitValue());
+				return false;
+			});
+			OSSafeReleaseNULL(uvars->pmAssertions);
+		}
+		if (uvars->pmAssertionsSynced) {
+			uvars->pmAssertionsSynced->iterateObjects(^(OSObject * obj) {
+				rootDomain->releaseDriverKitSyncedAssertion(((OSNumber *)obj)->unsigned64BitValue());
+				return false;
+			});
+			OSSafeReleaseNULL(uvars->pmAssertionsSynced);
+		}
+	}
+	if (kIODKLogSetup & gIODKDebug) {
+		DKLOG(DKS "::serviceStop(" DKS ", " DKS ")\n", DKN(this), DKN(service), DKN(provider));
 	}
 
 	ret = kIOReturnSuccess;
@@ -4355,13 +6122,29 @@ void
 IOUserServer::serviceFree(IOService * service)
 {
 	OSObjectUserVars * uvars;
+	uint32_t idx, queueAlloc;
+	IODispatchQueue ** unboundedQueueArray = NULL;
 
 	uvars = service->reserved->uvars;
 	if (!uvars) {
 		return;
 	}
+	if (uvars->queueArray && uvars->userMeta) {
+		queueAlloc = 1;
+		if (uvars->userMeta->queueNames) {
+			queueAlloc += uvars->userMeta->queueNames->count;
+		}
+		for (idx = 0; idx < queueAlloc; idx++) {
+			OSSafeReleaseNULL(uvars->queueArray[idx]);
+		}
+		unboundedQueueArray = uvars->queueArray.data();
+		IOSafeDeleteNULL(unboundedQueueArray, IODispatchQueue *, queueAlloc);
+		uvars->queueArray = OSBoundedArrayRef<IODispatchQueue *>();
+	}
 	OSSafeReleaseNULL(uvars->userServer);
-	IOSafeDeleteNULL(service->reserved->uvars, OSObjectUserVars, 1);
+	IOLockFree(uvars->uvarsLock);
+	OSSafeReleaseNULL(service->reserved->uvars->originalProperties);
+	IOFreeType(service->reserved->uvars, OSObjectUserVars);
 }
 
 void
@@ -4371,21 +6154,32 @@ IOUserServer::serviceWillTerminate(IOService * client, IOService * provider, IOO
 	bool     willTerminate;
 
 	willTerminate = false;
-	if (client->lockForArbitration(true)) {
-		if (!client->reserved->uvars->serverDied
-		    && !client->reserved->uvars->willTerminate) {
-			client->reserved->uvars->willTerminate = true;
-			willTerminate = true;
-		}
-		client->unlockForArbitration();
+	IOLockLock(client->reserved->uvars->uvarsLock);
+	if (!client->reserved->uvars->serverDied
+	    && !client->reserved->uvars->willTerminate) {
+		client->reserved->uvars->willTerminate = true;
+		willTerminate = true;
+	}
+	IOLockUnlock(client->reserved->uvars->uvarsLock);
+	if (kIODKLogSetup & gIODKDebug) {
+		DKLOG("serviceWillTerminate(" DKS ", " DKS ")\n", DKN(client), DKN(provider));
 	}
 
 	if (willTerminate) {
 		if (provider->isInactive() || IOServicePH::serverSlept()) {
+			if (kIODKLogIPC & gIODKDebug) {
+				DKLOG(DKS "->Stop_async(" DKS ")\n", DKN(client), DKN(provider));
+			}
 			client->Stop_async(provider);
 			ret = kIOReturnOffline;
 		} else {
+			if (kIODKLogIPC & gIODKDebug) {
+				DKLOG(DKS "->Stop(" DKS ")\n", DKN(client), DKN(provider));
+			}
 			ret = client->Stop(provider);
+			if (kIODKLogIPC & gIODKDebug) {
+				DKLOG(DKS "->Stop(" DKS ") returned %x\n", DKN(client), DKN(provider), ret);
+			}
 		}
 		if (kIOReturnSuccess != ret) {
 			IOUserServer::serviceDidStop(client, provider);
@@ -4397,13 +6191,15 @@ IOUserServer::serviceWillTerminate(IOService * client, IOService * provider, IOO
 void
 IOUserServer::serviceDidTerminate(IOService * client, IOService * provider, IOOptionBits options, bool * defer)
 {
-	if (client->lockForArbitration(true)) {
-		client->reserved->uvars->didTerminate = true;
-		if (!client->reserved->uvars->serverDied
-		    && !client->reserved->uvars->stopped) {
-			*defer = true;
-		}
-		client->unlockForArbitration();
+	IOLockLock(client->reserved->uvars->uvarsLock);
+	client->reserved->uvars->didTerminate = true;
+	if (!client->reserved->uvars->serverDied
+	    && !client->reserved->uvars->stopped) {
+		*defer = true;
+	}
+	IOLockUnlock(client->reserved->uvars->uvarsLock);
+	if (kIODKLogSetup & gIODKDebug) {
+		DKLOG("serviceDidTerminate(" DKS ", " DKS ") -> defer %d\n", DKN(client), DKN(provider), *defer);
 	}
 }
 
@@ -4416,32 +6212,37 @@ IOUserServer::serviceDidStop(IOService * client, IOService * provider)
 	complete = false;
 	closeArray = NULL;
 
-	if (client->lockForArbitration(true)) {
-		if (client->reserved->uvars
-		    && client->reserved->uvars->willTerminate
-		    && !client->reserved->uvars->stopped) {
-			client->reserved->uvars->stopped = true;
-			complete = client->reserved->uvars->didTerminate;
-		}
-
-		if (client->reserved->uvars) {
-			closeArray = client->reserved->uvars->openProviders;
-			client->reserved->uvars->openProviders = NULL;
-		}
-		client->unlockForArbitration();
-		if (closeArray) {
-			closeArray->iterateObjects(^bool (OSObject * obj) {
-				IOService * toClose;
-				toClose = OSDynamicCast(IOService, obj);
-				if (toClose) {
-				        DKLOG(DKS ":force close (" DKS ")\n", DKN(client), DKN(toClose));
-				        toClose->close(client);
-				}
-				return false;
-			});
-			closeArray->release();
-		}
+	IOLockLock(client->reserved->uvars->uvarsLock);
+	if (client->reserved->uvars
+	    && client->reserved->uvars->willTerminate
+	    && !client->reserved->uvars->stopped) {
+		client->reserved->uvars->stopped = true;
+		complete = client->reserved->uvars->didTerminate;
 	}
+
+	if (client->reserved->uvars) {
+		closeArray = client->reserved->uvars->openProviders;
+		client->reserved->uvars->openProviders = NULL;
+	}
+	IOLockUnlock(client->reserved->uvars->uvarsLock);
+
+	if (kIODKLogSetup & gIODKDebug) {
+		DKLOG("serviceDidStop(" DKS ", " DKS ") -> complete %d\n", DKN(client), DKN(provider), complete);
+	}
+
+	if (closeArray) {
+		closeArray->iterateObjects(^bool (OSObject * obj) {
+			IOService * toClose;
+			toClose = OSDynamicCast(IOService, obj);
+			if (toClose) {
+			        DKLOG(DKS ":force close (" DKS ")\n", DKN(client), DKN(toClose));
+			        toClose->close(client);
+			}
+			return false;
+		});
+		closeArray->release();
+	}
+
 	if (complete) {
 		bool defer = false;
 		client->didTerminate(provider, 0, &defer);
@@ -4480,6 +6281,40 @@ OSDefineMetaClassAndStructors(IOUserUserClient, IOUserClient)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+bool
+IOUserUserClient::init(OSDictionary * properties)
+{
+	if (!super::init(properties)) {
+		return false;
+	}
+
+	fWorkGroups = OSDictionary::withCapacity(0);
+	if (fWorkGroups == NULL) {
+		return false;
+	}
+
+	fEventLinks = OSDictionary::withCapacity(0);
+	if (fEventLinks == NULL) {
+		return false;
+	}
+
+	fLock = IOLockAlloc();
+
+	return true;
+}
+
+void
+IOUserUserClient::free()
+{
+	OSSafeReleaseNULL(fWorkGroups);
+	OSSafeReleaseNULL(fEventLinks);
+	if (fLock) {
+		IOLockFree(fLock);
+	}
+
+	super::free();
+}
+
 IOReturn
 IOUserUserClient::setTask(task_t task)
 {
@@ -4512,6 +6347,161 @@ IOUserUserClient::setProperties(OSObject * properties)
 	IOReturn ret = kIOReturnUnsupported;
 	return ret;
 }
+
+// p1 - name of object
+// p2 - length of object name
+// p3 - mach port name
+
+kern_return_t
+IOUserUserClient::eventlinkConfigurationTrap(void * p1, void * p2, void * p3, void * p4, void * p5, void * p6)
+{
+	user_addr_t userObjectName = (user_addr_t)p1;
+	mach_port_name_t portName = (mach_port_name_t)(uintptr_t)p3;
+	mach_port_t port = MACH_PORT_NULL;
+	char eventlinkName[kIOEventLinkMaxNameLength + 1] = {0};
+	size_t eventLinkNameLen;
+	OSString * eventlinkNameStr = NULL; // must release
+	IOEventLink * eventLink = NULL; // do not release
+	kern_return_t ret;
+
+	ret = copyinstr(userObjectName, &eventlinkName[0], sizeof(eventlinkName), &eventLinkNameLen);
+	if (ret != kIOReturnSuccess) {
+		goto finish;
+	}
+
+	// ensure string length matches trap argument
+	if (eventLinkNameLen != (size_t)p2 + 1) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	eventlinkNameStr = OSString::withCStringNoCopy(eventlinkName);
+	if (eventlinkNameStr == NULL) {
+		ret = kIOReturnNoMemory;
+		goto finish;
+	}
+
+	IOLockLock(fLock);
+	eventLink = OSDynamicCast(IOEventLink, fEventLinks->getObject(eventlinkNameStr));
+	if (eventLink) {
+		eventLink->retain();
+	}
+	IOLockUnlock(fLock);
+
+	if (eventLink == NULL) {
+		ret = kIOReturnNotFound;
+		goto finish;
+	}
+
+	ret = iokit_lookup_raw_current_task(portName, IKOT_EVENTLINK, &port);
+	if (ret != kIOReturnSuccess) {
+		goto finish;
+	}
+
+	ret = eventLink->SetEventlinkPort(port);
+	if (ret != kIOReturnSuccess) {
+		if (kIODKLogSetup & gIODKDebug) {
+			DKLOG(DKS " %s SetEventlinkPort() returned %x\n", DKN(this), eventlinkNameStr->getCStringNoCopy(), ret);
+		}
+		goto finish;
+	}
+
+finish:
+	if (port != NULL) {
+		iokit_release_port_send(port);
+	}
+
+	OSSafeReleaseNULL(eventlinkNameStr);
+	OSSafeReleaseNULL(eventLink);
+
+	return ret;
+}
+
+kern_return_t
+IOUserUserClient::workgroupConfigurationTrap(void * p1, void * p2, void * p3, void * p4, void * p5, void * p6)
+{
+	user_addr_t userObjectName = (user_addr_t)p1;
+	mach_port_name_t portName = (mach_port_name_t)(uintptr_t)p3;
+	mach_port_t port = MACH_PORT_NULL;
+	char workgroupName[kIOWorkGroupMaxNameLength + 1] = {0};
+	size_t workgroupNameLen;
+	OSString * workgroupNameStr = NULL; // must release
+	IOWorkGroup * workgroup = NULL; // do not release
+	kern_return_t ret;
+
+	ret = copyinstr(userObjectName, &workgroupName[0], sizeof(workgroupName), &workgroupNameLen);
+	if (ret != kIOReturnSuccess) {
+		goto finish;
+	}
+
+	// ensure string length matches trap argument
+	if (workgroupNameLen != (size_t)p2 + 1) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	workgroupNameStr = OSString::withCStringNoCopy(workgroupName);
+	if (workgroupNameStr == NULL) {
+		ret = kIOReturnNoMemory;
+		goto finish;
+	}
+
+	IOLockLock(fLock);
+	workgroup = OSDynamicCast(IOWorkGroup, fWorkGroups->getObject(workgroupNameStr));
+	if (workgroup) {
+		workgroup->retain();
+	}
+	IOLockUnlock(fLock);
+
+	if (workgroup == NULL) {
+		ret = kIOReturnNotFound;
+		goto finish;
+	}
+
+	ret = iokit_lookup_raw_current_task(portName, IKOT_WORK_INTERVAL, &port);
+	if (ret != kIOReturnSuccess) {
+		goto finish;
+	}
+
+	ret = workgroup->SetWorkGroupPort(port);
+	if (ret != kIOReturnSuccess) {
+		if (kIODKLogSetup & gIODKDebug) {
+			DKLOG(DKS " %s SetWorkGroupPort() returned %x\n", DKN(this), workgroupNameStr->getCStringNoCopy(), ret);
+		}
+		goto finish;
+	}
+
+finish:
+
+	if (port != NULL) {
+		iokit_release_port_send(port);
+	}
+
+	OSSafeReleaseNULL(workgroupNameStr);
+	OSSafeReleaseNULL(workgroup);
+
+	return ret;
+}
+
+IOExternalTrap *
+IOUserUserClient::getTargetAndTrapForIndex( IOService **targetP, UInt32 index )
+{
+	static const OSBoundedArray<IOExternalTrap, 2> trapTemplate = {{
+									       { NULL, (IOTrap) & IOUserUserClient::eventlinkConfigurationTrap},
+									       { NULL, (IOTrap) & IOUserUserClient::workgroupConfigurationTrap},
+								       }};
+	if (index >= trapTemplate.size()) {
+		return NULL;
+	}
+	*targetP = this;
+	return (IOExternalTrap *)&trapTemplate[index];
+}
+
+kern_return_t
+IOUserClient::CopyClientEntitlements_Impl(OSDictionary ** entitlements)
+{
+	return kIOReturnUnsupported;
+};
 
 struct IOUserUserClientActionRef {
 	OSAsyncReference64 asyncRef;
@@ -4584,6 +6574,7 @@ IOUserUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * 
 	uint64_t   structureOutputSize;
 	OSAction                  * action;
 	IOUserUserClientActionRef * ref;
+	mach_port_t wake_port = MACH_PORT_NULL;
 
 	kr             = kIOReturnUnsupported;
 	structureInput = NULL;
@@ -4596,7 +6587,7 @@ IOUserUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * 
 
 	if (MACH_PORT_NULL != args->asyncWakePort) {
 		// this retain is for the OSAction to release
-		iokit_make_port_send(args->asyncWakePort);
+		wake_port = ipc_port_make_send_mqueue(args->asyncWakePort);
 		kr = CreateActionKernelCompletion(sizeof(IOUserUserClientActionRef), &action);
 		assert(KERN_SUCCESS == kr);
 		ref = (typeof(ref))action->GetReference();
@@ -4630,16 +6621,7 @@ IOUserUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * 
 	OSSafeReleaseNULL(structureInput);
 	OSSafeReleaseNULL(action);
 
-	if (kIOReturnSuccess != kr) {
-		// mig will destroy any async port
-		return kr;
-	}
-	if (MACH_PORT_NULL != args->asyncWakePort) {
-		// this release is for the mig created send right
-		iokit_release_port_send(args->asyncWakePort);
-	}
-
-	if (structureOutput) {
+	if (kr == kIOReturnSuccess && structureOutput) {
 		if (args->structureVariableOutputData) {
 			*args->structureVariableOutputData = structureOutput;
 		} else {
@@ -4654,44 +6636,1412 @@ IOUserUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments * 
 		}
 	}
 
+	if (kIOReturnSuccess != kr) {
+		// mig will destroy any async port
+		return kr;
+	}
+
+	// We must never return error after this point in order to preserve MIG ownership semantics
+	assert(kr == kIOReturnSuccess);
+	if (MACH_PORT_NULL != wake_port) {
+		// this release is for the mig created send right
+		iokit_release_port_send(wake_port);
+	}
+
 	return kr;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-void
-IOUserServerCheckInToken::setNoSendersNotification(IOUserServerCheckInNotificationHandler handler,
+/*
+ * IOUserServerCheckInToken state machine
+ *
+ *         token
+ *        creation
+ *            |
+ *            |
+ *            v            dext
+ *      +-----------+    check-in    +-----------+
+ *      |  Pending  +--------------->| Complete  |
+ *      +-----+-----+                +-----+-----+
+ *            |                            |
+ * dext crash |                            |  dext crash
+ *   before   |                            | before server
+ *  check-in  |                            | registration
+ *            |      +-----------+         |
+ *            +----->| Canceled  |<--------+
+ *                   +-----------+
+ */
+
+extern IORecursiveLock               * gDriverKitLaunchLock;
+extern OSSet                         * gDriverKitLaunches;
+
+_IOUserServerCheckInCancellationHandler *
+IOUserServerCheckInToken::setCancellationHandler(IOUserServerCheckInCancellationHandler handler,
     void* handlerArgs)
 {
-	this->handler = handler;
-	this->handlerArgs = handlerArgs;
-}
-
-void
-IOUserServerCheckInToken::notifyNoSenders(IOUserServerCheckInToken *token)
-{
-	if (token->handler) {
-		token->handler(token, token->handlerArgs);
+	_IOUserServerCheckInCancellationHandler * handlerObj = _IOUserServerCheckInCancellationHandler::withHandler(handler, handlerArgs);
+	if (!handlerObj) {
+		goto finish;
 	}
+
+	IORecursiveLockLock(gDriverKitLaunchLock);
+
+	if (fState == kIOUserServerCheckInCanceled) {
+		// Send cancel notification if we set the handler after this was canceled
+		handlerObj->call(this);
+	} else if (fState == kIOUserServerCheckInPending) {
+		fHandlers->setObject(handlerObj);
+	}
+
+	IORecursiveLockUnlock(gDriverKitLaunchLock);
+
+finish:
+	return handlerObj;
 }
 
 void
-IOUserServerCheckInToken::clearNotification()
+IOUserServerCheckInToken::removeCancellationHandler(_IOUserServerCheckInCancellationHandler * handler)
 {
-	this->handler = NULL;
-	this->handlerArgs = NULL;
+	IORecursiveLockLock(gDriverKitLaunchLock);
+
+	fHandlers->removeObject(handler);
+
+	IORecursiveLockUnlock(gDriverKitLaunchLock);
 }
 
-IOUserServerCheckInToken *
-IOUserServerCheckInToken::create()
+void
+IOUserServerCheckInToken::cancel()
 {
-	IOUserServerCheckInToken *me = new IOUserServerCheckInToken;
-	if (me && !me->init()) {
-		me->release();
+	IORecursiveLockLock(gDriverKitLaunchLock);
+
+	if (fState != kIOUserServerCheckInCanceled) {
+		// Move the state to canceled even if the token has completed
+		// This is to cover the gap between dext check-in and the registration of user server
+		// Cancellation listeners must be informed of a crash in between
+		fState = kIOUserServerCheckInCanceled;
+
+		if (gDriverKitLaunches != NULL) {
+			// Remove pending launch from list, if we have not shut down yet.
+			gDriverKitLaunches->removeObject(this);
+		}
+
+		fHandlers->iterateObjects(^bool (OSObject * obj){
+			_IOUserServerCheckInCancellationHandler * handlerObj = OSDynamicCast(_IOUserServerCheckInCancellationHandler, obj);
+			if (handlerObj) {
+			        handlerObj->call(this);
+			}
+			return false;
+		});
+		fHandlers->flushCollection();
+	}
+
+	IORecursiveLockUnlock(gDriverKitLaunchLock);
+}
+
+IOReturn
+IOUserServerCheckInToken::complete()
+{
+	IOReturn ret;
+	IORecursiveLockLock(gDriverKitLaunchLock);
+
+	if (fState == kIOUserServerCheckInCanceled) {
+		ret = kIOReturnError;
+	} else {
+		ret = kIOReturnSuccess;
+	}
+
+	if (fState == kIOUserServerCheckInPending) {
+		fState = kIOUserServerCheckInComplete;
+		if (gDriverKitLaunches != NULL) {
+			// Remove pending launch from list, if we have not shut down yet.
+			gDriverKitLaunches->removeObject(this);
+		}
+
+		// Do not flush the cancellation handlers, as we might still trigger them
+	}
+
+	IORecursiveLockUnlock(gDriverKitLaunchLock);
+	return ret;
+}
+
+bool
+IOUserServerCheckInToken::init(const OSSymbol * serverName, OSNumber * serverTag, OSKext *driverKext, OSData *serverDUI)
+{
+	if (!OSObject::init()) {
+		return false;
+	}
+
+	if (!serverName) {
+		return false;
+	}
+	fServerName = serverName;
+	fServerName->retain();
+
+	if (!serverTag) {
+		return false;
+	}
+	fServerTag = serverTag;
+	fServerTag->retain();
+
+	fHandlers = OSSet::withCapacity(0);
+	if (!fHandlers) {
+		return false;
+	}
+
+	fState = kIOUserServerCheckInPending;
+
+	fKextBundleID = NULL;
+	fNeedDextDec = false;
+
+	fExecutableName = NULL;
+
+	if (driverKext) {
+		fExecutableName = OSDynamicCast(OSSymbol, driverKext->getBundleExecutable());
+
+		if (fExecutableName) {
+			fExecutableName->retain();
+		}
+
+		/*
+		 * We need to keep track of how many dexts we have started.
+		 * For every new dext we are going to create a new token, and
+		 * we consider the token creation as the initial step to
+		 * create a dext as it is the data structure that will back up
+		 * the userspace dance to start a dext.
+		 * We later have to decrement only once per token.
+		 * If no error occurs we consider the finalize() call on IOUserServer
+		 * as the moment in which we do not consider the dext "alive" anymore;
+		 * however in case of errors we will still need to decrement the count
+		 * otherwise upgrades of the dext will never make progress.
+		 */
+		if (OSKext::incrementDextLaunchCount(driverKext, serverDUI)) {
+			/*
+			 * If fKext holds a pointer,
+			 * it is the indication that a decrements needs
+			 * to be called.
+			 */
+			fNeedDextDec = true;
+			fKextBundleID = OSDynamicCast(OSString, driverKext->getIdentifier());
+			fKextBundleID->retain();
+		} else {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+ * Returns if the dext can be re-used
+ * for matching.
+ */
+bool
+IOUserServerCheckInToken::dextTerminate(void)
+{
+	bool ret = true;
+
+	if (fNeedDextDec == true) {
+		/*
+		 * We can decrement DextLaunchCount only
+		 * once per token.
+		 */
+		ret = !(OSKext::decrementDextLaunchCount(fKextBundleID));
+		fNeedDextDec = false;
+	}
+
+	return ret;
+}
+
+void
+IOUserServerCheckInToken::free()
+{
+	OSSafeReleaseNULL(fServerName);
+	OSSafeReleaseNULL(fServerTag);
+	OSSafeReleaseNULL(fExecutableName);
+	OSSafeReleaseNULL(fHandlers);
+	if (fKextBundleID != NULL) {
+		dextTerminate();
+		OSSafeReleaseNULL(fKextBundleID);
+	}
+
+	OSObject::free();
+}
+
+const OSSymbol *
+IOUserServerCheckInToken::copyServerName() const
+{
+	fServerName->retain();
+	return fServerName;
+}
+
+OSNumber *
+IOUserServerCheckInToken::copyServerTag() const
+{
+	fServerTag->retain();
+	return fServerTag;
+}
+
+/*
+ * Wait for a IOUserServer to check in
+ */
+
+static
+__attribute__((noinline, not_tail_called))
+IOUserServer *
+__WAITING_FOR_USER_SERVER__(IOUserServerCheckInToken * token, uint64_t * timeoutMS)
+{
+	IOUserServer * result = NULL;
+	IOService * server = NULL;
+	const OSSymbol * serverName = token->copyServerName();
+	OSNumber       * serverTag = token->copyServerTag();
+	OSDictionary   * matching = IOService::serviceMatching(gIOUserServerClassKey);
+	uint64_t         startTime = 0, endTime = 0;
+
+	if (!matching || !serverName || !serverTag) {
+		goto finish;
+	}
+	IOService::propertyMatching(gIOUserServerNameKey, serverName, matching);
+	if (!(kIODKDisableDextTag & gIODKDebug)) {
+		IOService::propertyMatching(gIOUserServerTagKey, serverTag, matching);
+	}
+
+	absolutetime_to_nanoseconds(mach_absolute_time(), &startTime);
+	startTime /= NSEC_PER_MSEC;
+	server = IOService::waitForMatchingServiceWithToken(matching, (*timeoutMS) * NSEC_PER_MSEC, token);
+	result = OSDynamicCast(IOUserServer, server);
+	if (!result) {
+		// Calculate the remaining timeout if the server isn't registered
+		OSSafeReleaseNULL(server);
+		token->cancel();
+		absolutetime_to_nanoseconds(mach_absolute_time(), &endTime);
+		endTime /= NSEC_PER_MSEC;
+		if (endTime > startTime) {
+			if (os_sub_overflow(*timeoutMS, endTime - startTime, timeoutMS)) {
+				*timeoutMS = 0;
+			}
+		}
+	}
+
+finish:
+	OSSafeReleaseNULL(matching);
+	OSSafeReleaseNULL(serverName);
+	OSSafeReleaseNULL(serverTag);
+
+	return result;
+}
+
+IOUserServer *
+IOUserServer::launchUserServer(IOService * provider, IOService * service, OSString * bundleID, const OSSymbol * serverName, OSNumber * serverTag, bool reuseIfExists, OSData *serverDUI)
+{
+	IOUserServer *me = NULL, *providerServer = NULL;
+	IOUserServerCheckInToken * token = NULL;
+	OSDictionary * matching = NULL;  // must release
+	OSKext * driverKext = NULL; // must release
+	OSDextStatistics * driverStatistics = NULL; // must release
+	bool reslide = false;
+	uint32_t retries = kIOUserServerCheckInMaxRetry;
+	uint64_t timeRemainingMS = kIOUserServerCheckInTimeoutMSecs;
+
+	/* TODO: Check we are looking for same dextID
+	 * and if it is not the same
+	 * restart the matching process.
+	 */
+	driverKext = OSKext::lookupDextWithIdentifier(bundleID, serverDUI);
+	if (driverKext != NULL) {
+		driverStatistics = driverKext->copyDextStatistics();
+		if (driverStatistics == NULL) {
+			panic("Kext %s was not a DriverKit OSKext", bundleID->getCStringNoCopy());
+		}
+		IOLog("Driver %s has crashed %zu time(s)\n", bundleID->getCStringNoCopy(), driverStatistics->getCrashCount());
+		reslide = driverStatistics->getCrashCount() > 0;
+	} else {
+		DKLOG("Could not find OSKext for %s\n", bundleID->getCStringNoCopy());
 		return NULL;
 	}
-	me->clearNotification();
+
+	if (reuseIfExists) {
+		const char * serverNameCStr;
+		const char * bundleIDCStr;
+		const char * endOrgCStr;
+
+		serverNameCStr = serverName->getCStringNoCopy();
+		bundleIDCStr = bundleID->getCStringNoCopy();
+		(endOrgCStr = strchr(bundleIDCStr, '.')) && (endOrgCStr = strchr(endOrgCStr + 1, '.'));
+		reuseIfExists = endOrgCStr && (0 == strncmp(bundleIDCStr, serverNameCStr, endOrgCStr + 1 - bundleIDCStr));
+		if (!reuseIfExists) {
+			IOLog(kIOUserServerNameKey " \"%s\" not correct organization for bundleID \"%s\"\n", serverNameCStr, bundleIDCStr);
+		}
+	}
+
+	if (reuseIfExists) {
+		// Check provider's user server, if exists
+		if (provider->reserved && provider->reserved->uvars && (providerServer = provider->reserved->uvars->userServer) != NULL) {
+			OSString * providerServerName = OSDynamicCast(OSString, providerServer->getProperty(gIOUserServerNameKey));
+			if (providerServerName && providerServerName->isEqualTo(serverName)) {
+				// Reuse is required
+
+				DKLOG("using existing server " DKS " from provider " DKS "\n", DKN(providerServer), DKN(provider));
+
+				// If provider has the user server that we are supposed to reuse, and it has become inactive
+				// start of this service should simply fail
+				// If the user server become inactive after this check, start should fail at a later stage
+				if (!providerServer->isInactive()) {
+					providerServer->retain();
+					me = providerServer;
+				} else {
+					DKLOG(DKS " cannot reuse inactive server\n", DKN(service));
+					// Must not create a token as reuse is required
+				}
+				goto finish;
+			}
+		}
+	}
+
+	do {
+		const OSSymbol * tokenServerName;
+		OSNumber * tokenServerTag;
+
+		IORecursiveLockLock(gDriverKitLaunchLock);
+
+		if (gDriverKitLaunches == NULL) {
+			// About to shut down, don't launch anything
+			IORecursiveLockUnlock(gDriverKitLaunchLock);
+			goto finish;
+		}
+
+		// Find existing server
+		if (reuseIfExists) {
+			token = IOUserServerCheckInToken::findExistingToken(serverName);
+			if (!token) {
+				// Check if launch completed
+
+				matching = IOService::serviceMatching(gIOUserServerClassKey);
+				if (!matching) {
+					IORecursiveLockUnlock(gDriverKitLaunchLock);
+					goto finish;
+				}
+				IOService::propertyMatching(gIOUserServerNameKey, serverName, matching);
+				IOService * service = IOService::copyMatchingService(matching);
+				IOUserServer * userServer = OSDynamicCast(IOUserServer, service);
+				if (userServer) {
+					// found existing user server
+					me = userServer;
+					IORecursiveLockUnlock(gDriverKitLaunchLock);
+					goto finish;
+				} else {
+					OSSafeReleaseNULL(service);
+				}
+			}
+		}
+
+		if (!token) {
+			// No existing server, request launch
+			token = new IOUserServerCheckInToken;
+			if (!token) {
+				IORecursiveLockUnlock(gDriverKitLaunchLock);
+				goto finish;
+			}
+
+			/*
+			 * TODO: If the init fails because the personalities are not up to date
+			 * restart the whole matching process.
+			 */
+			if (token && !token->init(serverName, serverTag, driverKext, serverDUI)) {
+				DKLOG(DKS " could not initialize token\n", DKN(service));
+				IORecursiveLockUnlock(gDriverKitLaunchLock);
+				OSSafeReleaseNULL(token);
+				goto finish;
+			}
+
+			/*
+			 * If the launch fails at any point terminate() will
+			 * be called on this IOUserServer.
+			 */
+			gDriverKitLaunches->setObject(token);
+			OSKext::requestDaemonLaunch(bundleID, (OSString *)serverName, serverTag, reslide ? kOSBooleanTrue : kOSBooleanFalse, token, serverDUI);
+		}
+
+		IORecursiveLockUnlock(gDriverKitLaunchLock);
+
+		tokenServerName = token->copyServerName();
+		tokenServerTag = token->copyServerTag();
+		assert(tokenServerName && tokenServerTag);
+		DKLOG(DKS " waiting for server %s-%llx\n", DKN(service), tokenServerName->getCStringNoCopy(), tokenServerTag->unsigned64BitValue());
+
+		me = __WAITING_FOR_USER_SERVER__(token, &timeRemainingMS);
+		if (me) {
+			OSSafeReleaseNULL(tokenServerName);
+			OSSafeReleaseNULL(tokenServerTag);
+			break;
+		}
+		DKLOG(DKS " failed to find server %s-%llx, remaining %llums, retries %u\n", DKN(service),
+		    tokenServerName->getCStringNoCopy(), tokenServerTag->unsigned64BitValue(), timeRemainingMS, retries - 1);
+		OSSafeReleaseNULL(tokenServerName);
+		OSSafeReleaseNULL(tokenServerTag);
+		OSSafeReleaseNULL(token);
+		// If the loop continues it means the dext has been killed
+		// We don't record a crash since start never happened. No client code has run
+	} while (--retries && timeRemainingMS && !gInUserspaceReboot);
+
+	if (me) {
+		DKLOG(DKS " server launched, validating\n", DKN(service));
+		if (token && !(kIODKDisableCheckInTokenVerification & gIODKDebug)) {
+			if (!me->serviceMatchesCheckInToken(token)) {
+				DKLOG(DKS " server does not match token\n", DKN(service));
+				me->exit("Check In Token verification failed");
+				OSSafeReleaseNULL(me);
+			}
+		}
+	} else {
+#if DEVELOPMENT || DEBUG
+		driverkit_checkin_timed_out = mach_absolute_time();
+#endif
+	}
+
+finish:
+	OSSafeReleaseNULL(matching);
+	OSSafeReleaseNULL(driverStatistics);
+	OSSafeReleaseNULL(driverKext);
+	OSSafeReleaseNULL(token);
+
 	return me;
 }
 
+/*
+ * IOUserServerCheckInTokens are used to track dext launches. They have three possible states:
+ *
+ * - Pending: A dext launch is pending
+ * - Canceled: Dext launch failed
+ * - Complete: Dext launch is complete
+ *
+ * A token can be shared among multiple IOServices that are waiting for dexts if the IOUserServerName
+ * is the same. This allows dexts to be reused and host multiple services. All pending tokens are stored
+ * in gDriverKitLaunches and we check here before creating a new token when launching a dext.
+ *
+ * A token starts in the pending state with a pending count of 1. When we reuse a token, we increase the
+ * pending count of the token.
+ *
+ * The token is sent to userspace as a mach port through kernelmanagerd/driverkitd to the dext. The dext then
+ * uses that token to check in to the kernel. If any part of the dext launch failed (dext crashed, kmd crashed, etc.)
+ * we get a no-senders notification for the token in the kernel and the token goes into the Canceled state.
+ *
+ * Once the dext checks in to the kernel, we decrement the pending count for the token. When the pending count reaches
+ * 0, the token goes into the Complete state. So if the token is in the Complete state, there are no kernel matching threads
+ * waiting on the dext to check in.
+ */
+
+IOUserServerCheckInToken *
+IOUserServerCheckInToken::findExistingToken(const OSSymbol * serverName)
+{
+	IOUserServerCheckInToken * __block result = NULL;
+
+	IORecursiveLockLock(gDriverKitLaunchLock);
+	if (gDriverKitLaunches == NULL) {
+		goto finish;
+	}
+
+	gDriverKitLaunches->iterateObjects(^(OSObject * obj) {
+		IOUserServerCheckInToken * token = OSDynamicCast(IOUserServerCheckInToken, obj);
+		if (token) {
+		        // Check if server name matches
+		        const OSSymbol * tokenServerName = token->fServerName;
+		        if (tokenServerName->isEqualTo(serverName)) {
+		                assert(token->fState == kIOUserServerCheckInPending);
+		                result = token;
+		                result->retain();
+			}
+		}
+		return result != NULL;
+	});
+
+finish:
+	IORecursiveLockUnlock(gDriverKitLaunchLock);
+	return result;
+}
+
+void
+IOUserServerCheckInToken::cancelAll()
+{
+	OSSet * tokensToCancel;
+
+	IORecursiveLockLock(gDriverKitLaunchLock);
+	tokensToCancel = gDriverKitLaunches;
+	gDriverKitLaunches = NULL;
+
+
+	tokensToCancel->iterateObjects(^(OSObject *obj) {
+		IOUserServerCheckInToken * token = OSDynamicCast(IOUserServerCheckInToken, obj);
+		if (token) {
+		        token->cancel();
+		}
+		return false;
+	});
+
+	IORecursiveLockUnlock(gDriverKitLaunchLock);
+
+	OSSafeReleaseNULL(tokensToCancel);
+}
+
+void
+_IOUserServerCheckInCancellationHandler::call(IOUserServerCheckInToken * token)
+{
+	fHandler(token, fHandlerArgs);
+}
+
+_IOUserServerCheckInCancellationHandler *
+_IOUserServerCheckInCancellationHandler::withHandler(IOUserServerCheckInCancellationHandler handler, void * args)
+{
+	_IOUserServerCheckInCancellationHandler * handlerObj = NULL;
+	if (!handler) {
+		goto finish;
+	}
+
+	handlerObj = new _IOUserServerCheckInCancellationHandler;
+	if (!handlerObj) {
+		goto finish;
+	}
+
+	handlerObj->fHandler = handler;
+	handlerObj->fHandlerArgs = args;
+
+finish:
+	return handlerObj;
+}
+
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+struct IOServiceStateNotificationDispatchSource_IVars {
+	IOLock                       * fLock;
+	IOService                    * fStateNotification;
+	IOStateNotificationListenerRef fListener;
+	OSAction                     * fAction;
+	bool                           fEnable;
+	bool                           fArmed;
+};
+
+kern_return_t
+IOServiceStateNotificationDispatchSource::Create_Impl(IOService * service, OSArray * items,
+    IODispatchQueue * queue, IOServiceStateNotificationDispatchSource ** outSource)
+{
+	kern_return_t kr;
+	IOServiceStateNotificationDispatchSource * source;
+
+	source = OSTypeAlloc(IOServiceStateNotificationDispatchSource);
+	source->init();
+
+	source->ivars->fStateNotification = service;
+	kr = service->stateNotificationListenerAdd(items, &source->ivars->fListener, ^kern_return_t () {
+		OSAction * action;
+
+		action = NULL;
+		IOLockLock(source->ivars->fLock);
+		if (source->ivars->fArmed && source->ivars->fAction) {
+		        source->ivars->fArmed = false;
+		        action = source->ivars->fAction;
+		        action->retain();
+		}
+		IOLockUnlock(source->ivars->fLock);
+		if (action) {
+		        source->StateNotificationReady(action);
+		        OSSafeReleaseNULL(action);
+		}
+		return kIOReturnSuccess;
+	});
+
+	if (kIOReturnSuccess != kr) {
+		OSSafeReleaseNULL(source);
+	}
+	*outSource = source;
+
+	return kr;
+}
+
+
+bool
+IOServiceStateNotificationDispatchSource::init()
+{
+	if (!IODispatchSource::init()) {
+		return false;
+	}
+	ivars = IOMallocType(IOServiceStateNotificationDispatchSource_IVars);
+	if (!ivars) {
+		return false;
+	}
+	ivars->fLock = IOLockAlloc();
+	if (!ivars->fLock) {
+		return false;
+	}
+	ivars->fArmed = true;
+
+	return true;
+}
+
+void
+IOServiceStateNotificationDispatchSource::free()
+{
+	if (ivars) {
+		if (ivars->fListener) {
+			ivars->fStateNotification->stateNotificationListenerRemove(ivars->fListener);
+		}
+		if (ivars->fLock) {
+			IOLockFree(ivars->fLock);
+		}
+		IOFreeType(ivars, IOServiceStateNotificationDispatchSource_IVars);
+	}
+	IODispatchSource::free();
+}
+
+kern_return_t
+IOServiceStateNotificationDispatchSource::SetHandler_Impl(OSAction * action)
+{
+	IOReturn ret;
+	bool     notifyReady;
+
+	notifyReady = false;
+
+	IOLockLock(ivars->fLock);
+	action->retain();
+	OSSafeReleaseNULL(ivars->fAction);
+	ivars->fAction = action;
+	if (action) {
+		notifyReady = true;
+	}
+	IOLockUnlock(ivars->fLock);
+
+	if (notifyReady) {
+		StateNotificationReady(action);
+	}
+	ret = kIOReturnSuccess;
+
+	return ret;
+}
+
+kern_return_t
+IOServiceStateNotificationDispatchSource::SetEnableWithCompletion_Impl(
+	bool enable,
+	IODispatchSourceCancelHandler handler)
+{
+	if (enable == ivars->fEnable) {
+		return kIOReturnSuccess;
+	}
+
+	IOLockLock(ivars->fLock);
+	ivars->fEnable = enable;
+	IOLockUnlock(ivars->fLock);
+
+	return kIOReturnSuccess;
+}
+
+kern_return_t
+IOServiceStateNotificationDispatchSource::Cancel_Impl(
+	IODispatchSourceCancelHandler handler)
+{
+	return kIOReturnUnsupported;
+}
+
+kern_return_t
+IOServiceStateNotificationDispatchSource::StateNotificationBegin_Impl(void)
+{
+	IOLockLock(ivars->fLock);
+	ivars->fArmed = true;
+	IOLockUnlock(ivars->fLock);
+
+	return kIOReturnSuccess;
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+#include <IOKit/IOServiceStateNotificationEventSource.h>
+
+OSDefineMetaClassAndStructors(IOServiceStateNotificationEventSource, IOEventSource)
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 0);
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 1);
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 2);
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 3);
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 4);
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 5);
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 6);
+OSMetaClassDefineReservedUnused(IOServiceStateNotificationEventSource, 7);
+
+OSPtr<IOServiceStateNotificationEventSource>
+IOServiceStateNotificationEventSource::serviceStateNotificationEventSource(IOService *service,
+    OSArray * items,
+    ActionBlock inAction)
+{
+	kern_return_t kr;
+	IOServiceStateNotificationEventSource * source;
+
+	source = OSTypeAlloc(IOServiceStateNotificationEventSource);
+	if (source && !source->init(service, NULL)) {
+		OSSafeReleaseNULL(source);
+	}
+
+	if (!source) {
+		return nullptr;
+	}
+
+	source->fStateNotification = service;
+	kr = service->stateNotificationListenerAdd(items, &source->fListener, ^kern_return_t () {
+		if (!source->workLoop) {
+		        return kIOReturnSuccess;
+		}
+		source->workLoop->runActionBlock(^IOReturn (void) {
+			source->fArmed = true;
+			return kIOReturnSuccess;
+		});
+		source->signalWorkAvailable();
+		return kIOReturnSuccess;
+	});
+
+	if (kIOReturnSuccess != kr) {
+		OSSafeReleaseNULL(source);
+	}
+
+	if (source) {
+		source->setActionBlock((IOEventSource::ActionBlock) inAction);
+	}
+
+	return source;
+}
+
+void
+IOServiceStateNotificationEventSource::free()
+{
+	if (fListener) {
+		fStateNotification->stateNotificationListenerRemove(fListener);
+	}
+	IOEventSource::free();
+}
+
+void
+IOServiceStateNotificationEventSource::enable()
+{
+	fEnable = true;
+}
+
+void
+IOServiceStateNotificationEventSource::disable()
+{
+	fEnable = false;
+}
+
+void
+IOServiceStateNotificationEventSource::setWorkLoop(IOWorkLoop *inWorkLoop)
+{
+	IOEventSource::setWorkLoop(inWorkLoop);
+}
+
+bool
+IOServiceStateNotificationEventSource::checkForWork()
+{
+	ActionBlock intActionBlock = (ActionBlock) actionBlock;
+
+	if (fArmed) {
+		fArmed = false;
+		(intActionBlock)();
+	}
+
+	return false;
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+OSDefineMetaClassAndStructors(IOSystemStateNotification, IOService);
+
+class IOStateNotificationItem : public OSObject
+{
+	OSDeclareDefaultStructors(IOStateNotificationItem);
+
+public:
+	virtual bool init() override;
+
+	OSDictionary * fValue;
+	OSSet        * fListeners;
+};
+OSDefineMetaClassAndStructors(IOStateNotificationItem, OSObject);
+
+
+class IOStateNotificationListener : public OSObject
+{
+	OSDeclareDefaultStructors(IOStateNotificationListener);
+
+public:
+	virtual bool init() override;
+	virtual void free() override;
+
+	IOStateNotificationHandler fHandler;
+};
+OSDefineMetaClassAndStructors(IOStateNotificationListener, OSObject);
+
+
+bool
+IOStateNotificationItem::init()
+{
+	return OSObject::init();
+}
+
+bool
+IOStateNotificationListener::init()
+{
+	return OSObject::init();
+}
+
+void
+IOStateNotificationListener::free()
+{
+	if (fHandler) {
+		Block_release(fHandler);
+	}
+	OSObject::free();
+}
+
+
+struct IOServiceStateChangeVars {
+	IOLock       * fLock;
+	OSDictionary * fItems;
+};
+
+IOService *
+IOSystemStateNotification::initialize(void)
+{
+	IOSystemStateNotification * me;
+	IOServiceStateChangeVars  * vars;
+
+	me = OSTypeAlloc(IOSystemStateNotification);
+	me->init();
+	vars = IOMallocType(IOServiceStateChangeVars);
+	me->reserved->svars = vars;
+	vars->fLock  = IOLockAlloc();
+	vars->fItems = OSDictionary::withCapacity(16);
+	{
+		kern_return_t ret;
+
+		gIOSystemStateSleepDescriptionKey = (OSString *)OSSymbol::withCStringNoCopy(kIOSystemStateSleepDescriptionKey);
+		gIOSystemStateSleepDescriptionHibernateStateKey = OSSymbol::withCStringNoCopy(kIOSystemStateSleepDescriptionHibernateStateKey);
+		gIOSystemStateSleepDescriptionReasonKey = OSSymbol::withCStringNoCopy(kIOSystemStateSleepDescriptionReasonKey);
+
+		ret = me->StateNotificationItemCreate(gIOSystemStateSleepDescriptionKey, NULL);
+		assert(kIOReturnSuccess == ret);
+
+		gIOSystemStateWakeDescriptionKey = (OSString *)OSSymbol::withCStringNoCopy(kIOSystemStateWakeDescriptionKey);
+		gIOSystemStateWakeDescriptionWakeReasonKey = OSSymbol::withCStringNoCopy(kIOSystemStateWakeDescriptionWakeReasonKey);
+		gIOSystemStateWakeDescriptionContinuousTimeOffsetKey = OSSymbol::withCStringNoCopy(kIOSystemStateWakeDescriptionContinuousTimeOffsetKey);
+
+#if defined(__arm__) || defined(__arm64__)
+		// Make ml_get_conttime_offset available before systemPower
+		OSDictionary * wakeDescription = OSDictionary::withCapacity(1);
+		OSObject * prop = OSNumber::withNumber(ml_get_conttime_offset(), sizeof(uint64_t) * CHAR_BIT);
+		wakeDescription->setObject(gIOSystemStateWakeDescriptionContinuousTimeOffsetKey, prop);
+		ret = me->StateNotificationItemCreate(gIOSystemStateWakeDescriptionKey, wakeDescription);
+		OSSafeReleaseNULL(prop);
+		OSSafeReleaseNULL(wakeDescription);
+		assert(kIOReturnSuccess == ret);
+#else /* !defined(__arm__) && !defined(__arm64__) */
+		ret = me->StateNotificationItemCreate(gIOSystemStateWakeDescriptionKey, NULL);
+		assert(kIOReturnSuccess == ret);
+#endif /* defined(__arm__) || defined(__arm64__) */
+
+		gIOSystemStateHaltDescriptionKey = (OSString *)OSSymbol::withCStringNoCopy(kIOSystemStateHaltDescriptionKey);
+		gIOSystemStateHaltDescriptionHaltStateKey = OSSymbol::withCStringNoCopy(kIOSystemStateHaltDescriptionHaltStateKey);
+
+		ret = me->StateNotificationItemCreate(gIOSystemStateHaltDescriptionKey, NULL);
+		assert(kIOReturnSuccess == ret);
+
+		gIOSystemStatePowerSourceDescriptionKey = (OSString *)OSSymbol::withCStringNoCopy(kIOSystemStatePowerSourceDescriptionKey);
+		gIOSystemStatePowerSourceDescriptionACAttachedKey = OSSymbol::withCStringNoCopy(kIOSystemStatePowerSourceDescriptionACAttachedKey);
+
+		ret = me->StateNotificationItemCreate(gIOSystemStatePowerSourceDescriptionKey, NULL);
+		assert(kIOReturnSuccess == ret);
+	}
+
+	return me;
+}
+
+bool
+IOSystemStateNotification::serializeProperties(OSSerialize * s) const
+{
+	IOServiceStateChangeVars * ivars = reserved->svars;
+
+	bool ok;
+	OSDictionary * result;
+
+	result = OSDictionary::withCapacity(16);
+
+	IOLockLock(ivars->fLock);
+	ivars->fItems->iterateObjects(^bool (const OSSymbol * key, OSObject * object) {
+		IOStateNotificationItem * item;
+
+		item = (typeof(item))object;
+		if (!item->fValue) {
+		        return false;
+		}
+		result->setObject(key, item->fValue);
+		return false;
+	});
+	IOLockUnlock(ivars->fLock);
+
+	ok = result->serialize(s);
+	OSSafeReleaseNULL(result);
+
+	return ok;
+}
+
+kern_return_t
+IOSystemStateNotification::setProperties(OSObject * properties)
+{
+	kern_return_t  kr;
+	OSDictionary * dict;
+	OSDictionary * value;
+	OSString     * itemName;
+
+	dict = OSDynamicCast(OSDictionary, properties);
+	if (!dict) {
+		return kIOReturnBadArgument;
+	}
+
+	if (!IOCurrentTaskHasEntitlement(kIOSystemStateEntitlement)) {
+		return kIOReturnNotPermitted;
+	}
+
+	if ((value = OSDynamicCast(OSDictionary, dict->getObject(kIOStateNotificationItemCreateKey)))) {
+		itemName = OSDynamicCast(OSString, value->getObject(kIOStateNotificationNameKey));
+		itemName->retain();
+		value->removeObject(kIOStateNotificationNameKey);
+		kr = StateNotificationItemCreate(itemName, value);
+		itemName->release();
+	} else if ((value = OSDynamicCast(OSDictionary, dict->getObject(kIOStateNotificationItemSetKey)))) {
+		itemName = OSDynamicCast(OSString, value->getObject(kIOStateNotificationNameKey));
+		itemName->retain();
+		value->removeObject(kIOStateNotificationNameKey);
+		kr = StateNotificationItemSet(itemName, value);
+		itemName->release();
+	} else {
+		kr = kIOReturnError;
+	}
+
+	return kr;
+}
+
+kern_return_t
+IOService::CopySystemStateNotificationService_Impl(IOService ** outService)
+{
+	IOService * service;
+
+	service = getSystemStateNotificationService();
+	service->retain();
+	*outService = service;
+
+	return kIOReturnSuccess;
+}
+
+IOStateNotificationItem *
+IOService::stateNotificationItemCopy(OSString * itemName, OSDictionary * initialValue)
+{
+	IOServiceStateChangeVars * ivars = reserved->svars;
+
+	const OSSymbol          * name;
+	IOStateNotificationItem * item;
+
+	name = OSSymbol::withString(itemName);
+
+	IOLockLock(ivars->fLock);
+	if ((item = (typeof(item))ivars->fItems->getObject(name))) {
+		item->retain();
+	} else {
+		item = OSTypeAlloc(IOStateNotificationItem);
+		item->init();
+		item->fListeners = OSSet::withCapacity(16);
+
+		if (initialValue) {
+			initialValue->retain();
+			item->fValue = initialValue;
+		}
+		ivars->fItems->setObject(name, item);
+	}
+	IOLockUnlock(ivars->fLock);
+
+	OSSafeReleaseNULL(name);
+
+	return item;
+}
+
+kern_return_t
+IOService::StateNotificationItemCreate_Impl(OSString * itemName, OSDictionary * value)
+{
+	IOStateNotificationItem * item;
+
+	item = stateNotificationItemCopy(itemName, value);
+	if (!item) {
+		return kIOReturnNoMemory;
+	}
+	item->release();
+
+	return kIOReturnSuccess;
+}
+
+kern_return_t
+IOService::StateNotificationItemSet_Impl(OSString * itemName, OSDictionary * value)
+{
+	kern_return_t              ret = kIOReturnSuccess;
+	IOServiceStateChangeVars * ivars = reserved->svars;
+
+	OSSet                    * listeners = NULL;
+	IOStateNotificationItem  * item;
+
+	value->retain();
+	IOLockLock(ivars->fLock);
+	do {
+		item = (typeof(item))ivars->fItems->getObject(itemName);
+		if (!item) {
+			ret = kIOReturnNotFound;
+			value->release();
+			break;
+		}
+		OSSafeReleaseNULL(item->fValue);
+		item->fValue = value;
+		if (item->fListeners->getCount()) {
+			listeners = OSSet::withSet(item->fListeners);
+		}
+	} while (false);
+	IOLockUnlock(ivars->fLock);
+
+	if (listeners) {
+		listeners->iterateObjects(^bool (OSObject * object) {
+			IOStateNotificationListener * listener;
+
+			listener = (typeof(listener))object;
+			listener->fHandler();
+			return false;
+		});
+		OSSafeReleaseNULL(listeners);
+	}
+
+	return ret;
+}
+
+kern_return_t
+IOService::StateNotificationItemCopy_Impl(OSString * itemName, OSDictionary ** outValue)
+{
+	IOServiceStateChangeVars * ivars = reserved->svars;
+
+	kern_return_t              ret;
+	IOStateNotificationItem  * item;
+	OSDictionary             * value;
+
+	IOLockLock(ivars->fLock);
+	item = (typeof(item))ivars->fItems->getObject(itemName);
+	if (item) {
+		value = item->fValue;
+	} else {
+		value = NULL;
+	}
+	if (!value) {
+		ret = kIOReturnNotFound;
+	} else {
+		value->retain();
+		ret = kIOReturnSuccess;
+	}
+	IOLockUnlock(ivars->fLock);
+
+	*outValue = value;
+
+	return ret;
+}
+
+kern_return_t
+IOService::stateNotificationListenerAdd(OSArray * items,
+    IOStateNotificationListenerRef * outRef,
+    IOStateNotificationHandler handler)
+{
+	IOServiceStateChangeVars * ivars = reserved->svars;
+
+	kern_return_t                 kr __block;
+	IOStateNotificationListener * listener;
+
+	listener = OSTypeAlloc(IOStateNotificationListener);
+	listener->init();
+	listener->fHandler = Block_copy(handler);
+
+	kr = kIOReturnSuccess;
+	items->iterateObjects(^bool (OSObject * object) {
+		OSString                * itemName;
+		IOStateNotificationItem * item;
+
+		itemName = OSDynamicCast(OSString, object);
+		if (!itemName) {
+		        kr = kIOReturnBadArgument;
+		        return true;
+		}
+		item = stateNotificationItemCopy(itemName, NULL);
+		if (!item) {
+		        kr = kIOReturnNoMemory;
+		        return true;
+		}
+		IOLockLock(ivars->fLock);
+		item->fListeners->setObject(listener);
+		IOLockUnlock(ivars->fLock);
+		item->release();
+		return false;
+	});
+
+	if (kIOReturnSuccess != kr) {
+		stateNotificationListenerRemove(listener);
+		OSSafeReleaseNULL(listener);
+	}
+	*outRef = listener;
+
+	return kr;
+}
+
+
+kern_return_t
+IOService::stateNotificationListenerRemove(IOStateNotificationListenerRef ref)
+{
+	IOServiceStateChangeVars * ivars = reserved->svars;
+
+	IOStateNotificationListener * listener;
+	kern_return_t                 kr;
+
+	kr = kIOReturnSuccess;
+	listener = (typeof(listener))ref;
+
+	IOLockLock(ivars->fLock);
+	ivars->fItems->iterateObjects(^bool (const OSSymbol * key, OSObject * object) {
+		IOStateNotificationItem * item;
+
+		item = (typeof(item))object;
+		item->fListeners->removeObject(listener);
+		return false;
+	});
+	IOLockUnlock(ivars->fLock);
+
+	return kr;
+}
+
+
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+kern_return_t
+IOWorkGroup::Create_Impl(OSString * name, IOUserClient * userClient, IOWorkGroup ** workgroup)
+{
+	IOWorkGroup * inst = NULL;
+	IOUserUserClient * uc = NULL;
+	kern_return_t ret = kIOReturnError;
+	IOUserServer * us;
+
+	if (name == NULL) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	if (name->getLength() > kIOWorkGroupMaxNameLength) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	uc = OSDynamicCast(IOUserUserClient, userClient);
+	if (uc == NULL) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	inst = OSTypeAlloc(IOWorkGroup);
+	if (!inst->init()) {
+		inst->free();
+		inst = NULL;
+		ret = kIOReturnNoMemory;
+		goto finish;
+	}
+
+	us = (typeof(us))thread_iokit_tls_get(0);
+	inst->ivars->userServer = OSDynamicCast(IOUserServer, us);
+
+	if (inst->ivars->userServer == NULL) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+	inst->ivars->userServer->retain();
+
+	inst->ivars->name = name;
+	inst->ivars->name->retain();
+
+	inst->ivars->userClient = uc; // no retain
+
+	IOLockLock(uc->fLock);
+	uc->fWorkGroups->setObject(name, inst);
+	IOLockUnlock(uc->fLock);
+	ret = kIOReturnSuccess;
+
+finish:
+	if (ret != kIOReturnSuccess) {
+		OSSafeReleaseNULL(inst);
+	} else {
+		*workgroup = inst;
+	}
+
+	return ret;
+}
+
+kern_return_t
+IOWorkGroup::InvalidateKernel_Impl(IOUserClient * client)
+{
+	IOUserUserClient * uc = OSDynamicCast(IOUserUserClient, client);
+
+	if (uc == NULL) {
+		return kIOReturnBadArgument;
+	}
+
+	if (uc != ivars->userClient) {
+		return kIOReturnBadArgument;
+	}
+
+	IOLockLock(uc->fLock);
+	uc->fWorkGroups->removeObject(ivars->name);
+	IOLockUnlock(uc->fLock);
+
+	return kIOReturnSuccess;
+}
+
+kern_return_t
+IOWorkGroup::SetWorkGroupPort_Impl(mach_port_t port)
+{
+	return kIOReturnUnsupported;
+}
+
+bool
+IOWorkGroup::init()
+{
+	if (!OSObject::init()) {
+		return false;
+	}
+	ivars = IOMallocType(IOWorkGroup_IVars);
+
+	return true;
+}
+
+void
+IOWorkGroup::free()
+{
+	if (ivars) {
+		OSSafeReleaseNULL(ivars->userServer);
+		OSSafeReleaseNULL(ivars->name);
+		IOFreeType(ivars, IOWorkGroup_IVars);
+	}
+
+	OSObject::free();
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+kern_return_t
+IOEventLink::Create_Impl(OSString * name, IOUserClient * userClient, IOEventLink ** eventlink)
+{
+	IOEventLink * inst = NULL;
+	IOUserUserClient * uc = NULL;
+	IOUserServer * us;
+	kern_return_t ret = kIOReturnError;
+
+	if (name == NULL) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	if (name->getLength() > kIOEventLinkMaxNameLength) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	uc = OSDynamicCast(IOUserUserClient, userClient);
+	if (uc == NULL) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+
+	inst = OSTypeAlloc(IOEventLink);
+	if (!inst->init()) {
+		inst->free();
+		inst = NULL;
+		ret = kIOReturnNoMemory;
+		goto finish;
+	}
+
+	us = (typeof(us))thread_iokit_tls_get(0);
+	inst->ivars->userServer = OSDynamicCast(IOUserServer, us);
+
+	if (inst->ivars->userServer == NULL) {
+		ret = kIOReturnBadArgument;
+		goto finish;
+	}
+	inst->ivars->userServer->retain();
+
+	inst->ivars->name = name;
+	inst->ivars->name->retain();
+
+	inst->ivars->userClient = uc; // no retain
+
+	IOLockLock(uc->fLock);
+	uc->fEventLinks->setObject(name, inst);
+	IOLockUnlock(uc->fLock);
+
+	ret = kIOReturnSuccess;
+
+finish:
+	if (ret != kIOReturnSuccess) {
+		OSSafeReleaseNULL(inst);
+	} else {
+		*eventlink = inst;
+	}
+
+	return ret;
+}
+
+kern_return_t
+IOEventLink::InvalidateKernel_Impl(IOUserClient * client)
+{
+	IOUserUserClient * uc = OSDynamicCast(IOUserUserClient, client);
+
+	if (uc == NULL) {
+		return kIOReturnBadArgument;
+	}
+
+	if (uc != ivars->userClient) {
+		return kIOReturnBadArgument;
+	}
+
+	IOLockLock(uc->fLock);
+	uc->fEventLinks->removeObject(ivars->name);
+	IOLockUnlock(uc->fLock);
+
+	return kIOReturnSuccess;
+}
+
+bool
+IOEventLink::init()
+{
+	if (!OSObject::init()) {
+		return false;
+	}
+	ivars = IOMallocType(IOEventLink_IVars);
+
+	return true;
+}
+
+void
+IOEventLink::free()
+{
+	if (ivars) {
+		OSSafeReleaseNULL(ivars->userServer);
+		OSSafeReleaseNULL(ivars->name);
+		IOFreeType(ivars, IOEventLink_IVars);
+	}
+
+	OSObject::free();
+}
+
+kern_return_t
+IOEventLink::SetEventlinkPort_Impl(mach_port_t port __unused)
+{
+	return kIOReturnUnsupported;
+}

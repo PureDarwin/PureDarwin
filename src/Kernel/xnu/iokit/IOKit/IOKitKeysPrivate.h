@@ -30,6 +30,7 @@
 #define _IOKIT_IOKITKEYSPRIVATE_H
 
 #include <IOKit/IOKitKeys.h>
+#include <libkern/OSTypes.h>
 
 // properties found in the registry root
 #define kIOConsoleLockedKey                     "IOConsoleLocked"               /* value is OSBoolean */
@@ -121,6 +122,75 @@ enum {
 	kIOClassNameOverrideNone = 0x00000001,
 };
 
+#define kIOWaitQuietPanicsEntitlement "com.apple.private.security.waitquiet-panics"
+#define kIOSystemStateEntitlement "com.apple.private.iokit.systemstate"
+
+#define kIOMemoryDescriptorSharingContextKey    "IOMemoryDescriptorSharingContext"
+
+// Entitlement allows io_connect_map_shared_memory to map writable in user space
+#define kIOMapSharedMemoryWritableEntitlement "com.apple.private.iokit.sharedmemory.writable"
+
+// Entitlement allows a DK driver to publish services to other dexts, using the
+// standard IOKit registerService() or DriverKit RegisterService() api.
+// Those client dexts must have an entitlement specified by the
+// kIODriverKitPublishEntitlementsKey property in the IOService being published,
+// and subscribed in the client dext with IOServiceNotificationDispatchSource.
+#define kIODriverKitAllowsPublishEntitlementsKey "com.apple.private.driverkit.allows-publish"
+// Property is an array of strings containing entitlements, one of which needs to be present
+// in the dext looking up the service with this property
+#define kIODriverKitPublishEntitlementsKey      "IODriverKitPublishEntitlementsKey"
+
+enum {
+	kIOWaitQuietPanicOnFailure = 0x00000001,
+};
+#define kIOServiceBusyTimeoutExtensionsKey      "IOServiceBusyTimeoutExtensions"
+
 #define kIOServiceLegacyMatchingRegistryIDKey "IOServiceLegacyMatchingRegistryID"
+
+#define kIOServiceMatchDeferredKey      "IOServiceMatchDeferred"
+
+#define kIOMatchedAtBootKey                                     "IOMatchedAtBoot"
+
+#define kIOPrimaryDriverTerminateOptionsKey "IOPrimaryDriverTerminateOptions"
+
+#define kIOServiceNotificationUserKey   "IOServiceNotificationUser"
+
+#define kIOExclaveAssignedKey    "exclave-assigned"
+#define kIOExclaveProxyKey       "IOExclaveProxy"
+
+#define kIOPMAOTAllowKey             "IOPMAOTAllow"
+#define kIOPMSystemOffPhase2AllowKey "IOPMSystemOffPhase2Allow"
+
+// IONVRAMSystemVariableList:
+// "one-time-boot-command" - Needed for diags customer install flows
+// "prevent-restores" - Keep for factory <rdar://problem/70476321>
+// "sep-debug-args" - Needed to simplify debug flows for SEP
+// "StartupMute" - Set by customers via nvram tool
+
+#define IONVRAMSystemVariableList "allow-root-hash-mismatch", \
+	                          "auto-boot", \
+	                          "auto-boot-halt-stage", \
+	                          "base-system-path", \
+	                          "boot-args", \
+	                          "boot-command", \
+	                          "boot-image", \
+	                          "bootdelay", \
+	                          "com.apple.System.boot-nonce", \
+	                          "darkboot", \
+	                          "emu", \
+	                          "one-time-boot-command", \
+	                          "policy-nonce-digests", \
+	                          "prevent-restores", \
+	                          "prev-lang:kbd", \
+	                          "root-live-fs", \
+	                          "sep-debug-args", \
+	                          "StartupMute", \
+	                          "SystemAudioVolume", \
+	                          "SystemAudioVolumeExtension", \
+	                          "SystemAudioVolumeSaved"
+
+
+// Uniform Type Identifiers supported by a service
+#define kIOUniformTypeIdentifiersKey "UniformTypeIdentifiers"
 
 #endif /* ! _IOKIT_IOKITKEYSPRIVATE_H */

@@ -45,15 +45,17 @@
 #define BANK_DEFAULT_VALUE NULL
 #define BANK_DEFAULT_TASK_VALUE ((void *) 1)
 
-typedef mach_voucher_attr_value_handle_t bank_handle_t;
+typedef mach_voucher_attr_value_handle_t bank_handle_t __kernel_ptr_semantics;
 
 #define BANK_TASK        0
 #define BANK_ACCOUNT     1
 
+os_refgrp_decl(static, bank_elem_refgrp, "bank element", NULL);
+
 struct bank_element {
 	unsigned int  be_type:31,                /* Type of element */
 	    be_voucher_ref:1;                    /* Voucher system holds a ref */
-	int           be_refs;                   /* Ref count */
+	os_ref_atomic_t be_refs;                 /* Ref count */
 	unsigned int  be_made;                   /* Made refs for voucher, Actual ref is only taken for voucher ref transition (0 to 1) */
 #if DEVELOPMENT || DEBUG
 	task_t        be_task;                   /* Customer task, do not use it since ref is not taken on task */
@@ -71,9 +73,13 @@ struct bank_task {
 	queue_head_t              bt_accounts_to_charge;   /* List of accounts I did work and need to charge */
 	decl_lck_mtx_data(, bt_acc_to_pay_lock);           /* Lock to protect accounts to pay list */
 	decl_lck_mtx_data(, bt_acc_to_charge_lock);        /* Lock to protect accounts to charge list */
-	boolean_t                 bt_hasentitlement;       /* If the secure persona entitlement is set on the task */
+	uint32_t                  bt_persona_uid;          /* Persona UID of the process */
+	uint32_t                  bt_hasentitlement:1;     /* If the secure persona entitlement is set on the task */
+#if CONFIG_COALITIONS && CONFIG_TELEMETRY
+	uint64_t                  bt_rsrc_coal_id;         /* Task's resource coalition ID for microstackshot/telemetry */
+#endif /* CONFIG_COALITIONS && CONFIG_TELEMETRY */
 #if CONFIG_THREAD_GROUPS
-	struct thread_group *         bt_thread_group;         /* Task's home thread group pointer */
+	struct thread_group *     bt_thread_group;         /* Task's home thread group pointer */
 #endif
 #if DEVELOPMENT || DEBUG
 	queue_chain_t             bt_global_elt;           /* Element on the global bank task chain */
@@ -101,14 +107,14 @@ struct bank_task {
 typedef struct bank_task * bank_task_t;
 #define BANK_TASK_NULL  ((bank_task_t) 0)
 
+#define bank_task_ref_init(elem)        \
+	        (os_ref_init_raw(&(elem)->bt_refs, &bank_elem_refgrp))
+
 #define bank_task_reference(elem)       \
-	        (OSAddAtomic(1, &(elem)->bt_refs))
+	        (os_ref_retain_raw(&(elem)->bt_refs, &bank_elem_refgrp))
 
 #define bank_task_release(elem)         \
-	        (OSAddAtomic(-1, &(elem)->bt_refs))
-
-#define bank_task_release_num(elem, num)        \
-	        (OSAddAtomic(-(num), &(elem)->bt_refs))
+	        (os_ref_release_raw(&(elem)->bt_refs, &bank_elem_refgrp))
 
 #define bank_task_made_reference(elem)  \
 	        (os_atomic_inc_orig(&(elem)->bt_made, relaxed))
@@ -119,6 +125,10 @@ typedef struct bank_task * bank_task_t;
 #define bank_task_made_release_num(elem, num)   \
 	        (os_atomic_sub_orig(&(elem)->bt_made, (num), relaxed))
 
+struct bank_persona {
+	uint32_t persona_id;
+	uint32_t persona_uid;
+};
 
 struct bank_account {
 	struct bank_element ba_elem;                 /* Bank element */
@@ -135,7 +145,7 @@ struct bank_account {
 #if DEVELOPMENT || DEBUG
 	queue_chain_t       ba_global_elt;           /* Element on the global account chain */
 #endif
-	uint32_t            ba_so_persona_id;        /* Persona ID of ba_secureoriginator,
+	struct bank_persona ba_so_persona;           /* Persona of ba_secureoriginator,
 	                                              *  unless modified by a entitled process */
 };
 
@@ -151,14 +161,11 @@ struct bank_account {
 typedef struct bank_account * bank_account_t;
 #define BANK_ACCOUNT_NULL  ((bank_account_t) 0)
 
-#define bank_account_reference(elem)    \
-	        (OSAddAtomic(1, &(elem)->ba_refs))
+#define bank_account_ref_init(elem)     \
+	        (os_ref_init_raw(&(elem)->ba_refs, &bank_elem_refgrp))
 
 #define bank_account_release(elem)      \
-	        (OSAddAtomic(-1, &(elem)->ba_refs))
-
-#define bank_account_release_num(elem, num)     \
-	        (OSAddAtomic(-(num), &(elem)->ba_refs))
+	        (os_ref_release_raw(&(elem)->ba_refs, &bank_elem_refgrp))
 
 #define bank_account_made_reference(elem)       \
 	        (os_atomic_inc_orig(&(elem)->ba_made, relaxed))
@@ -170,13 +177,12 @@ typedef struct bank_account * bank_account_t;
 	        (os_atomic_sub_orig(&(elem)->ba_made, (num), relaxed))
 
 struct _bank_ledger_indices {
-	int cpu_time;
-	int energy;
+	ledger_entry_id_t cpu_time;
+	ledger_entry_id_t energy;
 };
 
 extern struct _bank_ledger_indices bank_ledgers;
 
-extern void bank_init(void);
 extern void bank_task_destroy(task_t);
 extern void bank_task_initialize(task_t task);
 extern void bank_billed_balance_safe(task_t task, uint64_t *cpu_time, uint64_t *energy);
@@ -185,7 +191,12 @@ extern void bank_serviced_balance_safe(task_t task, uint64_t *cpu_time, uint64_t
 extern void bank_serviced_balance(bank_task_t bank_task, uint64_t *cpu_time, uint64_t *energy);
 extern kern_return_t bank_get_bank_ledger_thread_group_and_persona(ipc_voucher_t voucher,
     ledger_t *bankledger, struct thread_group **banktg, uint32_t *persona_id);
+extern uint64_t bank_get_bank_ledger_resource_coalition_id(ipc_voucher_t voucher);
 extern void bank_swap_thread_bank_ledger(thread_t thread, ledger_t ledger);
+#if CONFIG_PREADOPT_TG
+extern kern_return_t
+bank_get_preadopt_thread_group(ipc_voucher_t voucher, struct thread_group **banktg);
+#endif
 
 #endif /* MACH_KERNEL_PRIVATE */
 #endif /* _BANK_BANK_INTERNAL_H_ */

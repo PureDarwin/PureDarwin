@@ -78,14 +78,19 @@
 #endif
 #endif
 
-#define MAC_FLAG_INITIALIZED    0x0000001       /* Is initialized for use. */
+#if XNU_KERNEL_PRIVATE
+/* l_owner set to this value means the label is inlined in the cred */
+#define MAC_LABEL_CRED_OWNED  ((struct label **)~0ul)
+#define MAC_LABEL_NULL_SLOT   (~0l)
 
 struct label {
-	int     l_flags;
-	union {
-		void    * XNU_PTRAUTH_SIGNED_PTR("label.l_ptr") l_ptr;
-		long     l_long;
-	}       l_perpolicy[MAC_MAX_SLOTS];
+	struct label **l_owner;
+	long           l_perpolicy[MAC_MAX_SLOTS];
 };
+
+extern const struct label empty_label;
+#else
+struct label;
+#endif
 
 #endif /* !_SECURITY_LABEL_H_ */

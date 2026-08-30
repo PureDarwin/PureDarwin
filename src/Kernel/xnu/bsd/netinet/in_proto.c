@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -103,7 +103,6 @@
 #endif /* IPSEC */
 
 static void in_dinit(struct domain *);
-static void ip_proto_input(protocol_family_t, mbuf_t);
 
 extern struct domain inetdomain_s;
 static struct pr_usrreqs nousrreqs;
@@ -239,7 +238,6 @@ static struct protosw inetsw[] = {
 		.pr_flags =             PR_ATOMIC | PR_ADDR | PR_LASTHDR,
 		.pr_input =             encap4_input,
 		.pr_ctloutput =         rip_ctloutput,
-		.pr_init =              encap4_init,
 		.pr_usrreqs =           &rip_usrreqs,
 		.pr_unlock =            rip_unlock,
 		.pr_update_last_owner = inp_update_last_owner,
@@ -251,7 +249,6 @@ static struct protosw inetsw[] = {
 		.pr_flags =             PR_ATOMIC | PR_ADDR | PR_LASTHDR,
 		.pr_input =             encap4_input,
 		.pr_ctloutput =         rip_ctloutput,
-		.pr_init =              encap4_init,
 		.pr_usrreqs =           &rip_usrreqs,
 		.pr_unlock =            rip_unlock,
 		.pr_update_last_owner = inp_update_last_owner,
@@ -290,7 +287,7 @@ in_dinit(struct domain *dp)
 {
 	struct protosw *pr;
 	int i;
-	domain_unguard_t unguard;
+	domain_unguard_t __single unguard;
 
 	VERIFY(!(dp->dom_flags & DOM_INITIALIZED));
 	VERIFY(inetdomain == NULL);
@@ -302,7 +299,7 @@ in_dinit(struct domain *dp)
 	 * fit in a small mbuf because m_pullup only puls into 256
 	 * byte mbuf
 	 */
-	_CASSERT((sizeof(struct tcpiphdr) + TCP_MAXOLEN) <= _MHLEN);
+	static_assert((sizeof(struct tcpiphdr) + TCP_MAXOLEN) <= _MHLEN);
 
 	/*
 	 * Attach first, then initialize; ip_init() needs raw IP handler.
@@ -319,27 +316,11 @@ in_dinit(struct domain *dp)
 	unguard = domain_unguard_deploy();
 	i = proto_register_input(PF_INET, ip_proto_input, NULL, 1);
 	if (i != 0) {
-		panic("%s: failed to register PF_INET protocol: %d\n",
+		panic("%s: failed to register PF_INET protocol: %d",
 		    __func__, i);
 		/* NOTREACHED */
 	}
 	domain_unguard_release(unguard);
-}
-
-static void
-ip_proto_input(protocol_family_t protocol, mbuf_t packet_list)
-{
-#pragma unused(protocol)
-
-	if (packet_list->m_nextpkt != NULL) {
-		ip_input_process_list(packet_list);
-	} else {
-		/*
-		 * XXX remove this path if ip_input_process_list is proven
-		 * to be stable and has minimum overhead on most platforms.
-		 */
-		ip_input(packet_list);
-	}
 }
 
 SYSCTL_NODE(_net, PF_INET, inet,

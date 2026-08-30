@@ -31,12 +31,15 @@
 
 #include <machine/limits.h>
 
-#include <vm/vm_compressor_pager.h>
-#include <vm/vm_kern.h>                         /* kmem_alloc */
-#include <vm/vm_page.h>
-#include <vm/vm_pageout.h>
-#include <vm/vm_protos.h>
+#include <os/hash.h>
+
+#include <vm/vm_compressor_pager_xnu.h>
+#include <vm/vm_kern_xnu.h>                         /* kmem_alloc */
+#include <vm/vm_page_internal.h>
+#include <vm/vm_pageout_xnu.h>
+#include <vm/vm_protos_internal.h>
 #include <vm/vm_purgeable_internal.h>
+#include <vm/vm_object_internal.h>
 
 #include <sys/kdebug.h>
 
@@ -179,7 +182,6 @@ find_available_token:
 				return KERN_ABORTED;
 			}
 		}
-		;
 
 		/* Check whether memory is still maxed out */
 		if (token_init_idx < token_q_max_cnt) {
@@ -192,49 +194,52 @@ find_available_token:
 		/* Drop page queue lock so we can allocate */
 		vm_page_unlock_queues();
 
-		struct token *new_loc;
 		vm_size_t alloc_size = token_q_cur_size + PAGE_SIZE;
-		kern_return_t result;
+		kmem_return_t kmr = { };
+		kmem_guard_t guard = {
+			.kmg_atomic = true,
+			.kmg_tag = VM_KERN_MEMORY_OSFMK,
+			.kmg_context = os_hash_kernel_pointer(&tokens),
+		};
 
-		if (alloc_size / sizeof(struct token) > TOKEN_COUNT_MAX) {
-			result = KERN_RESOURCE_SHORTAGE;
-		} else {
-			if (token_q_cur_size) {
-				result = kmem_realloc(kernel_map,
-				    (vm_offset_t) tokens,
-				    token_q_cur_size,
-				    (vm_offset_t *) &new_loc,
-				    alloc_size, VM_KERN_MEMORY_OSFMK);
-			} else {
-				result = kmem_alloc(kernel_map,
-				    (vm_offset_t *) &new_loc,
-				    alloc_size, VM_KERN_MEMORY_OSFMK);
-			}
+		/*
+		 * We can't use KMR_DATA here, since we enforce single-mappability
+		 * on RESTRICTED mappings, and that means we have to use FREEOLD.
+		 *
+		 * However, the realloc path cannot also free the tokens allocation,
+		 * since we cannot free it without taking the lock (vm_page_lock_queues).
+		 */
+		if (alloc_size <= TOKEN_COUNT_MAX * sizeof(struct token)) {
+			kmr = kmem_realloc_guard(kernel_map,
+			    (vm_offset_t)tokens, token_q_cur_size, alloc_size,
+			    KMR_ZERO | KMR_DATA_SHARED, guard);
 		}
 
 		vm_page_lock_queues();
 
-		if (result) {
+		if (kmr.kmr_ptr == NULL) {
 			/* Unblock waiting threads */
 			token_q_allocating = 0;
 			thread_wakeup((event_t)&token_q_allocating);
-			return result;
+			return KERN_RESOURCE_SHORTAGE;
 		}
 
 		/* If we get here, we allocated new memory. Update pointers and
 		 * dealloc old range */
 		struct token *old_tokens = tokens;
-		tokens = new_loc;
 		vm_size_t old_token_q_cur_size = token_q_cur_size;
+
+		tokens = kmr.kmr_ptr;
 		token_q_cur_size = alloc_size;
 		token_q_max_cnt = (token_idx_t) (token_q_cur_size /
 		    sizeof(struct token));
 		assert(token_init_idx < token_q_max_cnt);       /* We must have a free token now */
 
-		if (old_token_q_cur_size) {     /* clean up old mapping */
+		/* kmem_realloc_guard() might leave the old region mapped. */
+		if (kmem_realloc_should_free((vm_offset_t)old_tokens, kmr)) {
 			vm_page_unlock_queues();
-			/* kmem_realloc leaves the old region mapped. Get rid of it. */
-			kmem_free(kernel_map, (vm_offset_t)old_tokens, old_token_q_cur_size);
+			kmem_free_guard(kernel_map, (vm_offset_t)old_tokens,
+			    old_token_q_cur_size, KMF_NONE, guard);
 			vm_page_lock_queues();
 		}
 
@@ -296,13 +301,10 @@ find_available_token:
 	vm_purgeable_token_check_queue(&purgeable_queues[PURGEABLE_Q_TYPE_FIFO]);
 	vm_purgeable_token_check_queue(&purgeable_queues[PURGEABLE_Q_TYPE_LIFO]);
 
-	KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, TOKEN_ADD)),
+	KDBG((VMDBG_CODE(DBG_VM_PURGEABLE_TOKEN_ADD)) | DBG_FUNC_NONE,
 	    queue->type,
-	    tokens[token].count,                        /* num pages on token
-	                                                 * (last token) */
-	    queue->debug_count_tokens,
-	    0,
-	    0);
+	    tokens[token].count, /* num pages on token (last token) */
+	    queue->debug_count_tokens);
 #endif
 
 	return KERN_SUCCESS;
@@ -357,14 +359,11 @@ vm_purgeable_token_remove_first(purgeable_q_t queue)
 		queue->debug_count_tokens--;
 		vm_purgeable_token_check_queue(queue);
 
-		KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, TOKEN_DELETE)),
+		KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_TOKEN_DELETE) | DBG_FUNC_NONE,
 		    queue->type,
-		    tokens[queue->token_q_head].count,                          /* num pages on new
-		                                                                 * first token */
-		    token_new_pagecount,                        /* num pages waiting for
-		                                                 * next token */
-		    available_for_purge,
-		    0);
+		    tokens[queue->token_q_head].count, /* num pages on new first token */
+		    token_new_pagecount, /* num pages waiting for next token */
+		    available_for_purge);
 #endif
 	}
 	return token;
@@ -418,14 +417,11 @@ vm_purgeable_token_remove_last(purgeable_q_t queue)
 		queue->debug_count_tokens--;
 		vm_purgeable_token_check_queue(queue);
 
-		KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, TOKEN_DELETE)),
+		KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_TOKEN_DELETE) | DBG_FUNC_NONE,
 		    queue->type,
-		    tokens[queue->token_q_head].count,                          /* num pages on new
-		                                                                 * first token */
-		    token_new_pagecount,                        /* num pages waiting for
-		                                                 * next token */
-		    available_for_purge,
-		    0);
+		    tokens[queue->token_q_head].count, /* num pages on new first token */
+		    token_new_pagecount, /* num pages waiting for next token */
+		    available_for_purge);
 #endif
 	}
 	return token;
@@ -509,13 +505,11 @@ vm_purgeable_q_advance_all()
 			if (tokens[queue->token_q_unripe].count == 0) {
 				queue->token_q_unripe = tokens[queue->token_q_unripe].next;
 				available_for_purge++;
-				KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, TOKEN_RIPEN)),
+				KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_TOKEN_RIPEN) | DBG_FUNC_NONE,
 				    queue->type,
-				    tokens[queue->token_q_head].count,                          /* num pages on new
-				                                                                 * first token */
+				    tokens[queue->token_q_head].count, /* num pages on new first token */
 				    0,
-				    available_for_purge,
-				    0);
+				    available_for_purge);
 				continue;       /* One token ripened. Make sure to
 				                 * check the next. */
 			}
@@ -699,12 +693,10 @@ vm_purgeable_object_find_and_lock(
 	 * remaining elements in order.
 	 */
 
-	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, (MACHDBG_CODE(DBG_MACH_VM, OBJECT_PURGE_LOOP) | DBG_FUNC_START),
+	KDBG_RELEASE(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_PURGE_LOOP) | DBG_FUNC_START,
 	    pick_ripe,
 	    group,
-	    VM_KERNEL_UNSLIDE_OR_PERM(queue),
-	    0,
-	    0);
+	    VM_KERNEL_UNSLIDE_OR_PERM(queue));
 
 	num_objects_skipped = 0;
 	for (object = (vm_object_t) queue_first(&queue->objq[group]);
@@ -765,12 +757,11 @@ vm_purgeable_object_find_and_lock(
 		}
 	}
 
-	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, (MACHDBG_CODE(DBG_MACH_VM, OBJECT_PURGE_LOOP) | DBG_FUNC_END),
+	KDBG_RELEASE(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_PURGE_LOOP) | DBG_FUNC_END,
 	    num_objects_skipped,                   /* considered objects */
 	    try_lock_failed,
 	    try_lock_succeeded,
-	    VM_KERNEL_UNSLIDE_OR_PERM(best_object),
-	    ((best_object == NULL) ? 0 : best_object->resident_page_count));
+	    VM_KERNEL_UNSLIDE_OR_PERM(best_object));
 
 	object = best_object;
 
@@ -868,12 +859,10 @@ restart:
 			assert(queue->debug_count_objects >= 0);
 		}
 	}
-	KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, OBJECT_PURGE_ALL)),
+	KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_PURGE_ALL) | DBG_FUNC_NONE,
 	    purged_count,                   /* # of purged objects */
 	    0,
-	    available_for_purge,
-	    0,
-	    0);
+	    available_for_purge);
 	lck_mtx_unlock(&vm_purgeable_queue_lock);
 	return;
 }
@@ -904,8 +893,8 @@ vm_purgeable_object_purge_one(
 	unsigned int    resident_page_count;
 
 
-	KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, OBJECT_PURGE)) | DBG_FUNC_START,
-	    force_purge_below_group, flags, 0, 0, 0);
+	KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_PURGE) | DBG_FUNC_START,
+	    force_purge_below_group, flags);
 
 	/* Need the page queue lock since we'll be changing the token queue. */
 	LCK_MTX_ASSERT(&vm_page_queue_lock, LCK_MTX_ASSERT_OWNED);
@@ -1000,8 +989,8 @@ vm_purgeable_object_purge_one(
 	 */
 	lck_mtx_unlock(&vm_purgeable_queue_lock);
 
-	KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, OBJECT_PURGE)) | DBG_FUNC_END,
-	    0, 0, available_for_purge, 0, 0);
+	KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_PURGE) | DBG_FUNC_END,
+	    0, 0, available_for_purge);
 
 	return FALSE;
 
@@ -1019,12 +1008,10 @@ purge_now:
 
 	vm_pageout_vminfo.vm_pageout_pages_purged += resident_page_count;
 
-	KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, OBJECT_PURGE)) | DBG_FUNC_END,
+	KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_PURGE) | DBG_FUNC_END,
 	    VM_KERNEL_UNSLIDE_OR_PERM(object),                          /* purged object */
 	    resident_page_count,
-	    available_for_purge,
-	    0,
-	    0);
+	    available_for_purge);
 
 	return TRUE;
 }
@@ -1073,12 +1060,11 @@ vm_purgeable_object_add(vm_object_t object, purgeable_q_t queue, int group)
 
 #if MACH_ASSERT
 	queue->debug_count_objects++;
-	KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, OBJECT_ADD)),
+	KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_ADD) | DBG_FUNC_NONE,
 	    0,
 	    tokens[queue->token_q_head].count,
 	    queue->type,
-	    group,
-	    0);
+	    group);
 #endif
 
 	lck_mtx_unlock(&vm_purgeable_queue_lock);
@@ -1133,12 +1119,11 @@ vm_purgeable_object_remove(vm_object_t object)
 
 #if MACH_ASSERT
 	queue->debug_count_objects--;
-	KERNEL_DEBUG_CONSTANT((MACHDBG_CODE(DBG_MACH_VM, OBJECT_REMOVE)),
+	KDBG(VMDBG_CODE(DBG_VM_PURGEABLE_OBJECT_REMOVE) | DBG_FUNC_NONE,
 	    0,
 	    tokens[queue->token_q_head].count,
 	    queue->type,
-	    group,
-	    0);
+	    group);
 #endif
 
 	lck_mtx_unlock(&vm_purgeable_queue_lock);
@@ -1506,15 +1491,12 @@ vm_purgeable_accounting(
 	vm_object_t     object,
 	vm_purgable_t   old_state)
 {
-	task_t          owner;
-	int             resident_page_count;
-	int             wired_page_count;
-	int             compressed_page_count;
-	int             ledger_idx_volatile;
-	int             ledger_idx_nonvolatile;
-	int             ledger_idx_volatile_compressed;
-	int             ledger_idx_nonvolatile_compressed;
-	boolean_t       do_footprint;
+	task_t            owner;
+	ledger_t          ledger;
+	int               resident_page_count;
+	int               wired_page_count;
+	int               compressed_page_count;
+	vmo_ledgers_t     lidx;
 
 	vm_object_lock_assert_exclusive(object);
 	assert(object->purgable != VM_PURGABLE_DENY);
@@ -1525,12 +1507,9 @@ vm_purgeable_accounting(
 		return;
 	}
 
-	vm_object_ledger_tag_ledgers(object,
-	    &ledger_idx_volatile,
-	    &ledger_idx_nonvolatile,
-	    &ledger_idx_volatile_compressed,
-	    &ledger_idx_nonvolatile_compressed,
-	    &do_footprint);
+	ledger = owner->ledger;
+	lidx   = vm_object_ledger_tag_ledgers(object);
+	assert(lidx.vmo_external_wired == LEDGER_ENTRY_ID_INVALID);
 
 	resident_page_count = object->resident_page_count;
 	wired_page_count = object->wired_page_count;
@@ -1542,64 +1521,60 @@ vm_purgeable_accounting(
 		compressed_page_count = 0;
 	}
 
+	disable_preemption();
 	if (old_state == VM_PURGABLE_VOLATILE ||
 	    old_state == VM_PURGABLE_EMPTY) {
 		/* less volatile bytes in ledger */
-		ledger_debit(owner->ledger,
-		    ledger_idx_volatile,
+		ledger_debit_nopreempt(ledger,
+		    lidx.vmo_volatile,
 		    ptoa_64(resident_page_count - wired_page_count));
 		/* less compressed volatile bytes in ledger */
-		ledger_debit(owner->ledger,
-		    ledger_idx_volatile_compressed,
+		ledger_debit_nopreempt(ledger,
+		    lidx.vmo_volatile_compressed,
 		    ptoa_64(compressed_page_count));
 
 		/* more non-volatile bytes in ledger */
-		ledger_credit(owner->ledger,
-		    ledger_idx_nonvolatile,
+		ledger_credit_nopreempt(ledger,
+		    lidx.vmo_nonvolatile,
 		    ptoa_64(resident_page_count - wired_page_count));
 		/* more compressed non-volatile bytes in ledger */
-		ledger_credit(owner->ledger,
-		    ledger_idx_nonvolatile_compressed,
+		ledger_credit_nopreempt(ledger,
+		    lidx.vmo_nonvolatile_compressed,
 		    ptoa_64(compressed_page_count));
-		if (do_footprint) {
-			/* more footprint */
-			ledger_credit(owner->ledger,
-			    task_ledgers.phys_footprint,
-			    ptoa_64(resident_page_count
-			    + compressed_page_count
-			    - wired_page_count));
-		}
+		ledger_credit_nopreempt(ledger,
+		    lidx.vmo_footprint,
+		    ptoa_64(resident_page_count
+		    + compressed_page_count
+		    - wired_page_count));
 	} else if (old_state == VM_PURGABLE_NONVOLATILE) {
 		/* less non-volatile bytes in ledger */
-		ledger_debit(owner->ledger,
-		    ledger_idx_nonvolatile,
+		ledger_debit_nopreempt(ledger,
+		    lidx.vmo_nonvolatile,
 		    ptoa_64(resident_page_count - wired_page_count));
 		/* less compressed non-volatile bytes in ledger */
-		ledger_debit(owner->ledger,
-		    ledger_idx_nonvolatile_compressed,
+		ledger_debit_nopreempt(ledger,
+		    lidx.vmo_nonvolatile_compressed,
 		    ptoa_64(compressed_page_count));
-		if (do_footprint) {
-			/* less footprint */
-			ledger_debit(owner->ledger,
-			    task_ledgers.phys_footprint,
-			    ptoa_64(resident_page_count
-			    + compressed_page_count
-			    - wired_page_count));
-		}
+		ledger_debit_nopreempt(ledger,
+		    lidx.vmo_footprint,
+		    ptoa_64(resident_page_count
+		    + compressed_page_count
+		    - wired_page_count));
 
 		/* more volatile bytes in ledger */
-		ledger_credit(owner->ledger,
-		    ledger_idx_volatile,
+		ledger_credit_nopreempt(ledger,
+		    lidx.vmo_volatile,
 		    ptoa_64(resident_page_count - wired_page_count));
 		/* more compressed volatile bytes in ledger */
-		ledger_credit(owner->ledger,
-		    ledger_idx_volatile_compressed,
+		ledger_credit_nopreempt(ledger,
+		    lidx.vmo_volatile_compressed,
 		    ptoa_64(compressed_page_count));
 	} else {
 		panic("vm_purgeable_accounting(%p): "
 		    "unexpected old_state=%d\n",
 		    object, old_state);
 	}
+	enable_preemption();
 
 	vm_object_lock_assert_exclusive(object);
 }
@@ -1645,36 +1620,27 @@ vm_purgeable_volatile_owner_update(
 }
 
 void
-vm_object_owner_compressed_update(
-	vm_object_t     object,
-	int             delta)
+vm_object_owner_compressed_update(vm_object_t object, int delta)
 {
-	task_t          owner;
-	int             ledger_idx_volatile;
-	int             ledger_idx_nonvolatile;
-	int             ledger_idx_volatile_compressed;
-	int             ledger_idx_nonvolatile_compressed;
-	boolean_t       do_footprint;
+	ledger_t      ledger;
+	vmo_ledgers_t lidx;
 
 	vm_object_lock_assert_exclusive(object);
-
-	owner = VM_OBJECT_OWNER(object);
 
 	if (delta == 0 ||
 	    !object->internal ||
 	    (object->purgable == VM_PURGABLE_DENY &&
 	    !object->vo_ledger_tag) ||
-	    owner == NULL) {
+	    (ledger = VM_OBJECT_LEDGER(object)) == LEDGER_NULL) {
 		/* not an owned purgeable (or tagged) VM object: nothing to update */
 		return;
 	}
 
-	vm_object_ledger_tag_ledgers(object,
-	    &ledger_idx_volatile,
-	    &ledger_idx_nonvolatile,
-	    &ledger_idx_volatile_compressed,
-	    &ledger_idx_nonvolatile_compressed,
-	    &do_footprint);
+	lidx = vm_object_ledger_tag_ledgers(object);
+	assert(lidx.vmo_external_wired == LEDGER_ENTRY_ID_INVALID);
+
+	disable_preemption();
+
 	switch (object->purgable) {
 	case VM_PURGABLE_DENY:
 		/* not purgeable: must be ledger-tagged */
@@ -1682,35 +1648,25 @@ vm_object_owner_compressed_update(
 		OS_FALLTHROUGH;
 	case VM_PURGABLE_NONVOLATILE:
 		if (delta > 0) {
-			ledger_credit(owner->ledger,
-			    ledger_idx_nonvolatile_compressed,
+			ledger_credit_nopreempt(ledger,
+			    lidx.vmo_nonvolatile_compressed, ptoa_64(delta));
+			ledger_credit_nopreempt(ledger, lidx.vmo_footprint,
 			    ptoa_64(delta));
-			if (do_footprint) {
-				ledger_credit(owner->ledger,
-				    task_ledgers.phys_footprint,
-				    ptoa_64(delta));
-			}
 		} else {
-			ledger_debit(owner->ledger,
-			    ledger_idx_nonvolatile_compressed,
-			    ptoa_64(-delta));
-			if (do_footprint) {
-				ledger_debit(owner->ledger,
-				    task_ledgers.phys_footprint,
-				    ptoa_64(-delta));
-			}
+			ledger_debit_nopreempt(ledger,
+			    lidx.vmo_nonvolatile_compressed, ptoa_64(-delta));
+			ledger_debit_nopreempt(ledger,
+			    lidx.vmo_footprint, ptoa_64(-delta));
 		}
 		break;
 	case VM_PURGABLE_VOLATILE:
 	case VM_PURGABLE_EMPTY:
 		if (delta > 0) {
-			ledger_credit(owner->ledger,
-			    ledger_idx_volatile_compressed,
-			    ptoa_64(delta));
+			ledger_credit_nopreempt(ledger,
+			    lidx.vmo_volatile_compressed, ptoa_64(delta));
 		} else {
-			ledger_debit(owner->ledger,
-			    ledger_idx_volatile_compressed,
-			    ptoa_64(-delta));
+			ledger_debit_nopreempt(ledger,
+			    lidx.vmo_volatile_compressed, ptoa_64(-delta));
 		}
 		break;
 	default:
@@ -1718,4 +1674,6 @@ vm_object_owner_compressed_update(
 		    "unexpected purgable %d for object %p\n",
 		    object->purgable, object);
 	}
+
+	enable_preemption();
 }

@@ -32,11 +32,11 @@
 
 #include <stdint.h>
 
-#ifndef PLATFORM_DriverKit
+#ifndef XNU_PLATFORM_DriverKit
 
 #include <mach/message.h>
 
-#else /* !PLATFORM_DriverKit */
+#else /* !XNU_PLATFORM_DriverKit */
 
 #ifndef _MACH_MESSAGE_H_
 #define _MACH_MESSAGE_H_
@@ -137,7 +137,7 @@ typedef struct{
 
 #endif  /* _MACH_MESSAGE_H_ */
 
-#endif /* PLATFORM_DriverKit */
+#endif /* XNU_PLATFORM_DriverKit */
 
 #if KERNEL
 class IOUserServer;
@@ -180,15 +180,22 @@ struct IORPCMessageMach {
 };
 typedef struct IORPCMessageMach IORPCMessageMach;
 
+#pragma pack(push, 4)
 struct IORPCMessage {
 	uint64_t         msgid;
 	uint64_t         flags;
 	uint64_t         objectRefs;
 	OSObjectRef      objects[0];
 };
+#pragma pack(pop)
 typedef struct IORPCMessage IORPCMessage;
 
-extern "C" IORPCMessage *
+#if defined(__cplusplus)
+extern "C"
+#else
+extern
+#endif
+IORPCMessage *
 IORPCMessageFromMach(IORPCMessageMach * msg, bool reply);
 
 struct IORPCMessageErrorReturnContent {
@@ -196,6 +203,7 @@ struct IORPCMessageErrorReturnContent {
 	kern_return_t result;
 	uint32_t      pad;
 };
+typedef struct IORPCMessageErrorReturnContent IORPCMessageErrorReturnContent;
 
 #pragma pack(4)
 struct IORPCMessageErrorReturn {
@@ -205,15 +213,20 @@ struct IORPCMessageErrorReturn {
 #pragma pack()
 
 
+#if defined(__cplusplus)
 class OSMetaClassBase;
 struct IORPC;
 typedef kern_return_t (*OSDispatchMethod)(OSMetaClassBase * self, const IORPC rpc);
+#endif
 
 struct IORPC {
 	IORPCMessageMach * message;
 	IORPCMessageMach * reply;
 	uint32_t           sendSize;
 	uint32_t           replySize;
+#ifdef KERNEL
+	IORPCMessage     * kernelContent;
+#endif /* KERNEL */
 };
 typedef struct IORPC IORPC;
 

@@ -34,6 +34,7 @@
 #include <libkern/c++/OSData.h>
 #include <libkern/OSDebug.h>
 #include <mach_debug/zone_info.h>
+#include <vm/vm_iokit.h>
 #include "IOKitKernelInternal.h"
 
 __BEGIN_DECLS
@@ -191,7 +192,7 @@ IOMapper::copyMapperForDeviceWithIndex(IOService * device, unsigned int index)
 			goto found;
 		}
 
-		data = OSData::withBytesNoCopy((UInt32 *)data->getBytesNoCopy() + index, sizeof(UInt32));
+		data = OSData::withValueNoCopy(*((UInt32 *)data->getBytesNoCopy() + index));
 		if (!data) {
 			goto found;
 		}

@@ -30,19 +30,21 @@
 #include <pexpert/arm64/board_config.h>
 #include "assym.s"
 
+
 #if XNU_MONITOR
-/* Exit path defines; for controlling PPL -> kernel transitions. */
+/*
+ * Exit path defines; for controlling PPL -> kernel transitions.
+ * These should fit within a 32-bit integer, as the PPL trampoline packs them into a 32-bit field.
+ */
 #define PPL_EXIT_DISPATCH   0 /* This is a clean exit after a PPL request. */
 #define PPL_EXIT_PANIC_CALL 1 /* The PPL has called panic. */
 #define PPL_EXIT_BAD_CALL   2 /* The PPL request failed. */
 #define PPL_EXIT_EXCEPTION  3 /* The PPL took an exception. */
 
-
 #define KERNEL_MODE_ELR      ELR_GL11
 #define KERNEL_MODE_FAR      FAR_GL11
 #define KERNEL_MODE_ESR      ESR_GL11
 #define KERNEL_MODE_SPSR     SPSR_GL11
-#define KERNEL_MODE_ASPSR    ASPSR_GL11
 #define KERNEL_MODE_VBAR     VBAR_GL11
 #define KERNEL_MODE_TPIDR    TPIDR_GL11
 
@@ -50,7 +52,6 @@
 #define GUARDED_MODE_FAR     FAR_EL1
 #define GUARDED_MODE_ESR     ESR_EL1
 #define GUARDED_MODE_SPSR    SPSR_EL1
-#define GUARDED_MODE_ASPSR   ASPSR_EL1
 #define GUARDED_MODE_VBAR    VBAR_EL1
 #define GUARDED_MODE_TPIDR   TPIDR_EL1
 
@@ -127,20 +128,50 @@
 /*
  * SPILL_REGISTERS
  *
- * Spills the current set of registers (excluding x0, x1, sp) to the specified
- * save area.
+ * Spills the current set of registers (excluding x0, x1, sp as well as x2, x3
+ * in KERNEL_MODE) to the specified save area.
  *
  * On CPUs with PAC, the kernel "A" keys are used to create a thread signature.
  * These keys are deliberately kept loaded into the CPU for later kernel use.
  *
  *   arg0 - KERNEL_MODE or HIBERNATE_MODE
+ *   arg1 - ADD_THREAD_SIGNATURE or POISON_THREAD_SIGNATURE
  *   x0 - Address of the save area
+ *   x25 - Return the value of FPCR
  */
 #define KERNEL_MODE 0
 #define HIBERNATE_MODE 1
 
-.macro SPILL_REGISTERS	mode
-	stp		x2, x3, [x0, SS64_X2]                                   // Save remaining GPRs
+/** When set, the thread will be given an invalid thread signature */
+#define SPILL_REGISTERS_OPTION_POISON_THREAD_SIGNATURE_SHIFT	(0)
+#define SPILL_REGISTERS_OPTION_POISON_THREAD_SIGNATURE \
+	(1 << SPILL_REGISTERS_OPTION_POISON_THREAD_SIGNATURE_SHIFT)
+/** When set, ELR and FAR will not be spilled */
+#define SPILL_REGISTERS_OPTION_DONT_SPILL_ELR_FAR_SHIFT			(1)
+#define SPILL_REGISTERS_OPTION_DONT_SPILL_ELR_FAR \
+	(1 << SPILL_REGISTERS_OPTION_DONT_SPILL_ELR_FAR_SHIFT)
+
+#define FLEH_DISPATCH64_OPTION_SYNC_EXCEPTION 0
+#if CONFIG_SPTM
+#undef FLEH_DISPATCH64_OPTION_SYNC_EXCEPTION
+#define FLEH_DISPATCH64_OPTION_SYNC_EXCEPTION \
+	(SPILL_REGISTERS_OPTION_DONT_SPILL_ELR_FAR)
+#endif /* CONFIG_SPTM */
+
+#define FLEH_DISPATCH64_OPTION_FATAL_EXCEPTION \
+	(SPILL_REGISTERS_OPTION_POISON_THREAD_SIGNATURE)
+
+#define FLEH_DISPATCH64_OPTION_FATAL_SYNC_EXCEPTION \
+	(FLEH_DISPATCH64_OPTION_FATAL_EXCEPTION | \
+	 FLEH_DISPATCH64_OPTION_SYNC_EXCEPTION)
+
+#define FLEH_DISPATCH64_OPTION_NONE 0
+
+.macro SPILL_REGISTERS	mode options_register=
+	/* Spill remaining GPRs */
+	.if \mode != KERNEL_MODE
+	stp		x2, x3, [x0, SS64_X2]
+	.endif
 	stp		x4, x5, [x0, SS64_X4]
 	stp		x6, x7, [x0, SS64_X6]
 	stp		x8, x9, [x0, SS64_X8]
@@ -157,7 +188,6 @@
 	str		lr, [x0, SS64_LR]
 
 	/* Save arm_neon_saved_state64 */
-
 	stp		q0, q1, [x0, NS64_Q0]
 	stp		q2, q3, [x0, NS64_Q2]
 	stp		q4, q5, [x0, NS64_Q4]
@@ -174,14 +204,21 @@
 	stp		q26, q27, [x0, NS64_Q26]
 	stp		q28, q29, [x0, NS64_Q28]
 	stp		q30, q31, [x0, NS64_Q30]
+	mrs		x24, FPSR
+	str		w24, [x0, NS64_FPSR]
+	mrs		x25, FPCR
+	str		w25, [x0, NS64_FPCR]
+Lsave_neon_state_done_\@:
 
 	mrs		x22, ELR_EL1                                                     // Get exception link register
 	mrs		x23, SPSR_EL1                                                   // Load CPSR into var reg x23
-	mrs		x24, FPSR
-	mrs		x25, FPCR
 
 #if defined(HAS_APPLE_PAC)
 	.if \mode != HIBERNATE_MODE
+
+.ifnb \options_register
+	tbnz	\options_register, SPILL_REGISTERS_OPTION_POISON_THREAD_SIGNATURE_SHIFT, Lspill_registers_do_poison_\@
+.endif /* options_register */
 
 	/* Save x1 and LR to preserve across call */
 	mov		x21, x1
@@ -202,79 +239,129 @@
 	mov		x3, x20
 	mov		x4, x16
 	mov		x5, x17
+
+#if !CONFIG_SPTM
+	/* We don't have Panic Lockdown, so as a backstop switch to SP1 */
+	mrs		x19, SPSel
+	msr		SPSel, #1
+#endif /* !CONFIG_SPTM */
+
 	bl		_ml_sign_thread_state
+	/* ml_sign_thread_state has special ABI, overwrites x1, x2, x17 */
+	mov		x17, x5
+
+#if !CONFIG_SPTM
+	/* If we called in on SP0, switch back */
+	cbnz	x19, Lspill_registers_was_on_sp1_\@
+	msr		SPSel, #0
+Lspill_registers_was_on_sp1_\@:
+#endif /* !CONFIG_SPTM */
+
 	mov		lr, x20
 	mov		x1, x21
+.ifnb \options_register
+	b		Lspill_registers_poison_continue_\@
+
+Lspill_registers_do_poison_\@:
+	mov		x21, #-1
+	str		x21, [x0, SS64_JOPHASH]
+
+Lspill_registers_poison_continue_\@:
+.endif /* options_register */
+
 	.endif
 #endif /* defined(HAS_APPLE_PAC) */
-
-	str		x22, [x0, SS64_PC]                                               // Save ELR to PCB
-	str		w23, [x0, SS64_CPSR]                                    // Save CPSR to PCB
-	str		w24, [x0, NS64_FPSR]
-	str		w25, [x0, NS64_FPCR]
 
 	mrs		x20, FAR_EL1
 	mrs		x21, ESR_EL1
 
+.ifnb \options_register
+	tbnz	\options_register, SPILL_REGISTERS_OPTION_DONT_SPILL_ELR_FAR_SHIFT, Lspill_registers_skip_elr_far_\@
+.endif /* options_register != NONE */
+
 	str		x20, [x0, SS64_FAR]
-	str		w21, [x0, SS64_ESR]
+	str		x22, [x0, SS64_PC]
+
+.ifnb \options_register
+Lspill_registers_skip_elr_far_\@:
+.endif /* options_register != NONE */
+	str		x21, [x0, SS64_ESR]
+	str		w23, [x0, SS64_CPSR]
 .endmacro
 
 .macro DEADLOOP
 	b	.
 .endmacro
 
-// SP0 is expected to already be selected
-.macro SWITCH_TO_KERN_STACK
-	ldr		x1, [x1, TH_KSTACKPTR]	// Load the top of the kernel stack to x1
-	mov		sp, x1			// Set the stack pointer to the kernel stack
-.endmacro
-
-// SP0 is expected to already be selected
-.macro SWITCH_TO_INT_STACK
+/**
+ * Reloads SP with the current thread's interrupt stack.
+ *
+ * SP0 is expected to already be selected.  Clobbers x1 and tmp.
+ */
+.macro SWITCH_TO_INT_STACK	tmp
 	mrs		x1, TPIDR_EL1
-	ldr		x1, [x1, ACT_CPUDATAP]
-	ldr		x1, [x1, CPU_ISTACKPTR]
+	LOAD_INT_STACK_THREAD	dst=x1, src=x1, tmp=\tmp
 	mov		sp, x1			// Set the stack pointer to the interrupt stack
 .endmacro
 
+#if HAS_ARM_FEAT_SME
 /*
- * REENABLE_DAIF
+ * LOAD_OR_STORE_Z_P_REGISTERS - loads or stores the Z and P register files
  *
- * Restores the DAIF bits to their original state (well, the AIF bits at least).
- *   arg0 - DAIF bits (read from the DAIF interface) to restore
+ * instr: ldr or str
+ * svl_b: register containing SVL_B
+ * ss: register pointing to save area of size 34 * SVL_B (clobbered)
  */
-.macro REENABLE_DAIF
-	/* AIF enable. */
-	tst		$0, #(DAIF_IRQF | DAIF_FIQF | DAIF_ASYNCF)
-	b.eq		3f
+.macro LOAD_OR_STORE_Z_P_REGISTERS	instr, svl_b, ss
+	\instr	z0, [\ss, #0, mul vl]
+	\instr	z1, [\ss, #1, mul vl]
+	\instr	z2, [\ss, #2, mul vl]
+	\instr	z3, [\ss, #3, mul vl]
+	\instr	z4, [\ss, #4, mul vl]
+	\instr	z5, [\ss, #5, mul vl]
+	\instr	z6, [\ss, #6, mul vl]
+	\instr	z7, [\ss, #7, mul vl]
+	\instr	z8, [\ss, #8, mul vl]
+	\instr	z9, [\ss, #9, mul vl]
+	\instr	z10, [\ss, #10, mul vl]
+	\instr	z11, [\ss, #11, mul vl]
+	\instr	z12, [\ss, #12, mul vl]
+	\instr	z13, [\ss, #13, mul vl]
+	\instr	z14, [\ss, #14, mul vl]
+	\instr	z15, [\ss, #15, mul vl]
+	\instr	z16, [\ss, #16, mul vl]
+	\instr	z17, [\ss, #17, mul vl]
+	\instr	z18, [\ss, #18, mul vl]
+	\instr	z19, [\ss, #19, mul vl]
+	\instr	z20, [\ss, #20, mul vl]
+	\instr	z21, [\ss, #21, mul vl]
+	\instr	z22, [\ss, #22, mul vl]
+	\instr	z23, [\ss, #23, mul vl]
+	\instr	z24, [\ss, #24, mul vl]
+	\instr	z25, [\ss, #25, mul vl]
+	\instr	z26, [\ss, #26, mul vl]
+	\instr	z27, [\ss, #27, mul vl]
+	\instr	z28, [\ss, #28, mul vl]
+	\instr	z29, [\ss, #29, mul vl]
+	\instr	z30, [\ss, #30, mul vl]
+	\instr	z31, [\ss, #31, mul vl]
 
-	/* IF enable. */
-	tst		$0, #(DAIF_IRQF | DAIF_FIQF)
-	b.eq		2f
-
-	/* A enable. */
-	tst		$0, #(DAIF_ASYNCF)
-	b.eq		1f
-
-	/* Enable nothing. */
-	b		4f
-
-	/* A enable. */
-1:
-	msr		DAIFClr, #(DAIFSC_ASYNCF)
-	b		4f
-
-	/* IF enable. */
-2:
-	msr		DAIFClr, #(DAIFSC_IRQF | DAIFSC_FIQF)
-	b		4f
-
-	/* AIF enable. */
-3:
-	msr		DAIFClr, #(DAIFSC_IRQF | DAIFSC_FIQF | DAIFSC_ASYNCF)
-
-	/* Done! */
-4:
+	add		\ss, \ss, \svl_b, lsl #5
+	\instr	p0, [\ss, #0, mul vl]
+	\instr	p1, [\ss, #1, mul vl]
+	\instr	p2, [\ss, #2, mul vl]
+	\instr	p3, [\ss, #3, mul vl]
+	\instr	p4, [\ss, #4, mul vl]
+	\instr	p5, [\ss, #5, mul vl]
+	\instr	p6, [\ss, #6, mul vl]
+	\instr	p7, [\ss, #7, mul vl]
+	\instr	p8, [\ss, #8, mul vl]
+	\instr	p9, [\ss, #9, mul vl]
+	\instr	p10, [\ss, #10, mul vl]
+	\instr	p11, [\ss, #11, mul vl]
+	\instr	p12, [\ss, #12, mul vl]
+	\instr	p13, [\ss, #13, mul vl]
+	\instr	p14, [\ss, #14, mul vl]
+	\instr	p15, [\ss, #15, mul vl]
 .endmacro
-
+#endif /* HAS_ARM_FEAT_SME */

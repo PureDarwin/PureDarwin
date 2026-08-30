@@ -28,10 +28,10 @@
 
 extern "C" {
 #include <mach/task.h>
-#include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 };
 
+#include <machine/machine_routines.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOService.h>
 #include <IOKit/PassthruInterruptController.h>
@@ -67,7 +67,7 @@ PassthruInterruptController::setCPUInterruptProperties(IOService *service)
 
 	long         zero = 0;
 	OSArray *specifier = OSArray::withCapacity(1);
-	OSData *tmpData = OSData::withBytes(&zero, sizeof(zero));
+	OSData *tmpData = OSData::withValue(zero);
 	specifier->setObject(tmpData);
 	tmpData->release();
 	service->setProperty(gIOInterruptSpecifiersKey, specifier);

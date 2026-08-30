@@ -84,6 +84,9 @@
 #include <mach/vm_types.h>
 #include <kern/simple_lock.h>
 #include <kern/assert.h>
+#ifdef XNU_KERNEL_PRIVATE
+#include <vm/vm_kern_xnu.h>
+#endif
 
 __BEGIN_DECLS
 
@@ -115,13 +118,10 @@ extern  volatile boolean_t mp_kdp_trap;
 extern  volatile boolean_t mp_kdp_is_NMI;
 extern  volatile boolean_t force_immediate_debugger_NMI;
 extern  volatile boolean_t pmap_tlb_flush_timeout;
-extern  volatile usimple_lock_t spinlock_timed_out;
-extern  volatile uint32_t spinlock_owner_cpu;
-extern  uint32_t spinlock_timeout_NMI(uintptr_t thread_addr);
 
-extern  uint64_t        LastDebuggerEntryAllowance;
+extern  uint64_t  LastDebuggerEntryAllowance;
 
-extern  void      mp_kdp_enter(boolean_t proceed_on_failure);
+extern  void      mp_kdp_enter(boolean_t proceed_on_failure, bool is_stackshot);
 extern  void      mp_kdp_exit(void);
 extern  boolean_t mp_kdp_all_cpus_halted(void);
 
@@ -156,7 +156,7 @@ typedef long (*kdp_x86_xcpu_func_t) (void *arg0, void *arg1, uint16_t lcpu);
 
 extern  long kdp_x86_xcpu_invoke(const uint16_t lcpu,
     kdp_x86_xcpu_func_t func,
-    void *arg0, void *arg1);
+    void *arg0, void *arg1, uint64_t timeout);
 typedef enum    {KDP_XCPU_NONE = 0xffff, KDP_CURRENT_LCPU = 0xfffe} kdp_cpu_t;
 #endif
 
@@ -170,9 +170,10 @@ cpu_to_cpumask(cpu_t cpu)
 {
 	return (cpu < MAX_CPUS) ? (1ULL << cpu) : 0;
 }
-#define CPUMASK_ALL     0xffffffffffffffffULL
-#define CPUMASK_SELF    cpu_to_cpumask(cpu_number())
-#define CPUMASK_OTHERS  (CPUMASK_ALL & ~CPUMASK_SELF)
+#define CPUMASK_ALL             0xffffffffffffffffULL
+#define CPUMASK_SELF            cpu_to_cpumask((cpu_t)cpu_number())
+#define CPUMASK_OTHERS          (CPUMASK_ALL & ~CPUMASK_SELF)
+#define CPUMASK_REAL_OTHERS     (((1ULL << real_ncpus) - 1) & ~CPUMASK_SELF)
 
 /* Initialation routing called at processor registration */
 extern void mp_cpus_call_cpu_init(int cpu);
@@ -207,9 +208,14 @@ typedef enum {
 	SPINLOCK_TIMEOUT,
 	TLB_FLUSH_TIMEOUT,
 	CROSSCALL_TIMEOUT,
-	INTERRUPT_WATCHDOG
+	INTERRUPT_WATCHDOG,
+	PTE_CORRUPTION
 } NMI_reason_t;
+
+extern NMI_reason_t NMI_panic_reason;
+
 extern void NMIPI_panic(cpumask_t cpus, NMI_reason_t reason);
+extern long NMI_pte_corruption_callback(void *arg0, void *arg1, uint16_t lcpu);
 
 /* Interrupt a set of cpus, forcing an exit out of non-root mode */
 extern void mp_cpus_kick(cpumask_t cpus);
@@ -240,41 +246,40 @@ typedef struct {
 extern cpu_signal_event_log_t   *cpu_signal[];
 extern cpu_signal_event_log_t   *cpu_handle[];
 
-#define DBGLOG(log, _cpu, _event) {                                     \
-	boolean_t		spl = ml_set_interrupts_enabled(FALSE); \
-	cpu_signal_event_log_t	*logp = log[cpu_number()];              \
-	int			next = logp->next_entry;                \
-	cpu_signal_event_t	*eventp = &logp->entry[next];           \
-                                                                        \
-	logp->count[_event]++;                                          \
-                                                                        \
-	eventp->time = rdtsc64();                                       \
-	eventp->cpu = _cpu;                                             \
-	eventp->event = _event;                                         \
-	if (next == (LOG_NENTRIES - 1))                                 \
-	        logp->next_entry = 0;                                   \
-	else                                                            \
-	        logp->next_entry++;                                     \
-                                                                        \
-	(void) ml_set_interrupts_enabled(spl);                          \
+#define DBGLOG(log, _cpu, _event) {                                             \
+	boolean_t		spl = ml_set_interrupts_enabled(FALSE);         \
+	cpu_signal_event_log_t	*logp = log[cpu_number()];                      \
+	int			next = logp->next_entry;                        \
+	cpu_signal_event_t	*eventp = &logp->entry[next];                   \
+                                                                                \
+	logp->count[_event]++;                                                  \
+                                                                                \
+	eventp->time = rdtsc64();                                               \
+	eventp->cpu = _cpu;                                                     \
+	eventp->event = _event;                                                 \
+	if (next == (LOG_NENTRIES - 1))                                         \
+	        logp->next_entry = 0;                                           \
+	else                                                                    \
+	        logp->next_entry++;                                             \
+                                                                                \
+	(void) ml_set_interrupts_enabled(spl);                                  \
 }
 
-#define DBGLOG_CPU_INIT(cpu)    {                                       \
-	cpu_signal_event_log_t	**sig_logpp = &cpu_signal[cpu];         \
-	cpu_signal_event_log_t	**hdl_logpp = &cpu_handle[cpu];         \
-                                                                        \
-	if (*sig_logpp == NULL &&                                       \
-	        kmem_alloc(kernel_map,                                  \
-	                (vm_offset_t *) sig_logpp,                      \
-	                sizeof(cpu_signal_event_log_t)) != KERN_SUCCESS)\
-	        panic("DBGLOG_CPU_INIT cpu_signal allocation failed\n");\
-	bzero(*sig_logpp, sizeof(cpu_signal_event_log_t));              \
-	if (*hdl_logpp == NULL &&                                       \
-	        kmem_alloc(kernel_map,                                  \
-	                (vm_offset_t *) hdl_logpp,                      \
-	                sizeof(cpu_signal_event_log_t)) != KERN_SUCCESS)\
-	        panic("DBGLOG_CPU_INIT cpu_handle allocation failed\n");\
-	bzero(*hdl_logpp, sizeof(cpu_signal_event_log_t));              \
+#define DBGLOG_CPU_INIT(cpu)    {                                               \
+	cpu_signal_event_log_t	**sig_logpp = &cpu_signal[cpu];                 \
+	cpu_signal_event_log_t	**hdl_logpp = &cpu_handle[cpu];                 \
+	vm_size_t log_size = round_page(sizeof(cpu_signal_event_log_t));        \
+	kma_flags_t log_flags = KMA_NOFAIL | KMA_KOBJECT |                      \
+	    KMA_PERMANENT | KMA_ZERO;                                           \
+                                                                                \
+	if (*sig_logpp == NULL) {                                               \
+	        kmem_alloc(kernel_map, (vm_offset_t *)sig_logpp,                \
+	            log_size, log_flags, VM_KERN_MEMORY_DIAG);                  \
+	}                                                                       \
+	if (*sig_logpp == NULL) {                                               \
+	        kmem_alloc(kernel_map, (vm_offset_t *)hdl_logpp,                \
+	            log_size, log_flags, VM_KERN_MEMORY_DIAG);                  \
+	}                                                                       \
 }
 #else   /* MP_DEBUG */
 #define DBGLOG(log, _cpu, _event)

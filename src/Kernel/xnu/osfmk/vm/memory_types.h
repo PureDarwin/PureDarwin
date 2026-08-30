@@ -40,4 +40,22 @@
 #define VM_WIMG_USE_DEFAULT     0x80
 #define VM_WIMG_MASK            0xFF
 
+#if HAS_MTE
+/*
+ * Specifies default cacheability.
+ */
+#define HAS_DEFAULT_CACHEABILITY(attr)                                  \
+	                        (                                       \
+	                        ((attr) == VM_WIMG_MTE) ||              \
+	                        ((attr) == VM_WIMG_USE_DEFAULT) ||      \
+	                        ((attr) == VM_WIMG_DEFAULT)             \
+	                        )
+#else /* !HAS_MTE */
+#define HAS_DEFAULT_CACHEABILITY(attr)                                  \
+	                        (                                       \
+	                        ((attr) == VM_WIMG_USE_DEFAULT) ||      \
+	                        ((attr) == VM_WIMG_DEFAULT)             \
+	                        )
+#endif /* HAS_MTE */
+
 #endif /* _VM_MEMORY_TYPES_H_ */

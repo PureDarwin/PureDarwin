@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -69,14 +69,17 @@
 #include <sys/appleapiopts.h>
 #include <sys/cdefs.h>
 
+__ASSUME_PTR_ABI_SINGLE_BEGIN
+
 /* XXX: this will go away */
 #define PR_SLOWHZ       2               /* 2 slow timeouts per second */
 
 /*
  * The arguments to the ctlinput routine are
- *      (*protosw[].pr_ctlinput)(cmd, sa, arg);
- * where cmd is one of the commands below, sa is a pointer to a sockaddr,
- * and arg is a `void *' argument used within a protocol family.
+ *      (*protosw[].pr_ctlinput)(cmd, sa, arg, ifnet);
+ * where `cmd' is one of the commands below, `sa' is a pointer to a sockaddr,
+ * `arg' is a `void *' argument used within a protocol family (typically
+ * that's a `struct ipctlparam *') and `ifp' is a pointer to the network interface.
  */
 #define PRC_IFDOWN              0       /* interface transition */
 #define PRC_ROUTEDEAD           1       /* select new route if possible ??? */
@@ -115,6 +118,26 @@
 #include <sys/socketvar.h>
 #include <sys/queue.h>
 #include <kern/locks.h>
+
+
+/*
+ * argument type for the 3rd arg of pr_ctlinput()
+ * should be consulted only with AF_INET family.
+ *
+ * IPv4 ICMP IPv4 [exthdrs] finalhdr payload
+ * ^    ^    ^              ^
+ * |    |    |              ipc_off
+ * |    |    ipc_icmp_ip
+ * |    ipc_icmp
+ * ipc_m
+ *
+ */
+struct ipctlparam {
+	struct ip   *ipc_icmp_ip;  /* ip header of target packet. Must be the first field */
+	struct mbuf *ipc_m;        /* start of mbuf chain */
+	struct icmp *ipc_icmp;     /* icmp header of target packet */
+	size_t       ipc_off;      /* offset of the target proto header */
+};
 
 /* Forward declare these structures referenced from prototypes below. */
 struct mbuf;
@@ -183,7 +206,7 @@ struct protosw {
 	(struct socket *so, int refcnt, void *debug);
 	int     (*pr_unlock)            /* unlock for protocol */
 	(struct socket *so, int refcnt, void *debug);
-	lck_mtx_t *(*pr_getlock)        /* retrieve protocol lock */
+	lck_mtx_t * __single (*pr_getlock)        /* retrieve protocol lock */
 	(struct socket *so, int flags);
 	/*
 	 * Implant hooks
@@ -257,13 +280,11 @@ struct protosw {
 	void    (*pr_init)              /* initialization hook */
 	(struct protosw *, struct domain *);
 	void    (*pr_drain)(void);      /* flush any excess space possible */
-	int     (*pr_sysctl)            /* sysctl for protocol */
-	(int *, u_int, void *, size_t *, void *, size_t);
 	int     (*pr_lock)              /* lock function for protocol */
 	(struct socket *so, int refcnt, void *debug);
 	int     (*pr_unlock)            /* unlock for protocol */
 	(struct socket *so, int refcnt, void *debug);
-	lck_mtx_t *(*pr_getlock)        /* retrieve protocol lock */
+	lck_mtx_t * __single (*pr_getlock)        /* retrieve protocol lock */
 	(struct socket *so, int flags);
 	/*
 	 * misc
@@ -276,6 +297,9 @@ struct protosw {
 
 	void    (*pr_copy_last_owner) /* copy last socket from listener */
 	(struct socket *so, struct socket *head);
+
+	/* Memory Accounting instance for this subsystem. */
+	struct mem_acct *pr_mem_acct;
 };
 
 /*
@@ -320,6 +344,25 @@ struct protosw {
 #endif /* BSD_KERNEL_PRIVATE */
 
 #ifdef BSD_KERNEL_PRIVATE
+#if SKYWALK
+struct protoctl_ev_val {
+	uint32_t val;
+	uint32_t tcp_seq_number;
+};
+
+extern void
+protoctl_event_enqueue_nwk_wq_entry(struct ifnet *ifp, struct sockaddr *p_laddr,
+    struct sockaddr *p_raddr, uint16_t lport, uint16_t rport, uint8_t protocol,
+    uint32_t protoctl_event_code, struct protoctl_ev_val *p_protoctl_ev_val);
+
+struct protoctl_ev_val;
+/* Proto event declarations */
+extern struct eventhandler_lists_ctxt protoctl_evhdlr_ctxt;
+typedef void (*protoctl_event_fn)(struct eventhandler_entry_arg, struct ifnet *,
+    struct sockaddr *, struct sockaddr*, uint16_t, uint16_t, uint8_t, uint32_t,
+    struct protoctl_ev_val *);
+EVENTHANDLER_DECLARE(protoctl_event, protoctl_event_fn);
+#endif /* SKYWALK */
 #ifdef PRCREQUESTS
 char    *prcrequests[] = {
 	"IFDOWN", "ROUTEDEAD", "IFUP", "DEC-BIT-QUENCH2",
@@ -444,8 +487,9 @@ struct pr_usrreqs {
 	int     (*pru_sosend)(struct socket *so, struct sockaddr *addr,
 	    struct uio *uio, struct mbuf *top, struct mbuf *control,
 	    int flags);
+	// rdar://87088674
 	int     (*pru_soreceive)(struct socket *so, struct sockaddr **paddr,
-	    struct uio *uio, struct mbuf **mp0, struct mbuf **controlp,
+	    struct uio *uio, struct mbuf **mp0, struct mbuf *__single *controlp,
 	    int *flagsp);
 	int     (*pru_sopoll)(struct socket *so, int events,
 	    struct ucred *cred, void *);
@@ -473,7 +517,8 @@ struct pr_usrreqs {
 	    struct sockaddr *, struct proc *, uint32_t,
 	    sae_associd_t, sae_connid_t *, uint32_t, void *, uint32_t,
 	    struct uio *, user_ssize_t *);
-	int     (*pru_control)(struct socket *, u_long, caddr_t,
+	int     (*pru_control)(struct socket *,
+	    u_long cmd, caddr_t __sized_by(IOCPARM_LEN(cmd)) data,
 	    struct ifnet *, struct proc *);
 	int     (*pru_detach)(struct socket *);
 	int     (*pru_disconnect)(struct socket *);
@@ -485,8 +530,7 @@ struct pr_usrreqs {
 	int     (*pru_rcvoob)(struct socket *, struct mbuf *, int);
 	int     (*pru_send)(struct socket *, int, struct mbuf *,
 	    struct sockaddr *, struct mbuf *, struct proc *);
-	int     (*pru_send_list)(struct socket *, int, struct mbuf *,
-	    struct sockaddr *, struct mbuf *, struct proc *);
+	int     (*pru_send_list)(struct socket *, struct mbuf *, u_int *, int);
 #define PRUS_OOB        0x1
 #define PRUS_EOF        0x2
 #define PRUS_MORETOCOME 0x4
@@ -496,24 +540,16 @@ struct pr_usrreqs {
 	int     (*pru_sopoll)(struct socket *, int, struct ucred *, void *);
 	int     (*pru_soreceive)(struct socket *, struct sockaddr **,
 	    struct uio *, struct mbuf **, struct mbuf **, int *);
-	int     (*pru_soreceive_list)(struct socket *, struct recv_msg_elem *, u_int,
-	    int *);
 	int     (*pru_sosend)(struct socket *, struct sockaddr *,
 	    struct uio *, struct mbuf *, struct mbuf *, int);
-	int     (*pru_sosend_list)(struct socket *, struct uio **, u_int, int);
+	int     (*pru_sosend_list)(struct socket *, struct mbuf *, size_t, u_int *, int);
 	int     (*pru_socheckopt)(struct socket *, struct sockopt *);
 	int     (*pru_preconnect)(struct socket *so);
+	int     (*pru_defunct)(struct socket *);
 };
 
 /* Values for pru_flags  */
 #define PRUF_OLD        0x10000000      /* added via net_add_proto */
-
-#ifdef BSD_KERNEL_PRIVATE
-/*
- * For faster access than net_uptime(), bypassing the initialization.
- */
-extern u_int64_t _net_uptime;
-#endif /* BSD_KERNEL_PRIVATE */
 #endif /* XNU_KERNEL_PRIVATE */
 
 __BEGIN_DECLS
@@ -533,7 +569,8 @@ extern int pru_disconnectx_notsupp(struct socket *, sae_associd_t,
     sae_connid_t);
 extern int pru_socheckopt_null(struct socket *, struct sockopt *);
 #endif /* XNU_KERNEL_PRIVATE */
-extern int pru_control_notsupp(struct socket *so, u_long cmd, caddr_t data,
+extern int pru_control_notsupp(struct socket *so,
+    u_long cmd, caddr_t __sized_by(IOCPARM_LEN(cmd)) data,
     struct ifnet *ifp, struct proc *p);
 extern int pru_detach_notsupp(struct socket *so);
 extern int pru_disconnect_notsupp(struct socket *so);
@@ -543,20 +580,16 @@ extern int pru_rcvd_notsupp(struct socket *so, int flags);
 extern int pru_rcvoob_notsupp(struct socket *so, struct mbuf *m, int flags);
 extern int pru_send_notsupp(struct socket *so, int flags, struct mbuf *m,
     struct sockaddr *addr, struct mbuf *control, struct proc *p);
-extern int pru_send_list_notsupp(struct socket *so, int flags, struct mbuf *m,
-    struct sockaddr *addr, struct mbuf *control, struct proc *p);
+extern int pru_send_list_notsupp(struct socket *, struct mbuf *, u_int *, int);
 extern int pru_sense_null(struct socket *so, void * sb, int isstat64);
 extern int pru_shutdown_notsupp(struct socket *so);
 extern int pru_sockaddr_notsupp(struct socket *so, struct sockaddr **nam);
 extern int pru_sosend_notsupp(struct socket *so, struct sockaddr *addr,
     struct uio *uio, struct mbuf *top, struct mbuf *control, int flags);
-extern int pru_sosend_list_notsupp(struct socket *so, struct uio **uio,
-    u_int, int flags);
+extern int pru_sosend_list_notsupp(struct socket *, struct mbuf *, size_t, u_int *, int);
 extern int pru_soreceive_notsupp(struct socket *so,
     struct sockaddr **paddr, struct uio *uio, struct mbuf **mp0,
     struct mbuf **controlp, int *flagsp);
-extern int pru_soreceive_list_notsupp(struct socket *, struct recv_msg_elem *, u_int,
-    int *);
 extern int pru_sopoll_notsupp(struct socket *so, int events,
     struct ucred *cred, void *);
 #ifdef XNU_KERNEL_PRIVATE
@@ -576,11 +609,6 @@ extern int net_del_proto(int, int, struct domain *)
 __XNU_INTERNAL(net_del_proto);
 extern int net_add_proto_old(struct protosw_old *, struct domain_old *);
 extern int net_del_proto_old(int, int, struct domain_old *);
-extern void net_update_uptime(void);
-extern void net_update_uptime_with_time(const struct timeval *);
-extern u_int64_t net_uptime(void);
-extern u_int64_t net_uptime_ms(void);
-extern void net_uptime2timeval(struct timeval *);
 extern struct protosw *pffindproto(int family, int protocol, int type)
 __XNU_INTERNAL(pffindproto);
 #else
@@ -590,4 +618,7 @@ extern struct protosw *pffindproto(int family, int protocol, int type);
 #endif /* XNU_KERNEL_PRIVATE */
 __END_DECLS
 #endif /* KERNEL_PRIVATE */
+
+__ASSUME_PTR_ABI_SINGLE_END
+
 #endif  /* !_SYS_PROTOSW_H_ */

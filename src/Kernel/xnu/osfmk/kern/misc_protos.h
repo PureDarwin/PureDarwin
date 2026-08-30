@@ -98,6 +98,24 @@ extern int copyin_atomic64(
 	const user_addr_t   user_addr,
 	uint64_t            *kernel_addr);
 
+#if CONFIG_DTRACE
+extern int dtrace_nofault_copy8(
+	const uintptr_t     kernel_addr,
+	uint8_t             *value);
+
+extern int dtrace_nofault_copy16(
+	const uintptr_t     kernel_addr,
+	uint16_t            *value);
+
+extern int dtrace_nofault_copy32(
+	const uintptr_t     kernel_addr,
+	uint32_t            *value);
+
+extern int dtrace_nofault_copy64(
+	const uintptr_t     kernel_addr,
+	uint64_t            *value);
+#endif /* CONFIG_DTRACE */
+
 /*
  * Does an atomic copyin at the specified user_address and compares
  * it to the passed in value, and if it matches, waits.
@@ -135,22 +153,35 @@ extern int copyinstr(
 /* Move arbitrarily-aligned data from a user space to kernel space */
 extern int copyinmsg(
 	const user_addr_t   user_addr,
-	char                *kernel_addr,
+	void                *kernel_addr,
 	mach_msg_size_t     nbytes);
 
 /* Move arbitrarily-aligned data from a kernel space to user space */
 extern int copyoutmsg(
-	const char      *kernel_addr,
+	const void      *kernel_addr,
 	user_addr_t     user_addr,
 	mach_msg_size_t nbytes);
 
+#if HAS_MTE
+/*
+ * Retrieves the associated MTE tag, if any, for a user space address.
+ * Returns the input pointer with any associated MTE tag merged to the
+ * architecturally specified bitfield in `out`.
+ */
+int copyin_mte_load_tag(const user_addr_t src, user_addr_t* out);
+
+#endif /* HAS_MTE */
+
+#if (DEBUG || DEVELOPMENT)
+extern int verify_write(const void *source, void *dst, size_t size);
+#endif
 extern int sscanf(const char *input, const char *fmt, ...) __scanflike(2, 3);
 
 /* sprintf() is being deprecated. Please use snprintf() instead. */
 extern integer_t sprintf(char *buf, const char *fmt, ...) __printflike(2, 3) __deprecated;
 
 extern int printf(const char *format, ...) __printflike(1, 2);
-extern int vprintf(const char *format, va_list ap);
+extern int vprintf(const char *format, va_list ap) __printflike(1, 0);
 
 #if KERNEL_PRIVATE
 int     _consume_printf_args(int, ...);
@@ -174,39 +205,34 @@ extern int kdb_printf_unbuffered(const char *format, ...) __printflike(1, 2);
 
 extern int snprintf(char *, size_t, const char *, ...) __printflike(3, 4);
 extern int scnprintf(char *, size_t, const char *, ...) __printflike(3, 4);
+extern const char *tsnprintf(char *, size_t, const char *, ...) __printflike(3, 4);
 
 extern void log(int level, char *fmt, ...) __printflike(2, 3);
 
 void
 _doprnt(
-	const char      *fmt,
-	va_list                 *argp,
-	void                    (*putc)(char),
-	int                     radix);
+	const char     *fmt,
+	va_list        *argp,
+	void          (*putc)(char),
+	int             radix) __printflike(1, 0);
 
 void
 _doprnt_log(
-	const char      *fmt,
-	va_list                 *argp,
-	void                    (*putc)(char),
-	int                     radix);
+	const char     *fmt,
+	va_list        *argp,
+	void          (*putc)(char),
+	int             radix) __printflike(1, 0);
 
 int
 __doprnt(
-	const char      *fmt,
-	va_list                 argp,
-	void                    (*putc)(int, void *),
-	void                    *arg,
-	int                     radix,
-	int                     is_log);
+	const char     *fmt,
+	va_list         argp,
+	void          (*putc)(int, void *),
+	void           *arg,
+	int             radix,
+	int             is_log) __printflike(1, 0);
 
-extern void safe_gets(
-	char    *str,
-	int     maxlen);
-
-extern void cnputcusr(char);
-
-extern void cnputsusr(char *, int);
+extern void console_write_char(char);
 
 extern void conslog_putc(char);
 
@@ -218,9 +244,7 @@ extern void consdebug_log(char);
 
 extern void consdebug_putc_unbuffered(char);
 
-extern void cnputc(char);
-
-extern void cnputc_unbuffered(char);
+extern void console_write_unbuffered(char);
 
 extern void console_write(char *, int);
 
@@ -228,9 +252,9 @@ extern void console_suspend(void);
 
 extern void console_resume(void);
 
-extern int cngetc(void);
+extern int console_read_char(void);
 
-extern int cnmaygetc(void);
+extern int console_try_read_char(void);
 
 extern int _setjmp(
 	jmp_buf_t       *jmp_buf);
@@ -240,11 +264,6 @@ extern int _longjmp(
 	int             value);
 
 extern void bootstrap_create(void);
-
-#if     DIPC
-extern boolean_t        no_bootstrap_task(void);
-extern ipc_port_t       get_root_master_device_port(void);
-#endif  /* DIPC */
 
 extern kern_return_t    kernel_set_special_port(
 	host_priv_t     host_priv,

@@ -1,0 +1,28 @@
+# The symbols in this file are symbols that darwintest main uses from libc and that XNU defines.
+_gettimeofday
+_getpid
+_getuid
+_geteuid
+_setpriority
+_open
+_write
+_dup2
+_exit
+_fchmod
+_unlink
+_posix_spawn
+_task_policy_set
+__stack_chk_fail
+_mach_vm_allocate
+# used by pthread
+_mach_vm_deallocate
+# used by tests
+_sleep
+# used by mock library
+_abort
+# used by llvm compiler_rt when creating coverage file
+_mkdir
+# for debugging
+_backtrace
+# used by sanitizers
+_task_set_exc_guard_behavior

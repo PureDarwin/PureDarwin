@@ -147,7 +147,8 @@ static errno_t lo_demux(struct ifnet *, struct mbuf *, char *,
     protocol_family_t *);
 static errno_t
 lo_framer(struct ifnet *, struct mbuf **, const struct sockaddr *,
-    const char *, const char *, u_int32_t *, u_int32_t *);
+    IFNET_LLADDR_T, IFNET_FRAME_TYPE_T,
+    u_int32_t *, u_int32_t *);
 static errno_t lo_add_proto(struct ifnet *, protocol_family_t,
     const struct ifnet_demux_desc *, u_int32_t);
 static errno_t lo_del_proto(struct ifnet *, protocol_family_t);
@@ -155,7 +156,7 @@ static int lo_output(struct ifnet *, struct mbuf *);
 static errno_t lo_pre_enqueue(struct ifnet *, struct mbuf *);
 static void lo_start(struct ifnet *);
 static errno_t lo_pre_output(struct ifnet *, protocol_family_t, struct mbuf **,
-    const struct sockaddr *, void *, char *, char *);
+    const struct sockaddr *, void *, IFNET_FRAME_TYPE_RW_T, IFNET_LLADDR_RW_T);
 static errno_t lo_input(struct ifnet *, protocol_family_t, struct mbuf *);
 static void lo_rtrequest(int, struct rtentry *, struct sockaddr *);
 static errno_t lo_ioctl(struct ifnet *, u_long, void *);
@@ -202,7 +203,8 @@ lo_demux(struct ifnet *ifp, struct mbuf *m, char *frame_header,
 
 static errno_t
 lo_framer(struct ifnet *ifp, struct mbuf **m, const struct sockaddr *dest,
-    const char *dest_linkaddr, const char *frame_type,
+    IFNET_LLADDR_T dest_linkaddr,
+    IFNET_FRAME_TYPE_T frame_type,
     u_int32_t *prepend_len, u_int32_t *postpend_len)
 {
 #pragma unused(ifp, dest, dest_linkaddr)
@@ -394,7 +396,7 @@ lo_start(struct ifnet *ifp)
 	bzero(&s, sizeof(s));
 
 	for (;;) {
-		struct mbuf *m = NULL, *m_tail = NULL;
+		mbuf_ref_t m = NULL, m_tail = NULL;
 		u_int32_t cnt, len = 0;
 
 		if (lo_sched_model == IFNET_SCHED_MODEL_NORMAL) {
@@ -429,11 +431,11 @@ lo_start(struct ifnet *ifp)
  */
 static errno_t
 lo_pre_output(struct ifnet *ifp, protocol_family_t protocol_family,
-    struct mbuf **m, const struct sockaddr *dst, void *route, char *frame_type,
-    char *dst_addr)
+    struct mbuf **m, const struct sockaddr *dst, void *route,
+    IFNET_FRAME_TYPE_RW_T frame_type, IFNET_LLADDR_RW_T dst_addr)
 {
 #pragma unused(ifp, dst, dst_addr)
-	struct rtentry *rt = route;
+	rtentry_ref_t rt = route;
 
 	VERIFY((*m)->m_flags & M_PKTHDR);
 
@@ -514,7 +516,7 @@ lo_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 
 	switch (cmd) {
 	case SIOCSIFADDR: {             /* struct ifaddr pointer */
-		struct ifaddr *ifa = data;
+		ifaddr_ref_t ifa = data;
 
 		ifnet_set_flags(ifp, IFF_UP | IFF_RUNNING, IFF_UP | IFF_RUNNING);
 		IFA_LOCK_SPIN(ifa);
@@ -528,7 +530,7 @@ lo_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 
 	case SIOCADDMULTI:              /* struct ifreq */
 	case SIOCDELMULTI: {            /* struct ifreq */
-		struct ifreq *ifr = data;
+		struct ifreq * __single ifr = data;
 
 		if (ifr == NULL) {
 			error = EAFNOSUPPORT;           /* XXX */
@@ -550,7 +552,7 @@ lo_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	}
 
 	case SIOCSIFMTU: {              /* struct ifreq */
-		struct ifreq *ifr = data;
+		struct ifreq * __single ifr = data;
 
 		bcopy(&ifr->ifr_mtu, &ifp->if_mtu, sizeof(int));
 		break;
@@ -674,7 +676,7 @@ loopattach(void)
 
 	result = ifnet_allocate_extended(&lo_init, &lo_ifp);
 	if (result != 0) {
-		panic("%s: couldn't allocate loopback ifnet (%d)\n",
+		panic("%s: couldn't allocate loopback ifnet (%d)",
 		    __func__, result);
 		/* NOTREACHED */
 	}
@@ -692,16 +694,10 @@ loopattach(void)
 
 	result = ifnet_attach(lo_ifp, NULL);
 	if (result != 0) {
-		panic("%s: couldn't attach loopback ifnet (%d)\n",
+		panic("%s: couldn't attach loopback ifnet (%d)",
 		    __func__, result);
 		/* NOTREACHED */
 	}
-	/*
-	 * Disable ECN on loopback as ECN serves no purpose and otherwise
-	 * TCP connections are subject to heuristics like SYN retransmits on RST
-	 */
-	if_clear_eflags(lo_ifp, IFEF_ECN_ENABLE);
-	if_set_eflags(lo_ifp, IFEF_ECN_DISABLE);
 
 	bpfattach(lo_ifp, DLT_NULL, sizeof(u_int32_t));
 }
@@ -749,6 +745,7 @@ sysctl_sched_model SYSCTL_HANDLER_ARGS
 	case IFNET_SCHED_MODEL_NORMAL:
 	case IFNET_SCHED_MODEL_DRIVER_MANAGED:
 	case IFNET_SCHED_MODEL_FQ_CODEL:
+	case IFNET_SCHED_MODEL_FQ_CODEL_DM:
 		break;
 
 	default:
@@ -781,7 +778,7 @@ sysctl_dequeue_scidx SYSCTL_HANDLER_ARGS
 		return EINVAL;
 	}
 
-	if (lo_sched_model != IFNET_SCHED_MODEL_DRIVER_MANAGED) {
+	if ((lo_sched_model & IFNET_SCHED_DRIVER_MANGED_MODELS) == 0) {
 		return ENODEV;
 	}
 

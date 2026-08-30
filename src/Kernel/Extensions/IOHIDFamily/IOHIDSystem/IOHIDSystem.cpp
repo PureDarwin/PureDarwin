@@ -81,6 +81,9 @@
 #include <string.h>
 #include <libkern/libkern.h>
 
+/* proc_private.h is intentionally hidden from loadable kexts. */
+extern "C" int proc_pidversion(proc_t);
+
 #ifdef __cplusplus
     extern "C"
     {

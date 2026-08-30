@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2014 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -28,6 +28,9 @@
 #ifndef FSEVENT_H
 #define FSEVENT_H 1
 
+#include <stdint.h>
+#include <sys/types.h>
+
 // Event types that you can ask to listen for
 #define FSE_INVALID             -1
 #define FSE_CREATE_FILE          0
@@ -46,7 +49,22 @@
 #define FSE_UNMOUNT_PENDING     13 // iOS-only: client must respond via FSEVENTS_UNMOUNT_PENDING_ACK
 #define FSE_CLONE               14
 
-#define FSE_MAX_EVENTS          15
+#define FSE_ACTIVITY            15
+#define FSE_ACTIVITY_VERSION_1  1
+
+#define FSE_ACTIVITY_ATTR_DEV            0x00000001
+#define FSE_ACTIVITY_ATTR_INO            0x00000002
+#define FSE_ACTIVITY_ATTR_ORIGIN_ID      0x00000004
+#define FSE_ACTIVITY_ATTR_AGE            0x00000008
+#define FSE_ACTIVITY_ATTR_USE_STATE      0x00000010
+#define FSE_ACTIVITY_ATTR_URGENCY        0x00000020
+#define FSE_ACTIVITY_ATTR_SIZE           0x00000040
+
+#define FSE_MAX_EVENTS          16
+#define FSE_ACCESS_GRANTED      FSE_INVALID
+#ifdef BSD_KERNEL_PRIVATE
+#define FSE_CONTENT_MODIFIED_NO_HLINK  997
+#endif /* BSD_KERNEL_PRIVATE */
 #define FSE_ALL_EVENTS         998
 
 #define FSE_EVENTS_DROPPED     999
@@ -73,9 +91,17 @@
 #define FSE_REPORT    1
 #define FSE_ASK       2    // Not implemented yet
 
+// The default disposition is to not report FSE_ACCESS_GRANTED
+// events.  (They are not useful to the vast majority of
+// /dev/fsevents clients.)
+#define FSE_REPORT_DEFAULT(e) \
+    ((e) == FSE_ACCESS_GRANTED ? FSE_IGNORE : FSE_REPORT)
+
 // The types of each of the arguments for an event
 // Each type is followed by the size and then the
 // data.  FSE_ARG_VNODE is just a path string
+// FSE_ARG_AUDIT_TOKEN is only delivered on FSE_ACCESS_GRANTED
+// events.
 #define FSE_ARG_VNODE    0x0001   // next arg is a vnode pointer
 #define FSE_ARG_STRING   0x0002   // next arg is length followed by string ptr
 #define FSE_ARG_PATH     0x0003   // next arg is a full path
@@ -88,9 +114,10 @@
 #define FSE_ARG_MODE     0x000a   // next arg is the file's mode (as an int32, file type only)
 #define FSE_ARG_GID      0x000b   // next arg is the file's gid (gid_t)
 #define FSE_ARG_FINFO    0x000c   // next arg is a packed finfo (dev, ino, mode, uid, gid)
+#define FSE_ARG_AUDIT_TOKEN 0x000d // next arg is an audit_token_t ptr
 #define FSE_ARG_DONE     0xb33f   // no more arguments
 
-#define FSE_MAX_ARGS     12
+#define FSE_MAX_ARGS     13
 
 //
 // These are special bits that be set in the 32-bit mode
@@ -141,7 +168,7 @@ typedef struct fse_info {
 	dev_t      dev;
 	int32_t    mode;// note: this is not a mode_t (it's 32-bits, not 16)
 	uid_t      uid;
-	gid_t      gid;
+	uint32_t   document_id;
 	uint64_t   nlink;// only filled in if the vnode is marked as a hardlink
 } fse_info;
 
@@ -157,6 +184,7 @@ void  release_pathbuff(char *path);
 
 int  need_fsevent(int type, vnode_t vp);
 int  add_fsevent(int type, vfs_context_t, ...);
+int  test_fse_access_granted(vnode_t vp, unsigned long type, vfs_context_t);
 
 #endif /* KERNEL_PRIVATE */
 

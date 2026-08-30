@@ -72,33 +72,10 @@
 #include <kern/locks.h>
 
 #include <net/raw_cb.h>
+#include <net/sockaddr_utils.h>
 
-decl_lck_mtx_data(, raw_mtx_data);       /*### global raw cb mutex for now */
-lck_mtx_t       *raw_mtx = &raw_mtx_data;
-lck_attr_t      *raw_mtx_attr;
-lck_grp_t       *raw_mtx_grp;
-lck_grp_attr_t  *raw_mtx_grp_attr;
-/*
- * Initialize raw connection block q.
- */
-void
-raw_init(struct protosw *pp, struct domain *dp)
-{
-#pragma unused(pp, dp)
-	static int raw_initialized = 0;
-
-	/* This is called by key_init as well, so do it only once */
-	if (!raw_initialized) {
-		raw_initialized = 1;
-
-		raw_mtx_grp_attr = lck_grp_attr_alloc_init();
-		raw_mtx_grp = lck_grp_alloc_init("rawcb", raw_mtx_grp_attr);
-		raw_mtx_attr = lck_attr_alloc_init();
-
-		lck_mtx_init(raw_mtx, raw_mtx_grp, raw_mtx_attr);
-		LIST_INIT(&rawcb_list);
-	}
-}
+static LCK_GRP_DECLARE(raw_mtx_grp, "rawcb");
+LCK_MTX_DECLARE(raw_mtx, &raw_mtx_grp);   /*### global raw cb mutex for now */
 
 
 /*
@@ -124,7 +101,7 @@ raw_input(struct mbuf *m0, struct sockproto *proto, struct sockaddr *src,
 //####LD calls from the output (locked) path need to make sure the socket is not locked when
 //####LD we call in raw_input
 	last = NULL;
-	lck_mtx_lock(raw_mtx);
+	lck_mtx_lock(&raw_mtx);
 	LIST_FOREACH(rp, &rawcb_list, list) {
 		if (rp->rcb_proto.sp_family != proto->sp_family) {
 			continue;
@@ -141,12 +118,10 @@ raw_input(struct mbuf *m0, struct sockproto *proto, struct sockaddr *src,
 		 * Note that if the lengths are not the same
 		 * the comparison will fail at the first byte.
 		 */
-#define equal(a1, a2) \
-  (bcmp((caddr_t)(a1), (caddr_t)(a2), a1->sa_len) == 0)
-		if (rp->rcb_laddr && !equal(rp->rcb_laddr, dst)) {
+		if (rp->rcb_laddr && SOCKADDR_CMP(rp->rcb_laddr, dst, rp->rcb_laddr->sa_len) != 0) {
 			continue;
 		}
-		if (rp->rcb_faddr && !equal(rp->rcb_faddr, src)) {
+		if (rp->rcb_faddr && SOCKADDR_CMP(rp->rcb_faddr, src, rp->rcb_faddr->sa_len) != 0) {
 			continue;
 		}
 		if (last) {
@@ -175,7 +150,7 @@ raw_input(struct mbuf *m0, struct sockproto *proto, struct sockaddr *src,
 	} else {
 		m_freem(m);
 	}
-	lck_mtx_unlock(raw_mtx);
+	lck_mtx_unlock(&raw_mtx);
 }
 
 /*ARGSUSED*/
@@ -258,7 +233,8 @@ raw_udetach(struct socket *so)
 		return EINVAL;
 	}
 
-	raw_detach(rp);
+	raw_detach_nofree(rp);
+	kfree_type(struct rawcb, rp);
 	return 0;
 }
 
@@ -329,7 +305,6 @@ raw_usend(struct socket *so, int flags, struct mbuf *m,
 	}
 
 	if (control != NULL) {
-		m_freem(control);
 		error = EOPNOTSUPP;
 		goto release;
 	}
@@ -343,12 +318,16 @@ raw_usend(struct socket *so, int flags, struct mbuf *m,
 		error = ENOTCONN;
 		goto release;
 	}
+	so_update_tx_data_stats(so, 1, m->m_pkthdr.len);
 	error = (*so->so_proto->pr_output)(m, so);
 	m = NULL;
 	if (nam) {
 		rp->rcb_faddr = NULL;
 	}
 release:
+	if (control != NULL) {
+		m_freem(control);
+	}
 	if (m != NULL) {
 		m_freem(m);
 	}

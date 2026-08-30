@@ -37,51 +37,172 @@
 #include <sys/systm.h>
 #include <security/mac_internal.h>
 
-static ZONE_DECLARE(zone_label, "MAC Labels", sizeof(struct label), ZC_ZFREE_CLEARMEM);
+ZONE_DEFINE_ID(ZONE_ID_MAC_LABEL, "MAC Labels", struct label,
+    ZC_READONLY | ZC_ZFREE_CLEARMEM);
+
+/*
+ * Number of initial values matches logic in security/_label.h
+ */
+const struct label empty_label = {
+	.l_perpolicy[0 ... MAC_MAX_SLOTS - 1] = MAC_LABEL_NULL_SLOT,
+};
+
+static struct label *
+label_alloc_noinit(int flags)
+{
+	static_assert(MAC_NOWAIT == Z_NOWAIT);
+	return zalloc_ro(ZONE_ID_MAC_LABEL, Z_ZERO | (flags & MAC_NOWAIT));
+}
 
 struct label *
 mac_labelzone_alloc(int flags)
 {
-	int zflags = Z_ZERO | (flags & MAC_NOWAIT);
-	struct label *l;
+	struct label *label;
 
-	static_assert(MAC_NOWAIT == Z_NOWAIT);
-	l = zalloc_flags(zone_label, zflags);
-	if (l) {
-		l->l_flags = MAC_FLAG_INITIALIZED;
+	label = label_alloc_noinit(flags);
+	if (label) {
+		zalloc_ro_update_elem(ZONE_ID_MAC_LABEL, label, &empty_label);
 	}
-	return l;
+
+	return label;
+}
+
+struct label *
+mac_labelzone_alloc_for_owner(struct label **labelp, int flags,
+    void (^extra_setup)(struct label *))
+{
+	struct label *label;
+
+	if (labelp) {
+		struct label tmp_label = empty_label;
+
+		label = zalloc_ro(ZONE_ID_MAC_LABEL, Z_ZERO | (flags & MAC_NOWAIT));
+
+		tmp_label.l_owner = labelp;
+		zalloc_ro_update_elem(ZONE_ID_MAC_LABEL, label, &tmp_label);
+	} else {
+		label = mac_labelzone_alloc(flags);
+	}
+
+	if (label && extra_setup) {
+		extra_setup(label);
+	}
+
+	return label;
+}
+
+struct label *
+mac_labelzone_alloc_owned(struct label **labelp, int flags,
+    void (^extra_setup)(struct label *))
+{
+	struct label *label;
+
+	label = mac_labelzone_alloc_for_owner(labelp, flags, extra_setup);
+
+	if (labelp) {
+		*labelp = label;
+	}
+
+	return label;
 }
 
 void
-mac_labelzone_free(struct label *l)
+mac_labelzone_free(struct label *label)
 {
-	if (l == NULL) {
-		panic("Free of NULL MAC label\n");
+	if (label == NULL) {
+		panic("Free of NULL MAC label");
 	}
 
-	if ((l->l_flags & MAC_FLAG_INITIALIZED) == 0) {
-		panic("Free of uninitialized label\n");
+	zfree_ro(ZONE_ID_MAC_LABEL, label);
+}
+
+void
+mac_labelzone_free_owned(struct label **labelp,
+    void (^extra_deinit)(struct label *))
+{
+	struct label *label;
+
+	label = mac_label_verify(labelp);
+	if (label) {
+		if (extra_deinit) {
+			extra_deinit(label);
+		}
+
+		os_atomic_store(labelp, NULL, release);
+		mac_labelzone_free(label);
 	}
-	bzero(l, sizeof(struct label));
-	zfree(zone_label, l);
+}
+
+struct label *
+mac_label_verify(struct label **labelp)
+{
+	struct label *label = os_atomic_load(labelp, acquire);
+
+	if (label != NULL) {
+		zone_require_ro(ZONE_ID_MAC_LABEL, sizeof(struct label), label);
+
+		if (__improbable(label->l_owner != labelp)) {
+			panic("label backref mismatch: labelp:%p label:%p l_owner:%p", labelp,
+			    label, label->l_owner);
+		}
+	}
+
+	return label;
+}
+
+static intptr_t
+mac_label_slot_encode(intptr_t p)
+{
+	return p ?: MAC_LABEL_NULL_SLOT;
+}
+
+static intptr_t
+mac_label_slot_decode(intptr_t p)
+{
+	switch (p) {
+	case 0:
+		/* make sure 0 doesn't mean NULL and causes crashes */
+		return MAC_LABEL_NULL_SLOT;
+	case MAC_LABEL_NULL_SLOT:
+		return 0l;
+	default:
+		return p;
+	}
 }
 
 /*
  * Functions used by policy modules to get and set label values.
  */
 intptr_t
-mac_label_get(struct label *l, int slot)
+mac_label_get(struct label *label, int slot)
 {
-	KASSERT(l != NULL, ("mac_label_get: NULL label"));
+	KASSERT(label != NULL, ("mac_label_get: NULL label"));
 
-	return (intptr_t) (l->l_perpolicy[slot].l_ptr);
+	zone_require_ro(ZONE_ID_MAC_LABEL, sizeof(struct label), label);
+	return mac_label_slot_decode((intptr_t) label->l_perpolicy[slot]);
+}
+
+__abortlike
+static void
+panic_label_set_sentinel(void)
+{
+	panic("cannot set mac label to ~0");
 }
 
 void
-mac_label_set(struct label *l, int slot, intptr_t v)
+mac_label_set(struct label *label, int slot, intptr_t v)
 {
-	KASSERT(l != NULL, ("mac_label_set: NULL label"));
+	KASSERT(label != NULL, ("mac_label_set: NULL label"));
 
-	l->l_perpolicy[slot].l_ptr = (void *) v;
+#if DEVELOPMENT || DEBUG
+	/* can't modify a sealed label, see mac_cred_label_seal() */
+	assertf(label->l_owner != (struct label **)-1,
+	    "mac_label_set(%p, %d, 0x%lx) is sealed",
+	    label, slot, (uintptr_t)v);
+#endif
+	if (v == MAC_LABEL_NULL_SLOT) {
+		panic_label_set_sentinel();
+	}
+	v = mac_label_slot_encode(v);
+	zalloc_ro_update_field(ZONE_ID_MAC_LABEL, label, l_perpolicy[slot], &v);
 }

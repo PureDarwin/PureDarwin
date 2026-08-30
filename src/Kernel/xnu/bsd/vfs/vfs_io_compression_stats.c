@@ -45,7 +45,7 @@
 #include <vfs/vfs_io_compression_stats.h>
 
 #include <vm/lz4.h>
-#include <vm/vm_compressor_algorithms.h>
+#include <vm/vm_compressor_algorithms_xnu.h>
 #include <vm/vm_protos.h>
 
 
@@ -57,10 +57,10 @@ typedef struct {
 	uint8_t lz4state[lz4_encode_scratch_size]__attribute((aligned(LZ4_SCRATCH_ALIGN)));
 } lz4_encode_scratch_t;
 
-lz4_encode_scratch_t **per_cpu_scratch_buf;
-uint8_t **per_cpu_compression_buf;
-uint32_t io_compression_stats_cpu_count;
-char *vnpath_scratch_buf;
+static lz4_encode_scratch_t *PERCPU_DATA(per_cpu_scratch_buf);
+static uint8_t *PERCPU_DATA(per_cpu_compression_buf);
+static uint32_t per_cpu_buf_size;
+static char *vnpath_scratch_buf;
 
 LCK_GRP_DECLARE(io_compression_stats_lckgrp, "io_compression_stats");
 LCK_RW_DECLARE(io_compression_stats_lock, &io_compression_stats_lckgrp);
@@ -82,51 +82,46 @@ struct iocs_store_buffer iocs_store_buffer = {
 int iocs_sb_bytes_since_last_mark = 0;
 int iocs_sb_bytes_since_last_notification = 0;
 
-ZONE_DECLARE(io_compression_stats_zone, "io_compression_stats",
-    sizeof(struct io_compression_stats), ZC_NOENCRYPT | ZC_NOGC | ZC_ZFREE_CLEARMEM);
+KALLOC_TYPE_DEFINE(io_compression_stats_zone, struct io_compression_stats, KT_DEFAULT);
 
 static int
-io_compression_stats_allocate_compression_buffers(io_compression_stats_alloc_type_t alloc_type, uint32_t block_size)
+io_compression_stats_allocate_compression_buffers(uint32_t block_size)
 {
 	int err = 0;
 	host_basic_info_data_t hinfo;
 	mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
+	uint32_t old_block_size = per_cpu_buf_size;
 #define BSD_HOST 1
 	host_info((host_t)BSD_HOST, HOST_BASIC_INFO, (host_info_t)&hinfo, &count);
 
-	io_compression_stats_cpu_count = hinfo.max_cpus;
-	if (alloc_type == IO_COMPRESSION_STATS_NEW_ALLOC) {
-		assert(per_cpu_scratch_buf == NULL);
-		per_cpu_scratch_buf = kheap_alloc(KHEAP_DEFAULT, sizeof(lz4_encode_scratch_t *) * io_compression_stats_cpu_count, Z_ZERO);
-		if (per_cpu_scratch_buf == NULL) {
-			err = ENOMEM;
-			goto out;
-		}
-		assert(per_cpu_compression_buf == NULL);
-		per_cpu_compression_buf = kheap_alloc(KHEAP_DEFAULT, sizeof(uint8_t *) * io_compression_stats_cpu_count, Z_ZERO);
-		if (per_cpu_compression_buf == NULL) {
-			err = ENOMEM;
-			goto out;
-		}
-	}
-	for (uint32_t cpu = 0; cpu < io_compression_stats_cpu_count; cpu++) {
-		if (alloc_type == IO_COMPRESSION_STATS_NEW_ALLOC) {
-			per_cpu_scratch_buf[cpu] = kheap_alloc(KHEAP_DEFAULT, sizeof(lz4_encode_scratch_t), Z_ZERO);
-			if (per_cpu_scratch_buf[cpu] == NULL) {
+	per_cpu_buf_size = block_size;
+
+	if (old_block_size == 0) {
+		static_assert(sizeof(lz4_encode_scratch_t) <= KALLOC_SAFE_ALLOC_SIZE);
+		percpu_foreach(buf, per_cpu_scratch_buf) {
+			*buf = kalloc_type(lz4_encode_scratch_t, Z_WAITOK | Z_ZERO);
+			if (*buf == NULL) {
 				err = ENOMEM;
 				goto out;
 			}
-		} else {
-			kheap_free_addr(KHEAP_DEFAULT, per_cpu_compression_buf[cpu]);
 		}
-		per_cpu_compression_buf[cpu] = kheap_alloc(KHEAP_DEFAULT, block_size, Z_ZERO);
-		if (per_cpu_compression_buf[cpu] == NULL) {
+	} else {
+		percpu_foreach(buf, per_cpu_compression_buf) {
+			kfree_data(*buf, old_block_size);
+			*buf = NULL;
+		}
+	}
+
+	percpu_foreach(buf, per_cpu_compression_buf) {
+		*buf = kalloc_data(block_size, Z_WAITOK | Z_ZERO);
+		if (*buf == NULL) {
 			err = ENOMEM;
 			goto out;
 		}
 	}
+
 	bzero(&iocs_store_buffer, sizeof(struct iocs_store_buffer));
-	iocs_store_buffer.buffer = kheap_alloc(KHEAP_DEFAULT, IOCS_STORE_BUFFER_SIZE, Z_ZERO);
+	iocs_store_buffer.buffer = kalloc_data(IOCS_STORE_BUFFER_SIZE, Z_WAITOK | Z_ZERO);
 	if (iocs_store_buffer.buffer == NULL) {
 		err = ENOMEM;
 		goto out;
@@ -135,7 +130,7 @@ io_compression_stats_allocate_compression_buffers(io_compression_stats_alloc_typ
 	iocs_store_buffer.marked_point = 0;
 
 	assert(vnpath_scratch_buf == NULL);
-	vnpath_scratch_buf = kheap_alloc(KHEAP_DEFAULT, MAXPATHLEN, Z_ZERO);
+	vnpath_scratch_buf = kalloc_data(MAXPATHLEN, Z_ZERO);
 	if (vnpath_scratch_buf == NULL) {
 		err = ENOMEM;
 		goto out;
@@ -151,43 +146,28 @@ out:
 }
 
 static void
-io_compression_stats_deallocate_compression_buffers()
+io_compression_stats_deallocate_compression_buffers(void)
 {
-	uint32_t cpu;
-	if (per_cpu_compression_buf != NULL) {
-		for (cpu = 0; cpu < io_compression_stats_cpu_count; cpu++) {
-			if (per_cpu_compression_buf[cpu] != NULL) {
-				kheap_free_addr(KHEAP_DEFAULT, per_cpu_compression_buf[cpu]);
-				per_cpu_compression_buf[cpu] = NULL;
-			}
-		}
-		kheap_free_addr(KHEAP_DEFAULT, per_cpu_compression_buf);
-		per_cpu_compression_buf = NULL;
+	percpu_foreach(buf, per_cpu_scratch_buf) {
+		kfree_type(lz4_encode_scratch_t, *buf);
+		*buf = NULL;
 	}
 
-	if (per_cpu_scratch_buf != NULL) {
-		for (cpu = 0; cpu < io_compression_stats_cpu_count; cpu++) {
-			if (per_cpu_scratch_buf[cpu] != NULL) {
-				kheap_free_addr(KHEAP_DEFAULT, per_cpu_scratch_buf[cpu]);
-				per_cpu_scratch_buf[cpu] = NULL;
-			}
-		}
-		kheap_free_addr(KHEAP_DEFAULT, per_cpu_scratch_buf);
-		per_cpu_scratch_buf = NULL;
+	percpu_foreach(buf, per_cpu_compression_buf) {
+		kfree_data(*buf, per_cpu_buf_size);
+		*buf = NULL;
 	}
 
 	if (iocs_store_buffer.buffer != NULL) {
-		kheap_free_addr(KHEAP_DEFAULT, iocs_store_buffer.buffer);
+		kfree_data(iocs_store_buffer.buffer, IOCS_STORE_BUFFER_SIZE);
 		bzero(&iocs_store_buffer, sizeof(struct iocs_store_buffer));
 	}
 
 	iocs_sb_bytes_since_last_mark = 0;
 	iocs_sb_bytes_since_last_notification = 0;
+	per_cpu_buf_size = 0;
 
-	if (vnpath_scratch_buf != NULL) {
-		kheap_free_addr(KHEAP_DEFAULT, vnpath_scratch_buf);
-		vnpath_scratch_buf = NULL;
-	}
+	kfree_data(vnpath_scratch_buf, MAXPATHLEN);
 }
 
 
@@ -218,7 +198,7 @@ sysctl_io_compression_stats_enable SYSCTL_HANDLER_ARGS
 	lck_mtx_lock(&iocs_store_buffer_lock);
 	if ((io_compression_stats_enable == 0) && (enable == 1)) {
 		/* Enabling collection of stats. Allocate appropriate buffers */
-		error = io_compression_stats_allocate_compression_buffers(IO_COMPRESSION_STATS_NEW_ALLOC, io_compression_stats_block_size);
+		error = io_compression_stats_allocate_compression_buffers(io_compression_stats_block_size);
 		if (error == 0) {
 			io_compression_stats_enable = enable;
 			io_compression_stats_dbg("SUCCESS: setting io_compression_stats_enable to %d", io_compression_stats_enable);
@@ -265,14 +245,14 @@ sysctl_io_compression_block_size SYSCTL_HANDLER_ARGS
 	if (io_compression_stats_block_size != block_size) {
 		if (io_compression_stats_enable == 1) {
 			/* IO compression stats is enabled, rellocate buffers. */
-			error = io_compression_stats_allocate_compression_buffers(IO_COMPRESSION_STATS_RESIZE, block_size);
+			error = io_compression_stats_allocate_compression_buffers(block_size);
 			if (error == 0) {
 				io_compression_stats_block_size = block_size;
 				io_compression_stats_dbg("SUCCESS: setting io_compression_stats_block_size to %d", io_compression_stats_block_size);
 			} else {
 				/* Failed to allocate buffers, disable IO compression stats */
 				io_compression_stats_enable = 0;
-				io_compression_stats_dbg("Failed: setting io_compression_stats_block_size to %d", io_compression_stats_block_size);
+				io_compression_stats_dbg("FAILED: setting io_compression_stats_block_size to %d", io_compression_stats_block_size);
 			}
 		} else {
 			/* IO compression stats is disabled, only set the io_compression_stats_block_size */
@@ -289,18 +269,12 @@ SYSCTL_PROC(_vfs, OID_AUTO, io_compression_stats_block_size, CTLTYPE_INT | CTLFL
 
 
 static int32_t
-iocs_compress_block(uint8_t *block_ptr, uint32_t block_size)
+iocs_compress_block(const uint8_t *block_ptr, uint32_t block_size)
 {
 	disable_preemption();
 
-	uint32_t current_cpu = cpu_number();
-	if (!(current_cpu < io_compression_stats_cpu_count)) {
-		enable_preemption();
-		return -1;
-	}
-
-	lz4_encode_scratch_t *scratch_buf = per_cpu_scratch_buf[current_cpu];
-	uint8_t *dest_buf = per_cpu_compression_buf[current_cpu];
+	lz4_encode_scratch_t *scratch_buf = *PERCPU_GET(per_cpu_scratch_buf);
+	uint8_t *dest_buf = *PERCPU_GET(per_cpu_compression_buf);
 
 	int compressed_block_size = (int) lz4raw_encode_buffer(dest_buf, block_size,
 	    block_ptr, block_size, (lz4_hash_entry_t *) scratch_buf);
@@ -313,7 +287,7 @@ iocs_compress_block(uint8_t *block_ptr, uint32_t block_size)
  * Compress buf in chunks of io_compression_stats_block_size
  */
 static uint32_t
-iocs_compress_buffer(vnode_t vn, uint8_t *buf_ptr, uint32_t buf_size)
+iocs_compress_buffer(vnode_t vn, const uint8_t *buf_ptr, uint32_t buf_size)
 {
 	uint32_t offset;
 	uint32_t compressed_size = 0;
@@ -389,7 +363,7 @@ get_buffer_compressibility_bucket(uint32_t uncompressed_size, uint32_t compresse
 void
 io_compression_stats(buf_t bp)
 {
-	uint8_t *buf_ptr = NULL;
+	const uint8_t *buf_ptr = NULL;
 	int bflags = bp->b_flags;
 	uint32_t compressed_size = 0;
 	uint32_t buf_cnt = buf_count(bp);
@@ -412,9 +386,9 @@ io_compression_stats(buf_t bp)
 		goto out;
 	}
 
-	err = buf_map(bp, &vaddr);
+	err = buf_map_range_with_prot(bp, &vaddr, VM_PROT_READ);
 	if (!err) {
-		buf_ptr = (uint8_t *) vaddr;
+		buf_ptr = (const uint8_t *) vaddr;
 	}
 
 	if (buf_ptr != NULL) {
@@ -435,7 +409,7 @@ io_compression_stats(buf_t bp)
 out:
 	lck_rw_unlock_shared(&io_compression_stats_lock);
 	if (buf_ptr != NULL) {
-		buf_unmap(bp);
+		buf_unmap_range(bp);
 	}
 }
 
@@ -450,12 +424,16 @@ iocs_notify_user(void)
 	iocompressionstats_notification(user_port, 0);
 	ipc_port_release_send(user_port);
 }
+
 static void
 construct_iocs_sbe_from_vnode(struct vnode *vp, struct iocs_store_buffer_entry *iocs_sbe)
 {
 	int path_len = MAXPATHLEN;
 
-	vn_getpath(vp, vnpath_scratch_buf, &path_len);
+	if (vn_getpath(vp, vnpath_scratch_buf, &path_len) != 0) {
+		io_compression_stats_dbg("FAILED: Unable to get file path from vnode");
+		return;
+	}
 	/*
 	 * Total path length is path_len, we can copy out IOCS_SBE_PATH_LEN bytes. We are interested
 	 * in first segment of the path to try and figure out the process writing to the file, and we are
@@ -469,10 +447,11 @@ construct_iocs_sbe_from_vnode(struct vnode *vp, struct iocs_store_buffer_entry *
 		    vnpath_scratch_buf + path_len - IOCS_PATH_END_BYTES_TO_COPY,
 		    IOCS_PATH_END_BYTES_TO_COPY);
 	} else {
-		strncpy(iocs_sbe->path_name, vnpath_scratch_buf, IOCS_SBE_PATH_LEN);
+		strncpy(iocs_sbe->path_name, vnpath_scratch_buf, path_len);
 	}
 	memcpy(&iocs_sbe->iocs, vp->io_compression_stats, sizeof(struct io_compression_stats));
 }
+
 void
 vnode_iocs_record_and_free(struct vnode *vp)
 {
@@ -489,7 +468,7 @@ vnode_iocs_record_and_free(struct vnode *vp)
 
 	assert(iocs_store_buffer.current_position + sizeof(struct iocs_store_buffer_entry) <= IOCS_STORE_BUFFER_SIZE);
 
-	iocs_sbe = (struct iocs_store_buffer_entry *)(iocs_store_buffer.buffer + iocs_store_buffer.current_position);
+	iocs_sbe = (struct iocs_store_buffer_entry *)((uintptr_t)iocs_store_buffer.buffer + iocs_store_buffer.current_position);
 
 	construct_iocs_sbe_from_vnode(vp, iocs_sbe);
 
@@ -523,7 +502,8 @@ out:
 
 struct vnode_iocs_context {
 	struct sysctl_req *addr;
-	int current_ptr;
+	unsigned long current_offset;
+	unsigned long length;
 };
 
 static int
@@ -531,17 +511,25 @@ vnode_iocs_callback(struct vnode *vp, void *vctx)
 {
 	struct vnode_iocs_context *ctx = vctx;
 	struct sysctl_req *req = ctx->addr;
-	int current_ptr = ctx->current_ptr;
+	unsigned long current_offset = ctx->current_offset;
+	unsigned long length = ctx->length;
+	struct iocs_store_buffer_entry iocs_sbe_next;
 
-	if (current_ptr + sizeof(struct iocs_store_buffer_entry) < req->oldlen) {
+	if ((current_offset + sizeof(struct iocs_store_buffer_entry)) < length) {
 		if (vp->io_compression_stats != NULL) {
-			construct_iocs_sbe_from_vnode(vp, (struct iocs_store_buffer_entry *) (req->oldptr + current_ptr));
-			current_ptr += sizeof(struct iocs_store_buffer_entry);
+			construct_iocs_sbe_from_vnode(vp, &iocs_sbe_next);
+
+			uint32_t error = copyout(&iocs_sbe_next, (user_addr_t)((unsigned char *)req->oldptr + current_offset), sizeof(struct iocs_store_buffer_entry));
+			if (error) {
+				return VNODE_RETURNED_DONE;
+			}
+
+			current_offset += sizeof(struct iocs_store_buffer_entry);
 		}
 	} else {
 		return VNODE_RETURNED_DONE;
 	}
-	ctx->current_ptr = current_ptr;
+	ctx->current_offset = current_offset;
 
 	return VNODE_RETURNED;
 }
@@ -605,11 +593,12 @@ sysctl_io_compression_dump_stats SYSCTL_HANDLER_ARGS
 
 	if (inp_flag & IOCS_SYSCTL_LIVE) {
 		struct vnode_iocs_context ctx;
-
 		bzero(&ctx, sizeof(struct vnode_iocs_context));
 		ctx.addr = req;
+		ctx.length = numvnodes * sizeof(struct iocs_store_buffer_entry);
 		vfs_iterate(0, vfs_iocs_callback, &ctx);
-		req->oldidx = ctx.current_ptr;
+		req->oldidx = ctx.current_offset;
+
 		goto out;
 	}
 
@@ -642,7 +631,7 @@ sysctl_io_compression_dump_stats SYSCTL_HANDLER_ARGS
 	}
 
 	if (iocs_store_buffer.marked_point < iocs_store_buffer.current_position) {
-		error = copyout(iocs_store_buffer.buffer + iocs_store_buffer.marked_point,
+		error = copyout((void *)((uintptr_t)iocs_store_buffer.buffer + iocs_store_buffer.marked_point),
 		    req->oldptr,
 		    iocs_store_buffer.current_position - iocs_store_buffer.marked_point);
 		if (error) {
@@ -651,7 +640,7 @@ sysctl_io_compression_dump_stats SYSCTL_HANDLER_ARGS
 		}
 		ret_len = iocs_store_buffer.current_position - iocs_store_buffer.marked_point;
 	} else {
-		error = copyout(iocs_store_buffer.buffer + iocs_store_buffer.marked_point,
+		error = copyout((void *)((uintptr_t)iocs_store_buffer.buffer + iocs_store_buffer.marked_point),
 		    req->oldptr,
 		    IOCS_STORE_BUFFER_SIZE - iocs_store_buffer.marked_point);
 		if (error) {
@@ -695,10 +684,8 @@ vnode_updateiocompressionblockstats(vnode_t vp, uint32_t size_bucket)
 	}
 
 	if (vp->io_compression_stats == NULL) {
-		io_compression_stats_t iocs = (io_compression_stats_t)zalloc_flags(io_compression_stats_zone, Z_ZERO);
-		if (iocs == NULL) {
-			return ENOMEM;
-		}
+		io_compression_stats_t iocs = zalloc_flags(io_compression_stats_zone,
+		    Z_ZERO | Z_NOFAIL);
 		vnode_lock_spin(vp);
 		/* Re-check with lock */
 		if (vp->io_compression_stats == NULL) {

@@ -81,6 +81,7 @@ enum {
 	kPEPanicEnd,
 	kPEPanicRestartCPUNoCallouts,
 	kPEPanicDiagnosticsDone,
+	kPEPanicDiagnosticsInProgress,
 };
 
 /* Bitmask of details related to panic callouts */
@@ -98,9 +99,9 @@ enum {
 	kIOSystemShutdownNotificationStageRootUnmount = 1,
 	kIOSystemShutdownNotificationTerminateDEXTs   = 2,
 };
-extern void IOSystemShutdownNotification(int stage);
+extern void IOSystemShutdownNotification(int howto, int stage);
 
-extern uint32_t gEnforceQuiesceSafety;
+extern uint32_t gEnforcePlatformActionSafety;
 #endif /* XNU_KERNEL_PRIVATE */
 
 #ifdef KERNEL_PRIVATE
@@ -128,10 +129,10 @@ extern void PESetUTCTimeOfDay( clock_sec_t secs, clock_usec_t usecs );
 extern boolean_t PEWriteNVRAMBooleanProperty(const char *symbol, boolean_t value);
 extern boolean_t PEWriteNVRAMProperty(const char *symbol, const void *value, const unsigned int len);
 extern boolean_t PEWriteNVRAMPropertyWithCopy(const char *symbol, const void *value, const unsigned int len);
-
 extern boolean_t PEReadNVRAMProperty(const char *symbol, void *value, unsigned int *len);
-
+extern boolean_t PEReadNVRAMBooleanProperty(const char *symbol, boolean_t *value);
 extern boolean_t PERemoveNVRAMProperty(const char *symbol);
+extern boolean_t PESyncNVRAM(void);
 
 extern coprocessor_type_t PEGetCoprocessorVersion( void );
 

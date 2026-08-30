@@ -36,7 +36,7 @@ __BEGIN_DECLS
 
 #include <sys/queue.h>
 #include <sys/kernel_types.h>
-#include <sys/vsock.h>
+#include <sys/vsock_private.h>
 
 #define VSOCK_MAX_PACKET_SIZE 65536
 
@@ -58,6 +58,7 @@ struct vsock_address {
 };
 
 struct vsock_transport {
+	uint16_t protocol;
 	void *provider;
 	int (*get_cid)(void *provider, uint32_t *cid);
 	int (*attach_socket)(void *provider);
@@ -70,7 +71,7 @@ extern int vsock_add_transport(struct vsock_transport *transport);
 extern int vsock_remove_transport(struct vsock_transport *transport);
 extern int vsock_reset_transport(struct vsock_transport *transport);
 extern int vsock_put_message(struct vsock_address src, struct vsock_address dst,
-    enum vsock_operation op, uint32_t buf_alloc, uint32_t fwd_cnt, mbuf_t m);
+    enum vsock_operation op, uint32_t buf_alloc, uint32_t fwd_cnt, mbuf_t m, uint16_t protocol);
 
 __END_DECLS
 

@@ -26,12 +26,13 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#include <vm/vm_page.h>
-#include <vm/vm_object.h>
-#include <vm/vm_kern.h>
-#include <vm/vm_pageout.h>
-#include <vm/vm_phantom_cache.h>
-#include <vm/vm_compressor.h>
+#include <vm/vm_page_internal.h>
+#include <vm/vm_object_internal.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_pageout_xnu.h>
+#include <vm/vm_phantom_cache_internal.h>
+#include <vm/vm_compressor_internal.h>
+#include <vm/vm_protos_internal.h>
 
 
 uint32_t phantom_cache_eval_period_in_msecs = 250;
@@ -52,8 +53,7 @@ unsigned phantom_cache_contiguous_periods = 4;
 unsigned phantom_cache_contiguous_periods = 2;
 #endif /* !XNU_TARGET_OS_OSX */
 
-clock_sec_t     pc_start_of_eval_period_sec = 0;
-clock_nsec_t    pc_start_of_eval_period_nsec = 0;
+uint64_t        pc_eval_start;
 boolean_t       pc_need_eval_reset = FALSE;
 
 /* One bit per recent sampling period. Bit 0 = current period. */
@@ -104,7 +104,7 @@ struct phantom_cache_stats {
 
 
 void
-vm_phantom_cache_init()
+vm_phantom_cache_init(void)
 {
 	unsigned int    num_entries;
 	unsigned int    log1;
@@ -134,16 +134,15 @@ vm_phantom_cache_init()
 	vm_phantom_cache_size = sizeof(struct vm_ghost) * vm_phantom_cache_num_entries;
 	vm_phantom_cache_hash_size = sizeof(vm_phantom_hash_entry_t) * vm_phantom_cache_num_entries;
 
-	if (kernel_memory_allocate(kernel_map, (vm_offset_t *)(&vm_phantom_cache), vm_phantom_cache_size, 0, KMA_KOBJECT | KMA_PERMANENT, VM_KERN_MEMORY_PHANTOM_CACHE) != KERN_SUCCESS) {
-		panic("vm_phantom_cache_init: kernel_memory_allocate failed\n");
-	}
-	bzero(vm_phantom_cache, vm_phantom_cache_size);
+	kmem_alloc(kernel_map, (vm_offset_t *)&vm_phantom_cache,
+	    vm_phantom_cache_size,
+	    KMA_DATA | KMA_NOFAIL | KMA_KOBJECT | KMA_ZERO | KMA_PERMANENT,
+	    VM_KERN_MEMORY_PHANTOM_CACHE);
 
-	if (kernel_memory_allocate(kernel_map, (vm_offset_t *)(&vm_phantom_cache_hash), vm_phantom_cache_hash_size, 0, KMA_KOBJECT | KMA_PERMANENT, VM_KERN_MEMORY_PHANTOM_CACHE) != KERN_SUCCESS) {
-		panic("vm_phantom_cache_init: kernel_memory_allocate failed\n");
-	}
-	bzero(vm_phantom_cache_hash, vm_phantom_cache_hash_size);
-
+	kmem_alloc(kernel_map, (vm_offset_t *)&vm_phantom_cache_hash,
+	    vm_phantom_cache_hash_size,
+	    KMA_NOFAIL | KMA_KOBJECT | KMA_ZERO | KMA_PERMANENT,
+	    VM_KERN_MEMORY_PHANTOM_CACHE);
 
 	vm_ghost_hash_mask = vm_phantom_cache_num_entries - 1;
 
@@ -185,6 +184,14 @@ vm_phantom_cache_add_ghost(vm_page_t m)
 	vm_object_lock_assert_exclusive(object);
 
 	if (vm_phantom_cache_num_entries == 0) {
+		return;
+	}
+	if (object->pager == MEMORY_OBJECT_NULL) {
+		/*
+		 * This object must have lost its memory object due to a force-unmount
+		 * or ungraft, for example;  this page won't come back, so no need to
+		 * track it.
+		 */
 		return;
 	}
 
@@ -241,7 +248,7 @@ vm_phantom_cache_add_ghost(vm_page_t m)
 		} else {
 			for (;;) {
 				if (nvpce->g_next_index == 0) {
-					panic("didn't find ghost in hash\n");
+					panic("didn't find ghost in hash");
 				}
 
 				if (&vm_phantom_cache[nvpce->g_next_index] == vpce) {
@@ -413,14 +420,13 @@ is_thrashing(uint32_t added, uint32_t found, uint32_t threshold)
 boolean_t
 vm_phantom_cache_check_pressure()
 {
-	clock_sec_t     cur_ts_sec;
-	clock_nsec_t    cur_ts_nsec;
 	uint64_t        elapsed_msecs_in_eval;
 	boolean_t       pressure_detected = FALSE;
 
-	clock_get_system_nanotime(&cur_ts_sec, &cur_ts_nsec);
-
-	elapsed_msecs_in_eval = vm_compressor_compute_elapsed_msecs(cur_ts_sec, cur_ts_nsec, pc_start_of_eval_period_sec, pc_start_of_eval_period_nsec);
+	uint64_t now = mach_absolute_time();
+	uint64_t delta_ns;
+	absolutetime_to_nanoseconds(now - pc_eval_start, &delta_ns);
+	elapsed_msecs_in_eval = delta_ns / NSEC_PER_MSEC;
 
 	/*
 	 * Reset evaluation period after phantom_cache_eval_period_in_msecs or
@@ -452,8 +458,7 @@ vm_phantom_cache_check_pressure()
 		sample_period_ghost_added_count_ssd = 0;
 		sample_period_ghost_found_count_ssd = 0;
 
-		pc_start_of_eval_period_sec = cur_ts_sec;
-		pc_start_of_eval_period_nsec = cur_ts_nsec;
+		pc_eval_start = now;
 		pc_history <<= 1;
 		pc_need_eval_reset = FALSE;
 	} else {
@@ -487,7 +492,7 @@ vm_phantom_cache_check_pressure()
 		pressure_detected = TRUE;
 	}
 
-	if (vm_page_external_count > ((AVAILABLE_MEMORY) * 50) / 100) {
+	if (vm_page_pageable_external_count > ((AVAILABLE_MEMORY) * 50) / 100) {
 		pressure_detected = FALSE;
 	}
 

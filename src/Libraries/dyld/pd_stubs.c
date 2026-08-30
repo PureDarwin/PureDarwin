@@ -19,6 +19,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <mach/shared_region.h>
 
 #ifdef PD_LD64LLD_WEAK_DYLD_FALLBACKS
 #define PD_DYLD_FALLBACK_ATTR __attribute__((weak))
@@ -57,6 +58,18 @@ int __availability_version_check(uint32_t count, void *versions)
 	(void)count;
 	(void)versions;
 	return 1;
+}
+
+/* Shared-cache mapping is unavailable until the kernel implements the
+ * shared-region interface. Returning an error makes dyld use its fallback
+ * image-loading path instead of leaving an unresolved private syscall. */
+int __shared_region_map_and_slide_np(int fd, uint32_t count,
+    const struct shared_file_mapping_np mappings[], long slide,
+    const struct dyld_cache_slide_info2 *slideInfo, size_t slideInfoSize)
+{
+	(void)fd; (void)count; (void)mappings; (void)slide;
+	(void)slideInfo; (void)slideInfoSize;
+	return -1;
 }
 
 void dispatch_once_f(long *predicate, void *context, void (*function)(void *))
@@ -127,8 +140,6 @@ int sandbox_check(int pid, const char *operation, unsigned int type, ...)
 /* voucher_mach_msg_{adopt,revert}: libdispatch's mach-voucher hooks. dyld's
  * mach_msg wrappers reference them, but PureDarwin has no libdispatch voucher
  * machinery; no-op them (adopt returns "no previous voucher"). */
-typedef unsigned int mach_voucher_t;
-typedef struct mach_msg_header_t mach_msg_header_t;
 mach_voucher_t voucher_mach_msg_adopt(mach_msg_header_t *msg)
 {
 	(void)msg;

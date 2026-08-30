@@ -27,14 +27,17 @@
  */
 
 subsystem
-#if	KERNEL_SERVER
+#if	KERNEL_SERVER || KOBJECT_SERVER
 	KernelServer
-#endif	/* KERNEL_SERVER */
+#endif	/* KERNEL_SERVER || KOBJECT_SERVER */
 			mach_eventlink 716200;
 
 #include <mach/std_types.defs>
 #include <mach/mach_types.defs>
 #include <mach/clock_types.defs>
+type mach_eventlink_create_option_t = uint32_t;
+type mach_eventlink_associate_option_t = uint32_t;
+type mach_eventlink_disassociate_option_t = uint32_t;
 
 routine mach_eventlink_create(
 		task             : task_t;

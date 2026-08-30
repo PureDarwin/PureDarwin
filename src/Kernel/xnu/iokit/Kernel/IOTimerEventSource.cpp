@@ -187,8 +187,9 @@ IOTimerEventSource::timeoutAndRelease(void * self, void * c)
 			wl->openGate();
 		}
 	}
-
-	me->reserved->workLoop->release();
+	if (me->reserved->workLoop) {
+		me->reserved->workLoop->release();
+	}
 	me->release();
 }
 
@@ -234,7 +235,7 @@ IOTimerEventSource::setTimeoutFunc()
 
 	// reserved != 0 means IOTimerEventSource::timeoutAndRelease is being used,
 	// not a subclassed implementation
-	reserved = IONewZero(ExpansionData, 1);
+	reserved = IOMallocType(ExpansionData);
 
 	reserved->calloutGenerationSignaled = ~reserved->calloutGeneration;
 	// make use of an existing ivar for parameter passing
@@ -375,7 +376,7 @@ IOTimerEventSource::free()
 	}
 
 	if (reserved) {
-		IODelete(reserved, ExpansionData, 1);
+		IOFreeType(reserved, ExpansionData);
 	}
 
 	super::free();

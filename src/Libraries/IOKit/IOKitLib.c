@@ -16,6 +16,12 @@
 
 #include "device_user.h"
 
+/* These older client names are absent from the pinned generated SDK headers. */
+extern kern_return_t host_get_io_master(host_t, io_main_t *);
+extern kern_return_t mach_port_mod_refs(ipc_space_t, mach_port_name_t,
+    mach_port_right_t, mach_port_delta_t);
+extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
+
 const mach_port_t kIOMasterPortDefault = MACH_PORT_NULL;
 
 

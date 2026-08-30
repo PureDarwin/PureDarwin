@@ -2,8 +2,8 @@
 #
 # This tool is used to stamp kernel version information into files at kernel
 # build time.  Each argument provided on the command line is the path to a file
-# that needs to be updated with the current verison information.  The file
-# xnu/config/MasterVersion is read to determine the version number to use.
+# that needs to be updated with the current version information.  The file
+# $OBJROOT/xnuVersion is read to determine the version number to use.
 # Each file is read, and all occurrences of the following strings are replaced
 # in-place like so:
 #   ###KERNEL_VERSION_LONG###               1.2.3b4
@@ -47,8 +47,8 @@ sub WriteFile {
 die("SRCROOT not defined") unless defined($ENV{'SRCROOT'});
 die("OBJROOT not defined") unless defined($ENV{'OBJROOT'});
 
-my $versfile = "MasterVersion";
-$versfile = "$ENV{'SRCROOT'}/config/$versfile" if ($ENV{'SRCROOT'});
+my $versfile = "xnuVersion";
+$versfile = "$ENV{'OBJROOT'}/$versfile" if ($ENV{'OBJROOT'});
 my $BUILD_SRCROOT=$ENV{'SRCROOT'};
 $BUILD_SRCROOT =~ s,/+$,,;
 my $BUILD_OBJROOT=$ENV{'OBJROOT'};
@@ -134,7 +134,7 @@ my $rawvers = &ReadFile($versfile);
 #$rawvers =~ s/\s//g;
 ($rawvers) = split "\n", $rawvers;
 my ($VERSION_MAJOR, $VERSION_MINOR, $VERSION_VARIANT) = split /\./, $rawvers;
-die "newvers: Invalid MasterVersion \"$rawvers\"!!! " if (!$VERSION_MAJOR);
+die "newvers: Invalid xnuVersion \"$rawvers\"!!! " if (!$VERSION_MAJOR);
 $VERSION_MINOR = "0" unless ($VERSION_MINOR);
 $VERSION_VARIANT = "0" unless ($VERSION_VARIANT);
 $VERSION_VARIANT =~ tr/A-Z/a-z/;
@@ -155,6 +155,12 @@ $VERSION_STAGE = 'VERSION_STAGE_RELEASE' if ($stage eq 'r');
 my $VERSION_SHORT = "$VERSION_MAJOR.$VERSION_MINOR.$VERSION_REVISION";
 my $VERSION_LONG = $VERSION_SHORT;
 $VERSION_LONG .= "$stage$VERSION_PRERELEASE_LEVEL" if (($stage ne "r") || ($VERSION_PRERELEASE_LEVEL != 0));
+
+# Allow environment to override some versioning information (allowing for
+# reproducible builds or building with changes that shouldn't affect the
+# build artifacts).
+$BUILD_DATE    = $ENV{'KERNEL_BUILD_DATE'}    ? $ENV{'KERNEL_BUILD_DATE'}    : $BUILD_DATE;
+$BUILD_OBJROOT = $ENV{'KERNEL_BUILD_OBJROOT'} ? $ENV{'KERNEL_BUILD_OBJROOT'} : $BUILD_OBJROOT;
 
 my $file;
 foreach $file (@ARGV) {

@@ -316,6 +316,8 @@ BUILD_DSYM := 1
 #
 CFLAGS_COMMON = \
 	$(DEBUG_CFLAGS) -nostdinc \
+	-include $(SRCROOT)/pd_apple_builtins.h \
+	-DOS_FIREHOSE_SPI=1 \
 	-fblocks \
 	-ferror-limit=10000 \
 	-fno-builtin \
@@ -779,8 +781,12 @@ LDFLAGS_KERNEL	= $(LDFLAGS_KERNEL_GEN) \
 LDFLAGS_KERNEL_ONLY   =   \
 		  $($(addsuffix $(CURRENT_ARCH_CONFIG), $(addsuffix $(CURRENT_KERNEL_CONFIG),LDFLAGS_KERNEL_ONLY_CONFIG_))) \
 		  $($(addsuffix $(ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG),LDFLAGS_KERNEL_ONLY_SUBARCH_)) \
-		  -Wl,-alias_list,$(TARGET)/all-alias.exp \
+		  -Wl,-alias_list,$(TARGET)/all-alias.exp
+
+ifneq ($(PUREDARWIN_SKIP_SYMBOLSETS),1)
+LDFLAGS_KERNEL_ONLY += \
 		  -Wl,-sectcreate,__LINKINFO,__symbolsets,$(TARGET)/symbolsets.plist -Wl,-segprot,__LINKINFO,r--,r--
+endif
 
 #
 # Default runtime libraries to be linked with the kernel
@@ -812,7 +818,10 @@ endif # DO_CTFMERGE
 # Default INCFLAGS
 #
 INCFLAGS_IMPORT	= $(patsubst %, -I$(OBJROOT)/EXPORT_HDRS/%, $(COMPONENT_IMPORT_LIST))
-INCFLAGS_EXTERN	= -I$(SRCROOT)/EXTERNAL_HEADERS -I@PTHREAD_HEADER_PATH@
+# clang's builtin headers, after EXTERNAL_HEADERS so its stdarg.h/stdbool.h
+# #include_next reaches them. xnu 12377 made those headers defer to the
+# compiler's under XNU_KERNEL_PRIVATE, and -nostdinc drops the builtin dir.
+INCFLAGS_EXTERN	= -I$(SRCROOT)/EXTERNAL_HEADERS -I$(shell $(CC) -print-resource-dir)/include -I@PTHREAD_HEADER_PATH@
 INCFLAGS_GEN	= -I$(SRCROOT)/$(COMPONENT) -I$(OBJROOT)/EXPORT_HDRS/$(COMPONENT)
 INCFLAGS_LOCAL	= -I.
 INCFLAGS_SDK	= -I@FIREHOSE_KERNEL_HEADER_PATH@
@@ -824,6 +833,20 @@ INCFLAGS	= $(INCFLAGS_LOCAL) $(INCFLAGS_GEN) $(INCFLAGS_IMPORT) $(INCFLAGS_EXTER
 #
 MIGFLAGS	= $(DEFINES) $(INCFLAGS) -novouchers $($(addsuffix $(CURRENT_ARCH_CONFIG),CFLAGS_)) $($(addsuffix $(CURRENT_ARCH_CONFIG),ARCH_FLAGS_)) \
 		$(DEPLOYMENT_TARGET_FLAGS)
+
+# New in xnu 12377. Without KERNEL_SERVER the VM .defs never set
+# VM_KERNEL_SERVER, so MIG emits the sanitized-input types unsanitized and
+# tools/vm_sanitize_enforcement.py rejects the result.
+# -mach_msg2 switches migcom to the split header/data kobject dispatch
+# ABI that ipc_kobject.c's ipc_kobject_server_internal() (mig_kern_subsystem,
+# 5-arg kstub_routine) already expects; tools/mig was vendored from
+# apple-oss-distributions/bootstrap_cmds-138 to support it.
+# MACH_KERNEL_PRIVATE is deliberately not repeated here: DEFINES already
+# carries it, and adding it to the MIG compile pulls kern_types.h's kernel
+# clock_t (struct clock *) in alongside BSD's __darwin_clock_t.
+MIGKSFLAGS = -DKERNEL_SERVER=1 -mach_msg2
+
+MIGKUFLAGS = -DKERNEL_USER=1
 
 # Support for LLVM Profile Guided Optimization (PGO)
 
@@ -1101,3 +1124,6 @@ INSTALL_KASAN_ONLY = 1
 endif
 
 # vim: set ft=make:
+
+# xnu 12377: path to the generated version stamp.
+XNU_VERSION = $(OBJROOT)/xnuVersion

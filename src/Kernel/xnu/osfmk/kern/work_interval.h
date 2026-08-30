@@ -57,6 +57,13 @@ struct kern_work_interval_create_args {
 	uint32_t        wica_create_flags;
 };
 
+struct kern_work_interval_workload_id_args {
+	uint32_t        wlida_flags;            /* in/out param */
+	uint32_t        wlida_wicreate_flags;   /* in/out param */
+	char *          wlida_name;             /* in param */
+	uint64_t        wlida_syscall_mask[2];  /* out param */
+};
+
 /*
  * Allocate/assign a single work interval ID for a thread,
  * and support deallocating it.
@@ -67,6 +74,55 @@ kern_work_interval_create(thread_t thread, struct kern_work_interval_create_args
 extern kern_return_t
 kern_work_interval_get_flags_from_port(mach_port_name_t port_name, uint32_t*flags);
 
+/*
+ * A private interface for kevent subsystem.
+ * Returns a +1 ref to the work_interval associated with a given port.
+ */
+extern kern_return_t
+kern_port_name_to_work_interval(mach_port_name_t name,
+    struct work_interval **work_interval);
+
+/*
+ * A private interface for kevent subsystem.
+ * Returns following scheduling policies associated with a work interval,
+ * if available.
+ * : Priority
+ * : Scheduling policy/mode
+ */
+extern kern_return_t
+kern_work_interval_get_policy(struct work_interval *work_interval,
+    integer_t *policy,
+    integer_t *priority);
+
+#if CONFIG_THREAD_GROUPS
+/*
+ * A private interface for kevent subsystem.
+ * Returns a +1 ref on the backing thread group associated with a work interval,
+ * if available.
+ */
+extern kern_return_t
+kern_work_interval_get_thread_group(struct work_interval *work_interval,
+    struct thread_group **tg);
+#endif /* CONFIG_THREAD_GROUPS */
+
+/*
+ * A private interface for kevent subsystem.
+ * Routine to release a ref count on the work interval.
+ * For more information, see work_interval_release.
+ */
+extern void
+kern_work_interval_release(struct work_interval *work_interval);
+
+/*
+ * A private interface for workqueue subsystem.
+ * Routine to join a work interval specified in @work_interval argument.
+ * It takes +1 ref on the work interval and passes it to the thread as a part of
+ * join the work interval. Expects @thread to be the calling thread.
+ */
+extern kern_return_t
+kern_work_interval_explicit_join(thread_t thread, struct work_interval *work_interval);
+
+
 extern kern_return_t
 kern_work_interval_destroy(thread_t thread, uint64_t work_interval_id);
 extern kern_return_t
@@ -74,11 +130,14 @@ kern_work_interval_join(thread_t thread, mach_port_name_t port_name);
 
 extern kern_return_t
 kern_work_interval_notify(thread_t thread, struct kern_work_interval_args* kwi_args);
+extern kern_return_t
+kern_work_interval_set_name(mach_port_name_t port_name, char *name, size_t len);
+extern kern_return_t
+kern_work_interval_set_workload_id(mach_port_name_t port_name,
+    struct kern_work_interval_workload_id_args *workload_id_args);
 
 #ifdef MACH_KERNEL_PRIVATE
 
-extern void work_interval_port_notify(mach_msg_header_t *msg);
-void work_interval_subsystem_init(void);
 bool work_interval_port_type_render_server(mach_port_name_t port_name);
 
 #if CONFIG_SCHED_AUTO_JOIN
@@ -88,8 +147,31 @@ void work_interval_auto_join_unwind(thread_t thread);
 void work_interval_auto_join_demote(thread_t thread);
 #endif /* CONFIG_SCHED_AUTO_JOIN */
 
+
+struct recount_track *work_interval_get_recount_tracks(struct work_interval *work_interval);
+
 extern kern_return_t work_interval_thread_terminate(thread_t thread);
+extern int work_interval_get_priority(thread_t thread);
+
 #endif /* MACH_KERNEL_PRIVATE */
+
+#ifdef KERNEL_PRIVATE
+
+__enum_closed_decl(wi_class_t, uint8_t, {
+	WI_CLASS_NONE              = 0,
+	WI_CLASS_DISCRETIONARY     = 1,
+	WI_CLASS_BEST_EFFORT       = 2,
+	WI_CLASS_APPLICATION       = 3,
+	WI_CLASS_SYSTEM            = 4,
+	WI_CLASS_SYSTEM_CRITICAL   = 5,
+	WI_CLASS_REALTIME          = 6,
+	WI_CLASS_REALTIME_CRITICAL = 7,
+	WI_CLASS_APP_SUPPORT       = 8,
+
+	WI_CLASS_COUNT
+});
+
+#endif
 
 __END_DECLS
 

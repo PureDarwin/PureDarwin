@@ -63,8 +63,8 @@
 #include <kern/cpu_data.h>
 #include <arm/pmap.h>
 #include <pexpert/pexpert.h>
-#include <vm/vm_map.h>
-#include <vm/vm_kern.h>
+#include <vm/vm_map_xnu.h>
+#include <vm/vm_kern_xnu.h>
 #include <libkern/version.h>
 
 void kprintf(const char *fmt, ...);
@@ -131,13 +131,16 @@ alternate_debugger_init(void)
 		    VM_MAP_PAGE_MASK(kernel_map));
 
 		kern_return_t kr = KERN_SUCCESS;
-		kr = kmem_alloc_contig(kernel_map, &alt_va, alt_size, VM_MAP_PAGE_MASK(kernel_map), 0, 0, KMA_NOPAGEWAIT | KMA_KOBJECT | KMA_LOMEM, VM_KERN_MEMORY_DIAG);
+		kr = kmem_alloc_contig(kernel_map, &alt_va, alt_size,
+		    VM_MAP_PAGE_MASK(kernel_map), 0, 0,
+		    KMA_NOPAGEWAIT | KMA_KOBJECT | KMA_LOMEM | KMA_PERMANENT,
+		    VM_KERN_MEMORY_DIAG);
 		if (kr != KERN_SUCCESS) {
 			kprintf("########## ALTERNATE_DEBUGGER FAILED kmem_alloc_contig with %d\n", kr);
 			alt_va = 0;
 		} else {
 			if (alt_pages_size) {
-				alt_pages = (vm_offset_t) kalloc((vm_size_t) alt_pages_size);
+				alt_pages = (vm_offset_t)zalloc_permanent(alt_pages_size, ZALIGN_PTR);
 			}
 		}
 
@@ -148,7 +151,7 @@ alternate_debugger_init(void)
 			uintptr_t just_return_size = (uintptr_t)&alternate_debugger_just_return_end - (uintptr_t)&alternate_debugger_just_return;
 			assert(just_return_size <= alt_size); // alt_size is page-rounded, just_return_size should be much less than a page.
 			// install a simple return vector
-			memcpy((void*)alt_va, &alternate_debugger_just_return, just_return_size);
+			memcpy((void*)alt_va, (const void *)&alternate_debugger_just_return, just_return_size);
 
 			// code is ready, enable the pointers to it
 			lowGlo.lgAltDebugger = alt_code = alt_va;

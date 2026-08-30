@@ -9,7 +9,8 @@
 #include <DriverKit/DriverKit.h>
 #endif /* KERNEL */
 #include <DriverKit/IOReturn.h>
-#include <DriverKit/OSObject.h>
+#include <IOKit/IORPC.h>
+#include "OSObject.h"
 
 /* @iig implementation */
 #include <DriverKit/IODispatchQueue.h>

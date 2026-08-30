@@ -29,6 +29,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <mach/mach_time.h>
+#include <assert.h>
 
 /*!
  * @function kcdata_get_typedescription
@@ -71,7 +72,15 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 {
 	unsigned int i = 0;
 #define _STR_VALUE(x) #x
-#define _SUBTYPE(t, s, f) setup_subtype_description(&subtypes[i++], (t), offsetof(s, f), _STR_VALUE(f))
+#define _SUBTYPE_TRUNC(t, s, f, name) do { \
+    setup_subtype_description(&subtypes[i++], (t), offsetof(s, f), name); \
+    _Static_assert(sizeof(name) == sizeof ((struct kcdata_subtype_descriptor *)0)->kcs_name, "\"" name "\" should fit exactly in kcs_name"); \
+} while (0)
+#define _SUBTYPE(t, s, f) do { \
+    setup_subtype_description(&subtypes[i++], (t), offsetof(s, f), _STR_VALUE(f)); \
+    _Static_assert(sizeof(_STR_VALUE(f)) <= sizeof ((struct kcdata_subtype_descriptor *)0)->kcs_name, "\"" _STR_VALUE(f) "\" should fit in kcs_name"); \
+} while (0)
+
 #define _SUBTYPE_ARRAY(t, s, f, c) setup_subtype_array_description(&subtypes[i++], (t), offsetof(s, f), (c), _STR_VALUE(f))
 #define _STRINGTYPE(f) setup_subtype_array_description(&subtypes[i++], KC_ST_CHAR, 0, UINT16_MAX, f)
 
@@ -154,7 +163,13 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		setup_type_definition(retval, type_id, i, "dyld_load_info");
 		break;
 	}
-
+	case STACKSHOT_KCTYPE_LOADINFO64_TEXT_EXEC: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct user64_dyld_uuid_info, imageLoadAddress);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct user64_dyld_uuid_info, imageUUID, 16);
+		setup_type_definition(retval, type_id, i, "dyld_load_info_text_exec");
+		break;
+	}
 	case STACKSHOT_KCTYPE_SHAREDCACHE_LOADINFO: {
 		i = 0;
 		/*
@@ -165,6 +180,19 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		_SUBTYPE_ARRAY(KC_ST_UINT8, struct dyld_uuid_info_64_v2, imageUUID, 16);
 		_SUBTYPE(KC_ST_UINT64, struct dyld_uuid_info_64_v2, imageSlidBaseAddress);
 		_SUBTYPE(KC_ST_UINT64, struct dyld_shared_cache_loadinfo, sharedCacheSlidFirstMapping);
+		_SUBTYPE(KC_ST_UINT32, struct dyld_shared_cache_loadinfo_v2, sharedCacheID);
+		_SUBTYPE(KC_ST_UINT32, struct dyld_shared_cache_loadinfo_v2, sharedCacheFlags);
+		setup_type_definition(retval, type_id, i, "shared_cache_dyld_load_info");
+		break;
+	}
+	case STACKSHOT_KCTYPE_SHAREDCACHE_INFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct dyld_shared_cache_loadinfo_v2, sharedCacheSlide);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct dyld_shared_cache_loadinfo_v2, sharedCacheUUID, 16);
+		_SUBTYPE_TRUNC(KC_ST_UINT64, struct dyld_shared_cache_loadinfo_v2, sharedCacheUnreliableSlidBaseAddress, "sharedCacheUnreliableSlidBaseAd");
+		_SUBTYPE(KC_ST_UINT64, struct dyld_shared_cache_loadinfo_v2, sharedCacheSlidFirstMapping);
+		_SUBTYPE(KC_ST_UINT32, struct dyld_shared_cache_loadinfo_v2, sharedCacheID);
+		_SUBTYPE(KC_ST_UINT32, struct dyld_shared_cache_loadinfo_v2, sharedCacheFlags);
 		setup_type_definition(retval, type_id, i, "shared_cache_dyld_load_info");
 		break;
 	}
@@ -214,6 +242,34 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		setup_type_definition(retval, type_id, i, "proc_name");
 		break;
 
+	case KCDATA_TYPE_LIBRARY_AOTINFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct user64_dyld_aot_info, x86LoadAddress);
+		_SUBTYPE(KC_ST_UINT64, struct user64_dyld_aot_info, aotLoadAddress);
+		_SUBTYPE(KC_ST_UINT64, struct user64_dyld_aot_info, aotImageSize);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct user64_dyld_aot_info, aotImageKey, DYLD_AOT_IMAGE_KEY_SIZE);
+		setup_type_definition(retval, type_id, i, "dyld_aot_info");
+		break;
+	}
+	case STACKSHOT_KCTYPE_AOTCACHE_LOADINFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct dyld_aot_cache_uuid_info, x86SlidBaseAddress);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct dyld_aot_cache_uuid_info, x86UUID, 16);
+		_SUBTYPE(KC_ST_UINT64, struct dyld_aot_cache_uuid_info, aotSlidBaseAddress);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct dyld_aot_cache_uuid_info, aotUUID, 16);
+		setup_type_definition(retval, type_id, i, "dyld_aot_cache_uuid_info");
+		break;
+	}
+	case STACKSHOT_KCTYPE_SHAREDCACHE_AOTINFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct dyld_aot_cache_uuid_info, x86SlidBaseAddress);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct dyld_aot_cache_uuid_info, x86UUID, 16);
+		_SUBTYPE(KC_ST_UINT64, struct dyld_aot_cache_uuid_info, aotSlidBaseAddress);
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct dyld_aot_cache_uuid_info, aotUUID, 16);
+		setup_type_definition(retval, type_id, i, "dyld_aot_cache_uuid_info");
+		break;
+	}
+
 	/* stackshot specific types */
 	case STACKSHOT_KCTYPE_IOSTATS: {
 		i = 0;
@@ -238,53 +294,81 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 
 	case STACKSHOT_KCTYPE_GLOBAL_MEM_STATS: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, snapshot_magic);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, free_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, active_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, inactive_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, purgeable_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, wired_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, speculative_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, throttled_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, filebacked_pages);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, compressions);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, decompressions);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, compressor_size);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, busy_buffer_count);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, pages_wanted);
-		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot, pages_reclaimed);
-		_SUBTYPE(KC_ST_UINT8, struct mem_and_io_snapshot, pages_wanted_reclaimed_valid);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, snapshot_magic);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, free_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, active_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, inactive_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, purgeable_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, wired_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, speculative_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, throttled_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, filebacked_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, compressions);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, decompressions);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, compressor_size);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, busy_buffer_count);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, pages_wanted);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, pages_reclaimed);
+		_SUBTYPE(KC_ST_UINT8, struct mem_and_io_snapshot_v2, pages_wanted_reclaimed_valid);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, shared_region_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, compressed_pages);
+		_SUBTYPE(KC_ST_UINT32, struct mem_and_io_snapshot_v2, swapped_pages);
 		setup_type_definition(retval, type_id, i, "mem_and_io_snapshot");
 		break;
 	}
 
+	case STACKSHOT_KCCONTAINER_SHAREDCACHE:
+		setup_type_definition(retval, type_id, 0, "shared_caches");
+		break;
+
 	case STACKSHOT_KCCONTAINER_TASK:
 		setup_type_definition(retval, type_id, 0, "task_snapshots");
+		break;
+
+	case STACKSHOT_KCCONTAINER_TRANSITIONING_TASK:
+		setup_type_definition(retval, type_id, 0, "transitioning_task_snapshots");
 		break;
 
 	case STACKSHOT_KCCONTAINER_THREAD:
 		setup_type_definition(retval, type_id, 0, "thread_snapshots");
 		break;
 
+	case STACKSHOT_KCCONTAINER_PORTLABEL:
+		setup_type_definition(retval, type_id, 0, "portlabels");
+		break;
+
 	case STACKSHOT_KCTYPE_TASK_SNAPSHOT: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v2, ts_unique_pid);
-		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v2, ts_ss_flags);
-		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v2, ts_user_time_in_terminated_threads);
-		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v2, ts_system_time_in_terminated_threads);
-		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v2, ts_p_start_sec);
-		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v2, ts_task_size);
-		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v2, ts_max_resident_size);
-		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v2, ts_suspend_count);
-		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v2, ts_faults);
-		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v2, ts_pageins);
-		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v2, ts_cow_faults);
-		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v2, ts_was_throttled);
-		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v2, ts_did_throttle);
-		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v2, ts_latency_qos);
-		_SUBTYPE(KC_ST_INT32, struct task_snapshot_v2, ts_pid);
-		_SUBTYPE_ARRAY(KC_ST_CHAR, struct task_snapshot_v2, ts_p_comm, 32);
+		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v3, ts_unique_pid);
+		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v3, ts_ss_flags);
+		_SUBTYPE_TRUNC(KC_ST_UINT64, struct task_snapshot_v3, ts_user_time_in_terminated_threads, "ts_user_time_in_terminated_thre");
+		_SUBTYPE_TRUNC(KC_ST_UINT64, struct task_snapshot_v3, ts_system_time_in_terminated_threads, "ts_system_time_in_terminated_th");
+		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v3, ts_p_start_sec);
+		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v3, ts_task_size);
+		_SUBTYPE(KC_ST_UINT64, struct task_snapshot_v3, ts_max_resident_size);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_suspend_count);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_faults);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_pageins);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_cow_faults);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_was_throttled);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_did_throttle);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_latency_qos);
+		_SUBTYPE(KC_ST_INT32, struct task_snapshot_v3, ts_pid);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct task_snapshot_v3, ts_p_comm, 32);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_uid);
+		_SUBTYPE(KC_ST_UINT32, struct task_snapshot_v3, ts_gid);
 		setup_type_definition(retval, type_id, i, "task_snapshot");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_TRANSITIONING_TASK_SNAPSHOT: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct transitioning_task_snapshot, tts_unique_pid);
+		_SUBTYPE(KC_ST_UINT64, struct transitioning_task_snapshot, tts_ss_flags);
+		_SUBTYPE(KC_ST_UINT64, struct transitioning_task_snapshot, tts_transition_type);
+		_SUBTYPE(KC_ST_INT32, struct transitioning_task_snapshot, tts_pid);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct transitioning_task_snapshot, tts_p_comm, 32);
+		setup_type_definition(retval, type_id, i, "transitioning_task_snapshot");
 		break;
 	}
 
@@ -292,8 +376,8 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		i = 0;
 		_SUBTYPE(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_unique_pid);
 		_SUBTYPE(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_ss_flags);
-		_SUBTYPE(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_user_time_in_terminated_threads);
-		_SUBTYPE(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_system_time_in_terminated_threads);
+		_SUBTYPE_TRUNC(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_user_time_in_terminated_threads, "tds_user_time_in_terminated_thr");
+		_SUBTYPE_TRUNC(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_system_time_in_terminated_threads, "tds_system_time_in_terminated_t");
 		_SUBTYPE(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_task_size);
 		_SUBTYPE(KC_ST_UINT64, struct task_delta_snapshot_v2, tds_max_resident_size);
 		_SUBTYPE(KC_ST_UINT32, struct task_delta_snapshot_v2, tds_suspend_count);
@@ -420,6 +504,17 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		subtypes[0].kcs_flags |= KCS_SUBTYPE_FLAGS_STRUCT;
 		break;
 
+	case STACKSHOT_KCTYPE_USER_ASYNC_START_INDEX:
+		setup_type_definition(retval, type_id, 1, "user_async_start_index");
+		setup_subtype_description(&subtypes[0], KC_ST_UINT32, 0, "user_async_start_index");
+		break;
+
+	case STACKSHOT_KCTYPE_USER_ASYNC_STACKLR64:
+		setup_type_definition(retval, type_id, 1, "user_async_stack_frames");
+		setup_subtype_description(&subtypes[0], KC_ST_UINT64, 0, "lr");
+		subtypes[0].kcs_flags |= KCS_SUBTYPE_FLAGS_STRUCT;
+		break;
+
 	case STACKSHOT_KCTYPE_NONRUNNABLE_TIDS:
 		setup_type_definition(retval, type_id, 1, "nonrunnable_threads");
 		setup_subtype_description(&subtypes[0], KC_ST_INT64, 0, "nonrunnable_threads");
@@ -428,6 +523,108 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 	case STACKSHOT_KCTYPE_NONRUNNABLE_TASKS:
 		setup_type_definition(retval, type_id, 1, "nonrunnable_tasks");
 		setup_subtype_description(&subtypes[0], KC_ST_INT64, 0, "nonrunnable_tasks");
+		break;
+
+	case STACKSHOT_KCTYPE_SHAREDCACHE_ID:
+		setup_type_definition(retval, type_id, 1, "sharedCacheID");
+		setup_subtype_description(&subtypes[0], KC_ST_INT32, 0, "sharedCacheID");
+		break;
+
+	case STACKSHOT_KCTYPE_CODESIGNING_INFO:
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_task_codesigning_info, csflags);
+		_SUBTYPE(KC_ST_UINT32, struct stackshot_task_codesigning_info, cs_trust_level);
+		setup_type_definition(retval, type_id, i, "stackshot_task_codesigning_info");
+		break;
+
+	case STACKSHOT_KCTYPE_KERN_EXCLAVES_THREADINFO:
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct thread_exclaves_info, tei_scid);
+		_SUBTYPE(KC_ST_UINT32, struct thread_exclaves_info, tei_thread_offset);
+		_SUBTYPE(KC_ST_UINT32, struct thread_exclaves_info, tei_flags);
+		setup_type_definition(retval, type_id, i, "exclaves_thread_info");
+		break;
+
+	case STACKSHOT_KCTYPE_KERN_EXCLAVES_CRASH_THREADINFO:
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct thread_crash_exclaves_info, tcei_scid);
+		_SUBTYPE(KC_ST_UINT64, struct thread_crash_exclaves_info, tcei_thread_id);
+		_SUBTYPE(KC_ST_UINT32, struct thread_crash_exclaves_info, tcei_flags);
+		setup_type_definition(retval, type_id, i, "exclaves_crash_thread_info");
+		break;
+
+	case STACKSHOT_KCCONTAINER_EXCLAVES:
+		setup_type_definition(retval, type_id, 0, "threads_exclave");
+		break;
+
+	case STACKSHOT_KCCONTAINER_EXCLAVE_SCRESULT:
+		setup_type_definition(retval, type_id, 0, "thread_exclave");
+		break;
+
+	case STACKSHOT_KCTYPE_EXCLAVE_SCRESULT_INFO:
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct exclave_scresult_info, esc_id);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_scresult_info, esc_flags);
+		setup_type_definition(retval, type_id, i, "exclave_scresult_info");
+		break;
+
+	case STACKSHOT_KCCONTAINER_EXCLAVE_IPCSTACKENTRY:
+		setup_type_definition(retval, type_id, 0, "exclave_ipcstackentry");
+		break;
+
+	case STACKSHOT_KCTYPE_EXCLAVE_IPCSTACKENTRY_INFO:
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct exclave_ipcstackentry_info, eise_asid);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_ipcstackentry_info, eise_tnid);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_ipcstackentry_info, eise_invocationid);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_ipcstackentry_info, eise_flags);
+		setup_type_definition(retval, type_id, i, "exclave_ipcstackentry_info");
+		break;
+
+	case STACKSHOT_KCTYPE_EXCLAVE_IPCSTACKENTRY_ECSTACK:
+		setup_type_definition(retval, type_id, 1, "secure_ecstack_entry");
+		setup_subtype_description(&subtypes[0], KC_ST_UINT64, 0, "lr");
+		subtypes[0].kcs_flags |= KCS_SUBTYPE_FLAGS_STRUCT;
+		break;
+
+	case STACKSHOT_KCCONTAINER_EXCLAVE_ADDRESSSPACE:
+		setup_type_definition(retval, type_id, 0, "exclave_addressspace");
+		break;
+
+	case STACKSHOT_KCTYPE_EXCLAVE_ADDRESSSPACE_INFO:
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct exclave_addressspace_info, eas_id);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_addressspace_info, eas_flags);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_addressspace_info, eas_layoutid);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_addressspace_info, eas_slide);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_addressspace_info, eas_asroot);
+		setup_type_definition(retval, type_id, i, "exclave_addressspace_info");
+		break;
+
+	case STACKSHOT_KCTYPE_EXCLAVE_ADDRESSSPACE_NAME:
+		i = 0;
+		_STRINGTYPE("exclave_addressspace_name");
+		setup_type_definition(retval, type_id, i, "exclave_addressspace_name");
+		break;
+
+	case STACKSHOT_KCCONTAINER_EXCLAVE_TEXTLAYOUT:
+		setup_type_definition(retval, type_id, 0, "exclave_textlayout");
+		break;
+
+	case STACKSHOT_KCTYPE_EXCLAVE_TEXTLAYOUT_INFO:
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct exclave_textlayout_info, layout_id);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_textlayout_info, etl_flags);
+		_SUBTYPE(KC_ST_UINT32, struct exclave_textlayout_info, sharedcache_index);
+		setup_type_definition(retval, type_id, i, "exclave_textlayout_info");
+		break;
+
+	case STACKSHOT_KCTYPE_EXCLAVE_TEXTLAYOUT_SEGMENTS:
+		i = 0;
+		_SUBTYPE_ARRAY(KC_ST_UINT8, struct exclave_textlayout_segment_v2, layoutSegment_uuid, 16);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_textlayout_segment_v2, layoutSegment_loadAddress);
+		_SUBTYPE(KC_ST_UINT64, struct exclave_textlayout_segment_v2, layoutSegment_rawLoadAddress);
+		setup_type_definition(retval, type_id, i, "exclave_textlayout_segments");
 		break;
 
 	case STACKSHOT_KCTYPE_BOOTARGS: {
@@ -441,6 +638,13 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		i = 0;
 		_STRINGTYPE("osversion");
 		setup_type_definition(retval, type_id, i, "osversion");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_OS_BUILD_VERSION: {
+		i = 0;
+		_STRINGTYPE("os_build_version");
+		setup_type_definition(retval, type_id, i, "os_build_version");
 		break;
 	}
 
@@ -533,7 +737,7 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		_SUBTYPE(KC_ST_UINT64, struct rusage_info_v3, ri_cpu_time_qos_utility);
 		_SUBTYPE(KC_ST_UINT64, struct rusage_info_v3, ri_cpu_time_qos_legacy);
 		_SUBTYPE(KC_ST_UINT64, struct rusage_info_v3, ri_cpu_time_qos_user_initiated);
-		_SUBTYPE(KC_ST_UINT64, struct rusage_info_v3, ri_cpu_time_qos_user_interactive);
+		_SUBTYPE_TRUNC(KC_ST_UINT64, struct rusage_info_v3, ri_cpu_time_qos_user_interactive, "ri_cpu_time_qos_user_interactiv");
 		_SUBTYPE(KC_ST_UINT64, struct rusage_info_v3, ri_billed_system_time);
 		_SUBTYPE(KC_ST_UINT64, struct rusage_info_v3, ri_serviced_system_time);
 		setup_type_definition(retval, type_id, i, "rusage_info");
@@ -574,19 +778,22 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 
 	case STACKSHOT_KCTYPE_THREAD_WAITINFO: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo, owner);
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo, waiter);
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo, context);
-		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_waitinfo, wait_type);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo_v2, owner);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo_v2, waiter);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_waitinfo_v2, context);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_waitinfo_v2, wait_type);
+		_SUBTYPE(KC_ST_INT16, struct stackshot_thread_waitinfo_v2, portlabel_id);
+		_SUBTYPE(KC_ST_UINT32, struct stackshot_thread_waitinfo_v2, wait_flags);
 		setup_type_definition(retval, type_id, i, "thread_waitinfo");
 		break;
 	}
 
 	case STACKSHOT_KCTYPE_THREAD_GROUP_SNAPSHOT: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT64, struct thread_group_snapshot_v2, tgs_id);
-		_SUBTYPE_ARRAY(KC_ST_CHAR, struct thread_group_snapshot_v2, tgs_name, 16);
-		_SUBTYPE(KC_ST_UINT64, struct thread_group_snapshot_v2, tgs_flags);
+		_SUBTYPE(KC_ST_UINT64, struct thread_group_snapshot_v3, tgs_id);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct thread_group_snapshot_v3, tgs_name, 16);
+		_SUBTYPE(KC_ST_UINT64, struct thread_group_snapshot_v3, tgs_flags);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct thread_group_snapshot_v3, tgs_name_cont, 16);
 		setup_type_definition(retval, type_id, i, "thread_group_snapshot");
 		break;
 	}
@@ -617,8 +824,10 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 
 	case STACKSHOT_KCTYPE_INSTRS_CYCLES: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot, ics_instructions);
-		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot, ics_cycles);
+		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot_v2, ics_instructions);
+		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot_v2, ics_cycles);
+		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot_v2, ics_p_instructions);
+		_SUBTYPE(KC_ST_UINT64, struct instrs_cycles_snapshot_v2, ics_p_cycles);
 		setup_type_definition(retval, type_id, i, "instrs_cycles_snapshot");
 		break;
 	}
@@ -756,6 +965,83 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		break;
 	}
 
+	case TASK_CRASHINFO_TASK_IS_CORPSE_FORK: {
+		setup_subtype_description(&subtypes[0], KC_ST_UINT32, 0, "task_is_corpse_fork");
+		setup_type_definition(retval, type_id, 1, "task_is_corpse_fork");
+		break;
+	}
+
+	case TASK_CRASHINFO_EXCEPTION_TYPE: {
+		setup_subtype_description(&subtypes[0], KC_ST_UINT32, 0, "exception_type");
+		setup_type_definition(retval, type_id, 1, "exception_type");
+		break;
+	}
+
+	case TASK_CRASHINFO_CS_SIGNING_ID: {
+		i = 0;
+		_STRINGTYPE("cs_signing_id");
+		setup_type_definition(retval, type_id, i, "cs_signing_id");
+		break;
+	}
+
+	case TASK_CRASHINFO_CS_TEAM_ID: {
+		i = 0;
+		_STRINGTYPE("cs_team_id");
+		setup_type_definition(retval, type_id, i, "cs_team_id");
+		break;
+	}
+
+	case TASK_CRASHINFO_CS_VALIDATION_CATEGORY: {
+		setup_subtype_description(&subtypes[0], KC_ST_UINT32, 0, "cs_validation_category");
+		setup_type_definition(retval, type_id, 1, "cs_validation_category");
+		break;
+	}
+	case TASK_CRASHINFO_CS_TRUST_LEVEL: {
+		setup_subtype_description(&subtypes[0], KC_ST_UINT32, 0, "cs_trust_level");
+		setup_type_definition(retval, type_id, 1, "cs_trust_level");
+		break;
+	}
+	case TASK_CRASHINFO_JIT_ADDRESS_RANGE: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct crashinfo_jit_address_range, start_address);
+		_SUBTYPE(KC_ST_UINT64, struct crashinfo_jit_address_range, end_address);
+		setup_type_definition(retval, type_id, 1, "jit_address_range");
+		break;
+	}
+	case TASK_CRASHINFO_MB: {
+		_SUBTYPE(KC_ST_UINT64, struct crashinfo_mb, start_address);
+		_SUBTYPE_ARRAY(KC_ST_UINT64, struct crashinfo_mb, data, 64);
+		setup_type_definition(retval, type_id, 1, "tags");
+	}
+	case TASK_CRASHINFO_CS_AUXILIARY_INFO: {
+		setup_subtype_description(&subtypes[0], KC_ST_UINT64, 0, "cs_auxiliary_info");
+		setup_type_definition(retval, type_id, 1, "cs_auxiliary_info");
+		break;
+	}
+	case TASK_CRASHINFO_RLIM_CORE: {
+		setup_subtype_description(&subtypes[0], KC_ST_UINT64, 0, "rlim_core");
+		setup_type_definition(retval, type_id, 1, "rlim_core");
+		break;
+	}
+	case TASK_CRASHINFO_CORE_ALLOWED: {
+		setup_subtype_description(&subtypes[0], KC_ST_UINT8, 0, "core_allowed");
+		setup_type_definition(retval, type_id, 1, "core_allowed");
+		break;
+	}
+	case TASK_CRASHINFO_VOUCHER_INFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct crashinfo_voucher, thread_id);
+		_SUBTYPE(KC_ST_UINT32, struct crashinfo_voucher, originator_pid);
+		_SUBTYPE(KC_ST_UINT32, struct crashinfo_voucher, proximate_pid);
+		setup_type_definition(retval, type_id, i, "voucher_info");
+		break;
+	}
+	case TASK_CRASHINFO_SANDBOX_PROFILE: {
+		i = 0;
+		_STRINGTYPE("sandbox_profile");
+		setup_type_definition(retval, type_id, i, "sandbox_profile");
+		break;
+	}
 	case EXIT_REASON_SNAPSHOT: {
 		_SUBTYPE(KC_ST_UINT32, struct exit_reason_snapshot, ers_namespace);
 		_SUBTYPE(KC_ST_UINT64, struct exit_reason_snapshot, ers_code);
@@ -848,14 +1134,33 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 
 	case STACKSHOT_KCTYPE_THREAD_TURNSTILEINFO: {
 		i = 0;
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo, waiter);
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo, turnstile_context);
-		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_turnstileinfo, turnstile_priority);
-		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_turnstileinfo, number_of_hops);
-		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo, turnstile_flags);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo_v2, waiter);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo_v2, turnstile_context);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_turnstileinfo_v2, turnstile_priority);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_thread_turnstileinfo_v2, number_of_hops);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_thread_turnstileinfo_v2, turnstile_flags);
+		_SUBTYPE(KC_ST_INT16, struct stackshot_thread_turnstileinfo_v2, portlabel_id);
 		setup_type_definition(retval, type_id, i, "thread_turnstileinfo");
 		break;
 	}
+
+	case STACKSHOT_KCTYPE_PORTLABEL: {
+		i = 0;
+		_SUBTYPE(KC_ST_INT16, struct portlabel_info, portlabel_id);
+		_SUBTYPE(KC_ST_UINT16, struct portlabel_info, portlabel_flags);
+		_SUBTYPE(KC_ST_INT8, struct portlabel_info, portlabel_domain);
+		subtypes[0].kcs_flags |= KCS_SUBTYPE_FLAGS_MERGE;
+		subtypes[1].kcs_flags |= KCS_SUBTYPE_FLAGS_MERGE;
+		subtypes[2].kcs_flags |= KCS_SUBTYPE_FLAGS_MERGE;
+		setup_type_definition(retval, type_id, i, "portlabel_info");
+		break;
+	}
+
+	case STACKSHOT_KCTYPE_PORTLABEL_NAME:
+		i = 0;
+		_STRINGTYPE("portlabel_name");
+		setup_type_definition(retval, type_id, i, "portlabel_name");
+		break;
 
 	case STACKSHOT_KCTYPE_TASK_CPU_ARCHITECTURE: {
 		i = 0;
@@ -865,6 +1170,107 @@ kcdata_get_typedescription(unsigned type_id, uint8_t * buffer, uint32_t buffer_s
 		break;
 	}
 
+	case STACKSHOT_KCTYPE_LATENCY_INFO: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_collection, latency_version);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_collection, setup_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_collection, total_task_iteration_latency);
+		_SUBTYPE_TRUNC(KC_ST_UINT64, struct stackshot_latency_collection, total_terminated_task_iteration_latency, "total_terminated_task_iteration");
+		setup_type_definition(retval, type_id, i, "stackshot_latency_collection");
+		break;
+	}
+	case STACKSHOT_KCTYPE_LATENCY_INFO_TASK: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, task_uniqueid);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, setup_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, task_thread_count_loop_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, task_thread_data_loop_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, cur_tsnap_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, pmap_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, bsd_proc_ids_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, misc_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, misc2_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_task, end_latency);
+		setup_type_definition(retval, type_id, i, "stackshot_latency_task");
+		break;
+	}
+	case STACKSHOT_KCTYPE_LATENCY_INFO_THREAD: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, thread_id);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, cur_thsnap1_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, dispatch_serial_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, dispatch_label_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, cur_thsnap2_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, thread_name_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, sur_times_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, user_stack_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, kernel_stack_latency);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_thread, misc_latency);
+		setup_type_definition(retval, type_id, i, "stackshot_latency_thread");
+		break;
+	}
+	case STACKSHOT_KCTYPE_LATENCY_INFO_CPU: {
+		i = 0;
+		_SUBTYPE(KC_ST_INT32, struct stackshot_latency_cpu, cpu_number);
+		_SUBTYPE(KC_ST_INT32, struct stackshot_latency_cpu, cluster_type);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, init_latency_mt);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, workqueue_latency_mt);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, total_latency_mt);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, total_cycles);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, total_instrs);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, tasks_processed);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, threads_processed);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, faulting_time_mt);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, total_buf);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_cpu, intercluster_buf_used);
+		setup_type_definition(retval, type_id, i, "stackshot_latency_cpu");
+		break;
+	}
+	case STACKSHOT_KCTYPE_LATENCY_INFO_BUFFER: {
+		i = 0;
+		_SUBTYPE(KC_ST_INT32, struct stackshot_latency_buffer, cluster_type);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_buffer, size);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_buffer, used);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_latency_buffer, overhead);
+		setup_type_definition(retval, type_id, i, "stackshot_latency_buffer");
+		break;
+	}
+	case TASK_CRASHINFO_KERNEL_TRIAGE_INFO_V1: {
+		i = 0;
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct kernel_triage_info_v1, triage_string1, MAX_TRIAGE_STRING_LEN);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct kernel_triage_info_v1, triage_string2, MAX_TRIAGE_STRING_LEN);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct kernel_triage_info_v1, triage_string3, MAX_TRIAGE_STRING_LEN);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct kernel_triage_info_v1, triage_string4, MAX_TRIAGE_STRING_LEN);
+		_SUBTYPE_ARRAY(KC_ST_CHAR, struct kernel_triage_info_v1, triage_string5, MAX_TRIAGE_STRING_LEN);
+		setup_type_definition(retval, type_id, i, "kernel_triage_info_v1");
+		break;
+	}
+	case STACKSHOT_KCTYPE_MTEINFO_CELL: {
+		_SUBTYPE(KC_ST_UINT8, struct mte_info_cell, mic_state);
+		_SUBTYPE(KC_ST_UINT8, struct mte_info_cell, mic_tagged_count);
+		_SUBTYPE(KC_ST_UINT8, struct mte_info_cell, mic_free_count);
+		_SUBTYPE(KC_ST_UINT8, struct mte_info_cell, mic_wired_count);
+		_SUBTYPE(KC_ST_UINT8, struct mte_info_cell, mic_wired_tagged_count);
+		_SUBTYPE(KC_ST_UINT8, struct mte_info_cell, mic_kernel_wired_tagged_count);
+		setup_type_definition(retval, type_id, i, "mte_info_cell");
+		break;
+	}
+	case STACKSHOT_KCTYPE_VMRL_BLOCKING_RELS: {
+		i = 0;
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_vmrl_blocking_relationship, waiter_tid);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_vmrl_blocking_relationship, blocker_tid);
+		_SUBTYPE(KC_ST_UINT64, struct stackshot_vmrl_blocking_relationship, entry_hash);
+		_SUBTYPE(KC_ST_UINT32, struct stackshot_vmrl_blocking_relationship, flags);
+		setup_type_definition(retval, type_id, i, "vmrl_blocking_relationship_t");
+		break;
+	}
+	case STACKSHOT_KCTYPE_LOCK_STATE: {
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_device_lock_state, flags);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_device_lock_state, passcode_status);
+		_SUBTYPE(KC_ST_UINT8, struct stackshot_device_lock_state, lock_state);
+		setup_type_definition(retval, type_id, i, "device_lock_state");
+		break;
+	}
 	default:
 		retval = NULL;
 		break;

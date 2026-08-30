@@ -848,6 +848,11 @@ _gmtime_r
 _mktemp
 _vsprintf
 _freelocale
+_duplocale
+_clock_getres
+_roundl
+_lroundl
+_llroundl
 _memmem
 _memset_s
 _backtrace
@@ -1120,6 +1125,7 @@ _regfree
 _sethostname
 _strcasestr
 ___strcat_chk
+___strncat_chk
 _strsep
 _strspn
 _ungetc

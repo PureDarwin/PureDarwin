@@ -132,6 +132,7 @@ typedef struct memory_object {
 #endif /* __LP64__ */
 	const struct memory_object_pager_ops    *mo_pager_ops;
 	memory_object_control_t                 mo_control;
+	uint32_t                                mo_last_unmap_ctid;
 } *memory_object_t;
 
 typedef const struct memory_object_pager_ops {
@@ -164,24 +165,33 @@ typedef const struct memory_object_pager_ops {
 		memory_object_t mem_obj,
 		memory_object_offset_t offset,
 		memory_object_cluster_size_t size);
+#if XNU_KERNEL_PRIVATE
+	void *__obsolete_memory_object_data_unlock;
+	void *__obsolete_memory_object_synchronize;
+#else
 	kern_return_t (*memory_object_data_unlock)(
 		memory_object_t mem_obj,
 		memory_object_offset_t offset,
 		memory_object_size_t size,
-		vm_prot_t desired_access);
+		vm_prot_t desired_access); /* obsolete */
 	kern_return_t (*memory_object_synchronize)(
 		memory_object_t mem_obj,
 		memory_object_offset_t offset,
 		memory_object_size_t size,
-		vm_sync_t sync_flags);
+		vm_sync_t sync_flags); /* obsolete */
+#endif /* !XNU_KERNEL_PRIVATE */
 	kern_return_t (*memory_object_map)(
 		memory_object_t mem_obj,
 		vm_prot_t prot);
 	kern_return_t (*memory_object_last_unmap)(
 		memory_object_t mem_obj);
+#if XNU_KERNEL_PRIVATE
+	void *__obsolete_memory_object_data_reclaim;
+#else
 	kern_return_t (*memory_object_data_reclaim)(
 		memory_object_t mem_obj,
-		boolean_t reclaim_backing_store);
+		boolean_t reclaim_backing_store); /* obsolete */
+#endif /* !XNU_KERNEL_PRIVATE */
 	boolean_t (*memory_object_backing_object)(
 		memory_object_t mem_obj,
 		memory_object_offset_t mem_obj_offset,
@@ -255,6 +265,12 @@ typedef int             memory_object_copy_strategy_t;
  *	examined without also
  *	examining pager_ready and
  *	internal.
+ */
+
+#define         MEMORY_OBJECT_COPY_DELAY_FORK   6
+/*
+ * ...  Like MEMORY_OBJECT_COPY_DELAY for vm_map_fork() but like
+ *      MEMORY_OBJECT_COPY_NONE otherwise.
  */
 
 typedef int             memory_object_return_t;
@@ -332,9 +348,6 @@ extern boolean_t memory_object_backing_object(
 	memory_object_offset_t offset,
 	vm_object_t *backing_object,
 	vm_object_offset_t *backing_offset);
-
-extern void memory_object_default_reference(memory_object_default_t);
-extern void memory_object_default_deallocate(memory_object_default_t);
 
 extern void memory_object_control_reference(memory_object_control_t control);
 extern void memory_object_control_deallocate(memory_object_control_t control);
@@ -420,6 +433,7 @@ typedef struct memory_object_attr_info  memory_object_attr_info_data_t;
 	                & 0xFF000000) | ((flags) & 0xFFFFFF));
 
 /* leave room for vm_prot bits (0xFF ?) */
+#define MAP_MEM_PROT_MASK            0xFF
 #define MAP_MEM_LEDGER_TAGGED        0x002000 /* object owned by a specific task and ledger */
 #define MAP_MEM_PURGABLE_KERNEL_ONLY 0x004000 /* volatility controlled by kernel */
 #define MAP_MEM_GRAB_SECLUDED   0x008000 /* can grab secluded pages */
@@ -484,11 +498,13 @@ struct upl_page_info {
 
 	    needed:1,           /* page should be left in cache on abort */
 	    mark:1,             /* a mark flag for the creator to use as they wish */
+	    reserved: 12,
 	:0;                     /* force to long boundary */
 #else
 	opaque;                 /* use upl_page_xxx() accessor funcs */
 #endif /* XNU_KERNEL_PRIVATE */
 };
+_Static_assert(sizeof(struct upl_page_info) == 8, "sizeof(struct upl_page_info) doesn't match expectation");
 
 #else
 
@@ -504,6 +520,7 @@ typedef upl_page_info_array_t   upl_page_list_ptr_t;
 
 typedef uint32_t        upl_offset_t;   /* page-aligned byte offset */
 typedef uint32_t        upl_size_t;     /* page-aligned byte size */
+#define UPL_SIZE_MAX    (UINT32_MAX & ~PAGE_MASK)
 
 /* upl invocation flags */
 /* top nibble is used by super upl */
@@ -547,8 +564,11 @@ typedef uint64_t upl_control_flags_t;
 #define UPL_NOZEROFILLIO        0x40000000ULL /* allow non zerofill pages present */
 #define UPL_REQUEST_FORCE_COHERENCY     0x80000000ULL
 
+
+
+#define UPL_CARRY_VA_TAG        0x10000000000ULL
 /* UPL flags known by this kernel */
-#define UPL_VALID_FLAGS         0xFFFFFFFFFFULL
+#define UPL_VALID_FLAGS         0x1FFFFFFFFFFULL
 
 
 /* upl abort error flags */
@@ -757,35 +777,17 @@ typedef uint64_t upl_control_flags_t;
 	((upl)->upl_reprio_info[(index)]) = (((uint64_t)(blkno) & UPL_REPRIO_INFO_MASK) | \
 	(((uint64_t)(len) & UPL_REPRIO_INFO_MASK) << UPL_REPRIO_INFO_SHIFT))
 
-/* The call prototyped below is used strictly by UPL_GET_INTERNAL_PAGE_LIST */
-
-extern vm_size_t        upl_offset_to_pagelist;
-extern vm_size_t        upl_get_internal_pagelist_offset(void);
-extern void*            upl_get_internal_vectorupl(upl_t);
-extern upl_page_info_t*         upl_get_internal_vectorupl_pagelist(upl_t);
-
-/*Use this variant to get the UPL's page list iff:*/
-/*- the upl being passed in is already part of a vector UPL*/
-/*- the page list you want is that of this "sub-upl" and not that of the entire vector-upl*/
-
-#define UPL_GET_INTERNAL_PAGE_LIST_SIMPLE(upl) \
-	((upl_page_info_t *)((upl_offset_to_pagelist == 0) ?  \
-	(uintptr_t)upl + (unsigned int)(upl_offset_to_pagelist = upl_get_internal_pagelist_offset()): \
-	(uintptr_t)upl + (unsigned int)upl_offset_to_pagelist))
-
 /* UPL_GET_INTERNAL_PAGE_LIST is only valid on internal objects where the */
 /* list request was made with the UPL_INTERNAL flag */
 
-
-#define UPL_GET_INTERNAL_PAGE_LIST(upl) \
-	((upl_get_internal_vectorupl(upl) != NULL ) ? (upl_get_internal_vectorupl_pagelist(upl)) : \
-	((upl_page_info_t *)((upl_offset_to_pagelist == 0) ?  \
-	(uintptr_t)upl + (unsigned int)(upl_offset_to_pagelist = upl_get_internal_pagelist_offset()): \
-	(uintptr_t)upl + (unsigned int)upl_offset_to_pagelist)))
+#define UPL_GET_INTERNAL_PAGE_LIST(upl) upl_get_internal_page_list(upl)
 
 __BEGIN_DECLS
 
-extern ppnum_t  upl_phys_page(upl_page_info_t *upl, int index);
+extern void            *upl_get_internal_vectorupl(upl_t);
+extern upl_page_info_t *upl_get_internal_vectorupl_pagelist(upl_t);
+extern upl_page_info_t *upl_get_internal_page_list(upl_t upl);
+extern ppnum_t          upl_phys_page(upl_page_info_t *upl, int index);
 extern boolean_t        upl_device_page(upl_page_info_t *upl);
 extern boolean_t        upl_speculative_page(upl_page_info_t *upl, int index);
 extern void     upl_clear_dirty(upl_t upl, boolean_t value);
@@ -808,11 +810,13 @@ extern boolean_t        upl_valid_page(upl_page_info_t *upl, int index);
 extern void             upl_deallocate(upl_t upl);
 extern void             upl_mark_decmp(upl_t upl);
 extern void             upl_unmark_decmp(upl_t upl);
+extern boolean_t        upl_has_wired_pages(upl_t upl);
 
 #ifdef KERNEL_PRIVATE
 
 void upl_page_set_mark(upl_page_info_t *upl, int index, boolean_t v);
 boolean_t upl_page_get_mark(upl_page_info_t *upl, int index);
+boolean_t upl_page_is_needed(upl_page_info_t *upl, int index);
 
 #endif // KERNEL_PRIVATE
 

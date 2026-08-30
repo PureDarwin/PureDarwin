@@ -44,6 +44,12 @@ enum {
 	kIOInterruptDispatchSourceTypeLevel = 0x00000001
 };
 
+enum {
+	kIOInterruptSourceIndexMask      = 0x0000FFFF,
+	kIOInterruptSourceAbsoluteTime   = 0x00000000,
+	kIOInterruptSourceContinuousTime = 0x00010000
+};
+
 /*!
  * @class IOInterruptDispatchSource
  *
@@ -56,7 +62,7 @@ enum {
  * the primary interrupt fired. For IOPCIDevices, only MSI interrupt sources are supported.
  */
  
-/* source class IOInterruptDispatchSource IOInterruptDispatchSource.iig:57-137 */
+/* source class IOInterruptDispatchSource IOInterruptDispatchSource.iig:63-156 */
 
 #if __DOCUMENTATION__
 #define KERNEL IIG_KERNEL
@@ -68,7 +74,8 @@ public:
     /*!
      * @brief       Create an IOInterruptDispatchSource for an interrupt by index from an IOService provider.
      * @param       provider The IOService object representing the HW device producing the interrupt.
-     * @param       index Index for the interrupt.
+     * @param       index Index for the interrupt, optionally or'ed with one of the following constants:
+                    kIOInterruptSourceContinuousTime time values sent to the InterruptOccurred() method will be in mach_continuous_time() units.
      * @param       queue Target queue to run the handler block.
      * @param       source Created source with +1 retain count to be released by the caller.
      * @return      kIOReturnSuccess on success. See IOReturn.h for error codes.
@@ -132,6 +139,18 @@ public:
 	virtual kern_return_t
 	Cancel(IODispatchSourceCancelHandler handler) override LOCAL;
 
+    /*!
+     * @brief       Get the count and time of the last interrupt received by the kernel
+                    primary interrupt handler.
+     * @param       count Interrupt count.
+     * @param       time Interrupt time.
+     * @return      kIOReturnSuccess on success. See IOReturn.h for error codes.
+     */
+	virtual kern_return_t
+	GetLastInterrupt(
+		uint64_t   * count,
+		uint64_t   * time);
+
 private:
 	virtual kern_return_t
 	CheckForWork(bool synchronous) override LOCAL;
@@ -146,11 +165,12 @@ private:
 #undef KERNEL
 #else /* __DOCUMENTATION__ */
 
-/* generated class IOInterruptDispatchSource IOInterruptDispatchSource.iig:57-137 */
+/* generated class IOInterruptDispatchSource IOInterruptDispatchSource.iig:63-156 */
 
 #define IOInterruptDispatchSource_Create_ID            0x244c8d0e39b5b6f2ULL
 #define IOInterruptDispatchSource_GetInterruptType_ID            0xb0cb449b522e02bbULL
 #define IOInterruptDispatchSource_SetHandler_ID            0x2a6d3966a0ed32c0ULL
+#define IOInterruptDispatchSource_GetLastInterrupt_ID            0xe72f414f5a9fa919ULL
 #define IOInterruptDispatchSource_InterruptOccurred_ID            0x66a5e7ded72316d8ULL
 
 #define IOInterruptDispatchSource_Create_Args \
@@ -173,6 +193,10 @@ private:
 
 #define IOInterruptDispatchSource_Cancel_Args \
         IODispatchSourceCancelHandler handler
+
+#define IOInterruptDispatchSource_GetLastInterrupt_Args \
+        uint64_t * count, \
+        uint64_t * time
 
 #define IOInterruptDispatchSource_CheckForWork_Args \
         bool synchronous
@@ -208,6 +232,12 @@ public:\
     kern_return_t\
     SetHandler(\
         OSAction * action,\
+        OSDispatchMethod supermethod = NULL);\
+\
+    kern_return_t\
+    GetLastInterrupt(\
+        uint64_t * count,\
+        uint64_t * time,\
         OSDispatchMethod supermethod = NULL);\
 \
     kern_return_t\
@@ -260,6 +290,12 @@ public:\
         OSMetaClassBase * target,\
         SetHandler_Handler func);\
 \
+    typedef kern_return_t (*GetLastInterrupt_Handler)(OSMetaClassBase * target, IOInterruptDispatchSource_GetLastInterrupt_Args);\
+    static kern_return_t\
+    GetLastInterrupt_Invoke(const IORPC rpc,\
+        OSMetaClassBase * target,\
+        GetLastInterrupt_Handler func);\
+\
     typedef void (*InterruptOccurred_Handler)(OSMetaClassBase * target, IOInterruptDispatchSource_InterruptOccurred_Args);\
     static kern_return_t\
     InterruptOccurred_Invoke(const IORPC rpc,\
@@ -281,6 +317,9 @@ protected:\
 \
     static kern_return_t\
     GetInterruptType_Impl(IOInterruptDispatchSource_GetInterruptType_Args);\
+\
+    kern_return_t\
+    GetLastInterrupt_Impl(IOInterruptDispatchSource_GetLastInterrupt_Args);\
 \
 
 

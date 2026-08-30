@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2005-2021 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -48,7 +48,7 @@
 #include <mach/vm_param.h>
 #include <mach/mach_vm.h>
 #include <mach/task.h>
-#include <vm/vm_map.h> /* All the bits we care about are guarded by MACH_KERNEL_PRIVATE :-( */
+#include <vm/vm_map_xnu.h> /* All the bits we care about are guarded by MACH_KERNEL_PRIVATE :-( */
 
 /*
  * pid/proc
@@ -56,7 +56,7 @@
 /* Solaris proc_t is the struct. Darwin's proc_t is a pointer to it. */
 #define proc_t struct proc /* Steer clear of the Darwin typedef for proc_t */
 
-KALLOC_HEAP_DEFINE(KHEAP_DTRACE, "dtrace", KHEAP_ID_DEFAULT);
+KALLOC_HEAP_DEFINE(KHEAP_DTRACE, "dtrace", KHEAP_ID_KT_VAR);
 
 void
 dtrace_sprlock(proc_t *p)
@@ -80,7 +80,7 @@ sprlock(pid_t pid)
 		return PROC_NULL;
 	}
 
-	task_suspend_internal(p->task);
+	task_suspend_internal(proc_task(p));
 
 	dtrace_sprlock(p);
 
@@ -94,7 +94,7 @@ sprunlock(proc_t *p)
 	if (p != PROC_NULL) {
 		dtrace_sprunlock(p);
 
-		task_resume_internal(p->task);
+		task_resume_internal(proc_task(p));
 
 		proc_rele(p);
 	}
@@ -104,9 +104,6 @@ sprunlock(proc_t *p)
  * uread/uwrite
  */
 
-// These are not exported from vm_map.h.
-extern kern_return_t vm_map_read_user(vm_map_t map, vm_map_address_t src_addr, void *dst_p, vm_size_t size);
-extern kern_return_t vm_map_write_user(vm_map_t map, void *src_p, vm_map_address_t dst_addr, vm_size_t size);
 
 /* Not called from probe context */
 int
@@ -115,9 +112,9 @@ uread(proc_t *p, void *buf, user_size_t len, user_addr_t a)
 	kern_return_t ret;
 
 	ASSERT(p != PROC_NULL);
-	ASSERT(p->task != NULL);
+	ASSERT(proc_task(p) != NULL);
 
-	task_t task = p->task;
+	task_t task = proc_task(p);
 
 	/*
 	 * Grab a reference to the task vm_map_t to make sure
@@ -146,9 +143,9 @@ uwrite(proc_t *p, void *buf, user_size_t len, user_addr_t a)
 	kern_return_t ret;
 
 	ASSERT(p != NULL);
-	ASSERT(p->task != NULL);
+	ASSERT(proc_task(p) != NULL);
 
-	task_t task = p->task;
+	task_t task = proc_task(p);
 
 	/*
 	 * Grab a reference to the task vm_map_t to make sure
@@ -244,13 +241,7 @@ cpu_core_t *cpu_core; /* XXX TLB lockdown? */
 cred_t *
 dtrace_CRED(void)
 {
-	struct uthread *uthread = get_bsdthread_info(current_thread());
-
-	if (uthread == NULL) {
-		return NULL;
-	} else {
-		return uthread->uu_ucred; /* May return NOCRED which is defined to be 0 */
-	}
+	return current_thread_ro_unchecked()->tro_cred;
 }
 
 int
@@ -297,11 +288,7 @@ typedef struct wrap_timer_call {
 typedef struct cyc_list {
 	cyc_omni_handler_t cyl_omni;
 	wrap_timer_call_t cyl_wrap_by_cpus[];
-#if __arm__ && (__BIGGEST_ALIGNMENT__ > 4)
-} __attribute__ ((aligned(8))) cyc_list_t;
-#else
 } cyc_list_t;
-#endif
 
 /* CPU going online/offline notifications */
 void (*dtrace_cpu_state_changed_hook)(int, boolean_t) = NULL;
@@ -316,22 +303,21 @@ dtrace_install_cpu_hooks(void)
 void
 dtrace_cpu_state_changed(int cpuid, boolean_t is_running)
 {
-#pragma unused(cpuid)
 	wrap_timer_call_t       *wrapTC = NULL;
 	boolean_t               suspend = (is_running ? FALSE : TRUE);
 	dtrace_icookie_t        s;
 
 	/* Ensure that we're not going to leave the CPU */
 	s = dtrace_interrupt_disable();
-	assert(cpuid == cpu_number());
 
-	LIST_FOREACH(wrapTC, &(cpu_list[cpu_number()].cpu_cyc_list), entries) {
-		assert(wrapTC->cpuid == cpu_number());
+	LIST_FOREACH(wrapTC, &(cpu_list[cpuid].cpu_cyc_list), entries) {
+		assert3u(wrapTC->cpuid, ==, cpuid);
 		if (suspend) {
 			assert(!wrapTC->suspended);
 			/* If this fails, we'll panic anyway, so let's do this now. */
 			if (!timer_call_cancel(&wrapTC->call)) {
-				panic("timer_call_set_suspend() failed to cancel a timer call");
+				panic("timer_call_cancel() failed to cancel a timer call: %p",
+				    &wrapTC->call);
 			}
 			wrapTC->suspended = TRUE;
 		} else {
@@ -415,7 +401,7 @@ timer_call_get_cyclic_arg(wrap_timer_call_t *wrapTC)
 cyclic_id_t
 cyclic_timer_add(cyc_handler_t *handler, cyc_time_t *when)
 {
-	wrap_timer_call_t *wrapTC = _MALLOC(sizeof(wrap_timer_call_t), M_TEMP, M_ZERO | M_WAITOK);
+	wrap_timer_call_t *wrapTC = kalloc_type(wrap_timer_call_t, Z_ZERO | Z_WAITOK);
 	if (NULL == wrapTC) {
 		return CYCLIC_NONE;
 	} else {
@@ -432,7 +418,7 @@ cyclic_timer_remove(cyclic_id_t cyclic)
 	wrap_timer_call_t *wrapTC = (wrap_timer_call_t *) cyclic;
 	dtrace_xcall(wrapTC->cpuid, (dtrace_xcall_t) timer_call_remove_cyclic, (void*) cyclic);
 
-	_FREE((void *)cyclic, M_TEMP);
+	kfree_type(wrap_timer_call_t, wrapTC);
 }
 
 static void
@@ -451,8 +437,7 @@ _cyclic_add_omni(cyc_list_t *cyc_list)
 cyclic_id_list_t
 cyclic_add_omni(cyc_omni_handler_t *omni)
 {
-	cyc_list_t *cyc_list =
-	    _MALLOC(sizeof(cyc_list_t) + NCPU * sizeof(wrap_timer_call_t), M_TEMP, M_ZERO | M_WAITOK);
+	cyc_list_t *cyc_list = kalloc_type(cyc_list_t, wrap_timer_call_t, NCPU, Z_WAITOK | Z_ZERO);
 
 	if (NULL == cyc_list) {
 		return NULL;
@@ -489,7 +474,8 @@ cyclic_remove_omni(cyclic_id_list_t cyc_list)
 	ASSERT(cyc_list != NULL);
 
 	dtrace_xcall(DTRACE_CPUALL, (dtrace_xcall_t)_cyclic_remove_omni, (void *)cyc_list);
-	_FREE(cyc_list, M_TEMP);
+	void *cyc_list_p = (void *)cyc_list;
+	kfree_type(cyc_list_t, wrap_timer_call_t, NCPU, cyc_list_p);
 }
 
 typedef struct wrap_thread_call {
@@ -525,7 +511,7 @@ cyclic_add(cyc_handler_t *handler, cyc_time_t *when)
 {
 	uint64_t now;
 
-	wrap_thread_call_t *wrapTC = _MALLOC(sizeof(wrap_thread_call_t), M_TEMP, M_ZERO | M_WAITOK);
+	wrap_thread_call_t *wrapTC = kalloc_type(wrap_thread_call_t, Z_ZERO | Z_WAITOK);
 	if (NULL == wrapTC) {
 		return CYCLIC_NONE;
 	}
@@ -572,7 +558,7 @@ cyclic_remove(cyclic_id_t cyclic)
 	}
 
 	if (thread_call_free(wrapTC->TChdl)) {
-		_FREE(wrapTC, M_TEMP);
+		kfree_type(wrap_thread_call_t, wrapTC);
 	} else {
 		/* Gut this cyclic and move on ... */
 		wrapTC->hdlr.cyh_func = noop_cyh_func;
@@ -593,7 +579,7 @@ ddi_create_minor_node(dev_info_t *dip, const char *name, int spec_type,
 #pragma unused(spec_type,node_type,flag)
 	dev_t dev = makedev( ddi_driver_major(dip), minor_num );
 
-	if (NULL == devfs_make_node( dev, DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, name, 0 )) {
+	if (NULL == devfs_make_node( dev, DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "%s", name )) {
 		return DDI_FAILURE;
 	} else {
 		return DDI_SUCCESS;
@@ -631,8 +617,11 @@ debug_enter(char *c)
  * kmem
  */
 
+// rdar://88962505
+__typed_allocators_ignore_push
+
 void *
-dt_kmem_alloc_site(size_t size, int kmflag, vm_allocation_site_t *site)
+dt_kmem_alloc_tag(size_t size, int kmflag, vm_tag_t tag)
 {
 #pragma unused(kmflag)
 
@@ -640,11 +629,11 @@ dt_kmem_alloc_site(size_t size, int kmflag, vm_allocation_site_t *site)
  * We ignore the M_NOWAIT bit in kmflag (all of kmflag, in fact).
  * Requests larger than 8K with M_NOWAIT fail in kalloc_ext.
  */
-	return kalloc_ext(KHEAP_DTRACE, size, Z_WAITOK, site).addr;
+	return kheap_alloc_tag(KHEAP_DTRACE, size, Z_WAITOK, tag);
 }
 
 void *
-dt_kmem_zalloc_site(size_t size, int kmflag, vm_allocation_site_t *site)
+dt_kmem_zalloc_tag(size_t size, int kmflag, vm_tag_t tag)
 {
 #pragma unused(kmflag)
 
@@ -652,7 +641,7 @@ dt_kmem_zalloc_site(size_t size, int kmflag, vm_allocation_site_t *site)
  * We ignore the M_NOWAIT bit in kmflag (all of kmflag, in fact).
  * Requests larger than 8K with M_NOWAIT fail in kalloc_ext.
  */
-	return kalloc_ext(KHEAP_DTRACE, size, Z_WAITOK | Z_ZERO, site).addr;
+	return kheap_alloc_tag(KHEAP_DTRACE, size, Z_WAITOK | Z_ZERO, tag);
 }
 
 void
@@ -661,6 +650,7 @@ dt_kmem_free(void *buf, size_t size)
 	kheap_free(KHEAP_DTRACE, buf, size);
 }
 
+__typed_allocators_ignore_pop
 
 
 /*
@@ -669,7 +659,7 @@ dt_kmem_free(void *buf, size_t size)
  */
 
 void*
-dt_kmem_alloc_aligned_site(size_t size, size_t align, int kmflag, vm_allocation_site_t *site)
+dt_kmem_alloc_aligned_tag(size_t size, size_t align, int kmflag, vm_tag_t tag)
 {
 	void *mem, **addr_to_free;
 	intptr_t mem_aligned;
@@ -684,7 +674,7 @@ dt_kmem_alloc_aligned_site(size_t size, size_t align, int kmflag, vm_allocation_
 	 * the address to free and the total size of the buffer.
 	 */
 	hdr_size = sizeof(size_t) + sizeof(void*);
-	mem = dt_kmem_alloc_site(size + align + hdr_size, kmflag, site);
+	mem = dt_kmem_alloc_tag(size + align + hdr_size, kmflag, tag);
 	if (mem == NULL) {
 		return NULL;
 	}
@@ -703,11 +693,11 @@ dt_kmem_alloc_aligned_site(size_t size, size_t align, int kmflag, vm_allocation_
 }
 
 void*
-dt_kmem_zalloc_aligned_site(size_t size, size_t align, int kmflag, vm_allocation_site_t *s)
+dt_kmem_zalloc_aligned_tag(size_t size, size_t align, int kmflag, vm_tag_t tag)
 {
 	void* buf;
 
-	buf = dt_kmem_alloc_aligned_site(size, align, kmflag, s);
+	buf = dt_kmem_alloc_aligned_tag(size, align, kmflag, tag);
 
 	if (!buf) {
 		return NULL;
@@ -734,49 +724,6 @@ dt_kmem_free_aligned(void* buf, size_t size)
 }
 
 /*
- * dtrace wants to manage just a single block: dtrace_state_percpu_t * NCPU, and
- * doesn't specify constructor, destructor, or reclaim methods.
- * At present, it always zeroes the block it obtains from kmem_cache_alloc().
- * We'll manage this constricted use of kmem_cache with ordinary _MALLOC and _FREE.
- */
-kmem_cache_t *
-kmem_cache_create(
-	const char *name,       /* descriptive name for this cache */
-	size_t bufsize,         /* size of the objects it manages */
-	size_t align,           /* required object alignment */
-	int (*constructor)(void *, void *, int), /* object constructor */
-	void (*destructor)(void *, void *), /* object destructor */
-	void (*reclaim)(void *), /* memory reclaim callback */
-	void *private,          /* pass-thru arg for constr/destr/reclaim */
-	vmem_t *vmp,            /* vmem source for slab allocation */
-	int cflags)     /* cache creation flags */
-{
-#pragma unused(name,align,constructor,destructor,reclaim,private,vmp,cflags)
-	return (kmem_cache_t *)bufsize; /* A cookie that tracks the single object size. */
-}
-
-void *
-kmem_cache_alloc(kmem_cache_t *cp, int kmflag)
-{
-#pragma unused(kmflag)
-	size_t bufsize = (size_t)cp;
-	return (void *)_MALLOC(bufsize, M_TEMP, M_WAITOK);
-}
-
-void
-kmem_cache_free(kmem_cache_t *cp, void *buf)
-{
-#pragma unused(cp)
-	_FREE(buf, M_TEMP);
-}
-
-void
-kmem_cache_destroy(kmem_cache_t *cp)
-{
-#pragma unused(cp)
-}
-
-/*
  * vmem (Solaris "slab" allocator) used by DTrace solely to hand out resource ids
  */
 typedef unsigned int u_daddr_t;
@@ -793,7 +740,7 @@ vmem_create(const char *name, void *base, size_t size, size_t quantum, void *ign
 {
 #pragma unused(name,quantum,ignore5,ignore6,source,qcache_max,vmflag)
 	blist_t bl;
-	struct blist_hdl *p = _MALLOC(sizeof(struct blist_hdl), M_TEMP, M_WAITOK);
+	struct blist_hdl *p = kalloc_type(struct blist_hdl, Z_WAITOK);
 
 	ASSERT(quantum == 1);
 	ASSERT(NULL == ignore5);
@@ -849,7 +796,7 @@ vmem_destroy(vmem_t *vmp)
 	struct blist_hdl *p = (struct blist_hdl *)vmp;
 
 	blist_destroy( p->blist );
-	_FREE( p, sizeof(struct blist_hdl));
+	kfree_type(struct blist_hdl, p);
 }
 
 /*
@@ -1006,9 +953,6 @@ dtrace_copycheck(user_addr_t uaddr, uintptr_t kaddr, size_t size)
 {
 #pragma unused(kaddr)
 
-	vm_offset_t recover = dtrace_set_thread_recover( current_thread(), 0 ); /* Snare any extant recovery point. */
-	dtrace_set_thread_recover( current_thread(), recover ); /* Put it back. We *must not* re-enter and overwrite. */
-
 	ASSERT(kaddr + size >= kaddr);
 
 	if (uaddr + size < uaddr ||             /* Avoid address wrap. */
@@ -1118,7 +1062,7 @@ dtrace_buffer_copyout(const void *kaddr, user_addr_t uaddr, vm_size_t nbytes)
 
 		nbytes -= maxsize;
 		uaddr += maxsize;
-		kaddr += maxsize;
+		kaddr = (const void *)((uintptr_t)kaddr + maxsize);
 	}
 	if (nbytes > 0) {
 		if (copyout(kaddr, uaddr, nbytes) != 0) {
@@ -1399,7 +1343,7 @@ dtrace_getstackdepth(int aframes)
 }
 
 int
-dtrace_addr_in_module(void* addr, struct modctl *ctl)
+dtrace_addr_in_module(const void* addr, const struct modctl *ctl)
 {
 	return OSKextKextForAddress(addr) == (void*)ctl->mod_address;
 }

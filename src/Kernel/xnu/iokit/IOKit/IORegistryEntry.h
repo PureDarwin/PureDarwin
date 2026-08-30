@@ -53,6 +53,8 @@ extern const OSSymbol * gIONameKey;
 extern const OSSymbol * gIOLocationKey;
 extern const OSSymbol * gIORegistryEntryIDKey;
 extern const OSSymbol * gIORegistryEntryPropertyKeysKey;
+extern const OSSymbol * gIORegistryEntryAllowableSetPropertiesKey;
+extern const OSSymbol * gIORegistryEntryDefaultLockingSetPropertiesKey;
 
 class IORegistryEntry;
 class IORegistryPlane;
@@ -977,7 +979,7 @@ private:
 	static LIBKERN_RETURNS_NOT_RETAINED IORegistryEntry * initialize( void );
 
 #ifdef XNU_KERNEL_PRIVATE
-	SInt32 getRegistryEntryGenerationCount( void ) const;
+	SInt32 getRegistryEntryParentGenerationCount( void ) const;
 	void setName(const OSString * name,
 	    const IORegistryPlane * plane = NULL);
 #endif

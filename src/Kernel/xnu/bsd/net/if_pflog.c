@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -69,6 +69,7 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/mcache.h>
+#include <sys/sysctl.h>
 
 #include <kern/zalloc.h>
 
@@ -117,7 +118,7 @@ static void pflogfree(struct ifnet *);
 static LIST_HEAD(, pflog_softc) pflogif_list;
 static struct if_clone pflog_cloner =
     IF_CLONE_INITIALIZER(PFLOGNAME, pflog_clone_create, pflog_clone_destroy,
-    0, (PFLOGIFS_MAX - 1), PFLOGIF_ZONE_MAX_ELEM, sizeof(struct pflog_softc));
+    0, (PFLOGIFS_MAX - 1));
 
 struct ifnet *pflogifs[PFLOGIFS_MAX];   /* for fast access */
 
@@ -134,12 +135,50 @@ pfloginit(void)
 	(void) if_clone_attach(&pflog_cloner);
 }
 
+#if !XNU_TARGET_OS_OSX
+static inline bool
+pflog_is_enabled(void)
+{
+	uint8_t         flags;
+	static uint8_t  pflog_enabled_flags;
+
+#define _FLAGS_INITIALIZED      0x1
+#define _FLAGS_ENABLED          0x2
+
+	if (pflog_enabled_flags != 0) {
+		goto done;
+	}
+	flags = _FLAGS_INITIALIZED;
+	if (kern_osreleasetype_matches("Darwin") ||
+	    kern_osreleasetype_matches("Restore") ||
+	    kern_osreleasetype_matches("Internal") ||
+	    kern_osreleasetype_matches("NonUI")) {
+		flags |= _FLAGS_ENABLED;
+	} else {
+		printf("%s: osreleasetype %s doesn't allow pflog\n", __func__,
+		    osreleasetype);
+	}
+	lck_rw_lock_exclusive(&pf_perim_lock);
+	pflog_enabled_flags = flags;
+	lck_rw_done(&pf_perim_lock);
+
+done:
+	return (pflog_enabled_flags & _FLAGS_ENABLED) != 0;
+}
+#endif /* !XNU_TARGET_OS_OSX */
+
 static int
 pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 {
-	struct pflog_softc *pflogif;
-	struct ifnet_init_eparams pf_init;
+	struct pflog_softc *__single pflogif;
+	struct ifnet_init_eparams pf_init = { .name = NULL };
 	int error = 0;
+
+#if !XNU_TARGET_OS_OSX
+	if (!pflog_is_enabled()) {
+		return EOPNOTSUPP;
+	}
+#endif /* !XNU_TARGET_OS_OSX */
 
 	if (unit >= PFLOGIFS_MAX) {
 		/* Either the interface cloner or our initializer is broken */
@@ -148,16 +187,13 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 		/* NOTREACHED */
 	}
 
-	if ((pflogif = if_clone_softc_allocate(&pflog_cloner)) == NULL) {
-		error = ENOMEM;
-		goto done;
-	}
+	pflogif = kalloc_type(struct pflog_softc, Z_WAITOK_ZERO_NOFAIL);
 
 	bzero(&pf_init, sizeof(pf_init));
 	pf_init.ver = IFNET_INIT_CURRENT_VERSION;
 	pf_init.len = sizeof(pf_init);
 	pf_init.flags = IFNET_INIT_LEGACY;
-	pf_init.name = ifc->ifc_name;
+	pf_init.name = __unsafe_null_terminated_from_indexable(ifc->ifc_name);
 	pf_init.unit = unit;
 	pf_init.type = IFT_PFLOG;
 	pf_init.family = IFNET_FAMILY_LOOPBACK;
@@ -169,14 +205,13 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 	pf_init.ioctl = pflogioctl;
 	pf_init.detach = pflogfree;
 
-	bzero(pflogif, sizeof(*pflogif));
 	pflogif->sc_unit = unit;
 	pflogif->sc_flags |= IFPFLF_DETACHING;
 
 	error = ifnet_allocate_extended(&pf_init, &pflogif->sc_if);
 	if (error != 0) {
 		printf("%s: ifnet_allocate failed - %d\n", __func__, error);
-		if_clone_softc_deallocate(&pflog_cloner, pflogif);
+		kfree_type(struct pflog_softc, pflogif);
 		goto done;
 	}
 
@@ -187,7 +222,7 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 	if (error != 0) {
 		printf("%s: ifnet_attach failed - %d\n", __func__, error);
 		ifnet_release(pflogif->sc_if);
-		if_clone_softc_deallocate(&pflog_cloner, pflogif);
+		kfree_type(struct pflog_softc, pflogif);
 		goto done;
 	}
 
@@ -195,13 +230,13 @@ pflog_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 	bpfattach(pflogif->sc_if, DLT_PFLOG, PFLOG_HDRLEN);
 #endif
 
-	lck_rw_lock_shared(pf_perim_lock);
-	lck_mtx_lock(pf_lock);
+	lck_rw_lock_shared(&pf_perim_lock);
+	lck_mtx_lock(&pf_lock);
 	LIST_INSERT_HEAD(&pflogif_list, pflogif, sc_list);
 	pflogifs[unit] = pflogif->sc_if;
 	pflogif->sc_flags &= ~IFPFLF_DETACHING;
-	lck_mtx_unlock(pf_lock);
-	lck_rw_done(pf_perim_lock);
+	lck_mtx_unlock(&pf_lock);
+	lck_rw_done(&pf_perim_lock);
 
 done:
 	return error;
@@ -211,10 +246,10 @@ static int
 pflog_remove(struct ifnet *ifp)
 {
 	int error = 0;
-	struct pflog_softc *pflogif = NULL;
+	struct pflog_softc *__single pflogif = NULL;
 
-	lck_rw_lock_shared(pf_perim_lock);
-	lck_mtx_lock(pf_lock);
+	lck_rw_lock_shared(&pf_perim_lock);
+	lck_mtx_lock(&pf_lock);
 	pflogif = ifp->if_softc;
 
 	if (pflogif == NULL ||
@@ -226,8 +261,8 @@ pflog_remove(struct ifnet *ifp)
 	pflogif->sc_flags |= IFPFLF_DETACHING;
 	LIST_REMOVE(pflogif, sc_list);
 done:
-	lck_mtx_unlock(pf_lock);
-	lck_rw_done(pf_perim_lock);
+	lck_mtx_unlock(&pf_lock);
+	lck_rw_done(&pf_perim_lock);
 	return error;
 }
 
@@ -302,7 +337,7 @@ pflogdelproto(struct ifnet *ifp, protocol_family_t pf)
 static void
 pflogfree(struct ifnet *ifp)
 {
-	if_clone_softc_deallocate(&pflog_cloner, ifp->if_softc);
+	kfree_type(struct pflog_softc, ifp->if_softc);
 	ifp->if_softc = NULL;
 	(void) ifnet_release(ifp);
 }
@@ -317,7 +352,7 @@ pflog_packet(struct pfi_kif *kif, pbuf_t *pbuf, sa_family_t af, u_int8_t dir,
 	struct pfloghdr hdr;
 	struct mbuf *m;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	if (kif == NULL || !pbuf_is_valid(pbuf) || rm == NULL || pd == NULL) {
 		return -1;
@@ -346,8 +381,7 @@ pflog_packet(struct pfi_kif *kif, pbuf_t *pbuf, sa_family_t af, u_int8_t dir,
 		hdr.rulenr = htonl(am->nr);
 		hdr.subrulenr = htonl(rm->nr);
 		if (ruleset != NULL && ruleset->anchor != NULL) {
-			strlcpy(hdr.ruleset, ruleset->anchor->name,
-			    sizeof(hdr.ruleset));
+			strbufcpy(hdr.ruleset, ruleset->anchor->name);
 		}
 	}
 	if (rm->log & PF_LOG_SOCKET_LOOKUP && !pd->lookup.done) {
@@ -374,8 +408,8 @@ pflog_packet(struct pfi_kif *kif, pbuf_t *pbuf, sa_family_t af, u_int8_t dir,
 	}
 #endif /* INET */
 
-	atomic_add_64(&ifn->if_opackets, 1);
-	atomic_add_64(&ifn->if_obytes, m->m_pkthdr.len);
+	os_atomic_inc(&ifn->if_opackets, relaxed);
+	os_atomic_add(&ifn->if_obytes, m->m_pkthdr.len, relaxed);
 
 	switch (dir) {
 	case PF_IN:

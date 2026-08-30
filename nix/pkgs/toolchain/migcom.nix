@@ -43,6 +43,13 @@ let
        "$SDK/usr/include/sys/appleapiopts.h" \
        mach_shim/sys/
     cp -r "$SDK/usr/include/sys/_types" mach_shim/sys/_types
+    # xnu 12377 also spells the fixed-width types out under sys/_types/, where
+    # they collide with glibc's stdint. glibc already provides all of them.
+    # Re-chmod: this tree was copied after the chmod above, so it is still
+    # store-read-only and sed cannot write its temporary file.
+    chmod -R u+w mach_shim/sys
+    sed -i -e "/^typedef .*[[:space:]]u\?_\?int64_t;/d" \
+      mach_shim/sys/_types/_int64_t.h mach_shim/sys/_types/_u_int64_t.h
     cp -r "$SDK/usr/include/sys/_pthread" mach_shim/sys/_pthread
     cp -r "$SDK/usr/include/machine" mach_shim/machine
     cp -r "$SDK/usr/include/architecture" mach_shim/architecture
@@ -53,6 +60,27 @@ let
        "$SDK/usr/include/AvailabilityVersions.h" \
        "$SDK/usr/include/AvailabilityMacros.h" \
        mach_shim/
+    # Apple's limits.h sets MB_LEN_MAX to 6 (4 in machlimits.h); glibc's
+    # bits/stdlib.h #errors unless it is glibc's own 16. glibc supplies it.
+    chmod -R u+w mach_shim
+    chmod -R u+w mach_shim/i386 mach_shim/arm mach_shim/machine
+    sed -i "/^#define[[:space:]]*MB_LEN_MAX/d" \
+      mach_shim/i386/limits.h mach_shim/arm/limits.h \
+      mach_shim/i386/machlimits.h mach_shim/arm/machlimits.h \
+      mach_shim/machine/i386/limits.h mach_shim/machine/arm/limits.h 2>/dev/null || true
+    # xnu 12377 annotates headers with kalloc type-segregation attributes and
+    # C23 enum helpers; compiled against glibc, xnu's cdefs.h never defines
+    # them away, so supply portable equivalents.
+    cat > mach_shim/pd_xnu_macros.h <<'XNUEOF'
+#pragma once
+#define __kernel_ptr_semantics
+#define __kernel_data_semantics
+#define __kernel_dual_semantics
+#define __enum_decl(_name, _type, ...)           typedef _type _name; enum __VA_ARGS__
+#define __enum_closed_decl(_name, _type, ...)    typedef _type _name; enum __VA_ARGS__
+#define __options_decl(_name, _type, ...)        typedef _type _name; enum __VA_ARGS__
+#define __options_closed_decl(_name, _type, ...) typedef _type _name; enum __VA_ARGS__
+XNUEOF
   '';
 
   archDefines = lib.optionalString stdenv.hostPlatform.isAarch64 " -D__arm64__=1";
@@ -60,7 +88,7 @@ let
   hostCflags =
     if onDarwin
     then ''-I . -include sys/types.h''
-    else ''-I . -I mach_shim -include sys/types.h -include bits/types/__mbstate_t.h${archDefines}'';
+    else ''-I . -I mach_shim -include sys/types.h -include bits/types/__mbstate_t.h${archDefines} -include pd_xnu_macros.h'';
 in
 stdenv.mkDerivation {
   pname = "puredarwin-migcom-native";

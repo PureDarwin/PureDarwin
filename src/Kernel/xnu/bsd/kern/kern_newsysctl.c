@@ -77,6 +77,9 @@
 #include <sys/kauth.h>
 #include <sys/systm.h>
 #include <sys/sysproto.h>
+#include <sys/variant_internal.h>
+
+#include <vm/vm_pageout_xnu.h>
 
 #include <os/atomic_private.h>
 
@@ -93,6 +96,12 @@
 #include <os/hash.h>
 #include <ptrauth.h>
 #endif /* defined(HAS_APPLE_PAC) */
+
+#include <libkern/coreanalytics/coreanalytics.h>
+
+#if DEBUG || DEVELOPMENT
+#include <os/system_event_log.h>
+#endif /* DEBUG || DEVELOPMENT */
 
 static LCK_GRP_DECLARE(sysctl_lock_group, "sysctl");
 static LCK_RW_DECLARE(sysctl_geometry_lock, &sysctl_lock_group);
@@ -156,6 +165,11 @@ sysctl_register_oid_locked(struct sysctl_oid *new_oidp,
 	struct sysctl_oid_list *parent = new_oidp->oid_parent;
 	struct sysctl_oid_list *parent_rw = NULL;
 	struct sysctl_oid *p, **prevp;
+
+	if (new_oidp->oid_number == OID_AUTO) {
+		/* remember OID_AUTO so we can restore OID_AUTO on unregister */
+		new_oidp->oid_kind |= CTLFLAG_OID_AUTO;
+	}
 
 	p = SLIST_FIRST(parent);
 	if (p && p->oid_number == OID_MUTABLE_ANCHOR) {
@@ -256,15 +270,7 @@ sysctl_register_oid(struct sysctl_oid *new_oidp)
 	 */
 	if (!(new_oidp->oid_kind & CTLFLAG_OID2)) {
 #if __x86_64__
-		/*
-		 * XXX:	KHEAP_DEFAULT is perhaps not the most apropriate zone, as it
-		 * XXX:	will subject us to use-after-free by other consumers.
-		 */
-		oidp = kheap_alloc(KHEAP_DEFAULT, sizeof(struct sysctl_oid),
-		    Z_WAITOK | Z_ZERO);
-		if (oidp == NULL) {
-			return;         /* reject: no memory */
-		}
+		oidp = kalloc_type(struct sysctl_oid, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 		/*
 		 * Copy the structure only through the oid_fmt field, which
 		 * is the last field in a non-OID2 OID structure.
@@ -397,12 +403,16 @@ sysctl_unregister_oid(struct sysctl_oid *oidp)
 		    &removed_oidp->oid_refcnt, THREAD_UNINT);
 	}
 
+	if (oidp->oid_kind & CTLFLAG_OID_AUTO) {
+		oidp->oid_number = OID_AUTO;
+	}
+
 	/* Release the write lock */
 	lck_rw_unlock_exclusive(&sysctl_geometry_lock);
 
 #if __x86_64__
 	/* If it was allocated, free it after dropping the lock */
-	kheap_free(KHEAP_DEFAULT, old_oidp, sizeof(struct sysctl_oid));
+	kfree_type(struct sysctl_oid, old_oidp);
 #endif
 }
 
@@ -992,7 +1002,12 @@ sysctl_sysctl_next_ls(struct sysctl_oid_list *lsp, int *name, u_int namelen,
 			return 0;
 		}
 next:
-		namelen = 1;
+		/* We expect to be reducing namelen here, don't reset to 1 if this
+		 * is actually an increase.
+		 */
+		if (namelen > 1) {
+			namelen = 1;
+		}
 		*len = level;
 	}
 	return 1;
@@ -1198,14 +1213,14 @@ sysctl_sysctl_name2oid(__unused struct sysctl_oid *oidp, __unused void *arg1,
 		return ENAMETOOLONG;
 	}
 
-	p = kheap_alloc(KHEAP_TEMP, req->newlen + 1, Z_WAITOK);
+	p = (char *)kalloc_data(req->newlen + 1, Z_WAITOK);
 	if (!p) {
 		return ENOMEM;
 	}
 
 	error = SYSCTL_IN(req, p, req->newlen);
 	if (error) {
-		kheap_free(KHEAP_TEMP, p, req->newlen + 1);
+		kfree_data(p, req->newlen + 1);
 		return error;
 	}
 
@@ -1219,7 +1234,7 @@ sysctl_sysctl_name2oid(__unused struct sysctl_oid *oidp, __unused void *arg1,
 	error = name2oid(p, oid, &len);
 	lck_rw_done(&sysctl_geometry_lock);
 
-	kheap_free(KHEAP_TEMP, p, req->newlen + 1);
+	kfree_data(p, req->newlen + 1);
 
 	if (error) {
 		return error;
@@ -1231,6 +1246,69 @@ sysctl_sysctl_name2oid(__unused struct sysctl_oid *oidp, __unused void *arg1,
 
 SYSCTL_PROC(_sysctl, 3, name2oid, CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_KERN | CTLFLAG_LOCKED, 0, 0,
     sysctl_sysctl_name2oid, "I", "");
+
+/*
+ * find_oid_by_name
+ *
+ * Description: Support function for use by sysctl_sysctl_oidfmt() and
+ *		sysctl_sysctl_oiddescr()); looks up an OID given an
+ *		OID name.
+ *
+ * Parameters:	name				A pointer to the OID name list
+ *						integer array
+ *		namelen				The length of the OID name
+ *		oidp				Pointer to receive OID pointer
+ *
+ * Returns:	0				Success
+ *		ENOENT				Entry not found
+ *		EISDIR				Malformed request
+ *
+ * Implicit:	*oidp				Modified to contain pointer to
+ *                                              the OID, or NULL if not found
+ *
+ * Locks:	Assumes sysctl_geometry_lock is held prior to calling
+ */
+STATIC int
+find_oid_by_name(int *name, u_int namelen, struct sysctl_oid **oidp)
+{
+	LCK_RW_ASSERT(&sysctl_geometry_lock, LCK_RW_ASSERT_SHARED);
+
+	struct sysctl_oid_iterator it = sysctl_oid_iterator_begin(&sysctl__children);
+	struct sysctl_oid *oid = sysctl_oid_iterator_next_system_order(&it);
+
+	u_int indx = 0;
+
+	*oidp = NULL;
+
+	while (oid && indx < CTL_MAXNAME) {
+		if (oid->oid_number == name[indx]) {
+			indx++;
+			if ((oid->oid_kind & CTLTYPE) == CTLTYPE_NODE) {
+				if (oid->oid_handler) {
+					goto found;
+				}
+				if (indx == namelen) {
+					goto found;
+				}
+				it = sysctl_oid_iterator_begin(oid->oid_arg1);
+				oid = sysctl_oid_iterator_next_system_order(&it);
+			} else {
+				if (indx != namelen) {
+					return EISDIR;
+				}
+				goto found;
+			}
+		} else {
+			oid = sysctl_oid_iterator_next_system_order(&it);
+		}
+	}
+
+	return ENOENT;
+
+found:
+	*oidp = oid;
+	return 0;
+}
 
 /*
  * sysctl_sysctl_oidfmt
@@ -1274,60 +1352,103 @@ sysctl_sysctl_oidfmt(__unused struct sysctl_oid *oidp, void *arg1, int arg2,
     struct sysctl_req *req)
 {
 	int *name = (int *) arg1;
-	int error = ENOENT;             /* default error: not found */
+	int error;
 	u_int namelen = arg2;
-	u_int indx;
-	struct sysctl_oid_iterator it;
 	struct sysctl_oid *oid;
+	int kind;
+
 
 	lck_rw_lock_shared(&sysctl_geometry_lock);
 
-	it = sysctl_oid_iterator_begin(&sysctl__children);
-	oid = sysctl_oid_iterator_next_system_order(&it);
-
-	indx = 0;
-	while (oid && indx < CTL_MAXNAME) {
-		if (oid->oid_number == name[indx]) {
-			indx++;
-			if ((oid->oid_kind & CTLTYPE) == CTLTYPE_NODE) {
-				if (oid->oid_handler) {
-					goto found;
-				}
-				if (indx == namelen) {
-					goto found;
-				}
-				it = sysctl_oid_iterator_begin(oid->oid_arg1);
-				oid = sysctl_oid_iterator_next_system_order(&it);
-			} else {
-				if (indx != namelen) {
-					error =  EISDIR;
-					goto err;
-				}
-				goto found;
-			}
-		} else {
-			oid = sysctl_oid_iterator_next_system_order(&it);
-		}
-	}
-	/* Not found */
-	goto err;
-
-found:
-	if (!oid->oid_fmt) {
+	error = find_oid_by_name(name, namelen, &oid);
+	if (error) {
 		goto err;
 	}
-	error = SYSCTL_OUT(req,
-	    &oid->oid_kind, sizeof(oid->oid_kind));
+
+	if (!oid->oid_fmt) {
+		error = ENOENT;
+		goto err;
+	}
+
+	kind = oid->oid_kind & ~CTLFLAG_KERNEL_PRIVATE_MASK;
+	error = SYSCTL_OUT(req, &kind, sizeof(kind));
 	if (!error) {
 		error = SYSCTL_OUT(req, oid->oid_fmt,
 		    strlen(oid->oid_fmt) + 1);
 	}
+
 err:
-	lck_rw_done(&sysctl_geometry_lock);
+	lck_rw_unlock_shared(&sysctl_geometry_lock);
 	return error;
 }
 
 SYSCTL_NODE(_sysctl, 4, oidfmt, CTLFLAG_RD | CTLFLAG_LOCKED, sysctl_sysctl_oidfmt, "");
+
+/*
+ * sysctl_sysctl_oiddescr
+ *
+ * Description: For a given OID name, determine the description of the
+ *		data which is associated with it.  This is used by the
+ *		"sysctl" command line command.
+ *
+ * OID:		0, 5
+ *
+ * Parameters:	oidp				__unused
+ *		arg1				The OID name to look up
+ *		arg2				The length of the OID name
+ *		req				Pointer to user request buffer
+ *
+ * Returns:	0				Success
+ *		EISDIR				Malformed request
+ *		ENOENT				No such OID name
+ *	SYSCTL_OUT:EPERM			Permission denied
+ *	SYSCTL_OUT:EFAULT			Bad user supplied buffer
+ *	SYSCTL_OUT:???				Return value from user function
+ *
+ * Implict:	Contents of user request buffer, modified
+ *
+ * Locks:	Acquires and then releases a read lock on the
+ *		sysctl_geometry_lock
+ *
+ * Notes:	SPI (System Programming Interface); this is subject to change
+ *		and may not be relied upon by third party applications; use
+ *		a subprocess to communicate with the "sysctl" command line
+ *		command instead, if you believe you need this functionality.
+ *
+ *		This function differs from other sysctl functions in that
+ *		it can not take an output buffer length of 0 to determine the
+ *		space which will be required.  It is suggested that the buffer
+ *		length be PATH_MAX, and that authors of new sysctl's refrain
+ *		from exceeding this string length.
+ */
+STATIC int
+sysctl_sysctl_oiddescr(__unused struct sysctl_oid *oidp, void *arg1, int arg2,
+    struct sysctl_req *req)
+{
+	int *name = (int *) arg1;
+	int error;
+	u_int namelen = arg2;
+	struct sysctl_oid *oid;
+
+	lck_rw_lock_shared(&sysctl_geometry_lock);
+
+	error = find_oid_by_name(name, namelen, &oid);
+	if (error) {
+		goto err;
+	}
+
+	if (!oid->oid_descr) {
+		error = ENOENT;
+		goto err;
+	}
+
+	error = SYSCTL_OUT(req, oid->oid_descr, strlen(oid->oid_descr) + 1);
+err:
+	lck_rw_unlock_shared(&sysctl_geometry_lock);
+	return error;
+}
+
+SYSCTL_NODE(_sysctl, 5, oiddescr, CTLFLAG_RD | CTLFLAG_LOCKED, sysctl_sysctl_oiddescr, "");
 
 
 /*
@@ -1567,16 +1688,36 @@ sysctl_new_user(struct sysctl_req *req, void *p, size_t l)
 	return error;
 }
 
-#define WRITE_EXPERIMENT_FACTORS_ENTITLEMENT "com.apple.private.write-kr-experiment-factors"
+const char *trial_experiment_factors_entitlement = "com.apple.private.kernel.read-write-trial-experiment-factors";
+
+/*
+ * Is the current task allowed to read/write trial experiment factors?
+ * Requires either:
+ *  - trial_experiment_factors_entitlement
+ *  - root user (internal-diagnostics only)
+ */
+STATIC bool
+can_rw_trial_experiment_factors(struct sysctl_req *req)
+{
+	if (IOTaskHasEntitlement(proc_task(req->p), trial_experiment_factors_entitlement)) {
+		return true;
+	}
+	if (os_variant_has_internal_diagnostics("com.apple.xnu")) {
+		return !proc_suser(req->p);
+	}
+	return false;
+}
+
+#define WRITE_LEGACY_EXPERIMENT_FACTORS_ENTITLEMENT "com.apple.private.write-kr-experiment-factors"
 /*
  * Is the current task allowed to write to experiment factors?
  * tasks with the WRITE_EXPERIMENT_FACTORS_ENTITLEMENT are always allowed to write these.
  * In the development / debug kernel we also allow root to write them.
  */
 STATIC bool
-can_write_experiment_factors(__unused struct sysctl_req *req)
+can_write_legacy_experiment_factors(__unused struct sysctl_req *req)
 {
-	if (IOTaskHasEntitlement(current_task(), WRITE_EXPERIMENT_FACTORS_ENTITLEMENT)) {
+	if (IOCurrentTaskHasEntitlement(WRITE_LEGACY_EXPERIMENT_FACTORS_ENTITLEMENT)) {
 		return true;
 	}
 #if DEBUG || DEVELOPMENT
@@ -1723,13 +1864,20 @@ found:
 		goto err;
 	}
 
+	if (oid->oid_kind & CTLFLAG_EXPERIMENT && req->p) {
+		if (!can_rw_trial_experiment_factors(req)) {
+			error = (EPERM);
+			goto err;
+		}
+	}
+
 	if (req->newptr && req->p) {
-		if (oid->oid_kind & CTLFLAG_EXPERIMENT) {
+		if (oid->oid_kind & CTLFLAG_LEGACY_EXPERIMENT) {
 			/*
 			 * Experiment factors have different permissions since they need to be
 			 * writable by procs with WRITE_EXPERIMENT_FACTORS_ENTITLEMENT.
 			 */
-			if (!can_write_experiment_factors(req)) {
+			if (!can_write_legacy_experiment_factors(req)) {
 				error = (EPERM);
 				goto err;
 			}
@@ -1925,7 +2073,7 @@ sysctl(proc_t p, struct sysctl_args *uap, __unused int32_t *retval)
 		}
 	}
 
-	namestring = kheap_alloc(KHEAP_TEMP, namestringlen, Z_WAITOK);
+	namestring = (char *)kalloc_data(namestringlen, Z_WAITOK);
 	if (!namestring) {
 		oldlen = 0;
 		goto err;
@@ -1933,7 +2081,7 @@ sysctl(proc_t p, struct sysctl_args *uap, __unused int32_t *retval)
 
 	error = userland_sysctl(FALSE, namestring, namestringlen, name, uap->namelen, &req, &oldlen);
 
-	kheap_free(KHEAP_TEMP, namestring, namestringlen);
+	kfree_data(namestring, namestringlen);
 
 	if ((error) && (error != ENOMEM)) {
 		return error;
@@ -1971,14 +2119,14 @@ sys_sysctlbyname(proc_t p, struct sysctlbyname_args *uap, __unused int32_t *retv
 	}
 	namelen = (size_t)uap->namelen;
 
-	name = kheap_alloc(KHEAP_TEMP, namelen + 1, Z_WAITOK);
+	name = (char *)kalloc_data(namelen + 1, Z_WAITOK);
 	if (!name) {
 		return ENOMEM;
 	}
 
 	error = copyin(uap->name, name, namelen);
 	if (error) {
-		kheap_free(KHEAP_TEMP, name, namelen + 1);
+		kfree_data(name, namelen + 1);
 		return error;
 	}
 	name[namelen] = '\0';
@@ -1988,7 +2136,7 @@ sys_sysctlbyname(proc_t p, struct sysctlbyname_args *uap, __unused int32_t *retv
 	 */
 
 	if (uap->newlen > SIZE_T_MAX) {
-		kheap_free(KHEAP_TEMP, name, namelen + 1);
+		kfree_data(name, namelen + 1);
 		return EINVAL;
 	}
 	newlen = (size_t)uap->newlen;
@@ -2010,7 +2158,7 @@ sys_sysctlbyname(proc_t p, struct sysctlbyname_args *uap, __unused int32_t *retv
 
 	error = userland_sysctl(TRUE, name, namelen + 1, oid, CTL_MAXNAME, &req, &oldlen);
 
-	kheap_free(KHEAP_TEMP, name, namelen + 1);
+	kfree_data(name, namelen + 1);
 
 	if ((error) && (error != ENOMEM)) {
 		return error;
@@ -2114,6 +2262,9 @@ scalable_counter_sysctl_handler SYSCTL_HANDLER_ARGS
 	return SYSCTL_OUT(req, &value, sizeof(value));
 }
 
+SYSCTL_NODE(_kern, OID_AUTO, trial, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
+    "trial experiment factors");
+
 #define X(name, T) \
 int \
 experiment_factor_##name##_handler SYSCTL_HANDLER_ARGS \
@@ -2145,3 +2296,243 @@ experiment_factor_##name##_handler SYSCTL_HANDLER_ARGS \
 
 experiment_factor_numeric_types
 #undef X
+
+#if DEBUG || DEVELOPMENT
+static int
+sysctl_test_handler SYSCTL_HANDLER_ARGS
+{
+	int error;
+	int64_t value, out = 0;
+
+	error = SYSCTL_IN(req, &value, sizeof(value));
+	/* Only run test when new value was provided to prevent just reading or
+	 * querying from triggering the test, but still allow for sysctl
+	 * presence tests via read requests with NULL oldptr */
+	if (error == 0 && req->newptr) {
+		/* call the test that was specified in SYSCTL_TEST_REGISTER */
+		error = ((int (*)(int64_t, int64_t *))(uintptr_t)arg1)(value, &out);
+	}
+	if (error == 0) {
+		error = SYSCTL_OUT(req, &out, sizeof(out));
+	}
+	return error;
+}
+
+void
+sysctl_register_test_startup(struct sysctl_test_setup_spec *spec)
+{
+	struct sysctl_oid *oid = zalloc_permanent_type(struct sysctl_oid);
+
+	*oid = (struct sysctl_oid){
+		.oid_parent     = &sysctl__debug_test_children,
+		.oid_number     = OID_AUTO,
+		.oid_kind       = CTLTYPE_QUAD | CTLFLAG_OID2 | CTLFLAG_WR |
+	    CTLFLAG_PERMANENT | CTLFLAG_LOCKED | CTLFLAG_MASKED
+#ifdef __BUILDING_XNU_LIB_UNITTEST__
+	    | CTLFLAG_KERN,     /* allow calls from unit-test which use kernel_sysctlbyname() */
+#else /* __BUILDING_XNU_LIB_UNITTEST__ */
+		,
+#endif /* __BUILDING_XNU_LIB_UNITTEST__ */
+		.oid_arg1       = (void *)(uintptr_t)spec->st_func,
+		.oid_name       = spec->st_name,
+		.oid_handler    = sysctl_test_handler,
+		.oid_fmt        = "Q",
+		.oid_version    = SYSCTL_OID_VERSION,
+		.oid_descr      = "",
+	};
+	sysctl_register_oid_early(oid);
+}
+
+
+extern void vm_analytics_daily_tick(void *arg0, void *arg1);
+
+/* Manual trigger of vm_analytics_tick for testing on dev/debug kernel. */
+static int
+sysctl_vm_analytics_tick SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+	int error, val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr) {
+		return error;
+	}
+	vm_analytics_daily_tick(NULL, NULL);
+	return 0;
+}
+
+SYSCTL_PROC(_vm, OID_AUTO, analytics_report, CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_LOCKED | CTLFLAG_MASKED, 0, 0, &sysctl_vm_analytics_tick, "I", "");
+
+/* Manual trigger of record_system_event for testing on dev/debug kernel */
+static int
+sysctl_test_record_system_event SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+	int error, val = 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr) {
+		return error;
+	}
+	record_system_event(SYSTEM_EVENT_TYPE_INFO, SYSTEM_EVENT_SUBSYSTEM_TEST, "sysctl test", "this is a test %s", "message");
+	return 0;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, test_record_system_event, CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_LOCKED | CTLFLAG_MASKED, 0, 0, &sysctl_test_record_system_event, "-", "");
+
+#endif /* DEBUG || DEVELOPMENT */
+
+
+CA_EVENT(ca_test_event,
+    CA_INT, TestKey,
+    CA_BOOL, TestBool,
+    CA_STATIC_STRING(CA_UUID_LEN), TestString);
+
+/*
+ * Manual testing of sending a CoreAnalytics event
+ */
+static int
+sysctl_test_ca_event SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+	int error, val = 0;
+	/*
+	 * Only send on write
+	 */
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error || !req->newptr) {
+		return error;
+	}
+
+	ca_event_t event = CA_EVENT_ALLOCATE(ca_test_event);
+	CA_EVENT_TYPE(ca_test_event) * event_data = event->data;
+	event_data->TestKey = val;
+	event_data->TestBool = true;
+	uuid_string_t test_str = "sysctl_test_ca_event";
+	strlcpy(event_data->TestString, test_str, CA_UUID_LEN);
+	CA_EVENT_SEND(event);
+	return 0;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, test_ca_event, CTLTYPE_INT | CTLFLAG_WR | CTLFLAG_LOCKED | CTLFLAG_MASKED, 0, 0, &sysctl_test_ca_event, "I", "");
+
+
+#if DEVELOPMENT || DEBUG
+struct perf_compressor_data {
+	user_addr_t buffer;
+	size_t buffer_size;
+	uint64_t benchmark_time;
+	uint64_t bytes_processed;
+	uint64_t compressor_growth;
+};
+
+static int
+sysctl_perf_compressor SYSCTL_HANDLER_ARGS
+{
+	int error = EINVAL;
+	size_t len = sizeof(struct perf_compressor_data);
+	struct perf_compressor_data benchmark_data = {0};
+
+	if (req->oldptr == USER_ADDR_NULL || req->oldlen != len ||
+	    req->newptr == USER_ADDR_NULL || req->newlen != len) {
+		return EINVAL;
+	}
+
+	error = SYSCTL_IN(req, &benchmark_data, len);
+	if (error) {
+		return error;
+	}
+
+	kern_return_t ret = run_compressor_perf_test(benchmark_data.buffer, benchmark_data.buffer_size,
+	    &benchmark_data.benchmark_time, &benchmark_data.bytes_processed, &benchmark_data.compressor_growth);
+	switch (ret) {
+	case KERN_SUCCESS:
+		error = 0;
+		break;
+	case KERN_NOT_SUPPORTED:
+		error = ENOTSUP;
+		break;
+	case KERN_INVALID_ARGUMENT:
+		error = EINVAL;
+		break;
+	case KERN_RESOURCE_SHORTAGE:
+		error = EAGAIN;
+		break;
+	default:
+		error = ret;
+		break;
+	}
+	if (error != 0) {
+		return error;
+	}
+
+	return SYSCTL_OUT(req, &benchmark_data, len);
+}
+
+/*
+ * Compressor & swap performance test
+ */
+SYSCTL_PROC(_kern, OID_AUTO, perf_compressor, CTLFLAG_WR | CTLFLAG_MASKED | CTLTYPE_STRUCT,
+    0, 0, sysctl_perf_compressor, "S", "Compressor & swap benchmark");
+#endif /* DEVELOPMENT || DEBUG */
+
+#if CONFIG_JETSAM
+extern uint32_t swapout_sleep_threshold;
+#if DEVELOPMENT || DEBUG
+SYSCTL_UINT(_vm, OID_AUTO, swapout_sleep_threshold, CTLFLAG_RW | CTLFLAG_LOCKED, &swapout_sleep_threshold, 0, "");
+#else /* DEVELOPMENT || DEBUG */
+SYSCTL_UINT(_vm, OID_AUTO, swapout_sleep_threshold, CTLFLAG_RD | CTLFLAG_LOCKED, &swapout_sleep_threshold, 0, "");
+#endif /* DEVELOPMENT || DEBUG */
+#endif /* CONFIG_JETSAM */
+
+#if DEBUG || DEVELOPMENT
+
+/* The following sysctl nodes set up a tree that our walking logic
+ * previously stumbled on. This tree gets walked in a unit test.
+ */
+SYSCTL_NODE(_debug_test, OID_AUTO, sysctl_node_test, CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, "rdar://138698424 parent node");
+
+SYSCTL_NODE(_debug_test_sysctl_node_test, OID_AUTO, l2, CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, "rdar://138698424 L2 node");
+
+SYSCTL_NODE(_debug_test_sysctl_node_test_l2, OID_AUTO, l3,
+    CTLFLAG_RW | CTLFLAG_LOCKED, 0, "rdar://138698424 L3 node");
+
+SYSCTL_NODE(_debug_test_sysctl_node_test_l2_l3, OID_AUTO, l4,
+    CTLFLAG_RW | CTLFLAG_LOCKED, 0, "rdar://138698424 L4 node");
+
+SYSCTL_OID(_debug_test_sysctl_node_test_l2, OID_AUTO, hanging_oid,
+    CTLFLAG_RW | CTLFLAG_LOCKED, 0, 0, NULL, "", "rdar://138698424 L2 hanging OID");
+
+#endif /* DEBUG || DEVELOPMENT */
+
+static int
+sysctl_static_if_modified_keys SYSCTL_HANDLER_ARGS
+{
+	extern char __static_if_segment_start[] __SEGMENT_START_SYM(STATIC_IF_SEGMENT);
+
+	uint64_t addr;
+	int      err;
+
+	for (static_if_key_t key = static_if_modified_keys;
+	    key; key = key->sik_modified_next) {
+		if ((key->sik_enable_count >= 0) == key->sik_init_value) {
+			continue;
+		}
+
+		addr = (vm_offset_t)key->sik_entries_head - (vm_offset_t)__static_if_segment_start;
+		err = SYSCTL_OUT(req, &addr, sizeof(addr));
+		if (err) {
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, static_if_modified_keys,
+    CTLFLAG_RD | CTLFLAG_LOCKED | CTLTYPE_OPAQUE,
+    0, 0, sysctl_static_if_modified_keys, "-",
+    "List of unslid addresses of modified keys");
+
+SYSCTL_UINT(_kern, OID_AUTO, static_if_abi, CTLFLAG_RD | CTLFLAG_LOCKED,
+    &static_if_abi, 0, "static_if ABI");

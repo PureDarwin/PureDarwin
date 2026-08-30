@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+        <key>com.apple.system-task-ports</key>
+        <true/>
+        <key>task_for_pid-allow</key>
+        <true/>
+
+        <key>com.apple.system-task-ports.control</key>
+        <!-- Supercedes the two above in AzulE+, cross-platfrom -->
+	<true/>
+
+        <key>com.apple.security.get-movable-control-port</key>
+        <!-- Allows for task_get_special_port(..TASK_KERNEL_PORT..) -->
+	<true/>
+
+        <key>com.apple.system-task-ports.token.read</key>
+        <!-- Allows for task_identity_token_get_task_port(..TASK_FLAVOR_READ..) -->
+        <true/>
+</dict>
+</plist>

@@ -190,12 +190,8 @@ devfs_mount(struct mount *mp, __unused vnode_t devvp, __unused user_addr_t data,
 	 * HERE we should check to see if we are already mounted here.
 	 */
 
-	MALLOC(devfs_mp_p, struct devfsmount *, sizeof(struct devfsmount),
-	    M_DEVFSMNT, M_WAITOK);
-	if (devfs_mp_p == NULL) {
-		return ENOMEM;
-	}
-	bzero(devfs_mp_p, sizeof(*devfs_mp_p));
+	devfs_mp_p = kalloc_type(struct devfsmount,
+	    Z_WAITOK | Z_ZERO | Z_NOFAIL);
 	devfs_mp_p->mount = mp;
 
 	/*-
@@ -206,13 +202,22 @@ devfs_mount(struct mount *mp, __unused vnode_t devvp, __unused user_addr_t data,
 	mp->mnt_vfsstat.f_fsid.val[1] = vfs_typenum(mp);
 	mp->mnt_flag |= MNT_LOCAL;
 
+	/*
+	 * If mount is requested by non-root user, silently drop the
+	 * MNT_IGNORE_OWNERSHIP flag to prevent bypassing permission checks during
+	 * the revoke call.
+	 */
+	if (vfs_context_suser(ctx)) {
+		mp->mnt_flag &= ~MNT_IGNORE_OWNERSHIP;
+	}
+
 	DEVFS_LOCK();
 	error = dev_dup_plane(devfs_mp_p);
 	DEVFS_UNLOCK();
 
 	if (error) {
 		mp->mnt_data = (qaddr_t)0;
-		FREE(devfs_mp_p, M_DEVFSMNT);
+		kfree_type(struct devfsmount, devfs_mp_p);
 		return error;
 	} else {
 		DEVFS_INCR_MOUNTS();
@@ -265,7 +270,7 @@ devfs_unmount( struct mount *mp, int mntflags, __unused vfs_context_t ctx)
 
 	DEVFS_DECR_MOUNTS();
 
-	FREE(devfs_mp_p, M_DEVFSMNT);
+	kfree_type(struct devfsmount, devfs_mp_p);
 	mp->mnt_data = (qaddr_t)0;
 	mp->mnt_flag &= ~MNT_LOCAL;
 

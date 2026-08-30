@@ -12,10 +12,17 @@ class ApplePS2Keyboard : public IOHIKeyboard
 
 private:
     ApplePS2KeyboardDevice * _device;
-    bool                     _extendCount;   /* saw an 0xE0 prefix */
+    bool                     _extended;      /* saw an 0xE0 prefix */
+    UInt8                    _pauseCountdown;/* bytes left of an E1 sequence */
     bool                     _interruptInstalled;
+    bool                     _consoleGrabbed;
+    /* Usages currently held, so a repeated make code is not a second press. */
+    UInt8                    _usageDown[256 / 8];
 
-    bool dispatchKeyboardEventWithScancode(UInt8 scanCode);
+    void decodeScancode(UInt8 data);
+    void dispatchUsage(UInt8 usage, bool down);
+    bool isUsageDown(UInt8 usage);
+    void setUsageDown(UInt8 usage, bool down);
     void setLEDs(UInt8 ledState);
     void setKeyboardEnable(bool enable);
 

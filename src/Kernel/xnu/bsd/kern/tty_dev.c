@@ -83,6 +83,7 @@
 #include <miscfs/devfs/devfs.h>
 #include <miscfs/devfs/devfsdefs.h>     /* DEVFS_LOCK()/DEVFS_UNLOCK() */
 #include <dev/kmreg_com.h>
+#include <machine/cons.h>
 
 #if CONFIG_MACF
 #include <security/mac_framework.h>
@@ -129,7 +130,7 @@ _devfs_setattr(void * handle, unsigned short mode, uid_t uid, gid_t gid)
 	devdirent_t             *direntp = (devdirent_t *)handle;
 	devnode_t               *devnodep;
 	int                     error = EACCES;
-	vfs_context_t           ctx = vfs_context_current();;
+	vfs_context_t           ctx = vfs_context_current();
 	struct vnode_attr       va;
 
 	VATTR_INIT(&va);
@@ -194,8 +195,8 @@ tty_dev_register(struct tty_dev_t *driver)
  * one if possible.
  *
  * Parameters:	minor			Minor number of ptmx device
- *		open_flag		PF_OPEN_M	First open of master
- *					PF_OPEN_S	First open of slave
+ *		open_flag		PF_OPEN_M	First open of primary
+ *					PF_OPEN_S	First open of replica
  *					0		Just want ioctl struct
  *
  * Returns:	NULL			Did not exist/could not create
@@ -210,7 +211,7 @@ pty_get_driver(dev_t dev)
 	int major = major(dev);
 	struct tty_dev_t *driver;
 	for (driver = tty_dev_head; driver != NULL; driver = driver->next) {
-		if ((driver->master == major || driver->slave == major)) {
+		if ((driver->primary == major || driver->replica == major)) {
 			break;
 		}
 	}
@@ -221,11 +222,16 @@ static struct ptmx_ioctl *
 pty_get_ioctl(dev_t dev, int open_flag, struct tty_dev_t **out_driver)
 {
 	struct tty_dev_t *driver = pty_get_driver(dev);
+	struct ptmx_ioctl *out = NULL;
 	if (out_driver) {
 		*out_driver = driver;
 	}
 	if (driver && driver->open) {
-		return driver->open(minor(dev), open_flag);
+		out = driver->open(minor(dev), open_flag);
+		if (!out) {
+			printf("pty_get_ioctl: driver->open returned NULL\n");
+		}
+		return out;
 	}
 	return NULL;
 }
@@ -258,12 +264,14 @@ ptsopen(dev_t dev, int flag, __unused int devtype, __unused struct proc *p)
 {
 	int error;
 	struct tty_dev_t *driver;
+	bool free_ptmx_ioctl = true;
 	struct ptmx_ioctl *pti = pty_get_ioctl(dev, PF_OPEN_S, &driver);
 	if (pti == NULL) {
 		return ENXIO;
 	}
 	if (!(pti->pt_flags & PF_UNLOCKED)) {
-		return EAGAIN;
+		error = EAGAIN;
+		goto out_free;
 	}
 
 	struct tty *tp = pti->pt_tty;
@@ -279,7 +287,7 @@ ptsopen(dev_t dev, int flag, __unused int devtype, __unused struct proc *p)
 		ttsetwater(tp);         /* would be done in xxparam() */
 	} else if ((tp->t_state & TS_XCLUDE) && kauth_cred_issuser(kauth_cred_get())) {
 		error = EBUSY;
-		goto out;
+		goto out_unlock;
 	}
 	if (tp->t_oproc) {                      /* Ctrlr still around. */
 		(void)(*linesw[tp->t_line].l_modem)(tp, 1);
@@ -290,20 +298,26 @@ ptsopen(dev_t dev, int flag, __unused int devtype, __unused struct proc *p)
 		}
 		error = ttysleep(tp, TSA_CARR_ON(tp), TTIPRI | PCATCH, __FUNCTION__, 0);
 		if (error) {
-			goto out;
+			goto out_unlock;
 		}
 	}
 	error = (*linesw[tp->t_line].l_open)(dev, tp);
-	/* Successful open; mark as open by the slave */
+	/* Successful open; mark as open by the replica */
 
-	pti->pt_flags |= PF_OPEN_S;
+	free_ptmx_ioctl = false;
 	CLR(tp->t_state, TS_IOCTL_NOT_OK);
 	if (error == 0) {
 		ptcwakeup(tp, FREAD | FWRITE);
 	}
 
-out:
+out_unlock:
 	tty_unlock(tp);
+
+out_free:
+	if (free_ptmx_ioctl) {
+		pty_free_ioctl(dev, PF_OPEN_S);
+	}
+
 	return error;
 }
 
@@ -342,7 +356,7 @@ ptsclose(dev_t dev, int flag, __unused int mode, __unused proc_t p)
 	(void)ttyclose(tp);
 
 	/*
-	 * Flush data and notify any waiters on the master side of this PTY.
+	 * Flush data and notify any waiters on the primary side of this PTY.
 	 */
 	ptsstop(tp, FREAD | FWRITE);
 #ifdef  FIX_VSX_HANG
@@ -362,12 +376,10 @@ ptsclose(dev_t dev, int flag, __unused int mode, __unused proc_t p)
 __private_extern__ int
 ptsread(dev_t dev, struct uio *uio, int flag)
 {
-	proc_t p = current_proc();
 	struct ptmx_ioctl *pti = pty_get_ioctl(dev, 0, NULL);
 	struct tty *tp;
 	int error = 0;
 	struct uthread *ut;
-	struct pgrp *pg;
 
 	if (pti == NULL) {
 		return ENXIO;
@@ -375,78 +387,11 @@ ptsread(dev_t dev, struct uio *uio, int flag)
 	tp = pti->pt_tty;
 	tty_lock(tp);
 
-	ut = (struct uthread *)get_bsdthread_info(current_thread());
-again:
-	if (pti->pt_flags & PF_REMOTE) {
-		while (isbackground(p, tp)) {
-			if ((p->p_sigignore & sigmask(SIGTTIN)) ||
-			    (ut->uu_sigmask & sigmask(SIGTTIN)) ||
-			    p->p_lflag & P_LPPWAIT) {
-				error = EIO;
-				goto out;
-			}
-
-
-			pg = proc_pgrp(p);
-			if (pg == PGRP_NULL) {
-				error = EIO;
-				goto out;
-			}
-			/*
-			 * SAFE: We about to drop the lock ourselves by
-			 * SAFE: erroring out or sleeping anyway.
-			 */
-			tty_unlock(tp);
-			if (pg->pg_jobc == 0) {
-				pg_rele(pg);
-				tty_lock(tp);
-				error = EIO;
-				goto out;
-			}
-			pgsignal(pg, SIGTTIN, 1);
-			pg_rele(pg);
-			tty_lock(tp);
-
-			error = ttysleep(tp, &ptsread, TTIPRI | PCATCH | PTTYBLOCK, __FUNCTION__, hz);
-			if (error) {
-				goto out;
-			}
-		}
-		if (tp->t_canq.c_cc == 0) {
-			if (flag & IO_NDELAY) {
-				error = EWOULDBLOCK;
-				goto out;
-			}
-			error = ttysleep(tp, TSA_PTS_READ(tp), TTIPRI | PCATCH, __FUNCTION__, 0);
-			if (error) {
-				goto out;
-			}
-			goto again;
-		}
-		while (tp->t_canq.c_cc > 1 && uio_resid(uio) > 0) {
-			int cc;
-			char buf[BUFSIZ];
-
-			cc = MIN((int)uio_resid(uio), BUFSIZ);
-			// Don't copy the very last byte
-			cc = MIN(cc, tp->t_canq.c_cc - 1);
-			cc = q_to_b(&tp->t_canq, (u_char *)buf, cc);
-			error = uiomove(buf, cc, uio);
-			if (error) {
-				break;
-			}
-		}
-		if (tp->t_canq.c_cc == 1) {
-			(void) getc(&tp->t_canq);
-		}
-		if (tp->t_canq.c_cc) {
-			goto out;
-		}
-	} else if (tp->t_oproc) {
+	ut = current_uthread();
+	if (tp->t_oproc) {
 		error = (*linesw[tp->t_line].l_read)(tp, uio, flag);
 	}
 	ptcwakeup(tp, FWRITE);
-out:
 	tty_unlock(tp);
 	return error;
 }
@@ -554,12 +499,12 @@ ptcopen(dev_t dev, __unused int flag, __unused int devtype, __unused proc_t p)
 	struct tty *tp = pti->pt_tty;
 	tty_lock(tp);
 
-	/* If master is open OR slave is still draining, pty is still busy */
+	/* If primary is open OR replica is still draining, pty is still busy */
 	if (tp->t_oproc || (tp->t_state & TS_ISOPEN)) {
 		tty_unlock(tp);
 		/*
-		 * If master is closed, we are the only reference, so we
-		 * need to clear the master open bit
+		 * If primary is closed, we are the only reference, so we
+		 * need to clear the primary open bit
 		 */
 		if (!tp->t_oproc) {
 			pty_free_ioctl(dev, PF_OPEN_M);
@@ -591,7 +536,8 @@ ptcclose(dev_t dev, __unused int flags, __unused int fmt, __unused proc_t p)
 	struct tty_dev_t *driver;
 	struct ptmx_ioctl *pti = pty_get_ioctl(dev, 0, &driver);
 	struct tty *tp;
-	struct knote *kn;
+	struct tty *constty = NULL;
+	struct tty *freetp = NULL;
 
 	if (!pti) {
 		return ENXIO;
@@ -599,6 +545,38 @@ ptcclose(dev_t dev, __unused int flags, __unused int fmt, __unused proc_t p)
 
 	tp = pti->pt_tty;
 	tty_lock(tp);
+
+	constty = copy_constty();
+
+	if (constty == tp) {
+		freetp = set_constty(NULL);
+		if (freetp != NULL) {
+			if (freetp == tp) {
+				ttyfree_locked(freetp);
+			} else {
+				ttyfree(freetp);
+			}
+			freetp = NULL;
+		}
+
+
+
+		/*
+		 * Closing current console tty; disable printing of console
+		 * messages at bottom-level driver.
+		 */
+		(*cdevsw[major(tp->t_dev)].d_ioctl)
+		(tp->t_dev, KMIOCDISABLCONS, NULL, 0, current_proc());
+	}
+
+	if (constty != NULL) {
+		if (constty == tp) {
+			ttyfree_locked(constty);
+		} else {
+			ttyfree(constty);
+		}
+		constty = NULL;
+	}
 
 	/*
 	 * XXX MDMBUF makes no sense for PTYs, but would inhibit an `l_modem`.
@@ -616,30 +594,26 @@ ptcclose(dev_t dev, __unused int flags, __unused int fmt, __unused proc_t p)
 
 	/*
 	 * Null out the backing TTY struct's open procedure to prevent starting
-	 * slaves through `ptsstart`.
+	 * replicas through `ptsstart`.
 	 */
 	tp->t_oproc = NULL;
 
 	/*
 	 * Clear any select or kevent waiters under the lock.
 	 */
-	SLIST_FOREACH(kn, &pti->pt_selr.si_note, kn_selnext) {
-		KNOTE_DETACH(&pti->pt_selr.si_note, kn);
-	}
+	knote(&pti->pt_selr.si_note, NOTE_REVOKE, true);
 	selthreadclear(&pti->pt_selr);
-	SLIST_FOREACH(kn, &pti->pt_selw.si_note, kn_selnext) {
-		KNOTE_DETACH(&pti->pt_selw.si_note, kn);
-	}
+	knote(&pti->pt_selw.si_note, NOTE_REVOKE, true);
 	selthreadclear(&pti->pt_selw);
 
 	tty_unlock(tp);
 
-	pty_free_ioctl(dev, PF_OPEN_M);
 #if CONFIG_MACF
 	if (driver->mac_notify) {
 		mac_pty_notify_close(p, tp, dev, NULL);
 	}
 #endif
+	pty_free_ioctl(dev, PF_OPEN_M);
 
 	return 0;
 }
@@ -659,9 +633,9 @@ ptcread(dev_t dev, struct uio *uio, int flag)
 	tty_lock(tp);
 
 	/*
-	 * We want to block until the slave
+	 * We want to block until the replica
 	 * is open, and there's something to read;
-	 * but if we lost the slave or we're NBIO,
+	 * but if we lost the replica or we're NBIO,
 	 * then return the appropriate error instead.
 	 */
 	for (;;) {
@@ -872,23 +846,16 @@ ptcselect(dev_t dev, int rw, void *wql, proc_t p)
 
 	case FWRITE:
 		if (tp->t_state & TS_ISOPEN) {
-			if (pti->pt_flags & PF_REMOTE) {
-				if (tp->t_canq.c_cc == 0) {
-					retval = (driver->fix_7828447) ? (TTYHOG - 1) : 1;
-					break;
-				}
-			} else {
-				retval = (TTYHOG - 2) - (tp->t_rawq.c_cc + tp->t_canq.c_cc);
-				if (retval > 0) {
-					retval = (driver->fix_7828447) ? retval : 1;
-					break;
-				}
-				if (tp->t_canq.c_cc == 0 && (tp->t_lflag & ICANON)) {
-					retval = 1;
-					break;
-				}
-				retval = 0;
+			retval = (TTYHOG - 2) - (tp->t_rawq.c_cc + tp->t_canq.c_cc);
+			if (retval > 0) {
+				retval = (driver->fix_7828447) ? retval : 1;
+				break;
 			}
+			if (tp->t_canq.c_cc == 0 && (tp->t_lflag & ICANON)) {
+				retval = 1;
+				break;
+			}
+			retval = 0;
 		}
 		selrecord(p, &pti->pt_selw, wql);
 		break;
@@ -932,50 +899,6 @@ again:
 	if ((tp->t_state & TS_ISOPEN) == 0) {
 		goto block;
 	}
-	if (pti->pt_flags & PF_REMOTE) {
-		if (tp->t_canq.c_cc) {
-			goto block;
-		}
-		while ((uio_resid(uio) > 0 || cc > 0) &&
-		    tp->t_canq.c_cc < TTYHOG - 1) {
-			if (cc == 0) {
-				cc = MIN((int)uio_resid(uio), BUFSIZ);
-				cc = MIN(cc, TTYHOG - 1 - tp->t_canq.c_cc);
-				cp = locbuf;
-				error = uiomove((caddr_t)cp, cc, uio);
-				if (error) {
-					goto out;
-				}
-				/* check again for safety */
-				if ((tp->t_state & TS_ISOPEN) == 0) {
-					/* adjust as usual */
-					uio_setresid(uio, (uio_resid(uio) + cc));
-					error = EIO;
-					goto out;
-				}
-			}
-			if (cc > 0) {
-				cc = b_to_q((u_char *)cp, cc, &tp->t_canq);
-				/*
-				 * XXX we don't guarantee that the canq size
-				 * is >= TTYHOG, so the above b_to_q() may
-				 * leave some bytes uncopied.  However, space
-				 * is guaranteed for the null terminator if
-				 * we don't fail here since (TTYHOG - 1) is
-				 * not a multiple of CBSIZE.
-				 */
-				if (cc > 0) {
-					break;
-				}
-			}
-		}
-		/* adjust for data copied in but not written */
-		uio_setresid(uio, (uio_resid(uio) + cc));
-		(void) putc(0, &tp->t_canq);
-		ttwakeup(tp);
-		wakeup(TSA_PTS_READ(tp));
-		goto out;
-	}
 	while (uio_resid(uio) > 0 || cc > 0) {
 		if (cc == 0) {
 			cc = MIN((int)uio_resid(uio), BUFSIZ);
@@ -998,7 +921,7 @@ again:
 				wakeup(TSA_HUP_OR_INPUT(tp));
 				goto block;
 			}
-			(*linesw[tp->t_line].l_rint)(*cp++, tp);
+			OS_ANALYZER_SUPPRESS("80961525") (*linesw[tp->t_line].l_rint)(*cp++, tp);
 			wcnt++;
 			cc--;
 		}
@@ -1011,7 +934,7 @@ out:
 
 block:
 	/*
-	 * Come here to wait for slave to open, for space
+	 * Come here to wait for replica to open, for space
 	 * in outq, or space in rawq, or an empty canq.
 	 */
 	if ((tp->t_state & TS_CONNECTED) == 0) {
@@ -1063,10 +986,10 @@ ptyioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 	u_char *cc = tp->t_cc;
 
 	/*
-	 * Do not permit extended ioctls on the master side of the pty unless
-	 * the slave side has been successfully opened and initialized.
+	 * Do not permit extended ioctls on the primary side of the pty unless
+	 * the replica side has been successfully opened and initialized.
 	 */
-	if (major(dev) == driver->master &&
+	if (major(dev) == driver->primary &&
 	    driver->fix_7070978 &&
 	    ISSET(tp->t_state, TS_IOCTL_NOT_OK)) {
 		allow_ext_ioctl = 0;
@@ -1131,15 +1054,6 @@ ptyioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 			}
 			goto out;
 
-		case TIOCREMOTE:
-			if (*(int *)data) {
-				pti->pt_flags |= PF_REMOTE;
-			} else {
-				pti->pt_flags &= ~PF_REMOTE;
-			}
-			ttyflush(tp, FREAD | FWRITE);
-			goto out;
-
 		case TIOCSETP:
 		case TIOCSETN:
 		case TIOCSETD:
@@ -1171,20 +1085,18 @@ ptyioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 			 * SAFE: if the ioctl() is eaten before the lower
 			 * SAFE: level code gets to see it.
 			 */
-			tty_unlock(tp);
-			tty_pgsignal(tp, *(unsigned int *)data, 1);
-			tty_lock(tp);
+			tty_pgsignal_locked(tp, *(unsigned int *)data, 1);
 			goto out;
 
 		case TIOCPTYGRANT:      /* grantpt(3) */
 			/*
-			 * Change the uid of the slave to that of the calling
-			 * thread, change the gid of the slave to GID_TTY,
+			 * Change the uid of the replica to that of the calling
+			 * thread, change the gid of the replica to GID_TTY,
 			 * change the mode to 0620 (rw--w----).
 			 */
 		{
 			error = _devfs_setattr(pti->pt_devhandle, 0620, kauth_getuid(), GID_TTY);
-			if (major(dev) == driver->master) {
+			if (major(dev) == driver->primary) {
 				if (driver->mac_notify) {
 #if CONFIG_MACF
 					if (!error) {
@@ -1202,7 +1114,7 @@ ptyioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 
 		case TIOCPTYGNAME:      /* ptsname(3) */
 			/*
-			 * Report the name of the slave device in *data
+			 * Report the name of the replica device in *data
 			 * (128 bytes max.).  Use the same template string
 			 * used for calling devfs_make_node() to create it.
 			 */
@@ -1212,18 +1124,33 @@ ptyioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
 
 		case TIOCPTYUNLK:       /* unlockpt(3) */
 			/*
-			 * Unlock the slave device so that it can be opened.
+			 * Unlock the replica device so that it can be opened.
 			 */
-			if (major(dev) == driver->master) {
+			if (major(dev) == driver->primary) {
 				pti->pt_flags |= PF_UNLOCKED;
 			}
 			error = 0;
 			goto out;
+
+		case FIONBIO:           /* set/clear non-blocking i/o */
+		case FIOASYNC:
+			/*
+			 * These probably come from sys_fcntl_nocancel().  Nothing specific
+			 * to serial devices here, so they should be allowed even if the
+			 * replica is closed.  The implementation in ttioctl_locked() is
+			 * safe to call in this case.  Bypass the line discipline's l_ioctl
+			 * implementation in case it is not.  In practice l_ioctl is
+			 * completely unused anyway (existing line disciplines set it to
+			 * l_noioctl, and the loadable line discipline mechanism is used
+			 * nowhere and not exposed to third parties).
+			 */
+			error = ttioctl_locked(tp, cmd, data, flag, p);
+			goto out;
 		}
 
 		/*
-		 * Fail all other calls; pty masters are not serial devices;
-		 * we only pretend they are when the slave side of the pty is
+		 * Fail all other calls; pty primaries are not serial devices;
+		 * we only pretend they are when the replica side of the pty is
 		 * already open.
 		 */
 		if (!allow_ext_ioctl) {

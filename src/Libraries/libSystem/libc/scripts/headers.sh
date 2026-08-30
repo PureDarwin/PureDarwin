@@ -42,8 +42,9 @@ copy_missing_header_tree()
 	fi
 }
 
-eval $(${SRCROOT}/scripts/generate_features.pl --bash)
-UNIFDEFARGS=$(${SRCROOT}/scripts/generate_features.pl --unifdef)
+FEATURES_SCRIPT=${GENERATE_FEATURES:-${SRCROOT}/scripts/generate_features.pl}
+eval $($FEATURES_SCRIPT --bash)
+UNIFDEFARGS=$($FEATURES_SCRIPT --unifdef)
 
 if [[ "${DEPLOYMENT_LOCATION}" == "NO" ]] ; then
     HDRROOT=${BUILT_PRODUCTS_DIR}

@@ -68,12 +68,12 @@ void
 sbuf_delete(struct sbuf *s)
 {
 	if (SBUF_ISDYNAMIC(s) && s->s_buf) {
-		kheap_free(KHEAP_DATA_BUFFERS, s->s_buf, s->s_size);
+		kfree_data(s->s_buf, s->s_size);
 		s->s_buf = NULL;
 	}
 
 	if (SBUF_ISDYNSTRUCT(s)) {
-		kheap_free(KHEAP_DEFAULT, s, sizeof(*s));
+		kfree_type(struct sbuf, s);
 	}
 }
 
@@ -158,12 +158,11 @@ sbuf_new(struct sbuf *s, char *buf, int length_, int flags)
 	}
 
 	if (s == NULL) {
-		s = (struct sbuf *)kheap_alloc(KHEAP_DEFAULT, sizeof(*s), Z_WAITOK);
+		s = (struct sbuf *)kalloc_type(struct sbuf, Z_WAITOK | Z_ZERO);
 		if (NULL == s) {
 			return NULL;
 		}
 
-		bzero(s, sizeof(*s));
 		s->s_flags = flags;
 		SBUF_SETFLAG(s, SBUF_DYNSTRUCT);
 	} else {
@@ -189,11 +188,10 @@ sbuf_new(struct sbuf *s, char *buf, int length_, int flags)
 		goto fail;
 	}
 
-	s->s_buf = (char *)kheap_alloc(KHEAP_DATA_BUFFERS, length, Z_WAITOK);
+	s->s_buf = kalloc_data(length, Z_WAITOK | Z_ZERO);
 	if (NULL == s->s_buf) {
 		goto fail;
 	}
-	bzero(s->s_buf, length);
 	s->s_size = (int)length;
 
 	SBUF_SETFLAG(s, SBUF_DYNAMIC);
@@ -285,14 +283,14 @@ sbuf_extend(struct sbuf *s, size_t addlen)
 		return -1;
 	}
 
-	new_buf = (char *)kheap_alloc(KHEAP_DATA_BUFFERS, new_size, Z_WAITOK);
+	new_buf = (char *) kalloc_data(new_size, Z_WAITOK);
 	if (NULL == new_buf) {
 		return -1;
 	}
 
 	bcopy(s->s_buf, new_buf, (size_t)s->s_size);
 	if (SBUF_ISDYNAMIC(s)) {
-		kheap_free(KHEAP_DATA_BUFFERS, s->s_buf, (size_t)s->s_size);
+		kfree_data(s->s_buf, (size_t)s->s_size);
 	} else {
 		SBUF_SETFLAG(s, SBUF_DYNAMIC);
 	}
@@ -803,7 +801,7 @@ sysctl_sbuf_tests SYSCTL_HANDLER_ARGS
 		{
 			struct sbuf *s = NULL;
 
-			s = sbuf_new(NULL, NULL, INT_MAX + 1, 0);
+			s = sbuf_new(NULL, NULL, INT_MIN, 0);
 			SBUF_ASSERT_EQ(NULL, s);
 		}
 
@@ -812,7 +810,7 @@ sysctl_sbuf_tests SYSCTL_HANDLER_ARGS
 			struct sbuf *s = NULL;
 			char buf[4] = { 0 };
 
-			s = sbuf_new(NULL, buf, INT_MAX + 1, 0);
+			s = sbuf_new(NULL, buf, INT_MIN, 0);
 			SBUF_ASSERT_EQ(NULL, s);
 		}
 

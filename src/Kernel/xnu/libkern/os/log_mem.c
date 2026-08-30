@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2020-2022 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -38,9 +38,18 @@
 #define BLOCK_INDEX(lm, l, a, s) \
     (BLOCK_LEVEL_BASE(l) + ((uintptr_t)(a) - (uintptr_t)(lm)->lm_mem) / (s))
 
+#define MAP_SIZE(size_order, min_order) \
+    MAX(1, (1 << ((size_order) - (min_order) + 1)) / 8)
+
 #define BITMAP_BUCKET_SIZE (8 * sizeof(((logmem_t *)0)->lm_mem_map[0]))
 #define BITMAP_BUCKET(i) ((i) / BITMAP_BUCKET_SIZE)
-#define BITMAP_BIT(i) (1 << (BITMAP_BUCKET_SIZE - ((i) % BITMAP_BUCKET_SIZE) - 1))
+#define BITMAP_BIT(i) (uint8_t)(1 << (BITMAP_BUCKET_SIZE - ((i) % BITMAP_BUCKET_SIZE) - 1))
+
+#define logmem_lock(lock, lm) if ((lock)) lck_spin_lock(&(lm)->lm_lock)
+#define logmem_unlock(lock, lm) if ((lock)) lck_spin_unlock(&(lm)->lm_lock)
+
+static LCK_GRP_DECLARE(logmem_lck_grp, "logmem_lck_grp");
+
 
 static bool
 bitmap_get(logmem_t *lm, size_t block)
@@ -151,26 +160,28 @@ block_reserve(logmem_t *lm, size_t level)
 	const size_t base = BLOCK_LEVEL_BASE(level);
 	const size_t end = base + BLOCK_SIZE(level);
 
-	lck_spin_lock(lm->lm_lock);
 	for (size_t block = base; block < end; block++) {
 		if (!bitmap_get(lm, block)) {
 			bitmap_reserve_root(lm, block);
 			bitmap_reserve_subtree(lm, level, block);
-			lck_spin_unlock(lm->lm_lock);
 			return block - base;
 		}
 	}
-	lck_spin_unlock(lm->lm_lock);
 
 	return BLOCK_INVALID;
 }
 
-void *
-logmem_alloc(logmem_t *lm, size_t *amount)
+static void *
+logmem_alloc_impl(logmem_t *lm, size_t *amount, bool lock_lm)
 {
 	assert(amount);
 
 	os_atomic_inc(&lm->lm_cnt_allocations, relaxed);
+
+	if (!lm->lm_mem) {
+		os_atomic_inc(&lm->lm_cnt_failed_lmoff, relaxed);
+		return NULL;
+	}
 
 	if (*amount == 0 || *amount > BLOCK_SIZE(lm->lm_max_order)) {
 		os_atomic_inc(&lm->lm_cnt_failed_size, relaxed);
@@ -178,7 +189,9 @@ logmem_alloc(logmem_t *lm, size_t *amount)
 	}
 
 	size_t level = block_size_level(lm, *amount);
+	logmem_lock(lock_lm, lm);
 	size_t block = block_reserve(lm, level);
+	logmem_unlock(lock_lm, lm);
 
 	if (block == BLOCK_INVALID) {
 		os_atomic_inc(&lm->lm_cnt_failed_full, relaxed);
@@ -191,8 +204,20 @@ logmem_alloc(logmem_t *lm, size_t *amount)
 	return &lm->lm_mem[block * *amount];
 }
 
-void
-logmem_free(logmem_t *lm, void *addr, size_t amount)
+void *
+logmem_alloc_locked(logmem_t *lm, size_t *amount)
+{
+	return logmem_alloc_impl(lm, amount, true);
+}
+
+void *
+logmem_alloc(logmem_t *lm, size_t *amount)
+{
+	return logmem_alloc_impl(lm, amount, false);
+}
+
+static void
+logmem_free_impl(logmem_t *lm, void *addr, size_t amount, bool lock_lm)
 {
 	assert(addr);
 	assert(amount > 0 && ((amount & (amount - 1)) == 0));
@@ -202,16 +227,68 @@ logmem_free(logmem_t *lm, void *addr, size_t amount)
 	assert(level != BLOCK_INVALID);
 	assert(block != BLOCK_INVALID);
 
-	lck_spin_lock(lm->lm_lock);
+	assert(lm->lm_mem);
+
+	logmem_lock(lock_lm, lm);
 	bitmap_release_root(lm, block);
 	bitmap_release_subtree(lm, level, block);
-	lck_spin_unlock(lm->lm_lock);
+	logmem_unlock(lock_lm, lm);
 
 	os_atomic_add(&lm->lm_cnt_free, (uint32_t)amount, relaxed);
+}
+
+void
+logmem_free_locked(logmem_t *lm, void *addr, size_t amount)
+{
+	logmem_free_impl(lm, addr, amount, true);
+}
+
+void
+logmem_free(logmem_t *lm, void *addr, size_t amount)
+{
+	logmem_free_impl(lm, addr, amount, false);
+}
+
+size_t
+logmem_required_size(size_t size_order, size_t min_order)
+{
+	return round_page(BLOCK_SIZE(size_order)) + round_page(MAP_SIZE(size_order, min_order));
 }
 
 size_t
 logmem_max_size(const logmem_t *lm)
 {
 	return BLOCK_SIZE(lm->lm_max_order);
+}
+
+bool
+logmem_empty(const logmem_t *lm)
+{
+	return lm->lm_cnt_free == BLOCK_SIZE(lm->lm_cap_order);
+}
+
+bool
+logmem_ready(const logmem_t *lm)
+{
+	return lm->lm_mem != NULL;
+}
+
+void
+logmem_init(logmem_t *lm, void *lm_mem, size_t lm_mem_size, size_t size_order, size_t min_order, size_t max_order)
+{
+	assert(lm_mem_size >= logmem_required_size(size_order, min_order));
+	assert(size_order >= max_order);
+	assert(max_order >= min_order);
+
+	bzero(lm, sizeof(*lm));
+	bzero(lm_mem, lm_mem_size);
+
+	lck_spin_init(&lm->lm_lock, &logmem_lck_grp, LCK_ATTR_NULL);
+	lm->lm_mem = lm_mem;
+	lm->lm_mem_map = (uint8_t *)((uintptr_t)lm_mem + round_page(BLOCK_SIZE(size_order)));
+	lm->lm_mem_size = lm_mem_size;
+	lm->lm_cap_order = size_order;
+	lm->lm_min_order = min_order;
+	lm->lm_max_order = max_order;
+	lm->lm_cnt_free = BLOCK_SIZE(size_order);
 }

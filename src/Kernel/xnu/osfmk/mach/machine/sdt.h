@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2021 Apple Inc. All rights reserved.
  */
 /*
  * CDDL HEADER START
@@ -30,128 +30,19 @@
 #ifndef _MACH_MACHINE_SYS_SDT_H
 #define _MACH_MACHINE_SYS_SDT_H
 
-#include <mach/machine/sdt_isa.h>
-
 #ifdef KERNEL
 
 #if CONFIG_DTRACE
 
 /*
- * The following macros are used to create static probes. The argument types
- * should be no greater than uintptr_t in size each. The behavior of larger
- * types is undefined.
+ * Include arch specific macro definitions for SDT probes.
+ * The argument types should be no greater than uintptr_t in size each.
+ * The behavior of larger types is undefined.
  */
-
-#define DTRACE_PROBE(provider, name) {                                                          \
-	DTRACE_CALL0ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE1(provider, name, arg0) {                                                   \
-	uintptr_t __dtrace_args[ARG1_EXTENT] __attribute__ ((aligned (16)));                    \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	DTRACE_CALL1ARG(provider, name)                                                         \
-}
-
-#define DTRACE_PROBE2(provider, name, arg0, arg1) {                                             \
-	uintptr_t __dtrace_args[ARGS2_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	DTRACE_CALL2ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE3(provider, name, arg0, arg1, arg2) {                                       \
-	uintptr_t __dtrace_args[ARGS3_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                             \
-	DTRACE_CALL3ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE4(provider, name, arg0, arg1, arg2, arg3) {                                 \
-	uintptr_t __dtrace_args[ARGS4_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                             \
-	__dtrace_args[3] = (uintptr_t)(arg3);                                                             \
-	DTRACE_CALL4ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE5(provider, name, arg0, arg1, arg2, arg3, arg4) {                           \
-	uintptr_t __dtrace_args[ARGS5_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                             \
-	__dtrace_args[3] = (uintptr_t)(arg3);                                                             \
-	__dtrace_args[4] = (uintptr_t)(arg4);                                                             \
-	DTRACE_CALL5ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE6(provider, name, arg0, arg1, arg2, arg3, arg4, arg5) {                     \
-	uintptr_t __dtrace_args[ARGS6_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                             \
-	__dtrace_args[3] = (uintptr_t)(arg3);                                                             \
-	__dtrace_args[4] = (uintptr_t)(arg4);                                                             \
-	__dtrace_args[5] = (uintptr_t)(arg5);                                                             \
-	DTRACE_CALL6ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE7(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6) {               \
-	uintptr_t __dtrace_args[ARGS7_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                             \
-	__dtrace_args[3] = (uintptr_t)(arg3);                                                             \
-	__dtrace_args[4] = (uintptr_t)(arg4);                                                             \
-	__dtrace_args[5] = (uintptr_t)(arg5);                                                             \
-	__dtrace_args[6] = (uintptr_t)(arg6);                                                             \
-	DTRACE_CALL7ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE8(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7) {         \
-	uintptr_t __dtrace_args[ARGS8_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                             \
-	__dtrace_args[3] = (uintptr_t)(arg3);                                                             \
-	__dtrace_args[4] = (uintptr_t)(arg4);                                                             \
-	__dtrace_args[5] = (uintptr_t)(arg5);                                                             \
-	__dtrace_args[6] = (uintptr_t)(arg6);                                                             \
-	__dtrace_args[7] = (uintptr_t)(arg7);                                                             \
-	DTRACE_CALL8ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE9(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {   \
-	uintptr_t __dtrace_args[ARGS9_EXTENT] __attribute__ ((aligned (16)));                   \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                             \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                             \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                             \
-	__dtrace_args[3] = (uintptr_t)(arg3);                                                             \
-	__dtrace_args[4] = (uintptr_t)(arg4);                                                             \
-	__dtrace_args[5] = (uintptr_t)(arg5);                                                             \
-	__dtrace_args[6] = (uintptr_t)(arg6);                                                             \
-	__dtrace_args[7] = (uintptr_t)(arg7);                                                             \
-	__dtrace_args[8] = (uintptr_t)(arg8);                                                             \
-	DTRACE_CALL9ARGS(provider, name)                                                        \
-}
-
-#define DTRACE_PROBE10(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {    \
-	uintptr_t __dtrace_args[ARGS10_EXTENT] __attribute__ ((aligned (16)));                          \
-	__dtrace_args[0] = (uintptr_t)(arg0);                                                                     \
-	__dtrace_args[1] = (uintptr_t)(arg1);                                                                     \
-	__dtrace_args[2] = (uintptr_t)(arg2);                                                                     \
-	__dtrace_args[3] = (uintptr_t)(arg3);                                                                     \
-	__dtrace_args[4] = (uintptr_t)(arg4);                                                                     \
-	__dtrace_args[5] = (uintptr_t)(arg5);                                                                     \
-	__dtrace_args[6] = (uintptr_t)(arg6);                                                                     \
-	__dtrace_args[7] = (uintptr_t)(arg7);                                                                     \
-	__dtrace_args[8] = (uintptr_t)(arg8);                                                                     \
-	__dtrace_args[9] = (uintptr_t)(arg9);                                                                     \
-	DTRACE_CALL10ARGS(provider, name)                                                               \
-}
+#include <mach/machine/sdt_isa.h>
 
 #else
+
 #define DTRACE_PROBE(provider, name) do {} while(0)
 #define DTRACE_PROBE1(provider, name, arg0) do {} while(0)
 #define DTRACE_PROBE2(provider, name, arg0, arg1) do {} while(0)
@@ -161,8 +52,6 @@
 #define DTRACE_PROBE6(provider, name, arg0, arg1, arg2, arg3, arg4, arg5) do {} while(0)
 #define DTRACE_PROBE7(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6) do {} while(0)
 #define DTRACE_PROBE8(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7) do {} while(0)
-#define DTRACE_PROBE9(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) do {} while(0)
-#define DTRACE_PROBE10(provider, name, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) do {} while(0)
 
 #endif /* CONFIG_DTRACE */
 
@@ -181,6 +70,14 @@
 #define DTRACE_SCHED4(name, type1, arg1, type2, arg2,                   \
 	    type3, arg3, type4, arg4)                                           \
 	DTRACE_PROBE4(__sched_, name, arg1, arg2, arg3, arg4);
+
+#define DTRACE_SCHED5(name, type1, arg1, type2, arg2,                   \
+	    type3, arg3, type4, arg4, type5, arg5)                              \
+	DTRACE_PROBE5(__sched_, name, arg1, arg2, arg3, arg4, arg5, arg6);
+
+#define DTRACE_SCHED6(name, type1, arg1, type2, arg2,                   \
+	    type3, arg3, type4, arg4, type5, arg5, type6, arg6)                 \
+	DTRACE_PROBE6(__sched_, name, arg1, arg2, arg3, arg4, arg5, arg6);
 
 #define DTRACE_PROC(name)                                               \
 	DTRACE_PROBE(__proc_, name);
@@ -254,6 +151,18 @@
 
 #define DTRACE_PHYSLAT5(name, type1, arg1, type2, arg2, type3, arg3, type4, arg4, type5, arg5)  \
 	DTRACE_PROBE5(__sdt_, name, arg1, arg2, arg3, arg4, arg5);
+
+#define DTRACE_MACF(name)                         \
+	DTRACE_PROBE(__sdt_, name);
+
+#define DTRACE_MACF1(name, type1, arg1)                         \
+	DTRACE_PROBE1(__sdt_, name, arg1);
+
+#define DTRACE_MACF2(name, type1, arg1, type2, arg2)            \
+	DTRACE_PROBE2(__sdt_, name, arg1, arg2);
+
+#define DTRACE_MACF3(name, type1, arg1, type2, arg2, type3, arg3)            \
+	DTRACE_PROBE3(__sdt_, name, arg1, arg2, arg3);
 
 #define DTRACE_VM(name)                                                 \
 	DTRACE_PROBE(__vminfo_, name)
@@ -446,9 +355,54 @@
 #endif /* KASAN */
 
 #if PRIVATE
+#define DTRACE_SKYWALK(name)                                            \
+	DTRACE_PROBE(__skywalk_, name)
+
+#define DTRACE_SKYWALK1(name, type1, arg1)                              \
+	DTRACE_PROBE1(__skywalk_, name, arg1)
+
+#define DTRACE_SKYWALK2(name, type1, arg1, type2, arg2)                 \
+	DTRACE_PROBE2(__skywalk_, name, arg1, arg2)
+
+#define DTRACE_SKYWALK3(name, type1, arg1, type2, arg2, type3, arg3)    \
+	DTRACE_PROBE3(__skywalk_, name, arg1, arg2, arg3)
+
+#define DTRACE_SKYWALK4(name, type1, arg1, type2, arg2, type3, arg3,    \
+	    type4, arg4)                                                \
+	DTRACE_PROBE4(__skywalk_, name, arg1, arg2, arg3, arg4)
+
+#define DTRACE_SKYWALK5(name, type1, arg1, type2, arg2, type3, arg3,    \
+	    type4, arg4, type5, arg5)                                   \
+	DTRACE_PROBE5(__skywalk_, name, arg1, arg2, arg3, arg4, arg5)
+
+#define DTRACE_SKYWALK6(name, type1, arg1, type2, arg2, type3, arg3,    \
+	    type4, arg4, type5, arg5, type6, arg6)                      \
+	DTRACE_PROBE6(__skywalk_, name, arg1, arg2, arg3, arg4, arg5, arg6)
+
+#define DTRACE_SKYWALK7(name, type1, arg1, type2, arg2, type3, arg3,    \
+	    type4, arg4, type5, arg5, type6, arg6, type7, arg7)         \
+	DTRACE_PROBE7(__skywalk_, name, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+
+#define DTRACE_SKYWALK8(name, type1, arg1, type2, arg2, type3, arg3,         \
+	    type4, arg4, type5, arg5, type6, arg6, type7, arg7, type8, arg8) \
+	DTRACE_PROBE8(__skywalk_, name, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8)
+
 #endif /* PRIVATE */
 
 #ifdef PRIVATE
+#define DTRACE_KCOV1(name, type1, arg1)                            \
+	DTRACE_PROBE1(__kcov_, name, arg1)
+
+#endif /* PRIVATE */
+
+#ifdef PRIVATE
+
+/*
+ * The AppleHV kext uses its own variants of these macros to avoid storing
+ * arguments as intermediate values on the stack (to lessen the overhead).
+ * If/When the mechanism by which SDT probes are generated changes, AppleHV
+ * should be updated too.
+ */
 #define DTRACE_HV(name)                                            \
 	DTRACE_PROBE(__hv_, name)
 

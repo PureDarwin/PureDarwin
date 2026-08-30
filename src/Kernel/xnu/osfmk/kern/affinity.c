@@ -127,6 +127,7 @@ thread_affinity_get(thread_t thread)
 kern_return_t
 thread_affinity_set(thread_t thread, uint32_t tag)
 {
+	task_t                  task = get_threadtask(thread);
 	affinity_set_t          aset;
 	affinity_set_t          empty_aset = NULL;
 	affinity_space_t        aspc;
@@ -134,22 +135,22 @@ thread_affinity_set(thread_t thread, uint32_t tag)
 
 	DBG("thread_affinity_set(%p,%u)\n", thread, tag);
 
-	task_lock(thread->task);
-	aspc = thread->task->affinity_space;
+	task_lock(task);
+	aspc = task->affinity_space;
 	if (aspc == NULL) {
-		task_unlock(thread->task);
+		task_unlock(task);
 		new_aspc = affinity_space_alloc();
 		if (new_aspc == NULL) {
 			return KERN_RESOURCE_SHORTAGE;
 		}
-		task_lock(thread->task);
-		if (thread->task->affinity_space == NULL) {
-			thread->task->affinity_space = new_aspc;
+		task_lock(task);
+		if (task->affinity_space == NULL) {
+			task->affinity_space = new_aspc;
 			new_aspc = NULL;
 		}
-		aspc = thread->task->affinity_space;
+		aspc = task->affinity_space;
 	}
-	task_unlock(thread->task);
+	task_unlock(task);
 	if (new_aspc) {
 		affinity_space_free(new_aspc);
 	}
@@ -331,8 +332,8 @@ thread_affinity_dup(thread_t parent, thread_t child)
 	}
 
 	aspc = aset->aset_space;
-	assert(aspc == parent->task->affinity_space);
-	assert(aspc == child->task->affinity_space);
+	assert(aspc == get_threadtask(parent)->affinity_space);
+	assert(aspc == get_threadtask(child)->affinity_space);
 
 	lck_mtx_lock(&aspc->aspc_lock);
 	affinity_set_add(aset, child);
@@ -383,10 +384,7 @@ affinity_space_alloc(void)
 {
 	affinity_space_t        aspc;
 
-	aspc = (affinity_space_t) kalloc(sizeof(struct affinity_space));
-	if (aspc == NULL) {
-		return NULL;
-	}
+	aspc = kalloc_type(struct affinity_space, Z_WAITOK | Z_NOFAIL);
 
 	lck_mtx_init(&aspc->aspc_lock, &task_lck_grp, &task_lck_attr);
 	queue_init(&aspc->aspc_affinities);
@@ -406,7 +404,7 @@ affinity_space_free(affinity_space_t aspc)
 
 	lck_mtx_destroy(&aspc->aspc_lock, &task_lck_grp);
 	DBG("affinity_space_free(%p)\n", aspc);
-	kfree(aspc, sizeof(struct affinity_space));
+	kfree_type(struct affinity_space, aspc);
 }
 
 
@@ -419,10 +417,7 @@ affinity_set_alloc(void)
 {
 	affinity_set_t  aset;
 
-	aset = (affinity_set_t) kalloc(sizeof(struct affinity_set));
-	if (aset == NULL) {
-		return NULL;
-	}
+	aset = kalloc_type(struct affinity_set, Z_WAITOK | Z_NOFAIL);
 
 	aset->aset_thread_count = 0;
 	queue_init(&aset->aset_affinities);
@@ -445,7 +440,7 @@ affinity_set_free(affinity_set_t aset)
 	assert(queue_empty(&aset->aset_threads));
 
 	DBG("affinity_set_free(%p)\n", aset);
-	kfree(aset, sizeof(struct affinity_set));
+	kfree_type(struct affinity_set, aset);
 }
 
 /*
@@ -463,7 +458,7 @@ affinity_set_add(affinity_set_t aset, thread_t thread)
 	aset->aset_thread_count++;
 	s = splsched();
 	thread_lock(thread);
-	thread->affinity_set = affinity_sets_enabled ? aset : NULL;
+	thread->affinity_set = aset;
 	thread_unlock(thread);
 	splx(s);
 }
@@ -540,7 +535,7 @@ affinity_set_place(affinity_space_t aspc, affinity_set_t new_aset)
 
 	if (__improbable(num_cpu_asets > MAX_CPUS)) {
 		// If this triggers then the array needs to be made bigger.
-		panic("num_cpu_asets = %d > %d too big in %s\n", num_cpu_asets, MAX_CPUS, __FUNCTION__);
+		panic("num_cpu_asets = %d > %d too big in %s", num_cpu_asets, MAX_CPUS, __FUNCTION__);
 	}
 
 	/*
@@ -552,7 +547,7 @@ affinity_set_place(affinity_space_t aspc, affinity_set_t new_aset)
 		if (aset->aset_num < num_cpu_asets) {
 			set_occupancy[aset->aset_num]++;
 		} else {
-			panic("aset_num = %d in %s\n", aset->aset_num, __FUNCTION__);
+			panic("aset_num = %d in %s", aset->aset_num, __FUNCTION__);
 		}
 	}
 

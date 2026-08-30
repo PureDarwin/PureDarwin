@@ -39,6 +39,7 @@
 #include <stdint.h>
 #include <mach/boolean.h>
 #include <machine/machine_cpuid.h>
+#include <machine/machine_routines.h>
 
 typedef struct {
 	uint32_t arm_rev : 4,  /* 00:03 revision number */
@@ -154,23 +155,16 @@ typedef union {
 /* H12 e-Core (ARMv8 architecture) */
 #define CPU_PART_THUNDER            0x13
 
-#ifndef RC_HIDE_XNU_FIRESTORM
-/*
- * Whilst this is a Thunder-based SoC, it
- * hasn't been released and should remain
- * hidden in 2020 seeds.
- */
 /* M10 e-Core (ARMv8 architecture) */
 #define CPU_PART_THUNDER_M10        0x26
-#endif
 
-#ifndef RC_HIDE_XNU_FIRESTORM
+/* H13P e-Core */
+#define CPU_PART_ICESTORM           0x20 /* Prefer CPU_PART_ICESTORM_SICILY. */
+#define CPU_PART_ICESTORM_SICILY    0x20
 
-/* H13 e-Core */
-#define CPU_PART_ICESTORM           0x20
-
-/* H13 p-Core */
-#define CPU_PART_FIRESTORM          0x21
+/* H13P p-Core */
+#define CPU_PART_FIRESTORM          0x21 /* Prefer CPU_PART_FIRESTORM_SICILY. */
+#define CPU_PART_FIRESTORM_SICILY   0x21
 
 /* H13G e-Core */
 #define CPU_PART_ICESTORM_TONGA     0x22
@@ -178,7 +172,134 @@ typedef union {
 /* H13G p-Core */
 #define CPU_PART_FIRESTORM_TONGA    0x23
 
-#endif /* !RC_HIDE_XNU_FIRESTORM */
+/* H13J e-Core */
+#define CPU_PART_ICESTORM_JADE_CHOP    0x24
+#define CPU_PART_ICESTORM_JADE_DIE     0x28
+
+/* H13J p-Core */
+#define CPU_PART_FIRESTORM_JADE_CHOP   0x25
+#define CPU_PART_FIRESTORM_JADE_DIE    0x29
+
+/* H14P e-Core */
+#define CPU_PART_BLIZZARD           0x30 /* Prefer CPU_PART_BLIZZARD_ELLIS. */
+#define CPU_PART_BLIZZARD_ELLIS     0x30
+
+/* H14P p-Core */
+#define CPU_PART_AVALANCHE          0x31 /* Prefer CPU_PART_AVALANCHE_ELLIS. */
+#define CPU_PART_AVALANCHE_ELLIS    0x31
+
+/* H14G e-Core */
+#define CPU_PART_BLIZZARD_STATEN    0x32
+
+/* H14G p-Core */
+#define CPU_PART_AVALANCHE_STATEN   0x33
+
+/* H14S e-Core */
+#define CPU_PART_BLIZZARD_RHODES_CHOP   0x34
+
+/* H14S p-Core */
+#define CPU_PART_AVALANCHE_RHODES_CHOP  0x35
+
+/* H14C e-Core */
+#define CPU_PART_BLIZZARD_RHODES_DIE    0x38
+
+/* H14C p-Core */
+#define CPU_PART_AVALANCHE_RHODES_DIE   0x39
+
+/* H15 e-Core */
+#define CPU_PART_SAWTOOTH           0x40
+
+/* H15 p-Core */
+#define CPU_PART_EVEREST            0x41
+
+/* H15 Ibiza e-Core */
+#define CPU_PART_ECORE_IBIZA        0x42
+
+/* H15 Ibiza p-Core */
+#define CPU_PART_PCORE_IBIZA        0x43
+
+/* H15 Palma e-Core. */
+#define CPU_PART_ECORE_PALMA 0x48
+
+/* H15 Palma p-Core. */
+#define CPU_PART_PCORE_PALMA 0x49
+
+/* H15 Coll e-Core. */
+#define CPU_PART_ECORE_COLL    0x50
+
+/* H15 Coll p-Core. */
+#define CPU_PART_PCORE_COLL    0x51
+
+/* H15 Lobos e-Core. */
+#define CPU_PART_ECORE_LOBOS 0x44
+
+/* H15 Lobos p-Core. */
+#define CPU_PART_PCORE_LOBOS 0x45
+
+/* M11 e-Core */
+#define CPU_PART_SAWTOOTH_M11       0x46
+
+/* H16G Donan e-Core. */
+#define CPU_PART_ECORE_DONAN 0x52
+
+/* H16H Donan p-Core. */
+#define CPU_PART_PCORE_DONAN 0x53
+
+/* H16S Brava S e-Core. */
+#define CPU_PART_ECORE_BRAVA_S 0x54
+
+/* H16S Brava S p-Core. */
+#define CPU_PART_PCORE_BRAVA_S 0x55
+
+/* H16C Brava C e-Core. */
+#define CPU_PART_ECORE_BRAVA_C 0x58
+
+/* H16C Brava C p-Core. */
+#define CPU_PART_PCORE_BRAVA_C 0x59
+
+/* H17P Tahiti e-Core. */
+#define CPU_PART_ECORE_TAHITI 0x60
+
+/* H17P Tahiti p-Core. */
+#define CPU_PART_PCORE_TAHITI 0x61
+
+/* H17A Tupai e-Core. */
+#define CPU_PART_ECORE_TUPAI 0x6a
+
+/* H17A Tupai p-Core. */
+#define CPU_PART_PCORE_TUPAI 0x6b
+
+/* H17G Hidra e-Core. */
+#define CPU_PART_ECORE_HIDRA 0x62
+
+/* H17G Hidra p-Core. */
+#define CPU_PART_PCORE_HIDRA 0x63
+
+/* H17S Sotra S m-Core. */
+#define CPU_PART_MCORE_SOTRA_S 0x64
+
+/* H17S Sotra S p-Core. */
+#define CPU_PART_PCORE_SOTRA_S 0x65
+
+/* H17C Sotra C m-Core. */
+#define CPU_PART_MCORE_SOTRA_C 0x68
+
+/* H17C Sotra C p-Core. */
+#define CPU_PART_PCORE_SOTRA_C 0x69
+
+
+/* H18P Thera e-Core. */
+#define CPU_PART_ECORE_THERA 0x70
+
+/* H18P Thera p-Core. */
+#define CPU_PART_PCORE_THERA 0x71
+
+/* H18P Thera e-Core. */
+#define CPU_PART_ECORE_TILOS 0x7a
+
+/* H18P Thera p-Core. */
+#define CPU_PART_PCORE_TILOS 0x7b
+
 
 
 
@@ -193,7 +314,9 @@ typedef enum {
 	CACHE_UNKNOWN
 } cache_type_t;
 
+
 typedef struct {
+	boolean_t    c_valid;            /* has this cache info been populated? */
 	boolean_t    c_unified;          /* unified I & D cache? */
 	uint32_t     c_isize;            /* in Bytes (ARM caches can be 0.5 KB) */
 	boolean_t    c_i_ppage;          /* protected page restriction for I cache
@@ -207,6 +330,7 @@ typedef struct {
 	uint32_t     c_l2size;           /* L2 size, if present */
 	uint32_t     c_bulksize_op;      /* bulk operation size limit. 0 if disabled */
 	uint32_t     c_inner_cache_size; /* inner dache size */
+
 } cache_info_t;
 
 typedef struct {
@@ -262,6 +386,7 @@ extern arm_debug_info_t *arm_debug_info(void);
 
 extern void do_cacheid(void);
 extern cache_info_t *cache_info(void);
+extern cache_info_t *cache_info_type(cluster_type_t cluster_type);
 
 extern void do_mvfpid(void);
 extern arm_mvfp_info_t *arm_mvfp_info(void);

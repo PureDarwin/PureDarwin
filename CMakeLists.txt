@@ -147,6 +147,12 @@ if(PUREDARWIN_ENABLE_PROJECTS)
         add_subdirectory(projects)
     endif()
 endif()
+# At this scope rather than in src/, so that the link options it adds for the
+# libdyld reexport reach tools/ as well.
+if(PUREDARWIN_PREBUILT_LIBSYSTEM_ROOT)
+    include(cmake/prebuilt_libsystem.cmake)
+endif()
+
 add_subdirectory(src)
 if(PUREDARWIN_ENABLE_TOOLS)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/CMakeLists.txt")

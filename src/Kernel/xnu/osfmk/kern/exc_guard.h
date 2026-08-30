@@ -71,13 +71,17 @@
  *
  * code:
  * +-----------------------------+----------------+-----------------+
- * |[63:61] GUARD_TYPE_MACH_PORT | [60:32] flavor | [31:0] port name|
+ * |[63:61] GUARD_TYPE_MACH_PORT | [60:32] flavor | [31:0] target   |
  * +-----------------------------+----------------+-----------------+
  *
  * subcode:
  * +----------------------------------------------------------------+
- * |[63:0] guard identifier                                         |
+ * |[63:0] payload                                                  |
  * +----------------------------------------------------------------+
+ *
+ * - flavors are defined in <mach/port.h>
+ * - meaning of target and payload is described
+ *   in doc/mach_ipc/guard_exceptions.md
  */
 
 #define GUARD_TYPE_MACH_PORT    0x1      /* guarded mach port */
@@ -146,6 +150,38 @@
 
 #define GUARD_TYPE_VIRT_MEMORY  0x5     /* VM operation violating guard */
 
+/*
+ * Rejected syscalls use the exception codes like this:
+ *
+ * code:
+ * +-------------------------------+----------------+------------------+
+ * |[63:61] GUARD_TYPE_REJECTED_SC | [60:32] unused | [31:0] mach_trap |
+ * +-------------------------------+----------------+------------------+
+ *
+ * subcode:
+ * +----------------------------------------------------------------+
+ * |[63:0] syscall (if mach_trap field is 0), or mach trap number   |
+ * +----------------------------------------------------------------+
+ */
+
+#define GUARD_TYPE_REJECTED_SC  0x6     /* rejected system call trap */
+
+/*
+ * App resumes use the exception codes like this:
+ *
+ * code:
+ * +-------------------------------+----------------------+------------+
+ * |[63:61] GUARD_TYPE_APP_RESUME  | [60:32] unused       | [31:0] pid |
+ * +-------------------------------+----------------------+------------+
+ *
+ * subcode:
+ * +----------------------------------------------------------------+
+ * |[63:0] unused                                                   |
+ * +----------------------------------------------------------------+
+ */
+
+#define GUARD_TYPE_FROZEN_SWAPIN 0x7     /* swapin of frozen app */
+
 #ifdef KERNEL
 
 #define EXC_GUARD_ENCODE_TYPE(code, type) \
@@ -154,6 +190,8 @@
 	((code) |= (((uint64_t)(flavor) & 0x1fffffffull) << 32))
 #define EXC_GUARD_ENCODE_TARGET(code, target) \
 	((code) |= (((uint64_t)(target) & 0xffffffffull)))
+#define EXC_GUARD_ENCODE_RESIDENT_FOOTPRINT(code, flavor) \
+	((code) |= (((uint64_t)(flavor) & 0x1fffffffull) << 32))
 
 #endif /* KERNEL */
 

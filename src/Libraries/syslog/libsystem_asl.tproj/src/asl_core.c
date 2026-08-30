@@ -36,7 +36,6 @@
 #include <bootstrap_priv.h>
 #include <mach/kern_return.h>
 #include <mach/mach_init.h>
-#include <mach/mach_vm.h>
 #include <mach/vm_map.h>
 #include <mach/vm_param.h>
 #include <dispatch/dispatch.h>

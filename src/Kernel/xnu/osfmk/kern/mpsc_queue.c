@@ -29,6 +29,7 @@
 #include <machine/machine_cpu.h>
 #include <kern/locks.h>
 #include <kern/mpsc_queue.h>
+#include <kern/queue.h>
 #include <kern/thread.h>
 
 #pragma mark Single Consumer calls
@@ -37,7 +38,7 @@ __attribute__((noinline))
 static mpsc_queue_chain_t
 _mpsc_queue_wait_for_enqueuer(struct mpsc_queue_chain *_Atomic *ptr)
 {
-	return hw_wait_while_equals((void **)ptr, NULL);
+	return hw_wait_while_equals_long(ptr, NULL);
 }
 
 void
@@ -122,6 +123,14 @@ static void _mpsc_daemon_queue_enqueue(mpsc_daemon_queue_t, mpsc_queue_chain_t);
 /* thread based queues */
 
 static void
+_mpsc_daemon_queue_init(mpsc_daemon_queue_t dq, mpsc_daemon_init_options_t flags)
+{
+	if (flags & MPSC_DAEMON_INIT_INACTIVE) {
+		os_atomic_init(&dq->mpd_state, MPSC_QUEUE_STATE_INACTIVE);
+	}
+}
+
+static void
 _mpsc_queue_thread_continue(void *param, wait_result_t wr __unused)
 {
 	mpsc_daemon_queue_t dq = param;
@@ -153,7 +162,7 @@ _mpsc_queue_thread_wakeup(mpsc_daemon_queue_t dq)
 static kern_return_t
 _mpsc_daemon_queue_init_with_thread(mpsc_daemon_queue_t dq,
     mpsc_daemon_invoke_fn_t invoke, int pri, const char *name,
-    mpsc_daemon_queue_kind_t kind)
+    mpsc_daemon_queue_kind_t kind, mpsc_daemon_init_options_t flags)
 {
 	kern_return_t kr;
 
@@ -163,12 +172,15 @@ _mpsc_daemon_queue_init_with_thread(mpsc_daemon_queue_t dq,
 		.mpd_queue  = MPSC_QUEUE_INITIALIZER(dq->mpd_queue),
 		.mpd_chain  = { MPSC_QUEUE_NOTQUEUED_MARKER },
 	};
+	_mpsc_daemon_queue_init(dq, flags);
 
 	kr = kernel_thread_create(_mpsc_queue_thread_continue, dq, pri,
 	    &dq->mpd_thread);
 	if (kr == KERN_SUCCESS) {
 		thread_set_thread_name(dq->mpd_thread, name);
-		thread_start_in_assert_wait(dq->mpd_thread, (event_t)dq, THREAD_UNINT);
+		thread_start_in_assert_wait(dq->mpd_thread,
+		    assert_wait_queue(dq), CAST_EVENT64_T(dq),
+		    THREAD_UNINT);
 		thread_deallocate(dq->mpd_thread);
 	}
 	return kr;
@@ -176,10 +188,11 @@ _mpsc_daemon_queue_init_with_thread(mpsc_daemon_queue_t dq,
 
 kern_return_t
 mpsc_daemon_queue_init_with_thread(mpsc_daemon_queue_t dq,
-    mpsc_daemon_invoke_fn_t invoke, int pri, const char *name)
+    mpsc_daemon_invoke_fn_t invoke, int pri, const char *name,
+    mpsc_daemon_init_options_t flags)
 {
 	return _mpsc_daemon_queue_init_with_thread(dq, invoke, pri, name,
-	           MPSC_QUEUE_KIND_THREAD);
+	           MPSC_QUEUE_KIND_THREAD, flags);
 }
 
 /* thread-call based queues */
@@ -199,7 +212,8 @@ _mpsc_queue_thread_call_wakeup(mpsc_daemon_queue_t dq)
 
 void
 mpsc_daemon_queue_init_with_thread_call(mpsc_daemon_queue_t dq,
-    mpsc_daemon_invoke_fn_t invoke, thread_call_priority_t pri)
+    mpsc_daemon_invoke_fn_t invoke, thread_call_priority_t pri,
+    mpsc_daemon_init_options_t flags)
 {
 	*dq = (struct mpsc_daemon_queue){
 		.mpd_kind   = MPSC_QUEUE_KIND_THREAD_CALL,
@@ -207,6 +221,7 @@ mpsc_daemon_queue_init_with_thread_call(mpsc_daemon_queue_t dq,
 		.mpd_queue  = MPSC_QUEUE_INITIALIZER(dq->mpd_queue),
 		.mpd_chain  = { MPSC_QUEUE_NOTQUEUED_MARKER },
 	};
+	_mpsc_daemon_queue_init(dq, flags);
 	dq->mpd_call = thread_call_allocate_with_options(
 		_mpsc_queue_thread_call_drain, dq, pri, THREAD_CALL_OPTIONS_ONCE);
 }
@@ -230,7 +245,8 @@ _mpsc_daemon_queue_nested_wakeup(mpsc_daemon_queue_t dq)
 
 void
 mpsc_daemon_queue_init_with_target(mpsc_daemon_queue_t dq,
-    mpsc_daemon_invoke_fn_t invoke, mpsc_daemon_queue_t target)
+    mpsc_daemon_invoke_fn_t invoke, mpsc_daemon_queue_t target,
+    mpsc_daemon_init_options_t flags)
 {
 	*dq = (struct mpsc_daemon_queue){
 		.mpd_kind   = MPSC_QUEUE_KIND_NESTED,
@@ -239,6 +255,7 @@ mpsc_daemon_queue_init_with_target(mpsc_daemon_queue_t dq,
 		.mpd_queue  = MPSC_QUEUE_INITIALIZER(dq->mpd_queue),
 		.mpd_chain  = { MPSC_QUEUE_NOTQUEUED_MARKER },
 	};
+	_mpsc_daemon_queue_init(dq, flags);
 }
 
 /* enqueue, drain & cancelation */
@@ -275,11 +292,17 @@ again:
 	}
 
 	os_atomic_dependency_t dep = os_atomic_make_dependency((uintptr_t)st);
-	while ((head = mpsc_queue_dequeue_batch(&dq->mpd_queue, &tail, dep))) {
-		mpsc_queue_batch_foreach_safe(cur, head, tail) {
-			os_atomic_store(&cur->mpqc_next,
-			    MPSC_QUEUE_NOTQUEUED_MARKER, relaxed);
-			invoke(cur, dq);
+	if ((head = mpsc_queue_dequeue_batch(&dq->mpd_queue, &tail, dep))) {
+		do {
+			mpsc_queue_batch_foreach_safe(cur, head, tail) {
+				os_atomic_store(&cur->mpqc_next,
+				    MPSC_QUEUE_NOTQUEUED_MARKER, relaxed);
+				invoke(cur, dq);
+			}
+		} while ((head = mpsc_queue_dequeue_batch(&dq->mpd_queue, &tail, dep)));
+
+		if (dq->mpd_options & MPSC_QUEUE_OPTION_BATCH) {
+			invoke(MPSC_QUEUE_BATCH_END, dq);
 		}
 	}
 
@@ -359,7 +382,8 @@ _mpsc_daemon_queue_enqueue(mpsc_daemon_queue_t dq, mpsc_queue_chain_t elm)
 			panic("mpsc_queue[%p]: use after cancelation", dq);
 		}
 
-		if ((st & (MPSC_QUEUE_STATE_DRAINING | MPSC_QUEUE_STATE_WAKEUP)) == 0) {
+		if ((st & (MPSC_QUEUE_STATE_DRAINING | MPSC_QUEUE_STATE_WAKEUP |
+		    MPSC_QUEUE_STATE_INACTIVE)) == 0) {
 			_mpsc_daemon_queue_wakeup(dq);
 		}
 	}
@@ -381,6 +405,18 @@ mpsc_daemon_enqueue(mpsc_daemon_queue_t dq, mpsc_queue_chain_t elm,
 }
 
 void
+mpsc_daemon_queue_activate(mpsc_daemon_queue_t dq)
+{
+	mpsc_daemon_queue_state_t st;
+
+	st = os_atomic_andnot_orig(&dq->mpd_state,
+	    MPSC_QUEUE_STATE_INACTIVE, relaxed);
+	if ((st & MPSC_QUEUE_STATE_WAKEUP) && (st & MPSC_QUEUE_STATE_INACTIVE)) {
+		_mpsc_daemon_queue_wakeup(dq);
+	}
+}
+
+void
 mpsc_daemon_queue_cancel_and_wait(mpsc_daemon_queue_t dq)
 {
 	mpsc_daemon_queue_state_t st;
@@ -390,6 +426,9 @@ mpsc_daemon_queue_cancel_and_wait(mpsc_daemon_queue_t dq)
 	st = os_atomic_or_orig(&dq->mpd_state, MPSC_QUEUE_STATE_CANCELED, relaxed);
 	if (__improbable(st & MPSC_QUEUE_STATE_CANCELED)) {
 		panic("mpsc_queue[%p]: cancelled twice (%x)", dq, st);
+	}
+	if (__improbable(st & MPSC_QUEUE_STATE_INACTIVE)) {
+		panic("mpsc_queue[%p]: queue is inactive (%x)", dq, st);
 	}
 
 	if (dq->mpd_kind == MPSC_QUEUE_KIND_NESTED && st == 0) {
@@ -431,7 +470,8 @@ thread_deallocate_daemon_init(void)
 
 	kr = _mpsc_daemon_queue_init_with_thread(&thread_deferred_deallocation_queue,
 	    mpsc_daemon_queue_nested_invoke, MINPRI_KERNEL,
-	    "daemon.deferred-deallocation", MPSC_QUEUE_KIND_THREAD_CRITICAL);
+	    "daemon.deferred-deallocation", MPSC_QUEUE_KIND_THREAD_CRITICAL,
+	    MPSC_DAEMON_INIT_NONE);
 	if (kr != KERN_SUCCESS) {
 		panic("thread_deallocate_daemon_init: creating daemon failed (%d)", kr);
 	}
@@ -442,5 +482,5 @@ thread_deallocate_daemon_register_queue(mpsc_daemon_queue_t dq,
     mpsc_daemon_invoke_fn_t invoke)
 {
 	mpsc_daemon_queue_init_with_target(dq, invoke,
-	    &thread_deferred_deallocation_queue);
+	    &thread_deferred_deallocation_queue, MPSC_DAEMON_INIT_NONE);
 }

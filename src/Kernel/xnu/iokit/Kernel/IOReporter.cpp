@@ -33,6 +33,7 @@
 #include "IOReporterDefs.h"
 
 #include <string.h>
+#include <sys/param.h>
 #include <IOKit/IORegistryEntry.h>
 
 #define super OSObject
@@ -187,7 +188,7 @@ IOReporter::init(IOService *reportingService,
 	_channelType = channelType;
 	// FIXME: need to look up dynamically
 	if (unit == kIOReportUnitHWTicks) {
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 		unit = kIOReportUnit24MHzTicks;
 #elif defined(__i386__) || defined(__x86_64__)
 		// Most, but not all Macs use 1GHz
@@ -250,11 +251,11 @@ IOReporter::free(void)
 
 	if (_elements) {
 		PREFL_MEMOP_PANIC(_nElements, IOReportElement);
-		IOFree(_elements, (size_t)_nElements * sizeof(IOReportElement));
+		IOFreeData(_elements, (size_t)_nElements * sizeof(IOReportElement));
 	}
 	if (_enableCounts) {
 		PREFL_MEMOP_PANIC(_nChannels, int);
-		IOFree(_enableCounts, (size_t)_nChannels * sizeof(int));
+		IOFreeData(_enableCounts, (size_t)_nChannels * sizeof(int));
 	}
 
 	super::free();
@@ -456,20 +457,18 @@ IOReporter::handleSwapPrepare(int newNChannels)
 	// Allocate memory for the new array of report elements
 	PREFL_MEMOP_FAIL(newNElements, IOReportElement);
 	newElementsSize = (size_t)newNElements * sizeof(IOReportElement);
-	_swapElements = (IOReportElement *)IOMalloc(newElementsSize);
+	_swapElements = (IOReportElement *)IOMallocZeroData(newElementsSize);
 	if (_swapElements == NULL) {
 		res = kIOReturnNoMemory; goto finish;
 	}
-	memset(_swapElements, 0, newElementsSize);
 
 	// Allocate memory for the new array of channel watch counts
 	PREFL_MEMOP_FAIL(newNChannels, int);
 	newECSize = (size_t)newNChannels * sizeof(int);
-	_swapEnableCounts = (int *)IOMalloc(newECSize);
+	_swapEnableCounts = (int *)IOMallocZeroData(newECSize);
 	if (_swapEnableCounts == NULL) {
 		res = kIOReturnNoMemory; goto finish;
 	}
-	memset(_swapEnableCounts, 0, newECSize);
 
 	// success
 	res = kIOReturnSuccess;
@@ -477,11 +476,11 @@ IOReporter::handleSwapPrepare(int newNChannels)
 finish:
 	if (res) {
 		if (_swapElements) {
-			IOFree(_swapElements, newElementsSize);
+			IOFreeData(_swapElements, newElementsSize);
 			_swapElements = NULL;
 		}
 		if (_swapEnableCounts) {
-			IOFree(_swapEnableCounts, newECSize);
+			IOFreeData(_swapEnableCounts, newECSize);
 			_swapEnableCounts = NULL;
 		}
 	}
@@ -589,12 +588,12 @@ IOReporter::handleSwapCleanup(int swapNChannels)
 	// release buffers no longer used after swapping
 	if (_swapElements) {
 		PREFL_MEMOP_PANIC(swapNElements, IOReportElement);
-		IOFree(_swapElements, (size_t)swapNElements * sizeof(IOReportElement));
+		IOFreeData(_swapElements, (size_t)swapNElements * sizeof(IOReportElement));
 		_swapElements = NULL;
 	}
 	if (_swapEnableCounts) {
 		PREFL_MEMOP_PANIC(swapNChannels, int);
-		IOFree(_swapEnableCounts, (size_t)swapNChannels * sizeof(int));
+		IOFreeData(_swapEnableCounts, (size_t)swapNChannels * sizeof(int));
 		_swapEnableCounts = NULL;
 	}
 }
@@ -662,6 +661,10 @@ finish:
 	return res;
 }
 
+static const uint32_t UNLOCK_PERIOD = 1 << 5;
+static_assert(powerof2(UNLOCK_PERIOD),
+    "unlock period not a power of 2: period check must be efficient");
+static const uint32_t UNLOCK_PERIOD_MASK = UNLOCK_PERIOD - 1;
 
 IOReturn
 IOReporter::handleUpdateReport(IOReportChannelList *channelList,
@@ -691,6 +694,19 @@ IOReporter::handleUpdateReport(IOReportChannelList *channelList,
 	}
 
 	for (chIdx = 0; chIdx < channelList->nchannels; chIdx++) {
+		// Drop the lock periodically to allow reporters to emit data, as they
+		// might be running in interrupt context.
+		//
+		// This is safe because the spinlock is really only protecting the
+		// element array, any other changes to the reporter will need to
+		// take the configuration lock.   Keeping the lock between channels
+		// isn't protecting us from anything, because there's no API to
+		// update multiple channels atomically anyway.
+		if ((chIdx & UNLOCK_PERIOD_MASK) == UNLOCK_PERIOD_MASK) {
+			unlockReporter();
+			delay(1);
+			lockReporter();
+		}
 		if (getChannelIndex(channelList->channels[chIdx].channel_id,
 		    &channel_index) == kIOReturnSuccess) {
 			//IORLOG("%s - found channel_id %llx @ index %d", __func__,
@@ -998,7 +1014,7 @@ IOReporter::copyChannelIDs()
 
 
 // DO NOT REMOVE THIS METHOD WHICH IS THE MAIN LEGEND CREATION FUNCTION
-/*static */ OSSharedPtr<IOReportLegendEntry>
+/*static */ OSPtr<IOReportLegendEntry>
 IOReporter::legendWith(OSArray *channelIDs,
     OSArray *channelNames,
     IOReportChannelType channelType,
@@ -1072,4 +1088,44 @@ IOReporter::legendWith(OSArray *channelIDs,
 
 finish:
 	return legendEntry;
+}
+
+/*static */ OSPtr<IOReportLegendEntry>
+IOReporter::legendWith(const uint64_t *channelIDs,
+    const char **channelNames,
+    int channelCount,
+    IOReportChannelType channelType,
+    IOReportUnit unit)
+{
+	OSSharedPtr<OSArray>            channelIDsArray;
+	OSSharedPtr<OSArray>            channelNamesArray;
+	OSSharedPtr<OSNumber>           channelID;
+	OSSharedPtr<const OSSymbol>     channelName;
+	int                             cnt;
+
+	channelIDsArray = OSArray::withCapacity(channelCount);
+	channelNamesArray = OSArray::withCapacity(channelCount);
+	if (!channelIDsArray || !channelNamesArray) {
+		return nullptr;
+	}
+
+	for (cnt = 0; cnt < channelCount; cnt++) {
+		channelID = OSNumber::withNumber(*channelIDs++, 64);
+		const char *name = *channelNames++;
+		if (name) {
+			channelName = OSSymbol::withCString(name);
+		} else {
+			// grab a reference to our shared global
+			channelName = gIOReportNoChannelName;
+		}
+		if (!channelID || !channelName) {
+			return nullptr;
+		}
+		if (!channelIDsArray->setObject(cnt, channelID) ||
+		    !channelNamesArray->setObject(cnt, channelName)) {
+			return nullptr;
+		}
+	}
+
+	return legendWith(channelIDsArray.get(), channelNamesArray.get(), channelType, unit);
 }

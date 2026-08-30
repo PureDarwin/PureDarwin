@@ -69,13 +69,16 @@
 #include <kern/zalloc_internal.h>
 #include <kern/kext_alloc.h>
 #include <sys/kdebug.h>
-#include <vm/vm_object.h>
-#include <vm/vm_map.h>
-#include <vm/vm_page.h>
+#include <vm/vm_object_internal.h>
+#include <vm/vm_map_internal.h>
+#include <vm/vm_page_internal.h>
 #include <vm/vm_kern.h>
 #include <vm/memory_object.h>
-#include <vm/vm_fault.h>
-#include <vm/vm_init.h>
+#include <vm/vm_fault_xnu.h>
+#include <vm/vm_init_xnu.h>
+#if HAS_MTE
+#include <vm/vm_mteinfo_internal.h>
+#endif /* HAS_MTE */
 
 #include <pexpert/pexpert.h>
 
@@ -90,16 +93,7 @@ TUNABLE(bool, iokit_iomd_setownership_enabled,
 static inline void
 vm_mem_bootstrap_log(const char *message)
 {
-	/*
-	 * The steps between two startup phases are otherwise invisible, and on a
-	 * board with no serial the startup phase lines are all there is to go on:
-	 * a stop between "reached phase 7" (kmem_alloc) and phase 8 (zalloc) is
-	 * vm_fault_init or kext_alloc_init, and nothing said which.
-	 */
-	if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
-	    startup_phase >= STARTUP_SUB_KPRINTF) {
-		kprintf("vm_mem_bootstrap: %s\n", message);
-	}
+//	kprintf("vm_mem_bootstrap: %s\n", message);
 	kernel_debug_string_early(message);
 }
 
@@ -111,7 +105,7 @@ __startup_func
 void
 vm_mem_bootstrap(void)
 {
-	vm_offset_t start, end, kmapoff_kaddr;
+	vm_offset_t start, end;
 
 	/*
 	 *	Initializes resident memory structures.
@@ -120,6 +114,7 @@ vm_mem_bootstrap(void)
 	 */
 	vm_mem_bootstrap_log("vm_page_bootstrap");
 	vm_page_bootstrap(&start, &end);
+	kprintf("PD-VM: vm_page_bootstrap done start=%p end=%p\n", (void *)start, (void *)end);
 
 	/*
 	 *	Initialize other VM packages
@@ -127,54 +122,34 @@ vm_mem_bootstrap(void)
 
 	vm_mem_bootstrap_log("zone_bootstrap");
 	zone_bootstrap();
+	kprintf("PD-VM: zone_bootstrap done\n");
 
 	vm_mem_bootstrap_log("vm_object_bootstrap");
 	vm_object_bootstrap();
+	kprintf("PD-VM: vm_object_bootstrap done\n");
 
 	vm_retire_boot_pages();
-
-	kernel_startup_initialize_upto(STARTUP_SUB_VM_KERNEL);
+	kprintf("PD-VM: vm_retire_boot_pages done\n");
 
 	vm_mem_bootstrap_log("vm_map_init");
 	vm_map_init();
+	kprintf("PD-VM: vm_map_init done\n");
 
 	vm_mem_bootstrap_log("kmem_init");
 	kmem_init(start, end);
+	kprintf("PD-VM: kmem_init done\n");
 
+	kprintf("PD-VM: startup KMEM begin\n");
 	kernel_startup_initialize_upto(STARTUP_SUB_KMEM);
-
-	/*
-	 * Eat a random amount of kernel_map to fuzz subsequent heap, zone and
-	 * stack addresses. (With a 4K page and 9 bits of randomness, this
-	 * eats about 2M of VA from the map)
-	 *
-	 * Note that we always need to slide by at least one page because the VM
-	 * pointer packing schemes using KERNEL_PMAP_HEAP_RANGE_START as a base
-	 * do not admit this address to be part of any zone submap.
-	 */
-	uint32_t kmapoff_pgcnt = (early_random() & 0x1ff) + 1; /* 9 bits */
-	if (kernel_memory_allocate(kernel_map, &kmapoff_kaddr,
-	    ptoa(kmapoff_pgcnt), 0, KMA_KOBJECT | KMA_PERMANENT | KMA_VAONLY,
-	    VM_KERN_MEMORY_OSFMK) != KERN_SUCCESS) {
-		panic("cannot kernel_memory_allocate %u pages", kmapoff_pgcnt);
-	}
-
-	vm_mem_bootstrap_log("pmap_init");
-	pmap_init();
-
-	kernel_startup_initialize_upto(STARTUP_SUB_KMEM_ALLOC);
+	kprintf("PD-VM: startup KMEM done\n");
 
 	vm_mem_bootstrap_log("vm_fault_init");
 	vm_fault_init();
+	kprintf("PD-VM: vm_fault_init done\n");
 
-	vm_mem_bootstrap_log("kext_alloc_init");
-	kext_alloc_init();
-
+	kprintf("PD-VM: startup ZALLOC begin\n");
 	kernel_startup_initialize_upto(STARTUP_SUB_ZALLOC);
-
-	vm_paging_map_init();
-
-	vm_page_delayed_work_init_ctx();
+	kprintf("PD-VM: startup ZALLOC done\n");
 
 	if (iokit_iomd_setownership_enabled) {
 		kprintf("IOKit IOMD setownership ENABLED\n");

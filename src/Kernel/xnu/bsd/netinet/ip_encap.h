@@ -78,8 +78,6 @@ struct ip6protosw;
 struct domain;
 
 __BEGIN_DECLS
-void    encap4_init(struct protosw *, struct domain *);
-void    encap6_init(struct ip6protosw *, struct domain *);
 void    encap4_input(struct mbuf *, int);
 int     encap6_input(struct mbuf **, int *, int);
 const struct encaptab *encap_attach(int, int, const struct sockaddr *,
@@ -90,6 +88,10 @@ const struct encaptab *encap_attach_func(int, int,
     const struct protosw *, void *);
 int     encap_detach(const struct encaptab *);
 void    *encap_getarg(struct mbuf *);
+void    encap_init(void);
+
+void encap_register_m_tag(void);
+
 __END_DECLS
 
 #endif /* BSD_KERNEL_PRIVATE */

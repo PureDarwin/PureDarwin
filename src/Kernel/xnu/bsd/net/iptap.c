@@ -81,10 +81,9 @@ static LIST_HEAD(iptap_list, iptap_softc) iptap_list = LIST_HEAD_INITIALIZER(ipt
 static void             iptap_lock_shared(void);
 static void             iptap_lock_exclusive(void);
 static void             iptap_lock_done(void);
-static void             iptap_alloc_lock(void);
 
-decl_lck_rw_data(static, iptap_lck_rw);
-static lck_grp_t                *iptap_grp;
+static LCK_GRP_DECLARE(iptap_grp, "IPTAP_IFNAME");
+static LCK_RW_DECLARE(iptap_lck_rw, &iptap_grp);
 
 errno_t iptap_if_output(ifnet_t, mbuf_t);
 errno_t iptap_demux(ifnet_t, mbuf_t, char *, protocol_family_t *);
@@ -92,7 +91,7 @@ errno_t iptap_add_proto(ifnet_t, protocol_family_t, const struct ifnet_demux_des
     u_int32_t);
 errno_t iptap_del_proto(ifnet_t, protocol_family_t);
 errno_t iptap_getdrvspec(ifnet_t, struct ifdrv64 *);
-errno_t iptap_ioctl(ifnet_t, unsigned long, void *);
+errno_t iptap_ioctl(ifnet_t, unsigned long cmd, void *__sized_by(IOCPARM_LEN(cmd)));
 void iptap_detach(ifnet_t);
 errno_t iptap_tap_callback(ifnet_t, u_int32_t, bpf_tap_mode );
 int iptap_clone_create(struct if_clone *, u_int32_t, void *);
@@ -116,9 +115,7 @@ static struct if_clone iptap_cloner =
     iptap_clone_create,
     iptap_clone_destroy,
     0,
-    IPTAP_MAXUNIT,
-    IPTAP_ZONE_MAX_ELEM,
-    sizeof(struct iptap_softc));
+    IPTAP_MAXUNIT);
 
 SYSCTL_DECL(_net_link);
 SYSCTL_NODE(_net_link, OID_AUTO, iptap, CTLFLAG_RW | CTLFLAG_LOCKED, 0,
@@ -143,30 +140,10 @@ iptap_init(void)
 {
 	errno_t error;
 
-	iptap_alloc_lock();
-
 	error = if_clone_attach(&iptap_cloner);
 	if (error != 0) {
-		panic("%s: if_clone_attach() failed, error %d\n", __func__, error);
+		panic("%s: if_clone_attach() failed, error %d", __func__, error);
 	}
-}
-
-static void
-iptap_alloc_lock(void)
-{
-	lck_grp_attr_t *grp_attr;
-	lck_attr_t *attr;
-
-	grp_attr = lck_grp_attr_alloc_init();
-	lck_grp_attr_setdefault(grp_attr);
-	iptap_grp = lck_grp_alloc_init(IPTAP_IFNAME, grp_attr);
-	lck_grp_attr_free(grp_attr);
-
-	attr = lck_attr_alloc_init();
-	lck_attr_setdefault(attr);
-
-	lck_rw_init(&iptap_lck_rw, iptap_grp, attr);
-	lck_attr_free(attr);
 }
 
 static void
@@ -193,15 +170,10 @@ iptap_clone_create(struct if_clone *ifc, u_int32_t unit, void *params)
 #pragma unused(params)
 
 	int error = 0;
-	struct iptap_softc *iptap = NULL;
+	struct iptap_softc *__single iptap = NULL;
 	struct ifnet_init_eparams if_init;
 
-	iptap = if_clone_softc_allocate(&iptap_cloner);
-	if (iptap == NULL) {
-		printf("%s: _MALLOC failed\n", __func__);
-		error = ENOMEM;
-		goto done;
-	}
+	iptap = kalloc_type(struct iptap_softc, Z_WAITOK_ZERO_NOFAIL);
 	iptap->iptap_unit = unit;
 
 	/*
@@ -212,7 +184,7 @@ iptap_clone_create(struct if_clone *ifc, u_int32_t unit, void *params)
 	if_init.ver = IFNET_INIT_CURRENT_VERSION;
 	if_init.len = sizeof(if_init);
 	if_init.flags = IFNET_INIT_LEGACY;
-	if_init.name = ifc->ifc_name;
+	if_init.name = __unsafe_null_terminated_from_indexable(ifc->ifc_name);
 	if_init.unit = unit;
 	if_init.type = IFT_OTHER;
 	if_init.family = IFNET_FAMILY_LOOPBACK;
@@ -259,10 +231,8 @@ iptap_clone_create(struct if_clone *ifc, u_int32_t unit, void *params)
 	LIST_INSERT_HEAD(&iptap_list, iptap, iptap_link);
 	iptap_lock_done();
 done:
-	if (error != 0) {
-		if (iptap != NULL) {
-			if_clone_softc_deallocate(&iptap_cloner, iptap);
-		}
+	if (error != 0 && iptap != NULL) {
+		kfree_type(struct iptap_softc, iptap);
 	}
 	return error;
 }
@@ -286,7 +256,7 @@ iptap_clone_destroy(struct ifnet *ifp)
 __private_extern__ errno_t
 iptap_tap_callback(ifnet_t ifp, u_int32_t dlt, bpf_tap_mode direction)
 {
-	struct iptap_softc *iptap;
+	struct iptap_softc *__single iptap;
 
 	iptap = ifp->if_softc;
 	if (iptap == NULL) {
@@ -374,7 +344,7 @@ __private_extern__ errno_t
 iptap_getdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 {
 	errno_t error = 0;
-	struct iptap_softc *iptap;
+	struct iptap_softc *__single iptap;
 
 	iptap = ifp->if_softc;
 	if (iptap == NULL) {
@@ -410,7 +380,7 @@ done:
 }
 
 __private_extern__ errno_t
-iptap_ioctl(ifnet_t ifp, unsigned long cmd, void *data)
+iptap_ioctl(ifnet_t ifp, unsigned long cmd, void *__sized_by(IOCPARM_LEN(cmd)) data)
 {
 	errno_t error = 0;
 
@@ -453,7 +423,7 @@ done:
 __private_extern__ void
 iptap_detach(ifnet_t ifp)
 {
-	struct iptap_softc *iptap = NULL;
+	struct iptap_softc *__single iptap = NULL;
 
 	iptap_lock_exclusive();
 
@@ -469,7 +439,7 @@ iptap_detach(ifnet_t ifp)
 
 	/* Drop reference as it's no more on the global list */
 	ifnet_release(ifp);
-	if_clone_softc_deallocate(&iptap_cloner, iptap);
+	kfree_type(struct iptap_softc, iptap);
 
 	/* This is for the reference taken by ifnet_attach() */
 	(void) ifnet_release(ifp);
@@ -591,22 +561,22 @@ iptap_ipf_detach(void *arg)
 __private_extern__ void
 iptap_bpf_tap(struct mbuf *m, u_int32_t proto, int outgoing)
 {
-	struct iptap_softc *iptap;
-	void (*bpf_tap_func)(ifnet_t, u_int32_t, mbuf_t, void *, size_t ) =
+	struct iptap_softc *__single iptap;
+	void (*bpf_tap_func)(ifnet_t, u_int32_t, mbuf_t, void *, size_t) =
 	    outgoing ? bpf_tap_out : bpf_tap_in;
-	uint16_t src_scope_id = 0;
-	uint16_t dst_scope_id = 0;
+	uint32_t src_scope_id = 0;
+	uint32_t dst_scope_id = 0;
 
 	if (proto == AF_INET6) {
 		struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
 		/*
 		 * Clear the embedded scope ID
 		 */
-		if (IN6_IS_SCOPE_EMBED(&ip6->ip6_src)) {
+		if (in6_embedded_scope && IN6_IS_SCOPE_EMBED(&ip6->ip6_src)) {
 			src_scope_id = ip6->ip6_src.s6_addr16[1];
 			ip6->ip6_src.s6_addr16[1] = 0;
 		}
-		if (IN6_IS_SCOPE_EMBED(&ip6->ip6_dst)) {
+		if (in6_embedded_scope && IN6_IS_SCOPE_EMBED(&ip6->ip6_dst)) {
 			dst_scope_id = ip6->ip6_dst.s6_addr16[1];
 			ip6->ip6_dst.s6_addr16[1] = 0;
 		}
@@ -629,9 +599,9 @@ iptap_bpf_tap(struct mbuf *m, u_int32_t proto, int outgoing)
 			struct ifnet *ifp = outgoing ? NULL : m->m_pkthdr.rcvif;
 
 			/* Verify the structure is packed */
-			_CASSERT(sizeof(hdr_buffer) == sizeof(struct pktap_header) + sizeof(u_int32_t));
+			static_assert(sizeof(hdr_buffer) == sizeof(struct pktap_header) + sizeof(u_int32_t));
 
-			bzero(hdr, sizeof(hdr_buffer));
+			bzero(&hdr_buffer, sizeof(hdr_buffer));
 			hdr->pth_length = sizeof(struct pktap_header);
 			hdr->pth_type_next = PTH_TYPE_PACKET;
 			hdr->pth_dlt = DLT_NULL;
@@ -647,11 +617,30 @@ iptap_bpf_tap(struct mbuf *m, u_int32_t proto, int outgoing)
 			hdr->pth_iftype = ifp != NULL ? ifp->if_type : 0;
 			hdr->pth_ifunit = ifp != NULL ? ifp->if_unit : 0;
 
+			if (m->m_pkthdr.pkt_flags & PKTF_KEEPALIVE) {
+				hdr->pth_flags |= PTH_FLAG_KEEP_ALIVE;
+			}
+			if (m->m_pkthdr.pkt_flags & PKTF_TCP_REXMT) {
+				hdr->pth_flags |= PTH_FLAG_REXMIT;
+			}
+			if (m->m_pkthdr.pkt_flags & PKTF_WAKE_PKT) {
+				hdr->pth_flags |= PTH_FLAG_WAKE_PKT;
+			}
+
+			/* Need to check the packet flag in case full wake has been requested */
+			if ((m->m_pkthdr.pkt_ext_flags & PKTF_EXT_LPW) != 0 || is_net_lpw_mode()) {
+				hdr->pth_flags |= PTH_FLAG_LPW;
+			}
+			if (outgoing != 0) {
+				hdr->pth_comp_gencnt = m->m_pkthdr.comp_gencnt;
+			}
+
 			pktap_fill_proc_info(hdr, proto, m, 0, outgoing, ifp);
 
 			hdr->pth_svc = so_svc2tc(m->m_pkthdr.pkt_svc);
 
-			bpf_tap_func(iptap->iptap_ifp, DLT_PKTAP, m, hdr, hdr_size);
+			bpf_tap_func(iptap->iptap_ifp, DLT_PKTAP, m, &hdr_buffer,
+			    hdr_size);
 		}
 	}
 
@@ -663,11 +652,11 @@ iptap_bpf_tap(struct mbuf *m, u_int32_t proto, int outgoing)
 		/*
 		 * Restore the embedded scope ID
 		 */
-		if (IN6_IS_SCOPE_EMBED(&ip6->ip6_src)) {
-			ip6->ip6_src.s6_addr16[1] = src_scope_id;
+		if (in6_embedded_scope && IN6_IS_SCOPE_EMBED(&ip6->ip6_src)) {
+			ip6->ip6_src.s6_addr16[1] = (uint16_t)src_scope_id;
 		}
-		if (IN6_IS_SCOPE_EMBED(&ip6->ip6_dst)) {
-			ip6->ip6_dst.s6_addr16[1] = dst_scope_id;
+		if (in6_embedded_scope && IN6_IS_SCOPE_EMBED(&ip6->ip6_dst)) {
+			ip6->ip6_dst.s6_addr16[1] = (uint16_t)dst_scope_id;
 		}
 	}
 }

@@ -34,7 +34,8 @@
 #include <kern/task.h>
 
 extern void memorystatus_proc_flags_unsafe(void * v, boolean_t *is_dirty,
-    boolean_t *is_dirty_tracked, boolean_t *allow_idle_exit);
+    boolean_t *is_dirty_tracked, boolean_t *allow_idle_exit, boolean_t *is_active,
+    boolean_t *is_managed, boolean_t *has_assertion);
 
 void
 kperf_task_snapshot_sample(task_t task, struct kperf_task_snapshot *tksn)
@@ -55,7 +56,8 @@ kperf_task_snapshot_sample(task_t task, struct kperf_task_snapshot *tksn)
 	}
 #if CONFIG_MEMORYSTATUS
 	boolean_t dirty = FALSE, dirty_tracked = FALSE, allow_idle_exit = FALSE;
-	memorystatus_proc_flags_unsafe(task->bsd_info, &dirty, &dirty_tracked, &allow_idle_exit);
+	boolean_t is_active = FALSE, is_managed = FALSE, has_assertion = FALSE;
+	memorystatus_proc_flags_unsafe(get_bsdtask_info(task), &dirty, &dirty_tracked, &allow_idle_exit, &is_active, &is_managed, &has_assertion);
 	if (dirty) {
 		tksn->kptksn_flags |= KPERF_TASK_FLAG_DIRTY;
 	}
@@ -65,12 +67,22 @@ kperf_task_snapshot_sample(task_t task, struct kperf_task_snapshot *tksn)
 	if (allow_idle_exit) {
 		tksn->kptksn_flags |= KPERF_TASK_ALLOW_IDLE_EXIT;
 	}
+	if (is_active) {
+		tksn->kptksn_flags |= KPERF_TASK_FLAG_ACTIVE;
+	}
+	if (is_managed) {
+		tksn->kptksn_flags |= KPERF_TASK_FLAG_MANAGED;
+	}
+	if (has_assertion) {
+		tksn->kptksn_flags |= KPERF_TASK_FLAG_HAS_ASSERTION;
+	}
 #endif
 
 	tksn->kptksn_suspend_count = task->suspend_count;
-	tksn->kptksn_pageins = task->pageins;
-	tksn->kptksn_user_time_in_terminated_threads = task->total_user_time;
-	tksn->kptksn_system_time_in_terminated_threads = task->total_system_time;
+	tksn->kptksn_pageins = (integer_t) MIN(counter_load(&task->pageins), INT32_MAX);
+	struct recount_times_mach times = recount_task_terminated_times(task);
+	tksn->kptksn_user_time_in_terminated_threads = times.rtm_user;
+	tksn->kptksn_system_time_in_terminated_threads = times.rtm_system;
 
 	BUF_INFO(PERF_TK_SNAP_SAMPLE | DBG_FUNC_END);
 }

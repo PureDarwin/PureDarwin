@@ -5,11 +5,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1785848761,
-        "narHash": "sha256-lAjlFkO+qnuADUFJzi0AjVM4iz6bxcYDrLW+ypTrc7c=",
+        "lastModified": 1787755283,
+        "narHash": "sha256-MFc/y46GA3eolVC68nQT+2i8WGZ7R9/Ra3ux3lNJUEo=",
         "owner": "PureDarwin",
         "repo": "iig-tools",
-        "rev": "8d6651f5f1417820783e3b3eb38df8e481d0a2fb",
+        "rev": "28010c688caab7eb5400b9c98faa5b1e538e0108",
         "type": "github"
       },
       "original": {

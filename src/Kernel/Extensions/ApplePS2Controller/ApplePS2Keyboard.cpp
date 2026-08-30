@@ -1,8 +1,8 @@
 /*
- * ApplePS2Keyboard: HID driver for the PS/2 keyboard nub published by
- * ApplePS2Controller. Translates i8042 set-1 (XT, controller-translated)
- * scan codes into ADB keycodes and dispatches them through IOHIKeyboard,
- * where IOBSDConsole picks them up for console input.
+ * ApplePS2Keyboard: driver for the keyboard nub published by
+ * ApplePS2Controller. Decodes i8042 set-1 scan codes into USB HID usages and
+ * feeds them to the raw /dev/usb_hid_kbd queue and to IOHIKeyboard, the same
+ * two consumers the USB boot-protocol keyboard uses.
  *
  * Modeled on Apple's historic ApplePS2Keyboard (APSL); rewritten for the
  * PureDarwin bring-up against IOHIDFamily-1633's IOHIKeyboard.
@@ -11,52 +11,92 @@
 #include <IOKit/hidsystem/IOHIDParameter.h>
 #include <IOKit/hidsystem/IOHIDShared.h>
 #include "ApplePS2Keyboard.h"
-#include "ApplePS2KeyboardMap.h"
+#include "PDHIDKeyboardMap.h"
+#include "PDHIDEventQueue.h"
 
 #define super IOHIKeyboard
 OSDefineMetaClassAndStructors(ApplePS2Keyboard, IOHIKeyboard);
 
+#define NOUSAGE 0x00    /* HID reserves usage 0 for "no key" */
+
 /*
- * PC set-1 (XT) scan code -> ADB keycode, US layout. 0xFF = no mapping.
+ * PC set-1 (XT) make code -> USB HID keyboard usage, US layout.
  * Index is the make code (0x00-0x7F); break codes have bit 7 set.
- * From Apple's historic ApplePS2Keyboard driver.
  */
-static const UInt8 PS2ToADBMap[kPS2ScanCodeCount * 2] =
+static const UInt8 PS2ToUSBMap[kPS2ScanCodeCount] =
 {
-/*  PS2 set-1 -> ADB, non-extended (no E0 prefix) */
-    0xFF, 0x35, 0x12, 0x13, 0x14, 0x15, 0x17, 0x16,  /* 00-07: -,esc,1..6 */
-    0x1A, 0x1C, 0x19, 0x1D, 0x1B, 0x18, 0x33, 0x30,  /* 08-0f: 7..0,-,=,bs,tab */
-    0x0C, 0x0D, 0x0E, 0x0F, 0x11, 0x10, 0x20, 0x22,  /* 10-17: q,w,e,r,t,y,u,i */
-    0x1F, 0x23, 0x21, 0x1E, 0x24, 0x36, 0x00, 0x01,  /* 18-1f: o,p,[,],ret,Lctl,a,s */
-    0x02, 0x03, 0x05, 0x04, 0x26, 0x28, 0x25, 0x29,  /* 20-27: d,f,g,h,j,k,l,; */
-    0x27, 0x32, 0x38, 0x2A, 0x06, 0x07, 0x08, 0x09,  /* 28-2f: ',`,Lsh,\,z,x,c,v */
-    0x0B, 0x2D, 0x2E, 0x2B, 0x2F, 0x2C, 0x3C, 0x43,  /* 30-37: b,n,m,,,.,/,Rsh,kp* */
-    0x3A, 0x31, 0x39, 0x7A, 0x78, 0x63, 0x76, 0x60,  /* 38-3f: Lalt,spc,caps,F1..F5 */
-    0x61, 0x62, 0x64, 0x65, 0x6D, 0x47, 0x6B, 0x59,  /* 40-47: F6..F10,num,scroll,kp7 */
-    0x5B, 0x5C, 0x4E, 0x56, 0x57, 0x58, 0x45, 0x53,  /* 48-4f: kp8,kp9,kp-,kp4,kp5,kp6,kp+,kp1 */
-    0x54, 0x55, 0x52, 0x41, 0xFF, 0xFF, 0x0A, 0x67,  /* 50-57: kp2,kp3,kp0,kp.,-,-,<>,F11 */
-    0x6F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* 58-5f: F12 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* 60-67 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* 68-6f */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* 70-77 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* 78-7f */
-/*  PS2 set-1 -> ADB, extended (E0 prefix) */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 00-07 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 08-0f */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 10-17 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0x4C, 0x3E, 0xFF, 0xFF,  /* e0 18-1f: kp-enter,Rctl */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 20-27 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 28-2f */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x4B, 0xFF, 0x69,  /* e0 30-37: kp/,prtsc */
-    0x3D, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 38-3f: Ralt */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x71, 0x73,  /* e0 40-47: pause,home */
-    0x3E, 0x74, 0xFF, 0x3B, 0xFF, 0x3C, 0xFF, 0x77,  /* e0 48-4f: up,pgup,left,right,end */
-    0x3D, 0x79, 0x72, 0x75, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 50-57: down,pgdn,ins,del */
-    0xFF, 0xFF, 0xFF, 0x37, 0x36, 0x6E, 0xFF, 0xFF,  /* e0 58-5f: Lcmd(win),Rcmd,menu */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 60-67 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 68-6f */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  /* e0 70-77 */
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF   /* e0 78-7f */
+/* 00-07: -,esc,1,2,3,4,5,6 */
+    NOUSAGE, 0x29, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23,
+/* 08-0f: 7,8,9,0,-,=,bs,tab */
+    0x24, 0x25, 0x26, 0x27, 0x2D, 0x2E, 0x2A, 0x2B,
+/* 10-17: q,w,e,r,t,y,u,i */
+    0x14, 0x1A, 0x08, 0x15, 0x17, 0x1C, 0x18, 0x0C,
+/* 18-1f: o,p,[,],ret,Lctrl,a,s */
+    0x12, 0x13, 0x2F, 0x30, 0x28, 0xE0, 0x04, 0x16,
+/* 20-27: d,f,g,h,j,k,l,; */
+    0x07, 0x09, 0x0A, 0x0B, 0x0D, 0x0E, 0x0F, 0x33,
+/* 28-2f: ',`,Lshift,\,z,x,c,v */
+    0x34, 0x35, 0xE1, 0x31, 0x1D, 0x1B, 0x06, 0x19,
+/* 30-37: b,n,m,comma,period,slash,Rshift,kp* */
+    0x05, 0x11, 0x10, 0x36, 0x37, 0x38, 0xE5, 0x55,
+/* 38-3f: Lalt,space,caps,F1,F2,F3,F4,F5 */
+    0xE2, 0x2C, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E,
+/* 40-47: F6,F7,F8,F9,F10,numlock,scrolllock,kp7 */
+    0x3F, 0x40, 0x41, 0x42, 0x43, 0x53, 0x47, 0x5F,
+/* 48-4f: kp8,kp9,kp-,kp4,kp5,kp6,kp+,kp1 */
+    0x60, 0x61, 0x56, 0x5C, 0x5D, 0x5E, 0x57, 0x59,
+/* 50-57: kp2,kp3,kp0,kp.,-,-,ISO backslash,F11 */
+    0x5A, 0x5B, 0x62, 0x63, NOUSAGE, NOUSAGE, 0x64, 0x44,
+/* 58-5f: F12 */
+    0x45, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 60-67 */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 68-6f */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 70-77 */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 78-7f */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE
+};
+
+/*
+ * The same, for make codes carrying an 0xE0 prefix: the keys the XT keyboard
+ * did not have.
+ */
+static const UInt8 PS2ExtendedToUSBMap[kPS2ScanCodeCount] =
+{
+/* 00-07 */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 08-0f */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 10-17 */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 18-1f: kp-enter,Rctrl */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, 0x58, 0xE4, NOUSAGE, NOUSAGE,
+/* 20-27 */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 28-2f */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 30-37: kp/,printscreen */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, 0x54, NOUSAGE, 0x46,
+/* 38-3f: Ralt */
+    0xE6, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 40-47: home */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, 0x4A,
+/* 48-4f: up,pgup,left,right,end */
+    0x52, 0x4B, NOUSAGE, 0x50, NOUSAGE, 0x4F, NOUSAGE, 0x4D,
+/* 50-57: down,pgdn,insert,delete */
+    0x51, 0x4E, 0x49, 0x4C, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 58-5f: Lgui,Rgui,application */
+    NOUSAGE, NOUSAGE, NOUSAGE, 0xE3, 0xE7, 0x65, NOUSAGE, NOUSAGE,
+/* 60-67 */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 68-6f */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 70-77 */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE,
+/* 78-7f */
+    NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE, NOUSAGE
 };
 
 bool ApplePS2Keyboard::init(OSDictionary * dict)
@@ -65,8 +105,11 @@ bool ApplePS2Keyboard::init(OSDictionary * dict)
         return false;
     }
     _device             = NULL;
-    _extendCount        = false;
+    _extended           = false;
+    _pauseCountdown     = 0;
     _interruptInstalled = false;
+    _consoleGrabbed     = false;
+    bzero(_usageDown, sizeof(_usageDown));
     return true;
 }
 
@@ -92,13 +135,18 @@ bool ApplePS2Keyboard::start(IOService * provider)
         return false;
     }
 
+    setProperty("Transport", "PS2");
+
     _device->installInterruptAction(this,
         (PS2InterruptAction)&ApplePS2Keyboard::interruptOccurred);
     _interruptInstalled = true;
 
     setKeyboardEnable(true);
 
-    IOLog("ApplePS2Keyboard: started (set-1 scancodes -> ADB)\n");
+    /* Shared with the USB HID keyboard: whichever starts first makes the node. */
+    PDHIDPublishKeyboardDevice();
+
+    IOLog("ApplePS2Keyboard: started (set-1 scancodes -> HID usages)\n");
     return true;
 }
 
@@ -115,40 +163,126 @@ void ApplePS2Keyboard::stop(IOService * provider)
 
 void ApplePS2Keyboard::interruptOccurred(void * target, UInt8 data)
 {
-    ApplePS2Keyboard * self = (ApplePS2Keyboard *)target;
-
-    if (data == kSC_Extend) {        /* 0xE0 prefix */
-        self->_extendCount = true;
-        return;
-    }
-    /* ACK/resend chatter from commands: ignore */
-    if (data == kSC_Acknowledge || data == kSC_Resend) {
-        return;
-    }
-    self->dispatchKeyboardEventWithScancode(data);
+    ((ApplePS2Keyboard *)target)->decodeScancode(data);
 }
 
-bool ApplePS2Keyboard::dispatchKeyboardEventWithScancode(UInt8 scanCode)
+void ApplePS2Keyboard::decodeScancode(UInt8 data)
 {
-    bool   goingDown = !(scanCode & kSC_UpBit);
-    UInt8  keyCode   = scanCode & ~kSC_UpBit;
-    UInt8  adbCode;
-    AbsoluteTime now;
+    UInt8 usage;
+    UInt8 code;
+    bool  goingDown;
 
-    if (_extendCount) {
-        _extendCount = false;
-        adbCode = PS2ToADBMap[kPS2ScanCodeCount + keyCode];
-    } else {
-        adbCode = PS2ToADBMap[keyCode];
+    /*
+     * Pause arrives as the fixed sequence E1 1D 45 / E1 9D C5; decoded byte by
+     * byte it reads as a control press that never comes back up.
+     */
+    if (_pauseCountdown != 0) {
+        _pauseCountdown--;
+        if (_pauseCountdown == 0 && !(data & kSC_UpBit)) {
+            dispatchUsage(0x48, true);
+            dispatchUsage(0x48, false);
+        }
+        return;
+    }
+    if (data == kSC_Pause) {
+        _pauseCountdown = 2;
+        _extended = false;
+        return;
     }
 
-    if (adbCode == 0xFF) {
-        return false;
+    if (data == kSC_Extend) {
+        _extended = true;
+        return;
+    }
+
+    /* ACK/resend chatter left over from a command: not a key. */
+    if (data == kSC_Acknowledge || data == kSC_Resend) {
+        _extended = false;
+        return;
+    }
+
+    goingDown = !(data & kSC_UpBit);
+    code      = data & ~kSC_UpBit;
+
+    if (_extended) {
+        _extended = false;
+        /*
+         * Print Screen and the keypad bracket themselves with a shift the user
+         * never pressed (E0 2A / E0 B7), which would flip the case of text.
+         */
+        if (code == kSC_ShiftLeft || code == kSC_ShiftRight) {
+            return;
+        }
+        usage = PS2ExtendedToUSBMap[code];
+    } else {
+        usage = PS2ToUSBMap[code];
+    }
+
+    if (usage == NOUSAGE) {
+        return;
+    }
+
+    /*
+     * A held key repeats by resending its make code, but IOHIKeyboard and the
+     * queue's clients both want one event per transition.
+     */
+    if (isUsageDown(usage) == goingDown) {
+        return;
+    }
+    setUsageDown(usage, goingDown);
+
+    dispatchUsage(usage, goingDown);
+}
+
+bool ApplePS2Keyboard::isUsageDown(UInt8 usage)
+{
+    return (_usageDown[usage >> 3] & (1U << (usage & 7))) != 0;
+}
+
+void ApplePS2Keyboard::setUsageDown(UInt8 usage, bool down)
+{
+    if (down) {
+        _usageDown[usage >> 3] |= (UInt8)(1U << (usage & 7));
+    } else {
+        _usageDown[usage >> 3] &= (UInt8)~(1U << (usage & 7));
+    }
+}
+
+void ApplePS2Keyboard::dispatchUsage(UInt8 usage, bool down)
+{
+    bool           grabbed = PDHIDKeyboardIsGrabbed();
+    UInt8          adb;
+    AbsoluteTime   now;
+
+    PDHIDPushKeyboardEvent(usage, down);
+
+    if (grabbed && !_consoleGrabbed) {
+        /* Keys held when the grab started would stay latched on the console
+         * for the compositor's lifetime without a matching release. */
+        clock_get_uptime((uint64_t *)&now);
+        for (unsigned int held = 0; held < 256; held++) {
+            if (!isUsageDown((UInt8)held)) {
+                continue;
+            }
+            adb = PDHIDUsageToADB((UInt8)held);
+            if (adb != kPDHIDNoADBCode) {
+                dispatchKeyboardEvent(adb, false, *(AbsoluteTime *)&now);
+            }
+        }
+    }
+    _consoleGrabbed = grabbed;
+
+    if (grabbed) {
+        return;
+    }
+
+    adb = PDHIDUsageToADB(usage);
+    if (adb == kPDHIDNoADBCode) {
+        return;
     }
 
     clock_get_uptime((uint64_t *)&now);
-    dispatchKeyboardEvent(adbCode, goingDown, *(AbsoluteTime *)&now);
-    return true;
+    dispatchKeyboardEvent(adb, down, *(AbsoluteTime *)&now);
 }
 
 void ApplePS2Keyboard::setLEDs(UInt8 ledState)
@@ -195,8 +329,8 @@ void ApplePS2Keyboard::setAlphaLockFeedback(bool locked)
 
 const unsigned char * ApplePS2Keyboard::defaultKeymapOfLength(UInt32 * length)
 {
-    *length = sizeof(applePS2USAKeyMap);
-    return applePS2USAKeyMap;
+    *length = sizeof(gPDHIDUSAKeyMap);
+    return gPDHIDUSAKeyMap;
 }
 
 UInt32 ApplePS2Keyboard::maxKeyCodes()

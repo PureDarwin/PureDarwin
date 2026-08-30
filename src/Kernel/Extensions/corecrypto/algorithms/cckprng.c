@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <sys/systm.h>
 #include <corecrypto/cckprng.h>
 #include <corecrypto/ccrng.h>
 #include "yarrow/yarrow.h"
@@ -9,7 +10,12 @@
 void cckprng_init(struct cckprng_ctx *ctx, unsigned max_ngens, size_t entropybuf_nbytes, const void *entropybuf,
 				  const uint32_t *entropybuf_nsamples, size_t seed_nbytes, const void *seed, size_t nonce_nbytes,
 				  const void *nonce) {
-	prngInitialize(&ctx->prng);
+	prng_error_status status = prngInitialize(&ctx->prng);
+	printf("PD-CCPRNG: init ctx=%p prng=%p status=%d\n", ctx, ctx->prng, status);
+	if (status != PRNG_SUCCESS || ctx->prng == NULL) {
+		printf("PD-CCPRNG: init failed, refusing to seed null PRNG\n");
+		return;
+	}
 	ctx->bytes_generated = ctx->bytes_since_entropy = 0;
 
 	cckprng_reseed(ctx, seed_nbytes, seed);
@@ -39,6 +45,11 @@ void cckprng_initgen(struct cckprng_ctx *ctx, unsigned gen_idx) {
 
 void cckprng_reseed(struct cckprng_ctx *ctx, size_t nbytes, const void *seed) {
 	if (nbytes == 0 || seed == NULL) {
+		return;
+	}
+	if (ctx == NULL || ctx->prng == NULL) {
+		printf("PD-CCPRNG: reseed skipped ctx=%p prng=%p nbytes=%lu\n", ctx,
+			ctx ? ctx->prng : NULL, (unsigned long)nbytes);
 		return;
 	}
 

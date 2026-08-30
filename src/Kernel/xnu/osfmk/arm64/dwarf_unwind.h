@@ -32,11 +32,11 @@
 
 /*
  * This file contains the architecture specific DWARF definitions needed for unwind
- * information added to trap handlers.
+ * information added to trap handlers (and hand-written assembly functions that
+ *  don't follow the standard calling convention ABI).
  */
 
 /* DWARF Register numbers for ARM64 registers contained in the saved state */
-
 #define DWARF_ARM64_X0 0
 #define DWARF_ARM64_X1 1
 #define DWARF_ARM64_X2 2
@@ -73,12 +73,6 @@
 #define DWARF_ARM64_PC 32
 #define DWARF_ARM64_CPSR 33
 
-#define DW_OP_breg21      0x85
-#define DW_CFA_expression 0x10
-
-#define DW_FORM_LEN_ONE_BYTE_SLEB 2
-#define DW_FORM_LEN_TWO_BYTE_SLEB 3
-
 #define DWARF_ARM64_X0_OFFSET 8
 #define DWARF_ARM64_X1_OFFSET 16
 #define DWARF_ARM64_X2_OFFSET 24
@@ -99,7 +93,6 @@
 #define DWARF_ARM64_X17_OFFSET 0x90, 0x01
 #define DWARF_ARM64_X18_OFFSET 0x98, 0x01
 #define DWARF_ARM64_X19_OFFSET 0xa0, 0x01
-
 #define DWARF_ARM64_X20_OFFSET 0xa8, 0x01
 #define DWARF_ARM64_X21_OFFSET 0xb0, 0x01
 #define DWARF_ARM64_X22_OFFSET 0xb8, 0x01
@@ -116,22 +109,43 @@
 #define DWARF_ARM64_PC_OFFSET 0x88, 0x02
 #define DWARF_ARM64_CPSR_OFFSET 0x90, 0x02
 
+/* DWARF constants */
+#define DW_CFA_register 0x09
+#define DW_CFA_expression 0x10
+#define DW_CFA_offset_extended_sf 0x11
+
+#define DW_OP_breg21      0x85
+
+#define DW_FORM_LEN_ONE_BYTE_SLEB 2
+#define DW_FORM_LEN_TWO_BYTE_SLEB 3
+
+
 /* The actual unwind directives added to trap handlers to let the debugger know where the register state is stored */
 
 /* Unwind Prologue added to each function to indicate the start of the unwind information. */
-
 #define UNWIND_PROLOGUE \
 .cfi_sections .eh_frame %%\
 .cfi_startproc          %%\
-.cfi_signal_frame       %%\
 
+#define TRAP_UNWIND_PROLOGUE \
+UNWIND_PROLOGUE \
+.cfi_signal_frame       %%\
 
 /* Unwind Epilogue added to each function to indicate the end of the unwind information */
 
 #define UNWIND_EPILOGUE .cfi_endproc
 
-
-#define UNWIND_DIRECTIVES \
+/*  Unwind directives for trap handlers let the debugger know where the register state is stored.
+ *
+ *   The saved state is stored in the `struct arm_kernel_saved_state` pointed to by x21.
+ *
+ *   A note on setting the CFA relative to $fp:
+ *   We have hand-written assembly that alters $sp all over the place, which interferes with InstructionEmulation-based unwinding.
+ *   So lldb falls back to the architecture-default unwind plan - which sets the CFA relative to $sp.
+ *   Although the $sp tampering means it can't be provided - we don't need at all for the unwind plan here.
+ *   By setting the CFA relative to $fp, which can be provided, lldb won't stop unwinding */
+#define TRAP_UNWIND_DIRECTIVES \
+.cfi_def_cfa w29, 0     %%\
 .cfi_escape DW_CFA_expression, DWARF_ARM64_X0, DW_FORM_LEN_ONE_BYTE_SLEB, DW_OP_breg21, DWARF_ARM64_X0_OFFSET %%\
 .cfi_escape DW_CFA_expression, DWARF_ARM64_X1, DW_FORM_LEN_ONE_BYTE_SLEB, DW_OP_breg21, DWARF_ARM64_X1_OFFSET %%\
 .cfi_escape DW_CFA_expression, DWARF_ARM64_X2, DW_FORM_LEN_ONE_BYTE_SLEB, DW_OP_breg21, DWARF_ARM64_X2_OFFSET %%\
@@ -166,5 +180,35 @@
 .cfi_escape DW_CFA_expression, DWARF_ARM64_SP, DW_FORM_LEN_TWO_BYTE_SLEB, DW_OP_breg21, DWARF_ARM64_SP_OFFSET %%\
 .cfi_escape DW_CFA_expression, DWARF_ARM64_PC, DW_FORM_LEN_TWO_BYTE_SLEB, DW_OP_breg21, DWARF_ARM64_PC_OFFSET %%\
 .cfi_escape DW_CFA_expression, DWARF_ARM64_CPSR, DW_FORM_LEN_TWO_BYTE_SLEB, DW_OP_breg21, DWARF_ARM64_CPSR_OFFSET %%\
+
+#if CONFIG_SPTM
+/**
+ * These offsets are SLEB128 encodings of the offsets of the FP, LR, SP, and PC
+ * members of the SPTM dispatch_panic_state_t structure defined in sptm/dispatch/dispatch.h
+ *
+ * If the offsets of these members are changed in SPTM data structures, they should be
+ * changed here to match accordingly.
+ */
+#define SPTM_UNWIND_DIRECTIVES \
+.cfi_escape DW_CFA_expression, DWARF_ARM64_FP, DW_FORM_LEN_ONE_BYTE_SLEB, DW_OP_breg21, 0 %%\
+.cfi_escape DW_CFA_expression, DWARF_ARM64_LR, DW_FORM_LEN_ONE_BYTE_SLEB, DW_OP_breg21, 8 %%\
+.cfi_escape DW_CFA_expression, DWARF_ARM64_SP, DW_FORM_LEN_ONE_BYTE_SLEB, DW_OP_breg21, 16 %%\
+.cfi_escape DW_CFA_expression, DWARF_ARM64_PC, DW_FORM_LEN_ONE_BYTE_SLEB, DW_OP_breg21, 24 %%\
+
+#endif /* CONFIG_SPTM */
+
+/*  Special unwinding instructions for `return_to_kernel`.
+ *
+ *   We set the CFA, $fp and $lr the same as would be for the architecture default
+ *   plan.
+ *   We have to tell the unwinder that x21 is at x21, because it isn't aware
+ *   we use it for the saved state.
+ *   (i.e. it isn't used as a general purpose register / isn't volatile)
+ */
+#define RETURN_TO_KERNEL_UNWIND \
+.cfi_def_cfa w29, 16     %%\
+.cfi_escape DW_CFA_offset_extended_sf, DWARF_ARM64_FP, 2 %%\
+.cfi_escape DW_CFA_offset_extended_sf, DWARF_ARM64_LR, 1 %%\
+.cfi_escape DW_CFA_register, DWARF_ARM64_X21, DWARF_ARM64_X21 %%\
 
 #endif /* _ARM64_DWARF_UNWIND_H_ */

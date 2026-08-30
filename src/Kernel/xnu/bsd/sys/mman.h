@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2020 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2000-2025 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -155,13 +155,14 @@
 #define MAP_32BIT       0x8000          /* Return virtual addresses <4G only */
 #endif /* defined(__MAC_OS_X_VERSION_MIN_REQUIRED) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 101500 */
 
-
 /*
  * Flags used to support translated processes.
  */
 #define MAP_TRANSLATED_ALLOW_EXECUTE 0x20000 /* allow execute in translated processes */
 
 #define MAP_UNIX03       0x40000 /* UNIX03 compliance */
+
+#define MAP_TPRO         0x80000 /* Allocate a region that will be protected by TPRO */
 
 #endif  /* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 
@@ -178,6 +179,10 @@
 
 /*
  * msync() flags
+ *
+ * When making a new MS_*, update tests vm_parameter_validation_[user|kern]
+ * and their expected results; they deliberately call VM functions with invalid
+ * msync values and you may be turning one of those invalid msyncs valid.
  */
 #define MS_ASYNC        0x0001  /* [MF|SIO] return immediately */
 #define MS_INVALIDATE   0x0002  /* [MF|SIO] invalidate all cached data */
@@ -192,6 +197,10 @@
 
 /*
  * Advice to madvise
+ *
+ * When making a new MADV_*, update tests vm_parameter_validation_[user|kern]
+ * and their expected results; they deliberately call VM functions with invalid
+ * madvise values and you may be turning one of those invalid madvises valid.
  */
 #define POSIX_MADV_NORMAL       0       /* [MC1] no further special treatment */
 #define POSIX_MADV_RANDOM       1       /* [MC1] expect random page refs */
@@ -211,6 +220,7 @@
 #define MADV_FREE_REUSE         8       /* caller wants to reuse those pages */
 #define MADV_CAN_REUSE          9
 #define MADV_PAGEOUT            10      /* page out now (internal only) */
+#define MADV_ZERO               11      /* zero pages without faulting in additional pages */
 
 /*
  * Return bits from mincore
@@ -224,26 +234,6 @@
 #define MINCORE_COPIED          0x40     /* Page has been copied */
 #define MINCORE_ANONYMOUS       0x80     /* Page belongs to an anonymous object */
 #endif  /* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
-
-#ifdef PRIVATE
-
-/*
- * Crypt ID for decryption flow
- */
-#define CRYPTID_NO_ENCRYPTION     0         /* File is unencrypted */
-#define CRYPTID_APP_ENCRYPTION    1         /* App binary is encrypted */
-#define CRYPTID_MODEL_ENCRYPTION  2         /* ML Model is encrypted */
-
-/*
- * Model encryption header
- */
-typedef struct {
-	__uint64_t version;
-	__uint64_t originalSize;
-	__uint64_t reserved[4];
-} model_encryption_header_t;
-
-#endif /* #ifdef PRIVATE */
 
 
 #ifndef KERNEL
@@ -279,31 +269,12 @@ int     mincore(const void *, size_t, char *);
 int     minherit(void *, size_t, int);
 #endif
 
-#ifdef PRIVATE
-int mremap_encrypted(void *, size_t, __uint32_t, __uint32_t, __uint32_t);
-#endif
-
 __END_DECLS
 
-#else   /* KERNEL */
-#ifdef XNU_KERNEL_PRIVATE
-void pshm_cache_init(void);     /* for bsd_init() */
-
-/*
- * XXX routine exported by posix_shm.c, but never used there, only used in
- * XXX kern_mman.c in the implementation of mmap().
- */
-struct mmap_args;
-struct fileproc;
-int pshm_mmap(struct proc *p, struct mmap_args *uap, user_addr_t *retval,
-    struct fileproc *fp, off_t pageoff);
-/* Really need to overhaul struct fileops to avoid this... */
-struct pshmnode;
-struct stat;
-int pshm_stat(struct pshmnode *pnode, void *ub, int isstat64);
-struct fileproc;
-int pshm_truncate(struct proc *p, struct fileproc *fp, int fd, off_t length, int32_t *retval);
-
-#endif /* XNU_KERNEL_PRIVATE */
 #endif /* KERNEL */
+
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <sys/mman_private.h>
+#endif /* defined(PRIVATE) && !defined(MODULES_SUPPORTED) */
+
 #endif /* !_SYS_MMAN_H_ */

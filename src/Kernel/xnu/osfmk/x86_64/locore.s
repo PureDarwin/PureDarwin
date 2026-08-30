@@ -68,6 +68,7 @@
 #include <assym.s>
 #include <mach/exception_types.h>
 #include <config_dtrace.h>
+#include <kern/ticket_lock.h>
 
 #define _ARCH_I386_ASM_HELP_H_          /* Prevent inclusion of user header */
 #include <mach/i386/syscall_sw.h>
@@ -318,11 +319,60 @@ _bcopystr_fail:
 	movl	$(EFAULT),%eax		/* return error for failure */
 	ret
 
+#if CONFIG_DTRACE
+
+/*
+ * Copyin 8 bit aligned word as a single transaction
+ * rdi: source address (user)
+ * rsi: destination address (kernel)
+ */
+Entry(dtrace_nofault_copy8)
+	pushq	%rbp			/* Save registers */
+	movq	%rsp, %rbp
+	RECOVERY_SECTION
+	RECOVER(L_copyin_atomic8_fail)	/* Set up recovery handler for next instruction */
+	movb	(%rdi), %al		/* Load long from user */
+	movb	%al, (%rsi)		/* Store to kernel */
+	xorl	%eax, %eax		/* Return success */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+L_copyin_atomic8_fail:
+	movl	$(EFAULT), %eax		/* Return error for failure */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+/*
+ * Copyin 16 bit aligned word as a single transaction
+ * rdi: source address (user)
+ * rsi: destination address (kernel)
+ */
+Entry(dtrace_nofault_copy16)
+	pushq	%rbp			/* Save registers */
+	movq	%rsp, %rbp
+	RECOVERY_SECTION
+	RECOVER(L_copyin_atomic16_fail)	/* Set up recovery handler for next instruction */
+	movw	(%rdi), %ax		/* Load long from user */
+	movw	%ax, (%rsi)		/* Store to kernel */
+	xorl	%eax, %eax		/* Return success */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+L_copyin_atomic16_fail:
+	movl	$(EFAULT), %eax		/* Return error for failure */
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+#endif /* CONFIG_DTRACE */
+
 /*
  * Copyin 32 bit aligned word as a single transaction
  * rdi: source address (user)
  * rsi: destination address (kernel)
  */
+#if CONFIG_DTRACE
+Entry(dtrace_nofault_copy32)
+#endif
 Entry(_copyin_atomic32)
 	pushq	%rbp			/* Save registers */
 	movq	%rsp, %rbp
@@ -344,6 +394,9 @@ L_copyin_atomic32_fail:
  * rdi: source address (user)
  * rsi: destination address (kernel)
  */
+#if CONFIG_DTRACE
+Entry(dtrace_nofault_copy64)
+#endif
 Entry(_copyin_atomic64)
 	pushq	%rbp			/* Save registers */
 	movq	%rsp, %rbp
@@ -402,6 +455,36 @@ L_copyout_atomic64_fail:
 	popq	%rbp			/* Restore registers */
 	retq				/* Return */
 
+/*
+ * hw_lck_ticket_t
+ * hw_lck_ticket_reserve_orig_allow_invalid(hw_lck_ticket_t *lck)
+ *
+ * rdi: lock address
+ */
+Entry(hw_lck_ticket_reserve_orig_allow_invalid)
+	pushq	%rbp			/* Save registers */
+	movq	%rsp, %rbp
+
+	RECOVERY_SECTION
+	RECOVER(3f)			/* Set up recovery handler for next instruction*/
+	movl	(%rdi), %eax		/* Load lock value */
+1:
+	btl	$HW_LCK_TICKET_LOCK_VALID_BIT, %eax
+	jae	3f			/* is the lock valid ? */
+
+	leal	HW_LCK_TICKET_LOCK_INC_WORD(%rax), %edx
+	RECOVERY_SECTION
+	RECOVER(3f)			/* Set up recovery handler for next instruction*/
+	lock	cmpxchgl %edx, (%rdi)
+	jne	1b
+
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
+
+3: /* invalid */
+	xorl	%eax, %eax
+	popq	%rbp			/* Restore registers */
+	retq				/* Return */
 
 /*
  * Done with recovery table.

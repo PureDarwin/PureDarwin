@@ -85,12 +85,9 @@
 #include <sys/namei.h>
 #include <sys/vnode_internal.h>
 #include <sys/ioctl.h>
+#include <sys/fsctl.h>
 #include <sys/tty.h>
-/* Temporary workaround for ubc.h until <rdar://4714366 is resolved */
-#define ubc_setcred ubc_setcred_deprecated
 #include <sys/ubc.h>
-#undef ubc_setcred
-int     ubc_setcred(struct vnode *, struct proc *);
 #include <sys/conf.h>
 #include <sys/disk.h>
 #include <sys/fsevents.h>
@@ -172,14 +169,14 @@ vn_open_modflags(struct nameidata *ndp, int *fmodep, int cmode)
 	int error;
 	struct vnode_attr *vap;
 
-	vap = kheap_alloc(KHEAP_TEMP, sizeof(struct vnode_attr), M_WAITOK);
+	vap = kalloc_type(struct vnode_attr, Z_WAITOK);
 
 	VATTR_INIT(vap);
 	VATTR_SET(vap, va_mode, (mode_t)cmode);
 
-	error = vn_open_auth(ndp, fmodep, vap);
+	error = vn_open_auth(ndp, fmodep, vap, NULLVP);
 
-	kheap_free(KHEAP_TEMP, vap, sizeof(struct vnode_attr));
+	kfree_type(struct vnode_attr, vap);
 
 	return error;
 }
@@ -231,6 +228,26 @@ vn_open_auth_do_create(struct nameidata *ndp, struct vnode_attr *vap, int fmode,
 
 #if NAMEDRSRCFORK
 	if (ndp->ni_cnd.cn_flags & CN_WANTSRSRCFORK) {
+		/* Resource fork creation - check additional read permissions if FREAD is set */
+		if (fmode & FREAD) {
+#if CONFIG_MACF
+			/* Need MAC getextattr check for read access */
+			error = mac_vnode_check_getextattr(ctx, dvp, XATTR_RESOURCEFORK_NAME, NULL);
+			if (error) {
+				goto out;
+			}
+#endif /* CONFIG_MACF */
+
+			/* Need read extended attribute permission for read access */
+			if ((error = vnode_authorize(dvp, NULL, KAUTH_VNODE_READ_EXTATTRIBUTES, ctx)) != 0) {
+				goto out;
+			}
+		}
+
+		/*
+		 * vn_authorize_create will unconditionally check POSIX/MAC write permissions
+		 * (regardless of FWRITE) because we are creating the file.
+		 */
 		if ((error = vn_authorize_create(dvp, &ndp->ni_cnd, vap, ctx, NULL)) != 0) {
 			goto out;
 		}
@@ -337,6 +354,10 @@ out:
  *					information to be used for the open
  *		vap			A pointer to the vnode attribute
  *					descriptor to be used for the open
+ *		authvp		If non-null and VA_DP_AUTHENTICATE is set in vap,
+ *					have a supporting filesystem verify that the file
+ *					to be opened is on the same volume as authvp and
+ *					that authvp is on an authenticated volume
  *
  * Indirect:	*			Contents of the data structures pointed
  *					to by the parameters are modified as
@@ -371,7 +392,7 @@ out:
  *		in the code they originated.
  */
 int
-vn_open_auth(struct nameidata *ndp, int *fmodep, struct vnode_attr *vap)
+vn_open_auth(struct nameidata *ndp, int *fmodep, struct vnode_attr *vap, vnode_t authvp)
 {
 	struct vnode *vp;
 	struct vnode *dvp;
@@ -384,7 +405,7 @@ vn_open_auth(struct nameidata *ndp, int *fmodep, struct vnode_attr *vap)
 	boolean_t need_vnop_open;
 	boolean_t batched;
 	boolean_t ref_failed;
-	int nretries = 0;
+	int nretries = 0, max_retries = 10;
 
 again:
 	vp = NULL;
@@ -396,16 +417,27 @@ again:
 	fmode = *fmodep;
 	origcnflags = ndp->ni_cnd.cn_flags;
 
-	// If raw encrypted mode is requested, handle that here
-	if (VATTR_IS_ACTIVE(vap, va_dataprotect_flags)
-	    && ISSET(vap->va_dataprotect_flags, VA_DP_RAWENCRYPTED)) {
-		fmode |= FENCRYPTED;
+	if (VATTR_IS_ACTIVE(vap, va_dataprotect_flags)) {
+		if ((authvp != NULLVP)
+		    && !ISSET(vap->va_dataprotect_flags, VA_DP_AUTHENTICATE)) {
+			error = EINVAL;
+			goto out;
+		}
+		// If raw encrypted mode is requested, handle that here
+		if (ISSET(vap->va_dataprotect_flags, VA_DP_RAWENCRYPTED)) {
+			fmode |= FENCRYPTED;
+		}
 	}
 
-	if ((fmode & O_NOFOLLOW_ANY) && (fmode & (O_SYMLINK | O_NOFOLLOW))) {
+	if ((fmode & O_NOFOLLOW_ANY) && (fmode & O_NOFOLLOW)) {
 		error = EINVAL;
 		goto out;
 	}
+
+	/*
+	 * We only call nameidone when exiting the function because we may
+	 * end up needing the pathname buffer in the component structure.
+	 */
 
 	/*
 	 * O_CREAT
@@ -422,17 +454,27 @@ again:
 		/* Inherit USEDVP, vnode_open() supported flags only */
 		ndp->ni_cnd.cn_flags &= (USEDVP | NOCROSSMOUNT);
 		ndp->ni_cnd.cn_flags |= LOCKPARENT | LOCKLEAF | AUDITVNPATH1;
-		ndp->ni_flag = NAMEI_COMPOUNDOPEN;
+		/* Inherit NAMEI_ROOTDIR flag only */
+		ndp->ni_flag &= NAMEI_ROOTDIR | NAMEI_ATFD;
+		ndp->ni_flag |= NAMEI_COMPOUNDOPEN;
 #if NAMEDRSRCFORK
 		/* open calls are allowed for resource forks. */
 		ndp->ni_cnd.cn_flags |= CN_ALLOWRSRCFORK;
 #endif
-		if ((fmode & O_EXCL) == 0 && (fmode & O_NOFOLLOW) == 0 && (origcnflags & FOLLOW) != 0) {
+		if ((fmode & O_EXCL) == 0 && (fmode & O_NOFOLLOW) == 0 && (origcnflags & FOLLOW) != 0 && (fmode & O_SYMLINK) == 0) {
 			ndp->ni_cnd.cn_flags |= FOLLOW;
 		}
 		if (fmode & O_NOFOLLOW_ANY) {
 			/* will return ELOOP on the first symlink to be hit */
 			ndp->ni_flag |= NAMEI_NOFOLLOW_ANY;
+		}
+		if (fmode & O_RESOLVE_BENEATH) {
+			/* will return ENOTCAPABLE if path resolution escapes the starting directory */
+			ndp->ni_flag |= NAMEI_RESOLVE_BENEATH;
+		}
+		if (fmode & O_UNIQUE) {
+			/* will return ENOTCAPABLE if target vnode has multiple links */
+			ndp->ni_flag |= NAMEI_UNIQUE;
 		}
 
 continue_create_lookup:
@@ -463,10 +505,7 @@ continue_create_lookup:
 			dvp = ndp->ni_dvp;
 			vp = ndp->ni_vp;
 
-			/*
-			 * Detected a node that the filesystem couldn't handle.  Don't call
-			 * nameidone() yet, because we need that path buffer.
-			 */
+			/* Detected a node that the filesystem couldn't handle */
 			if (error == EKEEPLOOKING) {
 				if (!batched) {
 					panic("EKEEPLOOKING from a filesystem that doesn't support compound VNOPs?");
@@ -474,7 +513,6 @@ continue_create_lookup:
 				goto continue_create_lookup;
 			}
 
-			nameidone(ndp);
 			if (dvp) {
 				panic("Shouldn't have a dvp here.");
 			}
@@ -487,6 +525,7 @@ continue_create_lookup:
 					if (vp) {
 						vnode_put(vp);
 					}
+					nameidone(ndp);
 					goto again;
 				}
 				goto bad;
@@ -517,7 +556,6 @@ continue_create_lookup:
 					goto continue_create_lookup;
 				}
 			}
-			nameidone(ndp);
 			vnode_put(dvp);
 			ndp->ni_dvp = NULLVP;
 
@@ -544,7 +582,9 @@ continue_create_lookup:
 		if (fmode & FENCRYPTED) {
 			ndp->ni_cnd.cn_flags |= CN_RAW_ENCRYPTED | CN_SKIPNAMECACHE;
 		}
-		ndp->ni_flag = NAMEI_COMPOUNDOPEN;
+		/* Inherit NAMEI_ROOTDIR flag only */
+		ndp->ni_flag &= NAMEI_ROOTDIR | NAMEI_ATFD;
+		ndp->ni_flag |= NAMEI_COMPOUNDOPEN;
 
 		/* preserve NOFOLLOW from vnode_open() */
 		if (fmode & O_NOFOLLOW || fmode & O_SYMLINK || (origcnflags & FOLLOW) == 0) {
@@ -553,6 +593,14 @@ continue_create_lookup:
 		if (fmode & O_NOFOLLOW_ANY) {
 			/* will return ELOOP on the first symlink to be hit */
 			ndp->ni_flag |= NAMEI_NOFOLLOW_ANY;
+		}
+		if (fmode & O_RESOLVE_BENEATH) {
+			/* will return ENOTCAPABLE if path resolution escapes the starting directory */
+			ndp->ni_flag |= NAMEI_RESOLVE_BENEATH;
+		}
+		if (fmode & O_UNIQUE) {
+			/* will return ENOTCAPABLE if target vnode has multiple links */
+			ndp->ni_flag |= NAMEI_UNIQUE;
 		}
 
 		/* Do a lookup, possibly going directly to filesystem for compound operation */
@@ -574,11 +622,22 @@ continue_create_lookup:
 					if ((ndp->ni_flag & NAMEI_CONTLOOKUP) == 0) {
 						panic("EKEEPLOOKING, but continue flag not set?");
 					}
+				} else if ((fmode & (FREAD | FWRITE | FEXEC)) == FEXEC) {
+					/*
+					 * Some file systems fail in vnop_open call with absense of
+					 * both FREAD and FWRITE access modes. Retry the vnop_open
+					 * call again with FREAD access mode added.
+					 */
+					error = VNOP_COMPOUND_OPEN(dvp, &ndp->ni_vp, ndp, 0,
+					    fmode | FREAD, NULL, NULL, ctx);
+					if (error == 0) {
+						vp = ndp->ni_vp;
+						need_vnop_open = FALSE;
+					}
 				}
 			}
 		} while (error == EKEEPLOOKING);
 
-		nameidone(ndp);
 		vnode_put(dvp);
 		ndp->ni_dvp = NULLVP;
 
@@ -588,11 +647,32 @@ continue_create_lookup:
 	}
 
 	/*
-	 * By this point, nameidone() is called, dvp iocount is dropped,
-	 * and dvp pointer is cleared.
+	 * By this point, dvp iocount is dropped and dvp pointer is cleared.
 	 */
 	if (ndp->ni_dvp != NULLVP) {
 		panic("Haven't cleaned up adequately in vn_open_auth()");
+	}
+
+	/* Verify that the vnode returned from namei() has the expected fileid and fsid */
+	if (VATTR_IS_ACTIVE(vap, va_flags) && ISSET(vap->va_flags, VA_VAFILEID)) {
+		vnode_t tmp_vp;
+
+		if (!VATTR_IS_ACTIVE(vap, va_fsid64) || !VATTR_IS_ACTIVE(vap, va_fileid)) {
+			error = EINVAL;
+			goto bad;
+		}
+
+		error = vnode_getfromid(vap->va_fsid64.val[0], vap->va_fileid, ctx, FSOPT_ISREALFSID, &tmp_vp);
+		if (error) {
+			goto bad;
+		}
+
+		if (tmp_vp != vp) {
+			vnode_put(tmp_vp);
+			error = ERECYCLE;
+			goto bad;
+		}
+		vnode_put(tmp_vp);
 	}
 
 	/*
@@ -612,23 +692,43 @@ continue_create_lookup:
 			}
 		}
 
-		if (VATTR_IS_ACTIVE(vap, va_dataprotect_flags)
-		    && ISSET(vap->va_dataprotect_flags, VA_DP_RAWUNENCRYPTED)) {
-			/* Don't allow unencrypted io request from user space unless entitled */
-			boolean_t entitled = FALSE;
+		if (VATTR_IS_ACTIVE(vap, va_dataprotect_flags)) {
+			if (ISSET(vap->va_dataprotect_flags, VA_DP_RAWUNENCRYPTED)) {
+				/* Don't allow unencrypted io request from user space unless entitled */
+				boolean_t entitled = FALSE;
 #if !SECURE_KERNEL
-			entitled = IOTaskHasEntitlement(current_task(), "com.apple.private.security.file-unencrypt-access");
-#endif
-			if (!entitled) {
-				error = EPERM;
-				goto bad;
+				entitled = IOCurrentTaskHasEntitlement("com.apple.private.security.file-unencrypt-access");
+#endif /* SECURE_KERNEL */
+				if (!entitled) {
+					error = EPERM;
+					goto bad;
+				}
+				fmode |= FUNENCRYPTED;
 			}
-			fmode |= FUNENCRYPTED;
+
+			if (ISSET(vap->va_dataprotect_flags, VA_DP_AUTHENTICATE)) {
+				fsioc_auth_fs_t afs = { .authvp = authvp };
+
+				error = VNOP_IOCTL(vp, FSIOC_AUTH_FS, (caddr_t)&afs, 0, ctx);
+				if (error) {
+					goto bad;
+				}
+			}
 		}
 
 		error = VNOP_OPEN(vp, fmode, ctx);
 		if (error) {
-			goto bad;
+			/*
+			 * Some file systems fail in vnop_open call with absense of both
+			 * FREAD and FWRITE access modes. Retry the vnop_open call again
+			 * with FREAD access mode added.
+			 */
+			if ((fmode & (FREAD | FWRITE | FEXEC)) == FEXEC) {
+				error = VNOP_OPEN(vp, fmode | FREAD, ctx);
+			}
+			if (error) {
+				goto bad;
+			}
 		}
 		need_vnop_open = FALSE;
 	}
@@ -660,6 +760,7 @@ continue_create_lookup:
 	}
 
 	*fmodep = fmode;
+	nameidone(ndp);
 	return 0;
 
 bad:
@@ -684,7 +785,7 @@ bad:
 		 * but according to vnode_authorize or VNOP_OPEN it
 		 * no longer exists.
 		 *
-		 * EREDRIVEOPEN: means that we were hit by the tty allocation race.
+		 * EREDRIVEOPEN: means that we were hit by the tty allocation race or NFSv4 open/create race.
 		 */
 		if (((error == ENOENT) && (*fmodep & O_CREAT)) || (error == EREDRIVEOPEN) || ref_failed) {
 			/*
@@ -699,20 +800,29 @@ bad:
 			 * may possibly be blcoking other threads from running.
 			 *
 			 * We start yielding the CPU after some number of
-			 * retries for increasing durations. Note that this is
-			 * still a loop without an exit condition.
+			 * retries for increasing durations.
 			 */
 			nretries += 1;
-			if (nretries > RETRY_NO_YIELD_COUNT) {
-				/* Every hz/100 secs is 10 msecs ... */
-				tsleep(&nretries, PVFS, "vn_open_auth_retry",
-				    MIN((nretries * (hz / 100)), hz));
+			if (nretries > max_retries) {
+				printf("%s: reached max_retries error %d need_vnop_open %d "
+				    "fmode 0x%x ref_failed %d\n",
+				    __func__, error, need_vnop_open, *fmodep, ref_failed);
+				goto out;
 			}
+			if (nretries > RETRY_NO_YIELD_COUNT) {
+				struct timespec to;
+
+				to.tv_sec = 0;
+				to.tv_nsec = nretries * 10 * NSEC_PER_MSEC;
+				msleep(&nretries, (lck_mtx_t *)0, PVFS, "vn_open_auth_retry", &to);
+			}
+			nameidone(ndp);
 			goto again;
 		}
 	}
 
 out:
+	nameidone(ndp);
 	return error;
 }
 
@@ -844,7 +954,7 @@ vn_read_swapfile(
 
 	while (swap_count > 0) {
 		if (my_swap_page == NULL) {
-			my_swap_page = kheap_alloc(KHEAP_TEMP, PAGE_SIZE, Z_WAITOK | Z_ZERO);
+			my_swap_page = kalloc_data(PAGE_SIZE, Z_WAITOK | Z_ZERO);
 			/* add an end-of-line to keep line counters happy */
 			my_swap_page[PAGE_SIZE - 1] = '\n';
 		}
@@ -862,7 +972,7 @@ vn_read_swapfile(
 		}
 		swap_count -= (prev_resid - uio_resid(uio));
 	}
-	kheap_free(KHEAP_TEMP, my_swap_page, PAGE_SIZE);
+	kfree_data(my_swap_page, PAGE_SIZE);
 
 	return error;
 }
@@ -926,7 +1036,7 @@ vn_rdwr_64(
 	int spacetype;
 	struct vfs_context context;
 	int error = 0;
-	char uio_buf[UIO_SIZEOF(1)];
+	UIO_STACKBUF(uio_buf, 1);
 
 	context.vc_thread = current_thread();
 	context.vc_ucred = cred;
@@ -981,7 +1091,7 @@ vn_rdwr_64(
 	return error;
 }
 
-static inline void
+void
 vn_offset_lock(struct fileglob *fg)
 {
 	lck_mtx_lock_spin(&fg->fg_lock);
@@ -994,7 +1104,7 @@ vn_offset_lock(struct fileglob *fg)
 	lck_mtx_unlock(&fg->fg_lock);
 }
 
-static inline void
+void
 vn_offset_unlock(struct fileglob *fg)
 {
 	int lock_wanted = 0;
@@ -1010,38 +1120,26 @@ vn_offset_unlock(struct fileglob *fg)
 	}
 }
 
-/*
- * File table vnode read routine.
- */
 static int
-vn_read(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
+vn_read_common(vnode_t vp, struct uio *uio, int fflag, vfs_context_t ctx)
 {
-	struct vnode *vp;
 	int error;
 	int ioflag;
 	off_t read_offset;
 	user_ssize_t  read_len;
 	user_ssize_t  adjusted_read_len;
 	user_ssize_t  clippedsize;
-	bool offset_locked;
 
+	/* Caller has already validated read_len. */
 	read_len = uio_resid(uio);
-	if (read_len < 0 || read_len > INT_MAX) {
-		return EINVAL;
-	}
+	assert(read_len >= 0 && read_len <= INT_MAX);
+
 	adjusted_read_len = read_len;
 	clippedsize = 0;
-	offset_locked = false;
-
-	vp = (struct vnode *)fp->fp_glob->fg_data;
-	if ((error = vnode_getwithref(vp))) {
-		return error;
-	}
 
 #if CONFIG_MACF
 	error = mac_vnode_check_read(ctx, vfs_context_ucred(ctx), vp);
 	if (error) {
-		(void)vnode_put(vp);
 		return error;
 	}
 #endif
@@ -1049,39 +1147,30 @@ vn_read(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
 	/* This signals to VNOP handlers that this read came from a file table read */
 	ioflag = IO_SYSCALL_DISPATCH;
 
-	if (fp->fp_glob->fg_flag & FNONBLOCK) {
+	if (fflag & FNONBLOCK) {
 		ioflag |= IO_NDELAY;
 	}
-	if ((fp->fp_glob->fg_flag & FNOCACHE) || vnode_isnocache(vp)) {
+	if ((fflag & FNOCACHE) || vnode_isnocache(vp)) {
 		ioflag |= IO_NOCACHE;
 	}
-	if (fp->fp_glob->fg_flag & FENCRYPTED) {
+	if (fflag & FENCRYPTED) {
 		ioflag |= IO_ENCRYPTED;
 	}
-	if (fp->fp_glob->fg_flag & FUNENCRYPTED) {
+	if (fflag & FUNENCRYPTED) {
 		ioflag |= IO_SKIP_ENCRYPTION;
 	}
-	if (fp->fp_glob->fg_flag & O_EVTONLY) {
+	if (fflag & O_EVTONLY) {
 		ioflag |= IO_EVTONLY;
 	}
-	if (fp->fp_glob->fg_flag & FNORDAHEAD) {
+	if (fflag & FNORDAHEAD) {
 		ioflag |= IO_RAOFF;
 	}
 
-	if ((flags & FOF_OFFSET) == 0) {
-		if ((vnode_vtype(vp) == VREG) && !vnode_isswap(vp)) {
-			vn_offset_lock(fp->fp_glob);
-			offset_locked = true;
-		}
-		read_offset = fp->fp_glob->fg_offset;
-		uio_setoffset(uio, read_offset);
-	} else {
-		read_offset = uio_offset(uio);
-		/* POSIX allows negative offsets for character devices. */
-		if ((read_offset < 0) && (vnode_vtype(vp) != VCHR)) {
-			error = EINVAL;
-			goto error_out;
-		}
+	read_offset = uio_offset(uio);
+	/* POSIX allows negative offsets for character devices. */
+	if ((read_offset < 0) && (vnode_vtype(vp) != VCHR)) {
+		error = EINVAL;
+		goto error_out;
 	}
 
 	if (read_offset == INT64_MAX) {
@@ -1120,20 +1209,63 @@ vn_read(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
 		uio_setresid(uio, (uio_resid(uio) + clippedsize));
 	}
 
+error_out:
+	return error;
+}
+
+/*
+ * File table vnode read routine.
+ */
+static int
+vn_read(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
+{
+	vnode_t vp;
+	user_ssize_t read_len;
+	int error;
+	bool offset_locked;
+
+	read_len = uio_resid(uio);
+	if (read_len < 0 || read_len > INT_MAX) {
+		return EINVAL;
+	}
+
+	if ((flags & FOF_OFFSET) == 0) {
+		vn_offset_lock(fp->fp_glob);
+		offset_locked = true;
+	} else {
+		offset_locked = false;
+	}
+	vp = (struct vnode *)fp_get_data(fp);
+	if ((error = vnode_getwithref(vp))) {
+		if (offset_locked) {
+			vn_offset_unlock(fp->fp_glob);
+		}
+		return error;
+	}
+
+	if (offset_locked && (vnode_vtype(vp) != VREG || vnode_isswap(vp))) {
+		vn_offset_unlock(fp->fp_glob);
+		offset_locked = false;
+	}
+
+	if ((flags & FOF_OFFSET) == 0) {
+		uio_setoffset(uio, fp->fp_glob->fg_offset);
+	}
+
+	error = vn_read_common(vp, uio, fp->fp_glob->fg_flag, ctx);
+
 	if ((flags & FOF_OFFSET) == 0) {
 		fp->fp_glob->fg_offset += read_len - uio_resid(uio);
 	}
 
-error_out:
 	if (offset_locked) {
 		vn_offset_unlock(fp->fp_glob);
 		offset_locked = false;
 	}
 
-	(void)vnode_put(vp);
+	vnode_put(vp);
 	return error;
 }
-
 
 /*
  * File table vnode write routine.
@@ -1150,7 +1282,7 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
 	user_ssize_t clippedsize;
 	bool offset_locked;
 	proc_t p = vfs_context_proc(ctx);
-	rlim_t rlim_cur_fsize = p ? proc_limitgetcur(p, RLIMIT_FSIZE, TRUE) : 0;
+	rlim_t rlim_cur_fsize = p ? proc_limitgetcur(p, RLIMIT_FSIZE) : 0;
 
 	write_len = uio_resid(uio);
 	if (write_len < 0 || write_len > INT_MAX) {
@@ -1158,17 +1290,34 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
 	}
 	adjusted_write_len = write_len;
 	clippedsize = 0;
-	offset_locked = false;
 
-	vp = (struct vnode *)fp->fp_glob->fg_data;
+	if ((flags & FOF_OFFSET) == 0) {
+		vn_offset_lock(fp->fp_glob);
+		offset_locked = true;
+	} else {
+		offset_locked = false;
+	}
+
+	vp = (struct vnode *)fp_get_data(fp);
 	if ((error = vnode_getwithref(vp))) {
+		if (offset_locked) {
+			vn_offset_unlock(fp->fp_glob);
+		}
 		return error;
+	}
+
+	if (offset_locked && (vnode_vtype(vp) != VREG || vnode_isswap(vp))) {
+		vn_offset_unlock(fp->fp_glob);
+		offset_locked = false;
 	}
 
 #if CONFIG_MACF
 	error = mac_vnode_check_write(ctx, vfs_context_ucred(ctx), vp);
 	if (error) {
 		(void)vnode_put(vp);
+		if (offset_locked) {
+			vn_offset_unlock(fp->fp_glob);
+		}
 		return error;
 	}
 #endif
@@ -1185,8 +1334,18 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
 	if (fp->fp_glob->fg_flag & FNONBLOCK) {
 		ioflag |= IO_NDELAY;
 	}
+	assert(!(fp->fp_glob->fg_flag & O_NOCTTY) || (fp->fp_glob->fg_flag & FNOCACHE));
 	if ((fp->fp_glob->fg_flag & FNOCACHE) || vnode_isnocache(vp)) {
 		ioflag |= IO_NOCACHE;
+		/*
+		 * O_NOCTTY is repurposed to indicate the preference for relaxed
+		 * alignment and size restrictions. O_NOCTTY has no meaning beyond
+		 * the open of the fd and is used only for ttys and the use
+		 * is mutually exclusive with nocache io for regular files.
+		 */
+		if (fp->fp_glob->fg_flag & O_NOCTTY || vfs_context_allow_fs_blksize_nocache_write(ctx)) {
+			ioflag |= IO_NOCACHE_SWRITE;
+		}
 	}
 	if (fp->fp_glob->fg_flag & FNODIRECT) {
 		ioflag |= IO_NODIRECT;
@@ -1211,10 +1370,6 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
 	}
 
 	if ((flags & FOF_OFFSET) == 0) {
-		if ((vnode_vtype(vp) == VREG) && !vnode_isswap(vp)) {
-			vn_offset_lock(fp->fp_glob);
-			offset_locked = true;
-		}
 		write_offset = fp->fp_glob->fg_offset;
 		uio_setoffset(uio, write_offset);
 	} else {
@@ -1331,20 +1486,21 @@ vn_write(struct fileproc *fp, struct uio *uio, int flags, vfs_context_t ctx)
 	 * Set the credentials on successful writes
 	 */
 	if ((error == 0) && (vp->v_tag == VT_NFS) && (UBCINFOEXISTS(vp))) {
-		/*
-		 * When called from aio subsystem, we only have the proc from
-		 * which to get the credential, at this point, so use that
-		 * instead.  This means aio functions are incompatible with
-		 * per-thread credentials (aio operations are proxied).  We
-		 * can't easily correct the aio vs. settid race in this case
-		 * anyway, so we disallow it.
-		 */
-		if ((flags & FOF_PCRED) == 0) {
-			ubc_setthreadcred(vp, p, current_thread());
-		} else {
-			ubc_setcred(vp, p);
-		}
+		ubc_setcred(vp, vfs_context_ucred(ctx));
 	}
+
+#if CONFIG_FILE_LEASES
+	/*
+	 * On success, break the parent dir lease as the file's attributes (size
+	 * and/or mtime) have changed. Best attempt to break lease, just drop the
+	 * the error upon failure as there is no point to return error when the
+	 * write has completed successfully.
+	 */
+	if (__probable(error == 0)) {
+		vnode_breakdirlease(vp, true, O_WRONLY);
+	}
+#endif /* CONFIG_FILE_LEASES */
+
 	(void)vnode_put(vp);
 	return error;
 
@@ -1400,7 +1556,7 @@ vn_stat_noauth(struct vnode *vp, void *sbptr, kauth_filesec_t *xsec, int isstat6
 	VATTR_WANTED(&va, va_iosize);
 	/* lower layers will synthesise va_total_alloc from va_data_size if required */
 	VATTR_WANTED(&va, va_total_alloc);
-	if (xsec != NULL) {
+	if (xsec != NULL && !vnode_isnamedstream(vp)) {
 		VATTR_WANTED(&va, va_uuuid);
 		VATTR_WANTED(&va, va_guuid);
 		VATTR_WANTED(&va, va_acl);
@@ -1584,11 +1740,10 @@ vn_stat(struct vnode *vp, void *sb, kauth_filesec_t *xsec, int isstat64, int nee
 static int
 vn_ioctl(struct fileproc *fp, u_long com, caddr_t data, vfs_context_t ctx)
 {
-	struct vnode *vp = ((struct vnode *)fp->fp_glob->fg_data);
+	struct vnode *vp = (struct vnode *)fp_get_data(fp);
 	off_t file_size;
 	int error;
 	struct vnode *ttyvp;
-	struct session * sessp;
 
 	if ((error = vnode_getwithref(vp))) {
 		return error;
@@ -1643,6 +1798,12 @@ vn_ioctl(struct fileproc *fp, u_long com, caddr_t data, vfs_context_t ctx)
 			goto out;
 		}
 
+		/* Should not be able to check if filesystem is authenticated from user space */
+		if (com == FSIOC_AUTH_FS) {
+			error = ENOTTY;
+			goto out;
+		}
+
 		if (com == FIODTYPE) {
 			if (vp->v_type == VBLK) {
 				if (major(vp->v_rdev) >= nblkdev) {
@@ -1665,14 +1826,18 @@ vn_ioctl(struct fileproc *fp, u_long com, caddr_t data, vfs_context_t ctx)
 		error = VNOP_IOCTL(vp, com, data, fp->fp_glob->fg_flag, ctx);
 
 		if (error == 0 && com == TIOCSCTTY) {
-			sessp = proc_session(vfs_context_proc(ctx));
+			struct session *sessp;
+			struct pgrp *pg;
+
+			pg = proc_pgrp(vfs_context_proc(ctx), &sessp);
 
 			session_lock(sessp);
 			ttyvp = sessp->s_ttyvp;
 			sessp->s_ttyvp = vp;
 			sessp->s_ttyvid = vnode_vid(vp);
 			session_unlock(sessp);
-			session_rele(sessp);
+
+			pgrp_rele(pg);
 		}
 	}
 out:
@@ -1687,7 +1852,7 @@ static int
 vn_select(struct fileproc *fp, int which, void *wql, __unused vfs_context_t ctx)
 {
 	int error;
-	struct vnode * vp = (struct vnode *)fp->fp_glob->fg_data;
+	struct vnode * vp = (struct vnode *)fp_get_data(fp);
 	struct vfs_context context;
 
 	if ((error = vnode_getwithref(vp)) == 0) {
@@ -1716,7 +1881,7 @@ vn_select(struct fileproc *fp, int which, void *wql, __unused vfs_context_t ctx)
 static int
 vn_closefile(struct fileglob *fg, vfs_context_t ctx)
 {
-	struct vnode *vp = fg->fg_data;
+	struct vnode *vp = fg_get_data(fg);
 	int error;
 
 	if ((error = vnode_getwithref(vp)) == 0) {
@@ -1736,10 +1901,16 @@ vn_closefile(struct fileglob *fg, vfs_context_t ctx)
 			}
 
 			if ((fg->fg_lflags & FG_HAS_OFDLOCK) != 0) {
-				(void) VNOP_ADVLOCK(vp, (caddr_t)fg,
+				(void) VNOP_ADVLOCK(vp, ofd_to_id(fg),
 				    F_UNLCK, &lf, F_OFD_LOCK, ctx, NULL);
 			}
 		}
+#if CONFIG_FILE_LEASES
+		if (FILEGLOB_DTYPE(fg) == DTYPE_VNODE && !LIST_EMPTY(&vp->v_leases)) {
+			/* Expected open count doesn't matter for release. */
+			(void)vnode_setlease(vp, fg, F_UNLCK, 0, ctx);
+		}
+#endif
 		error = vn_close(vp, fg->fg_flag, ctx);
 		(void) vnode_put(vp);
 	}
@@ -1836,7 +2007,7 @@ vn_kqfilter(struct fileproc *fp, struct knote *kn, struct kevent_qos_s *kev)
 	int error = 0;
 	int result = 0;
 
-	vp = (struct vnode *)fp->fp_glob->fg_data;
+	vp = (struct vnode *)fp_get_data(fp);
 
 	/*
 	 * Don't attach a knote to a dead vnode.
@@ -1877,8 +2048,9 @@ vn_kqfilter(struct fileproc *fp, struct knote *kn, struct kevent_qos_s *kev)
 			}
 #endif
 
-			kn->kn_hook = (void*)vp;
 			kn->kn_filtid = EVFILTID_VN;
+			knote_kn_hook_set_raw(kn, (void *)vp);
+			vnode_hold(vp);
 
 			vnode_lock(vp);
 			KNOTE_ATTACH(&vp->v_knotes, kn);
@@ -1907,11 +2079,13 @@ static void
 filt_vndetach(struct knote *kn)
 {
 	vfs_context_t ctx = vfs_context_current();
-	struct vnode *vp = (struct vnode *)kn->kn_hook;
+	struct vnode *vp = (struct vnode *)knote_kn_hook_get_raw(kn);
 	uint32_t vid = vnode_vid(vp);
 	if (vnode_getwithvid(vp, vid)) {
+		vnode_drop(vp);
 		return;
 	}
+	vnode_drop(vp);
 
 	vnode_lock(vp);
 	KNOTE_DETACH(&vp->v_knotes, kn);
@@ -2034,12 +2208,12 @@ filt_vnode_common(struct knote *kn, struct kevent_qos_s *kev, vnode_t vp, long h
 		case EVFILT_VNODE:
 			/* Check events this note matches against the hint */
 			if (kn->kn_sfflags & hint) {
-				kn->kn_fflags |= hint;         /* Set which event occurred */
+				kn->kn_fflags |= (uint32_t)hint; /* Set which event occurred */
 			}
 			activate = (kn->kn_fflags != 0);
 			break;
 		default:
-			panic("Invalid knote filter on a vnode!\n");
+			panic("Invalid knote filter on a vnode!");
 		}
 	}
 
@@ -2053,7 +2227,7 @@ filt_vnode_common(struct knote *kn, struct kevent_qos_s *kev, vnode_t vp, long h
 static int
 filt_vnode(struct knote *kn, long hint)
 {
-	vnode_t vp = (struct vnode *)kn->kn_hook;
+	vnode_t vp = (struct vnode *)knote_kn_hook_get_raw(kn);
 
 	return filt_vnode_common(kn, NULL, vp, hint);
 }
@@ -2061,7 +2235,7 @@ filt_vnode(struct knote *kn, long hint)
 static int
 filt_vntouch(struct knote *kn, struct kevent_qos_s *kev)
 {
-	vnode_t vp = (struct vnode *)kn->kn_hook;
+	vnode_t vp = (struct vnode *)knote_kn_hook_get_raw(kn);
 	uint32_t vid = vnode_vid(vp);
 	int activate;
 	int hint = 0;
@@ -2088,7 +2262,7 @@ filt_vntouch(struct knote *kn, struct kevent_qos_s *kev)
 static int
 filt_vnprocess(struct knote *kn, struct kevent_qos_s *kev)
 {
-	vnode_t vp = (struct vnode *)kn->kn_hook;
+	vnode_t vp = (struct vnode *)knote_kn_hook_get_raw(kn);
 	uint32_t vid = vnode_vid(vp);
 	int activate;
 	int hint = 0;
@@ -2107,4 +2281,132 @@ filt_vnprocess(struct knote *kn, struct kevent_qos_s *kev)
 	vnode_unlock(vp);
 
 	return activate;
+}
+
+struct vniodesc {
+	vnode_t         vnio_vnode;     /* associated vnode */
+	int             vnio_fflags;    /* cached fileglob flags */
+};
+
+errno_t
+vnio_openfd(int fd, vniodesc_t *vniop)
+{
+	proc_t p = current_proc();
+	struct fileproc *fp = NULL;
+	vniodesc_t vnio;
+	vnode_t vp;
+	int error;
+	bool need_drop = false;
+
+	vnio = kalloc_type(struct vniodesc, Z_WAITOK);
+
+	error = fp_getfvp(p, fd, &fp, &vp);
+	if (error) {
+		goto out;
+	}
+	need_drop = true;
+
+	if ((fp->fp_glob->fg_flag & (FREAD | FWRITE)) == 0) {
+		error = EBADF;
+		goto out;
+	}
+
+	if (vnode_isswap(vp)) {
+		error = EPERM;
+		goto out;
+	}
+
+	if (vp->v_type != VREG) {
+		error = EFTYPE;
+		goto out;
+	}
+
+	error = vnode_getwithref(vp);
+	if (error) {
+		goto out;
+	}
+
+	vnio->vnio_vnode = vp;
+	vnio->vnio_fflags = fp->fp_glob->fg_flag;
+
+	(void)fp_drop(p, fd, fp, 0);
+	need_drop = false;
+
+	error = vnode_ref_ext(vp, vnio->vnio_fflags, 0);
+	if (error == 0) {
+		*vniop = vnio;
+		vnio = NULL;
+	}
+
+	vnode_put(vp);
+
+out:
+	if (need_drop) {
+		fp_drop(p, fd, fp, 0);
+	}
+	if (vnio != NULL) {
+		kfree_type(struct vniodesc, vnio);
+	}
+	return error;
+}
+
+errno_t
+vnio_close(vniodesc_t vnio)
+{
+	int error;
+
+	/*
+	 * The vniodesc is always destroyed, because the close
+	 * always "succeeds".  We just return whatever error
+	 * might have been encountered while doing so.
+	 */
+
+	error = vnode_getwithref(vnio->vnio_vnode);
+	if (error == 0) {
+		error = vnode_close(vnio->vnio_vnode, vnio->vnio_fflags, NULL);
+	}
+
+	kfree_type(struct vniodesc, vnio);
+
+	return error;
+}
+
+errno_t
+vnio_read(vniodesc_t vnio, uio_t uio)
+{
+	vnode_t vp = vnio->vnio_vnode;
+	user_ssize_t read_len;
+	int error;
+
+	read_len = uio_resid(uio);
+	if (read_len < 0 || read_len > INT_MAX) {
+		return EINVAL;
+	}
+
+	error = vnode_getwithref(vp);
+	if (error == 0) {
+		error = vn_read_common(vp, uio, vnio->vnio_fflags,
+		    vfs_context_current());
+		vnode_put(vp);
+	}
+
+	return error;
+}
+
+vnode_t
+vnio_vnode(vniodesc_t vnio)
+{
+	return vnio->vnio_vnode;
+}
+
+int
+vnode_isauthfs(vnode_t vp)
+{
+	fsioc_auth_fs_t afs = { .authvp = NULL };
+	int error;
+
+	error = VNOP_IOCTL(vp, FSIOC_AUTH_FS, (caddr_t)&afs, 0,
+	    vfs_context_current());
+
+	return error == 0 ? 1 : 0;
 }

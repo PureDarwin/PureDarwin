@@ -15,15 +15,7 @@
 #include <pexpert/arm/consistent_debug.h>
 #include <pexpert/arm/protos.h>
 
-/*
- * Maximum size of an environment variable value. This particular value is
- * chosen to accommodate the maximum encoded size of the system token as
- * computed in https://confluence.sd.apple.com/display/TK/System+Token.
- *
- * This value matches iBoot's IBOOT_MAX_ENV_VAR_DATA_SIZE.
- * There are no iBoot headers so have to duplicate it here for now.
- */
-#define BOOT_LINE_LENGTH        608
+#define BOOT_LINE_LENGTH 1024
 
 /*
  * Video information..
@@ -75,14 +67,8 @@ typedef struct boot_args {
 
 #define PC_TRACE_BUF_SIZE               1024
 
-#if SHMCON
-#define SHMCON_MEM 0x4000
-#else
-#define SHMCON_MEM 0
-#endif
-
 #define CDBG_MEM ((sizeof(dbg_registry_t) + PAGE_SIZE - 1) & ~PAGE_MASK)
 
-#define PE_EARLY_BOOT_VA (SHMCON_MEM + CDBG_MEM)
+#define PE_EARLY_BOOT_VA (CDBG_MEM)
 
 #endif /* _PEXPERT_ARM64_BOOT_H_ */

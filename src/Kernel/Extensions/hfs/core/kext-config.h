@@ -34,6 +34,38 @@
 #define HFS_COMPRESSION 1
 #define FIFO 1
 
+/* Compatibility declarations for the 7195 HFS sources. */
+#ifdef KERNEL
+extern int tsleep(void *chan, int pri, const char *wmesg, int timo);
+extern int proc_is_forcing_hfs_case_sensitivity(struct proc *p);
+#endif
+
+#ifndef F_SETSTATICCONTENT
+#define F_SETSTATICCONTENT 68
+#endif
+#ifndef F_MAKECOMPRESSED
+#define F_MAKECOMPRESSED 80
+#endif
+#ifndef F_SET_GREEDY_MODE
+#define F_SET_GREEDY_MODE 81
+#endif
+#ifndef F_SETIOTYPE
+#define F_SETIOTYPE 82
+#endif
+#ifndef F_IOTYPE_ISOCHRONOUS
+#define F_IOTYPE_ISOCHRONOUS 0x0001
+#endif
+#ifndef FSOPT_EXCHANGE_DATA_ONLY
+#define FSOPT_EXCHANGE_DATA_ONLY 0x0000010
+#endif
+
+#ifndef nspace_snapshot_event
+#define nspace_snapshot_event(...) (0)
+#endif
+#ifndef resolve_nspace_item
+#define resolve_nspace_item(...) (-95)
+#endif
+
 // #define HFS_MALLOC_DEBUG 1
 // #define HFS_LEAK_DEBUG 1
 

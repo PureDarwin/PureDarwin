@@ -56,6 +56,9 @@
 void
 WriteIncludes(FILE *file, boolean_t isuser, boolean_t isdef)
 {
+  if (EmitCountAnnotations) {
+  	fprintf(file, "#include <sys/cdefs.h>\n");
+  }
   if (isdef) {
     fprintf(file, "#include <mach/port.h>\n");
     fprintf(file, "#include <mach/machine/kern_return.h>\n");
@@ -90,7 +93,10 @@ WriteIncludes(FILE *file, boolean_t isuser, boolean_t isdef)
       fprintf(file, "extern \"C\" {\n");
       fprintf(file, "#endif\n");
 
-      fprintf(file, "\textern boolean_t voucher_mach_msg_set(mach_msg_header_t *msg) __attribute__((weak_import));\n");
+      fprintf(file, "#ifndef __VOUCHER_FOWARD_TYPE_DECLS_SINGLE_ATTR\n");
+      fprintf(file, "#define __VOUCHER_FOWARD_TYPE_DECLS_SINGLE_ATTR __unsafe_indexable\n");
+      fprintf(file, "#endif\n");
+      fprintf(file, "\textern boolean_t voucher_mach_msg_set(mach_msg_header_t *%s msg) __attribute__((weak_import));\n", EmitCountAnnotations ? "__VOUCHER_FOWARD_TYPE_DECLS_SINGLE_ATTR" : "");
 
       fprintf(file, "#ifdef __cplusplus\n");
       fprintf(file, "}\n");
@@ -118,7 +124,11 @@ WriteIncludes(FILE *file, boolean_t isuser, boolean_t isdef)
     fprintf(file, "extern \"C\" {\n");
     fprintf(file, "#endif\n");
 
-    fprintf(file, "\textern int mig_strncpy_zerofill(char *dest, const char *src, int len) __attribute__((weak_import));\n");
+    fprintf(file, "#ifndef __MIG_STRNCPY_ZEROFILL_FORWARD_TYPE_DECLS_CSTRING_ATTR\n");
+    fprintf(file, "#define __MIG_STRNCPY_ZEROFILL_FORWARD_TYPE_DECLS_CSTRING_COUNTEDBY_ATTR(C) __unsafe_indexable\n");
+    fprintf(file, "#endif\n");
+    const char *countAttr = EmitCountAnnotations ? "__MIG_STRNCPY_ZEROFILL_FORWARD_TYPE_DECLS_CSTRING_COUNTEDBY_ATTR(len)" : "";
+    fprintf(file, "\textern int mig_strncpy_zerofill(char *%s dest, const char *%s src, int len) __attribute__((weak_import));\n", countAttr, countAttr);
 
     fprintf(file, "#ifdef __cplusplus\n");
     fprintf(file, "}\n");
@@ -181,9 +191,9 @@ WriteProlog(FILE *file, char *protect, boolean_t more, boolean_t isuser)
   fprintf(file, "#ifndef FUNCTION_PTR_T\n");
   fprintf(file, "#define FUNCTION_PTR_T\n");
   fprintf(file, "typedef void (*function_ptr_t)");
-  fprintf(file, "(mach_port_t, char *, mach_msg_type_number_t);\n");
+  fprintf(file, "(mach_port_t, char *%s, mach_msg_type_number_t);\n", EmitCountAnnotations ? "__unsafe_indexable" : "");
   fprintf(file, "typedef struct {\n");
-  fprintf(file, "        char            *name;\n");
+  fprintf(file, "        char            *%s name;\n", EmitCountAnnotations ? "__unsafe_indexable" : "");
   fprintf(file, "        function_ptr_t  function;\n");
   fprintf(file, "} function_table_entry;\n");
   fprintf(file, "typedef function_table_entry   *function_table_t;\n");
@@ -411,6 +421,15 @@ WriteDispatcher(FILE *file)
 {
   statement_t *stat;
   int descr_count = 0;
+  char *kern_ = "";
+  char *k = "";
+  char *kernel = "";
+
+  if (UseMachMsg2) {
+    kern_ = "kern_";
+    k = "k";
+    kernel = "kernel ";
+  }
 
   for (stat = stats; stat != stNULL; stat = stat->stNext)
     if (stat->stKind == skRoutine) {
@@ -420,34 +439,42 @@ WriteDispatcher(FILE *file)
   fprintf(file, "\n");
 
   WriteMigExternal(file);
-  fprintf(file, "boolean_t %s(\n", ServerDemux);
-  fprintf(file, "\t\tmach_msg_header_t *InHeadP,\n");
-  fprintf(file, "\t\tmach_msg_header_t *OutHeadP);\n\n");
+  fprintf(file, "boolean_t %s(", ServerDemux);
+  fprintf(file, "\n\t\tmach_msg_header_t *InHeadP,");
+  if (!UseMachMsg2) {
+    fprintf(file, "\n\t\tmach_msg_header_t *OutHeadP");
+  } else {
+    fprintf(file, "\n\t\tvoid *InDataP,");
+    fprintf(file, "\n\t\tmach_msg_max_trailer_t *InTrailerP,");
+    fprintf(file, "\n\t\tmach_msg_header_t *OutHeadP,");
+    fprintf(file, "\n\t\tvoid *OutDataP");
+  }
+  fprintf(file, ");\n\n");
 
   WriteMigExternal(file);
-  fprintf(file, "mig_routine_t %s_routine(\n", ServerDemux);
+  fprintf(file, "mig_%sroutine_t %s_routine(\n", kern_, ServerDemux);
   fprintf(file, "\t\tmach_msg_header_t *InHeadP);\n\n");
 
-  fprintf(file, "\n/* Description of this subsystem, for use in direct RPC */\n");
+  fprintf(file, "\n/* Description of this %ssubsystem, for use in direct RPC */\n", kernel);
   fprintf(file, "extern const struct %s {\n", ServerSubsys);
   if (UseRPCTrap) {
     fprintf(file, "\tstruct subsystem *\tsubsystem;\t/* Reserved for system use */\n");
   }
   else {
-    fprintf(file, "\tmig_server_routine_t\tserver;\t/* Server routine */\n");
+   fprintf(file, "\tmig_%sserver_routine_t\t%sserver;\t/* Server routine */\n", kern_, k);
   }
   fprintf(file, "\tmach_msg_id_t\tstart;\t/* Min routine number */\n");
   fprintf(file, "\tmach_msg_id_t\tend;\t/* Max routine number + 1 */\n");
   fprintf(file, "\tunsigned int\tmaxsize;\t/* Max msg size */\n");
   if (UseRPCTrap) {
     fprintf(file, "\tvm_address_t\tbase_addr;\t/* Base address */\n");
-    fprintf(file, "\tstruct rpc_routine_descriptor\t/*Array of routine descriptors */\n");
+    fprintf(file, "\tstruct rpc_routine_descriptor\t/* Array of routine descriptors */\n");
   }
   else {
     fprintf(file, "\tvm_address_t\treserved;\t/* Reserved */\n");
-    fprintf(file, "\tstruct routine_descriptor\t/*Array of routine descriptors */\n");
+    fprintf(file, "\tstruct %sroutine_descriptor\t/* Array of routine descriptors */\n", kern_);
   }
-  fprintf(file, "\t\troutine[%d];\n", rtNumber);
+  fprintf(file, "\t\t%sroutine[%d];\n", k, rtNumber);
   if (UseRPCTrap) {
     fprintf(file, "\tstruct rpc_routine_arg_descriptor\t/*Array of arg descriptors */\n");
     fprintf(file, "\t\targ_descriptor[%d];\n", descr_count);

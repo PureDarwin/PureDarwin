@@ -45,13 +45,6 @@
 
 static dtrace_provider_id_t lockprof_id;
 
-decl_lck_mtx_data(extern, lck_grp_lock);
-extern queue_head_t lck_grp_queue;
-extern unsigned int lck_grp_cnt;
-
-extern void lck_grp_reference(lck_grp_t *grp);
-extern void lck_grp_deallocate(lck_grp_t *grp);
-
 #define LOCKPROF_MAX 10000 /* maximum number of lockprof probes */
 static uint32_t lockprof_count; /* current number of lockprof probes */
 
@@ -80,12 +73,10 @@ static const struct {
 	{"ticket-held-", 0, offsetof(lck_grp_t, lck_grp_ticketcnt), offsetof(lck_grp_stats_t, lgss_ticket_held)},
 	{"ticket-miss-", 0, offsetof(lck_grp_t, lck_grp_ticketcnt), offsetof(lck_grp_stats_t, lgss_ticket_miss)},
 	{"ticket-spin-", TIME_EVENT, offsetof(lck_grp_t, lck_grp_ticketcnt), offsetof(lck_grp_stats_t, lgss_ticket_spin)},
-#if HAS_EXT_MUTEXES
 	{"adaptive-held-", STAT_NEEDED, offsetof(lck_grp_t, lck_grp_mtxcnt), offsetof(lck_grp_stats_t, lgss_mtx_held)},
 	{"adaptive-miss-", STAT_NEEDED, offsetof(lck_grp_t, lck_grp_mtxcnt), offsetof(lck_grp_stats_t, lgss_mtx_miss)},
 	{"adaptive-wait-", STAT_NEEDED, offsetof(lck_grp_t, lck_grp_mtxcnt), offsetof(lck_grp_stats_t, lgss_mtx_wait)},
 	{"adaptive-direct-wait-", STAT_NEEDED, offsetof(lck_grp_t, lck_grp_mtxcnt), offsetof(lck_grp_stats_t, lgss_mtx_direct_wait)},
-#endif /* HAS_EXT_MUTEXES */
 	{NULL, false, 0, 0}
 };
 
@@ -114,61 +105,55 @@ typedef struct lockprof_probe {
 	lck_grp_t *lockprof_grp;
 } lockprof_probe_t;
 
-void
-lockprof_invoke(lck_grp_t *grp, lck_grp_stat_t *stat, uint64_t val)
-{
-	dtrace_probe(stat->lgs_probeid, (uintptr_t)grp, val, 0, 0, 0);
-}
-
 static int
 lockprof_lock_count(lck_grp_t *grp, int kind)
 {
-	return *(int*)((void*)(grp) + probes[kind].count_offset);
+	return *(int*)((uintptr_t)(grp) + probes[kind].count_offset);
 }
 
 static void
 probe_create(int kind, const char *suffix, const char *grp_name, uint64_t count, uint64_t mult)
 {
-	char name[LOCKPROF_LEN];
-	lck_mtx_lock(&lck_grp_lock);
-	lck_grp_t *grp = (lck_grp_t*)queue_first(&lck_grp_queue);
 	uint64_t limit = count * mult;
 
 	if (probes[kind].flags & TIME_EVENT) {
 		nanoseconds_to_absolutetime(limit, &limit);
 	}
 
-	for (unsigned int i = 0; i < lck_grp_cnt; i++, grp = (lck_grp_t*)queue_next((queue_entry_t)grp)) {
+	lck_grp_foreach(^bool (lck_grp_t *grp) {
+		char name[LOCKPROF_LEN];
+
 		if (!grp_name || grp_name[0] == '\0' || strcmp(grp_name, grp->lck_grp_name) == 0) {
-			snprintf(name, sizeof(name), "%s%llu%s", probes[kind].prefix, count, suffix ?: "");
+		        snprintf(name, sizeof(name), "%s%llu%s", probes[kind].prefix, count, suffix ?: "");
 
-			if (dtrace_probe_lookup(lockprof_id, grp->lck_grp_name, NULL, name) != 0) {
-				continue;
+		        if (dtrace_probe_lookup(lockprof_id, grp->lck_grp_name, NULL, name) != 0) {
+		                return true;
 			}
-			if (lockprof_lock_count(grp, kind) == 0) {
-				continue;
+		        if (lockprof_lock_count(grp, kind) == 0) {
+		                return true;
 			}
-			if ((probes[kind].flags & STAT_NEEDED) && !(grp->lck_grp_attr & LCK_GRP_ATTR_STAT)) {
-				continue;
+		        if ((probes[kind].flags & STAT_NEEDED) && !lck_grp_has_stats(grp)) {
+		                return true;
 			}
-			if (lockprof_count >= LOCKPROF_MAX) {
-				break;
+		        if (lockprof_count >= LOCKPROF_MAX) {
+		                return false;
 			}
 
-			lockprof_probe_t *probe = kmem_zalloc(sizeof(lockprof_probe_t), KM_SLEEP);
-			probe->lockprof_kind = kind;
-			probe->lockprof_limit = limit;
-			probe->lockprof_grp = grp;
+		        lockprof_probe_t *probe = kmem_zalloc(sizeof(lockprof_probe_t), KM_SLEEP);
+		        probe->lockprof_kind = kind;
+		        probe->lockprof_limit = limit;
+		        probe->lockprof_grp = grp;
 
-			lck_grp_reference(grp);
+		        lck_grp_reference(grp, NULL);
 
-			probe->lockprof_id = dtrace_probe_create(lockprof_id, grp->lck_grp_name, NULL, name,
-			    LOCKPROF_AFRAMES, probe);
+		        probe->lockprof_id = dtrace_probe_create(lockprof_id, grp->lck_grp_name, NULL, name,
+		        LOCKPROF_AFRAMES, probe);
 
-			lockprof_count++;
+		        lockprof_count++;
 		}
-	}
-	lck_mtx_unlock(&lck_grp_lock);
+
+		return true;
+	});
 }
 
 static void
@@ -255,7 +240,7 @@ lockprof_provide(void *arg, const dtrace_probedesc_t *desc)
 
 	if (probes[event_id].flags & TIME_EVENT) {
 		for (i = 0, mult = 0; suffixes[i].name != NULL; i++) {
-			if (strncasecmp(suffixes[i].name, suffix, strlen(suffixes[i].name) + 1) == 0) {
+			if (suffix && (strncasecmp(suffixes[i].name, suffix, strlen(suffixes[i].name) + 1) == 0)) {
 				mult = suffixes[i].mult;
 				break;
 			}
@@ -263,7 +248,7 @@ lockprof_provide(void *arg, const dtrace_probedesc_t *desc)
 		if (suffixes[i].name == NULL) {
 			return;
 		}
-	} else if (*suffix != '\0') {
+	} else if (suffix && (*suffix != '\0')) {
 		return;
 	}
 
@@ -274,7 +259,7 @@ lockprof_provide(void *arg, const dtrace_probedesc_t *desc)
 static lck_grp_stat_t*
 lockprof_stat(lck_grp_t *grp, int kind)
 {
-	return (lck_grp_stat_t*)((void*)&grp->lck_grp_stats + probes[kind].stat_offset);
+	return (lck_grp_stat_t*)((uintptr_t)&grp->lck_grp_stats + probes[kind].stat_offset);
 }
 
 static int
@@ -302,8 +287,9 @@ lockprof_enable(void *arg, dtrace_id_t id, void *parg)
 	}
 
 	stat->lgs_limit = probe->lockprof_limit;
-	stat->lgs_enablings++;
 	stat->lgs_probeid = probe->lockprof_id;
+	lck_grp_stat_enable(stat);
+	lck_grp_enable_feature(LCK_DEBUG_LOCKPROF);
 
 	return 0;
 }
@@ -324,13 +310,14 @@ lockprof_disable(void *arg, dtrace_id_t id, void *parg)
 		return;
 	}
 
-	if (stat->lgs_limit == 0 || stat->lgs_enablings == 0) {
+	if (stat->lgs_limit == 0 || !lck_grp_stat_enabled(stat)) {
 		return;
 	}
 
 	stat->lgs_limit = 0;
-	stat->lgs_enablings--;
 	stat->lgs_probeid = 0;
+	lck_grp_stat_disable(stat);
+	lck_grp_disable_feature(LCK_DEBUG_LOCKPROF);
 }
 
 static void
@@ -338,7 +325,7 @@ lockprof_destroy(void *arg, dtrace_id_t id, void *parg)
 {
 #pragma unused(arg, id)
 	lockprof_probe_t *probe = (lockprof_probe_t*)parg;
-	lck_grp_deallocate(probe->lockprof_grp);
+	lck_grp_deallocate(probe->lockprof_grp, NULL);
 	kmem_free(probe, sizeof(lockprof_probe_t));
 	lockprof_count--;
 }
@@ -398,8 +385,8 @@ static const struct cdevsw lockprof_cdevsw =
 	.d_read = eno_rdwrt,
 	.d_write = eno_rdwrt,
 	.d_ioctl = eno_ioctl,
-	.d_stop = (stop_fcn_t *)nulldev,
-	.d_reset = (reset_fcn_t *)nulldev,
+	.d_stop = eno_stop,
+	.d_reset = eno_reset,
 	.d_select = eno_select,
 	.d_mmap = eno_mmap,
 	.d_strategy = eno_strat,
@@ -429,7 +416,7 @@ lockprof_init(void)
 	dev_t dev = makedev(majorno, 0);
 
 	if (devfs_make_node( dev, DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666,
-	    LP_NODE, 0 ) == NULL) {
+	    LP_NODE ) == NULL) {
 		panic("dtrace: devfs_make_node failed for lockprof");
 	}
 

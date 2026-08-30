@@ -204,7 +204,7 @@ IOStatistics::initialize()
 		return;
 	}
 
-	nextWorkLoopDependency = (IOWorkLoopDependency*)kalloc(sizeof(IOWorkLoopDependency));
+	nextWorkLoopDependency = kalloc_type(IOWorkLoopDependency, Z_WAITOK);
 	if (!nextWorkLoopDependency) {
 		return;
 	}
@@ -226,12 +226,10 @@ IOStatistics::onKextLoad(OSKext *kext, kmod_info_t *kmod_info)
 	LOG(1, "IOStatistics::onKextLoad: %s, tag %d, address 0x%llx, address end 0x%llx\n",
 	    kext->getIdentifierCString(), kmod_info->id, (uint64_t)kmod_info->address, (uint64_t)(kmod_info->address + kmod_info->size));
 
-	ke = (KextNode *)kalloc(sizeof(KextNode));
+	ke = kalloc_type(KextNode, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!ke) {
 		return;
 	}
-
-	memset(ke, 0, sizeof(KextNode));
 
 	ke->kext = kext;
 	ke->loadTag = kmod_info->id;
@@ -283,7 +281,7 @@ IOStatistics::onKextUnload(OSKext *kext)
 		/* Free up the user client list */
 		while ((uce = TAILQ_FIRST(&found->userClientCallList))) {
 			TAILQ_REMOVE(&found->userClientCallList, uce, link);
-			kfree(uce, sizeof(IOUserClientProcessEntry));
+			kfree_type(IOUserClientProcessEntry, uce);
 		}
 
 		/* Remove from kext trees */
@@ -299,7 +297,7 @@ IOStatistics::onKextUnload(OSKext *kext)
 		}
 
 		/* Finally, free the class node */
-		kfree(found, sizeof(KextNode));
+		kfree_type(KextNode, found);
 
 		sequenceID++;
 		loadedKexts--;
@@ -324,12 +322,10 @@ IOStatistics::onClassAdded(OSKext *parentKext, OSMetaClass *metaClass)
 
 	LOG(1, "IOStatistics::onClassAdded: %s\n", metaClass->getClassName());
 
-	ce = (ClassNode *)kalloc(sizeof(ClassNode));
+	ce = kalloc_type(ClassNode, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!ce) {
 		return;
 	}
-
-	memset(ce, 0, sizeof(ClassNode));
 
 	IORWLockWrite(lock);
 
@@ -400,13 +396,13 @@ IOStatistics::onClassRemoved(OSKext *parentKext, OSMetaClass *metaClass)
 		/* Free up the list of counters */
 		while ((esc = SLIST_FIRST(&found->counterList))) {
 			SLIST_REMOVE_HEAD(&found->counterList, link);
-			kfree(esc, sizeof(IOEventSourceCounter));
+			kfree_type(IOEventSourceCounter, esc);
 		}
 
 		/* Free up the user client list */
 		while ((ucc = SLIST_FIRST(&found->userClientList))) {
 			SLIST_REMOVE_HEAD(&found->userClientList, link);
-			kfree(ucc, sizeof(IOUserClientCounter));
+			kfree_type(IOUserClientCounter, ucc);
 		}
 
 		/* Remove from class tree */
@@ -416,7 +412,7 @@ IOStatistics::onClassRemoved(OSKext *parentKext, OSMetaClass *metaClass)
 		SLIST_REMOVE(&found->parentKext->classList, found, ClassNode, lLink);
 
 		/* Finally, free the class node */
-		kfree(found, sizeof(ClassNode));
+		kfree_type(ClassNode, found);
 
 		sequenceID++;
 		registeredClasses--;
@@ -440,12 +436,10 @@ IOStatistics::registerEventSource(OSObject *inOwner)
 		return NULL;
 	}
 
-	counter = (IOEventSourceCounter*)kalloc(sizeof(IOEventSourceCounter));
+	counter = kalloc_type(IOEventSourceCounter, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!counter) {
 		return NULL;
 	}
-
-	memset(counter, 0, sizeof(IOEventSourceCounter));
 
 	IORWLockWrite(lock);
 
@@ -488,7 +482,7 @@ IOStatistics::unregisterEventSource(IOEventSourceCounter *counter)
 		SLIST_REMOVE(&counter->parentClass->counterList, counter, IOEventSourceCounter, link);
 		registeredCounters--;
 	}
-	kfree(counter, sizeof(IOEventSourceCounter));
+	kfree_type(IOEventSourceCounter, counter);
 
 	IORWLockUnlock(lock);
 }
@@ -505,12 +499,10 @@ IOStatistics::registerWorkLoop(IOWorkLoop *workLoop)
 		return NULL;
 	}
 
-	counter = (IOWorkLoopCounter*)kalloc(sizeof(IOWorkLoopCounter));
+	counter = kalloc_type(IOWorkLoopCounter, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!counter) {
 		return NULL;
 	}
-
-	memset(counter, 0, sizeof(IOWorkLoopCounter));
 
 	found = getKextNodeFromBacktrace(TRUE);
 	if (!found) {
@@ -539,7 +531,7 @@ IOStatistics::unregisterWorkLoop(IOWorkLoopCounter *counter)
 	if (counter->parentKext) {
 		SLIST_REMOVE(&counter->parentKext->workLoopList, counter, IOWorkLoopCounter, link);
 	}
-	kfree(counter, sizeof(IOWorkLoopCounter));
+	kfree_type(IOWorkLoopCounter, counter);
 	registeredWorkloops--;
 
 	IORWLockUnlock(lock);
@@ -557,12 +549,10 @@ IOStatistics::registerUserClient(IOUserClient *userClient)
 		return NULL;
 	}
 
-	counter = (IOUserClientCounter*)kalloc(sizeof(IOUserClientCounter));
+	counter = kalloc_type(IOUserClientCounter, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!counter) {
 		return NULL;
 	}
-
-	memset(counter, 0, sizeof(IOUserClientCounter));
 
 	IORWLockWrite(lock);
 
@@ -591,7 +581,7 @@ IOStatistics::unregisterUserClient(IOUserClientCounter *counter)
 	IORWLockWrite(lock);
 
 	SLIST_REMOVE(&counter->parentClass->userClientList, counter, IOUserClientCounter, link);
-	kfree(counter, sizeof(IOUserClientCounter));
+	kfree_type(IOUserClientCounter, counter);
 
 	IORWLockUnlock(lock);
 }
@@ -615,7 +605,7 @@ IOStatistics::attachWorkLoopEventSource(IOWorkLoopCounter *wlc, IOEventSourceCou
 	/* Track the kext dependency */
 	nextWorkLoopDependency->loadTag = esc->parentClass->parentKext->loadTag;
 	if (NULL == RB_INSERT(IOWorkLoopCounter::DependencyTree, &wlc->dependencyHead, nextWorkLoopDependency)) {
-		nextWorkLoopDependency = (IOWorkLoopDependency*)kalloc(sizeof(IOWorkLoopDependency));
+		nextWorkLoopDependency = kalloc_type(IOWorkLoopDependency, Z_WAITOK);
 	}
 
 	IORWLockUnlock(lock);
@@ -640,7 +630,7 @@ IOStatistics::detachWorkLoopEventSource(IOWorkLoopCounter *wlc, IOEventSourceCou
 	found = RB_FIND(IOWorkLoopCounter::DependencyTree, &wlc->dependencyHead, &sought);
 	if (found) {
 		RB_REMOVE(IOWorkLoopCounter::DependencyTree, &wlc->dependencyHead, found);
-		kfree(found, sizeof(IOWorkLoopDependency));
+		kfree_type(IOWorkLoopDependency, found);
 	}
 
 	IORWLockUnlock(lock);
@@ -680,8 +670,7 @@ IOStatistics::getStatistics(sysctl_req *req)
 		goto exit;
 	}
 
-	buffer = (char*)kheap_alloc(KHEAP_TEMP, calculatedSize,
-	    (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
+	buffer = (char*)kalloc_data(calculatedSize, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!buffer) {
 		error = ENOMEM;
 		goto exit;
@@ -740,7 +729,7 @@ IOStatistics::getStatistics(sysctl_req *req)
 
 	error = SYSCTL_OUT(req, buffer, calculatedSize);
 
-	kheap_free(KHEAP_TEMP, buffer, calculatedSize);
+	kfree_data(buffer, calculatedSize);
 
 exit:
 	IORWLockUnlock(IOStatistics::lock);
@@ -775,8 +764,7 @@ IOStatistics::getWorkLoopStatistics(sysctl_req *req)
 		goto exit;
 	}
 
-	buffer = (char*)kheap_alloc(KHEAP_TEMP, calculatedSize,
-	    (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
+	buffer = (char*)kalloc_data(calculatedSize, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!buffer) {
 		error = ENOMEM;
 		goto exit;
@@ -798,7 +786,7 @@ IOStatistics::getWorkLoopStatistics(sysctl_req *req)
 
 	error = SYSCTL_OUT(req, buffer, size);
 
-	kheap_free(KHEAP_TEMP, buffer, calculatedSize);
+	kfree_data(buffer, calculatedSize);
 
 exit:
 	IORWLockUnlock(IOStatistics::lock);
@@ -841,8 +829,7 @@ IOStatistics::getUserClientStatistics(sysctl_req *req)
 
 	LOG(2, "IOStatistics::getUserClientStatistics - requesting kext w/load tag: %d\n", requestedLoadTag);
 
-	buffer = (char*)kheap_alloc(KHEAP_TEMP, calculatedSize,
-	    (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
+	buffer = (char*)kalloc_data(calculatedSize, (zalloc_flags_t)(Z_WAITOK | Z_ZERO));
 	if (!buffer) {
 		error = ENOMEM;
 		goto exit;
@@ -866,7 +853,7 @@ IOStatistics::getUserClientStatistics(sysctl_req *req)
 		error = EINVAL;
 	}
 
-	kheap_free(KHEAP_TEMP, buffer, calculatedSize);
+	kfree_data(buffer, calculatedSize);
 
 exit:
 	IORWLockUnlock(IOStatistics::lock);
@@ -1192,10 +1179,9 @@ IOStatistics::storeUserClientCallInfo(IOUserClient *userClient, IOUserClientCoun
 			TAILQ_REMOVE(&parentKext->userClientCallList, entry, link);
 		} else {
 			/* Otherwise, allocate a new entry */
-			entry = (IOUserClientProcessEntry*)kalloc(sizeof(IOUserClientProcessEntry));
+			entry = kalloc_type(IOUserClientProcessEntry, Z_WAITOK);
 			if (!entry) {
-				IORWLockUnlock(lock);
-				return;
+				goto err_unlock;
 			}
 		}
 
@@ -1260,7 +1246,7 @@ IOStatistics::getKextNodeFromBacktrace(boolean_t write)
 	 * overhead. OSBacktrace does many safety checks that
 	 * are not needed in this situation.
 	 */
-	btCount = backtrace((uintptr_t*)bt, btCount, NULL);
+	btCount = backtrace((uintptr_t*)bt, btCount, NULL, NULL);
 
 	if (write) {
 		IORWLockWrite(lock);

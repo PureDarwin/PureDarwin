@@ -26,11 +26,13 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#include <mach/kern_return.h>
 #include <mach/mach_types.h>
 #include <mach/notify.h>
+#include <os/refcnt.h>
 #include <ipc/ipc_types.h>
 #include <ipc/ipc_importance.h>
-#include <ipc/ipc_port.h>
+#include <ipc/ipc_policy.h>
 #include <ipc/ipc_voucher.h>
 #include <kern/ipc_kobject.h>
 #include <kern/ipc_tt.h>
@@ -43,7 +45,6 @@
 
 #include <sys/kdebug.h>
 
-#include <mach/mach_voucher_attr_control.h>
 #include <mach/machine/sdt.h>
 
 extern int      proc_pid(void *);
@@ -84,11 +85,11 @@ static LCK_SPIN_DECLARE_ATTR(ipc_importance_lock_data, &ipc_lck_grp, &ipc_lck_at
 #define incr_ref_counter(x) (os_atomic_inc(&(x), relaxed))
 
 static inline
-uint32_t
+void
 ipc_importance_reference_internal(ipc_importance_elem_t elem)
 {
 	incr_ref_counter(elem->iie_refs_added);
-	return os_atomic_inc(&elem->iie_bits, relaxed) & IIE_REFS_MASK;
+	os_ref_retain_mask(&elem->iie_bits, IIE_TYPE_BITS, &iie_refgrp);
 }
 
 static inline
@@ -96,17 +97,16 @@ uint32_t
 ipc_importance_release_internal(ipc_importance_elem_t elem)
 {
 	incr_ref_counter(elem->iie_refs_dropped);
-	return os_atomic_dec(&elem->iie_bits, relaxed) & IIE_REFS_MASK;
+	return os_ref_release_relaxed_mask(&elem->iie_bits, IIE_TYPE_BITS, &iie_refgrp);
 }
 
 static inline
-uint32_t
+void
 ipc_importance_task_reference_internal(ipc_importance_task_t task_imp)
 {
 	uint32_t out;
-	out = ipc_importance_reference_internal(&task_imp->iit_elem);
+	ipc_importance_reference_internal(&task_imp->iit_elem);
 	incr_ref_counter(task_imp->iit_elem.iie_task_refs_added);
-	return out;
 }
 
 static inline
@@ -148,10 +148,10 @@ static queue_head_t global_iit_alloc_queue =
     QUEUE_HEAD_INITIALIZER(global_iit_alloc_queue);
 #endif
 
-static ZONE_DECLARE(ipc_importance_task_zone, "ipc task importance",
-    sizeof(struct ipc_importance_task), ZC_NOENCRYPT);
-static ZONE_DECLARE(ipc_importance_inherit_zone, "ipc importance inherit",
-    sizeof(struct ipc_importance_inherit), ZC_NOENCRYPT);
+static ZONE_DEFINE_TYPE(ipc_importance_task_zone, "ipc task importance",
+    struct ipc_importance_task, ZC_ZFREE_CLEARMEM);
+static ZONE_DEFINE_TYPE(ipc_importance_inherit_zone, "ipc importance inherit",
+    struct ipc_importance_inherit, ZC_ZFREE_CLEARMEM);
 static zone_t ipc_importance_inherit_zone;
 
 static ipc_voucher_attr_control_t ipc_importance_control;
@@ -490,6 +490,13 @@ ipc_importance_release(ipc_importance_elem_t elem)
 	/* unlocked */
 }
 
+__abortlike
+static void
+iit_over_release_panic(ipc_importance_task_t task_imp)
+{
+	panic("iit unexpected zero refs: %p", task_imp);
+}
+
 /*
  *	Routine:	ipc_importance_task_reference
  *
@@ -660,7 +667,10 @@ ipc_importance_task_check_transition(
 			if (&ipc_importance_delayed_drop_queue != task_imp->iit_updateq) {
 				queue_remove(task_imp->iit_updateq, task_imp, ipc_importance_task_t, iit_updates);
 				task_imp->iit_updateq = NULL;
-				ipc_importance_task_release_internal(task_imp); /* can't be last ref */
+				if (!ipc_importance_task_release_internal(task_imp)) {
+					/* can't be last ref */
+					iit_over_release_panic(task_imp);
+				}
 			}
 		} else {
 			task_imp->iit_updatepolicy = 1;
@@ -700,7 +710,7 @@ ipc_importance_task_propagate_helper(
 	ipc_kmsg_t temp_kmsg;
 
 	queue_iterate(&task_imp->iit_kmsgs, temp_kmsg, ipc_kmsg_t, ikm_inheritance) {
-		mach_msg_header_t *hdr = temp_kmsg->ikm_header;
+		mach_msg_header_t *hdr = ikm_header(temp_kmsg);
 		mach_port_delta_t delta;
 		ipc_port_t port;
 
@@ -726,10 +736,10 @@ ipc_importance_task_propagate_helper(
 		/* determine the task importance to adjust as result (if any) */
 		port = hdr->msgh_remote_port;
 		assert(IP_VALID(port));
-		ip_lock(port);
+		ip_mq_lock(port);
 		temp_task_imp = IIT_NULL;
 		if (!ipc_port_importance_delta_internal(port, IPID_OPTION_NORMAL, &delta, &temp_task_imp)) {
-			ip_unlock(port);
+			ip_mq_unlock(port);
 		}
 
 		/* no task importance to adjust associated with the port? */
@@ -745,7 +755,10 @@ ipc_importance_task_propagate_helper(
 			queue_enter(propagation, temp_task_imp, ipc_importance_task_t, iit_props);
 			/* reference donated */
 		} else {
-			ipc_importance_task_release_internal(temp_task_imp);
+			if (!ipc_importance_task_release_internal(temp_task_imp)) {
+				/* can't be last ref */
+				iit_over_release_panic(temp_task_imp);
+			}
 		}
 	}
 
@@ -931,6 +944,9 @@ retry:
 		}
 
 		ipc_importance_unlock();
+
+		/* reevaluate turnstile boost */
+		pend_token.tpt_update_turnstile = 1;
 
 		/* apply the policy adjust to the target task (while it is still locked) */
 		task_update_boost_locked(target_task, boost, &pend_token);
@@ -1147,7 +1163,10 @@ ipc_importance_task_propagate_assertion_locked(
 			}
 		}
 
-		ipc_importance_task_release_internal(temp_task_imp);
+		if (!ipc_importance_task_release_internal(temp_task_imp)) {
+			/* can't be last ref */
+			iit_over_release_panic(temp_task_imp);
+		}
 	}
 
 	/* apply updates to task (may drop importance lock) */
@@ -1371,7 +1390,7 @@ ipc_importance_task_hold_legacy_external_assertion(ipc_importance_task_t task_im
 		printf("BUG in process %s[%d]: "
 		    "attempt to acquire an additional legacy external boost assertion without holding an existing legacy external assertion. "
 		    "(%d total, %d external, %d legacy-external)\n",
-		    proc_name_address(target_task->bsd_info), task_pid(target_task),
+		    proc_name_address(get_bsdtask_info(target_task)), task_pid(target_task),
 		    target_assertcnt, target_externcnt, target_legacycnt);
 	}
 
@@ -1463,7 +1482,7 @@ ipc_importance_task_drop_legacy_external_assertion(ipc_importance_task_t task_im
 	/* delayed printf for user-supplied data failures */
 	if (KERN_FAILURE == ret && TASK_NULL != target_task) {
 		printf("BUG in process %s[%d]: over-released legacy external boost assertions (%d total, %d external, %d legacy-external)\n",
-		    proc_name_address(target_task->bsd_info), task_pid(target_task),
+		    proc_name_address(get_bsdtask_info(target_task)), task_pid(target_task),
 		    target_assertcnt, target_externcnt, target_legacycnt);
 	}
 
@@ -1708,7 +1727,7 @@ boolean_t
 ipc_importance_task_is_never_donor(ipc_importance_task_t task_imp)
 {
 	if (IIT_NULL == task_imp) {
-		return FALSE;
+		return TRUE;
 	}
 	return !ipc_importance_task_is_marked_donor(task_imp) &&
 	       !ipc_importance_task_is_marked_live_donor(task_imp) &&
@@ -1921,11 +1940,9 @@ retry:
 		/* Add a made reference (borrowing active task ref to do it) */
 		if (made) {
 			if (0 == task_elem->iit_made++) {
-				assert(IIT_REFS_MAX > IIT_REFS(task_elem));
 				ipc_importance_task_reference_internal(task_elem);
 			}
 		} else {
-			assert(IIT_REFS_MAX > IIT_REFS(task_elem));
 			ipc_importance_task_reference_internal(task_elem);
 		}
 		ipc_importance_unlock();
@@ -1944,7 +1961,9 @@ retry:
 		goto retry;
 	}
 
-	task_elem->iit_bits = IIE_TYPE_TASK | 2; /* one for task, one for return/made */
+	/* one for task, one for return/made */
+	os_ref_init_count_mask(&task_elem->iit_bits, IIE_TYPE_BITS, &iie_refgrp, 2, IIE_TYPE_TASK);
+
 	task_elem->iit_made = (made) ? 1 : 0;
 	task_elem->iit_task = task; /* take actual ref when we're sure */
 #if IIE_REF_DEBUG
@@ -1969,7 +1988,7 @@ retry:
 
 	/* we won the race */
 	task->task_imp_base = task_elem;
-	task_reference(task);
+	task_reference_grp(task, TASK_GRP_INTERNAL);
 #if DEVELOPMENT || DEBUG
 	queue_enter(&global_iit_alloc_queue, task_elem, ipc_importance_task_t, iit_allocation);
 	task_importance_update_owner_info(task);
@@ -1987,8 +2006,8 @@ task_importance_update_owner_info(task_t task)
 		ipc_importance_task_t task_elem = task->task_imp_base;
 
 		task_elem->iit_bsd_pid = task_pid(task);
-		if (task->bsd_info) {
-			strncpy(&task_elem->iit_procname[0], proc_name_address(task->bsd_info), 16);
+		if (get_bsdtask_info(task)) {
+			strncpy(&task_elem->iit_procname[0], proc_name_address(get_bsdtask_info(task)), 16);
 			task_elem->iit_procname[16] = '\0';
 		} else {
 			strncpy(&task_elem->iit_procname[0], "unknown", 16);
@@ -2117,7 +2136,7 @@ ipc_importance_disconnect_task(task_t task)
 	/* importance unlocked */
 
 	/* deallocate the task now that the importance is unlocked */
-	task_deallocate(task);
+	task_deallocate_grp(task, TASK_GRP_INTERNAL);
 }
 
 /*
@@ -2228,7 +2247,7 @@ ipc_importance_check_circularity(
 	 *	First try a quick check that can run in parallel.
 	 *	No circularity if dest is not in transit.
 	 */
-	ip_lock(port);
+	ip_mq_lock(port);
 
 	/*
 	 * Even if port is just carrying assertions for others,
@@ -2236,25 +2255,23 @@ ipc_importance_check_circularity(
 	 */
 	if (port->ip_impcount > 0 && !imp_lock_held) {
 		if (!ipc_importance_lock_try()) {
-			ip_unlock(port);
+			ip_mq_unlock(port);
 			ipc_importance_lock();
-			ip_lock(port);
+			ip_mq_lock(port);
 		}
 		imp_lock_held = TRUE;
 	}
 
-	if (ip_lock_try(dest)) {
-		if (!ip_active(dest) ||
-		    (dest->ip_receiver_name != MACH_PORT_NULL) ||
-		    (dest->ip_destination == IP_NULL)) {
+	if (ip_mq_lock_try(dest)) {
+		if (!ip_in_transit(dest)) {
 			goto not_circular;
 		}
 
 		/* dest is in transit; further checking necessary */
 
-		ip_unlock(dest);
+		ip_mq_unlock(dest);
 	}
-	ip_unlock(port);
+	ip_mq_unlock(port);
 
 	/*
 	 * We're about to pay the cost to serialize,
@@ -2277,9 +2294,7 @@ ipc_importance_check_circularity(
 
 		/* port (== base) is in limbo */
 
-		require_ip_active(port);
-		assert(port->ip_receiver_name == MACH_PORT_NULL);
-		assert(port->ip_destination == IP_NULL);
+		ipc_release_assert(ip_in_limbo(port));
 		assert(!took_base_ref);
 
 		base = dest;
@@ -2288,11 +2303,10 @@ ipc_importance_check_circularity(
 
 			/* base is in transit or in limbo */
 
-			require_ip_active(base);
+			ipc_release_assert(ip_is_moving(base));
 			assert(base->ip_receiver_name == MACH_PORT_NULL);
-
-			next = base->ip_destination;
-			ip_unlock(base);
+			next = ip_get_destination(base);
+			ip_mq_unlock(base);
 			base = next;
 		}
 
@@ -2310,27 +2324,19 @@ ipc_importance_check_circularity(
 	 *	add port to the chain, and unlock everything.
 	 */
 
-	ip_lock(port);
+	ip_mq_lock(port);
 	ipc_port_multiple_unlock();
 
 not_circular:
-	/* port is in limbo */
-	imq_lock(&port->ip_messages);
-
-	require_ip_active(port);
-	assert(port->ip_receiver_name == MACH_PORT_NULL);
-	assert(port->ip_destination == IP_NULL);
-
 	/* Port is being enqueued in a kmsg, remove the watchport boost in order to push on destination port */
 	watchport_elem = ipc_port_clear_watchport_elem_internal(port);
 
 	/* Check if the port is being enqueued as a part of sync bootstrap checkin */
-	if (dest->ip_specialreply && dest->ip_sync_bootstrap_checkin) {
+	if (ip_is_special_reply_port(dest) && dest->ip_sync_bootstrap_checkin) {
 		port->ip_sync_bootstrap_checkin = 1;
 	}
 
-	ip_reference(dest);
-	port->ip_destination = dest;
+	ipc_port_mark_in_transit(port, dest);
 
 	/* must have been in limbo or still bound to a task */
 	assert(port->ip_tempowner != 0);
@@ -2340,7 +2346,7 @@ not_circular:
 	 * Cache that info now (we'll drop assertions and the
 	 * task reference below).
 	 */
-	release_imp_task = port->ip_imp_task;
+	release_imp_task = ip_get_imp_task(port);
 	if (IIT_NULL != release_imp_task) {
 		port->ip_imp_task = IIT_NULL;
 	}
@@ -2364,11 +2370,9 @@ not_circular:
 
 		/* update complete and turnstile complete called after dropping all locks */
 	}
-	imq_unlock(&port->ip_messages);
-
 	/* now unlock chain */
 
-	ip_unlock(port);
+	ip_mq_unlock(port);
 
 	for (;;) {
 		ipc_port_t next;
@@ -2381,20 +2385,16 @@ not_circular:
 
 		/* port is in transit */
 
-		require_ip_active(dest);
-		assert(dest->ip_receiver_name == MACH_PORT_NULL);
-		assert(dest->ip_destination != IP_NULL);
+		ipc_release_assert(ip_in_transit(dest));
 		assert(dest->ip_tempowner == 0);
 
-		next = dest->ip_destination;
-		ip_unlock(dest);
+		next = ip_get_destination(dest);
+		ip_mq_unlock(dest);
 		dest = next;
 	}
 
 	/* base is not in transit */
-	assert(!ip_active(base) ||
-	    (base->ip_receiver_name != MACH_PORT_NULL) ||
-	    (base->ip_destination == IP_NULL));
+	assert(!ip_in_transit(base));
 
 	/*
 	 * Find the task to boost (if any).
@@ -2405,15 +2405,14 @@ not_circular:
 	if (ip_active(base) && (assertcnt > 0)) {
 		assert(imp_lock_held);
 		if (base->ip_tempowner != 0) {
-			if (IIT_NULL != base->ip_imp_task) {
+			if (IIT_NULL != ip_get_imp_task(base)) {
 				/* specified tempowner task */
-				imp_task = base->ip_imp_task;
+				imp_task = ip_get_imp_task(base);
 				assert(ipc_importance_task_is_any_receiver_type(imp_task));
 			}
 			/* otherwise don't boost current task */
-		} else if (base->ip_receiver_name != MACH_PORT_NULL) {
-			ipc_space_t space = base->ip_receiver;
-
+		} else if (ip_in_a_space(base)) {
+			ipc_space_t space = ip_get_receiver(base);
 			/* only spaces with boost-accepting tasks */
 			if (space->is_task != TASK_NULL &&
 			    ipc_importance_task_is_any_receiver_type(space->is_task->task_imp_base)) {
@@ -2427,20 +2426,17 @@ not_circular:
 		}
 	}
 
-	ip_unlock(base);
-	if (took_base_ref) {
-		ip_release(base);
-	}
+	ip_mq_unlock(base);
 
 	/* All locks dropped, call turnstile_update_inheritor_complete for source port's turnstile */
 	if (send_turnstile) {
 		turnstile_update_inheritor_complete(send_turnstile, TURNSTILE_INTERLOCK_NOT_HELD);
 
-		/* Take the mq lock to call turnstile complete */
-		imq_lock(&port->ip_messages);
+		/* Take the port lock to call turnstile complete */
+		ip_mq_lock(port);
 		turnstile_complete((uintptr_t)port, port_send_turnstile_address(port), NULL, TURNSTILE_SYNC_IPC);
 		send_turnstile = TURNSTILE_NULL;
-		imq_unlock(&port->ip_messages);
+		ip_mq_unlock(port);
 		turnstile_cleanup();
 	}
 
@@ -2473,6 +2469,10 @@ not_circular:
 		ipc_importance_unlock();
 	}
 
+	if (took_base_ref) {
+		ip_release(base);
+	}
+
 	if (imp_task != IIT_NULL) {
 		ipc_importance_task_release(imp_task);
 	}
@@ -2501,9 +2501,11 @@ not_circular:
 boolean_t
 ipc_importance_send(
 	ipc_kmsg_t              kmsg,
-	mach_msg_option_t       option)
+	mach_msg_option64_t     option)
 {
-	ipc_port_t port = kmsg->ikm_header->msgh_remote_port;
+	mach_msg_header_t *hdr = ikm_header(kmsg);
+	ipc_port_t port = hdr->msgh_remote_port;
+	ipc_port_t voucher_port;
 	boolean_t port_lock_dropped = FALSE;
 	ipc_importance_elem_t elem;
 	task_t task;
@@ -2525,14 +2527,13 @@ ipc_importance_send(
 		/* acquire the importance lock while trying to hang on to port lock */
 		if (!ipc_importance_lock_try()) {
 			port_lock_dropped = TRUE;
-			ip_unlock(port);
+			ip_mq_unlock(port);
 			ipc_importance_lock();
 		}
 		goto portupdate;
 	}
 
 	task_imp = task->task_imp_base;
-	assert(IIT_NULL != task_imp);
 
 	/* If the sender can never donate importance, nothing to do */
 	if (ipc_importance_task_is_never_donor(task_imp)) {
@@ -2542,14 +2543,16 @@ ipc_importance_send(
 	elem = IIE_NULL;
 
 	/* If importance receiver and passing a voucher, look for importance in there */
-	if (IP_VALID(kmsg->ikm_voucher) &&
+	voucher_port = ipc_kmsg_get_voucher_port(kmsg);
+	if (IP_VALID(voucher_port) &&
 	    ipc_importance_task_is_marked_receiver(task_imp)) {
 		mach_voucher_attr_value_handle_t vals[MACH_VOUCHER_ATTR_VALUE_MAX_NESTED];
 		mach_voucher_attr_value_handle_array_size_t val_count;
 		ipc_voucher_t voucher;
 
-		assert(ip_kotype(kmsg->ikm_voucher) == IKOT_VOUCHER);
-		voucher = (ipc_voucher_t)ip_get_kobject(kmsg->ikm_voucher);
+		assert(ip_type(voucher_port) == IKOT_VOUCHER);
+		voucher = (ipc_voucher_t)ipc_kobject_get_raw(voucher_port,
+		    IKOT_VOUCHER);
 
 		/* check to see if the voucher has an importance attribute */
 		val_count = MACH_VOUCHER_ATTR_VALUE_MAX_NESTED;
@@ -2589,7 +2592,7 @@ ipc_importance_send(
 	/* acquire the importance lock while trying to hang on to port lock */
 	if (!ipc_importance_lock_try()) {
 		port_lock_dropped = TRUE;
-		ip_unlock(port);
+		ip_mq_unlock(port);
 		ipc_importance_lock();
 	}
 
@@ -2605,7 +2608,7 @@ ipc_importance_send(
 
 		/* re-acquire port lock, if needed */
 		if (TRUE == port_lock_dropped) {
-			ip_lock(port);
+			ip_mq_lock(port);
 		}
 
 		return port_lock_dropped;
@@ -2613,7 +2616,7 @@ ipc_importance_send(
 
 portupdate:
 	/* Mark the fact that we are (currently) donating through this message */
-	kmsg->ikm_header->msgh_bits |= MACH_MSGH_BITS_RAISEIMP;
+	hdr->msgh_bits |= MACH_MSGH_BITS_RAISEIMP;
 
 	/*
 	 * If we need to relock the port, do it with the importance still locked.
@@ -2622,17 +2625,16 @@ portupdate:
 	 * the sender lost donor status.
 	 */
 	if (TRUE == port_lock_dropped) {
-		ip_lock(port);
+		ip_mq_lock(port);
 	}
 
 	ipc_importance_assert_held();
 
 #if IMPORTANCE_TRACE
 	if (kdebug_enable) {
-		mach_msg_max_trailer_t *dbgtrailer = (mach_msg_max_trailer_t *)
-		    ((vm_offset_t)kmsg->ikm_header + mach_round_msg(kmsg->ikm_header->msgh_size));
+		mach_msg_max_trailer_t *dbgtrailer = ipc_kmsg_get_trailer(kmsg);
 		unsigned int sender_pid = dbgtrailer->msgh_audit.val[5];
-		mach_msg_id_t imp_msgh_id = kmsg->ikm_header->msgh_id;
+		mach_msg_id_t imp_msgh_id = hdr->msgh_id;
 		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, (IMPORTANCE_CODE(IMP_MSG, IMP_MSG_SEND)) | DBG_FUNC_START,
 		    task_pid(task), sender_pid, imp_msgh_id, 0, 0);
 	}
@@ -2655,7 +2657,7 @@ portupdate:
 			/* can't hold the port lock during task transition(s) */
 			if (!need_port_lock) {
 				need_port_lock = TRUE;
-				ip_unlock(port);
+				ip_mq_unlock(port);
 			}
 			ipc_importance_task_propagate_assertion_locked(task_imp, IIT_UPDATE_HOLD, TRUE);
 		}
@@ -2670,7 +2672,7 @@ portupdate:
 
 	if (need_port_lock) {
 		port_lock_dropped = TRUE;
-		ip_lock(port);
+		ip_mq_lock(port);
 	}
 
 	return port_lock_dropped;
@@ -2698,7 +2700,8 @@ ipc_importance_inherit_from_kmsg(ipc_kmsg_t kmsg)
 	ipc_importance_elem_t   elem;
 	task_t  task_self = current_task();
 
-	ipc_port_t port = kmsg->ikm_header->msgh_remote_port;
+	mach_msg_header_t *hdr = ikm_header(kmsg);
+	ipc_port_t port = hdr->msgh_remote_port;
 	ipc_importance_inherit_t inherit = III_NULL;
 	ipc_importance_inherit_t alloc = III_NULL;
 	boolean_t cleared_self_donation = FALSE;
@@ -2707,7 +2710,7 @@ ipc_importance_inherit_from_kmsg(ipc_kmsg_t kmsg)
 
 	/* The kmsg must have an importance donor or static boost to proceed */
 	if (IIE_NULL == kmsg->ikm_importance &&
-	    !MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits)) {
+	    !MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits)) {
 		return III_NULL;
 	}
 
@@ -2739,8 +2742,8 @@ ipc_importance_inherit_from_kmsg(ipc_kmsg_t kmsg)
 		if (from_inherit->iii_to_task == task_imp) {
 			/* clear self-donation if not also present in inherit */
 			if (!from_inherit->iii_donating &&
-			    MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits)) {
-				kmsg->ikm_header->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
+			    MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits)) {
+				hdr->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
 				cleared_self_donation = TRUE;
 			}
 			inherit = from_inherit;
@@ -2786,7 +2789,7 @@ ipc_importance_inherit_from_kmsg(ipc_kmsg_t kmsg)
 	 * In that case DO let the process permanently boost itself.
 	 */
 	if (IIE_NULL == from_elem) {
-		assert(MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits));
+		assert(MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits));
 		ipc_importance_task_reference_internal(task_imp);
 		from_elem = (ipc_importance_elem_t)task_imp;
 	}
@@ -2813,7 +2816,7 @@ ipc_importance_inherit_from_kmsg(ipc_kmsg_t kmsg)
 	}
 
 	/* snapshot the donating status while we have importance locked */
-	donating = MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits);
+	donating = MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits);
 
 	if (III_NULL != inherit) {
 		/* We found one, piggyback on that */
@@ -2823,7 +2826,6 @@ ipc_importance_inherit_from_kmsg(ipc_kmsg_t kmsg)
 
 		/* add in a made reference */
 		if (0 == inherit->iii_made++) {
-			assert(III_REFS_MAX > III_REFS(inherit));
 			ipc_importance_inherit_reference_internal(inherit);
 		}
 
@@ -2844,7 +2846,7 @@ ipc_importance_inherit_from_kmsg(ipc_kmsg_t kmsg)
 	} else {
 		/* initialize the previously allocated space */
 		inherit = alloc;
-		inherit->iii_bits = IIE_TYPE_INHERIT | 1;
+		os_ref_init_mask(&inherit->iii_bits, IIE_TYPE_BITS, &iie_refgrp, IIE_TYPE_INHERIT);
 		inherit->iii_made = 1;
 		inherit->iii_externcnt = 1;
 		inherit->iii_externdrop = 0;
@@ -2877,7 +2879,7 @@ out_locked:
 	 * for those paths that came straight here: snapshot the donating status
 	 * (this should match previous snapshot for other paths).
 	 */
-	donating = MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits);
+	donating = MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits);
 
 	/* unlink the kmsg inheritance (if any) */
 	elem = ipc_importance_kmsg_unlink(kmsg);
@@ -2927,19 +2929,19 @@ out_locked:
 	 * the importance lock
 	 */
 	if (donating || cleared_self_donation) {
-		ip_lock(port);
+		ip_mq_lock(port);
 		/* drop importance from port and destination task */
 		if (ipc_port_importance_delta(port, IPID_OPTION_NORMAL, -1) == FALSE) {
-			ip_unlock(port);
+			ip_mq_unlock(port);
 		}
 	}
 
 	if (III_NULL != inherit) {
 		/* have an associated importance attr, even if currently not donating */
-		kmsg->ikm_header->msgh_bits |= MACH_MSGH_BITS_RAISEIMP;
+		hdr->msgh_bits |= MACH_MSGH_BITS_RAISEIMP;
 	} else {
 		/* we won't have an importance attribute associated with our message */
-		kmsg->ikm_header->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
+		hdr->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
 	}
 
 	return inherit;
@@ -3030,7 +3032,6 @@ ipc_importance_inherit_from_task(
 		assert(0 < IIE_REFS(inherit->iii_from_elem));
 
 		/* Take a reference for inherit */
-		assert(III_REFS_MAX > III_REFS(inherit));
 		ipc_importance_inherit_reference_internal(inherit);
 
 		/* Reflect the inherit's change of status into the task boosts */
@@ -3050,7 +3051,7 @@ ipc_importance_inherit_from_task(
 	} else {
 		/* initialize the previously allocated space */
 		inherit = alloc;
-		inherit->iii_bits = IIE_TYPE_INHERIT | 1;
+		os_ref_init_mask(&inherit->iii_bits, IIE_TYPE_BITS, &iie_refgrp, IIE_TYPE_INHERIT);
 		inherit->iii_made = 0;
 		inherit->iii_externcnt = 1;
 		inherit->iii_externdrop = 0;
@@ -3137,16 +3138,15 @@ out_locked:
 void
 ipc_importance_receive(
 	ipc_kmsg_t              kmsg,
-	mach_msg_option_t       option)
+	mach_msg_option64_t     option)
 {
 	int impresult = -1;
 
 #if IMPORTANCE_TRACE || LEGACY_IMPORTANCE_DELIVERY
 	task_t task_self = current_task();
-	unsigned int sender_pid = ((mach_msg_max_trailer_t *)
-	    ((vm_offset_t)kmsg->ikm_header +
-	    mach_round_msg(kmsg->ikm_header->msgh_size)))->msgh_audit.val[5];
+	unsigned int sender_pid = ipc_kmsg_get_trailer(kmsg)->msgh_audit.val[5];
 #endif
+	mach_msg_header_t *hdr = ikm_header(kmsg);
 
 	/* convert to a voucher with an inherit importance attribute? */
 	if ((option & MACH_RCV_VOUCHER) != 0) {
@@ -3154,14 +3154,18 @@ ipc_importance_receive(
 		sizeof(mach_voucher_attr_value_handle_t)];
 		ipc_voucher_attr_raw_recipe_array_size_t recipe_size = 0;
 		ipc_voucher_attr_recipe_t recipe = (ipc_voucher_attr_recipe_t)recipes;
+		ipc_port_t voucher_port = ipc_kmsg_get_voucher_port(kmsg);
 		ipc_voucher_t recv_voucher;
 		mach_voucher_attr_value_handle_t handle;
 		ipc_importance_inherit_t inherit;
 		kern_return_t kr;
 
 		/* set up recipe to copy the old voucher */
-		if (IP_VALID(kmsg->ikm_voucher)) {
-			ipc_voucher_t sent_voucher = (ipc_voucher_t)ip_get_kobject(kmsg->ikm_voucher);
+		if (IP_VALID(voucher_port)) {
+			ipc_voucher_t sent_voucher;
+
+			sent_voucher = (ipc_voucher_t)ipc_kobject_get_raw(voucher_port,
+			    IKOT_VOUCHER);
 
 			recipe->key = MACH_VOUCHER_ATTR_KEY_ALL;
 			recipe->command = MACH_VOUCHER_ATTR_COPY;
@@ -3186,7 +3190,7 @@ ipc_importance_receive(
 		 * we have a valid incoming voucher. If we have neither of
 		 * these things then there is no need to create a new voucher.
 		 */
-		if (IP_VALID(kmsg->ikm_voucher) || inherit != III_NULL) {
+		if (IP_VALID(voucher_port) || inherit != III_NULL) {
 			/* replace the importance attribute with the handle we created */
 			/*  our made reference on the inherit is donated to the voucher */
 			recipe = (ipc_voucher_attr_recipe_t)&recipes[recipe_size];
@@ -3204,9 +3208,10 @@ ipc_importance_receive(
 			assert(KERN_SUCCESS == kr);
 
 			/* swap the voucher port (and set voucher bits in case it didn't already exist) */
-			kmsg->ikm_header->msgh_bits |= (MACH_MSG_TYPE_MOVE_SEND << 16);
-			ipc_port_release_send(kmsg->ikm_voucher);
-			kmsg->ikm_voucher = convert_voucher_to_port(recv_voucher);
+			hdr->msgh_bits |= (MACH_MSG_TYPE_MOVE_SEND << 16);
+			ipc_port_release_send(voucher_port);
+			voucher_port = convert_voucher_to_port(recv_voucher);
+			ipc_kmsg_set_voucher_port(kmsg, voucher_port, MACH_MSG_TYPE_MOVE_SEND);
 			if (III_NULL != inherit) {
 				impresult = 2;
 			}
@@ -3226,8 +3231,8 @@ ipc_importance_receive(
 		}
 
 		/* With kmsg unlinked, can safely examine message importance attribute. */
-		if (MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits)) {
-			ipc_port_t port = kmsg->ikm_header->msgh_remote_port;
+		if (MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits)) {
+			ipc_port_t port = hdr->msgh_remote_port;
 #if LEGACY_IMPORTANCE_DELIVERY
 			ipc_importance_task_t task_imp = task_self->task_imp_base;
 
@@ -3239,14 +3244,14 @@ ipc_importance_receive(
 #endif
 			{
 				/* The importance boost never applied to task (clear the bit) */
-				kmsg->ikm_header->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
+				hdr->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
 				impresult = 0;
 			}
 
 			/* Drop the boost on the port and the owner of the receive right */
-			ip_lock(port);
+			ip_mq_lock(port);
 			if (ipc_port_importance_delta(port, IPID_OPTION_NORMAL, -1) == FALSE) {
-				ip_unlock(port);
+				ip_mq_unlock(port);
 			}
 		}
 	}
@@ -3255,7 +3260,7 @@ ipc_importance_receive(
 	if (-1 < impresult) {
 		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE, (IMPORTANCE_CODE(IMP_MSG, IMP_MSG_DELV)) | DBG_FUNC_NONE,
 		    sender_pid, task_pid(task_self),
-		    kmsg->ikm_header->msgh_id, impresult, 0);
+		    hdr->msgh_id, impresult, 0);
 	}
 	if (impresult == 2) {
 		/*
@@ -3280,22 +3285,24 @@ ipc_importance_receive(
 void
 ipc_importance_unreceive(
 	ipc_kmsg_t              kmsg,
-	mach_msg_option_t       __unused option)
+	mach_msg_option64_t     __unused option)
 {
 	/* importance should already be in the voucher and out of the kmsg */
 	assert(IIE_NULL == kmsg->ikm_importance);
+	mach_msg_header_t *hdr = ikm_header(kmsg);
 
 	/* See if there is a legacy boost to be dropped from receiver */
-	if (MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits)) {
+	if (MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits)) {
 		ipc_importance_task_t task_imp;
 
-		kmsg->ikm_header->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
+		hdr->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
 		task_imp = current_task()->task_imp_base;
-		if (!IP_VALID(kmsg->ikm_voucher) && IIT_NULL != task_imp) {
+
+		if (!IP_VALID(ipc_kmsg_get_voucher_port(kmsg)) && IIT_NULL != task_imp) {
 			ipc_importance_task_drop_legacy_external_assertion(task_imp, 1);
 		}
 		/*
-		 * ipc_kmsg_copyout_dest() will consume the voucher
+		 * ipc_kmsg_copyout_dest_to_user() will consume the voucher
 		 * and any contained importance.
 		 */
 	}
@@ -3317,6 +3324,7 @@ ipc_importance_clean(
 	ipc_kmsg_t              kmsg)
 {
 	ipc_port_t              port;
+	mach_msg_header_t *hdr = ikm_header(kmsg);
 
 	/* Is the kmsg still linked? If so, remove that first */
 	if (IIE_NULL != kmsg->ikm_importance) {
@@ -3330,15 +3338,15 @@ ipc_importance_clean(
 	}
 
 	/* See if there is a legacy importance boost to be dropped from port */
-	if (MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits)) {
-		kmsg->ikm_header->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
-		port = kmsg->ikm_header->msgh_remote_port;
+	if (MACH_MSGH_BITS_RAISED_IMPORTANCE(hdr->msgh_bits)) {
+		hdr->msgh_bits &= ~MACH_MSGH_BITS_RAISEIMP;
+		port = hdr->msgh_remote_port;
 		if (IP_VALID(port)) {
-			ip_lock(port);
+			ip_mq_lock(port);
 			/* inactive ports already had their importance boosts dropped */
 			if (!ip_active(port) ||
 			    ipc_port_importance_delta(port, IPID_OPTION_NORMAL, -1) == FALSE) {
-				ip_unlock(port);
+				ip_mq_unlock(port);
 			}
 		}
 	}
@@ -3348,7 +3356,7 @@ void
 ipc_importance_assert_clean(__assert_only ipc_kmsg_t kmsg)
 {
 	assert(IIE_NULL == kmsg->ikm_importance);
-	assert(!MACH_MSGH_BITS_RAISED_IMPORTANCE(kmsg->ikm_header->msgh_bits));
+	assert(!MACH_MSGH_BITS_RAISED_IMPORTANCE(ikm_header(kmsg)->msgh_bits));
 }
 
 /*
@@ -3397,16 +3405,11 @@ ipc_importance_command(
 	mach_voucher_attr_content_t                     out_content,
 	mach_voucher_attr_content_size_t                *out_content_size);
 
-static void
-ipc_importance_manager_release(
-	ipc_voucher_attr_manager_t              manager);
-
 const struct ipc_voucher_attr_manager ipc_importance_manager = {
 	.ivam_release_value =   ipc_importance_release_value,
 	.ivam_get_value =       ipc_importance_get_value,
 	.ivam_extract_content = ipc_importance_extract_content,
 	.ivam_command =         ipc_importance_command,
-	.ivam_release =         ipc_importance_manager_release,
 	.ivam_flags =           IVAM_FLAGS_NONE,
 };
 
@@ -3602,6 +3605,11 @@ ipc_importance_extract_content(
 	IMPORTANCE_ASSERT_MANAGER(manager);
 	IMPORTANCE_ASSERT_KEY(key);
 
+	if (size < 1) {
+		/* rdar://110276886 we need space for the terminating NUL */
+		return KERN_NO_SPACE;
+	}
+
 	/* the first non-default value provides the data */
 	for (i = 0; i < value_count; i++) {
 		elem = (ipc_importance_elem_t)values[i];
@@ -3777,44 +3785,22 @@ ipc_importance_command(
 }
 
 /*
- *	Routine:	ipc_importance_manager_release [Voucher Attribute Manager Interface]
- *	Purpose:
- *		Release the Voucher system's reference on the IPC importance attribute
- *		manager.
- *	Conditions:
- *		As this can only occur after the manager drops the Attribute control
- *		reference granted back at registration time, and that reference is never
- *		dropped, this should never be called.
- */
-__abortlike
-static void
-ipc_importance_manager_release(
-	ipc_voucher_attr_manager_t              __assert_only manager)
-{
-	IMPORTANCE_ASSERT_MANAGER(manager);
-	panic("Voucher importance manager released");
-}
-
-/*
  *	Routine:	ipc_importance_init
  *	Purpose:
  *		Initialize the  IPC importance manager.
  *	Conditions:
  *		Zones and Vouchers are already initialized.
  */
-void
+__startup_func
+static void
 ipc_importance_init(void)
 {
-	kern_return_t kr;
-
-	kr = ipc_register_well_known_mach_voucher_attr_manager(&ipc_importance_manager,
+	ipc_register_well_known_mach_voucher_attr_manager(&ipc_importance_manager,
 	    (mach_voucher_attr_value_handle_t)0,
 	    MACH_VOUCHER_ATTR_KEY_IMPORTANCE,
 	    &ipc_importance_control);
-	if (KERN_SUCCESS != kr) {
-		printf("Voucher importance manager register returned %d", kr);
-	}
 }
+STARTUP(MACH_IPC, STARTUP_RANK_LAST, ipc_importance_init);
 
 /*
  *	Routine:	ipc_importance_thread_call_init
@@ -3824,7 +3810,8 @@ ipc_importance_init(void)
  *	Conditions:
  *		Thread-call mechanism is already initialized.
  */
-void
+__startup_func
+static void
 ipc_importance_thread_call_init(void)
 {
 	/* initialize delayed drop queue and thread-call */
@@ -3835,6 +3822,7 @@ ipc_importance_thread_call_init(void)
 		panic("ipc_importance_init");
 	}
 }
+STARTUP(THREAD_CALL, STARTUP_RANK_MIDDLE, ipc_importance_thread_call_init);
 
 /*
  * Routing: task_importance_list_pids
@@ -3853,9 +3841,9 @@ task_importance_list_pids(task_t task, int flags, char *pid_list, unsigned int m
 		return 0;
 	}
 	unsigned int pidcount = 0;
-	task_t temp_task;
 	ipc_importance_task_t task_imp = task->task_imp_base;
 	ipc_kmsg_t temp_kmsg;
+	mach_msg_header_t *temp_hdr;
 	ipc_importance_inherit_t temp_inherit;
 	ipc_importance_elem_t elem;
 	int target_pid = 0, previous_pid;
@@ -3887,13 +3875,15 @@ task_importance_list_pids(task_t task, int flags, char *pid_list, unsigned int m
 		previous_pid = target_pid;
 		target_pid = -1;
 		elem = temp_kmsg->ikm_importance;
-		temp_task = TASK_NULL;
 
 		if (elem == IIE_NULL) {
 			continue;
 		}
 
-		if (!(temp_kmsg->ikm_header && MACH_MSGH_BITS_RAISED_IMPORTANCE(temp_kmsg->ikm_header->msgh_bits))) {
+		temp_hdr = ikm_header(temp_kmsg);
+
+		if (!(temp_hdr &&
+		    MACH_MSGH_BITS_RAISED_IMPORTANCE(temp_hdr->msgh_bits))) {
 			continue;
 		}
 

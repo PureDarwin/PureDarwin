@@ -353,12 +353,6 @@ IOMultiMemoryDescriptor::doMap(vm_map_t           __addressMap,
 		}
 	}while (false);
 
-	if (kIOReturnSuccess == err) {
-#if IOTRACKING
-		IOTrackingAddUser(gIOMapTracking, &mapping->fTracking, mapping->fLength);
-#endif
-	}
-
 	return err;
 }
 
@@ -420,21 +414,22 @@ IOMultiMemoryDescriptor::setOwnership( task_t newOwner,
 
 IOReturn
 IOMultiMemoryDescriptor::getPageCounts(IOByteCount * pResidentPageCount,
-    IOByteCount * pDirtyPageCount)
+    IOByteCount * pDirtyPageCount, IOByteCount * pSwappedPageCount)
 {
 	IOReturn    err;
-	IOByteCount totalResidentPageCount, totalDirtyPageCount;
-	IOByteCount residentPageCount, dirtyPageCount;
+	IOByteCount totalResidentPageCount, totalDirtyPageCount, totalSwappedPageCount;
+	IOByteCount residentPageCount, dirtyPageCount, swappedPageCount;
 
 	err = kIOReturnSuccess;
-	totalResidentPageCount = totalDirtyPageCount = 0;
+	totalResidentPageCount = totalDirtyPageCount = totalSwappedPageCount = 0;
 	for (unsigned index = 0; index < _descriptorsCount; index++) {
-		err = _descriptors[index]->getPageCounts(&residentPageCount, &dirtyPageCount);
+		err = _descriptors[index]->getPageCounts(&residentPageCount, &dirtyPageCount, &swappedPageCount);
 		if (kIOReturnSuccess != err) {
 			break;
 		}
 		totalResidentPageCount += residentPageCount;
 		totalDirtyPageCount    += dirtyPageCount;
+		totalSwappedPageCount  += swappedPageCount;
 	}
 
 	if (pResidentPageCount) {
@@ -443,8 +438,18 @@ IOMultiMemoryDescriptor::getPageCounts(IOByteCount * pResidentPageCount,
 	if (pDirtyPageCount) {
 		*pDirtyPageCount = totalDirtyPageCount;
 	}
+	if (pSwappedPageCount) {
+		*pSwappedPageCount = totalSwappedPageCount;
+	}
 
 	return err;
+}
+
+IOReturn
+IOMultiMemoryDescriptor::getPageCounts(IOByteCount * pResidentPageCount,
+    IOByteCount * pDirtyPageCount)
+{
+	return getPageCounts(pResidentPageCount, pDirtyPageCount, NULL);
 }
 
 uint64_t

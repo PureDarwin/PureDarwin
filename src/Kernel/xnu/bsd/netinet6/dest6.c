@@ -68,6 +68,7 @@
 #include <sys/time.h>
 #include <sys/kernel.h>
 
+#include <net/droptap.h>
 #include <net/if.h>
 #include <net/route.h>
 
@@ -84,10 +85,11 @@ int
 dest6_input(struct mbuf **mp, int *offp, int proto)
 {
 #pragma unused(proto)
-	struct mbuf *m = *mp;
+	struct mbuf *__single m = *mp;
 	int off = *offp, dstoptlen = 0, optlen = 0;
 	struct ip6_dest *dstopts = NULL;
 	u_int8_t *opt = NULL;
+	drop_reason_t drop_reason = DROP_REASON_UNSPECIFIED;
 
 	/* validation of the length of the header */
 	IP6_EXTHDR_CHECK(m, off, sizeof(*dstopts), return IPPROTO_DONE);
@@ -105,6 +107,7 @@ dest6_input(struct mbuf **mp, int *offp, int proto)
 		if (*opt != IP6OPT_PAD1 &&
 		    (dstoptlen < IP6OPT_MINLEN || *(opt + 1) + 2 > dstoptlen)) {
 			ip6stat.ip6s_toosmall++;
+			drop_reason = DROP_REASON_IP_TOO_SMALL;
 			goto bad;
 		}
 
@@ -117,7 +120,7 @@ dest6_input(struct mbuf **mp, int *offp, int proto)
 			break;
 
 		default:                /* unknown option */
-			optlen = ip6_unknown_opt(opt, m,
+			optlen = ip6_unknown_opt(opt, dstoptlen, m,
 			    opt - mtod(m, u_int8_t *));
 			if (optlen == -1) {
 				return IPPROTO_DONE;
@@ -132,6 +135,6 @@ dest6_input(struct mbuf **mp, int *offp, int proto)
 
 bad:
 	*mp = NULL;
-	m_freem(m);
+	m_drop(m, DROPTAP_FLAG_DIR_IN | DROPTAP_FLAG_L2_MISSING, drop_reason, NULL, 0);
 	return IPPROTO_DONE;
 }

@@ -37,86 +37,91 @@
 #else
 #include <assert.h>
 #include <stdlib.h>
-#define kalloc(x) malloc(x)
-#define kfree(x, y) free(x)
+#define kalloc_data(x, y) malloc(x)
+#define kfree_data(x, y) free(x)
 #endif
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <string.h>
 
+#ifndef __DARWIN_UINT
 typedef unsigned int                    uint;
+#define __DARWIN_UINT
+#endif
 
 #define BIT(b)                          (1ULL << (b))
 
-#define mask(width)                     (width >= 64 ? -1ULL : (BIT(width) - 1))
-#define extract(x, shift, width)        ((((uint64_t)(x)) >> (shift)) & mask(width))
-#define bits(x, hi, lo)                 extract((x), (lo), (hi) - (lo) + 1)
+#define bits_mask(width)                ((width) >= 64 ? -1ULL : (BIT(width) - 1))
+#define bits_extract(x, shift, width)   ((((uint64_t)(x)) >> (shift)) & bits_mask(width))
+#define bits(x, hi, lo)                 bits_extract((x), (lo), (hi) - (lo) + 1)
 
+#define bit_assign(x, b, e)             ((x) = (((x) & ~BIT(b))) | ((((uint64_t) (!!(e)))) << (b)))
 #define bit_set(x, b)                   ((x) |= BIT(b))
 #define bit_clear(x, b)                 ((x) &= ~BIT(b))
 #define bit_test(x, b)                  ((bool)((x) & BIT(b)))
 
+/*
+ * FIXME(rdar://154775164): Deprecate `mask` and `extract` in kern/bits.h
+ *
+ * These macros have been deprecated.
+ */
+#define mask(width) \
+	_Pragma("message \"mask has been deprecated. Please use bits_mask instead.\"") \
+	bits_mask(width)
+#define extract(x, shift, width) \
+	_Pragma("message \"extract has been deprecated. Please use bits_extract instead.\"") \
+	bits_extract(x, shift, width)
+
 inline static uint64_t
 bit_ror64(uint64_t bitmap, uint n)
 {
-#if defined(__arm64__)
-	uint64_t result;
-	uint64_t _n = (uint64_t)n;
-	asm volatile ("ror %0, %1, %2" : "=r" (result) : "r" (bitmap), "r" (_n));
-	return result;
-#else
-	n = n & 63;
-	return (bitmap >> n) | (bitmap << (64 - n));
-#endif
+	return __builtin_rotateright64(bitmap, n);
 }
 
 inline static uint64_t
 bit_rol64(uint64_t bitmap, uint n)
 {
-#if defined(__arm64__)
-	return bit_ror64(bitmap, 64U - n);
-#else
-	n = n & 63;
-	return (bitmap << n) | (bitmap >> (64 - n));
-#endif
+	return __builtin_rotateleft64(bitmap, n);
 }
 
 /* Non-atomically clear the bit and returns whether the bit value was changed */
-inline static bool
-bit_clear_if_set(uint64_t *bitmap, int bit)
-{
-	bool bit_is_set = bit_test(*bitmap, bit);
-	bit_clear(*bitmap, bit);
-	return bit_is_set;
-}
+#define bit_clear_if_set(bitmap, bit) \
+({ \
+	int _n = (bit); \
+	__auto_type _map = &(bitmap); \
+	bool _bit_is_set = bit_test(*_map, _n); \
+	bit_clear(*_map, _n); \
+	_bit_is_set; \
+})
 
 /* Non-atomically set the bit and returns whether the bit value was changed */
-inline static bool
-bit_set_if_clear(uint64_t *bitmap, int bit)
-{
-	bool bit_is_set = bit_test(*bitmap, bit);
-	bit_set(*bitmap, bit);
-	return !bit_is_set;
-}
+#define bit_set_if_clear(bitmap, bit) \
+({ \
+	int _n = (bit); \
+	__auto_type _map = &(bitmap); \
+	bool _bit_is_set = bit_test(*_map, _n); \
+	bit_set(*_map, _n); \
+	!_bit_is_set; \
+})
+
+/*
+ * Note on bit indexing: bit indices are offsets from the least significant bit.
+ * So the bit at index `i` would be found by `1 & (bitmap >> i)`.
+ */
 
 /* Returns the most significant '1' bit, or -1 if all zeros */
 inline static int
 bit_first(uint64_t bitmap)
 {
-#if defined(__arm64__)
-	int64_t result;
-	asm volatile ("clz %0, %1" : "=r" (result) : "r" (bitmap));
-	return 63 - (int)result;
-#else
-	return (bitmap == 0) ? -1 : 63 - __builtin_clzll(bitmap);
-#endif
+	return 63 - __builtin_clzg(bitmap, 64);
 }
 
 
 inline static int
 __bit_next(uint64_t bitmap, int previous_bit)
 {
-	uint64_t mask = previous_bit ? mask(previous_bit) : ~0ULL;
+	uint64_t mask = previous_bit ? bits_mask(previous_bit) : ~0ULL;
 
 	return bit_first(bitmap & mask);
 }
@@ -138,7 +143,7 @@ bit_next(uint64_t bitmap, int previous_bit)
 inline static int
 lsb_first(uint64_t bitmap)
 {
-	return __builtin_ffsll((long long)bitmap) - 1;
+	return __builtin_ctzg(bitmap, -1);
 }
 
 /* Returns the least significant '1' bit that is more significant than previous_bit,
@@ -148,7 +153,7 @@ lsb_first(uint64_t bitmap)
 inline static int
 lsb_next(uint64_t bitmap, int previous_bit)
 {
-	uint64_t mask = mask(previous_bit + 1);
+	uint64_t mask = bits_mask(previous_bit + 1);
 
 	return lsb_first(bitmap & ~mask);
 }
@@ -183,7 +188,7 @@ typedef uint64_t                bitmap_t;
 
 
 inline static bool
-atomic_bit_set(_Atomic bitmap_t *map, int n, int mem_order)
+atomic_bit_set(_Atomic bitmap_t *__single map, int n, int mem_order)
 {
 	bitmap_t prev;
 	prev = __c11_atomic_fetch_or(map, BIT(n), mem_order);
@@ -191,27 +196,43 @@ atomic_bit_set(_Atomic bitmap_t *map, int n, int mem_order)
 }
 
 inline static bool
-atomic_bit_clear(_Atomic bitmap_t *map, int n, int mem_order)
+atomic_bit_clear(_Atomic bitmap_t *__single map, int n, int mem_order)
 {
 	bitmap_t prev;
 	prev = __c11_atomic_fetch_and(map, ~BIT(n), mem_order);
 	return bit_test(prev, n);
 }
 
+inline static bool
+atomic_bit_test(_Atomic bitmap_t *__single map, int n, int mem_order)
+{
+	bitmap_t prev;
+	prev = __c11_atomic_load(map, mem_order);
+	return bit_test(prev, n);
+}
+
+inline static int
+atomic_bit_count(_Atomic bitmap_t *__single map, int mem_order)
+{
+	bitmap_t prev;
+	prev = __c11_atomic_load(map, mem_order);
+	return bit_count(prev);
+}
 
 #define BITMAP_LEN(n)   (((uint)(n) + 63) >> 6)         /* Round to 64bit bitmap_t */
 #define BITMAP_SIZE(n)  (size_t)(BITMAP_LEN(n) << 3)            /* Round to 64bit bitmap_t, then convert to bytes */
 #define bitmap_bit(n)   bits(n, 5, 0)
 #define bitmap_index(n) bits(n, 63, 6)
 
-inline static bitmap_t *
-bitmap_zero(bitmap_t *map, uint nbits)
+inline static bitmap_t * __header_indexable
+bitmap_zero(bitmap_t *__header_indexable map, uint nbits)
 {
-	return (bitmap_t *)memset((void *)map, 0, BITMAP_SIZE(nbits));
+	memset((void *)map, 0, BITMAP_SIZE(nbits));
+	return map;
 }
 
-inline static bitmap_t *
-bitmap_full(bitmap_t *map, uint nbits)
+inline static bitmap_t *__header_indexable
+bitmap_full(bitmap_t *__header_indexable map, uint nbits)
 {
 	uint i;
 
@@ -222,14 +243,26 @@ bitmap_full(bitmap_t *map, uint nbits)
 	uint nbits_filled = i * 64;
 
 	if (nbits > nbits_filled) {
-		map[i] = mask(nbits - nbits_filled);
+		map[i] = bits_mask(nbits - nbits_filled);
 	}
 
 	return map;
 }
 
 inline static bool
-bitmap_is_full(bitmap_t *map, uint nbits)
+bitmap_is_empty(bitmap_t *__header_indexable map, uint nbits)
+{
+	for (uint i = 0; i < BITMAP_LEN(nbits); i++) {
+		if (map[i]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+inline static bool
+bitmap_is_full(bitmap_t *__header_indexable map, uint nbits)
 {
 	uint i;
 
@@ -242,62 +275,58 @@ bitmap_is_full(bitmap_t *map, uint nbits)
 	uint nbits_filled = i * 64;
 
 	if (nbits > nbits_filled) {
-		return map[i] == mask(nbits - nbits_filled);
+		return map[i] == bits_mask(nbits - nbits_filled);
 	}
 
 	return true;
 }
 
-inline static bitmap_t *
+inline static bitmap_t *__header_indexable
 bitmap_alloc(uint nbits)
 {
 	assert(nbits > 0);
-	bitmap_t *map = (bitmap_t *)kalloc(BITMAP_SIZE(nbits));
-	if (map) {
-		bitmap_zero(map, nbits);
-	}
-	return map;
+	return (bitmap_t *)kalloc_data(BITMAP_SIZE(nbits), Z_WAITOK_ZERO);
 }
 
 inline static void
 bitmap_free(bitmap_t *map, uint nbits)
 {
 	assert(nbits > 0);
-	kfree(map, BITMAP_SIZE(nbits));
+	kfree_data(map, BITMAP_SIZE(nbits));
 }
 
 inline static void
-bitmap_set(bitmap_t *map, uint n)
+bitmap_set(bitmap_t *__header_indexable map, uint n)
 {
 	bit_set(map[bitmap_index(n)], bitmap_bit(n));
 }
 
 inline static void
-bitmap_clear(bitmap_t *map, uint n)
+bitmap_clear(bitmap_t *__header_indexable map, uint n)
 {
 	bit_clear(map[bitmap_index(n)], bitmap_bit(n));
 }
 
 inline static bool
-atomic_bitmap_set(_Atomic bitmap_t *map, uint n, int mem_order)
+atomic_bitmap_set(_Atomic bitmap_t *__header_indexable map, uint n, int mem_order)
 {
 	return atomic_bit_set(&map[bitmap_index(n)], bitmap_bit(n), mem_order);
 }
 
 inline static bool
-atomic_bitmap_clear(_Atomic bitmap_t *map, uint n, int mem_order)
+atomic_bitmap_clear(_Atomic bitmap_t *__header_indexable map, uint n, int mem_order)
 {
 	return atomic_bit_clear(&map[bitmap_index(n)], bitmap_bit(n), mem_order);
 }
 
 inline static bool
-bitmap_test(const bitmap_t *map, uint n)
+bitmap_test(const bitmap_t *__header_indexable map, uint n)
 {
 	return bit_test(map[bitmap_index(n)], bitmap_bit(n));
 }
 
 inline static int
-bitmap_first(bitmap_t *map, uint nbits)
+bitmap_first(bitmap_t *__header_indexable map, uint nbits)
 {
 	for (int i = (int)bitmap_index(nbits - 1); i >= 0; i--) {
 		if (map[i] == 0) {
@@ -310,7 +339,10 @@ bitmap_first(bitmap_t *map, uint nbits)
 }
 
 inline static void
-bitmap_not(bitmap_t *out, const bitmap_t *in, uint nbits)
+bitmap_not(
+	bitmap_t       *__header_indexable out,
+	const bitmap_t *__header_indexable in,
+	uint                               nbits)
 {
 	uint i;
 
@@ -321,12 +353,16 @@ bitmap_not(bitmap_t *out, const bitmap_t *in, uint nbits)
 	uint nbits_complete = i * 64;
 
 	if (nbits > nbits_complete) {
-		out[i] = ~in[i] & mask(nbits - nbits_complete);
+		out[i] = ~in[i] & bits_mask(nbits - nbits_complete);
 	}
 }
 
 inline static void
-bitmap_and(bitmap_t *out, const bitmap_t *in1, const bitmap_t *in2, uint nbits)
+bitmap_and(
+	bitmap_t       *__header_indexable out,
+	const bitmap_t *__header_indexable in1,
+	const bitmap_t *__header_indexable in2,
+	uint                               nbits)
 {
 	for (uint i = 0; i <= bitmap_index(nbits - 1); i++) {
 		out[i] = in1[i] & in2[i];
@@ -334,23 +370,36 @@ bitmap_and(bitmap_t *out, const bitmap_t *in1, const bitmap_t *in2, uint nbits)
 }
 
 inline static void
-bitmap_and_not(bitmap_t *out, const bitmap_t *in1, const bitmap_t *in2, uint nbits)
+bitmap_and_not(
+	bitmap_t       *__header_indexable out,
+	const bitmap_t *__header_indexable in1,
+	const bitmap_t *__header_indexable in2,
+	uint                               nbits)
 {
 	uint i;
 
-	for (i = 0; i < bitmap_index(nbits - 1); i++) {
+	for (i = 0; i <= bitmap_index(nbits - 1); i++) {
 		out[i] = in1[i] & ~in2[i];
 	}
+}
 
-	uint nbits_complete = i * 64;
-
-	if (nbits > nbits_complete) {
-		out[i] = (in1[i] & ~in2[i]) & mask(nbits - nbits_complete);
+inline static void
+bitmap_or(
+	bitmap_t       *__header_indexable out,
+	const bitmap_t *__header_indexable in1,
+	const bitmap_t *__header_indexable in2,
+	uint                        nbits)
+{
+	for (uint i = 0; i <= bitmap_index(nbits - 1); i++) {
+		out[i] = in1[i] | in2[i];
 	}
 }
 
 inline static bool
-bitmap_equal(const bitmap_t *in1, const bitmap_t *in2, uint nbits)
+bitmap_equal(
+	const bitmap_t *__header_indexable in1,
+	const bitmap_t *__header_indexable in2,
+	uint                               nbits)
 {
 	for (uint i = 0; i <= bitmap_index(nbits - 1); i++) {
 		if (in1[i] != in2[i]) {
@@ -362,7 +411,10 @@ bitmap_equal(const bitmap_t *in1, const bitmap_t *in2, uint nbits)
 }
 
 inline static int
-bitmap_and_not_mask_first(bitmap_t *map, bitmap_t *mask, uint nbits)
+bitmap_and_not_mask_first(
+	bitmap_t       *__header_indexable map,
+	const bitmap_t *__header_indexable mask,
+	uint                               nbits)
 {
 	for (int i = (int)bitmap_index(nbits - 1); i >= 0; i--) {
 		if ((map[i] & ~mask[i]) == 0) {
@@ -375,7 +427,7 @@ bitmap_and_not_mask_first(bitmap_t *map, bitmap_t *mask, uint nbits)
 }
 
 inline static int
-bitmap_lsb_first(const bitmap_t *map, uint nbits)
+bitmap_lsb_first(const bitmap_t *__header_indexable map, uint nbits)
 {
 	for (uint i = 0; i <= bitmap_index(nbits - 1); i++) {
 		if (map[i] == 0) {
@@ -388,7 +440,7 @@ bitmap_lsb_first(const bitmap_t *map, uint nbits)
 }
 
 inline static int
-bitmap_next(const bitmap_t *map, uint prev)
+bitmap_next(const bitmap_t *__header_indexable map, uint prev)
 {
 	if (prev == 0) {
 		return -1;
@@ -411,7 +463,7 @@ bitmap_next(const bitmap_t *map, uint prev)
 }
 
 inline static int
-bitmap_lsb_next(const bitmap_t *map, uint nbits, uint prev)
+bitmap_lsb_next(const bitmap_t *__header_indexable map, uint nbits, uint prev)
 {
 	if ((prev + 1) >= nbits) {
 		return -1;
@@ -433,5 +485,16 @@ bitmap_lsb_next(const bitmap_t *map, uint nbits, uint prev)
 
 	return -1;
 }
+
+inline static uint
+bitmap_count(const bitmap_t *__header_indexable map, uint nbits)
+{
+	uint res = 0;
+	for (uint i = 0; i <= bitmap_index(nbits - 1); i++) {
+		res += (uint)bit_count(map[i]);
+	}
+	return res;
+}
+
 
 #endif

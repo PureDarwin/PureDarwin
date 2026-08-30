@@ -34,12 +34,15 @@
 #include <sys/sysctl.h>
 #include <libkern/libkern.h>
 #include <kern/assert.h>
+#include <kern/cpc.h>
 
 #include <kern/kpc.h>
 #include <sys/ktrace.h>
 
 #include <pexpert/pexpert.h>
 #include <kperf/kperf.h>
+
+#if CONFIG_CPU_COUNTERS
 
 /* Various sysctl requests */
 #define REQ_CLASSES              (1)
@@ -75,8 +78,6 @@ typedef int (*setget_func_t)(int);
 void
 kpc_init(void)
 {
-	kpc_arch_init();
-
 	kpc_initted = 1;
 }
 
@@ -98,8 +99,7 @@ kpc_get_bigarray(uint32_t *size_out)
 	 * Another element is needed to hold the CPU number when getting counter
 	 * values.
 	 */
-	bigarray = kheap_alloc_tag(KHEAP_DATA_BUFFERS, size,
-	    Z_WAITOK, VM_KERN_MEMORY_DIAG);
+	bigarray = kalloc_data_tag(size, Z_WAITOK, VM_KERN_MEMORY_DIAG);
 	assert(bigarray != NULL);
 	return bigarray;
 }
@@ -113,22 +113,6 @@ sysctl_get_int( struct sysctl_oid *oidp, struct sysctl_req *req,
 
 	/* copy out the old value */
 	error = sysctl_handle_int(oidp, &value, 0, req);
-
-	return error;
-}
-
-static int
-sysctl_set_int( struct sysctl_req *req, int (*set_func)(int))
-{
-	int error = 0;
-	int value = 0;
-
-	error = SYSCTL_IN( req, &value, sizeof(value));
-	if (error) {
-		return error;
-	}
-
-	error = set_func( value );
 
 	return error;
 }
@@ -198,29 +182,6 @@ sysctl_kpc_get_counters(uint32_t counters,
 }
 
 static int
-sysctl_kpc_get_shadow_counters(uint32_t counters,
-    uint32_t *size, void *buf)
-{
-	uint64_t *ctr_buf = (uint64_t*)buf;
-	int curcpu;
-	uint32_t count;
-
-	count = kpc_get_shadow_counters(counters & KPC_ALL_CPUS,
-	    counters,
-	    &curcpu, &ctr_buf[1]);
-
-	if (!count) {
-		return EINVAL;
-	}
-
-	ctr_buf[0] = curcpu;
-
-	*size = (count + 1) * sizeof(uint64_t);
-
-	return 0;
-}
-
-static int
 sysctl_kpc_get_thread_counters(uint32_t tid,
     uint32_t *size, void *buf)
 {
@@ -252,7 +213,7 @@ sysctl_kpc_set_config(uint32_t classes, void* buf)
 	if (classes & KPC_CLASS_POWER_MASK) {
 		return EPERM;
 	}
-	return kpc_set_config( classes, buf);
+	return kpc_set_config_kernel(classes, buf);
 }
 
 static int
@@ -379,25 +340,23 @@ kpc_sysctl SYSCTL_HANDLER_ARGS
 {
 	int ret;
 
-	// __unused struct sysctl_oid *unused_oidp = oidp;
 	(void)arg2;
+
+	if (!cpc_cpmu_supported) {
+		return ENOTSUP;
+	}
 
 	if (!kpc_initted) {
 		panic("kpc_init not called");
 	}
 
-	if (!kpc_supported) {
-		return ENOTSUP;
-	}
-
 	ktrace_lock();
 
-	// Most sysctls require an access check, but a few are public.
+	// Most sysctls require an access check, but a few are open.
 	switch ((uintptr_t) arg1) {
 	case REQ_CLASSES:
 	case REQ_CONFIG_COUNT:
 	case REQ_COUNTER_COUNT:
-		// These read-only sysctls are public.
 		break;
 
 	default:
@@ -423,7 +382,7 @@ kpc_sysctl SYSCTL_HANDLER_ARGS
 	case REQ_COUNTING:
 		ret = sysctl_getset_int( oidp, req,
 		    (getint_t)kpc_get_running,
-		    (setint_t)kpc_set_running );
+		    (setint_t)kpc_set_running_kernel );
 		break;
 	case REQ_THREAD_COUNTING:
 		ret = sysctl_getset_int( oidp, req,
@@ -441,17 +400,12 @@ kpc_sysctl SYSCTL_HANDLER_ARGS
 		    (setget_func_t)kpc_get_counter_count );
 		break;
 
-
 	case REQ_THREAD_COUNTERS:
 		ret = sysctl_get_bigarray( req, sysctl_kpc_get_thread_counters );
 		break;
 
 	case REQ_COUNTERS:
 		ret = sysctl_get_bigarray( req, sysctl_kpc_get_counters );
-		break;
-
-	case REQ_SHADOW_COUNTERS:
-		ret = sysctl_get_bigarray( req, sysctl_kpc_get_shadow_counters );
 		break;
 
 	case REQ_CONFIG:
@@ -477,7 +431,7 @@ kpc_sysctl SYSCTL_HANDLER_ARGS
 
 
 	case REQ_SW_INC:
-		ret = sysctl_set_int( req, (setget_func_t)kpc_set_sw_inc );
+		ret = ENOTSUP;
 		break;
 
 	case REQ_PMU_VERSION:
@@ -551,12 +505,6 @@ SYSCTL_PROC(_kpc, OID_AUTO, counters,
     sizeof(uint64_t), kpc_sysctl,
     "QU", "Current counters");
 
-SYSCTL_PROC(_kpc, OID_AUTO, shadow_counters,
-    CTLFLAG_RD | CTLFLAG_WR | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
-    (void*)REQ_SHADOW_COUNTERS,
-    sizeof(uint64_t), kpc_sysctl,
-    "QU", "Current shadow counters");
-
 SYSCTL_PROC(_kpc, OID_AUTO, config,
     CTLFLAG_RD | CTLFLAG_WR | CTLFLAG_ANYBODY | CTLFLAG_MASKED | CTLFLAG_LOCKED,
     (void*)REQ_CONFIG,
@@ -576,3 +524,14 @@ SYSCTL_PROC(_kpc, OID_AUTO, actionid,
     "QU", "Set counter actionids");
 
 
+
+#ifdef __arm64__
+
+extern int kpc_pc_capture;
+SYSCTL_INT(_kpc, OID_AUTO, pc_capture_supported,
+    CTLFLAG_RD | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, &kpc_pc_capture, 0,
+    "whether PC capture is supported by the hardware");
+
+#endif /* __arm64__ */
+
+#endif // CONFIG_CPU_COUNTERS

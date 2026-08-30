@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2017, 2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2012-2017, 2020, 2022, 2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -41,6 +41,9 @@
 #define FLOW_DIVERT_PKT_GROUP_INIT              6
 #define FLOW_DIVERT_PKT_PROPERTIES_UPDATE       7
 #define FLOW_DIVERT_PKT_APP_MAP_CREATE          9
+#define FLOW_DIVERT_PKT_FLOW_STATES_REQUEST     10
+#define FLOW_DIVERT_PKT_FLOW_STATES             11
+#define FLOW_DIVERT_PKT_CFIL_VERDICT            12
 
 #define FLOW_DIVERT_TLV_NIL                     0
 #define FLOW_DIVERT_TLV_ERROR_CODE              5
@@ -64,7 +67,7 @@
 #define FLOW_DIVERT_TLV_CDHASH                  24
 #define FLOW_DIVERT_TLV_SIGNING_ID              25
 #define FLOW_DIVERT_TLV_AGGREGATE_UNIT          26
-
+#define FLOW_DIVERT_TLV_IS_FRAGMENT             27
 #define FLOW_DIVERT_TLV_PREFIX_COUNT            28
 #define FLOW_DIVERT_TLV_FLAGS                   29
 #define FLOW_DIVERT_TLV_FLOW_TYPE               30
@@ -74,11 +77,17 @@
 #define FLOW_DIVERT_TLV_APP_REAL_CDHASH         34
 #define FLOW_DIVERT_TLV_APP_REAL_AUDIT_TOKEN    35
 #define FLOW_DIVERT_TLV_CFIL_ID                 36
+#define FLOW_DIVERT_TLV_DATAGRAM_SIZE           37
+#define FLOW_DIVERT_TLV_ORDER                   38
+#define FLOW_DIVERT_TLV_FLOW_STATE              39
+#define FLOW_DIVERT_TLV_GUARD_PROXY_CTL_UNIT    40
+#define FLOW_DIVERT_TLV_CFIL_VERDICT            41
+
 
 #define FLOW_DIVERT_FLOW_TYPE_TCP               1
 #define FLOW_DIVERT_FLOW_TYPE_UDP               3
 
-#define FLOW_DIVERT_CHUNK_SIZE                  4096
+#define FLOW_DIVERT_CHUNK_SIZE                  65600
 
 #define FLOW_DIVERT_TOKEN_GETOPT_MAX_SIZE       128
 
@@ -88,12 +97,29 @@
 #define FLOW_DIVERT_TOKEN_FLAG_BOUND            0x0000008
 
 #define FLOW_DIVERT_GROUP_FLAG_NO_APP_MAP       0x0000001
+#define FLOW_DIVERT_GROUP_FLAG_DEFUNCT          0x0000002
 
 #define FLOW_DIVERT_IS_TRANSPARENT              0x80000000
+
+// Used for policies as well as opening control sockets
+#define FLOW_DIVERT_IN_PROCESS_UNIT             0x0FFFFFFF
+
+// Range for actual assigned control units
+#define FLOW_DIVERT_IN_PROCESS_UNIT_MIN         0x0000FFFF
+#define FLOW_DIVERT_IN_PROCESS_UNIT_MAX         0xFFFFFFFF
 
 struct flow_divert_packet_header {
 	uint8_t             packet_type;
 	uint32_t            conn_id;
+};
+
+struct flow_divert_flow_state {
+	uint32_t conn_id;
+	uint64_t bytes_written_by_app;
+	uint64_t bytes_sent;
+	uint64_t bytes_received;
+	uint32_t send_window;
+	uint32_t send_buffer_bytes;
 };
 
 #endif /* __FLOW_DIVERT_PROTO_H__ */

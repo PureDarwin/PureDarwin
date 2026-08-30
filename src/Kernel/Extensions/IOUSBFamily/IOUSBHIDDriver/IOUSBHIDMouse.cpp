@@ -1,5 +1,5 @@
 #include "IOUSBHIDMouse.h"
-#include "IOUSBHIDEventQueue.h"
+#include "PDHIDEventQueue.h"
 
 #include <IOKit/IOLib.h>
 #include <kern/thread.h>
@@ -14,8 +14,6 @@ enum {
     kUSBHIDProtocolBoot = 0
 };
 
-static UInt8 gNextMouseIndex;
-
 bool IOUSBHIDMouse::init(OSDictionary *dict)
 {
     if (!super::init(dict)) return false;
@@ -24,7 +22,7 @@ bool IOUSBHIDMouse::init(OSDictionary *dict)
     fReportMem = NULL;
     fRunning = false;
     fLastButtons = 0;
-    fMouseIndex = gNextMouseIndex++;
+    fMouseIndex = PDHIDAllocateMouseIndex();
     setName("IOUSBHIDMouse");
     setProperty("Transport", "USB");
     return true;
@@ -61,7 +59,7 @@ bool IOUSBHIDMouse::start(IOService *provider)
     }
 
     IOLog("IOUSBHIDMouse: using existing HID protocol\n");
-    USBHIDPublishMouseDevice();
+    PDHIDPublishMouseDevice();
 
     fRunning = true;
     thread_t thread = THREAD_NULL;
@@ -143,7 +141,7 @@ void IOUSBHIDMouse::handleReport(const UInt8 report[8])
     SInt8 wheel = (SInt8)report[3];
 
     if (buttons != fLastButtons || dx || dy || wheel) {
-        USBHIDPushMouseEvent(fMouseIndex, buttons, dx, dy, wheel);
+        PDHIDPushMouseEvent(fMouseIndex, buttons, dx, dy, wheel);
         fLastButtons = buttons;
     }
 }

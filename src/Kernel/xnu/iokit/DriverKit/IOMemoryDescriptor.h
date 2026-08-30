@@ -45,6 +45,7 @@ class IOMemoryMap;
 
 // IOMemoryDescriptor Create options
 enum {
+	kIOMemoryDirectionNone       = 0x00000000,
 	kIOMemoryDirectionIn         = 0x00000001,
 	kIOMemoryDirectionOut        = 0x00000002,
 	kIOMemoryDirectionOutIn      = kIOMemoryDirectionIn | kIOMemoryDirectionOut,
@@ -56,10 +57,16 @@ enum {
 enum {
 	kIOMemoryMapFixedAddress          = 0x00000001,
 	kIOMemoryMapReadOnly              = 0x00000002,
+	kIOMemoryMapGuardedMask           = 0x0000001C,
+	kIOMemoryMapGuardedDefault        = 0x00000000,
+	kIOMemoryMapGuardedNone           = 0x00000004,
+	kIOMemoryMapGuardedSmall          = 0x00000008,
+	kIOMemoryMapGuardedLarge          = 0x0000000C,
 	kIOMemoryMapCacheModeDefault      = 0x00000000,
 	kIOMemoryMapCacheModeInhibit      = 0x00000100,
 	kIOMemoryMapCacheModeCopyback     = 0x00000200,
 	kIOMemoryMapCacheModeWriteThrough = 0x00000400,
+	kIOMemoryMapCacheModeRealTime     = 0x00000800,
 };
 
 struct IOAddressSegment {
@@ -88,7 +95,7 @@ struct _IOMDPrivateState {
         
 */
 
-/* source class IOMemoryDescriptor IOMemoryDescriptor.iig:89-186 */
+/* source class IOMemoryDescriptor IOMemoryDescriptor.iig:96-193 */
 
 #if __DOCUMENTATION__
 #define KERNEL IIG_KERNEL
@@ -195,7 +202,7 @@ private:
 #undef KERNEL
 #else /* __DOCUMENTATION__ */
 
-/* generated class IOMemoryDescriptor IOMemoryDescriptor.iig:89-186 */
+/* generated class IOMemoryDescriptor IOMemoryDescriptor.iig:96-193 */
 
 #define IOMemoryDescriptor__CopyState_ID            0x03a4e730d3c5fecfULL
 #define IOMemoryDescriptor_CreateMapping_ID            0x3b7ce65f9e5d7a62ULL
@@ -374,7 +381,7 @@ public:
 
 
 
-/* source class IOMemoryDescriptorPrivate IOMemoryDescriptor.iig:188-193 */
+/* source class IOMemoryDescriptorPrivate IOMemoryDescriptor.iig:195-200 */
 
 #if __DOCUMENTATION__
 #define KERNEL IIG_KERNEL

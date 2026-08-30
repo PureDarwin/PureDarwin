@@ -111,6 +111,7 @@
 , compilerRtArmv6Build
 , kernelBuild
 , kernelDebugBuild
+, kernelSource
 , kextsArm64Build
 , kextsBuild
 , launchctlBuild
@@ -730,11 +731,13 @@ let
     let
       kcBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelBuild;
+        inherit kernelSource;
         kexts = kextsBuild;
         kcTools = kc-tools.packages.${system}.default;
       };
       kcDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelDebugBuild;
+        inherit kernelSource;
         kexts = kextsBuild;
         kcTools = kc-tools.packages.${system}.default;
       };
@@ -1008,7 +1011,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-minimal.img";
         espMB = 60;
-        rootMB = 200;
+        rootMB = 260;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
       imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
@@ -1021,6 +1024,22 @@ let
         espMB = 64;
         rootMB = 384;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 serial_video_mirror=1 pdtrace=1";
+      };
+      # Small x86 diagnostic image: kernel/base plus only enough userland to
+      # get a shell. Keep this independent of X11, Wayland, Mesa, and LLVM.
+      imageShellBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemStripped;
+        # launchd links CoreFoundation (and its own runtime deps: ICU,
+        # libobjc, libc++) unconditionally, so this needs the same stack
+        # image-stripped/image-minimal already ship it with, not just a shell.
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnu-loader.packages.${system}.default;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-shell.img";
+        espMB = 60;
+        rootMB = 300;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1";
       };
       runVm = pkgs.writeShellApplication {
         name = "puredarwin-vm";
@@ -1346,6 +1365,7 @@ let
       gtk3-nox = gtk3NoxBuild;
       image-minimal = imageMinimalBuild;
       image-minimal-debug = imageMinimalBuildDebug;
+      image-shell = imageShellBuild;
       xorg = xorgBuild;
       libxcvt = xvfbLibxcvtBuild;
       userland = userlandBuild;

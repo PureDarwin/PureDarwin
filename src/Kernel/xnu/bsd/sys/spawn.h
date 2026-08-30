@@ -65,9 +65,8 @@
 #define POSIX_SPAWN_SETSID              0x0400
 #ifdef  PRIVATE
 /* unused                               0x0800 */
-#if (DEBUG || DEVELOPMENT)
-#define _POSIX_SPAWN_FORCE_4K_PAGES     0x1000
-#endif /* (DEBUG || DEVELOPMENT) */
+#define _POSIX_SPAWN_FORCE_4K_PAGES                                            \
+  0x1000 /* DEPRECATED: use posix_spawnattr_set_4k_page_size_np() */
 #define _POSIX_SPAWN_ALLOW_DATA_EXEC    0x2000
 #endif  /* PRIVATE */
 #define POSIX_SPAWN_CLOEXEC_DEFAULT     0x4000
@@ -87,6 +86,11 @@
 #define POSIX_SPAWN_PCONTROL_THROTTLE   0x0001
 #define POSIX_SPAWN_PCONTROL_SUSPEND    0x0002
 #define POSIX_SPAWN_PCONTROL_KILL       0x0003
+
+#define POSIX_SPAWN_PANIC_ON_CRASH         0x1
+#define POSIX_SPAWN_PANIC_ON_NON_ZERO_EXIT 0x2
+#define POSIX_SPAWN_PANIC_ON_EXIT          0x4
+#define POSIX_SPAWN_PANIC_ON_SPAWN_FAIL    0x8
 
 #endif /* (!_POSIX_C_SOURCE || _DARWIN_C_SOURCE) */
 

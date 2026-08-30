@@ -16,7 +16,17 @@
         let
           basePkgs = import nixpkgs { inherit system; };
 
-          appleSdk = basePkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix { };
+          # Two stages so the MIG-generated <mach/*.h> can be produced at build
+          # time instead of being carried pre-generated: the base SDK has the
+          # hand-written headers migcom itself needs, and the final SDK adds
+          # what migcom emits from xnu's .defs.
+          appleSdkBase = basePkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix { };
+          sdkMigcom = basePkgs.callPackage ./nix/pkgs/toolchain/migcom.nix {
+            appleSdk = appleSdkBase;
+          };
+          appleSdk = basePkgs.callPackage ./nix/pkgs/toolchain/apple-sdk-pinned.nix {
+            migcom = sdkMigcom;
+          };
           pkgs = basePkgs.extend (_: _: { inherit appleSdk; });
           isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
           # fbDOOM (GPL, opt-in - see src/Userspace/fbdoom/CMakeLists.txt) is
@@ -1111,6 +1121,7 @@
                 chmod -R u+w $out
               '';
               configureFlags = [ "--disable-readline" "--disable-editline" ];
+              deps = [ xvfbZlibBuild ];
             };
           webkitgtkBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/webkitgtk.nix {
@@ -1311,6 +1322,9 @@
                 libiconvBuild xvfbZlibBuild xvfbPixmanBuild
               ];
               preConfigureExtra = ''
+                # libxml2 installs under include/libxml2/libxml, and the deps
+                # mapping only contributes the include/ level.
+                export CFLAGS="$CFLAGS -I${libxml2Build}/include/libxml2"
                 export CFLAGS="$CFLAGS -include libxml/parser.h"
                 export CFLAGS="$CFLAGS -Wno-incompatible-function-pointer-types"
                 export ac_cv_path_GDK_PIXBUF_QUERYLOADERS="$(command -v true)"
@@ -1825,6 +1839,7 @@
                     -Wl,-current_version,1.0.2 \
                     -Wl,-undefined,dynamic_lookup \
                     -L${libSystemBuild}/usr/lib \
+                    -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystemBuild}/usr/lib/system/libdyld.dylib \
                     -o "$out/lib/libXcursor.1.dylib" \
                     ./*.o \
                     -lSystem
@@ -2464,6 +2479,7 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               nativeMesonTools = nativeMesonToolsDir;
+              corefoundation = coreFoundationBuild;
               vulkanLoader = pkgs.vulkan-loader;
               vulkanHeaders = pkgs.vulkan-headers;
               libX11 = libX11SharedBuild;
@@ -2495,8 +2511,13 @@
             inherit (pkgs.gnutls) version src;
             deps = [ nettleSharedBuild ];
             postPatchExtra = ''
-              substituteInPlace configure \
+              substituteInPlace configure lib/Makefile.in \
                 --replace ' -framework Security -framework CoreFoundation' ""
+              # The keychain trust store goes with those frameworks. The header
+              # is included whether or not that code path is compiled, and here
+              # it is not: DEFAULT_TRUST_STORE_FILE wins the #if chain.
+              substituteInPlace lib/system/certs.c \
+                --replace-fail '#ifdef __APPLE__' '#if 0'
             '';
             configureFlags = [
               "--with-default-trust-store-file=/etc/ssl/cert.pem"
@@ -2574,6 +2595,7 @@
               inherit (pkgs) dillo util-macros;
               fltk = fltkBuild;
               openssl = opensslBuild;
+              libiconv = libiconvBuild;
               libX11 = xlibBuild;
               libxcb = xcbBuild;
               libXau = xvfbLibXauBuild;
@@ -2657,6 +2679,8 @@
               libSystem = libSystemBuild;
               libcxxDylib = libcxxDylibBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
+              libcurlDylib = libcurlDylibBuild;
+              corefoundation = coreFoundationBuild;
               inherit (pkgs) cmake ninja;
             };
           ninjaBuild =
@@ -2716,6 +2740,7 @@
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/zsh.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
+              libiconv = libiconvBuild;
               zsh = pkgs.zsh;
               ncurses = ncursesBuild;
             };
@@ -2963,7 +2988,7 @@
             pkgs.callPackage ./nix/pkgs/apple/corefoundation.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
-              inherit (pkgs) icu;
+              icu = icuCoreBuild;
               src = "${coreFoundationSource}/src/Libraries/CoreFoundation";
               pdCompatInclude = "${coreFoundationSource}/src/Libraries/libSystem/libc/pd-compat-include";
               libobjc = libobjcBuild;
@@ -3656,7 +3681,7 @@
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
-              kernelBuild kernelDebugBuild kextsArm64Build kextsBuild
+              kernelBuild kernelDebugBuild kernelSource kextsArm64Build kextsBuild
               launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build

@@ -28,6 +28,7 @@
 , libuuid
 , ruby
 , iig
+, python3
 , cctools
 , tinycc
 , src ? ./.
@@ -96,7 +97,7 @@ stdenv.mkDerivation ({
 
   nativeBuildInputs = [
     cmake ninja bison flex perl bash ed unifdef tcsh
-    pax coreutils findutils gawk gnused clang ruby iig
+    pax coreutils findutils gawk gnused clang ruby iig python3
     nativeUnifdef nativeMigcom
   ] ++ lib.optionals (!isDarwinHost) [
     activeCrossToolchain gnustep-base

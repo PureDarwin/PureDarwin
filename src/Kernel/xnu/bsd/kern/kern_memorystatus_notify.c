@@ -34,6 +34,7 @@
 #include <kern/locks.h>
 #include <kern/task.h>
 #include <kern/thread.h>
+#include <kern/thread_call.h>
 #include <kern/host.h>
 #include <kern/policy_internal.h>
 #include <kern/thread_group.h>
@@ -41,7 +42,9 @@
 #include <IOKit/IOBSD.h>
 
 #include <libkern/libkern.h>
+#include <libkern/coreanalytics/coreanalytics.h>
 #include <mach/coalition.h>
+#include <mach/clock_types.h>
 #include <mach/mach_time.h>
 #include <mach/task.h>
 #include <mach/host_priv.h>
@@ -61,8 +64,9 @@
 #include <sys/wait.h>
 #include <sys/tree.h>
 #include <sys/priv.h>
-#include <vm/vm_pageout.h>
+#include <vm/vm_pageout_xnu.h>
 #include <vm/vm_protos.h>
+#include <vm/vm_purgeable_xnu.h>
 #include <mach/machine/sdt.h>
 #include <libkern/section_keywords.h>
 #include <stdatomic.h>
@@ -71,8 +75,10 @@
 #include <vm/vm_map.h>
 #endif /* CONFIG_FREEZE */
 
+#include <kern/kern_memorystatus_internal.h>
 #include <sys/kern_memorystatus.h>
 #include <sys/kern_memorystatus_notify.h>
+#include <sys/kern_memorystatus_xnu.h>
 
 /*
  * Memorystatus klist structures
@@ -121,7 +127,7 @@ enum {
 static vm_pressure_level_t convert_internal_pressure_level_to_dispatch_level(vm_pressure_level_t);
 static boolean_t is_knote_registered_modify_task_pressure_bits(struct knote*, int, task_t, vm_pressure_level_t, vm_pressure_level_t);
 static void memorystatus_klist_reset_all_for_level(vm_pressure_level_t pressure_level_to_clear);
-static struct knote *vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int level, boolean_t target_foreground_process);
+static struct knote *vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int level, boolean_t target_foreground_process, uint64_t *next_telemetry_update);
 static void vm_dispatch_memory_pressure(void);
 kern_return_t memorystatus_update_vm_pressure(boolean_t target_foreground_process);
 
@@ -136,7 +142,7 @@ kern_return_t memorystatus_update_vm_pressure(boolean_t target_foreground_proces
 #define VM_PRESSURE_MINIMUM_RSIZE        6    /* MB */
 #endif /* XNU_TARGET_OS_OSX */
 
-static uint32_t vm_pressure_task_footprint_min = VM_PRESSURE_MINIMUM_RSIZE;
+static TUNABLE_DEV_WRITEABLE(uint32_t, vm_pressure_task_footprint_min, "vm_pressure_notify_min_footprint_mb", VM_PRESSURE_MINIMUM_RSIZE);
 
 #if DEVELOPMENT || DEBUG
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_vm_pressure_task_footprint_min, CTLFLAG_RW | CTLFLAG_LOCKED, &vm_pressure_task_footprint_min, 0, "");
@@ -155,37 +161,22 @@ vm_pressure_level_t memorystatus_vm_pressure_level = kVMPressureNormal;
  * to keep track of HWM offenders that drop down below their memory
  * limit and/or exit. So, we choose to burn a couple of wasted wakeups
  * by allowing the unguarded modification of this variable.
+ *
+ * TODO: this should be a count of number of hwm candidates
  */
-boolean_t memorystatus_hwm_candidates = 0;
+_Atomic bool memorystatus_hwm_candidates = false;
 
 #endif /* VM_PRESSURE_EVENTS */
 
-#if CONFIG_JETSAM
-
-extern unsigned int memorystatus_available_pages;
-extern unsigned int memorystatus_available_pages_pressure;
-extern unsigned int memorystatus_available_pages_critical;
-extern unsigned int memorystatus_available_pages_critical_base;
-extern unsigned int memorystatus_available_pages_critical_idle_offset;
-
-#else /* CONFIG_JETSAM */
-
-extern uint64_t memorystatus_available_pages;
-extern uint64_t memorystatus_available_pages_pressure;
-extern uint64_t memorystatus_available_pages_critical;
-
-#endif /* CONFIG_JETSAM */
-
-extern lck_mtx_t memorystatus_jetsam_fg_band_lock;
 uint32_t memorystatus_jetsam_fg_band_waiters = 0;
+uint32_t memorystatus_jetsam_bg_band_waiters = 0;
 static uint64_t memorystatus_jetsam_fg_band_timestamp_ns = 0; /* nanosec */
-static uint64_t memorystatus_jetsam_fg_band_delay_ns = 5ull * 1000 * 1000 * 1000; /* nanosec */
-
-extern boolean_t(*volatile consider_buffer_cache_collect)(int);
+static uint64_t memorystatus_jetsam_bg_band_timestamp_ns = 0; /* nanosec */
+static uint64_t memorystatus_jetsam_notification_delay_ns = 5ull * 1000 * 1000 * 1000; /* nanosec */
 
 #if DEVELOPMENT || DEBUG
-SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_jetsam_fg_band_delay_ns, CTLFLAG_RW | CTLFLAG_LOCKED,
-    &memorystatus_jetsam_fg_band_delay_ns, "");
+SYSCTL_QUAD(_kern, OID_AUTO, memorystatus_jetsam_notification_delay_ns, CTLFLAG_RW | CTLFLAG_LOCKED,
+    &memorystatus_jetsam_notification_delay_ns, "");
 #endif
 
 static int
@@ -195,6 +186,7 @@ filt_memorystatusattach(struct knote *kn, __unused struct kevent_qos_s *kev)
 
 	kn->kn_flags |= EV_CLEAR; /* automatically set */
 	kn->kn_sdata = 0;         /* incoming data is ignored */
+	memset(&kn->kn_ext, 0, sizeof(kn->kn_ext));
 
 	error = memorystatus_knote_register(kn);
 	if (error) {
@@ -256,7 +248,7 @@ filt_memorystatus(struct knote *kn __unused, long hint)
 #if 0
 	if (kn->kn_fflags != 0) {
 		proc_t knote_proc = knote_get_kq(kn)->kq_p;
-		pid_t knote_pid = knote_proc->p_pid;
+		pid_t knote_pid = proc_getpid(knote_proc);
 
 		printf("filt_memorystatus: sending kn 0x%lx (event 0x%x) for pid (%d)\n",
 		    (unsigned long)kn, kn->kn_fflags, knote_pid);
@@ -429,17 +421,39 @@ memorystatus_knote_unregister(struct knote *kn __unused)
 
 #if VM_PRESSURE_EVENTS
 
+static thread_call_t sustained_pressure_handler_thread_call;
+/* Count the number of sustained pressure kills we've done since boot. */
+uint64_t memorystatus_kill_on_sustained_pressure_count = 0;
+uint64_t memorystatus_kill_on_sustained_pressure_window_s = 60 * 10; /* 10 Minutes */
+uint64_t memorystatus_kill_on_sustained_pressure_delay_ms = 500; /* .5 seconds */
+
+SYSCTL_QUAD(_kern_memorystatus, OID_AUTO, kill_on_sustained_pressure_count, CTLFLAG_RD | CTLFLAG_LOCKED, &memorystatus_kill_on_sustained_pressure_count, "");
+SYSCTL_QUAD(_kern_memorystatus, OID_AUTO, kill_on_sustained_pressure_window_s, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_kill_on_sustained_pressure_window_s, "");
+SYSCTL_QUAD(_kern_memorystatus, OID_AUTO, kill_on_sustained_pressure_delay_ms, CTLFLAG_RW | CTLFLAG_LOCKED, &memorystatus_kill_on_sustained_pressure_delay_ms, "");
+
+static void sustained_pressure_handler(void*, void*);
+
+static thread_call_t memorystatus_notify_update_telemetry_thread_call;
+static void update_footprints_for_telemetry(void*, void*);
+
+void
+memorystatus_notify_init()
+{
+	sustained_pressure_handler_thread_call = thread_call_allocate_with_options(sustained_pressure_handler, NULL, THREAD_CALL_PRIORITY_KERNEL_HIGH, THREAD_CALL_OPTIONS_ONCE);
+	memorystatus_notify_update_telemetry_thread_call = thread_call_allocate_with_options(update_footprints_for_telemetry, NULL, THREAD_CALL_PRIORITY_USER, THREAD_CALL_OPTIONS_ONCE);
+}
+
 #if CONFIG_MEMORYSTATUS
 
-static inline int
-memorystatus_send_note_internal(int event_code, int subclass, void *data, uint32_t data_length)
+inline int
+memorystatus_send_note(int event_code, void *data, uint32_t data_length)
 {
 	int ret;
 	struct kev_msg ev_msg;
 
 	ev_msg.vendor_code    = KEV_VENDOR_APPLE;
 	ev_msg.kev_class      = KEV_SYSTEM_CLASS;
-	ev_msg.kev_subclass   = subclass;
+	ev_msg.kev_subclass   = KEV_MEMORYSTATUS_SUBCLASS;
 
 	ev_msg.event_code     = event_code;
 
@@ -449,22 +463,10 @@ memorystatus_send_note_internal(int event_code, int subclass, void *data, uint32
 
 	ret = kev_post_msg(&ev_msg);
 	if (ret) {
-		printf("%s: kev_post_msg() failed, err %d\n", __func__, ret);
+		memorystatus_log_error("%s: kev_post_msg() failed, err %d\n", __func__, ret);
 	}
 
 	return ret;
-}
-
-int
-memorystatus_send_note(int event_code, void *data, uint32_t data_length)
-{
-	return memorystatus_send_note_internal(event_code, KEV_MEMORYSTATUS_SUBCLASS, data, data_length);
-}
-
-int
-memorystatus_send_dirty_status_change_note(void *data, uint32_t data_length)
-{
-	return memorystatus_send_note_internal(kDirtyStatusChangeNote, KEV_DIRTYSTATUS_SUBCLASS, data, data_length);
 }
 
 boolean_t
@@ -474,7 +476,7 @@ memorystatus_warn_process(const proc_t p, __unused boolean_t is_active, __unused
 	 * This function doesn't take a reference to p or lock it. So it better be the current process.
 	 */
 	assert(p == current_proc());
-	pid_t pid = p->p_pid;
+	pid_t pid = proc_getpid(p);
 	boolean_t ret = FALSE;
 	boolean_t found_knote = FALSE;
 	struct knote *kn = NULL;
@@ -490,7 +492,7 @@ memorystatus_warn_process(const proc_t p, __unused boolean_t is_active, __unused
 
 	SLIST_FOREACH(kn, &memorystatus_klist, kn_selnext) {
 		proc_t knote_proc = knote_get_kq(kn)->kq_p;
-		pid_t knote_pid = knote_proc->p_pid;
+		pid_t knote_pid = proc_getpid(knote_proc);
 
 		if (knote_pid == pid) {
 			/*
@@ -606,7 +608,7 @@ memorystatus_warn_process(const proc_t p, __unused boolean_t is_active, __unused
 							 * a hard limit... the process would be killed before it could be
 							 * received.
 							 */
-							panic("Caught sending pid %d a critical warning for a fatal limit.\n", pid);
+							panic("Caught sending pid %d a critical warning for a fatal limit.", pid);
 						}
 					}
 				}
@@ -681,7 +683,7 @@ memorystatus_low_mem_privileged_listener(uint32_t op_flags)
 int
 memorystatus_send_pressure_note(pid_t pid)
 {
-	MEMORYSTATUS_DEBUG(1, "memorystatus_send_pressure_note(): pid %d\n", pid);
+	memorystatus_log_debug("memorystatus_send_pressure_note(): pid %d\n", pid);
 	return memorystatus_send_note(kMemorystatusPressureNote, &pid, sizeof(pid));
 }
 
@@ -697,17 +699,23 @@ memorystatus_is_foreground_locked(proc_t p)
  * to access the p_memstat_dirty field.
  */
 void
-memorystatus_proc_flags_unsafe(void * v, boolean_t *is_dirty, boolean_t *is_dirty_tracked, boolean_t *allow_idle_exit)
+memorystatus_proc_flags_unsafe(void * v, boolean_t *is_dirty, boolean_t *is_dirty_tracked, boolean_t *allow_idle_exit, boolean_t *is_active, boolean_t *is_managed, boolean_t *has_assertion)
 {
 	if (!v) {
 		*is_dirty = FALSE;
 		*is_dirty_tracked = FALSE;
 		*allow_idle_exit = FALSE;
+		*is_active = FALSE;
+		*is_managed = FALSE;
+		*has_assertion = FALSE;
 	} else {
 		proc_t p = (proc_t)v;
 		*is_dirty = (p->p_memstat_dirty & P_DIRTY_IS_DIRTY) != 0;
 		*is_dirty_tracked = (p->p_memstat_dirty & P_DIRTY_TRACK) != 0;
 		*allow_idle_exit = (p->p_memstat_dirty & P_DIRTY_ALLOW_IDLE_EXIT) != 0;
+		*is_active = (p->p_memstat_memlimit == p->p_memstat_memlimit_active);
+		*is_managed = (p->p_memstat_state & P_MEMSTAT_MANAGED) != 0;
+		*has_assertion = (p->p_memstat_state & P_MEMSTAT_PRIORITY_ASSERTION) != 0;
 	}
 }
 
@@ -718,7 +726,7 @@ memorystatus_bg_pressure_eligible(proc_t p)
 
 	proc_list_lock();
 
-	MEMORYSTATUS_DEBUG(1, "memorystatus_bg_pressure_eligible: pid %d, state 0x%x\n", p->p_pid, p->p_memstat_state);
+	memorystatus_log_debug("memorystatus_bg_pressure_eligible: pid %d, state 0x%x\n", proc_getpid(p), p->p_memstat_state);
 
 	/* Foreground processes have already been dealt with at this point, so just test for eligibility */
 	if (!(p->p_memstat_state & (P_MEMSTAT_TERMINATED | P_MEMSTAT_LOCKED | P_MEMSTAT_SUSPENDED | P_MEMSTAT_FROZEN))) {
@@ -763,6 +771,245 @@ memorystatus_send_low_swap_note(void)
 #endif /* CONFIG_MEMORYSTATUS */
 
 /*
+ * Notification telemetry
+ */
+CA_EVENT(memorystatus_pressure_interval,
+    CA_INT, num_processes_registered,
+    CA_INT, num_notifications_sent,
+    CA_INT, max_level,
+    CA_INT, num_transitions,
+    CA_INT, num_kills,
+    CA_INT, duration);
+
+/* Separate struct for tracking so that we have aligned members for atomics */
+struct memstat_cur_interval {
+	int64_t             num_procs;
+	int64_t             num_notifs;
+	int64_t             num_transitions;
+	uint64_t            start_mt;
+	_Atomic uint32_t    num_kills;
+	vm_pressure_level_t max_level;
+} memstat_cur_interval;
+
+CA_EVENT(memorystatus_proc_notification,
+    CA_INT, footprint_before_notification,
+    CA_INT, footprint_1_min_after_first_warning,
+    CA_INT, footprint_5_min_after_first_warning,
+    CA_INT, footprint_20_min_after_first_warning,
+    CA_INT, footprint_1_min_after_first_critical,
+    CA_INT, footprint_5_min_after_first_critical,
+    CA_INT, footprint_20_min_after_first_critical,
+    CA_INT, order_within_list,
+    CA_INT, num_notifications_sent,
+    CA_INT, time_between_warning_and_critical,
+    CA_STATIC_STRING(CA_PROCNAME_LEN), proc_name);
+
+/* The send timestamps for the first notifications are stored in the knote's kn_sdata field */
+#define KNOTE_SEND_TIMESTAMP_WARNING_INDEX 0
+#define KNOTE_SEND_TIMESTAMP_CRITICAL_INDEX 1
+
+/* The footprint history for this task is stored in the knote's kn_ext array. */
+struct knote_footprint_history {
+	uint32_t kfh_starting_footprint;
+	uint32_t kfh_footprint_after_warn_1; /* 1 minute after first warning notification */
+	uint32_t kfh_footprint_after_warn_5; /* 5 minutes after first warning notification */
+	uint32_t kfh_footprint_after_warn_20; /* 20 minutes after first warning notification */
+	uint32_t kfh_footprint_after_critical_1; /* 1 minute after first critical notification */
+	uint32_t kfh_footprint_after_critical_5; /* 5 minutes after first critical notification */
+	uint32_t kfh_footprint_after_critical_20; /* 20 minutes after first critical notification */
+	uint16_t kfh_num_notifications;
+	uint16_t kfh_notification_order;
+} __attribute__((packed));
+
+
+static_assert(sizeof(struct knote_footprint_history) <= sizeof(uint64_t) * 4, "footprint history fits in knote extensions");
+
+static void
+mark_knote_send_time(struct knote *kn, task_t task, int knote_pressure_level, uint16_t order_within_list)
+{
+	uint32_t *timestamps;
+	uint32_t index;
+	uint64_t curr_ts, curr_ts_seconds;
+	struct knote_footprint_history *footprint_history = (struct knote_footprint_history *)kn->kn_ext;
+	if (knote_pressure_level != NOTE_MEMORYSTATUS_PRESSURE_NORMAL) {
+		timestamps = (uint32_t *)&(kn->kn_sdata);
+		index = knote_pressure_level == NOTE_MEMORYSTATUS_PRESSURE_WARN ?
+		    KNOTE_SEND_TIMESTAMP_WARNING_INDEX : KNOTE_SEND_TIMESTAMP_CRITICAL_INDEX;
+		if (timestamps[index] == 0) {
+			/* First notification for this level since pressure elevated from normal. */
+			curr_ts = mach_absolute_time();
+			curr_ts_seconds = 0;
+			absolutetime_to_nanoseconds(curr_ts, &curr_ts_seconds);
+			curr_ts_seconds /= NSEC_PER_SEC;
+
+			timestamps[index] = (uint32_t)MIN(UINT32_MAX, curr_ts_seconds);
+
+			/* Record task initial footprint */
+			if (timestamps[index == KNOTE_SEND_TIMESTAMP_WARNING_INDEX ? KNOTE_SEND_TIMESTAMP_CRITICAL_INDEX : KNOTE_SEND_TIMESTAMP_WARNING_INDEX] == 0) {
+				/*
+				 * First notification at any level since pressure elevated from normal.
+				 * Record the footprint and our order in the notification list.
+				 */
+				footprint_history->kfh_starting_footprint = (uint32_t) MIN(UINT32_MAX, get_task_phys_footprint(task) / (2UL << 20));
+				footprint_history->kfh_notification_order = order_within_list;
+			}
+		}
+	}
+	footprint_history->kfh_num_notifications++;
+}
+
+/*
+ * Records the current footprint for this task in the knote telemetry.
+ *
+ * Returns the soonest absolutetime when this footprint history should be updated again.
+ */
+static uint64_t
+update_knote_footprint_history(struct knote *kn, task_t task, uint64_t curr_ts)
+{
+	uint32_t *timestamps = (uint32_t *)&(kn->kn_sdata);
+	struct knote_footprint_history *footprint_history = (struct knote_footprint_history *)kn->kn_ext;
+	uint64_t warning_send_time, critical_send_time, minutes_since_warning = UINT64_MAX, minutes_since_critical = UINT64_MAX;
+	warning_send_time = timestamps[KNOTE_SEND_TIMESTAMP_WARNING_INDEX];
+	critical_send_time = timestamps[KNOTE_SEND_TIMESTAMP_CRITICAL_INDEX];
+	uint32_t task_phys_footprint_mb = (uint32_t) MIN(UINT32_MAX, get_task_phys_footprint(task) / (2UL << 20));
+	uint64_t next_run = UINT64_MAX, absolutetime_in_minute = 0, minutes_since_last_notification = 0, curr_ts_s;
+	absolutetime_to_nanoseconds(curr_ts, &curr_ts_s);
+	nanoseconds_to_absolutetime(60 * NSEC_PER_SEC, &absolutetime_in_minute);
+	curr_ts_s /= NSEC_PER_SEC;
+
+	if (warning_send_time != 0) {
+		/* This task received a warning notification. */
+		minutes_since_warning = (curr_ts_s - warning_send_time) / 60;
+		if (footprint_history->kfh_footprint_after_warn_1 == 0 && minutes_since_warning >= 1) {
+			footprint_history->kfh_footprint_after_warn_1 = task_phys_footprint_mb;
+		}
+		if (footprint_history->kfh_footprint_after_warn_5 == 0 && minutes_since_warning >= 5) {
+			footprint_history->kfh_footprint_after_warn_5 = task_phys_footprint_mb;
+		}
+		if (footprint_history->kfh_footprint_after_warn_20 == 0 && minutes_since_warning >= 20) {
+			footprint_history->kfh_footprint_after_warn_20 = task_phys_footprint_mb;
+		}
+	}
+	if (critical_send_time != 0) {
+		/* This task received a critical notification. */
+		minutes_since_critical = (curr_ts_s - critical_send_time) / 60;
+		if (footprint_history->kfh_footprint_after_critical_1 == 0 && minutes_since_critical >= 1) {
+			footprint_history->kfh_footprint_after_critical_1 = task_phys_footprint_mb;
+		}
+		if (footprint_history->kfh_footprint_after_critical_5 == 0 && minutes_since_critical >= 5) {
+			footprint_history->kfh_footprint_after_critical_5 = task_phys_footprint_mb;
+		}
+		if (footprint_history->kfh_footprint_after_critical_20 == 0 && minutes_since_critical >= 20) {
+			footprint_history->kfh_footprint_after_critical_20 = task_phys_footprint_mb;
+		}
+	}
+
+	minutes_since_last_notification = MIN(minutes_since_warning, minutes_since_critical);
+	if (minutes_since_last_notification < 20) {
+		if (minutes_since_last_notification < 5) {
+			if (minutes_since_last_notification < 1) {
+				next_run = curr_ts + absolutetime_in_minute;
+			} else {
+				next_run = curr_ts + (absolutetime_in_minute * 5);
+			}
+		} else {
+			next_run = curr_ts + (absolutetime_in_minute * 20);
+		}
+	}
+
+	return next_run;
+}
+
+extern char *proc_name_address(void *p);
+
+/*
+ * Send pressure interval telemetry.
+ */
+static void
+memorystatus_pressure_interval_send(void)
+{
+	uint64_t duration_nanoseconds;
+	CA_EVENT_TYPE(memorystatus_pressure_interval) * evt_data;
+
+	/*
+	 * Drop the event rather than block for memory. We should be in a normal pressure level now,
+	 * but we don't want to end up blocked in page_wait if there's a sudden spike in pressure.
+	 */
+	ca_event_t event_wrapper = CA_EVENT_ALLOCATE_FLAGS(memorystatus_pressure_interval, Z_NOWAIT);
+	if (event_wrapper) {
+		absolutetime_to_nanoseconds(
+			mach_absolute_time() - memstat_cur_interval.start_mt,
+			&duration_nanoseconds);
+
+		evt_data = event_wrapper->data;
+		evt_data->num_processes_registered = memstat_cur_interval.num_procs;
+		evt_data->num_notifications_sent   = memstat_cur_interval.num_notifs;
+		evt_data->max_level                = memstat_cur_interval.max_level;
+		evt_data->num_transitions          = memstat_cur_interval.num_transitions;
+		evt_data->num_kills                = os_atomic_load(&memstat_cur_interval.num_kills, relaxed);
+		evt_data->duration = duration_nanoseconds / NSEC_PER_SEC;
+
+		CA_EVENT_SEND(event_wrapper);
+	} else {
+		memorystatus_log_error("memorystatus: Dropping interval telemetry event\n");
+	}
+}
+
+/*
+ * Attempt to send the per-proc telemetry events.
+ * Clears the footprint histories on the knotes.
+ */
+static void
+memorystatus_pressure_proc_telemetry_send(void)
+{
+	struct knote *kn = NULL;
+	SLIST_FOREACH(kn, &memorystatus_klist, kn_selnext) {
+		proc_t            p = PROC_NULL;
+		struct knote_footprint_history *footprint_history = (struct knote_footprint_history *)kn->kn_ext;
+		uint32_t *timestamps = (uint32_t *)&(kn->kn_sdata);
+		uint32_t warning_send_time = timestamps[KNOTE_SEND_TIMESTAMP_WARNING_INDEX];
+		uint32_t critical_send_time = timestamps[KNOTE_SEND_TIMESTAMP_CRITICAL_INDEX];
+		CA_EVENT_TYPE(memorystatus_proc_notification) * event = NULL;
+		if (warning_send_time != 0 || critical_send_time != 0) {
+			/*
+			 * Drop the event rather than block for memory. We should be in a normal pressure level now,
+			 * but we don't want to end up blocked in page_wait if there's a sudden spike in pressure.
+			 */
+			ca_event_t event_wrapper = CA_EVENT_ALLOCATE_FLAGS(memorystatus_proc_notification, Z_NOWAIT | Z_ZERO);
+			if (event_wrapper) {
+				event = event_wrapper->data;
+
+				event->footprint_before_notification = footprint_history->kfh_starting_footprint;
+				event->footprint_1_min_after_first_warning = footprint_history->kfh_footprint_after_warn_1;
+				event->footprint_5_min_after_first_warning = footprint_history->kfh_footprint_after_warn_5;
+				event->footprint_20_min_after_first_warning = footprint_history->kfh_footprint_after_warn_20;
+				event->footprint_1_min_after_first_critical = footprint_history->kfh_footprint_after_critical_1;
+				event->footprint_5_min_after_first_critical = footprint_history->kfh_footprint_after_critical_5;
+				event->footprint_20_min_after_first_critical = footprint_history->kfh_footprint_after_critical_20;
+				event->num_notifications_sent = footprint_history->kfh_num_notifications;
+				if (warning_send_time != 0 && critical_send_time != 0) {
+					event->time_between_warning_and_critical = (critical_send_time - warning_send_time) / 60; // Minutes
+				}
+				event->order_within_list = footprint_history->kfh_notification_order;
+
+				p = proc_ref(knote_get_kq(kn)->kq_p, false);
+				if (p == NULL) {
+					CA_EVENT_DEALLOCATE(event_wrapper);
+					continue;
+				}
+				strlcpy(event->proc_name, proc_name_address(p), sizeof(event->proc_name));
+
+				proc_rele(p);
+				CA_EVENT_SEND(event_wrapper);
+			}
+		}
+		memset(footprint_history, 0, sizeof(*footprint_history));
+		timestamps[KNOTE_SEND_TIMESTAMP_WARNING_INDEX] = 0;
+		timestamps[KNOTE_SEND_TIMESTAMP_CRITICAL_INDEX] = 0;
+	}
+}
+
+/*
  * kn_max - knote
  *
  * knote_pressure_level - to check if the knote is registered for this notification level.
@@ -796,24 +1043,14 @@ memorystatus_klist_reset_all_for_level(vm_pressure_level_t pressure_level_to_cle
 	struct knote *kn = NULL;
 
 	memorystatus_klist_lock();
+
 	SLIST_FOREACH(kn, &memorystatus_klist, kn_selnext) {
-		proc_t            p = PROC_NULL;
-		struct task*        t = TASK_NULL;
+		proc_t p = knote_get_kq(kn)->kq_p;
 
-		p = knote_get_kq(kn)->kq_p;
-		proc_list_lock();
-		if (p != proc_ref_locked(p)) {
-			p = PROC_NULL;
-			proc_list_unlock();
-			continue;
+		if (p == proc_ref(p, false)) {
+			task_clear_has_been_notified(proc_task(p), pressure_level_to_clear);
+			proc_rele(p);
 		}
-		proc_list_unlock();
-
-		t = (struct task *)(p->task);
-
-		task_clear_has_been_notified(t, pressure_level_to_clear);
-
-		proc_rele(p);
 	}
 
 	memorystatus_klist_unlock();
@@ -837,13 +1074,15 @@ vm_dispatch_memory_pressure(void)
 }
 
 static struct knote *
-vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int level, boolean_t target_foreground_process)
+vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int level, boolean_t target_foreground_process, uint64_t *next_telemetry_update)
 {
 	struct knote    *kn = NULL, *kn_max = NULL;
 	uint64_t    resident_max = 0;/* MB */
 	int        selected_task_importance = 0;
 	static int    pressure_snapshot = -1;
 	boolean_t    pressure_increase = FALSE;
+	uint64_t     curr_ts = mach_absolute_time();
+	*next_telemetry_update = UINT64_MAX;
 
 	if (pressure_snapshot == -1) {
 		/*
@@ -880,17 +1119,14 @@ vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int
 		proc_t            p = PROC_NULL;
 		struct task*        t = TASK_NULL;
 		int            curr_task_importance = 0;
+		uint64_t         telemetry_update = 0;
 		boolean_t        consider_knote = FALSE;
 		boolean_t        privileged_listener = FALSE;
 
-		p = knote_get_kq(kn)->kq_p;
-		proc_list_lock();
-		if (p != proc_ref_locked(p)) {
-			p = PROC_NULL;
-			proc_list_unlock();
+		p = proc_ref(knote_get_kq(kn)->kq_p, false);
+		if (p == PROC_NULL) {
 			continue;
 		}
-		proc_list_unlock();
 
 #if CONFIG_MEMORYSTATUS
 		if (target_foreground_process == TRUE && !memorystatus_is_foreground_locked(p)) {
@@ -902,7 +1138,9 @@ vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int
 		}
 #endif /* CONFIG_MEMORYSTATUS */
 
-		t = (struct task *)(p->task);
+		t = (struct task *)(proc_task(p));
+		telemetry_update = update_knote_footprint_history(kn, t, curr_ts);
+		*next_telemetry_update = MIN(*next_telemetry_update, telemetry_update);
 
 		vm_pressure_level_t dispatch_level = convert_internal_pressure_level_to_dispatch_level(level);
 
@@ -913,7 +1151,7 @@ vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int
 
 #if CONFIG_MEMORYSTATUS
 		if (target_foreground_process == FALSE && !memorystatus_bg_pressure_eligible(p)) {
-			VM_PRESSURE_DEBUG(1, "[vm_pressure] skipping process %d\n", p->p_pid);
+			VM_PRESSURE_DEBUG(1, "[vm_pressure] skipping process %d\n", proc_getpid(p));
 			proc_rele(p);
 			continue;
 		}
@@ -1010,25 +1248,216 @@ vm_pressure_select_optimal_candidate_to_notify(struct klist *candidate_list, int
 			}
 		} else {
 			/* There was no candidate with enough resident memory to scavenge */
-			VM_PRESSURE_DEBUG(0, "[vm_pressure] threshold failed for pid %d with %llu resident...\n", p->p_pid, resident_size);
+			VM_PRESSURE_DEBUG(0, "[vm_pressure] threshold failed for pid %d with %llu resident...\n", proc_getpid(p), resident_size);
 		}
 		proc_rele(p);
 	}
 
 done_scanning:
 	if (kn_max) {
-		VM_DEBUG_CONSTANT_EVENT(vm_pressure_event, VM_PRESSURE_EVENT, DBG_FUNC_NONE, knote_get_kq(kn_max)->kq_p->p_pid, resident_max, 0, 0);
-		VM_PRESSURE_DEBUG(1, "[vm_pressure] sending event to pid %d with %llu resident\n", knote_get_kq(kn_max)->kq_p->p_pid, resident_max);
+		VM_DEBUG_CONSTANT_EVENT(vm_pressure_event, DBG_VM_PRESSURE_EVENT, DBG_FUNC_NONE, proc_getpid(knote_get_kq(kn_max)->kq_p), resident_max, 0, 0);
+		VM_PRESSURE_DEBUG(1, "[vm_pressure] sending event to pid %d with %llu resident\n", proc_getpid(knote_get_kq(kn_max)->kq_p), resident_max);
 	}
 
 	return kn_max;
 }
 
-static uint64_t next_warning_notification_sent_at_ts = 0;
-static uint64_t next_critical_notification_sent_at_ts = 0;
+/*
+ * To avoid notification storms in a system with sawtooth behavior of pressure levels eg:
+ * Normal -> warning (notify clients) -> critical (notify) -> warning (notify) -> critical (notify) -> warning (notify)...
+ *
+ * We have 'resting' periods: WARNING_NOTIFICATION_RESTING_PERIOD and CRITICAL_NOTIFICATION_RESTING_PERIOD
+ *
+ * So it would look like:-
+ * Normal -> warning (notify) -> critical (notify) -> warning (notify if it has been RestPeriod since last warning) -> critical (notify if it has been RestPeriod since last critical) -> ...
+ *
+ * That's what these 2 timestamps below signify.
+ */
+
+uint64_t next_warning_notification_sent_at_ts = 0;
+uint64_t next_critical_notification_sent_at_ts = 0;
 
 boolean_t        memorystatus_manual_testing_on = FALSE;
 vm_pressure_level_t    memorystatus_manual_testing_level = kVMPressureNormal;
+
+TUNABLE_DEV_WRITEABLE(unsigned int, memstat_sustained_pressure_max_pri, "memstat_sustained_pressure_max_pri", JETSAM_PRIORITY_IDLE);
+#if DEVELOPMENT || DEBUG
+SYSCTL_UINT(_kern_memorystatus, OID_AUTO, sustained_pressure_max_pri, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &memstat_sustained_pressure_max_pri, 0, "");
+#endif /* DEVELOPMENT || DEBUG */
+
+#if CONFIG_JETSAM
+#define MEMSTAT_PRESSURE_CONFIG_DEFAULT (MEMSTAT_WARNING_KILL_SUSTAINED)
+#else
+#define MEMSTAT_PRESSURE_CONFIG_DEFAULT (MEMSTAT_WARNING_KILL_IDLE_THROTTLED | MEMSTAT_CRITICAL_PURGE_CACHES)
+#endif
+
+TUNABLE_WRITEABLE(memstat_pressure_options_t, memstat_pressure_config,
+    "memorystatus_pressure_config", MEMSTAT_PRESSURE_CONFIG_DEFAULT);
+EXPERIMENT_FACTOR_UINT(memorystatus_pressure_config, &memstat_pressure_config,
+    0, MEMSTAT_PRESSURE_CONFIG_MAX,
+    "Which actions to take in response to rising VM pressure");
+#if DEVELOPMENT || DEBUG
+SYSCTL_UINT(_kern_memorystatus, OID_AUTO, pressure_config,
+    CTLFLAG_RW | CTLFLAG_LOCKED, &memstat_pressure_config, 0,
+    "How to respond to VM pressure");
+
+static int
+sysctl_memstat_should_kill_sustained SYSCTL_HANDLER_ARGS
+{
+	int old = !!(memstat_pressure_config & MEMSTAT_WARNING_KILL_SUSTAINED);
+	int new, changed;
+
+	int ret = sysctl_io_number(req, old, sizeof(old), &new, &changed);
+
+	if (changed) {
+		if (new) {
+			memstat_pressure_config |= MEMSTAT_WARNING_KILL_SUSTAINED;
+		} else {
+			memstat_pressure_config &= ~MEMSTAT_WARNING_KILL_SUSTAINED;
+		}
+	}
+	return ret;
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, memorystatus_should_kill_on_sustained_pressure,
+    CTLFLAG_RW | CTLFLAG_LOCKED, NULL, 0, sysctl_memstat_should_kill_sustained, "IU",
+    "Whether to kill idle processes under sustained pressure");
+#endif
+
+/*
+ * TODO(jason): The memorystatus thread should be responsible for this
+ * It can just check how long the pressure level has been at warning and the timestamp
+ * of the last sustained pressure kill.
+ */
+static void
+sustained_pressure_handler(void* arg0 __unused, void* arg1 __unused)
+{
+	int max_kills = 0, kill_count = 0;
+	/*
+	 * Pressure has been elevated for too long.
+	 * We don't want to leave the system in this state as it can delay background
+	 * work indefinitely & drain battery.
+	 *
+	 * Try to return the system to normal via jetsam.
+	 * We'll run through the idle band up to 2 times.
+	 * If the pressure hasn't been relieved by then, the problem is memory
+	 * consumption in a higher band and this churn is probably doing more harm than good.
+	 */
+	max_kills = memstat_get_proccnt_upto_priority(memstat_sustained_pressure_max_pri) * 2;
+	memorystatus_log("memorystatus: Pressure level has been elevated for too long. killing up to %d idle processes\n", max_kills);
+	while (memorystatus_vm_pressure_level != kVMPressureNormal && kill_count < max_kills) {
+		bool killed = memorystatus_kill_on_sustained_pressure();
+		if (killed) {
+			/*
+			 * Pause before our next kill & see if pressure reduces.
+			 */
+			delay((int)(memorystatus_kill_on_sustained_pressure_delay_ms * NSEC_PER_MSEC / NSEC_PER_USEC));
+			kill_count++;
+			memorystatus_kill_on_sustained_pressure_count++;
+			os_atomic_inc(&memstat_cur_interval.num_kills, relaxed);
+		} else {
+			/* Nothing left to kill */
+			break;
+		}
+	}
+	if (memorystatus_vm_pressure_level != kVMPressureNormal) {
+		memorystatus_log("memorystatus: Killed %d idle processes due to sustained pressure, but device didn't quiesce. Giving up.\n", kill_count);
+	}
+}
+
+/*
+ * Returns the number of processes registered for notifications at this level.
+ */
+static size_t
+memorystatus_klist_length(int level)
+{
+	LCK_MTX_ASSERT(&memorystatus_klist_mutex, LCK_MTX_ASSERT_OWNED);
+	struct knote *kn;
+	size_t count = 0;
+	int knote_pressure_level = convert_internal_pressure_level_to_dispatch_level(level);
+	SLIST_FOREACH(kn, &memorystatus_klist, kn_selnext) {
+		if (kn->kn_sfflags & knote_pressure_level) {
+			count++;
+		}
+	}
+	return count;
+}
+
+/*
+ * Starts a pressure interval, setting up tracking for it
+ */
+static void
+memstat_pressure_interval_start(uint64_t curr_ts)
+{
+	LCK_MTX_ASSERT(&memorystatus_klist_mutex, LCK_MTX_ASSERT_OWNED);
+	memstat_cur_interval.num_procs = 0;
+	memstat_cur_interval.num_notifs = 0;
+	memstat_cur_interval.num_transitions = 0;
+	memstat_cur_interval.start_mt = curr_ts;
+	os_atomic_store(&memstat_cur_interval.num_kills, 0, relaxed);
+	memstat_cur_interval.max_level = kVMPressureNormal;
+}
+
+/*
+ * Ends a pressure interval, sending all telemetry associated with it
+ */
+static void
+memstat_pressure_interval_end(void)
+{
+	LCK_MTX_ASSERT(&memorystatus_klist_mutex, LCK_MTX_ASSERT_OWNED);
+	memorystatus_pressure_interval_send();
+	memorystatus_pressure_proc_telemetry_send();
+}
+
+/*
+ * Updates the pressure interval when the pressure level changes
+ */
+static void
+memstat_pressure_interval_update(vm_pressure_level_t new_level)
+{
+	LCK_MTX_ASSERT(&memorystatus_klist_mutex, LCK_MTX_ASSERT_OWNED);
+	memstat_cur_interval.num_transitions++;
+	if (new_level <= memstat_cur_interval.max_level) {
+		return;
+	}
+	memstat_cur_interval.num_procs = memorystatus_klist_length(new_level);
+	memstat_cur_interval.max_level = new_level;
+}
+
+
+/*
+ * Updates the footprint telemetry for procs that have received notifications.
+ */
+static void
+update_footprints_for_telemetry(void* arg0 __unused, void* arg1 __unused)
+{
+	uint64_t curr_ts = mach_absolute_time(), next_telemetry_update = UINT64_MAX;
+	struct knote *kn;
+
+	memorystatus_klist_lock();
+	SLIST_FOREACH(kn, &memorystatus_klist, kn_selnext) {
+		proc_t            p = PROC_NULL;
+		struct task*      t = TASK_NULL;
+		uint64_t telemetry_update;
+
+		p = proc_ref(knote_get_kq(kn)->kq_p, false);
+		if (p == PROC_NULL) {
+			continue;
+		}
+		t = (struct task *)(proc_task(p));
+		proc_rele(p);
+		p = PROC_NULL;
+		telemetry_update = update_knote_footprint_history(kn, t, curr_ts);
+		next_telemetry_update = MIN(next_telemetry_update, telemetry_update);
+	}
+	memorystatus_klist_unlock();
+	if (next_telemetry_update != UINT64_MAX) {
+		uint64_t next_update_seconds;
+		absolutetime_to_nanoseconds(next_telemetry_update, &next_update_seconds);
+		next_update_seconds /= NSEC_PER_SEC;
+		thread_call_enter_delayed(memorystatus_notify_update_telemetry_thread_call, next_telemetry_update);
+	}
+}
 
 kern_return_t
 memorystatus_update_vm_pressure(boolean_t target_foreground_process)
@@ -1047,8 +1476,11 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 	struct timeval            smoothing_window_start_tstamp = {0, 0};
 	struct timeval            curr_tstamp = {0, 0};
 	int64_t              elapsed_msecs = 0;
-	uint64_t             curr_ts = mach_absolute_time();
+	uint64_t             curr_ts = mach_absolute_time(), next_telemetry_update = UINT64_MAX;
 
+
+	uint64_t logging_now;
+	absolutetime_to_nanoseconds(curr_ts, &logging_now);
 #if !CONFIG_JETSAM
 #define MAX_IDLE_KILLS 100    /* limit the number of idle kills allowed */
 
@@ -1060,8 +1492,11 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 	 * to avoid overkill.  And we impose a max counter as a fail safe
 	 * in case daemons re-launch too fast.
 	 */
-	while ((memorystatus_vm_pressure_level != kVMPressureNormal) && (idle_kill_counter < MAX_IDLE_KILLS)) {
-		if (memorystatus_idle_exit_from_VM() == FALSE) {
+	while (memstat_pressure_config & MEMSTAT_WARNING_KILL_IDLE_THROTTLED &&
+	    memorystatus_vm_pressure_level != kVMPressureNormal &&
+	    idle_kill_counter < MAX_IDLE_KILLS) {
+		uint64_t footprint;
+		if (!memstat_kill_idle_process(kMemorystatusKilledIdleExit, &footprint)) {
 			/* No idle exitable processes left to kill */
 			break;
 		}
@@ -1073,7 +1508,7 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 			 * the pressure notification scheme.
 			 */
 		} else {
-			delay(1000000); /* 1 second */
+			delay(1 * USEC_PER_SEC);
 		}
 	}
 #endif /* !CONFIG_JETSAM */
@@ -1109,6 +1544,25 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 		}
 	}
 
+	if (memstat_pressure_config & MEMSTAT_WARNING_KILL_SUSTAINED) {
+		if (memorystatus_vm_pressure_level == kVMPressureNormal && prev_level_snapshot != kVMPressureNormal) {
+			memorystatus_log("memorystatus: Pressure has returned to level %d. Cancelling scheduled jetsam\n", memorystatus_vm_pressure_level);
+			thread_call_cancel(sustained_pressure_handler_thread_call);
+		} else if (memorystatus_vm_pressure_level != kVMPressureNormal && prev_level_snapshot == kVMPressureNormal) {
+			/*
+			 * Pressure has increased from normal.
+			 * Hopefully the notifications will relieve it,
+			 * but as a fail-safe we'll trigger jetsam
+			 * after a configurable amount of time.
+			 */
+			memorystatus_log("memorystatus: Pressure level has increased from %d to %d. Scheduling jetsam.\n", prev_level_snapshot, memorystatus_vm_pressure_level);
+			uint64_t kill_time;
+			nanoseconds_to_absolutetime(memorystatus_kill_on_sustained_pressure_window_s * NSEC_PER_SEC, &kill_time);
+			kill_time += mach_absolute_time();
+			thread_call_enter_delayed(sustained_pressure_handler_thread_call, kill_time);
+		}
+	}
+
 	while (1) {
 		/*
 		 * There is a race window here. But it's not clear
@@ -1139,8 +1593,40 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 		prev_level_snapshot = level_snapshot;
 		smoothing_window_started = FALSE;
 
+		if (memstat_pressure_config & MEMSTAT_WARNING_KILL_LONG_IDLE &&
+		    level_snapshot >= kVMPressureWarning &&
+		    memstat_get_long_idle_proccnt() > 0) {
+			/* There are long-idle daemons to kill */
+			memorystatus_thread_wake();
+		} else if (level_snapshot == kVMPressureCritical) {
+			if (memstat_pressure_config & MEMSTAT_CRITICAL_PURGE_CACHES) {
+				uint64_t now = mach_absolute_time();
+				uint64_t delta_ns;
+				absolutetime_to_nanoseconds(now - memstat_last_cache_purge_ts, &delta_ns);
+				if (delta_ns >= memstat_cache_purge_backoff_ns) {
+					/* Wake up the jetsam thread to purge caches */
+					memorystatus_thread_wake();
+				}
+			} else if (memstat_pressure_config & MEMSTAT_CRITICAL_KILL_IDLE &&
+			    memstat_get_idle_proccnt() > 0) {
+				memorystatus_thread_wake();
+			}
+		}
+
 		memorystatus_klist_lock();
-		kn_max = vm_pressure_select_optimal_candidate_to_notify(&memorystatus_klist, level_snapshot, target_foreground_process);
+
+		/* Interval tracking & telemetry */
+		if (prev_level_snapshot != level_snapshot) {
+			if (level_snapshot == kVMPressureNormal) {
+				memstat_pressure_interval_end();
+			} else if (prev_level_snapshot == kVMPressureNormal) {
+				memstat_pressure_interval_start(curr_ts);
+			}
+
+			memstat_pressure_interval_update(level_snapshot);
+		}
+
+		kn_max = vm_pressure_select_optimal_candidate_to_notify(&memorystatus_klist, level_snapshot, target_foreground_process, &next_telemetry_update);
 
 		if (kn_max == NULL) {
 			memorystatus_klist_unlock();
@@ -1166,23 +1652,24 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 					next_critical_notification_sent_at_ts = mach_absolute_time() + curr_ts;
 				}
 			}
+			absolutetime_to_nanoseconds(mach_absolute_time(), &logging_now);
+			if (next_telemetry_update != UINT64_MAX) {
+				thread_call_enter_delayed(memorystatus_notify_update_telemetry_thread_call, next_telemetry_update);
+			} else {
+				thread_call_cancel(memorystatus_notify_update_telemetry_thread_call);
+			}
 			return KERN_FAILURE;
 		}
 
-		target_proc = knote_get_kq(kn_max)->kq_p;
-
-		proc_list_lock();
-		if (target_proc != proc_ref_locked(target_proc)) {
-			target_proc = PROC_NULL;
-			proc_list_unlock();
+		target_proc = proc_ref(knote_get_kq(kn_max)->kq_p, false);
+		if (target_proc == PROC_NULL) {
 			memorystatus_klist_unlock();
 			continue;
 		}
-		proc_list_unlock();
 
-		target_pid = target_proc->p_pid;
+		target_pid = proc_getpid(target_proc);
 
-		task = (struct task *)(target_proc->task);
+		task = (struct task *)(proc_task(target_proc));
 
 		if (level_snapshot != kVMPressureNormal) {
 			if (level_snapshot == kVMPressureWarning || level_snapshot == kVMPressureUrgent) {
@@ -1216,12 +1703,23 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 
 			if (is_knote_registered_modify_task_pressure_bits(kn_cur, knote_pressure_level, task, 0, level_snapshot) == TRUE) {
 				proc_t knote_proc = knote_get_kq(kn_cur)->kq_p;
-				pid_t knote_pid = knote_proc->p_pid;
+				pid_t knote_pid = proc_getpid(knote_proc);
 				if (knote_pid == target_pid) {
 					KNOTE_DETACH(&memorystatus_klist, kn_cur);
 					KNOTE_ATTACH(&dispatch_klist, kn_cur);
 				}
 			}
+		}
+
+		if (level_snapshot != kVMPressureNormal) {
+			uint16_t num_notifications;
+			if (os_convert_overflow(memstat_cur_interval.num_notifs, &num_notifications)) {
+				num_notifications = UINT16_MAX;
+			}
+			mark_knote_send_time(kn_max, task,
+			    convert_internal_pressure_level_to_dispatch_level(level_snapshot),
+			    num_notifications);
+			memstat_cur_interval.num_notifs++;
 		}
 
 		KNOTE(&dispatch_klist, (level_snapshot != kVMPressureNormal) ? kMemorystatusPressure : kMemorystatusNoPressure);
@@ -1248,15 +1746,15 @@ memorystatus_update_vm_pressure(boolean_t target_foreground_process)
 		} else {
 			uint32_t sleep_interval = INTER_NOTIFICATION_DELAY;
 #if CONFIG_JETSAM
-			unsigned int page_delta = 0;
-			unsigned int skip_delay_page_threshold = 0;
 
-			assert(memorystatus_available_pages_pressure >= memorystatus_available_pages_critical_base);
+			uint32_t critical_threshold = memorystatus_get_critical_page_shortage_threshold();
+			uint32_t soft_threshold = memorystatus_get_soft_memlimit_page_shortage_threshold();
+			assert(soft_threshold >= critical_threshold);
 
-			page_delta = (memorystatus_available_pages_pressure - memorystatus_available_pages_critical_base) / 2;
-			skip_delay_page_threshold = memorystatus_available_pages_pressure - page_delta;
+			uint32_t backoff_threshold = soft_threshold -
+			    ((soft_threshold - critical_threshold) / 2);
 
-			if (memorystatus_available_pages <= skip_delay_page_threshold) {
+			if (memorystatus_get_available_page_count() <= backoff_threshold) {
 				/*
 				 * We are nearing the critcal mark fast and can't afford to wait between
 				 * notifications.
@@ -1307,39 +1805,81 @@ convert_internal_pressure_level_to_dispatch_level(vm_pressure_level_t internal_p
 }
 
 /*
- * Notify any kexts that are waiting for notification that jetsam
- * is approaching the foreground bands. They should use this notification
- * to free cached memory.
+ * Issue a wakeup to any threads listening for jetsam pressure via
+ * `mach_vm_pressure_level_monitor`. Subscribers should respond to these
+ * notifications by freeing cached memory.
  */
 void
-memorystatus_issue_fg_band_notify(void)
+memorystatus_broadcast_jetsam_pressure(vm_pressure_level_t pressure_level)
 {
 	uint64_t now;
+	uint32_t *waiters = NULL;
+	uint64_t *last_notification_ns = NULL;
 
-	lck_mtx_lock(&memorystatus_jetsam_fg_band_lock);
+	switch (pressure_level) {
+	case kVMPressureForegroundJetsam:
+		waiters = &memorystatus_jetsam_fg_band_waiters;
+		last_notification_ns = &memorystatus_jetsam_fg_band_timestamp_ns;
+		break;
+	case kVMPressureBackgroundJetsam:
+		waiters = &memorystatus_jetsam_bg_band_waiters;
+		last_notification_ns = &memorystatus_jetsam_bg_band_timestamp_ns;
+		break;
+	default:
+		panic("Unexpected non-jetsam pressure level %d", pressure_level);
+	}
+
+	lck_mtx_lock(&memorystatus_jetsam_broadcast_lock);
 	absolutetime_to_nanoseconds(mach_absolute_time(), &now);
-	if (now - memorystatus_jetsam_fg_band_timestamp_ns < memorystatus_jetsam_fg_band_delay_ns) {
-		lck_mtx_unlock(&memorystatus_jetsam_fg_band_lock);
+
+	if (now - *last_notification_ns < memorystatus_jetsam_notification_delay_ns) {
+		lck_mtx_unlock(&memorystatus_jetsam_broadcast_lock);
 		return;
 	}
 
-	if (memorystatus_jetsam_fg_band_waiters > 0) {
-		thread_wakeup(&memorystatus_jetsam_fg_band_waiters);
-		memorystatus_jetsam_fg_band_waiters = 0;
-		memorystatus_jetsam_fg_band_timestamp_ns = now;
+	if (*waiters > 0) {
+		memorystatus_log("memorystatus: issuing %s jetsam pressure notification to %d waiters",
+		    pressure_level == kVMPressureForegroundJetsam ?
+		    "foreground" : "background", *waiters);
+		thread_wakeup((event_t)waiters);
+		*waiters = 0;
+		*last_notification_ns = now;
 	}
-	lck_mtx_unlock(&memorystatus_jetsam_fg_band_lock);
-
-	/* Notify the buffer cache, file systems, etc. to jetison everything they can. */
-	if (consider_buffer_cache_collect != NULL) {
-		(void)(*consider_buffer_cache_collect)(1);
-	}
+	lck_mtx_unlock(&memorystatus_jetsam_broadcast_lock);
 }
-
 
 /*
  * Memorystatus notification debugging support
  */
+
+#if DEVELOPMENT || DEBUG
+
+static int
+sysctl_memorystatus_broadcast_jetsam_pressure SYSCTL_HANDLER_ARGS
+{
+	int error = 0;
+	vm_pressure_level_t pressure_level;
+
+	error = SYSCTL_IN(req, &pressure_level, sizeof(pressure_level));
+	if (error) {
+		return error;
+	}
+
+	if (pressure_level == kVMPressureForegroundJetsam ||
+	    pressure_level == kVMPressureBackgroundJetsam) {
+		memorystatus_broadcast_jetsam_pressure(pressure_level);
+	} else {
+		return EINVAL;
+	}
+
+	return SYSCTL_OUT(req, &pressure_level, sizeof(pressure_level));
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, memorystatus_broadcast_jetsam_pressure,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MASKED | CTLFLAG_LOCKED,
+    0, 0, &sysctl_memorystatus_broadcast_jetsam_pressure, "I", "");
+
+#endif /* DEVELOPMENT || DEBUG */
 
 static int
 sysctl_memorystatus_vm_pressure_level SYSCTL_HANDLER_ARGS
@@ -1483,6 +2023,9 @@ SYSCTL_INT(_kern, OID_AUTO, memorystatus_purge_on_warning, CTLFLAG_RW | CTLFLAG_
 SYSCTL_INT(_kern, OID_AUTO, memorystatus_purge_on_urgent, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &vm_pageout_state.memorystatus_purge_on_urgent, 0, "");
 SYSCTL_INT(_kern, OID_AUTO, memorystatus_purge_on_critical, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &vm_pageout_state.memorystatus_purge_on_critical, 0, "");
 
+extern int vm_pressure_level_transition_threshold;
+SYSCTL_INT(_kern, OID_AUTO, vm_pressure_level_transition_threshold, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &vm_pressure_level_transition_threshold, 0, "");
+
 #if DEBUG || DEVELOPMENT
 SYSCTL_UINT(_kern, OID_AUTO, memorystatus_vm_pressure_events_enabled, CTLFLAG_RW | CTLFLAG_LOCKED, &vm_pressure_events_enabled, 0, "");
 
@@ -1512,7 +2055,7 @@ sysctl_memorystatus_vm_pressure_send SYSCTL_HANDLER_ARGS
 {
 #pragma unused(arg1, arg2)
 	/* Need to be root or have memorystatus entitlement */
-	if (!kauth_cred_issuser(kauth_cred_get()) && !IOTaskHasEntitlement(current_task(), MEMORYSTATUS_ENTITLEMENT)) {
+	if (!kauth_cred_issuser(kauth_cred_get()) && !IOCurrentTaskHasEntitlement(MEMORYSTATUS_ENTITLEMENT)) {
 		return EPERM;
 	}
 
@@ -1546,9 +2089,9 @@ sysctl_memorystatus_vm_pressure_send SYSCTL_HANDLER_ARGS
 		// printf("memorystatus_vm_pressure_send: using default notification [0x%x]\n", fflags);
 	}
 
-	/* wake up everybody waiting for kVMPressureJetsam */
+	/* wake up everybody waiting for kVMPressureForegroundJetsam */
 	if (fflags == NOTE_MEMORYSTATUS_JETSAM_FG_BAND) {
-		memorystatus_issue_fg_band_notify();
+		memorystatus_broadcast_jetsam_pressure(kVMPressureForegroundJetsam);
 		return error;
 	}
 
@@ -1563,7 +2106,7 @@ sysctl_memorystatus_vm_pressure_send SYSCTL_HANDLER_ARGS
 	    (fflags == NOTE_MEMORYSTATUS_PROC_LIMIT_CRITICAL) ||
 	    (((fflags & NOTE_MEMORYSTATUS_MSL_STATUS) != 0 &&
 	    ((fflags & ~NOTE_MEMORYSTATUS_MSL_STATUS) == 0))))) {
-		printf("memorystatus_vm_pressure_send: notification [0x%x] not supported \n", fflags);
+		memorystatus_log_error("memorystatus_vm_pressure_send: notification [0x%x] not supported\n", fflags);
 		error = 1;
 		return error;
 	}
@@ -1576,7 +2119,7 @@ sysctl_memorystatus_vm_pressure_send SYSCTL_HANDLER_ARGS
 
 	SLIST_FOREACH(kn, &memorystatus_klist, kn_selnext) {
 		proc_t knote_proc = knote_get_kq(kn)->kq_p;
-		pid_t knote_pid = knote_proc->p_pid;
+		pid_t knote_pid = proc_getpid(knote_proc);
 
 		if (knote_pid == pid) {
 			/*
@@ -1589,10 +2132,10 @@ sysctl_memorystatus_vm_pressure_send SYSCTL_HANDLER_ARGS
 
 	if (found_knote) {
 		KNOTE(&memorystatus_klist, 0);
-		printf("memorystatus_vm_pressure_send: (value 0x%llx) notification [0x%x] sent to process [%d] \n", value, fflags, pid);
+		memorystatus_log_debug("memorystatus_vm_pressure_send: (value 0x%llx) notification [0x%x] sent to process [%d]\n", value, fflags, pid);
 		error = 0;
 	} else {
-		printf("memorystatus_vm_pressure_send: (value 0x%llx) notification [0x%x] not sent to process [%d] (none registered?)\n", value, fflags, pid);
+		memorystatus_log_error("memorystatus_vm_pressure_send: (value 0x%llx) notification [0x%x] not sent to process [%d] (none registered?)\n", value, fflags, pid);
 		error = 1;
 	}
 

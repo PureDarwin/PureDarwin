@@ -33,7 +33,7 @@
 .\"
 .\"     @(#)rename.2	8.1 (Berkeley) 6/4/93
 .\"
-.Dd September 18, 2008
+.Dd June 3, 2021
 .Dt RENAME 2
 .Os BSD 4.2
 .Sh NAME
@@ -127,7 +127,7 @@ argument.
 Values for
 .Fa flags
 are constructed with below bits set:
-.Bl -tag -offset indent
+.Bl -tag -width VOL_CAP_INT_RENAME_EXCL
 .It Dv RENAME_SWAP
 On file systems that support it (see
 .Xr getattrlist 2
@@ -144,6 +144,15 @@ it will cause
 .Dv EEXIST
 to be returned if the destination already exists. EINVAL is returned in case of bitwise-inclusive OR with
 .Dv RENAME_SWAP .
+.It Dv RENAME_NOFOLLOW_ANY
+If any symbolic links are encountered during pathname resolution, an error is returned.
+.It Dv RENAME_RESOLVE_BENEATH
+Either
+.Fa from
+or
+.Fa to
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
 .El
 .Sh CAVEATS
 The system can deadlock if a loop is present in the file system graph.
@@ -269,6 +278,18 @@ is not a directory.
 Too many symbolic links are encountered in translating either pathname.
 This is taken to be indicative of a looping symbolic link.
 .\" ===========
+.It Bq Er ELOOP
+If RENAME_NOFOLLOW_ANY was passed and a symbolic link was encountered in
+translating either pathname.
+.\" ===========
+.It Bq Er ENOTCAPABLE
+RENAME_RESOLVE_BENEATH was passed and either
+.Fa from
+or
+.Fa to
+does not reside in the
+directory hierarchy beneath the starting directory.
+.\" ===========
 .It Bq Er ENAMETOOLONG
 A component of a pathname exceeds 
 .Dv {NAME_MAX}
@@ -345,6 +366,27 @@ and the file named by
 are on different logical devices (file systems).
 Note that this error code will not be returned
 if the implementation permits cross-device links.
+.\" ===========
+.It Bq Er EDEADLK
+A component of either pathname refers to a
+.Dq dataless
+directory that requires materialization and the I/O policy of the current
+thread or process disallows dataless directory materialization
+.Po see
+.Xr getiopolicy_np 3
+.Pc .
+.\" ===========
+.It Bq Er EDEADLK
+The
+.Fa from
+pathname refers to a
+.Dq dataless
+file or directory that must be materialized before being moved to its new
+location and the I/O policy of the current thread or process disallows file
+or directory materialization
+.Po see
+.Xr getiopolicy_np 3
+.Pc .
 .El
 .Pp
 The

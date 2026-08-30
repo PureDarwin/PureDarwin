@@ -56,6 +56,8 @@
 #ifndef _LIBKERN_TREE_H_
 #define _LIBKERN_TREE_H_
 
+#include <sys/cdefs.h>
+
 /*
  * This file defines data structures for different types of trees:
  * splay trees and red-black trees.
@@ -267,20 +269,18 @@ name##_SPLAY(struct name *head, struct type *elm)                       \
 static __inline struct type *                                           \
 name##_SPLAY_SEARCH(struct name *head, struct type *elm)                \
 {                                                                       \
-	struct type *__tmp;                                             \
+	struct type *__tmp = NULL;                                      \
 	int __comp;                                                     \
                                                                         \
 	__tmp = (head)->sph_root;                                       \
 	while ((__tmp != NULL) && ((__comp = (cmp)(elm, __tmp)) != 0)) { \
 	        if (__comp < 0) {                                       \
 	                __tmp = SPLAY_LEFT(__tmp, field);               \
-	        } else if (__comp > 0) {                                \
-	                __tmp = SPLAY_RIGHT(__tmp, field);              \
 	        } else {                                                \
-	               return __tmp;                                    \
+	                __tmp = SPLAY_RIGHT(__tmp, field);              \
 	        }                                                       \
 	}                                                               \
-	return (NULL);                                                  \
+	return __tmp;                                                   \
 }                                                                       \
                                                                         \
 /* Splay with either the minimum or the maximum element \
@@ -456,37 +456,39 @@ _sc_ void name##_RB_SETCOLOR(struct type*,int)
 /* Main rb operation.
  * Moves node close to the key of elm to top
  */
-#define RB_GENERATE(name, type, field, cmp)                             \
-struct type *name##_RB_GETPARENT(struct type *elm) {                            \
-	struct type *parent = _RB_PARENT(elm, field);                   \
-	if( parent != NULL) {                                           \
-	        parent = (struct type*)((uintptr_t)parent & ~RB_COLOR_MASK);\
-	        return( (struct type*) ( (parent == (struct type*) RB_PLACEHOLDER) ? NULL: parent));\
+#define RB_GENERATE(name, type, field, cmp)                         \
+struct type *name##_RB_GETPARENT(struct type *elm) {                \
+	struct type *__single parent = _RB_PARENT(elm, field);          \
+	if( parent == NULL || parent == (struct type*)RB_PLACEHOLDER) { \
+	        return __unsafe_forge_single(struct type*, NULL);       \
 	}                                                               \
-	return((struct type*)NULL);                                     \
-}                                                                       \
-int name##_RB_GETCOLOR(struct type *elm) {                                      \
+	return __unsafe_forge_single(struct type*,                      \
+	                (uintptr_t)parent & ~RB_COLOR_MASK);            \
+}                                                                   \
+int name##_RB_GETCOLOR(struct type *elm) {                          \
 	int color = 0;                                                  \
 	color = (int)((uintptr_t)_RB_PARENT(elm,field) & RB_COLOR_MASK);\
 	return(color);                                                  \
-}                                                                       \
-void name##_RB_SETCOLOR(struct type *elm,int color) {                           \
-	struct type *parent = name##_RB_GETPARENT(elm);                 \
-	if(parent == (struct type*)NULL)                                \
+}                                                                   \
+void name##_RB_SETCOLOR(struct type *elm,int color) {               \
+	struct type *__single parent = name##_RB_GETPARENT(elm);        \
+	if(parent == (struct type*)NULL) {                              \
 	        parent = (struct type*) RB_PLACEHOLDER;                 \
-	_RB_PARENT(elm, field) = (struct type*)((uintptr_t)parent | (unsigned int)color);\
-}                                                                       \
+	}                                                               \
+	_RB_PARENT(elm, field) = __unsafe_forge_single(struct type*,    \
+	                (uintptr_t)parent | (unsigned int)color);       \
+}                                                                   \
 struct type *name##_RB_SETPARENT(struct type *elm, struct type *parent) {       \
-	int color = name##_RB_GETCOLOR(elm);                                    \
+	int color = name##_RB_GETCOLOR(elm);                            \
 	_RB_PARENT(elm, field) = parent;                                \
-	if(color) name##_RB_SETCOLOR(elm, color);                               \
-	return(name##_RB_GETPARENT(elm));                                       \
-}                                                                       \
-                                                                        \
-void                                                                    \
-name##_RB_INSERT_COLOR(struct name *head, struct type *elm)             \
-{                                                                       \
-	struct type *parent, *gparent, *tmp;                            \
+	if(color) name##_RB_SETCOLOR(elm, color);                       \
+	return(name##_RB_GETPARENT(elm));                               \
+}                                                                   \
+                                                                    \
+void                                                                \
+name##_RB_INSERT_COLOR(struct name *head, struct type *elm)         \
+{                                                                   \
+	struct type *__single parent, *__single gparent, *__single tmp; \
 	while ((parent = name##_RB_GETPARENT(elm)) != NULL &&           \
 	    name##_RB_GETCOLOR(parent) == RB_RED) {                     \
 	        gparent = name##_RB_GETPARENT(parent);                  \
@@ -530,7 +532,7 @@ name##_RB_INSERT_COLOR(struct name *head, struct type *elm)             \
 void                                                                    \
 name##_RB_REMOVE_COLOR(struct name *head, struct type *parent, struct type *elm) \
 {                                                                       \
-	struct type *tmp;                                               \
+	struct type *__single tmp;                                      \
 	while ((elm == NULL || name##_RB_GETCOLOR(elm) == RB_BLACK) &&  \
 	    elm != RB_ROOT(head)) {                                     \
 	        if (RB_LEFT(parent, field) == elm) {                    \
@@ -550,7 +552,7 @@ name##_RB_REMOVE_COLOR(struct name *head, struct type *parent, struct type *elm)
 	                } else {                                        \
 	                        if (RB_RIGHT(tmp, field) == NULL ||     \
 	                            name##_RB_GETCOLOR(RB_RIGHT(tmp, field)) == RB_BLACK) {\
-	                                struct type *oleft;             \
+	                                struct type *__single oleft;      \
 	                                if ((oleft = RB_LEFT(tmp, field)) \
 	                                    != NULL)                    \
 	                                        name##_RB_SETCOLOR(oleft,  RB_BLACK);\
@@ -583,7 +585,7 @@ name##_RB_REMOVE_COLOR(struct name *head, struct type *parent, struct type *elm)
 	                } else {                                        \
 	                        if (RB_LEFT(tmp, field) == NULL ||      \
 	                            name##_RB_GETCOLOR(RB_LEFT(tmp, field)) == RB_BLACK) {\
-	                                struct type *oright;            \
+	                                struct type *__single oright;       \
 	                                if ((oright = RB_RIGHT(tmp, field)) \
 	                                    != NULL)                    \
 	                                        name##_RB_SETCOLOR(oright,  RB_BLACK);\
@@ -608,14 +610,14 @@ name##_RB_REMOVE_COLOR(struct name *head, struct type *parent, struct type *elm)
 struct type *                                                           \
 name##_RB_REMOVE(struct name *head, struct type *elm)                   \
 {                                                                       \
-	struct type *child, *parent, *old = elm;                        \
+	struct type *__single child, *__single parent, *__single old = elm; \
 	int color;                                                      \
 	if (RB_LEFT(elm, field) == NULL)                                \
 	        child = RB_RIGHT(elm, field);                           \
 	else if (RB_RIGHT(elm, field) == NULL)                          \
 	        child = RB_LEFT(elm, field);                            \
 	else {                                                          \
-	        struct type *left;                                      \
+	        struct type *__single left;                             \
 	        elm = RB_RIGHT(elm, field);                             \
 	        while ((left = RB_LEFT(elm, field)) != NULL)            \
 	                elm = left;                                     \
@@ -726,8 +728,8 @@ __attribute__((unused))                                                 \
 struct type *                                                           \
 name##_RB_NFIND(struct name *head, struct type *elm)                    \
 {                                                                       \
-	struct type *tmp = RB_ROOT(head);                               \
-	struct type *res = NULL;                                        \
+	struct type *__single tmp = RB_ROOT(head);                          \
+	struct type *__single res = NULL;                                   \
 	int comp;                                                       \
 	while (tmp) {                                                   \
 	        comp = cmp(elm, tmp);                                   \

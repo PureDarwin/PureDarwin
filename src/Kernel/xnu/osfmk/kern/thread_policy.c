@@ -26,6 +26,7 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#include <libkern/OSAtomic.h>
 #include <mach/mach_types.h>
 #include <mach/thread_act_server.h>
 
@@ -33,6 +34,7 @@
 #include <kern/processor.h>
 #include <kern/thread.h>
 #include <kern/affinity.h>
+#include <kern/work_interval.h>
 #include <mach/task_policy.h>
 #include <kern/sfi.h>
 #include <kern/policy_internal.h>
@@ -40,6 +42,9 @@
 #include <sys/ulock.h>
 
 #include <mach/machine/sdt.h>
+
+static KALLOC_TYPE_DEFINE(thread_qos_override_zone,
+    struct thread_qos_override, KT_DEFAULT);
 
 #ifdef MACH_BSD
 extern int      proc_selfpid(void);
@@ -49,16 +54,22 @@ extern void     rethrottle_thread(void * uthread);
 
 #define QOS_EXTRACT(q)        ((q) & 0xff)
 
-uint32_t qos_override_mode;
 #define QOS_OVERRIDE_MODE_OVERHANG_PEAK 0
 #define QOS_OVERRIDE_MODE_IGNORE_OVERRIDE 1
 #define QOS_OVERRIDE_MODE_FINE_GRAINED_OVERRIDE 2
 #define QOS_OVERRIDE_MODE_FINE_GRAINED_OVERRIDE_BUT_SINGLE_MUTEX_OVERRIDE 3
 
-extern zone_t thread_qos_override_zone;
+TUNABLE(uint32_t, qos_override_mode, "qos_override_mode",
+    QOS_OVERRIDE_MODE_FINE_GRAINED_OVERRIDE_BUT_SINGLE_MUTEX_OVERRIDE);
 
 static void
 proc_thread_qos_remove_override_internal(thread_t thread, user_addr_t resource, int resource_type, boolean_t reset);
+
+const int thread_default_iotier_override  = THROTTLE_LEVEL_END;
+
+const struct thread_requested_policy default_thread_requested_policy = {
+	.thrp_iotier_kevent_override = thread_default_iotier_override
+};
 
 /*
  * THREAD_QOS_UNSPECIFIED is assigned the highest tier available, so it does not provide a limit
@@ -141,16 +152,6 @@ thread_policy_update_spinlocked(thread_t thread, bool recompute_priority, task_p
 
 static void
 thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priority, task_pend_token_t pend_token);
-
-void
-thread_policy_init(void)
-{
-	if (PE_parse_boot_argn("qos_override_mode", &qos_override_mode, sizeof(qos_override_mode))) {
-		printf("QOS override mode: 0x%08x\n", qos_override_mode);
-	} else {
-		qos_override_mode = QOS_OVERRIDE_MODE_FINE_GRAINED_OVERRIDE_BUT_SINGLE_MUTEX_OVERRIDE;
-	}
-}
 
 boolean_t
 thread_has_qos_policy(thread_t thread)
@@ -284,6 +285,27 @@ thread_policy_set(
 		if (flavor == THREAD_QOS_POLICY) {
 			return KERN_INVALID_ARGUMENT;
 		}
+
+		if (flavor == THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY) {
+			if (count < THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY_COUNT) {
+				return KERN_INVALID_ARGUMENT;
+			}
+			thread_time_constraint_with_priority_policy_t info = (thread_time_constraint_with_priority_policy_t)policy_info;
+			if (info->priority != BASEPRI_RTQUEUES) {
+				return KERN_INVALID_ARGUMENT;
+			}
+		}
+	}
+
+	if (flavor == THREAD_TIME_CONSTRAINT_POLICY || flavor == THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY) {
+		thread_work_interval_flags_t th_wi_flags = os_atomic_load(
+			&thread->th_work_interval_flags, relaxed);
+		if ((th_wi_flags & TH_WORK_INTERVAL_FLAGS_HAS_WORKLOAD_ID) &&
+		    !(th_wi_flags & TH_WORK_INTERVAL_FLAGS_RT_ALLOWED)) {
+			/* Fail requests to become realtime for threads having joined workintervals
+			 * with workload ID that don't have the rt-allowed flag. */
+			return KERN_INVALID_POLICY;
+		}
 	}
 
 	/* Threads without static_param set reset their QoS when other policies are applied. */
@@ -300,7 +322,6 @@ thread_policy_set(
 
 	kr = thread_policy_set_internal(thread, flavor, policy_info, count);
 
-	/* Return KERN_QOS_REMOVED instead of KERN_SUCCESS if we succeeded. */
 	if (req_qos.qos_tier != THREAD_QOS_UNSPECIFIED) {
 		if (kr != KERN_SUCCESS) {
 			/* Reset back to our original tier as the set failed. */
@@ -310,6 +331,11 @@ thread_policy_set(
 
 	return kr;
 }
+
+static_assert(offsetof(thread_time_constraint_with_priority_policy_data_t, period) == offsetof(thread_time_constraint_policy_data_t, period));
+static_assert(offsetof(thread_time_constraint_with_priority_policy_data_t, computation) == offsetof(thread_time_constraint_policy_data_t, computation));
+static_assert(offsetof(thread_time_constraint_with_priority_policy_data_t, constraint) == offsetof(thread_time_constraint_policy_data_t, constraint));
+static_assert(offsetof(thread_time_constraint_with_priority_policy_data_t, preemptible) == offsetof(thread_time_constraint_policy_data_t, preemptible));
 
 kern_return_t
 thread_policy_set_internal(
@@ -350,21 +376,33 @@ thread_policy_set_internal(
 		thread_unlock(thread);
 		splx(s);
 
+		/*
+		 * The thread may be demoted with RT_DISALLOWED but has just
+		 * changed its sched mode to TIMESHARE or FIXED. Make sure to
+		 * undemote the thread so the new sched mode takes effect.
+		 */
+		thread_rt_evaluate(thread);
+
 		pend_token.tpt_update_thread_sfi = 1;
 
 		break;
 	}
 
 	case THREAD_TIME_CONSTRAINT_POLICY:
+	case THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY:
 	{
-		thread_time_constraint_policy_t info;
+		thread_time_constraint_with_priority_policy_t info;
 
-		if (count < THREAD_TIME_CONSTRAINT_POLICY_COUNT) {
+		mach_msg_type_number_t min_count = (flavor == THREAD_TIME_CONSTRAINT_POLICY ?
+		    THREAD_TIME_CONSTRAINT_POLICY_COUNT :
+		    THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY_COUNT);
+
+		if (count < min_count) {
 			result = KERN_INVALID_ARGUMENT;
 			break;
 		}
 
-		info = (thread_time_constraint_policy_t)policy_info;
+		info = (thread_time_constraint_with_priority_policy_t)policy_info;
 
 
 		if (info->constraint < info->computation ||
@@ -374,18 +412,46 @@ thread_policy_set_internal(
 			break;
 		}
 
+		if (info->computation < (info->constraint / 2)) {
+			info->computation = (info->constraint / 2);
+			if (info->computation > max_rt_quantum) {
+				info->computation = max_rt_quantum;
+			}
+		}
+
+		if (flavor == THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY) {
+			if ((info->priority < BASEPRI_RTQUEUES) || (info->priority > MAXPRI)) {
+				result = KERN_INVALID_ARGUMENT;
+				break;
+			}
+		}
+
 		spl_t s = splsched();
 		thread_lock(thread);
 
-		thread->realtime.period         = info->period;
-		thread->realtime.computation    = info->computation;
-		thread->realtime.constraint     = info->constraint;
-		thread->realtime.preemptible    = info->preemptible;
+		thread->realtime.period          = info->period;
+		thread->realtime.computation     = info->computation;
+		thread->realtime.constraint      = info->constraint;
+		thread->realtime.preemptible     = info->preemptible;
+
+		/*
+		 * If the thread has a work interval driven policy, the priority
+		 * offset has been set by the work interval.
+		 */
+		if (!thread->requested_policy.thrp_wi_driven) {
+			if (flavor == THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY) {
+				thread->realtime.priority_offset = (uint8_t)(info->priority - BASEPRI_RTQUEUES);
+			} else {
+				thread->realtime.priority_offset = 0;
+			}
+		}
 
 		thread_set_user_sched_mode_and_recompute_pri(thread, TH_MODE_REALTIME);
 
 		thread_unlock(thread);
 		splx(s);
+
+		thread_rt_evaluate(thread);
 
 		pend_token.tpt_update_thread_sfi = 1;
 
@@ -417,7 +483,13 @@ thread_policy_set_internal(
 
 	case THREAD_AFFINITY_POLICY:
 	{
+		extern boolean_t affinity_sets_enabled;
 		thread_affinity_policy_t info;
+
+		if (!affinity_sets_enabled) {
+			result = KERN_INVALID_POLICY;
+			break;
+		}
 
 		if (!thread_affinity_is_supported()) {
 			result = KERN_NOT_SUPPORTED;
@@ -449,7 +521,7 @@ thread_policy_set_internal(
 			break;
 		}
 
-		if (thread->task != current_task()) {
+		if (get_threadtask(thread) != current_task()) {
 			result = KERN_PROTECTION_FAILURE;
 			break;
 		}
@@ -605,6 +677,8 @@ thread_set_mode_and_absolute_pri_internal(thread_t              thread,
 	}
 
 	sched_mode_t old_mode = thread->sched_mode;
+	integer_t old_base_pri = thread->base_pri;
+	integer_t old_sched_pri = thread->sched_pri;
 
 	/*
 	 * Reverse engineer and apply the correct importance value
@@ -637,6 +711,11 @@ thread_set_mode_and_absolute_pri_internal(thread_t              thread,
 
 	if (mode != old_mode) {
 		pend_token->tpt_update_thread_sfi = 1;
+	}
+
+	if (thread->base_pri != old_base_pri ||
+	    thread->sched_pri != old_sched_pri) {
+		pend_token->tpt_update_turnstile = 1;
 	}
 
 unlock:
@@ -816,9 +895,9 @@ thread_set_workq_pri(thread_t  thread,
 	    &pend_token);
 	assert(kr == KERN_SUCCESS);
 
-	if (pend_token.tpt_update_thread_sfi) {
-		sfi_reevaluate(thread);
-	}
+	assert(pend_token.tpt_update_sockets == 0);
+
+	thread_policy_update_complete_unlocked(thread, &pend_token);
 }
 
 /*
@@ -883,16 +962,7 @@ thread_set_user_sched_mode_and_recompute_pri(thread_t thread, sched_mode_t mode)
 
 	boolean_t removed = thread_run_queue_remove(thread);
 
-	/*
-	 * TODO: Instead of having saved mode, have 'user mode' and 'true mode'.
-	 * That way there's zero confusion over which the user wants
-	 * and which the kernel wants.
-	 */
-	if (thread->sched_flags & TH_SFLAG_DEMOTED_MASK) {
-		thread->saved_mode = mode;
-	} else {
-		sched_set_thread_mode(thread, mode);
-	}
+	sched_set_thread_mode_user(thread, mode);
 
 	thread_recompute_priority(thread);
 
@@ -905,23 +975,19 @@ thread_set_user_sched_mode_and_recompute_pri(thread_t thread, sched_mode_t mode)
 static void
 thread_update_qos_cpu_time_locked(thread_t thread)
 {
-	task_t task = thread->task;
+	task_t task = get_threadtask(thread);
 	uint64_t timer_sum, timer_delta;
 
 	/*
-	 * This is only as accurate as the distance between
-	 * last context switch (embedded) or last user/kernel boundary transition (desktop)
-	 * because user_timer and system_timer are only updated then.
+	 * This is only as accurate the thread's last context switch or user/kernel
+	 * transition (unless precise user/kernel time is disabled).
 	 *
-	 * TODO: Consider running a timer_update operation here to update it first.
+	 * TODO: Consider running an update operation here to update it first.
 	 *       Maybe doable with interrupts disabled from current thread.
 	 *       If the thread is on a different core, may not be easy to get right.
-	 *
-	 * TODO: There should be a function for this in timer.c
 	 */
 
-	timer_sum = timer_grab(&thread->user_timer);
-	timer_sum += timer_grab(&thread->system_timer);
+	timer_sum = recount_thread_time_mach(thread);
 	timer_delta = timer_sum - thread->vtimer_qos_save;
 
 	thread->vtimer_qos_save = timer_sum;
@@ -984,22 +1050,43 @@ thread_update_qos_cpu_time(thread_t thread)
  *
  * Called with thread_lock and thread mutex held.
  */
-extern thread_t vm_pageout_scan_thread;
-extern boolean_t vps_dynamic_priority_enabled;
-
 void
 thread_recompute_priority(
 	thread_t                thread)
 {
 	integer_t               priority;
+	integer_t               adj_priority;
+	bool                    wi_priority = false;
 
 	if (thread->policy_reset) {
 		return;
 	}
 
 	if (thread->sched_mode == TH_MODE_REALTIME) {
-		sched_set_thread_base_priority(thread, BASEPRI_RTQUEUES);
+		uint8_t i = thread->realtime.priority_offset;
+		assert((i >= 0) && (i < NRTQS));
+		priority = BASEPRI_RTQUEUES + i;
+
+		sched_set_thread_base_priority(thread, priority);
+		if (thread->realtime.deadline == RT_DEADLINE_NONE) {
+			/* Make sure the thread has a valid deadline */
+			uint64_t ctime = mach_absolute_time();
+			thread->realtime.deadline = thread->realtime.constraint + ctime;
+			KDBG(MACHDBG_CODE(DBG_MACH_SCHED, MACH_SET_RT_DEADLINE) | DBG_FUNC_NONE,
+			    (uintptr_t)thread_tid(thread), thread->realtime.deadline, thread->realtime.computation, 1);
+		}
 		return;
+
+		/*
+		 * A thread may have joined a RT work interval but then never
+		 * changed its sched mode or have been demoted. RT work
+		 * intervals will have RT priorities - ignore the priority if
+		 * the thread isn't RT.
+		 */
+	} else if (thread->effective_policy.thep_wi_driven &&
+	    work_interval_get_priority(thread) < BASEPRI_RTQUEUES) {
+		priority = work_interval_get_priority(thread);
+		wi_priority = true;
 	} else if (thread->effective_policy.thep_qos != THREAD_QOS_UNSPECIFIED) {
 		int qos = thread->effective_policy.thep_qos;
 		int qos_ui_is_urgent = thread->effective_policy.thep_qos_ui_is_urgent;
@@ -1032,6 +1119,11 @@ thread_recompute_priority(
 		priority += thread->task_priority;
 	}
 
+	/* Boost the priority of threads which are RT demoted. */
+	if (sched_thread_mode_has_demotion(thread, TH_SFLAG_RT_DISALLOWED)) {
+		priority = MAX(priority, MAXPRI_USER);
+	}
+
 	priority = MAX(priority, thread->user_promotion_basepri);
 
 	/*
@@ -1043,18 +1135,24 @@ thread_recompute_priority(
 	 * Note that thread->importance is user-settable to any integer
 	 * via THREAD_PRECEDENCE_POLICY.
 	 */
-	if (priority > thread->max_priority) {
-		if (thread->effective_policy.thep_promote_above_task) {
-			priority = MAX(thread->max_priority, thread->user_promotion_basepri);
-		} else {
-			priority = thread->max_priority;
-		}
-	} else if (priority < MINPRI) {
-		priority = MINPRI;
+	adj_priority = priority;
+	adj_priority = MIN(adj_priority, thread->max_priority);
+	adj_priority = MAX(adj_priority, MINPRI);
+
+	/* Allow workload driven priorities to exceed max_priority. */
+	if (wi_priority) {
+		adj_priority = MAX(adj_priority, priority);
 	}
 
+	/* Allow priority to exceed max_priority for promotions. */
+	if (thread->effective_policy.thep_promote_above_task) {
+		adj_priority = MAX(adj_priority, thread->user_promotion_basepri);
+	}
+	priority = adj_priority;
+	assert3u(priority, <=, MAXPRI);
+
 	if (thread->saved_mode == TH_MODE_REALTIME &&
-	    thread->sched_flags & TH_SFLAG_FAILSAFE) {
+	    sched_thread_mode_has_demotion(thread, TH_SFLAG_FAILSAFE)) {
 		priority = DEPRESSPRI;
 	}
 
@@ -1157,13 +1255,16 @@ thread_policy_reset(
 		sched_thread_mode_undemote(thread, TH_SFLAG_THROTTLED);
 	}
 
+	if (thread->sched_flags & TH_SFLAG_RT_DISALLOWED) {
+		sched_thread_mode_undemote(thread, TH_SFLAG_RT_DISALLOWED);
+	}
+
 	/* At this point, the various demotions should be inactive */
 	assert(!(thread->sched_flags & TH_SFLAG_DEMOTED_MASK));
-	assert(!(thread->sched_flags & TH_SFLAG_THROTTLED));
 	assert(!(thread->sched_flags & TH_SFLAG_DEPRESSED_MASK));
 
 	/* Reset thread back to task-default basepri and mode  */
-	sched_mode_t newmode = SCHED(initial_thread_sched_mode)(thread->task);
+	sched_mode_t newmode = SCHED(initial_thread_sched_mode)(get_threadtask(thread));
 
 	sched_set_thread_mode(thread, newmode);
 
@@ -1234,15 +1335,20 @@ thread_policy_get(
 	}
 
 	case THREAD_TIME_CONSTRAINT_POLICY:
+	case THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY:
 	{
-		thread_time_constraint_policy_t         info;
+		thread_time_constraint_with_priority_policy_t         info;
 
-		if (*count < THREAD_TIME_CONSTRAINT_POLICY_COUNT) {
+		mach_msg_type_number_t min_count = (flavor == THREAD_TIME_CONSTRAINT_POLICY ?
+		    THREAD_TIME_CONSTRAINT_POLICY_COUNT :
+		    THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY_COUNT);
+
+		if (*count < min_count) {
 			result = KERN_INVALID_ARGUMENT;
 			break;
 		}
 
-		info = (thread_time_constraint_policy_t)policy_info;
+		info = (thread_time_constraint_with_priority_policy_t)policy_info;
 
 		if (!(*get_default)) {
 			spl_t s = splsched();
@@ -1254,6 +1360,9 @@ thread_policy_get(
 				info->computation = thread->realtime.computation;
 				info->constraint = thread->realtime.constraint;
 				info->preemptible = thread->realtime.preemptible;
+				if (flavor == THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY) {
+					info->priority = thread->realtime.priority_offset + BASEPRI_RTQUEUES;
+				}
 			} else {
 				*get_default = TRUE;
 			}
@@ -1267,6 +1376,9 @@ thread_policy_get(
 			info->computation = default_timeshare_computation;
 			info->constraint = default_timeshare_constraint;
 			info->preemptible = TRUE;
+			if (flavor == THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY) {
+				info->priority = BASEPRI_RTQUEUES;
+			}
 		}
 
 
@@ -1333,7 +1445,7 @@ thread_policy_get(
 		}
 
 		/* Only root can get this info */
-		if (current_task()->sec_token.val[0] != 0) {
+		if (!task_is_privileged(current_task())) {
 			result = KERN_PROTECTION_FAILURE;
 			break;
 		}
@@ -1364,6 +1476,27 @@ thread_policy_get(
 			info->effective = 0;
 			info->pending = 0;
 		}
+
+		break;
+	}
+
+	case THREAD_REQUESTED_STATE_POLICY:
+	{
+		if (*count < THREAD_REQUESTED_STATE_POLICY_COUNT) {
+			result = KERN_INVALID_ARGUMENT;
+			break;
+		}
+
+		thread_requested_qos_policy_t info = (thread_requested_qos_policy_t) policy_info;
+		struct thread_requested_policy *req_policy = &thread->requested_policy;
+
+		info->thrq_base_qos = req_policy->thrp_qos;
+		info->thrq_qos_relprio = req_policy->thrp_qos_relprio;
+		info->thrq_qos_override = req_policy->thrp_qos_override;
+		info->thrq_qos_promote = req_policy->thrp_qos_promote;
+		info->thrq_qos_kevent_override = req_policy->thrp_qos_kevent_override;
+		info->thrq_qos_workq_override = req_policy->thrp_qos_workq_override;
+		info->thrq_qos_wlsvc_override = req_policy->thrp_qos_wlsvc_override;
 
 		break;
 	}
@@ -1484,8 +1617,6 @@ thread_policy_update_spinlocked(thread_t thread, bool recompute_priority, task_p
  * This function updates the thread effective policy fields
  * and pushes the results to the relevant subsystems.
  *
- * Returns TRUE if a pended action needs to be run.
- *
  * Called with thread spinlock locked, task may be locked, thread mutex may be locked
  */
 static void
@@ -1497,8 +1628,8 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 	 *  Gather requested policy and effective task state
 	 */
 
-	struct thread_requested_policy requested = thread->requested_policy;
-	struct task_effective_policy task_effective = thread->task->effective_policy;
+	const struct thread_requested_policy requested = thread->requested_policy;
+	const struct task_effective_policy task_effective = get_threadtask(thread)->effective_policy;
 
 	/*
 	 * Step 2:
@@ -1508,6 +1639,8 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 	 */
 
 	struct thread_effective_policy next = {};
+
+	next.thep_wi_driven = requested.thrp_wi_driven;
 
 	next.thep_qos_ui_is_urgent = task_effective.tep_qos_ui_is_urgent;
 
@@ -1521,11 +1654,11 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 		next_qos = MAX(requested.thrp_qos_workq_override, next_qos);
 	}
 
-	if (task_effective.tep_darwinbg && task_effective.tep_adaptive_bg &&
+	if (task_effective.tep_darwinbg && task_effective.tep_promote_above_task &&
 	    requested.thrp_qos_promote > THREAD_QOS_BACKGROUND) {
 		/*
-		 * This thread is turnstile-boosted higher than the adaptive clamp
-		 * by a synchronous waiter. Allow that to override the adaptive
+		 * This thread is turnstile-boosted higher than the background clamp
+		 * by a synchronous waiter, and this clamp allows that to override the
 		 * clamp temporarily for this thread only.
 		 */
 		next.thep_promote_above_task = true;
@@ -1541,6 +1674,7 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 		} else {
 			next.thep_qos = task_effective.tep_qos_clamp;
 		}
+		next.thep_wi_driven = 0;
 	}
 
 	/*
@@ -1603,6 +1737,7 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 
 	if (wants_darwinbg) {
 		next.thep_darwinbg = 1;
+		next.thep_wi_driven = 0;
 	}
 
 	if (next.thep_darwinbg || task_effective.tep_new_sockets_bg) {
@@ -1639,6 +1774,9 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 
 	iopol = MAX(iopol, requested.thrp_int_iotier);
 	iopol = MAX(iopol, requested.thrp_ext_iotier);
+
+	/* Apply the kevent iotier override */
+	iopol = MIN(iopol, requested.thrp_iotier_kevent_override);
 
 	next.thep_io_tier = iopol;
 
@@ -1690,6 +1828,7 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 		next.thep_qos           = THREAD_QOS_UNSPECIFIED;
 		next.thep_latency_qos   = LATENCY_QOS_TIER_UNSPECIFIED;
 		next.thep_through_qos   = THROUGHPUT_QOS_TIER_UNSPECIFIED;
+		next.thep_wi_driven     = 0;
 	}
 
 	/*
@@ -1729,6 +1868,13 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 
 	integer_t old_base_pri = thread->base_pri;
 
+	/* promote-above-task generates its own dedicated tracepoint */
+	if (prev.thep_promote_above_task != next.thep_promote_above_task) {
+		KDBG_RELEASE(IMPORTANCE_CODE(IMP_THREAD_PROMOTE_ABOVE_TASK, 0) |
+		    (next.thep_promote_above_task ? DBG_FUNC_START : DBG_FUNC_END),
+		    thread_tid(thread), next.thep_terminated);
+	}
+
 	/*
 	 * Step 5:
 	 *  Update other subsystems as necessary if something has changed
@@ -1740,6 +1886,7 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 	    prev.thep_qos_ui_is_urgent != next.thep_qos_ui_is_urgent ||
 	    prev.thep_promote_above_task != next.thep_promote_above_task ||
 	    prev.thep_terminated != next.thep_terminated ||
+	    prev.thep_wi_driven != next.thep_wi_driven ||
 	    pend_token->tpt_force_recompute_pri == 1 ||
 	    recompute_priority) {
 		thread_recompute_priority(thread);
@@ -1760,33 +1907,6 @@ thread_policy_update_internal_spinlocked(thread_t thread, bool recompute_priorit
 	}
 }
 
-
-/*
- * Initiate a thread policy state transition on a thread with its TID
- * Useful if you cannot guarantee the thread won't get terminated
- * Precondition: No locks are held
- * Will take task lock - using the non-tid variant is faster
- * if you already have a thread ref.
- */
-void
-proc_set_thread_policy_with_tid(task_t     task,
-    uint64_t   tid,
-    int        category,
-    int        flavor,
-    int        value)
-{
-	/* takes task lock, returns ref'ed thread or NULL */
-	thread_t thread = task_findtid(task, tid);
-
-	if (thread == THREAD_NULL) {
-		return;
-	}
-
-	proc_set_thread_policy(thread, category, flavor, value);
-
-	thread_deallocate(thread);
-}
-
 /*
  * Initiate a thread policy transition on a thread
  * This path supports networking transitions (i.e. darwinbg transitions)
@@ -1798,11 +1918,21 @@ proc_set_thread_policy(thread_t   thread,
     int        flavor,
     int        value)
 {
+	proc_set_thread_policy_ext(thread, category, flavor, value, 0);
+}
+
+void
+proc_set_thread_policy_ext(thread_t   thread,
+    int        category,
+    int        flavor,
+    int        value,
+    int        value2)
+{
 	struct task_pend_token pend_token = {};
 
 	thread_mtx_lock(thread);
 
-	proc_set_thread_policy_locked(thread, category, flavor, value, 0, &pend_token);
+	proc_set_thread_policy_locked(thread, category, flavor, value, value2, &pend_token);
 
 	thread_mtx_unlock(thread);
 
@@ -1825,12 +1955,12 @@ thread_policy_update_complete_unlocked(thread_t thread, task_pend_token_t pend_t
 {
 #ifdef MACH_BSD
 	if (pend_token->tpt_update_sockets) {
-		proc_apply_task_networkbg(thread->task->bsd_info, thread);
+		proc_apply_task_networkbg(task_pid(get_threadtask(thread)), thread);
 	}
 #endif /* MACH_BSD */
 
 	if (pend_token->tpt_update_throttle) {
-		rethrottle_thread(thread->uthread);
+		rethrottle_thread(get_bsdthread_info(thread));
 	}
 
 	if (pend_token->tpt_update_thread_sfi) {
@@ -1914,6 +2044,7 @@ thread_set_requested_policy_spinlocked(thread_t     thread,
 		} else {
 			requested.thrp_int_darwinbg = value;
 		}
+		pend_token->tpt_update_turnstile = 1;
 		break;
 
 	case TASK_POLICY_IOPOL:
@@ -1948,6 +2079,7 @@ thread_set_requested_policy_spinlocked(thread_t     thread,
 	case TASK_POLICY_PIDBIND_BG:
 		assert(category == TASK_POLICY_ATTRIBUTE);
 		requested.thrp_pidbind_bg = value;
+		pend_token->tpt_update_turnstile = 1;
 		break;
 
 	case TASK_POLICY_LATENCY_QOS:
@@ -2000,6 +2132,37 @@ thread_set_requested_policy_spinlocked(thread_t     thread,
 	case TASK_POLICY_TERMINATED:
 		assert(category == TASK_POLICY_ATTRIBUTE);
 		requested.thrp_terminated = value;
+		break;
+
+	case TASK_POLICY_IOTIER_KEVENT_OVERRIDE:
+		assert(category == TASK_POLICY_ATTRIBUTE);
+		requested.thrp_iotier_kevent_override = value;
+		break;
+
+	case TASK_POLICY_WI_DRIVEN:
+		assert(category == TASK_POLICY_ATTRIBUTE);
+		assert(thread == current_thread());
+
+		const bool set_policy = value;
+		const sched_mode_t mode = value2;
+
+		requested.thrp_wi_driven = set_policy ? 1 : 0;
+
+		/*
+		 * No sched mode change for REALTIME (threads must explicitly
+		 * opt-in), however the priority_offset needs to be updated.
+		 */
+		if (mode == TH_MODE_REALTIME) {
+			const int pri = work_interval_get_priority(thread);
+			assert3u(pri, >=, BASEPRI_RTQUEUES);
+			thread->realtime.priority_offset = set_policy ?
+			    (uint8_t)(pri - BASEPRI_RTQUEUES) : 0;
+		} else {
+			sched_set_thread_mode_user(thread, mode);
+			if (set_policy) {
+				thread->static_param = true;
+			}
+		}
 		break;
 
 	default:
@@ -2131,6 +2294,15 @@ thread_get_requested_policy_spinlocked(thread_t thread,
 		assert(category == TASK_POLICY_ATTRIBUTE);
 		value = requested.thrp_terminated;
 		break;
+	case TASK_POLICY_IOTIER_KEVENT_OVERRIDE:
+		assert(category == TASK_POLICY_ATTRIBUTE);
+		value = requested.thrp_iotier_kevent_override;
+		break;
+
+	case TASK_POLICY_WI_DRIVEN:
+		assert(category == TASK_POLICY_ATTRIBUTE);
+		value = requested.thrp_wi_driven;
+		break;
 
 	default:
 		panic("unknown policy_flavor %d", flavor);
@@ -2204,7 +2376,7 @@ proc_get_effective_thread_policy(thread_t thread,
 		 * doesn't get you out of the network throttle.
 		 */
 		value = (thread->effective_policy.thep_all_sockets_bg ||
-		    thread->task->effective_policy.tep_all_sockets_bg) ? 1 : 0;
+		    get_threadtask(thread)->effective_policy.tep_all_sockets_bg) ? 1 : 0;
 		break;
 	case TASK_POLICY_NEW_SOCKETS_BG:
 		/*
@@ -2319,7 +2491,7 @@ uintptr_t
 threquested_1(thread_t thread)
 {
 #if defined __LP64__
-	return *(uintptr_t*)&thread->task->requested_policy;
+	return *(uintptr_t*)&get_threadtask(thread)->requested_policy;
 #else
 	uintptr_t* raw = (uintptr_t*)(void*)&thread->requested_policy;
 	return raw[1];
@@ -2339,7 +2511,7 @@ uintptr_t
 theffective_1(thread_t thread)
 {
 #if defined __LP64__
-	return *(uintptr_t*)&thread->task->effective_policy;
+	return *(uintptr_t*)&get_threadtask(thread)->effective_policy;
 #else
 	uintptr_t* raw = (uintptr_t*)(void*)&thread->effective_policy;
 	return raw[1];
@@ -2386,7 +2558,7 @@ set_thread_iotier_override(thread_t thread, int policy)
 	 * re-evaluate tiers and potentially break out
 	 * of an msleep
 	 */
-	rethrottle_thread(thread->uthread);
+	rethrottle_thread(get_bsdthread_info(thread));
 }
 
 /*
@@ -2632,7 +2804,7 @@ proc_thread_qos_add_override(task_t           task,
 		}
 		has_thread_reference = TRUE;
 	} else {
-		assert(thread->task == task);
+		assert(get_threadtask(thread) == task);
 	}
 	rc = proc_thread_qos_add_override_internal(thread, override_qos,
 	    first_override_for_resource, resource, resource_type);
@@ -2727,7 +2899,7 @@ proc_thread_qos_remove_override(task_t      task,
 		}
 		has_thread_reference = TRUE;
 	} else {
-		assert(task == thread->task);
+		assert(task == get_threadtask(thread));
 	}
 
 	proc_thread_qos_remove_override_internal(thread, resource, resource_type, FALSE);
@@ -2776,7 +2948,7 @@ task_set_main_thread_qos(task_t task, thread_t thread)
 {
 	struct task_pend_token pend_token = {};
 
-	assert(thread->task == task);
+	assert(get_threadtask(thread) == task);
 
 	thread_mtx_lock(thread);
 
@@ -3099,6 +3271,33 @@ thread_drop_servicer_override(thread_t thread)
 	thread_servicer_override(thread, THREAD_QOS_UNSPECIFIED, FALSE);
 }
 
+void
+thread_update_servicer_iotier_override(thread_t thread, uint8_t iotier_override)
+{
+	struct task_pend_token pend_token = {};
+	uint8_t current_iotier;
+
+	/* Check if the update is needed */
+	current_iotier = (uint8_t)thread_get_requested_policy_spinlocked(thread,
+	    TASK_POLICY_ATTRIBUTE, TASK_POLICY_IOTIER_KEVENT_OVERRIDE, NULL);
+
+	if (iotier_override == current_iotier) {
+		return;
+	}
+
+	spl_t s = splsched();
+	thread_lock(thread);
+
+	proc_set_thread_policy_spinlocked(thread, TASK_POLICY_ATTRIBUTE,
+	    TASK_POLICY_IOTIER_KEVENT_OVERRIDE,
+	    iotier_override, 0, &pend_token);
+
+	thread_unlock(thread);
+	splx(s);
+
+	assert(pend_token.tpt_update_sockets == 0);
+	thread_policy_update_complete_unlocked(thread, &pend_token);
+}
 
 /* Get current requested qos / relpri, may be called from spinlock context */
 thread_qos_t
@@ -3150,3 +3349,156 @@ thread_clear_exec_promotion(thread_t thread)
 	thread_unlock(thread);
 	splx(s);
 }
+
+#if CONFIG_SCHED_RT_ALLOW
+
+/*
+ * flag set by -rt-allow-policy-enable boot-arg to restrict use of
+ * THREAD_TIME_CONSTRAINT_POLICY and THREAD_TIME_CONSTRAINT_WITH_PRIORITY_POLICY
+ * to threads that have joined a workinterval with WORK_INTERVAL_WORKLOAD_ID_RT_ALLOWED.
+ */
+static TUNABLE(
+	bool,
+	rt_allow_policy_enabled,
+	"-rt-allow_policy-enable",
+#if XNU_TARGET_OS_XR
+	true
+#else
+	false
+#endif /* XNU_TARGET_OS_XR */
+	);
+
+/*
+ * When the RT allow policy is enabled and a thread allowed to become RT,
+ * sometimes (if the processes RT allow policy is restricted) the thread will
+ * have a CPU limit enforced. The following two tunables determine the
+ * parameters for that CPU limit.
+ */
+
+/* % of the interval allowed to run. */
+TUNABLE_DEV_WRITEABLE(uint8_t, rt_allow_limit_percent,
+    "rt_allow_limit_percent", 70);
+
+/* The length of interval in nanoseconds. */
+TUNABLE_DEV_WRITEABLE(uint16_t, rt_allow_limit_interval_ms,
+    "rt_allow_limit_interval", 10);
+
+static bool
+thread_has_rt(thread_t thread)
+{
+	return
+	        thread->sched_mode == TH_MODE_REALTIME ||
+	        thread->saved_mode == TH_MODE_REALTIME;
+}
+
+/*
+ * Set a CPU limit on a thread based on the RT allow policy. This will be picked
+ * up by the target thread via the ledger AST.
+ */
+static void
+thread_rt_set_cpulimit(thread_t thread)
+{
+	/* Force reasonable values for the cpu limit. */
+	const uint8_t percent = MAX(MIN(rt_allow_limit_percent, 99), 1);
+	const uint16_t interval_ms = MAX(rt_allow_limit_interval_ms, 1);
+
+	thread->t_ledger_req_percentage = percent;
+	thread->t_ledger_req_interval_ms = interval_ms;
+	thread->t_ledger_req_action = THREAD_CPULIMIT_BLOCK;
+
+	thread->sched_flags |= TH_SFLAG_RT_CPULIMIT;
+}
+
+/* Similar to the above but removes any CPU limit. */
+static void
+thread_rt_clear_cpulimit(thread_t thread)
+{
+	thread->sched_flags &= ~TH_SFLAG_RT_CPULIMIT;
+
+	thread->t_ledger_req_percentage = 0;
+	thread->t_ledger_req_interval_ms = 0;
+	thread->t_ledger_req_action = THREAD_CPULIMIT_DISABLE;
+}
+
+/*
+ * Evaluate RT policy for a thread, demoting and undemoting as needed.
+ */
+void
+thread_rt_evaluate(thread_t thread)
+{
+	task_t task = get_threadtask(thread);
+	bool platform_binary = false;
+
+	/* If the RT allow policy is not enabled - nothing to do. */
+	if (!rt_allow_policy_enabled) {
+		return;
+	}
+
+	/* User threads only. */
+	if (task == kernel_task) {
+		return;
+	}
+
+	/* Check for platform binary. */
+	platform_binary = (task_ro_flags_get(task) & TFRO_PLATFORM) != 0;
+
+	spl_t s = splsched();
+	thread_lock(thread);
+
+	const thread_work_interval_flags_t wi_flags =
+	    os_atomic_load(&thread->th_work_interval_flags, relaxed);
+
+	/*
+	 * RT threads which are not joined to a work interval which allows RT
+	 * threads are demoted. Once those conditions no longer hold, the thread
+	 * undemoted.
+	 */
+	if (thread_has_rt(thread) && (wi_flags & TH_WORK_INTERVAL_FLAGS_RT_ALLOWED) == 0) {
+		if (!sched_thread_mode_has_demotion(thread, TH_SFLAG_RT_DISALLOWED)) {
+			KDBG(MACHDBG_CODE(DBG_MACH_SCHED, MACH_RT_DISALLOWED_WORK_INTERVAL),
+			    thread_tid(thread));
+			sched_thread_mode_demote(thread, TH_SFLAG_RT_DISALLOWED);
+		}
+	} else {
+		if (sched_thread_mode_has_demotion(thread, TH_SFLAG_RT_DISALLOWED)) {
+			sched_thread_mode_undemote(thread, TH_SFLAG_RT_DISALLOWED);
+		}
+	}
+
+	/*
+	 * RT threads get a CPU limit unless they're part of a platform binary
+	 * task. If the thread is no longer RT, any existing CPU limit should be
+	 * removed.
+	 */
+	bool set_ast = false;
+	if (!platform_binary &&
+	    thread_has_rt(thread) &&
+	    (thread->sched_flags & TH_SFLAG_RT_CPULIMIT) == 0) {
+		thread_rt_set_cpulimit(thread);
+		set_ast = true;
+	}
+
+	if (!platform_binary &&
+	    !thread_has_rt(thread) &&
+	    (thread->sched_flags & TH_SFLAG_RT_CPULIMIT) != 0) {
+		thread_rt_clear_cpulimit(thread);
+		set_ast = true;
+	}
+
+	thread_unlock(thread);
+	splx(s);
+
+	if (set_ast) {
+		/* Ensure the target thread picks up any CPU limit change. */
+		act_set_astledger(thread);
+	}
+}
+
+#else
+
+void
+thread_rt_evaluate(__unused thread_t thread)
+{
+}
+
+#endif /*  CONFIG_SCHED_RT_ALLOW */

@@ -44,10 +44,10 @@
  * work on non-profiling tasks for the duration of the timer period.
  *
  * Lightweight PET samples the system less-intrusively than normal PET
- * mode.  Instead of iterating tasks and threads on each sample, it increments
- * a global generation count, `kppet_gencount`, which is checked as threads are
- * context switched on-core.  If the thread's local generation count is older
- * than the global generation, the thread samples itself.
+ * mode.  Instead of iterating tasks and threads on each sample, it checks the
+ * current time as threads are context switched on-core.  If the thread's local
+ * generation count is older than a sampling timer would have incremented a global
+ * generation count, the thread samples itself.
  *
  *            |  |
  * thread A   +--+---------|
@@ -63,8 +63,7 @@
  *               |         +-----+--- threads sampled when they come on-core in
  *               |                    kperf_pet_switch_context
  *               |
- *               +--- PET timer fire, sample on-core threads A and B,
- *                    increment kppet_gencount
+ *               +--- PET timer would have fired
  */
 
 #include <mach/mach_types.h>
@@ -80,6 +79,7 @@
 
 #include <kern/task.h>
 #include <kern/kalloc.h>
+#include <os/atomic_private.h>
 #if defined(__x86_64__)
 #include <i386/mp.h>
 #endif /* defined(__x86_64__) */
@@ -95,6 +95,7 @@ static struct {
 	uint32_t g_idle_rate;
 	bool g_setup:1;
 	bool g_lightweight:1;
+	uint64_t g_period;
 	struct kperf_sample *g_sample;
 
 	thread_t g_sample_thread;
@@ -104,18 +105,17 @@ static struct {
 	 */
 	thread_t *g_threads;
 	unsigned int g_nthreads;
-	size_t g_threads_size;
+	size_t g_threads_count;
 
 	task_t *g_tasks;
 	unsigned int g_ntasks;
-	size_t g_tasks_size;
+	size_t g_tasks_count;
 } kppet = {
 	.g_actionid = 0,
 	.g_idle_rate = KPERF_PET_DEFAULT_IDLE_RATE,
 };
 
-bool kppet_lightweight_active = false;
-_Atomic uint32_t kppet_gencount = 0;
+uint64_t kppet_lightweight_start_time = 0;
 
 static uint64_t kppet_sample_tasks(uint32_t idle_rate);
 static void kppet_thread(void * param, wait_result_t wr);
@@ -139,6 +139,34 @@ kppet_unlock(void)
 }
 
 void
+kppet_set_period(uint64_t period)
+{
+	kppet.g_period = period;
+}
+
+static uint32_t
+kppet_current_gen(void)
+{
+	/*
+	 * Don't worry too much about the memory model here.
+	 * The timers starting up issues a broadcast cross-call.
+	 * And the period/start time won't change while the timers are active.
+	 */
+	uint64_t period = os_atomic_load(&kppet.g_period, relaxed);
+	if (period == 0) {
+		return 0;
+	}
+	uint64_t start_time = os_atomic_load(&kppet_lightweight_start_time, relaxed);
+	return (uint32_t)((mach_continuous_time() - start_time) / period);
+}
+
+void
+kppet_mark_sampled(thread_t thread)
+{
+	thread->kperf_pet_gen = kppet_current_gen();
+}
+
+void
 kppet_on_cpu(thread_t thread, thread_continue_t continuation,
     uintptr_t *starting_fp)
 {
@@ -149,11 +177,14 @@ kppet_on_cpu(thread_t thread, thread_continue_t continuation,
 	if (actionid == 0) {
 		return;
 	}
+	uint32_t sample_gen = kppet_current_gen();
 
-	if (thread->kperf_pet_gen != atomic_load(&kppet_gencount)) {
-		BUF_VERB(PERF_PET_SAMPLE_THREAD | DBG_FUNC_START,
-		    atomic_load_explicit(&kppet_gencount,
-		    memory_order_relaxed), thread->kperf_pet_gen);
+	/*
+	 * Has to match exactly to skip sampling.
+	 */
+	if (thread->kperf_pet_gen != sample_gen) {
+		BUF_VERB(PERF_PET_SAMPLE_THREAD | DBG_FUNC_START, sample_gen, thread->kperf_pet_gen,
+		    kppet_lightweight_start_time, kppet.g_period);
 
 		task_t task = get_threadtask(thread);
 		struct kperf_context ctx = {
@@ -180,8 +211,8 @@ kppet_on_cpu(thread_t thread, thread_continue_t continuation,
 
 		BUF_VERB(PERF_PET_SAMPLE_THREAD | DBG_FUNC_END);
 	} else {
-		BUF_VERB(PERF_PET_SAMPLE_THREAD,
-		    os_atomic_load(&kppet_gencount, relaxed), thread->kperf_pet_gen);
+		BUF_VERB(PERF_PET_SAMPLE_THREAD, sample_gen, thread->kperf_pet_gen,
+		    kppet_lightweight_start_time, kppet.g_period);
 	}
 }
 
@@ -226,27 +257,32 @@ kppet_config(unsigned int actionid)
 
 	if (actionid > 0) {
 		if (!kppet.g_sample) {
-			kppet.g_sample = kalloc_tag(sizeof(*kppet.g_sample),
-			    VM_KERN_MEMORY_DIAG);
+			kppet.g_sample = kalloc_type_tag(struct kperf_sample,
+			    Z_WAITOK | Z_NOFAIL, VM_KERN_MEMORY_DIAG);
+			kppet.g_sample->usample.usample_min = kalloc_type_tag(
+				struct kperf_usample_min, Z_WAITOK | Z_NOFAIL, VM_KERN_MEMORY_DIAG);
 		}
 	} else {
 		if (kppet.g_tasks) {
-			assert(kppet.g_tasks_size != 0);
-			kfree(kppet.g_tasks, kppet.g_tasks_size);
+			assert(kppet.g_tasks_count != 0);
+			kfree_type(task_t, kppet.g_tasks_count, kppet.g_tasks);
 			kppet.g_tasks = NULL;
-			kppet.g_tasks_size = 0;
+			kppet.g_tasks_count = 0;
 			kppet.g_ntasks = 0;
 		}
 		if (kppet.g_threads) {
-			assert(kppet.g_threads_size != 0);
-			kfree(kppet.g_threads, kppet.g_threads_size);
+			assert(kppet.g_threads_count != 0);
+			void *g_tasks = (void *)kppet.g_tasks;
+			kfree_type(thread_t, kppet.g_threads_count, g_tasks);
+			kppet.g_tasks = NULL;
 			kppet.g_threads = NULL;
-			kppet.g_threads_size = 0;
+			kppet.g_threads_count = 0;
 			kppet.g_nthreads = 0;
 		}
 		if (kppet.g_sample != NULL) {
-			kfree(kppet.g_sample, sizeof(*kppet.g_sample));
-			kppet.g_sample = NULL;
+			kfree_type(struct kperf_usample_min,
+			    kppet.g_sample->usample.usample_min);
+			kfree_type(struct kperf_sample, kppet.g_sample);
 		}
 	}
 
@@ -332,7 +368,7 @@ kppet_threads_prepare(task_t task)
 {
 	kppet_lock_assert_owned();
 
-	vm_size_t threads_size_needed;
+	vm_size_t count_needed;
 
 	for (;;) {
 		task_lock(task);
@@ -346,8 +382,8 @@ kppet_threads_prepare(task_t task)
 		 * With the task locked, figure out if enough space has been allocated to
 		 * contain all of the thread references.
 		 */
-		threads_size_needed = task->thread_count * sizeof(thread_t);
-		if (threads_size_needed <= kppet.g_threads_size) {
+		count_needed = task->thread_count;
+		if (count_needed <= kppet.g_threads_count) {
 			break;
 		}
 
@@ -356,16 +392,15 @@ kppet_threads_prepare(task_t task)
 		 */
 		task_unlock(task);
 
-		if (kppet.g_threads_size != 0) {
-			kfree(kppet.g_threads, kppet.g_threads_size);
-		}
+		kfree_type(thread_t, kppet.g_threads_count, kppet.g_threads);
 
-		assert(threads_size_needed > 0);
-		kppet.g_threads_size = threads_size_needed;
+		assert(count_needed > 0);
+		kppet.g_threads_count = count_needed;
 
-		kppet.g_threads = kalloc_tag(kppet.g_threads_size, VM_KERN_MEMORY_DIAG);
+		kppet.g_threads = kalloc_type_tag(thread_t, kppet.g_threads_count,
+		    Z_WAITOK | Z_ZERO, VM_KERN_MEMORY_DIAG);
 		if (kppet.g_threads == NULL) {
-			kppet.g_threads_size = 0;
+			kppet.g_threads_count = 0;
 			return KERN_RESOURCE_SHORTAGE;
 		}
 	}
@@ -373,7 +408,7 @@ kppet_threads_prepare(task_t task)
 	thread_t thread;
 	kppet.g_nthreads = 0;
 	queue_iterate(&(task->threads), thread, thread_t, task_threads) {
-		thread_reference_internal(thread);
+		thread_reference(thread);
 		kppet.g_threads[kppet.g_nthreads++] = thread;
 	}
 
@@ -455,7 +490,7 @@ kppet_tasks_prepare(void)
 {
 	kppet_lock_assert_owned();
 
-	vm_size_t size_needed = 0;
+	vm_size_t count_needed = 0;
 
 	for (;;) {
 		lck_mtx_lock(&tasks_threads_lock);
@@ -464,8 +499,8 @@ kppet_tasks_prepare(void)
 		 * With the lock held, break out of the lock/unlock loop if
 		 * there's enough space to store all the tasks.
 		 */
-		size_needed = tasks_count * sizeof(task_t);
-		if (size_needed <= kppet.g_tasks_size) {
+		count_needed = tasks_count;
+		if (count_needed <= kppet.g_tasks_count) {
 			break;
 		}
 
@@ -474,17 +509,18 @@ kppet_tasks_prepare(void)
 		 */
 		lck_mtx_unlock(&tasks_threads_lock);
 
-		if (size_needed > kppet.g_tasks_size) {
-			if (kppet.g_tasks_size != 0) {
-				kfree(kppet.g_tasks, kppet.g_tasks_size);
+		if (count_needed > kppet.g_tasks_count) {
+			if (kppet.g_tasks_count != 0) {
+				kfree_type(task_t, kppet.g_tasks_count, kppet.g_tasks);
 			}
 
-			assert(size_needed > 0);
-			kppet.g_tasks_size = size_needed;
+			assert(count_needed > 0);
+			kppet.g_tasks_count = count_needed;
 
-			kppet.g_tasks = kalloc_tag(kppet.g_tasks_size, VM_KERN_MEMORY_DIAG);
+			kppet.g_tasks = kalloc_type_tag(task_t, kppet.g_tasks_count,
+			    Z_WAITOK | Z_ZERO, VM_KERN_MEMORY_DIAG);
 			if (!kppet.g_tasks) {
-				kppet.g_tasks_size = 0;
+				kppet.g_tasks_count = 0;
 				return KERN_RESOURCE_SHORTAGE;
 			}
 		}
@@ -495,7 +531,7 @@ kppet_tasks_prepare(void)
 	queue_iterate(&tasks, task, task_t, tasks) {
 		bool eligible_task = task != kernel_task;
 		if (eligible_task) {
-			task_reference_internal(task);
+			task_reference(task);
 			kppet.g_tasks[kppet.g_ntasks++] = task;
 		}
 	}
@@ -553,7 +589,7 @@ kppet_set_idle_rate(int new_idle_rate)
 void
 kppet_lightweight_active_update(void)
 {
-	kppet_lightweight_active = (kperf_is_sampling() && kppet.g_lightweight);
+	kppet_lightweight_start_time = (kperf_is_sampling() && kppet.g_lightweight) ? mach_continuous_time() : 0;
 	kperf_on_cpu_update();
 }
 

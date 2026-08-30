@@ -113,10 +113,10 @@ uint64_t sfi_window_interval;
 uint64_t sfi_next_off_deadline;
 
 typedef struct {
-	sfi_class_id_t  class_id;
+	sfi_class_id_t          class_id;
 	thread_continue_t       class_continuation;
-	const char *    class_name;
-	const char *    class_ledger_name;
+	const char             *class_name;
+	const char             *class_ledger_name;
 } sfi_class_registration_t;
 
 /*
@@ -154,7 +154,7 @@ SFI_ ## clsid ## _registration = {                                              
 STARTUP_ARG(TUNABLES, STARTUP_RANK_MIDDLE,                                      \
     sfi_class_register, &SFI_ ## clsid ## _registration)
 
-/* SFI_CLASS_UNSPECIFIED not included here */
+/* SFI_CLASS_UNSPECIFIED not included here keep task.c ledger in sync */
 SFI_CLASS_REGISTER(MAINTENANCE, MAINTENANCE);
 SFI_CLASS_REGISTER(DARWIN_BG, DARWIN_BG);
 SFI_CLASS_REGISTER(APP_NAP, APP_NAP);
@@ -171,12 +171,13 @@ SFI_CLASS_REGISTER(USER_INTERACTIVE_FOCAL, USER_INTERACTIVE);
 SFI_CLASS_REGISTER(USER_INTERACTIVE_NONFOCAL, USER_INTERACTIVE);
 SFI_CLASS_REGISTER(KERNEL, OPTED_OUT);
 SFI_CLASS_REGISTER(OPTED_OUT, OPTED_OUT);
+SFI_CLASS_REGISTER(RUNAWAY_MITIGATION, RUNAWAY_MITIGATION);
 
 struct sfi_class_state {
 	uint64_t        off_time_usecs;
 	uint64_t        off_time_interval;
 
-	timer_call_data_t       on_timer;
+	thread_call_t       on_timer;
 	uint64_t        on_timer_deadline;
 	boolean_t                       on_timer_programmed;
 
@@ -227,7 +228,6 @@ void
 sfi_init(void)
 {
 	sfi_class_id_t i;
-	kern_return_t kret;
 
 	simple_lock_init(&sfi_lock, 0);
 	timer_call_setup(&sfi_timer_call_entry, sfi_timer_global_off, NULL);
@@ -238,11 +238,12 @@ sfi_init(void)
 	for (i = 0; i < MAX_SFI_CLASS_ID; i++) {
 		/* If the class was set up in sfi_early_init(), initialize remaining fields */
 		if (sfi_classes[i].continuation) {
-			timer_call_setup(&sfi_classes[i].on_timer, sfi_timer_per_class_on, (void *)(uintptr_t)i);
+			sfi_classes[i].on_timer = thread_call_allocate_with_options(
+				sfi_timer_per_class_on, (void *)(uintptr_t)i, THREAD_CALL_PRIORITY_HIGH,
+				THREAD_CALL_OPTIONS_ONCE);
 			sfi_classes[i].on_timer_programmed = FALSE;
 
-			kret = waitq_init(&sfi_classes[i].waitq, SYNC_POLICY_FIFO | SYNC_POLICY_DISABLE_IRQ);
-			assert(kret == KERN_SUCCESS);
+			waitq_init(&sfi_classes[i].waitq, WQT_QUEUE, SYNC_POLICY_FIFO);
 		} else {
 			/* The only allowed gap is for SFI_CLASS_UNSPECIFIED */
 			if (i != SFI_CLASS_UNSPECIFIED) {
@@ -253,41 +254,10 @@ sfi_init(void)
 }
 
 /* Can be called before sfi_init() by task initialization, but after sfi_early_init() */
-sfi_class_id_t
-sfi_get_ledger_alias_for_class(sfi_class_id_t class_id)
+const char *
+sfi_class_ledger_name(sfi_class_id_t class_id)
 {
-	sfi_class_id_t i;
-	const char *ledger_name = NULL;
-
-	ledger_name = sfi_classes[class_id].class_ledger_name;
-
-	/* Find the first class in the registration table with this ledger name */
-	if (ledger_name) {
-		for (i = SFI_CLASS_UNSPECIFIED + 1; i < class_id; i++) {
-			if (0 == strcmp(sfi_classes[i].class_ledger_name, ledger_name)) {
-				dprintf("sfi_get_ledger_alias_for_class(0x%x) -> 0x%x\n", class_id, i);
-				return i;
-			}
-		}
-
-		/* This class is the primary one for the ledger, so there is no alias */
-		dprintf("sfi_get_ledger_alias_for_class(0x%x) -> 0x%x\n", class_id, SFI_CLASS_UNSPECIFIED);
-		return SFI_CLASS_UNSPECIFIED;
-	}
-
-	/* We are permissive on SFI class lookup failures. In sfi_init(), we assert more */
-	return SFI_CLASS_UNSPECIFIED;
-}
-
-int
-sfi_ledger_entry_add(ledger_template_t template, sfi_class_id_t class_id)
-{
-	const char *ledger_name = NULL;
-
-	ledger_name = sfi_classes[class_id].class_ledger_name;
-
-	dprintf("sfi_ledger_entry_add(%p, 0x%x) -> %s\n", template, class_id, ledger_name);
-	return ledger_entry_add(template, ledger_name, "sfi", "MATUs");
+	return sfi_classes[class_id].class_ledger_name;
 }
 
 static void
@@ -328,14 +298,14 @@ sfi_timer_global_off(
 			on_timer_deadline = now + sfi_classes[i].off_time_interval;
 			sfi_classes[i].on_timer_deadline = on_timer_deadline;
 
-			timer_call_enter1(&sfi_classes[i].on_timer, NULL, on_timer_deadline, TIMER_CALL_SYS_CRITICAL);
+			thread_call_enter_delayed_with_leeway(sfi_classes[i].on_timer, NULL, on_timer_deadline, 0, THREAD_CALL_DELAY_SYS_CRITICAL);
 		} else {
 			/* If this class no longer needs SFI, make sure the timer is cancelled */
 			sfi_classes[i].class_in_on_phase = TRUE;
 			if (sfi_classes[i].on_timer_programmed) {
 				sfi_classes[i].on_timer_programmed = FALSE;
 				sfi_classes[i].on_timer_deadline = ~0ULL;
-				timer_call_cancel(&sfi_classes[i].on_timer);
+				thread_call_cancel(sfi_classes[i].on_timer);
 			}
 		}
 	}
@@ -400,10 +370,8 @@ sfi_timer_per_class_on(
 {
 	sfi_class_id_t sfi_class_id = (sfi_class_id_t)(uintptr_t)param0;
 	struct sfi_class_state  *sfi_class = &sfi_classes[sfi_class_id];
-	kern_return_t   kret;
-	spl_t           s;
 
-	s = splsched();
+	spl_t s = splsched();
 
 	simple_lock(&sfi_lock, LCK_GRP_NULL);
 
@@ -418,16 +386,20 @@ sfi_timer_per_class_on(
 	sfi_class->class_in_on_phase = TRUE;
 	sfi_class->on_timer_programmed = FALSE;
 
+	simple_unlock(&sfi_lock);
+
+	/*
+	 * Issue the wakeup outside the lock to reduce lock hold time
+	 * rdar://problem/96463639
+	 */
+	__assert_only kern_return_t kret;
+
 	kret = waitq_wakeup64_all(&sfi_class->waitq,
 	    CAST_EVENT64_T(sfi_class_id),
-	    THREAD_AWAKENED, WAITQ_ALL_PRIORITIES);
+	    THREAD_AWAKENED, waitq_flags_splx(s));
 	assert(kret == KERN_SUCCESS || kret == KERN_NOT_WAITING);
 
 	KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_SFI, SFI_ON_TIMER) | DBG_FUNC_END, 0, 0, 0, 0, 0);
-
-	simple_unlock(&sfi_lock);
-
-	splx(s);
 }
 
 
@@ -544,9 +516,8 @@ sfi_window_cancel(void)
 kern_return_t
 sfi_defer(uint64_t sfi_defer_matus)
 {
-	spl_t           s;
 	kern_return_t kr = KERN_FAILURE;
-	s = splsched();
+	spl_t s = splsched();
 
 	KERNEL_DEBUG_CONSTANT(MACHDBG_CODE(DBG_MACH_SFI, SFI_GLOBAL_DEFER), sfi_defer_matus, 0, 0, 0, 0);
 
@@ -560,13 +531,12 @@ sfi_defer(uint64_t sfi_defer_matus)
 	sfi_next_off_deadline += sfi_defer_matus;
 	timer_call_enter1(&sfi_timer_call_entry, NULL, sfi_next_off_deadline, TIMER_CALL_SYS_CRITICAL);
 
-	int i;
-	for (i = 0; i < MAX_SFI_CLASS_ID; i++) {
+	for (int i = 0; i < MAX_SFI_CLASS_ID; i++) {
 		if (sfi_classes[i].class_sfi_is_enabled) {
 			if (sfi_classes[i].on_timer_programmed) {
 				uint64_t new_on_deadline = sfi_classes[i].on_timer_deadline + sfi_defer_matus;
 				sfi_classes[i].on_timer_deadline = new_on_deadline;
-				timer_call_enter1(&sfi_classes[i].on_timer, NULL, new_on_deadline, TIMER_CALL_SYS_CRITICAL);
+				thread_call_enter_delayed_with_leeway(sfi_classes[i].on_timer, NULL, new_on_deadline, 0, THREAD_CALL_DELAY_SYS_CRITICAL);
 			}
 		}
 	}
@@ -739,7 +709,7 @@ sfi_get_class_offtime(sfi_class_id_t class_id, uint64_t *offtime_usecs)
 sfi_class_id_t
 sfi_thread_classify(thread_t thread)
 {
-	task_t task = thread->task;
+	task_t task = get_threadtask(thread);
 	boolean_t is_kernel_thread = (task == kernel_task);
 	sched_mode_t thmode = thread->sched_mode;
 	boolean_t focal = FALSE;
@@ -757,16 +727,17 @@ sfi_thread_classify(thread_t thread)
 	int task_role       = proc_get_effective_task_policy(task, TASK_POLICY_ROLE);
 	int latency_qos     = proc_get_effective_task_policy(task, TASK_POLICY_LATENCY_QOS);
 	int managed_task    = proc_get_effective_task_policy(task, TASK_POLICY_SFI_MANAGED);
+	int runaway_bg      = proc_get_effective_task_policy(task, TASK_POLICY_RUNAWAY_MITIGATION);
 
 	int thread_qos      = proc_get_effective_thread_policy(thread, TASK_POLICY_QOS);
 	int thread_bg       = proc_get_effective_thread_policy(thread, TASK_POLICY_DARWIN_BG);
 
 	if (thread_qos == THREAD_QOS_MAINTENANCE) {
-		return SFI_CLASS_MAINTENANCE;
+		return runaway_bg ? SFI_CLASS_RUNAWAY_MITIGATION : SFI_CLASS_MAINTENANCE;
 	}
 
 	if (thread_bg || thread_qos == THREAD_QOS_BACKGROUND) {
-		return SFI_CLASS_DARWIN_BG;
+		return runaway_bg ? SFI_CLASS_RUNAWAY_MITIGATION : SFI_CLASS_DARWIN_BG;
 	}
 
 	if (latency_qos != 0) {
@@ -797,7 +768,7 @@ sfi_thread_classify(thread_t thread)
 	case TASK_DEFAULT_APPLICATION:
 	case TASK_UNSPECIFIED:
 		/* Focal if the task is in a coalition with a FG/focal app */
-		if (task_coalition_focal_count(thread->task) > 0) {
+		if (task_coalition_focal_count(task) > 0) {
 			focal = TRUE;
 		}
 		break;
@@ -950,7 +921,8 @@ _sfi_wait_cleanup(void)
 		int64_t sfi_wait_time = made_runnable - self->wait_sfi_begin_time;
 		assert(sfi_wait_time >= 0);
 
-		ledger_credit(self->task->ledger, task_ledgers.sfi_wait_times[current_sfi_wait_class],
+		ledger_credit(self->t_ledger,
+		    task_ledgers.sfi_wait_times[current_sfi_wait_class],
 		    sfi_wait_time);
 
 		self->wait_sfi_begin_time = 0;
@@ -1167,7 +1139,7 @@ sfi_reevaluate(thread_t thread __unused)
 sfi_class_id_t
 sfi_thread_classify(thread_t thread)
 {
-	task_t task = thread->task;
+	task_t task = get_threadtask(thread);
 	boolean_t is_kernel_thread = (task == kernel_task);
 
 	if (is_kernel_thread) {

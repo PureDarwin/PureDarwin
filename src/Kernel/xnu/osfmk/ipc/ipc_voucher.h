@@ -36,7 +36,7 @@
 
 #ifdef MACH_KERNEL_PRIVATE
 
-#include <kern/queue.h>
+#include <kern/smr_types.h>
 #include <kern/locks.h>
 #include <kern/simple_lock.h>
 #include <voucher/ipc_pthread_priority_types.h>
@@ -46,7 +46,7 @@ extern lck_grp_t        ipc_lck_grp;
 extern lck_attr_t       ipc_lck_attr;
 
 /* some shorthand for longer types */
-typedef mach_voucher_attr_value_handle_t        iv_value_handle_t;
+typedef mach_voucher_attr_value_handle_t        iv_value_handle_t __kernel_ptr_semantics;
 typedef mach_voucher_attr_value_reference_t     iv_value_refs_t;
 
 typedef natural_t               iv_index_t;
@@ -56,7 +56,12 @@ typedef natural_t               iv_index_t;
 typedef iv_index_t              *iv_entry_t;
 #define IVE_NULL                ((iv_entry_t) 0)
 
-#define IV_ENTRIES_INLINE MACH_VOUCHER_ATTR_KEY_NUM_WELL_KNOWN
+/* actual number of attribute managers supported by kernel */
+#if CONFIG_VOUCHER_DEPRECATED
+#define MACH_VOUCHER_ATTR_KEY_NUM    MACH_VOUCHER_ATTR_KEY_TEST
+#else
+#define MACH_VOUCHER_ATTR_KEY_NUM    MACH_VOUCHER_ATTR_KEY_BANK
+#endif /* CONFIG_VOUCHER_DEPRECATED */
 
 /*
  * IPC Voucher
@@ -66,14 +71,10 @@ typedef iv_index_t              *iv_entry_t;
  * (which themselves are reference counted).
  */
 struct ipc_voucher {
-	iv_index_t              iv_hash;        /* checksum hash */
-	iv_index_t              iv_sum;         /* checksum of values */
-	os_refcnt_t             iv_refs;        /* reference count */
-	iv_index_t              iv_table_size;  /* size of the voucher table */
-	iv_index_t              iv_inline_table[IV_ENTRIES_INLINE];
-	iv_entry_t              iv_table;       /* table of voucher attr entries */
+	os_ref_atomic_t         iv_refs;        /* reference count */
+	iv_index_t              iv_table[MACH_VOUCHER_ATTR_KEY_NUM];
 	ipc_port_t              iv_port;        /* port representing the voucher */
-	queue_chain_t           iv_hash_link;   /* link on hash chain */
+	struct smrq_slink       iv_hash_link;   /* link on hash chain */
 };
 
 #define IV_NULL         IPC_VOUCHER_NULL
@@ -139,25 +140,26 @@ typedef ivac_entry              *ivac_entry_t;
 #define IVAC_ENTRIES_MAX        524288
 
 struct ipc_voucher_attr_control {
-	os_refcnt_t             ivac_refs;
 	boolean_t               ivac_is_growing;        /* is the table being grown */
 	ivac_entry_t            ivac_table;             /* table of voucher attr value entries */
 	iv_index_t              ivac_table_size;        /* size of the attr value table */
 	iv_index_t              ivac_init_table_size;   /* size of the attr value table */
 	iv_index_t              ivac_freelist;          /* index of the first free element */
-	ipc_port_t              ivac_port;              /* port for accessing the cache control  */
 	lck_spin_t              ivac_lock_data;
-	iv_index_t              ivac_key_index;         /* key index for this value */
+	iv_index_t              ivac_key_index;
 };
 typedef ipc_voucher_attr_control_t iv_attr_control_t;
 
 #define IVAC_NULL                  IPC_VOUCHER_ATTR_CONTROL_NULL
 
-extern ipc_voucher_attr_control_t  ivac_alloc(iv_index_t);
-extern void ipc_voucher_receive_postprocessing(ipc_kmsg_t kmsg, mach_msg_option_t option);
+extern void ipc_voucher_receive_postprocessing(ipc_kmsg_t kmsg, mach_msg_option64_t option);
 extern void ipc_voucher_send_preprocessing(ipc_kmsg_t kmsg);
+extern ipc_voucher_t ipc_voucher_get_default_voucher(void);
 extern void mach_init_activity_id(void);
+#if CONFIG_VOUCHER_DEPRECATED
 extern kern_return_t ipc_get_pthpriority_from_kmsg_voucher(ipc_kmsg_t kmsg, ipc_pthread_priority_value_t *qos);
+#endif /* CONFIG_VOUCHER_DEPRECATED */
+
 #define ivac_lock_init(ivac) \
 	lck_spin_init(&(ivac)->ivac_lock_data, &ipc_lck_grp, &ipc_lck_attr)
 #define ivac_lock_destroy(ivac) \
@@ -174,49 +176,7 @@ extern kern_return_t ipc_get_pthpriority_from_kmsg_voucher(ipc_kmsg_t kmsg, ipc_
 	                                THREAD_UNINT, &ipc_lck_grp)
 #define ivac_wakeup(ivac) thread_wakeup((event_t)(ivac))
 
-extern void ivac_dealloc(ipc_voucher_attr_control_t ivac);
-
-static inline void
-ivac_reference(ipc_voucher_attr_control_t ivac)
-{
-	if (ivac == IVAC_NULL) {
-		return;
-	}
-	os_ref_retain(&ivac->ivac_refs);
-}
-
-static inline void
-ivac_release(ipc_voucher_attr_control_t ivac)
-{
-	if (IVAC_NULL == ivac) {
-		return;
-	}
-
-	if (os_ref_release(&ivac->ivac_refs) == 0) {
-		ivac_dealloc(ivac);
-	}
-}
-
 #define IVAM_NULL IPC_VOUCHER_ATTR_MANAGER_NULL
-
-/*
- * IPC voucher Resource Manager table element
- *
- * Information Associated with a specific registration of
- * a voucher resource manager.
- *
- * NOTE: For now, this table is indexed directly by the key.  In the future,
- * it will have to be growable and sparse by key.  When that is implemented
- * the index will be independent from the key (but there will be a hash to
- * find the index by key).
- */
-typedef struct ipc_voucher_global_table_element {
-	ipc_voucher_attr_manager_t      ivgte_manager;
-	ipc_voucher_attr_control_t      ivgte_control;
-	mach_voucher_attr_key_t         ivgte_key;
-} ipc_voucher_global_table_element;
-
-typedef ipc_voucher_global_table_element *ipc_voucher_global_table_element_t;
 
 #endif /* MACH_KERNEL_PRIVATE */
 
@@ -297,7 +257,6 @@ struct ipc_voucher_attr_manager {
 	ipc_voucher_attr_manager_get_value_t            ivam_get_value;
 	ipc_voucher_attr_manager_extract_content_t      ivam_extract_content;
 	ipc_voucher_attr_manager_command_t              ivam_command;
-	ipc_voucher_attr_manager_release_t              ivam_release;
 	ipc_voucher_attr_manager_flags                  ivam_flags;
 };
 
@@ -309,7 +268,7 @@ __BEGIN_DECLS
 
 /* DEBUG/TRACE Convert from a port to a voucher */
 extern uintptr_t unsafe_convert_port_to_voucher(
-	ipc_port_t              port);
+	ipc_port_t              port) __pure2;
 
 /* Convert from a port to a voucher */
 extern ipc_voucher_t convert_port_to_voucher(
@@ -327,33 +286,9 @@ extern void ipc_voucher_reference(
 extern void ipc_voucher_release(
 	ipc_voucher_t           voucher);
 
-/* deliver voucher notifications */
-extern void ipc_voucher_notify(
-	mach_msg_header_t       *msg);
-
 /* Convert from a voucher to a port */
 extern ipc_port_t convert_voucher_to_port(
 	ipc_voucher_t           voucher);
-
-/* convert from a voucher attribute control to a port */
-extern ipc_port_t convert_voucher_attr_control_to_port(
-	ipc_voucher_attr_control_t      control);
-
-/* add a reference to the specified voucher */
-extern void ipc_voucher_attr_control_reference(
-	ipc_voucher_attr_control_t      control);
-
-/* drop the reference picked up above */
-extern void ipc_voucher_attr_control_release(
-	ipc_voucher_attr_control_t      control);
-
-/* deliver voucher control notifications */
-extern void ipc_voucher_attr_control_notify(
-	mach_msg_header_t       *msg);
-
-/* convert from a port to a voucher attribute control */
-extern ipc_voucher_attr_control_t convert_port_to_voucher_attr_control(
-	ipc_port_t              port);
 
 /*
  * In-kernel equivalents to the user syscalls
@@ -371,20 +306,19 @@ ipc_voucher_attr_control_create_mach_voucher(
 	ipc_voucher_attr_raw_recipe_array_size_t        recipe_size,
 	ipc_voucher_t                                   *new_voucher);
 
-extern kern_return_t
+extern void
 ipc_register_well_known_mach_voucher_attr_manager(
 	ipc_voucher_attr_manager_t              manager,
 	mach_voucher_attr_value_handle_t        default_value,
 	mach_voucher_attr_key_t                 key,
 	ipc_voucher_attr_control_t              *control);
 
-
 extern kern_return_t
-ipc_register_mach_voucher_attr_manager(
-	ipc_voucher_attr_manager_t              manager,
-	mach_voucher_attr_value_handle_t        default_value,
-	mach_voucher_attr_key_t                 *key,
-	ipc_voucher_attr_control_t              *control);
+mach_voucher_attr_control_get_values(
+	ipc_voucher_attr_control_t              control,
+	ipc_voucher_t                           voucher,
+	mach_voucher_attr_value_handle_t        *out_values,
+	mach_msg_type_number_t                  *in_out_size);
 
 __END_DECLS
 

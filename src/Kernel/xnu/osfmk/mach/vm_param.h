@@ -237,12 +237,13 @@ extern vm_size_t        mem_size;               /* 32-bit size of memory - limit
 extern uint64_t         max_mem;                /* 64-bit size of memory - limited by maxmem */
 
 /*
- * The default pager does not handle 64-bit offsets inside its objects,
- * so this limits the size of anonymous memory objects to 4GB minus 1 page.
+ * The VM compressor pager uses 32-bit page numbers, so this limits the size
+ * of anonymous memory objects to 0xffffffff pages.
  * When we need to allocate a chunk of anonymous memory over that size,
  * we have to allocate more than one chunk.
  */
-#define ANON_MAX_SIZE   ((1ULL << 32) - PAGE_SIZE)
+#define ANON_MAX_PAGES   0xFFFFFFFFULL
+#define ANON_MAX_SIZE (ANON_MAX_PAGES << PAGE_SHIFT)
 /*
  * Work-around for <rdar://problem/6626493>
  * Break large anonymous memory areas into 128MB chunks to alleviate
@@ -260,14 +261,19 @@ extern uint64_t         max_mem;                /* 64-bit size of memory - limit
  */
 #define MALLOC_MEDIUM_CHUNK_SIZE (8ULL * 1024 * 1024) /* 8 MB */
 
+#ifdef KERNEL_PRIVATE
+extern uint64_t         sane_size;              /* Memory size to use for defaults calculations */
+#endif /* KERNEL_PRIVATE */
+
 #ifdef  XNU_KERNEL_PRIVATE
 
 #include <kern/debug.h>
+#include <vm/vm_memtag.h>
 
 extern uint64_t         mem_actual;             /* 64-bit size of memory - not limited by maxmem */
 extern uint64_t         max_mem_actual;         /* Size of physical memory adjusted by maxmem */
-extern uint64_t         sane_size;              /* Memory size to use for defaults calculations */
-extern addr64_t         vm_last_addr;   /* Highest kernel virtual address known to the VM system */
+extern addr64_t         vm_last_addr;           /* Highest kernel virtual address known to the VM system */
+extern addr64_t         first_avail_phys;       /* First available physical address */
 
 extern const vm_offset_t        vm_min_kernel_address;
 extern const vm_offset_t        vm_max_kernel_address;
@@ -277,6 +283,20 @@ extern vm_offset_t              vm_kernel_etext;
 extern vm_offset_t              vm_kernel_slid_base;
 extern vm_offset_t              vm_kernel_slid_top;
 extern vm_offset_t              vm_kernel_slide;
+
+#if CONFIG_SPTM
+typedef struct {
+	vm_offset_t unslid_base;
+	vm_offset_t unslid_top;
+	vm_offset_t slid_base;
+	vm_offset_t slid_top;
+	vm_offset_t slide;
+} vm_image_offsets;
+
+extern vm_image_offsets         vm_sptm_offsets;
+extern vm_image_offsets         vm_txm_offsets;
+#endif /* CONFIG_SPTM */
+
 extern vm_offset_t              vm_kernel_addrperm;
 extern vm_offset_t              vm_kext_base;
 extern vm_offset_t              vm_kext_top;
@@ -287,11 +307,49 @@ extern vm_offset_t              vm_hib_base;
 extern vm_offset_t              vm_kernel_builtinkmod_text;
 extern vm_offset_t              vm_kernel_builtinkmod_text_end;
 
-#define VM_KERNEL_IS_SLID(_o)                                             \
-	(((vm_offset_t)VM_KERNEL_STRIP_PTR(_o) >= vm_kernel_slid_base) && \
-	 ((vm_offset_t)VM_KERNEL_STRIP_PTR(_o) <  vm_kernel_slid_top))
+/**
+ * While these function's implementations are machine specific, due to the need
+ * to prevent header file circular dependencies, they need to be externed here
+ * for usage in the sliding/unsliding macros.
+ */
+__BEGIN_DECLS
+vm_offset_t ml_static_slide(vm_offset_t vaddr);
+vm_offset_t ml_static_unslide(vm_offset_t vaddr);
+__END_DECLS
 
-#define VM_KERNEL_SLIDE(_u) ((vm_offset_t)(_u) + vm_kernel_slide)
+/**
+ * Determine whether a given address is an address within a static region (i.e.,
+ * coming from TEXT or DATA) that was slid during boot. Addresses of this type
+ * should have the slide removed before exposing them to userspace so as to not
+ * leak the slide itself to userspace.
+ *
+ * @param addr The virtual address to check.
+ *
+ * @return True if the address is a static/slid kernel address, false otherwise.
+ */
+static inline bool
+vm_is_addr_slid(vm_offset_t addr)
+{
+	const vm_offset_t stripped_addr = (vm_offset_t)VM_KERNEL_STRIP_PTR(addr);
+	const bool is_slid_kern_addr =
+	    (stripped_addr >= vm_kernel_slid_base) && (stripped_addr < vm_kernel_slid_top);
+
+#if CONFIG_SPTM
+	const bool is_slid_sptm_addr =
+	    (stripped_addr >= vm_sptm_offsets.slid_base) && (stripped_addr < vm_sptm_offsets.slid_top);
+
+	const bool is_slid_txm_addr =
+	    (stripped_addr >= vm_txm_offsets.slid_base) && (stripped_addr < vm_txm_offsets.slid_top);
+
+	return is_slid_kern_addr || is_slid_sptm_addr || is_slid_txm_addr;
+#else
+	return is_slid_kern_addr;
+#endif /* CONFIG_SPTM */
+}
+
+#define VM_KERNEL_IS_SLID(_o) (vm_is_addr_slid((vm_offset_t)(_o)))
+
+#define VM_KERNEL_SLIDE(_u) (ml_static_slide((vm_offset_t)(_u)))
 
 /*
  * The following macros are to be used when exposing kernel addresses to
@@ -332,16 +390,7 @@ extern vm_offset_t              vm_kernel_builtinkmod_text_end;
  * Nesting of these macros should be considered invalid.
  */
 
-__BEGIN_DECLS
-#if XNU_KERNEL_PRIVATE
-extern vm_offset_t vm_kernel_addrhash(vm_offset_t addr)
-__XNU_INTERNAL(vm_kernel_addrhash);
-#else
-extern vm_offset_t vm_kernel_addrhash(vm_offset_t addr);
-#endif
-__END_DECLS
-
-#define __DO_UNSLIDE(_v) ((vm_offset_t)VM_KERNEL_STRIP_PTR(_v) - vm_kernel_slide)
+#define __DO_UNSLIDE(_v) (ml_static_unslide((vm_offset_t)VM_KERNEL_STRIP_PTR(_v)))
 
 #if DEBUG || DEVELOPMENT
 #define VM_KERNEL_ADDRHIDE(_v) (VM_KERNEL_IS_SLID(_v) ? __DO_UNSLIDE(_v) : (vm_address_t)VM_KERNEL_STRIP_PTR(_v))
@@ -351,9 +400,13 @@ __END_DECLS
 
 #define VM_KERNEL_ADDRHASH(_v) vm_kernel_addrhash((vm_offset_t)(_v))
 
+/*
+ * ML_ADDRPERM is defined as a macro that dispatches to the correct machine version.
+ * For systems that support the generic ml_addrperm version, the actual slide address is unused.
+ */
 #define VM_KERNEL_UNSLIDE_OR_PERM(_v) ({ \
 	        VM_KERNEL_IS_SLID(_v) ? __DO_UNSLIDE(_v) : \
-	        VM_KERNEL_ADDRESS(_v) ? ((vm_offset_t)VM_KERNEL_STRIP_PTR(_v) + vm_kernel_addrperm) : \
+	        VM_KERNEL_ADDRESS(_v) ? (ML_ADDRPERM((uintptr_t)VM_KERNEL_STRIP_UPTR(_v), vm_kernel_addrperm)) : \
 	        (vm_offset_t)VM_KERNEL_STRIP_PTR(_v); \
 	})
 
@@ -367,6 +420,22 @@ __END_DECLS
 #undef round_page
 #undef round_page_32
 #undef round_page_64
+
+static inline int
+mach_vm_size_unit(mach_vm_size_t size)
+{
+	uint32_t bits = 64u - (uint32_t)__builtin_clzll((size / 10) | 1);
+
+	return "BKMGTPE"[bits / 10];
+}
+
+static inline uint32_t
+mach_vm_size_pretty(mach_vm_size_t size)
+{
+	uint32_t bits = 64u - (uint32_t)__builtin_clzll((size / 10) | 1);
+
+	return (uint32_t)(size >> (bits - bits % 10));
+}
 
 static inline mach_vm_offset_t
 mach_vm_round_page(mach_vm_offset_t x)
@@ -498,9 +567,14 @@ typedef struct vm_packing_params {
  * @param params        The encoding parameters.
  * @returns             The packed pointer.
  */
+__pure2
 static inline vm_offset_t
 vm_pack_pointer(vm_offset_t ptr, vm_packing_params_t params)
 {
+	if (ptr != 0) {
+		ptr = vm_memtag_canonicalize_kernel(ptr);
+	}
+
 	if (!params.vmpp_base_relative) {
 		return ptr >> params.vmpp_shift;
 	}
@@ -526,6 +600,7 @@ vm_pack_pointer(vm_offset_t ptr, vm_packing_params_t params)
  * @param params        The encoding parameters.
  * @returns             The unpacked pointer.
  */
+__pure2
 static inline vm_offset_t
 vm_unpack_pointer(vm_offset_t packed, vm_packing_params_t params)
 {
@@ -533,10 +608,10 @@ vm_unpack_pointer(vm_offset_t packed, vm_packing_params_t params)
 		intptr_t addr = (intptr_t)packed;
 		addr <<= __WORDSIZE - params.vmpp_bits;
 		addr >>= __WORDSIZE - params.vmpp_bits - params.vmpp_shift;
-		return (vm_offset_t)addr;
+		return addr ? vm_memtag_load_tag((vm_offset_t)addr) : 0;
 	}
 	if (packed) {
-		return (packed << params.vmpp_shift) + params.vmpp_base;
+		return vm_memtag_load_tag((packed << params.vmpp_shift) + params.vmpp_base);
 	}
 	return (vm_offset_t)0;
 }
@@ -596,6 +671,10 @@ vm_packing_pointer_invalid(vm_offset_t ptr, vm_packing_params_t params);
 static inline void
 vm_verify_pointer_packable(vm_offset_t ptr, vm_packing_params_t params)
 {
+	if (ptr != 0) {
+		ptr = vm_memtag_canonicalize_kernel(ptr);
+	}
+
 	if (ptr & ((1ul << params.vmpp_shift) - 1)) {
 		vm_packing_pointer_invalid(ptr, params);
 	}

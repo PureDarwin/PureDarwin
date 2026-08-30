@@ -131,273 +131,6 @@ EXT(mc_task_stack_end):
  *	(Code/data/stack segments have base == 0, limit == 4G)
  */
 	
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-.macro PD_MARK32 band
-	pushl	%eax
-	pushl	%ebx
-	pushl	%ecx
-	pushl	%edx
-	pushl	%esi
-	pushl	%ebp
-
-	testl	%edi, %edi
-	jz	9f
-	cmpl	$32, BA_VIDEO_DEPTH(%edi)
-	jne	9f
-	movl	BA_VIDEO_BASE+4(%edi), %eax
-	testl	%eax, %eax
-	jnz	9f
-	movl	BA_VIDEO_BASE(%edi), %ebx
-	cmpl	$PD_BAND_MIN_BASE, %ebx
-	jb	9f
-	movl	BA_VIDEO_ROWBYTES(%edi), %edx
-	testl	%edx, %edx
-	jz	9f
-	cmpl	$PD_BAND_MAX_ROWBYTES, %edx
-	ja	9f
-	movl	BA_VIDEO_WIDTH(%edi), %esi
-	testl	%esi, %esi
-	jz	9f
-	cmpl	$PD_BAND_MAX_DIM, %esi
-	ja	9f
-	movl	%esi, %ebp
-	shll	$2, %ebp
-	cmpl	%ebp, %edx
-	jb	9f
-	movl	BA_VIDEO_HEIGHT(%edi), %ecx
-	cmpl	$PD_BAND_MAX_DIM, %ecx
-	ja	9f
-	movl	$((\band * 16) + 16), %eax
-	cmpl	%ecx, %eax
-	ja	9f
-
-	movl	$(\band * 16), %eax
-	imull	%edx, %eax
-	addl	%eax, %ebx
-
-	movl	$16, %eax			/* rows */
-2:
-	pushl	%eax
-	pushl	%ebx
-	movl	%esi, %ecx
-3:
-	movl	$PD_BAND_COLOUR(\band), (%ebx)
-	addl	$4, %ebx
-	decl	%ecx
-	jnz	3b
-	popl	%ebx
-	addl	%edx, %ebx			/* next scanline */
-	popl	%eax
-	decl	%eax
-	jnz	2b
-
-	movl	$PD_BAND_SPIN, %ecx
-4:
-	rep; nop
-	decl	%ecx
-	jnz	4b
-9:
-	popl	%ebp
-	popl	%esi
-	popl	%edx
-	popl	%ecx
-	popl	%ebx
-	popl	%eax
-.endmacro
-
-.macro PD_MARK32_RAW band
-	testl	%eax, %eax
-	jz	9f
-	cmpl	$32, BA_VIDEO_DEPTH(%eax)
-	jne	9f
-	movl	BA_VIDEO_BASE+4(%eax), %ebx	/* above 4GB is unreachable */
-	testl	%ebx, %ebx			/* with paging off */
-	jnz	9f
-	movl	BA_VIDEO_BASE(%eax), %ebx
-	cmpl	$PD_BAND_MIN_BASE, %ebx
-	jb	9f
-	movl	BA_VIDEO_ROWBYTES(%eax), %edx
-	testl	%edx, %edx
-	jz	9f
-	cmpl	$PD_BAND_MAX_ROWBYTES, %edx
-	ja	9f
-	movl	BA_VIDEO_WIDTH(%eax), %esi
-	testl	%esi, %esi
-	jz	9f
-	cmpl	$PD_BAND_MAX_DIM, %esi
-	ja	9f
-	movl	%esi, %ebp			/* rowbytes must hold the row */
-	shll	$2, %ebp
-	cmpl	%ebp, %edx
-	jb	9f
-	movl	BA_VIDEO_HEIGHT(%eax), %ecx
-	cmpl	$PD_BAND_MAX_DIM, %ecx
-	ja	9f
-	movl	$((\band * 16) + 16), %edi
-	cmpl	%ecx, %edi
-	ja	9f
-
-	movl	$(\band * 16), %ebp
-	imull	%edx, %ebp
-	addl	%ebp, %ebx
-
-	movl	$16, %edi			/* rows */
-2:
-	movl	%ebx, %ebp			/* remember row start */
-	movl	%esi, %ecx
-3:
-	movl	$PD_BAND_COLOUR(\band), (%ebx)
-	addl	$4, %ebx
-	decl	%ecx
-	jnz	3b
-	movl	%ebp, %ebx
-	addl	%edx, %ebx			/* next scanline */
-	decl	%edi
-	jnz	2b
-
-	/* Hold it long enough to be seen; see PD_BAND_SPIN. */
-	movl	$PD_BAND_SPIN, %ecx
-4:
-	rep; nop
-	decl	%ecx
-	jnz	4b
-9:
-.endmacro
-
-.macro PD_MARK64 band
-	testq	%rdi, %rdi
-	jz	9f
-	cmpl	$32, BA_VIDEO_DEPTH(%rdi)
-	jne	9f
-	movq	BA_VIDEO_BASE(%rdi), %rbx
-	cmpq	$PD_BAND_MIN_BASE, %rbx
-	jb	9f
-	/*
-	 * Only the low 4GB is mapped by the boot page tables; anything higher is
-	 * reachable only because PD_MAP_HIGH_FB identity-mapped it, and that
-	 * cannot reach past PML4[0]. Writing an unmapped address here faults with
-	 * no IDT and reboots the machine.
-	 */
-	movq	$(512 * 1024 * 1024 * 1024), %rax
-	cmpq	%rax, %rbx
-	jae	9f
-	movl	BA_VIDEO_ROWBYTES(%rdi), %edx
-	testl	%edx, %edx
-	jz	9f
-	cmpl	$PD_BAND_MAX_ROWBYTES, %edx
-	ja	9f
-	movl	BA_VIDEO_WIDTH(%rdi), %esi
-	testl	%esi, %esi
-	jz	9f
-	cmpl	$PD_BAND_MAX_DIM, %esi
-	ja	9f
-	movl	%esi, %ebp
-	shll	$2, %ebp
-	cmpl	%ebp, %edx
-	jb	9f
-	movl	BA_VIDEO_HEIGHT(%rdi), %ecx
-	cmpl	$PD_BAND_MAX_DIM, %ecx
-	ja	9f
-	movl	$((\band * 16) + 16), %eax
-	cmpl	%ecx, %eax
-	ja	9f
-
-	movl	$(\band * 16), %eax
-	imull	%edx, %eax
-	addq	%rax, %rbx
-
-	movl	$16, %ebp			/* rows */
-2:
-	movq	%rbx, %rax			/* remember row start */
-	movl	%esi, %ecx
-3:
-	movl	$PD_BAND_COLOUR(\band), (%rbx)
-	addq	$4, %rbx
-	decl	%ecx
-	jnz	3b
-	movq	%rax, %rbx
-	movl	%edx, %eax
-	addq	%rax, %rbx			/* next scanline */
-	decl	%ebp
-	jnz	2b
-
-	movl	$PD_BAND_SPIN, %ecx
-4:
-	rep; nop
-	decl	%ecx
-	jnz	4b
-9:
-.endmacro
-
-.macro PD_MAP_HIGH_FB
-	/*
-	 * Note the doubled dollars below. This macro takes no parameters, and on
-	 * the Darwin target a parameterless .macro treats $ as a parameter sigil,
-	 * so a plain $32 is "invalid operand for instruction". Macros that do
-	 * declare a parameter (the painters above) use \name and take a single $.
-	 */
-	testl	%edi, %edi
-	jz	9f
-	cmpl	$$32, BA_VIDEO_DEPTH(%edi)
-	jne	9f
-	movl	BA_VIDEO_BASE+4(%edi), %edx	/* high half */
-	testl	%edx, %edx
-	jz	9f				/* below 4GB: already mapped */
-	cmpl	$$0x80, %edx
-	jae	9f				/* at or above 512GB: out of PML4[0] */
-
-	/* BootPDPT[(fb >> 30) & 0x1ff] = &BootFBPD | PDPT_PROT */
-	movl	BA_VIDEO_BASE(%edi), %eax
-	shrl	$$30, %eax
-	movl	%edx, %ecx
-	shll	$$2, %ecx			/* high half contributes bits 32..33 */
-	orl	%ecx, %eax
-	andl	$$0x1ff, %eax
-	shll	$$3, %eax
-	addl	$$EXT(BootPDPT), %eax
-	movl	$$EXT(BootFBPD), %ebx
-	orl	$$0x3, %ebx			/* present, writable */
-	movl	%ebx, (%eax)
-	movl	$$0, 4(%eax)
-
-	/* Eight 2MB pages from the framebuffer base: 16MB, enough for any mode
-	 * we paint into, and the tail is harmless if the aperture is smaller. */
-	movl	BA_VIDEO_BASE(%edi), %eax
-	andl	$$0xffe00000, %eax		/* 2MB-aligned base, low half */
-	movl	%eax, %ecx
-	shrl	$$21, %ecx
-	andl	$$0x1ff, %ecx
-	shll	$$3, %ecx
-	orl	$$0x9b, %eax			/* present, writable, 2MB, PCD|PWT */
-	/* Stop at the end of the page directory rather than writing past it -
-	 * the next page is another live page table. */
-	movl	$$(512 * 8), %ebx		/* %ecx is a byte offset, not an index */
-	subl	%ecx, %ebx
-	shrl	$$3, %ebx
-	cmpl	$$8, %ebx
-	jbe	1f
-	movl	$$8, %ebx
-1:
-	addl	$$EXT(BootFBPD), %ecx		/* -> first PD entry */
-2:
-	movl	%eax, (%ecx)
-	movl	%edx, 4(%ecx)
-	addl	$$0x200000, %eax
-	addl	$$8, %ecx
-	decl	%ebx
-	jnz	2b
-9:
-.endmacro
-#else
-.macro PD_MARK32 band
-.endmacro
-.macro PD_MARK32_RAW band
-.endmacro
-.macro PD_MARK64 band
-.endmacro
-#endif /* PUREDARWIN_EARLY_FB_MARK */
-
 .code32
 	.text
 	.section __HIB, __text
@@ -427,10 +160,7 @@ LEXT(pstart)
  *	------------------------- 0
  *
  */	
-	PD_MARK32_RAW PD_BAND_ENTRY
-
 	mov	%eax, %edi	/* save kernbootstruct */
-	PD_MAP_HIGH_FB
 
 	/* Use low 32-bits of address as 32-bit stack */
 	movl	$EXT(low_eintstack), %esp
@@ -457,15 +187,13 @@ LEXT(pstart)
 	add	%eax, 3*8+0(%edx)
 
 	POSTCODE(PSTART_REBASE)
-	PD_MARK32 PD_BAND_REBASE
 
-/* the following code is shared by the master CPU and all slave CPUs */
+/* the following code is shared by the BSP CPU and all AP CPUs */
 L_pstart_common:
 	/*
 	 * switch to 64 bit mode
 	 */
 	SWITCH_TO_64BIT_MODE
-	PD_MARK64 PD_BAND_LONG_MODE
 
 	/* Flush data segment selectors */
 	xor	%eax, %eax
@@ -492,7 +220,6 @@ Lstore_random_guard:
 Lvstartshim:	
 
 	POSTCODE(PSTART_VSTART)
-	PD_MARK64 PD_BAND_VSTART_CALL
 
 	/* %edi = boot_args_start */
 	
@@ -502,7 +229,6 @@ Lvstartshim:
 	or	%rcx, %rax
 	andq	$0xfffffffffffffff0, %rsp	/* align stack */
 	xorq	%rbp, %rbp			/* zero frame pointer */
-
 	callq	*%rax
 
 Lnon_rdrand:
@@ -891,3 +617,4 @@ saved_ldt:	.word 0
 saved_tr:	.word 0
 saved_kgs_base:	.quad 0
 saved_ugs_base:	.quad 0
+

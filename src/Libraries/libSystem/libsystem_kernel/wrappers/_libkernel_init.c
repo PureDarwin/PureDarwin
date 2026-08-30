@@ -83,7 +83,9 @@ __libkernel_init(_libkernel_functions_t fns,
 	}
 	mach_init();
 #if TARGET_OS_OSX
-	for (size_t i = 0; envp[i]; i++) {
+	/* PD's libSystem initializer can be reached with no environment at all
+	 * (see the vars == NULL fallback in pd_libSystem_init.c). */
+	for (size_t i = 0; envp != NULL && envp[i]; i++) {
 
 #if defined(__i386__) || defined(__x86_64__)
 		const char *VM_KERNEL_PAGE_SHIFT_ENV = "VM_KERNEL_PAGE_SIZE_4K=1";

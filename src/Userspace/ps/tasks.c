@@ -22,10 +22,25 @@
 #include <pwd.h>
 
 #include "ps.h"
-#include <mach/shared_memory_server.h>
-#include <mach/mach_vm.h>
+
+#ifndef GLOBAL_SHARED_TEXT_SEGMENT
+#define GLOBAL_SHARED_TEXT_SEGMENT 0x90000000U
+#define SHARED_TEXT_REGION_SIZE   0x10000000
+#define SHARED_DATA_REGION_SIZE   0x10000000
+#endif
 
 extern kern_return_t task_read_for_pid(task_port_t task, pid_t pid, task_port_t *target);
+
+/* mach_vm.h is intentionally not included here because its generated MIG
+ * declarations overlap the vm_map declarations pulled in by mach_interface.h. */
+extern kern_return_t mach_vm_region(
+	vm_map_read_t target_task,
+	mach_vm_address_t *address,
+	mach_vm_size_t *size,
+	vm_region_flavor_t flavor,
+	vm_region_info_t info,
+	mach_msg_type_number_t *infoCnt,
+	mach_port_t *object_name);
 
 #define STATE_MAX       7 
                 

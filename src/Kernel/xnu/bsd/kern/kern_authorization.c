@@ -48,7 +48,6 @@
 #include <sys/mount.h>
 #include <sys/sysproto.h>
 #include <mach/message.h>
-#include <mach/host_security.h>
 
 #include <kern/locks.h>
 
@@ -133,7 +132,7 @@ static int      kauth_authorize_generic_callback(kauth_cred_t _credential, void 
     uintptr_t arg0, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3);
 kauth_scope_t   kauth_scope_fileop;
 
-extern int              cansignal(struct proc *, kauth_cred_t, struct proc *, int);
+extern bool              cansignal(struct proc *, kauth_cred_t, struct proc *, int);
 extern char *   get_pathbuff(void);
 extern void             release_pathbuff(char *path);
 
@@ -144,7 +143,6 @@ void
 kauth_init(void)
 {
 	/* bring up kauth subsystem components */
-	kauth_cred_init();
 	kauth_scope_init();
 }
 
@@ -168,10 +166,7 @@ kauth_alloc_scope(const char *identifier, kauth_scope_callback_t callback, void 
 	/*
 	 * Allocate and populate the scope structure.
 	 */
-	sp = kheap_alloc(KM_KAUTH, sizeof(*sp), Z_WAITOK | Z_ZERO);
-	if (sp == NULL) {
-		return NULL;
-	}
+	sp = kalloc_type(struct kauth_scope, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 	sp->ks_flags = 0;
 	sp->ks_identifier = identifier;
 	sp->ks_idata = idata;
@@ -187,10 +182,7 @@ kauth_alloc_listener(const char *identifier, kauth_scope_callback_t callback, vo
 	/*
 	 * Allocate and populate the listener structure.
 	 */
-	lsp = kheap_alloc(KM_KAUTH, sizeof(*lsp), Z_WAITOK);
-	if (lsp == NULL) {
-		return NULL;
-	}
+	lsp = kalloc_type(struct kauth_listener, Z_WAITOK | Z_NOFAIL);
 	lsp->kl_identifier = identifier;
 	lsp->kl_idata = idata;
 	lsp->kl_callback = callback;
@@ -216,7 +208,7 @@ kauth_register_scope(const char *identifier, kauth_scope_callback_t callback, vo
 		if (strncmp(tsp->ks_identifier, identifier,
 		    strlen(tsp->ks_identifier) + 1) == 0) {
 			KAUTH_SCOPEUNLOCK();
-			kheap_free(KM_KAUTH, sp, sizeof(struct kauth_scope));
+			kfree_type(struct kauth_scope, sp);
 			return NULL;
 		}
 	}
@@ -274,7 +266,7 @@ kauth_deregister_scope(kauth_scope_t scope)
 		}
 	}
 	KAUTH_SCOPEUNLOCK();
-	kheap_free(KM_KAUTH, scope, sizeof(struct kauth_scope));
+	kfree_type(struct kauth_scope, scope);
 
 	return;
 }
@@ -303,7 +295,7 @@ kauth_listen_scope(const char *identifier, kauth_scope_callback_t callback, void
 			}
 			/* table already full */
 			KAUTH_SCOPEUNLOCK();
-			kheap_free(KM_KAUTH, klp, sizeof(struct kauth_listener));
+			kfree_type(struct kauth_listener, klp);
 			return NULL;
 		}
 	}
@@ -347,7 +339,7 @@ kauth_unlisten_scope(kauth_listener_t listener)
 					sp->ks_flags &= ~KS_F_HAS_LISTENERS;
 				}
 				KAUTH_SCOPEUNLOCK();
-				kheap_free(KM_KAUTH, listener, sizeof(struct kauth_listener));
+				kfree_type(struct kauth_listener, listener);
 				return;
 			}
 		}
@@ -358,7 +350,7 @@ kauth_unlisten_scope(kauth_listener_t listener)
 		if (klp == listener) {
 			TAILQ_REMOVE(&kauth_dangling_listeners, klp, kl_link);
 			KAUTH_SCOPEUNLOCK();
-			kheap_free(KM_KAUTH, listener, sizeof(struct kauth_listener));
+			kfree_type(struct kauth_listener, listener);
 			return;
 		}
 	}
@@ -620,6 +612,16 @@ kauth_acl_evaluate(kauth_cred_t cred, kauth_acl_eval_t eval)
 	guid_t guid;
 	uint32_t rights;
 	int wkguid;
+
+	if (cred == NULL) {
+		KAUTH_DEBUG("    ACL - got NULL credential");
+		return EINVAL;
+	}
+
+	if (eval == NULL) {
+		KAUTH_DEBUG("    ACL - got NULL ACL evaluator");
+		return EINVAL;
+	}
 
 	/* always allowed to do nothing */
 	if (eval->ae_requested == 0) {
@@ -963,76 +965,48 @@ kauth_copyinfilesec(user_addr_t xsecurity, kauth_filesec_t *xsecdestpp)
 {
 	int error;
 	kauth_filesec_t fsec;
+	struct kauth_filesec tmp;
 	size_t count;
 	size_t copysize;
 
-	error = 0;
-	fsec = NULL;
+	/* copy the minimum filesec header which must always be present */
+	if ((error = copyin(xsecurity, &tmp, KAUTH_FILESEC_SIZE(0))) != 0) {
+		return error;
+	}
 
-	/*
-	 * Make a guess at the size of the filesec.  We start with the base
-	 * pointer, and look at how much room is left on the page, clipped
-	 * to a sensible upper bound.  If it turns out this isn't enough,
-	 * we'll size based on the actual ACL contents and come back again.
-	 *
-	 * The upper bound must be less than KAUTH_ACL_MAX_ENTRIES.  The
-	 * value here is fairly arbitrary.  It's ok to have a zero count.
-	 *
-	 * Because we're just using these values to make a guess about the
-	 * number of entries, the actual address doesn't matter, only their
-	 * relative offsets into the page.  We take advantage of this to
-	 * avoid an overflow in the rounding step (this is a user-provided
-	 * parameter, so caution pays off).
-	 */
-	{
-		user_addr_t known_bound = (xsecurity & PAGE_MASK) + KAUTH_FILESEC_SIZE(0);
-		user_addr_t uaddr = (user_addr_t)mach_vm_round_page(known_bound);
-		count = (uaddr - known_bound) / sizeof(struct kauth_ace);
+	/* validate the filesec header and count */
+	if (tmp.fsec_magic != KAUTH_FILESEC_MAGIC) {
+		return EINVAL;
 	}
-	if (count > 32) {
-		count = 32;
+
+	count = tmp.fsec_entrycount;
+	if (count == KAUTH_FILESEC_NOACL) {
+		count = 0;
+	} else if (count > KAUTH_ACL_MAX_ENTRIES) {
+		/* XXX This should be E2BIG */
+		return EINVAL;
 	}
-restart:
+
 	if ((fsec = kauth_filesec_alloc((int)count)) == NULL) {
-		error = ENOMEM;
-		goto out;
-	}
-	copysize = KAUTH_FILESEC_SIZE(count);
-	if ((error = copyin(xsecurity, (caddr_t)fsec, copysize)) != 0) {
-		goto out;
-	}
-
-	/* validate the filesec header */
-	if (fsec->fsec_magic != KAUTH_FILESEC_MAGIC) {
-		error = EINVAL;
-		goto out;
+		return ENOMEM;
 	}
 
 	/*
-	 * Is there an ACL payload, and is it too big?
+	 * now copy the header we already have,
+	 * and the number of records we're missing
 	 */
-	if ((fsec->fsec_entrycount != KAUTH_FILESEC_NOACL) &&
-	    (fsec->fsec_entrycount > count)) {
-		if (fsec->fsec_entrycount > KAUTH_ACL_MAX_ENTRIES) {
-			/* XXX This should be E2BIG */
-			error = EINVAL;
-			goto out;
-		}
-		count = fsec->fsec_entrycount;
+	copysize = KAUTH_FILESEC_SIZE(count);
+	memcpy(fsec, &tmp, KAUTH_FILESEC_SIZE(0));
+
+	if (count > 0 && ((error = copyin(xsecurity + KAUTH_FILESEC_SIZE(0),
+	    fsec->fsec_acl.acl_ace, copysize - KAUTH_FILESEC_SIZE(0))) != 0)) {
 		kauth_filesec_free(fsec);
-		goto restart;
+		return error;
 	}
 
-out:
-	if (error) {
-		if (fsec) {
-			kauth_filesec_free(fsec);
-		}
-	} else {
-		*xsecdestpp = fsec;
-		AUDIT_ARG(opaque, fsec, copysize);
-	}
-	return error;
+	*xsecdestpp = fsec;
+	AUDIT_ARG(opaque, fsec, copysize);
+	return 0;
 }
 
 /*
@@ -1064,7 +1038,7 @@ kauth_filesec_alloc(int count)
 		return NULL;
 	}
 
-	fsp = kheap_alloc(KM_KAUTH, KAUTH_FILESEC_SIZE(count), Z_WAITOK);
+	fsp = kalloc_data(KAUTH_FILESEC_SIZE(count), Z_WAITOK);
 	if (fsp != NULL) {
 		fsp->fsec_magic = KAUTH_FILESEC_MAGIC;
 		fsp->fsec_owner = kauth_null_guid;
@@ -1098,7 +1072,7 @@ kauth_filesec_free(kauth_filesec_t fsp)
 		panic("freeing KAUTH_FILESEC_WANTED");
 	}
 #endif
-	kheap_free_addr(KM_KAUTH, fsp);
+	kfree_data_addr(fsp);
 }
 
 /*
@@ -1172,36 +1146,24 @@ kauth_filesec_acl_setendian(int kendian, kauth_filesec_t fsec, kauth_acl_t acl)
 	}
 }
 
-
 /*
  * Allocate an ACL buffer.
  */
 kauth_acl_t
 kauth_acl_alloc(int count)
 {
-	kauth_acl_t     aclp;
-
 	/* if the caller hasn't given us a valid size hint, assume the worst */
 	if ((count < 0) || (count > KAUTH_ACL_MAX_ENTRIES)) {
 		return NULL;
 	}
 
-	aclp = kheap_alloc(KM_KAUTH, KAUTH_ACL_SIZE(count), Z_WAITOK);
-	if (aclp != NULL) {
-		aclp->acl_entrycount = 0;
-		aclp->acl_flags = 0;
-	}
-	return aclp;
+	return kalloc_data(KAUTH_ACL_SIZE(count), Z_WAITOK | Z_ZERO);
 }
 
 void
 kauth_acl_free(kauth_acl_t aclp)
 {
-	/*
-	 * It's possible this may have have been allocated in a kext using
-	 * MALLOC. Using KHEAP_ANY will allow us to free it here.
-	 */
-	kheap_free_addr(KHEAP_ANY, aclp);
+	kfree_data_addr(aclp);
 }
 
 

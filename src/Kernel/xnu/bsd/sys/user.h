@@ -87,6 +87,7 @@ struct waitq_set;
 #ifdef BSD_KERNEL_PRIVATE
 #include <sys/pthread_internal.h> /* for uu_kwe entry */
 #include <sys/eventvar.h>
+#include <kern/btlog.h>
 #endif  /* BSD_KERNEL_PRIVATE */
 #ifdef __APPLE_API_PRIVATE
 #include <sys/eventvar.h>
@@ -103,15 +104,21 @@ struct vfs_context {
 #endif /* !__LP64 || XNU_KERNEL_PRIVATE */
 
 #ifdef BSD_KERNEL_PRIVATE
-/* XXX Deprecated: xnu source compatability */
-#define uu_ucred        uu_context.vc_ucred
-
 struct label;           /* MAC label dummy struct */
 
 #define MAXTHREADNAMESIZE 64
 /*
  *	Per-thread U area.
  */
+
+#if PROC_REF_DEBUG
+struct uthread_proc_ref_info {
+#define NUM_PROC_REFS_TO_TRACK 31
+	uint32_t        upri_pindex;
+	btref_t         upri_proc_stacks[NUM_PROC_REFS_TO_TRACK];
+	void    *       upri_proc_ps[NUM_PROC_REFS_TO_TRACK];
+};
+#endif /* PROC_REF_DEBUG */
 
 struct uthread {
 	/* syscall parameters, results and catches */
@@ -134,7 +141,6 @@ struct uthread {
 	union {
 		struct _select_data {
 			u_int64_t abstime;
-			uint64_t *wqp;
 			int count;
 			struct select_nocancel_args *args;  /* original syscall arguments */
 			int32_t *retval;                    /* place to store return val */
@@ -184,31 +190,42 @@ struct uthread {
 			int32_t *retval;
 			uint flags;
 		} uus_ulock_wait_data;
+
+		struct _bsdthread_terminate {
+			user_addr_t      ulock_addr;
+			mach_port_name_t kport;
+		} uus_bsdthread_terminate;
+
+		struct _exec_data {
+			struct image_params *imgp;
+		} uus_exec_data;
 	} uu_save;
 
 	/* Persistent memory allocations across system calls */
 	struct _select {
-		u_int32_t       *ibits, *obits; /* bits to select on */
+		/* bits to select on */
+		u_int32_t * XNU_PTRAUTH_SIGNED_PTR("uthread.uu_select.ibits") ibits;
+		u_int32_t * XNU_PTRAUTH_SIGNED_PTR("uthread.uu_select.obits") obits;
 		uint    nbytes; /* number of bytes in ibits and obits */
 	} uu_select;                    /* saved state for select() */
 
-	struct proc *uu_proc;
-	thread_t uu_thread;
 	void * uu_userstate;
-	struct waitq_set *uu_wqset;             /* waitq state cached across select calls */
-	size_t uu_wqstate_sz;                   /* ...size of uu_wqset buffer */
+	struct select_set *uu_selset;            /* waitq state cached across select calls */
 	int uu_flag;
 	sigset_t uu_siglist;                            /* signals pending for the thread */
 	sigset_t uu_sigwait;                            /*  sigwait on this thread*/
 	sigset_t uu_sigmask;                            /* signal mask for the thread */
 	sigset_t uu_oldmask;                            /* signal mask saved before sigpause */
-	sigset_t uu_vforkmask;                          /* saved signal mask during vfork */
-	struct vfs_context uu_context;                  /* thread + cred */
+	user_addr_t uu_sigreturn_token;                 /* random token used to validate sigreturn arguments */
+	uint32_t uu_sigreturn_diversifier;              /* random diversifier used to validate user signed sigreturn pc/lr */
+	int uu_pending_sigreturn;                       /* Pending sigreturn count */
 
-	TAILQ_ENTRY(uthread) uu_list;           /* List of uthreads in proc */
+	TAILQ_ENTRY(uthread) uu_list;       /* List of uthreads in proc */
 
+#if CONFIG_AUDIT
 	struct kaudit_record    *uu_ar;                 /* audit record */
-	struct task*    uu_aio_task;                    /* target task for async io */
+#endif
+	struct task    *uu_aio_task;                    /* target task for async io */
 
 	union {
 		lck_mtx_t  *uu_mtx;
@@ -232,12 +249,12 @@ struct uthread {
 	int (*uu_continuation)(int);
 	const char *uu_wmesg;                   /* ... wait message */
 
-	u_int32_t       uu_network_marks;       /* network control flow marks */
-
 	struct kern_sigaltstack uu_sigstk;
 	vnode_t         uu_vreclaims;
 	vnode_t         uu_cdir;                /* per thread CWD */
 	int             uu_dupfd;               /* fd in fdesc_open/dupfdopen */
+
+	u_int32_t       uu_network_marks;       /* network control flow marks */
 
 	/*
 	 * Bound kqueue request. This field is only cleared by the current thread,
@@ -248,15 +265,42 @@ struct uthread {
 	vm_offset_t uu_workq_stackaddr;
 	mach_port_name_t uu_workq_thport;
 	struct uu_workq_policy {
-		uint16_t qos_req : 4;         /* requested QoS */
-		uint16_t qos_max : 4;         /* current acked max qos */
-		uint16_t qos_override : 4;    /* received async override */
-		uint16_t qos_bucket : 4;      /* current acked bucket */
+		/* Requested QoS.
+		 *
+		 *	- Modified on self during qos updates, or on idle threads we are setting
+		 *	up to run (eg. creator, threads for dispatch apply, etc) while holding
+		 *	wq lock
+		 *	- Read from self
+		 *
+		 *	Synchronization is subtle since it's generally on self but when
+		 *	modifying on non-self threads, we rely on the fact that they are
+		 *	previously idle and therefore, not modifying it on self at the same time
+		 *	until they take the wq lock.
+		 */
+		uint16_t qos_req : 4;
+		/* Current acked max qos - from kevent.
+		 *
+		 * Synchronized by being modified on self. Also generally under the wq lock
+		 * but that's more of a happy coincidence.
+		 */
+		uint16_t qos_max : 4;
+		/* Async QoS override received - workqueue override
+		 *
+		 * Synchronized with the thread mutex and wq lock since it can be modified
+		 * by another thread.
+		 */
+		uint16_t qos_override : 4;
+		/* Current acked bucket.
+		 *
+		 * Synchronized by only being read or written on self.
+		 */
+		uint16_t qos_bucket : 4;
 	} uu_workq_pri;
-	uint8_t uu_workq_flags;
+
+	uint16_t uu_workq_flags;
 	kq_index_t uu_kqueue_override;
 
-#ifdef JOE_DEBUG
+#ifdef CONFIG_IOCOUNT_TRACE
 	int             uu_iocount;
 	int             uu_vpindex;
 	void    *uu_vps[32];
@@ -280,11 +324,7 @@ struct uthread {
 #endif
 	int             uu_proc_refcount;
 #if PROC_REF_DEBUG
-#define NUM_PROC_REFS_TO_TRACK 32
-#define PROC_REF_STACK_DEPTH 10
-	int             uu_pindex;
-	void    *       uu_proc_ps[NUM_PROC_REFS_TO_TRACK];
-	uintptr_t       uu_proc_pcs[NUM_PROC_REFS_TO_TRACK][PROC_REF_STACK_DEPTH];
+	struct uthread_proc_ref_info *uu_proc_ref_info;
 #endif
 
 #if CONFIG_DTRACE
@@ -336,6 +376,12 @@ struct uthread {
 	uint64_t t_fs_private;
 
 	struct os_reason *uu_exit_reason;
+
+#if CONFIG_DEBUG_SYSCALL_REJECTION
+	uint64_t        syscall_rejection_flags;  /* flags for syscall rejection behavior */
+	uint64_t        *syscall_rejection_mask;  /* mach_trap_count + nsysent bits */
+	uint64_t        *syscall_rejection_once_mask;  /* mach_trap_count + nsysent bits */
+#endif /* CONFIG_DEBUG_SYSCALL_REJECTION */
 };
 
 typedef struct uthread * uthread_t;
@@ -343,10 +389,10 @@ typedef struct uthread * uthread_t;
 /* Definition of uu_flag */
 #define UT_SAS_OLDMASK  0x00000001      /* need to restore mask before pause */
 #define UT_NO_SIGMASK   0x00000002      /* exited thread; invalid sigmask */
-#define UT_NOTCANCELPT  0x00000004             /* not a cancelation point */
-#define UT_CANCEL       0x00000008             /* thread marked for cancel */
-#define UT_CANCELED     0x00000010            /* thread cancelled */
-#define UT_CANCELDISABLE 0x00000020            /* thread cancel disabled */
+#define UT_NOTCANCELPT  0x00000004      /* not a cancelation point */
+#define UT_CANCEL       0x00000008      /* thread marked for cancel */
+#define UT_CANCELED     0x00000010      /* thread cancelled */
+#define UT_CANCELDISABLE 0x00000020     /* thread cancel disabled */
 #define UT_ALTSTACK     0x00000040      /* this thread has alt stack for signals */
 #define UT_THROTTLE_IO  0x00000080      /* this thread issues throttle I/O */
 #define UT_PASSIVE_IO   0x00000100      /* this thread issues passive I/O */
@@ -356,10 +402,12 @@ typedef struct uthread * uthread_t;
 #define UT_NSPACE_NODATALESSFAULTS 0x00001000 /* thread does not materialize dataless files */
 #define UT_ATIME_UPDATE 0x00002000      /* don't update atime for files accessed by this thread */
 #define UT_NSPACE_FORCEDATALESSFAULTS  0x00004000 /* thread always materializes dataless files */
-#define UT_VFORK        0x02000000      /* thread has vfork children */
-#define UT_SETUID       0x04000000      /* thread is settugid() */
-#define UT_WASSETUID    0x08000000      /* thread was settugid() (in vfork) */
-#define UT_VFORKING     0x10000000      /* thread in vfork() syscall */
+#define UT_LP64         0x00010000      /* denormalized P_LP64 bit from proc */
+#define UT_FS_ENTITLED_RESERVE_ACCESS  0x00020000 /* thread's FS allocations should come from the entitled reserve */
+#define UT_SKIP_MTIME_UPDATE  0x00040000 /* don't update mtime for files modified by this thread */
+#define UT_SKIP_MTIME_UPDATE_IGNORE  0x00080000 /* ignore the process's mtime update policy when the policy is not enabled for this thread */
+#define UT_SUPPORT_LONG_PATHS  0x00100000 /* support long paths in syscalls used by this thread */
+#define UT_IGNORE_NODE_PERMISSIONS 0x00200000 /* thread should ignore node permissions */
 
 #endif /* BSD_KERNEL_PRIVATE */
 

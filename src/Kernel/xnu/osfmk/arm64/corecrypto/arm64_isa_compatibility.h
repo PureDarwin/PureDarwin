@@ -1,5 +1,12 @@
-/*
- * Copyright (c) 2019 Apple Inc. All rights reserved.
+/* Copyright (c) (2013,2015,2016,2019) Apple Inc. All rights reserved.
+ *
+ * corecrypto is licensed under Apple Inc.’s Internal Use License Agreement (which
+ * is contained in the License.txt file distributed with corecrypto) and only to
+ * people who accept that license. IMPORTANT:  Any license rights granted to you by
+ * Apple Inc. (if any) are limited to internal use within your organization only on
+ * devices and computers you own or control, for the sole purpose of verifying the
+ * security characteristics and correct functioning of the Apple Software.  You may
+ * not, directly or indirectly, redistribute the Apple Software or any portions thereof.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,19 +32,12 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
+
 // #include <Availability.h>
 #include <sys/cdefs.h>
 
-/*
- * PureDarwin: __apple_build_version__ is only ever defined by Apple's own
- * clang, never by a vanilla/nixpkgs LLVM - so this always fell into the
- * #else (pre-2019, no ".4s" suffix) branch when cross-building, and our
- * modern LLVM's integrated assembler rejects that older operand syntax
- * outright ("invalid operand for instruction" on sha256h/sha256su0/etc).
- * Default to the modern intrinics syntax for any non-Apple clang, which is
- * always recent enough to want it.
- */
-#if defined(__clang__) && (!defined(__apple_build_version__) || __apple_build_version__ > 5010000)
+#if defined(__clang__) && ((defined(__apple_build_version__) && __apple_build_version__ > 5010000))
 #define __USES_V_CRYPTO_INTRINSICS 1
 #else
 #define __USES_V_CRYPTO_INTRINSICS 0

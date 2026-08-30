@@ -34,15 +34,17 @@
 #define MACH_ASSERT 1
 #endif
 
-__BEGIN_DECLS
+#include <kern/lock_types.h>
 
 #include <stdarg.h>
-#include <sys/systm.h>
-
-#include <kern/assert.h>
 #ifdef KERNEL_PRIVATE
 #include <kern/kalloc.h>
 #endif
+
+__BEGIN_DECLS
+
+#include <sys/systm.h>
+#include <kern/assert.h>
 
 __END_DECLS
 
@@ -51,17 +53,30 @@ __END_DECLS
 #include <libkern/OSAtomic.h>
 #include <libkern/c++/OSCPPDebug.h>
 
-#define kalloc_container(size)  \
-	kalloc_tag_bt(size, VM_KERN_MEMORY_LIBKERN)
+#define kallocp_type_container(ty, countp, flags) ({                           \
+	uint32_t *__countp = (countp);                                         \
+	struct kalloc_result __kar;                                            \
+	static KALLOC_TYPE_VAR_DEFINE_3(kt_view_var, ty, KT_SHARED_ACCT);      \
+	__kar = kalloc_ext(kt_mangle_var_view(kt_view_var),                    \
+	    kt_size(0, sizeof(ty), *__countp),                                 \
+	    Z_VM_TAG_BT(flags | Z_FULLSIZE | Z_SET_NOT_EARLY,                   \
+	    VM_KERN_MEMORY_LIBKERN), NULL);                                    \
+	*__countp = (uint32_t)MIN(__kar.size / sizeof(ty), UINT32_MAX);        \
+	(ty *)__kar.addr;                                                      \
+})
 
-#define kalloc_data_container(size, flags)  \
-	kheap_alloc_tag_bt(KHEAP_DATA_BUFFERS, size, flags, VM_KERN_MEMORY_LIBKERN)
-
-#define kfree_data_container(buffer, size) \
-	kheap_free(KHEAP_DATA_BUFFERS, buffer, size)
-
-#define kallocp_container(size) \
-	kallocp_tag_bt(size, VM_KERN_MEMORY_LIBKERN)
+#define kreallocp_type_container(ty, ptr, old_count, countp, flags) ({         \
+	uint32_t *__countp = (countp);                                         \
+	struct kalloc_result __kar;                                            \
+	static KALLOC_TYPE_VAR_DEFINE_3(kt_view_var, ty, KT_SHARED_ACCT);      \
+	__kar = krealloc_ext(kt_mangle_var_view(kt_view_var), ptr,             \
+	    kt_size(0, sizeof(ty), old_count),                                 \
+	    kt_size(0, sizeof(ty), *__countp),                                 \
+	    Z_VM_TAG_BT(flags | Z_FULLSIZE | Z_SET_NOT_EARLY,                   \
+	    VM_KERN_MEMORY_LIBKERN), NULL);                                    \
+	*__countp = (uint32_t)MIN(__kar.size / sizeof(ty), UINT32_MAX);        \
+	(ty *)__kar.addr;                                                      \
+})
 
 #if OSALLOCDEBUG
 

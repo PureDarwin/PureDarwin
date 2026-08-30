@@ -31,6 +31,8 @@
 #include <mach/mach.h>
 #include <mach/mach_port.h>
 
+extern kern_return_t host_get_io_master(host_t, io_main_t *);
+
 #if TARGET_OS_SIMULATOR
 #include <servers/bootstrap.h>
 #endif

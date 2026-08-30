@@ -7,6 +7,8 @@
 , libSystem
 , libcxxDylib
 , libcxxabiDylib
+, libcurlDylib
+, corefoundation
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
 }:
@@ -19,6 +21,17 @@ stdenv.mkDerivation {
   inherit (cmake) version src;
 
   nativeBuildInputs = [ cmake ninja ];
+
+  # There is no ApplicationServices here; it is only used to locate an Xcode
+  # install, and every use of it is behind HAVE_APPLICATION_SERVICES.
+  postPatch = ''
+    substituteInPlace Source/cmGlobalXCodeGenerator.cxx \
+      --replace-fail '#  if !TARGET_OS_IPHONE' '#  if 0'
+    # CoreServices went with it: LaunchServices was the only thing wanted from
+    # it, and CPackLib already gates its own use on a header check.
+    substituteInPlace Source/CMakeLists.txt \
+      --replace-fail 'target_link_libraries(CMakeLib PUBLIC "-framework CoreServices")' ""
+  '';
 
   configurePhase = ''
     runHook preConfigure
@@ -42,9 +55,11 @@ set(CMAKE_INSTALL_NAME_TOOL "${darwinCrossToolchain}/bin/${targetTriple}-install
 set(_pd_common "-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include")
 set(CMAKE_C_FLAGS_INIT "\''${_pd_common}")
 set(CMAKE_CXX_FLAGS_INIT "\''${_pd_common} -nostdinc++ -I${libcxxDylib}/usr/include/c++/v1")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -lc++ -lc++abi -lSystem")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -F${corefoundation}/System/Library/Frameworks -lc++ -lc++abi -lSystem")
 
-set(CMAKE_FIND_ROOT_PATH "$DARWIN_SDK_ROOT" "${libSystem}")
+# CMake defaults to the system curl on APPLE, and PureDarwin does ship a real
+# /usr/lib/libcurl.4.dylib, so point find_package(CURL) at it.
+set(CMAKE_FIND_ROOT_PATH "$DARWIN_SDK_ROOT" "${libSystem}" "${libcurlDylib}")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)

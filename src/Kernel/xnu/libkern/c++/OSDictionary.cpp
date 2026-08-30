@@ -38,22 +38,7 @@
 #include <libkern/c++/OSSerialize.h>
 #include <libkern/c++/OSSharedPtr.h>
 #include <libkern/c++/OSSymbol.h>
-#include <IOKit/IOLib.h>
 #include <os/cpp_util.h>
-
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-extern "C" void pd_bcm2835_early_uart_str(const char *s);
-extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
-/* Set around one specific setObject() call; this is far too hot to trace
- * unconditionally. */
-bool pd_osdict_trace = false;
-#define PD_DT_TRACE(m)		do { if (pd_osdict_trace) { pd_bcm2835_early_uart_str(m); } } while (0)
-#define PD_DT_HEX(m, v)		do { if (pd_osdict_trace) { pd_bcm2835_early_uart_hex(m, (uint64_t)(v)); } } while (0)
-#else
-#define PD_DT_TRACE(m)		do { } while (0)
-#define PD_DT_HEX(m, v)		do { } while (0)
-#endif
-
 
 #define super OSCollection
 
@@ -106,16 +91,14 @@ OSDictionary::initWithCapacity(unsigned int inCapacity)
 		return false;
 	}
 
-	unsigned int size = inCapacity * sizeof(dictEntry);
 //fOptions |= kSort;
 
-	dictionary = (dictEntry *) kalloc_container(size);
+	dictionary = kallocp_type_container(dictEntry, &inCapacity, Z_WAITOK_ZERO);
 	if (!dictionary) {
 		return false;
 	}
 
-	os::uninitialized_value_construct(dictionary, dictionary + inCapacity);
-	OSCONTAINER_ACCUMSIZE(size);
+	OSCONTAINER_ACCUMSIZE(inCapacity * sizeof(dictEntry));
 
 	count = 0;
 	capacity = inCapacity;
@@ -297,7 +280,7 @@ OSDictionary::free()
 	(void) super::setOptions(0, kImmutable);
 	flushCollection();
 	if (dictionary) {
-		kfree(dictionary, capacity * sizeof(dictEntry));
+		kfree_type(dictEntry, capacity, dictionary);
 		OSCONTAINER_ACCUMSIZE( -(capacity * sizeof(dictEntry)));
 	}
 
@@ -333,8 +316,7 @@ unsigned int
 OSDictionary::ensureCapacity(unsigned int newCapacity)
 {
 	dictEntry *newDict;
-	vm_size_t finalCapacity;
-	vm_size_t oldSize, newSize;
+	unsigned int finalCapacity;
 
 	if (newCapacity <= capacity) {
 		return capacity;
@@ -349,29 +331,12 @@ OSDictionary::ensureCapacity(unsigned int newCapacity)
 		return capacity;
 	}
 
-	newSize = sizeof(dictEntry) * finalCapacity;
-
-	newDict = (dictEntry *) kallocp_container(&newSize);
+	newDict = kreallocp_type_container(dictEntry, dictionary,
+	    capacity, &finalCapacity, Z_WAITOK_ZERO);
 	if (newDict) {
-		// use all of the actual allocation size
-		finalCapacity = (newSize / sizeof(dictEntry));
-		if (finalCapacity > UINT_MAX) {
-			// failure, too large
-			kfree(newDict, newSize);
-			return capacity;
-		}
-
-		oldSize = sizeof(dictEntry) * capacity;
-
-		os::uninitialized_move(dictionary, dictionary + capacity, newDict);
-		os::uninitialized_value_construct(newDict + capacity, newDict + finalCapacity);
-		os::destroy(dictionary, dictionary + capacity);
-
-		OSCONTAINER_ACCUMSIZE(((size_t)newSize) - ((size_t)oldSize));
-		kfree(dictionary, oldSize);
-
+		OSCONTAINER_ACCUMSIZE(sizeof(dictEntry) * (finalCapacity - capacity));
 		dictionary = newDict;
-		capacity = (unsigned int) finalCapacity;
+		capacity = finalCapacity;
 	}
 
 	return capacity;
@@ -383,8 +348,8 @@ OSDictionary::flushCollection()
 	haveUpdated();
 
 	for (unsigned int i = 0; i < count; i++) {
-		dictionary[i].key->taggedRelease(OSTypeID(OSCollection));
-		dictionary[i].value->taggedRelease(OSTypeID(OSCollection));
+		dictionary[i].key.reset();
+		dictionary[i].value.reset();
 	}
 	count = 0;
 }
@@ -403,9 +368,7 @@ setObject(const OSSymbol *aKey, const OSMetaClassBase *anObject, bool onlyAdd)
 	// if the key exists, replace the object
 
 	if (fOptions & kSort) {
-		PD_DT_TRACE("dt:bsearch");
 		i = OSSymbol::bsearch(aKey, &dictionary[0], count, sizeof(dictionary[0]));
-		PD_DT_HEX("dt:i ", i);
 		exists = (i < count) && (aKey == dictionary[i].key);
 	} else {
 		for (exists = false, i = 0; i < count; i++) {
@@ -429,23 +392,17 @@ setObject(const OSSymbol *aKey, const OSMetaClassBase *anObject, bool onlyAdd)
 	}
 
 	// add new key, possibly extending our capacity
-	PD_DT_HEX("dt:cap ", capacity);
 	if (count >= capacity && count >= ensureCapacity(count + 1)) {
 		return false;
 	}
 
-	PD_DT_TRACE("dt:updated");
 	haveUpdated();
 
 	new (&dictionary[count]) dictEntry();
-	PD_DT_TRACE("dt:move");
 	os::move_backward(&dictionary[i], &dictionary[count], &dictionary[count + 1]);
 
-	PD_DT_TRACE("dt:key");
 	dictionary[i].key.reset(aKey, OSRetain);
-	PD_DT_TRACE("dt:value");
 	dictionary[i].value.reset(anObject, OSRetain);
-	PD_DT_TRACE("dt:done");
 	count++;
 
 	return true;

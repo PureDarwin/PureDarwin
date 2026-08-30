@@ -25,6 +25,7 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
 #include <mach/mach_types.h>
 #include <mach/machine/vm_param.h>
 #include <mach/task.h>
@@ -34,11 +35,14 @@
 #include <kern/processor.h>
 #include <kern/thread.h>
 #include <kern/task.h>
+#include <kern/task_ident.h>
 #include <kern/spl.h>
 #include <kern/ast.h>
+#include <kern/monotonic.h>
+#include <machine/monotonic.h>
 #include <ipc/ipc_port.h>
-#include <ipc/ipc_object.h>
-#include <vm/vm_map.h>
+#include <ipc/ipc_space.h>
+#include <vm/vm_map_xnu.h>
 #include <vm/vm_kern.h>
 #include <vm/pmap.h>
 #include <vm/vm_protos.h> /* last */
@@ -46,11 +50,8 @@
 #include <sys/signal.h>
 #include <sys/errno.h>
 #include <sys/proc_require.h>
-
-#if MONOTONIC
-#include <kern/monotonic.h>
-#include <machine/monotonic.h>
-#endif /* MONOTONIC */
+#include <sys/reason.h>
+#include <corpses/task_corpse.h>
 
 #include <machine/limits.h>
 #include <sys/codesign.h> /* CS_CDHASH_LEN */
@@ -70,18 +71,24 @@ kern_return_t get_signalact(task_t, thread_t *, int);
 int fill_task_rusage(task_t task, rusage_info_current *ri);
 int fill_task_io_rusage(task_t task, rusage_info_current *ri);
 int fill_task_qos_rusage(task_t task, rusage_info_current *ri);
-void fill_task_monotonic_rusage(task_t task, rusage_info_current *ri);
-uint64_t get_task_logical_writes(task_t task, boolean_t external);
+uint64_t get_task_logical_writes(task_t task, bool external);
 void fill_task_billed_usage(task_t task, rusage_info_current *ri);
-void task_bsdtask_kill(task_t);
+void task_self_sigkill(os_reason_t reason);
 
 extern uint64_t get_dispatchqueue_serialno_offset_from_proc(void *p);
 extern uint64_t get_dispatchqueue_label_offset_from_proc(void *p);
 extern uint64_t proc_uniqueid_task(void *p, void *t);
 extern int proc_pidversion(void *p);
 extern int proc_getcdhash(void *p, char *cdhash);
+extern void* proc_find_ident(struct proc_ident const *i);
+extern int proc_rele(void* p);
+extern task_t proc_task(void* p);
 
+int mach_to_bsd_errno(kern_return_t mach_err);
+kern_return_t kern_return_for_errno(int bsd_errno);
+void get_task_crashinfo_voucher(task_t corpse_task, void *crash_info_ptr);
 #if MACH_BSD
+extern void psignal_with_reason(void *, int, os_reason_t reason);
 extern void psignal(void *, int);
 #endif
 
@@ -91,17 +98,51 @@ extern void psignal(void *, int);
 void  *
 get_bsdtask_info(task_t t)
 {
-	proc_require(t->bsd_info, PROC_REQUIRE_ALLOW_NULL | PROC_REQUIRE_ALLOW_KERNPROC);
-	return t->bsd_info;
+	void *proc_from_task = task_get_proc_raw(t);
+	proc_require(proc_from_task, PROC_REQUIRE_ALLOW_NULL | PROC_REQUIRE_ALLOW_ALL);
+	return task_has_proc(t) ? proc_from_task : NULL;
+}
+
+/*
+ * This function is unsafe to be called with only task reference.
+ * Caller must make sure that proc is still alive (by holding
+ * reference to the proc)
+ */
+void
+taskbsd_kill_and_release(void* _Nonnull p)
+{
+	psignal(p, SIGKILL);
+	proc_rele(p);
+}
+
+/* NOTE: This function is not for common or generic use. Never use on a generic proc ident token */
+kern_return_t
+task_identity_token_try_sigkill(
+	task_id_token_t token)
+{
+	if (token == TASK_ID_TOKEN_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+	if (token->task_uniqueid) {
+		/* corpse is already killed */
+		return KERN_SUCCESS;
+	} else {
+		void *p = proc_find_ident(&token->ident);
+
+		if (p) {
+			/* trying to sigkill the proc */
+			psignal(p, SIGKILL);
+
+			proc_rele(p);
+		}
+	}
+	return KERN_SUCCESS;
 }
 
 void
-task_bsdtask_kill(task_t t)
+task_self_sigkill(os_reason_t reason)
 {
-	void * bsd_info = get_bsdtask_info(t);
-	if (bsd_info != NULL) {
-		psignal(bsd_info, SIGKILL);
-	}
+	psignal_with_reason(current_proc(), SIGKILL, reason);
 }
 /*
  *
@@ -109,12 +150,7 @@ task_bsdtask_kill(task_t t)
 void *
 get_bsdthreadtask_info(thread_t th)
 {
-	void *bsd_info = NULL;
-
-	if (th->task) {
-		bsd_info = get_bsdtask_info(th->task);
-	}
-	return bsd_info;
+	return get_thread_ro(th)->tro_proc;
 }
 
 /*
@@ -123,16 +159,74 @@ get_bsdthreadtask_info(thread_t th)
 void
 set_bsdtask_info(task_t t, void * v)
 {
-	t->bsd_info = v;
+	void *proc_from_task = task_get_proc_raw(t);
+	if (v == NULL) {
+		task_clear_has_proc(t);
+	} else {
+		if (v != proc_from_task) {
+			panic("set_bsdtask_info trying to set random bsd_info %p", v);
+		}
+		task_set_has_proc(t);
+	}
 }
 
-/*
- *
- */
-void *
+__abortlike
+static void
+__thread_ro_circularity_panic(thread_t th, thread_ro_t tro)
+{
+	panic("tro %p points back to %p instead of %p", tro, tro->tro_owner, th);
+}
+
+__attribute__((always_inline))
+thread_ro_t
+get_thread_ro_unchecked(thread_t th)
+{
+	return th->t_tro;
+}
+
+thread_ro_t
+get_thread_ro(thread_t th)
+{
+	thread_ro_t tro = th->t_tro;
+
+	zone_require_ro(ZONE_ID_THREAD_RO, sizeof(struct thread_ro), tro);
+	if (tro->tro_owner != th) {
+		__thread_ro_circularity_panic(th, tro);
+	}
+	return tro;
+}
+
+__attribute__((always_inline))
+thread_ro_t
+current_thread_ro_unchecked(void)
+{
+	return get_thread_ro_unchecked(current_thread());
+}
+
+thread_ro_t
+current_thread_ro(void)
+{
+	return get_thread_ro(current_thread());
+}
+
+void
+clear_thread_ro_proc(thread_t th)
+{
+	thread_ro_t tro = get_thread_ro(th);
+
+	zalloc_ro_clear_field(ZONE_ID_THREAD_RO, tro, tro_proc);
+}
+
+struct uthread *
 get_bsdthread_info(thread_t th)
 {
-	return th->uthread;
+	return (struct uthread *)((uintptr_t)th + sizeof(struct thread));
+}
+
+thread_t
+get_machthread(struct uthread *uth)
+{
+	return (struct thread *)((uintptr_t)uth - sizeof(struct thread));
 }
 
 /*
@@ -157,7 +251,8 @@ set_thread_pagein_error(thread_t th, int error)
 int
 thread_task_has_ldt(thread_t th)
 {
-	return th->task && th->task->i386_ldt != 0;
+	task_t task = get_threadtask(th);
+	return task && task->i386_ldt != 0;
 }
 #endif /* __x86_64__ */
 
@@ -166,30 +261,40 @@ thread_task_has_ldt(thread_t th)
  */
 int get_thread_lock_count(thread_t th);         /* forced forward */
 int
-get_thread_lock_count(thread_t th)
+get_thread_lock_count(thread_t th __unused)
 {
-	return th->mutex_count;
+	/*
+	 * TODO: one day: resurect counting locks held to disallow
+	 *       holding locks across upcalls.
+	 *
+	 *       never worked on arm.
+	 */
+	return 0;
 }
 
 /*
- * XXX: wait for BSD to  fix signal code
- * Until then, we cannot block here.  We know the task
- * can't go away, so we make sure it is still active after
- * retrieving the first thread for extra safety.
+ * Returns a thread reference.
  */
 thread_t
 get_firstthread(task_t task)
 {
-	thread_t        thread = (thread_t)(void *)queue_first(&task->threads);
-
-	if (queue_end(&task->threads, (queue_entry_t)thread)) {
-		thread = THREAD_NULL;
-	}
+	thread_t thread = THREAD_NULL;
+	task_lock(task);
 
 	if (!task->active) {
+		task_unlock(task);
 		return THREAD_NULL;
 	}
 
+	thread = (thread_t)(void *)queue_first(&task->threads);
+
+	if (queue_end(&task->threads, (queue_entry_t)thread)) {
+		task_unlock(task);
+		return THREAD_NULL;
+	}
+
+	thread_reference(thread);
+	task_unlock(task);
 	return thread;
 }
 
@@ -365,12 +470,15 @@ swap_task_map(task_t task, thread_t thread, vm_map_t map)
 	vm_map_t old_map;
 	boolean_t doswitch = (thread == current_thread()) ? TRUE : FALSE;
 
-	if (task != thread->task) {
+	if (task != get_threadtask(thread)) {
 		panic("swap_task_map");
 	}
 
 	task_lock(task);
 	mp_disable_preemption();
+
+	/* verify that the map has been activated if the task is enabled for IPC access and is not a corpse */
+	assert(!task->ipc_active || task_is_a_corpse(task) || (map->owning_task == task));
 
 	old_map = task->map;
 	thread->map = task->map = map;
@@ -399,36 +507,6 @@ get_task_pmap(task_t t)
 }
 
 /*
- *
- */
-uint64_t
-get_task_resident_size(task_t task)
-{
-	vm_map_t map;
-
-	map = (task == kernel_task) ? kernel_map: task->map;
-	return (uint64_t)pmap_resident_count(map->pmap) * PAGE_SIZE_64;
-}
-
-uint64_t
-get_task_compressed(task_t task)
-{
-	vm_map_t map;
-
-	map = (task == kernel_task) ? kernel_map: task->map;
-	return (uint64_t)pmap_compressed(map->pmap) * PAGE_SIZE_64;
-}
-
-uint64_t
-get_task_resident_max(task_t task)
-{
-	vm_map_t map;
-
-	map = (task == kernel_task) ? kernel_map: task->map;
-	return (uint64_t)pmap_resident_max(map->pmap) * PAGE_SIZE_64;
-}
-
-/*
  * Get the balance for a given field in the task ledger.
  * Returns 0 if the entry is invalid.
  */
@@ -437,8 +515,41 @@ get_task_ledger_balance(task_t task, int entry)
 {
 	ledger_amount_t balance = 0;
 
-	ledger_get_balance(task->ledger, entry, &balance);
+	ledger_get_balance(task->ledger, entry, LEO_SETTLE, &balance);
 	return balance;
+}
+
+uint64_t
+get_task_compressed(task_t task)
+{
+	uint64_t total = 0;
+
+	total += get_task_ledger_balance(task, task_ledgers.internal_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.purgeable_nonvolatile_compress);
+	/* Alt. Acct. is doubled counted between the purgeable and internal ledgers */
+	total -= get_task_ledger_balance(task, task_ledgers.alternate_accounting_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.network_nonvolatile_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.tagged_footprint_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.media_footprint_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.graphics_footprint_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.neural_footprint_compressed);
+#if !CONFIG_JETSAM
+	total += get_task_ledger_balance(task, task_ledgers.tagged_nofootprint_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.media_nofootprint_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.graphics_nofootprint_compressed);
+	total += get_task_ledger_balance(task, task_ledgers.neural_nofootprint_compressed);
+#endif
+	return total;
+}
+
+uint64_t
+get_task_resident_max(task_t task)
+{
+	uint64_t val;
+
+	ledger_get_lifetime_max(task->ledger, task_ledgers.phys_mem,
+	    LEO_SETTLE, (ledger_amount_t *) &val);
+	return val;
 }
 
 uint64_t
@@ -448,14 +559,18 @@ get_task_purgeable_size(task_t task)
 	ledger_amount_t balance = 0;
 	uint64_t volatile_size = 0;
 
-	ret = ledger_get_balance(task->ledger, task_ledgers.purgeable_volatile, &balance);
+	ledger_tab_settle(&task_ledger_template, task->ledger);
+
+	ret = ledger_get_balance(task->ledger, task_ledgers.purgeable_volatile,
+	    LEO_NO_SETTLE, &balance);
 	if (ret != KERN_SUCCESS) {
 		return 0;
 	}
 
 	volatile_size += balance;
 
-	ret = ledger_get_balance(task->ledger, task_ledgers.purgeable_volatile_compressed, &balance);
+	ret = ledger_get_balance(task->ledger, task_ledgers.purgeable_volatile_compress,
+	    LEO_NO_SETTLE, &balance);
 	if (ret != KERN_SUCCESS) {
 		return 0;
 	}
@@ -474,7 +589,6 @@ get_task_phys_footprint(task_t task)
 	return get_task_ledger_balance(task, task_ledgers.phys_footprint);
 }
 
-#if CONFIG_LEDGER_INTERVAL_MAX
 /*
  *
  */
@@ -484,15 +598,14 @@ get_task_phys_footprint_interval_max(task_t task, int reset)
 	kern_return_t ret;
 	ledger_amount_t max;
 
-	ret = ledger_get_interval_max(task->ledger, task_ledgers.phys_footprint, &max, reset);
-
+	ret = ledger_get_interval_max(task->ledger, task_ledgers.phys_footprint,
+	    (reset ? LEO_RESET_INTERVAL_MAX : LEO_SETTLE), &max);
 	if (KERN_SUCCESS == ret) {
 		return max;
 	}
 
 	return 0;
 }
-#endif /* CONFIG_LEDGER_INTERVAL_MAX */
 
 /*
  *
@@ -503,7 +616,8 @@ get_task_phys_footprint_lifetime_max(task_t task)
 	kern_return_t ret;
 	ledger_amount_t max;
 
-	ret = ledger_get_lifetime_max(task->ledger, task_ledgers.phys_footprint, &max);
+	ret = ledger_get_lifetime_max(task->ledger, task_ledgers.phys_footprint,
+	    LEO_SETTLE, &max);
 
 	if (KERN_SUCCESS == ret) {
 		return max;
@@ -550,7 +664,7 @@ get_task_purgeable_nonvolatile(task_t task)
 uint64_t
 get_task_purgeable_nonvolatile_compressed(task_t task)
 {
-	return get_task_ledger_balance(task, task_ledgers.purgeable_nonvolatile_compressed);
+	return get_task_ledger_balance(task, task_ledgers.purgeable_nonvolatile_compress);
 }
 
 uint64_t
@@ -609,7 +723,8 @@ get_task_tagged_footprint(task_t task)
 	kern_return_t ret;
 	ledger_amount_t credit, debit;
 
-	ret = ledger_get_entries(task->ledger, task_ledgers.tagged_footprint, &credit, &debit);
+	ret = ledger_get_entries(task->ledger, task_ledgers.tagged_footprint,
+	    LEO_SETTLE, &credit, &debit);
 	if (KERN_SUCCESS == ret) {
 		return credit - debit;
 	}
@@ -620,97 +735,77 @@ get_task_tagged_footprint(task_t task)
 uint64_t
 get_task_tagged_footprint_compressed(task_t task)
 {
-	kern_return_t ret;
-	ledger_amount_t credit, debit;
-
-	ret = ledger_get_entries(task->ledger, task_ledgers.tagged_footprint_compressed, &credit, &debit);
-	if (KERN_SUCCESS == ret) {
-		return credit - debit;
-	}
-
-	return 0;
+	return get_task_ledger_balance(task, task_ledgers.tagged_footprint_compressed);
 }
 
 uint64_t
 get_task_media_footprint(task_t task)
 {
-	kern_return_t ret;
-	ledger_amount_t credit, debit;
-
-	ret = ledger_get_entries(task->ledger, task_ledgers.media_footprint, &credit, &debit);
-	if (KERN_SUCCESS == ret) {
-		return credit - debit;
-	}
-
-	return 0;
+	return get_task_ledger_balance(task, task_ledgers.media_footprint);
 }
 
 uint64_t
 get_task_media_footprint_compressed(task_t task)
 {
-	kern_return_t ret;
-	ledger_amount_t credit, debit;
-
-	ret = ledger_get_entries(task->ledger, task_ledgers.media_footprint_compressed, &credit, &debit);
-	if (KERN_SUCCESS == ret) {
-		return credit - debit;
-	}
-
-	return 0;
+	return get_task_ledger_balance(task, task_ledgers.media_footprint_compressed);
 }
 
 uint64_t
 get_task_graphics_footprint(task_t task)
 {
-	kern_return_t ret;
-	ledger_amount_t credit, debit;
-
-	ret = ledger_get_entries(task->ledger, task_ledgers.graphics_footprint, &credit, &debit);
-	if (KERN_SUCCESS == ret) {
-		return credit - debit;
-	}
-
-	return 0;
+	return get_task_ledger_balance(task, task_ledgers.graphics_footprint);
 }
-
 
 uint64_t
 get_task_graphics_footprint_compressed(task_t task)
 {
-	kern_return_t ret;
-	ledger_amount_t credit, debit;
-
-	ret = ledger_get_entries(task->ledger, task_ledgers.graphics_footprint_compressed, &credit, &debit);
-	if (KERN_SUCCESS == ret) {
-		return credit - debit;
-	}
-
-	return 0;
+	return get_task_ledger_balance(task, task_ledgers.graphics_footprint_compressed);
 }
 
 uint64_t
 get_task_neural_footprint(task_t task)
 {
-	kern_return_t ret;
-	ledger_amount_t credit, debit;
+	return get_task_ledger_balance(task, task_ledgers.neural_footprint);
+}
 
-	ret = ledger_get_entries(task->ledger, task_ledgers.neural_footprint, &credit, &debit);
+uint64_t
+get_task_neural_footprint_compressed(task_t task)
+{
+	return get_task_ledger_balance(task, task_ledgers.neural_footprint_compressed);
+}
+
+uint64_t
+get_task_neural_nofootprint_total(task_t task)
+{
+	return get_task_ledger_balance(task, task_ledgers.neural_nofootprint_total);
+}
+
+uint64_t
+get_task_neural_nofootprint_total_interval_max(task_t task, int reset)
+{
+	kern_return_t ret;
+	ledger_amount_t max;
+
+	ret = ledger_get_interval_max(task->ledger, task_ledgers.neural_nofootprint_total,
+	    reset ? LEO_RESET_INTERVAL_MAX : LEO_SETTLE, &max);
 	if (KERN_SUCCESS == ret) {
-		return credit - debit;
+		return max;
 	}
 
 	return 0;
 }
 
 uint64_t
-get_task_neural_footprint_compressed(task_t task)
+get_task_neural_nofootprint_total_lifetime_max(task_t task)
 {
 	kern_return_t ret;
-	ledger_amount_t credit, debit;
+	ledger_amount_t max;
 
-	ret = ledger_get_entries(task->ledger, task_ledgers.neural_footprint_compressed, &credit, &debit);
+	ret = ledger_get_lifetime_max(task->ledger, task_ledgers.neural_nofootprint_total,
+	    LEO_SETTLE, &max);
+
 	if (KERN_SUCCESS == ret) {
-		return credit - debit;
+		return max;
 	}
 
 	return 0;
@@ -734,13 +829,22 @@ set_task_loadTag(task_t task, uint32_t loadTag)
 	return os_atomic_xchg(&task->loadTag, loadTag, relaxed);
 }
 
-/*
- *
- */
+
 task_t
 get_threadtask(thread_t th)
 {
-	return th->task;
+	return get_thread_ro(th)->tro_task;
+}
+
+task_t
+get_threadtask_early(thread_t th)
+{
+	if (__improbable(startup_phase < STARTUP_SUB_EARLY_BOOT)) {
+		if (th == THREAD_NULL || th->t_tro == NULL) {
+			return TASK_NULL;
+		}
+	}
+	return get_threadtask(th);
 }
 
 /*
@@ -775,82 +879,6 @@ get_task_page_size(
 	return vm_map_page_size(task->map);
 }
 
-#if CONFIG_COREDUMP
-
-static int
-get_vmsubmap_entries(
-	vm_map_t        map,
-	vm_object_offset_t      start,
-	vm_object_offset_t      end)
-{
-	int     total_entries = 0;
-	vm_map_entry_t  entry;
-
-	if (not_in_kdp) {
-		vm_map_lock(map);
-	}
-	entry = vm_map_first_entry(map);
-	while ((entry != vm_map_to_entry(map)) && (entry->vme_start < start)) {
-		entry = entry->vme_next;
-	}
-
-	while ((entry != vm_map_to_entry(map)) && (entry->vme_start < end)) {
-		if (entry->is_sub_map) {
-			total_entries +=
-			    get_vmsubmap_entries(VME_SUBMAP(entry),
-			    VME_OFFSET(entry),
-			    (VME_OFFSET(entry) +
-			    entry->vme_end -
-			    entry->vme_start));
-		} else {
-			total_entries += 1;
-		}
-		entry = entry->vme_next;
-	}
-	if (not_in_kdp) {
-		vm_map_unlock(map);
-	}
-	return total_entries;
-}
-
-int
-get_vmmap_entries(
-	vm_map_t        map)
-{
-	int     total_entries = 0;
-	vm_map_entry_t  entry;
-
-	if (not_in_kdp) {
-		vm_map_lock(map);
-	}
-	entry = vm_map_first_entry(map);
-
-	while (entry != vm_map_to_entry(map)) {
-		if (entry->is_sub_map) {
-			total_entries +=
-			    get_vmsubmap_entries(VME_SUBMAP(entry),
-			    VME_OFFSET(entry),
-			    (VME_OFFSET(entry) +
-			    entry->vme_end -
-			    entry->vme_start));
-		} else {
-			total_entries += 1;
-		}
-		entry = entry->vme_next;
-	}
-	if (not_in_kdp) {
-		vm_map_unlock(map);
-	}
-	return total_entries;
-}
-#endif /* CONFIG_COREDUMP */
-
-/*
- *
- */
-/*
- *
- */
 int
 get_task_userstop(
 	task_t task)
@@ -858,9 +886,6 @@ get_task_userstop(
 	return task->user_stop_count;
 }
 
-/*
- *
- */
 int
 get_thread_userstop(
 	thread_t th)
@@ -868,9 +893,6 @@ get_thread_userstop(
 	return th->user_stop_count;
 }
 
-/*
- *
- */
 boolean_t
 get_task_pidsuspended(
 	task_t task)
@@ -878,9 +900,6 @@ get_task_pidsuspended(
 	return task->pidsuspended;
 }
 
-/*
- *
- */
 boolean_t
 get_task_frozen(
 	task_t task)
@@ -888,9 +907,6 @@ get_task_frozen(
 	return task->frozen;
 }
 
-/*
- *
- */
 boolean_t
 thread_should_abort(
 	thread_t th)
@@ -929,9 +945,6 @@ current_thread_aborted(
 	return FALSE;
 }
 
-/*
- *
- */
 void
 task_act_iterate_wth_args(
 	task_t                  task,
@@ -951,7 +964,6 @@ task_act_iterate_wth_args(
 	task_unlock(task);
 }
 
-
 #include <sys/bsdtask_info.h>
 
 void
@@ -969,19 +981,13 @@ fill_taskprocinfo(task_t task, struct proc_taskinfo_internal * ptinfo)
 	map = (task == kernel_task)? kernel_map: task->map;
 
 	ptinfo->pti_virtual_size  = vm_map_adjusted_size(map);
-	ptinfo->pti_resident_size =
-	    (mach_vm_size_t)(pmap_resident_count(map->pmap))
-	    * PAGE_SIZE_64;
+	ledger_get_balance(task->ledger, task_ledgers.phys_mem,
+	    LEO_SETTLE, (ledger_amount_t *) &ptinfo->pti_resident_size);
 
 	ptinfo->pti_policy = ((task != kernel_task)?
 	    POLICY_TIMESHARE: POLICY_RR);
 
-	tinfo.threads_user = tinfo.threads_system = 0;
-	tinfo.total_user = task->total_user_time;
-	tinfo.total_system = task->total_system_time;
-
 	queue_iterate(&task->threads, thread, thread_t, task_threads) {
-		uint64_t    tval;
 		spl_t x;
 
 		if (thread->options & TH_OPT_IDLE_THREAD) {
@@ -995,20 +1001,6 @@ fill_taskprocinfo(task_t task, struct proc_taskinfo_internal * ptinfo)
 			numrunning++;
 		}
 		cswitch += thread->c_switch;
-		tval = timer_grab(&thread->user_timer);
-		tinfo.threads_user += tval;
-		tinfo.total_user += tval;
-
-		tval = timer_grab(&thread->system_timer);
-
-		if (thread->precise_user_kernel_time) {
-			tinfo.threads_system += tval;
-			tinfo.total_system += tval;
-		} else {
-			/* system_timer may represent either sys or user */
-			tinfo.threads_user += tval;
-			tinfo.total_user += tval;
-		}
 
 		syscalls_unix += thread->syscalls_unix;
 		syscalls_mach += thread->syscalls_mach;
@@ -1017,19 +1009,25 @@ fill_taskprocinfo(task_t task, struct proc_taskinfo_internal * ptinfo)
 		splx(x);
 	}
 
-	ptinfo->pti_total_system = tinfo.total_system;
-	ptinfo->pti_total_user = tinfo.total_user;
+	struct recount_times_mach term_times = recount_task_terminated_times(task);
+	struct recount_times_mach total_times = recount_task_times(task);
+
+	tinfo.threads_user = total_times.rtm_user - term_times.rtm_user;
+	tinfo.threads_system = total_times.rtm_system - term_times.rtm_system;
 	ptinfo->pti_threads_system = tinfo.threads_system;
 	ptinfo->pti_threads_user = tinfo.threads_user;
 
+	ptinfo->pti_total_system = total_times.rtm_system;
+	ptinfo->pti_total_user = total_times.rtm_user;
+
 	ptinfo->pti_faults = (int32_t) MIN(counter_load(&task->faults), INT32_MAX);
-	ptinfo->pti_pageins = task->pageins;
-	ptinfo->pti_cow_faults = task->cow_faults;
-	ptinfo->pti_messages_sent = task->messages_sent;
-	ptinfo->pti_messages_received = task->messages_received;
-	ptinfo->pti_syscalls_mach = task->syscalls_mach + syscalls_mach;
-	ptinfo->pti_syscalls_unix = task->syscalls_unix + syscalls_unix;
-	ptinfo->pti_csw = task->c_switch + cswitch;
+	ptinfo->pti_pageins = (int32_t) MIN(counter_load(&task->pageins), INT32_MAX);
+	ptinfo->pti_cow_faults = (int32_t) MIN(counter_load(&task->cow_faults), INT32_MAX);
+	ptinfo->pti_messages_sent = (int32_t) MIN(counter_load(&task->messages_sent), INT32_MAX);
+	ptinfo->pti_messages_received = (int32_t) MIN(counter_load(&task->messages_received), INT32_MAX);
+	ptinfo->pti_syscalls_mach = (int32_t) MIN(task->syscalls_mach + syscalls_mach, INT32_MAX);
+	ptinfo->pti_syscalls_unix = (int32_t) MIN(task->syscalls_unix + syscalls_unix, INT32_MAX);
+	ptinfo->pti_csw = (int32_t) MIN(task->c_switch + cswitch, INT32_MAX);
 	ptinfo->pti_threadnum = task->thread_count;
 	ptinfo->pti_numrunning = numrunning;
 	ptinfo->pti_priority = task->priority;
@@ -1070,10 +1068,10 @@ fill_taskthreadinfo(task_t task, uint64_t thaddr, bool thuniqueid, struct proc_t
 			ptinfo->pth_priority = thact->base_pri;
 			ptinfo->pth_maxpriority = thact->max_priority;
 
-			if ((vpp != NULL) && (thact->uthread != NULL)) {
-				bsd_threadcdir(thact->uthread, vpp, vidp);
+			if (vpp != NULL) {
+				bsd_threadcdir(get_bsdthread_info(thact), vpp, vidp);
 			}
-			bsd_getthreadname(thact->uthread, ptinfo->pth_name);
+			bsd_getthreadname(get_bsdthread_info(thact), ptinfo->pth_name);
 			err = 0;
 			goto out;
 		}
@@ -1115,6 +1113,33 @@ out:
 }
 
 int
+fill_taskthreadschedinfo(task_t task, uint64_t thread_id, struct proc_threadschedinfo_internal *thread_sched_info)
+{
+	int err = 0;
+
+	thread_t thread = current_thread();
+
+	/*
+	 * Looking up threads is pretty expensive and not realtime-safe
+	 * right now, requiring locking the task and iterating over all
+	 * threads. As long as that is the case, we officially only
+	 * support getting this info for the current thread.
+	 */
+	if (task != current_task() || thread_id != thread->thread_id) {
+		return -1;
+	}
+
+#if SCHED_HYGIENE_DEBUG
+	absolutetime_to_nanoseconds(thread->machine.int_time_mt, &thread_sched_info->int_time_ns);
+#else
+	(void)thread;
+	thread_sched_info->int_time_ns = 0;
+#endif
+
+	return err;
+}
+
+int
 get_numthreads(task_t task)
 {
 	return task->thread_count;
@@ -1129,24 +1154,39 @@ fill_task_rusage(task_t task, rusage_info_current *ri)
 {
 	struct task_power_info powerinfo;
 
-	uint64_t runnable_time = 0;
-
 	assert(task != TASK_NULL);
 	task_lock(task);
 
-	task_power_info_locked(task, &powerinfo, NULL, NULL, &runnable_time);
+	struct task_power_info_extra extra = { 0 };
+	task_power_info_locked(task, &powerinfo, NULL, NULL, &extra);
 	ri->ri_pkg_idle_wkups = powerinfo.task_platform_idle_wakeups;
 	ri->ri_interrupt_wkups = powerinfo.task_interrupt_wakeups;
+	ri->ri_runnable_time = extra.runnable_time;
+
 	ri->ri_user_time = powerinfo.total_user;
 	ri->ri_system_time = powerinfo.total_system;
-	ri->ri_runnable_time = runnable_time;
+	ri->ri_user_ptime = extra.user_ptime;
+	ri->ri_system_ptime = extra.system_ptime;
 
+	ri->ri_cycles = extra.cycles;
+	ri->ri_instructions = extra.instructions;
+	ri->ri_pcycles = extra.pcycles;
+	ri->ri_pinstructions = extra.pinstructions;
+
+	ri->ri_energy_nj = extra.energy;
+	ri->ri_penergy_nj = extra.penergy;
+	ri->ri_secure_time_in_system = extra.secure_time;
+	ri->ri_secure_ptime_in_system = extra.secure_ptime;
+
+	/* task_power_info_locked() settles the ledger */
 	ri->ri_phys_footprint = get_task_phys_footprint(task);
 	ledger_get_balance(task->ledger, task_ledgers.phys_mem,
-	    (ledger_amount_t *)&ri->ri_resident_size);
+	    LEO_NO_SETTLE, (ledger_amount_t *)&ri->ri_resident_size);
 	ri->ri_wired_size = get_task_wired_mem(task);
 
-	ri->ri_pageins = task->pageins;
+	ledger_get_balance(task->ledger, task_ledgers.neural_nofootprint_total,
+	    LEO_NO_SETTLE, (ledger_amount_t *)&ri->ri_neural_footprint);
+	ri->ri_pageins = counter_load(&task->pageins);
 
 	task_unlock(task);
 	return 0;
@@ -1205,54 +1245,26 @@ fill_task_qos_rusage(task_t task, rusage_info_current *ri)
 	return 0;
 }
 
-void
-fill_task_monotonic_rusage(task_t task, rusage_info_current *ri)
-{
-#if MONOTONIC
-	if (!mt_core_supported) {
-		return;
-	}
-
-	assert(task != TASK_NULL);
-
-	uint64_t counts[MT_CORE_NFIXED] = { 0 };
-	mt_fixed_task_counts(task, counts);
-#ifdef MT_CORE_INSTRS
-	ri->ri_instructions = counts[MT_CORE_INSTRS];
-#endif /* defined(MT_CORE_INSTRS) */
-	ri->ri_cycles = counts[MT_CORE_CYCLES];
-#else /* MONOTONIC */
-#pragma unused(task, ri)
-#endif /* !MONOTONIC */
-}
-
 uint64_t
-get_task_logical_writes(task_t task, boolean_t external)
+get_task_logical_writes(task_t task, bool external)
 {
 	assert(task != TASK_NULL);
-	struct ledger_entry_info lei;
+	ledger_amount_t balance = 0;
+	int entry = external ? task_ledgers.logical_writes_to_external :
+	    task_ledgers.logical_writes;
 
-	task_lock(task);
-
-	if (external == FALSE) {
-		ledger_get_entry_info(task->ledger, task_ledgers.logical_writes, &lei);
-	} else {
-		ledger_get_entry_info(task->ledger, task_ledgers.logical_writes_to_external, &lei);
-	}
-
-	ledger_get_entry_info(task->ledger, task_ledgers.logical_writes, &lei);
-
-	task_unlock(task);
-	return lei.lei_balance;
+	ledger_get_balance(task->ledger, entry, LEO_SETTLE, &balance);
+	return balance;
 }
 
 uint64_t
 get_task_dispatchqueue_serialno_offset(task_t task)
 {
 	uint64_t dq_serialno_offset = 0;
+	void *bsd_info = get_bsdtask_info(task);
 
-	if (task->bsd_info) {
-		dq_serialno_offset = get_dispatchqueue_serialno_offset_from_proc(task->bsd_info);
+	if (bsd_info) {
+		dq_serialno_offset = get_dispatchqueue_serialno_offset_from_proc(bsd_info);
 	}
 
 	return dq_serialno_offset;
@@ -1262,9 +1274,10 @@ uint64_t
 get_task_dispatchqueue_label_offset(task_t task)
 {
 	uint64_t dq_label_offset = 0;
+	void *bsd_info = get_bsdtask_info(task);
 
-	if (task->bsd_info) {
-		dq_label_offset = get_dispatchqueue_label_offset_from_proc(task->bsd_info);
+	if (bsd_info) {
+		dq_label_offset = get_dispatchqueue_label_offset_from_proc(bsd_info);
 	}
 
 	return dq_label_offset;
@@ -1273,8 +1286,10 @@ get_task_dispatchqueue_label_offset(task_t task)
 uint64_t
 get_task_uniqueid(task_t task)
 {
-	if (task->bsd_info) {
-		return proc_uniqueid_task(task->bsd_info, task);
+	void *bsd_info = get_bsdtask_info(task);
+
+	if (bsd_info) {
+		return proc_uniqueid_task(bsd_info, task);
 	} else {
 		return UINT64_MAX;
 	}
@@ -1283,8 +1298,10 @@ get_task_uniqueid(task_t task)
 int
 get_task_version(task_t task)
 {
-	if (task->bsd_info) {
-		return proc_pidversion(task->bsd_info);
+	void *bsd_info = get_bsdtask_info(task);
+
+	if (bsd_info) {
+		return proc_pidversion(bsd_info);
 	} else {
 		return INT_MAX;
 	}
@@ -1295,6 +1312,12 @@ struct label *
 get_task_crash_label(task_t task)
 {
 	return task->crash_label;
+}
+
+void
+set_task_crash_label(task_t task, struct label *label)
+{
+	task->crash_label = label;
 }
 #endif
 
@@ -1312,7 +1335,7 @@ fill_taskipctableinfo(task_t task, uint32_t *table_size, uint32_t *table_free)
 		return -1;
 	}
 
-	*table_size = space->is_table_size;
+	*table_size = ipc_entry_table_count(is_active_table(space));
 	*table_free = space->is_table_free;
 
 	is_read_unlock(space);
@@ -1324,10 +1347,175 @@ int
 get_task_cdhash(task_t task, char cdhash[static CS_CDHASH_LEN])
 {
 	int result = 0;
+	void *bsd_info = NULL;
 
 	task_lock(task);
-	result = task->bsd_info ? proc_getcdhash(task->bsd_info, cdhash) : ESRCH;
+	bsd_info = get_bsdtask_info(task);
+	result = bsd_info ? proc_getcdhash(bsd_info, cdhash) : ESRCH;
 	task_unlock(task);
 
 	return result;
+}
+
+void
+get_task_crashinfo_voucher(task_t corpse_task, void *crash_info_ptr)
+{
+	thread_t thread = NULL;
+	mach_vm_address_t uaddr = 0;
+	task_lock(corpse_task);
+	queue_iterate(&corpse_task->threads, thread, thread_t, task_threads)
+	{
+		pid_t originator_pid = -1, proximate_pid = -1;
+		kern_return_t kr = thread_get_voucher_origin_proximate_pid(thread, &originator_pid, &proximate_pid);
+		struct crashinfo_voucher voucher_info = {};
+
+		if (KERN_SUCCESS == kr && KERN_SUCCESS == kcdata_get_memory_addr(crash_info_ptr, TASK_CRASHINFO_VOUCHER_INFO, sizeof(voucher_info), &uaddr)) {
+			voucher_info.thread_id = thread->thread_id;
+			voucher_info.originator_pid = originator_pid;
+			voucher_info.proximate_pid = proximate_pid;
+			kcdata_memcpy(crash_info_ptr, uaddr, &voucher_info, sizeof(voucher_info));
+		}
+	}
+	task_unlock(corpse_task);
+}
+bool
+current_thread_in_kernel_fault(void)
+{
+	if (current_thread()->recover) {
+		return true;
+	}
+	return false;
+}
+
+/* moved from ubc_subr.c */
+int
+mach_to_bsd_errno(kern_return_t mach_err)
+{
+	switch (mach_err) {
+	case KERN_SUCCESS:
+		return 0;
+
+	case KERN_INVALID_ADDRESS:
+	case KERN_INVALID_ARGUMENT:
+	case KERN_NOT_IN_SET:
+	case KERN_INVALID_NAME:
+	case KERN_INVALID_TASK:
+	case KERN_INVALID_RIGHT:
+	case KERN_INVALID_VALUE:
+	case KERN_INVALID_CAPABILITY:
+	case KERN_INVALID_HOST:
+	case KERN_MEMORY_PRESENT:
+	case KERN_INVALID_PROCESSOR_SET:
+	case KERN_INVALID_POLICY:
+	case KERN_ALREADY_WAITING:
+	case KERN_DEFAULT_SET:
+	case KERN_EXCEPTION_PROTECTED:
+	case KERN_INVALID_LEDGER:
+	case KERN_INVALID_MEMORY_CONTROL:
+	case KERN_INVALID_SECURITY:
+	case KERN_NOT_DEPRESSED:
+	case KERN_LOCK_OWNED:
+	case KERN_LOCK_OWNED_SELF:
+		return EINVAL;
+
+	case KERN_NOT_RECEIVER:
+	case KERN_NO_ACCESS:
+	case KERN_POLICY_STATIC:
+		return EACCES;
+
+	case KERN_NO_SPACE:
+	case KERN_RESOURCE_SHORTAGE:
+	case KERN_UREFS_OVERFLOW:
+	case KERN_INVALID_OBJECT:
+		return ENOMEM;
+
+	case KERN_MEMORY_FAILURE:
+	case KERN_MEMORY_ERROR:
+	case KERN_PROTECTION_FAILURE:
+		return EFAULT;
+
+	case KERN_POLICY_LIMIT:
+	case KERN_CODESIGN_ERROR:
+	case KERN_DENIED:
+		return EPERM;
+
+	case KERN_ALREADY_IN_SET:
+	case KERN_NAME_EXISTS:
+	case KERN_RIGHT_EXISTS:
+		return EEXIST;
+
+	case KERN_ABORTED:
+		return EINTR;
+
+	case KERN_TERMINATED:
+	case KERN_LOCK_SET_DESTROYED:
+	case KERN_LOCK_UNSTABLE:
+	case KERN_SEMAPHORE_DESTROYED:
+	case KERN_NOT_FOUND:
+	case KERN_NOT_WAITING:
+		return ENOENT;
+
+	case KERN_RPC_SERVER_TERMINATED:
+		return ECONNRESET;
+
+	case KERN_NOT_SUPPORTED:
+		return ENOTSUP;
+
+	case KERN_NODE_DOWN:
+		return ENETDOWN;
+
+	case KERN_OPERATION_TIMED_OUT:
+		return ETIMEDOUT;
+
+	default:
+		return EIO; /* 5 == KERN_FAILURE */
+	}
+}
+
+/*
+ * Return the mach return value corresponding to a given BSD errno.
+ */
+kern_return_t
+kern_return_for_errno(int bsd_errno)
+{
+	switch (bsd_errno) {
+	case 0:
+		return KERN_SUCCESS;
+	case EIO:
+	case EACCES:
+	case ENOMEM:
+	case EFAULT:
+		return KERN_MEMORY_ERROR;
+
+	case EINVAL:
+		return KERN_INVALID_ARGUMENT;
+
+	case ETIMEDOUT:
+	case EBUSY:
+		return KERN_OPERATION_TIMED_OUT;
+
+	case ECONNRESET:
+		return KERN_RPC_SERVER_TERMINATED;
+
+	case ENOTSUP:
+		return KERN_NOT_SUPPORTED;
+
+	case ENETDOWN:
+		return KERN_NODE_DOWN;
+
+	case ENOENT:
+		return KERN_NOT_FOUND;
+
+	case EINTR:
+		return KERN_ABORTED;
+
+	case EPERM:
+		return KERN_DENIED;
+
+	case EEXIST:
+		return KERN_ALREADY_IN_SET;
+
+	default:
+		return KERN_FAILURE;
+	}
 }

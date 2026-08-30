@@ -29,7 +29,7 @@
 #ifndef __VM_VM_OPTIONS_H__
 #define __VM_VM_OPTIONS_H__
 
-#define UPL_DEBUG DEBUG
+#define UPL_DEBUG (DEVELOPMENT || DEBUG)
 // #define VM_PIP_DEBUG
 
 #define VM_PAGE_BUCKETS_CHECK DEBUG
@@ -42,6 +42,30 @@
 
 #define VM_OBJECT_ACCESS_TRACKING (DEVELOPMENT || DEBUG)
 
-#define VM_NAMED_ENTRY_LIST (DEVELOPMENT || DEBUG)
+#define VM_NAMED_ENTRY_DEBUG (DEVELOPMENT || DEBUG)
+
+#define FBDP_DEBUG_OBJECT_NO_PAGER (DEVELOPMENT || DEBUG)
+
+#if XNU_TARGET_OS_OSX && defined(__arm64__)
+/*
+ * These control whether the compressor thread is filling more than one segment at time. It's enabled only in macOS
+ * since the goal is to better handle multiple processes that do page-outs at the same time. Processes in
+ * embedded platforms are less likely to run more than one app at a time so this optimization is less likely
+ * to be helpful.
+ */
+#define COMPRESSOR_PAGEOUT_CHEADS_MAX_COUNT 16
+#define COMPRESSOR_PAGEOUT_CHEADS_BITS 4
+#else /* XNU_TARGET_OS_OSX && defined(__arm64__) */
+#define COMPRESSOR_PAGEOUT_CHEADS_MAX_COUNT 1
+#define COMPRESSOR_PAGEOUT_CHEADS_BITS 0
+#endif /* XNU_TARGET_OS_OSX && defined(__arm64__) */
+
+#define PAGE_SLEEP_WITH_INHERITOR (1)
+
+#if DEVELOPMENT || DEBUG
+#define CONFIG_CSEG_MPROTECT 1
+#else
+#define CONFIG_CSEG_MPROTECT 0
+#endif
 
 #endif /* __VM_VM_OPTIONS_H__ */

@@ -105,13 +105,24 @@ do_count(const char *dev, const char *hname, int search)
 }
 
 static void
+free_file_list(struct file_list *fl)
+{
+	struct file_list *fl_prev;
+	while (fl != 0) {
+		fl_prev = fl;
+		fl = fl->f_next;
+		free((char *)fl_prev);
+	}
+}
+
+static void
 do_header(const char *dev, const char *hname, int count)
 {
 	char *file, *name;
 	const char *inw;
 	char *inwcopy;
 	struct file_list *fl = NULL;    /* may exit for(;;) uninitted */
-	struct file_list *fl_head, *fl_prev;
+	struct file_list *fl_head;
 	FILE *inf, *outf;
 	int inc, oldcount;
 
@@ -169,11 +180,7 @@ do_header(const char *dev, const char *hname, int count)
 	}
 	(void) fclose(inf);
 	if (count == oldcount) {
-		while (fl != 0) {
-			fl_prev = fl;
-			fl = fl->f_next;
-			free((char *)fl_prev);
-		}
+		free_file_list(fl_head);
 		return;
 	}
 	if (oldcount == -1) {
@@ -192,8 +199,8 @@ do_header(const char *dev, const char *hname, int count)
 	for (fl = fl_head; fl != 0; fl = fl->f_next) {
 		fprintf(outf, "#define %s %d\n",
 		    fl->f_fn, count ? fl->f_type : 0);
-		free((char *)fl);
 	}
+	free_file_list(fl_head);
 	(void) fclose(outf);
 }
 

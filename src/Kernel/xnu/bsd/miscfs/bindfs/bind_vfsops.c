@@ -80,9 +80,6 @@
 
 #define BINDFS_ENTITLEMENT "com.apple.private.bindfs-allow"
 
-#define SIZEOF_MEMBER(type, member) (sizeof(((type *)0)->member))
-#define MAX_MNT_FROM_LENGTH (SIZEOF_MEMBER(struct vfsstatfs, f_mntfromname))
-
 static int
 bindfs_vfs_getlowerattr(mount_t mp, struct vfs_attr * vfap, vfs_context_t ctx)
 {
@@ -140,7 +137,7 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
 	}
 
 	/* check entitlement */
-	if (!IOTaskHasEntitlement(current_task(), BINDFS_ENTITLEMENT)) {
+	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
 		return EPERM;
 	}
 
@@ -155,9 +152,9 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
 
 	/* This could happen if the system is configured for 32 bit inodes instead of
 	 * 64 bit */
-	if (count > MAX_MNT_FROM_LENGTH) {
+	if (count > sizeof(vfs_statfs(mp)->f_mntfromname)) {
 		error = EINVAL;
-		BINDFSERROR("path to mount too large for this system %zu vs %lu\n", count, MAX_MNT_FROM_LENGTH);
+		BINDFSERROR("path to mount too large for this system %zu vs %lu\n", count, sizeof(vfs_statfs(mp)->f_mntfromname));
 		goto error;
 	}
 
@@ -180,11 +177,7 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
 
 	BINDFSDEBUG("mount %s\n", data);
 
-	MALLOC(xmp, struct bind_mount *, sizeof(*xmp), M_TEMP, M_WAITOK | M_ZERO);
-	if (xmp == NULL) {
-		error = ENOMEM;
-		goto error;
-	}
+	xmp = kalloc_type(struct bind_mount, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	/*
 	 * Save reference to underlying FS
@@ -229,7 +222,7 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
 
 	/* fill in the stat block */
 	sp = vfs_statfs(mp);
-	strlcpy(sp->f_mntfromname, data, MAX_MNT_FROM_LENGTH);
+	strlcpy(sp->f_mntfromname, data, sizeof(sp->f_mntfromname));
 
 	sp->f_flags = flags;
 
@@ -289,7 +282,7 @@ bindfs_mount(struct mount * mp, __unused vnode_t devvp, user_addr_t user_data, v
 
 error:
 	if (xmp) {
-		FREE(xmp, M_TEMP);
+		kfree_type(struct bind_mount, xmp);
 	}
 	if (lowerrootvp) {
 		vnode_getwithref(lowerrootvp);
@@ -320,7 +313,7 @@ bindfs_unmount(struct mount * mp, int mntflags, __unused vfs_context_t ctx)
 	BINDFSDEBUG("mp = %p\n", (void *)mp);
 
 	/* check entitlement or superuser*/
-	if (!IOTaskHasEntitlement(current_task(), BINDFS_ENTITLEMENT) &&
+	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT) &&
 	    vfs_context_suser(ctx) != 0) {
 		return EPERM;
 	}
@@ -363,7 +356,7 @@ bindfs_unmount(struct mount * mp, int mntflags, __unused vfs_context_t ctx)
 	vnode_rele(mntdata->bindm_lowerrootvp);
 	vnode_put(mntdata->bindm_lowerrootvp);
 
-	FREE(mntdata, M_TEMP);
+	kfree_type(struct bind_mount, mntdata);
 
 	uint64_t vflags = vfs_flags(mp);
 	vfs_setflags(mp, vflags & ~MNT_LOCAL);

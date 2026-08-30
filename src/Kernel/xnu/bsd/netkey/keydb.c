@@ -72,14 +72,11 @@
 #include <netinet/in.h>
 
 #include <net/pfkeyv2.h>
+#include <netkey/key.h>
 #include <netkey/keydb.h>
 #include <netinet6/ipsec.h>
 
 #include <net/net_osdep.h>
-
-extern lck_mtx_t  *sadb_mutex;
-
-MALLOC_DEFINE(M_SECA, "key mgmt", "security associations, key management");
 
 // static void keydb_delsecasvar(struct secasvar *); // not used
 
@@ -89,18 +86,15 @@ MALLOC_DEFINE(M_SECA, "key mgmt", "security associations, key management");
 struct secpolicy *
 keydb_newsecpolicy(void)
 {
-	struct secpolicy *p;
-
 	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_NOTOWNED);
 
-	return (struct secpolicy *)_MALLOC(sizeof(*p), M_SECA,
-	           M_WAITOK | M_ZERO);
+	return kalloc_type(struct secpolicy, Z_WAITOK | Z_ZERO);
 }
 
 void
 keydb_delsecpolicy(struct secpolicy *p)
 {
-	_FREE(p, M_SECA);
+	kfree_type(struct secpolicy, p);
 }
 
 /*
@@ -110,88 +104,20 @@ struct secashead *
 keydb_newsecashead(void)
 {
 	struct secashead *p;
-	int i;
 
 	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_OWNED);
 
-	p = (struct secashead *)_MALLOC(sizeof(*p), M_SECA, M_NOWAIT | M_ZERO);
+	p = kalloc_type(struct secashead, Z_NOWAIT | Z_ZERO);
 	if (!p) {
 		lck_mtx_unlock(sadb_mutex);
-		p = (struct secashead *)_MALLOC(sizeof(*p), M_SECA,
-		    M_WAITOK | M_ZERO);
+		p = kalloc_type(struct secashead, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 		lck_mtx_lock(sadb_mutex);
 	}
-	if (!p) {
-		return p;
-	}
-	for (i = 0; i < sizeof(p->savtree) / sizeof(p->savtree[0]); i++) {
+	for (size_t i = 0; i < ARRAY_COUNT(p->savtree); i++) {
 		LIST_INIT(&p->savtree[i]);
 	}
 	return p;
 }
-
-#if 0
-void
-keydb_delsecashead(p)
-struct secashead *p;
-{
-	_FREE(p, M_SECA);
-}
-
-
-
-/*
- * secasvar management (reference counted)
- */
-struct secasvar *
-keydb_newsecasvar()
-{
-	struct secasvar *p;
-
-	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_NOTOWNED);
-
-	p = (struct secasvar *)_MALLOC(sizeof(*p), M_SECA, M_WAITOK);
-	if (!p) {
-		return p;
-	}
-	bzero(p, sizeof(*p));
-	p->refcnt = 1;
-	return p;
-}
-
-void
-keydb_refsecasvar(p)
-struct secasvar *p;
-{
-	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_OWNED);
-
-	p->refcnt++;
-}
-
-void
-keydb_freesecasvar(p)
-struct secasvar *p;
-{
-	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_OWNED);
-
-	p->refcnt--;
-	/* negative refcnt will cause panic intentionally */
-	if (p->refcnt <= 0) {
-		keydb_delsecasvar(p);
-	}
-}
-
-static void
-keydb_delsecasvar(p)
-struct secasvar *p;
-{
-	if (p->refcnt) {
-		panic("keydb_delsecasvar called with refcnt != 0");
-	}
-
-	_FREE(p, M_SECA);
-}
-#endif
 
 /*
  * secreplay management
@@ -200,34 +126,28 @@ struct secreplay *
 keydb_newsecreplay(u_int8_t wsize)
 {
 	struct secreplay *p;
+	caddr_t tmp_bitmap = NULL;
 
 	LCK_MTX_ASSERT(sadb_mutex, LCK_MTX_ASSERT_OWNED);
 
-	p = (struct secreplay *)_MALLOC(sizeof(*p), M_SECA, M_NOWAIT | M_ZERO);
+	p = kalloc_type(struct secreplay, Z_NOWAIT | Z_ZERO);
 	if (!p) {
 		lck_mtx_unlock(sadb_mutex);
-		p = (struct secreplay *)_MALLOC(sizeof(*p), M_SECA,
-		    M_WAITOK | M_ZERO);
+		p = kalloc_type(struct secreplay, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 		lck_mtx_lock(sadb_mutex);
-	}
-	if (!p) {
-		return p;
 	}
 
 	if (wsize != 0) {
-		p->bitmap = (caddr_t)_MALLOC(wsize, M_SECA, M_NOWAIT | M_ZERO);
-		if (!p->bitmap) {
+		tmp_bitmap = (caddr_t)kalloc_data(wsize, Z_NOWAIT | Z_ZERO);
+		if (!tmp_bitmap) {
 			lck_mtx_unlock(sadb_mutex);
-			p->bitmap = (caddr_t)_MALLOC(wsize, M_SECA,
-			    M_WAITOK | M_ZERO);
+			tmp_bitmap = (caddr_t)kalloc_data(wsize, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 			lck_mtx_lock(sadb_mutex);
-			if (!p->bitmap) {
-				_FREE(p, M_SECA);
-				return NULL;
-			}
 		}
+
+		p->bitmap = tmp_bitmap;
+		p->wsize = wsize;
 	}
-	p->wsize = wsize;
 	return p;
 }
 
@@ -235,31 +155,7 @@ void
 keydb_delsecreplay(struct secreplay *p)
 {
 	if (p->bitmap) {
-		_FREE(p->bitmap, M_SECA);
+		kfree_data_sized_by(p->bitmap, p->wsize);
 	}
-	_FREE(p, M_SECA);
+	kfree_type(struct secreplay, p);
 }
-
-#if 0
-/*	NOT USED
- * secreg management
- */
-struct secreg *
-keydb_newsecreg()
-{
-	struct secreg *p;
-
-	p = (struct secreg *)_MALLOC(sizeof(*p), M_SECA, M_WAITOK);
-	if (p) {
-		bzero(p, sizeof(*p));
-	}
-	return p;
-}
-
-void
-keydb_delsecreg(p)
-struct secreg *p;
-{
-	_FREE(p, M_SECA);
-}
-#endif

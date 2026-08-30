@@ -2617,8 +2617,9 @@ static void getHostInfo(const macho_header* mainExecutableMH, uintptr_t mainExec
 	mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
 	mach_port_t hostPort = mach_host_self();
 	kern_return_t result = host_info(hostPort, HOST_BASIC_INFO, (host_info_t)&info, &count);
-	if ( result != KERN_SUCCESS )
+	if ( result != KERN_SUCCESS ) {
 		throw "host_info() failed";
+	}
 	sHostCPU		= info.cpu_type;
 	sHostCPUsubtype = info.cpu_subtype;
 	mach_port_deallocate(mach_task_self(), hostPort);
@@ -6636,9 +6637,6 @@ _main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide,
 	CRSetCrashLogMessage("dyld: launch started");
 
 	setContext(mainExecutableMH, argc, argv, envp, apple);
-
-	//gLinkContext.verboseMapping = true;
-	//gLinkContext.verboseInit = true;
 
 	// Pickup the pointer to the exec path.
 	sExecPath = _simple_getenv(apple, "executable_path");

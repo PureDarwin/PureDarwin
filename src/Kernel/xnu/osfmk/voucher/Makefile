@@ -30,6 +30,9 @@ DATAFILES = \
 INSTALL_MI_LIST	= \
 	${DATAFILES}
 
+INSTALL_SF_MI_LCL_LIST = \
+	${DATAFILES}
+
 INSTALL_KF_MI_LIST = \
 	${DATAFILES}
 
@@ -75,8 +78,6 @@ ${MIG_USHDRS} : \
 
 INCFLAGS_MAKEFILE= -I..
 
-MIGKSFLAGS      = -DMACH_KERNEL_PRIVATE -DKERNEL_SERVER=1
-MIGKUFLAGS      = -DMACH_KERNEL_PRIVATE -DKERNEL_USER=1 -maxonstack 1024
 #
 # MIG-generated headers that are traditionally used by kernel
 # level code.

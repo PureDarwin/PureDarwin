@@ -9,18 +9,7 @@
 #error "Please #include <img4/firmware.h> instead of this file directly"
 #endif // __IMG4_INDIRECT
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <os/base.h>
-
-#ifndef KERNEL
-#include <os/availability.h>
-#include <unistd.h>
-#endif
-
-#if !XNU_KERNEL_PRIVATE
-#include <TargetConditionals.h>
-#endif
+#include <img4/shim.h>
 
 /*!
  * @const IMG4_API_VERSION
@@ -40,25 +29,23 @@
  * Breaking API changes will be both covered under this mechanism as well as
  * individual preprocessor macros in this header that declare new behavior as
  * required.
+ *
+ * @note
+ * For a period of time, the API version was incorrectly defined as 20212105
+ * when it should have been 20210521. Avoid version comparisons across that
+ * version epoch.
  */
-#define IMG4_API_VERSION (20200724u)
+#define IMG4_API_VERSION (20221202u)
 
-#if IMG4_TAPI || (!defined(KERNEL) && !IMG4_PROJECT_BUILD)
-#define IMG4_API_AVAILABLE_20180112 \
+#if IMG4_TARGET_DARWIN
+#define IMG4_API_AVAILABLE_FALL_2018 \
 		API_AVAILABLE( \
 			macos(10.15), \
 			ios(12.0), \
 			tvos(12.0), \
 			watchos(5.0))
 
-#define IMG4_API_AVAILABLE_20180112_DEPRECATED \
-		API_DEPRECATED_WITH_REPLACEMENT( \
-			"img4_firmware_t", \
-			macos(10.15, 11.0), \
-			ios(12.0, 14.0), \
-			tvos(12.0, 14.0), \
-			watchos(5.0, 7.0))
-#define IMG4_API_AVAILABLE_20181004 \
+#define IMG4_API_DEPRECATED_FALL_2018 \
 		API_DEPRECATED_WITH_REPLACEMENT( \
 			"img4_firmware_t", \
 			macos(10.15, 11.0), \
@@ -66,92 +53,88 @@
 			tvos(12.2, 14.0), \
 			watchos(5.2, 7.0))
 
-// This API version introduced the nonce manager which was not deprecated when
-// the new API was introduced.
-#define IMG4_API_AVAILABLE_20181106 \
-		API_AVAILABLE( \
+#define IMG4_API_AVAILABLE_SPRING_2019 \
+		API_AVAILABLE(\
 			macos(10.15), \
 			ios(12.2), \
 			tvos(12.2), \
 			watchos(5.2))
-#define IMG4_API_AVAILABLE_20181106_DEPRECATED \
-		API_DEPRECATED_WITH_REPLACEMENT( \
-			"img4_firmware_t", \
-			macos(10.15, 11.0), \
-			ios(12.2, 14.0), \
-			tvos(12.2, 14.0), \
-			watchos(5.2, 7.0))
-#define IMG4_API_AVAILABLE_20190125 \
-		API_DEPRECATED_WITH_REPLACEMENT( \
-			"img4_firmware_t", \
-			macos(10.15, 11.0), \
-			ios(13.0, 14.0), \
-			tvos(13.0, 14.0), \
-			watchos(6.0, 7.0))
-#define IMG4_API_AVAILABLE_20191001 \
-		API_DEPRECATED_WITH_REPLACEMENT( \
-			"img4_firmware_t", \
-			macos(10.15.2, 11.0), \
-			ios(13.3, 14.0), \
-			tvos(13.3, 14.0), \
-			watchos(6.1.1, 7.0))
-#define IMG4_API_AVAILABLE_20191108 \
-		API_DEPRECATED_WITH_REPLACEMENT( \
-			"img4_firmware_t", \
-			macos(11.0, 11.0), \
-			ios(14.0, 14.0), \
-			tvos(14.0, 14.0), \
-			watchos(7.0, 7.0))
-#define IMG4_API_AVAILABLE_20200221 \
-		API_DEPRECATED_WITH_REPLACEMENT( \
-			"img4_firmware_t", \
-			macos(11.0, 11.0), \
-			ios(14.0, 14.0), \
-			tvos(14.0, 14.0), \
-			watchos(7.0, 7.0))
-#define IMG4_API_AVAILABLE_20200310 \
-		API_DEPRECATED_WITH_REPLACEMENT( \
-			"img4_firmware_t", \
-			macos(11.0, 11.0), \
-			ios(14.0, 14.0), \
-			tvos(14.0, 14.0), \
-			watchos(7.0, 7.0))
-#define IMG4_API_AVAILABLE_20200508 \
+
+#define IMG4_API_AVAILABLE_FALL_2020 \
 		API_AVAILABLE( \
 			macos(11.0), \
 			ios(14.0), \
 			tvos(14.0), \
 			watchos(7.0), \
 			bridgeos(5.0))
-#define IMG4_API_AVAILABLE_20200608 \
+
+#define IMG4_API_AVAILABLE_FALL_2021 \
 		API_AVAILABLE( \
-			macos(11.0), \
-			ios(14.0), \
-			tvos(14.0), \
-			watchos(7.0), \
-			bridgeos(5.0))
-#define IMG4_API_AVAILABLE_20200724 \
+			macos(12.0), \
+			ios(15.0), \
+			tvos(15.0), \
+			watchos(8.0), \
+			bridgeos(6.0))
+
+#define IMG4_API_AVAILABLE_FALL_2021_B \
 		API_AVAILABLE( \
-			macos(11.0), \
-			ios(14.0), \
-			tvos(14.0), \
-			watchos(7.0), \
-			bridgeos(5.0))
+			macos(12.1), \
+			ios(15.1), \
+			tvos(15.1), \
+			watchos(8.1), \
+			bridgeos(6.1))
+#define IMG4_API_AVAILABLE_FALL_2022 \
+		API_AVAILABLE( \
+			macos(13.0), \
+			ios(16.0), \
+			tvos(16.0), \
+			watchos(9.0), \
+			bridgeos(7.0))
+#define IMG4_API_AVAILABLE_SPRING_2023 \
+		API_AVAILABLE( \
+			macos(13.3), \
+			ios(16.4), \
+			tvos(16.4), \
+			watchos(9.4), \
+			bridgeos(7.4))
 #else
-#define IMG4_API_AVAILABLE_20180112
-#define IMG4_API_AVAILABLE_20180112_DEPRECATED
-#define IMG4_API_AVAILABLE_20181004
-#define IMG4_API_AVAILABLE_20181106
-#define IMG4_API_AVAILABLE_20181106_DEPRECATED
-#define IMG4_API_AVAILABLE_20190125
-#define IMG4_API_AVAILABLE_20191001
-#define IMG4_API_AVAILABLE_20191108
-#define IMG4_API_AVAILABLE_20200221
-#define IMG4_API_AVAILABLE_20200310
-#define IMG4_API_AVAILABLE_20200508
-#define IMG4_API_AVAILABLE_20200608
-#define IMG4_API_AVAILABLE_20200724
+#define IMG4_API_AVAILABLE_FALL_2018
+#define IMG4_API_DEPRECATED_FALL_2018
+#define IMG4_API_AVAILABLE_SPRING_2019
+#define IMG4_API_AVAILABLE_FALL_2020
+#define IMG4_API_AVAILABLE_FALL_2021
+#define IMG4_API_AVAILABLE_FALL_2021_B
+#define IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_SPRING_2023
 #endif
+
+#define IMG4_API_AVAILABLE_20180112 IMG4_API_AVAILABLE_FALL_2018
+#define IMG4_API_AVAILABLE_20181106 IMG4_API_AVAILABLE_SPRING_2019
+#define IMG4_API_AVAILABLE_20200508 IMG4_API_AVAILABLE_FALL_2020
+#define IMG4_API_AVAILABLE_20200608 IMG4_API_AVAILABLE_FALL_2020
+#define IMG4_API_AVAILABLE_20200724 IMG4_API_AVAILABLE_FALL_2020
+#define IMG4_API_AVAILABLE_20210113 IMG4_API_AVAILABLE_FALL_2021
+#define IMG4_API_AVAILABLE_20210205 IMG4_API_AVAILABLE_FALL_2021
+#define IMG4_API_AVAILABLE_20210226 IMG4_API_AVAILABLE_FALL_2021
+#define IMG4_API_AVAILABLE_20210305 IMG4_API_AVAILABLE_FALL_2021
+#define IMG4_API_AVAILABLE_20210521 IMG4_API_AVAILABLE_FALL_2021
+#define IMG4_API_AVAILABLE_20210624 IMG4_API_AVAILABLE_FALL_2021
+#define IMG4_API_AVAILABLE_20210731 IMG4_API_AVAILABLE_FALL_2021_B
+#define IMG4_API_AVAILABLE_20211105 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20211112 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20211119 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20211126 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20211224 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220128 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220322 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220401 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220513 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220711 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220714 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220715 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220912 IMG4_API_AVAILABLE_FALL_2022
+#define IMG4_API_AVAILABLE_20220915 IMG4_API_AVAILABLE_SPRING_2023
+#define IMG4_API_AVAILABLE_20221202 IMG4_API_AVAILABLE_SPRING_2023
 
 /*!
  * @typedef img4_struct_version_t

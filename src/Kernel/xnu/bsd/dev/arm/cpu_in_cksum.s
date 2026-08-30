@@ -65,8 +65,11 @@
 
 #ifdef KERNEL
 #include "../../../osfmk/arm/arch.h"
-#include "../../../osfmk/arm/proc_reg.h"
+#include "../../../osfmk/arm64/proc_reg.h"
 
+#if __ARM_VFP__ < 3
+#error "Unsupported: __ARM_VFP__ < 3"
+#endif /* __ARM_VFP__ < 3 */
 #define	CKSUM_ERR _kprintf
 #else /* !KERNEL */
 #ifndef LIBSYSCALL_INTERFACE
@@ -137,7 +140,6 @@
  * for folding the 32-bit sum into 16-bit and performinng the 1's
  * complement if applicable
  */
-#if __ARM_VFP__ >= 3
 	.globl	_os_cpu_in_cksum_mbuf
 	.text
 	.align	4
@@ -457,5 +459,3 @@ _os_cpu_in_cksum_mbuf:
 .Lin_cksum_whoops_str:
 	.asciz	"os_cpu_in_cksum_mbuf: out of data\n"
 	.align	5
-
-#endif /* __ARM_VFP__ >= 3 */

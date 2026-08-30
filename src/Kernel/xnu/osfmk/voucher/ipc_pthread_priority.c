@@ -27,7 +27,6 @@
  */
 
 #include <voucher/ipc_pthread_priority_types.h>
-#include <voucher/ipc_pthread_priority_internal.h>
 #include <mach/mach_types.h>
 #include <mach/kern_return.h>
 #include <ipc/ipc_port.h>
@@ -40,10 +39,11 @@
 #include <kern/ledger.h>
 #include <sys/kdebug.h>
 #include <IOKit/IOBSD.h>
-#include <mach/mach_voucher_attr_control.h>
 #include <pthread/priority_private.h>
 
 ipc_voucher_attr_control_t  ipc_pthread_priority_voucher_attr_control;    /* communication channel from PTHPRIORITY to voucher system */
+
+#define PTHPRIORITY_ATTR_DEFAULT_VALUE (0)
 
 #define IPC_PTHREAD_PRIORITY_VALUE_TO_HANDLE(x) ((mach_voucher_attr_value_handle_t)(x))
 #define HANDLE_TO_IPC_PTHREAD_PRIORITY_VALUE(x) ((ipc_pthread_priority_value_t)(x))
@@ -90,9 +90,6 @@ ipc_pthread_priority_command(
 	mach_voucher_attr_content_t out_content,
 	mach_voucher_attr_content_size_t *in_out_content_size);
 
-void
-ipc_pthread_priority_release(ipc_voucher_attr_manager_t __assert_only manager);
-
 /*
  * communication channel from voucher system to IPC_PTHREAD_PRIORITY
  */
@@ -101,7 +98,6 @@ const struct ipc_voucher_attr_manager ipc_pthread_priority_manager = {
 	.ivam_get_value        = ipc_pthread_priority_get_value,
 	.ivam_extract_content  = ipc_pthread_priority_extract_content,
 	.ivam_command          = ipc_pthread_priority_command,
-	.ivam_release          = ipc_pthread_priority_release,
 	.ivam_flags            = IVAM_FLAGS_NONE,
 };
 
@@ -110,24 +106,20 @@ const struct ipc_voucher_attr_manager ipc_pthread_priority_manager = {
  * Purpose: Initialize the IPC_PTHREAD_PRIORITY subsystem.
  * Returns: None.
  */
-void
-ipc_pthread_priority_init()
+__startup_func
+static void
+ipc_pthread_priority_init(void)
 {
-	kern_return_t kr = KERN_SUCCESS;
-
 	/* Register the ipc_pthread_priority manager with the Vouchers sub system. */
-	kr = ipc_register_well_known_mach_voucher_attr_manager(
+	ipc_register_well_known_mach_voucher_attr_manager(
 		&ipc_pthread_priority_manager,
 		0,
 		MACH_VOUCHER_ATTR_KEY_PTHPRIORITY,
 		&ipc_pthread_priority_voucher_attr_control);
-	if (kr != KERN_SUCCESS) {
-		panic("IPC_PTHREAD_PRIORITY subsystem initialization failed");
-	}
 
 	kprintf("IPC_PTHREAD_PRIORITY subsystem is initialized\n");
-	return;
 }
+STARTUP(MACH_IPC, STARTUP_RANK_FIRST, ipc_pthread_priority_init);
 
 /*
  * IPC_PTHREAD_PRIORITY Resource Manager Routines.
@@ -152,7 +144,7 @@ ipc_pthread_priority_release_value(
 
 	ipc_pthread_priority_value_t ipc_pthread_priority_value = HANDLE_TO_IPC_PTHREAD_PRIORITY_VALUE(value);
 
-	panic("ipc_pthread_priority_release_value called for a persistent PTHPRIORITY value %x with sync value %d\n", ipc_pthread_priority_value, sync);
+	panic("ipc_pthread_priority_release_value called for a persistent PTHPRIORITY value %x with sync value %d", ipc_pthread_priority_value, sync);
 	return KERN_FAILURE;
 }
 
@@ -280,11 +272,4 @@ ipc_pthread_priority_command(
 	assert(manager == &ipc_pthread_priority_manager);
 
 	return KERN_FAILURE;
-}
-
-void
-ipc_pthread_priority_release(
-	ipc_voucher_attr_manager_t              __assert_only manager)
-{
-	assert(manager == &ipc_pthread_priority_manager);
 }

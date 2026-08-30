@@ -44,44 +44,46 @@
 /* AAPCS-64 Page 14
  *
  * A subroutine invocation must preserve the contents of the registers r19-r29
- * and SP. We also save IP0 and IP1, as machine_idle uses IP0 for saving the LR.
+ * and SP.
  */
-	stp		x16, x17, [$0, SS64_KERNEL_X16]
+#if __has_feature(ptrauth_calls)
+	paciasp
+#endif
 	stp		x19, x20, [$0, SS64_KERNEL_X19]
 	stp		x21, x22, [$0, SS64_KERNEL_X21]
 	stp		x23, x24, [$0, SS64_KERNEL_X23]
 	stp		x25, x26, [$0, SS64_KERNEL_X25]
 	stp		x27, x28, [$0, SS64_KERNEL_X27]
 	stp		fp, lr, [$0, SS64_KERNEL_FP]
-	str		xzr, [$0, SS64_KERNEL_PC]
-	MOV32	w$1, PSR64_KERNEL_POISON
-	str		w$1, [$0, SS64_KERNEL_CPSR]	
-#ifdef HAS_APPLE_PAC
-	stp		x0, x1, [sp, #-16]!
-	stp		x2, x3, [sp, #-16]!
-	stp		x4, x5, [sp, #-16]!
-
-	/*
-	 * Arg0: The ARM context pointer
-	 * Arg1: PC value to sign
-	 * Arg2: CPSR value to sign
-	 * Arg3: LR to sign
-	 */
-	mov		x0, $0
-	mov		x1, #0
-	mov		w2, w$1
-	mov		x3, lr
-	mov		x4, x16
-	mov		x5, x17
-	bl		EXT(ml_sign_kernel_thread_state)
-
-	ldp		x4, x5, [sp], #16
-	ldp		x2, x3, [sp], #16
-	ldp		x0, x1, [sp], #16
-	ldp		fp, lr, [$0, SS64_KERNEL_FP]
-#endif /* defined(HAS_APPLE_PAC) */
+	strb	wzr, [$0, SS64_KERNEL_PC_WAS_IN_USER]
 	mov		x$1, sp
 	str		x$1, [$0, SS64_KERNEL_SP]
+#if HAS_ARM_FEAT_SSBS2
+#if APPLEVIRTUALPLATFORM
+	adrp	x$1, EXT(gARM_FEAT_SSBS)@page
+	ldrh	w$1, [x$1, EXT(gARM_FEAT_SSBS)@pageoff]
+	cbz		x$1, 1f
+#endif
+	mrs		x$1, SSBS
+	lsr     x$1, x$1, #0 + PSR64_SSBS_SHIFT_64
+	strb	w$1, [$0, SS64_KERNEL_SSBS]
+1:
+#endif // HAS_ARM_FEAT_SSBS2
+#if HAS_MTE
+	mrs		x$1, TCO
+	lsr     x$1, x$1, #0 + PSR64_TCO_SHIFT
+	strb	w$1, [$0, SS64_KERNEL_TCO]
+#endif //HAS_MTE
+#if __ARM_ARCH_8_4__
+	mrs		x$1, DIT
+	lsr     x$1, x$1, #0 + PSR64_DIT_SHIFT
+	strb	w$1, [$0, SS64_KERNEL_DIT]
+#endif //__ARM_ARCH_8_4__
+#if __ARM_ARCH_8_2__
+	mrs		x$1, UAO
+	lsr     x$1, x$1, #0 + PSR64_UAO_SHIFT
+	strb	w$1, [$0, SS64_KERNEL_UAO]
+#endif //__ARM_ARCH_8_2__
 
 /* AAPCS-64 Page 14
  *
@@ -110,32 +112,45 @@
  *   arg1 - Scratch register
  */
 .macro	load_general_registers
-	mov		x20, x0
-	mov		x21, x1
-	mov		x22, x2
-
-	mov		x0, $0
-	AUTH_KERNEL_THREAD_STATE_IN_X0	x23, x24, x25, x26, x27
-
-	mov		x0, x20
-	mov		x1, x21
-	mov		x2, x22
-
 	ldr		w$1, [$0, NS64_KERNEL_FPCR]
 	mrs		x19, FPCR
 	CMSR FPCR, x19, x$1, 1
 1:
 
-	// Skip x16, x17 - already loaded + authed by AUTH_THREAD_STATE_IN_X0
 	ldp		x19, x20, [$0, SS64_KERNEL_X19]
 	ldp		x21, x22, [$0, SS64_KERNEL_X21]
 	ldp		x23, x24, [$0, SS64_KERNEL_X23]
 	ldp		x25, x26, [$0, SS64_KERNEL_X25]
 	ldp		x27, x28, [$0, SS64_KERNEL_X27]
-	ldr		fp, [$0, SS64_KERNEL_FP]
-	// Skip lr - already loaded + authed by AUTH_THREAD_STATE_IN_X0
+	ldp		fp, lr, [$0, SS64_KERNEL_FP]
 	ldr		x$1, [$0, SS64_KERNEL_SP]
 	mov		sp, x$1
+#if HAS_ARM_FEAT_SSBS2
+#if APPLEVIRTUALPLATFORM
+	adrp	x$1, EXT(gARM_FEAT_SSBS)@page
+	ldrh	w$1, [x$1, EXT(gARM_FEAT_SSBS)@pageoff]
+	cbz		x$1, 1f
+#endif // APPLEVIRTUALPLATFORM
+	ldrb	w$1, [$0, SS64_KERNEL_SSBS]
+	lsl     x$1, x$1, #0 + PSR64_SSBS_SHIFT_64
+	msr		SSBS, x$1
+1:
+#endif // HAS_ARM_FEAT_SSBS2
+#if HAS_MTE
+	ldrb	w$1, [$0, SS64_KERNEL_TCO]
+	lsl     x$1, x$1, #0 + PSR64_TCO_SHIFT
+	msr		TCO, x$1
+#endif //HAS_MTE
+#if __ARM_ARCH_8_2__
+	ldrb	w$1, [$0, SS64_KERNEL_UAO]
+	lsl     x$1, x$1, #0 + PSR64_UAO_SHIFT
+	msr		UAO, x$1
+#endif //__ARM_ARCH_8_2__
+#if __ARM_ARCH_8_4__
+	ldrb	w$1, [$0, SS64_KERNEL_DIT]
+	lsl     x$1, x$1, #0 + PSR64_DIT_SHIFT
+	msr		DIT, x$1
+#endif //__ARM_ARCH_8_4__
 
 	ldr		d8,	[$0, NS64_KERNEL_D8]
 	ldr		d9,	[$0, NS64_KERNEL_D9]
@@ -146,6 +161,19 @@
 	ldr		d14,[$0, NS64_KERNEL_D14]
 	ldr		d15,[$0, NS64_KERNEL_D15]
 .endmacro
+
+/*
+ * cswitch_epilogue
+ *
+ * Returns to the address reloaded into LR, authenticating if needed.
+ */
+.macro	cswitch_epilogue
+#if __has_feature(ptrauth_calls)
+	retaa
+#else
+	ret
+#endif
+.endm
 
 
 /*
@@ -160,16 +188,40 @@
 	msr		TPIDR_EL1, $0						// Write new thread pointer to TPIDR_EL1
 	ldr		$1, [$0, ACT_CPUDATAP]
 	str		$0, [$1, CPU_ACTIVE_THREAD]
+
+	/*
+	 * This code *only* sets the lower TPIDR_EL0 bits that indicate
+	 * what core and cluster we are now running on. It does not touch
+	 * any higher bits, e.g. the bit that indicates whether x18 should
+	 * be preserved on context switch in user space.
+	 *
+	 * There are only three cases why we are here:
+	 *
+	 * 1. During bootstrap, loading the initial bootstrap thread.
+	 * 2. Coming back from sleep/wfi, loading the idle thread that we were in before.
+	 * 3. In a regular context switch, going from any thread to any other.
+	 *
+	 * For case 1 and 2, the bootstrap and idle thread respectively
+	 * never care about any of the higher bits right now. The early bootstrap path
+	 * will have zeroed them.
+	 *
+	 * For case 3, we will already have passed through
+	 * machine_switch_pmap_and_extended_context(), which will have
+	 * restored TPIDR_EL0 in its entirety.
+	 *
+	 * Note that if any bits are added to TPIDR_EL0 that the bootstrap
+	 * or idle thread may care about, this will need to change.
+	 */
+	ldr		$2, [$1, CPU_TPIDR_EL0]             // Load encoded CPU info ...
+	mrs		$1, TPIDR_EL0
+	bfi		$1, $2, #0, #MACHDEP_TPIDR_CPU_DATA_COUNT
+	msr		TPIDR_EL0, $1                       // ... into the lower bits.
+
 	ldr		$1, [$0, TH_CTH_SELF]				// Get cthread pointer
-	mrs		$2, TPIDRRO_EL0						// Extract cpu number from TPIDRRO_EL0
-	and		$2, $2, #(MACHDEP_CPUNUM_MASK)
-	orr		$2, $1, $2							// Save new cthread/cpu to TPIDRRO_EL0
-	msr		TPIDRRO_EL0, $2
-	msr		TPIDR_EL0, xzr
-#if DEBUG || DEVELOPMENT
+	msr		TPIDRRO_EL0, $1
+
 	ldr		$1, [$0, TH_THREAD_ID]				// Save the bottom 32-bits of the thread ID into
 	msr		CONTEXTIDR_EL1, $1					// CONTEXTIDR_EL1 (top 32-bits are RES0).
-#endif /* DEBUG || DEVELOPMENT */
 .endmacro
 
 #define CSWITCH_ROP_KEYS	(HAS_APPLE_PAC && HAS_PARAVIRTUALIZED_PAC)
@@ -194,16 +246,11 @@
 .macro set_process_dependent_keys_and_sync_context	thread, new_key, tmp_key, cpudatap, wsync
 
 
-#if defined(__ARM_ARCH_8_5__) || defined(HAS_APPLE_PAC)
+#if defined(HAS_APPLE_PAC)
 	ldr		\cpudatap, [\thread, ACT_CPUDATAP]
-#endif /* defined(__ARM_ARCH_8_5__) || defined(HAS_APPLE_PAC) */
+#endif /* defined(HAS_APPLE_PAC) */
 
-#if defined(__ARM_ARCH_8_5__)
-	ldrb	\wsync, [\cpudatap, CPU_SYNC_ON_CSWITCH]
-#else /* defined(__ARM_ARCH_8_5__) */
 	mov		\wsync, #0
-#endif
-
 
 #if CSWITCH_ROP_KEYS
 	ldr		\new_key, [\thread, TH_ROP_PID]
@@ -228,15 +275,28 @@ Lskip_rop_keys_\@:
 Lskip_jop_keys_\@:
 #endif /* CSWITCH_JOP_KEYS */
 
+	cbnz	\wsync, Lsync_now_\@
+#if !HAS_MTE
+	b		1f
+#else
+	/*
+	 * The HAS_MTE case:
+	 * If the new thread is inside an unprivileged access region and there is
+	 * a sync pending, we can't wait until an eret so synchronize it now.
+	 */
+	ldrb	\wsync, [\thread, IN_UNPRIVILEGED_ACCESS]
 	cbz		\wsync, 1f
-	isb 	sy
+	ldrb	\wsync, [\cpudatap, CPU_SYNC_ON_CSWITCH]
+	cbz		\wsync, 1f
+#endif /* !HAS_MTE */
+
+Lsync_now_\@:
+	isb		sy
 
 #if HAS_PARAVIRTUALIZED_PAC
 1:	/* guests need to clear the sync flag even after skipping the isb, in case they synced via hvc instead */
 #endif
-#if defined(__ARM_ARCH_8_5__)
 	strb	wzr, [\cpudatap, CPU_SYNC_ON_CSWITCH]
-#endif
 1:
 .endmacro
 
@@ -251,12 +311,13 @@ Lskip_jop_keys_\@:
 	.globl	EXT(machine_load_context)
 
 LEXT(machine_load_context)
+	ARM64_PROLOG
 	set_thread_registers 	x0, x1, x2
-	ldr		x1, [x0, TH_KSTACKPTR]				// Get top of kernel stack
+	LOAD_KERN_STACK_TOP	dst=x1, src=x0, tmp=x2	// Get top of kernel stack
 	load_general_registers 	x1, 2
 	set_process_dependent_keys_and_sync_context	x0, x1, x2, x3, w4
 	mov		x0, #0								// Clear argument to thread_continue
-	ret
+	cswitch_epilogue
 
 /*
  *  typedef void (*thread_continue_t)(void *param, wait_result_t)
@@ -271,10 +332,11 @@ LEXT(machine_load_context)
 	.globl	EXT(Call_continuation)
 
 LEXT(Call_continuation)
+	ARM64_PROLOG
 	mrs		x4, TPIDR_EL1						// Get the current thread pointer
 
 	/* ARM64_TODO arm loads the kstack top instead of arg4. What should we use? */
-	ldr		x5, [x4, TH_KSTACKPTR]				// Get the top of the kernel stack
+	LOAD_KERN_STACK_TOP	dst=x5, src=x4, tmp=x6
 	mov		sp, x5								// Set stack pointer
 	mov		fp, #0								// Clear the frame pointer
 
@@ -311,15 +373,16 @@ LEXT(Call_continuation)
 	.globl	EXT(Switch_context)
 
 LEXT(Switch_context)
+	ARM64_PROLOG
 	cbnz	x1, Lswitch_threads					// Skip saving old state if blocking on continuation
-	ldr		x3, [x0, TH_KSTACKPTR]				// Get the old kernel stack top
+	LOAD_KERN_STACK_TOP	dst=x3, src=x0, tmp=x4	// Get the old kernel stack top
 	save_general_registers	x3, 4
 Lswitch_threads:
 	set_thread_registers	x2, x3, x4
-	ldr		x3, [x2, TH_KSTACKPTR]
+	LOAD_KERN_STACK_TOP	dst=x3, src=x2, tmp=x4
 	load_general_registers	x3, 4
 	set_process_dependent_keys_and_sync_context	x2, x3, x4, x5, w6
-	ret
+	cswitch_epilogue
 
 /*
  *	thread_t Shutdown_context(void (*doshutdown)(processor_t), processor_t processor)
@@ -330,12 +393,12 @@ Lswitch_threads:
 	.globl	EXT(Shutdown_context)
 
 LEXT(Shutdown_context)
+	ARM64_PROLOG
 	mrs		x10, TPIDR_EL1							// Get thread pointer
-	ldr		x11, [x10, TH_KSTACKPTR]				// Get the top of the kernel stack
+	LOAD_KERN_STACK_TOP	dst=x11, src=x10, tmp=x12	// Get the top of the kernel stack
 	save_general_registers	x11, 12
-	msr		DAIFSet, #(DAIFSC_FIQF | DAIFSC_IRQF)	// Disable interrupts
-	ldr		x11, [x10, ACT_CPUDATAP]				// Get current cpu
-	ldr		x12, [x11, CPU_ISTACKPTR]				// Switch to interrupt stack
+	msr		DAIFSet, #(DAIFSC_STANDARD_DISABLE)	// Disable interrupts
+	LOAD_INT_STACK_THREAD dst=x12, src=x10, tmp=x11
 	mov		sp, x12
 	b		EXT(cpu_doshutdown)
 
@@ -348,11 +411,11 @@ LEXT(Shutdown_context)
 	.globl	EXT(Idle_context)
 
 LEXT(Idle_context)
+	ARM64_PROLOG
 	mrs		x0, TPIDR_EL1						// Get thread pointer
-	ldr		x1, [x0, TH_KSTACKPTR]				// Get the top of the kernel stack
+	LOAD_KERN_STACK_TOP	dst=x1, src=x0, tmp=x2	// Get the top of the kernel stack
 	save_general_registers	x1, 2
-	ldr		x1, [x0, ACT_CPUDATAP]				// Get current cpu
-	ldr		x2, [x1, CPU_ISTACKPTR]				// Switch to interrupt stack
+	LOAD_INT_STACK_THREAD	dst=x2, src=x0, tmp=x1
 	mov		sp, x2
 	b		EXT(cpu_idle)
 
@@ -365,15 +428,17 @@ LEXT(Idle_context)
 	.globl	EXT(Idle_load_context)
 
 LEXT(Idle_load_context)
+	ARM64_PROLOG
 	mrs		x0, TPIDR_EL1						// Get thread pointer
-	ldr		x1, [x0, TH_KSTACKPTR]				// Get the top of the kernel stack
+	LOAD_KERN_STACK_TOP	dst=x1, src=x0, tmp=x2	// Get the top of the kernel stack
 	load_general_registers	x1, 2
 	set_process_dependent_keys_and_sync_context	x0, x1, x2, x3, w4
-	ret
+	cswitch_epilogue
 
 	.align	2
 	.globl	EXT(machine_set_current_thread)
 LEXT(machine_set_current_thread)
+	ARM64_PROLOG
 	set_thread_registers x0, x1, x2
 	ret
 

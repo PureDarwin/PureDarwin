@@ -209,6 +209,11 @@ _pthread_exit_if_canceled(int error)
 	if ((error & 0xff) == EINTR && __pthread_canceled(0) == 0) {
 		pthread_t self = pthread_self();
 
+		// self is NULL if dyld's TSD base isn't set up yet - nothing to cancel.
+		if (self == NULL) {
+			return;
+		}
+
 		_pthread_validate_signature(self);
 		self->cancel_error = error;
 		self->canceled = true;

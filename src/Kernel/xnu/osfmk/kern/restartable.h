@@ -114,6 +114,7 @@ extern kern_return_t task_restartable_ranges_synchronize(task_t task);
 #define TASK_RESTARTABLE_OFFSET_MAX  4096u
 
 #ifdef KERNEL_PRIVATE
+#pragma GCC visibility push(hidden)
 
 struct restartable_ranges;
 
@@ -134,13 +135,47 @@ extern void restartable_init(void);
 extern void restartable_ranges_release(struct restartable_ranges *ranges);
 
 /**
+ * @function thread_reset_pcs_in_range
+ *
+ * @brief
+ * Returns whether a non running thread is currently in a critical range.
+ */
+extern bool thread_reset_pcs_in_range(task_t task, struct thread *thread);
+
+/**
+ * @function thread_reset_pcs_will_fault
+ *
+ * @brief
+ * Called by the platform code when about to handle a user fault exception.
+ */
+extern void thread_reset_pcs_will_fault(struct thread *thread);
+
+/**
+ * @function thread_reset_pcs_done_faulting
+ *
+ * @brief
+ * Called by the platform code when being done handling a user fault
+ * exception.
+ */
+extern void thread_reset_pcs_done_faulting(struct thread *thread);
+
+/**
  * @function thread_reset_pcs_ast
  *
  * @brief
  * Perform the work at the AST boundary to reset thread PCS.
  */
-extern void thread_reset_pcs_ast(struct thread *thread);
+extern void thread_reset_pcs_ast(task_t task, struct thread *thread);
 
+/**
+ * @function thread_reset_pcs_ack_IPI
+ *
+ * @brief
+ * Called by the scheduler code when acking the reset-pcs IPI.
+ */
+extern void thread_reset_pcs_ack_IPI(struct thread *thread);
+
+#pragma GCC visibility pop
 #endif // KERNEL_PRIVATE
 
 __END_DECLS

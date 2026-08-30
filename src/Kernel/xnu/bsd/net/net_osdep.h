@@ -193,9 +193,6 @@
  *	NetBSD 1.4 or later requires splsoftnet().
  *	other operating systems use splnet().
  *
- * - dtom()
- *	NEVER USE IT!
- *
  * - struct ifnet for loopback interface
  *	BSDI3: struct ifnet loif;
  *	BSDI4: struct ifnet *loifp;
@@ -244,9 +241,9 @@
  *	NetBSD 1.5: always use IFAREF whenever reference gets added.
  *		always use IFAFREE whenever reference gets freed.
  *		IFAFREE frees ifaddr when ifa_refcnt reaches 0.
- *	Darwin: always use IFA_ADDREF whenever reference gets added.
- *		always use IFA_REMREF whenever reference gets freed.
- *		IFA_ADDREF and IFA_REMREF are responsible for determining
+ *	Darwin: always use ifa_addref whenever reference gets added.
+ *		always use ifa_remref whenever reference gets freed.
+ *		ifa_addref and ifa_remref are responsible for determining
  *		when to free.
  *	others: do not increase refcnt for ifp->if_addrlist and in_ifaddr.
  *		use IFAFREE once when ifaddr is disconnected from

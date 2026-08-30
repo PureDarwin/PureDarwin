@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -76,22 +76,16 @@
 
 #ifndef _NET_BPF_H_
 #define _NET_BPF_H_
+
+#include <stdint.h>
+
+#if !defined(DRIVERKIT)
+#include <net/if.h>
 #include <sys/param.h>
 #include <sys/appleapiopts.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/cdefs.h>
-#include <stdint.h>
-
-#ifdef PRIVATE
-#include <net/if_var.h>
-#include <uuid/uuid.h>
-
-struct bpf_setup_args {
-	uuid_t  bsa_uuid;
-	char    bsa_ifname[IFNAMSIZ];
-};
-#endif /* PRIVATE */
 
 #ifdef KERNEL
 #include <sys/kernel_types.h>
@@ -144,23 +138,6 @@ struct bpf_program {
 	struct bpf_insn *bf_insns;
 };
 
-#ifdef KERNEL_PRIVATE
-/*
- * LP64 version of bpf_program.  all pointers
- * grow when we're dealing with a 64-bit process.
- * WARNING - keep in sync with bpf_program
- */
-struct bpf_program64 {
-	u_int           bf_len;
-	user64_addr_t   bf_insns __attribute__((aligned(8)));
-};
-
-struct bpf_program32 {
-	u_int           bf_len;
-	user32_addr_t   bf_insns;
-};
-#endif /* KERNEL_PRIVATE */
-
 /*
  * Struct returned by BIOCGSTATS.
  */
@@ -184,6 +161,7 @@ struct bpf_version {
 	u_short bv_major;
 	u_short bv_minor;
 };
+
 #if defined(__LP64__)
 #include <sys/_types/_timeval32.h>
 
@@ -198,25 +176,13 @@ struct bpf_version {
 #define BIOCGBLEN       _IOR('B',102, u_int)
 #define BIOCSBLEN       _IOWR('B',102, u_int)
 #define BIOCSETF        _IOW('B',103, struct bpf_program)
-#ifdef KERNEL_PRIVATE
-#define BIOCSETF64      _IOW('B',103, struct bpf_program64)
-#define BIOCSETF32      _IOW('B',103, struct bpf_program32)
-#endif /* KERNEL_PRIVATE */
 #define BIOCFLUSH       _IO('B',104)
 #define BIOCPROMISC     _IO('B',105)
 #define BIOCGDLT        _IOR('B',106, u_int)
 #define BIOCGETIF       _IOR('B',107, struct ifreq)
 #define BIOCSETIF       _IOW('B',108, struct ifreq)
 #define BIOCSRTIMEOUT   _IOW('B',109, struct timeval)
-#ifdef KERNEL_PRIVATE
-#define BIOCSRTIMEOUT64 _IOW('B',109, struct user64_timeval)
-#define BIOCSRTIMEOUT32 _IOW('B',109, struct user32_timeval)
-#endif /* KERNEL_PRIVATE */
 #define BIOCGRTIMEOUT   _IOR('B',110, struct timeval)
-#ifdef KERNEL_PRIVATE
-#define BIOCGRTIMEOUT64 _IOR('B',110, struct user64_timeval)
-#define BIOCGRTIMEOUT32 _IOR('B',110, struct user32_timeval)
-#endif /* KERNEL_PRIVATE */
 #define BIOCGSTATS      _IOR('B',111, struct bpf_stat)
 #define BIOCIMMEDIATE   _IOW('B',112, u_int)
 #define BIOCVERSION     _IOR('B',113, struct bpf_version)
@@ -228,28 +194,11 @@ struct bpf_version {
 #define BIOCSSEESENT    _IOW('B',119, u_int)
 #define BIOCSDLT        _IOW('B',120, u_int)
 #define BIOCGDLTLIST    _IOWR('B',121, struct bpf_dltlist)
-#ifdef PRIVATE
-#define BIOCGETTC       _IOR('B', 122, int)
-#define BIOCSETTC       _IOW('B', 123, int)
-#define BIOCSEXTHDR     _IOW('B', 124, u_int)
-#define BIOCGIFATTACHCOUNT      _IOWR('B', 125, struct ifreq)
-#endif /* PRIVATE */
 #define BIOCSETFNR      _IOW('B', 126, struct bpf_program)
-#ifdef KERNEL_PRIVATE
-#define BIOCSETFNR64    _IOW('B',126, struct bpf_program64)
-#define BIOCSETFNR32    _IOW('B',126, struct bpf_program32)
-#endif /* KERNEL_PRIVATE */
 #ifdef PRIVATE
-#define BIOCGWANTPKTAP  _IOR('B', 127, u_int)
-#define BIOCSWANTPKTAP  _IOWR('B', 127, u_int)
-#define BIOCSHEADDROP   _IOW('B', 128, int)
-#define BIOCGHEADDROP   _IOR('B', 128, int)
-#define BIOCSTRUNCATE   _IOW('B', 129, u_int)
-#define BIOCGETUUID     _IOR('B', 130, uuid_t)
-#define BIOCSETUP       _IOW('B', 131, struct bpf_setup_args)
-#define BIOCSPKTHDRV2   _IOW('B', 132, int)
-#define BIOCGPKTHDRV2   _IOW('B', 133, int)
+/* See bpf_private.h for additional ioctls */
 #endif /* PRIVATE */
+
 /*
  * Structure prepended to each packet.
  */
@@ -269,45 +218,7 @@ struct bpf_hdr {
 #define SIZEOF_BPF_HDR  (sizeof(struct bpf_hdr) <= 20 ? 18 : \
     sizeof(struct bpf_hdr))
 #endif
-#ifdef PRIVATE
-/*
- * This structure must be a multiple of 4 bytes.
- * It includes padding and spare fields that we can use later if desired.
- */
-struct bpf_hdr_ext {
-	struct BPF_TIMEVAL bh_tstamp;   /* time stamp */
-	bpf_u_int32     bh_caplen;      /* length of captured portion */
-	bpf_u_int32     bh_datalen;     /* original length of packet */
-	u_short         bh_hdrlen;      /* length of bpf header */
-	u_short         bh_flags;
-#define BPF_HDR_EXT_FLAGS_DIR_IN        0x0000
-#define BPF_HDR_EXT_FLAGS_DIR_OUT       0x0001
-	pid_t           bh_pid;         /* process PID */
-	char            bh_comm[MAXCOMLEN + 1]; /* process command */
-	u_char          _bh_pad2[1];
-	u_char          bh_pktflags;
-#define BPF_PKTFLAGS_TCP_REXMT  0x0001
-#define BPF_PKTFLAGS_START_SEQ  0x0002
-#define BPF_PKTFLAGS_LAST_PKT   0x0004
-	u_char          bh_proto;       /* kernel reserved; 0 in userland */
-	bpf_u_int32     bh_svc;         /* service class */
-	bpf_u_int32     bh_flowid;      /* kernel reserved; 0 in userland */
-	bpf_u_int32     bh_unsent_bytes; /* unsent bytes at interface */
-	bpf_u_int32     bh_unsent_snd; /* unsent bytes at socket buffer */
-};
-
-#define BPF_CONTROL_NAME        "com.apple.net.bpf"
-
-struct bpf_mtag {
-	char            bt_comm[MAXCOMLEN];
-	pid_t           bt_pid;
-	bpf_u_int32     bt_svc;
-	unsigned char   bt_direction;
-#define BPF_MTAG_DIR_IN         0
-#define BPF_MTAG_DIR_OUT        1
-};
-
-#endif /* PRIVATE */
+#endif /* !defined(DRIVERKIT) */
 
 /*
  * Data-link level type codes.
@@ -647,17 +558,6 @@ struct bpf_mtag {
 #define DLT_USER13              160
 #define DLT_USER14              161
 #define DLT_USER15              162
-
-#ifdef PRIVATE
-/*
- * For Apple private usage
- */
-#define DLT_USER0_APPLE_INTERNAL        DLT_USER0       /* rdar://12019509 */
-#define DLT_USER1_APPLE_INTERNAL        DLT_USER1       /* rdar://12019509 */
-#define DLT_PKTAP                       DLT_USER2       /* rdar://11779467 */
-#define DLT_USER3_APPLE_INTERNAL        DLT_USER3       /* rdar://19614531 */
-#define DLT_USER4_APPLE_INTERNAL        DLT_USER4       /* rdar://19614531 */
-#endif /* PRIVATE */
 
 /*
  * For future use with 802.11 captures - defined by AbsoluteValue
@@ -1249,6 +1149,7 @@ struct bpf_mtag {
 
 #define DLT_MATCHING_MAX        266     /* highest value in the "matching" range */
 
+#if !defined(DRIVERKIT)
 /*
  * The instruction encodings.
  */
@@ -1306,6 +1207,11 @@ struct bpf_mtag {
 #define         BPF_TXA         0x80
 
 /*
+ * Number of scratch memory words (for BPF_LD|BPF_MEM and BPF_ST).
+ */
+#define BPF_MEMWORDS 16
+
+/*
  * The instruction data structure.
  */
 struct bpf_insn {
@@ -1337,40 +1243,9 @@ struct bpf_dltlist {
 
 #pragma pack()
 
-#ifdef KERNEL_PRIVATE
-#define BPF_MIN_PKT_SIZE 40
-#define PORT_DNS 53
-#define PORT_BOOTPS 67
-#define PORT_BOOTPC 68
-#define PORT_ISAKMP 500
-#define PORT_ISAKMP_NATT 4500   /* rfc3948 */
+#endif /* !defined(DRIVERKIT) */
 
-/* Forward declerations */
-struct ifnet;
-struct mbuf;
-
-#define BPF_PACKET_TYPE_MBUF    0
-
-struct bpf_packet {
-	int     bpfp_type;
-	void *  bpfp_header;            /* optional */
-	size_t  bpfp_header_length;
-	union {
-		struct mbuf     *bpfpu_mbuf;
-		void *          bpfpu_ptr;
-	} bpfp_u;
-#define bpfp_mbuf       bpfp_u.bpfpu_mbuf
-#define bpfp_ptr        bpfp_u.bpfpu_ptr
-	size_t  bpfp_total_length;      /* length including optional header */
-};
-
-extern int      bpf_validate(const struct bpf_insn *, int);
-extern void     bpfdetach(struct ifnet *);
-extern void     bpfilterattach(int);
-extern u_int    bpf_filter(const struct bpf_insn *, u_char *, u_int, u_int);
-#endif /* KERNEL_PRIVATE */
-
-#ifdef KERNEL
+#if defined(DRIVERKIT) || defined(KERNEL)
 #ifndef BPF_TAP_MODE_T
 #define BPF_TAP_MODE_T
 /*!
@@ -1392,9 +1267,11 @@ enum {
  *       @typedef bpf_tap_mode
  *       @abstract Mode for tapping. BPF_MODE_DISABLED/BPF_MODE_INPUT_OUTPUT etc.
  */
-typedef u_int32_t bpf_tap_mode;
+typedef uint32_t bpf_tap_mode;
 #endif /* !BPF_TAP_MODE_T */
+#endif /* defined(DRIVERKIT) || defined(KERNEL) */
 
+#ifdef KERNEL
 /*!
  *       @typedef bpf_send_func
  *       @discussion bpf_send_func is called when a bpf file descriptor is
@@ -1473,7 +1350,7 @@ extern errno_t  bpf_attach(ifnet_t interface, u_int32_t data_link_type,
  *       @param header_len If the header was specified, the length of the header.
  */
 extern void bpf_tap_in(ifnet_t interface, u_int32_t dlt, mbuf_t packet,
-    void *header, size_t header_len);
+    void *__sized_by(header_len) header, size_t header_len);
 
 /*!
  *       @function bpf_tap_out
@@ -1487,13 +1364,12 @@ extern void bpf_tap_in(ifnet_t interface, u_int32_t dlt, mbuf_t packet,
  *       @param header_len If the header was specified, the length of the header.
  */
 extern void bpf_tap_out(ifnet_t interface, u_int32_t dlt, mbuf_t packet,
-    void *header, size_t header_len);
+    void *__sized_by(header_len) header, size_t header_len);
 
 #endif /* KERNEL */
 
-/*
- * Number of scratch memory words (for BPF_LD|BPF_MEM and BPF_ST).
- */
-#define BPF_MEMWORDS 16
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <net/bpf_private.h>
+#endif /* PRIVATE && !MODULES_SUPPORTED */
 
 #endif /* _NET_BPF_H_ */

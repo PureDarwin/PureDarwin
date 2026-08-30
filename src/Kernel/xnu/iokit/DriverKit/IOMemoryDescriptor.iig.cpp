@@ -9,7 +9,8 @@
 #include <DriverKit/DriverKit.h>
 #endif /* KERNEL */
 #include <DriverKit/IOReturn.h>
-#include <DriverKit/IOMemoryDescriptor.h>
+#include <IOKit/IORPC.h>
+#include "IOMemoryDescriptor.h"
 
 /* @iig implementation */
 #include <DriverKit/IOService.h>

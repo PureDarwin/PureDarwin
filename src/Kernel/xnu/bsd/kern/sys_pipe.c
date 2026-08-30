@@ -154,7 +154,6 @@
 
 #define f_flag fp_glob->fg_flag
 #define f_ops fp_glob->fg_ops
-#define f_data fp_glob->fg_data
 
 struct pipepair {
 	lck_mtx_t     pp_mtx;
@@ -269,7 +268,7 @@ static __inline int pipeio_lock(struct pipe *cpipe, int catch);
 static __inline void pipeio_unlock(struct pipe *cpipe);
 
 static LCK_GRP_DECLARE(pipe_mtx_grp, "pipe");
-static ZONE_DECLARE(pipe_zone, "pipe zone", sizeof(struct pipepair), ZC_NONE);
+static KALLOC_TYPE_DEFINE(pipe_zone, struct pipepair, KT_DEFAULT);
 
 #define MAX_PIPESIZE(pipe)              ( MAX(PIPE_SIZE, (pipe)->pipe_buffer.size) )
 
@@ -406,22 +405,22 @@ pipe(proc_t p, __unused struct pipe_args *uap, int32_t *retval)
 	 * this is what we've always supported..
 	 */
 
-	error = falloc(p, &rf, &retval[0], vfs_context_current());
+	error = falloc(p, &rf, &retval[0]);
 	if (error) {
 		goto freepipes;
 	}
 	rf->f_flag = FREAD;
-	rf->f_data = (caddr_t)rpipe;
 	rf->f_ops = &pipeops;
+	fp_set_data(rf, rpipe);
 
-	error = falloc(p, &wf, &retval[1], vfs_context_current());
+	error = falloc(p, &wf, &retval[1]);
 	if (error) {
 		fp_free(p, retval[0], rf);
 		goto freepipes;
 	}
 	wf->f_flag = FWRITE;
-	wf->f_data = (caddr_t)wpipe;
 	wf->f_ops = &pipeops;
+	fp_set_data(wf, wpipe);
 
 	rpipe->pipe_peer = wpipe;
 	wpipe->pipe_peer = rpipe;
@@ -437,7 +436,7 @@ pipe(proc_t p, __unused struct pipe_args *uap, int32_t *retval)
 	 */
 	mac_pipe_label_init(rpipe);
 	mac_pipe_label_associate(kauth_cred_get(), rpipe);
-	wpipe->pipe_label = rpipe->pipe_label;
+	mac_pipe_set_label(wpipe, mac_pipe_label(rpipe));
 #endif
 	proc_fdlock_spin(p);
 	procfdtbl_releasefd(p, retval[0], NULL);
@@ -586,7 +585,7 @@ pipespace(struct pipe *cpipe, int size)
 		return EINVAL;
 	}
 
-	buffer = (vm_offset_t)kheap_alloc(KHEAP_DATA_BUFFERS, size, Z_WAITOK);
+	buffer = (vm_offset_t)kalloc_data(size, Z_WAITOK);
 	if (!buffer) {
 		return ENOMEM;
 	}
@@ -611,19 +610,14 @@ pipespace(struct pipe *cpipe, int size)
 static int
 pipepair_alloc(struct pipe **rp_out, struct pipe **wp_out)
 {
-	struct pipepair *pp = zalloc(pipe_zone);
+	struct pipepair *pp = zalloc_flags(pipe_zone, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 	struct pipe *rpipe = &pp->pp_rpipe;
 	struct pipe *wpipe = &pp->pp_wpipe;
-
-	if (pp == NULL) {
-		return ENOMEM;
-	}
 
 	/*
 	 * protect so pipespace or pipeclose don't follow a junk pointer
 	 * if pipespace() fails.
 	 */
-	bzero(pp, sizeof(struct pipepair));
 	pp->pp_pipe_id = os_atomic_inc_orig(&pipe_unique_id, relaxed);
 	lck_mtx_init(&pp->pp_mtx, &pipe_mtx_grp, LCK_ATTR_NULL);
 
@@ -715,8 +709,9 @@ pipeio_unlock(struct pipe *cpipe)
 static void
 pipeselwakeup(struct pipe *cpipe, struct pipe *spipe)
 {
-	if (cpipe->pipe_state & PIPE_SEL) {
-		cpipe->pipe_state &= ~PIPE_SEL;
+	if (cpipe->pipe_state & PIPE_EOF) {
+		selthreadclear(&cpipe->pipe_sel);
+	} else {
 		selwakeup(&cpipe->pipe_sel);
 	}
 
@@ -731,6 +726,20 @@ pipeselwakeup(struct pipe *cpipe, struct pipe *spipe)
 	}
 }
 
+static void
+pipe_check_bounds_panic(struct pipe *cpipe)
+{
+	caddr_t start = cpipe->pipe_buffer.buffer;
+	u_int size = cpipe->pipe_buffer.size;
+	u_int in = cpipe->pipe_buffer.in;
+	u_int out = cpipe->pipe_buffer.out;
+
+	kalloc_data_require(start, size);
+
+	if (__improbable(in > size || out > size)) {
+		panic("%s: corrupted pipe read/write pointer or size.", __func__);
+	}
+}
 /*
  * Read n bytes from the buffer. Semantics are similar to file read.
  * returns: number of bytes read from the buffer
@@ -740,7 +749,7 @@ static int
 pipe_read(struct fileproc *fp, struct uio *uio, __unused int flags,
     __unused vfs_context_t ctx)
 {
-	struct pipe *rpipe = (struct pipe *)fp->f_data;
+	struct pipe *rpipe = (struct pipe *)fp_get_data(fp);
 	int error;
 	int nread = 0;
 	u_int size;
@@ -780,6 +789,7 @@ pipe_read(struct fileproc *fp, struct uio *uio, __unused int flags,
 			    (user_size_t)uio_resid(uio)));
 
 			PIPE_UNLOCK(rpipe); /* we still hold io lock.*/
+			pipe_check_bounds_panic(rpipe);
 			error = uiomove(
 				&rpipe->pipe_buffer.buffer[rpipe->pipe_buffer.out],
 				size, uio);
@@ -912,7 +922,7 @@ pipe_write(struct fileproc *fp, struct uio *uio, __unused int flags,
 	}
 	int space;
 
-	rpipe = (struct pipe *)fp->f_data;
+	rpipe = (struct pipe *)fp_get_data(fp);
 
 	PIPE_LOCK(rpipe);
 	wpipe = rpipe->pipe_peer;
@@ -1043,6 +1053,7 @@ retrywrite:
 				/* Transfer first segment */
 
 				PIPE_UNLOCK(rpipe);
+				pipe_check_bounds_panic(wpipe);
 				error = uiomove(&wpipe->pipe_buffer.buffer[wpipe->pipe_buffer.in],
 				    (int)segsize, uio);
 				PIPE_LOCK(rpipe);
@@ -1060,6 +1071,7 @@ retrywrite:
 					}
 
 					PIPE_UNLOCK(rpipe);
+					pipe_check_bounds_panic(wpipe);
 					error = uiomove(
 						&wpipe->pipe_buffer.buffer[0],
 						(int)(size - segsize), uio);
@@ -1175,7 +1187,7 @@ static int
 pipe_ioctl(struct fileproc *fp, u_long cmd, caddr_t data,
     __unused vfs_context_t ctx)
 {
-	struct pipe *mpipe = (struct pipe *)fp->f_data;
+	struct pipe *mpipe = (struct pipe *)fp_get_data(fp);
 #if CONFIG_MACF
 	int error;
 #endif
@@ -1230,7 +1242,7 @@ pipe_ioctl(struct fileproc *fp, u_long cmd, caddr_t data,
 static int
 pipe_select(struct fileproc *fp, int which, void *wql, vfs_context_t ctx)
 {
-	struct pipe *rpipe = (struct pipe *)fp->f_data;
+	struct pipe *rpipe = (struct pipe *)fp_get_data(fp);
 	struct pipe *wpipe;
 	int    retnum = 0;
 
@@ -1262,7 +1274,6 @@ pipe_select(struct fileproc *fp, int which, void *wql, vfs_context_t ctx)
 		    (fileproc_get_vflags(fp) & FPV_DRAIN)) {
 			retnum = 1;
 		} else {
-			rpipe->pipe_state |= PIPE_SEL;
 			selrecord(vfs_context_proc(ctx), &rpipe->pipe_sel, wql);
 		}
 		break;
@@ -1277,12 +1288,10 @@ pipe_select(struct fileproc *fp, int which, void *wql, vfs_context_t ctx)
 		    (MAX_PIPESIZE(wpipe) - wpipe->pipe_buffer.cnt) >= PIPE_BUF)) {
 			retnum = 1;
 		} else {
-			wpipe->pipe_state |= PIPE_SEL;
 			selrecord(vfs_context_proc(ctx), &wpipe->pipe_sel, wql);
 		}
 		break;
 	case 0:
-		rpipe->pipe_state |= PIPE_SEL;
 		selrecord(vfs_context_proc(ctx), &rpipe->pipe_sel, wql);
 		break;
 	}
@@ -1299,8 +1308,8 @@ pipe_close(struct fileglob *fg, __unused vfs_context_t ctx)
 	struct pipe *cpipe;
 
 	proc_fdlock_spin(vfs_context_proc(ctx));
-	cpipe = (struct pipe *)fg->fg_data;
-	fg->fg_data = NULL;
+	cpipe = (struct pipe *)fg_get_data(fg);
+	fg_set_data(fg, NULL);
 	proc_fdunlock(vfs_context_proc(ctx));
 	if (cpipe) {
 		pipeclose(cpipe);
@@ -1315,8 +1324,7 @@ pipe_free_kmem(struct pipe *cpipe)
 	if (cpipe->pipe_buffer.buffer != NULL) {
 		OSAddAtomic(-(cpipe->pipe_buffer.size), &amountpipekva);
 		OSAddAtomic(-1, &amountpipes);
-		kheap_free(KHEAP_DATA_BUFFERS, cpipe->pipe_buffer.buffer,
-		    cpipe->pipe_buffer.size);
+		kfree_data(cpipe->pipe_buffer.buffer, cpipe->pipe_buffer.size);
 		cpipe->pipe_buffer.buffer = NULL;
 		cpipe->pipe_buffer.size = 0;
 	}
@@ -1351,7 +1359,7 @@ pipeclose(struct pipe *cpipe)
 	/*
 	 * Free the shared pipe label only after the two ends are disconnected.
 	 */
-	if (cpipe->pipe_label != NULL && cpipe->pipe_peer == NULL) {
+	if (mac_pipe_label(cpipe) != NULL && cpipe->pipe_peer == NULL) {
 		mac_pipe_label_destroy(cpipe);
 	}
 #endif
@@ -1410,7 +1418,7 @@ static int
 filt_pipenotsup(struct knote *kn, long hint)
 {
 #pragma unused(hint)
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 
 	return filt_pipe_draincommon(kn, rpipe);
 }
@@ -1418,7 +1426,7 @@ filt_pipenotsup(struct knote *kn, long hint)
 static int
 filt_pipenotsuptouch(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 	int res;
 
 	PIPE_LOCK(rpipe);
@@ -1438,7 +1446,7 @@ filt_pipenotsuptouch(struct knote *kn, struct kevent_qos_s *kev)
 static int
 filt_pipenotsupprocess(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 	int res;
 
 	PIPE_LOCK(rpipe);
@@ -1473,7 +1481,7 @@ static int
 filt_piperead(struct knote *kn, long hint)
 {
 #pragma unused(hint)
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 
 	return filt_piperead_common(kn, NULL, rpipe);
 }
@@ -1481,7 +1489,7 @@ filt_piperead(struct knote *kn, long hint)
 static int
 filt_pipereadtouch(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 	int retval;
 
 	PIPE_LOCK(rpipe);
@@ -1501,7 +1509,7 @@ filt_pipereadtouch(struct knote *kn, struct kevent_qos_s *kev)
 static int
 filt_pipereadprocess(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 	int    retval;
 
 	PIPE_LOCK(rpipe);
@@ -1535,7 +1543,7 @@ static int
 filt_pipewrite(struct knote *kn, long hint)
 {
 #pragma unused(hint)
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 
 	return filt_pipewrite_common(kn, NULL, rpipe);
 }
@@ -1544,7 +1552,7 @@ filt_pipewrite(struct knote *kn, long hint)
 static int
 filt_pipewritetouch(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 	int res;
 
 	PIPE_LOCK(rpipe);
@@ -1564,7 +1572,7 @@ filt_pipewritetouch(struct knote *kn, struct kevent_qos_s *kev)
 static int
 filt_pipewriteprocess(struct knote *kn, struct kevent_qos_s *kev)
 {
-	struct pipe *rpipe = kn->kn_hook;
+	struct pipe *rpipe = knote_kn_hook_get_raw(kn);
 	int res;
 
 	PIPE_LOCK(rpipe);
@@ -1579,7 +1587,7 @@ static int
 pipe_kqfilter(struct fileproc *fp, struct knote *kn,
     __unused struct kevent_qos_s *kev)
 {
-	struct pipe *cpipe = (struct pipe *)fp->f_data;
+	struct pipe *cpipe = (struct pipe *)fp_get_data(fp);
 	struct pipe *rpipe = &PIPE_PAIR(cpipe)->pp_rpipe;
 	int res;
 
@@ -1638,7 +1646,7 @@ pipe_kqfilter(struct fileproc *fp, struct knote *kn,
 		return 0;
 	}
 
-	kn->kn_hook = rpipe;
+	knote_kn_hook_set_raw(kn, rpipe);
 	KNOTE_ATTACH(&rpipe->pipe_sel.si_note, kn);
 
 	PIPE_UNLOCK(cpipe);
@@ -1648,7 +1656,7 @@ pipe_kqfilter(struct fileproc *fp, struct knote *kn,
 static void
 filt_pipedetach(struct knote *kn)
 {
-	struct pipe *cpipe = (struct pipe *)kn->kn_fp->f_data;
+	struct pipe *cpipe = (struct pipe *)fp_get_data(kn->kn_fp);
 	struct pipe *rpipe = &PIPE_PAIR(cpipe)->pp_rpipe;
 
 	PIPE_LOCK(cpipe);
@@ -1747,7 +1755,7 @@ static int
 pipe_drain(struct fileproc *fp, __unused vfs_context_t ctx)
 {
 	/* Note: fdlock already held */
-	struct pipe *ppipe, *cpipe = (struct pipe *)(fp->fp_glob->fg_data);
+	struct pipe *ppipe, *cpipe = fp_get_data(fp);
 	boolean_t drain_pipe = FALSE;
 
 	/* Check if the pipe is going away */

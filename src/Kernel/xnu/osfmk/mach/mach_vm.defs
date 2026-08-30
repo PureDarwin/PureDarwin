@@ -62,22 +62,26 @@
  */
 
 subsystem
-#if	KERNEL_SERVER
-	  KernelServer
-#endif	/* KERNEL_SERVER */
+#if	KERNEL_SERVER || KOBJECT_SERVER
+	KernelServer
+#endif	/* KERNEL_SERVER || KOBJECT_SERVER */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
-	  mach_vm
+	mach_vm
 #else
-	  vm_map_lp64_local
+	vm_map_lp64_local
 #endif
-	  4800;
+	4800;
+
+#if KERNEL_SERVER
+#define VM_KERNEL_SERVER 1
+#endif
 
 #include <mach/std_types.defs>
 #include <mach/mach_types.defs>
 #include <mach_debug/mach_debug_types.defs>
 
 #define CONCAT(a,b) a ## b
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 #define PREFIX(NAME) CONCAT(_kernelrpc_, NAME)
 #else
 #define PREFIX(NAME) NAME
@@ -87,6 +91,13 @@ subsystem
 #define KERNEL_SERVER_SUFFIX(NAME) CONCAT(NAME, _external)
 #else
 #define KERNEL_SERVER_SUFFIX(NAME) NAME
+#endif
+
+/* If building for Sandbox, keep NAME unchanged */
+#if SANDBOX_COMPILER
+#define KERNEL_SERVER_SUFFIX_SANDBOX(NAME) NAME
+#else
+#define KERNEL_SERVER_SUFFIX_SANDBOX(NAME) KERNEL_SERVER_SUFFIX(NAME)
 #endif
 
 /*
@@ -105,7 +116,7 @@ routine PREFIX(KERNEL_SERVER_SUFFIX(mach_vm_allocate)) (
 
 #else
 
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 skip;
 #else
 routine PREFIX(KERNEL_SERVER_SUFFIX(vm_allocate)) (
@@ -124,14 +135,14 @@ routine PREFIX(KERNEL_SERVER_SUFFIX(vm_allocate)) (
  *	address space of the target virtual memory map.
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
-routine PREFIX(mach_vm_deallocate) (
+routine PREFIX(KERNEL_SERVER_SUFFIX(mach_vm_deallocate)) (
 		target		: vm_task_entry_t;
 		address		: mach_vm_address_t;
 		size		: mach_vm_size_t);
 
 #else
 
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 skip;
 #else
 routine PREFIX(vm_deallocate) (
@@ -163,7 +174,7 @@ routine PREFIX(mach_vm_protect) (
 
 #else
 
-#if !KERNEL && !LIBSYSCALL_INTERFACE
+#if !KERNEL && !LIBSYSCALL_INTERFACE && !KERNEL_VM_TEST
 skip;
 #else
 
@@ -221,9 +232,9 @@ routine mach_vm_read_list(
 #else
 routine vm_read_list(
 #endif
-		  target_task 	: vm_map_read_t;
-	inout data_list   	: mach_vm_read_entry_t;
-		  count		    : natural_t);
+		target_task 	: vm_map_read_t;
+	inout	data_list	: mach_vm_read_entry_t;
+		count		: natural_t);
 
 /*
  *	Writes the contents of the specified range of the
@@ -265,8 +276,8 @@ routine vm_copy(
  *	Returns the contents of the specified range of the
  *	virtual address space of the target task.  [There
  *	are no alignment restrictions, and the results will
- *      overwrite the area pointed to by data - which must
- *      already exist. The protection on the specified range
+ *	overwrite the area pointed to by data - which must
+ *	already exist. The protection on the specified range
  *	must permit reading.]
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
@@ -289,7 +300,7 @@ routine vm_msync(
 		target_task	: vm_map_t;
 		address		: mach_vm_address_t;
 		size		: mach_vm_size_t;
-		sync_flags	: vm_sync_t );
+		sync_flags	: vm_sync_t);
 
 /*
  *	Set the paging behavior attribute for the specified range
@@ -342,11 +353,7 @@ routine vm_behavior_set(
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine PREFIX(KERNEL_SERVER_SUFFIX(mach_vm_map)) (
 #else
-#if defined(__arm__) && !LIBSYSCALL_INTERFACE
-routine _vm_map_arm(
-#else
 routine PREFIX(KERNEL_SERVER_SUFFIX(vm_map)) (
-#endif
 #endif
 		target_task	: vm_task_entry_t;
 	inout	address		: mach_vm_address_t;
@@ -377,7 +384,7 @@ routine vm_machine_attribute(
 	inout	value		: vm_machine_attribute_val_t);
 
 /*
- *      Map portion of a task's address space.
+ *	Map portion of a task's address space.
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine PREFIX(KERNEL_SERVER_SUFFIX(mach_vm_remap)) (
@@ -397,54 +404,54 @@ routine PREFIX(KERNEL_SERVER_SUFFIX(vm_remap)) (
 		inheritance	: vm_inherit_t);
 
 /*
- *      Give the caller information on the given location in a virtual
- *      address space.  If a page is mapped return ref and dirty info.
+ *	Give the caller information on the given location in a virtual
+ *	address space.  If a page is mapped return ref and dirty info.
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine mach_vm_page_query(
 #else
 routine vm_map_page_query(
 #endif
-                target_map      :vm_map_read_t;
-                offset          :mach_vm_offset_t;
-        out     disposition     :integer_t;
-        out     ref_count       :integer_t);
+		target_map	: vm_map_read_t;
+		offset		: mach_vm_offset_t;
+	out	disposition	: integer_t;
+	out	ref_count	: integer_t);
 
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine mach_vm_region_recurse(
 #else
 routine vm_region_recurse_64(
 #endif
-                target_task     : vm_map_read_t;
+		target_task	: vm_map_read_t;
 	inout	address		: mach_vm_address_t;
-        out     size            : mach_vm_size_t;
+	out	size		: mach_vm_size_t;
 	inout	nesting_depth	: natural_t;
 	out	info		: vm_region_recurse_info_t,CountInOut);
 
 /*
- *      Returns information about the contents of the virtual
- *      address space of the target task at the specified
- *      address.  The returned protection, inheritance, sharing
- *      and memory object values apply to the entire range described
- *      by the address range returned; the memory object offset
- *      corresponds to the beginning of the address range.
- *      [If the specified address is not allocated, the next
- *      highest address range is described.  If no addresses beyond
- *      the one specified are allocated, the call returns KERN_NO_SPACE.]
+ *	Returns information about the contents of the virtual
+ *	address space of the target task at the specified
+ *	address.  The returned protection, inheritance, sharing
+ *	and memory object values apply to the entire range described
+ *	by the address range returned; the memory object offset
+ *	corresponds to the beginning of the address range.
+ *	[If the specified address is not allocated, the next
+ *	highest address range is described.  If no addresses beyond
+ *	the one specified are allocated, the call returns KERN_NO_SPACE.]
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine mach_vm_region(
 #else
 routine vm_region_64(
 #endif
-        target_task     : vm_map_read_t;
-  inout	address			: mach_vm_address_t;
-    out size            : mach_vm_size_t;
-		flavor			: vm_region_flavor_t;
-	out	info			: vm_region_info_t, CountInOut;
-    out object_name     : memory_object_name_t =
-                                        MACH_MSG_TYPE_MOVE_SEND
-                                        ctype: mach_port_t);
+		target_task	: vm_map_read_t;
+	inout	address		: mach_vm_address_t;
+	out	size		: mach_vm_size_t;
+		flavor		: vm_region_flavor_t;
+	out	info		: vm_region_info_t, CountInOut;
+	out	object_name	: memory_object_name_t =
+				    MACH_MSG_TYPE_MOVE_SEND
+				    ctype: mach_port_t);
 
 /*
  *	Allow application level processes to create named entries which
@@ -455,7 +462,7 @@ routine vm_region_64(
  *	THIS INTERFACE IS STILL EVOLVING.
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
-#if !defined(__LP64__) || KERNEL_SERVER || XNU_KERNEL_PRIVATE || LIBSYSCALL_INTERFACE
+#if !defined(__LP64__) || KERNEL_SERVER || XNU_KERNEL_PRIVATE || LIBSYSCALL_INTERFACE || KERNEL_VM_TEST
 routine _mach_make_memory_entry(
 #else
 routine mach_make_memory_entry(
@@ -478,11 +485,15 @@ routine mach_make_memory_entry_64(
  *	definition of the routine.
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
-routine PREFIX(mach_vm_purgable_control) (
+routine PREFIX(KERNEL_SERVER_SUFFIX_SANDBOX(mach_vm_purgable_control)) (
 #else
-routine PREFIX(vm_purgable_control) (
+routine PREFIX(KERNEL_SERVER_SUFFIX_SANDBOX(vm_purgable_control)) (
 #endif
+#if KERNEL_SERVER
+		target_tport	: mach_port_t;
+#else
 		target_task	: vm_map_t;
+#endif
 		address		: mach_vm_address_t;
 		control		: vm_purgable_t;
 	inout	state		: int);
@@ -490,27 +501,27 @@ routine PREFIX(vm_purgable_control) (
 
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine mach_vm_page_info(
-			target_task		: vm_map_read_t;
-			address			: mach_vm_address_t;
-			flavor			: vm_page_info_flavor_t;
-	out		info			: vm_page_info_t, CountInOut);
+		target_task	: vm_map_read_t;
+		address		: mach_vm_address_t;
+		flavor		: vm_page_info_flavor_t;
+	out	info		: vm_page_info_t, CountInOut);
 #else
 skip;
 #endif
 
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine mach_vm_page_range_query(
-                target_map		: vm_map_read_t;
-                address			: mach_vm_offset_t;
-                size			: mach_vm_size_t;
-                dispositions		: mach_vm_address_t;
+		target_map		: vm_map_read_t;
+		address			: mach_vm_offset_t;
+		size			: mach_vm_size_t;
+		dispositions		: mach_vm_address_t;
 	inout	dispositions_count	: mach_vm_size_t);
 #else
 skip;
 #endif
 
 /*
- *      Map portion of a task's address space, {max, cur}_protection is inout.
+ *	Map portion of a task's address space, {max, cur}_protection is inout.
  */
 #if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 routine PREFIX(KERNEL_SERVER_SUFFIX(mach_vm_remap_new)) (
@@ -518,52 +529,99 @@ routine PREFIX(KERNEL_SERVER_SUFFIX(mach_vm_remap_new)) (
 routine PREFIX(KERNEL_SERVER_SUFFIX(vm_remap_new)) (
 #endif
 		target_task	: vm_map_t;
-  inout	target_address	: mach_vm_address_t;
+	inout	target_address	: mach_vm_address_t;
 		size		: mach_vm_size_t;
 		mask		: mach_vm_offset_t;
 		flags		: int;
 #ifdef KERNEL_SERVER
-		src_tport   : mach_port_t;
+		src_tport	: mach_port_t;
 #else
 		src_task	: vm_map_read_t;
 #endif
 		src_address	: mach_vm_address_t;
 		copy		: boolean_t;
-  inout	cur_protection	: vm_prot_t;
-  inout	max_protection	: vm_prot_t;
+	inout	cur_protection	: vm_prot_t;
+	inout	max_protection	: vm_prot_t;
 		inheritance	: vm_inherit_t);
 
-/****************************** Legacy section ***************************/
-/*  The following definitions are exist to provide compatibility with    */
-/*  the legacy APIs.  They are no different.  We just need to produce    */
-/*  the user-level stub interface for them.                              */
-/****************************** Legacy section ***************************/
+/*
+ *	Mach VM deferred reclamation subsystem
+ */
+#if !defined(LIBSYSCALL_INTERFACE) && !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
 
+routine mach_vm_deferred_reclamation_buffer_allocate(
+		target_task	: task_t;
+	out	address	   	: mach_vm_address_t;
+	out	next_deadline 	: uint64_t;
+		len		: uint32_t;
+		max_len		: uint32_t);
+
+routine mach_vm_deferred_reclamation_buffer_flush(
+		target_task		: task_t;
+		num_entries_to_reclaim	: uint32_t;
+	out	bytes_reclaimed		: uint64_t;
+	out	next_deadline 		: uint64_t);
+
+skip; /* was: mach_vm_deferred_reclamation_buffer_update_reclaimable_bytes() */
+#else
+skip;
+skip;
+skip;
+#endif
+
+#if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
+routine mach_vm_range_create(
+		target_task	: vm_map_t;
+		flavor		: mach_vm_range_flavor_t;
+		recipes		: mach_vm_range_recipes_raw_t);
+#else
+skip;
+#endif
+
+#if !defined(LIBSYSCALL_INTERFACE) && !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
+routine mach_vm_deferred_reclamation_buffer_resize(
+		target_task		: task_t;
+		new_len			: uint32_t;
+	out	bytes_reclaimed		: uint64_t;
+	out	next_deadline 		: uint64_t);
+#else
+skip;
+#endif
+
+#if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
+routine PREFIX(mach_vm_update_pointers_with_remote_tags) (
+			target		 	: vm_map_t;
+			in_pointer_list			: mach_vm_offset_list_t;
+			out	out_pointer_list	: mach_vm_offset_list_t, CountInOut);
+#else /* !defined(_MACH_VM_PUBLISH_AS_LOCAL_) */
+skip;
+#endif /* !defined(_MACH_VM_PUBLISH_AS_LOCAL_) */
+
+#if !defined(LIBSYSCALL_INTERFACE) && !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
+routine mach_vm_deferred_reclamation_buffer_query(
+		target		: task_read_t;
+		out addr	: mach_vm_address_t;
+		out size	: mach_vm_size_t);
+#else
+skip;
+#endif
 
 /*
- * These interfaces just aren't supported in the new (wide) model:
- *
- *	mach_vm_region_info() -
- *	vm_map_pages_info() -
- *		no user-level replacement for these MACH_DEBUG interfaces
- *	vm_map_get_upl() -
- *		no user-level replacement at the moment
- *	vm_region_info() -
- *		use mach_vm_region_info() or vm_region_info_64()
- *	vm_region_recurse() -
- *		use mach_vm_region_recurse() or vm_region_recurse_64()
+ * Relocate the pages of the source range of the specified map to a new range
+ * of the given size in bytes within the same map.
  */
-
-/*
- * The following legacy interfaces are provides as macro wrappers to the new
- * interfaces.  You should strive to use the new ones instead:
- *
- *	vm_map() -
- *		use mach_vm_map() or vm_map_64()
- *	vm_region() -
- *		use mach_vm_region() or vm_region_64()
- *	mach_make_memory_entry() -
- *		use mach_vm_make_memory_entry() or mach_make_memory_entry_64()
- */
+#if !defined(_MACH_VM_PUBLISH_AS_LOCAL_)
+routine PREFIX(mach_vm_reallocate) (
+#else /* !defined(_MACH_VM_PUBLISH_AS_LOCAL_) */
+routine PREFIX(vm_reallocate) (
+#endif /* !defined(_MACH_VM_PUBLISH_AS_LOCAL_) */
+			target_task		: vm_map_t;
+			src				: mach_vm_address_t;
+			src_size		: mach_vm_size_t;
+    inout	dst				: mach_vm_address_t;
+  			dst_size 		: mach_vm_size_t;
+			align_mask		: mach_vm_offset_t;
+			options		    : int;
+			flags			: int);
 
 /* vim: set ft=c : */

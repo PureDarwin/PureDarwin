@@ -35,6 +35,9 @@
 #include <IOKit/IOMapper.h>
 #include <IOKit/IODMACommand.h>
 #include <IOKit/IOKitKeysPrivate.h>
+#include <Kernel/IOKitKernelInternal.h>
+#include <IOKit/IOUserClient.h>
+#include <IOKit/IOService.h>
 #include "Tests.h"
 
 #ifndef __LP64__
@@ -43,10 +46,13 @@
 #include <IOKit/IOSubMemoryDescriptor.h>
 #include <IOKit/IOMultiMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOGuardPageMemoryDescriptor.h>
 
 #include <IOKit/IOKitDebug.h>
 #include <libkern/OSDebug.h>
 #include <sys/uio.h>
+#include <libkern/sysctl.h>
+#include <sys/sysctl.h>
 
 __BEGIN_DECLS
 #include <vm/pmap.h>
@@ -56,8 +62,11 @@ __BEGIN_DECLS
 
 #include <mach/vm_prot.h>
 #include <mach/mach_vm.h>
+#include <mach/vm_param.h>
 #include <vm/vm_fault.h>
 #include <vm/vm_protos.h>
+#include <vm/vm_map_xnu.h>
+#include <vm/vm_kern_xnu.h>
 __END_DECLS
 
 
@@ -133,7 +142,7 @@ IOMultMemoryDescriptorTest(int newValue)
 	mds[2]->release();
 	mds[1]->release();
 	mds[0]->release();
-	map = mmd->createMappingInTask(kernel_task, 0, kIOMapAnywhere, ptoa(7), mmd->getLength() - ptoa(7));
+	map = mmd->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapGuardedSmall, ptoa(7), mmd->getLength() - ptoa(7));
 	mmd->release();
 	assert(map);
 
@@ -259,7 +268,7 @@ IODMACommandLocalMappedNonContig(int newValue)
 	UInt32                  numSegments;
 	UInt64                  dmaOffset;
 	UInt64                  segPhys;
-	vm_address_t            buffer;
+	mach_vm_address_t       buffer;
 	vm_size_t               bufSize = ptoa(4);
 
 	if (!IOMapper::gSystem) {
@@ -267,11 +276,12 @@ IODMACommandLocalMappedNonContig(int newValue)
 	}
 
 	buffer = 0;
-	kr = vm_allocate_kernel(kernel_map, &buffer, bufSize, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_IOKIT);
+	kr = mach_vm_allocate_kernel(kernel_map, &buffer, bufSize,
+	    VM_MAP_KERNEL_FLAGS_ANYWHERE(.vm_tag = VM_KERN_MEMORY_IOKIT));
 	assert(KERN_SUCCESS == kr);
 
 	// fragment the vmentries
-	kr = vm_inherit(kernel_map, buffer + ptoa(1), ptoa(1), VM_INHERIT_NONE);
+	kr = mach_vm_inherit(kernel_map, buffer + ptoa(1), ptoa(1), VM_INHERIT_NONE);
 	assert(KERN_SUCCESS == kr);
 
 	md = IOMemoryDescriptor::withAddressRange(
@@ -287,6 +297,7 @@ IODMACommandLocalMappedNonContig(int newValue)
 	device = IOService::copyMatchingService(matching);
 	matching->release();
 	mapper = device ? IOMapper::copyMapperForDeviceWithIndex(device, 0) : NULL;
+	OSSafeReleaseNULL(device);
 
 	dma = IODMACommand::withSpecification(kIODMACommandOutputHost64, &segOptions,
 	    kIODMAMapOptionMapped,
@@ -313,7 +324,7 @@ IODMACommandLocalMappedNonContig(int newValue)
 	assert(kIOReturnSuccess == kr);
 	md->release();
 
-	kr = vm_deallocate(kernel_map, buffer, bufSize);
+	kr = mach_vm_deallocate(kernel_map, buffer, bufSize);
 	assert(KERN_SUCCESS == kr);
 	OSSafeReleaseNULL(mapper);
 
@@ -440,9 +451,34 @@ IOBMDOverflowTest(uint32_t options)
 {
 	IOBufferMemoryDescriptor * bmd;
 
-	bmd = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIOMemoryKernelUserShared | kIODirectionOut,
-	    0xffffffffffffffff, 0xfffffffffffff000);
+	bmd = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIOMemoryPageable | kIODirectionOut,
+	    0xffffffffffffffff, 0);
 	assert(NULL == bmd);
+
+	return kIOReturnSuccess;
+}
+
+static IOReturn
+IOBMDSetLengthMapTest(uint32_t options)
+{
+	IOBufferMemoryDescriptor * bmd;
+	IOMemoryMap * map;
+
+	bmd = IOBufferMemoryDescriptor::inTaskWithOptions(
+		kernel_task, kIOMemoryDirectionOutIn | kIOMemoryKernelUserShared, 0x4000, 0x4000);
+	assert(bmd);
+
+	bmd->setLength(0x100);
+	map = bmd->createMappingInTask(current_task(), 0, kIOMapAnywhere, 0, 0);
+	assert(map);
+	OSSafeReleaseNULL(map);
+
+	bmd->setLength(0x200);
+	map = bmd->createMappingInTask(current_task(), 0, kIOMapAnywhere, 0, 0);
+	assert(map);
+	OSSafeReleaseNULL(map);
+
+	bmd->release();
 
 	return kIOReturnSuccess;
 }
@@ -602,6 +638,151 @@ AllocationNameTest(int newValue)
 	return 0;
 }
 
+static IOReturn
+IOGuardPageMDTest(int newValue)
+{
+	constexpr size_t MAX_LEFT_GUARD_PAGES = 5;
+	constexpr size_t MAX_RIGHT_GUARD_PAGES = 5;
+
+	IOMemoryDescriptor * mds[3];
+	IOMemoryDescriptor * dataMD;
+	IOMultiMemoryDescriptor * mmd;
+	IOBufferMemoryDescriptor * iobmd;
+	IOMemoryMap * map;
+	void * addr;
+	uint8_t * data;
+	uint32_t i;
+
+	data = (typeof(data))IOMallocAligned(page_size, page_size);
+	for (i = 0; i < page_size; i++) {
+		data[i] = (uint8_t)(i & 0xFF);
+	}
+
+	dataMD = IOMemoryDescriptor::withAddressRange((mach_vm_address_t) data, page_size, kIODirectionOutIn, kernel_task);
+	assert(dataMD);
+
+
+	for (size_t leftGuardSize = 1; leftGuardSize < MAX_LEFT_GUARD_PAGES; leftGuardSize++) {
+		for (size_t rightGuardSize = 1; rightGuardSize < MAX_RIGHT_GUARD_PAGES; rightGuardSize++) {
+			mds[0] = IOGuardPageMemoryDescriptor::withSize(page_size * leftGuardSize);
+			assert(mds[0]);
+
+			mds[1] = dataMD;
+			mds[1]->retain();
+
+			mds[2] = IOGuardPageMemoryDescriptor::withSize(page_size * rightGuardSize);
+			assert(mds[2]);
+
+			mmd = IOMultiMemoryDescriptor::withDescriptors(&mds[0], sizeof(mds) / sizeof(mds[0]), kIODirectionOutIn, false);
+
+			OSSafeReleaseNULL(mds[2]);
+			OSSafeReleaseNULL(mds[1]);
+			OSSafeReleaseNULL(mds[0]);
+
+			map = mmd->createMappingInTask(kernel_task, 0, kIOMapAnywhere, 0, mmd->getLength());
+
+			OSSafeReleaseNULL(mmd);
+			assert(map);
+			addr = (void *)map->getAddress();
+
+			// check data
+			for (i = 0; i < page_size; i++) {
+				assert(*(uint8_t *)((uintptr_t)addr + page_size * leftGuardSize + i) == (uint8_t)(i & 0xFF));
+			}
+
+			// check map length
+			assert(page_size * leftGuardSize + page_size + page_size * rightGuardSize == map->getLength());
+
+			// check page protections
+			for (i = 0; i < leftGuardSize + 1 + rightGuardSize; i++) {
+				mach_vm_address_t regionAddr = (vm_address_t)addr + i * page_size;
+				mach_vm_size_t regionSize;
+				vm_region_extended_info regionInfo;
+				mach_msg_type_number_t count = VM_REGION_EXTENDED_INFO_COUNT;
+				mach_port_t unused;
+				kern_return_t kr = mach_vm_region(kernel_map, &regionAddr, &regionSize, VM_REGION_EXTENDED_INFO, (vm_region_info_t)&regionInfo, &count, &unused);
+				assert(kr == KERN_SUCCESS);
+				if (i < leftGuardSize || i > leftGuardSize + 1) {
+					assert(regionInfo.protection == VM_PROT_NONE);
+				}
+			}
+			OSSafeReleaseNULL(map);
+		}
+	}
+
+	OSSafeReleaseNULL(dataMD);
+	IOFreeAligned(data, page_size);
+
+	for (size_t iobmdCapacity = page_size / 8; iobmdCapacity < page_size * 10; iobmdCapacity += page_size / 8) {
+		iobmd = IOBufferMemoryDescriptor::inTaskWithGuardPages(kernel_task, kIODirectionOutIn, iobmdCapacity);
+
+		// Capacity should be rounded up to page size
+		assert(iobmd->getLength() == round_page(iobmdCapacity));
+
+		// Buffer should be page aligned
+		addr = iobmd->getBytesNoCopy();
+		assert((vm_offset_t)addr == round_page((vm_offset_t)addr));
+
+		// fill buffer
+		for (size_t i = 0; i < iobmdCapacity; i++) {
+			*((char *)addr + i) = (char)(i & 0xFF);
+		}
+
+		map = iobmd->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapUnique, 0, iobmd->getLength());
+		assert(map->getLength() == iobmd->getLength());
+
+		// check buffer
+		for (size_t i = 0; i < iobmdCapacity; i++) {
+			assert(*((char *)map->getAddress() + i) == (char)(i & 0xFF));
+		}
+
+		OSSafeReleaseNULL(map);
+		OSSafeReleaseNULL(iobmd);
+	}
+
+	return kIOReturnSuccess;
+}
+
+static IOReturn
+IOMDContextTest(int newValue)
+{
+	IOBufferMemoryDescriptor * bmd = IOBufferMemoryDescriptor::inTaskWithOptions(TASK_NULL,
+	    kIODirectionOutIn | kIOMemoryPageable | kIOMemoryKernelUserShared,
+	    ptoa(13));
+
+	OSObject * current = NULL;
+	OSString * firstString = OSString::withCStringNoCopy("firstString");
+	OSString * secondString = OSString::withCStringNoCopy("secondString");
+
+	assert(bmd->copyContext() == NULL);
+
+	bmd->setContext(NULL);
+	assert(bmd->copyContext() == NULL);
+
+	bmd->setContext(firstString);
+	current = bmd->copyContext();
+	assert(current == firstString);
+	OSSafeReleaseNULL(current);
+
+	bmd->setContext(NULL);
+	assert(bmd->copyContext() == NULL);
+
+	bmd->setContext(secondString);
+	current = bmd->copyContext();
+	assert(current == secondString);
+	OSSafeReleaseNULL(current);
+
+	bmd->release();
+
+	assert(firstString->getRetainCount() == 1);
+	assert(secondString->getRetainCount() == 1);
+
+	firstString->release();
+	secondString->release();
+
+	return kIOReturnSuccess;
+}
+
 int
 IOMemoryDescriptorTest(int newValue)
 {
@@ -625,7 +806,7 @@ IOMemoryDescriptorTest(int newValue)
 		mds[0] = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionOutIn | kIOMemoryKernelUserShared, ptoa(1));
 		mds[1] = smmd;
 		mmd = IOMultiMemoryDescriptor::withDescriptors(&mds[0], sizeof(mds) / sizeof(mds[0]), kIODirectionOutIn, false);
-		map = mmd->createMappingInTask(kernel_task, 0, kIOMapAnywhere);
+		map = mmd->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapGuardedSmall);
 		assert(map);
 		map->release();
 		mmd->release();
@@ -851,6 +1032,11 @@ IOMemoryDescriptorTest(int newValue)
 		return result;
 	}
 
+	result = IOBMDSetLengthMapTest(newValue);
+	if (result) {
+		return result;
+	}
+
 	result = ZeroLengthTest(newValue);
 	if (result) {
 		return result;
@@ -876,18 +1062,29 @@ IOMemoryDescriptorTest(int newValue)
 		return result;
 	}
 
+	result = IOGuardPageMDTest(newValue);
+	if (result) {
+		return result;
+	}
+
+	result = IOMDContextTest(newValue);
+	if (result) {
+		return result;
+	}
+
 	IOGeneralMemoryDescriptor * md;
-	vm_offset_t data[2];
+	mach_vm_offset_t data[2];
 	vm_size_t  bsize = 16 * 1024 * 1024;
 	vm_size_t  srcsize, srcoffset, mapoffset, size;
 	kern_return_t kr;
 
 	data[0] = data[1] = 0;
-	kr = vm_allocate_kernel(kernel_map, &data[0], bsize, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_IOKIT);
+	kr = mach_vm_allocate_kernel(kernel_map, &data[0], bsize,
+	    VM_MAP_KERNEL_FLAGS_ANYWHERE(.vm_tag = VM_KERN_MEMORY_IOKIT));
 	assert(KERN_SUCCESS == kr);
 
-	vm_inherit(kernel_map, data[0] + ptoa(1), ptoa(1), VM_INHERIT_NONE);
-	vm_inherit(kernel_map, data[0] + ptoa(16), ptoa(4), VM_INHERIT_NONE);
+	mach_vm_inherit(kernel_map, data[0] + ptoa(1), ptoa(1), VM_INHERIT_NONE);
+	mach_vm_inherit(kernel_map, data[0] + ptoa(16), ptoa(4), VM_INHERIT_NONE);
 
 	IOLog("data 0x%lx, 0x%lx\n", (long)data[0], (long)data[1]);
 
@@ -942,7 +1139,7 @@ IOMemoryDescriptorTest(int newValue)
 
 //			IOLog("<mapRef [0x%lx @ 0x%lx]\n", (long) size, (long) mapoffset);
 
-						map = md->createMappingInTask(kernel_task, 0, kIOMapAnywhere, mapoffset, size);
+						map = md->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapGuardedSmall, mapoffset, size);
 						if (map) {
 							addr = map->getAddress();
 						} else {
@@ -956,9 +1153,22 @@ IOMemoryDescriptorTest(int newValue)
 						}
 						kr = md->prepare();
 						if (kIOReturnSuccess != kr) {
-							panic("prepare() fail 0x%x\n", kr);
+							panic("prepare() fail 0x%x", kr);
 							break;
 						}
+
+						IOByteCount resident, dirty, swapped;
+						kr = md->getPageCounts(&resident, &dirty, &swapped);
+						if (kIOReturnSuccess != kr) {
+							panic("unable to getExtendedPageCounts");
+							break;
+						}
+						IOLog("Page Counts: %llu resident, %llu dirty, %llu swapped\n",
+						    resident, dirty, swapped);
+						if (swapped != 0) {
+							panic("Swapped page count is not 0 for prepared descriptor %llu", swapped);
+						}
+
 						for (idx = 0; idx < size; idx += sizeof(uint32_t)) {
 							offidx = (typeof(offidx))(idx + mapoffset + srcoffset);
 							if ((srcsize <= ptoa(5)) && (srcsize > ptoa(2)) && !(page_mask & srcoffset)) {
@@ -969,14 +1179,14 @@ IOMemoryDescriptorTest(int newValue)
 							offidx /= sizeof(uint32_t);
 
 							if (offidx != ((uint32_t*)addr)[idx / sizeof(uint32_t)]) {
-								panic("vm mismatch md %p map %p, @ 0x%x, 0x%lx, 0x%lx, \n", md, map, idx, (long) srcoffset, (long) mapoffset);
+								panic("vm mismatch md %p map %p, @ 0x%x, 0x%lx, 0x%lx,", md, map, idx, (long) srcoffset, (long) mapoffset);
 								kr = kIOReturnBadMedia;
 							} else {
 								if (sizeof(data) != md->readBytes(mapoffset + idx, &data, sizeof(data))) {
 									data = 0;
 								}
 								if (offidx != data) {
-									panic("phys mismatch md %p map %p, @ 0x%x, 0x%lx, 0x%lx, \n", md, map, idx, (long) srcoffset, (long) mapoffset);
+									panic("phys mismatch md %p map %p, @ 0x%x, 0x%lx, 0x%lx,", md, map, idx, (long) srcoffset, (long) mapoffset);
 									kr = kIOReturnBadMedia;
 								}
 							}
@@ -1007,12 +1217,445 @@ IOMemoryDescriptorTest(int newValue)
 
 	assert(kr == kIOReturnSuccess);
 
-	vm_deallocate(kernel_map, data[0], bsize);
-//    vm_deallocate(kernel_map, data[1], size);
+	mach_vm_deallocate(kernel_map, data[0], bsize);
+	//mach_vm_deallocate(kernel_map, data[1], size);
 
 	IOLog("IOMemoryDescriptorTest/ %d\n", (int) gIOMemoryReferenceCount);
 
 	return 0;
 }
+
+#if HAS_MTE
+
+static void
+alloc_and_populate_user_buffer(
+	bool should_use_mte,
+	mach_vm_size_t size,
+	mach_vm_offset_t* out_addr)
+{
+	vm_map_t user_map = current_map();
+	mach_vm_offset_t buffer;
+	assert(user_map != VM_MAP_NULL);
+	assert(!vm_kernel_map_is_kernel(user_map));
+	kern_return_t kr = mach_vm_allocate_kernel(user_map, &buffer, size,
+	    VM_MAP_KERNEL_FLAGS_ANYWHERE(.vm_tag = VM_MEMORY_MALLOC_SMALL, .vmf_mte = should_use_mte));
+	assert(kr == KERN_SUCCESS);
+
+	// Write some data into the buffer
+	{
+		char* bufData = (char*) IOMallocAligned(size, page_size);
+		assert(bufData);
+		memset(bufData, 'S', size);
+		kr = copyout(bufData, buffer, size);
+		assert(kr == KERN_SUCCESS);
+		IOFreeAligned(bufData, size);
+	}
+
+	if (should_use_mte) {
+		// Set a tag on the buffer
+		// (And switch out of and back into PAN so we can touch the user-mode buffer from kernelspace)
+		__builtin_arm_wsr("pan", 0);
+		buffer = (mach_vm_offset_t)vm_memtag_generate_and_store_tag((caddr_t)buffer, size);
+		__builtin_arm_wsr("pan", 1);
+	}
+
+	*out_addr = buffer;
+}
+
+static int
+IOMDCPUMapMTETest(int newValue)
+{
+	const size_t MTE_TAG_SHIFT = 56;
+	const uint64_t MTE_TAG_MASK = (0xFULL << MTE_TAG_SHIFT);
+
+	const mach_vm_size_t bufSize = PAGE_SIZE;
+	mach_vm_offset_t buffer;
+	alloc_and_populate_user_buffer(true, bufSize, &buffer);
+
+	IOMemoryDescriptor *iomd = IOMemoryDescriptor::withAddressRange(buffer, bufSize, kIODirectionOutIn, current_task());
+	assert(iomd);
+
+	iomd->prepare();
+	IOMemoryMap *map = iomd->map();
+	assert(map);
+
+	/*
+	 * The userspace buffer has an MTE tag set, which will be something other than 0xF.
+	 * However, the pointer we get back here is an untagged kernel pointer,
+	 * so it should be tagged with 0xF (and we assert this).
+	 *
+	 * Despite the mismatch, we expect to be able to access the tagged userspace
+	 * memory without panicking since the kernel's mapping of this memory from
+	 * IOMD::map() should be an untagged one.
+	 */
+	assert((map->getVirtualAddress() & MTE_TAG_MASK) == MTE_TAG_MASK);
+	volatile char *kern_ptr = (volatile char*) map->getVirtualAddress();
+	for (size_t i = 0; i < bufSize; i++) {
+		assert(kern_ptr[i] == 'S');
+		kern_ptr[i]++;
+	}
+	iomd->complete();
+	map->release();
+	iomd->release();
+
+	/* clean up userspace buffer */
+	kern_return_t kr = mach_vm_deallocate(current_map(), vm_memtag_canonicalize_user(buffer), bufSize);
+	assert(kr == KERN_SUCCESS);
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOMemoryDescriptorCpuMapMTETest(int newValue)
+{
+	int result;
+	IOLog("/IOMDMapMTETest %d\n", (int) gIOMemoryReferenceCount);
+
+	result = IOMDCPUMapMTETest(newValue);
+	if (result) {
+		return result;
+	}
+
+	IOLog("IOMDMapMTETest/ %d\n", (int) gIOMemoryReferenceCount);
+	return kIOReturnSuccess;
+}
+
+static void
+do_iomd_read_write_bytes_test(uint8_t flags)
+{
+	// Extract the test configuration from the flags
+	bool do_write = flags & IOMD_MTE_RWB_DO_WRITE;
+	bool enable_mte = flags & IOMD_MTE_RWB_MTE_BUFFER;
+	bool do_tag_mismatch = flags & IOMD_MTE_RWB_DO_TAG_MISMATCH;
+	bool do_allocation_cleanup = false;
+
+	if (do_tag_mismatch && !enable_mte) {
+		panic("Invalid configuration requested: create a tag mismatch without enabling MTE");
+	}
+
+	// Create the necessary user buffer to operate on
+	const mach_vm_size_t bufSize = PAGE_SIZE;
+	mach_vm_offset_t buffer;
+	alloc_and_populate_user_buffer(enable_mte, bufSize, &buffer);
+
+	// And an IOMD pointing to the buffer
+	IOMemoryDescriptor *iomd = IOMemoryDescriptor::withAddressRange(
+		buffer,
+		bufSize,
+		kIODirectionOutIn,
+		current_task()
+		);
+	assert(iomd);
+
+	iomd->prepare();
+
+	// Do we need to test the consequences of a tag mismatch?
+	if (do_tag_mismatch) {
+		// (Let's switch out of and back into PAN so we can touch the user-mode buffer from kernelspace)
+		// Create a tag check fault condition in the middle of the buffer, as read/writeBytes will LDG
+		// the initial tag.
+		__builtin_arm_wsr("pan", 0);
+		buffer = (mach_vm_offset_t)vm_memtag_generate_and_store_tag((caddr_t)buffer + 32, bufSize - 32);
+		__builtin_arm_wsr("pan", 1);
+	}
+
+	if (do_write) {
+		// Write path:
+		char dataToWrite[64];
+		memset(dataToWrite, 'A', sizeof(dataToWrite));
+		iomd->writeBytes(0, dataToWrite, sizeof(dataToWrite));
+
+
+		if (!do_tag_mismatch) {
+			// At this point, we expect the process to have survived because
+			// the fixup routine in bcopy_phys_internal should have given us a correct access.
+			// Ensure that we actually survived correctly.
+			__builtin_arm_wsr("pan", 0);
+			if (memcmp((const void*)buffer, dataToWrite, sizeof(dataToWrite)) != 0) {
+				panic("Data was not successfully written");
+			}
+			__builtin_arm_wsr("pan", 1);
+		}
+
+		// in the do_tag_mismatch case, userspace gets killed, but we get out of here cleanly.
+		do_allocation_cleanup = true;
+		goto out;
+	} else {
+		// Read path:
+		char buf[64];
+		// Fill buf with an arbitrary pattern, 0x41 is popular is security circles.
+		memset(buf, 'A', sizeof(buf));
+		// If successful this should overwrite buf contents
+		iomd->readBytes(0, buf, sizeof(buf));
+
+		if (!do_tag_mismatch) {
+			// At this point, we expect the process to have survived because
+			// the fixup routine in bcopy_phys_internal should have given us a correct access.
+			// Ensure that we have actually read expected data.
+			char correct_data[64] = {0};
+			memset(correct_data, 'S', sizeof(correct_data));
+			if (memcmp(buf, correct_data, sizeof(correct_data)) != 0) {
+				panic("Failed to read data from the IOMD");
+			}
+		}
+
+		// in the do_tag_mismatch case, userspace gets killed, but we get out of here cleanly.
+		do_allocation_cleanup = true;
+		goto out;
+	}
+
+out:
+	// (Cleanup)
+	iomd->complete();
+	iomd->release();
+	if (do_allocation_cleanup) {
+		kern_return_t kr = mach_vm_deallocate(current_map(), vm_memtag_canonicalize_user(buffer), bufSize);
+		assert(kr == KERN_SUCCESS);
+	}
+}
+
+IOReturn
+IOMemoryDescriptorReadWriteBytesMTETest(void)
+{
+	uint8_t flags = IOMD_MTE_RWB_MTE_BUFFER;
+
+	/* Read path */
+	do_iomd_read_write_bytes_test(flags);
+
+	/* Write path */
+	flags |= IOMD_MTE_RWB_DO_WRITE;
+	do_iomd_read_write_bytes_test(flags);
+
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOMemoryDescriptorReadWriteBytesWithoutMTETest(void)
+{
+	uint8_t flags = 0;
+
+	/* Read path */
+	do_iomd_read_write_bytes_test(flags);
+
+	/* Write path */
+	flags |= IOMD_MTE_RWB_DO_WRITE;
+	do_iomd_read_write_bytes_test(flags);
+
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOMemoryDescriptorReadBytesMTEWithTCFTest(void)
+{
+	/* Read + Induce Tag Check Fault */
+	uint8_t flags = IOMD_MTE_RWB_MTE_BUFFER | IOMD_MTE_RWB_DO_TAG_MISMATCH;
+
+	do_iomd_read_write_bytes_test(flags);
+
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOMemoryDescriptorWriteBytesMTEWithTCFTest(void)
+{
+	/* Write + Induce Tag Check Fault */
+	uint8_t flags = IOMD_MTE_RWB_MTE_BUFFER | IOMD_MTE_RWB_DO_WRITE | IOMD_MTE_RWB_DO_TAG_MISMATCH;
+
+	do_iomd_read_write_bytes_test(flags);
+
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOMemoryDescriptorCreateMTEMappingInOtherMapTest(void)
+{
+	// Given a tagged userspace buffer
+	const mach_vm_size_t bufSize = PAGE_SIZE;
+	mach_vm_offset_t buffer;
+	alloc_and_populate_user_buffer(true, bufSize, &buffer);
+
+	// And an IOMD pointing to the buffer
+	IOMemoryDescriptor *iomd = IOMemoryDescriptor::withAddressRange(
+		buffer,
+		bufSize,
+		kIODirectionOutIn,
+		current_task()
+		);
+	assert(iomd);
+
+	iomd->prepare();
+
+	// When I try to enter the mapping into another task
+	// (Use launchd as a guinea pig)
+	proc_t dest_proc = proc_find(1);
+	IOMemoryMap* map = iomd->createMappingInTask(proc_task(dest_proc), 0, kIOMapAnywhere, 0, 0);
+
+	// Then the request is allowed, because aliasing MTE mappings is always allowed
+	assert(map != NULL);
+	// But the aliased mapping should not have MTE enabled (so should be tagged with the user-canonical tag)
+	uint64_t virt_addr = map->getVirtualAddress();
+	assert(vm_memtag_extract_tag(virt_addr) == 0);
+	assert(!pmap_is_tagged_mapping(vm_map_get_pmap(current_map()), virt_addr));
+
+	// (Cleanup)
+	proc_rele(dest_proc);
+	map->release();
+	iomd->complete();
+	iomd->release();
+	kern_return_t kr = mach_vm_deallocate(current_map(), vm_memtag_canonicalize_user(buffer), bufSize);
+	assert(kr == KERN_SUCCESS);
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOMemoryDescriptorCreateMTEMappingInThisMapTest(void)
+{
+	// Given a tagged userspace buffer
+	const mach_vm_size_t bufSize = PAGE_SIZE;
+	mach_vm_offset_t buffer;
+	alloc_and_populate_user_buffer(true, bufSize, &buffer);
+
+	// And an IOMD pointing to the buffer
+	IOMemoryDescriptor *iomd = IOMemoryDescriptor::withAddressRange(
+		buffer,
+		bufSize,
+		kIODirectionOutIn,
+		current_task()
+		);
+	assert(iomd);
+
+	iomd->prepare();
+
+	// When I try to enter the mapping into this task
+	IOMemoryMap* map = iomd->createMappingInTask(current_task(), 0, kIOMapAnywhere, 0, 0);
+
+	// Then the request is allowed, because aliasing MTE mappings within the originating task is allowed
+	assert(map != NULL);
+	// And the aliased mapping also has MTE enabled
+	uint64_t virt_addr = map->getVirtualAddress();
+	assert(vm_memtag_extract_tag(virt_addr) != 0);
+	assert(pmap_is_tagged_mapping(vm_map_get_pmap(current_map()), vm_memtag_canonicalize_user(virt_addr)));
+
+	// (Cleanup)
+	map->release();
+	iomd->complete();
+	iomd->release();
+	kern_return_t kr = mach_vm_deallocate(current_map(), vm_memtag_canonicalize_user(buffer), bufSize);
+	assert(kr == KERN_SUCCESS);
+	return kIOReturnSuccess;
+}
+
+IOReturn
+IOMemoryDescriptorCreateMTEMappingInKernelMapTest(void)
+{
+	// Given a tagged userspace buffer
+	const mach_vm_size_t bufSize = PAGE_SIZE;
+	mach_vm_offset_t buffer;
+	alloc_and_populate_user_buffer(true, bufSize, &buffer);
+
+	// And an IOMD pointing to the buffer
+	IOMemoryDescriptor *iomd = IOMemoryDescriptor::withAddressRange(
+		buffer,
+		bufSize,
+		kIODirectionOutIn,
+		current_task()
+		);
+	assert(iomd);
+	iomd->prepare();
+
+	// When I try to enter the mapping into the kernel map
+	IOMemoryMap* map = iomd->createMappingInTask(kernel_task, 0, kIOMapAnywhere, 0, 0);
+
+	// Then the request is allowed, because aliasing MTE mappings is always allowed
+	assert(map != NULL);
+	// But the aliased mapping should not have MTE enabled (so should be tagged with the kernel-canonical tag)
+	uint64_t virt_addr = map->getVirtualAddress();
+	assert(vm_memtag_extract_tag(virt_addr) == 0xf);
+	assert(!pmap_is_tagged_mapping(vm_map_get_pmap(current_map()), virt_addr));
+
+	// (Cleanup)
+	map->release();
+	iomd->complete();
+	iomd->release();
+	kern_return_t kr = mach_vm_deallocate(current_map(), vm_memtag_canonicalize_user(buffer), bufSize);
+	assert(kr == KERN_SUCCESS);
+	return kIOReturnSuccess;
+}
+#endif /* HAS_MTE */
+
+extern "C" {
+#include <sys/vnode.h>
+#include <sys/vnode_internal.h>
+}
+
+/* testdata script
+ *  for ((i = 0; i <= 1300000; i+=4)); do
+ *  printf -v format '\\x%x' \
+ *   "$((         i & 0xff ))" \
+ *   "$(( (i >>  8) & 0xff ))" \
+ *   "$(( (i >> 16) & 0xff ))" \
+ *   "$(( (i >> 24) & 0xff ))"
+ *  printf "$format"
+ *  done
+ */
+
+IOReturn
+IOMemoryDescriptorVNodeTest(int __unused arg)
+{
+	struct vnode         *vp = NULL;
+	vfs_context_t           ctx;
+	IOMemoryDescriptor * md = NULL;
+	IOMemoryMap * map = NULL;
+	IOReturn kr = kIOReturnNotOpen;
+	errno_t error;
+
+	const char * name = "/private/var/root/testdata";
+
+	ctx = vfs_context_create(vfs_context_current());
+	error = vnode_open(name, (O_RDONLY | FREAD | O_NOFOLLOW),
+	    S_IRUSR | S_IRGRP | S_IROTH, VNODE_LOOKUP_NOFOLLOW, &vp, ctx);
+
+	if (error != 0) {
+		IOLog("Failed(%d) to open the file %s\n", error, name);
+		goto exit;
+	}
+
+	for (uint64_t mdOffset = 0; mdOffset < 3 * page_size; mdOffset += (page_size / 2)) {
+		uint64_t size = mdOffset ? 4 * ptoa(1) : 0;
+		md = IOMemoryDescriptor::withVNode(vp, mdOffset, size, kIODirectionOut);
+		assert(md);
+		assert(md->getLength() >= (4 * ptoa(1)));
+
+		map = md->map(kIOMapReadOnly);
+		assert(map);
+
+		kr = md->prepare(kIODirectionOut);
+		assert(kIOReturnSuccess == kr);
+
+		uint32_t testdata;
+		for (int page = 0; page < 4; page++) {
+			uint64_t offset = ptoa(page) + 4 * page;
+
+			assert(sizeof(testdata) == md->readBytes(offset, &testdata, sizeof(testdata)));
+			assert(testdata == (mdOffset + offset));
+			testdata = ((uint32_t*)map->getVirtualAddress())[offset / 4];
+			assert(testdata == (mdOffset + offset));
+		}
+		kr = md->complete(kIODirectionOut);
+		assert(kIOReturnSuccess == kr);
+		OSSafeReleaseNULL(map);
+		OSSafeReleaseNULL(md);
+	}
+
+exit:
+	if (vp) {
+		vnode_close(vp, FREAD, ctx);
+	}
+	if (ctx) {
+		vfs_context_rele(ctx);
+	}
+
+	return kIOReturnSuccess;
+}
+
 
 #endif  /* DEVELOPMENT || DEBUG */

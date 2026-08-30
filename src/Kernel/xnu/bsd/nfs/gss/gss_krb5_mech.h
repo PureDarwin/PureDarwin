@@ -211,6 +211,11 @@ typedef enum etypes {
 #define GSS_RCV 1
 #define GSS_C_QOP_REVERSE 0x80000000    /* Pseudo QOP value to use as input to gss_krb5_unwrap to allow Sender to unwrap */
 
+typedef struct krb5_key {
+	void   *key_val;
+	size_t key_len;
+} krb5_key_t;
+
 /*
  * Key schedule is the cbc state for encryption and decryption.
  * For DES3 we always use the session key from the lucid context,
@@ -219,7 +224,7 @@ typedef enum etypes {
 struct key_schedule {
 	cccbc_ctx *enc;
 	cccbc_ctx *dec;
-	void *ikey[2];          /* Drived integrity key (same length context key); */
+	krb5_key_t ikeys[2];  /* Drived integrity key (same length context key); */
 };
 
 /*
@@ -245,11 +250,13 @@ typedef struct crypto_ctx {
 	struct key_schedule ks;
 	uint32_t digest_size;
 	uint32_t keylen;
-	void *ckey[2];  /* Derived checksum key. Same as key for DES3 */
+	krb5_key_t ckeys[2];  /* Derived checksum key. Same as key for DES3 */
 } *crypto_ctx_t;
 
 #define CRYPTO_KS_ALLOCED       0x00001
 #define CRYPTO_CTS_ENABLE       0x00002
+
+#define CRYPTO_MAX_DIGSET_SIZE  20 // 160 bits for DES3_CBC_SHA1_KD
 
 typedef struct gss_ctx_id_desc {
 	lucid_context  gss_lucid_ctx;
@@ -286,14 +293,6 @@ uint32_t
     gss_qop_t,                  /* qop_req */
     gss_buffer_t,               /* message buffer */
     gss_buffer_t                /* message_token */
-    );
-
-uint32_t
-    gss_krb5_verify_mic(uint32_t *,     /* minor_status */
-    gss_ctx_id_t,                       /* context_handle */
-    gss_buffer_t,                       /* message_buffer */
-    gss_buffer_t,                       /* message_token */
-    gss_qop_t *                         /* qop_state */
     );
 
 uint32_t

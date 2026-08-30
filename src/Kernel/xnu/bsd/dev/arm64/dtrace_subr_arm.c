@@ -35,7 +35,7 @@
 #include <sys/user.h>
 #include <sys/kauth.h>
 #include <kern/debug.h>
-#include <arm/proc_reg.h>
+#include <arm64/proc_reg.h>
 
 int             (*dtrace_pid_probe_ptr)(arm_saved_state_t *);
 int             (*dtrace_return_probe_ptr) (arm_saved_state_t *);
@@ -54,12 +54,10 @@ dtrace_user_probe(arm_saved_state_t *regs)
 	 */
 
 	lck_rw_t *rwp;
-	struct proc *p = current_proc();
 	int is_fasttrap = 0;
+	uthread_t uthread = current_uthread();
 
-	uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());
-
-	kauth_cred_uthread_update(uthread, p);
+	current_cached_proc_cred_update();
 
 	uint32_t pc;
 	if (copyin((user_addr_t)saved_state64(regs)->pc, &pc, sizeof(uint32_t))) {

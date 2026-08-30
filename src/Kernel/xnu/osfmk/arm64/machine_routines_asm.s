@@ -31,10 +31,65 @@
 #include <arm64/machine_machdep.h>
 #include <arm64/proc_reg.h>
 #include <arm/pmap.h>
+#include <kern/ticket_lock.h>
 #include <pexpert/arm64/board_config.h>
 #include <sys/errno.h>
 #include "assym.s"
 
+/*
+ * Fault recovery.
+ *
+ * COPYIO_RECOVER_TABLE_SYM is used to delimit an array with those symbols:
+ *     struct copyio_recovery_entry copyio_recover_table[];
+ *     struct copyio_recovery_entry copyio_recover_table_end[];
+ *
+ * COPYIO_RECOVER_RANGE <end_addr>, <recovery_addr>
+ *    defines a range from the COPYIO_RECOVER_RANGE point to the <end_addr>
+ *    which has a recovery point of recovery_addr (defaulting to copyio_error)
+ *
+ *    This defines a struct of this type:
+ *        struct copyio_recovery_entry {
+ *            ptrdiff_t cre_start;
+ *            ptrdiff_t cre_end;
+ *            ptrdiff_t cre_recovery;
+ *        };
+ *    where the offset are relative to copyio_recover_table.
+ */
+
+.macro COPYIO_RECOVER_TABLE_SYM 	sym_name
+	.align 3
+	.pushsection __TEXT, __copyio_vectors, regular
+	.private_extern EXT(\sym_name)
+	.globl EXT(\sym_name)
+LEXT(\sym_name)
+	.popsection
+.endmacro
+
+#if HAS_MTE
+.macro COPYIO_RECOVER_RANGE end_addr, recovery_addr = copyio_error, recover_from_kernel_read_tag_check_fault=0, recover_from_kernel_write_tag_check_fault=0
+#else
+.macro COPYIO_RECOVER_RANGE end_addr, recovery_addr = copyio_error
+#endif
+	.align	3
+	.pushsection __TEXT, __copyio_vectors, regular
+	.quad	Lcre_start_\@  - _copyio_recover_table
+	.quad	\end_addr      - _copyio_recover_table
+	.quad	\recovery_addr - _copyio_recover_table
+#if HAS_MTE
+	.byte	\recover_from_kernel_read_tag_check_fault
+	.byte	\recover_from_kernel_write_tag_check_fault
+	.zero	6
+#endif
+	.popsection
+Lcre_start_\@:
+.endmacro
+
+	COPYIO_RECOVER_TABLE_SYM	copyio_recover_table
+
+.macro COPYIO_STACK_PROLOG
+0:
+	ARM64_STACK_PROLOG
+.endmacro
 
 #if defined(HAS_APPLE_PAC)
 
@@ -51,11 +106,13 @@
 	.align 2
 	.globl EXT(ml_enable_user_jop_key)
 LEXT(ml_enable_user_jop_key)
+	ARM64_PROLOG
 #if HAS_PARAVIRTUALIZED_PAC
 	mov 	x2, x0
 	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
 	mov		x1, #1
 	hvc		#0
+	cbnz		x0, .
 	LOAD_CPU_JOP_KEY x0, x1
 	ret
 #endif /* HAS_PARAVIRTUALIZED_PAC */
@@ -66,11 +123,13 @@ LEXT(ml_enable_user_jop_key)
 	.align 2
 	.globl EXT(ml_disable_user_jop_key)
 LEXT(ml_disable_user_jop_key)
+	ARM64_PROLOG
 #if HAS_PARAVIRTUALIZED_PAC
 	mov 	x2, x1
 	MOV64	x0, VMAPPLE_PAC_SET_EL0_DIVERSIFIER_AT_EL1
 	mov		x1, #0
 	hvc		#0
+	cbnz		x0, .
 	ret
 #endif /* HAS_PARAVIRTUALIZED_PAC */
 
@@ -87,6 +146,7 @@ LEXT(ml_disable_user_jop_key)
 	.align 2
 	.globl EXT(set_bp_ret)
 LEXT(set_bp_ret)
+	ARM64_PROLOG
 	// Load bpret boot-arg
 	adrp		x14, EXT(bp_ret)@page
 	add		x14, x14, EXT(bp_ret)@pageoff
@@ -105,14 +165,11 @@ LEXT(set_bp_ret)
 	.align 2
 	.globl EXT(set_nex_pg)
 LEXT(set_nex_pg)
-	mrs		x14, MPIDR_EL1
+	ARM64_PROLOG
 	// Skip if this isn't a p-core; NEX powergating isn't available for e-cores
-	and		x14, x14, #(MPIDR_PNE)
+	ARM64_IS_PCORE  x14
 	cbz		x14, Lnex_pg_done
 
-	// Set the SEG-recommended value of 12 additional reset cycles
-	HID_INSERT_BITS	HID13, ARM64_REG_HID13_RstCyc_mask, ARM64_REG_HID13_RstCyc_val, x13
-	HID_SET_BITS HID14, ARM64_REG_HID14_NexPwgEn, x13
 
 Lnex_pg_done:
 	ret
@@ -125,6 +182,7 @@ Lnex_pg_done:
 	.align	2
 	.globl	EXT(get_fpscr)
 LEXT(get_fpscr)
+	ARM64_PROLOG
 #if	__ARM_VFP__
 	mrs	x1, FPSR			// Grab FPSR
 	mov	x4, #(FPSR_MASK & 0xFFFF)
@@ -151,6 +209,7 @@ LEXT(get_fpscr)
  *		and FPCR are not responsible for condition codes.
  */
 LEXT(set_fpscr)
+	ARM64_PROLOG
 #if	__ARM_VFP__
 	mov	x4, #(FPSR_MASK & 0xFFFF)
 	mov	x5, #(FPSR_MASK & 0xFFFF0000)
@@ -184,23 +243,25 @@ LEXT(set_fpscr)
 	.align 2
 	.globl EXT(update_mdscr)
 LEXT(update_mdscr)
-	mov	x4, #0
-	mrs	x2, MDSCR_EL1
-	bic	x2, x2, x0
-	orr	x2, x2, x1
+	ARM64_PROLOG
+	mov	x17, #0
+	mrs	x16, MDSCR_EL1
+	bic	x16, x16, x0
+	orr	x16, x16, x1
 1:
-	bic	x2, x2, #0x2000
-	msr	MDSCR_EL1, x2
+	bic	x16, x16, #0x2000
+	msr	MDSCR_EL1, x16
 #if defined(CONFIG_KERNEL_INTEGRITY)
 	/*
 	 * verify KDE didn't get set (including via ROP)
 	 * If set, clear it and then panic
 	 */
-	ands	x3, x2, #0x2000
-	orr	x4, x4, x3
-	bne	1b
-	cmp	x4, xzr
-	b.ne	Lupdate_mdscr_panic
+	tst	x16, #0x2000
+	beq	2f
+	mov	x17, #1
+	b	1b
+2:
+	cbnz	x17, Lupdate_mdscr_panic
 #endif
 	ret
 
@@ -221,19 +282,13 @@ Lupdate_mdscr_panic_str:
 	.align 2
 	.globl EXT(set_mmu_ttb_alternate)
 LEXT(set_mmu_ttb_alternate)
+	ARM64_PROLOG
 	dsb		sy
 #if defined(KERNEL_INTEGRITY_KTRR)
 	mov		x1, lr
 	bl		EXT(pinst_set_ttbr1)
 	mov		lr, x1
 #else
-#if defined(HAS_VMSA_LOCK)
-#if DEBUG || DEVELOPMENT
-	mrs		x1, VMSA_LOCK_EL1
-	and		x1, x1, #(VMSA_LOCK_TTBR1_EL1)
-	cbnz		x1, L_set_locked_reg_panic
-#endif /* DEBUG || DEVELOPMENT */
-#endif /* defined(HAS_VMSA_LOCK) */
 	msr		TTBR1_EL1, x0
 #endif /* defined(KERNEL_INTEGRITY_KTRR) */
 	isb		sy
@@ -247,6 +302,7 @@ LEXT(set_mmu_ttb_alternate)
 	.align 2
 	.globl EXT(set_mmu_ttb)
 LEXT(set_mmu_ttb)
+	ARM64_PROLOG
 #if __ARM_KERNEL_PROTECT__
 	/* All EL1-mode ASIDs are odd. */
 	orr		x0, x0, #(1 << TTBR_ASID_SHIFT)
@@ -262,6 +318,7 @@ LEXT(set_mmu_ttb)
 	.align 2
 	.globl EXT(ml_get_ppl_cpu_data)
 LEXT(ml_get_ppl_cpu_data)
+	ARM64_PROLOG
 	LOAD_PMAP_CPU_DATA x0, x1, x2
 	ret
 #endif
@@ -273,6 +330,7 @@ LEXT(ml_get_ppl_cpu_data)
 	.align 2
 	.globl EXT(set_aux_control)
 LEXT(set_aux_control)
+	ARM64_PROLOG
 	msr		ACTLR_EL1, x0
 	// Synchronize system
 	isb		sy
@@ -283,6 +341,7 @@ LEXT(set_aux_control)
 	.align 2
 	.globl EXT(set_vbar_el1)
 LEXT(set_vbar_el1)
+	ARM64_PROLOG
 #if defined(KERNEL_INTEGRITY_KTRR)
 	b		EXT(pinst_set_vbar)
 #else
@@ -291,23 +350,6 @@ LEXT(set_vbar_el1)
 #endif
 #endif /* __ARM_KERNEL_PROTECT__ */
 
-#if defined(HAS_VMSA_LOCK)
-	.text
-	.align 2
-	.globl EXT(vmsa_lock)
-LEXT(vmsa_lock)
-	isb sy
-	mov x1, #(VMSA_LOCK_SCTLR_M_BIT)
-#if __ARM_MIXED_PAGE_SIZE__
-	mov x0, #(VMSA_LOCK_TTBR1_EL1 | VMSA_LOCK_VBAR_EL1)
-#else
-	mov x0, #(VMSA_LOCK_TTBR1_EL1 | VMSA_LOCK_TCR_EL1 | VMSA_LOCK_VBAR_EL1)
-#endif
-	orr x0, x0, x1
-	msr VMSA_LOCK_EL1, x0
-	isb sy
-	ret
-#endif /* defined(HAS_VMSA_LOCK) */
 
 /*
  *	set translation control register
@@ -316,6 +358,7 @@ LEXT(vmsa_lock)
 	.align 2
 	.globl EXT(set_tcr)
 LEXT(set_tcr)
+	ARM64_PROLOG
 #if defined(APPLE_ARM64_ARCH_FAMILY)
 #if DEBUG || DEVELOPMENT
 	// Assert that T0Z is always equal to T1Z
@@ -329,14 +372,6 @@ LEXT(set_tcr)
 	bl		EXT(pinst_set_tcr)
 	mov		lr, x1
 #else
-#if defined(HAS_VMSA_LOCK)
-#if DEBUG || DEVELOPMENT
-	// assert TCR unlocked
-	mrs 		x1, VMSA_LOCK_EL1
-	and		x1, x1, #(VMSA_LOCK_TCR_EL1)
-	cbnz		x1, L_set_locked_reg_panic
-#endif /* DEBUG || DEVELOPMENT */
-#endif /* defined(HAS_VMSA_LOCK) */
 	msr		TCR_EL1, x0
 #endif /* defined(KERNEL_INTRITY_KTRR) */
 	isb		sy
@@ -373,8 +408,9 @@ L_set_locked_reg_panic_str:
 	.align 2
 	.globl EXT(mmu_kvtop)
 LEXT(mmu_kvtop)
+	ARM64_PROLOG
 	mrs		x2, DAIF									// Load current DAIF
-	msr		DAIFSet, #(DAIFSC_IRQF | DAIFSC_FIQF)		// Disable IRQ
+	msr		DAIFSet, #(DAIFSC_STANDARD_DISABLE)		// Disable all asynchronous exceptions
 	at		s1e1r, x0									// Translation Stage 1 EL1
 	isb		sy
 	mrs		x1, PAR_EL1									// Read result
@@ -394,10 +430,11 @@ L_mmu_kvtop_invalid:
 	.align 2
 	.globl EXT(mmu_uvtop)
 LEXT(mmu_uvtop)
+	ARM64_PROLOG
 	lsr		x8, x0, #56									// Extract top byte
 	cbnz	x8, L_mmu_uvtop_invalid						// Tagged pointers are invalid
 	mrs		x2, DAIF									// Load current DAIF
-	msr		DAIFSet, #(DAIFSC_IRQF | DAIFSC_FIQF)		// Disable IRQ
+	msr		DAIFSet, #(DAIFSC_STANDARD_DISABLE)		// Disable all asynchronous exceptions
 	at		s1e0r, x0									// Translation Stage 1 EL0
 	isb		sy
 	mrs		x1, PAR_EL1									// Read result
@@ -417,8 +454,9 @@ L_mmu_uvtop_invalid:
 	.align 2
 	.globl EXT(mmu_kvtop_wpreflight)
 LEXT(mmu_kvtop_wpreflight)
+	ARM64_PROLOG
 	mrs		x2, DAIF									// Load current DAIF
-	msr		DAIFSet, #(DAIFSC_IRQF | DAIFSC_FIQF)		// Disable IRQ
+	msr		DAIFSet, #(DAIFSC_STANDARD_DISABLE)		// Disable all asynchronous exceptions
 	at		s1e1w, x0									// Translation Stage 1 EL1
 	mrs		x1, PAR_EL1									// Read result
 	msr		DAIF, x2									// Restore interrupt state
@@ -430,120 +468,315 @@ L_mmu_kvtop_wpreflight_invalid:
 	mov		x0, #0										// Return invalid
 	ret
 
-/*
- * SET_RECOVERY_HANDLER
- *
- *	Sets up a page fault recovery handler.  This macro clobbers x16 and x17.
- *
- *	label - recovery label
- *	tpidr - persisted thread pointer
- *	old_handler - persisted recovery handler
- *	label_in_adr_range - whether \label is within 1 MB of PC
- */
-.macro SET_RECOVERY_HANDLER	label, tpidr=x16, old_handler=x10, label_in_adr_range=0
-	// Note: x16 and x17 are designated for use as temporaries in
-	// interruptible PAC routines.  DO NOT CHANGE THESE REGISTER ASSIGNMENTS.
-.if \label_in_adr_range==1						// Load the recovery handler address
-	adr		x17, \label
-.else
-	adrp	x17, \label@page
-	add		x17, x17, \label@pageoff
-.endif
-#if defined(HAS_APPLE_PAC)
-	mrs		x16, TPIDR_EL1
-	add		x16, x16, TH_RECOVER
-	movk	x16, #PAC_DISCRIMINATOR_RECOVER, lsl 48
-	pacia	x17, x16							// Sign with IAKey + blended discriminator
-#endif
-
-	mrs		\tpidr, TPIDR_EL1					// Load thread pointer
-	ldr		\old_handler, [\tpidr, TH_RECOVER]	// Save previous recovery handler
-	str		x17, [\tpidr, TH_RECOVER]			// Set new signed recovery handler
-.endmacro
-
-/*
- * CLEAR_RECOVERY_HANDLER
- *
- *	Clears page fault handler set by SET_RECOVERY_HANDLER
- *
- *	tpidr - thread pointer saved by SET_RECOVERY_HANDLER
- *	old_handler - old recovery handler saved by SET_RECOVERY_HANDLER
- */
-.macro CLEAR_RECOVERY_HANDLER	tpidr=x16, old_handler=x10
-	str		\old_handler, [\tpidr, TH_RECOVER]	// Restore the previous recovery handler
-.endmacro
-
-
 	.text
 	.align 2
+#if HAS_MTE
+copyio_error_clear_tco:
+	msr		TCO, #0
+#endif
 copyio_error:
-	CLEAR_RECOVERY_HANDLER
-	mov		x0, #EFAULT					// Return an EFAULT error
-	POP_FRAME
+	POP_FRAME							// Return the error populated in x0
+	                                    // by the exception handler
 	ARM64_STACK_EPILOG
 
+#if CONFIG_XNUPOST
 /*
- * int _bcopyin(const char *src, char *dst, vm_size_t len)
+ * Test function for panic lockdown which can cause a data abort at a well known
+ * PC with a copyio recovery handler.
+ */
+	.text
+	.align 2
+	.globl EXT(arm64_panic_lockdown_test_copyio)
+LEXT(arm64_panic_lockdown_test_copyio)
+	ARM64_PROLOG
+	COPYIO_RECOVER_RANGE 1f, 2f
+	/* RECOVER_RANGE can change code layout, breaking implicit fault PC */
+	.globl EXT(arm64_panic_lockdown_test_copyio_fault_pc)
+LEXT(arm64_panic_lockdown_test_copyio_fault_pc)
+	ldr		x0, [x0]
+1:
+	ret
+2:
+	mov		x0, 0xAA
+	ret
+
+#if HAS_MTE
+/*
+ * Test function for panic lockdown which can cause a data abort at a well known
+ * PC with a copyio recovery handler which is also able to recover from tag
+ * check faults.
+ */
+	.text
+	.align 2
+	.globl EXT(arm64_panic_lockdown_test_copyio_tag_check_fault_recoverable)
+LEXT(arm64_panic_lockdown_test_copyio_tag_check_fault_recoverable)
+	ARM64_PROLOG
+	COPYIO_RECOVER_RANGE 1f, 2f, recover_from_kernel_read_tag_check_fault=1
+	/* RECOVER_RANGE can change code layout, breaking implicit fault PC */
+	.globl EXT(arm64_panic_lockdown_test_copyio_tag_check_fault_recoverable_fault_pc)
+LEXT(arm64_panic_lockdown_test_copyio_tag_check_fault_recoverable_fault_pc)
+	ldr		x0, [x0]
+1:
+	ret
+2:
+	mov		x0, 0xAA
+	ret
+#endif /* HAS_MTE */
+#endif /* CONFIG_XNUPOST */
+
+/*
+ * We have several different _bcopy{in|out} implementations, with slightly different
+ * recovery models. This macro provides a common backbone for all of them, so that
+ * we don't risk (implementation/optimization) differences among them.
+ */
+.macro BCOPY_IMPL src, dst, len, end_label
+    // \src: Source pointer
+    // \dst: Destination pointer
+    // \len: Length
+    // \end_label: Label to jump to at the end of the copy
+
+    /* If len is less than 256 bytes, do 16 bytewise copy */
+    cmp     \len, #256
+    b.lt    2f
+    sub     \len, \len, #256
+    /* 256 bytes at a time */
+1:
+    /* 0-64 bytes */
+    ldp     x3, x4, [\src]
+    stp     x3, x4, [\dst]
+    ldp     x5, x6, [\src, #16]
+    stp     x5, x6, [\dst, #16]
+    ldp     x3, x4, [\src, #32]
+    stp     x3, x4, [\dst, #32]
+    ldp     x5, x6, [\src, #48]
+    stp     x5, x6, [\dst, #48]
+
+    /* 64-128 bytes */
+    ldp     x3, x4, [\src, #64]
+    stp     x3, x4, [\dst, #64]
+    ldp     x5, x6, [\src, #80]
+    stp     x5, x6, [\dst, #80]
+    ldp     x3, x4, [\src, #96]
+    stp     x3, x4, [\dst, #96]
+    ldp     x5, x6, [\src, #112]
+    stp     x5, x6, [\dst, #112]
+
+    /* 128-192 bytes */
+    ldp     x3, x4, [\src, #128]
+    stp     x3, x4, [\dst, #128]
+    ldp     x5, x6, [\src, #144]
+    stp     x5, x6, [\dst, #144]
+    ldp     x3, x4, [\src, #160]
+    stp     x3, x4, [\dst, #160]
+    ldp     x5, x6, [\src, #176]
+    stp     x5, x6, [\dst, #176]
+
+    /* 192-256 bytes */
+    ldp     x3, x4, [\src, #192]
+    stp     x3, x4, [\dst, #192]
+    ldp     x5, x6, [\src, #208]
+    stp     x5, x6, [\dst, #208]
+    ldp     x3, x4, [\src, #224]
+    stp     x3, x4, [\dst, #224]
+    ldp     x5, x6, [\src, #240]
+    stp     x5, x6, [\dst, #240]
+
+    add     \src, \src, #256
+    add     \dst, \dst, #256
+
+    subs    \len, \len, #256
+    b.ge    1b
+
+    /* Fixup the len and test for completion */
+    adds    \len, \len, #256
+    b.eq    \end_label
+
+2:
+    /* If len is less than 16 bytes, just do a bytewise copy */
+    cmp     \len, #16
+    b.lt    4f
+    sub     \len, \len, #16
+
+3:
+    /* 16 bytes at a time */
+    ldp     x3, x4, [\src], #16
+    stp     x3, x4, [\dst], #16
+    subs    \len, \len, #16
+    b.ge    3b
+
+    /* Fixup the len and test for completion */
+    adds    \len, \len, #16
+    b.eq    \end_label
+
+4:  /* Bytewise */
+    subs    \len, \len, #1
+    ldrb    w3, [\src], #1
+    strb    w3, [\dst], #1
+    b.hi    4b
+
+    //Fallthrough if copy finishes here.
+.endm
+
+/*
+ * int _bcopyin(const user_addr_t src, char *dst, vm_size_t len)
  */
 	.text
 	.align 2
 	.globl EXT(_bcopyin)
 LEXT(_bcopyin)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
-	/* If len is less than 16 bytes, just do a bytewise copy */
-	cmp		x2, #16
-	b.lt	2f
-	sub		x2, x2, #16
+	COPYIO_RECOVER_RANGE _bcopyin_end
+
+	BCOPY_IMPL x0, x1, x2, _bcopyin_end
+
+_bcopyin_end:	
+	mov		x0, xzr
+	/*
+	 * x3, x4, x5 and x6 now contain user-controlled values which may be used to form
+	 * addresses under speculative execution past the _bcopyin(); prevent any
+	 * attempts by userspace to influence kernel execution by zeroing them out
+	 * before we return.
+	 */
+	mov		x3, xzr
+	mov		x4, xzr
+	mov		x5, xzr
+	mov		x6, xzr
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_bcopyin)
+
+#if CONFIG_DTRACE
+/*
+ * int dtrace_nofault_copy8(const char *src, uint32_t *dst)
+ */
+	.text
+	.align 2
+	.globl EXT(dtrace_nofault_copy8)
+LEXT(dtrace_nofault_copy8)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+#if HAS_MTE
+	COPYIO_RECOVER_RANGE 1f, recover_from_kernel_read_tag_check_fault=1
+#else
+	COPYIO_RECOVER_RANGE 1f
+#endif /* HAS_MTE */
+	ldrb		w8, [x0]
 1:
-	/* 16 bytes at a time */
-	ldp		x3, x4, [x0], #16
-	stp		x3, x4, [x1], #16
-	subs	x2, x2, #16
-	b.ge	1b
-	/* Fixup the len and test for completion */
-	adds	x2, x2, #16
-	b.eq	3f
-2:	/* Bytewise */
-	subs	x2, x2, #1
-	ldrb	w3, [x0], #1
-	strb	w3, [x1], #1
-	b.hi	2b
-3:
-	CLEAR_RECOVERY_HANDLER
+	strb		w8, [x1]
 	mov		x0, #0
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(dtrace_nofault_copy8)
 
 /*
- * int _copyin_atomic32(const char *src, uint32_t *dst)
+ * int dtrace_nofault_copy16(const char *src, uint32_t *dst)
+ */
+	.text
+	.align 2
+	.globl EXT(dtrace_nofault_copy16)
+LEXT(dtrace_nofault_copy16)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+#if HAS_MTE
+	COPYIO_RECOVER_RANGE 1f, recover_from_kernel_read_tag_check_fault=1
+#else
+	COPYIO_RECOVER_RANGE 1f
+#endif /* HAS_MTE */
+	ldrh		w8, [x0]
+1:
+	strh		w8, [x1]
+	mov		x0, #0
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(dtrace_nofault_copy16)
+
+
+/*
+ * int dtrace_nofault_copy32(const char *src, uint32_t *dst)
+ */
+	.text
+	.align 2
+	.globl EXT(dtrace_nofault_copy32)
+LEXT(dtrace_nofault_copy32)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+#if HAS_MTE
+	COPYIO_RECOVER_RANGE 1f, recover_from_kernel_read_tag_check_fault=1
+#else
+	COPYIO_RECOVER_RANGE 1f
+#endif /* HAS_MTE */
+	ldr		w8, [x0]
+1:
+	str		w8, [x1]
+	mov		x0, #0
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(dtrace_nofault_copy32)
+
+/*
+ * int dtrace_nofault_copy64(const char *src, uint32_t *dst)
+ */
+	.text
+	.align 2
+	.globl EXT(dtrace_nofault_copy64)
+LEXT(dtrace_nofault_copy64)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+#if HAS_MTE
+	COPYIO_RECOVER_RANGE 1f, recover_from_kernel_read_tag_check_fault=1
+#else
+	COPYIO_RECOVER_RANGE 1f
+#endif /* HAS_MTE */
+	ldr		x8, [x0]
+1:
+	str		x8, [x1]
+	mov		x0, #0
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(dtrace_nofault_copy64)
+
+#endif /* CONFIG_DTRACE */
+
+/*
+ * int _copyin_atomic32(const user_addr_t src, uint32_t *dst)
  */
 	.text
 	.align 2
 	.globl EXT(_copyin_atomic32)
 LEXT(_copyin_atomic32)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
+	COPYIO_RECOVER_RANGE 1f
 	ldr		w8, [x0]
+1:
 	str		w8, [x1]
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(_copyin_atomic32)
 
 /*
- * int _copyin_atomic32_wait_if_equals(const char *src, uint32_t value)
+ * int _copyin_atomic32_wait_if_equals(const user_addr_t src, uint32_t value)
  */
 	.text
 	.align 2
 	.globl EXT(_copyin_atomic32_wait_if_equals)
 LEXT(_copyin_atomic32_wait_if_equals)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
+	COPYIO_RECOVER_RANGE 2f
 	ldxr		w8, [x0]
+2:
 	cmp		w8, w1
 	mov		x0, ESTALE
 	b.ne		1f
@@ -551,9 +784,37 @@ LEXT(_copyin_atomic32_wait_if_equals)
 	wfe
 1:
 	clrex
-	CLEAR_RECOVERY_HANDLER
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(_copyin_atomic32_wait_if_equals)
+
+#if HAS_MTE
+
+/*
+ * int _copyin_atomic64_allow_invalid_kernel_tag(const char *src, uint32_t *dst)
+ *
+ * Identical to _copyin_atomic64(), except mistagged kernel addresses cause
+ * this function to return EFAULT instead of panicking.
+ */
+	.text
+	.align 2
+	.globl EXT(_copyin_atomic64_allow_invalid_kernel_tag)
+LEXT(_copyin_atomic64_allow_invalid_kernel_tag)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 1f, recover_from_kernel_read_tag_check_fault=1
+	ldr		x8, [x0]
+1:
+	str		x8, [x1]
+	mov		x0, #0
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_copyin_atomic64_allow_invalid_kernel_tag)
+
+#endif /* HAS_MTE */
 
 /*
  * int _copyin_atomic64(const char *src, uint32_t *dst)
@@ -562,88 +823,76 @@ LEXT(_copyin_atomic32_wait_if_equals)
 	.align 2
 	.globl EXT(_copyin_atomic64)
 LEXT(_copyin_atomic64)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
+	COPYIO_RECOVER_RANGE Lcopyin_atomic64_common
 	ldr		x8, [x0]
+Lcopyin_atomic64_common:
 	str		x8, [x1]
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(_copyin_atomic64)
 
 
 /*
- * int _copyout_atomic32(uint32_t value, char *dst)
+ * int _copyout_atomic32(uint32_t u32, user_addr_t dst)
  */
 	.text
 	.align 2
 	.globl EXT(_copyout_atomic32)
 LEXT(_copyout_atomic32)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
+	COPYIO_RECOVER_RANGE 1f
 	str		w0, [x1]
+1:
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(_copyout_atomic32)
 
 /*
- * int _copyout_atomic64(uint64_t value, char *dst)
+ * int _copyout_atomic64(uint64_t u64, user_addr_t dst)
  */
 	.text
 	.align 2
 	.globl EXT(_copyout_atomic64)
 LEXT(_copyout_atomic64)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
+	COPYIO_RECOVER_RANGE 1f
 	str		x0, [x1]
+1:
 	mov		x0, #0
-	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
-	ARM64_STACK_EPILOG
-
+	ARM64_STACK_EPILOG EXT(_copyout_atomic64)
 
 /*
- * int _bcopyout(const char *src, char *dst, vm_size_t len)
+ * int _bcopyout(const char *src, user_addr_t dst, vm_size_t len)
  */
 	.text
 	.align 2
 	.globl EXT(_bcopyout)
 LEXT(_bcopyout)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
-	/* If len is less than 16 bytes, just do a bytewise copy */
-	cmp		x2, #16
-	b.lt	2f
-	sub		x2, x2, #16
-1:
-	/* 16 bytes at a time */
-	ldp		x3, x4, [x0], #16
-	stp		x3, x4, [x1], #16
-	subs	x2, x2, #16
-	b.ge	1b
-	/* Fixup the len and test for completion */
-	adds	x2, x2, #16
-	b.eq	3f
-2:  /* Bytewise */
-	subs	x2, x2, #1
-	ldrb	w3, [x0], #1
-	strb	w3, [x1], #1
-	b.hi	2b
-3:
-	CLEAR_RECOVERY_HANDLER
+	COPYIO_RECOVER_RANGE _bcopyout_end
+
+	BCOPY_IMPL x0, x1, x2, _bcopyout_end
+
+_bcopyout_end:
 	mov		x0, #0
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(_bcopyout)
 
 /*
  * int _bcopyinstr(
  *	  const user_addr_t user_addr,
- *	  char *kernel_addr,
+ *	  char *dst,
  *	  vm_size_t max,
  *	  vm_size_t *actual)
  */
@@ -651,9 +900,9 @@ LEXT(_bcopyout)
 	.align 2
 	.globl EXT(_bcopyinstr)
 LEXT(_bcopyinstr)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER Lcopyinstr_error, label_in_adr_range=1
+	COPYIO_RECOVER_RANGE Lcopyinstr_done
 	mov		x4, #0						// x4 - total bytes copied
 Lcopyinstr_loop:
 	ldrb	w5, [x0], #1					// Load a byte from the user source
@@ -667,13 +916,32 @@ Lcopyinstr_too_long:
 Lcopyinstr_done:
 	str		x4, [x3]					// Return number of bytes copied
 	mov		x0, x5						// Set error code (0 on success, ENAMETOOLONG on failure)
-	b		Lcopyinstr_exit
-Lcopyinstr_error:
-	mov		x0, #EFAULT					// Return EFAULT on error
-Lcopyinstr_exit:
-	CLEAR_RECOVERY_HANDLER
+	/*
+	 * A malicious userspace has weak control over the range of values held in
+	 * x2 based on which path through the kernel was taken to the copyinstr(),
+	 * for example:
+	 *  - (PSHMNAMLEN + 1) = 32
+	 *  - (MAXPATHLEN - 1) = 1023
+	 *  - (PAGE_SIZE * 2) = {8192, 32768}
+	 *  - etc
+	 *
+	 * This indirectly determines how much control a malicious userspace has
+	 * over the value held in x4 as they choose the length of the string in
+	 * the range of [0..x2] inclusive based on the index of the null terminator
+	 * (or lack thereof). This in turn controls the value held in x5, though
+	 * this is tightly constrained to either 0 or ENAMETOOLONG (i.e. 63) so
+	 * is less of a concern.
+	 *
+	 * The values held in these three registers (x2, x4, and x5) may be used
+	 * to form addresses under speculative execution past the _bcopyinstr();
+	 * prevent any attempts by userspace to influence kernel execution by
+	 * zeroing them out before we return.
+	 */
+	mov x2, xzr
+	mov x4, xzr
+	mov x5, xzr
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(_bcopyinstr)
 
 /*
  * int copyinframe(const vm_address_t frame_addr, char *kernel_addr, bool is64bit)
@@ -696,32 +964,32 @@ Lcopyinstr_exit:
 	.align 2
 	.globl EXT(copyinframe)
 LEXT(copyinframe)
-	ARM64_STACK_PROLOG
+	COPYIO_STACK_PROLOG
 	PUSH_FRAME
-	SET_RECOVERY_HANDLER copyio_error
+	COPYIO_RECOVER_RANGE Lcopyinframe_done
 	cbnz	w2, Lcopyinframe64 		// Check frame size
 	adrp	x5, EXT(gVirtBase)@page // For 32-bit frame, make sure we're not trying to copy from kernel
 	add		x5, x5, EXT(gVirtBase)@pageoff
 	ldr		x5, [x5]
-	cmp     x5, x0					// See if address is in kernel virtual range
+	cmp     x5, x0				// See if address is in kernel virtual range
 	b.hi	Lcopyinframe32			// If below kernel virtual range, proceed.
-	mov		w0, #EFAULT				// Should never have a 32-bit frame in kernel virtual range
+	mov		w0, #EFAULT		// Should never have a 32-bit frame in kernel virtual range
 	b		Lcopyinframe_done		
 
 Lcopyinframe32:
-	ldr		x12, [x0]				// Copy 8 bytes
+	ldr		x12, [x0]			// Copy 8 bytes
 	str		x12, [x1]
 	mov 	w0, #0					// Success
 	b		Lcopyinframe_done
 
 Lcopyinframe64:
-	mov		x3, VM_MIN_KERNEL_ADDRESS		// Check if kernel address
-	orr		x9, x0, TBI_MASK				// Hide tags in address comparison
-	cmp		x9, x3							// If in kernel address range, skip tag test
+	ldr		x3, =VM_MIN_KERNEL_ADDRESS		// Check if kernel address
+	orr		x9, x0, ARM_TBI_USER_MASK		// Hide tags in address comparison
+	cmp		x9, x3					// If in kernel address range, skip tag test
 	b.hs	Lcopyinframe_valid
-	tst		x0, TBI_MASK					// Detect tagged pointers
+	tst		x0, ARM_TBI_USER_MASK			// Detect tagged pointers
 	b.eq	Lcopyinframe_valid
-	mov		w0, #EFAULT						// Tagged address, fail
+	mov		w0, #EFAULT				// Tagged address, fail
 	b		Lcopyinframe_done
 Lcopyinframe_valid:
 	ldp		x12, x13, [x0]			// Copy 16 bytes
@@ -729,10 +997,517 @@ Lcopyinframe_valid:
 	mov 	w0, #0					// Success
 
 Lcopyinframe_done:
-	CLEAR_RECOVERY_HANDLER
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(copyinframe)
 
+#if HAS_MTE
+/*
+ * int _bcopy_recover_tag_write_fault(const char *src, char *dst, vm_size_t len)
+ */
+	.text
+	.align 2
+	.globl EXT(_bcopy_recover_tag_write_fault)
+LEXT(_bcopy_recover_tag_write_fault)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE _bcopy_recover_tag_write_fault_end, recover_from_kernel_write_tag_check_fault=1
+
+	BCOPY_IMPL x0, x1, x2, _bcopy_recover_tag_write_fault_end
+
+_bcopy_recover_tag_write_fault_end:
+	mov		x0, #0
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_bcopy_recover_tag_write_fault)
+
+/*
+ * int _bcopy_recover_tag_read_fault(const char *src, char *dst, vm_size_t len)
+ */
+	.text
+	.align 2
+	.globl EXT(_bcopy_recover_tag_read_fault)
+LEXT(_bcopy_recover_tag_read_fault)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE _bcopy_recover_tag_read_fault_end, recover_from_kernel_read_tag_check_fault=1
+
+	BCOPY_IMPL x0, x1, x2, _bcopy_recover_tag_read_fault_end
+
+_bcopy_recover_tag_read_fault_end:	
+	mov		x0, xzr
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_bcopy_recover_tag_read_fault)
+
+
+/*
+ * int _unprivileged_bcopyin(const user_addr_t src, char *dst, vm_size_t len)
+ */
+	.text
+	.align 2
+	.globl EXT(_unprivileged_bcopyin)
+LEXT(_unprivileged_bcopyin)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 5f
+	/* If len is less than 256 bytes, do 16 bytewise copy */
+	cmp		x2, #256
+	b.lt	2f
+	sub		x2, x2, #256
+	/* 256 bytes at a time */
+1:
+	ldtr	x3, [x0, #0]
+	ldtr	x4, [x0, #8]
+	stp		x3, x4, [x1, #0]
+	ldtr	x5, [x0, #16]
+	ldtr	x6, [x0, #24]
+	stp		x5, x6, [x1, #16]
+	ldtr	x3, [x0, #32]
+	ldtr	x4, [x0, #40]
+	stp		x3, x4, [x1, #32]
+	ldtr	x5, [x0, #48]
+	ldtr	x6, [x0, #56]
+	stp		x5, x6, [x1, #48]
+	ldtr	x3, [x0, #64]
+	ldtr	x4, [x0, #72]
+	stp		x3, x4, [x1, #64]
+	ldtr	x5, [x0, #80]
+	ldtr	x6, [x0, #88]
+	stp		x5, x6, [x1, #80]
+	ldtr	x3, [x0, #96]
+	ldtr	x4, [x0, #104]
+	stp		x3, x4, [x1, #96]
+	ldtr	x5, [x0, #112]
+	ldtr	x6, [x0, #120]
+	stp		x5, x6, [x1, #112]
+	ldtr	x3, [x0, #128]
+	ldtr	x4, [x0, #136]
+	stp		x3, x4, [x1, #128]
+	ldtr	x5, [x0, #144]
+	ldtr	x6, [x0, #152]
+	stp		x5, x6, [x1, #144]
+	ldtr	x3, [x0, #160]
+	ldtr	x4, [x0, #168]
+	stp		x3, x4, [x1, #160]
+	ldtr	x5, [x0, #176]
+	ldtr	x6, [x0, #184]
+	stp		x5, x6, [x1, #176]
+	ldtr	x3, [x0, #192]
+	ldtr	x4, [x0, #200]
+	stp		x3, x4, [x1, #192]
+	ldtr	x5, [x0, #208]
+	ldtr	x6, [x0, #216]
+	stp		x5, x6, [x1, #208]
+	ldtr	x3, [x0, #224]
+	ldtr	x4, [x0, #232]
+	stp		x3, x4, [x1, #224]
+	ldtr	x5, [x0, #240]
+	ldtr	x6, [x0, #248]
+	stp		x5, x6, [x1, #240]
+
+	add		x0, x0, #256
+	add		x1, x1, #256
+
+	subs	x2, x2, #256
+	b.ge	1b
+	/* Fixup the len and test for completion */
+	adds	x2, x2, #256
+	b.eq	5f
+2:
+	/* If len is less than 16 bytes, just do a bytewise copy */
+	cmp		x2, #16
+	b.lt	4f
+	sub		x2, x2, #16
+3:
+	/* 16 bytes at a time */
+	ldtr	x3, [x0]
+	ldtr	x4, [x0, #8]
+	stp		x3, x4, [x1], #16
+	add		x0, x0, #16
+	subs	x2, x2, #16
+	b.ge	3b
+	/* Fixup the len and test for completion */
+	adds	x2, x2, #16
+	b.eq	5f
+4:	/* Bytewise */
+	subs	x2, x2, #1
+	ldtrb	w3, [x0]
+	strb	w3, [x1], #1
+	add		x0, x0, #1
+	b.hi	4b
+5:
+	mov		x0, xzr
+	/*
+	 * x3, x4, x5 and x6 now contain user-controlled values which may be used to form
+	 * addresses under speculative execution past the _bcopyin(); prevent any
+	 * attempts by userspace to influence kernel execution by zeroing them out
+	 * before we return.
+	 */
+	mov		x3, xzr
+	mov		x4, xzr
+	mov		x5, xzr
+	mov		x6, xzr
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_unprivileged_bcopyin)
+
+/*
+ * int _unprivileged_bcopyout(const char *src, user_addr_t dst, vm_size_t len)
+ */
+	.text
+	.align 2
+	.globl EXT(_unprivileged_bcopyout)
+LEXT(_unprivileged_bcopyout)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 5f
+	/* If len is less than 256 bytes, do 16 bytewise copy */
+	cmp		x2, #256
+	b.lt	2f
+	sub		x2, x2, #256
+	/* 256 bytes at a time */
+1:
+	ldp		x3, x4, [x0, #0]
+	sttr	x3, [x1, #0]
+	sttr	x4, [x1, #8]
+	ldp		x5, x6, [x0, #16]
+	sttr	x5, [x1, #16]
+	sttr	x6, [x1, #24]
+	ldp		x3, x4, [x0, #32]
+	sttr	x3, [x1, #32]
+	sttr	x4, [x1, #40]
+	ldp		x5, x6, [x0, #48]
+	sttr	x5, [x1, #48]
+	sttr	x6, [x1, #56]
+	ldp		x3, x4, [x0, #64]
+	sttr	x3, [x1, #64]
+	sttr	x4, [x1, #72]
+	ldp		x5, x6, [x0, #80]
+	sttr	x5, [x1, #80]
+	sttr	x6, [x1, #88]
+	ldp		x3, x4, [x0, #96]
+	sttr	x3, [x1, #96]
+	sttr	x4, [x1, #104]
+	ldp		x5, x6, [x0, #112]
+	sttr	x5, [x1, #112]
+	sttr	x6, [x1, #120]
+	ldp		x3, x4, [x0, #128]
+	sttr	x3, [x1, #128]
+	sttr	x4, [x1, #136]
+	ldp		x5, x6, [x0, #144]
+	sttr	x5, [x1, #144]
+	sttr	x6, [x1, #152]
+	ldp		x3, x4, [x0, #160]
+	sttr	x3, [x1, #160]
+	sttr	x4, [x1, #168]
+	ldp		x5, x6, [x0, #176]
+	sttr	x5, [x1, #176]
+	sttr	x6, [x1, #184]
+	ldp		x3, x4, [x0, #192]
+	sttr	x3, [x1, #192]
+	sttr	x4, [x1, #200]
+	ldp		x5, x6, [x0, #208]
+	sttr	x5, [x1, #208]
+	sttr	x6, [x1, #216]
+	ldp		x3, x4, [x0, #224]
+	sttr	x3, [x1, #224]
+	sttr	x4, [x1, #232]
+	ldp		x5, x6, [x0, #240]
+	sttr	x5, [x1, #240]
+	sttr	x6, [x1, #248]
+
+	add		x0, x0, #256
+	add		x1, x1, #256
+	subs	x2, x2, #256
+	b.ge	1b
+	/* Fixup the len and test for completion */
+	adds	x2, x2, #256
+	b.eq	5f
+2:
+	/* If len is less than 16 bytes, just do a bytewise copy */
+	cmp		x2, #16
+	b.lt	4f
+	sub		x2, x2, #16
+3:
+	/* 16 bytes at a time */
+	ldp		x3, x4, [x0], #16
+	sttr	x3, [x1]
+	sttr	x4, [x1, #8]
+	add		x1, x1, #16
+	subs	x2, x2, #16
+	b.ge	3b
+	/* Fixup the len and test for completion */
+	adds	x2, x2, #16
+	b.eq	5f
+4:  /* Bytewise */
+	subs	x2, x2, #1
+	ldrb	w3, [x0], #1
+	sttrb	w3, [x1]
+	add		x1, x1, #1
+	b.hi	4b
+5:
+	mov		x0, #0
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_unprivileged_bcopyout)
+
+/*
+ * int _unprivileged_bcopyinstr(
+ *	  const user_addr_t user_addr,
+ *	  char *dst,
+ *	  vm_size_t max,
+ *	  vm_size_t *actual)
+ */
+	.text
+	.align 2
+	.globl EXT(_unprivileged_bcopyinstr)
+LEXT(_unprivileged_bcopyinstr)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE Lcopyinstr_unpriv_done
+	mov		x4, #0						// x4 - total bytes copied
+Lcopyinstr_unpriv_loop:
+	ldtrb	w5, [x0]					// Load a byte from the user source
+	strb	w5, [x1], #1				// Store a byte to the kernel dest
+	add		x0, x0, #1
+	add		x4, x4, #1					// Increment bytes copied
+	cbz	x5, Lcopyinstr_unpriv_done		// If this byte is null, we're done
+	cmp		x4, x2						// If we're out of space, return an error
+	b.ne	Lcopyinstr_unpriv_loop
+Lcopyinstr_unpriv_too_long:
+	mov		x5, #ENAMETOOLONG			// Set current byte to error code for later return
+Lcopyinstr_unpriv_done:
+	str		x4, [x3]					// Return number of bytes copied
+	mov		x0, x5						// Set error code (0 on success, ENAMETOOLONG on failure)
+	/*
+	 * A malicious userspace has weak control over the range of values held in
+	 * x2 based on which path through the kernel was taken to the copyinstr(),
+	 * for example:
+	 *  - (PSHMNAMLEN + 1) = 32
+	 *  - (MAXPATHLEN - 1) = 1023
+	 *  - (PAGE_SIZE * 2) = {8192, 32768}
+	 *  - etc
+	 *
+	 * This indirectly determines how much control a malicious userspace has
+	 * over the value held in x4 as they choose the length of the string in
+	 * the range of [0..x2] inclusive based on the index of the null terminator
+	 * (or lack thereof). This in turn controls the value held in x5, though
+	 * this is tightly constrained to either 0 or ENAMETOOLONG (i.e. 63) so
+	 * is less of a concern.
+	 *
+	 * The values held in these three registers (x2, x4, and x5) may be used
+	 * to form addresses under speculative execution past the _bcopyinstr();
+	 * prevent any attempts by userspace to influence kernel execution by
+	 * zeroing them out before we return.
+	 */
+	mov x2, xzr
+	mov x4, xzr
+	mov x5, xzr
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_unprivileged_bcopyinstr)
+
+/*
+ * int _unprivileged_copyin_atomic32(const user_addr_t src, uint32_t *dst)
+ */
+	.text
+	.align 2
+	.globl EXT(_unprivileged_copyin_atomic32)
+LEXT(_unprivileged_copyin_atomic32)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 1f
+	ldtr	w8, [x0]
+1:
+	str		w8, [x1]
+	mov		x0, #0
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_unprivileged_copyin_atomic32)
+
+/*
+ * int _unprivileged_copyin_atomic64(const user_addr_t src, uint64_t *dst)
+ */
+	.text
+	.align 2
+	.globl EXT(_unprivileged_copyin_atomic64)
+LEXT(_unprivileged_copyin_atomic64)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 1f
+	ldtr	x8, [x0]
+1:
+	str		x8, [x1]
+	mov		x0, #0
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_unprivileged_copyin_atomic64)
+
+/*
+ * int _copyin_atomic32_wait_if_equals_unchecked(const user_addr_t src, uint32_t value)
+ */
+	.text
+	.align 2
+	.globl EXT(_copyin_atomic32_wait_if_equals_unchecked)
+LEXT(_copyin_atomic32_wait_if_equals_unchecked)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 2f, recovery_addr = copyio_error_clear_tco
+	/*
+	 * There's no unprivileged version of ldxr, so we have to explicitly clear tag
+	 * checking while reading from userspace memory.
+	 */
+	msr		TCO, #1
+	ldxr	w8, [x0]
+	msr		TCO, #0
+2:
+	cmp		w8, w1
+	mov		x0, ESTALE
+	b.ne	1f
+	mov		x0, #0
+	wfe
+1:
+	clrex
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_copyin_atomic32_wait_if_equals_unchecked)
+
+/*
+ * int _unprivileged_copyout_atomic32(uint32_t u32, user_addr_t dst)
+ */
+	.text
+	.align 2
+	.globl EXT(_unprivileged_copyout_atomic32)
+LEXT(_unprivileged_copyout_atomic32)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 1f
+	sttr	w0, [x1]
+1:
+	mov		x0, #0
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_unprivileged_copyout_atomic32)
+
+/*
+ * int _unprivileged_copyout_atomic64(uint64_t u64, user_addr_t dst)
+ */
+	.text
+	.align 2
+	.globl EXT(_unprivileged_copyout_atomic64)
+LEXT(_unprivileged_copyout_atomic64)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 1f
+	sttr	x0, [x1]
+1:
+	mov		x0, #0
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_unprivileged_copyout_atomic64)
+
+
+/*
+ * int _copyin_mte_load_tag(const user_addr_t src, user_addr_t* out)
+ */
+	.text
+	.align 2
+	.globl EXT(_copyin_mte_load_tag)
+LEXT(_copyin_mte_load_tag)
+	COPYIO_STACK_PROLOG
+	PUSH_FRAME
+	COPYIO_RECOVER_RANGE 1f
+	mov		x8, x0
+	ldg		x8, [x0]
+	str		x8, [x1]
+1:
+	mov		x0, #0
+	/*
+	 * While x8 does contain a user-controlled value at this point, we will
+	 * be overwriting it immediately after returning to this asm function's
+	 * C wrapper. So, no need to zero it out here.
+	 */
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(_copyin_mte_load_tag)
+
+#endif /* HAS_MTE */
+
+/*
+ * hw_lck_ticket_t
+ * hw_lck_ticket_reserve_orig_allow_invalid(hw_lck_ticket_t *lck
+ * #if KASAN_TBI
+ *     , const uint8_t *tag_addr
+ * #endif
+ * )
+ */
+	.text
+	.align 2
+	.private_extern EXT(hw_lck_ticket_reserve_orig_allow_invalid)
+	.globl EXT(hw_lck_ticket_reserve_orig_allow_invalid)
+LEXT(hw_lck_ticket_reserve_orig_allow_invalid)
+	ARM64_STACK_PROLOG
+	PUSH_FRAME
+#if HAS_MTE
+	COPYIO_RECOVER_RANGE 7f, 9f, recover_from_kernel_read_tag_check_fault=1
+#else
+	COPYIO_RECOVER_RANGE 7f, 9f
+#endif
+
+	mov		x8, x0
+	mov		w9, #HW_LCK_TICKET_LOCK_INC_WORD
+1:
+#if defined(__ARM_ARCH_8_2__) && !KASAN_TBI
+	ldr 		w0, [x8]
+#else
+	ldaxr		w0, [x8]
+#endif
+2:
+	tbz		w0, #HW_LCK_TICKET_LOCK_VALID_BIT, 9f /* lock valid ? */
+
+	add		w11, w0, w9
+#if defined(__ARM_ARCH_8_2__) && !KASAN_TBI
+	mov		w12, w0
+	casa		w0, w11, [x8]
+	cmp		w12, w0
+	b.ne		2b
+#else /* __ARM_ARCH_8_2__ && !KASAN_TBI */
+#if KASAN_TBI
+	/*
+	 * Memory tagging introduces a further scenario that can lead to an invalid
+	 * acquire, which is the case in which the try address doesn't match the
+	 * allocated tag (because it has cycled to another allocation). With hardware
+	 * memory tagging, this would lead to a fault and get caught by the recovery handler.
+	 *
+	 * With KASAN_TBI software emulation of memory tagging, we need to explicitly
+	 * emulate a tag check. This is no longer an atomic operation, but we are
+	 * in the middle of a ldaxr / stxr pair, so we'd catch a transition underneath to
+	 * invalid because the store tag would mismatch.
+	 */
+	ldrb		w13, [x1]
+	ubfx		x14, x8, #56, #8
+	cmp		w13, w14
+	b.ne		9f
+#endif /* KASAN_TBI */
+	stxr		w12, w11, [x8]
+	cbnz		w12, 1b
+#endif /* __ARM_ARCH_8_2__ && !KASAN_TBI */
+
+7:
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(hw_lck_ticket_reserve_orig_allow_invalid)
+
+9: /* invalid */
+#if !defined(__ARM_ARCH_8_2__)
+	clrex
+#endif
+	mov		w0, #0
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(hw_lck_ticket_reserve_orig_allow_invalid)
 
 /*
  * uint32_t arm_debug_read_dscr(void)
@@ -741,6 +1516,7 @@ Lcopyinframe_done:
 	.align 2
 	.globl EXT(arm_debug_read_dscr)
 LEXT(arm_debug_read_dscr)
+	ARM64_PROLOG
 	PANIC_UNIMPLEMENTED
 
 /*
@@ -755,27 +1531,54 @@ LEXT(arm_debug_read_dscr)
        .align 2
        .globl EXT(arm_debug_set_cp14)
 LEXT(arm_debug_set_cp14)
+	ARM64_PROLOG
 	PANIC_UNIMPLEMENTED
 
 #if defined(APPLE_ARM64_ARCH_FAMILY)
 /*
  * Note: still have to ISB before executing wfi!
+ *
+ * x0 = boolean deep_sleep
+ * x1 = unsigned int cpu
+ * x2 = uint64_t entry_pa
  */
 	.text
 	.align 2
 	.globl EXT(arm64_prepare_for_sleep)
 LEXT(arm64_prepare_for_sleep)
+	ARM64_PROLOG
 	PUSH_FRAME
 
-#if defined(APPLETYPHOON)
-	// <rdar://problem/15827409>
-	HID_SET_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x9
-	dsb		sy
-	isb		sy
-#endif
+#if APPLEVIRTUALPLATFORM
+
+#define PSCI_FN_ID_CPU_OFF			0x84000002
+#define PSCI_FN_ID_SYSTEM_SUSPEND	0xC400000E
+
+	/*
+	 * For a VM, it always powers off CPUs individually, including the boot cpu.
+	 * If the boot cpu is going into deep sleep, power off the system instead.
+	 */
+	cbz		x0, vm_sleep_individual_cpu  // skip if not deep_sleep
+	cbnz	x1, vm_sleep_individual_cpu  // skip if not boot cpu
+vm_sleep_system:
+	MOV64	x0, PSCI_FN_ID_SYSTEM_SUSPEND
+	mov		x1, x2
+	hvc		0
+	b		.
+
+vm_sleep_individual_cpu:
+	MOV64	x0, PSCI_FN_ID_CPU_OFF
+	hvc		0
+	b		.
+
+#endif /* APPLEVIRTUALPLATFORM */
+
 
 #if HAS_CLUSTER
-	cbnz		x0, 1f                                      // Skip if deep_sleep == true
+	cbnz		x0, is_deep_sleep                           // Skip if deep_sleep == true
+
+
+#if !NO_CPU_OVRD
 	// Mask FIQ and IRQ to avoid spurious wakeups
 	mrs		x9, CPU_OVRD
 	and		x9, x9, #(~(ARM64_REG_CYC_OVRD_irq_mask | ARM64_REG_CYC_OVRD_fiq_mask))
@@ -783,11 +1586,19 @@ LEXT(arm64_prepare_for_sleep)
 	orr		x9, x9, x10
 	msr		CPU_OVRD, x9
 	isb
-1:
+#else
+	// Mask timer IRQs before entering WFI
+	mrs     x9, ACNTHV_CTL_EL2
+	mov     x10, #(~ACNTHV_CTL_EL2_EN_MASK)
+	and     x9, x9, x10
+	msr     ACNTHV_CTL_EL2, x9
+	isb
+#endif
+is_deep_sleep:
 #endif
 
-	cbz		x0, 1f                                          // Skip if deep_sleep == false
-#if __ARM_GLOBAL_SLEEP_BIT__
+	cbz		x0, not_deep_sleep                              // Skip if deep_sleep == false
+#if   __ARM_GLOBAL_SLEEP_BIT__
 	// Enable deep sleep
 	mrs		x1, ACC_OVRD
 	orr		x1, x1, #(ARM64_REG_ACC_OVRD_enDeepSleep)
@@ -828,7 +1639,8 @@ LEXT(arm64_prepare_for_sleep)
 #endif
 #endif
 
-1:
+not_deep_sleep:
+#if !NO_CPU_OVRD
 	// Set "OK to power down" (<rdar://problem/12390433>)
 	mrs		x9, CPU_OVRD
 	orr		x9, x9, #(ARM64_REG_CYC_OVRD_ok2pwrdn_force_down)
@@ -836,42 +1648,19 @@ LEXT(arm64_prepare_for_sleep)
 	orr		x9, x9, #(ARM64_REG_CYC_OVRD_disWfiRetn)
 #endif
 	msr		CPU_OVRD, x9
-
-#if defined(APPLEMONSOON) || defined(APPLEVORTEX)
-	ARM64_IS_PCORE x9
-	cbz		x9, Lwfi_inst // skip if not p-core
-
-	/* <rdar://problem/32512947>: Flush the GUPS prefetcher prior to
-	 * wfi.  A Skye HW bug can cause the GUPS prefetcher on p-cores
-	 * to be left with valid entries that fail to drain if a
-	 * subsequent wfi is issued.  This can prevent the core from
-	 * power-gating.  For the idle case that is recoverable, but
-	 * for the deep-sleep (S2R) case in which cores MUST power-gate,
-	 * it can lead to a hang.  This can be prevented by disabling
-	 * and re-enabling GUPS, which forces the prefetch queue to
-	 * drain.  This should be done as close to wfi as possible, i.e.
-	 * at the very end of arm64_prepare_for_sleep(). */
-#if defined(APPLEVORTEX)
-	/* <rdar://problem/32821461>: Cyprus A0/A1 parts have a similar
-	 * bug in the HSP prefetcher that can be worked around through
-	 * the same method mentioned above for Skye. */
-	mrs x9, MIDR_EL1
-	EXEC_COREALL_REVLO CPU_VERSION_B0, x9, x10
 #endif
-	mrs		x9, HID10
-	orr		x9, x9, #(ARM64_REG_HID10_DisHwpGups)
-	msr		HID10, x9
-	isb		sy
-	and		x9, x9, #(~(ARM64_REG_HID10_DisHwpGups))
-	msr		HID10, x9
-	isb		sy
-#endif
+
 	EXEC_END
 
 Lwfi_inst:
 	dsb		sy
 	isb		sy
 	wfi
+#if NO_CPU_OVRD
+	// Clear any spurious IPIs received during CPU shutdown
+	mov     x9, #0x1
+	msr     S3_5_C15_C1_1, x9
+#endif
 	b		Lwfi_inst
 
 /*
@@ -885,12 +1674,14 @@ LEXT(arm64_force_wfi_clock_gate)
 	ARM64_STACK_PROLOG
 	PUSH_FRAME
 
+#if !NO_CPU_OVRD
 	mrs		x0, CPU_OVRD
 	orr		x0, x0, #(ARM64_REG_CYC_OVRD_ok2pwrdn_force_up)
 	msr		CPU_OVRD, x0
+#endif
 	
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(arm64_force_wfi_clock_gate)
 
 
 #if HAS_RETENTION_STATE
@@ -898,6 +1689,7 @@ LEXT(arm64_force_wfi_clock_gate)
 	.align 2
 	.globl EXT(arm64_retention_wfi)
 LEXT(arm64_retention_wfi)
+	ARM64_PROLOG
 	wfi
 	cbz		lr, Lwfi_retention	// If lr is 0, we entered retention state and lost all GPRs except sp and pc
 	ret					// Otherwise just return to cpu_idle()
@@ -909,140 +1701,14 @@ Lwfi_retention:
 	b		.			// cpu_idle_exit() should never return
 #endif
 
-#if defined(APPLETYPHOON)
 
-	.text
-	.align 2
-	.globl EXT(typhoon_prepare_for_wfi)
-
-LEXT(typhoon_prepare_for_wfi)
-	PUSH_FRAME
-
-	// <rdar://problem/15827409>
-	HID_SET_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
-	dsb		sy
-	isb		sy
-
-	POP_FRAME
-	ret
-
-
-	.text
-	.align 2
-	.globl EXT(typhoon_return_from_wfi)
-LEXT(typhoon_return_from_wfi)
-	PUSH_FRAME
-
-	// <rdar://problem/15827409>
-	HID_CLEAR_BITS HID2, ARM64_REG_HID2_disMMUmtlbPrefetch, x0
-	dsb		sy
-	isb		sy 
-
-	POP_FRAME
-	ret
-#endif
-
-#ifdef  APPLETYPHOON
-
-#define HID0_DEFEATURES_1 0x0000a0c000064010ULL
-#define HID1_DEFEATURES_1 0x000000004005bf20ULL
-#define HID2_DEFEATURES_1 0x0000000000102074ULL
-#define HID3_DEFEATURES_1 0x0000000000400003ULL
-#define HID4_DEFEATURES_1 0x83ff00e100000268ULL
-#define HID7_DEFEATURES_1 0x000000000000000eULL
-
-#define HID0_DEFEATURES_2 0x0000a1c000020010ULL
-#define HID1_DEFEATURES_2 0x000000000005d720ULL
-#define HID2_DEFEATURES_2 0x0000000000002074ULL
-#define HID3_DEFEATURES_2 0x0000000000400001ULL
-#define HID4_DEFEATURES_2 0x8390000200000208ULL
-#define HID7_DEFEATURES_2 0x0000000000000000ULL
-
-/*
-	arg0 = target register
-	arg1 = 64-bit constant
-*/
-.macro LOAD_UINT64 
-	movz	$0, #(($1 >> 48) & 0xffff), lsl #48
-	movk	$0, #(($1 >> 32) & 0xffff), lsl #32
-	movk	$0, #(($1 >> 16) & 0xffff), lsl #16
-	movk	$0, #(($1)       & 0xffff)
-.endmacro
-
-	.text
-	.align 2
-	.globl EXT(cpu_defeatures_set)
-LEXT(cpu_defeatures_set)
-	PUSH_FRAME
-	cmp		x0, #2
-	b.eq		cpu_defeatures_set_2
-	cmp		x0, #1
-	b.ne		cpu_defeatures_set_ret
-	LOAD_UINT64	x1, HID0_DEFEATURES_1
-	mrs		x0, HID0
-	orr		x0, x0, x1
-	msr		HID0, x0
-	LOAD_UINT64	x1, HID1_DEFEATURES_1
-	mrs		x0, HID1
-	orr		x0, x0, x1
-	msr		HID1, x0
-	LOAD_UINT64	x1, HID2_DEFEATURES_1
-	mrs		x0, HID2
-	orr		x0, x0, x1
-	msr		HID2, x0
-	LOAD_UINT64	x1, HID3_DEFEATURES_1
-	mrs		x0, HID3
-	orr		x0, x0, x1
-	msr		HID3, x0
-	LOAD_UINT64	x1, HID4_DEFEATURES_1
-	mrs		x0, HID4
-	orr		x0, x0, x1
-	msr		HID4, x0
-	LOAD_UINT64	x1, HID7_DEFEATURES_1
-	mrs		x0, HID7
-	orr		x0, x0, x1
-	msr		HID7, x0
-	dsb		sy
-	isb		sy 
-	b		cpu_defeatures_set_ret
-cpu_defeatures_set_2:
-	LOAD_UINT64	x1, HID0_DEFEATURES_2
-	mrs		x0, HID0
-	orr		x0, x0, x1
-	msr		HID0, x0
-	LOAD_UINT64	x1, HID1_DEFEATURES_2
-	mrs		x0, HID1
-	orr		x0, x0, x1
-	msr		HID1, x0
-	LOAD_UINT64	x1, HID2_DEFEATURES_2
-	mrs		x0, HID2
-	orr		x0, x0, x1
-	msr		HID2, x0
-	LOAD_UINT64	x1, HID3_DEFEATURES_2
-	mrs		x0, HID3
-	orr		x0, x0, x1
-	msr		HID3, x0
-	LOAD_UINT64	x1, HID4_DEFEATURES_2
-	mrs		x0, HID4
-	orr		x0, x0, x1
-	msr		HID4, x0
-	LOAD_UINT64	x1, HID7_DEFEATURES_2
-	mrs		x0, HID7
-	orr		x0, x0, x1
-	msr		HID7, x0
-	dsb		sy
-	isb		sy 
-	b		cpu_defeatures_set_ret
-cpu_defeatures_set_ret:
-	POP_FRAME
-	ret
-#endif
 
 #else /* !defined(APPLE_ARM64_ARCH_FAMILY) */
 	.text
 	.align 2
 	.globl EXT(arm64_prepare_for_sleep)
 LEXT(arm64_prepare_for_sleep)
+	ARM64_PROLOG
 	PUSH_FRAME
 Lwfi_inst:
 	dsb		sy
@@ -1058,9 +1724,11 @@ Lwfi_inst:
 	.align 2
 	.globl EXT(arm64_force_wfi_clock_gate)
 LEXT(arm64_force_wfi_clock_gate)
+	ARM64_PROLOG
 	PUSH_FRAME
 	nop
 	POP_FRAME
+	ret
 
 #endif /* defined(APPLE_ARM64_ARCH_FAMILY) */
 
@@ -1082,9 +1750,9 @@ LEXT(arm64_replace_bootstack)
 	// Set the exception stack pointer
 	ldr		x0, [x0, CPU_EXCEPSTACK_TOP]
 	mrs		x4, DAIF					// Load current DAIF; use x4 as pinst may trash x1-x3
-	msr		DAIFSet, #(DAIFSC_IRQF | DAIFSC_FIQF | DAIFSC_ASYNCF)		// Disable IRQ/FIQ/serror
+	msr		DAIFSet, #(DAIFSC_STANDARD_DISABLE)		// Disable all asynchronous exceptions
 	// Set SP_EL1 to exception stack
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
 	mov		x1, lr
 	bl		EXT(pinst_spsel_1)
 	mov		lr, x1
@@ -1095,7 +1763,7 @@ LEXT(arm64_replace_bootstack)
 	msr		SPSel, #0
 	msr		DAIF, x4					// Restore interrupt state
 	POP_FRAME
-	ARM64_STACK_EPILOG
+	ARM64_STACK_EPILOG EXT(arm64_replace_bootstack)
 
 #ifdef MONITOR
 /*
@@ -1111,96 +1779,126 @@ LEXT(arm64_replace_bootstack)
 	.align 2
 	.globl EXT(monitor_call)
 LEXT(monitor_call)
+	ARM64_PROLOG
 	smc 	0x11
 	ret
 #endif
 
 #ifdef HAS_APPLE_PAC
 /*
- * SIGN_THREAD_STATE
+ * COMPUTE_THREAD_STATE_HASH
  *
- * Macro that signs thread state.
- * $0 - Offset in arm_saved_state to store JOPHASH value.
+ * Computes the thread state hash by hashing critical state with gkey.  The hash is
+ * diversified by &arm_saved_state_t.
+ *
+ * To fix rdar://118357645 we bind every step of the sequence to both the PC it
+ * belongs to and to the EL level it came from.
+ *
+ * Special ABI: preserves all registers, except x1, x2 and x17
+ * x1 is used to return the result.
  */
-.macro SIGN_THREAD_STATE
-	pacga	x1, x1, x0		/* PC hash (gkey + &arm_saved_state) */
+.macro COMPUTE_THREAD_STATE_HASH
 	/*
-	 * Mask off the carry flag so we don't need to re-sign when that flag is
-	 * touched by the system call return path.
+	 * Mask off the carry flag for EL0 states so we don't need to re-sign when
+	 * that flag is touched by the system call return path.
 	 */
+	tst		x2, PSR64_MODE_EL_MASK
+	b.ne	1f
 	bic		x2, x2, PSR_CF
-	pacga	x1, x2, x1		/* SPSR hash (gkey + pc hash) */
-	pacga	x1, x3, x1		/* LR Hash (gkey + spsr hash) */
-	pacga	x1, x4, x1		/* X16 hash (gkey + lr hash) */
-	pacga	x1, x5, x1		/* X17 hash (gkey + x16 hash) */
-	str		x1, [x0, $0]
-#if DEBUG || DEVELOPMENT
-	mrs		x1, DAIF
-	tbz		x1, #DAIF_IRQF_SHIFT, Lintr_enabled_panic
-#endif /* DEBUG || DEVELOPMENT */
-.endmacro
+1:
+
+	/*
+	 * first pacga, bind with context << 4 || PACGA_TAG
+	 */
+	lsl		x17, x0, #4
+	orr		x17, x17, PACGA_TAG_THREAD
+	pacga	x17, x17, x1				/* pc hash = hash(context, pc) */
+
+	/*
+	 * pacga puts the result in the upper half of x1. We use the lower half
+	 * to add the data to bind the hash to PC, EL and PACGA_TAG
+	 *
+	 * binding state will be 27 bits of PC, 2 bits of EL, 3 bits of PACGA_TAG
+	 * we have reserved both 0b0001 and 0b1001 for thread state tagging.
+	 * So we can use the top bit of the tag to store part of EL, and use
+	 * more bits of PC.
+	 */
+
+	lsl		x1, x1, #2
+	bfxil	x1, x2, PSR64_MODE_EL_SHIFT, #2
+	lsl		x1, x1, #3
+	orr		x1, x1, PACGA_TAG_THREAD
+
+
+	bfxil	x17, x1, #0, #32
+	pacga	x17, x17, x2				/* SPSR(x2) hash (gkey + pc hash) */
+
+	bfxil   x17, x1, #0, #32			/* add binding state */
+	pacga	x17, x17, x3				/* LR(x3) Hash (gkey + spsr hash) */
+
+	bfxil   x17, x1, #0, #32			/* add binding state */
+	pacga	x17, x17, x4				/* X16(x4) hash (gkey + lr hash) */
+
+	bfxil   x17, x1, #0, #32			/* add binding state */
+	pacga	x1, x17, x5					/* X17(x5) hash (gkey + x16 hash) */
+.endm
 
 /*
- * CHECK_SIGNED_STATE
+ * CHECK_THREAD_STATE_INTERRUPTS
  *
- * Macro that checks signed thread state.
- * $0 - Offset in arm_saved_state to to read the JOPHASH value from.
- * $1 - Label to jump to when check is unsuccessful.
+ * Branches to Lintr_enabled_panic if interrupts are in an unexpected state.
  */
-.macro CHECK_SIGNED_STATE
-	pacga	x1, x1, x0		/* PC hash (gkey + &arm_saved_state) */
+.macro CHECK_THREAD_STATE_INTERRUPTS tmp
+	mrs		\tmp, DAIF
+	tbz		\tmp, #DAIF_IRQF_SHIFT, Lintr_enabled_panic
+#if !CONFIG_SPTM
 	/*
-	 * Mask off the carry flag so we don't need to re-sign when that flag is
-	 * touched by the system call return path.
+	 * SPTM kernels do not need to switch to SP1 as they have Panic Lockdown to
+	 * protect them. As such, we only should check on non-SPTM kernels.
 	 */
-	bic		x2, x2, PSR_CF
-	pacga	x1, x2, x1		/* SPSR hash (gkey + pc hash) */
-	pacga	x1, x3, x1		/* LR Hash (gkey + spsr hash) */
-	pacga	x1, x4, x1		/* X16 hash (gkey + lr hash) */
-	pacga	x1, x5, x1		/* X17 hash (gkey + x16 hash) */
-	ldr		x2, [x0, $0]
-	cmp		x1, x2
-	b.ne	$1
-#if DEBUG || DEVELOPMENT
-	mrs		x1, DAIF
-	tbz		x1, #DAIF_IRQF_SHIFT, Lintr_enabled_panic
-#endif /* DEBUG || DEVELOPMENT */
-.endmacro
+	mrs		\tmp, SPSel
+	tbz		\tmp, #0, Lintr_enabled_panic
+#endif /* !CONFIG_SPTM */
+.endm
 
 /**
  * void ml_sign_thread_state(arm_saved_state_t *ss, uint64_t pc,
  *							 uint32_t cpsr, uint64_t lr, uint64_t x16,
  *							 uint64_t x17)
+ *
+ * ml_sign_thread_state uses a custom calling convention that
+ * preserves all registers except x1, x2 and x17.
  */
 	.text
 	.align 2
 	.globl EXT(ml_sign_thread_state)
 LEXT(ml_sign_thread_state)
-	SIGN_THREAD_STATE SS64_JOPHASH
-	ret
-
-/**
- * void ml_sign_kernel_thread_state(arm_kernel_saved_state *ss, uint64_t pc,
- *							 uint32_t cpsr, uint64_t lr, uint64_t x16,
- *							 uint64_t x17)
- */
-	.text
-	.align 2
-	.globl EXT(ml_sign_kernel_thread_state)
-LEXT(ml_sign_kernel_thread_state)
-	SIGN_THREAD_STATE SS64_KERNEL_JOPHASH
+	ARM64_PROLOG
+	COMPUTE_THREAD_STATE_HASH
+	str		x1, [x0, SS64_JOPHASH]
+#if DEBUG || DEVELOPMENT
+	CHECK_THREAD_STATE_INTERRUPTS tmp=x1
+#endif
 	ret
 
 /**
  * void ml_check_signed_state(arm_saved_state_t *ss, uint64_t pc,
  *							  uint32_t cpsr, uint64_t lr, uint64_t x16,
  *							  uint64_t x17)
+ *
+ * ml_check_signed_state uses a custom calling convention that
+ * preserves all registers except x1, x2, x16 and x17.
  */
 	.text
 	.align 2
 	.globl EXT(ml_check_signed_state)
 LEXT(ml_check_signed_state)
-	CHECK_SIGNED_STATE SS64_JOPHASH, Lcheck_hash_panic
+	ARM64_PROLOG
+	CHECK_THREAD_STATE_INTERRUPTS tmp=x16
+	ldr		x16, [x0, SS64_JOPHASH]
+	COMPUTE_THREAD_STATE_HASH
+	cmp		x1, x16
+	b.ne	Lcheck_hash_panic
 	ret
 Lcheck_hash_panic:
 	/*
@@ -1210,45 +1908,27 @@ Lcheck_hash_panic:
 	 * *only* using the stack frame for unwinding purposes, and without one
 	 * we'd be missing information about the caller.
 	 */
-	ARM64_STACK_PROLOG
-	PUSH_FRAME
 	mov		x1, x0
 	adr		x0, Lcheck_hash_str
-	CALL_EXTERN panic_with_thread_kernel_state
-
-/**
- * void ml_check_kernel_signed_state(arm_kernel_saved_state *ss, uint64_t pc,
- *							  uint32_t cpsr, uint64_t lr, uint64_t x16,
- *							  uint64_t x17)
- */
-	.text
-	.align 2
-	.globl EXT(ml_check_kernel_signed_state)
-LEXT(ml_check_kernel_signed_state)
-	CHECK_SIGNED_STATE SS64_KERNEL_JOPHASH, Lcheck_kernel_hash_panic
-	ret
-Lcheck_kernel_hash_panic:
-	ARM64_STACK_PROLOG
 	PUSH_FRAME
-	adr		x0, Lcheck_hash_str
-	CALL_EXTERN panic
+	CALL_EXTERN panic_with_thread_kernel_state
+	brk		#0
 
 Lcheck_hash_str:
 	.asciz "JOP Hash Mismatch Detected (PC, CPSR, or LR corruption)"
 
-#if DEBUG || DEVELOPMENT
+	.align 2
 Lintr_enabled_panic:
-	ARM64_STACK_PROLOG
 	PUSH_FRAME
 	adr		x0, Lintr_enabled_str
 	CALL_EXTERN panic
+	brk		#0
 Lintr_enabled_str:
 	/*
-	 * Please see the "Signing spilled register state" section of doc/pac.md
+	 * Please see the "Signing spilled register state" section of doc/arm/pac.md
 	 * for an explanation of why this is bad and how it should be fixed.
 	 */
 	.asciz "Signed thread state manipulated with interrupts enabled"
-#endif /* DEBUG || DEVELOPMENT */
 
 /**
  * void ml_auth_thread_state_invalid_cpsr(arm_saved_state_t *ss)
@@ -1264,15 +1944,62 @@ LEXT(ml_auth_thread_state_invalid_cpsr)
 	mov		x1, x0
 	adr		x0, Linvalid_cpsr_str
 	CALL_EXTERN panic_with_thread_kernel_state
+	brk		#0
 
 Linvalid_cpsr_str:
 	.asciz "Thread state corruption detected (PE mode == 0)"
+
+/**
+ * uint64_t ml_pac_safe_interrupts_disable(void)
+ *
+ * Disable interrupts using only PAC-safe registers.
+ *
+ * ml_pac_safe_interrupts_disable's return value should be passed to a
+ * complementary ml_pac_safe_interrupts_restore call.
+ *
+ * ml_pac_safe_interrupts_{disable,restore} are intended specifically for
+ * PAC-related callers that need to disable interrupts before manipulating
+ * signed thread state.  Other callers should use ml_set_interrupts_enabled
+ * instead.
+ *
+ * @return the previous interrupt state
+ */
+	.text
+	.align 2
+	.globl EXT(ml_pac_safe_interrupts_disable)
+LEXT(ml_pac_safe_interrupts_disable)
+	ARM64_PROLOG
+	mrs		x16, DAIF
+	and		x17, x16, DAIF_STANDARD_DISABLE
+	cmp		x17, DAIF_STANDARD_DISABLE
+	b.eq	Lalready_disabled
+	msr		DAIFSet, DAIFSC_STANDARD_DISABLE
+Lalready_disabled:
+	mov		x0, x16
+	ret
+
+/**
+ * void ml_pac_safe_interrupts_restore(uint64_t intr)
+ *
+ * Restores the interrupt state returned by ml_pac_safe_interrupts_disable().
+ *
+ * @param intr the previous interrupt state
+ */
+	.text
+	.align 2
+	.globl EXT(ml_pac_safe_interrupts_restore)
+LEXT(ml_pac_safe_interrupts_restore)
+	ARM64_PROLOG
+	msr		DAIF, x0
+	ret
+
 #endif /* HAS_APPLE_PAC */
 
 	.text
 	.align 2
 	.globl EXT(fill32_dczva)
 LEXT(fill32_dczva)
+	ARM64_PROLOG
 0:
 	dc	zva, x0
 	add	x0, x0, #64
@@ -1284,6 +2011,7 @@ LEXT(fill32_dczva)
 	.align 2
 	.globl EXT(fill32_nt)
 LEXT(fill32_nt)
+	ARM64_PROLOG
 	dup.4s	v0, w2
 0:
 	stnp	q0, q0, [x0]
@@ -1294,5 +2022,121 @@ LEXT(fill32_nt)
 	subs	x1, x1, #128
 	b.hi	0b
 	ret
+
+#if defined(HAS_APPLE_PAC)
+
+/*
+ * vm_offset_t ml_addrperm_pacga(vm_offset_t addr)
+ *
+ * Permutes a 64bit address to a random 64bit value. Lowest
+ * bit is forced to 1, to distinguish from a NULL pointer.
+ *
+ * Expected to be called only with non static kernel addresses.
+ *
+ * Should only be called with canonicalized kernel addresses, no PAC
+ * signature, no TAGS.
+ */
+	.text
+	.align 2
+	.globl EXT(ml_addrperm_pacga)
+LEXT(ml_addrperm_pacga)
+	ARM64_PROLOG
+	mov    w17, #PACGA_TAG_ADDRPERM
+	pacga  x16, x17, x0
+	/* Force the output to not be NULL, so debug can tell them apart */
+	orr    x16, x16, #0x1
+	mov    w17, #(0x10 | PACGA_TAG_ADDRPERM)
+	/* pacga puts the output in the top 32bits */
+	pacga  x0, x17, x0
+	/* combine the two outputs into a 64bit value, with lowest bit set to 1 */
+	orr    x0, x16, x0, lsr #32
+	ret
+
+/*
+ * ptrauth_utils_sign_blob_generic(const void * ptr, size_t len_bytes, uint64_t data, int flags)
+ *
+ * See "Signing arbitrary data blobs" of doc/arm/pac.md
+ */
+	.text
+	.align 2
+	.globl EXT(ptrauth_utils_sign_blob_generic)
+LEXT(ptrauth_utils_sign_blob_generic)
+	ARM64_STACK_PROLOG
+	PUSH_FRAME
+
+	cbz		x0, Lsign_ret
+	lsr		x10, x1, #0x3		// x10 = rounds - number of full words
+	and		x9, x1, #0x7		// x9 = ntrailing - number trailing bytes
+	tst		w3, #0x1			// Check if PTRAUTH_ADDR_DIVERSIFY is set in flags
+	csel	x17, xzr, x0, eq	// If yes, mix the diversifier with the address
+	eor		x17, x17, x2
+	mov		w16, #0xde43		// Prologue cookie: ptrauth_string_discriminator("ptrauth_utils_sign_blob_generic-prologue") | 0x01
+
+	// x16 is used to accumulate the signature because it is interrupt-safe
+	lsl		x16, x16, 4
+	orr		x16, x16, PACGA_TAG_BLOB
+	pacga	x16, x16, x1		// Mix in the data length. This helps distinguish e.g. a signature of 2 zeros from a signature of 3 zeros.
+	orr		x16, x16, PACGA_TAG_BLOB
+	pacga	x16, x16, x17		// Mix in the diversifier
+	cbz		x10, Lsmall_size	// Handle the case of < 8 bytes
+
+	// Handle as many full 64-bit words as possible first.
+Lloop_rounds:
+	ldr		x17, [x0], #0x8		// Load the next full 64-bit value
+	orr		x16, x16, PACGA_TAG_BLOB
+	pacga	x16, x16, x17		// Mix in the next 8 bytes of data
+	subs	x10, x10, #0x1
+	b.ne	Lloop_rounds
+	cbz		x9, Lepilogue_cookie	// If there are no trailing bytes, skip to the epilogue
+
+	/*
+	 * Handle the case of between 1 and 7 trailing bytes. x9 contains the
+	 * number of trailing bytes, but we convert it to bits so we can use it
+	 * as a bitshift to accumulate the trailing bytes into x17. We use x10
+	 * as the bit index since it is guaranteed to be zero at this point.
+	 * Bytes are accumulated with the first byte read in the LSB position
+	 * (just as would be the case if we performed a little-endian 64-bit
+	 * read).
+	 */
+Lsmall_size:
+	lsl		x9, x9, #0x3		// x9 = ntrailing_bits, x10 = current bit index (0 at entry)
+	mov		x17, #0				// x17 = trailing bytes accumulator
+Lloop_ntrailing:
+	ldrb	w12, [x0], #0x1		// Load the next trailing byte
+	lsl		x12, x12, x10		// Shift it by how many bits we've read so far to align it with its proper slot in x17
+	orr		x17, x17, x12		// Or the byte into x17
+	add		x10, x10, #0x8		// Advance x10 by 8 bits
+	cmp		x9, x10				// Check if we're done with all bytes
+	b.ne	Lloop_ntrailing
+	orr		x16, x16, PACGA_TAG_BLOB
+	pacga	x16, x16, x17		// Mix in the accumulated trailing bytes
+
+Lepilogue_cookie:
+	mov		w17, #0x9a2d		// Epilogue cookie: ptrauth_string_discriminator("ptrauth_utils_sign_blob_generic-epilogue") | 0x01
+	orr		x16, x16, PACGA_TAG_BLOB
+	pacga	x0, x16, x17		// Mix in the epilogue cookie
+
+Lsign_ret:
+	POP_FRAME
+	ARM64_STACK_EPILOG EXT(ptrauth_utils_sign_blob_generic)
+
+#endif // defined(HAS_APPLE_PAC)
+
+#if CONFIG_EXCLAVES && NEEDS_MTE_IRG_RESEED
+	.text
+	.align 2
+	.globl EXT(ml_mte_irg_reseed)
+LEXT(ml_mte_irg_reseed)
+	mrs		x0, DAIF
+	msr		DAIFSet, #(DAIFSC_STANDARD_DISABLE)
+
+	PACGA_IRG_RESEED x1, x2, x3
+
+	msr		DAIF, x0
+	ret
+#endif /* CONFIG_EXCLAVES && NEEDS_MTE_IRG_RESEED */
+
+    /* THIS MUST STAY LAST IN THIS FILE */
+	COPYIO_RECOVER_TABLE_SYM	copyio_recover_table_end
 
 /* vim: set sw=4 ts=4: */

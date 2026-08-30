@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Needed by exc_guard_helper.h -->
+    <key>com.apple.private.set-exception-port</key>
+	<true/>
+	<key>com.apple.private.amfi.can-set-exception-ports</key>
+	<true/>
+
+    <!-- Run with guard objects -->
+    <key>com.apple.security.hardened-process</key>
+    <true/>
+    <key>com.apple.security.hardened-process.guard-objects</key>
+    <true/>
+</dict>
+</plist>

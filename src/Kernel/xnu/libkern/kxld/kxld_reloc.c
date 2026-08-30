@@ -567,7 +567,7 @@ finish:
 /*******************************************************************************
 *******************************************************************************/
 u_long
-kxld_reloc_get_macho_header_size()
+kxld_reloc_get_macho_header_size(void)
 {
 	return sizeof(struct dysymtab_command);
 }

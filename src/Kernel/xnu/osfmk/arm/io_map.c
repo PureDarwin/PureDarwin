@@ -51,72 +51,67 @@
  * any improvements or extensions that they make and grant Carnegie Mellon the
  * rights to redistribute these changes.
  */
-/*
- */
 
 #include <mach/vm_param.h>
-#include <vm/vm_kern.h>
-#include <vm/vm_map.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_xnu.h>
 #include <arm/pmap.h>
-#include <arm/io_map_entries.h>
 #include <san/kasan.h>
 
-extern vm_offset_t      virtual_space_start;     /* Next available kernel VA */
-
-/*
- * Allocate and map memory for devices that may need to be mapped before
- * Mach VM is running.
- */
-vm_offset_t
-io_map(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags)
-{
-	return io_map_with_prot(phys_addr, size, flags, VM_PROT_READ | VM_PROT_WRITE);
-}
+extern vm_offset_t virtual_space_start;     /* Next available kernel VA */
 
 /*
  * Allocate and map memory for devices that may need to be mapped before
  * Mach VM is running. Allows caller to specify mapping protection
  */
 vm_offset_t
-io_map_with_prot(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags, vm_prot_t prot)
+io_map(
+	vm_map_offset_t         phys_addr,
+	vm_size_t               size,
+	unsigned int            flags,
+	vm_prot_t               prot,
+	bool                    unmappable)
 {
-	vm_offset_t     start, start_offset;
+	vm_offset_t start_offset = phys_addr - trunc_page(phys_addr);
+	vm_offset_t alloc_size   = round_page(size + start_offset);
+	vm_offset_t start;
 
-	start_offset = phys_addr & PAGE_MASK;
-	size += start_offset;
-	phys_addr -= start_offset;
-
-	if (kernel_map == VM_MAP_NULL) {
+	phys_addr = trunc_page(phys_addr);
+	if (startup_phase < STARTUP_SUB_KMEM) {
 		/*
 		 * VM is not initialized.  Grab memory.
+		 *
+		 * We need to steal address space, not physical memory.  Force
+		 * alignment of virtual_space_start to support this... but be
+		 * aware that if it is not already aligned we waste any
+		 * trailing memory in the last page that was stolen.
 		 */
+		virtual_space_start = round_page(virtual_space_start);
+
 		start = virtual_space_start;
 		virtual_space_start += round_page(size);
 
 		assert(flags == VM_WIMG_WCOMB || flags == VM_WIMG_IO);
 
 		if (flags == VM_WIMG_WCOMB) {
-			(void) pmap_map_bd_with_options(start, phys_addr, phys_addr + round_page(size),
-			    prot, PMAP_MAP_BD_WCOMB);
+			pmap_map_bd_with_options(start, phys_addr,
+			    phys_addr + alloc_size, prot, PMAP_MAP_BD_WCOMB);
 		} else {
-			(void) pmap_map_bd(start, phys_addr, phys_addr + round_page(size),
-			    prot);
+			pmap_map_bd(start, phys_addr, phys_addr + alloc_size, prot);
 		}
-	} else {
-		(void) kmem_alloc_pageable(kernel_map, &start, round_page(size), VM_KERN_MEMORY_IOKIT);
-		(void) pmap_map(start, phys_addr, phys_addr + round_page(size),
-		    prot, flags);
-	}
 #if KASAN
-	kasan_notify_address(start + start_offset, size);
+		kasan_notify_address(start + start_offset, size);
 #endif
+	} else {
+		kma_flags_t kmaflags = KMA_NOFAIL | KMA_PAGEABLE | KMA_IO;
+
+		if (!unmappable) {
+			kmaflags |= KMA_PERMANENT;
+		}
+
+		kmem_alloc(kernel_map, &start, alloc_size, kmaflags,
+		    VM_KERN_MEMORY_IOKIT);
+		pmap_map(start, phys_addr, phys_addr + alloc_size, prot, flags);
+	}
 	return start + start_offset;
-}
-
-/* just wrap this since io_map handles it */
-
-vm_offset_t
-io_map_spec(vm_map_offset_t phys_addr, vm_size_t size, unsigned int flags)
-{
-	return io_map(phys_addr, size, flags);
 }

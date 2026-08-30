@@ -87,7 +87,6 @@ extern void panic(const char *string, ...) __printflike(1,2) __dead2;
 #include <kern/thread.h>
 #include <kern/zalloc.h>
 #include <kern/sched_prim.h>	/* for thread_exception_return */
-#include <kern/processor.h>
 #include <kern/assert.h>
 #include <mach/mach_vm.h>
 #include <mach/mach_param.h>
@@ -269,17 +268,22 @@ _bsdthread_create(struct proc *p,
 	}
 
 	PTHREAD_TRACE(pthread_thread_create | DBG_FUNC_START, flags, 0, 0, 0);
-
-	kret = pthread_kern->thread_create(ctask, &th);
-	if (kret != KERN_SUCCESS) {
+	
+	/* Create thread and make it immovable, do not pin control port yet */
+	kret = pthread_kern->thread_create_immovable(ctask, &th);
+	
+	if (kret != KERN_SUCCESS)
 		return(ENOMEM);
-	}
 	thread_reference(th);
 
 	pthread_kern->thread_set_tag(th, THREAD_TAG_PTHREAD);
 
-	sright = (void *)pthread_kern->convert_thread_to_port(th);
-	th_thport = pthread_kern->ipc_port_copyout_send(sright, pthread_kern->task_get_ipcspace(ctask));
+	/* Convert to immovable thread port, port is not pinned yet */
+	sright = (void *)pthread_kern->convert_thread_to_port_pinned(th);
+	
+	/* Atomically copyout and pin the thread port */
+	th_thport = pthread_kern->ipc_port_copyout_send_pinned(sright, pthread_kern->task_get_ipcspace(ctask));
+	
 	if (!MACH_PORT_VALID(th_thport)) {
 		error = EMFILE; // userland will convert this into a crash
 		goto out;
@@ -479,11 +483,18 @@ _bsdthread_terminate(__unused struct proc *p,
 			kret = mach_vm_behavior_set(user_map, freeaddr, freesize, VM_BEHAVIOR_REUSABLE);
 #if MACH_ASSERT
 			if (kret != KERN_SUCCESS && kret != KERN_INVALID_ADDRESS) {
-				os_log_error(OS_LOG_DEFAULT, "unable to make thread stack reusable (kr: %d)", kret);
+				os_log_error(OS_LOG_DEFAULT, "unable to make main thread stack reusable (kr: %d)", kret);
 			}
 #endif
-			kret = kret ? kret : mach_vm_protect(user_map, freeaddr, freesize, FALSE, VM_PROT_NONE);
-			assert(kret == KERN_SUCCESS || kret == KERN_INVALID_ADDRESS);
+
+			if (kret == KERN_SUCCESS) {
+				kret = mach_vm_protect(user_map, freeaddr, freesize, FALSE, VM_PROT_NONE);
+#if MACH_ASSERT
+				if (kret != KERN_SUCCESS && kret != KERN_INVALID_ADDRESS) {
+					os_log_error(OS_LOG_DEFAULT, "unable to make main thread stack PROT_NONE (kr: %d)", kret);
+				}
+#endif
+			}
 		} else {
 			kret = mach_vm_deallocate(pthread_kern->current_map(), freeaddr, freesize);
 			if (kret != KERN_SUCCESS) {
@@ -495,7 +506,9 @@ _bsdthread_terminate(__unused struct proc *p,
 	if (pthread_kern->thread_will_park_or_terminate) {
 		pthread_kern->thread_will_park_or_terminate(th);
 	}
-	(void)thread_terminate(th);
+	
+	(void)pthread_kern->thread_terminate_pinned(th);
+	
 	if (sem != MACH_PORT_NULL) {
 		kret = pthread_kern->semaphore_signal_internal_trap(sem);
 		if (kret != KERN_SUCCESS) {
@@ -601,6 +614,14 @@ _bsdthread_register(struct proc *p,
 				data.mach_thread_self_offset);
 	}
 
+	if (pthread_kern->proc_set_workqueue_quantum_offset) {
+		if (data.wq_quantum_expiry_offset > max_tsd_offset) {
+			data.wq_quantum_expiry_offset = 0;
+		}
+
+		pthread_kern->proc_set_workqueue_quantum_offset(p, data.wq_quantum_expiry_offset);
+	}
+
 	if (pthread_init_data != 0) {
 		/* Outgoing data that userspace expects as a reply */
 		data.version = sizeof(struct _pthread_registration_data);
@@ -643,6 +664,21 @@ _bsdthread_register(struct proc *p,
 
 	/* return the supported feature set as the return value. */
 	*retval = PTHREAD_FEATURE_SUPPORTED;
+
+#if _PTHREAD_CONFIG_JIT_WRITE_PROTECT
+	if (pthread_kern->proc_get_jit_entitled(p)) {
+		*retval |= PTHREAD_FEATURE_JIT_ENTITLED;
+	}
+
+	bool late = false;
+	if (pthread_kern->proc_get_pthread_jit_allowlist2(p, &late)) {
+		*retval |= PTHREAD_FEATURE_JIT_ALLOWLIST;
+		if (late) {
+			*retval |= PTHREAD_FEATURE_JIT_FREEZE_LATE;
+		}
+	}
+#endif // _PTHREAD_CONFIG_JIT_WRITE_PROTECT
+
 	return(0);
 }
 
@@ -1006,7 +1042,6 @@ _pthread_init(void)
 
 	pth_global_hashinit();
 	psynch_thcall = thread_call_allocate(psynch_wq_cleanup, NULL);
-	psynch_zoneinit();
 
 	int policy_bootarg;
 	if (PE_parse_boot_argn("pthread_mutex_default_policy", &policy_bootarg, sizeof(policy_bootarg))) {

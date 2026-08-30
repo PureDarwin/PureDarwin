@@ -17,7 +17,7 @@ include $(MakeInc_def)
 # XXX: CFLAGS
 #
 CFLAGS+= -include meta_features.h -DDRIVER_PRIVATE		\
-	-DIOKIT_KERNEL_PRIVATE -DDRIVERKIT_PRIVATE=1 -DIOMATCHDEBUG=1 -DIOALLOCDEBUG=1
+	-DIOKIT_KERNEL_PRIVATE -DDRIVERKIT_PRIVATE=1 -DIOMATCHDEBUG=1 -DIOALLOCDEBUG=1 -DPRIVATE_WIFI_ONLY=1
 SFLAGS+= -include meta_features.h
 #-DIOKITDEBUG=-1
 
@@ -29,7 +29,10 @@ CFLAGS_DEBUG += -DIOASSERT=1
 # Directories for generated files
 #
 COMP_SUBDIRS = \
-	DriverKit
+	DriverKit \
+	Exclaves \
+	Tests \
+	Tests/TestServices
 
 #
 #  Make sure we don't remove this by accident if interrupted at the wrong
@@ -65,7 +68,7 @@ COMP_SUBDIRS = \
 # -Wno-cast-align
 IODataQueue.cpo_CXXWARNFLAGS_ADD += -Wno-cast-align
 IOHibernateIO.cpo_CXXWARNFLAGS_ADD += -Wno-cast-align
-IOHibernateRestoreKernel.o_CFLAGS_ADD += -Wno-cast-align
+IOHibernateRestoreKernel.o_CWARNFLAGS_ADD += -Wno-cast-align
 IONVRAM.cpo_CXXWARNFLAGS_ADD += -Wno-cast-align
 IOSharedDataQueue.cpo_CXXWARNFLAGS_ADD += -Wno-cast-align
 IOUserClient.cpo_CXXWARNFLAGS_ADD += -Wno-cast-align
@@ -129,7 +132,7 @@ IODMAEventSource.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IODeviceTreeSupport.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOFilterInterruptEventSource.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOHibernateIO.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
-IOHibernateRestoreKernel.o_CFLAGS_ADD += -Wno-sign-conversion
+IOHibernateRestoreKernel.o_CWARNFLAGS_ADD += -Wno-sign-conversion
 IOHistogramReporter.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOInterleavedMemoryDescriptor.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOInterruptAccounting.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
@@ -153,7 +156,7 @@ IOServicePM.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOSkywalkSupport.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOStartIOKit.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOStatistics.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
-IOStringFuncs.o_CFLAGS_ADD += -Wno-sign-conversion
+IOStringFuncs.o_CWARNFLAGS_ADD += -Wno-sign-conversion
 IOTimerEventSource.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOUserClient.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
 IOUserServer.cpo_CXXWARNFLAGS_ADD += -Wno-sign-conversion
@@ -168,7 +171,7 @@ IODMACommand.cpo_CXXWARNFLAGS_ADD += -Wno-unused-parameter
 IODeviceTreeSupport.cpo_CXXWARNFLAGS_ADD += -Wno-unused-parameter
 IOFilterInterruptEventSource.cpo_CXXWARNFLAGS_ADD += -Wno-unused-parameter
 IOHibernateIO.cpo_CXXWARNFLAGS_ADD += -Wno-unused-parameter
-IOHibernateRestoreKernel.o_CFLAGS_ADD += -Wno-unused-parameter
+IOHibernateRestoreKernel.o_CWARNFLAGS_ADD += -Wno-unused-parameter
 IOInterruptController.cpo_CXXWARNFLAGS_ADD += -Wno-unused-parameter
 IOInterruptEventSource.cpo_CXXWARNFLAGS_ADD += -Wno-unused-parameter
 IOKitBSDInit.cpo_CXXWARNFLAGS_ADD += -Wno-unused-parameter
@@ -223,6 +226,10 @@ $(COMPONENT).filelist: $(OBJS)
 	$(_v)for obj in ${OBJS}; do	\
 		 $(ECHO) $(TARGET)/$(CURRENT_KERNEL_CONFIG)/$${obj}; \
 	done > $(COMPONENT).filelist
+
+ifeq ($(XNU_LibAllFiles),1)
+LIBOBJS := $(OBJS)
+endif
 
 $(COMPONENT).libfilelist: $(LIBOBJS)
 	@$(LOG_LDFILELIST) "lib$(COMPONENT)"

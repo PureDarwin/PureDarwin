@@ -76,6 +76,12 @@ target_include_directories(libsystem_kernel_private_headers INTERFACE private_in
 
 add_darwin_static_library(libsystem_kernel_static)
 
+# The Darwin cross toolchain deliberately uses -nostdinc. Keep the SDK's
+# generated MIG headers available explicitly; mach_interface.h includes them
+# through angle brackets before this target's generated headers exist.
+target_include_directories(libsystem_kernel_static PRIVATE
+    ${NIX_DARWIN_SDK_ROOT}/usr/include)
+
 # This product should be called libsystem_kernel.a and should be placed in /usr/local/lib/{dyld,system,loaderd,dyld_stub}
 set_target_properties(libsystem_kernel_static PROPERTIES OUTPUT_NAME "system_kernel")
 

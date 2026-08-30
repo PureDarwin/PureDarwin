@@ -419,12 +419,26 @@ struct task_vm_info {
 
 	/* added for rev5 */
 	integer_t decompressions;
+
+	/* added for rev6 */
+	int64_t ledger_swapins;
+
+	/* added for rev7 */
+	int64_t ledger_tag_neural_nofootprint_total;
+	int64_t ledger_tag_neural_nofootprint_peak;
 };
 typedef struct task_vm_info     task_vm_info_data_t;
 typedef struct task_vm_info     *task_vm_info_t;
 #define TASK_VM_INFO_COUNT      ((mach_msg_type_number_t) \
 	        (sizeof (task_vm_info_data_t) / sizeof (natural_t)))
-#define TASK_VM_INFO_REV5_COUNT TASK_VM_INFO_COUNT
+/*
+ * The capacity of task_info_t in mach_types.defs also needs to be adjusted
+ */
+#define TASK_VM_INFO_REV7_COUNT TASK_VM_INFO_COUNT
+#define TASK_VM_INFO_REV6_COUNT /* doesn't include neural total and peak */ \
+	((mach_msg_type_number_t) (TASK_VM_INFO_REV7_COUNT - 4))
+#define TASK_VM_INFO_REV5_COUNT /* doesn't include ledger swapins */ \
+	((mach_msg_type_number_t) (TASK_VM_INFO_REV6_COUNT - 2))
 #define TASK_VM_INFO_REV4_COUNT /* doesn't include decompressions */ \
 	((mach_msg_type_number_t) (TASK_VM_INFO_REV5_COUNT - 1))
 #define TASK_VM_INFO_REV3_COUNT /* doesn't include limit bytes */ \
@@ -531,6 +545,56 @@ typedef struct task_debug_info_internal task_debug_info_internal_data_t;
 
 #endif /* PRIVATE */
 
+#ifdef PRIVATE
+
+typedef struct task_suspend_stats_s {
+	uint64_t tss_last_start; /* mach_absolute_time of beginning of last suspension*/
+	uint64_t tss_last_end; /* mach_absolute_time of end of last suspension */
+	uint64_t tss_count; /* number of times this task has been suspended */
+	uint64_t tss_duration; /* sum(mach_absolute_time) of time spend suspended */
+} *task_suspend_stats_t;
+
+typedef struct task_suspend_stats_s task_suspend_stats_data_t;
+#define TASK_SUSPEND_STATS_INFO 30
+#define TASK_SUSPEND_STATS_INFO_COUNT ((mach_msg_type_number_t) \
+	        (sizeof(task_suspend_stats_data_t) / sizeof(natural_t)))
+
+typedef struct task_suspend_source_s {
+	uint64_t tss_time; /* mach_absolute_time of suspend */
+	uint64_t tss_tid; /* tid of suspending thread */
+	int tss_pid; /* pid of suspending task */
+	char tss_procname[65]; /* name of suspending task */
+	uint8_t tss_padding[3]; /* pad to multiple of natural_t */
+} *task_suspend_source_t;
+#define TASK_SUSPEND_SOURCES_MAX 4
+typedef struct task_suspend_source_s task_suspend_source_array_t[TASK_SUSPEND_SOURCES_MAX];
+
+typedef struct task_suspend_source_s task_suspend_source_data_t;
+#define TASK_SUSPEND_SOURCES_INFO 31
+#define TASK_SUSPEND_SOURCES_INFO_COUNT ((mach_msg_type_number_t) \
+	        (sizeof(task_suspend_source_data_t) * TASK_SUSPEND_SOURCES_MAX / sizeof(natural_t)))
+
+#endif /* PRIVATE */
+
+#define TASK_SECURITY_CONFIG_INFO  32 /* Runtime security mitigations configuration for the task */
+struct task_security_config_info {
+	uint32_t  config;                       /* Configuration bitmask */
+};
+
+typedef struct task_security_config_info * task_security_config_info_t;
+#define TASK_SECURITY_CONFIG_INFO_COUNT  ((mach_msg_type_number_t) \
+	        (sizeof(struct task_security_config_info) / sizeof(natural_t)))
+
+
+#define TASK_IPC_SPACE_POLICY_INFO  33 /* Runtime security mitigations configuration for the task */
+struct task_ipc_space_policy_info {
+	uint32_t  space_policy;                       /* Configuration bitmask */
+};
+
+typedef struct task_ipc_space_policy_info * task_ipc_space_policy_info_t;
+#define TASK_IPC_SPACE_POLICY_INFO_COUNT  ((mach_msg_type_number_t) \
+	        (sizeof(struct task_ipc_space_policy_info) / sizeof(natural_t)))
+
 /*
  * Type to control EXC_GUARD delivery options for a task
  * via task_get/set_exc_guard_behavior interface(s).
@@ -538,6 +602,7 @@ typedef struct task_debug_info_internal task_debug_info_internal_data_t;
 typedef uint32_t task_exc_guard_behavior_t;
 
 /* EXC_GUARD optional delivery settings on a per-task basis */
+#define TASK_EXC_GUARD_NONE                  0x00
 #define TASK_EXC_GUARD_VM_DELIVER            0x01 /* Deliver virtual memory EXC_GUARD exceptions */
 #define TASK_EXC_GUARD_VM_ONCE               0x02 /* Deliver them only once */
 #define TASK_EXC_GUARD_VM_CORPSE             0x04 /* Deliver them via a forked corpse */
@@ -558,7 +623,34 @@ typedef uint32_t task_exc_guard_behavior_t;
  * The default for 3rd party guards is shifted up 8 bits - but otherwise the same values as above.
  */
 #define TASK_EXC_GUARD_THIRD_PARTY_DEFAULT_SHIFT 0x8 /* 3rd party default shifted up in boot-arg */
+
+#define TASK_EXC_GUARD_HONOR_NAMED_DEFAULTS 0x10000  /* Honor the by-process-name defaults */
+
 #endif
+
+/*
+ * Type to control corpse forking options for a task
+ * via task_get/set_corpse_forking_behavior interface(s).
+ */
+#ifndef PD_TASK_CORPSE_FORKING_BEHAVIOR_T_DEFINED
+#define PD_TASK_CORPSE_FORKING_BEHAVIOR_T_DEFINED
+typedef uint32_t task_corpse_forking_behavior_t;
+#endif
+
+#define TASK_CORPSE_FORKING_DISABLED_MEM_DIAG  0x01 /* Disable corpse forking because the task is running under a diagnostic tool */
+
+#ifdef XNU_KERNEL_PRIVATE
+
+__options_closed_decl(task_control_port_options_t, uint8_t, {
+	TASK_CONTROL_PORT_OPTIONS_INVALID     = 0x00000000,
+	TASK_CONTROL_PORT_OPTIONS_NONE     = 0x00000001,
+	TASK_CONTROL_PORT_IMMOVABLE_HARD   = 0x00000002,
+
+	TASK_CONTROL_PORT_IMMOVABLE_MASK   = (
+		TASK_CONTROL_PORT_IMMOVABLE_HARD),
+});
+
+#endif /* XNU_KERNEL_PRIVATE */
 
 /*
  * Obsolete interfaces.

@@ -68,7 +68,8 @@
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
 #include <vm/vnode_pager.h>
-#include <vm/vm_protos.h>
+#include <vm/vm_protos_internal.h>
+#include <vm/vm_compressor_backing_store_xnu.h>
 #if CONFIG_MACF
 #include <security/mac_framework.h>
 #endif
@@ -121,7 +122,7 @@ extern boolean_t compressor_store_stop_compaction;
  *  This routine assumes macx_lock has been locked by macx_triggers ->
  *      mach_macx_triggers -> macx_backing_store_compaction
  */
-
+extern int vm_swap_enabled;
 int
 macx_backing_store_compaction(int flags)
 {
@@ -132,12 +133,25 @@ macx_backing_store_compaction(int flags)
 	}
 
 	if (flags & SWAP_COMPACT_DISABLE) {
+#if (XNU_TARGET_OS_OSX && __arm64__)
+		/*
+		 * There's no synch. between the swap being turned
+		 * OFF from user-space and all processes having exited.
+		 * On fast SSD AS macs we can accumulate a lot of
+		 * compressed memory between those 2 operations.
+		 * So we allow swap till we are ready to shutdown the
+		 * system. Even with a bunch of processes
+		 * still running and creating a lot of compressed
+		 * memory the system can shutdown normally.
+		 */
+#else /* (XNU_TARGET_OS_OSX && __arm64__) */
 		compressor_store_stop_compaction = TRUE;
-
+		vm_swap_enabled = 0;
 		kprintf("compressor_store_stop_compaction = TRUE\n");
+#endif /* (XNU_TARGET_OS_OSX && __arm64__) */
 	} else if (flags & SWAP_COMPACT_ENABLE) {
 		compressor_store_stop_compaction = FALSE;
-
+		vm_swap_enabled = 1;
 		kprintf("compressor_store_stop_compaction = FALSE\n");
 	}
 
@@ -189,8 +203,6 @@ macx_swapoff(
  *	Function:
  *		Syscall interface to get general swap statistics
  */
-extern uint64_t vm_swap_get_total_space(void);
-extern uint64_t vm_swap_get_free_space(void);
 extern boolean_t vm_swap_up;
 
 int

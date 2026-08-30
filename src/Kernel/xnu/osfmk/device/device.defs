@@ -63,9 +63,9 @@
  */
 
 subsystem
-#if	KERNEL_SERVER
-	  KernelServer
-#endif	/* KERNEL_SERVER */
+#if	KERNEL_SERVER || KOBJECT_SERVER
+	KernelServer
+#endif	/* KERNEL_SERVER || KOBJECT_SERVER */
 		       iokit 2800;
 
 #if IOKITSIMD || KERNEL_SERVER
@@ -139,6 +139,15 @@ type io_connect_t = mach_port_t
 #endif	/* KERNEL_SERVER */
 		;
 
+type io_ident_t = mach_port_t
+		ctype: mach_port_t
+#if	KERNEL_SERVER
+		intran: io_ident_t iokit_lookup_ident_port(mach_port_t)
+		outtran: mach_port_t iokit_make_ident_port(io_ident_t)
+		destructor: iokit_remove_reference(io_ident_t)
+#endif	/* KERNEL_SERVER */
+		;
+
 routine io_object_get_class(
 	    object		: io_object_t;
 	out className		: io_name_t
@@ -160,7 +169,7 @@ routine io_iterator_reset(
 	);
 
 routine io_service_get_matching_services(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  matching		: io_string_t;
 	out existing		: io_object_t
 	);
@@ -172,7 +181,7 @@ routine io_registry_entry_get_property(
 	);
 
 routine io_registry_create_iterator(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  plane		: io_name_t;
 	in  options		: uint32_t;
 	out iterator		: io_object_t
@@ -187,7 +196,7 @@ routine io_registry_iterator_exit_entry(
 	);
 
 routine io_registry_entry_from_path(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  path		: io_string_t;
 	out registry_entry	: io_object_t
 	);
@@ -220,14 +229,17 @@ routine io_registry_entry_get_parent_iterator(
 	out iterator		: io_object_t
 	);
 
-skip;
-/* was routine io_service_open
-	    service		: io_object_t;
-	in  owningTask		: task_t;
-	in  connect_type	: uint32_t;
-	out connection		: io_connect_t
+/* >was< routine io_service_open */
+routine io_connect_map_shared_memory(
+	    connection		: io_connect_t;
+	in  memory_type		: uint32_t;
+	in  into_task		: task_t;
+	inout address		: mach_vm_address_t;
+	inout size		: mach_vm_size_t;
+	in  flags		: uint32_t;
+	in  property_name	: io_name_t;
+	out inband_output	: io_struct_inband_t, CountInOut
 	);
-*/
 
 routine io_service_close(
 	    connection		: io_connect_t
@@ -317,7 +329,7 @@ routine io_registry_entry_get_path(
 	);
 
 routine io_registry_get_root_entry(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	out root		: io_object_t
 	);
 
@@ -362,7 +374,7 @@ routine io_iterator_is_valid(
 
 skip;
 /* was routine io_make_matching(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  of_type		: uint32_t;
 	in  options		: uint32_t;
 	in  input		: io_struct_inband_t;
@@ -371,36 +383,36 @@ skip;
 */
 
 routine io_catalog_send_data(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
         in  flag                : uint32_t;
 	in  inData		: io_buf_ptr_t;
         out result		: kern_return_t
 	);
 
 routine io_catalog_terminate(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
         in  flag                : uint32_t;
 	in  name		: io_name_t
 	);
 
 routine io_catalog_get_data(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
         in  flag                : uint32_t;
 	out outData		: io_buf_ptr_t
 	);
 
 routine io_catalog_get_gen_count(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
         out genCount            : uint32_t
 	);
 
 routine io_catalog_module_loaded(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  name		: io_name_t
 	);
 
 routine io_catalog_reset(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  flag		: uint32_t
 	);
 
@@ -463,7 +475,7 @@ skip;
 
 #if IOKIT_ALL_IPC || __ILP32__
 routine io_service_add_notification(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  notification_type	: io_name_t;
 	in  matching		: io_string_t;
 	in  wake_port		: mach_port_make_send_t;
@@ -531,7 +543,7 @@ routine io_service_get_state(
 	);
 
 routine io_service_get_matching_services_ool(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  matching		: io_buf_ptr_t, physicalcopy;
         out result		: kern_return_t;
 	out existing		: io_object_t
@@ -546,7 +558,7 @@ routine io_service_match_property_table_ool(
 
 #if IOKIT_ALL_IPC || __ILP32__
 routine io_service_add_notification_ool(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  notification_type	: io_name_t;
 	in  matching		: io_buf_ptr_t, physicalcopy;
 	in  wake_port		: mach_port_make_send_t;
@@ -559,13 +571,13 @@ skip;
 #endif
 
 routine io_object_get_superclass(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  obj_name			: io_name_t;
 	out class_name          : io_name_t   
         );
 
 routine io_object_get_bundle_identifier(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  obj_name			: io_name_t;
 	out class_name          : io_name_t   
         );
@@ -648,7 +660,7 @@ routine FUNC_NAME(io_connect_set_notification_port)(
 	);
 
 routine FUNC_NAME(io_service_add_notification)(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  notification_type	: io_name_t;
 	in  matching		: io_string_t;
 	in  wake_port		: mach_port_make_send_t;
@@ -665,7 +677,7 @@ routine FUNC_NAME(io_service_add_interest_notification)(
 	);
 
 routine FUNC_NAME(io_service_add_notification_ool)(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  notification_type	: io_name_t;
 	in  matching		: io_buf_ptr_t, physicalcopy;
 	in  wake_port		: mach_port_make_send_t;
@@ -703,13 +715,13 @@ routine io_connect_method_var_output(
 	);
 
 routine io_service_get_matching_service(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  matching		: io_string_t;
 	out service		: io_object_t
 	);
 
 routine io_service_get_matching_service_ool(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  matching		: io_buf_ptr_t, physicalcopy;
         out result		: kern_return_t;
 	out service		: io_object_t
@@ -728,7 +740,7 @@ routine io_service_set_authorization_id(
 /* */
 
 routine io_server_version(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	out version		: uint64_t
 	);
 
@@ -746,13 +758,13 @@ routine io_registry_entry_get_property_bin(
 	);
 
 routine io_service_get_matching_service_bin(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  matching		: io_struct_inband_t;
 	out service		: io_object_t
 	);
 
 routine io_service_get_matching_services_bin(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  matching		: io_struct_inband_t;
 	out existing		: io_object_t
 	);
@@ -765,7 +777,7 @@ routine io_service_match_property_table_bin(
 
 #if IOKIT_ALL_IPC || __ILP32__
 routine io_service_add_notification_bin(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  notification_type	: io_name_t;
 	in  matching		: io_struct_inband_t;
 	in  wake_port		: mach_port_make_send_t;
@@ -778,7 +790,7 @@ skip;
 
 #if IOKIT_ALL_IPC || __LP64__
 routine FUNC_NAME(io_service_add_notification_bin)(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  notification_type	: io_name_t;
 	in  matching		: io_struct_inband_t;
 	in  wake_port		: mach_port_make_send_t;
@@ -799,7 +811,7 @@ routine io_registry_entry_get_path_ool(
 	);
 
 routine io_registry_entry_from_path_ool(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  path                : io_string_inband_t;
 	in  path_ool		: io_buf_ptr_t, physicalcopy;
         out result		: kern_return_t;
@@ -809,7 +821,7 @@ routine io_registry_entry_from_path_ool(
 #endif
 
 routine io_device_tree_entry_exists_with_name(
-	    master_port		: mach_port_t;
+	    main_port		: mach_port_t;
 	in  name		: io_name_t;
 	out exists		: boolean_t
 	);
@@ -829,6 +841,12 @@ routine io_registry_entry_get_property_bin_buf(
 	in  buf			: mach_vm_address_t;
 	inout  bufsize		: mach_vm_size_t;
 	out properties		: io_buf_ptr_t, physicalcopy
+	);
+
+routine io_service_wait_quiet_with_options(
+            service		: io_object_t;
+	in  wait_time		: mach_timespec_t;
+	in  options		: uint32_t
 	);
 
 #endif /* IOKIT */

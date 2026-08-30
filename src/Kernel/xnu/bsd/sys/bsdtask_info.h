@@ -68,6 +68,9 @@ struct proc_threadinfo_internal {
 	char                    pth_name[MAXTHREADNAMESIZE];            /* thread name, if any */
 };
 
+struct proc_threadschedinfo_internal {
+	uint64_t               int_time_ns;         /* time spent in interrupt context */
+};
 
 
 struct proc_regioninfo_internal {
@@ -102,7 +105,6 @@ struct proc_regioninfo_internal {
 extern uint32_t vnode_vid(void *vp);
 
 #if CONFIG_IOSCHED
-kern_return_t vnode_pager_get_object_devvp(memory_object_t mem_obj, uintptr_t *devvp);
 extern struct vnode *vnode_mountdevvp(struct vnode *);
 #endif
 
@@ -112,14 +114,14 @@ extern boolean_t vnode_isonexternalstorage(void *vp);
 
 extern int fill_procregioninfo(task_t t, uint64_t arg, struct proc_regioninfo_internal *pinfo, uintptr_t *vp, uint32_t *vid);
 extern int fill_procregioninfo_onlymappedvnodes(task_t t, uint64_t arg, struct proc_regioninfo_internal *pinfo, uintptr_t *vp, uint32_t *vid);
-extern int find_region_details(task_t task, vm_map_offset_t offset, uintptr_t *vnodeaddr, uint32_t *vid, uint64_t *start, uint64_t *len);
 void fill_taskprocinfo(task_t task, struct proc_taskinfo_internal * ptinfo);
 int fill_taskthreadinfo(task_t task, uint64_t thaddr, bool thuniqueid, struct proc_threadinfo_internal * ptinfo, void *, int *);
 int fill_taskthreadlist(task_t task, void * buffer, int thcount, bool thuniqueid);
+int fill_taskthreadschedinfo(task_t task, uint64_t thaddr, struct proc_threadschedinfo_internal *thread_sched_info);
 int get_numthreads(task_t);
 boolean_t bsd_hasthreadname(void *uth);
 void bsd_getthreadname(void *uth, char* buffer);
-void bsd_setthreadname(void *uth, const char* buffer);
+void bsd_setthreadname(void *uth, uint64_t tid, const char* buffer);
 void bsd_threadcdir(void * uth, void *vptr, int *vidp);
 extern void bsd_copythreadname(void *dst_uth, void *src_uth);
 int fill_taskipctableinfo(task_t task, uint32_t *table_size, uint32_t *table_free);

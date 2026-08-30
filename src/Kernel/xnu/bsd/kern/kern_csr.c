@@ -43,7 +43,7 @@
 #include <libkern/section_keywords.h>
 #include <pexpert/device_tree.h>
 
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
 #include <arm64/amcc_rorgn.h>
 #endif
 
@@ -110,6 +110,23 @@ _csr_is_recovery_environment(void)
 
 	return SecureDTLookupEntry(0, "/chosen", &chosen) == kSuccess &&
 	       _csr_dt_string_is_equal(&chosen, "osenvironment", "recoveryos");
+}
+
+static bool
+_csr_is_restore_environment(void)
+{
+	int notused;
+
+	return PE_parse_boot_argn("-restore", &notused, sizeof(notused));
+}
+
+static bool
+_csr_is_darwinos_ramdisk(void)
+{
+	DTEntry chosen;
+
+	return SecureDTLookupEntry(0, "/chosen", &chosen) == kSuccess &&
+	       _csr_dt_string_is_equal(&chosen, "osenvironment", "darwinos-ramdisk");
 }
 
 static bool
@@ -189,6 +206,15 @@ csr_bootstrap(void)
 		csr_config |= CSR_ALLOW_APPLE_INTERNAL;
 	}
 
+	// Unrestrict filesystem access in recovery and restore OS.
+	// This is required so the MSU stack can mount/unmount the update volume
+	// during paired recovery.
+	if (_csr_is_recovery_environment() ||
+	    _csr_is_restore_environment() ||
+	    _csr_is_darwinos_ramdisk()) {
+		csr_config |= CSR_ALLOW_UNRESTRICTED_FS;
+	}
+
 	if (_csr_should_allow_device_configuration()) {
 		csr_config |= CSR_ALLOW_DEVICE_CONFIGURATION;
 	}
@@ -200,13 +226,6 @@ csr_bootstrap(void)
 	} else {
 		csr_config &= ~CSR_ALLOW_UNAUTHENTICATED_ROOT;
 	}
-
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
-	// Check whether we have to disable CTRR.
-	// lp-sip2 in the local boot policy is the bit driving this,
-	// which csrutil also sets implicitly when e.g. requesting kernel debugging.
-	csr_unsafe_kernel_text = _csr_get_dt_bool(&entry, "lp-sip2", &bool_value) && bool_value;
-#endif
 }
 STARTUP(TUNABLES, STARTUP_RANK_FIRST, csr_bootstrap);
 

@@ -146,9 +146,11 @@
 
 #include <net/bpf.h>
 
+#include <net/sockaddr_utils.h>
+
 #define GET_V4(x) ((const struct in_addr *)(const void *)(&(x)->s6_addr16[1]))
 
-static lck_grp_t *stf_mtx_grp;
+static LCK_GRP_DECLARE(stf_mtx_grp, "stf");
 
 struct stf_softc {
 	ifnet_t                         sc_if;     /* common area */
@@ -167,10 +169,8 @@ struct stf_softc {
 void stfattach(void);
 
 static int ip_stf_ttl = 40;
-static int stf_init_done;
 
 static void in_stf_input(struct mbuf *, int);
-static void stfinit(void);
 
 static struct protosw in_stf_protosw =
 {
@@ -192,17 +192,8 @@ static int stf_checkaddr4(struct stf_softc *, const struct in_addr *,
 static int stf_checkaddr6(struct stf_softc *, struct in6_addr *,
     struct ifnet *);
 static void stf_rtrequest(int, struct rtentry *, struct sockaddr *);
-static errno_t stf_ioctl(ifnet_t ifp, u_long cmd, void *data);
+static errno_t stf_ioctl(ifnet_t ifp, u_long cmd, void *__sized_by(IOCPARM_LEN(cmd)) data);
 static errno_t stf_output(ifnet_t ifp, mbuf_t m);
-
-static void
-stfinit(void)
-{
-	if (!stf_init_done) {
-		stf_mtx_grp = lck_grp_alloc_init("stf", LCK_GRP_ATTR_NULL);
-		stf_init_done = 1;
-	}
-}
 
 /*
  * gif_input is the input handler for IP and IPv6 attached to gif
@@ -231,7 +222,7 @@ stf_add_proto(
 	__unused u_int32_t                                              demux_count)
 {
 	/* Only one protocol may be attached at a time */
-	struct stf_softc* stf = ifnet_softc(ifp);
+	struct stf_softc *__single stf = ifnet_softc(ifp);
 	if (stf->sc_protocol_family == 0) {
 		stf->sc_protocol_family = protocol_family;
 	} else {
@@ -286,7 +277,8 @@ stf_demux(
 	__unused char                   *frame_ptr,
 	protocol_family_t               *protocol_family)
 {
-	struct stf_softc* stf = ifnet_softc(ifp);
+	struct stf_softc *__single stf = ifnet_softc(ifp);
+
 	*protocol_family = stf->sc_protocol_family;
 	return 0;
 }
@@ -297,7 +289,7 @@ stf_set_bpf_tap(
 	bpf_tap_mode    mode,
 	bpf_packet_func callback)
 {
-	struct stf_softc        *sc = ifnet_softc(ifp);
+	struct stf_softc *__single sc = ifnet_softc(ifp);
 
 	sc->tap_mode = mode;
 	sc->tap_callback = callback;
@@ -308,12 +300,10 @@ stf_set_bpf_tap(
 void
 stfattach(void)
 {
-	struct stf_softc *sc;
+	struct stf_softc *__single sc;
 	int error;
-	const struct encaptab *p;
-	struct ifnet_init_eparams       stf_init;
-
-	stfinit();
+	const struct encaptab *__single p;
+	struct ifnet_init_eparams stf_init;
 
 	error = proto_register_plumber(PF_INET6, APPLE_IF_FAM_STF,
 	    stf_attach_inet6, NULL);
@@ -321,21 +311,16 @@ stfattach(void)
 		printf("proto_register_plumber failed for AF_INET6 error=%d\n", error);
 	}
 
-	sc = _MALLOC(sizeof(struct stf_softc), M_DEVBUF, M_WAITOK | M_ZERO);
-	if (sc == 0) {
-		printf("stf softc attach failed\n" );
-		return;
-	}
+	sc = kalloc_type(struct stf_softc, Z_WAITOK_ZERO_NOFAIL);
+	lck_mtx_init(&sc->sc_ro_mtx, &stf_mtx_grp, LCK_ATTR_NULL);
 
 	p = encap_attach_func(AF_INET, IPPROTO_IPV6, stf_encapcheck,
 	    &in_stf_protosw, sc);
 	if (p == NULL) {
 		printf("sftattach encap_attach_func failed\n");
-		FREE(sc, M_DEVBUF);
-		return;
+		goto free_sc;
 	}
 	sc->encap_cookie = p;
-	lck_mtx_init(&sc->sc_ro_mtx, stf_mtx_grp, LCK_ATTR_NULL);
 
 	bzero(&stf_init, sizeof(stf_init));
 	stf_init.ver = IFNET_INIT_CURRENT_VERSION;
@@ -357,9 +342,7 @@ stfattach(void)
 	if (error != 0) {
 		printf("stfattach, ifnet_allocate failed - %d\n", error);
 		encap_detach(sc->encap_cookie);
-		lck_mtx_destroy(&sc->sc_ro_mtx, stf_mtx_grp);
-		FREE(sc, M_DEVBUF);
-		return;
+		goto free_sc;
 	}
 	ifnet_set_mtu(sc->sc_if, IPV6_MMTU);
 	ifnet_set_flags(sc->sc_if, 0, 0xffff); /* clear all flags */
@@ -373,14 +356,16 @@ stfattach(void)
 		printf("stfattach: ifnet_attach returned error=%d\n", error);
 		encap_detach(sc->encap_cookie);
 		ifnet_release(sc->sc_if);
-		lck_mtx_destroy(&sc->sc_ro_mtx, stf_mtx_grp);
-		FREE(sc, M_DEVBUF);
-		return;
+		goto free_sc;
 	}
 
 	bpfattach(sc->sc_if, DLT_NULL, sizeof(u_int));
 
 	return;
+
+free_sc:
+	lck_mtx_destroy(&sc->sc_ro_mtx, &stf_mtx_grp);
+	kfree_type(struct stf_softc, sc);
 }
 
 static int
@@ -391,8 +376,8 @@ stf_encapcheck(
 	void *arg)
 {
 	struct ip ip;
-	struct in6_ifaddr *ia6;
-	struct stf_softc *sc;
+	struct in6_ifaddr *__single ia6;
+	struct stf_softc *__single  sc;
 	struct in_addr a, b;
 
 	sc = (struct stf_softc *)arg;
@@ -413,7 +398,7 @@ stf_encapcheck(
 		return 0;
 	}
 
-	mbuf_copydata((struct mbuf *)(size_t)m, 0, sizeof(ip), &ip);
+	mbuf_copydata(__DECONST(struct mbuf *, m), 0, sizeof(ip), &ip);
 
 	if (ip.ip_v != 4) {
 		return 0;
@@ -433,7 +418,7 @@ stf_encapcheck(
 	if (bcmp(GET_V4(&ia6->ia_addr.sin6_addr), &ip.ip_dst,
 	    sizeof(ip.ip_dst)) != 0) {
 		IFA_UNLOCK(&ia6->ia_ifa);
-		IFA_REMREF(&ia6->ia_ifa);
+		ifa_remref(&ia6->ia_ifa);
 		return 0;
 	}
 	/*
@@ -449,21 +434,21 @@ stf_encapcheck(
 	b.s_addr &= GET_V4(&ia6->ia_prefixmask.sin6_addr)->s_addr;
 	if (a.s_addr != b.s_addr) {
 		IFA_UNLOCK(&ia6->ia_ifa);
-		IFA_REMREF(&ia6->ia_ifa);
+		ifa_remref(&ia6->ia_ifa);
 		return 0;
 	}
 	/* stf interface makes single side match only */
 	IFA_UNLOCK(&ia6->ia_ifa);
-	IFA_REMREF(&ia6->ia_ifa);
+	ifa_remref(&ia6->ia_ifa);
 	return 32;
 }
 
 static struct in6_ifaddr *
 stf_getsrcifa6(struct ifnet *ifp)
 {
-	struct ifaddr *ia;
-	struct in_ifaddr *ia4;
-	struct sockaddr_in6 *sin6;
+	struct ifaddr *__single ia;
+	struct in_ifaddr *__single ia4;
+	struct sockaddr_in6 *__single sin6;
 	struct in_addr in;
 
 	ifnet_lock_shared(ifp);
@@ -477,14 +462,14 @@ stf_getsrcifa6(struct ifnet *ifp)
 			IFA_UNLOCK(ia);
 			continue;
 		}
-		sin6 = (struct sockaddr_in6 *)(void *)ia->ifa_addr;
+		sin6 = SIN6(ia->ifa_addr);
 		if (!IN6_IS_ADDR_6TO4(&sin6->sin6_addr)) {
 			IFA_UNLOCK(ia);
 			continue;
 		}
 		bcopy(GET_V4(&sin6->sin6_addr), &in, sizeof(in));
 		IFA_UNLOCK(ia);
-		lck_rw_lock_shared(in_ifaddr_rwlock);
+		lck_rw_lock_shared(&in_ifaddr_rwlock);
 		for (ia4 = TAILQ_FIRST(&in_ifaddrhead);
 		    ia4;
 		    ia4 = TAILQ_NEXT(ia4, ia_link)) {
@@ -495,14 +480,14 @@ stf_getsrcifa6(struct ifnet *ifp)
 			}
 			IFA_UNLOCK(&ia4->ia_ifa);
 		}
-		lck_rw_done(in_ifaddr_rwlock);
+		lck_rw_done(&in_ifaddr_rwlock);
 		if (ia4 == NULL) {
 			continue;
 		}
 
-		IFA_ADDREF(ia);         /* for caller */
+		ifa_addref(ia);         /* for caller */
 		ifnet_lock_done(ifp);
-		return (struct in6_ifaddr *)ia;
+		return ifatoia6(ia);
 	}
 	ifnet_lock_done(ifp);
 
@@ -519,15 +504,15 @@ stf_pre_output(
 	__unused char *desk_linkaddr,
 	__unused char *frame_type)
 {
-	struct mbuf *m = *m0;
-	struct stf_softc *sc;
-	const struct sockaddr_in6 *dst6;
-	const struct in_addr *in4;
+	mbuf_ref_t m = *m0;
+	struct stf_softc *__single sc;
+	const struct sockaddr_in6 *__single dst6;
+	const struct in_addr *__single in4;
 	u_int8_t tos;
-	struct ip *ip;
-	struct ip6_hdr *ip6;
-	struct in6_ifaddr *ia6;
-	struct sockaddr_in      *dst4;
+	struct ip *__single ip;
+	struct ip6_hdr *__single ip6;
+	struct in6_ifaddr *__single ia6;
+	struct sockaddr_in *__single dst4;
 	struct ip_out_args ipoa;
 	errno_t result = 0;
 
@@ -538,7 +523,7 @@ stf_pre_output(
 	ipoa.ipoa_netsvctype = _NET_SERVICE_TYPE_UNSPEC;
 
 	sc = ifnet_softc(ifp);
-	dst6 = (const struct sockaddr_in6 *)(const void *)dst;
+	dst6 = SIN6(dst);
 
 	/* just in case */
 	if ((ifnet_flags(ifp) & IFF_UP) == 0) {
@@ -560,7 +545,7 @@ stf_pre_output(
 		m = m_pullup(m, sizeof(*ip6));
 		if (!m) {
 			*m0 = NULL; /* makes sure this won't be double freed */
-			IFA_REMREF(&ia6->ia_ifa);
+			ifa_remref(&ia6->ia_ifa);
 			return ENOBUFS;
 		}
 		*m0 = m;
@@ -577,7 +562,7 @@ stf_pre_output(
 	} else if (IN6_IS_ADDR_6TO4(&dst6->sin6_addr)) {
 		in4 = GET_V4(&dst6->sin6_addr);
 	} else {
-		IFA_REMREF(&ia6->ia_ifa);
+		ifa_remref(&ia6->ia_ifa);
 		return ENETUNREACH;
 	}
 
@@ -594,7 +579,7 @@ stf_pre_output(
 	}
 	if (m == NULL) {
 		*m0 = NULL;
-		IFA_REMREF(&ia6->ia_ifa);
+		ifa_remref(&ia6->ia_ifa);
 		return ENOBUFS;
 	}
 
@@ -604,7 +589,7 @@ stf_pre_output(
 	bzero(ip, sizeof(*ip));
 
 	IFA_LOCK_SPIN(&ia6->ia_ifa);
-	bcopy(GET_V4(&((struct sockaddr_in6 *)&ia6->ia_addr)->sin6_addr),
+	bcopy(GET_V4(&(SIN6(&ia6->ia_addr))->sin6_addr),
 	    &ip->ip_src, sizeof(ip->ip_src));
 	IFA_UNLOCK(&ia6->ia_ifa);
 	bcopy(in4, &ip->ip_dst, sizeof(ip->ip_dst));
@@ -618,7 +603,7 @@ stf_pre_output(
 	}
 
 	lck_mtx_lock(&sc->sc_ro_mtx);
-	dst4 = (struct sockaddr_in *)(void *)&sc->sc_ro.ro_dst;
+	dst4 = SIN(&sc->sc_ro.ro_dst);
 	if (ROUTE_UNUSABLE(&sc->sc_ro) || dst4->sin_family != AF_INET ||
 	    bcmp(&dst4->sin_addr, &ip->ip_dst, sizeof(ip->ip_dst)) != 0) {
 		ROUTE_RELEASE(&sc->sc_ro);
@@ -637,7 +622,7 @@ stf_pre_output(
 		result = EJUSTRETURN;
 	}
 	*m0 = NULL;
-	IFA_REMREF(&ia6->ia_ifa);
+	ifa_remref(&ia6->ia_ifa);
 	return result;
 }
 static errno_t
@@ -657,7 +642,7 @@ stf_checkaddr4(
 	const struct in_addr *in,
 	struct ifnet *inifp)    /* incoming interface */
 {
-	struct in_ifaddr *ia4;
+	struct in_ifaddr *__single ia4;
 
 	/*
 	 * reject packets with the following address:
@@ -674,7 +659,7 @@ stf_checkaddr4(
 	/*
 	 * reject packets with broadcast
 	 */
-	lck_rw_lock_shared(in_ifaddr_rwlock);
+	lck_rw_lock_shared(&in_ifaddr_rwlock);
 	for (ia4 = TAILQ_FIRST(&in_ifaddrhead);
 	    ia4;
 	    ia4 = TAILQ_NEXT(ia4, ia_link)) {
@@ -685,25 +670,25 @@ stf_checkaddr4(
 		}
 		if (in->s_addr == ia4->ia_broadaddr.sin_addr.s_addr) {
 			IFA_UNLOCK(&ia4->ia_ifa);
-			lck_rw_done(in_ifaddr_rwlock);
+			lck_rw_done(&in_ifaddr_rwlock);
 			return -1;
 		}
 		IFA_UNLOCK(&ia4->ia_ifa);
 	}
-	lck_rw_done(in_ifaddr_rwlock);
+	lck_rw_done(&in_ifaddr_rwlock);
 
 	/*
 	 * perform ingress filter
 	 */
 	if (sc && (ifnet_flags(sc->sc_if) & IFF_LINK2) == 0 && inifp) {
 		struct sockaddr_in sin;
-		struct rtentry *rt;
+		rtentry_ref_t rt;
 
-		bzero(&sin, sizeof(sin));
+		SOCKADDR_ZERO(&sin, sizeof(sin));
 		sin.sin_family = AF_INET;
 		sin.sin_len = sizeof(struct sockaddr_in);
 		sin.sin_addr = *in;
-		rt = rtalloc1((struct sockaddr *)&sin, 0, 0);
+		rt = rtalloc1(SA(&sin), 0, 0);
 		if (rt != NULL) {
 			RT_LOCK(rt);
 		}
@@ -757,13 +742,13 @@ in_stf_input(
 	struct mbuf *m,
 	int off)
 {
-	struct stf_softc *sc;
-	struct ip *ip;
+	struct stf_softc *__single sc;
+	struct ip *__single ip;
 	struct ip6_hdr ip6;
 	u_int8_t otos, itos;
 	int proto;
-	struct ifnet *ifp;
-	struct ifnet_stat_increment_param       stats;
+	struct ifnet *__single ifp;
+	struct ifnet_stat_increment_param stats;
 
 	ip = mtod(m, struct ip *);
 	proto = ip->ip_p;
@@ -795,7 +780,10 @@ in_stf_input(
 	}
 
 	otos = ip->ip_tos;
-	mbuf_copydata(m, off, sizeof(ip6), &ip6);
+	if (mbuf_copydata(m, off, sizeof(ip6), &ip6)) {
+		m_freem(m);
+		return;
+	}
 
 	/*
 	 * perform sanity check against inner src/dst.
@@ -817,7 +805,7 @@ in_stf_input(
 	ip6.ip6_flow |= htonl((u_int32_t)itos << 20);
 
 	m->m_pkthdr.rcvif = ifp;
-	mbuf_pkthdr_setheader(m, mbuf_data(m));
+	mbuf_pkthdr_setheader(m, mtod(m, void*));
 	mbuf_adj(m, off);
 
 	if (ifp->if_bpf) {
@@ -857,11 +845,11 @@ static errno_t
 stf_ioctl(
 	ifnet_t         ifp,
 	u_long          cmd,
-	void            *data)
+	void            *__sized_by(IOCPARM_LEN(cmd)) data)
 {
-	struct ifaddr *ifa;
-	struct ifreq *ifr;
-	struct sockaddr_in6 *sin6;
+	struct ifaddr *__single ifa;
+	struct ifreq *__single ifr;
+	struct sockaddr_in6 *__single sin6;
 	int error;
 
 	error = 0;
@@ -878,7 +866,7 @@ stf_ioctl(
 			error = EAFNOSUPPORT;
 			break;
 		}
-		sin6 = (struct sockaddr_in6 *)(void *)ifa->ifa_addr;
+		sin6 = SIN6(ifa->ifa_addr);
 		if (IN6_IS_ADDR_6TO4(&sin6->sin6_addr)) {
 			if (!(ifnet_flags( ifp ) & IFF_UP)) {
 				/* do this only if the interface is not already up */

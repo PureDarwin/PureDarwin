@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2008 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2008, 2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -141,17 +141,8 @@ struct direntry __DARWIN_STRUCT_DIRENTRY;
 #define DTTOIF(dirtype) ((dirtype) << 12)
 #endif
 
-#if PRIVATE
-/*
- * If a buffer at least this size is passed to __getdirentries64,
- * the the last 4 bytes will be the flags below.
- */
-#define GETDIRENTRIES64_EXTENDED_BUFSIZE  1024
-
-__options_decl(getdirentries64_flags_t, unsigned, {
-	/* the __getdirentries64 returned all entries */
-	GETDIRENTRIES64_EOF = 1U << 0,
-});
-#endif
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <sys/dirent_private.h>
+#endif /* PRIVATE && !MODULES_SUPPORTED */
 
 #endif /* _SYS_DIRENT_H  */

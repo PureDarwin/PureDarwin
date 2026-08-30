@@ -42,6 +42,8 @@
 #include <i386/cpu_threads.h>
 #include <i386/rtclock_protos.h>
 #include <i386/cpuid.h>
+#include <i386/lbr.h>
+#include <kern/debug.h>
 #if CONFIG_VMX
 #include <i386/vmx/vmx_cpu.h>
 #endif
@@ -112,7 +114,7 @@ cpu_init(void)
 	i386_activate_cpu();
 }
 
-kern_return_t
+void
 cpu_start(
 	int cpu)
 {
@@ -120,7 +122,7 @@ cpu_start(
 
 	if (cpu == cpu_number()) {
 		cpu_machine_init();
-		return KERN_SUCCESS;
+		return;
 	}
 
 	/*
@@ -138,10 +140,8 @@ cpu_start(
 	}
 
 	if (ret != KERN_SUCCESS) {
-		kprintf("cpu: cpu_start(%d) returning failure!\n", cpu);
+		panic("cpu_start(%d) failed: %d\n", cpu, ret);
 	}
-
-	return ret;
 }
 
 void
@@ -282,4 +282,10 @@ processor_to_datastring(const char *prefix, processor_t target_processor)
 	    cpup->cpu_running);
 
 	return (const char *)&printBuf[0];
+}
+
+void
+abandon_preemption_disable_measurement(void)
+{
+	/* stub for libpthread */
 }

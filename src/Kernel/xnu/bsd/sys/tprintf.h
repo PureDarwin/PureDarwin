@@ -69,13 +69,25 @@
 
 #ifdef __APPLE_API_UNSTABLE
 
-typedef struct session *tpr_t;
+#ifdef XNU_KERNEL_PRIVATE
+struct proc;
+typedef struct pgrp *tpr_t;
 
 __BEGIN_DECLS
 tpr_t   tprintf_open(struct proc *);
 void    tprintf_close(tpr_t);
 void    tprintf(tpr_t, const char *fmt, ...) __printflike(2, 3);
 __END_DECLS
+
+#endif /* XNU_KERNEL_PRIVATE */
+
+#ifdef KERNEL_PRIVATE
+
+__BEGIN_DECLS
+void    tprintf_thd(thread_t, const char *fmt, ...) __printflike(2, 3);
+__END_DECLS
+
+#endif /* KERNEL_PRIVATE */
 
 #endif /* __APPLE_API_UNSTABLE */
 

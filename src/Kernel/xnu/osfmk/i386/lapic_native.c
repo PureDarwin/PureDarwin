@@ -40,7 +40,7 @@
 #include <kern/debug.h>
 
 #include <vm/vm_map.h>
-#include <vm/vm_kern.h>
+#include <vm/vm_kern_xnu.h>
 
 #include <i386/lapic.h>
 #include <i386/cpuid.h>
@@ -52,6 +52,7 @@
 #include <i386/cpu_threads.h>
 #include <i386/machine_routines.h>
 #include <i386/tsc.h>
+#include <i386/bit_routines.h>
 #if CONFIG_MCA
 #include <i386/machine_check.h>
 #endif
@@ -83,6 +84,7 @@ static unsigned lapic_master_error_count = 0;
 static unsigned lapic_error_count_threshold = 5;
 static boolean_t lapic_dont_panic = FALSE;
 int lapic_max_interrupt_cpunum = 0;
+long lapic_icr_pending_timeouts = 0;
 
 typedef enum {
 	APIC_MODE_UNKNOWN = 0,
@@ -118,27 +120,12 @@ lapic_cpu_map_dump(void)
 static void
 map_local_apic(void)
 {
-	vm_map_offset_t lapic_vbase64;
-	int             result;
 	kern_return_t   kr;
-	vm_map_entry_t  entry;
 
 	if (lapic_vbase == 0) {
-		lapic_vbase64 = (vm_offset_t)vm_map_min(kernel_map);
-		result = vm_map_find_space(kernel_map,
-		    &lapic_vbase64,
-		    round_page(LAPIC_SIZE), 0,
-		    0,
-		    VM_MAP_KERNEL_FLAGS_NONE,
-		    VM_KERN_MEMORY_IOKIT,
-		    &entry);
-		/* Convert 64-bit vm_map_offset_t to "pointer sized" vm_offset_t
-		 */
-		lapic_vbase = (vm_offset_t) lapic_vbase64;
-		if (result != KERN_SUCCESS) {
-			panic("legacy_init: vm_map_find_entry FAILED (err=%d)", result);
-		}
-		vm_map_unlock(kernel_map);
+		kmem_alloc(kernel_map, &lapic_vbase, round_page(LAPIC_SIZE),
+		    KMA_PERMANENT | KMA_NOFAIL | KMA_KOBJECT | KMA_VAONLY,
+		    VM_KERN_MEMORY_IOKIT);
 
 		/*
 		 * Map in the local APIC non-cacheable, as recommended by Intel
@@ -153,7 +140,8 @@ map_local_apic(void)
 		    VM_PROT_READ | VM_PROT_WRITE,
 		    VM_PROT_NONE,
 		    VM_WIMG_IO,
-		    TRUE);
+		    TRUE,
+		    PMAP_MAPPING_TYPE_INFER);
 
 		assert(kr == KERN_SUCCESS);
 	}
@@ -229,6 +217,8 @@ x2apic_init(void)
 		lo |= MSR_IA32_APIC_BASE_EXTENDED;
 		wrmsr(MSR_IA32_APIC_BASE, lo, hi);
 		kprintf("x2APIC mode enabled\n");
+		rdmsr(LAPIC_MSR(LVT_TIMER), lo, hi);
+		current_cpu_datap()->cpu_soft_apic_lvt_timer = lo;
 	}
 }
 
@@ -238,6 +228,10 @@ x2apic_read(lapic_register_t reg)
 	uint32_t        lo;
 	uint32_t        hi;
 
+	if (LVT_TIMER == reg) {
+		// avoid frequent APIC access VM-exit
+		return current_cpu_datap()->cpu_soft_apic_lvt_timer;
+	}
 	rdmsr(LAPIC_MSR(reg), lo, hi);
 	return lo;
 }
@@ -245,13 +239,16 @@ x2apic_read(lapic_register_t reg)
 static void
 x2apic_write(lapic_register_t reg, uint32_t value)
 {
+	if (LVT_TIMER == reg) {
+		current_cpu_datap()->cpu_soft_apic_lvt_timer = value;
+	}
 	wrmsr(LAPIC_MSR(reg), value, 0);
 }
 
 static uint64_t
 x2apic_read_icr(void)
 {
-	return rdmsr64(LAPIC_MSR(ICR));;
+	return rdmsr64(LAPIC_MSR(ICR));
 }
 
 static void
@@ -321,7 +318,7 @@ lapic_reinit(bool for_wake)
 	}
 
 	if ((!is_lapic_enabled && !is_local_x2apic)) {
-		panic("Unexpected local APIC state\n");
+		panic("Unexpected local APIC state");
 	}
 
 	/*
@@ -348,6 +345,12 @@ lapic_reinit(bool for_wake)
 		asm volatile ("cli; hlt;" ::: "memory");
 #endif
 	}
+
+	if (is_local_x2apic) {
+		/* ensure the soft copy is up-to-date */
+		rdmsr(LAPIC_MSR(LVT_TIMER), lo, hi);
+		current_cpu_datap()->cpu_soft_apic_lvt_timer = lo;
+	}
 }
 
 void
@@ -356,7 +359,7 @@ lapic_init_slave(void)
 	lapic_reinit(false);
 #if DEBUG || DEVELOPMENT
 	if (rdmsr64(MSR_IA32_APIC_BASE) & MSR_IA32_APIC_BASE_BSP) {
-		panic("Calling lapic_init_slave() on the boot processor\n");
+		panic("Calling lapic_init_slave() on the boot processor");
 	}
 #endif
 }
@@ -380,7 +383,7 @@ lapic_init(void)
 	    is_x2apic ? "extended" : "legacy",
 	    is_boot_processor ? "BSP" : "AP");
 	if (!is_boot_processor || !is_lapic_enabled) {
-		panic("Unexpected local APIC state\n");
+		panic("Unexpected local APIC state");
 	}
 
 	/*
@@ -418,7 +421,7 @@ lapic_init(void)
 	if ((LAPIC_READ(VERSION) & LAPIC_VERSION_MASK) < 0x14) {
 		kprintf("Local APIC version 0x%x, 0x14 or more expected by default\n",
 		    (LAPIC_READ(VERSION) & LAPIC_VERSION_MASK));
-		/* Continue anyways. AMD CPUs have different values IIRC */
+		/* Continue anyway: AMD reports different values here. */
 	}
 
 	/* Set up the lapic_id <-> cpu_number map and add this boot processor */
@@ -652,10 +655,10 @@ lapic_shutdown(bool for_sleep)
 	mp_enable_preemption();
 }
 
-boolean_t
-cpu_can_exit(int cpu)
+bool
+ml_cpu_can_exit(int cpu_id)
 {
-	return cpu > lapic_max_interrupt_cpunum;
+	return cpu_id > lapic_max_interrupt_cpunum;
 }
 
 void
@@ -711,8 +714,8 @@ lapic_configure(bool for_wake)
 	}
 #endif
 
-	if (((cpu_number() == master_cpu) && lapic_errors_masked == FALSE) ||
-	    (cpu_number() != master_cpu)) {
+	if (((cpu_number() == boot_cpu_id) && lapic_errors_masked == FALSE) ||
+	    (cpu_number() != boot_cpu_id)) {
 		lapic_esr_clear();
 		LAPIC_WRITE(LVT_ERROR, LAPIC_VECTOR(ERROR));
 	}
@@ -729,7 +732,7 @@ lapic_set_timer(
 
 	mp_disable_preemption();
 	timer_vector = LAPIC_READ(LVT_TIMER);
-	timer_vector &= ~(LAPIC_LVT_MASKED | LAPIC_LVT_PERIODIC);;
+	timer_vector &= ~(LAPIC_LVT_MASKED | LAPIC_LVT_PERIODIC);
 	timer_vector |= interrupt_unmasked ? 0 : LAPIC_LVT_MASKED;
 	timer_vector |= (mode == periodic) ? LAPIC_LVT_PERIODIC : 0;
 	LAPIC_WRITE(LVT_TIMER, timer_vector);
@@ -872,7 +875,7 @@ lapic_set_intr_func(int vector, i386_intr_func_t func)
 		lapic_intr_func[vector] = func;
 		break;
 	default:
-		panic("lapic_set_intr_func(%d,%p) invalid vector\n",
+		panic("lapic_set_intr_func(%d,%p) invalid vector",
 		    vector, func);
 	}
 }
@@ -954,11 +957,11 @@ lapic_interrupt(int interrupt_num, x86_saved_state_t *state)
 		lapic_dump();
 
 		if ((debug_boot_arg && (lapic_dont_panic == FALSE)) ||
-		    cpu_number() != master_cpu) {
-			panic("Local APIC error, ESR: %d\n", esr);
+		    cpu_number() != boot_cpu_id) {
+			panic("Local APIC error, ESR: %d", esr);
 		}
 
-		if (cpu_number() == master_cpu) {
+		if (cpu_number() == boot_cpu_id) {
 			uint64_t abstime = mach_absolute_time();
 			if ((abstime - lapic_last_master_error) < lapic_error_time_threshold) {
 				if (lapic_master_error_count++ > lapic_error_count_threshold) {
@@ -1050,6 +1053,35 @@ lapic_send_ipi(int cpu, int vector)
 	LAPIC_WRITE_ICR(cpu_to_lapic[cpu], vector | LAPIC_ICR_DM_FIXED);
 
 	(void) ml_set_interrupts_enabled(state);
+}
+
+void
+lapic_send_nmi(int cpu)
+{
+	if (!is_x2apic) {
+		if (LAPIC_READ_ICR() & LAPIC_ICR_DS_PENDING) {
+			uint64_t now = mach_absolute_time();
+			/* Wait up to 10ms for the pending outgoing send (if any) to complete */
+			while ((LAPIC_READ_ICR() & LAPIC_ICR_DS_PENDING) &&
+			    (mach_absolute_time() - now) < (10 * NSEC_PER_MSEC)) {
+				cpu_pause();
+			}
+		}
+#if DEVELOPMENT || DEBUG
+		if (__improbable(LAPIC_READ_ICR() & LAPIC_ICR_DS_PENDING)) {
+			/* Since it's not safe to invoke printf here, kprintf and counting is the best we can do */
+			kprintf("WARNING: Wait for lapic ICR pending bit timed-out!\n");
+			atomic_incl((volatile long *)&lapic_icr_pending_timeouts, 1);
+		}
+#endif
+	}
+
+	/* Program the interrupt command register */
+	/* The vector is ignored in this case--the target CPU will enter on the
+	 * NMI vector.
+	 */
+	LAPIC_WRITE_ICR(cpu_to_lapic[cpu],
+	    LAPIC_VECTOR(INTERPROCESSOR) | LAPIC_ICR_DM_NMI);
 }
 
 /*

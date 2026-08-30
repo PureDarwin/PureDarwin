@@ -65,7 +65,7 @@ set to zero.
 .Fa options
 controls how the attribute is set:
 .Pp
-.Bl -tag -width XATTR_NOFOLLOW
+.Bl -tag -width XATTR_RESOLVE_BENEATH
 .It Dv XATTR_NOFOLLOW
 do not follow symbolic links.
 .Fn setxattr
@@ -75,6 +75,14 @@ if it is a symbolic link.
 With this option,
 .Fn setxattr
 will act on the link itself.
+.It Dv XATTR_NOFOLLOW_ANY
+do not follow any symbolic links encountered during pathname resolution. An
+error is returned if a symlink is encountered before the last component of path.
+.It Dv XATTR_RESOLVE_BENEATH
+If
+.Fa path
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
 .It Dv XATTR_CREATE
 fail if the named attribute already exists.
 .It Dv XATTR_REPLACE
@@ -148,6 +156,9 @@ is invalid.
 must be valid UTF-8 and
 .Fa options
 must make sense.
+.It Bq Er EINVAL
+XATTR_NOFOLLOW, XATTR_NOFOLLOW_ANY or XATTR_RESOLVE_BENEATH option was passed in
+.Fn fsetxattr .
 .It Bq Er ENOTDIR
 A component of
 .Fa path
@@ -172,6 +183,13 @@ or permission to set the attribute is denied.
 .It Bq Er ELOOP
 Too many symbolic links were encountered resolving
 .Fa path .
+.It Bq Er ELOOP
+If XATTR_NOFOLLOW_ANY option was passed and a symbolic link was encountered in
+translating the pathname.
+.It Bq Er ENOTCAPABLE
+If XATTR_RESOLVE_BENEATH was passed and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory.
 .It Bq Er EFAULT
 .Fa path
 or

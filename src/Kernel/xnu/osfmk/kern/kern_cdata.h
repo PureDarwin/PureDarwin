@@ -39,7 +39,7 @@
  * Do not use these macros!
  *
  * Instead, you should use kcdata_iter_* functions defined in kcdata.h.  These
- * macoros have no idea where the kcdata buffer ends, so they are all unsafe.
+ * macros have no idea where the kcdata buffer ends, so they are all unsafe.
  */
 #define KCDATA_ITEM_HEADER_SIZE         (sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint64_t))
 #define KCDATA_ITEM_ITER(item)          kcdata_iter_unsafe((void*)(item))
@@ -116,13 +116,29 @@ struct kcdata_descriptor {
 #define KCFLAG_USE_COPYOUT 0x1
 #define KCFLAG_NO_AUTO_ENDBUFFER 0x2
 #define KCFLAG_USE_COMPRESSION 0x4
+#define KCFLAG_ALLOC_CALLBACK 0x8
 	uint16_t kcd_user_flags; /* reserved for subsystems using kcdata */
 	mach_vm_address_t kcd_addr_begin;
 	mach_vm_address_t kcd_addr_end;
 	struct kcdata_compress_descriptor kcd_comp_d;
+	uint32_t            kcd_endalloced;
+	struct kcdata_descriptor * (*kcd_alloc_callback) (struct kcdata_descriptor*, size_t);
 };
 
 typedef struct kcdata_descriptor * kcdata_descriptor_t;
+
+#define MAX_INFLIGHT_KCOBJECT_LW_CORPSE   15
+__options_decl(kcdata_obj_flags_t, uint32_t, {
+	KCDATA_OBJECT_TYPE_LW_CORPSE  = 0x1, /* for lightweight corpse */
+});
+
+struct kcdata_object {
+	kcdata_descriptor_t ko_data;
+	kcdata_obj_flags_t  ko_flags;
+	ipc_port_t          ko_port;
+	uint32_t            ko_alloc_size;
+	os_refcnt_t         ko_refs;
+};
 
 kcdata_descriptor_t kcdata_memory_alloc_init(mach_vm_address_t crash_data_p, unsigned data_type, unsigned size, unsigned flags);
 kern_return_t kcdata_memory_static_init(
@@ -147,11 +163,20 @@ kern_return_t kcdata_init_compress(kcdata_descriptor_t, int hdr_tag, void (*memc
 kern_return_t kcdata_push_data(kcdata_descriptor_t data, uint32_t type, uint32_t size, const void *input_data);
 kern_return_t kcdata_push_array(kcdata_descriptor_t data, uint32_t type_of_element, uint32_t size_of_element, uint32_t count, const void *input_data);
 kern_return_t kcdata_compress_memory_addr(kcdata_descriptor_t data, void *ptr);
-kern_return_t kcdata_finish_compression(kcdata_descriptor_t data);
+void *kcdata_endalloc(kcdata_descriptor_t data, size_t length);
+kern_return_t kcdata_finish(kcdata_descriptor_t data);
 void kcdata_compression_window_open(kcdata_descriptor_t data);
 kern_return_t kcdata_compression_window_close(kcdata_descriptor_t data);
 void kcd_finalize_compression(kcdata_descriptor_t data);
 
+/* kcdata mach port representation */
+kern_return_t kcdata_object_throttle_get(kcdata_obj_flags_t flags);
+void kcdata_object_throttle_release(kcdata_obj_flags_t flags);
+kern_return_t kcdata_create_object(kcdata_descriptor_t data, kcdata_obj_flags_t flags, uint32_t size, kcdata_object_t *objp);
+void kcdata_object_release(kcdata_object_t obj);
+void kcdata_object_reference(kcdata_object_t obj);
+kcdata_object_t convert_port_to_kcdata_object(ipc_port_t port);
+ipc_port_t convert_kcdata_object_to_port(kcdata_object_t obj);
 #else /* XNU_KERNEL_PRIVATE */
 
 typedef void * kcdata_descriptor_t;

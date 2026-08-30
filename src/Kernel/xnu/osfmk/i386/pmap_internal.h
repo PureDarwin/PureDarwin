@@ -44,21 +44,13 @@
 static inline void
 PMAP_LOCK_EXCLUSIVE(pmap_t p)
 {
-	mp_disable_preemption();
-	lck_rw_lock_exclusive(&p->pmap_rwl);
+	lck_rw_lock_exclusive_spin(&p->pmap_rwl);
 }
 
 static inline void
 PMAP_LOCK_SHARED(pmap_t p)
 {
-	mp_disable_preemption();
-	lck_rw_lock_shared(&p->pmap_rwl);
-}
-
-static inline void
-PMAP_LOCK_SHARED_TO_EXCLUSIVE(pmap_t p)
-{
-	lck_rw_lock_shared_to_exclusive(&p->pmap_rwl);
+	lck_rw_lock_shared_spin(&p->pmap_rwl);
 }
 
 static inline void
@@ -70,15 +62,13 @@ PMAP_LOCK_EXCLUSIVE_TO_SHARED(pmap_t p)
 static inline void
 PMAP_UNLOCK_EXCLUSIVE(pmap_t p)
 {
-	lck_rw_unlock_exclusive(&p->pmap_rwl);
-	mp_enable_preemption();
+	lck_rw_unlock_exclusive_spin(&p->pmap_rwl);
 }
 
 static inline void
 PMAP_UNLOCK_SHARED(pmap_t p)
 {
-	lck_rw_unlock_shared(&p->pmap_rwl);
-	mp_enable_preemption();
+	lck_rw_unlock_shared_spin(&p->pmap_rwl);
 }
 
 #define iswired(pte)    ((pte) & INTEL_PTE_WIRED)
@@ -533,7 +523,7 @@ extern uint64_t max_preemption_latency_tsc;
 #if PMAP_INTR_DEBUG
 #define pmap_intr_assert() {                                                    \
 	if (processor_avail_count > 1 && !ml_get_interrupts_enabled())          \
-	        panic("pmap interrupt assert %d %s, %d", processor_avail_count, __FILE__, __LINE__); \
+	        panic("pmap interrupt assert %d", processor_avail_count); \
 }
 #else
 #define pmap_intr_assert()
@@ -860,7 +850,7 @@ pmap_compressed_pte_corruption_repair(uint64_t pte, uint64_t *pte_addr, uint64_t
 	    action, pmap, vaddr, ptep, (ppnum_t)~0UL, 0, 0, sizeof(adj_pteps) / sizeof(adj_pteps[0]),
 	    adj_pteps) != PMAP_ACTION_ASSERT) {
 		/* Correct the flipped bit(s) and continue */
-		pmap_store_pte(ptep, pte & INTEL_PTE_COMPRESSED_MASK);
+		pmap_store_pte(is_ept_pmap(pmap), ptep, pte & INTEL_PTE_COMPRESSED_MASK);
 		pmap->corrected_compressed_ptes_count++;
 		return TRUE; /* Returning TRUE to indicate this is a now a valid compressed PTE (we hope) */
 	}
@@ -1052,30 +1042,6 @@ pmap_pv_is_altacct(
 	return is_altacct;
 }
 
-static inline void
-PMAP_ZINFO_PALLOC(pmap_t pmap, vm_size_t bytes)
-{
-	pmap_ledger_credit(pmap, task_ledgers.tkm_private, (ledger_amount_t)bytes);
-}
-
-static inline void
-PMAP_ZINFO_PFREE(pmap_t pmap, vm_size_t bytes)
-{
-	pmap_ledger_debit(pmap, task_ledgers.tkm_private, (ledger_amount_t)bytes);
-}
-
-static inline void
-PMAP_ZINFO_SALLOC(pmap_t pmap, vm_size_t bytes)
-{
-	pmap_ledger_credit(pmap, task_ledgers.tkm_shared, (ledger_amount_t)bytes);
-}
-
-static inline void
-PMAP_ZINFO_SFREE(pmap_t pmap, vm_size_t bytes)
-{
-	pmap_ledger_debit(pmap, task_ledgers.tkm_shared, (ledger_amount_t)bytes);
-}
-
 extern boolean_t        pmap_initialized;/* Has pmap_init completed? */
 #define valid_page(x) (pmap_initialized && pmap_valid_page(x))
 
@@ -1113,10 +1079,14 @@ pmap_cmpx_pte(pt_entry_t *entryp, pt_entry_t old, pt_entry_t new)
 	           memory_order_acq_rel_smp, memory_order_relaxed);
 }
 
+
+#if DEVELOPMENT || DEBUG
 extern uint32_t pmap_update_clear_pte_count;
+extern uint32_t pmap_update_invalid_pte_count;
+#endif
 
 static inline void
-pmap_update_pte(pt_entry_t *mptep, uint64_t pclear_bits, uint64_t pset_bits)
+pmap_update_pte(boolean_t is_ept, pt_entry_t *mptep, uint64_t pclear_bits, uint64_t pset_bits, bool oldpte_invalid_ok)
 {
 	pt_entry_t npte, opte;
 	do {
@@ -1125,11 +1095,27 @@ pmap_update_pte(pt_entry_t *mptep, uint64_t pclear_bits, uint64_t pset_bits)
 #if DEVELOPMENT || DEBUG
 			pmap_update_clear_pte_count++;
 #endif
-			break;
+			return;
+		} else if (__improbable(!oldpte_invalid_ok && (opte & PTE_VALID_MASK(is_ept)) == 0)) {
+#if DEVELOPMENT || DEBUG
+			pmap_update_invalid_pte_count++;
+#endif
+			return;
 		}
 		npte = opte & ~(pclear_bits);
 		npte |= pset_bits;
+#if DEVELOPMENT || DEBUG
+		if (__improbable(pmap_inject_pte_corruption != 0 && is_ept == FALSE && (npte & PTE_COMPRESSED))) {
+			pmap_inject_pte_corruption = 0;
+			/* Inject a corruption event */
+			npte |= INTEL_PTE_NX;
+		}
+#endif
 	}       while (!pmap_cmpx_pte(mptep, opte, npte));
+
+	if (__improbable((is_ept == FALSE) && (npte & PTE_COMPRESSED) && (npte & INTEL_PTE_NX))) {
+		pmap_corrupted_pte_detected(mptep, pclear_bits, pset_bits);
+	}
 }
 
 /*
@@ -1283,7 +1269,7 @@ extern void     pmap_alias(
 	vm_prot_t       prot,
 	unsigned int options);
 
-#if     DEBUG
+#ifdef  PMAP_DEBUG
 #define DPRINTF(x...)   kprintf(x)
 #else
 #define DPRINTF(x...)

@@ -6,6 +6,7 @@
 [
     "corecrypto.kext"
     "pthread.kext"
+    "amfi.kext"
     "IOACPIFamily.kext"
     "PDACPIPlatform.kext"
     "IOPCIFamily.kext"

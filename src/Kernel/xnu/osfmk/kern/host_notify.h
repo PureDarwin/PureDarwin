@@ -40,11 +40,11 @@
 #ifdef MACH_KERNEL_PRIVATE
 #include <mach/mach_types.h>
 
-void    host_notify_port_destroy(
-	ipc_port_t                      port);
+typedef struct host_notify_entry       *host_notify_t;
 
 void    host_notify_calendar_change(void);
 void    host_notify_calendar_set(void);
+void    host_notify_cancel(host_notify_t entry);
 
 #endif /* MACH_KERNEL_PRIVATE */
 

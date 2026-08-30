@@ -116,6 +116,7 @@ void                    devfs_rele_node(devnode_t *);
 static void             devfs_consider_time_update(devnode_t *dnp, uint32_t just_changed_flags);
 static boolean_t        devfs_update_needed(long now_s, long last_s);
 static boolean_t        devfs_is_name_protected(struct vnode *dvp, const char *name);
+static boolean_t        devfs_is_vnode_protected(struct vnode *vp);
 void                    dn_times_locked(devnode_t * dnp, struct timeval *t1, struct timeval *t2, struct timeval *t3, uint32_t just_changed_flags);
 void                    dn_times_now(devnode_t *dnp, uint32_t just_changed_flags);
 void                    dn_mark_for_delayed_times_update(devnode_t *dnp, uint32_t just_changed_flags);
@@ -204,6 +205,7 @@ devfs_is_name_protected(struct vnode *dvp, const char *name)
 	    (strcmp("tty", name) == 0) ||
 	    (strcmp("null", name) == 0) ||
 	    (strcmp("zero", name) == 0) ||
+	    (strcmp("fd", name) == 0) ||
 	    (strcmp("klog", name) == 0)) {
 		return TRUE;
 	}
@@ -211,6 +213,85 @@ devfs_is_name_protected(struct vnode *dvp, const char *name)
 	return FALSE;
 }
 
+/*
+ * These devfs devices cannot have their permissions updated.
+ */
+static boolean_t
+devfs_is_vnode_protected(struct vnode *vp)
+{
+	struct vnode *dvp = NULLVP;
+	const char *vname = NULL;
+	boolean_t ret = FALSE;
+	vnode_getparent_and_name(vp, &dvp, &vname);
+	if (!dvp || !vname) {
+		ret = FALSE;
+		goto out;
+	}
+
+	ret = devfs_is_name_protected(dvp, vname);
+
+out:
+	if (vname) {
+		vnode_putname(vname);
+	}
+	if (dvp != NULLVP) {
+		vnode_put(dvp);
+	}
+
+	return ret;
+}
+
+/* Walk up to the root to find out the depth of this nested directory. */
+static int
+devfs_nested_dirs_depth(devnode_t *dir_p)
+{
+	devdirent_t *dirent_p;
+	int depth = 0;
+
+	while ((dir_p = dir_p->dn_typeinfo.Dir.parent) != NULL) {
+		dirent_p = dir_p->dn_typeinfo.Dir.myname;
+		/* If 'de_parent' is NULL, then we are at root. */
+		if (dirent_p->de_parent == NULL) {
+			break;
+		}
+		depth++;
+	}
+
+	return depth;
+}
+
+/*
+ * Recurse down to all subdirs to figure out the max depths of the deepest
+ * subdir.
+ */
+static int
+devfs_subdirs_depth(devdirent_t *parent_dirent_p)
+{
+	devnode_t *parent_dnp = parent_dirent_p->de_dnp;
+	devdirent_t *dirent_p;
+	int max_depths = 0;
+
+	/* Return depth of 0 when there is no more subdir(s). */
+	if (parent_dnp->dn_typeinfo.Dir.entrycount == 0) {
+		return 0;
+	}
+
+	/*
+	 * Traverse each subdir at this level to find out the max depth of its
+	 * subdirs.
+	 */
+	for (dirent_p = parent_dnp->dn_typeinfo.Dir.dirlist; dirent_p;
+	    dirent_p = dirent_p->de_next) {
+		if (dirent_p->de_dnp->dn_type == DEV_DIR) {
+			int depths;
+
+			depths = devfs_subdirs_depth(dirent_p);
+			max_depths = MAX(depths, max_depths);
+		}
+	}
+
+	return max_depths + 1;
+}
 
 /*
  * Convert a component of a pathname into a pointer to a locked node.
@@ -579,6 +660,13 @@ devfs_setattr(struct vnop_setattr_args *ap)
 	 * Change the permissions.
 	 */
 	if (VATTR_IS_ACTIVE(vap, va_mode)) {
+		/*
+		 * Don't allow permission updates of critical devfs devices
+		 */
+		if (devfs_is_vnode_protected(vp)) {
+			error = EPERM;
+			goto exit;
+		}
 		file_node->dn_mode &= ~07777;
 		file_node->dn_mode |= vap->va_mode & 07777;
 	}
@@ -942,6 +1030,8 @@ out1:
 	return error;
 }
 
+#define MAX_NESTED_DIRS  16
+
 /*
  * Rename system call. Seems overly complicated to me...
  *      rename("foo", "bar");
@@ -1077,6 +1167,18 @@ devfs_rename(struct vnop_rename_args *ap)
 		} while ((tmp = tmp->dn_typeinfo.Dir.parent) != ntmp);
 	}
 
+	/*
+	 * If we are renaming a directory, fail the rename if the deepest subdir
+	 * in the target after rename is going to exceed the MAX_NESTED_DIRS limit.
+	 */
+	if (doingdirectory) {
+		if ((devfs_subdirs_depth(fnp) + devfs_nested_dirs_depth(tdp)) >=
+		    MAX_NESTED_DIRS) {
+			error = EMLINK;
+			goto out;
+		}
+	}
+
 	/***********************************
 	* Start actually doing things.... *
 	***********************************/
@@ -1148,12 +1250,19 @@ devfs_mkdir(struct vnop_mkdir_args *ap)
 	devnode_t * dir_p;
 	devdirent_t * nm_p;
 	devnode_t * dev_p;
-	struct vnode_attr *     vap = ap->a_vap;
+	struct vnode_attr * vap = ap->a_vap;
 	struct vnode * * vpp = ap->a_vpp;
 
 	DEVFS_LOCK();
 
 	dir_p = VTODN(ap->a_dvp);
+
+	/* Fail the mkdir if the depth of parent dir is already at the limit. */
+	if (devfs_nested_dirs_depth(dir_p) >= MAX_NESTED_DIRS) {
+		error = EMLINK;
+		goto failure;
+	}
+
 	error = dev_add_entry(cnp->cn_nameptr, dir_p, DEV_DIR,
 	    NULL, NULL, NULL, &nm_p);
 	if (error) {
@@ -1357,6 +1466,8 @@ devfs_readdir(struct vnop_readdir_args *ap)
 	nodenumber = 0;
 
 	while ((name_node || (nodenumber < 2)) && (uio_resid(uio) > 0)) {
+		bzero(&dirent, sizeof(struct dirent));
+
 		switch (nodenumber) {
 		case    0:
 			dirent.d_fileno = dir_node->dn_ino;
@@ -1581,10 +1692,12 @@ devfs_update(struct vnode *vp, struct timeval *access, struct timeval *modify)
 
 #define VOPFUNC int (*)(void *)
 
+#define devfs_default_error (void (*)(void))vn_default_error
+
 /* The following ops are used by directories and symlinks */
 int(**devfs_vnodeop_p)(void *);
 const static struct vnodeopv_entry_desc devfs_vnodeop_entries[] = {
-	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)vn_default_error },
+	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)devfs_default_error },
 	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC)devfs_lookup },           /* lookup */
 	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC)err_create },             /* create */
 	{ .opve_op = &vnop_whiteout_desc, .opve_impl = (VOPFUNC)err_whiteout },         /* whiteout */
@@ -1631,7 +1744,7 @@ const struct vnodeopv_desc devfs_vnodeop_opv_desc =
 /* The following ops are used by the device nodes */
 int(**devfs_spec_vnodeop_p)(void *);
 const static struct vnodeopv_entry_desc devfs_spec_vnodeop_entries[] = {
-	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)vn_default_error },
+	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)devfs_default_error },
 	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC)spec_lookup },            /* lookup */
 	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC)spec_create },            /* create */
 	{ .opve_op = &vnop_mknod_desc, .opve_impl = (VOPFUNC)spec_mknod },              /* mknod */
@@ -1678,7 +1791,7 @@ const struct vnodeopv_desc devfs_spec_vnodeop_opv_desc =
 #if FDESC
 int(**devfs_devfd_vnodeop_p)(void*);
 const static struct vnodeopv_entry_desc devfs_devfd_vnodeop_entries[] = {
-	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)vn_default_error },
+	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)devfs_default_error },
 	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC)devfs_devfd_lookup},      /* lookup */
 	{ .opve_op = &vnop_open_desc, .opve_impl = (VOPFUNC)nop_open },                 /* open */
 	{ .opve_op = &vnop_close_desc, .opve_impl = (VOPFUNC)devfs_close },             /* close */

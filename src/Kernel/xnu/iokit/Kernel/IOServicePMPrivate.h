@@ -32,6 +32,8 @@
 #include <IOKit/IOCommand.h>
 #include <IOKit/IOEventSource.h>
 
+#include <vm/vm_compressor_xnu.h>
+
 #define USE_SETTLE_TIMER    0
 
 //******************************************************************************
@@ -58,6 +60,7 @@ enum {
 	kIOPMRequestTypeSetIdleTimerPeriod          = 0x0F,
 	kIOPMRequestTypeIgnoreIdleTimer             = 0x10,
 	kIOPMRequestTypeQuiescePowerTree            = 0x11,
+	kIOPMRequestTypeDeferredActivityTickle      = 0x12,
 
 	/* Reply Types */
 	kIOPMRequestTypeReplyStart                  = 0x80,
@@ -201,6 +204,7 @@ private:
 	OSArray *               BlockedArray;
 	uint64_t                PendingResponseDeadline;
 	uint64_t                WatchdogDeadline;
+	uint64_t                WatchdogStart;
 
 // Settle time after changing power state.
 #if USE_SETTLE_TIMER
@@ -329,6 +333,9 @@ private:
 	IOPMPowerStateIndex     OverrideMaxPowerState;
 	IOPMPowerStateIndex     DeviceUsablePowerState;
 
+// Thread to be run alongside DriverCallEntry to provide logging.
+	thread_call_t           DriverCallTimer;
+
 // Protected by ActivityLock - BEGIN
 	IOPMPowerStateIndex     ActivityTicklePowerState;
 	IOPMPowerStateIndex     AdvisoryTicklePowerState;
@@ -361,6 +368,9 @@ private:
 
 	IOPMActions             PMActions;
 
+	uint64_t                                PMDriverClass;
+#define fPMDriverClass              pwrMgt->PMDriverClass
+
 // Serialize IOServicePM state for debug output.
 	IOReturn gatedSerialize( OSSerialize * s ) const;
 	virtual bool serialize( OSSerialize * s ) const APPLE_KEXT_OVERRIDE;
@@ -379,6 +389,7 @@ private:
 #define fIdleTimer                  pwrMgt->IdleTimer
 #define fWatchdogTimer              pwrMgt->WatchdogTimer
 #define fWatchdogDeadline           pwrMgt->WatchdogDeadline
+#define fWatchdogStart              pwrMgt->WatchdogStart
 #define fWatchdogLock               pwrMgt->WatchdogLock
 #define fBlockedArray               pwrMgt->BlockedArray
 #define fPendingResponseDeadline    pwrMgt->PendingResponseDeadline
@@ -447,6 +458,7 @@ private:
 #define fTempClampCount             pwrMgt->TempClampCount
 #define fOverrideMaxPowerState      pwrMgt->OverrideMaxPowerState
 #define fDeviceUsablePowerState     pwrMgt->DeviceUsablePowerState
+#define fDriverCallTimer            pwrMgt->DriverCallTimer
 #define fActivityTicklePowerState   pwrMgt->ActivityTicklePowerState
 #define fAdvisoryTicklePowerState   pwrMgt->AdvisoryTicklePowerState
 #define fActivityTickleCount        pwrMgt->ActivityTickleCount
@@ -486,6 +498,7 @@ private:
 #define WATCHDOG_SLEEP_TIMEOUT      (35)   // 35 secs (kMaxTimeRequested + 5s)
 #define WATCHDOG_WAKE_TIMEOUT       (35)   // 35 secs (kMaxTimeRequested + 5s)
 #endif
+#define WATCHDOG_HIBERNATION_TIMEOUT (180)
 
 // Max wait time in microseconds for kernel priority and capability clients
 // with async message handlers to acknowledge.
@@ -561,8 +574,15 @@ struct IOPMInterestContext {
 	IOPMPowerStateIndex     stateNumber;
 	IOPMPowerFlags          stateFlags;
 	IOPMPowerChangeFlags    changeFlags;
-	const char *            errorLog;
 	IOPMMessageFilter       messageFilter;
+};
+
+// track client ack requirements
+class IOPMClientAck : public OSObject {
+	OSDeclareDefaultStructors( IOPMClientAck );
+public:
+	uint64_t completionTimestamp;   // absolute time
+	uint32_t maxTimeRequested;              // microseconds
 };
 
 // assertPMDriverCall() options
@@ -572,13 +592,17 @@ enum {
 
 // assertPMDriverCall() method
 enum {
-	kIOPMDriverCallMethodUnknown       = 0,
-	kIOPMDriverCallMethodSetPowerState = 1,
-	kIOPMDriverCallMethodWillChange    = 2,
-	kIOPMDriverCallMethodDidChange     = 3,
-	kIOPMDriverCallMethodChangeDone    = 4,
-	kIOPMDriverCallMethodSetAggressive = 5
+	kIOPMDriverCallMethodUnknown                         = 0,
+	kIOPMDriverCallMethodSetPowerState                   = 1,
+	kIOPMDriverCallMethodWillChange                      = 2,
+	kIOPMDriverCallMethodDidChange                       = 3,
+	kIOPMDriverCallMethodChangeDone                      = 4,
+	kIOPMDriverCallMethodSetAggressive                   = 5,
+	kIOPMDriverCallMethodMaxCapabilityForDomainState     = 6,
+	kIOPMDriverCallMethodInitialPowerStateForDomainState = 7
 };
+
+extern uint64_t gLPWFlags;
 
 //******************************************************************************
 // PM Statistics & Diagnostics

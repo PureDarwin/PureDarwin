@@ -106,6 +106,14 @@ stdenv.mkDerivation {
     export ac_cv_func_explicit_memset=no
     export ac_cv_func_sem_timedwait=no
 
+    # Every curses header check fails, but the update_panels link test passes
+    # against -lSystem, so configure still enables these two.
+    export py_cv_module__curses=n/a
+    export py_cv_module__curses_panel=n/a
+    # _scproxy wants SystemConfiguration headers, and the framework flags it
+    # asks for were being stripped from the link anyway.
+    export py_cv_module__scproxy=n/a
+
     ./configure \
       --host=${targetTriple} \
       --build=$(cc -dumpmachine) \
@@ -120,10 +128,9 @@ stdenv.mkDerivation {
       --with-openssl-rpath=no
 
     substituteInPlace Makefile \
-      --replace-fail ' -framework CoreFoundation' "" \
-      --replace-fail '-framework SystemConfiguration' "" \
+      --replace-quiet ' -framework CoreFoundation' "" \
+      --replace-quiet '-framework SystemConfiguration' "" \
       --replace-fail 'LIBS=		 -latomic' 'LIBS=' \
-      --replace-fail 'none required' "" \
       --replace-fail \
         'MODULE_PYEXPAT_LDFLAGS=-lm $(LIBEXPAT_A)' \
         'MODULE_PYEXPAT_LDFLAGS=$(LIBEXPAT_A)' \

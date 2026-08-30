@@ -39,13 +39,13 @@ osfmk/i386/fpu.c		standard
 osfmk/i386/fp_simd.s		standard
 osfmk/i386/i386_lock.s		standard
 osfmk/i386/i386_init.c		standard
-osfmk/i386/pd_boot_mark.c	standard
 osfmk/i386/i386_vm_init.c	standard
 osfmk/i386/io_map.c		standard
 osfmk/i386/ktss.c		standard
 osfmk/i386/ldt.c		standard
 osfmk/x86_64/loose_ends.c	standard
 osfmk/x86_64/copyio.c		standard
+osfmk/i386/lock_ticket_pv.c	optional config_pv_ticket
 osfmk/i386/locks_i386.c		standard
 osfmk/i386/locks_i386_opt.c	standard
 osfmk/x86_64/locore.s	standard
@@ -108,9 +108,8 @@ osfmk/kern/hv_io_notifier.c			optional hypervisor
 #osfmk/OPTIONS/hi_res_clock	optional hi_res_clock
 
 # Kernel performance monitoring
-osfmk/x86_64/kpc_x86.c              optional kpc
-
-osfmk/x86_64/monotonic_x86_64.c optional monotonic
+osfmk/x86_64/cpc_x86_64.c           optional config_cpu_counters
+osfmk/x86_64/kpc_x86.c              optional config_cpu_counters
 
 osfmk/x86_64/idt64.s		standard
 
@@ -118,3 +117,4 @@ osfmk/i386/panic_hooks.c	standard
 osfmk/i386/panic_notify.c	standard
 osfmk/x86_64/machine_remote_time.c 		optional config_mach_bridge_send_time
 osfmk/x86_64/counter.c		standard
+osfmk/x86_64/static_if.c	standard

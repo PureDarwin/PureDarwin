@@ -3,21 +3,18 @@
  */
 
 #include <stdint.h>
-#include <arm/proc_reg.h>
+#include <arm64/proc_reg.h>
 #include <kern/clock.h>
 #include <mach/mach_time.h>
 #include <machine/atomic.h>
 #include <machine/machine_routines.h>
 #include <pexpert/device_tree.h>
-#if defined(__arm__)
-#include <pexpert/arm/board_config.h>
-#elif defined(__arm64__)
 #include <pexpert/arm64/board_config.h>
-#endif
 
 
 #if HAS_GIC_V3
-#define GICR_WAKE_TIMEOUT_NS (1000000000ULL) // timeout for redistributor wakeup
+#define GICR_WAKE_TIMEOUT_NS (1000000000ULL) // timeout for redistributor wakeup (default 1s)
+MACHINE_TIMEOUT(gicr_wake_timeout_ns, "gicr-wake-timeout", GICR_WAKE_TIMEOUT_NS, MACHINE_TIMEOUT_UNIT_NSEC, NULL);
 
 static vm_offset_t gicd_base;
 static vm_offset_t gicr_base;
@@ -76,51 +73,52 @@ pe_init_fiq()
 	int error;
 	DTEntry entry;
 
-	// Find GIC DT node
-	error = SecureDTLookupEntry(NULL, "/arm-io/gic", &entry);
-	if (error != kSuccess) {
-		panic("%s: cannot find GIC node in DT", __func__);
-	}
-
-	// Find "reg" property
-	void const *prop;
-	unsigned int prop_size;
-	error = SecureDTGetProperty(entry, "reg", &prop, &prop_size);
-	if (error != kSuccess) {
-		panic("%s: cannot find GIC MMIO regions in DT", __func__);
-	}
-
-	// Need at least GICD base, GICD size, GICR base and GICR size
-	if (prop_size < 4 * sizeof(uint64_t)) {
-		panic("%s: incorrect reg property size in GIC DT node; expecting 32 bytes but got %u bytes", __func__, prop_size);
-	}
-
-	vm_offset_t soc_base_phys = pe_arm_get_soc_base_phys();
-
-	uint64_t const gicd_base_prop = ((uint64_t const *) prop)[0];
-	uint64_t const gicd_size_prop = ((uint64_t const *) prop)[1];
-	uint64_t const gicr_base_prop = ((uint64_t const *) prop)[2];
-	uint64_t const gicr_size_prop = ((uint64_t const *) prop)[3];
-
-	// Find GICD base address
+	// gicd_base is 0x0 only before it's initialized by the boot processor.
+	// Avoid calling SecureDT* routines on secondary processors to avoid
+	// race conditions because they are not thread-safe.
 	if (!gicd_base) {
+		// Find GIC DT node
+		error = SecureDTLookupEntry(NULL, "/arm-io/gic", &entry);
+		if (error != kSuccess) {
+			panic("%s: cannot find GIC node in DT", __func__);
+		}
+
+		// Find "reg" property
+		void const *prop;
+		unsigned int prop_size;
+		error = SecureDTGetProperty(entry, "reg", &prop, &prop_size);
+		if (error != kSuccess) {
+			panic("%s: cannot find GIC MMIO regions in DT", __func__);
+		}
+
+		// Need at least GICD base, GICD size, GICR base and GICR size
+		if (prop_size < 4 * sizeof(uint64_t)) {
+			panic("%s: incorrect reg property size in GIC DT node; expecting 32 bytes but got %u bytes", __func__, prop_size);
+		}
+
+		vm_offset_t soc_base_phys = pe_arm_get_soc_base_phys();
+
+		uint64_t const gicd_base_prop = ((uint64_t const *) prop)[0];
+		uint64_t const gicd_size_prop = ((uint64_t const *) prop)[1];
+		uint64_t const gicr_base_prop = ((uint64_t const *) prop)[2];
+		uint64_t const gicr_size_prop = ((uint64_t const *) prop)[3];
+
+		// Find GICD base address
 		gicd_base = ml_io_map(soc_base_phys + gicd_base_prop, gicd_size_prop);
 
 		if (!gicd_base) {
 			panic("%s: cannot map GICD region", __func__);
 		}
-	}
 
-	// Find GICR base address
-	if (!gicr_base) {
+		// Find GICR base address
 		gicr_base = ml_io_map(soc_base_phys + gicr_base_prop, gicr_size_prop);
 
 		if (!gicr_base) {
 			panic("%s: cannot map GICR region", __func__);
 		}
-	}
 
-	gicr_size = gicr_size_prop;
+		gicr_size = gicr_size_prop;
+	}
 
 	// Find the redistributor for this processor
 	vm_offset_t gicr_pe_base = find_gicr_pe_base();
@@ -133,10 +131,10 @@ pe_init_fiq()
 		gicr_write32(GICR_WAKER, gicr_waker);
 
 		uint64_t gicr_wake_deadline;
-		nanoseconds_to_deadline(GICR_WAKE_TIMEOUT_NS, &gicr_wake_deadline);
+		nanoseconds_to_deadline(os_atomic_load(&gicr_wake_timeout_ns, relaxed), &gicr_wake_deadline);
 		while (gicr_read32(GICR_WAKER) & GICR_WAKER_CHILDRENASLEEP) {
 			// Spin
-			if (mach_absolute_time() > gicr_wake_deadline) {
+			if (gicr_wake_timeout_ns > 0 && mach_absolute_time() > gicr_wake_deadline) {
 				panic("%s: core %u timed out waiting for redistributor to wake up",
 				    __func__, ml_get_cpu_number_local());
 			}

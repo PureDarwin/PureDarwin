@@ -34,58 +34,15 @@
  * because platforms may not have builtin port 0x80 support.
  * To re-enable postcode outpout, uncomment the following define:
  */
-//#define DEBUG_POSTCODE 1
+#define DEBUG_POSTCODE 0
 
 /* Define this to delay about 1 sec after posting each code */
-//#define POSTCODE_DELAY 1
-
-#define PD_BAND_ENTRY           0       /* red     first instruction of pstart */
-#define PD_BAND_REBASE          1       /* green   boot page tables rebased */
-#define PD_BAND_LONG_MODE       2       /* yellow  paging on, executing 64-bit */
-#define PD_BAND_VSTART_CALL     3       /* blue    about to call vstart() */
-#define PD_BAND_VSTART_C        4       /* magenta vstart entered */
-#define PD_BAND_IDLE_PTS        5       /* cyan    kernel page tables built */
-#define PD_BAND_SET_CR3         6       /* white   about to switch CR3 */
-#define PD_BAND_I386_INIT       7       /* grey    i386_init entered */
-/*
- * Past i386_init the palette repeats, but position does not: these sit in a
- * second block of eight rows well below the first, so "third band of the lower
- * group" is still an unambiguous answer. Painted by explicit
- * pd_boot_mark_band() calls, because this stretch of i386_init has no
- * postcodes of its own and it is a long way to the next one.
- */
-#define PD_BAND_PAL_INIT        8       /* red     pal_i386_init done */
-#define PD_BAND_TSC             9       /* green   tsc_init done */
-#define PD_BAND_RTCLOCK         10      /* yellow  rtclock_early_init done */
-#define PD_BAND_MCA             11      /* blue    machine-check init done */
-#define PD_BAND_STARTUP_BS      12      /* magenta kernel_startup_bootstrap done */
-#define PD_BAND_TIMER_CALL      13      /* cyan    timer_call_init done */
-#define PD_BAND_CPU_INIT        14      /* white   cpu_init done */
-#define PD_BAND_KPRINTF         15      /* grey    kprintf initialized */
-#define PD_BAND_NONE            0xff
-
-/* Only the stages above get a band; everything else passes through silently. */
-#define PD_BAND_FOR_CODE(code)                          \
-	((code) == VSTART_IDLE_PTS_INIT ? PD_BAND_IDLE_PTS :    \
-	 (code) == VSTART_SET_CR3       ? PD_BAND_SET_CR3  :    \
-	 (code) == I386_INIT_ENTRY      ? PD_BAND_I386_INIT :   \
-	                                  PD_BAND_NONE)
-
-#define PD_BAND_MIN_BASE        0x01000000      /* no framebuffer lives below 16MB */
-#define PD_BAND_MAX_DIM         8192
-#define PD_BAND_MAX_ROWBYTES    0x00010000
-
-#define PD_BAND_SPIN            SPINCOUNT
-
-#define PD_BAND_CHAN(b, bit)    (0x40 + 0xbf * ((((b) + 1) >> (bit)) & 1))
-#define PD_BAND_COLOUR(b)       ((PD_BAND_CHAN(b, 0) << 16) | \
-	                         (PD_BAND_CHAN(b, 1) << 8)  | \
-	                          PD_BAND_CHAN(b, 2))
+#define POSTCODE_DELAY 0
 
 /* The POSTCODE is port 0x80 */
 #define POSTPORT 0x80
 
-#define SPINCOUNT       10000000
+#define SPINCOUNT       300000000
 #define CPU_PAUSE()     rep; nop
 
 #if DEBUG_POSTCODE
@@ -242,15 +199,6 @@ postcode2(uint8_t       xxxx)
 	_postcode_delay(SPINCOUNT);
 #endif
 }
-#elif defined(PUREDARWIN_EARLY_FB_MARK)
-/*
- * Port 0x80 is unavailable on most of the machines this has to run on, so the
- * same call sites paint a progress bar on the framebuffer instead. See
- * osfmk/i386/pd_boot_mark.c.
- */
-extern void pd_boot_mark(uint8_t code);
-#define postcode(xx) pd_boot_mark(xx)
-#define postcode2(xxxx) do {} while(0)
 #else
 #define postcode(xx) do {} while(0)
 #define postcode2(xxxx) do {} while(0)

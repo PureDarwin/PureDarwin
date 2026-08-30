@@ -57,7 +57,6 @@
 #define x86_64_kHasADX                  0x0000000400000000ULL
 #define x86_64_kHasMPX                  0x0000001000000000ULL
 #define x86_64_kHasSGX                  0x0000002000000000ULL
-#if !defined(RC_HIDE_XNU_J137)
 #define x86_64_kHasAVX512F              0x0000004000000000ULL
 #define x86_64_kHasAVX512CD             0x0000008000000000ULL
 #define x86_64_kHasAVX512DQ             0x0000010000000000ULL
@@ -65,7 +64,6 @@
 #define x86_64_kHasAVX512IFMA   0x0000040000000000ULL
 #define x86_64_kHasAVX512VBMI   0x0000080000000000ULL
 #define x86_64_kHasAVX512VL             0x0000100000000000ULL
-#endif /* not RC_HIDE_XNU_J137 */
 
 #define x86_64_kIsTranslated    0x4000000000000000ULL   // isTranslated
 /* Cambria specific. The address space page shift. */
@@ -82,7 +80,7 @@
 #define X86_64_MP_SPIN_TRIES                    1000
 
 #ifdef KERNEL_PRIVATE
-extern vm_address_t x86_64_sharedpage_rw_addr;
+extern vm_address_t x86_64_commpage_rw_addr;
 extern uint64_t _get_x86_64_cpu_capabilities(void);
 #endif
 
@@ -100,7 +98,7 @@ typedef struct {
 /* 34 */ volatile uint8_t active_cpus;
 /* 35 */ uint8_t physical_cpus;
 /* 36 */ uint8_t logical_cpus;
-/* 37 */ uint8_t _unused1[1];
+/* 37 */ uint8_t cpu_clusters;
 /* 38 */ uint64_t memory_size;
 /* 40 */ uint32_t cpufamily;
 /* 44 */ volatile uint32_t kdebug_enable;
@@ -139,14 +137,23 @@ typedef struct {
 
 /* f8 */ uint64_t unused;
 /* 100 */ uint64_t dyld_system_flags;
+/* 108 */ uint8_t cpu_to_cluster[256];
 
-/* 108 */ uint8_t unused2[3800];
+/* 0x208 */ uint8_t unused2[3536];
+/* 0xFD8 */ uint64_t arm_cpu_capabilities;
 /* 0xFE0 */ uint8_t cp_aprr_shadow_supported;
-/* 0xFE1 */ uint8_t unused3[7];
+/* 0xFE1 */ uint8_t user_timebase_type;
+/* 0xFE2 */ uint8_t unused3[6];
 /* 0xFE8 */ uint64_t cp_aprr_shadow_jit_rw;
-/* 0xFF0*/ uint64_t cp_aprr_shadow_jit_rx;
+/* 0xFF0 */ uint64_t cp_aprr_shadow_jit_rx;
 /* 0xFF8 */ uint32_t unused4;
-/* ffc */ uint32_t arm_cpufamily;
+/* 0xFFC */ uint32_t arm_cpufamily;
+/* 0x1000 */ uint64_t cp_aprr_shadow_tpro_rw;
+/* 0x1008 */ uint64_t cp_aprr_shadow_tpro_ro;
+/* 0x1010 */ uint64_t cp_asb_target_value;
+/* 0x1018 */ uint64_t cp_asb_target_address;
+/* 0x1020 */ uint64_t cp_asb_target_kern_value;
+/* 0x1028 */ uint64_t cp_asb_target_kern_address;
 } x86_64_commpage_t;
 
 #endif /* _ARM_CPU_X86_64_CAPABILITIES_H */

@@ -9,7 +9,8 @@
 #include <DriverKit/DriverKit.h>
 #endif /* KERNEL */
 #include <DriverKit/IOReturn.h>
-#include <DriverKit/IOInterruptDispatchSource.h>
+#include <IOKit/IORPC.h>
+#include "IOInterruptDispatchSource.h"
 
 #if __has_builtin(__builtin_load_member_function_pointer)
 #define SimpleMemberFunctionCast(cfnty, self, func) (cfnty)__builtin_load_member_function_pointer(self, func)
@@ -154,6 +155,48 @@ typedef union
     };
 }
 IOInterruptDispatchSource_SetHandler_Invocation;
+struct IOInterruptDispatchSource_GetLastInterrupt_Msg_Content
+{
+    IORPCMessage __hdr;
+    OSObjectRef  __object;
+};
+#pragma pack(4)
+struct IOInterruptDispatchSource_GetLastInterrupt_Msg
+{
+    IORPCMessageMach           mach;
+    mach_msg_port_descriptor_t __object__descriptor;
+    IOInterruptDispatchSource_GetLastInterrupt_Msg_Content content;
+};
+#pragma pack()
+#define IOInterruptDispatchSource_GetLastInterrupt_Msg_ObjRefs (1)
+
+struct IOInterruptDispatchSource_GetLastInterrupt_Rpl_Content
+{
+    IORPCMessage __hdr;
+    uint64_t  count;
+    uint64_t  time;
+};
+#pragma pack(4)
+struct IOInterruptDispatchSource_GetLastInterrupt_Rpl
+{
+    IORPCMessageMach           mach;
+    IOInterruptDispatchSource_GetLastInterrupt_Rpl_Content content;
+};
+#pragma pack()
+#define IOInterruptDispatchSource_GetLastInterrupt_Rpl_ObjRefs (0)
+
+typedef union
+{
+    const IORPC rpc;
+    struct
+    {
+        const struct IOInterruptDispatchSource_GetLastInterrupt_Msg * message;
+        struct IOInterruptDispatchSource_GetLastInterrupt_Rpl       * reply;
+        uint32_t sendSize;
+        uint32_t replySize;
+    };
+}
+IOInterruptDispatchSource_GetLastInterrupt_Invocation;
 struct IOInterruptDispatchSource_InterruptOccurred_Msg_Content
 {
     IORPCMessage __hdr;
@@ -230,6 +273,13 @@ IOInterruptDispatchSource::_Dispatch(IOInterruptDispatchSource * self, const IOR
         case IODispatchSource_Cancel_ID:
         {
             ret = IODispatchSource::Cancel_Invoke(rpc, self, SimpleMemberFunctionCast(IODispatchSource::Cancel_Handler, *self, &IOInterruptDispatchSource::Cancel_Impl));
+            break;
+        }
+#endif /* !KERNEL */
+#if KERNEL
+        case IOInterruptDispatchSource_GetLastInterrupt_ID:
+        {
+            ret = IOInterruptDispatchSource::GetLastInterrupt_Invoke(rpc, self, SimpleMemberFunctionCast(IOInterruptDispatchSource::GetLastInterrupt_Handler, *self, &IOInterruptDispatchSource::GetLastInterrupt_Impl));
             break;
         }
 #endif /* !KERNEL */
@@ -542,6 +592,88 @@ IOInterruptDispatchSource::SetHandler_Invoke(const IORPC _rpc,
     rpc.reply->mach.msgh.msgh_size = sizeof(*rpc.reply);
     rpc.reply->mach.msgh_body.msgh_descriptor_count = 0;
     rpc.reply->content.__hdr.objectRefs = IOInterruptDispatchSource_SetHandler_Rpl_ObjRefs;
+
+    return (ret);
+}
+
+kern_return_t
+IOInterruptDispatchSource::GetLastInterrupt(
+        uint64_t * count,
+        uint64_t * time,
+        OSDispatchMethod supermethod)
+{
+    kern_return_t ret;
+    union
+    {
+        IOInterruptDispatchSource_GetLastInterrupt_Msg msg;
+        struct
+        {
+            IOInterruptDispatchSource_GetLastInterrupt_Rpl rpl;
+            mach_msg_max_trailer_t trailer;
+        } rpl;
+    } buf;
+    struct IOInterruptDispatchSource_GetLastInterrupt_Msg * msg = &buf.msg;
+    struct IOInterruptDispatchSource_GetLastInterrupt_Rpl * rpl = &buf.rpl.rpl;
+
+    memset(msg, 0, sizeof(struct IOInterruptDispatchSource_GetLastInterrupt_Msg));
+    msg->mach.msgh.msgh_id   = kIORPCVersion190615;
+    msg->mach.msgh.msgh_size = sizeof(*msg);
+    msg->content.__hdr.flags = 0*kIORPCMessageOneway
+                             | 1*kIORPCMessageSimpleReply
+                             | 0*kIORPCMessageLocalHost
+                             | 0*kIORPCMessageOnqueue;
+    msg->content.__hdr.msgid = IOInterruptDispatchSource_GetLastInterrupt_ID;
+    msg->content.__object = (OSObjectRef) this;
+    msg->content.__hdr.objectRefs = IOInterruptDispatchSource_GetLastInterrupt_Msg_ObjRefs;
+    msg->mach.msgh_body.msgh_descriptor_count = 1;
+
+    msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
+
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    if (supermethod) ret = supermethod((OSObject *)this, _rpc);
+    else             ret = ((OSObject *)this)->Invoke(_rpc);
+
+    if (kIOReturnSuccess == ret)
+    do {
+        {
+            if (rpl->mach.msgh.msgh_size                  != sizeof(*rpl)) { ret = kIOReturnIPCError; break; };
+            if (rpl->content.__hdr.msgid                  != IOInterruptDispatchSource_GetLastInterrupt_ID) { ret = kIOReturnIPCError; break; };
+            if (rpl->mach.msgh_body.msgh_descriptor_count != 0) { ret = kIOReturnIPCError; break; };
+            if (IOInterruptDispatchSource_GetLastInterrupt_Rpl_ObjRefs   != rpl->content.__hdr.objectRefs) { ret = kIOReturnIPCError; break; };
+        }
+    }
+    while (false);
+    if (kIOReturnSuccess == ret)
+    {
+        if (count) *count = rpl->content.count;
+        if (time) *time = rpl->content.time;
+    }
+
+    return (ret);
+}
+
+kern_return_t
+IOInterruptDispatchSource::GetLastInterrupt_Invoke(const IORPC _rpc,
+        OSMetaClassBase * target,
+        GetLastInterrupt_Handler func)
+{
+    IOInterruptDispatchSource_GetLastInterrupt_Invocation rpc = { _rpc };
+    kern_return_t ret;
+
+    if (IOInterruptDispatchSource_GetLastInterrupt_Msg_ObjRefs != rpc.message->content.__hdr.objectRefs) return (kIOReturnIPCError);
+
+    ret = (*func)(target,
+        &rpc.reply->content.count,
+        &rpc.reply->content.time);
+
+    if (kIOReturnSuccess != ret) return (ret);
+
+    rpc.reply->content.__hdr.msgid = IOInterruptDispatchSource_GetLastInterrupt_ID;
+    rpc.reply->content.__hdr.flags = kIORPCMessageOneway;
+    rpc.reply->mach.msgh.msgh_id   = kIORPCVersion190615Reply;
+    rpc.reply->mach.msgh.msgh_size = sizeof(*rpc.reply);
+    rpc.reply->mach.msgh_body.msgh_descriptor_count = 0;
+    rpc.reply->content.__hdr.objectRefs = IOInterruptDispatchSource_GetLastInterrupt_Rpl_ObjRefs;
 
     return (ret);
 }

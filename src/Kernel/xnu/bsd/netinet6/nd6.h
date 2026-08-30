@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -56,7 +56,13 @@
 
 #ifndef _NETINET6_ND6_H_
 #define _NETINET6_ND6_H_
+
 #include <sys/appleapiopts.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#ifndef BSD_KERNEL_PRIVATE
+#include <netinet6/in6_var.h>
+#endif
 #include <net/net_kev.h>
 
 /* see net/route.h, or net/if_inarp.h */
@@ -72,6 +78,8 @@
 #include <sys/tree.h>
 #include <sys/eventhandler.h>
 #include <netinet6/nd6_var.h>
+#include <sys/sdt.h>
+#include <net/if_var.h>
 
 struct  llinfo_nd6 {
 	/*
@@ -118,18 +126,27 @@ struct  llinfo_nd6 {
 #ifdef BSD_KERNEL_PRIVATE
 
 #define ND6_CACHE_STATE_TRANSITION(ln, nstate) do {\
-	if (nd6_debug >= 1) {\
-	        struct rtentry *ln_rt = ln != NULL ? (ln)->ln_rt : NULL; \
-	        nd6log(info,\
+	DTRACE_IP2(nd6_state_transition, struct llinfo_nd6 *, (ln), int, (nstate));\
+	if (nd6_debug >= 3) {\
+	        struct rtentry *ln_rt = (ln) != NULL ? (ln)->ln_rt : NULL; \
+	        nd6log3(info,\
 	            "[%s:%d]: NDP cache entry changed from %s -> %s for address %s.\n",\
 	            __func__,\
 	            __LINE__,\
 	            ndcache_state2str((ln)->ln_state),\
-	            ndcache_state2str(nstate),\
+	            ndcache_state2str((nstate)),\
 	            ln_rt != NULL ? ip6_sprintf(&SIN6(rt_key(ln_rt))->sin6_addr) : "N/A");\
 	}\
-	if (ln != NULL)\
-	        (ln)->ln_state = nstate;\
+	if ((ln) != NULL) {\
+	        if ((ln)->ln_rt != NULL && (ln)->ln_rt->rt_ifp != NULL &&\
+	            ((ln)->ln_rt->rt_ifp->if_eflags & IFEF_IPV6_ND6ALT) &&\
+	            ((ln)->ln_state == ND6_LLINFO_REACHABLE)) {\
+	                VERIFY((nstate) != ND6_LLINFO_STALE &&\
+	                    (nstate) != ND6_LLINFO_DELAY &&\
+	                    (nstate) != ND6_LLINFO_PROBE);\
+	        }\
+	        (ln)->ln_state = (nstate);\
+	}\
 } while(0)
 
 #define ND6_IS_LLINFO_PROBREACH(n) ((n)->ln_state > ND6_LLINFO_INCOMPLETE)
@@ -167,7 +184,7 @@ struct nd_ifinfo_compat {
 	u_int8_t chlim;                 /* CurHopLimit */
 	u_int8_t receivedra;
 	/* the following 3 members are for privacy extension for addrconf */
-	u_int8_t randomseed0[8]; /* upper 64 bits of SHA1 digest */
+	u_int8_t randomseed0[8]; /* upper 64 bits of SHA256 digest */
 	u_int8_t randomseed1[8]; /* lower 64 bits (usually the EUI64 IFID) */
 	u_int8_t randomid[8];   /* current random ID */
 };
@@ -229,20 +246,6 @@ struct in6_nbrinfo_64 {
 } __attribute__((aligned(8)));
 #endif /* BSD_KERNEL_PRIVATE */
 
-#define DRLSTSIZ 10
-#define PRLSTSIZ 10
-
-struct  in6_drlist {
-	char ifname[IFNAMSIZ];
-	struct {
-		struct  in6_addr rtaddr;
-		u_char  flags;
-		u_short rtlifetime;
-		u_long  expire;
-		u_short if_index;
-	} defrouter[DRLSTSIZ];
-};
-
 #if defined(BSD_KERNEL_PRIVATE)
 #define ND6_PROCESS_RTI_ENABLE    1
 #define ND6_PROCESS_RTI_DISABLE   0
@@ -250,27 +253,6 @@ struct  in6_drlist {
 
 extern int nd6_process_rti;
 
-struct  in6_drlist_32 {
-	char ifname[IFNAMSIZ];
-	struct {
-		struct  in6_addr rtaddr;
-		u_char  flags;
-		u_short rtlifetime;
-		u_int32_t expire;
-		u_short if_index;
-	} defrouter[DRLSTSIZ];
-};
-
-struct  in6_drlist_64 {
-	char ifname[IFNAMSIZ];
-	struct {
-		struct  in6_addr rtaddr;
-		u_char  flags;
-		u_short rtlifetime;
-		u_long  expire          __attribute__((aligned(8)));
-		u_short if_index        __attribute__((aligned(8)));
-	} defrouter[DRLSTSIZ] __attribute__((aligned(8)));
-};
 #endif /* BSD_KERNEL_PRIVATE */
 
 /* valid values for stateflags */
@@ -279,6 +261,7 @@ struct  in6_drlist_64 {
 #define NDDRF_STATIC    0x04     /* for internal use only */
 #define NDDRF_MAPPED    0x08     /* Default router addr is mapped to a different one for routing */
 #define NDDRF_INELIGIBLE     0x10     /* Default router entry is ineligible for default router selection */
+#define NDDRF_LOCAL          0x20     /* Router's address is locally hosted as well */
 
 struct  in6_defrouter {
 	struct  sockaddr_in6 rtaddr;
@@ -307,57 +290,6 @@ struct  in6_defrouter_64 {
 	u_long  expire          __attribute__((aligned(8)));
 	u_short if_index        __attribute__((aligned(8)));
 } __attribute__((aligned(8)));
-#endif /* BSD_KERNEL_PRIVATE */
-
-struct  in6_prlist {
-	char ifname[IFNAMSIZ];
-	struct {
-		struct  in6_addr prefix;
-		struct prf_ra raflags;
-		u_char  prefixlen;
-		u_char  origin;
-		u_long  vltime;
-		u_long  pltime;
-		u_long  expire;
-		u_short if_index;
-		u_short advrtrs; /* number of advertisement routers */
-		struct  in6_addr advrtr[DRLSTSIZ]; /* XXX: explicit limit */
-	} prefix[PRLSTSIZ];
-};
-
-#if defined(BSD_KERNEL_PRIVATE)
-struct  in6_prlist_32 {
-	char ifname[IFNAMSIZ];
-	struct {
-		struct  in6_addr prefix;
-		struct prf_ra raflags;
-		u_char  prefixlen;
-		u_char  origin;
-		u_int32_t vltime;
-		u_int32_t pltime;
-		u_int32_t expire;
-		u_short if_index;
-		u_short advrtrs;
-		struct  in6_addr advrtr[DRLSTSIZ];
-	} prefix[PRLSTSIZ];
-};
-
-struct  in6_prlist_64 {
-	char ifname[IFNAMSIZ];
-	struct {
-		struct  in6_addr prefix;
-		struct prf_ra raflags;
-		u_char  prefixlen;
-		u_char  origin;
-		u_long  vltime  __attribute__((aligned(8)));
-		u_long  pltime  __attribute__((aligned(8)));
-		u_long  expire  __attribute__((aligned(8)));
-		u_short if_index;
-		u_short advrtrs;
-		u_int32_t pad;
-		struct  in6_addr advrtr[DRLSTSIZ];
-	} prefix[PRLSTSIZ];
-};
 #endif /* BSD_KERNEL_PRIVATE */
 
 struct in6_prefix {
@@ -460,6 +392,29 @@ struct  in6_ndifreq_64 {
 };
 #endif /* BSD_KERNEL_PRIVATE */
 
+struct  in6_route_info {
+	struct in6_addr prefix;
+	u_int8_t prefixlen;
+	u_short defrtrs; /* number of default routers */
+	/* struct in6_defrouter defrtr[] */
+} __attribute__((aligned(8)));
+
+#if defined(BSD_KERNEL_PRIVATE)
+struct  in6_route_info_32 {
+	struct in6_addr prefix;
+	u_int8_t prefixlen;
+	u_short defrtrs; /* number of default routers */
+	/* struct in6_defrouter defrtr[] */
+};
+
+struct  in6_route_info_64 {
+	struct in6_addr prefix;
+	u_int8_t prefixlen;
+	u_short defrtrs; /* number of default routers */
+	/* struct in6_defrouter defrtr[] */
+} __attribute__((aligned(8)));
+#endif /* BSD_KERNEL_PRIVATE */
+
 /* Prefix status */
 #define NDPRF_ONLINK            0x1
 #define NDPRF_DETACHED          0x2
@@ -473,7 +428,7 @@ struct  in6_ndifreq_64 {
 #define NDPRF_CLAT46            0x40000
 
 #define CLAT46_COLLISION_COUNT_OFFSET   128
-#endif
+#endif /* BSD_KERNEL_PRIVATE */
 
 /* protocol constants */
 #define MAX_RTR_SOLICITATION_DELAY      1       /* 1sec */
@@ -515,6 +470,7 @@ struct  in6_ndifreq_64 {
 #define MAX_REACHABLE_TIME              3600000 /* msec */
 #define REACHABLE_TIME                  30000   /* msec */
 #define RETRANS_TIMER                   1000    /* msec */
+#define MAX_RA_RETRANS_TIMER            10000   /* msec */
 #define MIN_RANDOM_FACTOR               512     /* 1024 * 0.5 */
 #define MAX_RANDOM_FACTOR               1536    /* 1024 * 1.5 */
 #define DEF_TEMP_VALID_LIFETIME         604800  /* 1 week */
@@ -532,7 +488,7 @@ struct  in6_ndifreq_64 {
 #define ND6_PREFIX_EXPIRY_NEVER         0
 
 TAILQ_HEAD(nd_drhead, nd_defrouter);
-struct  nd_defrouter {
+struct nd_defrouter {
 	decl_lck_mtx_data(, nddr_lock);
 	decl_lck_mtx_data(, nddr_ref_lock);
 	TAILQ_ENTRY(nd_defrouter) dr_entry;
@@ -548,6 +504,7 @@ struct  nd_defrouter {
 	int             err;
 	struct ifnet    *ifp;
 	struct in6_addr rtaddr_mapped;          /* Mapped gateway address for routing */
+	boolean_t       is_reachable;
 	void (*nddr_trace)(struct nd_defrouter *, int); /* trace callback fn */
 };
 
@@ -610,6 +567,8 @@ void nd6_rtilist_update(struct nd_route_info *, struct nd_defrouter *);
 int nd6_rtilist_add(struct nd_route_info *, struct nd_defrouter *,
     struct nd_route_info **);
 void nd6_rti_purge(struct nd_route_info *);
+void nd6_rti_delreq(struct nd_route_info *);
+void nd6_rti_select(struct nd_route_info *, struct ifnet *);
 
 /* define struct prproxy_sols_tree */
 RB_HEAD(prproxy_sols_tree, nd6_prproxy_soltgt);
@@ -639,6 +598,7 @@ struct nd_prefix {
 	LIST_HEAD(pr_rtrhead, nd_pfxrouter) ndpr_advrtrs;
 	u_char          ndpr_plen;
 	int             ndpr_addrcnt;   /* reference counter from addresses */
+	int             ndpr_manual_addrcnt; /* reference counter non-autoconf addresses */
 	u_int32_t       ndpr_allmulti_cnt;      /* total all-multi reqs */
 	u_int32_t       ndpr_prproxy_sols_cnt;  /* total # of proxied NS */
 	struct prproxy_sols_tree ndpr_prproxy_sols; /* tree of proxied NS */
@@ -808,9 +768,11 @@ extern int nd6_optimistic_dad;
 
 #include <os/log.h>
 
-#define nd6log0(type, ...)      do { os_log_##type(OS_LOG_DEFAULT, __VA_ARGS__); } while (0)
-#define nd6log(type, ...)       do { if (nd6_debug >= 1) os_log_##type(OS_LOG_DEFAULT, __VA_ARGS__); } while (0)
-#define nd6log2(type, ...)      do { if (nd6_debug >= 2) os_log_##type(OS_LOG_DEFAULT, __VA_ARGS__); } while (0)
+#define nd6log0(type, ...)      do { os_log_##type(OS_LOG_DEFAULT, ##__VA_ARGS__); } while (0)
+#define nd6log(type, ...)       do { if (nd6_debug >= 1) os_log_##type(OS_LOG_DEFAULT, ##__VA_ARGS__); } while (0)
+#define nd6log2(type, ...)      do { if (nd6_debug >= 2) os_log_##type(OS_LOG_DEFAULT, ##__VA_ARGS__); } while (0)
+#define nd6log3(type, ...)      do { if (nd6_debug >= 3) os_log_##type(OS_LOG_DEFAULT, ##__VA_ARGS__); } while (0)
+#define nd6log4(type, ...)      do { if (nd6_debug >= 4) os_log_##type(OS_LOG_DEFAULT, ##__VA_ARGS__); } while (0)
 
 #define ND6_OPTIMISTIC_DAD_LINKLOCAL    (1 << 0)
 #define ND6_OPTIMISTIC_DAD_AUTOCONF     (1 << 1)
@@ -819,7 +781,7 @@ extern int nd6_optimistic_dad;
 #define ND6_OPTIMISTIC_DAD_SECURED      (1 << 4)
 #define ND6_OPTIMISTIC_DAD_MANUAL       (1 << 5)
 
-#define ND6_OPTIMISTIC_DAD_DEFAULT                                      \
+#define ND6_OPTIMISTIC_DAD_DEFAULT                                  \
 	(ND6_OPTIMISTIC_DAD_LINKLOCAL | ND6_OPTIMISTIC_DAD_AUTOCONF |   \
 	 ND6_OPTIMISTIC_DAD_TEMPORARY | ND6_OPTIMISTIC_DAD_DYNAMIC |    \
 	 ND6_OPTIMISTIC_DAD_SECURED | ND6_OPTIMISTIC_DAD_MANUAL)
@@ -861,9 +823,10 @@ union nd_opts {
 		struct nd_opt_hdr *__res23;
 		struct nd_opt_route_info *rti_beg;
 		struct nd_opt_hdr *__res25;
-		struct nd_opt_hdr *search;      /* multiple opts */
-		struct nd_opt_hdr *last;        /* multiple opts */
-		int done;
+		struct nd_opt_hdr *__ended_by(last) search; /* multiple opts */
+		struct nd_opt_hdr *last;                    /* multiple opts */
+		uint8_t done;
+		uint8_t initialized;
 		struct nd_opt_prefix_info *pi_end; /* multiple prefix opts, end */
 		struct nd_opt_route_info *rti_end; /* multiple route info opts, end */
 	} nd_opt_each;
@@ -880,6 +843,26 @@ union nd_opts {
 #define nd_opts_search          nd_opt_each.search
 #define nd_opts_last            nd_opt_each.last
 #define nd_opts_done            nd_opt_each.done
+#define nd_opts_initialized     nd_opt_each.initialized
+
+#define ND_OPT_LLADDR(opt, optlen, val, vallen) ({                                \
+    (vallen) = opt->optlen << 3;                                                  \
+    struct nd_opt_hdr* __hdr = __unsafe_forge_bidi_indexable(struct nd_opt_hdr *, \
+    (opt), sizeof(struct nd_opt_hdr) + (vallen));                                 \
+    (val) = (char *)(__hdr + 1);                                                  \
+})
+
+#if __has_ptrcheck
+#define TAKE_ND_NEXT_OPT(opt, start, end) ({                                                          \
+    size_t __ndoptlen = (u_char*)ndopts.end - (u_char*)ndopts.start;                                  \
+    struct nd_opt_hdr* __hdr = __unsafe_forge_bidi_indexable(struct nd_opt_hdr *, (opt), __ndoptlen); \
+    __hdr;                                                                                            \
+})
+#else
+#define TAKE_ND_NEXT_OPT(opt, start, end) ({                                                          \
+     (struct nd_opt_hdr *)opt;                                                                        \
+})
+#endif
 
 /* XXX: need nd6_var.h?? */
 /* nd6.c */
@@ -889,7 +872,7 @@ extern void nd6_init(void);
 extern void nd6_ifreset(struct ifnet *ifp);
 extern void nd6_ifattach(struct ifnet *);
 extern int nd6_is_addr_neighbor(struct sockaddr_in6 *, struct ifnet *, int);
-extern void nd6_option_init(void *, int, union nd_opts *);
+extern void nd6_option_init(void *__sized_by(icmp6len), size_t icmp6len, union nd_opts *);
 extern struct nd_opt_hdr *nd6_option(union nd_opts *);
 extern int nd6_options(union nd_opts *);
 extern struct rtentry *nd6_lookup(struct in6_addr *, int, struct ifnet *, int);
@@ -900,15 +883,14 @@ extern void nd6_nud_hint(struct rtentry *, struct in6_addr *, int);
 extern int nd6_resolve(struct ifnet *, struct rtentry *,
     struct mbuf *, struct sockaddr *, u_char *);
 extern void nd6_rtrequest(int, struct rtentry *, struct sockaddr *);
-extern int nd6_ioctl(u_long, caddr_t, struct ifnet *);
+extern int nd6_ioctl(u_long cmd, caddr_t __counted_by(IOCPARM_LEN(cmd)), struct ifnet *);
 extern void nd6_cache_lladdr(struct ifnet *, struct in6_addr *,
-    char *, int, int, int);
+    char *lladdr __sized_by(lladdrlen), int lladdrlen,
+    int, int, int *);
 extern int nd6_output_list(struct ifnet *, struct ifnet *, struct mbuf *,
     struct sockaddr_in6 *, struct rtentry *, struct flowadv *);
 extern int nd6_output(struct ifnet *, struct ifnet *, struct mbuf *,
     struct sockaddr_in6 *, struct rtentry *, struct flowadv *);
-extern int nd6_storelladdr(struct ifnet *, struct rtentry *, struct mbuf *,
-    struct sockaddr *, u_char *);
 extern int nd6_need_cache(struct ifnet *);
 extern void nd6_drain(void *);
 extern void nd6_post_msg(u_int32_t, struct nd_prefix_list *, u_int32_t,
@@ -924,19 +906,46 @@ extern void nd6_na_output(struct ifnet *, const struct in6_addr *,
     const struct in6_addr *, u_int32_t, int, struct sockaddr *);
 extern void nd6_ns_input(struct mbuf *, int, int);
 extern void nd6_ns_output(struct ifnet *, const struct in6_addr *,
-    const struct in6_addr *, struct llinfo_nd6 *, uint8_t *);
-extern caddr_t nd6_ifptomac(struct ifnet *);
+    const struct in6_addr *, struct llinfo_nd6 *,
+    uint8_t *__counted_by(noncelen) nonce, size_t noncelen);
+
+static inline caddr_t __header_indexable __stateful_pure
+nd6_ifptomac(struct ifnet *ifp)
+{
+	switch (ifp->if_type) {
+	case IFT_ARCNET:
+	case IFT_ETHER:
+	case IFT_IEEE8023ADLAG:
+	case IFT_FDDI:
+	case IFT_IEEE1394:
+#ifdef IFT_L2VLAN
+	case IFT_L2VLAN:
+#endif
+#ifdef IFT_IEEE80211
+	case IFT_IEEE80211:
+#endif
+#ifdef IFT_CARP
+	case IFT_CARP:
+#endif
+	case IFT_BRIDGE:
+	case IFT_ISO88025:
+		return (caddr_t)IF_LLADDR(ifp);
+	default:
+		return NULL;
+	}
+}
+
 extern void nd6_dad_start(struct ifaddr *, int *);
 extern void nd6_dad_stop(struct ifaddr *);
-extern void nd6_llreach_alloc(struct rtentry *, struct ifnet *, void *,
-    unsigned int, boolean_t);
-extern void nd6_llreach_set_reachable(struct ifnet *, void *, unsigned int);
+extern void nd6_llreach_alloc(struct rtentry *, struct ifnet *,
+    void * __sized_by(alen), unsigned int alen, boolean_t);
+extern void nd6_llreach_set_reachable(struct ifnet *, void *__sized_by(alen) addr, unsigned int alen);
 extern void nd6_llreach_use(struct llinfo_nd6 *);
 extern void nd6_alt_node_addr_decompose(struct ifnet *, struct sockaddr *,
     struct sockaddr_dl *, struct sockaddr_in6 *);
 extern int nd6_alt_node_present(struct ifnet *, struct sockaddr_in6 *,
     struct sockaddr_dl *, int32_t, int, int);
-extern void nd6_alt_node_absent(struct ifnet *, struct sockaddr_in6 *, struct sockaddr_dl *);
+extern int nd6_alt_node_absent(struct ifnet *, struct sockaddr_in6 *, struct sockaddr_dl *);
 
 /* nd6_rtr.c */
 extern struct in6_ifaddr *in6_pfx_newpersistaddr(struct nd_prefix *, int,
@@ -949,10 +958,12 @@ extern struct nd_defrouter *defrtrlist_update(struct nd_defrouter *,
     struct nd_drhead *);
 extern void defrouter_select(struct ifnet *, struct nd_drhead *);
 extern void defrouter_reset(void);
-extern int defrtrlist_ioctl(u_long, caddr_t);
+extern int defrtrlist_ioctl(u_long cmd, caddr_t __sized_by(IOCPARM_LEN(cmd)));
 extern void defrtrlist_del(struct nd_defrouter *, struct nd_drhead *);
 extern int defrtrlist_add_static(struct nd_defrouter *);
 extern int defrtrlist_del_static(struct nd_defrouter *);
+extern void nd_prefix_busy_wait(void);
+extern void nd_prefix_busy_signal(void);
 extern void prelist_remove(struct nd_prefix *);
 extern int prelist_update(struct nd_prefix *, struct nd_defrouter *,
     struct mbuf *, int);
@@ -961,9 +972,11 @@ extern int nd6_prelist_add(struct nd_prefix *, struct nd_defrouter *,
 extern int nd6_prefix_onlink(struct nd_prefix *);
 extern int nd6_prefix_onlink_scoped(struct nd_prefix *, unsigned int);
 extern int nd6_prefix_offlink(struct nd_prefix *);
-extern void pfxlist_onlink_check(void);
+extern void pfxlist_onlink_check(bool);
+extern void defrouter_set_reachability(struct in6_addr *, struct ifnet *, boolean_t);
 extern struct nd_defrouter *defrouter_lookup(struct nd_drhead *,
     struct in6_addr *, struct ifnet *);
+extern struct nd_pfxrouter *pfxrtr_lookup(struct nd_prefix *, struct nd_defrouter *);
 extern struct nd_prefix *nd6_prefix_lookup(struct nd_prefix *, int);
 extern int in6_init_prefix_ltimes(struct nd_prefix *ndpr);
 extern void rt6_flush(struct in6_addr *, struct ifnet *);
@@ -975,6 +988,7 @@ extern uint64_t nddr_getexpire(struct nd_defrouter *);
 extern void ndpr_addref(struct nd_prefix *);
 extern struct nd_prefix *ndpr_remref(struct nd_prefix *);
 extern uint64_t ndpr_getexpire(struct nd_prefix *);
+extern void defrouter_delreq(struct nd_defrouter *, struct nd_route_info *);
 
 /* nd6_prproxy.c */
 struct ip6_hdr;
@@ -988,7 +1002,8 @@ extern boolean_t nd6_prproxy_isours(struct mbuf *, struct ip6_hdr *,
 extern void nd6_prproxy_ns_output(struct ifnet *, struct ifnet *,
     struct in6_addr *, struct in6_addr *, struct llinfo_nd6 *);
 extern void nd6_prproxy_ns_input(struct ifnet *, struct in6_addr *,
-    char *, int, struct in6_addr *, struct in6_addr *, uint8_t *nonce);
+    char *__sized_by(lladdrlen) lladdr, int lladdrlen, struct in6_addr *,
+    struct in6_addr *, uint8_t *__counted_by(noncelen) nonce, size_t noncelen);
 extern void nd6_prproxy_na_input(struct ifnet *, struct in6_addr *,
     struct in6_addr *, struct in6_addr *, int);
 extern void nd6_prproxy_sols_reap(struct nd_prefix *);

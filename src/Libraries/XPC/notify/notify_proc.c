@@ -32,6 +32,7 @@
 #include <mach/mach_traps.h>
 #include <sys/sysctl.h>
 #include <sys/kauth.h>
+#include <sys/fileport.h>
 #include <pthread.h>
 #include <pwd.h>
 #include <sys/fcntl.h>
@@ -1708,4 +1709,3 @@ kern_return_t __notify_server_register_mach_port_3
 
 	return KERN_SUCCESS;
 }
-

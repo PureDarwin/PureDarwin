@@ -63,6 +63,7 @@
 #ifndef _KERN_AST_H_
 #define _KERN_AST_H_
 
+#include <sys/cdefs.h>
 
 #include <kern/assert.h>
 #include <kern/macro_help.h>
@@ -75,10 +76,7 @@
  *
  * Machine-dependent code is responsible for maintaining
  * a set of reasons for an AST.
- */
-typedef uint32_t ast_t;
-
-/*
+ *
  * When returning from interrupt/trap context to kernel mode,
  * if AST_URGENT is set, then ast_taken_kernel is called, for
  * instance to effect preemption of a kernel thread by a realtime
@@ -108,47 +106,62 @@ typedef uint32_t ast_t;
  *      TODO: Split the context switch and return-to-user AST namespaces
  *      NOTE: Some of these are exported as the 'reason' code in scheduler tracepoints
  */
-#define AST_PREEMPT             0x01
-#define AST_QUANTUM             0x02
-#define AST_URGENT              0x04
-#define AST_HANDOFF             0x08
-#define AST_YIELD               0x10
-#define AST_APC                 0x20    /* migration APC hook */
-#define AST_LEDGER              0x40
-#define AST_BSD                 0x80
-#define AST_KPERF               0x100   /* kernel profiling */
-#define AST_MACF                0x200   /* MACF user ret pending */
-#define AST_RESET_PCS           0x400   /* restartable ranges */
-#define AST_ARCADE              0x800   /* arcade subsciption support */
-#define AST_GUARD               0x1000
-#define AST_TELEMETRY_USER      0x2000  /* telemetry sample requested on interrupt from userspace */
-#define AST_TELEMETRY_KERNEL    0x4000  /* telemetry sample requested on interrupt from kernel */
-#define AST_TELEMETRY_PMI       0x8000  /* telemetry sample requested on PMI */
-#define AST_SFI                 0x10000 /* Evaluate if SFI wait is needed before return to userspace */
-#define AST_DTRACE              0x20000
-#define AST_TELEMETRY_IO        0x40000 /* telemetry sample requested for I/O */
-#define AST_KEVENT              0x80000
-#define AST_REBALANCE           0x100000 /* thread context switched due to rebalancing */
-#define AST_UNQUIESCE           0x200000 /* catch unquiesced processor before returning to userspace */
+__options_decl(ast_t, uint32_t, {
+	AST_PREEMPT               = 0x01,
+	AST_QUANTUM               = 0x02,
+	AST_URGENT                = 0x04,
+	AST_HANDOFF               = 0x08,
+	AST_YIELD                 = 0x10,
+	AST_APC                   = 0x20,    /* migration APC hook */
+	AST_LEDGER                = 0x40,
+	AST_BSD                   = 0x80,
+	AST_KPERF                 = 0x100,   /* kernel profiling */
+	AST_MACF                  = 0x200,   /* MACF user ret pending */
+	AST_RESET_PCS             = 0x400,   /* restartable ranges */
+	AST_ARCADE                = 0x800,   /* arcade subsciption support */
+	AST_MACH_EXCEPTION        = 0x1000,
+	AST_TELEMETRY             = 0x2000,  /* telemetry sample requested, see t_telemetry_ast field */
+	// was AST_TELEMETRY_KERNEL 0x4000,
+	// was AST_TELEMETRY_PMI    0x8000,
+	AST_SFI                   = 0x10000, /* Evaluate if SFI wait is needed before return to userspace */
+	AST_DTRACE                = 0x20000,
+	// was AST_TELEMETRY_IO     0x40000
+	AST_KEVENT                = 0x80000,
+	AST_REBALANCE             = 0x100000, /* thread context switched due to rebalancing */
+	// was AST_UNQUIESCE        0x200000
+	AST_PROC_RESOURCE         = 0x400000, /* port space and/or file descriptor table has reached its limits */
+	AST_DEBUG_ASSERT          = 0x800000, /* check debug assertion */
+	// was AST_TELEMETRY_MACF   0x1000000
+	AST_SYNTHESIZE_MACH       = 0x2000000,
+	AST_LARGE_ENTER_TELEMETRY = 0x4000000, /* guard objects telemetry */
+});
 
-#define AST_NONE                0x00
+#define AST_NONE                (UINT32_C(0))
 #define AST_ALL                 (~AST_NONE)
 
-#define AST_SCHEDULING  (AST_PREEMPTION | AST_YIELD | AST_HANDOFF)
 #define AST_PREEMPTION  (AST_PREEMPT | AST_QUANTUM | AST_URGENT)
-
-#define AST_TELEMETRY_ALL (AST_TELEMETRY_USER | AST_TELEMETRY_KERNEL | \
-	        AST_TELEMETRY_PMI | AST_TELEMETRY_IO)
+#define AST_SCHEDULING  (AST_PREEMPTION | AST_YIELD | AST_HANDOFF)
 
 /* Per-thread ASTs follow the thread at context-switch time. */
 #define AST_PER_THREAD  (AST_APC | AST_BSD | AST_MACF | AST_RESET_PCS | \
-	AST_ARCADE | AST_LEDGER | AST_GUARD | AST_TELEMETRY_ALL | AST_KEVENT)
+	AST_ARCADE | AST_LEDGER | AST_MACH_EXCEPTION | AST_SYNTHESIZE_MACH | \
+	AST_LARGE_ENTER_TELEMETRY | AST_TELEMETRY | AST_KEVENT | \
+	AST_PROC_RESOURCE | AST_DEBUG_ASSERT)
+
+/* ASTs that can be skipped when checking if there's a reason to return to userspace */
+#define AST_LAZY (AST_DEBUG_ASSERT)
 
 /* Handle AST_URGENT detected while in the kernel */
 extern void ast_taken_kernel(void);
 
 /* Handle an AST flag set while returning to user mode (may continue via thread_exception_return) */
 extern void ast_taken_user(void);
+
+/* Check for pending maintenance work */
+extern void maintenance_ack_ipi(int cpu);
+
+/* Check for ASTs for per-process aio threads in the kernel */
+extern void ast_check_async_thread(void);
 
 /* Check for pending ASTs */
 extern void ast_check(processor_t processor);
@@ -184,11 +197,14 @@ extern void ast_propagate(thread_t thread);
  */
 #define thread_ast_set(act, reason)     ((void)os_atomic_or(&(act)->ast, (reason), relaxed))
 #define thread_ast_clear(act, reason)   ((void)os_atomic_andnot(&(act)->ast, (reason), relaxed))
+#define thread_ast_peek(act, reason)    (os_atomic_load(&(act)->ast, relaxed) & (reason))
+#define thread_ast_get(act)             os_atomic_load(&(act)->ast, relaxed)
 
 #ifdef MACH_BSD
 
 extern void act_set_astbsd(thread_t);
 extern void bsd_ast(thread_t);
+extern void proc_filedesc_ast(task_t task);
 
 #endif /* MACH_BSD */
 
@@ -197,9 +213,20 @@ extern void ast_dtrace_on(void);
 extern void dtrace_ast(void);
 #endif /* CONFIG_DTRACE */
 
+/* These are kept in sync with bsd/kern/ast.h */
+#define AST_KEVENT_RETURN_TO_KERNEL  0x0001
+#define AST_KEVENT_REDRIVE_THREADREQ 0x0002
+#define AST_KEVENT_WORKQ_QUANTUM_EXPIRED 0x0004
+
 extern void kevent_ast(thread_t thread, uint16_t bits);
 extern void act_set_astkevent(thread_t thread, uint16_t bits);
 extern uint16_t act_clear_astkevent(thread_t thread, uint16_t bits);
-extern void act_set_ast_reset_pcs(thread_t thread);
+extern bool act_set_ast_reset_pcs(task_t task, thread_t thread);
+#if CONFIG_PROC_RESOURCE_LIMITS
+extern void task_filedesc_ast(task_t task, int current_size, int soft_limit, int hard_limit);
+extern void task_kqworkloop_ast(task_t task, int current_size, int soft_limit, int hard_limit);
+#endif
+extern void act_set_debug_assert(void);
 
+extern void thread_debug_return_to_user_ast(thread_t thread);
 #endif  /* _KERN_AST_H_ */

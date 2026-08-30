@@ -87,6 +87,8 @@
 
 #include <net/net_osdep.h>
 
+#include <net/sockaddr_utils.h>
+
 int ip_gif_ttl = GIF_TTL;
 SYSCTL_INT(_net_inet_ip, IPCTL_GIF_TTL, gifttl, CTLFLAG_RW | CTLFLAG_LOCKED,
     &ip_gif_ttl, 0, "");
@@ -98,13 +100,10 @@ in_gif_output(
 	struct mbuf     *m,
 	__unused struct rtentry *rt)
 {
-	struct gif_softc *sc = ifnet_softc(ifp);
-	struct sockaddr_in *dst = (struct sockaddr_in *)
-	    (void *)&sc->gif_ro.ro_dst;
-	struct sockaddr_in *sin_src = (struct sockaddr_in *)
-	    (void *)sc->gif_psrc;
-	struct sockaddr_in *sin_dst = (struct sockaddr_in *)
-	    (void *)sc->gif_pdst;
+	struct gif_softc *__single sc = ifnet_softc(ifp);
+	struct sockaddr_in *__single dst = SIN(&sc->gif_ro.ro_dst);
+	struct sockaddr_in *__single sin_src = SIN(sc->gif_psrc);
+	struct sockaddr_in *__single sin_dst = SIN(sc->gif_pdst);
 	struct ip iphdr;        /* capsule IP header, host byte ordered */
 	int proto, error;
 	u_int8_t tos;
@@ -129,7 +128,7 @@ in_gif_output(
 #if INET
 	case AF_INET:
 	{
-		struct ip *ip;
+		struct ip *__single ip;
 
 		proto = IPPROTO_IPV4;
 		if (mbuf_len(m) < sizeof(*ip)) {
@@ -346,19 +345,19 @@ gif_encapcheck4(
 	void *arg)
 {
 	struct ip ip;
-	struct gif_softc *sc;
-	struct sockaddr_in *src, *dst;
+	struct gif_softc *__single sc;
+	struct sockaddr_in *__single src, *__single dst;
 	int addrmatch;
-	struct in_ifaddr *ia4;
+	struct in_ifaddr *__single ia4;
 
 	/* sanity check done in caller */
 	sc = (struct gif_softc *)arg;
-	src = (struct sockaddr_in *)(void *)sc->gif_psrc;
-	dst = (struct sockaddr_in *)(void *)sc->gif_pdst;
+	src = SIN(sc->gif_psrc);
+	dst = SIN(sc->gif_pdst);
 
 	GIF_LOCK_ASSERT(sc);
 
-	mbuf_copydata((struct mbuf *)(size_t)m, 0, sizeof(ip), &ip);
+	mbuf_copydata(__DECONST(struct mbuf *, m), 0, sizeof(ip), &ip);
 
 	/* check for address match */
 	addrmatch = 0;
@@ -381,7 +380,7 @@ gif_encapcheck4(
 		return 0;
 	}
 	/* reject packets with broadcast on source */
-	lck_rw_lock_shared(in_ifaddr_rwlock);
+	lck_rw_lock_shared(&in_ifaddr_rwlock);
 	for (ia4 = TAILQ_FIRST(&in_ifaddrhead); ia4;
 	    ia4 = TAILQ_NEXT(ia4, ia_link)) {
 		if ((ifnet_flags(ia4->ia_ifa.ifa_ifp) & IFF_BROADCAST) == 0) {
@@ -390,12 +389,12 @@ gif_encapcheck4(
 		IFA_LOCK(&ia4->ia_ifa);
 		if (ip.ip_src.s_addr == ia4->ia_broadaddr.sin_addr.s_addr) {
 			IFA_UNLOCK(&ia4->ia_ifa);
-			lck_rw_done(in_ifaddr_rwlock);
+			lck_rw_done(&in_ifaddr_rwlock);
 			return 0;
 		}
 		IFA_UNLOCK(&ia4->ia_ifa);
 	}
-	lck_rw_done(in_ifaddr_rwlock);
+	lck_rw_done(&in_ifaddr_rwlock);
 
 	/* ingress filters on outer source */
 	if ((ifnet_flags(sc->gif_if) & IFF_LINK2) == 0 &&
@@ -403,11 +402,11 @@ gif_encapcheck4(
 		struct sockaddr_in sin;
 		struct rtentry *rt;
 
-		bzero(&sin, sizeof(sin));
+		SOCKADDR_ZERO(&sin, sizeof(sin));
 		sin.sin_family = AF_INET;
 		sin.sin_len = sizeof(struct sockaddr_in);
 		sin.sin_addr = ip.ip_src;
-		rt = rtalloc1_scoped((struct sockaddr *)&sin, 0, 0,
+		rt = rtalloc1_scoped(SA(&sin), 0, 0,
 		    m->m_pkthdr.rcvif->if_index);
 		if (rt != NULL) {
 			RT_LOCK(rt);

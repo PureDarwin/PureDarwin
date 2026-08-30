@@ -69,6 +69,7 @@
 #include <mach/kern_return.h>
 #include <mach/machine.h>
 #include <mach/port.h>
+#include <ipc/ipc_policy.h>
 #include <mach/processor_info.h>
 #include <mach/vm_param.h>
 #include <mach/processor.h>
@@ -76,28 +77,38 @@
 #include <mach/host_priv_server.h>
 #include <mach/vm_map.h>
 #include <mach/task_info.h>
+#include <mach/resource_monitors.h>
 
 #include <machine/commpage.h>
 #include <machine/cpu_capabilities.h>
 
+#include <device/device_port.h>
+
 #include <kern/kern_types.h>
 #include <kern/assert.h>
 #include <kern/kalloc.h>
+#include <kern/ecc.h>
 #include <kern/host.h>
 #include <kern/host_statistics.h>
 #include <kern/ipc_host.h>
 #include <kern/misc_protos.h>
 #include <kern/sched.h>
 #include <kern/processor.h>
-#include <kern/mach_node.h>     // mach_node_port_changed()
 
-#include <vm/vm_map.h>
-#include <vm/vm_purgeable_internal.h>
+#include <sys/variant_internal.h>
+
+#include <vm/vm_compressor_xnu.h>
+#include <vm/vm_map_xnu.h>
+#if HAS_MTE
+#include <vm/vm_mteinfo_internal.h>
+#endif
+#include <vm/vm_purgeable_xnu.h>
 #include <vm/vm_pageout.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_log.h>
 
 #include <IOKit/IOBSD.h> // IOTaskHasEntitlement
 #include <IOKit/IOKitKeys.h> // DriverKit entitlement strings
-
 
 #if CONFIG_ATM
 #include <atm/atm_internal.h>
@@ -107,11 +118,19 @@
 #include <security/mac_mach_internal.h>
 #endif
 
+#if CONFIG_CSR
+#include <sys/csr.h>
+#endif
+
 #include <pexpert/pexpert.h>
+
+extern bool proc_sdk_26_4_or_later(proc_t);
 
 SCALABLE_COUNTER_DEFINE(vm_statistics_zero_fill_count);        /* # of zero fill pages */
 SCALABLE_COUNTER_DEFINE(vm_statistics_reactivations);          /* # of pages reactivated */
 SCALABLE_COUNTER_DEFINE(vm_statistics_pageins);                /* # of pageins */
+SCALABLE_COUNTER_DEFINE(vm_statistics_pageins_aborted);        /* # of pageins aborted */
+SCALABLE_COUNTER_DEFINE(vm_statistics_pageins_requested);      /* # of pageins requested */
 SCALABLE_COUNTER_DEFINE(vm_statistics_pageouts);               /* # of pageouts */
 SCALABLE_COUNTER_DEFINE(vm_statistics_faults);                 /* # of faults */
 SCALABLE_COUNTER_DEFINE(vm_statistics_cow_faults);             /* # of copy-on-writes */
@@ -124,6 +143,9 @@ SCALABLE_COUNTER_DEFINE(vm_statistics_swapins);                /* # of pages swa
 SCALABLE_COUNTER_DEFINE(vm_statistics_swapouts);               /* # of pages swapped out (via compression segments) */
 SCALABLE_COUNTER_DEFINE(vm_statistics_total_uncompressed_pages_in_compressor); /* # of pages (uncompressed) held within the compressor. */
 SCALABLE_COUNTER_DEFINE(vm_page_grab_count);
+SCALABLE_COUNTER_DEFINE(vm_page_grab_count_kern);
+SCALABLE_COUNTER_DEFINE(vm_page_grab_count_iopl);
+SCALABLE_COUNTER_DEFINE(vm_page_grab_count_upl);
 
 host_data_t realhost;
 
@@ -157,8 +179,8 @@ host_processors(host_priv_t host_priv, processor_array_t * out_array, mach_msg_t
 
 	static_assert(sizeof(mach_port_t) == sizeof(processor_t));
 
-	mach_port_t* ports = kalloc((vm_size_t)(count * sizeof(mach_port_t)));
-	if (!ports) {
+	mach_port_array_t ports = mach_port_array_alloc(count, Z_WAITOK);
+	if (ports == NULL) {
 		return KERN_RESOURCE_SHORTAGE;
 	}
 
@@ -167,12 +189,11 @@ host_processors(host_priv_t host_priv, processor_array_t * out_array, mach_msg_t
 		assert(processor != PROCESSOR_NULL);
 
 		/* do the conversion that Mig should handle */
-		ipc_port_t processor_port = convert_processor_to_port(processor);
-		ports[i] = processor_port;
+		ports[i].port = convert_processor_to_port(processor);
 	}
 
 	*countp = count;
-	*out_array = (processor_array_t)ports;
+	*out_array = ports;
 
 	return KERN_SUCCESS;
 }
@@ -204,7 +225,7 @@ host_info(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_num
 		basic_info->cpu_type = slot_type(master_id);
 		basic_info->cpu_subtype = slot_subtype(master_id);
 		basic_info->max_cpus = machine_info.max_cpus;
-#if defined(__x86_64__)
+#if CONFIG_SCHED_SMT
 		if (sched_allow_NO_SMT_threads && current_task()->t_flags & TF_NO_SMT) {
 			basic_info->avail_cpus = primary_processor_avail_count_user;
 		} else {
@@ -225,7 +246,6 @@ host_info(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_num
 			basic_info->logical_cpu = machine_info.logical_cpu;
 #endif
 			basic_info->logical_cpu_max = machine_info.logical_cpu_max;
-
 			basic_info->max_mem = machine_info.max_mem;
 
 			*count = HOST_BASIC_INFO_COUNT;
@@ -378,6 +398,16 @@ host_info(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_num
 		}
 		user_arch_info->cpu_type    = preferred_cpu_type;
 		user_arch_info->cpu_subtype = preferred_cpu_subtype;
+#elif APPLEVIRTUALPLATFORM
+		extern uint32_t force_arm64_32;
+		if (force_arm64_32) {
+			user_arch_info->cpu_type    = CPU_TYPE_ARM64_32;
+			user_arch_info->cpu_subtype = CPU_SUBTYPE_ARM64_32_V8;
+		} else {
+			int master_id               = master_processor->cpu_id;
+			user_arch_info->cpu_type    = slot_type(master_id);
+			user_arch_info->cpu_subtype = slot_subtype(master_id);
+		}
 #else
 		int master_id               = master_processor->cpu_id;
 		user_arch_info->cpu_type    = slot_type(master_id);
@@ -424,6 +454,7 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 		vm_statistics64_data_t host_vm_stat;
 		vm_statistics_t stat32;
 		mach_msg_type_number_t original_count;
+		natural_t speculative_count = vm_page_speculative_count;
 
 		if (*count < HOST_VM_INFO_REV0_COUNT) {
 			return KERN_FAILURE;
@@ -433,7 +464,7 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 
 		stat32 = (vm_statistics_t)info;
 
-		stat32->free_count = VM_STATISTICS_TRUNCATE_TO_32_BIT(vm_page_free_count + vm_page_speculative_count);
+		stat32->free_count = VM_STATISTICS_TRUNCATE_TO_32_BIT(vm_page_free_count + speculative_count);
 		stat32->active_count = VM_STATISTICS_TRUNCATE_TO_32_BIT(vm_page_active_count);
 
 		if (vm_page_local_q) {
@@ -465,14 +496,15 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 		*count = HOST_VM_INFO_REV0_COUNT; /* rev0 already filled in */
 		if (original_count >= HOST_VM_INFO_REV1_COUNT) {
 			/* rev1 added "purgeable" info */
-			stat32->purgeable_count = VM_STATISTICS_TRUNCATE_TO_32_BIT(vm_page_purgeable_count);
+			stat32->purgeable_count =
+			    VM_STATISTICS_TRUNCATE_TO_32_BIT(counter_load(&vm_page_purgeable_count));
 			stat32->purges = VM_STATISTICS_TRUNCATE_TO_32_BIT(vm_page_purged_count);
 			*count = HOST_VM_INFO_REV1_COUNT;
 		}
 
 		if (original_count >= HOST_VM_INFO_REV2_COUNT) {
 			/* rev2 added "speculative" info */
-			stat32->speculative_count = VM_STATISTICS_TRUNCATE_TO_32_BIT(vm_page_speculative_count);
+			stat32->speculative_count = VM_STATISTICS_TRUNCATE_TO_32_BIT(speculative_count);
 			*count = HOST_VM_INFO_REV2_COUNT;
 		}
 
@@ -501,50 +533,13 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 		cpu_load_info->cpu_ticks[CPU_STATE_IDLE] = 0;
 		cpu_load_info->cpu_ticks[CPU_STATE_NICE] = 0;
 
-		simple_lock(&processor_list_lock, LCK_GRP_NULL);
-
 		unsigned int pcount = processor_count;
 
 		for (unsigned int i = 0; i < pcount; i++) {
 			processor_t processor = processor_array[i];
 			assert(processor != PROCESSOR_NULL);
-
-			timer_t idle_state;
-			uint64_t idle_time_snapshot1, idle_time_snapshot2;
-			uint64_t idle_time_tstamp1, idle_time_tstamp2;
-
-			/* See discussion in processor_info(PROCESSOR_CPU_LOAD_INFO) */
-
-			GET_TICKS_VALUE_FROM_TIMER(processor, CPU_STATE_USER, user_state);
-			if (precise_user_kernel_time) {
-				GET_TICKS_VALUE_FROM_TIMER(processor, CPU_STATE_SYSTEM, system_state);
-			} else {
-				/* system_state may represent either sys or user */
-				GET_TICKS_VALUE_FROM_TIMER(processor, CPU_STATE_USER, system_state);
-			}
-
-			idle_state = &processor->idle_state;
-			idle_time_snapshot1 = timer_grab(idle_state);
-			idle_time_tstamp1 = idle_state->tstamp;
-
-			if (processor->current_state != idle_state) {
-				/* Processor is non-idle, so idle timer should be accurate */
-				GET_TICKS_VALUE_FROM_TIMER(processor, CPU_STATE_IDLE, idle_state);
-			} else if ((idle_time_snapshot1 != (idle_time_snapshot2 = timer_grab(idle_state))) ||
-			    (idle_time_tstamp1 != (idle_time_tstamp2 = idle_state->tstamp))) {
-				/* Idle timer is being updated concurrently, second stamp is good enough */
-				GET_TICKS_VALUE(CPU_STATE_IDLE, idle_time_snapshot2);
-			} else {
-				/*
-				 * Idle timer may be very stale. Fortunately we have established
-				 * that idle_time_snapshot1 and idle_time_tstamp1 are unchanging
-				 */
-				idle_time_snapshot1 += mach_absolute_time() - idle_time_tstamp1;
-
-				GET_TICKS_VALUE(CPU_STATE_IDLE, idle_time_snapshot1);
-			}
+			processor_cpu_load_info(processor, cpu_load_info->cpu_ticks);
 		}
-		simple_unlock(&processor_list_lock);
 
 		*count = HOST_CPU_LOAD_INFO_COUNT;
 
@@ -572,7 +567,7 @@ host_statistics(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_ty
 			*count = TASK_POWER_INFO_COUNT;
 		} else if (*count >= TASK_POWER_INFO_V2_COUNT) {
 			tinfo2->gpu_energy.task_gpu_utilisation = dead_task_statistics.task_gpu_ns;
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 			tinfo2->task_energy = dead_task_statistics.task_energy;
 			tinfo2->task_ptime = dead_task_statistics.total_ptime;
 			tinfo2->task_pset_switches = dead_task_statistics.total_pset_switches;
@@ -607,10 +602,15 @@ static LCK_MTX_DECLARE(host_statistics_lck, &host_statistics_lck_grp);
 #define HOST_CPU_LOAD_INFO_REV0         7
 #define HOST_EXPIRED_TASK_INFO_REV0     8
 #define HOST_EXPIRED_TASK_INFO_REV1     9
-#define NUM_HOST_INFO_DATA_TYPES        10
+#define HOST_VM_COMPRESSOR_Q_LEN_REV0   10
+#define HOST_VM_INFO64_REV2             11
+#define HOST_VM_INFO64_REV3             12
+#define NUM_HOST_INFO_DATA_TYPES        13
 
 static vm_statistics64_data_t host_vm_info64_rev0 = {};
 static vm_statistics64_data_t host_vm_info64_rev1 = {};
+static vm_statistics64_data_t host_vm_info64_rev2 = {};
+static vm_statistics64_data_t host_vm_info64_rev3 = {};
 static vm_extmod_statistics_data_t host_extmod_info64 = {};
 static host_load_info_data_t host_load_info = {};
 static vm_statistics_data_t host_vm_info_rev0 = {};
@@ -619,6 +619,7 @@ static vm_statistics_data_t host_vm_info_rev2 = {};
 static host_cpu_load_info_data_t host_cpu_load_info = {};
 static task_power_info_data_t host_expired_task_info = {};
 static task_power_info_v2_data_t host_expired_task_info2 = {};
+static vm_compressor_q_lens_data_t host_vm_compressor_q_lens = {};
 
 struct host_stats_cache {
 	uint64_t last_access;
@@ -639,6 +640,9 @@ static struct host_stats_cache g_host_stats_cache[NUM_HOST_INFO_DATA_TYPES] = {
 	[HOST_CPU_LOAD_INFO_REV0] = { .last_access = 0, .current_requests = 0, .max_requests = 0, .data = (uintptr_t)&host_cpu_load_info, .count = HOST_CPU_LOAD_INFO_COUNT },
 	[HOST_EXPIRED_TASK_INFO_REV0] = { .last_access = 0, .current_requests = 0, .max_requests = 0, .data = (uintptr_t)&host_expired_task_info, .count = TASK_POWER_INFO_COUNT },
 	[HOST_EXPIRED_TASK_INFO_REV1] = { .last_access = 0, .current_requests = 0, .max_requests = 0, .data = (uintptr_t)&host_expired_task_info2, .count = TASK_POWER_INFO_V2_COUNT},
+	[HOST_VM_COMPRESSOR_Q_LEN_REV0] = { .last_access = 0, .current_requests = 0, .max_requests = 0, .data = (uintptr_t)&host_vm_compressor_q_lens, .count = VM_COMPRESSOR_Q_LENS_COUNT},
+	[HOST_VM_INFO64_REV2] = { .last_access = 0, .current_requests = 0, .max_requests = 0, .data = (uintptr_t)&host_vm_info64_rev2, .count = HOST_VM_INFO64_REV2_COUNT },
+	[HOST_VM_INFO64_REV3] = { .last_access = 0, .current_requests = 0, .max_requests = 0, .data = (uintptr_t)&host_vm_info64_rev3, .count = HOST_VM_INFO64_REV3_COUNT },
 };
 
 
@@ -655,8 +659,7 @@ cache_host_statistics(int index, host_info64_t info)
 		return;
 	}
 
-	task_t task = current_task();
-	if (task->t_flags & TF_PLATFORM) {
+	if (task_get_platform_binary(current_task())) {
 		return;
 	}
 
@@ -688,6 +691,13 @@ get_host_info_data_index(bool is_stat64, host_flavor_t flavor, mach_msg_type_num
 		if (*count < HOST_VM_INFO64_REV0_COUNT) {
 			*ret = KERN_FAILURE;
 			return -1;
+		}
+
+		if (*count >= HOST_VM_INFO64_REV3_COUNT) {
+			return HOST_VM_INFO64_REV3;
+		}
+		if (*count >= HOST_VM_INFO64_REV2_COUNT) {
+			return HOST_VM_INFO64_REV2;
 		}
 		if (*count >= HOST_VM_INFO64_REV1_COUNT) {
 			return HOST_VM_INFO64_REV1;
@@ -742,6 +752,13 @@ get_host_info_data_index(bool is_stat64, host_flavor_t flavor, mach_msg_type_num
 		}
 		return HOST_EXPIRED_TASK_INFO_REV0;
 
+	case HOST_VM_COMPRESSOR_Q_LENS:
+		if (*count < VM_COMPRESSOR_Q_LENS_COUNT) {
+			*ret = KERN_FAILURE;
+			return -1;
+		}
+		return HOST_VM_COMPRESSOR_Q_LEN_REV0;
+
 	default:
 		*ret = KERN_INVALID_ARGUMENT;
 		return -1;
@@ -756,9 +773,10 @@ rate_limit_host_statistics(bool is_stat64, host_flavor_t flavor, host_info64_t i
 	assert(task != kernel_task);
 
 	*ret = KERN_SUCCESS;
+	*pindex = -1;
 
 	/* Access control only for third party applications */
-	if (task->t_flags & TF_PLATFORM) {
+	if (task_get_platform_binary(task)) {
 		return FALSE;
 	}
 
@@ -797,6 +815,9 @@ out:
 	return rate_limited;
 }
 
+_Static_assert(HOST_VM_INFO64_COUNT <= HOST_INFO_MAX,
+    "vm_statistics64_data_t exceeds maximum host_info size");
+
 kern_return_t
 vm_stats(void *info, unsigned int *count)
 {
@@ -804,6 +825,21 @@ vm_stats(void *info, unsigned int *count)
 	mach_msg_type_number_t original_count;
 	unsigned int local_q_internal_count;
 	unsigned int local_q_external_count;
+	natural_t speculative_count = vm_page_speculative_count;
+	natural_t throttled_count = vm_page_throttled_count;
+
+	if (*count > HOST_VM_INFO64_COUNT) {
+		vm_log_error("host_statistics64() count is larger than expected "
+		    "(actual:%u > HOST_VM_INFO64_COUNT:%u). This is most likely a bug in "
+		    "%s [%d] and is likely to result in memory corruption. The buffer count "
+		    "must be passed in units of integer_t's. HOST_VM_INFO64_COUNT may be "
+		    "used as shorthand.\n",
+		    *count, HOST_VM_INFO64_COUNT,
+		    task_best_name(current_task()), task_pid(current_task()));
+		DTRACE_VM2(vm_stats_bad_count,
+		    uint, *count,
+		    uint, HOST_VM_INFO64_COUNT);
+	}
 
 	if (*count < HOST_VM_INFO64_REV0_COUNT) {
 		return KERN_FAILURE;
@@ -812,7 +848,7 @@ vm_stats(void *info, unsigned int *count)
 
 	vm_statistics64_t stat = (vm_statistics64_t)info;
 
-	stat->free_count = vm_page_free_count + vm_page_speculative_count;
+	stat->free_count = vm_page_free_count + speculative_count;
 	stat->active_count = vm_page_active_count;
 
 	local_q_internal_count = 0;
@@ -828,8 +864,19 @@ vm_stats(void *info, unsigned int *count)
 #if !XNU_TARGET_OS_OSX
 	stat->wire_count = vm_page_wire_count;
 #else /* !XNU_TARGET_OS_OSX */
-	stat->wire_count = vm_page_wire_count + vm_page_throttled_count + vm_lopage_free_count;
+	stat->wire_count = vm_page_wire_count + throttled_count + vm_lopage_free_count;
 #endif /* !XNU_TARGET_OS_OSX */
+#if HAS_MTE
+	/*
+	 * Don't include KERN_MEMORY_MTAG pages which do not hold any tags in the
+	 * wired count for vm_stat. Though these pages are technically wired, they
+	 * are more fundamentally "free" and need not be reported separately from
+	 * the other "free" tag storage pages. Reporting them as wired here would
+	 * necessitate also reporting them as "tag-storing" in the MTE statistics
+	 * and would give an inaccurate view of tag storage fragmentation.
+	 */
+	stat->wire_count -= mteinfo_tag_storage_active_zero_locked();
+#endif /* HAS_MTE */
 	stat->zero_fill_count = host_vm_stat.zero_fill_count;
 	stat->reactivations = host_vm_stat.reactivations;
 	stat->pageins = host_vm_stat.pageins;
@@ -839,10 +886,11 @@ vm_stats(void *info, unsigned int *count)
 	stat->lookups = host_vm_stat.lookups;
 	stat->hits = host_vm_stat.hits;
 
-	stat->purgeable_count = vm_page_purgeable_count;
+	stat->purgeable_count =
+	    VM_STATISTICS_TRUNCATE_TO_32_BIT(counter_load(&vm_page_purgeable_count));
 	stat->purges = vm_page_purged_count;
 
-	stat->speculative_count = vm_page_speculative_count;
+	stat->speculative_count = speculative_count;
 
 	/*
 	 * Fill in extra info added in later revisions of the
@@ -850,29 +898,123 @@ vm_stats(void *info, unsigned int *count)
 	 * in the data structure the caller gave us !
 	 */
 	original_count = *count;
-	*count = HOST_VM_INFO64_REV0_COUNT; /* rev0 already filled in */
-	if (original_count >= HOST_VM_INFO64_REV1_COUNT) {
-		/* rev1 added "throttled count" */
-		stat->throttled_count = vm_page_throttled_count;
-		/* rev1 added "compression" info */
-		stat->compressor_page_count = VM_PAGE_COMPRESSOR_COUNT;
-		stat->compressions = host_vm_stat.compressions;
-		stat->decompressions = host_vm_stat.decompressions;
-		stat->swapins = host_vm_stat.swapins;
-		stat->swapouts = host_vm_stat.swapouts;
-		/* rev1 added:
-		 * "external page count"
-		 * "anonymous page count"
-		 * "total # of pages (uncompressed) held in the compressor"
-		 */
-		stat->external_page_count = (vm_page_pageable_external_count + local_q_external_count);
-		stat->internal_page_count = (vm_page_pageable_internal_count + local_q_internal_count);
-		stat->total_uncompressed_pages_in_compressor = c_segment_pages_compressed;
-		*count = HOST_VM_INFO64_REV1_COUNT;
+
+	if (original_count < HOST_VM_INFO64_REV1_COUNT) {
+		*count = HOST_VM_INFO64_REV0_COUNT;
+		return KERN_SUCCESS;
 	}
+
+	/* rev1 added "throttled count" */
+	stat->throttled_count = throttled_count;
+	/* rev1 added "compression" info */
+	stat->compressor_page_count = VM_PAGE_COMPRESSOR_COUNT;
+	stat->compressions = host_vm_stat.compressions;
+	stat->decompressions = host_vm_stat.decompressions;
+	stat->swapins = host_vm_stat.swapins;
+	stat->swapouts = host_vm_stat.swapouts;
+	/* rev1 added:
+	 * "external page count"
+	 * "anonymous page count"
+	 * "total # of pages (uncompressed) held in the compressor"
+	 */
+	stat->external_page_count = (vm_page_pageable_external_count + local_q_external_count);
+	stat->internal_page_count = (vm_page_pageable_internal_count + local_q_internal_count);
+	stat->total_uncompressed_pages_in_compressor = c_segment_pages_compressed;
+
+	if (original_count < HOST_VM_INFO64_REV2_COUNT) {
+		*count = HOST_VM_INFO64_REV1_COUNT;
+		return KERN_SUCCESS;
+	}
+
+	stat->swapped_count = os_atomic_load(&vm_page_swapped_count, relaxed);
+
+	if (original_count < HOST_VM_INFO64_REV3_COUNT) {
+		*count = HOST_VM_INFO64_REV2_COUNT;
+		return KERN_SUCCESS;
+	}
+#if HAS_MTE
+	/*
+	 * Don't actually take the free page queues lock -- at worst we fib.
+	 */
+	stat->resident_tagged_pages = vm_page_tagged_count;
+	stat->tag_storing_tag_storage_pages = mteinfo_tag_storage_active_locked();
+	stat->free_tag_storage_pages = mteinfo_tag_storage_free_locked();
+	stat->nontag_pageable_tag_storage_pages = mteinfo_tag_storage_nontags_pageable_locked();
+	stat->nontag_wired_tag_storage_pages = mteinfo_tag_storage_nontags_wired_locked();
+	stat->total_tag_storage_pages = mte_tag_storage_count;
+
+	stat->compressed_tagged_pages = counter_load(&compressor_tagged_pages);
+	stat->tagged_compressions = counter_load(&compressor_tagged_pages_compressed);
+	stat->tagged_decompressions = counter_load(&compressor_tagged_pages_decompressed);
+	stat->compressed_tag_storage_bytes = counter_load(&compressor_tags_overhead_bytes);
+
+	stat->total_tagged_pages = stat->resident_tagged_pages +
+	    stat->compressed_tagged_pages;
+#else /* HAS_MTE */
+	stat->resident_tagged_pages = 0;
+	stat->tag_storing_tag_storage_pages = 0;
+	stat->free_tag_storage_pages = 0;
+	stat->nontag_pageable_tag_storage_pages = 0;
+	stat->nontag_wired_tag_storage_pages = 0;
+	stat->total_tag_storage_pages = 0;
+	stat->compressed_tagged_pages = 0;
+	stat->tagged_compressions = 0;
+	stat->tagged_decompressions = 0;
+	stat->compressed_tag_storage_bytes = 0;
+	stat->total_tagged_pages = 0;
+#endif /* HAS_MTE */
+
+	*count = HOST_VM_INFO64_REV3_COUNT;
+	return KERN_SUCCESS;
+}
+
+#if DEVELOPMENT || DEBUG
+extern uint32_t        c_segment_count;
+extern uint32_t        c_age_count;
+extern uint32_t        c_early_swappedin_count, c_regular_swappedin_count, c_late_swappedin_count;
+extern uint32_t        c_early_swapout_count, c_regular_swapout_count, c_late_swapout_count;
+extern uint32_t        c_swapio_count;
+extern uint32_t        c_swappedout_count;
+extern uint32_t        c_swappedout_sparse_count;
+extern uint32_t        c_major_count;
+extern uint32_t        c_filling_count;
+extern uint32_t        c_empty_count;
+extern uint32_t        c_bad_count;
+extern uint32_t        c_minor_count;
+extern uint32_t        c_segments_available;
+
+static kern_return_t
+vm_compressor_queue_lens(void *info, unsigned int *count)
+{
+	if (*count < VM_COMPRESSOR_Q_LENS_COUNT) {
+		return KERN_NO_SPACE;
+	}
+
+	struct vm_compressor_q_lens *qc = (struct vm_compressor_q_lens *)info;
+	qc->qcc_segments_available = c_segments_available;
+	qc->qcc_segment_count = c_segment_count;
+	qc->qcc_age_count = c_age_count;
+	qc->qcc_early_swappedin_count = c_early_swappedin_count;
+	qc->qcc_regular_swappedin_count = c_regular_swappedin_count;
+	qc->qcc_late_swappedin_count = c_late_swappedin_count;
+	qc->qcc_early_swapout_count = c_early_swapout_count;
+	qc->qcc_regular_swapout_count = c_regular_swapout_count;
+	qc->qcc_late_swapout_count = c_late_swapout_count;
+	qc->qcc_swapio_count = c_swapio_count;
+	qc->qcc_swappedout_count = c_swappedout_count;
+	qc->qcc_swappedout_sparse_count = c_swappedout_sparse_count;
+	qc->qcc_major_count = c_major_count;
+	qc->qcc_filling_count = c_filling_count;
+	qc->qcc_empty_count = c_empty_count;
+	qc->qcc_bad_count = c_bad_count;
+	qc->qcc_minor_count = c_minor_count;
+
+	*count = VM_COMPRESSOR_Q_LENS_COUNT;
 
 	return KERN_SUCCESS;
 }
+
+#endif /* DEVELOPMENT || DEBUG */
 
 kern_return_t host_statistics64(host_t host, host_flavor_t flavor, host_info_t info, mach_msg_type_number_t * count);
 
@@ -902,6 +1044,13 @@ host_statistics64(host_t host, host_flavor_t flavor, host_info64_t info, mach_ms
 
 		return KERN_SUCCESS;
 	}
+
+	case HOST_VM_COMPRESSOR_Q_LENS:
+#if DEVELOPMENT || DEBUG
+		return vm_compressor_queue_lens(info, count);
+#else
+		return KERN_NOT_SUPPORTED;
+#endif
 
 	default: /* If we didn't recognize the flavor, send to host_statistics */
 		return host_statistics(host, flavor, (host_info_t)info, count);
@@ -1070,7 +1219,7 @@ host_kernel_version(host_t host, kernel_version_t out_version)
 kern_return_t
 host_processor_sets(host_priv_t host_priv, processor_set_name_array_t * pset_list, mach_msg_type_number_t * count)
 {
-	void * addr;
+	mach_port_array_t ports;
 
 	if (host_priv == HOST_PRIV_NULL) {
 		return KERN_INVALID_ARGUMENT;
@@ -1081,15 +1230,12 @@ host_processor_sets(host_priv_t host_priv, processor_set_name_array_t * pset_lis
 	 *	touched while holding a lock.
 	 */
 
-	addr = kalloc((vm_size_t)sizeof(mach_port_t));
-	if (addr == 0) {
-		return KERN_RESOURCE_SHORTAGE;
-	}
+	ports = mach_port_array_alloc(1, Z_WAITOK | Z_NOFAIL);
 
 	/* do the conversion that Mig should handle */
-	*((ipc_port_t *)addr) = convert_pset_name_to_port(&pset0);
+	ports[0].port = convert_pset_name_to_port(sched_boot_pset);
 
-	*pset_list = (processor_set_array_t)addr;
+	*pset_list = ports;
 	*count = 1;
 
 	return KERN_SUCCESS;
@@ -1151,7 +1297,7 @@ host_processor_info(host_t host,
 
 	needed = pcount * icount * sizeof(natural_t);
 	size = vm_map_round_page(needed, VM_MAP_PAGE_MASK(ipc_kernel_map));
-	result = kmem_alloc(ipc_kernel_map, &addr, size, VM_KERN_MEMORY_IPC);
+	result = kmem_alloc(ipc_kernel_map, &addr, size, KMA_DATA_SHARED, VM_KERN_MEMORY_IPC);
 	if (result != KERN_SUCCESS) {
 		return KERN_RESOURCE_SHORTAGE;
 	}
@@ -1197,8 +1343,6 @@ is_valid_host_special_port(int id)
 	       ((id <= HOST_LAST_SPECIAL_KERNEL_PORT) || (id > HOST_MAX_SPECIAL_KERNEL_PORT));
 }
 
-extern void * XNU_PTRAUTH_SIGNED_PTR("initproc") initproc;
-
 /*
  *      Kernel interface for setting a special port.
  */
@@ -1211,30 +1355,20 @@ kernel_set_special_port(host_priv_t host_priv, int id, ipc_port_t port)
 		panic("attempted to set invalid special port %d", id);
 	}
 
-#if !MACH_FLIPC
 	if (id == HOST_NODE_PORT) {
 		return KERN_NOT_SUPPORTED;
 	}
-#endif
 
 	host_lock(host_priv);
 	old_port = host_priv->special[id];
-	if ((id == HOST_AMFID_PORT) && (current_task()->bsd_info != initproc)) {
-		host_unlock(host_priv);
-		return KERN_NO_ACCESS;
-	}
 	host_priv->special[id] = port;
 	host_unlock(host_priv);
-
-#if MACH_FLIPC
-	if (id == HOST_NODE_PORT) {
-		mach_node_port_changed();
-	}
-#endif
 
 	if (IP_VALID(old_port)) {
 		ipc_port_release_send(old_port);
 	}
+
+
 	return KERN_SUCCESS;
 }
 
@@ -1274,8 +1408,12 @@ host_set_special_port_from_user(host_priv_t host_priv, int id, ipc_port_t port)
 		return KERN_NO_ACCESS;
 	}
 
-	if (IP_VALID(port) && (port->ip_immovable_receive || port->ip_immovable_send)) {
-		return KERN_INVALID_RIGHT;
+	/*
+	 * rdar://70585367
+	 * disallow immovable send so other process can't retrieve it through host_get_special_port()
+	 */
+	if (!ipc_can_stash_naked_send(port)) {
+		return KERN_DENIED;
 	}
 
 	return host_set_special_port(host_priv, id, port);
@@ -1286,6 +1424,19 @@ host_set_special_port(host_priv_t host_priv, int id, ipc_port_t port)
 {
 	if (host_priv == HOST_PRIV_NULL || id <= HOST_MAX_SPECIAL_KERNEL_PORT || id > HOST_MAX_SPECIAL_PORT) {
 		return KERN_INVALID_ARGUMENT;
+	}
+
+	if (current_task() != kernel_task && !task_is_initproc(current_task())) {
+		bool allowed = (id == HOST_TELEMETRY_PORT &&
+		    IOTaskHasEntitlement(current_task(), "com.apple.private.xpc.launchd.event-monitor"));
+#if CONFIG_CSR
+		if (!allowed) {
+			allowed = (csr_check(CSR_ALLOW_TASK_FOR_PID) == 0);
+		}
+#endif
+		if (!allowed) {
+			return KERN_NO_ACCESS;
+		}
 	}
 
 #if CONFIG_MACF
@@ -1317,7 +1468,7 @@ host_get_special_port_from_user(host_priv_t host_priv, __unused int node, int id
 	if (task && task_is_driver(task) && id > HOST_MAX_SPECIAL_KERNEL_PORT) {
 		/* allow HID drivers to get the sysdiagnose port for keychord handling */
 		if (id == HOST_SYSDIAGNOSE_PORT &&
-		    IOTaskHasEntitlement(task, kIODriverKitHIDFamilyEventServiceEntitlementKey)) {
+		    IOCurrentTaskHasEntitlement(kIODriverKitHIDFamilyEventServiceEntitlementKey)) {
 			goto get_special_port;
 		}
 		return KERN_NO_ACCESS;
@@ -1337,25 +1488,38 @@ host_get_special_port(host_priv_t host_priv, __unused int node, int id, ipc_port
 
 	host_lock(host_priv);
 	port = realhost.special[id];
-	*portp = ipc_port_copy_send(port);
+	switch (id) {
+	case HOST_PORT:
+		*portp = ipc_kobject_copy_send(port, &realhost, IKOT_HOST);
+		break;
+	case HOST_PRIV_PORT:
+		*portp = ipc_kobject_copy_send(port, &realhost, IKOT_HOST_PRIV);
+		break;
+	case HOST_IO_MAIN_PORT:
+		*portp = ipc_port_copy_send_any(main_device_port);
+		break;
+	default:
+		*portp = ipc_port_copy_send_mqueue(port);
+		break;
+	}
 	host_unlock(host_priv);
 
 	return KERN_SUCCESS;
 }
 
 /*
- *	host_get_io_master
+ *	host_get_io_main
  *
- *	Return the IO master access port for this host.
+ *	Return the IO main access port for this host.
  */
 kern_return_t
-host_get_io_master(host_t host, io_master_t * io_masterp)
+host_get_io_main(host_t host, io_main_t * io_mainp)
 {
 	if (host == HOST_NULL) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
-	return host_get_io_master_port(host_priv_self(), io_masterp);
+	return host_get_io_main_port(host_priv_self(), io_mainp);
 }
 
 host_t
@@ -1370,12 +1534,6 @@ host_priv_self(void)
 	return &realhost;
 }
 
-host_security_t
-host_security_self(void)
-{
-	return &realhost;
-}
-
 kern_return_t
 host_set_atm_diagnostic_flag(host_t host, uint32_t diagnostic_flag)
 {
@@ -1383,7 +1541,7 @@ host_set_atm_diagnostic_flag(host_t host, uint32_t diagnostic_flag)
 		return KERN_INVALID_ARGUMENT;
 	}
 
-	if (!IOTaskHasEntitlement(current_task(), "com.apple.private.set-atm-diagnostic-flag")) {
+	if (!IOCurrentTaskHasEntitlement("com.apple.private.set-atm-diagnostic-flag")) {
 		return KERN_NO_ACCESS;
 	}
 
@@ -1404,10 +1562,11 @@ host_set_multiuser_config_flags(host_priv_t host_priv, uint32_t multiuser_config
 	}
 
 	/*
-	 * Always enforce that the multiuser bit is set
-	 * if a value is written to the commpage word.
+	 * multiuser bit is extensively used for sharedIpad mode.
+	 * Caller sets the sharedIPad or other mutiuser modes.
+	 * Any override during commpage setting is not suitable anymore.
 	 */
-	commpage_update_multiuser_config(multiuser_config | kIsMultiUserDevice);
+	commpage_update_multiuser_config(multiuser_config);
 	return KERN_SUCCESS;
 #else
 	(void)host_priv;

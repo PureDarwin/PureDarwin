@@ -82,21 +82,75 @@ struct label;
 #include <sys/queue.h>
 #include <os/base.h>
 
-/*
+/*!
+ * @struct ucred
+ *
+ * @brief
  * In-kernel credential structure.
  *
- * Note that this structure should not be used outside the kernel, nor should
- * it or copies of it be exported outside.
+ * @discussion
+ * Note that this structure should not be used outside the kernel,
+ * nor should it or copies of it be exported outside.
+ *
+ * A credential has a relatively simple lifetime, with 3 phases:
+ * 1. construction
+ * 2. publication
+ * 3. death
+ *
+ *
+ * Construction
+ * ~~~~~~~~~~~~
+ *
+ * The construction phase happens via various MACF hooks,
+ * typically with the "associate" or "update" suffix.
+ *
+ * During this phase, the credential structure is completely private,
+ * and can't be looked up. All "associate" and "update" callouts are
+ * made serially (so no locking is required for clients to ensure
+ * atomicity of updates) and keeping references on the cred is forbidden.
+ *
+ *
+ * Publication
+ * ~~~~~~~~~~~
+ *
+ * Once the credential has been constructed, it is being published
+ * on its owning structure (typically the proc) and added into
+ * a uniquing hash table.
+ *
+ * After this point, the credential becomes a refcounted immutable
+ * "value type" data structure. MACF clients which have set labels
+ * are not allowed to modify this label pointer anymore (though
+ * their label itself might be mutable or contain caches).
+ *
+ * It means that while a client holds a reference on a credential,
+ * it can consult labels without further synchronization or references.
+ *
+ *
+ * Death
+ * ~~~~~
+ *
+ * Credentials are managed under the smr_kauth_cred domain,
+ * and retired according to the <kern/smr.h> rules.
+ *
+ * Once it is safe for the credential to be freed,
+ * callbacks will clean up the resources the credential
+ * holds onto via the MACF cred_label_destroy() hook.
+ *
+ * It means that under an smr_kauth_cred critical section,
+ * clients can consult labels without further synchronization
+ * or references, even after the credential hit a "0" refcount.
+ *
+ *
+ * KPIs to interact with this data structure live in <sys/kauth.h>
  */
 struct ucred {
-	LIST_ENTRY(ucred)       cr_link; /* never modify this without KAUTH_CRED_HASH_LOCK */
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)
-	_Atomic u_long          cr_ref;  /* reference count */
-#elif defined(__cplusplus) && __cplusplus >= 201103L
-	_Atomic u_long          cr_ref;  /* reference count */
+#if BSD_KERNEL_PRIVATE
+	struct ucred_rw        *cr_rw;
+	void                   *cr_unused;
 #else
-	volatile u_long         cr_ref;  /* reference count */
+	LIST_ENTRY(ucred)       cr_link; /* never modify this without KAUTH_CRED_HASH_LOCK */
 #endif
+	u_long                  cr_ref;  /* reference count */
 
 	struct posix_cred {
 		/*
@@ -116,7 +170,7 @@ struct ucred {
 		uid_t   cr_gmuid;       /* UID for group membership purposes */
 		int     cr_flags;       /* flags on credential */
 	} cr_posix;
-	struct label    * OS_PTRAUTH_SIGNED_PTR("ucred.cr_label") cr_label;     /* MAC label */
+	struct label    * OS_PTRAUTH_SIGNED_PTR_AUTH_NULL("ucred.cr_label") cr_label;     /* MAC label */
 
 	/*
 	 * NOTE: If anything else (besides the flags)
@@ -163,10 +217,8 @@ struct xucred {
 #ifdef KERNEL
 #ifdef __APPLE_API_OBSOLETE
 __BEGIN_DECLS
-int             crcmp(kauth_cred_t cr1, kauth_cred_t cr2);
 int             suser(kauth_cred_t cred, u_short *acflag);
-int             set_security_token(struct proc * p);
-int             set_security_token_task_internal(struct proc *p, void *task);
+int             set_security_token(struct proc *p, struct ucred *cred);
 void            cru2x(kauth_cred_t cr, struct xucred *xcr);
 __END_DECLS
 #endif /* __APPLE_API_OBSOLETE */

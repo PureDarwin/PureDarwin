@@ -64,7 +64,7 @@ typedef size_t      vm_size_t;
 #include <IOKit/IOTypes.h>
 #endif
 
-#if __has_include(<MacTypes.h>)
+#if !defined(KERNEL) && __has_include(<MacTypes.h>)
     #include <MacTypes.h>
 #endif
 

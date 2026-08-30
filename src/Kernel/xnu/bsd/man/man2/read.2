@@ -32,7 +32,7 @@
 .\"     @(#)read.2	8.4 (Berkeley) 2/26/94
 .\" $FreeBSD: src/lib/libc/sys/read.2,v 1.9.2.6 2001/12/14 18:34:01 ru Exp $
 .\"
-.Dd February 26, 1994
+.Dd June 3, 2021
 .Dt READ 2
 .Os
 .Sh NAME
@@ -145,6 +145,15 @@ return the number of bytes actually read and placed in the buffer.
 The system guarantees to read the number of bytes requested if
 the descriptor references a normal file that has that many bytes left
 before the end-of-file, but in no other case.
+.Pp
+.Fn read
+and
+.Fn pread
+will fail if the parameter
+.Fa nbyte
+exceeds
+.Dv INT_MAX ,
+and they do not attempt a partial read.
 .Sh RETURN VALUES
 If successful, the
 number of bytes actually read is returned.
@@ -230,6 +239,21 @@ the server.
 The connection timed out while reading a remote file from a soft mounted NFS
 volume (see
 .Xr mount_nfs 8 ) .
+.\" ===========
+.It Bq Er ETIMEDOUT
+The file is a
+.Dq dataless
+file that requires materialization and materialization timed out or
+encountered some other temporary failure.
+.\" ===========
+.It Bq Er EDEADLK
+The file is a
+.Dq dataless
+file that requires materialization and the I/O policy of the current thread
+or process disallows dataless file materialization
+.Po see
+.Xr getiopolicy_np 3
+.Pc .
 .El
 .Pp
 .Fn pread
@@ -260,6 +284,20 @@ A read is attempted on an unconnected socket.
 .It Bq Er ETIMEDOUT
 A transmission timeout occurs
 during a read attempt on a socket.
+.El
+.Pp
+The
+.Fn read
+and
+.Fn pread
+call may also return the following error:
+.Bl -tag -width Er
+.\" ===========
+.It Bq Er EINVAL
+The value provided for
+.Fa nbyte
+exceeds
+.Dv INT_MAX .
 .El
 .Pp
 The

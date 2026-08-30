@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -101,9 +101,10 @@
 
 #if INET
 static struct in_addr *ah4_finaldst(struct mbuf *);
-#endif
 
-extern lck_mtx_t *sadb_mutex;
+static LCK_GRP_DECLARE(sadb_stat_mutex_grp, "sadb_stat");
+static LCK_MTX_DECLARE(sadb_stat_mutex, &sadb_stat_mutex_grp);
+#endif
 
 /*
  * compute AH header size.
@@ -115,7 +116,7 @@ ah_hdrsiz(struct ipsecrequest *isr)
 {
 	/* sanity check */
 	if (isr == NULL) {
-		panic("ah_hdrsiz: NULL was passed.\n");
+		panic("ah_hdrsiz: NULL was passed.");
 	}
 
 	if (isr->saidx.proto != IPPROTO_AH) {
@@ -359,11 +360,11 @@ ah4_output(struct mbuf *m, struct secasvar *sav)
 		ip = mtod(m, struct ip *);      /*just to make sure*/
 		ip->ip_dst.s_addr = dst.s_addr;
 	}
-	lck_mtx_lock(sadb_stat_mutex);
+	lck_mtx_lock(&sadb_stat_mutex);
 	ipsecstat.out_success++;
 	ipsecstat.out_ahhist[sav->alg_auth]++;
-	lck_mtx_unlock(sadb_stat_mutex);
-	key_sa_recordxfer(sav, m);
+	lck_mtx_unlock(&sadb_stat_mutex);
+	key_sa_recordxfer(sav, m->m_pkthdr.len);
 
 	return 0;
 }
@@ -538,7 +539,7 @@ ah6_output(struct mbuf *m, u_char *nexthdrp, struct mbuf *md,
 		m_freem(m);
 	} else {
 		IPSEC_STAT_INCREMENT(ipsec6stat.out_success);
-		key_sa_recordxfer(sav, m);
+		key_sa_recordxfer(sav, m->m_pkthdr.len);
 	}
 	IPSEC_STAT_INCREMENT(ipsec6stat.out_ahhist[sav->alg_auth]);
 

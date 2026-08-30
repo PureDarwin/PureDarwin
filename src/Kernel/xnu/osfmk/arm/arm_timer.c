@@ -80,9 +80,9 @@ timer_intr(__unused int inuser, __unused uint64_t iaddr)
 		cpu_data_ptr->idle_timer_deadline = 0x0ULL;
 		new_idle_timeout_ticks = 0x0ULL;
 
-		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_COMMON, MACHDBG_CODE(DBG_MACH_EXCP_DECI, 3) | DBG_FUNC_START, 0, 0, 0, 0, 0);
+		KDBG_RELEASE(DECR_PM_DEADLINE | DBG_FUNC_START);
 		cpu_data_ptr->idle_timer_notify(cpu_data_ptr->idle_timer_refcon, &new_idle_timeout_ticks);
-		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_COMMON, MACHDBG_CODE(DBG_MACH_EXCP_DECI, 3) | DBG_FUNC_END, 0, 0, 0, 0, 0);
+		KDBG_RELEASE(DECR_PM_DEADLINE | DBG_FUNC_END);
 
 		/* if a new idle timeout was requested set the new idle timer deadline */
 		if (new_idle_timeout_ticks != 0x0ULL) {
@@ -179,9 +179,7 @@ timer_resync_deadlines(void)
 
 		decr = setPop(deadline);
 
-		KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
-		    MACHDBG_CODE(DBG_MACH_EXCP_DECI, 1) | DBG_FUNC_NONE,
-		    decr, 2, 0, 0, 0);
+		KDBG_RELEASE(DECR_SET_DEADLINE | DBG_FUNC_NONE, decr, 2);
 	}
 	splx(s);
 }
@@ -193,12 +191,20 @@ timer_queue_expire_local(
 	rtclock_timer_t         *mytimer = &getCpuDatap()->rtclock_timer;
 	uint64_t                abstime;
 
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+	    DECR_TIMER_EXPIRE_LOCAL | DBG_FUNC_START,
+	    mytimer->deadline, 0, 0, 0, 0);
+
 	abstime = mach_absolute_time();
 	mytimer->has_expired = TRUE;
 	mytimer->deadline = timer_queue_expire(&mytimer->queue, abstime);
 	mytimer->has_expired = FALSE;
 
 	timer_resync_deadlines();
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+	    DECR_TIMER_EXPIRE_LOCAL | DBG_FUNC_END,
+	    mytimer->deadline, 0, 0, 0, 0);
 }
 
 boolean_t
@@ -221,7 +227,14 @@ timer_queue_assign(
 			timer_set_deadline(deadline);
 		}
 	} else {
-		queue = &cpu_datap(master_cpu)->rtclock_timer.queue;
+		/*
+		 * No timers should be armed by powered down CPUs, except
+		 * already badly behaved code in the hibernation path, and
+		 * that is running on the boot CPU.
+		 */
+		assert(ml_is_quiescing());
+
+		queue = &cpu_datap(boot_cpu_id)->rtclock_timer.queue;
 	}
 
 	return queue;

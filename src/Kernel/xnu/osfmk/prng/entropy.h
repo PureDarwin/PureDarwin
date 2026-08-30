@@ -30,6 +30,7 @@
 #define _PRNG_ENTROPY_H_
 
 #include <kern/kern_types.h>
+#include <kern/bits.h>
 #include <sys/cdefs.h>
 
 __BEGIN_DECLS
@@ -49,7 +50,7 @@ __BEGIN_DECLS
 typedef uint32_t entropy_sample_t;
 
 // Called during startup to initialize internal data structures.
-void entropy_init(void);
+void entropy_init(size_t seed_size, uint8_t *seed);
 
 // Called during hardware interrupts to collect entropy in per-CPU
 // structures.
@@ -61,8 +62,44 @@ void entropy_collect(void);
 // (e.g. health test failure).
 int32_t entropy_provide(size_t *entropy_size, void *entropy, void *arg);
 
-extern entropy_sample_t *entropy_analysis_buffer;
+// Called internally when entropy_provide() is called or when exporting
+// analysis entropy with the "kern.entropy.analysis.filter" sysctl. This
+// function applies a filter to input entropy and returns a bitmap indicating
+// whether a particular sample is counted. The return value is the count of
+// samples that passed the filter. "filter" may be NULL in which case only
+// the number of unfiltered samples that passed the filter will be calculated.
+//
+// Each bit in the bitmap_t "filter" indicates whether a sample
+// is kept (when the bit is set) or filtered (when the bit is not set).
+// In other words, "bitmap_test(filter, n)" indicates whether
+// "sample[n]" is kept.
+uint32_t entropy_filter(uint32_t sample_count, entropy_sample_t *samples, uint32_t filter_count, bitmap_t *filter);
+
+#if (DEVELOPMENT || DEBUG)
+#define ENTROPY_ANALYSIS_SUPPORTED 1
+#else
+#define ENTROPY_ANALYSIS_SUPPORTED 0
+#endif
+
+#define ENTROPY_ANALYSIS_BOOTARG "entropy-analysis-sample-count"
+
+#if ENTROPY_ANALYSIS_SUPPORTED
+// Whether analysis is enabled via the "ENTROPY_ANALYSIS_BOOTARG" boot-arg
+extern int entropy_analysis_enabled;
+
+// The size (in bytes) of the filter
+extern uint32_t entropy_analysis_filter_size;
+
+// The size (in bytes) of the entropy analysis buffer
 extern uint32_t entropy_analysis_buffer_size;
+// The maximum number of entropy_sample_t elements in the analysis buffer
+extern uint32_t entropy_analysis_max_sample_count;
+
+// The number of entropy_sample_t elements in the analysis buffer
+extern uint32_t entropy_analysis_sample_count;
+
+extern entropy_sample_t *entropy_analysis_buffer;
+#endif  // ENTROPY_ANALYSIS_SUPPORTED
 
 typedef struct entropy_health_stats {
 	// A total count of times the test has been reset with a new
@@ -84,6 +121,14 @@ typedef struct entropy_health_stats {
 extern int entropy_health_startup_done;
 extern entropy_health_stats_t entropy_health_rct_stats;
 extern entropy_health_stats_t entropy_health_apt_stats;
+
+// The total number of samples processed
+extern uint64_t entropy_filter_total_sample_count;
+// The number of samples that passed the filter
+extern uint64_t entropy_filter_accepted_sample_count;
+// The number of samples that were rejected by the filters
+extern uint64_t entropy_filter_rejected_sample_count;
+
 
 __END_DECLS
 

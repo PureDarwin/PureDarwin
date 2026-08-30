@@ -36,7 +36,9 @@
 #include <sys/proc.h>
 #include <sys/proc_internal.h>
 #include <sys/kauth.h>
+
 #include <kern/task.h>
+#include <kern/telemetry.h>
 
 #include <security/mac_framework.h>
 #include <security/mac_internal.h>
@@ -85,18 +87,10 @@ mac_task_check_expose_task(struct task *task, mach_task_flavor_t flavor)
 	if (p == NULL) {
 		return ESRCH;
 	}
-	struct proc_ident pident = proc_ident(p);
+	struct proc_ident pident = proc_ident_with_policy(p, IDENT_VALIDATION_PROC_EXACT);
 
 	struct ucred *cred = kauth_cred_get();
 	proc_rele(p);
-
-	/* Also call the old hook for compatability, deprecating in rdar://66356944. */
-	if (flavor == TASK_FLAVOR_CONTROL) {
-		MAC_CHECK(proc_check_expose_task, cred, &pident);
-		if (error) {
-			return error;
-		}
-	}
 
 	MAC_CHECK(proc_check_expose_task_with_flavor, cred, &pident, flavor);
 
@@ -107,21 +101,27 @@ int
 mac_task_check_task_id_token_get_task(struct task *task, mach_task_flavor_t flavor)
 {
 	int error;
+	struct proc *target_proc = NULL;
+	struct proc_ident *pidentp = NULL;
+	struct proc_ident pident;
 
 	assert(flavor <= TASK_FLAVOR_NAME);
 
-	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL) {
-		return ESRCH;
+	if (!task_is_a_corpse(task)) {
+		/* only live task has proc */
+		target_proc = mac_task_get_proc(task);
+		if (target_proc == NULL) {
+			return ESRCH;
+		}
+		pident = proc_ident_with_policy(target_proc, IDENT_VALIDATION_PROC_EXACT);
+		pidentp = &pident;
+		proc_rele(target_proc);
 	}
-	struct proc_ident pident = proc_ident(p);
 
-	proc_rele(p);
+	/* pidentp is NULL for corpse task */
+	MAC_CHECK(proc_check_task_id_token_get_task,
+	    current_cached_proc_cred(PROC_NULL), pidentp, flavor);
 
-	p = current_proc();
-	kauth_cred_t cred = kauth_cred_proc_ref(p);
-	MAC_CHECK(proc_check_task_id_token_get_task, cred, &pident, flavor);
-	kauth_cred_unref(&cred);
 	return error;
 }
 
@@ -129,45 +129,185 @@ int
 mac_task_check_get_movable_control_port(void)
 {
 	int error;
-	struct proc *p = current_proc();
 
-	kauth_cred_t cred = kauth_cred_proc_ref(p);
-	MAC_CHECK(proc_check_get_movable_control_port, cred);
-	kauth_cred_unref(&cred);
+	MAC_CHECK(proc_check_get_movable_control_port,
+	    current_cached_proc_cred(PROC_NULL));
+
+	return error;
+}
+
+/*
+ * This function should only be called from spawn/fork context because,
+ * in general, it is not allowed to reference the proc from get_bsdtask_info
+ * if we only have a task ref. In spawn context, however, we have reference
+ * to both task and proc.
+ */
+int
+mac_task_check_get_movable_control_port_during_spawn(struct task *new_task)
+{
+	int error;
+	kauth_cred_t p_cred;
+
+	p_cred = kauth_cred_proc_ref(get_bsdtask_info(new_task));
+
+	MAC_CHECK(proc_check_get_movable_control_port, p_cred);
+
+	kauth_cred_unref(&p_cred);
+
 	return error;
 }
 
 int
 mac_task_check_set_host_special_port(struct task *task, int id, struct ipc_port *port)
 {
+#pragma unused(task)
 	int error;
 
-	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL) {
-		return ESRCH;
-	}
+	assert(task == current_task());
+	MAC_CHECK(proc_check_set_host_special_port,
+	    current_cached_proc_cred(PROC_NULL), id, port);
 
-	kauth_cred_t cred = kauth_cred_proc_ref(p);
-	MAC_CHECK(proc_check_set_host_special_port, cred, id, port);
-	kauth_cred_unref(&cred);
-	proc_rele(p);
 	return error;
 }
 
 int
 mac_task_check_set_host_exception_port(struct task *task, unsigned int exception)
 {
+#pragma unused(task)
 	int error;
 
-	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL) {
+	assert(task == current_task());
+	MAC_CHECK(proc_check_set_host_exception_port,
+	    current_cached_proc_cred(PROC_NULL), exception);
+
+	return error;
+}
+
+int
+mac_task_check_get_task_special_port(struct task *task, struct task *target, int which)
+{
+#pragma unused(task)
+	int error;
+	struct proc *target_proc = NULL;
+	struct proc_ident *pidentp = NULL;
+	struct proc_ident pident;
+
+	assert(task == current_task());
+
+	if (!task_is_a_corpse(target)) {
+		/* only live task has proc */
+		target_proc = mac_task_get_proc(target);
+		if (target_proc == NULL) {
+			return ESRCH;
+		}
+		pident = proc_ident_with_policy(target_proc, IDENT_VALIDATION_PROC_EXACT);
+		pidentp = &pident;
+		proc_rele(target_proc);
+	}
+
+	/* pidentp is NULL for corpse task */
+	MAC_CHECK(proc_check_get_task_special_port,
+	    current_cached_proc_cred(PROC_NULL), pidentp, which);
+
+	return error;
+}
+
+int
+mac_task_check_set_task_special_port(struct task *task, struct task *target, int which, struct ipc_port *port)
+{
+#pragma unused(task)
+	int error;
+
+	assert(task == current_task());
+
+	/* disallow setting task special ports for corpse */
+	if (task_is_a_corpse(target)) {
+		return EPERM;
+	}
+
+	struct proc *targetp = mac_task_get_proc(target);
+	if (targetp == NULL) {
 		return ESRCH;
 	}
 
-	kauth_cred_t cred = kauth_cred_proc_ref(p);
-	MAC_CHECK(proc_check_set_host_exception_port, cred, exception);
-	kauth_cred_unref(&cred);
-	proc_rele(p);
+	struct proc_ident pident = proc_ident_with_policy(targetp, IDENT_VALIDATION_PROC_EXACT);
+	proc_rele(targetp);
+
+	MAC_CHECK(proc_check_set_task_special_port,
+	    current_cached_proc_cred(PROC_NULL), &pident, which, port);
+
+	return error;
+}
+
+int
+mac_task_check_set_task_exception_ports(struct task *task, struct task *target, unsigned int exception_mask, int new_behavior)
+{
+#pragma unused(task)
+	int error = 0;
+	int exception;
+	kauth_cred_t cred = current_cached_proc_cred(PROC_NULL);
+
+	assert(task == current_task());
+
+	/* disallow setting task exception ports for corpse */
+	if (task_is_a_corpse(target)) {
+		return EPERM;
+	}
+
+	struct proc *targetp = mac_task_get_proc(target);
+	if (targetp == NULL) {
+		return ESRCH;
+	}
+
+	struct proc_ident pident = proc_ident_with_policy(targetp, IDENT_VALIDATION_PROC_EXACT);
+	proc_rele(targetp);
+
+	for (exception = FIRST_EXCEPTION; exception < EXC_TYPES_COUNT; exception++) {
+		if (exception_mask & (1 << exception)) {
+			MAC_CHECK(proc_check_set_task_exception_port,
+			    cred, &pident, exception, new_behavior);
+			if (error) {
+				break;
+			}
+		}
+	}
+
+	return error;
+}
+
+int
+mac_task_check_set_thread_exception_ports(struct task *task, struct task *target, unsigned int exception_mask, int new_behavior)
+{
+#pragma unused(task)
+	int error = 0;
+	int exception;
+	kauth_cred_t cred = current_cached_proc_cred(PROC_NULL);
+
+	assert(task == current_task());
+
+	/* disallow setting thread exception ports for corpse */
+	if (task_is_a_corpse(target)) {
+		return EPERM;
+	}
+
+	struct proc *targetp = mac_task_get_proc(target);
+	if (targetp == NULL) {
+		return ESRCH;
+	}
+
+	struct proc_ident pident = proc_ident_with_policy(targetp, IDENT_VALIDATION_PROC_EXACT);
+	proc_rele(targetp);
+
+	for (exception = FIRST_EXCEPTION; exception < EXC_TYPES_COUNT; exception++) {
+		if (exception_mask & (1 << exception)) {
+			MAC_CHECK(proc_check_set_thread_exception_port,
+			    cred, &pident, exception, new_behavior);
+			if (error) {
+				break;
+			}
+		}
+	}
+
 	return error;
 }
 
@@ -175,36 +315,33 @@ int
 mac_task_check_dyld_process_info_notify_register(void)
 {
 	int error;
-	struct proc *p = current_proc();
 
-	kauth_cred_t cred = kauth_cred_proc_ref(p);
-	MAC_CHECK(proc_check_dyld_process_info_notify_register, cred);
-	kauth_cred_unref(&cred);
+	MAC_CHECK(proc_check_dyld_process_info_notify_register,
+	    current_cached_proc_cred(PROC_NULL));
+
 	return error;
 }
 
 int
 mac_task_check_set_host_exception_ports(struct task *task, unsigned int exception_mask)
 {
+#pragma unused(task)
 	int error = 0;
 	int exception;
+	kauth_cred_t cred = current_cached_proc_cred(PROC_NULL);
 
-	struct proc *p = mac_task_get_proc(task);
-	if (p == NULL) {
-		return ESRCH;
-	}
+	assert(task == current_task());
 
-	kauth_cred_t cred = kauth_cred_proc_ref(p);
 	for (exception = FIRST_EXCEPTION; exception < EXC_TYPES_COUNT; exception++) {
 		if (exception_mask & (1 << exception)) {
-			MAC_CHECK(proc_check_set_host_exception_port, cred, exception);
+			MAC_CHECK(proc_check_set_host_exception_port,
+			    cred, exception);
 			if (error) {
 				break;
 			}
 		}
 	}
-	kauth_cred_unref(&cred);
-	proc_rele(p);
+
 	return error;
 }
 
@@ -212,6 +349,12 @@ void
 mac_thread_userret(struct thread *td)
 {
 	MAC_PERFORM(thread_userret, td);
+}
+
+void
+mac_thread_telemetry(struct thread *t, int err, void *data, size_t length)
+{
+	MAC_PERFORM(thread_telemetry, t, err, data, length);
 }
 
 void
@@ -239,22 +382,28 @@ mac_proc_notify_exec_complete(struct proc *proc)
  * crash labels).
  */
 
+struct label *
+mac_exc_label(struct exception_action *action)
+{
+	return mac_label_verify(&action->label);
+}
+
+void
+mac_exc_set_label(struct exception_action *action, struct label *label)
+{
+	action->label = label;
+}
+
 // Label allocation and deallocation, may sleep.
 
 struct label *
-mac_exc_create_label(void)
+mac_exc_create_label(struct exception_action *action)
 {
-	struct label *label = mac_labelzone_alloc(MAC_WAITOK);
-
-	if (label == NULL) {
-		return NULL;
-	}
-
-	// Policy initialization of the label, typically performs allocations as well.
-	// (Unless the policy's full data really fits into a pointer size.)
-	MAC_PERFORM(exc_action_label_init, label);
-
-	return label;
+	return mac_labelzone_alloc_for_owner(action ? &action->label : NULL, MAC_WAITOK, ^(struct label *label) {
+		// Policy initialization of the label, typically performs allocations as well.
+		// (Unless the policy's full data really fits into a pointer size.)
+		MAC_PERFORM(exc_action_label_init, label);
+	});
 }
 
 void
@@ -269,15 +418,15 @@ mac_exc_free_label(struct label *label)
 void
 mac_exc_associate_action_label(struct exception_action *action, struct label *label)
 {
-	action->label = label;
-	MAC_PERFORM(exc_action_label_associate, action, action->label);
+	mac_exc_set_label(action, label);
+	MAC_PERFORM(exc_action_label_associate, action, mac_exc_label(action));
 }
 
 void
 mac_exc_free_action_label(struct exception_action *action)
 {
-	mac_exc_free_label(action->label);
-	action->label = NULL;
+	mac_exc_free_label(mac_exc_label(action));
+	mac_exc_set_label(action, NULL);
 }
 
 // Action label update and inheritance, may NOT sleep and must be quick.
@@ -288,7 +437,7 @@ mac_exc_update_action_label(struct exception_action *action,
 {
 	int error;
 
-	MAC_CHECK(exc_action_label_update, action, action->label, newlabel);
+	MAC_CHECK(exc_action_label_update, action, mac_exc_label(action), newlabel);
 
 	return error;
 }
@@ -297,7 +446,7 @@ int
 mac_exc_inherit_action_label(struct exception_action *parent,
     struct exception_action *child)
 {
-	return mac_exc_update_action_label(child, parent->label);
+	return mac_exc_update_action_label(child, mac_exc_label(parent));
 }
 
 int
@@ -319,7 +468,7 @@ mac_exc_update_task_crash_label(struct task *task, struct label *label)
 struct label *
 mac_exc_create_label_for_proc(struct proc *proc)
 {
-	struct label *label = mac_exc_create_label();
+	struct label *label = mac_exc_create_label(NULL);
 	MAC_PERFORM(exc_action_label_populate, label, proc);
 	return label;
 }
@@ -354,11 +503,17 @@ mac_exc_action_check_exception_send(struct task *victim_task, struct exception_a
 		return EPERM;
 	}
 
-	MAC_CHECK(exc_action_check_exception_send, label, action, action->label);
+	MAC_CHECK(exc_action_check_exception_send, label, action, mac_exc_label(action));
 
 	if (bsd_label != NULL) {
 		mac_exc_free_label(bsd_label);
 	}
 
 	return error;
+}
+
+int
+mac_schedule_telemetry(void)
+{
+	return telemetry_macf_mark_curthread();
 }

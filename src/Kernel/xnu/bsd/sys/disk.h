@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2014 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2025 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -31,10 +31,6 @@
 
 #include <stdint.h>
 #include <sys/ioctl.h>
-
-#ifdef XNU_KERNEL_PRIVATE
-#include <mach/boolean.h>
-#endif /* XNU_KERNEL_PRIVATE */
 
 /*
  * Definitions
@@ -180,15 +176,6 @@ typedef struct{
 #define DK_LOCATION_INTERNAL                   0x00000000
 #define DK_LOCATION_EXTERNAL                   0x00000001
 
-#ifdef KERNEL
-#ifdef PRIVATE
-
-/* Definitions of option bits for dk_unmap_t */
-#define _DK_UNMAP_INITIALIZE                   0x00000100
-
-#endif /* PRIVATE */
-#endif /* KERNEL */
-
 #define DKIOCEJECT                            _IO('d', 21)
 #define DKIOCSYNCHRONIZE                      _IOW('d', 22, dk_synchronize_t)
 
@@ -279,77 +266,13 @@ typedef struct{
 #define DKIOCGETENCRYPTIONTYPE                _IOR('d', 86, uint32_t)
 #define DKIOCISLOWPOWERMODE                   _IOR('d', 87, uint32_t)
 #define DKIOCGETIOMINSATURATIONBYTECOUNT      _IOR('d', 88, uint32_t)
-
-#ifdef XNU_KERNEL_PRIVATE
-typedef struct{
-	boolean_t mi_mdev; /* Is this a memdev device? */
-	boolean_t mi_phys; /* Physical memory? */
-	uint32_t mi_base; /* Base page number of the device? */
-	uint64_t mi_size; /* Size of the device (in ) */
-} dk_memdev_info_t;
-
-typedef dk_memdev_info_t memdev_info_t;
-
-#define DKIOCGETMEMDEVINFO                    _IOR('d', 90, dk_memdev_info_t)
-#endif /* XNU_KERNEL_PRIVATE */
-#ifdef PRIVATE
-typedef struct _dk_cs_pin {
-	dk_extent_t     cp_extent;
-	int64_t         cp_flags;
-} _dk_cs_pin_t;
-/* The following are modifiers to _DKIOCCSPINEXTENT/cp_flags operation */
-#define _DKIOCCSPINTOFASTMEDIA          (0)                     /* Pin extent to the fast (SSD) media             */
-#define _DKIOCCSPINFORHIBERNATION       (1 << 0)        /* Pin of hibernation file, content not preserved */
-#define _DKIOCCSPINDISCARDBLACKLIST     (1 << 1)        /* Hibernation complete/error, stop blacklisting  */
-#define _DKIOCCSPINTOSLOWMEDIA          (1 << 2)        /* Pin extent to the slow (HDD) media             */
-#define _DKIOCCSTEMPORARYPIN            (1 << 3)        /* Relocate, but do not pin, to indicated media   */
-#define _DKIOCCSHIBERNATEIMGSIZE        (1 << 4)        /* Anticipate/Max size of the upcoming hibernate  */
-#define _DKIOCCSPINFORSWAPFILE          (1 << 5)        /* Pin of swap file, content not preserved        */
-
-#define _DKIOCCSSETLVNAME                     _IOW('d', 198, char[256])
-#define _DKIOCCSPINEXTENT                     _IOW('d', 199, _dk_cs_pin_t)
-#define _DKIOCCSUNPINEXTENT                   _IOW('d', 200, _dk_cs_pin_t)
-#define _DKIOCGETMIGRATIONUNITBYTESIZE        _IOR('d', 201, uint32_t)
-
-typedef struct _dk_cs_map {
-	dk_extent_t     cm_extent;
-	uint64_t        cm_bytes_mapped;
-} _dk_cs_map_t;
-
-typedef struct _dk_cs_unmap {
-	dk_extent_t                  *extents;
-	uint32_t                     extentsCount;
-	uint32_t                     options;
-} _dk_cs_unmap_t;
-
-#define _DKIOCCSMAP                           _IOWR('d', 202, _dk_cs_map_t)
-// No longer used: _DKIOCCSSETFSVNODE (203) & _DKIOCCSGETFREEBYTES (204)
-#define _DKIOCCSUNMAP                         _IOWR('d', 205, _dk_cs_unmap_t)
-
-typedef enum {
-	DK_APFS_ONE_DEVICE = 1,
-	DK_APFS_FUSION
-} dk_apfs_flavour_t;
-
-#define DKIOCGETAPFSFLAVOUR     _IOR('d', 91, dk_apfs_flavour_t)
-
-// Extent's offset and length returned in bytes
-typedef struct dk_apfs_wbc_range {
-	dev_t dev;              // Physical device for extents
-	uint32_t count;         // Number of extents
-	dk_extent_t extents[2]; // Addresses are relative to device we return
-} dk_apfs_wbc_range_t;
-
-#define DKIOCAPFSGETWBCRANGE           _IOR('d', 92, dk_apfs_wbc_range_t)
-#define DKIOCAPFSRELEASEWBCRANGE       _IO('d', 93)
-
-#define DKIOCGETMAXSWAPWRITE           _IOR('d', 94, uint64_t)
-
-#endif /* PRIVATE */
 #endif /* KERNEL */
 
 #ifdef PRIVATE
-#define _DKIOCSETSTATIC                       _IO('d', 84)
+/* See disk_private.h for additional ioctls */
+#ifndef MODULES_SUPPORTED
+#include <sys/disk_private.h>
+#endif /* !MODULES_SUPPORTED */
 #endif /* PRIVATE */
 
 #endif  /* _SYS_DISK_H_ */

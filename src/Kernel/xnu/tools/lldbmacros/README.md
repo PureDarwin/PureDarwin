@@ -19,6 +19,7 @@ Table of Contents
           i. Reading a exception backtrace
          ii. Loading custom or local lldbmacros and operating_system plugin
         iii. Adding debug related 'printf's
+         iv. Using VSCode's Python debugger with debugpy
 
 A. How to use lldb for kernel debugging
 ========================================
@@ -28,7 +29,8 @@ lldb can be used for kernel debugging the same way as gdb. The simplest way is t
     File: ~/.lldbinit
     settings set target.load-script-from-symbol-file true
 
-Now lldb will be ready to connect over kdp-remote '\<hostname:port>' or 'gdb-remote \<hostname:port>'. In case using a core file please do 'file --core /path/to/corefile'
+Now lldb will be ready to connect over kdp-remote '\<hostname:port>' or 'gdb-remote \<hostname:port>'.
+If you need to debug a core file, you can add '--core /path/to/corefile' to your lldb command (e.g. `xcrun --sdk macosx.internal lldb --core /path/to/corefile`)
 
 Following are detailed steps on how to debug a panic'ed / NMI'ed machine (For the curious souls).
 
@@ -97,7 +99,7 @@ The xnu script in xnu/tools/lldbmacros provides the following:
 
   * Ability to register test cases for macros (see doc strings for @xnudebug_test).
 
-The file layout is like following
+The file layout is as follows
 
     xnu/
      |-tools/
@@ -108,7 +110,11 @@ The file layout is like following
          |-xnudefines.py
          |-utils.py
          |-process.py  # files containing commands/summaries code for each subsystem
+         |-memory.py
          |-...
+       |-tests/
+         |-lldb_tests/          # unit tests for macros, using lldb scripted process to simulate debugging a core file
+         |-standalone_tests/    # standalone tests for functionality that's seperate from lldb/macros (but used by them)
 
 
 The lldbmacros directory has a Makefile that follows the build process for xnu. This packages lldbmacros scripts into the dSYM of each kernel build. This helps in rev-locking the lldb commands with changes in kernel sources.
@@ -391,21 +397,36 @@ Please search and look around the code for common util functions and paradigm
 
   * If you are developing a command for structure that is different based on development/release kernels please use "hasattr()" functionality to conditionalize referencing #ifdef'ed fields in structure. See example in def GetTaskSummary(task) in process.py
 
+  * `ArgumentStringToInt()` is recommended for argument parsing, as it supports binary/octal/decimal/hexadecimal literal
+    representations, as well as lldb expressions, which allows for convenient for usage e.g. `showmapvme foo_map_ptr`
+
 
 F. Development and Debugging on lldb kernel debugging platform.
 ===============================================================
 
 i. Reading a exception backtrace
 --------------------------------
-In case of an error the lldbmacros may print out an exception backtrace and halt immediately. The backtrace is very verbose and may be confusing. The important thing is to isolate possible causes of failure, and eventually filing a bug with kernel team. Following are some common ways where you may see an exception instead of your expected result.
+In case of an error the lldbmacros may print out an exception backtrace and halt immediately. The important thing is to
+isolate possible causes of failure, and eventually filing a bug with kernel team. Following are some common ways where
+you may see an exception instead of your expected result.
 
-  * The lldbmacros cannot divine the type of memory by inspection. If a wrong pointer is passed from commandline then, the command code will try to read and show some results. It may still be junk or plain erronous. Please make sure your command arguments are correct.
-    For example: a common mistake is to pass task address to showactstack. In such a case lldb command may fail and show you a confusing backtrace.
+  * The lldbmacros cannot divine the type of memory by inspection. If a wrong pointer is passed from commandline then,
+    the command code will try to read and show some results. It may still be junk or plain erronous. Please make sure
+	your command arguments are correct. For example: a common mistake is to pass task address to showactstack. In such
+	a case lldb command may fail and show you a confusing backtrace.
 
- * Kernel debugging is particularly tricky. Many parts of memory may not be readable. There could be failure in network, debugging protocol or just plain bad memory. In such a case please try to see if you can examine memory for the object you are trying to access.
+  * Kernel debugging is particularly tricky. Many parts of memory may not be readable. There could be failure in network,
+    debugging protocol or just plain bad memory. In such a case please try to see if you can examine memory for the object
+	you are trying to access.
 
- * In case of memory corruption, the lldbmacros may have followed wrong pointer dereferencing. This might lead to failure and a exception to be thrown.
+  * In case of memory corruption, the lldbmacros may have followed wrong pointer dereferencing. This might lead to failure
+    and a exception to be thrown.
 
+There are few more options that you can use when a macro is raising exceptions:
+
+  * Add --debug to your macro invocation to provide more detailed/verbose exception output.
+  * Add --radar to generate tar.gz archive when filling a new radar for kernel team.
+  * Add --pdb to attach pdb to exception stack for debugging.
 
 ii. Loading custom or local lldbmacros and operating_system plugin
 ------------------------------------------------------------------
@@ -436,4 +457,45 @@ The xnu debug framework provides a utility function (debuglog) in utils.py. Plea
      - (lldb) xnudebug debug
        Enabled debug logging.
 
+iv. Using VSCode's Python debugger with debugpy
+---------------------------------------------
 
+Install debugpy with:
+
+```sh
+> pip3 install --user debugpy
+```
+
+Add the following to `.vscode/launch.json`:
+```
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Attach Python debugger to XNU lldb macros",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/tools/lldbmacros",
+                    "remoteRoot": "${workspaceFolder}/tools/lldbmacros"
+                }
+            ],
+            "justMyCode": false
+        }
+    ]
+}
+```
+
+Then, run the scripts:
+```sh
+> export DEBUG_LLDB_PYTHON=1
+> lldb -c <corefile>
+(lldb) command script import <xnu/lldbmacros/xnu.py> # if you don't automatically load the scripts
+```
+
+The debug scripts will pause to give you a chance to "Debug: Start Debugging" in VSCode. Then breakpoints, watchpoints, and the debug console all work.

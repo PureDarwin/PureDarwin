@@ -81,7 +81,7 @@
 
 int(**fifo_vnodeop_p)(void *);
 const struct vnodeopv_entry_desc fifo_vnodeop_entries[] = {
-	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)vn_default_error },
+	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)(void (*)(void))vn_default_error },
 	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC)fifo_lookup },            /* lookup */
 	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC)err_create },             /* create */
 	{ .opve_op = &vnop_mknod_desc, .opve_impl = (VOPFUNC)err_mknod },               /* mknod */
@@ -122,6 +122,16 @@ const struct vnodeopv_entry_desc fifo_vnodeop_entries[] = {
 const struct vnodeopv_desc fifo_vnodeop_opv_desc =
 { .opv_desc_vector_p = &fifo_vnodeop_p, .opv_desc_ops = fifo_vnodeop_entries };
 
+static const struct fileops fifoops = {
+	.fo_type     = DTYPE_SOCKET,
+	.fo_read     = NULL,
+	.fo_write    = NULL,
+	.fo_ioctl    = NULL,
+	.fo_select   = NULL,
+	.fo_close    = NULL,
+	.fo_drain    = NULL,
+	.fo_kqfilter = NULL,
+};
 /*
  * Trivial lookup routine that always fails.
  */
@@ -145,6 +155,10 @@ fifo_open(struct vnop_open_args *ap)
 	struct fifoinfo *fip;
 	struct socket *rso, *wso;
 	int error;
+
+	if ((ap->a_mode & (FREAD | FWRITE)) == 0) {
+		ap->a_mode |= FREAD;
+	}
 
 	vnode_lock(vp);
 
@@ -361,15 +375,19 @@ fifo_write(struct vnop_write_args *ap)
 {
 	struct socket *wso = ap->a_vp->v_fifoinfo->fi_writesock;
 	int error;
+	user_ssize_t len;
 
 #if DIAGNOSTIC
 	if (ap->a_uio->uio_rw != UIO_WRITE) {
 		panic("fifo_write mode");
 	}
 #endif
+
+	len = uio_resid(ap->a_uio);
 	error = sosend(wso, (struct sockaddr *)0, ap->a_uio, NULL,
 	    (struct mbuf *)0, (ap->a_ioflag & IO_NDELAY) ? MSG_NBIO : 0);
-	if (error == 0) {
+	/* Also post kevent in the case of partial write due to full fifo buffer. */
+	if (error == 0 || (uio_resid(ap->a_uio) != len && error == EWOULDBLOCK)) {
 		lock_vnode_and_post(ap->a_vp, 0);
 	}
 
@@ -390,16 +408,20 @@ fifo_ioctl(struct vnop_ioctl_args *ap)
 		return 0;
 	}
 	bzero(&filetmp, sizeof(struct fileproc));
+	bzero(&filefg, sizeof(struct fileglob));
+
+	filefg.fg_ops = &fifoops;
 	filetmp.fp_glob = &filefg;
+
 	if (ap->a_fflag & FREAD) {
-		filetmp.fp_glob->fg_data = (caddr_t)ap->a_vp->v_fifoinfo->fi_readsock;
+		fg_set_data(filetmp.fp_glob, ap->a_vp->v_fifoinfo->fi_readsock);
 		error = soo_ioctl(&filetmp, ap->a_command, ap->a_data, ap->a_context);
 		if (error) {
 			return error;
 		}
 	}
 	if (ap->a_fflag & FWRITE) {
-		filetmp.fp_glob->fg_data = (caddr_t)ap->a_vp->v_fifoinfo->fi_writesock;
+		fg_set_data(filetmp.fp_glob, ap->a_vp->v_fifoinfo->fi_writesock);
 		error = soo_ioctl(&filetmp, ap->a_command, ap->a_data, ap->a_context);
 		if (error) {
 			return error;
@@ -416,16 +438,20 @@ fifo_select(struct vnop_select_args *ap)
 	int ready;
 
 	bzero(&filetmp, sizeof(struct fileproc));
+	bzero(&filefg, sizeof(struct fileglob));
+
+	filefg.fg_ops = &fifoops;
 	filetmp.fp_glob = &filefg;
+
 	if (ap->a_which & FREAD) {
-		filetmp.fp_glob->fg_data = (caddr_t)ap->a_vp->v_fifoinfo->fi_readsock;
+		fg_set_data(filetmp.fp_glob, ap->a_vp->v_fifoinfo->fi_readsock);
 		ready = soo_select(&filetmp, ap->a_which, ap->a_wql, ap->a_context);
 		if (ready) {
 			return ready;
 		}
 	}
 	if (ap->a_which & FWRITE) {
-		filetmp.fp_glob->fg_data = (caddr_t)ap->a_vp->v_fifoinfo->fi_writesock;
+		fg_set_data(filetmp.fp_glob, ap->a_vp->v_fifoinfo->fi_writesock);
 		ready = soo_select(&filetmp, ap->a_which, ap->a_wql, ap->a_context);
 		if (ready) {
 			return ready;
@@ -457,6 +483,10 @@ fifo_close_internal(vnode_t vp, int fflag, __unused vfs_context_t context, int l
 	int error1, error2;
 	struct socket *rso;
 	struct socket *wso;
+
+	if ((fflag & (FREAD | FWRITE)) == 0) {
+		fflag |= FREAD;
+	}
 
 	if (!locked) {
 		vnode_lock(vp);

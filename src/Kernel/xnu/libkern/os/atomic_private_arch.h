@@ -67,7 +67,7 @@
 #define os_atomic_clear_exclusive()  __builtin_arm_clrex()
 
 #define os_atomic_load_exclusive(p, m)  ({ \
-	__auto_type _r = __builtin_arm_ldrex(os_cast_to_nonatomic_pointer(p)); \
+	os_atomic_basetypeof(p) _r = __builtin_arm_ldrex(os_cast_to_nonatomic_pointer(p)); \
 	_os_memory_fence_after_atomic(m); \
 	_os_compiler_barrier_after_atomic(m); \
 	_r; \
@@ -78,8 +78,6 @@
 	_os_memory_fence_before_atomic(m); \
 	!__builtin_arm_strex(v, os_cast_to_nonatomic_pointer(p)); \
 })
-
-#if !OS_ATOMIC_HAS_STARVATION_FREE_RMW && !OS_ATOMIC_CONFIG_STARVATION_FREE_ONLY
 
 /*
  * armv7 override of os_atomic_rmw_loop
@@ -114,8 +112,6 @@
 #undef os_atomic_rmw_loop_give_up
 #define os_atomic_rmw_loop_give_up(...) \
 	({ os_atomic_clear_exclusive(); __VA_ARGS__; break; })
-
-#endif // !OS_ATOMIC_HAS_STARVATION_FREE_RMW && !OS_ATOMIC_CONFIG_STARVATION_FREE_ONLY
 
 #endif // __arm__
 
@@ -162,7 +158,7 @@
 #define os_atomic_clear_exclusive()  __builtin_arm_clrex()
 
 #define os_atomic_load_exclusive(p, m)  ({ \
-	__auto_type _r = _os_atomic_mo_has_acquire(_os_atomic_mo_##m##_smp) \
+	os_atomic_basetypeof(p) _r = _os_atomic_mo_has_acquire(_os_atomic_mo_##m##_smp) \
 	    ? __builtin_arm_ldaex(os_cast_to_nonatomic_pointer(p)) \
 	    : __builtin_arm_ldrex(os_cast_to_nonatomic_pointer(p)); \
 	_os_compiler_barrier_after_atomic(m); \
@@ -176,7 +172,7 @@
 	        : !__builtin_arm_strex(v, os_cast_to_nonatomic_pointer(p))); \
 })
 
-#if !OS_ATOMIC_HAS_STARVATION_FREE_RMW && !OS_ATOMIC_CONFIG_STARVATION_FREE_ONLY
+#if OS_ATOMIC_USE_LLSC
 
 /*
  * arm64 (without armv81 atomics) override of os_atomic_rmw_loop
@@ -212,7 +208,7 @@
 #define os_atomic_rmw_loop_give_up(...) \
 	({ os_atomic_clear_exclusive(); __VA_ARGS__; break; })
 
-#endif // !OS_ATOMIC_HAS_STARVATION_FREE_RMW && !OS_ATOMIC_CONFIG_STARVATION_FREE_ONLY
+#endif // OS_ATOMIC_USE_LLSC
 
 #endif // __arm64__
 

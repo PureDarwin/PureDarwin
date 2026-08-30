@@ -17,9 +17,6 @@ INSTINC_SUBDIRS_X86_64 =	\
 INSTINC_SUBDIRS_X86_64H =	\
 	architecture
 
-INSTINC_SUBDIRS_ARM =	\
-	architecture
-
 INSTINC_SUBDIRS_ARM64 =	\
 	architecture
 
@@ -35,6 +32,14 @@ KERNEL_FILES = \
 	stddef.h	\
 	stdint.h	\
 	ptrauth.h
+
+LIBCXX_DATAFILES = \
+	_inttypes.h \
+	inttypes.h \
+	stddef.h \
+	stdint.h
+
+INSTALL_KF_LIBCXX_MI_LIST = ${LIBCXX_DATAFILES}
 
 INSTALL_MI_LIST =
 

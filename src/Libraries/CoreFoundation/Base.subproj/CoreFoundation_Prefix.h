@@ -77,6 +77,32 @@ typedef char * Class;
 #if TARGET_OS_MAC
 #include <libkern/OSAtomic.h>
 #include <pthread.h>
+#include <mach/mach.h>
+
+/* The open SDK does not declare the deprecated OSAtomic compatibility API. */
+bool OSAtomicCompareAndSwapPtr(void *, void *, void *volatile *);
+bool OSAtomicCompareAndSwapPtrBarrier(void *, void *, void *volatile *);
+bool OSAtomicCompareAndSwap32Barrier(int32_t, int32_t, volatile int32_t *);
+int32_t OSAtomicIncrement32(volatile int32_t *);
+int32_t OSAtomicDecrement32(volatile int32_t *);
+int32_t OSAtomicIncrement32Barrier(volatile int32_t *);
+int32_t OSAtomicDecrement32Barrier(volatile int32_t *);
+void OSMemoryBarrier(void);
+
+/* The reduced SDK carries MIG request declarations, but not the libc wrappers. */
+extern kern_return_t mach_port_type(ipc_space_t, mach_port_name_t, mach_port_type_t *);
+extern kern_return_t mach_port_allocate(ipc_space_t, mach_port_right_t, mach_port_name_t *);
+extern kern_return_t mach_port_mod_refs(ipc_space_t, mach_port_name_t, mach_port_right_t, mach_port_delta_t);
+extern kern_return_t mach_port_insert_right(ipc_space_t, mach_port_name_t, mach_port_t, mach_msg_type_name_t);
+extern kern_return_t mach_port_get_attributes(ipc_space_read_t, mach_port_name_t, mach_port_flavor_t, mach_port_info_t, mach_msg_type_number_t *);
+extern kern_return_t mach_port_insert_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
+extern kern_return_t mach_port_extract_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
+extern kern_return_t mach_port_space_info(ipc_space_read_t, ipc_info_space_t *, ipc_info_name_array_t *, mach_msg_type_number_t *, ipc_info_tree_name_array_t *, mach_msg_type_number_t *);
+extern kern_return_t mach_port_construct(ipc_space_t, mach_port_options_ptr_t, mach_port_context_t, mach_port_name_t *);
+extern kern_return_t mach_port_destruct(ipc_space_t, mach_port_name_t, mach_port_delta_t, mach_port_context_t);
+extern kern_return_t mach_vm_region(vm_map_read_t, mach_vm_address_t *, mach_vm_size_t *, vm_region_flavor_t, vm_region_info_t, mach_msg_type_number_t *, memory_object_name_t *);
+extern void OSSpinLockLock(volatile int32_t *);
+extern void OSSpinLockUnlock(volatile int32_t *);
 #endif
 
 

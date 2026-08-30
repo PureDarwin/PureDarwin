@@ -29,6 +29,8 @@
 #ifndef _PTHREAD_WORKQUEUE_PRIVATE_H_
 #define _PTHREAD_WORKQUEUE_PRIVATE_H_
 
+#include <stdint.h>
+
 #if XNU_KERNEL_PRIVATE && !defined(__PTHREAD_EXPOSE_INTERNALS__)
 #define __PTHREAD_EXPOSE_INTERNALS__ 1
 #endif // XNU_KERNEL_PRIVATE
@@ -58,6 +60,7 @@
 #define WQ_FLAG_THREAD_TSD_BASE_SET             0x00200000  /* tsd base has already been set */
 #define WQ_FLAG_THREAD_WORKLOOP                 0x00400000  /* workloop thread */
 #define WQ_FLAG_THREAD_OUTSIDEQOS               0x00800000  /* thread qos changes should not be sent to kernel */
+#define WQ_FLAG_THREAD_COOPERATIVE              0x01000000  /* thread is part of cooperative thread pool */
 
 #define WQ_KEVENT_LIST_LEN  16 // WORKQ_KEVENT_EVENT_BUFFER_LEN
 #define WQ_KEVENT_DATA_SIZE (32 * 1024)
@@ -67,9 +70,11 @@
 #define KQ_WORKLOOP_DESTROY                             0x02
 
 /* indicate which fields of kq_workloop_create params are valid */
-#define KQ_WORKLOOP_CREATE_SCHED_PRI    0x01
-#define KQ_WORKLOOP_CREATE_SCHED_POL    0x02
-#define KQ_WORKLOOP_CREATE_CPU_PERCENT  0x04
+#define KQ_WORKLOOP_CREATE_SCHED_PRI         0x01
+#define KQ_WORKLOOP_CREATE_SCHED_POL         0x02
+#define KQ_WORKLOOP_CREATE_CPU_PERCENT       0x04
+#define KQ_WORKLOOP_CREATE_WORK_INTERVAL     0x08
+#define KQ_WORKLOOP_CREATE_WITH_BOUND_THREAD 0x10
 
 struct kqueue_workloop_params {
 	int kqwlp_version;
@@ -79,6 +84,7 @@ struct kqueue_workloop_params {
 	int kqwlp_sched_pol;
 	int kqwlp_cpu_percent;
 	int kqwlp_cpu_refillms;
+	mach_port_name_t kqwl_wi_port;
 } __attribute__((packed));
 
 _Static_assert(offsetof(struct kqueue_workloop_params, kqwlp_version) == 0,

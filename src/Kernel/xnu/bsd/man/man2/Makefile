@@ -57,10 +57,13 @@ DATAFILES = \
 	fsetattrlist.2		\
 	fgetxattr.2		\
 	fhopen.2		\
+	fileport_makefd.2	\
+	fileport_makeport.2	\
 	flistxattr.2		\
 	flock.2			\
 	fork.2			\
 	fpathconf.2		\
+	freadlink.2     \
 	fremovexattr.2		\
 	fsetxattr.2		\
 	fsgetpath.2		\
@@ -72,8 +75,10 @@ DATAFILES = \
 	fsync.2			\
 	fs_snapshot_create.2	\
 	fs_snapshot_list.2	\
+	fs_snapshot_mount.2	\
 	fs_snapshot_delete.2	\
 	fs_snapshot_rename.2	\
+	fs_snapshot_revert.2	\
 	ftruncate.2		\
 	futimens.2		\
 	futimes.2		\
@@ -122,6 +127,7 @@ DATAFILES = \
 	lchown.2		\
 	link.2			\
 	linkat.2		\
+	lio_listio.2	\
 	listen.2		\
 	listxattr.2		\
 	lseek.2			\
@@ -133,7 +139,9 @@ DATAFILES = \
 	mkdir.2			\
 	mkdirat.2		\
 	mkfifo.2		\
+	mkfifoat.2		\
 	mknod.2			\
+	mknodat.2		\
 	mlock.2			\
 	mmap.2			\
 	mount.2			\
@@ -145,6 +153,7 @@ DATAFILES = \
 	nfssvc.2		\
 	open.2			\
 	openat.2		\
+	openat_authenticated_np.2	\
 	pathconf.2		\
 	pipe.2			\
 	poll.2			\

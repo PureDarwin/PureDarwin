@@ -53,7 +53,13 @@ typedef OSString const* OSStringConstPtr;
  *
  * For internal use.
  */
-enum { kOSStringNoCopy = 0x00000001 };
+enum {
+	kOSStringNoCopy         = 0x001,
+#if XNU_KERNEL_PRIVATE
+	kOSSSymbolHashed        = 0x002,
+	kOSSSymbolPermanent     = 0x004,
+#endif /* XNU_KERNEL_PRIVATE */
+};
 
 
 /*!
@@ -198,9 +204,24 @@ public:
  */
 	static OSPtr<OSString> withCStringNoCopy(const char * cString);
 
-#if XNU_KERNEL_PRIVATE
-	static OSPtr<OSString> withStringOfLength(const char *cString, size_t length);
-#endif  /* XNU_KERNEL_PRIVATE */
+/*!
+ * @function withCString
+ *
+ * @abstract
+ * Creates and initializes an OSString from a C string and the given length.
+ *
+ * @param cString   The C string to copy into the new OSString.
+ * @param length    Number of characters to copy from cString. If the actual length of the
+ *                  C string is less than this length, then the length of the resulting
+ *                  OSString will be the same as that of the C cstring.
+ *
+ * @result
+ * An instance of OSString representing
+ * the same characters as <code>cString</code> with the specified length,
+ * and with a reference count of 1;
+ * <code>NULL</code> on failure.
+ */
+	static OSPtr<OSString> withCString(const char *cString, size_t length);
 
 /*!
  * @function initWithString

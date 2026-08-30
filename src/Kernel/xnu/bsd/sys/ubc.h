@@ -80,8 +80,8 @@ int     ubc_page_op(vnode_t, off_t, int, ppnum_t *, int *);
 int     ubc_range_op(vnode_t, off_t, off_t, int, int *);
 
 #ifdef KERNEL_PRIVATE
-/* This API continues to exist only until <rdar://4714366> is resolved */
-int     ubc_setcred(struct vnode *, struct proc *) __deprecated;
+int     ubc_setcred(struct vnode *, struct ucred *);
+
 /* code signing */
 struct cs_blob;
 struct cs_blob *ubc_cs_blob_get(vnode_t, cpu_type_t, cpu_subtype_t, off_t);
@@ -95,6 +95,10 @@ int ubc_cs_generation_check(vnode_t);
 int cs_entitlements_blob_get(proc_t, void **, size_t *);
 int cs_blob_get(proc_t, void **, size_t *);
 const char *cs_identity_get(proc_t);
+
+void ubc_cs_free_and_vnode_unlock(struct vnode *);
+
+int UBCINFOEXISTS(const struct vnode *);
 
 #endif
 
@@ -138,6 +142,8 @@ int     ubc_create_upl(vnode_t, off_t, int, upl_t *, upl_page_info_t **, int);
 #endif /* XNU_KERNEL_PRIVATE */
 int     ubc_upl_map(upl_t, vm_offset_t *);
 int     ubc_upl_unmap(upl_t);
+int     ubc_upl_map_range(upl_t, vm_offset_t, vm_size_t, vm_prot_t, vm_offset_t *);
+int     ubc_upl_unmap_range(upl_t, vm_offset_t, vm_size_t);
 int     ubc_upl_commit(upl_t);
 int     ubc_upl_commit_range(upl_t, upl_offset_t, upl_size_t, int);
 int     ubc_upl_abort(upl_t, int);
@@ -160,6 +166,8 @@ int     ubc_create_upl_kernel(vnode_t, off_t, int, upl_t *, upl_page_info_t **, 
 
 boolean_t ubc_is_mapped(const struct vnode *, boolean_t *writable);
 __attribute__((pure)) boolean_t ubc_is_mapped_writable(const struct vnode *);
+boolean_t ubc_was_mapped(const struct vnode *, boolean_t *writable);
+__attribute__((pure)) boolean_t ubc_was_mapped_writable(const struct vnode *);
 
 uint32_t cluster_max_io_size(mount_t, int);
 

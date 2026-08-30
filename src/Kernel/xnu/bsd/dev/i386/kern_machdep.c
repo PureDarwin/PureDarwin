@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -44,15 +44,17 @@
 extern int bootarg_no32exec;    /* bsd_init.c */
 #endif
 
+int ml_grade_binary(cpu_type_t, cpu_subtype_t, cpu_subtype_t, bool);
+
 /**********************************************************************
-* Routine:	grade_binary()
+* Routine:	ml_grade_binary()
 *
 * Function:	Say OK to CPU types that we can actually execute on the given
 *		system. 64-bit binaries have the highest preference, followed
 *		by 32-bit binaries. 0 means unsupported.
 **********************************************************************/
 int
-grade_binary(cpu_type_t exectype, cpu_subtype_t execsubtype, cpu_subtype_t execfeatures __unused, bool allow_simulator_binary __unused)
+ml_grade_binary(cpu_type_t exectype, cpu_subtype_t execsubtype, cpu_subtype_t execfeatures __unused, bool allow_simulator_binary __unused)
 {
 	cpu_subtype_t hostsubtype = cpu_subtype();
 

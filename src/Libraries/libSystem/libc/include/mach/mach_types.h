@@ -75,6 +75,10 @@
 
 #include <stdint.h>
 
+/* Keep the user Mach type umbrella compatible with the newer generated
+ * interfaces shipped by this tree. */
+#include <mach/pd_mach_compat.h>
+
 #include <sys/cdefs.h>
 
 #include <mach/host_info.h>

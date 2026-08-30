@@ -50,7 +50,11 @@
 #include <sys/sysctl.h>
 #include <sys/stat.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
+#include <mach/mach_types.h>
+extern kern_return_t mach_vm_allocate(vm_map_t, mach_vm_address_t *, mach_vm_size_t, int);
+extern kern_return_t mach_vm_deallocate(vm_map_t, mach_vm_address_t, mach_vm_size_t);
+extern kern_return_t mach_vm_region(vm_map_read_t, mach_vm_address_t *, mach_vm_size_t *, vm_region_flavor_t, vm_region_info_t, mach_msg_type_number_t *, memory_object_name_t *);
+extern kern_return_t vm_purgable_control(vm_map_t, vm_address_t, int, int *);
 #include <sys/mman.h>
 #include <stdio.h>
 #include <sys/errno.h>

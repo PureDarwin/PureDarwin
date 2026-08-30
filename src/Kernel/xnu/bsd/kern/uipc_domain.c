@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2023 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -75,11 +75,20 @@
 #include <sys/syslog.h>
 #include <sys/queue.h>
 
+#include <kern/uipc_domain.h>
+
 #include <net/dlil.h>
 #include <net/nwk_wq.h>
+#include <net/sockaddr_utils.h>
 
 #include <mach/boolean.h>
 #include <pexpert/pexpert.h>
+
+#include <net/sockaddr_utils.h>
+
+#if __has_ptrcheck
+#include <machine/trap.h> /* Needed by bound-checks-soft when enabled. */
+#endif /* __has_ptrcheck */
 
 /* Eventhandler context for protocol events */
 struct eventhandler_lists_ctxt protoctl_evhdlr_ctxt;
@@ -107,8 +116,9 @@ static LCK_MTX_DECLARE_ATTR(domain_proto_mtx,
 static LCK_MTX_DECLARE_ATTR(domain_timeout_mtx,
     &domain_proto_mtx_grp, &domain_proto_mtx_attr);
 
-u_int64_t _net_uptime;
-u_int64_t _net_uptime_ms;
+uint64_t _net_uptime;
+uint64_t _net_uptime_ms;
+uint64_t _net_uptime_us;
 
 #if (DEVELOPMENT || DEBUG)
 
@@ -208,15 +218,15 @@ init_domain(struct domain *dp)
 	}
 
 	/* Recompute for new protocol */
-	if (_max_linkhdr < 16) {        /* XXX - Sheesh; everything's ether? */
-		_max_linkhdr = 16;
+	if (max_linkhdr < 16) {        /* XXX - Sheesh; everything's ether? */
+		max_linkhdr = 16;
 	}
-	_max_linkhdr = max_linkhdr;     /* round it up */
+	max_linkhdr = (int)P2ROUNDUP(max_linkhdr, sizeof(uint32_t));
 
-	if (dp->dom_protohdrlen > _max_protohdr) {
-		_max_protohdr = dp->dom_protohdrlen;
+	if (dp->dom_protohdrlen > max_protohdr) {
+		max_protohdr = dp->dom_protohdrlen;
 	}
-	_max_protohdr = max_protohdr;   /* round it up */
+	max_protohdr = (int)P2ROUNDUP(max_protohdr, sizeof(uint32_t));
 
 	max_hdr = max_linkhdr + max_protohdr;
 	max_datalen = MHLEN - max_hdr;
@@ -257,7 +267,7 @@ void
 net_add_domain_old(struct domain_old *odp)
 {
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	VERIFY(odp != NULL);
 
@@ -268,7 +278,7 @@ net_add_domain_old(struct domain_old *odp)
 		 * as the caller would not have been able to handle
 		 * any failures otherwise.
 		 */
-		panic("%s: domain (%d,%s) already exists for %s\n", __func__,
+		panic("%s: domain (%d,%s) already exists for %s", __func__,
 		    dp->dom_family, dp->dom_name, odp->dom_name);
 		/* NOTREACHED */
 	}
@@ -291,17 +301,7 @@ net_add_domain_old(struct domain_old *odp)
 		/* NOTREACHED */
 	}
 
-	dp = kheap_alloc(KHEAP_DEFAULT, sizeof(struct domain), Z_WAITOK | Z_ZERO);
-	if (dp == NULL) {
-		/*
-		 * There is really nothing better than to panic here,
-		 * as the caller would not have been able to handle
-		 * any failures otherwise.
-		 */
-		panic("%s: unable to allocate memory for domain family "
-		    "%d (%s)\n", __func__, odp->dom_family, odp->dom_name);
-		/* NOTREACHED */
-	}
+	dp = kalloc_type(struct domain, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	/* Copy everything but dom_init, dom_mtx, dom_next and dom_refs */
 	dp->dom_family          = odp->dom_family;
@@ -330,9 +330,9 @@ net_add_domain_old(struct domain_old *odp)
 int
 net_del_domain_old(struct domain_old *odp)
 {
-	struct domain *dp1, *dp2;
+	struct domain *dp1 __single, *dp2 __single;
 	int error = 0;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	VERIFY(odp != NULL);
 
@@ -352,7 +352,7 @@ net_del_domain_old(struct domain_old *odp)
 		}
 	}
 	if (dp1 != NULL) {
-		struct protosw *pp1, *pp2;
+		struct protosw *pp1 __single, *pp2 __single;
 
 		VERIFY(dp1->dom_flags & DOM_OLD);
 		VERIFY(dp1->dom_old == odp);
@@ -361,15 +361,15 @@ net_del_domain_old(struct domain_old *odp)
 		TAILQ_FOREACH_SAFE(pp1, &dp1->dom_protosw, pr_entry, pp2) {
 			detach_proto(pp1, dp1);
 			if (pp1->pr_usrreqs->pru_flags & PRUF_OLD) {
-				kheap_free(KHEAP_DEFAULT, pp1->pr_usrreqs, sizeof(struct pr_usrreqs));
+				kfree_type(struct pr_usrreqs, pp1->pr_usrreqs);
 			}
 			if (pp1->pr_flags & PR_OLD) {
-				kheap_free(KHEAP_DEFAULT, pp1, sizeof(struct protosw));
+				kfree_type(struct protosw, pp1);
 			}
 		}
 
 		detach_domain(dp1);
-		kheap_free(KHEAP_DEFAULT, dp1, sizeof(struct domain));
+		kfree_type(struct domain, dp1);
 	} else {
 		error = EPFNOSUPPORT;
 	}
@@ -399,13 +399,13 @@ net_add_proto(struct protosw *pp, struct domain *dp, int doinit)
 
 	/* pr_domain is set only after the protocol is attached */
 	if (pp->pr_domain != NULL) {
-		panic("%s: domain (%d,%s), proto %d has non-NULL pr_domain!\n",
+		panic("%s: domain (%d,%s), proto %d has non-NULL pr_domain!",
 		    __func__, dp->dom_family, dp->dom_name, pp->pr_protocol);
 		/* NOTREACHED */
 	}
 
 	if (pp->pr_usrreqs == NULL) {
-		panic("%s: domain (%d,%s), proto %d has no usrreqs!\n",
+		panic("%s: domain (%d,%s), proto %d has no usrreqs!",
 		    __func__, dp->dom_family, dp->dom_name, pp->pr_protocol);
 		/* NOTREACHED */
 	}
@@ -446,11 +446,11 @@ int
 net_add_proto_old(struct protosw_old *opp, struct domain_old *odp)
 {
 	struct pr_usrreqs_old *opru;
-	struct pr_usrreqs *pru = NULL;
-	struct protosw *pp = NULL, *pp1;
+	struct pr_usrreqs *pru __single = NULL;
+	struct protosw *pp __single = NULL, *pp1;
 	int error = 0;
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	/*
 	 * This could be called as part of initializing the domain,
@@ -481,17 +481,12 @@ net_add_proto_old(struct protosw_old *opp, struct domain_old *odp)
 	}
 
 	if ((opru = opp->pr_usrreqs) == NULL) {
-		panic("%s: domain (%d,%s), proto %d has no usrreqs!\n",
+		panic("%s: domain (%d,%s), proto %d has no usrreqs!",
 		    __func__, odp->dom_family, odp->dom_name, opp->pr_protocol);
 		/* NOTREACHED */
 	}
 
-	pru = kheap_alloc(KHEAP_DEFAULT, sizeof(struct pr_usrreqs),
-	    Z_WAITOK | Z_ZERO);
-	if (pru == NULL) {
-		error = ENOMEM;
-		goto done;
-	}
+	pru = kalloc_type(struct pr_usrreqs, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	pru->pru_flags          = PRUF_OLD;
 	pru->pru_abort          = opru->pru_abort;
@@ -515,11 +510,7 @@ net_add_proto_old(struct protosw_old *opp, struct domain_old *odp)
 	pru->pru_soreceive      = opru->pru_soreceive;
 	pru->pru_sopoll         = opru->pru_sopoll;
 
-	pp = kheap_alloc(KHEAP_DEFAULT, sizeof(struct protosw), Z_WAITOK | Z_ZERO);
-	if (pp == NULL) {
-		error = ENOMEM;
-		goto done;
-	}
+	pp = kalloc_type(struct protosw, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	/*
 	 * Protocol fast and slow timers are now deprecated.
@@ -546,7 +537,6 @@ net_add_proto_old(struct protosw_old *opp, struct domain_old *odp)
 	pp->pr_usrreqs          = pru;
 	pp->pr_init             = pr_init_old;
 	pp->pr_drain            = opp->pr_drain;
-	pp->pr_sysctl           = opp->pr_sysctl;
 	pp->pr_lock             = opp->pr_lock;
 	pp->pr_unlock           = opp->pr_unlock;
 	pp->pr_getlock          = opp->pr_getlock;
@@ -561,8 +551,8 @@ done:
 		    "error %d\n", __func__, odp->dom_family,
 		    odp->dom_name, opp->pr_protocol, error);
 
-		kheap_free(KHEAP_DEFAULT, pru, sizeof(struct pr_usrreqs));
-		kheap_free(KHEAP_DEFAULT, pp, sizeof(struct protosw));
+		kfree_type(struct pr_usrreqs, pru);
+		kfree_type(struct protosw, pp);
 	}
 
 	domain_guard_release(guard);
@@ -581,7 +571,7 @@ done:
 int
 net_del_proto(int type, int protocol, struct domain *dp)
 {
-	struct protosw *pp;
+	struct protosw *pp __single;
 
 	/*
 	 * This could be called as part of initializing the domain,
@@ -600,10 +590,10 @@ net_del_proto(int type, int protocol, struct domain *dp)
 
 	detach_proto(pp, dp);
 	if (pp->pr_usrreqs->pru_flags & PRUF_OLD) {
-		kheap_free(KHEAP_DEFAULT, pp->pr_usrreqs, sizeof(struct pr_usrreqs));
+		kfree_type(struct pr_usrreqs, pp->pr_usrreqs);
 	}
 	if (pp->pr_flags & PR_OLD) {
-		kheap_free(KHEAP_DEFAULT, pp, sizeof(struct protosw));
+		kfree_type(struct protosw, pp);
 	}
 
 	return 0;
@@ -616,9 +606,9 @@ int
 net_del_proto_old(int type, int protocol, struct domain_old *odp)
 {
 	int error = 0;
-	struct protosw *pp;
+	struct protosw *pp __single;
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	/*
 	 * This could be called as part of initializing the domain,
@@ -651,10 +641,10 @@ net_del_proto_old(int type, int protocol, struct domain_old *odp)
 	}
 	detach_proto(pp, dp);
 	if (pp->pr_usrreqs->pru_flags & PRUF_OLD) {
-		kheap_free(KHEAP_DEFAULT, pp->pr_usrreqs, sizeof(struct pr_usrreqs));
+		kfree_type(struct pr_usrreqs, pp->pr_usrreqs);
 	}
 	if (pp->pr_flags & PR_OLD) {
-		kheap_free(KHEAP_DEFAULT, pp, sizeof(struct protosw));
+		kfree_type(struct protosw, pp);
 	}
 
 done:
@@ -701,7 +691,7 @@ domain_timeout(void *arg)
 #pragma unused(arg)
 	struct protosw *pp;
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	lck_mtx_lock(&domain_timeout_mtx);
 	if (domain_draining) {
@@ -731,7 +721,7 @@ void
 domaininit(void)
 {
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	eventhandler_lists_ctxt_init(&protoctl_evhdlr_ctxt);
 
@@ -787,7 +777,7 @@ pffindtype(int family, int type)
 {
 	struct protosw *pp = NULL;
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	guard = domain_guard_deploy();
 	if ((dp = pffinddomain_locked(family)) == NULL) {
@@ -811,7 +801,7 @@ struct domain *
 pffinddomain(int pf)
 {
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	guard = domain_guard_deploy();
 	dp = pffinddomain_locked(pf);
@@ -827,7 +817,7 @@ pffinddomain_old(int pf)
 {
 	struct domain_old *odp = NULL;
 	struct domain *dp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	guard = domain_guard_deploy();
 	if ((dp = pffinddomain_locked(pf)) != NULL && (dp->dom_flags & DOM_OLD)) {
@@ -844,7 +834,7 @@ struct protosw *
 pffindproto(int family, int protocol, int type)
 {
 	struct protosw *pp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	guard = domain_guard_deploy();
 	pp = pffindproto_locked(family, protocol, type);
@@ -891,7 +881,7 @@ pffindproto_old(int family, int protocol, int type)
 {
 	struct protosw_old *opr = NULL;
 	struct protosw *pp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	guard = domain_guard_deploy();
 	if ((pp = pffindproto_locked(family, protocol, type)) != NULL &&
@@ -932,7 +922,7 @@ struct protosw *
 pffindprotonotype(int family, int protocol)
 {
 	struct protosw *pp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	if (protocol == 0) {
 		return NULL;
@@ -955,7 +945,7 @@ pfctlinput2(int cmd, struct sockaddr *sa, void *ctlparam)
 {
 	struct domain *dp;
 	struct protosw *pp;
-	domain_guard_t guard;
+	domain_guard_t guard __single;
 
 	if (sa == NULL) {
 		return;
@@ -975,18 +965,40 @@ pfctlinput2(int cmd, struct sockaddr *sa, void *ctlparam)
 void
 net_update_uptime_with_time(const struct timeval *tvp)
 {
-	_net_uptime = tvp->tv_sec;
+	uint64_t tmp;
+	uint64_t seconds = tvp->tv_sec;;
+	uint64_t milliseconds = ((uint64_t)tvp->tv_sec * 1000) + ((uint64_t)tvp->tv_usec / 1000);
+	uint64_t microseconds = ((uint64_t)tvp->tv_sec * USEC_PER_SEC) + (uint64_t)tvp->tv_usec;
+
 	/*
 	 * Round up the timer to the nearest integer value because otherwise
 	 * we might setup networking timers that are off by almost 1 second.
 	 */
 	if (tvp->tv_usec > 500000) {
-		_net_uptime++;
+		seconds++;
+	}
+
+	tmp = os_atomic_load(&_net_uptime, relaxed);
+	if (tmp < seconds) {
+		os_atomic_cmpxchg(&_net_uptime, tmp, seconds, relaxed);
+
+		/*
+		 * No loop needed. If we are racing with another thread, let's give
+		 * the other one the priority.
+		 */
 	}
 
 	/* update milliseconds variant */
-	_net_uptime_ms = (((u_int64_t)tvp->tv_sec * 1000) +
-	    ((u_int64_t)tvp->tv_usec / 1000));
+	tmp = os_atomic_load(&_net_uptime_ms, relaxed);
+	if (tmp < milliseconds) {
+		os_atomic_cmpxchg(&_net_uptime_ms, tmp, milliseconds, relaxed);
+	}
+
+	/* update microseconds variant */
+	tmp = os_atomic_load(&_net_uptime_us, relaxed);
+	if (tmp < microseconds) {
+		os_atomic_cmpxchg(&_net_uptime_us, tmp, microseconds, relaxed);
+	}
 }
 
 void
@@ -1013,31 +1025,6 @@ net_uptime2timeval(struct timeval *tv)
 	tv->tv_sec = (time_t)net_uptime();
 }
 
-/*
- * An alternative way to obtain the coarse-grained uptime (in seconds)
- * for networking code which do not require high-precision timestamp,
- * as this is significantly cheaper than microuptime().
- */
-u_int64_t
-net_uptime(void)
-{
-	if (_net_uptime == 0) {
-		net_update_uptime();
-	}
-
-	return _net_uptime;
-}
-
-u_int64_t
-net_uptime_ms(void)
-{
-	if (_net_uptime_ms == 0) {
-		net_update_uptime();
-	}
-
-	return _net_uptime_ms;
-}
-
 void
 domain_proto_mtx_lock_assert_held(void)
 {
@@ -1053,7 +1040,7 @@ domain_proto_mtx_lock_assert_notheld(void)
 domain_guard_t
 domain_guard_deploy(void)
 {
-	net_thread_marks_t marks;
+	net_thread_marks_t marks __single;
 
 	marks = net_thread_marks_push(NET_THREAD_HELD_DOMAIN);
 	if (marks != net_thread_marks_none) {
@@ -1069,7 +1056,7 @@ domain_guard_deploy(void)
 void
 domain_guard_release(domain_guard_t guard)
 {
-	net_thread_marks_t marks = (net_thread_marks_t)(const void*)guard;
+	net_thread_marks_t marks __single = (net_thread_marks_t)(const void*)guard;
 
 	if (marks != net_thread_marks_none) {
 		LCK_MTX_ASSERT(&domain_proto_mtx, LCK_MTX_ASSERT_OWNED);
@@ -1083,7 +1070,7 @@ domain_guard_release(domain_guard_t guard)
 domain_unguard_t
 domain_unguard_deploy(void)
 {
-	net_thread_marks_t marks;
+	net_thread_marks_t marks __single;
 
 	marks = net_thread_unmarks_push(NET_THREAD_HELD_DOMAIN);
 	if (marks != net_thread_marks_none) {
@@ -1099,7 +1086,7 @@ domain_unguard_deploy(void)
 void
 domain_unguard_release(domain_unguard_t unguard)
 {
-	net_thread_marks_t marks = (net_thread_marks_t)(const void*)unguard;
+	net_thread_marks_t marks __single = (net_thread_marks_t)(const void*)unguard;
 
 	if (marks != net_thread_marks_none) {
 		LCK_MTX_ASSERT(&domain_proto_mtx, LCK_MTX_ASSERT_NOTOWNED);
@@ -1110,6 +1097,85 @@ domain_unguard_release(domain_unguard_t unguard)
 	}
 }
 
+#if SKYWALK
+/* The following is used to enqueue work items for interface events */
+struct protoctl_event {
+	struct ifnet *ifp;
+	union sockaddr_in_4_6 laddr;
+	union sockaddr_in_4_6 raddr;
+	uint32_t protoctl_event_code;
+	struct protoctl_ev_val val;
+	uint16_t lport;
+	uint16_t rport;
+	uint8_t protocol;
+};
+
+struct protoctl_event_nwk_wq_entry {
+	struct nwk_wq_entry nwk_wqe;
+	struct protoctl_event protoctl_ev_arg;
+};
+
+static void
+protoctl_event_callback(struct nwk_wq_entry *nwk_item)
+{
+	struct protoctl_event_nwk_wq_entry *p_ev __single = NULL;
+
+	p_ev = __unsafe_forge_single(struct protoctl_event_nwk_wq_entry *,
+	    __container_of(nwk_item, struct protoctl_event_nwk_wq_entry, nwk_wqe));
+
+	/* Call this before we walk the tree */
+	EVENTHANDLER_INVOKE(&protoctl_evhdlr_ctxt, protoctl_event,
+	    p_ev->protoctl_ev_arg.ifp, SA(&p_ev->protoctl_ev_arg.laddr),
+	    SA(&p_ev->protoctl_ev_arg.raddr),
+	    p_ev->protoctl_ev_arg.lport, p_ev->protoctl_ev_arg.rport,
+	    p_ev->protoctl_ev_arg.protocol, p_ev->protoctl_ev_arg.protoctl_event_code,
+	    &p_ev->protoctl_ev_arg.val);
+
+	kfree_type(struct protoctl_event_nwk_wq_entry, p_ev);
+}
+
+/* XXX Some PRC events needs extra verification like sequence number checking */
+void
+protoctl_event_enqueue_nwk_wq_entry(struct ifnet *ifp, struct sockaddr *p_laddr,
+    struct sockaddr *p_raddr, uint16_t lport, uint16_t rport, uint8_t protocol,
+    uint32_t protoctl_event_code, struct protoctl_ev_val *p_protoctl_ev_val)
+{
+	struct protoctl_event_nwk_wq_entry *p_protoctl_ev = NULL;
+
+	evhlog(debug, "%s: eventhandler enqueuing event of type=protoctl_event event_code=%d",
+	    __func__, protocol);
+
+	p_protoctl_ev = kalloc_type(struct protoctl_event_nwk_wq_entry,
+	    Z_WAITOK | Z_ZERO | Z_NOFAIL);
+
+	p_protoctl_ev->protoctl_ev_arg.ifp = ifp;
+
+	if (p_laddr != NULL) {
+		VERIFY(p_laddr->sa_len <= sizeof(p_protoctl_ev->protoctl_ev_arg.laddr));
+		struct sockaddr_in6 *dst __single = &p_protoctl_ev->protoctl_ev_arg.laddr.sin6;
+		SOCKADDR_COPY(SIN6(p_laddr), dst, p_laddr->sa_len);
+	}
+
+	if (p_raddr != NULL) {
+		VERIFY(p_raddr->sa_len <= sizeof(p_protoctl_ev->protoctl_ev_arg.raddr));
+		struct sockaddr_in6 *dst __single = &p_protoctl_ev->protoctl_ev_arg.raddr.sin6;
+		SOCKADDR_COPY(SIN6(p_raddr), dst, p_raddr->sa_len);
+	}
+
+	p_protoctl_ev->protoctl_ev_arg.lport = lport;
+	p_protoctl_ev->protoctl_ev_arg.rport = rport;
+	p_protoctl_ev->protoctl_ev_arg.protocol = protocol;
+	p_protoctl_ev->protoctl_ev_arg.protoctl_event_code = protoctl_event_code;
+
+	if (p_protoctl_ev_val != NULL) {
+		bcopy(p_protoctl_ev_val, &(p_protoctl_ev->protoctl_ev_arg.val),
+		    sizeof(*p_protoctl_ev_val));
+	}
+	p_protoctl_ev->nwk_wqe.func = protoctl_event_callback;
+
+	nwk_wq_enqueue(&p_protoctl_ev->nwk_wqe);
+}
+#endif /* SKYWALK */
 
 #if (DEVELOPMENT || DEBUG)
 

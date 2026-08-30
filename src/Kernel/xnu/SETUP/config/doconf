@@ -73,6 +73,13 @@ set SOURCEDIR=.
 set CONFIG_DIR=$OBJROOT/SETUP/config
 set MASTER_CONF_DIR=.
 
+set DEF_SEED=""
+set DEF_EXCLAVES="-UMASTER_CONFIG_ENABLE_EXCLAVES"
+set DEF_SPTM="-UMASTER_CONFIG_ENABLE_SPTM"
+set DEF_BUILD=""
+set DEF_TAG=""
+
+
 unset doconfig
 unset beverbose
 unset MACHINE
@@ -101,6 +108,11 @@ while ($#argv >= 1)
 		exit 1
 	    endif
 	    set SOC_CONFIG="$argv[2]"
+	    if (`echo $SOC_CONFIG | awk '{print substr($0,0,2)}'` == "vm") then
+	        set DEF_AVP="-DSOC_IS_VIRTUALIZED"
+	    else
+	        set DEF_AVP="-USOC_IS_VIRTUALIZED"
+	    endif
 	    shift
 	    breaksw
 	case "-platform":
@@ -141,6 +153,15 @@ while ($#argv >= 1)
 	case "-p":
 	case "-profile":
 	    set profile
+	    breaksw
+	case "-sptm":
+	    set DEF_SPTM="-DMASTER_CONFIG_ENABLE_SPTM"
+	    breaksw
+	case "-exclaves":
+	    set DEF_EXCLAVES="-DMASTER_CONFIG_ENABLE_EXCLAVES"
+	    breaksw
+	case "-tag":
+	    set DEF_TAG="-DMASTER_CONFIG_ENABLE_KERNEL_TAG"
 	    breaksw
 	default:
 	    echo "${prog}: ${argv[1]}: unknown switch"
@@ -188,7 +209,7 @@ foreach SYS ($argv)
     cat $MASTER $MASTER_CPU - \
         $MASTER $MASTER_CPU \
     | \
-    unifdef -t -DPLATFORM_${PLATFORM} -DCPU_$cpu -DSOC_CONFIG_${SOC_CONFIG} -DSYS_${SYS} - \
+    unifdef -t -DPLATFORM_${PLATFORM} -DCPU_$cpu -DSOC_CONFIG_${SOC_CONFIG} -DSYS_${SYS} $DEF_AVP $DEF_SEED $DEF_EXCLAVES $DEF_SPTM $DEF_BUILD $DEF_TAG - \
     | \
     sed -n \
 	-e "/^+/{" \

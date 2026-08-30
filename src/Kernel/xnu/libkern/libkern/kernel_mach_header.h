@@ -90,7 +90,8 @@ extern kernel_mach_header_t _mh_execute_header;
  */
 #define kernel_mach_header_is_in_fileset(_mh) ((_mh)->flags & MH_DYLIB_IN_CACHE)
 
-vm_offset_t getlastaddr(void);
+vm_offset_t getlastaddr(kernel_mach_header_t *header);
+vm_offset_t getlastkerneladdr(void);
 
 kernel_segment_command_t *firstseg(void);
 kernel_segment_command_t *firstsegfromheader(kernel_mach_header_t *header);
@@ -107,6 +108,10 @@ kernel_section_t *getsectbynamefromheader(
 	kernel_mach_header_t    *header,
 	const char              *seg_name,
 	const char              *sect_name);
+kernel_section_t *getsectbynamefromseg(
+	kernel_segment_command_t        *sgp,
+	const char                      *segname,
+	const char                      *sectname);
 uint32_t getsectoffsetfromheader(
 	kernel_mach_header_t *mhp,
 	const char *segname,
@@ -116,6 +121,8 @@ kernel_section_t *firstsect(kernel_segment_command_t *sgp);
 kernel_section_t *nextsect(kernel_segment_command_t *sgp, kernel_section_t *sp);
 void *getcommandfromheader(kernel_mach_header_t *, uint32_t);
 void *getuuidfromheader(kernel_mach_header_t *, unsigned long *);
+
+bool kernel_text_contains(vm_offset_t);
 
 #ifdef __cplusplus
 }

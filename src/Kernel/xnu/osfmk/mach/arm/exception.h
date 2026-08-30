@@ -29,6 +29,8 @@
 #ifndef _MACH_ARM_EXCEPTION_H_
 #define _MACH_ARM_EXCEPTION_H_
 
+#if defined (__arm__) || defined (__arm64__)
+
 #define EXC_TYPES_COUNT         14      /* incl. illegal exception 0 */
 
 #define EXC_MASK_MACHINE         0
@@ -36,8 +38,14 @@
 #define EXCEPTION_CODE_MAX       2      /*  code and subcode */
 
 #if XNU_KERNEL_PRIVATE
+
 #if __has_feature(ptrauth_calls)
-#define EXC_PTRAUTH_BIT         0x200  /* bit set if exception could have been caused by ptrauth failure */
+/*
+ * Note that while this bit can show up in the reported exception code,
+ * it also does double-duty by being set just while the exception is temporarily shuffled around
+ * within xnu, and it can be cleared before we reached exception_triage_thread().
+ */
+#define EXC_PTRAUTH_BIT                 0x200   /* Set if the exception was caused by a ptrauth failure */
 #endif /* __has_feature(ptrauth_calls) */
 #endif /* XNU_KERNEL_PRIVATE */
 
@@ -50,6 +58,7 @@
  */
 
 #define EXC_ARM_UNDEFINED       1       /* Undefined */
+#define EXC_ARM_SME_DISALLOWED  2       /* Current thread state prohibits use of SME resources */
 
 /*
  *      EXC_ARITHMETIC
@@ -74,11 +83,16 @@
 #define EXC_ARM_SWP             0x104   /* SWP instruction */
 #define EXC_ARM_PAC_FAIL        0x105   /* PAC authentication failure */
 
+#define EXC_ARM_MTE_TAGCHECK_FAIL       0x106   /* MTE Tag Check failure */
+#define EXC_ARM_MTE_CANONICAL_FAIL      0x107   /* MTE Canonical Tag access fail */
+
+
 /*
  *	EXC_BREAKPOINT
  */
 
 #define EXC_ARM_BREAKPOINT      1       /* breakpoint trap */
 
+#endif /* defined (__arm__) || defined (__arm64__) */
 
 #endif  /* _MACH_ARM_EXCEPTION_H_ */

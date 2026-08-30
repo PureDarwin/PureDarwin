@@ -212,9 +212,8 @@ or
 .Fn posix_spawnp
 call, it is entered as follows:
 .Bd -literal -offset indent
-main(argc, argv, envp)
-int argc;
-char **argv, **envp;
+.Ft int
+.Fn main "int argc" "char **argv" "char **envp";
 .Ed
 .Pp
 where

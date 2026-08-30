@@ -28,7 +28,6 @@
 #include <string.h>
 #include <mach/kern_return.h>
 #include <mach/mach_init.h>
-#include <mach/mach_vm.h>
 #include <mach/vm_map.h>
 #include <mach/vm_param.h>
 #include <libkern/OSAtomic.h>
@@ -744,4 +743,3 @@ asl_string_append_xml_tag(asl_string_t *str, const char *tag, const char *s)
 	asl_string_append_no_encoding_len(str, ">\n", 2);
 	return str;
 }
-

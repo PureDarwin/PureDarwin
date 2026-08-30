@@ -129,7 +129,7 @@ OSSerialize::addBinaryObject(const OSMetaClassBase * o, uint32_t key,
 			headerSize += sizeof(uint32_t);
 		}
 		offset /= sizeof(uint32_t);
-		indexData->appendBytes(&offset, sizeof(offset));
+		indexData->appendValue(offset);
 	}
 
 	if (os_add3_overflow(size, headerSize, 3, &alignSize)) {
@@ -218,7 +218,7 @@ OSSerialize::binarySerializeInternal(const OSMetaClassBase *o)
 	OSBoolean    * boo;
 
 	unsigned int  tagIdx;
-	uint32_t   i, key, startCollection;
+	uint32_t   i, key, startCollection = 0;
 	uint32_t   len;
 	bool       ok;
 
@@ -308,7 +308,7 @@ OSSerialize::binarySerializeInternal(const OSMetaClassBase *o)
 		key = (kOSSerializeSymbol | len);
 		ok = addBinaryObject(o, key, sym->getCStringNoCopy(), len, NULL);
 	} else if ((str = OSDynamicCast(OSString, o))) {
-		len = (str->getLength() + ((indexData != NULL) ? 1 : 0));
+		len = str->getLength();
 		key = (kOSSerializeString | len);
 		ok = addBinaryObject(o, key, str->getCStringNoCopy(), len, NULL);
 	} else if ((ldata = OSDynamicCast(OSData, o))) {
@@ -327,28 +327,19 @@ OSSerialize::binarySerializeInternal(const OSMetaClassBase *o)
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#define setAtIndex(v, idx, o)                                                                                                           \
-	if (idx >= v##Capacity)                                                                                                                 \
-	{                                                                                                                                                               \
-	if (v##Capacity >= v##CapacityMax) ok = false;                                  \
-	else                                                                                                                                                    \
-	{                                                                                                                                                           \
-	    uint32_t ncap = v##Capacity + 64;                                                                               \
-	    typeof(v##Array) nbuf = (typeof(v##Array)) kalloc_container(ncap * sizeof(o)); \
-	    if (!nbuf) ok = false;                                                                                                          \
-	    else                                                                                                                                    \
-	    {                                                                                                                                   \
-	        if (v##Array)                                                                                                                   \
-	        {                                                                                                                                               \
-	            bcopy(v##Array, nbuf, v##Capacity * sizeof(o));                                             \
-	            kfree(v##Array, v##Capacity * sizeof(o));                                                   \
-	        }                                                                                                                                               \
-	        v##Array    = nbuf;                                                                                                             \
-	        v##Capacity = ncap;                                                                                                             \
-	    }                                                                                                                                   \
-	    }                                                                                                                                                       \
-	}                                                                                                                                                               \
-	if (ok) v##Array[idx] = o;
+#define setAtIndex(v, idx, o)                                                  \
+	ok = idx < v##Capacity;                                                \
+	if (!ok && v##Capacity < v##CapacityMax) {                             \
+	    uint32_t ncap = v##Capacity + 64;                                  \
+	    typeof(v##Array) nbuf = kreallocp_type_container(OSObject *,       \
+	        v##Array, v##Capacity, &ncap, Z_WAITOK_ZERO);                  \
+	    if (nbuf) {                                                        \
+	        ok = true;                                                     \
+	        v##Array    = nbuf;                                            \
+	        v##Capacity = ncap;                                            \
+	    }                                                                  \
+	}                                                                      \
+	if (ok) v##Array[idx] = o
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -381,7 +372,10 @@ OSUnserializeBinary(const char *buffer, size_t bufferSize, OSString **errorStrin
 	const uint32_t * next;
 	uint32_t         key, len, wordLen, length;
 	bool             end, newCollect, isRef;
-	unsigned long long value;
+	union {
+		unsigned long long value;
+		double fpValue;
+	} value;
 	bool ok, indexed, hasLength;
 
 	indexed = false;
@@ -464,13 +458,23 @@ OSUnserializeBinary(const char *buffer, size_t bufferSize, OSString **errorStrin
 			if (bufferPos > bufferSize) {
 				break;
 			}
-			if ((len != 32) && (len != 64) && (len != 16) && (len != 8)) {
+			value.value = next[1];
+			value.value <<= 32;
+			value.value |= next[0];
+			switch (len) {
+			case 63:
+				o = OSNumber::withDouble(value.fpValue);
+				break;
+			case 31:
+				o = OSNumber::withFloat((float) value.fpValue);
+				break;
+			case 64:
+			case 32:
+			case 16:
+			case 8:
+				o = OSNumber::withNumber(value.value, len);
 				break;
 			}
-			value = next[1];
-			value <<= 32;
-			value |= next[0];
-			o = OSNumber::withNumber(value, len);
 			next += 2;
 			break;
 
@@ -479,7 +483,7 @@ OSUnserializeBinary(const char *buffer, size_t bufferSize, OSString **errorStrin
 			if (bufferPos > bufferSize) {
 				break;
 			}
-			if (len < 2) {
+			if (len < 1) {
 				break;
 			}
 			if (0 != ((const char *)next)[len - 1]) {
@@ -494,7 +498,7 @@ OSUnserializeBinary(const char *buffer, size_t bufferSize, OSString **errorStrin
 			if (bufferPos > bufferSize) {
 				break;
 			}
-			o = OSString::withStringOfLength((const char *) next, len);
+			o = OSString::withCString((const char *) next, len);
 			next += wordLen;
 			break;
 
@@ -623,10 +627,10 @@ OSUnserializeBinary(const char *buffer, size_t bufferSize, OSString **errorStrin
 		for (len = (result != NULL); len < objsIdx; len++) {
 			objsArray[len]->release();
 		}
-		kfree(objsArray, objsCapacity  * sizeof(*objsArray));
+		kfree_type(OSObject *, objsCapacity, objsArray);
 	}
 	if (stackCapacity) {
-		kfree(stackArray, stackCapacity * sizeof(*stackArray));
+		kfree_type(OSObject *, stackCapacity, stackArray);
 	}
 
 	return result;

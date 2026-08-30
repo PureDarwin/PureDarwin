@@ -71,7 +71,11 @@
 #define OS_WEAK __attribute__((__weak__))
 #define OS_WEAK_IMPORT __attribute__((__weak_import__))
 #define OS_NOINLINE __attribute__((__noinline__))
+#ifndef __BUILDING_XNU_LIBRARY__
 #define OS_ALWAYS_INLINE __attribute__((__always_inline__))
+#else /* __BUILDING_XNU_LIBRARY__ */
+#define OS_ALWAYS_INLINE
+#endif /* __BUILDING_XNU_LIBRARY__ */
 #define OS_TRANSPARENT_UNION __attribute__((__transparent_union__))
 #define OS_ALIGNED(n) __attribute__((__aligned__((n))))
 #define OS_FORMAT_PRINTF(x, y) __attribute__((__format__(printf,x,y)))
@@ -149,6 +153,12 @@
 #define OS_OVERLOADABLE __attribute__((__overloadable__))
 #else
 #define OS_OVERLOADABLE
+#endif
+
+#if __has_attribute(analyzer_suppress)
+#define OS_ANALYZER_SUPPRESS(RADAR) __attribute__((analyzer_suppress))
+#else
+#define OS_ANALYZER_SUPPRESS(RADAR)
 #endif
 
 #if __has_attribute(enum_extensibility)
@@ -235,6 +245,17 @@
 	__attribute__((__availability__(swift, unavailable, message=_msg)))
 #else
 #define OS_SWIFT_UNAVAILABLE(_msg)
+#endif
+
+#if __has_attribute(__swift_attr__)
+#define OS_SWIFT_UNAVAILABLE_FROM_ASYNC(msg) \
+	__attribute__((__swift_attr__("@_unavailableFromAsync(message: \"" msg "\")")))
+#define OS_SWIFT_NONISOLATED __attribute__((__swift_attr__("nonisolated")))
+#define OS_SWIFT_NONISOLATED_UNSAFE __attribute__((__swift_attr__("nonisolated(unsafe)")))
+#else
+#define OS_SWIFT_UNAVAILABLE_FROM_ASYNC(msg)
+#define OS_SWIFT_NONISOLATED
+#define OS_SWIFT_NONISOLATED_UNSAFE
 #endif
 
 #if __has_attribute(swift_private)
@@ -334,17 +355,60 @@ typedef void (^os_block_t)(void);
 #if __has_feature(ptrauth_calls)
 #include <ptrauth.h>
 #define OS_PTRAUTH_SIGNED_PTR(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type))
+#define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type) __ptrauth(ptrauth_key_process_independent_data, 1, ptrauth_string_discriminator(type), "authenticates-null-values")
 #define OS_PTRAUTH_DISCRIMINATOR(str) ptrauth_string_discriminator(str)
 #define __ptrauth_only
 #else //  __has_feature(ptrauth_calls)
 #define OS_PTRAUTH_SIGNED_PTR(type)
+#define OS_PTRAUTH_SIGNED_PTR_AUTH_NULL(type)
 #define OS_PTRAUTH_DISCRIMINATOR(str) 0
 #define __ptrauth_only __unused
 #endif // __has_feature(ptrauth_calls)
 #endif // KERNEL
 
-#if KERNEL_PRIVATE
+#if KERNEL
+#if __has_feature(ptrauth_calls)
+#define XNU_PTRAUTH_SIGNED_FUNCTION_PTR(type) \
+	__ptrauth(ptrauth_key_function_pointer, 1, ptrauth_string_discriminator(type))
+#else
+#define XNU_PTRAUTH_SIGNED_FUNCTION_PTR(type)
+#endif
 #define XNU_PTRAUTH_SIGNED_PTR OS_PTRAUTH_SIGNED_PTR
-#endif // KERNEL_PRIVATE
+#define XNU_PTRAUTH_SIGNED_PTR_AUTH_NULL OS_PTRAUTH_SIGNED_PTR_AUTH_NULL
+#endif // KERNEL
+
+#define OS_ASSUME_PTR_ABI_SINGLE_BEGIN __ASSUME_PTR_ABI_SINGLE_BEGIN
+#define OS_ASSUME_PTR_ABI_SINGLE_END __ASSUME_PTR_ABI_SINGLE_END
+#define OS_UNSAFE_INDEXABLE __unsafe_indexable
+#define OS_HEADER_INDEXABLE __header_indexable
+#define OS_COUNTED_BY(N) __counted_by(N)
+#define OS_SIZED_BY(N) __sized_by(N)
+
+#if XNU_KERNEL_PRIVATE
+#if __BUILDING_XNU_LIBRARY__
+// These are used to mark functions which should normally be static but
+// should be callable from the tester
+#define __static_testable
+// inline makes the functions not visible
+#define __inline_testable
+#define __always_inline_testable
+#define __header_always_inline_testable
+// This marks a function which could be overridden by a mock in a unit-tester
+// noinline - inlined instance of the function can't be interposed by the mock
+// weak - trick the compiler to not do any constant-propagation in to arguments and out of the return value
+#define __mockable __attribute__((noinline,used,weak))
+// The 'weak' attribute breaks the mocking of functions that have a definition with the same name in a different
+// .dylib. To avoid a problem in these rare cases __mockable_strong should be used. see also check_mocks_original
+#define __mockable_strong __attribute__((noinline,used))
+#else // __BUILDING_XNU_LIBRARY__
+#define __static_testable static
+#define __inline_testable inline
+#define __always_inline_testable __attribute((always_inline))
+#define __header_always_inline_testable __header_always_inline
+#define __mockable
+#define __mockable_strong
+#endif // __BUILDING_XNU_LIBRARY__
+
+#endif // XNU_KERNEL_PRIVATE
 
 #endif // __OS_BASE__

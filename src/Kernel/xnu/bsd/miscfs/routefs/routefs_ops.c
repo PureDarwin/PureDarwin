@@ -66,7 +66,7 @@ static int routefserr_setlabel(__unused struct vnop_setlabel_args * args);
 
 
 LCK_GRP_DECLARE(routefs_lck_grp, "routefs_lock");
-LCK_MTX_DECLARE(routefs_mutex, &routefs_lck_grp);;
+LCK_MTX_DECLARE(routefs_mutex, &routefs_lck_grp);
 
 #define ROUTEFS_LOCK()    lck_mtx_lock(&routefs_mutex)
 #define ROUTEFS_UNLOCK()  lck_mtx_unlock(&routefs_mutex)
@@ -118,12 +118,8 @@ routefs_mount(struct mount *mp, __unused vnode_t devvp, user_addr_t data, vfs_co
 	 * HERE we should check to see if we are already mounted here.
 	 */
 
-	MALLOC(routefs_mp_p, struct routefs_mount *, sizeof(struct routefs_mount),
-	    M_TEMP, M_WAITOK);
-	if (routefs_mp_p == NULL) {
-		return ENOMEM;
-	}
-	bzero(routefs_mp_p, sizeof(*routefs_mp_p));
+	routefs_mp_p = kalloc_type(struct routefs_mount,
+	    Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	routefs_mp_p->route_mount = mp;
 
@@ -164,7 +160,7 @@ routefs_mount(struct mount *mp, __unused vnode_t devvp, user_addr_t data, vfs_co
 out:
 	if (error != 0) {
 		if (routefs_mp_p != NULL) {
-			FREE(routefs_mp_p, M_TEMP);
+			kfree_type(struct routefs_mount, routefs_mp_p);
 		}
 	}
 	return error;
@@ -207,7 +203,7 @@ routefs_unmount( struct mount *mp, int mntflags, __unused vfs_context_t ctx)
 	}
 	/* no vnodes, ignore any errors */
 	(void)vflush(mp, NULLVP, flags);
-	FREE(routefs_mp_p, M_TEMP);
+	kfree_type(struct routefs_mount, routefs_mp_p);
 	mp->mnt_data = (qaddr_t)0;
 	mp->mnt_flag &= ~MNT_LOCAL;
 	_fs_alreadyMounted = FALSE; /* unmounted the fs, only one allowed at a time */
@@ -510,7 +506,7 @@ routefserr_setlabel(__unused struct vnop_setlabel_args * args)
 /* The following ops are used by directories and symlinks */
 int(**routefs_vnodeop_p)(void *);
 static const struct vnodeopv_entry_desc routefs_vnodeop_entries[] = {
-	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)vn_default_error },
+	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC)(void *)vn_default_error },
 	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC)routefserr_lookup },      /* lookup */
 	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC)err_create },     /* create */
 	{ .opve_op = &vnop_whiteout_desc, .opve_impl = (VOPFUNC)err_whiteout },         /* whiteout */

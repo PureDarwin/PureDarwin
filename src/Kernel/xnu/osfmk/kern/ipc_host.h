@@ -69,45 +69,28 @@ extern void ipc_host_init(void);
 extern void ipc_processor_init(
 	processor_t     processor);
 
-/* Enable ipc control of processor by setting port object */
-extern void ipc_processor_enable(
-	processor_t     processor);
-
 /* Initialize ipc control of a processor set */
 extern void ipc_pset_init(
-	processor_set_t         pset);
-
-/* Enable ipc access to a processor set */
-extern void ipc_pset_enable(
 	processor_set_t         pset);
 
 /* Initialize ipc control of a clock */
 extern void ipc_clock_init(
 	clock_t         clock);
 
-/* Enable ipc access to a clock */
-extern void ipc_clock_enable(
-	clock_t         clock);
-
 /* Convert from a port to a clock */
 extern clock_t convert_port_to_clock(
-	ipc_port_t      port);
-
-/* Convert from a port to a clock control */
-extern clock_t convert_port_to_clock_ctrl(
 	ipc_port_t      port);
 
 /* Convert from a clock to a port */
 extern ipc_port_t convert_clock_to_port(
 	clock_t         clock);
 
-/* Convert from a clock control to a port */
-extern ipc_port_t convert_clock_ctrl_to_port(
-	clock_t         clock);
-
 /* Convert from a clock name to a clock pointer */
 extern clock_t port_name_to_clock(
 	mach_port_name_t clock_name);
+
+extern ipc_port_t host_port_copy_send(
+	ipc_port_t      port);
 
 /* Convert from a port to a host */
 extern host_t convert_port_to_host(
@@ -115,10 +98,6 @@ extern host_t convert_port_to_host(
 
 /* Convert from a port to a host privilege port */
 extern host_t convert_port_to_host_priv(
-	ipc_port_t      port);
-
-/*  Convert from a port to a host paging port */
-extern host_t convert_port_to_host_paging(
 	ipc_port_t      port);
 
 /* Convert from a host to a port */
@@ -148,10 +127,5 @@ extern ipc_port_t convert_pset_to_port(
 /* Convert from a processor set name to a port */
 extern ipc_port_t convert_pset_name_to_port(
 	processor_set_t         processor);
-
-/* Convert from a port to a host security port */
-extern host_t convert_port_to_host_security(
-	ipc_port_t      port);
-
 
 #endif  /* _KERN_IPC_HOST_H_ */

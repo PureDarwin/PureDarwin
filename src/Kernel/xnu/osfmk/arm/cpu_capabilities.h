@@ -30,6 +30,8 @@
 #ifndef _ARM_CPU_CAPABILITIES_H
 #define _ARM_CPU_CAPABILITIES_H
 
+#if defined (__arm__) || defined (__arm64__)
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 #include <mach/vm_types.h>
@@ -38,6 +40,8 @@
 
 #define USER_TIMEBASE_NONE   0
 #define USER_TIMEBASE_SPEC   1
+#define USER_TIMEBASE_NOSPEC 2
+#define USER_TIMEBASE_NOSPEC_APPLE 3
 
 /*
  * This is the authoritative way to determine from user mode what
@@ -49,36 +53,77 @@
 /*
  * Bit definitions for _cpu_capabilities:
  */
-#define kHasNeonFP16                    0x00000008      // ARM v8.2 NEON FP16 supported
+#define kHasFeatFP16                    0x00000008      // ARM v8.2 NEON FP16 supported
 #define kCache32                        0x00000010      // cache line size is 32 bytes
 #define kCache64                        0x00000020      // cache line size is 64 bytes
 #define kCache128                       0x00000040      // cache line size is 128 bytes
 #define kFastThreadLocalStorage         0x00000080      // TLS ptr is kept in a user-mode-readable register
-#define kHasNeon                        0x00000100      // Advanced SIMD is supported
-#define kHasNeonHPFP                    0x00000200      // Advanced SIMD half-precision
+#define kHasAdvSIMD                     0x00000100      // Advanced SIMD is supported
+#define kHasAdvSIMD_HPFPCvt             0x00000200      // Advanced SIMD half-precision
 #define kHasVfp                         0x00000400      // VFP is supported
 #define kHasUCNormalMemory              0x00000800      // Uncacheable normal memory type supported
 #define kHasEvent                       0x00001000      // WFE/SVE and period event wakeup
 #define kHasFMA                         0x00002000      // Fused multiply add is supported
-#define kHasARMv82FHM                   0x00004000      // Optional ARMv8.2 FMLAL/FMLSL instructions (required in ARMv8.4)
+#define kHasFeatFHM                     0x00004000      // Optional ARMv8.2 FMLAL/FMLSL instructions (required in ARMv8.4)
 #define kUP                             0x00008000      // set if (kNumCPUs == 1)
 #define kNumCPUs                        0x00FF0000      // number of CPUs (see _NumCPUs() below)
 #define kHasARMv8Crypto                 0x01000000      // Optional ARMv8 Crypto extensions
-#define kHasARMv81Atomics               0x02000000      // ARMv8.1 Atomic instructions supported
+#define kHasFeatLSE                     0x02000000      // ARMv8.1 Atomic instructions supported
 #define kHasARMv8Crc32                  0x04000000      // Optional ARMv8 crc32 instructions (required in ARMv8.1)
-#define kHasARMv82SHA512                0x80000000      // Optional ARMv8.2 SHA512 instructions
+#define kHasFeatSHA512                  0x80000000      // Optional ARMv8.2 SHA512 instructions
 /* Extending into 64-bits from here: */
-#define kHasARMv82SHA3          0x0000000100000000      // Optional ARMv8.2 SHA3 instructions
+#define kHasFeatSHA3            0x0000000100000000      // Optional ARMv8.2 SHA3 instructions
+#define kHasFeatFCMA            0x0000000200000000      // ARMv8.3 complex number instructions
+#define kHasFeatAFP             0x0000000400000000      // ARMv8.7 alternate floating point mode
+#define kHasFEATFlagM           0x0000010000000000
+#define kHasFEATFlagM2          0x0000020000000000
+#define kHasFeatDotProd         0x0000040000000000
+#define kHasFeatRDM             0x0000080000000000
+#define kHasFeatSPECRES         0x0000100000000000
+#define kHasFeatSB              0x0000200000000000
+#define kHasFeatFRINTTS         0x0000400000000000
+#define kHasArmv8GPI            0x0000800000000000
+#define kHasFeatLRCPC           0x0001000000000000
+#define kHasFeatLRCPC2          0x0002000000000000
+#define kHasFeatJSCVT           0x0004000000000000
+#define kHasFeatPAuth           0x0008000000000000
+#define kHasFeatDPB             0x0010000000000000
+#define kHasFeatDPB2            0x0020000000000000
+#define kHasFeatLSE2            0x0040000000000000
+#define kHasFeatCSV2            0x0080000000000000
+#define kHasFeatCSV3            0x0100000000000000
+#define kHasFeatDIT             0x0200000000000000
+#define kHasFP_SyncExceptions   0x0400000000000000
+#define kHasFeatSME             0x0800000000000000
+#define kHasFeatSME2            0x1000000000000000
+#define kHasFeatSME2p1          0x2000000000000000
+
+/* Individual features coalesced to save bits */
+#define kHasFeatSHA256          kHasARMv8Crypto
+#define kHasFeatSHA1            kHasARMv8Crypto
+#define kHasFeatAES             kHasARMv8Crypto
+#define kHasFeatPMULL           kHasARMv8Crypto
+
+/* Deprecated names */
+#define kHasNeonFP16            kHasFeatFP16
+#define kHasNeon                kHasAdvSIMD
+#define kHasNeonHPFP            kHasAdvSIMD_HPFPCvt
+#define kHasARMv82FHM           kHasFeatFHM
+#define kHasARMv81Atomics       kHasFeatLSE
+#define kHasARMv82SHA512        kHasFeatSHA512
+#define kHasARMv82SHA3          kHasFeatSHA3
+#define kHasARMv83CompNum       kHasFeatFCMA
 
 #define kNumCPUsShift                   16              // see _NumCPUs() below
 /*
  * Bit definitions for multiuser_config:
  */
 #define kIsMultiUserDevice      0x80000000      // this device is in multiuser mode
-#define kMultiUserCurrentUserMask       0x7fffffff      // the current user UID of the multiuser device
+#define kHasSecondaryUsers      0x40000000      // this device has Secondary Users
+#define kMultiUserCurrentUserMask       0x3fffffff      // the current user UID of the multiuser device
 
 #ifndef __ASSEMBLER__
-#include <sys/commpage.h>
+#include <sys/commpage_private.h>
 
 __BEGIN_DECLS
 extern uint64_t _get_cpu_capabilities( void );
@@ -105,6 +150,7 @@ typedef struct {
 
 __BEGIN_DECLS
 extern vm_address_t                             _get_commpage_priv_address(void);
+extern vm_address_t                             _get_commpage_ro_address(void);
 extern vm_address_t                             _get_commpage_text_priv_address(void);
 __END_DECLS
 
@@ -118,12 +164,7 @@ __END_DECLS
 #if defined(__LP64__)
 
 #define _COMM_PAGE64_BASE_ADDRESS               (0x0000000FFFFFC000ULL) /* In TTBR0 */
-#if defined(ARM_LARGE_MEMORY)
-#define _COMM_HIGH_PAGE64_BASE_ADDRESS  (0xFFFFFE00001FC000ULL) /* Just below the kernel, safely in TTBR1; only used for testing */
-#else
-#define _COMM_HIGH_PAGE64_BASE_ADDRESS  (0xFFFFFFF0001FC000ULL) /* Just below the kernel, safely in TTBR1; only used for testing */
-#endif
-
+#define _COMM_PAGE64_RO_ADDRESS                 (0x0000000FFFFF4000ULL) /* In TTBR0 */
 #define _COMM_PAGE64_AREA_LENGTH                (_COMM_PAGE32_AREA_LENGTH)
 #define _COMM_PAGE64_AREA_USED                  (-1)
 
@@ -131,10 +172,12 @@ __END_DECLS
 
 #ifdef KERNEL_PRIVATE
 #define _COMM_PAGE_RW_OFFSET                    (0)
+#define _COMM_PAGE_RO_OFFSET                    (0)
 #define _COMM_PAGE_AREA_LENGTH                  (PAGE_SIZE)
 
 #define _COMM_PAGE_BASE_ADDRESS                 (_get_commpage_priv_address())
 #define _COMM_PAGE_START_ADDRESS                (_get_commpage_priv_address())
+#define _COMM_PAGE_RO_ADDRESS                   (_get_commpage_ro_address())
 
 /**
  * This represents the size of the memory region that the commpage is nested in.
@@ -159,13 +202,14 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
 
 #else /* KERNEL_PRIVATE */
 /*
- * <sys/commpage.h> defines a couple of conveniency macros
+ * <sys/commpage.h> defines a couple of convenience macros
  * to help read data from the commpage.
  */
 #define _COMM_PAGE_AREA_LENGTH                  (4096)
 
 #define _COMM_PAGE_BASE_ADDRESS                 _COMM_PAGE64_BASE_ADDRESS
 #define _COMM_PAGE_START_ADDRESS                _COMM_PAGE64_BASE_ADDRESS
+#define _COMM_PAGE_RO_ADDRESS                   _COMM_PAGE64_RO_ADDRESS
 #endif /* KERNEL_PRIVATE */
 
 #else /* __LP64__ */
@@ -181,6 +225,7 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
 
 #ifdef KERNEL_PRIVATE
 #define _COMM_PAGE_RW_OFFSET                    (_get_commpage_priv_address()-_COMM_PAGE_BASE_ADDRESS)
+#define _COMM_PAGE_RO_OFFSET                    (_get_commpage_ro_address()-_COMM_PAGE_RO_ADDRESS)
 #define _COMM_PAGE_AREA_LENGTH                  (PAGE_SIZE)
 #else /* KERNEL_PRIVATE */
 #define _COMM_PAGE_AREA_LENGTH                  (4096)
@@ -188,10 +233,12 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
 
 #define _COMM_PAGE_BASE_ADDRESS                 _COMM_PAGE32_BASE_ADDRESS
 #define _COMM_PAGE_START_ADDRESS                _COMM_PAGE32_BASE_ADDRESS
+#define _COMM_PAGE_RO_ADDRESS                   _COMM_PAGE32_RO_ADDRESS
 
 #endif /* __LP64__ */
 
 #define _COMM_PAGE32_BASE_ADDRESS               (0xFFFF4000)            /* Must be outside of normal map bounds */
+#define _COMM_PAGE32_RO_ADDRESS                 (0xFFFFC000)            /* Must be outside of normal map bounds */
 #define _COMM_PAGE32_AREA_LENGTH                (_COMM_PAGE_AREA_LENGTH)
 #define _COMM_PAGE32_TEXT_START                 (-1)
 
@@ -201,8 +248,48 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
 #define _COMM_PAGE64_OBJC_BASE                  0ULL
 
 /*
- * data in the comm pages
- * apply _COMM_PAGE_PRIV macro to use these in privileged mode
+ * Comm page layout versions
+ *
+ * If you need to create an RO variant of an existing commpage field (see "Comm page data fields"
+ * description below), bump the maximum value of _COMM_PAGE_LAYOUT_VERSION.  The kernel should
+ * always use the latest version.  Individual build targets may default to lower versions as
+ * needed.  For layout versions lower than the version in which an RO variant was added, the
+ * field should be defined to use the "legacy" RW offset.  In general, we expect these comm page
+ * fields to only be used by platform-level binaries, which are typically coupled to the SDK.
+ * A notable exception are simulator targets, which must run the latest platform binaries against
+ * older host kernels.  Individual builds can also override _COMM_PAGE_LAYOUT_VERSION if they
+ * should need to for some reason.
+ * Note that we don't use the _COMM_PAGE_VERSION field to provide conditional runtime access
+ * to these RO fields, as the version resides in the legacy kernel-writable page and could be
+ * spoofed by an attacker.
+ */
+
+#ifndef _COMM_PAGE_LAYOUT_VERSION
+
+#if KERNEL
+#define _COMM_PAGE_LAYOUT_VERSION 1
+#elif TARGET_OS_SIMULATOR
+// Simulators require running platform libraries built against new SDKs on older hosts
+#define _COMM_PAGE_LAYOUT_VERSION 0
+#else
+#define _COMM_PAGE_LAYOUT_VERSION 1
+#endif
+
+#endif // #ifndef _COMM_PAGE_LAYOUT_VERSION
+
+/*
+ * Comm page data fields
+ *
+ * There is always at least one comm page, backed by a physical page with a kernel RW mapping.
+ * Apply the _COMM_PAGE_PRIV macro to use this mapping in kernel mode.
+ * Depending on device configuration, there may be an additional comm page, backed by a physical
+ * page with a kernel RO mapping.  This is an additional security measure for certain high-value
+ * comm page fields which only need to be accessed from the kernel during early boot.
+ * Fields that wish to use this page when available should be defined here as an offset from
+ * _COMM_PAGE_RO_ADDRESS instead of _COMM_PAGE_START_ADDRESS, and should be placed at an offset
+ * that does not overlap with any other RO or RW field.  If an existing field is migrated from
+ * the RW to the RO page, the RW definition should be preserved with a _LEGACY suffix in order
+ * to maintain binary compatibility.
  */
 #define _COMM_PAGE_SIGNATURE                    (_COMM_PAGE_START_ADDRESS+0x000)        // first few bytes are a signature
 #define _COMM_PAGE_SIGNATURELEN                 (0x10)
@@ -213,20 +300,48 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
 
 #define _COMM_PAGE_CPU_CAPABILITIES             (_COMM_PAGE_START_ADDRESS+0x020)        // uint32_t _cpu_capabilities
 #define _COMM_PAGE_NCPUS                        (_COMM_PAGE_START_ADDRESS+0x022)        // uint8_t number of configured CPUs
-#define _COMM_PAGE_USER_PAGE_SHIFT_32           (_COMM_PAGE_START_ADDRESS+0x024)        // VM page shift for 32-bit processes
-#define _COMM_PAGE_USER_PAGE_SHIFT_64           (_COMM_PAGE_START_ADDRESS+0x025)        // VM page shift for 64-bit processes
+
+#define _COMM_PAGE_USER_PAGE_SHIFT_32_LEGACY    (_COMM_PAGE_START_ADDRESS+0x024)        // VM page shift for 32-bit processes
+#if _COMM_PAGE_LAYOUT_VERSION >= 1
+#define _COMM_PAGE_USER_PAGE_SHIFT_32           (_COMM_PAGE_RO_ADDRESS+0x024)           // VM page shift for 32-bit processes
+#else
+#define _COMM_PAGE_USER_PAGE_SHIFT_32            _COMM_PAGE_USER_PAGE_SHIFT_32_LEGACY
+#endif
+
+#define _COMM_PAGE_USER_PAGE_SHIFT_64_LEGACY    (_COMM_PAGE_START_ADDRESS+0x025)        // VM page shift for 64-bit processes
+#if _COMM_PAGE_LAYOUT_VERSION >= 1
+#define _COMM_PAGE_USER_PAGE_SHIFT_64           (_COMM_PAGE_RO_ADDRESS+0x025)           // VM page shift for 64-bit processes
+#else
+#define _COMM_PAGE_USER_PAGE_SHIFT_64            _COMM_PAGE_USER_PAGE_SHIFT_64_LEGACY
+#endif
+
 #define _COMM_PAGE_CACHE_LINESIZE               (_COMM_PAGE_START_ADDRESS+0x026)        // uint16_t cache line size
 #define _COMM_PAGE_UNUSED4                      (_COMM_PAGE_START_ADDRESS+0x028)        // used to be _COMM_PAGE_SCHED_GEN: uint32_t scheduler generation number (count of pre-emptions)
-#define _COMM_PAGE_UNUSED3                      (_COMM_PAGE_START_ADDRESS+0x02C)        // used to be _COMM_PAGE_SPIN_COUNT: uint32_t max spin count for mutex's
+#define _COMM_PAGE_UNUSED3                      (_COMM_PAGE_START_ADDRESS+0x02C)        // used to be _COMM_PAGE_SPIN_COUNT: uint32_t max spin count for mutex's (3 bytes unused)
+#define _COMM_PAGE_CPU_CLUSTERS                 (_COMM_PAGE_START_ADDRESS+0x02F)        // uint8_t number of CPU clusters
 #define _COMM_PAGE_MEMORY_PRESSURE              (_COMM_PAGE_START_ADDRESS+0x030)        // uint32_t copy of vm_memory_pressure
 #define _COMM_PAGE_ACTIVE_CPUS                  (_COMM_PAGE_START_ADDRESS+0x034)        // uint8_t number of active CPUs (hw.activecpu)
 #define _COMM_PAGE_PHYSICAL_CPUS                (_COMM_PAGE_START_ADDRESS+0x035)        // uint8_t number of physical CPUs (hw.physicalcpu_max)
 #define _COMM_PAGE_LOGICAL_CPUS                 (_COMM_PAGE_START_ADDRESS+0x036)        // uint8_t number of logical CPUs (hw.logicalcpu_max)
-#define _COMM_PAGE_KERNEL_PAGE_SHIFT            (_COMM_PAGE_START_ADDRESS+0x037)        // uint8_t kernel vm page shift */
+
+#define _COMM_PAGE_KERNEL_PAGE_SHIFT_LEGACY     (_COMM_PAGE_START_ADDRESS+0x037)        // uint8_t kernel vm page shift */
+#if _COMM_PAGE_LAYOUT_VERSION >= 1
+#define _COMM_PAGE_KERNEL_PAGE_SHIFT            (_COMM_PAGE_RO_ADDRESS+0x037)           // uint8_t kernel vm page shift */
+#else
+#define _COMM_PAGE_KERNEL_PAGE_SHIFT            _COMM_PAGE_KERNEL_PAGE_SHIFT_LEGACY
+#endif
+
 #define _COMM_PAGE_MEMORY_SIZE                  (_COMM_PAGE_START_ADDRESS+0x038)        // uint64_t max memory size */
 #define _COMM_PAGE_TIMEOFDAY_DATA               (_COMM_PAGE_START_ADDRESS+0x040)        // used by gettimeofday(). Currently, sizeof(commpage_timeofday_data_t) = 40. A new struct is used on gettimeofday but space is reserved on the commpage for compatibility
 #define _COMM_PAGE_CPUFAMILY                    (_COMM_PAGE_START_ADDRESS+0x080)        // used by memcpy() resolver
-#define _COMM_PAGE_DEV_FIRM                     (_COMM_PAGE_START_ADDRESS+0x084)        // uint32_t handle on PE_i_can_has_debugger
+
+#define _COMM_PAGE_DEV_FIRM_LEGACY              (_COMM_PAGE_START_ADDRESS+0x084)        // uint32_t handle on PE_i_can_has_debugger
+#if _COMM_PAGE_LAYOUT_VERSION >= 1
+#define _COMM_PAGE_DEV_FIRM                     (_COMM_PAGE_RO_ADDRESS+0x084)           // uint32_t handle on PE_i_can_has_debugger
+#else
+#define _COMM_PAGE_DEV_FIRM                     _COMM_PAGE_DEV_FIRM_LEGACY
+#endif
+
 #define _COMM_PAGE_TIMEBASE_OFFSET              (_COMM_PAGE_START_ADDRESS+0x088)        // uint64_t timebase offset for constructing mach_absolute_time()
 #define _COMM_PAGE_USER_TIMEBASE                (_COMM_PAGE_START_ADDRESS+0x090)        // uint8_t is userspace mach_absolute_time supported (can read the timebase)
 #define _COMM_PAGE_CONT_HWCLOCK                 (_COMM_PAGE_START_ADDRESS+0x091)        // uint8_t is always-on hardware clock present for mach_continuous_time()
@@ -239,7 +354,9 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
 // aligning to 64byte for cacheline size
 #define _COMM_PAGE_APPROX_TIME                  (_COMM_PAGE_START_ADDRESS+0x0C0)        // uint64_t last known mach_absolute_time()
 #define _COMM_PAGE_APPROX_TIME_SUPPORTED        (_COMM_PAGE_START_ADDRESS+0x0C8)        // uint8_t is mach_approximate_time supported
-#define _COMM_PAGE_UNUSED1                      (_COMM_PAGE_START_ADDRESS+0x0C9)        // 55 unused bytes, align next mutable value to a separate cache line
+
+
+#define _COMM_PAGE_UNUSED1                      (_COMM_PAGE_START_ADDRESS+0x0D9)        // 39 unused bytes, align next mutable value to a separate cache line
 
 #define _COMM_PAGE_KDEBUG_ENABLE                (_COMM_PAGE_START_ADDRESS+0x100)        // uint32_t export kdebug status bits to userspace
 #define _COMM_PAGE_ATM_DIAGNOSTIC_CONFIG        (_COMM_PAGE_START_ADDRESS+0x104)        // uint32_t export "atm_diagnostic_config" to userspace
@@ -253,6 +370,24 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
 // aligning to 128 bytes for cacheline/fabric size
 #define _COMM_PAGE_CPU_QUIESCENT_COUNTER        (_COMM_PAGE_START_ADDRESS+0x180)        // uint64_t, but reserve the whole 128 (0x80) bytes
 
+#define _COMM_PAGE_CPU_TO_CLUSTER               (_COMM_PAGE_START_ADDRESS+0x200)        // 256 bytes reserved for (logical) CPU_ID -> CLUSTER_ID mappings
+
+// Apple Security Bounty random values
+#define _COMM_PAGE_ASB_TARGET_VALUE             (_COMM_PAGE_START_ADDRESS+0x320)        // uint64_t for random value
+#define _COMM_PAGE_ASB_TARGET_ADDRESS           (_COMM_PAGE_START_ADDRESS+0x328)        // uint64_t for random target address
+#define _COMM_PAGE_ASB_TARGET_KERN_VALUE        (_COMM_PAGE_START_ADDRESS+0x330)        // uint64_t for random kernel value
+#define _COMM_PAGE_ASB_TARGET_KERN_ADDRESS      (_COMM_PAGE_START_ADDRESS+0x338)        // uint64_t for random kernel target address
+
+#define _COMM_PAGE_APT_MSG_POLICY               (_COMM_PAGE_START_ADDRESS+0x340)        // uint8_t for APT_MSG policy
+
+#define _COMM_PAGE_APT_ACTIVE                   (_COMM_PAGE_START_ADDRESS+0x341)        // uint8_t for APT active status (infrequently mutated)
+
+#if defined(PRIVATE)
+#define _COMM_PAGE_SECURITY_RESEARCH_DEVICE_ERM_ACTIVE (_COMM_PAGE_START_ADDRESS+0x342) // uint8_t for ERM active status (set at boot time)
+#else
+#define _COMM_PAGE_RESERVED_0                   (_COMM_PAGE_START_ADDRESS+0x342)
+#endif
+
 #define _COMM_PAGE_END                          (_COMM_PAGE_START_ADDRESS+0xfff)        // end of common page
 
 #if defined(__LP64__)
@@ -263,10 +398,12 @@ _Static_assert((_COMM_PAGE64_BASE_ADDRESS >= _COMM_PAGE64_NESTING_START) &&
  * address to text comm page is from apple array */
 #define _COMM_PAGE_TEXT_ATOMIC_ENQUEUE                  (0x0)
 #define _COMM_PAGE_TEXT_ATOMIC_DEQUEUE                  (0x4)
+#define _COMM_PAGE_TEXT_ATOMIC_TPIDR_EL0                (0x8)
 
 #else /* __LP64__ */
 /* No 32 bit text region */
 #endif /* __LP64__ */
 
+#endif /* defined (__arm__) || defined (__arm64__) */
 #endif /* _ARM_CPU_CAPABILITIES_H */
 #endif /* PRIVATE */

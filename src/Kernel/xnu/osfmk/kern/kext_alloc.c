@@ -41,19 +41,21 @@
 #include <libkern/prelink.h>
 #include <libkern/OSKextLibPrivate.h>
 #include <san/kasan.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_xnu.h>
 
 #define KASLR_IOREG_DEBUG 0
 
 
-vm_map_t g_kext_map = 0;
+SECURITY_READ_ONLY_LATE(vm_map_t) g_kext_map = 0;
 #if KASLR_IOREG_DEBUG
-mach_vm_offset_t kext_alloc_base = 0;
-mach_vm_offset_t kext_alloc_max = 0;
+SECURITY_READ_ONLY_LATE(mach_vm_offset_t) kext_alloc_base = 0;
+SECURITY_READ_ONLY_LATE(mach_vm_offset_t) kext_alloc_max = 0;
 #else
-static mach_vm_offset_t kext_alloc_base = 0;
-static mach_vm_offset_t kext_alloc_max = 0;
+static SECURITY_READ_ONLY_LATE(mach_vm_offset_t) kext_alloc_base = 0;
+static SECURITY_READ_ONLY_LATE(mach_vm_offset_t) kext_alloc_max = 0;
 #if CONFIG_KEXT_BASEMENT
-static mach_vm_offset_t kext_post_boot_base = 0;
+static SECURITY_READ_ONLY_LATE(mach_vm_offset_t) kext_post_boot_base = 0;
 #endif
 #endif
 
@@ -67,7 +69,6 @@ void
 kext_alloc_init(void)
 {
 #if CONFIG_KEXT_BASEMENT
-	kern_return_t rval = 0;
 	kernel_segment_command_t *text = NULL;
 	kernel_segment_command_t *prelinkTextSegment = NULL;
 	mach_vm_offset_t text_end, text_start;
@@ -104,17 +105,14 @@ kext_alloc_init(void)
 	}
 
 	/* Allocate the sub block of the kernel map */
-	rval = kmem_suballoc(kernel_map, (vm_offset_t *) &kext_alloc_base,
-	    kext_alloc_size, /* pageable */ TRUE,
+	vm_map_will_allocate_early_map(&g_kext_map);
+	g_kext_map = kmem_suballoc(kernel_map, &kext_alloc_base,
+	    kext_alloc_size, VM_MAP_CREATE_DEFAULT,
 	    VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
-	    VM_MAP_KERNEL_FLAGS_NONE, VM_KERN_MEMORY_KEXT,
-	    &g_kext_map);
-	if (rval != KERN_SUCCESS) {
-		panic("kext_alloc_init: kmem_suballoc failed 0x%x\n", rval);
-	}
+	    KMS_NOFAIL, VM_KERN_MEMORY_KEXT).kmr_submap;
 
 	if ((kext_alloc_base + kext_alloc_size) > kext_alloc_max) {
-		panic("kext_alloc_init: failed to get first 2GB\n");
+		panic("kext_alloc_init: failed to get first 2GB");
 	}
 
 	if (kernel_map->min_offset > kext_alloc_base) {
@@ -168,7 +166,10 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 #else
 	mach_vm_offset_t addr = (fixed) ? *_addr : kext_alloc_base;
 #endif
-	int flags = (fixed) ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE;
+	vm_map_kernel_flags_t vmk_flags = {
+		.vmf_fixed = (fixed != 0),
+		.vm_tag    = VM_KERN_MEMORY_KEXT,
+	};
 
 #if CONFIG_KEXT_BASEMENT
 	kc_format_t kcformat;
@@ -177,7 +178,8 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 		 * There is no need for a kext basement when booting with the
 		 * new MH_FILESET format kext collection.
 		 */
-		rval = mach_vm_allocate_kernel(g_kext_map, &addr, size, flags, VM_KERN_MEMORY_KEXT);
+		rval = mach_vm_allocate_kernel(g_kext_map, &addr, size,
+		    vmk_flags);
 		if (rval != KERN_SUCCESS) {
 			printf("vm_allocate failed - %d\n", rval);
 			goto finish;
@@ -196,9 +198,7 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 	    &addr,
 	    size,
 	    0,
-	    flags,
-	    VM_MAP_KERNEL_FLAGS_NONE,
-	    VM_KERN_MEMORY_KEXT,
+	    vmk_flags,
 	    MACH_PORT_NULL,
 	    0,
 	    TRUE,
@@ -211,7 +211,7 @@ kext_alloc(vm_offset_t *_addr, vm_size_t size, boolean_t fixed)
 	}
 check_reachable:
 #else
-	rval = mach_vm_allocate_kernel(g_kext_map, &addr, size, flags, VM_KERN_MEMORY_KEXT);
+	rval = mach_vm_allocate_kernel(g_kext_map, &addr, size, vmk_flags);
 	if (rval != KERN_SUCCESS) {
 		printf("vm_allocate failed - %d\n", rval);
 		goto finish;
@@ -240,7 +240,7 @@ kext_free(vm_offset_t addr, vm_size_t size)
 {
 	kern_return_t rval;
 
-	rval = mach_vm_deallocate(g_kext_map, addr, size);
+	rval = mach_vm_deallocate_kernel(g_kext_map, addr, size);
 	assert(rval == KERN_SUCCESS);
 }
 

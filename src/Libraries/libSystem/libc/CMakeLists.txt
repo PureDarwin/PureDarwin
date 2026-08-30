@@ -283,6 +283,7 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/alarm.c          # _alarm
     gen/FreeBSD/fmtcheck.c       # _fmtcheck (file(1) locale-safe strerror formatting)
     secure/strcat_chk.c          # ___strcat_chk
+    secure/strncat_chk.c         # ___strncat_chk (cairo, built with FORTIFY on)
     # POSIX regex: Apple's TRE engine (regcomp/regexec) + BSD regerror.
     regex/FreeBSD/regerror.c
     regex/TRE/lib/regcomp.c

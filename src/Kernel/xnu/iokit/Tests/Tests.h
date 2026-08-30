@@ -27,4 +27,23 @@
  */
 
 extern int IOMemoryDescriptorTest(int x);
+#if HAS_MTE
+extern int IOMemoryDescriptorCpuMapMTETest(int x);
+
+#define IOMD_MTE_RWB_DO_WRITE        0x01
+#define IOMD_MTE_RWB_MTE_BUFFER      0x02
+#define IOMD_MTE_RWB_DO_TAG_MISMATCH 0x04
+
+extern IOReturn IOMemoryDescriptorReadWriteBytesMTETest(void);
+extern IOReturn IOMemoryDescriptorReadWriteBytesWithoutMTETest(void);
+extern IOReturn IOMemoryDescriptorReadBytesMTEWithTCFTest(void);
+extern IOReturn IOMemoryDescriptorWriteBytesMTEWithTCFTest(void);
+
+extern int IOMemoryDescriptorCreateMTEMappingInThisMapTest(void);
+extern int IOMemoryDescriptorCreateMTEMappingInOtherMapTest(void);
+extern int IOMemoryDescriptorCreateMTEMappingInKernelMapTest(void);
+#endif /* HAS_MTE */
+IOReturn IOMemoryDescriptorVNodeTest(int arg);
+
+#define kIOServiceTestServiceManagementEntitlementKey "com.apple.iokit.test-service-management"
 

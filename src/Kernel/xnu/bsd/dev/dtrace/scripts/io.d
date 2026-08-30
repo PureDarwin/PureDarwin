@@ -168,6 +168,8 @@ inline int O_TRUNC = 0x0400;
 #pragma D binding "1.1" O_TRUNC
 inline int O_EXCL = 0x0800;
 #pragma D binding "1.1" O_EXCL
+inline int O_RESOLVE_BENEATH = 0x1000;
+#pragma D binding "1.1" O_RESOLVE_BENEATH
 inline int O_EVTONLY = 0x8000;
 #pragma D binding "1.1" O_EVTONLY
 inline int O_NOCTTY = 0x20000;
@@ -240,8 +242,8 @@ translator fileinfo_t < struct fileglob *F > {
 };
 
 inline fileinfo_t fds[int fd] = xlate <fileinfo_t> (
-	(fd >= 0 && fd <= curproc->p_fd->fd_lastfile) ?
-		(struct fileglob *)(curproc->p_fd->fd_ofiles[fd]->fp_glob) :
+	(fd >= 0 && fd < curproc->p_fd.fd_afterlast) ?
+		(struct fileglob *)(curproc->p_fd.fd_ofiles[fd]->fp_glob) :
 		(struct fileglob *)NULL);
 
 #pragma D attributes Stable/Stable/Common fds

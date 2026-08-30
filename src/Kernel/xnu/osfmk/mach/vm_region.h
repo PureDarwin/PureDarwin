@@ -50,6 +50,10 @@
 
 #include <sys/cdefs.h>
 
+#if defined(PRIVATE) && !defined(KERNEL) && !defined(MODULES_SUPPORTED)
+#include <mach/vm_region_private.h>
+#endif /* PRIVATE && !KERNEL && !MODULES_SUPPORTED */
+
 #pragma pack(push, 4)
 
 // LP64todo: all the current tools are 32bit, obviously never worked for 64b
@@ -70,6 +74,15 @@ typedef int     *vm_region_recurse_info_t;
 typedef int     *vm_region_recurse_info_64_t;
 typedef int      vm_region_flavor_t;
 typedef int      vm_region_info_data_t[VM_REGION_INFO_MAX];
+
+#ifdef PRIVATE
+/* task region info flags configured via sysctl */
+#ifdef MACH_KERNEL_PRIVATE
+/* update the bit field size in task.h if flags are added */
+#endif /* MACH_KERNEL_PRIVATE */
+/* return SM_SHARED for SM_PRIVATE_ALIASED/SM_SHARED_ALIASED (perf) */
+#define VM_REGION_INFO_FLAGS_NO_ALIASED 0x1
+#endif /* PRIVATE */
 
 #define VM_REGION_BASIC_INFO_64         9
 struct vm_region_basic_info_64 {
@@ -117,6 +130,13 @@ typedef struct vm_region_basic_info              vm_region_basic_info_data_t;
 #define VM_REGION_BASIC_INFO_COUNT ((mach_msg_type_number_t) \
 	(sizeof(vm_region_basic_info_data_t)/sizeof(int)))
 
+/*
+ * Clients should move away from using these codes for anything other than debugging
+ * or best-effort accounting.
+ * Each value is only loosely defined, and even within those definitions it is not
+ * always possible for the VM to return the correct value. This behavior is also
+ * subject to change as VM internals evolve.
+ */
 #define SM_COW             1
 #define SM_PRIVATE         2
 #define SM_EMPTY           3
@@ -252,6 +272,7 @@ typedef struct vm_region_submap_info             vm_region_submap_info_data_t;
 	 (sizeof(vm_region_submap_info_data_t) / sizeof(natural_t)))
 
 struct vm_region_submap_info_64 {
+	/* v0 fields */
 	vm_prot_t               protection;     /* present access protection */
 	vm_prot_t               max_protection; /* max avail through vm_prot */
 	vm_inherit_t            inheritance;/* behavior of map/obj on fork */
@@ -269,18 +290,30 @@ struct vm_region_submap_info_64 {
 	vm_behavior_t           behavior;       /* access behavior hint */
 	vm32_object_id_t        object_id;      /* obj/map name, not a handle */
 	unsigned short          user_wired_count;
+	unsigned short          flags;
+	/* v1 fields */
 	unsigned int            pages_reusable;
+	/* v2 fields */
 	vm_object_id_t          object_id_full;
 };
 
 typedef struct vm_region_submap_info_64         *vm_region_submap_info_64_t;
 typedef struct vm_region_submap_info_64          vm_region_submap_info_data_64_t;
 
+/*
+ * Note that this size is hard-coded at the MIG boundary in mach_types.defs
+ * so if we ever increase this you'll need to also bump the definition of
+ * vm_region_recurse_info_t.
+ */
 #define VM_REGION_SUBMAP_INFO_V2_SIZE   \
 	(sizeof (vm_region_submap_info_data_64_t))
+
+/* v1 size is v2 size minus v2's new fields */
 #define VM_REGION_SUBMAP_INFO_V1_SIZE   \
 	(VM_REGION_SUBMAP_INFO_V2_SIZE - \
 	 sizeof (vm_object_id_t) /* object_id_full */ )
+
+/* v0 size is v1 size minus v1's new fields */
 #define VM_REGION_SUBMAP_INFO_V0_SIZE   \
 	(VM_REGION_SUBMAP_INFO_V1_SIZE - \
 	 sizeof (unsigned int) /* pages_reusable */ )
@@ -298,6 +331,13 @@ typedef struct vm_region_submap_info_64          vm_region_submap_info_data_64_t
 /* set this to the latest version */
 #define VM_REGION_SUBMAP_INFO_COUNT_64          VM_REGION_SUBMAP_INFO_V2_COUNT_64
 
+#define VM_REGION_FLAG_JIT_ENABLED              0x1
+#define VM_REGION_FLAG_TPRO_ENABLED             0x2
+
+#ifdef PRIVATE
+#define VM_REGION_FLAG_MTE_ENABLED              0x4
+#endif /* PRIVATE */
+
 struct vm_region_submap_short_info_64 {
 	vm_prot_t               protection;     /* present access protection */
 	vm_prot_t               max_protection; /* max avail through vm_prot */
@@ -312,6 +352,7 @@ struct vm_region_submap_short_info_64 {
 	vm_behavior_t           behavior;       /* access behavior hint */
 	vm32_object_id_t        object_id;      /* obj/map name, not a handle */
 	unsigned short          user_wired_count;
+	unsigned short          flags;
 };
 
 typedef struct vm_region_submap_short_info_64   *vm_region_submap_short_info_64_t;

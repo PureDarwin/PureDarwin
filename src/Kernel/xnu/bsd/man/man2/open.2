@@ -2,14 +2,14 @@
 .\" Copyright (c) 2010 Apple Inc.  All rights reserved.
 .\"
 .\" @APPLE_LICENSE_HEADER_START@
-.\" 
+.\"
 .\" This file contains Original Code and/or Modifications of Original Code
 .\" as defined in and that are subject to the Apple Public Source License
 .\" Version 2.0 (the 'License'). You may not use this file except in
 .\" compliance with the License. Please obtain a copy of the License at
 .\" http://www.opensource.apple.com/apsl/ and read it before using this
 .\" file.
-.\" 
+.\"
 .\" The Original Code and all software distributed under the License are
 .\" distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
 .\" EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
@@ -17,7 +17,7 @@
 .\" FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
 .\" Please see the License for the specific language governing rights and
 .\" limitations under the License.
-.\" 
+.\"
 .\" @APPLE_LICENSE_HEADER_END@
 .\"
 .\"
@@ -56,7 +56,7 @@
 .\"
 .\"     @(#)open.2	8.2 (Berkeley) 11/16/93
 .\"
-.Dd November 10, 2010
+.Dd June 3, 2021
 .Dt OPEN 2
 .Os BSD 4
 .Sh NAME
@@ -135,6 +135,8 @@ argument must include exactly one of the following file access modes:
 O_RDONLY	open for reading only
 O_WRONLY	open for writing only
 O_RDWR		open for reading and writing
+O_SEARCH	open directory for searching
+O_EXEC		open for execute only
 .Ed
 .Pp
 In addition any combination of the following values can be
@@ -149,11 +151,14 @@ O_TRUNC		truncate size to 0
 O_EXCL		error if O_CREAT and the file exists
 O_SHLOCK	atomically obtain a shared lock
 O_EXLOCK	atomically obtain an exclusive lock
+O_DIRECTORY	restrict open to a directory
 O_NOFOLLOW	do not follow symlinks
 O_SYMLINK	allow open of symlinks
 O_EVTONLY	descriptor requested for event notifications only
 O_CLOEXEC	mark as close-on-exec
-O_NOFOLLOW_ANY	do not follow symlinks in the entire path.
+O_NOFOLLOW_ANY	do not follow symlinks in the entire path
+O_RESOLVE_BENEATH	path resolution must not escape the directory associated with the file descriptor
+O_UNIQUE	ensure a file is opened only if it has a single hard link
 .Ed
 .Pp
 Opening a file with
@@ -205,6 +210,14 @@ the request for the lock will never fail
 (provided that the underlying filesystem supports locking).
 .Pp
 If
+.Dv O_DIRECTORY
+is used in the mask and the target file passed to
+.Fn open
+is not a directory then the
+.Fn open
+will fail.
+.Pp
+If
 .Dv O_NOFOLLOW
 is used in the mask and the target file passed to
 .Fn open
@@ -222,8 +235,8 @@ will be for the symbolic link itself, not what it links to.
 .Pp
 The
 .Dv O_EVTONLY
-flag is only intended for monitoring a file for changes (e.g. kqueue). Note: when 
-this flag is used, the opened file will not prevent an unmount 
+flag is only intended for monitoring a file for changes (e.g. kqueue). Note: when
+this flag is used, the opened file will not prevent an unmount
 of the volume that contains the file.
 .Pp
 The
@@ -242,6 +255,19 @@ is used in the mask and any component of the path passed to
 is a symbolic link then the
 .Fn open
 will fail.
+.Pp
+If
+.Dv O_RESOLVE_BENEATH
+is used in the mask and the specified path resolution escapes the directory associated with the
+.Fa fd
+then the
+.Fn openat
+will fail.
+.Pp
+If
+.Dv O_UNIQUE
+is used in the mask, the open operation will fail if the file has more than one hard link pointing to it.
+The operation succeeds only if the file is guaranteed to be uniquely accessible through the provided pathname.
 .Pp
 If successful,
 .Fn open
@@ -281,7 +307,7 @@ The named file is opened unless:
 Search permission is denied for a component of the path prefix.
 .\" ===========
 .It Bq Er EACCES
-The required permissions (for reading and/or writing)
+The required permissions (for reading and/or writing or search or executing)
 are denied for the given flags.
 .\" ===========
 .It Bq Er EACCES
@@ -344,6 +370,10 @@ allocating the inode for
 The named file is a directory, and the arguments specify
 that it is to be opened for writing.
 .\" ===========
+.It Bq Er EISDIR
+The named file is a directory, and the arguments specify
+that it is to be opened for executing.
+.\" ===========
 .It Bq Er ELOOP
 Too many symbolic links are encountered in translating the pathname.
 This is taken to be indicative of a looping symbolic link.
@@ -354,12 +384,20 @@ The process has already reached its limit for open file descriptors.
 .It Bq Er ENAMETOOLONG
 A component of a pathname exceeds
 .Dv {NAME_MAX}
-characters, or an entire path name exceeded 
+characters, or an entire path name exceeded
 .Dv {PATH_MAX}
 characters.
 .\" ===========
 .It Bq Er ENFILE
 The system file table is full.
+.\" ===========
+.It Bq Er ENOTDIR
+.Dv O_DIRECTORY
+was specified and the target is not a directory.
+.\" ===========
+.It Bq Er ENOTDIR
+.Dv O_SEARCH
+was specified and the target is not a directory.
 .\" ===========
 .It Bq Er ELOOP
 .Dv O_NOFOLLOW
@@ -395,6 +433,15 @@ file is being created.
 .It Bq Er ENOTDIR
 A component of the path prefix is not a directory.
 .\" ===========
+.It Bq Er EDEADLK
+A component of the pathname refers to a
+.Dq dataless
+directory that requires materialization and the I/O policy of the current
+thread or process disallows dataless directory materialization
+.Po see
+.Xr getiopolicy_np 3
+.Pc .
+.\" ===========
 .It Bq Er ENXIO
 The named file is a character-special or block-special file
 and the device associated with this special file does not exist.
@@ -425,7 +472,7 @@ The file is a pure procedure (shared text) file that is being
 executed and the
 .Fn open
 call requests write access.
-.It Bq Eq EBADF
+.It Bq Er EBADF
 The
 .Fa path
 argument does not specify an absolute path and the
@@ -434,7 +481,7 @@ argument is
 neither
 .Dv AT_FDCWD
 nor a valid file descriptor open for searching.
-.It Bq Eq ENOTDIR
+.It Bq Er ENOTDIR
 The
 .Fa path
 argument is not an absolute path and
@@ -442,8 +489,18 @@ argument is not an absolute path and
 is neither
 .Dv AT_FDCWD
 nor a file descriptor associated with a directory.
-.It Bq Eq EILSEQ
+.It Bq Er EILSEQ
 The filename does not match the encoding rules.
+.It Bq Er EWOULDBLOCK
+O_SHLOCK or O_EXLOCK is specified, but the file is locked and the O_NONBLOCK option was specified.
+.It Bq Er ENOTCAPABLE
+.Fa path
+resolution escapes the directory associated with
+.Fa fd
+and O_RESOLVE_BENEATH option was specified.
+.It Bq Er ENOTCAPABLE
+.Fa path
+has multiple hard links and O_UNIQUE option was specified.
 .El
 .Sh COMPATIBILITY
 .Fn open
@@ -457,13 +514,14 @@ without changing your controlling terminal.
 .Xr dup 2 ,
 .Xr getdtablesize 2 ,
 .Xr lseek 2 ,
+.Xr openat_authenticated_np 2 ,
 .Xr read 2 ,
 .Xr umask 2 ,
 .Xr write 2
 .Sh HISTORY
 An
 .Fn open
-function call appeared in 
+function call appeared in
 .At v6 .
 The
 .Fn openat

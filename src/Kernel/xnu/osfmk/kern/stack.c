@@ -36,6 +36,7 @@
 #include <kern/kern_types.h>
 #include <kern/lock_group.h>
 #include <kern/mach_param.h>
+#include <kern/misc_protos.h>
 #include <kern/percpu.h>
 #include <kern/processor.h>
 #include <kern/thread.h>
@@ -43,11 +44,14 @@
 #include <kern/kalloc.h>
 #include <kern/ledger.h>
 
-#include <vm/vm_map.h>
-#include <vm/vm_kern.h>
+#include <vm/vm_map_xnu.h>
+#include <vm/vm_kern_xnu.h>
 
-#include <mach_debug.h>
 #include <san/kasan.h>
+
+#if __has_feature(ptrauth_calls)
+#include <ptrauth.h>
+#endif
 
 /*
  *	We allocate stacks from generic kernel VM.
@@ -56,7 +60,7 @@
  *	because stack_alloc_try/thread_invoke operate at splsched.
  */
 
-decl_simple_lock_data(static, stack_lock_data);
+static SIMPLE_LOCK_DECLARE(stack_lock_data, 0);
 #define stack_lock()            simple_lock(&stack_lock_data, LCK_GRP_NULL)
 #define stack_unlock()          simple_unlock(&stack_lock_data)
 
@@ -74,12 +78,10 @@ static int                      stack_free_delta;
 
 static unsigned int             stack_new_count;                                                /* total new stack allocations */
 
-static vm_offset_t              stack_addr_mask;
-
-unsigned int                    kernel_stack_pages;
-vm_offset_t                     kernel_stack_size;
-vm_offset_t                     kernel_stack_mask;
-vm_offset_t                     kernel_stack_depth_max;
+static SECURITY_READ_ONLY_LATE(vm_offset_t)  stack_addr_mask;
+SECURITY_READ_ONLY_LATE(vm_offset_t)         kernel_stack_size;
+SECURITY_READ_ONLY_LATE(vm_offset_t)         kernel_stack_mask;
+vm_offset_t                                  kernel_stack_depth_max;
 
 struct stack_cache {
 	vm_offset_t     free;
@@ -87,58 +89,94 @@ struct stack_cache {
 };
 static struct stack_cache PERCPU_DATA(stack_cache);
 
-/*
- *	The next field is at the base of the stack,
- *	so the low end is left unsullied.
- */
-#define stack_next(stack)       \
-	(*((vm_offset_t *)((stack) + kernel_stack_size) - 1))
-
-static inline int
-log2(vm_offset_t size)
+static inline vm_offset_t *
+stack_get_next_ptr(vm_offset_t stack)
 {
-	int     result;
-	for (result = 0; size > 0; result++) {
-		size >>= 1;
-	}
-	return result;
+	/*
+	 *	The next field is at the base of the stack,
+	 *	so the low end is left unsullied.
+	 */
+	return (vm_offset_t *)((stack) + kernel_stack_size) - 1;
+}
+
+#if __has_feature(ptrauth_calls)
+static inline uint64_t
+stack_next_ptr_discriminator(vm_offset_t containing_stack)
+{
+	/* diversify by both type and location */
+	return ptrauth_blend_discriminator(
+		(void *)containing_stack,
+		ptrauth_string_discriminator("stack.next"));
+}
+#endif /* __has_feature(ptrauth_calls) */
+
+static inline void
+stack_set_next(vm_offset_t stack, vm_offset_t stack_next)
+{
+	vm_offset_t *next_ptr = stack_get_next_ptr(stack);
+
+#if __has_feature(ptrauth_calls)
+	*next_ptr = (vm_offset_t)ptrauth_sign_unauthenticated(
+		(void *)stack_next,
+		ptrauth_key_process_independent_data,
+		stack_next_ptr_discriminator(stack));
+#else
+	*next_ptr = stack_next;
+#endif
+}
+
+static inline vm_offset_t
+stack_get_next(vm_offset_t stack)
+{
+	vm_offset_t *next_ptr = stack_get_next_ptr(stack);
+
+#if __has_feature(ptrauth_calls)
+	return (vm_offset_t)ptrauth_auth_data(
+		(void *)*next_ptr,
+		ptrauth_key_process_independent_data,
+		stack_next_ptr_discriminator(stack));
+#else
+	return *next_ptr;
+#endif
 }
 
 static inline vm_offset_t
 roundup_pow2(vm_offset_t size)
 {
-	return 1UL << (log2(size - 1) + 1);
+	if ((size & (size - 1)) == 0) {
+		/* if size is a power of 2 we're good */
+		return size;
+	}
+
+	return 1ul << flsll(size);
 }
 
 static vm_offset_t stack_alloc_internal(void);
 static void stack_free_stack(vm_offset_t);
 
-void
+static void
 stack_init(void)
 {
-	simple_lock_init(&stack_lock_data, 0);
+	uint32_t kernel_stack_pages = atop(KERNEL_STACK_SIZE);
 
-	kernel_stack_pages = KERNEL_STACK_SIZE / PAGE_SIZE;
 	kernel_stack_size = KERNEL_STACK_SIZE;
 	kernel_stack_mask = -KERNEL_STACK_SIZE;
-	kernel_stack_depth_max = 0;
 
 	if (PE_parse_boot_argn("kernel_stack_pages",
 	    &kernel_stack_pages,
 	    sizeof(kernel_stack_pages))) {
 		kernel_stack_size = kernel_stack_pages * PAGE_SIZE;
-		printf("stack_init: kernel_stack_pages=%d kernel_stack_size=%p\n",
-		    kernel_stack_pages, (void *) kernel_stack_size);
 	}
 
 	if (kernel_stack_size < round_page(kernel_stack_size)) {
-		panic("stack_init: stack size %p not a multiple of page size %d\n",
+		panic("stack_init: stack size %p not a multiple of page size %d",
 		    (void *) kernel_stack_size, PAGE_SIZE);
 	}
 
 	stack_addr_mask = roundup_pow2(kernel_stack_size) - 1;
 	kernel_stack_mask = ~stack_addr_mask;
 }
+STARTUP(TUNABLES, STARTUP_RANK_MIDDLE, stack_init);
 
 /*
  *	stack_alloc:
@@ -150,17 +188,17 @@ stack_init(void)
 static vm_offset_t
 stack_alloc_internal(void)
 {
-	vm_offset_t             stack = 0;
-	spl_t                   s;
-	int                     flags = 0;
-	kern_return_t           kr = KERN_SUCCESS;
+	vm_offset_t     stack = 0;
+	spl_t           s;
+	kma_flags_t     flags = KMA_NOFAIL | KMA_GUARD_FIRST | KMA_GUARD_LAST |
+	    KMA_GUARD_STACK | KMA_KSTACK | KMA_KOBJECT | KMA_ZERO;
 
 	s = splsched();
 	stack_lock();
 	stack_allocs++;
 	stack = stack_free_list;
 	if (stack != 0) {
-		stack_free_list = stack_next(stack);
+		stack_free_list = stack_get_next(stack);
 		stack_free_count--;
 	} else {
 		if (++stack_total > stack_hiwat) {
@@ -174,27 +212,21 @@ stack_alloc_internal(void)
 
 	if (stack == 0) {
 		/*
-		 * Request guard pages on either side of the stack.  Ask
-		 * kernel_memory_allocate() for two extra pages to account
+		 * Request two guard pages below the stack and one above.  Ask
+		 * kernel_memory_allocate() for three extra pages to account
 		 * for these.
 		 */
 
-		flags = KMA_GUARD_FIRST | KMA_GUARD_LAST | KMA_KSTACK | KMA_KOBJECT | KMA_ZERO;
-		kr = kernel_memory_allocate(kernel_map, &stack,
-		    kernel_stack_size + (2 * PAGE_SIZE),
-		    stack_addr_mask,
-		    flags,
-		    VM_KERN_MEMORY_STACK);
-		if (kr != KERN_SUCCESS) {
-			panic("stack_alloc: kernel_memory_allocate(size:0x%llx, mask: 0x%llx, flags: 0x%x) failed with %d\n", (uint64_t)(kernel_stack_size + (2 * PAGE_SIZE)), (uint64_t)stack_addr_mask, flags, kr);
-		}
+		kernel_memory_allocate(kernel_map, &stack,
+		    kernel_stack_size + ptoa(3), stack_addr_mask,
+		    flags, VM_KERN_MEMORY_STACK);
 
 		/*
 		 * The stack address that comes back is the address of the lower
-		 * guard page.  Skip past it to get the actual stack base address.
+		 * guard pages.  Skip past them to get the actual stack base address.
 		 */
 
-		stack += PAGE_SIZE;
+		stack += ptoa(2);
 	}
 	return stack;
 }
@@ -225,6 +257,9 @@ stack_free(
 {
 	vm_offset_t         stack = machine_stack_detach(thread);
 
+#if CONFIG_SPTM
+	assert(thread->machine.kredzonestack == 0);
+#endif
 	assert(stack);
 	if (stack != thread->reserved_stack) {
 		stack_free_stack(stack);
@@ -255,12 +290,12 @@ stack_free_stack(
 	s = splsched();
 	cache = PERCPU_GET(stack_cache);
 	if (cache->count < STACK_CACHE_SIZE) {
-		stack_next(stack) = cache->free;
+		stack_set_next(stack, cache->free);
 		cache->free = stack;
 		cache->count++;
 	} else {
 		stack_lock();
-		stack_next(stack) = stack_free_list;
+		stack_set_next(stack, stack_free_list);
 		stack_free_list = stack;
 		if (++stack_free_count > stack_free_hiwat) {
 			stack_free_hiwat = stack_free_count;
@@ -291,14 +326,14 @@ stack_alloc_try(
 	cache = PERCPU_GET(stack_cache);
 	stack = cache->free;
 	if (stack != 0) {
-		cache->free = stack_next(stack);
+		cache->free = stack_get_next(stack);
 		cache->count--;
 	} else {
 		if (stack_free_list != 0) {
 			stack_lock();
 			stack = stack_free_list;
 			if (stack != 0) {
-				stack_free_list = stack_next(stack);
+				stack_free_list = stack_get_next(stack);
 				stack_free_count--;
 				stack_free_delta--;
 			}
@@ -338,15 +373,15 @@ stack_collect(void)
 
 		while (stack_free_count > target) {
 			stack = stack_free_list;
-			stack_free_list = stack_next(stack);
+			stack_free_list = stack_get_next(stack);
 			stack_free_count--; stack_total--;
 			stack_unlock();
 			splx(s);
 
 			/*
-			 * Get the stack base address, then decrement by one page
-			 * to account for the lower guard page.  Add two extra pages
-			 * to the size to account for the guard pages on both ends
+			 * Get the stack base address, then decrement by two pages
+			 * to account for the lower guard pages.  Add three extra pages
+			 * to the size to account for the guard pages (two below, one above)
 			 * that were originally requested when the stack was allocated
 			 * back in stack_alloc().
 			 */
@@ -354,15 +389,9 @@ stack_collect(void)
 			stack = (vm_offset_t)vm_map_trunc_page(
 				stack,
 				VM_MAP_PAGE_MASK(kernel_map));
-			stack -= PAGE_SIZE;
-			if (vm_map_remove(
-				    kernel_map,
-				    stack,
-				    stack + kernel_stack_size + (2 * PAGE_SIZE),
-				    VM_MAP_REMOVE_KUNWIRE)
-			    != KERN_SUCCESS) {
-				panic("stack_collect: vm_map_remove");
-			}
+			stack -= ptoa(2);
+			kmem_free(kernel_map, stack, kernel_stack_size + ptoa(3),
+			    KMF_GUARD_FIRST | KMF_GUARD_LAST | KMF_GUARD_STACK);
 			stack = 0;
 
 			s = splsched();
@@ -423,115 +452,13 @@ stack_privilege(
 	/* OBSOLETE */
 }
 
-/*
- * Return info on stack usage for threads in a specific processor set
- */
-kern_return_t
-processor_set_stack_usage(
-	processor_set_t pset,
-	unsigned int    *totalp,
-	vm_size_t       *spacep,
-	vm_size_t       *residentp,
-	vm_size_t       *maxusagep,
-	vm_offset_t     *maxstackp)
-{
-#if !MACH_DEBUG
-	return KERN_NOT_SUPPORTED;
-#else
-	unsigned int total;
-	vm_size_t maxusage;
-	vm_offset_t maxstack;
-
-	thread_t *thread_list;
-	thread_t thread;
-
-	unsigned int actual;    /* this many things */
-	unsigned int i;
-
-	vm_size_t size, size_needed;
-	void *addr;
-
-	if (pset == PROCESSOR_SET_NULL || pset != &pset0) {
-		return KERN_INVALID_ARGUMENT;
-	}
-
-	size = 0;
-	addr = NULL;
-
-	for (;;) {
-		lck_mtx_lock(&tasks_threads_lock);
-
-		actual = threads_count;
-
-		/* do we have the memory we need? */
-
-		size_needed = actual * sizeof(thread_t);
-		if (size_needed <= size) {
-			break;
-		}
-
-		lck_mtx_unlock(&tasks_threads_lock);
-
-		if (size != 0) {
-			kheap_free(KHEAP_TEMP, addr, size);
-		}
-
-		assert(size_needed > 0);
-		size = size_needed;
-
-		addr = kheap_alloc(KHEAP_TEMP, size, Z_WAITOK);
-		if (addr == 0) {
-			return KERN_RESOURCE_SHORTAGE;
-		}
-	}
-
-	/* OK, have memory and list is locked */
-	thread_list = (thread_t *) addr;
-	for (i = 0, thread = (thread_t)(void *) queue_first(&threads);
-	    !queue_end(&threads, (queue_entry_t) thread);
-	    thread = (thread_t)(void *) queue_next(&thread->threads)) {
-		thread_reference_internal(thread);
-		thread_list[i++] = thread;
-	}
-	assert(i <= actual);
-
-	lck_mtx_unlock(&tasks_threads_lock);
-
-	/* calculate maxusage and free thread references */
-
-	total = 0;
-	maxusage = 0;
-	maxstack = 0;
-	while (i > 0) {
-		thread_t threadref = thread_list[--i];
-
-		if (threadref->kernel_stack != 0) {
-			total++;
-		}
-
-		thread_deallocate(threadref);
-	}
-
-	if (size != 0) {
-		kheap_free(KHEAP_TEMP, addr, size);
-	}
-
-	*totalp = total;
-	*residentp = *spacep = total * round_page(kernel_stack_size);
-	*maxusagep = maxusage;
-	*maxstackp = maxstack;
-	return KERN_SUCCESS;
-
-#endif  /* MACH_DEBUG */
-}
-
-vm_offset_t
+__mockable vm_offset_t
 min_valid_stack_address(void)
 {
 	return (vm_offset_t)vm_map_min(kernel_map);
 }
 
-vm_offset_t
+__mockable vm_offset_t
 max_valid_stack_address(void)
 {
 	return (vm_offset_t)vm_map_max(kernel_map);

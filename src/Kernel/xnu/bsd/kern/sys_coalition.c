@@ -1,3 +1,32 @@
+/*
+ * Copyright (c) 2000-2024 Apple Computer, Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
+
+
 #include <kern/kern_types.h>
 #include <kern/thread_group.h>
 #include <mach/mach_types.h>
@@ -6,11 +35,17 @@
 #include <kern/coalition.h>
 
 #include <sys/coalition.h>
+#include <sys/coalition_private.h>
 #include <sys/errno.h>
 #include <sys/kauth.h>
 #include <sys/kernel.h>
 #include <sys/sysproto.h>
 #include <sys/systm.h>
+#include <sys/ubc.h> /* mach_to_bsd_errno */
+
+#include <kern/policy_internal.h>
+
+#include <IOKit/IOBSD.h> /* IOTaskHasEntitlement */
 
 /* Coalitions syscalls */
 
@@ -35,6 +70,7 @@ coalition_create_syscall(user_addr_t cidp, uint32_t flags)
 	int type = COALITION_CREATE_FLAGS_GET_TYPE(flags);
 	int role = COALITION_CREATE_FLAGS_GET_ROLE(flags);
 	boolean_t privileged = !!(flags & COALITION_CREATE_FLAGS_PRIVILEGED);
+	boolean_t efficient = !!(flags & COALITION_CREATE_FLAGS_EFFICIENT);
 
 	if ((flags & (~COALITION_CREATE_FLAGS_MASK)) != 0) {
 		return EINVAL;
@@ -43,7 +79,7 @@ coalition_create_syscall(user_addr_t cidp, uint32_t flags)
 		return EINVAL;
 	}
 
-	kr = coalition_create_internal(type, role, privileged, &coal, &cid);
+	kr = coalition_create_internal(type, role, privileged, efficient, &coal, &cid);
 	if (kr != KERN_SUCCESS) {
 		/* for now, the only kr is KERN_RESOURCE_SHORTAGE */
 		error = ENOMEM;
@@ -193,7 +229,7 @@ coalition(proc_t p, struct coalition_args *cap, __unused int32_t *retval)
 	int error = 0;
 	int type = COALITION_CREATE_FLAGS_GET_TYPE(flags);
 
-	if (!task_is_in_privileged_coalition(p->task, type)) {
+	if (!task_is_in_privileged_coalition(proc_task(p), type)) {
 		return EPERM;
 	}
 
@@ -236,6 +272,23 @@ coalition_info_resource_usage(coalition_t coal, user_addr_t buffer, user_size_t 
 	return copyout(&cru, buffer, MIN(bufsize, sizeof(cru)));
 }
 
+#if DEVELOPMENT || DEBUG
+static int __attribute__ ((noinline))
+coalition_info_get_debug_info(coalition_t coal, user_addr_t buffer, user_size_t bufsize)
+{
+	kern_return_t kr;
+	struct coalinfo_debuginfo c_debuginfo = {};
+
+	kr = coalition_debug_info_internal(coal, &c_debuginfo);
+
+	if (kr != KERN_SUCCESS) {
+		return mach_to_bsd_errno(kr);
+	}
+
+	return copyout(&c_debuginfo, buffer, MIN(bufsize, sizeof(c_debuginfo)));
+}
+#endif /* DEVELOPMENT || DEBUG */
+
 #if CONFIG_THREAD_GROUPS
 static int
 coalition_info_set_name_internal(coalition_t coal, user_addr_t buffer, user_size_t bufsize)
@@ -253,7 +306,6 @@ coalition_info_set_name_internal(coalition_t coal, user_addr_t buffer, user_size
 	}
 	struct thread_group *tg = coalition_get_thread_group(coal);
 	thread_group_set_name(tg, name);
-	thread_group_release(tg);
 	return error;
 }
 
@@ -277,13 +329,47 @@ coalition_info_efficiency(coalition_t coal, user_addr_t buffer, user_size_t bufs
 		return EINVAL;
 	}
 	if (flags & COALITION_FLAGS_EFFICIENT) {
-		coalition_set_efficient(coal);
-#if CONFIG_THREAD_GROUPS
-		struct thread_group *tg = coalition_get_thread_group(coal);
-		thread_group_set_flags(tg, THREAD_GROUP_FLAGS_EFFICIENT);
-		thread_group_release(tg);
-#endif /* CONFIG_THREAD_GROUPS */
+		// No longer supported; this flag must be set during create.
+		return ENOTSUP;
 	}
+	return error;
+}
+
+static int
+coalition_info_pid_list(coalition_t coal, user_addr_t buffer, user_size_t *bufsize_inout_p)
+{
+	int error;
+
+	user_size_t size_in = *bufsize_inout_p;
+	if (size_in == 0) {
+		return 0;
+	}
+
+	/* We return at most COALITION_INFO_PID_LIST_MAX_PIDS. */
+	size_t alloc_count = MIN(size_in / sizeof(pid_t), (user_size_t)COALITION_INFO_PID_LIST_MAX_PIDS);
+
+	pid_t *pid_list = kalloc_type(pid_t, alloc_count, Z_WAITOK | Z_ZERO);
+	if (!pid_list) {
+		return ENOMEM;
+	}
+
+	int ntasks = coalition_get_pid_list(coal, COALITION_ROLEMASK_ALLROLES, COALITION_SORT_NOSORT, pid_list, (int)alloc_count);
+	if (ntasks < 0) {
+		/* coalition_get_pid_list returns negative errno */
+		error = -ntasks;
+		goto out_free;
+	}
+
+	/* Ensure size_in >= alloc_len * sizeof(pid_t) >= size_out */
+	user_size_t size_out = MIN(alloc_count * sizeof(pid_t), ntasks * sizeof(pid_t));
+	assert(size_in >= alloc_count * sizeof(pid_t));
+	assert(alloc_count * sizeof(pid_t) >= size_out);
+
+	*bufsize_inout_p = size_out;
+	error = copyout(pid_list, buffer, size_out);
+
+out_free:
+	kfree_type(pid_t, alloc_count, pid_list);
 	return error;
 }
 
@@ -314,7 +400,7 @@ coalition_info(proc_t p, struct coalition_info_args *uap, __unused int32_t *retv
 	user_addr_t cidp = uap->cid;
 	user_addr_t buffer = uap->buffer;
 	user_addr_t bufsizep = uap->bufsize;
-	user_size_t bufsize;
+	user_size_t bufsize = 0;
 	uint32_t flavor = uap->flavor;
 	int error;
 	uint64_t cid;
@@ -354,6 +440,30 @@ coalition_info(proc_t p, struct coalition_info_args *uap, __unused int32_t *retv
 	case COALITION_INFO_SET_EFFICIENCY:
 		error = coalition_info_efficiency(coal, buffer, bufsize);
 		break;
+	case COALITION_INFO_PID_LIST:
+		/* bufsize is used as inout for this operation */
+		error = coalition_info_pid_list(coal, buffer, &bufsize);
+		if (error) {
+			goto bad;
+		}
+
+		/* When successful, the size of the returned list is bounded */
+		assert(bufsize <= COALITION_INFO_PID_LIST_MAX_PIDS * sizeof(pid_t));
+
+		if (IS_64BIT_PROCESS(p)) {
+			user64_size_t size64out = bufsize;
+			error = copyout(&size64out, bufsizep, sizeof(user64_size_t));
+		} else {
+			/* bufsize < UINT32_MAX is guaranteed due to the assertion above */
+			user32_size_t size32out = (user32_size_t)bufsize;
+			error = copyout(&size32out, bufsizep, sizeof(user32_size_t));
+		}
+		break;
+#if DEVELOPMENT || DEBUG
+	case COALITION_INFO_GET_DEBUG_INFO:
+		error = coalition_info_get_debug_info(coal, buffer, bufsize);
+		break;
+#endif /* DEVELOPMENT || DEBUG */
 	default:
 		error = EINVAL;
 	}
@@ -417,6 +527,132 @@ out:
 	}
 	return error;
 }
+
+static int
+coalition_policy_set_suppress(coalition_t coal, coalition_policy_suppress_t value)
+{
+	int error = 0;
+
+	kern_return_t kr;
+
+	switch (value) {
+	case COALITION_POLICY_SUPPRESS_NONE:
+		kr = jetsam_coalition_set_policy(coal, TASK_POLICY_DARWIN_BG, TASK_POLICY_DISABLE);
+		error = mach_to_bsd_errno(kr);
+		break;
+	case COALITION_POLICY_SUPPRESS_DARWIN_BG:
+		kr = jetsam_coalition_set_policy(coal, TASK_POLICY_DARWIN_BG, TASK_POLICY_ENABLE);
+		error = mach_to_bsd_errno(kr);
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+
+	return error;
+}
+
+static int
+coalition_policy_get_suppress(coalition_t coal, int32_t *retval)
+{
+	int value = 0;
+	kern_return_t kr = jetsam_coalition_get_policy(coal,
+	    TASK_POLICY_DARWIN_BG, &value);
+
+	if (kr != KERN_SUCCESS) {
+		return mach_to_bsd_errno(kr);
+	}
+
+	switch (value) {
+	case TASK_POLICY_DISABLE:
+		*retval = (int32_t)COALITION_POLICY_SUPPRESS_NONE;
+		break;
+	case TASK_POLICY_ENABLE:
+		*retval = (int32_t)COALITION_POLICY_SUPPRESS_DARWIN_BG;
+		break;
+	default:
+		panic("unknown coalition policy suppress value %d", value);
+		break;
+	}
+
+	return 0;
+}
+
+int
+sys_coalition_policy_set(proc_t p, struct coalition_policy_set_args *uap, __unused int32_t *retval)
+{
+	uint64_t cid = uap->cid;
+	coalition_policy_flavor_t flavor = uap->flavor;
+	uint32_t value = uap->value;
+
+	int error = 0;
+
+	if (!IOTaskHasEntitlement(proc_task(p), COALITION_POLICY_ENTITLEMENT)) {
+		return EPERM;
+	}
+
+	coalition_t coal = coalition_find_by_id(cid);
+	if (coal == COALITION_NULL) {
+		return ESRCH;
+	}
+
+	if (coalition_type(coal) != COALITION_TYPE_JETSAM) {
+		error = ENOTSUP;
+		goto bad;
+	}
+
+	switch (flavor) {
+	case COALITION_POLICY_SUPPRESS:
+		error = coalition_policy_set_suppress(coal, (coalition_policy_suppress_t)value);
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+
+bad:
+	coalition_release(coal);
+	return error;
+}
+
+int
+sys_coalition_policy_get(proc_t p, struct coalition_policy_get_args *uap, int32_t *retval)
+{
+	uint64_t cid = uap->cid;
+	coalition_policy_flavor_t flavor = uap->flavor;
+
+	int error = 0;
+
+	if (!IOTaskHasEntitlement(proc_task(p), COALITION_POLICY_ENTITLEMENT)) {
+		return EPERM;
+	}
+
+	coalition_t coal = coalition_find_by_id(cid);
+	if (coal == COALITION_NULL) {
+		return ESRCH;
+	}
+
+	if (coalition_type(coal) != COALITION_TYPE_JETSAM) {
+		error = ENOTSUP;
+		goto bad;
+	}
+
+	switch (flavor) {
+	case COALITION_POLICY_SUPPRESS:
+		error = coalition_policy_get_suppress(coal, retval);
+		break;
+	default:
+		error = EINVAL;
+		break;
+	}
+
+bad:
+	coalition_release(coal);
+	return error;
+}
+
+
+
 #if DEVELOPMENT || DEBUG
 static int sysctl_coalition_get_ids SYSCTL_HANDLER_ARGS
 {
@@ -432,7 +668,7 @@ static int sysctl_coalition_get_ids SYSCTL_HANDLER_ARGS
 		return error;
 	}
 	if (!req->newptr) {
-		pid = req->p->p_pid;
+		pid = proc_getpid(req->p);
 	} else {
 		pid = (int)value;
 	}
@@ -444,7 +680,7 @@ static int sysctl_coalition_get_ids SYSCTL_HANDLER_ARGS
 		return ESRCH;
 	}
 
-	task_coalition_ids(tproc->task, ids);
+	task_coalition_ids(proc_task(tproc), ids);
 	proc_rele(tproc);
 
 	return SYSCTL_OUT(req, ids, sizeof(ids));
@@ -468,7 +704,7 @@ static int sysctl_coalition_get_roles SYSCTL_HANDLER_ARGS
 		return error;
 	}
 	if (!req->newptr) {
-		pid = req->p->p_pid;
+		pid = proc_getpid(req->p);
 	} else {
 		pid = (int)value;
 	}
@@ -480,7 +716,7 @@ static int sysctl_coalition_get_roles SYSCTL_HANDLER_ARGS
 		return ESRCH;
 	}
 
-	task_coalition_roles(tproc->task, roles);
+	task_coalition_roles(proc_task(tproc), roles);
 	proc_rele(tproc);
 
 	return SYSCTL_OUT(req, roles, sizeof(roles));
@@ -505,7 +741,7 @@ static int sysctl_coalition_get_page_count SYSCTL_HANDLER_ARGS
 		return error;
 	}
 	if (!req->newptr) {
-		pid = req->p->p_pid;
+		pid = proc_getpid(req->p);
 	} else {
 		pid = (int)value;
 	}
@@ -520,7 +756,7 @@ static int sysctl_coalition_get_page_count SYSCTL_HANDLER_ARGS
 	memset(pgcount, 0, sizeof(pgcount));
 
 	for (int t = 0; t < COALITION_NUM_TYPES; t++) {
-		coal = task_get_coalition(tproc->task, t);
+		coal = task_get_coalition(proc_task(tproc), t);
 		if (coal != COALITION_NULL) {
 			int ntasks = 0;
 			pgcount[t] = coalition_get_page_count(coal, &ntasks);
@@ -562,14 +798,14 @@ static int sysctl_coalition_get_pid_list SYSCTL_HANDLER_ARGS
 	if (!req->newptr) {
 		type = COALITION_TYPE_RESOURCE;
 		sort_order = COALITION_SORT_DEFAULT;
-		pid = req->p->p_pid;
+		pid = proc_getpid(req->p);
 	} else {
 		type = value[0];
 		sort_order = value[1];
 		if (has_pid) {
 			pid = value[2];
 		} else {
-			pid = req->p->p_pid;
+			pid = proc_getpid(req->p);
 		}
 	}
 
@@ -585,7 +821,7 @@ static int sysctl_coalition_get_pid_list SYSCTL_HANDLER_ARGS
 		return ESRCH;
 	}
 
-	coal = task_get_coalition(tproc->task, type);
+	coal = task_get_coalition(proc_task(tproc), type);
 	if (coal == COALITION_NULL) {
 		goto out;
 	}
@@ -663,5 +899,50 @@ SYSCTL_INT(_kern, OID_AUTO, unrestrict_coalitions,
     "unrestrict the coalition interface");
 
 #endif /* DEVELOPMENT */
+
+#include <kern/energy_perf.h>
+
+static int sysctl_coalition_gpu_energy_test SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	if (!req->newptr) {
+		return ENOTSUP;
+	}
+
+	uint64_t value[4] = {};
+
+	int error = SYSCTL_IN(req, value, sizeof(value));
+	if (error) {
+		return error;
+	}
+
+	kern_return_t kr = KERN_SUCCESS;
+	energy_id_t energy_id_out = 0;
+
+	switch (value[0]) {
+	case 1:
+		kr = current_energy_id(&energy_id_out);
+		break;
+	case 2:
+		kr = task_id_token_to_energy_id((mach_port_name_t) value[1], &energy_id_out);
+		break;
+	case 3:
+		kr = energy_id_report_energy(ENERGY_ID_SOURCE_GPU,
+		    (energy_id_t)value[1], (energy_id_t)value[2], value[3]);
+		break;
+	}
+
+	if (kr != KERN_SUCCESS) {
+		return mach_to_bsd_errno(kr);
+	}
+
+	value[0] = energy_id_out;
+
+	return SYSCTL_OUT(req, value, sizeof(value[0]));
+}
+
+SYSCTL_PROC(_kern, OID_AUTO, coalition_gpu_energy_test, CTLFLAG_MASKED | CTLTYPE_QUAD | CTLFLAG_RW | CTLFLAG_LOCKED,
+    0, 0, sysctl_coalition_gpu_energy_test, "Q", "test coalition gpu energy");
+
 
 #endif /* DEVELOPMENT || DEBUG */

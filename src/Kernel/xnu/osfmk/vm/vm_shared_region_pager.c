@@ -46,21 +46,26 @@
 #include <kern/thread.h>
 #include <kern/ipc_kobject.h>
 
-#include <ipc/ipc_port.h>
-#include <ipc/ipc_space.h>
-
-#include <vm/memory_object.h>
+#include <vm/memory_object_internal.h>
 #include <vm/vm_kern.h>
-#include <vm/vm_fault.h>
+#include <vm/vm_fault_internal.h>
 #include <vm/vm_map.h>
-#include <vm/vm_pageout.h>
-#include <vm/vm_protos.h>
-#include <vm/vm_shared_region.h>
+#include <vm/vm_pageout_xnu.h>
+#include <vm/vm_protos_internal.h>
+#include <vm/vm_shared_region_internal.h>
+#include <vm/vm_ubc.h>
+#include <vm/vm_page_internal.h>
+#include <vm/vm_object_internal.h>
+
+#include <sys/kdebug_triage.h>
+#include <sys/random.h>
 
 #if __has_feature(ptrauth_calls)
 #include <ptrauth.h>
 extern boolean_t diversify_user_jop;
 #endif /* __has_feature(ptrauth_calls) */
+
+extern int panic_on_dyld_issue;
 
 /*
  * SHARED REGION MEMORY PAGER
@@ -104,14 +109,6 @@ kern_return_t shared_region_pager_data_return(memory_object_t mem_obj,
 kern_return_t shared_region_pager_data_initialize(memory_object_t mem_obj,
     memory_object_offset_t offset,
     memory_object_cluster_size_t data_cnt);
-kern_return_t shared_region_pager_data_unlock(memory_object_t mem_obj,
-    memory_object_offset_t offset,
-    memory_object_size_t size,
-    vm_prot_t desired_access);
-kern_return_t shared_region_pager_synchronize(memory_object_t mem_obj,
-    memory_object_offset_t offset,
-    memory_object_size_t length,
-    vm_sync_t sync_flags);
 kern_return_t shared_region_pager_map(memory_object_t mem_obj,
     vm_prot_t prot);
 kern_return_t shared_region_pager_last_unmap(memory_object_t mem_obj);
@@ -133,11 +130,8 @@ const struct memory_object_pager_ops shared_region_pager_ops = {
 	.memory_object_data_request = shared_region_pager_data_request,
 	.memory_object_data_return = shared_region_pager_data_return,
 	.memory_object_data_initialize = shared_region_pager_data_initialize,
-	.memory_object_data_unlock = shared_region_pager_data_unlock,
-	.memory_object_synchronize = shared_region_pager_synchronize,
 	.memory_object_map = shared_region_pager_map,
 	.memory_object_last_unmap = shared_region_pager_last_unmap,
-	.memory_object_data_reclaim = NULL,
 	.memory_object_backing_object = shared_region_pager_backing_object,
 	.memory_object_pager_name = "shared_region"
 };
@@ -163,6 +157,22 @@ int shared_region_key_count = 0;              /* number of active shared_region_
 queue_head_t shared_region_jop_key_queue = QUEUE_HEAD_INITIALIZER(shared_region_jop_key_queue);
 LCK_GRP_DECLARE(shared_region_jop_key_lck_grp, "shared_region_jop_key");
 LCK_MTX_DECLARE(shared_region_jop_key_lock, &shared_region_jop_key_lck_grp);
+
+#if __has_feature(ptrauth_calls)
+/*
+ * Generate a random pointer signing key that isn't 0.
+ */
+uint64_t
+generate_jop_key(void)
+{
+	uint64_t key;
+
+	do {
+		read_random(&key, sizeof key);
+	} while (key == 0);
+	return key;
+}
+#endif /* __has_feature(ptrauth_calls) */
 
 /*
  * Find the pointer signing key for the give shared_region_id.
@@ -213,9 +223,9 @@ again:
 	 */
 	if (new == NULL) {
 		lck_mtx_unlock(&shared_region_jop_key_lock);
-		new = kalloc(sizeof *new);
+		new = kalloc_type(struct shared_region_jop_key_map, Z_WAITOK);
 		uint_t len = strlen(shared_region_id) + 1;
-		new->srk_shared_region_id = kheap_alloc(KHEAP_DATA_BUFFERS, len, Z_WAITOK);
+		new->srk_shared_region_id = kalloc_data(len, Z_WAITOK);
 		strlcpy(new->srk_shared_region_id, shared_region_id, len);
 		os_ref_init(&new->srk_ref_count, &srk_refgrp);
 
@@ -248,8 +258,9 @@ done:
 	 * free any unused new entry
 	 */
 	if (new != NULL) {
-		kheap_free(KHEAP_DATA_BUFFERS, new->srk_shared_region_id, strlen(new->srk_shared_region_id) + 1);
-		kfree(new, sizeof *new);
+		kfree_data(new->srk_shared_region_id,
+		    strlen(new->srk_shared_region_id) + 1);
+		kfree_type(struct shared_region_jop_key_map, new);
 	}
 }
 
@@ -280,8 +291,9 @@ done:
 	lck_mtx_unlock(&shared_region_jop_key_lock);
 
 	if (region != NULL) {
-		kheap_free(KHEAP_DATA_BUFFERS, region->srk_shared_region_id, strlen(region->srk_shared_region_id) + 1);
-		kfree(region, sizeof *region);
+		kfree_data(region->srk_shared_region_id,
+		    strlen(region->srk_shared_region_id) + 1);
+		kfree_type(struct shared_region_jop_key_map, region);
 	}
 }
 #endif /* __has_feature(ptrauth_calls) */
@@ -462,16 +474,6 @@ shared_region_pager_data_initialize(
 	return KERN_FAILURE;
 }
 
-kern_return_t
-shared_region_pager_data_unlock(
-	__unused memory_object_t        mem_obj,
-	__unused memory_object_offset_t offset,
-	__unused memory_object_size_t           size,
-	__unused vm_prot_t              desired_access)
-{
-	return KERN_FAILURE;
-}
-
 /*
  * shared_region_pager_data_request()
  *
@@ -498,6 +500,7 @@ shared_region_pager_data_request(
 	unsigned int            pl_count;
 	vm_object_t             src_top_object, src_page_object, dst_object;
 	kern_return_t           kr, retval;
+	vm_fault_return_t       vmfr;
 	vm_offset_t             src_vaddr, dst_vaddr;
 	vm_offset_t             cur_offset;
 	vm_offset_t             offset_in_page;
@@ -507,6 +510,7 @@ shared_region_pager_data_request(
 	int                     interruptible;
 	struct vm_object_fault_info     fault_info;
 	mach_vm_offset_t        slide_start_address;
+	u_int32_t                               slide_info_page_size;
 
 	PAGER_DEBUG(PAGER_ALL, ("shared_region_pager_data_request: %p, %llx, %x, %x\n", mem_obj, offset, length, protection_required));
 
@@ -546,6 +550,11 @@ shared_region_pager_data_request(
 	    offset, upl_size,
 	    &upl, NULL, NULL, upl_flags, VM_KERN_MEMORY_SECURITY);
 	if (kr != KERN_SUCCESS) {
+		ktriage_record(thread_tid(current_thread()), KDBG_TRIAGE_EVENTID(KDBG_TRIAGE_SUBSYS_SHARED_REGION, KDBG_TRIAGE_RESERVED, KDBG_TRIAGE_SHARED_REGION_NO_UPL), kr /* arg */);
+		if (panic_on_dyld_issue) {
+			panic("%s(): upl_request(%p, 0x%llx, 0x%llx) ret %d", __func__,
+			    mo_control, offset, (uint64_t)upl_size, kr);
+		}
 		retval = kr;
 		goto done;
 	}
@@ -562,6 +571,7 @@ shared_region_pager_data_request(
 	vm_object_reference(src_top_object); /* keep the source object alive */
 
 	slide_start_address = pager->srp_slide_info->si_slid_address;
+	slide_info_page_size = pager->srp_slide_info->si_slide_info_entry->version == 1 ? PAGE_SIZE_FOR_SR_SLIDE : pager->srp_slide_info->si_slide_info_entry->page_size;
 
 	fault_info.lo_offset += pager->srp_backing_offset;
 	fault_info.hi_offset += pager->srp_backing_offset;
@@ -587,12 +597,13 @@ shared_region_pager_data_request(
 		 * We already hold a reference on the src_top_object.
 		 */
 retry_src_fault:
+		vm_page_grab_prime();
 		vm_object_lock(src_top_object);
 		vm_object_paging_begin(src_top_object);
 		error_code = 0;
 		prot = VM_PROT_READ;
 		src_page = VM_PAGE_NULL;
-		kr = vm_fault_page(src_top_object,
+		vmfr = vm_fault_page(src_top_object,
 		    pager->srp_backing_offset + offset + cur_offset,
 		    VM_PROT_READ,
 		    FALSE,
@@ -603,9 +614,9 @@ retry_src_fault:
 		    NULL,
 		    &error_code,
 		    FALSE,
-		    FALSE,
-		    &fault_info);
-		switch (kr) {
+		    &fault_info,
+		    NULL);
+		switch (vmfr) {
 		case VM_FAULT_SUCCESS:
 			break;
 		case VM_FAULT_RETRY:
@@ -614,6 +625,7 @@ retry_src_fault:
 			if (vm_page_wait(interruptible)) {
 				goto retry_src_fault;
 			}
+			ktriage_record(thread_tid(current_thread()), KDBG_TRIAGE_EVENTID(KDBG_TRIAGE_SUBSYS_SHARED_REGION, KDBG_TRIAGE_RESERVED, KDBG_TRIAGE_SHARED_REGION_PAGER_MEMORY_SHORTAGE), 0 /* arg */);
 			OS_FALLTHROUGH;
 		case VM_FAULT_INTERRUPTED:
 			retval = MACH_SEND_INTERRUPTED;
@@ -631,10 +643,9 @@ retry_src_fault:
 				retval = KERN_MEMORY_ERROR;
 			}
 			goto done;
-		default:
-			panic("shared_region_pager_data_request: "
-			    "vm_fault_page() unexpected error 0x%x\n",
-			    kr);
+		case VM_FAULT_BUSY:
+			retval = KERN_ALREADY_WAITING;
+			goto done;
 		}
 		assert(src_page != VM_PAGE_NULL);
 		assert(src_page->vmp_busy);
@@ -698,7 +709,7 @@ retry_src_fault:
 		 */
 		for (offset_in_page = 0;
 		    offset_in_page < PAGE_SIZE;
-		    offset_in_page += PAGE_SIZE_FOR_SR_SLIDE) {
+		    offset_in_page += slide_info_page_size) {
 			vm_object_offset_t chunk_offset;
 			vm_object_offset_t offset_in_backing_object;
 			vm_object_offset_t offset_in_sliding_range;
@@ -708,7 +719,7 @@ retry_src_fault:
 			bcopy((const char *)(src_vaddr +
 			    offset_in_page),
 			    (char *)(dst_vaddr + offset_in_page),
-			    PAGE_SIZE_FOR_SR_SLIDE);
+			    slide_info_page_size);
 
 			offset_in_backing_object = (chunk_offset +
 			    pager->srp_backing_offset);
@@ -723,7 +734,7 @@ retry_src_fault:
 			kr = vm_shared_region_slide_page(pager->srp_slide_info,
 			    dst_vaddr + offset_in_page,
 			    (mach_vm_offset_t) (offset_in_sliding_range + slide_start_address),
-			    (uint32_t) (offset_in_sliding_range / PAGE_SIZE_FOR_SR_SLIDE),
+			    (uint32_t) (offset_in_sliding_range / slide_info_page_size),
 #if __has_feature(ptrauth_calls)
 			    pager->srp_slide_info->si_ptrauth ? pager->srp_jop_key : 0
 #else /* __has_feature(ptrauth_calls) */
@@ -766,7 +777,13 @@ retry_src_fault:
 				    kr);
 			}
 			if (kr != KERN_SUCCESS) {
+				ktriage_record(thread_tid(current_thread()), KDBG_TRIAGE_EVENTID(KDBG_TRIAGE_SUBSYS_SHARED_REGION, KDBG_TRIAGE_RESERVED, KDBG_TRIAGE_SHARED_REGION_SLIDE_ERROR), kr /* arg */);
+				if (panic_on_dyld_issue) {
+					panic("%s(): shared region slide error %d",
+					    __func__, kr);
+				}
 				shared_region_pager_slid_error++;
+				retval = KERN_MEMORY_ERROR;
 				break;
 			}
 			shared_region_pager_slid++;
@@ -780,7 +797,7 @@ retry_src_fault:
 		/*
 		 * Cleanup the result of vm_fault_page() of the source page.
 		 */
-		PAGE_WAKEUP_DONE(src_page);
+		vm_page_wakeup_done(src_page_object, src_page);
 		src_page = VM_PAGE_NULL;
 		vm_object_paging_end(src_page_object);
 		vm_object_unlock(src_page_object);
@@ -900,7 +917,7 @@ shared_region_pager_terminate_internal(
 		pager->srp_backing_object = VM_OBJECT_NULL;
 	}
 	/* trigger the destruction of the memory object */
-	memory_object_destroy(pager->srp_header.mo_control, 0);
+	memory_object_destroy(pager->srp_header.mo_control, VM_OBJECT_DESTROY_PAGER);
 }
 
 /*
@@ -966,8 +983,9 @@ shared_region_pager_deallocate_internal(
 		if (si != NULL) {
 			vm_object_deallocate(si->si_slide_object);
 			/* free the slide_info_entry */
-			kheap_free(KHEAP_DATA_BUFFERS, si->si_slide_info_entry, si->si_slide_info_size);
-			kfree(si, sizeof *si);
+			kfree_data(si->si_slide_info_entry,
+			    si->si_slide_info_size);
+			kfree_type(struct vm_shared_region_slide_info, si);
 			pager->srp_slide_info = NULL;
 		}
 
@@ -975,7 +993,7 @@ shared_region_pager_deallocate_internal(
 			memory_object_control_deallocate(pager->srp_header.mo_control);
 			pager->srp_header.mo_control = MEMORY_OBJECT_CONTROL_NULL;
 		}
-		kfree(pager, sizeof(*pager));
+		kfree_type(struct shared_region_pager, pager);
 		pager = SHARED_REGION_PAGER_NULL;
 	} else {
 		/* there are still plenty of references:  keep going... */
@@ -1018,20 +1036,6 @@ shared_region_pager_terminate(
 	PAGER_DEBUG(PAGER_ALL, ("shared_region_pager_terminate: %p\n", mem_obj));
 
 	return KERN_SUCCESS;
-}
-
-/*
- *
- */
-kern_return_t
-shared_region_pager_synchronize(
-	__unused memory_object_t        mem_obj,
-	__unused memory_object_offset_t offset,
-	__unused memory_object_size_t   length,
-	__unused vm_sync_t              sync_flags)
-{
-	panic("shared_region_pager_synchronize: memory_object_synchronize no longer supported\n");
-	return KERN_FAILURE;
 }
 
 /*
@@ -1159,7 +1163,7 @@ shared_region_pager_create(
 	kern_return_t           kr;
 	vm_object_t             object;
 
-	pager = (shared_region_pager_t) kalloc(sizeof(*pager));
+	pager = kalloc_type(struct shared_region_pager, Z_WAITOK);
 	if (pager == SHARED_REGION_PAGER_NULL) {
 		return SHARED_REGION_PAGER_NULL;
 	}
@@ -1168,12 +1172,13 @@ shared_region_pager_create(
 	 * The vm_map call takes both named entry ports and raw memory
 	 * objects in the same parameter.  We need to make sure that
 	 * vm_map does not see this object as a named entry port.  So,
-	 * we reserve the first word in the object for a fake ip_kotype
+	 * we reserve the first word in the object for a fake object type
 	 * setting - that will tell vm_map to use it as a memory object.
 	 */
 	pager->srp_header.mo_ikot = IKOT_MEMORY_OBJECT;
 	pager->srp_header.mo_pager_ops = &shared_region_pager_ops;
 	pager->srp_header.mo_control = MEMORY_OBJECT_CONTROL_NULL;
+	pager->srp_header.mo_last_unmap_ctid = 0;
 
 	pager->srp_is_ready = FALSE;/* not ready until it has a "name" */
 	/* existence reference (for the cache) + 1 for the caller */
@@ -1288,7 +1293,7 @@ shared_region_pager_match(
 
 	lck_mtx_lock(&shared_region_pager_lock);
 	queue_iterate(&shared_region_pager_queue, pager, shared_region_pager_t, srp_queue) {
-		if (pager->srp_backing_object != backing_object->copy) {
+		if (pager->srp_backing_object != backing_object->vo_copy) {
 			continue;
 		}
 		if (pager->srp_backing_offset != backing_offset) {
@@ -1335,7 +1340,7 @@ shared_region_pager_match(
 	 * waste a little memory.
 	 */
 	lck_mtx_unlock(&shared_region_pager_lock);
-	return shared_region_pager_setup(backing_object->copy, backing_offset, slide_info, jop_key);
+	return shared_region_pager_setup(backing_object->vo_copy, backing_offset, slide_info, jop_key);
 }
 
 void
@@ -1414,4 +1419,41 @@ shared_region_pager_trim(void)
 		(void)os_ref_release_locked_raw(&pager->srp_ref_count, NULL);
 		shared_region_pager_terminate_internal(pager);
 	}
+}
+
+static uint64_t
+shared_region_pager_purge(
+	shared_region_pager_t pager)
+{
+	uint64_t pages_purged;
+	vm_object_t object;
+
+	pages_purged = 0;
+	object = memory_object_to_vm_object((memory_object_t) pager);
+	assert(object != VM_OBJECT_NULL);
+	vm_object_lock(object);
+	pages_purged = object->resident_page_count;
+	vm_object_reap_pages(object, REAP_DATA_FLUSH_CLEAN);
+	pages_purged -= object->resident_page_count;
+//	printf("     %s:%d pager %p object %p purged %llu left %d\n", __FUNCTION__, __LINE__, pager, object, pages_purged, object->resident_page_count);
+	vm_object_unlock(object);
+	return pages_purged;
+}
+
+uint64_t
+shared_region_pager_purge_all(void)
+{
+	uint64_t pages_purged;
+	shared_region_pager_t pager;
+
+	pages_purged = 0;
+	lck_mtx_lock(&shared_region_pager_lock);
+	queue_iterate(&shared_region_pager_queue, pager, shared_region_pager_t, srp_queue) {
+		pages_purged += shared_region_pager_purge(pager);
+	}
+	lck_mtx_unlock(&shared_region_pager_lock);
+#if DEVELOPMENT || DEBUG
+	printf("   %s:%d pages purged: %llu\n", __FUNCTION__, __LINE__, pages_purged);
+#endif /* DEVELOPMENT || DEBUG */
+	return pages_purged;
 }

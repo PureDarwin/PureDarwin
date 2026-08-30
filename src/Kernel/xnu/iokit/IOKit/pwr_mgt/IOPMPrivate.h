@@ -25,10 +25,20 @@
  * 
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-#ifndef _IOKIT_IOPMPRIVATE_H
-#define _IOKIT_IOPMPRIVATE_H
+#pragma once
+
 
 #include <IOKit/pwr_mgt/IOPM.h>
+
+// Supported power states.
+enum IOPMRootDomainPowerState {
+	OFF_STATE           = 0,
+	RESTART_STATE       = 1,
+	SLEEP_STATE         = 2,
+	AOT_STATE           = 3,
+	ON_STATE            = 4,
+	NUM_POWER_STATES
+};
 
 /* @constant kIOPMEventTypeIntermediateFlag
  * @abstract This bit indicates the event is an intermediate event
@@ -112,6 +122,9 @@ enum {
 #define kIOPMMessageRequestUserActive \
                 iokit_family_msg(sub_iokit_powermanagement, 0x460)
 
+#define kIOPMMessageRequestSystemShutdown \
+                iokit_family_msg(sub_iokit_powermanagement, 0x470)
+
 /* @enum SystemSleepReasons
  * @abstract The potential causes for system sleep as logged in the system event record.
  */
@@ -143,17 +156,11 @@ enum {
 #define kIOPMDarkWakeThermalEmergencyKey            "Dark Wake Thermal Emergency"
 #define kIOPMNotificationWakeExitKey                "Notification Wake Back to Sleep"
 
-/*! kIOPMPSRestrictedModeKey
- *  An IOPMPowerSource property key
- *  Its property has an integer value.
- *  - value = 1 when the device is in a low power state and not fully functional.
- *  - value = 0, or property missing altogether, when the device is
- *      not in a restricted mode power state.
-*/
 #define kIOPMPSRestrictedModeKey                    "RestrictedMode"
 
 // Private keys for kIOPMPSAdapterDetailsKey dictionary
 #define kIOPMPSAdapterDetailsIsWirelessKey          "IsWireless"
+#define kIOPMPSAdapterDetailsPowerTierKey           "AdapterPowerTier"
 
 #pragma mark Stray Bitfields
 // Private power commands issued to root domain
@@ -752,13 +759,28 @@ enum {
                                 | kIOPMWakeEventAOTConfirmedPossibleExit)
 
 enum {
-	kIOPMAOTModeMask          = 0x000000ff,
+	kIOPMAOTModeMask          = 0x0000FFFF,
     kIOPMAOTModeEnable        = 0x00000001,
     kIOPMAOTModeCycle         = 0x00000002,
     kIOPMAOTModeAddEventFlags = 0x00000004,
     kIOPMAOTModeRespectTimers = 0x00000008,
-    kIOPMAOTModeDefault       = (kIOPMAOTModeEnable | kIOPMAOTModeAddEventFlags | kIOPMAOTModeRespectTimers)
+    kIOPMAOTModeDefault       = (kIOPMAOTModeEnable | kIOPMAOTModeAddEventFlags | kIOPMAOTModeRespectTimers),
+
+	kIOPMAOTModeRunModeMask            = 0xFFFF0000,
+	kIOPMAOTModeRunModeShift           = 16,
 };
+
+enum {
+	kIOPMDriverClassStorage          = 0x00000010,
+	kIOPMDriverClassNetworkCellular  = 0x00000020,
+	kIOPMDriverClassTest             = 0x00000040,
+	kIOPMDriverClassNetworkWifi      = 0x00000080,
+	kIOPMDriverClassNetworkBluetooth = 0x00000100,
+#ifdef XNU_KERNEL_PRIVATE
+	kIOPMDriverClassDone             = (1ULL << 63),
+#endif /* XNU_KERNEL_PRIVATE */
+};
+
 
 enum {
     kIOPMAOTMetricsKernelWakeCountMax = 24
@@ -783,6 +805,35 @@ struct IOPMAOTMetrics
 };
 
 #define kIOPMAOTPowerKey    "aot-power"
+
+/**
+ * Shared data structure between user/kernel describing intervals for which assertions
+ * are active.
+ */
+struct IOPMAssertionLogData {
+	/**
+	 * Duration of an assertion's activation.
+	 */
+	struct Interval {
+		uint64_t    id;
+		uint64_t    create_timestamp;
+		uint64_t    delete_timestamp;
+	};
+
+	/**
+	 * Static properties associated with a given assertion.
+	 */
+	struct Properties {
+		uint64_t    id;
+		char        name[64];
+	};
+
+	uint64_t        intervals_pos;
+	struct Interval intervals[256];
+
+	uint64_t            props_pos;
+	struct Properties   props[128];
+};
 
 /*****************************************************************************
  *
@@ -1065,4 +1116,3 @@ enum {
   kIOPMPerformanceWarning   = 100
 };
 
-#endif /* ! _IOKIT_IOPMPRIVATE_H */

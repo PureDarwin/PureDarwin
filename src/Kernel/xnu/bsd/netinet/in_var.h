@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -63,10 +63,13 @@
 #ifndef _NETINET_IN_VAR_H_
 #define _NETINET_IN_VAR_H_
 #include <sys/appleapiopts.h>
+#include <sys/protosw.h>
 
 #include <sys/queue.h>
 #include <sys/kern_event.h>
+#include <net/if_var.h>
 #include <net/net_kev.h>
+#include <netinet/in.h>
 
 #ifdef BSD_KERNEL_PRIVATE
 #include <net/route.h>
@@ -95,7 +98,71 @@ struct in_ifaddr {
 	TAILQ_ENTRY(in_ifaddr) ia_hash; /* hash bucket entry */
 };
 
-#define ifatoia(ifa)    ((struct in_ifaddr *)(void *)(ifa))
+static inline const struct in_ifaddr *
+__attribute__((overloadable)) __pure2
+__ifatoia_const(const struct ifaddr *ifa)
+{
+	return __container_of(ifa, const struct in_ifaddr, ia_ifa);
+}
+static inline struct in_ifaddr *
+__attribute__((overloadable)) __pure2
+__ifatoia(struct ifaddr *ifa)
+{
+	return __container_of(ifa, struct in_ifaddr, ia_ifa);
+}
+
+#if __has_ptrcheck
+#define ifatoia(ifa) (_Generic((ifa),                           \
+	const struct ifaddr * __single         : __ifatoia_const,   \
+	const struct ifaddr * __bidi_indexable : __ifatoia_const,   \
+	const struct ifaddr * __indexable      : __ifatoia_const,   \
+	      struct ifaddr * __single         : __ifatoia,         \
+	      struct ifaddr * __bidi_indexable : __ifatoia,         \
+	      struct ifaddr * __indexable      : __ifatoia)         \
+	((ifa)))
+#else /* !__has_ptrcheck */
+#define ifatoia(ifa) (_Generic((ifa),                  \
+	const struct ifaddr * : __ifatoia_const,           \
+	      struct ifaddr * : __ifatoia)                 \
+	((ifa)))
+#endif /* !__has_ptrcheck */
+
+static inline const struct in_ifaddr *
+__attribute__((overloadable)) __pure2
+__iatoia_const(const struct in_ifaddr *ia)
+{
+	return ia;
+}
+static inline struct in_ifaddr *
+__attribute__((overloadable)) __pure2
+__iatoia(struct in_ifaddr *ia)
+{
+	return ia;
+}
+#if __has_ptrcheck
+#define IA(ifa_or_ia) (_Generic((ifa_or_ia),                        \
+	const struct ifaddr    * __single          : __ifatoia_const,   \
+	const struct ifaddr    * __bidi_indexable  : __ifatoia_const,   \
+	const struct ifaddr    * __indexable       : __ifatoia_const,   \
+	          struct ifaddr    * __single          : __ifatoia,         \
+	          struct ifaddr    * __bidi_indexable  : __ifatoia,         \
+	          struct ifaddr    * __indexable       : __ifatoia,         \
+	const struct in_ifaddr * __single          : __iatoia_const,    \
+	const struct in_ifaddr * __bidi_indexable  : __iatoia_const,    \
+	const struct in_ifaddr * __indexable       : __iatoia_const,    \
+	          struct in_ifaddr * __single          : __iatoia,          \
+	          struct in_ifaddr * __bidi_indexable  : __iatoia,          \
+	          struct in_ifaddr * __indexable       : __iatoia)          \
+	((ifa_or_ia)))
+#else /* !__has_ptrcheck */
+#define IA(ifa_or_ia) (_Generic((ifa_or_ia),                        \
+	const struct ifaddr    *                   : __ifatoia_const,   \
+	      struct ifaddr    *                   : __ifatoia,         \
+	const struct in_ifaddr *                   : __iatoia_const,    \
+	      struct in_ifaddr *                   : __iatoia)          \
+	((ifa_or_ia)))
+#endif /* !__has_ptrcheck */
+
 #endif /* BSD_KERNEL_PRIVATE */
 
 struct in_aliasreq {
@@ -124,7 +191,7 @@ struct kev_in_collision {
 	struct net_event_data link_data; /* link where ARP was received on */
 	struct in_addr ia_ipaddr;       /* conflicting IP address */
 	u_char hw_len;                  /* length of hardware address */
-	u_char hw_addr[0];              /* variable length hardware address */
+	u_char hw_addr[__counted_by(hw_len)];/* variable length hardware address */
 };
 
 struct kev_in_arpfailure {
@@ -165,29 +232,28 @@ extern void socket_post_kev_msg_closed(struct socket *);
 
 #include <net/if.h>
 #include <net/if_var.h>
-#include <net/if_llatbl.h>
 #include <kern/locks.h>
 #include <sys/tree.h>
 /*
  * Given a pointer to an in_ifaddr (ifaddr),
  * return a pointer to the addr as a sockaddr_in.
  */
-#define IA_SIN(ia)    (&(((struct in_ifaddr *)(ia))->ia_addr))
-#define IA_DSTSIN(ia) (&(((struct in_ifaddr *)(ia))->ia_dstaddr))
+#define IA_SIN(ia)    (&(IA((ia))->ia_addr))
+#define IA_DSTSIN(ia) (&(IA((ia))->ia_dstaddr))
 
 #define IN_LNAOF(in, ifa) \
-	((ntohl((in).s_addr) & ~((struct in_ifaddr *)(ifa)->ia_subnetmask))
+	(ntohl((in).s_addr) & ~(IA((ifa))->ia_subnetmask))
 
 /*
  * Hash table for IPv4 addresses.
  */
 extern TAILQ_HEAD(in_ifaddrhead, in_ifaddr) in_ifaddrhead;
-extern TAILQ_HEAD(in_ifaddrhashhead, in_ifaddr) * in_ifaddrhashtbl;
-extern lck_rw_t *in_ifaddr_rwlock;
+TAILQ_HEAD(in_ifaddrhashhead, in_ifaddr);
+extern lck_rw_t in_ifaddr_rwlock;
 
-#define INADDR_HASH(x)  (&in_ifaddrhashtbl[inaddr_hashval(x)])
+#define INADDR_HASH(x)  inaddr_hashlookup(x)
 
-extern  u_char  inetctlerrmap[];
+extern  u_char  inetctlerrmap[PRC_NCMDS];
 
 /*
  * Macro for finding the interface (ifnet structure) corresponding to one
@@ -199,7 +265,7 @@ extern  u_char  inetctlerrmap[];
 {                                                                       \
 	struct in_ifaddr *ia;                                           \
                                                                         \
-	lck_rw_lock_shared(in_ifaddr_rwlock);                           \
+	lck_rw_lock_shared(&in_ifaddr_rwlock);                          \
 	TAILQ_FOREACH(ia, INADDR_HASH((addr).s_addr), ia_hash) {        \
 	        IFA_LOCK_SPIN(&ia->ia_ifa);                             \
 	        if (IA_SIN(ia)->sin_addr.s_addr == (addr).s_addr) {     \
@@ -209,7 +275,7 @@ extern  u_char  inetctlerrmap[];
 	        IFA_UNLOCK(&ia->ia_ifa);                                \
 	}                                                               \
 	(ifp) = (ia == NULL) ? NULL : ia->ia_ifp;                       \
-	lck_rw_done(in_ifaddr_rwlock);                                  \
+	lck_rw_done(&in_ifaddr_rwlock);                                 \
 }
 
 /*
@@ -221,14 +287,14 @@ extern  u_char  inetctlerrmap[];
 	/* struct ifnet *ifp; */                                        \
 	/* struct in_ifaddr *ia; */                                     \
 {                                                                       \
-	lck_rw_lock_shared(in_ifaddr_rwlock);                           \
+	lck_rw_lock_shared(&in_ifaddr_rwlock);                          \
 	for ((ia) = TAILQ_FIRST(&in_ifaddrhead);                        \
 	    (ia) != NULL && (ia)->ia_ifp != (ifp);                      \
 	    (ia) = TAILQ_NEXT((ia), ia_link))                           \
 	        continue;                                               \
 	if ((ia) != NULL)                                               \
-	        IFA_ADDREF(&(ia)->ia_ifa);                              \
-	lck_rw_done(in_ifaddr_rwlock);                                  \
+	        ifa_addref(&(ia)->ia_ifa);                              \
+	lck_rw_done(&in_ifaddr_rwlock);                                 \
 }
 
 /*
@@ -317,8 +383,8 @@ struct in_multi {
 	struct  ifnet *inm_ifp;         /* back pointer to ifnet */
 	struct  ifmultiaddr *inm_ifma;  /* back pointer to ifmultiaddr */
 	u_int   inm_timer;              /* IGMPv1/v2 group / v3 query timer  */
-	u_int   inm_state;              /*  state of the membership */
-	void *inm_rti;                  /* unused, legacy field */
+	u_int   inm_state;              /* state of the membership */
+	bool    inm_in_nrele;           /* if in nrele list */
 
 	/* New fields for IGMPv3 follow. */
 	struct igmp_ifinfo      *inm_igi;       /* IGMP info */
@@ -481,14 +547,11 @@ struct inpcb;
 struct in_ifextra {
 	uint32_t                netsig_len;
 	u_int8_t                netsig[IFNET_SIGNATURELEN];
-	struct lltable          *ii_llt;        /* ARP state */
 };
-#define IN_IFEXTRA(_ifp)        ((struct in_ifextra *)(_ifp->if_inetdata))
-#define LLTABLE(ifp)            ((IN_IFEXTRA(ifp) == NULL) ? NULL : IN_IFEXTRA(ifp)->ii_llt)
+#define IN_IFEXTRA(_ifp)        (_ifp->if_inetdata)
 
 extern u_int32_t ipv4_ll_arp_aware;
 
-extern void in_ifaddr_init(void);
 extern int imo_multi_filter(const struct ip_moptions *,
     const struct ifnet *, const struct sockaddr_in *,
     const struct sockaddr_in *);
@@ -498,7 +561,6 @@ extern void inm_clear_recorded(struct in_multi *);
 extern void inm_print(const struct in_multi *);
 extern int inm_record_source(struct in_multi *inm, const in_addr_t);
 extern void inm_release(struct in_multi *);
-extern void in_multi_init(void);
 extern struct in_multi *in_addmulti(struct in_addr *, struct ifnet *);
 extern void in_delmulti(struct in_multi *);
 extern int in_leavegroup(struct in_multi *, struct in_mfilter *);
@@ -508,16 +570,16 @@ extern void inm_remref(struct in_multi *, int);
 extern void inm_purge(struct in_multi *);
 extern uint8_t ims_get_mode(const struct in_multi *,
     const struct ip_msource *, uint8_t);
-extern int in_control(struct socket *, u_long, caddr_t, struct ifnet *,
-    struct proc *);
+extern int in_control(struct socket *, u_long cmd, caddr_t __sized_by(IOCPARM_LEN(cmd)),
+    struct ifnet *, struct proc *);
 extern int in_inithead(void **, int);
 extern void in_rtqdrain(void);
 extern struct radix_node *in_validate(struct radix_node *);
-extern void ip_input(struct mbuf *);
 extern void ip_input_process_list(struct mbuf *);
 extern int in_ifadown(struct ifaddr *ifa, int);
 extern void in_ifscrub(struct ifnet *, struct in_ifaddr *, int);
-extern u_int32_t inaddr_hashval(u_int32_t);
+extern uint32_t inaddr_hashval(uint32_t);
+extern struct in_ifaddrhashhead *inaddr_hashlookup(uint32_t);
 extern void in_purgeaddrs(struct ifnet *);
 extern void gre_input(struct mbuf *, int);
 extern void imf_leave(struct in_mfilter *);

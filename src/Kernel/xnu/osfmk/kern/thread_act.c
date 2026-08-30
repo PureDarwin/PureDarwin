@@ -50,9 +50,11 @@
  *	Thread management routines
  */
 
+#include <sys/kdebug.h>
 #include <mach/mach_types.h>
 #include <mach/kern_return.h>
 #include <mach/thread_act_server.h>
+#include <mach/thread_act.h>
 
 #include <kern/kern_types.h>
 #include <kern/ast.h>
@@ -70,11 +72,17 @@
 #include <kern/machine.h>
 #include <kern/spl.h>
 #include <kern/syscall_subr.h>
-#include <kern/sync_lock.h>
 #include <kern/processor.h>
+#include <kern/restartable.h>
 #include <kern/timer.h>
 #include <kern/affinity.h>
 #include <kern/host.h>
+#include <kern/exc_guard.h>
+#include <ipc/ipc_policy.h>
+#include <ipc/ipc_hash.h>
+#include <mach/arm/thread_status.h>
+
+#include <sys/code_signing.h>
 
 #include <stdatomic.h>
 
@@ -85,6 +93,120 @@ static void act_abort(thread_t thread);
 static void thread_suspended(void *arg, wait_result_t result);
 static void thread_set_apc_ast(thread_t thread);
 static void thread_set_apc_ast_locked(thread_t thread);
+
+extern int proc_pid(struct proc *);
+extern const char *proc_best_name(struct proc *p);
+extern boolean_t IOTaskHasEntitlement(task_t task, const char *entitlement);
+
+/* bootarg to create lightweight corpse for thread set state lockdown */
+TUNABLE(bool, tss_should_crash, "tss_should_crash", true);
+
+#define task_has_tss_entitlement(task) IOTaskHasEntitlement((task), \
+	"com.apple.private.thread-set-state")
+
+/* defined in bsd/kern/kern_prot.c */
+extern int get_audit_token_pid(const audit_token_t *audit_token);
+
+__static_testable __inline_testable bool
+thread_set_state_allowed(
+	thread_t                  thread,
+	int                       flavor,
+	thread_set_status_flags_t flags,
+	audit_token_t             *audit)
+{
+	task_t             curr_task   = TASK_NULL;
+	task_t             target_task = TASK_NULL;
+	void              *target_proc = NULL;
+	ipc_space_policy_t target_pol;
+	ipc_space_policy_t exception_tss_policy_level;
+
+#if DEVELOPMENT || DEBUG
+	/* disable the feature if the boot-arg is disabled. */
+	if (!tss_should_crash) {
+		return true;
+	}
+#endif /* DEVELOPMENT || DEBUG */
+
+	/* No security check needed if neither of these two flags were set */
+	if ((flags & TSSF_CHECK_ENTITLEMENT) == 0 &&
+	    (thread->options & TH_IN_MACH_EXCEPTION) == 0) {
+		return true;
+	}
+
+	curr_task = current_task();
+	target_task = get_threadtask(thread);
+	target_proc = get_bsdtask_info(target_task);
+	target_pol = ipc_space_policy(get_task_ipcspace(target_task));
+
+	/* Allow if the task is translated, simulated, or has IPC hardening turned off */
+	if (!ipc_should_apply_policy(target_pol, IPC_SPACE_POLICY_DEFAULT)) {
+		return true;
+	}
+
+	/*
+	 * Calling thread_set_state on a thread that is blocked in a mach exception
+	 * handler is allowed iff it comes from the same process, or if the process is
+	 * being debugged (in dev mode)
+	 */
+#if !(XNU_TARGET_OS_OSX || XNU_TARGET_OS_BRIDGE)
+	exception_tss_policy_level = IPC_POLICY_ENHANCED_V1;
+#else
+	exception_tss_policy_level = IPC_POLICY_ENHANCED_V2;
+#endif /* !(XNU_TARGET_OS_OSX || XNU_TARGET_OS_BRIDGE) */
+	if ((thread->options & TH_IN_MACH_EXCEPTION) &&
+	    target_task != curr_task &&
+	    ipc_should_apply_policy(target_pol, exception_tss_policy_level) &&
+	    (!is_address_space_debugged(get_bsdtask_info(target_task))) &&
+	    !task_has_tss_entitlement(curr_task)) {
+		mach_port_guard_exception(flavor, 0, kGUARD_EXC_THREAD_SET_STATE);
+		return false;
+	}
+
+	/*
+	 * Protect mach exceptions from setting thread state (via *STATE* flavors)
+	 * unless the audit token received from the mach exception matches the
+	 * current task
+	 */
+	if ((thread->options & TH_IN_MACH_EXCEPTION) &&
+	    /* only enforce for mach exceptions (i.e. when audit is not NULL) */
+	    (audit != NULL) &&
+	    (get_audit_token_pid(audit) != task_pid(target_task)) &&
+	    ipc_should_apply_policy(target_pol, IPC_POLICY_ENHANCED_V3) &&
+	    !is_address_space_debugged(target_proc)) {
+		ipc_triage_policy_violation(
+			IPC_SEC_POLICY_RESTRICT_MACH_EXC_THREAD_SET_STATE,
+			target_task->itk_space,
+			flavor,
+			audit ? get_audit_token_pid(audit) : 0,
+			IP_NULL,
+			0
+			);
+		// return true; /* telemetry mode for now */
+	}
+
+	/* enhanced security binaries must have entitlement - all others ok */
+	if ((flags & TSSF_CHECK_ENTITLEMENT) &&
+	    !(thread->options & TH_IN_MACH_EXCEPTION) &&  /* Allowed for now - rdar://103085786 */
+	    ipc_should_apply_policy(target_pol, IPC_POLICY_ENHANCED_V1) &&
+	    FLAVOR_MODIFIES_CORE_CPU_REGISTERS(flavor) && /* only care about locking down PC/LR */
+	    !task_has_tss_entitlement(curr_task)) {
+		mach_port_guard_exception(flavor, 0, kGUARD_EXC_THREAD_SET_STATE);
+		return false;
+	}
+
+#if __has_feature(ptrauth_calls)
+	/* Do not allow Fatal PAC exception binaries to set Debug state */
+	if ((flags & TSSF_CHECK_ENTITLEMENT) &&
+	    task_is_pac_exception_fatal(target_task) &&
+	    machine_thread_state_is_debug_flavor(flavor) &&
+	    !task_has_tss_entitlement(curr_task)) {
+		mach_port_guard_exception(flavor, 0, kGUARD_EXC_THREAD_SET_STATE);
+		return false;
+	}
+#endif /* __has_feature(ptrauth_calls) */
+
+	return true;
+}
 
 /*
  * Internal routine to mark a thread as started.
@@ -115,11 +237,11 @@ thread_start(
  */
 void
 thread_start_in_assert_wait(
-	thread_t                        thread,
-	event_t             event,
+	thread_t            thread,
+	struct waitq       *waitq,
+	event64_t           event,
 	wait_interrupt_t    interruptible)
 {
-	struct waitq *waitq = assert_wait_queue(event);
 	wait_result_t wait_result;
 	spl_t spl;
 
@@ -134,7 +256,7 @@ thread_start_in_assert_wait(
 	thread_unlock(thread);
 
 	/* assert wait interruptibly forever */
-	wait_result = waitq_assert_wait64_locked(waitq, CAST_EVENT64_T(event),
+	wait_result = waitq_assert_wait64_locked(waitq, event,
 	    interruptible,
 	    TIMEOUT_URGENCY_SYS_NORMAL,
 	    TIMEOUT_WAIT_FOREVER,
@@ -154,14 +276,16 @@ thread_start_in_assert_wait(
 /*
  * Internal routine to terminate a thread.
  * Sometimes called with task already locked.
+ *
+ * If thread is on core, cause AST check immediately;
+ * Otherwise, let the thread continue running in kernel
+ * until it hits AST.
  */
 kern_return_t
 thread_terminate_internal(
-	thread_t                        thread,
-	thread_terminate_options_t      options)
+	thread_t                        thread)
 {
 	kern_return_t           result = KERN_SUCCESS;
-	boolean_t               test_pin_bit = false;
 
 	thread_mtx_lock(thread);
 
@@ -175,8 +299,6 @@ thread_terminate_internal(
 		} else {
 			thread_start(thread);
 		}
-		/* This bit can be reliably tested only if the thread is still active */
-		test_pin_bit = (options == TH_TERMINATE_OPTION_UNPIN) ? true : false;
 	} else {
 		result = KERN_TERMINATED;
 	}
@@ -185,12 +307,8 @@ thread_terminate_internal(
 		thread_affinity_terminate(thread);
 	}
 
-	/*
-	 * <rdar://problem/53562036> thread_terminate shouldn't be allowed on pthread
-	 * Until thread_terminate is disallowed for pthreads, always unpin the pinned port
-	 * when the thread is being terminated.
-	 */
-	ipc_thread_port_unpin(thread->ith_self, test_pin_bit);
+	/* unconditionally unpin the thread in internal termination */
+	ipc_thread_port_unpin(thread->thread_ports[THREAD_FLAVOR_CONTROL]);
 
 	thread_mtx_unlock(thread);
 
@@ -201,30 +319,35 @@ thread_terminate_internal(
 	return result;
 }
 
-/*
- * Terminate a thread.
- */
 kern_return_t
 thread_terminate(
 	thread_t                thread)
 {
+	task_t task;
+
 	if (thread == THREAD_NULL) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
+	if (thread->state & TH_IDLE) {
+		panic("idle thread calling thread_terminate!");
+	}
+
+	task = get_threadtask(thread);
+
 	/* Kernel threads can't be terminated without their own cooperation */
-	if (thread->task == kernel_task && thread != current_thread()) {
+	if (task == kernel_task && thread != current_thread()) {
 		return KERN_FAILURE;
 	}
 
-	kern_return_t result = thread_terminate_internal(thread, TH_TERMINATE_OPTION_NONE);
+	kern_return_t result = thread_terminate_internal(thread);
 
 	/*
 	 * If a kernel thread is terminating itself, force handle the APC_AST here.
 	 * Kernel threads don't pass through the return-to-user AST checking code,
 	 * but all threads must finish their own termination in thread_apc_ast.
 	 */
-	if (thread->task == kernel_task) {
+	if (task == kernel_task) {
 		assert(thread->active == FALSE);
 		thread_ast_clear(thread, AST_APC);
 		thread_apc_ast(thread);
@@ -236,18 +359,40 @@ thread_terminate(
 	return result;
 }
 
+/*
+ * [MIG Call] Terminate a thread.
+ *
+ * Cannot be used on threads managed by pthread.
+ */
 kern_return_t
-thread_terminate_pinned(
+thread_terminate_from_user(
 	thread_t                thread)
 {
 	if (thread == THREAD_NULL) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
-	assert(thread->task != kernel_task);
+	if (thread_get_tag(thread) & THREAD_TAG_PTHREAD) {
+		return KERN_DENIED;
+	}
 
-	kern_return_t result = thread_terminate_internal(thread, TH_TERMINATE_OPTION_UNPIN);
-	return result;
+	return thread_terminate(thread);
+}
+
+/*
+ * Terminate a thread with immovable control port.
+ *
+ * Can only be used on threads managed by pthread. Exported in pthread_kern.
+ */
+kern_return_t
+thread_terminate_immovable(
+	thread_t                thread)
+{
+	assert(thread == current_thread());
+	assert(get_threadtask(thread) != kernel_task);
+	assert(thread_get_tag(thread) & (THREAD_TAG_PTHREAD | THREAD_TAG_MAINTHREAD));
+
+	return thread_terminate_internal(thread);
 }
 
 /*
@@ -261,8 +406,12 @@ void
 thread_hold(thread_t thread)
 {
 	if (thread->suspend_count++ == 0) {
+		task_t task = get_threadtask(thread);
 		thread_set_apc_ast(thread);
 		assert(thread->suspend_parked == FALSE);
+
+		KDBG_RELEASE(MACHDBG_CODE(DBG_MACH_SUSPENSION, MACH_THREAD_SUSPEND) | DBG_FUNC_NONE,
+		    thread->thread_id, thread->user_stop_count, task->pidsuspended);
 	}
 }
 
@@ -292,63 +441,246 @@ thread_release(thread_t thread)
 			thread->suspend_parked = FALSE;
 			thread_wakeup_thread(&thread->suspend_count, thread);
 		}
+		KDBG_RELEASE(MACHDBG_CODE(DBG_MACH_SUSPENSION, MACH_THREAD_RESUME) | DBG_FUNC_NONE, thread->thread_id);
 	}
 }
 
+/*
+ * Helper function to place hold on thread and account for stop counts.
+ *
+ * Condition: thread is locked.
+ */
+kern_return_t
+thread_suspend_internal(
+	thread_t            thread,
+	thread_suspend_mode mode)
+{
+	thread_mtx_held(thread);
+	assert(mode != THREAD_SUSPEND_ALL);
+
+	if (!thread->active) {
+		return KERN_TERMINATED;
+	}
+
+	if (thread->user_stop_count++ == 0) {
+		thread_hold(thread);
+	}
+
+	if (mode == THREAD_SUSPEND_LEGACY) {
+		thread->legacy_user_stop_count++;
+	}
+
+	return KERN_SUCCESS;
+}
+
+/*
+ * Helper function to release hold on thread and account for stop counts.
+ *
+ * Condition: thread is locked.
+ */
+kern_return_t
+thread_resume_internal(
+	thread_t            thread,
+	thread_suspend_mode mode)
+{
+	spl_t s;
+	thread_mtx_held(thread);
+
+	assert(thread->legacy_user_stop_count >= 0);
+	assert(thread->user_stop_count >= thread->legacy_user_stop_count);
+
+	if (!thread->active) {
+		return KERN_TERMINATED;
+	}
+
+	if (thread->user_stop_count == 0) {
+		return KERN_FAILURE;
+	}
+
+	switch (mode) {
+	case THREAD_SUSPEND_LEGACY:
+		if (thread->legacy_user_stop_count == 0) {
+			return KERN_FAILURE;
+		}
+		thread->legacy_user_stop_count--;
+		OS_FALLTHROUGH;
+	case THREAD_SUSPEND_NORMAL:
+		thread->user_stop_count--;
+		break;
+	case THREAD_SUSPEND_ALL:
+		/*
+		 * call from thread_suspension_no_senders, drop
+		 * all non-legacy stop count.
+		 */
+		thread->user_stop_count = thread->legacy_user_stop_count;
+
+		if (thread->user_stop_count == 0) {
+			s = splsched();
+			thread_lock(thread);
+			thread->sched_flags |= TH_SFLAG_AUTO_RESUMED;
+			thread_unlock(thread);
+			splx(s);
+		}
+		break;
+	}
+
+	if (thread->user_stop_count == 0) {
+		thread_release(thread);
+	}
+
+	return KERN_SUCCESS;
+}
+
+/*
+ *	thread_suspend:
+ *
+ *	Implement an (old-fashioned) user-level suspension on a thread.
+ *
+ *	Because the user isn't expecting to have to manage a suspension
+ *	token, we'll track it for them in the kernel in the form of a naked
+ *	send right to the thread's resume port.  All such send rights
+ *	account for a single suspension against the thread (unlike
+ *  thread_suspend2() where each caller gets a unique suspension
+ *	count represented by a unique send-once right).
+ *
+ * Conditions:
+ *      The caller holds a reference to the thread
+ */
 kern_return_t
 thread_suspend(thread_t thread)
 {
-	kern_return_t result = KERN_SUCCESS;
+	kern_return_t kr = KERN_SUCCESS;
 
-	if (thread == THREAD_NULL || thread->task == kernel_task) {
+	if (thread == THREAD_NULL || get_threadtask(thread) == kernel_task) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
 	thread_mtx_lock(thread);
-
-	if (thread->active) {
-		if (thread->user_stop_count++ == 0) {
-			thread_hold(thread);
-		}
-	} else {
-		result = KERN_TERMINATED;
-	}
-
+	kr = thread_suspend_internal(thread, THREAD_SUSPEND_LEGACY);
 	thread_mtx_unlock(thread);
 
-	if (thread != current_thread() && result == KERN_SUCCESS) {
+	if (kr != KERN_SUCCESS) {
+		return kr;
+	}
+
+	if (thread != current_thread()) {
 		thread_wait(thread, FALSE);
 	}
 
-	return result;
+	return kr;
 }
 
 kern_return_t
 thread_resume(thread_t thread)
 {
-	kern_return_t result = KERN_SUCCESS;
+	kern_return_t kr = KERN_SUCCESS;
 
-	if (thread == THREAD_NULL || thread->task == kernel_task) {
+	if (thread == THREAD_NULL || get_threadtask(thread) == kernel_task) {
 		return KERN_INVALID_ARGUMENT;
 	}
 
 	thread_mtx_lock(thread);
+	kr = thread_resume_internal(thread, THREAD_SUSPEND_LEGACY);
+	thread_mtx_unlock(thread);
 
-	if (thread->active) {
-		if (thread->user_stop_count > 0) {
-			if (--thread->user_stop_count == 0) {
-				thread_release(thread);
-			}
-		} else {
-			result = KERN_FAILURE;
+	return kr;
+}
+
+kern_return_t
+thread_suspend2(
+	thread_t thread,
+	ipc_port_t *suspend_token)
+{
+	kern_return_t kr;
+	ipc_port_t resume_port = IP_NULL;
+	ipc_port_t prealloc_resume_port = IP_NULL;
+
+	if (thread == THREAD_NULL || get_threadtask(thread) == kernel_task) {
+		*suspend_token = IP_NULL;
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	prealloc_resume_port = ipc_kobject_alloc_port((ipc_kobject_t)thread,
+	    IKOT_THREAD_RESUME, IPC_KOBJECT_ALLOC_NONE);
+
+	thread_mtx_lock(thread);
+
+	kr = thread_suspend_internal(thread, THREAD_SUSPEND_NORMAL);
+
+	if (kr != KERN_SUCCESS) {
+		thread_mtx_unlock(thread);
+		ipc_kobject_dealloc_port(prealloc_resume_port, 0, IKOT_THREAD_RESUME);
+		return kr;
+	}
+
+	if (thread->ipc_active) {
+		if (thread->thread_resume_port == IP_NULL) {
+			thread->thread_resume_port = prealloc_resume_port;
+			prealloc_resume_port = IP_NULL;
 		}
-	} else {
-		result = KERN_TERMINATED;
+
+		/*
+		 * Create a send right for each instance of a direct user-called
+		 * thread_suspend2 call. When all of these send rights are abandoned,
+		 * the no-senders notification handler will resume the target thread.
+		 *
+		 * IMPORTANT: ipc_kobject_make_send() must be called while holding
+		 * the thread mutex to prevent a race with thread_suspension_no_senders().
+		 * This ensures that if a concurrent thread_suspend2() happens while
+		 * a no-senders notification is being processed, the mscount will be
+		 * incremented under the lock, causing the no-senders handler to detect
+		 * the new suspend via ipc_kobject_is_mscount_current() and skip the resume.
+		 */
+		resume_port = thread->thread_resume_port;
+		ipc_kobject_require(resume_port, thread, IKOT_THREAD_RESUME);
+		resume_port = ipc_kobject_make_send(resume_port, thread, IKOT_THREAD_RESUME);
+		assert(IP_VALID(resume_port));
 	}
 
 	thread_mtx_unlock(thread);
 
-	return result;
+	if (prealloc_resume_port != IP_NULL) {
+		ipc_kobject_dealloc_port(prealloc_resume_port, 0, IKOT_THREAD_RESUME);
+	}
+
+	if (thread != current_thread()) {
+		thread_wait(thread, FALSE);
+	}
+
+	*suspend_token = resume_port;
+	return KERN_SUCCESS;
+}
+
+kern_return_t
+thread_resume2(ipc_port_t suspend_token)
+{
+	kern_return_t kr;
+	thread_t thread = THREAD_NULL;
+
+	if (IP_VALID(suspend_token)) {
+		ip_mq_lock(suspend_token);
+		thread = ipc_kobject_get_locked(suspend_token, IKOT_THREAD_RESUME);
+		if (thread != THREAD_NULL) {
+			thread_reference(thread);
+		}
+		ip_mq_unlock(suspend_token);
+	}
+
+	if (thread == THREAD_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	assert(get_threadtask(thread) != kernel_task);
+
+	thread_mtx_lock(thread);
+
+	kr = thread_resume_internal(thread, THREAD_SUSPEND_NORMAL);
+
+	thread_mtx_unlock(thread);
+
+	thread_deallocate(thread);
+
+	return kr;
 }
 
 /*
@@ -502,9 +834,10 @@ thread_get_state_internal(
 	int                                             flavor,
 	thread_state_t                  state,                  /* pointer to OUT array */
 	mach_msg_type_number_t  *state_count,   /*IN/OUT*/
-	boolean_t                               to_user)
+	thread_set_status_flags_t  flags)
 {
 	kern_return_t           result = KERN_SUCCESS;
+	boolean_t               to_user = !!(flags & TSSF_TRANSLATE_TO_USER);
 
 	if (thread == THREAD_NULL) {
 		return KERN_INVALID_ARGUMENT;
@@ -542,7 +875,7 @@ thread_get_state_internal(
 
 	if (to_user && result == KERN_SUCCESS) {
 		result = machine_thread_state_convert_to_user(thread, flavor, state,
-		    state_count);
+		    state_count, flags);
 	}
 
 	thread_mtx_unlock(thread);
@@ -566,7 +899,7 @@ thread_get_state(
 	thread_state_t                  state,                  /* pointer to OUT array */
 	mach_msg_type_number_t  *state_count)   /*IN/OUT*/
 {
-	return thread_get_state_internal(thread, flavor, state, state_count, FALSE);
+	return thread_get_state_internal(thread, flavor, state, state_count, TSSF_FLAGS_NONE);
 }
 
 kern_return_t
@@ -576,7 +909,7 @@ thread_get_state_to_user(
 	thread_state_t                  state,                  /* pointer to OUT array */
 	mach_msg_type_number_t  *state_count)   /*IN/OUT*/
 {
-	return thread_get_state_internal(thread, flavor, state, state_count, TRUE);
+	return thread_get_state_internal(thread, flavor, state, state_count, TSSF_TRANSLATE_TO_USER);
 }
 
 /*
@@ -585,16 +918,28 @@ thread_get_state_to_user(
  */
 static inline kern_return_t
 thread_set_state_internal(
-	thread_t                thread,
-	int                                             flavor,
+	thread_t                        thread,
+	int                             flavor,
 	thread_state_t                  state,
-	mach_msg_type_number_t  state_count,
-	boolean_t                               from_user)
+	mach_msg_type_number_t          state_count,
+	thread_state_t                  old_state,
+	mach_msg_type_number_t          old_state_count,
+	thread_set_status_flags_t       flags,
+	audit_token_t                   *audit)
 {
 	kern_return_t           result = KERN_SUCCESS;
+	boolean_t               from_user = !!(flags & TSSF_TRANSLATE_TO_USER);
 
 	if (thread == THREAD_NULL) {
 		return KERN_INVALID_ARGUMENT;
+	}
+
+	/*
+	 * process will be crashed with kGUARD_EXC_THREAD_SET_STATE
+	 * if thread_set_state_allowed() return false.
+	 */
+	if (!thread_set_state_allowed(thread, flavor, flags, audit)) {
+		return KERN_NO_ACCESS;
 	}
 
 	thread_mtx_lock(thread);
@@ -602,7 +947,7 @@ thread_set_state_internal(
 	if (thread->active) {
 		if (from_user) {
 			result = machine_thread_state_convert_from_user(thread, flavor,
-			    state, state_count);
+			    state, state_count, old_state, old_state_count, flags);
 			if (result != KERN_SUCCESS) {
 				goto out;
 			}
@@ -656,7 +1001,8 @@ thread_set_state(
 	thread_state_t                  state,
 	mach_msg_type_number_t  state_count)
 {
-	return thread_set_state_internal(thread, flavor, state, state_count, FALSE);
+	audit_token_t *audit = NULL;
+	return thread_set_state_internal(thread, flavor, state, state_count, NULL, 0, TSSF_FLAGS_NONE, audit);
 }
 
 kern_return_t
@@ -666,7 +1012,9 @@ thread_set_state_from_user(
 	thread_state_t                  state,
 	mach_msg_type_number_t  state_count)
 {
-	return thread_set_state_internal(thread, flavor, state, state_count, TRUE);
+	audit_token_t *audit = NULL;
+	return thread_set_state_internal(thread, flavor, state, state_count, NULL,
+	           0, TSSF_TRANSLATE_TO_USER | TSSF_CHECK_ENTITLEMENT, audit);
 }
 
 kern_return_t
@@ -707,7 +1055,7 @@ thread_convert_thread_state(
 
 	/* Authenticate and convert thread state to kernel representation */
 	kr = machine_thread_state_convert_from_user(from_thread, flavor,
-	    in_state, state_count);
+	    in_state, state_count, NULL, 0, TSSF_FLAGS_NONE);
 
 	/* Return early if one of the thread was jop disabled while other wasn't */
 	if (kr != KERN_SUCCESS) {
@@ -716,7 +1064,7 @@ thread_convert_thread_state(
 
 	/* Convert thread state to target thread user representation */
 	kr = machine_thread_state_convert_to_user(to_thread, flavor,
-	    in_state, &state_count);
+	    in_state, &state_count, TSSF_PRESERVE_FLAGS);
 
 	if (kr == KERN_SUCCESS) {
 		if (state_count <= *out_state_count) {
@@ -751,23 +1099,10 @@ thread_state_initialize(
 
 	if (thread->active) {
 		if (thread != current_thread()) {
-			thread_hold(thread);
-
-			thread_mtx_unlock(thread);
-
-			if (thread_stop(thread, TRUE)) {
-				thread_mtx_lock(thread);
-				result = machine_thread_state_initialize( thread );
-				thread_unstop(thread);
-			} else {
-				thread_mtx_lock(thread);
-				result = KERN_ABORTED;
-			}
-
-			thread_release(thread);
-		} else {
-			result = machine_thread_state_initialize( thread );
+			/* Thread created in exec should be blocked in UNINT wait */
+			assert(!(thread->state & TH_RUN));
 		}
+		machine_thread_state_initialize( thread );
 	} else {
 		result = KERN_TERMINATED;
 	}
@@ -889,9 +1224,14 @@ thread_setstatus_from_user(
 	thread_t                thread,
 	int                                             flavor,
 	thread_state_t                  tstate,
-	mach_msg_type_number_t  count)
+	mach_msg_type_number_t  count,
+	thread_state_t                  old_tstate,
+	mach_msg_type_number_t  old_count,
+	thread_set_status_flags_t flags,
+	audit_token_t *audit)
 {
-	return thread_set_state_from_user(thread, flavor, tstate, count);
+	return thread_set_state_internal(thread, flavor, tstate, count, old_tstate,
+	           old_count, flags | TSSF_TRANSLATE_TO_USER, audit);
 }
 
 /*
@@ -914,9 +1254,10 @@ thread_getstatus_to_user(
 	thread_t                thread,
 	int                                             flavor,
 	thread_state_t                  tstate,
-	mach_msg_type_number_t  *count)
+	mach_msg_type_number_t  *count,
+	thread_set_status_flags_t flags)
 {
-	return thread_get_state_to_user(thread, flavor, tstate, count);
+	return thread_get_state_internal(thread, flavor, tstate, count, flags | TSSF_TRANSLATE_TO_USER);
 }
 
 /*
@@ -1088,6 +1429,82 @@ thread_apc_ast(thread_t thread)
 	thread_mtx_unlock(thread);
 }
 
+#if CONFIG_ROSETTA
+extern kern_return_t
+exception_deliver(
+	thread_t                thread,
+	exception_type_t        exception,
+	mach_exception_data_t   code,
+	mach_msg_type_number_t  codeCnt,
+	struct exception_action *excp,
+	lck_mtx_t               *mutex);
+
+kern_return_t
+thread_raise_exception(
+	thread_t thread,
+	exception_type_t exception,
+	natural_t code_count,
+	int64_t code,
+	int64_t sub_code)
+{
+	task_t task;
+
+	if (thread == THREAD_NULL) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	task = get_threadtask(thread);
+
+	if (task != current_task()) {
+		return KERN_FAILURE;
+	}
+
+	if (!task_is_translated(task)) {
+		return KERN_FAILURE;
+	}
+
+	if (exception == EXC_CRASH) {
+		return KERN_INVALID_ARGUMENT;
+	}
+
+	int64_t codes[] = { code, sub_code };
+	host_priv_t host_priv = host_priv_self();
+	kern_return_t kr = exception_deliver(thread, exception, codes, code_count, host_priv->exc_actions, &host_priv->lock);
+	if (kr != KERN_SUCCESS) {
+		return kr;
+	}
+
+	return thread_resume(thread);
+}
+#endif
+
+void
+thread_debug_return_to_user_ast(
+	thread_t thread)
+{
+#pragma unused(thread)
+#if MACH_ASSERT
+	if ((thread->sched_flags & TH_SFLAG_RW_PROMOTED) ||
+	    thread->rwlock_count > 0) {
+		panic("Returning to userspace with rw lock held, thread %p sched_flag %u rwlock_count %d", thread, thread->sched_flags, thread->rwlock_count);
+	}
+
+	if ((thread->sched_flags & TH_SFLAG_FLOOR_PROMOTED) ||
+	    thread->priority_floor_count > 0) {
+		panic("Returning to userspace with floor boost set, thread %p sched_flag %u priority_floor_count %d", thread, thread->sched_flags, thread->priority_floor_count);
+	}
+
+	if (thread->th_vm_faults_disabled) {
+		panic("Returning to userspace with vm faults disabled, thread %p", thread);
+	}
+
+#if CONFIG_EXCLAVES
+	assert3u(thread->th_exclaves_state & TH_EXCLAVES_STATE_ANY, ==, 0);
+#endif /* CONFIG_EXCLAVES */
+
+#endif /* MACH_ASSERT */
+}
+
 
 /* Prototype, see justification above */
 kern_return_t
@@ -1163,8 +1580,8 @@ act_get_state_to_user(
 
 static void
 act_set_ast(
-	thread_t thread,
-	ast_t ast)
+	thread_t   thread,
+	ast_t      ast)
 {
 	spl_t s = splsched();
 
@@ -1210,10 +1627,23 @@ act_set_ast_async(thread_t  thread,
 }
 
 void
-act_set_astbsd(
-	thread_t        thread)
+act_set_debug_assert(void)
 {
-	act_set_ast( thread, AST_BSD );
+	thread_t thread = current_thread();
+	if (thread_ast_peek(thread, AST_DEBUG_ASSERT) != AST_DEBUG_ASSERT) {
+		thread_ast_set(thread, AST_DEBUG_ASSERT);
+	}
+	if (ast_peek(AST_DEBUG_ASSERT) != AST_DEBUG_ASSERT) {
+		spl_t s = splsched();
+		ast_propagate(thread);
+		splx(s);
+	}
+}
+
+void
+act_set_astbsd(thread_t thread)
+{
+	act_set_ast(thread, AST_BSD);
 }
 
 void
@@ -1239,15 +1669,65 @@ act_clear_astkevent(thread_t thread, uint16_t bits)
 	return cur & bits;
 }
 
-void
-act_set_ast_reset_pcs(thread_t thread)
+bool
+act_set_ast_reset_pcs(task_t task, thread_t thread)
 {
-	act_set_ast(thread, AST_RESET_PCS);
+	processor_t processor;
+	bool needs_wait = false;
+	spl_t s;
+
+	s = splsched();
+
+	if (thread == current_thread()) {
+		/*
+		 * this is called from the signal code,
+		 * just set the AST and move on
+		 */
+		thread_ast_set(thread, AST_RESET_PCS);
+		ast_propagate(thread);
+	} else {
+		thread_lock(thread);
+
+		assert(thread->t_rr_state.trr_ipi_ack_pending == 0);
+		assert(thread->t_rr_state.trr_sync_waiting == 0);
+
+		processor = thread->last_processor;
+		if (!thread->active) {
+			/*
+			 * ->active is being set before the thread is added
+			 * to the thread list (under the task lock which
+			 * the caller holds), and is reset before the thread
+			 * lock is being taken by thread_terminate_self().
+			 *
+			 * The result is that this will never fail to
+			 * set the AST on an thread that is active,
+			 * but will not set it past thread_terminate_self().
+			 */
+		} else if (processor != PROCESSOR_NULL &&
+		    processor->state == PROCESSOR_RUNNING &&
+		    processor->active_thread == thread) {
+			thread->t_rr_state.trr_ipi_ack_pending = true;
+			needs_wait = true;
+			thread_ast_set(thread, AST_RESET_PCS);
+			cause_ast_check(processor);
+		} else if (thread_reset_pcs_in_range(task, thread)) {
+			if (thread->t_rr_state.trr_fault_state) {
+				thread->t_rr_state.trr_fault_state =
+				    TRR_FAULT_OBSERVED;
+				needs_wait = true;
+			}
+			thread_ast_set(thread, AST_RESET_PCS);
+		}
+		thread_unlock(thread);
+	}
+
+	splx(s);
+
+	return needs_wait;
 }
 
 void
-act_set_kperf(
-	thread_t        thread)
+act_set_kperf(thread_t thread)
 {
 	/* safety check */
 	if (thread != current_thread()) {
@@ -1256,7 +1736,7 @@ act_set_kperf(
 		}
 	}
 
-	act_set_ast( thread, AST_KPERF );
+	act_set_ast(thread, AST_KPERF);
 }
 
 #if CONFIG_MACF
@@ -1274,22 +1754,60 @@ act_set_astledger(thread_t thread)
 	act_set_ast(thread, AST_LEDGER);
 }
 
-/*
- * The ledger AST may need to be set while already holding
- * the thread lock.  This routine skips sending the IPI,
- * allowing us to avoid the lock hold.
- *
- * However, it means the targeted thread must context switch
- * to recognize the ledger AST.
- */
 void
-act_set_astledger_async(thread_t thread)
+act_set_telemetry_ast(thread_t thread, telemetry_ast_t telemetry_ast)
 {
-	act_set_ast_async(thread, AST_LEDGER);
+	os_atomic_or(&thread->t_telemetry_ast, telemetry_ast, relaxed);
+	act_set_ast_async(thread, AST_TELEMETRY);
+}
+
+telemetry_ast_t
+act_clear_telemetry_ast(thread_t thread)
+{
+	thread_ast_clear(thread, AST_TELEMETRY);
+	return atomic_exchange(&thread->t_telemetry_ast, 0);
 }
 
 void
-act_set_io_telemetry_ast(thread_t thread)
+act_set_telemetry_ast_vm_fault(
+	thread_t thread,
+	uint64_t user_va,
+	int type,
+	uint16_t flags)
 {
-	act_set_ast(thread, AST_TELEMETRY_IO);
+#if CONFIG_MEMORY_MICROSTACKSHOT
+	thread->t_vm_fault_info.tvfi_va = user_va & ((1ULL << 48) - 1);
+	thread->t_vm_fault_info.tvfi_type = type;
+	thread->t_vm_fault_info.tvfi_flags = flags;
+
+	act_set_telemetry_ast(thread, TELEMETRY_AST_VM_FAULT);
+#else /* CONFIG_MEMORY_MICROSTACKSHOT */
+#pragma unused(thread, user_va, type, flags)
+#endif /* !CONFIG_MEMORY_MICROSTACKSHOT */
+}
+
+void
+act_set_telemetry_ast_page_grab(
+	thread_t thread,
+	bool is_iopl,
+	uint16_t tag)
+{
+#if CONFIG_MEMORY_MICROSTACKSHOT
+	if (is_iopl) {
+		thread->t_page_grab_info.tpgi_iopl_count += 1;
+	} else {
+		thread->t_page_grab_info.tpgi_upl_count += 1;
+	}
+	thread->t_page_grab_info.tpgi_tag = tag;
+
+	act_set_telemetry_ast(thread, TELEMETRY_AST_PAGE_GRAB);
+#else /* CONFIG_MEMORY_MICROSTACKSHOT */
+#pragma unused(thread, is_iopl, tag)
+#endif /* !CONFIG_MEMORY_MICROSTACKSHOT */
+}
+
+void
+act_set_astproc_resource(thread_t thread)
+{
+	act_set_ast(thread, AST_PROC_RESOURCE);
 }

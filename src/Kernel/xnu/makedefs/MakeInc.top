@@ -36,7 +36,7 @@ include $(MakeInc_cmd)
 # Default to current kernel architecture
 
 ifneq ($(filter $(SUPPORTED_EMBEDDED_PLATFORMS),$(PLATFORM)),)
-     override DEFAULT_ARCH_CONFIG := ARM
+     override DEFAULT_ARCH_CONFIG := ARM64
 else ifneq ($(filter $(SUPPORTED_SIMULATOR_PLATFORMS),$(PLATFORM)),)
      override DEFAULT_ARCH_CONFIG := X86_64
 else
@@ -89,14 +89,11 @@ override DEFAULT_X86_64_MACHINE_CONFIG := NONE
 override DEFAULT_X86_64H_MACHINE_CONFIG := NONE
 
 ifneq ($(findstring _Sim,$(RC_ProjectName)),)
-override DEFAULT_ARM_MACHINE_CONFIG	:= NONE
 override DEFAULT_ARM64_MACHINE_CONFIG	:= NONE
 else ifneq ($(findstring _host,$(RC_ProjectName)),)
-override DEFAULT_ARM_MACHINE_CONFIG	:= NONE
 override DEFAULT_ARM64_MACHINE_CONFIG	:= NONE
 else
-override DEFAULT_ARM_MACHINE_CONFIG	:= T8002
-override DEFAULT_ARM64_MACHINE_CONFIG	:= T7000
+override DEFAULT_ARM64_MACHINE_CONFIG	:= VMAPPLE
 endif
 
 # This is typically never specified (TARGET_CONFIGS is used)
@@ -134,7 +131,7 @@ KERNEL_CONFIGS_EMBEDDED := $(KERNEL_CONFIGS)
 endif
 
 ifeq ($(ARCH_CONFIGS),DEFAULT)
-ARCH_CONFIGS_EMBEDDED := ARM ARM64
+ARCH_CONFIGS_EMBEDDED := ARM64
 ARCH_CONFIGS_DESKTOP := X86_64
 else
 ARCH_CONFIGS_EMBEDDED := $(strip $(shell echo $(filter-out X86_64, $(ARCH_CONFIGS)) | $(TR) a-z A-Z))
@@ -143,39 +140,15 @@ endif
 
 # Find supported products from the device map
 ifneq ($(EMBEDDED_DEVICE_MAP),)
-DEVICEMAP_PRODUCTS_ARMV7  := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
-				-query 'SELECT DISTINCT TargetType			\
-					FROM Files					\
-					  INNER JOIN Manifests USING (manifestID)	\
-					  INNER JOIN Targets USING (Target)		\
-					WHERE (KernelMachOArchitecture LIKE "armv7"	\
-					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
-DEVICEMAP_PRODUCTS_ARMV7S := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
-				-query 'SELECT DISTINCT TargetType			\
-					FROM Files					\
-					  INNER JOIN Manifests USING (manifestID)	\
-					  INNER JOIN Targets USING (Target)		\
-					WHERE (KernelMachOArchitecture LIKE "armv7s"	\
-					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
-DEVICEMAP_PRODUCTS_ARMV7K := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
-				-query 'SELECT DISTINCT TargetType			\
-					FROM Files					\
-					  INNER JOIN Manifests USING (manifestID)	\
-					  INNER JOIN Targets USING (Target)		\
-					WHERE (KernelMachOArchitecture LIKE "armv7k"	\
-					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
-DEVICEMAP_PRODUCTS_ARM := $(DEVICEMAP_PRODUCTS_ARMV7) $(DEVICEMAP_PRODUCTS_ARMV7S) $(DEVICEMAP_PRODUCTS_ARMV7K)
-
-
 DEVICEMAP_PRODUCTS_ARM64 := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
-				-query 'SELECT DISTINCT TargetType			\
+				-list -query 'SELECT DISTINCT TargetType		\
 					FROM Files					\
 					  INNER JOIN Manifests USING (manifestID)	\
 					  INNER JOIN Targets USING (Target)		\
 					WHERE (KernelMachOArchitecture LIKE "arm64"	\
 					   AND fileType in ("KernelCache", "RestoreKernelCache"))')
 DEVICEMAP_PRODUCTS_OSX_ARM64 := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)		\
-					-query 'SELECT DISTINCT TargetType			\
+					-list -query 'SELECT DISTINCT TargetType		\
 					      	FROM Files					\
 					  	  INNER JOIN Manifests USING (manifestID)	\
 					  	  INNER JOIN Targets USING (Target)		\
@@ -185,25 +158,25 @@ DEVICEMAP_PRODUCTS_OSX_ARM64 := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH)
 
 
 # Generate a list of mappings of the form "n75:arm;t8002" based on the device map
-DEVICEMAP_PRODUCT_SOC_MAPPINGS := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform FROM Targets | awk -F\| '{ if ($$2 ~ /armv[0-9][a-z]?/) { print $$1 ":arm;" $$3 } else if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
+DEVICEMAP_PRODUCT_SOC_MAPPINGS := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -list -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform FROM Targets | awk -F\| '{ if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
 
 # use embedded_device_map
 endif
 
-# Map a product like "n75" to "arm;t8002"
+# Map a product like "n75" to "arm;t8002", or potentially multiple "soc;platform" strings, if the product has multiple platforms.
 # $(1) is a product name in lower case
-function_lookup_product = $(call function_substitute_word_with_replacement,	\
+function_lookup_product = $(call function_parse_product_configs,$(call function_substitute_word_with_replacement,	\
 				 $(1),						\
 				 $(DEVICEMAP_PRODUCT_SOC_MAPPINGS),		\
 				 unknown_arch_for_$(1);unknown_platform_for_$(1) \
-			   )
+			   ))
 
 ifneq ($(PLATFORM),MacOSX)
 ifneq ($(EMBEDDED_DEVICE_MAP),)
 # Generate a list of mappings for products that use a different platform for their kernel configuration than their true platform
 # of the form "n71m:arm64;s8000;s8003". The 4th element is the true SoC platform, which will get an on-disk copy, while the
 # kernel's recursive build system will build the 3rd element as the KernelPlatform
-DEVICEMAP_PRODUCT_SOC_ALIASES := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform, Platform FROM Targets WHERE KernelPlatform "!=" Platform | awk -F\| '{ if ($$2 ~ /armv[0-9][a-z]?/) { print $$1 ":arm;" $$3 ";" $$4} else if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
+DEVICEMAP_PRODUCT_SOC_ALIASES := $(shell $(EMBEDDED_DEVICE_MAP) -db $(EDM_DBPATH) -list -query SELECT DISTINCT TargetType, KernelMachOArchitecture, KernelPlatform, Platform FROM Targets WHERE KernelPlatform "!=" Platform | awk -F\| '{ if ($$2 ~ /arm64[a-z]?/) { print $$1 ":arm64;" $$3 ";" $$4} else { print $$1 ":" $$2 ";" $$3 ";" $$4} }' )
 
 endif
 endif
@@ -230,22 +203,41 @@ ifneq ($(PRODUCT_CONFIGS),)
 # generate TARGET_CONFIGS using KERNEL_CONFIGS and PRODUCT_CONFIGS
 TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_product_config,$(shell printf "%s" "$(PRODUCT_CONFIGS)" | $(TR) A-Z a-z),$(call function_lookup_product,$(my_product_config))),$(foreach my_kernel_config,$(KERNEL_CONFIGS),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
 TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_product_config,$(shell printf "%s" "$(PRODUCT_CONFIGS)" | $(TR) A-Z a-z),$(call function_lookup_product_alias,$(my_product_config))),$(foreach my_kernel_config,$(KERNEL_CONFIGS),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
-else ifneq ($(filter %_release_embedded,$(MAKECMDGOALS)),)
+else ifeq (xnu_headers_driverkit,$(RC_ProjectName))
+# generate TARGET_CONFIGS for all kernel configs for B&I
+TARGET_CONFIGS = DEVELOPMENT arm64 DEFAULT DEVELOPMENT X86_64 DEFAULT
+else ifneq ($(filter %_release_embedded,$(MAKECMDGOALS))$(filter %_release_embedded_nohdrs,$(MAKECMDGOALS)),)
 # generate TARGET_CONFIGS for RELEASE kernel configs and products in the device map
 TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,RELEASE,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS += $(EXTRA_TARGET_CONFIGS_RELEASE)
 TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,RELEASE,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
 else ifneq ($(filter %_development_embedded,$(MAKECMDGOALS)),)
 # generate TARGET_CONFIGS for DEVELOPMENT kernel configs and products in the device map
 TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,DEVELOPMENT,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS += $(EXTRA_TARGET_CONFIGS_DEVELOPMENT)
 TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,DEVELOPMENT,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
 else ifneq ($(filter %_embedded,$(MAKECMDGOALS)),)
 # generate TARGET_CONFIGS for all kernel configs and products in the device map
 TARGET_CONFIGS := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS += $(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(EXTRA_TARGET_CONFIGS_$(my_kernel_config)))
 TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+else ifneq ($(filter %_release_desktop,$(MAKECMDGOALS))$(filter %_release_desktop_nohdrs,$(MAKECMDGOALS)),)
+# generate TARGET_CONFIGS for B&I release builds
+TARGET_CONFIGS := $(foreach my_kern_config, RELEASE, $(foreach my_arch_config, $(ARCH_CONFIGS_DESKTOP), $(foreach my_machine_config, $(MACHINE_CONFIGS), $(my_kern_config) $(my_arch_config) $(my_machine_config))))
+TARGET_CONFIGS += $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,RELEASE,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS += $(EXTRA_TARGET_CONFIGS_RELEASE)
+TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,RELEASE,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+else ifneq ($(filter %_development_desktop,$(MAKECMDGOALS)),)
+# generate TARGET_CONFIGS for B&I development builds
+TARGET_CONFIGS := $(foreach my_kern_config, DEVELOPMENT, $(foreach my_arch_config, $(ARCH_CONFIGS_DESKTOP), $(foreach my_machine_config, $(MACHINE_CONFIGS), $(my_kern_config) $(my_arch_config) $(my_machine_config))))
+TARGET_CONFIGS += $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,DEVELOPMENT,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS += $(EXTRA_TARGET_CONFIGS_DEVELOPMENT)
+TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,DEVELOPMENT,$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
 else ifneq ($(filter %_desktop,$(MAKECMDGOALS)),)
 # generate TARGET_CONFIGS for all kernel configs for B&I
 TARGET_CONFIGS := $(foreach my_kern_config, $(KERNEL_CONFIGS_DESKTOP), $(foreach my_arch_config, $(ARCH_CONFIGS_DESKTOP), $(foreach my_machine_config, $(MACHINE_CONFIGS), $(my_kern_config) $(my_arch_config) $(my_machine_config))))
 TARGET_CONFIGS += $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
+TARGET_CONFIGS += $(foreach my_kernel_config,$(KERNEL_CONFIGS_DESKTOP),$(EXTRA_TARGET_CONFIGS_$(my_kernel_config)))
 TARGET_CONFIGS_ALIASES := $(foreach my_devicemap_config,$(foreach my_arch_config,$(ARCH_CONFIGS_EMBEDDED),$(foreach my_product_config,$(DEVICEMAP_PRODUCTS_OSX_$(my_arch_config)),$(call function_lookup_product_alias,$(my_product_config)))),$(foreach my_kernel_config,$(KERNEL_CONFIGS_EMBEDDED),$(my_kernel_config) $(subst ;, ,$(my_devicemap_config))))
 else
 # generate TARGET_CONFIGS using KERNEL_CONFIGS and ARCH_CONFIGS and MACHINE_CONFIGS (which defaults to "DEFAULT")
@@ -270,6 +262,9 @@ TARGET_CONFIGS_ALIASES_UC := $(strip $(shell printf "%s" "$(TARGET_CONFIGS_ALIAS
 # "RELEASE^I386^NONE DEVELOPMENT^ARM^T8002", which can be looped
 # over trivially. PRIMARY_BUILD_CONFIGS is the first config
 # for each architecture, used primarily for machine-dependent recursion.
+# VARIANT_CONFIGS contains one build configuration for each combination
+# of kernel architecture and configuration. It is used for variant
+# installation recursion.
 
 BUILD_CONFIGS = $(call function_create_build_configs, $(TARGET_CONFIGS_UC))
 
@@ -277,6 +272,15 @@ PRIMARY_ARCHS = $(strip $(sort $(foreach build_config, $(BUILD_CONFIGS), $(call 
 PRIMARY_BUILD_CONFIGS = $(strip $(foreach arch, $(PRIMARY_ARCHS), $(firstword $(foreach build_config, $(BUILD_CONFIGS), $(if $(filter $(arch),$(call function_extract_arch_config_from_build_config, $(build_config))), $(build_config), )))))
 NON_PRIMARY_BUILD_CONFIGS = $(strip $(filter-out $(PRIMARY_BUILD_CONFIGS), $(BUILD_CONFIGS)))
 FIRST_BUILD_CONFIG = $(firstword $(BUILD_CONFIGS))
+
+# Build list of all kernel configurations present in all build configs.
+PRIMARY_KERNEL_CONFIGS = $(strip $(sort $(foreach build_config, $(BUILD_CONFIGS), $(call function_extract_kernel_config_from_build_config, $(build_config)))))
+
+# Pick one build configuration for each kernel configuration.
+# This will be used to populate System.kext variants in SYMROOT / DSTROOT.
+VARIANT_CONFIGS = $(strip \
+                    $(foreach kernel_config, $(PRIMARY_KERNEL_CONFIGS), \
+                      $(firstword $(call function_match_build_config_for_kernel_config, $(BUILD_CONFIGS), $(kernel_config)))))
 
 ifneq ($(TARGET_CONFIGS_ALIASES_UC),)
 ALIAS_CONFIGS = $(call function_create_alias_configs, $(TARGET_CONFIGS_ALIASES_UC))
@@ -291,6 +295,12 @@ endif
 # $(warning NON_PRIMARY_BUILD_CONFIGS is $(NON_PRIMARY_BUILD_CONFIGS))
 # $(warning TARGET_CONFIGS_ALIASES is $(TARGET_CONFIGS_ALIASES))
 # $(warning ALIAS_CONFIGS is $(ALIAS_CONFIGS))
+# $(warning PRIMARY_KERNEL_CONFIGS is $(PRIMARY_KERNEL_CONFIGS))
+# $(warning VARIANT_CONFIGS is $(VARIANT_CONFIGS))
+
+# Run as its own make instance (Makefile invokes it with -f), so UNAME_S from
+# the parent is not visible here.
+UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Linux)
 	MEMORY_SIZE :=$(shell echo $$((`grep MemTotal /proc/meminfo | tr -dc '0-9'` * 1024)))
@@ -350,7 +360,7 @@ $$($(1)_bootstrap_target_list): $(1)_bootstrap_% : $(1)_stripe_dep_for_% $$(adds
 		CURRENT_ARCH_CONFIG=$$(call function_extract_arch_config_from_build_config,$$(patsubst $(1)_bootstrap_%,%,$$@))	  \
 		CURRENT_MACHINE_CONFIG=$$(call function_extract_machine_config_from_build_config,$$(patsubst $(1)_bootstrap_%,%,$$@))	\
 		CURRENT_BUILD_CONFIG=$$(patsubst $(1)_bootstrap_%,%,$$@)							\
-		PRIMARY_BUILD_CONFIGS="$(PRIMARY_BUILD_CONFIGS)"							\
+		PRIMARY_BUILD_CONFIGS="$(PRIMARY_BUILD_CONFIGS)" BUILD_CONFIGS="$(BUILD_CONFIGS)"				\
 		SOURCE=$${SRCROOT}/												\
 		RELATIVE_SOURCE_PATH=.											\
 		TARGET=$${OBJROOT}/$$(call function_convert_build_config_to_objdir,$$(patsubst $(1)_bootstrap_%,%,$$@))$(2)/	\
@@ -403,13 +413,15 @@ $(eval $(generated_top_level_build_setup))
 # invalidate current kernel in $(SYMROOT). Timestamp must be +1 from a previous kernel build
 setup: build_setup_bootstrap
 	$(_v)$(TOUCH) $(OBJROOT)/.mach_kernel.timestamp.new
-	$(_v)while [ \! $(OBJROOT)/.mach_kernel.timestamp.new -nt $(OBJROOT)/.mach_kernel.timestamp ]; do \
+    # -nt and -ot are evaluated differently by bash, dash, and zsh (and are not part of the POSIX specification).
+    # Explicitly specify what should happen when the right hand file doesn't exist.
+	$(_v)while [ \! $(OBJROOT)/.mach_kernel.timestamp.new -nt $(OBJROOT)/.mach_kernel.timestamp -a \( \! -e $(OBJROOT)/.mach_kernel.timestamp.new -o -e $(OBJROOT)/.mach_kernel.timestamp \) ]; do \
 		$(SLEEP) 1;					\
 		$(TOUCH) $(OBJROOT)/.mach_kernel.timestamp.new;	\
 	done
 	$(_v)$(MV) $(OBJROOT)/.mach_kernel.timestamp.new $(OBJROOT)/.mach_kernel.timestamp
 	$(_v)$(TOUCH) $(OBJROOT)/.symbolset.timestamp.new
-	$(_v)while [ \! $(OBJROOT)/.symbolset.timestamp.new -nt $(OBJROOT)/.symbolset.timestamp ]; do \
+	$(_v)while [ $(OBJROOT)/.symbolset.timestamp.new -ot $(OBJROOT)/.symbolset.timestamp ]; do \
 		$(SLEEP) 1;					\
 		$(TOUCH) $(OBJROOT)/.symbolset.timestamp.new;	\
 	done
@@ -463,11 +475,14 @@ else
 installhdrs: installhdrs_mi installhdrs_md
 endif
 
-.PHONY: installhdrs_embedded installhdrs_release_embedded installhdrs_development_embedded installhdrs_desktop
+.PHONY: installhdrs_embedded installhdrs_release_embedded installhdrs_development_embedded
+.PHONY: installhdrs_desktop installhdrs_release_desktop installhdrs_development_desktop
 
-installhdrs_embedded installhdrs_release_embedded installhdrs_desktop: installhdrs
+installhdrs_embedded installhdrs_release_embedded: installhdrs
+installhdrs_desktop installhdrs_release_desktop: installhdrs
 
 installhdrs_development_embedded:
+installhdrs_development_desktop:
 
 #
 # Install machine independent header files
@@ -549,9 +564,11 @@ $(eval $(generated_top_level_config_all))
 
 all config: config_all_bootstrap
 
-.PHONY: all_embedded all_release_embedded all_development_embedded all_desktop
+.PHONY: all_embedded all_release_embedded all_development_embedded
+.PHONY: all_desktop all_release_desktop all_development_desktop
 
-all_embedded all_release_embedded all_development_embedded all_desktop: all
+all_embedded all_release_embedded all_development_embedded: all
+all_desktop all_release_desktop all_development_desktop: all
 
 #
 # Install kernel files
@@ -577,7 +594,29 @@ $(eval $(generated_top_level_build_install_non_primary))
 
 install_non_primary: build_install_non_primary_bootstrap
 
-generated_top_level_config_install = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,config_install,,setup,config_all,1,$(PRIMARY_BUILD_CONFIGS))
+generated_top_level_config_install_primary = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,config_install_primary,,setup,config_all,1,$(PRIMARY_BUILD_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_config_install_primary))
+endif
+$(eval $(generated_top_level_config_install_primary))
+
+.PHONY: install_config_primary
+
+install_config_primary: config_install_primary_bootstrap
+
+# config_install_variant iterates through products from all BUILD_CONFIGS so depends on config_all having completed overall
+generated_top_level_config_install_variant = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,config_install_variant,,config_all_bootstrap,,1,$(VARIANT_CONFIGS))
+ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
+$(warning Generate makefile fragment: $(generated_top_level_config_install_variant))
+endif
+$(eval $(generated_top_level_config_install_variant))
+
+.PHONY: install_config_variant
+
+install_config_variant: config_install_variant_bootstrap
+
+# config_install iterates through products from all BUILD_CONFIGS so depends on config_all having completed overall
+generated_top_level_config_install = $(call TOP_LEVEL_EACH_BUILD_CONFIG_BOOTSTRAP_template,config_install,,config_all_bootstrap,,1,$(FIRST_BUILD_CONFIG))
 ifeq ($(VERBOSE_GENERATED_MAKE_FRAGMENTS),YES)
 $(warning Generate makefile fragment: $(generated_top_level_config_install))
 endif
@@ -585,17 +624,18 @@ $(eval $(generated_top_level_config_install))
 
 .PHONY: install_config final_touch_config_timestamps
 
-install_config: config_install_bootstrap final_touch_config_timestamps
+install_config: config_install_bootstrap install_config_primary install_config_variant final_touch_config_timestamps
+
 
 # Tell the next build the latest timestamp of any potential file in DSTROOT/SYMROOT
-final_touch_config_timestamps: config_install_bootstrap
+final_touch_config_timestamps: config_install_bootstrap install_config_primary install_config_variant
 	$(_v)$(TOUCH) $(OBJROOT)/.symbolset.timestamp
 
 #
 # Aggregate install targets, which install everything appropriate for the current build alias/make target
 #
 
-.PHONY: install
+.PHONY: install install_nohdrs
 
 ifneq ($(filter $(RC_ProjectName),xnu_debug),)
 install: install_kernels
@@ -606,20 +646,31 @@ install: installhdrs
 else ifneq ($(filter $(RC_ProjectName),xnu_headers_host),)
 install: installhdrs
 export INSTALLHDRS_SKIP_HOST=YES
+export INSTALLHDRS_MODULEMAPS_SKIP_HOST=YES
 else ifneq ($(filter $(RC_ProjectName),xnu_headers_driverkit),)
 install: installhdrs_desktop
+else ifneq ($(filter $(RC_ProjectName),xnu_headers_exclavekit xnu_headers_exclavecore),)
+install: installhdrs_desktop
+export INSTALLHDRS_MODULEMAPS_SKIP_HOST=YES
+export INSTALLHDRS_SKIP_HOST=YES
+export EXPORTHDRS_SKIP_EXCLAVES=YES
 else
 
-install: installhdrs install_textfiles install_config install_kernels install_aliases
+install_nohdrs: install_textfiles install_config install_kernels install_aliases
+install: installhdrs install_nohdrs
 endif
 
-.PHONY: install_embedded install_release_embedded install_development_embedded install_desktop
+.PHONY: install_embedded install_release_embedded install_development_embedded install_release_embedded_nohdrs
+.PHONY: install_desktop install_release_desktop install_development_desktop install_release_desktop_nohdrs
 
 # By default, all kernel files, headers, text files, and pseudo-kexts are installed
-install_embedded install_release_embedded install_desktop: install
+install_embedded install_release_embedded install_desktop install_release_desktop: install
 
 # These special configs only install the kernel files
-install_development_embedded: install_kernels install_aliases
+install_development_embedded install_development_desktop: install_kernels install_aliases
+
+# These install release kernels, text files, and pseudo-kexts, but no headers
+install_release_embedded_nohdrs install_release_desktop_nohdrs: install_nohdrs
 
 .PHONY: install_kernels final_touch_kernel_timestamps install_aliases
 
@@ -644,12 +695,23 @@ install_aliases: install_alias_bootstrap
 #
 .PHONY: installsrc
 
+
+ifeq ($(CREATE_BRANCH_PATCH),)
 installsrc:
 	@echo INSTALLSRC $(SRCROOT)
 	$(_v)$(MKDIR) $(SRCROOT)
-	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
+	$(_v)$(FIND) -x . \! \( \( -name BUILD -o -name .svn -o -name .git -o -name cscope.\* -o -name compile_commands.json -o -name \*~ \) -prune \) -print0 | $(PAX) -rw -p a -d0 $(SRCROOT)
 	$(_v)$(CHMOD) -R go+rX $(SRCROOT)
+endif
 
+###############
+# Open source #
+###############
+
+
+########
+# Misc #
+########
 
 #
 # Clean up source tree
@@ -748,5 +810,6 @@ $(eval $(generated_top_level_print_exports))
 .PHONY: print_exports_first_build_config
 
 print_exports_first_build_config: print_exports_bootstrap
+
 
 # vim: set ft=make:

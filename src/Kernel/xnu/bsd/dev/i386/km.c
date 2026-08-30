@@ -50,9 +50,8 @@
 
 extern int hz;
 
-extern void cnputcusr(char);
-extern void cnputsusr(char *, int);
-extern int  cngetc(void);
+extern void console_write_char(char);
+extern void console_write(char *, int);
 
 void    kminit(void);
 void    cons_cinput(char ch);
@@ -61,12 +60,6 @@ void    cons_cinput(char ch);
  * 'Global' variables, shared only by this file and conf.c.
  */
 struct tty *km_tty[1] = { 0 };
-
-/*
- * this works early on, after initialize_screen() but before autoconf (and thus
- * before we have a kmDevice).
- */
-int disableConsoleOutput;
 
 /*
  * 'Global' variables, shared only by this file and kmDevice.m.
@@ -261,7 +254,7 @@ fallthrough:
 /*
  * kmputc
  *
- * Output a character to the serial console driver via cnputcusr(),
+ * Output a character to the serial console driver via console_write_char(),
  * which is exported by that driver.
  *
  * Locks:       Assumes tp in the calling tty driver code is locked on
@@ -274,12 +267,12 @@ fallthrough:
 int
 kmputc(__unused dev_t dev, char c)
 {
-	if (!disableConsoleOutput && initialized) {
+	if (initialized) {
 		/* OCRNL */
 		if (c == '\n') {
-			cnputcusr('\r');
+			console_write_char('\r');
 		}
-		cnputcusr(c);
+		console_write_char(c);
 	}
 
 	return 0;
@@ -371,7 +364,7 @@ kmoutput(struct tty *tp)
 		}
 
 		if (cc > 1) {
-			cnputsusr((char *)buf, cc);
+			console_write((char *)buf, cc);
 		} else {
 			kmputc(tp->t_dev, *buf);
 		}
@@ -409,6 +402,9 @@ void
 cons_cinput(char ch)
 {
 	struct tty *tp = km_tty[0];     /* XXX */
+
+	if (tp == NULL)
+		return;
 
 	/*
 	 * The console tty is allocated in kminit(); until then km_tty[0] is

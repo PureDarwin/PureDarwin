@@ -74,7 +74,6 @@
 #include <mach/time_value.h>
 #include <mach/message.h>
 #include <mach/machine/vm_types.h>
-
 /*
  *	Generic information structure to allow for expansion.
  */
@@ -215,6 +214,7 @@ typedef struct io_stat_info *io_stat_info_t;
 __BEGIN_DECLS
 void thread_group_join_io_storage(void);
 void thread_group_join_perf_controller(void);
+void thread_group_join_cellular(void);
 __END_DECLS
 #endif
 

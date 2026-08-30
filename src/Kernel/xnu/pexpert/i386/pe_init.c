@@ -53,6 +53,8 @@ extern void pe_identify_machine(void * args);
 extern int kdb_printf(const char *format, ...) __printflike(1, 2);
 /* private globals */
 PE_state_t  PE_state;
+SECURITY_READ_ONLY_LATE(uint32_t) PE_esdm_fuses = 0;
+SECURITY_READ_ONLY_LATE(uint32_t) PE_vmm_present = 0;
 
 /* Clock Frequency Info */
 clock_frequency_info_t gPEClockFrequencyInfo;
@@ -189,6 +191,7 @@ PE_init_iokit(void)
 	 * with the ACPI stack.  Therefore, we start the IOKit matching process immediately on x86.
 	 */
 	InitIOKit(PE_state.deviceTreeHead);
+	zalloc_iokit_lockdown();
 	StartIOKitMatching();
 }
 
@@ -430,6 +433,15 @@ PE_init_panicheader()
 void
 PE_update_panicheader_nestedpanic()
 {
+	/*
+	 * if the panic header pointer is bogus (e.g. someone stomped on it) then bail.
+	 */
+	if (!panic_info) {
+		/* if this happens in development then blow up bigly */
+		assert(panic_info);
+		return;
+	}
+
 	/* If the panic log offset is not set, re-init the panic header */
 	if (panic_info->mph_panic_log_offset == 0) {
 		PE_init_panicheader();
@@ -444,6 +456,8 @@ PE_update_panicheader_nestedpanic()
 	    ((panic_info->mph_stackshot_offset != 0) && (panic_info->mph_stackshot_len != 0)))) {
 		kdb_printf("panic_info contains invalid stackshot metadata: mph_stackshot_offset 0x%x mph_stackshot_len 0x%x\n",
 		    panic_info->mph_stackshot_offset, panic_info->mph_stackshot_len);
+
+		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_INCOHERENT_PANICLOG;
 	}
 
 	/*
@@ -457,9 +471,37 @@ PE_update_panicheader_nestedpanic()
 		if (panic_info->mph_other_log_len != 0) {
 			kdb_printf("panic_info contains invalid other log metadata (zero offset but non-zero length), length was 0x%x, zeroing value\n",
 			    panic_info->mph_other_log_len);
+
 			panic_info->mph_other_log_len = 0;
+
+			panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_INCOHERENT_PANICLOG;
 		}
 	}
 
 	return;
+}
+
+vm_size_t
+PE_init_socd_client(void)
+{
+	/* not implemented */
+	return 0;
+}
+
+void
+PE_read_socd_client_buffer(__unused vm_offset_t offset, __unused void *out_buff, __unused vm_size_t size)
+{
+	/* not implemented */
+}
+
+void
+PE_write_socd_client_buffer(__unused vm_offset_t offset, __unused const void *buff, __unused vm_size_t size)
+{
+	/* not implemented */
+}
+
+boolean_t
+PE_device_is_simulated(void)
+{
+	return false;
 }

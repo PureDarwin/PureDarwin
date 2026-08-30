@@ -29,6 +29,7 @@
 #if KERNEL
 #include <kern/priority_queue.h>
 #include <mach/vm_param.h>
+#include <vm/vm_memtag.h>
 
 #ifdef __LP64__
 static_assert(PRIORITY_QUEUE_ENTRY_CHILD_BITS >= VM_KERNEL_POINTER_SIGNIFICANT_BITS,
@@ -128,12 +129,18 @@ struct pqueue {
 	static inline void
 	pack_child(entry_t e, const entry_t child)
 	{
+#if CONFIG_KERNEL_TAGGING
+		e->tag = vm_memtag_extract_tag((vm_offset_t)child);
+#endif /* CONFIG_KERNEL_TAGGING */
 		e->child = (long)child;
 	}
 
 	static inline entry_t
 	unpack_child(entry_t e)
 	{
+#if CONFIG_KERNEL_TAGGING
+		return (entry_t)(vm_memtag_insert_tag(e->child, e->tag));
+#endif /* CONFIG_KERNEL_TAGGING */
 		return (entry_t)e->child;
 	}
 
@@ -227,6 +234,12 @@ private:
 	}
 
 	static inline void
+	list_clear(entry_t e)
+	{
+		e->next = e->prev = NULL;
+	}
+
+	static inline void
 	list_remove(entry_t elt)
 	{
 		assert(elt->prev != NULL);
@@ -242,13 +255,31 @@ private:
 		if (elt->next != NULL) {
 			elt->next->prev = elt->prev;
 		}
+		list_clear(elt);
 	}
 
 	static inline bool
 	sift_down(queue_t que, entry_t elt)
 	{
-		bool was_root = remove(que, elt);
-		insert(que, elt);
+		bool was_root = (que->pq_root == elt);
+
+		if (!was_root) {
+			remove_non_root(que, elt);
+			insert(que, elt, false);
+		} else if (unpack_child(elt)) {
+			remove_root(que, elt);
+			insert(que, elt, false);
+		} else {
+			/*
+			 * If the queue is reduced to a single element,
+			 * we have nothing to do.
+			 *
+			 * It is important not to, so that pq_root remains
+			 * non null at all times during priority changes,
+			 * so that unsynchronized peeking at the "emptiness"
+			 * of the priority queue works as expected.
+			 */
+		}
 		return was_root;
 	}
 
@@ -262,7 +293,7 @@ private:
 		/* Remove the element from its current level list */
 		list_remove(elt);
 		/* Re-insert the element into the heap with a merge */
-		return insert(que, elt);
+		return insert(que, elt, false);
 	}
 
 	static inline entry_t
@@ -282,6 +313,7 @@ private:
 			child = meld_pair(que, child);
 			new_root = merge_pair(que, que->pq_root, child);
 			que->pq_root = new_root;
+			pack_child(elt, nullptr);
 		}
 
 		return elt;
@@ -320,8 +352,12 @@ public:
 	}
 
 	static inline bool
-	insert(queue_t que, entry_t elt)
+	insert(queue_t que, entry_t elt, bool clear = true)
 	{
+		if (clear) {
+			list_clear(elt);
+			pack_child(elt, nullptr);
+		}
 		return (que->pq_root = merge_pair(que, que->pq_root, elt)) == elt;
 	}
 
@@ -329,7 +365,13 @@ public:
 	remove_root(queue_t que, entry_t old_root)
 	{
 		entry_t new_root = unpack_child(old_root);
-		que->pq_root = new_root ? meld_pair(que, new_root) : NULL;
+
+		if (new_root) {
+			que->pq_root = meld_pair(que, new_root);
+			pack_child(old_root, nullptr);
+		} else {
+			que->pq_root = NULL;
+		}
 		return old_root;
 	}
 
@@ -338,13 +380,9 @@ public:
 	{
 		if (elt == que->pq_root) {
 			remove_root(que, elt);
-			elt->next = elt->prev = NULL;
-			elt->child = 0;
 			return true;
 		} else {
 			remove_non_root(que, elt);
-			elt->next = elt->prev = NULL;
-			elt->child = 0;
 			return false;
 		}
 	}

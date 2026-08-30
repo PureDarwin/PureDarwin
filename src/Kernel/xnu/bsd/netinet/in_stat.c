@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2017-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -26,6 +26,7 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#include <string.h>
 #include <netinet/in_stat.h>
 
 #define IN_STAT_ACTIVITY_GRANULARITY            8       /* 8 sec granularity */

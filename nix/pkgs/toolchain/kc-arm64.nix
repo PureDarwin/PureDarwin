@@ -27,7 +27,6 @@ stdenv.mkDerivation {
       -kernel "$KERNEL_BIN" \
       -kext "$KEXTS/IOPCIFamily.kext" \
       -kext "$KEXTS/corecrypto.kext" \
-      -kext "$KEXTS/pthread.kext" \
       -kext "$KEXTS/PDArmPlatformExpert.kext" \
       -kext "$KEXTS/PDArmPCI.kext" \
       -kext "$KEXTS/IOStorageFamily.kext" \

@@ -13,6 +13,7 @@
 , dillo
 , fltk
 , openssl
+, libiconv
 , libX11
 , libxcb
 , libXau
@@ -84,10 +85,10 @@ stdenv.mkDerivation {
     export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
     export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
     export FLTK_CONFIG="${fltk}/bin/fltk-config"
-    export CPPFLAGS="-I${libSystem}/usr/include -I${openssl}/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") xDeps}"
+    export CPPFLAGS="-I${libSystem}/usr/include -I${openssl}/include -I${libiconv}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") xDeps}"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
     export CXXFLAGS="$CFLAGS"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${openssl}/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") xDeps} -Wl,-force_load,${libxcb}/lib/libxcb.a -Wl,-force_load,${libXau}/lib/libXau.a -Wl,-force_load,${libXdmcp}/lib/libXdmcp.a -lfreetype -lfontconfig -Wl,-force_load,${expat}/lib/libexpat.a -Wl,-force_load,${openssl}/lib/libssl.a -Wl,-force_load,${openssl}/lib/libcrypto.a -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${openssl}/lib -L${libiconv}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") xDeps} -Wl,-force_load,${libxcb}/lib/libxcb.a -Wl,-force_load,${libXau}/lib/libXau.a -Wl,-force_load,${libXdmcp}/lib/libXdmcp.a -lfreetype -lfontconfig -Wl,-force_load,${expat}/lib/libexpat.a -Wl,-force_load,${openssl}/lib/libssl.a -Wl,-force_load,${openssl}/lib/libcrypto.a -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -liconv -lSystem"
 
     ./configure \
       --host=${targetTriple} \

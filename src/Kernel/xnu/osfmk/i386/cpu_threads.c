@@ -29,16 +29,13 @@
 #include <kern/zalloc.h>
 #include <kern/lock_group.h>
 #include <kern/timer_queue.h>
+#include <kern/monotonic.h>
 #include <mach/machine.h>
 #include <i386/cpu_threads.h>
 #include <i386/cpuid.h>
 #include <i386/machine_cpu.h>
 #include <i386/pmCPU.h>
 #include <i386/bit_routines.h>
-
-#if MONOTONIC
-#include <kern/monotonic.h>
-#endif /* MONOTONIC */
 
 #define DIVISOR_GUARD(denom)                            \
 	if ((denom) == 0) {                             \
@@ -65,17 +62,6 @@ static boolean_t        topoParmsInited = FALSE;
 x86_topology_parameters_t       topoParms;
 
 decl_simple_lock_data(, x86_topo_lock);
-
-void
-x86_topo_lock_init(void)
-{
-	static boolean_t x86_topo_lock_inited = FALSE;
-
-	if (!x86_topo_lock_inited) {
-		simple_lock_init(&x86_topo_lock, 0);
-		x86_topo_lock_inited = TRUE;
-	}
-}
 
 static struct cpu_cache {
 	int     level; int     type;
@@ -108,8 +94,9 @@ x86_cache_alloc(void)
 	int                 i;
 
 	if (x86_caches == NULL) {
-		cache = zalloc_permanent(sizeof(x86_cpu_cache_t) +
-		    (MAX_CPUS * sizeof(x86_lcpu_t *)), ZALIGN(x86_cpu_cache_t));
+		cache = zalloc_permanent_tag(sizeof(x86_cpu_cache_t) +
+		    (MAX_CPUS * sizeof(x86_lcpu_t *)),
+		    ZALIGN(x86_cpu_cache_t), VM_KERN_MEMORY_CPU);
 		if (cache == NULL) {
 			return NULL;
 		}
@@ -266,20 +253,6 @@ initTopoParms(void)
 	topoParms.nPThreadsPerPackage = nonzero_u32(topoParms.nPThreadsPerPackage,
 	    nonzero_u32(cpuinfo->cpuid_logical_per_package, 1));
 
-	/*
-	 * The physical divisors above come from cpuid leaf 4, whose counts are
-	 * max-addressable ids rounded up, not actual ones. If the logical model
-	 * says the package is a single die, the physical grouping must not split
-	 * it either: with sparse apic ids (e.g. 0 and 2 on a 2-core part with no
-	 * SMT) a too-small nPThreadsPerDie puts cpus in separate dies and
-	 * x86_validate_topology() then finds a die short of cores.
-	 */
-	if (topoParms.nLDiesPerPackage == 1) {
-		topoParms.nPDiesPerPackage = 1;
-		topoParms.nPCoresPerDie = topoParms.nPCoresPerPackage;
-		topoParms.nPThreadsPerDie = topoParms.nPThreadsPerPackage;
-	}
-
 	TOPO_DBG("\nCache Topology Parameters:\n");
 	TOPO_DBG("\tLLC Depth:           %d\n", topoParms.LLCDepth);
 	TOPO_DBG("\tCores Sharing LLC:   %d\n", topoParms.nCoresSharingLLC);
@@ -432,7 +405,7 @@ x86_core_alloc(int cpu)
 		simple_unlock(&x86_topo_lock);
 		core = zalloc_permanent_type(x86_core_t);
 		if (core == NULL) {
-			panic("x86_core_alloc() alloc of x86_core_t failed!\n");
+			panic("x86_core_alloc() alloc of x86_core_t failed!");
 		}
 	}
 
@@ -545,7 +518,7 @@ x86_set_logical_topology(x86_lcpu_t *lcpu, int pnum, int lnum)
 
 	lcpu->cpu_num = lnum;
 	lcpu->pnum = pnum;
-	lcpu->master = (lnum == master_cpu);
+	lcpu->master = (lnum == boot_cpu_id);
 	lcpu->primary = (lnum % topoParms.nLThreadsPerPackage) == 0;
 
 	lcpu->lnum = lnum % topoParms.nLThreadsPerCore;
@@ -578,7 +551,7 @@ x86_die_alloc(int cpu)
 		simple_unlock(&x86_topo_lock);
 		die = zalloc_permanent_type(x86_die_t);
 		if (die == NULL) {
-			panic("x86_die_alloc() alloc of x86_die_t failed!\n");
+			panic("x86_die_alloc() alloc of x86_die_t failed!");
 		}
 	}
 
@@ -619,7 +592,7 @@ x86_package_alloc(int cpu)
 		simple_unlock(&x86_topo_lock);
 		pkg = zalloc_permanent_type(x86_pkg_t);
 		if (pkg == NULL) {
-			panic("x86_package_alloc() alloc of x86_pkg_t failed!\n");
+			panic("x86_package_alloc() alloc of x86_pkg_t failed!");
 		}
 	}
 
@@ -1006,8 +979,8 @@ cpu_thread_init(void)
 	 * If we're the boot processor, we do all of the initialization of
 	 * the CPU topology infrastructure.
 	 */
-	if (my_cpu == master_cpu && !initialized) {
-		x86_topo_lock_init();
+	if (my_cpu == boot_cpu_id && !initialized) {
+		simple_lock_init(&x86_topo_lock, 0);
 
 		/*
 		 * Put this logical CPU into the physical CPU topology.

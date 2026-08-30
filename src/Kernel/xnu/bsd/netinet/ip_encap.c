@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -108,6 +108,7 @@
 #include <netinet6/ip6protosw.h>
 
 #include <net/net_osdep.h>
+#include <net/sockaddr_utils.h>
 
 #ifndef __APPLE__
 #include <sys/kernel.h>
@@ -115,83 +116,27 @@
 MALLOC_DEFINE(M_NETADDR, "Export Host", "Export host address structure");
 #endif
 
-static void encap_init(struct protosw *, struct domain *);
 static void encap_add_locked(struct encaptab *);
 static int mask_match(const struct encaptab *, const struct sockaddr *,
     const struct sockaddr *);
 static void encap_fillarg(struct mbuf *, void *arg);
 
-#ifndef LIST_HEAD_INITIALIZER
-/* rely upon BSS initialization */
-LIST_HEAD(, encaptab) encaptab;
-#else
 LIST_HEAD(, encaptab) encaptab = LIST_HEAD_INITIALIZER(&encaptab);
-#endif
 
-decl_lck_rw_data(static, encaptab_lock);
-
-static void
-encap_init(struct protosw *pp, struct domain *dp)
-{
-#pragma unused(dp)
-	static int encap_initialized = 0;
-	lck_grp_attr_t *encaptab_grp_attrib = NULL;
-	lck_attr_t *encaptab_lck_attrib = NULL;
-	lck_grp_t *encaptab_lck_group = NULL;
-
-	VERIFY((pp->pr_flags & (PR_INITIALIZED | PR_ATTACHED)) == PR_ATTACHED);
-
-	/* This gets called by more than one protocols, so initialize once */
-	if (encap_initialized) {
-		return;
-	}
-
-	encaptab_grp_attrib = lck_grp_attr_alloc_init();
-	encaptab_lck_group = lck_grp_alloc_init("encaptab lock", encaptab_grp_attrib);
-	lck_grp_attr_free(encaptab_grp_attrib);
-
-	encaptab_lck_attrib = lck_attr_alloc_init();
-	lck_rw_init(&encaptab_lock, encaptab_lck_group, encaptab_lck_attrib);
-
-	lck_grp_free(encaptab_lck_group);
-	lck_attr_free(encaptab_lck_attrib);
-
-	encap_initialized = 1;
-#if 0
-	/*
-	 * we cannot use LIST_INIT() here, since drivers may want to call
-	 * encap_attach(), on driver attach.  encap_init() will be called
-	 * on AF_INET{,6} initialization, which happens after driver
-	 * initialization - using LIST_INIT() here can nuke encap_attach()
-	 * from drivers.
-	 */
-	LIST_INIT(&encaptab);
-#endif
-}
-
-void
-encap4_init(struct protosw *pp, struct domain *dp)
-{
-	encap_init(pp, dp);
-}
-
-void
-encap6_init(struct ip6protosw *pp, struct domain *dp)
-{
-	encap_init((struct protosw *)pp, dp);
-}
+static LCK_GRP_DECLARE(encaptab_lock_grp, "encaptab lock");
+static LCK_RW_DECLARE(encaptab_lock, &encaptab_lock_grp);
 
 #if INET
 void
 encap4_input(struct mbuf *m, int off)
 {
 	int proto;
-	struct ip *ip;
+	struct ip *__single ip;
 	struct sockaddr_in s, d;
 	const struct protosw *psw;
-	struct encaptab *ep, *match;
+	struct encaptab *__single ep, *__single match;
 	int prio, matchprio;
-	void *match_arg = NULL;
+	void *__single match_arg = NULL;
 
 #ifndef __APPLE__
 	va_start(ap, m);
@@ -208,11 +153,11 @@ encap4_input(struct mbuf *m, int off)
 	proto = ip->ip_p;
 #endif
 
-	bzero(&s, sizeof(s));
+	SOCKADDR_ZERO(&s, sizeof(s));
 	s.sin_family = AF_INET;
 	s.sin_len = sizeof(struct sockaddr_in);
 	s.sin_addr = ip->ip_src;
-	bzero(&d, sizeof(d));
+	SOCKADDR_ZERO(&d, sizeof(d));
 	d.sin_family = AF_INET;
 	d.sin_len = sizeof(struct sockaddr_in);
 	d.sin_addr = ip->ip_dst;
@@ -235,8 +180,7 @@ encap4_input(struct mbuf *m, int off)
 			 * it's inbound traffic, we need to match in reverse
 			 * order
 			 */
-			prio = mask_match(ep, (struct sockaddr *)&d,
-			    (struct sockaddr *)&s);
+			prio = mask_match(ep, SA(&d), SA(&s));
 		}
 
 		/*
@@ -288,23 +232,23 @@ encap4_input(struct mbuf *m, int off)
 int
 encap6_input(struct mbuf **mp, int *offp, int proto)
 {
-	struct mbuf *m = *mp;
-	struct ip6_hdr *ip6;
+	mbuf_ref_t m = *mp;
+	struct ip6_hdr *__single ip6;
 	struct sockaddr_in6 s, d;
-	const struct ip6protosw *psw;
-	struct encaptab *ep, *match;
+	const struct ip6protosw *__single psw;
+	struct encaptab *__single ep, *__single match;
 	int prio, matchprio;
-	void *match_arg = NULL;
+	void *__single match_arg = NULL;
 
 	/* Expect 32-bit aligned data pointer on strict-align platforms */
 	MBUF_STRICT_DATA_ALIGNMENT_CHECK_32(m);
 
 	ip6 = mtod(m, struct ip6_hdr *);
-	bzero(&s, sizeof(s));
+	SOCKADDR_ZERO(&s, sizeof(s));
 	s.sin6_family = AF_INET6;
 	s.sin6_len = sizeof(struct sockaddr_in6);
 	s.sin6_addr = ip6->ip6_src;
-	bzero(&d, sizeof(d));
+	SOCKADDR_ZERO(&d, sizeof(d));
 	d.sin6_family = AF_INET6;
 	d.sin6_len = sizeof(struct sockaddr_in6);
 	d.sin6_addr = ip6->ip6_dst;
@@ -327,8 +271,7 @@ encap6_input(struct mbuf **mp, int *offp, int proto)
 			 * it's inbound traffic, we need to match in reverse
 			 * order
 			 */
-			prio = mask_match(ep, (struct sockaddr *)&d,
-			    (struct sockaddr *)&s);
+			prio = mask_match(ep, SA(&d), SA(&s));
 		}
 
 		/* see encap4_input() for issues here */
@@ -394,11 +337,7 @@ encap_attach(int af, int proto, const struct sockaddr *sp,
 		goto fail;
 	}
 
-	new_ep = _MALLOC(sizeof(*new_ep), M_NETADDR, M_WAITOK | M_ZERO);
-	if (new_ep == NULL) {
-		error = ENOBUFS;
-		goto fail;
-	}
+	new_ep = kalloc_type(struct encaptab, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	/* check if anyone have already attached with exactly same config */
 	lck_rw_lock_exclusive(&encaptab_lock);
@@ -410,13 +349,13 @@ encap_attach(int af, int proto, const struct sockaddr *sp,
 			continue;
 		}
 		if (ep->src.ss_len != sp->sa_len ||
-		    bcmp(&ep->src, sp, sp->sa_len) != 0 ||
-		    bcmp(&ep->srcmask, sm, sp->sa_len) != 0) {
+		    SOCKADDR_CMP(&ep->src, sp, sp->sa_len) != 0 ||
+		    SOCKADDR_CMP(&ep->srcmask, sm, sp->sa_len) != 0) {
 			continue;
 		}
 		if (ep->dst.ss_len != dp->sa_len ||
-		    bcmp(&ep->dst, dp, dp->sa_len) != 0 ||
-		    bcmp(&ep->dstmask, dm, dp->sa_len) != 0) {
+		    SOCKADDR_CMP(&ep->dst, dp, dp->sa_len) != 0 ||
+		    SOCKADDR_CMP(&ep->dstmask, dm, dp->sa_len) != 0) {
 			continue;
 		}
 
@@ -426,10 +365,10 @@ encap_attach(int af, int proto, const struct sockaddr *sp,
 
 	new_ep->af = af;
 	new_ep->proto = proto;
-	bcopy(sp, &new_ep->src, sp->sa_len);
-	bcopy(sm, &new_ep->srcmask, sp->sa_len);
-	bcopy(dp, &new_ep->dst, dp->sa_len);
-	bcopy(dm, &new_ep->dstmask, dp->sa_len);
+	SOCKADDR_COPY(sp, &new_ep->src, sp->sa_len);
+	SOCKADDR_COPY(sm, &new_ep->srcmask, sp->sa_len);
+	SOCKADDR_COPY(dp, &new_ep->dst, dp->sa_len);
+	SOCKADDR_COPY(dm, &new_ep->dstmask, dp->sa_len);
 	new_ep->psw = psw;
 	new_ep->arg = arg;
 
@@ -442,7 +381,7 @@ encap_attach(int af, int proto, const struct sockaddr *sp,
 fail_locked:
 	lck_rw_unlock_exclusive(&encaptab_lock);
 	if (new_ep != NULL) {
-		_FREE(new_ep, M_NETADDR);
+		kfree_type(struct encaptab, new_ep);
 	}
 fail:
 	return NULL;
@@ -462,11 +401,7 @@ encap_attach_func( int af, int proto,
 		goto fail;
 	}
 
-	ep = _MALLOC(sizeof(*ep), M_NETADDR, M_WAITOK | M_ZERO); /* XXX */
-	if (ep == NULL) {
-		error = ENOBUFS;
-		goto fail;
-	}
+	ep = kalloc_type(struct encaptab, Z_WAITOK | Z_ZERO | Z_NOFAIL); /* XXX */
 
 	ep->af = af;
 	ep->proto = proto;
@@ -496,7 +431,7 @@ encap_detach(const struct encaptab *cookie)
 		if (p == ep) {
 			LIST_REMOVE(p, chain);
 			lck_rw_unlock_exclusive(&encaptab_lock);
-			_FREE(p, M_NETADDR);    /*XXX*/
+			kfree_type(struct encaptab, p);    /*XXX*/
 			return 0;
 		}
 	}
@@ -528,18 +463,18 @@ mask_match(const struct encaptab *ep, const struct sockaddr *sp,
 
 	matchlen = 0;
 
-	p = (const u_int8_t *)sp;
-	q = (const u_int8_t *)&ep->srcmask;
-	r = (u_int8_t *)&s;
+	p = SA_BYTES(sp);
+	q = SA_BYTES(&ep->srcmask);
+	r = SA_BYTES(&s);
 	for (i = 0; i < sp->sa_len; i++) {
 		r[i] = p[i] & q[i];
 		/* XXX estimate */
 		matchlen += (q[i] ? 8 : 0);
 	}
 
-	p = (const u_int8_t *)dp;
-	q = (const u_int8_t *)&ep->dstmask;
-	r = (u_int8_t *)&d;
+	p = SA_BYTES(dp);
+	q = SA_BYTES(&ep->dstmask);
+	r = SA_BYTES(&s);
 	for (i = 0; i < dp->sa_len; i++) {
 		r[i] = p[i] & q[i];
 		/* XXX rough estimate */
@@ -576,7 +511,7 @@ encap_fillarg(
 	    sizeof(struct encaptabtag), M_WAITOK, m);
 
 	if (tag != NULL) {
-		et = (struct encaptabtag*)(tag + 1);
+		et = (struct encaptabtag*)(tag->m_tag_data);
 		et->arg = arg;
 		m_tag_prepend(m, tag);
 	}
@@ -585,16 +520,68 @@ encap_fillarg(
 void *
 encap_getarg(struct mbuf *m)
 {
-	struct m_tag    *tag;
-	struct encaptabtag *et;
-	void *p = NULL;
+	struct m_tag *__single tag;
+	struct encaptabtag *__single et;
+	void *__single p = NULL;
 
-	tag = m_tag_locate(m, KERNEL_MODULE_TAG_ID, KERNEL_TAG_TYPE_ENCAP, NULL);
+	tag = m_tag_locate(m, KERNEL_MODULE_TAG_ID, KERNEL_TAG_TYPE_ENCAP);
 	if (tag) {
-		et = (struct encaptabtag*)(tag + 1);
+		et = (struct encaptabtag*)(tag->m_tag_data);
 		p = et->arg;
 		m_tag_delete(m, tag);
 	}
 
 	return p;
+}
+
+struct encaptab_tag_container {
+	struct m_tag            encaptab_m_tag;
+	struct encaptabtag      encaptab_tag;
+};
+
+static struct m_tag *
+m_tag_kalloc_encap(u_int32_t id, u_int16_t type, uint16_t len, int wait)
+{
+	struct encaptab_tag_container *tag_container;
+	struct m_tag *tag = NULL;
+
+	assert3u(id, ==, KERNEL_MODULE_TAG_ID);
+	assert3u(type, ==, KERNEL_TAG_TYPE_ENCAP);
+	assert3u(len, ==, sizeof(struct encaptabtag));
+
+	if (len != sizeof(struct encaptabtag)) {
+		return NULL;
+	}
+
+	tag_container = kalloc_type(struct encaptab_tag_container, wait | M_ZERO);
+	if (tag_container != NULL) {
+		tag = &tag_container->encaptab_m_tag;
+
+		assert3p(tag, ==, tag_container);
+
+		M_TAG_INIT(tag, id, type, len, &tag_container->encaptab_tag, NULL);
+	}
+
+	return tag;
+}
+
+static void
+m_tag_kfree_encap(struct m_tag *tag)
+{
+	struct encaptab_tag_container *__single tag_container = (struct encaptab_tag_container *)tag;
+
+	assert3u(tag->m_tag_len, ==, sizeof(struct encaptabtag));
+
+	kfree_type(struct encaptab_tag_container, tag_container);
+}
+
+void
+encap_register_m_tag(void)
+{
+	int error;
+
+	error = m_register_internal_tag_type(KERNEL_TAG_TYPE_ENCAP, sizeof(struct encaptabtag),
+	    m_tag_kalloc_encap, m_tag_kfree_encap);
+
+	assert3u(error, ==, 0);
 }

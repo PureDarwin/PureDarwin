@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2012-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -61,19 +61,34 @@
 
 #include <kern/debug.h>
 
+#include <os/log.h>
+
 #include <sys/mcache.h>
 
 #include <string.h>
+#include <stdbool.h>
+
+
+struct kern_pktap_filter {
+	uint32_t        filter_op;
+	uint32_t        filter_param;
+	union {
+		uint32_t        _filter_if_type;
+		char            _filter_if_name[PKTAP_IFXNAMESIZE];
+	} param_;
+	size_t          filter_ifname_len;
+	bool            filter_ifname_prefix_match;
+};
 
 extern struct inpcbinfo ripcbinfo;
 
 struct pktap_softc {
 	LIST_ENTRY(pktap_softc)         pktp_link;
-	uint32_t                                        pktp_unit;
-	uint32_t                                        pktp_dlt_raw_count;
-	uint32_t                                        pktp_dlt_pkttap_count;
-	struct ifnet                            *pktp_ifp;
-	struct pktap_filter                     pktp_filters[PKTAP_MAX_FILTERS];
+	uint32_t                        pktp_unit;
+	uint32_t                        pktp_dlt_raw_count;
+	uint32_t                        pktp_dlt_pkttap_count;
+	struct ifnet                    *pktp_ifp;
+	struct kern_pktap_filter        pktp_filters[PKTAP_MAX_FILTERS];
 };
 
 #ifndef PKTAP_DEBUG
@@ -103,8 +118,8 @@ SYSCTL_INT(_net_link_pktap, OID_AUTO, log,
 
 #define PKTAP_LOG(mask, fmt, ...) \
 do { \
-	if ((pktap_log & mask)) \
-	        printf("%s:%d " fmt, __FUNCTION__, __LINE__, ##__VA_ARGS__); \
+	if (__improbable(pktap_log & mask)) \
+	        os_log(OS_LOG_DEFAULT, "%s:%d " fmt, __FUNCTION__, __LINE__, ##__VA_ARGS__); \
 } while (false)
 
 #define PKTP_LOG_FUNC 0x01
@@ -117,10 +132,14 @@ do { \
 /*
  * pktap_lck_rw protects the global list of pktap interfaces
  */
-decl_lck_rw_data(static, pktap_lck_rw_data);
-static lck_rw_t *pktap_lck_rw = &pktap_lck_rw_data;
-static lck_grp_t *pktap_lck_grp = NULL;
-static lck_attr_t *pktap_lck_attr = NULL;
+static LCK_GRP_DECLARE(pktap_lck_grp, "pktap");
+#if PKTAP_DEBUG
+static LCK_ATTR_DECLARE(pktap_lck_attr, LCK_ATTR_DEBUG, 0);
+#else
+static LCK_ATTR_DECLARE(pktap_lck_attr, 0, 0);
+#endif
+static LCK_RW_DECLARE_ATTR(pktap_lck_rw, &pktap_lck_grp, &pktap_lck_attr);
+
 
 static LIST_HEAD(pktap_list, pktap_softc) pktap_list =
     LIST_HEAD_INITIALIZER(pktap_list);
@@ -136,9 +155,7 @@ static struct if_clone pktap_cloner =
     pktap_clone_create,
     pktap_clone_destroy,
     0,
-    PKTAP_MAXUNIT,
-    PKTAP_ZONE_MAX_ELEM,
-    sizeof(struct pktap_softc));
+    PKTAP_MAXUNIT);
 
 errno_t pktap_if_output(ifnet_t, mbuf_t);
 errno_t pktap_demux(ifnet_t, mbuf_t, char *, protocol_family_t *);
@@ -147,7 +164,7 @@ errno_t pktap_add_proto(ifnet_t, protocol_family_t,
 errno_t pktap_del_proto(ifnet_t, protocol_family_t);
 errno_t pktap_getdrvspec(ifnet_t, struct ifdrv64 *);
 errno_t pktap_setdrvspec(ifnet_t, struct ifdrv64 *);
-errno_t pktap_ioctl(ifnet_t, unsigned long, void *);
+errno_t pktap_ioctl(ifnet_t, unsigned long cmd, void *__sized_by(IOCPARM_LEN(cmd)));
 void pktap_detach(ifnet_t);
 int pktap_filter_evaluate(struct pktap_softc *, struct ifnet *);
 void pktap_bpf_tap(struct ifnet *, protocol_family_t, struct mbuf *,
@@ -155,7 +172,7 @@ void pktap_bpf_tap(struct ifnet *, protocol_family_t, struct mbuf *,
 errno_t pktap_tap_callback(ifnet_t, u_int32_t, bpf_tap_mode);
 
 static void
-pktap_hexdump(int mask, void *addr, size_t len)
+pktap_hexdump(int mask, void *__sized_by(len) addr, size_t len)
 {
 	unsigned char *buf = addr;
 	size_t i;
@@ -184,36 +201,26 @@ pktap_hexdump(int mask, void *addr, size_t len)
 	}
 }
 
-#define _CASSERT_OFFFSETOF_FIELD(s1, s2, f) \
-	_CASSERT(offsetof(struct s1, f) == offsetof(struct s2, f))
+#define ASSERT_OFFFSETOF_FIELD(s1, s2, f) \
+	static_assert(offsetof(struct s1, f) == offsetof(struct s2, f))
 
 __private_extern__ void
 pktap_init(void)
 {
 	int error = 0;
-	lck_grp_attr_t *lck_grp_attr = NULL;
 
-	_CASSERT_OFFFSETOF_FIELD(pktap_header, pktap_v2_hdr, pth_flags);
+	ASSERT_OFFFSETOF_FIELD(pktap_header, pktap_v2_hdr, pth_flags);
 
 	/* Make sure we're called only once */
 	VERIFY(pktap_inited == 0);
 
 	pktap_inited = 1;
 
-	lck_grp_attr = lck_grp_attr_alloc_init();
-	pktap_lck_grp = lck_grp_alloc_init("pktap", lck_grp_attr);
-	pktap_lck_attr = lck_attr_alloc_init();
-#if PKTAP_DEBUG
-	lck_attr_setdebug(pktap_lck_attr);
-#endif /* PKTAP_DEBUG */
-	lck_rw_init(pktap_lck_rw, pktap_lck_grp, pktap_lck_attr);
-	lck_grp_attr_free(lck_grp_attr);
-
 	LIST_INIT(&pktap_list);
 
 	error = if_clone_attach(&pktap_cloner);
 	if (error != 0) {
-		panic("%s: if_clone_attach() failed, error %d\n",
+		panic("%s: if_clone_attach() failed, error %d",
 		    __func__, error);
 	}
 }
@@ -222,17 +229,12 @@ __private_extern__ int
 pktap_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 {
 	int error = 0;
-	struct pktap_softc *pktap = NULL;
+	struct pktap_softc *__single pktap = NULL;
 	struct ifnet_init_eparams if_init;
 
 	PKTAP_LOG(PKTP_LOG_FUNC, "unit %u\n", unit);
 
-	pktap = if_clone_softc_allocate(&pktap_cloner);
-	if (pktap == NULL) {
-		printf("%s: _MALLOC failed\n", __func__);
-		error = ENOMEM;
-		goto done;
-	}
+	pktap = kalloc_type(struct pktap_softc, Z_WAITOK_ZERO_NOFAIL);
 	pktap->pktp_unit = unit;
 
 	/*
@@ -264,7 +266,7 @@ pktap_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 	if_init.ver = IFNET_INIT_CURRENT_VERSION;
 	if_init.len = sizeof(if_init);
 	if_init.flags = IFNET_INIT_LEGACY;
-	if_init.name = ifc->ifc_name;
+	if_init.name = __unsafe_null_terminated_from_indexable(ifc->ifc_name);
 	if_init.unit = unit;
 	if_init.type = IFT_PKTAP;
 	if_init.family = IFNET_FAMILY_LOOPBACK;
@@ -299,12 +301,12 @@ pktap_clone_create(struct if_clone *ifc, u_int32_t unit, __unused void *params)
 
 	/* Take a reference and add to the global list */
 	ifnet_reference(pktap->pktp_ifp);
-	lck_rw_lock_exclusive(pktap_lck_rw);
+	lck_rw_lock_exclusive(&pktap_lck_rw);
 	LIST_INSERT_HEAD(&pktap_list, pktap, pktp_link);
-	lck_rw_done(pktap_lck_rw);
+	lck_rw_done(&pktap_lck_rw);
 done:
 	if (error != 0 && pktap != NULL) {
-		if_clone_softc_deallocate(&pktap_cloner, pktap);
+		kfree_type(struct pktap_softc, pktap);
 	}
 	return error;
 }
@@ -331,7 +333,7 @@ pktap_clone_destroy(struct ifnet *ifp)
 __private_extern__ errno_t
 pktap_tap_callback(ifnet_t ifp, u_int32_t dlt, bpf_tap_mode direction)
 {
-	struct pktap_softc *pktap;
+	struct pktap_softc *__single pktap;
 
 	pktap = ifp->if_softc;
 	if (pktap == NULL) {
@@ -408,7 +410,7 @@ __private_extern__ errno_t
 pktap_getdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 {
 	errno_t error = 0;
-	struct pktap_softc *pktap;
+	struct pktap_softc *__single pktap;
 	int i;
 
 	PKTAP_LOG(PKTP_LOG_FUNC, "%s\n", ifp->if_xname);
@@ -422,19 +424,19 @@ pktap_getdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 
 	switch (ifd->ifd_cmd) {
 	case PKTP_CMD_FILTER_GET: {
-		struct x_pktap_filter x_filters[PKTAP_MAX_FILTERS];
+		struct pktap_filter x_filters[PKTAP_MAX_FILTERS];
 
 		bzero(&x_filters, sizeof(x_filters));
 
-		if (ifd->ifd_len < PKTAP_MAX_FILTERS * sizeof(struct x_pktap_filter)) {
+		if (ifd->ifd_len < PKTAP_MAX_FILTERS * sizeof(struct pktap_filter)) {
 			printf("%s: PKTP_CMD_FILTER_GET ifd_len %llu too small - error %d\n",
 			    __func__, ifd->ifd_len, error);
 			error = EINVAL;
 			break;
 		}
 		for (i = 0; i < PKTAP_MAX_FILTERS; i++) {
-			struct pktap_filter *pktap_filter = pktap->pktp_filters + i;
-			struct x_pktap_filter *x_filter = x_filters + i;
+			struct kern_pktap_filter *pktap_filter = pktap->pktp_filters + i;
+			struct pktap_filter *x_filter = x_filters + i;
 
 			x_filter->filter_op = pktap_filter->filter_op;
 			x_filter->filter_param = pktap_filter->filter_param;
@@ -442,13 +444,12 @@ pktap_getdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 			if (pktap_filter->filter_param == PKTAP_FILTER_PARAM_IF_TYPE) {
 				x_filter->filter_param_if_type = pktap_filter->filter_param_if_type;
 			} else if (pktap_filter->filter_param == PKTAP_FILTER_PARAM_IF_NAME) {
-				strlcpy(x_filter->filter_param_if_name,
-				    pktap_filter->filter_param_if_name,
-				    sizeof(x_filter->filter_param_if_name));
+				strbufcpy(x_filter->filter_param_if_name,
+				    pktap_filter->filter_param_if_name);
 			}
 		}
 		error = copyout(x_filters, CAST_USER_ADDR_T(ifd->ifd_data),
-		    PKTAP_MAX_FILTERS * sizeof(struct x_pktap_filter));
+		    PKTAP_MAX_FILTERS * sizeof(struct pktap_filter));
 		if (error) {
 			printf("%s: PKTP_CMD_FILTER_GET copyout - error %d\n", __func__, error);
 			goto done;
@@ -484,7 +485,7 @@ __private_extern__ errno_t
 pktap_setdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 {
 	errno_t error = 0;
-	struct pktap_softc *pktap;
+	struct pktap_softc *__single pktap;
 
 	PKTAP_LOG(PKTP_LOG_FUNC, "%s\n", ifp->if_xname);
 
@@ -497,11 +498,11 @@ pktap_setdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 
 	switch (ifd->ifd_cmd) {
 	case PKTP_CMD_FILTER_SET: {
-		struct x_pktap_filter user_filters[PKTAP_MAX_FILTERS];
+		struct pktap_filter user_filters[PKTAP_MAX_FILTERS];
 		int i;
 		int got_op_none = 0;
 
-		if (ifd->ifd_len != PKTAP_MAX_FILTERS * sizeof(struct x_pktap_filter)) {
+		if (ifd->ifd_len != PKTAP_MAX_FILTERS * sizeof(struct pktap_filter)) {
 			printf("%s: PKTP_CMD_FILTER_SET bad ifd_len %llu - error %d\n",
 			    __func__, ifd->ifd_len, error);
 			error = EINVAL;
@@ -516,7 +517,7 @@ pktap_setdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 		 * Validate user provided parameters
 		 */
 		for (i = 0; i < PKTAP_MAX_FILTERS; i++) {
-			struct x_pktap_filter *x_filter = user_filters + i;
+			struct pktap_filter *x_filter = user_filters + i;
 
 			switch (x_filter->filter_op) {
 			case PKTAP_FILTER_OP_NONE:
@@ -559,7 +560,7 @@ pktap_setdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 				break;
 
 			case PKTAP_FILTER_PARAM_IF_NAME:
-				if (strncmp(x_filter->filter_param_if_name, PKTAP_IFNAME,
+				if (strlcmp(x_filter->filter_param_if_name, PKTAP_IFNAME,
 				    strlen(PKTAP_IFNAME)) == 0) {
 					error = EINVAL;
 					break;
@@ -578,8 +579,8 @@ pktap_setdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 			break;
 		}
 		for (i = 0; i < PKTAP_MAX_FILTERS; i++) {
-			struct pktap_filter *pktap_filter = pktap->pktp_filters + i;
-			struct x_pktap_filter *x_filter = user_filters + i;
+			struct kern_pktap_filter *pktap_filter = pktap->pktp_filters + i;
+			struct pktap_filter *x_filter = user_filters + i;
 
 			pktap_filter->filter_op = x_filter->filter_op;
 			pktap_filter->filter_param = x_filter->filter_param;
@@ -589,18 +590,20 @@ pktap_setdrvspec(ifnet_t ifp, struct ifdrv64 *ifd)
 			} else if (pktap_filter->filter_param == PKTAP_FILTER_PARAM_IF_NAME) {
 				size_t len;
 
-				strlcpy(pktap_filter->filter_param_if_name,
-				    x_filter->filter_param_if_name,
-				    sizeof(pktap_filter->filter_param_if_name));
+				strbufcpy(pktap_filter->filter_param_if_name,
+				    x_filter->filter_param_if_name);
 				/*
 				 * If name does not end with a number then it's a "wildcard" match
 				 * where we compare the prefix of the interface name
 				 */
-				len = strlen(pktap_filter->filter_param_if_name);
-				if (pktap_filter->filter_param_if_name[len] < '0' ||
-				    pktap_filter->filter_param_if_name[len] > '9') {
-					pktap_filter->filter_ifname_prefix_len = len;
+				len = strbuflen(pktap_filter->filter_param_if_name);
+				if (pktap_filter->filter_param_if_name[len - 1] < '0' ||
+				    pktap_filter->filter_param_if_name[len - 1] > '9') {
+					pktap_filter->filter_ifname_prefix_match = true;
+				} else {
+					pktap_filter->filter_ifname_prefix_match = false;
 				}
+				pktap_filter->filter_ifname_len = len;
 			}
 		}
 		break;
@@ -615,7 +618,7 @@ done:
 }
 
 __private_extern__ errno_t
-pktap_ioctl(ifnet_t ifp, unsigned long cmd, void *data)
+pktap_ioctl(ifnet_t ifp, unsigned long cmd, void *__sized_by(IOCPARM_LEN(cmd)) data)
 {
 	errno_t error = 0;
 
@@ -682,22 +685,22 @@ done:
 __private_extern__ void
 pktap_detach(ifnet_t ifp)
 {
-	struct pktap_softc *pktap;
+	struct pktap_softc *__single pktap;
 
 	PKTAP_LOG(PKTP_LOG_FUNC, "%s\n", ifp->if_xname);
 
-	lck_rw_lock_exclusive(pktap_lck_rw);
+	lck_rw_lock_exclusive(&pktap_lck_rw);
 
 	pktap = ifp->if_softc;
 	ifp->if_softc = NULL;
 	LIST_REMOVE(pktap, pktp_link);
 
-	lck_rw_done(pktap_lck_rw);
+	lck_rw_done(&pktap_lck_rw);
 
 	/* Drop reference as it's no more on the global list */
 	ifnet_release(ifp);
 
-	if_clone_softc_deallocate(&pktap_cloner, pktap);
+	kfree_type(struct pktap_softc, pktap);
 	/* This is for the reference taken by ifnet_attach() */
 	(void) ifnet_release(ifp);
 }
@@ -710,9 +713,7 @@ pktap_filter_evaluate(struct pktap_softc *pktap, struct ifnet *ifp)
 	int match = 0;
 
 	for (i = 0; i < PKTAP_MAX_FILTERS; i++) {
-		struct pktap_filter *pktap_filter = pktap->pktp_filters + i;
-		size_t len = pktap_filter->filter_ifname_prefix_len != 0 ?
-		    pktap_filter->filter_ifname_prefix_len : PKTAP_IFXNAMESIZE;
+		struct kern_pktap_filter *pktap_filter = pktap->pktp_filters + i;
 
 		switch (pktap_filter->filter_op) {
 		case PKTAP_FILTER_OP_NONE:
@@ -731,10 +732,17 @@ pktap_filter_evaluate(struct pktap_softc *pktap, struct ifnet *ifp)
 				}
 			}
 			if (pktap_filter->filter_param == PKTAP_FILTER_PARAM_IF_NAME) {
-				if (strncmp(ifp->if_xname, pktap_filter->filter_param_if_name,
-				    len) == 0) {
+				if (pktap_filter->filter_ifname_prefix_match == false) {
+					match = !strlcmp(pktap_filter->filter_param_if_name,
+					    ifp->if_xname,
+					    pktap_filter->filter_ifname_len);
+				} else {
+					match = strprefix(ifp->if_xname,
+					    __unsafe_forge_null_terminated(char *, pktap_filter->filter_param_if_name));
+				}
+
+				if (match) {
 					result = PKTAP_FILTER_OK;
-					match = 1;
 					PKTAP_LOG(PKTP_LOG_FILTER, "pass %s match name %s\n",
 					    ifp->if_xname, pktap_filter->filter_param_if_name);
 					break;
@@ -754,10 +762,16 @@ pktap_filter_evaluate(struct pktap_softc *pktap, struct ifnet *ifp)
 				}
 			}
 			if (pktap_filter->filter_param == PKTAP_FILTER_PARAM_IF_NAME) {
-				if (strncmp(ifp->if_xname, pktap_filter->filter_param_if_name,
-				    len) == 0) {
+				if (pktap_filter->filter_ifname_prefix_match == false) {
+					match = !strlcmp(pktap_filter->filter_param_if_name,
+					    ifp->if_xname,
+					    pktap_filter->filter_ifname_len);
+				} else {
+					match = strprefix(ifp->if_xname,
+					    __unsafe_forge_null_terminated(char *, pktap_filter->filter_param_if_name));
+				}
+				if (match) {
 					result = PKTAP_FILTER_SKIP;
-					match = 1;
 					PKTAP_LOG(PKTP_LOG_FILTER, "skip %s match name %s\n",
 					    ifp->if_xname, pktap_filter->filter_param_if_name);
 					break;
@@ -784,7 +798,7 @@ pktap_set_procinfo(struct pktap_header *hdr, struct so_procinfo *soprocinfo)
 	if (hdr->pth_comm[0] == 0) {
 		proc_name(soprocinfo->spi_pid, hdr->pth_comm, MAXCOMLEN);
 	}
-	strlcpy(&hdr->pth_comm[0], &soprocinfo->spi_proc_name[0], sizeof(hdr->pth_comm));
+	strbufcpy(hdr->pth_comm, soprocinfo->spi_proc_name);
 
 	if (soprocinfo->spi_pid != 0) {
 		uuid_copy(hdr->pth_uuid, soprocinfo->spi_uuid);
@@ -793,7 +807,7 @@ pktap_set_procinfo(struct pktap_header *hdr, struct so_procinfo *soprocinfo)
 	if (soprocinfo->spi_delegated != 0) {
 		hdr->pth_flags |= PTH_FLAG_PROC_DELEGATED;
 		hdr->pth_epid = soprocinfo->spi_epid;
-		strlcpy(&hdr->pth_ecomm[0], &soprocinfo->spi_e_proc_name[0], sizeof(hdr->pth_ecomm));
+		strbufcpy(hdr->pth_ecomm, soprocinfo->spi_e_proc_name);
 		uuid_copy(hdr->pth_euuid, soprocinfo->spi_euuid);
 	}
 }
@@ -828,19 +842,23 @@ static void
 pktap_v2_set_procinfo(struct pktap_v2_hdr *pktap_v2_hdr,
     struct so_procinfo *soprocinfo)
 {
+	uint8_t *region = __unsafe_forge_bidi_indexable(uint8_t *,
+	    pktap_v2_hdr,
+	    pktap_v2_hdr->pth_length);
 	pktap_v2_hdr->pth_pid = soprocinfo->spi_pid;
 
 	if (soprocinfo->spi_pid != 0 && soprocinfo->spi_pid != -1) {
 		if (pktap_v2_hdr->pth_comm_offset != 0) {
-			char *ptr = ((char *)pktap_v2_hdr) +
-			    pktap_v2_hdr->pth_comm_offset;
+			char *ptr = __unsafe_forge_bidi_indexable(char *,
+			    region + pktap_v2_hdr->pth_comm_offset,
+			    PKTAP_MAX_COMM_SIZE);
 
-			strlcpy(ptr, &soprocinfo->spi_proc_name[0], PKTAP_MAX_COMM_SIZE);
+			strbufcpy(ptr, PKTAP_MAX_COMM_SIZE, soprocinfo->spi_proc_name, PKTAP_MAX_COMM_SIZE);
 		}
 		if (pktap_v2_hdr->pth_uuid_offset != 0) {
-			uuid_t *ptr = (uuid_t *) (((char *)pktap_v2_hdr) +
-			    pktap_v2_hdr->pth_uuid_offset);
-
+			uuid_t *ptr = __unsafe_forge_bidi_indexable(uuid_t *,
+			    region + pktap_v2_hdr->pth_uuid_offset,
+			    sizeof(uuid_t));
 			uuid_copy(*ptr, soprocinfo->spi_uuid);
 		}
 	}
@@ -858,15 +876,15 @@ pktap_v2_set_procinfo(struct pktap_v2_hdr *pktap_v2_hdr,
 
 		if (soprocinfo->spi_pid != 0 && soprocinfo->spi_pid != -1 &&
 		    pktap_v2_hdr->pth_e_comm_offset != 0) {
-			char *ptr = ((char *)pktap_v2_hdr) +
-			    pktap_v2_hdr->pth_e_comm_offset;
-
-			strlcpy(ptr, &soprocinfo->spi_e_proc_name[0], PKTAP_MAX_COMM_SIZE);
+			char *ptr = __unsafe_forge_bidi_indexable(char *,
+			    region + pktap_v2_hdr->pth_e_comm_offset,
+			    PKTAP_MAX_COMM_SIZE);
+			strbufcpy(ptr, PKTAP_MAX_COMM_SIZE, soprocinfo->spi_e_proc_name, PKTAP_MAX_COMM_SIZE);
 		}
 		if (pktap_v2_hdr->pth_e_uuid_offset != 0) {
-			uuid_t *ptr = (uuid_t *) (((char *)pktap_v2_hdr) +
-			    pktap_v2_hdr->pth_e_uuid_offset);
-
+			uuid_t *ptr = __unsafe_forge_bidi_indexable(uuid_t *,
+			    region + pktap_v2_hdr->pth_e_uuid_offset,
+			    sizeof(uuid_t));
 			uuid_copy(*ptr, soprocinfo->spi_euuid);
 		}
 	}
@@ -1008,12 +1026,13 @@ pktap_fill_proc_info(struct pktap_header *hdr, protocol_family_t proto,
 				wildcard = 1;
 			}
 			if (pcbinfo != NULL) {
-				inp = in_pcblookup_hash(pcbinfo, faddr, fport,
-				    laddr, lport, wildcard, outgoing ? NULL : ifp);
+				inp = in_pcblookup_hash_try(pcbinfo, faddr,
+				    fport, laddr, lport, wildcard,
+				    outgoing ? NULL : ifp);
 
 				if (inp == NULL && hdr->pth_iftype != IFT_LOOP) {
 					PKTAP_LOG(PKTP_LOG_NOPCB,
-					    "in_pcblookup_hash no pcb %s\n",
+					    "in_pcblookup_hash_try no pcb %s\n",
 					    hdr->pth_ifname);
 				}
 			} else {
@@ -1074,12 +1093,12 @@ pktap_fill_proc_info(struct pktap_header *hdr, protocol_family_t proto,
 				wildcard = 1;
 			}
 			if (pcbinfo != NULL) {
-				inp = in6_pcblookup_hash(pcbinfo, faddr, fport,
-				    laddr, lport, wildcard, outgoing ? NULL : ifp);
+				inp = in6_pcblookup_hash_try(pcbinfo, faddr, fport, ip6_input_getdstifscope(m),
+				    laddr, lport, ip6_input_getsrcifscope(m), wildcard, outgoing ? NULL : ifp);
 
 				if (inp == NULL && hdr->pth_iftype != IFT_LOOP) {
 					PKTAP_LOG(PKTP_LOG_NOPCB,
-					    "in6_pcblookup_hash no pcb %s\n",
+					    "in6_pcblookup_hash_try no pcb %s\n",
 					    hdr->pth_ifname);
 				}
 			} else {
@@ -1114,7 +1133,7 @@ __private_extern__ void
 pktap_bpf_tap(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
     u_int32_t pre, u_int32_t post, int outgoing)
 {
-	struct pktap_softc *pktap;
+	struct pktap_softc *__single pktap;
 	void (*bpf_tap_func)(ifnet_t, u_int32_t, mbuf_t, void *, size_t) =
 	    outgoing ? bpf_tap_out : bpf_tap_in;
 
@@ -1125,7 +1144,7 @@ pktap_bpf_tap(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
 		return;
 	}
 
-	lck_rw_lock_shared(pktap_lck_rw);
+	lck_rw_lock_shared(&pktap_lck_rw);
 
 	/*
 	 * No need to take the ifnet_lock as the struct ifnet field if_bpf is
@@ -1148,9 +1167,9 @@ pktap_bpf_tap(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
 				 * chain because bpf_tap_imp() disregard the packet length
 				 * of the mbuf packet header.
 				 */
-				if (mbuf_setdata(m, m->m_data + pre, m->m_len - pre) == 0) {
+				if (mbuf_setdata(m, m_mtod_current(m) + pre, m->m_len - pre) == 0) {
 					bpf_tap_func(pktap->pktp_ifp, DLT_RAW, m, NULL, 0);
-					mbuf_setdata(m, m->m_data - pre, m->m_len + pre);
+					mbuf_setdata(m, m_mtod_current(m) - pre, m->m_len + pre);
 				}
 			}
 		}
@@ -1167,7 +1186,7 @@ pktap_bpf_tap(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
 			u_int32_t pre_adjust = 0;
 
 			/* Verify the structure is packed */
-			_CASSERT(sizeof(hdr_buffer) == sizeof(struct pktap_header) + sizeof(u_int32_t));
+			static_assert(sizeof(hdr_buffer) == sizeof(struct pktap_header) + sizeof(u_int32_t));
 
 			bzero(&hdr_buffer, sizeof(hdr_buffer));
 			hdr->pth_length = sizeof(struct pktap_header);
@@ -1234,7 +1253,7 @@ pktap_bpf_tap(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
 					 * - The old utun encapsulation with the protocol family in network order
 					 * - A raw IPv4 or IPv6 packet
 					 */
-					uint8_t data = *(uint8_t *)mbuf_data(m);
+					uint8_t data = *mtod(m, uint8_t *);
 					if ((data >> 4) == 4 || (data >> 4) == 6) {
 						pre = 4;
 					} else {
@@ -1278,29 +1297,42 @@ pktap_bpf_tap(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
 				if (m->m_pkthdr.pkt_flags & PKTF_TCP_REXMT) {
 					hdr->pth_flags |= PTH_FLAG_REXMIT;
 				}
+				if (m->m_pkthdr.pkt_flags & PKTF_WAKE_PKT) {
+					hdr->pth_flags |= PTH_FLAG_WAKE_PKT;
+				}
+
+				/* Need to check the packet flag in case full wake has been requested */
+				if ((m->m_pkthdr.pkt_ext_flags & PKTF_EXT_LPW) != 0 || is_net_lpw_mode()) {
+					hdr->pth_flags |= PTH_FLAG_LPW;
+				}
+				if (outgoing != 0) {
+					hdr->pth_comp_gencnt = m->m_pkthdr.comp_gencnt;
+				}
 
 				pktap_fill_proc_info(hdr, proto, m, pre, outgoing, ifp);
 
 				hdr->pth_svc = so_svc2tc(m->m_pkthdr.pkt_svc);
 
 				if (data_adjust == 0) {
-					bpf_tap_func(pktap->pktp_ifp, DLT_PKTAP, m, hdr, hdr_size);
+					bpf_tap_func(pktap->pktp_ifp, DLT_PKTAP, m, &hdr_buffer,
+					    hdr_size);
 				} else {
 					/*
 					 * We can play just with the length of the first mbuf in the
 					 * chain because bpf_tap_imp() disregard the packet length
 					 * of the mbuf packet header.
 					 */
-					if (mbuf_setdata(m, m->m_data + data_adjust, m->m_len - data_adjust) == 0) {
-						bpf_tap_func(pktap->pktp_ifp, DLT_PKTAP, m, hdr, hdr_size);
-						mbuf_setdata(m, m->m_data - data_adjust, m->m_len + data_adjust);
+					if (mbuf_setdata(m, m_mtod_current(m) + data_adjust, m->m_len - data_adjust) == 0) {
+						bpf_tap_func(pktap->pktp_ifp, DLT_PKTAP, m, &hdr_buffer,
+						    hdr_size);
+						mbuf_setdata(m, m_mtod_current(m) - data_adjust, m->m_len + data_adjust);
 					}
 				}
 			}
 		}
 	}
 done:
-	lck_rw_done(pktap_lck_rw);
+	lck_rw_done(&pktap_lck_rw);
 }
 
 __private_extern__ void
@@ -1316,8 +1348,8 @@ pktap_input(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
 		return;
 	}
 
-	hdr = (char *)mbuf_data(m);
-	start = (char *)mbuf_datastart(m);
+	start = m_mtod_lower_bound(m);
+	hdr = mtod(m, char *);
 	/* Make sure the frame header is fully contained in the  mbuf */
 	if (frame_header != NULL && frame_header >= start && frame_header <= hdr) {
 		size_t o_len = m->m_len;
@@ -1354,6 +1386,176 @@ pktap_output(struct ifnet *ifp, protocol_family_t proto, struct mbuf *m,
 	pktap_bpf_tap(ifp, proto, m, pre, post, 1);
 }
 
+#if SKYWALK
+
+typedef void (*tap_packet_func)(ifnet_t interface, u_int32_t dlt,
+    kern_packet_t packet, void *__sized_by(header_len) header, size_t header_len);
+
+static void
+pktap_bpf_tap_packet(struct ifnet *ifp, protocol_family_t proto, uint32_t dlt,
+    pid_t pid, const char * pname, pid_t epid, const char * epname,
+    kern_packet_t pkt, const void *__sized_by(header_length) header, size_t header_length,
+    uint8_t ipproto, uint32_t flowid, uint32_t flags, tap_packet_func tap_func)
+{
+	struct {
+		struct pktap_header     pkth;
+		union {
+			uint8_t         llhdr[16];
+			uint32_t        proto;
+		} extra;
+	} hdr_buffer;
+	struct pktap_header     *hdr;
+	size_t                  hdr_size;
+	struct pktap_softc      *__single pktap;
+	uint32_t                pre_length = 0;
+
+	/*
+	 * Skip the coprocessor interface
+	 */
+	if (!intcoproc_unrestricted && IFNET_IS_INTCOPROC(ifp)) {
+		return;
+	}
+
+	if (proto != AF_INET && proto != AF_INET6) {
+		PKTAP_LOG(PKTP_LOG_ERROR,
+		    "unsupported protocol %d\n",
+		    proto);
+		return;
+	}
+
+	/* assume that we'll be tapping using PKTAP */
+	hdr = &hdr_buffer.pkth;
+	bzero(&hdr_buffer, sizeof(hdr_buffer));
+	hdr->pth_length = sizeof(struct pktap_header);
+	hdr->pth_type_next = PTH_TYPE_PACKET;
+	hdr->pth_dlt = dlt;
+	hdr->pth_pid = pid;
+	if (pid != epid) {
+		hdr->pth_epid = epid;
+	} else {
+		hdr->pth_epid = -1;
+	}
+	if (pname != NULL) {
+		strlcpy(hdr->pth_comm, pname, sizeof(hdr->pth_comm));
+	}
+	if (epname != NULL) {
+		strlcpy(hdr->pth_ecomm, epname, sizeof(hdr->pth_ecomm));
+	}
+	strlcpy(hdr->pth_ifname, ifp->if_xname, sizeof(hdr->pth_ifname));
+	hdr->pth_flags |= flags;
+	hdr->pth_ipproto = ipproto;
+	hdr->pth_flowid = flowid;
+	/*
+	 * Do the same as pktap_fill_proc_info() to defer looking up inpcb.
+	 * We do it for both inbound and outbound packets unlike the mbuf case.
+	 */
+	if ((flags & PTH_FLAG_SOCKET) != 0 && ipproto != 0 && flowid != 0) {
+		hdr->pth_flags |= PTH_FLAG_DELAY_PKTAP;
+	}
+	if (kern_packet_get_wake_flag(pkt)) {
+		hdr->pth_flags |= PTH_FLAG_WAKE_PKT;
+	}
+
+	/* Need to check the packet flag in case full wake has been requested */
+	if (kern_packet_get_lpw_flag(pkt) || is_net_lpw_mode()) {
+		hdr->pth_flags |= PTH_FLAG_LPW;
+	}
+	kern_packet_get_compression_generation_count(pkt, &hdr->pth_comp_gencnt);
+
+	hdr->pth_trace_tag = kern_packet_get_trace_tag(pkt);
+	hdr->pth_protocol_family = proto;
+	hdr->pth_svc = so_svc2tc((mbuf_svc_class_t)
+	    kern_packet_get_service_class(pkt));
+	hdr->pth_iftype = ifp->if_type;
+	hdr->pth_ifunit = ifp->if_unit;
+	hdr_size = sizeof(struct pktap_header);
+	if (header != NULL && header_length != 0) {
+		if (header_length > sizeof(hdr_buffer.extra.llhdr)) {
+			PKTAP_LOG(PKTP_LOG_ERROR,
+			    "%s: header %d > %d\n",
+			    if_name(ifp), (int)header_length,
+			    (int)sizeof(hdr_buffer.extra.llhdr));
+			return;
+		}
+		bcopy(header, hdr_buffer.extra.llhdr, header_length);
+		hdr_size += header_length;
+		pre_length = (uint32_t)header_length;
+	} else if (dlt == DLT_RAW) {
+		/*
+		 * Use the same DLT as has been used for the mbuf path
+		 */
+		hdr->pth_dlt = DLT_NULL;
+		hdr_buffer.extra.proto = proto;
+		hdr_size = sizeof(struct pktap_header) + sizeof(u_int32_t);
+		pre_length = sizeof(hdr_buffer.extra.proto);
+	} else if (dlt == DLT_EN10MB) {
+		pre_length = ETHER_HDR_LEN;
+	}
+	hdr->pth_frame_pre_length = pre_length;
+
+	lck_rw_lock_shared(&pktap_lck_rw);
+	/*
+	 * No need to take the ifnet_lock as the struct ifnet field if_bpf is
+	 * protected by the BPF subsystem
+	 */
+	LIST_FOREACH(pktap, &pktap_list, pktp_link) {
+		int filter_result;
+
+		filter_result = pktap_filter_evaluate(pktap, ifp);
+		if (filter_result == PKTAP_FILTER_SKIP) {
+			continue;
+		}
+
+		if (dlt == DLT_RAW && pktap->pktp_dlt_raw_count > 0) {
+			(*tap_func)(pktap->pktp_ifp, DLT_RAW, pkt, NULL, 0);
+		}
+		if (pktap->pktp_dlt_pkttap_count > 0) {
+			(*tap_func)(pktap->pktp_ifp, DLT_PKTAP,
+			    pkt, &hdr_buffer, hdr_size);
+		}
+	}
+	lck_rw_done(&pktap_lck_rw);
+}
+
+void
+pktap_input_packet(struct ifnet *ifp, protocol_family_t proto, uint32_t dlt,
+    pid_t pid, const char * pname, pid_t epid, const char * epname,
+    kern_packet_t pkt, const void *__sized_by(header_length) header, size_t header_length,
+    uint8_t ipproto, uint32_t flowid, uint32_t flags)
+{
+	/* Fast path */
+	if (pktap_total_tap_count == 0) {
+		return;
+	}
+
+	PKTAP_LOG(PKTP_LOG_INPUT, "IN %s proto %u pid %d epid %d\n",
+	    ifp->if_xname, proto, pid, epid);
+	pktap_bpf_tap_packet(ifp, proto, dlt, pid, pname, epid, epname, pkt,
+	    header, header_length, ipproto, flowid,
+	    PTH_FLAG_DIR_IN | (flags & ~(PTH_FLAG_DIR_IN | PTH_FLAG_DIR_OUT)),
+	    bpf_tap_packet_in);
+}
+
+void
+pktap_output_packet(struct ifnet *ifp, protocol_family_t proto, uint32_t dlt,
+    pid_t pid, const char * pname, pid_t epid, const char * epname,
+    kern_packet_t pkt, const void *__sized_by(header_length) header, size_t header_length,
+    uint8_t ipproto, uint32_t flowid, uint32_t flags)
+{
+	/* Fast path */
+	if (pktap_total_tap_count == 0) {
+		return;
+	}
+
+	PKTAP_LOG(PKTP_LOG_OUTPUT, "OUT %s proto %u pid %d epid %d\n",
+	    ifp->if_xname, proto, pid, epid);
+	pktap_bpf_tap_packet(ifp, proto, dlt, pid, pname, epid, epname, pkt,
+	    header, header_length, ipproto, flowid,
+	    PTH_FLAG_DIR_OUT | (flags & ~(PTH_FLAG_DIR_IN | PTH_FLAG_DIR_OUT)),
+	    bpf_tap_packet_out);
+}
+
+#endif /* SKYWALK */
 
 void
 convert_to_pktap_header_to_v2(struct bpf_packet *bpf_pkt, bool truncate)
@@ -1383,7 +1585,7 @@ convert_to_pktap_header_to_v2(struct bpf_packet *bpf_pkt, bool truncate)
 
 	pktap_v2_hdr_space = &pktap_buffer_v2_hdr_extra.hdr_space;
 	pktap_v2_hdr = &pktap_v2_hdr_space->pth_hdr;
-	ptr = (uint8_t *) (pktap_v2_hdr + 1);
+	ptr = (uint8_t*) &pktap_buffer_v2_hdr_extra + sizeof(*pktap_v2_hdr);
 
 	COPY_PKTAP_COMMON_FIELDS_TO_V2(pktap_v2_hdr, pktap_header);
 
@@ -1431,8 +1633,11 @@ convert_to_pktap_header_to_v2(struct bpf_packet *bpf_pkt, bool truncate)
 		 * Note: strlcpy() returns the length of the string so we need
 		 * to add one for the end-of-string
 		 */
-		strsize = 1 + strlcpy((char *)ptr, pktap_header->pth_ifname,
-		    sizeof(pktap_v2_hdr_space->pth_ifname));
+		size_t remaining_space = (uintptr_t)(pktap_v2_hdr_space + 1) - (uintptr_t)ptr;
+		strsize = 1 + strlen(strbufcpy((char *)ptr,
+		    remaining_space,
+		    pktap_header->pth_ifname,
+		    sizeof(pktap_v2_hdr_space->pth_ifname)));
 		pktap_v2_hdr->pth_length += strsize;
 		ptr += strsize;
 		VERIFY((void *)ptr < (void *)(pktap_v2_hdr_space + 1));
@@ -1447,8 +1652,10 @@ convert_to_pktap_header_to_v2(struct bpf_packet *bpf_pkt, bool truncate)
 
 			pktap_v2_hdr->pth_comm_offset = pktap_v2_hdr->pth_length;
 
-			strsize = 1 + strlcpy((char *)ptr, pktap_header->pth_comm,
-			    sizeof(pktap_v2_hdr_space->pth_comm));
+			size_t remaining_space = (uintptr_t)(pktap_v2_hdr_space + 1) - (uintptr_t)ptr;
+			strsize = 1 +  strlen(strbufcpy((char *)ptr, remaining_space,
+			    pktap_header->pth_comm,
+			    sizeof(pktap_v2_hdr_space->pth_comm)));
 			pktap_v2_hdr->pth_length += strsize;
 			ptr += strsize;
 			VERIFY((void *)ptr < (void *)(pktap_v2_hdr_space + 1));
@@ -1475,8 +1682,12 @@ convert_to_pktap_header_to_v2(struct bpf_packet *bpf_pkt, bool truncate)
 
 			pktap_v2_hdr->pth_e_comm_offset = pktap_v2_hdr->pth_length;
 
-			strsize = 1 + strlcpy((char *)ptr, pktap_header->pth_ecomm,
-			    sizeof(pktap_v2_hdr_space->pth_e_comm));
+			size_t remaining_space = (uintptr_t)(pktap_v2_hdr_space + 1) - (uintptr_t)ptr;
+
+			strsize = 1 + strlen(strbufcpy((char *)ptr,
+			    remaining_space,
+			    pktap_header->pth_ecomm,
+			    sizeof(pktap_v2_hdr_space->pth_e_comm)));
 			pktap_v2_hdr->pth_length += strsize;
 			ptr += strsize;
 			VERIFY((void *)ptr < (void *)(pktap_v2_hdr_space + 1));
@@ -1492,9 +1703,8 @@ convert_to_pktap_header_to_v2(struct bpf_packet *bpf_pkt, bool truncate)
 	}
 
 	if (extra_src_size > 0) {
-		char *extra_src_ptr = (char *)(pktap_header + 1);
-		char *extra_dst_ptr = ((char *)pktap_v2_hdr) +
-		    pktap_v2_hdr->pth_length;
+		uint8_t *extra_src_ptr = (uint8_t *)bpf_pkt->bpfp_header + sizeof(*pktap_header);
+		uint8_t *extra_dst_ptr = (uint8_t *)&pktap_buffer_v2_hdr_extra + pktap_v2_hdr->pth_length;
 
 		VERIFY(pktap_v2_hdr->pth_length + extra_src_size <=
 		    sizeof(struct pktap_buffer_v2_hdr_extra));
@@ -1505,11 +1715,18 @@ convert_to_pktap_header_to_v2(struct bpf_packet *bpf_pkt, bool truncate)
 	VERIFY(pktap_v2_hdr->pth_length + extra_src_size <=
 	    bpf_pkt->bpfp_header_length);
 
-	memcpy(bpf_pkt->bpfp_header, pktap_v2_hdr,
+	memcpy(bpf_pkt->bpfp_header, &pktap_buffer_v2_hdr_extra,
 	    pktap_v2_hdr->pth_length + extra_src_size);
+	/*
+	 * For -fbounds-safety, we override the length which
+	 * is fragile.  However, this is only called from
+	 * BPF which passes us a buffer allocated on the stack
+	 * and, in practice, that isn't going to cause any problems.
+	 */
+	bpf_pkt->bpfp_header = bpf_pkt->bpfp_header;
+	bpf_pkt->bpfp_header_length += pktap_v2_hdr->pth_length -
+	    sizeof(struct pktap_header);
 
 	bpf_pkt->bpfp_total_length += pktap_v2_hdr->pth_length -
-	    sizeof(struct pktap_header);
-	bpf_pkt->bpfp_header_length += pktap_v2_hdr->pth_length -
 	    sizeof(struct pktap_header);
 }

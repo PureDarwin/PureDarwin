@@ -110,7 +110,7 @@ target_compile_options(libdispatch_static PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/pd_bridgeos_compat.h>
     $<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_bridgeos_compat_cxx.h>
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/src/Libraries/dyld/dyld_sdk_compat.h>
-    -include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/bsd/sys_private/kdebug_private.h
+    -include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/bsd/sys/kdebug_private.h
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern/os/base_private.h>
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_work_interval_instance.h>
     $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17;-fblocks;-fno-rtti;-fno-exceptions;-isystem${PUREDARWIN_MACOSX_SDK}/usr/include>)
@@ -149,4 +149,3 @@ target_include_directories(libdispatch_static PRIVATE
 
 target_include_directories(libdispatch_static PRIVATE
     ${CMAKE_BINARY_DIR}/generated-headers/dlfcn)
-

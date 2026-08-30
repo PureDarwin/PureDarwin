@@ -74,34 +74,15 @@
  * Version 2.0.
  */
 
-#include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/kernel.h>
 #include <sys/file_internal.h>
-#include <sys/filedesc.h>
-#include <sys/stat.h>
+#include <sys/param.h>
+#include <sys/mbuf.h>
 #include <sys/vnode_internal.h>
-#include <sys/mount_internal.h>
-#include <sys/proc_internal.h> /* for fdflags */
-#include <sys/kauth.h>
+#include <sys/uio_internal.h>
 #include <sys/sysctl.h>
-#include <sys/ubc.h>
-#include <sys/uio.h>
-#include <sys/malloc.h>
-#include <sys/kpi_mbuf.h>
-#include <sys/socket.h>
 #include <sys/socketvar.h>
-#include <sys/domain.h>
-#include <sys/protosw.h>
-#include <sys/fcntl.h>
-#include <sys/lockf.h>
-#include <sys/syslog.h>
-#include <sys/user.h>
 #include <sys/sysproto.h>
-#include <sys/kpi_socket.h>
 #include <sys/fsevents.h>
-#include <libkern/OSAtomic.h>
-#include <kern/thread_call.h>
 #include <kern/task.h>
 
 #include <security/audit/audit.h>
@@ -115,14 +96,9 @@
 #include <nfs/nfsm_subs.h>
 #include <nfs/nfsrvcache.h>
 #include <nfs/nfs_gss.h>
-#include <nfs/nfsmount.h>
-#include <nfs/nfsnode.h>
-#include <nfs/nfs_lock.h>
 #if CONFIG_MACF
 #include <security/mac_framework.h>
 #endif
-
-kern_return_t   thread_terminate(thread_t); /* XXX */
 
 #if CONFIG_NFS_SERVER
 
@@ -138,6 +114,11 @@ static int nfsrv_sock_tcp_cnt = 0;
 static int nfsrv_sock_idle_timeout = 3600; /* One hour */
 
 int     nfssvc_export(user_addr_t argp);
+int     nfssvc_exportstats(proc_t p, user_addr_t argp);
+int     nfssvc_userstats(proc_t p, user_addr_t argp);
+int     nfssvc_usercount(proc_t p, user_addr_t argp);
+int     nfssvc_zerostats(void);
+int     nfssvc_srvstats(proc_t p, user_addr_t argp);
 int     nfssvc_nfsd(void);
 int     nfssvc_addsock(socket_t, mbuf_t);
 void    nfsrv_zapsock(struct nfsrv_sock *);
@@ -146,43 +127,11 @@ void    nfsrv_slpfree(struct nfsrv_sock *);
 
 #endif /* CONFIG_NFS_SERVER */
 
-#if CONFIG_NFS
 /*
  * sysctl stuff
  */
 SYSCTL_DECL(_vfs_generic);
-SYSCTL_NODE(_vfs_generic, OID_AUTO, nfs, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "nfs hinge");
-#endif /* CONFIG_NFS */
-
-#if CONFIG_NFS_CLIENT
-SYSCTL_NODE(_vfs_generic_nfs, OID_AUTO, client, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "nfs client hinge");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, initialdowndelay, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_tprintf_initial_delay, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, nextdowndelay, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_tprintf_delay, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, iosize, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_iosize, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, access_cache_timeout, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_access_cache_timeout, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, allow_async, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_allow_async, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, statfs_rate_limit, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_statfs_rate_limit, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, nfsiod_thread_max, CTLFLAG_RW | CTLFLAG_LOCKED, &nfsiod_thread_max, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, nfsiod_thread_count, CTLFLAG_RD | CTLFLAG_LOCKED, &nfsiod_thread_count, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, lockd_mounts, CTLFLAG_RD | CTLFLAG_LOCKED, &nfs_lockd_mounts, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, max_async_writes, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_max_async_writes, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, access_delete, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_access_delete, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, access_dotzfs, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_access_dotzfs, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, access_for_getattr, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_access_for_getattr, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, idmap_ctrl, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_idmap_ctrl, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, callback_port, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_callback_port, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, is_mobile, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_is_mobile, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, squishy_flags, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_squishy_flags, 0, "");
-SYSCTL_UINT(_vfs_generic_nfs_client, OID_AUTO, tcp_sockbuf, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_tcp_sockbuf, 0, "");
-SYSCTL_UINT(_vfs_generic_nfs_client, OID_AUTO, debug_ctl, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_debug_ctl, 0, "");
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, readlink_nocache, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_readlink_nocache, 0, "");
-#if CONFIG_NFS_GSS
-SYSCTL_INT(_vfs_generic_nfs_client, OID_AUTO, root_steals_gss_context, CTLFLAG_RW | CTLFLAG_LOCKED, &nfs_root_steals_ctx, 0, "");
-#endif
-#if CONFIG_NFS4
-SYSCTL_STRING(_vfs_generic_nfs_client, OID_AUTO, default_nfs4domain, CTLFLAG_RW | CTLFLAG_LOCKED, nfs4_default_domain, sizeof(nfs4_default_domain), "");
-#endif
-#endif /* CONFIG_NFS_CLIENT */
+SYSCTL_EXTENSIBLE_NODE(_vfs_generic, OID_AUTO, nfs, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "nfs hinge");
 
 #if CONFIG_NFS_SERVER
 SYSCTL_NODE(_vfs_generic_nfs, OID_AUTO, server, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "nfs server hinge");
@@ -195,6 +144,9 @@ SYSCTL_INT(_vfs_generic_nfs_server, OID_AUTO, reqcache_size, CTLFLAG_RW | CTLFLA
 SYSCTL_INT(_vfs_generic_nfs_server, OID_AUTO, request_queue_length, CTLFLAG_RW | CTLFLAG_LOCKED, &nfsrv_sock_max_rec_queue_length, 0, "");
 SYSCTL_INT(_vfs_generic_nfs_server, OID_AUTO, user_stats, CTLFLAG_RW | CTLFLAG_LOCKED, &nfsrv_user_stat_enabled, 0, "");
 SYSCTL_UINT(_vfs_generic_nfs_server, OID_AUTO, gss_context_ttl, CTLFLAG_RW | CTLFLAG_LOCKED, &nfsrv_gss_context_ttl, 0, "");
+SYSCTL_UINT(_vfs_generic_nfs_server, OID_AUTO, debug_ctl, CTLFLAG_RW | CTLFLAG_LOCKED, &nfsrv_debug_ctl, 0, "");
+SYSCTL_UINT(_vfs_generic_nfs_server, OID_AUTO, unprocessed_rpc_current, CTLFLAG_RD | CTLFLAG_LOCKED, &nfsrv_unprocessed_rpc_current, 0, "");
+SYSCTL_UINT(_vfs_generic_nfs_server, OID_AUTO, unprocessed_rpc_max, CTLFLAG_RW | CTLFLAG_LOCKED, &nfsrv_unprocessed_rpc_max, 0, "");
 #if CONFIG_FSE
 SYSCTL_INT(_vfs_generic_nfs_server, OID_AUTO, fsevents, CTLFLAG_RW | CTLFLAG_LOCKED, &nfsrv_fsevents_enabled, 0, "");
 #endif
@@ -210,326 +162,54 @@ SYSCTL_INT(_vfs_generic_nfs_server, OID_AUTO, upcall_queue_count, CTLFLAG_RD | C
 #endif
 #endif /* CONFIG_NFS_SERVER */
 
-#if CONFIG_NFS_CLIENT && CONFIG_NFS4
-static int
-mapname2id(struct nfs_testmapid *map)
-{
-	int error;
-	error = nfs4_id2guid(map->ntm_name, &map->ntm_guid, map->ntm_grpflag);
-	if (error) {
-		return error;
-	}
+/* NFS hooks */
 
-	if (map->ntm_grpflag) {
-		error = kauth_cred_guid2gid(&map->ntm_guid, (gid_t *)&map->ntm_id);
-	} else {
-		error = kauth_cred_guid2uid(&map->ntm_guid, (uid_t *)&map->ntm_id);
-	}
+/* NFS hooks variables */
+struct nfs_hooks_in nfsh = {
+	.f_vinvalbuf      = NULL,
+	.f_buf_page_inval = NULL
+};
 
-	return error;
-}
-
-static int
-mapid2name(struct nfs_testmapid *map)
-{
-	int error;
-	size_t len = sizeof(map->ntm_name);
-
-	if (map->ntm_grpflag) {
-		error = kauth_cred_gid2guid((gid_t)map->ntm_id, &map->ntm_guid);
-	} else {
-		error = kauth_cred_uid2guid((uid_t)map->ntm_id, &map->ntm_guid);
-	}
-
-	if (error) {
-		return error;
-	}
-
-	error = nfs4_guid2id(&map->ntm_guid, map->ntm_name, &len, map->ntm_grpflag);
-
-	return error;
-}
-
-static int
-nfsclnt_testidmap(proc_t p, user_addr_t argp)
-{
-	struct nfs_testmapid mapid;
-	int error, coerror;
-	size_t len = sizeof(mapid.ntm_name);
-
-	/* Let root make this call. */
-	error = proc_suser(p);
-	if (error) {
-		return error;
-	}
-
-	error = copyin(argp, &mapid, sizeof(mapid));
-	mapid.ntm_name[MAXIDNAMELEN - 1] = '\0';
-
-	if (error) {
-		return error;
-	}
-	switch (mapid.ntm_lookup) {
-	case NTM_NAME2ID:
-		error = mapname2id(&mapid);
-		break;
-	case NTM_ID2NAME:
-		error = mapid2name(&mapid);
-		break;
-	case NTM_NAME2GUID:
-		error = nfs4_id2guid(mapid.ntm_name, &mapid.ntm_guid, mapid.ntm_grpflag);
-		break;
-	case NTM_GUID2NAME:
-		error = nfs4_guid2id(&mapid.ntm_guid, mapid.ntm_name, &len, mapid.ntm_grpflag);
-		break;
-	default:
-		return EINVAL;
-	}
-
-	coerror = copyout(&mapid, argp, sizeof(mapid));
-
-	return error ? error : coerror;
-}
-#endif /* CONFIG_NFS_CLIENT && CONFIG_NFS4 */
-
-#if !CONFIG_NFS_CLIENT
-#define __no_nfs_client_unused      __unused
-#else
-#define __no_nfs_client_unused      /* nothing */
-#endif
-
-int
-nfsclnt(
-	proc_t p __no_nfs_client_unused,
-	struct nfsclnt_args *uap __no_nfs_client_unused,
-	__unused int *retval)
-{
-#if CONFIG_NFS_CLIENT
-	struct lockd_ans la;
-	int error;
-
-	switch (uap->flag) {
-	case NFSCLNT_LOCKDANS:
-		error = copyin(uap->argp, &la, sizeof(la));
-		if (!error) {
-			error = nfslockdans(p, &la);
-		}
-		break;
-	case NFSCLNT_LOCKDNOTIFY:
-		error = nfslockdnotify(p, uap->argp);
-		break;
-#if CONFIG_NFS4
-	case NFSCLNT_TESTIDMAP:
-		error = nfsclnt_testidmap(p, uap->argp);
-		break;
-#endif
-	default:
-		error = EINVAL;
-	}
-	return error;
-#else
-	return ENOSYS;
-#endif /* CONFIG_NFS_CLIENT */
-}
-
-#if CONFIG_NFS_CLIENT
-
-/*
- * Asynchronous I/O threads for client NFS.
- * They do read-ahead and write-behind operations on the block I/O cache.
- *
- * The pool of up to nfsiod_thread_max threads is launched on demand and exit
- * when unused for a while.  There are as many nfsiod structs as there are
- * nfsiod threads; however there's no strict tie between a thread and a struct.
- * Each thread puts an nfsiod on the free list and sleeps on it.  When it wakes
- * up, it removes the next struct nfsiod from the queue and services it.  Then
- * it will put the struct at the head of free list and sleep on it.
- * Async requests will pull the next struct nfsiod from the head of the free list,
- * put it on the work queue, and wake whatever thread is waiting on that struct.
- */
-
-/*
- * nfsiod thread exit routine
- *
- * Must be called with nfsiod_mutex held so that the
- * decision to terminate is atomic with the termination.
- */
+/* NFS hooks registration functions */
 void
-nfsiod_terminate(struct nfsiod *niod)
+nfs_register_hooks(struct nfs_hooks_in *inh, struct nfs_hooks_out *outh)
 {
-	nfsiod_thread_count--;
-	lck_mtx_unlock(&nfsiod_mutex);
-	if (niod) {
-		FREE(niod, M_TEMP);
-	} else {
-		printf("nfsiod: terminating without niod\n");
+	if (inh) {
+		nfsh.f_vinvalbuf = inh->f_vinvalbuf;
+		nfsh.f_buf_page_inval = inh->f_buf_page_inval;
 	}
-	thread_terminate(current_thread());
-	/*NOTREACHED*/
+
+	if (outh) {
+		outh->f_get_bsdthreadtask_info = get_bsdthreadtask_info;
+	}
 }
 
-/* nfsiod thread startup routine */
 void
-nfsiod_thread(void)
+nfs_unregister_hooks(void)
 {
-	struct nfsiod *niod;
-	int error;
-
-	MALLOC(niod, struct nfsiod *, sizeof(struct nfsiod), M_TEMP, M_WAITOK);
-	if (!niod) {
-		lck_mtx_lock(&nfsiod_mutex);
-		nfsiod_thread_count--;
-		wakeup(current_thread());
-		lck_mtx_unlock(&nfsiod_mutex);
-		thread_terminate(current_thread());
-		/*NOTREACHED*/
-	}
-	bzero(niod, sizeof(*niod));
-	lck_mtx_lock(&nfsiod_mutex);
-	TAILQ_INSERT_HEAD(&nfsiodfree, niod, niod_link);
-	wakeup(current_thread());
-	error = msleep0(niod, &nfsiod_mutex, PWAIT | PDROP, "nfsiod", NFS_ASYNCTHREADMAXIDLE * hz, nfsiod_continue);
-	/* shouldn't return... so we have an error */
-	/* remove an old nfsiod struct and terminate */
-	lck_mtx_lock(&nfsiod_mutex);
-	if ((niod = TAILQ_LAST(&nfsiodfree, nfsiodlist))) {
-		TAILQ_REMOVE(&nfsiodfree, niod, niod_link);
-	}
-	nfsiod_terminate(niod);
-	/*NOTREACHED*/
+	memset(&nfsh, 0, sizeof(nfsh));
 }
 
-/*
- * Start up another nfsiod thread.
- * (unless we're already maxed out and there are nfsiods running)
- */
+/* NFS hooks wrappers */
 int
-nfsiod_start(void)
+nfs_vinvalbuf(vnode_t vp, int flags, vfs_context_t ctx, int intrflg)
 {
-	thread_t thd = THREAD_NULL;
+	if (nfsh.f_vinvalbuf == NULL) {
+		return 0;
+	}
 
-	lck_mtx_lock(&nfsiod_mutex);
-	if ((nfsiod_thread_count >= NFSIOD_MAX) && (nfsiod_thread_count > 0)) {
-		lck_mtx_unlock(&nfsiod_mutex);
-		return EBUSY;
-	}
-	nfsiod_thread_count++;
-	if (kernel_thread_start((thread_continue_t)nfsiod_thread, NULL, &thd) != KERN_SUCCESS) {
-		lck_mtx_unlock(&nfsiod_mutex);
-		return EBUSY;
-	}
-	/* wait for the thread to complete startup */
-	msleep(thd, &nfsiod_mutex, PWAIT | PDROP, "nfsiodw", NULL);
-	thread_deallocate(thd);
-	return 0;
+	return nfsh.f_vinvalbuf(vp, flags, ctx, intrflg);
 }
 
-/*
- * Continuation for Asynchronous I/O threads for NFS client.
- *
- * Grab an nfsiod struct to work on, do some work, then drop it
- */
 int
-nfsiod_continue(int error)
+nfs_buf_page_inval(vnode_t vp, off_t offset)
 {
-	struct nfsiod *niod;
-	struct nfsmount *nmp;
-	struct nfsreq *req, *treq;
-	struct nfs_reqqhead iodq;
-	int morework;
-
-	lck_mtx_lock(&nfsiod_mutex);
-	niod = TAILQ_FIRST(&nfsiodwork);
-	if (!niod) {
-		/* there's no work queued up */
-		/* remove an old nfsiod struct and terminate */
-		if ((niod = TAILQ_LAST(&nfsiodfree, nfsiodlist))) {
-			TAILQ_REMOVE(&nfsiodfree, niod, niod_link);
-		}
-		nfsiod_terminate(niod);
-		/*NOTREACHED*/
-	}
-	TAILQ_REMOVE(&nfsiodwork, niod, niod_link);
-
-worktodo:
-	while ((nmp = niod->niod_nmp)) {
-		if (nmp == NULL) {
-			niod->niod_nmp = NULL;
-			break;
-		}
-
-		/*
-		 * Service this mount's async I/O queue.
-		 *
-		 * In order to ensure some level of fairness between mounts,
-		 * we grab all the work up front before processing it so any
-		 * new work that arrives will be serviced on a subsequent
-		 * iteration - and we have a chance to see if other work needs
-		 * to be done (e.g. the delayed write queue needs to be pushed
-		 * or other mounts are waiting for an nfsiod).
-		 */
-		/* grab the current contents of the queue */
-		TAILQ_INIT(&iodq);
-		TAILQ_CONCAT(&iodq, &nmp->nm_iodq, r_achain);
-		/* Mark each iod request as being managed by an iod */
-		TAILQ_FOREACH(req, &iodq, r_achain) {
-			lck_mtx_lock(&req->r_mtx);
-			assert(!(req->r_flags & R_IOD));
-			req->r_flags |= R_IOD;
-			lck_mtx_unlock(&req->r_mtx);
-		}
-		lck_mtx_unlock(&nfsiod_mutex);
-
-		/* process the queue */
-		TAILQ_FOREACH_SAFE(req, &iodq, r_achain, treq) {
-			TAILQ_REMOVE(&iodq, req, r_achain);
-			req->r_achain.tqe_next = NFSREQNOLIST;
-			req->r_callback.rcb_func(req);
-		}
-
-		/* now check if there's more/other work to be done */
-		lck_mtx_lock(&nfsiod_mutex);
-		morework = !TAILQ_EMPTY(&nmp->nm_iodq);
-		if (!morework || !TAILQ_EMPTY(&nfsiodmounts)) {
-			/*
-			 * we're going to stop working on this mount but if the
-			 * mount still needs more work so queue it up
-			 */
-			if (morework && nmp->nm_iodlink.tqe_next == NFSNOLIST) {
-				TAILQ_INSERT_TAIL(&nfsiodmounts, nmp, nm_iodlink);
-			}
-			nmp->nm_niod = NULL;
-			niod->niod_nmp = NULL;
-		}
+	if (nfsh.f_buf_page_inval == NULL) {
+		return 0;
 	}
 
-	/* loop if there's still a mount to work on */
-	if (!niod->niod_nmp && !TAILQ_EMPTY(&nfsiodmounts)) {
-		niod->niod_nmp = TAILQ_FIRST(&nfsiodmounts);
-		TAILQ_REMOVE(&nfsiodmounts, niod->niod_nmp, nm_iodlink);
-		niod->niod_nmp->nm_iodlink.tqe_next = NFSNOLIST;
-	}
-	if (niod->niod_nmp) {
-		goto worktodo;
-	}
-
-	/* queue ourselves back up - if there aren't too many threads running */
-	if (nfsiod_thread_count <= NFSIOD_MAX) {
-		TAILQ_INSERT_HEAD(&nfsiodfree, niod, niod_link);
-		error = msleep0(niod, &nfsiod_mutex, PWAIT | PDROP, "nfsiod", NFS_ASYNCTHREADMAXIDLE * hz, nfsiod_continue);
-		/* shouldn't return... so we have an error */
-		/* remove an old nfsiod struct and terminate */
-		lck_mtx_lock(&nfsiod_mutex);
-		if ((niod = TAILQ_LAST(&nfsiodfree, nfsiodlist))) {
-			TAILQ_REMOVE(&nfsiodfree, niod, niod_link);
-		}
-	}
-	nfsiod_terminate(niod);
-	/*NOTREACHED*/
-	return 0;
+	return nfsh.f_buf_page_inval(vp, offset);
 }
-
-#endif /* CONFIG_NFS_CLIENT */
 
 #if !CONFIG_NFS_SERVER
 #define __no_nfs_server_unused      __unused
@@ -560,6 +240,44 @@ nfsrv_find_exportfs(const char *ptr)
 	return nxfs;
 }
 
+static char *
+nfsrv_export_remainder(char *path, char *nxfs_path)
+{
+	int error;
+	vnode_t vp, rvp;
+	struct nameidata nd;
+	size_t pathbuflen = MAXPATHLEN;
+	char real_mntonname[MAXPATHLEN];
+
+	if (!strncmp(path, nxfs_path, strlen(nxfs_path))) {
+		return path + strlen(nxfs_path);
+	}
+
+	NDINIT(&nd, LOOKUP, OP_LOOKUP, FOLLOW | LOCKLEAF | AUDITVNPATH1,
+	    UIO_SYSSPACE, CAST_USER_ADDR_T(nxfs_path), vfs_context_current());
+	error = namei(&nd);
+	if (error) {
+		return NULL;
+	}
+
+	nameidone(&nd);
+	vp = nd.ni_vp;
+
+	error = VFS_ROOT(vnode_mount(vp), &rvp, vfs_context_current());
+	vnode_put(vp);
+	if (error) {
+		return NULL;
+	}
+
+	error = vn_getpath_ext(rvp, NULLVP, real_mntonname, &pathbuflen, VN_GETPATH_FSENTER | VN_GETPATH_NO_FIRMLINK);
+	vnode_put(rvp);
+
+	if (error || strncmp(path, real_mntonname, strlen(real_mntonname))) {
+		return NULL;
+	}
+
+	return path + strlen(real_mntonname);
+}
 /*
  * Get file handle system call
  */
@@ -615,13 +333,13 @@ getfh(
 
 	// find exportfs that matches f_mntonname
 	lck_rw_lock_shared(&nfsrv_export_rwlock);
-	ptr = vnode_mount(vp)->mnt_vfsstat.f_mntonname;
+	ptr = vfs_statfs(vnode_mount(vp))->f_mntonname;
 	if ((nxfs = nfsrv_find_exportfs(ptr)) == NULL) {
 		/*
 		 * The f_mntonname might be a firmlink path.  Resolve
 		 * it into a physical path and try again.
 		 */
-		int pathbuflen = MAXPATHLEN;
+		size_t pathbuflen = MAXPATHLEN;
 		vnode_t rvp;
 
 		error = VFS_ROOT(vnode_mount(vp), &rvp, vfs_context_current());
@@ -642,7 +360,11 @@ getfh(
 		goto out;
 	}
 	// find export that best matches remainder of path
-	ptr = path + strlen(nxfs->nxfs_path);
+	if ((ptr = nfsrv_export_remainder(path, nxfs->nxfs_path)) == NULL) {
+		error = EINVAL;
+		goto out;
+	}
+
 	while (*ptr && (*ptr == '/')) {
 		ptr++;
 	}
@@ -689,9 +411,7 @@ out:
 	error = copyout((caddr_t)&nfh, uap->fhp, sizeof(fhandle_t));
 	return error;
 }
-#endif /* CONFIG_NFS_SERVER */
 
-#if CONFIG_NFS_SERVER
 extern const struct fileops vnops;
 
 /*
@@ -811,7 +531,7 @@ fhopen(proc_t p __no_nfs_server_unused,
 	 */
 
 	// starting here... error paths should call vn_close/vnode_put
-	if ((error = falloc(p, &nfp, &indx, ctx)) != 0) {
+	if ((error = falloc(p, &nfp, &indx)) != 0) {
 		vn_close(vp, fmode & FMASK, ctx);
 		goto bad;
 	}
@@ -819,7 +539,7 @@ fhopen(proc_t p __no_nfs_server_unused,
 
 	fp->fp_glob->fg_flag = fmode & FMASK;
 	fp->fp_glob->fg_ops = &vnops;
-	fp->fp_glob->fg_data = (caddr_t)vp;
+	fp_set_data(fp, vp);
 
 	// XXX do we really need to support this with fhopen()?
 	if (fmode & (O_EXLOCK | O_SHLOCK)) {
@@ -861,9 +581,7 @@ bad:
 	vnode_put(vp);
 	return error;
 }
-#endif /* CONFIG_NFS_SERVER */
 
-#if CONFIG_NFS_SERVER
 /*
  * NFS server pseudo system call
  */
@@ -880,9 +598,9 @@ nfssvc(proc_t p __no_nfs_server_unused,
 	AUDIT_ARG(cmd, uap->flag);
 
 	/*
-	 * Must be super user for most operations (export ops checked later).
+	 * Must be super user for NFSSVC_NFSD and NFSSVC_ADDSOCK operations.
 	 */
-	if ((uap->flag != NFSSVC_EXPORT) && ((error = proc_suser(p)))) {
+	if ((uap->flag & (NFSSVC_NFSD | NFSSVC_ADDSOCK)) && ((error = proc_suser(p)))) {
 		return error;
 	}
 #if CONFIG_MACF
@@ -938,6 +656,16 @@ nfssvc(proc_t p __no_nfs_server_unused,
 		error = nfssvc_nfsd();
 	} else if (uap->flag & NFSSVC_EXPORT) {
 		error = nfssvc_export(uap->argp);
+	} else if (uap->flag & NFSSVC_EXPORTSTATS) {
+		error = nfssvc_exportstats(p, uap->argp);
+	} else if (uap->flag & NFSSVC_USERSTATS) {
+		error = nfssvc_userstats(p, uap->argp);
+	} else if (uap->flag & NFSSVC_USERCOUNT) {
+		error = nfssvc_usercount(p, uap->argp);
+	} else if (uap->flag & NFSSVC_ZEROSTATS) {
+		error = nfssvc_zerostats();
+	} else if (uap->flag & NFSSVC_SRVSTATS) {
+		error = nfssvc_srvstats(p, uap->argp);
 	} else {
 		error = EINVAL;
 	}
@@ -946,9 +674,6 @@ nfssvc(proc_t p __no_nfs_server_unused,
 	}
 	return error;
 }
-#endif /* CONFIG_NFS_SERVER */
-
-#if CONFIG_NFS_SERVER
 
 /*
  * Adds a socket to the list for servicing by nfsds.
@@ -958,9 +683,9 @@ nfssvc_addsock(socket_t so, mbuf_t mynam)
 {
 	struct nfsrv_sock *slp;
 	int error = 0, sodomain, sotype, soprotocol, on = 1;
-	int first, sobufsize;
+	int first;
 	struct timeval timeo;
-	u_quad_t sbmaxsize;
+	uint64_t sobufsize;
 
 	/* make sure mbuf constants are set up */
 	if (!nfs_mbuf_mhlen) {
@@ -968,6 +693,15 @@ nfssvc_addsock(socket_t so, mbuf_t mynam)
 	}
 
 	sock_gettype(so, &sodomain, &sotype, &soprotocol);
+
+	bool valid_inet = (sodomain == AF_INET || sodomain == AF_INET6) && (soprotocol == IPPROTO_UDP || soprotocol == IPPROTO_TCP);
+	bool valid_unix = sodomain == AF_UNIX;
+
+	if (!valid_inet && !valid_unix) {
+		log(LOG_ERR, "nfssvc_addsock: unexpected af=%u proto=%u combination\n", sodomain, soprotocol);
+		mbuf_freem(mynam);
+		return EINVAL;
+	}
 
 	/* There should be only one UDP socket for each of IPv4 and IPv6 */
 	if ((sodomain == AF_INET) && (soprotocol == IPPROTO_UDP) && nfsrv_udpsock) {
@@ -993,17 +727,16 @@ nfssvc_addsock(socket_t so, mbuf_t mynam)
 		sock_setsockopt(so, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
 	}
 
-	/* Calculate maximum supported socket buffers sizes */
-	sbmaxsize = (u_quad_t)sb_max * MCLBYTES / (MSIZE + MCLBYTES);
-
 	/* Set socket buffer sizes for UDP/TCP */
-	sobufsize = min(sbmaxsize, (sotype == SOCK_DGRAM) ? NFS_UDPSOCKBUF : NFSRV_TCPSOCKBUF);
-	error |= sock_setsockopt(so, SOL_SOCKET, SO_SNDBUF, &sobufsize, sizeof(sobufsize));
-	error |= sock_setsockopt(so, SOL_SOCKET, SO_RCVBUF, &sobufsize, sizeof(sobufsize));
-
+	sobufsize = (sotype == SOCK_DGRAM) ? NFS_UDPSOCKBUF : NFSRV_TCPSOCKBUF;
+	error = sock_setsockopt(so, SOL_SOCKET, SO_SNDBUF, &sobufsize, sizeof(sobufsize));
 	if (error) {
-		log(LOG_INFO, "nfssvc_addsock: socket buffer setting error(s) %d\n", error);
-		error = 0;
+		log(LOG_INFO, "nfssvc_addsock: socket buffer setting SO_SNDBUF to %llu error(s) %d\n", sobufsize, error);
+	}
+
+	error = sock_setsockopt(so, SOL_SOCKET, SO_RCVBUF, &sobufsize, sizeof(sobufsize));
+	if (error) {
+		log(LOG_INFO, "nfssvc_addsock: socket buffer setting SO_RCVBUF to %llu error(s) %d\n", sobufsize, error);
 	}
 	sock_nointerrupt(so, 0);
 
@@ -1014,20 +747,18 @@ nfssvc_addsock(socket_t so, mbuf_t mynam)
 	 */
 	timeo.tv_usec = 0;
 	timeo.tv_sec = 1;
-	error |= sock_setsockopt(so, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo));
-	timeo.tv_sec = 30;
-	error |= sock_setsockopt(so, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo));
+	error = sock_setsockopt(so, SOL_SOCKET, SO_RCVTIMEO, &timeo, sizeof(timeo));
 	if (error) {
-		log(LOG_INFO, "nfssvc_addsock: socket timeout setting error(s) %d\n", error);
-		error = 0;
+		log(LOG_INFO, "nfssvc_addsock: socket timeout setting SO_RCVTIMEO error(s) %d\n", error);
 	}
 
-	MALLOC(slp, struct nfsrv_sock *, sizeof(struct nfsrv_sock), M_NFSSVC, M_WAITOK);
-	if (!slp) {
-		mbuf_freem(mynam);
-		return ENOMEM;
+	timeo.tv_sec = 30;
+	error = sock_setsockopt(so, SOL_SOCKET, SO_SNDTIMEO, &timeo, sizeof(timeo));
+	if (error) {
+		log(LOG_INFO, "nfssvc_addsock: socket timeout setting SO_SNDTIMEO error(s) %d\n", error);
 	}
-	bzero((caddr_t)slp, sizeof(struct nfsrv_sock));
+
+	slp = kalloc_type(struct nfsrv_sock, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 	lck_rw_init(&slp->ns_rwlock, &nfsrv_slp_rwlock_group, LCK_ATTR_NULL);
 	lck_mtx_init(&slp->ns_wgmutex, &nfsrv_slp_mutex_group, LCK_ATTR_NULL);
 
@@ -1082,6 +813,7 @@ nfssvc_addsock(socket_t so, mbuf_t mynam)
 			} else {
 				struct nfsrv_sock *old_slp;
 				struct timeval now;
+				microuptime(&now);
 				time_t time_to_wait = nfsrv_sock_idle_timeout;
 				/*
 				 * Get the oldest tcp socket and calculate the
@@ -1090,7 +822,6 @@ nfssvc_addsock(socket_t so, mbuf_t mynam)
 				 */
 				TAILQ_FOREACH(old_slp, &nfsrv_socklist, ns_chain) {
 					if (old_slp->ns_sotype == SOCK_STREAM) {
-						microuptime(&now);
 						time_to_wait -= now.tv_sec - old_slp->ns_timestamp;
 						if (time_to_wait < 1) {
 							time_to_wait = 1;
@@ -1119,7 +850,6 @@ nfssvc_addsock(socket_t so, mbuf_t mynam)
 	slp->ns_so = so;
 	slp->ns_sotype = sotype;
 	slp->ns_nam = mynam;
-	slp->ns_sobufsize = sobufsize;
 
 	/* set up the socket up-call */
 	nfsrv_uc_addsock(slp, first);
@@ -1189,11 +919,7 @@ nfssvc_nfsd(void)
 	writes_todo = 0;
 #endif
 
-	MALLOC(nfsd, struct nfsd *, sizeof(struct nfsd), M_NFSD, M_WAITOK);
-	if (!nfsd) {
-		return ENOMEM;
-	}
-	bzero(nfsd, sizeof(struct nfsd));
+	nfsd = kalloc_type(struct nfsd, Z_WAITOK | Z_ZERO | Z_NOFAIL);
 	lck_mtx_lock(&nfsd_mutex);
 	if (nfsd_thread_count++ == 0) {
 		nfsrv_initcache();              /* Init the server request cache */
@@ -1361,12 +1087,12 @@ nfssvc_nfsd(void)
 			if (nfsrv_require_resv_port) {
 				/* Check if source port is a reserved port */
 				in_port_t port = 0;
-				struct sockaddr *saddr = mbuf_data(nd->nd_nam);
+				struct sockaddr *saddr = mtod(nd->nd_nam, struct sockaddr*);
 
 				if (saddr->sa_family == AF_INET) {
-					port = ntohs(((struct sockaddr_in*)saddr)->sin_port);
+					port = ntohs((SIN(saddr))->sin_port);
 				} else if (saddr->sa_family == AF_INET6) {
-					port = ntohs(((struct sockaddr_in6*)saddr)->sin6_port);
+					port = ntohs((SIN6(saddr))->sin6_port);
 				}
 				if ((port >= IPPORT_RESERVED) && (nd->nd_procnum != NFSPROC_NULL)) {
 					nd->nd_procnum = NFSPROC_NOOP;
@@ -1412,7 +1138,7 @@ nfssvc_nfsd(void)
 					break;
 				}
 				if (error) {
-					OSAddAtomic64(1, &nfsstats.srv_errs);
+					OSAddAtomic64(1, &nfsrvstats.srv_errs);
 					nfsrv_updatecache(nd, FALSE, mrep);
 					if (nd->nd_nam2) {
 						mbuf_freem(nd->nd_nam2);
@@ -1420,7 +1146,7 @@ nfssvc_nfsd(void)
 					}
 					break;
 				}
-				OSAddAtomic64(1, &nfsstats.srvrpccnt[nd->nd_procnum]);
+				OSAddAtomic64(1, &nfsrvstats.srvrpccntv3[nd->nd_procnum]);
 				nfsrv_updatecache(nd, TRUE, mrep);
 				OS_FALLTHROUGH;
 
@@ -1462,7 +1188,7 @@ nfssvc_nfsd(void)
 				if (slp->ns_sotype == SOCK_STREAM) {
 					error = mbuf_prepend(&m, NFSX_UNSIGNED, MBUF_WAITOK);
 					if (!error) {
-						*(u_int32_t*)mbuf_data(m) = htonl(0x80000000 | siz);
+						*mtod(m, u_int32_t *) = htonl(0x80000000 | siz);
 					}
 				}
 				if (!error) {
@@ -1556,7 +1282,7 @@ nfssvc_nfsd(void)
 	lck_mtx_lock(&nfsd_mutex);
 done:
 	TAILQ_REMOVE(&nfsd_head, nfsd, nfsd_chain);
-	FREE(nfsd, M_NFSD);
+	kfree_type(struct nfsd, nfsd);
 	if (--nfsd_thread_count == 0) {
 		nfsrv_cleanup();
 	}
@@ -1571,7 +1297,7 @@ nfssvc_export(user_addr_t argp)
 	struct user_nfs_export_args unxa;
 	vfs_context_t ctx = vfs_context_current();
 
-	is_64bit = IS_64BIT_PROCESS(vfs_context_proc(ctx));
+	is_64bit = vfs_context_is64bit(ctx);
 
 	/* copy in pointers to path and export args */
 	if (is_64bit) {
@@ -1597,6 +1323,392 @@ nfssvc_export(user_addr_t argp)
 	error = nfsrv_export(&unxa, ctx);
 
 	return error;
+}
+
+int
+nfssvc_exportstats(proc_t p, user_addr_t argp)
+{
+	int error = 0;
+	uint pos;
+	struct nfs_exportfs *nxfs;
+	struct nfs_export *nx;
+	struct nfs_export_stat_desc stat_desc = {};
+	struct nfs_export_stat_rec statrec;
+	uint numExports, totlen, count;
+	size_t numRecs;
+	user_addr_t oldp, newlenp;
+	user_size_t oldlen, newlen;
+	struct user_iovec iov[2];
+
+	error = copyin_user_iovec_array(argp, IS_64BIT_PROCESS(p) ? UIO_USERSPACE64 : UIO_USERSPACE32, 2, iov, 2);
+	if (error) {
+		return error;
+	}
+
+	oldp = iov[0].iov_base;
+	oldlen = iov[0].iov_len;
+	newlenp = iov[1].iov_base;
+	newlen = iov[1].iov_len;
+
+	/* setup export stat descriptor */
+	stat_desc.rec_vers = NFS_EXPORT_STAT_REC_VERSION;
+
+	if (!nfsrv_is_initialized()) {
+		stat_desc.rec_count = 0;
+		if (oldp && (oldlen >= sizeof(struct nfs_export_stat_desc))) {
+			error = copyout(&stat_desc, oldp, sizeof(struct nfs_export_stat_desc));
+		}
+		size_t stat_desc_size = sizeof(struct nfs_export_stat_desc);
+		if (!error && newlenp && newlen >= sizeof(stat_desc_size)) {
+			error = copyout(&stat_desc_size, newlenp, sizeof(stat_desc_size));
+		}
+		return error;
+	}
+
+	/* Count the number of exported directories */
+	lck_rw_lock_shared(&nfsrv_export_rwlock);
+	numExports = 0;
+	LIST_FOREACH(nxfs, &nfsrv_exports, nxfs_next)
+	LIST_FOREACH(nx, &nxfs->nxfs_exports, nx_next)
+	numExports += 1;
+
+	/* update stat descriptor's export record count */
+	stat_desc.rec_count = numExports;
+
+	/* calculate total size of required buffer */
+	totlen = sizeof(struct nfs_export_stat_desc) + (numExports * sizeof(struct nfs_export_stat_rec));
+
+	/* Check caller's buffer */
+	if (oldp == 0 || newlenp == 0) {
+		lck_rw_done(&nfsrv_export_rwlock);
+		/* indicate required buffer len */
+		if (newlenp && newlen >= sizeof(totlen)) {
+			error = copyout(&totlen, newlenp, sizeof(totlen));
+		}
+		return error;
+	}
+
+	/* We require the caller's buffer to be at least large enough to hold the descriptor */
+	if (oldlen < sizeof(struct nfs_export_stat_desc) || newlen < sizeof(totlen)) {
+		lck_rw_done(&nfsrv_export_rwlock);
+		/* indicate required buffer len */
+		if (newlenp && newlen >= sizeof(totlen)) {
+			(void)copyout(&totlen, newlenp, sizeof(totlen));
+		}
+		return ENOMEM;
+	}
+
+	/* indicate required buffer len */
+	error = copyout(&totlen, newlenp, sizeof(totlen));
+	if (error) {
+		lck_rw_done(&nfsrv_export_rwlock);
+		return error;
+	}
+
+	/* check if export table is empty */
+	if (!numExports) {
+		lck_rw_done(&nfsrv_export_rwlock);
+		error = copyout(&stat_desc, oldp, sizeof(struct nfs_export_stat_desc));
+		return error;
+	}
+
+	/* calculate how many actual export stat records fit into caller's buffer */
+	numRecs = (totlen - sizeof(struct nfs_export_stat_desc)) / sizeof(struct nfs_export_stat_rec);
+
+	if (!numRecs) {
+		/* caller's buffer can only accomodate descriptor */
+		lck_rw_done(&nfsrv_export_rwlock);
+		stat_desc.rec_count = 0;
+		error = copyout(&stat_desc, oldp, sizeof(struct nfs_export_stat_desc));
+		return error;
+	}
+
+	/* adjust to actual number of records to copyout to caller's buffer */
+	if (numRecs > numExports) {
+		numRecs = numExports;
+	}
+
+	/* set actual number of records we are returning */
+	stat_desc.rec_count = numRecs;
+
+	/* first copy out the stat descriptor */
+	pos = 0;
+	error = copyout(&stat_desc, oldp + pos, sizeof(struct nfs_export_stat_desc));
+	if (error) {
+		lck_rw_done(&nfsrv_export_rwlock);
+		return error;
+	}
+	pos += sizeof(struct nfs_export_stat_desc);
+
+	/* Loop through exported directories */
+	count = 0;
+	LIST_FOREACH(nxfs, &nfsrv_exports, nxfs_next) {
+		LIST_FOREACH(nx, &nxfs->nxfs_exports, nx_next) {
+			if (count >= numRecs) {
+				break;
+			}
+
+			/* build exported filesystem path */
+			memset(statrec.path, 0, sizeof(statrec.path));
+			snprintf(statrec.path, sizeof(statrec.path), "%s%s%s",
+			    nxfs->nxfs_path, ((nxfs->nxfs_path[1] && nx->nx_path[0]) ? "/" : ""),
+			    nx->nx_path);
+
+			/* build the 64-bit export stat counters */
+			statrec.ops = ((uint64_t)nx->nx_stats.ops.hi << 32) |
+			    nx->nx_stats.ops.lo;
+			statrec.bytes_read = ((uint64_t)nx->nx_stats.bytes_read.hi << 32) |
+			    nx->nx_stats.bytes_read.lo;
+			statrec.bytes_written = ((uint64_t)nx->nx_stats.bytes_written.hi << 32) |
+			    nx->nx_stats.bytes_written.lo;
+			error = copyout(&statrec, oldp + pos, sizeof(statrec));
+			if (error) {
+				lck_rw_done(&nfsrv_export_rwlock);
+				return error;
+			}
+			/* advance buffer position */
+			pos += sizeof(statrec);
+		}
+	}
+	lck_rw_done(&nfsrv_export_rwlock);
+
+	return error;
+}
+
+int
+nfssvc_userstats(proc_t p, user_addr_t argp)
+{
+	int error = 0;
+	struct nfs_exportfs *nxfs;
+	struct nfs_export *nx;
+	struct nfs_active_user_list *ulist;
+	struct nfs_user_stat_desc ustat_desc = {};
+	struct nfs_user_stat_node *unode, *unode_next;
+	struct nfs_user_stat_user_rec ustat_rec;
+	struct nfs_user_stat_path_rec upath_rec;
+	uint bytes_total, recs_copied, pos;
+	size_t bytes_avail;
+	user_addr_t oldp, newlenp;
+	user_size_t oldlen, newlen;
+	struct user_iovec iov[2];
+
+	error = copyin_user_iovec_array(argp, IS_64BIT_PROCESS(p) ? UIO_USERSPACE64 : UIO_USERSPACE32, 2, iov, 2);
+	if (error) {
+		return error;
+	}
+
+	oldp = iov[0].iov_base;
+	oldlen = iov[0].iov_len;
+	newlenp = iov[1].iov_base;
+	newlen = iov[1].iov_len;
+
+	/* init structures used for copying out of kernel */
+	ustat_desc.rec_vers = NFS_USER_STAT_REC_VERSION;
+	ustat_rec.rec_type = NFS_USER_STAT_USER_REC;
+	upath_rec.rec_type = NFS_USER_STAT_PATH_REC;
+
+	/* initialize counters */
+	bytes_total = sizeof(struct nfs_user_stat_desc);
+	bytes_avail  = oldlen;
+	recs_copied = 0;
+
+	if (!nfsrv_is_initialized()) { /* NFS server not initialized, so no stats */
+		goto ustat_skip;
+	}
+
+	/* reclaim old expired user nodes */
+	nfsrv_active_user_list_reclaim();
+
+	/* reserve space for the buffer descriptor */
+	if (bytes_avail >= sizeof(struct nfs_user_stat_desc)) {
+		bytes_avail -= sizeof(struct nfs_user_stat_desc);
+	} else {
+		bytes_avail = 0;
+	}
+
+	/* put buffer position past the buffer descriptor */
+	pos = sizeof(struct nfs_user_stat_desc);
+
+	/* Loop through exported directories */
+	lck_rw_lock_shared(&nfsrv_export_rwlock);
+	LIST_FOREACH(nxfs, &nfsrv_exports, nxfs_next) {
+		LIST_FOREACH(nx, &nxfs->nxfs_exports, nx_next) {
+			/* copy out path */
+			if (bytes_avail >= sizeof(struct nfs_user_stat_path_rec)) {
+				memset(upath_rec.path, 0, sizeof(upath_rec.path));
+				snprintf(upath_rec.path, sizeof(upath_rec.path), "%s%s%s",
+				    nxfs->nxfs_path, ((nxfs->nxfs_path[1] && nx->nx_path[0]) ? "/" : ""),
+				    nx->nx_path);
+
+				error = copyout(&upath_rec, oldp + pos, sizeof(struct nfs_user_stat_path_rec));
+				if (error) {
+					/* punt */
+					goto ustat_done;
+				}
+
+				pos += sizeof(struct nfs_user_stat_path_rec);
+				bytes_avail -= sizeof(struct nfs_user_stat_path_rec);
+				recs_copied++;
+			} else {
+				/* Caller's buffer is exhausted */
+				bytes_avail = 0;
+			}
+
+			bytes_total += sizeof(struct nfs_user_stat_path_rec);
+
+			/* Scan through all user nodes of this export */
+			ulist = &nx->nx_user_list;
+			lck_mtx_lock(&ulist->user_mutex);
+			for (unode = TAILQ_FIRST(&ulist->user_lru); unode; unode = unode_next) {
+				unode_next = TAILQ_NEXT(unode, lru_link);
+
+				/* copy out node if there is space */
+				if (bytes_avail >= sizeof(struct nfs_user_stat_user_rec)) {
+					/* prepare a user stat rec for copying out */
+					ustat_rec.uid = unode->uid;
+					memset(&ustat_rec.sock, 0, sizeof(ustat_rec.sock));
+					bcopy(&unode->sock, &ustat_rec.sock, unode->sock.ss_len);
+					ustat_rec.ops = unode->ops;
+					ustat_rec.bytes_read = unode->bytes_read;
+					ustat_rec.bytes_written = unode->bytes_written;
+					ustat_rec.tm_start = unode->tm_start;
+					ustat_rec.tm_last = unode->tm_last;
+
+					error = copyout(&ustat_rec, oldp + pos, sizeof(struct nfs_user_stat_user_rec));
+
+					if (error) {
+						/* punt */
+						lck_mtx_unlock(&ulist->user_mutex);
+						goto ustat_done;
+					}
+
+					pos += sizeof(struct nfs_user_stat_user_rec);
+					bytes_avail -= sizeof(struct nfs_user_stat_user_rec);
+					recs_copied++;
+				} else {
+					/* Caller's buffer is exhausted */
+					bytes_avail = 0;
+				}
+				bytes_total += sizeof(struct nfs_user_stat_user_rec);
+			}
+			/* can unlock this export's list now */
+			lck_mtx_unlock(&ulist->user_mutex);
+		}
+	}
+
+ustat_done:
+	/* unlock the export table */
+	lck_rw_done(&nfsrv_export_rwlock);
+
+ustat_skip:
+	/* indicate number of actual records copied */
+	ustat_desc.rec_count = recs_copied;
+
+	if (!error) {
+		/* check if there was enough room for the buffer descriptor */
+		if (oldlen >= sizeof(struct nfs_user_stat_desc)) {
+			error = copyout(&ustat_desc, oldp, sizeof(struct nfs_user_stat_desc));
+		} else {
+			error = ENOMEM;
+		}
+
+		/* always indicate required buffer size */
+		if (!error && newlenp && newlen >= sizeof(bytes_total)) {
+			error = copyout(&bytes_total, newlenp, sizeof(bytes_total));
+		}
+	}
+	return error;
+}
+
+int
+nfssvc_usercount(proc_t p, user_addr_t argp)
+{
+	int error;
+	user_addr_t oldp, newlenp;
+	user_size_t oldlen, newlen;
+	struct user_iovec iov[2];
+	size_t stat_size = sizeof(nfsrv_user_stat_node_count);
+
+	error = copyin_user_iovec_array(argp, IS_64BIT_PROCESS(p) ? UIO_USERSPACE64 : UIO_USERSPACE32, 2, iov, 2);
+	if (error) {
+		return error;
+	}
+
+	oldp = iov[0].iov_base;
+	oldlen = iov[0].iov_len;
+	newlenp = iov[1].iov_base;
+	newlen = iov[1].iov_len;
+
+	if (!oldp) {
+		if (newlenp && newlen >= sizeof(stat_size)) {
+			error = copyout(&stat_size, newlenp, sizeof(stat_size));
+		}
+		return error;
+	}
+
+	if (oldlen < stat_size) {
+		if (newlenp && newlen >= sizeof(stat_size)) {
+			(void)copyout(&stat_size, newlenp, sizeof(stat_size));
+		}
+		return ENOMEM;
+	}
+
+	if (nfsrv_is_initialized()) {
+		/* reclaim old expired user nodes */
+		nfsrv_active_user_list_reclaim();
+	}
+
+	error = copyout(&nfsrv_user_stat_node_count, oldp, sizeof(nfsrv_user_stat_node_count));
+
+	return error;
+}
+
+int
+nfssvc_zerostats(void)
+{
+	bzero(&nfsrvstats, sizeof nfsrvstats);
+	return 0;
+}
+
+int
+nfssvc_srvstats(proc_t p, user_addr_t argp)
+{
+	int error;
+	user_addr_t oldp, newlenp;
+	user_size_t oldlen, newlen;
+	struct user_iovec iov[2];
+	size_t stat_size = sizeof(nfsrvstats);
+
+	error = copyin_user_iovec_array(argp, IS_64BIT_PROCESS(p) ? UIO_USERSPACE64 : UIO_USERSPACE32, 2, iov, 2);
+	if (error) {
+		return error;
+	}
+
+	oldp = iov[0].iov_base;
+	oldlen = iov[0].iov_len;
+	newlenp = iov[1].iov_base;
+	newlen = iov[1].iov_len;
+
+	if (!oldp) {
+		if (newlenp && newlen >= sizeof(stat_size)) {
+			error = copyout(&stat_size, newlenp, sizeof(stat_size));
+		}
+		return error;
+	}
+
+	if (oldlen < stat_size) {
+		if (newlenp && newlen >= sizeof(stat_size)) {
+			(void)copyout(&stat_size, newlenp, sizeof(stat_size));
+		}
+		return ENOMEM;
+	}
+
+	error = copyout(&nfsrvstats, oldp, stat_size);
+	if (error) {
+		return error;
+	}
+
+	return 0;
 }
 
 /*
@@ -1642,6 +1754,9 @@ nfsrv_slpfree(struct nfsrv_sock *slp)
 		sock_release(slp->ns_so);
 		slp->ns_so = NULL;
 	}
+	if (slp->ns_recslen) {
+		OSAddAtomic(-slp->ns_recslen, &nfsrv_unprocessed_rpc_current);
+	}
 	if (slp->ns_nam) {
 		mbuf_free(slp->ns_nam);
 	}
@@ -1679,7 +1794,7 @@ nfsrv_slpfree(struct nfsrv_sock *slp)
 
 	lck_rw_destroy(&slp->ns_rwlock, &nfsrv_slp_rwlock_group);
 	lck_mtx_destroy(&slp->ns_wgmutex, &nfsrv_slp_mutex_group);
-	FREE(slp, M_NFSSVC);
+	kfree_type(struct nfsrv_sock, slp);
 }
 
 /*
@@ -1849,7 +1964,7 @@ nfsrv_cleanup(void)
 			kauth_cred_unref(&fp->fm_context.vc_ucred);
 			nfp = LIST_NEXT(fp, fm_link);
 			LIST_REMOVE(fp, fm_link);
-			FREE(fp, M_TEMP);
+			kfree_type(struct nfsrv_fmod, fp);
 		}
 	}
 	nfsrv_fmod_pending = 0;

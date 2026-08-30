@@ -65,11 +65,12 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     # fails with no other clue as to who wanted it.
     #   i386_set_ldt   - x86 LDT syscall, no ARM equivalent
     #   nexttoward,
-    #   scalbnl        - openlibm builds these from its ld80/ tree, which is
+    #   scalbnl,
+    #   *roundl        - openlibm builds these from its ld80/ tree, which is
     #                    80-bit x87 long double; on arm64 long double is double
     #   fe*except      - openlibm's fenv is the x86 SSE/x87 implementation
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
-        "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|getfsstat|i386_set_ldt)$")
+        "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|roundl|lroundl|llroundl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|getfsstat|i386_set_ldt)$")
     if(PUREDARWIN_ARM32)
         # The ARMv6 bootstrap runtime does not provide the x86-only long
         # double/fenv entry points, 64-bit integer builtins, generic DWARF

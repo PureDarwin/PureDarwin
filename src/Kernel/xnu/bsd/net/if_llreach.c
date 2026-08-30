@@ -113,7 +113,6 @@
 #include <sys/kernel.h>
 #include <sys/malloc.h>
 #include <sys/tree.h>
-#include <sys/sysctl.h>
 #include <sys/mcache.h>
 #include <sys/protosw.h>
 
@@ -126,16 +125,17 @@
 #include <net/dlil.h>
 #include <net/kpi_interface.h>
 #include <net/route.h>
+#include <net/net_sysctl.h>
 
 #include <kern/assert.h>
 #include <kern/locks.h>
+#include <kern/uipc_domain.h>
 #include <kern/zalloc.h>
 
 #include <netinet6/in6_var.h>
 #include <netinet6/nd6.h>
 
-static ZONE_DECLARE(iflr_zone, "if_llreach", sizeof(struct if_llreach),
-    ZC_ZFREE_CLEARMEM);
+static KALLOC_TYPE_DEFINE(iflr_zone, struct if_llreach, NET_KT_DEFAULT);
 
 static struct if_llreach *iflr_alloc(zalloc_flags_t);
 static void iflr_free(struct if_llreach *);
@@ -239,7 +239,8 @@ ifnet_llreach_reachable_delta(struct if_llreach *lr, u_int64_t tval)
 }
 
 void
-ifnet_llreach_set_reachable(struct ifnet *ifp, u_int16_t llproto, void *addr,
+ifnet_llreach_set_reachable(struct ifnet *ifp, u_int16_t llproto,
+    void *__sized_by(alen) addr,
     unsigned int alen)
 {
 	struct if_llreach find, *lr;
@@ -263,7 +264,8 @@ ifnet_llreach_set_reachable(struct ifnet *ifp, u_int16_t llproto, void *addr,
 }
 
 struct if_llreach *
-ifnet_llreach_alloc(struct ifnet *ifp, u_int16_t llproto, void *addr,
+ifnet_llreach_alloc(struct ifnet *ifp, u_int16_t llproto,
+    void *__sized_by(alen) addr,
     unsigned int alen, u_int32_t llreach_base)
 {
 	struct if_llreach find, *lr;
@@ -456,7 +458,7 @@ iflr_alloc(zalloc_flags_t how)
 	struct if_llreach *lr = zalloc_flags(iflr_zone, how | Z_ZERO);
 
 	if (lr) {
-		lck_mtx_init(&lr->lr_lock, ifnet_lock_group, ifnet_lock_attr);
+		lck_mtx_init(&lr->lr_lock, &ifnet_lock_group, &ifnet_lock_attr);
 		lr->lr_debug |= IFD_ALLOC;
 	}
 	return lr;
@@ -482,7 +484,7 @@ iflr_free(struct if_llreach *lr)
 	lr->lr_debug &= ~IFD_ALLOC;
 	IFLR_UNLOCK(lr);
 
-	lck_mtx_destroy(&lr->lr_lock, ifnet_lock_group);
+	lck_mtx_destroy(&lr->lr_lock, &ifnet_lock_group);
 	zfree(iflr_zone, lr);
 }
 
@@ -598,22 +600,15 @@ static int
 sysctl_llreach_ifinfo SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp)
-	int             *name, retval = 0;
-	unsigned int    namelen;
+	DECLARE_SYSCTL_HANDLER_ARG_ARRAY(int, 1, name, namelen);
+	int             retval = 0;
 	uint32_t        ifindex;
 	struct if_llreach *lr;
 	struct if_llreach_info lri = {};
 	struct ifnet    *ifp;
 
-	name = (int *)arg1;
-	namelen = (unsigned int)arg2;
-
 	if (req->newptr != USER_ADDR_NULL) {
 		return EPERM;
-	}
-
-	if (namelen != 1) {
-		return EINVAL;
 	}
 
 	ifindex = name[0];

@@ -51,7 +51,7 @@ struct wait_queue { unsigned char opaque[32]; };
 #endif  /* MACH_KERNEL_PRIVATE */
 
 typedef struct zone                     *zone_t;
-#define         ZONE_NULL                       ((zone_t) 0)
+#define         ZONE_NULL               ((zone_t) 0)
 
 typedef struct wait_queue               *wait_queue_t;
 #define         WAIT_QUEUE_NULL         ((wait_queue_t) 0)
@@ -65,6 +65,17 @@ typedef void *                          ipc_kobject_t;
 typedef void *event_t;          /* wait event */
 #define         NO_EVENT                        ((event_t) 0)
 
+/*
+ * Events are used to selectively wake up threads waiting
+ * on a specified wait queue.
+ *
+ * The NO_EVENT64 value is a special event that is used
+ * on wait queues that can be members of wait queue sets
+ * for waits/wakeups that need to prepost to the set.
+ *
+ * This event must be "unique" and it is customary to use
+ * a pointer to memory related to the event.
+ */
 typedef uint64_t event64_t;             /* 64 bit wait event */
 #define         NO_EVENT64              ((event64_t) 0)
 #define         CAST_EVENT64_T(a_ptr)   ((event64_t)((uintptr_t)(a_ptr)))
@@ -196,7 +207,7 @@ typedef int wait_timeout_urgency_t;
 #define TIMEOUT_NO_LEEWAY               (0ULL)
 #define TIMEOUT_WAIT_FOREVER            (0ULL)
 
-#ifdef  KERNEL_PRIVATE
+#if defined(KERNEL_PRIVATE) || SCHED_TEST_HARNESS
 
 /*
  * n.b. this is defined in thread_call.h, but in the TIMEOUT_URGENCY flags space:
@@ -222,17 +233,6 @@ typedef struct affinity_set             *affinity_set_t;
 
 typedef struct run_queue               *run_queue_t;
 #define RUN_QUEUE_NULL                 ((run_queue_t) 0)
-
-typedef struct grrr_run_queue               *grrr_run_queue_t;
-#define GRRR_RUN_QUEUE_NULL                 ((grrr_run_queue_t) 0)
-
-typedef struct grrr_group                                       *grrr_group_t;
-#define GRRR_GROUP_NULL                                         ((grrr_group_t) 0)
-
-#if defined(CONFIG_SCHED_MULTIQ)
-typedef struct sched_group              *sched_group_t;
-#define SCHED_GROUP_NULL                ((sched_group_t) 0)
-#endif /* defined(CONFIG_SCHED_MULTIQ) */
 
 #else   /* MACH_KERNEL_PRIVATE */
 
@@ -317,13 +317,39 @@ typedef enum perfcontrol_class {
 	PERFCONTROL_CLASS_UTILITY        = 5,
 	/* Non-UI Thread (Default/Legacy) */
 	PERFCONTROL_CLASS_NONUI          = 6,
-	/* UI Thread (UI/IN) */
+	/* UI Thread (UI QoS / Per-Frame work) */
 	PERFCONTROL_CLASS_UI             = 7,
 	/* Above UI Thread */
 	PERFCONTROL_CLASS_ABOVEUI        = 8,
+	/* Frame-async UI Thread */
+	PERFCONTROL_CLASS_USER_INITIATED = 9,
 	/* Maximum class */
-	PERFCONTROL_CLASS_MAX            = 9,
+	PERFCONTROL_CLASS_MAX            = 10,
 } perfcontrol_class_t;
+
+typedef enum {
+	REASON_NONE,
+	REASON_SYSTEM,
+	REASON_USER,
+	REASON_CLPC_SYSTEM,
+	REASON_CLPC_USER,
+	REASON_PMGR_SYSTEM,
+} processor_reason_t;
+
+/*
+ * Internal validation policy for resolving a proc ref from a proc_ident
+ */
+enum proc_ident_validation_policy {
+	// Use all identifier metadata to validate the lookup
+	IDENT_VALIDATION_PROC_EXACT = 0b0000,
+	// The process may begin to exit, or has exited before the lookup,
+	// meaning proc_find() may fail.
+	IDENT_VALIDATION_PROC_MAY_EXIT = 0b0001,
+	// Use only p_uniqueid for validation, since p_idversion is allowed
+	// to increment across exec
+	IDENT_VALIDATION_PROC_MAY_EXEC = 0b0010,
+};
+typedef uint8_t proc_ident_validation_policy_t;
 
 /*
  * struct sched_clutch_edge
@@ -352,6 +378,24 @@ typedef union sched_clutch_edge {
 	uint64_t sce_edge_packed;
 } sched_clutch_edge;
 
-#endif  /* KERNEL_PRIVATE */
+/*
+ * Cluster shared resource management
+ *
+ * The options describe the various shared cluster resource
+ * types that can be contended under load and need special
+ * handling from the scheduler.
+ */
+__options_decl(cluster_shared_rsrc_type_t, uint32_t, {
+	CLUSTER_SHARED_RSRC_TYPE_RR                     = 0,
+	CLUSTER_SHARED_RSRC_TYPE_NATIVE_FIRST           = 1,
+	CLUSTER_SHARED_RSRC_TYPE_COUNT                  = 2,
+	CLUSTER_SHARED_RSRC_TYPE_MIN                    = CLUSTER_SHARED_RSRC_TYPE_RR,
+	CLUSTER_SHARED_RSRC_TYPE_NONE                   = CLUSTER_SHARED_RSRC_TYPE_COUNT,
+});
+
+typedef uint8_t pset_id_t;
+#define PSET_ID_INVALID ((pset_id_t)UINT8_MAX)
+
+#endif  /* defined(KERNEL_PRIVATE) || SCHED_TEST_HARNESS */
 
 #endif  /* _KERN_KERN_TYPES_H_ */

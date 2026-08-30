@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -70,17 +70,19 @@
 #include <kern/timer_queue.h>
 #include <console/serial_protos.h>
 #include <machine/pal_routines.h>
+#include <machine/machine_cpc.h>
 #include <vm/vm_page.h>
 
 #if HIBERNATION
 #include <IOKit/IOHibernatePrivate.h>
+#include <vm/vm_kern_xnu.h>
 #endif
 #include <IOKit/IOPlatformExpert.h>
 #include <sys/kdebug.h>
 
-#if MONOTONIC
-#include <kern/monotonic.h>
-#endif /* MONOTONIC */
+#if KPERF
+#include <kperf/kptimer.h>
+#endif /* KPERF */
 
 #if CONFIG_SLEEP
 extern void     acpi_sleep_cpu(acpi_sleep_callback, void * refcon);
@@ -215,9 +217,12 @@ acpi_sleep_kernel(acpi_sleep_callback func, void *refcon)
 	data.refcon = refcon;
 #endif
 
-#if MONOTONIC
-	mt_cpu_down(cdp);
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	cpc_cpu_transition(CPC_CPU_OFFLINE, cdp);
+#endif /* CONFIG_CPU_COUNTERS */
+#if KPERF
+	kptimer_stop_curcpu();
+#endif /* KPERF */
 
 	/* Save power management timer state */
 	pmTimerSave();
@@ -272,7 +277,7 @@ acpi_sleep_kernel(acpi_sleep_callback func, void *refcon)
 	 * for compatibility with firewire kprintf.
 	 */
 
-	if (FALSE == disable_serial_output) {
+	if (false == disable_serial_output) {
 		pal_serial_init();
 	}
 
@@ -367,16 +372,19 @@ acpi_sleep_kernel(acpi_sleep_callback func, void *refcon)
 	/* Restart timer interrupts */
 	rtc_timer_start();
 
-#if MONOTONIC
-	mt_cpu_up(cdp);
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	cpc_cpu_transition(CPC_CPU_ONLINE, cdp);
+#endif /* CONFIG_CPU_COUNTERS */
+#if KPERF
+	kptimer_curcpu_up();
+#endif /* KPERF */
 
 #if HIBERNATION
 	kprintf("ret from acpi_sleep_cpu hib=%d\n", did_hibernate);
 #endif /* HIBERNATION */
 
 #if CONFIG_SLEEP
-	/* Becase we don't save the bootstrap page, and we share it
+	/* Because we don't save the bootstrap page, and we share it
 	 * between sleep and mp slave init, we need to recreate it
 	 * after coming back from sleep or hibernate */
 	install_real_mode_bootstrap(slave_pstart);
@@ -424,18 +432,21 @@ acpi_idle_kernel(acpi_sleep_callback func, void *refcon)
 	kprintf("acpi_idle_kernel, cpu=%d, interrupts %s\n",
 	    cpu_number(), istate ? "enabled" : "disabled");
 
-	assert(cpu_number() == master_cpu);
+	assert(cpu_number() == boot_cpu_id);
 
-#if MONOTONIC
-	mt_cpu_down(cpu_datap(0));
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	cpc_cpu_transition(CPC_CPU_OFFLINE, cpu_datap(0));
+#endif /* CONFIG_CPU_COUNTERS */
+#if KPERF
+	kptimer_stop_curcpu();
+#endif /* KPERF */
 
 	/* Cancel any pending deadline */
 	setPop(0);
 	while (lapic_is_interrupting(LAPIC_TIMER_VECTOR)
-#if MONOTONIC
+#if CONFIG_CPU_COUNTERS
 	    || lapic_is_interrupting(LAPIC_VECTOR(PERFCNT))
-#endif /* MONOTONIC */
+#endif /* CONFIG_CPU_COUNTERS */
 	    ) {
 		(void) ml_set_interrupts_enabled(TRUE);
 		setPop(0);
@@ -495,9 +506,9 @@ acpi_idle_kernel(acpi_sleep_callback func, void *refcon)
 		MACHDBG_CODE(DBG_MACH_SCHED, MACH_DEEP_IDLE) | DBG_FUNC_END,
 		acpi_wake_abstime, acpi_wake_abstime - acpi_idle_abstime, 0, 0, 0);
 
-#if MONOTONIC
-	mt_cpu_up(cpu_datap(0));
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	cpc_cpu_transition(CPC_CPU_ONLINE, cpu_datap(0));
+#endif /* CONFIG_CPU_COUNTERS */
 
 	/* Like S3 sleep, turn on tracing if trace_wake boot-arg is present */
 	if (kdebug_enable == 0) {

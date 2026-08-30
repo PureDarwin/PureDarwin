@@ -91,18 +91,17 @@
 #include <mach/exception_types.h>
 #include <sys/signalvar.h>
 #include <mach/task.h>
-#include <kern/zalloc.h>
 #include <kern/ast.h>
+#include <kern/hvg_hypercall.h>
 #include <kern/sched_prim.h>
+#include <kern/processor.h>
 #include <kern/task.h>
+#include <kern/zalloc.h>
 #include <netinet/in.h>
 #include <libkern/sysctl.h>
 #include <sys/kdebug.h>
-
-#if MONOTONIC
-#include <kern/monotonic.h>
-#include <machine/monotonic.h>
-#endif /* MONOTONIC */
+#include <sys/sdt_impl.h>
+#include <kern/cpc.h>
 
 #include "dtrace_xoroshiro128_plus.h"
 
@@ -228,7 +227,6 @@ static dtrace_toxrange_t *dtrace_toxrange;	/* toxic range array */
 static int		dtrace_toxranges;	/* number of toxic ranges */
 static int		dtrace_toxranges_max;	/* size of toxic range array */
 static dtrace_anon_t	dtrace_anon;		/* anonymous enabling */
-static kmem_cache_t	*dtrace_state_cache;	/* cache for dynamic state */
 static uint64_t		dtrace_vtime_references; /* number of vtimestamp refs */
 static kthread_t	*dtrace_panicked;	/* panicking thread */
 static dtrace_ecb_t	*dtrace_ecb_create_cache; /* cached created ECB */
@@ -255,8 +253,11 @@ static uint8_t      dtrace_kerneluuid[16];	/* the 128-bit uuid */
  * 20k elements allocated, the space saved is substantial.
  */
 
-static ZONE_DECLARE(dtrace_probe_t_zone, "dtrace.dtrace_probe_t",
-    sizeof(dtrace_probe_t), ZC_NONE);
+static ZONE_DEFINE_TYPE(dtrace_probe_t_zone, "dtrace.dtrace_probe_t",
+    dtrace_probe_t, ZC_NONE);
+
+static ZONE_DEFINE(dtrace_state_pcpu_zone, "dtrace.dtrace_dstate_percpu_t",
+    sizeof(dtrace_dstate_percpu_t), ZC_PERCPU);
 
 static int dtrace_module_unloaded(struct kmod_info *kmod);
 
@@ -463,13 +464,19 @@ static LCK_MTX_DECLARE_ATTR(dtrace_errlock, &dtrace_lck_grp, &dtrace_lck_attr);
 #define	DTRACE_V4MAPPED_OFFSET		(sizeof (uint32_t) * 3)
 
 /*
- * The key for a thread-local variable consists of the lower 61 bits of the
- * current_thread(), plus the 3 bits of the highest active interrupt above LOCK_LEVEL.
- * We add DIF_VARIABLE_MAX to t_did to assure that the thread key is never
- * equal to a variable identifier.  This is necessary (but not sufficient) to
- * assure that global associative arrays never collide with thread-local
- * variables.  To guarantee that they cannot collide, we must also define the
- * order for keying dynamic variables.  That order is:
+ * The key for a thread-local variable needs to be unique to a single
+ * thread over the lifetime of the system, and not overlap with any variable
+ * IDs. So we take thread's thread_id, a unique 64-bit number that is never
+ * reused after the thread exits, and add DIF_VARIABLE_MAX to it, which
+ * guarantees that it won’t overlap any variable IDs. We also want to treat
+ * running in interrupt context as independent of thread-context. So if
+ * interrupts are active, we set the 63rd bit, otherwise it’s cleared.
+ *
+ * This is necessary (but not sufficient) to assure that global associative
+ * arrays never collide with thread-local variables. To guarantee that they
+ * cannot collide, we must also define the order for keying dynamic variables.
+ *
+ * That order is:
  *
  *   [ key0 ] ... [ keyn ] [ variable-key ] [ tls-key ]
  *
@@ -477,33 +484,13 @@ static LCK_MTX_DECLARE_ATTR(dtrace_errlock, &dtrace_lck_grp, &dtrace_lck_attr);
  * no way for a global variable key signature to match a thread-local key
  * signature.
  */
-#if defined (__x86_64__)
-/* FIXME: two function calls!! */
-#define	DTRACE_TLS_THRKEY(where) { \
+#if defined (__x86_64__) || defined(__arm64__)
+#define	DTRACE_TLS_THRKEY(where) {                                           \
 	uint_t intr = ml_at_interrupt_context(); /* Note: just one measly bit */ \
-	uint64_t thr = (uintptr_t)current_thread(); \
-	ASSERT(intr < (1 << 3)); \
-	(where) = ((thr + DIF_VARIABLE_MAX) & \
-	    (((uint64_t)1 << 61) - 1)) | ((uint64_t)intr << 61); \
-}
-#elif defined(__arm__)
-/* FIXME: three function calls!!! */
-#define	DTRACE_TLS_THRKEY(where) { \
-	uint_t intr = ml_at_interrupt_context(); /* Note: just one measly bit */ \
-	uint64_t thr = (uintptr_t)current_thread(); \
-	uint_t pid = (uint_t)dtrace_proc_selfpid(); \
-	ASSERT(intr < (1 << 3)); \
-	(where) = (((thr << 32 | pid) + DIF_VARIABLE_MAX) & \
-	    (((uint64_t)1 << 61) - 1)) | ((uint64_t)intr << 61); \
-}
-#elif defined (__arm64__)
-/* FIXME: two function calls!! */
-#define	DTRACE_TLS_THRKEY(where) { \
-	uint_t intr = ml_at_interrupt_context(); /* Note: just one measly bit */ \
-	uint64_t thr = (uintptr_t)current_thread(); \
-	ASSERT(intr < (1 << 3)); \
-	(where) = ((thr + DIF_VARIABLE_MAX) & \
-	    (((uint64_t)1 << 61) - 1)) | ((uint64_t)intr << 61); \
+	uint64_t thr = thread_tid(current_thread());                             \
+	ASSERT(intr < 2);                                                        \
+	(where) = ((thr + DIF_VARIABLE_MAX) & (~((uint64_t)1 << 63))) |          \
+		((uint64_t)intr << 63);                                              \
 }
 #else
 #error Unknown architecture
@@ -557,12 +544,12 @@ do {									\
 	((mstate)->dtms_scratch_base + (mstate)->dtms_scratch_size - \
 	(mstate)->dtms_scratch_ptr >= (alloc_sz))
 
-#define RECOVER_LABEL(bits) dtraceLoadRecover##bits:
-
-#if defined (__x86_64__) || (defined (__arm__) || defined (__arm64__))
+#if defined (__x86_64__) || defined (__arm64__)
 #define	DTRACE_LOADFUNC(bits)						\
 /*CSTYLED*/								\
 uint##bits##_t dtrace_load##bits(uintptr_t addr);			\
+									\
+extern int dtrace_nofault_copy##bits(uintptr_t, uint##bits##_t *);	\
 									\
 uint##bits##_t								\
 dtrace_load##bits(uintptr_t addr)					\
@@ -573,14 +560,15 @@ dtrace_load##bits(uintptr_t addr)					\
 	int i;								\
 	volatile uint16_t *flags = (volatile uint16_t *)		\
 	    &cpu_core[CPU->cpu_id].cpuc_dtrace_flags;			\
+	uintptr_t caddr = VM_KERNEL_STRIP_PTR(addr);			\
 									\
 	DTRACE_ALIGNCHECK(addr, size, flags);				\
 									\
 	for (i = 0; i < dtrace_toxranges; i++) {			\
-		if (addr >= dtrace_toxrange[i].dtt_limit)		\
+		if (caddr >= dtrace_toxrange[i].dtt_limit)		\
 			continue;					\
 									\
-		if (addr + size <= dtrace_toxrange[i].dtt_base)		\
+		if (caddr + size <= dtrace_toxrange[i].dtt_base)	\
 			continue;					\
 									\
 		/*							\
@@ -592,24 +580,19 @@ dtrace_load##bits(uintptr_t addr)					\
 	}								\
 									\
 	{								\
-	volatile vm_offset_t recover = (vm_offset_t)&&dtraceLoadRecover##bits;		\
 	*flags |= CPU_DTRACE_NOFAULT;					\
-	recover = dtrace_sign_and_set_thread_recover(current_thread(), recover);	\
 	/*CSTYLED*/							\
 	/*                                                              \
 	* PR6394061 - avoid device memory that is unpredictably		\
 	* mapped and unmapped                                   	\
 	*/								\
-        if (pmap_valid_page(pmap_find_phys(kernel_pmap, addr)))		\
-	    rval = *((volatile uint##bits##_t *)addr);			\
-	else {								\
+	if (!pmap_valid_page(pmap_find_phys(kernel_pmap, addr)) ||	\
+	    dtrace_nofault_copy##bits(addr, &rval)) {			\
 		*flags |= CPU_DTRACE_BADADDR;				\
 		cpu_core[CPU->cpu_id].cpuc_dtrace_illval = addr;	\
 		return (0);						\
 	}								\
 									\
-	RECOVER_LABEL(bits);						\
-	(void)dtrace_set_thread_recover(current_thread(), recover);	\
 	*flags &= ~CPU_DTRACE_NOFAULT;					\
 	}								\
 									\
@@ -1042,12 +1025,12 @@ dtrace_canstore_remains(uint64_t addr, size_t sz, size_t *remain,
 	dtrace_mstate_t *mstate, dtrace_vstate_t *vstate)
 {
 	/*
-	 * First, check to see if the address is in scratch space...
+	 * First, check to see if the address is in allocated scratch space...
 	 */
 	if (DTRACE_INRANGE(addr, sz, mstate->dtms_scratch_base,
-	    mstate->dtms_scratch_size)) {
+	    mstate->dtms_scratch_ptr - mstate->dtms_scratch_base)) {
 		DTRACE_RANGE_REMAIN(remain, addr, mstate->dtms_scratch_base,
-			mstate->dtms_scratch_size);
+		    mstate->dtms_scratch_ptr - mstate->dtms_scratch_base);
 		return (1);
 	}
 	/*
@@ -1187,7 +1170,7 @@ static int
 dtrace_strcanload(uint64_t addr, size_t sz, size_t *remain,
 	dtrace_mstate_t *mstate, dtrace_vstate_t *vstate)
 {
-	size_t rsize;
+	size_t rsize = 0;
 
 	/*
 	 * If we hold the privilege to read from kernel memory, then
@@ -1797,12 +1780,9 @@ static void
 dtrace_dynvar_clean(dtrace_dstate_t *dstate)
 {
 	dtrace_dynvar_t *dirty;
-	dtrace_dstate_percpu_t *dcpu;
-	int i, work = 0;
+	int work = 0;
 
-	for (i = 0; i < (int)NCPU; i++) {
-		dcpu = &dstate->dtds_percpu[i];
-
+	zpercpu_foreach(dcpu, dstate->dtds_percpu) {
 		ASSERT(dcpu->dtdsc_rinsing == NULL);
 
 		/*
@@ -1850,9 +1830,7 @@ dtrace_dynvar_clean(dtrace_dstate_t *dstate)
 
 	dtrace_sync();
 
-	for (i = 0; i < (int)NCPU; i++) {
-		dcpu = &dstate->dtds_percpu[i];
-
+	zpercpu_foreach(dcpu, dstate->dtds_percpu) {
 		if (dcpu->dtdsc_rinsing == NULL)
 			continue;
 
@@ -1894,7 +1872,7 @@ dtrace_dynvar(dtrace_dstate_t *dstate, uint_t nkeys,
 	dtrace_dynhash_t *hash = dstate->dtds_hash;
 	dtrace_dynvar_t *free, *new_free, *next, *dvar, *start, *prev = NULL;
 	processorid_t me = CPU->cpu_id, cpu = me;
-	dtrace_dstate_percpu_t *dcpu = &dstate->dtds_percpu[me];
+	dtrace_dstate_percpu_t *dcpu = zpercpu_get_cpu(dstate->dtds_percpu, me);
 	size_t bucket, ksize;
 	size_t chunksize = dstate->dtds_chunksize;
 	uintptr_t kdata, lock, nstate;
@@ -2209,7 +2187,7 @@ retry:
 					if (dcpu->dtdsc_rinsing != NULL)
 						nstate = DTRACE_DSTATE_RINSING;
 
-					dcpu = &dstate->dtds_percpu[cpu];
+					dcpu = zpercpu_get_cpu(dstate->dtds_percpu, cpu);
 
 					if (cpu != me)
 						goto retry;
@@ -3321,19 +3299,25 @@ dtrace_dif_variable(dtrace_mstate_t *mstate, dtrace_state_t *state, uint64_t v,
 			dtrace_vstate_t *vstate = &state->dts_vstate;
 			dtrace_provider_t *pv;
 			uint64_t val;
+			int argndx = ndx;
+
+			if (argndx < 0) {
+				DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
+				return (0);
+			}
 
 			pv = mstate->dtms_probe->dtpr_provider;
 			if (pv->dtpv_pops.dtps_getargval != NULL)
 				val = pv->dtpv_pops.dtps_getargval(pv->dtpv_arg,
 				    mstate->dtms_probe->dtpr_id,
-				    mstate->dtms_probe->dtpr_arg, ndx, aframes);
+				    mstate->dtms_probe->dtpr_arg, argndx, aframes);
 			/* Special case access of arg5 as passed to dtrace_probe_error() (which see.) */
-			else if (mstate->dtms_probe->dtpr_id == dtrace_probeid_error && ndx == 5) {
+			else if (mstate->dtms_probe->dtpr_id == dtrace_probeid_error && argndx == 5) {
 			        return ((dtrace_state_t *)(uintptr_t)(mstate->dtms_arg[0]))->dts_arg_error_illval;
 			}
 
 			else
-				val = dtrace_getarg(ndx, aframes, mstate, vstate);
+				val = dtrace_getarg(argndx, aframes, mstate, vstate);
 
 			/*
 			 * This is regrettably required to keep the compiler
@@ -3603,15 +3587,15 @@ dtrace_dif_variable(dtrace_mstate_t *mstate, dtrace_state_t *state, uint64_t v,
 	case DIF_VAR_EXECNAME:
 	{
 		char *xname = (char *)mstate->dtms_scratch_ptr;
-		char *pname = proc_best_name(curproc);
+		const char *pname = proc_best_name(curproc);
 		size_t scratch_size = sizeof(proc_name_t);
-		
+
 		/* The scratch allocation's lifetime is that of the clause. */
 		if (!DTRACE_INSCRATCH(mstate, scratch_size)) {
 			DTRACE_CPUFLAG_SET(CPU_DTRACE_NOSCRATCH);
 			return 0;
 		}
-			
+
 		if (!dtrace_priv_proc_relaxed(state))
 			return (0);
 
@@ -3645,25 +3629,34 @@ dtrace_dif_variable(dtrace_mstate_t *mstate, dtrace_state_t *state, uint64_t v,
 		return ((uint64_t)(uintptr_t)zname);
 	}
 
-#if MONOTONIC
+#if CONFIG_CPU_COUNTERS
 	case DIF_VAR_CPUINSTRS:
-		return mt_cur_cpu_instrs();
-
+		return cpc_instrs();
 	case DIF_VAR_CPUCYCLES:
-		return mt_cur_cpu_cycles();
+		return cpc_cycles();
+#else /* CONFIG_CPU_COUNTERS */
+    case DIF_VAR_CPUINSTRS:
+    case DIF_VAR_CPUCYCLES:
+        return 0;
+#endif /* CONFIG_CPU_COUNTERS */
 
+#if CONFIG_PERVASIVE_CPI
+	case DIF_VAR_VINSTRS: {
+		struct recount_usage usage = { 0 };
+		recount_current_thread_usage(&usage);
+		return recount_usage_instructions(&usage);
+	}
+
+	case DIF_VAR_VCYCLES: {
+        struct recount_usage usage = { 0 };
+        recount_current_thread_usage(&usage);
+		return recount_usage_cycles(&usage);
+    }
+#else /* CONFIG_PERVASIVE_CPI */
 	case DIF_VAR_VINSTRS:
-		return mt_cur_thread_instrs();
-
 	case DIF_VAR_VCYCLES:
-		return mt_cur_thread_cycles();
-#else /* MONOTONIC */
-	case DIF_VAR_CPUINSTRS: /* FALLTHROUGH */
-	case DIF_VAR_CPUCYCLES: /* FALLTHROUGH */
-	case DIF_VAR_VINSTRS: /* FALLTHROUGH */
-	case DIF_VAR_VCYCLES: /* FALLTHROUGH */
 		return 0;
-#endif /* !MONOTONIC */
+#endif /* !CONFIG_PERVASIVE_CPI */
 
 	case DIF_VAR_UID:
 		if (!dtrace_priv_proc_relaxed(state))
@@ -3697,7 +3690,7 @@ dtrace_dif_variable(dtrace_mstate_t *mstate, dtrace_state_t *state, uint64_t v,
 		}
 
 	case DIF_VAR_ERRNO: {
-		uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());
+		uthread_t uthread = current_uthread();
 		if (!dtrace_priv_proc(state))
 			return (0);
 
@@ -5729,6 +5722,37 @@ inetout:	regs[rd] = (uintptr_t)end + 1;
 #endif /* DEBUG || DEVELOPMENT */
 		break;
 	}
+
+	case DIF_SUBR_LIVEDUMP: {
+#if DEBUG || DEVELOPMENT
+		if (dtrace_destructive_disallow ||
+		    !dtrace_priv_kernel_destructive(state)) {
+			break;
+		}
+
+		/* For the moment, there is only one type of livedump. */
+		if (nargs != 1 || tupregs[0].dttk_value != 0) {
+			DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
+			break;
+		}
+
+		char *dest = (char *)mstate->dtms_scratch_ptr;
+		uint64_t size = state->dts_options[DTRACEOPT_STRSIZE];
+
+		if (!DTRACE_INSCRATCH(mstate, size)) {
+			DTRACE_CPUFLAG_SET(CPU_DTRACE_NOSCRATCH);
+			regs[rd] = 0;
+			break;
+		}
+
+		dtrace_livedump(dest, size);
+		regs[rd] = (uintptr_t) dest;
+		mstate->dtms_scratch_ptr += strlen(dest) + 1;
+#else
+		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);
+#endif /* DEBUG || DEVELOPMENT */
+		break;
+	}
 #endif /* defined(__APPLE__) */
 
 	}
@@ -6095,7 +6119,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 
 			if (v->dtdv_type.dtdt_flags & DIF_TF_BYREF) {
 				uintptr_t a = (uintptr_t)svar->dtsv_data;
-				size_t lim;
+				size_t lim = 0;
 
 				ASSERT(a != 0);
 				ASSERT(svar->dtsv_size != 0);
@@ -6189,7 +6213,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 			if (v->dtdv_type.dtdt_flags & DIF_TF_BYREF) {
 				uintptr_t a = (uintptr_t)svar->dtsv_data;
 				size_t sz = v->dtdv_type.dtdt_size;
-				size_t lim;
+				size_t lim = 0;
 
 				sz += sizeof (uint64_t);
 				ASSERT(svar->dtsv_size == (int)NCPU * sz);
@@ -6283,7 +6307,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 				break;
 
 			if (v->dtdv_type.dtdt_flags & DIF_TF_BYREF) {
-				size_t lim;
+				size_t lim = 0;
 
 				if (!dtrace_vcanload(
 				    (void *)(uintptr_t)regs[rd],
@@ -6432,7 +6456,7 @@ dtrace_dif_emulate(dtrace_difo_t *difo, dtrace_mstate_t *mstate,
 				break;
 
 			if (v->dtdv_type.dtdt_flags & DIF_TF_BYREF) {
-				size_t lim;
+				size_t lim = 0;
 
 				if (!dtrace_vcanload(
 				    (void *)(uintptr_t)regs[rd], &v->dtdv_type,
@@ -6671,7 +6695,7 @@ dtrace_action_raise(uint64_t sig)
 	 * invocations of the raise() action.
 	 */
 
-	uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());
+	uthread_t uthread = current_uthread();
 
 	if (uthread && uthread->t_dtrace_sig == 0) {
 		uthread->t_dtrace_sig = sig;
@@ -6685,7 +6709,7 @@ dtrace_action_stop(void)
 	if (dtrace_destructive_disallow)
 		return;
 
-        uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());
+        uthread_t uthread = current_uthread();
 	if (uthread) {
 		/*
 		 * The currently running process will be set to task_suspend
@@ -6712,7 +6736,7 @@ dtrace_action_pidresume(uint64_t pid)
 		DTRACE_CPUFLAG_SET(CPU_DTRACE_ILLOP);		
 		return;
 	}
-        uthread_t uthread = (uthread_t)get_bsdthread_info(current_thread());
+        uthread_t uthread = current_uthread();
 
 	/*
 	 * When the currently running process leaves the kernel, it attempts to
@@ -6990,9 +7014,26 @@ dtrace_probe_exit(dtrace_icookie_t cookie)
 	ASSERT(inprobe > 0);
 	dtrace_set_thread_inprobe(thread, inprobe - 1);
 
-#if INTERRUPT_MASKED_DEBUG
+#if SCHED_HYGIENE_DEBUG
+	/*
+	 * Probes can take a relatively long time depending on what the user has
+	 * requested be done in probe context.
+	 * Probes can fire from places where interrupts are already disabled
+	 * (like an interrupt handler) or where preemption has been disabled.
+	 * In order to not trip the interrupt or preemption thresholds, it is
+	 * important to reset timestamps when leaving probe context.
+	 */
+
+	/* Interrupts were disabled for the duration of this probe. */
 	ml_spin_debug_reset(thread);
-#endif /* INTERRUPT_MASKED_DEBUG */
+
+	/* May have been called from an interrupt handler. */
+	ml_irq_debug_abandon();
+
+	/* May have been called with preemption disabled. */
+	abandon_preemption_disable_measurement();
+
+#endif /* SCHED_HYGIENE_DEBUG */
 
 	dtrace_interrupt_enable(cookie);
 }
@@ -7682,13 +7723,12 @@ dtrace_probe(dtrace_id_t id, uint64_t arg0, uint64_t arg1,
 				 * into t_dtrace_vtime.
 				 */
 
-				/*				   
+				/*
 				 * Darwin sets the sign bit on t_dtrace_tracing
 				 * to suspend accumulation to it.
 				 */
 				dtrace_set_thread_tracing(current_thread(), 
 				    (1ULL<<63) | dtrace_get_thread_tracing(current_thread()));
-
 			}
 
 			/*
@@ -9029,8 +9069,7 @@ dtrace_probe_create(dtrace_provider_id_t prov, const char *mod,
 	id = (dtrace_id_t)(uintptr_t)vmem_alloc(dtrace_arena, 1,
 	    VM_BESTFIT | VM_SLEEP);
 
-	probe = zalloc(dtrace_probe_t_zone);
-	bzero(probe, sizeof (dtrace_probe_t));
+	probe = zalloc_flags(dtrace_probe_t_zone, Z_WAITOK | Z_ZERO);
 
 	probe->dtpr_id = id;
 	probe->dtpr_gen = dtrace_probegen++;
@@ -9895,6 +9934,7 @@ dtrace_difo_validate(dtrace_difo_t *dp, dtrace_vstate_t *vstate, uint_t nregs,
 			case DIF_SUBR_KDEBUG_TRACE_STRING:
 			case DIF_SUBR_PHYSMEM_READ:
 			case DIF_SUBR_PHYSMEM_WRITE:
+			case DIF_SUBR_LIVEDUMP:
 				dp->dtdo_destructive = 1;
 				break;
 			default:
@@ -13034,11 +13074,11 @@ dtrace_dof_copyin(user_addr_t uarg, int *errp)
 
 	dof = kmem_alloc_aligned(hdr.dofh_loadsz, 8, KM_SLEEP);
 
-        if (copyin(uarg, dof, hdr.dofh_loadsz) != 0  ||
-	  dof->dofh_loadsz != hdr.dofh_loadsz) {
-	    kmem_free_aligned(dof, hdr.dofh_loadsz);
-	    *errp = EFAULT;
-	    return (NULL);
+	if (copyin(uarg, dof, hdr.dofh_loadsz) != 0 ||
+	    dof->dofh_loadsz != hdr.dofh_loadsz) {
+		kmem_free_aligned(dof, hdr.dofh_loadsz);
+		*errp = EFAULT;
+		return (NULL);
 	}	    
 
 	return (dof);
@@ -13078,7 +13118,8 @@ dtrace_dof_copyin_from_proc(proc_t* p, user_addr_t uarg, int *errp)
 
 	dof = kmem_alloc_aligned(hdr.dofh_loadsz, 8, KM_SLEEP);
 
-	if (uread(p, dof, hdr.dofh_loadsz, uarg) != KERN_SUCCESS) {
+	if (uread(p, dof, hdr.dofh_loadsz, uarg) != KERN_SUCCESS ||
+	    dof->dofh_loadsz != hdr.dofh_loadsz) {
 		kmem_free_aligned(dof, hdr.dofh_loadsz);
 		*errp = EFAULT;
 		return (NULL);
@@ -13583,6 +13624,11 @@ dtrace_dof_ecbdesc(dof_hdr_t *dof, dof_sec_t *sec, dtrace_vstate_t *vstate,
 	dtrace_probedesc_t *desc;
 	dtrace_predicate_t *pred = NULL;
 
+	if (!(sec->dofs_flags & DOF_SECF_LOAD)) {
+		dtrace_dof_error(dof, "Non loadable section with ECB description");
+		return (NULL);
+	}
+
 	if (sec->dofs_size < sizeof (dof_ecbdesc_t)) {
 		dtrace_dof_error(dof, "truncated ECB description");
 		return (NULL);
@@ -13848,6 +13894,11 @@ dtrace_dof_options(dof_hdr_t *dof, dtrace_state_t *state)
 		if (sec->dofs_type != DOF_SECT_OPTDESC)
 			continue;
 
+		if (!(sec->dofs_flags & DOF_SECF_LOAD)) {
+			dtrace_dof_error(dof, "Non loadable option section");
+			return (EINVAL);
+		}
+
 		if (sec->dofs_align != sizeof (uint64_t)) {
 			dtrace_dof_error(dof, "bad alignment in "
 			    "option description");
@@ -13899,7 +13950,6 @@ dtrace_dstate_init(dtrace_dstate_t *dstate, size_t size)
 	void *base;
 	uintptr_t limit;
 	dtrace_dynvar_t *dvar, *next, *start;
-	size_t i;
 
 	LCK_MTX_ASSERT(&dtrace_lock, LCK_MTX_ASSERT_OWNED);
 	ASSERT(dstate->dtds_base == NULL && dstate->dtds_percpu == NULL);
@@ -13919,8 +13969,7 @@ dtrace_dstate_init(dtrace_dstate_t *dstate, size_t size)
 
 	dstate->dtds_size = size;
 	dstate->dtds_base = base;
-	dstate->dtds_percpu = kmem_cache_alloc(dtrace_state_cache, KM_SLEEP);
-	bzero(dstate->dtds_percpu, (int)NCPU * sizeof (dtrace_dstate_percpu_t));
+	dstate->dtds_percpu = zalloc_percpu(dtrace_state_pcpu_zone, Z_WAITOK | Z_ZERO);
 
 	hashsize = size / (dstate->dtds_chunksize + sizeof (dtrace_dynhash_t));
 
@@ -13937,7 +13986,7 @@ dtrace_dstate_init(dtrace_dstate_t *dstate, size_t size)
 	 * lookups to know that they have iterated over an entire, valid hash
 	 * chain.
 	 */
-	for (i = 0; i < hashsize; i++)
+	for (size_t i = 0; i < hashsize; i++)
 		dstate->dtds_hash[i].dtdh_chain = &dtrace_dynhash_sink;
 
 	if (dtrace_dynhash_sink.dtdv_hashval != DTRACE_DYNHASH_SINK)
@@ -13957,8 +14006,10 @@ dtrace_dstate_init(dtrace_dstate_t *dstate, size_t size)
 	maxper = (limit - (uintptr_t)start) / (int)NCPU;
 	maxper = (maxper / dstate->dtds_chunksize) * dstate->dtds_chunksize;
 
-	for (i = 0; i < NCPU; i++) {
-		dstate->dtds_percpu[i].dtdsc_free = dvar = start;
+	zpercpu_foreach_cpu(i) {
+		dtrace_dstate_percpu_t *dcpu = zpercpu_get_cpu(dstate->dtds_percpu, i);
+
+		dcpu->dtdsc_free = dvar = start;
 
 		/*
 		 * If we don't even have enough chunks to make it once through
@@ -14006,7 +14057,7 @@ dtrace_dstate_fini(dtrace_dstate_t *dstate)
 		return;
 
 	kmem_free(dstate->dtds_base, dstate->dtds_size);
-	kmem_cache_free(dtrace_state_cache, dstate->dtds_percpu);
+	zfree_percpu(dtrace_state_pcpu_zone, dstate->dtds_percpu);
 }
 
 static void
@@ -15471,7 +15522,7 @@ dtrace_helper_provider_register(proc_t *p, dtrace_helpers_t *help,
 		if (help->dthps_next == NULL && help->dthps_prev == NULL &&
 		    dtrace_deferred_pid != help) {
 			help->dthps_deferred = 1;
-			help->dthps_pid = p->p_pid;
+			help->dthps_pid = proc_getpid(p);
 			help->dthps_next = dtrace_deferred_pid;
 			help->dthps_prev = NULL;
 			if (dtrace_deferred_pid != NULL)
@@ -16782,6 +16833,14 @@ dtrace_module_loaded(struct kmod_info *kmod, uint32_t flag)
 	 */
 	if (dtrace_kernel_symbol_mode == DTRACE_KERNEL_SYMBOLS_NEVER)
 		return 0;
+
+#if CONFIG_SPTM
+	/* Opt-out the SPTM/TXM fake kexts from being loaded by DTrace. */
+	extern kmod_info_t g_sptm_kmod_info, g_txm_kmod_info;
+	if ((kmod == &g_sptm_kmod_info) || (kmod == &g_txm_kmod_info)) {
+		return 0;
+	}
+#endif
 	
 	struct modctl *ctl = NULL;
 	if (!kmod || kmod->address == 0 || kmod->size == 0)
@@ -16824,6 +16883,8 @@ dtrace_module_loaded(struct kmod_info *kmod, uint32_t flag)
 		ctl->mod_loaded = 1;
 		ctl->mod_flags = 0;
 		ctl->mod_user_symbols = NULL;
+		ctl->mod_sdtprobecnt = 0;
+		ctl->mod_sdtdesc = NULL;
 
 		/*
 		 * Find the UUID for this module, if it has one
@@ -16884,6 +16945,9 @@ dtrace_module_loaded(struct kmod_info *kmod, uint32_t flag)
 	if ((dtrace_kernel_symbol_mode == DTRACE_KERNEL_SYMBOLS_FROM_USERSPACE) &&
 	    (!(flag & KMOD_DTRACE_FORCE_INIT)))
 	{
+		/* Load SDT section for module. Symbol related data will be handled lazily. */
+		sdt_load_machsect(ctl);
+
 		/* We will instrument the module lazily -- this is the default */
 		lck_mtx_unlock(&dtrace_lock);
 		lck_mtx_unlock(&mod_lock);
@@ -16896,6 +16960,9 @@ dtrace_module_loaded(struct kmod_info *kmod, uint32_t flag)
 		ctl->mod_flags |= MODCTL_HAS_KERNEL_SYMBOLS;
 	}
 	
+	/* Load SDT section for module. Symbol related data will be handled lazily. */
+	sdt_load_machsect(ctl);
+
 	lck_mtx_unlock(&dtrace_lock);
 	
 	/*
@@ -17257,10 +17324,6 @@ dtrace_attach(dev_info_t *devi)
 	dtrace_arena = vmem_create("dtrace", (void *)1, INT32_MAX, 1,
 	    NULL, NULL, NULL, 0, VM_SLEEP | VMC_IDENTIFIER);
 
-	dtrace_state_cache = kmem_cache_create("dtrace_state_cache",
-	    sizeof (dtrace_dstate_percpu_t) * (int)NCPU, DTRACE_STATE_ALIGN,
-	    NULL, NULL, NULL, NULL, NULL, 0);
-
 	LCK_MTX_ASSERT(&cpu_lock, LCK_MTX_ASSERT_OWNED);
 
 	dtrace_nprobes = dtrace_nprobes_default;
@@ -17318,7 +17381,7 @@ dtrace_attach(dev_info_t *devi)
 	    dtrace_provider, NULL, NULL, "END", 0, NULL);
 	dtrace_probeid_error = dtrace_probe_create((dtrace_provider_id_t)
 	    dtrace_provider, NULL, NULL, "ERROR", 3, NULL);
-#elif (defined(__arm__) || defined(__arm64__))
+#elif defined(__arm64__)
 	dtrace_probeid_begin = dtrace_probe_create((dtrace_provider_id_t)
 	    dtrace_provider, NULL, NULL, "BEGIN", 2, NULL);
 	dtrace_probeid_end = dtrace_probe_create((dtrace_provider_id_t)
@@ -17406,6 +17469,9 @@ dtrace_open(dev_t *devp, int flag, int otyp, cred_t *cred_p)
 	uid_t uid;
 	zoneid_t zoneid;
 	int rv;
+
+	if (minor(*devp) < 0 || minor(*devp) >= DTRACE_NCLIENTS)
+		return (ENXIO);
 
 	/* APPLE: Darwin puts Helper on its own major device. */
 
@@ -17522,6 +17588,8 @@ dtrace_open(dev_t *devp, int flag, int otyp, cred_t *cred_p)
 	}
 	lck_mtx_unlock(&dtrace_lock);
 
+	/* Suspend cluster powerdown while DTrace device is opened. */
+	suspend_cluster_powerdown();
 	return (0);
 }
 
@@ -17598,6 +17666,8 @@ dtrace_close(dev_t dev, int flag, int otyp, cred_t *cred_p)
 	 */
 	dtrace_module_unloaded(NULL);
 
+	/* State is gone so resume cluster powerdown. */
+	resume_cluster_powerdown();
 	return (0);
 }
 
@@ -18467,7 +18537,7 @@ dtrace_ioctl(dev_t dev, u_long cmd, user_addr_t arg, int md, cred_t *cr, int *rv
 	case DTRACEIOC_STATUS: {
 		dtrace_status_t stat;
 		dtrace_dstate_t *dstate;
-		int i, j;
+		int j;
 		uint64_t nerrs;
 
 		/*
@@ -18494,8 +18564,8 @@ dtrace_ioctl(dev_t dev, u_long cmd, user_addr_t arg, int md, cred_t *cr, int *rv
 		nerrs = state->dts_errors;
 		dstate = &state->dts_vstate.dtvs_dynvars;
 
-		for (i = 0; i < (int)NCPU; i++) {
-			dtrace_dstate_percpu_t *dcpu = &dstate->dtds_percpu[i];
+		zpercpu_foreach_cpu(i) {
+			dtrace_dstate_percpu_t *dcpu = zpercpu_get_cpu(dstate->dtds_percpu, i);
 
 			stat.dtst_dyndrops += dcpu->dtdsc_drops;
 			stat.dtst_dyndrops_dirty += dcpu->dtdsc_dirty_drops;
@@ -18607,8 +18677,7 @@ dtrace_ioctl(dev_t dev, u_long cmd, user_addr_t arg, int md, cred_t *cr, int *rv
 		 * Read the number of symbolsdesc structs being passed in.
 		 */
 		if (copyin(arg + offsetof(dtrace_module_uuids_list_t, dtmul_count),
-			   &dtmul_count,
-			   sizeof(dtmul_count))) {
+		    &dtmul_count, sizeof(dtmul_count)) != 0) {
 			cmn_err(CE_WARN, "failed to copyin dtmul_count");
 			return (EFAULT);
 		}
@@ -18754,29 +18823,22 @@ dtrace_ioctl(dev_t dev, u_long cmd, user_addr_t arg, int md, cred_t *cr, int *rv
 		 * Read the number of module symbols structs being passed in.
 		 */
 		if (copyin(arg + offsetof(dtrace_module_symbols_t, dtmodsyms_count),
-			   &dtmodsyms_count,
-			   sizeof(dtmodsyms_count))) {
+		    &dtmodsyms_count, sizeof(dtmodsyms_count)) != 0) {
 			cmn_err(CE_WARN, "failed to copyin dtmodsyms_count");
 			return (EFAULT);
 		}
 		
-		/*
-		 * Range check the count. How much data can we pass around?
-		 * FIX ME!
-		 */
+		/* Ensure that we have at least one symbol. */
 		if (dtmodsyms_count == 0) {
-			cmn_err(CE_WARN, "dtmodsyms_count is not valid");
+			cmn_err(CE_WARN, "Invalid dtmodsyms_count value");
 			return (EINVAL);
 		}
-			
-		/*
-		 * Allocate a correctly sized structure and copyin the data.
-		 */
+
+		/* Safely calculate size we need for copyin buffer. */
 		module_symbols_size = DTRACE_MODULE_SYMBOLS_SIZE(dtmodsyms_count);
-		if (module_symbols_size > (size_t)dtrace_copy_maxsize()) {
-			size_t dtmodsyms_max = DTRACE_MODULE_SYMBOLS_COUNT(dtrace_copy_maxsize());
-			cmn_err(CE_WARN, "dtmodsyms_count %ld is too high, maximum is %ld", dtmodsyms_count, dtmodsyms_max);
-			return (ENOBUFS);
+		if (module_symbols_size == 0 || module_symbols_size > (size_t)dtrace_copy_maxsize()) {
+			cmn_err(CE_WARN, "Invalid module_symbols_size %ld", module_symbols_size);
+			return (EINVAL);
 		}
 
 		if ((module_symbols = kmem_alloc(module_symbols_size, KM_SLEEP)) == NULL) 
@@ -18862,7 +18924,7 @@ dtrace_ioctl(dev_t dev, u_long cmd, user_addr_t arg, int md, cred_t *cr, int *rv
 		if (pdesc.p_pid != -1) {
 			proc_t *proc = proc_find(pdesc.p_pid);
 			if (proc != PROC_NULL) {
-				task_pidresume(proc->task);
+				task_pidresume(proc_task(proc));
 				proc_rele(proc);
 			}
 		}
@@ -19091,6 +19153,8 @@ helper_ioctl(dev_t dev, u_long cmd, caddr_t data, int fflag, struct proc *p)
 
 #define HELPER_MAJOR  -24 /* let the kernel pick the device number */
 
+#define nulldevfp        (void (*)(void))&nulldev
+
 const static struct cdevsw helper_cdevsw =
 {
 	.d_open = helper_open,
@@ -19098,8 +19162,8 @@ const static struct cdevsw helper_cdevsw =
 	.d_read = eno_rdwrt,
 	.d_write = eno_rdwrt,
 	.d_ioctl = helper_ioctl,
-	.d_stop = (stop_fcn_t *)nulldev,
-	.d_reset = (reset_fcn_t *)nulldev,
+	.d_stop = eno_stop,
+	.d_reset = eno_reset,
 	.d_select = eno_select,
 	.d_mmap = eno_mmap,
 	.d_strategy = eno_strat,
@@ -19121,25 +19185,25 @@ helper_init( void )
 	 */
 
 	if (!gDTraceInited) {
-		panic("helper_init before dtrace_init\n");
+		panic("helper_init before dtrace_init");
 	}
 
 	if (0 >= helper_majdevno)
 	{
 		helper_majdevno = cdevsw_add(HELPER_MAJOR, &helper_cdevsw);
-		
+
 		if (helper_majdevno < 0) {
 			printf("helper_init: failed to allocate a major number!\n");
 			return;
 		}
-		
-		if (NULL == devfs_make_node( makedev(helper_majdevno, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, 
-					DTRACEMNR_HELPER, 0 )) {
+
+		if (NULL == devfs_make_node( makedev(helper_majdevno, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666,
+					DTRACEMNR_HELPER )) {
 			printf("dtrace_init: failed to devfs_make_node for helper!\n");
 			return;
 		}
 	} else
-		panic("helper_init: called twice!\n");
+		panic("helper_init: called twice!");
 }
 
 #undef HELPER_MAJOR
@@ -19195,8 +19259,8 @@ static const struct cdevsw dtrace_cdevsw =
 	.d_read = eno_rdwrt,
 	.d_write = eno_rdwrt,
 	.d_ioctl = _dtrace_ioctl,
-	.d_stop = (stop_fcn_t *)nulldev,
-	.d_reset = (reset_fcn_t *)nulldev,
+	.d_stop = eno_stop,
+	.d_reset = eno_reset,
 	.d_select = eno_select,
 	.d_mmap = eno_mmap,
 	.d_strategy = eno_strat,
@@ -19211,8 +19275,6 @@ static int gMajDevNo;
 
 void dtrace_early_init (void)
 {
-	dtrace_restriction_policy_load();
-
 	/*
 	 * See dtrace_impl.h for a description of kernel symbol modes.
 	 * The default is to wait for symbols from userspace (lazy symbols).
@@ -19273,8 +19335,8 @@ dtrace_init( void )
 			return;
 		}
 
-		if (NULL == devfs_make_node_clone( makedev(gMajDevNo, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, 
-					dtrace_clone_func, DTRACEMNR_DTRACE, 0 )) {
+		if (NULL == devfs_make_node_clone( makedev(gMajDevNo, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666,
+					dtrace_clone_func, DTRACEMNR_DTRACE )) {
 			printf("dtrace_init: failed to devfs_make_node_clone for dtrace!\n");
 			gDTraceInited = 0;
 			return;
@@ -19287,11 +19349,6 @@ dtrace_init( void )
 		 * is up to the platform to assure that this is performed properly.  Note that
 		 * the structure is sized to avoid false sharing.
 		 */
-
-		/*
-		 * Initialize the CPU offline/online hooks.
-		 */
-		dtrace_install_cpu_hooks();
 
 		dtrace_modctl_list = NULL;
 
@@ -19307,6 +19364,11 @@ dtrace_init( void )
 			LIST_INIT(&cpu_list[i].cpu_cyc_list);
 			lck_rw_init(&cpu_list[i].cpu_ft_lock, &dtrace_lck_grp, &dtrace_lck_attr);
 		}
+
+		/*
+		 * Initialize the CPU offline/online hooks.
+		 */
+		dtrace_install_cpu_hooks();
 
 		lck_mtx_lock(&cpu_lock);
 		for (i = 0; i < ncpu; ++i) 
@@ -19366,7 +19428,7 @@ dtrace_init( void )
 		gDTraceInited = 1;
 
 	} else
-		panic("dtrace_init: called twice!\n");
+		panic("dtrace_init: called twice!");
 }
 
 void
@@ -19390,7 +19452,11 @@ dtrace_postinit(void)
 	fake_kernel_kmod.address = g_kernel_kmod_info.address;
 	fake_kernel_kmod.size = g_kernel_kmod_info.size;
 
-	if (dtrace_module_loaded(&fake_kernel_kmod, 0) != 0) {
+	/* Ensure we don't try to touch symbols if they are gone. */
+	boolean_t keepsyms = false;
+	PE_parse_boot_argn("keepsyms", &keepsyms, sizeof(keepsyms));
+
+	if (dtrace_module_loaded(&fake_kernel_kmod, (keepsyms) ? 0 : KMOD_DTRACE_NO_KERNEL_SYMS) != 0) {
 		printf("dtrace_postinit: Could not register mach_kernel modctl\n");
 	}
 	

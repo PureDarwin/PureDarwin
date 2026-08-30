@@ -38,6 +38,26 @@ typedef struct activity_bitmap {
 	uint64_t        bitmap[2];      /* 128 bit map, each bit == 8 sec */
 } activity_bitmap_t;
 
+typedef struct traffic_stats {
+	uint64_t            ts_rxpackets;
+	uint64_t            ts_rxbytes;
+	uint64_t            ts_txpackets;
+	uint64_t            ts_txbytes;
+	activity_bitmap_t   ts_bitmap;
+} traffic_stats_t;
+
+typedef struct media_stats {
+	traffic_stats_t     ms_total;
+	traffic_stats_t     ms_cellular;
+	traffic_stats_t     ms_wifi_infra;
+	traffic_stats_t     ms_wifi_non_infra;
+	traffic_stats_t     ms_wired;
+	traffic_stats_t     ms_bluetooth;
+	traffic_stats_t     ms_alternate;   // "Spare", use initially for unclassified
+} media_stats_t;
+
+#define USE_MS_ALTERNATE_FOR_UNCLASSIFIED   1
+
 #endif /* PRIVATE */
 
 #ifdef BSD_KERNEL_PRIVATE

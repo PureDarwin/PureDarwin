@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2011-2022 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -32,14 +32,15 @@
 #include <kern/thread.h>
 #include <kern/backtrace.h>
 #include <kern/cambria_layout.h>
-#include <vm/vm_map.h>
+#include <vm/vm_map_xnu.h>
 #include <kperf/buffer.h>
 #include <kperf/context.h>
 #include <kperf/callstack.h>
 #include <kperf/ast.h>
 #include <sys/errno.h>
+#include <mach/exclaves.h>
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm64__)
 #include <arm/cpu_data.h>
 #include <arm/cpu_data_internal.h>
 #endif
@@ -75,7 +76,7 @@ callstack_fixup_user(struct kp_ucallstack *cs, thread_t thread)
 		    &fixup_val, user_64 ? sizeof(uint64_t) : sizeof(uint32_t));
 	}
 
-#elif defined(__arm64__) || defined(__arm__)
+#elif defined(__arm64__)
 
 	struct arm_saved_state *state = get_user_regs(thread);
 	if (!state) {
@@ -83,7 +84,7 @@ callstack_fixup_user(struct kp_ucallstack *cs, thread_t thread)
 	}
 
 	/* encode thumb mode into low bit of PC */
-	if (get_saved_state_cpsr(state) & PSR_TF) {
+	if (is_saved_state32(state) && (get_saved_state_cpsr(state) & PSR_TF)) {
 		cs->kpuc_frames[0] |= 1ULL;
 	}
 
@@ -162,29 +163,9 @@ interrupted_kernel_lr(uintptr_t *lr)
 	*lr = get_saved_state_lr(state);
 	return KERN_SUCCESS;
 }
-
-#elif defined(__arm__)
-
-__attribute__((used))
-static kern_return_t
-interrupted_kernel_lr(uintptr_t *lr)
-{
-	struct arm_saved_state *state;
-
-	state = getCpuDatap()->cpu_int_state;
-
-	/* return early if interrupted a thread in user space */
-	if (PSR_IS_USER(get_saved_state_cpsr(state))) {
-		return KERN_FAILURE;
-	}
-
-	*lr = get_saved_state_lr(state);
-	return KERN_SUCCESS;
-}
-
-#else /* defined(__arm__) */
+#else /* defined(__arm64__) */
 #error "interrupted_kernel_{sp,lr}: unsupported architecture"
-#endif /* !defined(__arm__) */
+#endif /* !defined(__arm64__) */
 
 
 static void
@@ -199,7 +180,7 @@ callstack_fixup_interrupted(struct kp_kcallstack *cs)
 #if DEVELOPMENT || DEBUG
 #if defined(__x86_64__)
 	(void)interrupted_kernel_sp_value(&fixup_val);
-#elif defined(__arm64__) || defined(__arm__)
+#elif defined(__arm64__)
 	(void)interrupted_kernel_lr(&fixup_val);
 #endif /* defined(__x86_64__) */
 #endif /* DEVELOPMENT || DEBUG */
@@ -243,11 +224,22 @@ kperf_backtrace_sample(struct kp_kcallstack *cs, struct kperf_context *context)
 
 	BUF_VERB(PERF_CS_BACKTRACE | DBG_FUNC_START, 1);
 
-	bool trunc = false;
-	cs->kpkc_nframes = backtrace_frame(cs->kpkc_word_frames,
-	    cs->kpkc_nframes - 1, context->starting_fp, &trunc);
+	backtrace_info_t btinfo = BTI_NONE;
+	struct backtrace_control ctl = {
+		.btc_frame_addr = (uintptr_t)context->starting_fp,
+	};
+	cs->kpkc_nframes = backtrace(cs->kpkc_word_frames, cs->kpkc_nframes - 1,
+	    &ctl, &btinfo);
 	if (cs->kpkc_nframes > 0) {
 		cs->kpkc_flags |= CALLSTACK_VALID;
+
+		cs->kpkc_exclaves_offset = 0;
+#if CONFIG_EXCLAVES
+		if ((context->cur_thread->th_exclaves_state & TH_EXCLAVES_RPC) != 0) {
+			cs->kpkc_exclaves_offset = exclaves_stack_offset(cs->kpkc_word_frames, cs->kpkc_nframes, true);
+		}
+#endif /* CONFIG_EXCLAVES */
+
 		/*
 		 * Fake the value pointed to by the stack pointer or the link
 		 * register for symbolicators.
@@ -255,7 +247,7 @@ kperf_backtrace_sample(struct kp_kcallstack *cs, struct kperf_context *context)
 		cs->kpkc_word_frames[cs->kpkc_nframes + 1] = 0;
 		cs->kpkc_nframes += 1;
 	}
-	if (trunc) {
+	if ((btinfo & BTI_TRUNCATED)) {
 		cs->kpkc_flags |= CALLSTACK_TRUNCATED;
 	}
 
@@ -289,15 +281,23 @@ kperf_kcallstack_sample(struct kp_kcallstack *cs, struct kperf_context *context)
 	if (ml_at_interrupt_context()) {
 		assert(thread == current_thread());
 		cs->kpkc_flags |= CALLSTACK_KERNEL_WORDS;
-		bool trunc = false;
-		cs->kpkc_nframes = backtrace_interrupted(
-			cs->kpkc_word_frames, cs->kpkc_nframes - 1, &trunc);
+		backtrace_info_t btinfo = BTI_NONE;
+		struct backtrace_control ctl = { .btc_flags = BTF_KERN_INTERRUPTED, };
+		cs->kpkc_nframes = backtrace(cs->kpkc_word_frames, cs->kpkc_nframes - 1,
+		    &ctl, &btinfo);
 		if (cs->kpkc_nframes != 0) {
 			callstack_fixup_interrupted(cs);
 		}
-		if (trunc) {
+		if ((btinfo & BTI_TRUNCATED)) {
 			cs->kpkc_flags |= CALLSTACK_TRUNCATED;
 		}
+
+		cs->kpkc_exclaves_offset = 0;
+#if CONFIG_EXCLAVES
+		if ((thread->th_exclaves_state & TH_EXCLAVES_RPC) != 0) {
+			cs->kpkc_exclaves_offset = exclaves_stack_offset(cs->kpkc_word_frames, cs->kpkc_nframes, true);
+		}
+#endif /* CONFIG_EXCLAVES */
 	} else {
 		/*
 		 * Rely on legacy CHUD backtracer to backtrace kernel stacks on
@@ -335,31 +335,48 @@ kperf_ucallstack_sample(struct kp_ucallstack *cs, struct kperf_context *context)
 	BUF_INFO(PERF_CS_USAMPLE | DBG_FUNC_START,
 	    (uintptr_t)thread_tid(thread), cs->kpuc_nframes);
 
-	bool user64 = false;
-	bool trunc = false;
-	int error = 0;
+	struct backtrace_user_info btinfo = BTUINFO_INIT;
 	/*
 	 * Leave space for the fixup information.
 	 */
 	unsigned int maxnframes = cs->kpuc_nframes - 1;
-	unsigned int nframes = backtrace_thread_user(thread, cs->kpuc_frames,
-	    maxnframes, &error, &user64, &trunc, true);
+	struct backtrace_control ctl = { .btc_user_thread = thread, };
+	unsigned int nframes = backtrace_user(cs->kpuc_frames, maxnframes, &ctl,
+	    &btinfo);
 	cs->kpuc_nframes = MIN(maxnframes, nframes);
 
+	cs->kpuc_flags |= CALLSTACK_KERNEL_WORDS |
+	    ((btinfo.btui_info & BTI_TRUNCATED) ? CALLSTACK_TRUNCATED : 0) |
+	    ((btinfo.btui_info & BTI_64_BIT) ? CALLSTACK_64BIT : 0);
+
 	/*
-	 * Ignore EFAULT to get as much of the stack as possible.  It will be
-	 * marked as truncated, below.
+	 * Ignore EFAULT to get as much of the stack as possible.
 	 */
-	if (error == 0 || error == EFAULT) {
+	if (btinfo.btui_error == 0 || btinfo.btui_error == EFAULT) {
 		callstack_fixup_user(cs, thread);
 		cs->kpuc_flags |= CALLSTACK_VALID;
+
+		if (cs->kpuc_nframes < maxnframes &&
+		    btinfo.btui_async_frame_addr != 0) {
+			cs->kpuc_async_index = btinfo.btui_async_start_index;
+			ctl.btc_frame_addr = btinfo.btui_async_frame_addr;
+			ctl.btc_addr_offset = BTCTL_ASYNC_ADDR_OFFSET;
+			maxnframes -= cs->kpuc_nframes;
+			btinfo = BTUINFO_INIT;
+			unsigned int nasync_frames = backtrace_user(
+			    &cs->kpuc_frames[cs->kpuc_nframes], maxnframes, &ctl, &btinfo);
+			if (btinfo.btui_info & BTI_TRUNCATED) {
+				cs->kpuc_flags |= CALLSTACK_TRUNCATED;
+			}
+			if (btinfo.btui_error == 0 || btinfo.btui_error == EFAULT) {
+				cs->kpuc_flags |= CALLSTACK_HAS_ASYNC;
+				cs->kpuc_async_nframes = nasync_frames;
+			}
+		}
 	} else {
 		cs->kpuc_nframes = 0;
-		BUF_INFO(PERF_CS_ERROR, ERR_GETSTACK, error);
+		BUF_INFO(PERF_CS_ERROR, ERR_GETSTACK, btinfo.btui_error);
 	}
-
-	cs->kpuc_flags |= CALLSTACK_KERNEL_WORDS | (user64 ? CALLSTACK_64BIT : 0) |
-	    (trunc ? CALLSTACK_TRUNCATED : 0);
 
 	BUF_INFO(PERF_CS_USAMPLE | DBG_FUNC_END, (uintptr_t)thread_tid(thread),
 	    cs->kpuc_flags, cs->kpuc_nframes);
@@ -391,11 +408,11 @@ scrub_frame(uint64_t *bt, int n_frames, int frame)
 
 static void
 callstack_log(uint32_t hdrid, uint32_t dataid, void *vframes,
-    unsigned int nframes, unsigned int flags)
+    unsigned int nframes, unsigned int flags, unsigned int async_index,
+    unsigned int async_nframes)
 {
 	BUF_VERB(PERF_CS_LOG | DBG_FUNC_START, flags, nframes);
-
-	BUF_DATA(hdrid, flags, nframes);
+	BUF_DATA(hdrid, flags, nframes - async_nframes, async_index, async_nframes);
 
 	unsigned int nevts = nframes / 4;
 	unsigned int ovf = nframes % 4;
@@ -434,15 +451,57 @@ void
 kperf_kcallstack_log(struct kp_kcallstack *cs)
 {
 	callstack_log(PERF_CS_KHDR, PERF_CS_KDATA, cs->kpkc_frames,
-	    cs->kpkc_nframes, cs->kpkc_flags);
+	    cs->kpkc_nframes, cs->kpkc_flags, 0, 0);
+
+	if (cs->kpkc_exclaves_offset != 0) {
+		BUF_DATA(PERF_CS_KEXOFFSET, cs->kpkc_exclaves_offset);
+	}
 }
 
 void
 kperf_ucallstack_log(struct kp_ucallstack *cs)
 {
 	callstack_log(PERF_CS_UHDR, PERF_CS_UDATA, cs->kpuc_frames,
-	    cs->kpuc_nframes, cs->kpuc_flags);
+	    cs->kpuc_nframes + cs->kpuc_async_nframes, cs->kpuc_flags,
+	    cs->kpuc_async_index, cs->kpuc_async_nframes);
 }
+
+#if CONFIG_EXCLAVES
+void
+kperf_excallstack_log(const stackshottypes_ipcstackentry_s *ipcstack)
+{
+	__block unsigned int nframes = 0;
+	__block unsigned int flags = CALLSTACK_VALID;
+	uint64_t frames[MAX_EXCALLSTACK_FRAMES] = {};
+	uint64_t *frames_block = frames;
+
+	BUF_DATA(PERF_CS_EXSTACK, ipcstack->asid);
+
+	if (ipcstack->stacktrace.has_value) {
+		address__v_visit(&ipcstack->stacktrace.value, ^(size_t i, const stackshottypes_address_s item) {
+			if (i >= MAX_EXCALLSTACK_FRAMES) {
+				flags |= CALLSTACK_TRUNCATED;
+				return;
+			}
+			frames_block[i] = item;
+			nframes += 1;
+		});
+		callstack_log(PERF_CS_EXHDR, PERF_CS_EXDATA, frames, nframes, flags, 0, 0);
+	}
+}
+
+bool
+kperf_exclave_callstack_pend(struct kperf_context *context, unsigned int actionid)
+{
+	if ((context->cur_thread->th_exclaves_state & TH_EXCLAVES_RPC)
+	    && (os_atomic_load(&context->cur_thread->th_exclaves_inspection_state, relaxed) & TH_EXCLAVES_INSPECTION_NOINSPECT) == 0) {
+		os_atomic_or(&context->cur_thread->th_exclaves_inspection_state, TH_EXCLAVES_INSPECTION_KPERF, relaxed);
+		context->cur_thread->kperf_exclaves_ast |= T_KPERF_SET_ACTIONID(actionid);
+		return true;
+	}
+	return false;
+}
+#endif /* CONFIG_EXCLAVES */
 
 int
 kperf_ucallstack_pend(struct kperf_context * context, uint32_t depth,
@@ -499,183 +558,7 @@ chudxnu_vm_unslide( uint64_t ptr, int kaddr )
 	return VM_KERNEL_UNSLIDE(ptr);
 }
 
-#if __arm__
-#define ARM_SUPERVISOR_MODE(cpsr) ((((cpsr) & PSR_MODE_MASK) != PSR_USER_MODE) ? TRUE : FALSE)
-#define CS_FLAG_EXTRASP  1  // capture extra sp register
-static kern_return_t
-chudxnu_thread_get_callstack64_internal(
-	thread_t                thread,
-	uint64_t                *callStack,
-	mach_msg_type_number_t  *count,
-	boolean_t               user_only,
-	int flags)
-{
-	kern_return_t kr;
-	task_t                  task;
-	uint64_t                currPC = 0ULL, currLR = 0ULL, currSP = 0ULL;
-	uint64_t                prevPC = 0ULL;
-	uint32_t                kernStackMin = thread->kernel_stack;
-	uint32_t                kernStackMax = kernStackMin + kernel_stack_size;
-	uint64_t       *buffer = callStack;
-	uint32_t                frame[2];
-	int             bufferIndex = 0;
-	int             bufferMaxIndex = 0;
-	boolean_t       supervisor = FALSE;
-	struct arm_saved_state *state = NULL;
-	uint32_t                *fp = NULL, *nextFramePointer = NULL, *topfp = NULL;
-	uint64_t                pc = 0ULL;
-
-	task = get_threadtask(thread);
-
-	bufferMaxIndex = *count;
-	//get thread state
-	if (user_only) {
-		state = find_user_regs(thread);
-	} else {
-		state = find_kern_regs(thread);
-	}
-
-	if (!state) {
-		*count = 0;
-		return KERN_FAILURE;
-	}
-
-	/* make sure it is safe to dereference before you do it */
-	supervisor = ARM_SUPERVISOR_MODE(state->cpsr);
-
-	/* can't take a kernel callstack if we've got a user frame */
-	if (!user_only && !supervisor) {
-		return KERN_FAILURE;
-	}
-
-	/*
-	 * Reserve space for saving LR (and sometimes SP) at the end of the
-	 * backtrace.
-	 */
-	if (flags & CS_FLAG_EXTRASP) {
-		bufferMaxIndex -= 2;
-	} else {
-		bufferMaxIndex -= 1;
-	}
-
-	if (bufferMaxIndex < 2) {
-		*count = 0;
-		return KERN_RESOURCE_SHORTAGE;
-	}
-
-	currPC = (uint64_t)state->pc; /* r15 */
-	if (state->cpsr & PSR_TF) {
-		currPC |= 1ULL; /* encode thumb mode into low bit of PC */
-	}
-	currLR = (uint64_t)state->lr; /* r14 */
-	currSP = (uint64_t)state->sp; /* r13 */
-
-	fp = (uint32_t *)state->r[7]; /* frame pointer */
-	topfp = fp;
-
-	bufferIndex = 0;  // start with a stack of size zero
-	buffer[bufferIndex++] = chudxnu_vm_unslide(currPC, supervisor); // save PC in position 0.
-
-	// Now, fill buffer with stack backtraces.
-	while (bufferIndex < bufferMaxIndex) {
-		pc = 0ULL;
-		/*
-		 * Below the frame pointer, the following values are saved:
-		 * -> FP
-		 */
-
-		/*
-		 * Note that we read the pc even for the first stack frame
-		 * (which, in theory, is always empty because the callee fills
-		 * it in just before it lowers the stack.  However, if we
-		 * catch the program in between filling in the return address
-		 * and lowering the stack, we want to still have a valid
-		 * backtrace. FixupStack correctly disregards this value if
-		 * necessary.
-		 */
-
-		if ((uint32_t)fp == 0 || ((uint32_t)fp & 0x3) != 0) {
-			/* frame pointer is invalid - stop backtracing */
-			pc = 0ULL;
-			break;
-		}
-
-		if (supervisor) {
-			if (((uint32_t)fp > kernStackMax) ||
-			    ((uint32_t)fp < kernStackMin)) {
-				kr = KERN_FAILURE;
-			} else {
-				kr = chudxnu_kern_read(&frame,
-				    (vm_offset_t)fp,
-				    (vm_size_t)sizeof(frame));
-				if (kr == KERN_SUCCESS) {
-					pc = (uint64_t)frame[1];
-					nextFramePointer = (uint32_t *) (frame[0]);
-				} else {
-					pc = 0ULL;
-					nextFramePointer = 0ULL;
-					kr = KERN_FAILURE;
-				}
-			}
-		} else {
-			kr = chudxnu_task_read(task,
-			    &frame,
-			    (((uint64_t)(uint32_t)fp) & 0x00000000FFFFFFFFULL),
-			    sizeof(frame));
-			if (kr == KERN_SUCCESS) {
-				pc = (uint64_t) frame[1];
-				nextFramePointer = (uint32_t *) (frame[0]);
-			} else {
-				pc = 0ULL;
-				nextFramePointer = 0ULL;
-				kr = KERN_FAILURE;
-			}
-		}
-
-		if (kr != KERN_SUCCESS) {
-			pc = 0ULL;
-			break;
-		}
-
-		if (nextFramePointer) {
-			buffer[bufferIndex++] = chudxnu_vm_unslide(pc, supervisor);
-			prevPC = pc;
-		}
-
-		if (nextFramePointer < fp) {
-			break;
-		} else {
-			fp = nextFramePointer;
-		}
-	}
-
-	if (bufferIndex >= bufferMaxIndex) {
-		bufferIndex = bufferMaxIndex;
-		kr = KERN_RESOURCE_SHORTAGE;
-	} else {
-		kr = KERN_SUCCESS;
-	}
-
-	// Save link register and R13 (sp) at bottom of stack (used for later fixup).
-	buffer[bufferIndex++] = chudxnu_vm_unslide(currLR, supervisor);
-	if (flags & CS_FLAG_EXTRASP) {
-		buffer[bufferIndex++] = chudxnu_vm_unslide(currSP, supervisor);
-	}
-
-	*count = bufferIndex;
-	return kr;
-}
-
-kern_return_t
-chudxnu_thread_get_callstack64_kperf(
-	thread_t                thread,
-	uint64_t                *callStack,
-	mach_msg_type_number_t  *count,
-	boolean_t               user_only)
-{
-	return chudxnu_thread_get_callstack64_internal( thread, callStack, count, user_only, 0 );
-}
-#elif __arm64__
+#if __arm64__
 
 #if defined(HAS_APPLE_PAC)
 #include <ptrauth.h>
@@ -693,8 +576,6 @@ chudxnu_thread_get_callstack64_kperf(
 // [N-1]    current r0 (in case we've saved LR in r0) (optional)
 //
 //
-#define ARM_SUPERVISOR_MODE(cpsr) ((((cpsr) & PSR_MODE_MASK) != PSR_USER_MODE) ? TRUE : FALSE)
-
 #define CS_FLAG_EXTRASP  1  // capture extra sp register
 
 static kern_return_t
@@ -711,6 +592,12 @@ chudxnu_thread_get_callstack64_internal(
 	uint64_t                prevPC = 0ULL;
 	uint64_t                kernStackMin = thread->kernel_stack;
 	uint64_t                kernStackMax = kernStackMin + kernel_stack_size;
+#if CONFIG_SPTM
+	/* If the redzone page is mapped, the valid stack extends one page lower */
+	if (thread->machine.kredzonestack) {
+		kernStackMin -= PAGE_SIZE;
+	}
+#endif /* CONFIG_SPTM */
 	uint64_t       *buffer = callStack;
 	int             bufferIndex = 0;
 	int             bufferMaxIndex = 0;
@@ -767,6 +654,10 @@ chudxnu_thread_get_callstack64_internal(
 		currSP = state->sp;
 
 		fp = (uint64_t *)state->fp; /* frame pointer */
+#if defined(HAS_APPLE_PAC)
+		/* frame pointers on stack will be signed by arm64e ABI */
+		fp = ptrauth_strip(fp, ptrauth_key_frame_pointer);
+#endif
 		topfp = fp;
 
 		bufferIndex = 0;  // start with a stack of size zero
@@ -814,6 +705,10 @@ chudxnu_thread_get_callstack64_internal(
 						pc = frame[1];
 #endif
 						nextFramePointer = (uint64_t *)frame[0];
+#if defined(HAS_APPLE_PAC)
+						/* frame pointers on stack will be signed by arm64e ABI */
+						nextFramePointer = ptrauth_strip(nextFramePointer, ptrauth_key_frame_pointer);
+#endif
 					} else {
 						pc = 0ULL;
 						nextFramePointer = 0ULL;
@@ -833,6 +728,10 @@ chudxnu_thread_get_callstack64_internal(
 					pc = frame[1];
 #endif
 					nextFramePointer = (uint64_t *)(frame[0]);
+#if defined(HAS_APPLE_PAC)
+					/* frame pointers on stack will be signed by arm64e ABI */
+					nextFramePointer = ptrauth_strip(nextFramePointer, ptrauth_key_frame_pointer);
+#endif
 				} else {
 					pc = 0ULL;
 					nextFramePointer = 0ULL;
@@ -882,7 +781,7 @@ chudxnu_thread_get_callstack64_internal(
 		state = saved_state32(sstate);
 
 		/* make sure it is safe to dereference before you do it */
-		kernel = ARM_SUPERVISOR_MODE(state->cpsr);
+		kernel = PSR_IS_KERNEL(state->cpsr);
 
 		/* can't take a kernel callstack if we've got a user frame */
 		if (!user_only && !kernel) {
@@ -1315,7 +1214,7 @@ chudxnu_thread_get_callstack64_internal(
 	boolean_t               kern_only)
 {
 	kern_return_t kr = KERN_FAILURE;
-	task_t task = thread->task;
+	task_t task = get_threadtask(thread);
 	uint64_t currPC = 0ULL;
 	boolean_t supervisor = FALSE;
 	mach_msg_type_number_t bufferIndex = 0;
@@ -1528,6 +1427,6 @@ chudxnu_thread_get_callstack64_kperf(
 {
 	return chudxnu_thread_get_callstack64_internal(thread, callstack, count, is_user, !is_user);
 }
-#else /* !__arm__ && !__arm64__ && !__x86_64__ */
+#else /* !__arm64__ && !__x86_64__ */
 #error kperf: unsupported architecture
-#endif /* !__arm__ && !__arm64__ && !__x86_64__ */
+#endif /* !__arm64__ && !__x86_64__ */

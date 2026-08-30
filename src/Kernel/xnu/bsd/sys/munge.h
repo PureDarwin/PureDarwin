@@ -1,5 +1,5 @@
 /*
- * Coyright (c) 2005-2013 Apple Inc. All rights reserved.
+ * Coyright (c) 2005-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -84,6 +84,8 @@ int munge_wl(const void *regs, void *args);
 int munge_wwl(const void *regs, void *args);
 int munge_wwlw(const void *regs, void *args);
 int munge_wwlll(const void *regs, void *args);
+int munge_wwlllll(const void *regs, void *args);
+int munge_wwllllll(const void *regs, void *args);
 int munge_wwllww(const void *regs, void *args);
 int munge_wlw(const void *regs, void *args);
 int munge_wlww(const void *regs, void *args);
@@ -115,15 +117,19 @@ int munge_wsw(const void *regs, void *args);
 int munge_wws(const void *regs, void *args);
 int munge_wwws(const void *regs, void *args);
 int munge_wwwsw(const void *regs, void *args);
+int munge_llllllll(const void *regs, void *args);
 int munge_llllll(const void *regs, void *args);
 int munge_l(const void *regs, void *args);
 int munge_ll(const void *regs, void *args);
+int munge_lll(const void *regs, void *args);
 int munge_lw(const void *regs, void *args);
+int munge_lww(const void *regs, void *args);
 int munge_lwww(const void *regs, void *args);
 int munge_lwwwwwww(const void *regs, void *args);
 int munge_wwlww(const void *regs, void *args);
 int munge_wwlwww(const void *regs, void *args);
 int munge_wwlwwwl(const void *regs, void *args);
+int munge_wlwwlww(const void *regs, void *args);
 #else
 void munge_w(void *args);
 void munge_ww(void *args);
@@ -137,6 +143,8 @@ void munge_wl(void *args);
 void munge_wwl(void *args);
 void munge_wwlw(void *args);
 void munge_wwlll(void *args);
+void munge_wwlllll(void *args);
+void munge_wwllllll(void *args);
 void munge_wwllww(void *args);
 void munge_wlw(void *args);
 void munge_wlww(void *args);
@@ -168,15 +176,19 @@ void munge_wsw(void *args);
 void munge_wws(void *args);
 void munge_wwws(void *args);
 void munge_wwwsw(void *args);
+void munge_llllllll(void *args);
 void munge_llllll(void *args);
 void munge_llll(void *args);
 void munge_l(void *args);
 void munge_ll(void *args);
+void munge_lll(void *args);
 void munge_lw(void *args);
+void munge_lww(void *args);
 void munge_lwww(void *args);
 void munge_lwwwwwww(void *args);
 void munge_wwlww(void *args);
 void munge_wwlwww(void *args);
 void munge_wwlwwwl(void *args);
+void munge_wlwwlww(void *args);
 #endif /* __arm__ && (__BIGGEST_ALIGNMENT__ > 4) */
 #endif /* __MUNGE_H__ */

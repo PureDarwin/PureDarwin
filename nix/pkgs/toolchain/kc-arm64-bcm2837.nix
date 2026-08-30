@@ -26,7 +26,6 @@ stdenv.mkDerivation {
     ${kcTools}/bin/kc-builder \
       -kernel "$KERNEL_BIN" \
       -kext "$KEXTS/corecrypto.kext" \
-      -kext "$KEXTS/pthread.kext" \
       -kext "$KEXTS/PDArmPlatformExpert.kext" \
       -kext "$KEXTS/IOStorageFamily.kext" \
       -kext "$KEXTS/PDBcm2835SD.kext" \

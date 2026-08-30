@@ -78,11 +78,11 @@ route6_input(struct mbuf **mp, int *offp, int proto)
 {
 #pragma unused(proto)
 	struct ip6_hdr *ip6 = NULL;
-	struct mbuf *m = *mp;
-	struct ip6_rthdr *rh = NULL;
+	mbuf_ref_t m = *mp;
+	struct ip6_rthdr *__single rh = NULL;
 	int off = *offp, rhlen = 0;
 #ifdef notyet
-	struct ip6aux *ip6a = NULL;
+	struct ip6aux *__single ip6a = NULL;
 
 	ip6a = ip6_findaux(m);
 	if (ip6a) {
@@ -90,7 +90,8 @@ route6_input(struct mbuf **mp, int *offp, int proto)
 		if (ip6a->ip6a_flags & IP6A_SWAP) {
 			ip6stat.ip6s_badoptions++;
 			*mp = NULL;
-			m_freem(m);
+			m_drop(m, DROPTAP_FLAG_DIR_IN | DROPTAP_FLAG_L2_MISSING, DROP_REASON_IP6_BAD_OPTION, NULL, 0);
+
 			return IPPROTO_DONE;
 		}
 	}

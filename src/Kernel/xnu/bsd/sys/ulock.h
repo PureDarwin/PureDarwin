@@ -51,6 +51,9 @@ ulock_owner_value_to_port_name(uint32_t uval)
 	 */
 	return ipc_entry_name_mask((mach_port_name_t)uval);
 }
+
+extern int ulock_wake(struct task *task, uint32_t operation, user_addr_t addr, uint64_t wake_value);
+
 #else
 static __inline mach_port_name_t
 ulock_owner_value_to_port_name(uint32_t uval)
@@ -61,8 +64,11 @@ ulock_owner_value_to_port_name(uint32_t uval)
 
 #ifndef KERNEL
 
+/* timeout is specified in microseconds */
 extern int __ulock_wait(uint32_t operation, void *addr, uint64_t value,
-    uint32_t timeout);             /* timeout is specified in microseconds */
+    uint32_t timeout);
+/* timeout is either a delta specified in nanoseconds or a deadline in
+ * mach_absolute_time units specified together with the ULF_DEADLINE flag */
 extern int __ulock_wait2(uint32_t operation, void *addr, uint64_t value,
     uint64_t timeout, uint64_t value2);
 extern int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
@@ -117,8 +123,13 @@ extern int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
 
 /*
  * operation bits [31, 24] contain the generic flags
+ *
+ * @const ULF_DEADLINE
+ * put timeout - if specified - is a deadline specified in mach absolute
+ * time units
  */
 #define ULF_NO_ERRNO                    0x01000000
+#define ULF_DEADLINE                    0x02000000
 
 /*
  * masks
@@ -127,7 +138,7 @@ extern int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
 #define UL_FLAGS_MASK           0xFFFFFF00
 #define ULF_GENERIC_MASK        0xFFFF0000
 
-#define ULF_WAIT_MASK           (ULF_NO_ERRNO | \
+#define ULF_WAIT_MASK           (ULF_NO_ERRNO | ULF_DEADLINE | \
 	                         ULF_WAIT_WORKQ_DATA_CONTENTION | \
 	                         ULF_WAIT_CANCEL_POINT | ULF_WAIT_ADAPTIVE_SPIN)
 

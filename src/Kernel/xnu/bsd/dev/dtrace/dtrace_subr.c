@@ -35,14 +35,11 @@
 #include <kern/debug.h>
 #include <kern/sched_prim.h>
 #include <kern/task.h>
+#include <machine/machine_routines.h>
 
 #if CONFIG_CSR
 #include <sys/codesign.h>
 #include <sys/csr.h>
-
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
-extern bool csr_unsafe_kernel_text;
-#endif
 #endif
 
 /*
@@ -156,8 +153,8 @@ dtrace_proc_exec_notification(proc_t *p) {
 	static char execpath[MAXPATHLEN];
 
 	ASSERT(p);
-	ASSERT(p->p_pid != -1);
-	ASSERT(current_task() != p->task);
+	ASSERT(proc_getpid(p) != -1);
+	ASSERT(current_task() != proc_task(p));
 
 	lck_mtx_lock(&dtrace_procwaitfor_lock);
 
@@ -166,7 +163,7 @@ dtrace_proc_exec_notification(proc_t *p) {
 		char *pname = p->p_comm;
 
 		/* Already matched with another process. */
-		if ((entry->pdesc->p_pid != -1))
+		if (((entry->pdesc->p_pid) != -1))
 			continue;
 
 		/* p_comm is too short, use the execpath. */
@@ -186,8 +183,8 @@ dtrace_proc_exec_notification(proc_t *p) {
 		}
 
 		if (!strcmp(entry->pdesc->p_name, pname)) {
-			entry->pdesc->p_pid = p->p_pid;
-			task_pidsuspend(p->task);
+			entry->pdesc->p_pid = proc_getpid(p);
+			task_pidsuspend(proc_task(p));
 			wakeup(entry);
 		}
 	}
@@ -329,7 +326,7 @@ dtrace_is_valid_ptrauth_key(uint64_t key)
 	return (key == ptrauth_key_asia) || (key == ptrauth_key_asib) ||
 	    (key == ptrauth_key_asda) || (key == ptrauth_key_asdb);
 #else
-	return (0);
+	return (1);
 #endif /* __has_feature(ptrauth_calls) */
 }
 
@@ -397,10 +394,10 @@ dtrace_state_get(minor_t minor)
 dtrace_state_t*
 dtrace_state_allocate(minor_t minor)
 {
-	dtrace_state_t *state = _MALLOC(sizeof(dtrace_state_t), M_TEMP, M_ZERO | M_WAITOK);
+	dtrace_state_t *state = kalloc_type(dtrace_state_t, Z_ZERO | Z_WAITOK);
 	if (dtrace_casptr(&dtrace_clients[minor], NULL, state) != NULL) {
 		// We have been raced by another client for this number, abort
-		_FREE(state, M_TEMP);
+		kfree_type(dtrace_state_t, state);
 		return NULL;
 	}
 	return state;
@@ -411,14 +408,7 @@ dtrace_state_free(minor_t minor)
 {
 	dtrace_state_t *state = dtrace_clients[minor];
 	dtrace_clients[minor] = NULL;
-	_FREE(state, M_TEMP);
-}
-
-
-
-void
-dtrace_restriction_policy_load(void)
-{
+	kfree_type(dtrace_state_t, state);
 }
 
 /*
@@ -449,7 +439,8 @@ dtrace_are_restrictions_relaxed(void)
 boolean_t
 dtrace_fbt_probes_restricted(void)
 {
-
+	if (!ml_unsafe_kernel_text())
+		return TRUE;
 #if CONFIG_CSR
 	if (dtrace_is_restricted() && !dtrace_are_restrictions_relaxed())
 		return TRUE;
@@ -462,6 +453,8 @@ boolean_t
 dtrace_sdt_probes_restricted(void)
 {
 
+	if (!ml_unsafe_kernel_text())
+		return TRUE;
 	return FALSE;
 }
 

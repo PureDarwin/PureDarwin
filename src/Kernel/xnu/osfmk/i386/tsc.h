@@ -43,7 +43,6 @@
 #define BASE_NHM_CLOCK_SOURCE   133333333ULL
 #define BASE_ART_CLOCK_SOURCE           24000000ULL     /* 24MHz */
 #define BASE_ART_CLOCK_SOURCE_SP        25000000ULL     /* 25MHz */
-#define BASE_ART_CLOCK_SOURCE_MTL       38400000ULL     /* 38.4MHz */
 #define IA32_PERF_STS                   0x198
 #define SLOW_TSC_THRESHOLD      1000067800      /* if slower, nonzero shift required in nanotime() algorithm */
 
@@ -79,7 +78,6 @@ typedef struct tscInfo tscInfo_t;
 extern void tsc_get_info(tscInfo_t *info);
 
 extern void tsc_init(void);
-extern void tsc_sync_init_deferred(void);
 
 #if DEVELOPMENT || DEBUG
 extern void cpu_data_tsc_sync_deltas_string(char *buf, uint32_t buflen,

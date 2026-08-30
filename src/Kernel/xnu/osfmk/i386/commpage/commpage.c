@@ -60,8 +60,10 @@
 #include <machine/cpu_capabilities.h>
 #include <machine/commpage.h>
 #include <machine/pmap.h>
-#include <vm/vm_kern.h>
-#include <vm/vm_map.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_map_internal.h>
+#include <vm/vm_map_lock_internal.h>
+#include <vm/vm_map_xnu.h>
 #include <stdatomic.h>
 
 #include <ipc/ipc_port.h>
@@ -70,6 +72,7 @@
 #include <kern/processor.h>
 
 #include <sys/kdebug.h>
+#include <sys/random.h>
 
 #if CONFIG_ATM
 #include <atm/atm_internal.h>
@@ -120,8 +123,8 @@ commpage_allocate(
 	size_t          area_used,              // _COMM_PAGE32_AREA_USED or _COMM_PAGE64_AREA_USED
 	vm_prot_t       uperm)
 {
-	vm_offset_t     kernel_addr = 0;        // address of commpage in kernel map
-	vm_offset_t     zero = 0;
+	mach_vm_offset_t kernel_addr = 0;        // address of commpage in kernel map
+	mach_vm_offset_t zero = 0;
 	vm_size_t       size = area_used;       // size actually populated
 	vm_map_entry_t  entry;
 	ipc_port_t      handle;
@@ -132,13 +135,11 @@ commpage_allocate(
 		panic("commpage submap is null");
 	}
 
-	kr = vm_map_kernel(kernel_map,
+	kr = mach_vm_map_kernel(kernel_map,
 	    &kernel_addr,
 	    area_used,
 	    0,
-	    VM_FLAGS_ANYWHERE,
-	    VM_MAP_KERNEL_FLAGS_NONE,
-	    VM_KERN_MEMORY_OSFMK,
+	    VM_MAP_KERNEL_FLAGS_ANYWHERE(.vm_tag = VM_KERN_MEMORY_OSFMK),
 	    NULL,
 	    0,
 	    FALSE,
@@ -165,9 +166,12 @@ commpage_allocate(
 	 *
 	 * JMM - What we really need is a way to create it like this in the first place.
 	 */
-	if (!(kr = vm_map_lookup_entry( kernel_map, vm_map_trunc_page(kernel_addr, VM_MAP_PAGE_MASK(kernel_map)), &entry) || entry->is_sub_map)) {
+	vm_map_ilk_lock(kernel_map);
+	entry = vm_map_lookup(kernel_map, kernel_addr);
+	if (entry == VM_MAP_ENTRY_NULL || entry->is_sub_map) {
 		panic("cannot find commpage entry %d", kr);
 	}
+	vm_map_ilk_unlock(kernel_map);
 	VME_OBJECT(entry)->copy_strategy = MEMORY_OBJECT_COPY_NONE;
 
 	if ((kr = mach_make_memory_entry( kernel_map,           // target map
@@ -179,7 +183,7 @@ commpage_allocate(
 		panic("cannot make entry for commpage %d", kr);
 	}
 
-	vmk_flags = VM_MAP_KERNEL_FLAGS_NONE;
+	vmk_flags = VM_MAP_KERNEL_FLAGS_FIXED();
 	if (uperm == (VM_PROT_READ | VM_PROT_EXECUTE)) {
 		/*
 		 * Mark this unsigned executable mapping as "jit" to avoid
@@ -189,14 +193,12 @@ commpage_allocate(
 		vmk_flags.vmkf_map_jit = TRUE;
 	}
 
-	kr = vm_map_64_kernel(
+	kr = mach_vm_map_kernel(
 		submap,                 // target map (shared submap)
 		&zero,                  // address (map into 1st page in submap)
-		area_used,              // size
-		0,                      // mask
-		VM_FLAGS_FIXED,         // flags (it must be 1st page in submap)
-		vmk_flags,
-		VM_KERN_MEMORY_NONE,
+	    area_used,              // size
+	    0,                      // mask
+	    vmk_flags,
 		handle,                 // port is the memory entry we just made
 		0,                      // offset (map 1st page in memory entry)
 		FALSE,                  // copy
@@ -212,8 +214,7 @@ commpage_allocate(
 	 * at the time of map entry creation as mach_make_memory_entry
 	 * cannot handle disjoint permissions at this time.
 	 */
-	kr = vm_protect(kernel_map, kernel_addr, area_used, FALSE, VM_PROT_READ | VM_PROT_WRITE);
-	assert(kr == KERN_SUCCESS);
+	/* The initial kernel mapping already has VM_PROT_ALL. */
 
 	return (void*)(intptr_t)kernel_addr;                     // return address in kernel map
 }
@@ -388,14 +389,11 @@ commpage_init_cpu_capabilities( void )
 		    CPUID_LEAF7_FEATURE_AVX512VPCDQ);
 	}
 
-	i386_cpu_info_t *infop = cpuid_info();
-
-	/* MSR_IA32_MISC_ENABLE != present on AMD */
-	if (infop->cpuid_ven == CPUID_VEN_INTEL) {
+	/* MSR_IA32_MISC_ENABLE is Intel-specific. */
+	if (cpuid_info()->cpuid_ven == CPUID_VEN_INTEL &&
+	    (cpuid_leaf7_features() & CPUID_LEAF7_FEATURE_ERMS)) {
 		uint64_t misc_enable = rdmsr64(MSR_IA32_MISC_ENABLE);
-		setif(bits, kHasENFSTRG, (misc_enable & 1ULL) &&
-	    (cpuid_leaf7_features() &
-	    CPUID_LEAF7_FEATURE_ERMS));
+		setif(bits, kHasENFSTRG, (misc_enable & 1ULL));
 	}
 
 	_cpu_capabilities = bits;               // set kernel version for use by drivers etc
@@ -516,6 +514,7 @@ commpage_populate_one(
 	uint8_t         c1;
 	uint16_t        c2;
 	uint64_t        c8;
+	uint8_t         c256[256] = {0};
 	uint32_t        cfamily;
 	short   version = _COMM_PAGE_THIS_VERSION;
 
@@ -524,8 +523,18 @@ commpage_populate_one(
 
 	/* PureDarwin/QEMU-TCG: from here until this function returns, commPagePtr32
 	 * (or 64) is non-NULL but the page is only lazily faulted in as the writes
-	 * below actually touch it.
-	 */
+	 * below actually touch it -- on real hardware that first-touch fault is
+	 * fast enough nobody has ever hit this, but under TCG's much slower
+	 * instruction-by-instruction emulation, the periodic timer interrupt
+	 * (running_timers_expire -> commpage_update_mach_approximate_time, which
+	 * reads through commPagePtr32 unconditionally once it's non-NULL) reliably
+	 * lands inside this window and faults on a mapping this same CPU is mid-
+	 * establishing, panicking the boot. Disable interrupts just for this
+	 * pointer-publish + fault-in-by-writing window (NOT around
+	 * commpage_allocate() above, which calls vm_map_enter -> zalloc and
+	 * *requires* interrupts enabled -- see zalloc.c's
+	 * "interrupts_enabled || ... || startup_phase < STARTUP_SUB_EARLY_BOOT"
+	 * assertion, which an earlier, wider version of this fix tripped). */
 	boolean_t istate = ml_set_interrupts_enabled(FALSE);
 
 	*kernAddressPtr = commPagePtr;                          // save address either in commPagePtr32 or 64
@@ -557,6 +566,8 @@ commpage_populate_one(
 	commpage_stuff(_COMM_PAGE_PHYSICAL_CPUS, &c1, 1);
 	c1 = machine_info.logical_cpu_max;
 	commpage_stuff(_COMM_PAGE_LOGICAL_CPUS, &c1, 1);
+	c1 = ml_get_cluster_count();
+	commpage_stuff(_COMM_PAGE_CPU_CLUSTERS, &c1, 1);
 
 	c8 = ml_cpu_cache_size(0);
 	commpage_stuff(_COMM_PAGE_MEMORY_SIZE, &c8, 8);
@@ -566,6 +577,9 @@ commpage_populate_one(
 	c1 = PAGE_SHIFT;
 	commpage_stuff(_COMM_PAGE_KERNEL_PAGE_SHIFT, &c1, 1);
 	commpage_stuff(_COMM_PAGE_USER_PAGE_SHIFT_64, &c1, 1);
+
+	ml_map_cpus_to_clusters(c256);
+	commpage_stuff(_COMM_PAGE_CPU_TO_CLUSTER, c256, 256);
 
 	if (next > _COMM_PAGE_END) {
 		panic("commpage overflow: next = 0x%08x, commPagePtr = 0x%p", next, commPagePtr);
@@ -628,6 +642,44 @@ commpage_populate( void )
 #if CONFIG_ATM
 	commpage_update_atm_diagnostic_config(atm_get_diagnostic_config());
 #endif
+
+	/*
+	 * Set random values for targets in Apple Security Bounty
+	 * addr should be unmapped for userland processes
+	 * kaddr should be unmapped for kernel
+	 */
+	uint64_t asb_value, asb_addr, asb_kvalue, asb_kaddr;
+	uint64_t asb_rand_vals[] = {
+		0x93e78adcded4d3d5, 0xd16c5b76ad99bccf, 0x67dfbbd12c4a594e, 0x7365636e6f6f544f,
+		0x239a974c9811e04b, 0xbf60e7fa45741446, 0x8acf5210b466b05, 0x67dfbbd12c4a594e
+	};
+	const int nrandval = sizeof(asb_rand_vals) / sizeof(asb_rand_vals[0]);
+	uint8_t randidx;
+	read_random(&randidx, sizeof(uint8_t));
+
+
+	asb_value = asb_rand_vals[randidx++ % nrandval];
+	commpage_update(_COMM_PAGE_ASB_TARGET_VALUE, &asb_value, sizeof(asb_value));
+
+	asb_addr = asb_rand_vals[randidx++ % nrandval];
+	uint64_t user_min = MACH_VM_MAX_ADDRESS;
+	uint64_t user_max = UINT64_MAX;
+	asb_addr %= (user_max - user_min);
+	asb_addr += user_min;
+	commpage_update(_COMM_PAGE_ASB_TARGET_ADDRESS, &asb_addr, sizeof(asb_addr));
+
+	asb_kvalue = asb_rand_vals[randidx++ % nrandval];
+	commpage_update(_COMM_PAGE_ASB_TARGET_KERN_VALUE, &asb_kvalue, sizeof(asb_kvalue));
+
+	asb_kaddr = asb_rand_vals[randidx++ % nrandval];
+	uint64_t kernel_min = 0x0LL;
+	uint64_t kernel_max = VM_MIN_KERNEL_ADDRESS;
+	asb_kaddr %= (kernel_max - kernel_min);
+	asb_kaddr += kernel_min;
+	commpage_update(_COMM_PAGE_ASB_TARGET_KERN_ADDRESS, &asb_kaddr, sizeof(asb_kaddr));
+
+	vm_map_seal(commpage32_map, true /* nested_pmap */);
+	vm_map_seal(commpage64_map, true /* nested_pmap */);
 }
 
 /* Fill in the common routines during kernel initialization.
@@ -681,6 +733,9 @@ commpage_text_populate( void )
 	if (next > _COMM_PAGE_TEXT_END) {
 		panic("commpage text overflow: next=0x%08x, commPagePtr=%p", next, commPagePtr);
 	}
+
+	vm_map_seal(commpage_text32_map, true /* nested_pmap */);
+	vm_map_seal(commpage_text64_map, true /* nested_pmap */);
 }
 
 /* Update commpage nanotime information.

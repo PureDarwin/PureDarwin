@@ -1,0 +1,72 @@
+module DarwinPrivate.net {
+  #ifndef XNU_PLATFORM_MacOSX
+  module bpf {
+    header "net/bpf.h"
+    export *
+  }
+
+  #endif
+  explicit module bpf_private {
+    header "net/bpf_private.h"
+    export *
+  }
+
+  module if_ipsec {
+    header "net/if_ipsec.h"
+    export *
+  }
+
+  module if {
+    header "net/if_private.h"
+    export *
+  }
+
+  #ifndef XNU_PLATFORM_MacOSX
+  module if_media {
+    header "net/if_media.h"
+    export *
+  }
+
+  module if_mib {
+    header "net/if_mib.h"
+    export *
+  }
+
+  #endif
+  module if_mib_private {
+    header "net/if_mib_private.h"
+    export *
+  }
+
+  module if_var {
+    header "net/if_var_private.h"
+    export *
+  }
+
+  module if_vlan_var {
+    header "net/if_vlan_var.h"
+    export *
+  }
+
+  module necp {
+    header "net/necp.h"
+    export *
+  }
+
+  module network_agent {
+    header "net/network_agent.h"
+    export *
+  }
+
+  #ifndef XNU_PLATFORM_MacOSX
+  module route {
+    header "net/route.h"
+    export *
+  }
+
+  #endif
+  module route_private {
+    header "net/route_private.h"
+    export *
+  }
+}

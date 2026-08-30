@@ -85,6 +85,7 @@
 
 
 #include <sys/queue.h>
+#include <kern/smr.h>
 #include <sys/uio.h>
 #include <sys/vnode.h>
 #include <sys/mount.h>
@@ -101,9 +102,7 @@ struct nameidata {
 	 */
 	user_addr_t ni_dirp;            /* pathname pointer */
 	enum    uio_seg ni_segflg;      /* location of pathname */
-#if CONFIG_TRIGGERS
 	enum    path_operation ni_op;   /* intended operation, see enum path_operation in vnode.h */
-#endif /* CONFIG_TRIGGERS */
 	/*
 	 * Arguments to lookup.
 	 */
@@ -126,6 +125,9 @@ struct nameidata {
 	struct componentname ni_cnd;
 	int32_t ni_flag;
 	int ni_ncgeneration;            /* For a batched vnop, grab generation beforehand */
+
+	/* arguments to namei */
+	int ni_atfd;
 };
 
 #define NAMEI_CONTLOOKUP        0x002    /* Continue processing a lookup which was partially processed in a compound VNOP */
@@ -145,6 +147,20 @@ struct nameidata {
 #define NAMEI_COMPOUND_OP_MASK (NAMEI_COMPOUNDOPEN | NAMEI_COMPOUNDREMOVE | NAMEI_COMPOUNDMKDIR | NAMEI_COMPOUNDRMDIR | NAMEI_COMPOUNDRENAME)
 
 #define NAMEI_NOFOLLOW_ANY      0x1000  /* no symlinks allowed in the path */
+#define NAMEI_ROOTDIR           0x2000  /* Limit lookup to ni_rootdir (similar to chroot) */
+#define NAMEI_RESOLVE_BENEATH   0x4000  /* path resolution must not escape the starting directory */
+#define NAMEI_NODOTDOT          0x8000  /* prevent '..' path traversal */
+
+#define NAMEI_LOCAL             0x10000 /* prevent a path lookup into a network filesystem */
+#define NAMEI_NODEVFS           0x20000 /* prevent a path lookup into `devfs` filesystem */
+#define NAMEI_IMMOVABLE         0x40000 /* prevent a path lookup into a removable filesystem */
+#define NAMEI_NOXATTRS          0x80000 /* prevent a path lookup on named streams */
+
+#define NAMEI_UNIQUE            0x100000 /* prevent a path lookup from succeeding on a vnode with multiple links */
+#define NAMEI_NOUNION           0x200000 /* prevent a path lookup on filesystem with MNT_UNION from traversing to covered filesystem */
+#define NAMEI_ATFD              0x400000 /* use the fd passed as the starting directory for lookup */
+
+#define NAMEI_FIRMLINK_FOLLOWED 0x800000 /* Firmlink followed since last root encounter */
 
 #ifdef KERNEL
 /*
@@ -183,7 +199,9 @@ struct nameidata {
 #define USEDVP          0x00400000 /* start the lookup at ndp.ni_dvp */
 #define CN_VOLFSPATH    0x00800000 /* user path was a volfs style path */
 #define CN_FIRMLINK_NOFOLLOW    0x01000000 /* Do not follow firm links */
-#define UNIONCREATED    0x02000000 /* union fs creation of vnode */
+#if NAMEDSTREAMS
+#define MARKISSHADOW    0x02000000 /* only for getshadowfile() */
+#endif
 #if NAMEDRSRCFORK
 #define CN_WANTSRSRCFORK 0x04000000
 #define CN_ALLOWRSRCFORK 0x08000000
@@ -199,15 +217,12 @@ struct nameidata {
  * Initialization of an nameidata structure.
  */
 
-#if CONFIG_TRIGGERS
-/* Note: vnode triggers require more precise path operation (ni_op) */
-
 #define NDINIT(ndp, op, pop, flags, segflg, namep, ctx) { \
 	(ndp)->ni_cnd.cn_nameiop = op; \
 	(ndp)->ni_op = pop; \
 	(ndp)->ni_cnd.cn_flags = flags; \
 	if ((segflg) == UIO_USERSPACE) { \
-	        (ndp)->ni_segflg = ((IS_64BIT_PROCESS(vfs_context_proc(ctx))) ? UIO_USERSPACE64 : UIO_USERSPACE32); \
+	        (ndp)->ni_segflg = (vfs_context_is64bit(ctx) ? UIO_USERSPACE64 : UIO_USERSPACE32); \
 	} \
 	else { \
 	        (ndp)->ni_segflg = segflg; \
@@ -216,23 +231,8 @@ struct nameidata {
 	(ndp)->ni_cnd.cn_context = ctx; \
 	(ndp)->ni_flag = 0; \
 	(ndp)->ni_cnd.cn_ndp = (ndp); \
+	(ndp)->ni_atfd = -2; \
 }
-#else
-#define NDINIT(ndp, op, _unused_, flags, segflg, namep, ctx) { \
-	(ndp)->ni_cnd.cn_nameiop = op; \
-	(ndp)->ni_cnd.cn_flags = flags; \
-	if ((segflg) == UIO_USERSPACE) { \
-	        (ndp)->ni_segflg = ((IS_64BIT_PROCESS(vfs_context_proc(ctx))) ? UIO_USERSPACE64 : UIO_USERSPACE32); \
-	} \
-	else { \
-	        (ndp)->ni_segflg = segflg; \
-	} \
-	(ndp)->ni_dirp = namep; \
-	(ndp)->ni_cnd.cn_context = ctx; \
-	(ndp)->ni_flag = 0; \
-	(ndp)->ni_cnd.cn_ndp = (ndp); \
-}
-#endif /* CONFIG_TRIGGERS */
 
 #endif /* KERNEL */
 
@@ -247,13 +247,16 @@ struct  namecache {
 		LIST_ENTRY(namecache)  nc_link; /* chain of ncp's that 'name' a vp */
 		TAILQ_ENTRY(namecache) nc_negentry; /* chain of ncp's that 'name' a vp */
 	} nc_un;
-	LIST_ENTRY(namecache)   nc_hash;        /* hash chain */
+	struct smrq_link        nc_hash;        /* hash chain */
+	uint32_t                nc_vid;         /* vid for nc_vp */
+	uint32_t                nc_counter;     /* flags */
 	vnode_t                 nc_dvp;         /* vnode of parent of name */
 	vnode_t                 nc_vp;          /* vnode the name refers to */
 	unsigned int            nc_hashval;     /* hashval of stringname */
 	const char              *nc_name;       /* pointer to segment name in string cache */
 };
 
+#define NC_VALID 0x01  /* counter value with this bit set (i.e. odd number) represents an valid/in-use namecache struct */
 
 #ifdef KERNEL
 
@@ -262,7 +265,10 @@ void    nameidone(struct nameidata *);
 int     lookup(struct nameidata *ndp);
 int     relookup(struct vnode *dvp, struct vnode **vpp,
     struct componentname *cnp);
+#if CONFIG_UNION_MOUNTS
 int     lookup_traverse_union(vnode_t dvp, vnode_t *new_dvp, vfs_context_t ctx);
+#endif /* CONFIG_UNION_MOUNTS */
+int     lookup_check_for_resolve_prefix(char *path, size_t pathbuflen, size_t len, uint32_t *resolve_flags, size_t *prefix_len);
 void    lookup_compound_vnop_post_hook(int error, vnode_t dvp, vnode_t vp, struct nameidata *ndp, int did_create);
 void    kdebug_lookup(struct vnode *dp, struct componentname *cnp);
 
@@ -279,6 +285,7 @@ boolean_t       vnode_cache_is_stale(vnode_t vp);
 boolean_t       vnode_cache_is_authorized(vnode_t vp, vfs_context_t context, kauth_action_t action);
 int             lookup_validate_creation_path(struct nameidata *ndp);
 int             namei_compound_available(vnode_t dp, struct nameidata *ndp);
+bool            mount_skip_rsrc_lookup(mount_t mp);
 
 #endif /* KERNEL */
 

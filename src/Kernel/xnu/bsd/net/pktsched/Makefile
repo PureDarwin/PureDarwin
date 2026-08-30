@@ -12,7 +12,7 @@ KERNELFILES= \
 
 PRIVATE_DATAFILES = \
 	pktsched.h pktsched_cbq.h pktsched_fairq.h pktsched_hfsc.h \
-	pktsched_priq.h pktsched_rmclass.h pktsched_fq_codel.h
+	pktsched_priq.h pktsched_rmclass.h pktsched_fq_codel.h pktsched_ops.h
 
 PRIVATE_KERNELFILES = ${KERNELFILES}
 
@@ -24,7 +24,7 @@ EXPORT_MI_LIST	= ${INSTALL_MI_LIST} ${KERNELFILES}
 
 EXPORT_MI_DIR = ${INSTALL_MI_DIR}
 
-INSTALL_MI_LCL_LIST = ${PRIVATE_DATAFILES}
+INSTALL_SF_MI_LCL_LIST = ${DATAFILES} ${PRIVATE_DATAFILES}
 
 INSTALL_KF_MI_LCL_LIST = ${DATAFILES} ${PRIVATE_DATAFILES} ${PRIVATE_KERNELFILES}
 

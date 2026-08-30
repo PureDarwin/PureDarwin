@@ -113,7 +113,7 @@ extern void pal_dbg_set_task_name( task_t task );
 /* wind-back to the start of a system call */
 void pal_syscall_restart(thread_t thread, x86_saved_state_t *state);
 
-/* Hook for non-vfork exec */
+/* Hook for exec */
 void pal_execve_return(thread_t thread);
 
 /* Called by thread_terminate_self() */
@@ -156,9 +156,10 @@ static inline void
 pal_get_resource_property(const char **property_name, int *property_value)
 {
 	*property_name = PAL_AICPM_PROPERTY_NAME;
-	*property_value = PAL_XCPM_PROPERTY_VALUE;
 	if (virtualized) {
 		*property_value = PAL_VIRTUALIZED_PROPERTY_VALUE;
+	} else {
+		*property_value = PAL_XCPM_PROPERTY_VALUE;
 	}
 }
 

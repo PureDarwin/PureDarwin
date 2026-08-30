@@ -5,6 +5,8 @@
 #ifndef _BSD_ARM_VMPARAM_H_
 #define _BSD_ARM_VMPARAM_H_ 1
 
+#if defined (__arm__) || defined (__arm64__)
+
 #include <sys/resource.h>
 
 #ifndef KERNEL
@@ -47,5 +49,7 @@
 #ifndef MAXCSIZ
 #define MAXCSIZ         (RLIM_INFINITY)         /* max core size */
 #endif  /* MAXCSIZ */
+
+#endif /* defined (__arm__) || defined (__arm64__) */
 
 #endif  /* _BSD_ARM_VMPARAM_H_ */

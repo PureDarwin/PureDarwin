@@ -59,7 +59,6 @@ MALLOC_DECLARE(M_AUDITDATA);
 MALLOC_DECLARE(M_AUDITPATH);
 MALLOC_DECLARE(M_AUDITTEXT);
 #endif
-KALLOC_HEAP_DECLARE(KHEAP_AUDIT);
 #if CONFIG_AUDIT
 /*
  * mac_audit_data_zone is the zone used for data pushed into the audit
@@ -325,7 +324,7 @@ struct audit_record {
  * Current thread macro.  get_bsdthread_info() returns a void ptr for some
  * reason.
  */
-#define curthread()     ((struct uthread *)get_bsdthread_info(current_thread()))
+#define curthread()     current_uthread()
 
 /*
  * In-kernel version of audit record; the basic record plus queue meta-data.
@@ -420,7 +419,7 @@ au_event_t       audit_flags_and_error_to_openbyidevent(int oflags,
     int error);
 au_event_t       audit_msgctl_to_event(int cmd);
 au_event_t       audit_semctl_to_event(int cmr);
-int              audit_canon_path(struct vnode *cwd_vp, char *path,
+int              audit_canon_path(struct vnode *cwd_vp, const char *path,
     char *cpath);
 au_event_t       auditon_command_event(int cmd);
 au_event_t       audit_fcntl_command_event(int cmd, int oflags, int error);

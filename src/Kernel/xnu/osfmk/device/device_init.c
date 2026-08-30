@@ -62,43 +62,24 @@
  *      Initialize device service as part of kernel task.
  */
 
-#include <mach/mach_types.h>
-#include <mach/port.h>
-
-#include <ipc/ipc_types.h>
-#include <ipc/ipc_port.h>
-#include <ipc/ipc_space.h>
-
-#include <kern/kern_types.h>
 #include <kern/host.h>
-#include <kern/ipc_kobject.h>
-#include <kern/startup.h>
-#include <kern/task.h>
-#include <kern/misc_protos.h>
-
-#include <device/device_types.h>
 #include <device/device_port.h>
 
-ipc_port_t      master_device_port;
-void           *master_device_kobject;
+static SECURITY_READ_ONLY_LATE(void *) main_device_kobject;
+SECURITY_READ_ONLY_LATE(ipc_port_t) main_device_port;
+
+IPC_KOBJECT_DEFINE(IKOT_MAIN_DEVICE,
+    .iko_op_stable    = true,
+    .iko_op_permanent = true);
 
 void
 device_service_create(void)
 {
-	master_device_port = ipc_kobject_alloc_port(
-		(ipc_kobject_t)&master_device_kobject, IKOT_MASTER_DEVICE,
+	main_device_port = ipc_kobject_alloc_port(
+		(ipc_kobject_t)&main_device_kobject, IKOT_MAIN_DEVICE,
 		IPC_KOBJECT_ALLOC_NONE);
 
-	kernel_set_special_port(host_priv_self(), HOST_IO_MASTER_PORT,
-	    ipc_port_make_send(master_device_port));
-
-#if 0
-	ds_init();
-	net_io_init();
-	device_pager_init();
-	datadev_init();
-
-	(void) kernel_thread(kernel_task, io_done_thread, (char *)0);
-	(void) kernel_thread(kernel_task, net_thread, (char *)0);
-#endif
+	kernel_set_special_port(host_priv_self(), HOST_IO_MAIN_PORT,
+	    ipc_kobject_make_send(main_device_port, &main_device_kobject,
+	    IKOT_MAIN_DEVICE));
 }

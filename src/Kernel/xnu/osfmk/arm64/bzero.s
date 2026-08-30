@@ -56,7 +56,7 @@ ___bzero:
     eor     x1,      x1, x1
     mov     x3,      x0
     cmp     x2,      #128
-    b.cc    L_memsetSmall
+    b.cc    L_bzeroSmall
 
 /*****************************************************************************
  *  Large buffer zero engine                                                 *
@@ -86,7 +86,23 @@ L_bzeroLarge:
     stp     x1, x1, [x3, #32]
     stp     x1, x1, [x3, #48]
     POP_FRAME
-    ARM64_STACK_EPILOG
+    ARM64_STACK_EPILOG _bzero
+
+/*****************************************************************************
+ *  Small buffer store engine                                                *
+ *****************************************************************************/
+
+0:  str     x1,     [x3],#8
+L_bzeroSmall:
+    subs    x2,      x2, #8
+    b.cs    0b
+    adds    x2,      x2, #8
+    b.eq    2f
+1:  strb    w1,     [x3],#1
+    subs    x2,      x2, #1
+    b.ne    1b
+2:  POP_FRAME
+    ARM64_STACK_EPILOG _bzero
 
 /*****************************************************************************
  *  memset entrypoint                                                        *
@@ -136,7 +152,7 @@ L_memsetLarge:
     stp     x1, x1, [x3, #32]
     stp     x1, x1, [x3, #48]
     POP_FRAME
-    ARM64_STACK_EPILOG
+    ARM64_STACK_EPILOG _memset
 
 /*****************************************************************************
  *  Small buffer store engine                                                *
@@ -152,5 +168,5 @@ L_memsetSmall:
     subs    x2,      x2, #1
     b.ne    1b
 2:  POP_FRAME
-    ARM64_STACK_EPILOG
+    ARM64_STACK_EPILOG _memset
 

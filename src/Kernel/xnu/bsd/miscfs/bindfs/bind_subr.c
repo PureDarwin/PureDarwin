@@ -156,6 +156,9 @@ bind_hashget(struct mount * mp, struct vnode * lowervp, struct vnode ** vpp)
 			break;
 		}
 	}
+	if (vp) {
+		vnode_hold(vp);
+	}
 	lck_mtx_unlock(&bind_hashmtx);
 
 	if (vp != NULL) {
@@ -163,6 +166,7 @@ bind_hashget(struct mount * mp, struct vnode * lowervp, struct vnode ** vpp)
 		if (error == 0) {
 			*vpp = vp;
 		}
+		vnode_drop(vp);
 	}
 	return error;
 }
@@ -209,6 +213,9 @@ bind_hashins(struct mount * mp, struct bind_node * xp, struct vnode ** vpp)
 	LIST_INSERT_HEAD(hd, xp, bind_hash);
 	xp->bind_flags |= BIND_FLAG_HASHED;
 end:
+	if (ovp) {
+		vnode_hold(ovp);
+	}
 	lck_mtx_unlock(&bind_hashmtx);
 	if (ovp != NULL) {
 		/* if we found something in the hash map then grab an iocount */
@@ -216,6 +223,7 @@ end:
 		if (error == 0) {
 			*vpp = ovp;
 		}
+		vnode_drop(ovp);
 	}
 	return error;
 }
@@ -238,12 +246,10 @@ bind_nodecreate(struct vnode * lowervp)
 {
 	struct bind_node * xp;
 
-	MALLOC(xp, struct bind_node *, sizeof(struct bind_node), M_TEMP, M_WAITOK | M_ZERO);
-	if (xp != NULL) {
-		if (lowervp) {
-			xp->bind_lowervp  = lowervp;
-			xp->bind_lowervid = vnode_vid(lowervp);
-		}
+	xp = kalloc_type(struct bind_node, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+	if (lowervp) {
+		xp->bind_lowervp  = lowervp;
+		xp->bind_lowervid = vnode_vid(lowervp);
 	}
 	return xp;
 }
@@ -279,13 +285,13 @@ bind_getnewvnode(
 	vnfs_param.vnfs_cnp        = cnp;
 	vnfs_param.vnfs_flags      = VNFS_ADDFSREF;
 
-	error = vnode_create(VNCREATE_FLAVOR, VCREATESIZE, &vnfs_param, vpp);
+	error = vnode_create_ext(VNCREATE_FLAVOR, VCREATESIZE, &vnfs_param, vpp, VNODE_CREATE_DEFAULT);
 	if (error == 0) {
 		xp->bind_vnode = *vpp;
 		xp->bind_myvid = vnode_vid(*vpp);
 		vnode_settag(*vpp, VT_BINDFS);
 	} else {
-		FREE(xp, M_TEMP);
+		kfree_type(struct bind_node, xp);
 	}
 	return error;
 }

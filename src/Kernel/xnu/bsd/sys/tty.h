@@ -73,7 +73,9 @@
 #include <sys/cdefs.h>
 #include <sys/termios.h>
 #include <sys/select.h>         /* For struct selinfo. */
-
+#if XNU_KERNEL_PRIVATE
+#include <os/refcnt.h>
+#endif
 
 #ifdef KERNEL
 
@@ -124,8 +126,8 @@ struct tty {
 	int     t_state;                /* Device and driver (TS*) state. */
 	int     t_flags;                /* Tty flags. */
 	int     t_timeout;              /* Timeout for ttywait() */
-	struct  pgrp *t_pgrp;           /* Foreground process group. */
-	struct  session *t_session;     /* Enclosing session. */
+	struct  pgrp *t_pgrp;           /* (TTYL+LL) Foreground process group. */
+	struct  session *t_session;     /* (TTYL+LL) Enclosing session. */
 	struct  selinfo t_rsel;         /* Tty read/oob select. */
 	struct  selinfo t_wsel;         /* Tty write select. */
 	struct  termios t_termios;      /* Termios state. */
@@ -143,7 +145,12 @@ struct tty {
 	int     t_lowat;                /* Low water mark. */
 	int     t_gen;                  /* Generation number. */
 	void    *t_iokit;               /* IOKit management */
+#if XNU_KERNEL_PRIVATE
+	os_ref_atomic_t t_refcnt;
+#else
 	int     t_refcnt;               /* reference count */
+#endif
+	thread_t t_locked_thread;       /* thread that owns the lock */
 };
 
 #define TTY_NULL (struct tty *)NULL
@@ -297,7 +304,9 @@ int     ttcompat(struct tty *tp, u_long com, caddr_t data, int flag,
 #endif /* KERNEL_PRIVATE */
 
 void tty_lock(struct tty *tp);
+bool tty_trylock(struct tty *tp);
 void tty_unlock(struct tty *tp);
+bool tty_islocked(struct tty *tp);
 
 void     termioschars(struct termios *t);
 int      tputchar(int c, struct tty *tp);
@@ -327,6 +336,7 @@ int      ttysleep(struct tty *tp,
 int      ttywait(struct tty *tp);
 struct tty *ttymalloc(void);
 void     ttyfree(struct tty *);
+void     ttyfree_locked(struct tty *);
 
 #ifdef XNU_KERNEL_PRIVATE
 extern void ttyhold(struct tty *tp);
@@ -336,11 +346,6 @@ extern void ttyhold(struct tty *tp);
 
 #define PTS_MAJOR 4
 #define PTC_MAJOR 5
-/*
- * If you need accounting consider using
- * KALLOC_HEAP_DEFINE to define a view.
- */
-#define KM_TTYS     KHEAP_DEFAULT
 #endif /* defined(XNU_KERNEL_PRIVATE) */
 
 __END_DECLS

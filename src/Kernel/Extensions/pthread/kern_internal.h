@@ -29,6 +29,8 @@
 #ifndef _SYS_PTHREAD_INTERNAL_H_
 #define _SYS_PTHREAD_INTERNAL_H_
 
+#include <TargetConditionals.h>
+
 #include <pthread/bsdthread_private.h>
 #include <pthread/priority_private.h>
 #include <pthread/workqueue_syscalls.h>
@@ -52,6 +54,7 @@ struct ksyn_waitq_element;
  * as a bitmask, to inform userspace of the supported feature set. Old releases of OS X return
  * from this call either zero or -1, allowing us to return a positive number for feature bits.
  */
+
 #define PTHREAD_FEATURE_DISPATCHFUNC	0x01		/* same as WQOPS_QUEUE_NEWSPISUPP, checks for dispatch function support */
 #define PTHREAD_FEATURE_FINEPRIO		0x02		/* are fine grained prioirities available */
 #define PTHREAD_FEATURE_BSDTHREADCTL	0x04		/* is the bsdthread_ctl syscall available */
@@ -61,6 +64,12 @@ struct ksyn_waitq_element;
 #define PTHREAD_FEATURE_KEVENT          0x40		/* supports direct kevent delivery */
 #define PTHREAD_FEATURE_WORKLOOP          0x80		/* supports workloops */
 #define PTHREAD_FEATURE_QOS_DEFAULT		0x40000000	/* the kernel supports QOS_CLASS_DEFAULT */
+#define PTHREAD_FEATURE_COOPERATIVE_WORKQ	0x100		/* Supports a cooperative workqueue pool */
+
+/* Note: These 'features' are determined by entitlement. */
+#define PTHREAD_FEATURE_JIT_ALLOWLIST	0x0200		/* Enforce JIT callback allowlist */
+#define PTHREAD_FEATURE_JIT_FREEZE_LATE	0x0800		/* Allow late freezing for JIT callback allowlist */
+#define PTHREAD_FEATURE_JIT_ENTITLED	0x1000		/* Process is entitled for JIT */
 
 /* userspace <-> kernel registration struct, for passing data to/from the kext during main thread init. */
 struct _pthread_registration_data {
@@ -86,6 +95,7 @@ struct _pthread_registration_data {
 #define _PTHREAD_REG_DEFAULT_USE_ADAPTIVE_SPIN 0x200
 	uint32_t mutex_default_policy; /* copy-out */
 	uint32_t joinable_offset_bits; /* copy-in */
+	uint32_t wq_quantum_expiry_offset; /* copy-in */
 } __attribute__ ((packed));
 
 /*
@@ -93,6 +103,24 @@ struct _pthread_registration_data {
  */
 #define ECVCLEARED	0x100
 #define ECVPREPOST	0x200
+
+#if !defined(VARIANT_DYLD)
+#define VARIANT_DYLD 0
+#endif // !defined(VARIANT_DYLD)
+
+#define PTHREAD_TARGET_OS_IOS_ONLY (TARGET_OS_IOS && !TARGET_OS_VISION)
+
+#if (TARGET_OS_OSX || PTHREAD_TARGET_OS_IOS_ONLY) && TARGET_CPU_ARM64 && !VARIANT_DYLD
+#define _PTHREAD_CONFIG_JIT_WRITE_PROTECT 1
+#else
+#define _PTHREAD_CONFIG_JIT_WRITE_PROTECT 0
+#endif
+
+#if _PTHREAD_CONFIG_JIT_WRITE_PROTECT && !TARGET_OS_OSX
+#define _PTHREAD_CONFIG_JIT_LOCKDOWN_DEFAULT 1
+#else
+#define _PTHREAD_CONFIG_JIT_LOCKDOWN_DEFAULT 0
+#endif
 
 #ifdef KERNEL
 
@@ -105,19 +133,20 @@ struct _pthread_registration_data {
 	PTHREAD_FEATURE_QOS_MAINTENANCE | \
 	PTHREAD_FEATURE_QOS_DEFAULT | \
 	PTHREAD_FEATURE_KEVENT | \
-	PTHREAD_FEATURE_WORKLOOP )
+	PTHREAD_FEATURE_WORKLOOP |  \
+	PTHREAD_FEATURE_COOPERATIVE_WORKQ)
 
 extern pthread_callbacks_t pthread_kern;
 
 struct ksyn_waitq_element {
 	TAILQ_ENTRY(ksyn_waitq_element) kwe_list;	/* link to other list members */
-	void *          kwe_kwqqueue;            	/* queue blocked on */
+	void *          kwe_kwqqueue;			/* queue blocked on */
 	thread_t        kwe_thread;
 	uint16_t        kwe_state;			/* state */
 	uint16_t        kwe_flags;
 	uint32_t        kwe_lockseq;			/* the sequence of the entry */
 	uint32_t	kwe_count;			/* upper bound on number of matches still pending */
-	uint32_t 	kwe_psynchretval;		/* thread retval */
+	uint32_t	kwe_psynchretval;		/* thread retval */
 	void		*kwe_uth;			/* uthread */
 };
 typedef struct ksyn_waitq_element * ksyn_waitq_element_t;
@@ -130,7 +159,6 @@ extern thread_t port_name_to_thread(mach_port_name_t port_name);
 
 /* function declarations for pthread_kext.c */
 void pthread_init(void);
-void psynch_zoneinit(void);
 void _pth_proc_hashinit(proc_t p);
 void _pth_proc_hashdelete(proc_t p);
 void pth_global_hashinit(void);
@@ -208,4 +236,3 @@ workq_markfree_threadstack(proc_t p, thread_t th, vm_map_t vmap,
 #define WORKQ_EXIT_THREAD_NKEVENT   (-1)
 
 #endif /* _SYS_PTHREAD_INTERNAL_H_ */
-

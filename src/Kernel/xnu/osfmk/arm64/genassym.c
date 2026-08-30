@@ -81,14 +81,21 @@
 #include <arm/cpu_internal.h>
 #include <arm/rtclock.h>
 #include <machine/commpage.h>
+#include <machine/static_if.h>
 #include <vm/vm_map.h>
 #include <pexpert/arm64/boot.h>
+#include <arm64/machine_machdep.h>
 #include <arm64/proc_reg.h>
+#include <arm64/sop.h>
 #include <prng/random.h>
 #if HIBERNATION
 #include <IOKit/IOHibernatePrivate.h>
 #include <machine/pal_hibernate.h>
 #endif /* HIBERNATION */
+#if XNU_MONITOR
+#include <arm/pmap/pmap_data.h>
+#endif /* XNU_MONITOR */
+#include <kern/debug.h>
 
 /*
  * genassym.c is used to produce an
@@ -106,6 +113,8 @@
 #define DECLARE(SYM, VAL) \
 	__asm("DEFINITION__define__" SYM ":\t .ascii \"%0\"" : : "i"  ((u_long)(VAL)))
 
+#define DECLARE_STATIC_IF_METADATA(KEY) \
+	DECLARE(#KEY "_jump_key_INIT_VALUE", __static_if_key_init_value(KEY))
 
 int main(int     argc,
     char ** argv);
@@ -116,25 +125,60 @@ main(int     argc,
 {
 	DECLARE("AST_URGENT", AST_URGENT);
 
+#if CONFIG_SPTM
+	DECLARE("TH_TXM_THREAD_STACK", offsetof(struct thread, txm_thread_stack));
+#if CONFIG_EXCLAVES
+	DECLARE("TH_EXCLAVES_INTSTATE", offsetof(struct thread, th_exclaves_intstate));
+	DECLARE("TH_EXCLAVES_STATE", offsetof(struct thread, th_exclaves_state));
+	DECLARE("TH_EXCLAVES_EXECUTION", TH_EXCLAVES_EXECUTION);
+#endif /* CONFIG_EXCLAVES */
+#endif /* CONFIG_SPTM */
 	DECLARE("TH_RECOVER", offsetof(struct thread, recover));
 	DECLARE("TH_KSTACKPTR", offsetof(struct thread, machine.kstackptr));
+	DECLARE("TH_KERNEL_STACK", offsetof(struct thread, kernel_stack));
+#if __has_feature(ptrauth_calls)
+	DECLARE("TH_KSTACKPTR_DIVERSIFIER", ptrauth_string_discriminator("machine_thread.kstackptr"));
+#endif
+#if CONFIG_SPTM
+	DECLARE("TH_KREDZONESTACK", offsetof(struct thread, machine.kredzonestack));
+#endif
 	DECLARE("TH_THREAD_ID", offsetof(struct thread, thread_id));
 #if defined(HAS_APPLE_PAC)
 	DECLARE("TH_ROP_PID", offsetof(struct thread, machine.rop_pid));
 	DECLARE("TH_JOP_PID", offsetof(struct thread, machine.jop_pid));
-	DECLARE("TH_DISABLE_USER_JOP", offsetof(struct thread, machine.disable_user_jop));
 #endif /* defined(HAS_APPLE_PAC) */
+#if CONFIG_XNUPOST
+	DECLARE("TH_EXPECTED_FAULT_HANDLER", offsetof(struct thread, machine.expected_fault_handler));
+#if __has_feature(ptrauth_calls)
+	DECLARE("TH_EXPECTED_FAULT_HANDLER_DIVERSIFIER", ptrauth_function_pointer_type_discriminator(expected_fault_handler_t));
+#endif /* ptrauth_calls */
+	DECLARE("TH_EXPECTED_FAULT_PC", offsetof(struct thread, machine.expected_fault_pc));
+	DECLARE("TH_EXPECTED_FAULT_ADDR", offsetof(struct thread, machine.expected_fault_addr));
+#endif /* CONFIG_XNUPOST */
+
+	DECLARE("TH_ARM_MACHINE_FLAGS", offsetof(struct thread, machine.arm_machine_flags));
 
 	/* These fields are being added on demand */
-	DECLARE("ACT_CONTEXT", offsetof(struct thread, machine.contextData));
+	DECLARE("TH_UPCB", offsetof(struct thread, machine.upcb));
+#if __has_feature(ptrauth_calls)
+	DECLARE("TH_UPCB_DIVERSIFIER", ptrauth_string_discriminator("machine_thread.upcb"));
+#endif
+#if HAS_ARM_FEAT_SME
+	DECLARE("ACT_UMATRIX_HDR", offsetof(struct thread, machine.umatrix_hdr));
+	DECLARE("ACT_UMATRIX_HDR_DIVERSIFIER", ptrauth_string_discriminator("machine_thread.umatrix_hdr"));
+
+#endif /* HAS_ARM_FEAT_SME */
 	DECLARE("TH_CTH_SELF", offsetof(struct thread, machine.cthread_self));
 	DECLARE("ACT_PREEMPT_CNT", offsetof(struct thread, machine.preemption_count));
+#if SCHED_HYGIENE_DEBUG
+	DECLARE("SCHED_HYGIENE_MARKER", SCHED_HYGIENE_MARKER);
+#endif
 	DECLARE("ACT_CPUDATAP", offsetof(struct thread, machine.CpuDatap));
+#if HAVE_MACHINE_THREAD_MATRIX_STATE
+	DECLARE("HAVE_MACHINE_THREAD_MATRIX_STATE", 1);
+#endif
 	DECLARE("ACT_DEBUGDATA", offsetof(struct thread, machine.DebugData));
 	DECLARE("TH_IOTIER_OVERRIDE", offsetof(struct thread, iotier_override));
-	DECLARE("TH_RWLOCK_CNT", offsetof(struct thread, rwlock_count));
-	DECLARE("TH_TMP_ALLOC_CNT", offsetof(struct thread, t_temp_alloc_count));
-	DECLARE("TH_TASK", offsetof(struct thread, task));
 
 #if defined(HAS_APPLE_PAC)
 	DECLARE("TASK_ROP_PID", offsetof(struct task, rop_pid));
@@ -215,26 +259,26 @@ main(int     argc,
 
 	DECLARE("ARM_KERNEL_CONTEXT_SIZE", sizeof(arm_kernel_context_t));
 
-	DECLARE("SS64_KERNEL_X16", offsetof(arm_kernel_context_t, ss.x[0]));
-	DECLARE("SS64_KERNEL_X17", offsetof(arm_kernel_context_t, ss.x[1]));
-	DECLARE("SS64_KERNEL_X19", offsetof(arm_kernel_context_t, ss.x[2]));
-	DECLARE("SS64_KERNEL_X20", offsetof(arm_kernel_context_t, ss.x[3]));
-	DECLARE("SS64_KERNEL_X21", offsetof(arm_kernel_context_t, ss.x[4]));
-	DECLARE("SS64_KERNEL_X22", offsetof(arm_kernel_context_t, ss.x[5]));
-	DECLARE("SS64_KERNEL_X23", offsetof(arm_kernel_context_t, ss.x[6]));
-	DECLARE("SS64_KERNEL_X24", offsetof(arm_kernel_context_t, ss.x[7]));
-	DECLARE("SS64_KERNEL_X25", offsetof(arm_kernel_context_t, ss.x[8]));
-	DECLARE("SS64_KERNEL_X26", offsetof(arm_kernel_context_t, ss.x[9]));
-	DECLARE("SS64_KERNEL_X27", offsetof(arm_kernel_context_t, ss.x[10]));
-	DECLARE("SS64_KERNEL_X28", offsetof(arm_kernel_context_t, ss.x[11]));
+	DECLARE("SS64_KERNEL_X19", offsetof(arm_kernel_context_t, ss.x[0]));
+	DECLARE("SS64_KERNEL_X20", offsetof(arm_kernel_context_t, ss.x[1]));
+	DECLARE("SS64_KERNEL_X21", offsetof(arm_kernel_context_t, ss.x[2]));
+	DECLARE("SS64_KERNEL_X22", offsetof(arm_kernel_context_t, ss.x[3]));
+	DECLARE("SS64_KERNEL_X23", offsetof(arm_kernel_context_t, ss.x[4]));
+	DECLARE("SS64_KERNEL_X24", offsetof(arm_kernel_context_t, ss.x[5]));
+	DECLARE("SS64_KERNEL_X25", offsetof(arm_kernel_context_t, ss.x[6]));
+	DECLARE("SS64_KERNEL_X26", offsetof(arm_kernel_context_t, ss.x[7]));
+	DECLARE("SS64_KERNEL_X27", offsetof(arm_kernel_context_t, ss.x[8]));
+	DECLARE("SS64_KERNEL_X28", offsetof(arm_kernel_context_t, ss.x[9]));
 	DECLARE("SS64_KERNEL_FP", offsetof(arm_kernel_context_t, ss.fp));
 	DECLARE("SS64_KERNEL_LR", offsetof(arm_kernel_context_t, ss.lr));
 	DECLARE("SS64_KERNEL_SP", offsetof(arm_kernel_context_t, ss.sp));
-	DECLARE("SS64_KERNEL_PC", offsetof(arm_kernel_context_t, ss.pc));
-	DECLARE("SS64_KERNEL_CPSR", offsetof(arm_kernel_context_t, ss.cpsr));
-#if defined(HAS_APPLE_PAC)
-	DECLARE("SS64_KERNEL_JOPHASH", offsetof(arm_kernel_context_t, ss.jophash));
-#endif /* defined(HAS_APPLE_PAC) */
+	DECLARE("SS64_KERNEL_PC_WAS_IN_USER", offsetof(arm_kernel_context_t, ss.pc_was_in_userspace));
+	DECLARE("SS64_KERNEL_SSBS", offsetof(arm_kernel_context_t, ss.ssbs));
+	DECLARE("SS64_KERNEL_DIT", offsetof(arm_kernel_context_t, ss.dit));
+	DECLARE("SS64_KERNEL_UAO", offsetof(arm_kernel_context_t, ss.uao));
+#if HAS_MTE
+	DECLARE("SS64_KERNEL_TCO", offsetof(arm_kernel_context_t, ss.tco));
+#endif
 
 	DECLARE("NS64_KERNEL_D8", offsetof(arm_kernel_context_t, ns.d[0]));
 	DECLARE("NS64_KERNEL_D9", offsetof(arm_kernel_context_t, ns.d[1]));
@@ -247,6 +291,12 @@ main(int     argc,
 
 	DECLARE("NS64_KERNEL_FPCR", offsetof(arm_kernel_context_t, ns.fpcr));
 
+#if HAS_ARM_FEAT_SME
+	DECLARE("SME_SVCR", offsetof(arm_sme_saved_state_t, svcr));
+	DECLARE("SME_SVL_B", offsetof(arm_sme_saved_state_t, svl_b));
+	DECLARE("SME_Z_P_ZA", offsetof(arm_sme_saved_state_t, context.__z_p_za));
+	DECLARE("ARM_SME_SAVED_STATE", ARM_SME_SAVED_STATE);
+#endif /* HAS_ARM_FEAT_SME */
 
 
 	DECLARE("PGBYTES", ARM_PGBYTES);
@@ -254,7 +304,7 @@ main(int     argc,
 
 	DECLARE("VM_MIN_KERNEL_ADDRESS", VM_MIN_KERNEL_ADDRESS);
 	DECLARE("KERNEL_STACK_SIZE", KERNEL_STACK_SIZE);
-	DECLARE("TBI_MASK", TBI_MASK);
+	DECLARE("ARM_TBI_USER_MASK", ARM_TBI_USER_MASK);
 
 	DECLARE("cdeSize", sizeof(struct cpu_data_entry));
 
@@ -262,11 +312,21 @@ main(int     argc,
 
 	DECLARE("CPU_ACTIVE_THREAD", offsetof(cpu_data_t, cpu_active_thread));
 	DECLARE("CPU_ISTACKPTR", offsetof(cpu_data_t, istackptr));
+#if __has_feature(ptrauth_calls)
+	DECLARE("CPU_ISTACKPTR_DIVERSIFIER", ptrauth_string_discriminator("cpu_data.istackptr"));
+#endif /* ptrauth_calls */
 	DECLARE("CPU_INTSTACK_TOP", offsetof(cpu_data_t, intstack_top));
+	DECLARE("CPU_EXCEPSTACKPTR", offsetof(cpu_data_t, excepstackptr));
+#if __has_feature(ptrauth_calls)
+	DECLARE("CPU_EXCEPSTACKPTR_DIVERSIFIER", ptrauth_string_discriminator("cpu_data.excepstackptr"));
+#endif /* ptrauth_calls */
 	DECLARE("CPU_EXCEPSTACK_TOP", offsetof(cpu_data_t, excepstack_top));
 #if __ARM_KERNEL_PROTECT__
 	DECLARE("CPU_EXC_VECTORS", offsetof(cpu_data_t, cpu_exc_vectors));
 #endif /* __ARM_KERNEL_PROTECT__ */
+#if NEEDS_MTE_IRG_RESEED
+	DECLARE("CPU_IRG_RESEED_COUNTER", offsetof(cpu_data_t, cpu_irg_reseed_counter));
+#endif
 	DECLARE("CPU_NUMBER_GS", offsetof(cpu_data_t, cpu_number));
 	DECLARE("CPU_PENDING_AST", offsetof(cpu_data_t, cpu_pending_ast));
 	DECLARE("CPU_INT_STATE", offsetof(cpu_data_t, cpu_int_state));
@@ -275,17 +335,27 @@ main(int     argc,
 	DECLARE("CPU_STAT_IRQ_WAKE", offsetof(cpu_data_t, cpu_stat.irq_ex_cnt_wake));
 	DECLARE("CPU_RESET_HANDLER", offsetof(cpu_data_t, cpu_reset_handler));
 	DECLARE("CPU_PHYS_ID", offsetof(cpu_data_t, cpu_phys_id));
+	DECLARE("CPU_TPIDR_EL0", offsetof(cpu_data_t, cpu_tpidr_el0));
+
+#ifdef APPLEEVEREST
+	DECLARE("PER_CPU_MASTER", offsetof(cpu_data_t, cluster_master));
+	DECLARE("PER_CPU_CPU_REG_PADDR", offsetof(cpu_data_t, cpu_reg_paddr));
+	DECLARE("PER_CPU_ACC_REG_PADDR", offsetof(cpu_data_t, acc_reg_paddr));
+	DECLARE("PER_CPU_CPM_REG_PADDR", offsetof(cpu_data_t, cpm_reg_paddr));
+#endif
 
 	DECLARE("RTCLOCKDataSize", sizeof(rtclock_data_t));
 
 	DECLARE("rhdSize", sizeof(struct reset_handler_data));
-#if WITH_CLASSIC_S2R || !__arm64__
+#if WITH_CLASSIC_S2R
 	DECLARE("stSize", sizeof(SleepToken));
-#endif /* WITH_CLASSIC_S2R || !__arm64__ */
+#endif /* WITH_CLASSIC_S2R */
 
+	DECLARE("CPU_DATA_SIZE", sizeof(cpu_data_entry_t));
 	DECLARE("CPU_DATA_ENTRIES", offsetof(struct reset_handler_data, cpu_data_entries));
 
 	DECLARE("CPU_DATA_PADDR", offsetof(struct cpu_data_entry, cpu_data_paddr));
+	DECLARE("CPU_DATA_VADDR", offsetof(struct cpu_data_entry, cpu_data_vaddr));
 
 	DECLARE("INTSTACK_SIZE", INTSTACK_SIZE);
 	DECLARE("EXCEPSTACK_SIZE", EXCEPSTACK_SIZE);
@@ -298,17 +368,18 @@ main(int     argc,
 	DECLARE("BA_MEM_SIZE", offsetof(struct boot_args, memSize));
 	DECLARE("BA_TOP_OF_KERNEL_DATA", offsetof(struct boot_args, topOfKernelData));
 	DECLARE("BA_BOOT_FLAGS", offsetof(struct boot_args, bootFlags));
-	DECLARE("BA_VIDEO_BASE", offsetof(struct boot_args, Video.v_baseAddr));
-	DECLARE("BA_VIDEO_ROWBYTES", offsetof(struct boot_args, Video.v_rowBytes));
-
-	DECLARE("SR_RESTORE_TCR_EL1", offsetof(struct sysreg_restore, tcr_el1));
 
 #if XNU_MONITOR
+	DECLARE("PMAP_CPU_DATA_INFLIGHT_PMAP", offsetof(struct pmap_cpu_data, inflight_pmap));
 	DECLARE("PMAP_CPU_DATA_PPL_STATE", offsetof(struct pmap_cpu_data, ppl_state));
 	DECLARE("PMAP_CPU_DATA_ARRAY_ENTRY_SIZE", sizeof(struct pmap_cpu_data_array_entry));
 	DECLARE("PMAP_CPU_DATA_PPL_STACK", offsetof(struct pmap_cpu_data, ppl_stack));
 	DECLARE("PMAP_CPU_DATA_KERN_SAVED_SP", offsetof(struct pmap_cpu_data, ppl_kern_saved_sp));
 	DECLARE("PMAP_CPU_DATA_SAVE_AREA", offsetof(struct pmap_cpu_data, save_area));
+#if HAS_GUARDED_IO_FILTER
+	DECLARE("PMAP_CPU_DATA_IOFILTER_STACK", offsetof(struct pmap_cpu_data, iofilter_stack));
+	DECLARE("PMAP_CPU_DATA_IOFILTER_SAVED_SP", offsetof(struct pmap_cpu_data, iofilter_saved_sp));
+#endif
 	DECLARE("PMAP_COUNT", PMAP_COUNT);
 #endif /* XNU_MONITOR */
 
@@ -324,9 +395,10 @@ main(int     argc,
 #endif /* defined(HAS_APPLE_PAC) */
 
 
-#if __ARM_ARCH_8_5__
 	DECLARE("CPU_SYNC_ON_CSWITCH", offsetof(cpu_data_t, sync_on_cswitch));
-#endif /* __ARM_ARCH_8_5__ */
+#if HAS_MTE
+	DECLARE("IN_UNPRIVILEGED_ACCESS", offsetof(struct thread, machine.in_unprivileged_access));
+#endif /* HAS_MTE */
 
 #if HIBERNATION
 	DECLARE("HIBHDR_STACKOFFSET", offsetof(IOHibernateImageHeader, restore1StackOffset));
@@ -335,6 +407,46 @@ main(int     argc,
 	DECLARE("HIBTRAMP_MEMSLIDE", offsetof(pal_hib_tramp_result_t, memSlide));
 	DECLARE("HIBGLOBALS_KERNELSLIDE", offsetof(pal_hib_globals_t, kernelSlide));
 #endif /* HIBERNATION */
+
+#if CONFIG_SPTM
+	DECLARE("SPTM_CPU_BOOT_COLD", SPTM_CPU_BOOT_COLD);
+	DECLARE("SPTM_CPU_BOOT_SECONDARY", SPTM_CPU_BOOT_SECONDARY);
+	DECLARE("SPTM_CPU_BOOT_WARM", SPTM_CPU_BOOT_WARM);
+	DECLARE("SPTM_CPU_BOOT_HIB", SPTM_CPU_BOOT_HIB);
+	DECLARE("SPTM_CPU_PANIC", SPTM_CPU_PANIC);
+	DECLARE("SPTM_TRACE_SIZE_SHIFT", SPTM_TRACE_SIZE_SHIFT);
+#endif
+
+
+#if CONFIG_SPTM && (DEVELOPMENT || DEBUG)
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_INITIATOR_PC", offsetof(struct panic_lockdown_initiator_state, initiator_pc));
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_INITIATOR_SP", offsetof(struct panic_lockdown_initiator_state, initiator_sp));
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_INITIATOR_TPIDR", offsetof(struct panic_lockdown_initiator_state, initiator_tpidr));
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_INITIATOR_MPIDR", offsetof(struct panic_lockdown_initiator_state, initiator_mpidr));
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_TIMESTAMP", offsetof(struct panic_lockdown_initiator_state, timestamp));
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_ESR", offsetof(struct panic_lockdown_initiator_state, esr));
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_ELR", offsetof(struct panic_lockdown_initiator_state, elr));
+	DECLARE("PANIC_LOCKDOWN_INITIATOR_STATE_FAR", offsetof(struct panic_lockdown_initiator_state, far));
+#endif /* CONFIG_SPTM && (DEVELOPMENT || DEBUG) */
+
+#if CONFIG_SPTM
+	DECLARE("PAGE_SIZE", PAGE_SIZE);
+	DECLARE("PAGE_MASK", PAGE_SIZE - 1);
+#endif /* CONFIG_SPTM */
+
+	DECLARE("SOP_EXCEPTION_SNAPSHOT_SIZE", sizeof(sop_exception_snapshot_t));
+
+	static_assert(!(SOP_EXCEPTION_RING_SIZE & (SOP_EXCEPTION_RING_SIZE - 1)),
+	    "SOP_EXCEPTION_RING_SIZE must be a power of 2");
+	DECLARE("SOP_EXCEPTION_RING_INDEX_MASK", SOP_EXCEPTION_RING_SIZE - 1);
+
+#if DEVELOPMENT || DEBUG
+	STATIC_IF_KEY_DECLARE_TRUE(static_if_test_key_true); DECLARE_STATIC_IF_METADATA(static_if_test_key_true);
+	STATIC_IF_KEY_DECLARE_TRUE(static_if_test_key_true_to_false); DECLARE_STATIC_IF_METADATA(static_if_test_key_true_to_false);
+	STATIC_IF_KEY_DECLARE_FALSE(static_if_test_key_false); DECLARE_STATIC_IF_METADATA(static_if_test_key_false);
+	STATIC_IF_KEY_DECLARE_FALSE(static_if_test_key_false_to_true); DECLARE_STATIC_IF_METADATA(static_if_test_key_false_to_true);
+#endif
+
 
 	return 0;
 }

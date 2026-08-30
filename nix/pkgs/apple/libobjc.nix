@@ -98,13 +98,14 @@ stdenv.mkDerivation {
     # objc_object::isTaggedPointerOrNil(), whose "!this" is exactly the null
     # check that matters. C++ says "this" is never null, so without this flag
     # clang folds that test away and objc_release(nil) dereferences 0.
-    CXXFLAGS="-x objective-c++ -std=gnu++17 -fno-objc-arc -fexceptions \
+    CXXFLAGS="-x objective-c++ -std=gnu++14 -fms-extensions -fno-pack-struct -fno-objc-arc -fexceptions \
       -fno-delete-null-pointer-checks \
       -fobjc-exceptions -fPIC -Os -DNDEBUG -DLIBC_NO_LIBCRASHREPORTERCLIENT \
       -D__PUREDARWIN__=1 \
       -Wno-undef-prefix \
       -isysroot $DARWIN_SDK_ROOT \
-      -Igenhdr -Iincdir -I$O/runtime -I$PRIV -I${libSystem}/usr/include"
+      -Igenhdr -Iincdir -I$O/runtime -I$PRIV -I${libSystem}/usr/include \
+      -I${src}/src/Libraries/libunwind/include"
 
     objs=""
     for s in ${lib.concatStringsSep " " mmSrcs}; do

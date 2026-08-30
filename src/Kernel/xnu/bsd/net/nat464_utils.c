@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2018-2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -122,8 +122,8 @@ nat464_synthesize_ipv6(ifnet_t ifp, const struct in_addr *addrv4, struct in6_add
 	struct in6_addr prefix = nat64prefixes[i].ipv6_prefix;
 	int prefix_len = nat64prefixes[i].prefix_len;
 
-	char *ptrv4 = __DECONST(char *, addrv4);
-	char *ptr = __DECONST(char *, addr);
+	char *ptrv4 = (char *)__DECONST(struct in_addr *__indexable, addrv4);
+	char *ptr = (char *)__DECONST(struct in6_addr *__indexable, addr);
 
 	if (IN_ZERONET(ntohl(addrv4->s_addr)) || // 0.0.0.0/8 Source hosts on local network
 	    IN_LOOPBACK(ntohl(addrv4->s_addr)) || // 127.0.0.0/8 Loopback
@@ -169,7 +169,7 @@ nat464_synthesize_ipv6(ifnet_t ifp, const struct in_addr *addrv4, struct in6_add
 		memcpy(ptr + 4, ptrv4, 4);
 		break;
 	default:
-		panic("NAT64-prefix len is wrong: %u\n", prefix_len);
+		panic("NAT64-prefix len is wrong: %u", prefix_len);
 	}
 
 	if (clat_debug) {
@@ -183,14 +183,16 @@ nat464_synthesize_ipv6(ifnet_t ifp, const struct in_addr *addrv4, struct in6_add
 
 /* Synthesize ipv4 from ipv6 */
 int
-nat464_synthesize_ipv4(ifnet_t ifp, const struct in6_addr *addr, struct in_addr *addrv4)
+nat464_synthesize_ipv4(ifnet_t ifp, const struct in6_addr *addr,
+    struct in_addr *addrv4, bool * translate_p)
 {
 	struct ipv6_prefix nat64prefixes[NAT64_MAX_NUM_PREFIXES];
 	int error = 0, i = 0;
+	bool translate = false;
 
 	/* Below call is not optimized as it creates a copy of prefixes */
 	if ((error = ifnet_get_nat64prefix(ifp, nat64prefixes)) != 0) {
-		return error;
+		goto done;
 	}
 
 	for (i = 0; i < NAT64_MAX_NUM_PREFIXES; i++) {
@@ -204,11 +206,18 @@ nat464_synthesize_ipv4(ifnet_t ifp, const struct in6_addr *addr, struct in_addr 
 	struct in6_addr prefix = nat64prefixes[i].ipv6_prefix;
 	int prefix_len = nat64prefixes[i].prefix_len;
 
-	char *ptrv4 = __DECONST(void *, addrv4);
-	char *ptr = __DECONST(void *, addr);
+	VERIFY(prefix_len < sizeof(prefix));
 
-	if (memcmp(addr, &prefix, prefix_len) != 0) {
-		return -1;
+	char *ptrv4 = (char *)__DECONST(struct in_addr *__indexable, addrv4);
+	char *ptr = (char *)__DECONST(struct in6_addr *__indexable, addr);
+
+	/* -fbounds-safety:
+	 * Override a warning about prefix_len being > 16 because
+	 * we already checked that above.
+	 */
+	if (memcmp((const struct in6_addr *__indexable)addr, &prefix, prefix_len) != 0) {
+		/* it's not the NAT64 prefix, so let it pass */
+		goto done;
 	}
 
 	switch (prefix_len) {
@@ -234,7 +243,7 @@ nat464_synthesize_ipv4(ifnet_t ifp, const struct in6_addr *addr, struct in_addr 
 		memcpy(ptrv4, ptr + 4, 4);
 		break;
 	default:
-		panic("NAT64-prefix len is wrong: %u\n",
+		panic("NAT64-prefix len is wrong: %u",
 		    prefix_len);
 	}
 
@@ -243,6 +252,9 @@ nat464_synthesize_ipv4(ifnet_t ifp, const struct in6_addr *addr, struct in_addr 
 		clat_log2((LOG_DEBUG, "%s desynthesized to %s\n", __func__,
 		    inet_ntop(AF_INET, (void *)addrv4, buf, sizeof(buf))));
 	}
+	translate = true;
+done:
+	*translate_p = translate;
 	return error;
 }
 
@@ -255,8 +267,8 @@ nat464_synthesize_ipv4(ifnet_t ifp, const struct in6_addr *addr, struct in_addr 
 int
 nat464_translate_icmp(int naf, void *arg)
 {
-	struct icmp             *icmp4;
-	struct icmp6_hdr        *icmp6;
+	struct icmp             *__single icmp4;
+	struct icmp6_hdr        *__single icmp6;
 	uint32_t                 mtu;
 	int32_t                  ptr = -1;
 	uint8_t          type;
@@ -482,10 +494,11 @@ nat464_translate_icmp_ip(pbuf_t *pbuf, uint16_t off, uint16_t *tot_len, uint16_t
     uint8_t proto2, uint8_t ttl2, uint16_t tot_len2, struct nat464_addr *src,
     struct nat464_addr *dst, protocol_family_t af, protocol_family_t naf)
 {
-	struct ip *ip4 = NULL;
-	struct ip6_hdr *ip6 = NULL;
-	void *hdr = NULL;
+	struct ip *__single ip4 = NULL;
+	struct ip6_hdr *__single ip6 = NULL;
+	void *__single hdr = NULL;
 	int hlen = 0, olen = 0;
+	uint64_t ipid_salt = (uint64_t)pbuf_get_packet_buffer_address(pbuf);
 
 	if (af == naf || (af != AF_INET && af != AF_INET6) ||
 	    (naf != AF_INET && naf != AF_INET6)) {
@@ -511,7 +524,7 @@ nat464_translate_icmp_ip(pbuf_t *pbuf, uint16_t off, uint16_t *tot_len, uint16_t
 		ip4->ip_v = IPVERSION;
 		ip4->ip_hl = sizeof(*ip4) >> 2;
 		ip4->ip_len = htons((uint16_t)(sizeof(*ip4) + tot_len2 - olen));
-		ip4->ip_id = rfc6864 ? 0 : htons(ip_randomid());
+		ip4->ip_id = rfc6864 ? 0 : htons(ip_randomid(ipid_salt));
 		ip4->ip_off = htons(IP_DF);
 		ip4->ip_ttl = ttl2;
 		if (proto2 == IPPROTO_ICMPV6) {
@@ -905,7 +918,7 @@ nat464_translate_proto(pbuf_t *pbuf, struct nat464_addr *osrc,
 		 * that has not yet been one's complemented.
 		 */
 		if (direction == NT_OUT &&
-		    (*pbuf->pb_csum_flags & CSUM_DELAY_DATA)) {
+		    (*pbuf->pb_csum_flags & CSUM_PARTIAL)) {
 			do_ones_complement = TRUE;
 		}
 
@@ -921,8 +934,8 @@ nat464_translate_proto(pbuf_t *pbuf, struct nat464_addr *osrc,
 			return NT_DROP;
 		}
 
-		struct icmp *icmph = NULL;
-		struct icmp6_hdr *icmp6h = NULL;
+		struct icmp *__single icmph = NULL;
+		struct icmp6_hdr *__single icmp6h = NULL;
 		uint16_t ip2off = 0, hlen2 = 0, tot_len2 = 0;
 
 		icmph = (struct icmp*) pbuf_contig_segment(pbuf, hlen,
@@ -937,9 +950,9 @@ nat464_translate_proto(pbuf_t *pbuf, struct nat464_addr *osrc,
 		}
 
 		*proto = IPPROTO_ICMPV6;
-		icmp6h = (struct icmp6_hdr *)(uintptr_t)icmph;
+		icmp6h = (struct icmp6_hdr *__single)(void *)icmph;
 		pbuf_copy_back(pbuf, hlen, sizeof(struct icmp6_hdr),
-		    icmp6h);
+		    icmp6h, sizeof(*icmp6h));
 
 		/*Translate the inner IP header only for error messages */
 		if (ICMP6_ERRORTYPE(icmp6h->icmp6_type)) {
@@ -954,8 +967,14 @@ nat464_translate_proto(pbuf_t *pbuf, struct nat464_addr *osrc,
 			hlen2 = (uint16_t)(ip2off + (iph2->ip_hl << 2));
 			tot_len2 = ntohs(iph2->ip_len);
 
-			/* Destination in outer IP should be Source in inner IP */
-			VERIFY(IN_ARE_ADDR_EQUAL(&odst->natv4addr, &iph2->ip_src));
+			/*
+			 * Destination in outer IP should be Source in inner IP,
+			 * otherwise the ICMP is likely errnoneous.
+			 */
+			if (!IN_ARE_ADDR_EQUAL(&odst->natv4addr, &iph2->ip_src)) {
+				return NT_DROP;
+			}
+
 			if (nat464_translate_icmp_ip(pbuf, ip2off, &tot_len,
 			    &hlen2, iph2->ip_p, iph2->ip_ttl, tot_len2,
 			    (struct nat464_addr *)ndst, (struct nat464_addr *)nsrc,
@@ -991,8 +1010,8 @@ nat464_translate_proto(pbuf_t *pbuf, struct nat464_addr *osrc,
 			return NT_DROP;
 		}
 
-		struct icmp6_hdr *icmp6h = NULL;
-		struct icmp *icmph = NULL;
+		struct icmp6_hdr *__single icmp6h = NULL;
+		struct icmp *__single icmph = NULL;
 		uint16_t ip2off = 0, hlen2 = 0, tot_len2 = 0;
 
 		icmp6h = (struct icmp6_hdr*) pbuf_contig_segment(pbuf, hlen,
@@ -1007,9 +1026,9 @@ nat464_translate_proto(pbuf_t *pbuf, struct nat464_addr *osrc,
 		}
 
 		*proto = IPPROTO_ICMP;
-		icmph = (struct icmp *)(uintptr_t)icmp6h;
+		icmph = (struct icmp *__single)(void *)icmp6h;
 		pbuf_copy_back(pbuf, hlen, ICMP_MINLEN,
-		    icmph);
+		    icmph, sizeof(*icmph));
 
 		/*Translate the inner IP header only for error messages */
 		if (ICMP_ERRORTYPE(icmph->icmp_type)) {
@@ -1139,9 +1158,9 @@ nat464_addr_cksum_fixup(uint16_t *pc, struct nat464_addr *ao, struct nat464_addr
 		switch (naf) {
 		case PF_INET6:
 			if (do_ones_complement) {
-				*pc = ~nat464_cksum_fixup(nat464_cksum_fixup(
+				*pc = (uint16_t)~nat464_cksum_fixup(nat464_cksum_fixup(
 					    nat464_cksum_fixup(nat464_cksum_fixup(nat464_cksum_fixup(
-						    nat464_cksum_fixup(nat464_cksum_fixup(nat464_cksum_fixup(~*pc,
+						    nat464_cksum_fixup(nat464_cksum_fixup(nat464_cksum_fixup((uint16_t)~*pc,
 						    ao->nataddr16[0], an->nataddr16[0], u),
 						    ao->nataddr16[1], an->nataddr16[1], u),
 						    0, an->nataddr16[2], u),
@@ -1235,21 +1254,25 @@ in6_clat46_eventhdlr_callback(struct eventhandler_entry_arg arg0 __unused,
 	kev_post_msg(&ev_msg);
 }
 
-static void
-in6_clat46_event_callback(void *arg)
-{
-	struct kev_netevent_clat46_data *p_in6_clat46_ev =
-	    (struct kev_netevent_clat46_data *)arg;
-
-	EVENTHANDLER_INVOKE(&in6_clat46_evhdlr_ctxt, in6_clat46_event,
-	    p_in6_clat46_ev->clat46_event_code, p_in6_clat46_ev->epid,
-	    p_in6_clat46_ev->euuid);
-}
-
 struct in6_clat46_event_nwk_wq_entry {
 	struct nwk_wq_entry nwk_wqe;
 	struct kev_netevent_clat46_data in6_clat46_ev_arg;
 };
+
+static void
+in6_clat46_event_callback(struct nwk_wq_entry *nwk_item)
+{
+	struct in6_clat46_event_nwk_wq_entry *p_ev;
+
+	p_ev = __container_of(nwk_item,
+	    struct in6_clat46_event_nwk_wq_entry, nwk_wqe);
+
+	EVENTHANDLER_INVOKE(&in6_clat46_evhdlr_ctxt, in6_clat46_event,
+	    p_ev->in6_clat46_ev_arg.clat46_event_code, p_ev->in6_clat46_ev_arg.epid,
+	    p_ev->in6_clat46_ev_arg.euuid);
+
+	kfree_type(struct in6_clat46_event_nwk_wq_entry, p_ev);
+}
 
 void
 in6_clat46_event_enqueue_nwk_wq_entry(in6_clat46_evhdlr_code_t in6_clat46_event_code,
@@ -1257,17 +1280,28 @@ in6_clat46_event_enqueue_nwk_wq_entry(in6_clat46_evhdlr_code_t in6_clat46_event_
 {
 	struct in6_clat46_event_nwk_wq_entry *p_ev = NULL;
 
-	MALLOC(p_ev, struct in6_clat46_event_nwk_wq_entry *,
-	    sizeof(struct in6_clat46_event_nwk_wq_entry),
-	    M_NWKWQ, M_WAITOK | M_ZERO);
+	p_ev = kalloc_type(struct in6_clat46_event_nwk_wq_entry,
+	    Z_WAITOK | Z_ZERO | Z_NOFAIL);
 
 	p_ev->nwk_wqe.func = in6_clat46_event_callback;
-	p_ev->nwk_wqe.is_arg_managed = TRUE;
-	p_ev->nwk_wqe.arg = &p_ev->in6_clat46_ev_arg;
-
 	p_ev->in6_clat46_ev_arg.clat46_event_code = in6_clat46_event_code;
 	p_ev->in6_clat46_ev_arg.epid = epid;
 	uuid_copy(p_ev->in6_clat46_ev_arg.euuid, euuid);
 
-	nwk_wq_enqueue((struct nwk_wq_entry*)p_ev);
+	evhlog(debug, "%s: eventhandler enqueuing event of type=in6_clat46_event event_code=%s",
+	    __func__, in6_clat46_evhdlr_code2str(in6_clat46_event_code));
+
+	nwk_wq_enqueue(&p_ev->nwk_wqe);
+}
+
+extern const char*
+in6_clat46_evhdlr_code2str(enum in6_clat46_evhdlr_code_t code)
+{
+	switch (code) {
+#define CLAT46_CODE_TO_STRING(type) case type: return #type;
+		CLAT46_CODE_TO_STRING(IN6_CLAT46_EVENT_V4_FLOW)
+		CLAT46_CODE_TO_STRING(IN6_CLAT46_EVENT_V6_ADDR_CONFFAIL)
+#undef CLAT46_CODE_TO_STRING
+	}
+	return "UNKNOWN_IN6_CLAT46_EVHDLR_CODE";
 }

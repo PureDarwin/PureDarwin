@@ -177,6 +177,14 @@ parseArgs(int argc,char *argv[])
         case 'N':
           CheckNDR = FALSE;
           break;
+        
+        case 'b':
+          EmitCountAnnotations = TRUE;
+          break;
+        
+        case 'B':
+          EmitCountAnnotations = FALSE;
+          break;
 
         case 's':
           if (streql(argv[0], "-server")) {
@@ -266,7 +274,19 @@ parseArgs(int argc,char *argv[])
               fatal("missing size for -maxonstack option");
             MaxMessSizeOnStack = atoi(argv[0]);
           }
-          else
+          else if (streql(argv[0], "-mach_msg2"))
+            UseMachMsg2 = TRUE;
+	  else if (streql(argv[0], "-max_descrs")) {
+            --argc; ++argv;
+            if (argc == 0)
+              fatal("missing count for -max_descrs option");
+            MaxServerDescrs = atoi(argv[0]);
+	  } else if (streql(argv[0], "-max_reply_descrs")) {
+            --argc; ++argv;
+            if (argc == 0)
+              fatal("missing count for -max_reply_descrs option");
+            MaxServerReplyDescrs = atoi(argv[0]);
+	  } else
             fatal("unknown flag: '%s'", argv[0]);
           break;
 
@@ -285,6 +305,12 @@ parseArgs(int argc,char *argv[])
     }
     else
       fatal("bad argument: '%s'", *argv);
+
+  if (UseMachMsg2) {
+    if (!BeAnsiC || UseRPCTrap || CheckNDR) {
+      fatal("KernelServer does not support the given uptions.");
+    }
+  }
 }
 
 FILE *uheader, *server, *user;
@@ -295,8 +321,6 @@ main(int argc, char *argv[])
   FILE *iheader = 0;
   FILE *sheader = 0;
   FILE *dheader = 0;
-  time_t loc;
-  extern string_t GenerationDate;
 
   set_program_name("mig");
   parseArgs(argc, argv);
@@ -307,8 +331,6 @@ main(int argc, char *argv[])
   }
   init_global();
   init_type();
-  loc = time((time_t *)0);
-  GenerationDate = ctime(&loc);
 
   LookNormal();
   (void) yyparse();

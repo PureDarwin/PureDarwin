@@ -30,14 +30,14 @@
 #define _KERN_PERCPU_H_
 
 #include <mach/vm_types.h>
+#include <mach/machine/vm_param.h> /* For PAGE_MASK */
 
 __BEGIN_DECLS
 
 #if XNU_KERNEL_PRIVATE
 #include <libkern/section_keywords.h>
-#include <os/atomic_private.h>
 
-#pragma GCC visibility push(hidden)
+__exported_push_hidden
 
 /*!
  * @macro PERCPU_DECL
@@ -61,7 +61,7 @@ __BEGIN_DECLS
  * @c PERCPU_DECL can be used in headers to export the variable to clients.
  *
  * By default, per-cpu data is 0-initialized. Per-CPU data is allocated during
- * the STARTUP_SUB_KMEM_ALLOC phase and can be initialized with a STARTUP
+ * the STARTUP_SUB_KMEM phase and can be initialized with a STARTUP
  * callback in any later phase.
  *
  * Usage is:
@@ -73,6 +73,16 @@ __BEGIN_DECLS
  */
 #define PERCPU_DATA(name) \
 	__percpu __PERCPU_NAME(name) = {0}
+
+/*
+ * Same as before, but as a temporary hack with a 0 initializer
+ * instead of {0}, because clang has a bug where it does not accept
+ * the latter for _Atomic types. (And we want to keep the initializer
+ * to prevent people to think they can initialize it to anything else
+ * but 0.)
+ */
+#define PERCPU_DATA_HACK_78750602(name) \
+	__percpu __PERCPU_NAME(name) = 0
 
 /*!
  * @macro PERCPU_GET
@@ -109,6 +119,17 @@ __BEGIN_DECLS
 extern vm_offset_t current_percpu_base(void);
 
 /*!
+ * @function other_percpu_base()
+ *
+ * @abstract
+ * Returns an offset that can be passed to @c PERCPU_GET_WITH_BASE(),
+ * for the speficied cpu number.
+ *
+ * @param cpu_number    the cpu number for which we want a base.
+ */
+extern vm_offset_t other_percpu_base(int cpu_number);
+
+/*!
  * @macro PERCPU_GET_MASTER
  *
  * @abstract
@@ -131,7 +152,7 @@ extern vm_offset_t current_percpu_base(void);
  * @param name          the per-CPU variable name
  */
 #define PERCPU_GET_WITH_BASE(base, name) \
-	__PERCPU_CAST(name, base + __PERCPU_ADDR(name))
+	__PERCPU_CAST(name, (vm_address_t)base + __PERCPU_ADDR(name))
 
 /*!
  * @macro PERCPU_GET_RELATIVE
@@ -184,15 +205,15 @@ extern vm_offset_t current_percpu_base(void);
  */
 #define percpu_foreach(it, name) \
 	for (__PERCPU_TYPE(name) it, \
-	    __base_ ## it = NULL, \
-	    __next_ ## it = (typeof(it))percpu_base.start, \
-	    __end_ ## it = (typeof(it))percpu_base.end; \
+	    __unsafe_indexable __base_ ## it = NULL, \
+	    __unsafe_indexable __next_ ## it = __PERCPU_CAST(name, percpu_base.start), \
+	    __unsafe_indexable __end_ ## it = __PERCPU_CAST(name, percpu_base.end); \
         \
-	    (it = (typeof(it))(__PERCPU_ADDR(name) + (vm_address_t)__base_ ## it), \
+	    (it = __PERCPU_CAST(name, __PERCPU_ADDR(name) + (vm_address_t)__base_ ## it), \
 	    __base_ ## it <= __end_ ## it); \
         \
 	    __base_ ## it = __next_ ## it, \
-	    __next_ ## it = (typeof(it))((vm_address_t)__base_ ## it + percpu_section_size()))
+	    __next_ ## it = __PERCPU_CAST(name, (vm_address_t)__base_ ## it + percpu_section_size()))
 
 /*!
  * @macro percpu_foreach_secondary_base()
@@ -217,13 +238,13 @@ extern vm_offset_t current_percpu_base(void);
  */
 #define percpu_foreach_secondary(it, name) \
 	for (__PERCPU_TYPE(name) it, \
-	    __base_ ## it = (typeof(it))percpu_base.start, \
-	    __end_ ## it = (typeof(it))percpu_base.end; \
+	    __unsafe_indexable __base_ ## it = __PERCPU_CAST(name, percpu_base.start), \
+	    __unsafe_indexable __end_ ## it = __PERCPU_CAST(name, percpu_base.end); \
         \
-	    (it = (typeof(it))(__PERCPU_ADDR(name) + (vm_address_t)__base_ ## it), \
+	    (it = __PERCPU_CAST(name, __PERCPU_ADDR(name) + (vm_address_t)__base_ ## it), \
 	    __base_ ## it <= __end_ ## it); \
         \
-	    __base_ ## it = (typeof(it))((vm_address_t)__base_ ## it + percpu_section_size()))
+	    __base_ ## it = __PERCPU_CAST(name, (vm_address_t)__base_ ## it + percpu_section_size()))
 
 #pragma mark - implementation details
 
@@ -234,9 +255,9 @@ extern vm_offset_t current_percpu_base(void);
 
 #define __percpu                        __attribute__((section("__DATA, __percpu")))
 #define __PERCPU_NAME(name)             percpu_slot_ ## name
-#define __PERCPU_ADDR(name)             ((vm_offset_t)&__PERCPU_NAME(name))
+#define __PERCPU_ADDR(name)             ((vm_address_t)&__PERCPU_NAME(name))
 #define __PERCPU_TYPE(name)             typeof(&__PERCPU_NAME(name))
-#define __PERCPU_CAST(name, expr)       ((__PERCPU_TYPE(name))(expr))
+#define __PERCPU_CAST(name, expr)       __unsafe_forge_bidi_indexable(__PERCPU_TYPE(name), (vm_address_t)(expr), sizeof(__PERCPU_NAME(name)))
 
 /*
  * Note for implementors:
@@ -260,24 +281,28 @@ extern struct percpu_base {
 static __pure2 inline vm_offset_t
 percpu_section_start(void)
 {
-	extern char __percpu_section_start[] __SECTION_START_SYM("__DATA", "__percpu");
+	extern char __percpu_section_start[0] __SECTION_START_SYM("__DATA", "__percpu");
 	return (vm_offset_t)__percpu_section_start;
 }
 
 static __pure2 inline vm_offset_t
 percpu_section_end(void)
 {
-	extern char __percpu_section_end[] __SECTION_END_SYM("__DATA", "__percpu");
+	extern char __percpu_section_end[0] __SECTION_END_SYM("__DATA", "__percpu");
 	return (vm_offset_t)__percpu_section_end;
 }
 
 static __pure2 inline vm_size_t
 percpu_section_size(void)
 {
-	return percpu_section_end() - percpu_section_start();
+	/**
+	 * TODO: remove page rounding once we have a linker construct that gives us the correct page-padded size
+	 * See rdar://problem/97665399.
+	 */
+	return ((percpu_section_end() - percpu_section_start()) + PAGE_MASK) & ~((vm_size_t)PAGE_MASK);
 }
 
-#pragma GCC visibility pop
+__exported_pop
 #endif /* XNU_KERNEL_PRIVATE */
 
 __END_DECLS

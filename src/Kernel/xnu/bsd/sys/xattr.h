@@ -47,6 +47,10 @@
 /* option for f/getxattr() and f/listxattr() to expose the HFS Compression extended attributes */
 #define XATTR_SHOWCOMPRESSION 0x0020
 
+/* Options for pathname based xattr calls */
+#define XATTR_NOFOLLOW_ANY     0x0040  /* Don't follow any symbolic links in the path */
+#define XATTR_RESOLVE_BENEATH  0x0080  /* path must reside in the hierarchy beneath the starting directory */
+
 #define XATTR_MAXNAMELEN   127
 
 /* See the ATTR_CMN_FNDRINFO section of getattrlist(2) for details on FinderInfo */

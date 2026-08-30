@@ -102,7 +102,8 @@ typedef int  open_close_fcn_t(dev_t dev, int flags, int devtype,
 typedef struct tty *d_devtotty_t(dev_t dev);
 
 typedef void strategy_fcn_t(struct buf *bp);
-typedef int  ioctl_fcn_t(dev_t dev, u_long cmd, caddr_t data,
+typedef int  ioctl_fcn_t(dev_t dev, u_long cmd,
+    caddr_t __sized_by(IOCPARM_LEN(cmd)) data,
     int fflag, struct proc *p);
 typedef int  dump_fcn_t(void);     /* parameters vary by architecture */
 typedef int  psize_fcn_t(dev_t dev);
@@ -111,6 +112,9 @@ typedef int  stop_fcn_t(struct tty *tp, int rw);
 typedef int  reset_fcn_t(int uban);
 typedef int  select_fcn_t(dev_t dev, int which, void * wql, struct proc *p);
 typedef int  mmap_fcn_t(void);
+typedef int  rsvd_fcn_t(void);
+
+typedef void empty_fcn_t(void);
 
 #define d_open_t        open_close_fcn_t
 #define d_close_t       open_close_fcn_t
@@ -123,6 +127,7 @@ typedef int  mmap_fcn_t(void);
 #define d_mmap_t        mmap_fcn_t
 #define d_strategy_t    strategy_fcn_t
 
+
 __BEGIN_DECLS
 int             enodev(void);
 void    enodev_strat(void);
@@ -132,20 +137,20 @@ __END_DECLS
  * Versions of enodev() pointer, cast to appropriate function type. For use
  * in empty devsw slots.
  */
-#define eno_opcl                ((open_close_fcn_t *)&enodev)
-#define eno_strat               ((strategy_fcn_t *)&enodev_strat)
-#define eno_ioctl               ((ioctl_fcn_t *)&enodev)
-#define eno_dump                ((dump_fcn_t *)&enodev)
-#define eno_psize               ((psize_fcn_t *)&enodev)
-#define eno_rdwrt               ((read_write_fcn_t *)&enodev)
-#define eno_stop                ((stop_fcn_t *)&enodev)
-#define eno_reset               ((reset_fcn_t *)&enodev)
-#define eno_mmap                ((mmap_fcn_t *)&enodev)
-#define eno_select              ((select_fcn_t *)&enodev)
+#define eno_opcl                ((open_close_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_strat               ((strategy_fcn_t *)(empty_fcn_t*)&enodev_strat)
+#define eno_ioctl               ((ioctl_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_dump                ((dump_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_psize               ((psize_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_rdwrt               ((read_write_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_stop                ((stop_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_reset               ((reset_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_mmap                ((mmap_fcn_t *)(empty_fcn_t*)&enodev)
+#define eno_select              ((select_fcn_t *)(empty_fcn_t*)&enodev)
 
 /* For source backward compatibility only! */
-#define eno_getc                ((void *)&enodev)
-#define eno_putc                ((void *)&enodev)
+#define eno_getc                ((rsvd_fcn_t *)&enodev)
+#define eno_putc                ((rsvd_fcn_t *)&enodev)
 
 /*
  * Block device switch table
@@ -192,8 +197,8 @@ struct cdevsw {
 	select_fcn_t            *d_select;
 	mmap_fcn_t              *d_mmap;
 	strategy_fcn_t          *d_strategy;
-	void                    *d_reserved_1;
-	void                    *d_reserved_2;
+	rsvd_fcn_t              *d_reserved_1;
+	rsvd_fcn_t              *d_reserved_2;
 	int                     d_type;
 };
 
@@ -217,7 +222,8 @@ struct thread;
     {                                                                   \
 	eno_opcl,	eno_opcl,	eno_rdwrt,	eno_rdwrt,      \
 	eno_ioctl,	eno_stop,	eno_reset,	0,              \
-	(select_fcn_t *)seltrue,	eno_mmap,	eno_strat,	eno_getc,       \
+	(select_fcn_t *)(void (*)(void))seltrue,	eno_mmap,       \
+	eno_strat,	eno_getc,                                       \
 	eno_putc,	0                                               \
     }
 

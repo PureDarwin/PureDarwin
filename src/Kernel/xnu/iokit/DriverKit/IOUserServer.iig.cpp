@@ -9,7 +9,8 @@
 #include <DriverKit/DriverKit.h>
 #endif /* KERNEL */
 #include <DriverKit/IOReturn.h>
-#include <DriverKit/IOUserServer.h>
+#include <IOKit/IORPC.h>
+#include "IOUserServer.h"
 
 /* @iig implementation */
 #include <IOKit/IOUserServer.h>
@@ -25,6 +26,7 @@ struct IOUserServer_Create_Msg_Content
 {
     IORPCMessage __hdr;
     OSObjectRef  __object;
+    OSObjectRef  bundleID;
     uint64_t  tag;
     uint64_t  options;
     const char *  name;
@@ -38,10 +40,11 @@ struct IOUserServer_Create_Msg
 {
     IORPCMessageMach           mach;
     mach_msg_port_descriptor_t __object__descriptor;
+    mach_msg_port_descriptor_t bundleID__descriptor;
     IOUserServer_Create_Msg_Content content;
 };
 #pragma pack()
-#define IOUserServer_Create_Msg_ObjRefs (1)
+#define IOUserServer_Create_Msg_ObjRefs (2)
 
 struct IOUserServer_Create_Rpl_Content
 {
@@ -188,6 +191,13 @@ IOUserServer::_Dispatch(IOUserServer * self, const IORPC rpc)
             break;
         }
 #endif /* !KERNEL */
+#if KERNEL
+        case IOService_RegisterService_ID:
+        {
+            ret = IOService::RegisterService_Invoke(rpc, self, SimpleMemberFunctionCast(IOService::RegisterService_Handler, *self, &IOUserServer::RegisterService_Impl));
+            break;
+        }
+#endif /* !KERNEL */
 
         default:
             ret = IOService::_Dispatch(self, rpc);
@@ -224,6 +234,7 @@ IOUserServer::Create(
         const char * name,
         uint64_t tag,
         uint64_t options,
+        OSString * bundleID,
         IOUserServer ** server)
 {
     kern_return_t ret;
@@ -249,9 +260,12 @@ IOUserServer::Create(
     msg->content.__hdr.msgid = IOUserServer_Create_ID;
     msg->content.__object = (OSObjectRef) OSTypeID(IOUserServer);
     msg->content.__hdr.objectRefs = IOUserServer_Create_Msg_ObjRefs;
-    msg->mach.msgh_body.msgh_descriptor_count = 1;
+    msg->mach.msgh_body.msgh_descriptor_count = 2;
 
     msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
+
+    msg->bundleID__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
+    msg->content.bundleID = (OSObjectRef) bundleID;
 
     msg->content.tag = tag;
 
@@ -289,13 +303,17 @@ IOUserServer::Create_Invoke(const IORPC _rpc,
 {
     IOUserServer_Create_Invocation rpc = { _rpc };
     kern_return_t ret;
+    OSString * bundleID;
 
     if (IOUserServer_Create_Msg_ObjRefs != rpc.message->content.__hdr.objectRefs) return (kIOReturnIPCError);
+    bundleID = OSDynamicCast(OSString, (OSObject *) rpc.message->content.bundleID);
+    if (!bundleID && rpc.message->content.bundleID) return (kIOReturnBadArgument);
     if (strnlen(&rpc.message->content.__name[0], sizeof(rpc.message->content.__name)) >= sizeof(rpc.message->content.__name)) return kIOReturnBadArgument;
 
     ret = (*func)(&rpc.message->content.__name[0],
         rpc.message->content.tag,
         rpc.message->content.options,
+        bundleID,
         (IOUserServer **)&rpc.reply->content.server);
 
     if (kIOReturnSuccess != ret) return (ret);

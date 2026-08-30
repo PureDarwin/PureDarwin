@@ -87,13 +87,8 @@ union os_log_fmt_types_u {
 	ptrdiff_t   pd;
 	long        l;
 	long long   ll;
+	double      f;
 };
-
-typedef struct os_log_format_value_s {
-	union os_log_fmt_types_u type;
-	os_log_fmt_cmd_type_t ctype;
-	uint16_t size;
-} *os_log_format_value_t;
 
 typedef struct os_log_fmt_hdr_s {
 	os_log_fmt_hdr_flags_t hdr_flags;
@@ -126,7 +121,6 @@ typedef struct os_log_context_s {
 	uint16_t                    ctx_content_sz; // size not including the header
 	uint16_t                    ctx_pubdata_sz;
 	uint16_t                    ctx_pubdata_cnt;
-	firehose_tracepoint_flags_t ctx_ft_flags;
 	uint8_t                     ctx_truncated : 1;
 	uint8_t                     ctx_allocated : 1;
 } *os_log_context_t;

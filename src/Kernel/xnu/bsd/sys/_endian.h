@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004, 2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2004, 2006, 2023 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -91,32 +91,23 @@
 #define _SYS__ENDIAN_H_
 
 #include <sys/cdefs.h>
-/*
- * __DARWIN_BYTE_ORDER must be defined before the #elif chain below: if it is
- * undefined it evaluates to 0 == 0 against __DARWIN_BIG_ENDIAN and
- * htonl/ntohl silently become identity macros on little-endian targets
- * (this bit PureDarwin's libc: inet_aton returned host-order addresses,
- * because with -Ixnu/osfmk ahead of -Ixnu/bsd, <machine/endian.h> resolves
- * to osfmk's kernel-internal copy, which never defines __DARWIN_BYTE_ORDER).
- * Include it here as modern SDKs do, then fall back to the compiler's
- * __BYTE_ORDER__ if the header that won the search still left it undefined.
- */
-#include <machine/endian.h>
+#include <machine/_endian.h>
+
 #if !defined(lint) && !defined(__DARWIN_BYTE_ORDER)
 #ifndef __DARWIN_LITTLE_ENDIAN
-#define __DARWIN_LITTLE_ENDIAN  1234
+#define __DARWIN_LITTLE_ENDIAN 1234
 #endif
 #ifndef __DARWIN_BIG_ENDIAN
-#define __DARWIN_BIG_ENDIAN     4321
+#define __DARWIN_BIG_ENDIAN 4321
 #endif
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define __DARWIN_BYTE_ORDER     __DARWIN_BIG_ENDIAN
+#define __DARWIN_BYTE_ORDER __DARWIN_BIG_ENDIAN
 #elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define __DARWIN_BYTE_ORDER     __DARWIN_LITTLE_ENDIAN
+#define __DARWIN_BYTE_ORDER __DARWIN_LITTLE_ENDIAN
 #else
 #error "cannot determine __DARWIN_BYTE_ORDER"
 #endif
-#endif /* !lint && !__DARWIN_BYTE_ORDER */
+#endif
 
 /*
  * Macros for network/external number representation conversion.
@@ -143,12 +134,12 @@ __END_DECLS
 #define ntohll(x)       ((__uint64_t)(x))
 #define htonll(x)       ((__uint64_t)(x))
 
-#define NTOHL(x)        (x)
-#define NTOHS(x)        (x)
-#define NTOHLL(x)       (x)
-#define HTONL(x)        (x)
-#define HTONS(x)        (x)
-#define HTONLL(x)       (x)
+#define NTOHL(x)        (x) = (x)
+#define NTOHS(x)        (x) = (x)
+#define NTOHLL(x)       (x) = (x)
+#define HTONL(x)        (x) = (x)
+#define HTONS(x)        (x) = (x)
+#define HTONLL(x)       (x) = (x)
 #endif /* defined(KERNEL) || (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE)) */
 
 #else   /* __DARWIN_BYTE_ORDER == __DARWIN_LITTLE_ENDIAN */

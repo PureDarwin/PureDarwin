@@ -43,7 +43,9 @@ int	setresuid(uid_t, uid_t, uid_t);
     export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
     export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
     export CPPFLAGS="-I${libSystem}/pd-guest-headers -I${openssl}/include -I${zlib}/include"
-    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -DPLATFORM_MacOSX -D_DARWIN_C_SOURCE -Wno-nullability-completeness"
+    # pd-guest-headers ships xnu's sys/cdefs.h with the PLATFORM_* blocks
+    # unresolved, so without this every 64-bit call asm-renames to $UNIX2003.
+    export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -DXNU_PLATFORM_MacOSX -D_DARWIN_C_SOURCE -Wno-nullability-completeness"
     export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${openssl}/lib -L${zlib}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -lSystem"
     export LIBS="-Wl,-force_load,${openssl}/lib/libcrypto.a -Wl,-force_load,${zlib}/lib/libz.a -lSystem"
 

@@ -269,6 +269,11 @@ timer_queue_expire_local(
 	pp = current_cpu_datap();
 
 	mytimer = &pp->rtclock_timer;
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+	    DECR_TIMER_EXPIRE_LOCAL | DBG_FUNC_START,
+	    mytimer->deadline, 0, 0, 0, 0);
+
 	abstime = mach_absolute_time();
 
 	mytimer->has_expired = TRUE;
@@ -277,6 +282,10 @@ timer_queue_expire_local(
 	mytimer->when_set = mach_absolute_time();
 
 	timer_resync_deadlines();
+
+	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
+	    DECR_TIMER_EXPIRE_LOCAL | DBG_FUNC_END,
+	    mytimer->deadline, 0, 0, 0, 0);
 }
 
 void
@@ -338,7 +347,7 @@ timer_queue_assign(
 			timer_set_deadline(deadline);
 		}
 	} else {
-		queue = &cpu_datap(master_cpu)->rtclock_timer.queue;
+		queue = &cpu_datap(boot_cpu_id)->rtclock_timer.queue;
 	}
 
 	return queue;
@@ -374,7 +383,7 @@ timer_queue_migrate_cpu(int target_cpu)
 
 	assert(!ml_get_interrupts_enabled());
 	assert(target_cpu != cdp->cpu_number);
-	assert(target_cpu == master_cpu);
+	assert(target_cpu == boot_cpu_id);
 
 	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_TRACE,
 	    DECR_TIMER_MIGRATE | DBG_FUNC_START,

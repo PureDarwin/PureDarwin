@@ -88,6 +88,22 @@ which correspond to the effective user and group IDs of the calling
 process. There is no visible entry in the file system for the created
 object in this implementation.
 .Pp
+There are additional restrictions for non-macOS platforms only: if the
+calling process is signed with a Team ID entitlement, then
+.Fa name
+is
+.Ql namespaced ,
+meaning calls to
+.Fn sem_open
+or
+.Fn sem_unlink
+will not observe any semaphores created by processes signed with different Team
+IDs. If a process lacks a Team ID entitlement, then
+.Fn sem_open
+and
+.Fn sem_unlink
+operate on a global namespace, which is always searched as a fallback.
+.Pp
 The returned semaphore descriptor is available to the calling process
 until it is closed with
 .Fn sem_close ,
@@ -143,6 +159,9 @@ descriptors in use.
 .Fa name
 exceeded
 .Dv PSEMNAMLEN
+characters, or Team ID of calling binary exceeded
+.Dv
+PSEMTEAMIDLEN
 characters.
 .It Bq Er ENFILE
 Too many semaphores or file descriptors are open on the system.

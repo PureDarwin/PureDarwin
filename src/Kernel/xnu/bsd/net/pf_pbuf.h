@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2016-2022 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -40,7 +40,7 @@ enum pbuf_action {
 #define PBUF_ACTION_RV_FAILURE  (-1)
 
 struct pbuf_memory {
-	uint8_t *pm_buffer;     // Pointer to start of buffer
+	uint8_t *__sized_by(pm_buffer_len) pm_buffer;     // Pointer to start of buffer
 	u_int pm_buffer_len;    // Total length of buffer
 	u_int pm_offset;        // Offset to start of payload
 	u_int pm_len;           // Length of payload
@@ -49,6 +49,7 @@ struct pbuf_memory {
 	uint8_t pm_proto;
 	uint8_t pm_flowsrc;
 	uint32_t pm_flowid;
+	uint32_t pm_flow_gencnt;
 	uint32_t pm_flags;
 	struct pf_mtag pm_pftag;
 	struct pf_fragment_tag  pm_pf_fragtag;
@@ -65,7 +66,7 @@ typedef struct pbuf {
 #define pb_mbuf         pb_u.pbu_mbuf
 #define pb_memory       pb_u.pbu_memory
 
-	void            *pb_data;
+	void            *__sized_by(pb_contig_len) pb_data;
 	uint32_t        pb_packet_len;
 	uint32_t        pb_contig_len;
 	uint32_t        *pb_csum_flags;
@@ -73,6 +74,7 @@ typedef struct pbuf {
 	uint8_t         *pb_proto;
 	uint8_t         *pb_flowsrc;
 	uint32_t        *pb_flowid;
+	uint32_t        *pb_flow_gencnt;
 	uint32_t        *pb_flags;
 	struct pf_mtag  *pb_pftag;
 	struct pf_fragment_tag  *pb_pf_fragtag;
@@ -94,15 +96,15 @@ struct mbuf     *pbuf_clone_to_mbuf(pbuf_t *);
 void *          pbuf_ensure_contig(pbuf_t *, size_t);
 void *          pbuf_ensure_writable(pbuf_t *, size_t);
 
-void *          pbuf_resize_segment(pbuf_t *, int off, int olen, int nlen);
-void *          pbuf_contig_segment(pbuf_t *, int off, int len);
+void *          pbuf_resize_segment(pbuf_t *, int off, int olen, int nlen) __attribute__((warn_unused_result));
+void *          pbuf_contig_segment(pbuf_t *, int off, int len) __attribute__((warn_unused_result));
 
-void            pbuf_copy_data(pbuf_t *, int, int, void *);
-void            pbuf_copy_back(pbuf_t *, int, int, void *);
+void            pbuf_copy_data(pbuf_t *, int, int, void *__sized_by(buflen), size_t buflen);
+void            pbuf_copy_back(pbuf_t *, int, int, void *__sized_by(buflen), size_t buflen);
 
 uint16_t        pbuf_inet_cksum(const pbuf_t *, uint32_t, uint32_t, uint32_t);
 uint16_t        pbuf_inet6_cksum(const pbuf_t *, uint32_t, uint32_t, uint32_t);
 
 mbuf_svc_class_t pbuf_get_service_class(const pbuf_t *);
-
+void *          pbuf_get_packet_buffer_address(const pbuf_t *);
 #endif /* __PBUF_H__ */

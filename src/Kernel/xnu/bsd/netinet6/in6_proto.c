@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -95,6 +95,7 @@
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/protosw.h>
+#include <sys/kauth.h>
 #include <sys/kernel.h>
 #include <sys/domain.h>
 #include <sys/mbuf.h>
@@ -142,6 +143,9 @@
 #include <netinet6/ip6protosw.h>
 
 #include <net/net_osdep.h>
+#include <os/log.h>
+
+#include <IOKit/IOBSD.h>
 
 /*
  * TCP/IP protocol family: IP6, ICMP6, UDP, TCP.
@@ -172,10 +176,8 @@ struct ip6protosw inet6sw[] = {
     PR_EVCONNINFO | PR_PRECONN_WRITE,
 		.pr_input =             udp6_input,
 		.pr_ctlinput =          udp6_ctlinput,
-		.pr_ctloutput =         ip6_ctloutput,
-#if !INET       /* don't call initialization twice */
+		.pr_ctloutput =         udp_ctloutput,
 		.pr_init =              udp_init,
-#endif /* !INET */
 		.pr_usrreqs =           &udp6_usrreqs,
 		.pr_lock =              udp_lock,
 		.pr_unlock =            udp_unlock,
@@ -192,9 +194,7 @@ struct ip6protosw inet6sw[] = {
 		.pr_input =             tcp6_input,
 		.pr_ctlinput =          tcp6_ctlinput,
 		.pr_ctloutput =         tcp_ctloutput,
-#if !INET       /* don't call initialization and timeout routines twice */
 		.pr_init =              tcp_init,
-#endif /* !INET */
 		.pr_drain =             tcp_drain,
 		.pr_usrreqs =           &tcp6_usrreqs,
 		.pr_lock =              tcp_lock,
@@ -211,9 +211,7 @@ struct ip6protosw inet6sw[] = {
 		.pr_output =            rip6_pr_output,
 		.pr_ctlinput =          rip6_ctlinput,
 		.pr_ctloutput =         rip6_ctloutput,
-#if !INET       /* don't call initialization and timeout routines twice */
 		.pr_init =              rip_init,
-#endif /* !INET */
 		.pr_usrreqs =           &rip6_usrreqs,
 		.pr_unlock =            rip_unlock,
 		.pr_update_last_owner = inp_update_last_owner,
@@ -295,7 +293,6 @@ struct ip6protosw inet6sw[] = {
 		.pr_input =             encap6_input,
 		.pr_output =            rip6_pr_output,
 		.pr_ctloutput =         rip6_ctloutput,
-		.pr_init =              encap6_init,
 		.pr_usrreqs =           &rip6_usrreqs,
 		.pr_unlock =            rip_unlock,
 		.pr_update_last_owner = inp_update_last_owner,
@@ -309,7 +306,6 @@ struct ip6protosw inet6sw[] = {
 		.pr_input =             encap6_input,
 		.pr_output =            rip6_pr_output,
 		.pr_ctloutput =         rip6_ctloutput,
-		.pr_init =              encap6_init,
 		.pr_usrreqs =           &rip6_usrreqs,
 		.pr_unlock =            rip_unlock,
 		.pr_update_last_owner = inp_update_last_owner,
@@ -355,49 +351,28 @@ in6_dinit(struct domain *dp)
 
 	inet6domain = dp;
 
-	_CASSERT(sizeof(struct protosw) == sizeof(struct ip6protosw));
-	_CASSERT(offsetof(struct ip6protosw, pr_entry) ==
-	    offsetof(struct protosw, pr_entry));
-	_CASSERT(offsetof(struct ip6protosw, pr_domain) ==
-	    offsetof(struct protosw, pr_domain));
-	_CASSERT(offsetof(struct ip6protosw, pr_protosw) ==
-	    offsetof(struct protosw, pr_protosw));
-	_CASSERT(offsetof(struct ip6protosw, pr_type) ==
-	    offsetof(struct protosw, pr_type));
-	_CASSERT(offsetof(struct ip6protosw, pr_protocol) ==
-	    offsetof(struct protosw, pr_protocol));
-	_CASSERT(offsetof(struct ip6protosw, pr_flags) ==
-	    offsetof(struct protosw, pr_flags));
-	_CASSERT(offsetof(struct ip6protosw, pr_input) ==
-	    offsetof(struct protosw, pr_input));
-	_CASSERT(offsetof(struct ip6protosw, pr_output) ==
-	    offsetof(struct protosw, pr_output));
-	_CASSERT(offsetof(struct ip6protosw, pr_ctlinput) ==
-	    offsetof(struct protosw, pr_ctlinput));
-	_CASSERT(offsetof(struct ip6protosw, pr_ctloutput) ==
-	    offsetof(struct protosw, pr_ctloutput));
-	_CASSERT(offsetof(struct ip6protosw, pr_usrreqs) ==
-	    offsetof(struct protosw, pr_usrreqs));
-	_CASSERT(offsetof(struct ip6protosw, pr_init) ==
-	    offsetof(struct protosw, pr_init));
-	_CASSERT(offsetof(struct ip6protosw, pr_drain) ==
-	    offsetof(struct protosw, pr_drain));
-	_CASSERT(offsetof(struct ip6protosw, pr_sysctl) ==
-	    offsetof(struct protosw, pr_sysctl));
-	_CASSERT(offsetof(struct ip6protosw, pr_lock) ==
-	    offsetof(struct protosw, pr_lock));
-	_CASSERT(offsetof(struct ip6protosw, pr_unlock) ==
-	    offsetof(struct protosw, pr_unlock));
-	_CASSERT(offsetof(struct ip6protosw, pr_getlock) ==
-	    offsetof(struct protosw, pr_getlock));
-	_CASSERT(offsetof(struct ip6protosw, pr_filter_head) ==
-	    offsetof(struct protosw, pr_filter_head));
-	_CASSERT(offsetof(struct ip6protosw, pr_old) ==
-	    offsetof(struct protosw, pr_old));
-	_CASSERT(offsetof(struct ip6protosw, pr_update_last_owner) ==
-	    offsetof(struct protosw, pr_update_last_owner));
-	_CASSERT(offsetof(struct ip6protosw, pr_copy_last_owner) ==
-	    offsetof(struct protosw, pr_copy_last_owner));
+	static_assert(sizeof(struct protosw) == sizeof(struct ip6protosw));
+	static_assert(offsetof(struct ip6protosw, pr_entry) == offsetof(struct protosw, pr_entry));
+	static_assert(offsetof(struct ip6protosw, pr_domain) == offsetof(struct protosw, pr_domain));
+	static_assert(offsetof(struct ip6protosw, pr_protosw) == offsetof(struct protosw, pr_protosw));
+	static_assert(offsetof(struct ip6protosw, pr_type) == offsetof(struct protosw, pr_type));
+	static_assert(offsetof(struct ip6protosw, pr_protocol) == offsetof(struct protosw, pr_protocol));
+	static_assert(offsetof(struct ip6protosw, pr_flags) == offsetof(struct protosw, pr_flags));
+	static_assert(offsetof(struct ip6protosw, pr_input) == offsetof(struct protosw, pr_input));
+	static_assert(offsetof(struct ip6protosw, pr_output) == offsetof(struct protosw, pr_output));
+	static_assert(offsetof(struct ip6protosw, pr_ctlinput) == offsetof(struct protosw, pr_ctlinput));
+	static_assert(offsetof(struct ip6protosw, pr_ctloutput) == offsetof(struct protosw, pr_ctloutput));
+	static_assert(offsetof(struct ip6protosw, pr_usrreqs) == offsetof(struct protosw, pr_usrreqs));
+	static_assert(offsetof(struct ip6protosw, pr_init) == offsetof(struct protosw, pr_init));
+	static_assert(offsetof(struct ip6protosw, pr_drain) == offsetof(struct protosw, pr_drain));
+	static_assert(offsetof(struct ip6protosw, pr_lock) == offsetof(struct protosw, pr_lock));
+	static_assert(offsetof(struct ip6protosw, pr_unlock) == offsetof(struct protosw, pr_unlock));
+	static_assert(offsetof(struct ip6protosw, pr_getlock) == offsetof(struct protosw, pr_getlock));
+	static_assert(offsetof(struct ip6protosw, pr_filter_head) == offsetof(struct protosw, pr_filter_head));
+	static_assert(offsetof(struct ip6protosw, pr_old) == offsetof(struct protosw, pr_old));
+	static_assert(offsetof(struct ip6protosw, pr_update_last_owner) == offsetof(struct protosw, pr_update_last_owner));
+	static_assert(offsetof(struct ip6protosw, pr_copy_last_owner) == offsetof(struct protosw, pr_copy_last_owner));
+	static_assert(offsetof(struct ip6protosw, pr_mem_acct) == offsetof(struct protosw, pr_mem_acct));
 
 	/*
 	 * Attach first, then initialize.  ip6_init() needs raw IP6 handler.
@@ -417,7 +392,7 @@ rip6_pr_output(struct mbuf *m, struct socket *so, struct sockaddr_in6 *sin6,
     struct mbuf *m1)
 {
 #pragma unused(m, so, sin6, m1)
-	panic("%s\n", __func__);
+	panic("%s", __func__);
 	/* NOTREACHED */
 	return 0;
 }
@@ -548,9 +523,9 @@ sysctl_ip6_tempvltime SYSCTL_HANDLER_ARGS
 {
 #pragma unused(oidp, arg2)
 	int error = 0;
-	int value = 0;
+	uint32_t value = 0;
 
-	error = SYSCTL_OUT(req, arg1, sizeof(int));
+	error = SYSCTL_OUT(req, arg1, sizeof(uint32_t));
 	if (error || !req->newptr) {
 		return error;
 	}
@@ -604,8 +579,6 @@ ip6_getstat SYSCTL_HANDLER_ARGS
 	return SYSCTL_OUT(req, &ip6stat, MIN(sizeof(ip6stat), req->oldlen));
 }
 
-SYSCTL_INT(_net_inet6_ip6, IPV6CTL_FORWARDING,
-    forwarding, CTLFLAG_RW | CTLFLAG_LOCKED, &ip6_forwarding, 0, "");
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_SENDREDIRECTS,
     redirect, CTLFLAG_RW | CTLFLAG_LOCKED, &ip6_sendredirects, 0, "");
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_DEFHLIM,
@@ -638,7 +611,7 @@ SYSCTL_INT(_net_inet6_ip6, IPV6CTL_DEFMCASTHLIM,
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_GIF_HLIM,
     gifhlim, CTLFLAG_RW | CTLFLAG_LOCKED, &ip6_gif_hlim, 0, "");
 SYSCTL_STRING(_net_inet6_ip6, IPV6CTL_KAME_VERSION,
-    kame_version, CTLFLAG_RD | CTLFLAG_LOCKED, (void *)((uintptr_t)(__KAME_VERSION)), 0, "");
+    kame_version, CTLFLAG_RD | CTLFLAG_LOCKED, __unsafe_forge_single(void *, __KAME_VERSION), 0, "");
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_USE_DEPRECATED,
     use_deprecated, CTLFLAG_RW | CTLFLAG_LOCKED, &ip6_use_deprecated, 0, "");
 SYSCTL_INT(_net_inet6_ip6, IPV6CTL_RR_PRUNE,
@@ -683,12 +656,102 @@ SYSCTL_PROC(_net_inet6_ip6, OID_AUTO,
     cga_conflict_retries, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
     &ip6_cga_conflict_retries, 0, sysctl_ip6_cga_conflict_retries, "IU", "");
 
+
+static int sysctl_ip6_forwarding SYSCTL_HANDLER_ARGS;
+
+SYSCTL_PROC(_net_inet6_ip6, IPV6CTL_FORWARDING, forwarding,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED, &ip6_forwarding, 0,
+    sysctl_ip6_forwarding, "I", "");
+
+static int
+sysctl_ip6_forwarding SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+	int error, i;
+	char proc_name_string[MAXCOMLEN + 1];
+	proc_name(proc_pid(current_proc()), proc_name_string, sizeof(proc_name_string));
+
+	i = ip6_forwarding;
+	os_log(OS_LOG_DEFAULT, "%s:%s entry: ip6_forwarding is %d",
+	    proc_name_string, __func__, ip6_forwarding);
+
+	error = sysctl_handle_int(oidp, &i, 0, req);
+	if (error || req->newptr == USER_ADDR_NULL) {
+		goto done;
+	}
+	/* impose bounds */
+	if (i < 0) {
+		error = EINVAL;
+		goto done;
+	}
+
+	if (i > 0) {
+		i = 1;
+	}
+
+	ip6_forwarding = i;
+done:
+	os_log(OS_LOG_DEFAULT, "%s:%s return: ip6_forwarding is %d "
+	    "and error is %d", proc_name_string, __func__, ip6_forwarding, error);
+	return error;
+}
+
+static int sysctl_nd6_debug SYSCTL_HANDLER_ARGS;
+
+SYSCTL_PROC(_net_inet6_icmp6, ICMPV6CTL_ND6_DEBUG, nd6_debug,
+    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, &nd6_debug, 0,
+    sysctl_nd6_debug, "I", "");
+
+static int
+sysctl_nd6_debug SYSCTL_HANDLER_ARGS
+{
+#pragma unused(arg1, arg2)
+	int error;
+	int old_value = nd6_debug;
+	int value = old_value;
+#if (DEBUG || DEVELOPMENT)
+	char proc_name_string[MAXCOMLEN + 1];
+
+	proc_name(proc_pid(current_proc()), proc_name_string, sizeof(proc_name_string));
+#endif
+
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error || req->newptr == USER_ADDR_NULL) {
+		goto done;
+	}
+
+	if (!(kauth_cred_issuser(kauth_cred_get()) != 0 ||
+	    IOCurrentTaskHasEntitlement("com.apple.private.networking.elevated-logging"))) {
+#if (DEBUG || DEVELOPMENT)
+		os_log(OS_LOG_DEFAULT, "%s:%s: sysctl not allowed\n",
+		    proc_name_string, __func__);
+#endif
+		error = EPERM;
+		goto done;
+	}
+
+	/* impose bounds */
+	if (value < 0) {
+		error = EINVAL;
+		goto done;
+	}
+
+	nd6_debug = value;
+
+done:
+#if (DEBUG || DEVELOPMENT)
+	os_log(OS_LOG_DEFAULT, "%s:%s return: nd6_debug is %d "
+	    "and error is %d\n", proc_name_string, __func__, nd6_debug, error);
+#endif
+	return error;
+}
+
 /*
  * One single sysctl to set v6 stack profile for IPv6 compliance testing.
  * A lot of compliance test suites are not aware of other enhancements in IPv6
  * protocol and expect some arguably obsolete behavior.
  */
-int v6_compliance_profile = 0;
+static int v6_compliance_profile;
 static int
 sysctl_set_v6_compliance_profile SYSCTL_HANDLER_ARGS
 {
@@ -757,8 +820,6 @@ SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ERRPPSLIMIT_RANDOM_INCR,
     errppslimit_random_incr, CTLFLAG_RW | CTLFLAG_LOCKED, &icmp6errppslim_random_incr, 0, "");
 SYSCTL_INT(_net_inet6_icmp6, OID_AUTO,
     rappslimit, CTLFLAG_RW | CTLFLAG_LOCKED, &icmp6rappslim, 0, "");
-SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_DEBUG,
-    nd6_debug, CTLFLAG_RW | CTLFLAG_LOCKED, &nd6_debug, 0, "");
 SYSCTL_INT(_net_inet6_icmp6, ICMPV6CTL_ND6_ONLINKNSRFC4861,
     nd6_onlink_ns_rfc4861, CTLFLAG_RW | CTLFLAG_LOCKED, &nd6_onlink_ns_rfc4861, 0,
     "Accept 'on-link' nd6 NS in compliance with RFC 4861.");

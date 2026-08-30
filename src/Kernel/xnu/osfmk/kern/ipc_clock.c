@@ -43,8 +43,11 @@
 #include <kern/ipc_kobject.h>
 #include <kern/clock.h>
 #include <kern/misc_protos.h>
-#include <ipc/ipc_port.h>
-#include <ipc/ipc_space.h>
+
+IPC_KOBJECT_DEFINE(IKOT_CLOCK,
+    .iko_op_movable_send = true,
+    .iko_op_stable    = true,
+    .iko_op_permanent = true);
 
 /*
  *	Routine:	ipc_clock_init
@@ -52,89 +55,30 @@
  *		Initialize ipc control of a clock.
  */
 void
-ipc_clock_init(
-	clock_t         clock)
+ipc_clock_init(clock_t clock)
 {
-	ipc_port_t      port;
-
-	port = ipc_port_alloc_kernel();
-	if (port == IP_NULL) {
-		panic("ipc_clock_init");
-	}
-	clock->cl_service = port;
-
-	port = ipc_port_alloc_kernel();
-	if (port == IP_NULL) {
-		panic("ipc_clock_init");
-	}
-	clock->cl_control = port;
-}
-
-/*
- *	Routine:	ipc_clock_enable
- *	Purpose:
- *		Enable ipc access to a clock.
- */
-void
-ipc_clock_enable(
-	clock_t         clock)
-{
-	ipc_kobject_set(clock->cl_service,
-	    (ipc_kobject_t) clock, IKOT_CLOCK);
-	ipc_kobject_set(clock->cl_control,
-	    (ipc_kobject_t) clock, IKOT_CLOCK_CTRL);
+	clock->cl_service = ipc_kobject_alloc_port(clock, IKOT_CLOCK,
+	    IPC_KOBJECT_ALLOC_NONE);
 }
 
 /*
  *	Routine:	convert_port_to_clock
  *	Purpose:
  *		Convert from a port to a clock.
- *		Doesn't consume the port ref; produces a clock ref,
+ *		Doesn't consume the port ref
  *		which may be null.
  *	Conditions:
  *		Nothing locked.
  */
 clock_t
-convert_port_to_clock(
-	ipc_port_t      port)
+convert_port_to_clock(ipc_port_t port)
 {
-	clock_t         clock = CLOCK_NULL;
+	clock_t clock = CLOCK_NULL;
 
 	if (IP_VALID(port)) {
-		ip_lock(port);
-		if (ip_active(port) &&
-		    ((ip_kotype(port) == IKOT_CLOCK) ||
-		    (ip_kotype(port) == IKOT_CLOCK_CTRL))) {
-			clock = (clock_t)ip_get_kobject(port);
-		}
-		ip_unlock(port);
+		clock = ipc_kobject_get_stable(port, IKOT_CLOCK);
 	}
-	return clock;
-}
 
-/*
- *	Routine:	convert_port_to_clock_ctrl
- *	Purpose:
- *		Convert from a port to a clock.
- *		Doesn't consume the port ref; produces a clock ref,
- *		which may be null.
- *	Conditions:
- *		Nothing locked.
- */
-clock_t
-convert_port_to_clock_ctrl(
-	ipc_port_t      port)
-{
-	clock_t         clock = CLOCK_NULL;
-
-	if (IP_VALID(port)) {
-		ip_lock(port);
-		if (ip_active(port) &&
-		    (ip_kotype(port) == IKOT_CLOCK_CTRL)) {
-			clock = (clock_t) ip_get_kobject(port);
-		}
-		ip_unlock(port);
-	}
 	return clock;
 }
 
@@ -147,31 +91,9 @@ convert_port_to_clock_ctrl(
  *		Nothing locked.
  */
 ipc_port_t
-convert_clock_to_port(
-	clock_t         clock)
+convert_clock_to_port(clock_t clock)
 {
-	ipc_port_t      port;
-
-	port = ipc_port_make_send(clock->cl_service);
-	return port;
-}
-
-/*
- *	Routine:	convert_clock_ctrl_to_port
- *	Purpose:
- *		Convert from a clock to a port.
- *		Produces a naked send right which may be invalid.
- *	Conditions:
- *		Nothing locked.
- */
-ipc_port_t
-convert_clock_ctrl_to_port(
-	clock_t         clock)
-{
-	ipc_port_t      port;
-
-	port = ipc_port_make_send(clock->cl_control);
-	return port;
+	return ipc_kobject_make_send(clock->cl_service, clock, IKOT_CLOCK);
 }
 
 /*
@@ -180,8 +102,7 @@ convert_clock_ctrl_to_port(
  *		Convert from a clock name to a clock pointer.
  */
 clock_t
-port_name_to_clock(
-	mach_port_name_t clock_name)
+port_name_to_clock(mach_port_name_t clock_name)
 {
 	clock_t         clock = CLOCK_NULL;
 	ipc_space_t     space;
@@ -194,9 +115,7 @@ port_name_to_clock(
 	if (ipc_port_translate_send(space, clock_name, &port) != KERN_SUCCESS) {
 		return clock;
 	}
-	if (ip_kotype(port) == IKOT_CLOCK) {
-		clock = (clock_t) ip_get_kobject(port);
-	}
-	ip_unlock(port);
+	clock = (clock_t)ipc_kobject_get_stable(port, IKOT_CLOCK);
+	ip_mq_unlock(port);
 	return clock;
 }

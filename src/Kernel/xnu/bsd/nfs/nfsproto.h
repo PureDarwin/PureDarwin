@@ -89,7 +89,7 @@
 #define NFS_V2MAXDATA   8192
 #define NFS_MAXDGRAMDATA 16384
 #define NFS_PREFDGRAMDATA 8192
-#define NFS_MAXDATA     (8 * 64 * PAGE_SIZE) /* Same as NFS_MAXBSIZE from nfsnode.h */
+#define NFS_MAXDATA     (1024 * 1024) /* Max data supported by kext is 2MB for x86 and 8MB for AS (8 * 64 * PAGE_SIZE) */
 #define NFS_MAXPATHLEN  1024
 #define NFS_MAXNAMLEN   255
 #define NFS_MAXPACKET   (16 * 1024 * 1024)
@@ -99,7 +99,10 @@
 #define NFSRV_MAXDATA     NFS_MAXDATA
 #define NFSRV_TCPSOCKBUF  (2 * NFSRV_MAXDATA)
 
-#define NFS4_CALLBACK_PROG              0x4E465343 /* "NFSC" */
+#define NFSV4_MINORVERSION              0   /* V4.0 Minor version */
+#define NFSV41_MINORVERSION             1   /* V4.1 Minor version */
+
+#define NFS4_CALLBACK_PROG              0x40000000
 #define NFS4_CALLBACK_PROG_VERSION      1
 
 /* Stat numbers for NFS RPC returns */
@@ -125,7 +128,9 @@
 #define NFSERR_STALE                    70
 #define NFSERR_REMOTE                   71      /* Version 3 only */
 #define NFSERR_WFLUSH                   99      /* Version 2 only */
-#define NFSERR_BADHANDLE                10001   /* The rest Version 3 only */
+
+/* NFSv3 specific errors */
+#define NFSERR_BADHANDLE                10001
 #define NFSERR_NOT_SYNC                 10002
 #define NFSERR_BAD_COOKIE               10003
 #define NFSERR_NOTSUPP                  10004
@@ -135,7 +140,9 @@
 #define NFSERR_JUKEBOX                  10008
 #define NFSERR_TRYLATER                 NFSERR_JUKEBOX
 #define NFSERR_DELAY                    NFSERR_JUKEBOX
-#define NFSERR_SAME                     10009   /* The rest Version 4 only */
+
+/* NFSv4.0 specific errors */
+#define NFSERR_SAME                     10009
 #define NFSERR_DENIED                   10010
 #define NFSERR_EXPIRED                  10011
 #define NFSERR_LOCKED                   10012
@@ -176,15 +183,57 @@
 #define NFSERR_ADMIN_REVOKED            10047
 #define NFSERR_CB_PATH_DOWN             10048
 
+/* NFSv4.1 specific errors */
+#define NFSERR_BADIOMODE                10049
+#define NFSERR_BADLAYOUT                10050
+#define NFSERR_BADSESSIONDIGEST         10051
+#define NFSERR_BADSESSION               10052
+#define NFSERR_BADSLOT                  10053
+#define NFSERR_COMPLETEALREADY          10054
+#define NFSERR_NOTBNDTOSESS             10055
+#define NFSERR_DELEGALREADYWANT         10056
+#define NFSERR_BACKCHANBUSY             10057
+#define NFSERR_LAYOUTTRYLATER           10058
+#define NFSERR_LAYOUTUNAVAIL            10059
+#define NFSERR_NOMATCHLAYOUT            10060
+#define NFSERR_RECALLCONFLICT           10061
+#define NFSERR_UNKNLAYOUTTYPE           10062
+#define NFSERR_SEQMISORDERED            10063
+#define NFSERR_SEQUENCEPOS              10064
+#define NFSERR_REQTOOBIG                10065
+#define NFSERR_REPTOOBIG                10066
+#define NFSERR_REPTOOBIGTOCACHE         10067
+#define NFSERR_RETRYUNCACHEDREP         10068
+#define NFSERR_UNSAFECOMPOUND           10069
+#define NFSERR_TOOMANYOPS               10070
+#define NFSERR_OPNOTINSESS              10071
+#define NFSERR_HASHALGUNSUPP            10072
+#define NFSERR_CLIENTIDBUSY             10074
+#define NFSERR_PNFSIOHOLE               10075
+#define NFSERR_SEQFALSERETRY            10076
+#define NFSERR_BADHIGHSLOT              10077
+#define NFSERR_DEADSESSION              10078
+#define NFSERR_ENCRALGUNSUPP            10079
+#define NFSERR_PNFSNOLAYOUT             10080
+#define NFSERR_NOTONLYOP                10081
+#define NFSERR_WRONGCRED                10082
+#define NFSERR_WRONGTYPE                10083
+#define NFSERR_DIRDELEGUNAVAIL          10084
+#define NFSERR_REJECTDELEG              10085
+#define NFSERR_RETURNCONFLICT           10086
+#define NFSERR_DELEGREVOKED             10087
+
 #define NFSERR_STALEWRITEVERF           30001   /* Fake return for nfs_commit() */
 #define NFSERR_DIRBUFDROPPED            30002   /* Fake return for nfs*_readdir_rpc() */
+#define NFSERR_REPLYFROMCACHE           30003   /* Fake return for nfs41_sequence_cb_get() */
+#define NFSERR_SEQSTATUSERR             30004   /* Fake return for nfs41_sequence_get() */
 
 /*
  * For gss we would like to return EAUTH when we don't have or can't get credentials,
  * but some callers don't know what to do with it, so we define our own version
  * of EAUTH to be EACCES
  */
-#define NFSERR_EAUTH    EACCES
+#define NFSERR_EAUTH            EACCES
 
 #define NFSERR_RETVOID          0x20000000 /* Return void, not error */
 #define NFSERR_AUTHERR          0x40000000 /* Mark an authentication error */
@@ -219,6 +268,7 @@
 #define NFS4_FHSIZE             128
 #define NFS4_VERIFIER_SIZE      8
 #define NFS4_OPAQUE_LIMIT       1024
+#define NFS4_SESSIONID_SIZE     16
 
 /* variants for multiple versions */
 #define NFSX_FH(V)              (((V) == NFS_VER2) ? NFSX_V2FH : (NFSX_UNSIGNED + \
@@ -325,7 +375,8 @@
 /* NFS CREATE types */
 #define NFS_CREATE_UNCHECKED            0
 #define NFS_CREATE_GUARDED              1
-#define NFS_CREATE_EXCLUSIVE            2
+#define NFS_CREATE_EXCLUSIVE            2 /* Deprecated in NFSv4.1. */
+#define NFS_CREATE_EXCLUSIVE4_1         3 /* New to NFSv4.1 */
 
 /* Only define these if nfs_prot.h hasn't been included */
 #ifndef NFS_PROGRAM
@@ -349,7 +400,7 @@ typedef enum { NFNON=0, NFREG=1, NFDIR=2, NFBLK=3, NFCHR=4, NFLNK=5,
 /*
  * NFS attribute management stuff
  */
-#define NFS_ATTR_BITMAP_LEN     2
+#define NFS_ATTR_BITMAP_LEN     3
 #define NFS_BITMAP_SET(B, I)    (((uint32_t *)(B))[(I)/32] |= 1U<<((I)%32))
 #define NFS_BITMAP_CLR(B, I)    (((uint32_t *)(B))[(I)/32] &= ~(1U<<((I)%32)))
 #define NFS_BITMAP_ISSET(B, I)  (((uint32_t *)(B))[(I)/32] & (1U<<((I)%32)))
@@ -374,11 +425,6 @@ typedef enum { NFNON=0, NFREG=1, NFDIR=2, NFBLK=3, NFCHR=4, NFLNK=5,
 	        for (__i=0; __i < (L); __i++) \
 	                ((uint32_t*)(B))[__i] = 0; \
 	} while (0)
-
-extern uint32_t nfs_fs_attr_bitmap[NFS_ATTR_BITMAP_LEN];
-extern uint32_t nfs_object_attr_bitmap[NFS_ATTR_BITMAP_LEN];
-extern uint32_t nfs_getattr_bitmap[NFS_ATTR_BITMAP_LEN];
-extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 
 #define NFS_CLEAR_ATTRIBUTES(A) NFS_BITMAP_ZERO((A), NFS_ATTR_BITMAP_LEN)
 #define NFS_COPY_ATTRIBUTES(SRC, DST) \
@@ -445,220 +491,27 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_FATTR_TIME_MODIFY                   53
 #define NFS_FATTR_TIME_MODIFY_SET               54
 #define NFS_FATTR_MOUNTED_ON_FILEID             55
-
-#define NFS4_ALL_ATTRIBUTES(A) \
-	do { \
-	/* required: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_SUPPORTED_ATTRS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FH_EXPIRE_TYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CHANGE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SIZE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_LINK_SUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SYMLINK_SUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NAMED_ATTR); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FSID); \
-	NFS_BITMAP_SET((A), NFS_FATTR_UNIQUE_HANDLES); \
-	NFS_BITMAP_SET((A), NFS_FATTR_LEASE_TIME); \
-	NFS_BITMAP_SET((A), NFS_FATTR_RDATTR_ERROR); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILEHANDLE); \
-	/* optional: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_ACL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_ACLSUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_ARCHIVE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CANSETTIME); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CASE_INSENSITIVE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CASE_PRESERVING); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CHOWN_RESTRICTED); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILEID); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_TOTAL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FS_LOCATIONS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_HIDDEN); \
-	NFS_BITMAP_SET((A), NFS_FATTR_HOMOGENEOUS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXFILESIZE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXLINK); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXNAME); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXREAD); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXWRITE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MIMETYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MODE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NO_TRUNC); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NUMLINKS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_OWNER); \
-	NFS_BITMAP_SET((A), NFS_FATTR_OWNER_GROUP); \
-	NFS_BITMAP_SET((A), NFS_FATTR_QUOTA_AVAIL_HARD); \
-	NFS_BITMAP_SET((A), NFS_FATTR_QUOTA_AVAIL_SOFT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_QUOTA_USED); \
-	NFS_BITMAP_SET((A), NFS_FATTR_RAWDEV); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_TOTAL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_USED); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SYSTEM); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_ACCESS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_ACCESS_SET); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_BACKUP); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_CREATE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_DELTA); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_METADATA); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_MODIFY); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_MODIFY_SET); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MOUNTED_ON_FILEID); \
-	} while (0)
-
-#define NFS4_PER_OBJECT_ATTRIBUTES(A) \
-	do { \
-	/* required: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_TYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CHANGE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SIZE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NAMED_ATTR); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FSID); \
-	NFS_BITMAP_SET((A), NFS_FATTR_RDATTR_ERROR); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILEHANDLE); \
-	/* optional: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_ACL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_ARCHIVE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILEID); \
-	NFS_BITMAP_SET((A), NFS_FATTR_HIDDEN); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXLINK); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MIMETYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MODE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NUMLINKS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_OWNER); \
-	NFS_BITMAP_SET((A), NFS_FATTR_OWNER_GROUP); \
-	NFS_BITMAP_SET((A), NFS_FATTR_RAWDEV); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_USED); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SYSTEM); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_ACCESS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_BACKUP); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_CREATE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_METADATA); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_MODIFY); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MOUNTED_ON_FILEID); \
-	} while (0)
-
-#define NFS4_PER_FS_ATTRIBUTES(A) \
-	do { \
-	/* required: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_SUPPORTED_ATTRS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FH_EXPIRE_TYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_LINK_SUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SYMLINK_SUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_UNIQUE_HANDLES); \
-	NFS_BITMAP_SET((A), NFS_FATTR_LEASE_TIME); \
-	/* optional: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_ACLSUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CANSETTIME); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CASE_INSENSITIVE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CASE_PRESERVING); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CHOWN_RESTRICTED); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_TOTAL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FS_LOCATIONS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_HOMOGENEOUS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXFILESIZE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXNAME); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXREAD); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXWRITE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NO_TRUNC); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_TOTAL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_DELTA); \
-	} while (0)
-
-#define NFS4_DEFAULT_ATTRIBUTES(A) \
-	do { \
-	/* required: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_SUPPORTED_ATTRS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FH_EXPIRE_TYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CHANGE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SIZE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_LINK_SUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SYMLINK_SUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NAMED_ATTR); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FSID); \
-	NFS_BITMAP_SET((A), NFS_FATTR_UNIQUE_HANDLES); \
-	NFS_BITMAP_SET((A), NFS_FATTR_LEASE_TIME); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_RDATTR_ERROR); */ \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_FILEHANDLE); */ \
-	/* optional: */ \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_ACL); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_ACLSUPPORT); \
-	NFS_BITMAP_SET((A), NFS_FATTR_ARCHIVE); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_CANSETTIME); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_CASE_INSENSITIVE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CASE_PRESERVING); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CHOWN_RESTRICTED); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILEID); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_TOTAL); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_FS_LOCATIONS); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_HIDDEN); \
-	NFS_BITMAP_SET((A), NFS_FATTR_HOMOGENEOUS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXFILESIZE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXLINK); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXNAME); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXREAD); \
-	NFS_BITMAP_SET((A), NFS_FATTR_MAXWRITE); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_MIMETYPE); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_MODE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NO_TRUNC); \
-	NFS_BITMAP_SET((A), NFS_FATTR_NUMLINKS); \
-	NFS_BITMAP_SET((A), NFS_FATTR_OWNER); \
-	NFS_BITMAP_SET((A), NFS_FATTR_OWNER_GROUP); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_QUOTA_AVAIL_HARD); */ \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_QUOTA_AVAIL_SOFT); */ \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_QUOTA_USED); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_RAWDEV); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_TOTAL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_USED); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_SYSTEM); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_ACCESS); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_TIME_ACCESS_SET); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_BACKUP); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_CREATE); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_TIME_DELTA); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_METADATA); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_MODIFY); \
-	/* NFS_BITMAP_SET((A), NFS_FATTR_TIME_MODIFY_SET); */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_MOUNTED_ON_FILEID); \
-	} while (0)
-
-/*
- * NFSv4 WRITE RPCs contain partial GETATTR requests - only type, change, size, metadatatime and modifytime are requested.
- * In such cases,  we do not update the time stamp - but the requested attributes.
- */
-#define NFS4_DEFAULT_WRITE_ATTRIBUTES(A) \
-	do { \
-	/* required: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_TYPE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_CHANGE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SIZE); \
-	/* optional: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_METADATA); \
-	NFS_BITMAP_SET((A), NFS_FATTR_TIME_MODIFY); \
-	} while (0)
-
-/* attributes requested when we want to do a "statfs" */
-#define NFS4_STATFS_ATTRIBUTES(A) \
-	do { \
-	/* optional: */ \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_FILES_TOTAL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_AVAIL); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_FREE); \
-	NFS_BITMAP_SET((A), NFS_FATTR_SPACE_TOTAL); \
-	} while (0)
+#define NFS_FATTR_DIR_NOTIF_DELAY               56
+#define NFS_FATTR_DIRENT_NOTIF_DELAY            57
+#define NFS_FATTR_DACL                          58
+#define NFS_FATTR_SACL                          59
+#define NFS_FATTR_CHANGE_POLICY                 60
+#define NFS_FATTR_FS_STATUS                     61
+#define NFS_FATTR_FS_LAYOUT_TYPE                62
+#define NFS_FATTR_LAYOUT_HINT                   63
+#define NFS_FATTR_LAYOUT_TYPE                   64
+#define NFS_FATTR_LAYOUT_BLKSIZE                65
+#define NFS_FATTR_LAYOUT_ALIGNMENT              66
+#define NFS_FATTR_FS_LOCATIONS_INFO             67
+#define NFS_FATTR_MDSTHRESHOLD                  68
+#define NFS_FATTR_RETENTION_GET                 69
+#define NFS_FATTR_RETENTION_SET                 70
+#define NFS_FATTR_RETENTEVT_GET                 71
+#define NFS_FATTR_RETENTEVT_SET                 72
+#define NFS_FATTR_RETENTION_HOLD                73
+#define NFS_FATTR_MODE_SET_MASKED               74
+#define NFS_FATTR_SUPPATTR_EXCLCREAT            75
+#define NFS_FATTR_FS_CHARSET_CAP                76
 
 /*
  * NFS OPEN constants
@@ -666,9 +519,11 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 /* open type */
 #define NFS_OPEN_NOCREATE                       0
 #define NFS_OPEN_CREATE                         1
+
 /* delegation space limit */
 #define NFS_LIMIT_SIZE                          1
 #define NFS_LIMIT_BLOCKS                        2
+
 /* access/deny modes */
 #define NFS_OPEN_SHARE_ACCESS_NONE              0x00000000
 #define NFS_OPEN_SHARE_ACCESS_READ              0x00000001
@@ -678,18 +533,50 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_OPEN_SHARE_DENY_READ                0x00000001
 #define NFS_OPEN_SHARE_DENY_WRITE               0x00000002
 #define NFS_OPEN_SHARE_DENY_BOTH                0x00000003
+
+/* flags for share_access field of OPEN4args */
+#define NFS_OPEN4_SHARE_ACCESS_WANT_DELEG_MASK                    0x0FF00
+#define NFS_OPEN4_SHARE_ACCESS_WANT_NO_PREFERENCE                 0x00000
+#define NFS_OPEN4_SHARE_ACCESS_WANT_READ_DELEG                    0x00100
+#define NFS_OPEN4_SHARE_ACCESS_WANT_WRITE_DELEG                   0x00200
+#define NFS_OPEN4_SHARE_ACCESS_WANT_ANY_DELEG                     0x00300
+#define NFS_OPEN4_SHARE_ACCESS_WANT_NO_DELEG                      0x00400
+#define NFS_OPEN4_SHARE_ACCESS_WANT_CANCEL                        0x00500
+#define NFS_OPEN4_SHARE_ACCESS_WANT_SIGNAL_DELEG_WHEN_RESRC_AVAIL 0x10000
+#define NFS_OPEN4_SHARE_ACCESS_WANT_PUSH_DELEG_WHEN_UNCONTENDED   0x20000
+
 /* delegation types */
 #define NFS_OPEN_DELEGATE_NONE                  0
 #define NFS_OPEN_DELEGATE_READ                  1
 #define NFS_OPEN_DELEGATE_WRITE                 2
+#define NFS_OPEN_DELEGATE_NONE_EXT              3 /* New to v4.1 */
+
 /* delegation claim types */
 #define NFS_CLAIM_NULL                          0
 #define NFS_CLAIM_PREVIOUS                      1
 #define NFS_CLAIM_DELEGATE_CUR                  2
 #define NFS_CLAIM_DELEGATE_PREV                 3
+#define NFS_CLAIM_FH                            4 /* New to v4.1 */
+#define NFS_CLAIM_DELEG_CUR_FH                  5 /* New to v4.1 */
+#define NFS_CLAIM_DELEG_PREV_FH                 6 /* New to v4.1 */
+
+/* why_no_delegation4 */
+#define NFS_WND4_NOT_WANTED                     0
+#define NFS_WND4_CONTENTION                     1
+#define NFS_WND4_RESOURCE                       2
+#define NFS_WND4_NOT_SUPP_FTYPE                 3
+#define NFS_WND4_WRITE_DELEG_NOT_SUPP_FTYPE     4
+#define NFS_WND4_NOT_SUPP_UPGRADE               5
+#define NFS_WND4_NOT_SUPP_DOWNGRADE             6
+#define NFS_WND4_CANCELLED                      7
+#define NFS_WND4_IS_DIR                         8
+
 /* open result flags */
 #define NFS_OPEN_RESULT_CONFIRM                 0x00000002
 #define NFS_OPEN_RESULT_LOCKTYPE_POSIX          0x00000004
+#define NFS_OPEN_RESULT_PRESERVE_UNLINKED       0x00000008
+#define NFS_OPEN_RESULT_MAY_NOTIFY_LOCK         0x00000020
+
 /* NFS lock types */
 #define NFS_LOCK_TYPE_READ                      1
 #define NFS_LOCK_TYPE_WRITE                     2
@@ -740,10 +627,60 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_OP_VERIFY                           37
 #define NFS_OP_WRITE                            38
 #define NFS_OP_RELEASE_LOCKOWNER                39
+
+/* NFSv4 opcodes */
+#define NFS_V4_OP_COUNT                         40
+
+/* NFSv4.1 opcodes */
+#define NFS_OP_BACKCHANNELCTL                   40
+#define NFS_OP_BINDCONNTOSESS                   41
+#define NFS_OP_EXCHANGEID                       42
+#define NFS_OP_CREATESESSION                    43
+#define NFS_OP_DESTROYSESSION                   44
+#define NFS_OP_FREESTATEID                      45
+#define NFS_OP_GETDIRDELEG                      46
+#define NFS_OP_GETDEVINFO                       47
+#define NFS_OP_GETDEVLIST                       48
+#define NFS_OP_LAYOUTCOMMIT                     49
+#define NFS_OP_LAYOUTGET                        50
+#define NFS_OP_LAYOUTRETURN                     51
+#define NFS_OP_SECINFONONAME                    52
+#define NFS_OP_SEQUENCE                         53
+#define NFS_OP_SETSSV                           54
+#define NFS_OP_TESTSTATEID                      55
+#define NFS_OP_WANTDELEG                        56
+#define NFS_OP_DESTROYCLIENTID                  57
+#define NFS_OP_RECLAIMCOMPL                     58
+
+/* NFSv4.1 opcodes */
+#define NFS_V41_OP_COUNT                        59
+
+/* illegal op code */
 #define NFS_OP_ILLEGAL                          10044
+
 /* NFSv4 callback opcodes */
 #define NFS_OP_CB_GETATTR                       3
 #define NFS_OP_CB_RECALL                        4
+
+/* NFSv4 callback opcodes */
+#define NFS_V4_OP_CB_COUNT                      5
+
+/* NFSv4.1 callback opcodes */
+#define NFS_OP_CB_LAYOUTRECALL                  5
+#define NFS_OP_CB_NOTIFY                        6
+#define NFS_OP_CB_PUSHDELEG                     7
+#define NFS_OP_CB_RECALLANY                     8
+#define NFS_OP_CB_RECALLOBJAVAIL                9
+#define NFS_OP_CB_RECALLSLOT                    10
+#define NFS_OP_CB_SEQUENCE                      11
+#define NFS_OP_CB_WANTCANCELLED                 12
+#define NFS_OP_CB_NOTIFYLOCK                    13
+#define NFS_OP_CB_NOTIFYDEVID                   14
+
+/* NFSv4.1 callback opcodes */
+#define NFS_V41_OP_CB_COUNT                     15
+
+/* illegal op code */
 #define NFS_OP_CB_ILLEGAL                       10044
 
 /* NFSv4 file handle type flags */
@@ -753,6 +690,98 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_FH_VOL_MIGRATION                    0x00000004
 #define NFS_FH_VOL_RENAME                       0x00000008
 
+/* NFSv4.1 Constants */
+
+/* BIND_CONN_TO_SESSION - Associate Connection with Session */
+#define NFS_CDFC4_FORE                          0x1
+#define NFS_CDFC4_BACK                          0x2
+#define NFS_CDFC4_FORE_OR_BOTH                  0x3
+#define NFS_CDFC4_BACK_OR_BOTH                  0x7
+
+#define NFS_CDFS4_FORE                          0x1
+#define NFS_CDFS4_BACK                          0x2
+#define NFS_CDFS4_BOTH                          0x3
+
+/* EXCHANGE_ID - Instantiate Client ID */
+#define NFS_EXCHGID4_FLAG_SUPP_MOVED_REFER       0x00000001
+#define NFS_EXCHGID4_FLAG_SUPP_MOVED_MIGR        0x00000002
+#define NFS_EXCHGID4_FLAG_BIND_PRINC_STATEID     0x00000100
+#define NFS_EXCHGID4_FLAG_USE_NON_PNFS           0x00010000
+#define NFS_EXCHGID4_FLAG_USE_PNFS_MDS           0x00020000
+#define NFS_EXCHGID4_FLAG_USE_PNFS_DS            0x00040000
+#define NFS_EXCHGID4_FLAG_MASK_PNFS              0x00070000
+#define NFS_EXCHGID4_FLAG_UPD_CONFIRMED_REC_A    0x40000000
+#define NFS_EXCHGID4_FLAG_CONFIRMED_R            0x80000000
+
+#define NFS_EXCHGID4_SP4_NONE                    0
+#define NFS_EXCHGID4_SP4_MACH_CRED               1
+#define NFS_EXCHGID4_SP4_SSV                     2
+
+/* CREATE_SESSION - Create New Session and Confirm Client ID */
+#define NFS_CREATE_SESSION4_FLAG_PERSIST         0x00000001
+#define NFS_CREATE_SESSION4_FLAG_CONN_BACK_CHAN  0x00000002
+#define NFS_CREATE_SESSION4_FLAG_CONN_RDMA       0x00000004
+
+/* GET_DIR_DELEGATION - Get a Directory Delegation */
+#define NFS_GDD4_OK                              0
+#define NFS_GDD4_UNAVAIL                         1
+
+/* LAYOUTRETURN - Release Layout Information */
+#define NFS_LAYOUT4_RET_REC_FILE                 1
+#define NFS_LAYOUT4_RET_REC_FSID                 2
+#define NFS_LAYOUT4_RET_REC_ALL                  3
+
+#define NFS_LAYOUTRETURN4_FILE                   NFS_LAYOUT4_RET_REC_FILE
+#define NFS_LAYOUTRETURN4_FSID                   NFS_LAYOUT4_RET_REC_FSID
+#define NFS_LAYOUTRETURN4_ALL                    NFS_LAYOUT4_RET_REC_ALL
+
+/* SECINFO_NO_NAME - Get Security on Unnamed Object */
+#define NFS_SECINFO_STYLE4_CURRENT_FH            0
+#define NFS_SECINFO_STYLE4_PARENT                1
+
+/* SEQUENCE - Supply Per-Procedure Sequencing and Control */
+#define NFS_SEQ4_STATUS_CB_PATH_DOWN                   0x00000001
+#define NFS_SEQ4_STATUS_CB_GSS_CONTEXTS_EXPIRING       0x00000002
+#define NFS_SEQ4_STATUS_CB_GSS_CONTEXTS_EXPIRED        0x00000004
+#define NFS_SEQ4_STATUS_EXPIRED_ALL_STATE_REVOKED      0x00000008
+#define NFS_SEQ4_STATUS_EXPIRED_SOME_STATE_REVOKED     0x00000010
+#define NFS_SEQ4_STATUS_ADMIN_STATE_REVOKED            0x00000020
+#define NFS_SEQ4_STATUS_RECALLABLE_STATE_REVOKED       0x00000040
+#define NFS_SEQ4_STATUS_LEASE_MOVED                    0x00000080
+#define NFS_SEQ4_STATUS_RESTART_RECLAIM_NEEDED         0x00000100
+#define NFS_SEQ4_STATUS_CB_PATH_DOWN_SESSION           0x00000200
+#define NFS_SEQ4_STATUS_BACKCHANNEL_FAULT              0x00000400
+#define NFS_SEQ4_STATUS_DEVID_CHANGED                  0x00000800
+#define NFS_SEQ4_STATUS_DEVID_DELETED                  0x00001000
+
+/* CB_LAYOUTRECALL - Recall Layout from Client */
+#define NFS_LAYOUTRECALL4_FILE NFS_LAYOUT4_RET_REC_FILE
+#define NFS_LAYOUTRECALL4_FSID NFS_LAYOUT4_RET_REC_FSID
+#define NFS_LAYOUTRECALL4_ALL  NFS_LAYOUT4_RET_REC_ALL
+
+/* CB_NOTIFY - Notify Client of Directory Changes */
+#define NFS_NOTIFY4_CHANGE_CHILD_ATTRS        0
+#define NFS_NOTIFY4_CHANGE_DIR_ATTRS          1
+#define NFS_NOTIFY4_REMOVE_ENTRY              2
+#define NFS_NOTIFY4_ADD_ENTRY                 3
+#define NFS_NOTIFY4_RENAME_ENTRY              4
+#define NFS_NOTIFY4_CHANGE_COOKIE_VERIFIER    5
+
+/* CB_RECALL_ANY - Keep Any N Recallable Objects */
+#define NFS_RCA4_TYPE_MASK_RDATA_DLG          0
+#define NFS_RCA4_TYPE_MASK_WDATA_DLG          1
+#define NFS_RCA4_TYPE_MASK_DIR_DLG            2
+#define NFS_RCA4_TYPE_MASK_FILE_LAYOUT        3
+#define NFS_RCA4_TYPE_MASK_BLK_LAYOUT         4
+#define NFS_RCA4_TYPE_MASK_OBJ_LAYOUT_MIN     8
+#define NFS_RCA4_TYPE_MASK_OBJ_LAYOUT_MAX     9
+#define NFS_RCA4_TYPE_MASK_OTHER_LAYOUT_MIN   12
+#define NFS_RCA4_TYPE_MASK_OTHER_LAYOUT_MAX   15
+
+/* CB_NOTIFY_DEVICEID - Notify Client of Device ID Changes */
+#define NFS_NOTIFY_DEVICEID4_CHANGE           1
+#define NFS_NOTIFY_DEVICEID4_DELETE           2
+
 /*
  * NFSv4 ACL constants
  */
@@ -761,11 +790,13 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_ACL_SUPPORT_DENY_ACL                0x00000002
 #define NFS_ACL_SUPPORT_AUDIT_ACL               0x00000004
 #define NFS_ACL_SUPPORT_ALARM_ACL               0x00000008
+
 /* ACE types */
 #define NFS_ACE_ACCESS_ALLOWED_ACE_TYPE         0x00000000
 #define NFS_ACE_ACCESS_DENIED_ACE_TYPE          0x00000001
 #define NFS_ACE_SYSTEM_AUDIT_ACE_TYPE           0x00000002
 #define NFS_ACE_SYSTEM_ALARM_ACE_TYPE           0x00000003
+
 /* ACE flags */
 #define NFS_ACE_FILE_INHERIT_ACE                0x00000001
 #define NFS_ACE_DIRECTORY_INHERIT_ACE           0x00000002
@@ -775,6 +806,7 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_ACE_FAILED_ACCESS_ACE_FLAG          0x00000020
 #define NFS_ACE_IDENTIFIER_GROUP                0x00000040
 #define NFS_ACE_INHERITED_ACE                   0x00000080
+
 /* ACE mask flags */
 #define NFS_ACE_READ_DATA                       0x00000001
 #define NFS_ACE_LIST_DIRECTORY                  0x00000001
@@ -788,6 +820,8 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_ACE_DELETE_CHILD                    0x00000040
 #define NFS_ACE_READ_ATTRIBUTES                 0x00000080
 #define NFS_ACE_WRITE_ATTRIBUTES                0x00000100
+#define NFS_ACE_WRITE_RETENTION                 0x00000200
+#define NFS_ACE_WRITE_RETENTION_HOLD            0x00000400
 #define NFS_ACE_DELETE                          0x00010000
 #define NFS_ACE_READ_ACL                        0x00020000
 #define NFS_ACE_WRITE_ACL                       0x00040000
@@ -797,6 +831,87 @@ extern uint32_t nfs4_getattr_write_bitmap[NFS_ATTR_BITMAP_LEN];
 #define NFS_ACE_GENERIC_WRITE                   0x00160106
 #define NFS_ACE_GENERIC_EXECUTE                 0x001200A0
 
+/* deviceid4 */
+#define NFS4_DEVICEID4_SIZE           16
+
+/* retention_get */
+#define NFS_RET4_DURATION_INFINITE    0xffffffffffffffff
+
+/* na41_flag */
+#define NFS_ACL4_AUTO_INHERIT         0x00000001
+#define NFS_ACL4_PROTECTED            0x00000002
+#define NFS_ACL4_DEFAULTED            0x00000004
+
+/* thi_hintset */
+#define NFS_TH4_READ_SIZE             0
+#define NFS_TH4_WRITE_SIZE            1
+#define NFS_TH4_READ_IOSIZE           2
+#define NFS_TH4_WRITE_IOSIZE          3
+
+/* fs_locations_info4 */
+#define NFS_FSLI4BX_GFLAGS            0
+#define NFS_FSLI4BX_TFLAGS            1
+
+#define NFS_FSLI4BX_CLSIMUL           2
+#define NFS_FSLI4BX_CLHANDLE          3
+#define NFS_FSLI4BX_CLFILEID          4
+#define NFS_FSLI4BX_CLWRITEVER        5
+#define NFS_FSLI4BX_CLCHANGE          6
+#define NFS_FSLI4BX_CLREADDIR         7
+
+#define NFS_FSLI4BX_READRANK          8
+#define NFS_FSLI4BX_WRITERANK         9
+#define NFS_FSLI4BX_READORDER         10
+#define NFS_FSLI4BX_WRITEORDER        11
+
+#define NFS_FSLI4GF_WRITABLE          0x01
+#define NFS_FSLI4GF_CUR_REQ           0x02
+#define NFS_FSLI4GF_ABSENT            0x04
+#define NFS_FSLI4GF_GOING             0x08
+#define NFS_FSLI4GF_SPLIT             0x10
+
+#define NFS_FSLI4TF_RDMA              0x01 /* Bits defined within the transport flag byte */
+
+#define NFS_FSLI4IF_VAR_SUB           0x00000001 /* Flag bits in fli_flags */
+
+/* layouttype4 */
+#define NFS_LAYOUT4_NFSV4_1_FILES     0x1
+#define NFS_LAYOUT4_OSD2_OBJECTS      0x2
+#define NFS_LAYOUT4_BLOCK_VOLUME      0x3
+
+/* layoutiomode4 */
+#define NFS_LAYOUTIOMODE4_READ        1
+#define NFS_LAYOUTIOMODE4_RW          2
+#define NFS_LAYOUTIOMODE4_ANY         3
+
+/* fs4_status_type */
+#define NFS_STATUS4_FIXED             1
+#define NFS_STATUS4_UPDATED           2
+#define NFS_STATUS4_VERSIONED         3
+#define NFS_STATUS4_WRITABLE          4
+#define NFS_STATUS4_REFERRAL          5
+
+/* nfsv4_1_file_layouthint4 */
+#define NFS_NFL4_UFLG_MASK                   0x0000003F
+#define NFS_NFL4_UFLG_DENSE                  0x00000001
+#define NFS_NFL4_UFLG_COMMIT_THRU_MDS        0x00000002
+#define NFS_NFL4_UFLG_STRIPE_UNIT_SIZE_MASK  0xFFFFFFC0
+
+/* filelayout_hint_care4 */
+#define NFS_NFLH4_CARE_DENSE                  NFS_NFL4_UFLG_DENSE
+#define NFS_NFLH4_CARE_COMMIT_THRU_MDS        NFS_NFL4_UFLG_COMMIT_THRU_MDS
+#define NFS_NFLH4_CARE_STRIPE_UNIT_SIZE       0x00000040
+#define NFS_NFLH4_CARE_STRIPE_COUNT           0x00000080
+
+/* fs_charset_cap4 */
+#define NFS_FSCHARSET_CAP4_CONTAINS_NON_UTF8  0x1
+#define NFS_FSCHARSET_CAP4_ALLOWS_ONLY_UTF8   0x2
+
+/* ssv_subkey4 */
+#define NFS_SSV4_SUBKEY_MIC_I2T                1
+#define NFS_SSV4_SUBKEY_MIC_T2I                2
+#define NFS_SSV4_SUBKEY_SEAL_I2T               3
+#define NFS_SSV4_SUBKEY_SEAL_T2I               4
 
 /*
  * Quads are defined as arrays of 2 32-bit values to ensure dense packing

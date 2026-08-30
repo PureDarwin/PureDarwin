@@ -29,19 +29,6 @@
 
 #include <string.h>
 
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-extern "C" void pd_bcm2835_early_uart_str(const char *s);
-extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
-#define PD_MC_TRACE(m)		pd_bcm2835_early_uart_str(m)
-#define PD_MC_HEX(m, v)		pd_bcm2835_early_uart_hex(m, (uint64_t)(v))
-#define PD_MC_NAME(s)		pd_bcm2835_early_uart_str(s)
-#else
-#define PD_MC_TRACE(m)		do { } while (0)
-#define PD_MC_HEX(m, v)		do { } while (0)
-#define PD_MC_NAME(s)		do { } while (0)
-#endif
-
-
 #include <libkern/OSReturn.h>
 
 #include <libkern/c++/OSMetaClass.h>
@@ -446,7 +433,7 @@ class OSMetaClassMeta : public OSMetaClass
 {
 public:
 	OSMetaClassMeta();
-	OSObject * alloc() const;
+	OSObject * alloc() const override;
 };
 OSMetaClassMeta::OSMetaClassMeta()
 	: OSMetaClass("OSMetaClass", NULL, sizeof(OSMetaClass))
@@ -593,8 +580,7 @@ OSMetaClass::OSMetaClass(
 	classSize = inClassSize;
 	superClassLink = inSuperClass;
 
-	reserved = IONew(ExpansionData, 1);
-	bzero(reserved, sizeof(ExpansionData));
+	reserved = IOMallocType(ExpansionData);
 #if IOTRACKING
 	uint32_t numSiteQs = 0;
 	if ((this == &OSSymbol    ::gMetaClass)
@@ -631,21 +617,22 @@ OSMetaClass::OSMetaClass(
 		// Grow stalled array if neccessary
 		if (sStalled->count >= sStalled->capacity) {
 			OSMetaClass **oldStalled = sStalled->classes;
-			int oldSize = sStalled->capacity * sizeof(OSMetaClass *);
-			int newSize = oldSize
-			    + kKModCapacityIncrement * sizeof(OSMetaClass *);
+			int oldCount = sStalled->capacity;
+			int newCount = oldCount + kKModCapacityIncrement;
 
-			sStalled->classes = (OSMetaClass **)kalloc_tag(newSize, VM_KERN_MEMORY_OSKEXT);
+			sStalled->classes = kalloc_type_tag(OSMetaClass *, newCount,
+			    Z_WAITOK_ZERO, VM_KERN_MEMORY_OSKEXT);
 			if (!sStalled->classes) {
 				sStalled->classes = oldStalled;
 				sStalled->result = kOSMetaClassNoTempData;
 				return;
 			}
 
-			sStalled->capacity += kKModCapacityIncrement;
-			memmove(sStalled->classes, oldStalled, oldSize);
-			kfree(oldStalled, oldSize);
-			OSMETA_ACCUMSIZE(((size_t)newSize) - ((size_t)oldSize));
+			sStalled->capacity = newCount;
+			memmove(sStalled->classes, oldStalled,
+			    sizeof(OSMetaClass *) * oldCount);
+			kfree_type(OSMetaClass *, oldCount, oldStalled);
+			OSMETA_ACCUMSIZE(sizeof(OSMetaClass *) * (newCount - oldCount));
 		}
 
 		sStalled->classes[sStalled->count++] = this;
@@ -726,7 +713,7 @@ OSMetaClass::~OSMetaClass()
 #if IOTRACKING
 	IOTrackingQueueFree(reserved->tracking);
 #endif
-	IODelete(reserved, ExpansionData, 1);
+	IOFreeType(reserved, ExpansionData);
 }
 
 /*********************************************************************
@@ -795,23 +782,21 @@ OSMetaClass::preModLoad(const char * kextIdentifier)
 	IOLockLock(sStalledClassesLock);
 
 	assert(sStalled == NULL);
-	sStalled = (StalledData *)kalloc_tag(sizeof(*sStalled), VM_KERN_MEMORY_OSKEXT);
-	if (sStalled) {
-		sStalled->classes = (OSMetaClass **)
-		    kalloc_tag(kKModCapacityIncrement * sizeof(OSMetaClass *), VM_KERN_MEMORY_OSKEXT);
-		if (!sStalled->classes) {
-			kfree(sStalled, sizeof(*sStalled));
-			return NULL;
-		}
-		OSMETA_ACCUMSIZE((kKModCapacityIncrement * sizeof(OSMetaClass *)) +
-		    sizeof(*sStalled));
+	sStalled = kalloc_type(StalledData, Z_WAITOK_ZERO_NOFAIL);
 
-		sStalled->result   = kOSReturnSuccess;
-		sStalled->capacity = kKModCapacityIncrement;
-		sStalled->count    = 0;
-		sStalled->kextIdentifier = kextIdentifier;
-		bzero(sStalled->classes, kKModCapacityIncrement * sizeof(OSMetaClass *));
+	sStalled->classes = kalloc_type_tag(OSMetaClass *,
+	    kKModCapacityIncrement, Z_WAITOK_ZERO, VM_KERN_MEMORY_OSKEXT);
+	if (!sStalled->classes) {
+		kfree_type(StalledData, sStalled);
+		return NULL;
 	}
+	OSMETA_ACCUMSIZE((kKModCapacityIncrement * sizeof(OSMetaClass *)) +
+	    sizeof(*sStalled));
+
+	sStalled->result   = kOSReturnSuccess;
+	sStalled->capacity = kKModCapacityIncrement;
+	sStalled->count    = 0;
+	sStalled->kextIdentifier = kextIdentifier;
 
 	// keep sStalledClassesLock locked until postModLoad
 
@@ -851,7 +836,6 @@ OSMetaClass::postModLoad(void * loadHandle)
 			[[clang::fallthrough]];
 
 		case kMakingDictionaries:
-			PD_MC_TRACE("mc:dict");
 			sAllClassesDict = OSDictionary::withCapacity(kClassCapacityIncrement);
 			if (!sAllClassesDict) {
 				result = kOSMetaClassNoDicts;
@@ -865,18 +849,14 @@ OSMetaClass::postModLoad(void * loadHandle)
 		case kCompletedBootstrap:
 		{
 			unsigned int i;
-			PD_MC_TRACE("mc:kextname");
 			myKextName = const_cast<OSSymbol *>(OSSymbol::withCStringNoCopy(
 				    sStalled->kextIdentifier));
 
-			PD_MC_HEX("mc:count ", sStalled->count);
 			if (!sStalled->count) {
 				break; // Nothing to do so just get out
 			}
 
-			PD_MC_TRACE("mc:lookup");
 			myKext = OSKext::lookupKextWithIdentifier(myKextName);
-			PD_MC_HEX("mc:kext ", myKext);
 			if (!myKext) {
 				result = kOSMetaClassNoKext;
 
@@ -895,7 +875,6 @@ OSMetaClass::postModLoad(void * loadHandle)
 			 * Hack alert: me->className has been a C string until now.
 			 * We only release the OSSymbol if we store the kext.
 			 */
-			PD_MC_TRACE("mc:pass1");
 			IOLockLock(sAllClassesLock);
 			for (i = 0; i < sStalled->count; i++) {
 				const OSMetaClass * me = sStalled->classes[i];
@@ -927,7 +906,6 @@ OSMetaClass::postModLoad(void * loadHandle)
 				}
 			}
 			IOLockUnlock(sAllClassesLock);
-			PD_MC_TRACE("mc:pass1-done");
 
 			/* Bail if we didn't go through the entire list of new classes
 			 * (if we hit a duplicate).
@@ -936,7 +914,6 @@ OSMetaClass::postModLoad(void * loadHandle)
 			        break;
 			}
 
-			PD_MC_TRACE("mc:pass2");
 			// Second pass symbolling strings and inserting classes in dictionary
 			IOLockLock(sAllClassesLock);
 			for (i = 0; i < sStalled->count; i++) {
@@ -946,31 +923,11 @@ OSMetaClass::postModLoad(void * loadHandle)
 			         * We only release the OSSymbol in ~OSMetaClass()
 			         * if we set the reference to the kext.
 			         */
-			        PD_MC_HEX("mc:d ", i);
-			        PD_MC_HEX("mc:d:me ", me);
-			        PD_MC_NAME((const char *)me->className);
 			        me->className =
 			            OSSymbol::withCStringNoCopy((const char *)me->className);
 
-			        PD_MC_TRACE("mc:d:set");
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-			        extern bool pd_osdict_trace;
-			        pd_osdict_trace = (i >= 46);
-			        if (i >= 46) {
-				        /* vptr points at vtable index 2, so taggedRetain
-				         * (index 11) is 9 words in. */
-				        void * const * mevt = *(void * const * const *)me;
-				        for (unsigned int k = 8; k < 11; k++) {
-					        PD_MC_HEX("mc:d:vt ", mevt[k]);
-				        }
-			        }
-#endif
 			        // xxx - I suppose if these fail we're going to panic soon....
 			        sAllClassesDict->setObject(me->className, me);
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-			        pd_osdict_trace = false;
-#endif
-			        PD_MC_TRACE("mc:d:kext");
 
 			        /* Do not retain the kext object here.
 			         */
@@ -984,7 +941,6 @@ OSMetaClass::postModLoad(void * loadHandle)
 				}
 			}
 			IOLockUnlock(sAllClassesLock);
-			PD_MC_TRACE("mc:pass2-done");
 			sBootstrapState = kCompletedBootstrap;
 			break;
 		}
@@ -1012,8 +968,8 @@ finish:
 	if (sStalled) {
 	        OSMETA_ACCUMSIZE(-(sStalled->capacity * sizeof(OSMetaClass *) +
 	            sizeof(*sStalled)));
-	        kfree(sStalled->classes, sStalled->capacity * sizeof(OSMetaClass *));
-	        kfree(sStalled, sizeof(*sStalled));
+	        kfree_type(OSMetaClass *, sStalled->capacity, sStalled->classes);
+	        kfree_type(StalledData, sStalled);
 	        sStalled = NULL;
 	}
 
@@ -1149,7 +1105,7 @@ OSMetaClass::applyToInstances(OSOrderedSet * set,
 
         maxDepth = sDeepestClass;
         if (maxDepth > kLocalDepth) {
-                nextIndex = IONew(typeof(nextIndex[0]), maxDepth);
+                nextIndex = IONewData(typeof(nextIndex[0]), maxDepth);
                 sets      = IONew(typeof(sets[0]), maxDepth);
 	}
         done = false;
@@ -1181,7 +1137,7 @@ OSMetaClass::applyToInstances(OSOrderedSet * set,
 		}
 	}while (!done);
         if (maxDepth > kLocalDepth) {
-                IODelete(nextIndex, typeof(nextIndex[0]), maxDepth);
+                IODeleteData(nextIndex, typeof(nextIndex[0]), maxDepth);
                 IODelete(sets, typeof(sets[0]), maxDepth);
 	}
 }
@@ -1522,7 +1478,7 @@ OSMetaClass::printInstanceCounts()
 OSDictionary *
 OSMetaClass::getClassDictionary()
 {
-        panic("OSMetaClass::getClassDictionary() is obsoleted.\n");
+        panic("OSMetaClass::getClassDictionary() is obsoleted.");
         return NULL;
 }
 
@@ -1531,7 +1487,7 @@ OSMetaClass::getClassDictionary()
 bool
 OSMetaClass::serialize(__unused OSSerialize * s) const
 {
-        panic("OSMetaClass::serialize(): Obsoleted\n");
+        panic("OSMetaClass::serialize(): Obsoleted");
         return false;
 }
 
@@ -1589,12 +1545,15 @@ finish:
 
 #if IOTRACKING
 
+__typed_allocators_ignore_push
+
 void *
 OSMetaClass::trackedNew(size_t size)
 {
         IOTracking * mem;
 
-        mem = (typeof(mem))kalloc_tag_bt(size + sizeof(IOTracking), VM_KERN_MEMORY_LIBKERN);
+        mem = (typeof(mem))kheap_alloc(KHEAP_DEFAULT, size + sizeof(IOTracking),
+            Z_VM_TAG_BT(Z_WAITOK, VM_KERN_MEMORY_LIBKERN));
         assert(mem);
         if (!mem) {
                 return mem;
@@ -1613,9 +1572,11 @@ OSMetaClass::trackedDelete(void * instance, size_t size)
 {
         IOTracking * mem = (typeof(mem))instance; mem--;
 
-        kfree(mem, size + sizeof(IOTracking));
+        kheap_free(KHEAP_DEFAULT, mem, size + sizeof(IOTracking));
         OSIVAR_ACCUMSIZE(-size);
 }
+
+__typed_allocators_ignore_pop
 
 void
 OSMetaClass::trackedInstance(OSObject * instance) const

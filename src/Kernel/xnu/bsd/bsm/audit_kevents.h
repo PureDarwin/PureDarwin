@@ -382,6 +382,7 @@
 #define AUE_DARWIN_PIDFORTASK   359     /* Darwin-specific. */
 #define AUE_DARWIN_SYSCTL_NONADMIN      360
 #define AUE_DARWIN_COPYFILE     361     /* Darwin-specific. */
+#define AUE_TRACKERACTION       362
 
 /*
  * Audit event identifiers added as part of OpenBSM, generally corresponding
@@ -617,6 +618,8 @@
 #define AUE_DBGPORTFORPID       43215   /* Darwin-specific. */
 #define AUE_PREADV              43216   /* Darwin. */
 #define AUE_PWRITEV             43217   /* Darwin. */
+#define AUE_FREADLINK           43218
+#define AUE_FUNMOUNT            43219   /* Darwin. */
 
 #define AUE_SESSION_START       44901   /* Darwin. */
 #define AUE_SESSION_UPDATE      44902   /* Darwin. */
@@ -820,5 +823,7 @@
 #define AUE_NET                 AUE_NULL
 #define AUE_TASKREADFORPID      AUE_NULL
 #define AUE_TASKINSPECTFORPID   AUE_NULL
+#define AUE_DEBUG_SYSCALL_REJECT AUE_NULL
+#define AUE_DEBUG_SYSCALL_REJECT_CONFIG AUE_NULL
 
 #endif /* !_BSM_AUDIT_KEVENTS_H_ */

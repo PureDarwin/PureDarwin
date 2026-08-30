@@ -109,16 +109,21 @@
  * Structures associated with name cacheing.
  */
 
-ZONE_DECLARE(namecache_zone, "namecache", sizeof(struct namecache), ZC_NONE);
+ZONE_DEFINE_TYPE(namecache_zone, "namecache", struct namecache, ZC_NONE);
 
-LIST_HEAD(nchashhead, namecache) * nchashtbl;    /* Hash Table */
+struct smrq_list_head *nchashtbl;       /* Hash Table */
 u_long  nchashmask;
 u_long  nchash;                         /* size of hash table - 1 */
 long    numcache;                       /* number of cache entries allocated */
 int     desiredNodes;
 int     desiredNegNodes;
 int     ncs_negtotal;
-int     nc_disabled = 0;
+TUNABLE_WRITEABLE(int, nc_disabled, "-novfscache", 0);
+__options_decl(nc_smr_level_t, uint32_t, {
+	NC_SMR_DISABLED = 0,
+	NC_SMR_LOOKUP = 1
+});
+TUNABLE(nc_smr_level_t, nc_smr_enabled, "ncsmr", NC_SMR_LOOKUP);
 TAILQ_HEAD(, namecache) nchead;         /* chain of all name cache entries */
 TAILQ_HEAD(, namecache) neghead;        /* chain of only negative cache entries */
 
@@ -130,23 +135,32 @@ struct  nchstats nchstats;              /* cache effectiveness statistics */
 #define NCHSTAT(v) {            \
 	nchstats.v++;           \
 }
-#define NAME_CACHE_LOCK()               name_cache_lock()
-#define NAME_CACHE_UNLOCK()             name_cache_unlock()
 #define NAME_CACHE_LOCK_SHARED()        name_cache_lock()
+#define NAME_CACHE_LOCK_SHARED_TO_EXCLUSIVE() TRUE
 
 #else
 
 #define NCHSTAT(v)
-#define NAME_CACHE_LOCK()               name_cache_lock()
-#define NAME_CACHE_UNLOCK()             name_cache_unlock()
 #define NAME_CACHE_LOCK_SHARED()        name_cache_lock_shared()
+#define NAME_CACHE_LOCK_SHARED_TO_EXCLUSIVE()             name_cache_lock_shared_to_exclusive()
 
 #endif
 
+#define NAME_CACHE_LOCK()               name_cache_lock()
+#define NAME_CACHE_UNLOCK()             name_cache_unlock()
 
 /* vars for name cache list lock */
 static LCK_GRP_DECLARE(namecache_lck_grp, "Name Cache");
 static LCK_RW_DECLARE(namecache_rw_lock, &namecache_lck_grp);
+
+typedef struct string_t {
+	LIST_ENTRY(string_t)  hash_chain;
+	char                  *str;
+	uint32_t              strbuflen;
+	uint32_t              refcount;
+} string_t;
+
+ZONE_DEFINE_TYPE(stringcache_zone, "vfsstringcache", string_t, ZC_NONE);
 
 static LCK_GRP_DECLARE(strcache_lck_grp, "String Cache");
 static LCK_ATTR_DECLARE(strcache_lck_attr, 0, 0);
@@ -159,13 +173,77 @@ LCK_RW_DECLARE(rootvnode_rw_lock, &rootvnode_lck_grp);
 
 lck_mtx_t strcache_mtx_locks[NUM_STRCACHE_LOCKS];
 
+SYSCTL_NODE(_vfs, OID_AUTO, ncstats, CTLFLAG_RD | CTLFLAG_LOCKED, NULL, "vfs name cache stats");
 
-static vnode_t cache_lookup_locked(vnode_t dvp, struct componentname *cnp);
+SYSCTL_COMPAT_INT(_vfs_ncstats, OID_AUTO, nc_smr_enabled,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &nc_smr_enabled, 0, "");
+
+#if COLLECT_NC_SMR_STATS
+struct ncstats {
+	uint64_t cl_smr_hits;
+	uint64_t cl_smr_miss;
+	uint64_t cl_smr_negative_hits;
+	uint64_t cl_smr_fallback;
+	uint64_t cl_lock_hits;
+	uint64_t clp_next;
+	uint64_t clp_next_fail;
+	uint64_t clp_smr_next;
+	uint64_t clp_smr_next_fail;
+	uint64_t clp_smr_fallback;
+	uint64_t nc_lock_shared;
+	uint64_t nc_lock;
+} ncstats = {0};
+
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, cl_smr_hits,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.cl_smr_hits, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, cl_smr_misses,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.cl_smr_miss, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, cl_smr_negative_hits,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.cl_smr_negative_hits, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, cl_smr_fallback,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.cl_smr_fallback, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, cl_lock_hits,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.cl_lock_hits, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, clp_next,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.clp_next, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, clp_next_fail,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.clp_next_fail, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, clp_smr_next,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.clp_smr_next, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, clp_smr_next_fail,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.clp_smr_next_fail, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, nc_lock_shared,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.nc_lock_shared, "");
+SYSCTL_LONG(_vfs_ncstats, OID_AUTO, nc_lock,
+    CTLFLAG_RD | CTLFLAG_LOCKED,
+    &ncstats.nc_lock, "");
+
+#define NC_SMR_STATS(v)  os_atomic_inc(&ncstats.v, relaxed)
+#else
+#define NC_SMR_STATS(v)
+#endif /* COLLECT_NC_SMR_STATS */
+
+static vnode_t cache_lookup_locked(vnode_t dvp, struct componentname *cnp, uint32_t *vidp);
+static vnode_t cache_lookup_smr(vnode_t dvp, struct componentname *cnp, uint32_t *vidp);
 static const char *add_name_internal(const char *, uint32_t, u_int, boolean_t, u_int);
 static void init_string_table(void);
 static void cache_delete(struct namecache *, int);
 static void cache_enter_locked(vnode_t dvp, vnode_t vp, struct componentname *cnp, const char *strname);
 static void cache_purge_locked(vnode_t vp, kauth_cred_t *credp);
+static void namecache_smr_free(void *, size_t);
+static void string_smr_free(void *, size_t);
+
 
 #ifdef DUMP_STRING_TABLE
 /*
@@ -305,7 +383,7 @@ vnode_issubdir(vnode_t vp, vnode_t dvp, int *is_subdir, vfs_context_t ctx)
 	while (1) {
 		boolean_t defer;
 		vnode_t pvp;
-		uint32_t vid;
+		uint32_t vid = 0;
 		struct componentname cn;
 		boolean_t is_subdir_locked = FALSE;
 
@@ -324,6 +402,7 @@ vnode_issubdir(vnode_t vp, vnode_t dvp, int *is_subdir, vfs_context_t ctx)
 
 		if (defer && tvp) {
 			vid = vnode_vid(tvp);
+			vnode_hold(tvp);
 		}
 
 		NAME_CACHE_UNLOCK();
@@ -349,6 +428,7 @@ vnode_issubdir(vnode_t vp, vnode_t dvp, int *is_subdir, vfs_context_t ctx)
 			}
 
 			error = vnode_getwithvid(tvp, vid);
+			vnode_drop(tvp);
 			if (error) {
 				if (error_retry_count++ < MAX_ERROR_RETRY) {
 					tvp = vp;
@@ -357,8 +437,9 @@ vnode_issubdir(vnode_t vp, vnode_t dvp, int *is_subdir, vfs_context_t ctx)
 				}
 				break;
 			}
-
 			vp_with_iocount = tvp;
+		} else {
+			tvp = vnode_drop(tvp);
 		}
 
 		bzero(&cn, sizeof(cn));
@@ -441,6 +522,8 @@ build_path_with_parent(vnode_t first_vp, vnode_t parent_vp, char *buff, int bufl
 	unsigned int  len;
 	int  ret = 0;
 	int  fixhardlink;
+	int  chroot_violation = 0;
+	int  encountered_chroot = 0;
 
 	if (first_vp == NULLVP) {
 		return EINVAL;
@@ -453,8 +536,8 @@ build_path_with_parent(vnode_t first_vp, vnode_t parent_vp, char *buff, int bufl
 	/*
 	 * Grab the process fd so we can evaluate fd_rdir.
 	 */
-	if (vfs_context_proc(ctx)->p_fd && !(flags & BUILDPATH_NO_PROCROOT)) {
-		proc_root_dir_vp = vfs_context_proc(ctx)->p_fd->fd_rdir;
+	if (!(flags & BUILDPATH_NO_PROCROOT)) {
+		proc_root_dir_vp = vfs_context_proc(ctx)->p_fd.fd_rdir;
 	} else {
 		proc_root_dir_vp = NULL;
 	}
@@ -473,6 +556,7 @@ again:
 	 * /full/path/to/dir instead of "/".
 	 */
 	if (proc_root_dir_vp == first_vp) {
+		encountered_chroot = 1;
 		*--end = '/';
 		goto out;
 	}
@@ -496,7 +580,7 @@ again:
 
 #if CONFIG_FIRMLINKS
 	if (!(flags & BUILDPATH_NO_FIRMLINK) &&
-	    (vp->v_flag & VFMLINKTARGET) && vp->v_fmlink) {
+	    (vp->v_flag & VFMLINKTARGET) && vp->v_fmlink && (vp->v_fmlink->v_type == VDIR)) {
 		vp = vp->v_fmlink;
 	}
 #endif
@@ -514,6 +598,9 @@ again:
 			 * It's the root of the root file system, so it's
 			 * just "/".
 			 */
+			if (vp == proc_root_dir_vp) {
+				encountered_chroot = 1;
+			}
 			*--end = '/';
 
 			goto out_unlock;
@@ -525,7 +612,7 @@ again:
 			 */
 #if CONFIG_FIRMLINKS
 			if (!(flags & BUILDPATH_NO_FIRMLINK) &&
-			    (vp->v_flag & VFMLINKTARGET) && vp->v_fmlink) {
+			    (vp->v_flag & VFMLINKTARGET) && vp->v_fmlink && (vp->v_fmlink->v_type == VDIR)) {
 				vp = vp->v_fmlink;
 			} else
 #endif
@@ -635,6 +722,7 @@ again:
 			}
 			vid = vp->v_id;
 
+			vnode_hold(vp);
 			NAME_CACHE_UNLOCK();
 
 			if (vp != first_vp && vp != parent_vp && vp != vp_with_iocount) {
@@ -643,10 +731,14 @@ again:
 					vp_with_iocount = NULLVP;
 				}
 				if (vnode_getwithvid(vp, vid)) {
+					vnode_drop(vp);
 					goto again;
 				}
 				vp_with_iocount = vp;
 			}
+
+			vnode_drop(vp);
+
 			VATTR_INIT(&va);
 			VATTR_WANTED(&va, va_parentid);
 
@@ -661,18 +753,37 @@ again:
 			 */
 			ret = vnode_getattr(vp, &va, ctx);
 
+			if (ret || !VATTR_IS_SUPPORTED(&va, va_parentid)) {
+				ret = ENOENT;
+				goto out;
+			}
+
+			/*
+			 * Ask the file system for the parent vnode.
+			 */
+			if ((ret = VFS_VGET(vp->v_mount, (ino64_t)va.va_parentid, &dvp, ctx))) {
+				goto out;
+			}
+
+			/* No exit from here before switching vp_with_iocount to dvp */
+
 			if (fixhardlink) {
-				if ((ret == 0) && (VATTR_IS_SUPPORTED(&va, va_name))) {
+				if (VATTR_IS_SUPPORTED(&va, va_name)) {
 					str = va.va_name;
-					vnode_update_identity(vp, NULL, str, (unsigned int)strlen(str), 0, VNODE_UPDATE_NAME);
-				} else if (vp->v_name) {
-					str = vp->v_name;
-					ret = 0;
 				} else {
 					ret = ENOENT;
 					goto bad_news;
 				}
 				len = (unsigned int)strlen(str);
+
+				/* Don't update parent for namedstream vnode. */
+				if (vp->v_flag & VISNAMEDSTREAM) {
+					vnode_update_identity(vp, NULL, str, len, 0,
+					    VNODE_UPDATE_NAME);
+				} else {
+					vnode_update_identity(vp, dvp, str, len, 0,
+					    VNODE_UPDATE_NAME | VNODE_UPDATE_PARENT);
+				}
 
 				/*
 				 * Check that there's enough space.
@@ -693,19 +804,7 @@ again:
 				}
 bad_news:
 				zfree(ZV_NAMEI, va.va_name);
-			}
-			if (ret || !VATTR_IS_SUPPORTED(&va, va_parentid)) {
-				ret = ENOENT;
-				goto out;
-			}
-			/*
-			 * Ask the file system for the parent vnode.
-			 */
-			if ((ret = VFS_VGET(vp->v_mount, (ino64_t)va.va_parentid, &dvp, ctx))) {
-				goto out;
-			}
-
-			if (!fixhardlink && (vp->v_parent != dvp)) {
+			} else if (vp->v_parent != dvp) {
 				vnode_update_identity(vp, dvp, NULL, 0, 0, VNODE_UPDATE_PARENT);
 			}
 
@@ -731,6 +830,7 @@ bad_news:
 		if (vp && (flags & BUILDPATH_CHECKACCESS)) {
 			vid = vp->v_id;
 
+			vnode_hold(vp);
 			NAME_CACHE_UNLOCK();
 
 			if (vp != first_vp && vp != parent_vp && vp != vp_with_iocount) {
@@ -739,10 +839,13 @@ bad_news:
 					vp_with_iocount = NULLVP;
 				}
 				if (vnode_getwithvid(vp, vid)) {
+					vnode_drop(vp);
 					goto again;
 				}
 				vp_with_iocount = vp;
 			}
+			vnode_drop(vp);
+
 			if ((ret = vnode_authorize(vp, NULL, KAUTH_VNODE_SEARCH, ctx))) {
 				goto out;       /* no peeking */
 			}
@@ -759,12 +862,13 @@ bad_news:
 
 		while (tvp) {
 			if (tvp == proc_root_dir_vp) {
+				encountered_chroot = 1;
 				goto out_unlock;        /* encountered the root */
 			}
 
 #if CONFIG_FIRMLINKS
 			if (!(flags & BUILDPATH_NO_FIRMLINK) &&
-			    (tvp->v_flag & VFMLINKTARGET) && tvp->v_fmlink) {
+			    (tvp->v_flag & VFMLINKTARGET) && tvp->v_fmlink && (tvp->v_fmlink->v_type == VDIR)) {
 				tvp = tvp->v_fmlink;
 				break;
 			}
@@ -790,6 +894,17 @@ bad_news:
 	}
 out_unlock:
 	NAME_CACHE_UNLOCK();
+
+	/*
+	 * If we have a chroot directory set (proc_root_dir_vp != NULL), then we should
+	 * have encountered the chroot directory during our traversal. If we didn't,
+	 * it means the path is outside the chroot and we should fail rather than
+	 * return the full absolute path.
+	 */
+	if (proc_root_dir_vp != NULL && !encountered_chroot && ret == 0) {
+		ret = ENOENT;
+		chroot_violation = 1;
+	}
 out:
 	if (vp_with_iocount) {
 		vnode_put(vp_with_iocount);
@@ -810,8 +925,9 @@ out:
 	/* One of the parents was moved during path reconstruction.
 	 * The caller is interested in knowing whether any of the
 	 * parents moved via BUILDPATH_CHECK_MOVED, so return EAGAIN.
+	 * Don't convert chroot violations to EAGAIN as they should not be retried.
 	 */
-	if ((ret == ENOENT) && (flags & BUILDPATH_CHECK_MOVED)) {
+	if ((ret == ENOENT) && (flags & BUILDPATH_CHECK_MOVED) && !chroot_violation) {
 		ret = EAGAIN;
 	}
 
@@ -825,17 +941,30 @@ build_path(vnode_t first_vp, char *buff, int buflen, int *outlen, int flags, vfs
 }
 
 /*
- * return NULLVP if vp's parent doesn't
- * exist, or we can't get a valid iocount
- * else return the parent of vp
+ * Combined version of vnode_getparent() and vnode_getname() to acquire both vnode name and parent
+ * without releasing the name cache lock in interim.
  */
-vnode_t
-vnode_getparent(vnode_t vp)
+void
+vnode_getparent_and_name(vnode_t vp, vnode_t *out_pvp, const char **out_name)
 {
 	vnode_t pvp = NULLVP;
+	int     locked = 0;
 	int     pvid;
 
 	NAME_CACHE_LOCK_SHARED();
+	locked = 1;
+
+	if (out_name) {
+		const char *name = NULL;
+		if (vp->v_name) {
+			name = vfs_addname(vp->v_name, (unsigned int)strlen(vp->v_name), 0, 0);
+		}
+		*out_name = name;
+	}
+
+	if (!out_pvp) {
+		goto out;
+	}
 
 	pvp = vp->v_parent;
 
@@ -849,28 +978,91 @@ vnode_getparent(vnode_t vp)
 	if (pvp != NULLVP) {
 		pvid = pvp->v_id;
 
+		vnode_hold(pvp);
 		NAME_CACHE_UNLOCK();
+		locked = 0;
 
 		if (vnode_getwithvid(pvp, pvid) != 0) {
+			vnode_drop(pvp);
 			pvp = NULL;
+		} else {
+			vnode_drop(pvp);
 		}
-	} else {
+	}
+	*out_pvp = pvp;
+
+out:
+	if (locked) {
 		NAME_CACHE_UNLOCK();
 	}
+}
+
+/*
+ * return NULLVP if vp's parent doesn't
+ * exist, or we can't get a valid iocount
+ * else return the parent of vp
+ */
+vnode_t
+vnode_getparent(vnode_t vp)
+{
+	vnode_t pvp = NULLVP;
+	vnode_getparent_and_name(vp, &pvp, NULL);
+
 	return pvp;
+}
+
+/*
+ * Similar to vnode_getparent() but only returned parent vnode (with iocount
+ * held) if the actual parent vnode is different than the given 'pvp'.
+ */
+__private_extern__ vnode_t
+vnode_getparent_if_different(vnode_t vp, vnode_t pvp)
+{
+	vnode_t real_pvp = NULLVP;
+	int     pvid;
+
+	if (vp->v_parent == pvp) {
+		goto out;
+	}
+
+	NAME_CACHE_LOCK_SHARED();
+
+	real_pvp = vp->v_parent;
+	if (real_pvp == NULLVP) {
+		NAME_CACHE_UNLOCK();
+		goto out;
+	}
+
+	/*
+	 * Do the check again after namecache lock is acquired as the parent vnode
+	 * could have changed.
+	 */
+	if (real_pvp != pvp) {
+		pvid = real_pvp->v_id;
+
+		vnode_hold(real_pvp);
+		NAME_CACHE_UNLOCK();
+
+		if (vnode_getwithvid(real_pvp, pvid) != 0) {
+			vnode_drop(real_pvp);
+			real_pvp = NULLVP;
+		} else {
+			vnode_drop(real_pvp);
+		}
+	} else {
+		real_pvp = NULLVP;
+		NAME_CACHE_UNLOCK();
+	}
+
+out:
+	return real_pvp;
 }
 
 const char *
 vnode_getname(vnode_t vp)
 {
 	const char *name = NULL;
-
-	NAME_CACHE_LOCK_SHARED();
-
-	if (vp->v_name) {
-		name = vfs_addname(vp->v_name, (unsigned int)strlen(vp->v_name), 0, 0);
-	}
-	NAME_CACHE_UNLOCK();
+	vnode_getparent_and_name(vp, NULL, &name);
 
 	return name;
 }
@@ -878,7 +1070,9 @@ vnode_getname(vnode_t vp)
 void
 vnode_putname(const char *name)
 {
-	vfs_removename(name);
+	if (name) {
+		vfs_removename(name);
+	}
 }
 
 static const char unknown_vnodename[] = "(unknown vnode name)";
@@ -958,7 +1152,7 @@ vnode_update_identity(vnode_t vp, vnode_t dvp, const char *name, int name_len, u
 	}
 
 	if (flags & VNODE_UPDATE_PARENT) {
-		if (dvp && vnode_ref(dvp) != 0) {
+		if (dvp && (vnode_ref_ext(dvp, 0, ((flags & VNODE_UPDATE_FORCE_PARENT_REF) ? VNODE_REF_FORCE : 0)) != 0)) {
 			dvp = NULLVP;
 		}
 		/* Don't count a stream's parent ref during unmounts */
@@ -1025,9 +1219,9 @@ vnode_update_identity(vnode_t vp, vnode_t dvp, const char *name, int name_len, u
 			}
 
 			/*
-			 * Use a temp variable to avoid kauth_cred_unref() while NAME_CACHE_LOCK is held
+			 * Use a temp variable to avoid kauth_cred_drop() while NAME_CACHE_LOCK is held
 			 */
-			tcred = vp->v_cred;
+			tcred = vnode_cred(vp);
 			vp->v_cred = NOCRED;
 			vp->v_authorized_actions = 0;
 			vp->v_cred_timestamp = 0;
@@ -1075,6 +1269,7 @@ vnode_update_identity(vnode_t vp, vnode_t dvp, const char *name, int name_len, u
 	}
 	if (old_parentvp) {
 		struct  uthread *ut;
+		vnode_t vreclaims = NULLVP;
 
 		if (isstream) {
 			vnode_lock_spin(old_parentvp);
@@ -1083,7 +1278,7 @@ vnode_update_identity(vnode_t vp, vnode_t dvp, const char *name, int name_len, u
 			}
 			vnode_unlock(old_parentvp);
 		}
-		ut = get_bsdthread_info(current_thread());
+		ut = current_uthread();
 
 		/*
 		 * indicated to vnode_rele that it shouldn't do a
@@ -1096,6 +1291,7 @@ vnode_update_identity(vnode_t vp, vnode_t dvp, const char *name, int name_len, u
 		ut->uu_vreclaims = NULLVP;
 
 		while ((vp = old_parentvp) != NULLVP) {
+			vnode_hold(vp);
 			vnode_lock_spin(vp);
 			vnode_rele_internal(vp, 0, 0, 1);
 
@@ -1117,12 +1313,11 @@ vnode_update_identity(vnode_t vp, vnode_t dvp, const char *name, int name_len, u
 			 * this vnode on the list to be reaped by us, than
 			 * it has left this vnode with an iocount == 1
 			 */
-			if ((vp->v_iocount == 1) && (vp->v_usecount == 0) &&
-			    ((vp->v_lflag & (VL_MARKTERM | VL_TERMINATE | VL_DEAD)) == VL_MARKTERM)) {
+			if (ut->uu_vreclaims == vp) {
 				/*
-				 * vnode_rele wanted to do a vnode_reclaim on this vnode
-				 * it should be sitting on the head of the uu_vreclaims chain
-				 * pull the parent pointer now so that when we do the
+				 * This vnode is on the head of the uu_vreclaims chain
+				 * which means vnode_rele wanted to do a vnode_reclaim
+				 * on this vnode. Pull the parent pointer now so that when we do the
 				 * vnode_reclaim for each of the vnodes in the uu_vreclaims
 				 * list, we won't recurse back through here
 				 *
@@ -1143,12 +1338,14 @@ vnode_update_identity(vnode_t vp, vnode_t dvp, const char *name, int name_len, u
 				 */
 				old_parentvp = NULLVP;
 			}
-			vnode_unlock(vp);
+			vnode_drop_and_unlock(vp);
 		}
+		vreclaims = ut->uu_vreclaims;
+		ut->uu_vreclaims = NULLVP;
 		ut->uu_defer_reclaims = 0;
 
-		while ((vp = ut->uu_vreclaims) != NULLVP) {
-			ut->uu_vreclaims = vp->v_defer_reclaimlist;
+		while ((vp = vreclaims) != NULLVP) {
+			vreclaims = vp->v_defer_reclaimlist;
 
 			/*
 			 * vnode_put will drive the vnode_reclaim if
@@ -1224,12 +1421,12 @@ vnode_setasfirmlink(vnode_t vp, vnode_t target_vp)
 
 	NAME_CACHE_UNLOCK();
 
-	if (target_vp_cred && IS_VALID_CRED(target_vp_cred)) {
+	if (IS_VALID_CRED(target_vp_cred)) {
 		kauth_cred_unref(&target_vp_cred);
 	}
 
 	if (old_target_vp) {
-		if (old_target_vp_cred && IS_VALID_CRED(old_target_vp_cred)) {
+		if (IS_VALID_CRED(old_target_vp_cred)) {
 			kauth_cred_unref(&old_target_vp_cred);
 		}
 
@@ -1360,18 +1557,19 @@ vnode_uncache_authorized_action(vnode_t vp, kauth_action_t action)
 		/*
 		 * Use a temp variable to avoid kauth_cred_unref() while NAME_CACHE_LOCK is held
 		 */
-		tcred = vp->v_cred;
+		tcred = vnode_cred(vp);
 		vp->v_cred = NOCRED;
 	}
 	NAME_CACHE_UNLOCK();
 
-	if (tcred != NOCRED) {
+	if (IS_VALID_CRED(tcred)) {
 		kauth_cred_unref(&tcred);
 	}
 }
 
 
-extern int bootarg_vnode_cache_defeat;  /* default = 0, from bsd_init.c */
+/* disable vnode_cache_is_authorized() by setting vnode_cache_defeat */
+static TUNABLE(int, bootarg_vnode_cache_defeat, "-vnode_cache_defeat", 0);
 
 boolean_t
 vnode_cache_is_authorized(vnode_t vp, vfs_context_t ctx, kauth_action_t action)
@@ -1413,7 +1611,7 @@ vnode_cache_is_authorized(vnode_t vp, vfs_context_t ctx, kauth_action_t action)
 
 		NAME_CACHE_LOCK_SHARED();
 
-		if (vp->v_cred == ucred && (vp->v_authorized_actions & action) == action) {
+		if (vnode_cred(vp) == ucred && (vp->v_authorized_actions & action) == action) {
 			retval = TRUE;
 		}
 
@@ -1462,12 +1660,14 @@ vnode_cache_authorized_action(vnode_t vp, vfs_context_t ctx, kauth_action_t acti
 	}
 	NAME_CACHE_LOCK();
 
-	if (vp->v_cred != ucred) {
-		kauth_cred_ref(ucred);
+	tcred = vnode_cred(vp);
+	if (tcred == ucred) {
+		tcred = NOCRED;
+	} else {
 		/*
-		 * Use a temp variable to avoid kauth_cred_unref() while NAME_CACHE_LOCK is held
+		 * Use a temp variable to avoid kauth_cred_drop() while NAME_CACHE_LOCK is held
 		 */
-		tcred = vp->v_cred;
+		kauth_cred_ref(ucred);
 		vp->v_cred = ucred;
 		vp->v_authorized_actions = 0;
 	}
@@ -1509,7 +1709,75 @@ vnode_cache_is_stale(vnode_t vp)
 	return retval;
 }
 
+VFS_SMR_DECLARE;
 
+/*
+ * Components of nameidata (or objects it can point to) which may
+ * need restoring in case fast path lookup fails.
+ */
+struct nameidata_state {
+	u_long  ni_loopcnt;
+	char *ni_next;
+	u_int ni_pathlen;
+	int32_t ni_flag;
+	char *cn_nameptr;
+	int cn_namelen;
+	int cn_flags;
+	uint32_t cn_hash;
+};
+
+static void
+save_ndp_state(struct nameidata *ndp, struct componentname *cnp, struct nameidata_state *saved_statep)
+{
+	saved_statep->ni_loopcnt = ndp->ni_loopcnt;
+	saved_statep->ni_next = ndp->ni_next;
+	saved_statep->ni_pathlen = ndp->ni_pathlen;
+	saved_statep->ni_flag = ndp->ni_flag;
+	saved_statep->cn_nameptr = cnp->cn_nameptr;
+	saved_statep->cn_namelen = cnp->cn_namelen;
+	saved_statep->cn_flags = cnp->cn_flags;
+	saved_statep->cn_hash = cnp->cn_hash;
+}
+
+static void
+restore_ndp_state(struct nameidata *ndp, struct componentname *cnp, struct nameidata_state *saved_statep)
+{
+	ndp->ni_loopcnt = saved_statep->ni_loopcnt;
+	ndp->ni_next = saved_statep->ni_next;
+	ndp->ni_pathlen = saved_statep->ni_pathlen;
+	ndp->ni_flag = saved_statep->ni_flag;
+	cnp->cn_nameptr = saved_statep->cn_nameptr;
+	cnp->cn_namelen = saved_statep->cn_namelen;
+	cnp->cn_flags = saved_statep->cn_flags;
+	cnp->cn_hash = saved_statep->cn_hash;
+}
+
+static inline bool
+vid_is_same(vnode_t vp, uint32_t vid)
+{
+	return !(os_atomic_load(&vp->v_lflag, relaxed) & (VL_DRAIN | VL_TERMINATE | VL_DEAD)) && (vnode_vid(vp) == vid);
+}
+
+static inline bool
+can_check_v_mountedhere(vnode_t vp)
+{
+	return (os_atomic_load(&vp->v_usecount, relaxed) > 0) &&
+	       (os_atomic_load(&vp->v_flag, relaxed) & VMOUNTEDHERE) &&
+	       !(os_atomic_load(&vp->v_lflag, relaxed) & (VL_TERMINATE | VL_DEAD) &&
+	       (vp->v_type == VDIR));
+}
+
+bool
+mount_skip_rsrc_lookup(mount_t dmp)
+{
+	/* Skip volfs file systems that don't support native streams. */
+	if ((dmp != NULL) &&
+	    (dmp->mnt_flag & MNT_DOVOLFS) &&
+	    (dmp->mnt_kern_flag & MNTK_NAMED_STREAMS) == 0) {
+		return true;
+	}
+	return false;
+}
 
 /*
  * Returns:	0			Success
@@ -1520,29 +1788,42 @@ int
 cache_lookup_path(struct nameidata *ndp, struct componentname *cnp, vnode_t dp,
     vfs_context_t ctx, int *dp_authorized, vnode_t last_dp)
 {
+	struct nameidata_state saved_state;
 	char            *cp;            /* pointer into pathname argument */
-	int             vid;
-	int             vvid = 0;       /* protected by vp != NULLVP */
+	uint32_t        vid;
+	uint32_t        vvid = 0;       /* protected by vp != NULLVP */
 	vnode_t         vp = NULLVP;
 	vnode_t         tdp = NULLVP;
+	vnode_t         start_dp = dp;
 	kauth_cred_t    ucred;
 	boolean_t       ttl_enabled = FALSE;
 	struct timeval  tv;
 	mount_t         mp;
+	mount_t         dmp;
 	unsigned int    hash;
 	int             error = 0;
 	boolean_t       dotdotchecked = FALSE;
+	bool            locked = false;
+	bool            needs_lock = false;
+	bool            dp_iocount_taken = false;
 
 #if CONFIG_TRIGGERS
 	vnode_t         trigger_vp;
 #endif /* CONFIG_TRIGGERS */
 
 	ucred = vfs_context_ucred(ctx);
-	ndp->ni_flag &= ~(NAMEI_TRAILINGSLASH);
+retry:
+	if (nc_smr_enabled && !needs_lock) {
+		save_ndp_state(ndp, cnp, &saved_state);
+		vfs_smr_enter();
+	} else {
+		NAME_CACHE_LOCK_SHARED();
+		locked = true;
+	}
 
-	NAME_CACHE_LOCK_SHARED();
-
-	if (dp->v_mount && (dp->v_mount->mnt_kern_flag & (MNTK_AUTH_OPAQUE | MNTK_AUTH_CACHE_TTL))) {
+	dmp = dp->v_mount;
+	vid = dp->v_id;
+	if (dmp && (dmp->mnt_kern_flag & (MNTK_AUTH_OPAQUE | MNTK_AUTH_CACHE_TTL))) {
 		ttl_enabled = TRUE;
 		microuptime(&tv);
 	}
@@ -1600,9 +1881,17 @@ cache_lookup_path(struct nameidata *ndp, struct componentname *cnp, vnode_t dp,
 
 		if (cnp->cn_namelen == 2 && cnp->cn_nameptr[1] == '.' && cnp->cn_nameptr[0] == '.') {
 			cnp->cn_flags |= ISDOTDOT;
+
+			/* if dp is the starting directory and RESOLVE_BENEATH, we should break */
+			if ((ndp->ni_flag & NAMEI_RESOLVE_BENEATH) && (dp == ndp->ni_usedvp)) {
+				break;
+			}
+			/* Break if '..' path traversal is prohibited */
+			if (ndp->ni_flag & NAMEI_NODOTDOT) {
+				break;
+			}
 		}
 
-		*dp_authorized = 0;
 #if NAMEDRSRCFORK
 		/*
 		 * Process a request for a file's resource fork.
@@ -1612,12 +1901,15 @@ cache_lookup_path(struct nameidata *ndp, struct componentname *cnp, vnode_t dp,
 		if ((ndp->ni_pathlen == sizeof(_PATH_RSRCFORKSPEC)) &&
 		    (cp[1] == '.' && cp[2] == '.') &&
 		    bcmp(cp, _PATH_RSRCFORKSPEC, sizeof(_PATH_RSRCFORKSPEC)) == 0) {
-			/* Skip volfs file systems that don't support native streams. */
-			if ((dp->v_mount != NULL) &&
-			    (dp->v_mount->mnt_flag & MNT_DOVOLFS) &&
-			    (dp->v_mount->mnt_kern_flag & MNTK_NAMED_STREAMS) == 0) {
+			/* Break if path lookup on named streams is prohibited. */
+			if (ndp->ni_flag & NAMEI_NOXATTRS) {
+				break;
+			}
+
+			if (mount_skip_rsrc_lookup(dmp)) {
 				goto skiprsrcfork;
 			}
+
 			cnp->cn_flags |= CN_WANTSRSRCFORK;
 			cnp->cn_flags |= ISLASTCN;
 			ndp->ni_next[0] = '\0';
@@ -1626,26 +1918,38 @@ cache_lookup_path(struct nameidata *ndp, struct componentname *cnp, vnode_t dp,
 skiprsrcfork:
 #endif
 
-#if CONFIG_MACF
+		*dp_authorized = 0;
 
-		/*
-		 * Name cache provides authorization caching (see below)
-		 * that will short circuit MAC checks in lookup().
-		 * We must perform MAC check here.  On denial
-		 * dp_authorized will remain 0 and second check will
-		 * be perfomed in lookup().
-		 */
-		if (!(cnp->cn_flags & DONOTAUTH)) {
-			error = mac_vnode_check_lookup(ctx, dp, cnp);
-			if (error) {
-				NAME_CACHE_UNLOCK();
-				goto errorout;
+#if CONFIG_FIRMLINKS
+		if ((cnp->cn_flags & ISDOTDOT) && (dp->v_flag & VFMLINKTARGET) && dp->v_fmlink) {
+			/*
+			 * If this is a firmlink target then dp has to be switched to the
+			 * firmlink "source" before exiting this loop.
+			 *
+			 * For a firmlink "target", the policy is to pick the parent of the
+			 * firmlink "source" as the parent. This means that you can never
+			 * get to the "real" parent of firmlink target via a dotdot lookup.
+			 */
+			vnode_t v_fmlink = dp->v_fmlink;
+			uint32_t old_vid = vid;
+			mp = dmp;
+			if (v_fmlink) {
+				vid = v_fmlink->v_id;
+				dmp = v_fmlink->v_mount;
+				if ((dp->v_fmlink == v_fmlink) && dmp) {
+					dp = v_fmlink;
+				} else {
+					vid = old_vid;
+					dmp = mp;
+				}
 			}
 		}
-#endif /* MAC */
+#endif
+
+
 		if (ttl_enabled &&
-		    (dp->v_mount->mnt_authcache_ttl == 0 ||
-		    ((tv.tv_sec - dp->v_cred_timestamp) > dp->v_mount->mnt_authcache_ttl))) {
+		    (dmp->mnt_authcache_ttl == 0 ||
+		    ((tv.tv_sec - dp->v_cred_timestamp) > dmp->mnt_authcache_ttl))) {
 			break;
 		}
 
@@ -1662,8 +1966,9 @@ skiprsrcfork:
 		 * XXX: Remove the check for root when we can reliably set
 		 * KAUTH_VNODE_SEARCHBYANYONE as root.
 		 */
-		if ((dp->v_cred != ucred || !(dp->v_authorized_actions & KAUTH_VNODE_SEARCH)) &&
-		    !(dp->v_authorized_actions & KAUTH_VNODE_SEARCHBYANYONE) &&
+		int v_authorized_actions = os_atomic_load(&dp->v_authorized_actions, relaxed);
+		if ((vnode_cred(dp) != ucred || !(v_authorized_actions & KAUTH_VNODE_SEARCH)) &&
+		    !(v_authorized_actions & KAUTH_VNODE_SEARCHBYANYONE) &&
 		    (ttl_enabled || !vfs_context_issuser(ctx))) {
 			break;
 		}
@@ -1677,18 +1982,6 @@ skiprsrcfork:
 		*dp_authorized = 1;
 
 		if ((cnp->cn_flags & (ISLASTCN | ISDOTDOT))) {
-			/*
-			 * Moving the firmlinks section to be first to catch a corner case:
-			 * When using DOTDOT to get a parent of a firmlink, we want the
-			 * firmlink source to be resolved even if cn_nameiop != LOOKUP.
-			 * This is because lookup() traverses DOTDOT by calling VNOP_LOOKUP
-			 * and has no notion about firmlinks
-			 */
-#if CONFIG_FIRMLINKS
-			if (cnp->cn_flags & ISDOTDOT && dp->v_fmlink && (dp->v_flag & VFMLINKTARGET)) {
-				dp = dp->v_fmlink;
-			}
-#endif
 			if (cnp->cn_nameiop != LOOKUP) {
 				break;
 			}
@@ -1734,7 +2027,11 @@ skiprsrcfork:
 		 * for them before checking the cache.
 		 */
 		if (cnp->cn_namelen == 1 && cnp->cn_nameptr[0] == '.') {
+			if ((cnp->cn_flags & ISLASTCN) && !vnode_isdir(dp)) {
+				break;
+			}
 			vp = dp;
+			vvid = vid;
 		} else if ((cnp->cn_flags & ISDOTDOT)) {
 			/*
 			 * If this is a chrooted process, we need to check if
@@ -1751,7 +2048,11 @@ skiprsrcfork:
 			 * If dotdotchecked is set, it means we've done this
 			 * check once already and don't need to do it again.
 			 */
-			if (!dotdotchecked && (ndp->ni_rootdir != rootvnode)) {
+			if (!locked && (ndp->ni_rootdir != rootvnode)) {
+				vfs_smr_leave();
+				needs_lock = true;
+				goto prep_lock_retry;
+			} else if (locked && !dotdotchecked && (ndp->ni_rootdir != rootvnode)) {
 				vnode_t tvp = dp;
 				boolean_t defer = FALSE;
 				boolean_t is_subdir = FALSE;
@@ -1781,8 +2082,25 @@ skiprsrcfork:
 			} else {
 				vp = dp->v_parent;
 			}
+			if (!vp) {
+				break;
+			}
+			vvid = vp->v_id;
 		} else {
-			if ((vp = cache_lookup_locked(dp, cnp)) == NULLVP) {
+			if (!locked) {
+				vp = cache_lookup_smr(dp, cnp, &vvid);
+				if (!vid_is_same(dp, vid)) {
+					vp = NULLVP;
+					needs_lock = true;
+					vfs_smr_leave();
+					goto prep_lock_retry;
+				}
+			} else {
+				vp = cache_lookup_locked(dp, cnp, &vvid);
+			}
+
+
+			if (!vp) {
 				break;
 			}
 
@@ -1793,6 +2111,38 @@ skiprsrcfork:
 				vp = NULL;
 				break;
 			}
+
+#if CONFIG_FIRMLINKS
+			vnode_t v_fmlink = vp->v_fmlink;
+			if (v_fmlink && !(vp->v_flag & VFMLINKTARGET)) {
+				if (cnp->cn_flags & CN_FIRMLINK_NOFOLLOW ||
+				    ((vp->v_type != VDIR) && (vp->v_type != VLNK))) {
+					/* Leave it to the filesystem */
+					vp = NULLVP;
+					break;
+				}
+
+				/*
+				 * Always switch to the target unless it is a VLNK
+				 * and it is the last component and we have NOFOLLOW
+				 * semantics
+				 */
+				if (vp->v_type == VDIR) {
+					vp = v_fmlink;
+					vvid = vnode_vid(vp);
+					ndp->ni_flag |= NAMEI_FIRMLINK_FOLLOWED;
+				} else if ((cnp->cn_flags & FOLLOW) ||
+				    (ndp->ni_flag & NAMEI_TRAILINGSLASH) || *ndp->ni_next == '/') {
+					if (ndp->ni_loopcnt >= MAXSYMLINKS - 1) {
+						vp = NULLVP;
+						break;
+					}
+					ndp->ni_loopcnt++;
+					vp = v_fmlink;
+					vvid = vnode_vid(vp);
+				}
+			}
+#endif
 		}
 		if ((cnp->cn_flags & ISLASTCN)) {
 			break;
@@ -1805,13 +2155,48 @@ skiprsrcfork:
 			break;
 		}
 
-		if ((mp = vp->v_mountedhere) && ((cnp->cn_flags & NOCROSSMOUNT) == 0)) {
-			vnode_t tmp_vp = mp->mnt_realrootvp;
-			if (tmp_vp == NULLVP || mp->mnt_generation != mount_generation ||
-			    mp->mnt_realrootvp_vid != tmp_vp->v_id) {
+		/*
+		 * v_mountedhere is PAC protected which means vp has to be a VDIR
+		 * to access that pointer as v_mountedhere. However, if we don't
+		 * have the name cache lock or an iocount (which we won't in the
+		 * !locked case) we can't guarantee that. So we try to detect it
+		 * via other fields to avoid having to dereference v_mountedhere
+		 * when we don't need to. Note that in theory if entire reclaim
+		 * happens between the time we check can_check_v_mountedhere()
+		 * and the subsequent access this will still fail but the fields
+		 * we check make that exceedingly unlikely and will result in
+		 * the chances of that happening being practically zero (but not
+		 * zero).
+		 */
+		if ((locked || can_check_v_mountedhere(vp)) &&
+		    (mp = vp->v_mountedhere) && ((cnp->cn_flags & NOCROSSMOUNT) == 0)) {
+			vnode_t tmp_vp;
+			int tmp_vid;
+
+			if (!(locked || vid_is_same(vp, vvid))) {
+				vp = NULL;
 				break;
 			}
+			tmp_vp = mp->mnt_realrootvp;
+			tmp_vid = mp->mnt_realrootvp_vid;
+			if (tmp_vp == NULLVP || mp->mnt_generation != mount_generation ||
+			    tmp_vid != tmp_vp->v_id) {
+				break;
+			}
+
+			if ((mp = tmp_vp->v_mount) == NULL) {
+				break;
+			}
+
 			vp = tmp_vp;
+			vvid = tmp_vid;
+			dmp = mp;
+			if (dmp->mnt_kern_flag & (MNTK_AUTH_OPAQUE | MNTK_AUTH_CACHE_TTL)) {
+				ttl_enabled = TRUE;
+				microuptime(&tv);
+			} else {
+				ttl_enabled = FALSE;
+			}
 		}
 
 #if CONFIG_TRIGGERS
@@ -1825,9 +2210,33 @@ skiprsrcfork:
 		}
 #endif /* CONFIG_TRIGGERS */
 
+		if ((ndp->ni_flag & NAMEI_LOCAL) && !(vp->v_mount->mnt_flag & MNT_LOCAL)) {
+			/* Prevent a path lookup from ever crossing into a network filesystem */
+			vp = NULL;
+			break;
+		}
+
+		if ((ndp->ni_flag & NAMEI_NODEVFS) && (vnode_tag(vp) == VT_DEVFS)) {
+			/* Prevent a path lookup into `devfs` filesystem */
+			vp = NULL;
+			break;
+		}
+
+		if ((ndp->ni_flag & NAMEI_IMMOVABLE) && (vp->v_mount->mnt_flag & MNT_REMOVABLE) && !(vp->v_mount->mnt_kern_flag & MNTK_VIRTUALDEV)) {
+			/* prevent a path lookup into a removable filesystem */
+			vp = NULL;
+			break;
+		}
+
+		if (!(locked || vid_is_same(vp, vvid))) {
+			vp = NULL;
+			break;
+		}
 
 		dp = vp;
+		vid = vvid;
 		vp = NULLVP;
+		vvid = 0;
 
 		cnp->cn_nameptr = ndp->ni_next + 1;
 		ndp->ni_pathlen--;
@@ -1836,14 +2245,35 @@ skiprsrcfork:
 			ndp->ni_pathlen--;
 		}
 	}
-	if (vp != NULLVP) {
-		vvid = vp->v_id;
+	if (!locked) {
+		if (vp && !vnode_hold_smr(vp)) {
+			vp = NULLVP;
+			vvid = 0;
+		}
+		if (!vnode_hold_smr(dp)) {
+			vfs_smr_leave();
+			if (vp) {
+				vnode_drop(vp);
+				vp = NULLVP;
+				vvid = 0;
+			}
+			goto prep_lock_retry;
+		}
+		vfs_smr_leave();
+	} else {
+		if (vp != NULLVP) {
+			vvid = vp->v_id;
+			vnode_hold(vp);
+		}
+		vid = dp->v_id;
+
+		vnode_hold(dp);
+		NAME_CACHE_UNLOCK();
 	}
-	vid = dp->v_id;
 
-	NAME_CACHE_UNLOCK();
-
-	if ((vp != NULLVP) && (vp->v_type != VLNK) &&
+	tdp = NULLVP;
+	if (!(cnp->cn_flags & DONOTAUTH) &&
+	    (vp != NULLVP) && (vp->v_type != VLNK) &&
 	    ((cnp->cn_flags & (ISLASTCN | LOCKPARENT | WANTPARENT | SAVESTART)) == ISLASTCN)) {
 		/*
 		 * if we've got a child and it's the last component, and
@@ -1853,6 +2283,9 @@ skiprsrcfork:
 		 * we return from 'lookup'.  If it's a symbolic link,
 		 * we need the parent in case the link happens to be
 		 * a relative pathname.
+		 *
+		 * However, we can't make this optimisation if we have to call
+		 * a MAC hook.
 		 */
 		tdp = dp;
 		dp = NULLVP;
@@ -1865,7 +2298,7 @@ need_dp:
 		 * it should already hold an io ref. No need to increase ref.
 		 */
 		if (last_dp != dp) {
-			if (dp == ndp->ni_usedvp) {
+			if (dp == ndp->ni_usedvp && (cnp->cn_flags & USEDVP)) {
 				/*
 				 * if this vnode matches the one passed in via USEDVP
 				 * than this context already holds an io_count... just
@@ -1899,12 +2332,44 @@ need_dp:
 				} else {
 					error = ERECYCLE;
 				}
+				vnode_drop(dp);
+				if (vp) {
+					vnode_drop(vp);
+				}
 				goto errorout;
 			}
+			dp_iocount_taken = true;
+		}
+		vnode_drop(dp);
+	}
+
+#if CONFIG_MACF
+	/*
+	 * Name cache provides authorization caching (see below)
+	 * that will short circuit MAC checks in lookup().
+	 * We must perform MAC check here.  On denial
+	 * dp_authorized will remain 0 and second check will
+	 * be perfomed in lookup().
+	 */
+	if (!(cnp->cn_flags & DONOTAUTH)) {
+		error = mac_vnode_check_lookup(ctx, dp, cnp);
+		if (error) {
+			*dp_authorized = 0;
+			if (dp_iocount_taken) {
+				vnode_put(dp);
+			}
+			if (vp) {
+				vnode_drop(vp);
+				vp = NULLVP;
+			}
+			goto errorout;
 		}
 	}
+#endif /* MAC */
+
 	if (vp != NULLVP) {
 		if ((vnode_getwithvid_drainok(vp, vvid))) {
+			vnode_drop(vp);
 			vp = NULLVP;
 
 			/*
@@ -1917,9 +2382,22 @@ need_dp:
 			 */
 			if (dp == NULLVP) {
 				dp = tdp;
+				tdp = NULLVP;
 				goto need_dp;
 			}
+		} else {
+			vnode_drop(vp);
 		}
+		if (dp_iocount_taken && vp && (vp->v_type != VLNK) &&
+		    ((cnp->cn_flags & (ISLASTCN | LOCKPARENT | WANTPARENT | SAVESTART)) == ISLASTCN)) {
+			vnode_put(dp);
+			dp = NULLVP;
+		}
+	}
+
+	if (tdp) {
+		vnode_drop(tdp);
+		tdp = NULLVP;
 	}
 
 	ndp->ni_dvp = dp;
@@ -1957,14 +2435,18 @@ errorout:
 
 	//initialized to 0, should be the same if no error cases occurred.
 	return error;
+
+prep_lock_retry:
+	restore_ndp_state(ndp, cnp, &saved_state);
+	dp = start_dp;
+	goto retry;
 }
 
 
 static vnode_t
-cache_lookup_locked(vnode_t dvp, struct componentname *cnp)
+cache_lookup_locked(vnode_t dvp, struct componentname *cnp, uint32_t *vidp)
 {
 	struct namecache *ncp;
-	struct nchashhead *ncpp;
 	long namelen = cnp->cn_namelen;
 	unsigned int hashval = cnp->cn_hash;
 
@@ -1972,8 +2454,7 @@ cache_lookup_locked(vnode_t dvp, struct componentname *cnp)
 		return NULL;
 	}
 
-	ncpp = NCHHASH(dvp, cnp->cn_hash);
-	LIST_FOREACH(ncp, ncpp, nc_hash) {
+	smrq_serialized_foreach(ncp, NCHHASH(dvp, cnp->cn_hash), nc_hash) {
 		if ((ncp->nc_dvp == dvp) && (ncp->nc_hashval == hashval)) {
 			if (strncmp(ncp->nc_name, cnp->cn_nameptr, namelen) == 0 && ncp->nc_name[namelen] == 0) {
 				break;
@@ -1985,11 +2466,83 @@ cache_lookup_locked(vnode_t dvp, struct componentname *cnp)
 		 * We failed to find an entry
 		 */
 		NCHSTAT(ncs_miss);
+		NC_SMR_STATS(clp_next_fail);
 		return NULL;
 	}
 	NCHSTAT(ncs_goodhits);
 
+	if (!ncp->nc_vp) {
+		return NULL;
+	}
+
+	*vidp = ncp->nc_vid;
+	NC_SMR_STATS(clp_next);
+
 	return ncp->nc_vp;
+}
+
+static vnode_t
+cache_lookup_smr(vnode_t dvp, struct componentname *cnp, uint32_t *vidp)
+{
+	struct namecache *ncp;
+	long namelen = cnp->cn_namelen;
+	unsigned int hashval = cnp->cn_hash;
+	vnode_t vp = NULLVP;
+	uint32_t vid = 0;
+	uint32_t counter = 1;
+
+	if (nc_disabled) {
+		return NULL;
+	}
+
+	smrq_entered_foreach(ncp, NCHHASH(dvp, cnp->cn_hash), nc_hash) {
+		counter = os_atomic_load(&ncp->nc_counter, acquire);
+		if (!(counter & NC_VALID)) {
+			ncp = NULL;
+			goto out;
+		}
+		if ((ncp->nc_dvp == dvp) && (ncp->nc_hashval == hashval)) {
+			const char *nc_name =
+			    os_atomic_load(&ncp->nc_name, relaxed);
+			if (nc_name &&
+			    strncmp(nc_name, cnp->cn_nameptr, namelen) == 0 &&
+			    nc_name[namelen] == 0) {
+				break;
+			} else if (!nc_name) {
+				ncp = NULL;
+				goto out;
+			}
+		}
+	}
+
+	/* We failed to find an entry */
+	if (ncp == 0) {
+		goto out;
+	}
+
+	vp = ncp->nc_vp;
+	vid = ncp->nc_vid;
+
+	/*
+	 * The validity of vp and vid depends on the value of the counter being
+	 * the same when we read it first in the loop and now. Anything else
+	 * and we can't use this vp & vid.
+	 * Hopefully this ncp wasn't reused 2 billion times between the time
+	 * we read it first and when we the counter value again.
+	 */
+	if (os_atomic_load(&ncp->nc_counter, acquire) != counter) {
+		vp = NULLVP;
+		goto out;
+	}
+
+	*vidp = vid;
+	NC_SMR_STATS(clp_smr_next);
+
+	return vp;
+
+out:
+	NC_SMR_STATS(clp_smr_next_fail);
+	return NULL;
 }
 
 
@@ -2039,31 +2592,21 @@ hash_string(const char *cp, int len)
  * fails, a status of zero is returned.
  */
 
-int
-cache_lookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp)
+static int
+cache_lookup_fallback(struct vnode *dvp, struct vnode **vpp,
+    struct componentname *cnp, int flags)
 {
 	struct namecache *ncp;
-	struct nchashhead *ncpp;
 	long namelen = cnp->cn_namelen;
-	unsigned int hashval;
+	unsigned int hashval = cnp->cn_hash;
 	boolean_t       have_exclusive = FALSE;
 	uint32_t vid;
 	vnode_t  vp;
 
-	if (cnp->cn_hash == 0) {
-		cnp->cn_hash = hash_string(cnp->cn_nameptr, cnp->cn_namelen);
-	}
-	hashval = cnp->cn_hash;
-
-	if (nc_disabled) {
-		return 0;
-	}
-
 	NAME_CACHE_LOCK_SHARED();
 
 relook:
-	ncpp = NCHHASH(dvp, cnp->cn_hash);
-	LIST_FOREACH(ncp, ncpp, nc_hash) {
+	smrq_serialized_foreach(ncp, NCHHASH(dvp, cnp->cn_hash), nc_hash) {
 		if ((ncp->nc_dvp == dvp) && (ncp->nc_hashval == hashval)) {
 			if (strncmp(ncp->nc_name, cnp->cn_nameptr, namelen) == 0 && ncp->nc_name[namelen] == 0) {
 				break;
@@ -2085,8 +2628,9 @@ relook:
 			NAME_CACHE_UNLOCK();
 			return 0;
 		}
-		NAME_CACHE_UNLOCK();
-		NAME_CACHE_LOCK();
+		if (!NAME_CACHE_LOCK_SHARED_TO_EXCLUSIVE()) {
+			NAME_CACHE_LOCK();
+		}
 		have_exclusive = TRUE;
 		goto relook;
 	}
@@ -2096,10 +2640,12 @@ relook:
 	if (vp) {
 		NCHSTAT(ncs_goodhits);
 
-		vid = vp->v_id;
+		vid = ncp->nc_vid;
+		vnode_hold(vp);
 		NAME_CACHE_UNLOCK();
 
 		if (vnode_getwithvid(vp, vid)) {
+			vnode_drop(vp);
 #if COLLECT_STATS
 			NAME_CACHE_LOCK();
 			NCHSTAT(ncs_badvid);
@@ -2107,7 +2653,9 @@ relook:
 #endif
 			return 0;
 		}
+		vnode_drop(vp);
 		*vpp = vp;
+		NC_SMR_STATS(cl_lock_hits);
 		return -1;
 	}
 
@@ -2117,10 +2665,17 @@ relook:
 			NCHSTAT(ncs_badhits);
 			cache_delete(ncp, 1);
 			NAME_CACHE_UNLOCK();
-			return 0;
+			/*
+			 * Even though we're purging the entry, it
+			 * may be useful to the caller to know that
+			 * we got a neg hit (to, for example, avoid
+			 * an expensive IPC/RPC).
+			 */
+			return (flags & CACHE_LOOKUP_ALLHITS) ? ENOENT : 0;
 		}
-		NAME_CACHE_UNLOCK();
-		NAME_CACHE_LOCK();
+		if (!NAME_CACHE_LOCK_SHARED_TO_EXCLUSIVE()) {
+			NAME_CACHE_LOCK();
+		}
 		have_exclusive = TRUE;
 		goto relook;
 	}
@@ -2132,6 +2687,140 @@ relook:
 
 	NAME_CACHE_UNLOCK();
 	return ENOENT;
+}
+
+
+
+/*
+ * Lookup an entry in the cache
+ *
+ * Lookup is called with dvp pointing to the directory to search,
+ * cnp pointing to the name of the entry being sought. If the lookup
+ * succeeds, the vnode is returned in *vpp, and a status of -1 is
+ * returned. If the lookup determines that the name does not exist
+ * (negative cacheing), a status of ENOENT is returned. If the lookup
+ * fails, a status of zero is returned.
+ */
+int
+cache_lookup_ext(struct vnode *dvp, struct vnode **vpp,
+    struct componentname *cnp, int flags)
+{
+	struct namecache *ncp;
+	long namelen = cnp->cn_namelen;
+	vnode_t  vp;
+	uint32_t vid = 0;
+	uint32_t counter = 1;
+	unsigned int hashval;
+
+	*vpp = NULLVP;
+
+	if (cnp->cn_hash == 0) {
+		cnp->cn_hash = hash_string(cnp->cn_nameptr, cnp->cn_namelen);
+	}
+	hashval = cnp->cn_hash;
+
+	if (nc_disabled) {
+		return 0;
+	}
+
+	if (!nc_smr_enabled) {
+		goto out_fallback;
+	}
+
+	/* We don't want to have an entry, so dump it */
+	if ((cnp->cn_flags & MAKEENTRY) == 0) {
+		goto out_fallback;
+	}
+
+	vfs_smr_enter();
+
+	smrq_entered_foreach(ncp, NCHHASH(dvp, cnp->cn_hash), nc_hash) {
+		counter = os_atomic_load(&ncp->nc_counter, acquire);
+		if (!(counter & NC_VALID)) {
+			vfs_smr_leave();
+			goto out_fallback;
+		}
+		if ((ncp->nc_dvp == dvp) && (ncp->nc_hashval == hashval)) {
+			const char *nc_name =
+			    os_atomic_load(&ncp->nc_name, relaxed);
+			if (nc_name &&
+			    strncmp(nc_name, cnp->cn_nameptr, namelen) == 0 &&
+			    nc_name[namelen] == 0) {
+				break;
+			} else if (!nc_name) {
+				vfs_smr_leave();
+				goto out_fallback;
+			}
+		}
+	}
+
+	/* We failed to find an entry */
+	if (ncp == 0) {
+		NCHSTAT(ncs_miss);
+		vfs_smr_leave();
+		NC_SMR_STATS(cl_smr_miss);
+		return 0;
+	}
+
+	vp = ncp->nc_vp;
+	vid = ncp->nc_vid;
+
+	/*
+	 * The validity of vp and vid depends on the value of the counter being
+	 * the same when we read it first in the loop and now. Anything else
+	 * and we can't use this vp & vid.
+	 * Hopefully this ncp wasn't reused 2 billion times between the time
+	 * we read it first and when we the counter value again.
+	 */
+	if (os_atomic_load(&ncp->nc_counter, acquire) != counter) {
+		vfs_smr_leave();
+		goto out_fallback;
+	}
+
+	if (vp) {
+		bool holdcount_acquired = vnode_hold_smr(vp);
+
+		vfs_smr_leave();
+
+		if (!holdcount_acquired) {
+			goto out_fallback;
+		}
+
+		if (vnode_getwithvid(vp, vid) != 0) {
+			vnode_drop(vp);
+			goto out_fallback;
+		}
+		vnode_drop(vp);
+		NCHSTAT(ncs_goodhits);
+
+		*vpp = vp;
+		NC_SMR_STATS(cl_smr_hits);
+		return -1;
+	}
+
+	vfs_smr_leave();
+
+	/* We found a negative match, and want to create it, so purge */
+	if (cnp->cn_nameiop == CREATE || cnp->cn_nameiop == RENAME) {
+		goto out_fallback;
+	}
+
+	/*
+	 * We found a "negative" match, ENOENT notifies client of this match.
+	 */
+	NCHSTAT(ncs_neghits);
+	NC_SMR_STATS(cl_smr_negative_hits);
+	return ENOENT;
+
+out_fallback:
+	NC_SMR_STATS(cl_smr_fallback);
+	return cache_lookup_fallback(dvp, vpp, cnp, flags);
+}
+
+int
+cache_lookup(struct vnode *dvp, struct vnode **vpp, struct componentname *cnp)
+{
+	return cache_lookup_ext(dvp, vpp, cnp, 0);
 }
 
 const char *
@@ -2215,7 +2904,7 @@ static void
 cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cnp, const char *strname)
 {
 	struct namecache *ncp, *negp;
-	struct nchashhead *ncpp;
+	struct smrq_list_head  *ncpp;
 
 	if (nc_disabled) {
 		return;
@@ -2241,11 +2930,16 @@ cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cn
 	 */
 	if (numcache < desiredNodes &&
 	    ((ncp = nchead.tqh_first) == NULL ||
-	    ncp->nc_hash.le_prev != 0)) {
+	    (ncp->nc_counter & NC_VALID))) {
 		/*
 		 * Allocate one more entry
 		 */
-		ncp = zalloc(namecache_zone);
+		if (nc_smr_enabled) {
+			ncp = zalloc_smr(namecache_zone, Z_WAITOK_ZERO_NOFAIL);
+		} else {
+			ncp = zalloc(namecache_zone);
+		}
+		ncp->nc_counter = 0;
 		numcache++;
 	} else {
 		/*
@@ -2254,7 +2948,7 @@ cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cn
 		ncp = TAILQ_FIRST(&nchead);
 		TAILQ_REMOVE(&nchead, ncp, nc_entry);
 
-		if (ncp->nc_hash.le_prev != 0) {
+		if (ncp->nc_counter & NC_VALID) {
 			/*
 			 * still in use... we need to
 			 * delete it before re-using it
@@ -2268,6 +2962,10 @@ cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cn
 	/*
 	 * Fill in cache info, if vp is NULL this is a "negative" cache entry.
 	 */
+	if (vp) {
+		ncp->nc_vid = vnode_vid(vp);
+		vnode_hold(vp);
+	}
 	ncp->nc_vp = vp;
 	ncp->nc_dvp = dvp;
 	ncp->nc_hashval = cnp->cn_hash;
@@ -2307,7 +3005,7 @@ cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cn
 	{
 		struct namecache *p;
 
-		for (p = ncpp->lh_first; p != 0; p = p->nc_hash.le_next) {
+		smrq_serialized_foreach(p, ncpp, nc_hash) {
 			if (p == ncp) {
 				panic("cache_enter: duplicate");
 			}
@@ -2317,7 +3015,7 @@ cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cn
 	/*
 	 * make us available to be found via lookup
 	 */
-	LIST_INSERT_HEAD(ncpp, ncp, nc_hash);
+	smrq_serialized_insert_head(ncpp, &ncp->nc_hash);
 
 	if (vp) {
 		/*
@@ -2344,6 +3042,7 @@ cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cn
 			cache_delete(negp, 1);
 		}
 	}
+
 	/*
 	 * add us to the list of name cache entries that
 	 * are children of dvp
@@ -2352,6 +3051,21 @@ cache_enter_locked(struct vnode *dvp, struct vnode *vp, struct componentname *cn
 		TAILQ_INSERT_TAIL(&dvp->v_ncchildren, ncp, nc_child);
 	} else {
 		TAILQ_INSERT_HEAD(&dvp->v_ncchildren, ncp, nc_child);
+	}
+
+	/*
+	 * nc_counter represents a sequence counter and 1 bit valid flag.
+	 * When the counter value is odd, it represents a valid and in use
+	 * namecache structure. We increment the value on every state transition
+	 * (invalid to valid (here) and valid to invalid (in cache delete).
+	 * Lockless readers have to read the value before reading other fields
+	 * and ensure that the field is valid and remains the same after the fields
+	 * have been read.
+	 */
+	uint32_t old_count = os_atomic_inc_orig(&ncp->nc_counter, release);
+	if (old_count & NC_VALID) {
+		/* This is a invalid to valid transition */
+		panic("Incorrect state for old nc_counter(%d), should be even", old_count);
 	}
 }
 
@@ -2397,6 +3111,10 @@ nchinit(void)
 	desiredNegNodes = (desiredvnodes / 10);
 	desiredNodes = desiredvnodes + desiredNegNodes;
 
+	if (nc_smr_enabled) {
+		zone_enable_smr(namecache_zone, VFS_SMR(), &namecache_smr_free);
+		zone_enable_smr(stringcache_zone, VFS_SMR(), &string_smr_free);
+	}
 	TAILQ_INIT(&nchead);
 	TAILQ_INIT(&neghead);
 
@@ -2417,12 +3135,20 @@ void
 name_cache_lock_shared(void)
 {
 	lck_rw_lock_shared(&namecache_rw_lock);
+	NC_SMR_STATS(nc_lock_shared);
 }
 
 void
 name_cache_lock(void)
 {
 	lck_rw_lock_exclusive(&namecache_rw_lock);
+	NC_SMR_STATS(nc_lock);
+}
+
+boolean_t
+name_cache_lock_shared_to_exclusive(void)
+{
+	return lck_rw_lock_shared_to_exclusive(&namecache_rw_lock);
 }
 
 void
@@ -2435,10 +3161,10 @@ name_cache_unlock(void)
 int
 resize_namecache(int newsize)
 {
-	struct nchashhead   *new_table;
-	struct nchashhead   *old_table;
-	struct nchashhead   *old_head, *head;
-	struct namecache    *entry, *next;
+	struct smrq_list_head   *new_table;
+	struct smrq_list_head   *old_table;
+	struct smrq_list_head   *old_head;
+	struct namecache    *entry;
 	uint32_t            i, hashval;
 	int                 dNodes, dNegNodes, nelements;
 	u_long              new_size, old_size;
@@ -2466,6 +3192,14 @@ resize_namecache(int newsize)
 	}
 
 	NAME_CACHE_LOCK();
+
+	/* No need to switch if the hash table size hasn't changed. */
+	if (new_size == nchash) {
+		NAME_CACHE_UNLOCK();
+		hashdestroy(new_table, M_CACHE, new_size - 1);
+		return 0;
+	}
+
 	// do the switch!
 	old_table = nchashtbl;
 	nchashtbl = new_table;
@@ -2477,32 +3211,48 @@ resize_namecache(int newsize)
 	//
 	for (i = 0; i < old_size; i++) {
 		old_head = &old_table[i];
-		for (entry = old_head->lh_first; entry != NULL; entry = next) {
+		smrq_serialized_foreach_safe(entry, old_head, nc_hash) {
 			//
 			// XXXdbg - Beware: this assumes that hash_string() does
 			//                  the same thing as what happens in
 			//                  lookup() over in vfs_lookup.c
 			hashval = hash_string(entry->nc_name, 0);
 			entry->nc_hashval = hashval;
-			head = NCHHASH(entry->nc_dvp, hashval);
 
-			next = entry->nc_hash.le_next;
-			LIST_INSERT_HEAD(head, entry, nc_hash);
+			smrq_serialized_insert_head(NCHHASH(entry->nc_dvp, hashval), &entry->nc_hash);
 		}
 	}
 	desiredNodes = dNodes;
 	desiredNegNodes = dNegNodes;
 
 	NAME_CACHE_UNLOCK();
-	FREE(old_table, M_CACHE);
+	hashdestroy(old_table, M_CACHE, old_size - 1);
 
 	return 0;
+}
+
+static void
+namecache_smr_free(void *_ncp, __unused size_t _size)
+{
+	struct namecache *ncp = _ncp;
+
+	bzero(ncp, sizeof(*ncp));
 }
 
 static void
 cache_delete(struct namecache *ncp, int free_entry)
 {
 	NCHSTAT(ncs_deletes);
+
+	/*
+	 * See comment at the end of cache_enter_locked expalining the usage of
+	 * nc_counter.
+	 */
+	uint32_t old_count = os_atomic_inc_orig(&ncp->nc_counter, release);
+	if (!(old_count & NC_VALID)) {
+		/* This should be a valid to invalid transition */
+		panic("Incorrect state for old nc_counter(%d), should be odd", old_count);
+	}
 
 	if (ncp->nc_vp) {
 		LIST_REMOVE(ncp, nc_un.nc_link);
@@ -2512,20 +3262,25 @@ cache_delete(struct namecache *ncp, int free_entry)
 	}
 	TAILQ_REMOVE(&(ncp->nc_dvp->v_ncchildren), ncp, nc_child);
 
-	LIST_REMOVE(ncp, nc_hash);
-	/*
-	 * this field is used to indicate
-	 * that the entry is in use and
-	 * must be deleted before it can
-	 * be reused...
-	 */
-	ncp->nc_hash.le_prev = NULL;
+	smrq_serialized_remove((NCHHASH(ncp->nc_dvp, ncp->nc_hashval)), &ncp->nc_hash);
 
-	vfs_removename(ncp->nc_name);
+	const char *nc_name = ncp->nc_name;
 	ncp->nc_name = NULL;
+	vfs_removename(nc_name);
+	if (ncp->nc_vp) {
+		vnode_t vp = ncp->nc_vp;
+
+		ncp->nc_vp = NULLVP;
+		vnode_drop(vp);
+	}
+
 	if (free_entry) {
 		TAILQ_REMOVE(&nchead, ncp, nc_entry);
-		zfree(namecache_zone, ncp);
+		if (nc_smr_enabled) {
+			zfree_smr(namecache_zone, ncp);
+		} else {
+			zfree(namecache_zone, ncp);
+		}
 		numcache--;
 	}
 }
@@ -2543,7 +3298,7 @@ cache_purge_locked(vnode_t vp, kauth_cred_t *credp)
 	*credp = NULL;
 	if ((LIST_FIRST(&vp->v_nclinks) == NULL) &&
 	    (TAILQ_FIRST(&vp->v_ncchildren) == NULL) &&
-	    (vp->v_cred == NOCRED) &&
+	    (vnode_cred(vp) == NOCRED) &&
 	    (vp->v_parent == NULLVP)) {
 		return;
 	}
@@ -2563,7 +3318,7 @@ cache_purge_locked(vnode_t vp, kauth_cred_t *credp)
 	/*
 	 * Use a temp variable to avoid kauth_cred_unref() while NAME_CACHE_LOCK is held
 	 */
-	*credp = vp->v_cred;
+	*credp = vnode_cred(vp);
 	vp->v_cred = NOCRED;
 	vp->v_authorized_actions = 0;
 }
@@ -2575,7 +3330,7 @@ cache_purge(vnode_t vp)
 
 	if ((LIST_FIRST(&vp->v_nclinks) == NULL) &&
 	    (TAILQ_FIRST(&vp->v_ncchildren) == NULL) &&
-	    (vp->v_cred == NOCRED) &&
+	    (vnode_cred(vp) == NOCRED) &&
 	    (vp->v_parent == NULLVP)) {
 		return;
 	}
@@ -2586,7 +3341,7 @@ cache_purge(vnode_t vp)
 
 	NAME_CACHE_UNLOCK();
 
-	if (tcred && IS_VALID_CRED(tcred)) {
+	if (IS_VALID_CRED(tcred)) {
 		kauth_cred_unref(&tcred);
 	}
 }
@@ -2625,14 +3380,14 @@ cache_purge_negatives(vnode_t vp)
 void
 cache_purgevfs(struct mount *mp)
 {
-	struct nchashhead *ncpp;
+	struct smrq_list_head *ncpp;
 	struct namecache *ncp;
 
 	NAME_CACHE_LOCK();
 	/* Scan hash tables for applicable entries */
 	for (ncpp = &nchashtbl[nchash - 1]; ncpp >= nchashtbl; ncpp--) {
 restart:
-		for (ncp = ncpp->lh_first; ncp != 0; ncp = ncp->nc_hash.le_next) {
+		smrq_serialized_foreach(ncp, ncpp, nc_hash) {
 			if (ncp->nc_dvp->v_mount == mp) {
 				cache_delete(ncp, 0);
 				goto restart;
@@ -2652,11 +3407,6 @@ static u_long   string_table_mask;
 static uint32_t filled_buckets = 0;
 
 
-typedef struct string_t {
-	LIST_ENTRY(string_t)  hash_chain;
-	const char *str;
-	uint32_t              refcount;
-} string_t;
 
 
 static void
@@ -2715,7 +3465,7 @@ resize_string_ref_table(void)
 	}
 	lck_rw_done(&strtable_rw_lock);
 
-	FREE(old_table, M_CACHE);
+	hashdestroy(old_table, M_CACHE, old_mask);
 }
 
 
@@ -2790,19 +3540,26 @@ add_name_internal(const char *name, uint32_t len, u_int hashval, boolean_t need_
 		}
 	}
 	if (entry == NULL) {
+		const uint32_t buflen = len + 1;
+
 		lck_mtx_convert_spin(&strcache_mtx_locks[lock_index]);
 		/*
 		 * it wasn't already there so add it.
 		 */
-		entry = kheap_alloc(KHEAP_DEFAULT, sizeof(string_t) + len + 1, Z_WAITOK);
+		if (nc_smr_enabled) {
+			entry = zalloc_smr(stringcache_zone, Z_WAITOK_ZERO_NOFAIL);
+		} else {
+			entry = zalloc(stringcache_zone);
+		}
 
 		if (head->lh_first == NULL) {
 			OSAddAtomic(1, &filled_buckets);
 		}
-		ptr = (char *)((char *)entry + sizeof(string_t));
+		ptr = kalloc_data(buflen, Z_WAITOK);
 		strncpy(ptr, name, len);
 		ptr[len] = '\0';
 		entry->str = ptr;
+		entry->strbuflen = buflen;
 		entry->refcount = 1;
 		LIST_INSERT_HEAD(head, entry, hash_chain);
 	}
@@ -2816,6 +3573,14 @@ add_name_internal(const char *name, uint32_t len, u_int hashval, boolean_t need_
 	return (const char *)entry->str;
 }
 
+static void
+string_smr_free(void *_entry, __unused size_t size)
+{
+	string_t *entry = _entry;
+
+	kfree_data(entry->str, entry->strbuflen);
+	bzero(entry, sizeof(*entry));
+}
 
 int
 vfs_removename(const char *nameref)
@@ -2867,7 +3632,17 @@ vfs_removename(const char *nameref)
 	lck_mtx_unlock(&strcache_mtx_locks[lock_index]);
 	lck_rw_done(&strtable_rw_lock);
 
-	kheap_free_addr(KHEAP_DEFAULT, entry);
+	if (entry) {
+		assert(entry->refcount == 0);
+		if (nc_smr_enabled) {
+			zfree_smr(stringcache_zone, entry);
+		} else {
+			kfree_data(entry->str, entry->strbuflen);
+			entry->str = NULL;
+			entry->strbuflen = 0;
+			zfree(stringcache_zone, entry);
+		}
+	}
 
 	return retval;
 }

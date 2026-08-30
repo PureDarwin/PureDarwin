@@ -25,13 +25,84 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+
+#include <mach/host_priv.h>
+#include <mach/host_special_ports.h>
+#include <mach/memory_error_notification.h>
+
 #include <mach/mach_types.h>
 #include <mach/host_info.h>
+#include <kern/host.h>
 #include <kern/locks.h>
 #include <kern/ecc.h>
+#include <kern/ecc_init.h>
 #include <kern/spl.h>
+#include <kern/mpsc_queue.h>
+#include <kern/thread.h>
+#include <kern/thread_call.h>
+#include <kern/startup.h>
+#include <os/log.h>
 #include <pexpert/pexpert.h>
+#include <pexpert/device_tree.h>
 #include <libkern/OSAtomic.h>
+#include <arm/pmap_public.h>
+#include <vm/vm_page.h>
+#include <vm/vm_protos.h>
+
+/* New CoreAnalytics ECC logging mechanism */
+
+/**
+ * Stubs for targets which do not support ECC.
+ */
+
+kern_return_t
+ecc_log_memory_error(
+	__unused pmap_paddr_t physical_address,
+	__unused uint32_t ecc_flags)
+{
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+ecc_log_memory_error_internal(
+	__unused pmap_paddr_t physical_address,
+	__unused uint32_t ecc_flags)
+{
+	return KERN_NOT_SUPPORTED;
+}
+
+kern_return_t
+ecc_log_memory_error_ce(
+	__unused pmap_paddr_t physical_address,
+	__unused uint32_t ecc_flags,
+	__unused uint32_t ce_count)
+{
+	return KERN_NOT_SUPPORTED;
+}
+
+
+kern_return_t
+kern_ecc_poll_register(
+	__unused platform_error_handler_ecc_poll_t poll_func,
+	__unused uint32_t max_errors)
+{
+	return KERN_NOT_SUPPORTED;
+}
+
+/*
+ * Used to report earlier errors that were found after ECC gets enabled.
+ * We don't want the VM to panic for these.
+ */
+kern_return_t
+ecc_log_memory_error_delayed(
+	__unused pmap_paddr_t physical_address,
+	__unused uint32_t ecc_flags)
+{
+	return KERN_FAILURE;
+}
+
+
+/* Legacy ECC logging mechanism */
 
 /*
  * ECC data.  Not really KPCs, but this still seems like the
@@ -39,7 +110,8 @@
  *
  * Circular buffer of events.  When we fill up, drop data.
  */
-#define ECC_EVENT_BUFFER_COUNT  5
+#define ECC_EVENT_BUFFER_COUNT  (256)
+
 struct ecc_event                ecc_data[ECC_EVENT_BUFFER_COUNT];
 static uint32_t                 ecc_data_next_read;
 static uint32_t                 ecc_data_next_write;
@@ -47,6 +119,7 @@ static boolean_t                ecc_data_empty = TRUE; // next read == next writ
 static LCK_GRP_DECLARE(ecc_data_lock_group, "ecc-data");
 static LCK_SPIN_DECLARE(ecc_data_lock, &ecc_data_lock_group);
 static uint32_t                 ecc_correction_count;
+
 
 uint32_t
 ecc_log_get_correction_count()

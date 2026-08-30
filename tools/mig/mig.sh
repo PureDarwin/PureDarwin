@@ -160,6 +160,9 @@ do
 	-maxonstack ) migflags=( "${migflags[@]}" "$1" "$2"); shift; shift;;
 	-split ) migflags=( "${migflags[@]}" "$1" ); shift;;
 	-novouchers ) migflags=( "${migflags[@]}" "$1" ); shift;;
+	-mach_msg2 ) migflags=( "${migflags[@]}" "$1" ); shift;;
+	-max_descrs) migflags=( "${migflags[@]}" "$1" "$2"); shift; shift;;
+	-max_reply_descrs) migflags=( "${migflags[@]}" "$1" "$2"); shift; shift;;
 	-MD ) sawMD=1; cppflags=( "${cppflags[@]}" "$1"); shift;;
 	-cpp) shift; shift;;
 	-cc) C="$2"; shift; shift;;

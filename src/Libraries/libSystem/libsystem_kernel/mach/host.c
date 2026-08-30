@@ -108,3 +108,10 @@ host_create_mach_voucher(mach_port_name_t host,
 
 	return rv;
 }
+
+/* Compatibility name retained by IOKit clients from older SDKs. */
+kern_return_t
+host_get_io_master(host_t host, io_main_t *io_main)
+{
+	return host_get_io_main(host, io_main);
+}

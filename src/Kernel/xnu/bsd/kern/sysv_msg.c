@@ -235,27 +235,24 @@ msginit(__unused void *dummy)
 	 * if this fails, fail safely and leave it uninitialized (related
 	 * system calls will fail).
 	 */
-	msgpool = kheap_alloc(KHEAP_DATA_BUFFERS, msginfo.msgmax, Z_WAITOK);
+	msgpool = kalloc_data(msginfo.msgmax, Z_WAITOK);
 	if (msgpool == NULL) {
 		printf("msginit: can't allocate msgpool");
 		goto bad;
 	}
-	msgmaps = kheap_alloc(KM_SHM, sizeof(struct msgmap) * msginfo.msgseg,
-	    Z_WAITOK);
+	msgmaps = kalloc_data(sizeof(struct msgmap) * msginfo.msgseg, Z_WAITOK);
 	if (msgmaps == NULL) {
 		printf("msginit: can't allocate msgmaps");
 		goto bad;
 	}
 
-	msghdrs = kheap_alloc(KM_SHM, sizeof(struct msg) * msginfo.msgtql,
-	    Z_WAITOK);
+	msghdrs = kalloc_type(struct msg, msginfo.msgtql, Z_WAITOK);
 	if (msghdrs == NULL) {
 		printf("msginit: can't allocate msghdrs");
 		goto bad;
 	}
 
-	msqids = kheap_alloc(KM_SHM,
-	    sizeof(struct msqid_kernel) * msginfo.msgmni, Z_WAITOK);
+	msqids = kalloc_type(struct msqid_kernel, msginfo.msgmni, Z_WAITOK);
 	if (msqids == NULL) {
 		printf("msginit: can't allocate msqids");
 		goto bad;
@@ -299,14 +296,10 @@ msginit(__unused void *dummy)
 	initted = 1;
 bad:
 	if (!initted) {
-		kheap_free(KHEAP_DATA_BUFFERS, msgpool,
-		    sizeof(struct msgmap) * msginfo.msgseg);
-		kheap_free(KM_SHM, msgmaps,
-		    sizeof(struct msgmap) * msginfo.msgseg);
-		kheap_free(KM_SHM, msghdrs,
-		    sizeof(struct msg) * msginfo.msgtql);
-		kheap_free(KM_SHM, msqids,
-		    sizeof(struct msqid_kernel) * msginfo.msgmni);
+		kfree_data(msgpool, sizeof(struct msgmap) * msginfo.msgseg);
+		kfree_data(msgmaps, sizeof(struct msgmap) * msginfo.msgseg);
+		kfree_type(struct msg, msginfo.msgtql, msghdrs);
+		kfree_type(struct msqid_kernel, msginfo.msgmni, msqids);
 	}
 	return initted;
 }
@@ -496,8 +489,6 @@ msgctl(struct proc *p, struct msgctl_args *uap, int32_t *retval)
 			goto msgctlout;
 		}
 
-		SYSV_MSG_SUBSYS_UNLOCK();
-
 		if (IS_64BIT_PROCESS(p)) {
 			struct user64_msqid_ds tmpds;
 			eval = copyin(uap->buf, &tmpds, sizeof(tmpds));
@@ -511,10 +502,8 @@ msgctl(struct proc *p, struct msgctl_args *uap, int32_t *retval)
 			msqid_ds_user32tokernel(&tmpds, &msqbuf);
 		}
 		if (eval) {
-			return eval;
+			goto msgctlout;
 		}
-
-		SYSV_MSG_SUBSYS_LOCK();
 
 		if (msqbuf.msg_qbytes > msqptr->u.msg_qbytes) {
 			eval = suser(cred, &p->p_acflag);
@@ -522,7 +511,6 @@ msgctl(struct proc *p, struct msgctl_args *uap, int32_t *retval)
 				goto msgctlout;
 			}
 		}
-
 
 		/* compare (msglen_t) value against restrict (int) value */
 		if (msqbuf.msg_qbytes > (user_msglen_t)msginfo.msgmnb) {
@@ -674,7 +662,7 @@ msgget(__unused struct proc *p, struct msgget_args *uap, int32_t *retval)
 		msqptr->u.msg_perm.gid = kauth_cred_getgid(cred);
 		msqptr->u.msg_perm.mode = (msgflg & 0777);
 		/* Make sure that the returned msqid is unique */
-		msqptr->u.msg_perm._seq++;
+		msqptr->u.msg_perm._seq = ipc_perm_seq_inc(msqptr->u.msg_perm._seq);
 		msqptr->u.msg_first = NULL;
 		msqptr->u.msg_last = NULL;
 		msqptr->u.msg_cbytes = 0;
@@ -1122,7 +1110,7 @@ msgsnd_nocancel(struct proc *p, struct msgsnd_nocancel_args *uap, int32_t *retva
 
 	msqptr->u.msg_cbytes += msghdr->msg_ts;
 	msqptr->u.msg_qnum++;
-	msqptr->u.msg_lspid = p->p_pid;
+	msqptr->u.msg_lspid = proc_getpid(p);
 	msqptr->u.msg_stime = sysv_msgtime();
 
 	wakeup((caddr_t)msqptr);
@@ -1385,7 +1373,7 @@ msgrcv_nocancel(struct proc *p, struct msgrcv_nocancel_args *uap, user_ssize_t *
 
 	msqptr->u.msg_cbytes -= msghdr->msg_ts;
 	msqptr->u.msg_qnum--;
-	msqptr->u.msg_lrpid = p->p_pid;
+	msqptr->u.msg_lrpid = proc_getpid(p);
 	msqptr->u.msg_rtime = sysv_msgtime();
 
 	/*

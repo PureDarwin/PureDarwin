@@ -162,7 +162,7 @@ public:
 					or aborted, or the deadline passed.
      * @param       token Opaque value to be passed from an earlier call to WillWait().
      * @param       options Pass one of the kIOTimerClock* options to specify the timebase for the
-     *              deadline.
+     *              deadline, or zero for no timeout.
      * @param       deadline Pass the time the wait should timeout, or zero for no timeout.
      * @return      kIOReturnSuccess on success. kIOReturnAborted if aborted or canceled.
 					kIOReturnTimeout if the deadline was passed. See IOReturn.h for error codes.
@@ -174,7 +174,7 @@ public:
 		uint64_t deadline) LOCALONLY;
 
 	virtual void
-	Aborted(void) LOCAL;
+	Aborted(void) LOCALHOST;
 };
 
 #undef KERNEL
@@ -271,9 +271,6 @@ protected:\
     static kern_return_t\
     CreateWithTypeName_Impl(OSAction_CreateWithTypeName_Args);\
 \
-    void\
-    Aborted_Impl(OSAction_Aborted_Args);\
-\
 \
 public:\
     /* _Invoke methods */\
@@ -300,6 +297,9 @@ public:\
 \
 protected:\
     /* _Impl methods */\
+\
+    void\
+    Aborted_Impl(OSAction_Aborted_Args);\
 \
 
 

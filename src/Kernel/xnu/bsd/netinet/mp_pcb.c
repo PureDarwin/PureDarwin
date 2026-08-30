@@ -45,11 +45,10 @@
 #include <netinet/mptcp_var.h>
 #include <netinet6/in6_pcb.h>
 
-static lck_grp_t        *mp_lock_grp;
-static lck_attr_t       *mp_lock_attr;
-static lck_grp_attr_t   *mp_lock_grp_attr;
-decl_lck_mtx_data(static, mp_lock);             /* global MULTIPATH lock */
-decl_lck_mtx_data(static, mp_timeout_lock);
+static LCK_GRP_DECLARE(mp_lock_grp, "multipath");
+static LCK_ATTR_DECLARE(mp_lock_attr, 0, 0);
+static LCK_MTX_DECLARE_ATTR(mp_lock, &mp_lock_grp, &mp_lock_attr);
+static LCK_MTX_DECLARE_ATTR(mp_timeout_lock, &mp_lock_grp, &mp_lock_attr);
 
 static TAILQ_HEAD(, mppcbinfo) mppi_head = TAILQ_HEAD_INITIALIZER(mppi_head);
 
@@ -66,21 +65,6 @@ mpp_lock_assert_held(struct mppcb *mp)
 #pragma unused(mp)
 #endif
 	LCK_MTX_ASSERT(&mp->mpp_lock, LCK_MTX_ASSERT_OWNED);
-}
-
-void
-mp_pcbinit(void)
-{
-	static int mp_initialized = 0;
-
-	VERIFY(!mp_initialized);
-	mp_initialized = 1;
-
-	mp_lock_grp_attr = lck_grp_attr_alloc_init();
-	mp_lock_grp = lck_grp_alloc_init("multipath", mp_lock_grp_attr);
-	mp_lock_attr = lck_attr_alloc_init();
-	lck_mtx_init(&mp_lock, mp_lock_grp, mp_lock_attr);
-	lck_mtx_init(&mp_timeout_lock, mp_lock_grp, mp_lock_attr);
 }
 
 static void
@@ -180,7 +164,7 @@ mp_pcbinfo_attach(struct mppcbinfo *mppi)
 	lck_mtx_lock(&mp_lock);
 	TAILQ_FOREACH(mppi0, &mppi_head, mppi_entry) {
 		if (mppi0 == mppi) {
-			panic("%s: mppi %p already in the list\n",
+			panic("%s: mppi %p already in the list",
 			    __func__, mppi);
 			/* NOTREACHED */
 		}
@@ -219,13 +203,8 @@ mp_pcballoc(struct socket *so, struct mppcbinfo *mppi)
 
 	VERIFY(mpsotomppcb(so) == NULL);
 
-	mpp = zalloc(mppi->mppi_zone);
-	if (mpp == NULL) {
-		return ENOBUFS;
-	}
-
-	bzero(mpp, mppi->mppi_size);
-	lck_mtx_init(&mpp->mpp_lock, mppi->mppi_lock_grp, mppi->mppi_lock_attr);
+	mpp = mppi->mppi_alloc();
+	lck_mtx_init(&mpp->mpp_lock, mppi->mppi_lock_grp, &mppi->mppi_lock_attr);
 	mpp->mpp_pcbinfo = mppi;
 	mpp->mpp_state = MPPCB_STATE_INUSE;
 	mpp->mpp_socket = so;
@@ -234,7 +213,7 @@ mp_pcballoc(struct socket *so, struct mppcbinfo *mppi)
 	error = mptcp_session_create(mpp);
 	if (error) {
 		lck_mtx_destroy(&mpp->mpp_lock, mppi->mppi_lock_grp);
-		zfree(mppi->mppi_zone, mpp);
+		mppi->mppi_free(mpp);
 		return error;
 	}
 
@@ -309,8 +288,7 @@ mptcp_pcbdispose(struct mppcb *mpp)
 	VERIFY(mpp->mpp_socket->so_usecount == 0);
 	mpp->mpp_socket->so_pcb = NULL;
 	mpp->mpp_socket = NULL;
-
-	zfree(mppi->mppi_zone, mpp);
+	mppi->mppi_free(mpp);
 }
 
 static int
@@ -322,13 +300,10 @@ mp_getaddr_v4(struct socket *mp_so, struct sockaddr **nam, boolean_t peer)
 	/*
 	 * Do the malloc first in case it blocks.
 	 */
-	MALLOC(sin, struct sockaddr_in *, sizeof(*sin), M_SONAME, M_WAITOK);
-	if (sin == NULL) {
-		return ENOBUFS;
-	}
-	bzero(sin, sizeof(*sin));
+	sin = (struct sockaddr_in *)alloc_sockaddr(sizeof(*sin),
+	    Z_WAITOK | Z_NOFAIL);
+
 	sin->sin_family = AF_INET;
-	sin->sin_len = sizeof(*sin);
 
 	if (!peer) {
 		sin->sin_port = mpte->__mpte_src_v4.sin_port;
@@ -348,16 +323,19 @@ mp_getaddr_v6(struct socket *mp_so, struct sockaddr **nam, boolean_t peer)
 	struct mptses *mpte = mpsotompte(mp_so);
 	struct in6_addr addr;
 	in_port_t port;
+	uint32_t ifscope;
 
 	if (!peer) {
 		port = mpte->__mpte_src_v6.sin6_port;
 		addr = mpte->__mpte_src_v6.sin6_addr;
+		ifscope = mpte->__mpte_src_v6.sin6_scope_id;
 	} else {
 		port = mpte->__mpte_dst_v6.sin6_port;
 		addr = mpte->__mpte_dst_v6.sin6_addr;
+		ifscope = mpte->__mpte_dst_v6.sin6_scope_id;
 	}
 
-	*nam = in6_sockaddr(port, &addr);
+	*nam = in6_sockaddr(port, &addr, ifscope);
 	if (*nam == NULL) {
 		return ENOBUFS;
 	}

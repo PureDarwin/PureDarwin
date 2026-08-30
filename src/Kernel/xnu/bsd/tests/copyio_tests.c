@@ -33,8 +33,9 @@
 #include <mach/mach_vm.h>
 #include <mach/semaphore.h>
 #include <mach/task.h>
-#include <vm/vm_kern.h>
+#include <vm/vm_kern_xnu.h>
 #include <vm/vm_map.h>
+#include <vm/vm_map_xnu.h>
 #include <vm/vm_protos.h>
 #include <sys/errno.h>
 #include <sys/proc.h>
@@ -43,6 +44,9 @@
 #include <tests/ktest.h>
 
 kern_return_t copyio_test(void);
+#if HAS_MTE
+kern_return_t copyio_unprivileged_test(void);
+#endif
 
 #define copyio_test_buf_size (PAGE_SIZE * 16)
 static const char copyio_test_string[] = {'T', 'e', 's', 't', ' ', 'S', 't', 'r', 'i', 'n', 'g', '!', '\0', 'A', 'B', 'C'};
@@ -108,7 +112,7 @@ copyio_test_run_in_thread(copyio_thread_fn_t fn, struct copyio_test_data *data)
 static void
 copyio_test_protect(struct copyio_test_data *data, vm_prot_t prot)
 {
-	kern_return_t ret = mach_vm_protect(data->user_map, data->user_addr, copyio_test_buf_size, false, prot);
+	__assert_only kern_return_t ret = mach_vm_protect(data->user_map, data->user_addr, copyio_test_buf_size, false, prot);
 	assert(ret == KERN_SUCCESS);
 }
 
@@ -252,7 +256,7 @@ copyinstr_test(struct copyio_test_data *data)
 	data->thread_ptr = &lencopied;
 
 	err = copyio_test_run_in_thread(copyinstr_from_kernel, data);
-#if defined(__arm__) || defined (__arm64__)
+#if defined (__arm64__)
 	T_EXPECT_EQ_INT(err, EFAULT, "copyinstr() from kernel address in kernel_task thread should return EFAULT");
 #else
 	T_EXPECT_EQ_INT(err, 0, "copyinstr() from kernel address in kernel_task thread should succeed");
@@ -324,7 +328,7 @@ copyoutstr_test(struct copyio_test_data *data)
 	data->thread_ptr = &lencopied;
 
 	err = copyio_test_run_in_thread(copyoutstr_to_kernel, data);
-#if defined(__arm__) || defined (__arm64__)
+#if defined (__arm64__)
 	T_EXPECT_EQ_INT(err, EFAULT, "copyoutstr() to kernel address in kernel_task thread should return EFAULT");
 #else
 	T_EXPECT_EQ_INT(err, 0, "copyoutstr() to kernel address in kernel_task thread should succeed");
@@ -495,8 +499,8 @@ copyio_test(void)
 	mach_vm_offset_t user_addr = 0;
 	kern_return_t ret = KERN_SUCCESS;
 
-	data.buf1 = kalloc(copyio_test_buf_size);
-	data.buf2 = kalloc(copyio_test_buf_size);
+	data.buf1 = kalloc_data(copyio_test_buf_size, Z_WAITOK);
+	data.buf2 = kalloc_data(copyio_test_buf_size, Z_WAITOK);
 	if (!data.buf1 || !data.buf2) {
 		T_FAIL("failed to allocate scratch buffers");
 		ret = KERN_NO_SPACE;
@@ -511,11 +515,12 @@ copyio_test(void)
 	 * not to the point of actually execing yet.
 	 */
 	proc_t proc = current_proc();
-	assert(proc->p_pid == 1);
-	data.user_map = get_task_map_reference(proc->task);
+	assert(proc_getpid(proc) == 1);
+	data.user_map = get_task_map_reference(proc_task(proc));
 
 	user_addr = data.user_addr;
-	ret = mach_vm_allocate_kernel(data.user_map, &user_addr, copyio_test_buf_size + PAGE_SIZE, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
+	ret = mach_vm_allocate_kernel(data.user_map, &user_addr,
+	    copyio_test_buf_size + PAGE_SIZE, VM_MAP_KERNEL_FLAGS_ANYWHERE());
 	if (ret) {
 		T_FAIL("mach_vm_allocate_kernel(user_addr) failed: %d", ret);
 		goto err_user_alloc;
@@ -523,7 +528,8 @@ copyio_test(void)
 	data.user_addr = (user_addr_t)user_addr;
 
 	user_addr = get_map_max(data.user_map) - PAGE_SIZE;
-	ret = mach_vm_allocate_kernel(data.user_map, &user_addr, PAGE_SIZE, VM_FLAGS_FIXED, VM_KERN_MEMORY_NONE);
+	ret = mach_vm_allocate_kernel(data.user_map, &user_addr, PAGE_SIZE,
+	    VM_MAP_KERNEL_FLAGS_FIXED());
 	if (ret) {
 		T_FAIL("mach_vm_allocate_kernel(user_lastpage_addr) failed: %d", ret);
 		goto err_user_lastpage_alloc;
@@ -535,10 +541,12 @@ copyio_test(void)
 
 	vm_prot_t cur_protection, max_protection;
 	mach_vm_offset_t kern_addr = 0;
-	ret = mach_vm_remap_kernel(kernel_map, &kern_addr, copyio_test_buf_size, VM_PROT_READ | VM_PROT_WRITE, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE,
-	    data.user_map, data.user_addr, false, &cur_protection, &max_protection, VM_INHERIT_NONE);
+	ret = mach_vm_remap(kernel_map, &kern_addr, copyio_test_buf_size,
+	    VM_PROT_READ | VM_PROT_WRITE, VM_FLAGS_ANYWHERE,
+	    data.user_map, data.user_addr, false,
+	    &cur_protection, &max_protection, VM_INHERIT_NONE);
 	if (ret) {
-		T_FAIL("mach_vm_remap_kernel() failed: %d", ret);
+		T_FAIL("mach_vm_remap() failed: %d", ret);
 		goto err_kern_remap;
 	}
 	data.kern_addr = (void *)kern_addr;
@@ -559,7 +567,32 @@ err_user_lastpage_alloc:
 err_user_alloc:
 	vm_map_deallocate(data.user_map);
 err_kalloc:
-	kfree(data.buf2, copyio_test_buf_size);
-	kfree(data.buf1, copyio_test_buf_size);
+	kfree_data(data.buf2, copyio_test_buf_size);
+	kfree_data(data.buf1, copyio_test_buf_size);
 	return ret;
 }
+
+#if HAS_MTE
+kern_return_t
+copyio_unprivileged_test(void)
+{
+	task_t task = current_task();
+	bool sec_enabled = task_has_sec(task);
+	task_clear_sec(task);
+
+	vm_map_t map = current_map();
+	bool sec_access = vm_map_has_sec_access(map);
+	vm_map_mark_has_sec_access(map);
+
+	kern_return_t ret = copyio_test();
+
+	if (sec_enabled) {
+		task_set_sec(task);
+	}
+	if (!sec_access) {
+		vm_map_remove_sec_access(map);
+	}
+
+	return ret;
+}
+#endif /* HAS_MTE */

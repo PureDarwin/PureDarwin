@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -33,12 +33,14 @@
 #define _ARM_MISC_PROTOS_H_
 
 #include <kern/kern_types.h>
+#include <arm/cpu_capabilities_public.h>
 
 typedef struct boot_args boot_args;
 /* The address of the end of the kernelcache. */
 extern vm_offset_t end_kern;
 /* The lowest address in the kernelcache. */
 extern vm_offset_t segLOWEST;
+
 
 extern void machine_startup(__unused boot_args *args) __attribute__((noinline));
 
@@ -49,7 +51,11 @@ extern void arm_vm_init(uint64_t memory_size, boot_args *args);
 extern void arm_vm_prot_init(boot_args *args);
 extern void arm_vm_prot_finalize(boot_args *args);
 
-extern kern_return_t DebuggerXCallEnter(boolean_t);
+#if __arm64__
+void __attribute__((__noreturn__)) _was_in_userspace(void);
+#endif /* __arm64__ */
+
+extern kern_return_t DebuggerXCallEnter(boolean_t, bool);
 extern void DebuggerXCallReturn(void);
 
 #if __arm64__ && DEBUG
@@ -63,24 +69,56 @@ extern thread_t Shutdown_context(void (*doshutdown)(processor_t), processor_t  p
 extern void __dead2 Call_continuation(thread_continue_t, void *, wait_result_t, boolean_t enable_interrupts);
 
 
+typedef enum {
+	ARM_SME_UNSUPPORTED = 0,
+	ARM_FEAT_SME,
+	ARM_FEAT_SME2,
+	ARM_FEAT_SME2p1,
+	ARM_SME_VERSION_MAX,
+} arm_sme_version_t;
+
+extern arm_sme_version_t arm_sme_version(void) __pure2;
+#if HAS_ARM_FEAT_SME
+extern void arm_sme_init(bool is_boot_cpu);
+extern uint16_t arm_sme_svl_b(void);
+extern void arm_save_sme_za(arm_sme_context_t *sme_ss, uint16_t svl_b);
+extern void arm_load_sme_za(const arm_sme_context_t *sme_ss, uint16_t svl_b);
+extern void arm_sme_trap_at_el0(bool trap_enabled);
+extern boolean_t arm_sme_is_active(void);
+#if HAS_ARM_FEAT_SME2
+extern void arm_save_sme_zt0(arm_sme_context_t *sme_ss);
+extern void arm_load_sme_zt0(const arm_sme_context_t *sme_ss);
+#endif /* HAS_ARM_FEAT_SME2 */
+extern void arm_save_sme_za_zt0(arm_sme_context_t *sme_ss, uint16_t svl_b);
+extern void arm_load_sme_za_zt0(const arm_sme_context_t *sme_ss, uint16_t svl_b);
+#endif /* HAS_ARM_FEAT_SME */
+
+struct arm_matrix_cpu_state {
+#if HAS_ARM_FEAT_SME
+	bool have_sme;
+	bool za_is_enabled;
+	bool sm_is_enabled;
+#endif
+};
+
+extern void arm_get_matrix_cpu_state(struct arm_matrix_cpu_state *cpu_state);
+
 /**
  * Indicate during a context-switch event that we have updated some CPU
  * state which requires a later context-sync event.
  *
- * On ARMv8.5 and later CPUs, this function sets a flag that will trigger an
- * explicit isb instruction sometime before the upcoming eret instruction.
- *
- * Prior to ARMv8.5, the eret instruction itself is always synchronizing, and
- * this function is an empty stub which serves only as documentation.
+ * Sets a per-CPU flag indicating the processor context needs synchronizing.
+ * This is done to defer synchronization until returning from an exception. If
+ * synchronization is needed before that, call arm_context_switch_sync().
  */
-#if __ARM_ARCH_8_5__
 extern void arm_context_switch_requires_sync(void);
-#else
-static inline void
-arm_context_switch_requires_sync(void)
-{
-}
-#endif /* __ARM_ARCH_8_5__ */
+
+/**
+ * Synchronize context switch state immediately. Clears the dirty flag used by
+ * arm_context_switch_requires_sync(). If the context switch state has already
+ * been synchronized, does nothing.
+ */
+extern void arm_context_switch_sync(void);
 
 #if __has_feature(ptrauth_calls)
 extern boolean_t arm_user_jop_disabled(void);
@@ -93,13 +131,12 @@ extern int copyout_kern(const char *kernel_addr, user_addr_t user_addr, vm_size_
 extern int copyin_kern(const user_addr_t user_addr, char *kernel_addr, vm_size_t nbytes);
 
 extern void bcopy_phys(addr64_t from, addr64_t to, vm_size_t nbytes);
+extern void bcopy_phys_with_options(addr64_t from, addr64_t to, vm_size_t nbytes, int options);
 
 extern void dcache_incoherent_io_flush64(addr64_t pa, unsigned int count, unsigned int remaining, unsigned int *res);
 extern void dcache_incoherent_io_store64(addr64_t pa, unsigned int count, unsigned int remaining, unsigned int *res);
 
-#if defined(__arm__)
-extern void copy_debug_state(arm_debug_state_t * src, arm_debug_state_t *target, __unused boolean_t all);
-#elif defined(__arm64__)
+#if defined(__arm64__)
 extern void copy_legacy_debug_state(arm_legacy_debug_state_t * src, arm_legacy_debug_state_t *target, __unused boolean_t all);
 extern void copy_debug_state32(arm_debug_state32_t * src, arm_debug_state32_t *target, __unused boolean_t all);
 extern void copy_debug_state64(arm_debug_state64_t * src, arm_debug_state64_t *target, __unused boolean_t all);
@@ -116,12 +153,8 @@ extern int copyio_check_user_addr(user_addr_t user_addr, vm_size_t nbytes);
  */
 extern int apply_func_phys(addr64_t src64, vm_size_t bytes, int (*func)(void * buffer, vm_size_t bytes, void * arg), void * arg);
 
-/* Top-Byte-Ignore */
-#define TBI_MASK           0xff00000000000000
-#define tbi_clear(addr)    ((addr) & ~(TBI_MASK))
-
-#else /* !defined(__arm__) && !defined(__arm64__) */
+#else /* !defined(__arm64__) */
 #error Unknown architecture.
-#endif /* defined(__arm__) */
+#endif /* defined(__arm64__) */
 
 #endif /* _ARM_MISC_PROTOS_H_ */

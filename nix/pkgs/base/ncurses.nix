@@ -72,6 +72,17 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     make install
+
+    # --enable-widec names everything with a "w" suffix, but configure scripts
+    # probe for -lncurses/-lcurses. Without these they conclude curses is
+    # missing, which is how nano's configure fails.
+    for l in ncurses curses; do
+      ln -sf libncursesw.a "$out/lib/lib$l.a"
+    done
+    ln -sf libpanelw.a "$out/lib/libpanel.a"
+    ln -sf libmenuw.a "$out/lib/libmenu.a"
+    ln -sf libformw.a "$out/lib/libform.a"
+
     runHook postInstall
   '';
 

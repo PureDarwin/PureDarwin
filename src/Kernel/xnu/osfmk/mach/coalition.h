@@ -29,12 +29,16 @@
 #ifndef _MACH_COALITION_H_
 #define _MACH_COALITION_H_
 
+#include <stdint.h>
+#include <stdbool.h>
+
 /* code shared by userspace and xnu */
 
 #define COALITION_SPAWN_ENTITLEMENT "com.apple.private.coalition-spawn"
 
-#define COALITION_CREATE_FLAGS_MASK       ((uint32_t)0xFF1)
+#define COALITION_CREATE_FLAGS_MASK       ((uint32_t)0xFF3)
 #define COALITION_CREATE_FLAGS_PRIVILEGED ((uint32_t)0x01)
+#define COALITION_CREATE_FLAGS_EFFICIENT  ((uint32_t)0x02)
 
 #define COALITION_CREATE_FLAGS_TYPE_MASK  ((uint32_t)0xF0)
 #define COALITION_CREATE_FLAGS_TYPE_SHIFT (4)
@@ -103,39 +107,22 @@
 
 #define COALITION_NUM_THREAD_QOS_TYPES   7
 
-/* Coalition Efficiency Interface Support */
-
-/* Flags for coalition efficiency */
+/* Flags for coalition efficiency (Deprecated) */
 #define COALITION_FLAGS_EFFICIENT       (0x1)
-
-/*
- * Mapping of launchd plist values to coalition efficiency flags.
- * Launchd uses this mapping to pass the correct flags to
- * coalition_info_set_efficiency(cid, flags);
- *
- * Current supported values mapping:
- * { "Efficient" : COALITION_FLAGS_EFFICIENT, }
- */
-static const char *coalition_efficiency_names[] = {
-	"Efficient",
-};
-static const uint64_t coalition_efficiency_flags[] = {
-	COALITION_FLAGS_EFFICIENT,
-};
 
 struct coalition_resource_usage {
 	uint64_t tasks_started;
 	uint64_t tasks_exited;
 	uint64_t time_nonempty;
-	uint64_t cpu_time;
+	uint64_t cpu_time; /* mach_absolute_time units */
 	uint64_t interrupt_wakeups;
 	uint64_t platform_idle_wakeups;
 	uint64_t bytesread;
 	uint64_t byteswritten;
-	uint64_t gpu_time;
-	uint64_t cpu_time_billed_to_me;
-	uint64_t cpu_time_billed_to_others;
-	uint64_t energy;
+	uint64_t gpu_time; /* nanoseconds */
+	uint64_t cpu_time_billed_to_me; /* mach_absolute_time units */
+	uint64_t cpu_time_billed_to_others; /* mach_absolute_time units */
+	uint64_t energy; /* nanojoules */
 	uint64_t logical_immediate_writes;
 	uint64_t logical_deferred_writes;
 	uint64_t logical_invalidated_writes;
@@ -144,15 +131,25 @@ struct coalition_resource_usage {
 	uint64_t logical_deferred_writes_to_external;
 	uint64_t logical_invalidated_writes_to_external;
 	uint64_t logical_metadata_writes_to_external;
-	uint64_t energy_billed_to_me;
-	uint64_t energy_billed_to_others;
-	uint64_t cpu_ptime;
+	uint64_t energy_billed_to_me; /* nanojoules */
+	uint64_t energy_billed_to_others; /* nanojoules */
+	uint64_t cpu_ptime; /* mach_absolute_time units */
 	uint64_t cpu_time_eqos_len;     /* Stores the number of thread QoS types */
 	uint64_t cpu_time_eqos[COALITION_NUM_THREAD_QOS_TYPES];
 	uint64_t cpu_instructions;
 	uint64_t cpu_cycles;
 	uint64_t fs_metadata_writes;
 	uint64_t pm_writes;
+	uint64_t cpu_pinstructions;
+	uint64_t cpu_pcycles;
+	uint64_t conclave_mem;
+	uint64_t ane_mach_time; /* mach_absolute_time units */
+	uint64_t ane_energy_nj; /* nanojoules */
+	uint64_t phys_footprint;        /* Sum of instantaneous process phys_footprint */
+	uint64_t gpu_energy_nj; /* nanojoules that I did */
+	uint64_t gpu_energy_nj_billed_to_me; /* nanojoules that others did on my behalf */
+	uint64_t gpu_energy_nj_billed_to_others; /* nanojoules that I did on others' behalf */
+	uint64_t swapins;
 };
 
 #ifdef PRIVATE
@@ -170,6 +167,18 @@ struct coalition_resource_usage {
 #define COALITION_INFO_RESOURCE_USAGE 1
 #define COALITION_INFO_SET_NAME 2
 #define COALITION_INFO_SET_EFFICIENCY 3
+#define COALITION_INFO_GET_DEBUG_INFO 4
+#define COALITION_INFO_PID_LIST 5
+
+struct coalinfo_debuginfo {
+	uint64_t thread_group_id;
+	uint32_t thread_group_recommendation;
+	uint32_t thread_group_flags;
+	uint32_t focal_task_count;
+	uint32_t nonfocal_task_count;
+	uint32_t game_task_count;
+	uint32_t carplay_task_count;
+};
 
 /* coalition_ledger_set operations */
 #define COALITION_LEDGER_SET_LOGICAL_WRITES_LIMIT 1
@@ -186,6 +195,7 @@ struct procinfo_coalinfo {
 #endif /* PRIVATE */
 
 #ifdef XNU_KERNEL_PRIVATE
+
 #if COALITION_DEBUG
 #define coal_dbg(fmt, ...) \
 	printf("%s: " fmt "\n", __func__, ## __VA_ARGS__)
@@ -193,6 +203,23 @@ struct procinfo_coalinfo {
 #define coal_dbg(fmt, ...)
 #endif
 
-#endif
+__options_decl(coalition_gpu_energy_t, uint32_t, {
+	CGE_SELF    = 0x1,
+	CGE_BILLED  = 0x2,
+	CGE_OTHERS  = 0x4,
+});
+
+extern bool coalition_add_to_gpu_energy(uint64_t coalition_id, coalition_gpu_energy_t which, uint64_t energy);
+
+#endif /* XNU_KERNEL_PRIVATE */
+
+#ifdef MACH_KERNEL_PRIVATE
+
+typedef struct coalition_pend_token {
+	uint32_t        cpt_update_timers      :1,
+	    cpt_update_j_coal_tasks :1;
+} *coalition_pend_token_t;
+
+#endif /* MACH_KERNEL_PRIVATE */
 
 #endif /* _MACH_COALITION_H_ */

@@ -1,11 +1,11 @@
-/* Copyright (c) (2017,2018,2019,2020) Apple Inc. All rights reserved.
+/* Copyright (c) (2017-2022) Apple Inc. All rights reserved.
  *
  * corecrypto is licensed under Apple Inc.’s Internal Use License Agreement (which
- * is contained in the License.txt file distributed with corecrypto) and only to 
- * people who accept that license. IMPORTANT:  Any license rights granted to you by 
- * Apple Inc. (if any) are limited to internal use within your organization only on 
- * devices and computers you own or control, for the sole purpose of verifying the 
- * security characteristics and correct functioning of the Apple Software.  You may 
+ * is contained in the License.txt file distributed with corecrypto) and only to
+ * people who accept that license. IMPORTANT:  Any license rights granted to you by
+ * Apple Inc. (if any) are limited to internal use within your organization only on
+ * devices and computers you own or control, for the sole purpose of verifying the
+ * security characteristics and correct functioning of the Apple Software.  You may
  * not, directly or indirectly, redistribute the Apple Software or any portions thereof.
  */
 
@@ -97,7 +97,7 @@ enum {
     CCDRBG_STATUS_NEED_RESEED = -62,
     CCDRBG_STATUS_PARAM_ERROR = -63,
     // If this value is returned, the caller must abort or panic the process for
-    // security reasons. for example in the case of catastrophic error in
+    // security reasons. For example in the case of catastrophic error in
     // http://csrc.nist.gov/publications/drafts/800-90/sp800_90a_r1_draft.pdf
     // ccdrbg calls abort() or panic(), if they are available in the system.
     CCDRBG_STATUS_ABORT = -64,
@@ -166,6 +166,34 @@ enum {
     CCERR_IOSERVICE_GETMATCHING = -147,
     CCERR_IOSERVICE_OPEN = -148,
     CCERR_IOCONNECT_CALL = -149,
+    
+    CCEC_KEY_CANNOT_BE_UNIT = -160,
+    CCEC_COMPRESSED_POINT_ENCODING_ERROR = -161,
+
+    CCERR_RNG_NOT_SEEDED = -162,
+    
+    CCERR_BUFFER_TOO_SMALL = -163,
+
+    CCERR_XTS_KEYS_EQUAL = -164,
+
+    CCERR_RETRY = -165,
+
+    CCDH_GP_P_NOTPRIME = -166,
+    CCDH_GP_Q_NOTPRIME = -167,
+    CCDH_GP_NONSAFE_PRIME = -168,
+
+    // -169, // deprecated
+
+    CCEC_POINT_CANNOT_BE_UNIT = CCEC_KEY_CANNOT_BE_UNIT,
+    CCEC_UNCOMPRESSED_POINT_ENCODING_ERROR = -170,
+    CCEC_HYBRID_POINT_ENCODING_ERROR = -171,
+    CCEC_COMPACT_POINT_ENCODING_ERROR = -172,
+
+    CCERR_NOT_SUPPORTED = -173,
+    
+    // Always add error codes above this line, and always keep
+    // their value greater than the value of CCERR_MIN.
+    CCERR_MIN = -255,
 };
 
 #define CCDRBG_STATUS_OK CCERR_OK

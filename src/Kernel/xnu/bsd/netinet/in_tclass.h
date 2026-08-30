@@ -51,6 +51,7 @@ struct so_tcdbg {
 	u_int32_t       so_tcdbg_cmd;
 	int32_t         so_tcdbg_tclass;
 	int32_t         so_tcdbg_netsvctype;
+	uint8_t         so_tcdbg_ecn_val;  /* 1 is ECT(1) and 2 is ECT(0) */
 	u_int32_t       so_tcdbg_count;
 	pid_t           so_tcdbg_pid;
 	u_int32_t       so_tcbbg_qos_mode;
@@ -102,6 +103,8 @@ extern int so_get_netsvc_marking_level(struct socket *);
 
 extern uint8_t fastlane_sc_to_dscp(uint32_t svc_class);
 extern uint8_t rfc4594_sc_to_dscp(uint32_t svc_class);
+extern uint8_t custom_sc_to_dscp(uint32_t svc_class);
+
 extern mbuf_traffic_class_t rfc4594_dscp_to_tc(uint8_t dscp);
 
 #endif /* BSD_KERNEL_PRIVATE */

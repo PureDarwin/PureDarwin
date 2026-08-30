@@ -36,6 +36,12 @@
 #ifndef _MACH_ARM_VM_PARAM_H_
 #define _MACH_ARM_VM_PARAM_H_
 
+#if defined (__arm__) || defined (__arm64__)
+
+#if defined(XNU_KERNEL_PRIVATE) && defined(__arm64__)
+#include <arm64/proc_reg.h>
+#endif
+
 #if defined(KERNEL_PRIVATE) && __ARM_16K_PG__
 #include <arm64/proc_reg.h>
 #endif
@@ -109,47 +115,7 @@ extern int PAGE_SHIFT_CONST;
 #define VM32_MIN_ADDRESS        ((vm32_offset_t) 0)
 #define VM32_MAX_ADDRESS        ((vm32_offset_t) (VM_MAX_ADDRESS & 0xFFFFFFFF))
 
-/*
- * kalloc() parameters:
- *
- * Historically kalloc's underlying zones were power-of-2 sizes, with a
- * KALLOC_MINSIZE of 16 bytes.  Thus the allocator ensured that
- * (sizeof == alignof) >= 16 for all kalloc allocations.
- *
- * Today kalloc may use zones with intermediate (small) sizes, constrained by
- * KALLOC_MINSIZE and a minimum alignment, expressed by KALLOC_LOG2_MINALIGN.
- *
- * Note that most dynamically allocated data structures contain more than
- * one int/long/pointer member, so KALLOC_MINSIZE should probably start at 8.
- */
-
-#if defined (__arm__)
-
-#define KALLOC_MINSIZE          8       /* minimum allocation size */
-#define KALLOC_LOG2_MINALIGN    3       /* log2 minimum alignment */
-
-#elif defined(__arm64__)
-
-#define KALLOC_MINSIZE          16      /* minimum allocation size */
-#define KALLOC_LOG2_MINALIGN    4       /* log2 minimum alignment */
-
-#else
-#error Unsupported arch
-#endif
-
-#if defined (__arm__)
-/* existing zone map size limit moved from osfmk/vm/vm_init.c */
-#define ZONE_MAP_MAX (1024 * 1024 * 1536) /* 1.5GB for 32bit systems */
-#elif defined(__arm64__)
-/*
- * Limits the physical pages in the zone map
- */
-#define ZONE_MAP_MAX (31ULL << 30) /* 31GB for 64bit systems */
-#else
-#error Unsupported arch
-#endif
-
-#endif
+#endif /* MACH_KERNEL_PRIVATE */
 
 #if defined (__arm__)
 
@@ -163,15 +129,29 @@ extern int PAGE_SHIFT_CONST;
 #elif defined (__arm64__)
 
 #define VM_MIN_ADDRESS          ((vm_address_t) 0x0000000000000000ULL)
-#define VM_MAX_ADDRESS          ((vm_address_t) 0x0000000080000000ULL)
+#define VM_MAX_ADDRESS          ((vm_address_t) 0x00000000F0000000ULL)
 
 /* system-wide values */
 #define MACH_VM_MIN_ADDRESS_RAW 0x0ULL
-#if defined(PLATFORM_MacOSX) || defined(PLATFORM_DriverKit)
+#if defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)
 #define MACH_VM_MAX_ADDRESS_RAW 0x00007FFFFE000000ULL
 #else
 #define MACH_VM_MAX_ADDRESS_RAW 0x0000000FC0000000ULL
 #endif
+
+/*
+ * `MACH_VM_MAX_ADDRESS` is exported to user space, but we don't want this
+ * larger value for `MACH_VM_MAX_ADDRESS` to be exposed outside the kernel.
+ */
+#if XNU_KERNEL_PRIVATE
+#if defined(XNU_PLATFORM_iPhoneOS) && EXTENDED_USER_VA_SUPPORT
+#undef MACH_VM_MAX_ADDRESS_RAW
+#define MACH_VM_MAX_ADDRESS_RAW 0x00007FFFFE000000ULL
+#endif /* defined(XNU_PLATFORM_iPhoneOS) && EXTENDED_USER_VA_SUPPORT */
+/* threshold for allocations to be placed in the large file range */
+#define VM_LARGE_FILE_THRESHOLD (1ULL << 30)
+#define MACH_VM_JUMBO_ADDRESS ((mach_vm_offset_t) 0x0000000FC0000000ULL)
+#endif /* KERNEL_PRIVATE */
 
 #define MACH_VM_MIN_ADDRESS     ((mach_vm_offset_t) MACH_VM_MIN_ADDRESS_RAW)
 #define MACH_VM_MAX_ADDRESS     ((mach_vm_offset_t) MACH_VM_MAX_ADDRESS_RAW)
@@ -195,26 +175,45 @@ extern int PAGE_SHIFT_CONST;
 #define VM_MIN_KERNEL_ADDRESS   ((vm_address_t) 0x80000000)
 #define VM_MAX_KERNEL_ADDRESS   ((vm_address_t) 0xFFFEFFFF)
 #define VM_HIGH_KERNEL_WINDOW   ((vm_address_t) 0xFFFE0000)
+
 #elif defined (__arm64__)
+/*
+ * kalloc() parameters:
+ *
+ * Historically kalloc's underlying zones were power-of-2 sizes, with a
+ * KALLOC_MINSIZE of 16 bytes.  Thus the allocator ensured that
+ * (sizeof == alignof) >= 16 for all kalloc allocations.
+ *
+ * Today kalloc may use zones with intermediate (small) sizes, constrained by
+ * KALLOC_MINSIZE and a minimum alignment, expressed by KALLOC_LOG2_MINALIGN.
+ *
+ * Note that most dynamically allocated data structures contain more than
+ * one int/long/pointer member, so KALLOC_MINSIZE should probably start at 8.
+ */
+#define TiB(x)                  ((0ULL + (x)) << 40)
+#define GiB(x)                  ((0ULL + (x)) << 30)
+#define KALLOC_MINSIZE          16      /* minimum allocation size */
+#define KALLOC_LOG2_MINALIGN    4       /* log2 minimum alignment */
+
 /*
  * The minimum and maximum kernel address; some configurations may
  * constrain the address space further.
  */
-#define TiB(x) ((0ULL + (x)) << 40)
-#define GiB(x) ((0ULL + (x)) << 30)
 
+
+#ifndef __BUILDING_XNU_LIBRARY__
 #if XNU_KERNEL_PRIVATE
 #if defined(ARM_LARGE_MEMORY)
 /*
  * +-----------------------+--------+--------+------------------------+
- * | 0xffff_fe90_0000_0000 |-1472GB |  576GB | KASAN_SHADOW_MIN       |
- * |                       |        |        | VM_MAX_KERNEL_ADDRESS  |
+ * | 0xffff_fed0_0000_0000 |-1216GB |  832GB | KASAN_SHADOW_MIN       |
+ * | 0xffff_fecf_ffff_ffff |        |        | VM_MAX_KERNEL_ADDRESS  |
  * +-----------------------+--------+--------+------------------------+
  * | 0xffff_fe10_0000_0000 |-1984GB |   64GB | PMAP_HEAP_RANGE_START  |
  * +-----------------------+--------+--------+------------------------+
  * | 0xffff_fe00_0700_4000 |        |        | VM_KERNEL_LINK_ADDRESS |
  * +-----------------------+--------+--------+------------------------+
- * | 0xffff_fe00_0000_0000 |   -2TB |    0GB | VM_MIN_KERNEL_ADDRESS  |
+ * | 0xffff_fe00_0000_0000 |-2048GB |    0GB | VM_MIN_KERNEL_ADDRESS  |
  * |                       |        |        | LOW_GLOBALS            |
  * +-----------------------+--------+--------+------------------------+
  */
@@ -223,8 +222,17 @@ extern int PAGE_SHIFT_CONST;
 // Kernel VA space starts at -2TB
 #define VM_MIN_KERNEL_ADDRESS   ((vm_address_t) (0ULL - TiB(2)))
 
-// 1.25TB for static_memory_region, 512GB for kernel heap, 256GB for KASAN
-#define VM_MAX_KERNEL_ADDRESS   ((vm_address_t) (VM_MIN_KERNEL_ADDRESS + GiB(64) + GiB(512) - 1))
+//   64 GB for kernel cache and globals
+//  768 GB for heap/general kernel use
+// 1216 GB left over at the top of the range for KASAN
+//     Assuming KASAN TBI, this lets us cover down to:
+//     0 - (1216GB<<KASAN_SCALE) = 0xffff_ed00_0000_0000, or ~19.5TB of VA
+//     Since we place the DRAM PAPT below VM_MIN_KERNEL_ADDRESS on large
+//     memory configurations, this configuration works until systems have
+//     ~17.5TB of DRAM.
+#define VM_MAX_KERNEL_ADDRESS \
+	((vm_address_t) (VM_MIN_KERNEL_ADDRESS + GiB(64) + GiB(768) - 1))
+
 #else // ARM_LARGE_MEMORY
 /*
  * +-----------------------+--------+--------+------------------------+
@@ -236,36 +244,102 @@ extern int PAGE_SHIFT_CONST;
  * | 0xffff_fff0_0000_0000 |  -64GB |   64GB | LOW_GLOBALS            |
  * |                       |        |        | PMAP_HEAP_RANGE_START  | <= H8
  * +-----------------------+--------+--------+------------------------+
- * | 0xffff_ffe0_0000_0000 | -128GB |    0GB | VM_MIN_KERNEL_ADDRESS  |
+ * | 0xffff_ffe0_0000_0000 | -128GB |    0GB | VM_MIN_KERNEL_ADDRESS  | <= H8
+ * +-----------------------+--------+--------+------------------------+
+ * | 0xffff_ffdc_0000_0000 | -144GB |    0GB | VM_MIN_KERNEL_ADDRESS  | >= H9
  * |                       |        |        | PMAP_HEAP_RANGE_START  | >= H9
  * +-----------------------+--------+--------+------------------------+
  */
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
+#define VM_KERNEL_POINTER_SIGNIFICANT_BITS  38
+#define VM_MIN_KERNEL_ADDRESS   ((vm_address_t) (0ULL - GiB(144)))
+#else /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR) */
 #define VM_KERNEL_POINTER_SIGNIFICANT_BITS  37
 #define VM_MIN_KERNEL_ADDRESS   ((vm_address_t) 0xffffffe000000000ULL)
+#endif /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR) */
 #define VM_MAX_KERNEL_ADDRESS   ((vm_address_t) 0xfffffffbffffffffULL)
+
 #endif // ARM_LARGE_MEMORY
 
 #else // !XNU_KERNEL_PRIVATE
 // Inform kexts about largest possible kernel address space
+#define VM_KERNEL_POINTER_SIGNIFICANT_BITS  41
 #define VM_MIN_KERNEL_ADDRESS   ((vm_address_t) (0ULL - TiB(2)))
 #define VM_MAX_KERNEL_ADDRESS   ((vm_address_t) 0xfffffffbffffffffULL)
 #endif // XNU_KERNEL_PRIVATE
+#else /* __BUILDING_XNU_LIBRARY__ */
+/* When building in user-space unit-test, the address space is a normal
+ * user-space address that is usually used by the system */
+#define VM_MIN_KERNEL_ADDRESS ((vm_address_t)(0ULL + PAGE_SIZE))
+#define VM_MAX_KERNEL_ADDRESS ((vm_address_t)(0ULL + GiB(64)))
+#define VM_KERNEL_POINTER_SIGNIFICANT_BITS  41
+#endif /*__BUILDING_XNU_LIBRARY__ */
 #else
 #error architecture not supported
 #endif
 
 #define VM_MIN_KERNEL_AND_KEXT_ADDRESS  VM_MIN_KERNEL_ADDRESS
 
+#if defined (__arm64__)
+/* Top-Byte-Ignore */
+#define ARM_TBI_USER_MASK        (0xFF00000000000000ULL)
+#define VM_USER_STRIP_TBI(_v)    ((typeof (_v))(((uintptr_t)(_v)) &~ (ARM_TBI_USER_MASK)))
+#else /* __arm64__ */
+#define VM_USER_STRIP_TBI(_v)    (_v)
+#endif /* __arm64__ */
+
+
+#if __arm64__
+
+#if XNU_KERNEL_PRIVATE
+#define VM_KERNEL_STRIP_MASK            (-1ULL << (64 - T1SZ_BOOT))
+#define VM_USER_STRIP_MASK              (-1ULL >> (T0SZ_BOOT))
+#define _VM_KERNEL_STRIP_PTR(_va)       ({((_va) & 1ULL << 55) ? ((_va) | VM_KERNEL_STRIP_MASK) : ((_va) & VM_USER_STRIP_MASK);})
+#else /* XNU_KERNEL_PRIVATE */
+
 #if __has_feature(ptrauth_calls)
 #include <ptrauth.h>
-#define VM_KERNEL_STRIP_PTR(_v) (ptrauth_strip((void *)(uintptr_t)(_v), ptrauth_key_asia))
+#define VM_KERNEL_STRIP_PAC(_v)         ((uintptr_t)(ptrauth_strip((void *)(uintptr_t)(_v), ptrauth_key_asia)))
 #else /* !ptrauth_calls */
-#define VM_KERNEL_STRIP_PTR(_v) (_v)
+#define VM_KERNEL_STRIP_PAC(_v)         (_v)
 #endif /* ptrauth_calls */
+/* For KEXT, just blow away TBI bits, even if only used for KASAN. */
+#define _VM_KERNEL_STRIP_PTR(_v)        (VM_KERNEL_STRIP_PAC(_v) | (0xFF00000000000000ULL))
+#endif /* XNU_KERNEL_PRIVATE */
+
+#else /* __arm64__ */
+#define _VM_KERNEL_STRIP_PTR(_v)        (_v)
+#endif /* __arm64__ */
+
+#define VM_KERNEL_STRIP_PTR(_va)        (_VM_KERNEL_STRIP_PTR((uintptr_t)(_va)))
+
+/* Vestige from the past, kept for retro-compatibility. */
+#define VM_KERNEL_STRIP_UPTR(_va)       (VM_KERNEL_STRIP_PTR(_va))
 
 #define VM_KERNEL_ADDRESS(_va)  \
-	((((vm_address_t)VM_KERNEL_STRIP_PTR(_va)) >= VM_MIN_KERNEL_ADDRESS) && \
-	 (((vm_address_t)VM_KERNEL_STRIP_PTR(_va)) <= VM_MAX_KERNEL_ADDRESS))
+	((VM_KERNEL_STRIP_PTR(_va) >= VM_MIN_KERNEL_ADDRESS) && \
+	 (VM_KERNEL_STRIP_PTR(_va) <= VM_MAX_KERNEL_ADDRESS))
+
+#define VM_USER_STRIP_PTR(_v)           (VM_USER_STRIP_TBI(_v))
+
+#if DEBUG || DEVELOPMENT || !defined(HAS_APPLE_PAC)
+
+#define ML_ADDRPERM(addr, slide) ((addr) + (slide))
+
+#else /* DEBUG || DEVELOPMENT || !defined(HAS_APPLE_PAC) */
+
+/**
+ * While these function's implementations are machine specific, due to the need
+ * to prevent header file circular dependencies, they need to be externed here
+ * for usage in the addrperm macro
+ */
+__BEGIN_DECLS
+vm_offset_t ml_addrperm_pacga(vm_offset_t addr);
+__END_DECLS
+
+#define ML_ADDRPERM(addr, slide) ml_addrperm_pacga(addr)
+
+#endif /* DEBUG || DEVELOPMENT || !defined(HAS_APPLE_PAC) */
 
 #ifdef  MACH_KERNEL_PRIVATE
 /*
@@ -284,6 +358,10 @@ extern unsigned long            gVirtBase, gPhysBase, gPhysSize;
 #include <stdint.h>
 extern uint64_t                 gDramBase, gDramSize;
 #define is_dram_addr(addr)      (((uint64_t)(addr) - gDramBase) < gDramSize)
+
+#endif /* MACH_KERNEL_PRIVATE */
+
+#ifdef  XNU_KERNEL_PRIVATE
 
 #if KASAN
 /* Increase the stack sizes to account for the redzones that get added to every
@@ -305,7 +383,7 @@ extern uint64_t                 gDramBase, gDramSize;
 #define KERNEL_STACK_MULTIPLIER (1)
 #endif /* KERNEL_STACK_MULTIPLIER */
 # define KERNEL_STACK_SIZE      (4*4096*KERNEL_STACK_MULTIPLIER)
-#endif
+#endif /* XNU_KERNEL_PRIVATE */
 
 #define INTSTACK_SIZE           (4*4096)
 
@@ -339,5 +417,7 @@ extern uint64_t                 gDramBase, gDramSize;
 #endif  /* !__ASSEMBLER__ */
 
 #define SWI_SYSCALL     0x80
+
+#endif /* defined (__arm__) || defined (__arm64__) */
 
 #endif  /* _MACH_ARM_VM_PARAM_H_ */

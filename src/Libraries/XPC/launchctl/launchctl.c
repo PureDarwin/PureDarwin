@@ -57,6 +57,8 @@
 #undef PRIVATE
 
 #include <sys/un.h>
+#include <sys/ioctl.h>
+#include <sys/sockio.h>
 #include <sys/fcntl.h>
 #include <sys/event.h>
 #include <sys/resource.h>
@@ -89,8 +91,8 @@ extern kern_return_t xpc_domain_mig_load_services(mach_port_t j, vm_offset_t ser
 
 //#include <readline/readline.h>
 //#include <readline/history.h>
-// the above are both symlinks to this
-#include <editline/readline.h>
+// The interactive readline implementation is not part of the PureDarwin
+// base image, and launchctl does not use it in this build.
 
 //#include <dns_sd.h>
 #include <paths.h>

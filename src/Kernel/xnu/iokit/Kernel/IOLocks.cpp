@@ -57,6 +57,18 @@ IOLockAlloc( void )
 }
 
 void
+IOLockInlineInit( IOLock *lock )
+{
+	lck_mtx_init(lock, IOLockGroup, LCK_ATTR_NULL);
+}
+
+void
+IOLockInlineDestroy( IOLock * lock)
+{
+	lck_mtx_destroy( lock, IOLockGroup);
+}
+
+void
 IOLockFree( IOLock * lock)
 {
 	lck_mtx_free( lock, IOLockGroup);
@@ -82,10 +94,24 @@ IOLockSleepDeadline( IOLock * lock, void *event,
 	           (wait_interrupt_t) interType, __OSAbsoluteTime(deadline));
 }
 
+int
+IOLockSleepWithInheritor( IOLock *lock, UInt32 lck_sleep_action,
+    void *event, thread_t inheritor, UInt32 interType, uint64_t deadline)
+{
+	return (int) lck_mtx_sleep_with_inheritor(lock, (lck_sleep_action_t) lck_sleep_action, (event_t) event, inheritor,
+	           (wait_interrupt_t) interType, deadline);
+}
+
 void
 IOLockWakeup(IOLock * lock, void *event, bool oneThread)
 {
 	thread_wakeup_prim((event_t) event, oneThread, THREAD_AWAKENED);
+}
+
+void
+IOLockWakeupAllWithInheritor(IOLock * lock, void *event)
+{
+	wakeup_all_with_inheritor((event_t) event, THREAD_AWAKENED);
 }
 
 
@@ -148,7 +174,7 @@ IORecursiveLockAllocWithLockGroup( lck_grp_t * lockGroup )
 		return NULL;
 	}
 
-	lock = IONew( _IORecursiveLock, 1 );
+	lock = IOMallocType( _IORecursiveLock );
 	if (!lock) {
 		return NULL;
 	}
@@ -174,7 +200,7 @@ IORecursiveLockFree( IORecursiveLock * _lock )
 	_IORecursiveLock * lock = (_IORecursiveLock *)_lock;
 
 	lck_mtx_destroy(&lock->mutex, lock->group);
-	IODelete( lock, _IORecursiveLock, 1 );
+	IOFreeType( lock, _IORecursiveLock );
 }
 
 lck_mtx_t *
@@ -300,6 +326,18 @@ IORWLock *
 IORWLockAlloc( void )
 {
 	return lck_rw_alloc_init(IOLockGroup, LCK_ATTR_NULL);
+}
+
+void
+IORWLockInlineInit( IORWLock *lock )
+{
+	lck_rw_init(lock, IOLockGroup, LCK_ATTR_NULL);
+}
+
+void
+IORWLockInlineDestroy( IORWLock * lock)
+{
+	lck_rw_destroy( lock, IOLockGroup);
 }
 
 void

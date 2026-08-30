@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>WorkloadIDTable</key>
+	<dict>
+		<key>com.apple.test</key>
+		<dict>
+			<key>Phases</key>
+			<dict>
+				<key>Realtime</key>
+				<dict>
+					<key>WorkIntervalType</key>
+					<string>DEFAULT</string>
+					<key>WorkloadClass</key>
+					<string>REALTIME</string>
+				</dict>
+			</dict>
+			<key>Root</key>
+			<dict>
+				<key>DefaultPhase</key>
+				<string>Realtime</string>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>

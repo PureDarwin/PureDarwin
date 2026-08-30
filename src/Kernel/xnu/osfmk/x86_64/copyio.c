@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2009-2024 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -178,11 +178,10 @@ copyio(int copy_type, user_addr_t user_addr, char *kernel_addr,
 	int             debug_type = 0xeff70010;
 	debug_type += (copy_type << 2);
 #endif
-	vm_size_t kernel_buf_size = 0;
 
 	if (__improbable(nbytes > copysize_limit_panic)) {
-		panic("%s(%p, %p, %lu) - transfer too large", __func__,
-		    (void *)user_addr, (void *)kernel_addr, nbytes);
+		error = EINVAL;
+		goto out;
 	}
 
 	COPYIO_TRACE(debug_type | DBG_FUNC_START,
@@ -199,18 +198,7 @@ copyio(int copy_type, user_addr_t user_addr, char *kernel_addr,
 		if (__improbable((vm_offset_t)kernel_addr < VM_MIN_KERNEL_AND_KEXT_ADDRESS)) {
 			panic("Invalid copy parameter, copy type: %d, kernel address: %p", copy_type, kernel_addr);
 		}
-		if (__probable(!zalloc_disable_copyio_check)) {
-			zone_t src_zone = NULL;
-			kernel_buf_size = zone_element_size(kernel_addr, &src_zone);
-			/*
-			 * Size of elements in the permanent zone is not saved as a part of the
-			 * zone's info
-			 */
-			if (__improbable(src_zone && !src_zone->z_permanent &&
-			    kernel_buf_size < nbytes)) {
-				panic("copyio: kernel buffer %p has size %lu < nbytes %lu", kernel_addr, kernel_buf_size, nbytes);
-			}
-		}
+		zone_element_bounds_check((vm_offset_t)kernel_addr, nbytes);
 	}
 
 	/* Sanity and security check for addresses to/from a user */
@@ -240,7 +228,6 @@ copyio(int copy_type, user_addr_t user_addr, char *kernel_addr,
 	case COPYOUTATOMIC32:
 	case COPYOUTATOMIC64:
 		__asan_loadN((uptr)kernel_addr, nbytes);
-		kasan_check_uninitialized((vm_address_t)kernel_addr, nbytes);
 		break;
 	}
 #endif
@@ -424,7 +411,7 @@ copyio_phys(addr64_t source, addr64_t sink, vm_size_t csize, int which)
 }
 
 int
-copyinmsg(const user_addr_t user_addr, char *kernel_addr, mach_msg_size_t nbytes)
+copyinmsg(const user_addr_t user_addr, void *kernel_addr, mach_msg_size_t nbytes)
 {
 	return copyio(COPYIN, user_addr, kernel_addr, nbytes, NULL, 0);
 }
@@ -504,7 +491,7 @@ copyinstr(const user_addr_t user_addr, char *kernel_addr, vm_size_t nbytes, vm_s
 }
 
 int
-copyoutmsg(const char *kernel_addr, user_addr_t user_addr, mach_msg_size_t nbytes)
+copyoutmsg(const void *kernel_addr, user_addr_t user_addr, mach_msg_size_t nbytes)
 {
 	CALL_COPYOUT_SHIM_MSG(kernel_addr, user_addr, (vm_size_t)nbytes)
 	return copyio(COPYOUT, user_addr, (char *)(uintptr_t)kernel_addr, nbytes, NULL, 0);
@@ -517,6 +504,17 @@ copyout(const void *kernel_addr, user_addr_t user_addr, vm_size_t nbytes)
 	return copyio(COPYOUT, user_addr, (char *)(uintptr_t)kernel_addr, nbytes, NULL, 0);
 }
 
+#if (DEBUG || DEVELOPMENT)
+int
+verify_write(const void *source, void *dst, size_t size)
+{
+	int rc;
+	disable_preemption();
+	rc = _bcopy((const char*)source, (char*)dst, size);
+	enable_preemption();
+	return rc;
+}
+#endif
 
 kern_return_t
 copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
@@ -528,7 +526,7 @@ copypv(addr64_t src64, addr64_t snk64, unsigned int size, int which)
 	    (unsigned)snk64, size, which, 0);
 
 	if ((which & (cppvPsrc | cppvPsnk)) == 0) {                             /* Make sure that only one is virtual */
-		panic("copypv: no more than 1 parameter may be virtual\n");     /* Not allowed */
+		panic("copypv: no more than 1 parameter may be virtual");     /* Not allowed */
 	}
 	if ((which & (cppvPsrc | cppvPsnk)) == (cppvPsrc | cppvPsnk)) {
 		bothphys = 1;                                                   /* both are physical */

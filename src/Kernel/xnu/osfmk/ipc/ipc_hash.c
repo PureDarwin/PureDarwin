@@ -70,17 +70,12 @@
 #include <ipc/ipc_object.h>
 #include <ipc/ipc_entry.h>
 #include <ipc/ipc_hash.h>
-#include <ipc/ipc_init.h>
 #include <os/hash.h>
 
-#include <mach_ipc_debug.h>
-
-#if     MACH_IPC_DEBUG
 #include <mach/kern_return.h>
 #include <mach_debug/hash_info.h>
 #include <vm/vm_map.h>
 #include <vm/vm_kern.h>
-#endif  /* MACH_IPC_DEBUG */
 
 /*
  * Forward declarations
@@ -109,7 +104,7 @@ ipc_hash_lookup(
 	mach_port_name_t        *namep,
 	ipc_entry_t             *entryp)
 {
-	return ipc_hash_table_lookup(space->is_table, space->is_table_size, obj, namep, entryp);
+	return ipc_hash_table_lookup(is_active_table(space), obj, namep, entryp);
 }
 
 /*
@@ -132,7 +127,7 @@ ipc_hash_insert(
 
 	index = MACH_PORT_INDEX(name);
 	space->is_table_hashed++;
-	ipc_hash_table_insert(space->is_table, space->is_table_size, obj, index, entry);
+	ipc_hash_table_insert(is_active_table(space), obj, index, entry);
 }
 
 /*
@@ -154,7 +149,7 @@ ipc_hash_delete(
 
 	index = MACH_PORT_INDEX(name);
 	space->is_table_hashed--;
-	ipc_hash_table_delete(space->is_table, space->is_table_size, obj, index, entry);
+	ipc_hash_table_delete(is_active_table(space), obj, index, entry);
 }
 
 /*
@@ -200,15 +195,16 @@ ipc_hash_delete(
 
 boolean_t
 ipc_hash_table_lookup(
-	ipc_entry_t             table,
-	ipc_entry_num_t         size,
+	ipc_entry_table_t       array,
 	ipc_object_t            obj,
 	mach_port_name_t        *namep,
 	ipc_entry_t             *entryp)
 {
 	mach_port_index_t hindex, index, hdist;
+	ipc_entry_t       table = ipc_entry_table_base(array);
+	ipc_entry_num_t   size  = ipc_entry_table_count(array);
 
-	if (obj == IO_NULL) {
+	if (obj == IPC_OBJECT_NULL) {
 		return FALSE;
 	}
 
@@ -223,7 +219,7 @@ ipc_hash_table_lookup(
 	 */
 
 	while ((index = table[hindex].ie_index) != 0) {
-		ipc_entry_t entry = &table[index];
+		ipc_entry_t entry = index < size ? &table[index] : IE_NULL;
 
 		/*
 		 * if our current displacement is strictly larger
@@ -239,7 +235,6 @@ ipc_hash_table_lookup(
 		 * slot displacement, then it can be a match, let's check.
 		 */
 		if (hdist == table[hindex].ie_dist) {
-			assert(index < size);
 			if (entry->ie_object == obj) {
 				*entryp = entry;
 				*namep = MACH_PORT_MAKE(index,
@@ -272,16 +267,17 @@ ipc_hash_table_lookup(
 
 void
 ipc_hash_table_insert(
-	ipc_entry_t                     table,
-	ipc_entry_num_t                 size,
+	ipc_entry_table_t               array,
 	ipc_object_t                    obj,
 	mach_port_index_t               index,
 	__assert_only ipc_entry_t       entry)
 {
 	mach_port_index_t hindex, hdist;
+	ipc_entry_t       table = ipc_entry_table_base(array);
+	ipc_entry_num_t   size  = ipc_entry_table_count(array);
 
 	assert(index != 0);
-	assert(obj != IO_NULL);
+	assert(obj != IPC_OBJECT_NULL);
 
 	hindex = IH_TABLE_HASH(obj, size);
 	hdist  = 0;
@@ -329,16 +325,17 @@ ipc_hash_table_insert(
 
 void
 ipc_hash_table_delete(
-	ipc_entry_t                     table,
-	ipc_entry_num_t                 size,
+	ipc_entry_table_t               array,
 	ipc_object_t                    obj,
 	mach_port_index_t               index,
 	__assert_only ipc_entry_t       entry)
 {
 	mach_port_index_t hindex, dindex, dist;
+	ipc_entry_t       table = ipc_entry_table_base(array);
+	ipc_entry_num_t   size  = ipc_entry_table_count(array);
 
 	assert(index != MACH_PORT_NULL);
-	assert(obj != IO_NULL);
+	assert(obj != IPC_OBJECT_NULL);
 
 	hindex = IH_TABLE_HASH(obj, size);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -72,12 +72,14 @@
 #include <kern/pms.h>
 #include <kern/cpu_data.h>
 #include <kern/processor.h>
+#include <kern/monotonic.h>
 #include <sys/kdebug.h>
 #include <console/serial_protos.h>
 #include <vm/vm_page.h>
 #include <vm/pmap.h>
 #include <vm/vm_kern.h>
 #include <machine/pal_routines.h>
+#include <machine/machine_cpc.h>
 #include <i386/fpu.h>
 #include <i386/pmap.h>
 #include <i386/misc_protos.h>
@@ -98,19 +100,18 @@
 #include <i386/Diagnostics.h>
 #include <i386/pmCPU.h>
 #include <i386/tsc.h>
-#include <i386/locks.h> /* LcksOpts */
 #include <i386/acpi.h>
 #if DEBUG
 #include <machine/pal_routines.h>
 #endif
 extern void xcpm_bootstrap(void);
 #if DEVELOPMENT || DEBUG
-#include <i386/trap.h>
+#include <i386/trap_internal.h>
 #endif
 
-#if MONOTONIC
-#include <kern/monotonic.h>
-#endif /* MONOTONIC */
+#if KPERF
+#include <kperf/kptimer.h>
+#endif /* KPERF */
 
 #include <san/kasan.h>
 
@@ -132,13 +133,6 @@ int                     early_boot = 1;
 bool                    serial_console_enabled = false;
 
 static boot_args        *kernelBootArgs;
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-extern void pd_boot_mark_init(boot_args *args);
-extern void pd_boot_mark_direct(uint32_t band, boot_args *args);
-extern int  pd_boot_mark_physmap;
-extern void pd_boot_mark_band(uint32_t band);
-#endif
 
 extern int              disableConsoleOutput;
 extern const char       version[];
@@ -172,7 +166,7 @@ int panic_on_cacheline_mismatch = -1;
 char panic_on_trap_procname[64];
 uint32_t panic_on_trap_mask;
 #endif
-bool last_branch_support_enabled;
+lbr_modes_t last_branch_enabled_modes;
 int insn_copyin_count;
 #if DEVELOPMENT || DEBUG
 #define DEFAULT_INSN_COPYIN_COUNT x86_INSTRUCTION_STATE_MAX_INSN_BYTES
@@ -182,6 +176,8 @@ int insn_copyin_count;
 
 char *physfree;
 void idt64_remap(void);
+
+TUNABLE(bool, restore_boot, "-restore", false);
 
 /*
  * Note: ALLOCPAGES() can only be used safely within Idle_PTs_init()
@@ -440,28 +436,7 @@ Idle_PTs_init(void)
 	 */
 	physmap_base = new_physmap_base;
 	physmap_max = new_physmap_max;
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	/*
-	 * Carry the high-framebuffer mapping across the page-table switch.
-	 */
-	{
-		extern pd_entry_t BootFBPD[];
-		uint64_t fb = kernelBootArgs->Video.v_baseAddr;
-
-		if (fb >= (4ULL << 30) && fb < (512ULL << 30)) {
-			IdlePDPT[(fb >> 30) & 0x1ff] =
-			    (pdpt_entry_t)ID_MAP_VTOP(BootFBPD)
-			    | INTEL_PTE_VALID | INTEL_PTE_WRITE;
-		}
-	}
-#endif
-
 	set_cr3_raw((uintptr_t)ID_MAP_VTOP(IdlePML4));
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_boot_mark_physmap = 1;
-#endif
 }
 
 /*
@@ -687,7 +662,9 @@ i386_slide_and_rebase_image(uintptr_t kstart_addr)
 	 * rebase/slide all the kexts in the collection
 	 * (EFI should have already rebased the kernel)
 	 */
+	DBG("[MH] pre kernel_collection_slide kc_mh=%p\n", kc_mh);
 	kernel_collection_slide(kc_mh, (const void **) (void *)collection_base_pointers);
+	DBG("[MH] post kernel_collection_slide\n");
 
 
 	/*
@@ -696,6 +673,7 @@ i386_slide_and_rebase_image(uintptr_t kstart_addr)
 	 */
 	kernel_collection_adjust_mh_addrs(kc_mh, slide, false,
 	    NULL, NULL, NULL, NULL, NULL, NULL, &kc_highest_nonlinkedit_vmaddr);
+	DBG("[MH] post kernel_collection_adjust_mh_addrs\n");
 }
 
 /*
@@ -725,11 +703,6 @@ vstart(vm_offset_t boot_args_start)
 #endif
 
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_boot_mark_direct(PD_BAND_VSTART_C, (boot_args *)boot_args_start);
-	pd_boot_mark_init((boot_args *)boot_args_start);
-#endif
-
 	postcode(VSTART_ENTRY);
 
 	/*
@@ -750,7 +723,6 @@ vstart(vm_offset_t boot_args_start)
 		 * Get startup parameters.
 		 */
 		kernelBootArgs = (boot_args *)boot_args_start;
-
 		lphysfree = kernelBootArgs->kaddr + kernelBootArgs->ksize;
 		physfree = (void *)(uintptr_t)((lphysfree + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
 
@@ -809,9 +781,9 @@ vstart(vm_offset_t boot_args_start)
 		kasan_notify_stolen((uintptr_t)ml_static_ptovirt((vm_offset_t)physfree));
 #endif
 
-#if MONOTONIC
-		mt_early_init();
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+		cpc_early_init();
+#endif /* CONFIG_CPU_COUNTERS */
 
 		first_avail = (vm_offset_t)ID_MAP_VTOP(physfree);
 
@@ -879,15 +851,8 @@ i386_init(void)
 	postcode(I386_INIT_ENTRY);
 
 	pal_i386_init();
-	pd_boot_mark_band(PD_BAND_PAL_INIT);
-	/* Before anything can consult the CPU topology: the lock guarding it was
-	 * otherwise not initialised until cpu_thread_init(), and using it before
-	 * then panics from inside the panic path, hiding the real fault. */
-	x86_topo_lock_init();
 	tsc_init();
-	pd_boot_mark_band(PD_BAND_TSC);
 	rtclock_early_init();   /* mach_absolute_time() now functional */
-	pd_boot_mark_band(PD_BAND_RTCLOCK);
 
 	kernel_debug_string_early("i386_init");
 	//pstate_trace(); /* Where does this come from? */
@@ -898,29 +863,24 @@ i386_init(void)
 	/* Initialize machine-check handling */
 	mca_cpu_init();
 #endif
-	pd_boot_mark_band(PD_BAND_MCA);
 
-	master_cpu = 0;
+	boot_cpu_id = 0;
 
 	kernel_debug_string_early("kernel_startup_bootstrap");
 	kernel_startup_bootstrap();
-	pd_boot_mark_band(PD_BAND_STARTUP_BS);
 
 	/*
 	 * Initialize the timer callout world
 	 */
 	timer_call_init();
-	pd_boot_mark_band(PD_BAND_TIMER_CALL);
 
 	cpu_init();
 
 	postcode(CPU_INIT_D);
-	pd_boot_mark_band(PD_BAND_CPU_INIT);
 
 	/* setup debugging output if one has been chosen */
 	kernel_startup_initialize_upto(STARTUP_SUB_KPRINTF);
 	kprintf("kprintf initialized\n");
-	pd_boot_mark_band(PD_BAND_KPRINTF);
 
 	if (!PE_parse_boot_argn("diag", &dgWork.dgFlags, sizeof(dgWork.dgFlags))) {
 		dgWork.dgFlags = 0;
@@ -960,10 +920,10 @@ i386_init(void)
 	}
 #endif
 	/* But allow that to be overridden via boot-arg: */
-	if (!PE_parse_boot_argn("lbr_support", &last_branch_support_enabled,
-	    sizeof(last_branch_support_enabled))) {
+	if (!PE_parse_boot_argn("lbr_support", &last_branch_enabled_modes,
+	    sizeof(last_branch_enabled_modes))) {
 		/* Disable LBR support by default due to its high context switch overhead */
-		last_branch_support_enabled = false;
+		last_branch_enabled_modes = LBR_ENABLED_NONE;
 	}
 
 	serialmode = 0;
@@ -971,6 +931,8 @@ i386_init(void)
 		/* We want a serial keyboard and/or console */
 		kprintf("Serial mode specified: %08X\n", serialmode);
 		int force_sync = serialmode & SERIALMODE_SYNCDRAIN;
+		disable_iolog_serial_output = (serialmode & SERIALMODE_NO_IOLOG) != 0;
+		enable_dklog_serial_output = restore_boot || (serialmode & SERIALMODE_DKLOG) != 0;
 		if (force_sync || PE_parse_boot_argn("drain_uart_sync", &force_sync, sizeof(force_sync))) {
 			if (force_sync) {
 				serialmode |= SERIALMODE_SYNCDRAIN;
@@ -1045,17 +1007,20 @@ i386_init(void)
 	PE_init_platform(TRUE, kernelBootArgs);
 	PE_create_console();
 
+	/* set %gs early so that power management can use locks */
+	thread_t thread = thread_bootstrap();
+	machine_set_current_thread(thread);
+
 	kernel_debug_string_early("power_management_init");
 	power_management_init();
 	xcpm_bootstrap();
 
-#if MONOTONIC
-	mt_cpu_up(cpu_datap(0));
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	cpc_cpu_transition(CPC_CPU_EARLY_INIT, cpu_datap(0));
+	cpc_cpu_transition(CPC_CPU_ONLINE, cpu_datap(0));
+#endif /* CONFIG_CPU_COUNTERS */
 
 	processor_bootstrap();
-	thread_t thread = thread_bootstrap();
-	machine_set_current_thread(thread);
 
 	//pstate_trace();
 	kernel_debug_string_early("machine_startup");
@@ -1109,6 +1074,9 @@ do_init_slave(boolean_t fast_restart)
 
 		/* Enable LBRs on non-boot CPUs */
 		i386_lbr_init(cpuid_info(), false);
+#if CONFIG_CPU_COUNTERS
+		cpc_cpu_transition(CPC_CPU_EARLY_INIT, current_cpu_datap());
+#endif /* CONFIG_CPU_COUNTERS */
 	} else {
 		init_param = FAST_SLAVE_INIT;
 	}
@@ -1129,13 +1097,27 @@ do_init_slave(boolean_t fast_restart)
 	cpu_init();     /* Sets cpu_running which starter cpu waits for */
 
 
-#if MONOTONIC
-	mt_cpu_up(current_cpu_datap());
-#endif /* MONOTONIC */
+#if CONFIG_CPU_COUNTERS
+	cpc_cpu_transition(CPC_CPU_ONLINE, current_cpu_datap());
+#endif /* CONFIG_CPU_COUNTERS */
 
-	slave_main(init_param);
+#if KPERF
+	/*
+	 * We can only directly invoke kptimer_curcpu_up() when there is already an
+	 * active thread (that is, that this CPU has already been started at some point),
+	 * otherwise the ktrace calls within the kptimer operations will try to deref
+	 * the current thread and will instead cause a system reset.
+	 * If this is the first time the CPU is being started, we don't need to call
+	 * kptimer_curcpu_up().
+	 */
+	if (current_processor()->active_thread != THREAD_NULL) {
+		kptimer_curcpu_up();
+	}
+#endif /* KPERF */
 
-	panic("do_init_slave() returned from slave_main()");
+	secondary_cpu_main(init_param);
+
+	panic("do_init_slave() returned from secondary_cpu_main()");
 }
 
 /*

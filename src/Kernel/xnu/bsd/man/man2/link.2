@@ -33,7 +33,7 @@
 .\"
 .\"     @(#)link.2	8.3 (Berkeley) 1/12/94
 .\"
-.Dd October 29, 2008
+.Dd June 3, 2021
 .Dt LINK 2
 .Os BSD 4
 .Sh NAME
@@ -126,12 +126,28 @@ Values for
 are constructed by a bitwise-inclusive OR of flags from the following
 list, defined in
 .In fcntl.h :
-.Bl -tag -width indent
+.Bl -tag -width AT_SYMLINK_NOFOLLOW_ANY
 .It Dv AT_SYMLINK_FOLLOW
 If
 .Fa name1
 names a symbolic link, a new link for the target of the symbolic link is
 created.
+.It Dv AT_SYMLINK_NOFOLLOW_ANY
+If
+.Fa name1
+names a symbolic link, a new link for the symbolic link is
+created.
+If a symbolic link is encountered during pathname resolution, an error is returned.
+.It Dv AT_RESOLVE_BENEATH
+If
+.Fa name1
+does not reside in the hierarchy beneath the starting directory,
+an error is returned.
+.It Dv AT_UNIQUE
+If
+.Fa name1
+resolves to a vnode with multiple hard links,
+an error is returned.
 .El
 .Pp
 If
@@ -156,14 +172,14 @@ the behavior is identical to a call to
 Unless
 .Fa flag
 contains the
-.Dv AT_SYMLINK_FOLLOW
-flag, if
-.Fa name1
-names a symbolic link, a new link is created for the symbolic link
-.Fa name1
-and not its target. On OS X, not assigning AT_SYMLINK_FOLLOW to
+.Dv AT_SYMLINK_FOLLOW,
+.Dv AT_SYMLINK_NOFOLLOW_ANY,
+.Dv AT_RESOLVE_BENEATH
+or the
+.Dv AT_UNIQUE
+flags. On OS X, not assigning AT_SYMLINK_FOLLOW, AT_SYMLINK_NOFOLLOW_ANY, AT_RESOLVE_BENEATH or AT_UNIQUE to
 .Fa flag
-may result in some filesystems returning an error.
+may result in some file systems returning an error.
 .Sh RETURN VALUES
 Upon successful completion, a value of 0 is returned.  Otherwise,
 a value of -1 is returned and
@@ -248,6 +264,17 @@ The link named by
 and the file named by
 .Fa path1
 are on different file systems.
+.\" ==========
+.It Bq Er EDEADLK
+The file named by
+.Fa path1
+is a
+.Dq dataless
+file that must be materialized before being linked and the I/O policy of
+the current thread or process disallows file materialization
+.Po see
+.Xr getiopolicy_np 3
+.Pc .
 .El
 .Pp
 In addition to the errors returned by the
@@ -275,7 +302,9 @@ argument is not valid.
 .It Bq Er ENOTSUP
 .Fa flag
 was not set to
-.Dv AT_SYMLINK_FOLLOW (some filesystems only)
+.Dv AT_SYMLINK_FOLLOW (some file systems only).
+.It Bq Er ENOTSUP
+The underlying file system does not support this call.
 .It Bq Er ENOTDIR
 The
 .Fa name1
@@ -288,6 +317,28 @@ or
 respectively, is neither
 .Dv AT_FDCWD
 nor a file descriptor associated with a directory.
+.It Bq Er ELOOP
+If AT_SYMLINK_NOFOLLOW_ANY was passed and a symbolic link was encountered in
+translating either the
+.Fa name1
+or
+.Fa name2
+arguments.
+.It Bq Er ENOTCAPABLE
+AT_RESOLVE_BENEATH was passed and
+.Fa path
+does not reside in the directory hierarchy beneath the starting directory encountered in
+translating either the
+.Fa name1
+or
+.Fa name2
+arguments.
+.It Bq Er ENOTCAPABLE
+The flag parameter has the
+.Dv  AT_UNIQUE
+bit set and
+.Fa name1
+resolves to a vnode with multiple links.
 .El
 .Sh SEE ALSO
 .Xr symlink 2 ,

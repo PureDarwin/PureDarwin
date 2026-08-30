@@ -47,7 +47,7 @@ target_link_libraries(IOAudioFamily.kext PRIVATE xnu_kernel_private_headers)
 # Force-included so the vendored Apple sources stay unmodified; see the header
 # for why the published sources need it against this XNU.
 target_compile_options(IOAudioFamily.kext PRIVATE
-    -include ${CMAKE_CURRENT_SOURCE_DIR}/pd-iomalloc-compat.h)
+    -include${CMAKE_CURRENT_SOURCE_DIR}/pd-iomalloc-compat.h)
 
 target_compile_options(IOAudioFamily.kext PRIVATE
     -Wno-sign-conversion -Wno-implicit-int-conversion -Wno-shorten-64-to-32

@@ -26,9 +26,11 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
+#include <sys/errno.h>
 #include <sys/sysctl.h>
+#include <tests/ktest.h>
 
-#if defined(KERNEL_INTEGRITY_CTRR) && defined(CONFIG_XNUPOST)
+#if (defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)) && defined(CONFIG_XNUPOST)
 extern kern_return_t ctrr_test(void);
 
 static int
@@ -40,10 +42,14 @@ sysctl_run_ctrr_test(__unused struct sysctl_oid *oidp, __unused void *arg1, __un
 	if (error || !changed) {
 		return error;
 	}
-	return ctrr_test();
+	kern_return_t kr = ctrr_test();
+	if (kr != KERN_SUCCESS || T_TESTRESULT != T_STATE_PASS) {
+		return EDEVERR;
+	}
+	return 0;
 }
 
 SYSCTL_PROC(_kern, OID_AUTO, run_ctrr_test,
     CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
     0, 0, sysctl_run_ctrr_test, "I", "");
-#endif /* defined(KERNEL_INTEGRITY_CTRR) && defined(CONFIG_XNUPOST) */
+#endif /* (defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)) && defined(CONFIG_XNUPOST) */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2012-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -82,7 +82,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
-#include <sys/mcache.h>
+#include <sys/mcache.h> /* for VERIFY() */
 #include <sys/mbuf.h>
 #include <sys/proc_internal.h>
 #include <sys/socketvar.h>
@@ -94,19 +94,19 @@
 
 #include <netinet/in_pcb.h>
 #include <net/flowadv.h>
+#if SKYWALK
+#include <skywalk/os_channel.h>
+#endif /* SKYWALK */
 
 /* Lock group and attribute for fadv_lock */
-static lck_grp_t        *fadv_lock_grp;
-static lck_grp_attr_t   *fadv_lock_grp_attr;
-decl_lck_mtx_data(static, fadv_lock);
+static LCK_GRP_DECLARE(fadv_lock_grp, "fadv_lock");
+static LCK_MTX_DECLARE(fadv_lock, &fadv_lock_grp);
 
 /* protected by fadv_lock */
-static STAILQ_HEAD(fadv_head, flowadv_fcentry) fadv_list;
+static STAILQ_HEAD(fadv_head, flowadv_fcentry) fadv_list =
+    STAILQ_HEAD_INITIALIZER(fadv_list);
 static thread_t fadv_thread = THREAD_NULL;
 static uint32_t fadv_active;
-
-static unsigned int fadv_size;                  /* size of flowadv_fcentry */
-static struct mcache *fadv_cache;               /* mcache for flowadv_fcentry */
 
 #define FADV_CACHE_NAME  "flowadv"              /* cache name */
 
@@ -116,17 +116,6 @@ static void flowadv_thread_func(void *, wait_result_t);
 void
 flowadv_init(void)
 {
-	STAILQ_INIT(&fadv_list);
-
-	/* Setup lock group and attribute for fadv_lock */
-	fadv_lock_grp_attr = lck_grp_attr_alloc_init();
-	fadv_lock_grp = lck_grp_alloc_init("fadv_lock", fadv_lock_grp_attr);
-	lck_mtx_init(&fadv_lock, fadv_lock_grp, NULL);
-
-	fadv_size = sizeof(struct flowadv_fcentry);
-	fadv_cache = mcache_create(FADV_CACHE_NAME, fadv_size,
-	    sizeof(uint64_t), 0, MCR_SLEEP);
-
 	if (kernel_thread_start(flowadv_thread_func, NULL, &fadv_thread) !=
 	    KERN_SUCCESS) {
 		panic("%s: couldn't create flow event advisory thread",
@@ -139,20 +128,13 @@ flowadv_init(void)
 struct flowadv_fcentry *
 flowadv_alloc_entry(int how)
 {
-	struct flowadv_fcentry *fce;
-
-	if ((fce = mcache_alloc(fadv_cache, (how == M_WAITOK) ?
-	    MCR_SLEEP : MCR_NOSLEEP)) != NULL) {
-		bzero(fce, fadv_size);
-	}
-
-	return fce;
+	return kalloc_type(struct flowadv_fcentry, how | Z_ZERO);
 }
 
 void
 flowadv_free_entry(struct flowadv_fcentry *fce)
 {
-	mcache_free(fadv_cache, fce);
+	kfree_type(struct flowadv_fcentry, fce);
 }
 
 void
@@ -212,20 +194,58 @@ flowadv_thread_cont(int err)
 			STAILQ_NEXT(fce, fce_link) = NULL;
 
 			lck_mtx_unlock(&fadv_lock);
+
+			if (fce->fce_event_type == FCE_EVENT_TYPE_CONGESTION_EXPERIENCED) {
+				switch (fce->fce_flowsrc_type) {
+				case FLOWSRC_CHANNEL:
+					kern_channel_flowadv_report_congestion_event(fce,
+					    fce->fce_congestion_cnt, fce->l4s_ce_cnt,
+					    fce->fce_pkts_since_last_report);
+					break;
+				case FLOWSRC_INPCB:
+				case FLOWSRC_IFNET:
+				case FLOWSRC_PF:
+				default:
+					break;
+				}
+
+				goto next;
+			}
+
 			switch (fce->fce_flowsrc_type) {
 			case FLOWSRC_INPCB:
 				inp_flowadv(fce->fce_flowid);
 				break;
 
 			case FLOWSRC_IFNET:
+#if SKYWALK
+				/*
+				 * when using the flowID allocator, IPSec
+				 * driver uses the "pkt_flowid" field in mbuf
+				 * packet header for the globally unique flowID
+				 * and the "pkt_mpriv_srcid" field carries the
+				 * interface flow control id (if_flowhash).
+				 * For IPSec flows, it is the IPSec driver
+				 * network interface which is flow controlled,
+				 * instead of the IPSec SA flow.
+				 */
+				ifnet_flowadv(fce->fce_flowsrc_token);
+#else /* !SKYWALK */
 				ifnet_flowadv(fce->fce_flowid);
+#endif /* !SKYWALK */
 				break;
 
+#if SKYWALK
+			case FLOWSRC_CHANNEL:
+				kern_channel_flowadv_clear(fce);
+				break;
+#endif /* SKYWALK */
 
 			case FLOWSRC_PF:
 			default:
 				break;
 			}
+next:
 			flowadv_free_entry(fce);
 			lck_mtx_lock_spin(&fadv_lock);
 
@@ -252,10 +272,4 @@ flowadv_thread_func(void *v, wait_result_t w)
 	 */
 	lck_mtx_unlock(&fadv_lock);
 	VERIFY(0);
-}
-
-void
-flowadv_reap_caches(boolean_t purge)
-{
-	mcache_reap_now(fadv_cache, purge);
 }

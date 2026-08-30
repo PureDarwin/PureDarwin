@@ -1,4 +1,5 @@
 from xnu import *
+from process import GetBSDThread, GetMachThread
 from scheduler import GetRecentTimestamp
 import xnudefines
 
@@ -36,13 +37,14 @@ def GetWorkqueueSummary(proc, wq):
         if wq.wq_flags & pended: s += 'P'
         s += ']'
         wq_flags.append(s)
+    task = GetTaskFromProc(proc)
 
-    return "{p.task: <#020x} {p: <#020x} {wq: <#020x} {wq.wq_threads_scheduled: <10d} {wq.wq_reqcount: <10d} {wq.wq_thidlecount: <10d} {wq.wq_thdying_count: <10d} {wq.wq_creations: <10d} {wq.wq_fulfilled: <10d} {wq_flags: <30s}".format(p=proc, wq=wq, wq_flags=" ".join(wq_flags));
+    return "{task: <#020x} {p: <#020x} {wq: <#020x} {wq.wq_threads_scheduled: <10d} {wq.wq_reqcount: <10d} {wq.wq_thidlecount: <10d} {wq.wq_thdying_count: <10d} {wq.wq_creations: <10d} {wq.wq_fulfilled: <10d} {wq_flags: <30s}".format(task=task, p=proc, wq=wq, wq_flags=" ".join(wq_flags));
 
 @header("{:<20s} {:<20s} {:>10s}  {:9s} {:<20s} {:<10s} {:<30s}".format(
     'thread', 'uthread', 'thport', 'kind', 'kqueue', 'idle (ms)', 'uu_workq_flags'))
 def GetWQThreadSummary(th, uth):
-    p = Cast(th.task.bsd_info, 'proc *')
+    p = th.t_tro.tro_proc
     wq = p.p_wqptr
 
     uu_workq_flags = []
@@ -60,6 +62,10 @@ def GetWQThreadSummary(th, uth):
         idle = "%#.03f" % (ts)
     if uth.uu_workq_flags & 0x04: uu_workq_flags.append("DYING")
     if uth.uu_workq_flags & 0x08: uu_workq_flags.append("OVERCOMMIT")
+    if uth.uu_workq_flags & 0x100: uu_workq_flags.append("COOPERATIVE")
+    if uth.uu_workq_flags & 0x200: uu_workq_flags.append("PERMANENT_BIND")
+    if uth.uu_workq_flags & 0x400: uu_workq_flags.append("WORK_INTERVAL_JOINED")
+    if uth.uu_workq_flags & 0x800: uu_workq_flags.append("WORK_INTERVAL_FAILED")
     if uth.uu_workq_flags & 0x10: uu_workq_flags.append("OUTSIDE_QOS")
     if uth.uu_workq_flags & 0x20: uu_workq_flags.append("IDLE_CLEANUP")
     if uth.uu_workq_flags & 0x40: uu_workq_flags.append("EARLY_BOUND")
@@ -82,22 +88,24 @@ def GetWQThreadSummary(th, uth):
 
 @header("{:<20s} {:<20s} {:<20s} {:<10s} {:<4s} {:<6s} {:<6s} {:<6s} {:<30s}".format(
     'request', 'kqueue', 'thread', 'state', '#', 'qos', 'kq_qos', 'kq_ovr', 'tr_flags'))
-def GetWorkqueueThreadRequestSummary(proc, req):
+def GetWorkqueueThreadRequestSummary(proc, req): # req is the actual structure, not pointer
     kq = 0
     tr_flags = []
+    req_addr = addressof(req)
 
     if req.tr_flags & 0x01:
         tr_flags.append("KEVENT")
         kq = proc.p_fd.fd_wqkqueue
     if req.tr_flags & 0x02:
         tr_flags.append("WORKLOOP")
-        kq = ContainerOf(req, 'struct kqworkloop', 'kqwl_request')
+        kq = ContainerOf(req_addr, 'struct kqworkloop', 'kqwl_request')
     if req.tr_flags & 0x04: tr_flags.append("OVERCOMMIT")
     if req.tr_flags & 0x08: tr_flags.append("PARAMS")
     if req.tr_flags & 0x10: tr_flags.append("OUTSIDE_QOS")
+    if req.tr_flags & 0x20: tr_flags.append("COOPERATIVE")
+    if req.tr_flags & 0x40: tr_flags.append("PERMANENT_BIND")
 
     state = {0: "IDLE", 1: "NEW", 2: "QUEUED", 3: "CANCELED", 4: "BINDING", 5: "BOUND" }[int(req.tr_state)]
-    if req.tr_kq_wakeup: state += "*"
 
     thread = 0
     if int(req.tr_state) in [4, 5]: # BINDING or BOUND
@@ -113,10 +121,9 @@ def GetWorkqueueThreadRequestSummary(proc, req):
 
     kq_qos = xnudefines.thread_qos_short_strings[int(req.tr_kq_qos_index)]
     kq_ovr = xnudefines.thread_qos_short_strings[int(req.tr_kq_override_index)]
-    req_addr = unsigned(addressof(req))
 
-    return "{req_addr: <#020x} {kq: <#020x} {thread: <#020x} {state: <10s} {req.tr_count: <4d} {qos: <6s} {kq_qos: <6s} {kq_ovr: <6s} {tr_flags: <30s}".format(
-            req_addr=req_addr, req=req, kq=kq, thread=thread, state=state, qos=qos, kq_qos=kq_qos, kq_ovr=kq_ovr, tr_flags=" ".join(tr_flags))
+    return "{req_addr: <#020x} {kq: <#020x} {thread: <#020x} {state: <10s} {tr_count: <4d} {qos: <6s} {kq_qos: <6s} {kq_ovr: <6s} {tr_flags: <30s}".format(
+            req_addr=unsigned(req_addr), kq=kq, thread=thread, state=state, qos=qos, kq_qos=kq_qos, kq_ovr=kq_ovr, tr_count=req.tr_count, tr_flags=" ".join(tr_flags))
 
 @lldb_command('showwqthread', fancy=True)
 def ShowWQThread(cmd_args=None, cmd_options={}, O=None):
@@ -125,15 +132,15 @@ def ShowWQThread(cmd_args=None, cmd_options={}, O=None):
         usage: showworkqthread <thread_t>
     """
 
-    if not cmd_args:
-        return O.error('missing struct proc * argument')
+    if cmd_args is None or len(cmd_args) == 0:
+        raise ArgumentError('missing struct proc * argument')
 
     th = kern.GetValueFromAddress(cmd_args[0], "struct thread *")
     if not (th.thread_tag & 0x20):
         raise ArgumentError('not a workqueue thread')
 
     with O.table(GetWQThreadSummary.header):
-        print GetWQThreadSummary(th, Cast(th.uthread, 'struct uthread *'))
+        print(GetWQThreadSummary(th, GetBSDThread(th)))
 
 
 @lldb_command('showprocworkqueue', fancy=True)
@@ -143,37 +150,44 @@ def ShowProcWorkqueue(cmd_args=None, cmd_options={}, O=None):
         usage: showprocworkqueue <proc_t>
     """
 
-    if not cmd_args:
-        return O.error('missing struct proc * argument')
+    if cmd_args is None or len(cmd_args) == 0:
+        raise ArgumentError('missing struct proc * argument')
 
     proc = kern.GetValueFromAddress(cmd_args[0], "proc_t")
-    wq = Cast(proc.p_wqptr, "struct workqueue *");
+    wq = Cast(proc.p_wqptr, "struct workqueue *")
     if not wq:
         return O.error("{:#x} doesn't have a workqueue", proc)
 
     with O.table(GetWorkqueueSummary.header):
-        print GetWorkqueueSummary(proc, wq)
+        print(GetWorkqueueSummary(proc, wq))
 
         with O.table(GetWorkqueueThreadRequestSummary.header, indent=True):
             if wq.wq_reqcount:
-                print ""
+                print("")
             if wq.wq_event_manager_threadreq:
-                print GetWorkqueueThreadRequestSummary(proc, wq.wq_event_manager_threadreq)
+                print(GetWorkqueueThreadRequestSummary(proc, dereference(wq.wq_event_manager_threadreq)))
             for req in IterateSchedPriorityQueue(wq.wq_overcommit_queue, 'struct workq_threadreq_s', 'tr_entry'):
-                print GetWorkqueueThreadRequestSummary(proc, req)
+                print(GetWorkqueueThreadRequestSummary(proc, dereference(req)))
             for req in IterateSchedPriorityQueue(wq.wq_constrained_queue, 'struct workq_threadreq_s', 'tr_entry'):
-                print GetWorkqueueThreadRequestSummary(proc, req)
+                print(GetWorkqueueThreadRequestSummary(proc, dereference(req)))
             for req in IterateSchedPriorityQueue(wq.wq_special_queue, 'struct workq_threadreq_s', 'tr_entry'):
-                print GetWorkqueueThreadRequestSummary(proc, req)
+                print(GetWorkqueueThreadRequestSummary(proc, dereference(req)))
+            for qos in xnudefines.thread_qos_short_strings:
+                bucket = 0;
+                if qos > 2: #Greater than BG
+                    bucket = qos - 2;
+                for req in IterateSTAILQ_HEAD(wq.wq_cooperative_queue[bucket], "tr_link"):
+                    print(GetWorkqueueThreadRequestSummary(proc, dereference(req)))
+
 
         with O.table(GetWQThreadSummary.header, indent=True):
-            print ""
+            print("")
             for uth in IterateTAILQ_HEAD(wq.wq_thrunlist, "uu_workq_entry"):
-                print GetWQThreadSummary(Cast(uth.uu_thread, 'struct thread *'), uth)
+                print(GetWQThreadSummary(GetMachThread(uth), uth))
             for uth in IterateTAILQ_HEAD(wq.wq_thidlelist, "uu_workq_entry"):
-                print GetWQThreadSummary(Cast(uth.uu_thread, 'struct thread *'), uth)
+                print(GetWQThreadSummary(GetMachThread(uth), uth))
             for uth in IterateTAILQ_HEAD(wq.wq_thnewlist, "uu_workq_entry"):
-                print GetWQThreadSummary(Cast(uth.uu_thread, 'struct thread *'), uth)
+                print(GetWQThreadSummary(GetMachThread(uth), uth))
 
 @lldb_command('showallworkqueues', fancy=True)
 def ShowAllWorkqueues(cmd_args=None, cmd_options={}, O=None):
@@ -184,7 +198,9 @@ def ShowAllWorkqueues(cmd_args=None, cmd_options={}, O=None):
 
     with O.table(GetWorkqueueSummary.header):
         for t in kern.tasks:
-            proc = Cast(t.bsd_info, 'proc *')
+            proc = GetProcFromTask(t)
+            if proc is None:
+                continue
             wq = Cast(proc.p_wqptr, "struct workqueue *");
             if wq:
-                print GetWorkqueueSummary(proc, wq)
+                print(GetWorkqueueSummary(proc, wq))

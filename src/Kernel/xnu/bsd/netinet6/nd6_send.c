@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2013-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -31,8 +31,6 @@
 #include <sys/proc.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
-
-#include <libkern/crypto/sha1.h>
 
 #include <net/if.h>
 
@@ -84,13 +82,10 @@ sysctl_cga_parameters SYSCTL_HANDLER_ARGS
 	char *oldp, *newp;
 	const char *fin;
 	struct in6_cga_nodecfg cfg;
-	struct iovec *iov;
+	struct iovec *__single iov;
 	int error;
 	char *buffer;
 	u_int16_t u16;
-#if CONFIG_MACF
-	kauth_cred_t cred;
-#endif
 
 	namelen = arg2;
 	if (namelen != 0) {
@@ -106,17 +101,16 @@ sysctl_cga_parameters SYSCTL_HANDLER_ARGS
 	}
 
 #if CONFIG_MACF
-	cred = kauth_cred_proc_ref(current_proc());
-	error = mac_system_check_info(cred, "net.inet6.send.cga_parameters");
-	kauth_cred_unref(&cred);
+	error = mac_system_check_info(current_cached_proc_cred(req->p),
+	    "net.inet6.send.cga_parameters");
 	if (error != 0) {
 		log(LOG_ERR, "%s: mac_system_check_info denied.\n", __func__);
 		return EPERM;
 	}
 #endif
 
-	MALLOC(buffer, char *, SYSCTL_CGA_PARAMETERS_BUFFER_SIZE, M_IP6CGA,
-	    M_WAITOK | M_ZERO);
+	buffer = (char *)kalloc_data(SYSCTL_CGA_PARAMETERS_BUFFER_SIZE,
+	    Z_WAITOK | Z_ZERO);
 	if (buffer == NULL) {
 		log(LOG_ERR, "%s: could not allocate marshaling buffer.\n",
 		    __func__);
@@ -150,7 +144,7 @@ sysctl_cga_parameters SYSCTL_HANDLER_ARGS
 			oldp += sizeof(u16);
 
 			if (&oldp[iov->iov_len] < fin) {
-				bcopy(iov->iov_base, oldp, iov->iov_len);
+				bcopy(__unsafe_forge_bidi_indexable(void *, iov->iov_base, iov->iov_len), oldp, iov->iov_len);
 			}
 			oldp += iov->iov_len;
 
@@ -246,7 +240,7 @@ sysctl_cga_parameters SYSCTL_HANDLER_ARGS
 
 done:
 	in6_cga_node_unlock();
-	FREE(buffer, M_IP6CGA);
+	kfree_data(buffer, SYSCTL_CGA_PARAMETERS_BUFFER_SIZE);
 	return error;
 }
 

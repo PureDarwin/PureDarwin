@@ -43,6 +43,7 @@
 ##########################################################################
 
 use strict;
+use feature 'refaliasing';
 use File::Basename ();
 use File::Copy ();
 use File::Spec;
@@ -63,6 +64,7 @@ my %TypeBytes = (
     'au_asid_t'		=> 4,
     'sae_associd_t'	=> 4,
     'caddr_t'		=> 4,
+    'caddr_ut'	=> 4,
     'sae_connid_t'	=> 4,
     'gid_t'		=> 4,
     'id_t'		=> 4,
@@ -79,6 +81,7 @@ my %TypeBytes = (
     'semun_t'		=> 4,
     'sigset_t'		=> 4,
     'size_t'		=> 4,
+    'size_ut'		=> 4,
     'socklen_t'		=> 4,
     'ssize_t'		=> 4,
     'u_int'		=> 4,
@@ -87,8 +90,10 @@ my %TypeBytes = (
     'uint32_t'		=> 4,
     'uint64_t'		=> 8,
     'user_addr_t'	=> 4,
+    'user_addr_ut'	=> 4,
     'user_long_t'	=> 4,
     'user_size_t'	=> 4,
+    'user_size_ut'	=> 4,
     'user_ssize_t'	=> 4,
     'user_ulong_t'	=> 4,
     'uuid_t'		=> 4,
@@ -100,8 +105,10 @@ my %TypeBytes = (
 my %UserKernelMismatchTypes = (
     'long'          => 'SIGN_EXTEND',
     'size_t'        => 'ZERO_EXTEND',
+    'size_ut'       => 'ZERO_EXTEND',
     'u_long'        => 'ZERO_EXTEND',
     'user_size_t'   => 'ZERO_EXTEND',
+    'user_size_ut'  => 'ZERO_EXTEND',
     'user_ssize_t'  => 'SIGN_EXTEND'
 );
 
@@ -494,4 +501,3 @@ for my $s (@sources) {
 }
 undef $f;
 undef $path;
-

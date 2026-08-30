@@ -30,8 +30,6 @@
 #define _LIBKERN_OSKEXTLIB_H
 
 #include <sys/cdefs.h>
-__BEGIN_DECLS
-
 #include <stdint.h>
 #include <mach/kmod.h>
 #include <mach/vm_types.h>
@@ -41,9 +39,10 @@ __BEGIN_DECLS
 #include <libkern/OSTypes.h>
 #include <libkern/OSReturn.h>
 #else
-#include <CoreFoundation/CoreFoundation.h>
 #include <libkern/OSReturn.h>
 #endif /* KERNEL */
+
+__BEGIN_DECLS
 
 /*!
  * @header
@@ -474,6 +473,22 @@ __BEGIN_DECLS
  * This is the CFBundleIdentifier user for the kernel itself.
  */
 #define kOSKextKernelIdentifier                 "__kernel__"
+
+#if CONFIG_SPTM && PRIVATE
+/*!
+ * @define   kOSKextSPTMIdentifier
+ * @abstract
+ * This is the CFBundleIdentifier used by the Secure Page Table Monitor (SPTM).
+ */
+#define kOSKextSPTMIdentifier                 "com.apple.sptm"
+
+/*!
+ * @define   kOSKextTXMIdentifier
+ * @abstract
+ * This is the CFBundleIdentifier used by the Trusted Execution Monitor (TXM).
+ */
+#define kOSKextTXMIdentifier                 "com.apple.txm"
+#endif /* CONFIG_SPTM */
 
 /*!
  * @define  kOSKextBundlePackageTypeKext

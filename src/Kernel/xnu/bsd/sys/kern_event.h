@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2014 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -98,6 +98,15 @@
  *       @discussion IEEE 802.11 kernel event class.
  */
 #define KEV_IEEE80211_CLASS     6
+
+/*!
+ *       @defined KEV_NKE_CLASS
+ *       @discussion NKE kernel event class.
+ */
+#define KEV_NKE_CLASS           7
+
+#define KEV_NKE_ALF_SUBCLASS            1
+#define KEV_NKE_ALF_STATE_CHANGED       1
 
 /*
  * The following struct is KPI, but it was originally defined with a trailing
@@ -234,27 +243,6 @@ struct kev_vendor_code {
  */
 #define SIOCGKEVVENDOR  _IOWR('e', 4, struct kev_vendor_code)
 
-#ifdef PRIVATE
-struct xkevtpcb {
-	u_int32_t       kep_len;
-	u_int32_t       kep_kind;
-	u_int64_t       kep_evtpcb;
-	u_int32_t       kep_vendor_code_filter;
-	u_int32_t       kep_class_filter;
-	u_int32_t       kep_subclass_filter;
-};
-
-struct kevtstat {
-	u_int64_t       kes_pcbcount __attribute__((aligned(8)));
-	u_int64_t       kes_gencnt __attribute__((aligned(8)));
-	u_int64_t       kes_badvendor __attribute__((aligned(8)));
-	u_int64_t       kes_toobig __attribute__((aligned(8)));
-	u_int64_t       kes_nomem __attribute__((aligned(8)));
-	u_int64_t       kes_fullsock __attribute__((aligned(8)));
-	u_int64_t       kes_posted __attribute__((aligned(8)));
-};
-#endif /* PRIVATE */
-
 #ifdef KERNEL
 /*!
  *       @define N_KEV_VECTORS
@@ -318,26 +306,8 @@ errno_t kev_vendor_code_find(const char *vendor_string, u_int32_t *vendor_code);
  */
 errno_t kev_msg_post(struct kev_msg *event_msg);
 
-#ifdef PRIVATE
-/*
- * Internal version of kev_msg_post. Allows posting Apple vendor code kernel
- * events.
- */
-int     kev_post_msg(struct kev_msg *event);
-
-LIST_HEAD(kern_event_head, kern_event_pcb);
-
-struct kern_event_pcb {
-	decl_lck_mtx_data(, evp_mtx);   /* per-socket mutex */
-	LIST_ENTRY(kern_event_pcb) evp_link;    /* glue on list of all PCBs */
-	struct socket *evp_socket;              /* pointer back to socket */
-	u_int32_t evp_vendor_code_filter;
-	u_int32_t evp_class_filter;
-	u_int32_t evp_subclass_filter;
-};
-
-#define sotoevpcb(so)   ((struct kern_event_pcb *)((so)->so_pcb))
-
-#endif /* PRIVATE */
 #endif /* KERNEL */
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <sys/kern_event_private.h>
+#endif /* PRIVATE && !MODULES_SUPPORTED */
 #endif /* SYS_KERN_EVENT_H */

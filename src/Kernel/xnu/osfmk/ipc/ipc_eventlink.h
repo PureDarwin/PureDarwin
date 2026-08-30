@@ -35,7 +35,6 @@
 #include <mach/port.h>
 #include <mach/mach_eventlink_types.h>
 #include <mach_assert.h>
-#include <mach_debug.h>
 
 #include <mach/mach_types.h>
 #include <mach/boolean.h>
@@ -78,15 +77,14 @@ struct ipc_eventlink_base {
 	struct ipc_eventlink          elb_eventlink[2];  /* Eventlink pair */
 	struct waitq                  elb_waitq;         /* waitq */
 	os_refcnt_t                   elb_ref_count;     /* ref count for eventlink */
-	uint32_t                      elb_active:1,
-	    elb_type:8;
+	uint8_t                       elb_type;
 #if DEVELOPMENT || DEBUG
 	queue_chain_t                 elb_global_elm;    /* Global list of eventlinks */
 #endif
 };
 
 #define IPC_EVENTLINK_BASE_NULL ((struct ipc_eventlink_base *)NULL)
-#define ipc_eventlink_active(eventlink) ((eventlink)->el_base->elb_active == TRUE)
+#define ipc_eventlink_active(eventlink) waitq_valid(&(eventlink)->el_base->elb_waitq)
 
 #define eventlink_remote_side(eventlink) ((eventlink) == &((eventlink)->el_base->elb_eventlink[0]) ? \
 	&((eventlink)->el_base->elb_eventlink[1]) : &((eventlink)->el_base->elb_eventlink[0]))
@@ -111,10 +109,6 @@ ipc_eventlink_reference(
 void
 ipc_eventlink_deallocate(
 	struct ipc_eventlink *ipc_eventlink);
-
-void
-ipc_eventlink_notify(
-	mach_msg_header_t *msg);
 
 uint64_t
     mach_eventlink_signal_trap(

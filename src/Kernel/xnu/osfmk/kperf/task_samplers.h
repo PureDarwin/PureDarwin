@@ -49,6 +49,9 @@ struct kperf_task_snapshot {
 #define KPERF_TASK_FLAG_WQ_EXCEEDED_CONSTRAINED (1U << 6)
 #define KPERF_TASK_FLAG_DIRTY_TRACKED           (1U << 7)
 #define KPERF_TASK_ALLOW_IDLE_EXIT              (1U << 8)
+#define KPERF_TASK_FLAG_ACTIVE                  (1U << 9)
+#define KPERF_TASK_FLAG_MANAGED                 (1U << 10)
+#define KPERF_TASK_FLAG_HAS_ASSERTION           (1U << 11)
 
 void kperf_task_snapshot_sample(task_t task, struct kperf_task_snapshot *tksn);
 void kperf_task_snapshot_log(struct kperf_task_snapshot *tksn);

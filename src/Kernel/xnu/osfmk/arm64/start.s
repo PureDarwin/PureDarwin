@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2022 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,19 +25,21 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-#include <arm/proc_reg.h>
+#include "assym.s"
 #include <arm64/asm.h>
+#include <arm64/proc_reg.h>
+#include <arm64/machine_machdep.h>
 #include <arm64/proc_reg.h>
 #include <pexpert/arm64/board_config.h>
 #include <mach_assert.h>
 #include <machine/asm.h>
-#include "assym.s"
 #include <arm64/tunables/tunables.s>
 #include <arm64/exception_asm.h>
 
 #if __ARM_KERNEL_PROTECT__
 #include <arm/pmap.h>
 #endif /* __ARM_KERNEL_PROTECT__ */
+
 
 
 .macro MSR_VBAR_EL1_X0
@@ -71,26 +73,6 @@
 #endif
 .endmacro
 
-/* Like ARM_TTE_BOOT_BLOCK but Device memory, for the BCM2837 peripheral
- * window mapped during bootstrap. */
-#define ARM_TTE_BOOT_BLOCK_DEVICE \
-	(ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | \
-	 ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_DISABLE) | ARM_TTE_BLOCK_AF)
-
-/* Raw PL011 mark, pre-MMU, BCM2837 only. Clobbers x9-x11, which are dead
- * everywhere it is used below. Bisects the window between the "E0" mark at
- * start_first_cpu and the "M0" mark before the SCTLR_EL1 write. */
-.macro PD_MARK ch
-#if defined(BCM2837)
-	movz	x9, #0x3F20, lsl #16
-	movk	x9, #0x1000
-	movz	w10, #\ch
-1:	ldr		w11, [x9, #0x18]
-	tbnz	w11, #5, 1b
-	str		w10, [x9]
-#endif
-.endm
-
 .macro MSR_SCTLR_EL1_X0
 #if defined(KERNEL_INTEGRITY_KTRR)
 	mov		x1, lr
@@ -105,49 +87,6 @@
 	msr		SCTLR_EL1, x0
 #endif /* defined(KERNEL_INTEGRITY_KTRR) */
 .endmacro
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-.macro EARLY_FB_SAVE ba
-	ldr		x8, [\ba, BA_VIDEO_BASE]
-	ldr		w9, [\ba, BA_VIDEO_ROWBYTES]
-	adrp	x10, EXT(pd_start_fb_info)@page
-	add		x10, x10, EXT(pd_start_fb_info)@pageoff
-	str		x8, [x10]
-	str		x9, [x10, #8]
-.endmacro
-
-/*
- * Clobbers x8-x15, and must not touch the stack: SP is set to a KVA long
- * before the MMU comes on (see the excepstack_top setup in start_first_cpu),
- * so any push here faults. Every call site below is a point where x8-x15 are
- * dead.
- */
-.macro EARLY_FB_BAND slot, colour
-	adrp	x8, EXT(pd_start_fb_info)@page
-	add		x8, x8, EXT(pd_start_fb_info)@pageoff
-	ldr		x9, [x8]							// framebuffer base
-	ldr		x10, [x8, #8]						// bytes per row
-	cbz		x9, 5f
-	cbz		x10, 5f
-	mov		x11, #((\slot) * 16)				// first row of this band
-	mul		x11, x11, x10
-	add		x9, x9, x11
-	movz	w15, #((\colour) & 0xffff)
-	movk	w15, #(((\colour) >> 16) & 0xffff), lsl #16
-	mov		w12, #16							// rows in a band
-1:
-	mov		x13, x9
-	lsr		w14, w10, #2						// pixels in a row
-2:
-	str		w15, [x13], #4
-	subs	w14, w14, #1
-	b.ne	2b
-	add		x9, x9, x10
-	subs	w12, w12, #1
-	b.ne	1b
-5:
-.endmacro
-#endif /* PUREDARWIN_EARLY_FB_MARK */
 
 /*
  * Checks the reset handler for global and CPU-specific reset-assist functions,
@@ -191,16 +130,7 @@ LEXT(reset_vector)
 	msr		OSLAR_EL1, xzr
 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
 
-#ifdef QEMUVIRT
-	/* QEMU may retain a pending GIC interrupt across the loader handoff.
-	 * Keep the GIC CPU interface closed until the bootstrap thread and
-	 * interrupt state have been initialized by XNU. */
-	msr		ICC_IGRPEN1_EL1, xzr
-	msr		ICC_PMR_EL1, xzr
-	isb
-#endif
-
-#if !(defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR))
+#if !(defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR))
 	// Set low reset vector before attempting any loads
 	adrp    x0, EXT(LowExceptionVectorBase)@page
 	add     x0, x0, EXT(LowExceptionVectorBase)@pageoff
@@ -232,6 +162,15 @@ Lnext_cpu_data_entry:
 	b.eq	Lskip_cpu_reset_handler				// Not found
 	b		Lcheck_cpu_data_entry	// loop
 Lfound_cpu_data_entry:
+
+#ifdef APPLEEVEREST
+	/*
+	 * On H15, we need to configure PIO-only tunables and to apply
+	 * PIO lockdown as early as possible.
+	 */
+	SET_PIO_ONLY_REGISTERS x21, x2, x3, x4, x5, x6
+#endif /* APPLEEVEREST */
+
 	adrp	x20, EXT(const_boot_args)@page
 	add		x20, x20, EXT(const_boot_args)@pageoff
 	ldr		x0, [x21, CPU_RESET_HANDLER]		// Call CPU reset handler
@@ -290,6 +229,7 @@ LEXT(ResetHandlerData)
 	.align	3
 	.globl EXT(_start)
 LEXT(_start)
+	ARM64_PROLOG
 	b	EXT(start_first_cpu)
 
 
@@ -339,7 +279,7 @@ LEXT(LowExceptionVectorBase)
 	b		.
 	.align 12, 0
 
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
 /*
  * Provide a global symbol so that we can narrow the V=P mapping to cover
  * this page during arm_vm_init.
@@ -348,7 +288,7 @@ LEXT(LowExceptionVectorBase)
 .globl EXT(bootstrap_instructions)
 LEXT(bootstrap_instructions)
 
-#endif /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) */
+#endif /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR) */
 	.align 2
 	.globl EXT(resume_idle_cpu)
 LEXT(resume_idle_cpu)
@@ -365,13 +305,13 @@ LEXT(start_cpu)
 
 	.align 2
 start_cpu:
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
 	// This is done right away in reset vector for pre-KTRR devices
 	// Set low reset vector now that we are in the KTRR-free zone
 	adrp	x0, EXT(LowExceptionVectorBase)@page
 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 	MSR_VBAR_EL1_X0
-#endif /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) */
+#endif /* defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR) */
 
 	// x20 set to BootArgs phys address
 	// x21 set to cpu data phys address
@@ -384,16 +324,20 @@ start_cpu:
 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
 
 
-	// Set TPIDRRO_EL0 with the CPU number
-	ldr		x0, [x21, CPU_NUMBER_GS]
-	msr		TPIDRRO_EL0, x0
+	// Set TPIDR_EL0 with cached CPU info
+	ldr		x0, [x21, CPU_TPIDR_EL0]
+	msr		TPIDR_EL0, x0
+
+	// Set TPIDRRO_EL0 to 0
+	msr		TPIDRRO_EL0, xzr
+
 
 	// Set the exception stack pointer
 	ldr		x0, [x21, CPU_EXCEPSTACK_TOP]
 
 
 	// Set SP_EL1 to exception stack
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
 	mov		x1, lr
 	bl		EXT(pinst_spsel_1)
 	mov		lr, x1
@@ -426,7 +370,7 @@ start_cpu:
  *   arg5 - Scratch register
  */
 .macro create_l1_table_entry
-	and		$3,	$0, #(ARM_TT_L1_INDEX_MASK)
+	and		$3,	$0, #(ARM_PTE_T1_REGION_MASK(TCR_EL1_BOOT))
 	lsr		$3, $3, #(ARM_TT_L1_SHIFT)			// Get index in L1 table for L2 table
 	lsl		$3, $3, #(TTE_SHIFT)				// Convert index into pointer offset
 	add		$3, $1, $3							// Get L1 entry pointer
@@ -435,39 +379,6 @@ start_cpu:
 	orr		$5, $4, $5 							// Create table entry for L2 table
 	str		$5, [$3]							// Write entry to L1 table
 .endmacro
-
-#if defined(ARM_LARGE_MEMORY)
-/*
- * create_l0_table_entry
- *
- * Given a virtual address, creates a table entry in an L0 translation table
- * to point to an L1 translation table. Only needed under ARM_LARGE_MEMORY:
- * that config's T1SZ_BOOT (see proc_reg.h) yields a 41-bit input address
- * space, which architecturally requires the walk to start at L0 (an L1
- * table alone only covers a 39-bit space) - without this, TTBR0/TTBR1
- * pointing directly at an L1 table is a canonical-address mismatch that
- * the MMU rejects as a translation fault (IFSC "level 0") the first time
- * a real kernel VA outside the table's L1-sized reach is touched.
- *   arg0 - Virtual address
- *   arg1 - L0 table address
- *   arg2 - L1 table address
- *   arg3 - Scratch register
- *   arg4 - Scratch register
- *   arg5 - Scratch register
- */
-#define ARM_BOOT_L0_INDEX_MASK (((1ULL << ((64 - T1SZ_BOOT) - 39)) - 1) << 39)
-
-.macro create_l0_table_entry
-	and		$3,	$0, #(ARM_BOOT_L0_INDEX_MASK)
-	lsr		$3, $3, #(ARM_TT_L0_SHIFT)			// Get index in L0 table for L1 table
-	lsl		$3, $3, #(TTE_SHIFT)				// Convert index into pointer offset
-	add		$3, $1, $3							// Get L0 entry pointer
-	mov		$4, #(ARM_TTE_BOOT_TABLE)			// Get L0 table entry template
-	and		$5, $2, #(ARM_TTE_TABLE_MASK)		// Get address bits of L1 table
-	orr		$5, $4, $5 							// Create table entry for L1 table
-	str		$5, [$3]							// Write entry to L0 table
-.endmacro
-#endif /* ARM_LARGE_MEMORY */
 
 /*
  * create_l2_block_entries
@@ -488,7 +399,8 @@ start_cpu:
 	lsr		$4, $4, #(ARM_TTE_BLOCK_L2_SHIFT)	// Get index in L2 table for block entry
 	lsl		$4, $4, #(TTE_SHIFT)				// Convert index into pointer offset
 	add		$4, $2, $4							// Get L2 entry pointer
-	mov		$5, #(ARM_TTE_BOOT_BLOCK)			// Get L2 block entry template
+	mov		$5, #(ARM_TTE_BOOT_BLOCK_LOWER)		// Get L2 block entry template
+	orr		$5, $5, #(ARM_TTE_BOOT_BLOCK_UPPER)
 	and		$6, $1, #(ARM_TTE_BLOCK_L2_MASK)	// Get address bits of block mapping
 	orr		$6, $5, $6
 	mov		$5, $3
@@ -559,41 +471,14 @@ LEXT(start_first_cpu)
 	msr		OSLAR_EL1, xzr
 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
 
-#if defined(BCM2837)
-	// raw PL011 UART print at the very first instruction, pre-MMU
-	// (BCM2837-only: hardcodes that board's real PL011 physical address,
-	// which doesn't exist on other targets like QEMU virt)
-	movz	x8, #0x3F20, lsl #16
-	movk	x8, #0x1000
-	movz	w9, #'E'
-6:	ldr		w10, [x8, #0x18]
-	tbnz	w10, #5, 6b
-	str		w9, [x8]
-	movz	w9, #'0'
-7:	ldr		w10, [x8, #0x18]
-	tbnz	w10, #5, 7b
-	str		w9, [x8]
-#endif /* BCM2837 */
-
 	mov		x20, x0
 	mov		x21, #0
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// White: the booter's jump landed and the kernel is executing.
-	EARLY_FB_SAVE x20
-	EARLY_FB_BAND 0, 0x00ffffff
-#endif
 
 	// Set low reset vector before attempting any loads
 	adrp	x0, EXT(LowExceptionVectorBase)@page
 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
 	MSR_VBAR_EL1_X0
-	PD_MARK 'A'
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Red: the low exception vector is installed.
-	EARLY_FB_BAND 1, 0x00ff0000
-#endif
 
 	// Get the kernel memory parameters from the boot args
 	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
@@ -601,32 +486,12 @@ LEXT(start_first_cpu)
 	ldr		x24, [x20, BA_MEM_SIZE]				// Get the physical memory size
 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
-	PD_MARK 'B'
-#if defined(BCM2837)
-	/* Dump the boot_args pointer and the three values just read from it, before
-	 * any adjustment: x20, virtBase, physBase, memSize. x0 is dead here (it was
-	 * only the VBAR address), so only lr needs parking. */
-	mov		x27, x30
-	mov		x9, x20
-	bl		Lprint_hex32_dbg
-	mov		x9, x22
-	bl		Lprint_hex32_dbg
-	mov		x9, x23
-	bl		Lprint_hex32_dbg
-	mov		x9, x24
-	bl		Lprint_hex32_dbg
-	mov		x30, x27
-#endif
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Blue: the boot args have been read.
-	EARLY_FB_BAND 2, 0x000000ff
-#endif
-
-	// Clear the register that will be used to store the userspace thread pointer and CPU number.
+	// Clear the registers that will be used to store the userspace thread pointer and CPU number.
 	// We may not actually be booting from ordinal CPU 0, so this register will be updated
 	// in ml_parse_cpu_topology(), which happens later in bootstrap.
-	msr		TPIDRRO_EL0, x21
+	msr		TPIDRRO_EL0, xzr
+	msr		TPIDR_EL0, xzr
 
 	// Set up exception stack pointer
 	adrp	x0, EXT(excepstack_top)@page		// Load top of exception stack
@@ -635,7 +500,7 @@ LEXT(start_first_cpu)
 	sub		x0, x0, x23
 
 	// Set SP_EL1 to exception stack
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
 	bl		EXT(pinst_spsel_1)
 #else
 	msr		SPSel, #1
@@ -651,12 +516,6 @@ LEXT(start_first_cpu)
 	msr		SPSel, #0							// Set SP_EL0 to interrupt stack
 	mov		sp, x0
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Yellow: the exception and interrupt stack pointers are set.
-	EARLY_FB_BAND 3, 0x00ffff00
-#endif
-
-	PD_MARK 'C'
 	// Load address to the C init routine into link register
 	adrp	lr, EXT(arm_init)@page
 	add		lr, lr, EXT(arm_init)@pageoff
@@ -677,23 +536,12 @@ LEXT(start_first_cpu)
 	mov		x0, #(ARM_TTE_EMPTY)				// Load invalid entry template
 	mov		x1, x25								// Start at V=P pagetable root
 	mov		x2, #(TTE_PGENTRIES)				// Load number of entries per page
-#if defined(ARM_LARGE_MEMORY)
-	mov		x6, #6								// 2 extra L0 root pages (V=P + KVA)
-	mul		x2, x2, x6							// Shift by 6 for num entries on 6 pages
-#else
 	lsl		x2, x2, #2							// Shift by 2 for num entries on 4 pages
-#endif
 
 Linvalidate_bootstrap:							// do {
 	str		x0, [x1], #(1 << TTE_SHIFT)			//   Invalidate and advance
 	subs	x2, x2, #1							//   entries--
 	b.ne	Linvalidate_bootstrap				// } while (entries != 0)
-	PD_MARK 'D'
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Red: the bootstrap page tables have been cleared.
-	EARLY_FB_BAND 4, 0x00ff00ff
-#endif
 
 	/*
 	 * In order to reclaim memory on targets where TZ0 (or some other entity)
@@ -735,7 +583,6 @@ Lkernelcache_base_found:
 	sub		x24, x24, x18
 	add		x22, x22, x18
 	add		x23, x23, x18
-	PD_MARK 'E'
 
 	/*
 	 * x0  - V=P virtual cursor
@@ -743,10 +590,6 @@ Lkernelcache_base_found:
 	 * x14 - KVA virtual cursor
 	 * x15 - KVA physical cursor
 	 */
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Blue: the kernelcache base scan is done and the bases are adjusted.
-	EARLY_FB_BAND 5, 0x0000ffff
-#endif
 	mov		x4, x0
 	mov		x14, x22
 	mov		x15, x23
@@ -760,20 +603,8 @@ Lkernelcache_base_found:
 	 * BOOTSTRAP_TABLE_SIZE. For a 2G 4k page device, assuming the worst-case
 	 * slide, we need 1xL1 and up to 3xL2 pages (1GB mapped per L1 entry), so
 	 * 8 total pages for V=P and KVA.
-	 *
-	 * Under ARM_LARGE_MEMORY, two additional root pages precede these (see
-	 * the create_l0_table_entry comment above): page 0 - V=P L0 root,
-	 * page 1 - KVA L0 root; the V=P/KVA L1 tables and L2 free area are
-	 * pushed back by 2 pages to make room.
 	 */
-#if defined(ARM_LARGE_MEMORY)
-	mov		x27, x0								// Save V=P vbase (x0 mutates below)
-	mov		x28, x14							// Save KVA vbase (x22, x14 mutates below)
-	add		x1, x25, PGBYTES
-	add		x1, x1, PGBYTES
-#else
 	mov		x1, x25
-#endif
 	add		x3, x1, PGBYTES
 	mov		x2, x3
 
@@ -782,160 +613,18 @@ Lkernelcache_base_found:
 	 * x5 - total number of L2 entries to allocate
 	 */
 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	/*
-	 * Stretch the V=P mapping up to the framebuffer. iBoot carves the display
-	 * buffer out above the memory it reports in memSize, so it is not covered
-	 * by the mapping built from x24, and the markers below would fault on it
-	 * the moment the MMU came on. This costs one more L2 block entry and lasts
-	 * only until arm_vm_init builds the real tables.
-	 */
-	adrp	x8, EXT(pd_start_fb_info)@page
-	add		x8, x8, EXT(pd_start_fb_info)@pageoff
-	ldr		x9, [x8]							// framebuffer physical base
-	cbz		x9, 1f
-	subs	x9, x9, x4							// distance from the V=P base
-	b.ls	1f									// below it: already mapped
-	lsr		x9, x9, #(ARM_TT_L2_SHIFT)
-	add		x9, x9, #2							// its block, plus rounding
-	cmp		x9, x5
-	csel	x5, x9, x5, hi
-1:
-#endif
-
-	PD_MARK 'F'
-#if defined(BCM2837)
-	/* Dump the inputs to the V=P mapping before building it: memSize,
-	 * num_ents, pagetable root, free pointer, vbase, pbase. A num_ents of 0
-	 * makes create_l2_block_entries' "subs/b.ne" loop 2^64 times, which is
-	 * indistinguishable from a hang. Lprint_hex32_dbg clobbers w0, so the V=P
-	 * virtual cursor is parked in x28 across the calls (ARM_LARGE_MEMORY is
-	 * off here, so x27/x28 are free). */
-	mov		x27, x30
-	mov		x28, x0
-	mov		x9, x24
-	bl		Lprint_hex32_dbg
-	mov		x9, x5
-	bl		Lprint_hex32_dbg
-	mov		x9, x25
-	bl		Lprint_hex32_dbg
-	mov		x9, x2
-	bl		Lprint_hex32_dbg
-	mov		x9, x28
-	bl		Lprint_hex32_dbg
-	mov		x9, x4
-	bl		Lprint_hex32_dbg
-	mov		x0, x28
-	mov		x30, x27
-#endif
 	/* create_bootstrap_mapping(vbase, pbase, num_ents, L1 table, freeptr) */
 	create_bootstrap_mapping x0,  x4,  x5, x1, x2, x6, x10, x11, x12, x13
-
-#if defined(BCM2837)
-	/*
-	 * Map the peripheral window V=P as Device memory.
-	 *
-	 * The PL011 sits at physical 0x3F201000, far above the RAM this loader
-	 * reports, so it is outside the mapping built from memSize and every raw
-	 * UART access after the MMU comes on faults - which reads as a hang at M0.
-	 * It cannot simply be folded into the block above either: ARM_TTE_BOOT_BLOCK
-	 * is CACHE_ATTRINDX_WRITEBACK, and a cacheable UART swallows the status-
-	 * register reads and buffers the writes, so output arrives as fragments.
-	 *
-	 * x2 points at the L2 table the V=P mapping just filled (one page, covering
-	 * VA 0..1GB via L1[0]), so 0x3F000000..0x40000000 is entries 504..511 of
-	 * that same page. Lasts only until arm_vm_init/ml_io_map take over.
-	 */
-	MOV64	x6, ARM_TTE_BOOT_BLOCK_DEVICE
-	movz	x10, #0x3F00, lsl #16				// peripheral base
-	orr		x6, x6, x10
-	add		x11, x2, #(504 * 8)					// &L2[504]
-	mov		x12, #8								// 16MB / 2MB
-	MOV64	x13, ARM_TT_L2_SIZE
-1:
-	str		x6, [x11], #8
-	add		x6, x6, x13
-	subs	x12, x12, #1
-	b.ne	1b
-#endif /* BCM2837 */
-
-	PD_MARK 'G'
 
 	/* Setup the KVA bootstrap mapping */
 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
-	PD_MARK 'H'
-
-#if defined(ARM_LARGE_MEMORY)
-	/*
-	 * Link the L0 root tables to the L1 tables just built. x25 - V=P L0
-	 * root page, x25+PGBYTES - KVA L0 root page.
-	 */
-	create_l0_table_entry x27, x25, x1, x6, x10, x11
-	add		x26, x25, PGBYTES
-	create_l0_table_entry x28, x26, x3, x6, x10, x11
-#endif
-
-#if defined(BCM2837)
-	/* Print low 32 bits of x2 (final free L2-page pointer after
-	 * both V=P and KVA bootstrap mappings), x14 (final KVA virt cursor),
-	 * and x15 (final KVA phys cursor) as raw hex, to verify actual runtime
-	 * table construction against hand-derived expectations.
-	 */
-	mov		x28, x30		// save lr (still needed for arm_init jump later)
-	mov		x9, x2
-	bl		Lprint_hex32_dbg
-	mov		x9, x14
-	bl		Lprint_hex32_dbg
-	mov		x9, x15
-	bl		Lprint_hex32_dbg
-	mov		x30, x28
-#endif /* BCM2837 */
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Yellow: both bootstrap mappings are built.
-	EARLY_FB_BAND 6, 0x00ff8000
-#endif
 
 	/* Ensure TTEs are visible */
 	dsb		ish
 
-	b		common_start
 
-#if defined(BCM2837)
-/* Print low 32 bits of x9 as 8 hex chars + trailing space via
- * raw PL011 UART MMIO. Clobbers x9,x16-x19,w0. Preserves lr via caller.
- * hardcodes that board's PL011 physical address. */
-Lprint_hex32_dbg:
-	movz	x16, #0x3F20, lsl #16
-	movk	x16, #0x1000
-	mov		x19, x9
-	mov		x17, #8
-91:
-	lsr		x18, x19, #28
-	and		x18, x18, #0xf
-	lsl		x19, x19, #4
-	cmp		x18, #10
-	b.lt	92f
-	add		x18, x18, #(0x41-10)
-	b		93f
-92:
-	add		x18, x18, #0x30
-93:
-94:
-	ldr		w0, [x16, #0x18]
-	tbnz	w0, #5, 94b
-	str		w18, [x16]
-	subs	x17, x17, #1
-	b.ne	91b
-	movz	w18, #0x20
-95:
-	ldr		w0, [x16, #0x18]
-	tbnz	w0, #5, 95b
-	str		w18, [x16]
-	ret
-#endif /* BCM2837 */
+	b		common_start
 
 /*
  * Begin common CPU initialization
@@ -962,16 +651,15 @@ common_start:
 #endif
 
 	// Set the translation control register.
-	adrp	x0,     EXT(sysreg_restore)@page		// Load TCR value from the system register restore structure
-	add		x0, x0, EXT(sysreg_restore)@pageoff
-	ldr		x1, [x0, SR_RESTORE_TCR_EL1]
+	MOV64	x1, TCR_EL1_BOOT
 	MSR_TCR_EL1_X1
+
 
 	/* Set up translation table base registers.
 	 *	TTBR0 - V=P table @ top of kernel
 	 *	TTBR1 - KVA table @ top of kernel + 1 page
 	 */
-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR) || defined(KERNEL_INTEGRITY_PV_CTRR)
 	/* Note that for KTRR configurations, the V=P map will be modified by
 	 * arm_vm_init.c.
 	 */
@@ -988,43 +676,35 @@ common_start:
 	mov		x0, xzr
 	mov		x1, #(MAIR_WRITEBACK << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_WRITEBACK))
 	orr		x0, x0, x1
-	mov		x1, #(MAIR_INNERWRITEBACK << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_INNERWRITEBACK))
-	orr		x0, x0, x1
-	mov		x1, #(MAIR_DISABLE << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_DISABLE))
-	orr		x0, x0, x1
 	mov		x1, #(MAIR_WRITETHRU << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_WRITETHRU))
 	orr		x0, x0, x1
 	mov		x1, #(MAIR_WRITECOMB << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_WRITECOMB))
 	orr		x0, x0, x1
+	mov		x1, #(MAIR_WRITEBACK << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_RESERVED))
+#if HAS_MTE
+	mov		x1, #(MAIR_MTE_WRITEBACK << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_RESERVED))
+#endif /* HAS_MTE */
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_POSTED_COMBINED_REORDERED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_DISABLE << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_DISABLE))
+	orr		x0, x0, x1
+#if HAS_FEAT_XS
+	mov		x1, #(MAIR_DISABLE_XS << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_DISABLE_XS))
+	orr		x0, x0, x1
+	mov		x1, #(MAIR_POSTED_COMBINED_REORDERED_XS << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED_XS))
+	orr		x0, x0, x1
+#else
 	mov		x1, #(MAIR_POSTED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED))
 	orr		x0, x0, x1
 	mov		x1, #(MAIR_POSTED_REORDERED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_REORDERED))
 	orr		x0, x0, x1
-	mov		x1, #(MAIR_POSTED_COMBINED_REORDERED << MAIR_ATTR_SHIFT(CACHE_ATTRINDX_POSTED_COMBINED_REORDERED))
-	orr		x0, x0, x1
+#endif /* HAS_FEAT_XS */
 	msr		MAIR_EL1, x0
 	isb
 	tlbi	vmalle1
 	dsb		ish
 
-#if defined(APPLEHURRICANE)
-	// <rdar://problem/26726624> Increase Snoop reservation in EDB to reduce starvation risk
-	// Needs to be done before MMU is enabled
-	HID_INSERT_BITS	HID5, ARM64_REG_HID5_CrdEdbSnpRsvd_mask, ARM64_REG_HID5_CrdEdbSnpRsvd_VALUE, x12
-#endif
-
-#if defined(BCM2837)
-	// Setup timer interrupt routing; must be done before MMU is enabled
-	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
-	and		x15, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
-	mov		x0, #0x4000
-	lsl		x0, x0, #16
-	add		x0, x0, #0x0040						// x0: 0x4000004X Core Timers interrupt control
-	add		x0, x0, x15, lsl #2
-	mov		w1, #0xF0 						// x1: 0xF0 	  Route to Core FIQs
-	str		w1, [x0]
-	isb		sy
-#endif
 
 #ifndef __ARM_IC_NOALIAS_ICACHE__
 	/* Invalidate the TLB and icache on systems that do not guarantee that the
@@ -1063,141 +743,20 @@ common_start:
 1:
 	MSR_VBAR_EL1_X0
 
-1:
-#if defined(BCM2837)
-	// Raw PL011 UART print "M0" right before SCTLR_EL1 write (MMU still off here)
-	movz	x11, #0x3F20, lsl #16
-	movk	x11, #0x1000
-	movz	w12, #'M'
-8:	ldr		w13, [x11, #0x18]
-	tbnz	w13, #5, 8b
-	str		w12, [x11]
-	movz	w12, #'0'
-9:	ldr		w13, [x11, #0x18]
-	tbnz	w13, #5, 9b
-	str		w12, [x11]
-#endif /* BCM2837 */
-
-#ifdef HAS_APPLE_PAC
-#if HAS_PARAVIRTUALIZED_PAC
-	mov		x0, #VMAPPLE_PAC_SET_INITIAL_STATE
-	hvc		#0
-#endif /* HAS_PARAVIRTUALIZED_PAC */
+#if HAS_APPLE_PAC
+	PAC_INIT_KEY_STATE tmp=x0, tmp2=x1
+#endif /* HAS_APPLE_PAC */
 
 	// Enable caches, MMU, ROP and JOP
-	MOV64	x0, SCTLR_EL1_DEFAULT
-	orr		x0, x0, #(SCTLR_PACIB_ENABLED) /* IB is ROP */
-
-	MOV64	x1, SCTLR_JOP_KEYS_ENABLED
-	orr 	x0, x0, x1
-#else  /* HAS_APPLE_PAC */
-
-	// Enable caches and MMU
-	MOV64	x0, SCTLR_EL1_DEFAULT
-#endif /* HAS_APPLE_PAC */
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Green: about to turn the MMU on. Nothing can be painted after this.
-	EARLY_FB_BAND 7, 0x0000ff00
-#endif
-
-	// TEMP DEBUG: extra belt-and-suspenders barrier immediately before enabling
-	// the MMU, to rule out stale-TLB/TCG-translation-block staleness across
-	// the SCTLR_EL1.M toggle.
-	dsb		ish
-	tlbi	vmalle1
-	dsb		ish
-	isb
-
+	MOV64   x0, SCTLR_EL1_DEFAULT
 	MSR_SCTLR_EL1_X0
 	isb		sy
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	/*
-	 * Grey: the MMU is on and we are still executing V=P. This only paints if
-	 * the framebuffer falls inside the V=P bootstrap mapping, which covers the
-	 * kernelcache base to the end of memory - so its absence is not proof on
-	 * its own that the MMU transition failed.
-	 */
-	EARLY_FB_BAND 8, 0x00808080
-#endif
-
-#if defined(BCM2837)
-	// Raw PL011 UART print "P0" as the very first thing after the
-	// real SCTLR_EL1 write + isb, before the readback check. Uses x11-x13 only
-	// (x0/x1 still needed live for the cmp/bne readback check below).
-	movz	x11, #0x3F20, lsl #16
-	movk	x11, #0x1000
-	movz	w12, #'P'
-10:	ldr		w13, [x11, #0x18]
-	tbnz	w13, #5, 10b
-	str		w12, [x11]
-	movz	w12, #'0'
-11:	ldr		w13, [x11, #0x18]
-	tbnz	w13, #5, 11b
-	str		w12, [x11]
-#endif /* BCM2837 */
-
+#if !VMAPPLE
 	MOV64	x1, SCTLR_EL1_DEFAULT
-#if HAS_APPLE_PAC
-	orr		x1, x1, #(SCTLR_PACIB_ENABLED)
-	MOV64	x2, SCTLR_JOP_KEYS_ENABLED
-	orr		x1, x1, x2
-#endif /* HAS_APPLE_PAC */
-
-#if defined(BCM2837)
-	// Raw PL011 UART print "Q0" right before the cmp/bne readback
-	// check, using x14-x16 only (x0/x1 must stay untouched, they're live for
-	// the check right after).
-	stp		x14, x15, [sp, #-16]!
-	stp		x16, x17, [sp, #-16]!
-	movz	x14, #0x3F20, lsl #16
-	movk	x14, #0x1000
-	movz	w15, #'Q'
-12:	ldr		w16, [x14, #0x18]
-	tbnz	w16, #5, 12b
-	str		w15, [x14]
-	movz	w15, #'0'
-13:	ldr		w16, [x14, #0x18]
-	tbnz	w16, #5, 13b
-	str		w15, [x14]
-	ldp		x16, x17, [sp], #16
-	ldp		x14, x15, [sp], #16
-#endif /* BCM2837 */
-
-#ifdef QEMUVIRT
-	/* QEMU does not preserve the implementation-defined SCTLR readback
-	 * expected by Apple's startup invariant. The MMU transition itself is
-	 * complete; XNU's VM bootstrap establishes the final state later. */
-#else
 	cmp		x0, x1
 	bne		.
-#endif
-
-#if defined(BCM2837)
-	// Raw PL011 UART print to prove forward progress post-MMU-enable
-	stp		x0, x1, [sp, #-16]!
-	stp		x2, x3, [sp, #-16]!
-	movz	x2, #0x3F20, lsl #16
-	movk	x2, #0x1000
-	movz	w3, #'D'
-2:	ldr		w1, [x2, #0x18]
-	tbnz	w1, #5, 2b
-	str		w3, [x2]
-	movz	w3, #'B'
-3:	ldr		w1, [x2, #0x18]
-	tbnz	w1, #5, 3b
-	str		w3, [x2]
-	movz	w3, #'G'
-4:	ldr		w1, [x2, #0x18]
-	tbnz	w1, #5, 4b
-	str		w3, [x2]
-	movz	w3, #'1'
-5:	ldr		w1, [x2, #0x18]
-	tbnz	w1, #5, 5b
-	str		w3, [x2]
-	ldp		x2, x3, [sp], #16
-	ldp		x0, x1, [sp], #16
-#endif /* BCM2837 */
+#endif /* !VMAPPLE */
 
 #if (!CONFIG_KERNEL_INTEGRITY || (CONFIG_KERNEL_INTEGRITY && !defined(KERNEL_INTEGRITY_WT)))
 	/* Watchtower
@@ -1213,54 +772,25 @@ common_start:
 
 	// Clear thread pointer
 	msr		TPIDR_EL1, xzr						// Set thread register
-	PD_MARK 'R'
 
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Purple: past the MMU switch, about to touch the implementation-defined
-	// HID registers, whose encodings are reconstructed rather than published.
-	EARLY_FB_BAND 9, 0x00800080
-#endif
 
 #if defined(APPLE_ARM64_ARCH_FAMILY)
+	mrs		x12, MDSCR_EL1
+	orr		x12, x12, MDSCR_TDCC
+	msr		MDSCR_EL1, x12
 	// Initialization common to all non-virtual Apple targets
-#if !APPLEVIRTUALPLATFORM
-	ARM64_IS_PCORE x15
-	ARM64_READ_EP_SPR x15, x12, EHID4, HID4
-	orr		x12, x12, ARM64_REG_HID4_DisDcMVAOps
-	orr		x12, x12, ARM64_REG_HID4_DisDcSWL2Ops
-	ARM64_WRITE_EP_SPR x15, x12, EHID4, HID4
-#endif  // !APPLEVIRTUALPLATFORM
 #endif  // APPLE_ARM64_ARCH_FAMILY
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Teal: the HID4/EHID4 writes survived.
-	EARLY_FB_BAND 10, 0x00008080
-#endif
 
 	// Read MIDR before start of per-SoC tunables
 	mrs x12, MIDR_EL1
 
-	APPLY_TUNABLES x12, x13
-	PD_MARK 'S'
+	APPLY_TUNABLES x12, x13, x14
 
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Pale green: the per-SoC tunables survived.
-	EARLY_FB_BAND 11, 0x0080ff80
-#endif
-
-
-
-#if HAS_CLUSTER
+#if HAS_CLUSTER && !NO_CPU_OVRD
 	// Unmask external IRQs if we're restarting from non-retention WFI
 	mrs		x9, CPU_OVRD
 	and		x9, x9, #(~(ARM64_REG_CYC_OVRD_irq_mask | ARM64_REG_CYC_OVRD_fiq_mask))
 	msr		CPU_OVRD, x9
-#endif
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Orange-red: the CPU_OVRD unmask survived.
-	EARLY_FB_BAND 12, 0x00ff4000
 #endif
 
 	// If x21 != 0, we're doing a warm reset, so we need to trampoline to the kernel pmap.
@@ -1269,11 +799,6 @@ common_start:
 	// Set KVA of boot args as first arg
 	add		x0, x20, x22
 	sub		x0, x0, x23
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	// Light green: about to return into arm_init at its kernel virtual address.
-	EARLY_FB_BAND 13, 0x0040ff40
-#endif
 
 #if KASAN
 	mov	x20, x0
@@ -1288,7 +813,6 @@ common_start:
 	mov	lr, x21
 #endif
 
-	PD_MARK 'T'
 	// Return to arm_init()
 	ret
 
@@ -1309,6 +833,7 @@ Ltrampoline:
 	.text
 	.align 2
 arm_init_tramp:
+	ARM64_JUMP_TARGET
 	/* On a warm boot, the full kernel translation table is initialized in
 	 * addition to the bootstrap tables. The layout is as follows:
 	 *
@@ -1340,9 +865,6 @@ arm_init_tramp:
 
 
 	mov		x19, lr
-#if defined(HAS_VMSA_LOCK)
-	bl		EXT(vmsa_lock)
-#endif
 	// Convert CPU data PA to VA and set as first argument
 	mov		x0, x21
 	bl		EXT(phystokv)
@@ -1351,16 +873,6 @@ arm_init_tramp:
 
 	/* Return to arm_init() */
 	ret
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	.section __DATA,__data
-	.align 3
-	.globl EXT(pd_start_fb_info)
-LEXT(pd_start_fb_info)
-	.quad 0
-	.quad 0
-	.text
-#endif /* PUREDARWIN_EARLY_FB_MARK */
 
 //#include	"globals_asm.h"
 

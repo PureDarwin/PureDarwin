@@ -119,9 +119,16 @@ enum uio_seg {
 	UIO_SYSSPACE32          = 11    /* deprecated */
 };
 
+enum {
+	UIOF_USERSPACE          = (1 << UIO_USERSPACE),
+	UIOF_SYSSPACE           = (1 << UIO_SYSSPACE),
+	UIOF_USERSPACE32        = (1 << UIO_USERSPACE32),
+	UIOF_USERSPACE64        = (1 << UIO_USERSPACE64),
+	UIOF_SYSSPACE32         = (1 << UIO_SYSSPACE32),
+};
+
 #define UIO_SEG_IS_USER_SPACE( a_uio_seg )  \
-	( (a_uio_seg) == UIO_USERSPACE64 || (a_uio_seg) == UIO_USERSPACE32 || \
-	  (a_uio_seg) == UIO_USERSPACE )
+	((1 << a_uio_seg) & (UIOF_USERSPACE64 | UIOF_USERSPACE32 | UIOF_USERSPACE))
 
 
 __BEGIN_DECLS
@@ -155,6 +162,11 @@ void uio_reset( uio_t a_uio,
  */
 uio_t uio_duplicate( uio_t a_uio );
 
+/*
+ * uio_restore - restore a uio to the state it was in the provided snapshot.
+ *      returns 0 if it was successful else non zero.
+ */
+int uio_restore(uio_t uio, uio_t snapshot_uio);
 
 /*
  * uio_free - free a uio_t allocated via uio_create.
@@ -246,7 +258,7 @@ user_size_t uio_curriovlen( uio_t a_uio );
 #define UIO_MAXIOV      1024            /* max 1K of iov's */
 #define UIO_SMALLIOV    8               /* 8 on stack, else malloc */
 
-extern int uiomove(const char * cp, int n, struct uio *uio);
+extern int uiomove(const char *__sized_by(n) cp, int n, struct uio *uio);
 extern int uiomove64(const __uint64_t cp, int n, struct uio *uio);
 __END_DECLS
 

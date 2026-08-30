@@ -35,17 +35,6 @@
 #include <libkern/c++/OSSymbol.h>
 #include <IOKit/IOKitDebug.h>
 
-#if defined(ARM_BOARD_CONFIG_BCM2835) || defined(ARM64_BOARD_CONFIG_BCM2837)
-extern "C" void pd_bcm2835_early_uart_str(const char *s);
-extern "C" void pd_bcm2835_early_uart_hex(const char *label, uint64_t v);
-#define PD_RT_TRACE(m)		pd_bcm2835_early_uart_str(m)
-#define PD_RT_HEX(m, v)		pd_bcm2835_early_uart_hex(m, (uint64_t)(v))
-#else
-#define PD_RT_TRACE(m)		do { } while (0)
-#define PD_RT_HEX(m, v)		do { } while (0)
-#endif
-
-
 #include <sys/cdefs.h>
 #if defined(HAS_APPLE_PAC)
 #include <ptrauth.h>
@@ -62,33 +51,12 @@ __BEGIN_DECLS
 #include <libkern/prelink.h>
 #include <stdarg.h>
 
-/*
- * Resident (permanent kernel text) __cxa_atexit stub.  Kexts and the kernel's
- * own C++ static constructors reference __cxa_atexit to register static
- * destructors; we never tear those objects down individually, so a no-op that
- * returns success is sufficient.  This MUST live in permanent text (not the
- * __KLD segment, which is freed by OSKextRemoveKextBootstrap), otherwise a kext
- * whose constructors run after bootstrap teardown would call a freed page.
- *
- * Nothing in the kernel itself references it (only kexts do, resolved later at
- * kernel-collection link time), so it must be an exported symbol (see
- * config/Libkern.exports) or a RELEASE build strips it: nmedit demotes every
- * non-exported global to a local and strip -x then removes it.  When that
- * happens the KC linker cannot resolve the kext import and binds it to the
- * _panic trampoline, so the first kext static constructor "calls __cxa_atexit"
- * and instead panics with a garbage format string.  "used" + default
- * visibility additionally keep -dead_strip from dropping it before nmedit runs.
- */
-__attribute__((used, visibility("default")))
-int
-__cxa_atexit(void (*func)(void))
-{
-	(void)func;
-	return 0;
-}
-
 #if KASAN
 #include <san/kasan.h>
+#endif
+
+#if CONFIG_SPTM
+#include <arm64/sptm/sptm.h>
 #endif
 
 #if PRAGMA_MARK
@@ -144,6 +112,9 @@ __pure_virtual( void )
 
 extern lck_grp_t * IOLockGroup;
 extern kmod_info_t g_kernel_kmod_info;
+#if CONFIG_SPTM
+extern kmod_info_t g_sptm_kmod_info, g_txm_kmod_info;
+#endif /* CONFIG_SPTM */
 
 enum {
 	kOSSectionNamesDefault     = 0,
@@ -162,33 +133,23 @@ static const char *
 	{ kBuiltinInitSection, kBuiltinTermSection }
 };
 
-/*
- * Under -fapple-kext clang follows the 32-bit Darwin kext ABI on arm, which
- * puts static initializers in __TEXT,__constructor rather than
- * __mod_init_func.  The kernel is built with that flag, so on arm32 its own
- * C++ constructors land in a section OSRuntimeInitializeCPP would otherwise
- * never look at, leaving every libkern and IOKit metaclass unconstructed -
- * the first OSTypeAlloc then calls through a NULL vtable.  Scan both names.
- */
-#if defined(__arm__)
-#define kOSSectionNameAppleKext32Init   "__constructor"
-#define kOSSectionNameAppleKext32Term   "__destructor"
-#endif /* defined(__arm__) */
-
 void
 OSlibkernInit(void)
 {
 	// This must be called before calling OSRuntimeInitializeCPP.
-	PD_RT_TRACE("rt:metaclass-init");
 	OSMetaClassBase::initialize();
 
 	g_kernel_kmod_info.address = (vm_address_t) &_mh_execute_header;
+#if CONFIG_SPTM
+	g_sptm_kmod_info.address = (vm_offset_t)SPTMArgs->debug_header->image[DEBUG_HEADER_ENTRY_SPTM];
+	g_txm_kmod_info.address = (vm_offset_t)SPTMArgs->debug_header->image[DEBUG_HEADER_ENTRY_TXM];
+#endif /* CONFIG_SPTM */
+
 	if (kOSReturnSuccess != OSRuntimeInitializeCPP(NULL)) {
 		// &g_kernel_kmod_info, gOSSectionNamesStandard, 0, 0)) {
 		panic("OSRuntime: C++ runtime failed to initialize.");
 	}
 
-	PD_RT_TRACE("rt:cpp-initialized");
 	gKernelCPPInitialized = true;
 
 	return;
@@ -368,12 +329,6 @@ OSRuntimeFinalizeCPP(
 	    segment = nextsegfromheader(header, segment)) {
 		OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
 		    sectionNames[kOSSectionNameFinalizer], textStart, textEnd);
-#if defined(__arm__)
-		if (sectionNames == gOSStructorSectionNames[kOSSectionNamesDefault]) {
-			OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
-			    kOSSectionNameAppleKext32Term, textStart, textEnd);
-		}
-#endif /* defined(__arm__) */
 	}
 
 	(void)OSMetaClass::postModLoad(metaHandle);
@@ -545,16 +500,7 @@ OSRuntimeInitializeCPP(
 			theKext, kmodInfo, metaHandle, segment,
 			sectionNames[kOSSectionNameInitializer],
 			textStart, textEnd);
-#if defined(__arm__)
-		if (load_success && sectionNames == gOSStructorSectionNames[kOSSectionNamesDefault]) {
-			load_success = OSRuntimeCallStructorsInSection(
-				theKext, kmodInfo, metaHandle, segment,
-				kOSSectionNameAppleKext32Init,
-				textStart, textEnd);
-		}
-#endif /* defined(__arm__) */
 	} /* for (segment...) */
-	PD_RT_TRACE("rt:structors-done");
 
 	/* We failed so call all of the destructors. We must do this before
 	 * calling OSMetaClass::postModLoad() as the OSMetaClass destructors
@@ -569,12 +515,6 @@ OSRuntimeInitializeCPP(
 		    segment = nextsegfromheader(header, segment)) {
 			OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
 			    sectionNames[kOSSectionNameFinalizer], textStart, textEnd);
-#if defined(__arm__)
-			if (sectionNames == gOSStructorSectionNames[kOSSectionNamesDefault]) {
-				OSRuntimeCallStructorsInSection(theKext, kmodInfo, NULL, segment,
-				    kOSSectionNameAppleKext32Term, textStart, textEnd);
-			}
-#endif /* defined(__arm__) */
 		} /* for (segment...) */
 	}
 
@@ -583,7 +523,6 @@ OSRuntimeInitializeCPP(
 	 * destructors have removed classes from the stalled list so no
 	 * metaclasses will actually be registered.
 	 */
-	PD_RT_TRACE("rt:postModLoad");
 	result = OSMetaClass::postModLoad(metaHandle);
 
 	/* If we've otherwise been fine up to now, but OSMetaClass::postModLoad()
@@ -593,7 +532,6 @@ OSRuntimeInitializeCPP(
 	 * because it's only a fail when there are existing instances of libkern
 	 * classes, and there had better not be any created on the C++ init path.
 	 */
-	PD_RT_TRACE("rt:postModLoad-done");
 	if (load_success && result != KMOD_RETURN_SUCCESS) {
 		(void)OSRuntimeFinalizeCPP(theKext); //kmodInfo, sectionNames, textStart, textEnd);
 	}
@@ -615,10 +553,6 @@ OSRuntimeUnloadCPPForSegment(
 {
 	OSRuntimeCallStructorsInSection(NULL, &g_kernel_kmod_info, NULL, segment,
 	    gOSStructorSectionNames[kOSSectionNamesDefault][kOSSectionNameFinalizer], 0, 0);
-#if defined(__arm__)
-	OSRuntimeCallStructorsInSection(NULL, &g_kernel_kmod_info, NULL, segment,
-	    kOSSectionNameAppleKext32Term, 0, 0);
-#endif /* defined(__arm__) */
 }
 
 #if PRAGMA_MARK
@@ -627,12 +561,14 @@ OSRuntimeUnloadCPPForSegment(
 /*********************************************************************
 * C++ Allocators & Deallocators
 *********************************************************************/
+__typed_allocators_ignore_push
+
 void *
 operator new(size_t size)
 {
 	assert(size);
-	return kheap_alloc_tag_bt(KERN_OS_MALLOC, size,
-	           (zalloc_flags_t) (Z_WAITOK | Z_ZERO), VM_KERN_MEMORY_LIBKERN);
+	return kheap_alloc(KERN_OS_MALLOC, size,
+	           Z_VM_TAG_BT(Z_WAITOK_ZERO, VM_KERN_MEMORY_LIBKERN));
 }
 
 void
@@ -646,10 +582,10 @@ noexcept
 }
 
 void *
-operator new[](unsigned long sz)
+operator new[](unsigned long size)
 {
-	return kheap_alloc_tag_bt(KERN_OS_MALLOC, sz,
-	           (zalloc_flags_t) (Z_WAITOK | Z_ZERO), VM_KERN_MEMORY_LIBKERN);
+	return kheap_alloc(KERN_OS_MALLOC, size,
+	           Z_VM_TAG_BT(Z_WAITOK_ZERO, VM_KERN_MEMORY_LIBKERN));
 }
 
 void
@@ -686,6 +622,8 @@ operator delete[](void * addr, size_t sz) noexcept
 		kheap_free(KERN_OS_MALLOC, addr, sz);
 	}
 }
+
+__typed_allocators_ignore_pop
 
 #endif /* __cplusplus >= 201103L */
 

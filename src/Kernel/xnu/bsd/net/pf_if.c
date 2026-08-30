@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2019 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -90,9 +90,9 @@ struct pfi_kif                  *pfi_all = NULL;
 static struct pool              pfi_addr_pl;
 static struct pfi_ifhead        pfi_ifs;
 static u_int32_t                pfi_update = 1;
-static struct pfr_addr          *pfi_buffer;
-static int                      pfi_buffer_cnt;
 static int                      pfi_buffer_max;
+static struct pfr_addr          *__counted_by(pfi_buffer_max) pfi_buffer;
+static int                      pfi_buffer_cnt;
 
 __private_extern__ void pfi_kifaddr_update(void *);
 
@@ -109,7 +109,6 @@ RB_PROTOTYPE_SC(static, pfi_ifhead, pfi_kif, pfik_tree, pfi_if_compare);
 RB_GENERATE(pfi_ifhead, pfi_kif, pfik_tree, pfi_if_compare);
 
 #define PFI_BUFFER_MAX          0x10000
-#define PFI_MTYPE               M_IFADDR
 
 #define IFG_ALL "ALL"
 
@@ -122,9 +121,9 @@ pfi_initialize(void)
 
 	pool_init(&pfi_addr_pl, sizeof(struct pfi_dynaddr), 0, 0, 0,
 	    "pfiaddrpl", NULL);
+	pfi_buffer = (struct pfr_addr *)kalloc_data(64 * sizeof(*pfi_buffer),
+	    Z_WAITOK);
 	pfi_buffer_max = 64;
-	pfi_buffer = _MALLOC(pfi_buffer_max * sizeof(*pfi_buffer),
-	    PFI_MTYPE, M_WAITOK);
 
 	if ((pfi_all = pfi_kif_get(IFG_ALL)) == NULL) {
 		panic("pfi_kif_get for pfi_all failed");
@@ -136,14 +135,14 @@ void
 pfi_destroy(void)
 {
 	pool_destroy(&pfi_addr_pl);
-	_FREE(pfi_buffer, PFI_MTYPE);
+	kfree_data(pfi_buffer, pfi_buffer_max * sizeof(*pfi_buffer));
 }
 #endif
 
 struct pfi_kif *
 pfi_kif_get(const char *kif_name)
 {
-	struct pfi_kif          *kif;
+	struct pfi_kif          *__single kif;
 	struct pfi_kif       s;
 
 	bzero(&s.pfik_name, sizeof(s.pfik_name));
@@ -154,7 +153,7 @@ pfi_kif_get(const char *kif_name)
 	}
 
 	/* create new one */
-	if ((kif = _MALLOC(sizeof(*kif), PFI_MTYPE, M_WAITOK | M_ZERO)) == NULL) {
+	if ((kif = kalloc_type(struct pfi_kif, Z_WAITOK | Z_ZERO)) == NULL) {
 		return NULL;
 	}
 
@@ -218,7 +217,7 @@ pfi_kif_unref(struct pfi_kif *kif, enum pfi_kif_refs what)
 	}
 
 	RB_REMOVE(pfi_ifhead, &pfi_ifs, kif);
-	_FREE(kif, PFI_MTYPE);
+	kfree_type(struct pfi_kif, kif);
 }
 
 int
@@ -236,7 +235,7 @@ pfi_attach_ifnet(struct ifnet *ifp)
 {
 	struct pfi_kif *kif;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	pfi_update++;
 	if ((kif = pfi_kif_get(if_name(ifp))) == NULL) {
@@ -259,7 +258,7 @@ pfi_detach_ifnet(struct ifnet *ifp)
 {
 	struct pfi_kif          *kif;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	if ((kif = (struct pfi_kif *)ifp->if_pf_kif) == NULL) {
 		return;
@@ -310,12 +309,13 @@ pfi_match_addr(struct pfi_dynaddr *dyn, struct pf_addr *a, sa_family_t af)
 int
 pfi_dynaddr_setup(struct pf_addr_wrap *aw, sa_family_t af)
 {
-	struct pfi_dynaddr      *dyn;
-	char                     tblname[PF_TABLE_NAME_SIZE];
-	struct pf_ruleset       *ruleset = NULL;
+	struct pfi_dynaddr      *__single dyn;
+	char                     tblnamebuf[PF_TABLE_NAME_SIZE];
+	const char              *__null_terminated tblname = NULL;
+	struct pf_ruleset       *__single ruleset = NULL;
 	int                      rv = 0;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	if (aw->type != PF_ADDR_DYNIFTL) {
 		return 0;
@@ -325,10 +325,10 @@ pfi_dynaddr_setup(struct pf_addr_wrap *aw, sa_family_t af)
 	}
 	bzero(dyn, sizeof(*dyn));
 
-	if (strcmp(aw->v.ifname, "self") == 0) {
+	if (strlcmp(aw->v.ifname, "self", sizeof(aw->v.ifname)) == 0) {
 		dyn->pfid_kif = pfi_kif_get(IFG_ALL);
 	} else {
-		dyn->pfid_kif = pfi_kif_get(aw->v.ifname);
+		dyn->pfid_kif = pfi_kif_get(__unsafe_null_terminated_from_indexable(aw->v.ifname));
 	}
 	if (dyn->pfid_kif == NULL) {
 		rv = 1;
@@ -340,22 +340,24 @@ pfi_dynaddr_setup(struct pf_addr_wrap *aw, sa_family_t af)
 	if (af == AF_INET && dyn->pfid_net == 32) {
 		dyn->pfid_net = 128;
 	}
-	strlcpy(tblname, aw->v.ifname, sizeof(tblname));
+	strbufcpy(tblnamebuf, aw->v.ifname);
 	if (aw->iflags & PFI_AFLAG_NETWORK) {
-		strlcat(tblname, ":network", sizeof(tblname));
+		strlcat(tblnamebuf, ":network", sizeof(tblnamebuf));
 	}
 	if (aw->iflags & PFI_AFLAG_BROADCAST) {
-		strlcat(tblname, ":broadcast", sizeof(tblname));
+		strlcat(tblnamebuf, ":broadcast", sizeof(tblnamebuf));
 	}
 	if (aw->iflags & PFI_AFLAG_PEER) {
-		strlcat(tblname, ":peer", sizeof(tblname));
+		strlcat(tblnamebuf, ":peer", sizeof(tblnamebuf));
 	}
 	if (aw->iflags & PFI_AFLAG_NOALIAS) {
-		strlcat(tblname, ":0", sizeof(tblname));
+		strlcat(tblnamebuf, ":0", sizeof(tblnamebuf));
 	}
-	if (dyn->pfid_net != 128) {
-		snprintf(tblname + strlen(tblname),
-		    sizeof(tblname) - strlen(tblname), "/%d", dyn->pfid_net);
+	if (dyn->pfid_net == 128) {
+		tblname = __unsafe_null_terminated_from_indexable(tblnamebuf);
+	} else {
+		tblname = tsnprintf(tblnamebuf + strbuflen(tblnamebuf),
+		    sizeof(tblnamebuf) - strbuflen(tblnamebuf), "/%d", dyn->pfid_net);
 	}
 	if ((ruleset = pf_find_or_create_ruleset(PF_RESERVED_ANCHOR)) == NULL) {
 		rv = 1;
@@ -381,7 +383,7 @@ _bad:
 		pfr_detach_table(dyn->pfid_kt);
 	}
 	if (ruleset != NULL) {
-		pf_remove_if_empty_ruleset(ruleset);
+		pf_release_ruleset(ruleset);
 	}
 	if (dyn->pfid_kif != NULL) {
 		pfi_kif_unref(dyn->pfid_kif, PFI_KIF_REF_RULE);
@@ -395,7 +397,7 @@ pfi_kif_update(struct pfi_kif *kif)
 {
 	struct pfi_dynaddr      *p;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	/* update all dynaddr */
 	TAILQ_FOREACH(p, &kif->pfik_dynaddrs, entry)
@@ -444,7 +446,7 @@ pfi_table_update(struct pfr_ktable *kt, struct pfi_kif *kif, uint8_t net, int fl
 void
 pfi_instance_add(struct ifnet *ifp, uint8_t net, int flags)
 {
-	struct ifaddr   *ia;
+	struct ifaddr   *__single ia;
 	int              got4 = 0, got6 = 0;
 	uint8_t          net2, af;
 
@@ -484,7 +486,7 @@ pfi_instance_add(struct ifnet *ifp, uint8_t net, int flags)
 			continue;
 		}
 		if ((af == AF_INET6) &&
-		    (((struct in6_ifaddr *)ia)->ia6_flags &
+		    ((ifatoia6(ia))->ia6_flags &
 		    (IN6_IFF_ANYCAST | IN6_IFF_NOTREADY | IN6_IFF_DETACHED |
 		    IN6_IFF_CLAT46 | IN6_IFF_TEMPORARY | IN6_IFF_DEPRECATED))) {
 			IFA_UNLOCK(ia);
@@ -544,8 +546,8 @@ pfi_address_add(struct sockaddr *sa, uint8_t af, uint8_t net)
 			    pfi_buffer_cnt, PFI_BUFFER_MAX);
 			return;
 		}
-		p = _MALLOC(new_max * sizeof(*pfi_buffer), PFI_MTYPE,
-		    M_WAITOK);
+		p = (struct pfr_addr *)kalloc_data(new_max * sizeof(*pfi_buffer),
+		    Z_WAITOK);
 		if (p == NULL) {
 			printf("pfi_address_add: no memory to grow buffer "
 			    "(%d/%d)\n", pfi_buffer_cnt, PFI_BUFFER_MAX);
@@ -553,7 +555,7 @@ pfi_address_add(struct sockaddr *sa, uint8_t af, uint8_t net)
 		}
 		memcpy(p, pfi_buffer, pfi_buffer_max * sizeof(*pfi_buffer));
 		/* no need to zero buffer */
-		_FREE(pfi_buffer, PFI_MTYPE);
+		kfree_data_counted_by(pfi_buffer, pfi_buffer_max);
 		pfi_buffer = p;
 		pfi_buffer_max = new_max;
 	}
@@ -614,7 +616,7 @@ pfi_kifaddr_update(void *v)
 {
 	struct pfi_kif          *kif = (struct pfi_kif *)v;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	pfi_update++;
 	pfi_kif_update(kif);
@@ -623,17 +625,17 @@ pfi_kifaddr_update(void *v)
 int
 pfi_if_compare(struct pfi_kif *p, struct pfi_kif *q)
 {
-	return strncmp(p->pfik_name, q->pfik_name, IFNAMSIZ - 1);
+	return strbufcmp(p->pfik_name, q->pfik_name);
 }
 
 void
-pfi_update_status(const char *name, struct pf_status *pfs)
+pfi_update_status(const char *__null_terminated name, struct pf_status *pfs)
 {
 	struct pfi_kif          *p;
 	struct pfi_kif       key;
 	int                      i, j, k;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	bzero(&key.pfik_name, sizeof(key.pfik_name));
 	strlcpy(key.pfik_name, name, sizeof(key.pfik_name));
@@ -666,10 +668,10 @@ pfi_update_status(const char *name, struct pf_status *pfs)
 int
 pfi_get_ifaces(const char *name, user_addr_t buf, int *size)
 {
-	struct pfi_kif   *p, *nextp;
+	struct pfi_kif   *__single p, *__single nextp;
 	int              n = 0;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	for (p = RB_MIN(pfi_ifhead, &pfi_ifs); p; p = nextp) {
 		nextp = RB_NEXT(pfi_ifhead, &pfi_ifs, p);
@@ -717,17 +719,18 @@ pfi_skip_if(const char *filter, struct pfi_kif *p)
 	if (filter == NULL || !*filter) {
 		return 0;
 	}
-	if (strcmp(p->pfik_name, filter) == 0) {
+	if (strlcmp(p->pfik_name, filter, sizeof(p->pfik_name)) == 0) {
 		return 0;     /* exact match */
 	}
 	n = strlen(filter);
 	if (n < 1 || n >= IFNAMSIZ) {
 		return 1;     /* sanity check */
 	}
-	if (filter[n - 1] >= '0' && filter[n - 1] <= '9') {
+	char const * fp = __null_terminated_to_indexable(filter);
+	if (fp[n - 1] >= '0' && fp[n - 1] <= '9') {
 		return 1;     /* only do exact match in that case */
 	}
-	if (strncmp(p->pfik_name, filter, n)) {
+	if (strlcmp(p->pfik_name, filter, sizeof(p->pfik_name))) {
 		return 1;     /* prefix doesn't match */
 	}
 	return p->pfik_name[n] < '0' || p->pfik_name[n] > '9';
@@ -738,7 +741,7 @@ pfi_set_flags(const char *name, int flags)
 {
 	struct pfi_kif  *p;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	RB_FOREACH(p, pfi_ifhead, &pfi_ifs) {
 		if (pfi_skip_if(name, p)) {
@@ -754,7 +757,7 @@ pfi_clear_flags(const char *name, int flags)
 {
 	struct pfi_kif  *p;
 
-	LCK_MTX_ASSERT(pf_lock, LCK_MTX_ASSERT_OWNED);
+	LCK_MTX_ASSERT(&pf_lock, LCK_MTX_ASSERT_OWNED);
 
 	RB_FOREACH(p, pfi_ifhead, &pfi_ifs) {
 		if (pfi_skip_if(name, p)) {
@@ -769,7 +772,7 @@ pfi_clear_flags(const char *name, int flags)
 uint8_t
 pfi_unmask(void *addr)
 {
-	struct pf_addr *m = addr;
+	struct pf_addr *__single m = addr;
 	int i = 31, j = 0, b = 0;
 	u_int32_t tmp;
 

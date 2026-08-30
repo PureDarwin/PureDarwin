@@ -1,5 +1,5 @@
 .\"
-.\" Copyright (c) 2011 Apple Inc.  All rights reserved.
+.\" Copyright (c) 2011-2022 Apple Inc.  All rights reserved.
 .\"
 .\" @APPLE_LICENSE_HEADER_START@
 .\" 
@@ -56,7 +56,7 @@
 .\"
 .\"     @(#)fcntl.2	8.2 (Berkeley) 1/12/94
 .\"
-.Dd August 8, 2018
+.Dd August 12, 2021
 .Dt FCNTL 2
 .Os BSD 4.2
 .Sh NAME
@@ -78,7 +78,7 @@ The argument
 is a descriptor to be operated on by
 .Fa cmd
 as follows:
-.Bl -tag -width F_WRITEBOOTSTRAPX
+.Bl -tag -width F_GETPATH_NOFIRMLINKX
 .It Dv F_DUPFD
 Return a new descriptor as follows:
 .Pp
@@ -147,15 +147,19 @@ as negative, otherwise
 is interpreted as a process ID.
 .It Dv F_GETPATH
 Get the path of the file descriptor
+.Fa fildes .
+The argument must be a buffer of size
+.Sy MAXPATHLEN
+or greater.
 .It Dv F_GETPATH_NOFIRMLINK
 Get the non firmlinked path of the file descriptor
-.Fa Fildes .  
+.Fa fildes .
 The argument must be a buffer of size
 .Sy MAXPATHLEN
 or greater.
 .It Dv F_PREALLOCATE
-Preallocate file storage space. Note: upon success, 
-the space that is allocated can be the size requested,
+Preallocate file storage space.
+Note: upon success, the space that is allocated can be the size requested,
 larger than the size requested, or (if the
 .Dv F_ALLOCATEALL
 flag is not provided) smaller than the space requested.
@@ -261,6 +265,13 @@ match those of the
 .Fa arg
 of
 .Dv F_SETNOSIGPIPE .
+.It Dv F_TRANSFEREXTENTS
+Transfer any extra space in the file past the logical EOF (as previously
+allocated via
+.Dv F_PREALLOCATE )
+to another file.  The other file is specified via a file descriptor
+as the lone extra argument.  Both descriptors must reference regular
+files in the same volume.
 .El
 .Pp
 The flags for the
@@ -286,9 +297,9 @@ commands are as follows:
 .Bl -tag -width O_NONBLOCKX -offset indent
 .It Dv O_NONBLOCK
 Non-blocking I/O; if no data is available to a
-.Xr read
+.Xr read 2
 call, or if a
-.Xr write
+.Xr write 2
 operation would block,
 the read or write call returns -1 with the error
 .Er EAGAIN .
@@ -337,6 +348,18 @@ If no lock is found that would prevent this lock from being created,
 the structure is left unchanged by this function call except for the
 lock type which is set to
 .Dv F_UNLCK .
+If a lock that does not support the discovery of lock ownership by process
+(such as an OFD lock (see below), one created by the
+.Xr flock 2
+system call or the
+.Xr open 2
+system call with the
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+flag) is found,
+.Fa l_pid
+is set to -1.
 .It Dv F_SETLK
 Set or clear a file segment lock according to the lock description
 pointed to by the third argument,
@@ -359,7 +382,7 @@ returns immediately with
 This command is the same as
 .Dv F_SETLK
 except that if a shared or exclusive lock is blocked by other locks,
-the process waits until the request can be satisfied.
+the thread waits until the request can be satisfied.
 If a signal that is to be caught is received while
 .Nm fcntl
 is waiting for a region, the
@@ -426,7 +449,7 @@ point to the beginning of the file, and
 is zero, the entire file is locked.
 If an application wishes only to do entire file locking, the
 .Xr flock 2
-system call is much more efficient.
+system call is more efficient.
 .Pp
 There is at most one type of lock set for each byte in the file.
 Before a successful return from an
@@ -454,10 +477,10 @@ This semantic means that applications must be aware of any files that
 a subroutine library may access.
 For example if an application for updating the password file locks the
 password file database while making the update, and then calls
-.Xr getpwname 3
+.Xr getpwnam 3
 to retrieve a record,
 the lock will be lost because 
-.Xr getpwname 3
+.Xr getpwnam 3
 opens, reads, and closes the password database.
 The database close will release all locks that the process has
 associated with the database, even if the library routine never
@@ -477,7 +500,7 @@ to their children.
 Note that 
 .Xr flock 2
 and 
-.Xr fcntl 2
+.Nm fcntl
 locks may be safely used concurrently.
 .Pp
 All locks associated with a file for a given process are
@@ -489,6 +512,110 @@ This implementation detects that sleeping until a locked region is unlocked
 would cause a deadlock and fails with an
 .Er EDEADLK
 error.
+.Pp
+An alternative set of commands is available for advisory record locking;
+they operate on the same
+.Fa flock
+structure described above, the fields of the structure have the same
+semantics, and the commands behave similarly to the traditional record
+locks described above.
+The primary difference is that
+.Em open file description
+(OFD) locks are locks on the file associated with the open file description
+used to acquire them, and not with the process that created them.
+OFD locks are conceptually similar to locks managed by
+.Xr flock 2 ,
+with the addition of record locking capabilities.
+.Pp
+A new open file description can be obtained from e.g.,
+.Xr open 2 .
+However, file descriptors that have been duplicated using e.g.,
+.Xr dup 2
+or
+.Xr fork 2
+do
+.Sy not
+result in multiple instances of a lock, but create additional
+references to the same open file description, and thus reference the same lock.
+For example, if a process holding an OFD lock on a file forks, and the child
+explicitly unlocks a record, the parent will also lose that lock on the
+same record.
+.Pp
+Only the last close of the last file descriptor in any process still
+referencing the open file description causes an automatic unlock to occur,
+so this type of record lock avoids the more unfortunate
+.Xr close 2
+semantics of traditional advisory record locks.
+.Pp
+The commands used for OFD locks are direct analogs of traditional
+record locking commands:
+.\"
+.Bl -tag -width F_OFD_SETLKWX
+.It Dv F_OFD_GETLK
+Get the first lock that blocks the lock description pointed to by the
+third argument,
+.Fa arg ,
+taken as a pointer to a
+.Fa "struct flock"
+(see above).
+The information retrieved overwrites the information passed to
+.Nm fcntl
+in the
+.Fa flock
+structure.
+If no lock is found that would prevent this lock from being created,
+the structure is left unchanged by this function call except for the
+lock type which is set to
+.Dv F_UNLCK .
+If a lock that does not support the discovery of lock ownership by process
+(such as an OFD lock, one created by the
+.Xr flock 2
+system call or the
+.Xr open 2
+system call with the
+.Dv O_SHLOCK
+or
+.Dv O_EXLOCK
+flag) is found,
+.Fa l_pid
+is set to -1.
+.\"
+.It Dv F_OFD_SETLK
+Set or clear a file segment lock according to the lock description
+pointed to by the third argument,
+.Fa arg ,
+taken as a pointer to a
+.Fa "struct flock"
+(see above).
+.Dv F_SETLK
+is used to establish shared (or read) locks
+.Dv (F_RDLCK)
+or exclusive (or write) locks,
+.Dv (F_WRLCK) ,
+as well as remove either type of lock
+.Dv (F_UNLCK) .
+If a shared or exclusive lock cannot be set,
+.Nm fcntl
+returns immediately with a return value of -1.
+.\"
+.It Dv F_OFD_SETLKW
+This command is the same as
+.Dv F_OFD_SETLK
+except that if a shared or exclusive lock is blocked by other locks,
+the thread waits until the request can be satisfied.
+If a signal that is to be caught is received while
+.Nm fcntl
+is waiting for a region, the
+.Nm fcntl
+will be interrupted if the signal handler has not specified the
+.Dv SA_RESTART
+(see
+.Xr sigaction 2 ) .
+.El
+.\"
+.Pp
+No deadlock detection is performed for OFD file locks.
+.\"
 .Pp
 The
 .Dv F_PREALLOCATE
@@ -509,9 +636,15 @@ The flags (fst_flags) for the
 command are as follows:
 .Bl -tag -width F_ALLOCATECONTIGX -offset indent
 .It Dv F_ALLOCATECONTIG
-Allocate contiguous space.
+Allocate contiguous space. (Note that the file system may ignore this request if
+.Fa fst_length
+is very large.)
 .It Dv F_ALLOCATEALL
 Allocate all requested space or no space at all.
+.It Dv F_ALLOCATEPERSIST
+Allocate space that is not freed when
+.Xr close 2
+is called. (Note that the file system may ignore this request.)
 .El
 .Pp
 The position modes (fst_posmode) for the
@@ -552,18 +685,6 @@ user to the system:
            off_t   ra_offset;  /* offset into the file */
            int     ra_count;   /* size of the read     */
         };
-.Ed
-.Pp
-The
-.Dv F_READBOOTSTRAP and F_WRITEBOOTSTRAP
-commands operate on the following structure.
-.ne 7v
-.Bd -literal
-        typedef struct fbootstraptransfer {
-            off_t fbt_offset;       /* IN: offset to start read/write */
-            size_t fbt_length;      /* IN: number of bytes to transfer */
-            void *fbt_buffer;       /* IN: buffer to be read/written */
-        } fbootstraptransfer_t;
 .Ed
 .Pp
 The
@@ -635,7 +756,9 @@ system call will fail if:
 The argument
 .Fa cmd
 is
-.Dv F_SETLK ,
+.Dv F_SETLK
+or
+.Dv F_OFD_SETLK ,
 the type of lock
 .Fa (l_type)
 is a shared lock
@@ -647,13 +770,11 @@ exclusive-locked by another process;
 or the type is an exclusive lock and some portion of the
 segment of a file to be locked is already shared-locked or
 exclusive-locked by another process.
-.It Bq Er EACCESS
+.It Bq Er EACCES
 The argument
 .Fa cmd
-is either
+is
 .Dv F_SETSIZE
-or
-.Dv F_WRITEBOOTSTRAP
 and the calling process does not have root privileges.
 .\" ==========
 .It Bq Er EBADF
@@ -663,9 +784,11 @@ is not a valid open file descriptor.
 The argument
 .Fa cmd
 is
-.Dv F_SETLK
-or
+.Dv F_SETLK ,
 .Dv F_SETLKW ,
+.Dv F_OFD_SETLK
+or
+.Dv F_OFD_SETLKW ,
 the type of lock
 .Fa (l_type)
 is a shared lock
@@ -677,9 +800,11 @@ is not a valid file descriptor open for reading.
 The argument
 .Fa cmd
 is
-.Dv F_SETLK
-or
+.Dv F_SETLK ,
 .Dv F_SETLKW ,
+.Dv F_OFD_SETLK
+or
+.Dv F_OFD_SETLKW ,
 the type of lock
 .Fa (l_type)
 is an exclusive lock
@@ -704,6 +829,13 @@ or
 and
 .Fa fildes
 is not a valid file descriptor open for reading.
+.Pp
+The argument
+.Fa cmd
+is
+.Dv F_TRANSFEREXTENTS
+and either file descriptor does not correspond to a valid
+regular file, or either file is not open for writing.
 .\" ==========
 .It Bq Er EDEADLK
 The argument
@@ -712,11 +844,25 @@ is
 .Dv F_SETLKW ,
 and a deadlock condition was detected.
 .\" ==========
+.It Bq Er EFBIG
+The argument
+.Fa cmd
+is
+.Dv F_PREALLOCATE ,
+.Dv F_PEOFPOSMODE
+is set and preallocating
+.Fa fst_length
+bytes on
+.Fa fildes
+would exceed the maximum file size.
+.\" ==========
 .It Bq Er EINTR
 The argument
 .Fa cmd
 is
-.Dv F_SETLKW ,
+.Dv F_SETLKW
+or
+.Dv F_OFD_SETLKW ,
 and the function was interrupted by a signal.
 .\" ==========
 .It Bq Er EINVAL
@@ -734,8 +880,11 @@ The argument
 is
 .Dv F_GETLK ,
 .Dv F_SETLK ,
+.Dv F_SETLKW ,
+.Dv F_OFD_GETLK ,
+.Dv F_OFD_SETLK
 or
-.Dv F_SETLKW
+.Dv F_OFD_SETLKW ,
 and the data to which
 .Fa arg
 points is not valid, or
@@ -769,19 +918,22 @@ either
 .Fa fp_offset
 or
 .Fa fp_length
-are negative, or both
+are negative, or when both
 .Fa fp_offset
 and
 .Fa fp_length
-are not multiples of the file system block size.
+are not multiples of the file system block size, or when either
+.Fa fp_flags
+or
+.Fa reserved
+is non-zero value.
 .Pp
 The argument
 .Fa cmd
-is either
-.Dv F_READBOOTSTRAP
-or
-.Dv F_WRITEBOOTSTRAP
-and the operation was attempted on a non-HFS disk type.
+is
+.Dv F_TRANSFEREXTENTS
+and the additional file descriptor is negative or both file
+descriptors reference the same file.
 .\" ==========
 .It Bq Er EMFILE
 .Fa Cmd
@@ -794,7 +946,7 @@ open.
 The argument
 .Fa cmd
 is
-.Dv F_DUPED
+.Dv F_DUPFD
 and the maximum number of file descriptors permitted for the
 process are already in use,
 or no file descriptors greater than or equal to
@@ -805,9 +957,11 @@ are available.
 The argument
 .Fa cmd
 is
-.Dv F_SETLK
-or
+.Dv F_SETLK ,
 .Dv F_SETLKW ,
+.Dv F_OFD_SETLK
+or
+.Dv F_OFD_SETLKW ,
 and satisfying the lock or unlock request would result in the
 number of locked regions in the system exceeding a system-imposed limit.
 .\" ==========
@@ -850,25 +1004,52 @@ The argument cmd is
 .Dv F_PUNCHHOLE
 and the calling process does not have file write permission.
 .\" ==========
+.It Bq Er EPERM
+The argument cmd is
+.Dv F_SETSIZE
+and the named file has its append-only flag set, see the
+.Xr chflags 2
+manual page for more information.
+.\" ==========
+.It Bq Er EPERM
+The argument cmd is
+.Dv F_SETFL
+and O_APPEND flag is not present but the named file has its append-only flag set.
+.\" ==========
 .It Bq Er ESRCH
 .Fa Cmd
 is
 .Dv F_SETOWN
 and
 the process ID given as argument is not in use.
+.\" ==========
+.It Bq Er ENOTSUP
+.Fa Cmd
+is
+.Dv F_TRANSFEREXTENTS
+and the given files aren't on an APFS volume.
+.\" ==========
+.It Bq Er EXDEV
+.Fa Cmd
+is
+.Dv F_TRANSFEREXTENTS
+and the referenced files are not in the same volume.
 .El
 .Sh SEE ALSO
 .Xr close 2 ,
 .Xr execve 2 ,
 .Xr flock 2 ,
+.Xr fork 2 ,
 .Xr getdtablesize 2 ,
 .Xr open 2 ,
 .Xr pipe 2 ,
-.Xr socket 2 ,
 .Xr setsockopt 2 ,
+.Xr socket 2 ,
 .Xr sigaction 3
 .Sh HISTORY
 The
 .Fn fcntl
 function call appeared in
 .Bx 4.2 .
+.Pp
+Open file description locks first appeared in Linux 3.15

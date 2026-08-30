@@ -103,52 +103,40 @@ __BEGIN_DECLS
 #include <kern/kalloc.h>
 __END_DECLS
 
-#define malloc(size) malloc_impl(size)
+// Omit from static analysis.
+#ifndef __clang_analyzer__
+
+#define malloc(size)         malloc_impl(size)
+#define malloc_type(type)    kalloc_type(type, Z_SET_NOTSHARED)
 static inline void *
 malloc_impl(size_t size)
 {
 	if (size == 0) {
 		return NULL;
 	}
-	return kheap_alloc_tag_bt(KHEAP_DEFAULT, size,
-	           (zalloc_flags_t) (Z_WAITOK | Z_ZERO),
-	           VM_KERN_MEMORY_LIBKERN);
+	return kalloc_data(size,
+		Z_VM_TAG_BT(Z_WAITOK_ZERO, VM_KERN_MEMORY_LIBKERN));
 }
 
-#define free(addr) free_impl(addr)
+#define free(addr)             free_impl(addr)
+#define free_type(type, addr)  kfree_type(type, addr)
 static inline void
 free_impl(void *addr)
 {
-	kheap_free_addr(KHEAP_DEFAULT, addr);
+	kfree_data_addr(addr);
 }
 static inline void
 safe_free(void *addr, size_t size)
 {
-  if(addr) {
-    assert(size != 0);
-    kheap_free(KHEAP_DEFAULT, addr, size);
-  }
+	kfree_data(addr, size);
 }
 
 #define realloc(addr, osize, nsize) realloc_impl(addr, osize, nsize)
 static inline void *
 realloc_impl(void *addr, size_t osize, size_t nsize)
 {
-	if (!addr) {
-		return malloc(nsize);
-	}
-	if (nsize == osize) {
-		return addr;
-	}
-	void *nmem = malloc(nsize);
-	if (!nmem) {
-		safe_free(addr, osize);
-		return NULL;
-	}
-	(void)memcpy(nmem, addr, (nsize > osize) ? osize : nsize);
-	safe_free(addr, osize);
-
-	return nmem;
+	return krealloc_data(addr, osize, nsize,
+		Z_VM_TAG_BT(Z_WAITOK_ZERO, VM_KERN_MEMORY_LIBKERN));
 }
 
 %}
@@ -500,7 +488,7 @@ newObject()
 #if DEBUG
 	debugUnserializeAllocCount++;
 #endif
-	return (object_t *)malloc(sizeof(object_t));
+	return malloc_type(object_t);
 }
 
 void
@@ -509,7 +497,7 @@ freeObject(object_t *o)
 #if DEBUG
 	debugUnserializeAllocCount--;
 #endif
-	safe_free(o, sizeof(object_t));
+	free_type(object_t, o);
 }
 
 static OSDictionary *tags;
@@ -692,6 +680,8 @@ OSUnserialize(const char *buffer, OSString **errorString)
 
 	return object;
 }
+
+#endif // not __clang_analyzer__
 
 
 //

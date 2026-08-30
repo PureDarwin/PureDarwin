@@ -186,13 +186,13 @@ typedef enum {
 #include <machine/endian.h>
 #ifndef __DARWIN_BYTE_ORDER
 #if defined(__LITTLE_ENDIAN__) || defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__arm64__)
-#define __DARWIN_LITTLE_ENDIAN  1234
-#define __DARWIN_BIG_ENDIAN     4321
-#define __DARWIN_BYTE_ORDER     __DARWIN_LITTLE_ENDIAN
+#define __DARWIN_LITTLE_ENDIAN 1234
+#define __DARWIN_BIG_ENDIAN 4321
+#define __DARWIN_BYTE_ORDER __DARWIN_LITTLE_ENDIAN
 #elif defined(__BIG_ENDIAN__)
-#define __DARWIN_LITTLE_ENDIAN  1234
-#define __DARWIN_BIG_ENDIAN     4321
-#define __DARWIN_BYTE_ORDER     __DARWIN_BIG_ENDIAN
+#define __DARWIN_LITTLE_ENDIAN 1234
+#define __DARWIN_BIG_ENDIAN 4321
+#define __DARWIN_BYTE_ORDER __DARWIN_BIG_ENDIAN
 #endif
 #endif
 
@@ -213,8 +213,7 @@ union wait {
 		    w_Coredump:1,               /* core dump indicator */
 		    w_Retcode:8,                /* exit code if w_termsig==0 */
 		    w_Filler:16;                /* upper bits filler */
-#endif
-#if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
+#elif __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
 		unsigned int    w_Filler:16,    /* upper bits filler */
 		    w_Retcode:8,                /* exit code if w_termsig==0 */
 		    w_Coredump:1,               /* core dump indicator */
@@ -231,8 +230,7 @@ union wait {
 		unsigned int    w_Stopval:8,    /* == W_STOPPED if stopped */
 		    w_Stopsig:8,                /* signal that stopped us */
 		    w_Filler:16;                /* upper bits filler */
-#endif
-#if __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
+#elif __DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN
 		unsigned int    w_Filler:16,    /* upper bits filler */
 		    w_Stopsig:8,                /* signal that stopped us */
 		    w_Stopval:8;                /* == W_STOPPED if stopped */

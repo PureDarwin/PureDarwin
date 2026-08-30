@@ -130,6 +130,11 @@ typedef uint64_t                vm_map_size_t;
 
 typedef mach_vm_address_t       mach_port_context_t;
 
+/* Newer mach_vm.h interfaces use these types on all 64-bit user ABIs. */
+typedef mach_vm_offset_t        *mach_vm_offset_list_t;
+typedef uint32_t                 mach_vm_range_flavor_t;
+typedef uint8_t                  *mach_vm_range_recipes_raw_t;
+
 
 #endif  /* ASSEMBLER */
 

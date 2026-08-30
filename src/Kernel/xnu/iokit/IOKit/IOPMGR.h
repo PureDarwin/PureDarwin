@@ -28,9 +28,7 @@
 
 #pragma once
 
-extern "C" {
 #include <machine/machine_routines.h>
-};
 
 #include <stdint.h>
 #include <IOKit/IOService.h>

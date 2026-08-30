@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2003-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -116,6 +116,7 @@
 #include <netinet/in_systm.h>
 #include <netinet/ip6.h>
 #include <netinet/ip_var.h>
+#include <netinet/inp_log.h>
 
 #include <netinet6/ip6_var.h>
 #include <netinet6/nd6.h>
@@ -140,6 +141,8 @@
 #include <net/necp.h>
 #endif /* NECP */
 
+#include <net/sockaddr_utils.h>
+
 /*
  * in6_pcblookup_local_and_cleanup does everything
  * in6_pcblookup_local does but it checks for a socket
@@ -151,12 +154,12 @@
  */
 static struct inpcb *
 in6_pcblookup_local_and_cleanup(struct inpcbinfo *pcbinfo,
-    struct in6_addr *laddr, u_int lport_arg, int wild_okay)
+    struct in6_addr *laddr, u_int lport_arg, uint32_t ifscope, int wild_okay)
 {
-	struct inpcb *inp;
+	struct inpcb *__single inp;
 
 	/* Perform normal lookup */
-	inp = in6_pcblookup_local(pcbinfo, laddr, lport_arg, wild_okay);
+	inp = in6_pcblookup_local(pcbinfo, laddr, lport_arg, ifscope, wild_okay);
 
 	/* Check if we found a match but it's waiting to be disposed */
 	if (inp != NULL && inp->inp_wantcnt == WNT_STOPUSING) {
@@ -180,52 +183,62 @@ in6_pcblookup_local_and_cleanup(struct inpcbinfo *pcbinfo,
 
 /*
  * Bind an INPCB to an address and/or port.  This routine should not alter
- * the caller-supplied local address "nam".
+ * the caller-supplied local address "nam" or remote address "remote".
  */
 int
-in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
+in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct sockaddr *remote, struct proc *p)
 {
-	struct socket *so = inp->inp_socket;
-	struct inpcbinfo *pcbinfo = inp->inp_pcbinfo;
+	struct socket *__single so = inp->inp_socket;
+	struct inpcbinfo *__single pcbinfo = inp->inp_pcbinfo;
 	u_short lport = 0;
 	int wild = 0, reuseport = (so->so_options & SO_REUSEPORT);
-	struct ifnet *outif = NULL;
+	ifnet_ref_t outif = NULL;
 	struct sockaddr_in6 sin6;
+	uint32_t lifscope = IFSCOPE_NONE;
+	int error = 0;
 #if XNU_TARGET_OS_OSX
-	int error;
-	kauth_cred_t cred;
+	kauth_cred_t __single cred;
 #endif /* XNU_TARGET_OS_OSX */
 
+	ASSERT((inp->inp_flags2 & INP2_BIND_IN_PROGRESS) != 0);
+
 	if (TAILQ_EMPTY(&in6_ifaddrhead)) { /* XXX broken! */
-		return EADDRNOTAVAIL;
+		error = EADDRNOTAVAIL;
+		goto done;
 	}
 	if (!(so->so_options & (SO_REUSEADDR | SO_REUSEPORT))) {
 		wild = 1;
 	}
 
+	in_pcb_check_management_entitled(inp);
+	in_pcb_check_ultra_constrained_entitled(inp);
+
 	socket_unlock(so, 0); /* keep reference */
-	lck_rw_lock_exclusive(pcbinfo->ipi_lock);
+	lck_rw_lock_exclusive(&pcbinfo->ipi_lock);
 	if (inp->inp_lport || !IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr)) {
 		/* another thread completed the bind */
-		lck_rw_done(pcbinfo->ipi_lock);
+		lck_rw_done(&pcbinfo->ipi_lock);
 		socket_lock(so, 0);
-		return EINVAL;
+		error = EINVAL;
+		goto done;
 	}
 
-	bzero(&sin6, sizeof(sin6));
+	SOCKADDR_ZERO(&sin6, sizeof(sin6));
 	if (nam != NULL) {
 		if (nam->sa_len != sizeof(struct sockaddr_in6)) {
-			lck_rw_done(pcbinfo->ipi_lock);
+			lck_rw_done(&pcbinfo->ipi_lock);
 			socket_lock(so, 0);
-			return EINVAL;
+			error = EINVAL;
+			goto done;
 		}
 		/*
 		 * family check.
 		 */
 		if (nam->sa_family != AF_INET6) {
-			lck_rw_done(pcbinfo->ipi_lock);
+			lck_rw_done(&pcbinfo->ipi_lock);
 			socket_lock(so, 0);
-			return EAFNOSUPPORT;
+			error = EAFNOSUPPORT;
+			goto done;
 		}
 		lport = SIN6(nam)->sin6_port;
 
@@ -233,16 +246,19 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 
 		/* KAME hack: embed scopeid */
 		if (in6_embedscope(&sin6.sin6_addr, &sin6, inp, NULL,
-		    NULL) != 0) {
-			lck_rw_done(pcbinfo->ipi_lock);
+		    NULL, &lifscope) != 0) {
+			lck_rw_done(&pcbinfo->ipi_lock);
 			socket_lock(so, 0);
-			return EINVAL;
+			error = EINVAL;
+			goto done;
 		}
 
 		/* Sanitize local copy for address searches */
 		sin6.sin6_flowinfo = 0;
-		sin6.sin6_scope_id = 0;
 		sin6.sin6_port = 0;
+		if (in6_embedded_scope) {
+			sin6.sin6_scope_id = 0;
+		}
 
 		if (IN6_IS_ADDR_MULTICAST(&sin6.sin6_addr)) {
 			/*
@@ -256,13 +272,14 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 				reuseport = SO_REUSEADDR | SO_REUSEPORT;
 			}
 		} else if (!IN6_IS_ADDR_UNSPECIFIED(&sin6.sin6_addr)) {
-			struct ifaddr *ifa;
+			struct ifaddr *__single ifa;
 
 			ifa = ifa_ifwithaddr(SA(&sin6));
 			if (ifa == NULL) {
-				lck_rw_done(pcbinfo->ipi_lock);
+				lck_rw_done(&pcbinfo->ipi_lock);
 				socket_lock(so, 0);
-				return EADDRNOTAVAIL;
+				error = EADDRNOTAVAIL;
+				goto done;
 			} else {
 				/*
 				 * XXX: bind to an anycast address might
@@ -272,14 +289,15 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 				 * the application dare to use it.
 				 */
 				IFA_LOCK_SPIN(ifa);
-				if (((struct in6_ifaddr *)ifa)->ia6_flags &
+				if ((ifatoia6(ifa))->ia6_flags &
 				    (IN6_IFF_ANYCAST | IN6_IFF_NOTREADY |
 				    IN6_IFF_DETACHED | IN6_IFF_CLAT46)) {
 					IFA_UNLOCK(ifa);
-					IFA_REMREF(ifa);
-					lck_rw_done(pcbinfo->ipi_lock);
+					ifa_remref(ifa);
+					lck_rw_done(&pcbinfo->ipi_lock);
 					socket_lock(so, 0);
-					return EADDRNOTAVAIL;
+					error = EADDRNOTAVAIL;
+					goto done;
 				}
 				/*
 				 * Opportunistically determine the outbound
@@ -291,13 +309,64 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 				 */
 				outif = ifa->ifa_ifp;
 				IFA_UNLOCK(ifa);
-				IFA_REMREF(ifa);
+				ifa_remref(ifa);
 			}
 		}
 
+#if SKYWALK
+		if (inp->inp_flags2 & INP2_EXTERNAL_PORT) {
+			// Extract the external flow info
+			struct ns_flow_info nfi = {};
+			int netns_error = necp_client_get_netns_flow_info(inp->necp_client_uuid,
+			    &nfi);
+			if (netns_error != 0) {
+				lck_rw_done(&pcbinfo->ipi_lock);
+				socket_lock(so, 0);
+				error = netns_error;
+				goto done;
+			}
+
+			// Extract the reserved port
+			u_int16_t reserved_lport = 0;
+			if (nfi.nfi_laddr.sa.sa_family == AF_INET) {
+				reserved_lport = nfi.nfi_laddr.sin.sin_port;
+			} else if (nfi.nfi_laddr.sa.sa_family == AF_INET6) {
+				reserved_lport = nfi.nfi_laddr.sin6.sin6_port;
+			} else {
+				lck_rw_done(&pcbinfo->ipi_lock);
+				socket_lock(so, 0);
+				error = EINVAL;
+				goto done;
+			}
+
+			// Validate or use the reserved port
+			if (lport == 0) {
+				lport = reserved_lport;
+			} else if (lport != reserved_lport) {
+				lck_rw_done(&pcbinfo->ipi_lock);
+				socket_lock(so, 0);
+				error = EINVAL;
+				goto done;
+			}
+		}
+
+		/* Do not allow reserving a UDP port if remaining UDP port count is below 4096 */
+		if (SOCK_PROTO(so) == IPPROTO_UDP && !allow_udp_port_exhaustion) {
+			uint32_t current_reservations = 0;
+			current_reservations = netns_lookup_reservations_count_in6(inp->in6p_laddr, IPPROTO_UDP);
+			if (USHRT_MAX - UDP_RANDOM_PORT_RESERVE < current_reservations) {
+				log(LOG_ERR, "UDP port not available, less than 4096 UDP ports left");
+				lck_rw_done(&pcbinfo->ipi_lock);
+				socket_lock(so, 0);
+				error = EADDRNOTAVAIL;
+				goto done;
+			}
+		}
+
+#endif /* SKYWALK */
 
 		if (lport != 0) {
-			struct inpcb *t;
+			struct inpcb *__single t;
 			uid_t u;
 
 #if XNU_TARGET_OS_OSX
@@ -309,9 +378,10 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 				    PRIV_NETINET_RESERVEDPORT, 0);
 				kauth_cred_unref(&cred);
 				if (error != 0) {
-					lck_rw_done(pcbinfo->ipi_lock);
+					lck_rw_done(&pcbinfo->ipi_lock);
 					socket_lock(so, 0);
-					return EACCES;
+					error = EACCES;
+					goto done;
 				}
 			}
 #endif /* XNU_TARGET_OS_OSX */
@@ -320,15 +390,17 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 			 */
 			if (!current_task_can_use_restricted_in_port(lport,
 			    (uint8_t)SOCK_PROTO(so), PORT_FLAGS_BSD)) {
-				lck_rw_done(pcbinfo->ipi_lock);
+				lck_rw_done(&pcbinfo->ipi_lock);
 				socket_lock(so, 0);
-				return EADDRINUSE;
+				error = EADDRINUSE;
+				INP_LOG(inp, nam, NULL, "error EADDRINUSE port %u is restricted", ntohs(lport));
+				goto done;
 			}
 
 			if (!IN6_IS_ADDR_MULTICAST(&sin6.sin6_addr) &&
 			    (u = kauth_cred_getuid(so->so_cred)) != 0) {
 				t = in6_pcblookup_local_and_cleanup(pcbinfo,
-				    &sin6.sin6_addr, lport,
+				    &sin6.sin6_addr, lport, sin6.sin6_scope_id,
 				    INPLOOKUP_WILDCARD);
 				if (t != NULL &&
 				    (!IN6_IS_ADDR_UNSPECIFIED(&sin6.sin6_addr) ||
@@ -339,9 +411,11 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 				    (!(t->inp_flags2 & INP2_EXTERNAL_PORT) ||
 				    !(inp->inp_flags2 & INP2_EXTERNAL_PORT) ||
 				    uuid_compare(t->necp_client_uuid, inp->necp_client_uuid) != 0)) {
-					lck_rw_done(pcbinfo->ipi_lock);
+					INP_LOG_PAIR(inp, nam, NULL, t, "EADDRINUSE caused by");
+					lck_rw_done(&pcbinfo->ipi_lock);
 					socket_lock(so, 0);
-					return EADDRINUSE;
+					error = EADDRINUSE;
+					goto done;
 				}
 				if (!(inp->inp_flags & IN6P_IPV6_V6ONLY) &&
 				    IN6_IS_ADDR_UNSPECIFIED(&sin6.sin6_addr)) {
@@ -360,23 +434,49 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 					    (!(t->inp_flags2 & INP2_EXTERNAL_PORT) ||
 					    !(inp->inp_flags2 & INP2_EXTERNAL_PORT) ||
 					    uuid_compare(t->necp_client_uuid, inp->necp_client_uuid) != 0)) {
-						lck_rw_done(pcbinfo->ipi_lock);
+						INP_LOG_PAIR(inp, nam, NULL, t, "EADDRINUSE caused by");
+						lck_rw_done(&pcbinfo->ipi_lock);
 						socket_lock(so, 0);
-						return EADDRINUSE;
+						error = EADDRINUSE;
+						goto done;
 					}
 
+#if SKYWALK
+					VERIFY(!NETNS_TOKEN_VALID(
+						    &inp->inp_wildcard_netns_token));
+					if ((SOCK_PROTO(so) == IPPROTO_TCP ||
+					    SOCK_PROTO(so) == IPPROTO_UDP) &&
+					    !(inp->inp_flags2 & INP2_EXTERNAL_PORT)) {
+						if (netns_reserve_in(&inp->
+						    inp_wildcard_netns_token,
+						    sin.sin_addr,
+						    (uint8_t)SOCK_PROTO(so), lport,
+						    NETNS_BSD, NULL) != 0) {
+							lck_rw_done(&pcbinfo->ipi_lock);
+							socket_lock(so, 0);
+							error = EADDRINUSE;
+							INP_LOG(inp, nam, NULL, "error EADDRINUSE netns_reserve_in failed for port %u", ntohs(lport));
+							goto done;
+						}
+					}
+#endif /* SKYWALK */
 				}
 			}
 			t = in6_pcblookup_local_and_cleanup(pcbinfo,
-			    &sin6.sin6_addr, lport, wild);
+			    &sin6.sin6_addr, lport, sin6.sin6_scope_id, wild);
 			if (t != NULL &&
 			    (reuseport & t->inp_socket->so_options) == 0 &&
 			    (!(t->inp_flags2 & INP2_EXTERNAL_PORT) ||
 			    !(inp->inp_flags2 & INP2_EXTERNAL_PORT) ||
 			    uuid_compare(t->necp_client_uuid, inp->necp_client_uuid) != 0)) {
-				lck_rw_done(pcbinfo->ipi_lock);
+#if SKYWALK
+				netns_release(&inp->inp_wildcard_netns_token);
+#endif /* SKYWALK */
+				INP_LOG_PAIR(inp, nam, NULL, t, "EADDRINUSE caused by");
+				lck_rw_done(&pcbinfo->ipi_lock);
 				socket_lock(so, 0);
-				return EADDRINUSE;
+				error = EADDRINUSE;
+				goto done;
 			}
 			if (!(inp->inp_flags & IN6P_IPV6_V6ONLY) &&
 			    IN6_IS_ADDR_UNSPECIFIED(&sin6.sin6_addr)) {
@@ -392,11 +492,51 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 				    (!(t->inp_flags2 & INP2_EXTERNAL_PORT) ||
 				    !(inp->inp_flags2 & INP2_EXTERNAL_PORT) ||
 				    uuid_compare(t->necp_client_uuid, inp->necp_client_uuid) != 0)) {
-					lck_rw_done(pcbinfo->ipi_lock);
+					INP_LOG_PAIR(inp, nam, NULL, t, "EADDRINUSE caused by");
+#if SKYWALK
+					netns_release(&inp->inp_wildcard_netns_token);
+#endif /* SKYWALK */
+					lck_rw_done(&pcbinfo->ipi_lock);
 					socket_lock(so, 0);
-					return EADDRINUSE;
+					error = EADDRINUSE;
+					goto done;
+				}
+#if SKYWALK
+				if ((SOCK_PROTO(so) == IPPROTO_TCP ||
+				    SOCK_PROTO(so) == IPPROTO_UDP) &&
+				    !(inp->inp_flags2 & INP2_EXTERNAL_PORT) &&
+				    (!NETNS_TOKEN_VALID(
+					    &inp->inp_wildcard_netns_token))) {
+					if (netns_reserve_in(&inp->
+					    inp_wildcard_netns_token,
+					    sin.sin_addr,
+					    (uint8_t)SOCK_PROTO(so), lport,
+					    NETNS_BSD, NULL) != 0) {
+						lck_rw_done(&pcbinfo->ipi_lock);
+						socket_lock(so, 0);
+						error = EADDRINUSE;
+						INP_LOG(inp, nam, NULL, "error EADDRINUSE netns_reserve_in failed for port %u", ntohs(lport));
+						goto done;
+					}
+				}
+#endif /* SKYWALK */
+			}
+#if SKYWALK
+			if ((SOCK_PROTO(so) == IPPROTO_TCP ||
+			    SOCK_PROTO(so) == IPPROTO_UDP) &&
+			    !(inp->inp_flags2 & INP2_EXTERNAL_PORT)) {
+				if (netns_reserve_in6(&inp->inp_netns_token,
+				    sin6.sin6_addr, (uint8_t)SOCK_PROTO(so), lport,
+				    NETNS_BSD, NULL) != 0) {
+					INP_LOG(inp, nam, NULL, "error EADDRINUSE netns_reserve_in6 failed for port %u", ntohs(lport));
+					netns_release(&inp->inp_wildcard_netns_token);
+					lck_rw_done(&pcbinfo->ipi_lock);
+					socket_lock(so, 0);
+					error = EADDRINUSE;
+					goto done;
 				}
 			}
+#endif /* SKYWALK */
 		}
 	}
 
@@ -407,43 +547,74 @@ in6_pcbbind(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 	 * Checking if world has changed since.
 	 */
 	if (inp->inp_state == INPCB_STATE_DEAD) {
-		lck_rw_done(pcbinfo->ipi_lock);
-		return ECONNABORTED;
+#if SKYWALK
+		netns_release(&inp->inp_netns_token);
+		netns_release(&inp->inp_wildcard_netns_token);
+#endif /* SKYWALK */
+		lck_rw_done(&pcbinfo->ipi_lock);
+		error = ECONNABORTED;
+		goto done;
 	}
 
 	/* check if the socket got bound when the lock was released */
 	if (inp->inp_lport || !IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr)) {
-		lck_rw_done(pcbinfo->ipi_lock);
-		return EINVAL;
+#if SKYWALK
+		netns_release(&inp->inp_netns_token);
+		netns_release(&inp->inp_wildcard_netns_token);
+#endif /* SKYWALK */
+		lck_rw_done(&pcbinfo->ipi_lock);
+		error = EINVAL;
+		goto done;
 	}
 
 	if (!IN6_IS_ADDR_UNSPECIFIED(&sin6.sin6_addr)) {
 		inp->in6p_laddr = sin6.sin6_addr;
 		inp->in6p_last_outifp = outif;
+		inp->inp_lifscope = lifscope;
+		in6_verify_ifscope(&inp->in6p_laddr, lifscope);
+#if SKYWALK
+		if (NETNS_TOKEN_VALID(&inp->inp_netns_token)) {
+			netns_set_ifnet(&inp->inp_netns_token,
+			    inp->in6p_last_outifp);
+		}
+#endif /* SKYWALK */
 	}
 
 	if (lport == 0) {
 		int e;
-		if ((e = in6_pcbsetport(&inp->in6p_laddr, inp, p, 1)) != 0) {
+		if ((e = in6_pcbsetport(&inp->in6p_laddr, remote, inp, p, 1)) != 0) {
 			/* Undo any address bind from above. */
+#if SKYWALK
+			netns_release(&inp->inp_netns_token);
+			netns_release(&inp->inp_wildcard_netns_token);
+#endif /* SKYWALK */
 			inp->in6p_laddr = in6addr_any;
 			inp->in6p_last_outifp = NULL;
-			lck_rw_done(pcbinfo->ipi_lock);
-			return e;
+			inp->inp_lifscope = IFSCOPE_NONE;
+			lck_rw_done(&pcbinfo->ipi_lock);
+			error = e;
+			goto done;
 		}
 	} else {
 		inp->inp_lport = lport;
-		if (in_pcbinshash(inp, 1) != 0) {
+		if (in_pcbinshash(inp, remote, 1) != 0) {
+#if SKYWALK
+			netns_release(&inp->inp_netns_token);
+			netns_release(&inp->inp_wildcard_netns_token);
+#endif /* SKYWALK */
 			inp->in6p_laddr = in6addr_any;
+			inp->inp_lifscope = IFSCOPE_NONE;
 			inp->inp_lport = 0;
 			inp->in6p_last_outifp = NULL;
-			lck_rw_done(pcbinfo->ipi_lock);
-			return EAGAIN;
+			lck_rw_done(&pcbinfo->ipi_lock);
+			error = EAGAIN;
+			goto done;
 		}
 	}
-	lck_rw_done(pcbinfo->ipi_lock);
+	lck_rw_done(&pcbinfo->ipi_lock);
 	sflt_notify(so, sock_evt_bound, NULL);
-	return 0;
+done:
+	return error;
 }
 
 /*
@@ -462,7 +633,7 @@ int
 in6_pcbladdr(struct inpcb *inp, struct sockaddr *nam,
     struct in6_addr *plocal_addr6, struct ifnet **outif)
 {
-	struct in6_addr *addr6 = NULL;
+	struct in6_addr *__single addr6 = NULL;
 	struct in6_addr src_storage;
 	int error = 0;
 	unsigned int ifscope;
@@ -481,9 +652,12 @@ in6_pcbladdr(struct inpcb *inp, struct sockaddr *nam,
 	}
 
 	/* KAME hack: embed scopeid */
-	if (in6_embedscope(&SIN6(nam)->sin6_addr, SIN6(nam), inp, NULL, NULL) != 0) {
+	if (in6_embedscope(&SIN6(nam)->sin6_addr, SIN6(nam), inp, NULL, NULL, IN6_NULL_IF_EMBEDDED_SCOPE(&SIN6(nam)->sin6_scope_id)) != 0) {
 		return EINVAL;
 	}
+
+	in_pcb_check_management_entitled(inp);
+	in_pcb_check_ultra_constrained_entitled(inp);
 
 	if (!TAILQ_EMPTY(&in6_ifaddrhead)) {
 		/*
@@ -511,7 +685,7 @@ in6_pcbladdr(struct inpcb *inp, struct sockaddr *nam,
 	    &inp->in6p_route, outif, &src_storage, ifscope, &error);
 
 	if (outif != NULL) {
-		struct rtentry *rt = inp->in6p_route.ro_rt;
+		rtentry_ref_t rt = inp->in6p_route.ro_rt;
 		/*
 		 * If in6_selectsrc() returns a route, it should be one
 		 * which points to the same ifp as outif.  Just in case
@@ -560,17 +734,17 @@ int
 in6_pcbconnect(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 {
 	struct in6_addr addr6;
-	struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)(void *)nam;
-	struct inpcb *pcb;
+	struct sockaddr_in6 *__single sin6 = SIN6(nam);
+	struct inpcb *__single pcb;
 	int error = 0;
-	struct ifnet *outif = NULL;
+	ifnet_ref_t outif = NULL;
 	struct socket *so = inp->inp_socket;
 
 #if CONTENT_FILTER
 	so->so_state_change_cnt++;
 #endif
 
-	if (so->so_proto->pr_protocol == IPPROTO_UDP &&
+	if (SOCK_CHECK_PROTO(so, IPPROTO_UDP) &&
 	    sin6->sin6_port == htons(53) && !(so->so_flags1 & SOF1_DNS_COUNTED)) {
 		so->so_flags1 |= SOF1_DNS_COUNTED;
 		INC_ATOMIC_INT64_LIM(net_api_stats.nas_socket_inet_dgram_dns);
@@ -592,39 +766,65 @@ in6_pcbconnect(struct inpcb *inp, struct sockaddr *nam, struct proc *p)
 		goto done;
 	}
 	socket_unlock(so, 0);
+
+	uint32_t lifscope;
+	if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr)) {
+		lifscope = inp->inp_lifscope;
+	} else if (outif != NULL) {
+		lifscope = in6_addr2scopeid(outif, &addr6);
+	} else {
+		lifscope = sin6->sin6_scope_id;
+	}
+
 	pcb = in6_pcblookup_hash(inp->inp_pcbinfo, &sin6->sin6_addr,
-	    sin6->sin6_port, IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr) ?
-	    &addr6 : &inp->in6p_laddr, inp->inp_lport, 0, NULL);
+	    sin6->sin6_port, sin6->sin6_scope_id, IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr) ?
+	    &addr6 : &inp->in6p_laddr, inp->inp_lport, lifscope, 0, NULL);
 	socket_lock(so, 0);
 	if (pcb != NULL) {
+		INP_LOG(pcb, NULL, nam, "already connected, causing error EADDRINUSE");
 		in_pcb_checkstate(pcb, WNT_RELEASE, pcb == inp ? 1 : 0);
 		error = EADDRINUSE;
 		goto done;
 	}
 	if (IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr)) {
 		if (inp->inp_lport == 0) {
-			error = in6_pcbbind(inp, NULL, p);
+			error = in6_pcbbind(inp, NULL, nam, p);
 			if (error) {
 				goto done;
 			}
 		}
 		inp->in6p_laddr = addr6;
 		inp->in6p_last_outifp = outif;  /* no reference needed */
+		if (IN6_IS_SCOPE_EMBED(&inp->in6p_laddr) &&
+		    IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, &sin6->sin6_addr)) {
+			inp->inp_lifscope = sin6->sin6_scope_id;
+		} else {
+			inp->inp_lifscope = lifscope;
+		}
+		in6_verify_ifscope(&inp->in6p_laddr, inp->inp_lifscope);
+#if SKYWALK
+		if (NETNS_TOKEN_VALID(&inp->inp_netns_token)) {
+			netns_set_ifnet(&inp->inp_netns_token,
+			    inp->in6p_last_outifp);
+		}
+#endif /* SKYWALK */
 		inp->in6p_flags |= INP_IN6ADDR_ANY;
 	}
-	if (!lck_rw_try_lock_exclusive(inp->inp_pcbinfo->ipi_lock)) {
+	if (!lck_rw_try_lock_exclusive(&inp->inp_pcbinfo->ipi_lock)) {
 		/* lock inversion issue, mostly with udp multicast packets */
 		socket_unlock(so, 0);
-		lck_rw_lock_exclusive(inp->inp_pcbinfo->ipi_lock);
+		lck_rw_lock_exclusive(&inp->inp_pcbinfo->ipi_lock);
 		socket_lock(so, 0);
 	}
 	inp->in6p_faddr = sin6->sin6_addr;
 	inp->inp_fport = sin6->sin6_port;
+	inp->inp_fifscope = sin6->sin6_scope_id;
+	in6_verify_ifscope(&inp->in6p_faddr, inp->inp_fifscope);
 	if (nstat_collect && SOCK_PROTO(so) == IPPROTO_UDP) {
-		nstat_pcb_invalidate_cache(inp);
+		nstat_udp_pcb_invalidate_cache(inp);
 	}
 	in_pcbrehash(inp);
-	lck_rw_done(inp->inp_pcbinfo->ipi_lock);
+	lck_rw_done(&inp->inp_pcbinfo->ipi_lock);
 
 done:
 	if (outif != NULL) {
@@ -637,7 +837,7 @@ done:
 void
 in6_pcbdisconnect(struct inpcb *inp)
 {
-	struct socket *so = inp->inp_socket;
+	struct socket *__single so = inp->inp_socket;
 
 #if CONTENT_FILTER
 	if (so) {
@@ -645,21 +845,21 @@ in6_pcbdisconnect(struct inpcb *inp)
 	}
 #endif
 
-	if (!lck_rw_try_lock_exclusive(inp->inp_pcbinfo->ipi_lock)) {
+	if (!lck_rw_try_lock_exclusive(&inp->inp_pcbinfo->ipi_lock)) {
 		/* lock inversion issue, mostly with udp multicast packets */
 		socket_unlock(so, 0);
-		lck_rw_lock_exclusive(inp->inp_pcbinfo->ipi_lock);
+		lck_rw_lock_exclusive(&inp->inp_pcbinfo->ipi_lock);
 		socket_lock(so, 0);
 	}
 	if (nstat_collect && SOCK_PROTO(so) == IPPROTO_UDP) {
-		nstat_pcb_cache(inp);
+		nstat_udp_pcb_cache(inp);
 	}
 	bzero((caddr_t)&inp->in6p_faddr, sizeof(inp->in6p_faddr));
 	inp->inp_fport = 0;
 	/* clear flowinfo - RFC 6437 */
 	inp->inp_flow &= ~IPV6_FLOWLABEL_MASK;
 	in_pcbrehash(inp);
-	lck_rw_done(inp->inp_pcbinfo->ipi_lock);
+	lck_rw_done(&inp->inp_pcbinfo->ipi_lock);
 	/*
 	 * A multipath subflow socket would have its SS_NOFDREF set by default,
 	 * so check for SOF_MP_SUBFLOW socket flag before detaching the PCB;
@@ -673,11 +873,11 @@ in6_pcbdisconnect(struct inpcb *inp)
 void
 in6_pcbdetach(struct inpcb *inp)
 {
-	struct socket *so = inp->inp_socket;
+	struct socket *__single so = inp->inp_socket;
 
 	if (so->so_pcb == NULL) {
 		/* PCB has been disposed */
-		panic("%s: inp=%p so=%p proto=%d so_pcb is null!\n", __func__,
+		panic("%s: inp=%p so=%p proto=%d so_pcb is null!", __func__,
 		    inp, so, SOCK_PROTO(so));
 		/* NOTREACHED */
 	}
@@ -688,8 +888,8 @@ in6_pcbdetach(struct inpcb *inp)
 	}
 #endif /* IPSEC */
 
-	if (inp->inp_stat != NULL && SOCK_PROTO(so) == IPPROTO_UDP) {
-		if (inp->inp_stat->rxpackets == 0 && inp->inp_stat->txpackets == 0) {
+	if (SOCK_PROTO(so) == IPPROTO_UDP) {
+		if (inp->inp_mstat.ms_total.ts_rxpackets == 0 && inp->inp_mstat.ms_total.ts_txpackets == 0) {
 			INC_ATOMIC_INT64_LIM(net_api_stats.nas_socket_inet6_dgram_no_data);
 		}
 	}
@@ -704,14 +904,22 @@ in6_pcbdetach(struct inpcb *inp)
 	}
 	/* mark socket state as dead */
 	if (in_pcb_checkstate(inp, WNT_STOPUSING, 1) != WNT_STOPUSING) {
-		panic("%s: so=%p proto=%d couldn't set to STOPUSING\n",
+		panic("%s: so=%p proto=%d couldn't set to STOPUSING",
 		    __func__, so, SOCK_PROTO(so));
 		/* NOTREACHED */
 	}
 
+#if SKYWALK
+	/* Free up the port in the namespace registrar if not in TIME_WAIT */
+	if (!(inp->inp_flags2 & INP2_TIMEWAIT)) {
+		netns_release(&inp->inp_netns_token);
+		netns_release(&inp->inp_wildcard_netns_token);
+	}
+#endif /* SKYWALK */
+
 	if (!(so->so_flags & SOF_PCBCLEARING)) {
-		struct ip_moptions *imo;
-		struct ip6_moptions *im6o;
+		struct ip_moptions *__single imo;
+		struct ip6_moptions *__single im6o;
 
 		inp->inp_vflag = 0;
 		if (inp->in6p_options != NULL) {
@@ -728,9 +936,14 @@ in6_pcbdetach(struct inpcb *inp)
 		}
 		im6o = inp->in6p_moptions;
 		inp->in6p_moptions = NULL;
-
+		if (im6o != NULL) {
+			IM6O_REMREF(im6o);
+		}
 		imo = inp->inp_moptions;
 		inp->inp_moptions = NULL;
+		if (imo != NULL) {
+			IMO_REMREF(imo);
+		}
 
 		sofreelastref(so, 0);
 		inp->inp_state = INPCB_STATE_DEAD;
@@ -738,56 +951,43 @@ in6_pcbdetach(struct inpcb *inp)
 		so->so_flags |= SOF_PCBCLEARING;
 
 		inpcb_gc_sched(inp->inp_pcbinfo, INPCB_TIMER_FAST);
-
-		/*
-		 * See inp_join_group() for why we need to unlock
-		 */
-		if (im6o != NULL || imo != NULL) {
-			socket_unlock(so, 0);
-			if (im6o != NULL) {
-				IM6O_REMREF(im6o);
-			}
-			if (imo != NULL) {
-				IMO_REMREF(imo);
-			}
-			socket_lock(so, 0);
-		}
 	}
 }
 
 struct sockaddr *
-in6_sockaddr(in_port_t port, struct in6_addr *addr_p)
+in6_sockaddr(in_port_t port, struct in6_addr *addr_p, uint32_t ifscope)
 {
-	struct sockaddr_in6 *sin6;
+	struct sockaddr_in6 *__single sin6;
 
-	MALLOC(sin6, struct sockaddr_in6 *, sizeof(*sin6), M_SONAME, M_WAITOK);
-	if (sin6 == NULL) {
-		return NULL;
-	}
-	bzero(sin6, sizeof(*sin6));
+	sin6 = (struct sockaddr_in6 *)(alloc_sockaddr(sizeof(*sin6),
+	    Z_WAITOK | Z_NOFAIL));
+
 	sin6->sin6_family = AF_INET6;
-	sin6->sin6_len = sizeof(*sin6);
 	sin6->sin6_port = port;
 	sin6->sin6_addr = *addr_p;
 
 	/* would be good to use sa6_recoverscope(), except for locking  */
-	if (IN6_IS_SCOPE_LINKLOCAL(&sin6->sin6_addr)) {
-		sin6->sin6_scope_id = ntohs(sin6->sin6_addr.s6_addr16[1]);
+	if (IN6_IS_SCOPE_EMBED(&sin6->sin6_addr)) {
+		sin6->sin6_scope_id = ifscope;
+		if (in6_embedded_scope) {
+			in6_verify_ifscope(&sin6->sin6_addr, ifscope);
+			sin6->sin6_scope_id = ntohs(sin6->sin6_addr.s6_addr16[1]);
+		}
 	} else {
 		sin6->sin6_scope_id = 0;        /* XXX */
 	}
-	if (IN6_IS_SCOPE_LINKLOCAL(&sin6->sin6_addr)) {
+	if (in6_embedded_scope && IN6_IS_SCOPE_LINKLOCAL(&sin6->sin6_addr)) {
 		sin6->sin6_addr.s6_addr16[1] = 0;
 	}
 
-	return (struct sockaddr *)sin6;
+	return SA(sin6);
 }
 
 void
 in6_sockaddr_s(in_port_t port, struct in6_addr *addr_p,
-    struct sockaddr_in6 *sin6)
+    struct sockaddr_in6 *sin6, uint32_t ifscope)
 {
-	bzero(sin6, sizeof(*sin6));
+	SOCKADDR_ZERO(sin6, sizeof(*sin6));
 	sin6->sin6_family = AF_INET6;
 	sin6->sin6_len = sizeof(*sin6);
 	sin6->sin6_port = port;
@@ -795,11 +995,15 @@ in6_sockaddr_s(in_port_t port, struct in6_addr *addr_p,
 
 	/* would be good to use sa6_recoverscope(), except for locking  */
 	if (IN6_IS_SCOPE_LINKLOCAL(&sin6->sin6_addr)) {
-		sin6->sin6_scope_id = ntohs(sin6->sin6_addr.s6_addr16[1]);
+		sin6->sin6_scope_id = ifscope;
+		if (in6_embedded_scope) {
+			in6_verify_ifscope(&sin6->sin6_addr, ifscope);
+			sin6->sin6_scope_id = ntohs(sin6->sin6_addr.s6_addr16[1]);
+		}
 	} else {
 		sin6->sin6_scope_id = 0;        /* XXX */
 	}
-	if (IN6_IS_SCOPE_LINKLOCAL(&sin6->sin6_addr)) {
+	if (in6_embedded_scope && IN6_IS_SCOPE_LINKLOCAL(&sin6->sin6_addr)) {
 		sin6->sin6_addr.s6_addr16[1] = 0;
 	}
 }
@@ -813,7 +1017,7 @@ in6_sockaddr_s(in_port_t port, struct in6_addr *addr_p,
 int
 in6_getsockaddr(struct socket *so, struct sockaddr **nam)
 {
-	struct inpcb *inp;
+	struct inpcb *__single inp;
 	struct in6_addr addr;
 	in_port_t port;
 
@@ -824,7 +1028,7 @@ in6_getsockaddr(struct socket *so, struct sockaddr **nam)
 	port = inp->inp_lport;
 	addr = inp->in6p_laddr;
 
-	*nam = in6_sockaddr(port, &addr);
+	*nam = in6_sockaddr(port, &addr, inp->inp_lifscope);
 	if (*nam == NULL) {
 		return ENOBUFS;
 	}
@@ -834,12 +1038,12 @@ in6_getsockaddr(struct socket *so, struct sockaddr **nam)
 int
 in6_getsockaddr_s(struct socket *so, struct sockaddr_in6 *ss)
 {
-	struct inpcb *inp;
+	struct inpcb *__single inp;
 	struct in6_addr addr;
 	in_port_t port;
 
 	VERIFY(ss != NULL);
-	bzero(ss, sizeof(*ss));
+	SOCKADDR_ZERO(ss, sizeof(*ss));
 
 	if ((inp = sotoinpcb(so)) == NULL) {
 		return EINVAL;
@@ -848,14 +1052,14 @@ in6_getsockaddr_s(struct socket *so, struct sockaddr_in6 *ss)
 	port = inp->inp_lport;
 	addr = inp->in6p_laddr;
 
-	in6_sockaddr_s(port, &addr, ss);
+	in6_sockaddr_s(port, &addr, ss, inp->inp_lifscope);
 	return 0;
 }
 
 int
 in6_getpeeraddr(struct socket *so, struct sockaddr **nam)
 {
-	struct inpcb *inp;
+	struct inpcb *__single inp;
 	struct in6_addr addr;
 	in_port_t port;
 
@@ -866,7 +1070,7 @@ in6_getpeeraddr(struct socket *so, struct sockaddr **nam)
 	port = inp->inp_fport;
 	addr = inp->in6p_faddr;
 
-	*nam = in6_sockaddr(port, &addr);
+	*nam = in6_sockaddr(port, &addr, inp->inp_fifscope);
 	if (*nam == NULL) {
 		return ENOBUFS;
 	}
@@ -876,7 +1080,7 @@ in6_getpeeraddr(struct socket *so, struct sockaddr **nam)
 int
 in6_mapped_sockaddr(struct socket *so, struct sockaddr **nam)
 {
-	struct  inpcb *inp = sotoinpcb(so);
+	struct  inpcb *__single inp = sotoinpcb(so);
 	int     error;
 
 	if (inp == NULL) {
@@ -929,9 +1133,10 @@ in6_pcbnotify(struct inpcbinfo *pcbinfo, struct sockaddr *dst, u_int fport_arg,
     const struct sockaddr *src, u_int lport_arg, int cmd, void *cmdarg,
     void (*notify)(struct inpcb *, int))
 {
-	struct inpcbhead *head = pcbinfo->ipi_listhead;
-	struct inpcb *inp, *ninp;
-	struct sockaddr_in6 sa6_src, *sa6_dst;
+	struct inpcbhead *__single head = pcbinfo->ipi_listhead;
+	struct inpcb *__single inp, *__single ninp;
+	struct sockaddr_in6 sa6_src;
+	struct sockaddr_in6 *__single sa6_dst;
 	uint16_t fport = (uint16_t)fport_arg, lport = (uint16_t)lport_arg;
 	u_int32_t flowinfo;
 	int errno;
@@ -940,7 +1145,7 @@ in6_pcbnotify(struct inpcbinfo *pcbinfo, struct sockaddr *dst, u_int fport_arg,
 		return;
 	}
 
-	sa6_dst = (struct sockaddr_in6 *)(void *)dst;
+	sa6_dst = SIN6(dst);
 	if (IN6_IS_ADDR_UNSPECIFIED(&sa6_dst->sin6_addr)) {
 		return;
 	}
@@ -949,7 +1154,7 @@ in6_pcbnotify(struct inpcbinfo *pcbinfo, struct sockaddr *dst, u_int fport_arg,
 	 * note that src can be NULL when we get notify by local fragmentation.
 	 */
 	sa6_src = (src == NULL) ?
-	    sa6_any : *(struct sockaddr_in6 *)(uintptr_t)(size_t)src;
+	    sa6_any : *SIN6(src);
 	flowinfo = sa6_src.sin6_flowinfo;
 
 	/*
@@ -970,7 +1175,7 @@ in6_pcbnotify(struct inpcbinfo *pcbinfo, struct sockaddr *dst, u_int fport_arg,
 		}
 	}
 	errno = inet6ctlerrmap[cmd];
-	lck_rw_lock_shared(pcbinfo->ipi_lock);
+	lck_rw_lock_shared(&pcbinfo->ipi_lock);
 	for (inp = LIST_FIRST(head); inp != NULL; inp = ninp) {
 		ninp = LIST_NEXT(inp, inp_list);
 
@@ -989,7 +1194,7 @@ in6_pcbnotify(struct inpcbinfo *pcbinfo, struct sockaddr *dst, u_int fport_arg,
 		 */
 		if (cmd == PRC_MSGSIZE && cmdarg != NULL) {
 			socket_lock(inp->inp_socket, 1);
-			ip6_notify_pmtu(inp, (struct sockaddr_in6 *)(void *)dst,
+			ip6_notify_pmtu(inp, SIN6(dst),
 			    (u_int32_t *)cmdarg);
 			socket_unlock(inp->inp_socket, 1);
 		}
@@ -1005,14 +1210,13 @@ in6_pcbnotify(struct inpcbinfo *pcbinfo, struct sockaddr *dst, u_int fport_arg,
 		if (lport == 0 && fport == 0 && flowinfo &&
 		    inp->inp_socket != NULL &&
 		    flowinfo == (inp->inp_flow & IPV6_FLOWLABEL_MASK) &&
-		    IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, &sa6_src.sin6_addr)) {
+		    in6_are_addr_equal_scoped(&inp->in6p_laddr, &sa6_src.sin6_addr, inp->inp_lifscope, sa6_src.sin6_scope_id)) {
 			goto do_notify;
-		} else if (!IN6_ARE_ADDR_EQUAL(&inp->in6p_faddr,
-		    &sa6_dst->sin6_addr) || inp->inp_socket == NULL ||
+		} else if (!in6_are_addr_equal_scoped(&inp->in6p_faddr, &sa6_dst->sin6_addr,
+		    inp->inp_fifscope, sa6_dst->sin6_scope_id) || inp->inp_socket == NULL ||
 		    (lport && inp->inp_lport != lport) ||
 		    (!IN6_IS_ADDR_UNSPECIFIED(&sa6_src.sin6_addr) &&
-		    !IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr,
-		    &sa6_src.sin6_addr)) || (fport && inp->inp_fport != fport)) {
+		    !in6_are_addr_equal_scoped(&inp->in6p_laddr, &sa6_src.sin6_addr, inp->inp_lifscope, sa6_src.sin6_scope_id)) || (fport && inp->inp_fport != fport)) {
 			continue;
 		}
 
@@ -1028,7 +1232,7 @@ do_notify:
 			socket_unlock(inp->inp_socket, 1);
 		}
 	}
-	lck_rw_done(pcbinfo->ipi_lock);
+	lck_rw_done(&pcbinfo->ipi_lock);
 }
 
 /*
@@ -1036,17 +1240,17 @@ do_notify:
  */
 struct inpcb *
 in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
-    u_int lport_arg, int wild_okay)
+    u_int lport_arg, uint32_t ifscope, int wild_okay)
 {
-	struct inpcb *inp;
+	struct inpcb *__single inp;
 	int matchwild = 3, wildcard;
 	uint16_t lport = (uint16_t)lport_arg;
-	struct inpcbporthead *porthash;
-	struct inpcb *match = NULL;
-	struct inpcbport *phd;
+	struct inpcbporthead *__single porthash;
+	struct inpcb *__single match = NULL;
+	struct inpcbport *__single phd;
 
 	if (!wild_okay) {
-		struct inpcbhead *head;
+		struct inpcbhead *__single head;
 		/*
 		 * Look for an unconnected (wildcard foreign addr) PCB that
 		 * matches the local address and port we're looking for.
@@ -1058,7 +1262,7 @@ in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
 				continue;
 			}
 			if (IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr) &&
-			    IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, laddr) &&
+			    in6_are_addr_equal_scoped(&inp->in6p_laddr, laddr, inp->inp_lifscope, ifscope) &&
 			    inp->inp_lport == lport) {
 				/*
 				 * Found.
@@ -1084,6 +1288,7 @@ in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
 			break;
 		}
 	}
+
 	if (phd != NULL) {
 		/*
 		 * Port is in use by one or more PCBs. Look for best
@@ -1100,8 +1305,8 @@ in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
 			if (!IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_laddr)) {
 				if (IN6_IS_ADDR_UNSPECIFIED(laddr)) {
 					wildcard++;
-				} else if (!IN6_ARE_ADDR_EQUAL(
-					    &inp->in6p_laddr, laddr)) {
+				} else if (!in6_are_addr_equal_scoped(
+					    &inp->in6p_laddr, laddr, inp->inp_lifscope, ifscope)) {
 					continue;
 				}
 			} else {
@@ -1130,7 +1335,7 @@ in6_pcblookup_local(struct inpcbinfo *pcbinfo, struct in6_addr *laddr,
 void
 in6_losing(struct inpcb *in6p)
 {
-	struct rtentry *rt;
+	rtentry_ref_t rt;
 
 	if ((rt = in6p->in6p_route.ro_rt) != NULL) {
 		RT_LOCK(rt);
@@ -1175,18 +1380,18 @@ in6_rtchange(struct inpcb *inp, int errno)
  */
 int
 in6_pcblookup_hash_exists(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
-    u_int fport_arg, struct in6_addr *laddr, u_int lport_arg, int wildcard,
-    uid_t *uid, gid_t *gid, struct ifnet *ifp)
+    u_int fport_arg, uint32_t fifscope, struct in6_addr *laddr, u_int lport_arg, uint32_t lifscope, int wildcard,
+    uid_t *uid, gid_t *gid, struct ifnet *ifp, bool relaxed)
 {
-	struct inpcbhead *head;
-	struct inpcb *inp;
+	struct inpcbhead *__single head;
+	struct inpcb *__single inp;
 	uint16_t fport = (uint16_t)fport_arg, lport = (uint16_t)lport_arg;
 	int found;
 
 	*uid = UID_MAX;
 	*gid = GID_MAX;
 
-	lck_rw_lock_shared(pcbinfo->ipi_lock);
+	lck_rw_lock_shared(&pcbinfo->ipi_lock);
 
 	/*
 	 * First look for an exact match.
@@ -1208,8 +1413,11 @@ in6_pcblookup_hash_exists(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 		}
 #endif /* NECP */
 
-		if (IN6_ARE_ADDR_EQUAL(&inp->in6p_faddr, faddr) &&
-		    IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, laddr) &&
+		if (((in6_are_addr_equal_scoped(&inp->in6p_faddr, faddr, inp->inp_fifscope, fifscope) &&
+		    in6_are_addr_equal_scoped(&inp->in6p_laddr, laddr, inp->inp_lifscope, lifscope)) ||
+		    (relaxed &&
+		    IN6_ARE_ADDR_EQUAL(&inp->in6p_faddr, faddr) &&
+		    IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, laddr))) &&
 		    inp->inp_fport == fport &&
 		    inp->inp_lport == lport) {
 			if ((found = (inp->inp_socket != NULL))) {
@@ -1221,12 +1429,12 @@ in6_pcblookup_hash_exists(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 				*gid = kauth_cred_getgid(
 					inp->inp_socket->so_cred);
 			}
-			lck_rw_done(pcbinfo->ipi_lock);
+			lck_rw_done(&pcbinfo->ipi_lock);
 			return found;
 		}
 	}
 	if (wildcard) {
-		struct inpcb *local_wild = NULL;
+		struct inpcb *__single local_wild = NULL;
 
 		head = &pcbinfo->ipi_hashbase[INP_PCBHASH(INADDR_ANY, lport, 0,
 		    pcbinfo->ipi_hashmask)];
@@ -1247,8 +1455,9 @@ in6_pcblookup_hash_exists(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 
 			if (IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr) &&
 			    inp->inp_lport == lport) {
-				if (IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr,
-				    laddr)) {
+				if (in6_are_addr_equal_scoped(&inp->in6p_laddr,
+				    laddr, inp->inp_lifscope, lifscope) ||
+				    (relaxed && IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, laddr))) {
 					found = (inp->inp_socket != NULL);
 					if (found) {
 						*uid = kauth_cred_getuid(
@@ -1256,7 +1465,7 @@ in6_pcblookup_hash_exists(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 						*gid = kauth_cred_getgid(
 							inp->inp_socket->so_cred);
 					}
-					lck_rw_done(pcbinfo->ipi_lock);
+					lck_rw_done(&pcbinfo->ipi_lock);
 					return found;
 				} else if (IN6_IS_ADDR_UNSPECIFIED(
 					    &inp->in6p_laddr)) {
@@ -1271,7 +1480,7 @@ in6_pcblookup_hash_exists(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 				*gid = kauth_cred_getgid(
 					local_wild->inp_socket->so_cred);
 			}
-			lck_rw_done(pcbinfo->ipi_lock);
+			lck_rw_done(&pcbinfo->ipi_lock);
 			return found;
 		}
 	}
@@ -1279,23 +1488,21 @@ in6_pcblookup_hash_exists(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 	/*
 	 * Not found.
 	 */
-	lck_rw_done(pcbinfo->ipi_lock);
+	lck_rw_done(&pcbinfo->ipi_lock);
 	return 0;
 }
 
 /*
  * Lookup PCB in hash list.
  */
-struct inpcb *
-in6_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
-    u_int fport_arg, struct in6_addr *laddr, u_int lport_arg, int wildcard,
-    struct ifnet *ifp)
+static struct inpcb *
+in6_pcblookup_hash_locked(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
+    u_int fport_arg, uint32_t fifscope, struct in6_addr *laddr, u_int lport_arg,
+    uint32_t lifscope, int wildcard, struct ifnet *ifp)
 {
-	struct inpcbhead *head;
-	struct inpcb *inp;
+	struct inpcbhead *__single head;
+	struct inpcb *__single inp;
 	uint16_t fport = (uint16_t)fport_arg, lport = (uint16_t)lport_arg;
-
-	lck_rw_lock_shared(pcbinfo->ipi_lock);
 
 	/*
 	 * First look for an exact match.
@@ -1317,8 +1524,8 @@ in6_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 		}
 #endif /* NECP */
 
-		if (IN6_ARE_ADDR_EQUAL(&inp->in6p_faddr, faddr) &&
-		    IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr, laddr) &&
+		if (in6_are_addr_equal_scoped(&inp->in6p_faddr, faddr, inp->inp_fifscope, fifscope) &&
+		    in6_are_addr_equal_scoped(&inp->in6p_laddr, laddr, inp->inp_lifscope, lifscope) &&
 		    inp->inp_fport == fport &&
 		    inp->inp_lport == lport) {
 			/*
@@ -1326,17 +1533,15 @@ in6_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 			 */
 			if (in_pcb_checkstate(inp, WNT_ACQUIRE, 0) !=
 			    WNT_STOPUSING) {
-				lck_rw_done(pcbinfo->ipi_lock);
 				return inp;
 			} else {
 				/* it's there but dead, say it isn't found */
-				lck_rw_done(pcbinfo->ipi_lock);
 				return NULL;
 			}
 		}
 	}
 	if (wildcard) {
-		struct inpcb *local_wild = NULL;
+		struct inpcb *__single local_wild = NULL;
 
 		head = &pcbinfo->ipi_hashbase[INP_PCBHASH(INADDR_ANY, lport, 0,
 		    pcbinfo->ipi_hashmask)];
@@ -1357,15 +1562,13 @@ in6_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 
 			if (IN6_IS_ADDR_UNSPECIFIED(&inp->in6p_faddr) &&
 			    inp->inp_lport == lport) {
-				if (IN6_ARE_ADDR_EQUAL(&inp->in6p_laddr,
-				    laddr)) {
+				if (in6_are_addr_equal_scoped(&inp->in6p_laddr,
+				    laddr, inp->inp_lifscope, lifscope)) {
 					if (in_pcb_checkstate(inp, WNT_ACQUIRE,
 					    0) != WNT_STOPUSING) {
-						lck_rw_done(pcbinfo->ipi_lock);
 						return inp;
 					} else {
 						/* dead; say it isn't found */
-						lck_rw_done(pcbinfo->ipi_lock);
 						return NULL;
 					}
 				} else if (IN6_IS_ADDR_UNSPECIFIED(
@@ -1376,10 +1579,8 @@ in6_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 		}
 		if (local_wild && in_pcb_checkstate(local_wild,
 		    WNT_ACQUIRE, 0) != WNT_STOPUSING) {
-			lck_rw_done(pcbinfo->ipi_lock);
 			return local_wild;
 		} else {
-			lck_rw_done(pcbinfo->ipi_lock);
 			return NULL;
 		}
 	}
@@ -1387,22 +1588,59 @@ in6_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
 	/*
 	 * Not found.
 	 */
-	lck_rw_done(pcbinfo->ipi_lock);
 	return NULL;
+}
+
+struct inpcb *
+in6_pcblookup_hash(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
+    u_int fport_arg, uint32_t fifscope, struct in6_addr *laddr, u_int lport_arg,
+    uint32_t lifscope, int wildcard, struct ifnet *ifp)
+{
+	struct inpcb *inp;
+
+	lck_rw_lock_shared(&pcbinfo->ipi_lock);
+
+	inp = in6_pcblookup_hash_locked(pcbinfo, faddr, fport_arg, fifscope,
+	    laddr, lport_arg, lifscope, wildcard, ifp);
+
+	lck_rw_done(&pcbinfo->ipi_lock);
+
+	return inp;
+}
+
+struct inpcb *
+in6_pcblookup_hash_try(struct inpcbinfo *pcbinfo, struct in6_addr *faddr,
+    u_int fport_arg, uint32_t fifscope, struct in6_addr *laddr, u_int lport_arg,
+    uint32_t lifscope, int wildcard, struct ifnet *ifp)
+{
+	struct inpcb *inp;
+
+	if (!lck_rw_try_lock_shared(&pcbinfo->ipi_lock)) {
+		return NULL;
+	}
+
+	inp = in6_pcblookup_hash_locked(pcbinfo, faddr, fport_arg, fifscope,
+	    laddr, lport_arg, lifscope, wildcard, ifp);
+
+	lck_rw_done(&pcbinfo->ipi_lock);
+
+	return inp;
 }
 
 void
 init_sin6(struct sockaddr_in6 *sin6, struct mbuf *m)
 {
-	struct ip6_hdr *ip;
+	struct ip6_hdr *__single ip;
 
 	ip = mtod(m, struct ip6_hdr *);
-	bzero(sin6, sizeof(*sin6));
+	SOCKADDR_ZERO(sin6, sizeof(*sin6));
 	sin6->sin6_len = sizeof(*sin6);
 	sin6->sin6_family = AF_INET6;
 	sin6->sin6_addr = ip->ip6_src;
 	if (IN6_IS_SCOPE_LINKLOCAL(&sin6->sin6_addr)) {
-		sin6->sin6_addr.s6_addr16[1] = 0;
+		if (in6_embedded_scope) {
+			sin6->sin6_addr.s6_addr16[1] = 0;
+		}
 		if ((m->m_pkthdr.pkt_flags & (PKTF_LOOP | PKTF_IFAINFO)) ==
 		    (PKTF_LOOP | PKTF_IFAINFO)) {
 			sin6->sin6_scope_id = m->m_pkthdr.src_ifindex;
@@ -1441,7 +1679,7 @@ init_sin6(struct sockaddr_in6 *sin6, struct mbuf *m)
 void
 in6p_route_copyout(struct inpcb *inp, struct route_in6 *dst)
 {
-	struct route_in6 *src = &inp->in6p_route;
+	struct route_in6 *__single src = &inp->in6p_route;
 
 	socket_lock_assert_owned(inp->inp_socket);
 
@@ -1456,7 +1694,7 @@ in6p_route_copyout(struct inpcb *inp, struct route_in6 *dst)
 void
 in6p_route_copyin(struct inpcb *inp, struct route_in6 *src)
 {
-	struct route_in6 *dst = &inp->in6p_route;
+	struct route_in6 *__single dst = &inp->in6p_route;
 
 	socket_lock_assert_owned(inp->inp_socket);
 

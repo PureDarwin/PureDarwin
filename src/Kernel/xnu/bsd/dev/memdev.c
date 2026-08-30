@@ -92,7 +92,7 @@
 #include <libkern/libkern.h>
 
 #include <vm/pmap.h>
-#include <vm/vm_pager.h>
+#include <vm/vm_pager_xnu.h>
 #include <mach/memory_object_types.h>
 #include <kern/debug.h>
 
@@ -158,8 +158,8 @@ static const struct cdevsw mdevcdevsw = {
 };
 
 struct mdev {
-	uint64_t        mdBase;         /* file size in bytes */
-	uint32_t        mdSize;         /* file size in bytes */
+	uint64_t        mdBase;         /* base page number (pages are assumed to be 4K). Multiply by 4096 to find actual address */
+	uint32_t        mdSize;         /* size in pages (pages are assumed to be 4K). Multiply by 4096 to find actual size. */
 	int                     mdFlags;        /* flags */
 	int                     mdSecsize;      /* sector size */
 	int                     mdBDev;         /* Block device number */
@@ -196,7 +196,7 @@ mdevopen(dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
 
 	devid = minor(dev);                                                                     /* Get minor device number */
 
-	if (devid >= NB_MAX_MDEVICES) {
+	if (devid >= NB_MAX_MDEVICES || devid < 0) {
 		return ENXIO;                                                                 /* Not valid */
 	}
 	if ((flags & FWRITE) && (mdev[devid].mdFlags & mdRO)) {
@@ -211,24 +211,26 @@ mdevrw(dev_t dev, struct uio *uio, __unused int ioflag)
 	int                     status;
 	addr64_t                mdata;
 	int                     devid;
-	enum uio_seg    saveflag;
+	enum uio_seg            saveflag;
+	int                     count;
 
 	devid = minor(dev);                                                                     /* Get minor device number */
 
-	if (devid >= NB_MAX_MDEVICES) {
+	if (devid >= NB_MAX_MDEVICES || devid < 0) {
 		return ENXIO;                                                                 /* Not valid */
 	}
 	if (!(mdev[devid].mdFlags & mdInited)) {
 		return ENXIO;                                 /* Have we actually been defined yet? */
 	}
+	if (uio->uio_offset < 0) {
+		return EINVAL;  /* invalid offset */
+	}
+	if (uio_resid(uio) < 0) {
+		return EINVAL;
+	}
 	mdata = ((addr64_t)mdev[devid].mdBase << 12) + uio->uio_offset; /* Point to the area in "file" */
 
 	saveflag = uio->uio_segflg;                                                     /* Remember what the request is */
-#if LP64_DEBUG
-	if (UIO_IS_USER_SPACE(uio) == 0 && UIO_IS_SYS_SPACE(uio) == 0) {
-		panic("mdevrw - invalid uio_segflg\n");
-	}
-#endif /* LP64_DEBUG */
 	/* Make sure we are moving from physical ram if physical device */
 	if (mdev[devid].mdFlags & mdPhys) {
 		if (uio->uio_segflg == UIO_USERSPACE64) {
@@ -239,7 +241,14 @@ mdevrw(dev_t dev, struct uio *uio, __unused int ioflag)
 			uio->uio_segflg = UIO_PHYS_USERSPACE;
 		}
 	}
-	status = uiomove64(mdata, (int)uio_resid(uio), uio);    /* Move the data */
+
+	if (uio->uio_offset > (mdev[devid].mdSize << 12)) {
+		count = 0;
+	} else {
+		count = imin(uio_resid(uio), (mdev[devid].mdSize << 12) - uio->uio_offset);
+	}
+
+	status = uiomove64(mdata, count, uio);     /* Move the data */
 	uio->uio_segflg = saveflag;                                                     /* Restore the flag */
 
 	return status;
@@ -287,7 +296,7 @@ mdevstrategy(struct buf *bp)
 	 * accessible
 	 */
 	if (buf_map(bp, (caddr_t *)&vaddr)) {
-		panic("ramstrategy: buf_map failed\n");
+		panic("ramstrategy: buf_map failed");
 	}
 
 	fvaddr = (mdev[devid].mdBase << 12) + blkoff;           /* Point to offset into ram disk */
@@ -304,7 +313,7 @@ mdevstrategy(struct buf *bp)
 
 				pp = pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)vaddr)); /* Get the sink physical address */
 				if (!pp) {                                                               /* Not found, what gives? */
-					panic("mdevstrategy: sink address %016llX not mapped\n", (addr64_t)((uintptr_t)vaddr));
+					panic("mdevstrategy: sink address %016llX not mapped", (addr64_t)((uintptr_t)vaddr));
 				}
 				paddr = (addr64_t)(((addr64_t)pp << 12) | (addr64_t)(vaddr & 4095));    /* Get actual address */
 				bcopy_phys(fvaddr, paddr, csize);               /* Copy this on in */
@@ -327,7 +336,7 @@ mdevstrategy(struct buf *bp)
 
 				pp = pmap_find_phys(kernel_pmap, (addr64_t)((uintptr_t)vaddr)); /* Get the source physical address */
 				if (!pp) {                                                               /* Not found, what gives? */
-					panic("mdevstrategy: source address %016llX not mapped\n", (addr64_t)((uintptr_t)vaddr));
+					panic("mdevstrategy: source address %016llX not mapped", (addr64_t)((uintptr_t)vaddr));
 				}
 				paddr = (addr64_t)(((addr64_t)pp << 12) | (addr64_t)(vaddr & 4095));    /* Get actual address */
 
@@ -375,7 +384,7 @@ mdevioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
 
 	devid = minor(dev);                                                                     /* Get minor device number */
 
-	if (devid >= NB_MAX_MDEVICES) {
+	if (devid >= NB_MAX_MDEVICES || devid < 0) {
 		return ENXIO;                                                                 /* Not valid */
 	}
 	error = proc_suser(p);                  /* Are we superman? */
@@ -459,7 +468,7 @@ mdevsize(dev_t dev)
 	int devid;
 
 	devid = minor(dev);                                                                     /* Get minor device number */
-	if (devid >= NB_MAX_MDEVICES) {
+	if (devid >= NB_MAX_MDEVICES || devid < 0) {
 		return ENXIO;                                                                 /* Not valid */
 	}
 	if ((mdev[devid].mdFlags & mdInited) == 0) {
@@ -637,18 +646,18 @@ mdevadd(int devid, uint64_t base, unsigned int size, int phys)
 				continue;                                                               /* Skip check */
 			}
 			if (!(((base + size - 1) < mdev[i].mdBase) || ((mdev[i].mdBase + mdev[i].mdSize - 1) < base))) { /* Is there any overlap? */
-				panic("mdevadd: attempt to add overlapping memory device at %016llX-%016llX\n", mdev[i].mdBase, mdev[i].mdBase + mdev[i].mdSize - 1);
+				panic("mdevadd: attempt to add overlapping memory device at %016llX-%016llX", mdev[i].mdBase, mdev[i].mdBase + mdev[i].mdSize - 1);
 			}
 		}
 		if (devid < 0) {                                                                 /* Do we have free slots? */
-			panic("mdevadd: attempt to add more than %d memory devices\n", NB_MAX_MDEVICES);
+			panic("mdevadd: attempt to add more than %d memory devices", NB_MAX_MDEVICES);
 		}
 	} else {
 		if (devid >= NB_MAX_MDEVICES) {                                                          /* Giving us something bogus? */
-			panic("mdevadd: attempt to explicitly add a bogus memory device: %08X\n", devid);
+			panic("mdevadd: attempt to explicitly add a bogus memory device: %08X", devid);
 		}
 		if (mdev[devid].mdFlags & mdInited) {                    /* Already there? */
-			panic("mdevadd: attempt to explicitly add a previously defined memory device: %08X\n", devid);
+			panic("mdevadd: attempt to explicitly add a previously defined memory device: %08X", devid);
 		}
 	}
 

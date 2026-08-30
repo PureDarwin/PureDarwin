@@ -49,7 +49,7 @@
 #include <sys/tty.h>
 #include <kern/task.h>
 #include <sys/quota.h>
-#include <vm/vm_kern.h>
+#include <vm/vm_kern_xnu.h>
 #include <mach/vm_param.h>
 #include <sys/filedesc.h>
 #include <mach/host_priv.h>
@@ -72,6 +72,7 @@
 #include <sys/kdebug.h>
 
 uint32_t system_inshutdown = 0;
+uint32_t final_shutdown_stage = 0;
 
 #if XNU_TARGET_OS_OSX
 /* XXX should be in a header file somewhere, but isn't */
@@ -125,20 +126,22 @@ zprint_panic_info(void)
 	unsigned int  num_sites;
 	kern_return_t kr;
 
-	panic_include_zprint = TRUE;
+	panic_include_zprint = true;
 	panic_kext_memory_info = NULL;
 	panic_kext_memory_size = 0;
 
 	num_sites = vm_page_diagnose_estimate();
 	panic_kext_memory_size = num_sites * sizeof(panic_kext_memory_info[0]);
 
-	kr = kmem_alloc(kernel_map, (vm_offset_t *)&panic_kext_memory_info, round_page(panic_kext_memory_size), VM_KERN_MEMORY_OSFMK);
+	kr = kmem_alloc(kernel_map, (vm_offset_t *)&panic_kext_memory_info,
+	    round_page(panic_kext_memory_size), KMA_DATA | KMA_ZERO,
+	    VM_KERN_MEMORY_OSFMK);
 	if (kr != KERN_SUCCESS) {
 		panic_kext_memory_info = NULL;
 		return;
 	}
 
-	vm_page_diagnose(panic_kext_memory_info, num_sites, 0);
+	vm_page_diagnose(panic_kext_memory_info, num_sites, 0, false);
 }
 
 int
@@ -147,20 +150,37 @@ get_system_inshutdown()
 	return system_inshutdown;
 }
 
+extern int OSKextIsInUserspaceReboot(void);
+
+int
+get_system_inuserspacereboot()
+{
+	/* set by launchd before performing a userspace reboot */
+	return OSKextIsInUserspaceReboot();
+}
+
 __abortlike
 static void
 panic_kernel(int howto, char *message)
 {
+	uint64_t opts = DEBUGGER_OPTION_USERSPACE_INITIATED_PANIC;
+
 	if ((howto & RB_PANIC_ZPRINT) == RB_PANIC_ZPRINT) {
 		zprint_panic_info();
 	}
-	panic("userspace panic: %s", message);
+
+	if ((howto & RB_PANIC_FORCERESET) == RB_PANIC_FORCERESET) {
+		opts |= DEBUGGER_OPTION_PANICLOGANDREBOOT;
+	}
+
+	panic_with_options(0, NULL, opts, "userspace panic: %s", message);
 }
 
 extern boolean_t compressor_store_stop_compaction;
 extern lck_mtx_t vm_swap_data_lock;
 extern int vm_swapfile_create_thread_running;
 extern int vm_swapfile_gc_thread_running;
+extern uint32_t cl_sparse_push_error;
 
 int
 reboot_kernel(int howto, char *message)
@@ -200,7 +220,7 @@ reboot_kernel(int howto, char *message)
 	/*
 	 * Notify the power management root domain that the system will shut down.
 	 */
-	IOSystemShutdownNotification(kIOSystemShutdownNotificationStageProcessExit);
+	IOSystemShutdownNotification(howto, kIOSystemShutdownNotificationStageProcessExit);
 
 	if ((howto & RB_QUICK) == RB_QUICK) {
 		printf("Quick reboot...\n");
@@ -239,11 +259,15 @@ reboot_kernel(int howto, char *message)
 
 		if (kdebug_enable) {
 			startTime = mach_absolute_time();
-			kdbg_dump_trace_to_file("/var/log/shutdown/shutdown.trace");
+			kdbg_dump_trace_to_file("/var/log/shutdown/shutdown.trace", true);
 			halt_log_enter("shutdown.trace", 0, mach_absolute_time() - startTime);
 		}
 
-		IOSystemShutdownNotification(kIOSystemShutdownNotificationStageRootUnmount);
+		IOSystemShutdownNotification(howto, kIOSystemShutdownNotificationStageRootUnmount);
+
+		if (cl_sparse_push_error) {
+			panic("system_shutdown cluster_push_err failed with ENOSPC %d times\n", cl_sparse_push_error);
+		}
 
 		/*
 		 * Unmount filesystems
@@ -253,12 +277,17 @@ reboot_kernel(int howto, char *message)
 		if (!(howto & RB_PANIC) || !kdp_has_polled_corefile())
 #endif /* DEVELOPMENT || DEBUG */
 		{
+#if CONFIG_COREDUMP || CONFIG_UCOREDUMP
+			/* Disable user space core dump before unmounting non-system volume so
+			 * that dext cores wouldn't be written to system volume */
+			do_coredump = 0;
+#endif /* COREDUMP || CONFIG_UCOREDUMP */
 			startTime = mach_absolute_time();
 			vfs_unmountall(TRUE);
 			halt_log_enter("vfs_unmountall", 0, mach_absolute_time() - startTime);
 		}
 
-		IOSystemShutdownNotification(kIOSystemShutdownNotificationTerminateDEXTs);
+		IOSystemShutdownNotification(howto, kIOSystemShutdownNotificationTerminateDEXTs);
 
 		startTime = mach_absolute_time();
 		proc_shutdown(FALSE);
@@ -307,6 +336,12 @@ force_reboot:
 
 	if (howto & RB_PANIC) {
 		panic_kernel(howto, message);
+	}
+
+	// Make sure an RB_QUICK reboot thread and another regular/RB_QUICK thread
+	// do not race.
+	if (!OSCompareAndSwap(0, 1, &final_shutdown_stage)) {
+		return EBUSY;
 	}
 
 	if (howto & RB_HALT) {
@@ -359,6 +394,7 @@ sd_closelog(vfs_context_t ctx)
 	return error;
 }
 
+__printflike(2, 3)
 static void
 sd_log(vfs_context_t ctx, const char *fmt, ...)
 {
@@ -384,8 +420,6 @@ sd_log(vfs_context_t ctx, const char *fmt, ...)
 
 	va_end(arglist);
 }
-
-#define proc_is_driver(p) (task_is_driver((p)->task))
 
 static int
 sd_filt1(proc_t p, void * args)
@@ -523,11 +557,11 @@ sd_callback3(proc_t p, void * args)
 			p->exit_thread = current_thread();
 			printf(".");
 
-			sd_log(ctx, "%s[%d] had to be forced closed with exit1().\n", p->p_comm, p->p_pid);
+			sd_log(ctx, "%s[%d] had to be forced closed with exit1().\n", p->p_comm, proc_getpid(p));
 
 			proc_unlock(p);
 			KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_FRCEXIT) | DBG_FUNC_NONE,
-			    p->p_pid, 0, 1, 0, 0);
+			    proc_getpid(p), 0, 1, 0, 0);
 			sd->activecount++;
 			exit1(p, 1, (int *)NULL);
 		}
@@ -630,8 +664,8 @@ sigterm_loop:
 
 		for (p = allproc.lh_first; p; p = p->p_list.le_next) {
 			if (p->p_shutdownstate == 1) {
-				printf("%s[%d]: didn't act on SIGTERM\n", p->p_comm, p->p_pid);
-				sd_log(ctx, "%s[%d]: didn't act on SIGTERM\n", p->p_comm, p->p_pid);
+				printf("%s[%d]: didn't act on SIGTERM\n", p->p_comm, proc_getpid(p));
+				sd_log(ctx, "%s[%d]: didn't act on SIGTERM\n", p->p_comm, proc_getpid(p));
 			}
 		}
 
@@ -690,8 +724,8 @@ sigterm_loop:
 
 		for (p = allproc.lh_first; p; p = p->p_list.le_next) {
 			if (p->p_shutdownstate == 2) {
-				printf("%s[%d]: didn't act on SIGKILL\n", p->p_comm, p->p_pid);
-				sd_log(ctx, "%s[%d]: didn't act on SIGKILL\n", p->p_comm, p->p_pid);
+				printf("%s[%d]: didn't act on SIGKILL\n", p->p_comm, proc_getpid(p));
+				sd_log(ctx, "%s[%d]: didn't act on SIGKILL\n", p->p_comm, proc_getpid(p));
 			}
 		}
 
@@ -729,7 +763,7 @@ sigterm_loop:
 	/*
 	 * Now that all other processes have been terminated, suspend init
 	 */
-	task_suspend_internal(initproc->task);
+	task_suspend_internal(proc_task(initproc));
 
 	/* drop the ref on initproc */
 	proc_rele(initproc);

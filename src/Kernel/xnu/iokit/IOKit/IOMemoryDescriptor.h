@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 1998-2020, 2026 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -47,6 +47,7 @@ class IOMemoryMap;
 class IOMapper;
 class IOService;
 class IODMACommand;
+class _IOMemoryDescriptorMixedData;
 
 /*
  * Direction of transfer, with respect to the described memory.
@@ -102,6 +103,7 @@ enum {
 #ifdef __LP64__
 	kIOMemoryTypeVirtual64      = kIOMemoryTypeVirtual,
 	kIOMemoryTypePhysical64     = kIOMemoryTypePhysical,
+	kIOMemoryTypeVnode          = 0x00000060,
 #else /* !__LP64__ */
 	kIOMemoryTypeVirtual64      = 0x00000060,
 	kIOMemoryTypePhysical64     = 0x00000070,
@@ -204,6 +206,15 @@ enum{
 	kIODMAMapFixedAddress          = 0x00000200,
 };
 
+// Options used by IOMapper. example IOMappers are DART and VT-d
+enum {
+	kIOMapperUncached      = 0x0001,
+#ifdef KERNEL_PRIVATE
+	kIOMapperTransient     = 0x0002,
+	kIOMapperPriorityMap   = 0x0010,
+#endif
+};
+
 #ifdef KERNEL_PRIVATE
 
 // Used for dmaCommandOperation communications for IODMACommand and mappers
@@ -243,11 +254,14 @@ struct IOMDDMAMapArgs {
 
 struct IOMDDMAWalkSegmentArgs {
 	UInt64 fOffset;                 // Input/Output offset
-	UInt64 fIOVMAddr, fLength;      // Output variables
+	/* Output variables.
+	 * Note to reader: fIOVMAddr is (sometimes?) a DART-mapped device address.
+	 */
+	UInt64 fIOVMAddr, fLength;
 	UInt8 fMapped;                  // Input Variable, Require mapped IOVMA
 	UInt64 fMappedBase;             // Input base of mapping
 };
-typedef UInt8 IOMDDMAWalkSegmentState[128];
+typedef UInt8 IOMDDMAWalkSegmentState[64];
 
 #endif /* KERNEL_PRIVATE */
 
@@ -264,7 +278,6 @@ enum{
 #ifdef XNU_KERNEL_PRIVATE
 struct IOMemoryReference;
 #endif
-
 
 /*! @class IOMemoryDescriptor : public OSObject
  *   @abstract An abstract base class defining common methods for describing physical or virtual memory.
@@ -294,7 +307,7 @@ public:
 	vm_tag_t _kernelTag;
 	vm_tag_t _userTag;
 	int16_t _dmaReferences;
-	uint16_t _internalFlags;
+	uint16_t _internalIOMDFlags;
 	kern_allocation_name_t _mapName;
 protected:
 #else /* XNU_KERNEL_PRIVATE */
@@ -303,7 +316,12 @@ protected:
 	uintptr_t           __iomd_reserved2;
 #endif /* XNU_KERNEL_PRIVATE */
 
-	uintptr_t           __iomd_reserved3;
+	uint16_t            _iomapperOptions;
+#ifdef __LP64__
+	uint16_t            __iomd_reserved3[3];
+#else
+	uint16_t            __iomd_reserved3;
+#endif
 	uintptr_t           __iomd_reserved4;
 
 #ifndef __LP64__
@@ -373,6 +391,20 @@ public:
 
 	IOReturn getPageCounts( IOByteCount * residentPageCount,
 	    IOByteCount * dirtyPageCount);
+
+#if KERNEL_PRIVATE
+#define IOMEMORYDESCRIPTOR_GETPAGECOUNTS_SUPPORTS_SWAPPED 1
+#endif
+/*! @function getPageCounts
+ *   @abstract Retrieve the number of resident, dirty, and swapped pages encompassed by an IOMemoryDescriptor.
+ *   @param residentPageCount - If non-null, a pointer to a byte count that will return the number of resident pages encompassed by this IOMemoryDescriptor.
+ *   @param dirtyPageCount - If non-null, a pointer to a byte count that will return the number of resident, dirty pages encompassed by this IOMemoryDescriptor.
+ *   @param swappedPageCount - If non-null, a pointer to a byte count that will return the number of swapped pages encompassed by this IOMemoryDescriptor.
+ *   @result An IOReturn code. */
+
+	IOReturn getPageCounts( IOByteCount * residentPageCount,
+	    IOByteCount * dirtyPageCount,
+	    IOByteCount * swappedPageCount );
 
 /*! @function performOperation
  *   @abstract Perform an operation on the memory descriptor's memory.
@@ -550,6 +582,15 @@ public:
 		UInt32           rangeCount,
 		IOOptionBits     options,
 		task_t           task);
+
+#if PRIVATE
+	static OSPtr<IOMemoryDescriptor>  withVNode(
+		struct vnode    *vnode,
+		uint64_t         offset,
+		uint64_t         size,
+		IOOptionBits     options);
+#define IOMEMORYDESCRIPTORWITHVNODE_DEFINED     1
+#endif
 
 /*! @function withOptions
  *   @abstract Master initialiser for all variants of memory descriptors.
@@ -781,6 +822,20 @@ public:
 		IOVirtualAddress        mapAddress,
 		IOOptionBits            options = 0 );
 
+/*! @function setMapperOptions
+ *   @abstract Set the IOMapper options
+ *   @discussion This method sets the IOMapper options
+ *   @param options  IOMapper options to be set. */
+
+	void setMapperOptions( uint16_t options );
+
+/*! @function getMapperOptions
+ *   @abstract return IOMapper Options
+ *   @discussion This method returns IOMapper Options set earlier using setMapperOptions
+ *   @result IOMapper options set. */
+
+	uint16_t getMapperOptions( void );
+
 // Following methods are private implementation
 
 #ifdef __LP64__
@@ -801,13 +856,39 @@ public:
 		mach_vm_size_t          length,
 		IOOptionBits            options );
 
-	virtual IOMemoryMap *      makeMapping(
+	virtual LIBKERN_RETURNS_NOT_RETAINED IOMemoryMap *      makeMapping(
 		IOMemoryDescriptor *    owner,
 		task_t                  intoTask,
 		IOVirtualAddress        atAddress,
 		IOOptionBits            options,
 		IOByteCount             offset,
 		IOByteCount             length );
+
+#if KERNEL_PRIVATE
+/*! @function copyContext
+ *   @abstract Accessor to the retrieve the context previously set for the memory descriptor.
+ *   @discussion This method returns the context for the memory descriptor. The context is not interpreted by IOMemoryDescriptor.
+ *   @result The context, returned with an additional retain to be released by the caller. */
+	OSObject * copyContext(void) const;
+#ifdef XNU_KERNEL_PRIVATE
+	OSObject * copyContext(const OSSymbol * key) const;
+	OSObject * copyContext(const char * key) const;
+	OSObject * copySharingContext(const char * key) const;
+#endif /* XNU_KERNEL_PRIVATE */
+
+/*! @function setContext
+ *   @abstract Set a context object for the memory descriptor. The context is not interpreted by IOMemoryDescriptor.
+ *   @discussion The context is retained, and will be released when the memory descriptor is freed or when a new context object is set.
+ */
+	void setContext(OSObject * context);
+#ifdef XNU_KERNEL_PRIVATE
+	void setContext(const OSSymbol * key, OSObject * context);
+	void setContext(const char * key, OSObject * context);
+	void setSharingContext(const char * key, OSObject * context);
+	bool hasSharingContext(void);
+
+#endif /* XNU_KERNEL_PRIVATE */
+#endif /* KERNEL_PRIVATE */
 
 protected:
 	virtual void                addMapping(
@@ -1075,6 +1156,9 @@ public:
 		uint64_t                    * mapLength);
 	bool initMemoryEntries(size_t size, IOMapper * mapper);
 
+
+	vm_prot_t memoryReferenceProt(IOOptionBits options);
+
 	IOMemoryReference * memoryReferenceAlloc(uint32_t capacity,
 	    IOMemoryReference * realloc);
 	void memoryReferenceFree(IOMemoryReference * ref);
@@ -1082,6 +1166,13 @@ public:
 
 	IOReturn memoryReferenceCreate(
 		IOOptionBits         options,
+		IOMemoryReference ** reference);
+
+	IOReturn memoryReferenceCreate(
+		IOOptionBits         options,
+		ipc_port_t           entry,
+		uint64_t             offset,
+		uint64_t             size,
 		IOMemoryReference ** reference);
 
 	IOReturn memoryReferenceMap(IOMemoryReference * ref,
@@ -1110,11 +1201,17 @@ public:
 	static IOReturn memoryReferenceGetPageCounts(
 		IOMemoryReference * ref,
 		IOByteCount       * residentPageCount,
-		IOByteCount       * dirtyPageCount);
+		IOByteCount       * dirtyPageCount,
+		IOByteCount       * swappedPageCount);
 
 	static uint64_t memoryReferenceGetDMAMapLength(
 		IOMemoryReference * ref,
 		uint64_t * offset);
+
+	IOByteCount readBytes(IOByteCount offset,
+	    void * bytes, IOByteCount withLength) override;
+	IOByteCount writeBytes(IOByteCount offset,
+	    const void * bytes, IOByteCount withLength) override;
 
 #endif
 
@@ -1127,7 +1224,7 @@ private:
 #endif /* !__LP64__ */
 
 // Internal
-	OSPtr<OSData>   _memoryEntries;
+	OSPtr<_IOMemoryDescriptorMixedData> _memoryEntries;
 	unsigned int    _pages;
 	ppnum_t         _highestPage;
 	uint32_t        __iomd_reservedA;
@@ -1207,6 +1304,14 @@ public:
 
 	virtual IOReturn complete(IODirection forDirection = kIODirectionNone) APPLE_KEXT_OVERRIDE;
 
+	virtual LIBKERN_RETURNS_NOT_RETAINED IOMemoryMap *      makeMapping(
+		IOMemoryDescriptor *    owner,
+		task_t                  intoTask,
+		IOVirtualAddress        atAddress,
+		IOOptionBits            options,
+		IOByteCount             offset,
+		IOByteCount             length ) APPLE_KEXT_OVERRIDE;
+
 	virtual IOReturn doMap(
 		vm_map_t                addressMap,
 		IOVirtualAddress *      atAddress,
@@ -1224,6 +1329,8 @@ public:
 // Factory method for cloning a persistent IOMD, see IOMemoryDescriptor
 	static OSPtr<IOMemoryDescriptor>
 	withPersistentMemoryDescriptor(IOGeneralMemoryDescriptor *originalMD);
+
+	IOOptionBits memoryReferenceCreateOptions(IOOptionBits options, IOMemoryMap * map);
 };
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */

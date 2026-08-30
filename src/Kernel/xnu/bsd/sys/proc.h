@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2018 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -82,10 +82,6 @@
 #include <uuid/uuid.h>
 #endif
 #include <mach/boolean.h>
-
-#ifdef XNU_KERNEL_PRIVATE
-#include <mach/coalition.h>             /* COALITION_NUM_TYPES */
-#endif
 
 #ifndef KERNEL
 #include <Availability.h>
@@ -226,6 +222,8 @@ struct extern_proc {
 #define P_DIRTY_LAUNCH_IN_PROGRESS              0x00000200      /* launch is in progress */
 #define P_DIRTY_DEFER_ALWAYS                    0x00000400      /* defer going to idle-exit after every dirty->clean transition.
 	                                                         * For legacy jetsam policy only. This is the default with the other policies.*/
+#define P_DIRTY_SHUTDOWN_ON_CLEAN               0x00000800      /* process should shutdown on going clean */
+#define P_DIRTY_IM_NEW_HERE                     0x00001000      /* process just enrolled in dirty tracking and has not yet marked itself dirty for the first time */
 
 #define P_DIRTY_IS_DIRTY                        (P_DIRTY | P_DIRTY_SHUTDOWN)
 #define P_DIRTY_IDLE_EXIT_ENABLED               (P_DIRTY_TRACK|P_DIRTY_ALLOW_IDLE_EXIT)
@@ -241,8 +239,14 @@ extern int proc_is_classic(proc_t p);
 extern bool proc_is_exotic(proc_t p);
 extern bool proc_is_alien(proc_t p);
 proc_t current_proc_EXTERNAL(void);
+extern proc_t proc_ref_nowait(proc_t);
 
-extern int      msleep(void *chan, lck_mtx_t *mtx, int pri, const char *wmesg, struct timespec * ts );
+/*
+ * __unsafe_indexable is a workaround for
+ * rdar://88409003 (PredefinedExpr trips C string detection)
+ */
+extern int      msleep(void *chan, lck_mtx_t *mtx, int pri, const char *__unsafe_indexable wmesg, struct timespec * ts );
+extern int      msleep0(void *chan, lck_mtx_t *mtx, int pri, const char *__unsafe_indexable wmesg, int timo, int (*continuation)(int));
 extern void     wakeup(void *chan);
 extern void wakeup_one(caddr_t chan);
 
@@ -267,14 +271,27 @@ extern int proc_isinferior(int pid1, int pid2);
  */
 void proc_name(int pid, char * buf, int size);
 /* returns the 32-byte name if it exists, otherwise returns the 16-byte name */
+#ifndef XNU_KERNEL_PRIVATE
 extern char *proc_best_name(proc_t p);
-/* This routine is simillar to proc_name except it returns for current process */
+#endif
+/* this routine is similar to proc_name except it returns for current process */
 void proc_selfname(char * buf, int size);
 
 /* find a process with a given pid. This comes with a reference which needs to be dropped by proc_rele */
 extern proc_t proc_find(int pid);
-/* find a process with a given process identity */
-extern proc_t proc_find_ident(struct proc_ident const *i);
+/*
+ * Function: proc_find_ident
+ *
+ * Description: Obtain a proc ref from the provided proc_ident.
+ *
+ * Returns:
+ *    - Non-null proc_t on success
+ *    - PROC_NULL on error
+ */
+extern proc_t proc_find_ident(const proc_ident_t i);
+
+/* find a process with a given audit token */
+extern proc_t proc_find_audit_token(const audit_token_t token);
 /* returns a handle to current process which is referenced. The reference needs to be dropped with proc_rele */
 extern proc_t proc_self(void);
 /* releases the held reference on the process */
@@ -285,14 +302,20 @@ extern int proc_pid(proc_t);
 extern int proc_ppid(proc_t);
 /* returns the original pid of the parent of a given process */
 extern int proc_original_ppid(proc_t);
+/* returns the pid version of the original parent of a given process */
+extern int proc_orig_ppidversion(proc_t);
 /* returns the start time of the given process */
 extern int proc_starttime(proc_t, struct timeval *);
+/* returns whether the given process is on simulated platform */
+extern boolean_t proc_is_simulated(const proc_t);
 /* returns the platform (macos, ios, watchos, tvos, ...) of the given process */
 extern uint32_t proc_platform(const proc_t);
 /* returns the minimum sdk version used by the current process */
 extern uint32_t proc_min_sdk(proc_t);
 /* returns the sdk version used by the current process */
 extern uint32_t proc_sdk(proc_t);
+/* returns whether the proc's sdk version is OS 26.4 (Fall 2025 SU E) aligned or greater */
+extern bool proc_sdk_26_4_or_later(proc_t proc);
 /* returns 1 if the process is marked for no remote hangs */
 extern int proc_noremotehang(proc_t);
 /* returns 1 if the process is marked for force quota */
@@ -313,9 +336,14 @@ extern int proc_exiting(proc_t);
 /* returns whether the process has started down proc_exit() */
 extern int proc_in_teardown(proc_t);
 /* this routine returns error if the process is not one with super user privileges */
-int proc_suser(proc_t p);
+extern int proc_suser(proc_t p);
+
 /* returns the cred assicaited with the process; temporary api */
+#if !BSD_KERNEL_PRIVATE
+__deprecated_msg("proc_ucred is unsafe, use kauth_cred_proc_ref() or current_cached_proc_cred()")
 kauth_cred_t proc_ucred(proc_t p);
+#endif
+
 /* returns 1 if the process is tainted by uid or gid changes,e else 0 */
 extern int proc_issetugid(proc_t p);
 
@@ -354,174 +382,12 @@ pid_t proc_pgrpid(proc_t p);
  */
 pid_t proc_sessionid(proc_t p);
 
-#ifdef KERNEL_PRIVATE
-// mark a process as being allowed to call vfs_markdependency()
-void bsd_set_dependency_capable(task_t task);
-#ifdef  __arm__
-static inline int
-IS_64BIT_PROCESS(__unused proc_t p)
-{
-	return 0;
-}
-#else
-extern int IS_64BIT_PROCESS(proc_t);
-#endif /* __arm__ */
-
-extern int      tsleep(void *chan, int pri, const char *wmesg, int timo);
-extern int      msleep1(void *chan, lck_mtx_t *mtx, int pri, const char *wmesg, u_int64_t timo);
-
-task_t proc_task(proc_t);
-extern int proc_pidversion(proc_t);
-extern proc_t proc_parent(proc_t);
-extern void proc_parent_audit_token(proc_t, audit_token_t *);
-extern uint32_t proc_persona_id(proc_t);
-extern uint32_t proc_getuid(proc_t);
-extern uint32_t proc_getgid(proc_t);
-extern int proc_getcdhash(proc_t, unsigned char *);
-
-/*!
- *  @function    proc_pidbackgrounded
- *  @abstract    KPI to determine if a process is currently backgrounded.
- *  @discussion  The process may move into or out of background state at any time,
- *             so be prepared for this value to be outdated immediately.
- *  @param pid   PID of the process to be queried.
- *  @param state Pointer to a value which will be set to 1 if the process
- *             is currently backgrounded, 0 otherwise.
- *  @return      ESRCH if pid cannot be found or has started exiting.
- *
- *             EINVAL if state is NULL.
- */
-extern int proc_pidbackgrounded(pid_t pid, uint32_t* state);
-
-/*
- * This returns an unique 64bit id of a given process.
- * Caller needs to hold proper reference on the
- * passed in process strucutre.
- */
-extern uint64_t proc_uniqueid(proc_t);
-
-/* unique 64bit id for process's original parent */
-extern uint64_t proc_puniqueid(proc_t);
-
-extern void proc_set_responsible_pid(proc_t target_proc, pid_t responsible_pid);
-
-/* return 1 if process is forcing case-sensitive HFS+ access, 0 for default */
-extern int proc_is_forcing_hfs_case_sensitivity(proc_t);
-
-/* return true if the process is translated, false for default */
-extern boolean_t proc_is_translated(proc_t);
-
-/* true if the process ignores errors from content protection APIs */
-extern bool proc_ignores_content_protection(proc_t proc);
-
-/* true if the file system shouldn't update mtime for operations by the process */
-extern bool proc_skip_mtime_update(proc_t proc);
-
-/*!
- *  @function    proc_exitstatus
- *  @abstract    KPI to determine a process's exit status.
- *  @discussion  This function is not safe to call if the process could be
- *               concurrently stopped or started, but it can be called from a
- *               mpo_proc_notify_exit callback.
- *  @param p     The process to be queried.
- *  @return      Value in the same format as wait()'s output parameter.
- */
-extern int proc_exitstatus(proc_t p);
-
-#endif /* KERNEL_PRIVATE */
-
-#ifdef XNU_KERNEL_PRIVATE
-
-extern void proc_getexecutableuuid(proc_t, unsigned char *, unsigned long);
-extern int proc_get_originatorbgstate(uint32_t *is_backgrounded);
-
-/* Kernel interface to get the uuid of the originator of the work.*/
-extern int proc_pidoriginatoruuid(uuid_t uuid_buf, uint32_t buffersize);
-
-extern uint64_t proc_was_throttled(proc_t);
-extern uint64_t proc_did_throttle(proc_t);
-extern bool proc_is_traced(proc_t p);
-
-extern void proc_coalitionids(proc_t, uint64_t[COALITION_NUM_TYPES]);
-
-#ifdef CONFIG_32BIT_TELEMETRY
-extern void proc_log_32bit_telemetry(proc_t p);
-#endif /* CONFIG_32BIT_TELEMETRY */
-extern uint64_t get_current_unique_pid(void);
-#endif /* XNU_KERNEL_PRIVATE*/
-
-#ifdef KERNEL_PRIVATE
-/* If buf argument is NULL, the necessary length to allocate will be set in buflen */
-extern int proc_selfexecutableargs(uint8_t *buf, size_t *buflen);
-extern off_t proc_getexecutableoffset(proc_t p);
-extern vnode_t proc_getexecutablevnode(proc_t); /* Returned with iocount, use vnode_put() to drop */
-extern int networking_memstatus_callout(proc_t p, uint32_t);
-
-/* System call filtering for BSD syscalls, mach traps and kobject routines. */
-#define SYSCALL_MASK_UNIX 0
-#define SYSCALL_MASK_MACH 1
-#define SYSCALL_MASK_KOBJ 2
-
-#define SYSCALL_FILTER_CALLBACK_VERSION 1
-typedef int (*syscall_filter_cbfunc_t)(proc_t p, int num);
-typedef int (*kobject_filter_cbfunc_t)(proc_t p, int msgid, int idx);
-struct syscall_filter_callbacks {
-	int version;
-	const syscall_filter_cbfunc_t unix_filter_cbfunc;
-	const syscall_filter_cbfunc_t mach_filter_cbfunc;
-	const kobject_filter_cbfunc_t kobj_filter_cbfunc;
-};
-typedef struct syscall_filter_callbacks * syscall_filter_cbs_t;
-
-extern int proc_set_syscall_filter_callbacks(syscall_filter_cbs_t callback);
-extern int proc_set_syscall_filter_index(int which, int num, int index);
-extern size_t proc_get_syscall_filter_mask_size(int which);
-extern int proc_set_syscall_filter_mask(proc_t p, int which, unsigned char *maskptr, size_t masklen);
-
-extern int proc_set_filter_message_flag(proc_t p, boolean_t flag);
-extern int proc_get_filter_message_flag(proc_t p, boolean_t *flag);
-
-#endif /* KERNEL_PRIVATE */
-
 __END_DECLS
 
 #endif  /* KERNEL */
 
-#ifdef PRIVATE
-
-/* Values for pid_shutdown_sockets */
-#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_SVC            0x00000001
-#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_ALL            0x00000002
-
-#ifdef KERNEL
-#define SHUTDOWN_SOCKET_LEVEL_DISCONNECT_INTERNAL       0x10000000
-#define SHUTDOWN_SOCKET_LEVEL_NECP                      0x20000000
-#define SHUTDOWN_SOCKET_LEVEL_CONTENT_FILTER            0x40000000
-#endif
-
-#ifndef KERNEL
-
-__BEGIN_DECLS
-
-int pid_suspend(int pid);
-int pid_resume(int pid);
-__API_AVAILABLE(macos(11.3), ios(14.5), tvos(14.5), watchos(7.3))
-int task_inspect_for_pid(unsigned int target_tport, int pid, unsigned int *t);  /* Returns task inspect port */
-__API_AVAILABLE(macos(11.3), ios(14.5), tvos(14.5), watchos(7.3))
-int task_read_for_pid(unsigned int target_tport, int pid, unsigned int *t);     /* Returns task read port */
-
-#if defined(__arm__) || defined(__arm64__)
-int pid_hibernate(int pid);
-#endif /* defined(__arm__) || defined(__arm64__)  */
-int pid_shutdown_sockets(int pid, int level);
-int pid_shutdown_networking(int pid, int level);
-__END_DECLS
-
-#endif /* !KERNEL */
-
-/* Entitlement to allow non-root processes to suspend/resume any task */
-#define PROCESS_RESUME_SUSPEND_ENTITLEMENT "com.apple.private.process.suspend-resume.any"
-
-#endif /* PRIVATE */
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <sys/proc_private.h>
+#endif /* PRIVATE && !MODULES_SUPPORTED */
 
 #endif  /* !_SYS_PROC_H_ */

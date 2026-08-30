@@ -64,12 +64,8 @@
 
 
 #include <sys/types.h>
-//#include <stdlib.h>
 #include <sys/kpi_private.h>
-
-__private_extern__
-void
-qsort(void *a, size_t n, size_t es, int (*cmp)(const void *, const void *));
+#include <kern/qsort.h>
 
 static inline char      *med3(char *, char *, char *, int (*)(const void *, const void *));
 static inline void       swapfunc(char *, char *, long, int);

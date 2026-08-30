@@ -45,6 +45,7 @@
  */
 #if MACH_KERNEL_PRIVATE || !_DARWIN_BUILDING_PROJECT_APPLEIMAGE4
 #include <img4/firmware.h>
+#include <img4/nonce.h>
 #endif
 
 /*!
@@ -54,7 +55,7 @@
  * it can be tested at build-time and not require rev-locked submissions of xnu
  * and AppleImage4.
  */
-#define IMG4_INTERFACE_VERSION (10u)
+#define IMG4_INTERFACE_VERSION (20u)
 
 /*!
  * @typegroup
@@ -184,6 +185,40 @@ typedef const img4_chip_t *(*img4_firmware_select_chip_t)(
 	size_t acceptable_chips_cnt
 	);
 
+typedef const img4_runtime_object_spec_t *(*img4_runtime_find_object_spec_t)(
+	img4_4cc_t _4cc
+	);
+
+typedef errno_t (*img4_nonce_domain_preroll_nonce_t)(
+	const img4_nonce_domain_t *nd,
+	img4_nonce_t *n
+	);
+
+typedef const img4_buff_t *(*img4_get_manifest_t)(
+	const void *buff,
+	size_t len,
+	img4_buff_t *buff_storage
+	);
+
+typedef const img4_buff_t *(*img4_get_payload_t)(
+	const void *buff,
+	size_t len,
+	img4_buff_t *buff_storage
+	);
+
+typedef const img4_chip_t *(*img4_chip_get_cryptex1_boot_t)(
+	const img4_chip_t *chip
+	);
+
+typedef const img4_nonce_domain_t *(*img4_nonce_domain_get_from_handle_t)(
+	uint32_t handle
+	);
+
+typedef errno_t (*const img4_nonce_domain_peek_nonce_t)(
+	const img4_nonce_domain_t *nd,
+	img4_nonce_t *n
+	);
+
 typedef struct _img4_interface {
 	const uint32_t i4if_version;
 	img4_retired_t i4if_init;
@@ -263,6 +298,96 @@ typedef struct _img4_interface {
 	struct {
 		img4_firmware_select_chip_t firmware_select_chip;
 	} i4if_v10;
+	struct {
+		// The following fields are ultimately going to be NULL and unused due
+		// to development churn
+		//
+		//     chip_ap_datacenter_development
+		//     chip_ap_category
+		//     chip_ap_ddi
+		//     chip_ap_developer_disk_image
+		const img4_chip_t *chip_ap_datacenter_development;
+		const img4_chip_t *chip_ap_intransigent;
+		const img4_chip_t *chip_ap_category;
+		const img4_chip_t *chip_ap_ddi;
+		const img4_chip_t *chip_ap_developer_disk_image;
+		const img4_chip_t *chip_ap_software_ff06;
+		const img4_chip_t *chip_ap_supplemental;
+		const img4_runtime_object_spec_t *runtime_object_spec_supplemental_root;
+		img4_runtime_find_object_spec_t runtime_find_object_spec;
+		img4_runtime_execute_object_t runtime_execute_object;
+		img4_runtime_copy_object_t runtime_copy_object;
+	} i4if_v11;
+	struct {
+		const img4_nonce_domain_t *nonce_domain_ddi;
+		const img4_nonce_domain_t *nonce_domain_ephemeral_cryptex;
+		const img4_chip_t *chip_ap_category_ff02;
+		const img4_chip_t *chip_ap_category_ff03;
+		const img4_chip_t *chip_ap_category_ff04_f0;
+		const img4_chip_t *chip_ap_category_ff04_f1;
+		const img4_chip_t *chip_ap_category_ff04_f2;
+		const img4_chip_t *chip_ap_category_ff04_f3;
+		img4_chip_select_personalized_ap_t chip_select_categorized_ap;
+	} i4if_v12;
+	struct {
+		const img4_chip_t *chip_ap_vma2;
+		const img4_chip_t *chip_ap_vma2_clone;
+		const img4_object_spec_t *pmap_data_spec;
+	} i4if_v13;
+	struct {
+		img4_nonce_domain_preroll_nonce_t nonce_domain_preroll_nonce;
+	} i4if_v14;
+	struct {
+		img4_get_manifest_t get_manifest;
+		img4_get_payload_t get_payload;
+	} i4if_v15;
+	struct {
+		img4_chip_select_personalized_ap_t chip_select_personalized_sep;
+		const img4_nonce_domain_t *nonce_domain_cryptex1_boot;
+		const img4_nonce_domain_t *nonce_domain_cryptex1_asset;
+	} i4if_v16;
+	struct {
+		img4_chip_select_personalized_ap_t chip_select_cryptex1_boot;
+		img4_chip_select_personalized_ap_t chip_select_cryptex1_preboot;
+		const img4_chip_t *chip_cryptex1_boot;
+		const img4_chip_t *chip_cryptex1_boot_reduced;
+		const img4_chip_t *chip_cryptex1_boot_x86;
+		const img4_chip_t *chip_cryptex1_boot_vma2;
+		const img4_chip_t *chip_cryptex1_preboot;
+		const img4_chip_t *chip_cryptex1_preboot_reduced;
+		const img4_chip_t *chip_cryptex1_preboot_x86;
+		const img4_chip_t *chip_cryptex1_preboot_vma2;
+		const img4_chip_t *chip_cryptex1_asset;
+	} i4if_v17;
+	struct {
+		const img4_nonce_domain_t *nonce_domain_cryptex1_snuf_stub;
+		const img4_chip_t *chip_cryptex1_asset_x86;
+		const img4_chip_t *chip_cryptex1_boot_proposal;
+		const img4_chip_t *chip_cryptex1_boot_reduced_proposal;
+		const img4_chip_t *chip_cryptex1_boot_vma2_proposal;
+		const img4_chip_t *chip_cryptex1_boot_vma2_clone_proposal;
+		img4_chip_get_cryptex1_boot_t chip_get_cryptex1_boot;
+		img4_chip_get_cryptex1_boot_t chip_get_cryptex1_boot_proposal;
+		img4_image_get_property_bool_t image_get_entitlement_bool;
+		img4_image_get_property_uint32_t image_get_entitlement_uint32;
+		img4_image_get_property_uint64_t image_get_entitlement_uint64;
+		img4_image_get_property_data_t image_get_entitlement_data;
+		const img4_runtime_object_spec_t *runtime_object_spec_local_policy;
+		const img4_chip_t *chip_ap_local_blessed;
+	} i4if_v18;
+	struct {
+		img4_nonce_domain_peek_nonce_t nonce_domain_peek_nonce;
+		const img4_chip_t *chip_cryptex1_boot_relaxed_x86;
+		const img4_chip_t *chip_cryptex1_preboot_relaxed_x86;
+		const img4_chip_t *chip_cryptex1_boot_static_x86;
+		const img4_chip_t *chip_cryptex1_preboot_static_x86;
+	} i4if_v19;
+	struct {
+		img4_nonce_domain_get_from_handle_t nonce_domain_get_from_handle;
+		const img4_chip_t *chip_cryptex1_generic;
+		const img4_chip_t *chip_cryptex1_generic_supplemental;
+		const img4_chip_t *chip_cryptex1_generic_x86;
+	} i4if_v20;
 } img4_interface_t;
 
 __BEGIN_DECLS
@@ -271,7 +396,7 @@ __BEGIN_DECLS
  * @const img4if
  * The AppleImage4 interface that was registered.
  */
-extern const img4_interface_t *img4if;
+extern const img4_interface_t * img4if;
 
 /*!
  * @function img4_interface_register

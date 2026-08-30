@@ -81,7 +81,7 @@
 struct  timezone tz = { .tz_minuteswest = 0, .tz_dsttime = 0 };
 
 #if !defined(__x86_64__)
-#define NPROC 1000          /* Account for TOTAL_CORPSES_ALLOWED by making this slightly lower than we can. */
+#define NPROC 1000          /* Account for DEFAULT_TOTAL_CORPSES_ALLOWED by making this slightly lower than we can. */
 #define NPROC_PER_UID 950
 #else
 #define NPROC (20 + 32 * 32)
@@ -101,16 +101,16 @@ int hard_maxproc = HNPROC;      /* hardcoded limit */
 
 int nprocs = 0; /* XXX */
 
-//#define	NTEXT (80 + NPROC / 8)			/* actually the object cache */
-int desiredvnodes = 0;                          /* desiredvnodes is set explicitly in unix_startup.c */
-uint32_t kern_maxvnodes = 0;            /* global, to be read from the device tree */
+int desiredvnodes = 0;          /* desiredvnodes is set explicitly in unix_startup.c */
+uint32_t kern_maxvnodes = 0;    /* global, to be read from the device tree */
 
-#define MAXFILES (OPEN_MAX + 2048)
-int     maxfiles = MAXFILES;
+#if __LP64__
+int     maxfiles = 3 * OPEN_MAX;
+#else
+int     maxfiles = OPEN_MAX + 2048;
+#endif
 
-unsigned int    ncallout = 16 + 2 * NPROC;
 unsigned int nmbclusters = NMBCLUSTERS;
-int     nport = NPROC / 2;
 
 /*
  *  async IO (aio) configurable limits

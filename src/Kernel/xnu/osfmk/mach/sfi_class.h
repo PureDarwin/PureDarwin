@@ -52,7 +52,7 @@ typedef uint32_t sfi_class_id_t;
  * Total number of classes supported including SFI_CLASS_UNSPECIFIED.
  * If new class is defined increase this number.
  */
-#define MAX_SFI_CLASS_ID        0x00000011
+#define MAX_SFI_CLASS_ID        0x00000012
 
 /*
  * Threads may initially start out unspecified
@@ -125,6 +125,12 @@ typedef uint32_t sfi_class_id_t;
 #define SFI_CLASS_USER_INTERACTIVE_FOCAL    0x0000000E
 #define SFI_CLASS_USER_INTERACTIVE_NONFOCAL 0x0000000F
 #define SFI_CLASS_MAINTENANCE               0x00000010
+
+/*
+ * Threads that have been tagged for runaway mitigation and are
+ * not turnstile boosted by something not-mitigated.
+ */
+#define SFI_CLASS_RUNAWAY_MITIGATION        0x00000011
 
 /*
  * Windows that are specified smaller than MIN_SFI_WINDOW_USEC

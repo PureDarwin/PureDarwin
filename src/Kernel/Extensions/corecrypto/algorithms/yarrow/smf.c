@@ -34,7 +34,7 @@
 */
 
 #include "smf.h"
-#include <sys/malloc.h>
+#include <kern/kalloc.h>
 #include <sys/systm.h>
 
 
@@ -48,7 +48,7 @@ SMFAPI MMPTR mmMalloc(DWORD request)
     // since kfree requires that we pass in the alloc size, add enough bytes to store a dword
     void* mem;
     
-    mem = _MALLOC (request, M_TEMP, M_WAITOK);
+    mem = kalloc_data(request, Z_WAITOK);
     
     if (mem == 0) // oops, it didn't appear to work
     {
@@ -62,7 +62,7 @@ SMFAPI MMPTR mmMalloc(DWORD request)
 SMFAPI void mmFree(MMPTR ptrnum)
 {
     // get the size of the pointer back
-    _FREE (ptrnum, M_TEMP);
+    kfree_data_addr(ptrnum);
 }
 
 SMFAPI LPVOID mmGetPtr(MMPTR ptrnum)
@@ -75,4 +75,3 @@ SMFAPI void mmReturnPtr(__unused MMPTR ptrnum)
 	/* nothing */
 	return;
 }
-

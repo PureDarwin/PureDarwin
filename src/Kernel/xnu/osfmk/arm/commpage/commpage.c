@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2021 Apple Inc. All rights reserved.
  * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
@@ -37,7 +37,6 @@
  *	Purpose:	Set up and export a RO/RW page
  */
 #include <libkern/section_keywords.h>
-#include <machine/atomic.h>
 #include <mach/mach_types.h>
 #include <mach/machine.h>
 #include <mach/vm_map.h>
@@ -50,14 +49,20 @@
 #include <vm/vm_protos.h>
 #include <ipc/ipc_port.h>
 #include <arm/cpuid.h>          /* for cpuid_info() & cache_info() */
+#include <arm/cpu_capabilities_public.h>
+#include <arm/misc_protos.h>
 #include <arm/rtclock.h>
 #include <libkern/OSAtomic.h>
 #include <stdatomic.h>
 #include <kern/remote_time.h>
+#include <kern/smr.h>
+#include <machine/atomic.h>
 #include <machine/machine_remote_time.h>
 #include <machine/machine_routines.h>
+#include <sys/code_signing.h>
 
 #include <sys/kdebug.h>
+#include <sys/random.h>
 
 #if CONFIG_ATM
 #include <atm/atm_internal.h>
@@ -65,23 +70,30 @@
 
 static int commpage_cpus( void );
 
+#if defined (__arm64__)
+#include <arm64/proc_reg.h>
+#include <pexpert/arm64/apt_msg.h>
+#endif
+
 
 static void commpage_init_cpu_capabilities( void );
 
 SECURITY_READ_ONLY_LATE(vm_address_t)   commPagePtr = 0;
-SECURITY_READ_ONLY_LATE(vm_address_t)   sharedpage_rw_addr = 0;
+SECURITY_READ_ONLY_LATE(vm_address_t)   commpage_rw_addr = 0;
+SECURITY_READ_ONLY_LATE(vm_address_t)   commpage_kernel_ro_addr = 0;
 SECURITY_READ_ONLY_LATE(uint64_t)       _cpu_capabilities = 0;
-SECURITY_READ_ONLY_LATE(vm_address_t)   sharedpage_rw_text_addr = 0;
+SECURITY_READ_ONLY_LATE(vm_address_t)   commpage_rw_text_addr = 0;
 
 extern user64_addr_t commpage_text64_location;
 extern user32_addr_t commpage_text32_location;
 
 /* For sysctl access from BSD side */
-extern int      gARMv81Atomics;
-extern int      gARMv8Crc32;
-extern int      gARMv82FHM;
-extern int      gARMv82SHA512;
-extern int      gARMv82SHA3;
+#define ARM_FEATURE_FLAG(x) \
+	extern int gARM_ ## x;
+#include <arm/arm_features.inc>
+#undef ARM_FEATURE_FLAG
+
+extern int      gUCNormalMem;
 
 void
 commpage_populate(void)
@@ -90,21 +102,18 @@ commpage_populate(void)
 	int cpufamily;
 
 	// Create the data and the text commpage
-	vm_map_address_t kernel_data_addr, kernel_text_addr, user_text_addr;
-	pmap_create_sharedpages(&kernel_data_addr, &kernel_text_addr, &user_text_addr);
+	vm_map_address_t kernel_data_addr, kernel_text_addr, kernel_ro_data_addr, user_text_addr;
+	pmap_create_commpages(&kernel_data_addr, &kernel_text_addr, &kernel_ro_data_addr, &user_text_addr);
 
-	sharedpage_rw_addr = kernel_data_addr;
-	sharedpage_rw_text_addr = kernel_text_addr;
+	commpage_rw_addr = kernel_data_addr;
+	commpage_rw_text_addr = kernel_text_addr;
+	commpage_kernel_ro_addr = kernel_ro_data_addr;
 	commPagePtr = (vm_address_t) _COMM_PAGE_BASE_ADDRESS;
 
 #if __arm64__
 	commpage_text64_location = user_text_addr;
 	bcopy(_COMM_PAGE64_SIGNATURE_STRING, (void *)(_COMM_PAGE_SIGNATURE + _COMM_PAGE_RW_OFFSET),
 	    MIN(_COMM_PAGE_SIGNATURELEN, strlen(_COMM_PAGE64_SIGNATURE_STRING)));
-#else
-	commpage_text32_location = user_text_addr;
-	bcopy(_COMM_PAGE32_SIGNATURE_STRING, (void *)(_COMM_PAGE_SIGNATURE + _COMM_PAGE_RW_OFFSET),
-	    MIN(_COMM_PAGE_SIGNATURELEN, strlen(_COMM_PAGE32_SIGNATURE_STRING)));
 #endif
 
 	*((uint16_t*)(_COMM_PAGE_VERSION + _COMM_PAGE_RW_OFFSET)) = (uint16_t) _COMM_PAGE_THIS_VERSION;
@@ -126,26 +135,27 @@ commpage_populate(void)
 
 	commpage_update_active_cpus();
 	cpufamily = cpuid_get_cpufamily();
-
+	*((uint8_t*)(_COMM_PAGE_CPU_CLUSTERS + _COMM_PAGE_RW_OFFSET)) = (uint8_t) ml_get_cluster_count();
 	*((uint8_t*)(_COMM_PAGE_PHYSICAL_CPUS + _COMM_PAGE_RW_OFFSET)) = (uint8_t) machine_info.physical_cpu_max;
 	*((uint8_t*)(_COMM_PAGE_LOGICAL_CPUS + _COMM_PAGE_RW_OFFSET)) = (uint8_t) machine_info.logical_cpu_max;
 	*((uint64_t*)(_COMM_PAGE_MEMORY_SIZE + _COMM_PAGE_RW_OFFSET)) = machine_info.max_mem;
 	*((uint32_t*)(_COMM_PAGE_CPUFAMILY + _COMM_PAGE_RW_OFFSET)) = (uint32_t)cpufamily;
-	*((uint32_t*)(_COMM_PAGE_DEV_FIRM + _COMM_PAGE_RW_OFFSET)) = (uint32_t)PE_i_can_has_debugger(NULL);
+	*((uint32_t*)(_COMM_PAGE_DEV_FIRM_LEGACY + _COMM_PAGE_RW_OFFSET)) = (uint32_t)PE_i_can_has_debugger(NULL);
+	*((uint32_t*)(_COMM_PAGE_DEV_FIRM + _COMM_PAGE_RO_OFFSET)) = (uint32_t)PE_i_can_has_debugger(NULL);
 	*((uint8_t*)(_COMM_PAGE_USER_TIMEBASE + _COMM_PAGE_RW_OFFSET)) = user_timebase_type();
+
+	// Populate logical CPU -> logical cluster table
+	ml_map_cpus_to_clusters((uint8_t*)(_COMM_PAGE_CPU_TO_CLUSTER + _COMM_PAGE_RW_OFFSET));
+
 	*((uint8_t*)(_COMM_PAGE_CONT_HWCLOCK + _COMM_PAGE_RW_OFFSET)) = (uint8_t)user_cont_hwclock_allowed();
-	*((uint8_t*)(_COMM_PAGE_KERNEL_PAGE_SHIFT + _COMM_PAGE_RW_OFFSET)) = (uint8_t) page_shift;
+	*((uint8_t*)(_COMM_PAGE_KERNEL_PAGE_SHIFT_LEGACY + _COMM_PAGE_RW_OFFSET)) = (uint8_t) page_shift;
+	*((uint8_t*)(_COMM_PAGE_KERNEL_PAGE_SHIFT + _COMM_PAGE_RO_OFFSET)) = (uint8_t) page_shift;
 
 #if __arm64__
-	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_32 + _COMM_PAGE_RW_OFFSET)) = (uint8_t) page_shift_user32;
-	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64 + _COMM_PAGE_RW_OFFSET)) = (uint8_t) SIXTEENK_PAGE_SHIFT;
-#elif (__ARM_ARCH_7K__ >= 2)
-	/* enforce 16KB alignment for watch targets with new ABI */
-	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_32 + _COMM_PAGE_RW_OFFSET)) = (uint8_t) SIXTEENK_PAGE_SHIFT;
-	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64 + _COMM_PAGE_RW_OFFSET)) = (uint8_t) SIXTEENK_PAGE_SHIFT;
-#else /* __arm64__ */
-	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_32 + _COMM_PAGE_RW_OFFSET)) = (uint8_t) PAGE_SHIFT;
-	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64 + _COMM_PAGE_RW_OFFSET)) = (uint8_t) PAGE_SHIFT;
+	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_32_LEGACY + _COMM_PAGE_RW_OFFSET)) = (uint8_t) page_shift_user32;
+	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_32 + _COMM_PAGE_RO_OFFSET)) = (uint8_t) page_shift_user32;
+	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64_LEGACY + _COMM_PAGE_RW_OFFSET)) = (uint8_t) SIXTEENK_PAGE_SHIFT;
+	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64 + _COMM_PAGE_RO_OFFSET)) = (uint8_t) SIXTEENK_PAGE_SHIFT;
 #endif /* __arm64__ */
 
 	commpage_update_timebase();
@@ -175,6 +185,53 @@ commpage_populate(void)
 
 
 	*((uint64_t*)(_COMM_PAGE_REMOTETIME_PARAMS + _COMM_PAGE_RW_OFFSET)) = BT_RESET_SENTINEL_TS;
+
+#if CONFIG_QUIESCE_COUNTER
+	cpu_quiescent_set_storage((_Atomic uint64_t *)(_COMM_PAGE_CPU_QUIESCENT_COUNTER +
+	    _COMM_PAGE_RW_OFFSET));
+#endif /* CONFIG_QUIESCE_COUNTER */
+
+	/*
+	 * Set random values for targets in Apple Security Bounty
+	 * addr should be unmapped for userland processes
+	 * kaddr should be unmapped for kernel
+	 */
+	uint64_t asb_value, asb_addr, asb_kvalue, asb_kaddr;
+	uint64_t asb_rand_vals[] = {
+		0x93e78adcded4d3d5, 0xd16c5b76ad99bccf, 0x67dfbbd12c4a594e, 0x7365636e6f6f544f,
+		0x239a974c9811e04b, 0xbf60e7fa45741446, 0x8acf5210b466b05, 0x67dfbbd12c4a594e
+	};
+	const int nrandval = sizeof(asb_rand_vals) / sizeof(asb_rand_vals[0]);
+	uint8_t randidx;
+
+	read_random(&randidx, sizeof(uint8_t));
+	asb_value = asb_rand_vals[randidx++ % nrandval];
+	*((uint64_t*)(_COMM_PAGE_ASB_TARGET_VALUE + _COMM_PAGE_RW_OFFSET)) = asb_value;
+
+	// userspace faulting address should be > MACH_VM_MAX_ADDRESS
+	asb_addr = asb_rand_vals[randidx++ % nrandval];
+	uint64_t user_min = MACH_VM_MAX_ADDRESS;
+	uint64_t user_max = UINT64_MAX;
+	asb_addr %= (user_max - user_min);
+	asb_addr += user_min;
+	*((uint64_t*)(_COMM_PAGE_ASB_TARGET_ADDRESS + _COMM_PAGE_RW_OFFSET)) = asb_addr;
+
+	asb_kvalue = asb_rand_vals[randidx++ % nrandval];
+	*((uint64_t*)(_COMM_PAGE_ASB_TARGET_KERN_VALUE + _COMM_PAGE_RW_OFFSET)) = asb_kvalue;
+
+	// kernel faulting address should be < VM_MIN_KERNEL_ADDRESS
+	asb_kaddr = asb_rand_vals[randidx++ % nrandval];
+	uint64_t kernel_min = 0x0LL;
+	uint64_t kernel_max = VM_MIN_KERNEL_ADDRESS;
+	asb_kaddr %= (kernel_max - kernel_min);
+	asb_kaddr += kernel_min;
+	*((uint64_t*)(_COMM_PAGE_ASB_TARGET_KERN_ADDRESS + _COMM_PAGE_RW_OFFSET)) = asb_kaddr;
+
+#if __arm64__
+	*((uint8_t*)(_COMM_PAGE_APT_MSG_POLICY + _COMM_PAGE_RW_OFFSET)) = apt_msg_policy();
+#endif
+
+	commpage_set_erm_active(extended_research_mode_state());
 }
 
 #define COMMPAGE_TEXT_SEGMENT "__TEXT_EXEC"
@@ -260,17 +317,15 @@ commpage_set_timestamp(
 
 	commpage_timeofday_datap->TimeStamp_tick = 0x0ULL;
 
-#if     (__ARM_ARCH__ >= 7)
-	ARM_DMB_ISH();
-#endif
+	__builtin_arm_dmb(DMB_ISH);
+
 	commpage_timeofday_datap->TimeStamp_sec = secs;
 	commpage_timeofday_datap->TimeStamp_frac = frac;
 	commpage_timeofday_datap->Ticks_scale = scale;
 	commpage_timeofday_datap->Ticks_per_sec = tick_per_sec;
 
-#if     (__ARM_ARCH__ >= 7)
-	ARM_DMB_ISH();
-#endif
+	__builtin_arm_dmb(DMB_ISH);
+
 	commpage_timeofday_datap->TimeStamp_tick = tbr;
 
 }
@@ -318,14 +373,493 @@ _get_cpu_capabilities(void)
 vm_address_t
 _get_commpage_priv_address(void)
 {
-	return sharedpage_rw_addr;
+	return commpage_rw_addr;
+}
+
+vm_address_t
+_get_commpage_ro_address(void)
+{
+	return commpage_kernel_ro_addr;
 }
 
 vm_address_t
 _get_commpage_text_priv_address(void)
 {
-	return sharedpage_rw_text_addr;
+	return commpage_rw_text_addr;
 }
+
+#if defined(__arm64__)
+
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64ISAR0_EL1
+ */
+static void
+commpage_init_arm_optional_features_isar0(uint64_t *commpage_bits)
+{
+	uint64_t bits = 0;
+	uint64_t isar0 = __builtin_arm_rsr64("ID_AA64ISAR0_EL1");
+
+	if ((isar0 & ID_AA64ISAR0_EL1_TS_MASK) >= ID_AA64ISAR0_EL1_TS_FLAGM_EN) {
+		gARM_FEAT_FlagM = 1;
+		bits |= kHasFEATFlagM;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_TS_MASK) >= ID_AA64ISAR0_EL1_TS_FLAGM2_EN) {
+		gARM_FEAT_FlagM2 = 1;
+		bits |= kHasFEATFlagM2;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_FHM_MASK) >= ID_AA64ISAR0_EL1_FHM_8_2) {
+		gARM_FEAT_FHM = 1;
+		bits |= kHasFeatFHM;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_DP_MASK) >= ID_AA64ISAR0_EL1_DP_EN) {
+		gARM_FEAT_DotProd = 1;
+		bits |= kHasFeatDotProd;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_SHA3_MASK) >= ID_AA64ISAR0_EL1_SHA3_EN) {
+		gARM_FEAT_SHA3 = 1;
+		bits |= kHasFeatSHA3;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_RDM_MASK) >= ID_AA64ISAR0_EL1_RDM_EN) {
+		gARM_FEAT_RDM = 1;
+		bits |= kHasFeatRDM;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_ATOMIC_MASK) >= ID_AA64ISAR0_EL1_ATOMIC_8_1) {
+		gARM_FEAT_LSE = 1;
+		bits |= kHasFeatLSE;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_SHA2_MASK) >= ID_AA64ISAR0_EL1_SHA2_512_EN) {
+		gARM_FEAT_SHA512 = 1;
+		bits |= kHasFeatSHA512;
+	}
+	if ((isar0 & ID_AA64ISAR0_EL1_CRC32_MASK) == ID_AA64ISAR0_EL1_CRC32_EN) {
+		gARM_FEAT_CRC32 = 1;
+		bits |= kHasARMv8Crc32;
+	}
+
+#if __ARM_V8_CRYPTO_EXTENSIONS__
+	/**
+	 * T7000 has a bug in the ISAR0 register that reports that PMULL is not
+	 * supported when it actually is. To work around this, for all of the crypto
+	 * extensions, just check if they're supported using the board_config.h
+	 * values.
+	 */
+	gARM_FEAT_PMULL = 1;
+	gARM_FEAT_SHA1 = 1;
+	gARM_FEAT_AES = 1;
+	gARM_FEAT_SHA256 = 1;
+	bits |= kHasARMv8Crypto;
+#endif /* __ARM_V8_CRYPTO_EXTENSIONS__ */
+
+	*commpage_bits |= bits;
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64ISAR1_EL1
+ */
+static void
+commpage_init_arm_optional_features_isar1(uint64_t *commpage_bits)
+{
+	uint64_t bits = 0;
+	uint64_t isar1 = __builtin_arm_rsr64("ID_AA64ISAR1_EL1");
+	uint64_t sctlr = __builtin_arm_rsr64("SCTLR_EL1");
+
+	if ((isar1 & ID_AA64ISAR1_EL1_SPECRES_MASK) >= ID_AA64ISAR1_EL1_SPECRES_EN &&
+	    sctlr & SCTLR_EnRCTX) {
+		gARM_FEAT_SPECRES = 1;
+		bits |= kHasFeatSPECRES;
+#ifdef HAS_SPECRES2
+		if ((isar1 & ID_AA64ISAR1_EL1_SPECRES_MASK) >= ID_AA64ISAR1_EL1_SPECRES2_EN) {
+			gARM_FEAT_SPECRES2 = 1;
+		}
+#endif /* HAS_SPECRES2 */
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_SB_MASK) >= ID_AA64ISAR1_EL1_SB_EN) {
+		gARM_FEAT_SB = 1;
+		bits |= kHasFeatSB;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_FRINTTS_MASK) >= ID_AA64ISAR1_EL1_FRINTTS_EN) {
+		gARM_FEAT_FRINTTS = 1;
+		bits |= kHasFeatFRINTTS;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_GPI_MASK) >= ID_AA64ISAR1_EL1_GPI_EN) {
+		gARM_FEAT_PACIMP = 1;
+		bits |= kHasArmv8GPI;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_LRCPC_MASK) >= ID_AA64ISAR1_EL1_LRCPC_EN) {
+		gARM_FEAT_LRCPC = 1;
+		bits |= kHasFeatLRCPC;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_LRCPC_MASK) >= ID_AA64ISAR1_EL1_LRCP2C_EN) {
+		gARM_FEAT_LRCPC2 = 1;
+		bits |= kHasFeatLRCPC2;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_FCMA_MASK) >= ID_AA64ISAR1_EL1_FCMA_EN) {
+		gARM_FEAT_FCMA = 1;
+		bits |= kHasFeatFCMA;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_JSCVT_MASK) >= ID_AA64ISAR1_EL1_JSCVT_EN) {
+		gARM_FEAT_JSCVT = 1;
+		bits |= kHasFeatJSCVT;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_API_MASK) >= ID_AA64ISAR1_EL1_API_PAuth_EN) {
+		gARM_FEAT_PAuth = 1;
+		bits |= kHasFeatPAuth;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_API_MASK) >= ID_AA64ISAR1_EL1_API_PAuth2_EN) {
+		gARM_FEAT_PAuth2 = 1;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_API_MASK) >= ID_AA64ISAR1_EL1_API_FPAC_EN) {
+		gARM_FEAT_FPAC = 1;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_API_MASK) >= ID_AA64ISAR1_EL1_API_FPACCOMBINE) {
+		gARM_FEAT_FPACCOMBINE = 1;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_DPB_MASK) >= ID_AA64ISAR1_EL1_DPB_EN) {
+		gARM_FEAT_DPB = 1;
+		bits |= kHasFeatDPB;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_DPB_MASK) >= ID_AA64ISAR1_EL1_DPB2_EN) {
+		gARM_FEAT_DPB2 = 1;
+		bits |= kHasFeatDPB2;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_BF16_MASK) >= ID_AA64ISAR1_EL1_BF16_EN) {
+		gARM_FEAT_BF16 = 1;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_BF16_MASK) >= ID_AA64ISAR1_EL1_EBF16_EN) {
+		gARM_FEAT_EBF16 = 1;
+	}
+	if ((isar1 & ID_AA64ISAR1_EL1_I8MM_MASK) >= ID_AA64ISAR1_EL1_I8MM_EN) {
+		gARM_FEAT_I8MM = 1;
+	}
+
+	*commpage_bits |= bits;
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64ISAR2_EL1
+ */
+static void
+commpage_init_arm_optional_features_isar2(void)
+{
+	uint64_t isar2 = __builtin_arm_rsr64("ID_AA64ISAR2_EL1");
+
+	if ((isar2 & ID_AA64ISAR2_EL1_WFxT_MASK) >= ID_AA64ISAR2_EL1_WFxT_EN) {
+		gARM_FEAT_WFxT = 1;
+	}
+	if ((isar2 & ID_AA64ISAR2_EL1_RPRES_MASK) >= ID_AA64ISAR2_EL1_RPRES_EN) {
+		gARM_FEAT_RPRES = 1;
+	}
+	if ((isar2 & ID_AA64ISAR2_EL1_CSSC_MASK) >= ID_AA64ISAR2_EL1_CSSC_EN) {
+		gARM_FEAT_CSSC = 1;
+	}
+	if ((isar2 & ID_AA64ISAR2_EL1_BC_MASK) >= ID_AA64ISAR2_EL1_BC_EN) {
+		gARM_FEAT_HBC = 1;
+	}
+}
+
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64MMFR0_EL1
+ */
+static void
+commpage_init_arm_optional_features_mmfr0(uint64_t *commpage_bits)
+{
+	uint64_t bits = 0;
+	uint64_t mmfr0 = __builtin_arm_rsr64("ID_AA64MMFR0_EL1");
+
+	if ((mmfr0 & ID_AA64MMFR0_EL1_ECV_MASK) >= ID_AA64MMFR0_EL1_ECV_EN) {
+		gARM_FEAT_ECV = 1;
+	}
+
+	*commpage_bits |= bits;
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64MMFR2_EL1
+ */
+static void
+commpage_init_arm_optional_features_mmfr2(uint64_t *commpage_bits)
+{
+	uint64_t bits = 0;
+	uint64_t mmfr2 = __builtin_arm_rsr64("ID_AA64MMFR2_EL1");
+
+	if ((mmfr2 & ID_AA64MMFR2_EL1_AT_MASK) >= ID_AA64MMFR2_EL1_AT_LSE2_EN) {
+		gARM_FEAT_LSE2 = 1;
+		bits |= kHasFeatLSE2;
+	}
+
+	*commpage_bits |= bits;
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64PFR0_EL1
+ */
+static void
+commpage_init_arm_optional_features_pfr0(uint64_t *commpage_bits)
+{
+	uint64_t bits = 0;
+	uint64_t pfr0 = __builtin_arm_rsr64("ID_AA64PFR0_EL1");
+
+	if ((pfr0 & ID_AA64PFR0_EL1_CSV3_MASK) >= ID_AA64PFR0_EL1_CSV3_EN) {
+		gARM_FEAT_CSV3 = 1;
+		bits |= kHasFeatCSV3;
+	}
+	if ((pfr0 & ID_AA64PFR0_EL1_CSV2_MASK) >= ID_AA64PFR0_EL1_CSV2_EN) {
+		gARM_FEAT_CSV2 = 1;
+		bits |= kHasFeatCSV2;
+	}
+	if ((pfr0 & ID_AA64PFR0_EL1_DIT_MASK) >= ID_AA64PFR0_EL1_DIT_EN) {
+		gARM_FEAT_DIT = 1;
+		bits |= kHasFeatDIT;
+	}
+	if ((pfr0 & ID_AA64PFR0_EL1_AdvSIMD_MASK) != ID_AA64PFR0_EL1_AdvSIMD_DIS) {
+		gARM_AdvSIMD = 1;
+		bits |= kHasAdvSIMD;
+		if ((pfr0 & ID_AA64PFR0_EL1_AdvSIMD_MASK) >= ID_AA64PFR0_EL1_AdvSIMD_HPFPCVT) {
+			gARM_AdvSIMD_HPFPCvt = 1;
+			bits |= kHasAdvSIMD_HPFPCvt;
+		}
+		if ((pfr0 & ID_AA64PFR0_EL1_AdvSIMD_MASK) >= ID_AA64PFR0_EL1_AdvSIMD_FP16) {
+			gARM_FEAT_FP16 = 1;
+			bits |= kHasFeatFP16;
+		}
+	}
+
+	*commpage_bits |= bits;
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64PFR1_EL1
+ */
+static void
+commpage_init_arm_optional_features_pfr1(uint64_t *commpage_bits)
+{
+	uint64_t pfr1 = __builtin_arm_rsr64("ID_AA64PFR1_EL1");
+
+	if ((pfr1 & ID_AA64PFR1_EL1_SSBS_MASK) >= ID_AA64PFR1_EL1_SSBS_EN) {
+		gARM_FEAT_SSBS = 1;
+	}
+
+	if ((pfr1 & ID_AA64PFR1_EL1_BT_MASK) >= ID_AA64PFR1_EL1_BT_EN) {
+		gARM_FEAT_BTI = 1;
+	}
+
+	unsigned int sme_version = arm_sme_version();
+	if (sme_version >= ARM_FEAT_SME) {
+		gARM_FEAT_SME = 1;
+		*commpage_bits |= kHasFeatSME;
+	}
+	if (sme_version >= ARM_FEAT_SME2) {
+		gARM_FEAT_SME2 = 1;
+		*commpage_bits |= kHasFeatSME2;
+	}
+	if (sme_version >= ARM_FEAT_SME2p1) {
+		gARM_FEAT_SME2p1 = 1;
+		*commpage_bits |= kHasFeatSME2p1;
+	}
+
+	uint64_t mte_ver = (pfr1 & ID_AA64PFR1_EL1_MTE_MASK) >> ID_AA64PFR1_EL1_MTE_OFFSET;
+	if (mte_ver >= 1) {
+		gARM_FEAT_MTE = 1;
+	}
+	if (mte_ver >= 2) {
+		gARM_FEAT_MTE2 = 1;
+		if ((pfr1 & ID_AA64PFR1_EL1_MTEX_MASK) >= ID_AA64PFR1_EL1_MTEX_EN) {
+			gARM_FEAT_MTE4 = 1;
+		}
+		if ((pfr1 & ID_AA64PFR1_EL1_MTE_FRAC_MASK) == 0) {
+			gARM_FEAT_MTE_ASYNC = 1;
+		}
+	}
+	if (mte_ver >= 3) {
+		gARM_FEAT_MTE3 = 1;
+	}
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64PFR2_EL1
+ */
+static void
+commpage_init_arm_optional_features_pfr2(__unused uint64_t *commpage_bits)
+{
+	uint64_t pfr2 __unused = __builtin_arm_rsr64("ID_AA64PFR2_EL1");
+
+	if ((pfr2 & ID_AA64PFR2_EL1_MTE_STORE_ONLY_MASK) >= ID_AA64PFR2_EL1_MTE_STORE_ONLY_EN) {
+		gARM_FEAT_MTE_STORE_ONLY = 1;
+	}
+
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64SMFR0_EL1
+ */
+__attribute__((target("sme")))
+static void
+commpage_init_arm_optional_features_smfr0(void)
+{
+	if (arm_sme_version() == 0) {
+		/*
+		 * We can safely read ID_AA64SMFR0_EL1 on SME-less devices.  But
+		 * arm_sme_version() == 0 could also mean that the user
+		 * defeatured SME with a boot-arg.
+		 */
+		return;
+	}
+
+	uint64_t smfr0 = __builtin_arm_rsr64("ID_AA64SMFR0_EL1");
+
+	/*
+	 * ID_AA64SMFR0_EL1 has to be parsed differently from other feature ID
+	 * registers.  See "Alternative ID scheme used for ID_AA64SMFR0_EL1" in
+	 * the ARM ARM.
+	 */
+
+	/* 1-bit fields */
+	if (smfr0 & ID_AA64SMFR0_EL1_F32F32_EN) {
+		gARM_SME_F32F32 = 1;
+	}
+	if (smfr0 & ID_AA64SMFR0_EL1_BI32I32_EN) {
+		gARM_SME_BI32I32 = 1;
+	}
+	if (smfr0 & ID_AA64SMFR0_EL1_B16F32_EN) {
+		gARM_SME_B16F32 = 1;
+	}
+	if (smfr0 & ID_AA64SMFR0_EL1_F16F32_EN) {
+		gARM_SME_F16F32 = 1;
+	}
+	if (smfr0 & ID_AA64SMFR0_EL1_F64F64_EN) {
+		gARM_FEAT_SME_F64F64 = 1;
+	}
+	if (smfr0 & ID_AA64SMFR0_EL1_F16F16_EN) {
+		gARM_FEAT_SME_F16F16 = 1;
+	}
+	if (smfr0 & ID_AA64SMFR0_EL1_B16B16_EN) {
+		gARM_FEAT_SME_B16B16 = 1;
+	}
+
+	/* 4-bit fields (0 bits are ignored) */
+	if ((smfr0 & ID_AA64SMFR0_EL1_I8I32_EN) == ID_AA64SMFR0_EL1_I8I32_EN) {
+		gARM_SME_I8I32 = 1;
+	}
+	if ((smfr0 & ID_AA64SMFR0_EL1_I16I32_EN) == ID_AA64SMFR0_EL1_I16I32_EN) {
+		gARM_SME_I16I32 = 1;
+	}
+	if ((smfr0 & ID_AA64SMFR0_EL1_I16I64_EN) == ID_AA64SMFR0_EL1_I16I64_EN) {
+		gARM_FEAT_SME_I16I64 = 1;
+	}
+}
+
+/**
+ * Initializes all commpage entries and sysctls for EL0 visible features in ID_AA64ZFR0_EL1
+ */
+static void
+commpage_init_arm_optional_features_zfr0(void)
+{
+	uint64_t zfr0 = __builtin_arm_rsr64("S3_0_C0_C4_4" /* ID_AA64ZFR0_EL1 */);
+
+	if ((zfr0 & ID_AA64ZFR0_EL1_B16B16_MASK) >= ID_AA64ZFR0_EL1_B16B16_EN) {
+		gARM_FEAT_SVE_B16B16 = 1;
+	}
+}
+
+static void
+commpage_init_arm_optional_features_mmfr1(uint64_t *commpage_bits)
+{
+	uint64_t bits = 0;
+	const uint64_t mmfr1 = __builtin_arm_rsr64("ID_AA64MMFR1_EL1");
+
+	if ((mmfr1 & ID_AA64MMFR1_EL1_AFP_MASK) == ID_AA64MMFR1_EL1_AFP_EN) {
+		gARM_FEAT_AFP = 1;
+		bits |= kHasFeatAFP;
+	}
+
+	*commpage_bits |= bits;
+}
+
+/**
+ * Read the system register @name, attempt to set set bits of @mask if not
+ * already, test if bits were actually set, reset the register to its
+ * previous value if required, and 'return' @mask with only bits that
+ * were successfully set (or already set) in the system register. */
+#define _test_sys_bits(name, mask) ({ \
+	const uint64_t src = __builtin_arm_rsr64(#name); \
+    uint64_t test = src | mask; \
+    if (test != src) { \
+	__builtin_arm_wsr64(#name, test); \
+	test = __builtin_arm_rsr64(#name); \
+	if (test != src) { \
+	    __builtin_arm_wsr64(#name, src); \
+	}\
+    } \
+    mask & test; \
+})
+
+/**
+ * Reports whether FPU exceptions are supported.
+ * Possible FPU exceptions are :
+ * - input denormal;
+ * - inexact;
+ * - underflow;
+ * - overflow;
+ * - divide by 0;
+ * - invalid operation.
+ *
+ * Any of those can be supported or not but for now, we consider that
+ * it all or nothing : FPU exceptions support flag set <=> all 6 exceptions
+ * a supported.
+ */
+static void
+commpage_init_arm_optional_features_fpcr(uint64_t *commpage_bits)
+{
+	uint64_t support_mask = FPCR_IDE | FPCR_IXE | FPCR_UFE | FPCR_OFE |
+	    FPCR_DZE | FPCR_IOE;
+	uint64_t FPCR_bits = _test_sys_bits(FPCR, support_mask);
+	if (FPCR_bits == support_mask) {
+		gARM_FP_SyncExceptions = 1;
+		*commpage_bits |= kHasFP_SyncExceptions;
+	}
+}
+
+
+/**
+ * Reports whether stateless FEATs are present or not.
+ * Those only depend on the SoC and on previous variables.
+ */
+static void
+commpage_init_arm_optional_features_misc(__unused uint64_t *commpage_bits)
+{
+	if (gARM_FEAT_MTE4) {
+		gARM_FEAT_MTE_CANONICAL_TAGS = 1;
+		gARM_FEAT_MTE_NO_ADDRESS_TAGS = 1;
+	}
+}
+
+/**
+ * Initializes all commpage entries and sysctls for ARM64 optional features accessible from EL0.
+ */
+static void
+commpage_init_arm_optional_features(uint64_t *commpage_bits)
+{
+	commpage_init_arm_optional_features_isar0(commpage_bits);
+	commpage_init_arm_optional_features_isar1(commpage_bits);
+	commpage_init_arm_optional_features_isar2();
+	commpage_init_arm_optional_features_mmfr0(commpage_bits);
+	commpage_init_arm_optional_features_mmfr1(commpage_bits);
+	commpage_init_arm_optional_features_mmfr2(commpage_bits);
+	commpage_init_arm_optional_features_pfr0(commpage_bits);
+	commpage_init_arm_optional_features_pfr1(commpage_bits);
+	commpage_init_arm_optional_features_pfr2(commpage_bits);
+	commpage_init_arm_optional_features_smfr0();
+	commpage_init_arm_optional_features_zfr0();
+	commpage_init_arm_optional_features_fpcr(commpage_bits);
+	/*
+	 * commpage_init_arm_optional_features_misc handles features flags
+	 * derived from other feature flags, so it must run last.
+	 */
+	commpage_init_arm_optional_features_misc(commpage_bits);
+}
+#endif /* __arm64__ */
 
 /*
  * Initialize _cpu_capabilities vector
@@ -363,61 +897,29 @@ commpage_init_cpu_capabilities( void )
 
 	bits |= kFastThreadLocalStorage;        // TPIDRURO for TLS
 
-#if     __ARM_VFP__
 	bits |= kHasVfp;
-	arm_mvfp_info_t *mvfp_info = arm_mvfp_info();
-	if (mvfp_info->neon) {
-		bits |= kHasNeon;
-	}
-	if (mvfp_info->neon_hpfp) {
-		bits |= kHasNeonHPFP;
-	}
-	if (mvfp_info->neon_fp16) {
-		bits |= kHasNeonFP16;
-	}
-#endif
+
 #if defined(__arm64__)
 	bits |= kHasFMA;
 #endif
-#if     __ARM_ENABLE_WFE_
 	bits |= kHasEvent;
-#endif
-#if __ARM_V8_CRYPTO_EXTENSIONS__
-	bits |= kHasARMv8Crypto;
-#endif
 #ifdef __arm64__
-	uint64_t isar0 = __builtin_arm_rsr64("ID_AA64ISAR0_EL1");
-	if ((isar0 & ID_AA64ISAR0_EL1_ATOMIC_MASK) == ID_AA64ISAR0_EL1_ATOMIC_8_1) {
-		bits |= kHasARMv81Atomics;
-		gARMv81Atomics = 1;
-	}
-	if ((isar0 & ID_AA64ISAR0_EL1_CRC32_MASK) == ID_AA64ISAR0_EL1_CRC32_EN) {
-		bits |= kHasARMv8Crc32;
-		gARMv8Crc32 = 1;
-	}
-	if ((isar0 & ID_AA64ISAR0_EL1_FHM_MASK) >= ID_AA64ISAR0_EL1_FHM_8_2) {
-		bits |= kHasARMv82FHM;
-		gARMv82FHM = 1;
-	}
-
-	if ((isar0 & ID_AA64ISAR0_EL1_SHA2_MASK) > ID_AA64ISAR0_EL1_SHA2_EN) {
-		bits |= kHasARMv82SHA512;
-		gARMv82SHA512 = 1;
-	}
-	if ((isar0 & ID_AA64ISAR0_EL1_SHA3_MASK) >= ID_AA64ISAR0_EL1_SHA3_EN) {
-		bits |= kHasARMv82SHA3;
-		gARMv82SHA3 = 1;
-	}
-
+	commpage_init_arm_optional_features(&bits);
 #endif
 
 
 
+
+#if HAS_UCNORMAL_MEM
+	gUCNormalMem = 1;
+	bits |= kHasUCNormalMemory;
+#endif
 
 	_cpu_capabilities = bits;
 
 	*((uint32_t *)(_COMM_PAGE_CPU_CAPABILITIES + _COMM_PAGE_RW_OFFSET)) = (uint32_t)_cpu_capabilities;
 	*((uint64_t *)(_COMM_PAGE_CPU_CAPABILITIES64 + _COMM_PAGE_RW_OFFSET)) = _cpu_capabilities;
+
 }
 
 /*
@@ -445,18 +947,17 @@ commpage_update_timebase(void)
 }
 
 /*
- * Update the commpage with current kdebug state. This currently has bits for
- * global trace state, and typefilter enablement. It is likely additional state
- * will be tracked in the future.
+ * Update the commpage with current kdebug state: whether tracing is enabled, a
+ * typefilter is present, and continuous time should be used for timestamps.
  *
- * INVARIANT: This value will always be 0 if global tracing is disabled. This
- * allows simple guard tests of "if (*_COMM_PAGE_KDEBUG_ENABLE) { ... }"
+ * Disregards configuration and set to 0 if tracing is disabled.
  */
 void
 commpage_update_kdebug_state(void)
 {
 	if (commPagePtr) {
-		*((volatile uint32_t*)(_COMM_PAGE_KDEBUG_ENABLE + _COMM_PAGE_RW_OFFSET)) = kdebug_commpage_state();
+		uint32_t state = kdebug_commpage_state();
+		*((volatile uint32_t *)(_COMM_PAGE_KDEBUG_ENABLE + _COMM_PAGE_RW_OFFSET)) = state;
 	}
 }
 
@@ -491,22 +992,25 @@ void
 commpage_update_mach_approximate_time(uint64_t abstime)
 {
 #ifdef CONFIG_MACH_APPROXIMATE_TIME
-	uintptr_t approx_time_base = (uintptr_t)(_COMM_PAGE_APPROX_TIME + _COMM_PAGE_RW_OFFSET);
-	uint64_t saved_data;
-
-	if (commPagePtr) {
-		saved_data = atomic_load_explicit((_Atomic uint64_t *)approx_time_base,
-		    memory_order_relaxed);
-		if (saved_data < abstime) {
-			/* ignoring the success/fail return value assuming that
-			 * if the value has been updated since we last read it,
-			 * "someone" has a newer timestamp than us and ours is
-			 * now invalid. */
-			atomic_compare_exchange_strong_explicit((_Atomic uint64_t *)approx_time_base,
-			    &saved_data, abstime, memory_order_relaxed, memory_order_relaxed);
-		}
+	if (!commPagePtr) {
+		return;
 	}
-#else
+
+	uint64_t *approx_time_base = (uint64_t *)(uintptr_t)(_COMM_PAGE_APPROX_TIME + _COMM_PAGE_RW_OFFSET);
+
+	uint64_t saved_data = os_atomic_load_wide(approx_time_base, relaxed);
+	if (saved_data < abstime) {
+		/*
+		 * ignore the success/fail return value assuming that
+		 * if the value has been updated since we last read it,
+		 * someone else has written a timestamp that is new enough.
+		 */
+		__unused bool ret = os_atomic_cmpxchg(approx_time_base,
+		    saved_data, abstime, relaxed);
+	}
+
+
+#else /* CONFIG_MACH_APPROXIMATE_TIME */
 #pragma unused (abstime)
 #endif
 }
@@ -518,17 +1022,14 @@ commpage_update_mach_approximate_time(uint64_t abstime)
 void
 commpage_update_mach_continuous_time(uint64_t sleeptime)
 {
-	if (commPagePtr) {
-#ifdef __arm64__
-		*((uint64_t *)(_COMM_PAGE_CONT_TIMEBASE + _COMM_PAGE_RW_OFFSET)) = sleeptime;
-#else
-		uint64_t *c_time_base = (uint64_t *)(_COMM_PAGE_CONT_TIMEBASE + _COMM_PAGE_RW_OFFSET);
-		uint64_t old;
-		do {
-			old = *c_time_base;
-		} while (!OSCompareAndSwap64(old, sleeptime, c_time_base));
-#endif /* __arm64__ */
+	if (!commPagePtr) {
+		return;
 	}
+
+	uint64_t *cont_time_base = (uint64_t *)(uintptr_t)(_COMM_PAGE_CONT_TIMEBASE + _COMM_PAGE_RW_OFFSET);
+
+	os_atomic_store_wide(cont_time_base, sleeptime, relaxed);
+
 }
 
 void
@@ -543,17 +1044,14 @@ commpage_update_mach_continuous_time_hw_offset(uint64_t offset)
 void
 commpage_update_boottime(uint64_t value)
 {
-	if (commPagePtr) {
-#ifdef __arm64__
-		*((uint64_t *)(_COMM_PAGE_BOOTTIME_USEC + _COMM_PAGE_RW_OFFSET)) = value;
-#else
-		uint64_t *cp = (uint64_t *)(_COMM_PAGE_BOOTTIME_USEC + _COMM_PAGE_RW_OFFSET);
-		uint64_t old_value;
-		do {
-			old_value = *cp;
-		} while (!OSCompareAndSwap64(old_value, value, cp));
-#endif /* __arm64__ */
+	if (!commPagePtr) {
+		return;
 	}
+
+	uint64_t *boottime_usec = (uint64_t *)(uintptr_t)(_COMM_PAGE_BOOTTIME_USEC + _COMM_PAGE_RW_OFFSET);
+
+	os_atomic_store_wide(boottime_usec, value, relaxed);
+
 }
 
 /*
@@ -567,57 +1065,15 @@ commpage_set_remotetime_params(double rate, uint64_t base_local_ts, uint64_t bas
 #ifdef __arm64__
 		struct bt_params *paramsp = (struct bt_params *)(_COMM_PAGE_REMOTETIME_PARAMS + _COMM_PAGE_RW_OFFSET);
 		paramsp->base_local_ts = 0;
-		ARM_DMB_ISH();
+		__builtin_arm_dmb(DMB_ISH);
 		paramsp->rate = rate;
 		paramsp->base_remote_ts = base_remote_ts;
-		ARM_DMB_ISH();
+		__builtin_arm_dmb(DMB_ISH);
 		paramsp->base_local_ts = base_local_ts;  //This will act as a generation count
-#else
-		(void)rate;
-		(void)base_local_ts;
-		(void)base_remote_ts;
 #endif /* __arm64__ */
 	}
 }
 
-
-/*
- * After this counter has incremented, all running CPUs are guaranteed to
- * have quiesced, i.e. executed serially dependent memory barriers.
- * This is only tracked for CPUs running in userspace, therefore only useful
- * outside the kernel.
- *
- * Note that you can't know which side of those barriers your read was from,
- * so you have to observe 2 increments in order to ensure that you saw a
- * serially dependent barrier chain across all running CPUs.
- */
-uint64_t
-commpage_increment_cpu_quiescent_counter(void)
-{
-	if (!commPagePtr) {
-		return 0;
-	}
-
-	uint64_t old_gen;
-
-	_Atomic uint64_t *sched_gen = (_Atomic uint64_t *)(_COMM_PAGE_CPU_QUIESCENT_COUNTER +
-	    _COMM_PAGE_RW_OFFSET);
-	/*
-	 * On 32bit architectures, double-wide atomic load or stores are a CAS,
-	 * so the atomic increment is the most efficient way to increment the
-	 * counter.
-	 *
-	 * On 64bit architectures however, because the update is synchronized by
-	 * the cpu mask, relaxed loads and stores is more efficient.
-	 */
-#if __LP64__
-	old_gen = os_atomic_load(sched_gen, relaxed);
-	os_atomic_store(sched_gen, old_gen + 1, relaxed);
-#else
-	old_gen = atomic_fetch_add_explicit(sched_gen, 1, memory_order_relaxed);
-#endif
-	return old_gen;
-}
 
 /*
  * update the commpage with if dtrace user land probes are enabled
@@ -640,4 +1096,31 @@ commpage_update_dyld_flags(uint64_t value)
 {
 	*((uint64_t*)(_COMM_PAGE_DYLD_FLAGS + _COMM_PAGE_RW_OFFSET)) = value;
 
+}
+
+/*
+ * update the APT active indicator
+ */
+void
+commpage_update_apt_active(bool active)
+{
+	uint8_t *slot = (uint8_t *)(void *)(_COMM_PAGE_APT_ACTIVE + _COMM_PAGE_RW_OFFSET);
+	os_atomic_store(slot, active ? 1 : 0, relaxed);
+}
+
+/*
+ * set the Extended Research Mode active indicator
+ */
+void
+commpage_set_erm_active(bool active)
+{
+	if (startup_phase < STARTUP_SUB_LOCKDOWN) {
+		uint8_t *slot = (uint8_t *)(void *)(_COMM_PAGE_SECURITY_RESEARCH_DEVICE_ERM_ACTIVE + _COMM_PAGE_RW_OFFSET);
+		os_atomic_store(slot, active ? 1 : 0, relaxed);
+	}
+#if DEVELOPMENT || DEBUG
+	else {
+		kprintf("ERROR can't set ERM bit at startup_phase 0x%x. Action is ignored\n", startup_phase);
+	}
+#endif
 }

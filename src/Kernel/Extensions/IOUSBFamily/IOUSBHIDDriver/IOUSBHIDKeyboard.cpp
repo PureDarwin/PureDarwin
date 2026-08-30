@@ -1,40 +1,23 @@
 #include "IOUSBHIDKeyboard.h"
-#include "IOUSBHIDEventQueue.h"
+#include "PDHIDEventQueue.h"
 
 #include <IOKit/IOLib.h>
 #include <IOKit/hidsystem/IOHIDParameter.h>
 #include <IOKit/hidsystem/IOHIDShared.h>
 #include <kern/thread.h>
-#include "../../ApplePS2Controller/ApplePS2KeyboardMap.h"
+#include "PDHIDKeyboardMap.h"
 
 #define super IOHIKeyboard
 OSDefineMetaClassAndStructors(IOUSBHIDKeyboard, IOHIKeyboard);
 
-#define DEADKEY 0xFF
+/* ADB translation lives in PDHIDEventQueue, shared with the PS/2 driver. */
+#define DEADKEY kPDHIDNoADBCode
 
 enum {
     kUSBHIDReqTypeSet = 0x21,
     kUSBHIDReqSetIdle = 0x0A,
     kUSBHIDReqSetProtocol = 0x0B,
     kUSBHIDProtocolBoot = 0
-};
-
-static const UInt8 gUSBToADB[256] = {
-    DEADKEY, DEADKEY, DEADKEY, DEADKEY,
-    0x00, 0x0b, 0x08, 0x02, 0x0e, 0x03, 0x05, 0x04, 0x22, 0x26, 0x28, 0x25,
-    0x2e, 0x2d, 0x1f, 0x23, 0x0c, 0x0f, 0x01, 0x11, 0x20, 0x09, 0x0d, 0x07,
-    0x10, 0x06, 0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1a, 0x1c, 0x19, 0x1d,
-    0x24, 0x35, 0x33, 0x30, 0x31, 0x1b, 0x18, 0x21, 0x1e, 0x2a, 0x2a, 0x29,
-    0x27, 0x32, 0x2b, 0x2f, 0x2c, 0x39, 0x7a, 0x78, 0x63, 0x76, 0x60, 0x61,
-    0x62, 0x64, 0x65, 0x6d, 0x67, 0x6f, 0x69, 0x6b, 0x71, 0x72, 0x73, 0x74,
-    0x75, 0x77, 0x79, 0x7c, 0x7b, 0x7d, 0x7e, 0x47, 0x4b, 0x43, 0x4e, 0x45,
-    0x4c, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5b, 0x5c, 0x52, 0x41,
-    0x0a, 0x6e, 0x7f, 0x51, 0x69, 0x6b, 0x71, 0x6a, 0x40, 0x4f, 0x50, 0x5a,
-    DEADKEY, DEADKEY, DEADKEY, DEADKEY, DEADKEY, 0x72,
-};
-
-static const UInt8 gUSBModToADB[8] = {
-    0x3b, 0x38, 0x3a, 0x37, 0x3e, 0x3c, 0x3d, 0x36
 };
 
 bool IOUSBHIDKeyboard::init(OSDictionary *dict)
@@ -88,7 +71,7 @@ bool IOUSBHIDKeyboard::start(IOService *provider)
     }
 
     IOLog("IOUSBHIDKeyboard: using existing HID protocol\n");
-    USBHIDPublishKeyboardDevice();
+    PDHIDPublishKeyboardDevice();
 
     fRunning = true;
     thread_t thread = THREAD_NULL;
@@ -171,7 +154,7 @@ static bool reportHasUsage(const UInt8 report[8], UInt8 usage)
 
 void IOUSBHIDKeyboard::handleReport(const UInt8 report[8])
 {
-    bool grabbed = USBHIDKeyboardIsGrabbed();
+    bool grabbed = PDHIDKeyboardIsGrabbed();
     if (grabbed && !fConsoleGrabbed) {
         /* Anything held down when the grab started has already been reported
          * to the console; without a matching release it stays latched there
@@ -180,11 +163,11 @@ void IOUSBHIDKeyboard::handleReport(const UInt8 report[8])
         clock_get_uptime((uint64_t *)&now);
         for (UInt8 bit = 0; bit < 8; bit++)
             if (fLastReport[0] & (1U << bit))
-                dispatchKeyboardEvent(gUSBModToADB[bit], false, now);
+                dispatchKeyboardEvent(PDHIDUsageToADB((UInt8)(0xE0 + bit)), false, now);
         for (int i = 2; i < 8; i++) {
             UInt8 usage = fLastReport[i];
-            if (usage >= 4 && usage <= 0x75 && gUSBToADB[usage] != DEADKEY)
-                dispatchKeyboardEvent(gUSBToADB[usage], false, now);
+            if (usage >= 4 && usage <= 0x75 && PDHIDUsageToADB(usage) != DEADKEY)
+                dispatchKeyboardEvent(PDHIDUsageToADB(usage), false, now);
         }
     }
     fConsoleGrabbed = grabbed;
@@ -215,11 +198,11 @@ void IOUSBHIDKeyboard::handleReport(const UInt8 report[8])
 void IOUSBHIDKeyboard::dispatchUSBUsage(UInt8 usage, bool down)
 {
     if (usage > 0x75) return;
-    USBHIDPushKeyboardEvent(usage, down);
+    PDHIDPushKeyboardEvent(usage, down);
 
     if (fConsoleGrabbed) return;
 
-    UInt8 adb = gUSBToADB[usage];
+    UInt8 adb = PDHIDUsageToADB(usage);
     if (adb == DEADKEY) return;
 
     AbsoluteTime now;
@@ -230,13 +213,13 @@ void IOUSBHIDKeyboard::dispatchUSBUsage(UInt8 usage, bool down)
 void IOUSBHIDKeyboard::dispatchModifier(UInt8 bit, bool down)
 {
     if (bit >= 8) return;
-    USBHIDPushKeyboardEvent((UInt8)(0xE0 + bit), down);
+    PDHIDPushKeyboardEvent((UInt8)(0xE0 + bit), down);
 
     if (fConsoleGrabbed) return;
 
     AbsoluteTime now;
     clock_get_uptime((uint64_t *)&now);
-    dispatchKeyboardEvent(gUSBModToADB[bit], down, now);
+    dispatchKeyboardEvent(PDHIDUsageToADB((UInt8)(0xE0 + bit)), down, now);
 }
 
 void IOUSBHIDKeyboard::setAlphaLockFeedback(bool)
@@ -245,8 +228,8 @@ void IOUSBHIDKeyboard::setAlphaLockFeedback(bool)
 
 const unsigned char *IOUSBHIDKeyboard::defaultKeymapOfLength(UInt32 *length)
 {
-    *length = sizeof(applePS2USAKeyMap);
-    return applePS2USAKeyMap;
+    *length = sizeof(gPDHIDUSAKeyMap);
+    return gPDHIDUSAKeyMap;
 }
 
 UInt32 IOUSBHIDKeyboard::maxKeyCodes()

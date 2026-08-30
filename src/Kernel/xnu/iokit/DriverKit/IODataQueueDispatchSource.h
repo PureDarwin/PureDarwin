@@ -37,7 +37,7 @@
 typedef void (^IODataQueueClientEnqueueEntryBlock)(void *data, size_t dataSize);
 typedef void (^IODataQueueClientDequeueEntryBlock)(const void *data, size_t dataSize);
 
-/* source class IODataQueueDispatchSource IODataQueueDispatchSource.iig:38-208 */
+/* source class IODataQueueDispatchSource IODataQueueDispatchSource.iig:38-236 */
 
 #if __DOCUMENTATION__
 #define KERNEL IIG_KERNEL
@@ -60,6 +60,13 @@ public:
 		uint64_t queueByteCount,
 	    IODispatchQueue * queue,
 	    IODataQueueDispatchSource ** source);
+
+    /*!
+     * @brief Represents the size of the data queue entry header independent of the actual size of the data in the entry.  This is the overhead of each entry in the queue.
+     * @return      Size of the entry header.
+     */
+    static size_t
+    GetDataQueueEntryHeaderSize() LOCALONLY;
 
 	virtual bool
 	init() override;
@@ -178,6 +185,27 @@ public:
 	EnqueueWithCoalesce(uint32_t dataSize,  bool * sendDataAvailable, IODataQueueClientEnqueueEntryBlock callback) LOCALONLY;
 
     /*!
+     * @brief       As a producer, check if the queue has sufficient free space for a queue entry with the specified size.
+     * @param       dataSize  size of the queue entry to check
+     * @return      kIOReturnSuccess if the queue has enough free space
+     *              kIOReturnOverrun if the queue is full
+     *              kIOReturnError if the queue was corrupt
+     */
+	kern_return_t
+	CanEnqueueData(uint32_t dataSize) LOCALONLY;
+
+    /*!
+     * @brief       As a producer, check if the queue has sufficient free space for queue entries with the specified size.
+     * @param       dataSize   size of the queue entry to check
+     * @param       entryCount number of queue entries to check. Entries are assumed to be the same size.
+     * @return      kIOReturnSuccess if the queue has enough free space
+     *              kIOReturnOverrun if the queue is full
+     *              kIOReturnError if the queue was corrupt
+     */
+	kern_return_t
+	CanEnqueueData(uint32_t dataSize, uint32_t entryCount) LOCALONLY;
+
+    /*!
      * @brief       As a consumer, send the DataServiced notification indicated by DequeueWithCoalesce.
 	 */
 	void
@@ -217,7 +245,7 @@ private:
 #undef KERNEL
 #else /* __DOCUMENTATION__ */
 
-/* generated class IODataQueueDispatchSource IODataQueueDispatchSource.iig:38-208 */
+/* generated class IODataQueueDispatchSource IODataQueueDispatchSource.iig:38-236 */
 
 #define IODataQueueDispatchSource_Create_ID            0xa1cc04b18416b422ULL
 #define IODataQueueDispatchSource_SetDataAvailableHandler_ID            0xaf77e75c0746a47dULL
@@ -280,6 +308,10 @@ public:\
         IODispatchQueue * queue,\
         IODataQueueDispatchSource ** source);\
 \
+    static size_t\
+    GetDataQueueEntryHeaderSize(\
+);\
+\
     kern_return_t\
     SetDataAvailableHandler(\
         OSAction * action,\
@@ -317,6 +349,15 @@ public:\
         uint32_t dataSize,\
         bool * sendDataAvailable,\
         IODataQueueClientEnqueueEntryBlock callback);\
+\
+    kern_return_t\
+    CanEnqueueData(\
+        uint32_t dataSize);\
+\
+    kern_return_t\
+    CanEnqueueData(\
+        uint32_t dataSize,\
+        uint32_t entryCount);\
 \
     void\
     SendDataServiced(\

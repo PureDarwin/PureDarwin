@@ -90,6 +90,7 @@ pmap_pcid_configure(void)
 		pmap_pcid_disabled = TRUE;
 	}
 #endif
+
 	if (pmap_pcid_disabled || no_shared_cr3) {
 		unsigned i;
 		/* Reset PCID status, as we may have picked up
@@ -132,7 +133,7 @@ pmap_pcid_configure(void)
 		pmap_pcid_log("Pre-PCID:CR0: 0x%lx, CR3: 0x%lx, CR4(CPU %d): 0x%lx\n", get_cr0(), get_cr3_raw(), ccpu, cr4);
 
 		if (cpu_number() >= PMAP_PCID_MAX_CPUS) {
-			panic("PMAP_PCID_MAX_CPUS %d\n", cpu_number());
+			panic("PMAP_PCID_MAX_CPUS %d", cpu_number());
 		}
 		if ((get_cr4() & CR4_PGE) == 0) {
 			set_cr4(get_cr4() | CR4_PGE);

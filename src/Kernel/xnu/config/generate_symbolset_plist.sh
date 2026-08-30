@@ -15,7 +15,7 @@ if [ "${OUTPUT##*.}" != "plist" -o "${PLIST##*.}" != "plist" ]; then
 fi
 shift 2
 
-if [ $(grep -E -c 'CFBundleIdentifier|OSBundleCompatibleVersion|CFBundleVersion' $PLIST) -lt 3 ]; then
+if [ $(egrep -c 'CFBundleIdentifier|OSBundleCompatibleVersion|CFBundleVersion' $PLIST) -lt 3 ]; then
     echo "error: Invalid input Info.plist $PLIST" 1>&2
     exit 1
 fi

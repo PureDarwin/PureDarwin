@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2005, 2012, 2014 Apple Inc. All rights reserved.
+ * Copyright (c) 2000-2005, 2012, 2014, 2025 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -34,10 +34,6 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
-#ifdef KERNEL_PRIVATE
-#include <sys/sysctl.h>
-#endif /* KERNEL_PRIVATE */
-
 /* Kernel Events Protocol */
 #define SYSPROTO_EVENT          1       /* kernel events protocol */
 
@@ -53,26 +49,8 @@ struct sockaddr_sys {
 	u_int32_t       ss_reserved[7]; /* reserved to the protocol use */
 };
 
-#ifdef PRIVATE
-struct  xsystmgen {
-	u_int32_t       xg_len; /* length of this structure */
-	u_int64_t       xg_count;       /* number of PCBs at this time */
-	u_int64_t       xg_gen; /* generation count at this time */
-	u_int64_t       xg_sogen;       /* current socket generation count */
-};
-#endif /* PRIVATE */
-
-#ifdef KERNEL_PRIVATE
-
-extern struct domain *systemdomain;
-
-SYSCTL_DECL(_net_systm);
-
-/* built in system domain protocols init function */
-__BEGIN_DECLS
-void kern_event_init(struct domain *);
-void kern_control_init(struct domain *);
-__END_DECLS
+#if defined(PRIVATE) && !defined(MODULES_SUPPORTED)
+#include <sys/sys_domain_private.h>
 #endif /* KERNEL_PRIVATE */
 
 #endif /* _SYSTEM_DOMAIN_H_ */

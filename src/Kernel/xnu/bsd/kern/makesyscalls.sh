@@ -516,11 +516,11 @@ s/\$//g
 						printf("\t\tcase %d:\n\t\t\tp = \"userland %s\";\n\t\t\tbreak;\n", i - 1, arg) > systraceargdesctempfile
 					else
 						printf("\t\tcase %d:\n\t\t\tp = \"%s\";\n\t\t\tbreak;\n", i - 1, arg) > systraceargdesctempfile
-					if (index(arg, "*") > 0 || arg == "caddr_t")
+					if (index(arg, "*") > 0 || arg == "caddr_t" || arg == "caddr_ut")
                         printf("\t\tuarg[%d] = (uint64_t) p->%s; /* %s */\n", \
 							i - 1, \
 							argname[i], arg) > systraceargstempfile
-					else if (substr(arg, 1, 1) == "u" || arg == "size_t")
+					else if (substr(arg, 1, 1) == "u" || arg == "size_t" || arg == "size_ut")
                         printf("\t\tuarg[%d] = (uint64_t) p->%s; /* %s */\n", \
 							i - 1, \
 							argname[i], arg) > systraceargstempfile
@@ -563,6 +563,11 @@ s/\$//g
 						munge32 = munge32 "w"
 						size32 += 4
 					}
+					else if (argtype[i] == "size_ut") {
+						ext_argtype[i] = "user_size_ut";
+						munge32 = munge32 "w"
+						size32 += 4
+					}
 					else if (argtype[i] == "ssize_t") {
 						ext_argtype[i] = "user_ssize_t";
 						munge32 = munge32 "s"
@@ -577,12 +582,18 @@ s/\$//g
 						munge32 = munge32 "w"
 						size32 += 4
 					}
-					else if (argtype[i] == "caddr_t" || argtype[i] == "semun_t" ||
-  						argtype[i] == "uuid_t" || match(argtype[i], "[\*]") != 0) {
+					else if (argtype[i] == "caddr_t" ||
+						  argtype[i] == "semun_t" || argtype[i] == "uuid_t" ||
+							match(argtype[i], "[\*]") != 0) {
 						ext_argtype[i] = "user_addr_t";
 						munge32 = munge32 "w"
 						size32 += 4
 					}
+				  else if (argtype[i] == "caddr_ut") {
+						ext_argtype[i] = "user_addr_ut";
+						munge32 = munge32 "w"
+						size32 += 4
+				  }
 					else if (argtype[i] == "int" || argtype[i] == "u_int" ||
 							 argtype[i] == "uid_t" || argtype[i] == "pid_t" ||
 							 argtype[i] == "id_t" || argtype[i] == "idtype_t" ||
@@ -670,15 +681,15 @@ s/\$//g
 			}
 		}
 
-		printf("#if CONFIG_REQUIRES_U32_MUNGING || (__arm__ && (__BIGGEST_ALIGNMENT__ > 4))\n") > sysent
-		printf("\t{ \(sy_call_t *\)%s, %s, %s, %s, %s},", 
+		printf("#if CONFIG_REQUIRES_U32_MUNGING\n") > sysent
+		printf("\t{ \(sy_call_t *\)(void (*)(void))%s, %s, %s, %s, %s},",
 				tempname, munge32, munge_ret, argssize, size32) > sysent
 		linesize = length(tempname) + length(munge32) + \
 			length(munge_ret) + length(argssize) + length(size32) + 28
 		align_comment(linesize, 88, sysent)
 		printf("/* %d = %s%s*/\n", syscall_num, funcname, additional_comments) > sysent
 		printf("#else\n") > sysent
-		printf("\t{ \(sy_call_t *\)%s, %s, %s, %s},\n", 
+		printf("\t{ \(sy_call_t *\)(void (*)(void))%s, %s, %s, %s},\n",
 				tempname, munge_ret, argssize, size32) > sysent
 		printf("#endif\n") > sysent
 		

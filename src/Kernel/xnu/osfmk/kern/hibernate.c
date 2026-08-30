@@ -38,9 +38,10 @@
 
 #include <IOKit/IOHibernatePrivate.h>
 #include <vm/vm_page.h>
-#include <vm/vm_pageout.h>
+#include <vm/vm_pageout_xnu.h>
 #include <vm/vm_purgeable_internal.h>
-#include <vm/vm_compressor.h>
+#include <vm/vm_compressor_xnu.h>
+#include <kern/ecc.h>
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -66,15 +67,15 @@ hibernate_alloc_page_lists(
 	}
 	page_list_wired = hibernate_page_list_allocate(FALSE);
 	if (!page_list_wired) {
-		kfree(page_list, page_list->list_size);
+		kfree_data(page_list, page_list->list_size);
 		HIBLOG("%s: failed for page_list_wired\n", __FUNCTION__);
 		retval = KERN_RESOURCE_SHORTAGE;
 		goto done;
 	}
 	page_list_pal = hibernate_page_list_allocate(FALSE);
 	if (!page_list_pal) {
-		kfree(page_list, page_list->list_size);
-		kfree(page_list_wired, page_list_wired->list_size);
+		kfree_data(page_list, page_list->list_size);
+		kfree_data(page_list_wired, page_list_wired->list_size);
 		HIBLOG("%s: failed for page_list_pal\n", __FUNCTION__);
 		retval = KERN_RESOURCE_SHORTAGE;
 		goto done;
@@ -111,6 +112,7 @@ hibernate_setup(IOHibernateImageHeader * header,
 		hibernate_flush_memory();
 	}
 
+
 	// no failures hereafter
 
 	hibernate_processor_setup(header);
@@ -132,16 +134,14 @@ hibernate_teardown(hibernate_page_list_t * page_list,
     hibernate_page_list_t * page_list_wired,
     hibernate_page_list_t * page_list_pal)
 {
-	hibernate_free_gobble_pages();
-
 	if (page_list) {
-		kfree(page_list, page_list->list_size);
+		kfree_data(page_list, page_list->list_size);
 	}
 	if (page_list_wired) {
-		kfree(page_list_wired, page_list_wired->list_size);
+		kfree_data(page_list_wired, page_list_wired->list_size);
 	}
 	if (page_list_pal) {
-		kfree(page_list_pal, page_list_pal->list_size);
+		kfree_data(page_list_pal, page_list_pal->list_size);
 	}
 
 	if (VM_CONFIG_COMPRESSOR_IS_PRESENT) {
@@ -151,5 +151,7 @@ hibernate_teardown(hibernate_page_list_t * page_list,
 		}
 		vm_compressor_delay_trim();
 	}
+
+
 	return KERN_SUCCESS;
 }

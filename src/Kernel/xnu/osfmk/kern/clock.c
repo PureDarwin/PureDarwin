@@ -106,24 +106,23 @@ uint32_t        hz_tick_interval = 1;
 static uint64_t has_monotonic_clock = 0;
 #endif /* ENABLE_LEGACY_CLOCK_CODE */
 
-SIMPLE_LOCK_DECLARE(clock_lock, 0);
+lck_ticket_t clock_lock;
+LCK_GRP_DECLARE(clock_lock_grp, "clock");
 
 static LCK_GRP_DECLARE(settime_lock_grp, "settime");
 static LCK_MTX_DECLARE(settime_lock, &settime_lock_grp);
 
 #define clock_lock()    \
-	simple_lock(&clock_lock, LCK_GRP_NULL)
+	lck_ticket_lock(&clock_lock, &clock_lock_grp)
 
 #define clock_unlock()  \
-	simple_unlock(&clock_lock)
+	lck_ticket_unlock(&clock_lock)
 
-#ifdef kdp_simple_lock_is_acquired
 boolean_t
 kdp_clock_is_locked()
 {
-	return kdp_simple_lock_is_acquired(&clock_lock);
+	return kdp_lck_ticket_is_acquired(&clock_lock);
 }
-#endif
 
 struct bintime {
 	time_t  sec;
@@ -357,6 +356,8 @@ MACRO_END
 void
 clock_config(void)
 {
+	lck_ticket_init(&clock_lock, &clock_lock_grp);
+
 	clock_oldconfig();
 
 	ntp_init();
@@ -388,6 +389,9 @@ clock_timebase_init(void)
 {
 	uint64_t        abstime;
 
+	/*
+	 * BSD expects a tick to represent 10ms.
+	 */
 	nanoseconds_to_absolutetime(NSEC_PER_SEC / 100, &abstime);
 	hz_tick_interval = (uint32_t)abstime;
 
@@ -808,6 +812,8 @@ clock_set_calendar_microtime(
 
 	commpage_value = clock_boottime * USEC_PER_SEC + clock_boottime_usec;
 
+	commpage_update_boottime(commpage_value);
+
 	clock_unlock();
 	splx(s);
 
@@ -830,8 +836,6 @@ clock_set_calendar_microtime(
 
 	print_all_clock_variables_internal(__func__, &clock_calend_cp);
 	print_all_clock_variables_internal(__func__, &clock_calend_cp1);
-
-	commpage_update_boottime(commpage_value);
 
 	/*
 	 *	Send host notifications.
@@ -1117,7 +1121,7 @@ clock_initialize_calendar(void)
 
 #if ENABLE_LEGACY_CLOCK_CODE
 	if (has_monotonic_clock) {
-		monotonic_sec = monotonic_usec_total / (clock_sec_t)USEC_PER_SEC;
+		OS_ANALYZER_SUPPRESS("82347749") monotonic_sec = monotonic_usec_total / (clock_sec_t)USEC_PER_SEC;
 		monotonic_usec = monotonic_usec_total % (clock_usec_t)USEC_PER_SEC;
 
 		// monotonic clock - sys
@@ -1298,7 +1302,7 @@ clock_wakeup_calendar_legacy(void)
 #if DEVELOPMENT || DEBUG
 	os_log(OS_LOG_DEFAULT, "time at wake %lu s %d u from %s clock, abs %llu\n", (unsigned long)wake_sec, wake_usec, (has_monotonic_clock)?"monotonic":"UTC", wake_abs);
 	if (has_monotonic_clock) {
-		os_log(OS_LOG_DEFAULT, "UTC time %lu s %d u\n", (unsigned long)var_s, var_us);
+		OS_ANALYZER_SUPPRESS("82347749") os_log(OS_LOG_DEFAULT, "UTC time %lu s %d u\n", (unsigned long)var_s, var_us);
 	}
 #endif /* DEVELOPMENT || DEBUG */
 
@@ -1737,6 +1741,18 @@ mach_continuous_time(void)
 			return absolute + read1;
 		}
 	}
+#endif
+}
+
+uint64_t
+mach_continuous_speculative_time(void)
+{
+#if HIBERNATION && HAS_CONTINUOUS_HWCLOCK
+	return ml_get_hwclock_speculative() + hwclock_conttime_offset;
+#elif HAS_CONTINUOUS_HWCLOCK
+	return ml_get_hwclock_speculative();
+#else
+	return mach_continuous_time();
 #endif
 }
 

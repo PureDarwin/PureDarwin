@@ -1,0 +1,1495 @@
+/*
+ * Copyright (c) 2023 Apple Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
+
+#if CONFIG_EXCLAVES
+
+#if __has_include(<Tightbeam/tightbeam.h>)
+
+#include <stdint.h>
+
+#include <Tightbeam/tightbeam.h>
+#include <Tightbeam/tightbeam_private.h>
+
+#include <Exclaves/Exclaves.h>
+#include <IOKit/IOTypes.h>
+#include <IOKit/IOReturn.h>
+#include <mach/exclaves.h>
+#include <kern/startup.h>
+#include <stdint.h>
+#include <kern/startup.h>
+
+#include "kern/exclaves.tightbeam.h"
+#include "exclaves_debug.h"
+#include "exclaves_driverkit.h"
+#include "exclaves_resource.h"
+
+/* Registry ID of service being used in HelloDriverInterrupts */
+static uint64_t exclaves_hello_driverkit_interrupts_service_id = -1ull;
+
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Upcalls
+
+/* Legacy upcall handlers */
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_irq_register(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_irq_register__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] register_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeRegister;
+	// If upcall is from HelloDriverInterrupts test, create detached IOIES
+	args.data.register_args.test_irq =
+	    (id == exclaves_hello_driverkit_interrupts_service_id);
+
+	xnuupcalls_xnuupcalls_irq_register__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_irq_register__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_irq_register__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_irq_remove(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_irq_remove__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] remove_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeRemove;
+
+	xnuupcalls_xnuupcalls_irq_remove__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_irq_remove__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_irq_remove__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_irq_enable(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_irq_enable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] enable_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeEnable;
+	args.data.enable_args.enable = true;
+
+	xnuupcalls_xnuupcalls_irq_enable__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_irq_enable__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_irq_enable__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_irq_disable(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_irq_disable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] disable_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeEnable;
+	args.data.enable_args.enable = false;
+
+	xnuupcalls_xnuupcalls_irq_disable__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_irq_disable__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_irq_disable__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_timer_register(const uint64_t id,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_timer_register__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.type = kIOExclaveTimerUpcallTypeRegister;
+
+	xnuupcalls_xnuupcalls_timer_register__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_timer_register__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_timer_register__result_init_success(&result,
+		    args.timer_id);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_timer_remove(const uint64_t id, const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_timer_remove__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeRemove;
+
+	xnuupcalls_xnuupcalls_timer_remove__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_timer_remove__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_timer_remove__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+extern tb_error_t
+exclaves_driverkit_upcall_legacy_timer_enable(const uint64_t id, const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_timer_enable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeEnable;
+	args.data.enable_args.enable = true;
+
+	xnuupcalls_xnuupcalls_timer_enable__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_timer_enable__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_timer_enable__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_timer_disable(const uint64_t id, const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_timer_disable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeEnable;
+	args.data.enable_args.enable = false;
+
+	xnuupcalls_xnuupcalls_timer_disable__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_timer_disable__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_timer_disable__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_timer_set_timeout(const uint64_t id,
+    const uint32_t timer_id,
+    const struct xnuupcalls_drivertimerspecification_s *duration,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_timer_set_timeout__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+
+	xnuupcalls_xnuupcalls_timer_set_timeout__result_s result = {};
+
+	if (!duration) {
+		exclaves_debug_printf(show_iokit_upcalls,
+		    "[iokit_upcalls] %s invalid duration\n", __func__);
+		xnuupcalls_xnuupcalls_timer_set_timeout__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+		return completion(result);
+	}
+
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeSetTimeout;
+
+	switch (duration->type) {
+	case XNUUPCALLS_DRIVERTIMERTYPE_ABSOLUTE:
+		args.data.set_timeout_args.clock_continuous = false;
+		break;
+	case XNUUPCALLS_DRIVERTIMERTYPE_CONTINUOUS:
+		args.data.set_timeout_args.clock_continuous = true;
+		break;
+	default:
+		exclaves_debug_printf(show_iokit_upcalls,
+		    "[iokit_upcalls] %s unknown clock type %u\n",
+		    __func__, duration->type);
+		xnuupcalls_xnuupcalls_timer_set_timeout__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+		return completion(result);
+	}
+
+	// Convert to abs time
+	AbsoluteTime end, nsecs;
+	clock_interval_to_absolutetime_interval(duration->tv_nsec,
+	    kNanosecondScale, &nsecs);
+	clock_interval_to_absolutetime_interval(duration->tv_sec,
+	    kSecondScale, &end);
+	ADD_ABSOLUTETIME(&end, &nsecs);
+	args.data.set_timeout_args.duration = end;
+
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_timer_set_timeout__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_timer_set_timeout__result_init_success(&result,
+		    args.data.set_timeout_args.kr == kIOReturnSuccess);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_timer_cancel_timeout(const uint64_t id,
+    const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_timer_cancel_timeout__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeCancelTimeout;
+
+	xnuupcalls_xnuupcalls_timer_cancel_timeout__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_timer_cancel_timeout__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_timer_cancel_timeout__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_lock_wl(const uint64_t id,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_lock_wl__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] lock_wl from id %llu\n", id);
+
+	xnuupcalls_xnuupcalls_lock_wl__result_s result = {};
+	if (!IOExclaveLockWorkloop(id, true)) {
+		xnuupcalls_xnuupcalls_lock_wl__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_lock_wl__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_unlock_wl(const uint64_t id,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_unlock_wl__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] unlock_wl from id %llu\n", id);
+
+	xnuupcalls_xnuupcalls_unlock_wl__result_s result = {};
+	if (!IOExclaveLockWorkloop(id, false)) {
+		xnuupcalls_xnuupcalls_unlock_wl__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_unlock_wl__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+extern tb_error_t
+exclaves_driverkit_upcall_legacy_async_notification_signal(const uint64_t id,
+    const uint32_t notificationID,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_async_notification_signal__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] async_notification_signal from id %llu\n", id);
+	struct IOExclaveAsyncNotificationUpcallArgs args;
+	args.type = AsyncNotificationUpcallTypeSignal;
+	args.notificationID = notificationID;
+
+	xnuupcalls_xnuupcalls_async_notification_signal__result_s result = {};
+	if (!IOExclaveAsyncNotificationUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_async_notification_signal__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_async_notification_signal__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_mapper_activate(const uint64_t id,
+    const uint32_t mapperIndex,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_mapper_activate__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] mapper_activate from id %llu\n", id);
+	struct IOExclaveMapperOperationUpcallArgs args;
+	args.type = MapperActivate;
+	args.mapperIndex = mapperIndex;
+
+	xnuupcalls_xnuupcalls_mapper_activate__result_s result = {};
+	if (!IOExclaveMapperOperationUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_mapper_activate__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_mapper_activate__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_mapper_deactivate(const uint64_t id,
+    const uint32_t mapperIndex,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_mapper_deactivate__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] mapper_deactivate from id %llu\n", id);
+	struct IOExclaveMapperOperationUpcallArgs args;
+	args.type = MapperDeactivate;
+	args.mapperIndex = mapperIndex;
+
+	xnuupcalls_xnuupcalls_mapper_deactivate__result_s result = {};
+	if (!IOExclaveMapperOperationUpcallHandler(id, &args)) {
+		xnuupcalls_xnuupcalls_mapper_deactivate__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_mapper_deactivate__result_init_success(&result);
+	}
+
+	return completion(result);
+}
+
+extern tb_error_t
+exclaves_driverkit_upcall_legacy_ane_setpowerstate(const uint64_t id,
+    const uint32_t desiredState,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_ane_setpowerstate__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_setpowerstate from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeSetPowerState;
+	args.setpowerstate_args.desired_state = desiredState;
+
+	xnuupcalls_xnuupcalls_ane_setpowerstate__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcalls_xnuupcalls_ane_setpowerstate__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_ane_setpowerstate__result_init_success(&result,
+		    ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_ane_worksubmit(const uint64_t id, const uint64_t requestID,
+    const uint32_t taskDescriptorCount, const uint64_t submitTimestamp,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_ane_worksubmit__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_worksubmit from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeWorkSubmit;
+	args.work_args.arg0 = requestID;
+	args.work_args.arg1 = taskDescriptorCount;
+	args.work_args.arg2 = submitTimestamp;
+
+	xnuupcalls_xnuupcalls_ane_worksubmit__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcalls_xnuupcalls_ane_worksubmit__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_ane_worksubmit__result_init_success(&result,
+		    ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_ane_workbegin(const uint64_t id, const uint64_t requestID,
+    const uint64_t beginTimestamp,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_ane_workbegin__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_workbegin from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeWorkBegin;
+	args.work_args.arg0 = requestID;
+	args.work_args.arg1 = beginTimestamp;
+	args.work_args.arg2 = 0;
+
+	xnuupcalls_xnuupcalls_ane_workbegin__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcalls_xnuupcalls_ane_workbegin__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_ane_workbegin__result_init_success(&result,
+		    ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_ane_workend(const uint64_t id, const uint64_t requestID,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_ane_workend__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_workend from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeWorkEnd;
+	args.work_args.arg0 = requestID;
+	args.work_args.arg1 = 0;
+	args.work_args.arg2 = 0;
+
+	xnuupcalls_xnuupcalls_ane_workend__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcalls_xnuupcalls_ane_workend__result_init_failure(&result,
+		    XNUUPCALLS_DRIVERUPCALLERROR_FAILURE);
+	} else {
+		xnuupcalls_xnuupcalls_ane_workend__result_init_success(&result,
+		    ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_legacy_notification_signal(const uint64_t id,
+    const uint32_t mask,
+    tb_error_t (^completion)(xnuupcalls_xnuupcalls_notification_signal__result_s))
+{
+	exclaves_debug_printf(show_notification_upcalls,
+	    "[notification_upcalls] notification_signal "
+	    "id %llx mask %x\n", id, mask);
+	exclaves_resource_t *notification_resource =
+	    exclaves_notification_lookup_by_id(id);
+
+	xnuupcalls_xnuupcalls_notification_signal__result_s result = {};
+
+	if (notification_resource != NULL) {
+		exclaves_debug_printf(show_notification_upcalls,
+		    "[notification_upcalls] notification_signal "
+		    "id %llx mask %x -> found resource\n", id, mask);
+		exclaves_notification_signal(notification_resource, mask);
+		xnuupcalls_xnuupcalls_notification_signal__result_init_success(&result);
+	} else {
+		exclaves_debug_printf(show_notification_upcalls,
+		    "[notification_upcalls] notification_signal "
+		    "id %llx mask %x -> no notification resource found\n",
+		    id, mask);
+		xnuupcalls_xnuupcalls_notification_signal__result_init_failure(&result,
+		    XNUUPCALLS_NOTIFICATIONERROR_NOTFOUND);
+	}
+
+	return completion(result);
+}
+
+/* Upcall handlers */
+
+tb_error_t
+exclaves_driverkit_upcall_irq_register(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_irqregister__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] register_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeRegister;
+	// If upcall is from HelloDriverInterrupts test, create detached IOIES
+	args.data.register_args.test_irq =
+	    (id == exclaves_hello_driverkit_interrupts_service_id);
+
+	xnuupcallsv2_driverupcallsprivate_irqregister__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_irqregister__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_irqregister__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_irq_remove(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_irqremove__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] remove_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeRemove;
+
+	xnuupcallsv2_driverupcallsprivate_irqremove__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_irqremove__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_irqremove__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+
+tb_error_t
+exclaves_driverkit_upcall_irq_enable(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_irqenable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] enable_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeEnable;
+	args.data.enable_args.enable = true;
+
+	xnuupcallsv2_driverupcallsprivate_irqenable__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_irqenable__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_irqenable__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_irq_disable(const uint64_t id, const int32_t index,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_irqdisable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] disable_irq %d from id %llu \n", index, id);
+	struct IOExclaveInterruptUpcallArgs args;
+	args.index = index;
+	args.type = kIOExclaveInterruptUpcallTypeEnable;
+	args.data.enable_args.enable = false;
+
+	xnuupcallsv2_driverupcallsprivate_irqdisable__result_s result = {};
+	if (!IOExclaveInterruptUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_irqdisable__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_irqdisable__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_timer_register(const uint64_t id,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_timerregister__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.type = kIOExclaveTimerUpcallTypeRegister;
+
+	xnuupcallsv2_driverupcallsprivate_timerregister__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_timerregister__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_timerregister__result_init_success(
+			&result, args.timer_id);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_timer_remove(const uint64_t id, const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_timerremove__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeRemove;
+
+	xnuupcallsv2_driverupcallsprivate_timerremove__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_timerremove__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_timerremove__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+extern tb_error_t
+exclaves_driverkit_upcall_timer_enable(const uint64_t id, const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_timerenable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeEnable;
+	args.data.enable_args.enable = true;
+
+	xnuupcallsv2_driverupcallsprivate_timerenable__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_timerenable__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_timerenable__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_timer_disable(const uint64_t id, const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_timerdisable__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeEnable;
+	args.data.enable_args.enable = false;
+
+	xnuupcallsv2_driverupcallsprivate_timerdisable__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_timerdisable__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_timerdisable__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_timer_set_timeout(const uint64_t id,
+    const uint32_t timer_id,
+    const struct xnuupcallsv2_drivertimerspecification_s *duration,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_timersettimeout__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+
+	xnuupcallsv2_driverupcallsprivate_timersettimeout__result_s result = {};
+	xnuupcallsv2_driverupcallerror_s err =
+	{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+
+	if (!duration) {
+		exclaves_debug_printf(show_iokit_upcalls,
+		    "[iokit_upcalls] %s invalid duration\n", __func__);
+		xnuupcallsv2_driverupcallsprivate_timersettimeout__result_init_failure(
+			&result, err);
+		return completion(result);
+	}
+
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeSetTimeout;
+
+	switch (duration->type) {
+	case XNUUPCALLSV2_DRIVERTIMERTYPE_ABSOLUTE:
+		args.data.set_timeout_args.clock_continuous = false;
+		break;
+	case XNUUPCALLSV2_DRIVERTIMERTYPE_CONTINUOUS:
+		args.data.set_timeout_args.clock_continuous = true;
+		break;
+	default:
+		exclaves_debug_printf(show_iokit_upcalls,
+		    "[iokit_upcalls] %s unknown clock type %u\n",
+		    __func__, duration->type);
+		xnuupcallsv2_driverupcallsprivate_timersettimeout__result_init_failure(
+			&result, err);
+		return completion(result);
+	}
+
+	// Convert to abs time
+	AbsoluteTime end, nsecs;
+	clock_interval_to_absolutetime_interval(duration->nanoseconds,
+	    kNanosecondScale, &nsecs);
+	clock_interval_to_absolutetime_interval(duration->seconds,
+	    kSecondScale, &end);
+	ADD_ABSOLUTETIME(&end, &nsecs);
+	args.data.set_timeout_args.duration = end;
+
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallsprivate_timersettimeout__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_timersettimeout__result_init_success(
+			&result, args.data.set_timeout_args.kr == kIOReturnSuccess);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_timer_cancel_timeout(const uint64_t id,
+    const uint32_t timer_id,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_timercanceltimeout__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] %s from id %llu\n", __func__, id);
+	struct IOExclaveTimerUpcallArgs args;
+	args.timer_id = timer_id;
+	args.type = kIOExclaveTimerUpcallTypeCancelTimeout;
+
+	xnuupcallsv2_driverupcallsprivate_timercanceltimeout__result_s result = {};
+	if (!IOExclaveTimerUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_timercanceltimeout__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_timercanceltimeout__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_lock_workloop(const uint64_t id,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_lockworkloop__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] lock_workloop from id %llu\n", id);
+
+	xnuupcallsv2_driverupcallsprivate_lockworkloop__result_s result = {};
+	if (!IOExclaveLockWorkloop(id, true)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_lockworkloop__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_lockworkloop__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_unlock_workloop(const uint64_t id,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_unlockworkloop__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] unlock_workloop from id %llu\n", id);
+
+	xnuupcallsv2_driverupcallsprivate_unlockworkloop__result_s result = {};
+	if (!IOExclaveLockWorkloop(id, false)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_unlockworkloop__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_unlockworkloop__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+extern tb_error_t
+exclaves_driverkit_upcall_async_notification_signal(const uint64_t id,
+    const uint32_t notificationID,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_asyncnotificationsignal__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] async_notification_signal from id %llu\n", id);
+	struct IOExclaveAsyncNotificationUpcallArgs args;
+	args.type = AsyncNotificationUpcallTypeSignal;
+	args.notificationID = notificationID;
+
+	xnuupcallsv2_driverupcallsprivate_asyncnotificationsignal__result_s result = {};
+	if (!IOExclaveAsyncNotificationUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_asyncnotificationsignal__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_asyncnotificationsignal__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_mapper_activate(const uint64_t id,
+    const uint32_t mapperIndex,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_mapperactivate__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] mapper_activate from id %llu\n", id);
+	struct IOExclaveMapperOperationUpcallArgs args;
+	args.type = MapperActivate;
+	args.mapperIndex = mapperIndex;
+
+	xnuupcallsv2_driverupcallsprivate_mapperactivate__result_s result = {};
+	if (!IOExclaveMapperOperationUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_mapperactivate__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_mapperactivate__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_mapper_deactivate(const uint64_t id,
+    const uint32_t mapperIndex,
+    tb_error_t (^completion)(xnuupcallsv2_driverupcallsprivate_mapperdeactivate__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] mapper_deactivate from id %llu\n", id);
+	struct IOExclaveMapperOperationUpcallArgs args;
+	args.type = MapperDeactivate;
+	args.mapperIndex = mapperIndex;
+
+	xnuupcallsv2_driverupcallsprivate_mapperdeactivate__result_s result = {};
+	if (!IOExclaveMapperOperationUpcallHandler(id, &args)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_driverupcallsprivate_mapperdeactivate__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_driverupcallsprivate_mapperdeactivate__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+extern tb_error_t
+exclaves_driverkit_upcall_ane_setpowerstate(const uint64_t id,
+    const uint32_t desiredState,
+    tb_error_t (^completion)(xnuupcallsv2_aneupcallsprivate_anesetpowerstate__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_setpowerstate from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeSetPowerState;
+	args.setpowerstate_args.desired_state = desiredState;
+
+	xnuupcallsv2_aneupcallsprivate_anesetpowerstate__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_aneupcallsprivate_anesetpowerstate__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_aneupcallsprivate_anesetpowerstate__result_init_success(
+			&result, ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_ane_worksubmit(const uint64_t id, const uint64_t requestID,
+    const uint32_t taskDescriptorCount, const uint64_t submitTimestamp,
+    tb_error_t (^completion)(xnuupcallsv2_aneupcallsprivate_aneworksubmit__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_worksubmit from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeWorkSubmit;
+	args.work_args.arg0 = requestID;
+	args.work_args.arg1 = taskDescriptorCount;
+	args.work_args.arg2 = submitTimestamp;
+
+	xnuupcallsv2_aneupcallsprivate_aneworksubmit__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_aneupcallsprivate_aneworksubmit__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_aneupcallsprivate_aneworksubmit__result_init_success(
+			&result, ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_ane_workbegin(const uint64_t id, const uint64_t requestID,
+    const uint64_t beginTimestamp,
+    tb_error_t (^completion)(xnuupcallsv2_aneupcallsprivate_aneworkbegin__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_workbegin from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeWorkBegin;
+	args.work_args.arg0 = requestID;
+	args.work_args.arg1 = beginTimestamp;
+	args.work_args.arg2 = 0;
+
+	xnuupcallsv2_aneupcallsprivate_aneworkbegin__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_aneupcallsprivate_aneworkbegin__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_aneupcallsprivate_aneworkbegin__result_init_success(
+			&result, ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_ane_workend(const uint64_t id, const uint64_t requestID,
+    tb_error_t (^completion)(xnuupcallsv2_aneupcallsprivate_aneworkend__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[iokit_upcalls] ane_workend from id %llu\n", id);
+	struct IOExclaveANEUpcallArgs args;
+	bool ret = false;
+	args.type = kIOExclaveANEUpcallTypeWorkEnd;
+	args.work_args.arg0 = requestID;
+	args.work_args.arg1 = 0;
+	args.work_args.arg2 = 0;
+
+	xnuupcallsv2_aneupcallsprivate_aneworkend__result_s result = {};
+	if (!IOExclaveANEUpcallHandler(id, &args, &ret)) {
+		xnuupcallsv2_driverupcallerror_s err =
+		{ .tag = XNUUPCALLSV2_DRIVERUPCALLERROR__FAILURE };
+		xnuupcallsv2_aneupcallsprivate_aneworkend__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_aneupcallsprivate_aneworkend__result_init_success(
+			&result, ret);
+	}
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_notification_signal(const uint64_t id,
+    const uint32_t mask,
+    tb_error_t (^completion)(xnuupcallsv2_notificationupcallsprivate_notificationsignal__result_s))
+{
+	exclaves_debug_printf(show_notification_upcalls,
+	    "[notification_upcalls] notification_signal "
+	    "id %llx mask %x\n", id, mask);
+	exclaves_resource_t *notification_resource =
+	    exclaves_notification_lookup_by_id(id);
+
+	xnuupcallsv2_notificationupcallsprivate_notificationsignal__result_s result = {};
+
+	if (notification_resource != NULL) {
+		exclaves_debug_printf(show_notification_upcalls,
+		    "[notification_upcalls] notification_signal "
+		    "id %llx mask %x -> found resource\n", id, mask);
+		exclaves_notification_signal(notification_resource, mask);
+		xnuupcallsv2_notificationupcallsprivate_notificationsignal__result_init_success(
+			&result);
+	} else {
+		exclaves_debug_printf(show_notification_upcalls,
+		    "[notification_upcalls] notification_signal "
+		    "id %llx mask %x -> no notification resource found\n",
+		    id, mask);
+		xnuupcallsv2_notificationupcallsprivate_notificationsignal__result_init_failure(
+			&result, XNUUPCALLSV2_NOTIFICATIONERROR_NOTFOUND);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_daemon_notification_signal(const uint64_t id,
+    tb_error_t (^completion)(xnuupcallsv2_notificationupcallsprivate_daemonnotificationsignal__result_s))
+{
+	exclaves_resource_t *notification_resource =
+	    exclaves_resource_lookup_by_id(EXCLAVES_DOMAIN_KERNEL, id,
+	    XNUPROXY_RESOURCETYPE_DAEMONNOTIFICATION);
+
+	xnuupcallsv2_notificationupcallsprivate_daemonnotificationsignal__result_s result = {};
+
+	if (notification_resource == NULL) {
+		exclaves_debug_printf(show_errors,
+		    "exclaves: No notification resource found for ID %llx\n", id);
+		xnuupcallsv2_notificationupcallsprivate_daemonnotificationsignal__result_init_failure(
+			&result, XNUUPCALLSV2_NOTIFICATIONERROR_NOTFOUND);
+	} else {
+		exclaves_daemon_notification_signal(notification_resource);
+		xnuupcallsv2_notificationupcallsprivate_daemonnotificationsignal__result_init_success(
+			&result);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_lpw_createpowerassertion(
+	tb_error_t (^completion)(xnuupcallsv2_lpwupcallsprivate_createpowerassertion__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls, "[lpw_upcalls] createPowerAssertion\n");
+
+	struct IOExclaveLPWUpcallArgs args;
+	args.type = kIOExclaveLPWUpcallTypeCreateAssertion;
+	args.data.createassertion.id_out = 0;
+	args.data.createassertion.owner = 0;
+	args.data.createassertion.data = 0;
+	args.data.createassertion.types = 0;
+
+	xnuupcallsv2_lpwupcallsprivate_createpowerassertion__result_s result = {};
+	IOReturn ret = IOExclaveLPWUpcallHandler(&args);
+	uint64_t assertionID = args.data.createassertion.id_out;
+	if (ret == kIOReturnSuccess && assertionID != 0) {
+		xnuupcallsv2_lpwupcallsprivate_createpowerassertion__result_init_success(
+			&result, assertionID);
+	} else if (ret == kIOReturnBusy) {
+		xnuupcallsv2_lpwerror_s err;
+		xnuupcallsv2_lpwerror_assertiondenied__init(&err);
+		xnuupcallsv2_lpwupcallsprivate_createpowerassertion__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_lpwerror_s err;
+		xnuupcallsv2_lpwerror_internalerror__init(&err);
+		xnuupcallsv2_lpwupcallsprivate_createpowerassertion__result_init_failure(
+			&result, err);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_lpw_createtypedpowerassertion(
+	const uint64_t owner, const uint64_t data, const uint64_t types,
+	tb_error_t (^completion)(xnuupcallsv2_lpwupcallsprivate_createtypedpowerassertion__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[lpw_upcalls] createTypedPowerAssertion "
+	    "owner %llx data %llx types %llx\n", owner, data, types);
+
+	struct IOExclaveLPWUpcallArgs args;
+	args.type = kIOExclaveLPWUpcallTypeCreateAssertion;
+	args.data.createassertion.id_out = 0;
+	args.data.createassertion.owner = owner;
+	args.data.createassertion.data = data;
+	args.data.createassertion.types = types;
+
+	xnuupcallsv2_lpwupcallsprivate_createtypedpowerassertion__result_s result = {};
+	IOReturn ret = IOExclaveLPWUpcallHandler(&args);
+	uint64_t assertionID = args.data.createassertion.id_out;
+	if (ret == kIOReturnSuccess && assertionID != 0) {
+		xnuupcallsv2_lpwupcallsprivate_createtypedpowerassertion__result_init_success(
+			&result, assertionID);
+	} else if (ret == kIOReturnBusy) {
+		xnuupcallsv2_lpwerror_s err;
+		xnuupcallsv2_lpwerror_assertiondenied__init(&err);
+		xnuupcallsv2_lpwupcallsprivate_createtypedpowerassertion__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_lpwerror_s err;
+		xnuupcallsv2_lpwerror_internalerror__init(&err);
+		xnuupcallsv2_lpwupcallsprivate_createtypedpowerassertion__result_init_failure(
+			&result, err);
+	}
+
+	return completion(result);
+}
+
+
+tb_error_t
+exclaves_driverkit_upcall_lpw_releasepowerassertion(const uint64_t assertionID,
+    tb_error_t (^completion)(xnuupcallsv2_lpwupcallsprivate_releasepowerassertion__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[lpw_upcalls] releasePowerAssertion id %llx\n", assertionID);
+
+	struct IOExclaveLPWUpcallArgs args;
+	args.type = kIOExclaveLPWUpcallTypeReleaseAssertion;
+	args.data.releaseassertion.id = assertionID;
+
+	xnuupcallsv2_lpwupcallsprivate_releasepowerassertion__result_s result = {};
+	if (IOExclaveLPWUpcallHandler(&args) == kIOReturnSuccess) {
+		xnuupcallsv2_lpwupcallsprivate_releasepowerassertion__result_init_success(
+			&result);
+	} else {
+		xnuupcallsv2_lpwerror_s err;
+		xnuupcallsv2_lpwerror_internalerror__init(&err);
+		xnuupcallsv2_lpwupcallsprivate_releasepowerassertion__result_init_failure(
+			&result, err);
+	}
+
+	return completion(result);
+}
+
+tb_error_t
+exclaves_driverkit_upcall_lpw_requestrunmode(const uint64_t runmode_mask,
+    tb_error_t (^completion)(xnuupcallsv2_lpwupcallsprivate_requestrunmode__result_s))
+{
+	exclaves_debug_printf(show_iokit_upcalls,
+	    "[lpw_upcalls] requestRunMode mask %llx\n", runmode_mask);
+
+	struct IOExclaveLPWUpcallArgs args;
+	args.type = kIOExclaveLPWUpcallTypeRequestRunMode;
+	args.data.requestrunmode.runmode_mask = runmode_mask;
+
+	xnuupcallsv2_lpwupcallsprivate_requestrunmode__result_s result = {};
+	IOReturn ret = IOExclaveLPWUpcallHandler(&args);
+	if (ret == kIOReturnSuccess) {
+		xnuupcallsv2_lpwupcallsprivate_requestrunmode__result_init_success(
+			&result);
+	} else if (ret == kIOReturnBusy || ret == kIOReturnUnsupported) {
+		xnuupcallsv2_lpwerror_s err;
+		xnuupcallsv2_lpwerror_runmoderequestdenied__init(&err);
+		xnuupcallsv2_lpwupcallsprivate_requestrunmode__result_init_failure(
+			&result, err);
+	} else {
+		xnuupcallsv2_lpwerror_s err;
+		xnuupcallsv2_lpwerror_internalerror__init(&err);
+		xnuupcallsv2_lpwupcallsprivate_requestrunmode__result_init_failure(
+			&result, err);
+	}
+
+	return completion(result);
+}
+
+/* -------------------------------------------------------------------------- */
+#pragma mark Tests
+
+#if DEVELOPMENT || DEBUG
+
+#define EXCLAVES_HELLO_DRIVER_INTERRUPTS_INDEX 0
+#define EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(test) if (test) { break; }
+
+#define EXCLAVES_HELLO_INTERRUPTS "com.apple.service.HelloDriverInterrupts"
+
+typedef enum hello_driverkit_interrupts_test_type {
+	TEST_IRQ_REGISTER,
+	TEST_IRQ_REMOVE,
+	TEST_IRQ_ENABLE,
+	TEST_IRQ_CHECK,
+	TEST_IRQ_DISABLE,
+	TEST_TIMER_REGISTER,
+	TEST_TIMER_REMOVE,
+	TEST_TIMER_ENABLE,
+	TEST_TIMER_DISABLE,
+	TEST_TIMER_SETTIMEOUT,
+	TEST_TIMER_CHECK,
+	TEST_TIMER_CANCELTIMEOUT,
+	TEST_MULTI_TIMER_SETUP,
+	TEST_MULTI_TIMER_CLEANUP,
+	HELLO_DRIVER_INTERRUPTS_NUM_TESTS
+} hello_driverkit_interrupts_test_type_t;
+static const char *hello_driverkit_interrupts_test_string[] = {
+	"IRQ_REGISTER",
+	"IRQ_REMOVE",
+	"IRQ_ENABLE",
+	"IRQ_CHECK",
+	"IRQ_DISABLE",
+	"TIMER_REGISTER",
+	"TIMER_REMOVE",
+	"TIMER_ENABLE",
+	"TIMER_DISABLE",
+	"TIMER_SETTIMEOUT",
+	"TIMER_CHECK",
+	"TIMER_CANCELTIMEOUT",
+	"MULTI_TIMER_SETUP",
+	"MULTI_TIMER_CLEANUP"
+};
+
+static int
+hello_driverkit_interrupts(hello_driverkit_interrupts_test_type_t test_type)
+{
+	int err = 0;
+	__block uint8_t res = 0;
+	hellodriverinterrupts_hellodriverinterrupts_s client;
+
+	exclaves_debug_printf(show_test_output, "****** START: %s ******\n",
+	    hello_driverkit_interrupts_test_string[test_type]);
+
+	assert(test_type < HELLO_DRIVER_INTERRUPTS_NUM_TESTS);
+
+	exclaves_id_t id = exclaves_service_lookup(EXCLAVES_DOMAIN_KERNEL,
+	    EXCLAVES_HELLO_INTERRUPTS);
+	if (id == EXCLAVES_INVALID_ID) {
+		exclaves_debug_printf(show_test_output, "%s: Found %s service failed\n",
+		    __func__, EXCLAVES_HELLO_INTERRUPTS);
+		err = 1;
+		goto out;
+	}
+
+	tb_endpoint_t ep = tb_endpoint_create_with_value(
+		TB_TRANSPORT_TYPE_XNU, id, TB_ENDPOINT_OPTIONS_NONE);
+
+	tb_error_t tb_err =
+	    hellodriverinterrupts_hellodriverinterrupts__init(&client, ep);
+	if (tb_err != TB_ERROR_SUCCESS) {
+		exclaves_debug_printf(show_test_output, "%s: Failed to initialize hellodriverinterrupts service\n",
+		    __func__);
+		err = 2;
+		goto out;
+	}
+
+	tb_err = hellodriverinterrupts_hellodriverinterrupts_hellointerrupt(&client, (uint8_t)test_type, ^(uint8_t result) {
+		res = result;
+	});
+	if (tb_err != TB_ERROR_SUCCESS || res != 0) {
+		exclaves_debug_printf(show_test_output, "%s: Sending TB message hellointerrupt (type %d), failed with result %d\n",
+		    __func__, (uint8_t)test_type, res);
+		err = 3;
+		goto out;
+	}
+
+out:
+	if (err == 0) {
+		exclaves_debug_printf(show_test_output, "****** SUCCESS: %s ******\n",
+		    hello_driverkit_interrupts_test_string[test_type]);
+	} else {
+		exclaves_debug_printf(show_test_output, "****** FAILURE: %s (%d) ******\n",
+		    hello_driverkit_interrupts_test_string[test_type], err);
+	}
+
+	return err;
+}
+
+
+static int
+exclaves_hello_driverkit_interrupts(uint64_t registryID, int64_t *out)
+{
+	if (exclaves_get_status() != EXCLAVES_STATUS_AVAILABLE) {
+		exclaves_debug_printf(show_test_output,
+		    "%s: SKIPPED: Exclaves not available\n", __func__);
+		*out = -1;
+		return 0;
+	}
+
+	bool success = false;
+	exclaves_debug_printf(show_test_output, "%s: STARTING\n", __func__);
+
+	// Interrupts
+	struct IOExclaveTestSignalInterruptParam *signal_param = kalloc_type(
+		struct IOExclaveTestSignalInterruptParam, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+	thread_call_t signal_thread = thread_call_allocate(
+		(thread_call_func_t) &IOExclaveTestSignalInterrupt, signal_param);
+
+	do {
+		/* Interrupt tests */
+
+		// Set AppleExclaveExampleKext registryID as service under test
+		exclaves_hello_driverkit_interrupts_service_id = registryID;
+		signal_param->id = registryID;
+		signal_param->index = EXCLAVES_HELLO_DRIVER_INTERRUPTS_INDEX;
+
+		exclaves_debug_printf(show_test_output,
+		    "%s: SKIPPING INTERRUPT TESTS (rdar://107842497)\n", __func__);
+
+		/* Timer tests */
+
+		exclaves_debug_printf(show_test_output,
+		    "%s: TIMER TESTS\n", __func__);
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_REGISTER))
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_ENABLE))
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_SETTIMEOUT))
+		// Wait for timer to fire
+		delay_for_interval(2000, 1000 * 1000 /* kMilliSecondScale */);
+		// Check timer was recieved by exclave
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_CHECK))
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_DISABLE))
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_REMOVE))
+
+		success = true;
+	} while (false);
+
+	// Cleanup
+	exclaves_hello_driverkit_interrupts_service_id = -1ull;
+	thread_call_free(signal_thread);
+	signal_thread = NULL;
+	kfree_type(struct IOExclaveTestSignalInterruptParam, signal_param);
+
+	if (success) {
+		exclaves_debug_printf(show_test_output, "%s: SUCCESS\n", __func__);
+		*out = 1;
+	} else {
+		exclaves_debug_printf(show_errors, "%s: FAILED\n", __func__);
+		*out = 0;
+	}
+	return 0;
+}
+
+static int
+exclaves_hello_driverkit_interrupts_test(int64_t in, int64_t *out)
+{
+	// in should be AppleExclaveExampleKext's registry ID
+	return exclaves_hello_driverkit_interrupts((uint64_t)in, out);
+}
+
+
+SYSCTL_TEST_REGISTER(exclaves_hello_driver_interrupts_test,
+    exclaves_hello_driverkit_interrupts_test);
+
+
+static int
+exclaves_hello_driverkit_multi_timers(int64_t *out)
+{
+	if (exclaves_get_status() != EXCLAVES_STATUS_AVAILABLE) {
+		exclaves_debug_printf(show_test_output,
+		    "%s: SKIPPED: Exclaves not available\n", __func__);
+		*out = -1;
+		return 0;
+	}
+
+	bool success = false;
+	exclaves_debug_printf(show_test_output, "%s: STARTING\n", __func__);
+
+	do {
+		exclaves_debug_printf(show_test_output,
+		    "%s: TIMER TESTS\n", __func__);
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_MULTI_TIMER_SETUP))
+		// Multiple timers are setup with the same timeout
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_SETTIMEOUT))
+		// Wait for timers to fire
+		delay_for_interval(2000, 1000 * 1000 /* kMilliSecondScale */);
+		// Check if all timer interrupts were recieved by exclave
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_TIMER_CHECK))
+		EXCLAVES_HELLO_DRIVER_INTERRUPTS_CHECK_RET(
+			hello_driverkit_interrupts(TEST_MULTI_TIMER_CLEANUP))
+
+		success = true;
+	} while (false);
+
+	if (success) {
+		exclaves_debug_printf(show_test_output, "%s: SUCCESS\n", __func__);
+		*out = 1;
+	} else {
+		exclaves_debug_printf(show_errors, "%s: FAILED\n", __func__);
+		*out = 0;
+	}
+	return 0;
+}
+
+
+static int
+exclaves_hello_driverkit_multi_timers_test(__unused int64_t in, int64_t *out)
+{
+	return exclaves_hello_driverkit_multi_timers(out);
+}
+
+
+SYSCTL_TEST_REGISTER(exclaves_hello_driver_multi_timers_test,
+    exclaves_hello_driverkit_multi_timers_test);
+
+#endif /* DEVELOPMENT || DEBUG */
+
+kern_return_t
+exclaves_driver_service_lookup(const char *service_name, uint64_t *endpoint)
+{
+	assert3p(endpoint, !=, NULL);
+	static const char * domains[] = { EXCLAVES_DOMAIN_KERNEL, EXCLAVES_DOMAIN_DARWIN };
+
+	for (size_t domainIndex = 0; domainIndex < sizeof(domains) / sizeof(domains[0]); domainIndex++) {
+		uint64_t result = exclaves_service_lookup(domains[domainIndex], service_name);
+		if (result != EXCLAVES_INVALID_ID) {
+			*endpoint = result;
+			return KERN_SUCCESS;
+		}
+	}
+
+	return KERN_NOT_FOUND;
+}
+
+#endif  /* __has_include(<Tightbeam/tightbeam.h>) */
+
+#endif /* CONFIG_EXCLAVES */

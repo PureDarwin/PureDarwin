@@ -72,6 +72,12 @@ ux_exception(int                        exception,
 			return SIGBUS;
 		}
 
+	case EXC_SYSCALL:
+		if (send_sigsys) {
+			return SIGSYS;
+		}
+		break;
+
 	case EXC_BAD_INSTRUCTION:
 		return SIGILL;
 
@@ -151,15 +157,15 @@ handle_ux_exception(thread_t                    thread,
 			 * SIGSEGV with a SIG_DFL handler.
 			 */
 			int mask = sigmask(ux_signal);
-			struct sigacts *ps = p->p_sigacts;
+			struct sigacts *ps = &p->p_sigacts;
 			if ((p->p_sigignore & mask) ||
 			    (ut->uu_sigwait & mask) ||
 			    (ut->uu_sigmask & mask) ||
-			    (ps->ps_sigact[SIGSEGV] == SIG_IGN) ||
+			    (SIGACTION(p, SIGSEGV) == SIG_IGN) ||
 			    (!(ps->ps_sigonstack & mask))) {
 				p->p_sigignore &= ~mask;
 				p->p_sigcatch &= ~mask;
-				ps->ps_sigact[SIGSEGV] = SIG_DFL;
+				proc_set_sigact(p, SIGSEGV, SIG_DFL);
 				ut->uu_sigwait &= ~mask;
 				ut->uu_sigmask &= ~mask;
 			}

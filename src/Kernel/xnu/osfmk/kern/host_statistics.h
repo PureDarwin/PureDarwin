@@ -38,11 +38,15 @@
 #ifndef _KERN_HOST_STATISTICS_H_
 #define _KERN_HOST_STATISTICS_H_
 
+#if XNU_KERNEL_PRIVATE
+
 #include <kern/counter.h>
 
 SCALABLE_COUNTER_DECLARE(vm_statistics_zero_fill_count);        /* # of zero fill pages */
 SCALABLE_COUNTER_DECLARE(vm_statistics_reactivations);          /* # of pages reactivated */
 SCALABLE_COUNTER_DECLARE(vm_statistics_pageins);                /* # of pageins */
+SCALABLE_COUNTER_DECLARE(vm_statistics_pageins_aborted);        /* # of pageins aborted */
+SCALABLE_COUNTER_DECLARE(vm_statistics_pageins_requested);      /* # of pageins requested */
 SCALABLE_COUNTER_DECLARE(vm_statistics_pageouts);               /* # of pageouts */
 SCALABLE_COUNTER_DECLARE(vm_statistics_faults);                 /* # of faults */
 SCALABLE_COUNTER_DECLARE(vm_statistics_cow_faults);             /* # of copy-on-writes */
@@ -56,5 +60,10 @@ SCALABLE_COUNTER_DECLARE(vm_statistics_swapouts);               /* # of pages sw
 SCALABLE_COUNTER_DECLARE(vm_statistics_total_uncompressed_pages_in_compressor); /* # of pages (uncompressed) held within the compressor. */
 
 SCALABLE_COUNTER_DECLARE(vm_page_grab_count);
+SCALABLE_COUNTER_DECLARE(vm_page_grab_count_kern);
+SCALABLE_COUNTER_DECLARE(vm_page_grab_count_iopl);
+SCALABLE_COUNTER_DECLARE(vm_page_grab_count_upl);
+
+#endif /* XNU_KERNEL_PRIVATE */
 
 #endif  /* _KERN_HOST_STATISTICS_H_ */

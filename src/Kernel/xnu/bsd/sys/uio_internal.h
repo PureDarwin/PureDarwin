@@ -92,24 +92,52 @@
 //      UIO_SYSSPACE64          13      reserved, never used. Use UIO_SYSSPACE
 //      UIO_PHYS_SYSSPACE64     14      reserved, never used. Use UIO_PHYS_SYSSPACE
 
+enum {
+	UIOF_USERISPACE          = (1 << UIO_USERISPACE),
+	UIOF_PHYS_USERSPACE      = (1 << UIO_PHYS_USERSPACE),
+	UIOF_PHYS_SYSSPACE       = (1 << UIO_PHYS_SYSSPACE),
+	UIOF_USERISPACE32        = (1 << UIO_USERISPACE32),
+	UIOF_PHYS_USERSPACE32    = (1 << UIO_PHYS_USERSPACE32),
+	UIOF_USERISPACE64        = (1 << UIO_USERISPACE64),
+	UIOF_PHYS_USERSPACE64    = (1 << UIO_PHYS_USERSPACE64),
+};
+
 __BEGIN_DECLS
 struct user_iovec;
 
 #ifdef XNU_KERNEL_PRIVATE
-__private_extern__ struct user_iovec * uio_iovsaddr( uio_t a_uio );
-__private_extern__ int uio_calculateresid( uio_t a_uio );
-__private_extern__ void uio_setcurriovlen( uio_t a_uio, user_size_t a_value );
-__private_extern__ int uio_spacetype( uio_t a_uio );
+__private_extern__ struct user_iovec * uio_iovsaddr_user( uio_t a_uio );
+__private_extern__ int uio_calculateresid_user(uio_t __attribute((nonnull)) a_uio);
 __private_extern__ uio_t  uio_createwithbuffer( int a_iovcount, off_t a_offset, int a_spacetype, int a_iodirection, void *a_buf_p, size_t a_buffer_size );
-__private_extern__ int copyin_user_iovec_array(user_addr_t uaddr, int spacetype, int count, struct user_iovec *dst);
-/* reverse of uio_update to "undo" uncommited I/O. This only works in
- * limited cases */
-__private_extern__ void uio_pushback( uio_t a_uio, user_size_t a_count );
+__private_extern__ int copyin_user_iovec_array(user_addr_t uaddr, int spacetype, int count, struct user_iovec *dst, int capacity);
+
+/*
+ * uio_reset_fast - reset an uio_t.
+ *      Reset the given uio_t to initial values.  The uio_t is not fully initialized
+ *      until all iovecs are added using uio_add_ov calls.
+ *	The a_iovcount value passed in the uio_create is the maximum number of
+ *	iovecs you may add.
+ *	a_spacetype must NOT be UIO_USERSPACE, UIO_SYSSPACE32 or UIO_PHYS_USERSPACE.
+ */
+__private_extern__ void uio_reset_fast( uio_t a_uio,
+    off_t a_offset,                                             /* current offset */
+    int a_spacetype,                                            /* type of address space */
+    int a_iodirection );                                /* read or write flag */
+
+__private_extern__ int uio_copyout_user(const char *__sized_by(n) c_cp, int n, uio_t uio);
+__private_extern__ int uio_copyin_user(const char *__sized_by(n) c_cp, int n, uio_t uio);
+__private_extern__ int uio_copyout_sys(const char *__sized_by(n) c_cp, int n, uio_t uio);
+__private_extern__ int uio_copyin_sys(const char *__sized_by(n) c_cp, int n, uio_t uio);
+__private_extern__ int uio_copyout_phys_user(const char *__sized_by(n) c_cp, int n, uio_t uio);
+__private_extern__ int uio_copyin_phys_user(const char *__sized_by(n) c_cp, int n, uio_t uio);
+__private_extern__ int uio_copyout_phys_sys(const char *__sized_by(n) c_cp, int n, uio_t uio);
+__private_extern__ int uio_copyin_phys_sys(const char *__sized_by(n) c_cp, int n, uio_t uio);
+
 #endif /* XNU_KERNEL_PRIVATE */
 
 /* use kern_iovec for system space requests */
 struct kern_iovec {
-	u_int64_t       iov_base;       /* Base address. */
+	u_int64_t       iov_base;       /* Base address; PAC signed, diversified with length. */
 	u_int64_t       iov_len;        /* Length. */
 };
 
@@ -139,15 +167,15 @@ union iovecs {
 /* WARNING - use accessor calls for uio_iov and uio_resid since these */
 /* fields vary depending on the originating address space. */
 struct uio {
-	union iovecs    uio_iovs;               /* current iovec */
-	int                             uio_iovcnt;             /* active iovecs */
-	off_t                   uio_offset;
+	void * XNU_PTRAUTH_SIGNED_PTR("uio.uio_iovs") uio_iovs;       /* current iovec */
+	void * XNU_PTRAUTH_SIGNED_PTR("uio.uio_iovbase") uio_iovbase; /* iovec base */
+	int             uio_max_iovs;   /* max number of iovecs this uio_t can hold */
+	int             uio_iovcnt;     /* active iovecs */
+	off_t           uio_offset;
 	enum uio_seg    uio_segflg;
 	enum uio_rw     uio_rw;
 	user_size_t     uio_resid_64;
-	int                             uio_size;               /* size for use with kfree */
-	int                             uio_max_iovs;   /* max number of iovecs this uio_t can hold */
-	u_int32_t               uio_flags;
+	u_int32_t       uio_flags;
 };
 
 /* values for uio_flags */
@@ -157,27 +185,39 @@ struct uio {
 
 __END_DECLS
 
+#define UIO_SIZEOF_IOVS( a_iovcount ) \
+	( MAX(sizeof(struct user_iovec), sizeof(struct kern_iovec)) * (a_iovcount) )
+
 /*
  * UIO_SIZEOF - return the amount of space a uio_t requires to
- *	contain the given number of iovecs.  Use this macro to
- *  create a stack buffer that can be passed to uio_createwithbuffer.
+ *	contain the given number of iovecs.
  */
+#ifndef P2ROUNDUP
+#define P2ROUNDUP(x, align)     (-(-((long)x) & -((long)align)))
+#endif
 #define UIO_SIZEOF( a_iovcount ) \
-	( sizeof(struct uio) + (MAX(sizeof(struct user_iovec), sizeof(struct kern_iovec)) * (a_iovcount)) )
+	( P2ROUNDUP(sizeof(struct uio), sizeof(uint64_t)) \
+	  + UIO_SIZEOF_IOVS(a_iovcount) )
+
+/*
+ * UIO_STACKBUF - use this macro to declare a stack buffer with the
+ *	appropriate size an alignment for the given number of iovecs.
+ *	The resulting buffer can then be passed to uio_createwithbuffer().
+ */
+#define UIO_STACKBUF(name, niov) \
+	uint64_t name[P2ROUNDUP(UIO_SIZEOF(niov), sizeof(uint64_t)) \
+	    / sizeof(uint64_t)]
 
 #define UIO_IS_USER_SPACE32( a_uio_t )  \
-	( (a_uio_t)->uio_segflg == UIO_USERSPACE32 || (a_uio_t)->uio_segflg == UIO_PHYS_USERSPACE32 || \
-	  (a_uio_t)->uio_segflg == UIO_USERISPACE32 )
+	( (1 << (a_uio_t)->uio_segflg) & (UIOF_USERSPACE32 | UIOF_PHYS_USERSPACE32 | UIOF_USERISPACE32))
 #define UIO_IS_USER_SPACE64( a_uio_t )  \
-	( (a_uio_t)->uio_segflg == UIO_USERSPACE64 || (a_uio_t)->uio_segflg == UIO_PHYS_USERSPACE64 || \
-	  (a_uio_t)->uio_segflg == UIO_USERISPACE64 )
+	( (1 << (a_uio_t)->uio_segflg) & (UIOF_USERSPACE64 | UIOF_PHYS_USERSPACE64 | UIOF_USERISPACE64))
 #define UIO_IS_USER_SPACE( a_uio_t )  \
-	( UIO_IS_USER_SPACE32((a_uio_t)) || UIO_IS_USER_SPACE64((a_uio_t)) || \
-	  (a_uio_t)->uio_segflg == UIO_USERSPACE || (a_uio_t)->uio_segflg == UIO_USERISPACE || \
-	   (a_uio_t)->uio_segflg == UIO_PHYS_USERSPACE )
+	( (1 << (a_uio_t)->uio_segflg) & (UIOF_USERSPACE32 | UIOF_PHYS_USERSPACE32 | UIOF_USERISPACE32 | \
+	                                  UIOF_USERSPACE64 | UIOF_PHYS_USERSPACE64 | UIOF_USERISPACE64 | \
+	                                  UIOF_USERSPACE | UIOF_PHYS_USERSPACE | UIOF_USERISPACE))
 #define UIO_IS_SYS_SPACE( a_uio_t )  \
-	( (a_uio_t)->uio_segflg == UIO_SYSSPACE || (a_uio_t)->uio_segflg == UIO_PHYS_SYSSPACE || \
-	  (a_uio_t)->uio_segflg == UIO_SYSSPACE32 )
+	( (1 << (a_uio_t)->uio_segflg) & (UIOF_SYSSPACE | UIOF_PHYS_SYSSPACE | UIOF_SYSSPACE32))
 
 extern int ureadc(int c, struct uio *uio);
 

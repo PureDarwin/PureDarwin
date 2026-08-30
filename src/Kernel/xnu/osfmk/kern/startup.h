@@ -35,13 +35,14 @@
 #define _KERN_STARTUP_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <libkern/section_keywords.h>
 
 __BEGIN_DECLS
 
-#pragma GCC visibility push(hidden)
+__exported_push_hidden
 
 /*!
  * @enum startup_subsystem_id_t
@@ -52,28 +53,31 @@ __BEGIN_DECLS
  *
  * @discussion
  * Documentation of each subsystem initialization sequence exists in
- * @file doc/startup.md.
+ * @file doc/lifecycle/startup.md.
  */
 __enum_decl(startup_subsystem_id_t, uint32_t, {
 	STARTUP_SUB_NONE = 0,         /**< reserved for the startup subsystem  */
 
 	STARTUP_SUB_TUNABLES,         /**< support for the tunables subsystem  */
-	STARTUP_SUB_LOCKS_EARLY,      /**< early locking, before zalloc        */
+	STARTUP_SUB_TIMEOUTS,         /**< configurable machine timeouts       */
+	STARTUP_SUB_LOCKS,            /**< various subsystem locks             */
 	STARTUP_SUB_KPRINTF,          /**< kprintf initialization              */
 
 	STARTUP_SUB_PMAP_STEAL,       /**< to perform various pmap carveouts   */
-	STARTUP_SUB_VM_KERNEL,        /**< once the kernel VM is ready         */
-	STARTUP_SUB_KMEM,             /**< once kmem is ready                  */
-	STARTUP_SUB_KMEM_ALLOC,       /**< once kmem_alloc is ready            */
+	STARTUP_SUB_KMEM,             /**< once kmem_alloc is ready            */
 	STARTUP_SUB_ZALLOC,           /**< initialize zalloc and kalloc        */
+	STARTUP_SUB_KTRACE,           /**< initialize kernel trace             */
 	STARTUP_SUB_PERCPU,           /**< initialize the percpu subsystem     */
-	STARTUP_SUB_LOCKS,            /**< various subsystem locks             */
+	STARTUP_SUB_SCHED,            /**< initialize scheduler subsystem      */
+	STARTUP_SUB_EVENT,            /**< initiailze the event subsystem      */
 
 	STARTUP_SUB_CODESIGNING,      /**< codesigning subsystem               */
-	STARTUP_SUB_OSLOG,            /**< oslog and kernel loggging           */
+	STARTUP_SUB_OSLOG,            /**< oslog and kernel logging            */
 	STARTUP_SUB_MACH_IPC,         /**< Mach IPC                            */
+	STARTUP_SUB_THREAD_CALL,      /**< Thread calls                        */
 	STARTUP_SUB_SYSCTL,           /**< registers sysctls                   */
-	STARTUP_SUB_EARLY_BOOT,       /**< interrupts/premption are turned on  */
+	STARTUP_SUB_EXCLAVES,         /**< initialize exclaves                 */
+	STARTUP_SUB_EARLY_BOOT,       /**< interrupts/preemption are turned on */
 
 	STARTUP_SUB_LOCKDOWN = ~0u,   /**< reserved for the startup subsystem  */
 });
@@ -94,11 +98,19 @@ __options_decl(startup_debug_t, uint32_t, {
 	STARTUP_DEBUG_VERBOSE = 0x00000001,
 });
 
-#if DEBUG || DEVELOPMENT
+/*!
+ * @enum startup_source_t
+ *
+ * @abstract
+ * The source from which a tunable was resolved.
+ */
+__options_decl(startup_source_t, uint32_t, {
+	STARTUP_SOURCE_DEFAULT,
+	STARTUP_SOURCE_DEVICETREE,
+	STARTUP_SOURCE_BOOTPARAM,
+});
+
 extern startup_debug_t startup_debug;
-#else
-#define startup_debug  STARTUP_DEBUG_NONE
-#endif
 
 /*!
  * @enum startup_rank
@@ -109,12 +121,12 @@ extern startup_debug_t startup_debug;
  *
  * @description
  * A startup function, declared with @c STARTUP or @c STARTUP_ARG, can specify
- * an rank within the subsystem they initialize.
+ * a rank within the subsystem they initialize.
  *
  * @c STARTUP_RANK_NTH(n) will let callbacks be run at stage @c n (0-based).
  *
  * @c STARTUP_RANK_FIRST, @c STARTUP_RANK_SECOND, @c STARTUP_RANK_THIRD and
- * @c STARTUP_RANK_FOURTH are given as conveniency names for these.
+ * @c STARTUP_RANK_FOURTH are given as convenient names for these.
  *
  * @c STARTUP_RANK_MIDDLE is a reserved value that will let startup functions
  * run after all the @c STARTUP_RANK_NTH(n) ones have.
@@ -126,8 +138,7 @@ extern startup_debug_t startup_debug;
  * else did for this subsystem.
  */
 __enum_decl(startup_rank_t, uint32_t, {
-#define STARTUP_RANK_NTH(n) \
-	(enum startup_rank)(n)
+#define STARTUP_RANK_NTH(n)           ((startup_rank_t)(n - 1))
 	STARTUP_RANK_FIRST          = 0,
 	STARTUP_RANK_SECOND         = 1,
 	STARTUP_RANK_THIRD          = 2,
@@ -136,7 +147,7 @@ __enum_decl(startup_rank_t, uint32_t, {
 	STARTUP_RANK_MIDDLE         = 0x7fffffff,
 
 #define STARTUP_RANK_LATE_NTH(n) \
-	(enum startup_rank)(STARTUP_RANK_MIDDLE + 1 + (n))
+	((startup_rank_t)(STARTUP_RANK_MIDDLE + 1 + (n)))
 
 	STARTUP_RANK_LAST           = 0xffffffff,
 });
@@ -147,18 +158,21 @@ __enum_decl(startup_rank_t, uint32_t, {
  * so for KASAN leave things in regular __TEXT/__DATA segments
  */
 #define STARTUP_CODE_SEGSECT "__TEXT,__text"
+#define STARTUP_CONST_SEGSECT "__DATA_CONST,__init"
 #define STARTUP_DATA_SEGSECT "__DATA,__init"
 #define STARTUP_HOOK_SEGMENT "__DATA"
 #define STARTUP_HOOK_SECTION "__init_entry_set"
 #elif defined(__x86_64__)
 /* Intel doesn't have a __BOOTDATA but doesn't protect __KLD */
 #define STARTUP_CODE_SEGSECT "__TEXT,__text"
+#define STARTUP_CONST_SEGSECT "__KLDDATA,__const"
 #define STARTUP_DATA_SEGSECT "__KLDDATA,__init"
 #define STARTUP_HOOK_SEGMENT "__KLDDATA"
 #define STARTUP_HOOK_SECTION "__init_entry_set"
 #else
 /* arm protects __KLD early, so use __BOOTDATA for data */
 #define STARTUP_CODE_SEGSECT "__TEXT,__text"
+#define STARTUP_CONST_SEGSECT "__KLDDATA,__const"
 #define STARTUP_DATA_SEGSECT "__BOOTDATA,__init"
 #define STARTUP_HOOK_SEGMENT "__BOOTDATA"
 #define STARTUP_HOOK_SECTION "__init_entry_set"
@@ -173,10 +187,14 @@ __enum_decl(startup_rank_t, uint32_t, {
  * @description
  * Code marked with this attribute will be unmapped after kernel lockdown.
  */
+#ifndef __BUILDING_XNU_LIBRARY__
 #define __startup_func \
 	__PLACE_IN_SECTION(STARTUP_CODE_SEGSECT) \
 	__attribute__((cold, visibility("hidden")))
-
+#else
+/* tester needs some startup function to be visible from outside the XNU library */
+#define __startup_func __unused
+#endif
 /*!
  * @macro __startup_data
  *
@@ -186,8 +204,28 @@ __enum_decl(startup_rank_t, uint32_t, {
  * @description
  * Data marked with this attribute will be unmapped after kernel lockdown.
  */
+#ifndef __BUILDING_XNU_LIBRARY__
 #define __startup_data \
 	__PLACE_IN_SECTION(STARTUP_DATA_SEGSECT)
+#else
+#define __startup_data
+#endif
+
+/*!
+ * @macro __startup_const
+ *
+ * @abstract
+ * Attribute to place on global constants used during the kernel startup phase.
+ *
+ * @description
+ * Data marked with this attribute will be unmapped after kernel lockdown.
+ *
+ * __startup_const implies const. Be mindful that for pointers, the `const`
+ * will end up on the wrong side of the star if you put __startup_const at the
+ * start of the declaration.
+ */
+#define __startup_const \
+	__PLACE_IN_SECTION(STARTUP_CONST_SEGSECT) const
 
 /*!
  * @macro STARTUP
@@ -220,15 +258,15 @@ __enum_decl(startup_rank_t, uint32_t, {
  * @param var
  * The name of the C variable to use for storage.
  *
- * @param key
+ * @param boot_arg
  * The name of the boot-arg to parse for initialization
  *
  * @param default_value
  * The default value for the tunable if the boot-arg is absent.
  */
-#define TUNABLE(type_t, var, key, default_value) \
+#define TUNABLE(type_t, var, boot_arg, default_value) \
 	SECURITY_READ_ONLY_LATE(type_t) var = default_value; \
-	__TUNABLE(type_t, var, key)
+	__TUNABLE(type_t, var, boot_arg)
 
 /*!
  * @macro TUNABLE_WRITEABLE
@@ -243,29 +281,552 @@ __enum_decl(startup_rank_t, uint32_t, {
  * @param var
  * The name of the C variable to use for storage.
  *
- * @param key
+ * @param boot_arg
  * The name of the boot-arg to parse for initialization
  *
  * @param default_value
  * The default value for the tunable if the boot-arg is absent.
  */
-#define TUNABLE_WRITEABLE(type_t, var, key, default_value) \
+#define TUNABLE_WRITEABLE(type_t, var, boot_arg, default_value) \
 	type_t var = default_value; \
-	__TUNABLE(type_t, var, key)
+	__TUNABLE(type_t, var, boot_arg)
 
+#if DEBUG || DEVELOPMENT
+#define TUNABLE_DEV_WRITEABLE(type_t, var, boot_arg, default_value) \
+	TUNABLE_WRITEABLE(type_t, var, boot_arg, default_value)
+#else
+#define TUNABLE_DEV_WRITEABLE(type_t, var, boot_arg, default_value) \
+	TUNABLE(type_t, var, boot_arg, default_value)
+#endif
+
+/*!
+ * @macro TUNABLE_STR
+ *
+ * @abstract
+ * Declares a read-only kernel tunable that is read from a boot-arg with
+ * a default value, without further processing.
+ *
+ * @param var
+ * The name of the C variable to use for storage.
+ *
+ * @param count
+ * The number of bytes in the buffer.
+ *
+ * @param boot_arg
+ * The name of the boot-arg to parse for initialization
+ *
+ * @param default_value
+ * The default value for the tunable if the boot-arg is absent.
+ */
+#define TUNABLE_STR(var, count, boot_arg, default_value) \
+	char __security_const_late var[count] = default_value; \
+	__TUNABLE_STR(var, boot_arg)
+
+/*!
+ * @enum tunable_dt_flags_t
+ *
+ * @abstract
+ * Flags used with the @c TUNABLE_DT* macros.
+ *
+ * @description
+ * If TUNABLE_DT_CHECK_CHOSEN is set, a value in
+ * /chosen/<dt_base>/<dt_name> takes precedence over any value in
+ * /<dt_base>/<dt_name>. /chosen is by convention the area where
+ * synthesized values not coming from the serialized device tree are
+ * being added, so this provides a way for e.g. the boot-loader to
+ * set/override tunables. Don't override with a boot-arg if
+ * TUNABLE_DT_NO_BOOTARG is set.
+ */
+__options_decl(tunable_dt_flags_t, uint32_t, {
+	TUNABLE_DT_NONE         = 0x00000000,
+	TUNABLE_DT_CHECK_CHOSEN = 0x00000001,
+	TUNABLE_DT_NO_BOOTARG   = 0x00000002,
+});
+
+/*!
+ * @macro TUNABLE_DT
+ *
+ * @abstract
+ * Like TUNABLE, but gets the initial value from both Device Tree and
+ * boot-args. The order in which the initial value is resolved is as
+ * follows, with later steps overriding previous ones (if they are
+ * specified):
+ *
+ * 1. Device Tree Entry "/<dt_base>/<dt_name>",
+ * 2. If TUNABLE_DT_CHECK_CHOSEN is set, Device Tree Entry
+ *    "/chosen/<dt_base>/<dt_name>" (see the description for
+ *    @c tunable_dt_flags_t),
+ * 3. boot-args.
+ *
+ * @param type_t
+ * Should be an integer type or bool.
+ *
+ * @param var
+ * The name of the C variable to use for storage.
+ *
+ * @param dt_base
+ * The name of the DT node containing the property.
+ *
+ * @param dt_name
+ * The name of the DT property containing the default value.
+ *
+ * @param boot_arg
+ * The name of the boot-arg overriding the initial value from the DT.
+ *
+ * @param default_value
+ * The default value for the tunable if both DT entry and boot-arg are
+ * absent.
+ *
+ * @param flags
+ * See the description for @c tunable_dt_flags_t.
+ */
+#define TUNABLE_DT(type_t, var, dt_base, dt_name, boot_arg, default_value, flags) \
+	SECURITY_READ_ONLY_LATE(type_t) var = default_value; \
+	__TUNABLE_DT(type_t, var, dt_base, dt_name, boot_arg, flags)
+
+/*!
+ * @macro TUNABLE_DT_WRITEABLE
+ *
+ * @abstract
+ * Like TUNABLE_WRITEABLE, but gets the initial value from both Device
+ * Tree and boot-args. The order in which the initial value is
+ * resolved is as follows, with later steps overriding previous ones
+ * (if they are specified):
+ *
+ * 1. Device Tree Entry "/<dt_base>/<dt_name>",
+ * 2. If TUNABLE_DT_CHECK_CHOSEN is set, Device Tree Entry
+ *    "/chosen/<dt_base>/<dt_name>" (see the description for
+ *    @c tunable_dt_flags_t),
+ * 3. boot-args.
+ *
+ * @param type_t
+ * Should be an integer type or bool.
+ *
+ * @param var
+ * The name of the C variable to use for storage.
+ *
+ * @param dt_base
+ * The name of the DT node containing the property.
+ *
+ * @param dt_name
+ * The name of the DT property containing the default value.
+ *
+ * @param boot_arg
+ * The name of the boot-arg overriding the initial value from the DT.
+ *
+ * @param default_value
+ * The default value for the tunable if both DT entry and boot-arg are
+ * absent.
+ *
+ * @param flags
+ * See the description for @c tunable_dt_flags_t.
+ */
+#define TUNABLE_DT_WRITEABLE(type_t, var, dt_base, dt_name, boot_arg, default_value, flags) \
+	type_t var = default_value; \
+	__TUNABLE_DT(type_t, var, dt_base, dt_name, boot_arg, flags)
+
+#if DEBUG || DEVELOPMENT
+#define TUNABLE_DT_DEV_WRITEABLE(type_t, var, dt_base, dt_name, boot_arg, default_value, flags) \
+	TUNABLE_DT_WRITEABLE(type_t, var, dt_base, dt_name, boot_arg, default_value, flags)
+#else
+#define TUNABLE_DT_DEV_WRITEABLE(type_t, var, dt_base, dt_name, boot_arg, default_value, flags) \
+	TUNABLE_DT(type_t, var, dt_base, dt_name, boot_arg, default_value, flags)
+#endif
+
+/*!
+ * @macro TUNABLE_DT_WRITEABLE_SOURCE
+ *
+ * @abstract
+ * Like TUNABLE_DT_WRITEABLE, but records the source from which the value was resolved.
+ *
+ * @param type_t
+ * Should be an integer type or bool.
+ *
+ * @param var
+ * The name of the C variable to use for storage.
+ *
+ * @param source_var
+ * The name of the C variable to record the source. It will be of type startup_source_t.
+ *
+ * @param dt_base
+ * The name of the DT node containing the property.
+ *
+ * @param dt_name
+ * The name of the DT property containing the default value.
+ *
+ * @param boot_arg
+ * The name of the boot-arg overriding the initial value from the DT.
+ *
+ * @param default_value
+ * The default value for the tunable if both DT entry and boot-arg are
+ * absent.
+ *
+ * @param flags
+ * See the description for @c tunable_dt_flags_t.
+ */
+#define TUNABLE_DT_WRITEABLE_SOURCE(type_t, var, source_var, dt_base, dt_name, boot_arg, default_value, flags) \
+	type_t var = default_value; \
+    startup_source_t source_var; \
+	__TUNABLE_DT_SOURCE(type_t, var, source_var, dt_base, dt_name, boot_arg, flags)
+
+/*
+ * Machine Timeouts
+ *
+ * Machine Timeouts are timeouts for low level kernel code manifesting
+ * as _Atomic uint64_t variables, whose default value can be
+ * overridden and scaled via the device tree and boot-args.
+ *
+ * Each timeout has a name, looked up directly as the property name in
+ * the device tree in both the "/machine-timeouts" and
+ * "/chosen/machine-timeouts" nodes. The "chosen" property always
+ * overrides the other one. This allows fixed per-device timeouts in
+ * the device tree to be overridden by iBoot in "chosen".
+ *
+ * Additionally, the same name with "-scale" appended is looked up as
+ * properties for optional scale factors. Scale factors are not
+ * overridden by chosen, instead all scale factors (including global
+ * and/or boot-arg scale factors) combine by multiplication.
+ *
+ * The special name "global-scale" provides a scale that applies to
+ * every timeout.
+ *
+ * All property names can be used as boot-args by prefixing
+ * "ml-timeout-", e.g. th global scale is available as the
+ * "ml-timeout-global-scale" boot-arg.
+ *
+ * By convention, if the timeout value resolves to 0, the timeout
+ * should be disabled.
+ */
+
+/*
+ * Machine Timeouts types. See the next section for what unit
+ * they are in.
+ *
+ * We use _Atomic, but only with relaxed ordering: This is just to
+ * make sure all devices see consistent values all the time.  Since
+ * the actual timeout value will be seen as 0 before initializaton,
+ * relaxed ordering means that code that runs concurrently with
+ * initialization only risks to see a disabled timeout during early
+ * boot.
+ */
+typedef _Atomic uint64_t machine_timeout_t;
+
+/*
+ * Units
+ *
+ * Machine Timeouts are ALWAYS in picoseconds in the device tree or
+ * boot-args, to avoid confusion when changing or comparing timeouts
+ * as a user, but the actual storage value might contain the same
+ * duration in another unit, calculated by the initialization code.
+ *
+ * This is done because otherwise we would likely introduce another
+ * multiplication in potentially hot code paths, given that code that
+ * actually uses the timeout storage variable is unlikely to work with
+ * picosecond values when comparing against the timeout deadline.
+ *
+ * This unit scale is *only* applied during initialization at early
+ * boot, and only if the timeout's default value was overridden
+ * through the device tree or a boot-arg.
+ */
+#define MACHINE_TIMEOUT_UNIT_PSEC 1
+#define MACHINE_TIMEOUT_UNIT_NSEC 1000
+#define MACHINE_TIMEOUT_UNIT_USEC (1000*1000)
+#define MACHINE_TIMEOUT_UNIT_MSEC (1000*1000*1000)
+// Special unit for timebase ticks (usually 1/24MHz)
+#define MACHINE_TIMEOUT_UNIT_TIMEBASE 0
+
+// DT property names are limited to 31 chars, minus "-global" suffix
+#define MACHINE_TIMEOUT_MAX_NAME_LEN 25
+struct machine_timeout_spec {
+	void *ptr;
+	uint64_t default_value;
+	uint64_t unit_scale;
+	char name[MACHINE_TIMEOUT_MAX_NAME_LEN + 1];
+	bool (*skip_predicate)(struct machine_timeout_spec const *);
+};
+
+extern void
+machine_timeout_init_with_suffix(const struct machine_timeout_spec *spec, char const *phase_suffix, bool always_enabled);
+
+extern void
+machine_timeout_init(const struct machine_timeout_spec *spec);
+
+extern void
+machine_timeout_init_always_enabled(const struct machine_timeout_spec *spec);
+
+#if DEVELOPMENT || DEBUG
+// Late timeout (re-)initialization, at the end of bsd_init()
+extern void
+machine_timeout_bsd_init(void);
+#endif /* DEVELOPMENT || DEBUG */
+
+/*!
+ * @macro MACHINE_TIMEOUT, MACHINE_TIMEOUT_ALWAYS_ENABLED, and MACHINE_TIMEOUT_DEV_WRITEABLE
+ *
+ * @abstract
+ * Defines a Machine Timeout that can be overridden and
+ * scaled through the device tree and boot-args.
+ *
+ * The variant with the _DEV_WRITEABLE suffix does not mark the timeout as
+ * SECURITY_READ_ONLY_LATE on DEVELOPMENT kernels, so that e.g.
+ * machine_timeout_init_with_suffix or sysctls can change it after lockdown.
+ *
+ * @param var
+ * The name of the C variable to use for storage. If the storage value
+ * contains 0, the timeout is considered disabled by convention.
+ *
+ * @param timeout_name
+ * The name of the timeout, used for property and boot-arg names. See
+ * the general description of Machine Timeouts above for how this name
+ * ends up being used.
+ *
+ * @param timeout_default
+ * The default value for the timeout if not specified through device
+ * tree or boot-arg. Will still be scaled if a scale factor exists.
+ *
+ * @param var_unit
+ * The unit that the storage variable is in. Note that timeout values
+ * must always be specified as picoseconds in the device tree and
+ * boot-args, but timeout initialization will convert the value to the
+ * unit specified here before writing it to the storage variable.
+ *
+ * @param skip_predicate
+ * Optionally, a function to call to decide whether the timeout should
+ * be set or not.  If NULL, the timeout will always be set (if
+ * specified anywhere). A predicate has the following signature:
+ *     bool skip_predicate (struct machine_timeout_spec const *)
+ */
+
+#define _MACHINE_TIMEOUT(var, timeout_name, timeout_default, var_unit, skip_pred, init_fn) \
+	struct machine_timeout_spec \
+	__machine_timeout_spec_ ## var = { \
+	        .ptr = &var, \
+	        .default_value = timeout_default, \
+	        .unit_scale = var_unit, \
+	        .name = timeout_name, \
+	        .skip_predicate = skip_pred, \
+	}; \
+	__STARTUP_ARG(var, __LINE__, TIMEOUTS, STARTUP_RANK_FIRST, \
+	    init_fn, &__machine_timeout_spec_ ## var)
+
+#define MACHINE_TIMEOUT(var, name, default, unit, skip_predicate)       \
+	SECURITY_READ_ONLY_LATE(machine_timeout_t) var = 0;                                     \
+	_MACHINE_TIMEOUT(var, name, default, unit, skip_predicate, machine_timeout_init)
+
+/*
+ * Variant of MACHINE_TIMEOUT that does not get zeroed if wdt == -1 boot arg is set
+ */
+#define MACHINE_TIMEOUT_ALWAYS_ENABLED(var, name, default, unit)       \
+	SECURITY_READ_ONLY_LATE(machine_timeout_t) var = 0;                                     \
+	_MACHINE_TIMEOUT(var, name, default, unit, NULL, machine_timeout_init_always_enabled)
+
+#if DEVELOPMENT || DEBUG
+#define MACHINE_TIMEOUT_DEV_WRITEABLE(var, name, default, unit, skip_predicate)       \
+	machine_timeout_t var = 0; \
+	_MACHINE_TIMEOUT(var, name, default, unit, skip_predicate, machine_timeout_init)
+#else
+#define MACHINE_TIMEOUT_DEV_WRITEABLE(var, name, default, unit, skip_predicate) \
+	MACHINE_TIMEOUT(var, name, default, unit, skip_predicate)
+#endif /* DEVELOPMENT || DEBUG */
+
+/*!
+ * @macro MACHINE_TIMEOUT_SPEC_REF
+ *
+ * @abstract
+ * References a previously defined MACHINE_TIMEOUT.
+ *
+ * This is primarily useful for overriding individual timeouts
+ * at arbitrary times (even after boot), by manually calling
+ * machine_timeout_init_with_suffix() with this macro
+ * as first argument, and a suffix to apply to both device tree and
+ * boot-arg as second argument.
+ *
+ * @param var
+ * The name of the C variable used for storage, as it was specified
+ * in MACHINE_TIMEOUT.
+ */
+#define MACHINE_TIMEOUT_SPEC_REF(var) (&__machine_timeout_spec_ ## var)
+
+/*!
+ * @macro MACHINE_TIMEOUT_SPEC_DECL
+ *
+ * @abstract
+ * Declaration of machine timeout spec, mostly useful to make it known
+ * for MACHINE_TIMEOUT_SPEC_REF.
+ *
+ * @param var
+ * The name of the C variable used for storage, as it was specified
+ * in MACHINE_TIMEOUT.
+ */
+#define MACHINE_TIMEOUT_SPEC_DECL(var) extern struct machine_timeout_spec __machine_timeout_spec_ ## var
+
+/*
+ * Event subsystem
+ *
+ * This allows to define a few system-wide events that allow for loose coupling
+ * between subsystems interested in those events and the emitter.
+ */
+
+/*!
+ * @macro EVENT_DECLARE()
+ *
+ * @brief
+ * Declares an event namespace with a given callback type.
+ *
+ * @param name          The name for the event (typically in all caps).
+ * @param cb_type_t     A function type for the callbacks.
+ */
+#define EVENT_DECLARE(name, cb_type_t) \
+	struct name##_event {                                                   \
+	        struct event_hdr        evt_link;                               \
+	        cb_type_t              *evt_cb;                                 \
+	};                                                                      \
+	extern struct event_hdr name##_HEAD
+
+/*!
+ * @macro EVENT_DEFINE()
+ *
+ * @brief
+ * Defines the head for the event corresponding to an EVENT_DECLARE()
+ */
+#define EVENT_DEFINE(name) \
+	__security_const_late struct event_hdr name##_HEAD
+
+/*!
+ * @macro EVENT_REGISTER_HANDLER()
+ *
+ * @brief
+ * Registers a handler for a given event.
+ *
+ * @param name          The name for the event as declared in EVENT_DECLARE()
+ * @param handler       The handler to register for this event.
+ */
+#define EVENT_REGISTER_HANDLER(name, handler) \
+	__EVENT_REGISTER(name, __LINE__, handler)
+
+
+/*!
+ * @macro EVENT_INVOKE()
+ *
+ * @brief
+ * Call all the events handlers with the specified arguments.
+ *
+ * @param name          The name for the event as declared in EVENT_DECLARE()
+ * @param handler       The handler to register for this event.
+ */
+#define EVENT_INVOKE(name, ...) \
+	for (struct event_hdr *__e = &name##_HEAD; (__e = __e->next);) {        \
+	        __container_of(__e, struct name##_event,                        \
+	            evt_link)->evt_cb(__VA_ARGS__);                             \
+	}
+
+
+#if DEBUG || DEVELOPMENT
+
+/*!
+ * @macro SYSCTL_TEST_REGISTER
+ *
+ * @abstract
+ * Declares a test that will appear under @c debug.test.${name}.
+ *
+ * @param name
+ * An identifier that will be stringified to form the sysctl test name.
+ *
+ * @param cb
+ * The callback to run, of type:
+ * <code>
+ *     int (callback *)(int64_t value, int64_t *);
+ * </code>
+ */
+#define SYSCTL_TEST_REGISTER(name, cb) \
+	static __startup_data struct sysctl_test_setup_spec \
+	__startup_SYSCTL_TEST_ ## name = { \
+	        .st_name = #name, \
+	        .st_func = &cb, \
+	}; \
+	STARTUP_ARG(SYSCTL, STARTUP_RANK_MIDDLE, \
+	    sysctl_register_test_startup, &__startup_SYSCTL_TEST_ ## name)
+
+#endif /* DEBUG || DEVELOPMENT */
 #pragma mark - internals
 
+__END_DECLS
+
+#ifdef __cplusplus
+template <typename T>
+struct __startup_tunable {
+	static const bool value  = false;
+};
+
+template <>
+struct __startup_tunable <bool>{
+	static const bool value = true;
+};
+#define __startup_type_is_bool(type_t) __startup_tunable<type_t>::value
+#else
+#define __startup_type_is_bool(type_t) __builtin_types_compatible_p(bool, type_t)
+#endif
+
+__BEGIN_DECLS
+
 #define __TUNABLE(type_t, var, key) \
-	static __startup_data char __startup_TUNABLES_name_ ## var[] = key; \
-	static __startup_data struct startup_tunable_spec \
+	static __startup_const char __startup_TUNABLES_name_ ## var[] = key; \
+	static __startup_const struct startup_tunable_spec \
 	__startup_TUNABLES_spec_ ## var = { \
-	    .name = __startup_TUNABLES_name_ ## var, \
-	    .var_addr = (void *)&var, \
-	    .var_len = sizeof(type_t), \
-	    .var_is_bool = __builtin_types_compatible_p(bool, type_t), \
+	        .name = __startup_TUNABLES_name_ ## var, \
+	        .var_addr = (void *)&var, \
+	        .var_len = sizeof(type_t), \
+	        .var_is_bool = __startup_type_is_bool(type_t), \
 	}; \
 	__STARTUP_ARG(var, __LINE__, TUNABLES, STARTUP_RANK_FIRST, \
 	    kernel_startup_tunable_init, &__startup_TUNABLES_spec_ ## var)
+
+#define __TUNABLE_STR(var, key) \
+	static __startup_const char __startup_TUNABLES_name_ ## var[] = key; \
+	static __startup_const struct startup_tunable_spec \
+	__startup_TUNABLES_spec_ ## var = { \
+	        .name = __startup_TUNABLES_name_ ## var, \
+	        .var_addr = (void *)&var, \
+	        .var_len = sizeof(var), \
+	        .var_is_str = true, \
+	}; \
+	__STARTUP_ARG(var, __LINE__, TUNABLES, STARTUP_RANK_FIRST, \
+	    kernel_startup_tunable_init, &__startup_TUNABLES_spec_ ## var)
+
+#define __TUNABLE_DT(type_t, var, dt_base_key, dt_name_key, boot_arg_key, flags) \
+	static __startup_const char __startup_TUNABLES_dt_base_ ## var[] = dt_base_key; \
+	static __startup_const char __startup_TUNABLES_dt_name_ ## var[] = dt_name_key; \
+	static __startup_const char __startup_TUNABLES_name_ ## var[] = boot_arg_key; \
+	static __startup_const struct startup_tunable_dt_spec \
+	__startup_TUNABLES_DT_spec_ ## var = { \
+	        .dt_base = __startup_TUNABLES_dt_base_ ## var, \
+	        .dt_name = __startup_TUNABLES_dt_name_ ## var, \
+	        .dt_chosen_override = (bool)((flags) & TUNABLE_DT_CHECK_CHOSEN), \
+	        .boot_arg_name = (flags & TUNABLE_DT_NO_BOOTARG) ? NULL : __startup_TUNABLES_name_ ## var, \
+	        .var_addr = (void *)&var, \
+	        .var_len = sizeof(type_t), \
+	        .var_is_bool = __startup_type_is_bool(type_t), \
+	}; \
+	__STARTUP_ARG(var, __LINE__, TUNABLES, STARTUP_RANK_FIRST, \
+	    kernel_startup_tunable_dt_init, &__startup_TUNABLES_DT_spec_ ## var)
+
+#define __TUNABLE_DT_SOURCE(type_t, var, source_var, dt_base_key, dt_name_key, boot_arg_key, flags) \
+	static __startup_const char __startup_TUNABLES_dt_base_ ## var[] = dt_base_key; \
+	static __startup_const char __startup_TUNABLES_dt_name_ ## var[] = dt_name_key; \
+	static __startup_const char __startup_TUNABLES_name_ ## var[] = boot_arg_key; \
+	static __startup_const struct startup_tunable_dt_source_spec \
+	__startup_TUNABLES_DT_spec_ ## var = { \
+	        .dt_base = __startup_TUNABLES_dt_base_ ## var, \
+	        .dt_name = __startup_TUNABLES_dt_name_ ## var, \
+	        .dt_chosen_override = (bool)((flags) & TUNABLE_DT_CHECK_CHOSEN), \
+	        .boot_arg_name = (flags & TUNABLE_DT_NO_BOOTARG) ? NULL : __startup_TUNABLES_name_ ## var, \
+	        .var_addr = (void *)&var, \
+	        .var_len = sizeof(type_t), \
+	        .var_is_bool = __startup_type_is_bool(type_t), \
+	    .source_addr = &source_var, \
+	}; \
+	__STARTUP_ARG(var, __LINE__, TUNABLES, STARTUP_RANK_FIRST, \
+	    kernel_startup_tunable_dt_source_init, &__startup_TUNABLES_DT_spec_ ## var)
 
 #ifdef __cplusplus
 #define __STARTUP_FUNC_CAST(func, a) \
@@ -275,13 +836,21 @@ __enum_decl(startup_rank_t, uint32_t, {
 	    (typeof(func(a))(*)(const void *))func
 #endif
 
+#ifdef __BUILDING_XNU_LIB_UNITTEST__
+#define __STARTUP_SET_FUNC_NAME(name) .func_name = #name,
+#else
+#define __STARTUP_SET_FUNC_NAME(name)
+#endif
 
-#define __STARTUP1(name, line, subsystem, rank, func, a, b) \
+#define __STARTUP1(name_v, line, subsystem_v, rank_v, func_v, a, b) \
 	__PLACE_IN_SECTION(STARTUP_HOOK_SEGMENT "," STARTUP_HOOK_SECTION) \
 	static const struct startup_entry \
-	__startup_ ## subsystem ## _entry_ ## name ## _ ## line = { \
-	    STARTUP_SUB_ ## subsystem, \
-	    rank, __STARTUP_FUNC_CAST(func, a), b, \
+	__startup_ ## subsystem_v ## _entry_ ## name_v ## _ ## line = { \
+	    .subsystem = STARTUP_SUB_ ## subsystem_v, \
+	    .rank = rank_v, \
+	        .func = __STARTUP_FUNC_CAST(func_v, a),  \
+	        .arg = b, \
+	    __STARTUP_SET_FUNC_NAME(name_v) \
 	}
 
 #define __STARTUP(name, line, subsystem, rank, func) \
@@ -295,6 +864,9 @@ struct startup_entry {
 	startup_rank_t         rank;
 	void                 (*func)(const void *);
 	const void            *arg;
+#ifdef __BUILDING_XNU_LIB_UNITTEST__
+	const char            *func_name;
+#endif
 };
 
 struct startup_tunable_spec {
@@ -302,7 +874,39 @@ struct startup_tunable_spec {
 	void       *var_addr;
 	int         var_len;
 	bool        var_is_bool;
+	bool        var_is_str;
 };
+
+struct startup_tunable_dt_spec {
+	const char *dt_base;
+	const char *dt_name;
+	bool        dt_chosen_override;
+	const char *boot_arg_name;
+	void       *var_addr;
+	int         var_len;
+	bool        var_is_bool;
+};
+
+struct startup_tunable_dt_source_spec {
+	const char       *dt_base;
+	const char       *dt_name;
+	bool              dt_chosen_override;
+	const char       *boot_arg_name;
+	void             *var_addr;
+	int               var_len;
+	bool              var_is_bool;
+	startup_source_t *source_addr;
+};
+
+#if DEBUG || DEVELOPMENT
+struct sysctl_test_setup_spec {
+	const char *st_name;
+	int (*st_func)(int64_t, int64_t *);
+};
+
+extern void sysctl_register_test_startup(
+	struct sysctl_test_setup_spec *spec);
+#endif /* DEBUG || DEVELOPMENT */
 
 /*
  * Kernel and machine startup declarations
@@ -312,31 +916,60 @@ struct startup_tunable_spec {
 extern void kernel_startup_bootstrap(void);
 extern void kernel_startup_initialize_upto(startup_subsystem_id_t upto);
 extern void kernel_startup_tunable_init(const struct startup_tunable_spec *);
+extern void kernel_startup_tunable_dt_init(const struct startup_tunable_dt_spec *);
+extern void kernel_startup_tunable_dt_source_init(const struct startup_tunable_dt_source_spec *);
 extern void kernel_bootstrap(void);
 
 /* Initialize machine dependent stuff */
 extern void machine_init(void);
 
-extern void slave_main(void *machine_param);
+extern void secondary_cpu_main(void *machine_param);
 
-/*
- * The following must be implemented in machine dependent code.
- */
+/* Secondary cpu initialization */
+extern void machine_cpu_reinit(void *machine_param);
+extern void processor_cpu_reinit(void* machine_param, bool wait_for_cpu_signal, bool is_final_system_sleep);
 
-/* Slave cpu initialization */
-extern void slave_machine_init(void *machine_param);
-
-/* Device subystem initialization */
+/* Device subsystem initialization */
 extern void device_service_create(void);
+
+struct event_hdr {
+	struct event_hdr *next;
+};
+
+extern void event_register_handler(struct event_hdr *event_hdr);
+
+#define __EVENT_REGISTER(name, lno, handler) \
+	static __security_const_late struct name##_event name##_event_##lno = { \
+	        .evt_link.next = &name##_HEAD,                                  \
+	        .evt_cb = (handler),                                            \
+	};                                                                      \
+	__STARTUP_ARG(name, lno, EVENT, STARTUP_RANK_FIRST,                     \
+	    event_register_handler, &name##_event_##lno.evt_link)
 
 #ifdef  MACH_BSD
 
 /* BSD subsystem initialization */
 extern void bsd_init(void);
 
+extern int serverperfmode;
+
+#if defined(XNU_TARGET_OS_OSX)
+static inline bool
+kernel_is_macos_or_server(void)
+{
+	return true;
+}
+#else /* XNU_TARGET_OS_OSX */
+static inline bool
+kernel_is_macos_or_server(void)
+{
+	return serverperfmode != 0;
+}
+#endif /* XNU_TARGET_OS_OSX */
+
 #endif  /* MACH_BSD */
 
-#pragma GCC visibility pop
+__exported_pop
 
 __END_DECLS
 

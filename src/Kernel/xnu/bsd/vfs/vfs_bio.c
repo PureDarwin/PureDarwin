@@ -101,8 +101,8 @@
 #include <mach/memory_object_types.h>
 #include <kern/sched_prim.h>    /* thread_block() */
 
-#include <vm/vm_kern.h>
-#include <vm/vm_pageout.h>
+#include <vm/vm_kern_xnu.h>
+#include <vm/vm_pageout_xnu.h>
 
 #include <sys/kdebug.h>
 
@@ -138,7 +138,7 @@ extern void disk_conditioner_delay(buf_t, int, int, uint64_t);
 static void     bcleanbuf_thread_init(void);
 static void     bcleanbuf_thread(void);
 
-static ZONE_DECLARE(buf_hdr_zone, "buf headers", sizeof(struct buf), ZC_NONE);
+static ZONE_DEFINE_TYPE(buf_hdr_zone, "buf headers", struct buf, ZC_NONE);
 static int      buf_hdr_count;
 
 
@@ -182,6 +182,22 @@ typedef struct {
 } fs_buffer_cache_gc_callout_t;
 
 fs_buffer_cache_gc_callout_t fs_callouts[FS_BUFFER_CACHE_GC_CALLOUTS_MAX_SIZE] = { {NULL, NULL} };
+
+static const uint32_t num_bytes_for_verify_kind[NUM_VERIFY_KIND] = {
+	[VK_HASH_NONE]     =  0,
+	[VK_HASH_SHA3_256] = 32,
+	[VK_HASH_SHA3_384] = 48,
+	[VK_HASH_SHA3_512] = 64,
+};
+
+uint32_t
+get_num_bytes_for_verify_kind(vnode_verify_kind_t verify_kind)
+{
+	if (verify_kind < NUM_VERIFY_KIND) {
+		return num_bytes_for_verify_kind[verify_kind];
+	}
+	return 0;
+}
 
 static __inline__ int
 buf_timestamp(void)
@@ -444,25 +460,20 @@ bufattr_setcpx(__unused bufattr_t bap, __unused struct cpx *cpx)
 bufattr_t
 bufattr_alloc(void)
 {
-	return kheap_alloc(KHEAP_DEFAULT, sizeof(struct bufattr),
-	           Z_WAITOK | Z_ZERO);
+	return kalloc_type(struct bufattr, Z_WAITOK | Z_ZERO);
 }
 
 void
 bufattr_free(bufattr_t bap)
 {
-	kheap_free(KHEAP_DEFAULT, bap, sizeof(struct bufattr));
+	kfree_type(struct bufattr, bap);
 }
 
 bufattr_t
 bufattr_dup(bufattr_t bap)
 {
 	bufattr_t new_bufattr;
-	new_bufattr = kheap_alloc(KHEAP_DEFAULT, sizeof(struct bufattr),
-	    Z_WAITOK);
-	if (new_bufattr == NULL) {
-		return NULL;
-	}
+	new_bufattr = kalloc_type(struct bufattr, Z_WAITOK | Z_NOFAIL);
 
 	/* Copy the provided one into the new copy */
 	memcpy(new_bufattr, bap, sizeof(struct bufattr));
@@ -623,6 +634,162 @@ bufattr_expeditedmeta(bufattr_t bap)
 	return 0;
 }
 
+int
+bufattr_willverify(bufattr_t bap)
+{
+	if ((bap->ba_flags & BA_WILL_VERIFY)) {
+		return 1;
+	}
+	return 0;
+}
+
+vnode_verify_kind_t
+bufattr_verifykind(bufattr_t bap)
+{
+	return bap->ba_verify_type;
+}
+
+void
+bufattr_setverifyvalid(bufattr_t bap)
+{
+	assert(bap->ba_verify_type);
+	bap->ba_flags |= BA_VERIFY_VALID;
+}
+
+uint8_t *
+buf_verifyptr_with_size(buf_t bp, int verify_size, uint32_t *len)
+{
+	upl_t upl;
+	vnode_t vp;
+	mount_t mp;
+	uint32_t num_bytes;
+	uint8_t *buf;
+	uint32_t size;
+
+	if (!len) {
+		return NULL;
+	}
+
+	*len = 0;
+	if (!(os_atomic_load(&bp->b_attr.ba_verify_type, relaxed))) {
+		return NULL;
+	}
+
+	vp = bp->b_vp;
+	if (vp) {
+		mp = vp->v_mount;
+	} else {
+		mp = NULL;
+	}
+
+	num_bytes = get_num_bytes_for_verify_kind(bp->b_attr.ba_verify_type);
+
+	if (!(bp->b_flags & B_CLUSTER)) {
+		if (bp->b_attr.ba_un.verify_ptr && bp->b_bcount && vp) {
+			if (vnode_isspec(bp->b_vp)) {
+				*len = (bp->b_bcount / vp->v_specsize) *  num_bytes;
+			} else if (mp && mp->mnt_devblocksize) {
+				*len = (bp->b_bcount / mp->mnt_devblocksize) *  num_bytes;
+			} else {
+				return NULL;
+			}
+			return bp->b_attr.ba_un.verify_ptr;
+		}
+		return NULL;
+	}
+
+	if (!(bp->b_attr.ba_flags & BA_WILL_VERIFY)) {
+		return NULL;
+	}
+
+	upl = bp->b_upl;
+	if (!(upl && vp && mp && mp->mnt_devblocksize)) {
+		return NULL;
+	}
+
+	buf = upl_fs_verify_buf(upl, &size);
+	if (!(buf && size && len && num_bytes)) {
+		return NULL;
+	}
+
+	if (!verify_size) {
+		verify_size = bp->b_bcount;
+	}
+	*len = (verify_size / mp->mnt_devblocksize) * num_bytes;
+	assert(*len <= size);
+
+	if (bp->b_uploffset == 0) {
+		return buf;
+	} else {
+		uint32_t start = (bp->b_uploffset / mp->mnt_devblocksize) * num_bytes;
+
+		assert((start + *len) <= size);
+		return buf + start;
+	}
+}
+
+uint8_t *
+buf_verifyptr(buf_t bp, uint32_t *len)
+{
+	return buf_verifyptr_with_size(bp, 0, len);
+}
+
+uint8_t *
+bufattr_verifyptr(bufattr_t bap, uint32_t *len)
+{
+	return buf_verifyptr_with_size(__container_of(bap, struct buf, b_attr), 0, len);
+}
+
+errno_t
+buf_verify_enable(buf_t bp, vnode_verify_kind_t verify_type)
+{
+	uint32_t num_bytes;
+
+	if ((bp->b_flags & B_CLUSTER) || !(bp->b_bcount)) {
+		return EINVAL;
+	}
+
+	if (vnode_isspec(bp->b_vp)) {
+		num_bytes = (bp->b_bcount / bp->b_vp->v_specsize) * get_num_bytes_for_verify_kind(verify_type);
+	} else if (bp->b_vp->v_mount && bp->b_vp->v_mount->mnt_devblocksize) {
+		num_bytes = (bp->b_bcount / bp->b_vp->v_mount->mnt_devblocksize) * get_num_bytes_for_verify_kind(verify_type);
+	} else {
+		return EINVAL;
+	}
+
+	uint8_t *verify_ptr = kalloc_data(num_bytes, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+	if (os_atomic_cmpxchg(&bp->b_attr.ba_verify_type, 0, verify_type, acq_rel)) {
+		assert(bp->b_attr.ba_un.verify_ptr == NULL);
+		bp->b_attr.ba_un.verify_ptr = verify_ptr;
+	} else {
+		kfree_data(verify_ptr, num_bytes);
+	}
+
+	return 0;
+}
+
+void
+buf_verify_free(buf_t bp)
+{
+	if ((bp->b_flags & B_CLUSTER) || !(bp->b_bcount)) {
+		return;
+	}
+
+	if (os_atomic_load(&bp->b_attr.ba_verify_type, relaxed)) {
+		uint32_t num_bytes;
+
+		if (vnode_isspec(bp->b_vp)) {
+			num_bytes = (bp->b_bcount / bp->b_vp->v_specsize) * get_num_bytes_for_verify_kind(bp->b_attr.ba_verify_type);
+		} else if (bp->b_vp->v_mount && bp->b_vp->v_mount->mnt_devblocksize) {
+			num_bytes = (bp->b_bcount / bp->b_vp->v_mount->mnt_devblocksize) * get_num_bytes_for_verify_kind(bp->b_attr.ba_verify_type);
+		} else {
+			return;
+		}
+		kfree_data(bp->b_attr.ba_un.verify_ptr, num_bytes);
+		os_atomic_store(&bp->b_attr.ba_verify_type, 0, release);
+	}
+}
+
 errno_t
 buf_error(buf_t bp)
 {
@@ -750,6 +917,11 @@ buf_setvnode(buf_t bp, vnode_t vp)
 	bp->b_vp = vp;
 }
 
+vnode_t
+buf_vnop_vnode(buf_t bp)
+{
+	return bp->b_vnop_vp ? bp->b_vnop_vp :  bp->b_vp;
+}
 
 void *
 buf_callback(buf_t bp)
@@ -887,6 +1059,7 @@ buf_create_shadow_internal(buf_t bp, boolean_t force_copy, uintptr_t external_st
 	io_bp->b_flags = bp->b_flags & (B_META | B_ZALLOC | B_ASYNC | B_READ | B_FUA);
 	io_bp->b_blkno = bp->b_blkno;
 	io_bp->b_lblkno = bp->b_lblkno;
+	io_bp->b_lblksize = bp->b_lblksize;
 
 	if (iodone) {
 		io_bp->b_transaction = arg;
@@ -1048,6 +1221,16 @@ buf_lblkno(buf_t bp)
 	return bp->b_lblkno;
 }
 
+uint32_t
+buf_lblksize(buf_t bp)
+{
+	if (bp->b_flags & B_CLUSTER) {
+		return CLUSTER_IO_BLOCK_SIZE;
+	} else {
+		return (uint32_t)(bp->b_lblksize);
+	}
+}
+
 void
 buf_setblkno(buf_t bp, daddr64_t blkno)
 {
@@ -1058,6 +1241,14 @@ void
 buf_setlblkno(buf_t bp, daddr64_t lblkno)
 {
 	bp->b_lblkno = lblkno;
+}
+
+void
+buf_setlblksize(buf_t bp, uint32_t lblksize)
+{
+	if (!(bp->b_flags & B_CLUSTER)) {
+		bp->b_lblksize = lblksize;
+	}
 }
 
 dev_t
@@ -1133,8 +1324,9 @@ buf_proc(buf_t bp)
 }
 
 
-errno_t
-buf_map(buf_t bp, caddr_t *io_addr)
+static errno_t
+buf_map_range_internal(buf_t bp, caddr_t *io_addr, boolean_t legacymode,
+    vm_prot_t prot)
 {
 	buf_t           real_bp;
 	vm_offset_t     vaddr;
@@ -1157,14 +1349,26 @@ buf_map(buf_t bp, caddr_t *io_addr)
 		*io_addr = (caddr_t)real_bp->b_datap;
 		return 0;
 	}
-	kret = ubc_upl_map(bp->b_upl, &vaddr);    /* Map it in */
+
+	if (legacymode) {
+		kret = ubc_upl_map(bp->b_upl, &vaddr);    /* Map it in */
+		if (kret == KERN_SUCCESS) {
+			vaddr += bp->b_uploffset;
+		}
+	} else {
+		upl_t upl = bp->b_upl;
+		upl_set_map_exclusive(upl);
+		kret = ubc_upl_map_range(upl, bp->b_uploffset, bp->b_bcount, prot, &vaddr);    /* Map it in */
+		if (kret != KERN_SUCCESS) {
+			upl_clear_map_exclusive(upl);
+		}
+	}
 
 	if (kret != KERN_SUCCESS) {
 		*io_addr = NULL;
 
 		return ENOMEM;
 	}
-	vaddr += bp->b_uploffset;
 
 	*io_addr = (caddr_t)vaddr;
 
@@ -1172,7 +1376,32 @@ buf_map(buf_t bp, caddr_t *io_addr)
 }
 
 errno_t
-buf_unmap(buf_t bp)
+buf_map_range(buf_t bp, caddr_t *io_addr)
+{
+	return buf_map_range_internal(bp, io_addr, false, VM_PROT_DEFAULT);
+}
+
+errno_t
+buf_map_range_with_prot(buf_t bp, caddr_t *io_addr, vm_prot_t prot)
+{
+	/* Only VM_PROT_READ and/or VM_PROT_WRITE is allowed. */
+	prot &= (VM_PROT_READ | VM_PROT_WRITE);
+	if (prot == VM_PROT_NONE) {
+		*io_addr = NULL;
+		return EINVAL;
+	}
+
+	return buf_map_range_internal(bp, io_addr, false, prot);
+}
+
+errno_t
+buf_map(buf_t bp, caddr_t *io_addr)
+{
+	return buf_map_range_internal(bp, io_addr, true, VM_PROT_DEFAULT);
+}
+
+static errno_t
+buf_unmap_range_internal(buf_t bp, boolean_t legacymode)
 {
 	buf_t           real_bp;
 	kern_return_t   kret;
@@ -1203,12 +1432,30 @@ buf_unmap(buf_t bp)
 		 */
 		bp->b_flags |= B_AGE;
 	}
-	kret = ubc_upl_unmap(bp->b_upl);
+
+	if (legacymode) {
+		kret = ubc_upl_unmap(bp->b_upl);
+	} else {
+		kret = ubc_upl_unmap_range(bp->b_upl, bp->b_uploffset, bp->b_bcount);
+		upl_clear_map_exclusive(bp->b_upl);
+	}
 
 	if (kret != KERN_SUCCESS) {
 		return EINVAL;
 	}
 	return 0;
+}
+
+errno_t
+buf_unmap_range(buf_t bp)
+{
+	return buf_unmap_range_internal(bp, false);
+}
+
+errno_t
+buf_unmap(buf_t bp)
+{
+	return buf_unmap_range_internal(bp, true);
 }
 
 
@@ -1258,6 +1505,7 @@ buf_strategy_fragmented(vnode_t devvp, buf_t bp, off_t f_offset, size_t contig_b
 	io_bp = alloc_io_buf(devvp, 0);
 
 	io_bp->b_lblkno = bp->b_lblkno;
+	io_bp->b_lblksize = bp->b_lblksize;
 	io_bp->b_datap  = bp->b_datap;
 	io_resid        = bp->b_bcount;
 	io_direction    = bp->b_flags & B_READ;
@@ -1351,7 +1599,7 @@ buf_strategy(vnode_t devvp, void *ap)
 #endif
 
 	if (vp == NULL || vp->v_type == VCHR || vp->v_type == VBLK) {
-		panic("buf_strategy: b_vp == NULL || vtype == VCHR | VBLK\n");
+		panic("buf_strategy: b_vp == NULL || vtype == VCHR | VBLK");
 	}
 	/*
 	 * associate the physical device with
@@ -1381,7 +1629,9 @@ buf_strategy(vnode_t devvp, void *ap)
 			off_t       f_offset;
 			size_t  contig_bytes;
 
-			if ((error = VNOP_BLKTOOFF(vp, bp->b_lblkno, &f_offset))) {
+			if (bp->b_lblksize && bp->b_lblkno >= 0) {
+				f_offset = bp->b_lblkno * bp->b_lblksize;
+			} else if ((error = VNOP_BLKTOOFF(vp, bp->b_lblkno, &f_offset))) {
 				DTRACE_IO1(start, buf_t, bp);
 				buf_seterror(bp, error);
 				buf_biodone(bp);
@@ -1437,7 +1687,10 @@ buf_strategy(vnode_t devvp, void *ap)
 		/* No need to go here for older EAs */
 		if (cpx_use_offset_for_iv(cpx) && !cpx_synthetic_offset_for_iv(cpx)) {
 			off_t f_offset;
-			if ((error = VNOP_BLKTOOFF(bp->b_vp, bp->b_lblkno, &f_offset))) {
+
+			if (bp->b_flags & B_CLUSTER) {
+				f_offset = bp->b_lblkno * CLUSTER_IO_BLOCK_SIZE;
+			} else if ((error = VNOP_BLKTOOFF(bp->b_vp, bp->b_lblkno, &f_offset))) {
 				return error;
 			}
 
@@ -1474,7 +1727,9 @@ buf_strategy(vnode_t devvp, void *ap)
 	 * we were able to successfully set up the
 	 * physical block mapping
 	 */
+	bp->b_vnop_vp = devvp;
 	error = VOCALL(devvp->v_op, VOFFSET(vnop_strategy), ap);
+	bp->b_vnop_vp = NULLVP;
 	DTRACE_FSINFO(strategy, vnode_t, vp);
 	return error;
 }
@@ -2139,7 +2394,7 @@ bufinit(void)
 
 	/* Register a callout for relieving vm pressure */
 	if (vm_set_buffer_cleanup_callout(buffer_cache_gc) != KERN_SUCCESS) {
-		panic("Couldn't register buffer cache callout for vm pressure!\n");
+		panic("Couldn't register buffer cache callout for vm pressure!");
 	}
 }
 
@@ -2150,7 +2405,7 @@ bufinit(void)
 #define MINMETA 512
 #define MAXMETA 16384
 
-KALLOC_HEAP_DEFINE(KHEAP_VFS_BIO, "vfs_bio", KHEAP_ID_DATA_BUFFERS);
+KALLOC_HEAP_DEFINE(KHEAP_VFS_BIO, "vfs_bio", KHEAP_ID_DATA_SHARED);
 
 static struct buf *
 bio_doread(vnode_t vp, daddr64_t blkno, int size, kauth_cred_t cred, int async, int queuetype)
@@ -2529,7 +2784,7 @@ buf_brelse_shadow(buf_t bp)
 	__IGNORE_WCASTALIGN(bp_head = (buf_t)bp->b_orig);
 
 	if (bp_head->b_whichq != -1) {
-		panic("buf_brelse_shadow: bp_head on freelist %d\n", bp_head->b_whichq);
+		panic("buf_brelse_shadow: bp_head on freelist %d", bp_head->b_whichq);
 	}
 
 #ifdef BUF_MAKE_PRIVATE
@@ -2637,7 +2892,7 @@ buf_brelse(buf_t bp)
 
 
 	if (bp->b_whichq != -1 || !(bp->b_lflags & BL_BUSY)) {
-		panic("buf_brelse: bad buffer = %p\n", bp);
+		panic("buf_brelse: bad buffer = %p", bp);
 	}
 
 #ifdef JOE_DEBUG
@@ -2686,7 +2941,7 @@ buf_brelse(buf_t bp)
 			bp->b_transaction = NULL;
 
 			if (iodone_func == NULL) {
-				panic("brelse: bp @ %p has NULL b_iodone!\n", bp);
+				panic("brelse: bp @ %p has NULL b_iodone!", bp);
 			}
 			(*iodone_func)(bp, arg);
 		}
@@ -2753,6 +3008,8 @@ buf_brelse(buf_t bp)
 			panic("brelse: UPL set for non VREG; vp=%p", bp->b_vp);
 		}
 	}
+
+	buf_verify_free(bp);
 
 	/*
 	 * If it's locked, don't report an error; try again later.
@@ -3047,7 +3304,7 @@ start:
 				/*
 				 * unknown operation requested
 				 */
-				panic("getblk: paging or unknown operation for incore busy buffer - %x\n", operation);
+				panic("getblk: paging or unknown operation for incore busy buffer - %x", operation);
 				/*NOTREACHED*/
 				break;
 			}
@@ -3162,7 +3419,7 @@ start:
 				break;
 
 			default:
-				panic("getblk: paging or unknown operation for incore buffer- %d\n", operation);
+				panic("getblk: paging or unknown operation for incore buffer- %d", operation);
 				/*NOTREACHED*/
 				break;
 			}
@@ -3216,6 +3473,7 @@ start:
 		}
 
 		bp->b_blkno = bp->b_lblkno = blkno;
+		bp->b_lblksize = 0; /* Should be set by caller */
 		bp->b_vp = vp;
 
 		/*
@@ -3532,7 +3790,9 @@ allocbuf(buf_t bp, int size)
 						*(void **)(&bp->b_datap) = grab_memory_for_meta_buf(nsize);
 					} else {
 						bp->b_datap = (uintptr_t)NULL;
-						kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size, VM_KERN_MEMORY_FILE);
+						kmem_alloc(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size,
+						    KMA_KOBJECT | KMA_DATA_SHARED | KMA_NOFAIL,
+						    VM_KERN_MEMORY_FILE);
 						CLR(bp->b_flags, B_ZALLOC);
 					}
 					bcopy(elem, (caddr_t)bp->b_datap, bp->b_bufsize);
@@ -3544,7 +3804,9 @@ allocbuf(buf_t bp, int size)
 				if ((vm_size_t)bp->b_bufsize < desired_size) {
 					/* reallocate to a bigger size */
 					bp->b_datap = (uintptr_t)NULL;
-					kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size, VM_KERN_MEMORY_FILE);
+					kmem_alloc(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size,
+					    KMA_KOBJECT | KMA_DATA_SHARED | KMA_NOFAIL,
+					    VM_KERN_MEMORY_FILE);
 					bcopy(elem, (caddr_t)bp->b_datap, bp->b_bufsize);
 					kmem_free(kernel_map, (vm_offset_t)elem, bp->b_bufsize);
 				} else {
@@ -3560,12 +3822,10 @@ allocbuf(buf_t bp, int size)
 				*(void **)(&bp->b_datap) = grab_memory_for_meta_buf(nsize);
 				SET(bp->b_flags, B_ZALLOC);
 			} else {
-				kmem_alloc_kobject(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size, VM_KERN_MEMORY_FILE);
+				kmem_alloc(kernel_map, (vm_offset_t *)&bp->b_datap, desired_size,
+				    KMA_KOBJECT | KMA_DATA_SHARED | KMA_NOFAIL,
+				    VM_KERN_MEMORY_FILE);
 			}
-		}
-
-		if (bp->b_datap == 0) {
-			panic("allocbuf: NULL b_datap");
 		}
 	}
 	bp->b_bufsize = (uint32_t)desired_size;
@@ -3664,16 +3924,13 @@ add_newbufs:
 		lck_mtx_unlock(&buf_mtx);
 
 		/* Create a new temporary buffer header */
-		bp = (struct buf *)zalloc(buf_hdr_zone);
-
-		if (bp) {
-			bufhdrinit(bp);
-			bp->b_whichq = BQ_EMPTY;
-			bp->b_timestamp = buf_timestamp();
-			BLISTNONE(bp);
-			SET(bp->b_flags, B_HDRALLOC);
-			*queue = BQ_EMPTY;
-		}
+		bp = zalloc_flags(buf_hdr_zone, Z_WAITOK | Z_NOFAIL);
+		bufhdrinit(bp);
+		bp->b_whichq = BQ_EMPTY;
+		bp->b_timestamp = buf_timestamp();
+		BLISTNONE(bp);
+		SET(bp->b_flags, B_HDRALLOC);
+		*queue = BQ_EMPTY;
 		lck_mtx_lock_spin(&buf_mtx);
 
 		if (bp) {
@@ -3756,7 +4013,7 @@ add_newbufs:
 	}
 found:
 	if (ISSET(bp->b_flags, B_LOCKED) || ISSET(bp->b_lflags, BL_BUSY)) {
-		panic("getnewbuf: bp @ %p is LOCKED or BUSY! (flags 0x%x)\n", bp, bp->b_flags);
+		panic("getnewbuf: bp @ %p is LOCKED or BUSY! (flags 0x%x)", bp, bp->b_flags);
 	}
 
 	/* Clean it */
@@ -3874,6 +4131,7 @@ bcleanbuf(buf_t bp, boolean_t discard)
 		bp->b_redundancy_flags = 0;
 		bp->b_dev = NODEV;
 		bp->b_blkno = bp->b_lblkno = 0;
+		bp->b_lblksize = 0;
 		bp->b_iodone = NULL;
 		bp->b_error = 0;
 		bp->b_resid = 0;
@@ -4092,6 +4350,9 @@ buf_biodone(buf_t bp)
 	KERNEL_DEBUG((FSDBG_CODE(DBG_FSRW, 387)) | DBG_FUNC_START,
 	    bp, bp->b_datap, bp->b_flags, 0, 0);
 
+	/* Record our progress. */
+	vfs_update_last_completion_time();
+
 	if (ISSET(bp->b_flags, B_DONE)) {
 		panic("biodone already");
 	}
@@ -4197,7 +4458,7 @@ buf_biodone(buf_t bp)
 		int     callout = ISSET(bp->b_flags, B_CALL);
 
 		if (iodone_func == NULL) {
-			panic("biodone: bp @ %p has NULL b_iodone!\n", bp);
+			panic("biodone: bp @ %p has NULL b_iodone!", bp);
 		}
 
 		CLR(bp->b_flags, (B_CALL | B_FILTER));  /* filters and callouts are one-shot */
@@ -4263,10 +4524,12 @@ biodone_done:
 vm_offset_t
 buf_kernel_addrperm_addr(void * addr)
 {
+	addr = (void *) VM_KERNEL_STRIP_PTR(addr);
+
 	if ((vm_offset_t)addr == 0) {
 		return 0;
 	} else {
-		return (vm_offset_t)addr + buf_kernel_addrperm;
+		return ML_ADDRPERM((vm_offset_t)addr, buf_kernel_addrperm);
 	}
 }
 
@@ -4343,7 +4606,7 @@ vfs_bufstats()
 
 #define NRESERVEDIOBUFS 128
 
-#define MNT_VIRTUALDEV_MAX_IOBUFS 16
+#define MNT_VIRTUALDEV_MAX_IOBUFS 128
 #define VIRTUALDEV_MAX_IOBUFS ((40*niobuf_headers)/100)
 
 buf_t
@@ -4417,6 +4680,7 @@ alloc_io_buf(vnode_t vp, int priv)
 	}
 	bp->b_redundancy_flags = 0;
 	bp->b_blkno = bp->b_lblkno = 0;
+	bp->b_lblksize = 0;
 #ifdef JOE_DEBUG
 	bp->b_owner = current_thread();
 	bp->b_tag   = 6;

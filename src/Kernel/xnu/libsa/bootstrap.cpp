@@ -104,6 +104,7 @@ static const char * sKernelComponentNames[] = {
 	"com.apple.kpi.dsep",
 	"com.apple.kpi.iokit",
 	"com.apple.kpi.kasan",
+	"com.apple.kpi.kcov",
 	"com.apple.kpi.libkern",
 	"com.apple.kpi.mach",
 	"com.apple.kpi.private",
@@ -335,13 +336,28 @@ skip_adding_kexts:
 	/*
 	 * Free the prelink info segment, we're done with it.
 	 */
+
+#if !XNU_TARGET_OS_OSX
+	/*
+	 * For now, we are limiting this freeing to embedded platforms.
+	 * To enable freeing of prelink info segment on macOS, we need to
+	 * fix rdar://88929016
+	 */
+	bool freedPrelinkInfo = false;
 	kernel_segment_command_t *prelinkInfoSegment = NULL;
-	prelinkInfoSegment = getsegbyname(kPrelinkInfoSegment);
+	prelinkInfoSegment = getsegbynamefromheader(mh, kPrelinkInfoSegment);
 	if (prelinkInfoSegment) {
-		ml_static_mfree((vm_offset_t)prelinkInfoSegment->vmaddr,
-		    (vm_size_t)prelinkInfoSegment->vmsize);
+		if (prelinkInfoSegment->vmsize != 0) {
+			freedPrelinkInfo = true;
+			ml_static_mfree((vm_offset_t)prelinkInfoSegment->vmaddr,
+			    (vm_size_t)prelinkInfoSegment->vmsize);
+		}
 	}
 
+	if (!freedPrelinkInfo) {
+		OSKextLog(NULL, kOSKextLogErrorLevel | kOSKextLogArchiveFlag, "Failed to free prelink info.");
+	}
+#endif
 	return;
 }
 
@@ -634,11 +650,13 @@ KLDBootstrap::loadKernelExternalComponents(void)
 		isKernelExternalComponent = OSDynamicCast(OSBoolean,
 		    theKext->getPropertyForHostArch(kAppleKernelExternalComponentKey));
 		if (isKernelExternalComponent && isKernelExternalComponent->isTrue()) {
+			OSReturn loadResult;
+
 			OSKextLog(/* kext */ NULL,
 			    kOSKextLogStepLevel |
 			    kOSKextLogLoadFlag,
 			    "Loading kernel external component %s.", bundleID->getCStringNoCopy());
-			OSKext::loadKextWithIdentifier(bundleID->getCStringNoCopy(),
+			loadResult = OSKext::loadKextWithIdentifier(bundleID->getCStringNoCopy(),
 			    /* allowDefer */ false);
 		}
 	}
@@ -780,4 +798,3 @@ bootstrapLoadSecurityExtensions(void)
 	sBootstrapObject.loadSecurityExtensions();
 	return;
 }
-

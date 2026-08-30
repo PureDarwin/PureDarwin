@@ -9,7 +9,6 @@
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 #include <kern/debug.h>
-#include <kern/startup.h>
 #include <kern/simple_lock.h>
 #include <os/log_private.h>
 #include <libkern/section_keywords.h>
@@ -18,67 +17,59 @@
 typedef void (*PE_kputc_t)(char);
 SECURITY_READ_ONLY_LATE(PE_kputc_t) PE_kputc;
 
-// disable_serial_output disables kprintf() *and* unbuffered panic output.
+/**
+ * disable_serial_output disables kprintf() *and* unbuffered panic output
+ * except for SPTM based early panic serial output via `sptm_serial_putc()`.
+ */
+SECURITY_READ_ONLY_LATE(bool) disable_serial_output = true;
 // disable_kprintf_output only disables kprintf().
-SECURITY_READ_ONLY_LATE(unsigned int) disable_serial_output = TRUE;
-static SECURITY_READ_ONLY_LATE(unsigned int) disable_kprintf_output = TRUE;
+SECURITY_READ_ONLY_LATE(bool) disable_kprintf_output = true;
+// disable_iolog_serial_output only disables IOLog, controlled by
+// SERIALMODE_NO_IOLOG.
+SECURITY_READ_ONLY_LATE(bool) disable_iolog_serial_output = false;
+SECURITY_READ_ONLY_LATE(bool) enable_dklog_serial_output = false;
 
 static SIMPLE_LOCK_DECLARE(kprintf_lock, 0);
 
 static void serial_putc_crlf(char c);
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-extern void pd_bcm2835_early_uart_tag(char phase);
-#endif
-
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-extern void vc_serial_record_early(char c);
-
-static void
-pd_early_kputc(char c)
-{
-	vc_serial_record_early(c);
-	cnputc_unbuffered(c);
-}
-#endif /* PUREDARWIN_EARLY_FB_MARK */
 
 __startup_func
 static void
-PE_init_kprintf(void)
+PE_init_kprintf_config(void)
 {
 	if (PE_state.initialized == FALSE) {
 		panic("Platform Expert not initialized");
 	}
 
-	if (debug_boot_arg & DB_KPRT) {
-		disable_serial_output = FALSE;
+	if (debug_boot_arg & (DB_KPRT | DB_PRT)) {
+		disable_serial_output = false;
 	}
 
 #if DEBUG
-	disable_kprintf_output = FALSE;
+	disable_kprintf_output = false;
 #elif DEVELOPMENT
 	bool enable_kprintf_spam = false;
 	if (PE_parse_boot_argn("-enable_kprintf_spam", &enable_kprintf_spam, sizeof(enable_kprintf_spam))) {
-		disable_kprintf_output = FALSE;
+		disable_kprintf_output = false;
 	}
 #endif
+}
+// Do this early, so other code can depend on whether kprintf is enabled.
+STARTUP(TUNABLES, STARTUP_RANK_LAST, PE_init_kprintf_config);
 
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-	pd_bcm2835_early_uart_tag('W');	/* about to probe serial */
-#endif
+__startup_func
+static void
+PE_init_kprintf(void)
+{
 	if (serial_init()) {
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-		pd_bcm2835_early_uart_tag('X');	/* serial console attached */
-#endif
 		PE_kputc = serial_putc_crlf;
 	} else {
-#if defined(ARM64_BOARD_CONFIG_BCM2837)
-		pd_bcm2835_early_uart_tag('Y');	/* no serial device found */
-#endif
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-		PE_kputc = pd_early_kputc;
-#else
-		PE_kputc = cnputc_unbuffered;
-#endif
+		/**
+		 * If serial failed to initialize then fall back to using the console,
+		 * and assume the console is using the video console (because clearly
+		 * serial doesn't work).
+		 */
+		PE_kputc = console_write_unbuffered;
 	}
 }
 STARTUP(KPRINTF, STARTUP_RANK_FIRST, PE_init_kprintf);
@@ -137,7 +128,7 @@ kprintf(const char *fmt, ...)
 
 		simple_unlock(&kprintf_lock);
 
-#if INTERRUPT_MASKED_DEBUG
+#if SCHED_HYGIENE_DEBUG
 		/*
 		 * kprintf holds interrupts disabled for far too long
 		 * and would trip the spin-debugger.  If we are about to reenable
@@ -153,17 +144,17 @@ kprintf(const char *fmt, ...)
 		ml_set_interrupts_enabled(state);
 		va_end(listp);
 
-		if (startup_phase >= STARTUP_SUB_OSLOG) {
-			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
-		}
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat"
+		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp2, caller);
 		va_end(listp2);
 	} else {
 		va_start(listp, fmt);
-		if (startup_phase >= STARTUP_SUB_OSLOG) {
-			os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp, caller);
-		}
+		os_log_with_args(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, fmt, listp, caller);
 		va_end(listp);
 	}
+#pragma clang diagnostic pop
 }
 
 static void
@@ -173,6 +164,12 @@ serial_putc_crlf(char c)
 		uart_putc('\r');
 	}
 	uart_putc(c);
+}
+
+void
+serial_putc_options(char c, bool poll)
+{
+	uart_putc_options(c, poll);
 }
 
 void

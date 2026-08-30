@@ -302,8 +302,14 @@ di_root_ramfile_buf(void *buf, size_t bufsz, char *devname, size_t devsz, dev_t 
 	OSNumber *myDevT = NULL;
 	IOMemoryDescriptor *mem = NULL;
 
-	mem = IOMemoryDescriptor::withAddress(buf, bufsz, kIODirectionInOut);
-	assert(mem);
+	/* Use kIOMemoryAutoPrepare and wire down the buffer so readBytes() will work. */
+	mem = IOMemoryDescriptor::withAddressRange(
+		(mach_vm_address_t)buf, (mach_vm_size_t)bufsz,
+		kIODirectionOut | kIOMemoryAutoPrepare, kernel_task);
+	if (!mem) {
+		res = kIOReturnNoMemory;
+		goto out;
+	}
 
 	controller = di_load_controller();
 	if (controller) {
@@ -345,10 +351,7 @@ di_root_ramfile_buf(void *buf, size_t bufsz, char *devname, size_t devsz, dev_t 
 	}
 
 out:
-	if (res) {
-		OSSafeReleaseNULL(mem);
-	}
-
+	OSSafeReleaseNULL(mem);
 	return res;
 }
 
@@ -383,7 +386,11 @@ di_root_ramfile( IORegistryEntry * entry )
 		extentData  = OSData::withData(data);
 		assert(extentData);
 
+		/* BEGIN IGNORE CODESTYLE */
+		__typed_allocators_ignore_push
 		extentList  = (IOAddressRange *) extentData->getBytesNoCopy();
+		__typed_allocators_ignore_pop
+		/* END IGNORE CODESTYLE */
 		extentCount = extentData->getLength() / sizeof(IOAddressRange);
 		extentSize  = 0;
 		remain = dmgSize;

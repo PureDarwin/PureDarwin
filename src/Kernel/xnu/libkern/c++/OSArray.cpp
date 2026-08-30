@@ -55,8 +55,6 @@ OSMetaClassDefineReservedUnused(OSArray, 7);
 bool
 OSArray::initWithCapacity(unsigned int inCapacity)
 {
-	unsigned int size;
-
 	if (!super::init()) {
 		return false;
 	}
@@ -66,8 +64,7 @@ OSArray::initWithCapacity(unsigned int inCapacity)
 		return false;
 	}
 
-	size = sizeof(*array) * inCapacity;
-	array = (ArraySharedPtrType *)kalloc_container(size);
+	array = kallocp_type_container(ArrayPtrType, &inCapacity, Z_WAITOK_ZERO);
 	if (!array) {
 		return false;
 	}
@@ -75,9 +72,7 @@ OSArray::initWithCapacity(unsigned int inCapacity)
 	count = 0;
 	capacity = inCapacity;
 	capacityIncrement = (inCapacity)? inCapacity : 16;
-
-	os::uninitialized_value_construct(array, array + capacity);
-	OSCONTAINER_ACCUMSIZE(size);
+	OSCONTAINER_ACCUMSIZE(sizeof(*array) * inCapacity);
 
 	return true;
 }
@@ -175,7 +170,7 @@ OSArray::free()
 
 	if (array) {
 		os::destroy(array, array + capacity);
-		kfree(array, sizeof(*array) * capacity);
+		kfree_type(ArrayPtrType, capacity, array);
 		OSCONTAINER_ACCUMSIZE( -(sizeof(*array) * capacity));
 	}
 
@@ -210,8 +205,7 @@ unsigned int
 OSArray::ensureCapacity(unsigned int newCapacity)
 {
 	ArraySharedPtrType *newArray;
-	vm_size_t    finalCapacity;
-	vm_size_t    oldSize, newSize;
+	unsigned int        finalCapacity;
 
 	if (newCapacity <= capacity) {
 		return capacity;
@@ -226,28 +220,12 @@ OSArray::ensureCapacity(unsigned int newCapacity)
 		return capacity;
 	}
 
-	newSize = sizeof(*newArray) * finalCapacity;
-
-	newArray = (decltype(newArray))kallocp_container(&newSize);
+	newArray = kreallocp_type_container(ArrayPtrType, array,
+	    capacity, &finalCapacity, Z_WAITOK_ZERO);
 	if (newArray) {
-		// use all of the actual allocation size
-		finalCapacity = (newSize / sizeof(*newArray));
-		if (finalCapacity > UINT_MAX) {
-			// failure, too large
-			kfree(newArray, newSize);
-			return capacity;
-		}
-
-		oldSize = sizeof(*array) * capacity;
-
-		OSCONTAINER_ACCUMSIZE(((size_t)newSize) - ((size_t)oldSize));
-
-		os::uninitialized_move(array, array + capacity, newArray);
-		os::uninitialized_value_construct(newArray + capacity, newArray + finalCapacity);
-		os::destroy(array, array + capacity);
-		kfree(array, oldSize);
+		OSCONTAINER_ACCUMSIZE(sizeof(*array) * (finalCapacity - capacity));
 		array = newArray;
-		capacity = (unsigned int) finalCapacity;
+		capacity = finalCapacity;
 	}
 
 	return capacity;
