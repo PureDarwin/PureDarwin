@@ -72,14 +72,37 @@ enum IOHIDLibUserClientCommandCodes {
 
 __BEGIN_DECLS
 
+/*
+ * Set in IOHIDElementValue.flags when value[] holds a pointer to the report
+ * rather than the report itself; hid.subproj's
+ * _IOHIDValueCreateWithElementValuePtr branches on it.
+ */
+enum {
+	kIOHIDElementValueOOBReport = 0x00000001
+};
+
 typedef struct _IOHIDElementValue
 {
 	IOHIDElementCookie	cookie;
 	UInt32              totalSize;
 	AbsoluteTime        timestamp;
 	UInt32              generation;
+	/* Added for the newer hid.subproj; setMemoryForElementValue bzeroes the
+	 * block, so the kext leaves it 0 and userspace takes the inline path. */
+	UInt32              flags;
 	UInt32              value[1];
 }IOHIDElementValue;
+
+/*
+ * The header-only form userspace writes when posting values back
+ * (_IOHIDValueCopyToElementValueHeader): identity, byte length, payload.
+ */
+typedef struct _IOHIDElementValueHeader
+{
+	IOHIDElementCookie	cookie;
+	UInt32              length;
+	UInt32              value[1];
+}IOHIDElementValueHeader;
 
 typedef struct _IOHIDReportReq
 {
@@ -108,7 +131,12 @@ struct IOHIDElementStruct
 	SInt32				scaledMax;
 	UInt32				size;
 	UInt32				reportSize;
-	UInt32				reportCount;
+	/* Renamed rawReportCount in later IOHIDFamily; hid.subproj uses the new
+	 * spelling and the kext the old. Union keeps the shared ABI identical. */
+	union {
+		UInt32			reportCount;
+		UInt32			rawReportCount;
+	};
 	UInt32				reportID;
 	UInt32				unit;
 	UInt32				unitExponent;

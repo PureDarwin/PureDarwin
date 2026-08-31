@@ -625,6 +625,8 @@ __os_assert_log
 __os_assumes_log_ctx
 __os_assumes_log
 __os_crash
+__os_crash_fmt
+__os_avoid_tail_call
 __os_log_default
 __os_log_internal
 _auditon
@@ -635,6 +637,7 @@ _audit_token_to_asid
 _dispatch_activate
 _dispatch_assert_queue$V2
 _dispatch_mach_connect
+_dispatch_mach_create
 _dispatch_mach_create_f
 _dispatch_mach_mig_demux
 _dispatch_mach_msg_get_msg
@@ -1005,6 +1008,7 @@ _puts
 _qsort
 _raise
 _rand
+_rand_r
 _read
 _readv
 _readdir$INODE64

@@ -844,3 +844,44 @@ Boolean CFURLDestroyResource(CFURLRef url, SInt32 *errorCode) {
 #pragma GCC diagnostic pop
 
 
+
+/*
+ * PureDarwin: declared in CFURL.h but never implemented here. Per that
+ * declaration this applies only to file system resources; other URL types
+ * return false. IOCFPlugIn.c uses it to skip unreachable plugin paths.
+ */
+Boolean CFURLResourceIsReachable(CFURLRef url, CFErrorRef *error) {
+    char cPath[CFMaxPathSize];
+
+    if (error) *error = NULL;
+    if (!url) return false;
+
+    CFStringRef scheme = CFURLCopyScheme(url);
+    Boolean isFile = scheme && CFEqual(scheme, CFSTR("file"));
+    if (scheme) CFRelease(scheme);
+    if (!isFile) {
+        if (error) {
+            *error = CFErrorCreate(kCFAllocatorDefault, kCFErrorDomainCocoa,
+                                   kCFURLUnknownSchemeError, NULL);
+        }
+        return false;
+    }
+
+    if (!CFURLGetFileSystemRepresentation(url, true, (unsigned char *)cPath, CFMaxPathSize)) {
+        if (error) {
+            *error = CFErrorCreate(kCFAllocatorDefault, kCFErrorDomainCocoa,
+                                   kCFURLImproperArgumentsError, NULL);
+        }
+        return false;
+    }
+
+    if (access(cPath, F_OK) != 0) {
+        if (error) {
+            *error = CFErrorCreate(kCFAllocatorDefault, kCFErrorDomainPOSIX,
+                                   errno, NULL);
+        }
+        return false;
+    }
+
+    return true;
+}

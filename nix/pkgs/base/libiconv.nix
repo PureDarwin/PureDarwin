@@ -108,8 +108,10 @@ EOF
     mkdir -p "$out/usr/include"
     install -m644 include/iconv.h.inst "$out/usr/include/iconv.h"
 
-    # Everything else here installs into $out/{include,lib}, and consumers map
-    # dependencies as -I$dep/include -L$dep/lib without special-casing.
+    # Build-time convenience for consumers that map dependencies as
+    # -I$dep/include -L$dep/lib without special-casing (glib's meson
+    # dependency('iconv') resolves through these). image.nix skips them when
+    # staging, since they would collide with the root's real include/ and lib/.
     ln -s usr/include "$out/include"
     ln -s usr/lib "$out/lib"
 

@@ -6,6 +6,8 @@
 , libSystem
 , corefoundation
 , iokitCFStatic
+, libobjc
+, foundation
 , isArmv6 ? lib.hasPrefix "armv6-" targetTriple
 , appleSdk
 }:
@@ -32,11 +34,12 @@ stdenv.mkDerivation {
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib \
+      -L${libobjc}/usr/lib -L${foundation}/usr/lib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,/usr/lib/libIOKitCF.dylib \
       -Wl,-force_load,${iokitCFStatic}/usr/lib/system/libIOKitCF.a \
       ${lib.optionalString (!isArmv6) "-Wl,-fixup_chains"} \
-      -lCoreFoundation -lSystem \
+      -lobjc -lFoundation -lCoreFoundation -lSystem \
       -o libIOKitCF.dylib
 
     runHook postBuild

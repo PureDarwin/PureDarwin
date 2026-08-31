@@ -71,8 +71,13 @@ void
 _os_crash_fmt(os_log_pack_t pack, size_t pack_size)
 {
     (void)pack_size;
+#ifdef PD_HAVE_REAL_OS_LOG_PACK
+    _os_crash((pack != NULL && pack->olp_format != NULL)
+        ? pack->olp_format : "(no message)");
+#else
     _os_crash((pack != NULL && pack->format != NULL)
         ? pack->format : "(no message)");
+#endif
 }
 
 /*

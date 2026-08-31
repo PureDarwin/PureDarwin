@@ -45,9 +45,13 @@ stdenv.mkDerivation {
     fwdir=$out/System/Library/Frameworks/CoreServices.framework
     mkdir -p "$fwdir/Versions/A/Resources"
     cp CoreServices "$fwdir/Versions/A/CoreServices"
+    mkdir -p "$fwdir/Versions/A/Headers"
+    cp src/Libraries/CoreServices/include/CoreServices/CoreServices.h \
+       "$fwdir/Versions/A/Headers/"
     ln -sf A "$fwdir/Versions/Current"
     ln -sf Versions/Current/CoreServices "$fwdir/CoreServices"
     ln -sf Versions/Current/Resources "$fwdir/Resources"
+    ln -sf Versions/Current/Headers "$fwdir/Headers"
     runHook postInstall
   '';
 

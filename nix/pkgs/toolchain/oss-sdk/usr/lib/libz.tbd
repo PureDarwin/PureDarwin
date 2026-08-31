@@ -2,9 +2,38 @@
 tbd-version: 4
 targets: [ x86_64-macos, arm64-macos ]
 install-name: '/usr/lib/libz.1.dylib'
-current-version: 1.2.13
+current-version: 1.3.2
 compatibility-version: 1
+# Mirrors the export list of nix/pkgs/base/libz-dylib.nix's libz.1.dylib
+# (llvm-nm --defined-only), so anything that links -lz here resolves at runtime.
 exports:
   - targets: [ x86_64-macos, arm64-macos ]
-    symbols: [ _deflate, _deflateEnd, _deflateInit_, _inflate, _inflateEnd, _inflateInit_, _zError ]
+    symbols: [ _adler32, _adler32_combine, _adler32_combine64, _adler32_z,
+               _compress, _compress2, _compress2_z, _compressBound,
+               _compressBound_z, _compress_z, _crc32, _crc32_combine,
+               _crc32_combine64, _crc32_combine_gen, _crc32_combine_gen64,
+               _crc32_combine_op, _crc32_z, _deflate, _deflateBound,
+               _deflateBound_z, _deflateCopy, _deflate_copyright, _deflateEnd,
+               _deflateGetDictionary, _deflateInit_, _deflateInit2_,
+               _deflateParams, _deflatePending, _deflatePrime, _deflateReset,
+               _deflateResetKeep, _deflateSetDictionary, _deflateSetHeader,
+               _deflateTune, _deflateUsed, __dist_code, _get_crc_table,
+               _gzbuffer, _gzclearerr, _gzclose, _gzclose_r, _gzclose_w,
+               _gzdirect, _gzdopen, _gzeof, _gz_error, _gzerror, _gzflush,
+               _gzfread, _gzfwrite, _gzgetc, _gzgetc_, _gzgets, _gz_intmax,
+               _gzoffset, _gzoffset64, _gzopen, _gzopen64, _gzprintf, _gzputc,
+               _gzputs, _gzread, _gzrewind, _gzseek, _gzseek64, _gzsetparams,
+               _gztell, _gztell64, _gzungetc, _gzvprintf, _gzwrite, _inflate,
+               _inflateBack, _inflateBackEnd, _inflateBackInit_,
+               _inflateCodesUsed, _inflateCopy, _inflate_copyright,
+               _inflateEnd, _inflate_fast, _inflate_fixed,
+               _inflateGetDictionary, _inflateGetHeader, _inflateInit_,
+               _inflateInit2_, _inflateMark, _inflatePrime, _inflateReset,
+               _inflateReset2, _inflateResetKeep, _inflateSetDictionary,
+               _inflateSync, _inflateSyncPoint, _inflate_table,
+               _inflateUndermine, _inflateValidate, __length_code, __tr_align,
+               __tr_flush_bits, __tr_flush_block, __tr_init, __tr_stored_block,
+               __tr_tally, _uncompress, _uncompress2, _uncompress2_z,
+               _uncompress_z, _zcalloc, _zcfree, _z_errmsg, _zError,
+               _zlibCompileFlags, _zlibVersion ]
 ...

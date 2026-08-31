@@ -33,6 +33,23 @@ typedef uint8_t os_log_type_t;
 #endif
 #endif /* !PD_HAVE_REAL_OS_LOG */
 
+/*
+ * libsystem_trace now ships the real Apple-shaped pack (olp_* fields), and it
+ * arrives via <os/log.h> above. Only define the compact stand-in when it did
+ * not, or the two definitions collide.
+ */
+#ifdef PD_HAVE_REAL_OS_LOG_PACK
+
+/* assumes.h spells the type both ways; the real header only typedefs the
+ * pointer form. */
+typedef struct os_log_pack_s os_log_pack_s;
+
+size_t os_log_pack_size(const char *format, ...);
+uint8_t *os_log_pack_fill(void *pack, size_t size, int saved_errno,
+    const char *format, ...);
+
+#else
+
 typedef struct os_log_pack_s {
 	uint32_t size;
 	int32_t  saved_errno;
@@ -55,6 +72,8 @@ os_log_pack_fill(os_log_pack_t pack, size_t size, int saved_errno,
 	pack->saved_errno = saved_errno;
 	pack->format = format;
 }
+
+#endif /* PD_HAVE_REAL_OS_LOG_PACK */
 
 #ifdef __cplusplus
 }

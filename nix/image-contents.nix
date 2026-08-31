@@ -58,6 +58,7 @@
 , xkbcommonNoxBuild
 , dbusNoxBuild
 , mesaNoxBuild
+, gluNoxBuild
 , openglFrameworkNoxBuild
 , mesaDemosNoxBuild
 , librsvgNoxBuild
@@ -171,6 +172,7 @@
 , libxml2Build
 , libzDylibBuild
 , mesaBuild
+, gluBuild
 , mesaDemosBuild
 , migcomDarwinBuild
 , mkPureDarwinBuild
@@ -536,6 +538,7 @@ let
     libcxx-dylib = libcxxDylibBuild;
     libcxx-test = libcxxTestBuild;
     mesa = mesaBuild;
+    glu = gluBuild;
     mesa-demos = mesaDemosBuild;
     pd-virgl-shim = pdVirglShimBuild;
     libobjc = libobjcBuild;
@@ -981,6 +984,7 @@ let
           pd-epoll-shim = pdEpollShimBuild;
           dbus = dbusNoxBuild;
           mesa = mesaNoxBuild;
+    glu = gluNoxBuild;
           opengl-framework = openglFrameworkNoxBuild;
           mesa-demos = mesaDemosNoxBuild;
           librsvg = librsvgNoxBuild;

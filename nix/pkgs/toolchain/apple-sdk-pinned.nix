@@ -28,12 +28,20 @@ let
       /src/Kernel/xnu/osfmk/device/device_types.h
       /src/Kernel/xnu/osfmk/i386/eflags.h
       /src/Kernel/xnu/osfmk/i386/proc_reg.h
+      /src/Kernel/xnu/osfmk/i386/user_ldt.h
       /src/Kernel/xnu/osfmk/kern/cs_blobs.h
       /src/Kernel/xnu/osfmk/kern/kcdata.h
       /src/Kernel/xnu/osfmk/mach
       /src/Kernel/xnu/osfmk/mach_debug
       /src/Libraries/AvailabilityVersions/include
       /src/Libraries/CoreFoundation
+      /src/Kernel/Extensions/IOStorageFamily/include/IOKit/storage
+      /src/Kernel/Extensions/IOCDStorageFamily/include/IOKit/storage
+      /src/Kernel/Extensions/IODVDStorageFamily/include/IOKit/storage
+      /src/Kernel/Extensions/IOSCSIArchitectureModelFamily/include/IOKit/scsi
+      /src/Kernel/Extensions/IOHIDFamily/IOHIDFamily
+      /src/Kernel/Extensions/IOHIDFamily/IOHIDSystem/IOKit
+      /src/Kernel/Extensions/IOGraphicsFamily/IOKit/graphics/IOGraphicsTypes.h
       /src/Libraries/IOKit/iokituser/include/IOKit
       /src/Libraries/XPC/libinfo/aliasdb.h
       /src/Libraries/XPC/libinfo/printerdb.h
@@ -84,6 +92,12 @@ let
     # IOKitUser's CF-shaped client headers are separate from XNU's kernel-side
     # IOKit headers, but the SDK framework must expose both surfaces.
     [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit" "System/Library/Frameworks/IOKit.framework/Headers" ]
+    # IOStorageFamily's headers gate everything but the registry key names
+    # behind KERNEL, which is the surface disk tools include them for.
+    [ "${root}/src/Kernel/Extensions/IOStorageFamily/include/IOKit/storage" "System/Library/Frameworks/IOKit.framework/Headers/storage" ]
+    [ "${root}/src/Kernel/Extensions/IOCDStorageFamily/include/IOKit/storage" "System/Library/Frameworks/IOKit.framework/Headers/storage" ]
+    [ "${root}/src/Kernel/Extensions/IODVDStorageFamily/include/IOKit/storage" "System/Library/Frameworks/IOKit.framework/Headers/storage" ]
+    [ "${root}/src/Kernel/Extensions/IOSCSIArchitectureModelFamily/include/IOKit/scsi" "System/Library/Frameworks/IOKit.framework/Headers/scsi" ]
     [ "${root}/src/Kernel/xnu/libkern/libkern" "usr/include/libkern" ]
     [ "${root}/src/Kernel/xnu/osfmk/mach" "usr/include/mach" ]
     [ "${root}/src/Libraries/AvailabilityVersions/include" "usr/include" ]
@@ -108,12 +122,36 @@ let
     [ "${libxml2.dev}/include/libxml2" "usr/include/libxml2" ]
   ];
   files = [
+    # The public IOKit/hid surface: the transitive closure of IOHIDLib.h, and
+    # nothing else. Named files, never a directory copy - IOHIDFamily has kernel
+    # C++ IOHIDDevice.h/IOHIDElement.h/IOHIDUserDevice.h under the same names as
+    # IOKitUser's user-space ones.
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDBase.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDBase.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDDevice.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDDevice.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDElement.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDElement.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDLib.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDLib.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDLibObsolete.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDLibObsolete.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDManager.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDManager.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDQueue.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDQueue.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDTransaction.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDTransaction.h" ]
+    [ "${root}/src/Libraries/IOKit/iokituser/include/IOKit/hid/IOHIDValue.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDValue.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDFamily/IOHIDDeviceKeys.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDDeviceKeys.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDFamily/IOHIDDeviceTypes.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDDeviceTypes.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDFamily/IOHIDEventServiceKeys.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDEventServiceKeys.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDFamily/IOHIDKeys.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDKeys.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDFamily/IOHIDProperties.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDProperties.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDFamily/IOHIDUsageTables.h" "System/Library/Frameworks/IOKit.framework/Headers/hid/IOHIDUsageTables.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDSystem/IOKit/hidsystem/IOHIDParameter.h" "System/Library/Frameworks/IOKit.framework/Headers/hidsystem/IOHIDParameter.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDSystem/IOKit/hidsystem/IOHIDTypes.h" "System/Library/Frameworks/IOKit.framework/Headers/hidsystem/IOHIDTypes.h" ]
+    [ "${root}/src/Kernel/Extensions/IOHIDFamily/IOHIDSystem/IOKit/hidsystem/IOLLEvent.h" "System/Library/Frameworks/IOKit.framework/Headers/hidsystem/IOLLEvent.h" ]
+    [ "${root}/src/Kernel/Extensions/IOGraphicsFamily/IOKit/graphics/IOGraphicsTypes.h" "System/Library/Frameworks/IOKit.framework/Headers/graphics/IOGraphicsTypes.h" ]
     [ "${root}/src/Kernel/xnu/EXTERNAL_HEADERS/stdatomic.h" "usr/include/puredarwin/stdatomic.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/base.h" "usr/include/os/base.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/base_private.h" "usr/include/os/base_private.h" ]
     [ "${root}/src/Kernel/xnu/bsd/uuid/uuid.h" "usr/include/uuid/uuid.h" ]
     [ "${root}/src/Kernel/xnu/osfmk/i386/eflags.h" "usr/include/i386/eflags.h" ]
     [ "${root}/src/Kernel/xnu/osfmk/i386/proc_reg.h" "usr/include/i386/proc_reg.h" ]
+    [ "${root}/src/Kernel/xnu/osfmk/i386/user_ldt.h" "usr/include/i386/user_ldt.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/log.h" "usr/include/os/log.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/log_private.h" "usr/include/os/log_private.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/overflow.h" "usr/include/os/overflow.h" ]
@@ -188,7 +226,14 @@ let
     chmod -R u+w "$sdk/${source.target}"
     cp -RL ${source.path}/. "$sdk/${source.target}/"
   '';
-  installFile = source: ''install -Dm644 ${source.path} "$sdk/${source.target}"'';
+  # A directory an earlier cp -RL created carries the store's read-only mode, so
+  # install -D cannot write into it; make it writable first.
+  installFile = source: ''
+    _d="$(dirname "$sdk/${source.target}")"
+    mkdir -p "$_d"
+    chmod u+w "$_d"
+    install -m644 ${source.path} "$sdk/${source.target}"
+  '';
 in
 stdenvNoCC.mkDerivation {
   pname = "puredarwin-oss-sdk";
@@ -204,6 +249,11 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     sdk="$out/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     ${lib.concatMapStrings installSource (map (entry: { path = builtins.elemAt entry 0; target = builtins.elemAt entry 1; }) sources)}
+    # iokituser/include/IOKit carries the whole private HID surface (event
+    # system, service/session filters, objc ivar headers) for APIs we do not
+    # implement. Keep only the public IOHIDLib closure, installed by name below.
+    chmod -R u+w "$sdk/System/Library/Frameworks/IOKit.framework/Headers/hid"
+    rm -rf "$sdk/System/Library/Frameworks/IOKit.framework/Headers/hid"
     headers_script="$TMPDIR/headers.sh"
     cp ${root}/src/Libraries/libSystem/libc/scripts/headers.sh "$headers_script"
     features_script="$TMPDIR/generate_features.pl"
@@ -388,12 +438,62 @@ extern kern_return_t mach_port_allocate(ipc_space_t, mach_port_right_t, mach_por
 extern kern_return_t mach_port_deallocate(ipc_space_t, mach_port_name_t);
 extern kern_return_t mach_port_mod_refs(ipc_space_t, mach_port_name_t, mach_port_right_t, mach_port_delta_t);
 extern kern_return_t mach_port_insert_right(ipc_space_t, mach_port_name_t, mach_port_t, mach_msg_type_name_t);
+/* mach_port_poly_t out-param expands to (mach_port_t *, mach_msg_type_name_t *). */
+extern kern_return_t mach_port_extract_right(ipc_space_t, mach_port_name_t, mach_msg_type_name_t, mach_port_t *, mach_msg_type_name_t *);
 extern kern_return_t mach_port_get_attributes(ipc_space_read_t, mach_port_name_t, mach_port_flavor_t, mach_port_info_t, mach_msg_type_number_t *);
 extern kern_return_t mach_port_insert_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
 extern kern_return_t mach_port_extract_member(ipc_space_t, mach_port_name_t, mach_port_name_t);
 extern kern_return_t mach_port_space_info(ipc_space_read_t, ipc_info_space_t *, ipc_info_name_array_t *, mach_msg_type_number_t *, ipc_info_tree_name_array_t *, mach_msg_type_number_t *);
 extern kern_return_t mach_port_construct(ipc_space_t, mach_port_options_ptr_t, mach_port_context_t, mach_port_name_t *);
 extern kern_return_t mach_port_destruct(ipc_space_t, mach_port_name_t, mach_port_delta_t, mach_port_context_t);
+#ifdef __cplusplus
+}
+#endif
+EOF
+    # mach_make_memory_entry is a routine in both vm_map.defs and mach_vm.defs,
+    # so MIG emits it twice: identical Request/Reply typedefs, and a prototype
+    # typed vm_size_t here but memory_object_size_t there. Anything including
+    # mach.h and mach_vm.h together (wine's ntdll) sees both. Rename this file's
+    # typedefs - its own RequestUnion is the only user - and drop the duplicate
+    # prototype; mach_vm.h keeps the canonical one. libSystem exports neither
+    # spelling today, so no call site changes meaning.
+    perl -0777 -i -pe '
+      s/\b__Request__mach_make_memory_entry_t\b/__Request__vm_map_mach_make_memory_entry_t/g;
+      s/\b__Reply__mach_make_memory_entry_t\b/__Reply__vm_map_mach_make_memory_entry_t/g;
+      s{/\* Routine mach_make_memory_entry \*/\n(?:\#ifdef\tmig_external\nmig_external\n\#else\nextern\n\#endif\t/\* mig_external \*/\n)kern_return_t mach_make_memory_entry\n\((?:[^)]*)\n\);\n}{}s;
+    ' "$sdk/usr/include/mach/vm_map.h"
+
+    # vm_map.defs skips vm_allocate/vm_deallocate/vm_protect unless
+    # LIBSYSCALL_INTERFACE, so MIG emits no declaration for them here, but
+    # libsystem_kernel exports all three. mach_init.h for mach_task_self().
+    cat >> "$sdk/usr/include/mach/vm_map.h" <<'EOF'
+
+#include <mach/mach_init.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern kern_return_t vm_allocate(vm_map_t, vm_address_t *, vm_size_t, int);
+extern kern_return_t vm_deallocate(vm_map_t, vm_address_t, vm_size_t);
+extern kern_return_t vm_protect(vm_map_t, vm_address_t, vm_size_t, boolean_t, vm_prot_t);
+#ifdef __cplusplus
+}
+#endif
+EOF
+    # mach_vm.defs applies the same _kernelrpc_ PREFIX as vm_map.defs, so the
+    # plain mach_vm_* entry points libsystem_kernel exports get no declaration.
+    cat >> "$sdk/usr/include/mach/mach_vm.h" <<'EOF'
+
+#include <mach/mach_init.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern kern_return_t mach_vm_allocate(vm_map_t, mach_vm_address_t *, mach_vm_size_t, int);
+extern kern_return_t mach_vm_deallocate(vm_map_t, mach_vm_address_t, mach_vm_size_t);
+extern kern_return_t mach_vm_protect(vm_map_t, mach_vm_address_t, mach_vm_size_t, boolean_t, vm_prot_t);
+extern kern_return_t mach_vm_map(vm_map_t, mach_vm_address_t *, mach_vm_size_t, mach_vm_offset_t, int, mem_entry_name_port_t, memory_object_offset_t, boolean_t, vm_prot_t, vm_prot_t, vm_inherit_t);
+extern kern_return_t mach_vm_read(vm_map_t, mach_vm_address_t, mach_vm_size_t, vm_offset_t *, mach_msg_type_number_t *);
+extern kern_return_t mach_vm_write(vm_map_t, mach_vm_address_t, vm_offset_t, mach_msg_type_number_t);
+extern kern_return_t mach_vm_region(vm_map_t, mach_vm_address_t *, mach_vm_size_t *, vm_region_flavor_t, vm_region_info_t, mach_msg_type_number_t *, mach_port_t *);
 #ifdef __cplusplus
 }
 #endif

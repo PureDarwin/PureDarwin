@@ -30,6 +30,13 @@
 , expat
 , gnutls
 , mesa
+, coreservices
+, security
+, diskArbitration
+, systemConfiguration
+, iokit
+, corefoundation
+, perl
 , wayland
 , waylandProtocols
 , waylandScanner
@@ -123,7 +130,7 @@ stdenv.mkDerivation {
 
   # mingwGcc builds Wine's PE-format modules. Like winebuild it runs on the
   # build host and emits Windows binaries, so it never touches PureDarwin.
-  nativeBuildInputs = [ pkg-config gnumake flex bison python3 waylandScanner ] ++ peCompilers;
+  nativeBuildInputs = [ pkg-config gnumake flex bison python3 perl waylandScanner ] ++ peCompilers;
   buildInputs = xDeps ++ waylandDeps ++ [ freetype fontconfig ];
 
   configurePhase = ''
@@ -142,9 +149,9 @@ stdenv.mkDerivation {
     export AR="${darwinCrossToolchain}/bin/${targetTriple}-ar"
     export RANLIB="${darwinCrossToolchain}/bin/${targetTriple}-ranlib"
     export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
-    export CPPFLAGS="-I${mesa}/usr/include -I${libSystem}/usr/include -I${../wayland/pd-compat-include} ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") (xDeps ++ waylandDeps)}"
+    export CPPFLAGS="-F${coreservices}/System/Library/Frameworks -F${security}/System/Library/Frameworks -F${diskArbitration}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -I${mesa}/usr/include -I${libSystem}/usr/include -I${../wayland/pd-compat-include} ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") (xDeps ++ waylandDeps)}"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,11.0,11.5 -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,11.0,11.5 -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
 
     # The cross build invokes widl for IDLs that import stdole2.tlb. The
     # native-tools derivation deliberately builds only the host tools, so its
@@ -178,13 +185,40 @@ stdenv.mkDerivation {
     export XKBREGISTRY_CFLAGS="-I${lib.getDev xkbcommon}/include"
     export XKBREGISTRY_LIBS="-L${xkbcommon}/lib -lxkbregistry ${libxml2}/lib/libxml2.a"
 
-    # dlls/win32u/Makefile.in has an unconditional
-    # UNIX_LIBS = $(CORETEXT_LIBS) $(APPKIT_LIBS)
-    # Blank them.
+    # Makefile.in files list these unconditionally (win32u: UNIX_LIBS =
+    # $(CORETEXT_LIBS) $(APPKIT_LIBS); localspl: $(APPLICATIONSERVICES_LIBS)).
+    # None of these frameworks exist here. Blank them.
     sed -i -e 's|^CORETEXT_LIBS=.*|CORETEXT_LIBS=""|' \
            -e 's|^APPKIT_LIBS=.*|APPKIT_LIBS=""|' \
+           -e 's|^APPLICATIONSERVICES_LIBS=.*|APPLICATIONSERVICES_LIBS=""|' \
            -e 's|CORETEXT_LIBS="-framework CoreText"|CORETEXT_LIBS=""|' \
-           -e 's|APPKIT_LIBS="-framework AppKit"|APPKIT_LIBS=""|' configure
+           -e 's|APPKIT_LIBS="-framework AppKit"|APPKIT_LIBS=""|' \
+           -e 's|APPLICATIONSERVICES_LIBS="-framework ApplicationServices"|APPLICATIONSERVICES_LIBS=""|' \
+           -e 's|PCSCLITE_LIBS="-framework PCSC"|PCSCLITE_LIBS=""|' configure
+
+    # cups.c pulls ApplicationServices for Carbon Print Manager (PMCreateSession,
+    # PMPaperGetPPDPaperName). No printing stack here and we configure
+    # --without-cups; both __APPLE__ blocks are self-contained and the second has
+    # an #else.
+    sed -i 's|^#ifdef __APPLE__$|#if 0 /* PureDarwin: no ApplicationServices/Carbon printing */|' \
+      dlls/winspool.drv/cups.c
+
+    # freetype.c includes CoreText unconditionally, but its only user
+    # (load_mac_fonts) sits behind #ifdef SONAME_LIBFREETYPE/#elif __APPLE__ and
+    # we build with freetype, so that branch is dead. Drop the include.
+    perl -0777 -i -pe "s{\#ifdef __APPLE__\n\#include <CoreText/CoreText\.h>\n\#endif /\* __APPLE__ \*/}{/* PureDarwin: no CoreText; load_mac_fonts is behind !SONAME_LIBFREETYPE */}s" \
+      dlls/win32u/freetype.c
+
+    # ip.c hand-copies struct ip6stat because "Mac OS doesn't export
+    # <netinet6/ip6_var.h> to user-space". Ours does, from the same xnu the
+    # kernel is built from, so use the real one rather than a drifting copy.
+    perl -0777 -i -pe "s{\#ifdef __APPLE__\n(/\* For reasons unknown, Mac OS doesn't export)}{#if 0 /* PureDarwin: our SDK does export it */\n\$1}s" \
+      dlls/nsiproxy.sys/ip.c
+
+    # cred.c's __APPLE__ branch wants Spotlight (MDQuery*) and the Carbon
+    # keychain (SecKeychain*); PureDarwin has neither, and the file carries a
+    # portable #else. Take that instead of half-compiling the Apple one.
+    sed -i '0,/^#ifdef __APPLE__$/! s|^#ifdef __APPLE__$|#if 0 /* PureDarwin: no Spotlight or Carbon keychain */|' dlls/mountmgr.sys/cred.c
 
     sed -i 's| -ldylib1\.o| -fuse-ld=${nativeLd}/bin/ld -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,10.7,11.5 -lSystem|' configure
 
@@ -240,9 +274,15 @@ ${lib.optionalString isArm64 ''
   buildPhase = ''
     runHook preBuild
 
+    # Do not swallow make's status: a partial tree used to sail through to
+    # installPhase and ship a broken wine.
     set +e
     make -j$NIX_BUILD_CORES
+    buildStatus=$?
     set -e
+    if [ "$buildStatus" -ne 0 ]; then
+      exit "$buildStatus"
+    fi
 
     runHook postBuild
   '';

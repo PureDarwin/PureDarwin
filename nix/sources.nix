@@ -204,7 +204,14 @@ let
       "src/Libraries/dyld/upstream/include"
     ]));
   iokitCFSource = stripOsfmkImpl (sourceWith "puredarwin-iokitcf-source"
-    (libSystemSourcePaths ++ [ "src/Kernel/xnu/iokit" ]));
+    (libSystemSourcePaths ++ [
+      "src/Kernel/xnu/iokit"
+      # IOHIDKeys.h and friends, shared between IOHIDLib and the kext. The
+      # include/ tree is symlinks into IOHIDFamily/, so both are needed.
+      "src/Kernel/Extensions/IOHIDFamily/include"
+      "src/Kernel/Extensions/IOHIDFamily/IOHIDFamily"
+      "src/Kernel/Extensions/IOHIDFamily/IOHIDSystem/IOKit"
+    ]));
   symptomReporterSource = stripOsfmkImpl (sourceWith "puredarwin-symptomreporter-source"
     (libSystemSourcePaths ++ [
       "src/Libraries/SymptomReporter"

@@ -10,15 +10,7 @@
 , appleSdk
 }:
 
-# Cross-builds the small real slice of Foundation vendored at
-# src/Libraries/Foundation into /usr/lib/libFoundation.dylib: NSString /
-# NSCFString (the CFString toll-free bridge target registered by
-# NSCFString.m) and NSAttributedString's minimal declaration. NSObject
-# itself lives in libobjc (objc4's runtime/NSObject.mm), not here - matches
-# real Darwin, where NSObject is the objc runtime's root class.
-
 let
-
   cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang";
   mmSrcs = [
     "String.subproj/NSString"
@@ -62,12 +54,6 @@ stdenv.mkDerivation {
     mkdir -p sdk
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
-    # Stage a "Foundation/" include dir (same trick corefoundation.nix uses)
-    # so `#import <Foundation/NSString.h>` etc. resolve like a real
-    # framework search path would. Scoped to Runtime.subproj/String.subproj
-    # only (not `.` broadly) - the SDK tarball just got extracted alongside
-    # these sources and its own real Foundation.framework/*.h must not be
-    # picked up here.
     mkdir -p foundation-headers/Foundation
     find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
 
@@ -117,7 +103,7 @@ stdenv.mkDerivation {
   dontFixup = true;
 
   meta = with lib; {
-    description = "PureDarwin Foundation (NSString/NSCFString real toll-free bridge slice), cross-built as /usr/lib/libFoundation.dylib";
+    description = "PureDarwin Foundation";
     platforms = platforms.unix;
   };
 }

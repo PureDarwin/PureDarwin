@@ -1022,12 +1022,25 @@
               virglAbiHeader = ./src/Kernel/Extensions/IOVirtIOGPU/IOVirtIOGPU3DShared.h;
               inherit (pkgs) meson ninja pkg-config python3 bison flex xorgproto xtrans;
             };
+          gluBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/glu.nix {
+              nativeMesonTools = nativeMesonToolsDir;
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              mesa = mesaBuild;
+              inherit (pkgs) meson ninja pkg-config;
+            };
+          gluNoxBuild =
+            if isDarwin then null else gluBuild.override { mesa = mesaNoxBuild; };
           mesaDemosBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/mesa/mesa-demos.nix {
               nativeMesonTools = nativeMesonToolsDir;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               mesa = mesaBuild;
+              openglFramework = openglFrameworkBuild;
               libX11 = xlibBuild;
               libXext = xvfbLibXextBuild;
               libxcb = xcbBuild;
@@ -1474,6 +1487,7 @@
             if isDarwin then null else openglFrameworkBuild.override {
               withX11 = false;
               mesa = mesaNoxBuild;
+              glu = gluNoxBuild;
               libX11 = null; xorgproto = null; libXext = null;
               libxcb = null; libXau = null; libXdmcp = null;
             };
@@ -1524,6 +1538,7 @@
             if isDarwin then null else fastfetchBuild.override {
               withX11 = false;
               mesa = mesaNoxBuild;
+              glu = gluNoxBuild;
               openglFramework = openglFrameworkNoxBuild;
               libX11 = null; libXext = null; libxcb = null;
               libXau = null; libXdmcp = null;
@@ -2556,6 +2571,13 @@
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/wine.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
+              coreservices = coreServicesBuild;
+              security = securityBuild;
+              diskArbitration = diskArbitrationBuild;
+              systemConfiguration = systemConfigurationBuild;
+              iokit = iokitBuild;
+              corefoundation = coreFoundationBuild;
+              inherit (pkgs) perl;
               wineTools = wineToolsBuild;
               mingwGcc = pkgs.pkgsCross.mingwW64.buildPackages.gcc;
               mingwBintools = pkgs.pkgsCross.mingwW64.buildPackages.bintools;
@@ -2952,6 +2974,7 @@
               libobjc = libobjcBuild;
               iokit = iokitBuild;
               openglFramework = openglFrameworkBuild;
+              glu = gluBuild;
               libX11 = libX11SharedBuild;
               libXext = libXextSharedBuild;
               libxcb = libxcbSharedBuild;
@@ -3062,6 +3085,8 @@
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
               iokitCFStatic = iokitCFStaticBuild;
+              libobjc = libobjcBuild;
+              foundation = foundationBuild;
             };
           coreServicesBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coreservices.nix {
@@ -3074,6 +3099,7 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               mesa = mesaBuild;
+              glu = gluBuild;
               libX11 = libX11SharedBuild;
               inherit (pkgs) xorgproto;
               libXext = libXextSharedBuild;
@@ -3457,6 +3483,8 @@
               extraCmakeFlags = [
                 "-DPUREDARWIN_ENABLE_IOKITCF=ON"
                 "-DPUREDARWIN_COREFOUNDATION_PREFIX=${coreFoundationBuild}"
+                "-DPUREDARWIN_LIBOBJC_PREFIX=${libobjcBuild}"
+                "-DPUREDARWIN_FOUNDATION_PREFIX=${foundationBuild}"
               ];
             }).overrideAttrs (old: {
               installPhase = ''
@@ -3687,7 +3715,7 @@
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build
               libiconvBuild libnsbmpBuild libnsgifBuild libnsutilsBuild libobjcBuild libparserutilsBuild
               libpngBuild libutf8procBuild libwapcapletBuild libwnckBuild libxfce4uiBuild
-              libxfce4utilBuild libxfce4windowingBuild libxml2Build libzDylibBuild mesaBuild
+              libxfce4utilBuild libxfce4windowingBuild libxml2Build libzDylibBuild mesaBuild gluBuild gluNoxBuild
               mesaDemosBuild migcomDarwinBuild mkPureDarwinBuild clangCrossBuild cmakeBuild kcToolsGuestBuild mesonBuild nanoBuild nativeLd ncursesBuild ninjaBuild
               netsurfBuild objcTestBuild openglFrameworkBuild opensshBuild opensslBuild
               pangoBuild pcre2Build pdVirglShimBuild pkgconfBuild pkgs pythonBuild

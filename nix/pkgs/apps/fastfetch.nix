@@ -14,6 +14,7 @@
 , iokit
 , openglFramework
 , mesa
+, glu
 , libX11 ? null
 , libXext ? null
 , libxcb ? null
@@ -33,7 +34,9 @@ let
   glIncludeFlag    = lib.optionalString withOpenGL "-I${mesa}/usr/include ";
   xDylibFileFlags  = lib.optionalString withX11
     "-Wl,-dylib_file,/usr/lib/libX11.6.dylib:${libX11}/lib/libX11.6.dylib -Wl,-dylib_file,/usr/lib/libXext.6.dylib:${libXext}/lib/libXext.6.dylib -Wl,-dylib_file,/usr/lib/libxcb.1.1.0.dylib:${libxcb}/lib/libxcb.1.1.0.dylib -Wl,-dylib_file,/usr/lib/libXau.6.dylib:${libXau}/lib/libXau.6.dylib -Wl,-dylib_file,/usr/lib/libXdmcp.6.dylib:${libXdmcp}/lib/libXdmcp.6.dylib ";
-  glDylibFileFlag  = lib.optionalString withOpenGL "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib ";
+  # OpenGL.framework re-exports both, so the linker has to be able to find
+  # each one behind its runtime install name.
+  glDylibFileFlag  = lib.optionalString withOpenGL "-Wl,-dylib_file,/usr/lib/libGL.1.dylib:${mesa}/usr/lib/libGL.1.dylib -Wl,-dylib_file,/usr/lib/libGLU.1.dylib:${glu}/usr/lib/libGLU.1.dylib ";
   glLinkFlag       = lib.optionalString withOpenGL "-framework OpenGL ";
 in
 stdenv.mkDerivation {
@@ -90,7 +93,9 @@ stdenv.mkDerivation {
   ];
 
   preConfigure = ''
-    for base in camera wifi bluetooth bluetoothradio cursor font media wallpaper wm wmtheme physicalmemory brightness poweradapter; do
+    # keyboard, mouse and gamepad are the IOKit/hid users; there is no
+    # user-space IOHIDLib here, so they go the same way as the rest.
+    for base in camera wifi bluetooth bluetoothradio cursor font media wallpaper wm wmtheme physicalmemory brightness poweradapter keyboard mouse gamepad; do
       sed -i "s#src/detection/$base/''${base}_apple\.[mc]#src/detection/$base/''${base}_nosupport.c#" CMakeLists.txt
     done
 
@@ -108,6 +113,18 @@ SNDEOF
     sed -i 's#src/detection/sound/sound_apple\.[mc]#src/detection/sound/sound_nosupport.c#' CMakeLists.txt
 
     sed -i 's#src/detection/dns/dns_apple\.c#src/detection/dns/dns_linux.c#' CMakeLists.txt
+
+    # KextManager is part of IOKitUser's kext.subproj, which PureDarwin does
+    # not have; kextstat's job has no user-space API here yet.
+    sed -i 's#src/common/impl/kmod_apple\.c#src/common/impl/kmod_nosupport.c#' CMakeLists.txt
+
+    # gpu_apple.c wants IOGraphicsLib.h and physicaldisk_apple.c the NVMe SMART
+    # library; neither is in IOKitUser yet. The gpu_apple.m stub below stays -
+    # gpu_nosupport.c only defines ffDetectGPUImpl, not ffGpuDetectDriverVersion.
+    sed -i \
+      -e 's#src/detection/gpu/gpu_apple\.c#src/detection/gpu/gpu_nosupport.c#' \
+      -e 's#src/detection/physicaldisk/physicaldisk_apple\.c#src/detection/physicaldisk/physicaldisk_nosupport.c#' \
+      CMakeLists.txt
 
     cat > src/detection/displayserver/displayserver_nosupport.c <<'DSEOF'
 #include "displayserver.h"

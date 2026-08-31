@@ -45,6 +45,10 @@
  * olp_continuous_time directly, so the layout has to be public rather than
  * confined to log_internal.h.
  */
+/* Marker for libc's os/log_private.h shim, which otherwise defines its own
+ * incompatible pack when this real one is already in scope. */
+#define PD_HAVE_REAL_OS_LOG_PACK 1
+
 struct os_log_pack_s {
     uint64_t        olp_continuous_time;
     struct timespec olp_wall_time;

@@ -119,7 +119,20 @@ ${if rootFsType == "hfs" then ''
         exit 1
       fi
 
-      cp -a -- "$package"/. "$staging"/
+      # A package may ship a top-level symlink (libiconv's include -> usr/include)
+      # purely so build-time consumers can say -I$dep/include. cp -a cannot put
+      # that over the staging tree's real directory, and it is not runtime
+      # content anyway, so skip those rather than fail the image.
+      local entry base
+      for entry in "$package"/* "$package"/.[!.]*; do
+        [ -e "$entry" ] || continue
+        base="$(basename "$entry")"
+        if [ -L "$entry" ] && [ -d "$staging/$base" ] && [ ! -L "$staging/$base" ]; then
+          echo "  skipping $base (symlink would clobber staged directory)"
+          continue
+        fi
+        cp -a -- "$entry" "$staging"/
+      done
       chmod -R u+rwX "$staging"
     }
 

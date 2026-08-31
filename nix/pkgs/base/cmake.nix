@@ -31,6 +31,10 @@ stdenv.mkDerivation {
     # it, and CPackLib already gates its own use on a header check.
     substituteInPlace Source/CMakeLists.txt \
       --replace-fail 'target_link_libraries(CMakeLib PUBLIC "-framework CoreServices")' ""
+    # libarchive links CoreServices on every APPLE build but references no
+    # symbol from it, so ctest picked it up transitively for nothing.
+    substituteInPlace Utilities/cmlibarchive/CMakeLists.txt \
+      --replace-fail 'LIST(APPEND ADDITIONAL_LIBS "-framework CoreServices")' ""
   '';
 
   configurePhase = ''

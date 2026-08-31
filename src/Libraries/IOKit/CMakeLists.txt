@@ -57,19 +57,58 @@ target_sources(IOKitCF PRIVATE
     iokituser/IOCFUnserialize.tab.c
     iokituser/IOPowerSources.c
     iokituser/IOPMLib.c
+    # CFPlugIn-backed device access, and the shared-memory queue clients read
+    # events from. (ionotify.c/ionotifyCB.c are sample programs, not library
+    # sources; the notification API is already in IOKitLib.c.)
+    iokituser/IOCFPlugIn.c
+    iokituser/pd_oskext_folders.c
+    iokituser/IODataQueueClient.c
+    iokituser/IOMIGMachPort.c
+    # IOHIDLib's C API. The IOHIDEventSystem*/IOHIDService*/IOHIDSession* half
+    # of hid.subproj ships as empty files in the drop, IOHIDPlugins.c included.
+    iokituser/hid.subproj/IOHIDManager.c
+    iokituser/hid.subproj/IOHIDDevice.c
+    iokituser/hid.subproj/IOHIDElement.c
+    iokituser/hid.subproj/IOHIDQueue.c
+    iokituser/hid.subproj/IOHIDTransaction.c
+    iokituser/hid.subproj/IOHIDValue.c
+    iokituser/hid.subproj/IOHIDLibPrivate.c
+    iokituser/hid.subproj/IOHIDPreferences.c
+    iokituser/hid.subproj/pd_hid_reconstructed.c
+    # IOHIDDevice/IOHIDElement are CF-bridged ObjC objects upstream: their
+    # structs start with objc_object and the constructors alloc a real class.
+    iokituser/hid.subproj/HIDDeviceBase.m
+    iokituser/hid.subproj/HIDElementBase.m
+    iokituser/hid.subproj/IOHIDDeviceObjc.m
+    iokituser/hid.subproj/IOHIDElementObjc.m
     ${CMAKE_CURRENT_BINARY_DIR}/device_user.c
 )
 
+# IOCFPlugIn.c is wholly inside #ifdef HAVE_CFPLUGIN; our CoreFoundation has
+# the CFPlugIn/CFBundle surface it needs.
+# hid.subproj calls the os_assert(expr, fmt, ...) form, which only exists on
+# assumes.h's libtrace path; _os_crash_fmt backs it in pd_assumes.c.
 target_compile_definitions(IOKitCF PRIVATE IOKIT=1 KERNEL=0
-    __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
+    __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1 HAVE_CFPLUGIN=1
+    OS_CRASH_ENABLE_EXPERIMENTAL_LIBTRACE=1)
 target_compile_options(IOKitCF PRIVATE -UKERNEL -fblocks -w
-    -Wno-error=int-conversion)
+    -Wno-error=int-conversion
+    # hid.subproj's ObjC is MRR, not ARC.
+    $<$<COMPILE_LANGUAGE:OBJC>:-fno-objc-arc>)
 
 target_include_directories(IOKitCF
     PUBLIC iokituser/include
     PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/iokituser
+        ${CMAKE_CURRENT_SOURCE_DIR}/iokituser/hid.subproj
+        ${CMAKE_CURRENT_SOURCE_DIR}/iokituser/include/IOKit/hid
         ${CMAKE_CURRENT_SOURCE_DIR}/iokituser/pd-compat-include
+        # IOHIDKeys.h/IOHIDUsageTables.h/IOHIDLibUserClient.h are shared with
+        # the kext and KERNEL-guarded. Listed after iokituser/include so the
+        # user-space IOHIDDevice.h wins over the kernel class of that name.
+        ${CMAKE_SOURCE_DIR}/src/Kernel/Extensions/IOHIDFamily/include
+        ${CMAKE_SOURCE_DIR}/src/Kernel/Extensions/IOHIDFamily/IOHIDSystem
         ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libc/include
         ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libc
         ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libc/darwin
@@ -91,6 +130,10 @@ target_include_directories(IOKitCF
         ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libdispatch
         ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libdispatch/src/BlocksRuntime
         ${PUREDARWIN_COREFOUNDATION_PREFIX}/include
+        # NSObject for the HIDDevice/HIDElement classes, NSString for their
+        # -description.
+        ${PUREDARWIN_LIBOBJC_PREFIX}/usr/include
+        ${PUREDARWIN_FOUNDATION_PREFIX}/usr/include
         ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/iokit
         ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern
         ${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk

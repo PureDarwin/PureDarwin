@@ -5,6 +5,7 @@
 , targetTriple ? "x86_64-apple-darwin20.4"
 , libSystem
 , mesa
+, glu
 , libX11 ? null
 , xorgproto ? null
 , libXext ? null
@@ -42,12 +43,13 @@ stdenv.mkDerivation {
       -I${libSystem}/usr/include \
       -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-      -L${libSystem}/usr/lib -L${mesa}/usr/lib \
+      -L${libSystem}/usr/lib -L${mesa}/usr/lib -L${glu}/usr/lib \
       ${lib.optionalString withX11 "-L${libX11}/lib -L${libXext}/lib -L${libxcb}/lib -L${libXau}/lib -L${libXdmcp}/lib"} \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,11.0,11.5 \
       -Wl,-install_name,${installName} \
       -Wl,-reexport-lGL \
+      -Wl,-reexport-lGLU \
       ${lib.optionalString withX11 "-lX11 -lXext -lxcb -lXau -lXdmcp"} \
       ${lib.optionalString (!withX11) "-lEGL"} \
       -lSystem \
@@ -64,6 +66,12 @@ stdenv.mkDerivation {
     mkdir -p "$frameworkDir/Versions/A/Headers"
     cp OpenGL "$frameworkDir/Versions/A/OpenGL"
     cp -a ${src}/include/OpenGL/. "$frameworkDir/Versions/A/Headers/"
+    # cp -a carried the store's read-only mode onto Headers/.
+    chmod u+w "$frameworkDir/Versions/A/Headers"
+    # Real OpenGL.framework ships glu.h too, and ports include <OpenGL/glu.h>.
+    # Mesa's copy includes <GL/gl.h> rather than <OpenGL/gl.h>; every consumer
+    # here already has Mesa's include dir on the search path.
+    cp ${glu}/usr/include/GL/glu.h "$frameworkDir/Versions/A/Headers/glu.h"
 
     ln -s A "$frameworkDir/Versions/Current"
     ln -s Versions/Current/OpenGL "$frameworkDir/OpenGL"
@@ -82,7 +90,7 @@ stdenv.mkDerivation {
   dontStrip = true;
 
   meta = with lib; {
-    description = "PureDarwin OpenGL.framework: CGL over GLX pbuffers, re-exporting the GL API";
+    description = "PureDarwin OpenGL.framework: CGL over GLX pbuffers, re-exporting the GL and GLU APIs";
     platforms = platforms.unix;
   };
 }

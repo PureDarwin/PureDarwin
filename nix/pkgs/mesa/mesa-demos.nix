@@ -9,6 +9,7 @@
 , nativeLd
 , libSystem
 , mesa
+, openglFramework
 , libX11 ? null
 , libXext ? null
 , libxcb ? null
@@ -32,7 +33,10 @@
 let
   targetInfo = import ../../lib/target-info.nix targetTriple;
 
-  incs = [ "-I${mesa}/usr/include" ]
+  # gl_wrap.h includes <OpenGL/gl.h> on __APPLE__; Mesa only ships GL/gl.h, so
+  # the header comes from our OpenGL.framework.
+  incs = [ "-I${mesa}/usr/include"
+           "-F${openglFramework}/System/Library/Frameworks" ]
     ++ lib.optionals withX11 [
       "-I${lib.getDev libX11}/include"
       "-I${lib.getDev xorgproto}/include"

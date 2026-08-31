@@ -38,9 +38,16 @@ typedef struct os_state_data_s {
 /* Upper bound on a single state-dump payload, as enforced by the collector. */
 #define MAX_STATEDUMP_SIZE (1024 * 1024)
 
+/* Which API asked for the dump. Handlers switch on it (hid.subproj serves
+ * only FAULT and REQUEST); the values are ours, nothing crosses an ABI here. */
+#define OS_STATE_API_ERROR                      1
+#define OS_STATE_API_FAULT                      2
+#define OS_STATE_API_REQUEST                    3
+
 typedef struct os_state_hints_s {
 	uint32_t osh_flags;
 	char     osh_requestor[64];
+	uint32_t osh_api;
 } *os_state_hints_t;
 
 typedef uint64_t os_state_handle_t;
