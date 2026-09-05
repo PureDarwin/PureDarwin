@@ -19,7 +19,7 @@ if(PUREDARWIN_NIX_TOOLCHAIN AND DEFINED ENV{NIX_NATIVE_LD_PATH})
 endif()
 
 set(PUREDARWIN_TCC_LDFLAGS
-    "${PUREDARWIN_TCC_LINKER_FLAG} -nostdlib -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub> -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:$<TARGET_FILE:libdyld> -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains -Wl,-lSystem"
+    "${PUREDARWIN_TCC_LINKER_FLAG} -nostdlib -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub> -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:$<TARGET_FILE:libdyld> -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains -Wl,-lSystem"
 )
 
 file(GLOB_RECURSE PUREDARWIN_TCC_SOURCES CONFIGURE_DEPENDS

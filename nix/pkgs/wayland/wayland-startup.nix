@@ -33,13 +33,13 @@ stdenv.mkDerivation {
       ${waylandProtocols}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml \
       xdg-shell-protocol.c
 
-    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -D_DARWIN_C_SOURCE -I. -I${wayland}/include -I${libSystem}/usr/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${wayland}/lib -L${libSystem}/usr/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-dylinker_install_name,/usr/lib/dyld \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-fixup_chains \
       -lwayland-client -lSystem -o wayland-startup wayland-startup.c \
       xdg-shell-protocol.c

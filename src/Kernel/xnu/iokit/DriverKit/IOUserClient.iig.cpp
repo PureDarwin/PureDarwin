@@ -497,7 +497,14 @@ IOUserClient::CopyClientMemoryForType(
 
     msg->content.type = type;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -593,7 +600,14 @@ IOUserClient::CreateMemoryDescriptorFromClient(
 
     msg->content.segmentsCount = segmentsCount;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -677,7 +691,14 @@ IOUserClient::CopyClientEntitlements(
 
     msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -794,7 +815,14 @@ IOUserClient::_ExternalMethod(
 
     msg->content.structureOutputMaximumSize = structureOutputMaximumSize;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 

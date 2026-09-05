@@ -66,8 +66,8 @@ stdenv.mkDerivation {
     export PKG_CONFIG_PATH="${lib.concatMapStringsSep ":" (d: "${lib.getDev d}/lib/pkgconfig") xDeps}:${lib.concatMapStringsSep ":" (d: "${lib.getDev d}/share/pkgconfig") xDeps}"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
-    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include -nostdinc++ -I${libcxxDylib}/usr/include/c++/v1 ${lib.concatMapStringsSep " " (d: "-I${lib.getDev d}/include") xDeps}"
-    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${vulkanLoader}/usr/lib ${lib.concatMapStringsSep " " (d: "-L${d}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -lc++ -lc++abi -lSystem"
+    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include -nostdinc++ -I${libcxxDylib}/usr/include/c++/v1 ${lib.concatMapStringsSep " " (d: "-I${lib.getDev d}/include") xDeps}"
+    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${vulkanLoader}/usr/lib ${lib.concatMapStringsSep " " (d: "-L${d}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,26.5,26.5 -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -lc++ -lc++abi -lSystem"
 
     cmake -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Darwin \

@@ -64,7 +64,7 @@ set(_fbdoom_upstream_srcs
     w_file_stdc_unbuffered.c w_main.c w_wad.c z_zone.c
 )
 
-add_darwin_executable(fbdoom MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(fbdoom MACOSX_VERSION_MIN 26.5)
 
 foreach(_src ${_fbdoom_upstream_srcs})
     target_sources(fbdoom PRIVATE "${PUREDARWIN_FBDOOM_SOURCE}/${_src}")
@@ -104,7 +104,7 @@ target_link_options(fbdoom PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -lSystem)
 target_link_libraries(fbdoom PRIVATE $<TARGET_FILE:PDGOP> $<TARGET_FILE:IOKit>)
 add_dependencies(fbdoom PDGOP IOKit)

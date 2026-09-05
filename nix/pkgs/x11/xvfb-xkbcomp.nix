@@ -51,7 +51,7 @@ c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOUR
 # libX11.pc's real transitive dep (libxcb) sits under "Libs.private:", which
 # meson's default (non-static) pkgconfig lookup skips -- same as libXfont2's
 # freetype/fontenc/zlib issue in xvfb.nix. Append the archive directly.
-c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylinker_install_name,/usr/lib/dyld', '-Wl,-platform_version,macos,11.0,11.5', '-lSystem', '${libxcb}/lib/libxcb.a', '${libXau}/lib/libXau.a', '${libXdmcp}/lib/libXdmcp.a']
+c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylinker_install_name,/usr/lib/dyld', '-Wl,-platform_version,macos,26.5,26.5', '-lSystem', '${libxcb}/lib/libxcb.a', '${libXau}/lib/libXau.a', '${libXdmcp}/lib/libXdmcp.a']
 
 [host_machine]
 system = 'darwin'

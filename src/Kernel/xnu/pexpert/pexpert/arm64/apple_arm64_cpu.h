@@ -32,6 +32,9 @@
 
 #include <stdbool.h>
 #include <sys/cdefs.h>
+/* MPIDR_CORETYPE_*; Apple boards get it via apple_arm64_common.h, but pcb.c
+ * and sleh.c include this header directly and virt has no Apple common. */
+#include <pexpert/arm64/apple_arm64_regs.h>
 
 /**
  * Defines the core type of the executing CPU.

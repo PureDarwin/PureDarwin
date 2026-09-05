@@ -11,7 +11,7 @@ void cckprng_init(struct cckprng_ctx *ctx, unsigned max_ngens, size_t entropybuf
 				  const uint32_t *entropybuf_nsamples, size_t seed_nbytes, const void *seed, size_t nonce_nbytes,
 				  const void *nonce) {
 	prng_error_status status = prngInitialize(&ctx->prng);
-	printf("PD-CCPRNG: init ctx=%p prng=%p status=%d\n", ctx, ctx->prng, status);
+	printf("PD-CCPRNG: init ctx=0x%llx prng=0x%llx status=%d\n", (unsigned long long)(uintptr_t)ctx, (unsigned long long)(uintptr_t)ctx->prng, status);
 	if (status != PRNG_SUCCESS || ctx->prng == NULL) {
 		printf("PD-CCPRNG: init failed, refusing to seed null PRNG\n");
 		return;
@@ -26,7 +26,10 @@ void cckprng_init(struct cckprng_ctx *ctx, unsigned max_ngens, size_t entropybuf
 void cckprng_init_with_getentropy(struct cckprng_ctx *ctx, unsigned max_ngens, size_t seed_nbytes, const void *seed,
 								  size_t nonce_nbytes, const void *nonce, cckprng_getentropy getentropy,
 								  void *getentropy_arg) {
-	uint8_t entropy[32];
+	/* Must be at least SHA512_DIGEST_LENGTH: xnu's entropy_provide() ends with
+	 * an unconditional SHA512_Final() into this buffer, ignoring the size we
+	 * pass in. A smaller buffer smashes the stack (silently, in RELEASE). */
+	uint8_t entropy[64];
 	size_t entropy_nbytes = sizeof(entropy);
 
 	cckprng_init(ctx, max_ngens, 0, NULL, NULL, seed_nbytes, seed, nonce_nbytes, nonce);
@@ -48,10 +51,15 @@ void cckprng_reseed(struct cckprng_ctx *ctx, size_t nbytes, const void *seed) {
 		return;
 	}
 	if (ctx == NULL || ctx->prng == NULL) {
-		printf("PD-CCPRNG: reseed skipped ctx=%p prng=%p nbytes=%lu\n", ctx,
-			ctx ? ctx->prng : NULL, (unsigned long)nbytes);
+		printf("PD-CCPRNG: reseed skipped ctx=0x%llx prng=0x%llx nbytes=%lu\n",
+			(unsigned long long)(uintptr_t)ctx,
+			(unsigned long long)(uintptr_t)(ctx ? ctx->prng : NULL),
+			(unsigned long)nbytes);
 		return;
 	}
+	printf("PD-CCPRNG: reseed ctx=0x%llx prng=0x%llx nbytes=%lu\n",
+		(unsigned long long)(uintptr_t)ctx,
+		(unsigned long long)(uintptr_t)ctx->prng, (unsigned long)nbytes);
 
 	prngInput(ctx->prng, (BYTE *)seed, (UINT)nbytes, 0, 0);
 	prngAllowReseed(ctx->prng, 5000);

@@ -94,4 +94,21 @@ typedef mach_port_t             vm_named_entry_t;
 #define UPL_NULL                ((upl_t) 0)
 #define VM_NAMED_ENTRY_NULL     ((vm_named_entry_t) 0)
 
+/*
+ * mach_vm.defs grew mach_vm_range_create()/mach_vm_deferred_reclamation_*,
+ * so the generated public <mach/mach_vm.h> needs these. This header is a
+ * trimmed userspace copy of osfmk/mach/vm_types.h; keep them in step.
+ */
+typedef mach_vm_offset_t                *mach_vm_offset_list_t;
+
+/* Spelled out rather than via __enum_decl: osfmk's copy expands that to a
+ * uint32_t typedef here, and an enum typedef would collide with it. */
+typedef uint32_t mach_vm_range_flavor_t;
+enum {
+	MACH_VM_RANGE_FLAVOR_INVALID,
+	MACH_VM_RANGE_FLAVOR_V1,
+};
+
+typedef uint8_t                *mach_vm_range_recipes_raw_t;
+
 #endif  /* _MACH_VM_TYPES_H_ */

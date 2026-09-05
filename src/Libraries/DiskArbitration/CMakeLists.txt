@@ -10,7 +10,7 @@ if(NOT PUREDARWIN_COREFOUNDATION_PREFIX)
 endif()
 
 add_darwin_shared_library(DiskArbitration
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration)
 
 # Only the client side: diskarbitrationd is the other end and is not built here.
@@ -116,7 +116,7 @@ target_compile_options(DiskArbitration PRIVATE
 target_link_options(DiskArbitration PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     $<TARGET_FILE:CrashReporterClient>
     -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib
@@ -140,7 +140,7 @@ install(TARGETS DiskArbitration
 
 # diskarbitrationd: the other end of DAServer.defs. It probes IOMedia through
 # IOKit, runs the per-filesystem fsck/mount helpers, and arbitrates claims.
-add_darwin_executable(diskarbitrationd MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(diskarbitrationd MACOSX_VERSION_MIN 26.5)
 
 mig(diskarbitrationd/DAServer.defs
     INCLUDES_FROM_TARGET diskarbitrationd
@@ -235,7 +235,7 @@ target_link_options(diskarbitrationd PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     "${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks/Security.framework/Versions/A/Security"
     "${PUREDARWIN_SYSTEMCONFIGURATION_PREFIX}/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration"

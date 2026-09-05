@@ -124,7 +124,13 @@ extern bool gInUserspaceReboot;
 extern void iokit_clear_registered_ports(task_t task);
 
 static IORPCMessage *
-IORPCMessageFromMachReply(IORPCMessageMach * msg);
+IORPCMessageFromMachDesc(IORPCMessageMach * msg, bool reply);
+
+static inline IORPCMessage *
+IORPCMessageFromMachReply(IORPCMessageMach * msg)
+{
+	return IORPCMessageFromMachDesc(msg, true);
+}
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -3666,14 +3672,13 @@ IOUserServer::rpc(IORPC rpc)
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 static IORPCMessage *
-IORPCMessageFromMachReply(IORPCMessageMach * msg)
+IORPCMessageFromMachDesc(IORPCMessageMach * msg, bool reply)
 {
 	mach_msg_size_t              idx, count;
 	mach_msg_port_descriptor_t * desc;
 	mach_msg_port_descriptor_t * maxDesc;
 	size_t                       size, msgsize;
 	bool                         upgrade;
-	bool                         reply = true;
 
 	msgsize = msg->msgh.msgh_size;
 	count   = msg->msgh_body.msgh_descriptor_count;
@@ -3708,15 +3713,10 @@ IORPCMessageFromMachReply(IORPCMessageMach * msg)
 extern "C" IORPCMessage *
 IORPCMessageFromMach(IORPCMessageMach * msg, bool reply)
 {
-	if (reply) {
-		return IORPCMessageFromMachReply(msg);
-	}
-
-	if (!msg || msg->msgh.msgh_size < sizeof(IORPCMessageMach)) {
-		return NULL;
-	}
-
-	return (IORPCMessage *)(uintptr_t)(((uint8_t *)msg) + sizeof(IORPCMessageMach));
+	/* The content follows msgh_descriptor_count descriptors, so it has to be
+	 * located by walking them - a fixed sizeof(IORPCMessageMach) skip lands on
+	 * the first descriptor and every msgid reads back as garbage. */
+	return IORPCMessageFromMachDesc(msg, reply);
 }
 
 ipc_port_t

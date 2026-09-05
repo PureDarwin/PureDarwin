@@ -92,7 +92,7 @@ stdenv.mkDerivation {
     $RANLIB libXext-trimmed.a
     trimmedXext="-Wl,-force_load,$PWD/libXext-trimmed.a"
     export CPPFLAGS="''${CPPFLAGS:-} -I${ncurses}/include/ncursesw -I${ncurses}/include"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${ncurses}/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${ncurses}/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") xDeps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup -lSystem"
     # Link the real static ncurses rather than leaning on the terminfo shims
     # that used to live in libSystem: those made setupterm() succeed while every
     # tigetstr() reported the capability absent, so xterm's TcapInit passed but

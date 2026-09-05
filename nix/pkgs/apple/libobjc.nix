@@ -123,7 +123,7 @@ stdenv.mkDerivation {
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${libcxxabiDylib}/usr/lib \
       ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/usr/lib/libobjc.A.dylib \
       -Wl,-init,__objc_init \
       -Wl,-sectalign,__DATA,__objc_data,0x1000 \

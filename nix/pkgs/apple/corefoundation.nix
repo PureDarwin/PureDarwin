@@ -61,7 +61,7 @@ stdenv.mkDerivation {
       ${lib.optionalString isArmv6 "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"} \
       -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
       -DCMAKE_OBJC_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include -I${pdCompatInclude} -I${lib.getDev icu}/include -I${libobjc}/usr/include -I$PWD/foundation-headers -fno-objc-arc -DU_DISABLE_RENAMING=1 -DDEPLOYMENT_RUNTIME_OBJC=1 -DINCLUDE_OBJC=1 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
-      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${icu}/usr/lib -lSystem -lobjc ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-install_name,/usr/lib/libCoreFoundation.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains"}"
+      -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L$PWD/placeholder-libs -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${icu}/usr/lib -lSystem -lobjc ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-install_name,/usr/lib/libCoreFoundation.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"}"
 
     runHook postConfigure
   '';

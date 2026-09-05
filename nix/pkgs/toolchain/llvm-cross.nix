@@ -27,14 +27,25 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [ cmake ninja python3 ];
 
+  # The SDK publishes CoreServices now, so clang's DirectoryWatcher picks its
+  # mac backend and wants FSEvents, which PureDarwin does not implement. The
+  # APPLE branch has no fallback source of its own, so point it at the
+  # not-implemented one the other platforms use.
+  postPatch = ''
+    substituteInPlace clang/lib/DirectoryWatcher/CMakeLists.txt \
+      --replace-fail 'check_include_files("CoreServices/CoreServices.h" HAVE_CORESERVICES)' \
+                     'set(HAVE_CORESERVICES 0)
+  list(APPEND DIRECTORY_WATCHER_SOURCES default/DirectoryWatcher-not-implemented.cpp)'
+  '';
+
   configurePhase = ''
     runHook preConfigure
 
     mkdir -p sdk
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
-    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include"
-    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -lc++ -lc++abi -lSystem"
+    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include"
+    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,26.5,26.5 -lc++ -lc++abi -lSystem"
 
     cmake -B build -G Ninja llvm \
       -DCMAKE_SYSTEM_NAME=Darwin \

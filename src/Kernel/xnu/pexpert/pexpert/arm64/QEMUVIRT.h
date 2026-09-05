@@ -14,12 +14,18 @@
 #define __ARM_VFP__               4
 #define __ARM_COHERENT_CACHE__    1
 #define __ARM_DEBUG__             7
+#if !ARM_LARGE_MEMORY
 #define __ARM64_PMAP_SUBPAGE_L1__ 1
+#endif
 #define __ARM_PAN_AVAILABLE__ 1
 
 #ifndef ASSEMBLER
 
 #define QEMUVIRT_UART
+
+/* Compiles in pe_serial.c's upstream PL011 driver, which serial_init() then
+ * selects via the "arm,pl011" compatible string on /arm-io/uart0. */
+#define PL011_UART
 
 /* PL011 UART, matched against the real QEMU virt DTB */
 #define QEMUVIRT_UART_BASE_PHYS   0x09000000ULL
@@ -31,6 +37,10 @@
 #define QEMUVIRT_UART_FR_TXFF     (1U << 5)  /* transmit FIFO full */
 
 /* GICv3, matched against the real QEMU virt DTB */
+/* The generic timer is delivered as an FIQ (GIC Group 0), so sleh_fiq() has to
+ * acknowledge and EOI it through ICC_IAR0_EL1/ICC_EOIR0_EL1 the way it does on
+ * Apple's virtual platform. Apple SoCs use the AIC and need none of this. */
+#define HAS_GICV3_FIQ             1
 #define GIC_SPURIOUS_IRQ          1023    /* INTID returned by ICC_IAR when no interrupt is pending */
 #define QEMUVIRT_GICD_BASE_PHYS   0x08000000ULL
 #define QEMUVIRT_GICD_SIZE        0x10000ULL

@@ -5395,8 +5395,10 @@ IOService::publishHiddenMedia(IOService * parent)
 	const OSMetaClass * iomediaClass;
 	bool                wasHiding;
 
+	/* NULL until IOStorageFamily registers IOMedia, which on PureDarwin can
+	 * be after the first matching pass gets here. assert() is a no-op in
+	 * RELEASE, so without this the applyToInstances below faults on NULL. */
 	iomediaClass = OSMetaClass::getMetaClassWithName(gIOMediaKey);
-	assert(iomediaClass);
 
 	LOCKWRITENOTIFY();
 	wasHiding = gIOServiceHideIOMedia;
@@ -5407,7 +5409,7 @@ IOService::publishHiddenMedia(IOService * parent)
 
 	FindRootMediaContext ctx = { .services = NULL, .parent = parent };
 
-	if (wasHiding) {
+	if (wasHiding && iomediaClass) {
 		iomediaClass->applyToInstances(publishHiddenMediaApplier, &ctx);
 	}
 	if (ctx.services) {

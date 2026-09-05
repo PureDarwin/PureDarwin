@@ -29,12 +29,19 @@ let
       /src/Kernel/xnu/osfmk/i386/eflags.h
       /src/Kernel/xnu/osfmk/i386/proc_reg.h
       /src/Kernel/xnu/osfmk/i386/user_ldt.h
+      /src/Kernel/xnu/osfmk/arm/arch.h
       /src/Kernel/xnu/osfmk/kern/cs_blobs.h
       /src/Kernel/xnu/osfmk/kern/kcdata.h
       /src/Kernel/xnu/osfmk/mach
       /src/Kernel/xnu/osfmk/mach_debug
       /src/Libraries/AvailabilityVersions/include
       /src/Libraries/CoreFoundation
+      /src/Libraries/Security
+      /src/Libraries/IOKit/IOKit.exports
+      /src/Libraries/CoreServices
+      /src/Libraries/DiskArbitration/DiskArbitration.exports
+      /src/Libraries/SystemConfiguration/SystemConfiguration.exports
+      /src/Libraries/libDER/include
       /src/Kernel/Extensions/IOStorageFamily/include/IOKit/storage
       /src/Kernel/Extensions/IOCDStorageFamily/include/IOKit/storage
       /src/Kernel/Extensions/IODVDStorageFamily/include/IOKit/storage
@@ -56,6 +63,7 @@ let
       /src/Libraries/libSystem/libmalloc/include
       /src/Libraries/libSystem/libplatform/include
       /src/Libraries/libSystem/libsystem_kernel/Platforms/MacOSX/x86_64/syscall.map
+      /src/Libraries/libSystem/libsystem_kernel/Platforms/MacOSX/arm64/syscall.map
       /src/Libraries/libSystem/libsystem_kernel/include
       /src/Libraries/libSystem/libsystem_kernel/mach
       /src/Libraries/libSystem/libsystem_kernel/os
@@ -78,6 +86,32 @@ let
       /tools/mig/mig.sh
     ]);
   };
+  # Security.framework: headers from the same list the framework package uses,
+  # and a tbd generated from its checked-in exports so -framework Security
+  # resolves too. Headers alone would be worse than nothing - a port's
+  # configure would find <Security/Security.h>, take its __APPLE__ branch and
+  # then fail at "ld: framework not found Security".
+  # Frameworks the SDK publishes a tbd for, so -framework <X> resolves from
+  # -isysroot. Each list is checked in, so the SDK depends on no built
+  # framework and stays out of its own build closure.
+  frameworkTbds = [
+    { name = "Security"; version = "59754.120.12";
+      exports = "${root}/src/Libraries/Security/Security.exports"; }
+    { name = "CoreFoundation"; version = "1338";
+      exports = "${root}/src/Libraries/CoreFoundation/CoreFoundation.exports"; }
+    { name = "IOKit"; version = "275";
+      exports = "${root}/src/Libraries/IOKit/IOKit.exports"; }
+    { name = "CoreServices"; version = "1069.24";
+      exports = "${root}/src/Libraries/CoreServices/CoreServices.exports"; }
+    { name = "DiskArbitration"; version = "309";
+      exports = "${root}/src/Libraries/DiskArbitration/DiskArbitration.exports"; }
+    { name = "SystemConfiguration"; version = "1109.101.1";
+      exports = "${root}/src/Libraries/SystemConfiguration/SystemConfiguration.exports"; }
+  ];
+  secHeaders = import ../../lib/security-headers.nix;
+  secHeaderArgs = lib.concatStringsSep " " (
+    map (d: "${root}/src/Libraries/Security/${d}/*.h") secHeaders.dirs
+    ++ map (f: "${root}/src/Libraries/Security/${f}") (secHeaders.apiFiles ++ secHeaders.closureFiles));
   sources = [
     [ "${root}/src/Kernel/xnu/EXTERNAL_HEADERS" "usr/include" ]
     [ "${root}/src/Kernel/xnu/bsd/arm" "usr/include/arm" ]
@@ -152,6 +186,9 @@ let
     [ "${root}/src/Kernel/xnu/osfmk/i386/eflags.h" "usr/include/i386/eflags.h" ]
     [ "${root}/src/Kernel/xnu/osfmk/i386/proc_reg.h" "usr/include/i386/proc_reg.h" ]
     [ "${root}/src/Kernel/xnu/osfmk/i386/user_ldt.h" "usr/include/i386/user_ldt.h" ]
+    # libkern/arm/OSByteOrder.h includes <arm/arch.h>, which lives in osfmk,
+    # not bsd/arm (the only arm dir copied wholesale above).
+    [ "${root}/src/Kernel/xnu/osfmk/arm/arch.h" "usr/include/arm/arch.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/log.h" "usr/include/os/log.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/log_private.h" "usr/include/os/log_private.h" ]
     [ "${root}/src/Kernel/xnu/libkern/os/overflow.h" "usr/include/os/overflow.h" ]
@@ -183,6 +220,7 @@ let
     [ "${root}/tools/cctools/include/mach-o/arch.h" "usr/include/mach-o/arch.h" ]
     [ "${root}/tools/cctools/include/mach-o/swap.h" "usr/include/mach-o/swap.h" ]
     [ "${root}/tools/cctools/include/mach-o/ranlib.h" "usr/include/mach-o/ranlib.h" ]
+    [ "${root}/tools/cctools/include/mach-o/utils.h" "usr/include/mach-o/utils.h" ]
     [ "${root}/src/Libraries/libresolv/include/ifaddrs.h" "usr/include/ifaddrs.h" ]
     [ "${root}/src/Kernel/xnu/osfmk/kern/kcdata.h" "usr/include/kern/kcdata.h" ]
     [ "${root}/src/Kernel/xnu/osfmk/mach/mach_eventlink_types.h" "usr/include/mach/mach_eventlink_types.h" ]
@@ -219,6 +257,10 @@ let
     # x86_64, not i386: the tbd targets 64-bit, and only the i386 map carries the
     # 60 $UNIX2003 aliases that 64-bit does not have.
     "${root}/src/Libraries/libSystem/libsystem_kernel/Platforms/MacOSX/x86_64/syscall.map"
+    # ...plus arm64, which spells these without the $INODE64 suffix. One SDK
+    # serves both arches, so the tbd needs the union; x86 never references the
+    # plain names (cdefs.h renames them), so the extra entries are inert there.
+    "${root}/src/Libraries/libSystem/libsystem_kernel/Platforms/MacOSX/arm64/syscall.map"
     "${./libSystem-compat.exports}"
   ];
   installSource = source: ''
@@ -237,7 +279,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "puredarwin-oss-sdk";
-  version = "20.4";
+  version = "26.5";
 
   dontUnpack = true;
   dontConfigure = true;
@@ -307,11 +349,46 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$sdk/usr/include/objc"
     cp -RL ${root}/src/Libraries/objc4/runtime/*.h "$sdk/usr/include/objc/"
     mkdir -p "$sdk/usr/include/puredarwin"
+    csfw="$sdk/System/Library/Frameworks/CoreServices.framework"
+    mkdir -p "$csfw/Headers"
+    cp ${root}/src/Libraries/CoreServices/include/CoreServices/*.h "$csfw/Headers/"
+    secfw="$sdk/System/Library/Frameworks/Security.framework"
+    mkdir -p "$secfw/Headers"
+    cp ${secHeaderArgs} "$secfw/Headers/"
+    # SecCertificatePriv.h includes <security_libDER/libDER/libDER.h>; libDER's
+    # own headers include each other plainly, so publish both spellings.
+    mkdir -p "$sdk/usr/include/security_libDER/libDER" "$sdk/usr/include/libDER"
+    cp ${root}/src/Libraries/libDER/include/libDER/*.h "$sdk/usr/include/security_libDER/libDER/"
+    cp ${root}/src/Libraries/libDER/include/libDER/*.h "$sdk/usr/include/libDER/"
+    emit_framework_tbd() {
+      _name="$1"; _ver="$2"; _exports="$3"
+      _fw="$sdk/System/Library/Frameworks/$_name.framework"
+      mkdir -p "$_fw"
+      {
+        printf '%s\n' '--- !tapi-tbd' 'tbd-version: 4' \
+          'targets: [ x86_64-macos, arm64-macos ]' \
+          "install-name: '/System/Library/Frameworks/$_name.framework/Versions/A/$_name'" \
+          "current-version: $_ver" 'compatibility-version: 1' \
+          'exports:' '  - targets: [ x86_64-macos, arm64-macos ]'
+        printf '    symbols: [ '
+        _sep=
+        while read -r symbol remainder; do
+          case "$symbol" in
+            ""|'#'*) continue ;;
+          esac
+          printf '%s%s' "$_sep" "$symbol"
+          _sep=', '
+        done < "$_exports"
+        printf '%s\n' ' ]' '...'
+      } > "$_fw/$_name.tbd"
+    }
+    emit_framework_tbd Security 59754.120.12 ${root}/src/Libraries/Security/Security.exports
+    emit_framework_tbd CoreFoundation 1338 ${root}/src/Libraries/CoreFoundation/CoreFoundation.exports
+    emit_framework_tbd IOKit 275 ${root}/src/Libraries/IOKit/IOKit.exports
+    emit_framework_tbd CoreServices 1069.24 ${root}/src/Libraries/CoreServices/CoreServices.exports
+    emit_framework_tbd DiskArbitration 309 ${root}/src/Libraries/DiskArbitration/DiskArbitration.exports
+    emit_framework_tbd SystemConfiguration 1109.101.1 ${root}/src/Libraries/SystemConfiguration/SystemConfiguration.exports
     ${lib.concatMapStringsSep "\n" installFile (map (entry: { path = builtins.elemAt entry 0; target = builtins.elemAt entry 1; }) files)}
-    # libc's generated private headers include this availability shim directly.
-    # Keep it in the SDK root so targets built with -nostdinc can still resolve it.
-    install -Dm644 ${root}/src/Libraries/AvailabilityVersions/include/AvailabilityInternal.h \
-      "$sdk/usr/include/AvailabilityInternalPrivate.h"
     {
       printf '%s\n' '--- !tapi-tbd' 'tbd-version: 4' \
         'targets: [ x86_64-macos, arm64-macos ]' \
@@ -327,6 +404,14 @@ stdenvNoCC.mkDerivation {
           esac
           printf '%s%s' "$separator" "$symbol"
           separator=', '
+          # The tbd covers both arches. arm64 builds define XNU_PLATFORM_MacOSX,
+          # so cdefs.h emits these entry points unsuffixed; publish the base
+          # name too or arm64 links fail on plain _readdir/_opendir/etc.
+          case "$symbol" in
+            *'$INODE64'|*'$UNIX2003'|*'$1050')
+              printf '%s%s' "$separator" "''${symbol%%\$*}"
+              ;;
+          esac
         done < "$source"
       done
       printf '%s\n' ' ]' '...'
@@ -338,7 +423,7 @@ stdenvNoCC.mkDerivation {
         perl ${root}/src/Libraries/libSystem/libc/scripts/generate_features.pl
       cp "$TMPDIR/libc-features/$arch/libc-features.h" "$sdk/usr/include/$arch/"
     done
-    ln -s MacOSX.sdk "$out/Platforms/MacOSX.platform/Developer/SDKs/MacOSX20.4.sdk"
+    ln -s MacOSX.sdk "$out/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk"
     # <mach/*.h> RPC interfaces, generated from xnu's .defs rather than carried
     # pre-generated. Skipped for the base SDK that builds migcom itself.
     ${lib.optionalString (migcom != null) ''
@@ -346,7 +431,7 @@ stdenvNoCC.mkDerivation {
       # mig.sh always passes -arch, which only a Darwin-targeting clang accepts.
       cat > "$TMPDIR/migcc" <<EOF
 #!/bin/sh
-exec ${clang}/bin/clang -target x86_64-apple-darwin20.4 "\$@"
+exec ${clang}/bin/clang -target x86_64-apple-darwin25.5 "\$@"
 EOF
       chmod +x "$TMPDIR/migcc"
       export MIGCC="$TMPDIR/migcc"
@@ -475,6 +560,8 @@ extern "C" {
 extern kern_return_t vm_allocate(vm_map_t, vm_address_t *, vm_size_t, int);
 extern kern_return_t vm_deallocate(vm_map_t, vm_address_t, vm_size_t);
 extern kern_return_t vm_protect(vm_map_t, vm_address_t, vm_size_t, boolean_t, vm_prot_t);
+extern kern_return_t vm_remap(vm_map_t, vm_address_t *, vm_size_t, vm_address_t,
+    int, vm_map_t, vm_address_t, boolean_t, vm_prot_t *, vm_prot_t *, vm_inherit_t);
 #ifdef __cplusplus
 }
 #endif

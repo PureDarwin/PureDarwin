@@ -196,7 +196,14 @@ IOBufferMemoryDescriptor::Create(
 
     msg->content.alignment = alignment;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     ret = OSMTypeID(IOBufferMemoryDescriptor)->Invoke(_rpc);
 
     if (kIOReturnSuccess == ret)
@@ -279,7 +286,14 @@ IOBufferMemoryDescriptor::SetLength(
 
     msg->content.length = length;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 

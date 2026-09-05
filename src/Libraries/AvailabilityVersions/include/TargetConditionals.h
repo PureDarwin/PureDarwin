@@ -510,4 +510,30 @@
     
 #endif
 
+/*
+ * PureDarwin: platforms Apple added after this header's 11.x vintage. Apple
+ * does not publish the current TargetConditionals.h, so these are defaulted
+ * here rather than woven into the branches above - every branch that already
+ * decides a value keeps it, and code that tests one of these compiles instead
+ * of tripping -Wundef. All zero: PureDarwin is none of them.
+ */
+#ifndef TARGET_OS_VISION
+ #define TARGET_OS_VISION            0
+#endif
+#ifndef TARGET_OS_XR
+ #define TARGET_OS_XR                TARGET_OS_VISION
+#endif
+#ifndef TARGET_OS_EXCLAVEKIT
+ #define TARGET_OS_EXCLAVEKIT        0
+#endif
+#ifndef TARGET_OS_EXCLAVECORE
+ #define TARGET_OS_EXCLAVECORE       0
+#endif
+#ifndef TARGET_OS_LINUX
+ #define TARGET_OS_LINUX             0
+#endif
+#ifndef TARGET_OS_WINDOWS
+ #define TARGET_OS_WINDOWS           0
+#endif
+
 #endif  /* __TARGETCONDITIONALS__ */

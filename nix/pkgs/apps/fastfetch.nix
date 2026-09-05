@@ -278,7 +278,7 @@ GPUEOF
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     export PATH="${darwinCrossToolchain}/bin:$PATH"
     export NIX_DARWIN_TOOLCHAIN_DIR="${darwinCrossToolchain}/bin"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}${xDylibFileFlags}${glLinkFlag}-lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F$DARWIN_SDK_ROOT/System/Library/Frameworks ${glFrameworkFlag}-fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${foundation}/usr/lib -L${libobjc}/usr/lib -L${iokit}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup ${glDylibFileFlag}${xDylibFileFlags}${glLinkFlag}-lIOKitCF -lCoreFoundation -lFoundation -lobjc -lSystem"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT ${glFrameworkFlag}${glIncludeFlag}-I${libSystem}/usr/include -I${corefoundation}/include -I${foundation}/usr/include -I${libobjc}/usr/include -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
   '';
 

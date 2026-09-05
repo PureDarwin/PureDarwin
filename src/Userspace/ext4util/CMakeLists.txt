@@ -1,6 +1,6 @@
 # ext4.util and the filesystem bundle that points diskarbitrationd at it.
 
-add_darwin_executable(ext4_util MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(ext4_util MACOSX_VERSION_MIN 26.5)
 set_target_properties(ext4_util PROPERTIES OUTPUT_NAME ext4.util)
 
 get_target_property(_ext4util_opts ext4_util COMPILE_OPTIONS)
@@ -30,7 +30,7 @@ target_link_options(ext4_util PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -lSystem
 )
 

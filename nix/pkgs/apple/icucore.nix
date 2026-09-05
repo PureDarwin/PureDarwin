@@ -46,9 +46,9 @@ stdenv.mkDerivation {
       CXX=${darwinCrossToolchain}/bin/${targetTriple}-clang++ \
       AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
       RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
-      CFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include ${lib.optionalString (!isArmv6) "-mmacosx-version-min=11.0"}" \
-      CXXFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include ${lib.optionalString (!isArmv6) "-mmacosx-version-min=11.0"} ${lib.optionalString isArmv6 "-O1"}" \
-      LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains"} ${lib.optionalString (libcxxabiDylib != null) "-L${libcxxabiDylib}/usr/lib -lc++abi"} -lSystem ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"}" \
+      CFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include ${lib.optionalString (!isArmv6) "-mmacosx-version-min=26.5"}" \
+      CXXFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include ${lib.optionalString (!isArmv6) "-mmacosx-version-min=26.5"} ${lib.optionalString isArmv6 "-O1"}" \
+      LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"} ${lib.optionalString (libcxxabiDylib != null) "-L${libcxxabiDylib}/usr/lib -lc++abi"} -lSystem ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"}" \
       ../source/configure \
         --host=${targetTriple} \
         --with-cross-build=$PWD/../native-build \
@@ -142,7 +142,7 @@ PCEOF
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib -fuse-ld=${nativeLd}/bin/ld \
       -nostdlib -L${libSystem}/usr/lib -L"$out/usr/lib" \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,11.0,11.5"} \
+      ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5"} \
       -Wl,-install_name,/usr/lib/libicucore.A.dylib \
       -Wl,-reexport_library,"$out/usr/lib/libicuuc.76.1.dylib" \
       -Wl,-reexport_library,"$out/usr/lib/libicudata.76.1.dylib" \

@@ -35,7 +35,7 @@ stdenv.mkDerivation {
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
       -Wl,-dylinker_install_name,/usr/lib/dyld \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_launchd_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_launchd_mig_static.a \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libxpc_static.a \
@@ -56,7 +56,7 @@ stdenv.mkDerivation {
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib \
       -Wl,-dylinker_install_name,/usr/lib/dyld \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       ${lib.optionalString (!isArmv6) "-Wl,-fixup_chains"} \
       -lSystem \
       ${src}/src/Libraries/XPC/launchd/pd_console_login.c \

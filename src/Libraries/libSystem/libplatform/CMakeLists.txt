@@ -84,6 +84,7 @@ target_sources(libplatform_static PRIVATE
     src/simple/asl.c
     src/simple/string_io.c
     src/os/lock.c
+    src/os/sync_wait_on_address.c
     src/os/alloc_once.c
     src/os/semaphore.c
     src/setjmp/generic/sigaction.c   # __platform_sigaction (libc's sigaction.c wrapper)

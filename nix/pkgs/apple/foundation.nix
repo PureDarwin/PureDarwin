@@ -83,7 +83,7 @@ stdenv.mkDerivation {
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${libobjc}/usr/lib -L${corefoundation}/usr/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/usr/lib/libFoundation.dylib \
       -Wl,-fixup_chains \
       -lobjc -lCoreFoundation -lSystem \

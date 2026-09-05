@@ -6760,6 +6760,16 @@ out:
 	*ret = error;
 	return error;
 }
+#else /* XNU_TARGET_OS_OSX */
+
+/* syscalls.master declares pid_hibernate for ALL arches, so the sysent table
+ * references it even where the freezer is not built. */
+int
+pid_hibernate(struct proc *p __unused, struct pid_hibernate_args *args __unused, int *ret __unused)
+{
+	return ENOTSUP;
+}
+
 #endif /* !XNU_TARGET_OS_OSX */
 
 #if SOCKETS

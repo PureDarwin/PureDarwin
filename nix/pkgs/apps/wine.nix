@@ -151,7 +151,7 @@ stdenv.mkDerivation {
     export STRIP="${darwinCrossToolchain}/bin/${targetTriple}-strip"
     export CPPFLAGS="-F${coreservices}/System/Library/Frameworks -F${security}/System/Library/Frameworks -F${diskArbitration}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -I${mesa}/usr/include -I${libSystem}/usr/include -I${../wayland/pd-compat-include} ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") (xDeps ++ waylandDeps)}"
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,11.0,11.5 -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${mesa}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") (xDeps ++ waylandDeps)} -Wl,-platform_version,macos,26.5,26.5 -F${coreservices}/System/Library/Frameworks -framework CoreServices -F${security}/System/Library/Frameworks -framework Security -F${diskArbitration}/System/Library/Frameworks -framework DiskArbitration -F${systemConfiguration}/System/Library/Frameworks -framework SystemConfiguration -F${iokit}/System/Library/Frameworks -F${corefoundation}/System/Library/Frameworks -lSystem"
 
     # The cross build invokes widl for IDLs that import stdole2.tlb. The
     # native-tools derivation deliberately builds only the host tools, so its
@@ -220,7 +220,7 @@ stdenv.mkDerivation {
     # portable #else. Take that instead of half-compiling the Apple one.
     sed -i '0,/^#ifdef __APPLE__$/! s|^#ifdef __APPLE__$|#if 0 /* PureDarwin: no Spotlight or Carbon keychain */|' dlls/mountmgr.sys/cred.c
 
-    sed -i 's| -ldylib1\.o| -fuse-ld=${nativeLd}/bin/ld -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,10.7,11.5 -lSystem|' configure
+    sed -i 's| -ldylib1\.o| -fuse-ld=${nativeLd}/bin/ld -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,26.5,26.5 -lSystem|' configure
 
 ${lib.optionalString isArm64 ''
     export CROSSCFLAGS="-g -O1 -fno-unwind-tables"

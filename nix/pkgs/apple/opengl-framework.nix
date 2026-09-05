@@ -46,7 +46,7 @@ stdenv.mkDerivation {
       -L${libSystem}/usr/lib -L${mesa}/usr/lib -L${glu}/usr/lib \
       ${lib.optionalString withX11 "-L${libX11}/lib -L${libXext}/lib -L${libxcb}/lib -L${libXau}/lib -L${libXdmcp}/lib"} \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,${installName} \
       -Wl,-reexport-lGL \
       -Wl,-reexport-lGLU \

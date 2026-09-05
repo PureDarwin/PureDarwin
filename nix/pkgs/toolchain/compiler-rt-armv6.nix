@@ -32,7 +32,7 @@ stdenv.mkDerivation {
         atomic.c|atomic_*.c) continue ;;
       esac
       obj="$OLDPWD/obj/''${f%.c}.o"
-      $CC -arch armv6 -isysroot "$SDK" -mmacosx-version-min=11.0 \
+      $CC -arch armv6 -isysroot "$SDK" -mmacosx-version-min=26.5 \
           -c "$f" -o "$obj" \
           -O2 -fno-builtin -fno-stack-protector -ffreestanding \
           -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \

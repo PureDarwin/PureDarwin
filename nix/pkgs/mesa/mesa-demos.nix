@@ -82,8 +82,8 @@ pkg-config = '${pkg-config}/bin/pkg-config'
 install_name_tool = '${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool'
 
 [built-in options]
-c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-Qunused-arguments', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include', ${lib.concatMapStringsSep ", " (s: "'${s}'") incs}]
-c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${mesa}/usr/lib', ${lib.optionalString withX11 "'-L${libX11}/lib', '-L${libXext}/lib', '-L${libxcb}/lib', '-L${libXau}/lib', '-L${libXdmcp}/lib', "} '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-fixup_chains', '-lGL', ${lib.optionalString withX11 "'-lX11', '-lXext', '-lxcb', '-lXau', '-lXdmcp', "}'-lSystem']
+c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-Qunused-arguments', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector', '-I${libSystem}/usr/include', ${lib.concatMapStringsSep ", " (s: "'${s}'") incs}]
+c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${mesa}/usr/lib', ${lib.optionalString withX11 "'-L${libX11}/lib', '-L${libXext}/lib', '-L${libxcb}/lib', '-L${libXau}/lib', '-L${libXdmcp}/lib', "} '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-Wl,-fixup_chains', '-lGL', ${lib.optionalString withX11 "'-lX11', '-lXext', '-lxcb', '-lXau', '-lXdmcp', "}'-lSystem']
 
 [host_machine]
 system = 'darwin'

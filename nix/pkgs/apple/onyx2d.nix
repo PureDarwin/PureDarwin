@@ -51,7 +51,7 @@ stdenv.mkDerivation {
     cc="${darwinCrossToolchain}/bin/${targetTriple}-clang"
     cflags="
       -isysroot $DARWIN_SDK_ROOT
-      -mmacosx-version-min=11.0
+      -mmacosx-version-min=26.5
       -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
       -fno-stack-protector
       -fobjc-arc-exceptions -fblocks
@@ -87,7 +87,7 @@ stdenv.mkDerivation {
       -L${foundation}/usr/lib \
       -L${freetype2}/lib -L${libpng}/lib -L${libjpeg}/lib -L${zlib}/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,${installName} \
       $objs \
       -lFoundation -lCoreFoundation -lobjc \

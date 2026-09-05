@@ -6,7 +6,7 @@ endif()
 # Build as a DYLIB (dyld3 here cannot dlopen an MH_BUNDLE - see the video
 # driver's notes). install_name must be the on-image path dyld records.
 add_darwin_shared_library(puredarwininput_drv
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /usr/lib/xorg/modules/input/puredarwininput_drv.so)
 
 # Xorg's loader looks the module up as "<name>_drv"; strip CMake's "lib".
@@ -16,7 +16,7 @@ target_link_options(puredarwininput_drv PRIVATE
     -flat_namespace
     "LINKER:-undefined,warning"
     "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/puredarwininput_drv.exports"
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -Wl,-lSystem
 )
 set_property(TARGET puredarwininput_drv APPEND PROPERTY LINK_DEPENDS

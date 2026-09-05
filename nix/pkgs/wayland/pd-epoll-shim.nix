@@ -31,24 +31,24 @@ stdenv.mkDerivation {
     mkdir -p sdk
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
-    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -D_DARWIN_C_SOURCE -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
       -fno-stack-protector -fPIC -O2 \
       -I. -I${libSystem}/usr/include \
       -c epoll.c -o epoll.o
 
-    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -D_DARWIN_C_SOURCE -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
       -fno-stack-protector -fPIC -O2 \
       -I. -I${libSystem}/usr/include \
       -c sem.c -o sem.o
 
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
-      -mmacosx-version-min=11.0 \
+      -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/usr/lib/libepoll-shim.dylib \
       -Wl,-fixup_chains \
       epoll.o sem.o -lSystem -o libepoll-shim.dylib

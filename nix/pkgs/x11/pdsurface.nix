@@ -25,7 +25,7 @@ stdenv.mkDerivation {
     mkdir -p sdk
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
-    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+    ${cc} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -D_DARWIN_C_SOURCE -Iinclude \
       -I${libSystem}/usr/include -I${corefoundation}/usr/include \
       -I${iokit}/usr/include \
@@ -33,7 +33,7 @@ stdenv.mkDerivation {
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
       -Wl,-install_name,/usr/lib/libPDSurface.dylib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
+      -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains \
       -lIOKitCF -lCoreFoundation -lSystem \
       -o libPDSurface.dylib PDSurface.c
     runHook postBuild

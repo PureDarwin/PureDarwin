@@ -31,6 +31,7 @@ target_sources(corecrypto.kext PRIVATE
     algorithms/yarrow/yarrowUtils.c
 
     kext/cc_functions.c
+    kext/cc_random.c
     kext/cc_kext_main.c
 )
 

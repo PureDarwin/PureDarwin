@@ -32,8 +32,8 @@ stdenv.mkDerivation {
       -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -DCMAKE_AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
       -DCMAKE_RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
-      -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include" \
-      -DCMAKE_EXE_LINKER_FLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -lSystem" \
+      -DCMAKE_C_FLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include" \
+      -DCMAKE_EXE_LINKER_FLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -lSystem" \
       -DCMAKE_INSTALL_PREFIX=$out \
       -DCMAKE_BUILD_TYPE=Release \
       -DENABLE_SHARED=OFF \

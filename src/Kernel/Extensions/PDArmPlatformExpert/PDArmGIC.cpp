@@ -22,6 +22,7 @@
 #define GICR_SGI_BASE            0x10000
 #define GICR_IGROUPR0            (GICR_SGI_BASE + 0x0080)
 #define GICR_ISENABLER0          (GICR_SGI_BASE + 0x0100)
+#define GICR_ICENABLER0          (GICR_SGI_BASE + 0x0180)
 #define GICR_IPRIORITYR          (GICR_SGI_BASE + 0x0400)
 #define GICR_IGRPMODR0           (GICR_SGI_BASE + 0x0D00)
 
@@ -103,21 +104,55 @@ PDArmGIC_init(void)
 		;
 	}
 
-	r_write(GICR_IGROUPR0, r_read(GICR_IGROUPR0) | (1u << GIC_TIMER_PPI));
+	/* The generic timer must land in **Group 0**, i.e. be delivered as an FIQ:
+	 * xnu handles it in sleh_fiq() (ml_get_timer_pending() -> rtclock_intr()),
+	 * which acknowledges via ICC_IAR0_EL1 and EOIs via ICC_EOIR0_EL1. Putting
+	 * it in Group 1 sends it to sleh_irq(), which dispatches to the IOCPU
+	 * interrupt controller - that has no notion of the timer, so it never
+	 * rearms and the CPU wedges in an interrupt storm.
+	 *
+	 * Everything stays masked here. Delivery is switched on by
+	 * PDArmGIC_enable() once cpu_data->interrupt_handler is installed. */
+	r_write(GICR_ICENABLER0, 0xffffffffu);
+	r_write(GICR_IGROUPR0, r_read(GICR_IGROUPR0) & ~(1u << GIC_TIMER_PPI));
 	r_write(GICR_IGRPMODR0, r_read(GICR_IGRPMODR0) & ~(1u << GIC_TIMER_PPI));
 	((volatile uint8_t *)(gGicr + GICR_IPRIORITYR))[GIC_TIMER_PPI] = 0x00;
-	r_write(GICR_ISENABLER0, (1u << GIC_TIMER_PPI));
 
+	/* System register access and priority mask are safe now; delivery is not. */
 	__asm__ volatile (
 	    "msr ICC_SRE_EL1, %0\n"
 	    "isb\n"
 	    "msr ICC_PMR_EL1, %1\n"
+	    "msr ICC_IGRPEN0_EL1, %2\n"
 	    "msr ICC_IGRPEN1_EL1, %2\n"
 	    "isb\n"
-	    :: "r"((uint64_t)0x1), "r"((uint64_t)0xff), "r"((uint64_t)0x1) : "memory");
+	    :: "r"((uint64_t)0x1), "r"((uint64_t)0xff), "r"((uint64_t)0x0) : "memory");
 
-	IOLog("PDArmGIC: up (GICD_CTLR=0x%x GICR_WAKER=0x%x timer PPI %u Group1 enabled)\n",
+	IOLog("PDArmGIC: configured (GICD_CTLR=0x%x GICR_WAKER=0x%x timer PPI %u Group0/masked)\n",
 	    d_read(GICD_CTLR), r_read(GICR_WAKER), (unsigned)GIC_TIMER_PPI);
+	return true;
+#endif
+}
+
+bool
+PDArmGIC_enable(void)
+{
+#if defined(__arm__) && !defined(__arm64__)
+	return true;
+#else
+	if (gGicr == NULL) {
+		return false;
+	}
+
+	r_write(GICR_ISENABLER0, (1u << GIC_TIMER_PPI));
+	__asm__ volatile (
+	    "msr ICC_IGRPEN0_EL1, %0\n"
+	    "msr ICC_IGRPEN1_EL1, %0\n"
+	    "isb\n"
+	    :: "r"((uint64_t)0x1) : "memory");
+
+	IOLog("PDArmGIC: delivery enabled (timer PPI %u as Group0/FIQ)\n",
+	    (unsigned)GIC_TIMER_PPI);
 	return true;
 #endif
 }

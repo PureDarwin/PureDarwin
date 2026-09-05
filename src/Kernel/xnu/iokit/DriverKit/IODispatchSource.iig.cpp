@@ -270,7 +270,14 @@ IODispatchSource::Cancel(
 
     msg->content.handler = handler;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -353,7 +360,14 @@ IODispatchSource::SetEnableWithCompletion(
 
     msg->content.handler = handler;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -434,7 +448,14 @@ IODispatchSource::CheckForWork(
 
     msg->content.synchronous = synchronous;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -515,7 +536,14 @@ IODispatchSource::SetEnable(
 
     msg->content.enable = enable;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 

@@ -1,4 +1,4 @@
-add_darwin_executable(mousemon MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(mousemon MACOSX_VERSION_MIN 26.5)
 
 get_target_property(_mousemon_opts mousemon COMPILE_OPTIONS)
 if(_mousemon_opts)
@@ -20,7 +20,7 @@ target_link_options(mousemon PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -lSystem
 )
 

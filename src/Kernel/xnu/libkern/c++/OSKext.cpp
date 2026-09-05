@@ -11089,7 +11089,12 @@ OSKext::consumeDeferredKextCollection(kc_kind_t type)
 
 // #include <InstrProfiling.h>
 extern "C" {
-/* Kernel images do not have process teardown, so C++ registrations are inert. */
+/* Kernel images do not have process teardown, so C++ registrations are inert.
+ * Nothing in the kernel calls this - only kexts do, at KC-link time - so it
+ * must stay in the symbol table or release strips it and kc-tools binds the
+ * kext import to its _panic trampoline (garbage panic string at first kext
+ * static initializer). See ___cxa_atexit in config/Libkern.exports. */
+__attribute__((used, visibility("default")))
 int
 __cxa_atexit(void (*destructor)(void *), void *object, void *dso_handle)
 {

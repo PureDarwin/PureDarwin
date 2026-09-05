@@ -307,7 +307,14 @@ IOServiceStateNotificationDispatchSource::Create(
     msg->queue__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
     msg->content.queue = (OSObjectRef) queue;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     ret = OSMTypeID(IOServiceStateNotificationDispatchSource)->Invoke(_rpc);
 
     if (kIOReturnSuccess == ret)
@@ -400,7 +407,14 @@ IOServiceStateNotificationDispatchSource::SetHandler(
     msg->action__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
     msg->content.action = (OSObjectRef) action;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -480,7 +494,14 @@ IOServiceStateNotificationDispatchSource::StateNotificationBegin(
 
     msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 

@@ -550,8 +550,9 @@ __dead2 __unused
 static void
 arm64_implementation_specific_error(arm_saved_state_t *state, uint64_t esr, vm_offset_t far)
 {
-#pragma unused (state, esr, far)
-	panic_plain("Unhandled implementation specific error\n");
+#pragma unused (state)
+	panic_plain("Unhandled implementation specific error: esr 0x%llx far 0x%lx\n",
+	    esr, (unsigned long)far);
 }
 
 #if CONFIG_KERNEL_INTEGRITY
@@ -3073,7 +3074,7 @@ sleh_fiq(arm_saved_state_t *state)
 
 	sleh_interrupt_handler_prologue(state, type);
 
-#if APPLEVIRTUALPLATFORM
+#if APPLEVIRTUALPLATFORM || HAS_GICV3_FIQ
 	uint64_t iar = __builtin_arm_rsr64("ICC_IAR0_EL1");
 #endif
 
@@ -3119,7 +3120,7 @@ sleh_fiq(arm_saved_state_t *state)
 		ml_interrupt_masked_debug_end();
 	}
 
-#if APPLEVIRTUALPLATFORM
+#if APPLEVIRTUALPLATFORM || HAS_GICV3_FIQ
 	if (iar != GIC_SPURIOUS_IRQ) {
 		__builtin_arm_wsr64("ICC_EOIR0_EL1", iar);
 		__builtin_arm_isb(ISB_SY);

@@ -85,8 +85,14 @@ KALLOC_HEAP_DEFINE(KERN_OS_MALLOC, "kern_os_malloc", KHEAP_ID_KT_VAR);
 /*
  * macOS Only deprecated interfaces, here only for legacy reasons.
  * There is no internal variant of any of these symbols on purpose.
+ *
+ * PureDarwin never defines XNU_PLATFORM_MacOSX, so upstream's guard leaves this
+ * block to the __x86_64__ clause alone. Our vendored kexts (IOStorageFamily and
+ * friends) are old Apple sources that still call OSMalloc_Tagalloc()/_MALLOC(),
+ * so arm64 needs them too - otherwise kc-tools binds those imports to its panic
+ * trampoline and the kext panics on its own bundle identifier at init.
  */
-#if XNU_PLATFORM_MacOSX || defined(__x86_64__)
+#if XNU_PLATFORM_MacOSX || defined(__x86_64__) || defined(__arm64__)
 
 #define OSMallocDeprecatedMsg(msg)
 #include <libkern/OSMalloc.h>

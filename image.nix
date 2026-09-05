@@ -516,15 +516,15 @@ EOF
 <plist version="1.0">
 <dict>
 	<key>ProductBuildVersion</key>
-	<string>20D91</string>
+	<string>25F74</string>
 	<key>ProductCopyright</key>
-	<string>1983-2021 PureDarwin. All rights reserved.</string>
+	<string>1983-2026 PureDarwin. All rights reserved.</string>
 	<key>ProductName</key>
 	<string>PureDarwin</string>
 	<key>ProductUserVisibleVersion</key>
-	<string>11.3</string>
+	<string>26.5</string>
 	<key>ProductVersion</key>
-	<string>11.3</string>
+	<string>26.5</string>
 </dict>
 </plist>
 EOF

@@ -62,7 +62,7 @@ _sec_farm_dir(os
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/pthread/compat-include/os/base_private.h)
 
 add_darwin_shared_library(Security
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /System/Library/Frameworks/Security.framework/Versions/A/Security)
 
 # Apple ships these but PureDarwin does not build them:
@@ -197,7 +197,7 @@ target_compile_options(Security PRIVATE
 target_link_options(Security PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     -Wl,-L,${PUREDARWIN_LIBOBJC_PREFIX}/usr/lib
     -lobjc

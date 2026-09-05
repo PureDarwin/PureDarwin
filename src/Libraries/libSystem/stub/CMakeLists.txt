@@ -1,5 +1,5 @@
 add_darwin_shared_library(libSystem_B_stub
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /usr/lib/libSystem.B.dylib)
 set_property(TARGET libSystem_B_stub PROPERTY OUTPUT_NAME "System.B")
 add_custom_command(TARGET libSystem_B_stub POST_BUILD
@@ -33,7 +33,9 @@ target_sources(libSystem_B_stub PRIVATE
     # libobjc references; libmacho isn't otherwise compiled into PD libSystem.
     ${CMAKE_SOURCE_DIR}/tools/cctools/libmacho/getsecbyname.c
     # NXGetArchInfo* - also libmacho, and also part of libSystem on Darwin.
-    ${CMAKE_SOURCE_DIR}/tools/cctools/libmacho/arch.c)
+    ${CMAKE_SOURCE_DIR}/tools/cctools/libmacho/arch.c
+    # mach-o/utils.h (macOS 13) arch-name helpers, over that same table.
+    ${CMAKE_SOURCE_DIR}/tools/cctools/libmacho/utils.c)
 
 target_link_options(libSystem_B_stub PRIVATE
     -compatibility_version 1.0.0
@@ -56,9 +58,18 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBSYSTEM_EXPOR
 file(STRINGS ${LIBSYSTEM_EXPORTS} _libsystem_export_lines)
 set(_libsystem_exports_for_link ${LIBSYSTEM_EXPORTS})
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
-    # Drop only the legacy x86 ABI suffixes. Modern ARM64 APIs still use
-    # Darwin extension/versioned names such as $DARWIN_EXTSN and $V2.
-    list(FILTER _libsystem_export_lines EXCLUDE REGEX "\\$(UNIX2003|INODE64|1050)$")
+    # The legacy x86 ABI suffixes. On arm64 the toolchain defines
+    # XNU_PLATFORM_MacOSX, so cdefs.h sets __DARWIN_ONLY_64_BIT_INO_T and
+    # friends to 1 and libc compiles these entry points under their plain
+    # names - strip the suffix rather than dropping the export, or nothing
+    # exports stat/fstat at all. ARM32 has no such define, so it keeps the
+    # old drop. Modern ARM64 APIs still use $DARWIN_EXTSN and $V2.
+    if(PUREDARWIN_ARM64)
+        list(TRANSFORM _libsystem_export_lines REPLACE "\\$(UNIX2003|INODE64|1050)$" "")
+        list(REMOVE_DUPLICATES _libsystem_export_lines)
+    else()
+        list(FILTER _libsystem_export_lines EXCLUDE REGEX "\\$(UNIX2003|INODE64|1050)$")
+    endif()
     list(FILTER _libsystem_export_lines EXCLUDE REGEX "__ZNSt3__1plIc.*ERKS9_PKS6_")
     # Symbols that only exist on x86. Exporting one that was never built makes
     # the -exported_symbols_list itself the undefined reference, so the link

@@ -1,0 +1,5 @@
+# Symbols CoreServices.framework exports, for the SDK's CoreServices.tbd.
+# Generated from the built framework; see
+# src/Libraries/Security/Security.exports for the regeneration command.
+_MPCurrentTaskID
+_MPTaskIsPreemptive

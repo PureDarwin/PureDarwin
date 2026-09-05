@@ -130,6 +130,8 @@ extern u_int32_t random(void); /* from <libkern/libkern.h> */
 
 static bool alloc_asid(pmap_t pmap);
 static void free_asid(pmap_t pmap);
+/* Defined below its first use; the drop has no prototype for it. */
+static void pmap_phys_write_disable(vm_address_t va);
 static void flush_mmu_tlb_region_asid_async(vm_offset_t va, size_t length, pmap_t pmap, bool last_level_only, bool strong);
 static void flush_mmu_tlb_full_asid_async(pmap_t pmap);
 static pt_entry_t wimg_to_pte(unsigned int wimg, pmap_paddr_t pa);
@@ -12231,6 +12233,24 @@ pmap_pin_kernel_pages(vm_offset_t kva __unused, size_t nbytes __unused)
 
 void __unused
 pmap_unpin_kernel_pages(vm_offset_t kva __unused, size_t nbytes __unused)
+{
+}
+
+/**
+ * pmap_cs_lockdown_pages()/pmap_cs_unlockdown_pages() call these on both sides
+ * of the XNU_MONITOR check, but the open-source drop defines the whole lockdown
+ * family only under XNU_MONITOR. Without a PPL there is no monitor to protect
+ * the pages from, so these are no-ops.
+ */
+static inline void
+pmap_ppl_lockdown_pages(vm_address_t kva __unused, vm_size_t size __unused,
+    uint64_t lockdown_flag __unused, bool ppl_writable __unused)
+{
+}
+
+static inline void
+pmap_ppl_unlockdown_pages(vm_address_t kva __unused, vm_size_t size __unused,
+    uint64_t lockdown_flag __unused, bool ppl_writable __unused)
 {
 }
 

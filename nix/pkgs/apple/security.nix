@@ -12,6 +12,14 @@
 , arm64CrossToolchain ? null
 }:
 
+let
+  # Shared with apple-sdk-pinned.nix so the SDK publishes the same headers.
+  secHeaders = import ../../lib/security-headers.nix;
+  secHeaderArgs = lib.concatStringsSep " " (
+    map (d: "src/Libraries/Security/${d}/*.h") secHeaders.dirs
+    ++ map (f: "src/Libraries/Security/${f}") (secHeaders.apiFiles ++ secHeaders.closureFiles));
+in
+
 # Security.framework, built from Apple's Security-59754.120.12 sources by
 # src/Libraries/Security/CMakeLists.txt. The framework layout (Versions/A,
 # Headers, the Current/ symlinks and the flat /usr/lib/libSecurity.dylib every
@@ -44,42 +52,9 @@
     cp build-nix/src/Libraries/Security/libSecurity.dylib \
       "$fw/Versions/A/Security"
 
-    # Apple's own API headers, so consumers see the real Security API. Note
-    # base/Security.h is deliberately not among them: its SEC_OS_OSX_INCLUDES
-    # branch pulls the whole CDSA header set, which is not vendored - our
-    # include/Security/Security.h is the umbrella over what does exist.
-    cp src/Libraries/Security/apple/trust/headers/*.h \
-       src/Libraries/Security/apple/keychain/headers/*.h \
-       src/Libraries/Security/apple/base/SecBase.h \
-       src/Libraries/Security/apple/base/SecBasePriv.h \
-       src/Libraries/Security/apple/base/SecRandom.h \
-       src/Libraries/Security/apple/cssm/certextensions.h \
-       src/Libraries/Security/apple/sectask/SecTask.h \
-       src/Libraries/Security/apple/sectask/SecTaskPriv.h \
-       src/Libraries/Security/apple/sectask/SecEntitlements.h \
-       src/Libraries/Security/include/Security/*.h \
-       "$fw/Versions/A/Headers/"
-
-    # Apple's public headers reference these from their #if SEC_OS_OSX blocks,
-    # which a consumer takes because it does not define SEC_IOS_ON_OSX the way
-    # this build does. They are declarations only - the CDSA, code-signing and
-    # CMS implementations are not vendored, so calling into them fails at link
-    # time, which is the honest outcome. Computed as the include closure of the
-    # headers above; keep it that way if either set changes.
-    cp src/Libraries/Security/apple/OSX/libsecurity_cssm/lib/cssmconfig.h \
-       src/Libraries/Security/apple/OSX/libsecurity_cssm/lib/cssmtype.h \
-       src/Libraries/Security/apple/OSX/libsecurity_cssm/lib/cssmerr.h \
-       src/Libraries/Security/apple/OSX/libsecurity_cssm/lib/x509defs.h \
-       src/Libraries/Security/apple/cssm/cssmapple.h \
-       src/Libraries/Security/apple/OSX/libsecurity_codesigning/lib/CSCommon.h \
-       src/Libraries/Security/apple/OSX/libsecurity_codesigning/lib/SecCode.h \
-       src/Libraries/Security/apple/OSX/libsecurity_keychain/lib/SecAccess.h \
-       src/Libraries/Security/apple/OSX/libsecurity_asn1/lib/SecAsn1Types.h \
-       src/Libraries/Security/apple/CMS/SecCMS.h \
-       src/Libraries/Security/apple/OSX/libsecurity_keychain/lib/SecKeychain.h \
-       src/Libraries/Security/apple/OSX/libsecurity_keychain/lib/SecKeychainItem.h \
-       src/Libraries/Security/apple/OSX/libsecurity_keychain/lib/SecTrustedApplication.h \
-       "$fw/Versions/A/Headers/"
+    # Header set comes from nix/lib/security-headers.nix; see there for why
+    # base/Security.h is excluded and what the second group is for.
+    cp ${secHeaderArgs} "$fw/Versions/A/Headers/"
 
     # Apple's SecCertificatePriv.h includes <security_libDER/libDER/libDER.h>,
     # the spelling their build uses for libDER. Publish our clean-room libDER's

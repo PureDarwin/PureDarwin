@@ -124,8 +124,8 @@ override PKG_CONFIG := ${pkg-config}/bin/pkg-config
 # those later appends to actually take effect.
 # libiconv ships no .pc, so the pkg-config sweep above misses it; macOS puts
 # iconv.h in the SDK, which the OSS one does not carry.
-CFLAGS += -isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -D_DARWIN_C_SOURCE -fno-stack-protector -I${libSystem}/usr/include -I${libiconv}/usr/include
-LDFLAGS += -isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -L${libiconv}/usr/lib -liconv -lSystem
+CFLAGS += -isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -D_DARWIN_C_SOURCE -fno-stack-protector -I${libSystem}/usr/include -I${libiconv}/usr/include
+LDFLAGS += -isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup -L${libiconv}/usr/lib -liconv -lSystem
 EOF
 
     runHook postConfigure

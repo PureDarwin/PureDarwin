@@ -69,7 +69,7 @@ install_name_tool = '${darwinCrossToolchain}/bin/${targetTriple}-install_name_to
 
 [built-in options]
 c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-DHAVE_UINT64_T=1', '-DHAVE___UINT128_T=1', '-DHAVE_XRENDERCREATESOLIDFILL=1', '-DHAVE_XRENDERCREATELINEARGRADIENT=1', '-DHAVE_XRENDERCREATERADIALGRADIENT=1', '-DHAVE_XRENDERCREATECONICALGRADIENT=1', '-DFC_RGBA_UNKNOWN=0', '-DFC_RGBA_RGB=1', '-DFC_RGBA_BGR=2', '-DFC_RGBA_VRGB=3', '-DFC_RGBA_VBGR=4', '-DFC_RGBA_NONE=5', '-DFC_HINT_NONE=0', '-DFC_HINT_SLIGHT=1', '-DFC_HINT_MEDIUM=2', '-DFC_HINT_FULL=3', '-DFC_LCD_NONE=0', '-DFC_LCD_DEFAULT=1', '-DFC_LCD_LIGHT=2', '-DFC_LCD_LEGACY=3', '-fno-stack-protector', '-I${libSystem}/usr/include', ${lib.concatMapStringsSep ", " (dep: "'-I${lib.getDev dep}/include'") deps}]
-c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', ${lib.concatMapStringsSep ", " (dep: "'-L${dep}/lib'") deps}, ${lib.optionalString withX11 "'-Wl,-force_load,${libXau}/lib/libXau.a', '-Wl,-force_load,${libXdmcp}/lib/libXdmcp.a', "}'-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-lSystem']
+c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', ${lib.concatMapStringsSep ", " (dep: "'-L${dep}/lib'") deps}, ${lib.optionalString withX11 "'-Wl,-force_load,${libXau}/lib/libXau.a', '-Wl,-force_load,${libXdmcp}/lib/libXdmcp.a', "}'-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-lSystem']
 
 [host_machine]
 system = 'darwin'

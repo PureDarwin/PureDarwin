@@ -1,5 +1,5 @@
 macro(cctools_selfhost_executable name)
-    add_darwin_executable(${name}_selfhost MACOSX_VERSION_MIN 11.0)
+    add_darwin_executable(${name}_selfhost MACOSX_VERSION_MIN 26.5)
     get_target_property(_selfhost_opts ${name}_selfhost COMPILE_OPTIONS)
     if(_selfhost_opts)
         list(REMOVE_ITEM _selfhost_opts -nostdinc)
@@ -17,7 +17,7 @@ macro(cctools_selfhost_executable name)
         -nostdlib
         -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
         -Wl,-dylinker_install_name,/usr/lib/dyld
-        -Wl,-platform_version,macos,11.0,11.5
+        -Wl,-platform_version,macos,26.5,26.5
         -lSystem)
     target_link_libraries(${name}_selfhost PRIVATE libmacho_static libstuff_static)
     add_dependencies(${name}_selfhost libSystem_B_stub dyld)
@@ -55,7 +55,7 @@ set(_cctools_selfhost_reallocf "${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libc
 # Special cases: same source file as another tool, different behavior
 # selected via a preprocessor define at compile time (mirrors misc/CMakeLists.txt).
 macro(cctools_selfhost_executable_alias name source extra_define)
-    add_darwin_executable(${name}_selfhost MACOSX_VERSION_MIN 11.0)
+    add_darwin_executable(${name}_selfhost MACOSX_VERSION_MIN 26.5)
     get_target_property(_selfhost_opts ${name}_selfhost COMPILE_OPTIONS)
     if(_selfhost_opts)
         list(REMOVE_ITEM _selfhost_opts -nostdinc)
@@ -74,7 +74,7 @@ macro(cctools_selfhost_executable_alias name source extra_define)
         -nostdlib
         -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
         -Wl,-dylinker_install_name,/usr/lib/dyld
-        -Wl,-platform_version,macos,11.0,11.5
+        -Wl,-platform_version,macos,26.5,26.5
         -lSystem)
     target_link_libraries(${name}_selfhost PRIVATE libmacho_static libstuff_static)
     add_dependencies(${name}_selfhost libSystem_B_stub dyld)

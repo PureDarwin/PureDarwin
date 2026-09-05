@@ -451,7 +451,14 @@ IOExtensiblePaniclog::Create(
 
     msg->content.options = options;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     ret = OSMTypeID(IOExtensiblePaniclog)->Invoke(_rpc);
 
     if (kIOReturnSuccess == ret)
@@ -538,7 +545,14 @@ IOExtensiblePaniclog::SetActive(
 
     msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -614,7 +628,14 @@ IOExtensiblePaniclog::SetInactive(
 
     msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -694,7 +715,14 @@ IOExtensiblePaniclog::InsertData(
     msg->data__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
     msg->content.data = (OSObjectRef) data;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -778,7 +806,14 @@ IOExtensiblePaniclog::AppendData(
     msg->data__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
     msg->content.data = (OSObjectRef) data;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -859,7 +894,14 @@ IOExtensiblePaniclog::CopyMemoryDescriptor(
 
     msg->__object__descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 
@@ -942,7 +984,14 @@ IOExtensiblePaniclog::SetUsedLen(
 
     msg->content.used_len = used_len;
 
-    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl) };
+    IORPC _rpc = { .message = &buf.msg.mach, .reply = &buf.rpl.rpl.mach, .sendSize = sizeof(buf.msg), .replySize = sizeof(buf.rpl)
+#ifdef KERNEL
+                 /* OSMetaClassBase::Invoke() reads the RPC header through
+                  * kernelContent and fails with kIOReturnIPCError when it is
+                  * NULL, so every kernel-side call must set it. */
+                 , .kernelContent = (IORPCMessage *) &buf.msg.content
+#endif /* KERNEL */
+    };
     if (supermethod) ret = supermethod((OSObject *)this, _rpc);
     else             ret = ((OSObject *)this)->Invoke(_rpc);
 

@@ -129,8 +129,8 @@ pkg-config = '${pkg-config}/bin/pkg-config'
 wayland-scanner = '${waylandScanner}/bin/wayland-scanner'
 
 [built-in options]
-c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-D_DARWIN_C_SOURCE', '-D_USE_EXTENDED_LOCALES_', '-include', 'xlocale.h', '-fno-stack-protector', '-I${./pd-libc-compat}', '-I${./pd-compat-include}', '-I${epollShim}/include', ${lib.concatMapStringsSep ", " (d: "'-I${lib.getDev d}/include'") deps}, '-I${lib.getDev freetype}/include/freetype2', '-I${fcft}/usr/include']
-c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=11.0', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${epollShim}/usr/lib', '-L${fcft}/usr/lib', ${lib.concatMapStringsSep ", " (d: "'-L${d}/lib'") deps}, '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylib_file,/usr/lib/libepoll-shim.dylib:${epollShim}/usr/lib/libepoll-shim.dylib', '-Wl,-platform_version,macos,11.0,11.5', '-Wl,-fixup_chains', '-lepoll-shim', '-lSystem']
+c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-D_DARWIN_C_SOURCE', '-D_USE_EXTENDED_LOCALES_', '-include', 'xlocale.h', '-fno-stack-protector', '-I${./pd-libc-compat}', '-I${./pd-compat-include}', '-I${epollShim}/include', ${lib.concatMapStringsSep ", " (d: "'-I${lib.getDev d}/include'") deps}, '-I${lib.getDev freetype}/include/freetype2', '-I${fcft}/usr/include']
+c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${epollShim}/usr/lib', '-L${fcft}/usr/lib', ${lib.concatMapStringsSep ", " (d: "'-L${d}/lib'") deps}, '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylib_file,/usr/lib/libepoll-shim.dylib:${epollShim}/usr/lib/libepoll-shim.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-Wl,-fixup_chains', '-lepoll-shim', '-lSystem']
 
 [host_machine]
 system = 'darwin'

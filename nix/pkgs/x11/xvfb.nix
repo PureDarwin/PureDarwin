@@ -87,7 +87,7 @@ c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOUR
 # (non-static) pkgconfig dependency() lookup doesn't pull in. Rather than
 # force --static globally (breaks libxkbfile's own Requires.private: x11,
 # which we don't have a .pc for), just append those archives directly here.
-c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylinker_install_name,/usr/lib/dyld', '-Wl,-platform_version,macos,11.0,11.5', '-lSystem', '${freetype2}/lib/libfreetype.dylib', '${libfontenc}/lib/libfontenc.a', '${xvfbZlib}/lib/libz.a']
+c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylinker_install_name,/usr/lib/dyld', '-Wl,-platform_version,macos,26.5,26.5', '-lSystem', '${freetype2}/lib/libfreetype.dylib', '${libfontenc}/lib/libfontenc.a', '${xvfbZlib}/lib/libz.a']
 
 [host_machine]
 system = 'darwin'

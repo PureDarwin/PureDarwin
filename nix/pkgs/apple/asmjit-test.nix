@@ -32,7 +32,7 @@ stdenv.mkDerivation {
     # target is compiled; the other one is dead weight and doubles build time.
     defs="-DASMJIT_STATIC ${if isArm64 then "-DASMJIT_NO_X86" else "-DASMJIT_NO_AARCH64"}"
 
-    common="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 \
+    common="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 \
       -std=c++17 -fno-rtti -O2 \
       -nostdinc++ -isystem ${libcxxDylib}/usr/include/c++/v1 \
       -I${libSystem}/usr/include \
@@ -64,10 +64,10 @@ stdenv.mkDerivation {
     ${cxx} $common -c ${./asmjit-test.cpp} -o asmjit-test.o
     objs="$objs asmjit-test.o"
 
-    ${cxx} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+    ${cxx} -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib \
-      -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
+      -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains \
       -lc++ -lc++abi -lSystem \
       -o asmjit-test $objs
     runHook postBuild

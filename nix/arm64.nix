@@ -123,6 +123,9 @@ let
   };
   dilloArm64Build = mkArm64Build ./pkgs/apps/dillo.nix {
     inherit (pkgs) dillo util-macros;
+    # Without this it falls back to nixpkgs' libiconv, which on Linux is
+    # glibc-iconv - a host library with no arm64-darwin lib dir at all.
+    libiconv = libiconvArm64Build;
     fltk = fltkArm64Build;
     openssl = opensslArm64Build;
     libX11 = xlibArm64Build;
@@ -167,6 +170,7 @@ let
     libXau = xvfbLibXauArm64Build;
     libXdmcp = xvfbLibXdmcpArm64Build;
     mesa = mesaArm64Build;
+    glu = gluArm64Build;
   };
   # For boards with no GL stack (the Pi), so the image does not have to carry
   # OpenGL.framework and Mesa just to satisfy dyld at launch.
@@ -440,6 +444,8 @@ let
   cmakeArm64Build = mkArm64Build ./pkgs/base/cmake.nix {
     libcxxDylib = libcxxDylibArm64Build;
     libcxxabiDylib = libcxxabiDylibArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    libcurlDylib = libcurlDylibArm64Build;
     inherit (pkgs) cmake ninja;
   };
   ninjaArm64Build = mkArm64Build ./pkgs/base/ninja.nix {
@@ -492,6 +498,13 @@ let
     expat = expatArm64Build;
     gnutls = gnutlsSharedArm64Build;
     mesa = mesaArm64Build;
+    coreservices = coreServicesArm64Build;
+    security = securityArm64Build;
+    diskArbitration = diskArbitrationArm64Build;
+    systemConfiguration = systemConfigurationArm64Build;
+    iokit = iokitArm64Build;
+    corefoundation = coreFoundationArm64Build;
+    inherit (pkgs) perl;
     wayland = waylandArm64Build;
     waylandProtocols = waylandProtocolsBuild;
     waylandScanner = waylandScannerBuild;
@@ -628,6 +641,13 @@ let
     waylandScanner = waylandScannerBuild;
     src = ../src/ThirdParty/wayland;
   };
+  gluArm64Build = mkArm64Build ./pkgs/mesa/glu.nix {
+    nativeMesonTools = nativeMesonToolsDir;
+    libcxxDylib = libcxxDylibArm64Build;
+    libcxxabiDylib = libcxxabiDylibArm64Build;
+    mesa = mesaArm64Build;
+    inherit (pkgs) meson ninja pkg-config;
+  };
   mesaArm64Build = mkArm64Build ./pkgs/mesa/mesa.nix {
     nativeMesonTools = nativeMesonToolsDir;
     libcxxDylib = libcxxDylibArm64Build;
@@ -653,6 +673,7 @@ let
   mesaDemosArm64Build = mkArm64Build ./pkgs/mesa/mesa-demos.nix {
     nativeMesonTools = nativeMesonToolsDir;
     mesa = mesaArm64Build;
+    openglFramework = openglFrameworkArm64Build;
     libX11 = xlibArm64Build;
     libXext = xvfbLibXextArm64Build;
     libxcb = xcbArm64Build;
@@ -712,6 +733,7 @@ let
   };
   openglFrameworkArm64Build = mkArm64Build ./pkgs/apple/opengl-framework.nix {
     mesa = mesaArm64Build;
+    glu = gluArm64Build;
     libX11 = xlibArm64Build;
     xorgproto = pkgs.xorgproto;
     libXext = xvfbLibXextArm64Build;
@@ -781,6 +803,9 @@ let
       libiconvArm64Build xvfbZlibArm64Build xvfbPixmanArm64Build
     ];
     preConfigureExtra = ''
+      # libxml2 installs under include/libxml2/libxml, and the deps mapping
+      # only contributes the include/ level.
+      export CFLAGS="$CFLAGS -I${libxml2Arm64Build}/include/libxml2"
       export CFLAGS="$CFLAGS -include libxml/parser.h"
       export CFLAGS="$CFLAGS -Wno-incompatible-function-pointer-types"
       export ac_cv_path_GDK_PIXBUF_QUERYLOADERS="$(command -v true)"
@@ -1318,7 +1343,7 @@ let
         ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar x "$out/lib/libXcursor.a"
         ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
           -isysroot "$DARWIN_SDK_ROOT" \
-          -mmacosx-version-min=11.0 \
+          -mmacosx-version-min=26.5 \
           -fuse-ld=${nativeLd}/bin/ld \
           -nostdlib \
           -dynamiclib \
@@ -1464,7 +1489,7 @@ let
           -dynamiclib -fuse-ld=${nativeLd}/bin/ld -nostdlib \
           -L${libSystemArm64Build}/usr/lib \
           -Wl,-install_name,/usr/lib/libpd_virgl_shim.dylib \
-          -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
+          -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains \
           repack/*.o -lSystem \
           -o $out/usr/lib/libpd_virgl_shim.dylib
         cp src/Libraries/PDVirglShim/include/pd_virgl_shim.h $out/include/
@@ -1539,6 +1564,11 @@ let
     libSystem = libSystemArm64Build;
     corefoundation = coreFoundationArm64Build;
     iokitCFStatic = iokitCFStaticArm64Build;
+    # IOKitCF's hid.subproj has ObjC (HIDDeviceBase.m et al) subclassing
+    # NSObject; without these the override keeps the x86 builds and the arm64
+    # link cannot find _OBJC_CLASS_$_NSObject.
+    libobjc = libobjcArm64Build;
+    foundation = foundationArm64Build;
   };
   # ARMv6 (Pi Zero). launchd links CoreFoundation and IOKitCF, which in turn
   # need ICU, libobjc and libc++abi, so the whole chain gets an armv6 build.
@@ -2390,7 +2420,7 @@ let
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
       "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
-      "AppleFileSystemDriver.kext" "corecrypto.kext"
+      "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext" "amfi.kext"
       "PDArmPlatformExpert" "PDArmPCI"
       # Arch-neutral drivers, matching what x86 builds: filesystems,
       # USB, the rest of VirtIO, and the remaining storage families.
@@ -2414,7 +2444,7 @@ let
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
       "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
-      "AppleFileSystemDriver.kext" "corecrypto.kext"
+      "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext" "amfi.kext"
       "PDArmPlatformExpert.kext" "PDArmPCI.kext"
       "msdosfs.kext" "apfs.kext" "hfs.kext" "HFSEncodings.kext"
       "IOUSBFamily.kext" "AppleUSBEHCI.kext" "AppleUSBOHCI.kext"

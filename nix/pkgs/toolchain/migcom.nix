@@ -57,6 +57,7 @@ let
     cp -r "$SDK/usr/include/libkern" mach_shim/libkern
     cp "$SDK/usr/include/Availability.h" \
        "$SDK/usr/include/AvailabilityInternal.h" \
+       "$SDK/usr/include/AvailabilityInternalLegacy.h" \
        "$SDK/usr/include/AvailabilityVersions.h" \
        "$SDK/usr/include/AvailabilityMacros.h" \
        mach_shim/

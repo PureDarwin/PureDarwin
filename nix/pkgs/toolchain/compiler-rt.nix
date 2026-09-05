@@ -53,7 +53,7 @@ stdenv.mkDerivation {
     fi
     export PATH="$PWD/toolshim:$PATH"
 
-    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -arch ${targetArch}"
+    commonFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -arch ${targetArch}"
 
     # PureDarwin exports the builtins from libSystem (they are named in
     # libSystem.exports), and -exported_symbols_list cannot promote a hidden

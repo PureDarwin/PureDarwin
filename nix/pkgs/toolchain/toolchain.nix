@@ -14,7 +14,7 @@
                else callPackage ./host-otool.nix { })
 , nativeLd ? null
 , target ? "x86_64-apple-darwin20.4"
-, clangTarget ? "x86_64-apple-macosx11.0"
+, clangTarget ? "x86_64-apple-macosx26.5"
 , defaultSdkRoot ? "/usr/local/osxcross/SDK/MacOSX11.3.sdk"
 }:
 
@@ -28,7 +28,7 @@ let
 
   # The ISA baseline for generated code.
   #
-  # clang's default CPU for arm64-apple-macosx11.0 is an Apple Silicon Mac
+  # clang's default CPU for arm64-apple-macosx26.5 is an Apple Silicon Mac
   # (ARMv8.5), so it freely emits the ARMv8.1 large-system-extension atomics -
   # ldadd, cas and friends. The oldest hardware PureDarwin targets is Hurricane
   # (A10), which is ARMv8.0 and traps those as undefined instructions: the
@@ -36,11 +36,20 @@ let
   # does NOT prevent this on Apple targets; only -mcpu does.
   baselineCpu = if lib.hasPrefix "arm64-" clangTarget then [ "-mcpu=apple-a10" ] else [ ];
 
+  # cdefs.h picks the __DARWIN_ONLY_* set from XNU_PLATFORM_*. With none defined
+  # they default to 0, which is right for x86_64 macOS ($INODE64/$UNIX2003
+  # variants exist there) but wrong for arm64, where those suffixes never
+  # existed - freetype's fstat() then wants _fstat$INODE64. Only arm64 gets the
+  # define: setting it for x86_64 would also flip __DARWIN_ONLY_UNIX_CONFORMANCE
+  # and change that ABI.
+  platformDefine = if lib.hasPrefix "arm64-" clangTarget then [ "-DXNU_PLATFORM_MacOSX=1" ] else [ ];
+
   compilerWrapper = name: realBin: writeShellScriptBin "${target}-${name}" ''
     SDK="''${DARWIN_SDK_ROOT:-${defaultSdkRoot}}"
     export PATH="${lld}/bin:$PATH"
     fuseld=(${linkerArg})
     cpu=(${lib.escapeShellArgs baselineCpu})
+    platdef=(${lib.escapeShellArgs platformDefine})
     prev=
     for a in "$@"; do
       case "$a" in
@@ -59,6 +68,7 @@ let
     exec ${realBin} \
       -target ${clangTarget} \
       "''${cpu[@]}" \
+      "''${platdef[@]}" \
       -isysroot "$SDK" \
       "''${fuseld[@]}" \
       "$@"
@@ -80,7 +90,7 @@ let
     exec ${nativeLd}/bin/ld "''${args[@]}"
     '' else ''
     exec ${lld}/bin/ld64.lld \
-      -platform_version macos 11.0 11.3 \
+      -platform_version macos 26.5 26.5 \
       "''${args[@]}"
     ''}
   '';

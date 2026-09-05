@@ -12,14 +12,14 @@ stdenv.mkDerivation {
   buildPhase = ''
     export SDK="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     ${darwinCrossToolchain}/bin/${targetTriple}-clang \
-      -isysroot "$SDK" -mmacosx-version-min=11.0 -D_DARWIN_C_SOURCE -x objective-c \
+      -isysroot "$SDK" -mmacosx-version-min=26.5 -D_DARWIN_C_SOURCE -x objective-c \
       -fno-stack-protector -I${pdsurface}/usr/include -I${coregraphics}/usr/include \
       -I${corefoundation}/include \
       -I${libSystem}/usr/include -I${libobjc}/usr/include \
       -L${pdsurface}/usr/lib -L${coregraphics}/usr/lib -L${libSystem}/usr/lib \
       -L${libobjc}/usr/lib -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 cg-screen-demo.c \
+      -Wl,-platform_version,macos,26.5,26.5 cg-screen-demo.c \
       -lCoreGraphics -lPDSurface -lobjc -lSystem -o cg-screen-demo
   '';
   installPhase = ''

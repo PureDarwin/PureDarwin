@@ -128,7 +128,7 @@ add_dependencies(ipconfiguration_static libc_features)
 
 # ipconfig: the command line client. SystemStarter runs `ipconfig waitall` to
 # block until every interface has finished configuring.
-add_darwin_executable(ipconfig MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(ipconfig MACOSX_VERSION_MIN 26.5)
 
 target_sources(ipconfig PRIVATE
     ipconfig.tproj/client.c
@@ -142,7 +142,7 @@ target_compile_options(ipconfig PRIVATE ${_bootp_options})
 target_link_options(ipconfig PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -Wl,-dylinker_install_name,/usr/lib/dyld
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     -Wl,-L,${PUREDARWIN_IOKIT_PREFIX}/usr/lib

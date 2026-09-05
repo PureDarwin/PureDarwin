@@ -42,9 +42,9 @@ typedef struct {
 	(((maj) << 16) | (((min) & 0xff) << 8) | ((pat) & 0xff))
 
 /*
- * Falls back to the version sw_vers reports. kern.osproductversion is only
- * populated if launchd set it, so an empty answer is expected rather than an
- * error - and this must not claim to be newer than the system really is.
+ * launchd publishes kern.osproductversion from SystemVersion.plist, but it is
+ * empty for anything that runs before that, so an empty answer is expected
+ * rather than an error. The fallback tracks sw_vers' own built-in constants.
  */
 static uint32_t
 pd_os_version(void)
@@ -52,7 +52,7 @@ pd_os_version(void)
 	static uint32_t cached;
 	char buf[64];
 	size_t len = sizeof(buf);
-	unsigned int maj = 11, min = 3, pat = 0;
+	unsigned int maj = 26, min = 5, pat = 0;
 
 	if (cached != 0) {
 		return cached;

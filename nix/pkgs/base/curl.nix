@@ -54,7 +54,7 @@ stdenv.mkDerivation {
 EOF
 
     export CFLAGS="-isysroot $DARWIN_SDK_ROOT -include $PWD/pd-bridgeos.h -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F${corefoundation}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${openssl}/lib -L${zlib}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F${corefoundation}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -Wl,-Z -L${libSystem}/usr/lib -L${openssl}/lib -L${zlib}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup -lSystem"
     export LIBS="-Wl,-force_load,${openssl}/lib/libssl.a -Wl,-force_load,${openssl}/lib/libcrypto.a -Wl,-force_load,${zlib}/lib/libz.a -lSystem"
 
     for fn in fchmod ftruncate getpeername getsockname recv send \

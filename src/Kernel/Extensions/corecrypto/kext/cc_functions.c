@@ -1,4 +1,4 @@
-#include "register_crypto.h"
+#include <libkern/crypto/register_crypto.h>
 #include <corecrypto/cc_abort.h>
 #include <corecrypto/ccmd5.h>
 #include <corecrypto/ccsha1.h>
@@ -15,6 +15,24 @@ extern const struct ccmode_ecb pdcaes_ecb_decrypt;
 extern const struct ccmode_cbc pdcaes_cbc_encrypt;
 extern const struct ccmode_cbc pdcaes_cbc_decrypt;
 extern const struct ccdigest_info ccsha256_ltc_di;
+
+/* Tail half of struct crypto_functions; see cc_random.c. */
+extern void   pd_random_generate_fn(crypto_random_ctx_t, void *, size_t);
+extern void   pd_random_uniform_fn(crypto_random_ctx_t, uint64_t, uint64_t *);
+extern size_t pd_random_kmem_ctx_size_fn(void);
+extern void   pd_random_kmem_init_fn(crypto_random_ctx_t);
+extern size_t pd_digest_ctx_size_fn(crypto_digest_alg_t);
+extern void   pd_digest_init_fn(crypto_digest_alg_t, void *, size_t);
+extern void   pd_digest_update_fn(crypto_digest_alg_t, void *, size_t, const void *, size_t);
+extern void   pd_digest_final_fn(crypto_digest_alg_t, void *, size_t, void *, size_t);
+extern void   pd_digest_fn(crypto_digest_alg_t, const void *, size_t, void *, size_t);
+extern size_t pd_hmac_ctx_size_fn(crypto_digest_alg_t);
+extern void   pd_hmac_init_fn(crypto_digest_alg_t, void *, size_t, const void *, size_t);
+extern void   pd_hmac_update_fn(crypto_digest_alg_t, void *, size_t, const void *, size_t);
+extern void   pd_hmac_final_generate_fn(crypto_digest_alg_t, void *, size_t, void *, size_t);
+extern bool   pd_hmac_final_verify_fn(crypto_digest_alg_t, void *, size_t, const void *, size_t);
+extern void   pd_hmac_generate_fn(crypto_digest_alg_t, const void *, size_t, const void *, size_t, void *, size_t);
+extern bool   pd_hmac_verify_fn(crypto_digest_alg_t, const void *, size_t, const void *, size_t, const void *, size_t);
 
 const struct crypto_functions pdcrypto_internal_functions = {
 	.ccdigest_init_fn = ccdigest_init,
@@ -50,5 +68,24 @@ const struct crypto_functions pdcrypto_internal_functions = {
 	.ccdes_key_is_weak_fn = pdcdes_key_is_weak_fn_dummy,
 	.ccdes_key_set_odd_parity_fn = pdcdes_key_set_odd_parity_fn_dummy,
 
-	.ccrng_fn = ccrng
+	.ccrng_fn = ccrng,
+
+	.random_generate_fn = pd_random_generate_fn,
+	.random_uniform_fn = pd_random_uniform_fn,
+	.random_kmem_ctx_size_fn = pd_random_kmem_ctx_size_fn,
+	.random_kmem_init_fn = pd_random_kmem_init_fn,
+
+	.digest_ctx_size_fn = pd_digest_ctx_size_fn,
+	.digest_init_fn = pd_digest_init_fn,
+	.digest_update_fn = pd_digest_update_fn,
+	.digest_final_fn = pd_digest_final_fn,
+	.digest_fn = pd_digest_fn,
+
+	.hmac_ctx_size_fn = pd_hmac_ctx_size_fn,
+	.hmac_init_fn = pd_hmac_init_fn,
+	.hmac_update_fn = pd_hmac_update_fn,
+	.hmac_final_generate_fn = pd_hmac_final_generate_fn,
+	.hmac_final_verify_fn = pd_hmac_final_verify_fn,
+	.hmac_generate_fn = pd_hmac_generate_fn,
+	.hmac_verify_fn = pd_hmac_verify_fn
 };

@@ -1,4 +1,4 @@
-add_darwin_executable(sw_vers MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(sw_vers MACOSX_VERSION_MIN 26.5)
 
 get_target_property(_sw_vers_opts sw_vers COMPILE_OPTIONS)
 if(_sw_vers_opts)
@@ -20,7 +20,7 @@ target_link_options(sw_vers PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -lSystem
 )
 

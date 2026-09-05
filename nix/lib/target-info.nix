@@ -22,5 +22,5 @@ in
   # (macosx + a version, no vendor-style darwinNN). Passing an explicit -target
   # overrides whatever the toolchain wrapper set, so a hardcoded one silently
   # produces objects for the wrong architecture rather than failing.
-  clangTarget = "${arch}-apple-macosx11.0";
+  clangTarget = "${arch}-apple-macosx26.5";
 }

@@ -23,7 +23,7 @@ target_compile_definitions(pd_virgl_shim PRIVATE IOKIT=1 KERNEL=0)
 # -mmacosx-version-min: stamp a platform load command on every object, else ld64
 #   ignores the archive when Mesa force_loads it ("building for macOS-x86_64 but
 #   attempting to link with file built for macOS-x86_64").
-target_compile_options(pd_virgl_shim PRIVATE -UKERNEL -mmacosx-version-min=11.0)
+target_compile_options(pd_virgl_shim PRIVATE -UKERNEL -mmacosx-version-min=26.5)
 
 target_include_directories(pd_virgl_shim
     PUBLIC ${CMAKE_SOURCE_DIR}/src/Libraries/PDVirglShim/include

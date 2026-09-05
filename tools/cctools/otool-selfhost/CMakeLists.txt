@@ -18,7 +18,7 @@ set(_otool_selfhost_sources
     ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libc/stdlib/FreeBSD/reallocf.c
 )
 
-add_darwin_executable(otool_selfhost MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(otool_selfhost MACOSX_VERSION_MIN 26.5)
 get_target_property(_otool_selfhost_opts otool_selfhost COMPILE_OPTIONS)
 if(_otool_selfhost_opts)
     list(REMOVE_ITEM _otool_selfhost_opts -nostdinc)
@@ -45,7 +45,7 @@ target_link_options(otool_selfhost PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -lSystem
 )
 target_link_libraries(otool_selfhost PRIVATE libmacho_static libstuff_static)

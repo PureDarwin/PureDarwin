@@ -10,7 +10,7 @@ if(NOT PUREDARWIN_COREFOUNDATION_PREFIX)
 endif()
 
 add_darwin_shared_library(SystemConfiguration
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration)
 
 mig(SystemConfiguration.fproj/config.defs
@@ -178,7 +178,7 @@ target_compile_options(SystemConfiguration PRIVATE
 target_link_options(SystemConfiguration PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     # gCRAnnotations (__DATA,__crash_info) is defined per image on Darwin, so
     # every binary using CRSetCrashLogMessage links its own copy. By archive

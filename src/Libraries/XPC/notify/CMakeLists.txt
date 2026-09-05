@@ -90,7 +90,7 @@ target_link_libraries(XPC_notifyd_mig_static PRIVATE
     xnu_private_headers
 )
 
-add_darwin_executable(notifyd MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(notifyd MACOSX_VERSION_MIN 26.5)
 
 get_target_property(_notifyd_opts notifyd COMPILE_OPTIONS)
 if(_notifyd_opts)
@@ -125,7 +125,7 @@ target_link_options(notifyd PRIVATE
     -isysroot ${PUREDARWIN_MACOSX_SDK}
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -Wl,-force_load,$<TARGET_FILE:XPC_notifyd_mig_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_notify_client_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libxpc_static>

@@ -2222,8 +2222,11 @@ ml_static_mfree(
 	vm_page_kernelcache_count -= freed_kernelcache_pages;
 	vm_page_unlock_queues();
 #if DEBUG
-	kprintf("%s: Released %u pages at VA %p, size: %llu, last ppn: %#x, +%u bad\n",
-	    __func__, freed_pages, (void *)vaddr, (uint64_t)size, ppn, bad_page_cnt);
+	/* Upstream also logs a bad_page_cnt here, but no such counter exists in
+	 * this function - the reference only compiles because Apple never builds
+	 * this file with DEBUG. Report the kernelcache tally instead. */
+	kprintf("%s: Released %u pages at VA %p, size: %llu, last ppn: %#x, %u from kernelcache\n",
+	    __func__, freed_pages, (void *)vaddr, (uint64_t)size, ppn, freed_kernelcache_pages);
 #endif
 }
 
@@ -2241,6 +2244,17 @@ ml_page_protection_type(void)
 #else
 	return 0;
 #endif
+}
+
+/*
+ * Routine: ml_device_is_prod_fused
+ * Function: Whether the device is production-fused. Only Apple SoCs carry the
+ *           fuse; the i386 version returns 1 unconditionally, so match it.
+ */
+boolean_t
+ml_device_is_prod_fused(void)
+{
+	return 1;
 }
 
 /* virtual to physical on wired pages */

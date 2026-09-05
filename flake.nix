@@ -2,8 +2,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     iig-tools.url = "github:PureDarwin/iig-tools";
-    kc-tools.url = "github:PureDarwin/kc-tools";
-    xnu-loader.url = "github:PureDarwin/xnu-loader";
+    kc-tools.url = "github:PureDarwin/kc-tools/xnu-12377";
+    xnu-loader.url = "github:PureDarwin/xnu-loader/xnu-12377";
   };
 
   outputs = { self, nixpkgs, iig-tools, kc-tools, xnu-loader }:
@@ -106,7 +106,7 @@
           arm64CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
             inherit nativeLd;
             target = "arm64-apple-darwin20.4";
-            clangTarget = "arm64-apple-macosx11.0";
+            clangTarget = "arm64-apple-macosx26.5";
           };
           # The Pi Zero's ARM1176 is ARMv6; there is no macosx deployment
           # target for 32-bit ARM, so the triple stays a plain darwin one.
@@ -166,6 +166,9 @@
             "tools/cctools/libmacho/getsecbyname.c"
             # NXGetArchInfo* is part of libSystem on Darwin, same libmacho source.
             "tools/cctools/libmacho/arch.c"
+            # mach-o/utils.h (macOS 13) arch-name helpers, over that same table.
+            "tools/cctools/libmacho/utils.c"
+            "tools/cctools/include/mach-o/utils.h"
             "tools/cctools/include/mach-o/arch.h"
             "tools/cctools/include/stuff/openstep_mach.h"
             "tools/cctools/include/mach/machine.h"
@@ -990,7 +993,7 @@
                   -L${libSystemBuild}/usr/lib \
                   -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystemBuild}/usr/lib/system/libdyld.dylib \
                   -Wl,-install_name,/usr/lib/libpd_virgl_shim.dylib \
-                  -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
+                  -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains \
                   repack/*.o -lSystem \
                   -o $out/usr/lib/libpd_virgl_shim.dylib
                 cp src/Libraries/PDVirglShim/include/pd_virgl_shim.h $out/include/
@@ -1845,7 +1848,7 @@
                   ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-ar x "$out/lib/libXcursor.a"
                   ${darwinCrossToolchain}/bin/x86_64-apple-darwin20.4-clang \
                     -isysroot "$DARWIN_SDK_ROOT" \
-                    -mmacosx-version-min=11.0 \
+                    -mmacosx-version-min=26.5 \
                     -fuse-ld=${nativeLd}/bin/ld \
                     -nostdlib \
                     -dynamiclib \

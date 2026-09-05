@@ -55,7 +55,7 @@ set(DYLD_SRCS
 )
 list(TRANSFORM DYLD_SRCS PREPEND "${DYLD_SOURCE_DIR}/")
 
-add_darwin_executable(dyld MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(dyld MACOSX_VERSION_MIN 26.5)
 target_sources(dyld PRIVATE ${DYLD_SRCS}
     ${CMAKE_CURRENT_SOURCE_DIR}/pd_stubs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/pd_libc_common_storage.c

@@ -1880,6 +1880,15 @@ kalloc_type_view_init_fixed(void)
 	kprintf("PD-KALLOC: fixed parse done count=%u\n", kt_count);
 	assert(kt_count < KALLOC_TYPE_SIZE_MASK);
 
+	/*
+	 * pd_apple_builtins.h reports every type as data-only, so every view is
+	 * routed to the data heap and none reach kt_buffer. The iterators below
+	 * assume at least one view; with none there is nothing to segregate.
+	 */
+	if (kt_count == 0) {
+		return;
+	}
+
 #if MACH_ASSERT
 	vm_size_t sig_slist_size = (size_t) kt_count * sizeof(uint16_t);
 	vm_size_t kt_buffer_size = (size_t) kt_count * sizeof(kalloc_type_view_t);

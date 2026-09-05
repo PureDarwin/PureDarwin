@@ -237,9 +237,11 @@ PDArmPlatformExpert::initPlatformInterruptsLate(void)
 {
 	/* The CPU interrupt controller exists by now, so the ARMCTRL controller
 	 * can attach to it and start dispatching. */
-	if (pd_platform_is_bcm283x() && !PDBcm2835IC_init()) {
-		IOLog("PDArmPlatformExpert: BCM2835 interrupt controller unavailable; "
-		    "device interrupts will not be delivered\n");
+	if (pd_platform_is_bcm283x()) {
+		if (!PDBcm2835IC_init()) {
+			IOLog("PDArmPlatformExpert: BCM2835 interrupt controller unavailable; "
+			    "device interrupts will not be delivered\n");
+		}
 	}
 }
 

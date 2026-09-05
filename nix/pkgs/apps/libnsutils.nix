@@ -24,7 +24,7 @@ stdenv.mkDerivation {
 
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
 
-    CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -Iinclude -I${libSystem}/usr/include"
+    CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -Iinclude -I${libSystem}/usr/include"
 
     for f in ${lib.concatStringsSep " " srcs}; do
       obj=$(basename "$f").o
@@ -32,12 +32,12 @@ stdenv.mkDerivation {
     done
 
     "$CC" -dynamiclib \
-      -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+      -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld \
       -nostdlib \
       -L${libSystem}/usr/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -install_name /lib/libnsutils.dylib \
       -lSystem \
       *.o \

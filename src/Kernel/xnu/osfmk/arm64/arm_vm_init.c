@@ -1202,6 +1202,14 @@ arm_vm_page_granular_RWNX(vm_offset_t start, unsigned long size, unsigned granul
 	arm_vm_page_granular_prot(start, size, 0, 1, AP_RWNA, 1, granule, ARM64_PAGE_UNGUARDED);
 }
 
+/* PureDarwin: needed for the coalesced kext region, which holds kext code and
+ * kext data in the same pages. See the __PRELINK_TEXT mapping below. */
+static inline void
+arm_vm_page_granular_RWX(vm_offset_t start, unsigned long size, unsigned granule)
+{
+	arm_vm_page_granular_prot(start, size, 0, 0, AP_RWNA, 0, granule, ARM64_PAGE_UNGUARDED);
+}
+
 // Populate seg...AuxKC and fixup AuxKC permissions
 static bool
 arm_vm_auxkc_init(void)
@@ -1398,8 +1406,14 @@ arm_vm_prot_init(__unused boot_args * args)
 	arm_vm_page_granular_RWNX(auxkc_base, auxKC_range->length, 0);
 
 noAuxKC:
-	/* Map coalesced kext TEXT segment RWNX for now */
-	arm_vm_page_granular_RWNX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK); // Refined in OSKext::readPrelinkedExtensions
+	/* PureDarwin: upstream maps this RWNX and expects OSKext to refine it, but
+	 * that refinement is skipped for fileset KCs (setVMAttributes returns
+	 * early) and machine_lockdown() has not run by the time the first kext
+	 * starts. Our kexts are single-__TEXT bundles, so one kext's code, DATA
+	 * and DATA_CONST all sit in this region and it has to be both writable and
+	 * executable. Splitting kext code into __PLK_TEXT_EXEC in kc-tools would
+	 * let this go back to RWNX/ROX. */
+	arm_vm_page_granular_RWX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK);
 
 	/* Map coalesced kext DATA_CONST segment RWNX (could be empty) */
 	arm_vm_page_granular_RWNX(segPLKDATACONSTB, segSizePLKDATACONST, ARM64_GRANULE_ALLOW_BLOCK); // Refined in OSKext::readPrelinkedExtensions
@@ -1681,7 +1695,8 @@ arm_vm_prot_finalize(boot_args * args __unused)
 	}
 
 	/* tighten permissions on kext read only data and code */
-	arm_vm_page_granular_RNX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK);
+	/* PureDarwin: keep the coalesced kext region RWX; see arm_vm_prot_init. */
+	arm_vm_page_granular_RWX(segPRELINKTEXTB, segSizePRELINKTEXT, ARM64_GRANULE_ALLOW_BLOCK);
 	arm_vm_page_granular_RNX(segPLKDATACONSTB, segSizePLKDATACONST, ARM64_GRANULE_ALLOW_BLOCK);
 
 	cpu_stack_alloc(&BootCpuData);
@@ -2164,7 +2179,11 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
 	arm_vm_physmap_init(args);
 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
 
+#if XNU_MONITOR
+	/* Only the PPL provides this; it is declared but never implemented in the
+	 * open-source drop, and a board with no monitor has nothing to enable. */
 	ml_enable_monitor();
+#endif
 
 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
 

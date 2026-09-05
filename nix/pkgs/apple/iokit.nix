@@ -35,7 +35,7 @@ stdenv.mkDerivation {
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib \
       -L${libobjc}/usr/lib -L${foundation}/usr/lib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/usr/lib/libIOKitCF.dylib \
       -Wl,-force_load,${iokitCFStatic}/usr/lib/system/libIOKitCF.a \
       ${lib.optionalString (!isArmv6) "-Wl,-fixup_chains"} \

@@ -31,6 +31,13 @@ stdenv.mkDerivation {
     # it, and CPackLib already gates its own use on a header check.
     substituteInPlace Source/CMakeLists.txt \
       --replace-fail 'target_link_libraries(CMakeLib PUBLIC "-framework CoreServices")' ""
+    # The SDK now publishes CoreServices, so this check passes - but PureDarwin's
+    # CoreServices is only the Multiprocessing entry points, not CarbonCore's
+    # LocaleStringToLangAndRegionCodes. cmake has a supported fallback for the
+    # header being absent, so take it.
+    substituteInPlace Source/CMakeLists.txt \
+      --replace-fail 'check_include_file("CoreServices/CoreServices.h" HAVE_CoreServices)' \
+                     'set(HAVE_CoreServices 0)'
     # libarchive links CoreServices on every APPLE build but references no
     # symbol from it, so ctest picked it up transitively for nothing.
     substituteInPlace Utilities/cmlibarchive/CMakeLists.txt \
@@ -47,7 +54,7 @@ stdenv.mkDerivation {
 set(CMAKE_SYSTEM_NAME Darwin)
 set(CMAKE_SYSTEM_PROCESSOR ${targetInfo.mesonCpu})
 set(CMAKE_OSX_SYSROOT "$DARWIN_SDK_ROOT")
-set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "26.5")
 
 set(CMAKE_C_COMPILER "${darwinCrossToolchain}/bin/${targetTriple}-clang")
 set(CMAKE_CXX_COMPILER "${darwinCrossToolchain}/bin/${targetTriple}-clang++")
@@ -56,10 +63,10 @@ set(CMAKE_RANLIB "${darwinCrossToolchain}/bin/${targetTriple}-ranlib")
 set(CMAKE_STRIP "${darwinCrossToolchain}/bin/${targetTriple}-strip")
 set(CMAKE_INSTALL_NAME_TOOL "${darwinCrossToolchain}/bin/${targetTriple}-install_name_tool")
 
-set(_pd_common "-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include")
+set(_pd_common "-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include")
 set(CMAKE_C_FLAGS_INIT "\''${_pd_common}")
 set(CMAKE_CXX_FLAGS_INIT "\''${_pd_common} -nostdinc++ -I${libcxxDylib}/usr/include/c++/v1")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,11.0,11.5 -F${corefoundation}/System/Library/Frameworks -lc++ -lc++abi -lSystem")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-dylinker_install_name,/usr/lib/dyld -Wl,-platform_version,macos,26.5,26.5 -F${corefoundation}/System/Library/Frameworks -lc++ -lc++abi -lSystem")
 
 # CMake defaults to the system curl on APPLE, and PureDarwin does ship a real
 # /usr/lib/libcurl.4.dylib, so point find_package(CURL) at it.

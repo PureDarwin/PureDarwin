@@ -32,7 +32,7 @@ stdenv.mkDerivation {
       -I${iokit}/include \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libSystem}/usr/lib -L${corefoundation}/usr/lib -L${iokit}/usr/lib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-force_load,${libSystem}/pd-xpc-dev/lib/libXPC_libxpc_static.a \
       -Wl,-U,_OBJC_CLASS_\$_NSObject \
       -Wl,-U,_OBJC_METACLASS_\$_NSObject \

@@ -746,11 +746,13 @@ let
       };
       kcArm64DebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
         kernel = kernelArm64VirtDebugBuild;
+        inherit kernelSource;
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
       kcArm64ReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
         kernel = kernelArm64VirtBuild;
+        inherit kernelSource;
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
@@ -842,7 +844,11 @@ let
         rootMB = 512;
         imageFileName = "puredarwin-arm64-virt-minimal.img";
         ramdiskMB = 512;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
+        # No rd=md0 here: this target has no useRamdisk, so nothing loads an
+        # md0 and IOFindBSDRoot panics on it. The loader publishes the ext4
+        # root it finds on the boot disk instead. The netboot target below is
+        # the one that really boots from a ramdisk.
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1";
       };
       netbootArm64VirtMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;

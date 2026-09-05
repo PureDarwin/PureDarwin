@@ -27,7 +27,7 @@ stdenv.mkDerivation {
 
     CC="${darwinCrossToolchain}/bin/${targetTriple}-clang"
 
-    CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -Iinclude -Isrc -Ibindings/hubbub -Ibindings/xml -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${dep}/include") deps}"
+    CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -Iinclude -Isrc -Ibindings/hubbub -Ibindings/xml -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${dep}/include") deps}"
 
     srcs=$(find src -name '*.c')
     srcs="$srcs bindings/hubbub/parser.c bindings/xml/expat_xmlparser.c"
@@ -37,12 +37,12 @@ stdenv.mkDerivation {
     done
 
     "$CC" -dynamiclib \
-      -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+      -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld \
       -nostdlib \
       -L${libSystem}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") deps} \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -install_name /lib/libdom.dylib \
       -lwapcaplet -lparserutils -lhubbub -lexpat -lSystem \
       *.o \

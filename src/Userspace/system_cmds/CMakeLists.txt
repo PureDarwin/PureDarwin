@@ -1,5 +1,5 @@
 function(add_system_cmd name)
-    add_darwin_executable(${name} MACOSX_VERSION_MIN 11.0)
+    add_darwin_executable(${name} MACOSX_VERSION_MIN 26.5)
 
     get_target_property(_system_cmd_opts ${name} COMPILE_OPTIONS)
     if(_system_cmd_opts)
@@ -17,7 +17,7 @@ function(add_system_cmd name)
         -nostdlib
         -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
         -Wl,-dylinker_install_name,/usr/lib/dyld
-        -Wl,-platform_version,macos,11.0,11.5
+        -Wl,-platform_version,macos,26.5,26.5
         -lSystem
     )
     add_dependencies(${name} libSystem_B_stub dyld)

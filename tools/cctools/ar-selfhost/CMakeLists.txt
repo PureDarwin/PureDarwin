@@ -13,7 +13,7 @@ set(_ar_selfhost_sources
     ${CMAKE_SOURCE_DIR}/src/Libraries/libSystem/libc/string/FreeBSD/strmode.c
 )
 
-add_darwin_executable(ar_selfhost MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(ar_selfhost MACOSX_VERSION_MIN 26.5)
 get_target_property(_ar_selfhost_opts ar_selfhost COMPILE_OPTIONS)
 if(_ar_selfhost_opts)
     list(REMOVE_ITEM _ar_selfhost_opts -nostdinc)
@@ -30,7 +30,7 @@ target_link_options(ar_selfhost PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -lSystem)
 target_link_libraries(ar_selfhost PRIVATE libmacho_static libstuff_static)
 add_dependencies(ar_selfhost libSystem_B_stub dyld)

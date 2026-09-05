@@ -55,7 +55,7 @@ stdenv.mkDerivation {
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -L${libobjc}/usr/lib -L${libSystem}/usr/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 -Wl,-fixup_chains \
+      -Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains \
       -lobjc -lSystem \
       -o objc-test objc-test.m
     runHook postBuild

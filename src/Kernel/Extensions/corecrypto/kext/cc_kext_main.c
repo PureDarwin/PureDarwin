@@ -1,6 +1,6 @@
 #include <sys/systm.h>
 #include <mach/mach_types.h>
-#include "register_crypto.h"
+#include <libkern/crypto/register_crypto.h>
 #include "prng_random.h"
 #include <corecrypto/cckprng.h>
 #include "../algorithms/yarrow/yarrow.h"

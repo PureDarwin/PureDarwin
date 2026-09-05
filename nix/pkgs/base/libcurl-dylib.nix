@@ -74,7 +74,7 @@ EOF
 
     export CPPFLAGS="-I${libSystem}/usr/include -I${zlib}/include -I${openssl}/include -isysroot $DARWIN_SDK_ROOT -include $PWD/pd-bridgeos.h -F${corefoundation}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector"
     export CFLAGS="$CPPFLAGS"
-    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F${corefoundation}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${zlib}/lib -L${openssl}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -lSystem"
+    export LDFLAGS="-isysroot $DARWIN_SDK_ROOT -F${corefoundation}/System/Library/Frameworks -F${systemConfiguration}/System/Library/Frameworks -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${zlib}/lib -L${openssl}/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,26.5,26.5 -Wl,-undefined,dynamic_lookup -lSystem"
 
     ./configure \
       --host=${targetTriple} \
@@ -110,7 +110,7 @@ EOF
       -L${libSystem}/usr/lib -L${zlib}/lib -L${openssl}/lib \
       -Wl,-force_load,${openssl}/lib/libssl.a -Wl,-force_load,${openssl}/lib/libcrypto.a \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -install_name /usr/lib/libcurl.4.dylib \
       -compatibility_version 7 \
       -current_version 9 \

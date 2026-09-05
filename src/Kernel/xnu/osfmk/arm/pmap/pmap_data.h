@@ -973,6 +973,20 @@ ptep_get_pmap(const pt_entry_t *ptep)
 	return ptep_get_ptd(ptep)->pmap;
 }
 
+/**
+ * The IOMMU that owns a page table, for tables owned by one.
+ *
+ * @note The open-source pt_desc union carries only the pmap member; the iommu
+ *       member its comment describes is not in the public drop. No PureDarwin
+ *       board has IOMMU-owned page tables, so this returns NULL - it is only
+ *       reached from panic strings on that path.
+ */
+static inline void *
+ptep_get_iommu(const pt_entry_t *ptep __unused)
+{
+	return NULL;
+}
+
 
 /**
  * Given an arbitrary translation table entry, get the page table descriptor

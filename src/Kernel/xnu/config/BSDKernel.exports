@@ -1,6 +1,8 @@
 _VNOP_BWRITE
 _VNOP_FSYNC
 _VNOP_IOCTL
+_VNOP_CLOSE
+_VNOP_OPEN
 _VNOP_READ
 _VNOP_STRATEGY
 _VNOP_WRITE
@@ -134,6 +136,7 @@ _current_cached_proc_label_get
 _current_proc
 _current_thread_cred_label_get
 _desiredvnodes
+_devfs_is_ready
 _devfs_make_node
 _devfs_make_node_clone
 _devfs_remove

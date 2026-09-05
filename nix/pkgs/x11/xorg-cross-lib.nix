@@ -101,7 +101,7 @@ PDCCEOF
     done
     [ -e .pd-dylib-maps ] && pd_dylib_maps="$pd_dylib_maps $(tr -d '\n' < .pd-dylib-maps)"
 
-    export LDFLAGS="$pd_dylib_maps -isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") deps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib${lib.optionalString (!shared) " -Wl,-dylinker_install_name,/usr/lib/dyld"} -Wl,-platform_version,macos,11.0,11.5 -lSystem"
+    export LDFLAGS="$pd_dylib_maps -isysroot $DARWIN_SDK_ROOT -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") deps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib${lib.optionalString (!shared) " -Wl,-dylinker_install_name,/usr/lib/dyld"} -Wl,-platform_version,macos,26.5,26.5 -lSystem"
 
     ${preConfigureExtra}
 

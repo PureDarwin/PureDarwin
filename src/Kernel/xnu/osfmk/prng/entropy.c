@@ -474,7 +474,8 @@ entropy_provide(size_t *entropy_size, void *entropy, __unused void *arg)
 {
 #if (DEVELOPMENT || DEBUG)
 	if (*entropy_size < SHA512_DIGEST_LENGTH) {
-		panic("[entropy_provide] recipient entropy buffer is too small");
+		panic("[entropy_provide] recipient entropy buffer is too small "
+		    "(%zu < %d, entropy=%p)", *entropy_size, SHA512_DIGEST_LENGTH, entropy);
 	}
 #endif
 

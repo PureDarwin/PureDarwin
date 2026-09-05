@@ -1,7 +1,7 @@
 set(DYLD_SRC_DIR ${CMAKE_SOURCE_DIR}/src/Libraries/dyld/upstream)
 
 add_darwin_shared_library(libdyld
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /usr/lib/system/libdyld.dylib)
 set_property(TARGET libdyld PROPERTY OUTPUT_NAME "dyld")
 

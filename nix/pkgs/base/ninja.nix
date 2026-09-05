@@ -47,7 +47,7 @@ stdenv.mkDerivation {
       -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-dylinker_install_name,/usr/lib/dyld \
-      -Wl,-platform_version,macos,11.0,11.5 -lc++ -lc++abi -lSystem"
+      -Wl,-platform_version,macos,26.5,26.5 -lc++ -lc++abi -lSystem"
 
     mkdir -p obj
     for name in ${lib.concatStringsSep " " sources}; do

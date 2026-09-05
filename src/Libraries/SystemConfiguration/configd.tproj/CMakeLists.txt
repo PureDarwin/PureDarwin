@@ -1,4 +1,4 @@
-add_darwin_executable(configd MACOSX_VERSION_MIN 11.0)
+add_darwin_executable(configd MACOSX_VERSION_MIN 26.5)
 
 mig(../SystemConfiguration.fproj/config.defs
     INCLUDES_FROM_TARGET configd
@@ -198,7 +198,7 @@ target_link_options(configd PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
     -Wl,-dylinker_install_name,/usr/lib/dyld
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     "${PUREDARWIN_COREFOUNDATION_PREFIX}/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
     $<TARGET_FILE:SystemConfiguration>
     "${PUREDARWIN_SECURITY_PREFIX}/System/Library/Frameworks/Security.framework/Versions/A/Security"

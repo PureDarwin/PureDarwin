@@ -21,3 +21,6 @@ _kpc_set_config:_kpc_set_config_external
 _vm_map:_vm_map_external
 __ZN5IORTC15getUTCTimeOfDayEPmPj
 __ZN5IORTC15setUTCTimeOfDayEmj
+_PE_state
+_switch_to_video_console
+_vc_progress_set

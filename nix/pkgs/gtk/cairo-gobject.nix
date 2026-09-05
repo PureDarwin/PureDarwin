@@ -35,20 +35,20 @@ stdenv.mkDerivation {
     SRC=$(echo */util/cairo-gobject)
     touch "$SRC/config.h"
 
-    CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -DCAIRO_COMPILATION -DCAIRO_HAS_GOBJECT_FUNCTIONS=1 -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${dep}/include -I${dep}/include/cairo -I${dep}/include/glib-2.0 -I${dep}/lib/glib-2.0/include") deps}"
+    CFLAGS="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -DCAIRO_COMPILATION -DCAIRO_HAS_GOBJECT_FUNCTIONS=1 -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${dep}/include -I${dep}/include/cairo -I${dep}/include/glib-2.0 -I${dep}/lib/glib-2.0/include") deps}"
 
     for f in "$SRC"/cairo-gobject-enums.c "$SRC"/cairo-gobject-structs.c; do
       "$CC" $CFLAGS -c "$f" -o "$(basename "$f").o"
     done
 
     "$CC" -dynamiclib \
-      -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=11.0 \
+      -isysroot "$DARWIN_SDK_ROOT" -mmacosx-version-min=26.5 \
       -fuse-ld=${nativeLd}/bin/ld \
       -nostdlib \
       -L${libSystem}/usr/lib \
       -L${cairo}/lib -L${glib}/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -Wl,-platform_version,macos,11.0,11.5 \
+      -Wl,-platform_version,macos,26.5,26.5 \
       -install_name /lib/libcairo-gobject.dylib \
       -lcairo -lglib-2.0 -lgobject-2.0 \
       -lSystem \

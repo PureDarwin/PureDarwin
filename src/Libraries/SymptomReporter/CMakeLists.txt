@@ -3,7 +3,7 @@ if(NOT PUREDARWIN_ENABLE_SYMPTOMREPORTER)
 endif()
 
 add_darwin_shared_library(SymptomReporter
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /System/Library/PrivateFrameworks/SymptomReporter.framework/Versions/A/SymptomReporter)
 
 target_sources(SymptomReporter PRIVATE
@@ -25,7 +25,7 @@ target_include_directories(SymptomReporter PRIVATE
 target_link_options(SymptomReporter PRIVATE
     -nostdlib
     -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     -lSystem)
 
 # The header-carrying interface targets libc's own headers need; without them

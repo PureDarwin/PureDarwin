@@ -22,7 +22,7 @@ endif()
 # The install_name must be the path the module actually lives at on the image,
 # because that is what dyld records and resolves.
 add_darwin_shared_library(puredarwingop_drv
-    MACOSX_VERSION_MIN 11.0
+    MACOSX_VERSION_MIN 26.5
     INSTALL_NAME /usr/lib/xorg/modules/drivers/puredarwingop_drv.so)
 
 # Strip CMake's default "lib" prefix and emit the filename Xorg's loader
@@ -52,7 +52,7 @@ target_link_options(puredarwingop_drv PRIVATE
     -flat_namespace
     "LINKER:-undefined,warning"
     "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/puredarwingop_drv.exports"
-    -Wl,-platform_version,macos,11.0,11.5
+    -Wl,-platform_version,macos,26.5,26.5
     # -lSystem MUST precede the static archives below.
     #
     # We link libsystem_kernel.a for _NDR_record and the mach_msg entry points

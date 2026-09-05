@@ -97,7 +97,7 @@ add_custom_command(
             -Wl,-L,$<TARGET_FILE_DIR:libSystem_B_stub>
             -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:$<TARGET_FILE:libdyld>
             -Wl,-dylinker_install_name,/usr/lib/dyld
-            -Wl,-platform_version,macos,11.0,11.5
+            -Wl,-platform_version,macos,26.5,26.5
             -lSystem
             ${_iig_objs} -o "${_iig_bin}"
     DEPENDS ${_iig_objs} libSystem_B_stub dyld

@@ -1189,6 +1189,14 @@ load_static_trust_cache(void)
 		return;
 	}
 
+	/* PureDarwin: trust_cache_runtime_init() bails without initializing the
+	 * runtime when there is no image4/AMFI provider, but the module loop below
+	 * still calls through amfi->TrustCache.loadModule. */
+	if (img4if == NULL || amfi == NULL) {
+		printf("trust cache: no image4/AMFI provider; skipping static trust cache\n");
+		return;
+	}
+
 	int err = SecureDTLookupEntry(NULL, "chosen/memory-map", &memory_map);
 	if (err != kSuccess) {
 		printf("unable to find chosen/memory-map in the device tree: %d\n", err);

@@ -65,8 +65,8 @@ stdenv.mkDerivation {
     # question off the critical path. WebKitFeatures.cmake:266-269 declares
     # exactly three things as conflicting with C_LOOP - JIT, SAMPLING_PROFILER
     # and WEBASSEMBLY - and all three are off below.
-    commonFlags="-DKERN_NOT_FOUND=56 -DUSE_TZONE_MALLOC=0 -DWL_EGL_PLATFORM=1 -I${mesa}/usr/include -isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") deps}"
-    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=11.0 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") deps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,11.0,11.5 -lc++ -lc++abi -lsharpyuv -lSystem"
+    commonFlags="-DKERN_NOT_FOUND=56 -DUSE_TZONE_MALLOC=0 -DWL_EGL_PLATFORM=1 -I${mesa}/usr/include -isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -Qunused-arguments -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -fno-stack-protector -I${libSystem}/usr/include ${lib.concatMapStringsSep " " (dep: "-I${lib.getDev dep}/include") deps}"
+    linkFlags="-isysroot $DARWIN_SDK_ROOT -mmacosx-version-min=26.5 -fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -L${libcxxDylib}/usr/lib -L${libcxxabiDylib}/usr/lib ${lib.concatMapStringsSep " " (dep: "-L${dep}/lib") deps} -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,26.5,26.5 -lc++ -lc++abi -lsharpyuv -lSystem"
 
     cmake -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Darwin \
