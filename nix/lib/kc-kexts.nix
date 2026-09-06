@@ -16,7 +16,7 @@
     "IOStorageFamily.kext"
     "IONVMEFamily.kext"
     "IOATAFamily.kext"
-    "IOATAFamily.kext/Contents/PlugIns/AppleIntelPIIXATA.kext"
+    "AppleIntelPIIXATA.kext"
     "IOATABlockStorage.kext"
     "ext4.kext"
     "msdosfs.kext"

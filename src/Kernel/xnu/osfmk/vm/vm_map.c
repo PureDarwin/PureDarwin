@@ -13021,19 +13021,6 @@ vm_map_exec(
 		(void *)VM_KERNEL_ADDRPERM(fsroot),
 		cpu,
 		cpu_subtype));
-	(void) vm_commpage_enter(new_map, task, is64bit);
-
-	(void) vm_shared_region_enter(new_map, task, is64bit, fsroot, cpu, cpu_subtype, reslide, is_driverkit, rsr_version);
-
-	SHARED_REGION_TRACE_DEBUG(
-		("shared_region: task %p: vm_map_exec(%p,%p,%p,0x%x,0x%x): <-\n",
-		(void *)VM_KERNEL_ADDRPERM(current_task()),
-		(void *)VM_KERNEL_ADDRPERM(new_map),
-		(void *)VM_KERNEL_ADDRPERM(task),
-		(void *)VM_KERNEL_ADDRPERM(fsroot),
-		cpu,
-		cpu_subtype));
-
 	/*
 	 * Some devices have region(s) of memory that shouldn't get allocated by
 	 * user processes. The following code creates dummy vm_map_entry_t's for each
@@ -13071,6 +13058,25 @@ vm_map_exec(
 	}
 
 	new_map->reserved_regions = (num_regions ? TRUE : FALSE);
+
+	/*
+	 * On arm64, vm_commpage_enter() installs a pre-populated page-table
+	 * subtree directly in the pmap. Reserve its VM range first so that a
+	 * DEBUG kernel does not mistake that expected mapping for stale state
+	 * while creating the reservation.
+	 */
+	(void) vm_commpage_enter(new_map, task, is64bit);
+
+	(void) vm_shared_region_enter(new_map, task, is64bit, fsroot, cpu, cpu_subtype, reslide, is_driverkit, rsr_version);
+
+	SHARED_REGION_TRACE_DEBUG(
+		("shared_region: task %p: vm_map_exec(%p,%p,%p,0x%x,0x%x): <-\n",
+		(void *)VM_KERNEL_ADDRPERM(current_task()),
+		(void *)VM_KERNEL_ADDRPERM(new_map),
+		(void *)VM_KERNEL_ADDRPERM(task),
+		(void *)VM_KERNEL_ADDRPERM(fsroot),
+		cpu,
+		cpu_subtype));
 
 	return KERN_SUCCESS;
 }

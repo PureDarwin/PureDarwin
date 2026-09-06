@@ -31,7 +31,7 @@
 
 #include "IOATABlockStorageDriver.h"
 
-#define ATA_BLOCK_STORAGE_DRIVER_DEBUGGING_LEVEL 4
+#define ATA_BLOCK_STORAGE_DRIVER_DEBUGGING_LEVEL 2
 
 #if ( ATA_BLOCK_STORAGE_DRIVER_DEBUGGING_LEVEL >= 1 )
 #define PANIC_NOW(x)			IOPanic x
@@ -949,10 +949,14 @@ IOATABlockStorageDriver_PD::configureATADevice ( void )
 	
 	configData->self 		= this;
 	configData->state 		= kPIOTransferModeSetup;
-		
-	sATAConfigStateMachine ( fConfigurationCommand );
-	
+
+	// Commands issued by the configuration state machine can complete before
+	// executeCommand() returns (notably with QEMU's PIIX IDE controller). Arm
+	// the syncer before starting the chain so an immediate final callback is
+	// not erased by a later reinit(), which would leave start() blocked forever.
 	configData->syncer->reinit ( );
+
+	sATAConfigStateMachine ( fConfigurationCommand );
 	configData->syncer->wait ( false );
 	
 	return kIOReturnSuccess;

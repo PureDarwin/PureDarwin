@@ -32,7 +32,7 @@
 #include <IOKit/IOKitKeys.h>
 #include <IOKit/ata/IOATATypes.h>
 
-#define ATA_BLOCK_STORAGE_DRIVER_DEBUGGING_LEVEL 4
+#define ATA_BLOCK_STORAGE_DRIVER_DEBUGGING_LEVEL 2
 
 #if ( ATA_BLOCK_STORAGE_DRIVER_DEBUGGING_LEVEL >= 1 )
 #define PANIC_NOW(x)			IOPanic x
@@ -107,7 +107,6 @@ IOATABlockStorageDriver_PD::start ( IOService * provider )
 	OSNumber *		numCommandObjects 	= NULL;
 	
 	STATUS_LOG ( ( "IOATABlockStorageDriver::start entering.\n" ) );
-	kprintf ( "ABS_PD: start() entered, provider='%s'\n", provider ? provider->getName() : "(null)" );
 
 	fATADevice 					= NULL;
 	fCommandPool				= NULL;
@@ -126,13 +125,10 @@ IOATABlockStorageDriver_PD::start ( IOService * provider )
 		return false;
 		
 	// Find out if the device type is ATA
-	kprintf ( "ABS_PD: getDeviceType=%d reportATADeviceType=%d\n",
-	          (int) fATADevice->getDeviceType ( ), (int) reportATADeviceType ( ) );
 	if ( fATADevice->getDeviceType ( ) != reportATADeviceType ( ) )
 	{
 
 		ERROR_LOG ( ( "IOATABlockStorageDriver::start exiting, not an ATA device.\n" ) );
-		kprintf ( "ABS_PD: start() bail - not an ATA device\n" );
 		return false;
 
 	}
@@ -213,9 +209,7 @@ IOATABlockStorageDriver_PD::start ( IOService * provider )
 	fPowerManagementInitialized = true;
 	initForPM ( );
 
-	kprintf ( "ABS_PD: start() reached createNub\n" );
 	bool nubOK = createNub ( provider );
-	kprintf ( "ABS_PD: createNub returned %d\n", nubOK );
 	return ( nubOK );
 
 }

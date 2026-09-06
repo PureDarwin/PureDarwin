@@ -130,11 +130,7 @@ SECURITY_READ_ONLY_EARLY(struct console_ops) cons_ops[] = {
 
 SECURITY_READ_ONLY_EARLY(uint32_t) nconsops = (sizeof cons_ops / sizeof cons_ops[0]);
 
-#if __x86_64__
 uint32_t cons_ops_index = VC_CONS_OPS;
-#else
-SECURITY_READ_ONLY_LATE(uint32_t) cons_ops_index = VC_CONS_OPS;
-#endif
 
 LCK_GRP_DECLARE(console_lck_grp, "console");
 

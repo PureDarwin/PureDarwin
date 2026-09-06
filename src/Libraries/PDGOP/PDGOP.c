@@ -163,7 +163,6 @@ PDGOPClose(PDGOPFramebuffer *fb)
     }
     if (fb->connect != IO_OBJECT_NULL) {
         (void)IOServiceClose(fb->connect);
-        (void)IOObjectRelease(fb->connect);
     }
     if (fb->service != IO_OBJECT_NULL) {
         (void)IOObjectRelease(fb->service);

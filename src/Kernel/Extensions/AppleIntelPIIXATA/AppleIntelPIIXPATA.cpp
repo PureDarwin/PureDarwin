@@ -31,7 +31,7 @@
 #define super IOPCIATA
 OSDefineMetaClassAndStructors( AppleIntelPIIXPATA, IOPCIATA )
 
-#if  1
+#if  0
 #define DLOG(fmt, args...)  kprintf(fmt, ## args)
 #else
 #define DLOG(fmt, args...)
@@ -2046,4 +2046,3 @@ AppleIntelICHxPATAPolledAdapter::setOwner( AppleIntelPIIXPATA* myOwner )
     owner = myOwner;
     pollingActive = false;
 }
-

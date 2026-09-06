@@ -732,6 +732,7 @@ let
 
   linuxPackages =
     let
+      xnuLoaderArm64 = xnu-loader.packages.${system}.arm64-virt;
       kcBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelBuild;
         inherit kernelSource;
@@ -804,6 +805,19 @@ let
         apfsprogs = pkgs.apfsprogs;
         #testAudioFile = /home/vali/development/darwin/stillalive.pcm;
       };
+      legacyBoot = xnu-loader.packages.${system}.legacy-boot.override {
+        stage2Lba = 34;
+      };
+      imageLegacyBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystem;
+        extraPackages = imageExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnu-loader.packages.${system}.default;
+        inherit legacyBoot;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-legacy.img";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1";
+      };
       imageHfsBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
         extraPackages = imageExtraPackages;
@@ -828,7 +842,7 @@ let
         baseSystem = splitBaseSystemArm64VirtWayland;
         extraPackages = imageExtraPackagesArm64Nox;
         kc = kcArm64ReleaseBuild;
-        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
         imageFileName = "puredarwin-arm64-virt.img";
@@ -837,7 +851,7 @@ let
         baseSystem = splitBaseSystemArm64VirtMinimal;
         extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build asmjitTestArm64Build ];
         kc = kcArm64DebugBuild;
-        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
         espMB = 768;
@@ -854,7 +868,7 @@ let
         baseSystem = splitBaseSystemArm64VirtMinimal;
         extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build asmjitTestArm64Build ];
         kc = kcArm64DebugBuild;
-        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
         netbootOnly = true;
@@ -1024,6 +1038,18 @@ let
         rootMB = 260;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
+      imageLegacyMinimalBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemMinimal;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnu-loader.packages.${system}.default;
+        inherit legacyBoot;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-legacy-minimal.img";
+        espMB = 60;
+        rootMB = 260;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
+      };
       imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemMinimalDebug;
         extraPackages = strippedExtraPackages;
@@ -1047,6 +1073,18 @@ let
         xnuLoader = xnu-loader.packages.${system}.default;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-shell.img";
+        espMB = 60;
+        rootMB = 300;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1";
+      };
+      imageLegacyShellBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemStripped;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnu-loader.packages.${system}.default;
+        inherit legacyBoot;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-legacy-shell.img";
         espMB = 60;
         rootMB = 300;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1";
@@ -1182,6 +1220,97 @@ let
             "$@"
         '';
       };
+      runVmLegacy = pkgs.writeShellApplication {
+        name = "puredarwin-vm-legacy";
+        runtimeInputs = [ pkgs.qemu ];
+        text = ''
+          set -euo pipefail
+
+          image="''${PUREDARWIN_IMAGE:-}"
+          if [ -z "$image" ]; then
+            if [ -e "$PWD/puredarwin-legacy.img" ]; then
+              image="$PWD/puredarwin-legacy.img"
+            elif [ -e "$PWD/result/puredarwin-legacy.img" ]; then
+              image="$PWD/result/puredarwin-legacy.img"
+            else
+              echo "puredarwin-vm-legacy: no image found; set PUREDARWIN_IMAGE or run nix build .#image-legacy" >&2
+              exit 1
+            fi
+          fi
+
+          image_readonly_opt=""
+          if [ ! -w "$image" ]; then
+            image_readonly_opt=",snapshot=on"
+          fi
+
+          exec qemu-system-x86_64 \
+            -machine q35 \
+            -cpu "''${PUREDARWIN_VM_CPU:-Penryn}" \
+            -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
+            -smp "''${PUREDARWIN_VM_SMP:-1}" \
+            -vga "''${PUREDARWIN_VM_VGA:-std}" \
+            -device piix3-ide,id=legacy-ide \
+            -drive "if=none,id=system,file=$image,format=raw$image_readonly_opt" \
+            -device ide-hd,bus=legacy-ide.0,drive=system \
+            -device qemu-xhci,id=xhci \
+            -device usb-kbd,bus=xhci.0 \
+            -device usb-mouse,bus=xhci.0 \
+            -device intel-hda,id=hda \
+            -device hda-duplex,audiodev=snd0 \
+            -audiodev "''${PUREDARWIN_VM_AUDIODEV:-none},id=snd0" \
+            -serial mon:stdio \
+            -no-reboot \
+            -no-shutdown \
+            "$@"
+        '';
+      };
+      runKvmLegacy = pkgs.writeShellApplication {
+        name = "puredarwin-kvm-legacy";
+        runtimeInputs = [ pkgs.qemu ];
+        text = ''
+          set -euo pipefail
+
+          image="''${PUREDARWIN_IMAGE:-}"
+          if [ -z "$image" ]; then
+            if [ -e "$PWD/puredarwin-legacy.img" ]; then
+              image="$PWD/puredarwin-legacy.img"
+            elif [ -e "$PWD/result/puredarwin-legacy.img" ]; then
+              image="$PWD/result/puredarwin-legacy.img"
+            else
+              echo "puredarwin-kvm-legacy: no image found; set PUREDARWIN_IMAGE or run nix build .#image-legacy" >&2
+              exit 1
+            fi
+          fi
+
+          image_readonly_opt=""
+          if [ ! -w "$image" ]; then
+            image_readonly_opt=",snapshot=on"
+          fi
+
+          exec qemu-system-x86_64 \
+            -machine q35,accel=kvm \
+            -cpu "''${PUREDARWIN_KVM_CPU:-host}" \
+            -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
+            -smp "''${PUREDARWIN_VM_SMP:-1}" \
+            -vga "''${PUREDARWIN_VM_VGA:-std}" \
+            -device piix3-ide,id=legacy-ide \
+            -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt" \
+            -device ide-hd,bus=legacy-ide.0,drive=system \
+            -device virtio-net,netdev=net0 \
+            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+            ''${PUREDARWIN_VM_NETDUMP:+-object filter-dump,id=netdump,netdev=net0,file="$PUREDARWIN_VM_NETDUMP"} \
+            -device qemu-xhci,id=xhci \
+            -device usb-kbd,bus=xhci.0 \
+            -device usb-mouse,bus=xhci.0 \
+            -device intel-hda,id=hda \
+            -device hda-duplex,audiodev=snd0 \
+            -audiodev "''${PUREDARWIN_VM_AUDIODEV:-none},id=snd0" \
+            -serial mon:stdio \
+            -no-reboot \
+            -no-shutdown \
+            "$@"
+        '';
+      };
       runArm64Uefi = pkgs.writeShellApplication {
         name = "puredarwin-arm64-uefi";
         runtimeInputs = [ pkgs.qemu ];
@@ -1267,6 +1396,11 @@ let
           aavmf_vars_template="''${PUREDARWIN_AAVMF_VARS_TEMPLATE:-${pkgs.pkgsCross.aarch64-multiplatform.OVMF.fd}/FV/AAVMF_VARS.fd}"
           aavmf_vars="''${PUREDARWIN_AAVMF_VARS:-$state_dir/AAVMF_VARS.fd}"
 
+          vga_args=()
+          if [ "''${PUREDARWIN_VM_VGA:-ramfb}" != none ]; then
+            vga_args=(-device "''${PUREDARWIN_VM_VGA:-ramfb}")
+          fi
+
           if [ -z "$image" ]; then
             if [ -e "$PWD/puredarwin-arm64-virt.img" ]; then
               image="$PWD/puredarwin-arm64-virt.img"
@@ -1302,14 +1436,13 @@ let
             -drive if=pflash,format=raw,unit=1,file="$aavmf_vars" \
             -drive if=none,id=system,file="$image",format=raw$image_readonly_opt \
             -device virtio-blk-pci,drive=system,bootindex=1 \
-            -device ramfb \
+            "''${vga_args[@]}" \
             -device virtio-net-pci,netdev=net0 \
             -netdev user,id=net0,hostfwd=tcp::2223-:22 \
             -device qemu-xhci,id=xhci \
             -device usb-kbd,bus=xhci.0 \
             -device usb-mouse,bus=xhci.0 \
             -serial mon:stdio \
-            -display none \
             -no-reboot \
             -no-shutdown \
             "$@"
@@ -1374,13 +1507,18 @@ let
       sway-nox = swayNoxBuild;
       gtk3-nox = gtk3NoxBuild;
       image-minimal = imageMinimalBuild;
+      image-legacy = imageLegacyBuild;
+      image-legacy-minimal = imageLegacyMinimalBuild;
       image-minimal-debug = imageMinimalBuildDebug;
       image-shell = imageShellBuild;
+      image-legacy-shell = imageLegacyShellBuild;
       xorg = xorgBuild;
       libxcvt = xvfbLibxcvtBuild;
       userland = userlandBuild;
       vm-runner = runVm;
       kvm-runner = runKvm;
+      vm-legacy-runner = runVmLegacy;
+      kvm-legacy-runner = runKvmLegacy;
       arm64-virt-runner = runArm64Virt;
       arm64-uefi-runner = runArm64Uefi;
       arm64-uboot-runner = runArm64Uboot;
@@ -1390,6 +1528,8 @@ let
     let
       runVm = linuxPackages.vm-runner;
       runKvm = linuxPackages.kvm-runner;
+      runVmLegacy = linuxPackages.vm-legacy-runner;
+      runKvmLegacy = linuxPackages.kvm-legacy-runner;
       runVirt = linuxPackages.arm64-virt-runner;
     in {
       default = {
@@ -1399,6 +1539,10 @@ let
       vm = {
         type = "app";
         program = "${runVm}/bin/puredarwin-vm";
+      };
+      vm-legacy = {
+        type = "app";
+        program = "${runVmLegacy}/bin/puredarwin-vm-legacy";
       };
       arm64-virt = {
         type = "app";
@@ -1415,6 +1559,10 @@ let
       kvm = {
         type = "app";
         program = "${runKvm}/bin/puredarwin-kvm";
+      };
+      kvm-legacy = {
+        type = "app";
+        program = "${runKvmLegacy}/bin/puredarwin-kvm-legacy";
       };
     };
 in {

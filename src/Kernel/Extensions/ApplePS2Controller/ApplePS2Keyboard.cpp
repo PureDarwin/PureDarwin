@@ -144,7 +144,7 @@ bool ApplePS2Keyboard::start(IOService * provider)
     setKeyboardEnable(true);
 
     /* Shared with the USB HID keyboard: whichever starts first makes the node. */
-    PDHIDPublishKeyboardDevice();
+    PDHIDPublishPS2KeyboardDevice();
 
     IOLog("ApplePS2Keyboard: started (set-1 scancodes -> HID usages)\n");
     return true;

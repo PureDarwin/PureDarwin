@@ -28,6 +28,8 @@ struct PDHIDMouseEvent {
 
 void PDHIDPublishKeyboardDevice(void);
 void PDHIDPublishMouseDevice(void);
+void PDHIDPublishPS2KeyboardDevice(void);
+void PDHIDPublishPS2MouseDevice(void);
 void PDHIDPushKeyboardEvent(UInt8 usage, bool down);
 
 /* True while a userspace client holds /dev/usb_hid_kbd open. A compositor or

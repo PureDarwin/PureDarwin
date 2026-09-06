@@ -1134,7 +1134,7 @@ IOVirtIOGPU::start(IOService *provider)
 #if !defined(__arm64__) && !defined(__aarch64__)
     if (pe) {
         PE_Video consoleInfo;
-        consoleInfo.v_baseAddr = (unsigned long)fFbPhys | 1; // force mapping
+        consoleInfo.v_baseAddr = (unsigned long)fFbBase;
         consoleInfo.v_width = fWidth;
         consoleInfo.v_height = fHeight;
         consoleInfo.v_depth = 32;

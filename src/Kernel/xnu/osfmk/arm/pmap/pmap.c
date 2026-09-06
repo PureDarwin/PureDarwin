@@ -11866,7 +11866,8 @@ pmap_is_empty_internal(
 			epte_p = bpte_p + ((block_end - block_start) >> pt_attr_leaf_shift(pt_attr));
 
 			for (pte_p = bpte_p; pte_p < epte_p; pte_p++) {
-				if (*pte_p != ARM_PTE_EMPTY) {
+				if ((*pte_p != ARM_PTE_EMPTY) &&
+				    ((pmap == kernel_pmap) || (ptep_get_pmap(pte_p) == pmap))) {
 					if ((pmap != kernel_pmap) && (initial_not_in_kdp)) {
 						pmap_unlock(pmap, PMAP_LOCK_SHARED);
 					}

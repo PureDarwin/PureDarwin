@@ -72,10 +72,10 @@ PDArmPlatformExpert::start(IOService *provider)
 }
 
 /*
- * The Pi's device tree describes no display: the VideoCore firmware allocates
- * the framebuffer and the loader passes its geometry in boot_args, which is
- * where IOGOPFramebuffer reads it from anyway. All this nub has to do is give
- * that driver something to match on, since there is no IOPCIDevice here.
+ * Firmware framebuffers are described by boot_args rather than an
+ * architecture-specific device-tree node. Publish a matching nub whenever the
+ * loader supplied valid geometry. This covers both the Pi framebuffer and
+ * QEMU's GOP-backed ramfb.
  */
 void
 PDArmPlatformExpert::publishBcm283xFramebuffer(void)
@@ -84,7 +84,6 @@ PDArmPlatformExpert::publishBcm283xFramebuffer(void)
 	IOService *nub = NULL;
 
 	if (fFramebufferNub != NULL) return;
-	if (!pd_platform_is_bcm283x()) return;
 
 	if (getConsoleInfo(&console) != kIOReturnSuccess ||
 	    console.v_baseAddr == 0 || console.v_width == 0 || console.v_height == 0) {

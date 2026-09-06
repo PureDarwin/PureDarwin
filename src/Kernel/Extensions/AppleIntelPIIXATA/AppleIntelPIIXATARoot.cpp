@@ -142,14 +142,22 @@ IOService * AppleIntelPIIXATARoot::probe( IOService * provider,
         return 0;
     }
 
-    // BIOS did not enable I/O space decoding.
-    // For now assume the ATA controller is disabled.
-
-    if ( (pciDevice->configRead16( kIOPCIConfigCommand ) &
-          kIOPCICommandIOSpace) == 0 )
-    {
+    // An add-on legacy PIIX controller (as used by the BIOS/Q35 runner) is
+    // not guaranteed to have been enabled by firmware. The fixed legacy
+    // command/control ports are still valid, so take ownership here instead
+    // of rejecting an otherwise matching controller.
+    UInt16 command = pciDevice->configRead16(kIOPCIConfigCommand);
+    command |= kIOPCICommandIOSpace | kIOPCICommandBusMaster;
+    pciDevice->configWrite16(kIOPCIConfigCommand, command);
+    command = pciDevice->configRead16(kIOPCIConfigCommand);
+    if ((command & kIOPCICommandIOSpace) == 0) {
+        IOLog("AppleIntelPIIXATA: unable to enable PCI I/O decoding\n");
         return 0;
     }
+
+    IOLog("AppleIntelPIIXATA: matched controller %04x:%04x command=0x%04x\n",
+          pciDevice->configRead16(kIOPCIConfigVendorID),
+          pciDevice->configRead16(kIOPCIConfigDeviceID), command);
 
     return this;
 }

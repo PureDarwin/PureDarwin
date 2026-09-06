@@ -69,11 +69,11 @@ stdenv.mkDerivation {
       -kext "$KEXTS/AppleUSBOHCI.kext" \
       -kext "$KEXTS/RavynXHCIPort.kext" \
       -kext "$KEXTS/IOGraphicsFamily.kext" \
+      -kext "$KEXTS/IOVirtIOFamily.kext" \
+      -kext "$KEXTS/IOVirtIOGPU.kext" \
       -kext "$KEXTS/IOGOPFramebuffer.kext" \
       -kext "$KEXTS/IONetworkingFamily.kext" \
-      -kext "$KEXTS/IOVirtIOFamily.kext" \
       -kext "$KEXTS/IOVirtIOBlock.kext" \
-      -kext "$KEXTS/IOVirtIOGPU.kext" \
       -kext "$KEXTS/IOVirtIONet.kext" \
       "''${codeless[@]}" \
       -o kernel

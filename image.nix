@@ -4,6 +4,7 @@
 , extraPackages ? [ ]
 , kc
 , xnuLoader
+, legacyBoot ? null
 , gptfdisk
 , util-linux
 , dosfstools
@@ -42,6 +43,7 @@
 
 assert lib.isDerivation baseSystem;
 assert lib.all lib.isDerivation extraPackages;
+assert legacyBoot == null || lib.isDerivation legacyBoot;
 assert rootFsType == "ext4" || rootFsType == "hfs";
 assert rootFsType == "hfs" -> (hfsprogs != null && libdmg-hfsplus != null);
 
@@ -101,6 +103,10 @@ ${if rootFsType == "hfs" then ''
     mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
     printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
     mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt
+${lib.optionalString (legacyBoot != null) ''
+    # The minimal FAT reader uses a stable 8.3 alias and does not parse LFNs.
+    mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/BOOTARGS.TXT
+''}
     fi
 
     if [ "$netboot_only" -eq 1 ]; then
@@ -130,6 +136,10 @@ ${if rootFsType == "hfs" then ''
         if [ -L "$entry" ] && [ -d "$staging/$base" ] && [ ! -L "$staging/$base" ]; then
           echo "  skipping $base (symlink would clobber staged directory)"
           continue
+        fi
+        if [ -d "$entry" ] && [ -L "$staging/$base" ]; then
+          echo "  replacing $base symlink with staged directory"
+          rm "$staging/$base"
         fi
         cp -a -- "$entry" "$staging"/
       done
@@ -767,7 +777,7 @@ ${lib.optionalString (rootFsType == "hfs") ''
     hfsplus root.img ls /usr/lib | grep -q libSystem.B.dylib
     hfsplus root.img ls /bin | grep -q zsh
 
-    dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc status=none
+    dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc,sparse status=none
 ''}
 ${lib.optionalString (rootFsType == "ext4") ''
     # mke2fs -d records each source file's uid/gid, and under Nix the whole
@@ -788,7 +798,21 @@ set_inode_field /var/empty mode 040755
 EOF
     debugfs -w -f root-debugfs.cmds root.img >/dev/null
 
-    dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc status=none
+    dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc,sparse status=none
+''}
+${lib.optionalString (legacyBoot != null) ''
+    stage2_sectors=$((($(stat -c %s ${legacyBoot}/usr/standalone/i386/stage2.bin) + 511) / 512))
+    payload_sectors=$((($(stat -c %s ${legacyBoot}/usr/standalone/i386/payload.bin) + 511) / 512))
+    test $((34 + stage2_sectors + payload_sectors)) -le 2048
+
+    # Preserve sgdisk's protective partition entry and signature at bytes
+    # 446-511. The remaining loader stages fit between the GPT array and ESP.
+    dd if=${legacyBoot}/usr/standalone/i386/stage1.bin of=$img \
+      bs=1 count=446 conv=notrunc status=none
+    dd if=${legacyBoot}/usr/standalone/i386/stage2.bin of=$img \
+      bs=512 seek=34 conv=notrunc status=none
+    dd if=${legacyBoot}/usr/standalone/i386/payload.bin of=$img \
+      bs=512 seek=$((34 + stage2_sectors)) conv=notrunc status=none
 ''}
     fi
     runHook postBuild
@@ -804,7 +828,7 @@ ${lib.optionalString netbootOnly ''
     cp ramdisk.img $out/ramdisk.img
 ''}
 ${lib.optionalString (!netbootOnly) ''
-    cp puredarwin.img $out/${imageFileName}
+    cp --sparse=always puredarwin.img $out/${imageFileName}
 ''}
     runHook postInstall
   '';

@@ -288,7 +288,9 @@ IOGOPFramebuffer::start(IOService *provider)
         DEBUG("no framebuffer base address\n");
         return false;
     }
-    fbBase = (void *)bootDisplay.v_baseAddr;
+    /* initialize_screen() uses the low bits to tag a physical framebuffer.
+     * IODeviceMemory takes the actual aligned physical address. */
+    fbBase = (void *)(bootDisplay.v_baseAddr & ~3UL);
     width  = bootDisplay.v_width;
     height = bootDisplay.v_height;
     pitch  = bootDisplay.v_rowBytes;
@@ -297,49 +299,6 @@ IOGOPFramebuffer::start(IOService *provider)
 
     DEBUG("framebuffer: %dx%d @ %p\n", width, height, fbBase);
     DEBUG("successfully started\n");
-
-    // Register the framebuffer with the kernel console system
-    /* Which mode the booter left the screen in. A loader that put up no splash
-     * hands over text mode, and taking the screen into graphics mode there just
-     * blanks the kernel's console (serial_video_mirror included). */
-    unsigned int consoleMode = bootDisplay.v_display ? kPEGraphicsMode : kPETextMode;
-
-    PE_Video consoleInfo;
-    consoleInfo.v_baseAddr   = bootDisplay.v_baseAddr | 1;  // Set low bit to force mapping
-    consoleInfo.v_width      = bootDisplay.v_width;
-    consoleInfo.v_height     = bootDisplay.v_height;
-    consoleInfo.v_depth      = 32;  // GOP is always 32-bit
-    consoleInfo.v_rowBytes   = bootDisplay.v_rowBytes;
-    /* kPEGraphicsMode (pexpert.h) rather than GRAPHICS_MODE, which is only
-     * defined in pexpert/i386/boot.h; both are 1, but the PE name is
-     * arch-neutral so this file also builds for arm64. */
-    consoleInfo.v_display    = consoleMode;
-    consoleInfo.v_offset     = 0;
-    consoleInfo.v_length     = 0;  // Let kernel calculate from height * rowBytes
-    consoleInfo.v_rotate     = 0;
-    consoleInfo.v_scale      = kPEScaleFactor1x;
-
-    // Initialize graphics console with this framebuffer
-    // Use the public IOPlatformExpert::setConsoleInfo() method
-    IOReturn ret = pe->setConsoleInfo(&consoleInfo, consoleMode);
-    if (ret != kIOReturnSuccess) {
-        DEBUG("setConsoleInfo failed: %d\n", ret);
-        // Don't fail - we can still register the service.
-    } else {
-        DEBUG("Kernel graphics console initialized\n");
-
-        bool useGopConsole = false;
-        if (PE_parse_boot_argn("gopconsole", &useGopConsole, sizeof(useGopConsole)) && useGopConsole) {
-            int oldConsole = switch_to_video_console();
-            pe->setConsoleInfo(&consoleInfo, kPEAcquireScreen);
-            pe->setConsoleInfo(&consoleInfo, kPETextScreen);
-            DEBUG("active console switched to video, old console=%d\n", oldConsole);
-
-            vc_progress_set(FALSE, 0);
-            vc_progress_set(TRUE, 0);
-            DEBUG("gopprogress: overlaid kernel progress meter on text console\n");
-        }
-    }
 
     registerService();
     return true;

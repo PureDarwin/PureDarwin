@@ -74,7 +74,7 @@ bool ApplePS2Mouse::start(IOService * provider)
     setMouseEnable(true);
 
     /* Shared with the USB HID mouse: whichever starts first makes the node. */
-    PDHIDPublishMouseDevice();
+    PDHIDPublishPS2MouseDevice();
 
     IOLog("ApplePS2Mouse: started ps2mouse%u (%u-byte packets)\n",
         _mouseIndex, _packetLength);

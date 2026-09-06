@@ -2523,8 +2523,14 @@ proc_exit(proc_t p)
 		}
 	}
 
-	/* wait till parentrefs are dropped and grant no more */
-	proc_childdrainstart(p);
+	/*
+	 * The old proc in an exec transition has already had its children
+	 * transferred and its child references drained.
+	 */
+	if (!proc_is_shadow(p)) {
+		/* wait till parentrefs are dropped and grant no more */
+		proc_childdrainstart(p);
+	}
 	while ((q = p->p_children.lh_first) != NULL) {
 		if (q->p_stat == SZOMB) {
 			if (p != q->p_pptr) {
@@ -2615,7 +2621,9 @@ proc_exit(proc_t p)
 		}
 	}
 
-	proc_childdrainend(p);
+	if (!proc_is_shadow(p)) {
+		proc_childdrainend(p);
+	}
 	proc_list_unlock();
 
 #if CONFIG_MACF

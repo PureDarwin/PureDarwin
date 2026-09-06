@@ -930,7 +930,12 @@ consdebug_putc(char c)
 	debug_putc(c);
 
 	/* Ignore `disable_serial_output` for early panic serial output from `sptm_serial_putc()`. */
-	if (!console_is_serial() && !disable_serial_output && (PE_kputc != NULL)) {
+	/*
+	 * PureDarwin's video console mirrors to the UART when serial output is
+	 * enabled. Do not send the same character through PE_kputc as well.
+	 */
+	if (!console_is_serial() && !(serialmode & SERIALMODE_OUTPUT) &&
+	    !disable_serial_output && (PE_kputc != NULL)) {
 		PE_kputc(c);
 	} else if (!console_is_serial() && (PE_kputc == NULL)) {
 		/* Use SPTM's serial interface for early serial output. */
@@ -946,7 +951,9 @@ consdebug_putc_unbuffered(char c)
 	debug_putc(c);
 
 	/* Ignore `disable_serial_output` for early panic serial output from `sptm_serial_putc()`. */
-	if (!console_is_serial() && !disable_serial_output && (PE_kputc != NULL)) {
+	/* The video console already mirrors this character to the UART. */
+	if (!console_is_serial() && !(serialmode & SERIALMODE_OUTPUT) &&
+	    !disable_serial_output && (PE_kputc != NULL)) {
 		PE_kputc(c);
 	} else if (!console_is_serial() && (PE_kputc == NULL)) {
 		/* Use SPTM's serial interface for early serial output. */

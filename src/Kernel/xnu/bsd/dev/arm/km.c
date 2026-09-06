@@ -398,6 +398,11 @@ cons_cinput(char ch)
 {
 	struct tty *tp = km_tty[0];     /* XXX */
 
+	/* IOHIDSystem can deliver input before bsd_autoconf calls kminit(). */
+	if (tp == NULL) {
+		return;
+	}
+
 	tty_lock(tp);
 	(*linesw[tp->t_line].l_rint)(ch, tp);
 	tty_unlock(tp);

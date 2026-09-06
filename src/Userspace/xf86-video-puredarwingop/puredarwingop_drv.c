@@ -434,10 +434,22 @@ PDGOPScreenInit(ScreenPtr pScreen, int argc, char **argv)
 {
     ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
     PDGOPPtr    p = PDGOPGetRec(pScrn);
+    kern_return_t kr;
     void       *fbstart;
 
     (void)argc;
     (void)argv;
+
+    if (!p->fbOpen) {
+        kr = PDGOPOpen(&p->fb);
+        if (kr != KERN_SUCCESS) {
+            xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+                       "PDGOPOpen failed at %s: 0x%x\n",
+                       PDGOPLastErrorStage(), kr);
+            return FALSE;
+        }
+        p->fbOpen = TRUE;
+    }
 
     xf86DrvMsg(pScrn->scrnIndex, X_INFO,
                "ScreenInit: fbOpen=%d vram=0x%llx size=0x%llx %dx%d stride=%d bpp=%d\n",

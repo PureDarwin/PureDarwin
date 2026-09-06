@@ -15,6 +15,7 @@
 #include <kern/socd_client.h>
 #include <machine/atomic.h>
 #include <machine/machine_routines.h>
+#include <console/serial_protos.h>
 #include <arm/caches_internal.h>
 #include <kern/debug.h>
 #include <libkern/section_keywords.h>
@@ -327,7 +328,7 @@ PE_init_iokit(void)
 	show_progress = FALSE;
 	PE_parse_boot_argn("-progress", &show_progress, sizeof(show_progress));
 #endif /* XNU_TARGET_OS_OSX */
-	if (show_progress) {
+	if (show_progress && PE_state.video.v_display) {
 		/* Rotation: 0:normal, 1:right 90, 2:left 180, 3:left 90 */
 		switch (PE_state.video.v_rotate) {
 		case 2:
@@ -546,6 +547,8 @@ PE_init_platform(boolean_t vm_initialized, void *args)
 void
 PE_create_console(void)
 {
+	int video_mirror = 0;
+
 	/*
 	 * Check the head of VRAM for a panic log saved on last panic.
 	 * Do this before the VRAM is trashed.
@@ -553,7 +556,25 @@ PE_create_console(void)
 	check_for_panic_log();
 
 	if (PE_state.video.v_display) {
-		PE_initialize_console(&PE_state.video, kPEGraphicsMode);
+		/*
+		 * Boot_Video uses 1 for a splash/graphics boot and 2 for a verbose
+		 * framebuffer text boot. Only the former should suppress character
+		 * painting when the screen is acquired.
+		 */
+		PE_initialize_console(&PE_state.video,
+		    PE_state.video.v_display == 1 ? kPEGraphicsMode : kPETextMode);
+
+		/*
+		 * serial=3 selects the UART before this function runs. When display
+		 * mirroring is requested, make video the active console instead;
+		 * vcputc_options() mirrors every character back to the UART.
+		 */
+		if ((PE_parse_boot_argn("serial_video_mirror", &video_mirror,
+		    sizeof(video_mirror)) && video_mirror) ||
+		    (PE_parse_boot_argn("gopconsole", &video_mirror,
+		    sizeof(video_mirror)) && video_mirror)) {
+			(void)switch_to_video_console();
+		}
 	} else {
 		PE_initialize_console(&PE_state.video, kPETextMode);
 	}

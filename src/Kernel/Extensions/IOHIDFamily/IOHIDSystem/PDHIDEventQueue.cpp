@@ -47,6 +47,8 @@ PDHIDUsageToADB(UInt8 usage)
 }
 
 static void *gKbdNode;
+static void *gPS2KbdNode;
+static bool gWantPS2KbdNode;
 static int gKbdMajor = -1;
 static thread_call_t gKbdRetryCall;
 static IONotifier *gKbdBSDNotifier;
@@ -59,6 +61,8 @@ static PDHIDKbdEvent gKbdEvents[64];
 static UInt8 gNextMouseIndex;
 
 static void *gMouseNode;
+static void *gPS2MouseNode;
+static bool gWantPS2MouseNode;
 static int gMouseMajor = -1;
 static thread_call_t gMouseRetryCall;
 static IONotifier *gMouseBSDNotifier;
@@ -172,7 +176,7 @@ schedule_retry(thread_call_t *call, thread_call_func_t func)
 void
 PDHIDPublishKeyboardDevice(void)
 {
-    if (gKbdNode) return;
+    if (gKbdNode && (!gWantPS2KbdNode || gPS2KbdNode)) return;
     if (!gKbdLock) {
         gKbdLock = IOLockAlloc();
         if (!gKbdLock) return;
@@ -195,11 +199,30 @@ PDHIDPublishKeyboardDevice(void)
         schedule_retry(&gKbdRetryCall, pd_hid_kbd_publish_retry);
         return;
     }
-    gKbdNode = devfs_make_node(makedev(gKbdMajor, 0), DEVFS_CHAR, 0, 0, 0666, "usb_hid_kbd");
-    if (!gKbdNode)
-        schedule_retry(&gKbdRetryCall, pd_hid_kbd_publish_retry);
-    else
-        IOLog("PDHIDEventQueue: published /dev/usb_hid_kbd\n");
+    if (!gKbdNode) {
+        gKbdNode = devfs_make_node(makedev(gKbdMajor, 0), DEVFS_CHAR,
+                                   0, 0, 0666, "usb_hid_kbd");
+        if (!gKbdNode)
+            schedule_retry(&gKbdRetryCall, pd_hid_kbd_publish_retry);
+        else
+            IOLog("PDHIDEventQueue: published /dev/usb_hid_kbd\n");
+    }
+
+    if (gWantPS2KbdNode && !gPS2KbdNode) {
+        gPS2KbdNode = devfs_make_node(makedev(gKbdMajor, 0), DEVFS_CHAR,
+                                     0, 0, 0666, "ps2_kbd");
+        if (!gPS2KbdNode)
+            schedule_retry(&gKbdRetryCall, pd_hid_kbd_publish_retry);
+        else
+            IOLog("PDHIDEventQueue: published /dev/ps2_kbd\n");
+    }
+}
+
+void
+PDHIDPublishPS2KeyboardDevice(void)
+{
+    gWantPS2KbdNode = true;
+    PDHIDPublishKeyboardDevice();
 }
 
 UInt8
@@ -211,7 +234,7 @@ PDHIDAllocateMouseIndex(void)
 void
 PDHIDPublishMouseDevice(void)
 {
-    if (gMouseNode) return;
+    if (gMouseNode && (!gWantPS2MouseNode || gPS2MouseNode)) return;
     if (!gMouseLock) {
         gMouseLock = IOLockAlloc();
         if (!gMouseLock) return;
@@ -234,11 +257,30 @@ PDHIDPublishMouseDevice(void)
         schedule_retry(&gMouseRetryCall, pd_hid_mouse_publish_retry);
         return;
     }
-    gMouseNode = devfs_make_node(makedev(gMouseMajor, 0), DEVFS_CHAR, 0, 0, 0666, "usb_hid_mouse");
-    if (!gMouseNode)
-        schedule_retry(&gMouseRetryCall, pd_hid_mouse_publish_retry);
-    else
-        IOLog("PDHIDEventQueue: published /dev/usb_hid_mouse\n");
+    if (!gMouseNode) {
+        gMouseNode = devfs_make_node(makedev(gMouseMajor, 0), DEVFS_CHAR,
+                                     0, 0, 0666, "usb_hid_mouse");
+        if (!gMouseNode)
+            schedule_retry(&gMouseRetryCall, pd_hid_mouse_publish_retry);
+        else
+            IOLog("PDHIDEventQueue: published /dev/usb_hid_mouse\n");
+    }
+
+    if (gWantPS2MouseNode && !gPS2MouseNode) {
+        gPS2MouseNode = devfs_make_node(makedev(gMouseMajor, 0), DEVFS_CHAR,
+                                       0, 0, 0666, "ps2_mouse");
+        if (!gPS2MouseNode)
+            schedule_retry(&gMouseRetryCall, pd_hid_mouse_publish_retry);
+        else
+            IOLog("PDHIDEventQueue: published /dev/ps2_mouse\n");
+    }
+}
+
+void
+PDHIDPublishPS2MouseDevice(void)
+{
+    gWantPS2MouseNode = true;
+    PDHIDPublishMouseDevice();
 }
 
 static void pd_hid_kbd_publish_retry(thread_call_param_t, thread_call_param_t)
