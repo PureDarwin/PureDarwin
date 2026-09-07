@@ -1,6 +1,6 @@
 #import <QuartzCore/CAMediaTimingFunction.h>
 #import <Foundation/NSString.h>
-#import <Foundation/NSRaise.h>
+#import "NSRaise.h"
 
 NSString * const kCAMediaTimingFunctionLinear=@"kCAMediaTimingFunctionLinear";
 NSString * const kCAMediaTimingFunctionEaseIn=@"kCAMediaTimingFunctionEaseIn";

@@ -22,6 +22,9 @@
 - (id)objectAtIndex:(NSUInteger)index;
 - (id)objectAtIndexedSubscript:(NSUInteger)index;
 - (BOOL)containsObject:(id)object;
+- (NSUInteger)indexOfObjectIdenticalTo:(id)object;
+- (NSArray<ObjectType> *)arrayByAddingObject:(ObjectType)object;
+- (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
 
 @end
 
@@ -35,6 +38,8 @@
 - (void)addObject:(ObjectType)object;
 - (void)addObjectsFromArray:(NSArray<ObjectType> *)array;
 - (void)removeObjectAtIndex:(NSUInteger)index;
+- (void)removeObjectIdenticalTo:(ObjectType)object;
+- (void)replaceObjectAtIndex:(NSUInteger)index withObject:(ObjectType)object;
 - (void)removeAllObjects;
 
 @end

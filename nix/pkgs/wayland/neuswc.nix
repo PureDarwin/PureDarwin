@@ -51,7 +51,7 @@ strip = '${darwinCrossToolchain}/bin/${targetTriple}-strip'
 pkg-config = '${pkg-config}/bin/pkg-config'
 
 [built-in options]
-c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-D_DARWIN_C_SOURCE', '-fno-stack-protector', '-I${libSystem}/usr/include', '-I${iokitHeaders}/include']
+c_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-D_DARWIN_C_SOURCE', '-D__PUREDARWIN__=1', '-fno-stack-protector', '-I${libSystem}/usr/include', '-I${iokitHeaders}/include']
 c_link_args = ['-isysroot', '$DARWIN_SDK_ROOT', '-mmacosx-version-min=26.5', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-L${corefoundation}/usr/lib', '-L${iokit}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-dylib_file,/usr/lib/libCoreFoundation.dylib:${corefoundation}/usr/lib/libCoreFoundation.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-lIOKitCF', '-lCoreFoundation', '-lSystem']
 
 [host_machine]

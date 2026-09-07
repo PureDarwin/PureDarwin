@@ -1,6 +1,6 @@
 #import <QuartzCore/CAAnimation.h>
 #import <QuartzCore/CATransaction.h>
-#import <AppKit/NSRaise.h>
+#import "NSRaise.h"
 
 @implementation CAAnimation
 

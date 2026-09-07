@@ -4,6 +4,7 @@
 #import <QuartzCore/CAMediaTimingFunction.h>
 #import <CoreVideo/CoreVideo.h>
 #import <OpenGL/OpenGL.h>
+#import <OpenGL/gl.h>
 #import <Onyx2D/O2Surface.h>
 
 @interface CALayer(private)

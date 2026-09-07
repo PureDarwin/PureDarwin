@@ -2,6 +2,7 @@
 #import <QuartzCore/CALayer.h>
 #import <QuartzCore/CARenderer.h>
 #import <Foundation/NSString.h>
+#import <OpenGL/gl.h>
 
 @interface CALayer(private)
 -(void)_setContext:(CALayerContext *)context;

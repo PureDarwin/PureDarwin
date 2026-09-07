@@ -40,7 +40,9 @@ static CATransactionGroup *createImplicitTransactionGroupIfNeeded(){
     check=[[CATransactionGroup alloc] init];
    
     [transactionStack() addObject:check];
-    [[NSRunLoop currentRunLoop] performSelector:@selector(commit) target:[CATransaction class] argument:nil order:0 modes:[NSArray arrayWithObject:NSDefaultRunLoopMode]];
+    dispatch_async(dispatch_get_main_queue(), ^{
+     [CATransaction commit];
+    });
    }
    
    return check;

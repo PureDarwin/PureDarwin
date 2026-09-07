@@ -1,6 +1,6 @@
 #import <QuartzCore/CIFilter.h>
 #import <QuartzCore/CIImage.h>
-#import <AppKit/NSRaise.h>
+#import "NSRaise.h"
 #import <Foundation/NSDictionary.h>
 
 @interface CIImage(private)

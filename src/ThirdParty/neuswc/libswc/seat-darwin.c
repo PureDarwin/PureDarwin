@@ -35,9 +35,11 @@
 #include <IOKit/hid/IOHIDElement.h>
 #include <IOKit/hid/IOHIDManager.h>
 #include <IOKit/hid/IOHIDValue.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <wayland-server.h>
 
 enum {
@@ -57,6 +59,11 @@ struct seat {
 
 	IOHIDManagerRef manager;
 	struct wl_event_source *run_loop_source;
+#ifdef __PUREDARWIN__
+	int keyboard_fd;
+	int mouse_fd;
+	uint8_t mouse_buttons;
+#endif
 
 	struct wl_listener swc_listener;
 	struct wl_listener keyboard_focus_listener;
@@ -66,6 +73,25 @@ struct seat {
 	struct wl_global *global;
 	struct wl_list resources;
 };
+
+#ifdef __PUREDARWIN__
+struct pd_hid_keyboard_event {
+	uint32_t sequence;
+	uint8_t usage;
+	uint8_t down;
+	uint8_t reserved[2];
+};
+
+struct pd_hid_mouse_event {
+	uint32_t sequence;
+	uint8_t mouse_index;
+	uint8_t buttons;
+	int8_t dx;
+	int8_t dy;
+	int8_t wheel;
+	uint8_t reserved[3];
+};
+#endif
 
 /* USB HID keyboard usages translated to Linux input keycodes, as expected by
  * libxkbcommon. Unlisted usages are not keyboard keys. */
@@ -252,14 +278,76 @@ static int
 dispatch_run_loop(void *data)
 {
 	struct seat *seat = data;
-	(void)CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
-	wl_event_source_timer_update(seat->run_loop_source, 5);
+#ifdef __PUREDARWIN__
+	struct pd_hid_keyboard_event keyboard_event;
+	struct pd_hid_mouse_event mouse_event;
+
+	if (seat->keyboard_fd < 0) {
+		seat->keyboard_fd = open("/dev/usb_hid_kbd", O_RDONLY | O_NONBLOCK);
+	}
+	if (seat->mouse_fd < 0) {
+		seat->mouse_fd = open("/dev/usb_hid_mouse", O_RDONLY | O_NONBLOCK);
+	}
+	while (seat->keyboard_fd >= 0 &&
+	       read(seat->keyboard_fd, &keyboard_event, sizeof(keyboard_event)) ==
+	           sizeof(keyboard_event)) {
+		uint16_t key = hid_to_evdev[keyboard_event.usage];
+
+		if (key) {
+			keyboard_handle_key(seat->base.keyboard, get_time(), key,
+			                    keyboard_event.down
+			                        ? WL_KEYBOARD_KEY_STATE_PRESSED
+			                        : WL_KEYBOARD_KEY_STATE_RELEASED);
+		}
+	}
+	while (seat->mouse_fd >= 0 &&
+	       read(seat->mouse_fd, &mouse_event, sizeof(mouse_event)) ==
+	           sizeof(mouse_event)) {
+		uint32_t time = get_time();
+		uint8_t changed = mouse_event.buttons ^ seat->mouse_buttons;
+		unsigned bit;
+
+		if (mouse_event.dx || mouse_event.dy) {
+			pointer_handle_relative_motion(seat->base.pointer, time,
+			                               wl_fixed_from_int(mouse_event.dx),
+			                               wl_fixed_from_int(mouse_event.dy));
+		}
+		for (bit = 0; bit < 3; ++bit) {
+			if (changed & (1u << bit)) {
+				pointer_handle_button(
+				    seat->base.pointer, time, 0x110 + bit,
+				    mouse_event.buttons & (1u << bit)
+				        ? WL_POINTER_BUTTON_STATE_PRESSED
+				        : WL_POINTER_BUTTON_STATE_RELEASED);
+			}
+		}
+		seat->mouse_buttons = mouse_event.buttons;
+		if (mouse_event.wheel) {
+			pointer_handle_axis(seat->base.pointer, time,
+			                    WL_POINTER_AXIS_VERTICAL_SCROLL,
+			                    WL_POINTER_AXIS_SOURCE_WHEEL,
+			                    wl_fixed_from_int(-mouse_event.wheel * 10),
+			                    -mouse_event.wheel * 120);
+		}
+		pointer_handle_frame(seat->base.pointer);
+	}
+#else
+	/* A zero interval returns before PureDarwin's run loop services the HID
+	 * Mach port. Keep the wait bounded so Wayland remains the outer loop. */
+	(void)CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
+#endif
+	wl_event_source_timer_update(seat->run_loop_source, 8);
 	return 0;
 }
 
 static bool
 initialize_hid(struct seat *seat)
 {
+#ifdef __PUREDARWIN__
+	seat->keyboard_fd = -1;
+	seat->mouse_fd = -1;
+	return true;
+#else
 	seat->manager = IOHIDManagerCreate(kCFAllocatorDefault,
 	                                   kIOHIDManagerOptionNone);
 	if (!seat->manager) {
@@ -279,6 +367,7 @@ initialize_hid(struct seat *seat)
 		return false;
 	}
 	return true;
+#endif
 }
 
 struct swc_seat *
@@ -337,14 +426,25 @@ seat_create(struct wl_display *display, const char *seat_name)
 	if (!seat->run_loop_source) {
 		goto error6;
 	}
-	wl_event_source_timer_update(seat->run_loop_source, 0);
+	/* A zero timeout disarms timers on Darwin. Run the initial poll directly;
+	 * it schedules subsequent polls after the HID nodes have been checked. */
+	dispatch_run_loop(seat);
 	return &seat->base;
 
 error6:
+#ifdef __PUREDARWIN__
+	if (seat->keyboard_fd >= 0) {
+		close(seat->keyboard_fd);
+	}
+	if (seat->mouse_fd >= 0) {
+		close(seat->mouse_fd);
+	}
+#else
 	IOHIDManagerClose(seat->manager, kIOHIDOptionsTypeNone);
 	IOHIDManagerUnscheduleFromRunLoop(seat->manager, CFRunLoopGetCurrent(),
 	                                    kCFRunLoopDefaultMode);
 	CFRelease(seat->manager);
+#endif
 error5:
 	pointer_finalize(&seat->pointer);
 error4:
@@ -366,10 +466,19 @@ seat_destroy(struct swc_seat *seat_base)
 	struct seat *seat = wl_container_of(seat_base, seat, base);
 
 	wl_event_source_remove(seat->run_loop_source);
+#ifdef __PUREDARWIN__
+	if (seat->keyboard_fd >= 0) {
+		close(seat->keyboard_fd);
+	}
+	if (seat->mouse_fd >= 0) {
+		close(seat->mouse_fd);
+	}
+#else
 	IOHIDManagerClose(seat->manager, kIOHIDOptionsTypeNone);
 	IOHIDManagerUnscheduleFromRunLoop(seat->manager, CFRunLoopGetCurrent(),
 	                                    kCFRunLoopDefaultMode);
 	CFRelease(seat->manager);
+#endif
 	pointer_finalize(&seat->pointer);
 	keyboard_destroy(seat->base.keyboard);
 	data_device_destroy(seat->base.data_device);

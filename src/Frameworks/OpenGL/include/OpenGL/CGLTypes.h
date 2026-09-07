@@ -57,6 +57,8 @@ enum {
 typedef enum _CGLContextParameter {
 	kCGLCPSwapInterval      = 222,
 	kCGLCPSurfaceOpacity    = 236,
+	kCGLCPSurfaceBackingSize   = 304,
+	kCGLCPSurfaceBackingOrigin = 305,
 	kCGLCPHasDrawable       = 508,
 	kCGLCPCurrentRendererID = 309,
 	kCGLCPGPUVertexProcessing   = 310,

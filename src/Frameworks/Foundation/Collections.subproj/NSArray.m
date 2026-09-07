@@ -9,6 +9,7 @@
 #import <Foundation/NSArray.h>
 #include <CoreFoundation/CFArray.h>
 #include <CoreFoundation/ForFoundationOnly.h>
+#include <objc/message.h>
 #include <objc/runtime.h>
 
 extern int __CFConstantStringClassReference[];
@@ -76,6 +77,36 @@ static const CFArrayCallBacks ns_array_callbacks = {
                                 (const void *)object) ? YES : NO;
 }
 
+- (NSUInteger)indexOfObjectIdenticalTo:(id)object {
+    CFIndex count = CFArrayGetCount((CFArrayRef)self);
+
+    for (CFIndex index = 0; index < count; ++index) {
+        if (CFArrayGetValueAtIndex((CFArrayRef)self, index) == object) {
+            return (NSUInteger)index;
+        }
+    }
+    return NSNotFound;
+}
+
+- (NSArray *)arrayByAddingObject:(id)object {
+    CFMutableArrayRef values = CFArrayCreateMutableCopy(kCFAllocatorDefault,
+                                                        0,
+                                                        (CFArrayRef)self);
+    CFArrayAppendValue(values, object);
+    CFArrayRef result = CFArrayCreateCopy(kCFAllocatorDefault, values);
+    CFRelease(values);
+    return (id)result;
+}
+
+- (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object {
+    CFIndex count = CFArrayGetCount((CFArrayRef)self);
+
+    for (CFIndex index = 0; index < count; ++index) {
+        id value = (id)CFArrayGetValueAtIndex((CFArrayRef)self, index);
+        ((void (*)(id, SEL, id))objc_msgSend)(value, selector, object);
+    }
+}
+
 /* CoreFoundation has one runtime class for immutable and mutable arrays. */
 - (void)addObject:(id)object {
     CFArrayAppendValue((CFMutableArrayRef)self, (const void *)object);
@@ -89,6 +120,19 @@ static const CFArrayCallBacks ns_array_callbacks = {
 
 - (void)removeObjectAtIndex:(NSUInteger)index {
     CFArrayRemoveValueAtIndex((CFMutableArrayRef)self, (CFIndex)index);
+}
+
+- (void)removeObjectIdenticalTo:(id)object {
+    CFIndex index;
+
+    while ((index = (CFIndex)[self indexOfObjectIdenticalTo:object]) !=
+           (CFIndex)NSNotFound) {
+        CFArrayRemoveValueAtIndex((CFMutableArrayRef)self, index);
+    }
+}
+
+- (void)replaceObjectAtIndex:(NSUInteger)index withObject:(id)object {
+    CFArraySetValueAtIndex((CFMutableArrayRef)self, (CFIndex)index, object);
 }
 
 - (void)removeAllObjects {

@@ -1,5 +1,6 @@
 
 #import <QuartzCore/CABase.h>
+#import <CoreFoundation/CFCGTypes.h>
 
 typedef struct {
     CGFloat m11, m12, m13, m14;

@@ -1,11 +1,12 @@
 #import <QuartzCore/CABase.h>
 #import <Foundation/NSString.h>
+#import <mach/mach_time.h>
 
 static double conversionFactor(){
    struct mach_timebase_info timebase;
-   kern_return_t error;
+   kern_return_t error=mach_timebase_info(&timebase);
    
-   if((mach_timebase_info(&timebase))!=KERN_SUCCESS){
+   if(error!=KERN_SUCCESS){
     NSLog(@"mach_timebase_info returned %d",error);
     return 1;
    }
@@ -18,4 +19,3 @@ CFTimeInterval CACurrentMediaTime(void) {
 
    return ((double) value)*conversionFactor();
 }
-

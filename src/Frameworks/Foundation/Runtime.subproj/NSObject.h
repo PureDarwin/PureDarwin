@@ -33,4 +33,17 @@ static inline id _Nullable CFBridgingRelease(CFTypeRef CF_RELEASES_ARGUMENT _Nul
 - (id)mutableCopyWithZone:(NSZone *)zone;
 @end
 
+/* Apple declares these here rather than in NSCoder.h, so sources get NSCoding
+ * from any header that pulls in NSObject.h. */
+@class NSCoder;
+
+@protocol NSCoding
+- (void)encodeWithCoder:(NSCoder *)coder;
+- (id)initWithCoder:(NSCoder *)coder;
+@end
+
+@protocol NSSecureCoding <NSCoding>
++ (BOOL)supportsSecureCoding;
+@end
+
 #endif /* ! __FOUNDATION_NSOBJECT__ */

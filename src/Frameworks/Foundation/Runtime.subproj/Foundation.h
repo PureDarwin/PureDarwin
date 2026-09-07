@@ -14,23 +14,28 @@
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/FoundationErrors.h>
 #import <Foundation/NSError.h>
+#import <Foundation/NSCoder.h>
+#import <Foundation/NSKeyedUnarchiver.h>
 #import <Foundation/NSArray.h>
 #import <Foundation/NSData.h>
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSSet.h>
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSDate.h>
+#import <Foundation/NSTimer.h>
 #import <Foundation/NSURL.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSStream.h>
 #import <Foundation/NSZone.h>
 #import <Foundation/NSGeometry.h>
+#import <Foundation/NSAffineTransform.h>
 #import <Foundation/NSException.h>
 #import <Foundation/NSValue.h>
 #import <Foundation/NSNull.h>
 #import <Foundation/NSDebug.h>
 #import <Foundation/NSBundle.h>
 #import <Foundation/NSProcessInfo.h>
+#import <Foundation/NSThread.h>
 #import <Foundation/NSUserDefaults.h>
 #import <Foundation/NSMapTable.h>
 #import <Foundation/NSCharacterSet.h>
@@ -39,4 +44,3 @@
 #import <Foundation/NSFileHandle.h>
 
 #endif /* ! __FOUNDATION_FOUNDATION__ */
-

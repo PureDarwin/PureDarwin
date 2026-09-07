@@ -1,5 +1,7 @@
 #import <QuartzCore/CAWindowOpenGLContext.h>
 #import <OpenGL/OpenGL.h>
+#define GL_GLEXT_PROTOTYPES 1
+#import <OpenGL/gl.h>
 #import <Onyx2D/O2Surface.h>
 
 @implementation CAWindowOpenGLContext
@@ -52,8 +54,6 @@
 
 // prepare
     glEnable(GL_DEPTH_TEST);
-    CGLUseShaders(_cglContext);
-
 // reshape
     glViewport(0, 0, width, height);
     //glMatrixMode(GL_PATH_PROJECTION_NV);                      

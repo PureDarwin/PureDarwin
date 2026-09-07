@@ -3203,6 +3203,39 @@
               libXdmcp = libXdmcpSharedBuild;
               src = ./src/Frameworks/OpenGL;
             };
+          applicationservicesBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/applicationservices.nix {
+              src = ./src/Frameworks/ApplicationServices;
+            };
+          corevideoBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/corevideo.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              openglFramework = openglFrameworkBuild;
+              mesa = mesaBuild;
+              glu = gluBuild;
+              src = ./src/Frameworks/CoreVideo;
+            };
+          quartzcoreBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/quartzcore.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              onyx2d = onyx2dBuild;
+              coregraphics = coregraphicsBuild;
+              coretext = coretextBuild;
+              openglFramework = openglFrameworkBuild;
+              corevideo = corevideoBuild;
+              applicationservices = applicationservicesBuild;
+              mesa = mesaBuild;
+              glu = gluBuild;
+              src = ./src/Frameworks/QuartzCore;
+            };
           # arm64 twins of the remaining image packages and their dependency
           # closure, generated from the x86 wiring: toolchain/triple/libSystem
           # come from mkArm64Build, and each package's own PureDarwin deps are
@@ -3890,6 +3923,9 @@
             freetype-shared = freetype2Build;
             neuwld = neuwldBuild;
             neuswc = neuswcBuild;
+            quartzcore = quartzcoreBuild;
+            corevideo = corevideoBuild;
+            applicationservices = applicationservicesBuild;
           };
           arm64Packages = lib.optionalAttrs (!isDarwin) {
             libSystem-armv6 = arm64.libSystemArmv6Build;
