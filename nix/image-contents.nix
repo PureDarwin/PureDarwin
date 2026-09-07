@@ -41,7 +41,11 @@
 , gtk3NoxBuild
 , onyx2dBuild
 , coregraphicsBuild
+, coretextBuild
+, coredataBuild
 , cgScreenDemoBuild
+, gershwinSystemBuild
+, gershwinAssetsBuild
 , cairoNoxBuild
 , pdEpollShimBuild
 , tllistBuild
@@ -532,7 +536,11 @@ let
     corefoundation = coreFoundationBuild;
     onyx2d = onyx2dBuild;
     coregraphics = coregraphicsBuild;
+    coretext = coretextBuild;
+    coredata = coredataBuild;
     cg-screen-demo = cgScreenDemoBuild;
+    gershwin-system = gershwinSystemBuild;
+    gershwin-assets = gershwinAssetsBuild;
     icucore = icuCoreBuild;
     libcxxabi-dylib = libcxxabiDylibBuild;
     libcxx-dylib = libcxxDylibBuild;
@@ -732,7 +740,39 @@ let
 
   linuxPackages =
     let
-      xnuLoaderArm64 = xnu-loader.packages.${system}.arm64-virt;
+      makeXnuLoaderHostBuild = loader: crossPkgs:
+        let
+          efiInputTarget =
+            if crossPkgs.stdenv.hostPlatform.isx86_64
+            then "elf64-x86-64"
+            else "elf64-littleaarch64";
+        in
+        (loader.override {
+          stdenv = crossPkgs.stdenv;
+          gnu-efi = crossPkgs.gnu-efi;
+        }).overrideAttrs (old: {
+          nativeBuildInputs = [
+            pkgs.cmake
+            pkgs.coreutils
+            pkgs.dosfstools
+            pkgs.mtools
+          ];
+          cmakeFlags = (old.cmakeFlags or [ ]) ++ [
+            "-DCMAKE_LINKER=${crossPkgs.stdenv.cc.bintools.bintools}/bin/ld"
+            "-DCMAKE_OBJCOPY=${crossPkgs.stdenv.cc.bintools.bintools}/bin/objcopy"
+          ];
+          postPatch = (old.postPatch or "") + ''
+            if grep -q -- '--target=efi-app-''${ARCH}' CMakeLists.txt; then
+              substituteInPlace CMakeLists.txt \
+                --replace-fail 'COMMAND ''${CMAKE_OBJCOPY}' \
+                  'COMMAND ''${CMAKE_OBJCOPY} --input-target=${efiInputTarget}' \
+                --replace-fail '--target=efi-app-''${ARCH}' \
+                  '--output-target=efi-app-''${ARCH}'
+            fi
+          '';
+        });
+      xnuLoaderDefault = makeXnuLoaderHostBuild xnu-loader.packages.${system}.default pkgs.pkgsCross.gnu64;
+      xnuLoaderArm64 = makeXnuLoaderHostBuild xnu-loader.packages.${system}.arm64-virt pkgs.pkgsCross.aarch64-multiplatform;
       kcBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelBuild;
         inherit kernelSource;
@@ -801,7 +841,7 @@ let
         baseSystem = splitBaseSystem;
         extraPackages = imageExtraPackages;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         #testAudioFile = /home/vali/development/darwin/stillalive.pcm;
       };
@@ -812,7 +852,7 @@ let
         baseSystem = splitBaseSystem;
         extraPackages = imageExtraPackages;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         inherit legacyBoot;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-legacy.img";
@@ -822,7 +862,7 @@ let
         baseSystem = splitBaseSystem;
         extraPackages = imageExtraPackages;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         hfsprogs = pkgs.hfsprogs;
         libdmg-hfsplus = pkgs.callPackage ./pkgs/toolchain/libdmg-hfsplus.nix { };
@@ -834,7 +874,7 @@ let
         baseSystem = splitBaseSystem;
         extraPackages = lib.attrValues imageExtraPackageSet;
         kc = kcDebugBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-debug.img";
       };
@@ -885,7 +925,7 @@ let
         baseSystem = splitBaseSystemArm64VirtMinimal;
         extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ];
         kc = kcArm64T8010DebugBuild;
-        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
         netbootOnly = true;
@@ -921,7 +961,7 @@ let
           fastfetchNoGLArm64Build foundationArm64Build vmprobeArm64Build
         ];
         kc = kcArm64Bcm2837ReleaseBuild;
-        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
         imageFileName = "puredarwin-rpi3.img";
@@ -934,7 +974,7 @@ let
         baseSystem = splitBaseSystemArm64VirtMinimalRelease;
         extraPackages = imageExtraPackagesArm64;
         kc = kcArm64ReleaseBuild;
-        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
         espMB = 64;
@@ -946,7 +986,7 @@ let
         baseSystem = splitBaseSystemArm64VirtMinimalRelease;
         extraPackages = [ zshArm64Build libiconvArm64Build toyboxArm64Build ];
         kc = kcArm64ReleaseBuild;
-        xnuLoader = xnu-loader.packages.${system}.arm64-virt;
+        xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
         espMB = 64;
@@ -1013,17 +1053,40 @@ let
         baseSystem = splitBaseSystemWayland;
         extraPackages = lib.attrValues waylandOnlyExtraPackageSet;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-wayland.img";
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1 ahci_debug=1";
       };
-      strippedExtraPackages = [ zshBuild toyboxBuild libiconvBuild coreFoundationBuild icuCoreBuild iokitBuild coreServicesBuild libcxxabiDylibBuild libcxxDylibBuild libcxxTestBuild libobjcBuild objcTestBuild foundationBuild securityBuild symptomReporterBuild systemConfigurationBuild diskArbitrationBuild ioregBuild ];
+      strippedExtraPackages = lib.filter lib.isDerivation (
+        [
+          coreFoundationBuild
+          icuCoreBuild
+          libcxxabiDylibBuild
+          libcxxDylibBuild
+          libobjcBuild
+        ]
+        ++ lib.optionals (!isDarwin) [
+          zshBuild
+          toyboxBuild
+          libiconvBuild
+          iokitBuild
+          coreServicesBuild
+          libcxxTestBuild
+          objcTestBuild
+          foundationBuild
+          securityBuild
+          symptomReporterBuild
+          systemConfigurationBuild
+          diskArbitrationBuild
+          ioregBuild
+        ]
+      );
       imageStrippedBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
         extraPackages = strippedExtraPackages;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-stripped.img";
       };
@@ -1031,7 +1094,7 @@ let
         baseSystem = splitBaseSystemMinimal;
         extraPackages = strippedExtraPackages;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-minimal.img";
         espMB = 60;
@@ -1042,7 +1105,7 @@ let
         baseSystem = splitBaseSystemMinimal;
         extraPackages = strippedExtraPackages;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         inherit legacyBoot;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-legacy-minimal.img";
@@ -1054,7 +1117,7 @@ let
         baseSystem = splitBaseSystemMinimalDebug;
         extraPackages = strippedExtraPackages;
         kc = kcDebugBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-minimal-debug.img";
         espMB = 64;
@@ -1068,20 +1131,35 @@ let
         # launchd links CoreFoundation (and its own runtime deps: ICU,
         # libobjc, libc++) unconditionally, so this needs the same stack
         # image-stripped/image-minimal already ship it with, not just a shell.
-        extraPackages = strippedExtraPackages;
+        # Keep the Cocotron graphics layer together: CoreGraphics uses Onyx2D,
+        # and the screen demo uses PDSurface to present its bitmap context.
+        extraPackages = lib.unique (strippedExtraPackages ++ lib.filter lib.isDerivation [
+          foundationBuild
+          freetype2Build
+          libpngBuild
+          libjpegBuild
+          xvfbZlibBuild
+          pdsurfaceBuild
+          onyx2dBuild
+          coregraphicsBuild
+          coretextBuild
+          cgScreenDemoBuild
+          gershwinSystemBuild
+          gershwinAssetsBuild
+        ]);
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-shell.img";
         espMB = 60;
-        rootMB = 300;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1";
+        rootMB = 420;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1 pd_fault_trace=1";
       };
       imageLegacyShellBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemStripped;
         extraPackages = strippedExtraPackages;
         kc = kcBuild;
-        xnuLoader = xnu-loader.packages.${system}.default;
+        xnuLoader = xnuLoaderDefault;
         inherit legacyBoot;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-legacy-shell.img";
@@ -1493,6 +1571,8 @@ let
       image-stripped = imageStrippedBuild;
       onyx2d = onyx2dBuild;
       coregraphics = coregraphicsBuild;
+      coretext = coretextBuild;
+      coredata = coredataBuild;
       pd-epoll-shim = pdEpollShimBuild;
       tllist = tllistBuild;
       fcft = fcftBuild;

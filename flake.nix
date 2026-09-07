@@ -159,6 +159,8 @@
             "src/Kernel/xnu/bsd/uuid"
             "src/Kernel/xnu/bsd/kern/makesyscalls.sh"
             "src/Kernel/xnu/bsd/kern/syscalls.master"
+            "src/Frameworks/CoreFoundation"
+            "src/Frameworks/Foundation"
             "src/Libraries"
             "src/Libraries/libSystem/libmalloc/compat-include"
             "tools/mig"
@@ -1456,6 +1458,26 @@
               zlib = xvfbZlibBuild;
               src = ./src/Frameworks/CoreGraphics;
             };
+          coretextBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coretext.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              onyx2d = onyx2dBuild;
+              coregraphics = coregraphicsBuild;
+              src = ./src/Frameworks/CoreText;
+            };
+          coredataBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coredata.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              src = ./src/Frameworks/CoreData;
+            };
           cgScreenDemoBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/cg-screen-demo.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -1466,6 +1488,50 @@
               coregraphics = coregraphicsBuild;
               src = ./src/Userspace/cg-screen-demo;
             };
+          gershwinSystemBuild = pkgs.stdenvNoCC.mkDerivation {
+            pname = "gershwin-system";
+            version = "2026-09-06";
+            src = pkgs.fetchFromGitHub {
+              owner = "gershwin-desktop";
+              repo = "gershwin-system";
+              rev = "a29ac743fea4388d580467e1998d7bf4c06b1de2";
+              hash = "sha256-T/1iGevtrkIfoUVDu645UTujd+lhUxOuGiYfCYlaCYw=";
+            };
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/System/Library"
+              cp -R Library/. "$out/System/Library/"
+              runHook postInstall
+            '';
+            meta = {
+              description = "Gershwin system-domain configuration and scripts";
+              homepage = "https://github.com/gershwin-desktop/gershwin-system";
+              license = lib.licenses.bsd2;
+              platforms = lib.platforms.unix;
+            };
+          };
+          gershwinAssetsBuild = pkgs.stdenvNoCC.mkDerivation {
+            pname = "gershwin-assets";
+            version = "2026-09-06";
+            src = pkgs.fetchFromGitHub {
+              owner = "gershwin-desktop";
+              repo = "gershwin-assets";
+              rev = "9266b6edd28ce7fb6d9e6dfcf9cca4cc4b1c3038";
+              hash = "sha256-Scc33jaG/lJqEjunU9MGKGIM47YgRACoipsWsnPe2U8=";
+            };
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/System/Library"
+              cp -R Library/. "$out/System/Library/"
+              runHook postInstall
+            '';
+            meta = {
+              description = "Gershwin system-domain artwork and resources";
+              homepage = "https://github.com/gershwin-desktop/gershwin-assets";
+              license = lib.licenses.bsd2;
+              platforms = lib.platforms.unix;
+            };
+          };
           # Wayland-only image: cairo/dbus/mesa each bake an libX11 path into
           # their output unless their X11 backends are configured out.
           cairoNoxBuild =
@@ -3015,10 +3081,10 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               icu = icuCoreBuild;
-              src = "${coreFoundationSource}/src/Libraries/CoreFoundation";
+              src = "${coreFoundationSource}/src/Frameworks/CoreFoundation";
               pdCompatInclude = "${coreFoundationSource}/src/Libraries/libSystem/libc/pd-compat-include";
               libobjc = libobjcBuild;
-              foundationSrc = "${foundationSource}/src/Libraries/Foundation";
+              foundationSrc = "${foundationSource}/src/Frameworks/Foundation";
             };
           libcxxabiDylibBuild =
             pkgs.callPackage ./nix/pkgs/apple/libcxxabi-dylib.nix {
@@ -3067,7 +3133,7 @@
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
               corefoundation = coreFoundationBuild;
-              src = "${foundationSource}/src/Libraries/Foundation";
+              src = "${foundationSource}/src/Frameworks/Foundation";
             };
           protocolBufferBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/protocolbuffer.nix {
@@ -3109,7 +3175,7 @@
               libxcb = libxcbSharedBuild;
               libXau = libXauSharedBuild;
               libXdmcp = libXdmcpSharedBuild;
-              src = ./src/Libraries/OpenGL;
+              src = ./src/Frameworks/OpenGL;
             };
           # arm64 twins of the remaining image packages and their dependency
           # closure, generated from the x86 wiring: toolchain/triple/libSystem
@@ -3707,7 +3773,7 @@
               libXcursorSharedBuild libXrandrSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
-              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild cgScreenDemoBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
+              gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild coredataBuild cgScreenDemoBuild gershwinSystemBuild gershwinAssetsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
               cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
@@ -4048,7 +4114,7 @@
           packages = {
             apple-sdk = appleSdk;
             cg-screen-demo = cgScreenDemoBuild;
-          } // commonPackages // arm64Packages // probePackages // lib.optionalAttrs (!isDarwin) linuxPackages;
+          } // commonPackages // arm64Packages // probePackages // linuxPackages;
           apps = lib.optionalAttrs (!isDarwin) linuxApps;
           devShells = {
             kernel = devShell;

@@ -20,7 +20,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSArray.h>
 #import "O2Encoding.h"
 #import "O2PDFCharWidths.h"
-
 void O2ContextDefaultShowText(O2ContextRef self,const char *text,unsigned length);
 
 @implementation O2Context
@@ -30,14 +29,15 @@ static NSMutableArray *possibleContextClasses=nil;
 +(void)initialize {
    if(possibleContextClasses==nil){
     possibleContextClasses=[NSMutableArray new];
-    
+
     [possibleContextClasses addObject:@"O2Context_gdi"];
     [possibleContextClasses addObject:@"O2Context_builtin"];
     [possibleContextClasses addObject:@"O2Context_builtin_gdi"];
     [possibleContextClasses addObject:@"O2Context_cairo"];
     [possibleContextClasses addObject:@"O2Context_builtin_FT"];
-    
-    NSArray *allPaths=[[NSBundle bundleForClass:self] pathsForResourcesOfType:@"cgContext" inDirectory:nil];
+
+    NSBundle *bundle=[NSBundle bundleForClass:self];
+    NSArray *allPaths=[bundle pathsForResourcesOfType:@"cgContext" inDirectory:nil];
     int      i,count=[allPaths count];
     
     for(i=0;i<count;i++){
@@ -109,7 +109,7 @@ static NSMutableArray *possibleContextClasses=nil;
    
    while(--count>=0){
     Class check=[array objectAtIndex:count];
-    
+
     if([check canInitBitmap]){
      O2Context *result=[[check alloc] initWithBytes:bytes width:width height:height bitsPerComponent:bitsPerComponent bytesPerRow:bytesPerRow colorSpace:colorSpace bitmapInfo:bitmapInfo releaseCallback:releaseCallback releaseInfo:releaseInfo];
 
@@ -334,12 +334,11 @@ O2ColorRef O2ContextFillColor(O2ContextRef self) {
 }
 
 O2ContextRef O2ContextRetain(O2ContextRef self) {
-   return (self!=NULL)?(O2ContextRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 void O2ContextRelease(O2ContextRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 // context state

@@ -119,12 +119,11 @@ O2DataConsumerRef O2DataConsumerCreateWithURL(CFURLRef url) {
 }
 
 O2DataConsumerRef O2DataConsumerRetain(O2DataConsumerRef self) {
-   return (self!=NULL)?(O2DataConsumerRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 void O2DataConsumerRelease(O2DataConsumerRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 size_t O2DataConsumerPutBytes(O2DataConsumerRef self,const void *buffer,size_t count) {
@@ -132,4 +131,3 @@ size_t O2DataConsumerPutBytes(O2DataConsumerRef self,const void *buffer,size_t c
 }
 
 @end
-

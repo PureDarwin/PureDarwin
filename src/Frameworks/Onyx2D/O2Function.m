@@ -51,12 +51,11 @@ O2FunctionRef O2FunctionCreate(void *info,size_t domainDimension,const O2Float *
 }
 
 O2FunctionRef O2FunctionRetain(O2FunctionRef self) {
-   return (self!=NULL)?(O2FunctionRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 void O2FunctionRelease(O2FunctionRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 void O2FunctionEvaluate(O2FunctionRef self,O2Float x,O2Float *output){

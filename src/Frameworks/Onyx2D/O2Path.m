@@ -45,12 +45,11 @@ id O2PathInitWithOperators(O2Path *self,unsigned char *elements,unsigned numberO
 }
 
 void O2PathRelease(O2PathRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 O2PathRef O2PathRetain(O2PathRef self) {
-   return (self!=NULL)?(O2PathRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 -copyWithZone:(NSZone *)zone {

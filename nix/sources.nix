@@ -151,7 +151,7 @@ let
     "tools"
   ]);
   coreFoundationSource = sourceWith "puredarwin-corefoundation-source" [
-    "src/Libraries/CoreFoundation"
+    "src/Frameworks/CoreFoundation"
     "src/Libraries/libSystem/libc/pd-compat-include"
   ];
   coreServicesSource = sourceWith "puredarwin-coreservices-source" [
@@ -253,7 +253,7 @@ let
     "src/Libraries/llvm-libc"
   ];
   foundationSource = sourceWith "puredarwin-foundation-source" [
-    "src/Libraries/Foundation"
+    "src/Frameworks/Foundation"
   ];
 
   xfconfSrc = pkgs.fetchurl {

@@ -13,7 +13,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Onyx2D/O2ColorSpace.h>
 #import <Onyx2D/O2Exceptions.h>
 #import <Onyx2D/O2Surface.h>
-
 @implementation O2BitmapContext
 
 -initWithSurface:(O2Surface *)surface flipped:(BOOL)flipped {

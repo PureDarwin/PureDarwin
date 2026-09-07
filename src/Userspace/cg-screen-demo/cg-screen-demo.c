@@ -3,9 +3,11 @@
 #include <CoreGraphics/CGContext.h>
 #include <PDSurface.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void
 fill_demo(CGContextRef context, size_t width, size_t height)
@@ -35,8 +37,8 @@ main(int argc, char **argv)
     void *bitmap = NULL;
     int status = 1;
 
-    if (width == 0 || height == 0 ||
-        PDSurfaceDeviceOpen(&device) != KERN_SUCCESS) {
+    kern_return_t kr = PDSurfaceDeviceOpen(&device);
+    if (width == 0 || height == 0 || kr != KERN_SUCCESS) {
         fprintf(stderr, "cg-screen-demo: no PDSurface device\n");
         goto done;
     }
@@ -45,7 +47,8 @@ main(int argc, char **argv)
         .format = kPDSurfaceFormatXRGB8888,
         .usage = kPDSurfaceUsageLinear | kPDSurfaceUsageScanout,
     };
-    if (PDSurfaceCreate(device, &descriptor, &surface) != KERN_SUCCESS) {
+    kr = PDSurfaceCreate(device, &descriptor, &surface);
+    if (kr != KERN_SUCCESS) {
         fprintf(stderr, "cg-screen-demo: surface creation failed\n");
         goto done;
     }
@@ -76,6 +79,10 @@ main(int argc, char **argv)
     }
     fprintf(stderr, "cg-screen-demo: %ux%u displayed on %s\n",
             width, height, PDSurfaceDeviceGetName(device));
+    fprintf(stderr, "cg-screen-demo: press return to exit\n");
+    char input;
+    while (read(STDIN_FILENO, &input, sizeof(input)) < 0 && errno == EINTR) {
+    }
     status = 0;
 done:
     if (context != NULL) CGContextRelease(context);

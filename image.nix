@@ -53,7 +53,7 @@ stdenv.mkDerivation {
 
   dontUnpack = true;
 
-  nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs fakeroot apfsprogs ]
+  nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs fakeroot ]
     ++ lib.optionals (rootFsType == "hfs") [ hfsprogs libdmg-hfsplus ];
 
   buildPhase = ''
@@ -835,6 +835,6 @@ ${lib.optionalString (!netbootOnly) ''
 
   meta = with lib; {
     description = "Bootable PureDarwin GPT disk image (xnu-loader ESP + kc-tools kernel collection + ext4 BaseSystem root + APFS test container)";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

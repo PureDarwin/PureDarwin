@@ -96,12 +96,11 @@ O2ShadingRef O2ShadingCreateRadial(O2ColorSpaceRef colorSpace,O2Point start,O2Fl
 }
 
 O2ShadingRef O2ShadingRetain(O2ShadingRef self) {
-   return (self!=NULL)?(O2ShadingRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 void O2ShadingRelease(O2ShadingRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 

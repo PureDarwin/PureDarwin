@@ -196,7 +196,7 @@ let
   foundationArm64Build = mkArm64Build ./pkgs/apple/foundation.nix {
     libobjc = libobjcArm64Build;
     corefoundation = coreFoundationArm64Build;
-    src = "${foundationSource}/src/Libraries/Foundation";
+    src = "${foundationSource}/src/Frameworks/Foundation";
   };
   fribidiArm64Build = mkArm64Build ./pkgs/gtk/fribidi.nix {
     inherit (pkgs) fribidi;
@@ -740,7 +740,7 @@ let
     libxcb = xcbArm64Build;
     libXau = xvfbLibXauArm64Build;
     libXdmcp = pkgs.libxdmcp;
-    src = ../src/Libraries/OpenGL;
+    src = ../src/Frameworks/OpenGL;
   };
   opensshArm64Build = mkArm64Build ./pkgs/base/openssh.nix {
     openssh = pkgs.openssh;

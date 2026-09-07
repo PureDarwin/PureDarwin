@@ -60,6 +60,6 @@ ${lib.concatMapStringsSep "\n" (k: "      -kext \"$KEXTS/" + k + "\" \\") kextLi
 
   meta = with lib; {
     description = "PureDarwin boot kernel collection (kernel + kexts fileset), assembled by kc-tools' kc-builder";
-    platforms = platforms.linux;
+    platforms = platforms.unix;
   };
 }

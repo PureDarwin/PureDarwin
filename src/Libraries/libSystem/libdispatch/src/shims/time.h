@@ -31,6 +31,13 @@
 #error "Please #include <dispatch/dispatch.h> instead of this file directly."
 #endif
 
+#if defined(__PUREDARWIN__)
+__BEGIN_DECLS
+kern_return_t mach_get_times(uint64_t *absolute_time,
+		uint64_t *cont_time, struct timespec *tp);
+__END_DECLS
+#endif
+
 #if defined(_WIN32)
 static inline unsigned int
 sleep(unsigned int seconds)

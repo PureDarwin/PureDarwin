@@ -417,6 +417,13 @@ static BOOL initFunctionsForParameters(O2Surface *self,size_t bitsPerComponent,s
           break;
           
          case kO2ImageAlphaNoneSkipFirst:
+          switch(bitmapInfo&kO2BitmapByteOrderMask){
+           case kO2BitmapByteOrderDefault:
+           case kO2BitmapByteOrder16Little:
+           case kO2BitmapByteOrder32Little:
+            self->_writeargb8u=O2SurfaceWrite_argb8u_to_BGRA8888;
+            return YES;
+          }
           break;
         }
        }

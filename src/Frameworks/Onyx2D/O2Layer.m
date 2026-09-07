@@ -30,12 +30,11 @@ O2LayerRef O2LayerCreateWithContext(O2ContextRef context,O2Size size,NSDictionar
 }
 
 O2LayerRef O2LayerRetain(O2LayerRef self) {
-   return (self!=NULL)?(O2LayerRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 void O2LayerRelease(O2LayerRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 O2Size O2LayerGetSize(O2LayerRef self) {

@@ -113,28 +113,19 @@ target_compile_options(libdispatch_static PRIVATE
     -include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/bsd/sys/kdebug_private.h
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/libkern/os/base_private.h>
     $<$<COMPILE_LANGUAGE:C>:-include${CMAKE_CURRENT_SOURCE_DIR}/compat-include/pd_work_interval_instance.h>
+    -include${CMAKE_SOURCE_DIR}/src/Kernel/xnu/osfmk/mach/thread_policy_private.h
     $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17;-fblocks;-fno-rtti;-fno-exceptions;-isystem${PUREDARWIN_MACOSX_SDK}/usr/include>)
 
-# libc++'s <cmath> includes <math.h> and asserts it got libc++'s own wrapper.
-# clang searches every -isystem after every -I, so passing libc++ as -isystem
-# let ../libc/include below shadow it and the assert fired; only ordering on the
-# include path fixes it. Not gated on COMPILE_LANGUAGE:CXX because that genex
-# evaluates to nothing here and the C++ headers vanish entirely. Safe for the C
-# sources: libc++'s C wrappers #include_next the real header and gate everything
-# else on __cplusplus.
-# CMake drops any include directory it believes the compiler searches
-# implicitly, and build.nix puts this exact path in CMAKE_CXX_FLAGS as -isystem,
-# which is what put it on that list. Without this the -I below is silently
-# discarded and <atomic> stops resolving at all.
+# libc++'s C compatibility wrappers must precede libc's headers. CMake treats
+# the SDK libc++ path as implicit on native macOS and otherwise drops it here.
 list(REMOVE_ITEM CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES
-    "${PUREDARWIN_MACOSX_SDK}/usr/include/c++/v1")
+    "${PUREDARWIN_LIBCXX_INCLUDE_DIR}")
 target_include_directories(libdispatch_static BEFORE PRIVATE
-    ${PUREDARWIN_MACOSX_SDK}/usr/include/c++/v1)
+    ${PUREDARWIN_LIBCXX_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/compat-include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../libc/include)
 
 add_dependencies(libdispatch_static libsystem_kernel_static)
-
-target_include_directories(libdispatch_static PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../libc/include)
 
 target_include_directories(libdispatch_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../libsystem_kernel/mach)

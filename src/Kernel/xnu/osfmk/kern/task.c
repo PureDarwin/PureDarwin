@@ -2422,7 +2422,10 @@ task_deliver_crash_notification(
 	wsave = thread_interrupt_level(THREAD_UNINT);
 	kr = exception_triage_thread(EXC_CORPSE_NOTIFY, code, EXCEPTION_CODE_MAX, thread);
 	if (kr != KERN_SUCCESS) {
-		printf("Failed to send exception EXC_CORPSE_NOTIFY. error code: %d for pid %d\n", kr, task_pid(corpse));
+		printf("Failed to send exception EXC_CORPSE_NOTIFY. error code: %d for pid %d proc=%s etype=%d subcode=0x%llx\n",
+		    kr, task_pid(corpse),
+		    get_bsdtask_info(corpse) ? proc_name_address(get_bsdtask_info(corpse)) : "?",
+		    etype, (unsigned long long)subcode);
 	}
 
 	(void)thread_interrupt_level(wsave);

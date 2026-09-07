@@ -8,6 +8,11 @@ include $(MakeInc_def)
 
 OBJS = kextsymboltool.o
 
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    OBJS += swap.o
+endif
+
 CFLAGS = -isysroot $(HOST_SDKROOT) -mmacosx-version-min=$(HOST_OS_VERSION) -g -O0 -I$(SOURCE) -I.
 
 WARNFLAGS = -Wall
@@ -15,7 +20,6 @@ WARNFLAGS = -Wall
 LDFLAGS = -isysroot $(HOST_SDKROOT) -mmacosx-version-min=$(HOST_OS_VERSION) -lstdc++
 
 # If we are a Linux host, append luuid
-UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
     LDFLAGS += -luuid
 endif
@@ -25,6 +29,10 @@ kextsymboltool: $(OBJS)
 	$(_v)$(HOST_CC) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c
+	@$(LOG_HOST_CC) "$@"
+	$(_v)$(HOST_CC) $(WARNFLAGS) $(CFLAGS) -c -o $@ $<
+
+swap.o: $(SRCROOT)/../../../tools/cctools/libmacho/swap.c
 	@$(LOG_HOST_CC) "$@"
 	$(_v)$(HOST_CC) $(WARNFLAGS) $(CFLAGS) -c -o $@ $<
 

@@ -159,6 +159,7 @@ extern boolean_t dtrace_handle_trap(int, x86_saved_state_t *);
 
 #ifdef MACH_BSD
 extern char *   proc_name_address(void *p);
+extern int      proc_pid(void *p);
 #endif /* MACH_BSD */
 
 extern boolean_t pmap_smep_enabled;
@@ -1093,6 +1094,8 @@ user_trap(
 	user_addr_t             vaddr;
 	vm_prot_t               prot;
 	thread_t                thread = current_thread();
+	task_t                  user_task = get_threadtask(thread);
+	void                    *user_proc = get_bsdtask_info(user_task);
 	kern_return_t           kret;
 	user_addr_t             rip;
 	unsigned long           dr6 = 0; /* 32 bit for i386, 64 bit for x86_64 */
@@ -1252,10 +1255,36 @@ user_trap(
 			/* ud2 is how abort()/malloc_zone_error()/__builtin_trap()
 			 * surface in userland. */
 			if (pd_fault_trace) {
-				printf("user #UD -> SIGILL: rip=0x%llx\n",
+				printf("user #UD -> SIGILL: proc=%s pid=%d rip=0x%llx\n",
+				    user_proc ? proc_name_address(user_proc) : "?",
+				    user_proc ? proc_pid(user_proc) : -1,
 				    (unsigned long long)rip);
 			}
 			if (pd_fault_trace && is_saved_state64(saved_state)) {
+				x86_saved_state64_t *r = saved_state64(saved_state);
+				printf("registers: rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx rdi=0x%llx rsi=0x%llx rbp=0x%llx\n",
+				    (unsigned long long)r->rax, (unsigned long long)r->rbx,
+				    (unsigned long long)r->rcx, (unsigned long long)r->rdx,
+				    (unsigned long long)r->rdi, (unsigned long long)r->rsi,
+				    (unsigned long long)r->rbp);
+				uint8_t insn[16];
+				bool readable = true;
+				for (int i = 0; i < 16; i++) {
+					if (copyin((user_addr_t)(rip + (uint64_t)i),
+					    (char *)&insn[i], 1) != 0) {
+						readable = false;
+						break;
+					}
+				}
+				printf("instruction bytes:");
+				if (readable) {
+					for (int i = 0; i < 16; i++) {
+						printf(" %02x", insn[i]);
+					}
+				} else {
+					printf(" <unreadable>");
+				}
+				printf("\n");
 				/* Walk the rbp frame-pointer chain: [rbp] = caller rbp,
 				 * [rbp+8] = return address. Darwin userland keeps frame
 				 * pointers, so this yields a real backtrace. */
@@ -1330,7 +1359,9 @@ user_trap(
 		 * win!
 		 */
 		if (pd_fault_trace) {
-			printf("user #GP -> SIGSEGV: rip=0x%llx err=0x%x rsp=0x%llx (non-canonical deref?)\n",
+			printf("user #GP -> SIGSEGV: proc=%s pid=%d rip=0x%llx err=0x%x rsp=0x%llx (non-canonical deref?)\n",
+			    user_proc ? proc_name_address(user_proc) : "?",
+			    user_proc ? proc_pid(user_proc) : -1,
 			    (unsigned long long)rip, err,
 			    (unsigned long long)(is_saved_state64(saved_state) ? saved_state64(saved_state)->isf.rsp : 0));
 		}
@@ -1390,10 +1421,51 @@ user_trap(
 		/* PAL debug hook (empty on x86) */
 		pal_dbg_page_fault(thread, vaddr, kret);
 		if (pd_fault_trace) {
-			printf("fatal user #PF -> SIGSEGV: rip=0x%llx fault_addr=0x%llx err=0x%x kret=%d\n",
+			printf("fatal user #PF -> SIGSEGV: proc=%s pid=%d rip=0x%llx fault_addr=0x%llx err=0x%x kret=%d\n",
+			    user_proc ? proc_name_address(user_proc) : "?",
+			    user_proc ? proc_pid(user_proc) : -1,
 			    (unsigned long long)rip, (unsigned long long)vaddr, err, kret);
 		}
 		if (pd_fault_trace && is_saved_state64(saved_state)) {
+			x86_saved_state64_t *r = saved_state64(saved_state);
+			printf("registers: rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx rdi=0x%llx rsi=0x%llx rbp=0x%llx\n",
+			    (unsigned long long)r->rax, (unsigned long long)r->rbx,
+			    (unsigned long long)r->rcx, (unsigned long long)r->rdx,
+			    (unsigned long long)r->rdi, (unsigned long long)r->rsi,
+			    (unsigned long long)r->rbp);
+			uint8_t insn[16];
+			bool readable = true;
+			for (int i = 0; i < 16; i++) {
+				if (copyin((user_addr_t)(rip + (uint64_t)i),
+				    (char *)&insn[i], 1) != 0) {
+					readable = false;
+					break;
+				}
+			}
+			printf("instruction bytes:");
+			if (readable) {
+				for (int i = 0; i < 16; i++) {
+					printf(" %02x", insn[i]);
+				}
+			} else {
+				printf(" <unreadable>");
+			}
+			printf("\n");
+			uint64_t urbp = r->rbp;
+			printf("rbp-chain backtrace:");
+			for (int i = 0; i < 32 && urbp != 0; i++) {
+				uint64_t frame[2] = { 0, 0 };
+				if (copyin((user_addr_t)urbp, (char *)frame, 16) != 0 ||
+				    frame[1] < 0x1000ULL || frame[1] > 0x800000000000ULL) {
+					break;
+				}
+				printf(" 0x%llx", (unsigned long long)frame[1]);
+				if (frame[0] <= urbp) {
+					break;
+				}
+				urbp = frame[0];
+			}
+			printf("\n");
 			uint64_t ursp = saved_state64(saved_state)->isf.rsp;
 			printf("rsp=0x%llx user-stack code addrs:", (unsigned long long)ursp);
 			int shown = 0;

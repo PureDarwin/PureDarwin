@@ -46,6 +46,11 @@
 #include <uuid/uuid.h>
 #include <stdbool.h>
 
+#ifdef __APPLE__
+/* New SDKs declare this legacy libSystem variable without exporting it. */
+vm_size_t vm_page_mask = 4095;
+#endif
+
 #pragma mark Typedefs, Enums, Constants
 /*********************************************************************
 * Typedefs, Enums, Constants

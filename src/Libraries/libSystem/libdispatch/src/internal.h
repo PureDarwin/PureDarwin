@@ -271,6 +271,11 @@ upcast(dispatch_object_t dou)
 #include <mach/mach_host.h>
 #include <mach/mach_interface.h>
 #include <mach/mach_time.h>
+#if defined(__PUREDARWIN__)
+__BEGIN_DECLS
+mach_port_name_t thread_get_special_reply_port(void);
+__END_DECLS
+#endif
 #include <mach/mach_traps.h>
 #include <mach/message.h>
 #include <mach/mig_errors.h>

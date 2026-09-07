@@ -35,7 +35,7 @@ let
       /src/Kernel/xnu/osfmk/mach
       /src/Kernel/xnu/osfmk/mach_debug
       /src/Libraries/AvailabilityVersions/include
-      /src/Libraries/CoreFoundation
+      /src/Frameworks/CoreFoundation
       /src/Libraries/Security
       /src/Libraries/IOKit/IOKit.exports
       /src/Libraries/CoreServices
@@ -98,7 +98,7 @@ let
     { name = "Security"; version = "59754.120.12";
       exports = "${root}/src/Libraries/Security/Security.exports"; }
     { name = "CoreFoundation"; version = "1338";
-      exports = "${root}/src/Libraries/CoreFoundation/CoreFoundation.exports"; }
+      exports = "${root}/src/Frameworks/CoreFoundation/CoreFoundation.exports"; }
     { name = "IOKit"; version = "275";
       exports = "${root}/src/Libraries/IOKit/IOKit.exports"; }
     { name = "CoreServices"; version = "1069.24";
@@ -341,7 +341,7 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$sdk/System/Library/Frameworks/CoreFoundation.framework/Headers"
     # One cp per file: a couple of basenames repeat across subprojects and a
     # single cp refuses to overwrite what it just created.
-    for h in ${root}/src/Libraries/CoreFoundation/*.subproj/*.h; do
+    for h in ${root}/src/Frameworks/CoreFoundation/*.subproj/*.h; do
       cp -Lf "$h" "$sdk/System/Library/Frameworks/CoreFoundation.framework/Headers/"
     done
     # Not a sources entry: runtime/ mixes headers with .mm/.cpp. Same *.h set
@@ -383,7 +383,7 @@ stdenvNoCC.mkDerivation {
       } > "$_fw/$_name.tbd"
     }
     emit_framework_tbd Security 59754.120.12 ${root}/src/Libraries/Security/Security.exports
-    emit_framework_tbd CoreFoundation 1338 ${root}/src/Libraries/CoreFoundation/CoreFoundation.exports
+    emit_framework_tbd CoreFoundation 1338 ${root}/src/Frameworks/CoreFoundation/CoreFoundation.exports
     emit_framework_tbd IOKit 275 ${root}/src/Libraries/IOKit/IOKit.exports
     emit_framework_tbd CoreServices 1069.24 ${root}/src/Libraries/CoreServices/CoreServices.exports
     emit_framework_tbd DiskArbitration 309 ${root}/src/Libraries/DiskArbitration/DiskArbitration.exports

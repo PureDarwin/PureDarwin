@@ -507,12 +507,11 @@ O2ImageRef O2ImageCreateWithMaskingColors(O2ImageRef self,const O2Float *compone
 }
 
 O2ImageRef O2ImageRetain(O2ImageRef self) {
-   return (self!=NULL)?(O2ImageRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 void O2ImageRelease(O2ImageRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 BOOL O2ImageIsMask(O2ImageRef self) {

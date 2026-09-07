@@ -103,7 +103,9 @@
 #define LIBC_EXTSN(sym)		__asm("_" __STRING(sym) LIBC_SUF_EXTSN)
 #define LIBC_EXTSN_C(sym)	__asm("_" __STRING(sym) LIBC_SUF_EXTSN LIBC_SUF_NON_CANCELABLE)
 
+__BEGIN_DECLS
 extern int pthread_key_init_np(int, void (*)(void *));
+__END_DECLS
 
 #include <TargetConditionals.h>
 #if TARGET_IPHONE_SIMULATOR

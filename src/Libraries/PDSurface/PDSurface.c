@@ -4,11 +4,10 @@
 #include <mach/mach.h>
 #include <stdlib.h>
 #include <string.h>
-
 struct PDSurfaceDevice {
     mach_port_t  masterPort;
     io_connect_t connect;
-    char         name[128];
+    const char  *name;
 };
 
 struct PDSurface {
@@ -91,8 +90,7 @@ PDSurfaceDeviceOpen(PDSurfaceDeviceRef *outDevice)
             continue;
         }
 
-        strncpy(device->name, kSurfaceProviderClasses[i],
-                sizeof(device->name) - 1);
+        device->name = kSurfaceProviderClasses[i];
         *outDevice = device;
         return KERN_SUCCESS;
     }

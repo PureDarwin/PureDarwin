@@ -51,12 +51,11 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 O2ColorSpaceRef O2ColorSpaceRetain(O2ColorSpaceRef self) {
-   return (self!=NULL)?(O2ColorSpaceRef)CFRetain(self):NULL;
+   return [self retain];
 }
 
 void O2ColorSpaceRelease(O2ColorSpaceRef self) {
-   if(self!=NULL)
-    CFRelease(self);
+   [self release];
 }
 
 O2ColorSpaceRef O2ColorSpaceCreateDeviceGray(void) {

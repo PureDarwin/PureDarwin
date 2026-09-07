@@ -22,7 +22,7 @@ target_include_directories(libsystem_trace_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/os-include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Kernel/xnu/libkern
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/pd-compat-include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../CoreFoundation
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Frameworks/CoreFoundation
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../libSystem/libc/locale          # xlocale_private.h

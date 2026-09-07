@@ -18,6 +18,7 @@ let
     "Collections.subproj/NSArray"
     "Collections.subproj/NSData"
     "Collections.subproj/NSDictionary"
+    "Collections.subproj/NSSet"
     "Numeric.subproj/NSNumber"
     "Date.subproj/NSDate"
     "URL.subproj/NSURL"
@@ -97,6 +98,16 @@ stdenv.mkDerivation {
     mkdir -p $out/usr/lib $out/usr/include/Foundation
     cp libFoundation.dylib $out/usr/lib/
     find Runtime.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
+
+    fwdir=$out/System/Library/Frameworks/Foundation.framework
+    mkdir -p "$fwdir/Versions/A/Resources"
+    ln -s ../../../../../../usr/lib/libFoundation.dylib "$fwdir/Versions/A/Foundation"
+    ln -s ../../../../../usr/include/Foundation "$fwdir/Versions/A/Headers"
+    cp Info.plist "$fwdir/Versions/A/Resources/Info.plist"
+    ln -s A "$fwdir/Versions/Current"
+    ln -s Versions/Current/Foundation "$fwdir/Foundation"
+    ln -s Versions/Current/Headers "$fwdir/Headers"
+    ln -s Versions/Current/Resources "$fwdir/Resources"
     runHook postInstall
   '';
 
