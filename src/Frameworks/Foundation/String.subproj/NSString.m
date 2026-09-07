@@ -53,6 +53,13 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     return (id)result;
 }
 
+- (BOOL)isEqualToString:(NSString *)other {
+    if (other == nil) {
+        return NO;
+    }
+    return CFEqual((CFStringRef)self, (CFStringRef)other) ? YES : NO;
+}
+
 - (NSData *)dataUsingEncoding:(NSStringEncoding)encoding {
     CFDataRef result = CFStringCreateExternalRepresentation(kCFAllocatorDefault,
                                                             (CFStringRef)self,

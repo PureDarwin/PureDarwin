@@ -45,6 +45,16 @@ static const CFArrayCallBacks ns_array_callbacks = {
 
 @implementation NSArray
 
+/* See the note in NSDictionary.m: bridged onto CF, so +new/-init must produce a
+ * real CF object rather than NSObject's plain allocation. */
++ (instancetype)new {
+    return [self array];
+}
+
+- (instancetype)init {
+    return [NSArray array];
+}
+
 + (instancetype)array {
     return (id)CFArrayCreate(kCFAllocatorDefault, NULL, 0,
                              &ns_array_callbacks);
@@ -69,6 +79,40 @@ static const CFArrayCallBacks ns_array_callbacks = {
 
 - (id)objectAtIndexedSubscript:(NSUInteger)index {
     return [self objectAtIndex:index];
+}
+
+/* These are CF objects, not ObjC allocations: the default NSObject refcounting
+ * would free CF-allocated memory, and constant strings, which CF keeps
+ * immortal, are not heap objects at all. Forward to CF. */
+- (id)retain {
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    return (id)CFArrayCreateCopy(kCFAllocatorDefault, (CFArrayRef)self);
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return (id)CFArrayCreateMutableCopy(kCFAllocatorDefault, 0, (CFArrayRef)self);
+}
+
+- (id)firstObject {
+    CFIndex n = CFArrayGetCount((CFArrayRef)self);
+    return n > 0 ? (id)CFArrayGetValueAtIndex((CFArrayRef)self, 0) : nil;
+}
+
+- (id)lastObject {
+    CFIndex n = CFArrayGetCount((CFArrayRef)self);
+    return n > 0 ? (id)CFArrayGetValueAtIndex((CFArrayRef)self, n - 1) : nil;
 }
 
 - (BOOL)containsObject:(id)object {
@@ -154,6 +198,10 @@ static const CFArrayCallBacks ns_array_callbacks = {
 
 + (instancetype)array {
     return [self arrayWithCapacity:0];
+}
+
+- (instancetype)init {
+    return [NSMutableArray arrayWithCapacity:0];
 }
 
 - (instancetype)initWithCapacity:(NSUInteger)capacity {

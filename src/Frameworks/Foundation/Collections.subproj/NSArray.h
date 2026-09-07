@@ -21,6 +21,8 @@
 - (NSUInteger)count;
 - (id)objectAtIndex:(NSUInteger)index;
 - (id)objectAtIndexedSubscript:(NSUInteger)index;
+- (nullable ObjectType)firstObject;
+- (nullable ObjectType)lastObject;
 - (BOOL)containsObject:(id)object;
 - (NSUInteger)indexOfObjectIdenticalTo:(id)object;
 - (NSArray<ObjectType> *)arrayByAddingObject:(ObjectType)object;

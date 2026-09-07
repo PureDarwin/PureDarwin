@@ -74,6 +74,17 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
 
 @implementation NSDictionary
 
+/* These classes are bridged onto CF, so an instance has to be a CF object.
+ * NSObject's +new/-init would hand back a plain ObjC allocation, and the first
+ * CFDictionaryGetValue() on it crashes. */
++ (instancetype)new {
+    return [self dictionary];
+}
+
+- (instancetype)init {
+    return [NSDictionary dictionary];
+}
+
 + (instancetype)dictionary {
     return (id)CFDictionaryCreate(kCFAllocatorDefault, NULL, NULL, 0,
                                   &kCFTypeDictionaryKeyCallBacks,
@@ -89,6 +100,47 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
                                   (CFIndex)count,
                                   &kCFTypeDictionaryKeyCallBacks,
                                   &kCFTypeDictionaryValueCallBacks);
+}
+
+/* These are CF objects, not ObjC allocations: the default NSObject refcounting
+ * would free CF-allocated memory, and constant strings, which CF keeps
+ * immortal, are not heap objects at all. Forward to CF. */
+- (id)retain {
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    return (id)CFDictionaryCreateCopy(kCFAllocatorDefault, (CFDictionaryRef)self);
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return (id)CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
+                                             (CFDictionaryRef)self);
+}
+
+/* One class is bridged per CFTypeID, so even a CFMutableDictionary reports
+ * NSDictionary. The mutators have to live here or they are unreachable, the
+ * same way NSArray.m keeps addObject: and friends. */
+- (void)setObject:(id)object forKey:(id)key {
+    CFDictionarySetValue((CFMutableDictionaryRef)self, (const void *)key,
+                         (const void *)object);
+}
+
+- (void)setObject:(id)object forKeyedSubscript:(id)key {
+    [self setObject:object forKey:key];
+}
+
+- (void)removeObjectForKey:(id)key {
+    CFDictionaryRemoveValue((CFMutableDictionaryRef)self, (const void *)key);
 }
 
 - (void)enumerateKeysAndObjectsUsingBlock:(void (^)(id, id, BOOL *))block {
@@ -167,6 +219,14 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
 
 @implementation NSMutableDictionary
 
++ (instancetype)new {
+    return [self dictionaryWithCapacity:0];
+}
+
+- (instancetype)init {
+    return [NSMutableDictionary dictionaryWithCapacity:0];
+}
+
 + (instancetype)dictionaryWithCapacity:(NSUInteger)capacity {
     return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
                                          &kCFTypeDictionaryKeyCallBacks,
@@ -175,19 +235,6 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
 
 + (instancetype)dictionary {
     return [self dictionaryWithCapacity:0];
-}
-
-- (void)setObject:(id)object forKey:(id)key {
-    CFDictionarySetValue((CFMutableDictionaryRef)self, (const void *)key,
-                         (const void *)object);
-}
-
-- (void)setObject:(id)object forKeyedSubscript:(id)key {
-    [self setObject:object forKey:key];
-}
-
-- (void)removeObjectForKey:(id)key {
-    CFDictionaryRemoveValue((CFMutableDictionaryRef)self, (const void *)key);
 }
 
 @end

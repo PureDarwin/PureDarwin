@@ -146,6 +146,27 @@ __NSNUMBER_GETTER(integerValue, NSInteger, kCFNumberNSIntegerType)
     return [self longLongValue] != 0;
 }
 
+/* These are CF objects, not ObjC allocations: the default NSObject refcounting
+ * would free CF-allocated memory, and constant strings, which CF keeps
+ * immortal, are not heap objects at all. Forward to CF. */
+- (id)retain {
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
+
+/* CFNumber is immutable, so a copy is just a retain. */
+- (id)copyWithZone:(NSZone *)zone {
+    return (id)CFRetain((CFTypeRef)self);
+}
+
 @end
 
 #if DEPLOYMENT_RUNTIME_OBJC

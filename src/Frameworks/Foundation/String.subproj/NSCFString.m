@@ -9,6 +9,17 @@
 #import "NSCFString.h"
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/ForFoundationOnly.h>
+#include <CoreFoundation/CFRuntime.h>
+
+/* The compiler emits every @"..." with its isa pointing at
+ * ___CFConstantStringClassReference, so that symbol has to *be* a class.
+ * CoreFoundation only references it (CFRuntime.c) - Foundation owns the class,
+ * matching Apple, where __NSCFConstantString lives in Foundation. */
+__asm__(".globl ___CFConstantStringClassReference\n\t"
+        ".set ___CFConstantStringClassReference, _OBJC_CLASS_$_NSCFString");
+
+CF_EXPORT void *__CFConstantStringClassReferencePtr;
+extern int __CFConstantStringClassReference[];
 
 @implementation NSCFString
 
@@ -40,6 +51,30 @@
     return self;
 }
 
+/* These are CF objects, not ObjC allocations: the default NSObject refcounting
+ * would free CF-allocated memory, and constant strings, which CF keeps
+ * immortal, are not heap objects at all. Forward to CF. */
+- (id)retain {
+    CFRetain((CFTypeRef)self);
+    return self;
+}
+
+- (oneway void)release {
+    CFRelease((CFTypeRef)self);
+}
+
+- (NSUInteger)retainCount {
+    return (NSUInteger)CFGetRetainCount((CFTypeRef)self);
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    return (id)CFStringCreateCopy(kCFAllocatorDefault, (CFStringRef)self);
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return (id)CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)self);
+}
+
 - (BOOL)getBytes:(void *)buffer
        maxLength:(NSUInteger)maxBufferCount
       usedLength:(NSUInteger *)usedBufferCount
@@ -69,5 +104,8 @@
 __attribute__((constructor))
 static void __NSCFStringBridgeInit(void) {
     _CFRuntimeBridgeClasses(CFStringGetTypeID(), "NSCFString");
+    /* CF_IS_OBJC compares an object's isa against this to spot a constant
+     * string; left NULL it treats every literal as a foreign ObjC object. */
+    __CFConstantStringClassReferencePtr = __CFConstantStringClassReference;
 }
 #endif

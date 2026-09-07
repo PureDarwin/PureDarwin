@@ -57,6 +57,7 @@ typedef NS_ENUM(NSUInteger, NSStringEncoding) {
                        length:(NSUInteger)length
                      encoding:(NSStringEncoding)encoding;
 
+- (BOOL)isEqualToString:(NSString *)other;
 - (NSData *)dataUsingEncoding:(NSStringEncoding)encoding;
 
 - (NSUInteger)length;
