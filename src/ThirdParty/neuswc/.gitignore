@@ -1,0 +1,17 @@
+*.o
+*.lo
+.*.sw*
+
+protocol/*-protocol.[ch]
+
+/.deps/
+/swc.pc
+/libswc/libswc.a
+/libswc/libswc.so*
+/launch/swc-launch
+/cursor/convert_font
+/cursor/cursor_data.h
+/example/wm
+
+/build
+/*.patch

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="swc_snap">
+    <interface name="swc_snap" version="2">
+        <description summary="raw screen capture into client buffers">
+            gives a screen capture capability where the client supplies a
+            wl_shm buffer and the compositor fills it with a raw frame.
+        </description>
+
+        <enum name="flags" bitfield="true">
+            <entry name="overlay_cursor" value="1"
+                summary="composite the current cursor into the frame"/>
+        </enum>
+
+        <enum name="pixel_format">
+            <entry name="xrgb8888" value="0"
+                summary="WL_SHM_FORMAT_XRGB8888"/>
+            <entry name="argb8888" value="1"
+                summary="WL_SHM_FORMAT_ARGB8888"/>
+        </enum>
+
+        <enum name="failure_reason">
+            <entry name="no_screen" value="0"
+                summary="no captureable screen is available"/>
+            <entry name="unsupported_buffer" value="1"
+                summary="buffer is not a wl_shm xrgb/argb8888 buffer"/>
+            <entry name="size_mismatch" value="2"
+                summary="buffer dimensions are too small for the screen"/>
+            <entry name="internal" value="3"
+                summary="compositor capture failed"/>
+        </enum>
+
+        <request name="destroy" type="destructor">
+            <description summary="destroy the capture object"/>
+        </request>
+
+        <request name="capture">
+            <description summary="capture a frame into a client buffer">
+                captures the current primary screen into the supplied wl_shm
+                buffer. The compositor writes raw pixels and reports ready or 
+		failed state
+            </description>
+            <arg name="buffer" type="object" interface="wl_buffer"
+                summary="client-provided wl_shm buffer to fill"/>
+            <arg name="flags" type="uint" summary="bitmask of swc_snap.flags"/>
+        </request>
+
+        <event name="buffer">
+            <description summary="current capture frame metadata">
+                describes the current frame geometry and pixel format expected
+                by the capture stream
+            </description>
+            <arg name="width" type="uint"/>
+            <arg name="height" type="uint"/>
+            <arg name="format" type="uint"
+                summary="swc_snap.pixel_format value"/>
+        </event>
+
+        <event name="ready">
+            <description summary="capture complete">
+                the requested buffer has been filled and is ready for client
+            </description>
+            <arg name="tv_sec" type="uint" summary="CLOCK_MONOTONIC seconds"/>
+            <arg name="tv_nsec" type="uint" summary="CLOCK_MONOTONIC nanoseconds"/>
+        </event>
+
+        <event name="failed">
+            <description summary="capture failed">
+                the capture request failed, the object still usable and the
+                client may retry with another buffer or after a mode change
+            </description>
+            <arg name="reason" type="uint"
+                summary="swc_snap.failure_reason value"/>
+        </event>
+    </interface>
+</protocol>

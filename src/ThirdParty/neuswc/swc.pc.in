@@ -1,0 +1,14 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
+datadir=@DATADIR@/swc
+
+Name: swc
+Description: A library for making a simple Wayland compositor
+Version: @VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lswc
+
+Requires: @REQUIRES@
+Requires.private: @REQUIRES_PRIVATE@

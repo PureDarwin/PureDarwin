@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="swc">
+    <copyright>
+        Copyright (c) 2013, 2014 Michael Forney
+
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+
+        The above copyright notice and this permission notice shall be included in
+        all copies or substantial portions of the Software.
+
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+    </copyright>
+
+    <interface name="swc_screen" version="1">
+        <description summary="an area in which windows may be placed">
+            A screen represents an area in which windows may be placed. It
+            corresponds to one or monitors displaying the same content (in
+            mirror mode).
+        </description>
+    </interface>
+
+    <interface name="swc_panel_manager" version="1">
+        <request name="create_panel">
+            <arg name="id" type="new_id" interface="swc_panel" />
+            <arg name="surface" type="object" interface="wl_surface" />
+        </request>
+    </interface>
+
+    <interface name="swc_panel" version="2">
+        <enum name="edge">
+            <entry name="top" value="0" />
+            <entry name="bottom" value="1" />
+            <entry name="left" value="2" />
+            <entry name="right" value="3" />
+        </enum>
+
+        <request name="dock">
+            <arg name="edge" type="uint" />
+            <arg name="screen" type="object" interface="swc_screen"
+                 allow-null="true" />
+            <arg name="focus" type="uint" />
+        </request>
+
+        <request name="set_offset">
+            <arg name="offset" type="uint" />
+        </request>
+
+        <request name="set_y_offset">
+            <arg name="offset" type="uint" />
+        </request>
+
+        <request name="set_strut">
+            <arg name="size" type="uint" />
+            <arg name="begin" type="uint" />
+            <arg name="end" type="uint" />
+        </request>
+
+        <event name="docked">
+            <arg name="length" type="uint" />
+        </event>
+    </interface>
+</protocol>
+

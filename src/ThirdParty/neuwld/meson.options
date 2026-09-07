@@ -1,0 +1,4 @@
+option('wayland', type: 'feature', value: 'auto', description: 'Wayland frontend')
+option('drm', type: 'feature', value: 'auto', description: 'Enable libdrm backend')
+option('drivers', type: 'array', choices: ['auto', 'intel', 'nouveau'], value: ['auto'], description: 'libdrm drivers')
+option('doxygen', type: 'feature', value: 'auto', description: 'Build documentation')

@@ -2906,6 +2906,32 @@
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wayland-protocols.nix {
               src = ./src/ThirdParty/wayland-protocols;
             };
+          neuwldBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/neuwld.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              fontconfig = fontconfigBuild;
+              freetype = freetype2Build;
+              pixman = xvfbPixmanBuild;
+              src = ./src/ThirdParty/neuwld;
+            };
+          neuswcBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/neuswc.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
+              fontconfig = fontconfigBuild;
+              freetype = freetype2Build;
+              iokit = iokitBuild;
+              iokitHeaders = iokitCFStaticBuild;
+              neuwld = neuwldBuild;
+              pixman = xvfbPixmanBuild;
+              wayland = waylandBuild;
+              waylandProtocols = waylandProtocolsBuild;
+              waylandScanner = waylandScannerBuild;
+              xkbcommon = xkbcommonNoxBuild;
+              src = ./src/ThirdParty/neuswc;
+            };
           wlrootsBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/wlroots.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -3779,7 +3805,7 @@
               kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build
               kernelBuild kernelDebugBuild kernelSource kextsArm64Build kextsBuild
-              launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
+              launchctlBuild launchdBuild lib libSystemBuild libdrmBuild libXftBuild libapfsrwBuild libcssBuild waylandBuild waylandProtocolsBuild neuwldBuild neuswcBuild wlrootsBuild swayBuild wlrootsNoxBuild swayNoxBuild
               pdsurfaceBuild libgbmBuild libcurlDylibBuild libcxxDylibBuild libcxxTestBuild libcxxabiDylibBuild libdisplayInfoBuild
               libdomBuild libepoxyBuild libevBuild libffiBuild libhubbubBuild libiconvArm64Build
               libiconvBuild libnsbmpBuild libnsgifBuild libnsutilsBuild libobjcBuild libparserutilsBuild
@@ -3862,6 +3888,8 @@
             sqlite = sqliteBuild;
             glib-networking = glibNetworkingBuild;
             freetype-shared = freetype2Build;
+            neuwld = neuwldBuild;
+            neuswc = neuswcBuild;
           };
           arm64Packages = lib.optionalAttrs (!isDarwin) {
             libSystem-armv6 = arm64.libSystemArmv6Build;

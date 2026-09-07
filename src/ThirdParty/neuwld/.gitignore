@@ -1,0 +1,16 @@
+# Autotools / libtool
+.deps/
+*.lo
+*.o
+
+# Libraries
+*.a
+*.so
+*.so.*
+libwld.*
+
+# pkg-config
+*.pc
+
+# Generated Wayland protocol files
+protocol/*-protocol.*

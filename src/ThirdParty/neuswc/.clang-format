@@ -1,0 +1,13 @@
+﻿---
+AlwaysBreakAfterReturnType: All
+BreakBeforeBraces: Linux
+ColumnLimit: '80'
+ExperimentalAutoDetectBinPacking: 'true'
+FixNamespaceComments: 'true'
+PointerAlignment: Right
+InsertBraces: 'true'
+MaxEmptyLinesToKeep: 1
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+...

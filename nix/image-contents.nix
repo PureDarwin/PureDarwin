@@ -128,6 +128,8 @@
 , libgbmBuild
 , waylandBuild
 , waylandProtocolsBuild
+, neuwldBuild
+, neuswcBuild
 , wlrootsBuild
 , swayBuild
 , wlrootsNoxBuild
@@ -675,6 +677,8 @@ let
     # evaluate to something that is not a derivation.
     wayland = waylandBuild;
     wayland-protocols = waylandProtocolsBuild;
+    neuwld = neuwldBuild;
+    neuswc = neuswcBuild;
     wlroots = wlrootsBuild;
     sway = swayBuild;
     xwayland = xwaylandBuild;
@@ -1136,6 +1140,7 @@ let
         extraPackages = lib.unique (strippedExtraPackages ++ lib.filter lib.isDerivation [
           foundationBuild
           freetype2Build
+          fontconfigBuild
           libpngBuild
           libjpegBuild
           xvfbZlibBuild
@@ -1146,6 +1151,12 @@ let
           cgScreenDemoBuild
           gershwinSystemBuild
           gershwinAssetsBuild
+          waylandBuild
+          waylandProtocolsBuild
+          xkbcommonNoxBuild
+          xkeyboardConfigBuild
+          neuwldBuild
+          neuswcBuild
         ]);
         kc = kcBuild;
         xnuLoader = xnuLoaderDefault;
