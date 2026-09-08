@@ -11,7 +11,7 @@
 
 #import <Foundation/NSThread.h>
 
-FOUNDATION_EXPORT NSThread *NSCurrentThread(void);
+
 
 @interface NSThread (Private)
 - (NSMutableDictionary *)sharedDictionary;

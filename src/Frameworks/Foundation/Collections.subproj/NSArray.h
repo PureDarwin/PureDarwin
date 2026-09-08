@@ -10,11 +10,13 @@
 #define NSArray_h
 
 #import <Foundation/NSObject.h>
+#import <Foundation/NSEnumerator.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@interface NSArray<__covariant ObjectType> : NSObject
+@interface NSArray<__covariant ObjectType> : NSObject <NSFastEnumeration>
 
 + (instancetype)array;
++ (instancetype)arrayWithObjects:(ObjectType)firstObject, ...;
 + (instancetype)arrayWithObjects:(const ObjectType _Nonnull [_Nullable])objects count:(NSUInteger)count;
 + (instancetype)arrayWithArray:(NSArray<ObjectType> *)array;
 
@@ -23,9 +25,14 @@
 - (id)objectAtIndexedSubscript:(NSUInteger)index;
 - (nullable ObjectType)firstObject;
 - (nullable ObjectType)lastObject;
+- (NSEnumerator *)objectEnumerator;
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)length;
 - (BOOL)containsObject:(id)object;
 - (NSUInteger)indexOfObjectIdenticalTo:(id)object;
 - (NSArray<ObjectType> *)arrayByAddingObject:(ObjectType)object;
+- (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
 
 @end

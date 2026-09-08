@@ -3203,6 +3203,38 @@
               libXdmcp = libXdmcpSharedBuild;
               src = ./src/Frameworks/OpenGL;
             };
+          appkitBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/appkit.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libobjc = libobjcBuild;
+              corefoundation = coreFoundationBuild;
+              foundation = foundationBuild;
+              onyx2d = onyx2dBuild;
+              coregraphics = coregraphicsBuild;
+              coretext = coretextBuild;
+              quartzcore = quartzcoreBuild;
+              applicationservices = applicationservicesBuild;
+              openglFramework = openglFrameworkBuild;
+              windowserver = windowserverBuild;
+              freetype2 = freetype2Build;
+              fontconfig = fontconfigBuild;
+              mesa = mesaBuild;
+              glu = gluBuild;
+              src = ./src/Frameworks/AppKit;
+            };
+          windowserverBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/windowserver.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              coregraphics = coregraphicsBuild;
+              corefoundation = coreFoundationBuild;
+              wayland = waylandBuild;
+              xkbcommon = xkbcommonBuild;
+              waylandProtocols = waylandProtocolsBuild;
+              waylandScanner = pkgs.wayland-scanner;
+              src = ./src/Frameworks/WindowServer;
+            };
           applicationservicesBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/applicationservices.nix {
               src = ./src/Frameworks/ApplicationServices;
@@ -3926,6 +3958,8 @@
             quartzcore = quartzcoreBuild;
             corevideo = corevideoBuild;
             applicationservices = applicationservicesBuild;
+            windowserver = windowserverBuild;
+            appkit = appkitBuild;
           };
           arm64Packages = lib.optionalAttrs (!isDarwin) {
             libSystem-armv6 = arm64.libSystemArmv6Build;

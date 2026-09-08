@@ -16,6 +16,8 @@
 /* Backed by CFPreferences for the current application; -registerDefaults keeps
  * its own volatile layer, consulted only when CFPreferences has no value. */
 
+NSString * const NSUserDefaultsDidChangeNotification = @"NSUserDefaultsDidChangeNotification";
+
 @implementation NSUserDefaults {
     NSMutableDictionary *_registered;
 }

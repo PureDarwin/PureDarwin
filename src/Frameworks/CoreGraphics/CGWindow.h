@@ -8,6 +8,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <CoreGraphics/CGWindowLevel.h>
 #import <CoreGraphics/CGGeometry.h>
+/* The abstract window API is spelled in Foundation geometry and CGL types.
+ * CGLContextObj is declared here rather than imported: pulling in
+ * <OpenGL/OpenGL.h> would put Mesa and LLVM in CoreGraphics's dependency
+ * closure for three method signatures. This must stay identical to the
+ * typedef in OpenGL.framework's CGLTypes.h - repeating it is legal, changing
+ * it is not. */
+#import <Foundation/NSGeometry.h>
+
+typedef struct _CGLContextObject *CGLContextObj;
 #include <stdint.h>
 
 @class O2Context, CGEvent;

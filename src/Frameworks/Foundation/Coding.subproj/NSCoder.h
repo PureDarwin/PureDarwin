@@ -33,6 +33,7 @@
 - (void)encodeInt:(int)value forKey:(NSString *)key;
 - (void)encodeInt32:(int32_t)value forKey:(NSString *)key;
 - (void)encodeInt64:(int64_t)value forKey:(NSString *)key;
+- (void)encodeInteger:(NSInteger)value forKey:(NSString *)key;
 - (void)encodeFloat:(float)value forKey:(NSString *)key;
 - (void)encodeDouble:(double)value forKey:(NSString *)key;
 - (void)encodeBytes:(const uint8_t *)bytes length:(NSUInteger)length forKey:(NSString *)key;
@@ -42,6 +43,7 @@
 - (int)decodeIntForKey:(NSString *)key;
 - (int32_t)decodeInt32ForKey:(NSString *)key;
 - (int64_t)decodeInt64ForKey:(NSString *)key;
+- (NSInteger)decodeIntegerForKey:(NSString *)key;
 - (float)decodeFloatForKey:(NSString *)key;
 - (double)decodeDoubleForKey:(NSString *)key;
 - (const uint8_t *)decodeBytesForKey:(NSString *)key returnedLength:(NSUInteger *)length;

@@ -7,6 +7,7 @@
  */
 
 #import "NSCFString.h"
+#import <Foundation/NSArray.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <CoreFoundation/CFRuntime.h>
@@ -49,6 +50,73 @@ extern int __CFConstantStringClassReference[];
 
 - (NSString *)description {
     return self;
+}
+
+/* Expands range to whole lines, the way the text system expects: back to the
+ * start of the line containing range.location, forward past the terminator
+ * that ends the line containing its last character. */
+- (NSRange)lineRangeForRange:(NSRange)range {
+    CFIndex start = 0, end = 0, contentsEnd = 0;
+
+    CFStringGetLineBounds((CFStringRef)self,
+        CFRangeMake((CFIndex)range.location, (CFIndex)range.length),
+        &start, &end, &contentsEnd);
+    return NSMakeRange((NSUInteger)start, (NSUInteger)(end - start));
+}
+
+/* CF has no paragraph-bounds call, and for the separators CFStringGetLineBounds
+ * recognises the two agree on everything except U+2028; close enough for the
+ * text system until a real paragraph walk exists. */
+- (NSRange)paragraphRangeForRange:(NSRange)range {
+    return [self lineRangeForRange:range];
+}
+
+- (NSRange)rangeOfString:(NSString *)string {
+    return [self rangeOfString:string options:0];
+}
+
+- (NSRange)rangeOfString:(NSString *)string options:(NSStringCompareOptions)options {
+    return [self rangeOfString:string
+                       options:options
+                         range:NSMakeRange(0, [self length])];
+}
+
+/* NSStringCompareOptions and CFStringCompareFlags share their bit values for
+ * the flags that exist in both, so the mask passes straight through. */
+- (NSRange)rangeOfString:(NSString *)string
+                 options:(NSStringCompareOptions)options
+                   range:(NSRange)searchRange {
+    CFRange found;
+    Boolean ok = CFStringFindWithOptions((CFStringRef)self, (CFStringRef)string,
+        CFRangeMake((CFIndex)searchRange.location, (CFIndex)searchRange.length),
+        (CFStringCompareFlags)options, &found);
+
+    if (!ok) {
+        return NSMakeRange(NSNotFound, 0);
+    }
+    return NSMakeRange((NSUInteger)found.location, (NSUInteger)found.length);
+}
+
+- (NSArray *)componentsSeparatedByString:(NSString *)separator {
+    CFArrayRef result = CFStringCreateArrayBySeparatingStrings(kCFAllocatorDefault,
+        (CFStringRef)self, (CFStringRef)separator);
+
+    return (NSArray *)CFAutorelease(result);
+}
+
+- (NSString *)substringWithRange:(NSRange)range {
+    CFStringRef result = CFStringCreateWithSubstring(kCFAllocatorDefault,
+        (CFStringRef)self, CFRangeMake((CFIndex)range.location, (CFIndex)range.length));
+
+    return (NSString *)CFAutorelease(result);
+}
+
+- (NSString *)substringFromIndex:(NSUInteger)index {
+    return [self substringWithRange:NSMakeRange(index, [self length] - index)];
+}
+
+- (NSString *)substringToIndex:(NSUInteger)index {
+    return [self substringWithRange:NSMakeRange(0, index)];
 }
 
 /* These are CF objects, not ObjC allocations: the default NSObject refcounting

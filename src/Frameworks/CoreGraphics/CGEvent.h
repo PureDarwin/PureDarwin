@@ -24,12 +24,16 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <CoreGraphics/CoreGraphicsExport.h>
 #import <CoreGraphics/CGError.h>
+/* CGPoint and friends; without this the SDK's MacTypes.h "Point" is the only
+ * thing in scope and every geometry signature here fails to parse. */
+#import <CoreGraphics/CGGeometry.h>
 
 #define CGEventMaskBit(eventType) eventType
 #define kCGAnyInputEventType (~(CGEventType)0)
 #define kCGEventMaskForAllEvents (~(CGEventMask)0)
 
-typedef uint32_t UniCharCount;
+/* UniCharCount belongs to MacTypes.h (as unsigned long); redefining it here
+ * conflicts once anything pulls the SDK header in. */
 typedef struct __CGEvent *CGEventRef;
 typedef uint32_t CGButtonCount;
 typedef uint16_t CGCharCode;

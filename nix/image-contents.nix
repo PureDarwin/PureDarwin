@@ -1297,7 +1297,7 @@ let
             -drive if=pflash,format=raw,unit=1,file="$ovmf_vars" \
             "''${disk_args[@]}" \
             -device virtio-net,netdev=net0 \
-            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+            -netdev user,id=net0 \
             ''${PUREDARWIN_VM_NETDUMP:+-object filter-dump,id=netdump,netdev=net0,file="$PUREDARWIN_VM_NETDUMP"} \
             -device qemu-xhci,id=xhci \
             -device usb-kbd,bus=xhci.0 \

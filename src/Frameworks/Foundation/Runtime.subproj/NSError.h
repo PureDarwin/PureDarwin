@@ -12,16 +12,38 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@class NSString;
+@class NSString, NSDictionary, NSArray;
 
 /* NSErrorDomain and NSErrorUserInfoKey are typed NSString aliases; code that
  * declares an error domain constant spells it with the alias. */
 typedef NSString *NSErrorDomain;
 typedef NSString *NSErrorUserInfoKey;
 
+FOUNDATION_EXPORT NSErrorDomain const NSCocoaErrorDomain;
+FOUNDATION_EXPORT NSErrorDomain const NSPOSIXErrorDomain;
+FOUNDATION_EXPORT NSErrorDomain const NSOSStatusErrorDomain;
+FOUNDATION_EXPORT NSErrorDomain const NSMachErrorDomain;
+
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSLocalizedDescriptionKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSLocalizedFailureReasonErrorKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSLocalizedRecoverySuggestionErrorKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSLocalizedRecoveryOptionsErrorKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSRecoveryAttempterErrorKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSUnderlyingErrorKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSFilePathErrorKey;
+FOUNDATION_EXPORT NSErrorUserInfoKey const NSURLErrorKey;
+
 @interface NSError : NSObject
 
 + (instancetype)errorWithDomain:(NSString *)domain code:(NSInteger)code;
++ (instancetype)errorWithDomain:(NSString *)domain
+                           code:(NSInteger)code
+                       userInfo:(NSDictionary *)userInfo;
+
+- (NSDictionary *)userInfo;
+- (NSString *)localizedFailureReason;
+- (NSString *)localizedRecoverySuggestion;
+- (NSArray *)localizedRecoveryOptions;
 
 - (NSInteger)code;
 - (NSString *)domain;

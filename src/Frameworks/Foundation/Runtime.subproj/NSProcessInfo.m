@@ -103,3 +103,6 @@ static NSString *_string(const char *cString) {
 }
 
 @end
+
+void __NSInitializeProcess(int argc, const char *argv[]) {
+}

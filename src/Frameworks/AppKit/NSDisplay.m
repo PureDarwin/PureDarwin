@@ -50,25 +50,41 @@ SOFTWARE. */
 }
 
 -init {
+    NSLog(@"NSDisplay init: begin");
     _eventQueue=[NSMutableArray new];
     _screens = [NSMutableArray new];
+    NSLog(@"NSDisplay init: collections ready");
 
     CGDirectDisplayID cgDisplays[8];
     uint32_t count = 0;
     CGDirectDisplayID mainDisplay = CGMainDisplayID();
     CGGetActiveDisplayList(8, &cgDisplays, &count);
+    NSLog(@"NSDisplay init: main display %u, active displays %u",
+          mainDisplay, count);
 
     // make the main display first in our screen list
     // the main display is the one that has an origin of 0,0
     CGDisplayModeRef mode = CGDisplayCopyDisplayMode(mainDisplay);
+    NSLog(@"NSDisplay init: main mode copied");
     CGColorSpaceRef cs = CGDisplayCopyColorSpace(mainDisplay);
+    NSLog(@"NSDisplay init: main color space copied");
+    if (mode == NULL) {
+        NSLog(@"NSDisplay init: main display has no mode");
+        return nil;
+    }
     NSRect frame = NSMakeRect(0, 0, CGDisplayModeGetWidth(mode), CGDisplayModeGetHeight(mode));
+    NSLog(@"NSDisplay init: main geometry %.0fx%.0f",
+          frame.size.width, frame.size.height);
     NSRect visFrame = frame;
     visFrame.size.height -= MENU_BAR_HEIGHT;
     NSScreen *screen = [[[NSScreen alloc] initWithFrame:frame visibleFrame:visFrame] retain];
+    NSLog(@"NSDisplay init: main NSScreen allocated");
     [screen _propertiesFromMode:mode colorSpace:cs displayID:mainDisplay];
+    NSLog(@"NSDisplay init: main properties copied");
     CGDisplayModeRelease(mode);
+    NSLog(@"NSDisplay init: main mode released");
     [_screens addObject:screen];
+    NSLog(@"NSDisplay init: main screen ready");
 
     // now add any other displays as additional screens
     for(int i = 0; i < count; ++i) {
@@ -76,6 +92,8 @@ SOFTWARE. */
             continue;
         mode = CGDisplayCopyDisplayMode(cgDisplays[i]);
         cs = CGDisplayCopyColorSpace(mainDisplay);
+        if (mode == NULL)
+            continue;
         frame = NSMakeRect(0, 0, CGDisplayModeGetWidth(mode), CGDisplayModeGetHeight(mode));
         NSScreen *screen = [[[NSScreen alloc] initWithFrame:frame visibleFrame:frame] retain];
         [screen _propertiesFromMode:mode colorSpace:cs displayID:cgDisplays[i]];
@@ -84,6 +102,7 @@ SOFTWARE. */
     }
     
     _depth = 32;
+    NSLog(@"NSDisplay init: complete");
     return self;
 }
 

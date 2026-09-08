@@ -63,6 +63,8 @@ typedef enum _CGLContextParameter {
 	kCGLCPCurrentRendererID = 309,
 	kCGLCPGPUVertexProcessing   = 310,
 	kCGLCPGPUFragmentProcessing = 311,
+	kCGLCPSurfaceHidden     = 237,
+	kCGLCPSurfaceWindowNumber = 238,
 } CGLContextParameter;
 
 typedef enum _CGLError {

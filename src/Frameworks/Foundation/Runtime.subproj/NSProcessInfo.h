@@ -30,4 +30,9 @@
 
 @end
 
+/* Cocotron's entry point for handing Foundation the process arguments. Here
+ * NSProcessInfo reads them from the crt (_NSGetArgc/_NSGetArgv), so there is
+ * nothing to stash - it exists so NSApplicationMain and friends compile. */
+FOUNDATION_EXPORT void __NSInitializeProcess(int argc, const char *argv[]);
+
 #endif /* NSProcessInfo_h */

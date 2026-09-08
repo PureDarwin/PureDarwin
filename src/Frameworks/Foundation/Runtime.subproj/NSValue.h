@@ -10,6 +10,9 @@
 #define NSValue_h
 
 #import <Foundation/NSObject.h>
+/* Apple declares NSNumber in NSValue.h, and callers rely on importing only
+ * this header to get -floatValue and friends. */
+#import <Foundation/NSNumber.h>
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/NSGeometry.h>
 #import <Foundation/NSRange.h>

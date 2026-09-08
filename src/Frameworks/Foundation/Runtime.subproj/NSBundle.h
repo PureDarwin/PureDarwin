@@ -30,6 +30,10 @@
 - (id)objectForInfoDictionaryKey:(NSString *)key;
 
 - (NSString *)pathForResource:(NSString *)name ofType:(NSString *)extension;
+
+- (NSString *)localizedStringForKey:(NSString *)key
+                              value:(NSString *)value
+                              table:(NSString *)tableName;
 - (NSString *)pathForResource:(NSString *)name
                        ofType:(NSString *)extension
                   inDirectory:(NSString *)subpath;
@@ -38,5 +42,20 @@
 - (Class)principalClass;
 
 @end
+
+/* The lookup macros. Localisation tables are not read yet, so these resolve to
+ * the key itself - correct for an unlocalised build, and the call sites stay
+ * source compatible for when tables land. */
+#define NSLocalizedString(key, comment) \
+    [[NSBundle mainBundle] localizedStringForKey:(key) value:@"" table:nil]
+
+#define NSLocalizedStringFromTable(key, tbl, comment) \
+    [[NSBundle mainBundle] localizedStringForKey:(key) value:@"" table:(tbl)]
+
+#define NSLocalizedStringFromTableInBundle(key, tbl, bundle, comment) \
+    [(bundle) localizedStringForKey:(key) value:@"" table:(tbl)]
+
+#define NSLocalizedStringWithDefaultValue(key, tbl, bundle, val, comment) \
+    [(bundle) localizedStringForKey:(key) value:(val) table:(tbl)]
 
 #endif /* NSBundle_h */

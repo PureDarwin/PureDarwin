@@ -24,11 +24,53 @@ typedef NSPoint *NSPointPointer;
 typedef NSSize *NSSizePointer;
 typedef NSRect *NSRectPointer;
 
+@class NSString;
+
+/* Alignment rules for -backingAlignedRect:options:. The values are Apple's:
+ * bits 0-7 select the rounding for each edge, the high bits the options. */
+typedef NS_OPTIONS(unsigned long long, NSAlignmentOptions) {
+    NSAlignMinXInward       = 1ULL << 0,
+    NSAlignMinYInward       = 1ULL << 1,
+    NSAlignMaxXInward       = 1ULL << 2,
+    NSAlignMaxYInward       = 1ULL << 3,
+    NSAlignWidthInward      = 1ULL << 4,
+    NSAlignHeightInward     = 1ULL << 5,
+
+    NSAlignMinXOutward      = 1ULL << 8,
+    NSAlignMinYOutward      = 1ULL << 9,
+    NSAlignMaxXOutward      = 1ULL << 10,
+    NSAlignMaxYOutward      = 1ULL << 11,
+    NSAlignWidthOutward     = 1ULL << 12,
+    NSAlignHeightOutward    = 1ULL << 13,
+
+    NSAlignMinXNearest      = 1ULL << 16,
+    NSAlignMinYNearest      = 1ULL << 17,
+    NSAlignMaxXNearest      = 1ULL << 18,
+    NSAlignMaxYNearest      = 1ULL << 19,
+    NSAlignWidthNearest     = 1ULL << 20,
+    NSAlignHeightNearest    = 1ULL << 21,
+
+    NSAlignRectFlipped      = 1ULL << 63,
+
+    NSAlignAllEdgesInward   = NSAlignMinXInward | NSAlignMaxXInward |
+                              NSAlignMinYInward | NSAlignMaxYInward,
+    NSAlignAllEdgesOutward  = NSAlignMinXOutward | NSAlignMaxXOutward |
+                              NSAlignMinYOutward | NSAlignMaxYOutward,
+    NSAlignAllEdgesNearest  = NSAlignMinXNearest | NSAlignMaxXNearest |
+                              NSAlignMinYNearest | NSAlignMaxYNearest,
+};
+
 typedef NS_ENUM(NSUInteger, NSRectEdge) {
     NSRectEdgeMinX = 0,
     NSRectEdgeMinY = 1,
     NSRectEdgeMaxX = 2,
     NSRectEdgeMaxY = 3,
+
+    /* The pre-10.11 spellings, which Cocotron's AppKit uses throughout. */
+    NSMinXEdge = NSRectEdgeMinX,
+    NSMinYEdge = NSRectEdgeMinY,
+    NSMaxXEdge = NSRectEdgeMaxX,
+    NSMaxYEdge = NSRectEdgeMaxY,
 };
 
 FOUNDATION_EXPORT const NSPoint NSZeroPoint;
@@ -105,5 +147,34 @@ FOUNDATION_EXPORT NSRect NSOffsetRect(NSRect r, CGFloat dx, CGFloat dy);
 FOUNDATION_EXPORT NSRect NSIntegralRect(NSRect r);
 FOUNDATION_EXPORT void NSDivideRect(NSRect r, NSRect *slice, NSRect *remainder,
                                     CGFloat amount, NSRectEdge edge);
+
+/* flipped selects whether the bottom or top edge counts as inside, which is
+ * what makes hit testing agree with a flipped view's coordinates. */
+FOUNDATION_EXPORT BOOL NSMouseInRect(NSPoint point, NSRect rect, BOOL flipped);
+
+FOUNDATION_EXPORT NSString *NSStringFromPoint(NSPoint point);
+FOUNDATION_EXPORT NSString *NSStringFromSize(NSSize size);
+FOUNDATION_EXPORT NSString *NSStringFromRect(NSRect rect);
+FOUNDATION_EXPORT NSPoint NSPointFromString(NSString *string);
+FOUNDATION_EXPORT NSSize NSSizeFromString(NSString *string);
+FOUNDATION_EXPORT NSRect NSRectFromString(NSString *string);
+
+/* A category needs the real interface, not a forward declaration. NSCoder.h
+ * pulls in only NSObject/NSObjCRuntime, so this does not cycle back. */
+#import <Foundation/NSCoder.h>
+
+/* Apple hangs these off NSCoder here rather than in NSCoder.h, and the keyed
+ * archive carries geometry as its string form. */
+@interface NSCoder (NSGeometryKeyedCoding)
+
+- (void)encodePoint:(NSPoint)point forKey:(NSString *)key;
+- (void)encodeSize:(NSSize)size forKey:(NSString *)key;
+- (void)encodeRect:(NSRect)rect forKey:(NSString *)key;
+
+- (NSPoint)decodePointForKey:(NSString *)key;
+- (NSSize)decodeSizeForKey:(NSString *)key;
+- (NSRect)decodeRectForKey:(NSString *)key;
+
+@end
 
 #endif /* NSGeometry_h */

@@ -7,6 +7,9 @@
  */
 
 #import <Foundation/NSGeometry.h>
+#import <Foundation/NSString.h>
+#import <Foundation/NSCoder.h>
+#include <stdio.h>
 #include <stddef.h>
 
 const NSPoint NSZeroPoint = { 0, 0 };
@@ -115,3 +118,87 @@ void NSDivideRect(NSRect r, NSRect *slice, NSRect *remainder, CGFloat amount, NS
             break;
     }
 }
+
+BOOL NSMouseInRect(NSPoint point, NSRect rect, BOOL flipped) {
+    if (flipped) {
+        return point.x >= NSMinX(rect) && point.y >= NSMinY(rect) &&
+               point.x < NSMaxX(rect) && point.y < NSMaxY(rect);
+    }
+    return point.x >= NSMinX(rect) && point.y > NSMinY(rect) &&
+           point.x < NSMaxX(rect) && point.y <= NSMaxY(rect);
+}
+
+NSString *NSStringFromPoint(NSPoint point) {
+    return [NSString stringWithFormat:@"{%g, %g}", (double)point.x, (double)point.y];
+}
+
+NSString *NSStringFromSize(NSSize size) {
+    return [NSString stringWithFormat:@"{%g, %g}", (double)size.width, (double)size.height];
+}
+
+NSString *NSStringFromRect(NSRect rect) {
+    return [NSString stringWithFormat:@"{{%g, %g}, {%g, %g}}",
+            (double)rect.origin.x, (double)rect.origin.y,
+            (double)rect.size.width, (double)rect.size.height];
+}
+
+/* The string forms are "{a, b}" and "{{a, b}, {c, d}}"; sscanf over the UTF-8
+ * form is enough because every field is a plain number. */
+NSPoint NSPointFromString(NSString *string) {
+    NSPoint result = NSMakePoint(0, 0);
+    double x = 0, y = 0;
+
+    if (string != nil && sscanf([string UTF8String], "{%lf, %lf}", &x, &y) == 2) {
+        result = NSMakePoint((CGFloat)x, (CGFloat)y);
+    }
+    return result;
+}
+
+NSSize NSSizeFromString(NSString *string) {
+    NSSize result = NSMakeSize(0, 0);
+    double w = 0, h = 0;
+
+    if (string != nil && sscanf([string UTF8String], "{%lf, %lf}", &w, &h) == 2) {
+        result = NSMakeSize((CGFloat)w, (CGFloat)h);
+    }
+    return result;
+}
+
+NSRect NSRectFromString(NSString *string) {
+    NSRect result = NSMakeRect(0, 0, 0, 0);
+    double x = 0, y = 0, w = 0, h = 0;
+
+    if (string != nil &&
+        sscanf([string UTF8String], "{{%lf, %lf}, {%lf, %lf}}", &x, &y, &w, &h) == 4) {
+        result = NSMakeRect((CGFloat)x, (CGFloat)y, (CGFloat)w, (CGFloat)h);
+    }
+    return result;
+}
+
+@implementation NSCoder (NSGeometryKeyedCoding)
+
+- (void)encodePoint:(NSPoint)point forKey:(NSString *)key {
+    [self encodeObject:NSStringFromPoint(point) forKey:key];
+}
+
+- (void)encodeSize:(NSSize)size forKey:(NSString *)key {
+    [self encodeObject:NSStringFromSize(size) forKey:key];
+}
+
+- (void)encodeRect:(NSRect)rect forKey:(NSString *)key {
+    [self encodeObject:NSStringFromRect(rect) forKey:key];
+}
+
+- (NSPoint)decodePointForKey:(NSString *)key {
+    return NSPointFromString([self decodeObjectForKey:key]);
+}
+
+- (NSSize)decodeSizeForKey:(NSString *)key {
+    return NSSizeFromString([self decodeObjectForKey:key]);
+}
+
+- (NSRect)decodeRectForKey:(NSString *)key {
+    return NSRectFromString([self decodeObjectForKey:key]);
+}
+
+@end

@@ -37,6 +37,8 @@ struct _CGLPixelFormatObject {
 
 struct _CGLContextObject {
 	unsigned int      retain_count;
+	pthread_mutex_t   lock;
+	int               lock_ready;
 #ifdef PD_CGL_USE_EGL
 	EGLContext        glx;
 	EGLSurface        pbuffer;
@@ -672,4 +674,37 @@ CGLErrorString(CGLError error)
 	case kCGLBadConnection:   return "invalid CoreGraphics connection";
 	default:                  return "unknown error";
 	}
+}
+
+/* Recursive so a caller that locks around a block which itself locks - which
+ * NSOpenGLView does via -lockFocus - does not deadlock. */
+static void pd_cgl_init_lock(struct _CGLContextObject *c) {
+	if (c->lock_ready) {
+		return;
+	}
+	pthread_mutexattr_t attr;
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(&c->lock, &attr);
+	pthread_mutexattr_destroy(&attr);
+	c->lock_ready = 1;
+}
+
+CGLError CGLLockContext(CGLContextObj ctx)
+{
+	if (ctx == NULL) {
+		return kCGLBadContext;
+	}
+	pd_cgl_init_lock(ctx);
+	pthread_mutex_lock(&ctx->lock);
+	return kCGLNoError;
+}
+
+CGLError CGLUnlockContext(CGLContextObj ctx)
+{
+	if (ctx == NULL || !ctx->lock_ready) {
+		return kCGLBadContext;
+	}
+	pthread_mutex_unlock(&ctx->lock);
+	return kCGLNoError;
 }

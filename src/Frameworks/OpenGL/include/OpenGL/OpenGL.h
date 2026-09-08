@@ -52,4 +52,9 @@ const char *CGLErrorString(CGLError error);
 }
 #endif
 
+/* Serialise access to a context shared between threads. AppKit's NSOpenGLView
+ * brackets its drawing with these. */
+extern CGLError CGLLockContext(CGLContextObj ctx);
+extern CGLError CGLUnlockContext(CGLContextObj ctx);
+
 #endif /* _PUREDARWIN_OPENGL_OPENGL_H */

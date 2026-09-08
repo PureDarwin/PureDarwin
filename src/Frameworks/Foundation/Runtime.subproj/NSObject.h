@@ -33,6 +33,19 @@ static inline id _Nullable CFBridgingRelease(CFTypeRef CF_RELEASES_ARGUMENT _Nul
 - (id)mutableCopyWithZone:(NSZone *)zone;
 @end
 
+typedef struct {
+    unsigned long state;
+    id __unsafe_unretained _Nullable *itemsPtr;
+    unsigned long *_Nullable mutationsPtr;
+    unsigned long extra[5];
+} NSFastEnumerationState;
+
+@protocol NSFastEnumeration
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained _Nullable [])buffer
+                                    count:(NSUInteger)length;
+@end
+
 /* Apple declares these here rather than in NSCoder.h, so sources get NSCoding
  * from any header that pulls in NSObject.h. */
 @class NSCoder;

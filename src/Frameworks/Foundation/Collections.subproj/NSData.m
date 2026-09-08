@@ -26,9 +26,14 @@
  */
 
 #import <Foundation/NSData.h>
+#import <Foundation/NSString.h>
 #include <CoreFoundation/CFData.h>
 #include <CoreFoundation/ForFoundationOnly.h>
+#include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 @interface NSCFData : NSMutableData
 @end
@@ -43,6 +48,47 @@ __NSDataAutorelease(CFTypeRef cf)
 		return nil;
 	}
 	return (id)CFAutorelease(cf);
+}
+
+static CFDataRef
+__NSDataCreateWithContentsOfFile(NSString *path)
+{
+	struct stat status;
+	UInt8 *bytes = NULL;
+	ssize_t offset = 0;
+	int fd;
+
+	if (path == nil || (fd = open([path cString], O_RDONLY)) < 0) {
+		return NULL;
+	}
+	if (fstat(fd, &status) != 0 || status.st_size < 0) {
+		close(fd);
+		return NULL;
+	}
+	if (status.st_size != 0) {
+		bytes = malloc((size_t)status.st_size);
+		if (bytes == NULL) {
+			close(fd);
+			return NULL;
+		}
+		while (offset < status.st_size) {
+			ssize_t amount = read(fd, bytes + offset,
+				(size_t)(status.st_size - offset));
+
+			if (amount <= 0) {
+				free(bytes);
+				close(fd);
+				return NULL;
+			}
+			offset += amount;
+		}
+	}
+	close(fd);
+
+	CFDataRef result = CFDataCreate(kCFAllocatorDefault, bytes,
+		(CFIndex)status.st_size);
+	free(bytes);
+	return result;
 }
 
 @implementation NSData
@@ -87,6 +133,11 @@ __NSDataAutorelease(CFTypeRef cf)
 						    (CFDataRef)data));
 }
 
++ (instancetype)dataWithContentsOfFile:(NSString *)path
+{
+	return __NSDataAutorelease(__NSDataCreateWithContentsOfFile(path));
+}
+
 - (instancetype)init
 {
 	[self release];
@@ -119,6 +170,12 @@ __NSDataAutorelease(CFTypeRef cf)
 		return nil;
 	}
 	return (id)CFDataCreateCopy(kCFAllocatorDefault, (CFDataRef)data);
+}
+
+- (instancetype)initWithContentsOfFile:(NSString *)path
+{
+	[self release];
+	return (id)__NSDataCreateWithContentsOfFile(path);
 }
 
 /*

@@ -21,6 +21,11 @@ typedef double NSTimeInterval;
 + (instancetype)dateWithTimeIntervalSinceNow:(NSTimeInterval)seconds;
 + (instancetype)dateWithTimeIntervalSinceReferenceDate:(NSTimeInterval)seconds;
 + (instancetype)dateWithTimeIntervalSince1970:(NSTimeInterval)seconds;
++ (instancetype)distantFuture;
++ (instancetype)distantPast;
+
+/* The class-method form callers use to read the clock without allocating. */
++ (NSTimeInterval)timeIntervalSinceReferenceDate;
 
 - (NSTimeInterval)timeIntervalSinceDate:(NSDate *)other;
 - (NSTimeInterval)timeIntervalSinceNow;

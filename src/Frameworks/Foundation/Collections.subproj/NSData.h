@@ -22,6 +22,7 @@
                              length:(NSUInteger)length
                        freeWhenDone:(BOOL)freeWhenDone;
 + (instancetype)dataWithData:(NSData *)data;
++ (nullable instancetype)dataWithContentsOfFile:(NSString *)path;
 
 - (instancetype)init;
 - (instancetype)initWithBytes:(const void *)bytes length:(NSUInteger)length;
@@ -29,6 +30,7 @@
                              length:(NSUInteger)length
                        freeWhenDone:(BOOL)freeWhenDone;
 - (instancetype)initWithData:(NSData *)data;
+- (nullable instancetype)initWithContentsOfFile:(NSString *)path;
 
 - (const void *)bytes;
 - (NSUInteger)length;

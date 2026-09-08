@@ -71,6 +71,10 @@ static void NSCoderAbstract(id self, SEL _cmd) {
     NSCoderAbstract(self, _cmd);
 }
 
+- (void)encodeInteger:(NSInteger)value forKey:(NSString *)key {
+    [self encodeInt64:(int64_t)value forKey:key];
+}
+
 - (void)encodeFloat:(float)value forKey:(NSString *)key {
     NSCoderAbstract(self, _cmd);
 }
@@ -106,6 +110,10 @@ static void NSCoderAbstract(id self, SEL _cmd) {
 - (int64_t)decodeInt64ForKey:(NSString *)key {
     NSCoderAbstract(self, _cmd);
     return 0;
+}
+
+- (NSInteger)decodeIntegerForKey:(NSString *)key {
+    return (NSInteger)[self decodeInt64ForKey:key];
 }
 
 - (float)decodeFloatForKey:(NSString *)key {

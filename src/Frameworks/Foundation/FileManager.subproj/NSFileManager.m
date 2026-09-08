@@ -28,6 +28,76 @@ NSString *const NSFileTypeRegular = @"NSFileTypeRegular";
 NSString *const NSFileTypeDirectory = @"NSFileTypeDirectory";
 NSString *const NSFileTypeSymbolicLink = @"NSFileTypeSymbolicLink";
 NSString *const NSFileTypeUnknown = @"NSFileTypeUnknown";
+NSString *const NSFileModificationDate = @"NSFileModificationDate";
+NSString *const NSFileCreationDate = @"NSFileCreationDate";
+NSString *const NSFileOwnerAccountName = @"NSFileOwnerAccountName";
+NSString *const NSFileGroupOwnerAccountName = @"NSFileGroupOwnerAccountName";
+NSString *const NSFilePosixPermissions = @"NSFilePosixPermissions";
+NSString *const NSFileSystemFileNumber = @"NSFileSystemFileNumber";
+
+/* Depth-first walk, yielding paths relative to the root the way Cocoa does. */
+@implementation NSDirectoryEnumerator
+
+- (instancetype)initWithPath:(NSString *)path {
+    self = [super init];
+    if (self == nil) {
+        return nil;
+    }
+    _root = [path copy];
+    _stack = [[NSMutableArray alloc] init];
+
+    NSArray *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:path
+                                                                          error:NULL];
+    NSUInteger count = [entries count];
+    for (NSUInteger i = 0; i < count; i++) {
+        [_stack addObject:[entries objectAtIndex:i]];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [_root release];
+    [_stack release];
+    [super dealloc];
+}
+
+- (id)nextObject {
+    if ([_stack count] == 0) {
+        return nil;
+    }
+
+    NSString *relative = [[[_stack objectAtIndex:0] retain] autorelease];
+    [_stack removeObjectAtIndex:0];
+
+    NSString *full = [_root stringByAppendingPathComponent:relative];
+    BOOL isDirectory = NO;
+
+    if ([[NSFileManager defaultManager] fileExistsAtPath:full isDirectory:&isDirectory] &&
+        isDirectory) {
+        NSArray *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:full
+                                                                               error:NULL];
+        NSUInteger count = [entries count];
+        for (NSUInteger i = 0; i < count; i++) {
+            [_stack addObject:[relative stringByAppendingPathComponent:
+                                 [entries objectAtIndex:i]]];
+        }
+    }
+    return relative;
+}
+
+- (NSDictionary *)fileAttributes {
+    return nil;
+}
+
+- (NSDictionary *)directoryAttributes {
+    return nil;
+}
+
+- (void)skipDescendents {
+}
+
+@end
+
 
 /* Paths cross into POSIX as UTF-8; PATH_MAX-bounded so nothing here allocates. */
 static BOOL _fsPath(NSString *path, char *buffer, size_t size) {
@@ -266,6 +336,10 @@ static void _setPOSIXError(NSError **error) {
 - (BOOL)changeCurrentDirectoryPath:(NSString *)path {
     char buffer[PATH_MAX];
     return _fsPath(path, buffer, sizeof(buffer)) && chdir(buffer) == 0;
+}
+
+- (NSDirectoryEnumerator *)enumeratorAtPath:(NSString *)path {
+    return [[[NSDirectoryEnumerator alloc] initWithPath:path] autorelease];
 }
 
 @end

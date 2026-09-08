@@ -10,6 +10,7 @@
 #define NSDictionary_h
 
 #import <Foundation/NSObject.h>
+#import <Foundation/NSEnumerator.h>
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/NSArray.h>
 
@@ -18,6 +19,11 @@
 @interface NSDictionary<__covariant KeyType, __covariant ObjectType> : NSObject
 
 + (instancetype)dictionary;
++ (instancetype)dictionaryWithObject:(ObjectType)object forKey:(KeyType)key;
++ (instancetype)dictionaryWithObjectsAndKeys:(nullable ObjectType)firstObject, ...;
++ (instancetype)dictionaryWithObjects:(NSArray<ObjectType> *)objects
+                               forKeys:(NSArray<KeyType> *)keys;
++ (instancetype)dictionaryWithDictionary:(NSDictionary<KeyType, ObjectType> *)dictionary;
 /* The compiler emits +dictionaryWithObjects:forKeys:count: for a @{...}
  * literal, so it is API rather than convenience. */
 + (instancetype)dictionaryWithObjects:(const ObjectType _Nonnull [_Nullable])objects
@@ -41,10 +47,15 @@
 @interface NSMutableDictionary<KeyType, ObjectType> : NSDictionary<KeyType, ObjectType>
 
 + (instancetype)dictionaryWithCapacity:(NSUInteger)capacity;
++ (instancetype)dictionaryWithDictionary:(NSDictionary<KeyType, ObjectType> *)dictionary;
 
 - (void)setObject:(id)object forKey:(id)key;
 - (void)setObject:(id)object forKeyedSubscript:(id)key;
 - (void)removeObjectForKey:(id)key;
+- (void)addEntriesFromDictionary:(NSDictionary *)dictionary;
+- (void)removeAllObjects;
+- (void)removeObjectsForKeys:(NSArray *)keys;
+- (void)setDictionary:(NSDictionary *)dictionary;
 
 @end
 

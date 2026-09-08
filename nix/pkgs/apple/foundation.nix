@@ -25,6 +25,39 @@ let
     "URL.subproj/NSURL"
     "Coding.subproj/NSCoder"
     "Coding.subproj/NSKeyedUnarchiver"
+    "Runtime.subproj/NSAutoreleasePool"
+    "Collections.subproj/NSEnumerator"
+    "Collections.subproj/NSIndexSet"
+    "Notifications.subproj/NSNotification"
+    "UndoManager.subproj/NSUndoManager"
+    "Scanner.subproj/NSScanner"
+    "Locale.subproj/NSLocale"
+    "String.subproj/NSTextCheckingResult"
+    "String.subproj/NSOrthography"
+    "Predicates.subproj/NSSortDescriptor"
+    "Predicates.subproj/NSValueTransformer"
+    "Predicates.subproj/NSPredicate"
+    "Runtime.subproj/NSSpellEngine"
+    "Runtime.subproj/NSPlatform"
+    "Coding.subproj/NSKeyedArchiver"
+    "Coding.subproj/NSArchiver"
+    "Collections.subproj/NSPropertyListSerialization"
+    "Notifications.subproj/NSNotificationQueue"
+    "Formatters.subproj/NSDateFormatter"
+    "KVC.subproj/NSKeyValueCoding"
+    "KVC.subproj/NSKeyValueObserving"
+    "Locking.subproj/NSLock"
+    "Collections.subproj/NSHashTable"
+    "Collections.subproj/NSRangeEntries"
+    "Collections.subproj/NSCountedSet"
+    "Runtime.subproj/NSInvocation"
+    "Date.subproj/NSCalendar"
+    "Formatters.subproj/NSNumberFormatter"
+    "RunLoop.subproj/NSSocket_bsd"
+    "RunLoop.subproj/NSSelectInputSource"
+    "RunLoop.subproj/NSRunLoop"
+    "Formatters.subproj/NSFormatter"
+    "String.subproj/NSAttributedString"
     "Runtime.subproj/NSError"
     "Runtime.subproj/NSZone"
     "Runtime.subproj/NSLog"
@@ -61,7 +94,7 @@ stdenv.mkDerivation {
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     mkdir -p foundation-headers/Foundation
-    find Runtime.subproj Coding.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
+    find Runtime.subproj Coding.subproj Formatters.subproj Notifications.subproj UndoManager.subproj Scanner.subproj Locale.subproj RunLoop.subproj Predicates.subproj KVC.subproj Locking.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
 
     # corefoundation.nix installs its headers flattened into $out/include
     # (no "CoreFoundation/" subdirectory) - stage the same
@@ -102,7 +135,7 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/usr/lib $out/usr/include/Foundation
     cp libFoundation.dylib $out/usr/lib/
-    find Runtime.subproj Coding.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
+    find Runtime.subproj Coding.subproj Formatters.subproj Notifications.subproj UndoManager.subproj Scanner.subproj Locale.subproj RunLoop.subproj Predicates.subproj KVC.subproj Locking.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
 
     fwdir=$out/System/Library/Frameworks/Foundation.framework
     mkdir -p "$fwdir/Versions/A/Resources"

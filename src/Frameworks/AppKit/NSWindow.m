@@ -1845,6 +1845,15 @@ const float WSWindowEdgePad = 2;
 
         if(!([self isOpaque] && [_contentView isKindOfClass:[NSOpenGLView class]] && [_contentView isOpaque])) {
             O2ContextFlush(_context);
+
+            /* The drawing landed in the shared buffer; the window server has to
+             * be told before the compositor will show it. */
+            struct wsRPCWindow flush = {
+                { kWSWindowFlush, sizeof(struct wsRPCWindow) - sizeof(struct wsRPCBase) },
+                _number, _frame.origin.x, _frame.origin.y,
+                _frame.size.width, _frame.size.height, _styleMask, 0, {'\0'}, _level
+            };
+            _windowServerRPC(&flush, sizeof(flush), NULL, NULL);
         }
     }
 }

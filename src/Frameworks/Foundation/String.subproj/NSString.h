@@ -12,7 +12,7 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSRange.h>
 
-@class NSData;
+@class NSData, NSArray;
 
 typedef unsigned short unichar;
 
@@ -47,6 +47,14 @@ typedef NS_ENUM(NSUInteger, NSStringEncoding) {
     NSUTF32LittleEndianStringEncoding = 0x9c000100,
 };
 
+typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
+    NSCaseInsensitiveSearch = 1,
+    NSLiteralSearch         = 2,
+    NSBackwardsSearch       = 4,
+    NSAnchoredSearch        = 8,
+    NSNumericSearch         = 64,
+};
+
 @interface NSString : NSObject
 
 + (instancetype)stringWithUTF8String:(const char *)utf8String;
@@ -63,6 +71,18 @@ typedef NS_ENUM(NSUInteger, NSStringEncoding) {
 - (NSUInteger)length;
 - (unichar)characterAtIndex:(NSUInteger)index;
 - (const char *)UTF8String;
+- (const char *)cString;
+- (NSArray *)componentsSeparatedByString:(NSString *)separator;
+- (NSRange)rangeOfString:(NSString *)string;
+- (NSRange)lineRangeForRange:(NSRange)range;
+- (NSRange)paragraphRangeForRange:(NSRange)range;
+- (NSRange)rangeOfString:(NSString *)string options:(NSStringCompareOptions)options;
+- (NSRange)rangeOfString:(NSString *)string
+                 options:(NSStringCompareOptions)options
+                   range:(NSRange)searchRange;
+- (NSString *)substringWithRange:(NSRange)range;
+- (NSString *)substringFromIndex:(NSUInteger)index;
+- (NSString *)substringToIndex:(NSUInteger)index;
 
 - (BOOL)getBytes:(void *)buffer
        maxLength:(NSUInteger)maxBufferCount

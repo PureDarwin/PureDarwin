@@ -10,8 +10,9 @@
 #define NSThread_h
 
 #import <Foundation/NSObject.h>
+#import <Foundation/NSObjCRuntime.h>
 
-@class NSMutableDictionary;
+@class NSMutableDictionary, NSString;
 
 @interface NSThread : NSObject {
     NSMutableDictionary *_dictionary;
@@ -22,10 +23,21 @@
 + (NSThread *)currentThread;
 + (NSThread *)mainThread;
 + (BOOL)isMainThread;
++ (void)detachNewThreadSelector:(SEL)selector
+                       toTarget:(id)target
+                     withObject:(nullable id)object;
 
 - (BOOL)isMainThread;
 - (NSMutableDictionary *)threadDictionary;
 
 @end
+
+
+FOUNDATION_EXPORT NSThread *NSCurrentThread(void);
+
+/* Per-thread singletons keyed by class name: Cocotron uses these for the
+ * objects that are "one per thread" (NSDisplay, the graphics context stack). */
+FOUNDATION_EXPORT id NSThreadSharedInstance(NSString *className);
+FOUNDATION_EXPORT id NSThreadSharedInstanceDoNotCreate(NSString *className);
 
 #endif /* NSThread_h */

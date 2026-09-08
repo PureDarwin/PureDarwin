@@ -16,20 +16,11 @@
 , appleSdk
 }:
 
-# CoreGraphics.framework is a thin CG* -> O2* shim over Onyx2D, in the Cocotron
-# layering ravynOS uses. Everything here is software rendering into a bitmap;
-# nothing talks to a window server.
-
 let
-
   installName = "/System/Library/Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics";
 
-  # PureDarwin has no WindowServer, so the sources that are pure clients of it
-  # stay out until there is something to talk to. KTFont+PDF belongs to
-  # CoreText, which is a separate framework and not in upstream's SRCS either.
-  # Everything else here is self-contained software rendering.
   excludedSrcs = [
-    "CGLPixelSurface.m" "CGDirectDisplay.m" "CGEvent.m" "CGWindow.m"
+    "CGLPixelSurface.m" "CGDirectDisplay.m"
     "KTFont+PDF.m"
   ];
 in

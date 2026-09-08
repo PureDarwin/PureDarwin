@@ -17,6 +17,8 @@
 
 @class NSData, NSURL;
 
+FOUNDATION_EXPORT NSString * const NSUserDefaultsDidChangeNotification;
+
 @interface NSUserDefaults : NSObject
 
 + (NSUserDefaults *)standardUserDefaults;

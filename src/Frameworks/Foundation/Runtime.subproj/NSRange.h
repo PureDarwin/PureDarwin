@@ -16,11 +16,34 @@ typedef struct _NSRange {
     NSUInteger length;
 } NSRange;
 
+typedef NSRange *NSRangePointer;
+
 NS_INLINE NSRange NSMakeRange(NSUInteger loc, NSUInteger len) {
     NSRange r;
     r.location = loc;
     r.length = len;
     return r;
+}
+
+NS_INLINE NSRange NSIntersectionRange(NSRange a, NSRange b) {
+    NSUInteger start = (a.location > b.location) ? a.location : b.location;
+    NSUInteger endA = a.location + a.length;
+    NSUInteger endB = b.location + b.length;
+    NSUInteger end = (endA < endB) ? endA : endB;
+
+    if (end <= start) {
+        return (NSRange){ 0, 0 };
+    }
+    return (NSRange){ start, end - start };
+}
+
+NS_INLINE NSRange NSUnionRange(NSRange a, NSRange b) {
+    NSUInteger start = (a.location < b.location) ? a.location : b.location;
+    NSUInteger endA = a.location + a.length;
+    NSUInteger endB = b.location + b.length;
+    NSUInteger end = (endA > endB) ? endA : endB;
+
+    return (NSRange){ start, end - start };
 }
 
 NS_INLINE NSUInteger NSMaxRange(NSRange range) {

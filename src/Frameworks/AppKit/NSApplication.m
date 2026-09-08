@@ -13,6 +13,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSSocket_bsd.h>
 #import <Foundation/NSSelectInputSource.h>
 #import <AppKit/NSApplication.h>
+#include <errno.h>
 #import <AppKit/NSWindow-Private.h>
 #import <AppKit/NSPanel.h>
 #import <AppKit/NSMenu.h>
@@ -161,10 +162,12 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 
     while(1) {
         ReceiveMessage msg = {0};
-        mach_msg_return_t result = mach_msg((mach_msg_header_t *)&msg, MACH_RCV_MSG, 0, sizeof(msg),
-            _wsReplyPort, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-        if(result != MACH_MSG_SUCCESS)
-            NSLog(@"mach_msg receive error 0x%x", result);
+        /* The window server runs in this process rather than behind a Mach
+         * port, so the events come from its Wayland connection. Blocks until
+         * one arrives; returns 0 when the display is gone. */
+        if(_windowServerReceiveMessage(&msg) == 0) {
+            break;
+        }
         else {
             switch(msg.header.msgh_id) {
                 case MSG_ID_INLINE:
@@ -506,63 +509,48 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
         NSLog(@"Failed to allocate mach_port _wsReplyPort");
         exit(1);
     }
-    [NSThread detachNewThreadSelector:@selector(machServiceLoop:) toTarget:self withObject:nil];
+    /* The in-process WindowServer supplies display geometry. Connect before
+     * NSDisplay queries it, and before the receive thread can observe a
+     * disconnected event queue. */
+    if (!_windowServerConnect()) {
+        NSLog(@"Failed to connect to the Wayland compositor");
+        return nil;
+    }
+    NSLog(@"NSApplication init: WindowServer connected");
 
    _wsSvcPort = MACH_PORT_NULL;
 
    _display=[[NSDisplay currentDisplay] retain];
+   NSLog(@"NSApplication init: display ready");
 
    _windows=[[NSMutableArray new] retain];
    _mainMenu=nil;
+   NSLog(@"NSApplication init: window collection ready");
 
     NSBundle *mainBundle = [NSBundle mainBundle];
 
-   // don't try to find the service if this is the app that provides it...
    bundleID = [mainBundle bundleIdentifier];
     if(bundleID == nil)
         bundleID = [NSString stringWithFormat:@"unix.%u", getpid()];
-   if(!([bundleID isEqualToString:@"com.ravynos.WindowServer"])) {
-        NSLog(@"Finding service %s (%u)", WINDOWSERVER_SVC_NAME, bootstrap_port);
-        if(bootstrap_look_up(bootstrap_port, WINDOWSERVER_SVC_NAME, &_wsSvcPort) != KERN_SUCCESS) {
-            NSLog(@"Failed to locate service");
-            return nil;
-        }
+    NSLog(@"NSApplication init: bundle ready");
 
-        // register this app with WindowServer so we get events
-        PortMessage msg = {0};
-        msg.header.msgh_remote_port = _wsSvcPort;
-        msg.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, MACH_MSGH_BITS_COMPLEX);
-        msg.header.msgh_id = MSG_ID_PORT;
-        msg.header.msgh_size = sizeof(msg);
-        msg.msgh_descriptor_count = 1;
-        msg.descriptor.type = MACH_MSG_PORT_DESCRIPTOR;
-        msg.descriptor.name = _wsReplyPort;
-        msg.descriptor.disposition = MACH_MSG_TYPE_MAKE_SEND;
-        msg.pid = getpid();
-        strncpy(msg.bundleID, [bundleID cString], sizeof(msg.bundleID));
-
-        int ret = 0;
-        if((ret = mach_msg((mach_msg_header_t *)&msg, MACH_SEND_MSG|MACH_SEND_TIMEOUT, sizeof(msg), 0, MACH_PORT_NULL,
-            2000 /* ms timeout */, MACH_PORT_NULL)) != MACH_MSG_SUCCESS)
-            NSLog(@"Failed to register with WS: mach_msg error 0x%x", ret);
-   }
+    /* Event delivery is owned by libWindowServer in this process. The old
+     * bootstrap registration targeted a separate Mach service and left the
+     * application half initialized when that service was absent. */
 
    _dockTile=[[NSDockTile alloc] initWithOwner:self];
    _modalStack=[NSMutableArray new];
+   NSLog(@"NSApplication init: application state ready");
 
    _lock=NSZoneMalloc(NULL,sizeof(pthread_mutex_t));
 
    pthread_mutex_init(_lock,NULL);
-
-   // We can't display the splash until WindowServer gives us a real display to use. This will
-   // come as a mach msg processed by the service loop. Keep polling display until it is ready
-   // FIXME: need a timeout here?
-    //NSLog(@"waiting for display to become ready");
-    while([_display isReady] == NO) {
-        usleep(10000);
-    }
+   NSLog(@"NSApplication init: mutex ready");
 
     [self _showSplashImage];
+    [NSThread detachNewThreadSelector:@selector(machServiceLoop:) toTarget:self withObject:nil];
+    NSLog(@"NSApplication init: event thread started");
+    NSLog(@"NSApplication init: complete");
 
    return NSApp;
 }

@@ -10,12 +10,13 @@
 #define NSFileManager_h
 
 #import <Foundation/NSObject.h>
+#import <Foundation/NSEnumerator.h>
 #import <Foundation/NSObjCRuntime.h>
 
 #import <Foundation/NSArray.h>
 #import <Foundation/NSString.h>
 
-@class NSData, NSDictionary, NSError;
+@class NSData, NSDictionary, NSError, NSMutableArray, NSString;
 
 FOUNDATION_EXPORT NSString *const NSFileSize;
 FOUNDATION_EXPORT NSString *const NSFileType;
@@ -23,6 +24,26 @@ FOUNDATION_EXPORT NSString *const NSFileTypeRegular;
 FOUNDATION_EXPORT NSString *const NSFileTypeDirectory;
 FOUNDATION_EXPORT NSString *const NSFileTypeSymbolicLink;
 FOUNDATION_EXPORT NSString *const NSFileTypeUnknown;
+FOUNDATION_EXPORT NSString *const NSFileModificationDate;
+FOUNDATION_EXPORT NSString *const NSFileCreationDate;
+FOUNDATION_EXPORT NSString *const NSFileOwnerAccountName;
+FOUNDATION_EXPORT NSString *const NSFileGroupOwnerAccountName;
+FOUNDATION_EXPORT NSString *const NSFilePosixPermissions;
+FOUNDATION_EXPORT NSString *const NSFileSystemFileNumber;
+
+/* Returned by -enumeratorAtPath:; walks a directory tree lazily. */
+@interface NSDirectoryEnumerator : NSEnumerator {
+    NSMutableArray *_stack;
+    NSString *_root;
+}
+
+- (instancetype)initWithPath:(NSString *)path;
+
+- (NSDictionary *)fileAttributes;
+- (NSDictionary *)directoryAttributes;
+- (void)skipDescendents;
+
+@end
 
 @interface NSFileManager : NSObject
 
@@ -36,6 +57,7 @@ FOUNDATION_EXPORT NSString *const NSFileTypeUnknown;
 
 - (NSArray<NSString *> *)contentsOfDirectoryAtPath:(NSString *)path error:(NSError **)error;
 - (NSDictionary *)attributesOfItemAtPath:(NSString *)path error:(NSError **)error;
+- (NSDirectoryEnumerator *)enumeratorAtPath:(NSString *)path;
 
 - (NSData *)contentsAtPath:(NSString *)path;
 - (BOOL)createFileAtPath:(NSString *)path

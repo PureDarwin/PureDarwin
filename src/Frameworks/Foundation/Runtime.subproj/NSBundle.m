@@ -159,4 +159,14 @@
     return NSClassFromString((NSString *)name);
 }
 
+
+- (NSString *)localizedStringForKey:(NSString *)key
+                              value:(NSString *)value
+                              table:(NSString *)tableName {
+    if (key != nil) {
+        return key;
+    }
+    return (value != nil) ? value : @"";
+}
+
 @end

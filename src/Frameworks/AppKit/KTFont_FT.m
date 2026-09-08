@@ -8,7 +8,7 @@
 
 #import <AppKit/NSFont.h>
 #import "KTFont_FT.h"
-#import <AppKit/KTFont.h>
+#import <CoreText/KTFont.h>
 #import <AppKit/NSRaise.h>
 #import "O2Font_FT.h"
 #import <AppKit/NSFontTypeface.h>

@@ -17,8 +17,46 @@
 #include <CoreFoundation/CFStream.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <objc/runtime.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+extern int __CFConstantStringClassReference[];
+
+static BOOL ns_dictionary_value_is_constant_string(const void *value) {
+    return *(const uintptr_t *)value ==
+        (uintptr_t)&__CFConstantStringClassReference;
+}
+
+static const void *ns_dictionary_value_retain(CFAllocatorRef allocator,
+                                               const void *value) {
+    if (ns_dictionary_value_is_constant_string(value)) {
+        return CFRetain(value);
+    }
+    return [(id)value retain];
+}
+
+static void ns_dictionary_value_release(CFAllocatorRef allocator,
+                                        const void *value) {
+    if (ns_dictionary_value_is_constant_string(value)) {
+        CFRelease(value);
+        return;
+    }
+    [(id)value release];
+}
+
+static Boolean ns_dictionary_value_equal(const void *left,
+                                         const void *right) {
+    return [(id)left isEqual:(id)right] ? true : false;
+}
+
+static const CFDictionaryValueCallBacks ns_dictionary_value_callbacks = {
+    0,
+    ns_dictionary_value_retain,
+    ns_dictionary_value_release,
+    CFCopyDescription,
+    ns_dictionary_value_equal
+};
 
 /* Read a whole file into a CFData. CFReadStream would do, but plists are small
  * and stdio keeps this independent of the stream machinery. */
@@ -72,6 +110,11 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
     return plist;
 }
 
+static void pd_add_dictionary_entry(const void *key, const void *value,
+                                    void *context) {
+    CFDictionarySetValue((CFMutableDictionaryRef)context, key, value);
+}
+
 @implementation NSDictionary
 
 /* These classes are bridged onto CF, so an instance has to be a CF object.
@@ -88,7 +131,57 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
 + (instancetype)dictionary {
     return (id)CFDictionaryCreate(kCFAllocatorDefault, NULL, NULL, 0,
                                   &kCFTypeDictionaryKeyCallBacks,
-                                  &kCFTypeDictionaryValueCallBacks);
+                                  &ns_dictionary_value_callbacks);
+}
+
++ (instancetype)dictionaryWithObject:(id)object forKey:(id)key {
+    const void *keys[] = { (const void *)key };
+    const void *objects[] = { (const void *)object };
+    return (id)CFDictionaryCreate(kCFAllocatorDefault, keys, objects, 1,
+                                  &kCFTypeDictionaryKeyCallBacks,
+                                  &ns_dictionary_value_callbacks);
+}
+
++ (instancetype)dictionaryWithObjectsAndKeys:(id)firstObject, ... {
+    CFMutableDictionaryRef result = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks,
+        &ns_dictionary_value_callbacks);
+    if (result == NULL || firstObject == nil)
+        return (id)result;
+
+    va_list arguments;
+    va_start(arguments, firstObject);
+    id object = firstObject;
+    while (object != nil) {
+        id key = va_arg(arguments, id);
+        if (key == nil)
+            break;
+        CFDictionarySetValue(result, (const void *)key, (const void *)object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+    return (id)result;
+}
+
++ (instancetype)dictionaryWithObjects:(NSArray *)objects
+                               forKeys:(NSArray *)keys {
+    NSUInteger count = [objects count];
+    if ([keys count] != count)
+        return nil;
+
+    CFMutableDictionaryRef result = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, (CFIndex)count, &kCFTypeDictionaryKeyCallBacks,
+        &ns_dictionary_value_callbacks);
+    for (NSUInteger i = 0; i < count; i++) {
+        CFDictionarySetValue(result, [keys objectAtIndex:i],
+                             [objects objectAtIndex:i]);
+    }
+    return (id)result;
+}
+
++ (instancetype)dictionaryWithDictionary:(NSDictionary *)dictionary {
+    return (id)CFDictionaryCreateCopy(kCFAllocatorDefault,
+                                      (CFDictionaryRef)dictionary);
 }
 
 /* CFDictionaryCreate takes keys first, the ObjC spelling takes objects first. */
@@ -99,7 +192,7 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
                                   (const void **)keys, (const void **)objects,
                                   (CFIndex)count,
                                   &kCFTypeDictionaryKeyCallBacks,
-                                  &kCFTypeDictionaryValueCallBacks);
+                                  &ns_dictionary_value_callbacks);
 }
 
 /* These are CF objects, not ObjC allocations: the default NSObject refcounting
@@ -141,6 +234,25 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
 
 - (void)removeObjectForKey:(id)key {
     CFDictionaryRemoveValue((CFMutableDictionaryRef)self, (const void *)key);
+}
+
+- (void)addEntriesFromDictionary:(NSDictionary *)dictionary {
+    CFDictionaryApplyFunction((CFDictionaryRef)dictionary,
+                              pd_add_dictionary_entry, self);
+}
+
+- (void)removeAllObjects {
+    CFDictionaryRemoveAllValues((CFMutableDictionaryRef)self);
+}
+
+- (void)removeObjectsForKeys:(NSArray *)keys {
+    for (NSUInteger i = 0; i < [keys count]; i++)
+        [self removeObjectForKey:[keys objectAtIndex:i]];
+}
+
+- (void)setDictionary:(NSDictionary *)dictionary {
+    [self removeAllObjects];
+    [self addEntriesFromDictionary:dictionary];
 }
 
 - (void)enumerateKeysAndObjectsUsingBlock:(void (^)(id, id, BOOL *))block {
@@ -230,11 +342,16 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
 + (instancetype)dictionaryWithCapacity:(NSUInteger)capacity {
     return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
                                          &kCFTypeDictionaryKeyCallBacks,
-                                         &kCFTypeDictionaryValueCallBacks);
+                                         &ns_dictionary_value_callbacks);
 }
 
 + (instancetype)dictionary {
     return [self dictionaryWithCapacity:0];
+}
+
++ (instancetype)dictionaryWithDictionary:(NSDictionary *)dictionary {
+    return (id)CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
+                                             (CFDictionaryRef)dictionary);
 }
 
 @end

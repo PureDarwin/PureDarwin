@@ -60,6 +60,10 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     return CFEqual((CFStringRef)self, (CFStringRef)other) ? YES : NO;
 }
 
+- (const char *)cString {
+    return [self UTF8String];
+}
+
 - (NSData *)dataUsingEncoding:(NSStringEncoding)encoding {
     CFDataRef result = CFStringCreateExternalRepresentation(kCFAllocatorDefault,
                                                             (CFStringRef)self,

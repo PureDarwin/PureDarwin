@@ -37,6 +37,20 @@
             seconds - kCFAbsoluteTimeIntervalSince1970];
 }
 
+/* The sentinels callers pass to mean "no deadline" / "already elapsed". The
+ * values match Apple's, which are far outside any real date arithmetic. */
++ (instancetype)distantFuture {
+    return [self dateWithTimeIntervalSinceReferenceDate:63113904000.0];
+}
+
++ (NSTimeInterval)timeIntervalSinceReferenceDate {
+    return (NSTimeInterval)CFAbsoluteTimeGetCurrent();
+}
+
++ (instancetype)distantPast {
+    return [self dateWithTimeIntervalSinceReferenceDate:-63114076800.0];
+}
+
 - (NSTimeInterval)timeIntervalSinceReferenceDate {
     return (NSTimeInterval)CFDateGetAbsoluteTime((CFDateRef)self);
 }

@@ -11,6 +11,7 @@
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
+#include <stdarg.h>
 
 extern int __CFConstantStringClassReference[];
 
@@ -58,6 +59,24 @@ static const CFArrayCallBacks ns_array_callbacks = {
 + (instancetype)array {
     return (id)CFArrayCreate(kCFAllocatorDefault, NULL, 0,
                              &ns_array_callbacks);
+}
+
++ (instancetype)arrayWithObjects:(id)firstObject, ... {
+    CFMutableArrayRef values = CFArrayCreateMutable(kCFAllocatorDefault, 0,
+                                                     &ns_array_callbacks);
+    va_list arguments;
+    id object = firstObject;
+
+    va_start(arguments, firstObject);
+    while (object != nil) {
+        CFArrayAppendValue(values, object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+
+    CFArrayRef result = CFArrayCreateCopy(kCFAllocatorDefault, values);
+    CFRelease(values);
+    return (id)result;
 }
 
 + (instancetype)arrayWithObjects:(const id *)objects count:(NSUInteger)count {
@@ -115,6 +134,28 @@ static const CFArrayCallBacks ns_array_callbacks = {
     return n > 0 ? (id)CFArrayGetValueAtIndex((CFArrayRef)self, n - 1) : nil;
 }
 
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)length {
+    CFIndex count = CFArrayGetCount((CFArrayRef)self);
+    CFIndex index = (CFIndex)state->state;
+
+    if (index >= count || length == 0) {
+        return 0;
+    }
+
+    NSUInteger result = MIN(length, (NSUInteger)(count - index));
+    for (NSUInteger offset = 0; offset < result; ++offset) {
+        buffer[offset] = (id)CFArrayGetValueAtIndex((CFArrayRef)self,
+                                                    index + (CFIndex)offset);
+    }
+
+    state->itemsPtr = buffer;
+    state->mutationsPtr = &state->extra[0];
+    state->state += result;
+    return result;
+}
+
 - (BOOL)containsObject:(id)object {
     CFIndex n = CFArrayGetCount((CFArrayRef)self);
     return CFArrayContainsValue((CFArrayRef)self, CFRangeMake(0, n),
@@ -140,6 +181,15 @@ static const CFArrayCallBacks ns_array_callbacks = {
     CFArrayRef result = CFArrayCreateCopy(kCFAllocatorDefault, values);
     CFRelease(values);
     return (id)result;
+}
+
+- (void)makeObjectsPerformSelector:(SEL)selector {
+    CFIndex count = CFArrayGetCount((CFArrayRef)self);
+
+    for (CFIndex index = 0; index < count; ++index) {
+        id value = (id)CFArrayGetValueAtIndex((CFArrayRef)self, index);
+        ((void (*)(id, SEL))objc_msgSend)(value, selector);
+    }
 }
 
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object {
