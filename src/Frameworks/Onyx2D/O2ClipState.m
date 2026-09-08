@@ -22,9 +22,10 @@ O2ClipStateType O2ClipStateGetType(O2ClipState *self) {
 
 O2ClipState *O2ClipStateCreateCopy(O2ClipState *self) {
    O2ClipState *result=NSCopyObject(self,0,NULL);
-   
    result->_path=O2PathCreateCopy(self->_path);
-   result->_phases=[[NSMutableArray alloc] initWithArray:self->_phases];
+   result->_phases=self->_phases == nil
+       ? nil
+       : [[NSMutableArray alloc] initWithArray:self->_phases];
    
    return result;
 }

@@ -184,9 +184,25 @@ window_entered(void *data)
 	focus(window);
 }
 
+static void
+window_move(void *data)
+{
+	struct window *window = data;
+
+	swc_window_set_stacked(window->swc);
+}
+
+static void
+window_resize(void *data)
+{
+	window_move(data);
+}
+
 static const struct swc_window_handler window_handler = {
     .destroy = &window_destroy,
     .entered = &window_entered,
+    .move = &window_move,
+    .resize = &window_resize,
 };
 
 static void

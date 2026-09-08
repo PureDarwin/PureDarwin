@@ -10,7 +10,8 @@
 #import <Onyx2D/O2Font_freetype.h>
 
 O2FontRef O2FontCreateWithFontName_platform(NSString *name) {
-    return [[O2Font_FT alloc] initWithFontName:name];
+    O2FontRef result=[[O2Font_FT alloc] initWithFontName:name];
+    return result;
 }
 
 O2FontRef O2FontCreateWithDataProvider_platform(O2DataProviderRef provider) {
@@ -25,7 +26,10 @@ O2FontRef O2FontCreateWithDataProvider_platform(O2DataProviderRef provider) {
 @implementation O2Font(FreeType)
 
 +allocWithZone:(NSZone *)zone {
-   return NSAllocateObject([O2Font_FT class],0,NULL);
+   if(self==[O2Font class])
+    return NSAllocateObject([O2Font_FT class],0,zone);
+
+   return NSAllocateObject(self,0,zone);
 }
 
 @end
@@ -90,8 +94,11 @@ FcConfig *O2FontSharedFontConfig() {
 
    FT_Error ret=FT_New_Face(O2FontSharedFreeTypeLibrary(),[filename fileSystemRepresentation],0,&_face);
 
-   if(ret!=0)
+   if(ret!=0) {
     NSLog(@"FT_New_Face returned %d",ret);
+    [self release];
+    return nil;
+   }
 
    FT_Select_Charmap(_face, FT_ENCODING_UNICODE);
  //  FT_Set_Char_Size(_face,0,2048*64,72,72);
@@ -118,7 +125,9 @@ FcConfig *O2FontSharedFontConfig() {
 }
 
 -(void)dealloc {
-   FT_Done_Face(_face);
+   if(_face!=NULL)
+    FT_Done_Face(_face);
+   [super dealloc];
 }
 
 -(FT_Face)face {
@@ -147,18 +156,20 @@ FcConfig *O2FontSharedFontConfig() {
 -(NSCharacterSet *)coveredCharacterSet {
     if(_coveredCharSet == nil) {
         NSMutableCharacterSet *set = [[NSMutableCharacterSet alloc] init];
-        uint32_t code, first, last, index;
+        uint32_t code, first, last = 0, index;
 
         code = first = FT_Get_First_Char(_face, &index);
         while(index != 0) {
             last = code;
             code = FT_Get_Next_Char(_face, code, &index);
             if(code > (last+1)) {
-                [set addCharactersInRange:NSMakeRange(first, last - first)];
+                [set addCharactersInRange:NSMakeRange(first, last - first + 1)];
                 first = code;
             }
         }
-        [set addCharactersInRange: NSMakeRange(first, last - first)];
+        if(last >= first) {
+            [set addCharactersInRange:NSMakeRange(first, last - first + 1)];
+        }
         _coveredCharSet = set;
     }
     return _coveredCharSet;

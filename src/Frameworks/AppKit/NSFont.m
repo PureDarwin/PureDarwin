@@ -196,13 +196,25 @@ static NSLock *_cacheLock=nil;
     if (ctFont) {
         NSString *name=(NSString *)CTFontCopyFullName(ctFont);
         size=CTFontGetSize(ctFont);
-
         result=[NSFont fontWithName:name size:size];
 
         [ctFont release];
         [name release];
-    } else {
+    }
+    if(result == nil) {
         result = [NSFont fontWithName:[O2Font postscriptNameForDisplayName:fallbackName] size:size];
+    }
+    if(result == nil) {
+        BOOL bold = type == kCTFontEmphasizedSystemFontType ||
+            type == kCTFontSmallEmphasizedSystemFontType ||
+            type == kCTFontMiniEmphasizedSystemFontType ||
+            type == kCTFontMenuTitleFontType ||
+            type == kCTFontWindowTitleFontType ||
+            type == kCTFontUtilityWindowTitleFontType ||
+            type == kCTFontAlertHeaderFontType ||
+            type == kCTFontEmphasizedSystemDetailFontType;
+        result = [NSFont fontWithName:(bold ? @"DejaVu Sans-Bold" : @"DejaVu Sans")
+                                 size:size];
     }
     O2FontLog(@"asked for type: %d got font: %@", type, result);
     return result;
@@ -242,7 +254,7 @@ static NSLock *_cacheLock=nil;
 }
 
 +(NSFont *)titleBarFontOfSize:(float)size {
-    return [self boldSystemFontOfSize:size];
+    return [self _uiFontOfType:kCTFontWindowTitleFontType size:size fallbackName:@"Inter-Bold"];
 }
 
 +(NSFont *)toolTipsFontOfSize:(float)size {
@@ -689,7 +701,6 @@ arrayWithArray:[_name componentsSeparatedByString:blank]];
 -(unsigned)getGlyphs:(NSGlyph *)glyphs forCharacters:(unichar *)characters length:(unsigned)length {
    CGGlyph  cgGlyphs[length];
    int      i;
-
    CTFontGetGlyphsForCharacters(_ctFont,characters,cgGlyphs,length);
 
    for(i=0;i<length;i++){

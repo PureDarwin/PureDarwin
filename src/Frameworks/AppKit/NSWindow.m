@@ -307,10 +307,10 @@ const float WSWindowEdgePad = 2;
 
    _autosaveFrameName=nil;
 
-   _threadToContext=[[NSMutableDictionary alloc] init];
+    _threadToContext=[[NSMutableDictionary alloc] init];
 
-   [_backgroundView addSubview:_contentView];
-   [_backgroundView setNeedsDisplay:YES];
+    [_backgroundView addSubview:_contentView];
+    [_backgroundView setNeedsDisplay:YES];
     if (!(_styleMask & NSAppKitPrivateWindow)) {
         [[NSApplication sharedApplication] _addWindow:self];
     }
@@ -329,7 +329,6 @@ const float WSWindowEdgePad = 2;
     shmPath = [NSString stringWithFormat:@"/%s/%u/win/%u", [bundleID cString], getpid(), _number];
 
     _context = [self cgContext];
-    [[NSDraggingManager draggingManager] registerWindow:self dragTypes:nil];
     return self;
 }
 
@@ -388,6 +387,10 @@ const float WSWindowEdgePad = 2;
         if(shmfd >= 0) {
             buffer = mmap(NULL, bufsize, PROT_WRITE|PROT_READ, MAP_SHARED, shmfd, 0);
             close(shmfd);
+        }
+        if(shmfd < 0 || buffer == MAP_FAILED) {
+            buffer = NULL;
+            return nil;
         }
 
         O2ColorSpaceRef colorSpace = O2ColorSpaceCreateDeviceRGB();
@@ -1525,6 +1528,24 @@ const float WSWindowEdgePad = 2;
    return point;
 }
 
+-(NSRect)convertRectToScreen:(NSRect)rect {
+   rect.origin=[self convertBaseToScreen:rect.origin];
+   return rect;
+}
+
+-(NSRect)convertRectFromScreen:(NSRect)rect {
+   rect.origin=[self convertScreenToBase:rect.origin];
+   return rect;
+}
+
+-(NSPoint)convertPointToScreen:(NSPoint)point {
+   return [self convertBaseToScreen:point];
+}
+
+-(NSPoint)convertPointFromScreen:(NSPoint)point {
+   return [self convertScreenToBase:point];
+}
+
 -(NSRect)frameRectForContentRect:(NSRect)contentRect {
    NSRect result=CGOutsetRectForNativeWindowBorder(contentRect,[self styleMask]);
 
@@ -1876,9 +1897,7 @@ const float WSWindowEdgePad = 2;
        [self enableFlushWindow];
        [self flushWindowIfNeeded];
     }
-
     [NSGraphicsContext setQuartzDebugMode: NO];
-
     [self disableFlushWindow];
     [_backgroundView displayIfNeeded];
     [self enableFlushWindow];
@@ -2059,7 +2078,6 @@ const float WSWindowEdgePad = 2;
 
 -(void)orderWindow:(NSWindowOrderingMode)place relativeTo:(int)relativeTo {
 // The move notifications are sent under unknown conditions around orderFront: in the Apple AppKit, we do them all the time here until it's figured out. I suspect it is a side effect of off-screen windows being at off-screen coordinates (as opposed to just being hidden)
-
    [self postNotificationName:NSWindowWillMoveNotification];
 
    switch(place){
@@ -2462,8 +2480,8 @@ const float WSWindowEdgePad = 2;
 }
 
 -(void)zoom:sender {
-    NSRect zoomedFrame = [self zoomedFrame];
-    if (NSEqualRects( _frame, zoomedFrame )) zoomedFrame = _savedFrame;
+    BOOL zooming = !_isZoomed;
+    NSRect zoomedFrame = zooming ? [self zoomedFrame] : _savedFrame;
 
     // Make sure we obey our minimums
     NSSize minSize = [self minSize];
@@ -2482,7 +2500,9 @@ const float WSWindowEdgePad = 2;
     }
 
     if (shouldZoom) {
-        _savedFrame = [self frame];
+        if(zooming)
+            _savedFrame = [self frame];
+        _isZoomed = zooming;
         [self setFrame: zoomedFrame display: YES];
     }
 }
@@ -2496,6 +2516,7 @@ const float WSWindowEdgePad = 2;
 -(void)deminiaturize:sender {
     _isMiniaturized = NO;
     [self _updateWSState];
+    [self display];
 }
 
 -(void)print:sender {
@@ -3098,9 +3119,36 @@ const float WSWindowEdgePad = 2;
 
 -(void)requestMove:(NSEvent *)event {
     [self postNotificationName:NSWindowWillMoveNotification];
+
+    struct wsRPCSimple move = {
+        { kWSWindowMove, sizeof(struct wsRPCSimple) - sizeof(struct wsRPCBase) },
+        _number, 0, 0, 0
+    };
+    kern_return_t result=_windowServerRPC(&move,sizeof(move),NULL,NULL);
 }
 
 -(void)requestResize:(NSEvent *)event {
+    NSPoint point = [event locationInWindow];
+    const CGFloat margin = 6.0;
+    int edges = 0;
+
+    if(point.x <= margin)
+        edges |= kWSResizeLeft;
+    else if(point.x >= NSWidth(_frame) - margin)
+        edges |= kWSResizeRight;
+    if(point.y <= margin)
+        edges |= kWSResizeBottom;
+    else if(point.y >= NSHeight(_frame) - margin)
+        edges |= kWSResizeTop;
+
+    if(edges == 0)
+        return;
+
+    struct wsRPCSimple resize = {
+        { kWSWindowResize, sizeof(struct wsRPCSimple) - sizeof(struct wsRPCBase) },
+        _number, edges, 0, 0
+    };
+    _windowServerRPC(&resize,sizeof(resize),NULL,NULL);
 }
 
 // WindowServer wants us to do something...

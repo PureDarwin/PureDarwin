@@ -79,7 +79,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 O2GState *O2GStateCopyWithZone(O2GState *self,NSZone *zone) {
    O2GState *copy=NSCopyObject(self,0,zone);
-
    copy->_clipState=O2ClipStateCreateCopy(self->_clipState);
    copy->_strokeColor=O2ColorCreateCopy(self->_strokeColor);
    copy->_fillColor=O2ColorCreateCopy(self->_fillColor);
@@ -422,7 +421,7 @@ void O2GStateSetAlpha(O2GState *self,float alpha){
 
 -(void)setShadowOffset:(O2Size)offset blur:(float)blur {
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceRGB();
-   float         components[4]={0,0,0,1.0/3.0};
+   CGFloat       components[4]={0,0,0,1.0/3.0};
    O2ColorRef color=O2ColorCreate(colorSpace,components);
 
    [self setShadowOffset:offset blur:blur color:color];

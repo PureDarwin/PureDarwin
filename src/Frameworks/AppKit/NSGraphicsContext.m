@@ -159,7 +159,8 @@ NSMutableArray *NSCurrentFocusStack() {
    NSGraphicsContext *current=_currentContext();
 
    if(current!=nil) {
-    [_contextStack() addObject:current];
+    NSMutableArray *stack=_contextStack();
+    [stack addObject:current];
     [current saveGraphicsState];
    }
 }

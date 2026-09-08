@@ -39,6 +39,9 @@
 - (NSUInteger)count;
 - (nullable id)objectForKey:(id)key;
 - (nullable id)objectForKeyedSubscript:(id)key;
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)length;
 - (NSArray<KeyType> *)allKeys;
 - (void)enumerateKeysAndObjectsUsingBlock:(void (^)(KeyType key, ObjectType obj, BOOL *stop))block;
 

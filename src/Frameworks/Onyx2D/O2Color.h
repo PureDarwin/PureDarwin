@@ -20,18 +20,18 @@ typedef O2Color *O2ColorRef;
 @interface O2Color : NSObject {
     O2ColorSpaceRef _colorSpace;
     unsigned _numberOfComponents;
-    O2Float *_components;
+    CGFloat *_components;
     O2Pattern *_pattern;
 }
 
 O2ColorRef O2ColorRetain(O2ColorRef self);
 void O2ColorRelease(O2ColorRef self);
 
-O2ColorRef O2ColorCreate(O2ColorSpaceRef colorSpace, const O2Float *components);
+O2ColorRef O2ColorCreate(O2ColorSpaceRef colorSpace, const CGFloat *components);
 O2ColorRef O2ColorCreateGenericGray(O2Float gray, O2Float a);
 O2ColorRef O2ColorCreateGenericRGB(O2Float r, O2Float g, O2Float b, O2Float a);
 O2ColorRef O2ColorCreateGenericCMYK(O2Float c, O2Float m, O2Float y, O2Float k, O2Float a);
-O2ColorRef O2ColorCreateWithPattern(O2ColorSpaceRef colorSpace, O2PatternRef pattern, const O2Float *components);
+O2ColorRef O2ColorCreateWithPattern(O2ColorSpaceRef colorSpace, O2PatternRef pattern, const CGFloat *components);
 
 O2ColorRef O2ColorCreateCopy(O2ColorRef self);
 O2ColorRef O2ColorCreateCopyWithAlpha(O2ColorRef self, O2Float a);
@@ -40,12 +40,12 @@ BOOL O2ColorEqualToColor(O2ColorRef self, O2ColorRef other);
 
 O2ColorSpaceRef O2ColorGetColorSpace(O2ColorRef self);
 size_t O2ColorGetNumberOfComponents(O2ColorRef self);
-const O2Float *O2ColorGetComponents(O2ColorRef self);
+const CGFloat *O2ColorGetComponents(O2ColorRef self);
 O2Float O2ColorGetAlpha(O2ColorRef self);
 
 O2PatternRef O2ColorGetPattern(O2ColorRef self);
 
-int O2ColorConvertComponentsToDeviceRGB(O2ColorSpaceRef inputSpace, const O2Float *input, O2Float *output);
+int O2ColorConvertComponentsToDeviceRGB(O2ColorSpaceRef inputSpace, const CGFloat *input, CGFloat *output);
 O2ColorRef O2ColorConvertToDeviceRGB(O2ColorRef self);
 
 @end

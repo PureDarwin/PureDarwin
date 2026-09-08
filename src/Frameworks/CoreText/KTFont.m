@@ -12,15 +12,41 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 @implementation KTFont
 
 -initWithFont:(CGFontRef)font size:(CGFloat)size {
-   _font=CGFontRetain(font);
+   _font=[(id)font retain];
    _unitsPerEm=CGFontGetUnitsPerEm(_font);
    _size=size;
    return self;
 }
 
 -initWithUIFontType:(CTFontUIFontType)uiFontType size:(CGFloat)size language:(NSString *)language {
-   O2InvalidAbstractInvocation();
-   return nil;
+   NSString *name;
+
+   switch(uiFontType) {
+    case kCTFontEmphasizedSystemFontType:
+    case kCTFontSmallEmphasizedSystemFontType:
+    case kCTFontMiniEmphasizedSystemFontType:
+    case kCTFontMenuTitleFontType:
+    case kCTFontWindowTitleFontType:
+    case kCTFontUtilityWindowTitleFontType:
+    case kCTFontAlertHeaderFontType:
+    case kCTFontEmphasizedSystemDetailFontType:
+     name=@"Inter-Bold";
+     break;
+
+    default:
+     name=@"Inter-Regular";
+     break;
+   }
+
+   CGFontRef font=CGFontCreateWithFontName((CFStringRef)name);
+   if(font==NULL) {
+    [self release];
+    return nil;
+   }
+
+   self=[self initWithFont:font size:size];
+   CGFontRelease(font);
+   return self;
 }
 
 -(void)dealloc {

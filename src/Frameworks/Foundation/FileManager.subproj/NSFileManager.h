@@ -72,6 +72,9 @@ FOUNDATION_EXPORT NSString *const NSFileSystemFileNumber;
 - (NSString *)currentDirectoryPath;
 - (BOOL)changeCurrentDirectoryPath:(NSString *)path;
 
+- (NSString *)stringWithFileSystemRepresentation:(const char *)string
+                                           length:(NSUInteger)length;
+
 @end
 
 #endif /* NSFileManager_h */

@@ -53,10 +53,15 @@
 }
 
 -(void)getGlyphs:(CGGlyph *)glyphs forCharacters:(const unichar *)characters length:(unsigned)length {
-   O2Font_FT *o2Font=(O2Font_FT *)_font;
-   FT_Face    face=[o2Font face];
+   FT_Face face=[(id)_font face];
 
    int i;
+   if(face==NULL) {
+    for(i=0;i<length;i++)
+     glyphs[i]=0;
+    return;
+   }
+
    for(i=0; i<length; i++)
    {
       glyphs[i]=FT_Get_Char_Index(face, characters[i]);
@@ -64,16 +69,24 @@
 }
 
 -(void)getAdvancements:(CGSize *)advancements forGlyphs:(const CGGlyph *)glyphs count:(unsigned)count {
-   O2Font_FT *o2Font=(O2Font_FT *)_font;
-   FT_Face    face=[o2Font face];
+   FT_Face face=[(id)_font face];
 
    int i;
+   if(face==NULL) {
+    for(i=0;i<count;i++)
+     advancements[i]=CGSizeZero;
+    return;
+   }
    FT_Set_Pixel_Sizes(face, _size, _size);
 
    for(i=0;i<count;i++){
-    FT_Load_Glyph(face, glyphs[i], FT_LOAD_DEFAULT);
-      advancements[i]= CGSizeMake(face->glyph->bitmap_left,
-                                  0);
+    if(glyphs[i] >= face->num_glyphs ||
+       FT_Load_Glyph(face, glyphs[i], FT_LOAD_DEFAULT) != 0) {
+      advancements[i]=CGSizeZero;
+      continue;
+    }
+      advancements[i]= CGSizeMake(face->glyph->advance.x / 64.0,
+                                  face->glyph->advance.y / 64.0);
    }
 }
 
@@ -84,12 +97,11 @@
 }
 
 -(CGPoint)positionOfGlyph:(CGGlyph)current precededByGlyph:(CGGlyph)previous isNominal:(BOOL *)isNominalp {
-   O2Font_FT *o2Font=(O2Font_FT *)_font;
-   FT_Face    face=[o2Font face];
+   FT_Face face=[(id)_font face];
 
    *isNominalp=YES;
 
-   if(!current)
+   if(!current || face==NULL)
       return NSZeroPoint;
 
    FT_Set_Pixel_Sizes(face, _size, _size);

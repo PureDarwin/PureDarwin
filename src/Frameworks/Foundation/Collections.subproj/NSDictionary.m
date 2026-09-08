@@ -50,6 +50,19 @@ static Boolean ns_dictionary_value_equal(const void *left,
     return [(id)left isEqual:(id)right] ? true : false;
 }
 
+static CFHashCode ns_dictionary_key_hash(const void *value) {
+    return (CFHashCode)[(id)value hash];
+}
+
+static const CFDictionaryKeyCallBacks ns_dictionary_key_callbacks = {
+    0,
+    ns_dictionary_value_retain,
+    ns_dictionary_value_release,
+    NULL,
+    ns_dictionary_value_equal,
+    ns_dictionary_key_hash
+};
+
 static const CFDictionaryValueCallBacks ns_dictionary_value_callbacks = {
     0,
     ns_dictionary_value_retain,
@@ -130,7 +143,7 @@ static void pd_add_dictionary_entry(const void *key, const void *value,
 
 + (instancetype)dictionary {
     return (id)CFDictionaryCreate(kCFAllocatorDefault, NULL, NULL, 0,
-                                  &kCFTypeDictionaryKeyCallBacks,
+                                  &ns_dictionary_key_callbacks,
                                   &ns_dictionary_value_callbacks);
 }
 
@@ -138,13 +151,13 @@ static void pd_add_dictionary_entry(const void *key, const void *value,
     const void *keys[] = { (const void *)key };
     const void *objects[] = { (const void *)object };
     return (id)CFDictionaryCreate(kCFAllocatorDefault, keys, objects, 1,
-                                  &kCFTypeDictionaryKeyCallBacks,
+                                  &ns_dictionary_key_callbacks,
                                   &ns_dictionary_value_callbacks);
 }
 
 + (instancetype)dictionaryWithObjectsAndKeys:(id)firstObject, ... {
     CFMutableDictionaryRef result = CFDictionaryCreateMutable(
-        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks,
+        kCFAllocatorDefault, 0, &ns_dictionary_key_callbacks,
         &ns_dictionary_value_callbacks);
     if (result == NULL || firstObject == nil)
         return (id)result;
@@ -170,7 +183,7 @@ static void pd_add_dictionary_entry(const void *key, const void *value,
         return nil;
 
     CFMutableDictionaryRef result = CFDictionaryCreateMutable(
-        kCFAllocatorDefault, (CFIndex)count, &kCFTypeDictionaryKeyCallBacks,
+        kCFAllocatorDefault, (CFIndex)count, &ns_dictionary_key_callbacks,
         &ns_dictionary_value_callbacks);
     for (NSUInteger i = 0; i < count; i++) {
         CFDictionarySetValue(result, [keys objectAtIndex:i],
@@ -191,7 +204,7 @@ static void pd_add_dictionary_entry(const void *key, const void *value,
     return (id)CFDictionaryCreate(kCFAllocatorDefault,
                                   (const void **)keys, (const void **)objects,
                                   (CFIndex)count,
-                                  &kCFTypeDictionaryKeyCallBacks,
+                                  &ns_dictionary_key_callbacks,
                                   &ns_dictionary_value_callbacks);
 }
 
@@ -314,6 +327,27 @@ static void pd_add_dictionary_entry(const void *key, const void *value,
     return [self objectForKey:key];
 }
 
+/* Enumerates keys, which is what for..in over a dictionary yields. The key
+ * array is created once on the first call and parked in the state so the rest
+ * of the loop is just indexing. */
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)length {
+    NSArray *keys;
+
+    if (state->state == 0) {
+        keys = [[self allKeys] autorelease];
+        state->extra[1] = (unsigned long)keys;
+    } else {
+        keys = (NSArray *)state->extra[1];
+    }
+
+    if (keys == nil) {
+        return 0;
+    }
+    return [keys countByEnumeratingWithState:state objects:buffer count:length];
+}
+
 - (NSArray *)allKeys {
     CFIndex n = CFDictionaryGetCount((CFDictionaryRef)self);
     const void **keys = malloc(sizeof(void *) * (size_t)(n > 0 ? n : 1));
@@ -341,7 +375,7 @@ static void pd_add_dictionary_entry(const void *key, const void *value,
 
 + (instancetype)dictionaryWithCapacity:(NSUInteger)capacity {
     return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
-                                         &kCFTypeDictionaryKeyCallBacks,
+                                         &ns_dictionary_key_callbacks,
                                          &ns_dictionary_value_callbacks);
 }
 

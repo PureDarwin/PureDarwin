@@ -47,6 +47,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _string;
 }
 
+-(NSUInteger)length {
+   return [_string length];
+}
+
 -(NSDictionary *)attributesAtIndex:(NSUInteger)location effectiveRange:(NSRangePointer)effectiveRangep {
    NSDictionary *result;
 
@@ -63,11 +67,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 static inline int replaceCharactersInRangeWithString(NSTextStorage_concrete *self,NSRange range,NSString *string){
    int delta=[string length]-range.length;
-
    [self->_string replaceCharactersInRange:range withString:string];
 
 //NSRangeEntriesDump(self->_rangeToAttributes);
-
    NSRangeEntriesExpandAndWipe(self->_rangeToAttributes,range,delta);
    if(NSCountRangeEntries(self->_rangeToAttributes)==0)
     NSRangeEntryInsert(self->_rangeToAttributes,NSMakeRange(0,[self->_string length]),[NSDictionary dictionary]);
@@ -104,7 +106,6 @@ static inline void replaceCharactersInRangeWithAttributedString(NSTextStorage_co
     NSRange       effectiveRange;
     NSDictionary *attributes=[other attributesAtIndex:location effectiveRange:&effectiveRange];
     NSRange       range=NSMakeRange(replaced.location+location,effectiveRange.length);
-
     setAttributes(self,attributes,range);
 
     location=NSMaxRange(effectiveRange);
@@ -114,7 +115,6 @@ static inline void replaceCharactersInRangeWithAttributedString(NSTextStorage_co
           // That will just try to merge attributes at the location when possible
           NSRangeEntryInsert(self->_rangeToAttributes,NSMakeRange(replaced.location,0),nil);
    }
-
    [self edited:NSTextStorageEditedAttributes|NSTextStorageEditedCharacters range:replaced changeInLength:delta];
 }
 

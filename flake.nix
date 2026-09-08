@@ -1439,6 +1439,7 @@
               corefoundation = coreFoundationBuild;
               foundation = foundationBuild;
               freetype2 = freetype2Build;
+              fontconfig = fontconfigBuild;
               libpng = libpngBuild;
               libjpeg = libjpegBuild;
               zlib = xvfbZlibBuild;

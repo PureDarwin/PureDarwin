@@ -9,7 +9,9 @@
 #include <WindowServer/rpc.h>
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include <CoreGraphics/CGDirectDisplay_puredarwin.h>
+#include <CoreGraphics/CGWindowLevel.h>
 #include <CoreFoundation/CFBundle.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +27,8 @@ struct wsWindow {
     struct wl_surface *surface;
     struct xdg_surface *xdgSurface;
     struct xdg_toplevel *toplevel;
+    struct zwlr_layer_surface_v1 *layerSurface;
+    int level;
     struct wl_shm_pool *pool;
     struct wl_buffer *buffer;
     void *pixels;
@@ -41,6 +45,7 @@ static struct {
     struct wl_registry *registry;
     struct wl_compositor *compositor;
     struct xdg_wm_base *wmBase;
+    struct zwlr_layer_shell_v1 *layerShell;
     struct wl_seat *seat;
     struct wl_output *output;
     struct wl_shm *shm;
@@ -57,6 +62,7 @@ static struct {
     pthread_t dispatchThread;
     int dispatchRunning;
     int focusWindowID;
+    uint32_t pointerButtonSerial;
     struct wsWindow *windows;
     int connected;
     int lastMouseX, lastMouseY;
@@ -108,9 +114,10 @@ static const struct wl_output_listener outputListener = {
 };
 
 /* Defined with the rest of the input handling, below. */
-static void seatAttachListener(void);
+static const struct wl_seat_listener seatListener;
 static void *dispatchThreadMain(void *unused);
 static int windowAttachBuffer(struct wsWindow *window);
+static void windowReleaseBuffer(struct wsWindow *window);
 
 static void registryGlobal(void *data, struct wl_registry *registry, uint32_t name,
                            const char *interface, uint32_t version) {
@@ -119,10 +126,16 @@ static void registryGlobal(void *data, struct wl_registry *registry, uint32_t na
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
         ws.wmBase = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
         xdg_wm_base_add_listener(ws.wmBase, &wmBaseListener, NULL);
+    } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
+        ws.layerShell = wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         ws.shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         ws.seat = wl_registry_bind(registry, name, &wl_seat_interface, 5);
+        /* wl_seat sends capabilities as soon as the bind is processed. Attach
+         * before the enclosing roundtrip returns or that initial event is
+         * dispatched without a listener and is not sent again. */
+        wl_seat_add_listener(ws.seat, &seatListener, NULL);
     } else if (strcmp(interface, wl_output_interface.name) == 0) {
         ws.output = wl_registry_bind(registry, name, &wl_output_interface, 2);
         wl_output_add_listener(ws.output, &outputListener, NULL);
@@ -170,8 +183,6 @@ static int ensureConnected(void) {
         return 0;
     }
 
-    seatAttachListener();
-
     pthread_mutex_init(&ws.queueLock, NULL);
     pthread_cond_init(&ws.queueReady, NULL);
     ws.connected = 1;
@@ -198,6 +209,57 @@ static void xdgSurfaceConfigure(void *data, struct xdg_surface *surface, uint32_
 static const struct xdg_surface_listener xdgSurfaceListener = {
     .configure = xdgSurfaceConfigure,
 };
+
+static void layerSurfaceConfigure(void *data, struct zwlr_layer_surface_v1 *surface,
+                                  uint32_t serial, uint32_t width, uint32_t height) {
+    struct wsWindow *window = data;
+
+    zwlr_layer_surface_v1_ack_configure(surface, serial);
+
+    /* The compositor sizes background layers to the output; take what it
+     * gives us so the backing store matches the surface. */
+    if (width > 0 && height > 0 &&
+        ((double)width != window->w || (double)height != window->h)) {
+        window->w = width;
+        window->h = height;
+        windowReleaseBuffer(window);
+    }
+    if (window->buffer == NULL) {
+        windowAttachBuffer(window);
+    }
+    wl_surface_commit(window->surface);
+
+    pthread_mutex_lock(&ws.queueLock);
+    window->configured = 1;
+    pthread_cond_broadcast(&ws.queueReady);
+    pthread_mutex_unlock(&ws.queueLock);
+}
+
+static void layerSurfaceClosed(void *data, struct zwlr_layer_surface_v1 *surface) {
+}
+
+static const struct zwlr_layer_surface_v1_listener layerSurfaceListener = {
+    .configure = layerSurfaceConfigure,
+    .closed = layerSurfaceClosed,
+};
+
+/* AppKit window levels are CGWindowLevelKey values, so desktop sorts below
+ * normal and the dock/menu levels above it. Anything that maps to a layer is
+ * given a layer-shell role instead of an xdg_toplevel. */
+static int layerForWindowLevel(int level, uint32_t *layerOut) {
+    if (ws.layerShell == NULL) {
+        return 0;
+    }
+    if (level <= kCGDesktopWindowLevelKey) {
+        *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
+        return 1;
+    }
+    if (level == kCGDockWindowLevelKey || level == kCGMainMenuWindowLevelKey) {
+        *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+        return 1;
+    }
+    return 0;
+}
 
 static void windowShmPath(int windowID, char *out, size_t outSize) {
     CFBundleRef bundle = CFBundleGetMainBundle();
@@ -327,15 +389,18 @@ static void pointerLeave(void *data, struct wl_pointer *pointer, uint32_t serial
 static void pointerMotion(void *data, struct wl_pointer *pointer, uint32_t time,
                           wl_fixed_t x, wl_fixed_t y) {
     struct mach_event event = {0};
+    struct wsWindow *window = windowForID(ws.focusWindowID);
     double newX = wl_fixed_to_double(x);
     double newY = wl_fixed_to_double(y);
 
     event.windowID = ws.focusWindowID;
     event.code = WS_MOUSE_MOVED;
-    event.x = newX;
-    event.y = newY;
+    /* AppKit's event bridge accepts screen coordinates and converts them back
+     * to window coordinates. Wayland pointer coordinates are surface-local. */
+    event.x = newX + (window != NULL ? window->x : 0);
+    event.y = window != NULL ? window->y + window->h - newY : newY;
     event.dx = newX - lastPointerX;
-    event.dy = newY - lastPointerY;
+    event.dy = lastPointerY - newY;
     event.mods = currentModifiers;
     lastPointerX = newX;
     lastPointerY = newY;
@@ -345,7 +410,12 @@ static void pointerMotion(void *data, struct wl_pointer *pointer, uint32_t time,
 static void pointerButton(void *data, struct wl_pointer *pointer, uint32_t serial,
                           uint32_t time, uint32_t button, uint32_t state) {
     struct mach_event event = {0};
+    struct wsWindow *window = windowForID(ws.focusWindowID);
     int pressed = (state == WL_POINTER_BUTTON_STATE_PRESSED);
+
+    if (pressed) {
+        ws.pointerButtonSerial = serial;
+    }
 
     /* linux/input-event-codes.h: BTN_LEFT 0x110, BTN_RIGHT 0x111. */
     if (button == 0x110) {
@@ -356,8 +426,9 @@ static void pointerButton(void *data, struct wl_pointer *pointer, uint32_t seria
         return;
     }
     event.windowID = ws.focusWindowID;
-    event.x = lastPointerX;
-    event.y = lastPointerY;
+    event.x = lastPointerX + (window != NULL ? window->x : 0);
+    event.y = window != NULL
+        ? window->y + window->h - lastPointerY : lastPointerY;
     event.mods = currentModifiers;
     queuePush(&event);
 }
@@ -366,12 +437,31 @@ static void pointerAxis(void *data, struct wl_pointer *pointer, uint32_t time,
                         uint32_t axis, wl_fixed_t value) {
 }
 
+static void pointerFrame(void *data, struct wl_pointer *pointer) {
+}
+
+static void pointerAxisSource(void *data, struct wl_pointer *pointer,
+                              uint32_t source) {
+}
+
+static void pointerAxisStop(void *data, struct wl_pointer *pointer,
+                            uint32_t time, uint32_t axis) {
+}
+
+static void pointerAxisDiscrete(void *data, struct wl_pointer *pointer,
+                                uint32_t axis, int32_t discrete) {
+}
+
 static const struct wl_pointer_listener pointerListener = {
     .enter = pointerEnter,
     .leave = pointerLeave,
     .motion = pointerMotion,
     .button = pointerButton,
     .axis = pointerAxis,
+    .frame = pointerFrame,
+    .axis_source = pointerAxisSource,
+    .axis_stop = pointerAxisStop,
+    .axis_discrete = pointerAxisDiscrete,
 };
 
 static void keyboardKeymap(void *data, struct wl_keyboard *keyboard, uint32_t format,
@@ -501,19 +591,13 @@ static const struct wl_seat_listener seatListener = {
     .name = seatName,
 };
 
-static void seatAttachListener(void) {
-    if (ws.seat != NULL) {
-        wl_seat_add_listener(ws.seat, &seatListener, NULL);
-        /* The capabilities event arrives in reply to this. */
-        wl_display_roundtrip(ws.display);
-    }
-}
-
 /* Owns the Wayland connection's read side so input arrives without the app
  * having to poll. */
 static void *dispatchThreadMain(void *unused) {
     while (ws.dispatchRunning) {
         if (wl_display_dispatch(ws.display) < 0) {
+            fprintf(stderr,"WindowServer: Wayland dispatch stopped with error %d\n",
+                    wl_display_get_error(ws.display));
             break;
         }
     }
@@ -557,6 +641,55 @@ int _windowServerReceiveMessage(PortMessage *msg) {
     return 1;
 }
 
+/* Gives the surface its shell role. A window whose level maps to a layer gets
+ * a layer-shell surface; everything else gets an xdg_toplevel. The role cannot
+ * be changed in place, so a level change tears this down and rebuilds it. */
+static void windowCreateRole(struct wsWindow *window, const char *title) {
+    uint32_t layer;
+
+    if (layerForWindowLevel(window->level, &layer)) {
+        window->layerSurface = zwlr_layer_shell_v1_get_layer_surface(
+            ws.layerShell, window->surface, NULL, layer,
+            title != NULL && title[0] != '\0' ? title : "puredarwin");
+        zwlr_layer_surface_v1_add_listener(window->layerSurface,
+                                           &layerSurfaceListener, window);
+        zwlr_layer_surface_v1_set_size(window->layerSurface,
+                                       (uint32_t)window->w, (uint32_t)window->h);
+        /* Anchoring to all four edges makes the compositor size the surface to
+         * the output, which is what a desktop wants. */
+        if (layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND) {
+            zwlr_layer_surface_v1_set_anchor(window->layerSurface,
+                ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+                ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+            zwlr_layer_surface_v1_set_exclusive_zone(window->layerSurface, -1);
+        }
+        return;
+    }
+
+    window->xdgSurface = xdg_wm_base_get_xdg_surface(ws.wmBase, window->surface);
+    xdg_surface_add_listener(window->xdgSurface, &xdgSurfaceListener, window);
+    window->toplevel = xdg_surface_get_toplevel(window->xdgSurface);
+
+    if (title != NULL && title[0] != '\0') {
+        xdg_toplevel_set_title(window->toplevel, title);
+    }
+}
+
+static void windowDestroyRole(struct wsWindow *window) {
+    if (window->layerSurface != NULL) {
+        zwlr_layer_surface_v1_destroy(window->layerSurface);
+        window->layerSurface = NULL;
+    }
+    if (window->toplevel != NULL) {
+        xdg_toplevel_destroy(window->toplevel);
+        window->toplevel = NULL;
+    }
+    if (window->xdgSurface != NULL) {
+        xdg_surface_destroy(window->xdgSurface);
+        window->xdgSurface = NULL;
+    }
+}
+
 static kern_return_t windowCreate(struct wsRPCWindow *msg) {
     if (!ensureConnected()) {
         return KERN_FAILURE;
@@ -574,14 +707,9 @@ static kern_return_t windowCreate(struct wsRPCWindow *msg) {
     window->w = msg->w;
     window->h = msg->h;
 
+    window->level = msg->level;
     window->surface = wl_compositor_create_surface(ws.compositor);
-    window->xdgSurface = xdg_wm_base_get_xdg_surface(ws.wmBase, window->surface);
-    xdg_surface_add_listener(window->xdgSurface, &xdgSurfaceListener, window);
-    window->toplevel = xdg_surface_get_toplevel(window->xdgSurface);
-
-    if (msg->title[0] != '\0') {
-        xdg_toplevel_set_title(window->toplevel, msg->title);
-    }
+    windowCreateRole(window, msg->title);
 
     window->next = ws.windows;
     ws.windows = window;
@@ -613,8 +741,7 @@ static kern_return_t windowDestroy(struct wsRPCWindow *msg) {
         if (window->windowID == msg->windowID) {
             *link = window->next;
             windowReleaseBuffer(window);
-            if (window->toplevel != NULL)   { xdg_toplevel_destroy(window->toplevel); }
-            if (window->xdgSurface != NULL) { xdg_surface_destroy(window->xdgSurface); }
+            windowDestroyRole(window);
             if (window->surface != NULL)    { wl_surface_destroy(window->surface); }
             free(window);
             if (ws.display != NULL) {
@@ -644,20 +771,46 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
         }
     }
 
-    if (msg->title[0] != '\0') {
+    /* A level change can move the window between a layer and a toplevel, and
+     * the role is fixed once assigned - rebuild it. */
+    if (msg->level != window->level) {
+        uint32_t wasLayer, nowLayer;
+        int wasLayered = layerForWindowLevel(window->level, &wasLayer);
+        int nowLayered = layerForWindowLevel(msg->level, &nowLayer);
+
+        window->level = msg->level;
+
+        if (wasLayered != nowLayered || (wasLayered && wasLayer != nowLayer)) {
+            windowReleaseBuffer(window);
+            windowDestroyRole(window);
+            window->configured = 0;
+            windowCreateRole(window, msg->title);
+            wl_surface_commit(window->surface);
+            wl_display_flush(ws.display);
+
+            pthread_mutex_lock(&ws.queueLock);
+            while (!window->configured && ws.dispatchRunning) {
+                pthread_cond_wait(&ws.queueReady, &ws.queueLock);
+            }
+            pthread_mutex_unlock(&ws.queueLock);
+            return window->configured ? KERN_SUCCESS : KERN_FAILURE;
+        }
+    }
+
+    if (msg->title[0] != '\0' && window->toplevel != NULL) {
         xdg_toplevel_set_title(window->toplevel, msg->title);
     }
 
     if (msg->state != window->state) {
         switch (msg->state) {
             case MINIMIZED:
-                xdg_toplevel_set_minimized(window->toplevel);
+                if (window->toplevel != NULL) { xdg_toplevel_set_minimized(window->toplevel); }
                 break;
             case MAXIMIZED:
-                xdg_toplevel_set_maximized(window->toplevel);
+                if (window->toplevel != NULL) { xdg_toplevel_set_maximized(window->toplevel); }
                 break;
             case NORMAL:
-                xdg_toplevel_unset_maximized(window->toplevel);
+                if (window->toplevel != NULL) { xdg_toplevel_unset_maximized(window->toplevel); }
                 break;
             case HIDDEN:
                 /* Wayland has no hide; the surface is unmapped by attaching a
@@ -709,6 +862,34 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
             wl_surface_attach(window->surface, window->buffer, 0, 0);
             wl_surface_damage(window->surface, 0, 0, (int)window->w, (int)window->h);
             wl_surface_commit(window->surface);
+            wl_display_flush(ws.display);
+            return KERN_SUCCESS;
+        }
+
+        case kWSWindowMove: {
+            struct wsRPCSimple *msg = (struct wsRPCSimple *)data;
+            struct wsWindow *window = windowForID(msg->val1);
+
+            if (window == NULL || window->toplevel == NULL || ws.seat == NULL ||
+                ws.pointerButtonSerial == 0) {
+                return KERN_FAILURE;
+            }
+            xdg_toplevel_move(window->toplevel, ws.seat,
+                              ws.pointerButtonSerial);
+            wl_display_flush(ws.display);
+            return KERN_SUCCESS;
+        }
+
+        case kWSWindowResize: {
+            struct wsRPCSimple *msg = (struct wsRPCSimple *)data;
+            struct wsWindow *window = windowForID(msg->val1);
+
+            if (window == NULL || window->toplevel == NULL || ws.seat == NULL ||
+                ws.pointerButtonSerial == 0) {
+                return KERN_FAILURE;
+            }
+            xdg_toplevel_resize(window->toplevel, ws.seat,
+                                ws.pointerButtonSerial, msg->val2);
             wl_display_flush(ws.display);
             return KERN_SUCCESS;
         }

@@ -10,7 +10,44 @@
 #import <Foundation/NSData.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFData.h>
+#include <objc/runtime.h>
 #include <stdarg.h>
+
+extern CFStringRef _CFStringCreateWithFormatAndArgumentsAux(
+    CFAllocatorRef allocator,
+    CFStringRef (*copyDescription)(void *, const void *),
+    CFDictionaryRef options, CFStringRef format, va_list arguments);
+extern void _CFStringAppendFormatAndArgumentsAux(
+    CFMutableStringRef output,
+    CFStringRef (*copyDescription)(void *, const void *),
+    CFDictionaryRef options, CFStringRef format, va_list arguments);
+
+CFStringRef _NSCopyFormattingDescription(void *value, const void *locale) {
+    id object = (id)value;
+    Class objectClass = object_getClass(object);
+
+    if (objectClass != Nil && class_isMetaClass(objectClass)) {
+        return CFStringCreateWithCString(kCFAllocatorDefault,
+                                         class_getName((Class)object),
+                                         kCFStringEncodingUTF8);
+    }
+
+    NSString *description;
+    if ([object respondsToSelector:@selector(descriptionWithLocale:)]) {
+        description = [object descriptionWithLocale:(id)locale];
+    } else {
+        description = [object description];
+    }
+
+    return description ? CFRetain((CFStringRef)description) : NULL;
+}
+
+CFStringRef _NSStringCreateWithFormatAndArguments(NSString *format,
+                                                   va_list arguments) {
+    return _CFStringCreateWithFormatAndArgumentsAux(
+        kCFAllocatorDefault, _NSCopyFormattingDescription, NULL,
+        (CFStringRef)format, arguments);
+}
 
 /* NSStringEncoding and CFStringEncoding are separate numbering schemes; only
  * the two encodings NSString.h declares are mapped. */
@@ -30,9 +67,17 @@ __NSStringCFEncoding(NSStringEncoding encoding)
 + (instancetype)stringWithFormat:(NSString *)format, ... {
     va_list args;
     va_start(args, format);
-    CFStringRef result = CFStringCreateWithFormatAndArguments(kCFAllocatorDefault, NULL, (CFStringRef)format, args);
+    CFStringRef result = _NSStringCreateWithFormatAndArguments(format, args);
     va_end(args);
     return (id)result;
+}
+
++ (instancetype)stringWithContentsOfFile:(NSString *)path
+                                  encoding:(NSStringEncoding)encoding
+                                     error:(NSError **)error {
+    return [[[self alloc] initWithContentsOfFile:path
+                                        encoding:encoding
+                                           error:error] autorelease];
 }
 
 - (instancetype)initWithUTF8String:(const char *)utf8String {
@@ -50,6 +95,26 @@ __NSStringCFEncoding(NSStringEncoding encoding)
                                                  (CFIndex)length,
                                                  __NSStringCFEncoding(encoding),
                                                  false);
+    return (id)result;
+}
+
+- (instancetype)initWithContentsOfFile:(NSString *)path
+                                encoding:(NSStringEncoding)encoding
+                                   error:(NSError **)error {
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (data == nil) {
+        if (error != NULL) {
+            *error = nil;
+        }
+        [self release];
+        return nil;
+    }
+    CFStringRef result = CFStringCreateWithBytes(kCFAllocatorDefault,
+                                                 (const UInt8 *)[data bytes],
+                                                 (CFIndex)[data length],
+                                                 __NSStringCFEncoding(encoding),
+                                                 false);
+    [self release];
     return (id)result;
 }
 
@@ -99,8 +164,9 @@ __NSStringCFEncoding(NSStringEncoding encoding)
 - (void)appendFormat:(NSString *)format, ... {
     va_list args;
     va_start(args, format);
-    CFStringAppendFormatAndArguments((CFMutableStringRef)self, NULL,
-                                     (CFStringRef)format, args);
+    _CFStringAppendFormatAndArgumentsAux((CFMutableStringRef)self,
+                                         _NSCopyFormattingDescription, NULL,
+                                         (CFStringRef)format, args);
     va_end(args);
 }
 

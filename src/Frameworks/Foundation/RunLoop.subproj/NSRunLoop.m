@@ -16,6 +16,25 @@
 #include <sys/select.h>
 #include <pthread.h>
 
+@interface NSRunLoopPerform : NSObject {
+@public
+    SEL selector;
+    id target;
+    id argument;
+    NSArray *modes;
+    NSUInteger order;
+}
+@end
+
+@implementation NSRunLoopPerform
+- (void)dealloc {
+    [target release];
+    [argument release];
+    [modes release];
+    [super dealloc];
+}
+@end
+
 NSRunLoopMode const NSDefaultRunLoopMode = @"kCFRunLoopDefaultMode";
 NSRunLoopMode const NSRunLoopCommonModes = @"kCFRunLoopCommonModes";
 NSRunLoopMode const NSEventTrackingRunLoopMode = @"NSEventTrackingRunLoopMode";
@@ -64,6 +83,7 @@ static void createRunLoopKey(void) {
     }
     _modeToSources = [[NSMutableDictionary alloc] init];
     _timers = [[NSMutableArray alloc] init];
+    _performs = [[NSMutableArray alloc] init];
     _currentMode = [NSDefaultRunLoopMode copy];
     return self;
 }
@@ -71,6 +91,7 @@ static void createRunLoopKey(void) {
 - (void)dealloc {
     [_modeToSources release];
     [_timers release];
+    [_performs release];
     [_currentMode release];
     [super dealloc];
 }
@@ -101,6 +122,57 @@ static void createRunLoopKey(void) {
     [_timers addObject:timer];
 }
 
+- (void)performSelector:(SEL)selector target:(id)target argument:(id)argument
+                  order:(NSUInteger)order modes:(NSArray *)modes {
+    NSRunLoopPerform *perform = [NSRunLoopPerform new];
+    perform->selector = selector;
+    perform->target = [target retain];
+    perform->argument = [argument retain];
+    perform->modes = [modes copy];
+    perform->order = order;
+    [_performs addObject:perform];
+    [perform release];
+}
+
+- (void)cancelPerformSelector:(SEL)selector target:(id)target argument:(id)argument {
+    for(NSUInteger index = [_performs count]; index > 0; --index) {
+        NSRunLoopPerform *perform = [_performs objectAtIndex:index - 1];
+        if(perform->selector == selector && perform->target == target &&
+           perform->argument == argument)
+            [_performs removeObjectAtIndex:index - 1];
+    }
+}
+
+- (BOOL)_performSelectorsForMode:(NSRunLoopMode)mode {
+    BOOL fired = NO;
+
+    for(;;) {
+        NSUInteger selected = NSNotFound;
+        NSUInteger selectedOrder = (NSUInteger)-1;
+        for(NSUInteger index = 0; index < [_performs count]; ++index) {
+            NSRunLoopPerform *perform = [_performs objectAtIndex:index];
+            if(([perform->modes containsObject:mode] ||
+                [perform->modes containsObject:NSRunLoopCommonModes]) &&
+               perform->order < selectedOrder) {
+                selected = index;
+                selectedOrder = perform->order;
+            }
+        }
+        if(selected == NSNotFound)
+            break;
+
+        NSRunLoopPerform *perform = [[_performs objectAtIndex:selected] retain];
+        [_performs removeObjectAtIndex:selected];
+        typedef void (*PerformIMP)(id, SEL, id);
+        PerformIMP implementation = (PerformIMP)[perform->target
+            methodForSelector:perform->selector];
+        implementation(perform->target, perform->selector, perform->argument);
+        [perform release];
+        fired = YES;
+    }
+    return fired;
+}
+
 - (NSDate *)limitDateForMode:(NSRunLoopMode)mode {
     return [NSDate distantFuture];
 }
@@ -111,6 +183,13 @@ static void createRunLoopKey(void) {
 
     NSString *previousMode = _currentMode;
     _currentMode = [mode copy];
+
+    BOOL fired = [self _performSelectorsForMode:mode];
+    if(fired) {
+        [_currentMode release];
+        _currentMode = previousMode;
+        return YES;
+    }
 
     fd_set readSet, writeSet, exceptSet;
     FD_ZERO(&readSet);
@@ -142,11 +221,15 @@ static void createRunLoopKey(void) {
     if (remaining < 0.0) {
         remaining = 0.0;
     }
+    /* XNU rejects very large select() timeouts. Long deadlines are still
+     * honored by waiting in bounded pieces; an input source wakes us sooner. */
+    if (remaining > 86400.0) {
+        remaining = 86400.0;
+    }
     struct timeval timeout;
     timeout.tv_sec = (time_t)remaining;
     timeout.tv_usec = (suseconds_t)((remaining - (double)timeout.tv_sec) * 1000000.0);
 
-    BOOL fired = NO;
     if (maxFd >= 0) {
         int ready = select(maxFd + 1, &readSet, &writeSet, &exceptSet, &timeout);
 

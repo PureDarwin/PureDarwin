@@ -365,7 +365,7 @@ const NSString *kO2PDFContextTitle=@"kO2PDFContextTitle";
   O2GState *gState=O2ContextCurrentGState(self);
 
   {
-  const float *components=O2ColorGetComponents(gState->_strokeColor);
+  const CGFloat *components=O2ColorGetComponents(gState->_strokeColor);
 
    switch([O2ColorGetColorSpace(gState->_strokeColor) type]){
 
@@ -388,7 +388,7 @@ const NSString *kO2PDFContextTitle=@"kO2PDFContextTitle";
   }
 
   {
-   const float *components=O2ColorGetComponents(gState->_fillColor);
+   const CGFloat *components=O2ColorGetComponents(gState->_fillColor);
 
    switch([O2ColorGetColorSpace(gState->_fillColor) type]){
 

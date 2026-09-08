@@ -24,6 +24,10 @@ NSString * const NSTextStorageDidProcessEditingNotification=@"NSTextStorageDidPr
    return NSAllocateObject(self,0,zone);
 }
 
+-init {
+   return [self initWithString:@""];
+}
+
 -initWithCoder:(NSCoder *)coder {
    _layoutManagers=[NSMutableArray new];
    return self;
@@ -103,29 +107,23 @@ NSString * const NSTextStorageDidProcessEditingNotification=@"NSTextStorageDidPr
 
 -(void)processEditing {
    int i,count;
-
 	if ([_delegate respondsToSelector: @selector(textStorageWillProcessEditing:)]) {
 		NSNotification* note = [NSNotification notificationWithName: NSTextStorageWillProcessEditingNotification object: self userInfo: nil];
 		[_delegate textStorageWillProcessEditing: note];
 	}
-	
     [[NSNotificationCenter defaultCenter] postNotificationName: NSTextStorageWillProcessEditingNotification object:self];
-
     [self fixAttributesInRange:_editedRange];
-
 	if ([_delegate respondsToSelector: @selector(textStorageDidProcessEditing:)]) {
 		NSNotification* note = [NSNotification notificationWithName: NSTextStorageDidProcessEditingNotification object: self userInfo: nil];
 		[_delegate textStorageDidProcessEditing: note];
 	}
-	
    [[NSNotificationCenter defaultCenter] postNotificationName: NSTextStorageDidProcessEditingNotification object:self];
-
    count=[_layoutManagers count];
    for(i=0;i<count;i++){
     NSLayoutManager *layout=[_layoutManagers objectAtIndex:i];
 
     [layout textStorage:self edited:[self editedMask] range:[self editedRange]
-       changeInLength:[self changeInLength]
+      changeInLength:[self changeInLength]
       invalidatedRange:[self invalidatedRange]];
    }
 }
@@ -160,4 +158,3 @@ NSString * const NSTextStorageDidProcessEditingNotification=@"NSTextStorageDidPr
 }
 
 @end
-

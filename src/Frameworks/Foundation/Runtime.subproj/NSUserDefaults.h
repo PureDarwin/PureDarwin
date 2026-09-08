@@ -19,6 +19,10 @@
 
 FOUNDATION_EXPORT NSString * const NSUserDefaultsDidChangeNotification;
 
+FOUNDATION_EXPORT NSString * const NSGlobalDomain;
+FOUNDATION_EXPORT NSString * const NSArgumentDomain;
+FOUNDATION_EXPORT NSString * const NSRegistrationDomain;
+
 @interface NSUserDefaults : NSObject
 
 + (NSUserDefaults *)standardUserDefaults;
@@ -44,6 +48,21 @@ FOUNDATION_EXPORT NSString * const NSUserDefaultsDidChangeNotification;
 
 - (void)registerDefaults:(NSDictionary *)defaults;
 - (BOOL)synchronize;
+
+- (NSDictionary *)persistentDomainForName:(NSString *)domainName;
+- (void)setPersistentDomain:(NSDictionary *)domain forName:(NSString *)domainName;
+- (void)removePersistentDomainForName:(NSString *)domainName;
+- (NSArray *)persistentDomainNames;
+
+- (NSDictionary *)volatileDomainForName:(NSString *)domainName;
+- (void)setVolatileDomain:(NSDictionary *)domain forName:(NSString *)domainName;
+- (void)removeVolatileDomainForName:(NSString *)domainName;
+- (NSArray *)volatileDomainNames;
+
+- (NSDictionary *)dictionaryRepresentation;
+
+- (id)objectForKey:(NSString *)key inDomain:(NSString *)domainName;
+- (void)setObject:(id)value forKey:(NSString *)key inDomain:(NSString *)domainName;
 
 @end
 

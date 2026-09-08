@@ -76,13 +76,8 @@ static inline void CFToNSRange(CFRange cf, NSRangePointer out) {
 - (id)attribute:(NSAttributedStringKey)name
         atIndex:(NSUInteger)index
  effectiveRange:(NSRangePointer)range {
-    CFRange effective = CFRangeMake(0, 0);
-    CFTypeRef result = CFAttributedStringGetAttribute(
-        (CFAttributedStringRef)self, (CFIndex)index, (CFStringRef)name,
-        (range != NULL) ? &effective : NULL);
-
-    CFToNSRange(effective, range);
-    return (id)result;
+    return [[self attributesAtIndex:index effectiveRange:range]
+        objectForKey:name];
 }
 
 - (id)attribute:(NSAttributedStringKey)name

@@ -45,13 +45,59 @@ const float NSWindowControlSpacing = 10;
 
 static O2Image *wsClose, *wsCloseHover, *wsMini, *wsMiniHover;
 static O2Image *wsZoom, *wsZoomUp, *wsZoomDown;
+static BOOL wsImagesTried;
+
+enum { kControlGlyphNone = 0, kControlGlyphClose, kControlGlyphMini, kControlGlyphZoom };
+
+// Fallback used when the traffic light images are unavailable.
+static void drawWindowControl(O2Context *context, CGRect rect,
+    CGFloat r, CGFloat g, CGFloat b, int glyph)
+{
+    CGFloat radius = rect.size.width / 2;
+    CGFloat cx = rect.origin.x + radius;
+    CGFloat cy = rect.origin.y + radius;
+
+    O2ContextSetRGBFillColor(context, r, g, b, 1);
+    O2ContextBeginPath(context);
+    // O2ContextAddArc takes fmod of the angles, so a full 2*pi sweep degenerates.
+    O2ContextAddEllipseInRect(context, rect);
+    O2ContextFillPath(context);
+
+    if(glyph == kControlGlyphNone)
+        return;
+
+    CGFloat inset = radius * 0.45;
+    O2ContextSetRGBStrokeColor(context, 0, 0, 0, 0.6);
+    O2ContextSetLineWidth(context, 1.5);
+    O2ContextBeginPath(context);
+    switch(glyph) {
+        case kControlGlyphClose:
+            O2ContextMoveToPoint(context, cx - inset, cy - inset);
+            O2ContextAddLineToPoint(context, cx + inset, cy + inset);
+            O2ContextMoveToPoint(context, cx - inset, cy + inset);
+            O2ContextAddLineToPoint(context, cx + inset, cy - inset);
+            break;
+        case kControlGlyphMini:
+            O2ContextMoveToPoint(context, cx - inset, cy);
+            O2ContextAddLineToPoint(context, cx + inset, cy);
+            break;
+        case kControlGlyphZoom:
+            O2ContextMoveToPoint(context, cx - inset, cy);
+            O2ContextAddLineToPoint(context, cx + inset, cy);
+            O2ContextMoveToPoint(context, cx, cy - inset);
+            O2ContextAddLineToPoint(context, cx, cy + inset);
+            break;
+    }
+    O2ContextStrokePath(context);
+}
 
 -initWithFrame:(NSRect)frame {
     self = [super initWithFrame:frame];
     pointer = NSZeroPoint;
 
     // use singleton traffic light images
-    if(wsClose == nil) {
+    if(!wsImagesTried) {
+        wsImagesTried = YES;
         NSString *basepath = @"/System/Library/CoreServices/WindowServer.app/Contents/Resources";
         NSString *path = [NSString stringWithFormat:@"%@/close.png", basepath];
         wsClose = [[[NSBitmapImageRep alloc] initWithContentsOfFile:path] CGImage];
@@ -177,21 +223,33 @@ static O2Image *wsZoom, *wsZoomUp, *wsZoomDown;
     controls = NSMakeRect(_closeButtonRect.origin.x, _closeButtonRect.origin.y,
             3*NSWindowControlSpacing + 3*NSWindowControlDiameter, NSWindowControlDiameter);
 
-    if(NSPointInRect(pointer, controls)) {
-        [_context drawImage:wsCloseHover inRect:_closeButtonRect];
-        [_context drawImage:wsMiniHover inRect:_miniButtonRect];
-        [_context drawImage:wsZoomUp inRect:_zoomButtonRect];
-    } else {
-        [_context drawImage:wsClose inRect:_closeButtonRect];
-        [_context drawImage:wsMini inRect:_miniButtonRect];
-        [_context drawImage:wsZoom inRect:_zoomButtonRect];
-    }
+    BOOL hover = NSPointInRect(pointer, controls);
 
+    if(wsClose != nil) {
+        if(hover) {
+            [_context drawImage:wsCloseHover inRect:_closeButtonRect];
+            [_context drawImage:wsMiniHover inRect:_miniButtonRect];
+            [_context drawImage:wsZoomUp inRect:_zoomButtonRect];
+        } else {
+            [_context drawImage:wsClose inRect:_closeButtonRect];
+            [_context drawImage:wsMini inRect:_miniButtonRect];
+            [_context drawImage:wsZoom inRect:_zoomButtonRect];
+        }
+    } else {
+        drawWindowControl(_context, _closeButtonRect, 0.99, 0.36, 0.34,
+            hover ? kControlGlyphClose : kControlGlyphNone);
+        drawWindowControl(_context, _miniButtonRect, 1.00, 0.74, 0.20,
+            hover ? kControlGlyphMini : kControlGlyphNone);
+        drawWindowControl(_context, _zoomButtonRect, 0.16, 0.79, 0.25,
+            hover ? kControlGlyphZoom : kControlGlyphNone);
+    }
     NSString *t = [[self window] title];
     if(t) {
+        NSFont *titleFont = [NSFont titleBarFontOfSize:15.0];
+        NSColor *titleColor = [NSColor blackColor];
         NSDictionary *attrs = @{
-            NSFontAttributeName : [NSFont titleBarFontOfSize:15.0],
-            NSForegroundColorAttributeName : [NSColor blackColor]
+            NSFontAttributeName : titleFont,
+            NSForegroundColorAttributeName : titleColor
         };
         NSAttributedString *title = [[NSAttributedString alloc] initWithString:t attributes:attrs];
         NSSize size = [title size];
@@ -232,12 +290,23 @@ static O2Image *wsZoom, *wsZoomUp, *wsZoomDown;
     CGFloat top, left, right, bottom;
     CGNativeBorderFrameWidthsForStyle([[self window] styleMask], &top, &left, &bottom, &right);
     NSPoint pos = [event locationInWindow];
+    const CGFloat resizeMargin = 6.0;
 
-    if(NSPointInRect(pos, _closeButtonRect))
+    if(([[self window] styleMask] & NSResizableWindowMask) &&
+       (pos.x <= resizeMargin || pos.x >= NSWidth(_frame) - resizeMargin ||
+        pos.y <= resizeMargin || pos.y >= NSHeight(_frame) - resizeMargin)) {
+        [[self window] requestResize:event];
+        return;
+    }
+
+    if(([[self window] styleMask] & NSClosableWindowMask) &&
+       NSPointInRect(pos, _closeButtonRect))
         [[self window] performClose:self];
-    else if(NSPointInRect(pos, _miniButtonRect))
+    else if(([[self window] styleMask] & NSMiniaturizableWindowMask) &&
+            NSPointInRect(pos, _miniButtonRect))
         [[self window] performMiniaturize:self];
-    else if(NSPointInRect(pos, _zoomButtonRect))
+    else if(([[self window] styleMask] & NSResizableWindowMask) &&
+            NSPointInRect(pos, _zoomButtonRect))
         [[self window] performZoom:self];
     else if(pos.y > (NSMaxY(_frame) - top)) // in titlebar?
         [[self window] requestMove:event];

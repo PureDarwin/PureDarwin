@@ -8,6 +8,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <AppKit/NSControl.h>
 
+@class NSTextField;
+
+@protocol NSTextFieldDelegate <NSControlTextEditingDelegate>
+@optional
+- (void)controlTextDidBeginEditing:(NSNotification *)note;
+- (void)controlTextDidEndEditing:(NSNotification *)note;
+- (void)controlTextDidChange:(NSNotification *)note;
+@end
+
 @interface NSTextField : NSControl {
     id _delegate;
     SEL _errorAction;

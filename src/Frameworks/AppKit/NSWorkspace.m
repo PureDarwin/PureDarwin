@@ -10,7 +10,23 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 NSString * const NSWorkspaceWillPowerOffNotification=@"NSWorkspaceWillPowerOffNotification";
 
+NSString * const NSWorkspaceDidMountNotification=@"NSWorkspaceDidMountNotification";
+NSString * const NSWorkspaceWillUnmountNotification=@"NSWorkspaceWillUnmountNotification";
+NSString * const NSWorkspaceDidUnmountNotification=@"NSWorkspaceDidUnmountNotification";
+NSString * const NSWorkspaceDidLaunchApplicationNotification=@"NSWorkspaceDidLaunchApplicationNotification";
+NSString * const NSWorkspaceDidTerminateApplicationNotification=@"NSWorkspaceDidTerminateApplicationNotification";
+NSString * const NSWorkspaceWillLaunchApplicationNotification=@"NSWorkspaceWillLaunchApplicationNotification";
+
 NSString * const NSWorkspaceRecycleOperation=@"NSWorkspaceRecycleOperation";
+NSString * const NSWorkspaceMoveOperation=@"NSWorkspaceMoveOperation";
+NSString * const NSWorkspaceCopyOperation=@"NSWorkspaceCopyOperation";
+NSString * const NSWorkspaceLinkOperation=@"NSWorkspaceLinkOperation";
+NSString * const NSWorkspaceCompressOperation=@"NSWorkspaceCompressOperation";
+NSString * const NSWorkspaceDecompressOperation=@"NSWorkspaceDecompressOperation";
+NSString * const NSWorkspaceEncryptOperation=@"NSWorkspaceEncryptOperation";
+NSString * const NSWorkspaceDecryptOperation=@"NSWorkspaceDecryptOperation";
+NSString * const NSWorkspaceDestroyOperation=@"NSWorkspaceDestroyOperation";
+NSString * const NSWorkspaceDuplicateOperation=@"NSWorkspaceDuplicateOperation";
 
 @implementation NSWorkspace
 

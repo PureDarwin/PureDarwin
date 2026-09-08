@@ -1775,12 +1775,9 @@ static NSGraphicsContext *graphicsContextForView(NSView *view){
 
 -(void)_lockFocusInContext:(NSGraphicsContext *)context {
     CGContextRef graphicsPort=[context graphicsPort];
-
     [NSGraphicsContext saveGraphicsState];
     [NSGraphicsContext setCurrentContext:context];
-
     [[context focusStack] addObject:self];
-
     CGContextSaveGState(graphicsPort);
     CGContextResetClip(graphicsPort);
 

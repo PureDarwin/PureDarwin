@@ -929,14 +929,18 @@ void O2PDF_render_SC(O2PDFScanner *scanner,void *info) {
    O2ColorSpaceRef colorSpace=O2ColorGetColorSpace(color);
    unsigned      numberOfComponents=O2ColorSpaceGetNumberOfComponents(colorSpace);
    int           count=numberOfComponents;
-   float         components[count+1];
+   CGFloat       components[count+1];
+   O2PDFReal     scanned;
    
    components[count]=O2ColorGetAlpha(color);
-   while(--count>=0)
-    if(!O2PDFScannerPopNumber(scanner,components+count)){
+   while(--count>=0){
+    /* The scanner yields O2PDFReal (float); the colour API takes CGFloat. */
+    if(!O2PDFScannerPopNumber(scanner,&scanned)){
      O2PDFError(__FILE__,__LINE__,@"underflow in SC, numberOfComponents=%d,count=%d",numberOfComponents,count);
      return;
     }
+    components[count]=scanned;
+   }
     
    O2ContextSetStrokeColor(context,components);
 }
@@ -948,14 +952,18 @@ void O2PDF_render_sc(O2PDFScanner *scanner,void *info) {
    O2ColorSpaceRef colorSpace=O2ColorGetColorSpace(color);
    unsigned      numberOfComponents=O2ColorSpaceGetNumberOfComponents(colorSpace);
    int           count=numberOfComponents;
-   float         components[count+1];
+   CGFloat       components[count+1];
+   O2PDFReal     scanned;
    
    components[count]=O2ColorGetAlpha(color);
-   while(--count>=0)
-    if(!O2PDFScannerPopNumber(scanner,components+count)){
+   while(--count>=0){
+    /* The scanner yields O2PDFReal (float); the colour API takes CGFloat. */
+    if(!O2PDFScannerPopNumber(scanner,&scanned)){
      O2PDFError(__FILE__,__LINE__,@"underflow in sc, numberOfComponents=%d,count=%d",numberOfComponents,count);
      return;
     }
+    components[count]=scanned;
+   }
     
    O2ContextSetFillColor(context,components);
 }
@@ -967,14 +975,18 @@ void O2PDF_render_SCN(O2PDFScanner *scanner,void *info) {
    O2ColorSpaceRef colorSpace=O2ColorGetColorSpace(color);
    unsigned      numberOfComponents=O2ColorSpaceGetNumberOfComponents(colorSpace);
    int           count=numberOfComponents;
-   float         components[count+1];
+   CGFloat       components[count+1];
+   O2PDFReal     scanned;
    
    components[count]=O2ColorGetAlpha(color);
-   while(--count>=0)
-    if(!O2PDFScannerPopNumber(scanner,components+count)){
+   while(--count>=0){
+    /* The scanner yields O2PDFReal (float); the colour API takes CGFloat. */
+    if(!O2PDFScannerPopNumber(scanner,&scanned)){
      O2PDFError(__FILE__,__LINE__,@"underflow in SCN, numberOfComponents=%d,count=%d",numberOfComponents,count);
      return;
     }
+    components[count]=scanned;
+   }
     
    O2ContextSetStrokeColor(context,components);
 }

@@ -11,26 +11,26 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation O2Color
 
--initWithColorSpace:(O2ColorSpaceRef)colorSpace pattern:(O2Pattern *)pattern components:(const O2Float *)components {
+-initWithColorSpace:(O2ColorSpaceRef)colorSpace pattern:(O2Pattern *)pattern components:(const CGFloat *)components {
    int i;
    
    _colorSpace=[colorSpace retain];
    _pattern=[pattern retain];
    _numberOfComponents=O2ColorSpaceGetNumberOfComponents(_colorSpace)+1;
-   _components=NSZoneMalloc([self zone],sizeof(O2Float)*_numberOfComponents);
+   _components=NSZoneMalloc([self zone],sizeof(CGFloat)*_numberOfComponents);
    for(i=0;i<_numberOfComponents;i++)
     _components[i]=components[i];
     
    return self;
 }
 
-O2ColorRef O2ColorInitWithColorSpace(O2ColorRef self,O2ColorSpaceRef colorSpace,const O2Float *components) {
+O2ColorRef O2ColorInitWithColorSpace(O2ColorRef self,O2ColorSpaceRef colorSpace,const CGFloat *components) {
    int i;
    
    self->_colorSpace=[colorSpace retain];
    self->_pattern=nil;
    self->_numberOfComponents=O2ColorSpaceGetNumberOfComponents(self->_colorSpace)+1;
-   self->_components=NSZoneMalloc([self zone],sizeof(O2Float)*self->_numberOfComponents);
+   self->_components=NSZoneMalloc([self zone],sizeof(CGFloat)*self->_numberOfComponents);
    for(i=0;i<self->_numberOfComponents;i++)
     self->_components[i]=components[i];
     
@@ -38,7 +38,7 @@ O2ColorRef O2ColorInitWithColorSpace(O2ColorRef self,O2ColorSpaceRef colorSpace,
 }
 
 -initWithDeviceGray:(O2Float)gray alpha:(O2Float)alpha {
-   O2Float components[2]={gray,alpha};
+   CGFloat components[2]={gray,alpha};
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceGray();
    O2ColorInitWithColorSpace(self,colorSpace,components);
    [colorSpace release];
@@ -46,7 +46,7 @@ O2ColorRef O2ColorInitWithColorSpace(O2ColorRef self,O2ColorSpaceRef colorSpace,
 }
 
 -initWithDeviceRed:(O2Float)red green:(O2Float)green blue:(O2Float)blue alpha:(O2Float)alpha {
-   O2Float components[4]={red,green,blue,alpha};
+   CGFloat components[4]={red,green,blue,alpha};
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceRGB();
    O2ColorInitWithColorSpace(self,colorSpace,components);
    [colorSpace release];
@@ -54,14 +54,14 @@ O2ColorRef O2ColorInitWithColorSpace(O2ColorRef self,O2ColorSpaceRef colorSpace,
 }
 
 -initWithDeviceCyan:(O2Float)cyan magenta:(O2Float)magenta yellow:(O2Float)yellow black:(O2Float)black alpha:(O2Float)alpha {
-   O2Float components[5]={cyan,magenta,yellow,black,alpha};
+   CGFloat components[5]={cyan,magenta,yellow,black,alpha};
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceCMYK();
    O2ColorInitWithColorSpace(self,colorSpace,components);
    [colorSpace release];
    return self;
 }
 
-O2ColorRef O2ColorCreate(O2ColorSpaceRef colorSpace,const O2Float *components) {
+O2ColorRef O2ColorCreate(O2ColorSpaceRef colorSpace,const CGFloat *components) {
    return O2ColorInitWithColorSpace([O2Color alloc],colorSpace,components);
 }
 
@@ -77,13 +77,13 @@ O2ColorRef O2ColorCreateGenericCMYK(O2Float c,O2Float m,O2Float y,O2Float k,O2Fl
    return [[O2Color alloc] initWithDeviceCyan:c magenta:m yellow:y black:k alpha:a];
 }
 
-O2ColorRef O2ColorCreateWithPattern(O2ColorSpaceRef colorSpace,O2PatternRef pattern,const O2Float *components) {
+O2ColorRef O2ColorCreateWithPattern(O2ColorSpaceRef colorSpace,O2PatternRef pattern,const CGFloat *components) {
    return [[O2Color alloc] initWithColorSpace:colorSpace pattern:pattern components:components];
 }
 
 -init {
    O2ColorSpaceRef gray=O2ColorSpaceCreateDeviceGray();
-   O2Float       components[2]={0,1};
+   CGFloat       components[2]={0,1};
    
    O2ColorInitWithColorSpace(self,gray,components);
    [gray release];
@@ -103,7 +103,7 @@ O2ColorRef O2ColorCreateCopy(O2ColorRef self) {
 
 O2ColorRef O2ColorCreateCopyWithAlpha(O2ColorRef self,O2Float alpha) {
    int   i;
-   O2Float components[self->_numberOfComponents];
+   CGFloat components[self->_numberOfComponents];
 
    for(i=0;i<self->_numberOfComponents-1;i++)
     components[i]=self->_components[i];
@@ -128,7 +128,7 @@ size_t O2ColorGetNumberOfComponents(O2ColorRef self) {
    return self->_numberOfComponents;
 }
 
-const O2Float *O2ColorGetComponents(O2ColorRef self) {
+const CGFloat *O2ColorGetComponents(O2ColorRef self) {
    return self->_components;
 }
 
@@ -152,7 +152,7 @@ BOOL O2ColorEqualToColor(O2ColorRef self,O2ColorRef other) {
    return YES;
 }
 
-int O2ColorConvertComponentsToDeviceRGB(O2ColorSpaceRef inputSpace,const O2Float *components,O2Float *rgbComponents){
+int O2ColorConvertComponentsToDeviceRGB(O2ColorSpaceRef inputSpace,const CGFloat *components,CGFloat *rgbComponents){
    O2ColorSpaceModel model=O2ColorSpaceGetModel(inputSpace);
    
    switch(model){
@@ -249,8 +249,8 @@ O2ColorRef O2ColorConvertToDeviceRGB(O2ColorRef self) {
         // No need for a conversion
         return O2ColorRetain(self);
     }
-   const O2Float   *components=O2ColorGetComponents(self);
-   O2Float         rgbComponents[4];
+   const CGFloat   *components=O2ColorGetComponents(self);
+   CGFloat         rgbComponents[4];
    
    if(!O2ColorConvertComponentsToDeviceRGB(colorSpace,components,rgbComponents))
     return NULL;

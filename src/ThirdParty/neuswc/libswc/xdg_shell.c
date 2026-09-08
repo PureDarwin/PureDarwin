@@ -24,6 +24,7 @@
 #include "xdg_shell.h"
 #include "compositor.h"
 #include "internal.h"
+#include "screen.h"
 #include "seat.h"
 #include "surface.h"
 #include "util.h"
@@ -442,27 +443,60 @@ set_min_size(struct wl_client *client, struct wl_resource *resource,
 static void
 set_maximized(struct wl_client *client, struct wl_resource *resource)
 {
+	struct xdg_toplevel *toplevel = wl_resource_get_user_data(resource);
+	struct screen *screen;
+
+	if (wl_list_empty(&swc.screens)) {
+		return;
+	}
+	screen = wl_container_of(swc.screens.next, screen, link);
+	swc_window_set_tiled(&toplevel->window.base);
+	swc_window_set_geometry(&toplevel->window.base,
+	                        &screen->base.usable_geometry);
 }
 
 static void
 unset_maximized(struct wl_client *client, struct wl_resource *resource)
 {
+	struct xdg_toplevel *toplevel = wl_resource_get_user_data(resource);
+
+	swc_window_set_stacked(&toplevel->window.base);
+	swc_window_show(&toplevel->window.base);
 }
 
 static void
 set_fullscreen(struct wl_client *client, struct wl_resource *resource,
                struct wl_resource *output)
 {
+	struct xdg_toplevel *toplevel = wl_resource_get_user_data(resource);
+	struct screen *screen;
+
+	if (wl_list_empty(&swc.screens)) {
+		return;
+	}
+	screen = wl_container_of(swc.screens.next, screen, link);
+	swc_window_set_fullscreen(&toplevel->window.base, &screen->base);
 }
 
 static void
 unset_fullscreen(struct wl_client *client, struct wl_resource *resource)
 {
+	struct xdg_toplevel *toplevel = wl_resource_get_user_data(resource);
+	struct screen *screen;
+
+	if (wl_list_empty(&swc.screens)) {
+		return;
+	}
+	screen = wl_container_of(swc.screens.next, screen, link);
+	swc_window_set_fullscreen(&toplevel->window.base, &screen->base);
 }
 
 static void
 set_minimized(struct wl_client *client, struct wl_resource *resource)
 {
+	struct xdg_toplevel *toplevel = wl_resource_get_user_data(resource);
+
+	swc_window_hide(&toplevel->window.base);
 }
 
 static const struct xdg_toplevel_interface toplevel_impl = {

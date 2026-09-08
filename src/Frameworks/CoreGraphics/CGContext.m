@@ -220,7 +220,7 @@ void CGContextSetFillColorSpace(CGContextRef context,CGColorSpaceRef colorSpace)
    O2ContextSetFillColorSpace(context,colorSpace);
 }
 
-void CGContextSetStrokeColor(CGContextRef context,const float *components) {
+void CGContextSetStrokeColor(CGContextRef context,const CGFloat *components) {
    O2ContextSetStrokeColor(context,components);
 }
 
@@ -240,7 +240,7 @@ void CGContextSetCMYKStrokeColor(CGContextRef context,float c,float m,float y,fl
    O2ContextSetCMYKStrokeColor(context,c,m,y,k,alpha);
 }
 
-void CGContextSetFillColor(CGContextRef context,const float *components) {
+void CGContextSetFillColor(CGContextRef context,const CGFloat *components) {
    O2ContextSetFillColor(context,components);
 }
 
@@ -268,11 +268,11 @@ void CGContextSetPatternPhase(CGContextRef context,CGSize phase) {
    O2ContextSetPatternPhase(context,phase);
 }
 
-void CGContextSetStrokePattern(CGContextRef context,CGPatternRef pattern,const float *components) {
+void CGContextSetStrokePattern(CGContextRef context,CGPatternRef pattern,const CGFloat *components) {
    O2ContextSetStrokePattern(context,pattern,components);
 }
 
-void CGContextSetFillPattern(CGContextRef context,CGPatternRef pattern,const float *components) {
+void CGContextSetFillPattern(CGContextRef context,CGPatternRef pattern,const CGFloat *components) {
    O2ContextSetFillPattern(context,pattern,components);
 }
 

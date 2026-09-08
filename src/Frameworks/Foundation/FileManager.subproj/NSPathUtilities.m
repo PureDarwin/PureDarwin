@@ -69,6 +69,65 @@ NSString *NSOpenStepRootDirectory(void) {
     return _string("/");
 }
 
+/* Returns the directory's name under each requested domain's root, in the
+ * order Foundation documents: user, local, network, then system. */
+static NSString *_searchPathLeaf(NSSearchPathDirectory directory) {
+    switch (directory) {
+        case NSApplicationDirectory:        return @"Applications";
+        case NSDemoApplicationDirectory:    return @"Applications/Demos";
+        case NSDeveloperApplicationDirectory: return @"Developer/Applications";
+        case NSAdminApplicationDirectory:   return @"Applications/Utilities";
+        case NSLibraryDirectory:            return @"Library";
+        case NSDeveloperDirectory:          return @"Developer";
+        case NSUserDirectory:               return @"Users";
+        case NSDocumentationDirectory:      return @"Library/Documentation";
+        case NSDocumentDirectory:           return @"Documents";
+        case NSCoreServiceDirectory:        return @"Library/CoreServices";
+        case NSAutosavedInformationDirectory: return @"Library/Autosave Information";
+        case NSDesktopDirectory:            return @"Desktop";
+        case NSCachesDirectory:             return @"Library/Caches";
+        case NSApplicationSupportDirectory: return @"Library/Application Support";
+        case NSDownloadsDirectory:          return @"Downloads";
+        case NSInputMethodsDirectory:       return @"Library/Input Methods";
+        case NSMoviesDirectory:             return @"Movies";
+        case NSMusicDirectory:              return @"Music";
+        case NSPicturesDirectory:           return @"Pictures";
+        case NSPrinterDescriptionDirectory: return @"Library/Printers/PPDs";
+        case NSSharedPublicDirectory:       return @"Public";
+        case NSPreferencePanesDirectory:    return @"Library/PreferencePanes";
+        case NSApplicationScriptsDirectory: return @"Library/Application Scripts";
+        case NSTrashDirectory:              return @".Trash";
+        default:                            return nil;
+    }
+}
+
+NSArray<NSString *> *NSSearchPathForDirectoriesInDomains(
+    NSSearchPathDirectory directory, NSSearchPathDomainMask domainMask,
+    BOOL expandTilde) {
+    NSString *leaf = _searchPathLeaf(directory);
+    if (leaf == nil) {
+        return [NSArray array];
+    }
+
+    NSMutableArray<NSString *> *result = [NSMutableArray array];
+
+    if (domainMask & NSUserDomainMask) {
+        NSString *home = expandTilde ? NSHomeDirectory() : @"~";
+        [result addObject:[home stringByAppendingPathComponent:leaf]];
+    }
+    if (domainMask & NSLocalDomainMask) {
+        [result addObject:[@"/" stringByAppendingPathComponent:leaf]];
+    }
+    if (domainMask & NSNetworkDomainMask) {
+        [result addObject:[@"/Network" stringByAppendingPathComponent:leaf]];
+    }
+    if (domainMask & NSSystemDomainMask) {
+        [result addObject:[@"/System" stringByAppendingPathComponent:leaf]];
+    }
+
+    return result;
+}
+
 /* Path arithmetic goes through CFURL where it can, so the edge cases (trailing
  * slashes, "/" itself, extension-less names) match CoreFoundation's. */
 

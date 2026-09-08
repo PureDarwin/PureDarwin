@@ -15,6 +15,9 @@
 #include <time.h>
 #include <sys/time.h>
 
+extern CFStringRef _NSStringCreateWithFormatAndArguments(NSString *format,
+                                                          va_list arguments);
+
 /* Apple's NSLog prefixes "yyyy-MM-dd HH:mm:ss.SSS progname[pid:tid] ". We keep
  * the shape but drop the thread id, which needs a lookup to be useful. libc
  * rather than CFDate: this is local time, and it works before CF is up. */
@@ -36,8 +39,7 @@ void NSLogv(NSString *format, va_list args) {
         return;
     }
 
-    CFStringRef message = CFStringCreateWithFormatAndArguments(
-        kCFAllocatorDefault, NULL, (CFStringRef)format, args);
+    CFStringRef message = _NSStringCreateWithFormatAndArguments(format, args);
     if (!message) {
         return;
     }

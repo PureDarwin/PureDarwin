@@ -28,8 +28,21 @@ enum {
     kWSWindowSetTitle = 5,
     kWSWindowOrder = 6,
     kWSWindowFlush = 7,
+    kWSWindowMove = 8,
+    kWSWindowResize = 9,
     kCGGetLastMouseDelta = 100,
     kCGGetMouseLocation = 101,
+};
+
+enum {
+    kWSResizeTop = 1,
+    kWSResizeBottom = 2,
+    kWSResizeLeft = 4,
+    kWSResizeTopLeft = 5,
+    kWSResizeBottomLeft = 6,
+    kWSResizeRight = 8,
+    kWSResizeTopRight = 9,
+    kWSResizeBottomRight = 10,
 };
 
 enum {
@@ -71,7 +84,7 @@ enum {
 
 #define WS_TITLE_MAX 256
 #define WS_BUNDLEID_MAX 256
-#define WS_INLINE_MAX 1024
+#define WS_INLINE_MAX 16384
 
 struct wsRPCBase {
     uint32_t code;

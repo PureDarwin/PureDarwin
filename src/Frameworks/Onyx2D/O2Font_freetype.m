@@ -23,13 +23,20 @@ FT_Library freeTypeLibrary;
 
    _platformType=O2FontPlatformTypeFreeType;
    
-   const void *bytes=[provider bytes];
-   size_t      length=[provider length];
+   int error;
 
-   int error=FT_New_Memory_Face(freeTypeLibrary,bytes,length,0,&_face);
+   if([provider isDirectAccess]) {
+    const void *bytes=[provider bytes];
+    size_t length=[provider length];
+
+    error=FT_New_Memory_Face(freeTypeLibrary,bytes,length,0,&_face);
+   }
+   else {
+    error=FT_New_Face(freeTypeLibrary,
+                     [[provider path] fileSystemRepresentation],0,&_face);
+   }
    
    if(error!=0){
-    NSLog(@"FT_New_Memory_Face=%d",error);
     [self dealloc];
     return nil;
    }
@@ -90,6 +97,10 @@ FT_Library freeTypeLibrary;
 
 FT_Face O2FontFreeTypeFace(O2Font_freetype *self) {
    return self->_face;
+}
+
+-(FT_Face)face {
+   return _face;
 }
 
 -(void)fetchAdvances {

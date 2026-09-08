@@ -8,6 +8,7 @@
 , corefoundation
 , foundation
 , freetype2
+, fontconfig
 , libpng
 , libjpeg
 , zlib
@@ -63,6 +64,7 @@ stdenv.mkDerivation {
       -I${corefoundation}/include
       -I${foundation}/usr/include
       -I${freetype2}/include/freetype2
+      -I${fontconfig}/include
       -I${libpng}/include
       -I${libjpeg}/include
       -I${zlib}/include
@@ -86,12 +88,13 @@ stdenv.mkDerivation {
       -L${corefoundation}/usr/lib \
       -L${foundation}/usr/lib \
       -L${freetype2}/lib -L${libpng}/lib -L${libjpeg}/lib -L${zlib}/lib \
+      -L${fontconfig}/lib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,${installName} \
       $objs \
       -lFoundation -lCoreFoundation -lobjc \
-      -lfreetype -lpng -ljpeg -lz \
+      -lfreetype -lfontconfig -lpng -ljpeg -lz \
       -lSystem \
       -o Onyx2D
 

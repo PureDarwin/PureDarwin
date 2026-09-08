@@ -55,9 +55,7 @@ NSString * const NSScreenColorSpaceDidChangeNotification = @"NSScreenColorSpaceD
  * 2025-01-05 12:21:34.925 foo[7386:982302] [0xffffff08] bpp 0 bps 8 cs NSCustomColorSpace
  */
 -(void)_propertiesFromMode:(CGDisplayModeRef)mode colorSpace:(CGColorSpaceRef)cs displayID:(CGDirectDisplayID)displayID {
-    NSLog(@"NSScreen properties: creating color space");
     _colorSpace = [[[NSColorSpace alloc] initWithCGColorSpace:cs] retain];
-    NSLog(@"NSScreen properties: color space ready");
     _depth = 8; // I think component size is always 8 bits
     switch(CGColorSpaceGetModel(cs)) {
         case kCGColorSpaceModelMonochrome:
@@ -80,9 +78,6 @@ NSString * const NSScreenColorSpaceDidChangeNotification = @"NSScreenColorSpaceD
     p[0] = _depth;
     p[1] = 0;
     _supportedWindowDepths = p;
-    NSLog(@"NSScreen properties: depth ready");
-
-    NSLog(@"NSScreen properties: creating device description");
     _deviceDescription = [[NSDictionary
         dictionaryWithObjects:@[
             [NSNumber numberWithBool:YES], [NSValue valueWithSize:_frame.size],
@@ -93,7 +88,6 @@ NSString * const NSScreenColorSpaceDidChangeNotification = @"NSScreenColorSpaceD
             @"NSDeviceIsScreen", @"NSDeviceSize", @"NSDeviceResolution",
             @"NSDeviceColorSpaceName", @"NSDeviceBitsPerSample", @"NSScreenNumber"
         ]] retain];
-    NSLog(@"NSScreen properties: device description ready");
     _localizedName = @"Display name not available"; // FIXME think we need EDID for this
 }
 

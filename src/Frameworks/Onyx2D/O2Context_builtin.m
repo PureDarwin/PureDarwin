@@ -272,7 +272,7 @@ ONYX2D_STATIC O2Paint *paintFromColor(O2Context_builtin *self,O2ColorRef color,O
    }
    else {
     size_t    count=O2ColorGetNumberOfComponents(color);
-    const float *components=O2ColorGetComponents(color);
+    const CGFloat *components=O2ColorGetComponents(color);
 
     if(count==2)
      result=[[O2Paint_color alloc] initWithGray:components[0]  alpha:components[1] surfaceToPaintTransform:surfaceToPaintMatrix];

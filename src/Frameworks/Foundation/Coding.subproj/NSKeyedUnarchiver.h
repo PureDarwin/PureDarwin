@@ -11,11 +11,16 @@
 
 #import <Foundation/NSCoder.h>
 
-@class NSData, NSError;
+@class NSData, NSMutableArray, NSError;
 
-/* Declared so sources that decode keyed archives compile and link. The keyed
- * archive format itself is not implemented yet - every entry point raises. */
+/* Decoding half of the property-list-backed keyed archive format. */
 @interface NSKeyedUnarchiver : NSCoder
+{
+@public
+    NSData *_data;
+    NSMutableArray *_containers;
+    id _root;
+}
 
 + (id)unarchiveObjectWithData:(NSData *)data;
 + (id)unarchivedObjectOfClass:(Class)cls fromData:(NSData *)data error:(NSError **)error;

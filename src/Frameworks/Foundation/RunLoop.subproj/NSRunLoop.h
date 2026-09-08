@@ -24,6 +24,7 @@ FOUNDATION_EXPORT NSRunLoopMode const NSModalPanelRunLoopMode;
 @interface NSRunLoop : NSObject {
     NSMutableDictionary *_modeToSources;
     NSMutableArray *_timers;
+    NSMutableArray *_performs;
     NSString *_currentMode;
 }
 
@@ -36,6 +37,10 @@ FOUNDATION_EXPORT NSRunLoopMode const NSModalPanelRunLoopMode;
 - (void)removeInputSource:(NSInputSource *)source forMode:(NSRunLoopMode)mode;
 
 - (void)addTimer:(NSTimer *)timer forMode:(NSRunLoopMode)mode;
+
+- (void)performSelector:(SEL)selector target:(id)target argument:(id)argument
+                  order:(NSUInteger)order modes:(NSArray *)modes;
+- (void)cancelPerformSelector:(SEL)selector target:(id)target argument:(id)argument;
 
 - (void)run;
 - (void)runUntilDate:(NSDate *)date;

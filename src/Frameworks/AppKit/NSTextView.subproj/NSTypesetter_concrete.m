@@ -762,7 +762,6 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
    unsigned characterIndex=_nextGlyphLocation; // FIX
    NSGlyph  spaceGlyph;
    unichar  space=' ';
-
    _attributes=[_attributedString attributesAtIndex:characterIndex effectiveRange:&_attributesRange];
 
 #if DEBUG_FETCHATTRIBUTES
@@ -801,7 +800,6 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
         }
     }
     _attributesGlyphRange=_attributesRange; // FIX
-
    nextFont=NSFontAttributeInDictionary(_attributes);
    if(_font!=nextFont){
 #if DEBUG_FETCHATTRIBUTES
@@ -812,11 +810,9 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
     _fontAscender=ceil([_font ascender]);
     _fontDefaultLineHeight=ceil([_font defaultLineHeightForFont]);
     _positionOfGlyph=(void *)[_font methodForSelector:@selector(positionOfGlyph:precededByGlyph:isNominal:)];
-
     [_font getGlyphs:&spaceGlyph forCharacters:&space length:1];
     _whitespaceAdvancement=[_font advancementForGlyph:spaceGlyph].width;
    }
-
    if((_currentParagraphStyle=[_attributes objectForKey:NSParagraphStyleAttributeName])==nil)
 #if DEBUG_FETCHATTRIBUTES
        NSLog(@"using default paragraph style");
@@ -860,7 +856,6 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
    [_layoutManager release];
         _layoutManager=layoutManager;
    _textContainers=[layoutManager textContainers];
-
    [self setAttributedString:[layoutManager textStorage]];
 
     NSUInteger length = [_attributedString length];
@@ -872,7 +867,6 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
    _numberOfGlyphs=[_string length];
    _glyphCacheRange=NSMakeRange(0,0);
    _previousGlyph=NSNullGlyph;
-
         NSTextContainer *container = [[_textContainers objectAtIndex:0] retain];
 
    [_container release];
@@ -899,8 +893,9 @@ static void loadGlyphAndCharacterCacheForLocation(NSTypesetter_concrete *self,un
       NSLog(@"checking glyph location: %d", _nextGlyphLocation);
 #endif
 
-    if(!NSLocationInRange(_nextGlyphLocation,_attributesRange))
+    if(!NSLocationInRange(_nextGlyphLocation,_attributesRange)) {
      [self fetchAttributes];
+    }
 
     typedef void (*fn_t)(id, SEL);
     ((fn_t)_layoutNextFragment)(self,NULL);

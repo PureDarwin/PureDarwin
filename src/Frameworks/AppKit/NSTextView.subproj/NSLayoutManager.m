@@ -116,6 +116,7 @@ static inline NSGlyphFragment *fragmentAtGlyphIndex(NSLayoutManager *self,unsign
 }
 
 -(void)dealloc {
+    if (_rangeToTemporaryAttributes != NULL)
         NSFreeRangeEntries(_rangeToTemporaryAttributes);
    _textStorage=nil;
    [_typesetter release];
@@ -175,7 +176,8 @@ static inline NSGlyphFragment *fragmentAtGlyphIndex(NSLayoutManager *self,unsign
         // The text storage owns the layout manager - so we can't retain
     _textStorage=textStorage;
 
-        NSFreeRangeEntries(_rangeToTemporaryAttributes);
+        if (_rangeToTemporaryAttributes != NULL)
+                NSFreeRangeEntries(_rangeToTemporaryAttributes);
 
         _rangeToTemporaryAttributes=NSCreateRangeToCopiedObjectEntries(0);
         NSRangeEntryInsert(_rangeToTemporaryAttributes,NSMakeRange(0,[_textStorage length]),[NSDictionary dictionary]);
@@ -1319,6 +1321,10 @@ static inline void _appendRectToCache(NSLayoutManager *self,NSRect rect){
         CGContextRef context=NSCurrentGraphicsPort();
         CGGlyph     *cgGlyphs=(CGGlyph *)glyphs;
         int          cgGlyphsLength=length/2;
+
+    [color set];
+    [font set];
+
     CGSize advances[cgGlyphsLength];
     NSGlyph nsglyphs[cgGlyphsLength];
     for (int i = 0; i < cgGlyphsLength; ++i) {

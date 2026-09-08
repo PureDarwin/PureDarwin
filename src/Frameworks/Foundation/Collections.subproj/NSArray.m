@@ -44,6 +44,14 @@ static const CFArrayCallBacks ns_array_callbacks = {
     CFEqual
 };
 
+static CFComparisonResult ns_array_compare(const void *left,
+                                           const void *right,
+                                           void *context) {
+    SEL selector = (SEL)context;
+    return (CFComparisonResult)((NSInteger (*)(id, SEL, id))objc_msgSend)(
+        (id)left, selector, (id)right);
+}
+
 @implementation NSArray
 
 /* See the note in NSDictionary.m: bridged onto CF, so +new/-init must produce a
@@ -56,9 +64,18 @@ static const CFArrayCallBacks ns_array_callbacks = {
     return [NSArray array];
 }
 
+- (instancetype)initWithObjects:(const id *)objects count:(NSUInteger)count {
+    return (id)CFArrayCreate(kCFAllocatorDefault, (const void **)objects,
+                             (CFIndex)count, &ns_array_callbacks);
+}
+
 + (instancetype)array {
     return (id)CFArrayCreate(kCFAllocatorDefault, NULL, 0,
                              &ns_array_callbacks);
+}
+
++ (instancetype)arrayWithObject:(id)object {
+    return [self arrayWithObjects:&object count:1];
 }
 
 + (instancetype)arrayWithObjects:(id)firstObject, ... {
@@ -183,6 +200,14 @@ static const CFArrayCallBacks ns_array_callbacks = {
     return (id)result;
 }
 
+- (NSArray *)sortedArrayUsingSelector:(SEL)selector {
+    CFMutableArrayRef result = CFArrayCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                        (CFArrayRef)self);
+    CFArraySortValues(result, CFRangeMake(0, CFArrayGetCount(result)),
+                      ns_array_compare, selector);
+    return (id)CFAutorelease(result);
+}
+
 - (void)makeObjectsPerformSelector:(SEL)selector {
     CFIndex count = CFArrayGetCount((CFArrayRef)self);
 
@@ -206,6 +231,11 @@ static const CFArrayCallBacks ns_array_callbacks = {
     CFArrayAppendValue((CFMutableArrayRef)self, (const void *)object);
 }
 
+- (void)insertObject:(id)object atIndex:(NSUInteger)index {
+    CFArrayInsertValueAtIndex((CFMutableArrayRef)self, (CFIndex)index,
+                              (const void *)object);
+}
+
 - (void)addObjectsFromArray:(NSArray *)array {
     CFIndex n = CFArrayGetCount((CFArrayRef)array);
     CFArrayAppendArray((CFMutableArrayRef)self, (CFArrayRef)array,
@@ -214,6 +244,13 @@ static const CFArrayCallBacks ns_array_callbacks = {
 
 - (void)removeObjectAtIndex:(NSUInteger)index {
     CFArrayRemoveValueAtIndex((CFMutableArrayRef)self, (CFIndex)index);
+}
+
+- (void)removeLastObject {
+    CFIndex count = CFArrayGetCount((CFArrayRef)self);
+    if (count > 0) {
+        CFArrayRemoveValueAtIndex((CFMutableArrayRef)self, count - 1);
+    }
 }
 
 - (void)removeObjectIdenticalTo:(id)object {
@@ -231,6 +268,12 @@ static const CFArrayCallBacks ns_array_callbacks = {
 
 - (void)removeAllObjects {
     CFArrayRemoveAllValues((CFMutableArrayRef)self);
+}
+
+- (void)sortUsingSelector:(SEL)selector {
+    CFMutableArrayRef array = (CFMutableArrayRef)self;
+    CFArraySortValues(array, CFRangeMake(0, CFArrayGetCount(array)),
+                      ns_array_compare, selector);
 }
 
 @end

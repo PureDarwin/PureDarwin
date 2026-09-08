@@ -55,7 +55,10 @@ enum {
 typedef NSUInteger NSWindowBackingLocation;
 
 enum {
+    NSDesktopWindowLevel = kCGDesktopWindowLevelKey,
+    NSBackstopMenuLevel = kCGBackstopMenuLevelKey,
     NSNormalWindowLevel = kCGNormalWindowLevelKey,
+    NSDockWindowLevel = kCGDockWindowLevelKey,
     NSFloatingWindowLevel = kCGFloatingWindowLevelKey,
     NSSubmenuWindowLevel = kCGTornOffMenuWindowLevelKey,
     NSTornOffMenuWindowLevel = kCGTornOffMenuWindowLevelKey,
@@ -402,6 +405,10 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 
 - (NSPoint)convertBaseToScreen:(NSPoint)point;
 - (NSPoint)convertScreenToBase:(NSPoint)point;
+- (NSRect)convertRectToScreen:(NSRect)rect;
+- (NSRect)convertRectFromScreen:(NSRect)rect;
+- (NSPoint)convertPointToScreen:(NSPoint)point;
+- (NSPoint)convertPointFromScreen:(NSPoint)point;
 
 - (NSRect)frameRectForContentRect:(NSRect)rect;
 - (NSRect)contentRectForFrameRect:(NSRect)rect;

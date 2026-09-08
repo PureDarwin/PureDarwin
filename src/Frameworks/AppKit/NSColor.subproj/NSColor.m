@@ -327,7 +327,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 +(NSColor *)windowBackgroundColor {
-   return [NSColor colorWithCatalogName:@"System" colorName:@"windowBackgroundColor"];
+   NSColor *color = [NSColor colorWithCatalogName:@"System"
+                                        colorName:@"windowBackgroundColor"];
+   return color != nil ? color : [NSColor colorWithCalibratedWhite:0.93 alpha:1.0];
 }
 
 +(NSColor *)windowFrameColor {
@@ -416,7 +418,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 +(NSColor *)redColor {
-   return [NSColor colorWithCatalogName:@"System" colorName:@"systemRedColor"];
+   NSColor *color = [NSColor colorWithCatalogName:@"System"
+                                        colorName:@"systemRedColor"];
+   return color != nil ? color : [NSColor colorWithCalibratedRed:1.0
+                                                            green:0.0
+                                                             blue:0.0
+                                                            alpha:1.0];
 }
 
 +(NSColor *)yellowColor {

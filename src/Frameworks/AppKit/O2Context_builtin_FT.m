@@ -26,7 +26,7 @@
 
 static O2Paint *paintFromColor(O2ColorRef color) {
    size_t count = O2ColorGetNumberOfComponents(color);
-   const float *components = O2ColorGetComponents(color);
+   const CGFloat *components = O2ColorGetComponents(color);
 
    if(count==2)
        return [[O2Paint_color alloc] initWithGray:components[0] alpha:components[1] surfaceToPaintTransform:O2AffineTransformIdentity];
@@ -75,8 +75,6 @@ static void drawFreeTypeBitmap(O2Context_builtin_FT *self,O2Surface *surface,FT_
       chunk=-chunk;
      else {
 
-      self->_blend_argb8u_PRE(src,dst,chunk);
-      
       applyCoverageToSpan_lRGBA8888_PRE(dst,coverage,src,chunk);
 
       if(direct==NULL)
@@ -138,7 +136,7 @@ static void drawFreeTypeBitmap(O2Context_builtin_FT *self,O2Surface *surface,FT_
     ftError=FT_Render_Glyph(face->glyph,FT_RENDER_MODE_NORMAL);
     if(ftError)
      continue;
-      
+
     drawFreeTypeBitmap(self,_surface,&slot->bitmap,point.x+slot->bitmap_left,point.y-slot->bitmap_top,paint);
 
     point.x += slot->advance.x >> 6;

@@ -14,6 +14,9 @@
 #include <execinfo.h>
 #include <stdlib.h>
 
+extern CFStringRef _NSStringCreateWithFormatAndArguments(NSString *format,
+                                                          va_list arguments);
+
 NSExceptionName const NSGenericException = @"NSGenericException";
 NSExceptionName const NSRangeException = @"NSRangeException";
 NSExceptionName const NSInvalidArgumentException = @"NSInvalidArgumentException";
@@ -56,8 +59,8 @@ void NSSetUncaughtExceptionHandler(NSUncaughtExceptionHandler *handler) {
 }
 
 + (void)raise:(NSExceptionName)name format:(NSString *)format arguments:(va_list)args {
-    NSString *reason = (NSString *)CFStringCreateWithFormatAndArguments(
-        kCFAllocatorDefault, NULL, (CFStringRef)format, args);
+    NSString *reason = (NSString *)_NSStringCreateWithFormatAndArguments(
+        format, args);
     [[self exceptionWithName:name reason:reason userInfo:nil] raise];
 }
 
@@ -118,10 +121,7 @@ void NSSetUncaughtExceptionHandler(NSUncaughtExceptionHandler *handler) {
 }
 
 - (NSString *)description {
-    return (NSString *)CFStringCreateWithFormat(kCFAllocatorDefault, NULL,
-                                                CFSTR("%@: %@"),
-                                                (CFStringRef)_name,
-                                                (CFStringRef)_reason);
+    return [NSString stringWithFormat:@"%@: %@", _name, _reason];
 }
 
 @end
@@ -130,14 +130,13 @@ void NSAssertionFailure(const char *function, const char *file, int line,
                         NSString *format, ...) {
     va_list args;
     va_start(args, format);
-    NSString *reason = (NSString *)CFStringCreateWithFormatAndArguments(
-        kCFAllocatorDefault, NULL, (CFStringRef)format, args);
+    NSString *reason = (NSString *)_NSStringCreateWithFormatAndArguments(
+        format, args);
     va_end(args);
 
     [[NSException exceptionWithName:NSInternalInconsistencyException
-                             reason:(NSString *)CFStringCreateWithFormat(
-                                        kCFAllocatorDefault, NULL,
-                                        CFSTR("%s (%s:%d): %@"),
-                                        function, file, line, (CFStringRef)reason)
+                             reason:[NSString stringWithFormat:@"%s (%s:%d): %@",
+                                                                function, file,
+                                                                line, reason]
                            userInfo:nil] raise];
 }

@@ -33,6 +33,7 @@
 + (NSCharacterSet *)characterSetWithRange:(NSRange)range;
 
 - (BOOL)characterIsMember:(unichar)character;
+- (BOOL)longCharacterIsMember:(UTF32Char)character;
 - (NSCharacterSet *)invertedSet;
 
 @end

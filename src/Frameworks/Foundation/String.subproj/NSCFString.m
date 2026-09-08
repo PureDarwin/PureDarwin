@@ -29,7 +29,19 @@ extern int __CFConstantStringClassReference[];
 }
 
 - (unichar)characterAtIndex:(NSUInteger)index {
-    return (unichar)CFStringGetCharacterAtIndex((CFStringRef)self, (CFIndex)index);
+    UniChar character = 0;
+
+    _CFStringCheckAndGetCharacterAtIndex((CFStringRef)self,
+                                          (CFIndex)index,
+                                          &character);
+    return (unichar)character;
+}
+
+- (void)getCharacters:(unichar *)buffer range:(NSRange)range {
+    _CFStringCheckAndGetCharacters((CFStringRef)self,
+                                   CFRangeMake((CFIndex)range.location,
+                                               (CFIndex)range.length),
+                                   (UniChar *)buffer);
 }
 
 - (const char *)UTF8String {
@@ -48,8 +60,23 @@ extern int __CFConstantStringClassReference[];
     return buffer;
 }
 
+- (const char *)fileSystemRepresentation {
+    return [self UTF8String];
+}
+
 - (NSString *)description {
     return self;
+}
+
+- (NSComparisonResult)compare:(NSString *)other {
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
+                                               (CFStringRef)other, 0);
+}
+
+- (NSComparisonResult)caseInsensitiveCompare:(NSString *)other {
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
+                                               (CFStringRef)other,
+                                               kCFCompareCaseInsensitive);
 }
 
 /* Expands range to whole lines, the way the text system expects: back to the
@@ -111,6 +138,14 @@ extern int __CFConstantStringClassReference[];
     return (NSString *)CFAutorelease(result);
 }
 
+- (NSString *)stringByAppendingString:(NSString *)string {
+    CFMutableStringRef result = CFStringCreateMutableCopy(kCFAllocatorDefault,
+        0, (CFStringRef)self);
+
+    CFStringAppend(result, (CFStringRef)string);
+    return (NSString *)CFAutorelease(result);
+}
+
 - (NSString *)substringFromIndex:(NSUInteger)index {
     return [self substringWithRange:NSMakeRange(index, [self length] - index)];
 }
@@ -141,6 +176,13 @@ extern int __CFConstantStringClassReference[];
 
 - (id)mutableCopyWithZone:(NSZone *)zone {
     return (id)CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)self);
+}
+
+- (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string {
+    __CFStringCheckAndReplace((CFMutableStringRef)self,
+                              CFRangeMake((CFIndex)range.location,
+                                          (CFIndex)range.length),
+                              (CFStringRef)string);
 }
 
 - (BOOL)getBytes:(void *)buffer

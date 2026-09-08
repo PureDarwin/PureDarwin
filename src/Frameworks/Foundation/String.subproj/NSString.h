@@ -12,7 +12,7 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSRange.h>
 
-@class NSData, NSArray;
+@class NSData, NSArray, NSError;
 
 typedef unsigned short unichar;
 
@@ -59,19 +59,29 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 
 + (instancetype)stringWithUTF8String:(const char *)utf8String;
 + (instancetype)stringWithFormat:(NSString *)format, ...;
++ (nullable instancetype)stringWithContentsOfFile:(NSString *)path
+                                          encoding:(NSStringEncoding)encoding
+                                             error:(NSError **)error;
 
 - (instancetype)initWithUTF8String:(const char *)utf8String;
 - (instancetype)initWithBytes:(const void *)bytes
                        length:(NSUInteger)length
                      encoding:(NSStringEncoding)encoding;
+- (nullable instancetype)initWithContentsOfFile:(NSString *)path
+                                        encoding:(NSStringEncoding)encoding
+                                           error:(NSError **)error;
 
 - (BOOL)isEqualToString:(NSString *)other;
+- (NSComparisonResult)compare:(NSString *)other;
+- (NSComparisonResult)caseInsensitiveCompare:(NSString *)other;
 - (NSData *)dataUsingEncoding:(NSStringEncoding)encoding;
 
 - (NSUInteger)length;
 - (unichar)characterAtIndex:(NSUInteger)index;
+- (void)getCharacters:(unichar *)buffer range:(NSRange)range;
 - (const char *)UTF8String;
 - (const char *)cString;
+- (const char *)fileSystemRepresentation;
 - (NSArray *)componentsSeparatedByString:(NSString *)separator;
 - (NSRange)rangeOfString:(NSString *)string;
 - (NSRange)lineRangeForRange:(NSRange)range;
@@ -83,6 +93,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (NSString *)substringWithRange:(NSRange)range;
 - (NSString *)substringFromIndex:(NSUInteger)index;
 - (NSString *)substringToIndex:(NSUInteger)index;
+- (NSString *)stringByAppendingString:(NSString *)string;
 
 - (BOOL)getBytes:(void *)buffer
        maxLength:(NSUInteger)maxBufferCount
@@ -103,6 +114,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (void)appendString:(NSString *)string;
 - (void)appendFormat:(NSString *)format, ...;
 - (void)setString:(NSString *)string;
+- (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string;
 
 @end
 

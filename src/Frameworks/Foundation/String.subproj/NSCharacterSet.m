@@ -8,6 +8,10 @@
 
 #import <Foundation/NSCharacterSet.h>
 #include <CoreFoundation/CFCharacterSet.h>
+#include <CoreFoundation/ForFoundationOnly.h>
+
+extern Boolean _CFCharacterSetIsLongCharacterMember(CFCharacterSetRef set,
+                                                     UTF32Char character);
 
 /* Bridged straight onto CFCharacterSet, the same way NSArray is onto CFArray. */
 
@@ -69,8 +73,13 @@ static NSCharacterSet *_predefined(CFCharacterSetPredefinedSet which) {
 }
 
 - (BOOL)characterIsMember:(unichar)character {
-    return CFCharacterSetIsCharacterMember((CFCharacterSetRef)self,
-                                           (UniChar)character) ? YES : NO;
+    return _CFCharacterSetIsLongCharacterMember((CFCharacterSetRef)self,
+                                                (UTF32Char)character) ? YES : NO;
+}
+
+- (BOOL)longCharacterIsMember:(UTF32Char)character {
+    return _CFCharacterSetIsLongCharacterMember((CFCharacterSetRef)self,
+                                                character) ? YES : NO;
 }
 
 - (NSCharacterSet *)invertedSet {
@@ -78,17 +87,7 @@ static NSCharacterSet *_predefined(CFCharacterSetPredefinedSet which) {
                                                              (CFCharacterSetRef)self);
 }
 
-@end
-
-@implementation NSMutableCharacterSet
-
-+ (NSMutableCharacterSet *)characterSetWithRange:(NSRange)range {
-    CFMutableCharacterSetRef set = CFCharacterSetCreateMutable(kCFAllocatorDefault);
-    CFCharacterSetAddCharactersInRange(set, CFRangeMake((CFIndex)range.location,
-                                                        (CFIndex)range.length));
-    return (NSMutableCharacterSet *)set;
-}
-
+/* CoreFoundation uses one runtime class for mutable and immutable sets. */
 - (void)addCharactersInRange:(NSRange)range {
     CFCharacterSetAddCharactersInRange((CFMutableCharacterSetRef)self,
                                        CFRangeMake((CFIndex)range.location,
@@ -113,6 +112,32 @@ static NSCharacterSet *_predefined(CFCharacterSetPredefinedSet which) {
 
 - (void)invert {
     CFCharacterSetInvert((CFMutableCharacterSetRef)self);
+}
+
+@end
+
+#if DEPLOYMENT_RUNTIME_OBJC
+__attribute__((constructor))
+static void __NSCharacterSetBridgeInit(void) {
+    _CFRuntimeBridgeClasses(CFCharacterSetGetTypeID(), "NSCharacterSet");
+}
+#endif
+
+@implementation NSMutableCharacterSet
+
++ (instancetype)new {
+    return (id)CFCharacterSetCreateMutable(kCFAllocatorDefault);
+}
+
+- (instancetype)init {
+    return (id)CFCharacterSetCreateMutable(kCFAllocatorDefault);
+}
+
++ (NSMutableCharacterSet *)characterSetWithRange:(NSRange)range {
+    CFMutableCharacterSetRef set = CFCharacterSetCreateMutable(kCFAllocatorDefault);
+    CFCharacterSetAddCharactersInRange(set, CFRangeMake((CFIndex)range.location,
+                                                        (CFIndex)range.length));
+    return (NSMutableCharacterSet *)set;
 }
 
 @end

@@ -129,6 +129,17 @@ static void _setPOSIXError(NSError **error) {
     return shared;
 }
 
+- (NSString *)stringWithFileSystemRepresentation:(const char *)string
+                                           length:(NSUInteger)length {
+    if (string == NULL) {
+        return nil;
+    }
+
+    return [[[NSString alloc] initWithBytes:string
+                                     length:length
+                                   encoding:NSUTF8StringEncoding] autorelease];
+}
+
 - (BOOL)fileExistsAtPath:(NSString *)path {
     return [self fileExistsAtPath:path isDirectory:NULL];
 }

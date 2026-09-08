@@ -13,6 +13,8 @@
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/NSArray.h>
 
+@class NSEnumerator;
+
 @interface NSSet<__covariant ObjectType> : NSObject
 
 + (instancetype)set;
@@ -25,6 +27,7 @@
 - (nullable ObjectType)member:(ObjectType)object;
 - (BOOL)containsObject:(ObjectType)object;
 - (NSArray<ObjectType> *)allObjects;
+- (NSEnumerator *)objectEnumerator;
 
 @end
 

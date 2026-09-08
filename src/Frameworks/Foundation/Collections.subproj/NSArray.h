@@ -16,6 +16,7 @@
 @interface NSArray<__covariant ObjectType> : NSObject <NSFastEnumeration>
 
 + (instancetype)array;
++ (instancetype)arrayWithObject:(ObjectType)object;
 + (instancetype)arrayWithObjects:(ObjectType)firstObject, ...;
 + (instancetype)arrayWithObjects:(const ObjectType _Nonnull [_Nullable])objects count:(NSUInteger)count;
 + (instancetype)arrayWithArray:(NSArray<ObjectType> *)array;
@@ -32,6 +33,7 @@
 - (BOOL)containsObject:(id)object;
 - (NSUInteger)indexOfObjectIdenticalTo:(id)object;
 - (NSArray<ObjectType> *)arrayByAddingObject:(ObjectType)object;
+- (NSArray<ObjectType> *)sortedArrayUsingSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
 
@@ -45,11 +47,13 @@
 - (instancetype)initWithCapacity:(NSUInteger)capacity;
 - (instancetype)initWithArray:(NSArray<ObjectType> *)array;
 - (void)addObject:(ObjectType)object;
+- (void)insertObject:(ObjectType)object atIndex:(NSUInteger)index;
 - (void)addObjectsFromArray:(NSArray<ObjectType> *)array;
 - (void)removeObjectAtIndex:(NSUInteger)index;
 - (void)removeObjectIdenticalTo:(ObjectType)object;
 - (void)replaceObjectAtIndex:(NSUInteger)index withObject:(ObjectType)object;
 - (void)removeAllObjects;
+- (void)sortUsingSelector:(SEL)selector;
 
 @end
 

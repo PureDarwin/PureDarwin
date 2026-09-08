@@ -8,11 +8,20 @@
 
 #import <Foundation/NSSet.h>
 #import <Foundation/NSArray.h>
+#import <Foundation/NSEnumerator.h>
 #include <CoreFoundation/CFSet.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <stdlib.h>
 
 @implementation NSSet
+
++ (instancetype)new {
+    return [self set];
+}
+
+- (instancetype)init {
+    return [NSSet set];
+}
 
 + (instancetype)set {
     return (id)CFAutorelease(CFSetCreate(kCFAllocatorDefault, NULL, 0,
@@ -68,16 +77,20 @@
     return array;
 }
 
-@end
-
-@implementation NSMutableSet
-
-+ (instancetype)setWithCapacity:(NSUInteger)capacity {
-    return (id)CFAutorelease(CFSetCreateMutable(kCFAllocatorDefault,
-                                               (CFIndex)capacity,
-                                               &kCFTypeSetCallBacks));
+- (NSEnumerator *)objectEnumerator {
+    return [[self allObjects] objectEnumerator];
 }
 
+- (id)copyWithZone:(NSZone *)zone {
+    return (id)CFSetCreateCopy(kCFAllocatorDefault, (CFSetRef)self);
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return (id)CFSetCreateMutableCopy(kCFAllocatorDefault, 0,
+                                      (CFSetRef)self);
+}
+
+/* CoreFoundation has one runtime class for immutable and mutable sets. */
 - (void)addObject:(id)object {
     if (object) {
         CFSetAddValue((CFMutableSetRef)self, object);
@@ -122,6 +135,61 @@
             [self removeObject:object];
         }
     }
+}
+
+@end
+
+@implementation NSMutableSet
+
++ (instancetype)new {
+    return [self setWithCapacity:0];
+}
+
++ (instancetype)set {
+    return [self setWithCapacity:0];
+}
+
++ (instancetype)setWithCapacity:(NSUInteger)capacity {
+    return (id)CFAutorelease(CFSetCreateMutable(kCFAllocatorDefault,
+                                               (CFIndex)capacity,
+                                               &kCFTypeSetCallBacks));
+}
+
++ (instancetype)setWithObject:(id)object {
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault, 0,
+                                             &kCFTypeSetCallBacks);
+    if (object) {
+        CFSetAddValue(set, object);
+    }
+    return (id)CFAutorelease(set);
+}
+
++ (instancetype)setWithArray:(NSArray *)array {
+    NSMutableSet *set = [self setWithCapacity:[array count]];
+    [set addObjectsFromArray:array];
+    return set;
+}
+
++ (instancetype)setWithObjects:(const id [])objects count:(NSUInteger)count {
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault,
+                                             (CFIndex)count,
+                                             &kCFTypeSetCallBacks);
+    for (NSUInteger index = 0; index < count; index++) {
+        if (objects[index]) {
+            CFSetAddValue(set, objects[index]);
+        }
+    }
+    return (id)CFAutorelease(set);
+}
+
+- (instancetype)init {
+    return (id)CFSetCreateMutable(kCFAllocatorDefault, 0,
+                                  &kCFTypeSetCallBacks);
+}
+
+- (instancetype)initWithCapacity:(NSUInteger)capacity {
+    return (id)CFSetCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
+                                  &kCFTypeSetCallBacks);
 }
 
 @end

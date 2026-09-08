@@ -8,6 +8,8 @@
 
 #import <Foundation/NSUserDefaults.h>
 #import <Foundation/NSData.h>
+#import <Foundation/NSArray.h>
+#import <Foundation/NSDictionary.h>
 #import <Foundation/NSNumber.h>
 #include <CoreFoundation/CFPreferences.h>
 #include <CoreFoundation/CFNumber.h>
@@ -18,8 +20,22 @@
 
 NSString * const NSUserDefaultsDidChangeNotification = @"NSUserDefaultsDidChangeNotification";
 
+NSString * const NSGlobalDomain = @"NSGlobalDomain";
+NSString * const NSArgumentDomain = @"NSArgumentDomain";
+NSString * const NSRegistrationDomain = @"NSRegistrationDomain";
+
+/* A domain name is a CFPreferences application ID. NSGlobalDomain is the
+ * cross-application domain, which CF spells kCFPreferencesAnyApplication. */
+static CFStringRef _applicationIDForDomain(NSString *domainName) {
+    if (domainName == nil || [domainName isEqualToString:NSGlobalDomain]) {
+        return kCFPreferencesAnyApplication;
+    }
+    return (CFStringRef)domainName;
+}
+
 @implementation NSUserDefaults {
     NSMutableDictionary *_registered;
+    NSMutableDictionary *_volatile;
 }
 
 + (NSUserDefaults *)standardUserDefaults {
@@ -38,6 +54,7 @@ NSString * const NSUserDefaultsDidChangeNotification = @"NSUserDefaultsDidChange
     self = [super init];
     if (self != nil) {
         _registered = [NSMutableDictionary dictionaryWithCapacity:0];
+        _volatile = [NSMutableDictionary dictionaryWithCapacity:0];
     }
     return self;
 }
@@ -122,6 +139,129 @@ NSString * const NSUserDefaultsDidChangeNotification = @"NSUserDefaultsDidChange
 
 - (BOOL)synchronize {
     return CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication) ? YES : NO;
+}
+
+- (NSDictionary *)persistentDomainForName:(NSString *)domainName {
+    CFStringRef appID = _applicationIDForDomain(domainName);
+    CFArrayRef keys = CFPreferencesCopyKeyList(appID, kCFPreferencesCurrentUser,
+                                               kCFPreferencesAnyHost);
+    if (keys == NULL) {
+        return nil;
+    }
+
+    NSMutableDictionary *domain = [NSMutableDictionary dictionaryWithCapacity:0];
+    CFIndex count = CFArrayGetCount(keys);
+
+    for (CFIndex i = 0; i < count; i++) {
+        CFStringRef key = CFArrayGetValueAtIndex(keys, i);
+        CFPropertyListRef value = CFPreferencesCopyValue(key, appID,
+                                                         kCFPreferencesCurrentUser,
+                                                         kCFPreferencesAnyHost);
+        if (value != NULL) {
+            [domain setObject:(id)value forKey:(NSString *)key];
+            CFRelease(value);
+        }
+    }
+    CFRelease(keys);
+    return domain;
+}
+
+- (void)setPersistentDomain:(NSDictionary *)domain forName:(NSString *)domainName {
+    [self removePersistentDomainForName:domainName];
+
+    CFStringRef appID = _applicationIDForDomain(domainName);
+
+    for (NSString *key in [domain allKeys]) {
+        CFPreferencesSetValue((CFStringRef)key,
+                              (CFPropertyListRef)[domain objectForKey:key],
+                              appID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    }
+    CFPreferencesSynchronize(appID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+}
+
+- (void)removePersistentDomainForName:(NSString *)domainName {
+    CFStringRef appID = _applicationIDForDomain(domainName);
+    CFArrayRef keys = CFPreferencesCopyKeyList(appID, kCFPreferencesCurrentUser,
+                                               kCFPreferencesAnyHost);
+    if (keys == NULL) {
+        return;
+    }
+
+    CFIndex count = CFArrayGetCount(keys);
+
+    for (CFIndex i = 0; i < count; i++) {
+        CFPreferencesSetValue(CFArrayGetValueAtIndex(keys, i), NULL, appID,
+                              kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    }
+    CFRelease(keys);
+    CFPreferencesSynchronize(appID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+}
+
+- (NSArray *)persistentDomainNames {
+    /* CFPreferences exposes no way to enumerate application IDs, so this
+     * reports only the domains this process can name. */
+    return [NSArray arrayWithObjects:NSGlobalDomain, nil];
+}
+
+- (NSDictionary *)volatileDomainForName:(NSString *)domainName {
+    if ([domainName isEqualToString:NSRegistrationDomain]) {
+        return _registered;
+    }
+    return [_volatile objectForKey:domainName];
+}
+
+- (void)setVolatileDomain:(NSDictionary *)domain forName:(NSString *)domainName {
+    if ([domainName isEqualToString:NSRegistrationDomain]) {
+        [_registered removeAllObjects];
+        [_registered addEntriesFromDictionary:domain];
+        return;
+    }
+    [_volatile setObject:domain forKey:domainName];
+}
+
+- (void)removeVolatileDomainForName:(NSString *)domainName {
+    if ([domainName isEqualToString:NSRegistrationDomain]) {
+        [_registered removeAllObjects];
+        return;
+    }
+    [_volatile removeObjectForKey:domainName];
+}
+
+- (NSArray *)volatileDomainNames {
+    NSMutableArray *names = [NSMutableArray arrayWithArray:[_volatile allKeys]];
+    [names addObject:NSRegistrationDomain];
+    return names;
+}
+
+/* Search order: registration domain first, then the application domain on top,
+ * matching how -objectForKey: resolves a single key. */
+- (NSDictionary *)dictionaryRepresentation {
+    NSMutableDictionary *result = [NSMutableDictionary dictionaryWithCapacity:0];
+
+    [result addEntriesFromDictionary:_registered];
+
+    NSDictionary *app = [self persistentDomainForName:
+        (NSString *)kCFPreferencesCurrentApplication];
+    if (app != nil) {
+        [result addEntriesFromDictionary:app];
+    }
+    return result;
+}
+
+- (id)objectForKey:(NSString *)key inDomain:(NSString *)domainName {
+    CFPropertyListRef value = CFPreferencesCopyValue((CFStringRef)key,
+                                                     _applicationIDForDomain(domainName),
+                                                     kCFPreferencesCurrentUser,
+                                                     kCFPreferencesAnyHost);
+    return value != NULL ? [(id)value autorelease] : nil;
+}
+
+- (void)setObject:(id)value forKey:(NSString *)key inDomain:(NSString *)domainName {
+    CFStringRef appID = _applicationIDForDomain(domainName);
+
+    CFPreferencesSetValue((CFStringRef)key, (CFPropertyListRef)value, appID,
+                          kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    CFPreferencesSynchronize(appID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
 }
 
 @end

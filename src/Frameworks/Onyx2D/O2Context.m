@@ -536,7 +536,6 @@ void O2ContextSaveGState(O2ContextRef self) {
    }
 
    O2GState *current=O2ContextCurrentGState(self),*next;
-
    next=O2GStateCopyWithZone(current,NULL);
    [self->_stateStack addObject:next];
    self->_currentState=next;
@@ -749,7 +748,7 @@ void O2ContextSetStrokeColorSpace(O2ContextRef self,O2ColorSpaceRef colorSpace) 
     return;
 
    int   i,length=O2ColorSpaceGetNumberOfComponents(colorSpace);
-   O2Float components[length+1];
+   CGFloat components[length+1];
    
    for(i=0;i<length;i++)
     components[i]=0;
@@ -767,7 +766,7 @@ void O2ContextSetFillColorSpace(O2ContextRef self,O2ColorSpaceRef colorSpace) {
     return;
 
    int   i,length=O2ColorSpaceGetNumberOfComponents(colorSpace);
-   O2Float components[length+1];
+   CGFloat components[length+1];
    
    for(i=0;i<length;i++)
     components[i]=0;
@@ -780,7 +779,7 @@ void O2ContextSetFillColorSpace(O2ContextRef self,O2ColorSpaceRef colorSpace) {
    O2ColorRelease(color);
 }
 
-void O2ContextSetStrokeColor(O2ContextRef self,const O2Float *components) {
+void O2ContextSetStrokeColor(O2ContextRef self,const CGFloat *components) {
    if(self==nil)
     return;
 
@@ -804,7 +803,7 @@ void O2ContextSetGrayStrokeColor(O2ContextRef self,O2Float gray,O2Float alpha) {
     return;
 
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceGray();
-   O2Float         components[2]={gray,alpha};
+   CGFloat         components[2]={gray,alpha};
    O2ColorRef color=O2ColorCreate(colorSpace,components);
    
    O2ContextSetStrokeColorWithColor(self,color);
@@ -818,7 +817,7 @@ void O2ContextSetRGBStrokeColor(O2ContextRef self,O2Float r,O2Float g,O2Float b,
     return;
 
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceRGB();
-   O2Float         components[4]={r,g,b,alpha};
+   CGFloat         components[4]={r,g,b,alpha};
    O2ColorRef color=O2ColorCreate(colorSpace,components);
    
    O2ContextSetStrokeColorWithColor(self,color);
@@ -832,7 +831,7 @@ void O2ContextSetCMYKStrokeColor(O2ContextRef self,O2Float c,O2Float m,O2Float y
     return;
 
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceCMYK();
-   O2Float         components[5]={c,m,y,k,alpha};
+   CGFloat         components[5]={c,m,y,k,alpha};
    O2ColorRef color=O2ColorCreate(colorSpace,components);
    
    O2ContextSetStrokeColorWithColor(self,color);
@@ -841,7 +840,7 @@ void O2ContextSetCMYKStrokeColor(O2ContextRef self,O2Float c,O2Float m,O2Float y
    O2ColorSpaceRelease(colorSpace);
 }
 
-void O2ContextSetFillColor(O2ContextRef self,const O2Float *components) {
+void O2ContextSetFillColor(O2ContextRef self,const CGFloat *components) {
    if(self==nil)
     return;
 
@@ -865,7 +864,7 @@ void O2ContextSetGrayFillColor(O2ContextRef self,O2Float gray,O2Float alpha) {
     return;
 
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceGray();
-   O2Float         components[2]={gray,alpha};
+   CGFloat         components[2]={gray,alpha};
    O2ColorRef color=O2ColorCreate(colorSpace,components);
    
    O2ContextSetFillColorWithColor(self,color);
@@ -879,7 +878,7 @@ void O2ContextSetRGBFillColor(O2ContextRef self,O2Float r,O2Float g,O2Float b,O2
     return;
 
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceRGB();
-   O2Float         components[4]={r,g,b,alpha};
+   CGFloat         components[4]={r,g,b,alpha};
    O2ColorRef color=O2ColorCreate(colorSpace,components);
    
    O2ContextSetFillColorWithColor(self,color);
@@ -893,7 +892,7 @@ void O2ContextSetCMYKFillColor(O2ContextRef self,O2Float c,O2Float m,O2Float y,O
     return;
 
    O2ColorSpaceRef colorSpace=O2ColorSpaceCreateDeviceCMYK();
-   O2Float         components[5]={c,m,y,k,alpha};
+   CGFloat         components[5]={c,m,y,k,alpha};
    O2ColorRef color=O2ColorCreate(colorSpace,components);
    
    O2ContextSetFillColorWithColor(self,color);
@@ -916,14 +915,14 @@ void O2ContextSetPatternPhase(O2ContextRef self,O2Size phase) {
    O2GStateSetPatternPhase(O2ContextCurrentGState(self),phase);
 }
 
-void O2ContextSetStrokePattern(O2ContextRef self,O2PatternRef pattern,const O2Float *components) {
+void O2ContextSetStrokePattern(O2ContextRef self,O2PatternRef pattern,const CGFloat *components) {
    if(self==nil)
     return;
 
    [O2ContextCurrentGState(self) setStrokePattern:pattern components:components];
 }
 
-void O2ContextSetFillPattern(O2ContextRef self,O2PatternRef pattern,const O2Float *components) {
+void O2ContextSetFillPattern(O2ContextRef self,O2PatternRef pattern,const CGFloat *components) {
    if(self==nil)
     return;
 

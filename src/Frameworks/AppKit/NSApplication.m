@@ -43,6 +43,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/socket.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -516,23 +517,19 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
         NSLog(@"Failed to connect to the Wayland compositor");
         return nil;
     }
-    NSLog(@"NSApplication init: WindowServer connected");
 
    _wsSvcPort = MACH_PORT_NULL;
 
    _display=[[NSDisplay currentDisplay] retain];
-   NSLog(@"NSApplication init: display ready");
 
    _windows=[[NSMutableArray new] retain];
    _mainMenu=nil;
-   NSLog(@"NSApplication init: window collection ready");
 
     NSBundle *mainBundle = [NSBundle mainBundle];
 
    bundleID = [mainBundle bundleIdentifier];
     if(bundleID == nil)
         bundleID = [NSString stringWithFormat:@"unix.%u", getpid()];
-    NSLog(@"NSApplication init: bundle ready");
 
     /* Event delivery is owned by libWindowServer in this process. The old
      * bootstrap registration targeted a separate Mach service and left the
@@ -540,17 +537,13 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
 
    _dockTile=[[NSDockTile alloc] initWithOwner:self];
    _modalStack=[NSMutableArray new];
-   NSLog(@"NSApplication init: application state ready");
 
    _lock=NSZoneMalloc(NULL,sizeof(pthread_mutex_t));
 
    pthread_mutex_init(_lock,NULL);
-   NSLog(@"NSApplication init: mutex ready");
 
     [self _showSplashImage];
     [NSThread detachNewThreadSelector:@selector(machServiceLoop:) toTarget:self withObject:nil];
-    NSLog(@"NSApplication init: event thread started");
-    NSLog(@"NSApplication init: complete");
 
    return NSApp;
 }
@@ -827,7 +820,25 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
         dictionaryWithObjects:@[menuCopy]
         forKeys:@[@"MainMenu"]];
 
-    NSData *d = [NSKeyedArchiver archivedDataWithRootObject:dict];
+    NSData *d = nil;
+    NS_DURING
+        d = [NSKeyedArchiver archivedDataWithRootObject:dict];
+    NS_HANDLER
+        /* Menu transport is optional until keyed archiving is available. */
+        NSLog(@"Unable to serialize the application menu: %@", localException);
+    NS_ENDHANDLER
+
+    if(d == nil) {
+        [menuCopy release];
+        return;
+    }
+
+    if(_wsSvcPort == MACH_PORT_NULL) {
+        /* The window server runs in this process; there is no menu transport
+         * and nothing to render a menu bar yet. */
+        [menuCopy release];
+        return;
+    }
 
     Message msg = {0};
     msg.header.msgh_remote_port = _wsSvcPort;
@@ -846,10 +857,15 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
         NSLog(@"Failed to send menus to WS");
 
     [menuCopy release];
-    [d release];
 }
 
 - (void)addRecentItem:(NSURL *)url {
+    /* The window server runs in this process, so there is no service port and
+     * nothing consumes menus or status items yet. Skip rather than fail a send
+     * to MACH_PORT_NULL on every call. */
+    if(_wsSvcPort == MACH_PORT_NULL)
+        return;
+
     Message msg = {0};
     msg.header.msgh_remote_port = _wsSvcPort;
     msg.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
@@ -866,6 +882,12 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 }
 
 - (void)_addStatusItem:(NSStatusItem *)item {
+    /* The window server runs in this process, so there is no service port and
+     * nothing consumes menus or status items yet. Skip rather than fail a send
+     * to MACH_PORT_NULL on every call. */
+    if(_wsSvcPort == MACH_PORT_NULL)
+        return;
+
     Message msg = {0};
     msg.header.msgh_remote_port = _wsSvcPort;
     msg.header.msgh_bits = MACH_MSGH_BITS_SET(MACH_MSG_TYPE_COPY_SEND, 0, 0, 0);
@@ -893,7 +915,6 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 
     memcpy(msg.data, [d bytes], [d length]);
     msg.len = [d length];
-    [d release];
     [dict release];
 
     if(mach_msg((mach_msg_header_t *)&msg, MACH_SEND_MSG|MACH_SEND_TIMEOUT,
@@ -1139,7 +1160,11 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 
   if (!didlaunch) {
     didlaunch = YES;
-    [self finishLaunching];
+    NS_DURING
+     [self finishLaunching];
+    NS_HANDLER
+     [self reportException:localException];
+    NS_ENDHANDLER
   }
 
    do {
@@ -1589,7 +1614,12 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 }
 
 -(void)reportException:(NSException *)exception {
-   NSLog(@"NSApplication got exception: %@",exception);
+   const char *name = [[[exception name] description] UTF8String];
+   const char *reason = [[[exception reason] description] UTF8String];
+
+   fprintf(stderr, "NSApplication got exception: %s: %s\n",
+           name != NULL ? name : "(unknown)",
+           reason != NULL ? reason : "(no reason)");
 }
 
 -(void)_attentionTimer:(NSTimer *)timer {

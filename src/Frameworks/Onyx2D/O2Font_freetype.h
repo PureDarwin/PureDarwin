@@ -15,6 +15,7 @@
 }
 
 - initWithDataProvider:(O2DataProviderRef)provider;
+- (FT_Face)face;
 
 FT_Face O2FontFreeTypeFace(O2Font_freetype *self);
 
