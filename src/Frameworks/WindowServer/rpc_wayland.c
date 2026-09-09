@@ -197,6 +197,11 @@ static void xdgSurfaceConfigure(void *data, struct xdg_surface *surface, uint32_
     xdg_surface_ack_configure(surface, serial);
     if (window->buffer == NULL) {
         windowAttachBuffer(window);
+    } else {
+        /* Surviving buffer from a role rebuild: the new role starts unmapped,
+         * so attach it again or the surface never shows anything. */
+        wl_surface_attach(window->surface, window->buffer, 0, 0);
+        wl_surface_damage(window->surface, 0, 0, (int)window->w, (int)window->h);
     }
     wl_surface_commit(window->surface);
 
@@ -226,6 +231,11 @@ static void layerSurfaceConfigure(void *data, struct zwlr_layer_surface_v1 *surf
     }
     if (window->buffer == NULL) {
         windowAttachBuffer(window);
+    } else {
+        /* Surviving buffer from a role rebuild: the new role starts unmapped,
+         * so attach it again or the surface never shows anything. */
+        wl_surface_attach(window->surface, window->buffer, 0, 0);
+        wl_surface_damage(window->surface, 0, 0, (int)window->w, (int)window->h);
     }
     wl_surface_commit(window->surface);
 
@@ -781,7 +791,13 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
         window->level = msg->level;
 
         if (wasLayered != nowLayered || (wasLayered && wasLayer != nowLayer)) {
-            windowReleaseBuffer(window);
+            /* The client mapped this shm by path and caches the mapping, so
+             * the buffer must survive the rebuild or it would go on drawing
+             * into an orphaned object. It cannot stay attached though: giving
+             * a wl_surface a new role while a buffer is attached is a protocol
+             * error, so detach first and re-attach once reconfigured. */
+            wl_surface_attach(window->surface, NULL, 0, 0);
+            wl_surface_commit(window->surface);
             windowDestroyRole(window);
             window->configured = 0;
             windowCreateRole(window, msg->title);
@@ -854,6 +870,9 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
             struct wsRPCWindow *msg = (struct wsRPCWindow *)data;
             struct wsWindow *window = windowForID(msg->windowID);
 
+            fprintf(stderr, "WindowServer: flush win=%d found=%d buffer=%d\n",
+                    msg->windowID, window != NULL,
+                    window != NULL && window->buffer != NULL);
             if (window == NULL || window->buffer == NULL) {
                 return KERN_SUCCESS;
             }

@@ -100,7 +100,11 @@ static NSMutableArray *_registeredClasses=nil;
 
 +(Class)imageRepClassForFileType:(NSString *)type {
    int count=[_registeredClasses count];
-   
+
+   /* A nil type matches nothing; comparing against it faults inside CF. */
+   if([type length]==0)
+    return nil;
+
    while(--count>=0){
     Class    checkClass=[_registeredClasses objectAtIndex:count];
     NSArray *types=[checkClass imageUnfilteredFileTypes];
@@ -128,6 +132,9 @@ static NSMutableArray *_registeredClasses=nil;
 }
 
 +(NSArray *)imageRepsWithContentsOfFile:(NSString *)path {
+   if(path==nil)
+    return nil;
+
 	// Try to guess which class to use from the path extension
    NSString *type=[path pathExtension];
    Class     class=[self imageRepClassForFileType:type];

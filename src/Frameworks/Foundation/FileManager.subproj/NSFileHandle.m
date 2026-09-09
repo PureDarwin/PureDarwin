@@ -155,4 +155,11 @@ static NSFileHandle *_open(Class cls, NSString *path, int flags) {
     }
 }
 
+
+/* Returns whatever can be read without blocking further; for a regular file
+ * that is the rest of the file. */
+- (NSData *)availableData {
+    return [self readDataToEndOfFile];
+}
+
 @end

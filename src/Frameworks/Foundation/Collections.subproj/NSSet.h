@@ -15,7 +15,12 @@
 
 @class NSEnumerator;
 
-@interface NSSet<__covariant ObjectType> : NSObject
+@interface NSSet<__covariant ObjectType> : NSObject <NSFastEnumeration>
+
+- (instancetype)initWithArray:(NSArray *)array;
+- (instancetype)initWithSet:(NSSet *)set;
+- (instancetype)initWithObjects:(id)firstObject, ...;
+- (instancetype)initWithObjects:(const id _Nonnull [_Nullable])objects count:(NSUInteger)count;
 
 + (instancetype)set;
 + (instancetype)setWithObject:(ObjectType)object;
@@ -27,6 +32,9 @@
 - (nullable ObjectType)member:(ObjectType)object;
 - (BOOL)containsObject:(ObjectType)object;
 - (NSArray<ObjectType> *)allObjects;
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)length;
 - (NSEnumerator *)objectEnumerator;
 
 @end

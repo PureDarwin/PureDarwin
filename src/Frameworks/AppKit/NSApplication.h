@@ -60,6 +60,16 @@ enum {
     NSRunContinuesResponse = -1002
 };
 
+typedef NSInteger NSModalResponse;
+
+enum {
+    NSModalResponseStop = -1000,
+    NSModalResponseAbort = -1001,
+    NSModalResponseContinue = -1002,
+    NSModalResponseOK = 1,
+    NSModalResponseCancel = 0
+};
+
 typedef enum {
     NSTerminateCancel,
     NSTerminateNow,
@@ -93,6 +103,7 @@ typedef enum {
     NSWindow *_mainWindow;
     NSMenu *_mainMenu;
     NSMenu *_windowsMenu;
+    NSMenu *_servicesMenu;
     mach_port_t _wsReplyPort;
     mach_port_t _wsSvcPort;
 

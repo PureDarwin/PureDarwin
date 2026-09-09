@@ -7,8 +7,11 @@
  */
 
 #import <Foundation/NSString.h>
+#import <Foundation/NSArray.h>
+#include <CoreFoundation/CFBase.h>
 #import <Foundation/NSData.h>
 #include <CoreFoundation/CFString.h>
+#include <CoreFoundation/CFCharacterSet.h>
 #include <CoreFoundation/CFData.h>
 #include <objc/runtime.h>
 #include <stdarg.h>
@@ -80,6 +83,50 @@ __NSStringCFEncoding(NSStringEncoding encoding)
                                            error:error] autorelease];
 }
 
+- (instancetype)init {
+    return (id)CFStringCreateWithCString(kCFAllocatorDefault, "",
+                                          kCFStringEncodingUTF8);
+}
+
+- (instancetype)initWithString:(NSString *)string {
+    if (string == nil) {
+        [self release];
+        return nil;
+    }
+    return (id)CFStringCreateCopy(kCFAllocatorDefault, (CFStringRef)string);
+}
+
+- (instancetype)initWithFormat:(NSString *)format, ... {
+    va_list arguments;
+
+    va_start(arguments, format);
+    CFStringRef result = _NSStringCreateWithFormatAndArguments(format, arguments);
+    va_end(arguments);
+
+    return (id)result;
+}
+
+- (instancetype)initWithFormat:(NSString *)format arguments:(va_list)arguments {
+    return (id)_NSStringCreateWithFormatAndArguments(format, arguments);
+}
+
+- (instancetype)initWithCharacters:(const unichar *)characters
+                            length:(NSUInteger)length {
+    return (id)CFStringCreateWithCharacters(kCFAllocatorDefault,
+                                            (const UniChar *)characters,
+                                            (CFIndex)length);
+}
+
+- (instancetype)initWithCString:(const char *)cString
+                       encoding:(NSStringEncoding)encoding {
+    if (cString == NULL) {
+        [self release];
+        return nil;
+    }
+    return (id)CFStringCreateWithCString(kCFAllocatorDefault, cString,
+                                         __NSStringCFEncoding(encoding));
+}
+
 - (instancetype)initWithUTF8String:(const char *)utf8String {
     CFStringRef result = CFStringCreateWithCString(kCFAllocatorDefault, utf8String, kCFStringEncodingUTF8);
     return (id)result;
@@ -138,6 +185,139 @@ __NSStringCFEncoding(NSStringEncoding encoding)
         return nil;
     }
     return (NSData *)CFAutorelease(result);
+}
+
+/* Bridged to CFStringRef, so identity comes from the CF layer. Without these the
+ * NSObject versions apply and compare pointers, which makes any dictionary or
+ * set keyed by value fail to find an equal-but-distinct object. */
+- (NSUInteger)hash {
+    return (NSUInteger)CFHash((CFTypeRef)self);
+}
+
+- (BOOL)isEqual:(id)other {
+    if (self == other) {
+        return YES;
+    }
+    if (other == nil || ![other isKindOfClass:[NSString class]]) {
+        return NO;
+    }
+    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+}
+
+
++ (instancetype)stringWithCharacters:(const unichar *)characters length:(NSUInteger)length {
+    CFStringRef string = CFStringCreateWithCharacters(kCFAllocatorDefault,
+                                                      (const UniChar *)characters,
+                                                      (CFIndex)length);
+
+    return (id)CFAutorelease(string);
+}
+
+
++ (instancetype)stringWithString:(NSString *)string {
+    if (string == nil) {
+        return nil;
+    }
+    CFStringRef copy = CFStringCreateCopy(kCFAllocatorDefault, (CFStringRef)string);
+
+    return (id)CFAutorelease(copy);
+}
+
+
++ (instancetype)string {
+    return [self stringWithUTF8String:""];
+}
+
+- (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set {
+    CFRange found;
+
+    if (CFStringFindCharacterFromSet((CFStringRef)self, (CFCharacterSetRef)set,
+                                     CFRangeMake(0, CFStringGetLength((CFStringRef)self)),
+                                     0, &found)) {
+        return NSMakeRange((NSUInteger)found.location, (NSUInteger)found.length);
+    }
+    return NSMakeRange(NSNotFound, 0);
+}
+
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically {
+    return [[self dataUsingEncoding:NSUTF8StringEncoding] writeToFile:path
+                                                           atomically:atomically];
+}
+
+
+- (NSArray *)componentsSeparatedByString:(NSString *)separator {
+    NSMutableArray *parts = [NSMutableArray array];
+    NSUInteger length = [self length];
+    NSUInteger start = 0;
+
+    if ([separator length] == 0) {
+        return [NSArray arrayWithObject:self];
+    }
+    while (start <= length) {
+        NSRange search = NSMakeRange(start, length - start);
+        NSRange found = [self rangeOfString:separator options:0 range:search];
+
+        if (found.location == NSNotFound) {
+            [parts addObject:[self substringFromIndex:start]];
+            break;
+        }
+        [parts addObject:[self substringWithRange:
+            NSMakeRange(start, found.location - start)]];
+        start = found.location + found.length;
+    }
+    return parts;
+}
+
+- (NSArray *)componentsSeparatedByCharactersInSet:(NSCharacterSet *)set {
+    NSMutableArray *parts = [NSMutableArray array];
+    NSUInteger length = [self length];
+    NSUInteger start = 0;
+
+    for (NSUInteger i = 0; i < length; i++) {
+        if (CFCharacterSetIsCharacterMember((CFCharacterSetRef)set,
+                                            CFStringGetCharacterAtIndex((CFStringRef)self,
+                                                                        (CFIndex)i))) {
+            [parts addObject:[self substringWithRange:NSMakeRange(start, i - start)]];
+            start = i + 1;
+        }
+    }
+    [parts addObject:[self substringFromIndex:start]];
+    return parts;
+}
+
+- (NSString *)stringByReplacingOccurrencesOfString:(NSString *)target
+                                        withString:(NSString *)replacement {
+    CFMutableStringRef copy = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                        (CFStringRef)self);
+
+    CFStringFindAndReplace(copy, (CFStringRef)target, (CFStringRef)replacement,
+                           CFRangeMake(0, CFStringGetLength(copy)), 0);
+    return (id)CFAutorelease(copy);
+}
+
+
++ (instancetype)stringWithCString:(const char *)cString encoding:(NSStringEncoding)encoding {
+    if (cString == NULL) {
+        return nil;
+    }
+
+    CFStringRef string = CFStringCreateWithCString(kCFAllocatorDefault, cString,
+                                                   (CFStringEncoding)encoding);
+
+    return (id)CFAutorelease(string);
+}
+
++ (instancetype)stringWithCString:(const char *)cString {
+    return [self stringWithCString:cString encoding:NSUTF8StringEncoding];
+}
+
+- (const char *)cStringUsingEncoding:(NSStringEncoding)encoding {
+    return CFStringGetCStringPtr((CFStringRef)self, (CFStringEncoding)encoding);
+}
+
+
++ (NSStringEncoding)defaultCStringEncoding {
+    return NSUTF8StringEncoding;
 }
 
 @end

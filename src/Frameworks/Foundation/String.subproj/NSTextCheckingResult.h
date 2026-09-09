@@ -10,6 +10,7 @@
 #define NSTextCheckingResult_h
 
 #import <Foundation/NSObject.h>
+@class NSArray;
 #import <Foundation/NSRange.h>
 
 @class NSString, NSArray, NSDictionary, NSOrthography;
@@ -35,6 +36,7 @@ typedef uint64_t NSTextCheckingTypes;
     NSTextCheckingType _resultType;
     NSRange _range;
     NSString *_replacementString;
+    NSArray *_ranges;
 }
 
 + (NSTextCheckingResult *)spellCheckingResultWithRange:(NSRange)range;
@@ -46,6 +48,12 @@ typedef uint64_t NSTextCheckingTypes;
 - (NSTextCheckingType)resultType;
 - (NSRange)range;
 - (NSString *)replacementString;
+
+/* Regular-expression results carry the overall match at index 0 and one entry
+ * per capture group after it. */
++ (NSTextCheckingResult *)regularExpressionCheckingResultWithRanges:(NSArray *)ranges;
+- (NSUInteger)numberOfRanges;
+- (NSRange)rangeAtIndex:(NSUInteger)index;
 
 @end
 

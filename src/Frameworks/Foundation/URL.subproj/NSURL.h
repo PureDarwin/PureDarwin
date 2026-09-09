@@ -22,6 +22,9 @@
 - (nullable NSString *)path;
 - (BOOL)isFileURL;
 
+
+- (NSNumber *)port;
+
 @end
 
 #endif /* NSURL_h */

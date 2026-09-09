@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSRunLoop.h>
+#import <Foundation/NSPort.h>
 #import <Foundation/NSSelectInputSource.h>
 #import <Foundation/NSArray.h>
 #import <Foundation/NSDictionary.h>
@@ -260,6 +261,15 @@ static void createRunLoopKey(void) {
     return fired;
 }
 
+/* Ports are scheduled through the port itself; see -[NSPort scheduleInRunLoop:]. */
+- (void)addPort:(NSPort *)port forMode:(NSRunLoopMode)mode {
+    [port scheduleInRunLoop:self forMode:mode];
+}
+
+- (void)removePort:(NSPort *)port forMode:(NSRunLoopMode)mode {
+    [port removeFromRunLoop:self forMode:mode];
+}
+
 - (void)runUntilDate:(NSDate *)date {
     while ([date timeIntervalSinceNow] > 0.0) {
         if (![self runMode:NSDefaultRunLoopMode beforeDate:date]) {
@@ -270,6 +280,33 @@ static void createRunLoopKey(void) {
 
 - (void)run {
     [self runUntilDate:[NSDate distantFuture]];
+}
+
+@end
+
+/* Delayed performs run as one-shot timers on the current run loop, which is
+ * what the documented behaviour amounts to. */
+@implementation NSObject (NSDelayedPerforming)
+
+- (void)performSelector:(SEL)selector withObject:(id)object afterDelay:(NSTimeInterval)delay {
+    [self performSelector:selector withObject:object afterDelay:delay inModes:nil];
+}
+
+- (void)performSelector:(SEL)selector withObject:(id)object afterDelay:(NSTimeInterval)delay
+                inModes:(NSArray *)modes {
+    NSTimer *timer = [NSTimer timerWithTimeInterval:delay
+                                             target:self
+                                           selector:selector
+                                           userInfo:object
+                                            repeats:NO];
+
+    [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];
+}
+
++ (void)cancelPreviousPerformRequestsWithTarget:(id)target {
+}
+
++ (void)cancelPreviousPerformRequestsWithTarget:(id)target selector:(SEL)selector object:(id)object {
 }
 
 @end

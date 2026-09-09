@@ -19,6 +19,12 @@ APPKIT_EXPORT NSString *const NSWorkspaceDidLaunchApplicationNotification;
 APPKIT_EXPORT NSString *const NSWorkspaceDidTerminateApplicationNotification;
 APPKIT_EXPORT NSString *const NSWorkspaceWillLaunchApplicationNotification;
 
+APPKIT_EXPORT NSString *const NSPlainFileType;
+APPKIT_EXPORT NSString *const NSDirectoryFileType;
+APPKIT_EXPORT NSString *const NSApplicationFileType;
+APPKIT_EXPORT NSString *const NSFilesystemFileType;
+APPKIT_EXPORT NSString *const NSShellCommandFileType;
+
 APPKIT_EXPORT NSString *const NSWorkspaceRecycleOperation;
 APPKIT_EXPORT NSString *const NSWorkspaceMoveOperation;
 APPKIT_EXPORT NSString *const NSWorkspaceCopyOperation;
@@ -46,6 +52,7 @@ APPKIT_EXPORT NSString *const NSWorkspaceDuplicateOperation;
 - (NSString *)preferredFilenameExtensionForType:(NSString *)type;
 - (BOOL)type:(NSString *)type conformsToType:(NSString *)conformsToType;
 - (NSString *)typeOfFile:(NSString *)path error:(NSError **)error;
+- (NSString *)fullPathForApplication:(NSString *)appName;
 
 - (BOOL)openFile:(NSString *)path;
 - (BOOL)openFile:(NSString *)path withApplication:(NSString *)application;

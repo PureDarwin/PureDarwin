@@ -100,6 +100,7 @@ typedef enum {
     NSArray *_sortDescriptors;
 
     int _draggingRow;
+    NSTableColumn *_highlightedTableColumn;
 }
 
 - (SEL)doubleAction;
@@ -220,6 +221,10 @@ typedef enum {
 
 - (NSArray *)sortDescriptors;
 - (void)setSortDescriptors:(NSArray *)value;
+
+- (void)setHighlightedTableColumn:(NSTableColumn *)column;
+- (NSTableColumn *)highlightedTableColumn;
+
 @end
 
 @interface NSObject (NSTableView_dataSource)

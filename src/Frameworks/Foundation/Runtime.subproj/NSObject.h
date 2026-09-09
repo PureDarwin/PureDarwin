@@ -60,3 +60,7 @@ typedef struct {
 @end
 
 #endif /* ! __FOUNDATION_NSOBJECT__ */
+
+@interface NSObject (NSClassName)
+- (NSString *)className;
+@end

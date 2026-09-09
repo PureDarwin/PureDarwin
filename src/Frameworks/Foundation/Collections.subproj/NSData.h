@@ -13,6 +13,17 @@
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/NSRange.h>
 
+typedef NS_OPTIONS(NSUInteger, NSDataReadingOptions) {
+    NSDataReadingMappedIfSafe = 1 << 0,
+    NSDataReadingUncached = 1 << 1,
+    NSDataReadingMappedAlways = 1 << 3
+};
+
+typedef NS_OPTIONS(NSUInteger, NSDataWritingOptions) {
+    NSDataWritingAtomic = 1 << 0,
+    NSDataWritingWithoutOverwriting = 1 << 1
+};
+
 @interface NSData : NSObject
 
 + (instancetype)data;
@@ -23,6 +34,12 @@
                        freeWhenDone:(BOOL)freeWhenDone;
 + (instancetype)dataWithData:(NSData *)data;
 + (nullable instancetype)dataWithContentsOfFile:(NSString *)path;
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
+- (BOOL)writeToFile:(NSString *)path options:(NSDataWritingOptions)options
+              error:(NSError **)error;
++ (nullable instancetype)dataWithContentsOfFile:(NSString *)path
+                                        options:(NSDataReadingOptions)options
+                                          error:(NSError **)error;
 
 - (instancetype)init;
 - (instancetype)initWithBytes:(const void *)bytes length:(NSUInteger)length;

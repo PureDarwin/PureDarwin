@@ -43,11 +43,18 @@ APPKIT_EXPORT NSString *const NSFontPboard;
 APPKIT_EXPORT NSString *const NSGeneralPboard;
 APPKIT_EXPORT NSString *const NSRulerPboard;
 
-@interface NSPasteboard : NSObject
+@interface NSPasteboard : NSObject {
+    NSString *_name;
+    NSMutableDictionary *_items;   /* type -> NSData */
+    NSMutableArray *_types;        /* declared order */
+    id _owner;                     /* provides data lazily, not retained */
+    int _changeCount;
+}
 
 + (NSPasteboard *)generalPasteboard;
 + (NSPasteboard *)pasteboardWithName:(NSString *)name;
 
+- (NSString *)name;
 - (int)changeCount;
 
 - (NSArray *)types;

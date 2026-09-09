@@ -4,9 +4,11 @@
 # sourceWith filters the repo down to just the prefixes a component needs, so
 # editing an unrelated file does not invalidate its build.
 { fbdoomExternalSrcEnv
+, frameworkHeadersOnly
 , libSystemSourcePaths
 , pkgs
 , sourceWith
+, sourceWithExtraFilter
 }:
 
 let
@@ -61,7 +63,7 @@ let
     "src/Libraries/libSystem/pthread"
     "tools"
   ];
-  libSystemSource = stripOsfmkImpl (sourceWith "puredarwin-libsystem-source" libSystemSourcePaths);
+  libSystemSource = stripOsfmkImpl (sourceWithExtraFilter "puredarwin-libsystem-source" libSystemSourcePaths frameworkHeadersOnly);
   kextsSource = sourceWith "puredarwin-kexts-source" [
     "projects"
     "src/Kernel/CMakeLists.txt"

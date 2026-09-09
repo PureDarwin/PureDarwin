@@ -7,6 +7,8 @@
  */
 
 #import <Foundation/NSTextCheckingResult.h>
+#import <Foundation/NSArray.h>
+#import <Foundation/NSValue.h>
 #import <Foundation/NSString.h>
 
 @implementation NSTextCheckingResult
@@ -40,6 +42,30 @@
 - (void)dealloc {
     [_replacementString release];
     [super dealloc];
+}
+
++ (NSTextCheckingResult *)regularExpressionCheckingResultWithRanges:(NSArray *)ranges {
+    NSTextCheckingResult *result = [[[self alloc] init] autorelease];
+
+    result->_resultType = NSTextCheckingTypeRegularExpression;
+    result->_ranges = [ranges retain];
+    result->_range = ([ranges count] > 0)
+        ? [[ranges objectAtIndex:0] rangeValue] : NSMakeRange(NSNotFound, 0);
+    return result;
+}
+
+- (NSUInteger)numberOfRanges {
+    return (_ranges != nil) ? [_ranges count] : 1;
+}
+
+- (NSRange)rangeAtIndex:(NSUInteger)index {
+    if (_ranges == nil) {
+        return (index == 0) ? _range : NSMakeRange(NSNotFound, 0);
+    }
+    if (index >= [_ranges count]) {
+        return NSMakeRange(NSNotFound, 0);
+    }
+    return [[_ranges objectAtIndex:index] rangeValue];
 }
 
 - (NSTextCheckingType)resultType {

@@ -11,8 +11,9 @@
 
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
+#import <Foundation/NSDate.h>
 
-@class NSDate, NSString, NSTimer, NSMutableArray, NSMutableDictionary, NSInputSource;
+@class NSDate, NSString, NSTimer, NSMutableArray, NSMutableDictionary, NSInputSource, NSPort;
 
 typedef NSString *NSRunLoopMode;
 
@@ -34,6 +35,8 @@ FOUNDATION_EXPORT NSRunLoopMode const NSModalPanelRunLoopMode;
 - (NSString *)currentMode;
 
 - (void)addInputSource:(NSInputSource *)source forMode:(NSRunLoopMode)mode;
+- (void)addPort:(NSPort *)port forMode:(NSRunLoopMode)mode;
+- (void)removePort:(NSPort *)port forMode:(NSRunLoopMode)mode;
 - (void)removeInputSource:(NSInputSource *)source forMode:(NSRunLoopMode)mode;
 
 - (void)addTimer:(NSTimer *)timer forMode:(NSRunLoopMode)mode;
@@ -47,6 +50,14 @@ FOUNDATION_EXPORT NSRunLoopMode const NSModalPanelRunLoopMode;
 - (BOOL)runMode:(NSRunLoopMode)mode beforeDate:(NSDate *)date;
 - (NSDate *)limitDateForMode:(NSRunLoopMode)mode;
 
+@end
+
+@interface NSObject (NSDelayedPerforming)
+- (void)performSelector:(SEL)selector withObject:(id)object afterDelay:(NSTimeInterval)delay;
+- (void)performSelector:(SEL)selector withObject:(id)object afterDelay:(NSTimeInterval)delay
+                inModes:(NSArray *)modes;
++ (void)cancelPreviousPerformRequestsWithTarget:(id)target;
++ (void)cancelPreviousPerformRequestsWithTarget:(id)target selector:(SEL)selector object:(id)object;
 @end
 
 #endif /* NSRunLoop_h */

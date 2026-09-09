@@ -48,18 +48,42 @@ NSString * const NSRulerPboard=@"NSRulerPboard";
    return [self pasteboardWithName:NSGeneralPboard];
 }
 
+/* Named boards live for the life of the process. Cocotron expected the display
+ * backend to own these; here they are process-local, which is all a single
+ * application needs for cut/copy/paste and intra-app dragging. */
 +(NSPasteboard *)pasteboardWithName:(NSString *)name {
-   return [[NSDisplay currentDisplay] pasteboardWithName:name];
+   static NSMutableDictionary *boards=nil;
+
+   if(name==nil)
+    name=NSGeneralPboard;
+
+   if(boards==nil)
+    boards=[[NSMutableDictionary alloc] initWithCapacity:0];
+
+   NSPasteboard *board=[boards objectForKey:name];
+
+   if(board==nil){
+    board=[[NSPasteboard alloc] init];
+    board->_name=[name copy];
+    board->_items=[[NSMutableDictionary alloc] initWithCapacity:0];
+    board->_types=[[NSMutableArray alloc] initWithCapacity:0];
+    board->_changeCount=0;
+    [boards setObject:board forKey:name];
+   }
+
+   return board;
+}
+
+-(NSString *)name {
+   return _name;
 }
 
 -(int)changeCount {
-   NSUnimplementedMethod();
-   return 0;
+   return _changeCount;
 }
 
 -(NSArray *)types {
-   NSUnimplementedMethod();
-   return nil;
+   return _types;
 }
 
 -(NSString *)availableTypeFromArray:(NSArray *)types {
@@ -78,8 +102,16 @@ NSString * const NSRulerPboard=@"NSRulerPboard";
 
 
 -(NSData *)dataForType:(NSString *)type {
-   NSUnimplementedMethod();
-   return nil;
+   NSData *data=[_items objectForKey:type];
+
+   /* A lazy owner supplies the bytes only when they are first asked for. */
+   if(data==nil && _owner!=nil &&
+      [_owner respondsToSelector:@selector(pasteboard:provideDataForType:)]){
+    [_owner pasteboard:self provideDataForType:type];
+    data=[_items objectForKey:type];
+   }
+
+   return data;
 }
 
 -(NSString *)stringForType:(NSString *)type {
@@ -100,18 +132,43 @@ NSString * const NSRulerPboard=@"NSRulerPboard";
 }
 
 -(int)declareTypes:(NSArray *)types owner:(id)owner {
-   NSUnimplementedMethod();
-   return 0;
+   if(_owner!=nil && _owner!=owner &&
+      [_owner respondsToSelector:@selector(pasteboardChangedOwner:)])
+    [_owner pasteboardChangedOwner:self];
+
+   [_items removeAllObjects];
+   [_types removeAllObjects];
+   _owner=owner;
+   _changeCount++;
+
+   return [self addTypes:types owner:owner];
 }
 
 -(int)addTypes:(NSArray *)types owner:(id)owner {
-    NSUnimplementedMethod();
-    return 0;
+   int i,count=[types count];
+
+   _owner=owner;
+
+   for(i=0;i<count;i++){
+    NSString *type=[types objectAtIndex:i];
+
+    if(![_types containsObject:type])
+     [_types addObject:type];
+   }
+
+   return _changeCount;
 }
 
 -(BOOL)setData:(NSData *)data forType:(NSString *)type {
-   NSUnimplementedMethod();
-   return NO;
+   if(data==nil || type==nil)
+    return NO;
+
+   if(![_types containsObject:type])
+    [_types addObject:type];
+
+   [_items setObject:data forKey:type];
+
+   return YES;
 }
 
 -(BOOL)setString:(NSString *)string forType:(NSString *)type {

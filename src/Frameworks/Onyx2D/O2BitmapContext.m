@@ -140,7 +140,12 @@ O2BitmapInfo O2BitmapContextGetBitmapInfo(O2ContextRef selfX) {
 
 O2ImageRef O2BitmapContextCreateImage(O2ContextRef selfX) {
    O2BitmapContextRef self=(O2BitmapContextRef)selfX;
-   
+
+   /* Callers reach here with a nil context when an image has no drawable
+    * representation; that is their bug, but it should not be a crash. */
+   if(self==NULL)
+    return NULL;
+
    return O2SurfaceCreateImage(self->_surface);
 }
 

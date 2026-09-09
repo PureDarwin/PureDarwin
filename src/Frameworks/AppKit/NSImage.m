@@ -29,6 +29,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 - (id)initWithFlipped:(BOOL)flipped;
 @end
+NSString *const NSImageNameMultipleDocuments=@"NSMultipleDocuments";
+NSString *const NSImageNameTrashEmpty=@"NSTrashEmpty";
+NSString *const NSImageNameTrashFull=@"NSTrashFull";
+NSString *const NSImageNameFolder=@"NSFolder";
+NSString *const NSImageNameComputer=@"NSComputer";
+NSString *const NSImageNameUser=@"NSUser";
+NSString *const NSImageNameCaution=@"NSCaution";
+
 @implementation NSImageCacheView
 - (id)initWithFlipped:(BOOL)flipped
 {

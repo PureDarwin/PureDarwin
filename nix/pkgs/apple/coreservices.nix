@@ -4,12 +4,14 @@
 , targetTriple ? "x86_64-apple-darwin20.4"
 , nativeLd
 , libSystem
+, corefoundation
 , src
 , appleSdk
 }:
 
-# CoreServices umbrella. Only the CarbonCore Multiprocessing entry points are
-# implemented so far - see src/Libraries/CoreServices
+# CoreServices umbrella: the CarbonCore Multiprocessing entry points and a
+# LaunchServices built on a directory scan of the application folders.
+# See src/Libraries/CoreServices.
 
 let
 in
@@ -28,13 +30,16 @@ stdenv.mkDerivation {
     ${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
-      -L${libSystem}/usr/lib \
+      -L${libSystem}/usr/lib -L${corefoundation}/usr/lib \
+      -I${corefoundation}/include \
+      -Isrc/Libraries/CoreServices/include \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices \
       -Wl,-fixup_chains \
       src/Libraries/CoreServices/MultiprocessingCompat.c \
-      -lSystem \
+      src/Libraries/CoreServices/LaunchServices.c \
+      -lCoreFoundation -lSystem \
       -o CoreServices
 
     runHook postBuild
@@ -47,7 +52,10 @@ stdenv.mkDerivation {
     cp CoreServices "$fwdir/Versions/A/CoreServices"
     mkdir -p "$fwdir/Versions/A/Headers"
     cp src/Libraries/CoreServices/include/CoreServices/CoreServices.h \
+       src/Libraries/CoreServices/include/CoreServices/LaunchServices.h \
        "$fwdir/Versions/A/Headers/"
+    mkdir -p "$out/usr/include/CoreServices"
+    cp src/Libraries/CoreServices/include/CoreServices/*.h "$out/usr/include/CoreServices/"
     ln -sf A "$fwdir/Versions/Current"
     ln -sf Versions/Current/CoreServices "$fwdir/CoreServices"
     ln -sf Versions/Current/Resources "$fwdir/Resources"

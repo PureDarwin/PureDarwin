@@ -56,6 +56,14 @@ typedef enum {
     NSOnState = 1,
 } NSCellState;
 
+typedef NSInteger NSControlStateValue;
+
+enum {
+    NSControlStateValueMixed = NSMixedState,
+    NSControlStateValueOff = NSOffState,
+    NSControlStateValueOn = NSOnState
+};
+
 typedef enum {
     NSRegularControlSize,
     NSSmallControlSize,

@@ -8,9 +8,16 @@
 
 #import "NSCFString.h"
 #import <Foundation/NSArray.h>
+#import <Foundation/NSException.h>
+#include <stdarg.h>
+
+/* Defined in NSString.m: renders %@ by asking the object for a description. */
+extern CFStringRef _NSCopyFormattingDescription(void *value, const void *locale);
 #include <CoreFoundation/CFString.h>
+#include <CoreFoundation/CFCharacterSet.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <CoreFoundation/CFRuntime.h>
+#include <objc/runtime.h>
 
 /* The compiler emits every @"..." with its isa pointing at
  * ___CFConstantStringClassReference, so that symbol has to *be* a class.
@@ -68,12 +75,128 @@ extern int __CFConstantStringClassReference[];
     return self;
 }
 
+- (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding {
+    [self release];
+    if (data == nil) {
+        return nil;
+    }
+    return (id)CFStringCreateWithBytes(kCFAllocatorDefault, [data bytes],
+                                       (CFIndex)[data length],
+                                       (CFStringEncoding)encoding, false);
+}
+
+- (BOOL)hasPrefix:(NSString *)prefix {
+    if (prefix == nil) {
+        return NO;
+    }
+    return CFStringHasPrefix((CFStringRef)self, (CFStringRef)prefix) ? YES : NO;
+}
+
+- (BOOL)hasSuffix:(NSString *)suffix {
+    if (suffix == nil) {
+        return NO;
+    }
+    return CFStringHasSuffix((CFStringRef)self, (CFStringRef)suffix) ? YES : NO;
+}
+
+- (BOOL)containsString:(NSString *)string {
+    if (string == nil) {
+        return NO;
+    }
+    return [self rangeOfString:string].location != NSNotFound;
+}
+
+- (NSString *)lowercaseString {
+    CFMutableStringRef copy = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                        (CFStringRef)self);
+
+    CFStringLowercase(copy, NULL);
+    return (id)CFAutorelease(copy);
+}
+
+- (NSString *)uppercaseString {
+    CFMutableStringRef copy = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                        (CFStringRef)self);
+
+    CFStringUppercase(copy, NULL);
+    return (id)CFAutorelease(copy);
+}
+
+- (NSString *)capitalizedString {
+    CFMutableStringRef copy = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                        (CFStringRef)self);
+
+    CFStringCapitalize(copy, NULL);
+    return (id)CFAutorelease(copy);
+}
+
+/* Trims from both ends, stopping at the first character not in the set. */
+- (NSString *)stringByTrimmingCharactersInSet:(NSCharacterSet *)set {
+    NSUInteger length = [self length];
+    NSUInteger start = 0;
+    NSUInteger end = length;
+
+    while (start < end &&
+           CFCharacterSetIsCharacterMember((CFCharacterSetRef)set,
+                                           CFStringGetCharacterAtIndex((CFStringRef)self,
+                                                                       (CFIndex)start))) {
+        start++;
+    }
+    while (end > start &&
+           CFCharacterSetIsCharacterMember((CFCharacterSetRef)set,
+                                           CFStringGetCharacterAtIndex((CFStringRef)self,
+                                                                       (CFIndex)(end - 1)))) {
+        end--;
+    }
+    return [self substringWithRange:NSMakeRange(start, end - start)];
+}
+
+/* CFStringCompare dereferences its argument, so nil has to be caught here.
+ * Apple raises for this rather than returning an order. */
+#define PD_REQUIRE_STRING(arg) \
+    do { \
+        if ((arg) == nil) \
+            [NSException raise:NSInvalidArgumentException \
+                        format:@"-[%@ %s]: nil argument", \
+                               NSStringFromClass([self class]), sel_getName(_cmd)]; \
+    } while (0)
+
 - (NSComparisonResult)compare:(NSString *)other {
+    PD_REQUIRE_STRING(other);
     return (NSComparisonResult)CFStringCompare((CFStringRef)self,
                                                (CFStringRef)other, 0);
 }
 
+/* NSStringCompareOptions are laid out to match the CFStringCompareFlags. */
+- (NSComparisonResult)compare:(NSString *)other options:(NSStringCompareOptions)options {
+    PD_REQUIRE_STRING(other);
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self, (CFStringRef)other,
+                                               (CFStringCompareFlags)options);
+}
+
+- (NSComparisonResult)compare:(NSString *)other
+                      options:(NSStringCompareOptions)options
+                        range:(NSRange)range {
+    PD_REQUIRE_STRING(other);
+    return (NSComparisonResult)CFStringCompareWithOptions((CFStringRef)self,
+        (CFStringRef)other, CFRangeMake((CFIndex)range.location, (CFIndex)range.length),
+        (CFStringCompareFlags)options);
+}
+
+- (NSComparisonResult)localizedCompare:(NSString *)other {
+    PD_REQUIRE_STRING(other);
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self, (CFStringRef)other,
+                                               kCFCompareLocalized);
+}
+
+- (NSComparisonResult)localizedCaseInsensitiveCompare:(NSString *)other {
+    PD_REQUIRE_STRING(other);
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self, (CFStringRef)other,
+                                               kCFCompareLocalized | kCFCompareCaseInsensitive);
+}
+
 - (NSComparisonResult)caseInsensitiveCompare:(NSString *)other {
+    PD_REQUIRE_STRING(other);
     return (NSComparisonResult)CFStringCompare((CFStringRef)self,
                                                (CFStringRef)other,
                                                kCFCompareCaseInsensitive);
@@ -113,6 +236,8 @@ extern int __CFConstantStringClassReference[];
 - (NSRange)rangeOfString:(NSString *)string
                  options:(NSStringCompareOptions)options
                    range:(NSRange)searchRange {
+    PD_REQUIRE_STRING(string);
+
     CFRange found;
     Boolean ok = CFStringFindWithOptions((CFStringRef)self, (CFStringRef)string,
         CFRangeMake((CFIndex)searchRange.location, (CFIndex)searchRange.length),
@@ -176,6 +301,56 @@ extern int __CFConstantStringClassReference[];
 
 - (id)mutableCopyWithZone:(NSZone *)zone {
     return (id)CFStringCreateMutableCopy(kCFAllocatorDefault, 0, (CFStringRef)self);
+}
+
+/* Mutable operations live here rather than on NSMutableString: a CFString is
+ * bridged to this one class whether or not it is mutable, so methods declared
+ * only on NSMutableString are never found at runtime. */
+- (void)appendString:(NSString *)string {
+    if (string == nil) {
+        return;
+    }
+    CFStringAppend((CFMutableStringRef)self, (CFStringRef)string);
+}
+
+- (void)appendFormat:(NSString *)format, ... {
+    va_list arguments;
+
+    va_start(arguments, format);
+    _CFStringAppendFormatAndArgumentsAux((CFMutableStringRef)self,
+                                         _NSCopyFormattingDescription, NULL,
+                                         (CFStringRef)format, arguments);
+    va_end(arguments);
+}
+
+- (void)setString:(NSString *)string {
+    CFStringReplaceAll((CFMutableStringRef)self,
+                       (CFStringRef)(string != nil ? string : @""));
+}
+
+- (void)insertString:(NSString *)string atIndex:(NSUInteger)index {
+    if (string == nil) {
+        return;
+    }
+    CFStringInsert((CFMutableStringRef)self, (CFIndex)index, (CFStringRef)string);
+}
+
+- (void)deleteCharactersInRange:(NSRange)range {
+    CFStringDelete((CFMutableStringRef)self,
+                   CFRangeMake((CFIndex)range.location, (CFIndex)range.length));
+}
+
+- (NSUInteger)replaceOccurrencesOfString:(NSString *)target
+                              withString:(NSString *)replacement
+                                 options:(NSStringCompareOptions)options
+                                   range:(NSRange)searchRange {
+    if (target == nil || replacement == nil) {
+        return 0;
+    }
+    return (NSUInteger)CFStringFindAndReplace((CFMutableStringRef)self,
+        (CFStringRef)target, (CFStringRef)replacement,
+        CFRangeMake((CFIndex)searchRange.location, (CFIndex)searchRange.length),
+        (CFStringCompareFlags)options);
 }
 
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string {

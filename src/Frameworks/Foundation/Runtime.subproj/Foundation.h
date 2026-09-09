@@ -80,5 +80,18 @@
 #import <Foundation/NSPathUtilities.h>
 #import <Foundation/NSFileManager.h>
 #import <Foundation/NSFileHandle.h>
+#import <Foundation/NSPipe.h>
+#import <Foundation/NSTask.h>
+#import <Foundation/NSDistributedLock.h>
+#import <Foundation/NSHost.h>
+#import <Foundation/NSCalendarDate.h>
+#import <Foundation/NSTimeZone.h>
+#import <Foundation/NSProxy.h>
+#import <Foundation/NSConnection.h>
+#import <Foundation/NSPort.h>
+#import <Foundation/NSNetServices.h>
+#import <Foundation/NSDistributedNotificationCenter.h>
+#import <Foundation/NSRegularExpression.h>
+#import <Foundation/NSJSONSerialization.h>
 
 #endif /* ! __FOUNDATION_FOUNDATION__ */

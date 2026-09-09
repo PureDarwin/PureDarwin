@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSProcessInfo.h>
+#include <sys/time.h>
 #import <Foundation/NSArray.h>
 #import <Foundation/NSDictionary.h>
 #import <Foundation/NSString.h>
@@ -71,6 +72,23 @@ static NSString *_string(const char *cString) {
     return _string(slash != NULL ? slash + 1 : argv0);
 }
 
+/* Unique across processes and calls: pid plus a counter and the clock, which
+ * is what callers use it for (temporary file and connection names). */
+- (NSString *)globallyUniqueString {
+    static unsigned long counter = 0;
+    struct timeval now;
+
+    gettimeofday(&now, NULL);
+
+    return [NSString stringWithFormat:@"%@-%d-%lx-%lx-%lx",
+                     [self processName], getpid(), (unsigned long)(++counter),
+                     (unsigned long)now.tv_sec, (unsigned long)now.tv_usec];
+}
+
+- (NSString *)globallyUniqueID {
+    return [self globallyUniqueString];
+}
+
 - (int)processIdentifier {
     return getpid();
 }
@@ -82,6 +100,32 @@ static NSString *_string(const char *cString) {
     }
     buffer[sizeof(buffer) - 1] = '\0';
     return _string(buffer);
+}
+
+/* Darwin is the MACH flavour in this (OpenStep-era) enumeration. */
+/* Seconds since boot, from the kernel's boot time. */
+- (NSTimeInterval)systemUptime {
+    struct timeval boot;
+    size_t size = sizeof(boot);
+    int name[2] = { CTL_KERN, KERN_BOOTTIME };
+
+    if (sysctl(name, 2, &boot, &size, NULL, 0) != 0) {
+        return 0.0;
+    }
+
+    struct timeval now;
+
+    gettimeofday(&now, NULL);
+    return (NSTimeInterval)(now.tv_sec - boot.tv_sec) +
+           (NSTimeInterval)(now.tv_usec - boot.tv_usec) / 1000000.0;
+}
+
+- (NSUInteger)operatingSystem {
+    return NSMACHOperatingSystem;
+}
+
+- (NSString *)operatingSystemName {
+    return @"NSMACHOperatingSystem";
 }
 
 - (NSUInteger)processorCount {

@@ -659,10 +659,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 -(void)setStringValue:(NSString *)value {
-   if(value==nil){
-    [NSException raise:NSInvalidArgumentException format:@"-[%@ %s] value==nil",[self class],sel_getName(_cmd)];
-    return;
-   }
+   /* AppKit treats a nil string as empty rather than refusing it; cells are
+    * routinely fed the result of a lookup that found nothing. */
+   if(value==nil)
+    value=@"";
 
    [self setType:NSTextCellType];
 

@@ -20,11 +20,32 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/mount.h>
+#include <sys/param.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 NSString *const NSFileSize = @"NSFileSize";
 NSString *const NSFileType = @"NSFileType";
+NSString *const NSFileOwnerAccountID = @"NSFileOwnerAccountID";
+NSString *const NSFileGroupOwnerAccountID = @"NSFileGroupOwnerAccountID";
+NSString *const NSFileReferenceCount = @"NSFileReferenceCount";
+NSString *const NSFileDeviceIdentifier = @"NSFileDeviceIdentifier";
+NSString *const NSFileSystemNumber = @"NSFileSystemNumber";
+NSString *const NSFileImmutable = @"NSFileImmutable";
+NSString *const NSFileAppendOnly = @"NSFileAppendOnly";
+NSString *const NSFileExtensionHidden = @"NSFileExtensionHidden";
+NSString *const NSFileHFSCreatorCode = @"NSFileHFSCreatorCode";
+NSString *const NSFileHFSTypeCode = @"NSFileHFSTypeCode";
+NSString *const NSFileSystemSize = @"NSFileSystemSize";
+NSString *const NSFileSystemFreeSize = @"NSFileSystemFreeSize";
+NSString *const NSFileSystemNodes = @"NSFileSystemNodes";
+NSString *const NSFileSystemFreeNodes = @"NSFileSystemFreeNodes";
 NSString *const NSFileTypeRegular = @"NSFileTypeRegular";
+NSString *const NSFileTypeSocket = @"NSFileTypeSocket";
+NSString *const NSFileTypeCharacterSpecial = @"NSFileTypeCharacterSpecial";
+NSString *const NSFileTypeBlockSpecial = @"NSFileTypeBlockSpecial";
+NSString *const NSFileTypeFIFO = @"NSFileTypeFIFO";
 NSString *const NSFileTypeDirectory = @"NSFileTypeDirectory";
 NSString *const NSFileTypeSymbolicLink = @"NSFileTypeSymbolicLink";
 NSString *const NSFileTypeUnknown = @"NSFileTypeUnknown";
@@ -336,6 +357,264 @@ static void _setPOSIXError(NSError **error) {
     return YES;
 }
 
+/* Copy one regular file's bytes, preserving permission bits. */
+static BOOL _copyFileBytes(const char *from, const char *to, mode_t mode,
+                           NSError **error) {
+    int in = open(from, O_RDONLY);
+    if (in < 0) {
+        _setPOSIXError(error);
+        return NO;
+    }
+
+    int out = open(to, O_WRONLY | O_CREAT | O_TRUNC, mode & 07777);
+    if (out < 0) {
+        _setPOSIXError(error);
+        close(in);
+        return NO;
+    }
+
+    char buffer[65536];
+    ssize_t got;
+    while ((got = read(in, buffer, sizeof(buffer))) > 0) {
+        ssize_t done = 0;
+        while (done < got) {
+            ssize_t put = write(out, buffer + done, (size_t)(got - done));
+            if (put <= 0) {
+                _setPOSIXError(error);
+                close(in);
+                close(out);
+                return NO;
+            }
+            done += put;
+        }
+    }
+
+    if (got < 0) {
+        _setPOSIXError(error);
+        close(in);
+        close(out);
+        return NO;
+    }
+
+    close(in);
+    close(out);
+    return YES;
+}
+
+- (BOOL)copyItemAtPath:(NSString *)source toPath:(NSString *)destination
+                 error:(NSError **)error {
+    char from[PATH_MAX], to[PATH_MAX];
+    if (!_fsPath(source, from, sizeof(from)) ||
+        !_fsPath(destination, to, sizeof(to))) {
+        _setPOSIXError(error);
+        return NO;
+    }
+
+    struct stat info;
+    if (lstat(from, &info) != 0) {
+        _setPOSIXError(error);
+        return NO;
+    }
+
+    if (S_ISLNK(info.st_mode)) {
+        char target[PATH_MAX];
+        ssize_t length = readlink(from, target, sizeof(target) - 1);
+        if (length < 0) {
+            _setPOSIXError(error);
+            return NO;
+        }
+        target[length] = '\0';
+        if (symlink(target, to) != 0) {
+            _setPOSIXError(error);
+            return NO;
+        }
+        return YES;
+    }
+
+    if (S_ISDIR(info.st_mode)) {
+        if (mkdir(to, info.st_mode & 07777) != 0 && errno != EEXIST) {
+            _setPOSIXError(error);
+            return NO;
+        }
+
+        NSArray<NSString *> *entries = [self contentsOfDirectoryAtPath:source
+                                                                 error:error];
+        NSUInteger count = [entries count];
+        for (NSUInteger i = 0; i < count; i++) {
+            NSString *name = [entries objectAtIndex:i];
+            if (![self copyItemAtPath:[source stringByAppendingPathComponent:name]
+                               toPath:[destination stringByAppendingPathComponent:name]
+                                error:error]) {
+                return NO;
+            }
+        }
+        return YES;
+    }
+
+    return _copyFileBytes(from, to, info.st_mode, error);
+}
+
+- (BOOL)moveItemAtPath:(NSString *)source toPath:(NSString *)destination
+                 error:(NSError **)error {
+    char from[PATH_MAX], to[PATH_MAX];
+    if (!_fsPath(source, from, sizeof(from)) ||
+        !_fsPath(destination, to, sizeof(to))) {
+        _setPOSIXError(error);
+        return NO;
+    }
+
+    if (rename(from, to) == 0) {
+        return YES;
+    }
+
+    /* Across devices rename cannot work; fall back to copy and remove. */
+    if (errno != EXDEV) {
+        _setPOSIXError(error);
+        return NO;
+    }
+
+    if (![self copyItemAtPath:source toPath:destination error:error]) {
+        return NO;
+    }
+    return [self removeItemAtPath:source error:error];
+}
+
+- (BOOL)linkItemAtPath:(NSString *)source toPath:(NSString *)destination
+                 error:(NSError **)error {
+    char from[PATH_MAX], to[PATH_MAX];
+    if (!_fsPath(source, from, sizeof(from)) ||
+        !_fsPath(destination, to, sizeof(to))) {
+        _setPOSIXError(error);
+        return NO;
+    }
+
+    if (link(from, to) != 0) {
+        _setPOSIXError(error);
+        return NO;
+    }
+    return YES;
+}
+
+- (BOOL)createSymbolicLinkAtPath:(NSString *)path
+             withDestinationPath:(NSString *)destination
+                           error:(NSError **)error {
+    char link[PATH_MAX], target[PATH_MAX];
+    if (!_fsPath(path, link, sizeof(link)) ||
+        !_fsPath(destination, target, sizeof(target))) {
+        _setPOSIXError(error);
+        return NO;
+    }
+
+    if (symlink(target, link) != 0) {
+        _setPOSIXError(error);
+        return NO;
+    }
+    return YES;
+}
+
+- (NSString *)destinationOfSymbolicLinkAtPath:(NSString *)path
+                                        error:(NSError **)error {
+    char buffer[PATH_MAX], target[PATH_MAX];
+    if (!_fsPath(path, buffer, sizeof(buffer))) {
+        _setPOSIXError(error);
+        return nil;
+    }
+
+    ssize_t length = readlink(buffer, target, sizeof(target) - 1);
+    if (length < 0) {
+        _setPOSIXError(error);
+        return nil;
+    }
+    target[length] = '\0';
+
+    return [self stringWithFileSystemRepresentation:target];
+}
+
+- (NSDictionary *)attributesOfFileSystemForPath:(NSString *)path
+                                          error:(NSError **)error {
+    char buffer[PATH_MAX];
+    if (!_fsPath(path, buffer, sizeof(buffer))) {
+        _setPOSIXError(error);
+        return nil;
+    }
+
+    struct statfs info;
+    if (statfs(buffer, &info) != 0) {
+        _setPOSIXError(error);
+        return nil;
+    }
+
+    unsigned long long blockSize = (unsigned long long)info.f_bsize;
+
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+        [NSNumber numberWithUnsignedLongLong:blockSize * info.f_blocks],
+            NSFileSystemSize,
+        [NSNumber numberWithUnsignedLongLong:blockSize * info.f_bavail],
+            NSFileSystemFreeSize,
+        [NSNumber numberWithUnsignedLongLong:(unsigned long long)info.f_files],
+            NSFileSystemNodes,
+        [NSNumber numberWithUnsignedLongLong:(unsigned long long)info.f_ffree],
+            NSFileSystemFreeNodes,
+        [NSNumber numberWithUnsignedLong:(unsigned long)info.f_fsid.val[0]],
+            NSFileSystemNumber,
+        nil];
+}
+
+/* The pre-10.5 spellings. Deprecated by Apple but never removed, and what
+ * GNUstep-era sources call; each one forwards to its modern replacement. */
+
+- (BOOL)createDirectoryAtPath:(NSString *)path
+                   attributes:(NSDictionary *)attributes {
+    if (![self createDirectoryAtPath:path
+         withIntermediateDirectories:NO
+                          attributes:attributes
+                               error:NULL]) {
+        return NO;
+    }
+    if (attributes != nil) {
+        [self setAttributes:attributes ofItemAtPath:path error:NULL];
+    }
+    return YES;
+}
+
+- (BOOL)removeFileAtPath:(NSString *)path handler:(id)handler {
+    return [self removeItemAtPath:path error:NULL];
+}
+
+- (BOOL)copyPath:(NSString *)source toPath:(NSString *)destination
+         handler:(id)handler {
+    return [self copyItemAtPath:source toPath:destination error:NULL];
+}
+
+- (BOOL)movePath:(NSString *)source toPath:(NSString *)destination
+         handler:(id)handler {
+    return [self moveItemAtPath:source toPath:destination error:NULL];
+}
+
+- (BOOL)linkPath:(NSString *)source toPath:(NSString *)destination
+         handler:(id)handler {
+    return [self linkItemAtPath:source toPath:destination error:NULL];
+}
+
+- (BOOL)changeFileAttributes:(NSDictionary *)attributes atPath:(NSString *)path {
+    return [self setAttributes:attributes ofItemAtPath:path error:NULL];
+}
+
+- (NSDictionary *)fileSystemAttributesAtPath:(NSString *)path {
+    return [self attributesOfFileSystemForPath:path error:NULL];
+}
+
+- (NSString *)pathContentOfSymbolicLinkAtPath:(NSString *)path {
+    return [self destinationOfSymbolicLinkAtPath:path error:NULL];
+}
+
+- (BOOL)createSymbolicLinkAtPath:(NSString *)path
+                     pathContent:(NSString *)destination {
+    return [self createSymbolicLinkAtPath:path
+                      withDestinationPath:destination
+                                    error:NULL];
+}
+
 - (NSString *)currentDirectoryPath {
     char buffer[PATH_MAX];
     if (getcwd(buffer, sizeof(buffer)) == NULL) {
@@ -351,6 +630,107 @@ static void _setPOSIXError(NSError **error) {
 
 - (NSDirectoryEnumerator *)enumeratorAtPath:(NSString *)path {
     return [[[NSDirectoryEnumerator alloc] initWithPath:path] autorelease];
+}
+
+
+/* Older spellings of -attributesOfItemAtPath:error: and
+ * -contentsOfDirectoryAtPath:error:, which this code still uses. */
+- (NSDictionary *)fileAttributesAtPath:(NSString *)path traverseLink:(BOOL)traverse {
+    return [self attributesOfItemAtPath:path error:NULL];
+}
+
+- (NSArray *)directoryContentsAtPath:(NSString *)path {
+    return [self contentsOfDirectoryAtPath:path error:NULL];
+}
+
+
+/* Deletable means the containing directory is writable, which is what the
+ * POSIX rules actually turn on. */
+- (BOOL)isDeletableFileAtPath:(NSString *)path {
+    if (access([path fileSystemRepresentation], F_OK) != 0) {
+        return NO;
+    }
+    return access([[path stringByDeletingLastPathComponent] fileSystemRepresentation],
+                  W_OK) == 0;
+}
+
+
+/* Only the attributes with a direct POSIX equivalent are applied; the rest are
+ * accepted and ignored, which is what callers setting permissions expect. */
+- (BOOL)setAttributes:(NSDictionary *)attributes ofItemAtPath:(NSString *)path
+                error:(NSError **)error {
+    const char *system = [path fileSystemRepresentation];
+    NSNumber *permissions = [attributes objectForKey:NSFilePosixPermissions];
+    BOOL ok = YES;
+
+    if (permissions != nil) {
+        ok = (chmod(system, (mode_t)[permissions unsignedLongValue]) == 0);
+    }
+
+    NSNumber *owner = [attributes objectForKey:NSFileOwnerAccountID];
+    NSNumber *group = [attributes objectForKey:NSFileGroupOwnerAccountID];
+
+    if (ok && (owner != nil || group != nil)) {
+        ok = (chown(system,
+                    (owner != nil) ? (uid_t)[owner unsignedLongValue] : (uid_t)-1,
+                    (group != nil) ? (gid_t)[group unsignedLongValue] : (gid_t)-1) == 0);
+    }
+    if (!ok && error != NULL) {
+        *error = nil;
+    }
+    return ok;
+}
+
+@end
+
+@implementation NSDictionary (NSFileAttributes)
+
+- (unsigned long long)fileSize {
+    return [[self objectForKey:NSFileSize] unsignedLongLongValue];
+}
+
+- (NSString *)fileType {
+    return [self objectForKey:NSFileType];
+}
+
+- (NSUInteger)filePosixPermissions {
+    return (NSUInteger)[[self objectForKey:NSFilePosixPermissions] unsignedLongValue];
+}
+
+- (NSString *)fileOwnerAccountName {
+    return [self objectForKey:NSFileOwnerAccountName];
+}
+
+- (NSString *)fileGroupOwnerAccountName {
+    return [self objectForKey:NSFileGroupOwnerAccountName];
+}
+
+- (NSDate *)fileModificationDate {
+    return [self objectForKey:NSFileModificationDate];
+}
+
+- (NSDate *)fileCreationDate {
+    return [self objectForKey:NSFileCreationDate];
+}
+
+- (NSUInteger)fileSystemFileNumber {
+    return (NSUInteger)[[self objectForKey:NSFileSystemFileNumber] unsignedLongValue];
+}
+
+- (NSUInteger)fileSystemNumber {
+    return (NSUInteger)[[self objectForKey:NSFileSystemNumber] unsignedLongValue];
+}
+
+- (BOOL)fileIsImmutable {
+    return [[self objectForKey:NSFileImmutable] boolValue];
+}
+
+- (BOOL)fileIsAppendOnly {
+    return [[self objectForKey:NSFileAppendOnly] boolValue];
+}
+
+- (BOOL)fileExtensionHidden {
+    return [[self objectForKey:NSFileExtensionHidden] boolValue];
 }
 
 @end

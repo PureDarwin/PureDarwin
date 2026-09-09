@@ -129,6 +129,9 @@ typedef enum {
 
 - (unsigned)getGlyphs:(NSGlyph *)glyphs forCharacters:(unichar *)characters length:(unsigned)length;
 
+
+- (CGFloat)widthOfString:(NSString *)string;
+
 @end
 
 @interface NSFont (PortatibilityAdditions)

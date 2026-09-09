@@ -36,7 +36,7 @@
           fbdoomExternalSrcEnv = builtins.getEnv "PUREDARWIN_FBDOOM_SOURCE_ENV";
           # Component source trees (see nix/sources.nix).
           sources = import ./nix/sources.nix {
-            inherit pkgs sourceWith libSystemSourcePaths fbdoomExternalSrcEnv;
+            inherit pkgs sourceWith sourceWithExtraFilter frameworkHeadersOnly libSystemSourcePaths fbdoomExternalSrcEnv;
           };
           inherit (sources)
             fbdoomExternalSrc
@@ -119,7 +119,7 @@
           nativeMigcom = pkgs.callPackage ./nix/pkgs/toolchain/migcom.nix { };
           libapfsrwBuild = pkgs.callPackage ./nix/pkgs/apple/libapfsrw.nix { };
 
-          sourceWith = name: prefixes:
+          sourceWithExtraFilter = name: prefixes: extraFilter:
             lib.cleanSourceWith {
               src = ./.;
               filter = path: type:
@@ -128,7 +128,8 @@
                   isParentOfPrefix = prefix:
                     lib.hasPrefix "${rel}/" prefix;
                 in
-                  rel == "CMakeLists.txt"
+                  extraFilter rel type
+                  && (rel == "CMakeLists.txt"
                   || rel == "src/CMakeLists.txt"
                   || rel == "cmake"
                   || lib.hasPrefix "cmake/" rel
@@ -136,8 +137,20 @@
                     rel == prefix
                     || lib.hasPrefix "${prefix}/" rel
                     || (type == "directory" && isParentOfPrefix prefix)
-                  ) prefixes;
+                  ) prefixes);
             };
+          sourceWith = name: prefixes:
+            sourceWithExtraFilter name prefixes (rel: type: true);
+          # The top-level CMakeLists.txt globs *.h out of the CoreFoundation and
+          # Foundation trees for a header search path, and nothing built from
+          # libSystemSource compiles their sources. Dropping the implementation
+          # files keeps a .m edit in either framework from invalidating
+          # libSystem - and so from rebuilding LLVM, which depends on it.
+          frameworkHeadersOnly = rel: type:
+            !(type == "regular"
+              && (lib.hasPrefix "src/Frameworks/CoreFoundation/" rel
+                  || lib.hasPrefix "src/Frameworks/Foundation/" rel)
+              && !(lib.hasSuffix ".h" rel));
           libSystemSourcePaths = [
             "src/Kernel/xnu/EXTERNAL_HEADERS"
             "src/Kernel/xnu/osfmk"
@@ -3160,6 +3173,11 @@
               libSystem = libSystemBuild;
               libobjc = libobjcBuild;
               corefoundation = coreFoundationBuild;
+              libffi = libffiBuild;
+              # libSystem exports the DNSService* API but installs no header.
+              dnssdInclude = ./src/Libraries/mDNSResponder/mDNSShared;
+              # Likewise notify_post/notify_register_dispatch.
+              notifyInclude = ./src/Libraries/XPC/notify;
               src = "${foundationSource}/src/Frameworks/Foundation";
             };
           protocolBufferBuild =
@@ -3188,6 +3206,7 @@
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apple/coreservices.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
+              corefoundation = coreFoundationBuild;
               src = coreServicesSource;
             };
           openglFrameworkBuild =
@@ -3216,6 +3235,7 @@
               coretext = coretextBuild;
               quartzcore = quartzcoreBuild;
               applicationservices = applicationservicesBuild;
+              coreservices = coreServicesBuild;
               openglFramework = openglFrameworkBuild;
               windowserver = windowserverBuild;
               freetype2 = freetype2Build;

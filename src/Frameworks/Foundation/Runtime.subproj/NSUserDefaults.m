@@ -53,8 +53,9 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
 - (instancetype)init {
     self = [super init];
     if (self != nil) {
-        _registered = [NSMutableDictionary dictionaryWithCapacity:0];
-        _volatile = [NSMutableDictionary dictionaryWithCapacity:0];
+        // Retained: this object outlives the pool these are created in.
+        _registered = [[NSMutableDictionary alloc] initWithCapacity:0];
+        _volatile = [[NSMutableDictionary alloc] initWithCapacity:0];
     }
     return self;
 }
@@ -63,7 +64,8 @@ static CFStringRef _applicationIDForDomain(NSString *domainName) {
     CFPropertyListRef value = CFPreferencesCopyAppValue((CFStringRef)key,
                                                         kCFPreferencesCurrentApplication);
     if (value != NULL) {
-        return (__bridge id)value;
+        // CFPreferencesCopyAppValue returns +1; -objectForKey: must not.
+        return [(id)value autorelease];
     }
     return [_registered objectForKey:key];
 }

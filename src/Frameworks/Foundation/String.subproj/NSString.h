@@ -10,6 +10,7 @@
 #define NSString_h
 
 #import <Foundation/NSObject.h>
+#include <stdarg.h>
 #import <Foundation/NSRange.h>
 
 @class NSData, NSArray, NSError;
@@ -63,6 +64,12 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
                                           encoding:(NSStringEncoding)encoding
                                              error:(NSError **)error;
 
+- (instancetype)init;
+- (instancetype)initWithString:(NSString *)string;
+- (instancetype)initWithFormat:(NSString *)format, ...;
+- (instancetype)initWithFormat:(NSString *)format arguments:(va_list)arguments;
+- (instancetype)initWithCharacters:(const unichar *)characters length:(NSUInteger)length;
+- (instancetype)initWithCString:(const char *)cString encoding:(NSStringEncoding)encoding;
 - (instancetype)initWithUTF8String:(const char *)utf8String;
 - (instancetype)initWithBytes:(const void *)bytes
                        length:(NSUInteger)length
@@ -74,7 +81,31 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (BOOL)isEqualToString:(NSString *)other;
 - (NSComparisonResult)compare:(NSString *)other;
 - (NSComparisonResult)caseInsensitiveCompare:(NSString *)other;
+- (BOOL)hasPrefix:(NSString *)prefix;
+- (BOOL)hasSuffix:(NSString *)suffix;
+- (BOOL)containsString:(NSString *)string;
+- (NSString *)lowercaseString;
+- (NSString *)uppercaseString;
+- (NSString *)capitalizedString;
+- (NSString *)stringByTrimmingCharactersInSet:(NSCharacterSet *)set;
++ (instancetype)stringWithString:(NSString *)string;
++ (instancetype)stringWithCString:(const char *)cString encoding:(NSStringEncoding)encoding;
++ (instancetype)stringWithCString:(const char *)cString;
++ (NSStringEncoding)defaultCStringEncoding;
+- (const char *)cStringUsingEncoding:(NSStringEncoding)encoding NS_RETURNS_INNER_POINTER;
+- (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set;
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
+- (NSArray *)componentsSeparatedByCharactersInSet:(NSCharacterSet *)set;
+- (NSString *)stringByReplacingOccurrencesOfString:(NSString *)target withString:(NSString *)replacement;
+- (NSComparisonResult)compare:(NSString *)other options:(NSStringCompareOptions)options;
+- (NSComparisonResult)compare:(NSString *)other
+                      options:(NSStringCompareOptions)options
+                        range:(NSRange)range;
+- (NSComparisonResult)localizedCompare:(NSString *)other;
+- (NSComparisonResult)localizedCaseInsensitiveCompare:(NSString *)other;
 - (NSData *)dataUsingEncoding:(NSStringEncoding)encoding;
+- (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding;
++ (instancetype)stringWithCharacters:(const unichar *)characters length:(NSUInteger)length;
 
 - (NSUInteger)length;
 - (unichar)characterAtIndex:(NSUInteger)index;
@@ -115,6 +146,12 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (void)appendFormat:(NSString *)format, ...;
 - (void)setString:(NSString *)string;
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string;
+- (void)insertString:(NSString *)string atIndex:(NSUInteger)index;
+- (void)deleteCharactersInRange:(NSRange)range;
+- (NSUInteger)replaceOccurrencesOfString:(NSString *)target
+                              withString:(NSString *)replacement
+                                 options:(NSStringCompareOptions)options
+                                   range:(NSRange)searchRange;
 
 @end
 

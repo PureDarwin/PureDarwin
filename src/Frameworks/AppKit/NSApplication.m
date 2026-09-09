@@ -1776,11 +1776,15 @@ typedef void (*endfunction_t)(id, SEL, id, NSInteger, void *);
 }
 
 -(NSMenu *)servicesMenu {
+   if(_servicesMenu!=nil)
+    return _servicesMenu;
+
    return [[NSApp mainMenu] _menuWithName:@"_NSServicesMenu"];
 }
 
 -(void)setServicesMenu:(NSMenu *)menu {
-   NSUnimplementedMethod();
+   [_servicesMenu autorelease];
+   _servicesMenu=[menu retain];
 }
 
 -servicesProvider {

@@ -1866,6 +1866,19 @@ _dataSource);
    [self _moveUp:NO extend:YES];
 }
 
+
+/* Records the column a sort indicator would be drawn in; the header view does
+ * not draw one yet. */
+-(void)setHighlightedTableColumn:(NSTableColumn *)column {
+   [column retain];
+   [_highlightedTableColumn release];
+   _highlightedTableColumn=column;
+}
+
+-(NSTableColumn *)highlightedTableColumn {
+   return _highlightedTableColumn;
+}
+
 @end
 
 

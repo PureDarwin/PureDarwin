@@ -25,6 +25,8 @@
 - (NSString *)bundlePath;
 - (NSURL *)bundleURL;
 - (NSString *)bundleIdentifier;
+- (NSString *)executablePath;
+- (NSURL *)executableURL;
 - (NSString *)resourcePath;
 - (NSDictionary *)infoDictionary;
 - (id)objectForInfoDictionaryKey:(NSString *)key;
@@ -40,6 +42,9 @@
 - (NSArray *)pathsForResourcesOfType:(NSString *)extension
                          inDirectory:(NSString *)subpath;
 - (Class)principalClass;
+
+
+- (Class)classNamed:(NSString *)className;
 
 @end
 

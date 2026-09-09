@@ -1142,11 +1142,16 @@ static inline void buildTransformsIfNeeded(NSView *self) {
 
    [self _trackingAreasChanged];
 
-   return area;
+   /* NSTrackingRectTag is an integer in the API; hand back the area's index
+    * and look it back up on removal. */
+   return (NSTrackingRectTag)[_trackingAreas indexOfObjectIdenticalTo:area];
 }
 
 -(void)removeTrackingRect:(NSTrackingRectTag)tag {
-   [self removeTrackingArea:tag];
+   if(tag<0 || (NSUInteger)tag>=[_trackingAreas count])
+    return;
+
+   [self removeTrackingArea:[_trackingAreas objectAtIndex:(NSUInteger)tag]];
 }
 
 -(NSTextInputContext *)inputContext {

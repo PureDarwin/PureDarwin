@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSURL.h>
+#import <Foundation/NSNumber.h>
 #include <CoreFoundation/CFURL.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <objc/runtime.h>
@@ -43,6 +44,14 @@
     BOOL isFile = CFStringCompare(scheme, CFSTR("file"), 0) == kCFCompareEqualTo;
     CFRelease(scheme);
     return isFile;
+}
+
+
+/* nil when the URL carries no explicit port, matching Foundation. */
+- (NSNumber *)port {
+    SInt32 port = CFURLGetPortNumber((CFURLRef)self);
+
+    return (port < 0) ? nil : [NSNumber numberWithInt:(int)port];
 }
 
 @end

@@ -5,6 +5,9 @@
 , libSystem
 , libobjc
 , corefoundation
+, dnssdInclude
+, notifyInclude
+, libffi
 , src
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
@@ -77,6 +80,20 @@ let
     "FileManager.subproj/NSPathUtilities"
     "FileManager.subproj/NSFileManager"
     "FileManager.subproj/NSFileHandle"
+    "FileManager.subproj/NSPipe"
+    "Runtime.subproj/NSTask"
+    "Locking.subproj/NSDistributedLock"
+    "URL.subproj/NSHost"
+    "Date.subproj/NSCalendarDate"
+    "Date.subproj/NSTimeZone"
+    "Runtime.subproj/NSForwarding"
+    "Runtime.subproj/NSProxy"
+    "Runtime.subproj/NSConnection"
+    "RunLoop.subproj/NSPort"
+    "URL.subproj/NSNetServices"
+    "Notifications.subproj/NSDistributedNotificationCenter"
+    "String.subproj/NSRegularExpression"
+    "Coding.subproj/NSJSONSerialization"
   ];
 in
 stdenv.mkDerivation {
@@ -109,7 +126,10 @@ stdenv.mkDerivation {
       -Icf-headers \
       -I${libSystem}/usr/include \
       -I${libobjc}/usr/include \
-      -I${corefoundation}/include"
+      -I${corefoundation}/include \
+      -I${libffi}/include \
+      -I${dnssdInclude} \
+      -I${notifyInclude}"
 
     objs=""
     for s in ${lib.concatStringsSep " " mmSrcs}; do
@@ -125,6 +145,7 @@ stdenv.mkDerivation {
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/usr/lib/libFoundation.dylib \
       -Wl,-fixup_chains \
+      ${libffi}/lib/libffi.a \
       -lobjc -lCoreFoundation -lSystem \
       -o libFoundation.dylib $objs
 

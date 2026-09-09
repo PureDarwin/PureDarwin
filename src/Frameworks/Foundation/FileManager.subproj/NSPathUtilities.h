@@ -73,6 +73,10 @@ FOUNDATION_EXPORT NSArray<NSString *> *NSSearchPathForDirectoriesInDomains(
 - (NSString *)stringByAppendingPathExtension:(NSString *)extension;
 - (NSArray<NSString *> *)pathComponents;
 - (BOOL)isAbsolutePath;
+- (NSString *)stringByStandardizingPath;
+- (NSString *)stringByResolvingSymlinksInPath;
+- (NSString *)stringByExpandingTildeInPath;
+- (NSString *)stringByAbbreviatingWithTildeInPath;
 
 @end
 

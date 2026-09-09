@@ -9,6 +9,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <sys/param.h>
 #import <AppKit/NSFont.h>
+#import <AppKit/NSAttributedString.h>
+#import <AppKit/NSStringDrawing.h>
 #import <AppKit/NSFontDescriptor.h>
 #import <AppKit/NSFontFamily.h>
 #import <AppKit/NSFontTypeface.h>
@@ -196,13 +198,19 @@ static NSLock *_cacheLock=nil;
     if (ctFont) {
         NSString *name=(NSString *)CTFontCopyFullName(ctFont);
         size=CTFontGetSize(ctFont);
-        result=[NSFont fontWithName:name size:size];
+        /* +fontWithName: raises on a nil name, which would abort the fallback
+         * chain below before it ever ran. */
+        if(name != nil)
+            result=[NSFont fontWithName:name size:size];
 
         [ctFont release];
         [name release];
     }
     if(result == nil) {
-        result = [NSFont fontWithName:[O2Font postscriptNameForDisplayName:fallbackName] size:size];
+        NSString *postscript=[O2Font postscriptNameForDisplayName:fallbackName];
+
+        if(postscript != nil)
+            result = [NSFont fontWithName:postscript size:size];
     }
     if(result == nil) {
         BOOL bold = type == kCTFontEmphasizedSystemFontType ||
@@ -731,6 +739,19 @@ int NSConvertGlyphsToPackedGlyphs(NSGlyph *glyphs,int length,NSMultibyteGlyphPac
    }
 
    return result*2;
+}
+
+
+/* Advance width of the string in this font, which is what the older layout
+ * code asks for. */
+-(CGFloat)widthOfString:(NSString *)string {
+   if(string==nil)
+    return 0.0;
+
+   NSDictionary *attributes=[NSDictionary dictionaryWithObject:self
+                                                       forKey:NSFontAttributeName];
+
+   return [string sizeWithAttributes:attributes].width;
 }
 
 @end

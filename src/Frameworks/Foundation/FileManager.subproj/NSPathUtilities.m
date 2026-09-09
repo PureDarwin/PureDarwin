@@ -12,6 +12,7 @@
 #include <CoreFoundation/CFURL.h>
 #include <pwd.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <unistd.h>
 
 static NSString *_string(const char *cString) {
@@ -238,6 +239,81 @@ NSArray<NSString *> *NSSearchPathForDirectoriesInDomains(
 
 - (BOOL)isAbsolutePath {
     return CFStringHasPrefix((CFStringRef)self, CFSTR("/")) ? YES : NO;
+}
+
+
+- (NSString *)stringByExpandingTildeInPath {
+    if (![self hasPrefix:@"~"]) {
+        return self;
+    }
+    if ([self length] == 1 || [self characterAtIndex:1] == '/') {
+        NSString *rest = ([self length] > 1) ? [self substringFromIndex:1] : @"";
+
+        return [NSHomeDirectory() stringByAppendingString:rest];
+    }
+    return self;
+}
+
+- (NSString *)stringByAbbreviatingWithTildeInPath {
+    NSString *home = NSHomeDirectory();
+
+    if ([home length] > 0 && [self hasPrefix:home]) {
+        return [@"~" stringByAppendingString:[self substringFromIndex:[home length]]];
+    }
+    return self;
+}
+
+/* Expands a leading tilde and removes "." and empty components, resolving
+ * ".." lexically the way the path APIs specify. */
+- (NSString *)stringByStandardizingPath {
+    NSString *expanded = [self stringByExpandingTildeInPath];
+    NSArray *parts = [expanded pathComponents];
+    NSMutableArray *kept = [NSMutableArray array];
+    BOOL absolute = [expanded isAbsolutePath];
+
+    for (NSString *part in parts) {
+        if ([part isEqualToString:@"."] || [part length] == 0) {
+            continue;
+        }
+        if ([part isEqualToString:@".."] && [kept count] > 0) {
+            NSString *last = [kept lastObject];
+
+            if (![last isEqualToString:@".."] && ![last isEqualToString:@"/"]) {
+                [kept removeObjectAtIndex:[kept count] - 1];
+                continue;
+            }
+        }
+        [kept addObject:part];
+    }
+
+    NSMutableString *result = [NSMutableString string];
+    NSUInteger index = 0;
+
+    for (NSString *part in kept) {
+        if ([part isEqualToString:@"/"]) {
+            continue;
+        }
+        if (index++ > 0 || absolute) {
+            [result appendString:@"/"];
+        }
+        [result appendString:part];
+    }
+    if ([result length] == 0) {
+        return absolute ? @"/" : @"";
+    }
+    return result;
+}
+
+/* realpath(3) resolves the symlinks; a path that does not exist is returned
+ * standardised instead, matching the documented behaviour. */
+- (NSString *)stringByResolvingSymlinksInPath {
+    NSString *standardized = [self stringByStandardizingPath];
+    char resolved[PATH_MAX];
+
+    if (realpath([standardized fileSystemRepresentation], resolved) != NULL) {
+        return [NSString stringWithUTF8String:resolved];
+    }
+    return standardized;
 }
 
 @end

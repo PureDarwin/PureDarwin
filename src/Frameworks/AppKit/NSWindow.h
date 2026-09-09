@@ -105,6 +105,21 @@ APPKIT_EXPORT NSString *const NSWindowWillCloseNotification;
 APPKIT_EXPORT NSString *const NSWindowWillStartLiveResizeNotification;
 APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 
+@protocol NSWindowDelegate <NSObject>
+@optional
+- (BOOL)windowShouldClose:(id)sender;
+- (void)windowWillClose:(NSNotification *)notification;
+- (void)windowDidBecomeKey:(NSNotification *)notification;
+- (void)windowDidResignKey:(NSNotification *)notification;
+- (void)windowDidBecomeMain:(NSNotification *)notification;
+- (void)windowDidResignMain:(NSNotification *)notification;
+- (void)windowDidResize:(NSNotification *)notification;
+- (void)windowDidMove:(NSNotification *)notification;
+- (void)windowDidMiniaturize:(NSNotification *)notification;
+- (void)windowDidDeminiaturize:(NSNotification *)notification;
+- (NSSize)windowWillResize:(NSWindow *)sender toSize:(NSSize)frameSize;
+@end
+
 @interface NSWindow : NSResponder {
     int _number;
     //CGLContextObj _cglContext;
@@ -550,6 +565,8 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (BOOL)windowShouldClose:sender;
 - (void)windowWillClose:(NSNotification *)note;
 
+- (id)platformWindow;
+- (void)addEntriesToDeviceDictionary:(NSDictionary *)entries;
 @end
 
 //private

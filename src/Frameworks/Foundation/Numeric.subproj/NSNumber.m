@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSNumber.h>
+#include <CoreFoundation/CFBase.h>
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFNumber.h>
@@ -165,6 +166,52 @@ __NSNUMBER_GETTER(integerValue, NSInteger, kCFNumberNSIntegerType)
 /* CFNumber is immutable, so a copy is just a retain. */
 - (id)copyWithZone:(NSZone *)zone {
     return (id)CFRetain((CFTypeRef)self);
+}
+
+/* Bridged to CFNumberRef, so identity comes from the CF layer. Without these the
+ * NSObject versions apply and compare pointers, which makes any dictionary or
+ * set keyed by value fail to find an equal-but-distinct object. */
+- (NSUInteger)hash {
+    return (NSUInteger)CFHash((CFTypeRef)self);
+}
+
+- (BOOL)isEqual:(id)other {
+    if (self == other) {
+        return YES;
+    }
+    if (other == nil || ![other isKindOfClass:[NSNumber class]]) {
+        return NO;
+    }
+    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+}
+
+
+/* Reports the encoding matching the CFNumber's stored type, which is what
+ * callers switch on to tell integers, floats and booleans apart. */
+- (const char *)objCType {
+    if (CFGetTypeID((CFTypeRef)self) == CFBooleanGetTypeID()) {
+        return "c";
+    }
+
+    switch (CFNumberGetType((CFNumberRef)self)) {
+        case kCFNumberFloat32Type:
+        case kCFNumberFloatType:
+            return "f";
+        case kCFNumberFloat64Type:
+        case kCFNumberDoubleType:
+        case kCFNumberCGFloatType:
+            return "d";
+        case kCFNumberCharType:
+            return "c";
+        case kCFNumberShortType:
+        case kCFNumberSInt16Type:
+            return "s";
+        case kCFNumberIntType:
+        case kCFNumberSInt32Type:
+            return "i";
+        default:
+            return "q";
+    }
 }
 
 @end

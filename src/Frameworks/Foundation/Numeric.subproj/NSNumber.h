@@ -52,6 +52,9 @@
 @property (readonly) NSUInteger unsignedIntegerValue;
 @property (readonly) NSString *stringValue;
 
+
+- (const char *)objCType NS_RETURNS_INNER_POINTER;
+
 @end
 
 #endif /* NSNumber_h */

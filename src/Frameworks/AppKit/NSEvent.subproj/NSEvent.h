@@ -71,6 +71,36 @@ enum {
 };
 
 enum {
+    NSEventTypeLeftMouseDown = NSLeftMouseDown,
+    NSEventTypeLeftMouseUp = NSLeftMouseUp,
+    NSEventTypeRightMouseDown = NSRightMouseDown,
+    NSEventTypeRightMouseUp = NSRightMouseUp,
+    NSEventTypeMouseMoved = NSMouseMoved,
+    NSEventTypeLeftMouseDragged = NSLeftMouseDragged,
+    NSEventTypeRightMouseDragged = NSRightMouseDragged,
+    NSEventTypeMouseEntered = NSMouseEntered,
+    NSEventTypeMouseExited = NSMouseExited,
+    NSEventTypeKeyDown = NSKeyDown,
+    NSEventTypeKeyUp = NSKeyUp,
+    NSEventTypeFlagsChanged = NSFlagsChanged,
+    NSEventTypeScrollWheel = NSScrollWheel
+};
+
+typedef NSUInteger NSEventModifierFlags;
+
+enum {
+    NSEventModifierFlagCapsLock = NSAlphaShiftKeyMask,
+    NSEventModifierFlagShift = NSShiftKeyMask,
+    NSEventModifierFlagControl = NSControlKeyMask,
+    NSEventModifierFlagOption = NSAlternateKeyMask,
+    NSEventModifierFlagCommand = NSCommandKeyMask,
+    NSEventModifierFlagNumericPad = NSNumericPadKeyMask,
+    NSEventModifierFlagHelp = NSHelpKeyMask,
+    NSEventModifierFlagFunction = NSFunctionKeyMask,
+    NSEventModifierFlagDeviceIndependentFlagsMask = NSDeviceIndependentModifierFlagsMask
+};
+
+enum {
     NSUpArrowFunctionKey = 0xF700,
     NSDownArrowFunctionKey = 0xF701,
     NSLeftArrowFunctionKey = 0xF702,

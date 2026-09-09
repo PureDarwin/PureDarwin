@@ -18,6 +18,10 @@
 
 @interface NSDictionary<__covariant KeyType, __covariant ObjectType> : NSObject
 
+- (instancetype)initWithDictionary:(NSDictionary *)dictionary;
+- (instancetype)initWithObjectsAndKeys:(id)firstObject, ...;
+- (instancetype)initWithObjects:(NSArray *)objects forKeys:(NSArray *)keys;
+
 + (instancetype)dictionary;
 + (instancetype)dictionaryWithObject:(ObjectType)object forKey:(KeyType)key;
 + (instancetype)dictionaryWithObjectsAndKeys:(nullable ObjectType)firstObject, ...;
@@ -43,6 +47,12 @@
                                   objects:(id __unsafe_unretained [])buffer
                                     count:(NSUInteger)length;
 - (NSArray<KeyType> *)allKeys;
+- (NSArray<ObjectType> *)allValues;
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
+- (NSArray<KeyType> *)keysSortedByValueUsingSelector:(SEL)comparator;
+- (id)valueForKey:(NSString *)key;
+- (NSEnumerator *)keyEnumerator;
+- (NSEnumerator *)objectEnumerator;
 - (void)enumerateKeysAndObjectsUsingBlock:(void (^)(KeyType key, ObjectType obj, BOOL *stop))block;
 
 @end
@@ -50,7 +60,7 @@
 @interface NSMutableDictionary<KeyType, ObjectType> : NSDictionary<KeyType, ObjectType>
 
 + (instancetype)dictionaryWithCapacity:(NSUInteger)capacity;
-+ (instancetype)dictionaryWithDictionary:(NSDictionary<KeyType, ObjectType> *)dictionary;
+- (instancetype)initWithCapacity:(NSUInteger)capacity;
 
 - (void)setObject:(id)object forKey:(id)key;
 - (void)setObject:(id)object forKeyedSubscript:(id)key;

@@ -12,8 +12,19 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSEnumerator.h>
 #import <Foundation/NSObjCRuntime.h>
+#import <Foundation/NSRange.h>
+
+@class NSString;
 
 @interface NSArray<__covariant ObjectType> : NSObject <NSFastEnumeration>
+
+- (NSArray<ObjectType> *)arrayByAddingObjectsFromArray:(NSArray<ObjectType> *)other;
+- (NSArray<ObjectType> *)subarrayWithRange:(NSRange)range;
+- (BOOL)isEqualToArray:(NSArray<ObjectType> *)other;
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
+- (id)valueForKey:(NSString *)key;
+- (instancetype)initWithObjects:(id)firstObject, ...;
+- (instancetype)initWithArray:(NSArray<ObjectType> *)array;
 
 + (instancetype)array;
 + (instancetype)arrayWithObject:(ObjectType)object;
@@ -31,8 +42,10 @@
                                   objects:(id __unsafe_unretained [])buffer
                                     count:(NSUInteger)length;
 - (BOOL)containsObject:(id)object;
+- (NSUInteger)indexOfObject:(id)object;
 - (NSUInteger)indexOfObjectIdenticalTo:(id)object;
 - (NSArray<ObjectType> *)arrayByAddingObject:(ObjectType)object;
+- (NSString *)componentsJoinedByString:(NSString *)separator;
 - (NSArray<ObjectType> *)sortedArrayUsingSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
@@ -45,12 +58,13 @@
 + (instancetype)arrayWithCapacity:(NSUInteger)capacity;
 
 - (instancetype)initWithCapacity:(NSUInteger)capacity;
-- (instancetype)initWithArray:(NSArray<ObjectType> *)array;
 - (void)addObject:(ObjectType)object;
 - (void)insertObject:(ObjectType)object atIndex:(NSUInteger)index;
 - (void)addObjectsFromArray:(NSArray<ObjectType> *)array;
 - (void)removeObjectAtIndex:(NSUInteger)index;
 - (void)removeObjectIdenticalTo:(ObjectType)object;
+- (void)removeObject:(ObjectType)object;
+- (void)sortUsingFunction:(NSInteger (*)(id, id, void *))comparator context:(void *)context;
 - (void)replaceObjectAtIndex:(NSUInteger)index withObject:(ObjectType)object;
 - (void)removeAllObjects;
 - (void)sortUsingSelector:(SEL)selector;

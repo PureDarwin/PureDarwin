@@ -82,6 +82,21 @@
     return identifier == NULL ? nil : (NSString *)CFRetain(identifier);
 }
 
+- (NSURL *)executableURL {
+    return (NSURL *)CFBundleCopyExecutableURL(_bundle);
+}
+
+- (NSString *)executablePath {
+    CFURLRef url = CFBundleCopyExecutableURL(_bundle);
+    if (url == NULL) {
+        return nil;
+    }
+
+    NSString *path = (NSString *)CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
+    CFRelease(url);
+    return [path autorelease];
+}
+
 - (NSString *)resourcePath {
     CFURLRef url = CFBundleCopyResourcesDirectoryURL(_bundle);
     if (url == NULL) {
@@ -167,6 +182,13 @@
         return key;
     }
     return (value != nil) ? value : @"";
+}
+
+
+/* The bundle's classes all live in the one image here, so this is a lookup by
+ * name rather than a per-bundle class table. */
+- (Class)classNamed:(NSString *)className {
+    return NSClassFromString(className);
 }
 
 @end

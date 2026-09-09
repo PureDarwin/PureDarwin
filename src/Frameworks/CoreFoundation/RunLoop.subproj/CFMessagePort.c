@@ -35,6 +35,7 @@
 
 #if TARGET_OS_MAC
 #include <bootstrap.h>
+#include <stdio.h>
 #endif
 
 extern pid_t getpid(void);
@@ -395,6 +396,22 @@ static CFMessagePortRef __CFMessagePortCreateLocal(CFAllocatorRef allocator, CFS
 	mach_port_t bs, mp;
 	task_get_bootstrap_port(mach_task_self(), &bs);
 	if (!perPID) {
+	    /* Claim the name the job declared in its MachServices, so the port
+	     * we listen on is the one clients resolve. Without this the port
+	     * below is fresh and unregistered: sends to the advertised name go
+	     * to a port nobody is receiving on, and every request times out. */
+	    ret = bootstrap_check_in(bs, (char *)utfname, &mp);
+	    if (KERN_SUCCESS == ret) {
+		ret = mach_port_insert_right(mach_task_self(), mp, mp, MACH_MSG_TYPE_MAKE_SEND);
+		if (KERN_SUCCESS == ret) {
+		    CFMachPortContext ctx = {0, memory, NULL, NULL, NULL};
+		    native = CFMachPortCreateWithPort(allocator, mp, __CFMessagePortDummyCallback, &ctx, NULL);
+		    /* bootstrap_check_in yields +1 receive and we added +1 send. */
+		    __CFMessagePortSetExtraMachRef(memory);
+		} else {
+		    mach_port_mod_refs(mach_task_self(), mp, MACH_PORT_RIGHT_RECEIVE, -1);
+		}
+	    }
 	}
 	if (!native) {
 	    CFMachPortContext ctx = {0, memory, NULL, NULL, NULL};
@@ -508,6 +525,10 @@ static CFMessagePortRef __CFMessagePortCreateRemote(CFAllocatorRef allocator, CF
     ctx.release = NULL;
     ctx.copyDescription = NULL;
     task_get_bootstrap_port(mach_task_self(), &bp);
+    /* Resolve the name through the bootstrap server; without this both `ret`
+     * and `port` are read uninitialized and no remote port ever resolves. */
+    port = MACH_PORT_NULL;
+    ret = bootstrap_look_up(bp, (char *)utfname, &port);
     native = (KERN_SUCCESS == ret) ? CFMachPortCreateWithPort(allocator, port, __CFMessagePortDummyCallback, &ctx, NULL) : NULL;
     CFAllocatorDeallocate(kCFAllocatorSystemDefault, utfname);
     if (NULL == native) {
@@ -609,6 +630,9 @@ Boolean CFMessagePortSetName(CFMessagePortRef ms, CFStringRef inName) {
         
         // NOTE: bootstrap_check_in always yields +1 receive-right
         ret = bootstrap_check_in(bs, (char *)utfname, &mp); /* If we're started by launchd or the old mach_init */
+        if (KERN_SUCCESS != ret) {
+            CFLog(kCFLogLevelWarning, CFSTR("*** CFMessagePortCreateLocal: bootstrap_check_in(\"%s\") failed (0x%x); the port will not be reachable by name because there is no bootstrap_register fallback"), utfname, ret);
+        }
         
         if (ret == KERN_SUCCESS) {
             ret = mach_port_insert_right(mach_task_self(), mp, mp, MACH_MSG_TYPE_MAKE_SEND);

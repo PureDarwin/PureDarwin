@@ -59,9 +59,11 @@
     return [self timeIntervalSinceReferenceDate] + kCFAbsoluteTimeIntervalSince1970;
 }
 
+/* Goes through the accessor rather than casting to CFDateRef: only a real
+ * CFDate carries CF storage, and NSCalendarDate is a plain ObjC subclass. */
 - (NSTimeInterval)timeIntervalSinceDate:(NSDate *)other {
-    return (NSTimeInterval)CFDateGetTimeIntervalSinceDate((CFDateRef)self,
-                                                          (CFDateRef)other);
+    return [self timeIntervalSinceReferenceDate] -
+           [other timeIntervalSinceReferenceDate];
 }
 
 - (NSTimeInterval)timeIntervalSinceNow {
@@ -71,6 +73,23 @@
 - (instancetype)dateByAddingTimeInterval:(NSTimeInterval)seconds {
     return [NSDate dateWithTimeIntervalSinceReferenceDate:
             [self timeIntervalSinceReferenceDate] + seconds];
+}
+
+/* Goes through the accessor rather than CFHash/CFEqual: only a real CFDate
+ * carries CF storage, and NSCalendarDate is a plain ObjC subclass. */
+- (NSUInteger)hash {
+    return (NSUInteger)[self timeIntervalSinceReferenceDate];
+}
+
+- (BOOL)isEqual:(id)other {
+    if (self == other) {
+        return YES;
+    }
+    if (other == nil || ![other isKindOfClass:[NSDate class]]) {
+        return NO;
+    }
+    return [self timeIntervalSinceReferenceDate] ==
+           [(NSDate *)other timeIntervalSinceReferenceDate];
 }
 
 @end

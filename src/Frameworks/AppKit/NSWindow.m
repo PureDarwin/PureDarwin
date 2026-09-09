@@ -33,6 +33,7 @@
 #import <Onyx2D/O2Surface.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import <AppKit/NSWindow.h>
+#include <stdio.h>
 #import <AppKit/NSWindow-Private.h>
 #import <AppKit/NSThemeFrame.h>
 #import <AppKit/NSSheetContext.h>
@@ -1859,6 +1860,8 @@ const float WSWindowEdgePad = 2;
 }
 
 -(void)flushWindow {
+    fprintf(stderr, "AppKit: flushWindow num=%d level=%d disabled=%d\n",
+            (int)_number, (int)_level, (int)_flushDisabled);
     if(_flushDisabled > 0)
         _flushNeeded=YES;
     else {
@@ -2077,12 +2080,19 @@ const float WSWindowEdgePad = 2;
 }
 
 -(void)orderWindow:(NSWindowOrderingMode)place relativeTo:(int)relativeTo {
+   BOOL wasVisible=_isVisible;
+
 // The move notifications are sent under unknown conditions around orderFront: in the Apple AppKit, we do them all the time here until it's figured out. I suspect it is a side effect of off-screen windows being at off-screen coordinates (as opposed to just being hidden)
    [self postNotificationName:NSWindowWillMoveNotification];
 
    switch(place){
     case NSWindowAbove:
      [self update];
+
+     /* A window being shown has to paint: -displayIfNeeded alone does nothing
+      * when nothing marked it dirty, leaving the surface mapped but blank. */
+     if(!wasVisible)
+      [_backgroundView setNeedsDisplay:YES];
 
      _isVisible=YES;
      [self displayIfNeeded];
@@ -2096,6 +2106,9 @@ const float WSWindowEdgePad = 2;
 
     case NSWindowBelow:
      [self update];
+
+     if(!wasVisible)
+      [_backgroundView setNeedsDisplay:YES];
 
      _isVisible=YES;
      [self displayIfNeeded];
@@ -3185,6 +3198,13 @@ const float WSWindowEdgePad = 2;
         [self setStyleMask:data->style];
     if(!NSEqualPoints(geom.origin, _frame.origin) || !NSEqualSizes(geom.size, _frame.size))
         [self setFrame:geom display:NO animate:NO tellWS:NO];
+}
+
+/* Cocotron split NSWindow from a per-platform window object. Here the two are
+ * one: NSWindow already carries the device dictionary and receives the
+ * platformWindow* callbacks, so callers asking for it get self. */
+-(id)platformWindow {
+   return self;
 }
 
 -(void)addEntriesToDeviceDictionary:(NSDictionary *)entries {

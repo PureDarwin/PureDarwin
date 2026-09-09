@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSSet.h>
+#include <CoreFoundation/CFBase.h>
 #import <Foundation/NSArray.h>
 #import <Foundation/NSEnumerator.h>
 #include <CoreFoundation/CFSet.h>
@@ -16,11 +17,49 @@
 @implementation NSSet
 
 + (instancetype)new {
-    return [self set];
+    // Must be +1, so this cannot go through the autoreleasing +set.
+    return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeSetCallBacks);
 }
 
 - (instancetype)init {
-    return [NSSet set];
+    return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeSetCallBacks);
+}
+
+- (instancetype)initWithArray:(NSArray *)array {
+    NSUInteger count = [array count];
+    CFMutableSetRef result = CFSetCreateMutable(kCFAllocatorDefault,
+                                                (CFIndex)count,
+                                                &kCFTypeSetCallBacks);
+
+    for (NSUInteger index = 0; index < count; index++) {
+        CFSetAddValue(result, [array objectAtIndex:index]);
+    }
+    return (id)result;
+}
+
+- (instancetype)initWithSet:(NSSet *)set {
+    return [self initWithArray:[set allObjects]];
+}
+
+- (instancetype)initWithObjects:(id)firstObject, ... {
+    CFMutableSetRef result = CFSetCreateMutable(kCFAllocatorDefault, 0,
+                                                &kCFTypeSetCallBacks);
+    va_list arguments;
+    id object = firstObject;
+
+    va_start(arguments, firstObject);
+    while (object != nil) {
+        CFSetAddValue(result, object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+
+    return (id)result;
+}
+
+- (instancetype)initWithObjects:(const id *)objects count:(NSUInteger)count {
+    return (id)CFSetCreate(kCFAllocatorDefault, (const void **)objects,
+                           (CFIndex)count, &kCFTypeSetCallBacks);
 }
 
 + (instancetype)set {
@@ -75,6 +114,36 @@
                                          count:(NSUInteger)count];
     free(values);
     return array;
+}
+
+/* Fast enumeration: CFSet has no index-based access, so the members are
+ * snapshotted once and walked from the state's extra storage. */
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)length {
+    NSArray *objects = (state->state == 0) ? [self allObjects]
+                                           : (NSArray *)state->extra[1];
+
+    if (state->state == 0) {
+        state->extra[1] = (unsigned long)objects;
+        state->mutationsPtr = &state->extra[0];
+    }
+
+    NSUInteger count = [objects count];
+    NSUInteger index = (NSUInteger)state->state;
+
+    if (index >= count || length == 0) {
+        return 0;
+    }
+
+    NSUInteger produced = MIN(length, count - index);
+    for (NSUInteger offset = 0; offset < produced; offset++) {
+        buffer[offset] = [objects objectAtIndex:index + offset];
+    }
+
+    state->itemsPtr = buffer;
+    state->state += produced;
+    return produced;
 }
 
 - (NSEnumerator *)objectEnumerator {
@@ -135,6 +204,23 @@
             [self removeObject:object];
         }
     }
+}
+
+/* Bridged to CFSetRef, so identity comes from the CF layer. Without these the
+ * NSObject versions apply and compare pointers, which makes any dictionary or
+ * set keyed by value fail to find an equal-but-distinct object. */
+- (NSUInteger)hash {
+    return (NSUInteger)CFHash((CFTypeRef)self);
+}
+
+- (BOOL)isEqual:(id)other {
+    if (self == other) {
+        return YES;
+    }
+    if (other == nil || ![other isKindOfClass:[NSSet class]]) {
+        return NO;
+    }
+    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
 }
 
 @end

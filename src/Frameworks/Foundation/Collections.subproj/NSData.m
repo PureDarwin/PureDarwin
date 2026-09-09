@@ -26,6 +26,8 @@
  */
 
 #import <Foundation/NSData.h>
+#include <stdio.h>
+#include <CoreFoundation/CFBase.h>
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFData.h>
 #include <CoreFoundation/ForFoundationOnly.h>
@@ -138,6 +140,20 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 	return __NSDataAutorelease(__NSDataCreateWithContentsOfFile(path));
 }
 
+/* The reading options only hint at mapping and caching; the bytes are the same
+ * either way, so they are accepted and ignored. */
++ (instancetype)dataWithContentsOfFile:(NSString *)path
+                               options:(NSDataReadingOptions)options
+                                 error:(NSError **)error
+{
+	NSData *data = [self dataWithContentsOfFile:path];
+
+	if (data == nil && error != NULL) {
+		*error = nil;
+	}
+	return data;
+}
+
 - (instancetype)init
 {
 	[self release];
@@ -227,6 +243,82 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 		return YES;
 	}
 	return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+}
+
+/* Bridged to CFDataRef, so identity comes from the CF layer. Without these the
+ * NSObject versions apply and compare pointers, which makes any dictionary or
+ * set keyed by value fail to find an equal-but-distinct object. */
+- (NSUInteger)hash {
+    return (NSUInteger)CFHash((CFTypeRef)self);
+}
+
+- (BOOL)isEqual:(id)other {
+    if (self == other) {
+        return YES;
+    }
+    if (other == nil || ![other isKindOfClass:[NSData class]]) {
+        return NO;
+    }
+    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+}
+
+
+/* Atomic writes go to a temporary in the same directory and are renamed, so a
+ * reader never observes a partial file. */
+- (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically
+{
+	const char *target = [path fileSystemRepresentation];
+	char temporary[1024];
+	const char *writePath = target;
+
+	if (atomically) {
+		snprintf(temporary, sizeof(temporary), "%s.XXXXXX", target);
+		writePath = temporary;
+	}
+
+	int fd = atomically ? mkstemp(temporary)
+	                    : open(target, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+	if (fd < 0) {
+		return NO;
+	}
+
+	const void *bytes = [self bytes];
+	size_t remaining = (size_t)[self length];
+	BOOL ok = YES;
+
+	while (remaining > 0) {
+		ssize_t written = write(fd, bytes, remaining);
+
+		if (written <= 0) {
+			ok = NO;
+			break;
+		}
+		bytes = (const char *)bytes + written;
+		remaining -= (size_t)written;
+	}
+	close(fd);
+
+	if (ok && atomically) {
+		ok = (rename(writePath, target) == 0);
+		if (!ok) {
+			unlink(writePath);
+		}
+	}
+	return ok;
+}
+
+
+- (BOOL)writeToFile:(NSString *)path options:(NSDataWritingOptions)options
+              error:(NSError **)error
+{
+	BOOL ok = [self writeToFile:path
+	                 atomically:(options & NSDataWritingAtomic) != 0];
+
+	if (!ok && error != NULL) {
+		*error = nil;
+	}
+	return ok;
 }
 
 @end

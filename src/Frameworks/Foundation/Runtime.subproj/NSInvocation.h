@@ -14,16 +14,13 @@
 
 @class NSMethodSignature, NSMutableArray;
 
-/* Object arguments only. That covers every call site here - the panels use it
- * to defer a selector with id arguments - but an invocation carrying scalars
- * or structs needs a real frame builder (libffi). -setArgument: raises for
- * anything else. */
+/* Argument storage is a raw frame laid out by the method signature, so an
+ * invocation carries scalars and structs as well as objects. -invoke builds
+ * the call through libffi. */
 @interface NSInvocation : NSObject {
     NSMethodSignature *_signature;
-    id _target;
-    SEL _selector;
-    NSMutableArray *_arguments;
-    id _returnValue;
+    void *_frame;
+    void *_returnValue;
     BOOL _argumentsRetained;
 }
 
@@ -50,8 +47,15 @@
 @end
 
 @interface NSMethodSignature : NSObject {
-    const char *_types;
+    char *_types;
+    char **_argumentTypes;
+    char *_returnType;
+    NSUInteger *_argumentOffsets;
+    NSUInteger *_argumentSizes;
     NSUInteger _argumentCount;
+    NSUInteger _frameLength;
+    NSUInteger _returnLength;
+    BOOL _isOneway;
 }
 
 + (NSMethodSignature *)signatureWithObjCTypes:(const char *)types;
@@ -60,6 +64,13 @@
 - (const char *)getArgumentTypeAtIndex:(NSUInteger)index;
 - (const char *)methodReturnType;
 - (NSUInteger)methodReturnLength;
+- (NSUInteger)frameLength;
+- (BOOL)isOneway;
+
+/* Byte offset of an argument inside an NSInvocation's frame. */
+- (NSUInteger)_offsetOfArgumentAtIndex:(NSUInteger)index;
+- (NSUInteger)_sizeOfArgumentAtIndex:(NSUInteger)index;
+- (const char *)_types;
 
 @end
 

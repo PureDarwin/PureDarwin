@@ -18,6 +18,14 @@ typedef enum {
     NSImageCacheNever,
 } NSImageCacheMode;
 
+APPKIT_EXPORT NSString *const NSImageNameMultipleDocuments;
+APPKIT_EXPORT NSString *const NSImageNameTrashEmpty;
+APPKIT_EXPORT NSString *const NSImageNameTrashFull;
+APPKIT_EXPORT NSString *const NSImageNameFolder;
+APPKIT_EXPORT NSString *const NSImageNameComputer;
+APPKIT_EXPORT NSString *const NSImageNameUser;
+APPKIT_EXPORT NSString *const NSImageNameCaution;
+
 @interface NSImage : NSObject <NSCopying, NSCoding> {
     NSString *_name;
     NSSize _size;

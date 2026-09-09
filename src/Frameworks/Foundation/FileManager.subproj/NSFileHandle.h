@@ -29,6 +29,7 @@
 
 - (int)fileDescriptor;
 
+- (NSData *)availableData;
 - (NSData *)readDataToEndOfFile;
 - (NSData *)readDataOfLength:(NSUInteger)length;
 - (void)writeData:(NSData *)data;

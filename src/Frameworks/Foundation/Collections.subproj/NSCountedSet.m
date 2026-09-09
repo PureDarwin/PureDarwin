@@ -22,11 +22,10 @@
 }
 
 - (instancetype)initWithCapacity:(NSUInteger)capacity {
-    self = [super init];
-    if (self == nil) {
-        return nil;
-    }
-    _counts = [[NSMutableDictionary alloc] init];
+    /* Deliberately not [super init]: NSSet is bridged to CoreFoundation and
+     * its -init returns a CFSet, which would discard this allocation and leave
+     * every inherited method operating on an immutable CF object. */
+    _counts = [[NSMutableDictionary alloc] initWithCapacity:capacity];
     return self;
 }
 
@@ -41,6 +40,54 @@
         [self addObject:[array objectAtIndex:i]];
     }
     return self;
+}
+
+/* Every NSSet method not overridden here would treat self as a CFSet, so the
+ * rest of the inherited surface is implemented against _counts too. */
+- (id)member:(id)object {
+    return ([_counts objectForKey:object] != nil) ? object : nil;
+}
+
+- (NSUInteger)hash {
+    return [_counts count];
+}
+
+- (BOOL)isEqual:(id)other {
+    if (self == other) {
+        return YES;
+    }
+    if (![other isKindOfClass:[NSCountedSet class]]) {
+        return NO;
+    }
+    return [[self allObjects] isEqualToArray:[other allObjects]];
+}
+
+- (id)copyWithZone:(NSZone *)zone {
+    return [[NSCountedSet alloc] initWithArray:[self allObjects]];
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return [[NSCountedSet alloc] initWithArray:[self allObjects]];
+}
+
+- (void)removeAllObjects {
+    [_counts removeAllObjects];
+}
+
+- (void)addObjectsFromArray:(NSArray *)array {
+    NSUInteger count = [array count];
+
+    for (NSUInteger index = 0; index < count; index++) {
+        [self addObject:[array objectAtIndex:index]];
+    }
+}
+
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
+                                  objects:(id __unsafe_unretained [])buffer
+                                    count:(NSUInteger)length {
+    return [[self allObjects] countByEnumeratingWithState:state
+                                                  objects:buffer
+                                                    count:length];
 }
 
 - (void)dealloc {

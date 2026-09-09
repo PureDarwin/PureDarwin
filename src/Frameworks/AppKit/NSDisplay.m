@@ -20,6 +20,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE. */
 
 #import <AppKit/NSDisplay.h>
+#import <AppKit/NSPasteboard.h>
 #import <AppKit/NSRaise.h>
 #import <AppKit/NSColorList.h>
 #import <AppKit/NSFontTypeface.h>
@@ -99,8 +100,8 @@ SOFTWARE. */
 -(uint32_t)depth { return _depth; }
 
 -(NSPasteboard *)pasteboardWithName:(NSString *)name {
-   NSUnimplementedMethod();
-   return nil;
+   /* Pasteboards are process-local here; NSPasteboard owns the registry. */
+   return [NSPasteboard pasteboardWithName:name];
 }
 
 -(NSDraggingManager *)draggingManager {
@@ -152,21 +153,20 @@ SOFTWARE. */
 }
 
 -(void)hideCursor {
-   NSUnimplementedMethod();
+   /* No pointer of our own to hide; the compositor draws it. */
 }
 
 -(void)unhideCursor {
-   NSUnimplementedMethod();
 }
 
 // Arrow, IBeam, HorizontalResize, VerticalResize
 -(id)cursorWithName:(NSString *)name {
-   NSUnimplementedMethod();
-   return nil;
+   /* Cursor shapes come from the Wayland compositor; the name is enough of a
+    * token for callers that only pass it back to -setCursor:. */
+   return name;
 }
 
 -(void)setCursor:(id)cursor {
-   NSUnimplementedMethod();
 }
 
 -(NSEvent *)nextEventMatchingMask:(unsigned)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
