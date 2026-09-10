@@ -41,7 +41,9 @@ struct window {
 
 static const char *terminal_command[] = {"st-wl", NULL};
 static const char *dmenu_command[] = {"dmenu_run-wl", NULL};
-static const uint32_t border_width = 1;
+/* A desktop shell draws its own window frames, so the compositor must not put
+ * a focus outline around them. */
+static const uint32_t border_width = 0;
 static const uint32_t border_color_active = 0xff333388;
 static const uint32_t border_color_normal = 0xff888888;
 

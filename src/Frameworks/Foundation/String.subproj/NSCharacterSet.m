@@ -17,6 +17,18 @@ extern Boolean _CFCharacterSetIsLongCharacterMember(CFCharacterSetRef set,
 
 @implementation NSCharacterSet
 
+/* NSMutableCharacterSet is a subclass, so retaining self could hand back a
+ * mutable object; CFCharacterSetCreateCopy always yields an immutable one. */
+- (id)copyWithZone:(NSZone *)zone {
+    return (id)CFCharacterSetCreateCopy(kCFAllocatorDefault,
+                                        (CFCharacterSetRef)self);
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone {
+    return (id)CFCharacterSetCreateMutableCopy(kCFAllocatorDefault,
+                                               (CFCharacterSetRef)self);
+}
+
 static NSCharacterSet *_predefined(CFCharacterSetPredefinedSet which) {
     return (NSCharacterSet *)CFCharacterSetCreateCopy(kCFAllocatorDefault,
                                                       CFCharacterSetGetPredefined(which));

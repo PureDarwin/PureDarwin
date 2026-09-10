@@ -374,11 +374,6 @@ handle_attach(struct view_handler *handler)
 	struct layer_surface *surface = wl_container_of(handler, surface, view_handler);
 	bool mapped = surface->view->base.buffer != NULL;
 
-	fprintf(stderr, "swc-layer: attach mapped=%d was=%d layer=%u size=%ux%u\n",
-	        (int)mapped, (int)surface->mapped, surface->current.layer,
-	        surface->view->base.geometry.width,
-	        surface->view->base.geometry.height);
-
 	if (mapped) {
 		update_position(surface);
 		restack_layer(surface);
@@ -394,12 +389,6 @@ handle_attach(struct view_handler *handler)
 	}
 
 	surface->mapped = mapped;
-	fprintf(stderr, "swc-layer: view visible=%d at %d,%d %ux%u stack=%u\n",
-	        (int)surface->view->visible,
-	        surface->view->base.geometry.x, surface->view->base.geometry.y,
-	        surface->view->base.geometry.width,
-	        surface->view->base.geometry.height,
-	        surface->view->stack_layer);
 	update_usable_geometry(surface);
 }
 
@@ -439,8 +428,6 @@ handle_surface_commit(struct wl_listener *listener, void *data)
 	/* Make sure that the initial commit and also any later state change gets a fresh
 	 * configure  */
 	if (!surface->configured || state_changed) {
-		fprintf(stderr, "swc-layer: commit -> configure (configured=%d changed=%d)\n",
-		        (int)surface->configured, (int)state_changed);
 		send_configure(surface);
 		surface->configured = true;
 	}

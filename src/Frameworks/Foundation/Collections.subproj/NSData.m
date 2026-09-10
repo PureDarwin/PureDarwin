@@ -167,6 +167,13 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 				(CFIndex)length);
 }
 
+/* The two-argument form takes ownership, i.e. it is the three-argument form
+ * with freeWhenDone:YES. Only the latter existed. */
+- (instancetype)initWithBytesNoCopy:(void *)bytes length:(NSUInteger)length
+{
+	return [self initWithBytesNoCopy:bytes length:length freeWhenDone:YES];
+}
+
 - (instancetype)initWithBytesNoCopy:(void *)bytes
 			     length:(NSUInteger)length
 		       freeWhenDone:(BOOL)freeWhenDone
@@ -192,6 +199,23 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 {
 	[self release];
 	return (id)__NSDataCreateWithContentsOfFile(path);
+}
+
+- (id)copyWithZone:(NSZone *)zone
+{
+	return (id)CFDataCreate(kCFAllocatorDefault, [self bytes],
+	                        (CFIndex)[self length]);
+}
+
+- (id)mutableCopyWithZone:(NSZone *)zone
+{
+	CFMutableDataRef result =
+	    CFDataCreateMutable(kCFAllocatorDefault, 0);
+
+	if (result != NULL) {
+		CFDataAppendBytes(result, [self bytes], (CFIndex)[self length]);
+	}
+	return (id)result;
 }
 
 /*
@@ -332,8 +356,7 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 
 + (instancetype)dataWithCapacity:(NSUInteger)capacity
 {
-	return __NSDataAutorelease(CFDataCreateMutable(kCFAllocatorDefault,
-						       (CFIndex)capacity));
+	return __NSDataAutorelease(CFDataCreateMutable(kCFAllocatorDefault, 0));
 }
 
 + (instancetype)dataWithLength:(NSUInteger)length
@@ -383,7 +406,8 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 - (instancetype)initWithCapacity:(NSUInteger)capacity
 {
 	[self release];
-	return (id)CFDataCreateMutable(kCFAllocatorDefault, (CFIndex)capacity);
+	/* See +dataWithCapacity: - a non-zero CF capacity is a hard ceiling. */
+	return (id)CFDataCreateMutable(kCFAllocatorDefault, 0);
 }
 
 - (instancetype)initWithLength:(NSUInteger)length

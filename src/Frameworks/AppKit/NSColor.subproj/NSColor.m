@@ -7,6 +7,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSColor.h>
+#import <AppKit/NSDisplay.h>
+#include <string.h>
 #import <AppKit/NSColor_catalog.h>
 #import <AppKit/NSColor_CGColor.h>
 #import <AppKit/NSColorList.h>
@@ -462,17 +464,101 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return [NSColor_CGColor colorWithHue:hue saturation:saturation brightness:brightness alpha:alpha spaceName:NSCalibratedRGBColorSpace];
 }
 
+static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemColors[] = {
+    /* Basic palette. */
+    {"systemBlackColor",      0.00, 0.00, 0.00, 1.0},
+    {"systemWhiteColor",      1.00, 1.00, 1.00, 1.0},
+    {"systemGrayColor",       0.50, 0.50, 0.50, 1.0},
+    {"systemLightGrayColor",  0.67, 0.67, 0.67, 1.0},
+    {"systemDarkGrayColor",   0.33, 0.33, 0.33, 1.0},
+    {"systemRedColor",        1.00, 0.23, 0.19, 1.0},
+    {"systemGreenColor",      0.20, 0.78, 0.35, 1.0},
+    {"systemBlueColor",       0.04, 0.52, 1.00, 1.0},
+    {"systemYellowColor",     1.00, 0.80, 0.00, 1.0},
+    {"systemOrangeColor",     1.00, 0.58, 0.00, 1.0},
+    {"systemPurpleColor",     0.69, 0.32, 0.87, 1.0},
+    {"systemPinkColor",       1.00, 0.18, 0.33, 1.0},
+    {"systemBrownColor",      0.64, 0.52, 0.37, 1.0},
+    {"systemTealColor",       0.35, 0.78, 0.98, 1.0},
+    {"systemIndigoColor",     0.35, 0.34, 0.84, 1.0},
+    {"systemCyanColor",       0.00, 1.00, 1.00, 1.0},
+    {"systemMagentaColor",    1.00, 0.00, 1.00, 1.0},
+    /* Interface colours, a light-grey appearance. */
+    {"controlColor",                  0.85, 0.85, 0.85, 1.0},
+    {"controlBackgroundColor",        1.00, 1.00, 1.00, 1.0},
+    {"controlTextColor",              0.00, 0.00, 0.00, 1.0},
+    {"disabledControlTextColor",      0.53, 0.53, 0.53, 1.0},
+    {"selectedControlColor",          0.70, 0.79, 0.94, 1.0},
+    {"secondarySelectedControlColor", 0.83, 0.83, 0.83, 1.0},
+    {"selectedControlTextColor",      0.00, 0.00, 0.00, 1.0},
+    {"alternateSelectedControlColor",     0.14, 0.44, 0.85, 1.0},
+    {"alternateSelectedControlTextColor", 1.00, 1.00, 1.00, 1.0},
+    {"controlHighlightColor",         1.00, 1.00, 1.00, 1.0},
+    {"controlLightHighlightColor",    1.00, 1.00, 1.00, 1.0},
+    {"controlShadowColor",            0.60, 0.60, 0.60, 1.0},
+    {"controlDarkShadowColor",        0.40, 0.40, 0.40, 1.0},
+    {"highlightColor",                1.00, 1.00, 1.00, 1.0},
+    {"shadowColor",                   0.00, 0.00, 0.00, 1.0},
+    {"gridColor",                     0.87, 0.87, 0.87, 1.0},
+    {"textColor",                     0.00, 0.00, 0.00, 1.0},
+    {"textBackgroundColor",           1.00, 1.00, 1.00, 1.0},
+    {"selectedTextColor",             0.00, 0.00, 0.00, 1.0},
+    {"selectedTextBackgroundColor",   0.70, 0.79, 0.94, 1.0},
+    {"headerColor",                   0.85, 0.85, 0.85, 1.0},
+    {"headerTextColor",               0.00, 0.00, 0.00, 1.0},
+    {"scrollBarColor",                0.87, 0.87, 0.87, 1.0},
+    {"knobColor",                     0.75, 0.75, 0.75, 1.0},
+    {"selectedKnobColor",             0.60, 0.60, 0.60, 1.0},
+    {"windowFrameColor",              0.85, 0.85, 0.85, 1.0},
+    {"windowBackgroundColor",         0.93, 0.93, 0.93, 1.0},
+    {"menuBackgroundColor",           0.93, 0.93, 0.93, 1.0},
+    {"mainMenuBarColor",              0.90, 0.90, 0.90, 1.0},
+    {"menuItemTextColor",             0.00, 0.00, 0.00, 1.0},
+    {"selectedMenuItemColor",         0.14, 0.44, 0.85, 1.0},
+    {"selectedMenuItemTextColor",     1.00, 1.00, 1.00, 1.0},
+    {NULL, 0, 0, 0, 0}
+};
+
++(NSColor *)_fallbackColorNamed:(NSString *)colorName {
+    /* The display's own table wins, so a backend can override the look. */
+    NSColor *color = [[NSDisplay currentDisplay] colorWithName:colorName];
+
+    if(color != nil)
+        return color;
+
+    const char *wanted = [colorName UTF8String];
+
+    if(wanted == NULL)
+        return nil;
+
+    for(int i = 0; _pdSystemColors[i].name != NULL; i++) {
+        if(strcmp(_pdSystemColors[i].name, wanted) == 0)
+            return [NSColor colorWithCalibratedRed:_pdSystemColors[i].r
+                                             green:_pdSystemColors[i].g
+                                              blue:_pdSystemColors[i].b
+                                             alpha:_pdSystemColors[i].a];
+    }
+
+    /* Unknown name: nil, so callers with their own hard-coded value still
+     * get to use it. */
+    return nil;
+}
+
 +(NSColor *)colorWithCatalogName:(NSString *)catalogName colorName:(NSString *)colorName {
     NSColorList *list = [NSColorList colorListNamed:catalogName];
     if(!list) {
-        NSLog(@"*** Unknown color catalog %@",catalogName);
-        return nil;
+        static BOOL warned = NO;
+
+        if(!warned) {
+            NSLog(@"*** Unknown color catalog %@; using built-in colours",catalogName);
+            warned = YES;
+        }
+        return [self _fallbackColorNamed:colorName];
     }
 
     NSColor *color = [list colorWithKey:colorName];
     if(!color) {
-        NSLog(@"*** Unknown color %@ for catalog %@",colorName,catalogName);
-        return nil;
+        return [self _fallbackColorNamed:colorName];
     }
 
     // handle aliases to other catalog colors
@@ -645,8 +731,62 @@ static void releasePatternInfo(void *info){
 
 -(NSColor *)colorWithAlphaComponent:(CGFloat)alpha {
    if (alpha >= 1.0)
-    return self; 
-   return nil; 
+    return self;
+
+   /* Returning nil for any translucency made every alpha-blended colour nil,
+    * and -set on nil silently keeps the previous colour. Convert instead. */
+   NSColor *rgb = [self colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+
+   if(rgb == nil || rgb == self)
+    return self;
+
+   return [NSColor colorWithCalibratedRed:[rgb redComponent]
+                                    green:[rgb greenComponent]
+                                     blue:[rgb blueComponent]
+                                    alpha:alpha];
+}
+
+/* Cocoa blends toward white (highlight) or black (shadow) by the given
+ * fraction, keeping alpha. Their absence left callers with a nil colour, and
+ * -set on nil silently leaves the previous colour in place - which is how the
+ * dock came out black. */cc
+-(NSColor *)highlightWithLevel:(CGFloat)level {
+   if(level <= 0.0)
+    return self;
+   if(level > 1.0)
+    level = 1.0;
+
+   NSColor *rgb = [self colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+
+   if(rgb == nil)
+    rgb = self;
+
+   CGFloat r = [rgb redComponent], g = [rgb greenComponent];
+   CGFloat b = [rgb blueComponent], a = [rgb alphaComponent];
+
+   return [NSColor colorWithCalibratedRed:r + (1.0 - r) * level
+                                    green:g + (1.0 - g) * level
+                                     blue:b + (1.0 - b) * level
+                                    alpha:a];
+}
+
+-(NSColor *)shadowWithLevel:(CGFloat)level {
+   if(level <= 0.0)
+    return self;
+   if(level > 1.0)
+    level = 1.0;
+
+   NSColor *rgb = [self colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+
+   if(rgb == nil)
+    rgb = self;
+
+   CGFloat scale = 1.0 - level;
+
+   return [NSColor colorWithCalibratedRed:[rgb redComponent] * scale
+                                    green:[rgb greenComponent] * scale
+                                     blue:[rgb blueComponent] * scale
+                                    alpha:[rgb alphaComponent]];
 }
 
 -(NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace {

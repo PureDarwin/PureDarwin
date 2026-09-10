@@ -1410,12 +1410,41 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    [_windows makeObjectsPerformSelector:@selector(update)];
 }
 
+/* A Wayland compositor has no concept of activating an application, so
+ * activation here is the local half of it: mark the app active, show the
+ * windows that were hidden on deactivation, and post the notifications
+ * observers rely on. Raising above other applications is the compositor's
+ * decision, which is why the flag has nothing to act on. */
 -(void)activateIgnoringOtherApps:(BOOL)flag {
-   NSUnimplementedMethod();
+   if(_isActive)
+    return;
+
+   [[NSNotificationCenter defaultCenter]
+       postNotificationName:NSApplicationWillBecomeActiveNotification
+                     object:self];
+
+   _isActive=YES;
+   [self _checkForAppActivation];
+
+   [[NSNotificationCenter defaultCenter]
+       postNotificationName:NSApplicationDidBecomeActiveNotification
+                     object:self];
 }
 
 -(void)deactivate {
-   NSUnimplementedMethod();
+   if(!_isActive)
+    return;
+
+   [[NSNotificationCenter defaultCenter]
+       postNotificationName:NSApplicationWillResignActiveNotification
+                     object:self];
+
+   _isActive=NO;
+   [self _checkForAppActivation];
+
+   [[NSNotificationCenter defaultCenter]
+       postNotificationName:NSApplicationDidResignActiveNotification
+                     object:self];
 }
 
 -(NSWindow *)modalWindow {

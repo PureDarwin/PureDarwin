@@ -10,6 +10,8 @@
 #import <Foundation/NSArray.h>
 #import <Foundation/NSException.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* Defined in NSString.m: renders %@ by asking the object for a description. */
 extern CFStringRef _NSCopyFormattingDescription(void *value, const void *locale);
@@ -161,6 +163,55 @@ extern int __CFConstantStringClassReference[];
                                NSStringFromClass([self class]), sel_getName(_cmd)]; \
     } while (0)
 
+/* Numeric accessors. Their absence is quiet rather than loud: callers such as
+ * -[NSUserDefaults integerForKey:] test respondsToSelector: first and simply
+ * return 0, so every integer default read as zero. */
+- (int)intValue {
+    return (int)[self integerValue];
+}
+
+- (NSInteger)integerValue {
+    const char *utf8 = [self UTF8String];
+
+    return (utf8 != NULL) ? (NSInteger)strtol(utf8, NULL, 10) : 0;
+}
+
+- (long long)longLongValue {
+    const char *utf8 = [self UTF8String];
+
+    return (utf8 != NULL) ? strtoll(utf8, NULL, 10) : 0;
+}
+
+- (float)floatValue {
+    return (float)[self doubleValue];
+}
+
+- (double)doubleValue {
+    const char *utf8 = [self UTF8String];
+
+    return (utf8 != NULL) ? strtod(utf8, NULL) : 0.0;
+}
+
+/* Cocoa: leading whitespace and sign are skipped, then Y/y/T/t or a non-zero
+ * number is true. */
+- (BOOL)boolValue {
+    const char *utf8 = [self UTF8String];
+
+    if (utf8 == NULL) {
+        return NO;
+    }
+    while (*utf8 == ' ' || *utf8 == '\t' || *utf8 == '\n' || *utf8 == '\r') {
+        utf8++;
+    }
+    if (*utf8 == '+' || *utf8 == '-') {
+        utf8++;
+    }
+    if (*utf8 == 'Y' || *utf8 == 'y' || *utf8 == 'T' || *utf8 == 't') {
+        return YES;
+    }
+    return (strtol(utf8, NULL, 10) != 0) ? YES : NO;
+}
+
 - (NSComparisonResult)compare:(NSString *)other {
     PD_REQUIRE_STRING(other);
     return (NSComparisonResult)CFStringCompare((CFStringRef)self,
@@ -205,6 +256,39 @@ extern int __CFConstantStringClassReference[];
 /* Expands range to whole lines, the way the text system expects: back to the
  * start of the line containing range.location, forward past the terminator
  * that ends the line containing its last character. */
+/* The out-parameter forms of the line and paragraph bounds. CFStringGetLineBounds
+ * gives all three positions directly. */
+- (void)getLineStart:(NSUInteger *)startPtr
+                 end:(NSUInteger *)endPtr
+         contentsEnd:(NSUInteger *)contentsEndPtr
+            forRange:(NSRange)range {
+    CFIndex start = 0, end = 0, contentsEnd = 0;
+
+    CFStringGetLineBounds((CFStringRef)self,
+        CFRangeMake((CFIndex)range.location, (CFIndex)range.length),
+        &start, &end, &contentsEnd);
+
+    if (startPtr != NULL) {
+        *startPtr = (NSUInteger)start;
+    }
+    if (endPtr != NULL) {
+        *endPtr = (NSUInteger)end;
+    }
+    if (contentsEndPtr != NULL) {
+        *contentsEndPtr = (NSUInteger)contentsEnd;
+    }
+}
+
+/* CF has no paragraph-bounds call; for the separators it recognises the two
+ * agree on everything except U+2028, matching -paragraphRangeForRange:. */
+- (void)getParagraphStart:(NSUInteger *)startPtr
+                      end:(NSUInteger *)endPtr
+              contentsEnd:(NSUInteger *)contentsEndPtr
+                 forRange:(NSRange)range {
+    [self getLineStart:startPtr end:endPtr contentsEnd:contentsEndPtr
+              forRange:range];
+}
+
 - (NSRange)lineRangeForRange:(NSRange)range {
     CFIndex start = 0, end = 0, contentsEnd = 0;
 

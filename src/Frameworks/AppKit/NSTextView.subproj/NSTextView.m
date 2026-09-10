@@ -393,6 +393,16 @@ NSString * const NSOldSelectedCharacterRange=@"NSOldSelectedCharacterRange";
     _usesFontPanel = flag;
 }
 
+/* NSText leaves these abstract; NSTextView is the concrete class, so a caller
+ * setting them on a text view must not hit the abstract raise. */
+-(BOOL)importsGraphics {
+    return _importsGraphics;
+}
+
+-(void)setImportsGraphics:(BOOL)flag {
+    _importsGraphics = flag;
+}
+
 -(BOOL)usesFontPanel
 {
     return _usesFontPanel;

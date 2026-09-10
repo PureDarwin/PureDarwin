@@ -161,6 +161,36 @@
     return (NSArray *)paths;
 }
 
+/* CFBundleLoadExecutableAndReturnError reports why a load failed, which is the
+ * whole point of the ...AndReturnError: form; -load and -isLoaded are the older
+ * spellings of the same thing. */
+- (BOOL)loadAndReturnError:(NSError **)error {
+    CFErrorRef cfError = NULL;
+
+    if (CFBundleLoadExecutableAndReturnError(_bundle, &cfError)) {
+        return YES;
+    }
+
+    if (error != NULL) {
+        *error = (NSError *)cfError;
+        if (cfError != NULL) {
+            CFAutorelease(cfError);
+        }
+    }
+    else if (cfError != NULL) {
+        CFRelease(cfError);
+    }
+    return NO;
+}
+
+- (BOOL)load {
+    return CFBundleLoadExecutable(_bundle) ? YES : NO;
+}
+
+- (BOOL)isLoaded {
+    return CFBundleIsExecutableLoaded(_bundle) ? YES : NO;
+}
+
 - (Class)principalClass {
     if (!CFBundleLoadExecutable(_bundle)) {
         return Nil;

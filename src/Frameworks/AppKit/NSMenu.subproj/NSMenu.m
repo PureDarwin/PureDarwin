@@ -7,6 +7,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSMenu.h>
+#import <AppKit/NSMenuView.h>
+#import <AppKit/NSWindow.h>
 #import <AppKit/NSMenuItem.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSWindow.h>
@@ -16,31 +18,67 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 @implementation NSMenu
 
-+(void)popUpContextMenu:(NSMenu *)menu withEvent:(NSEvent *)event forView:(NSView *)view {
-#if 0
-   [menu update];
-   if([[menu itemArray] count]>0){
-    NSPoint       point=[event locationInWindow];
-    NSWindow     *window=[event window];
-    NSMenuWindow *menuWindow=[[NSMenuWindow alloc] initWithMenu:menu];
-    NSMenuView   *menuView=[menuWindow menuView];
-    NSMenuItem   *item;
-    
-    [menuWindow setReleasedWhenClosed:YES];
-    [menuWindow setFrameTopLeftPoint:[window convertBaseToScreen:point]];
-    [menuWindow orderFront:nil];
+/* The windows currently showing a popped-up menu. A menu window has to outlive
+ * the call that shows it, and only one popup is meaningful at a time, so the
+ * previous one is closed when a new one appears. */
+static NSMutableArray *__NSMenuPopUpWindows = nil;
 
-    item=[menuView trackForEvent:event];
- 
-    [menuWindow close];
+-(BOOL)popUpMenuPositioningItem:(NSMenuItem *)item
+                     atLocation:(NSPoint)location
+                         inView:(NSView *)view {
+   [self update];
 
-    if(item!=nil)
-     [NSApp sendAction:[item action] to:[item target] from:item];
+   if([[self itemArray] count]==0)
+    return NO;
+
+   if(__NSMenuPopUpWindows==nil)
+    __NSMenuPopUpWindows=[[NSMutableArray alloc] init];
+   else {
+    for(NSWindow *open in __NSMenuPopUpWindows)
+     [open orderOut:nil];
+    [__NSMenuPopUpWindows removeAllObjects];
    }
-#else
-   NSUnimplementedMethod();
-#endif
+
+   NSMenuView *menuView=[[[NSMenuView alloc] initWithFrame:NSMakeRect(0,0,10,10)] autorelease];
+
+   [menuView setMenu:self];
+   [menuView sizeToFit];
+
+   NSPoint screenPoint=location;
+
+   if(view!=nil){
+    screenPoint=[view convertPoint:location toView:nil];
+    screenPoint=[[view window] convertBaseToScreen:screenPoint];
+   }
+
+   NSRect frame=[menuView frame];
+
+   /* location is the menu's top-left, and window frames are bottom-left. */
+   frame.origin.x=screenPoint.x;
+   frame.origin.y=screenPoint.y-frame.size.height;
+
+   NSWindow *window=[[NSWindow alloc] initWithContentRect:frame
+                                                styleMask:NSBorderlessWindowMask
+                                                  backing:NSBackingStoreBuffered
+                                                    defer:NO];
+
+   [window setLevel:NSPopUpMenuWindowLevel];
+   [[window contentView] addSubview:menuView];
+   [window orderFront:nil];
+
+   [__NSMenuPopUpWindows addObject:window];
+   [window release];
+
+   return YES;
 }
+
++(void)popUpContextMenu:(NSMenu *)menu withEvent:(NSEvent *)event forView:(NSView *)view {
+   /* Now that NSMenuView exists, a context menu is a popup at the click. */
+   [menu popUpMenuPositioningItem:nil
+                      atLocation:[event locationInWindow]
+                          inView:nil];
+}
+
 
 -(void)encodeWithCoder:(NSCoder *)coder {
    [coder encodeObject:_title forKey:@"NSTitle"];
@@ -304,6 +342,10 @@ BOOL itemIsEnabled(NSMenuItem *item) {
     } 
 
     return enabled;
+}
+
+/* See the header: menu views size themselves from the menu when they draw. */
+-(void)sizeToFit {
 }
 
 -(void)update {

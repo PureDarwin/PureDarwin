@@ -28,6 +28,8 @@
 #include "DenseMapExtras.h"
 
 #include <malloc/malloc.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <mach/mach.h>
@@ -937,11 +939,33 @@ private:
             page->protect();
 
             if (obj != POOL_BOUNDARY) {
+                /* PureDarwin: pool-drain trace. Prints each object about to be
+                 * released so an over-release shows which one faulted; the last
+                 * line before the crash names the culprit. */
+                bool pdTrace = (getenv("PD_POOL_TRACE") != NULL);
+
+                if (pdTrace) {
+                    /* Pointer first, without touching the object: if the entry
+                     * itself is garbage the fault lands here rather than in a
+                     * class lookup, which distinguishes a corrupt pool entry
+                     * from a bad dealloc. */
+                    fprintf(stderr, "pool: entry %p\n", (void *)obj);
+                    fflush(stderr);
+
+                    Class cls = object_getClass(obj);
+                    fprintf(stderr, "pool:   class %s\n",
+                            cls ? class_getName(cls) : "?");
+                    fflush(stderr);
+                }
 #if SUPPORT_AUTORELEASEPOOL_DEDUP_PTRS
                 // release count+1 times since it is count of the additional
                 // autoreleases beyond the first one
                 for (int i = 0; i < count + 1; i++) {
                     objc_release(obj);
+                }
+                if (pdTrace) {
+                    fprintf(stderr, "pool:   released\n");
+                    fflush(stderr);
                 }
 #else
                 objc_release(obj);
@@ -1064,6 +1088,12 @@ private:
 
     static inline id *autoreleaseFast(id obj)
     {
+        if (obj != POOL_BOUNDARY && getenv("PD_POOL_TRACE") != NULL) {
+            Class cls = object_getClass(obj);
+            fprintf(stderr, "pool: ADD %p %s\n", (void *)obj,
+                    cls ? class_getName(cls) : "?");
+            fflush(stderr);
+        }
         AutoreleasePoolPage *page = hotPage();
         if (page && !page->full()) {
             return page->add(obj);

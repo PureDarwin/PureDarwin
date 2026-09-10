@@ -139,6 +139,11 @@ stdenv.mkDerivation {
     cp staged/AppKit/*.h "$frameworkDir/Versions/A/Headers/"
     cp Info.plist "$frameworkDir/Versions/A/Resources/" || true
 
+    # The control artwork AppKit draws with is found through
+    # -[NSBundle pathForImageResource:] against the framework bundle, so it has
+    # to be installed alongside the binary or every +imageNamed: returns nil.
+    find "$src" -name '*.tiff' -exec cp {} "$frameworkDir/Versions/A/Resources/" \; 2>/dev/null || true
+
     ln -s A "$frameworkDir/Versions/Current"
     ln -s Versions/Current/AppKit "$frameworkDir/AppKit"
     ln -s Versions/Current/Headers "$frameworkDir/Headers"

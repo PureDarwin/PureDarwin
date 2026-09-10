@@ -41,6 +41,10 @@
                 maxCount:(NSUInteger)maxCount
             inIndexRange:(NSRangePointer)range;
 
+- (void)enumerateIndexesUsingBlock:(void (^)(NSUInteger index, BOOL *stop))block;
+- (void)enumerateIndexesWithOptions:(NSEnumerationOptions)options
+                         usingBlock:(void (^)(NSUInteger index, BOOL *stop))block;
+
 @end
 
 @interface NSMutableIndexSet : NSIndexSet

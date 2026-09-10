@@ -8,8 +8,15 @@
 
 #import <Foundation/NSArchiver.h>
 #import <Foundation/NSException.h>
+#import <Foundation/NSKeyedArchiver.h>
+#import <Foundation/NSData.h>
 #import <Foundation/NSString.h>
 #include <objc/runtime.h>
+
+/* Backed by the keyed archiver rather than an NeXT typed stream.
+ * That is enough for a round trip, which is what Distributed Objects and
+ * the workspace tools need but the bytes are NOT the sequential format,
+ * so genuine .gorm files and archives from GNUstep will not load. */
 
 static void NSArchiverUnimplemented(id self, SEL _cmd) {
     [NSException raise:NSInternalInconsistencyException
@@ -20,13 +27,13 @@ static void NSArchiverUnimplemented(id self, SEL _cmd) {
 @implementation NSArchiver
 
 + (NSData *)archivedDataWithRootObject:(id)root {
-    NSArchiverUnimplemented(self, _cmd);
-    return nil;
+    return [NSKeyedArchiver archivedDataWithRootObject:root];
 }
 
 + (BOOL)archiveRootObject:(id)root toFile:(NSString *)path {
-    NSArchiverUnimplemented(self, _cmd);
-    return NO;
+    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:root];
+
+    return (data != nil) ? [data writeToFile:path atomically:YES] : NO;
 }
 
 - (instancetype)initForWritingWithMutableData:(NSMutableData *)data {
@@ -45,13 +52,13 @@ static void NSArchiverUnimplemented(id self, SEL _cmd) {
 @implementation NSUnarchiver
 
 + (id)unarchiveObjectWithData:(NSData *)data {
-    NSArchiverUnimplemented(self, _cmd);
-    return nil;
+    return [NSKeyedUnarchiver unarchiveObjectWithData:data];
 }
 
 + (id)unarchiveObjectWithFile:(NSString *)path {
-    NSArchiverUnimplemented(self, _cmd);
-    return nil;
+    NSData *data = [NSData dataWithContentsOfFile:path];
+
+    return (data != nil) ? [NSKeyedUnarchiver unarchiveObjectWithData:data] : nil;
 }
 
 - (instancetype)initForReadingWithData:(NSData *)data {

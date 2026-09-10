@@ -19,6 +19,12 @@
     char *_type;
 }
 
+/* Immutable and with no mutable counterpart, so a copy is the object itself.
+ * Without this -copy raised "unrecognized selector". */
+- (id)copyWithZone:(NSZone *)zone {
+    return [self retain];
+}
+
 + (instancetype)valueWithBytes:(const void *)bytes objCType:(const char *)type {
     NSUInteger size = 0;
     NSGetSizeAndAlignment(type, &size, NULL);
@@ -35,6 +41,22 @@
 
 + (instancetype)value:(const void *)bytes withObjCType:(const char *)type {
     return [self valueWithBytes:bytes objCType:type];
+}
+
+/* Only the +valueWith... form existed, so [[NSValue alloc] initWithBytes:...]
+ * raised "unrecognized selector". */
+- (instancetype)initWithBytes:(const void *)bytes objCType:(const char *)type {
+    self = [super init];
+    if (self != nil) {
+        NSUInteger size = 0;
+        NSGetSizeAndAlignment(type, &size, NULL);
+
+        _size = size;
+        _bytes = malloc(size);
+        memcpy(_bytes, bytes, size);
+        _type = strdup(type);
+    }
+    return self;
 }
 
 + (instancetype)valueWithPointer:(const void *)pointer {

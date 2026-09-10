@@ -42,6 +42,12 @@
 - (void)synchronizeFile;
 - (void)closeFile;
 
+/* Posts NSFileHandleDataAvailableNotification on the run loop that registered
+ * the wait, once the descriptor has something to read. */
+- (void)waitForDataInBackgroundAndNotify;
+
 @end
+
+FOUNDATION_EXPORT NSString *const NSFileHandleDataAvailableNotification;
 
 #endif /* NSFileHandle_h */

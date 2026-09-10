@@ -786,6 +786,12 @@ CFTypeRef _CFNonObjCRetain(CFTypeRef cf) {
     return _CFRetain(cf, false);
 }
 
+#if DEPLOYMENT_RUNTIME_OBJC
+CF_INLINE Boolean __CFTypeRefIsObjC(const void *obj) {
+    return CF_IS_OBJC(__CFGenericTypeID_inline(obj), obj);
+}
+#endif
+
 CFTypeRef CFRetain(CFTypeRef cf) {
     if (NULL == cf) { CRSetCrashLogMessage("*** CFRetain() called with NULL ***"); HALT; }
     if (cf) __CFGenericAssertIsCF(cf);

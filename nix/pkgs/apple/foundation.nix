@@ -18,6 +18,7 @@ let
   mmSrcs = [
     "String.subproj/NSString"
     "String.subproj/NSCFString"
+    "Runtime.subproj/NSObjectDescription"
     "Collections.subproj/NSArray"
     "Collections.subproj/NSData"
     "Collections.subproj/NSDictionary"
@@ -73,6 +74,7 @@ let
     "Runtime.subproj/NSDebug"
     "Runtime.subproj/NSBundle"
     "Runtime.subproj/NSProcessInfo"
+    "Runtime.subproj/NSBlock"
     "Runtime.subproj/NSThread"
     "Runtime.subproj/NSUserDefaults"
     "Collections.subproj/NSMapTable"

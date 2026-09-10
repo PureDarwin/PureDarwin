@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSString.h>
+#import <Foundation/NSException.h>
 #import <Foundation/NSArray.h>
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSData.h>
@@ -81,6 +82,31 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     return [[[self alloc] initWithContentsOfFile:path
                                         encoding:encoding
                                            error:error] autorelease];
+}
+
+/* Also on NSString, not only NSCFString: code caches IMPs with
+ * +[NSString instanceMethodForSelector:] and invokes them on real instances,
+ * which finds the forwarding stub if the method lives solely on the bridged
+ * subclass. Every instance is a CFString, so calling CF here is valid. */
+- (NSComparisonResult)compare:(NSString *)other {
+    if (other == nil) {
+        [NSException raise:NSInvalidArgumentException
+                    format:@"-[NSString compare:]: nil argument"];
+        return NSOrderedSame;
+    }
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
+                                               (CFStringRef)other, 0);
+}
+
+- (NSComparisonResult)caseInsensitiveCompare:(NSString *)other {
+    if (other == nil) {
+        [NSException raise:NSInvalidArgumentException
+                    format:@"-[NSString caseInsensitiveCompare:]: nil argument"];
+        return NSOrderedSame;
+    }
+    return (NSComparisonResult)CFStringCompare((CFStringRef)self,
+                                               (CFStringRef)other,
+                                               kCFCompareCaseInsensitive);
 }
 
 - (instancetype)init {
@@ -285,13 +311,43 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     return parts;
 }
 
+/* The NSStringCompareOptions bits line up with CFStringCompareFlags, with one
+ * exception: NSLiteralSearch has no CF bit because CF compares literally by
+ * default (kCFCompareNonliteral opts out), so it maps to no flag at all. */
+static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
+    return (CFOptionFlags)(options & ~(NSStringCompareOptions)NSLiteralSearch);
+}
+
 - (NSString *)stringByReplacingOccurrencesOfString:(NSString *)target
                                         withString:(NSString *)replacement {
+    return [self stringByReplacingOccurrencesOfString:target
+                                           withString:replacement
+                                              options:0
+                                                range:NSMakeRange(0, [self length])];
+}
+
+- (NSString *)stringByReplacingCharactersInRange:(NSRange)range
+                                      withString:(NSString *)replacement {
+    CFMutableStringRef copy = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                        (CFStringRef)self);
+
+    CFStringReplace(copy, CFRangeMake((CFIndex)range.location,
+                                      (CFIndex)range.length),
+                    (CFStringRef)(replacement != nil ? replacement : @""));
+    return (id)CFAutorelease(copy);
+}
+
+- (NSString *)stringByReplacingOccurrencesOfString:(NSString *)target
+                                        withString:(NSString *)replacement
+                                           options:(NSStringCompareOptions)options
+                                             range:(NSRange)range {
     CFMutableStringRef copy = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
                                                         (CFStringRef)self);
 
     CFStringFindAndReplace(copy, (CFStringRef)target, (CFStringRef)replacement,
-                           CFRangeMake(0, CFStringGetLength(copy)), 0);
+                           CFRangeMake((CFIndex)range.location,
+                                       (CFIndex)range.length),
+                           __NSStringCFCompareFlags(options));
     return (id)CFAutorelease(copy);
 }
 

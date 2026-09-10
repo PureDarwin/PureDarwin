@@ -24,7 +24,7 @@ typedef NS_OPTIONS(NSUInteger, NSDataWritingOptions) {
     NSDataWritingWithoutOverwriting = 1 << 1
 };
 
-@interface NSData : NSObject
+@interface NSData : NSObject <NSCopying, NSMutableCopying>
 
 + (instancetype)data;
 + (instancetype)dataWithBytes:(const void *)bytes length:(NSUInteger)length;
@@ -43,6 +43,7 @@ typedef NS_OPTIONS(NSUInteger, NSDataWritingOptions) {
 
 - (instancetype)init;
 - (instancetype)initWithBytes:(const void *)bytes length:(NSUInteger)length;
+- (instancetype)initWithBytesNoCopy:(void *)bytes length:(NSUInteger)length;
 - (instancetype)initWithBytesNoCopy:(void *)bytes
                              length:(NSUInteger)length
                        freeWhenDone:(BOOL)freeWhenDone;

@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSNumber.h>
+#import <Foundation/NSException.h>
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFString.h>
@@ -94,6 +95,98 @@ __NSNumberCreate(CFNumberType type, const void *value)
     return __NSNumberCreate(kCFNumberLongLongType, &widened);
 }
 
+/* The -initWith... forms were missing entirely, so [[NSNumber alloc]
+ * initWithInt:] raised "unrecognized selector". They must return a retained
+ * object, unlike the +numberWith... forms above: the caller owns the result
+ * and releases it. The freshly allocated shell is released first, as NSData's
+ * initialisers do, so it is not leaked. */
+static id __NSNumberInit(CFNumberType type, const void *value) {
+    return (id)CFNumberCreate(kCFAllocatorDefault, type, value);
+}
+
+- (instancetype)initWithChar:(char)value {
+    [self release];
+    return __NSNumberInit(kCFNumberCharType, &value);
+}
+
+- (instancetype)initWithUnsignedChar:(unsigned char)value {
+    short widened = value;
+    [self release];
+    return __NSNumberInit(kCFNumberShortType, &widened);
+}
+
+- (instancetype)initWithShort:(short)value {
+    [self release];
+    return __NSNumberInit(kCFNumberShortType, &value);
+}
+
+- (instancetype)initWithUnsignedShort:(unsigned short)value {
+    int widened = value;
+    [self release];
+    return __NSNumberInit(kCFNumberIntType, &widened);
+}
+
+- (instancetype)initWithInt:(int)value {
+    [self release];
+    return __NSNumberInit(kCFNumberIntType, &value);
+}
+
+- (instancetype)initWithUnsignedInt:(unsigned int)value {
+    long long widened = value;
+    [self release];
+    return __NSNumberInit(kCFNumberLongLongType, &widened);
+}
+
+- (instancetype)initWithLong:(long)value {
+    [self release];
+    return __NSNumberInit(kCFNumberLongType, &value);
+}
+
+- (instancetype)initWithUnsignedLong:(unsigned long)value {
+    long long widened = (long long)value;
+    [self release];
+    return __NSNumberInit(kCFNumberLongLongType, &widened);
+}
+
+- (instancetype)initWithLongLong:(long long)value {
+    [self release];
+    return __NSNumberInit(kCFNumberLongLongType, &value);
+}
+
+- (instancetype)initWithUnsignedLongLong:(unsigned long long)value {
+    long long widened = (long long)value;
+    [self release];
+    return __NSNumberInit(kCFNumberLongLongType, &widened);
+}
+
+- (instancetype)initWithFloat:(float)value {
+    [self release];
+    return __NSNumberInit(kCFNumberFloatType, &value);
+}
+
+- (instancetype)initWithDouble:(double)value {
+    [self release];
+    return __NSNumberInit(kCFNumberDoubleType, &value);
+}
+
+/* The booleans are immortal constants, so retaining is a no-op and releasing
+ * one is harmless - the caller's release balances correctly either way. */
+- (instancetype)initWithBool:(BOOL)value {
+    [self release];
+    return (id)CFRetain(value ? kCFBooleanTrue : kCFBooleanFalse);
+}
+
+- (instancetype)initWithInteger:(NSInteger)value {
+    [self release];
+    return __NSNumberInit(kCFNumberNSIntegerType, &value);
+}
+
+- (instancetype)initWithUnsignedInteger:(NSUInteger)value {
+    long long widened = (long long)value;
+    [self release];
+    return __NSNumberInit(kCFNumberLongLongType, &widened);
+}
+
 /* CFNumberGetValue converts, and reports false when the value did not fit.
  * The result is still the truncated conversion, which is what NSNumber
  * promises for a lossy read, so the return value is deliberately ignored. */
@@ -144,6 +237,11 @@ __NSNUMBER_GETTER(integerValue, NSInteger, kCFNumberNSIntegerType)
 }
 
 - (BOOL)boolValue {
+    /* -longLongValue goes through CFNumberGetValue, which does not read a
+     * CFBoolean, so [@YES boolValue] answered NO. */
+    if (CFGetTypeID((CFTypeRef)self) == CFBooleanGetTypeID()) {
+        return CFBooleanGetValue((CFBooleanRef)self) ? YES : NO;
+    }
     return [self longLongValue] != 0;
 }
 
@@ -185,6 +283,46 @@ __NSNUMBER_GETTER(integerValue, NSInteger, kCFNumberNSIntegerType)
     return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
 }
 
+/* +numberWithBool: yields kCFBooleanTrue/False, which are CFBooleans rather
+ * than CFNumbers, so CFNumberGetValue and CFNumberCompare do not read them. */
+static double __NSNumberAsDouble(NSNumber *number) {
+    double result = 0.0;
+
+    if (CFGetTypeID((CFTypeRef)number) == CFBooleanGetTypeID()) {
+        return CFBooleanGetValue((CFBooleanRef)number) ? 1.0 : 0.0;
+    }
+    CFNumberGetValue((CFNumberRef)number, kCFNumberDoubleType, &result);
+    return result;
+}
+
+- (NSComparisonResult)compare:(NSNumber *)other {
+    if (other == nil) {
+        [NSException raise:NSInvalidArgumentException
+                    format:@"-[NSNumber compare:] nil argument"];
+    }
+    if (self == other) {
+        return NSOrderedSame;
+    }
+
+    CFTypeID booleanID = CFBooleanGetTypeID();
+
+    if (CFGetTypeID((CFTypeRef)self) == booleanID ||
+        CFGetTypeID((CFTypeRef)other) == booleanID) {
+        double left = __NSNumberAsDouble(self);
+        double right = __NSNumberAsDouble(other);
+
+        if (left < right) return NSOrderedAscending;
+        if (left > right) return NSOrderedDescending;
+        return NSOrderedSame;
+    }
+
+    return (NSComparisonResult)CFNumberCompare((CFNumberRef)self,
+                                               (CFNumberRef)other, NULL);
+}
+
+- (BOOL)isEqualToNumber:(NSNumber *)other {
+    return [self isEqual:other];
+}
 
 /* Reports the encoding matching the CFNumber's stored type, which is what
  * callers switch on to tell integers, floats and booleans apart. */

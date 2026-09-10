@@ -9,7 +9,9 @@ O2TIFFEncoderRef O2TIFFEncoderCreate(O2DataConsumerRef consumer) {
    self->_bufferCapacity=0;
    self->_bufferCount=0;
    self->_mutableBytes=NULL;
-   self->_consumer=(id)CFRetain(consumer);
+   /* The consumer is an ObjC object, not a CF one: CFRetain would maul a
+    * refcount field it does not have. */
+   self->_consumer=[(id)consumer retain];
    return self;
 }
 
@@ -17,7 +19,7 @@ void O2TIFFEncoderDealloc(O2TIFFEncoderRef self) {
    if(self->_mutableBytes!=NULL)
     NSZoneFree(NULL,self->_mutableBytes);
    if(self->_consumer!=NULL)
-    CFRelease(self->_consumer);
+    [self->_consumer release];
    NSZoneFree(NULL,self);
 }
 

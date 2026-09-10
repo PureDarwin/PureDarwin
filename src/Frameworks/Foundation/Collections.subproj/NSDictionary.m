@@ -58,6 +58,16 @@ static CFHashCode ns_dictionary_key_hash(const void *value) {
     return (CFHashCode)[(id)value hash];
 }
 
+/* -allKeys and -allValues hand the dictionary's own objects to a CFArray, so
+ * that array needs callbacks that message them rather than CFRetain them. */
+static const CFArrayCallBacks ns_dictionary_array_callbacks = {
+    0,
+    ns_dictionary_value_retain,
+    ns_dictionary_value_release,
+    NULL,
+    ns_dictionary_value_equal
+};
+
 static const CFDictionaryKeyCallBacks ns_dictionary_key_callbacks = {
     0,
     ns_dictionary_value_retain,
@@ -130,6 +140,17 @@ static CFPropertyListRef pd_plist_from_path(CFStringRef path) {
 static void pd_add_dictionary_entry(const void *key, const void *value,
                                     void *context) {
     CFDictionarySetValue((CFMutableDictionaryRef)context, key, value);
+}
+
+/* clang emits a reference to this shared empty dictionary for the @{} literal
+ * rather than calling into the runtime, the same way it does for @[]. */
+id __NSDictionary0__ = nil;
+
+__attribute__((constructor))
+static void __NSDictionary0Init(void) {
+    __NSDictionary0__ = (id)CFDictionaryCreate(kCFAllocatorDefault, NULL, NULL, 0,
+                                               &ns_dictionary_key_callbacks,
+                                               &ns_dictionary_value_callbacks);
 }
 
 @implementation NSDictionary
@@ -493,6 +514,16 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     return [[self allValues] objectEnumerator];
 }
 
+- (BOOL)isEqualToDictionary:(NSDictionary *)other {
+    if (other == nil) {
+        return NO;
+    }
+    if (self == other) {
+        return YES;
+    }
+    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
+}
+
 - (NSArray *)allValues {
     CFIndex n = CFDictionaryGetCount((CFDictionaryRef)self);
     const void **values = malloc(sizeof(void *) * (size_t)(n > 0 ? n : 1));
@@ -501,7 +532,7 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     }
     CFDictionaryGetKeysAndValues((CFDictionaryRef)self, NULL, values);
     CFArrayRef array = CFArrayCreate(kCFAllocatorDefault, values, n,
-                                     &kCFTypeArrayCallBacks);
+                                     &ns_dictionary_array_callbacks);
     free(values);
     return (NSArray *)CFAutorelease(array);
 }
@@ -549,7 +580,7 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     }
     CFDictionaryGetKeysAndValues((CFDictionaryRef)self, keys, NULL);
     CFArrayRef array = CFArrayCreate(kCFAllocatorDefault, keys, n,
-                                     &kCFTypeArrayCallBacks);
+                                     &ns_dictionary_array_callbacks);
     free(keys);
     return (NSArray *)array;
 }
@@ -587,19 +618,81 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
 }
 
 + (instancetype)dictionaryWithCapacity:(NSUInteger)capacity {
-    return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
+    /* A non-zero CF capacity is a hard ceiling, while the Cocoa capacity is
+     * only a hint; passing it through makes the collection halt once it grows
+     * past the hint. See +[NSMutableData dataWithCapacity:]. */
+    return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                          &ns_dictionary_key_callbacks,
                                          &ns_dictionary_value_callbacks);
 }
 
 - (instancetype)initWithCapacity:(NSUInteger)capacity {
-    return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
+    /* A non-zero CF capacity is a hard ceiling, while the Cocoa capacity is
+     * only a hint; passing it through makes the collection halt once it grows
+     * past the hint. See +[NSMutableData dataWithCapacity:]. */
+    return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                          &ns_dictionary_key_callbacks,
                                          &ns_dictionary_value_callbacks);
 }
 
 + (instancetype)dictionary {
     return [self dictionaryWithCapacity:0];
+}
+
+/* As above: inherited from NSDictionary these return immutable objects. */
++ (instancetype)dictionaryWithObject:(id)object forKey:(id)key {
+    CFMutableDictionaryRef result = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 1, &ns_dictionary_key_callbacks,
+        &ns_dictionary_value_callbacks);
+
+    if (object != nil && key != nil) {
+        CFDictionarySetValue(result, (const void *)key, (const void *)object);
+    }
+    return (id)result;
+}
+
++ (instancetype)dictionaryWithObjects:(NSArray *)objects forKeys:(NSArray *)keys {
+    NSUInteger count = [objects count];
+
+    if ([keys count] != count) {
+        return nil;
+    }
+
+    CFMutableDictionaryRef result = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, (CFIndex)count, &ns_dictionary_key_callbacks,
+        &ns_dictionary_value_callbacks);
+
+    for (NSUInteger i = 0; i < count; i++) {
+        CFDictionarySetValue(result, [keys objectAtIndex:i],
+                             [objects objectAtIndex:i]);
+    }
+    return (id)result;
+}
+
++ (instancetype)dictionaryWithObjectsAndKeys:(id)firstObject, ... {
+    CFMutableDictionaryRef result = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &ns_dictionary_key_callbacks,
+        &ns_dictionary_value_callbacks);
+    va_list arguments;
+    id object = firstObject;
+
+    if (firstObject == nil) {
+        return (id)result;
+    }
+
+    va_start(arguments, firstObject);
+    while (object != nil) {
+        id key = va_arg(arguments, id);
+
+        if (key == nil) {
+            break;
+        }
+        CFDictionarySetValue(result, (const void *)key, (const void *)object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+
+    return (id)result;
 }
 
 + (instancetype)dictionaryWithDictionary:(NSDictionary *)dictionary {
@@ -610,6 +703,57 @@ BOOL pd_write_plist(CFPropertyListRef plist, NSString *path,
     }
     return (id)CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
                                              (CFDictionaryRef)dictionary);
+}
+
+/* The initialiser forms need the same treatment as the class methods above. */
+- (instancetype)initWithDictionary:(NSDictionary *)dictionary {
+    if (dictionary == nil) {
+        return (id)CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                                             &ns_dictionary_key_callbacks,
+                                             &ns_dictionary_value_callbacks);
+    }
+    return (id)CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0,
+                                             (CFDictionaryRef)dictionary);
+}
+
+- (instancetype)initWithObjectsAndKeys:(id)firstObject, ... {
+    CFMutableDictionaryRef result =
+        CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                                  &ns_dictionary_key_callbacks,
+                                  &ns_dictionary_value_callbacks);
+    va_list arguments;
+    id object = firstObject;
+
+    va_start(arguments, firstObject);
+    while (object != nil) {
+        id key = va_arg(arguments, id);
+
+        if (key == nil) {
+            break;
+        }
+        CFDictionarySetValue(result, key, object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+
+    return (id)result;
+}
+
+- (instancetype)initWithObjects:(NSArray *)objects forKeys:(NSArray *)keys {
+    CFMutableDictionaryRef result =
+        CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                                  &ns_dictionary_key_callbacks,
+                                  &ns_dictionary_value_callbacks);
+    NSUInteger count = [objects count];
+
+    if (count > [keys count]) {
+        count = [keys count];
+    }
+    for (NSUInteger index = 0; index < count; index++) {
+        CFDictionarySetValue(result, [keys objectAtIndex:index],
+                             [objects objectAtIndex:index]);
+    }
+    return (id)result;
 }
 
 @end

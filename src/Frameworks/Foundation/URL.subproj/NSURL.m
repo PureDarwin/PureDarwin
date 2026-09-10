@@ -14,6 +14,12 @@
 
 @implementation NSURL
 
+/* Immutable and with no mutable counterpart, so a copy is the object itself.
+ * Without this -copy raised "unrecognized selector". */
+- (id)copyWithZone:(NSZone *)zone {
+    return [self retain];
+}
+
 + (nullable instancetype)URLWithString:(NSString *)string {
     return [[self alloc] initWithString:string];
 }

@@ -12,7 +12,7 @@
 #import <Foundation/NSObject.h>
 #import <Foundation/NSObjCRuntime.h>
 
-@class NSArray, NSDictionary, NSString, NSURL;
+@class NSArray, NSDictionary, NSString, NSURL, NSError;
 
 @interface NSBundle : NSObject
 
@@ -41,6 +41,9 @@
                   inDirectory:(NSString *)subpath;
 - (NSArray *)pathsForResourcesOfType:(NSString *)extension
                          inDirectory:(NSString *)subpath;
+- (BOOL)load;
+- (BOOL)loadAndReturnError:(NSError **)error;
+- (BOOL)isLoaded;
 - (Class)principalClass;
 
 

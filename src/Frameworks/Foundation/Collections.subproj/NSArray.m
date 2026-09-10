@@ -345,6 +345,13 @@ static void __NSArray0Init(void) {
     return (id)CFAutorelease(result);
 }
 
+- (NSArray *)sortedArrayUsingComparator:(NSComparator)comparator {
+    NSMutableArray *result = [[self mutableCopy] autorelease];
+
+    [result sortUsingComparator:comparator];
+    return result;
+}
+
 - (void)makeObjectsPerformSelector:(SEL)selector {
     CFIndex count = CFArrayGetCount((CFArrayRef)self);
 
@@ -378,6 +385,42 @@ static void __NSArray0Init(void) {
 - (void)insertObject:(id)object atIndex:(NSUInteger)index {
     CFArrayInsertValueAtIndex((CFMutableArrayRef)self, (CFIndex)index,
                               (const void *)object);
+}
+
+- (void)setArray:(NSArray *)array {
+    CFArrayRemoveAllValues((CFMutableArrayRef)self);
+
+    if (array != nil) {
+        CFArrayAppendArray((CFMutableArrayRef)self, (CFArrayRef)array,
+                           CFRangeMake(0, CFArrayGetCount((CFArrayRef)array)));
+    }
+}
+
+- (void)removeObjectsInArray:(NSArray *)array {
+    NSUInteger count = [array count];
+
+    for (NSUInteger index = 0; index < count; index++) {
+        [self removeObject:[array objectAtIndex:index]];
+    }
+}
+
+- (void)exchangeObjectAtIndex:(NSUInteger)index1
+            withObjectAtIndex:(NSUInteger)index2 {
+    CFIndex count = CFArrayGetCount((CFArrayRef)self);
+
+    if ((CFIndex)index1 >= count || (CFIndex)index2 >= count) {
+        [NSException raise:NSRangeException
+                    format:@"-[NSMutableArray exchangeObjectAtIndex:%lu withObjectAtIndex:%lu]: "
+                           @"beyond count %ld",
+                           (unsigned long)index1, (unsigned long)index2, (long)count];
+        return;
+    }
+
+    id first = [[(id)CFArrayGetValueAtIndex((CFArrayRef)self, (CFIndex)index1) retain] autorelease];
+    id second = (id)CFArrayGetValueAtIndex((CFArrayRef)self, (CFIndex)index2);
+
+    CFArraySetValueAtIndex((CFMutableArrayRef)self, (CFIndex)index1, second);
+    CFArraySetValueAtIndex((CFMutableArrayRef)self, (CFIndex)index2, first);
 }
 
 - (void)addObjectsFromArray:(NSArray *)array {
@@ -451,6 +494,31 @@ static void __NSArray0Init(void) {
                       ns_array_compare, selector);
 }
 
+/* The block form. CFArraySortValues passes the context straight through, so
+ * the comparator travels as that context. */
+static CFComparisonResult ns_array_compare_block(const void *left,
+                                                 const void *right,
+                                                 void *context) {
+    NSComparator comparator = (NSComparator)context;
+
+    return (CFComparisonResult)comparator((id)left, (id)right);
+}
+
+- (void)sortUsingComparator:(NSComparator)comparator {
+    if (comparator == nil) {
+        return;
+    }
+
+    CFMutableArrayRef array = (CFMutableArrayRef)self;
+
+    CFArraySortValues(array, CFRangeMake(0, CFArrayGetCount(array)),
+                      ns_array_compare_block, comparator);
+}
+
+- (void)sortWithOptions:(NSSortOptions)options usingComparator:(NSComparator)comparator {
+    [self sortUsingComparator:comparator];
+}
+
 /* Bridged to CFArrayRef, so identity comes from the CF layer. Without these the
  * NSObject versions apply and compare pointers, which makes any dictionary or
  * set keyed by value fail to find an equal-but-distinct object. */
@@ -491,7 +559,10 @@ static void __NSArray0Init(void) {
 }
 
 + (instancetype)arrayWithCapacity:(NSUInteger)capacity {
-    return (id)CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
+    /* A non-zero CF capacity is a hard ceiling, while the Cocoa capacity is
+     * only a hint; passing it through makes the collection halt once it grows
+     * past the hint. See +[NSMutableData dataWithCapacity:]. */
+    return (id)CFArrayCreateMutable(kCFAllocatorDefault, 0,
                                     &ns_array_callbacks);
 }
 
@@ -505,8 +576,38 @@ static void __NSArray0Init(void) {
 }
 
 - (instancetype)initWithCapacity:(NSUInteger)capacity {
-    return (id)CFArrayCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
+    /* A non-zero CF capacity is a hard ceiling, while the Cocoa capacity is
+     * only a hint; passing it through makes the collection halt once it grows
+     * past the hint. See +[NSMutableData dataWithCapacity:]. */
+    return (id)CFArrayCreateMutable(kCFAllocatorDefault, 0,
                                     &ns_array_callbacks);
+}
+
+/* Inherited from NSArray these would hand back an immutable CFArray, and the
+ * first -addObject: on it is undefined behaviour. */
++ (instancetype)arrayWithObject:(id)object {
+    CFMutableArrayRef result = CFArrayCreateMutable(kCFAllocatorDefault, 1,
+                                                     &ns_array_callbacks);
+    if (object != nil) {
+        CFArrayAppendValue(result, object);
+    }
+    return (id)result;
+}
+
++ (instancetype)arrayWithObjects:(id)firstObject, ... {
+    CFMutableArrayRef result = CFArrayCreateMutable(kCFAllocatorDefault, 0,
+                                                     &ns_array_callbacks);
+    va_list arguments;
+    id object = firstObject;
+
+    va_start(arguments, firstObject);
+    while (object != nil) {
+        CFArrayAppendValue(result, object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+
+    return (id)result;
 }
 
 + (instancetype)arrayWithArray:(NSArray *)array {
@@ -528,6 +629,33 @@ static void __NSArray0Init(void) {
     }
     return (id)CFArrayCreateMutableCopy(kCFAllocatorDefault, 0,
                                         (CFArrayRef)array);
+}
+
+// Inheriting these from NSArray returned an immutable CFArray, so the first
+// -addObject: appended to an immutable object and left a NULL slot behind.
+- (instancetype)initWithObjects:(id)firstObject, ... {
+    CFMutableArrayRef result = CFArrayCreateMutable(kCFAllocatorDefault, 0,
+                                                    &ns_array_callbacks);
+    va_list arguments;
+    id object = firstObject;
+
+    va_start(arguments, firstObject);
+    while (object != nil) {
+        CFArrayAppendValue(result, object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+
+    return (id)result;
+}
+
+- (instancetype)initWithObjects:(const id *)objects count:(NSUInteger)count {
+    CFMutableArrayRef result = CFArrayCreateMutable(kCFAllocatorDefault, 0,
+                                                    &ns_array_callbacks);
+    for (NSUInteger index = 0; index < count; index++) {
+        CFArrayAppendValue(result, objects[index]);
+    }
+    return (id)result;
 }
 
 @end

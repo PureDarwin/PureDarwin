@@ -35,7 +35,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSControl.h>
 #import <AppKit/NSDragging.h>
 
-@class NSTableHeaderView, NSTableColumn;
+@class NSTableHeaderView, NSTableColumn, NSPasteboard, NSTableView;
 
 APPKIT_EXPORT NSString *const NSTableViewSelectionIsChangingNotification;
 APPKIT_EXPORT NSString *const NSTableViewSelectionDidChangeNotification;
@@ -59,6 +59,45 @@ typedef enum {
     NSTableViewDropOn,
     NSTableViewDropAbove
 } NSTableViewDropOperation;
+
+@protocol NSTableViewDataSource <NSObject>
+@optional
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView;
+- (id)tableView:(NSTableView *)tableView
+    objectValueForTableColumn:(NSTableColumn *)tableColumn
+                          row:(NSInteger)row;
+- (void)tableView:(NSTableView *)tableView
+   setObjectValue:(id)object
+   forTableColumn:(NSTableColumn *)tableColumn
+              row:(NSInteger)row;
+- (BOOL)tableView:(NSTableView *)tableView
+       acceptDrop:(id)info
+              row:(NSInteger)row
+    dropOperation:(NSInteger)operation;
+- (NSInteger)tableView:(NSTableView *)tableView
+          validateDrop:(id)info
+           proposedRow:(NSInteger)row
+ proposedDropOperation:(NSInteger)operation;
+- (BOOL)tableView:(NSTableView *)tableView
+    writeRowsWithIndexes:(NSIndexSet *)rowIndexes
+            toPasteboard:(NSPasteboard *)pasteboard;
+@end
+
+@protocol NSTableViewDelegate <NSObject>
+@optional
+- (BOOL)selectionShouldChangeInTableView:(NSTableView *)tableView;
+- (CGFloat)tableView:(NSTableView *)tableView heightOfRow:(NSInteger)row;
+- (BOOL)tableView:(NSTableView *)tableView
+    shouldEditTableColumn:(NSTableColumn *)tableColumn
+                      row:(NSInteger)row;
+- (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)row;
+- (BOOL)tableView:(NSTableView *)tableView
+    shouldSelectTableColumn:(NSTableColumn *)tableColumn;
+- (void)tableView:(NSTableView *)tableView
+  willDisplayCell:(id)cell
+   forTableColumn:(NSTableColumn *)tableColumn
+              row:(NSInteger)row;
+@end
 
 @interface NSTableView : NSControl {
     id _target;

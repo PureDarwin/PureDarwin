@@ -39,6 +39,7 @@ enum {
     BOOL _needsLayout;
     id _sheetDelegate;
     SEL _sheetDidEnd;
+    void (^_sheetCompletionHandler)(NSInteger returnCode);
 }
 
 + (NSAlert *)alertWithError:(NSError *)error;
@@ -72,6 +73,7 @@ enum {
 - (void)layout;
 
 - (void)beginSheetModalForWindow:(NSWindow *)window modalDelegate:delegate didEndSelector:(SEL)selector contextInfo:(void *)info;
+- (void)beginSheetModalForWindow:(NSWindow *)window completionHandler:(void (^)(NSInteger returnCode))handler;
 - (NSInteger)runModal;
 
 @end

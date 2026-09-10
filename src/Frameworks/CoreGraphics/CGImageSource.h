@@ -19,7 +19,8 @@ COREGRAPHICS_EXPORT CGImageSourceRef CGImageSourceCreateWithURL(CFURLRef url, CF
 
 COREGRAPHICS_EXPORT CFStringRef CGImageSourceGetType(CGImageSourceRef self);
 
-COREGRAPHICS_EXPORT size_t CGImageSourceGetCount(CGImageSourceRef self);
+COREGRAPHICS_EXPORT void CGImageSourceRelease(CGImageSourceRef self);
+size_t CGImageSourceGetCount(CGImageSourceRef self);
 
 COREGRAPHICS_EXPORT CGImageRef CGImageSourceCreateImageAtIndex(CGImageSourceRef self, size_t index, CFDictionaryRef options);
 COREGRAPHICS_EXPORT CFDictionaryRef CGImageSourceCopyPropertiesAtIndex(CGImageSourceRef self, size_t index, CFDictionaryRef options);

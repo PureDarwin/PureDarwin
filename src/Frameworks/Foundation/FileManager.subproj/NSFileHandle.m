@@ -11,12 +11,18 @@
 #import <Foundation/NSString.h>
 #include <CoreFoundation/CFData.h>
 #include <CoreFoundation/CFString.h>
+#import <Foundation/NSNotification.h>
+#import <Foundation/NSThread.h>
+#import <Foundation/NSValue.h>
+#include <CoreFoundation/CFRunLoop.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/select.h>
 
 @implementation NSFileHandle {
     int _fd;
     BOOL _closeOnDealloc;
+    CFRunLoopRef _waitRunLoop;
 }
 
 static NSFileHandle *_open(Class cls, NSString *path, int flags) {
@@ -146,6 +152,51 @@ static NSFileHandle *_open(Class cls, NSString *path, int flags) {
 
 - (void)synchronizeFile {
     fsync(_fd);
+}
+
+NSString *const NSFileHandleDataAvailableNotification =
+    @"NSFileHandleDataAvailableNotification";
+
+/*
+ * Apple delivers this on the run loop that registered the wait, so that is the
+ * one captured here and woken when the descriptor becomes readable. The wait
+ * itself is a blocking select on a detached thread, and there is no run-loop
+ * source plumbing for descriptors yet.
+ */
+- (void)__waitForDataThread:(id)ignored {
+    int fd = _fd;
+    fd_set readSet;
+
+    FD_ZERO(&readSet);
+    FD_SET(fd, &readSet);
+
+    /* A failed select still notifies: the observer's read reports the error,
+     * which is more useful than never being told. */
+    (void)select(fd + 1, &readSet, NULL, NULL, NULL);
+
+    CFRunLoopRef runLoop = _waitRunLoop;
+
+    if (runLoop == NULL) {
+        return;
+    }
+
+    NSFileHandle *handle = [self retain];
+
+    CFRunLoopPerformBlock(runLoop, kCFRunLoopCommonModes, ^{
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:NSFileHandleDataAvailableNotification
+                          object:handle];
+        [handle release];
+    });
+    CFRunLoopWakeUp(runLoop);
+}
+
+- (void)waitForDataInBackgroundAndNotify {
+    _waitRunLoop = CFRunLoopGetCurrent();
+
+    [NSThread detachNewThreadSelector:@selector(__waitForDataThread:)
+                             toTarget:self
+                           withObject:nil];
 }
 
 - (void)closeFile {

@@ -156,6 +156,7 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 
     NSThemeFrame *_backgroundView;
     NSMenu *_menu;
+    NSWindowCollectionBehavior _collectionBehavior;
     NSView *_menuView;
     NSView *_contentView;
     NSColor *_backgroundColor;

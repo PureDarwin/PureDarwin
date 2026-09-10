@@ -294,6 +294,42 @@ static void removeRange(NSIndexSet *self, NSRange range) {
     return [self init];
 }
 
+- (void)enumerateIndexesUsingBlock:(void (^)(NSUInteger index, BOOL *stop))block {
+    [self enumerateIndexesWithOptions:0 usingBlock:block];
+}
+
+- (void)enumerateIndexesWithOptions:(NSEnumerationOptions)options
+                         usingBlock:(void (^)(NSUInteger index, BOOL *stop))block {
+    if (block == nil) {
+        return;
+    }
+
+    BOOL stop = NO;
+
+    if ((options & NSEnumerationReverse) != 0) {
+        NSUInteger index = [self lastIndex];
+
+        while (index != NSNotFound) {
+            block(index, &stop);
+            if (stop) {
+                return;
+            }
+            index = [self indexLessThanIndex:index];
+        }
+        return;
+    }
+
+    NSUInteger index = [self firstIndex];
+
+    while (index != NSNotFound) {
+        block(index, &stop);
+        if (stop) {
+            return;
+        }
+        index = [self indexGreaterThanIndex:index];
+    }
+}
+
 @end
 
 @implementation NSMutableIndexSet

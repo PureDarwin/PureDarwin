@@ -22,6 +22,9 @@
 - (NSArray<ObjectType> *)subarrayWithRange:(NSRange)range;
 - (BOOL)isEqualToArray:(NSArray<ObjectType> *)other;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
+- (void)setArray:(NSArray<ObjectType> *)array;
+- (void)removeObjectsInArray:(NSArray<ObjectType> *)array;
+- (void)exchangeObjectAtIndex:(NSUInteger)index1 withObjectAtIndex:(NSUInteger)index2;
 - (id)valueForKey:(NSString *)key;
 - (instancetype)initWithObjects:(id)firstObject, ...;
 - (instancetype)initWithArray:(NSArray<ObjectType> *)array;
@@ -47,6 +50,7 @@
 - (NSArray<ObjectType> *)arrayByAddingObject:(ObjectType)object;
 - (NSString *)componentsJoinedByString:(NSString *)separator;
 - (NSArray<ObjectType> *)sortedArrayUsingSelector:(SEL)selector;
+- (NSArray<ObjectType> *)sortedArrayUsingComparator:(NSComparator)comparator;
 - (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
 
@@ -62,12 +66,15 @@
 - (void)insertObject:(ObjectType)object atIndex:(NSUInteger)index;
 - (void)addObjectsFromArray:(NSArray<ObjectType> *)array;
 - (void)removeObjectAtIndex:(NSUInteger)index;
+- (void)removeLastObject;
 - (void)removeObjectIdenticalTo:(ObjectType)object;
 - (void)removeObject:(ObjectType)object;
 - (void)sortUsingFunction:(NSInteger (*)(id, id, void *))comparator context:(void *)context;
 - (void)replaceObjectAtIndex:(NSUInteger)index withObject:(ObjectType)object;
 - (void)removeAllObjects;
 - (void)sortUsingSelector:(SEL)selector;
+- (void)sortUsingComparator:(NSComparator)comparator;
+- (void)sortWithOptions:(NSSortOptions)options usingComparator:(NSComparator)comparator;
 
 @end
 

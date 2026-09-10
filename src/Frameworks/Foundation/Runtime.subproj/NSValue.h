@@ -22,6 +22,7 @@
 @interface NSValue : NSObject
 
 + (instancetype)valueWithBytes:(const void *)bytes objCType:(const char *)type;
+- (instancetype)initWithBytes:(const void *)bytes objCType:(const char *)type;
 + (instancetype)value:(const void *)bytes withObjCType:(const char *)type;
 + (instancetype)valueWithPointer:(const void *)pointer;
 + (instancetype)valueWithNonretainedObject:(id)object;

@@ -14,22 +14,61 @@
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <stdlib.h>
 
+extern int __CFConstantStringClassReference[];
+
+static BOOL ns_set_value_is_constant_string(const void *value) {
+    return *(const uintptr_t *)value ==
+        (uintptr_t)&__CFConstantStringClassReference;
+}
+
+static const void *ns_set_retain(CFAllocatorRef allocator, const void *value) {
+    if (ns_set_value_is_constant_string(value)) {
+        return CFRetain(value);
+    }
+    return [(id)value retain];
+}
+
+static void ns_set_release(CFAllocatorRef allocator, const void *value) {
+    if (ns_set_value_is_constant_string(value)) {
+        CFRelease(value);
+        return;
+    }
+    [(id)value release];
+}
+
+static Boolean ns_set_equal(const void *left, const void *right) {
+    return [(id)left isEqual:(id)right] ? true : false;
+}
+
+static CFHashCode ns_set_hash(const void *value) {
+    return (CFHashCode)[(id)value hash];
+}
+
+static const CFSetCallBacks ns_set_callbacks = {
+    0,
+    ns_set_retain,
+    ns_set_release,
+    NULL,
+    ns_set_equal,
+    ns_set_hash
+};
+
 @implementation NSSet
 
 + (instancetype)new {
     // Must be +1, so this cannot go through the autoreleasing +set.
-    return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeSetCallBacks);
+    return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &ns_set_callbacks);
 }
 
 - (instancetype)init {
-    return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &kCFTypeSetCallBacks);
+    return (id)CFSetCreate(kCFAllocatorDefault, NULL, 0, &ns_set_callbacks);
 }
 
 - (instancetype)initWithArray:(NSArray *)array {
     NSUInteger count = [array count];
     CFMutableSetRef result = CFSetCreateMutable(kCFAllocatorDefault,
                                                 (CFIndex)count,
-                                                &kCFTypeSetCallBacks);
+                                                &ns_set_callbacks);
 
     for (NSUInteger index = 0; index < count; index++) {
         CFSetAddValue(result, [array objectAtIndex:index]);
@@ -43,7 +82,7 @@
 
 - (instancetype)initWithObjects:(id)firstObject, ... {
     CFMutableSetRef result = CFSetCreateMutable(kCFAllocatorDefault, 0,
-                                                &kCFTypeSetCallBacks);
+                                                &ns_set_callbacks);
     va_list arguments;
     id object = firstObject;
 
@@ -59,12 +98,12 @@
 
 - (instancetype)initWithObjects:(const id *)objects count:(NSUInteger)count {
     return (id)CFSetCreate(kCFAllocatorDefault, (const void **)objects,
-                           (CFIndex)count, &kCFTypeSetCallBacks);
+                           (CFIndex)count, &ns_set_callbacks);
 }
 
 + (instancetype)set {
     return (id)CFAutorelease(CFSetCreate(kCFAllocatorDefault, NULL, 0,
-                                        &kCFTypeSetCallBacks));
+                                        &ns_set_callbacks));
 }
 
 + (instancetype)setWithObject:(id)object {
@@ -73,7 +112,7 @@
     }
     const void *value = object;
     return (id)CFAutorelease(CFSetCreate(kCFAllocatorDefault, &value, 1,
-                                        &kCFTypeSetCallBacks));
+                                        &ns_set_callbacks));
 }
 
 + (instancetype)setWithArray:(NSArray *)array {
@@ -83,7 +122,7 @@
         values[index] = [array objectAtIndex:index];
     }
     CFSetRef set = CFSetCreate(kCFAllocatorDefault, values, (CFIndex)count,
-                               &kCFTypeSetCallBacks);
+                               &ns_set_callbacks);
     free(values);
     return (id)CFAutorelease(set);
 }
@@ -91,7 +130,7 @@
 + (instancetype)setWithObjects:(const id [])objects count:(NSUInteger)count {
     return (id)CFAutorelease(CFSetCreate(kCFAllocatorDefault,
                                         (const void **)objects, (CFIndex)count,
-                                        &kCFTypeSetCallBacks));
+                                        &ns_set_callbacks));
 }
 
 - (NSUInteger)count {
@@ -104,6 +143,16 @@
 
 - (BOOL)containsObject:(id)object {
     return CFSetContainsValue((CFSetRef)self, object);
+}
+
+- (BOOL)isEqualToSet:(NSSet *)other {
+    if (other == nil) {
+        return NO;
+    }
+    if (self == other) {
+        return YES;
+    }
+    return CFEqual((CFTypeRef)self, (CFTypeRef)other) ? YES : NO;
 }
 
 - (NSArray *)allObjects {
@@ -236,14 +285,14 @@
 }
 
 + (instancetype)setWithCapacity:(NSUInteger)capacity {
-    return (id)CFAutorelease(CFSetCreateMutable(kCFAllocatorDefault,
-                                               (CFIndex)capacity,
-                                               &kCFTypeSetCallBacks));
+    /* Hint, not ceiling - see -initWithCapacity:. */
+    return (id)CFAutorelease(CFSetCreateMutable(kCFAllocatorDefault, 0,
+                                               &ns_set_callbacks));
 }
 
 + (instancetype)setWithObject:(id)object {
     CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault, 0,
-                                             &kCFTypeSetCallBacks);
+                                             &ns_set_callbacks);
     if (object) {
         CFSetAddValue(set, object);
     }
@@ -259,7 +308,7 @@
 + (instancetype)setWithObjects:(const id [])objects count:(NSUInteger)count {
     CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault,
                                              (CFIndex)count,
-                                             &kCFTypeSetCallBacks);
+                                             &ns_set_callbacks);
     for (NSUInteger index = 0; index < count; index++) {
         if (objects[index]) {
             CFSetAddValue(set, objects[index]);
@@ -270,12 +319,58 @@
 
 - (instancetype)init {
     return (id)CFSetCreateMutable(kCFAllocatorDefault, 0,
-                                  &kCFTypeSetCallBacks);
+                                  &ns_set_callbacks);
 }
 
 - (instancetype)initWithCapacity:(NSUInteger)capacity {
-    return (id)CFSetCreateMutable(kCFAllocatorDefault, (CFIndex)capacity,
-                                  &kCFTypeSetCallBacks);
+    /* A non-zero CF capacity is a hard ceiling, while the Cocoa capacity is
+     * only a hint; passing it through makes the collection halt once it grows
+     * past the hint. See +[NSMutableData dataWithCapacity:]. */
+    return (id)CFSetCreateMutable(kCFAllocatorDefault, 0,
+                                  &ns_set_callbacks);
+}
+
+// Inherited from NSSet these returned an immutable CFSet, so the first
+// -addObject: mutated an immutable object.
+- (instancetype)initWithObjects:(id)firstObject, ... {
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault, 0,
+                                             &ns_set_callbacks);
+    va_list arguments;
+    id object = firstObject;
+
+    va_start(arguments, firstObject);
+    while (object != nil) {
+        CFSetAddValue(set, object);
+        object = va_arg(arguments, id);
+    }
+    va_end(arguments);
+
+    return (id)set;
+}
+
+- (instancetype)initWithObjects:(const id *)objects count:(NSUInteger)count {
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault,
+                                             (CFIndex)count,
+                                             &ns_set_callbacks);
+    for (NSUInteger index = 0; index < count; index++) {
+        if (objects[index]) {
+            CFSetAddValue(set, objects[index]);
+        }
+    }
+    return (id)set;
+}
+
+- (instancetype)initWithArray:(NSArray *)array {
+    CFMutableSetRef set = CFSetCreateMutable(kCFAllocatorDefault, 0,
+                                             &ns_set_callbacks);
+    for (id object in array) {
+        CFSetAddValue(set, object);
+    }
+    return (id)set;
+}
+
+- (instancetype)initWithSet:(NSSet *)other {
+    return [self initWithArray:[other allObjects]];
 }
 
 @end

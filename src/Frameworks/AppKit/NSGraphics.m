@@ -1,3 +1,4 @@
+#include <stdio.h>
 /*
  * Copyright (c) 2006-2007 Christopher J. W. Lloyd
  * Copyright (C) 2022-2025 Zoe Knox <zoe@ravynsoft.com>
@@ -139,7 +140,7 @@ void NSRectFillListWithColors(const NSRect *rects,NSColor **colors,int count) {
    int i;
 
    CGContextSaveGState(context);
-   CGContextSetBlendMode(context,kCGBlendModeCopy);
+   CGContextSetBlendMode(context,kCGBlendModeNormal);
    for(i=0;i<count;i++){
     [colors[i] setFill];
 // FIXME: the groove/button rect generating code can generate negative size rects which draw incorrectly
@@ -155,7 +156,7 @@ void NSRectFillListWithGrays(const NSRect *rects,const float *grays,int count) {
    int        i;
 
    CGContextSaveGState(context);
-   CGContextSetBlendMode(context,kCGBlendModeCopy);
+   CGContextSetBlendMode(context,kCGBlendModeNormal);
    for(i=0;i<count;i++){
     CGContextSetGrayFillColor(context,grays[i],1.0);
 // FIXME: the groove/button rect generating code can generate negative size rects which draw incorrectly
@@ -169,15 +170,18 @@ void NSRectFillListWithGrays(const NSRect *rects,const float *grays,int count) {
 void NSRectFillList(const NSRect *rects, int count) {
    CGContextRef context=NSCurrentGraphicsPort();
    CGContextSaveGState(context);
-   CGContextSetBlendMode(context,kCGBlendModeCopy);
+   CGContextSetBlendMode(context,kCGBlendModeNormal);
    CGContextFillRects(NSCurrentGraphicsPort(),rects,count);
    CGContextRestoreGState(context);
 }
 
+/* Copy would replace the destination, so filling with a clear colour erased
+ * whatever was underneath instead of leaving it alone. Opaque fills are
+ * unaffected: O2ContextSetupPaintAndBlendMode promotes them back to Copy. */
 void NSRectFill(NSRect rect) {
    CGContextRef context=NSCurrentGraphicsPort();
    CGContextSaveGState(context);
-   CGContextSetBlendMode(context,kCGBlendModeCopy);
+   CGContextSetBlendMode(context,kCGBlendModeNormal);
    CGContextFillRect(NSCurrentGraphicsPort(),rect);
    CGContextRestoreGState(context);
 }

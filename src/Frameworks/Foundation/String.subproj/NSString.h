@@ -79,6 +79,16 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
                                            error:(NSError **)error;
 
 - (BOOL)isEqualToString:(NSString *)other;
+- (void)getLineStart:(NSUInteger *)startPtr end:(NSUInteger *)endPtr
+         contentsEnd:(NSUInteger *)contentsEndPtr forRange:(NSRange)range;
+- (void)getParagraphStart:(NSUInteger *)startPtr end:(NSUInteger *)endPtr
+              contentsEnd:(NSUInteger *)contentsEndPtr forRange:(NSRange)range;
+- (int)intValue;
+- (NSInteger)integerValue;
+- (long long)longLongValue;
+- (float)floatValue;
+- (double)doubleValue;
+- (BOOL)boolValue;
 - (NSComparisonResult)compare:(NSString *)other;
 - (NSComparisonResult)caseInsensitiveCompare:(NSString *)other;
 - (BOOL)hasPrefix:(NSString *)prefix;
@@ -96,7 +106,12 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (NSRange)rangeOfCharacterFromSet:(NSCharacterSet *)set;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
 - (NSArray *)componentsSeparatedByCharactersInSet:(NSCharacterSet *)set;
+- (NSString *)stringByReplacingCharactersInRange:(NSRange)range withString:(NSString *)replacement;
 - (NSString *)stringByReplacingOccurrencesOfString:(NSString *)target withString:(NSString *)replacement;
+- (NSString *)stringByReplacingOccurrencesOfString:(NSString *)target
+                                        withString:(NSString *)replacement
+                                           options:(NSStringCompareOptions)options
+                                             range:(NSRange)range;
 - (NSComparisonResult)compare:(NSString *)other options:(NSStringCompareOptions)options;
 - (NSComparisonResult)compare:(NSString *)other
                       options:(NSStringCompareOptions)options

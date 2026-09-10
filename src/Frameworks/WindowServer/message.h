@@ -15,6 +15,7 @@
 #define WINDOWSERVER_MESSAGE_H
 
 #include <stdint.h>
+#include <stdio.h>
 #include <mach/mach.h>
 #include <mach/message.h>
 
@@ -144,5 +145,22 @@ typedef struct {
 
 typedef PortMessage ReceiveMessage;
 typedef PortMessage Message;
+
+
+/*
+ * shm_open names are capped at PSHMNAMLEN (31) on Darwin, which a reverse-DNS
+ * bundle identifier exceeds on its own, so the identifier is folded into an
+ * FNV-1a hash rather than embedded.
+ */
+static inline void wsWindowShmPath(const char *bundleID, unsigned pid,
+                                   unsigned windowID, char *out,
+                                   size_t outSize) {
+    uint32_t hash = 2166136261u;
+
+    for (const char *c = bundleID; c != NULL && *c != '\0'; c++) {
+        hash = (hash ^ (unsigned char)*c) * 16777619u;
+    }
+    snprintf(out, outSize, "/pd.%08x.%u.%u", hash, pid, windowID);
+}
 
 #endif /* WINDOWSERVER_MESSAGE_H */

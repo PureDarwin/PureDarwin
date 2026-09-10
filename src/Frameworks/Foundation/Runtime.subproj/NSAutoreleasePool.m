@@ -8,6 +8,9 @@
 
 #import <Foundation/NSAutoreleasePool.h>
 #include <objc/objc.h>
+#include <stdio.h>
+#include <pthread.h>
+#include <stdlib.h>
 
 /* libobjc owns the pool stack; NSAutoreleasePool is a wrapper over its
  * push/pop pair so -init and -release/-drain nest the same way. */
@@ -26,6 +29,11 @@ extern void objc_autoreleasePoolPop(void *token);
         return nil;
     }
     _token = objc_autoreleasePoolPush();
+    if (getenv("PD_POOL_TRACE") != NULL) {
+        fprintf(stderr, "pool: PUSH %p (pool %p thread %p)\n", _token,
+                (void *)self, (void *)pthread_self());
+        fflush(stderr);
+    }
     return self;
 }
 
@@ -39,6 +47,11 @@ extern void objc_autoreleasePoolPop(void *token);
 
 - (void)dealloc {
     if (_token != NULL) {
+        if (getenv("PD_POOL_TRACE") != NULL) {
+            fprintf(stderr, "pool: POP  %p (pool %p thread %p)\n", _token,
+                    (void *)self, (void *)pthread_self());
+            fflush(stderr);
+        }
         objc_autoreleasePoolPop(_token);
         _token = NULL;
     }

@@ -430,8 +430,26 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    }
 }
 
+/* The block form of the same sheet: it shares sheetDidEnd:, so whichever of
+ * the two was used gets its callback. */
+-(void)beginSheetModalForWindow:(NSWindow *)window completionHandler:(void (^)(NSInteger returnCode))handler {
+   [_sheetCompletionHandler release];
+   _sheetCompletionHandler=[handler copy];
+
+   [self beginSheetModalForWindow:window modalDelegate:nil didEndSelector:NULL contextInfo:NULL];
+}
+
 -(void)sheetDidEnd:(NSWindow *)sheet returnCode:(int)returnCode contextInfo:(void *)contextInfo {
    typedef void (*alertDidEnd)(id,SEL,NSAlert *,int,void *);
+
+   if (_sheetCompletionHandler!=nil) {
+    void (^handler)(NSInteger)=_sheetCompletionHandler;
+
+    _sheetCompletionHandler=nil;
+    handler(returnCode);
+    [handler release];
+   }
+
    if (_sheetDidEnd) {
     alertDidEnd endFunction=(alertDidEnd)[_sheetDelegate methodForSelector:_sheetDidEnd];
 

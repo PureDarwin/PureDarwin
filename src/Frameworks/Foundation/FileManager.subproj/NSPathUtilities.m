@@ -15,6 +15,10 @@
 #include <limits.h>
 #include <unistd.h>
 
+/* Returns +1 rather than an autoreleased string: callers here store the result
+ * without retaining it, so making these +0 leaves them holding a dangling
+ * pointer once the pool drains. Cocoa returns +0; that difference needs the
+ * call sites audited before it can be changed. */
 static NSString *_string(const char *cString) {
     if (cString == NULL) {
         return nil;

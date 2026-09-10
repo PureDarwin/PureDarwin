@@ -147,6 +147,20 @@ FOUNDATION_EXPORT Class NSClassFromString(NSString *name);
 FOUNDATION_EXPORT NSString *NSStringFromProtocol(Protocol *protocol);
 FOUNDATION_EXPORT Protocol *NSProtocolFromString(NSString *name);
 
+/* The block-based comparator and the enumeration options that go with the
+ * -enumerate.../-sortUsingComparator: family. */
+typedef NSComparisonResult (^NSComparator)(id obj1, id obj2);
+
+typedef NS_OPTIONS(NSUInteger, NSEnumerationOptions) {
+    NSEnumerationConcurrent = (1UL << 0),
+    NSEnumerationReverse    = (1UL << 1)
+};
+
+typedef NS_OPTIONS(NSUInteger, NSSortOptions) {
+    NSSortConcurrent = (1UL << 0),
+    NSSortStable     = (1UL << 4)
+};
+
 FOUNDATION_EXPORT const char *NSGetSizeAndAlignment(const char *typePtr,
                                                     NSUInteger *sizep,
                                                     NSUInteger *alignp);

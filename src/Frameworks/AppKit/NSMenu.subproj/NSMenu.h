@@ -24,6 +24,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 + (void)popUpContextMenu:(NSMenu *)menu withEvent:(NSEvent *)event forView:(NSView *)view;
 
+/* Shows the menu in its own window with its top-left at location, which is in
+ * view's coordinates (or screen coordinates when view is nil). Returns whether
+ * a menu was shown. */
+- (BOOL)popUpMenuPositioningItem:(NSMenuItem *)item
+                      atLocation:(NSPoint)location
+                          inView:(NSView *)view;
+
 - initWithTitle:(NSString *)title;
 
 - (NSMenu *)supermenu;
@@ -58,6 +65,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (NSMenuItem *)insertItemWithTitle:(NSString *)title action:(SEL)action keyEquivalent:(NSString *)keyEquivalent atIndex:(int)index;
 
 - (void)setSubmenu:(NSMenu *)submenu forItem:(NSMenuItem *)item;
+
+/* GNUstep caches item cell sizes and recomputes them here. NSMenuView derives
+ * item geometry from the menu on every draw, so there is no cached layout to
+ * invalidate - this exists so callers that force a relayout still compile and
+ * behave. */
+- (void)sizeToFit;
 
 - (void)update;
 

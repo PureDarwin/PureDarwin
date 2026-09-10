@@ -35,6 +35,7 @@
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state
                                   objects:(id __unsafe_unretained [])buffer
                                     count:(NSUInteger)length;
+- (BOOL)isEqualToSet:(NSSet *)other;
 - (NSEnumerator *)objectEnumerator;
 
 @end

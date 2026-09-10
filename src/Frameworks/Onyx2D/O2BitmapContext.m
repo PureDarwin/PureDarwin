@@ -13,6 +13,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Onyx2D/O2ColorSpace.h>
 #import <Onyx2D/O2Exceptions.h>
 #import <Onyx2D/O2Surface.h>
+#import <Onyx2D/O2Encoder_PNG.h>
+#import <Onyx2D/O2DataConsumer.h>
 @implementation O2BitmapContext
 
 -initWithSurface:(O2Surface *)surface flipped:(BOOL)flipped {
@@ -136,6 +138,53 @@ O2BitmapInfo O2BitmapContextGetBitmapInfo(O2ContextRef selfX) {
    O2BitmapContextRef self=(O2BitmapContextRef)selfX;
 
    return O2ImageGetBitmapInfo(self->_surface);
+}
+
+/* -[NSBitmapImageRep initWithFocusedViewRect:] feeds this straight to
+ * -initWithData:, which decodes an image file, so this returns encoded PNG
+ * rather than raw pixels. Without it every icon resize raised, because the
+ * abstract O2Context version is an invalid-abstract-invocation. */
+-(NSData *)captureBitmapInRect:(NSRect)rect {
+   if(_surface==nil)
+    return nil;
+
+   O2ImageRef whole=O2SurfaceCreateImage(_surface);
+
+   if(whole==NULL)
+    return nil;
+
+   /* An empty or out-of-bounds rect means "everything"; O2ImageCreateWithImageInRect
+    * cannot crop to nothing. */
+   O2ImageRef image=whole;
+
+   if(rect.size.width>=1 && rect.size.height>=1){
+    O2ImageRef cropped=O2ImageCreateWithImageInRect(whole,rect);
+
+    if(cropped!=NULL){
+     image=cropped;
+     O2ImageRelease(whole);
+    }
+   }
+
+   CFMutableDataRef data=CFDataCreateMutable(kCFAllocatorDefault,0);
+   O2DataConsumerRef consumer=(data!=NULL)?O2DataConsumerCreateWithCFData(data):NULL;
+
+   if(consumer!=NULL){
+    O2PNGEncoderRef encoder=O2PNGEncoderCreate(consumer);
+
+    if(encoder!=NULL){
+     O2PNGEncoderWriteImage(encoder,image,NULL);
+     O2PNGEncoderDealloc(encoder);
+    }
+    O2DataConsumerRelease(consumer);
+   }
+
+   O2ImageRelease(image);
+
+   if(data==NULL)
+    return nil;
+
+   return [(NSData *)data autorelease];
 }
 
 O2ImageRef O2BitmapContextCreateImage(O2ContextRef selfX) {

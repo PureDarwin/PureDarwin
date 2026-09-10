@@ -362,14 +362,29 @@ static void PDNoteLaunched(NSString *path)
 
 -(BOOL)getInfoForFile:(NSString *)path application:(NSString **)application type:(NSString **)type {
    NSFileManager *manager=[NSFileManager defaultManager];
+   BOOL isDirectory=NO;
 
-   if(![manager fileExistsAtPath:path])
+   if(![manager fileExistsAtPath:path isDirectory:&isDirectory])
     return NO;
 
    if(application!=NULL)
     *application=nil;   /* no launch-services registry to answer from */
-   if(type!=NULL)
-    *type=[path pathExtension];
+
+   /* The type is one of the NS*FileType constants, not the path extension:
+    * callers compare it against those constants by pointer, so returning
+    * anything else never matches. */
+   if(type!=NULL){
+    if(isDirectory){
+     if([[[path pathExtension] lowercaseString] isEqualToString:@"app"])
+      *type=NSApplicationFileType;
+     else
+      *type=NSDirectoryFileType;
+    }
+    else if([manager isExecutableFileAtPath:path])
+     *type=NSShellCommandFileType;
+    else
+     *type=NSPlainFileType;
+   }
 
    return YES;
 }
@@ -541,6 +556,14 @@ static void PDNoteLaunched(NSString *path)
 
    for(NSString *directory in NSSearchPathForDirectoriesInDomains(
         NSApplicationDirectory,NSAllDomainsMask,YES)){
+    NSString *candidate=[directory stringByAppendingPathComponent:withExtension];
+
+    if([manager fileExistsAtPath:candidate])
+     return candidate;
+   }
+
+   for(NSString *directory in NSSearchPathForDirectoriesInDomains(
+        NSCoreServiceDirectory,NSAllDomainsMask,YES)){
     NSString *candidate=[directory stringByAppendingPathComponent:withExtension];
 
     if([manager fileExistsAtPath:candidate])

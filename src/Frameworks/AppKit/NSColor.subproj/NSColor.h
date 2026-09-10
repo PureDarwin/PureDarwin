@@ -119,6 +119,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 - (CGFloat)alphaComponent;
 
 - (NSColor *)colorWithAlphaComponent:(CGFloat)alpha;
+- (NSColor *)highlightWithLevel:(CGFloat)level;
+- (NSColor *)shadowWithLevel:(CGFloat)level;
 
 - (NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace;
 - (NSColor *)colorUsingColorSpaceName:(NSString *)colorSpace device:(NSDictionary *)device;

@@ -11,23 +11,17 @@
  * plumbing: a service registers a name with the bootstrap server, clients
  * look it up, and requests are synchronous with a reply.
  *
- * A call is archived as a dictionary - selector, type encoding, arguments -
- * and the reply carries either the return value or an exception.
+ * Calls encode the selector, types, and arguments; replies contain a return
+ * value or exception. Archivable objects pass by value; others pass by
+ * reference through NSDistantObject, enabling callbacks.
  *
- * An object argument that can be archived travels by value. Anything else is
- * vended by reference: the sender keeps it in a table, and the far side gets an
- * NSDistantObject that calls back. Cocoa passes objects by reference by default
- * and copies only for bycopy, so this is the usual case rather than the
- * exception - a client registering itself for callbacks relies on it.
- *
- * Receiving those callbacks needs a port the far side can reach, and Darwin has
- * no bootstrap_register: a name can only be claimed by the job that declares it
- * in its launchd plist MachServices. So a process that vends objects by
- * reference must declare one, and NSConnection checks in under
- * "<process name>.doproxy" the first time it is asked to vend.
+ * Referenced objects need a reachable callback port. Since only launchd jobs
+ * can claim declared MachServices, processes vending objects must declare one.
+ * NSConnection uses "<process name>.doproxy" for this purpose.
  */
 
 #import <Foundation/NSConnection.h>
+#include <stdio.h>
 #import <Foundation/NSAutoreleasePool.h>
 #import <Foundation/NSProcessInfo.h>
 #import <Foundation/NSInvocation.h>
@@ -78,6 +72,8 @@ static NSMutableDictionary *_vendedObjects = nil;
 static NSString *_vendServiceName = nil;
 static CFMessagePortRef _vendPort = NULL;
 static NSUInteger _vendCounter = 0;
+static NSConnection *_servingConnection = nil;
+static NSMutableDictionary *_clientConnections = nil;
 
 @interface NSConnection (Private)
 - (NSData *)_handleRequestWithIdentifier:(SInt32)identifier data:(NSData *)data;
@@ -215,11 +211,36 @@ static id _proxyForReference(NSDictionary *reference) {
         return nil;
     }
 
-    NSConnection *connection =
-        [NSConnection connectionWithRegisteredName:service host:@""];
+    if (_clientConnections == nil) {
+        _clientConnections = [[NSMutableDictionary alloc] initWithCapacity:0];
+    }
+
+    NSConnection *connection = [_clientConnections objectForKey:service];
+    BOOL isNewClient = NO;
 
     if (connection == nil) {
-        return nil;
+        connection = [NSConnection connectionWithRegisteredName:service host:@""];
+        if (connection == nil) {
+            return nil;
+        }
+        [_clientConnections setObject:connection forKey:service];
+        isNewClient = YES;
+    }
+
+    /* Cocoa asks the server's delegate to approve each new client connection,
+     * and servers use that callback to start tracking it. Without it they
+     * reject anything arriving over a connection they have not seen. */
+    if (isNewClient && _servingConnection != nil) {
+        id delegate = [_servingConnection delegate];
+
+        if ([delegate respondsToSelector:
+                @selector(connection:shouldMakeNewConnection:)]) {
+            if (![delegate connection:_servingConnection
+              shouldMakeNewConnection:connection]) {
+                [_clientConnections removeObjectForKey:service];
+                return nil;
+            }
+        }
     }
 
     NSDistantObject *proxy = [[NSDistantObject alloc] _initWithConnection:connection];
@@ -365,7 +386,7 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
 @implementation NSDistantObject
 
 - (id)_initWithConnection:(NSConnection *)connection {
-    _connection = connection;
+    _connection = [connection retain];
     _signatureCache = [[NSMutableDictionary alloc] init];
     return self;
 }
@@ -380,6 +401,8 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
 }
 
 - (void)dealloc {
+    [_connection release];
+    [_targetToken release];
     [_signatureCache release];
     [super dealloc];
 }
@@ -670,6 +693,16 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
 
 /* Requests are serviced on the connection's dispatch queue, so attaching to a
  * particular run loop is a no-op. */
+/* CFMessagePort plus a dispatch queue, so there is no NSPort to hand back and
+ * nothing for a caller to add to a run loop; the guarded callers skip it. */
+- (NSPort *)receivePort {
+    return nil;
+}
+
+- (NSPort *)sendPort {
+    return nil;
+}
+
 - (void)addRunLoop:(NSRunLoop *)runLoop {
 }
 
@@ -697,6 +730,15 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
 }
 
 - (void)invalidate {
+    /* Breaks the proxy/connection retain cycle set up in
+     * -[NSDistantObject _initWithConnection:]. */
+    if (_rootProxy != nil) {
+        NSDistantObject *proxy = _rootProxy;
+
+        _rootProxy = nil;
+        [proxy release];
+    }
+
     if (!_isValid) {
         return;
     }
@@ -780,6 +822,11 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
         return nil;
     }
 
+    /* Byref arguments unboxed below belong to whoever sent this request. */
+    NSConnection *previousServing = _servingConnection;
+
+    _servingConnection = self;
+
     NSString *selectorName = [call objectForKey:kSelectorKey];
     NSString *types = [call objectForKey:kTypesKey];
     NSArray *arguments = [call objectForKey:kArgumentsKey];
@@ -813,6 +860,7 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
         }
 
         [invocation invokeWithTarget:_rootObject];
+        _servingConnection = previousServing;
 
         NSUInteger returnLength = [signature methodReturnLength];
 
@@ -845,6 +893,7 @@ static CFDataRef _connectionCallback(CFMessagePortRef local, SInt32 identifier,
         }
     }
     @catch (NSException *exception) {
+        _servingConnection = previousServing;
         result = [NSDictionary dictionaryWithObject:[exception reason]
                                              forKey:kExceptionKey];
     }

@@ -13,7 +13,7 @@
 #import <Foundation/NSProxy.h>
 #import <Foundation/NSDate.h>
 
-@class NSString, NSArray, NSMutableDictionary, NSConnection, NSRunLoop;
+@class NSString, NSArray, NSMutableDictionary, NSConnection, NSRunLoop, NSPort;
 
 FOUNDATION_EXPORT NSString * const NSConnectionDidDieNotification;
 FOUNDATION_EXPORT NSString * const NSFailedAuthenticationException;
@@ -67,6 +67,13 @@ FOUNDATION_EXPORT NSString * const NSObjectInaccessibleException;
 - (NSTimeInterval)requestTimeout;
 - (void)setReplyTimeout:(NSTimeInterval)interval;
 - (NSTimeInterval)replyTimeout;
+
+/* This connection is serviced by a dispatch queue on a CFMessagePort, not by
+ * an NSPort on a run loop, so there is no port for a caller to schedule. Both
+ * answer nil; callers guard on that and skip the scheduling they would
+ * otherwise do. */
+- (NSPort *)receivePort;
+- (NSPort *)sendPort;
 
 - (void)addRunLoop:(NSRunLoop *)runLoop;
 - (void)removeRunLoop:(NSRunLoop *)runLoop;

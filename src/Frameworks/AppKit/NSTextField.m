@@ -361,6 +361,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 	}
 }
 
+/* Forwarded to the cell, which is where the bezel style lives. */
+-(void)setBezelStyle:(NSTextFieldBezelStyle)style {
+   [(NSTextFieldCell *)[self cell] setBezelStyle:style];
+}
+
+-(NSTextFieldBezelStyle)bezelStyle {
+   return [(NSTextFieldCell *)[self cell] bezelStyle];
+}
+
 -(void)setAlignment:(NSTextAlignment)alignment {
   [super setAlignment:alignment];
   [_currentEditor setAlignment:[self alignment]];

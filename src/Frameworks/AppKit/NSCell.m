@@ -552,7 +552,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    image=[image retain];
    [_image release];
    _image=image;
-   [(NSControl *)[self controlView] updateCell:self];
+   /* The control view is only an NSControl when the cell belongs to one; a
+    * plain NSView hosting a cell does not implement -updateCell:. */
+   if([[self controlView] respondsToSelector:@selector(updateCell:)])
+    [(NSControl *)[self controlView] updateCell:self];
 }
 
 -(void)setAlignment:(NSTextAlignment)alignment {
@@ -655,6 +658,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
     _hasValidObjectValue = YES;
     [[self controlView] didChangeValueForKey:@"objectValue"];
 
+    /* The control view is only an NSControl when the cell belongs to one; a
+    * plain NSView hosting a cell does not implement -updateCell:. */
+   if([[self controlView] respondsToSelector:@selector(updateCell:)])
     [(NSControl *)[self controlView] updateCell:self];
 }
 
@@ -712,7 +718,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _controlSize = size;
    [_font release];
    _font = [[NSFont userFontOfSize:16 - _controlSize*2] retain];
-   [(NSControl *)[self controlView] updateCell:self];
+   /* The control view is only an NSControl when the cell belongs to one; a
+    * plain NSView hosting a cell does not implement -updateCell:. */
+   if([[self controlView] respondsToSelector:@selector(updateCell:)])
+    [(NSControl *)[self controlView] updateCell:self];
 }
 
 -(void)setFocusRingType:(NSFocusRingType)focusRingType {

@@ -3,13 +3,15 @@
 
 O2PNGEncoderRef O2PNGEncoderCreate(O2DataConsumerRef consumer) {
    O2PNGEncoderRef self=NSZoneCalloc(NULL,1,sizeof(struct O2PNGEncoder));
-   self->_consumer=(id)CFRetain(consumer);
+   /* The consumer is an ObjC object, not a CF one: CFRetain would maul a
+    * refcount field it does not have. */
+   self->_consumer=[(id)consumer retain];
    return self;
 }
 
 void O2PNGEncoderDealloc(O2PNGEncoderRef self) {
    if(self->_consumer!=NULL)
-    CFRelease(self->_consumer);
+    [self->_consumer release];
    NSZoneFree(NULL,self);
 }
 

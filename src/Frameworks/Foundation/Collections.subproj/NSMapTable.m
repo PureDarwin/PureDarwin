@@ -242,7 +242,11 @@ void *NSMapGet(NSMapTable *table, const void *key) {
 void NSMapInsert(NSMapTable *table, const void *key, const void *value) {
     NSMapBucket *bucket = _findBucket(table, key);
 
-    if (bucket != NULL && bucket->state == kBucketOccupied) {
+    if (bucket == NULL) {
+        return;
+    }
+
+    if (bucket->state == kBucketOccupied) {
         _retainValue(table, value);
         _releaseValue(table, bucket->value);
         bucket->value = value;
@@ -380,13 +384,13 @@ static BOOL _objectIsEqual(NSMapTable *table, const void *key1, const void *key2
 
 static void _objectRetain(NSMapTable *table, const void *item) {
     if (item != NULL) {
-        CFRetain(item);
+        [(id)item retain];
     }
 }
 
 static void _objectRelease(NSMapTable *table, void *item) {
     if (item != NULL) {
-        CFRelease(item);
+        [(id)item release];
     }
 }
 

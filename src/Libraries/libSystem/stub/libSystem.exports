@@ -293,6 +293,7 @@ _sysdir_start_search_path_enumeration
 _sysdir_get_next_search_path_enumeration
 __NSConcreteStackBlock
 __NSConcreteGlobalBlock
+__NSConcreteMallocBlock
 _malloc_default_zone
 _vm_page_size
 __NSGetArgv
@@ -1772,6 +1773,9 @@ _backtrace_symbols
 _backtrace_symbols_fd
 _clock_gettime_nsec_np
 _dispatch_queue_get_label
+_dispatch_queue_set_specific
+_dispatch_queue_get_specific
+_dispatch_get_specific
 _fls
 _getsectdatafromheader
 _getsectdatafromheader_64

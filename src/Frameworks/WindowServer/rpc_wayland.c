@@ -37,6 +37,7 @@ struct wsWindow {
     double x, y, w, h;
     int state;
     int configured;
+    char title[64];
     struct wsWindow *next;
 };
 
@@ -66,6 +67,7 @@ static struct {
     struct wsWindow *windows;
     int connected;
     int lastMouseX, lastMouseY;
+    int screenW, screenH;
 } ws;
 
 static struct wsWindow *windowForID(int windowID) {
@@ -91,6 +93,8 @@ static void outputMode(void *data, struct wl_output *output, uint32_t flags,
     if (flags & WL_OUTPUT_MODE_CURRENT) {
         /* CoreGraphics cannot discover displays itself; hand it the real
          * geometry now that the compositor has told us. */
+        ws.screenW = width;
+        ws.screenH = height;
         CGDirectDisplaySetMainDisplayBounds(CGRectMake(0, 0, width, height));
     }
 }
@@ -116,6 +120,7 @@ static const struct wl_output_listener outputListener = {
 /* Defined with the rest of the input handling, below. */
 static const struct wl_seat_listener seatListener;
 static void *dispatchThreadMain(void *unused);
+static int windowCreateBuffer(struct wsWindow *window);
 static int windowAttachBuffer(struct wsWindow *window);
 static void windowReleaseBuffer(struct wsWindow *window);
 
@@ -195,14 +200,10 @@ static void xdgSurfaceConfigure(void *data, struct xdg_surface *surface, uint32_
     struct wsWindow *window = data;
 
     xdg_surface_ack_configure(surface, serial);
-    if (window->buffer == NULL) {
-        windowAttachBuffer(window);
-    } else {
-        /* Surviving buffer from a role rebuild: the new role starts unmapped,
-         * so attach it again or the surface never shows anything. */
-        wl_surface_attach(window->surface, window->buffer, 0, 0);
-        wl_surface_damage(window->surface, 0, 0, (int)window->w, (int)window->h);
-    }
+    /* The role now exists, so the buffer can go on the surface: either the one
+     * created with the window, or a fresh one after a resize. A new role starts
+     * unmapped, so this attach is what makes the surface appear at all. */
+    windowAttachBuffer(window);
     wl_surface_commit(window->surface);
 
     pthread_mutex_lock(&ws.queueLock);
@@ -229,14 +230,10 @@ static void layerSurfaceConfigure(void *data, struct zwlr_layer_surface_v1 *surf
         window->h = height;
         windowReleaseBuffer(window);
     }
-    if (window->buffer == NULL) {
-        windowAttachBuffer(window);
-    } else {
-        /* Surviving buffer from a role rebuild: the new role starts unmapped,
-         * so attach it again or the surface never shows anything. */
-        wl_surface_attach(window->surface, window->buffer, 0, 0);
-        wl_surface_damage(window->surface, 0, 0, (int)window->w, (int)window->h);
-    }
+    /* The role now exists, so the buffer can go on the surface: either the one
+     * created with the window, or a fresh one after a resize. A new role starts
+     * unmapped, so this attach is what makes the surface appear at all. */
+    windowAttachBuffer(window);
     wl_surface_commit(window->surface);
 
     pthread_mutex_lock(&ws.queueLock);
@@ -264,11 +261,81 @@ static int layerForWindowLevel(int level, uint32_t *layerOut) {
         *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
         return 1;
     }
-    if (level == kCGDockWindowLevelKey || level == kCGMainMenuWindowLevelKey) {
+    /* The dock sits on the TOP layer; the menu bar and anything above it are
+     * overlays, which is both what they are semantically and what keeps them
+     * clear of the dock's stacking. */
+    if (level >= kCGMainMenuWindowLevelKey) {
+        *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
+        return 1;
+    }
+    if (level >= kCGDockWindowLevelKey) {
         *layerOut = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
         return 1;
     }
     return 0;
+}
+
+static void windowApplyLayerGeometry(struct wsWindow *window, uint32_t layer) {
+    /* Background surfaces cover the output; nothing to derive. */
+    if (layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND) {
+        zwlr_layer_surface_v1_set_anchor(window->layerSurface,
+            ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
+            ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
+        zwlr_layer_surface_v1_set_exclusive_zone(window->layerSurface, -1);
+        return;
+    }
+
+    zwlr_layer_surface_v1_set_size(window->layerSurface,
+                                   (uint32_t)window->w, (uint32_t)window->h);
+
+    if (ws.screenW <= 0 || ws.screenH <= 0) {
+        if (getenv("PD_WS_TRACE") != NULL) {
+            fprintf(stderr,
+                    "WindowServer: surface %d NOT ANCHORED - screen size unknown\n",
+                    window->windowID);
+        }
+        return;
+    }
+
+    /* AppKit frames are bottom-left origin, which is also the edge sense the
+     * anchor bits use, so the gaps map across directly. */
+    double leftGap   = window->x;
+    double rightGap  = (double)ws.screenW - (window->x + window->w);
+    double bottomGap = window->y;
+    double topGap    = (double)ws.screenH - (window->y + window->h);
+
+    /* A window is "against" an edge when it is nearer to it than to the
+     * opposite one by more than a pixel; otherwise it wants centring. */
+    const double slack = 1.0;
+    uint32_t anchor = 0;
+    int32_t marginTop = 0, marginRight = 0, marginBottom = 0, marginLeft = 0;
+
+    if (leftGap + slack < rightGap) {
+        anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT;
+        marginLeft = (int32_t)leftGap;
+    } else if (rightGap + slack < leftGap) {
+        anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+        marginRight = (int32_t)rightGap;
+    }
+
+    if (bottomGap + slack < topGap) {
+        anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+        marginBottom = (int32_t)bottomGap;
+    } else if (topGap + slack < bottomGap) {
+        anchor |= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP;
+        marginTop = (int32_t)topGap;
+    }
+
+    if (getenv("PD_WS_TRACE") != NULL) {
+        fprintf(stderr,
+                "WindowServer: surface %d anchor=0x%x margins t=%d r=%d b=%d l=%d\n",
+                window->windowID, anchor, marginTop, marginRight, marginBottom,
+                marginLeft);
+    }
+
+    zwlr_layer_surface_v1_set_anchor(window->layerSurface, anchor);
+    zwlr_layer_surface_v1_set_margin(window->layerSurface, marginTop, marginRight,
+                                     marginBottom, marginLeft);
 }
 
 static void windowShmPath(int windowID, char *out, size_t outSize) {
@@ -280,13 +347,13 @@ static void windowShmPath(int windowID, char *out, size_t outSize) {
         !CFStringGetCString(identifier, bundleID, sizeof(bundleID), kCFStringEncodingUTF8)) {
         snprintf(bundleID, sizeof(bundleID), "unix.%u", (unsigned)getpid());
     }
-    snprintf(out, outSize, "/%s/%u/win/%u", bundleID, (unsigned)getpid(),
-             (unsigned)windowID);
+    wsWindowShmPath(bundleID, (unsigned)getpid(), (unsigned)windowID, out,
+                    outSize);
 }
 
 /* Backing store sized to the frame, ARGB8888 - which is what AppKit's
  * O2Surface writes (premultiplied-first, host byte order). */
-static int windowAttachBuffer(struct wsWindow *window) {
+static int windowCreateBuffer(struct wsWindow *window) {
     int width = (int)window->w;
     int height = (int)window->h;
 
@@ -325,8 +392,18 @@ static int windowAttachBuffer(struct wsWindow *window) {
     window->pool = wl_shm_create_pool(ws.shm, window->shmFd, (int32_t)size);
     window->buffer = wl_shm_pool_create_buffer(window->pool, 0, width, height,
                                                stride, WL_SHM_FORMAT_ARGB8888);
+    return 1;
+}
+
+/* Creates the buffer if needed and puts it on the surface. Only safe once the
+ * surface has a role. */
+static int windowAttachBuffer(struct wsWindow *window) {
+    if (window->buffer == NULL && !windowCreateBuffer(window)) {
+        return 0;
+    }
+
     wl_surface_attach(window->surface, window->buffer, 0, 0);
-    wl_surface_damage(window->surface, 0, 0, width, height);
+    wl_surface_damage(window->surface, 0, 0, (int)window->w, (int)window->h);
     return 1;
 }
 
@@ -657,6 +734,15 @@ int _windowServerReceiveMessage(PortMessage *msg) {
 static void windowCreateRole(struct wsWindow *window, const char *title) {
     uint32_t layer;
 
+    /* PD_WS_TRACE names every window the compositor is asked to show, which is
+     * the only way to tell whose surface an unexpected rectangle belongs to. */
+    if (getenv("PD_WS_TRACE") != NULL) {
+        fprintf(stderr,
+                "WindowServer: window %d level %d frame {{%g, %g}, {%g, %g}} title \"%s\"\n",
+                window->windowID, window->level, window->x, window->y,
+                window->w, window->h, title != NULL ? title : "");
+    }
+
     if (layerForWindowLevel(window->level, &layer)) {
         window->layerSurface = zwlr_layer_shell_v1_get_layer_surface(
             ws.layerShell, window->surface, NULL, layer,
@@ -665,14 +751,7 @@ static void windowCreateRole(struct wsWindow *window, const char *title) {
                                            &layerSurfaceListener, window);
         zwlr_layer_surface_v1_set_size(window->layerSurface,
                                        (uint32_t)window->w, (uint32_t)window->h);
-        /* Anchoring to all four edges makes the compositor size the surface to
-         * the output, which is what a desktop wants. */
-        if (layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND) {
-            zwlr_layer_surface_v1_set_anchor(window->layerSurface,
-                ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
-                ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
-            zwlr_layer_surface_v1_set_exclusive_zone(window->layerSurface, -1);
-        }
+        windowApplyLayerGeometry(window, layer);
         return;
     }
 
@@ -683,6 +762,19 @@ static void windowCreateRole(struct wsWindow *window, const char *title) {
     if (title != NULL && title[0] != '\0') {
         xdg_toplevel_set_title(window->toplevel, title);
     }
+}
+
+static void windowTraceSurface(struct wsWindow *window, const char *what) {
+    if (getenv("PD_WS_TRACE") == NULL) {
+        return;
+    }
+    fprintf(stderr,
+            "WindowServer: surface %d %s: configured=%d buffer=%p layer=%p "
+            "toplevel=%p frame {{%g, %g}, {%g, %g}} screen %dx%d\n",
+            window->windowID, what, window->configured,
+            (void *)window->buffer, (void *)window->layerSurface,
+            (void *)window->toplevel, window->x, window->y, window->w,
+            window->h, ws.screenW, ws.screenH);
 }
 
 static void windowDestroyRole(struct wsWindow *window) {
@@ -719,26 +811,13 @@ static kern_return_t windowCreate(struct wsRPCWindow *msg) {
 
     window->level = msg->level;
     window->surface = wl_compositor_create_surface(ws.compositor);
-    windowCreateRole(window, msg->title);
+    strncpy(window->title, msg->title, sizeof(window->title) - 1);
 
     window->next = ws.windows;
     ws.windows = window;
 
-    /* Commit the role first so the compositor sends its configure. The
-     * dispatch thread creates and attaches the buffer from the configure
-     * callback; it is the only thread that reads from the Wayland display. */
-    wl_surface_commit(window->surface);
-    wl_display_flush(ws.display);
+    windowCreateBuffer(window);
 
-    pthread_mutex_lock(&ws.queueLock);
-    while (!window->configured && ws.dispatchRunning) {
-        pthread_cond_wait(&ws.queueReady, &ws.queueLock);
-    }
-    pthread_mutex_unlock(&ws.queueLock);
-
-    if (!window->configured) {
-        return KERN_FAILURE;
-    }
     return KERN_SUCCESS;
 }
 
@@ -764,6 +843,24 @@ static kern_return_t windowDestroy(struct wsRPCWindow *msg) {
     return KERN_SUCCESS;
 }
 
+static int windowEnsureRole(struct wsWindow *window) {
+    if (window->layerSurface != NULL || window->toplevel != NULL) {
+        return 1;
+    }
+
+    windowCreateRole(window, window->title);
+    wl_surface_commit(window->surface);
+    wl_display_flush(ws.display);
+
+    pthread_mutex_lock(&ws.queueLock);
+    while (!window->configured && ws.dispatchRunning) {
+        pthread_cond_wait(&ws.queueReady, &ws.queueLock);
+    }
+    pthread_mutex_unlock(&ws.queueLock);
+
+    return window->configured;
+}
+
 static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
     struct wsWindow *window = windowForID(msg->windowID);
 
@@ -779,6 +876,26 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
         if (window == NULL) {
             return KERN_FAILURE;
         }
+    }
+
+    if (msg->w > 0 && msg->h > 0 &&
+        (msg->w != window->w || msg->h != window->h)) {
+        window->w = msg->w;
+        window->h = msg->h;
+
+        windowReleaseBuffer(window);
+        if (windowAttachBuffer(window)) {
+            wl_surface_commit(window->surface);
+            wl_display_flush(ws.display);
+        }
+    }
+
+    if (msg->title[0] != '\0') {
+        strncpy(window->title, msg->title, sizeof(window->title) - 1);
+    }
+
+    if (window->layerSurface == NULL && window->toplevel == NULL) {
+        window->level = msg->level;
     }
 
     /* A level change can move the window between a layer and a toplevel, and
@@ -840,10 +957,21 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
         window->state = msg->state;
     }
 
+    int moved = (msg->x != window->x || msg->y != window->y ||
+                 msg->w != window->w || msg->h != window->h);
+
     window->x = msg->x;
     window->y = msg->y;
     window->w = msg->w;
     window->h = msg->h;
+
+    if (moved && window->layerSurface != NULL) {
+        uint32_t layer;
+        if (layerForWindowLevel(window->level, &layer)) {
+            windowApplyLayerGeometry(window, layer);
+            wl_surface_commit(window->surface);
+        }
+    }
 
     wl_display_flush(ws.display);
     return KERN_SUCCESS;
@@ -870,11 +998,31 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
             struct wsRPCWindow *msg = (struct wsRPCWindow *)data;
             struct wsWindow *window = windowForID(msg->windowID);
 
-            fprintf(stderr, "WindowServer: flush win=%d found=%d buffer=%d\n",
-                    msg->windowID, window != NULL,
-                    window != NULL && window->buffer != NULL);
-            if (window == NULL || window->buffer == NULL) {
+            if (window == NULL || !windowEnsureRole(window)) {
                 return KERN_SUCCESS;
+            }
+            windowTraceSurface(window, "flush");
+            if (window->buffer == NULL) {
+                return KERN_SUCCESS;
+            }
+
+            if (getenv("PD_WS_TRACE") != NULL && window->pixels != NULL &&
+                window->level >= kCGMainMenuWindowLevelKey) {
+                const uint32_t *px = window->pixels;
+                size_t count = window->pixelsSize / 4;
+                size_t nonzero = 0;
+                size_t i;
+
+                for (i = 0; i < count; i++) {
+                    if (px[i] != 0) {
+                        nonzero++;
+                    }
+                }
+                fprintf(stderr,
+                        "WindowServer: surface %d pixels: %zu/%zu non-zero, "
+                        "first=0x%08x mid=0x%08x\n",
+                        window->windowID, nonzero, count, px[0],
+                        px[count / 2]);
             }
             /* The client has drawn into the shared pixels; tell the compositor
              * the whole surface changed and hand the frame over. */

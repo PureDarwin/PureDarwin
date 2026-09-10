@@ -32,7 +32,13 @@ typedef enum {
     NSAppKitSystem = 17,
     NSScrollWheel = 18,
     NSApplicationDefined = 19,
-    NSAppKitDefined = 20
+    NSAppKitDefined = 20,
+    /* Middle and extra buttons. The values continue this enum's own numbering
+     * rather than Cocoa's, because the masks below are 1 << type and must stay
+     * inside 32 bits. */
+    NSOtherMouseDown = 21,
+    NSOtherMouseUp = 22,
+    NSOtherMouseDragged = 23
 } NSEventType;
 
 enum {
@@ -53,6 +59,9 @@ enum {
     NSScrollWheelMask = 1 << NSScrollWheel,
     NSApplicationDefinedMask = 1 << NSApplicationDefined,
     NSAppKitDefinedMask = 1 << NSAppKitDefined,
+    NSOtherMouseDownMask = 1 << NSOtherMouseDown,
+    NSOtherMouseUpMask = 1 << NSOtherMouseUp,
+    NSOtherMouseDraggedMask = 1 << NSOtherMouseDragged,
     NSAnyEventMask = 0xffffffff,
 
     NSPlatformSpecificDisplayMask = 1 << NSPlatformSpecificDisplayEvent,
@@ -83,7 +92,10 @@ enum {
     NSEventTypeKeyDown = NSKeyDown,
     NSEventTypeKeyUp = NSKeyUp,
     NSEventTypeFlagsChanged = NSFlagsChanged,
-    NSEventTypeScrollWheel = NSScrollWheel
+    NSEventTypeScrollWheel = NSScrollWheel,
+    NSEventTypeOtherMouseDown = NSOtherMouseDown,
+    NSEventTypeOtherMouseUp = NSOtherMouseUp,
+    NSEventTypeOtherMouseDragged = NSOtherMouseDragged
 };
 
 typedef NSUInteger NSEventModifierFlags;

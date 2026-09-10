@@ -9,6 +9,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #import <sys/param.h>
 #import <AppKit/NSFont.h>
+#import <AppKit/NSFontManager.h>
 #import <AppKit/NSAttributedString.h>
 #import <AppKit/NSStringDrawing.h>
 #import <AppKit/NSFontDescriptor.h>
@@ -224,6 +225,15 @@ static NSLock *_cacheLock=nil;
         result = [NSFont fontWithName:(bold ? @"DejaVu Sans-Bold" : @"DejaVu Sans")
                                  size:size];
     }
+    if(result == nil) {
+        /* Callers put this straight into attribute dictionaries, so returning
+         * nil turns a missing font into an exception somewhere unrelated. Take
+         * whatever is installed rather than nothing. */
+        NSArray *available = [[NSFontManager sharedFontManager] availableFonts];
+
+        if([available count] > 0)
+            result = [NSFont fontWithName:[available objectAtIndex:0] size:size];
+    }
     O2FontLog(@"asked for type: %d got font: %@", type, result);
     return result;
 }
@@ -269,12 +279,18 @@ static NSLock *_cacheLock=nil;
     return [self _uiFontOfType:kCTFontToolTipFontType size:(size==0)?9.:size fallbackName:@"Inter-Regular"];
 }
 
+/* Through the UI-font path so the fallback chain applies: a bare
+ * +fontWithName: returns nil when that one family is not installed, and
+ * callers store the result straight into attribute dictionaries. */
 +(NSFont *)userFontOfSize:(float)size {
-   return [NSFont fontWithName:[O2Font postscriptNameForDisplayName:@"Inter-Regular"] size:(size==0)?10.0:size];
+   return [self _uiFontOfType:kCTFontApplicationFontType size:(size==0)?10.0:size
+                 fallbackName:@"Inter-Regular"];
 }
 
 +(NSFont *)userFixedPitchFontOfSize:(float)size {
-   return [NSFont fontWithName:[O2Font postscriptNameForDisplayName:@"Source Code Pro-Regular"] size:(size==0)?12.0:size];
+   return [self _uiFontOfType:kCTFontApplicationFontType
+                         size:(size==0)?12.0:size
+                 fallbackName:@"Source Code Pro-Regular"];
 }
 
 +(void)setUserFont:(NSFont *)value {

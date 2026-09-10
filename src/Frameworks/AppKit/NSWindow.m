@@ -34,6 +34,7 @@
 #import <Onyx2D/O2GraphicsState.h>
 #import <AppKit/NSWindow.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #import <AppKit/NSWindow-Private.h>
 #import <AppKit/NSThemeFrame.h>
 #import <AppKit/NSSheetContext.h>
@@ -327,7 +328,14 @@ const float WSWindowEdgePad = 2;
     bundleID = [[NSBundle mainBundle] bundleIdentifier];
     if(bundleID == nil)
         bundleID = [NSString stringWithFormat:@"unix.%u", getpid()];
-    shmPath = [NSString stringWithFormat:@"/%s/%u/win/%u", [bundleID cString], getpid(), _number];
+    /* Must match what the window server opens; see wsWindowShmPath. */
+    {
+        char shmName[64];
+
+        wsWindowShmPath([bundleID cString], (unsigned)getpid(),
+                        (unsigned)_number, shmName, sizeof(shmName));
+        shmPath = [NSString stringWithUTF8String:shmName];
+    }
 
     _context = [self cgContext];
     return self;
@@ -386,6 +394,18 @@ const float WSWindowEdgePad = 2;
         bufsize = depth * _frame.size.width * _frame.size.height;
 
         if(shmfd >= 0) {
+            /* The window server sizes this object from its own idea of the
+             * window; drawing past the end of it corrupts unrelated heap. */
+            struct stat shmInfo;
+
+            if(fstat(shmfd, &shmInfo) == 0 && (size_t)shmInfo.st_size < (size_t)bufsize) {
+                fprintf(stderr, "AppKit: window %d backing store too small: "
+                        "shm %lld bytes, surface needs %zu (%gx%g)\n",
+                        (int)_number, (long long)shmInfo.st_size, (size_t)bufsize,
+                        _frame.size.width, _frame.size.height);
+                fflush(stderr);
+            }
+
             buffer = mmap(NULL, bufsize, PROT_WRITE|PROT_READ, MAP_SHARED, shmfd, 0);
             close(shmfd);
         }
@@ -401,10 +421,11 @@ const float WSWindowEdgePad = 2;
                 bitmapInfo:kO2BitmapByteOrderDefault|kCGImageAlphaPremultipliedFirst];
         _context = [[O2Context_builtin_FT alloc] initWithSurface:surface flipped:NO];
 
-        NSGraphicsContext *gc = [NSGraphicsContext currentContext];
-        if(gc != nil)
-            [gc release];
-        gc = [NSGraphicsContext graphicsContextWithGraphicsPort:_context flipped:NO];
+        /* +currentContext is not owned by us; releasing it frees a context
+         * that is still held by the autorelease pool, which then faults on a
+         * zeroed isa when it drains. */
+        NSGraphicsContext *gc =
+            [NSGraphicsContext graphicsContextWithGraphicsPort:_context flipped:NO];
         [NSGraphicsContext setCurrentContext:gc];
         NSValue *key = [NSValue valueWithPointer:[NSThread currentThread]];
         [_threadToContext setObject:gc forKey:key];
@@ -498,8 +519,21 @@ const float WSWindowEdgePad = 2;
    return _level;
 }
 -(void)setLevel:(NSInteger)value {
+    if(_level==value)
+     return;
+
     _level = value;
     [self _updateWSState];
+
+    /* A level change can move the window between a layer-shell surface and an
+     * xdg_toplevel, and the surface's role is rebuilt to do it. The buffer
+     * survives but nothing has drawn into it since, so ask for a redisplay -
+     * otherwise the window is present, correctly placed, and blank. */
+    if([self isVisible]){
+     [_backgroundView setNeedsDisplay:YES];
+     [self displayIfNeeded];
+     [self flushWindow];
+    }
 }
 
 -(NSRect)frame {
@@ -1228,8 +1262,12 @@ const float WSWindowEdgePad = 2;
 //   NSUnimplementedMethod();
 }
 
+/* Collection behaviour describes how a window relates to Spaces and to
+ * app hiding. There are no Spaces under this window server, so the value is
+ * recorded and reported back rather than acted on - a caller setting it is
+ * expressing an intent that simply has nothing to apply to here. */
 -(void)setCollectionBehavior:(NSWindowCollectionBehavior)behavior {
-   NSUnimplementedMethod();
+   _collectionBehavior=behavior;
 }
 
 -(void)setOpaque:(BOOL)value {
@@ -1507,8 +1545,7 @@ const float WSWindowEdgePad = 2;
 }
 
 -(NSWindowCollectionBehavior)collectionBehavior {
-   NSUnimplementedMethod();
-   return 0;
+   return _collectionBehavior;
 }
 
 -(NSPoint)convertBaseToScreen:(NSPoint)point {
@@ -1860,8 +1897,6 @@ const float WSWindowEdgePad = 2;
 }
 
 -(void)flushWindow {
-    fprintf(stderr, "AppKit: flushWindow num=%d level=%d disabled=%d\n",
-            (int)_number, (int)_level, (int)_flushDisabled);
     if(_flushDisabled > 0)
         _flushNeeded=YES;
     else {

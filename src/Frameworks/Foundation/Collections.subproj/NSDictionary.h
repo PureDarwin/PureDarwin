@@ -47,6 +47,7 @@
                                   objects:(id __unsafe_unretained [])buffer
                                     count:(NSUInteger)length;
 - (NSArray<KeyType> *)allKeys;
+- (BOOL)isEqualToDictionary:(NSDictionary *)other;
 - (NSArray<ObjectType> *)allValues;
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically;
 - (NSArray<KeyType> *)keysSortedByValueUsingSelector:(SEL)comparator;

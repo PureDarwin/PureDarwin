@@ -18,6 +18,14 @@
     NSMutableDictionary *_dictionary;
     NSMutableDictionary *_sharedDictionary;
     BOOL _main;
+    /* Set only for a thread created with -initWithTarget:...; the class
+     * methods above run detached and have nothing to report. */
+    SEL _selector;
+    id _target;
+    id _argument;
+    BOOL _executing;
+    BOOL _finished;
+    BOOL _cancelled;
 }
 
 + (NSThread *)currentThread;
@@ -30,6 +38,22 @@
 - (BOOL)isMainThread;
 - (NSMutableDictionary *)threadDictionary;
 
+- (instancetype)initWithTarget:(id)target selector:(SEL)selector object:(id)argument;
+- (void)start;
+- (void)cancel;
+- (BOOL)isExecuting;
+- (BOOL)isFinished;
+- (BOOL)isCancelled;
+
+@end
+
+@interface NSObject (NSThreadPerformAdditions)
+/* Hops to the main run loop. When already on the main thread the selector is
+ * invoked directly, which is what callers expect and avoids deadlocking a
+ * waitUntilDone:YES call against itself. */
+- (void)performSelectorOnMainThread:(SEL)selector
+                         withObject:(id)object
+                      waitUntilDone:(BOOL)wait;
 @end
 
 

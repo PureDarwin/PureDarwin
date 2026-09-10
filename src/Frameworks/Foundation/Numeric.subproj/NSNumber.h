@@ -35,6 +35,25 @@
 + (instancetype)numberWithInteger:(NSInteger)value;
 + (instancetype)numberWithUnsignedInteger:(NSUInteger)value;
 
+- (instancetype)initWithChar:(char)value;
+- (instancetype)initWithUnsignedChar:(unsigned char)value;
+- (instancetype)initWithShort:(short)value;
+- (instancetype)initWithUnsignedShort:(unsigned short)value;
+- (instancetype)initWithInt:(int)value;
+- (instancetype)initWithUnsignedInt:(unsigned int)value;
+- (instancetype)initWithLong:(long)value;
+- (instancetype)initWithUnsignedLong:(unsigned long)value;
+- (instancetype)initWithLongLong:(long long)value;
+- (instancetype)initWithUnsignedLongLong:(unsigned long long)value;
+- (instancetype)initWithFloat:(float)value;
+- (instancetype)initWithDouble:(double)value;
+- (instancetype)initWithBool:(BOOL)value;
+- (instancetype)initWithInteger:(NSInteger)value;
+- (instancetype)initWithUnsignedInteger:(NSUInteger)value;
+
+- (NSComparisonResult)compare:(NSNumber *)other;
+- (BOOL)isEqualToNumber:(NSNumber *)other;
+
 @property (readonly) char charValue;
 @property (readonly) unsigned char unsignedCharValue;
 @property (readonly) short shortValue;

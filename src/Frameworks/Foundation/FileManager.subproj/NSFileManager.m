@@ -169,6 +169,12 @@ static void _setPOSIXError(NSError **error) {
     char buffer[PATH_MAX];
     struct stat info;
 
+    /* The out-parameter has to be written even when the file is absent.
+     * Callers routinely test it before the return value, and leaving it
+     * untouched hands them whatever the last call left on the stack. */
+    if (isDirectory != NULL) {
+        *isDirectory = NO;
+    }
     if (!_fsPath(path, buffer, sizeof(buffer)) || stat(buffer, &info) != 0) {
         return NO;
     }
