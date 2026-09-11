@@ -122,6 +122,7 @@ typedef enum {
     BOOL _allowsMultipleSelection;
     BOOL _allowsEmptySelection;
     BOOL _allowsColumnSelection;
+    BOOL _verticalMotionCanBeginDrag;
     NSSize _intercellSpacing;
 
     BOOL _alternatingRowBackground;
@@ -163,6 +164,7 @@ typedef enum {
 - (BOOL)allowsMultipleSelection;
 - (BOOL)allowsEmptySelection;
 - (BOOL)allowsColumnSelection;
+- (BOOL)verticalMotionCanBeginDrag;
 - (BOOL)autosaveTableColumns;
 
 - (BOOL)usesAlternatingRowBackgroundColors;
@@ -204,6 +206,7 @@ typedef enum {
 - (void)setAllowsMultipleSelection:(BOOL)flag;
 - (void)setAllowsEmptySelection:(BOOL)flag;
 - (void)setAllowsColumnSelection:(BOOL)flag;
+- (void)setVerticalMotionCanBeginDrag:(BOOL)flag;
 - (void)setAutosaveTableColumns:(BOOL)flag;
 
 - (void)setUsesAlternatingRowBackgroundColors:(BOOL)flag;

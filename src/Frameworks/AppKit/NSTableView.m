@@ -254,6 +254,10 @@ const float NSTableViewDefaultRowHeight=16.0f;
     return _allowsColumnSelection;
 }
 
+-(BOOL)verticalMotionCanBeginDrag {
+    return _verticalMotionCanBeginDrag;
+}
+
 -(BOOL)autosaveTableColumns {
    NSUnimplementedMethod();
    return NO;
@@ -615,6 +619,10 @@ static float rowHeightAtIndex(NSTableView *self,int index){
 
 -(void)setAllowsColumnSelection:(BOOL)flag {
     _allowsColumnSelection = flag;
+}
+
+-(void)setVerticalMotionCanBeginDrag:(BOOL)flag {
+    _verticalMotionCanBeginDrag = flag;
 }
 
 -(void)setAutosaveTableColumns:(BOOL)flag {
@@ -1613,7 +1621,8 @@ _dataSource);
                                         else
                                                 break;
                                         currentPoint = [self convertPoint:[event locationInWindow] fromView:nil];
-                                        if(abs(location.x - currentPoint.x) > 5 || abs(location.y - currentPoint.y) > 5)
+                                        if(abs(location.x - currentPoint.x) > 5 ||
+                                           (_verticalMotionCanBeginDrag && abs(location.y - currentPoint.y) > 5))
                                         {
                                                 dragging = YES;
                                                 break;

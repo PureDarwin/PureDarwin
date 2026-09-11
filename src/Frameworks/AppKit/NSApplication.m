@@ -40,6 +40,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <objc/message.h>
 #import <pthread.h>
 
+/* libdispatch's Cocoa integration entry point. CFRunLoop normally calls this;
+ * AppKit uses Foundation's select-driven NSRunLoop, so NSApplication must. */
+extern void _dispatch_main_queue_callback_4CF(void *);
+
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/socket.h>
@@ -1229,6 +1233,9 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    do {
    NSAutoreleasePool *pool=[NSAutoreleasePool new];
 
+   if(pthread_main_np())
+    _dispatch_main_queue_callback_4CF(NULL);
+
    /* Left set from a previous iteration this would be a dangling pointer,
     * since that iteration's pool has already gone. */
    nextEvent=nil;
@@ -1244,7 +1251,14 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
     [self _checkForAppActivation];
      [self _displayAllWindowsIfNeeded];
 
-     nextEvent=[_display nextEventMatchingMask:mask untilDate:untilDate inMode:mode dequeue:dequeue];
+     /* A dispatch enqueue wakes a Mach run-loop port, not our select loop.
+      * Bound the wait so newly queued main-thread work is serviced promptly. */
+     NSDate *waitDate=untilDate;
+     NSDate *dispatchPollDate=[NSDate dateWithTimeIntervalSinceNow:0.01];
+     if(waitDate==nil || [waitDate compare:dispatchPollDate]==NSOrderedDescending)
+      waitDate=dispatchPollDate;
+
+     nextEvent=[_display nextEventMatchingMask:mask untilDate:waitDate inMode:mode dequeue:dequeue];
 
      if([nextEvent type]==NSAppKitSystem)
       nextEvent=nil;

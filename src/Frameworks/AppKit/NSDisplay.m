@@ -303,7 +303,8 @@ SOFTWARE. */
    int i;
    FcPattern *pat=FcPatternCreate();
    FcPatternAddString(pat, FC_FAMILY, (unsigned char*)[familyName UTF8String]);
-   FcObjectSet *props=FcObjectSetBuild(FC_FAMILY, FC_STYLE, FC_SLANT, FC_WIDTH, FC_WEIGHT, NULL);
+   FcObjectSet *props=FcObjectSetBuild(FC_FAMILY, FC_STYLE, FC_POSTSCRIPT_NAME,
+                                      FC_SLANT, FC_WIDTH, FC_WEIGHT, NULL);
 
    FcFontSet *set = FcFontList (O2FontSharedFontConfig(), pat, props);
    NSMutableArray* ret=[NSMutableArray array];
@@ -314,15 +315,18 @@ SOFTWARE. */
       FcPattern *p=set->fonts[i];
       if (FcPatternGetString (p, FC_STYLE, 0, &typeface) == FcResultMatch) {
          NSString* traitName=[NSString stringWithUTF8String:(char*)typeface];
-         FcChar8* pattern=FcNameUnparse(p);
-         NSString* name=[NSString stringWithUTF8String:(char*)pattern];
-         FcStrFree(pattern);
+         FcChar8 *postscriptName=NULL;
+         NSString *name=nil;
+         if (FcPatternGetString(p, FC_POSTSCRIPT_NAME, 0, &postscriptName) == FcResultMatch)
+            name=[NSString stringWithUTF8String:(char *)postscriptName];
          
          NSFontTraitMask traits=0;
-         int slant, width, weight;
+         int slant=FC_SLANT_ROMAN;
+         int width=FC_WIDTH_NORMAL;
+         int weight=FC_WEIGHT_REGULAR;
          
-         FcPatternGetInteger(p, FC_SLANT, FC_SLANT_ROMAN, &slant);
-         FcPatternGetInteger(p, FC_WIDTH, FC_WIDTH_NORMAL, &width);
+         FcPatternGetInteger(p, FC_SLANT, 0, &slant);
+         FcPatternGetInteger(p, FC_WIDTH, 0, &width);
          FcPatternGetInteger(p, FC_WEIGHT, 0, &weight);
 
          switch(slant) {
@@ -342,10 +346,8 @@ SOFTWARE. */
 
         // FIXME: we should set FixedPitch (monospace) and other attrs too (see NSFontManager.h)
          
-         name = [NSString stringWithFormat:@"%@-%@",
-            [[[[name componentsSeparatedByString:@":"] firstObject] // strip off any 'style=XXX' stuff
-            componentsSeparatedByString:@","] firstObject],         // and any multiple names
-            traitName]; // and append "-Traits"
+         if (name == nil)
+            name = [NSString stringWithFormat:@"%@-%@", familyName, traitName];
          NSFontTypeface *face=[[NSFontTypeface alloc] initWithName:name traitName:traitName traits:traits];
          [ret addObject:face];
          [face release];
