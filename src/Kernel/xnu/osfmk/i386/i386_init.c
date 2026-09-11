@@ -99,6 +99,7 @@
 #include <i386/postcode.h>
 #if defined(PUREDARWIN_EARLY_FB_MARK)
 extern void pd_boot_mark_init(boot_args *args);
+extern void pd_boot_mark_band(uint32_t band);
 extern int  pd_boot_mark_physmap;
 #endif
 #include <i386/Diagnostics.h>
@@ -424,9 +425,21 @@ Idle_PTs_init(void)
 	 * two 8-bit entropy values needed for address randomization.
 	 */
 	rand64 = early_random();
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_boot_mark_band(7);       /* early_random returned */
+#endif
 	physmap_init(rand64 & 0xFF, &new_physmap_base, &new_physmap_max);
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_boot_mark_band(9);       /* physmap_init returned */
+#endif
 	doublemap_init((rand64 >> 8) & 0xFF);
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_boot_mark_band(10);      /* doublemap_init returned */
+#endif
 	idt64_remap();
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	pd_boot_mark_band(11);      /* idt64_remap returned */
+#endif
 
 	postcode(VSTART_SET_CR3);
 

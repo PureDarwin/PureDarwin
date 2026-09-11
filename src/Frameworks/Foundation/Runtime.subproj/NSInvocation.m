@@ -512,6 +512,15 @@ static void _sizeAndAlignOfEncoding(const char *type, size_t *sizeOut, size_t *a
 
 @implementation NSObject (NSMethodSignatureLookup)
 
++ (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    Method method = class_getClassMethod(self, selector);
+
+    if (method == NULL) {
+        return nil;
+    }
+    return [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
+}
+
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
     Method method = class_getInstanceMethod(object_getClass(self), selector);
 
