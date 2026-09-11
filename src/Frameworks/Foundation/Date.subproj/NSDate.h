@@ -28,6 +28,7 @@ typedef double NSTimeInterval;
 + (NSTimeInterval)timeIntervalSinceReferenceDate;
 
 - (NSTimeInterval)timeIntervalSinceDate:(NSDate *)other;
+- (NSComparisonResult)compare:(NSDate *)other;
 - (NSTimeInterval)timeIntervalSinceNow;
 - (NSTimeInterval)timeIntervalSinceReferenceDate;
 - (NSTimeInterval)timeIntervalSince1970;

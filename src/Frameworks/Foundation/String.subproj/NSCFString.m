@@ -401,10 +401,15 @@ extern int __CFConstantStringClassReference[];
     va_list arguments;
 
     va_start(arguments, format);
-    _CFStringAppendFormatAndArgumentsAux((CFMutableStringRef)self,
-                                         _NSCopyFormattingDescription, NULL,
-                                         (CFStringRef)format, arguments);
+    CFStringRef formatted = _CFStringCreateWithFormatAndArgumentsAux(
+        kCFAllocatorDefault, _NSCopyFormattingDescription, NULL,
+        (CFStringRef)format, arguments);
     va_end(arguments);
+
+    if (formatted != NULL) {
+        CFStringAppend((CFMutableStringRef)self, formatted);
+        CFRelease(formatted);
+    }
 }
 
 - (void)setString:(NSString *)string {

@@ -72,6 +72,17 @@
            [other timeIntervalSinceReferenceDate];
 }
 
+- (NSComparisonResult)compare:(NSDate *)other {
+    NSTimeInterval difference = [self timeIntervalSinceDate:other];
+    if (difference < 0.0) {
+        return NSOrderedAscending;
+    }
+    if (difference > 0.0) {
+        return NSOrderedDescending;
+    }
+    return NSOrderedSame;
+}
+
 - (NSTimeInterval)timeIntervalSinceNow {
     return [self timeIntervalSinceReferenceDate] - CFAbsoluteTimeGetCurrent();
 }

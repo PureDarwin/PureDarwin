@@ -387,10 +387,44 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
     return [self stringWithCapacity:0];
 }
 
++ (instancetype)stringWithFormat:(NSString *)format, ... {
+    va_list arguments;
+
+    va_start(arguments, format);
+    CFStringRef formatted = _NSStringCreateWithFormatAndArguments(format, arguments);
+    va_end(arguments);
+
+    CFMutableStringRef result = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                           formatted);
+    CFRelease(formatted);
+    return (id)CFAutorelease(result);
+}
+
 + (instancetype)stringWithCapacity:(NSUInteger)capacity {
     (void)capacity;
     CFMutableStringRef result = CFStringCreateMutable(kCFAllocatorDefault, 0);
     return (id)CFAutorelease(result);
+}
+
+- (instancetype)initWithFormat:(NSString *)format, ... {
+    va_list arguments;
+
+    va_start(arguments, format);
+    CFStringRef formatted = _NSStringCreateWithFormatAndArguments(format, arguments);
+    va_end(arguments);
+
+    CFMutableStringRef result = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                           formatted);
+    CFRelease(formatted);
+    return (id)result;
+}
+
+- (instancetype)initWithFormat:(NSString *)format arguments:(va_list)arguments {
+    CFStringRef formatted = _NSStringCreateWithFormatAndArguments(format, arguments);
+    CFMutableStringRef result = CFStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                           formatted);
+    CFRelease(formatted);
+    return (id)result;
 }
 
 - (void)appendString:(NSString *)string {
@@ -400,10 +434,13 @@ static CFOptionFlags __NSStringCFCompareFlags(NSStringCompareOptions options) {
 - (void)appendFormat:(NSString *)format, ... {
     va_list args;
     va_start(args, format);
-    _CFStringAppendFormatAndArgumentsAux((CFMutableStringRef)self,
-                                         _NSCopyFormattingDescription, NULL,
-                                         (CFStringRef)format, args);
+    CFStringRef formatted = _NSStringCreateWithFormatAndArguments(format, args);
     va_end(args);
+
+    if (formatted != NULL) {
+        CFStringAppend((CFMutableStringRef)self, formatted);
+        CFRelease(formatted);
+    }
 }
 
 - (void)setString:(NSString *)string {

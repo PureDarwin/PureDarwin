@@ -58,6 +58,12 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     return [super isOpaque];
 }
 
+- (Margins)menuItemTextMargins
+{
+    Margins margins = {0};
+    return margins;
+}
+
 - (void)setMenu:(NSMenu *)menu
 {
     if (menu == _menu) {
