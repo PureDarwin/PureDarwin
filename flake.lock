@@ -114,11 +114,11 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1789096169,
-        "narHash": "sha256-CwZyT8dzvzVjQV5R3xJ5UKSFvToruy4ZAHsOGC1yEKQ=",
+        "lastModified": 1789104873,
+        "narHash": "sha256-OyQYzLcZP6x5nmHtho776bmvooQdTYgYwSEHsKaPw+8=",
         "owner": "PureDarwin",
         "repo": "xnu-loader",
-        "rev": "cae32f542c2b237fbe0113263ec376bae034a5ab",
+        "rev": "995a84d8508dab9a940bef322d1a37be99ff7014",
         "type": "github"
       },
       "original": {

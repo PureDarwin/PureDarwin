@@ -66,6 +66,86 @@
 #include <i386/cpuid.h>
 #include <i386/acpi.h>
 
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+/*
+ * PD_MARK32 <band> - paint a progress band from pstart.
+ *
+ * pstart runs in protected mode with paging off and flat 32-bit segments (see
+ * the comment at the top of this file), so the framebuffer's *physical*
+ * address out of boot_args is directly writable - which is the whole reason
+ * this works before any console, page table or C code exists.
+ *
+ * %edi holds kernbootstruct throughout pstart. Every register touched is saved,
+ * because these sit in the middle of the boot page-table rebase. Silently does
+ * nothing unless boot_args describes a linear 32bpp framebuffer below 4GB
+ * (above 4GB is unreachable with paging off) and the band fits on screen.
+ */
+.macro PD_MARK32 band
+	pushfl
+	pushal
+	cld
+
+	testl	%edi, %edi
+	jz	90f
+	cmpl	$32, BA_VIDEO_DEPTH(%edi)
+	jne	90f
+	cmpl	$0, (BA_VIDEO_BASEADDR + 4)(%edi)
+	jne	90f
+	cmpl	$0, BA_VIDEO_BASEADDR(%edi)
+	je	90f
+
+	movl	BA_VIDEO_HEIGHT(%edi), %eax
+	cmpl	$((\band + 1) * 16), %eax
+	jb	90f
+
+	movl	BA_VIDEO_WIDTH(%edi), %ebx
+	testl	%ebx, %ebx
+	jz	90f
+	movl	BA_VIDEO_ROWBYTES(%edi), %ebp
+	testl	%ebp, %ebp
+	jz	90f
+
+	/* pad = rowbytes - width*4; refuse anything narrower than its own width */
+	movl	%ebx, %eax
+	shll	$2, %eax
+	cmpl	%eax, %ebp
+	jb	90f
+	subl	%eax, %ebp
+
+	/* dest = baseAddr + (band * 16) * rowbytes */
+	movl	BA_VIDEO_ROWBYTES(%edi), %eax
+	movl	$(\band * 16), %ecx
+	mull	%ecx
+	addl	BA_VIDEO_BASEADDR(%edi), %eax
+	movl	%eax, %edi
+
+	movl	$16, %esi
+	/* band+1: band 0 would be opaque black, i.e. invisible - see
+	 * PD_BAND_COLOUR. Must match that macro or the two halves disagree. */
+	movl	$(0xFF000000 | ((((\band + 1) * 53) & 0xFF) << 16) | ((((\band + 1) * 97) & 0xFF) << 8) | (((\band + 1) * 29) & 0xFF)), %eax
+10:
+	movl	%ebx, %ecx
+	rep	stosl
+	addl	%ebp, %edi
+	decl	%esi
+	jnz	10b
+
+	/* Hold long enough to be read off a screen. */
+	movl	$0x00A00000, %ecx
+11:
+	rep;	nop
+	decl	%ecx
+	jnz	11b
+90:
+	popal
+	popfl
+.endm
+#else
+.macro PD_MARK32 band
+.endm
+#endif
+
+
 .code32
 
 
@@ -166,6 +246,7 @@ LEXT(pstart)
 	movl	$EXT(low_eintstack), %esp
 	
 	POSTCODE(PSTART_ENTRY)
+	PD_MARK32 0
 
 	/*
 	 * Set up segmentation
@@ -187,6 +268,7 @@ LEXT(pstart)
 	add	%eax, 3*8+0(%edx)
 
 	POSTCODE(PSTART_REBASE)
+	PD_MARK32 1
 
 /* the following code is shared by the BSP CPU and all AP CPUs */
 L_pstart_common:

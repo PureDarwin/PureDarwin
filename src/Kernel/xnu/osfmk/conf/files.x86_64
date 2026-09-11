@@ -21,6 +21,7 @@ osfmk/i386/machdep_call.c	optional mach_bsd
 # Order is important here for __HIB section
 osfmk/x86_64/boot_pt.c		standard
 osfmk/i386/mp_desc.c		standard
+osfmk/i386/pd_boot_mark.c              standard
 osfmk/i386/gdt.c		standard
 osfmk/x86_64/start.s		standard
 

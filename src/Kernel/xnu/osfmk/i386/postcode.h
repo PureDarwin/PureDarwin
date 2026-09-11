@@ -121,6 +121,32 @@
  * The following postcodes are defined for stages of early startup:
  */
 
+/*
+ * Early-boot framebuffer bands. Deliberately stupid: no console, no allocation,
+ * no locks, no formatting - anything the marker depends on is something that
+ * can fail before it reports.
+ */
+#define PD_BAND_HEIGHT          16              /* pixels per band */
+#define PD_BAND_NONE            0xFFFFFFFFU
+#define PD_BAND_FOR_CODE(code)  (0xFFU - (uint32_t)(code))
+#define PD_BAND_SPIN            0x00A00000U     /* long enough to read off a screen */
+
+/* A band is written straight to physical memory, so refuse anything that does
+ * not look like a linear 32bpp framebuffer rather than scribbling on RAM. */
+#define PD_BAND_MIN_BASE        0x000A0000ULL
+#define PD_BAND_MAX_DIM         16384U
+#define PD_BAND_MAX_ROWBYTES    (16384U * 4U)
+
+/* Spread the code's bits across the channels so adjacent stages differ.
+ * Band+1, not band: band 0 would otherwise come out opaque black and be
+ * invisible on an unlit screen - indistinguishable from not painting at all,
+ * which is exactly the case these bands exist to tell apart. */
+#define PD_BAND_COLOUR(band)                                  \
+	(0xFF000000U                                          \
+	 | ((uint32_t)((((band) + 1U) * 53U) & 0xFFU) << 16)   \
+	 | ((uint32_t)((((band) + 1U) * 97U) & 0xFFU) << 8)    \
+	 |  (uint32_t)((((band) + 1U) * 29U) & 0xFFU))
+
 #define PSTART_ENTRY                    0xFF
 #define PSTART_REBASE                   0xFE
 #define PSTART_BEFORE_PAGING            0xFE
@@ -199,6 +225,20 @@ postcode2(uint8_t       xxxx)
 	_postcode_delay(SPINCOUNT);
 #endif
 }
+#elif defined(PUREDARWIN_EARLY_FB_MARK)
+/*
+ * No POST card and no serial on a lot of hardware, so paint the framebuffer
+ * instead. The postcode() call sites are already in the right places, so they
+ * become progress bands rather than dead weight - no new call sites to invent.
+ *
+ * Codes count *down* from PSTART_ENTRY (0xFF) in boot order, so the band index
+ * counts up and bands fill top-to-bottom, stopping where the boot died.
+ * Anything too low to fit on screen is simply not drawn.
+ */
+extern void pd_boot_mark(uint8_t code);
+
+#define postcode(xx)     pd_boot_mark((uint8_t)(xx))
+#define postcode2(xxxx)  do {} while(0)
 #else
 #define postcode(xx) do {} while(0)
 #define postcode2(xxxx) do {} while(0)

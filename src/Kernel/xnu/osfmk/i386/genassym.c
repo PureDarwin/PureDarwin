@@ -431,6 +431,13 @@ main(
 	DECLARE("KSIZE", offsetof(struct boot_args, ksize));
 	DECLARE("MEMORYMAP", offsetof(struct boot_args, MemoryMap));
 	DECLARE("DEVICETREEP", offsetof(struct boot_args, deviceTreeP));
+	/* For PD_MARK32, which paints progress bands in pstart - before any
+	 * console exists - using the framebuffer boot_args describes. */
+	DECLARE("BA_VIDEO_BASEADDR", offsetof(struct boot_args, Video.v_baseAddr));
+	DECLARE("BA_VIDEO_ROWBYTES", offsetof(struct boot_args, Video.v_rowBytes));
+	DECLARE("BA_VIDEO_WIDTH", offsetof(struct boot_args, Video.v_width));
+	DECLARE("BA_VIDEO_HEIGHT", offsetof(struct boot_args, Video.v_height));
+	DECLARE("BA_VIDEO_DEPTH", offsetof(struct boot_args, Video.v_depth));
 
 	DECLARE("RNT_TSC_BASE",
 	    offsetof(pal_rtc_nanotime_t, tsc_base));

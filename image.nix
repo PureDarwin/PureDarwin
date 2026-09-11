@@ -28,6 +28,11 @@
 , testAudioFile ? null
 , imageFileName ? "puredarwin.img"
 , efiBinary ? "BOOTX64.EFI"
+  # Additional loaders to place on the ESP, as { loader, efiBinary } pairs.
+  # UEFI picks the removable-media fallback matching its own architecture, so
+  # shipping more than one lets a machine of unknown width boot whichever it
+  # supports - and the loader that runs tells you which that was.
+, extraLoaders ? [ ]
 , netbootOnly ? false
 , useRamdisk ? false
 , ramdiskMB ? 128
@@ -100,6 +105,9 @@ ${if rootFsType == "hfs" then ''
     mkfs.vfat -F 32 -n EFI esp.img >/dev/null
     mmd -i esp.img ::/EFI ::/EFI/BOOT
     mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}
+${lib.concatMapStrings (e: ''
+    mcopy -o -i esp.img ${e.loader}/img/EFI/BOOT/${e.efiBinary} ::/EFI/BOOT/${e.efiBinary}
+'') extraLoaders}
     mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
     printf '%s' ${lib.escapeShellArg bootArgs} > boot-args.txt
     mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/boot-args.txt

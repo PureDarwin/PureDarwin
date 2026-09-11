@@ -97,6 +97,10 @@
 #endif
 #include <i386/ucode.h>
 #include <i386/postcode.h>
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+extern void pd_boot_mark_init(boot_args *args);
+extern int  pd_boot_mark_physmap;
+#endif
 #include <i386/Diagnostics.h>
 #include <i386/pmCPU.h>
 #include <i386/tsc.h>
@@ -437,6 +441,12 @@ Idle_PTs_init(void)
 	physmap_base = new_physmap_base;
 	physmap_max = new_physmap_max;
 	set_cr3_raw((uintptr_t)ID_MAP_VTOP(IdlePML4));
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+	/* The firmware identity map is gone; address the framebuffer through the
+	 * physmap from here on. Set after the switch, since that is when it
+	 * becomes true. */
+	pd_boot_mark_physmap = 1;
+#endif
 }
 
 /*
@@ -723,6 +733,12 @@ vstart(vm_offset_t boot_args_start)
 		 * Get startup parameters.
 		 */
 		kernelBootArgs = (boot_args *)boot_args_start;
+#if defined(PUREDARWIN_EARLY_FB_MARK)
+		/* Armed here because this is the first moment the framebuffer's
+		 * address is known, and everything after it can fail. */
+		pd_boot_mark_init(kernelBootArgs);
+		pd_boot_mark(VSTART_ENTRY);
+#endif
 		lphysfree = kernelBootArgs->kaddr + kernelBootArgs->ksize;
 		physfree = (void *)(uintptr_t)((lphysfree + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
 

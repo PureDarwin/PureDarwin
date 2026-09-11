@@ -884,6 +884,23 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-ia32.img";
       };
+      # Both loaders on one ESP, for a machine whose firmware width is not
+      # established: UEFI takes the fallback name matching its own
+      # architecture, so whichever loader runs identifies the firmware.
+      imageIa32DualBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemMinimal;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderIa32;
+        efiBinary = "BOOTIA32.EFI";
+        extraLoaders = [
+          { loader = xnuLoaderDefault; efiBinary = "BOOTX64.EFI"; }
+        ];
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-ia32-dual.img";
+        espMB = 60;
+        rootMB = 260;
+      };
       imageHfsBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
         extraPackages = imageExtraPackages;
@@ -1750,6 +1767,7 @@ let
       image-legacy = imageLegacyBuild;
       image-ia32 = imageIa32Build;
       image-ia32-minimal = imageIa32MinimalBuild;
+      image-ia32-dual = imageIa32DualBuild;
       image-legacy-minimal = imageLegacyMinimalBuild;
       image-minimal-debug = imageMinimalBuildDebug;
       image-shell = imageShellBuild;

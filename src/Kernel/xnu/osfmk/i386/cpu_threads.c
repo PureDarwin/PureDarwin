@@ -60,6 +60,79 @@ static uint32_t         num_caches      = 0;
 
 static boolean_t        topoParmsInited = FALSE;
 x86_topology_parameters_t       topoParms;
+static uint32_t         topoSMTShift;
+static uint32_t         topoLLCShift;
+static uint32_t         topoPackageShift;
+
+static uint32_t
+ceil_log2_u32(uint32_t value)
+{
+	uint32_t shift = 0;
+	uint32_t span = 1;
+
+	while (span < value && shift < 31) {
+		span <<= 1;
+		shift++;
+	}
+	return shift;
+}
+
+/*
+ * APIC IDs encode topology bit fields; they are not necessarily dense CPU
+ * numbers. In particular, Gemini Lake uses IDs 0,2,4,6 even without SMT.
+ * Decode the bit widths advertised by Intel's extended topology leaves while
+ * retaining count-derived fallbacks for older Intel and non-Intel CPUs.
+ */
+static void
+initTopoShifts(i386_cpu_info_t *cpuinfo)
+{
+	topoSMTShift = ceil_log2_u32(topoParms.nPThreadsPerCore);
+	topoPackageShift = ceil_log2_u32(topoParms.nPThreadsPerPackage);
+
+	if (cpuinfo->cpuid_ven == CPUID_VEN_INTEL &&
+	    cpuinfo->cpuid_max_basic >= 0x0b) {
+		uint32_t regs[4];
+		uint32_t leaf = cpuinfo->cpuid_max_basic >= 0x1f ? 0x1f : 0x0b;
+
+		for (uint32_t subleaf = 0; subleaf < 8; subleaf++) {
+			regs[eax] = leaf;
+			regs[ecx] = subleaf;
+			cpuid(regs);
+			uint32_t levelType = bitfield32(regs[ecx], 15, 8);
+			uint32_t shift = bitfield32(regs[eax], 4, 0);
+			if (levelType == 0)
+				break;
+			if (levelType == 1)
+				topoSMTShift = shift;
+			if (shift > topoPackageShift)
+				topoPackageShift = shift;
+		}
+	}
+
+	/* The old topology model treats the LLC-sharing domain as a die. */
+	topoLLCShift = topoSMTShift +
+	    ceil_log2_u32(topoParms.nCoresSharingLLC);
+	if (topoLLCShift > topoPackageShift)
+		topoLLCShift = topoPackageShift;
+}
+
+static inline uint32_t
+topo_core_id(uint32_t apicID)
+{
+	return apicID >> topoSMTShift;
+}
+
+static inline uint32_t
+topo_die_id(uint32_t apicID)
+{
+	return apicID >> topoLLCShift;
+}
+
+static inline uint32_t
+topo_package_id(uint32_t apicID)
+{
+	return apicID >> topoPackageShift;
+}
 
 decl_simple_lock_data(, x86_topo_lock);
 
@@ -253,6 +326,8 @@ initTopoParms(void)
 	topoParms.nPThreadsPerPackage = nonzero_u32(topoParms.nPThreadsPerPackage,
 	    nonzero_u32(cpuinfo->cpuid_logical_per_package, 1));
 
+	initTopoShifts(cpuinfo);
+
 	TOPO_DBG("\nCache Topology Parameters:\n");
 	TOPO_DBG("\tLLC Depth:           %d\n", topoParms.LLCDepth);
 	TOPO_DBG("\tCores Sharing LLC:   %d\n", topoParms.nCoresSharingLLC);
@@ -409,7 +484,7 @@ x86_core_alloc(int cpu)
 		}
 	}
 
-	core->pcore_num = cpup->cpu_phys_number / topoParms.nPThreadsPerCore;
+	core->pcore_num = topo_core_id(cpup->cpu_phys_number);
 	core->lcore_num = core->pcore_num % topoParms.nPCoresPerPackage;
 
 	core->flags = X86CORE_FL_PRESENT | X86CORE_FL_READY
@@ -436,7 +511,7 @@ x86_package_find(int cpu)
 
 	cpup = cpu_datap(cpu);
 
-	pkg_num = cpup->cpu_phys_number / topoParms.nPThreadsPerPackage;
+	pkg_num = topo_package_id(cpup->cpu_phys_number);
 
 	pkg = x86_pkgs;
 	while (pkg != NULL) {
@@ -459,7 +534,7 @@ x86_die_find(int cpu)
 
 	cpup = cpu_datap(cpu);
 
-	die_num = cpup->cpu_phys_number / topoParms.nPThreadsPerDie;
+	die_num = topo_die_id(cpup->cpu_phys_number);
 
 	pkg = x86_package_find(cpu);
 	if (pkg == NULL) {
@@ -487,7 +562,7 @@ x86_core_find(int cpu)
 
 	cpup = cpu_datap(cpu);
 
-	core_num = cpup->cpu_phys_number / topoParms.nPThreadsPerCore;
+	core_num = topo_core_id(cpup->cpu_phys_number);
 
 	die = x86_die_find(cpu);
 	if (die == NULL) {
@@ -555,7 +630,7 @@ x86_die_alloc(int cpu)
 		}
 	}
 
-	die->pdie_num = cpup->cpu_phys_number / topoParms.nPThreadsPerDie;
+	die->pdie_num = topo_die_id(cpup->cpu_phys_number);
 
 	die->ldie_num = num_dies;
 	atomic_incl((long *) &num_dies, 1);
@@ -596,7 +671,7 @@ x86_package_alloc(int cpu)
 		}
 	}
 
-	pkg->ppkg_num = cpup->cpu_phys_number / topoParms.nPThreadsPerPackage;
+	pkg->ppkg_num = topo_package_id(cpup->cpu_phys_number);
 
 	pkg->lpkg_num = topoParms.nPackages;
 	atomic_incl((long *) &topoParms.nPackages, 1);
