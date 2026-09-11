@@ -3174,6 +3174,8 @@
               libobjc = libobjcBuild;
               corefoundation = coreFoundationBuild;
               libffi = libffiBuild;
+              # NSXML is implemented over libxml2, as Apple's is.
+              libxml2 = libxml2Build;
               # libSystem exports the DNSService* API but installs no header.
               dnssdInclude = ./src/Libraries/mDNSResponder/mDNSShared;
               # Likewise notify_post/notify_register_dispatch.

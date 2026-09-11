@@ -13,6 +13,8 @@
 #import <Foundation/NSObjCRuntime.h>
 #import <Foundation/NSRange.h>
 
+@class NSURL, NSError;
+
 typedef NS_OPTIONS(NSUInteger, NSDataReadingOptions) {
     NSDataReadingMappedIfSafe = 1 << 0,
     NSDataReadingUncached = 1 << 1,
@@ -49,6 +51,21 @@ typedef NS_OPTIONS(NSUInteger, NSDataWritingOptions) {
                        freeWhenDone:(BOOL)freeWhenDone;
 - (instancetype)initWithData:(NSData *)data;
 - (nullable instancetype)initWithContentsOfFile:(NSString *)path;
+
+/* The URL forms, for file URLs. Nothing here fetches over the network, so a
+ * non-file URL reports failure rather than pretending. */
++ (nullable instancetype)dataWithContentsOfURL:(NSURL *)url;
++ (nullable instancetype)dataWithContentsOfURL:(NSURL *)url
+                                       options:(NSDataReadingOptions)options
+                                         error:(NSError **)error;
+- (nullable instancetype)initWithContentsOfURL:(NSURL *)url;
+- (nullable instancetype)initWithContentsOfURL:(NSURL *)url
+                                       options:(NSDataReadingOptions)options
+                                         error:(NSError **)error;
+- (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically;
+- (BOOL)writeToURL:(NSURL *)url
+           options:(NSDataWritingOptions)options
+             error:(NSError **)error;
 
 - (const void *)bytes;
 - (NSUInteger)length;

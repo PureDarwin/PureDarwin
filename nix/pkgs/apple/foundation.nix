@@ -8,6 +8,7 @@
 , dnssdInclude
 , notifyInclude
 , libffi
+, libxml2
 , src
 , targetTriple ? "x86_64-apple-darwin20.4"
 , appleSdk
@@ -16,6 +17,9 @@
 let
   cc = "${darwinCrossToolchain}/bin/${targetTriple}-clang";
   mmSrcs = [
+    "XML.subproj/NSXMLNode"
+    "XML.subproj/NSXMLElement"
+    "XML.subproj/NSXMLDocument"
     "String.subproj/NSString"
     "String.subproj/NSCFString"
     "Runtime.subproj/NSObjectDescription"
@@ -113,7 +117,7 @@ stdenv.mkDerivation {
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 
     mkdir -p foundation-headers/Foundation
-    find Runtime.subproj Coding.subproj Formatters.subproj Notifications.subproj UndoManager.subproj Scanner.subproj Locale.subproj RunLoop.subproj Predicates.subproj KVC.subproj Locking.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
+    find Runtime.subproj Coding.subproj Formatters.subproj Notifications.subproj UndoManager.subproj Scanner.subproj Locale.subproj RunLoop.subproj Predicates.subproj KVC.subproj Locking.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj XML.subproj -name '*.h' -exec cp {} foundation-headers/Foundation/ \;
 
     # corefoundation.nix installs its headers flattened into $out/include
     # (no "CoreFoundation/" subdirectory) - stage the same
@@ -131,6 +135,7 @@ stdenv.mkDerivation {
       -I${corefoundation}/include \
       -I${libffi}/include \
       -I${dnssdInclude} \
+      -I${libxml2}/include/libxml2 \
       -I${notifyInclude}"
 
     objs=""
@@ -148,6 +153,7 @@ stdenv.mkDerivation {
       -Wl,-install_name,/usr/lib/libFoundation.dylib \
       -Wl,-fixup_chains \
       ${libffi}/lib/libffi.a \
+      ${libxml2}/lib/libxml2.a \
       -lobjc -lCoreFoundation -lSystem \
       -o libFoundation.dylib $objs
 
@@ -158,7 +164,7 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/usr/lib $out/usr/include/Foundation
     cp libFoundation.dylib $out/usr/lib/
-    find Runtime.subproj Coding.subproj Formatters.subproj Notifications.subproj UndoManager.subproj Scanner.subproj Locale.subproj RunLoop.subproj Predicates.subproj KVC.subproj Locking.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
+    find Runtime.subproj Coding.subproj Formatters.subproj Notifications.subproj UndoManager.subproj Scanner.subproj Locale.subproj RunLoop.subproj Predicates.subproj KVC.subproj Locking.subproj String.subproj Collections.subproj URL.subproj Numeric.subproj Date.subproj Stream.subproj XPC.subproj FileManager.subproj XML.subproj -name '*.h' -exec cp {} $out/usr/include/Foundation/ \;
 
     fwdir=$out/System/Library/Frameworks/Foundation.framework
     mkdir -p "$fwdir/Versions/A/Resources"

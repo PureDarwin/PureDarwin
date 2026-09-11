@@ -1147,6 +1147,20 @@ let
         rootMB = 260;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       };
+      # The minimal system booted by 32-bit UEFI. Same shape as
+      # image-minimal; only the loader and the ESP fallback name differ.
+      imageIa32MinimalBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemMinimal;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderIa32;
+        efiBinary = "BOOTIA32.EFI";
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-ia32-minimal.img";
+        espMB = 60;
+        rootMB = 260;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
+      };
       imageLegacyMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemMinimal;
         extraPackages = strippedExtraPackages;
@@ -1220,137 +1234,228 @@ let
         rootMB = 300;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 serial_video_mirror=1";
       };
-      runVm = pkgs.writeShellApplication {
+      # One body for every UEFI runner. The differences between them are real
+      # but small - firmware, accelerator, CPU, how the disk is attached - so
+      # they are parameters rather than four near-copies that drift apart.
+      # One body for every UEFI runner. The differences between them are real
+      # but small - firmware, accelerator, CPU, how the disk is attached - so
+      # they are parameters rather than several near-copies that drift apart.
+      #
+      # The qemu invocation is assembled as an array rather than a
+      # backslash-continued command: an option that contributes no arguments
+      # would otherwise leave a blank line mid-continuation, which ends the
+      # command early and makes the next flag look like a command name.
+      mkRunner =
+        { name
+        , imageNames            # candidates looked for in $PWD and result/
+        , imageHint             # the flake target named in the "no image" error
+        , firmware ? pkgs.OVMF.fd   # null: must be supplied via the environment
+        , machine
+        , cpuVar ? "PUREDARWIN_VM_CPU"
+        , cpuDefault
+        , smpDefault ? "4"
+        , diskStyle ? "simple"  # "simple" | "switch" (ahci/virtio via env)
+        , network ? false
+        , audio ? true
+        , pciMmio64 ? true      # OVMF's 64-bit MMIO window; X64 firmware only
+        , noReboot ? true
+        }:
+        let
+          # One shell token per element, each emitted already quoted: an
+          # unquoted element containing a comma reads as an attempt to separate
+          # array elements, and a flag and its value must stay separate argv
+          # entries. Values needing expansion carry their own "${...}".
+          q = tok: ''"${tok}"'';
+          qemuArgs =
+            [
+              (q "-machine") (q machine)
+              (q "-cpu") ''"''${${cpuVar}:-${cpuDefault}}"''
+              (q "-smp") ''"''${PUREDARWIN_VM_SMP:-${smpDefault}}"''
+              (q "-m") ''"''${PUREDARWIN_VM_MEMORY:-4096}"''
+              (q "-vga") ''"''${PUREDARWIN_VM_VGA:-std}"''
+            ]
+            ++ lib.optionals pciMmio64 [
+              (q "-fw_cfg") (q "name=opt/ovmf/X-PciMmio64Mb,string=2048")
+            ]
+            ++ [
+              (q "-drive") ''"if=pflash,format=raw,unit=0,readonly=on,file=$ovmf_code"''
+              (q "-drive") ''"if=pflash,format=raw,unit=1,file=$ovmf_vars"''
+            ]
+            ++ lib.optionals network [
+              (q "-device") (q "virtio-net,netdev=net0")
+              (q "-netdev") (q "user,id=net0")
+            ]
+            ++ [
+              (q "-device") (q "qemu-xhci,id=xhci")
+              (q "-device") (q "usb-kbd,bus=xhci.0")
+              (q "-device") (q "usb-mouse,bus=xhci.0")
+            ]
+            ++ lib.optionals audio [
+              (q "-device") (q "intel-hda,id=hda")
+              (q "-device") (q "hda-duplex,audiodev=snd0")
+              (q "-audiodev") ''"''${PUREDARWIN_VM_AUDIODEV:-none},id=snd0"''
+            ]
+            ++ [ (q "-serial") (q "mon:stdio") ]
+            ++ lib.optionals noReboot [ (q "-no-reboot") (q "-no-shutdown") ];
+        in
+        pkgs.writeShellApplication {
+          inherit name;
+          runtimeInputs = [ pkgs.qemu ];
+          text = ''
+            set -euo pipefail
+
+            state_dir="''${PUREDARWIN_VM_STATE_DIR:-$PWD/.${name}}"
+            image="''${PUREDARWIN_IMAGE:-}"
+            ${if firmware == null then ''
+            # No firmware is built for this configuration; see the comment on
+            # the runner that sets firmware = null.
+            ovmf_code="''${PUREDARWIN_OVMF_CODE:-}"
+            ovmf_vars_template="''${PUREDARWIN_OVMF_VARS_TEMPLATE:-}"
+            if [ -z "$ovmf_code" ] || [ -z "$ovmf_vars_template" ]; then
+              echo "${name}: set PUREDARWIN_OVMF_CODE and PUREDARWIN_OVMF_VARS_TEMPLATE to a 32-bit (IA32) UEFI firmware." >&2
+              echo "  There is no IA32 OVMF to default to: edk2 202602 ships only OvmfPkgX64.dsc," >&2
+              echo "  OvmfPkgIa32X64.dsc (32-bit PEI but 64-bit DXE, so it loads BOOTX64.EFI, not" >&2
+              echo "  BOOTIA32.EFI) and OvmfXen.dsc - upstream dropped the pure-IA32 platform." >&2
+              echo "  Use an IA32 build from an older edk2 (OvmfPkgIa32.dsc existed through ~2024)," >&2
+              echo "  a distro package, or a dump of the target machine's own firmware." >&2
+              exit 1
+            fi
+            '' else ''
+            ovmf_code="''${PUREDARWIN_OVMF_CODE:-${firmware}/FV/OVMF_CODE.fd}"
+            ovmf_vars_template="''${PUREDARWIN_OVMF_VARS_TEMPLATE:-${firmware}/FV/OVMF_VARS.fd}"
+            ''}
+            ovmf_vars="''${PUREDARWIN_OVMF_VARS:-$state_dir/OVMF_VARS.fd}"
+
+            if [ -z "$image" ]; then
+              for candidate in ${lib.concatMapStringsSep " " (n: ''"$PWD/${n}" "$PWD/result/${n}"'') imageNames}; do
+                if [ -e "$candidate" ]; then
+                  image="$candidate"
+                  break
+                fi
+              done
+            fi
+            if [ -z "$image" ]; then
+              echo "${name}: no image found; set PUREDARWIN_IMAGE or run nix build ${imageHint}" >&2
+              exit 1
+            fi
+
+            image_readonly_opt=""
+            if [ ! -w "$image" ]; then
+              image_readonly_opt=",snapshot=on"
+            fi
+
+            mkdir -p "$state_dir"
+            if [ ! -e "$ovmf_vars" ]; then
+              cp "$ovmf_vars_template" "$ovmf_vars"
+              chmod u+w "$ovmf_vars"
+            fi
+
+            ${if diskStyle == "switch" then ''
+            case "''${PUREDARWIN_VM_DISK:-ahci}" in
+              virtio|virtio-blk)
+                disk_args=(
+                  -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt"
+                  -device "virtio-blk-pci,drive=system"
+                )
+                ;;
+              ahci)
+                disk_args=(
+                  -device "ich9-ahci,id=sata"
+                  -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt"
+                  -device "ide-hd,bus=sata.0,drive=system"
+                )
+                ;;
+              *)
+                echo "PUREDARWIN_VM_DISK must be 'ahci' or 'virtio'" >&2
+                exit 1
+                ;;
+            esac
+            '' else ''
+            disk_args=(-drive "id=root,format=raw,file=$image$image_readonly_opt")
+            ''}
+
+            qemu_args=(
+              ${lib.concatStringsSep "\n              " qemuArgs}
+            )
+            qemu_args+=("''${disk_args[@]}")
+
+            # Zero-or-one argument, so it cannot be an array element: an unset
+            # variable would contribute an empty argv entry.
+            if [ -n "''${PUREDARWIN_VM_NETDUMP:-}" ]; then
+              qemu_args+=(-object "filter-dump,id=netdump,netdev=net0,file=$PUREDARWIN_VM_NETDUMP")
+            fi
+
+            exec qemu-system-x86_64 "''${qemu_args[@]}" "$@"
+          '';
+        };
+
+      mkUefiRunner = args: mkRunner ({
+        imageNames = [ "puredarwin.img" ];
+        imageHint = ".#image";
+        diskStyle = "switch";
+        network = true;
+        # As this runner has always behaved: a reboot inside the guest
+        # restarts it rather than stopping the machine.
+        noReboot = false;
+      } // args);
+
+      runVm = mkUefiRunner {
         name = "puredarwin-vm";
-        runtimeInputs = [ pkgs.qemu ];
-        text = ''
-          set -euo pipefail
-
-          state_dir="''${PUREDARWIN_VM_STATE_DIR:-$PWD/.puredarwin-vm}"
-          image="''${PUREDARWIN_IMAGE:-}"
-          ovmf_code="''${PUREDARWIN_OVMF_CODE:-${pkgs.OVMF.fd}/FV/OVMF_CODE.fd}"
-          ovmf_vars_template="''${PUREDARWIN_OVMF_VARS_TEMPLATE:-${pkgs.OVMF.fd}/FV/OVMF_VARS.fd}"
-          ovmf_vars="''${PUREDARWIN_OVMF_VARS:-$state_dir/OVMF_VARS.fd}"
-
-          if [ -z "$image" ]; then
-            if [ -e "$PWD/puredarwin.img" ]; then
-              image="$PWD/puredarwin.img"
-            elif [ -e "$PWD/result/puredarwin.img" ]; then
-              image="$PWD/result/puredarwin.img"
-            else
-              echo "puredarwin-vm: no image found; set PUREDARWIN_IMAGE or run nix build .#image" >&2
-              exit 1
-            fi
-          fi
-          image_readonly_opt=""
-          if [ ! -w "$image" ]; then
-            image_readonly_opt=",snapshot=on"
-          fi
-
-          mkdir -p "$state_dir"
-          if [ ! -e "$ovmf_vars" ]; then
-            cp "$ovmf_vars_template" "$ovmf_vars"
-            chmod u+w "$ovmf_vars"
-          fi
-
-          exec qemu-system-x86_64 \
-            -M q35 \
-            -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
-            -smp "''${PUREDARWIN_VM_SMP:-4}" \
-            -vga "''${PUREDARWIN_VM_VGA:-std}" \
-            -cpu IvyBridge,vendor=GenuineIntel \
-            -fw_cfg name=opt/ovmf/X-PciMmio64Mb,string=2048 \
-            -drive if=pflash,format=raw,unit=0,readonly=on,file="$ovmf_code" \
-            -drive if=pflash,format=raw,unit=1,file="$ovmf_vars" \
-            -drive id=root,format=raw,file="$image"$image_readonly_opt \
-            -device qemu-xhci,id=xhci \
-            -device usb-kbd,bus=xhci.0 \
-            -device usb-mouse,bus=xhci.0 \
-            -device intel-hda,id=hda \
-            -device hda-duplex,audiodev=snd0 \
-            -audiodev "''${PUREDARWIN_VM_AUDIODEV:-none},id=snd0" \
-            -serial mon:stdio \
-            -no-reboot \
-            -no-shutdown \
-            "$@"
-        '';
+        machine = "q35";
+        cpuDefault = "IvyBridge,vendor=GenuineIntel";
       };
-      runKvm = pkgs.writeShellApplication {
+
+      runKvm = mkUefiRunner {
         name = "puredarwin-kvm";
-        runtimeInputs = [ pkgs.qemu ];
-        text = ''
-          set -euo pipefail
-
-          state_dir="''${PUREDARWIN_VM_STATE_DIR:-$PWD/.puredarwin-kvm}"
-          image="''${PUREDARWIN_IMAGE:-}"
-          ovmf_code="''${PUREDARWIN_OVMF_CODE:-${pkgs.OVMF.fd}/FV/OVMF_CODE.fd}"
-          ovmf_vars_template="''${PUREDARWIN_OVMF_VARS_TEMPLATE:-${pkgs.OVMF.fd}/FV/OVMF_VARS.fd}"
-          ovmf_vars="''${PUREDARWIN_OVMF_VARS:-$state_dir/OVMF_VARS.fd}"
-
-          if [ -z "$image" ]; then
-            if [ -e "$PWD/puredarwin.img" ]; then
-              image="$PWD/puredarwin.img"
-            elif [ -e "$PWD/result/puredarwin.img" ]; then
-              image="$PWD/result/puredarwin.img"
-            else
-              echo "puredarwin-kvm: no image found; set PUREDARWIN_IMAGE or run nix build .#image" >&2
-              exit 1
-            fi
-          fi
-          image_readonly_opt=""
-          if [ ! -w "$image" ]; then
-            image_readonly_opt=",snapshot=on"
-          fi
-
-          mkdir -p "$state_dir"
-          if [ ! -e "$ovmf_vars" ]; then
-            cp "$ovmf_vars_template" "$ovmf_vars"
-            chmod u+w "$ovmf_vars"
-          fi
-
-          case "''${PUREDARWIN_VM_DISK:-ahci}" in
-            virtio|virtio-blk)
-              disk_args=(
-                -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt"
-                -device "virtio-blk-pci,drive=system"
-              )
-              ;;
-            ahci)
-              disk_args=(
-                -device "ich9-ahci,id=sata"
-                -drive "if=none,id=system,file=$image,format=raw,cache=writeback$image_readonly_opt"
-                -device "ide-hd,bus=sata.0,drive=system"
-              )
-              ;;
-            *)
-              echo "PUREDARWIN_VM_DISK must be 'ahci' or 'virtio'" >&2
-              exit 1
-              ;;
-          esac
-
-          exec qemu-system-x86_64 \
-            -machine q35,accel=kvm \
-            -cpu "''${PUREDARWIN_KVM_CPU:-host}" \
-            -smp "''${PUREDARWIN_VM_SMP:-4}" \
-            -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
-            -vga "''${PUREDARWIN_VM_VGA:-std}" \
-            -fw_cfg name=opt/ovmf/X-PciMmio64Mb,string=2048 \
-            -drive if=pflash,format=raw,unit=0,readonly=on,file="$ovmf_code" \
-            -drive if=pflash,format=raw,unit=1,file="$ovmf_vars" \
-            "''${disk_args[@]}" \
-            -device virtio-net,netdev=net0 \
-            -netdev user,id=net0 \
-            ''${PUREDARWIN_VM_NETDUMP:+-object filter-dump,id=netdump,netdev=net0,file="$PUREDARWIN_VM_NETDUMP"} \
-            -device qemu-xhci,id=xhci \
-            -device usb-kbd,bus=xhci.0 \
-            -device usb-mouse,bus=xhci.0 \
-            -device intel-hda,id=hda \
-            -device hda-duplex,audiodev=snd0 \
-            -audiodev "''${PUREDARWIN_VM_AUDIODEV:-none},id=snd0" \
-            -serial mon:stdio \
-            "$@"
-        '';
+        machine = "q35,accel=kvm";
+        cpuVar = "PUREDARWIN_KVM_CPU";
+        cpuDefault = "host";
       };
+
+      # 32-bit UEFI firmware. edk2 removed OvmfPkgIa32.dsc in stable202511, so
+      # the sources are pinned to stable202508 - the last release that has it.
+      # OvmfPkgIa32X64.dsc is not a substitute: its DXE phase is 64-bit, so it
+      # loads BOOTX64.EFI rather than the BOOTIA32.EFI an ia32 image ships.
+      edk2Ia32 = pkgs.pkgsi686Linux.edk2.overrideAttrs (old: {
+        version = "202508";
+        src = pkgs.fetchFromGitHub {
+          owner = "tianocore";
+          repo = "edk2";
+          rev = "edk2-stable202508";
+          fetchSubmodules = true;
+          hash = "sha256-YZcjPGPkUQ9CeJS9JxdHBmpdHsAj7T0ifSZWZKyNPMk=";
+        };
+      });
+
+      ovmfIa32 = (pkgs.pkgsi686Linux.OVMF.override {
+        edk2 = edk2Ia32;
+        projectDscPath = "OvmfPkg/OvmfPkgIa32.dsc";
+        fwPrefix = "OVMF";
+        metaPlatforms = [ "i686-linux" "x86_64-linux" ];
+      });
+
+      # ia32 differs in exactly two things: the firmware is 32-bit, and OVMF's
+      # 64-bit MMIO window does not exist there.
+      mkIa32Runner = args: mkUefiRunner ({
+        imageNames = [ "puredarwin-ia32-minimal.img" "puredarwin-ia32.img" ];
+        imageHint = ".#image-ia32-minimal";
+        firmware = ovmfIa32.fd;
+        pciMmio64 = false;
+      } // args);
+
+      runVmIa32 = mkIa32Runner {
+        name = "puredarwin-vm-ia32";
+        machine = "q35";
+        cpuDefault = "Penryn";
+      };
+
+      runKvmIa32 = mkIa32Runner {
+        name = "puredarwin-kvm-ia32";
+        machine = "q35,accel=kvm";
+        cpuVar = "PUREDARWIN_KVM_CPU";
+        cpuDefault = "host";
+      };
+
       runVmLegacy = pkgs.writeShellApplication {
         name = "puredarwin-vm-legacy";
         runtimeInputs = [ pkgs.qemu ];
@@ -1644,6 +1749,7 @@ let
       image-minimal = imageMinimalBuild;
       image-legacy = imageLegacyBuild;
       image-ia32 = imageIa32Build;
+      image-ia32-minimal = imageIa32MinimalBuild;
       image-legacy-minimal = imageLegacyMinimalBuild;
       image-minimal-debug = imageMinimalBuildDebug;
       image-shell = imageShellBuild;
@@ -1653,6 +1759,8 @@ let
       userland = userlandBuild;
       vm-runner = runVm;
       kvm-runner = runKvm;
+      vm-ia32-runner = runVmIa32;
+      kvm-ia32-runner = runKvmIa32;
       vm-legacy-runner = runVmLegacy;
       kvm-legacy-runner = runKvmLegacy;
       arm64-virt-runner = runArm64Virt;
@@ -1666,6 +1774,8 @@ let
       runKvm = linuxPackages.kvm-runner;
       runVmLegacy = linuxPackages.vm-legacy-runner;
       runKvmLegacy = linuxPackages.kvm-legacy-runner;
+      runVmIa32 = linuxPackages.vm-ia32-runner;
+      runKvmIa32 = linuxPackages.kvm-ia32-runner;
       runVirt = linuxPackages.arm64-virt-runner;
     in {
       default = {
@@ -1699,6 +1809,14 @@ let
       kvm-legacy = {
         type = "app";
         program = "${runKvmLegacy}/bin/puredarwin-kvm-legacy";
+      };
+      vm-ia32 = {
+        type = "app";
+        program = "${runVmIa32}/bin/puredarwin-vm-ia32";
+      };
+      kvm-ia32 = {
+        type = "app";
+        program = "${runKvmIa32}/bin/puredarwin-kvm-ia32";
       };
     };
 in {

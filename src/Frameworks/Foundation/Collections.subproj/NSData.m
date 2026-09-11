@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <CoreFoundation/CFBase.h>
 #import <Foundation/NSString.h>
+#import <Foundation/NSURL.h>
 #include <CoreFoundation/CFData.h>
 #include <CoreFoundation/ForFoundationOnly.h>
 #include <fcntl.h>
@@ -289,6 +290,68 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 
 /* Atomic writes go to a temporary in the same directory and are renamed, so a
  * reader never observes a partial file. */
+/* File URLs only: a path is what the file-backed implementations below take,
+ * and nothing in this Foundation fetches a remote URL. */
++ (instancetype)dataWithContentsOfURL:(NSURL *)url
+{
+	return [self dataWithContentsOfURL:url options:0 error:NULL];
+}
+
++ (instancetype)dataWithContentsOfURL:(NSURL *)url
+                              options:(NSDataReadingOptions)options
+                                error:(NSError **)error
+{
+	if (error != NULL) {
+		*error = nil;
+	}
+	if (![url isFileURL]) {
+		return nil;
+	}
+	return [self dataWithContentsOfFile:[url path] options:options error:error];
+}
+
+- (instancetype)initWithContentsOfURL:(NSURL *)url
+{
+	return [self initWithContentsOfURL:url options:0 error:NULL];
+}
+
+- (instancetype)initWithContentsOfURL:(NSURL *)url
+                              options:(NSDataReadingOptions)options
+                                error:(NSError **)error
+{
+	(void)options;
+
+	if (error != NULL) {
+		*error = nil;
+	}
+	if (![url isFileURL]) {
+		[self release];
+		return nil;
+	}
+	return [self initWithContentsOfFile:[url path]];
+}
+
+- (BOOL)writeToURL:(NSURL *)url atomically:(BOOL)atomically
+{
+	if (![url isFileURL]) {
+		return NO;
+	}
+	return [self writeToFile:[url path] atomically:atomically];
+}
+
+- (BOOL)writeToURL:(NSURL *)url
+           options:(NSDataWritingOptions)options
+             error:(NSError **)error
+{
+	if (![url isFileURL]) {
+		if (error != NULL) {
+			*error = nil;
+		}
+		return NO;
+	}
+	return [self writeToFile:[url path] options:options error:error];
+}
+
 - (BOOL)writeToFile:(NSString *)path atomically:(BOOL)atomically
 {
 	const char *target = [path fileSystemRepresentation];

@@ -197,6 +197,7 @@ let
     libobjc = libobjcArm64Build;
     corefoundation = coreFoundationArm64Build;
     libffi = libffiArm64Build;
+    libxml2 = libxml2Arm64Build;
     # Headers only, so the same sources the x86 side uses.
     dnssdInclude = ../src/Libraries/mDNSResponder/mDNSShared;
     notifyInclude = ../src/Libraries/XPC/notify;
