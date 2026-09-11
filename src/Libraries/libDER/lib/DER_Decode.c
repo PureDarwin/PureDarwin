@@ -1,6 +1,9 @@
 /*
  * DER_Decode.c - DER decoding.
-
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 
 #include <libDER/DER_Decode.h>
