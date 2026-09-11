@@ -25,6 +25,10 @@ APPKIT_EXPORT NSString *const NSMenuDidEndTrackingNotification;
 - (void)setHorizontal:(BOOL)flag;
 - (BOOL)isHorizontal;
 
+/* The attributes item widths are measured with. Draw titles with these, or the
+ * text will not fit the rect that was measured for it. */
+- (NSDictionary *)itemAttributes;
+
 - (void)setFont:(NSFont *)font;
 - (NSFont *)font;
 

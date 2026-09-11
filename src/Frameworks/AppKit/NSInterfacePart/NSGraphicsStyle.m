@@ -6,6 +6,8 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #import <AppKit/NSGraphicsStyle.h>
+#import <AppKit/NSInterfaceTheme.h>
+#import <objc/runtime.h>
 #import <AppKit/NSInterfacePartAttributedString.h>
 #import <AppKit/NSInterfacePartDisabledAttributedString.h>
 #import <AppKit/NSColor.h>
@@ -27,6 +29,17 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 	if (sNormalMenuTextAttributes == nil)
 	{
 		NSFont *menuFont = [NSFont menuFontOfSize:15.0];
+
+		/* A nil font would truncate every dictionaryWithObjectsAndKeys: below
+		 * at its first argument, leaving the attributes empty - so menu items
+		 * drew nothing at all while still measuring and highlighting normally.
+		 * Fall back to a font that is known to resolve. */
+		if (menuFont == nil) {
+			menuFont = [NSFont systemFontOfSize:15.0];
+		}
+		if (menuFont == nil) {
+			menuFont = [NSFont userFontOfSize:15.0];
+		}
 		sNormalMenuTextAttributes = [[NSDictionary dictionaryWithObjectsAndKeys:
 									  menuFont,NSFontAttributeName,
 									  [NSColor menuItemTextColor],NSForegroundColorAttributeName,
@@ -49,12 +62,15 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 }
 
 -initWithView:(NSView *)view {
-   _view=[view retain];
+   /* Not retained: the style is a draw-time helper and never outlives its
+    * view, and the view now owns the style (see -graphicsStyle), so retaining
+    * here would be a cycle and the view would never deallocate. */
+   _view=view;
    return self;
 }
 
 -(void)dealloc {
-   [_view release];
+   /* _view is not retained - see -initWithView:. */
    [super dealloc];
 }
 
@@ -190,6 +206,33 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 	// Nothing to do.
 }
 
+-(NSDictionary *)_menuTextAttributesEnabled:(BOOL)enabled selected:(BOOL)selected
+{
+	NSDictionary *fallback = enabled
+		? (selected ? sSelectedMenuTextAttributes : sNormalMenuTextAttributes)
+		: sDimmedMenuTextAttributes;
+
+	if (![_view respondsToSelector:@selector(itemAttributes)]) {
+		return fallback;
+	}
+
+	NSFont *font = [[(id)_view itemAttributes] objectForKey:NSFontAttributeName];
+
+	if (font == nil) {
+		return fallback;
+	}
+
+	NSColor *colour = enabled
+		? (selected ? [NSColor selectedMenuItemTextColor] : [NSColor menuItemTextColor])
+		: [NSColor grayColor];
+
+	if (colour == nil) {
+		return fallback;
+	}
+	return [NSDictionary dictionaryWithObjectsAndKeys:
+	        font, NSFontAttributeName, colour, NSForegroundColorAttributeName, nil];
+}
+
 -(void)drawMenuItemText:(NSString *)string inRect:(NSRect)rect enabled:(BOOL)enabled selected:(BOOL)selected
 {
     // Ensure we have enough width - fractional widths give float comparison trouble
@@ -202,30 +245,8 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 	rect.size.width -= (margins.left + margins.right);
 	rect.size.height -= (margins.top + margins.bottom);
 	
-	if (enabled)
-	{
-		if (selected)
-		{
-			[string drawInRect:rect withAttributes:sSelectedMenuTextAttributes];
-		}
-		else
-		{
-			[string drawInRect:rect withAttributes:sNormalMenuTextAttributes];
-		}
-	}
-	else
-	{
-#if 0
-		if (!selected)
-		{
-			NSRect offsetRect = rect;
-			offsetRect.origin.x += 1;
-			offsetRect.origin.y += 1;
-			[string drawInRect:offsetRect withAttributes:sDimmedMenuTextShadowAttributes];
-		}
-#endif
-		[string drawInRect:rect withAttributes:sDimmedMenuTextAttributes];
-	}
+	[string drawInRect:rect
+	    withAttributes:[self _menuTextAttributesEnabled:enabled selected:selected]];
 }
 
 -(void)drawAttributedMenuItemText:(NSAttributedString *)string inRect:(NSRect)rect enabled:(BOOL)enabled selected:(BOOL)selected
@@ -319,12 +340,20 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 {
 	if (enabled)
 	{
+		if ([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemeMenuSelection
+		                                            inRect:rect]) {
+			return;
+		}
 		[[NSColor selectedMenuItemColor] setFill];
 		NSRectFill(rect);
 	}
 }
 
 -(void)drawMenuWindowBackgroundInRect:(NSRect)rect {
+    if ([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemeMenuWindowBackground
+                                                inRect:rect]) {
+        return;
+    }
     [[NSColor menuBackgroundColor] setFill];
 	NSRectFill(rect);
 	[[NSColor windowFrameColor] set];
@@ -335,12 +364,20 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 {
 	if (selected || hovering)
 	{
+		if ([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemeMenuBarItemSelected
+		                                            inRect:rect]) {
+			return;
+		}
 		[[NSColor selectedMenuItemColor] setFill];
 		NSRectFill(rect);
 	}
 }
 
 -(void)drawMenuBarBackgroundInRect:(NSRect)rect {
+	if ([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemeMenuBarBackground
+	                                            inRect:rect]) {
+		return;
+	}
 	[[NSColor mainMenuBarColor] setFill];
 	NSRectFill(rect);
 }
@@ -357,6 +394,10 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 }
 
 -(void)drawPushButtonNormalInRect:(NSRect)rect defaulted:(BOOL)defaulted {
+   if([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemePushButtonNormal
+                                              inRect:rect])
+    return;
+
    if(defaulted){
     [[NSColor blackColor] setFill];
     NSRectFill(rect);
@@ -367,10 +408,18 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 }
 
 -(void)drawPushButtonPressedInRect:(NSRect)rect {
+   if([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemePushButtonPressed
+                                              inRect:rect])
+    return;
+
    NSInterfaceDrawDepressedButton(rect,rect);
 }
 
 -(void)drawPushButtonHighlightedInRect:(NSRect)rect {
+   if([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemePushButtonHighlighted
+                                              inRect:rect])
+    return;
+
    NSInterfaceDrawHighlightedButton(rect,rect);
 }
 
@@ -554,10 +603,16 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 }
 
 -(void)drawScrollerKnobInRect:(NSRect)rect vertical:(BOOL)vertical highlight:(BOOL)highlight {
-   NSDrawButton(rect,rect);
+   if(![[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemeScrollerKnob
+                                               inRect:rect])
+    NSDrawButton(rect,rect);
 }
 
 -(void)drawScrollerTrackInRect:(NSRect)rect vertical:(BOOL)vertical upOrLeft:(BOOL)upOrLeft {
+   if([[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemeScrollerTrack
+                                              inRect:rect])
+    return;
+
    [[NSColor colorWithCalibratedWhite:0.9 alpha:1] setFill];
    NSRectFill(rect);
 }
@@ -645,7 +700,9 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 @implementation NSGraphicsStyle (NSTableView)
 
 -(void)drawTableViewHeaderInRect:(NSRect)rect highlighted:(BOOL)highlighted {
-   NSDrawButton(rect, rect);
+   if(![[NSInterfaceTheme currentTheme] drawPartNamed:NSInterfaceThemeTableViewHeader
+                                               inRect:rect])
+    NSDrawButton(rect, rect);
     
    if(highlighted){
     [[NSColor darkGrayColor] setFill];
@@ -804,7 +861,19 @@ static NSDictionary *sDimmedMenuTextShadowAttributes = nil;
 @implementation NSView(NSGraphicsStyle)
 
 -(NSGraphicsStyle *)graphicsStyle {
-   return [[[NSGraphicsStyle alloc] initWithView:self] autorelease];
+   /* One per view, not one per draw call: -sizeOfItem: and -rectOfItemAtIndex:
+    * ask for the style inside loops, so this used to allocate once per item on
+    * every redraw. Kept on the view itself so no two views share an instance. */
+   static const char kGraphicsStyleKey = 0;
+   NSGraphicsStyle *style = objc_getAssociatedObject(self, &kGraphicsStyleKey);
+
+   if (style == nil) {
+      style = [[NSGraphicsStyle alloc] initWithView:self];
+      objc_setAssociatedObject(self, &kGraphicsStyleKey, style,
+                               OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      [style release];
+   }
+   return style;
 }
 
 @end

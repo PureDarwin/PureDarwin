@@ -235,7 +235,15 @@ postcode2(uint8_t       xxxx)
  * counts up and bands fill top-to-bottom, stopping where the boot died.
  * Anything too low to fit on screen is simply not drawn.
  */
+struct boot_args;
+
 extern void pd_boot_mark(uint8_t code);
+extern void pd_boot_mark_init(struct boot_args *args);
+extern void pd_boot_mark_band(uint32_t band);
+extern void pd_boot_mark_direct(uint32_t band, struct boot_args *args);
+extern uintptr_t pd_boot_mark_fb_va(void);
+extern int pd_boot_mark_physmap;
+extern uint64_t pd_boot_mark_physmap_cr3;
 
 #define postcode(xx)     pd_boot_mark((uint8_t)(xx))
 #define postcode2(xxxx)  do {} while(0)

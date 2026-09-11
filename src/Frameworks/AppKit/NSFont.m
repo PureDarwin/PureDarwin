@@ -251,12 +251,15 @@ static NSLock *_cacheLock=nil;
     return [self _uiFontOfType:kCTFontLabelFontType size:(size==0)?10.0:size fallbackName:@"Inter-Regular"];
 }
 
+/* size==0 means "the default size" - every other +...FontOfSize: substitutes
+ * one, and without it the fallback path builds a 0-point font, which measures
+ * as zero-width and draws nothing. */
 +(NSFont *)menuFontOfSize:(float)size {
-    return [self _uiFontOfType:kCTFontMenuItemFontType size:size fallbackName:@"Inter-Regular"];
+    return [self _uiFontOfType:kCTFontMenuItemFontType size:(size==0)?14.0:size fallbackName:@"Inter-Regular"];
 }
 
 +(NSFont *)menuBarFontOfSize:(float)size {
-    return [self _uiFontOfType:kCTFontMenuTitleFontType size:size fallbackName:@"Inter-Regular"];
+    return [self _uiFontOfType:kCTFontMenuTitleFontType size:(size==0)?14.0:size fallbackName:@"Inter-Regular"];
 }
 
 +(NSFont *)messageFontOfSize:(float)size {

@@ -12,4 +12,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 @interface NSInterfacePart : NSObject
 - (NSSize)size;
 - (void)drawAtPoint:(NSPoint)point;
+
+/* Parts that describe a control's background have to stretch to whatever rect
+ * the control occupies, which -drawAtPoint: cannot express. The default
+ * implementation defers to -drawAtPoint: so fixed-size parts keep working. */
+- (void)drawInRect:(NSRect)rect;
 @end

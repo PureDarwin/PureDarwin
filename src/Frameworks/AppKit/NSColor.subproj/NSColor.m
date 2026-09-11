@@ -519,6 +519,24 @@ static const struct { const char *name; CGFloat r, g, b, a; } _pdSystemColors[] 
     {NULL, 0, 0, 0, 0}
 };
 
++(NSColorList *)_builtInSystemColorList {
+    NSColorList *list = [[[NSColorList alloc] initWithName:@"System"] autorelease];
+
+    for(int i = 0; _pdSystemColors[i].name != NULL; i++) {
+        NSString *key = [NSString stringWithUTF8String:_pdSystemColors[i].name];
+
+        if(key == nil)
+            continue;
+
+        [list setColor:[NSColor colorWithCalibratedRed:_pdSystemColors[i].r
+                                                 green:_pdSystemColors[i].g
+                                                  blue:_pdSystemColors[i].b
+                                                 alpha:_pdSystemColors[i].a]
+                forKey:key];
+    }
+    return list;
+}
+
 +(NSColor *)_fallbackColorNamed:(NSString *)colorName {
     /* The display's own table wins, so a backend can override the look. */
     NSColor *color = [[NSDisplay currentDisplay] colorWithName:colorName];

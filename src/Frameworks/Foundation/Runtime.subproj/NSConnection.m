@@ -41,6 +41,7 @@
 #import <Foundation/NSNull.h>
 #include <CoreFoundation/CFMessagePort.h>
 #include <CoreFoundation/CFRunLoop.h>
+#include <CoreFoundation/CFNumber.h>
 #include <dispatch/dispatch.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -87,7 +88,8 @@ static NSMutableDictionary *_clientConnections = nil;
  * what can be sent - NSCoding conformance is not declared on our value
  * classes. Scalars travel as raw bytes because NSValue is neither. */
 static BOOL _isArchivable(id object) {
-    return [object isKindOfClass:[NSString class]] ||
+    return object == (id)kCFBooleanTrue || object == (id)kCFBooleanFalse ||
+           [object isKindOfClass:[NSString class]] ||
            [object isKindOfClass:[NSNumber class]] ||
            [object isKindOfClass:[NSData class]] ||
            [object isKindOfClass:[NSArray class]] ||

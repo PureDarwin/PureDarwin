@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>menuBarBackground</key>
+	<dict>
+		<key>angle</key>
+		<real>270.0</real>
+		<key>border</key>
+		<string>0.55 0.57 0.60</string>
+		<key>colors</key>
+		<array>
+			<string>0.99 0.99 1.0</string>
+			<string>0.82 0.84 0.88</string>
+		</array>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+	<key>menuBarItemSelected</key>
+	<dict>
+		<key>angle</key>
+		<real>270.0</real>
+		<key>colors</key>
+		<array>
+			<string>0.42 0.62 0.92</string>
+			<string>0.16 0.38 0.78</string>
+		</array>
+		<key>radius</key>
+		<real>3.0</real>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+	<key>menuSelection</key>
+	<dict>
+		<key>angle</key>
+		<real>270.0</real>
+		<key>colors</key>
+		<array>
+			<string>0.42 0.62 0.92</string>
+			<string>0.16 0.38 0.78</string>
+		</array>
+		<key>radius</key>
+		<real>3.0</real>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+	<key>menuWindowBackground</key>
+	<dict>
+		<key>angle</key>
+		<real>270.0</real>
+		<key>border</key>
+		<string>0.45 0.47 0.52</string>
+		<key>colors</key>
+		<array>
+			<string>0.99 0.99 1.0</string>
+			<string>0.90 0.91 0.94</string>
+		</array>
+		<key>radius</key>
+		<real>5.0</real>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+	<key>pushButtonNormal</key>
+	<dict>
+		<key>angle</key>
+		<real>270.0</real>
+		<key>border</key>
+		<string>0.50 0.52 0.56</string>
+		<key>colors</key>
+		<array>
+			<string>1.0 1.0 1.0</string>
+			<string>0.86 0.87 0.90</string>
+		</array>
+		<key>radius</key>
+		<real>5.0</real>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+	<key>pushButtonPressed</key>
+	<dict>
+		<key>angle</key>
+		<real>270.0</real>
+		<key>border</key>
+		<string>0.20 0.30 0.55</string>
+		<key>colors</key>
+		<array>
+			<string>0.30 0.50 0.85</string>
+			<string>0.14 0.34 0.72</string>
+		</array>
+		<key>radius</key>
+		<real>5.0</real>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+	<key>scrollerKnob</key>
+	<dict>
+		<key>angle</key>
+		<real>0.0</real>
+		<key>colors</key>
+		<array>
+			<string>0.80 0.82 0.86</string>
+			<string>0.60 0.63 0.68</string>
+		</array>
+		<key>radius</key>
+		<real>4.0</real>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+	<key>scrollerTrack</key>
+	<dict>
+		<key>color</key>
+		<string>0.93 0.93 0.95</string>
+		<key>type</key>
+		<string>fill</string>
+	</dict>
+	<key>tableViewHeader</key>
+	<dict>
+		<key>angle</key>
+		<real>270.0</real>
+		<key>border</key>
+		<string>0.60 0.62 0.66</string>
+		<key>colors</key>
+		<array>
+			<string>0.98 0.98 0.99</string>
+			<string>0.87 0.88 0.91</string>
+		</array>
+		<key>type</key>
+		<string>gradient</string>
+	</dict>
+</dict>
+</plist>

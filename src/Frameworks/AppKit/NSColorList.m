@@ -7,10 +7,17 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <AppKit/NSColorList.h>
+#import <AppKit/NSColor.h>
 #import <AppKit/NSRaise.h>
 #import <Foundation/NSPlatform.h>
 
 NSString * const NSColorListDidChangeNotification = @"NSColorListDidChangeNotification";
+
+/* Implemented in NSColor.m, which owns the built-in table. Declared here
+ * rather than in the public header: it is private to this pairing. */
+@interface NSColor (PDBuiltInColorList)
++ (NSColorList *)_builtInSystemColorList;
+@end
 
 @implementation NSColorList
 
@@ -31,6 +38,14 @@ static NSMutableDictionary *_namedColorLists = nil;
             NSColorList *clr = [[[NSColorList alloc] initWithName:name fromFile:path] autorelease];
             [_namedColorLists setObject:clr forKey:name];
         }
+    }
+
+    /* Added last and only if absent, so a System.clr found above still wins. */
+    if ([_namedColorLists objectForKey:@"System"] == nil) {
+        NSColorList *system = [NSColor _builtInSystemColorList];
+
+        if (system != nil)
+            [_namedColorLists setObject:system forKey:@"System"];
     }
 }
 

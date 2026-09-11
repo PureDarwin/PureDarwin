@@ -157,7 +157,22 @@ static void evaluate(void *info,float const *input,float *output) {
 }
 
 - (void)drawFromCenter:(NSPoint)startCenter radius:(CGFloat)startRadius toCenter:(NSPoint)endCenter radius:(CGFloat)endRadius options:(NSGradientDrawingOptions)options {
-	NSUnimplementedMethod();
+   /* Same shape as the axial path above, with a radial shading. Onyx2D
+    * rasterises these through O2Paint_radialGradient. */
+   CGContextRef context=[[NSGraphicsContext currentContext] graphicsPort];
+   CGFunctionCallbacks callbacks = { 0, evaluate, NULL };
+   CGFunctionRef function = CGFunctionCreate(self, 1, NULL, _numberOfComponents, NULL, &callbacks);
+   CGColorSpaceRef colorSpace = [_colorSpace CGColorSpace];
+   CGShadingRef shading = CGShadingCreateRadial(colorSpace, startCenter, startRadius,
+       endCenter, endRadius, function,
+       (options & NSGradientDrawsBeforeStartingLocation) ? YES : NO,
+       (options & NSGradientDrawsAfterEndingLocation) ? YES : NO);
+
+   CGContextDrawShading(context,shading);
+
+   CGFunctionRelease(function);
+   CGShadingRelease(shading);
+   return;
 }
 
 - (void)drawInRect:(NSRect)rect angle:(CGFloat)angle
@@ -219,11 +234,37 @@ static void evaluate(void *info,float const *input,float *output) {
 }
 
 -(void)drawInRect:(NSRect)rect relativeCenterPosition:(NSPoint)center {
-	NSUnimplementedMethod();
+   if(_numberOfColors < 2 || NSIsEmptyRect(rect))
+    return;
+
+   /* center is -1..1 across the rect, 0,0 being the middle. */
+   NSPoint origin = NSMakePoint(NSMidX(rect) + center.x * rect.size.width / 2.0,
+                                NSMidY(rect) + center.y * rect.size.height / 2.0);
+
+   /* Reach the farthest corner, so the last colour covers the whole rect
+    * however far off-centre the origin is. */
+   CGFloat dx = MAX(fabs(origin.x - NSMinX(rect)), fabs(NSMaxX(rect) - origin.x));
+   CGFloat dy = MAX(fabs(origin.y - NSMinY(rect)), fabs(NSMaxY(rect) - origin.y));
+   CGFloat radius = sqrt(dx * dx + dy * dy);
+
+   CGContextRef context = [[NSGraphicsContext currentContext] graphicsPort];
+
+   CGContextSaveGState(context);
+   CGContextClipToRect(context, rect);
+   [self drawFromCenter:origin radius:0.0 toCenter:origin radius:radius
+                options:NSGradientDrawsBeforeStartingLocation|NSGradientDrawsAfterEndingLocation];
+   CGContextRestoreGState(context);
 }
 
 -(void)drawInBezierPath:(NSBezierPath *)path relativeCenterPosition:(NSPoint)center {
-	NSUnimplementedMethod();
+   NSRect rect = [path bounds];
+
+   [NSGraphicsContext saveGraphicsState];
+
+   [path addClip];
+   [self drawInRect:rect relativeCenterPosition:center];
+
+   [NSGraphicsContext restoreGraphicsState];
 }
 
 - (NSColorSpace *)colorSpace {

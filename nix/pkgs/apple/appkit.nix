@@ -148,6 +148,13 @@ stdenv.mkDerivation {
     ln -s Versions/Current/AppKit "$frameworkDir/AppKit"
     ln -s Versions/Current/Headers "$frameworkDir/Headers"
 
+    # NSInterfaceTheme reads /System/Library/Themes/Default.plist when it is
+    # present; with no theme file every control draws itself as before.
+    if [ -d "$src/Themes" ]; then
+      mkdir -p "$out/System/Library/Themes"
+      cp "$src"/Themes/*.plist "$out/System/Library/Themes/"
+    fi
+
     mkdir -p "$out/usr/lib" "$out/usr/include"
     ln -s ../../System/Library/Frameworks/AppKit.framework/Versions/A/AppKit \
       "$out/usr/lib/libAppKit.dylib"

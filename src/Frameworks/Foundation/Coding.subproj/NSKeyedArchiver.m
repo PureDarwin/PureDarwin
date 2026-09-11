@@ -13,11 +13,13 @@
 #import <Foundation/NSNumber.h>
 #import <Foundation/NSPropertyListSerialization.h>
 #import <Foundation/NSString.h>
+#import <CoreFoundation/CFNumber.h>
 
 static id archiveValue(NSKeyedArchiver *archiver, id object) {
     if(object == nil)
         return [NSDictionary dictionaryWithObject:@"nil" forKey:@"$type"];
-    if([object isKindOfClass:[NSString class]] ||
+    if(object == (id)kCFBooleanTrue || object == (id)kCFBooleanFalse ||
+       [object isKindOfClass:[NSString class]] ||
        [object isKindOfClass:[NSNumber class]] ||
        [object isKindOfClass:[NSData class]])
         return object;

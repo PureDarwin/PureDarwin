@@ -19,5 +19,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 -(void)drawAtPoint:(NSPoint)point {
 }
 
+-(void)drawInRect:(NSRect)rect {
+   [self drawAtPoint:rect.origin];
+}
+
 @end
 

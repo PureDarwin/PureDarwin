@@ -5,12 +5,15 @@
 #include <pexpert/boot.h>
 #include <i386/pmap.h>
 #include <i386/postcode.h>
+#include <i386/proc_reg.h>
 
 uint64_t pd_boot_mark_base;             /* framebuffer physical base */
 uint32_t pd_boot_mark_rowbytes;
 uint32_t pd_boot_mark_width;
 uint32_t pd_boot_mark_height;
 int pd_boot_mark_physmap;
+uint64_t pd_boot_mark_boot_cr3;          /* boot page tables: framebuffer is 1:1 */
+uint64_t pd_boot_mark_physmap_cr3;       /* IdlePML4: reach it through the physmap */
 
 /* See PD_BAND_SPIN: hold each band long enough to be read off a screen. */
 static void
@@ -92,6 +95,7 @@ pd_boot_mark_init(boot_args *args)
 	    args->Video.v_rowBytes < args->Video.v_width * 4) {
 		return;
 	}
+	pd_boot_mark_boot_cr3 = get_cr3_raw();
 	pd_boot_mark_base     = args->Video.v_baseAddr;
 	pd_boot_mark_rowbytes = args->Video.v_rowBytes;
 	pd_boot_mark_width    = args->Video.v_width;
@@ -106,18 +110,26 @@ pd_boot_mark_fb_va(void)
 	if (pd_boot_mark_base == 0) {
 		return 0;
 	}
-	if (!pd_boot_mark_physmap) {
-		/* Boot page tables: BootPML4[0] maps 1:1, so use it directly. */
+	/*
+	 * Which regime this CPU is in is a *per-CPU* fact, not a global one:
+	 * vstart() runs on every processor, and while the boot CPU has already
+	 * switched to IdlePML4, each AP still enters it on the boot page tables.
+	 */
+	uint64_t cr3 = get_cr3_raw();
+
+	if (pd_boot_mark_physmap && cr3 == pd_boot_mark_physmap_cr3) {
+		if (pd_boot_mark_base < (physmap_max - physmap_base)) {
+			return (uintptr_t)PHYSMAP_PTOV(pd_boot_mark_base);
+		}
+		return 0;
+	}
+	if (cr3 == pd_boot_mark_boot_cr3) {
+		/* BootPML4[0] identity-maps the low 4GB. */
 		return (uintptr_t)pd_boot_mark_base;
 	}
-	if (pd_boot_mark_base < (physmap_max - physmap_base)) {
-		return (uintptr_t)PHYSMAP_PTOV(pd_boot_mark_base);
-	}
-	/*
-	 * IdlePML4 has no entry 0 in a normal boot - only KERNEL_PML4_INDEX - so
-	 * the raw physical address is unmapped once CR3 moves.
-	 */
-	return (uintptr_t)(KERNEL_BASE + pd_boot_mark_base);
+	/* Some other page-table regime - refuse rather than guess an address.
+	 * A wrong guess here faults, and a fault here reboots the machine. */
+	return 0;
 }
 
 void

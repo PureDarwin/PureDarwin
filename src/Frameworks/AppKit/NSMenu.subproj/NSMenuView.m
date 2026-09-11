@@ -45,7 +45,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
  * arithmetic below assumes. */
 - (BOOL)isFlipped
 {
-    return !_horizontal;
+    return YES;
 }
 
 - (NSWindow *)window
@@ -137,6 +137,9 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
     NSString *title = [item title];
 
+    /* -itemAttributes is the single source of truth for menu text metrics:
+     * whoever draws the title must measure with the same dictionary, or the
+     * item comes out narrower than its own text and the title is clipped. */
     size = [(title != nil ? title : @"") sizeWithAttributes:[self itemAttributes]];
     size.width += ITEM_PAD_X * 2.0;
     size.height += ITEM_PAD_Y * 2.0;
@@ -358,6 +361,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
                       object:_menu];
 
     NSMenuItem *chosen = nil;
+    BOOL sticky = NO;
 
     for (;;) {
         NSPoint screenPoint = [[self window] convertBaseToScreen:[event locationInWindow]];
@@ -379,7 +383,11 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
             }
         }
 
-        if ([event type] == NSLeftMouseUp) {
+        NSEventType type = [event type];
+
+        if (type == NSLeftMouseUp || (sticky && type == NSLeftMouseDown)) {
+            NSMenuItem *hit = nil;
+
             if (index >= 0) {
                 NSArray *items = [[view menu] itemArray];
 
@@ -387,15 +395,30 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
                     NSMenuItem *item = [items objectAtIndex:index];
 
                     if ([item isEnabled] && ![item isSeparatorItem] && ![item hasSubmenu]) {
-                        chosen = item;
+                        hit = item;
                     }
                 }
             }
-            break;
+            if (hit != nil) {
+                chosen = hit;
+                break;
+            }
+            /* Nothing actionable under the cursor: the first release opens the
+             * menu for good, anything after that dismisses it. */
+            if (type == NSLeftMouseUp && !sticky) {
+                sticky = YES;
+            }
+            else {
+                break;
+            }
         }
 
-        event = [NSApp nextEventMatchingMask:NSLeftMouseUpMask | NSLeftMouseDraggedMask |
-                                             NSMouseMovedMask
+        NSUInteger mask = NSLeftMouseUpMask | NSLeftMouseDraggedMask | NSMouseMovedMask;
+
+        if (sticky) {
+            mask |= NSLeftMouseDownMask;
+        }
+        event = [NSApp nextEventMatchingMask:mask
                                    untilDate:[NSDate distantFuture]
                                       inMode:NSEventTrackingRunLoopMode
                                      dequeue:YES];

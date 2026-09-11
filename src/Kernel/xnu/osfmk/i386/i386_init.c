@@ -97,11 +97,6 @@
 #endif
 #include <i386/ucode.h>
 #include <i386/postcode.h>
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-extern void pd_boot_mark_init(boot_args *args);
-extern void pd_boot_mark_band(uint32_t band);
-extern int  pd_boot_mark_physmap;
-#endif
 #include <i386/Diagnostics.h>
 #include <i386/pmCPU.h>
 #include <i386/tsc.h>
@@ -425,32 +420,11 @@ Idle_PTs_init(void)
 	 * two 8-bit entropy values needed for address randomization.
 	 */
 	rand64 = early_random();
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_boot_mark_band(7);       /* early_random returned */
-#endif
 	physmap_init(rand64 & 0xFF, &new_physmap_base, &new_physmap_max);
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_boot_mark_band(9);       /* physmap_init returned */
-#endif
 	doublemap_init((rand64 >> 8) & 0xFF);
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_boot_mark_band(10);      /* doublemap_init returned */
-#endif
 	idt64_remap();
-#if defined(PUREDARWIN_EARLY_FB_MARK)
-	pd_boot_mark_band(11);      /* idt64_remap returned */
-#endif
 
 	postcode(VSTART_SET_CR3);
-
-	/*
-	 * Switch to the page tables. We set physmap_base and physmap_max just
-	 * before switching to the new page tables to avoid someone calling
-	 * kprintf() or otherwise using physical memory in between.
-	 * This is needed because kprintf() writes to physical memory using
-	 * ml_phys_read_data and PHYSMAP_PTOV, which requires physmap_base to be
-	 * set correctly.
-	 */
 	physmap_base = new_physmap_base;
 	physmap_max = new_physmap_max;
 	set_cr3_raw((uintptr_t)ID_MAP_VTOP(IdlePML4));
@@ -458,6 +432,7 @@ Idle_PTs_init(void)
 	/* The firmware identity map is gone; address the framebuffer through the
 	 * physmap from here on. Set after the switch, since that is when it
 	 * becomes true. */
+	pd_boot_mark_physmap_cr3 = get_cr3_raw();
 	pd_boot_mark_physmap = 1;
 #endif
 }

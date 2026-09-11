@@ -12,6 +12,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <servers/bootstrap.h>
 #import <Foundation/NSSocket_bsd.h>
 #import <Foundation/NSSelectInputSource.h>
+#import <Foundation/NSConnection.h>
 #import <AppKit/NSApplication.h>
 #include <errno.h>
 #import <AppKit/NSWindow-Private.h>
@@ -88,6 +89,130 @@ NSString * const NSApplicationDidChangeScreenParametersNotification=@"NSApplicat
 @interface NSDockTile(private)
 -initWithOwner:owner;
 @end
+
+@protocol PDGershwinMenuServer
+- (oneway void)updateMenuForWindow:(bycopy NSNumber *)windowId
+                          menuData:(bycopy NSDictionary *)menuData
+                        clientName:(bycopy NSString *)clientName;
+@end
+
+@protocol PDGershwinMenuClient
+- (oneway void)activateMenuItemAtPath:(NSArray *)indexPath
+                            forWindow:(NSNumber *)windowId;
+- (oneway void)requestMenuUpdateForWindow:(NSNumber *)windowId;
+- (bycopy id)validateMenuStateForWindow:(NSNumber *)windowId;
+@end
+
+static NSConnection *pdMenuClientConnection;
+static id pdMenuServerProxy;
+static NSString *pdMenuClientName;
+static BOOL pdMenuNeedsPublish = YES;
+static NSTimeInterval pdMenuNextAttempt;
+static BOOL pdMenuLoggedWaitingForMenu;
+static BOOL pdMenuLoggedWaitingForServer;
+
+static NSDictionary *pdSerializeMenu(NSMenu *menu);
+static void pdSplitMainMenu(NSMenu *menu, NSMutableArray *barItems,
+                            NSMutableArray *appItems);
+
+static NSMutableDictionary *pdSerializeItem(NSMenuItem *item)
+{
+        NSMutableDictionary *serializedItem = [NSMutableDictionary dictionary];
+
+        [serializedItem setObject:([item title] ?: @"") forKey:@"title"];
+        [serializedItem setObject:[NSNumber numberWithBool:[item isSeparatorItem]]
+                           forKey:@"isSeparator"];
+        [serializedItem setObject:[NSNumber numberWithBool:[item isEnabled]] forKey:@"enabled"];
+        [serializedItem setObject:[NSNumber numberWithInteger:[item state]] forKey:@"state"];
+        [serializedItem setObject:([item keyEquivalent] ?: @"") forKey:@"keyEquivalent"];
+        [serializedItem setObject:[NSNumber numberWithUnsignedInteger:[item keyEquivalentModifierMask]]
+                           forKey:@"keyEquivalentModifierMask"];
+        if ([item hasSubmenu]) {
+            [serializedItem setObject:pdSerializeMenu([item submenu]) forKey:@"submenu"];
+        }
+        return serializedItem;
+}
+
+/* The main menu as the bar should present it: an application menu first,
+ * holding every command the app put at top level, then the real submenus. */
+static NSDictionary *pdSerializeMainMenu(NSMenu *menu)
+{
+    NSMutableArray *barItems = [NSMutableArray array];
+    NSMutableArray *appItems = [NSMutableArray array];
+
+    pdSplitMainMenu(menu, barItems, appItems);
+
+    NSString *appName = [menu title];
+    if ([appName length] == 0) {
+        appName = [[NSProcessInfo processInfo] processName];
+    }
+    if ([appItems count] == 0) {
+        return pdSerializeMenu(menu);
+    }
+
+    NSMutableArray *serializedItems = [NSMutableArray array];
+    NSMutableArray *serializedAppItems = [NSMutableArray array];
+
+    for (NSMenuItem *item in appItems) {
+        [serializedAppItems addObject:pdSerializeItem(item)];
+    }
+
+    NSMutableDictionary *appMenuItem = [NSMutableDictionary dictionary];
+
+    [appMenuItem setObject:appName forKey:@"title"];
+    [appMenuItem setObject:[NSNumber numberWithBool:NO] forKey:@"isSeparator"];
+    [appMenuItem setObject:[NSNumber numberWithBool:YES] forKey:@"enabled"];
+    [appMenuItem setObject:[NSNumber numberWithInteger:0] forKey:@"state"];
+    [appMenuItem setObject:@"" forKey:@"keyEquivalent"];
+    [appMenuItem setObject:[NSNumber numberWithUnsignedInteger:0]
+                    forKey:@"keyEquivalentModifierMask"];
+    [appMenuItem setObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                            appName, @"title", serializedAppItems, @"items", nil]
+                    forKey:@"submenu"];
+
+    [serializedItems addObject:appMenuItem];
+    for (NSMenuItem *item in barItems) {
+        [serializedItems addObject:pdSerializeItem(item)];
+    }
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+            appName, @"title", serializedItems, @"items", nil];
+}
+
+static NSDictionary *pdSerializeMenu(NSMenu *menu)
+{
+    NSMutableArray *serializedItems = [NSMutableArray array];
+
+    for (NSMenuItem *item in [menu itemArray]) {
+        NSMutableDictionary *serializedItem = [NSMutableDictionary dictionary];
+
+        [serializedItem setObject:([item title] ?: @"") forKey:@"title"];
+        [serializedItem setObject:[NSNumber numberWithBool:[item isSeparatorItem]]
+                           forKey:@"isSeparator"];
+        [serializedItem setObject:[NSNumber numberWithBool:[item isEnabled]] forKey:@"enabled"];
+        [serializedItem setObject:[NSNumber numberWithInteger:[item state]] forKey:@"state"];
+        [serializedItem setObject:([item keyEquivalent] ?: @"") forKey:@"keyEquivalent"];
+        [serializedItem setObject:[NSNumber numberWithUnsignedInteger:[item keyEquivalentModifierMask]]
+                           forKey:@"keyEquivalentModifierMask"];
+        if ([item hasSubmenu]) {
+            [serializedItem setObject:pdSerializeMenu([item submenu]) forKey:@"submenu"];
+        }
+        [serializedItems addObject:serializedItem];
+    }
+
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+            ([menu title] ?: @""), @"title", serializedItems, @"items", nil];
+}
+
+static void pdSplitMainMenu(NSMenu *menu, NSMutableArray *barItems,
+                            NSMutableArray *appItems)
+{
+   for (NSMenuItem *item in [menu itemArray]) {
+      if ([item hasSubmenu])
+       [barItems addObject:item];
+      else
+       [appItems addObject:item];
+   }
+}
 
 @implementation NSApplication
 
@@ -791,6 +916,155 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    }
 
     [self sendMenusToWindowServer];
+    pdMenuNeedsPublish = YES;
+}
+
+- (BOOL)_connectToGershwinMenuServer
+{
+    if (pdMenuClientConnection == nil) {
+        pdMenuClientConnection = [[NSConnection alloc] init];
+        [pdMenuClientConnection setRootObject:self];
+        pdMenuClientName = [[NSString stringWithFormat:@"org.gnustep.Gershwin.MenuClient.%d",
+                                                       getpid()] retain];
+        if (![pdMenuClientConnection registerName:pdMenuClientName]) {
+            [pdMenuClientConnection release];
+            pdMenuClientConnection = nil;
+            [pdMenuClientName release];
+            pdMenuClientName = nil;
+            return NO;
+        }
+    }
+
+    if (pdMenuServerProxy == nil) {
+        NSConnection *connection = [NSConnection
+            connectionWithRegisteredName:@"org.gnustep.Gershwin.MenuServer" host:nil];
+        if (connection == nil || ![connection isValid]) {
+            return NO;
+        }
+        pdMenuServerProxy = [[connection rootProxy] retain];
+        [pdMenuServerProxy setProtocolForProxy:@protocol(PDGershwinMenuServer)];
+    }
+    return pdMenuServerProxy != nil;
+}
+
+- (void)_publishMainMenuToGershwin
+{
+    if (_mainMenu == nil) {
+        if (!pdMenuLoggedWaitingForMenu) {
+            NSLog(@"NSApplication: waiting for a main menu to publish to Gershwin");
+            pdMenuLoggedWaitingForMenu = YES;
+        }
+        return;
+    }
+    if (![self _connectToGershwinMenuServer]) {
+        if (!pdMenuLoggedWaitingForServer) {
+            NSLog(@"NSApplication: waiting for the Gershwin menu server");
+            pdMenuLoggedWaitingForServer = YES;
+        }
+        return;
+    }
+
+    NSDictionary *menuData = pdSerializeMainMenu(_mainMenu);
+    BOOL published = NO;
+
+    NS_DURING
+        for (NSWindow *window in _windows) {
+            if (![window isKindOfClass:[NSPanel class]] && [window windowNumber] != 0) {
+                [(id<PDGershwinMenuServer>)pdMenuServerProxy
+                    updateMenuForWindow:[NSNumber numberWithUnsignedLong:
+                                         (unsigned long)(uint32_t)[window windowNumber]]
+                                 menuData:menuData
+                               clientName:pdMenuClientName];
+                published = YES;
+            }
+        }
+    NS_HANDLER
+        [pdMenuServerProxy release];
+        pdMenuServerProxy = nil;
+        pdMenuLoggedWaitingForServer = NO;
+    NS_ENDHANDLER
+
+    if (published) {
+        NSLog(@"NSApplication: published %lu menu items for %lu windows to Gershwin",
+              (unsigned long)[_mainMenu numberOfItems],
+              (unsigned long)[_windows count]);
+        pdMenuNeedsPublish = NO;
+    }
+}
+
+- (oneway void)requestMenuUpdateForWindow:(NSNumber *)windowId
+{
+    (void)windowId;
+    pdMenuNeedsPublish = YES;
+    [self _publishMainMenuToGershwin];
+}
+
+- (bycopy id)validateMenuStateForWindow:(NSNumber *)windowId
+{
+    (void)windowId;
+    return pdSerializeMainMenu(_mainMenu);
+}
+
+- (oneway void)activateMenuItemAtPath:(NSArray *)indexPath
+                            forWindow:(NSNumber *)windowId
+{
+    (void)windowId;
+    if ([indexPath count] == 0 || _mainMenu == nil) {
+        return;
+    }
+
+    /* Resolve against the same layout pdSerializeMainMenu published, or the
+     * indices the server hands back address the wrong items. */
+    NSMutableArray *barItems = [NSMutableArray array];
+    NSMutableArray *appItems = [NSMutableArray array];
+
+    pdSplitMainMenu(_mainMenu, barItems, appItems);
+
+    NSArray *topLevel = barItems;
+    NSInteger first = [[indexPath objectAtIndex:0] integerValue];
+    NSUInteger next = 1;
+    NSMenuItem *item = nil;
+
+    if ([appItems count] != 0) {
+        if (first == 0) {
+            /* The synthesized application menu: its children are appItems,
+             * none of which has a submenu, so the path ends there. */
+            if ([indexPath count] < 2) {
+                return;
+            }
+            NSInteger appIndex = [[indexPath objectAtIndex:1] integerValue];
+
+            if (appIndex < 0 || appIndex >= (NSInteger)[appItems count]) {
+                return;
+            }
+            item = [appItems objectAtIndex:appIndex];
+            if ([item action] != NULL) {
+                [self sendAction:[item action] to:[item target] from:item];
+            }
+            return;
+        }
+        first -= 1;     /* index 0 was the application menu */
+    }
+
+    if (first < 0 || first >= (NSInteger)[topLevel count]) {
+        return;
+    }
+    item = [topLevel objectAtIndex:first];
+
+    NSMenu *menu = [item submenu];
+
+    for (; next < [indexPath count]; next++) {
+        NSInteger index = [[indexPath objectAtIndex:next] integerValue];
+
+        if (menu == nil || index < 0 || index >= [menu numberOfItems]) {
+            return;
+        }
+        item = [menu itemAtIndex:index];
+        menu = [item submenu];
+    }
+    if (item != nil && [item action] != NULL) {
+        [self sendAction:[item action] to:[item target] from:item];
+    }
 }
 
 /* Make a copy of the menus with nil delegates and targets before
@@ -1235,6 +1509,12 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 
    if(pthread_main_np())
     _dispatch_main_queue_callback_4CF(NULL);
+
+   NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+   if (pdMenuNeedsPublish && now >= pdMenuNextAttempt) {
+    pdMenuNextAttempt = now + 0.5;
+    [self _publishMainMenuToGershwin];
+   }
 
    /* Left set from a previous iteration this would be a dangling pointer,
     * since that iteration's pool has already gone. */
@@ -1920,13 +2200,16 @@ standardAboutPanel] retain];
 
 -(void)_addWindow:(NSWindow *)window {
    [_windows addObject:window];
+   pdMenuNeedsPublish = YES;
 }
 
 -(void)_removeWindow:(NSWindow *)window {
+   pdMenuNeedsPublish=YES;
     [_windows removeObject:window];
 }
 
 -(void)_windowWillBecomeActive:(NSWindow *)window {
+   pdMenuNeedsPublish = YES;
    [_attentionTimer invalidate];
    _attentionTimer=nil;
 
