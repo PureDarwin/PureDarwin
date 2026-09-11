@@ -47,6 +47,14 @@ stdenv.mkDerivation {
 
     objs=""
     for source in *.m; do
+      # dllmain.m is Cocotron's Windows DLL entry point and includes
+      # windows.h; it has no place in a Darwin build.
+      case "$source" in
+        dllmain.m)
+          echo "  SKIP $source (Windows only)"
+          continue
+          ;;
+      esac
       object="''${source%.m}.o"
       echo "  CC $source"
       $cc $cflags -c "$source" -o "$object"

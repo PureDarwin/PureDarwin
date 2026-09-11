@@ -17,6 +17,11 @@
 extern int __CFConstantStringClassReference[];
 
 static BOOL ns_set_value_is_constant_string(const void *value) {
+    /* A nil member reaches the callbacks as NULL, and reading its isa
+     * to classify it is what turned a stray nil into a crash. */
+    if (value == NULL) {
+        return NO;
+    }
     return *(const uintptr_t *)value ==
         (uintptr_t)&__CFConstantStringClassReference;
 }

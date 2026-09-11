@@ -730,6 +730,7 @@ static inline void buildTransformsIfNeeded(NSView *self) {
    if(NSEqualRects(_frame,frame))
     return;
 
+   NSRect oldFrame=_frame;
    NSSize oldSize=_bounds.size;
 
     if (_bounds.size.width == 0 || _bounds.size.height == 0) {
@@ -759,6 +760,9 @@ static inline void buildTransformsIfNeeded(NSView *self) {
     [_layerContext setFrame:layerFrame];
 
    invalidateTransform(self);
+
+   if(_superview!=nil && !NSContainsRect(_frame,oldFrame))
+    [_superview setNeedsDisplayInRect:oldFrame];
 
    if(_postsNotificationOnFrameChange)
     [[NSNotificationCenter defaultCenter] postNotificationName:NSViewFrameDidChangeNotification object:self];

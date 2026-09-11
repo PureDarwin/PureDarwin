@@ -73,6 +73,10 @@ typedef NS_OPTIONS(NSUInteger, NSDataWritingOptions) {
 - (void)appendBytes:(const void *)bytes length:(NSUInteger)length;
 - (void)appendData:(NSData *)other;
 - (void)replaceBytesInRange:(NSRange)range withBytes:(const void *)bytes;
+- (void)replaceBytesInRange:(NSRange)range
+                  withBytes:(const void *)bytes
+                     length:(NSUInteger)length;
+- (void)increaseLengthBy:(NSUInteger)extra;
 - (void)resetBytesInRange:(NSRange)range;
 - (void)setData:(NSData *)data;
 

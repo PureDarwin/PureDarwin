@@ -51,6 +51,7 @@
 - (NSString *)componentsJoinedByString:(NSString *)separator;
 - (NSArray<ObjectType> *)sortedArrayUsingSelector:(SEL)selector;
 - (NSArray<ObjectType> *)sortedArrayUsingComparator:(NSComparator)comparator;
+- (NSArray<ObjectType> *)sortedArrayUsingDescriptors:(NSArray *)descriptors;
 - (void)makeObjectsPerformSelector:(SEL)selector;
 - (void)makeObjectsPerformSelector:(SEL)selector withObject:(id)object;
 
@@ -74,6 +75,7 @@
 - (void)removeAllObjects;
 - (void)sortUsingSelector:(SEL)selector;
 - (void)sortUsingComparator:(NSComparator)comparator;
+- (void)sortUsingDescriptors:(NSArray *)descriptors;
 - (void)sortWithOptions:(NSSortOptions)options usingComparator:(NSComparator)comparator;
 
 @end

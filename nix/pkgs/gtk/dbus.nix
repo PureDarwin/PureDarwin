@@ -69,7 +69,7 @@ cpu = '${targetInfo.mesonCpu}'
 endian = '${targetInfo.mesonEndian}'
 
 [built-in options]
-c_args = ['-target', '${targetInfo.clangTarget}', '-isysroot', '$DARWIN_SDK_ROOT', '-I${libSystem}/usr/include', '-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector']
+c_args = ['-target', '${targetInfo.clangTarget}', '-isysroot', '$DARWIN_SDK_ROOT', '-I${libSystem}/usr/include', ${targetInfo.mesonPlatformCArgs}'-U_FORTIFY_SOURCE', '-D_FORTIFY_SOURCE=0', '-fno-stack-protector']
 c_link_args = ['-target', '${targetInfo.clangTarget}', '-isysroot', '$DARWIN_SDK_ROOT', '-fuse-ld=${nativeLd}/bin/ld', '-nostdlib', '-L${libSystem}/usr/lib', '-Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib', '-Wl,-platform_version,macos,26.5,26.5', '-Wl,-undefined,dynamic_lookup', ${lib.optionalString withX11 "'-L${libX11}/lib', '-L${libxcb}/lib', '-L${libXau}/lib', '-L${libXdmcp}/lib', '-lX11', '-lxcb', '-lXau', '-lXdmcp', "}'-lSystem']
 
 [properties]

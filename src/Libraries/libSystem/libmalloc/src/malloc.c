@@ -2723,6 +2723,13 @@ malloc_register_stack_logger(void)
 	if (msl.dylib != NULL) {
 		return true;
 	}
+	/* _dlopen is only set by libSystem's late-init handshake, which PureDarwin
+	 * deliberately does not run (see pd_libSystem_init.c). Calling through the
+	 * null pointer killed any process that took a critical memory-pressure
+	 * notification, so report stack logging as unavailable instead. */
+	if (_dlopen == NULL) {
+		return false;
+	}
 	void *dylib = _dlopen("/System/Library/PrivateFrameworks/MallocStackLogging.framework/MallocStackLogging", RTLD_GLOBAL);
 	if (dylib == NULL) {
 		return false;	

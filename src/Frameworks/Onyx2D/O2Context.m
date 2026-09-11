@@ -7,6 +7,9 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 #import <Onyx2D/O2Context.h>
+#include <stdio.h>
+#include <dlfcn.h>
+#include <execinfo.h>
 #import <Onyx2D/O2BitmapContext.h>
 #import <Onyx2D/O2GraphicsState.h>
 #import <Onyx2D/O2Color.h>
@@ -546,7 +549,27 @@ void O2ContextRestoreGState(O2ContextRef self) {
    if(self==nil){
     return;
    }
-    
+
+   /* The stack top is the current state and the base state has to stay on it.
+    * Popping it left _currentState nil and the lines below dereferenced it;
+    * Quartz treats a restore with no matching save as doing nothing. */
+   if([self->_stateStack count]<2){
+    if(getenv("O2_GSTATE_TRACE")!=NULL){
+     void *callers[10];
+     int   depth=backtrace(callers,10),i;
+
+     fprintf(stderr,"O2: unmatched RestoreGState\n");
+     for(i=1;i<depth;i++){
+      Dl_info info;
+
+      if(dladdr(callers[i],&info) && info.dli_sname!=NULL)
+       fprintf(stderr,"O2:   [%d] %s\n",i,info.dli_sname);
+     }
+     fflush(stderr);
+    }
+    return;
+   }
+
    [self->_stateStack removeLastObject];
    self->_currentState=[self->_stateStack lastObject];
 

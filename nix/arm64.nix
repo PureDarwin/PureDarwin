@@ -196,6 +196,10 @@ let
   foundationArm64Build = mkArm64Build ./pkgs/apple/foundation.nix {
     libobjc = libobjcArm64Build;
     corefoundation = coreFoundationArm64Build;
+    libffi = libffiArm64Build;
+    # Headers only, so the same sources the x86 side uses.
+    dnssdInclude = ../src/Libraries/mDNSResponder/mDNSShared;
+    notifyInclude = ../src/Libraries/XPC/notify;
     src = "${foundationSource}/src/Frameworks/Foundation";
   };
   fribidiArm64Build = mkArm64Build ./pkgs/gtk/fribidi.nix {
@@ -954,6 +958,7 @@ let
   };
   coreServicesArm64Build = mkArm64Build ./pkgs/apple/coreservices.nix {
     src = coreServicesSource;
+    corefoundation = coreFoundationArm64Build;
   };
   iomediacheckArm64Build = mkArm64Build ./pkgs/apple/iomediacheck.nix {
     corefoundation = coreFoundationArm64Build;
@@ -2059,6 +2064,10 @@ let
     targetTriple = "arm64-apple-darwin20.4";
     libSystem = libSystemArm64Build;
     ncurses = ncursesArm64Build;
+    # Left at the default this is the x86_64 build, and -undefined
+    # dynamic_lookup lets the link succeed anyway - the miss only shows up as
+    # "Symbol not found: _libiconv_open" when zsh launches.
+    libiconv = libiconvArm64Build;
   };
   userlandArm64Build = userlandBuild.override {
     puredarwinArch = "arm64";

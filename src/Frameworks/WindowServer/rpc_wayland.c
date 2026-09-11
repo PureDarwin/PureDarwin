@@ -63,6 +63,9 @@ static struct {
     pthread_t dispatchThread;
     int dispatchRunning;
     int focusWindowID;
+    /* Panels, the dock and the desktop take pointer focus too, so the window
+     * reported as active is only ever an xdg toplevel. */
+    int activeAppWindowID;
     uint32_t pointerButtonSerial;
     struct wsWindow *windows;
     int connected;
@@ -462,6 +465,9 @@ static void pointerEnter(void *data, struct wl_pointer *pointer, uint32_t serial
     for (struct wsWindow *w = ws.windows; w != NULL; w = w->next) {
         if (w->surface == surface) {
             ws.focusWindowID = w->windowID;
+            if (w->toplevel != NULL) {
+                ws.activeAppWindowID = w->windowID;
+            }
             break;
         }
     }
@@ -585,6 +591,9 @@ static void keyboardEnter(void *data, struct wl_keyboard *keyboard, uint32_t ser
     for (struct wsWindow *w = ws.windows; w != NULL; w = w->next) {
         if (w->surface == surface) {
             ws.focusWindowID = w->windowID;
+            if (w->toplevel != NULL) {
+                ws.activeAppWindowID = w->windowID;
+            }
             break;
         }
     }
@@ -1062,6 +1071,36 @@ kern_return_t _windowServerRPC(void *data, size_t len, void *reply, int *replyLe
         }
 
         case kCGGetLastMouseDelta:
+        case kWSGetWindowInfo: {
+            if (reply == NULL || replyLen == NULL ||
+                (size_t)*replyLen < sizeof(struct wsRPCWindow)) {
+                return KERN_INVALID_ARGUMENT;
+            }
+            if (len < sizeof(struct wsRPCWindow)) {
+                return KERN_INVALID_ARGUMENT;
+            }
+            struct wsRPCWindow *in = (struct wsRPCWindow *)data;
+            struct wsRPCWindow *out = (struct wsRPCWindow *)reply;
+            int wanted = in->windowID != 0 ? in->windowID : ws.activeAppWindowID;
+            struct wsWindow *window = wanted != 0 ? windowForID(wanted) : NULL;
+
+            memset(out, 0, sizeof(*out));
+            out->base.code = kWSGetWindowInfo;
+            out->base.len = sizeof(*out) - sizeof(struct wsRPCBase);
+            if (window != NULL) {
+                out->windowID = window->windowID;
+                out->x = window->x;
+                out->y = window->y;
+                out->w = window->w;
+                out->h = window->h;
+                out->state = window->state;
+                out->level = window->level;
+                strncpy(out->title, window->title, sizeof(out->title) - 1);
+            }
+            *replyLen = sizeof(struct wsRPCWindow);
+            return KERN_SUCCESS;
+        }
+
         case kCGGetMouseLocation: {
             if (reply == NULL || replyLen == NULL ||
                 (size_t)*replyLen < sizeof(struct wsRPCSimple)) {

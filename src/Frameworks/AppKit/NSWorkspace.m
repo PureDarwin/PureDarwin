@@ -6,6 +6,8 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #import <AppKit/NSWorkspace.h>
+#import <AppKit/NSBezierPath.h>
+#include <pthread.h>
 #import <AppKit/NSImage.h>
 #import <AppKit/NSGraphics.h>
 #import <AppKit/NSColor.h>
@@ -107,6 +109,65 @@ static void PDNoteLaunched(NSString *path)
    return _notificationCenter;
 }
 
+/* No icon theme is installed, so the generic icons are drawn rather than
+ * loaded. Distinguishing a folder from a document is the part that matters:
+ * every node in a file viewer came back as the same blank square before. */
+static NSImage *pdGenericIcon(BOOL isDirectory) {
+   static NSImage *folderIcon=nil;
+   static NSImage *documentIcon=nil;
+   NSImage        **slot=isDirectory?&folderIcon:&documentIcon;
+
+   if(*slot!=nil)
+    return *slot;
+
+   NSImage *icon=[[NSImage alloc] initWithSize:NSMakeSize(48,48)];
+
+   [icon lockFocus];
+
+   if(isDirectory){
+    NSBezierPath *body=[NSBezierPath bezierPathWithRect:NSMakeRect(4,6,40,30)];
+    NSBezierPath *tab=[NSBezierPath bezierPathWithRect:NSMakeRect(4,36,18,5)];
+
+    [[NSColor colorWithCalibratedRed:0.36 green:0.53 blue:0.75 alpha:1.0] set];
+    [body fill];
+    [tab fill];
+    [[NSColor colorWithCalibratedRed:0.22 green:0.36 blue:0.55 alpha:1.0] set];
+    [body stroke];
+    [tab stroke];
+   }
+   else {
+    NSBezierPath *page=[NSBezierPath bezierPath];
+
+    /* A page with the top-right corner turned down. */
+    [page moveToPoint:NSMakePoint(9,4)];
+    [page lineToPoint:NSMakePoint(9,44)];
+    [page lineToPoint:NSMakePoint(30,44)];
+    [page lineToPoint:NSMakePoint(39,35)];
+    [page lineToPoint:NSMakePoint(39,4)];
+    [page closePath];
+
+    [[NSColor whiteColor] set];
+    [page fill];
+    [[NSColor colorWithCalibratedWhite:0.45 alpha:1.0] set];
+    [page stroke];
+
+    NSBezierPath *fold=[NSBezierPath bezierPath];
+
+    [fold moveToPoint:NSMakePoint(30,44)];
+    [fold lineToPoint:NSMakePoint(30,35)];
+    [fold lineToPoint:NSMakePoint(39,35)];
+    [[NSColor colorWithCalibratedWhite:0.80 alpha:1.0] set];
+    [fold fill];
+    [[NSColor colorWithCalibratedWhite:0.45 alpha:1.0] set];
+    [fold stroke];
+   }
+
+   [icon unlockFocus];
+
+   *slot=icon;
+   return icon;
+}
+
 -(NSImage *)iconForFile:(NSString *)path {
    /* An application shows its own icon; other files fall back by type. */
    NSFileManager *manager=[NSFileManager defaultManager];
@@ -132,7 +193,10 @@ static void PDNoteLaunched(NSString *path)
 
    /* Apple always answers with something; a missing file still gets the
     * generic icon, and callers cache the result without checking for nil. */
-   (void)manager;
+   BOOL isDirectory=NO;
+
+   if([manager fileExistsAtPath:path isDirectory:&isDirectory] && isDirectory)
+    return pdGenericIcon(YES);
 
    return [self iconForFileType:extension];
 }
@@ -146,30 +210,32 @@ static void PDNoteLaunched(NSString *path)
 }
 
 -(NSImage *)iconForFileType:(NSString *)type {
-   /* No icon theme is installed yet. A named image is tried first, but callers
-    * cache whatever comes back and cannot handle nil, so fall back to a blank
-    * image of icon size rather than returning nothing. */
-   NSImage *named=([type length]>0)?[NSImage imageNamed:type]:nil;
+   static NSMutableDictionary *iconsByType=nil;
+   static pthread_mutex_t      iconsLock=PTHREAD_MUTEX_INITIALIZER;
+   NSString                   *key=([type length]>0)?type:@"";
 
-   if(named!=nil)
-    return named;
+   pthread_mutex_lock(&iconsLock);
 
-   static NSImage *generic=nil;
+   if(iconsByType==nil)
+    iconsByType=[[NSMutableDictionary alloc] init];
 
-   if(generic==nil){
-    /* Drawn rather than left empty: an NSImage with a size but no
-     * representation crashes when composited. */
-    generic=[[NSImage alloc] initWithSize:NSMakeSize(48,48)];
+   NSImage *cached=[iconsByType objectForKey:key];
 
-    [generic lockFocus];
-    [[NSColor lightGrayColor] set];
-    NSRectFill(NSMakeRect(4,4,40,40));
-    [[NSColor darkGrayColor] set];
-    NSFrameRect(NSMakeRect(4,4,40,40));
-    [generic unlockFocus];
-   }
+   pthread_mutex_unlock(&iconsLock);
 
-   return generic;
+   if(cached!=nil)
+    return cached;
+
+   NSImage *result=([type length]>0)?[NSImage imageNamed:type]:nil;
+
+   if(result==nil)
+    result=pdGenericIcon(NO);
+
+   pthread_mutex_lock(&iconsLock);
+   [iconsByType setObject:result forKey:key];
+   pthread_mutex_unlock(&iconsLock);
+
+   return result;
 }
 
 -(NSString *)localizedDescriptionForType:(NSString *)type {
@@ -570,6 +636,136 @@ static void PDNoteLaunched(NSString *path)
      return candidate;
    }
    return nil;
+}
+
+
+/* A GNUstep addition Gershwin relies on: the applications that can open a
+ * given extension, keyed by application name. Gershwin builds its "Open with"
+ * menu from the keys, and treats nil as "nothing registered", so an extension
+ * no bundle claims simply produces an empty menu. */
+-(NSDictionary *)infoForExtension:(NSString *)extension {
+   if([extension length]==0)
+    return nil;
+
+   NSString            *wanted=[extension lowercaseString];
+   NSFileManager       *manager=[NSFileManager defaultManager];
+   NSMutableDictionary *result=[NSMutableDictionary dictionary];
+   NSMutableArray      *directories=[NSMutableArray array];
+
+   [directories addObjectsFromArray:NSSearchPathForDirectoriesInDomains(
+     NSApplicationDirectory,NSAllDomainsMask,YES)];
+   [directories addObjectsFromArray:NSSearchPathForDirectoriesInDomains(
+     NSCoreServiceDirectory,NSAllDomainsMask,YES)];
+
+   for(NSString *directory in directories){
+    for(NSString *name in [manager contentsOfDirectoryAtPath:directory error:NULL]){
+     if(![[name pathExtension] isEqualToString:@"app"])
+      continue;
+
+     NSBundle     *bundle=[NSBundle bundleWithPath:
+                            [directory stringByAppendingPathComponent:name]];
+     NSDictionary *info=[bundle infoDictionary];
+
+     for(NSDictionary *type in [info objectForKey:@"CFBundleDocumentTypes"]){
+      if(![type isKindOfClass:[NSDictionary class]])
+       continue;
+
+      for(NSString *candidate in [type objectForKey:@"CFBundleTypeExtensions"]){
+       if(![candidate isKindOfClass:[NSString class]])
+        continue;
+
+       /* "*" is the wildcard an editor uses to claim every file. */
+       if([candidate isEqualToString:@"*"] ||
+          [[candidate lowercaseString] isEqualToString:wanted]){
+        [result setObject:type forKey:name];
+        break;
+       }
+      }
+      if([result objectForKey:name]!=nil)
+       break;
+     }
+    }
+   }
+
+   return [result count]>0 ? result : nil;
+}
+
+
+/* GNUstep records which application should open a given extension; Gershwin
+ * reads it to pick a target and writes it when the user chooses "Open with".
+ * A nil role is the default role, which is all Gershwin ever asks for. */
+static NSString * const PDWorkspaceBestAppsKey = @"NSWorkspaceBestApps";
+
+-(NSString *)getBestAppInRole:(NSString *)role forExtension:(NSString *)extension {
+   if([extension length]==0)
+    return nil;
+
+   NSString     *key=[extension lowercaseString];
+   NSDictionary *bestApps=[[NSUserDefaults standardUserDefaults]
+                            dictionaryForKey:PDWorkspaceBestAppsKey];
+   NSDictionary *roles=[bestApps objectForKey:key];
+
+   if([roles isKindOfClass:[NSDictionary class]]){
+    NSString *chosen=[roles objectForKey:(role!=nil ? role : @"")];
+
+    if([chosen length]>0)
+     return chosen;
+   }
+
+   /* Nothing recorded, so any application claiming the extension will do.
+    * Callers treat nil as "use the default editor". */
+   NSArray *claimants=[[self infoForExtension:extension] allKeys];
+
+   if([claimants count]>0)
+    return [[claimants objectAtIndex:0] stringByDeletingPathExtension];
+
+   return nil;
+}
+
+-(void)setBestApp:(NSString *)appName inRole:(NSString *)role forExtension:(NSString *)extension {
+   if([extension length]==0 || [appName length]==0)
+    return;
+
+   NSUserDefaults      *defaults=[NSUserDefaults standardUserDefaults];
+   NSString            *key=[extension lowercaseString];
+   NSMutableDictionary *bestApps=[NSMutableDictionary dictionary];
+   NSMutableDictionary *roles=[NSMutableDictionary dictionary];
+   NSDictionary        *existing=[defaults dictionaryForKey:PDWorkspaceBestAppsKey];
+
+   if(existing!=nil)
+    [bestApps addEntriesFromDictionary:existing];
+
+   NSDictionary *existingRoles=[bestApps objectForKey:key];
+
+   if([existingRoles isKindOfClass:[NSDictionary class]])
+    [roles addEntriesFromDictionary:existingRoles];
+
+   [roles setObject:appName forKey:(role!=nil ? role : @"")];
+   [bestApps setObject:roles forKey:key];
+   [defaults setObject:bestApps forKey:PDWorkspaceBestAppsKey];
+   [defaults synchronize];
+}
+
+/* The executable inside an application bundle; Gershwin hands this to NSTask,
+ * and treats nil as "cannot launch". */
+-(NSString *)locateApplicationBinary:(NSString *)appName {
+   NSString *bundlePath=[self fullPathForApplication:appName];
+
+   if(bundlePath==nil)
+    return nil;
+
+   NSFileManager *manager=[NSFileManager defaultManager];
+   NSString      *executable=[[NSBundle bundleWithPath:bundlePath] executablePath];
+
+   if(executable!=nil && [manager isExecutableFileAtPath:executable])
+    return executable;
+
+   /* No usable Info.plist, so fall back to the conventional layout. */
+   NSString *name=[[bundlePath lastPathComponent] stringByDeletingPathExtension];
+   NSString *candidate=[[bundlePath stringByAppendingPathComponent:@"Contents/MacOS"]
+                         stringByAppendingPathComponent:name];
+
+   return [manager isExecutableFileAtPath:candidate] ? candidate : nil;
 }
 
 @end

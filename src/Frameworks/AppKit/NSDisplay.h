@@ -27,8 +27,13 @@ SOFTWARE. */
 
 @class NSEvent, NSColor, NSPasteboard, NSDraggingManager, NSPrintInfo, NSView, NSSavePanel, NSOpenPanel, CGWindow;
 
+#include <pthread.h>
+
 @interface NSDisplay : NSObject {
     NSMutableArray *_eventQueue;
+    /* -machServiceLoop: posts events from its own thread while the main thread
+     * dequeues them, so every _eventQueue access is serialised. */
+    pthread_mutex_t _eventQueueLock;
     NSMutableArray *_screens;
     uint32_t _depth;
     NSPoint pointerPos;

@@ -1,5 +1,6 @@
 #import "O2Context_builtin_FT.h"
 #import <Onyx2D/O2GraphicsState.h>
+#import <Onyx2D/O2Image.h>
 #import "O2Font_FT.h"
 #import <Onyx2D/O2Paint_color.h>
 
@@ -50,50 +51,82 @@ static void applyCoverageToSpan_lRGBA8888_PRE(O2argb8u *dst,unsigned char *cover
 }
 
 
+/* A glyph can land partly or wholly outside the surface - a window laying out
+ * text before it is sized, or a label running past an edge. The spans were
+ * read and written unclipped, which walks off the end of the backing store. */
 static void drawFreeTypeBitmap(O2Context_builtin_FT *self,O2Surface *surface,FT_Bitmap *bitmap,int x,int y,O2Paint *paint){
-// FIXME: clipping
    int            width=bitmap->width;
-   int            row,height=bitmap->rows;
-   O2argb8u      *dstBuffer=__builtin_alloca(width*sizeof(O2argb8u));
-   O2argb8u      *srcBuffer=__builtin_alloca(width*sizeof(O2argb8u));
-   unsigned char *coverage=bitmap->buffer;
-   
-   for(row=0;row<height;row++,y++){
-   int        length=width;
-    O2argb8u *dst=dstBuffer;
-    O2argb8u *src=srcBuffer;
-    
-    O2argb8u *direct=surface->_read_argb8u(surface,x,y,dst,length);
+   int            height=bitmap->rows;
+   /* Glyphs are written straight to the surface, so the rasterizer viewport -
+    * which is where CGContextClipToRect ends up - has to be applied here too.
+    * Without it text ignored its view's clip and drew over whatever sat on
+    * top of it. */
+   int            clipLeft=MAX(0,self->_vpx);
+   int            clipTop=MAX(0,self->_vpy);
+   int            clipRight=MIN((int)O2ImageGetWidth((O2ImageRef)surface),
+                                self->_vpx+self->_vpwidth);
+   int            clipBottom=MIN((int)O2ImageGetHeight((O2ImageRef)surface),
+                                 self->_vpy+self->_vpheight);
+   int            pitch=(bitmap->pitch>0)?bitmap->pitch:width;
+   int            row;
+   O2argb8u      *dstBuffer;
+   O2argb8u      *srcBuffer;
+   unsigned char *coverageRow=bitmap->buffer;
+
+   if(width<=0 || height<=0 || coverageRow==NULL)
+    return;
+
+   dstBuffer=__builtin_alloca(width*sizeof(O2argb8u));
+   srcBuffer=__builtin_alloca(width*sizeof(O2argb8u));
+
+   if(clipRight<=clipLeft || clipBottom<=clipTop)
+    return;
+
+   for(row=0;row<height;row++,y++,coverageRow+=pitch){
+    if(y<clipTop || y>=clipBottom)
+     continue;
+
+    int leading=(x<clipLeft)?clipLeft-x:0;
+    int visible=width-leading;
+
+    if(x+width>clipRight)
+     visible-=(x+width)-clipRight;
+
+    if(visible<=0)
+     continue;
+
+    int            spanX=x+leading;
+    int            length=visible;
+    unsigned char *coverage=coverageRow+leading;
+    O2argb8u      *dst=dstBuffer;
+    O2argb8u      *src=srcBuffer;
+    O2argb8u      *direct=surface->_read_argb8u(surface,spanX,y,dst,length);
 
     if(direct!=NULL)
      dst=direct;
 
     while(YES){
-     int chunk=O2PaintReadSpan_argb8u_PRE(paint,x,y,src,length);
-      
+     int chunk=O2PaintReadSpan_argb8u_PRE(paint,spanX,y,src,length);
+
      if(chunk<0)
       chunk=-chunk;
      else {
-
       applyCoverageToSpan_lRGBA8888_PRE(dst,coverage,src,chunk);
 
       if(direct==NULL)
-       O2SurfaceWriteSpan_argb8u_PRE(surface,x,y,dst,chunk);
+       O2SurfaceWriteSpan_argb8u_PRE(surface,spanX,y,dst,chunk);
      }
      coverage+=chunk;
 
-     length-=chunk;     
-     x+=chunk;
+     length-=chunk;
+     spanX+=chunk;
      src+=chunk;
      dst+=chunk;
 
-     if(length==0)
+     if(length<=0)
       break;
-
     }
-    x-=width;
    }
-    
 }
 
 -(void)showGlyphs:(const O2Glyph *)glyphs advances:(const O2Size *)advances count:(unsigned)count {

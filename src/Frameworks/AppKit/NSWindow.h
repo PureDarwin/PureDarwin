@@ -533,6 +533,11 @@ APPKIT_EXPORT NSString *const NSWindowDidEndLiveResizeNotification;
 - (void)toggleToolbarShown:sender;
 - (void)runToolbarCustomizationPalette:sender;
 
+
+/* PureDarwin: the window server's view of a window; windowNumber 0 asks for
+ * the active application window. Returns nil when there is none. */
++(NSDictionary *)_windowServerInfoForWindowNumber:(NSInteger)windowNumber;
+
 @end
 
 @interface NSObject (NSWindow_delegate)

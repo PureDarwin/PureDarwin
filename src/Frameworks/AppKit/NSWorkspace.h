@@ -96,6 +96,14 @@ APPKIT_EXPORT NSString *const NSWorkspaceDuplicateOperation;
 
 - (int)extendPowerOffBy:(int)milliseconds;
 
+
+/* GNUstep addition: applications that can open the extension, keyed by
+ * application name; nil when none is registered. */
+-(NSDictionary *)infoForExtension:(NSString *)extension;
+-(NSString *)getBestAppInRole:(NSString *)role forExtension:(NSString *)extension;
+-(void)setBestApp:(NSString *)appName inRole:(NSString *)role forExtension:(NSString *)extension;
+-(NSString *)locateApplicationBinary:(NSString *)appName;
+
 @end
 
 @interface NSWorkspace (CocotronAdditions)

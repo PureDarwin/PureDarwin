@@ -52,6 +52,7 @@ SOFTWARE. */
 
 -init {
     _eventQueue=[NSMutableArray new];
+    pthread_mutex_init(&_eventQueueLock,NULL);
     _screens = [NSMutableArray new];
 
     CGDirectDisplayID cgDisplays[8];
@@ -172,17 +173,20 @@ SOFTWARE. */
 -(NSEvent *)nextEventMatchingMask:(unsigned)mask untilDate:(NSDate *)untilDate inMode:(NSString *)mode dequeue:(BOOL)dequeue {
     NSEvent *result=nil;
 
+    pthread_mutex_lock(&_eventQueueLock);
     if([_eventQueue count])
         untilDate=[NSDate date];
+    pthread_mutex_unlock(&_eventQueueLock);
    
     [[NSRunLoop currentRunLoop] addInputSource:[NSApp inputSource] forMode:mode];
     [[NSRunLoop currentRunLoop] runMode:mode beforeDate:untilDate];
     [NSApp _drainPipe]; // if there are events, read one at a time
     [[NSRunLoop currentRunLoop] removeInputSource:[NSApp inputSource] forMode:mode];
 
+    pthread_mutex_lock(&_eventQueueLock);
     while(result==nil && [_eventQueue count]>0) {
         NSEvent *check=[_eventQueue objectAtIndex:0];
-    
+
     if(!(NSEventMaskFromType([check type])&mask))
          [_eventQueue removeObjectAtIndex:0];
     else {
@@ -196,6 +200,7 @@ SOFTWARE. */
             [_eventQueue removeObjectAtIndex:0];
        }
    }
+    pthread_mutex_unlock(&_eventQueueLock);
 
     if(result==nil)
         result=[[[NSEvent alloc] initWithType:NSAppKitSystem location:NSMakePoint(0,0) modifierFlags:0 window:nil] autorelease];
@@ -204,6 +209,8 @@ SOFTWARE. */
 }
 
 -(void)discardEventsMatchingMask:(unsigned)mask beforeEvent:(NSEvent *)event {
+   pthread_mutex_lock(&_eventQueueLock);
+
    int count=[_eventQueue count];
 
    while(--count>=0){
@@ -217,17 +224,27 @@ SOFTWARE. */
     if(NSEventMaskFromType([event type])&mask)
      [_eventQueue removeObjectAtIndex:count];
    }
+
+   pthread_mutex_unlock(&_eventQueueLock);
 }
 
 -(void)postEvent:(NSEvent *)event atStart:(BOOL)atStart {
+   if(event==nil)
+    return;
+
+   pthread_mutex_lock(&_eventQueueLock);
    if(atStart)
     [_eventQueue insertObject:event atIndex:0];
    else
     [_eventQueue addObject:event];
+   pthread_mutex_unlock(&_eventQueueLock);
 }
 
 -(BOOL)containsAndRemovePeriodicEvents {
    BOOL result=NO;
+
+   pthread_mutex_lock(&_eventQueueLock);
+
    int  count=[_eventQueue count];
 
    while(--count>=0){
@@ -236,6 +253,8 @@ SOFTWARE. */
      [_eventQueue removeObjectAtIndex:count];
     }
    }
+
+   pthread_mutex_unlock(&_eventQueueLock);
 
    return result;
 }

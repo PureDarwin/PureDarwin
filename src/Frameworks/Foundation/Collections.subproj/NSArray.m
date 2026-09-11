@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/NSArray.h>
+#import <Foundation/NSSortDescriptor.h>
 #import <Foundation/NSException.h>
 #import <Foundation/NSNull.h>
 #import <Foundation/NSString.h>
@@ -21,6 +22,11 @@
 extern int __CFConstantStringClassReference[];
 
 static BOOL ns_array_value_is_constant_string(const void *value) {
+    /* A nil member reaches the callbacks as NULL, and reading its isa
+     * to classify it is what turned a stray nil into a crash. */
+    if (value == NULL) {
+        return NO;
+    }
     return *(const uintptr_t *)value ==
         (uintptr_t)&__CFConstantStringClassReference;
 }
@@ -41,12 +47,22 @@ static void ns_array_release(CFAllocatorRef allocator, const void *value) {
     [(id)value release];
 }
 
+static Boolean ns_array_equal(const void *left, const void *right) {
+    if (left == right) {
+        return true;
+    }
+    if (left == NULL || right == NULL) {
+        return false;
+    }
+    return [(id)left isEqual:(id)right] ? true : false;
+}
+
 static const CFArrayCallBacks ns_array_callbacks = {
     0,
     ns_array_retain,
     ns_array_release,
     CFCopyDescription,
-    CFEqual
+    ns_array_equal
 };
 
 static CFComparisonResult ns_array_compare(const void *left,
@@ -345,6 +361,13 @@ static void __NSArray0Init(void) {
     return (id)CFAutorelease(result);
 }
 
+- (NSArray *)sortedArrayUsingDescriptors:(NSArray *)descriptors {
+    NSMutableArray *result = [NSMutableArray arrayWithArray:self];
+
+    [result sortUsingDescriptors:descriptors];
+    return result;
+}
+
 - (NSArray *)sortedArrayUsingComparator:(NSComparator)comparator {
     NSMutableArray *result = [[self mutableCopy] autorelease];
 
@@ -517,6 +540,26 @@ static CFComparisonResult ns_array_compare_block(const void *left,
 
 - (void)sortWithOptions:(NSSortOptions)options usingComparator:(NSComparator)comparator {
     [self sortUsingComparator:comparator];
+}
+
+/* Each descriptor breaks the previous one's ties, which is the order the
+ * descriptors are given in. */
+- (void)sortUsingDescriptors:(NSArray *)descriptors {
+    if ([descriptors count] == 0) {
+        return;
+    }
+
+    [self sortUsingComparator:^NSComparisonResult(id first, id second) {
+        for (NSSortDescriptor *descriptor in descriptors) {
+            NSComparisonResult order = [descriptor compareObject:first
+                                                        toObject:second];
+
+            if (order != NSOrderedSame) {
+                return order;
+            }
+        }
+        return NSOrderedSame;
+    }];
 }
 
 /* Bridged to CFArrayRef, so identity comes from the CF layer. Without these the

@@ -33,6 +33,8 @@ enum {
     kWSWindowResize = 9,
     kCGGetLastMouseDelta = 100,
     kCGGetMouseLocation = 101,
+    /* windowID 0 asks for the active application window. */
+    kWSGetWindowInfo = 102,
 };
 
 enum {

@@ -26,6 +26,7 @@
     BOOL _executing;
     BOOL _finished;
     BOOL _cancelled;
+    NSString *_name;
 }
 
 + (NSThread *)currentThread;
@@ -44,6 +45,8 @@
 - (BOOL)isExecuting;
 - (BOOL)isFinished;
 - (BOOL)isCancelled;
+- (NSString *)name;
+- (void)setName:(NSString *)name;
 
 @end
 

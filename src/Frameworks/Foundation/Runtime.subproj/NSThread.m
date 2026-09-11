@@ -73,6 +73,7 @@ static void *startDetachedThread(void *context) {
 - (void)dealloc {
     [_dictionary release];
     [_sharedDictionary release];
+    [_name release];
     [super dealloc];
 }
 
@@ -172,6 +173,20 @@ static void *startThreadObject(void *context) {
 - (BOOL)isCancelled {
     return _cancelled;
 }
+
+/* Thread names are advisory; Gershwin sets them for its worker threads. */
+- (NSString *)name {
+    return _name;
+}
+
+- (void)setName:(NSString *)name {
+    if (_name == name) {
+        return;
+    }
+    [_name release];
+    _name = [name copy];
+}
+
 
 + (void)detachNewThreadSelector:(SEL)selector
                        toTarget:(id)target

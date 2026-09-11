@@ -1229,6 +1229,10 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    do {
    NSAutoreleasePool *pool=[NSAutoreleasePool new];
 
+   /* Left set from a previous iteration this would be a dangling pointer,
+    * since that iteration's pool has already gone. */
+   nextEvent=nil;
+
    NS_DURING
     //[NSClassFromString(@"Win32RunningCopyPipe") performSelector:@selector(createRunningCopyPipe)];
 
@@ -1242,10 +1246,10 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 
      nextEvent=[_display nextEventMatchingMask:mask untilDate:untilDate inMode:mode dequeue:dequeue];
 
-     if([nextEvent type]==NSAppKitSystem){
-      [nextEvent release];
+     if([nextEvent type]==NSAppKitSystem)
       nextEvent=nil;
-     }
+     else
+      [nextEvent retain];
 
    NS_HANDLER
     [self reportException:localException];
@@ -1255,11 +1259,11 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    }while(nextEvent==nil && [untilDate timeIntervalSinceNow]>0);
 
    if(nextEvent!=nil){
-    nextEvent=[nextEvent retain];
-
+    /* -currentEvent hands this out to other threads, so the ivar keeps a
+     * reference of its own rather than borrowing the one being returned. */
     pthread_mutex_lock(_lock);
      [_currentEvent release];
-     _currentEvent=nextEvent;
+     _currentEvent=[nextEvent retain];
     pthread_mutex_unlock(_lock);
    }
 

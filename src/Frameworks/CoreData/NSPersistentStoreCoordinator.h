@@ -8,6 +8,10 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <Foundation/NSObject.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSLock.h>
+/* NSMutableArray and NSDictionary are used below. Apple's NSObject.h drags in
+ * the collections transitively; ours does not, so name them directly. */
+#import <Foundation/NSArray.h>
+#import <Foundation/NSDictionary.h>
 #import <CoreData/CoreDataExports.h>
 
 @class NSManagedObjectModel, NSPersistentStore, NSManagedObjectID;

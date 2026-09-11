@@ -749,7 +749,7 @@ static void releasePatternInfo(void *info){
 /* Cocoa blends toward white (highlight) or black (shadow) by the given
  * fraction, keeping alpha. Their absence left callers with a nil colour, and
  * -set on nil silently leaves the previous colour in place - which is how the
- * dock came out black. */cc
+ * dock (from Gershwin) came out black. */
 -(NSColor *)highlightWithLevel:(CGFloat)level {
    if(level <= 0.0)
     return self;
@@ -848,7 +848,7 @@ static void releasePatternInfo(void *info){
     [path lineToPoint:NSMakePoint(NSMinX(rect), NSMinY(rect))];
     [path closePath];
     [path fill];
-    
+
     [self setFill];
     NSRectFillUsingOperation(rect, NSCompositeSourceOver);
 }

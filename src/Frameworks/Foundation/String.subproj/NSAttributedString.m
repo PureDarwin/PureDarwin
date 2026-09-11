@@ -137,30 +137,6 @@ longestEffectiveRange:(NSRangePointer)range
     return [self initWithString:@""];
 }
 
-@end
-
-@implementation NSMutableAttributedString
-
-- (instancetype)initWithString:(NSString *)string attributes:(NSDictionary *)attributes {
-    CFMutableAttributedStringRef result =
-        CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
-
-    if (string != nil) {
-        CFAttributedStringReplaceString(result, CFRangeMake(0, 0), (CFStringRef)string);
-    }
-    if (attributes != nil && string != nil) {
-        CFAttributedStringSetAttributes(result,
-            CFRangeMake(0, CFAttributedStringGetLength(result)),
-            (CFDictionaryRef)attributes, true);
-    }
-    return (id)result;
-}
-
-- (instancetype)initWithAttributedString:(NSAttributedString *)other {
-    return (id)CFAttributedStringCreateMutableCopy(kCFAllocatorDefault, 0,
-                                                   (CFAttributedStringRef)other);
-}
-
 - (NSMutableString *)mutableString {
     return (NSMutableString *)CFAttributedStringGetMutableString(
         (CFMutableAttributedStringRef)self);
@@ -230,6 +206,30 @@ longestEffectiveRange:(NSRangePointer)range
 
 - (void)endEditing {
     CFAttributedStringEndEditing((CFMutableAttributedStringRef)self);
+}
+
+@end
+
+@implementation NSMutableAttributedString
+
+- (instancetype)initWithString:(NSString *)string attributes:(NSDictionary *)attributes {
+    CFMutableAttributedStringRef result =
+        CFAttributedStringCreateMutable(kCFAllocatorDefault, 0);
+
+    if (string != nil) {
+        CFAttributedStringReplaceString(result, CFRangeMake(0, 0), (CFStringRef)string);
+    }
+    if (attributes != nil && string != nil) {
+        CFAttributedStringSetAttributes(result,
+            CFRangeMake(0, CFAttributedStringGetLength(result)),
+            (CFDictionaryRef)attributes, true);
+    }
+    return (id)result;
+}
+
+- (instancetype)initWithAttributedString:(NSAttributedString *)other {
+    return (id)CFAttributedStringCreateMutableCopy(kCFAllocatorDefault, 0,
+                                                   (CFAttributedStringRef)other);
 }
 
 @end

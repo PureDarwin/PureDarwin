@@ -461,7 +461,9 @@ const float WSWindowEdgePad = 2;
    if(result==nil){
     result=[NSGraphicsContext graphicsContextWithWindow:self];
     [_threadToContext setObject:result forKey:key];
-    [NSGraphicsContext setCurrentContext:result];
+
+    /* Deliberately not made current here. Asking one window for its context
+     * used to repoint the process-wide current context, which is not ideal. */
    }
 
    return result;
@@ -778,6 +780,11 @@ const float WSWindowEdgePad = 2;
 
 -(void)_makeSureIsOnAScreen {
    if(_makeSureIsOnAScreen && [self isVisible] && ![self isMiniaturized]){
+    if(!(_styleMask & NSTitledWindowMask) || _level > NSNormalWindowLevel){
+     _makeSureIsOnAScreen=NO;
+     return;
+    }
+
     NSRect   frame=_frame;
     NSArray *screens=[NSScreen screens];
     int      i,count=[screens count];
@@ -898,6 +905,8 @@ const float WSWindowEdgePad = 2;
     if(!NSEqualSizes(_frame.size,size) || forceRebuild) {
         _frame.size = size;
         [self _updateWSState];
+
+        [_threadToContext removeAllObjects];
 
         [_context release];
         _context = nil;
@@ -3260,6 +3269,30 @@ const float WSWindowEdgePad = 2;
     return frame;
 }
 
++(NSDictionary *)_windowServerInfoForWindowNumber:(NSInteger)windowNumber {
+    struct wsRPCWindow data = {
+        { kWSGetWindowInfo, sizeof(struct wsRPCWindow) - sizeof(struct wsRPCBase) },
+        (int)windowNumber, 0, 0, 0, 0, 0, 0, {'\0'}, 0
+    };
+    int len = sizeof(data);
+
+    if(_windowServerRPC(&data, sizeof(data), &data, &len) != KERN_SUCCESS)
+        return nil;
+    if(data.windowID == 0)
+        return nil;
+
+    data.title[sizeof(data.title) - 1] = '\0';
+
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+        [NSNumber numberWithInt:data.windowID], @"windowNumber",
+        [NSString stringWithUTF8String:data.title], @"title",
+        [NSNumber numberWithInt:data.level], @"level",
+        [NSNumber numberWithDouble:data.x], @"x",
+        [NSNumber numberWithDouble:data.y], @"y",
+        [NSNumber numberWithDouble:data.w], @"width",
+        [NSNumber numberWithDouble:data.h], @"height",
+        nil];
+}
 
 -(BOOL)_updateWSState {
     struct wsRPCWindow data = {

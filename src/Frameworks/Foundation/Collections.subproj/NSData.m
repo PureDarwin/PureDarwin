@@ -470,6 +470,21 @@ __NSDataCreateWithContentsOfFile(NSString *path)
 			   (const UInt8 *)bytes, (CFIndex)range.length);
 }
 
+- (void)replaceBytesInRange:(NSRange)range
+                  withBytes:(const void *)bytes
+                     length:(NSUInteger)length
+{
+	CFDataReplaceBytes((CFMutableDataRef)self,
+			   CFRangeMake((CFIndex)range.location,
+				       (CFIndex)range.length),
+			   (const UInt8 *)bytes, (CFIndex)length);
+}
+
+- (void)increaseLengthBy:(NSUInteger)extra
+{
+	[self setLength:[self length] + extra];
+}
+
 - (void)resetBytesInRange:(NSRange)range
 {
 	uint8_t	*base = (uint8_t *)[self mutableBytes];

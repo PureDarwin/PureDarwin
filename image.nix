@@ -38,7 +38,7 @@
   # xnu-loader reads this off the ESP at \EFI\BOOT\boot-args.txt
   # it falls back if it cannot find a boot-args.txt, so not strictly needed here
   # but generally nice to have so we can override things easily now
-, bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1"
+, bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1 vgpu_debug=1"
 }:
 
 assert lib.isDerivation baseSystem;

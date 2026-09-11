@@ -749,6 +749,8 @@ let
           efiInputTarget =
             if crossPkgs.stdenv.hostPlatform.isx86_64
             then "elf64-x86-64"
+            else if crossPkgs.stdenv.hostPlatform.isi686
+            then "elf32-i386"
             else "elf64-littleaarch64";
         in
         (loader.override {
@@ -761,9 +763,13 @@ let
             pkgs.dosfstools
             pkgs.mtools
           ];
+          # The unwrapped binutils installs only target-prefixed tools in bin/
+          # for a cross set, so bin/ld and bin/objcopy do not exist there and
+          # the link fails with "No such file or directory". The wrapper does
+          # carry the prefixed names.
           cmakeFlags = (old.cmakeFlags or [ ]) ++ [
-            "-DCMAKE_LINKER=${crossPkgs.stdenv.cc.bintools.bintools}/bin/ld"
-            "-DCMAKE_OBJCOPY=${crossPkgs.stdenv.cc.bintools.bintools}/bin/objcopy"
+            "-DCMAKE_LINKER=${crossPkgs.stdenv.cc.bintools}/bin/${crossPkgs.stdenv.cc.targetPrefix}ld"
+            "-DCMAKE_OBJCOPY=${crossPkgs.stdenv.cc.bintools}/bin/${crossPkgs.stdenv.cc.targetPrefix}objcopy"
           ];
           postPatch = (old.postPatch or "") + ''
             if grep -q -- '--target=efi-app-''${ARCH}' CMakeLists.txt; then
@@ -777,6 +783,10 @@ let
         });
       xnuLoaderDefault = makeXnuLoaderHostBuild xnu-loader.packages.${system}.default pkgs.pkgsCross.gnu64;
       xnuLoaderArm64 = makeXnuLoaderHostBuild xnu-loader.packages.${system}.arm64-virt pkgs.pkgsCross.aarch64-multiplatform;
+      # 32-bit UEFI on a 64-bit CPU: the firmware loads only IA32 PE images,
+      # while the kernel it boots stays x86_64. Built from the i686 set so
+      # libgcc, gnu-efi and binutils are all 32-bit.
+      xnuLoaderIa32 = makeXnuLoaderHostBuild xnu-loader.packages.${system}.ia32 pkgs.pkgsi686Linux;
       kcBuild = pkgs.callPackage ./pkgs/toolchain/kc.nix {
         kernel = kernelBuild;
         inherit kernelSource;
@@ -862,6 +872,18 @@ let
         imageFileName = "puredarwin-legacy.img";
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1";
       };
+      # Same system as .#image, booted by a 32-bit UEFI implementation. Only
+      # the loader and the ESP's fallback filename differ; the kernel, KC and
+      # every kext are the ordinary x86_64 ones.
+      imageIa32Build = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystem;
+        extraPackages = imageExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderIa32;
+        efiBinary = "BOOTIA32.EFI";
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-ia32.img";
+      };
       imageHfsBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
         extraPackages = imageExtraPackages;
@@ -883,13 +905,46 @@ let
         imageFileName = "puredarwin-debug.img";
       };
       imageArm64VirtBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtMinimalRelease;
+        extraPackages = imageExtraPackagesArm64;
+        kc = kcArm64ReleaseBuild;
+        xnuLoader = xnuLoaderArm64;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        espMB = 64;
+        rootMB = 3072;
+        imageFileName = "puredarwin-arm64-virt.img";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 vgpu_debug=1";
+      };
+      imageArm64VirtDebugBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtMinimalRelease;
+        extraPackages = imageExtraPackagesArm64;
+        kc = kcArm64ReleaseBuild;
+        xnuLoader = xnuLoaderArm64;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        espMB = 64;
+        rootMB = 3072;
+        imageFileName = "puredarwin-debug-arm64-virt.img";
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 vgpu_debug=1";
+      };
+      imageArm64VirtWaylandBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtWayland;
         extraPackages = imageExtraPackagesArm64Nox;
         kc = kcArm64ReleaseBuild;
         xnuLoader = xnuLoaderArm64;
         apfsprogs = pkgs.apfsprogs;
         efiBinary = "BOOTAA64.EFI";
-        imageFileName = "puredarwin-arm64-virt.img";
+        imageFileName = "puredarwin-wayland-arm64-virt.img";
+      };
+      imageArm64VirtWaylandDebugBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64VirtWayland;
+        extraPackages = imageExtraPackagesArm64Nox;
+        kc = kcArm64DebugBuild;
+        xnuLoader = xnuLoaderArm64;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        imageFileName = "puredarwin-wayland-debug-arm64-virt.img";
       };
       imageArm64VirtMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
@@ -972,19 +1027,6 @@ let
         espMB = 64;
         rootMB = 1024;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=1 no_interrupt_masked_debug=1";
-      };
-
-      imageArm64VirtFullBuild = pkgs.callPackage ../image.nix {
-        baseSystem = splitBaseSystemArm64VirtMinimalRelease;
-        extraPackages = imageExtraPackagesArm64;
-        kc = kcArm64ReleaseBuild;
-        xnuLoader = xnuLoaderArm64;
-        apfsprogs = pkgs.apfsprogs;
-        efiBinary = "BOOTAA64.EFI";
-        espMB = 64;
-        rootMB = 3072;
-        imageFileName = "puredarwin-arm64-virt.img";
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1 vgpu_debug=1";
       };
       imageArm64VirtMinimalReleaseBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimalRelease;
@@ -1572,11 +1614,13 @@ let
       launchctl = launchctlBuild;
       image = imageBuild;
       image-arm64-virt = imageArm64VirtBuild;
+      image-arm64-virt-debug = imageArm64VirtDebugBuild;
       image-arm64-bcm2837 = imageArm64Bcm2837Build;
       image-arm64-virt-minimal = imageArm64VirtMinimalBuild;
       netboot-arm64-virt-minimal = netbootArm64VirtMinimalBuild;
       image-arm64-virt-minimal-release = imageArm64VirtMinimalReleaseBuild;
-      image-arm64-virt-full = imageArm64VirtFullBuild;
+      image-arm64-virt-wayland = imageArm64VirtWaylandBuild;
+      image-arm64-virt-wayland-debug = imageArm64VirtWaylandDebugBuild;
       image-hfs = imageHfsBuild;
       image-debug = imageDebugBuild;
       image-stripped = imageStrippedBuild;
@@ -1599,6 +1643,7 @@ let
       gtk3-nox = gtk3NoxBuild;
       image-minimal = imageMinimalBuild;
       image-legacy = imageLegacyBuild;
+      image-ia32 = imageIa32Build;
       image-legacy-minimal = imageLegacyMinimalBuild;
       image-minimal-debug = imageMinimalBuildDebug;
       image-shell = imageShellBuild;
