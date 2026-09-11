@@ -1,5 +1,9 @@
 /*
  * oids.h - object identifier constants.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 #ifndef _LIB_DER_OIDS_H_
 #define _LIB_DER_OIDS_H_

@@ -1,6 +1,12 @@
 /*
  * DER_CertCrl.h - X.509 certificate structures.
  *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
+
+/*
  * A note on the context-specific tags: RFC 5280 marks several fields [n]. Where
  * the field is EXPLICIT the tag is constructed; where it is IMPLICIT over a
  * primitive type it is not. Getting that bit wrong makes the field silently

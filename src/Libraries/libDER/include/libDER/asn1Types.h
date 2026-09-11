@@ -1,5 +1,9 @@
 /*
  * asn1Types.h - ASN.1 identifier octet constants.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 #ifndef _ASN1_TYPES_H_
 #define _ASN1_TYPES_H_

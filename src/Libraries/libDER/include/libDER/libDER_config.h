@@ -1,6 +1,12 @@
 /*
  * libDER_config.h - base types and build knobs for libDER.
  *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
+
+/*
  * Apple ships libDER sources as part of CommonCrypto without licensing
  * terms that permit reuse here, so none of it may be used here;
  * this is written from the public API contract

@@ -45,7 +45,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
  * arithmetic below assumes. */
 - (BOOL)isFlipped
 {
-    return YES;
+    return !_horizontal;
 }
 
 - (NSWindow *)window

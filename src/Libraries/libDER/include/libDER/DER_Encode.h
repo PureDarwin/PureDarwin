@@ -1,5 +1,9 @@
 /*
  * DER_Encode.h - DER encoding.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 #ifndef _DER_ENCODE_H_
 #define _DER_ENCODE_H_

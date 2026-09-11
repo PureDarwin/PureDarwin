@@ -1,5 +1,9 @@
 /*
  * DERItem.h - the (pointer, length) pair every libDER entry point traffics in.
+ *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 #ifndef _DER_ITEM_H_
 #define _DER_ITEM_H_

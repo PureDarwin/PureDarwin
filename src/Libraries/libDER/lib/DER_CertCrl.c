@@ -1,6 +1,12 @@
 /*
  * DER_CertCrl.c - X.509 spec tables.
  *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
+
+/*
  * Context tag conventions used below:
  *   CTX_C(n)  constructed [n] - an EXPLICIT wrapper, or an IMPLICIT one over a
  *             constructed type such as SEQUENCE

@@ -1,3 +1,7 @@
+# Copyright (c) 2026 The PureDarwin Project
+#
+# SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+
 add_library(libDER_static STATIC
     lib/DER_Decode.c
     lib/DER_Encode.c

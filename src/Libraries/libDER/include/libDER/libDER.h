@@ -1,6 +1,12 @@
 /*
  * libDER.h - umbrella header.
  *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
+
+/*
  * Clean-room; see libDER_config.h for provenance.
  */
 #ifndef _LIB_DER_H_

@@ -1,6 +1,12 @@
 /*
  * oids.c - object identifier constants.
  *
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
+ */
+
+/*
  * Generated from dotted OID forms and verified against OpenSSL; see oids.h.
  */
 
