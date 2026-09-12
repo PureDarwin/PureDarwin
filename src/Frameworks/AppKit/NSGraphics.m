@@ -178,12 +178,12 @@ void NSRectFillList(const NSRect *rects, int count) {
 /* Copy would replace the destination, so filling with a clear colour erased
  * whatever was underneath instead of leaving it alone. Opaque fills are
  * unaffected: O2ContextSetupPaintAndBlendMode promotes them back to Copy. */
+/* Apple's NSRectFill composites with copy, so filling with a transparent
+   colour erases. Source-over here instead would silently turn every such
+   erase into a no-op; callers wanting that ask for it with
+   NSRectFillUsingOperation. */
 void NSRectFill(NSRect rect) {
-   CGContextRef context=NSCurrentGraphicsPort();
-   CGContextSaveGState(context);
-   CGContextSetBlendMode(context,kCGBlendModeNormal);
-   CGContextFillRect(NSCurrentGraphicsPort(),rect);
-   CGContextRestoreGState(context);
+   NSRectFillUsingOperation(rect,NSCompositeCopy);
 }
 
 void NSEraseRect(NSRect rect) {

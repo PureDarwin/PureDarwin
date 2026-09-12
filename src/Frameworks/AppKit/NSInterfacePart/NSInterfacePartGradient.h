@@ -10,6 +10,8 @@
 @interface NSInterfacePartGradient : NSInterfacePart {
     NSGradient *_gradient;
     NSColor *_borderColor;
+    NSColor *_topHighlightColor;
+    NSColor *_bottomBorderColor;
     CGFloat _angle;
     CGFloat _cornerRadius;
 }
@@ -18,5 +20,9 @@
            angle:(CGFloat)angle
      borderColor:(NSColor *)borderColor
     cornerRadius:(CGFloat)cornerRadius;
+
+/* A bar wants a rule along one edge rather than a box: either edge colour may
+ * be nil, and both are independent of borderColor. */
+- (void)setTopHighlightColor:(NSColor *)top bottomBorderColor:(NSColor *)bottom;
 
 @end

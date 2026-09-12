@@ -324,7 +324,13 @@ static NSMutableArray *__NSMenuPopUpWindows = nil;
 
 BOOL itemIsEnabled(NSMenuItem *item) {
     BOOL enabled=NO;
-    
+
+    /* A submenu's parent carries no action to validate, so falling through to
+       the action checks below would have auto-enabling disable every title in
+       the menu bar. Opening a submenu is always possible. */
+    if([item hasSubmenu])
+        return YES;
+
     if([item action]!=NULL){
         id target=[item target];
         

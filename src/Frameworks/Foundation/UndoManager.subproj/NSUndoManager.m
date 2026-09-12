@@ -10,6 +10,7 @@
 #import <Foundation/NSArray.h>
 #import <Foundation/NSString.h>
 #import <Foundation/NSNumber.h>
+#import <Foundation/NSInvocation.h>
 #include <objc/message.h>
 
 NSString *const NSUndoManagerCheckpointNotification = @"NSUndoManagerCheckpointNotification";
@@ -28,6 +29,7 @@ NSString *const NSUndoManagerWillUndoChangeNotification = @"NSUndoManagerWillUnd
     id _target;
     SEL _selector;
     id _object;
+    NSInvocation *_invocation;
 }
 @end
 
@@ -35,13 +37,24 @@ NSString *const NSUndoManagerWillUndoChangeNotification = @"NSUndoManagerWillUnd
 
 - (void)dealloc {
     [_object release];
+    [_invocation release];
     [super dealloc];
 }
 
 - (void)invoke {
+    /* Registered through -prepareWithInvocationTarget:, so the message shape
+     * is whatever the caller sent rather than the single-object form. */
+    if (_invocation != nil) {
+        [_invocation invoke];
+        return;
+    }
     ((void (*)(id, SEL, id))objc_msgSend)(_target, _selector, _object);
 }
 
+@end
+
+@interface NSUndoManager (PureDarwinUndoProxy)
+- (void)_registerUndoInvocation:(NSInvocation *)invocation target:(id)target;
 @end
 
 /* Returned by -prepareWithInvocationTarget:. It records the next message sent
@@ -55,17 +68,27 @@ NSString *const NSUndoManagerWillUndoChangeNotification = @"NSUndoManagerWillUnd
 
 @implementation NSUndoProxy
 
-- (void)forwardInvocation:(id)invocation {
+- (void)forwardInvocation:(NSInvocation *)invocation {
+    [invocation setTarget:_target];
+    /* The arguments outlive this message, so the invocation has to own them. */
+    [invocation retainArguments];
+    [_manager _registerUndoInvocation:invocation target:_target];
 }
 
-/* Only the object-argument shape is supported, which is what
- * registerUndoWithTarget:selector:object: covers. */
-- (id)methodSignatureForSelector:(SEL)selector {
-    return nil;
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)selector {
+    /* The proxy answers for its target: returning nil here makes the runtime
+     * report an unrecognised selector instead of forwarding, which aborted on
+     * every -prepareWithInvocationTarget: message. */
+    NSMethodSignature *signature = [_target methodSignatureForSelector:selector];
+
+    if (signature != nil) {
+        return signature;
+    }
+    return [super methodSignatureForSelector:selector];
 }
 
 - (BOOL)respondsToSelector:(SEL)selector {
-    return YES;
+    return [_target respondsToSelector:selector];
 }
 
 @end
@@ -93,16 +116,7 @@ NSString *const NSUndoManagerWillUndoChangeNotification = @"NSUndoManagerWillUnd
     [super dealloc];
 }
 
-- (void)registerUndoWithTarget:(id)target selector:(SEL)selector object:(id)object {
-    if (![self isUndoRegistrationEnabled]) {
-        return;
-    }
-
-    NSUndoAction *action = [[NSUndoAction alloc] init];
-    action->_target = target;
-    action->_selector = selector;
-    action->_object = [object retain];
-
+- (void)_pushAction:(NSUndoAction *)action {
     /* A registration made while undoing is the redo action, and vice versa. */
     if (_isUndoing) {
         [_redoStack addObject:action];
@@ -112,13 +126,40 @@ NSString *const NSUndoManagerWillUndoChangeNotification = @"NSUndoManagerWillUnd
             [_redoStack removeAllObjects];
         }
     }
-    [action release];
 
     if (_levelsOfUndo > 0) {
         while ([_undoStack count] > _levelsOfUndo) {
             [_undoStack removeObjectAtIndex:0];
         }
     }
+}
+
+- (void)registerUndoWithTarget:(id)target selector:(SEL)selector object:(id)object {
+    if (![self isUndoRegistrationEnabled]) {
+        return;
+    }
+
+    NSUndoAction *action = [[NSUndoAction alloc] init];
+
+    action->_target = target;
+    action->_selector = selector;
+    action->_object = [object retain];
+    [self _pushAction:action];
+    [action release];
+}
+
+- (void)_registerUndoInvocation:(NSInvocation *)invocation target:(id)target {
+    if (![self isUndoRegistrationEnabled]) {
+        return;
+    }
+
+    NSUndoAction *action = [[NSUndoAction alloc] init];
+
+    action->_target = target;
+    action->_selector = [invocation selector];
+    action->_invocation = [invocation retain];
+    [self _pushAction:action];
+    [action release];
 }
 
 - (id)prepareWithInvocationTarget:(id)target {

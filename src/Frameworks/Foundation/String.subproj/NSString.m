@@ -64,6 +64,13 @@ __NSStringCFEncoding(NSStringEncoding encoding)
 
 @implementation NSString
 
+/* Derived from the -getCharacters:range: primitive, so every subclass gets it.
+   The key-event path in -[NSResponder interpretKeyEvents:] uses this form, and
+   without it any keystroke reaching a text view aborts. No NUL is written. */
+- (void)getCharacters:(unichar *)buffer {
+    [self getCharacters:buffer range:NSMakeRange(0, [self length])];
+}
+
 + (instancetype)stringWithUTF8String:(const char *)utf8String {
     return [[self alloc] initWithUTF8String:utf8String];
 }

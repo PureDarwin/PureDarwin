@@ -22,6 +22,8 @@ APPKIT_EXPORT NSString *const NSMenuDidEndTrackingNotification;
     NSArray *_macAppItems;
     NSMenuItem *_macAppItem;
     int _macStyleChecked;
+    NSUInteger _macSourceCount;
+    NSMenuItem *_macSourceFirst;
 }
 
 - (void)setMenu:(NSMenu *)menu;

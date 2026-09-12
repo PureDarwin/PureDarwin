@@ -6,13 +6,16 @@
 	<dict>
 		<key>angle</key>
 		<real>270.0</real>
-		<key>border</key>
-		<string>0.55 0.57 0.60</string>
+		<key>bottomBorder</key>
+		<string>0.42 0.44 0.46</string>
 		<key>colors</key>
 		<array>
-			<string>0.99 0.99 1.0</string>
-			<string>0.82 0.84 0.88</string>
+			<string>0.737 0.753 0.765</string>
+			<string>0.702 0.698 0.690</string>
+			<string>0.635 0.639 0.655</string>
 		</array>
+		<key>topHighlight</key>
+		<string>0.816 0.831 0.843</string>
 		<key>type</key>
 		<string>gradient</string>
 	</dict>

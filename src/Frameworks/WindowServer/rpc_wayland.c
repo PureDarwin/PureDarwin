@@ -53,6 +53,7 @@ static struct {
     struct wl_compositor *compositor;
     struct xdg_wm_base *wmBase;
     struct zwlr_layer_shell_v1 *layerShell;
+    uint32_t layerShellVersion;
     struct wl_seat *seat;
     struct wl_output *output;
     struct wl_shm *shm;
@@ -144,7 +145,14 @@ static void registryGlobal(void *data, struct wl_registry *registry, uint32_t na
         ws.wmBase = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
         xdg_wm_base_add_listener(ws.wmBase, &wmBaseListener, NULL);
     } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
-        ws.layerShell = wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
+        /* Version 4 is the first with on-demand keyboard focus, which is what
+         * a panel holding a text field needs: at version 1 the only choices
+         * are never and exclusive, so a search field could never take focus. */
+        uint32_t bind = (version < 4) ? version : 4;
+
+        ws.layerShellVersion = bind;
+        ws.layerShell = wl_registry_bind(registry, name,
+                                         &zwlr_layer_shell_v1_interface, bind);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         ws.shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
     } else if (strcmp(interface, zwp_linux_dmabuf_v1_interface.name) == 0) {
@@ -797,6 +805,12 @@ static void windowCreateRole(struct wsWindow *window, const char *title) {
         window->layerSurface = zwlr_layer_shell_v1_get_layer_surface(
             ws.layerShell, window->surface, NULL, layer,
             title != NULL && title[0] != '\0' ? title : "puredarwin");
+        /* Without this a layer surface never gets keyboard focus, so a panel
+         * with a text field resigns key the moment it is shown. */
+        if (ws.layerShellVersion >= 4) {
+            zwlr_layer_surface_v1_set_keyboard_interactivity(window->layerSurface,
+                ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND);
+        }
         zwlr_layer_surface_v1_add_listener(window->layerSurface,
                                            &layerSurfaceListener, window);
         zwlr_layer_surface_v1_set_size(window->layerSurface,

@@ -89,10 +89,15 @@ static NSInterfacePart *themePart(NSDictionary *description, NSString *directory
          * control background wants. */
         CGFloat degrees = (angle != nil) ? (CGFloat)[angle doubleValue] : 270.0;
 
-        return [[[NSInterfacePartGradient alloc] initWithColors:colors
-                                                          angle:degrees
-                                                    borderColor:border
-                                                   cornerRadius:radius] autorelease];
+        NSInterfacePartGradient *part =
+            [[[NSInterfacePartGradient alloc] initWithColors:colors
+                                                      angle:degrees
+                                                borderColor:border
+                                               cornerRadius:radius] autorelease];
+
+        [part setTopHighlightColor:themeColor([description objectForKey:@"topHighlight"])
+                 bottomBorderColor:themeColor([description objectForKey:@"bottomBorder"])];
+        return part;
     }
     if ([type isEqualToString:@"image"]) {
         NSString *file = [description objectForKey:@"file"];

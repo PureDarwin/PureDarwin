@@ -41,6 +41,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    return _worksWhenModal;
 }
 
+/* A panel takes key status without needing a title bar, which is what
+   separates it from a plain borderless window: inheriting NSWindow's
+   titled-or-resizable rule leaves a borderless panel unable to ever be key,
+   so anything it contains can never receive a keystroke. */
+-(BOOL)canBecomeKeyWindow {
+   return YES;
+}
+
 -(BOOL)becomesKeyOnlyIfNeeded {
    return _becomesKeyOnlyIfNeeded;
 }

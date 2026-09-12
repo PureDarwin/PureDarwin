@@ -126,6 +126,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 
 - (NSUInteger)length;
 - (unichar)characterAtIndex:(NSUInteger)index;
+- (void)getCharacters:(unichar *)buffer;
 - (void)getCharacters:(unichar *)buffer range:(NSRange)range;
 - (const char *)UTF8String;
 - (const char *)cString;

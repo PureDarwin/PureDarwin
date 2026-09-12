@@ -92,15 +92,46 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     _macAppItems = nil;
     [_macAppItem release];
     _macAppItem = nil;
+    [_macSourceFirst release];
+    _macSourceFirst = nil;
 }
 
 - (void)_buildMacPresentation
 {
     NSMutableArray *bar = [[NSMutableArray alloc] init];
     NSMutableArray *app = [[NSMutableArray alloc] init];
+    NSArray *items = [_menu itemArray];
+    NSInteger count = (NSInteger)[items count];
+    NSMenuItem *owner = nil;
+    NSInteger firstLoose = count;
+    NSInteger tailStart = count;
+    NSInteger i;
 
-    for (NSMenuItem *item in [_menu itemArray]) {
-        if ([item hasSubmenu]) {
+    /* The application menu's contents sit inline between its own title and the
+     * run of titles that ends the menu, so the split is positional: the
+     * trailing run of submenu items is the rest of the bar, and everything
+     * from the first loose item up to it belongs to the application - even
+     * items that have submenus of their own, such as Services. */
+    for (i = 0; i < count; i++) {
+        if (![[items objectAtIndex:i] hasSubmenu]) {
+            firstLoose = i;
+            break;
+        }
+    }
+    for (i = count - 1; i >= 0 && [[items objectAtIndex:i] hasSubmenu]; i--) {
+        tailStart = i;
+    }
+    if (tailStart < firstLoose) {
+        tailStart = count;
+    }
+    if (firstLoose > 0 && firstLoose < count) {
+        owner = [items objectAtIndex:firstLoose - 1];
+    }
+
+    for (i = 0; i < count; i++) {
+        NSMenuItem *item = [items objectAtIndex:i];
+
+        if (i < firstLoose || i >= tailStart) {
             [bar addObject:item];
         }
         else {
@@ -109,7 +140,12 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     }
 
     _macAppItems = app;
-    if ([app count] != 0) {
+    if ([app count] != 0 && owner != nil) {
+        /* An existing title already stands for the application, so adding one
+         * would both duplicate it and leave a blank slot in the bar. */
+        _macAppItem = [owner retain];
+    }
+    else if ([app count] != 0) {
         /* The menu's own title names the application it belongs to. Do NOT
          * fall back to the process name: a menu bar shows *other*
          * applications' menus, so the process here is the menu bar itself -
@@ -130,6 +166,8 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
         [bar insertObject:_macAppItem atIndex:0];
     }
     _macBarItems = bar;
+    _macSourceCount = (NSUInteger)count;
+    _macSourceFirst = (count > 0) ? [[items objectAtIndex:0] retain] : nil;
 }
 
 - (NSArray *)presentedItems
@@ -139,6 +177,16 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     }
     if (![self _groupsIntoApplicationMenu]) {
         return [_menu itemArray];
+    }
+    /* Gershwin fills the menu in after handing it over, mutating the same
+     * NSMenu rather than setting a new one, so a presentation built from the
+     * placeholder would stay cached and the bar would draw empty. */
+    NSArray *source = [_menu itemArray];
+
+    if (_macBarItems != nil &&
+        (_macSourceCount != [source count] ||
+         ([source count] != 0 && [source objectAtIndex:0] != _macSourceFirst))) {
+        [self _invalidatePresentation];
     }
     if (_macBarItems == nil) {
         [self _buildMacPresentation];
@@ -308,6 +356,21 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
     frame.size = total;
     [self setFrame:frame];
+
+    if (_horizontal) {
+        static BOOL logged = NO;
+
+        if (!logged) {
+            NSMutableString *shape = [NSMutableString string];
+
+            logged = YES;
+            for (NSMenuItem *item in items) {
+                [shape appendFormat:@" [%@]%gpx", [item title],
+                       [self sizeOfItem:item].width];
+            }
+            NSLog(@"NSMenuView: bar presents %ld items:%@", (long)[items count], shape);
+        }
+    }
 }
 
 - (void)drawRect:(NSRect)dirtyRect
@@ -379,6 +442,10 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     NSMenu *submenu = [item submenu];
     NSArray *loose = (item == _macAppItem) ? _macAppItems : nil;
 
+    NSLog(@"NSMenuView: open '%@' idx %ld submenu=%@ items=%ld loose=%ld",
+          [item title], (long)index, (submenu != nil) ? @"yes" : @"no",
+          (long)[[submenu itemArray] count], (long)[loose count]);
+
     if (submenu == nil && loose == nil) {
         return;
     }
@@ -390,7 +457,15 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
      * the menu they live in and told which of them to show. */
     [view setMenu:(submenu != nil) ? submenu : _menu];
     if (loose != nil) {
-        [view setPresentedItems:loose];
+        /* The application menu shows its own items followed by the ones that
+         * were listed loose under its title. */
+        NSMutableArray *combined = [NSMutableArray array];
+
+        if (submenu != nil) {
+            [combined addObjectsFromArray:[submenu itemArray]];
+        }
+        [combined addObjectsFromArray:loose];
+        [view setPresentedItems:combined];
     }
     [view sizeToFit];
     view->_supermenuView = self;
@@ -398,6 +473,8 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     /* An empty menu sizes to nothing, and a zero-sized window gets no surface:
      * it would look exactly like a menu that failed to open. */
     if (NSIsEmptyRect([view frame])) {
+        NSLog(@"NSMenuView: '%@' sized to nothing, presenting %ld items - not opening",
+              [item title], (long)[[view presentedItems] count]);
         [view release];
         return;
     }
@@ -494,7 +571,12 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
             if (index >= 0) {
                 NSMenuItem *item = [[self presentedItems] objectAtIndex:index];
 
-                if ([item hasSubmenu] && [item isEnabled]) {
+                /* The application menu's slot has no submenu of its own - its
+                 * contents are the loose items - so asking for one is not the
+                 * same question as whether there is anything to open. */
+                BOOL opens = ([item hasSubmenu] || item == _macAppItem);
+
+                if (opens && [item isEnabled]) {
                     [self openSubmenuAtIndex:index];
                 }
                 else {

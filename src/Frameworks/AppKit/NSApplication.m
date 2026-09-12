@@ -910,6 +910,15 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
         NSLog(@"NSApplication: published %lu menu items for %lu windows to Gershwin",
               (unsigned long)[_mainMenu numberOfItems],
               (unsigned long)[_windows count]);
+
+        NSMutableString *shape = [NSMutableString string];
+
+        for (NSMenuItem *item in [_mainMenu itemArray]) {
+            [shape appendFormat:@" %@:%ld", [item title],
+                   [item hasSubmenu] ? (long)[[[item submenu] itemArray] count] : -1];
+        }
+        NSLog(@"NSApplication: published shape (-1 = no submenu):%@", shape);
+
         pdMenuNeedsPublish = NO;
     }
 }

@@ -2488,8 +2488,12 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
    [self orderWindow:NSWindowAbove relativeTo:0];
 
+    /* -makeKeyWindow here only prepares the key view loop; the key status
+       itself is assigned by -becomeKeyWindow, so calling the former alone left
+       the application with no key window at all and every keystroke with
+       nowhere to go. */
     if([self canBecomeKeyWindow])
-        [self makeKeyWindow];
+        [self becomeKeyWindow];
 
    if([self canBecomeMainWindow])
     [self makeMainWindow];
