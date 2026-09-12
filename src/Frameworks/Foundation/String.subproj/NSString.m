@@ -205,6 +205,16 @@ __NSStringCFEncoding(NSStringEncoding encoding)
     return (id)result;
 }
 
+- (instancetype)initWithData:(NSData *)data encoding:(NSStringEncoding)encoding {
+    if (data == nil) {
+        [self release];
+        return nil;
+    }
+    return [self initWithBytes:[data bytes]
+                        length:[data length]
+                      encoding:encoding];
+}
+
 - (instancetype)initWithContentsOfFile:(NSString *)path
                                 encoding:(NSStringEncoding)encoding
                                    error:(NSError **)error {
