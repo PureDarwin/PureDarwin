@@ -431,7 +431,8 @@ static Class _fontPanelFactory;
 	if(newface!=nil) {
 		return [NSFont fontWithName:[newface name] size:[font pointSize]];
 	}
-   NSLog(@"%s failed, %@ %d",sel_getName(_cmd),[font fontName],addTraits);
+   /* A family with no such face is ordinary, and drawing code calls this per
+      glyph run: return the original font as Cocoa does, without logging. */
    return font;
 }
 
@@ -451,7 +452,6 @@ static Class _fontPanelFactory;
 	if(newface!=nil) {
 		return [NSFont fontWithName:[newface name] size:[font pointSize]];
 	}
-	NSLog(@"%s failed, %@ %d",sel_getName(_cmd),[font fontName],trait);
 	return font;
 }
 
