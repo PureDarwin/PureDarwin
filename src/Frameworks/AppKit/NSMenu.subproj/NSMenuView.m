@@ -395,6 +395,13 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     [view sizeToFit];
     view->_supermenuView = self;
 
+    /* An empty menu sizes to nothing, and a zero-sized window gets no surface:
+     * it would look exactly like a menu that failed to open. */
+    if (NSIsEmptyRect([view frame])) {
+        [view release];
+        return;
+    }
+
     NSRect itemRect = [self rectOfItemAtIndex:index];
     NSPoint origin = [self convertPoint:NSMakePoint(NSMinX(itemRect), NSMaxY(itemRect))
                                  toView:nil];
@@ -469,7 +476,15 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     BOOL sticky = NO;
 
     for (;;) {
-        NSPoint screenPoint = [[self window] convertBaseToScreen:[event locationInWindow]];
+        /* Once a submenu is open the pointer is over its window, so the event's
+         * coordinates are relative to that one, not to this view's. */
+        NSWindow *eventWindow = [event window];
+
+        if (eventWindow == nil) {
+            eventWindow = [self window];
+        }
+
+        NSPoint screenPoint = [eventWindow convertBaseToScreen:[event locationInWindow]];
         NSInteger index = -1;
         NSMenuView *view = [self viewForScreenPoint:screenPoint index:&index];
 

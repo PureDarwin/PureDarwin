@@ -1,15 +1,12 @@
 /*
- * Copyright (C) 2026, PureDarwin Project.
+ * message.h - the window-server message ABI AppKit is written against.
  *
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ * Copyright (c) 2026 The PureDarwin Project
+ *
+ * SPDX-License-Identifier: MPL-2.0 OR BSD-2-Clause
  */
 
-/*
- * The window-server message ABI AppKit is written against
- * Do not reorder these fields without checking those initialisers.
- */
+/* Do not reorder these fields without checking those initialisers. */
 
 #ifndef WINDOWSERVER_MESSAGE_H
 #define WINDOWSERVER_MESSAGE_H
