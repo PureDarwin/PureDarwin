@@ -111,73 +111,6 @@ static NSTimeInterval pdMenuNextAttempt;
 static BOOL pdMenuLoggedWaitingForMenu;
 static BOOL pdMenuLoggedWaitingForServer;
 
-static NSDictionary *pdSerializeMenu(NSMenu *menu);
-static void pdSplitMainMenu(NSMenu *menu, NSMutableArray *barItems,
-                            NSMutableArray *appItems);
-
-static NSMutableDictionary *pdSerializeItem(NSMenuItem *item)
-{
-        NSMutableDictionary *serializedItem = [NSMutableDictionary dictionary];
-
-        [serializedItem setObject:([item title] ?: @"") forKey:@"title"];
-        [serializedItem setObject:[NSNumber numberWithBool:[item isSeparatorItem]]
-                           forKey:@"isSeparator"];
-        [serializedItem setObject:[NSNumber numberWithBool:[item isEnabled]] forKey:@"enabled"];
-        [serializedItem setObject:[NSNumber numberWithInteger:[item state]] forKey:@"state"];
-        [serializedItem setObject:([item keyEquivalent] ?: @"") forKey:@"keyEquivalent"];
-        [serializedItem setObject:[NSNumber numberWithUnsignedInteger:[item keyEquivalentModifierMask]]
-                           forKey:@"keyEquivalentModifierMask"];
-        if ([item hasSubmenu]) {
-            [serializedItem setObject:pdSerializeMenu([item submenu]) forKey:@"submenu"];
-        }
-        return serializedItem;
-}
-
-/* The main menu as the bar should present it: an application menu first,
- * holding every command the app put at top level, then the real submenus. */
-static NSDictionary *pdSerializeMainMenu(NSMenu *menu)
-{
-    NSMutableArray *barItems = [NSMutableArray array];
-    NSMutableArray *appItems = [NSMutableArray array];
-
-    pdSplitMainMenu(menu, barItems, appItems);
-
-    NSString *appName = [menu title];
-    if ([appName length] == 0) {
-        appName = [[NSProcessInfo processInfo] processName];
-    }
-    if ([appItems count] == 0) {
-        return pdSerializeMenu(menu);
-    }
-
-    NSMutableArray *serializedItems = [NSMutableArray array];
-    NSMutableArray *serializedAppItems = [NSMutableArray array];
-
-    for (NSMenuItem *item in appItems) {
-        [serializedAppItems addObject:pdSerializeItem(item)];
-    }
-
-    NSMutableDictionary *appMenuItem = [NSMutableDictionary dictionary];
-
-    [appMenuItem setObject:appName forKey:@"title"];
-    [appMenuItem setObject:[NSNumber numberWithBool:NO] forKey:@"isSeparator"];
-    [appMenuItem setObject:[NSNumber numberWithBool:YES] forKey:@"enabled"];
-    [appMenuItem setObject:[NSNumber numberWithInteger:0] forKey:@"state"];
-    [appMenuItem setObject:@"" forKey:@"keyEquivalent"];
-    [appMenuItem setObject:[NSNumber numberWithUnsignedInteger:0]
-                    forKey:@"keyEquivalentModifierMask"];
-    [appMenuItem setObject:[NSDictionary dictionaryWithObjectsAndKeys:
-                            appName, @"title", serializedAppItems, @"items", nil]
-                    forKey:@"submenu"];
-
-    [serializedItems addObject:appMenuItem];
-    for (NSMenuItem *item in barItems) {
-        [serializedItems addObject:pdSerializeItem(item)];
-    }
-    return [NSDictionary dictionaryWithObjectsAndKeys:
-            appName, @"title", serializedItems, @"items", nil];
-}
-
 static NSDictionary *pdSerializeMenu(NSMenu *menu)
 {
     NSMutableArray *serializedItems = [NSMutableArray array];
@@ -201,17 +134,6 @@ static NSDictionary *pdSerializeMenu(NSMenu *menu)
 
     return [NSDictionary dictionaryWithObjectsAndKeys:
             ([menu title] ?: @""), @"title", serializedItems, @"items", nil];
-}
-
-static void pdSplitMainMenu(NSMenu *menu, NSMutableArray *barItems,
-                            NSMutableArray *appItems)
-{
-   for (NSMenuItem *item in [menu itemArray]) {
-      if ([item hasSubmenu])
-       [barItems addObject:item];
-      else
-       [appItems addObject:item];
-   }
 }
 
 @implementation NSApplication
@@ -964,7 +886,7 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
         return;
     }
 
-    NSDictionary *menuData = pdSerializeMainMenu(_mainMenu);
+    NSDictionary *menuData = pdSerializeMenu(_mainMenu);
     BOOL published = NO;
 
     NS_DURING
@@ -1002,59 +924,20 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
 - (bycopy id)validateMenuStateForWindow:(NSNumber *)windowId
 {
     (void)windowId;
-    return pdSerializeMainMenu(_mainMenu);
+    return pdSerializeMenu(_mainMenu);
 }
 
 - (oneway void)activateMenuItemAtPath:(NSArray *)indexPath
                             forWindow:(NSNumber *)windowId
 {
     (void)windowId;
-    if ([indexPath count] == 0 || _mainMenu == nil) {
-        return;
-    }
-
-    /* Resolve against the same layout pdSerializeMainMenu published, or the
-     * indices the server hands back address the wrong items. */
-    NSMutableArray *barItems = [NSMutableArray array];
-    NSMutableArray *appItems = [NSMutableArray array];
-
-    pdSplitMainMenu(_mainMenu, barItems, appItems);
-
-    NSArray *topLevel = barItems;
-    NSInteger first = [[indexPath objectAtIndex:0] integerValue];
-    NSUInteger next = 1;
+    NSMenu *menu = _mainMenu;
     NSMenuItem *item = nil;
 
-    if ([appItems count] != 0) {
-        if (first == 0) {
-            /* The synthesized application menu: its children are appItems,
-             * none of which has a submenu, so the path ends there. */
-            if ([indexPath count] < 2) {
-                return;
-            }
-            NSInteger appIndex = [[indexPath objectAtIndex:1] integerValue];
-
-            if (appIndex < 0 || appIndex >= (NSInteger)[appItems count]) {
-                return;
-            }
-            item = [appItems objectAtIndex:appIndex];
-            if ([item action] != NULL) {
-                [self sendAction:[item action] to:[item target] from:item];
-            }
-            return;
-        }
-        first -= 1;     /* index 0 was the application menu */
-    }
-
-    if (first < 0 || first >= (NSInteger)[topLevel count]) {
-        return;
-    }
-    item = [topLevel objectAtIndex:first];
-
-    NSMenu *menu = [item submenu];
-
-    for (; next < [indexPath count]; next++) {
-        NSInteger index = [[indexPath objectAtIndex:next] integerValue];
+    /* Indices address the menu as published, which is now the menu as it
+     * really is: the Mac-style grouping happens in the menu bar. */
+    for (NSNumber *indexNumber in indexPath) {
+        NSInteger index = [indexNumber integerValue];
 
         if (menu == nil || index < 0 || index >= [menu numberOfItems]) {
             return;

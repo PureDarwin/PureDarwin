@@ -11,6 +11,8 @@
 #import <Foundation/NSException.h>
 #import <Foundation/NSNull.h>
 #import <Foundation/NSString.h>
+#import <Foundation/NSURL.h>
+#import <Foundation/NSData.h>
 #include <CoreFoundation/CFBase.h>
 #include <CoreFoundation/CFArray.h>
 #include <CoreFoundation/CFPropertyList.h>
@@ -264,6 +266,49 @@ static void __NSArray0Init(void) {
         }
     }
     return NSNotFound;
+}
+
+/* The read side of -writeToFile:atomically:, which existed without it - so
+ * round-tripping an array plist hit an unrecognized selector and aborted the
+ * process. NSDictionary's loader cannot be shared: it rejects any root that is
+ * not a dictionary. */
++ (nullable instancetype)arrayWithContentsOfFile:(NSString *)path {
+    if (path == nil) {
+        return nil;
+    }
+
+    NSData *data = [NSData dataWithContentsOfFile:path];
+
+    if (data == nil) {
+        return nil;
+    }
+
+    CFPropertyListRef plist = CFPropertyListCreateWithData(
+        kCFAllocatorDefault, (CFDataRef)data, kCFPropertyListImmutable, NULL, NULL);
+
+    if (plist == NULL) {
+        return nil;
+    }
+    if (CFGetTypeID(plist) != CFArrayGetTypeID()) {
+        CFRelease(plist);   /* a plist root may legitimately be a dictionary */
+        return nil;
+    }
+
+    NSArray *result = [(id)plist autorelease];
+
+    /* Sent to NSMutableArray this has to hand back something mutable; the
+     * parser only ever produces an immutable array. */
+    if ([self isSubclassOfClass:[NSMutableArray class]]) {
+        return [[result mutableCopy] autorelease];
+    }
+    return result;
+}
+
++ (nullable instancetype)arrayWithContentsOfURL:(NSURL *)url {
+    if (![url isFileURL]) {
+        return nil;
+    }
+    return [self arrayWithContentsOfFile:[url path]];
 }
 
 /* Property-list serialisation, matching NSDictionary's. */

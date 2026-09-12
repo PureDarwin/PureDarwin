@@ -126,6 +126,8 @@ typedef enum {
     NSSize _intercellSpacing;
 
     BOOL _alternatingRowBackground;
+    NSString *_autosaveName;
+    BOOL _autosaveTableColumns;
     unsigned int _gridStyleMask;
     NSTableViewSelectionHighlightStyle _selectionHighlightStyle;
 

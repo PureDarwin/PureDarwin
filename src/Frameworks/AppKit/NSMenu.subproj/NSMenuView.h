@@ -17,6 +17,11 @@ APPKIT_EXPORT NSString *const NSMenuDidEndTrackingNotification;
     NSMenuView *_submenuView;
     NSMenuView *_supermenuView;
     BOOL _tracking;
+    NSArray *_presentedItems;
+    NSArray *_macBarItems;
+    NSArray *_macAppItems;
+    NSMenuItem *_macAppItem;
+    int _macStyleChecked;
 }
 
 - (void)setMenu:(NSMenu *)menu;
@@ -28,6 +33,14 @@ APPKIT_EXPORT NSString *const NSMenuDidEndTrackingNotification;
 /* The attributes item widths are measured with. Draw titles with these, or the
  * text will not fit the rect that was measured for it. */
 - (NSDictionary *)itemAttributes;
+
+/* The items this view lays out. Normally the menu's own, but a Mac-style menu
+ * bar groups an application's loose commands under an application menu, and
+ * that menu's view is handed its items directly. Items are referenced, never
+ * moved: an NSMenuItem belongs to exactly one NSMenu and this must not
+ * disturb the menu it came from. */
+- (NSArray *)presentedItems;
+- (void)setPresentedItems:(NSArray *)items;
 
 - (void)setFont:(NSFont *)font;
 - (NSFont *)font;

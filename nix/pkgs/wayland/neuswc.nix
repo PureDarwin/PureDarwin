@@ -14,6 +14,7 @@
 , iokit
 , iokitHeaders
 , neuwld
+, pdsurface
 , pixman
 , wayland
 , waylandProtocols
@@ -40,7 +41,7 @@ stdenv.mkDerivation {
     runHook preConfigure
     export DARWIN_SDK_ROOT="${appleSdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     export PATH="${waylandScanner}/bin:$PATH"
-    export PKG_CONFIG_PATH="${fontconfig}/lib/pkgconfig:${freetype}/lib/pkgconfig:${neuwld}/lib/pkgconfig:${pixman}/lib/pkgconfig:${wayland}/lib/pkgconfig:${waylandProtocols}/share/pkgconfig:${xkbcommon}/lib/pkgconfig"
+    export PKG_CONFIG_PATH="${fontconfig}/lib/pkgconfig:${freetype}/lib/pkgconfig:${neuwld}/lib/pkgconfig:${pdsurface}/usr/lib/pkgconfig:${pixman}/lib/pkgconfig:${wayland}/lib/pkgconfig:${waylandProtocols}/share/pkgconfig:${xkbcommon}/lib/pkgconfig"
     export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
     cat > puredarwin-cross.ini <<EOF

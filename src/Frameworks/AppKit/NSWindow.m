@@ -1153,8 +1153,43 @@ const float WSWindowEdgePad = 2;
    [self _updatePlatformWindowTitle];
 }
 
+/* Two colours are the same paint if their RGBA matches. NSColor has no
+ * -isEqual:, and constructors like +clearColor return a fresh object each
+ * call, so pointer comparison alone never matches. Falls back to "different"
+ * if either colour cannot be expressed as RGBA, which keeps the old
+ * behaviour rather than skipping a real change. */
+static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
+   if(a==b)
+    return YES;
+   if(a==nil || b==nil)
+    return NO;
+
+   NSColor *ra=[a colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+   NSColor *rb=[b colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+
+   if(ra==nil || rb==nil)
+    return NO;
+
+   CGFloat ar,ag,ab,aa,br,bg,bb,ba;
+
+   [ra getRed:&ar green:&ag blue:&ab alpha:&aa];
+   [rb getRed:&br green:&bg blue:&bb alpha:&ba];
+
+   return ar==br && ag==bg && ab==bb && aa==ba;
+}
+
 -(void)setBackgroundColor:(NSColor *)color {
    if (color==nil) color = [NSColor windowBackgroundColor];
+
+   /* Setting the colour it already has must not invalidate. -[NSMenuView
+    * window] is swizzled by Gershwin to restyle the window on every call, and
+    * -window is a plain accessor that drawing and event routing call
+    * constantly - so an unconditional setNeedsDisplay: here became an
+    * unbounded redraw loop: draw asks for -window, -window dirties the view,
+    * the next pass redraws, for ever, re-flushing identical pixels. */
+   if(pdWindowColorsEqual(color,_backgroundColor))
+    return;
+
    color=[color copy];
    [_backgroundColor release];
    _backgroundColor=color;

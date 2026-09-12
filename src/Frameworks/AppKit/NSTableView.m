@@ -7,6 +7,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#import <Foundation/NSUserDefaults.h>
 #import <sys/param.h>
 #import <AppKit/AppKit.h>
 #import <AppKit/NSTableCornerView.h>
@@ -163,6 +164,7 @@ const float NSTableViewDefaultRowHeight=16.0f;
    [_headerView release];
    [_cornerView release];
    [_tableColumns release];
+   [_autosaveName release];
    [_backgroundColor release];
    [_gridColor release];
    [_selectedRowIndexes release];
@@ -216,8 +218,60 @@ const float NSTableViewDefaultRowHeight=16.0f;
 }
 
 -(NSString *)autosaveName {
-   NSUnimplementedMethod();
-   return nil;
+   return _autosaveName;
+}
+
+/* Column widths and order, persisted under the autosave name. Keyed the way
+ * AppKit names these defaults so a layout written by one run is found by the
+ * next. Silently does nothing without a name, which is the documented
+ * behaviour rather than an error. */
+-(NSString *)_autosaveDefaultsKey {
+   if([_autosaveName length]==0)
+    return nil;
+
+   return [NSString stringWithFormat:@"NSTableView Columns %@",_autosaveName];
+}
+
+-(void)_saveColumnLayout {
+   NSString *key=[self _autosaveDefaultsKey];
+
+   if(key==nil || !_autosaveTableColumns)
+    return;
+
+   NSMutableDictionary *layout=[NSMutableDictionary dictionary];
+
+   for(NSTableColumn *column in _tableColumns){
+    NSString *identifier=[[column identifier] description];
+
+    if([identifier length]==0)
+     continue;
+
+    [layout setObject:[NSNumber numberWithDouble:(double)[column width]]
+               forKey:identifier];
+   }
+   [[NSUserDefaults standardUserDefaults] setObject:layout forKey:key];
+}
+
+-(void)_restoreColumnLayout {
+   NSString *key=[self _autosaveDefaultsKey];
+
+   if(key==nil || !_autosaveTableColumns)
+    return;
+
+   NSDictionary *layout=[[NSUserDefaults standardUserDefaults] objectForKey:key];
+
+   if(![layout isKindOfClass:[NSDictionary class]])
+    return;
+
+   for(NSTableColumn *column in _tableColumns){
+    NSString *identifier=[[column identifier] description];
+    NSNumber *width=(identifier!=nil)?[layout objectForKey:identifier]:nil;
+
+    if(width!=nil)
+     [column setWidth:(CGFloat)[width doubleValue]];
+   }
+   [self tile];
+   [self setNeedsDisplay:YES];
 }
 
 // deprecated in OS X >= 10.3
@@ -259,8 +313,7 @@ const float NSTableViewDefaultRowHeight=16.0f;
 }
 
 -(BOOL)autosaveTableColumns {
-   NSUnimplementedMethod();
-   return NO;
+   return _autosaveTableColumns;
 }
 
 // row background and grid attributes for OS X >= 10.3
@@ -584,8 +637,17 @@ static float rowHeightAtIndex(NSTableView *self,int index){
    _gridColor=color;
 }
 
+/* These four raised until now, so an application doing the ordinary thing -
+ * naming a table so its column layout persists - threw during setup. */
 -(void)setAutosaveName:(NSString *)name {
-   NSUnimplementedMethod();
+   if(name==_autosaveName)
+    return;
+
+   [_autosaveName release];
+   _autosaveName=[name copy];
+
+   if(_autosaveTableColumns)
+    [self _restoreColumnLayout];
 }
 
 // deprecated in OS X >= 10.3
@@ -626,7 +688,13 @@ static float rowHeightAtIndex(NSTableView *self,int index){
 }
 
 -(void)setAutosaveTableColumns:(BOOL)flag {
-   NSUnimplementedMethod();
+   if(_autosaveTableColumns==flag)
+    return;
+
+   _autosaveTableColumns=flag;
+
+   if(flag)
+    [self _restoreColumnLayout];
 }
 
 // row background and grid attributes for OS X >= 10.3
@@ -661,7 +729,29 @@ static float rowHeightAtIndex(NSTableView *self,int index){
 }
 
 -(void)moveColumn:(NSInteger)columnIndex toColumn:(NSInteger)newIndex {
-    NSUnimplementedMethod();
+    NSInteger count=(NSInteger)[_tableColumns count];
+
+    if(columnIndex<0 || columnIndex>=count || newIndex<0 || newIndex>=count)
+     return;
+    if(columnIndex==newIndex)
+     return;
+
+    NSTableColumn *column=[[_tableColumns objectAtIndex:columnIndex] retain];
+
+    [_tableColumns removeObjectAtIndex:columnIndex];
+    [_tableColumns insertObject:column atIndex:newIndex];
+    [column release];
+
+    [[NSNotificationCenter defaultCenter]
+       postNotificationName:NSTableViewColumnDidMoveNotification
+                     object:self
+                   userInfo:[NSDictionary dictionaryWithObjectsAndKeys:
+                             [NSNumber numberWithInteger:columnIndex],@"NSOldColumn",
+                             [NSNumber numberWithInteger:newIndex],@"NSNewColumn",nil]];
+
+    [self _saveColumnLayout];
+    [self tile];
+    [self setNeedsDisplay:YES];
 }
 
 -(int)editedRow {

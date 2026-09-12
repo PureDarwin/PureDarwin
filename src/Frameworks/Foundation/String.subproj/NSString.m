@@ -84,6 +84,33 @@ __NSStringCFEncoding(NSStringEncoding encoding)
                                            error:error] autorelease];
 }
 
+/* The deprecated loaders, still used by plenty of working code. They have no
+ * encoding argument, so guess: UTF-8 if the bytes decode, Latin-1 otherwise -
+ * which always decodes, so a file is never unreadable here. */
++ (instancetype)stringWithContentsOfFile:(NSString *)path {
+    return [[[self alloc] initWithContentsOfFile:path] autorelease];
+}
+
+- (instancetype)initWithContentsOfFile:(NSString *)path {
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (data == nil) {
+        [self release];
+        return nil;
+    }
+    CFStringRef result = CFStringCreateWithBytes(kCFAllocatorDefault,
+                                                 (const UInt8 *)[data bytes],
+                                                 (CFIndex)[data length],
+                                                 kCFStringEncodingUTF8, false);
+    if (result == NULL) {
+        result = CFStringCreateWithBytes(kCFAllocatorDefault,
+                                         (const UInt8 *)[data bytes],
+                                         (CFIndex)[data length],
+                                         kCFStringEncodingISOLatin1, false);
+    }
+    [self release];
+    return (id)result;
+}
+
 /* Also on NSString, not only NSCFString: code caches IMPs with
  * +[NSString instanceMethodForSelector:] and invokes them on real instances,
  * which finds the forwarding stub if the method lives solely on the bridged

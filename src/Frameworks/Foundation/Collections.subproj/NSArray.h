@@ -16,6 +16,8 @@
 
 @class NSString;
 
+@class NSURL;
+
 @interface NSArray<__covariant ObjectType> : NSObject <NSFastEnumeration>
 
 - (NSArray<ObjectType> *)arrayByAddingObjectsFromArray:(NSArray<ObjectType> *)other;
@@ -34,6 +36,11 @@
 + (instancetype)arrayWithObjects:(ObjectType)firstObject, ...;
 + (instancetype)arrayWithObjects:(const ObjectType _Nonnull [_Nullable])objects count:(NSUInteger)count;
 + (instancetype)arrayWithArray:(NSArray<ObjectType> *)array;
+
+/* Reads what -writeToFile:atomically: produces. Sent to NSMutableArray the
+ * result is mutable. */
++ (nullable instancetype)arrayWithContentsOfFile:(NSString *_Nonnull)path;
++ (nullable instancetype)arrayWithContentsOfURL:(NSURL *_Nonnull)url;
 
 - (NSUInteger)count;
 - (id)objectAtIndex:(NSUInteger)index;

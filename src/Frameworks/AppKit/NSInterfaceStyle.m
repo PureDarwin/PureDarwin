@@ -10,6 +10,50 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #import <AppKit/NSInterfaceStyle.h>
 
 NSInterfaceStyle NSInterfaceStyleForKey(NSString *key, NSResponder *responder) {
-   return NSWindows95InterfaceStyle;
+   static NSString *const names[] = {
+      @"NSNoInterfaceStyle", @"NSWindows95InterfaceStyle", @"NSMacintoshInterfaceStyle"
+   };
+   /* Cached: this is consulted from drawing code - NSMenuView asks once per
+    * item per redraw - and a defaults lookup per item is enough to make a
+    * menu bar visibly slow. Interface style does not change within a run. */
+   static NSMutableDictionary *cache = nil;
+   NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+   NSString *value = nil;
+   NSString *cacheKey = (key != nil) ? key : @"";
+
+   if (cache == nil) {
+      cache = [[NSMutableDictionary alloc] init];
+   }
+   else {
+      NSNumber *cached = [cache objectForKey:cacheKey];
+
+      if (cached != nil)
+       return (NSInterfaceStyle)[cached integerValue];
+   }
+
+   /* A responder may override the style for itself; otherwise the key's own
+    * default wins, then the process-wide one. */
+   if ([responder respondsToSelector:@selector(interfaceStyle)]) {
+      NSInterfaceStyle style = (NSInterfaceStyle)[(id)responder interfaceStyle];
+
+      if (style != NSNoInterfaceStyle)
+       return style;
+   }
+   if (key != nil)
+    value = [defaults stringForKey:key];
+   if (value == nil)
+    value = [defaults stringForKey:@"NSInterfaceStyle"];
+   NSInterfaceStyle result = NSMacintoshInterfaceStyle;
+
+   if (value != nil) {
+      for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+         if ([value isEqualToString:names[i]]) {
+            result = (NSInterfaceStyle)i;
+            break;
+         }
+      }
+   }
+   [cache setObject:[NSNumber numberWithInteger:result] forKey:cacheKey];
+   return result;
 }
 

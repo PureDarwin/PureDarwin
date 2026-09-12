@@ -2939,6 +2939,7 @@
               iokit = iokitBuild;
               iokitHeaders = iokitCFStaticBuild;
               neuwld = neuwldBuild;
+              pdsurface = pdsurfaceBuild;
               pixman = xvfbPixmanBuild;
               wayland = waylandBuild;
               waylandProtocols = waylandProtocolsBuild;

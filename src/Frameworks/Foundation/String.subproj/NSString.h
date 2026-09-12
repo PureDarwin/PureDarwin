@@ -63,6 +63,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 + (nullable instancetype)stringWithContentsOfFile:(NSString *)path
                                           encoding:(NSStringEncoding)encoding
                                              error:(NSError **)error;
++ (nullable instancetype)stringWithContentsOfFile:(NSString *)path;
 
 - (instancetype)init;
 - (instancetype)initWithString:(NSString *)string;
@@ -77,6 +78,7 @@ typedef NS_OPTIONS(NSUInteger, NSStringCompareOptions) {
 - (nullable instancetype)initWithContentsOfFile:(NSString *)path
                                         encoding:(NSStringEncoding)encoding
                                            error:(NSError **)error;
+- (nullable instancetype)initWithContentsOfFile:(NSString *)path;
 
 - (BOOL)isEqualToString:(NSString *)other;
 - (void)getLineStart:(NSUInteger *)startPtr end:(NSUInteger *)endPtr

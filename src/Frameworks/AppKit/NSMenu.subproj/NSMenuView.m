@@ -1,4 +1,5 @@
 #import <AppKit/NSMenuView.h>
+#import <AppKit/NSInterfaceStyle.h>
 #import <AppKit/NSMenu.h>
 #import <AppKit/NSMenuItem.h>
 #import <AppKit/NSFont.h>
@@ -37,6 +38,8 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     [_submenuWindow release];
     [_submenuView release];
     [_font release];
+    [_presentedItems release];
+    [self _invalidatePresentation];
     /* _menu belongs to NSView, which releases it. */
     [super dealloc];
 }
@@ -58,6 +61,101 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     return [super isOpaque];
 }
 
+/* Mac-style menu bars put an application's own commands under one application
+ * menu instead of spreading them across the bar. GNUstep's AppKit does this in
+ * its Macintosh interface style; ours has to, or an app like Workspace - whose
+ * main menu is a flat list of commands, as is normal for GNUstep - fills the
+ * whole bar and overflows the screen.
+ *
+ * Items are only ever *referenced* here. An NSMenuItem belongs to exactly one
+ * NSMenu, so moving or copying them would either mutate the application's real
+ * menu or desynchronise from it. */
+- (BOOL)_groupsIntoApplicationMenu
+{
+    if (!_horizontal || _menu == nil) {
+        return NO;
+    }
+    /* Asked once per item per redraw through -presentedItems, so the answer is
+     * kept rather than recomputed. */
+    if (_macStyleChecked == 0) {
+        _macStyleChecked = (NSInterfaceStyleForKey(@"NSMenuInterfaceStyle", nil)
+                            == NSMacintoshInterfaceStyle) ? 1 : -1;
+    }
+    return _macStyleChecked > 0;
+}
+
+- (void)_invalidatePresentation
+{
+    [_macBarItems release];
+    _macBarItems = nil;
+    [_macAppItems release];
+    _macAppItems = nil;
+    [_macAppItem release];
+    _macAppItem = nil;
+}
+
+- (void)_buildMacPresentation
+{
+    NSMutableArray *bar = [[NSMutableArray alloc] init];
+    NSMutableArray *app = [[NSMutableArray alloc] init];
+
+    for (NSMenuItem *item in [_menu itemArray]) {
+        if ([item hasSubmenu]) {
+            [bar addObject:item];
+        }
+        else {
+            [app addObject:item];
+        }
+    }
+
+    _macAppItems = app;
+    if ([app count] != 0) {
+        /* The menu's own title names the application it belongs to. Do NOT
+         * fall back to the process name: a menu bar shows *other*
+         * applications' menus, so the process here is the menu bar itself -
+         * which is how an application menu ended up labelled "Menu". With no
+         * title there is nothing truthful to call it, so leave it blank and
+         * let the item read as an anonymous application menu. */
+        NSString *title = [_menu title];
+
+        if (title == nil) {
+            title = @"";
+        }
+        /* Stands in for the application menu. Deliberately given no submenu:
+         * its contents are _macAppItems, which still belong to _menu, and
+         * -openSubmenuAtIndex: hands them straight to the submenu view. */
+        _macAppItem = [[NSMenuItem alloc] initWithTitle:(title ?: @"")
+                                                action:NULL
+                                         keyEquivalent:@""];
+        [bar insertObject:_macAppItem atIndex:0];
+    }
+    _macBarItems = bar;
+}
+
+- (NSArray *)presentedItems
+{
+    if (_presentedItems != nil) {
+        return _presentedItems;
+    }
+    if (![self _groupsIntoApplicationMenu]) {
+        return [_menu itemArray];
+    }
+    if (_macBarItems == nil) {
+        [self _buildMacPresentation];
+    }
+    return _macBarItems;
+}
+
+- (void)setPresentedItems:(NSArray *)items
+{
+    if (items == _presentedItems) {
+        return;
+    }
+    [_presentedItems release];
+    _presentedItems = [items retain];
+    [self setNeedsDisplay:YES];
+}
+
 - (Margins)menuItemTextMargins
 {
     Margins margins = {0};
@@ -72,6 +170,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     [self closeSubmenu];
 
     [super setMenu:menu];
+    [self _invalidatePresentation];
     _highlightedIndex = -1;
 
     [self setNeedsDisplay:YES];
@@ -152,7 +251,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
 - (NSRect)rectOfItemAtIndex:(NSInteger)index
 {
-    NSArray *items = [_menu itemArray];
+    NSArray *items = [self presentedItems];
 
     if (_menu == nil || index < 0 || index >= (NSInteger)[items count]) {
         return NSZeroRect;
@@ -177,7 +276,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
 - (NSInteger)indexOfItemAtPoint:(NSPoint)point
 {
-    NSInteger count = (NSInteger)[[_menu itemArray] count];
+    NSInteger count = (NSInteger)[[self presentedItems] count];
 
     for (NSInteger i = 0; i < count; i++) {
         if (NSPointInRect(point, [self rectOfItemAtIndex:i])) {
@@ -189,7 +288,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
 - (void)sizeToFit
 {
-    NSArray *items = [_menu itemArray];
+    NSArray *items = [self presentedItems];
     NSSize total = NSMakeSize(0.0, 0.0);
 
     for (NSMenuItem *item in items) {
@@ -214,7 +313,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 - (void)drawRect:(NSRect)dirtyRect
 {
     NSGraphicsStyle *style = [self graphicsStyle];
-    NSArray *items = [_menu itemArray];
+    NSArray *items = [self presentedItems];
     NSInteger count = (NSInteger)[items count];
 
     if (_horizontal) {
@@ -276,17 +375,23 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     }
     [self closeSubmenu];
 
-    NSMenuItem *item = [[_menu itemArray] objectAtIndex:index];
+    NSMenuItem *item = [[self presentedItems] objectAtIndex:index];
     NSMenu *submenu = [item submenu];
+    NSArray *loose = (item == _macAppItem) ? _macAppItems : nil;
 
-    if (submenu == nil) {
+    if (submenu == nil && loose == nil) {
         return;
     }
 
     NSMenuView *view = [[NSMenuView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 10.0, 10.0)];
 
     [view setFont:_font];
-    [view setMenu:submenu];
+    /* The application menu's items still belong to _menu, so the view is given
+     * the menu they live in and told which of them to show. */
+    [view setMenu:(submenu != nil) ? submenu : _menu];
+    if (loose != nil) {
+        [view setPresentedItems:loose];
+    }
     [view sizeToFit];
     view->_supermenuView = self;
 
@@ -372,7 +477,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
         if (view == self) {
             if (index >= 0) {
-                NSMenuItem *item = [[_menu itemArray] objectAtIndex:index];
+                NSMenuItem *item = [[self presentedItems] objectAtIndex:index];
 
                 if ([item hasSubmenu] && [item isEnabled]) {
                     [self openSubmenuAtIndex:index];
@@ -389,7 +494,7 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
             NSMenuItem *hit = nil;
 
             if (index >= 0) {
-                NSArray *items = [[view menu] itemArray];
+                NSArray *items = [view presentedItems];
 
                 if (index < (NSInteger)[items count]) {
                     NSMenuItem *item = [items objectAtIndex:index];

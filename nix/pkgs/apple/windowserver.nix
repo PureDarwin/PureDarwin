@@ -35,6 +35,14 @@ stdenv.mkDerivation {
     wayland-scanner client-header "$protocol" xdg-shell-client-protocol.h
     wayland-scanner private-code "$protocol" xdg-shell-protocol.c
 
+    # linux-dmabuf lets a window hand the compositor a GPU buffer instead of
+    # copying a full surface through wl_shm every frame. Optional at runtime:
+    # with no DRM device Mesa falls back to surfaceless swrast, which cannot
+    # export dmabufs, and the shm path is used instead.
+    dmabuf=${waylandProtocols}/share/wayland-protocols/stable/linux-dmabuf/linux-dmabuf-v1.xml
+    wayland-scanner client-header "$dmabuf" linux-dmabuf-v1-client-protocol.h
+    wayland-scanner private-code "$dmabuf" linux-dmabuf-protocol.c
+
     # wlr-layer-shell is not in wayland-protocols; the XML is vendored next to
     # the sources and is the same one neuswc implements.
     layer=wlr-layer-shell-unstable-v1.xml
@@ -59,6 +67,7 @@ stdenv.mkDerivation {
     $cc $cflags -c rpc_wayland.c -o rpc_wayland.o
     $cc $cflags -c xdg-shell-protocol.c -o xdg-shell-protocol.o
     $cc $cflags -c wlr-layer-shell-protocol.c -o wlr-layer-shell-protocol.o
+    $cc $cflags -c linux-dmabuf-protocol.c -o linux-dmabuf-protocol.o
 
     $cc \
       -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
@@ -72,6 +81,7 @@ stdenv.mkDerivation {
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/usr/lib/libWindowServer.dylib \
       rpc_wayland.o xdg-shell-protocol.o wlr-layer-shell-protocol.o \
+      linux-dmabuf-protocol.o \
       -lwayland-client -lxkbcommon -lCoreGraphics -lCoreFoundation -lSystem \
       -o libWindowServer.dylib
 

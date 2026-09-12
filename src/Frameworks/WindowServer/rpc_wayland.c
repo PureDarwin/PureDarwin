@@ -10,6 +10,7 @@
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "linux-dmabuf-v1-client-protocol.h"
 #include <CoreGraphics/CGDirectDisplay_puredarwin.h>
 #include <CoreGraphics/CGWindowLevel.h>
 #include <CoreFoundation/CFBundle.h>
@@ -38,6 +39,11 @@ struct wsWindow {
     int state;
     int configured;
     char title[64];
+    /* Last anchor/margins actually sent, so an unchanged layout does not
+     * re-issue the requests. */
+    uint32_t sentAnchor;
+    int32_t sentMarginTop, sentMarginRight, sentMarginBottom, sentMarginLeft;
+    int haveSentAnchor;
     struct wsWindow *next;
 };
 
@@ -50,6 +56,9 @@ static struct {
     struct wl_seat *seat;
     struct wl_output *output;
     struct wl_shm *shm;
+    /* NULL when the compositor does not advertise linux-dmabuf, which is the
+     * normal case on a framebuffer-only setup; the shm path is used then. */
+    struct zwp_linux_dmabuf_v1 *dmabuf;
     struct wl_keyboard *keyboard;
     struct wl_pointer *pointer;
     struct xkb_context *xkbContext;
@@ -138,6 +147,12 @@ static void registryGlobal(void *data, struct wl_registry *registry, uint32_t na
         ws.layerShell = wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         ws.shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+    } else if (strcmp(interface, zwp_linux_dmabuf_v1_interface.name) == 0) {
+        /* Version 3 is the highest that still offers create_params/create_immed
+         * without requiring the dmabuf_feedback flow added in 4. */
+        uint32_t bind = (version < 3) ? version : 3;
+
+        ws.dmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, bind);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         ws.seat = wl_registry_bind(registry, name, &wl_seat_interface, 5);
         /* wl_seat sends capabilities as soon as the bind is processed. Attach
@@ -193,6 +208,12 @@ static int ensureConnected(void) {
 
     pthread_mutex_init(&ws.queueLock, NULL);
     pthread_cond_init(&ws.queueReady, NULL);
+    if (getenv("PD_WS_TRACE") != NULL) {
+        fprintf(stderr, "WindowServer: linux-dmabuf %s\n",
+                (ws.dmabuf != NULL) ? "available (GPU buffers possible)"
+                                    : "absent (shm path)");
+    }
+
     ws.connected = 1;
     ws.dispatchRunning = 1;
     pthread_create(&ws.dispatchThread, NULL, dispatchThreadMain, NULL);
@@ -335,6 +356,26 @@ static void windowApplyLayerGeometry(struct wsWindow *window, uint32_t layer) {
                 window->windowID, anchor, marginTop, marginRight, marginBottom,
                 marginLeft);
     }
+
+    /* Every set_anchor/set_margin pair makes the compositor reconfigure the
+     * layer surface, and a reconfigure costs a repaint. This is reached on
+     * ordinary state updates, so re-sending values that have not changed made
+     * the menu bar redraw continuously - visible as flicker. */
+    if (window->haveSentAnchor &&
+        window->sentAnchor == anchor &&
+        window->sentMarginTop == marginTop &&
+        window->sentMarginRight == marginRight &&
+        window->sentMarginBottom == marginBottom &&
+        window->sentMarginLeft == marginLeft) {
+        return;
+    }
+
+    window->sentAnchor = anchor;
+    window->sentMarginTop = marginTop;
+    window->sentMarginRight = marginRight;
+    window->sentMarginBottom = marginBottom;
+    window->sentMarginLeft = marginLeft;
+    window->haveSentAnchor = 1;
 
     zwlr_layer_surface_v1_set_anchor(window->layerSurface, anchor);
     zwlr_layer_surface_v1_set_margin(window->layerSurface, marginTop, marginRight,
@@ -787,6 +828,11 @@ static void windowTraceSurface(struct wsWindow *window, const char *what) {
 }
 
 static void windowDestroyRole(struct wsWindow *window) {
+    /* A replacement layer surface starts with no anchor or margins, so the
+     * record of what was sent must not outlive the surface it described - or
+     * the new one would be skipped as "unchanged" and never anchored. */
+    window->haveSentAnchor = 0;
+
     if (window->layerSurface != NULL) {
         zwlr_layer_surface_v1_destroy(window->layerSurface);
         window->layerSurface = NULL;
@@ -946,13 +992,30 @@ static kern_return_t windowModifyState(struct wsRPCWindow *msg) {
     if (msg->state != window->state) {
         switch (msg->state) {
             case MINIMIZED:
-                if (window->toplevel != NULL) { xdg_toplevel_set_minimized(window->toplevel); }
+                /* Deliberately not xdg_toplevel_set_minimized(): that request
+                 * is a one-way hint. xdg-shell has no unset_minimized, so a
+                 * client cannot un-minimize itself - only the compositor can,
+                 * through a taskbar protocol - and a window minimized that way
+                 * can never be restored. Unmapping looks the same and is
+                 * reversible, which is what -deminiaturize: needs. */
+                wl_surface_attach(window->surface, NULL, 0, 0);
+                wl_surface_commit(window->surface);
                 break;
             case MAXIMIZED:
                 if (window->toplevel != NULL) { xdg_toplevel_set_maximized(window->toplevel); }
                 break;
             case NORMAL:
                 if (window->toplevel != NULL) { xdg_toplevel_unset_maximized(window->toplevel); }
+                /* window->state is still the *previous* state here - it is
+                 * assigned after this switch - so this is the test for "coming
+                 * back from an unmapped state". Both MINIMIZED and HIDDEN
+                 * detach the buffer, and without re-attaching it the window
+                 * never reappears however often NORMAL is sent. */
+                if (window->state == MINIMIZED || window->state == HIDDEN) {
+                    if (windowAttachBuffer(window)) {
+                        wl_surface_commit(window->surface);
+                    }
+                }
                 break;
             case HIDDEN:
                 /* Wayland has no hide; the surface is unmapped by attaching a
