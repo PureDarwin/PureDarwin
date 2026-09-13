@@ -1,10 +1,11 @@
 name: Build minimal image
 
 on:
-  pull_request:
-    branches: [upstream-xnu-12377]
-  push:
-    branches: [upstream-xnu-12377]
+#  Don't enable due to workflow limits & schedule can only run on the default branch
+#  pull_request:
+#    branches: [upstream-xnu-12377]
+#  push:
+#    branches: [upstream-xnu-12377]
   workflow_dispatch:
 
 concurrency:
