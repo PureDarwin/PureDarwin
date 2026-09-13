@@ -276,6 +276,11 @@
             extraCmakeFlags = [
               "-DPUREDARWIN_ENABLE_SELFHOST_CCTOOLS=ON"
               "-DPUREDARWIN_IIG_SOURCE=${iig-tools}"
+            ] ++ lib.optionals isDarwin [
+              # CMake picks CMAKE_OSX_SYSROOT itself on an Apple host by running
+              # xcrun, which cannot see an SDK inside the nix sandbox and leaves
+              # its own error text as the sysroot.
+              "-DPUREDARWIN_MACOSX_SDK=${pkgs.apple-sdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
             ];
           };
           xvfbPixmanBuild =
@@ -1083,8 +1088,11 @@
               llvmVersion = "22";
             };
 
+          # Cross-built for the target triple, so the host does not matter; on a
+          # Darwin host leaving it out left libSystems export list demanding
+          # 128-bit builtins that nothing defined.
           compilerRtBuild =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt.nix {
+            pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt.nix {
               inherit darwinCrossToolchain nativeLd;
               nativeMesonTools = nativeMesonToolsDir;
               llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
@@ -1275,12 +1283,15 @@
               llvmVersion = pkgs.llvmPackages_21.llvm.version;
               nativeTblgen = "${pkgs.llvmPackages_21.llvm}/bin/llvm-tblgen";
             };
+          # On a Darwin host cctools already provides both tools, so the
+          # cross-built host otool is only needed elsewhere.
           nativeMesonToolsDir =
-            if isDarwin then null else pkgs.runCommand "puredarwin-native-meson-tools" { } ''
+            pkgs.runCommand "puredarwin-native-meson-tools" { } (
+              let toolsdir = if isDarwin then "${pkgs.cctools}" else "${hostOtoolBuild}"; in ''
               mkdir -p $out/bin
-              ln -s ${hostOtoolBuild}/bin/otool $out/bin/otool
-              ln -s ${hostOtoolBuild}/bin/install_name_tool $out/bin/install_name_tool
-            '';
+              ln -s ${toolsdir}/bin/otool $out/bin/otool
+              ln -s ${toolsdir}/bin/install_name_tool $out/bin/install_name_tool
+            '');
           libpngBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/gtk/libpng.nix {
               inherit darwinCrossToolchain nativeLd;

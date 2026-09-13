@@ -273,6 +273,18 @@ static NSMenuItem *itemWithTag(NSMenu *root, int tag) {
                             me.x -= [window frame].origin.x;
                             me.y -= [window frame].origin.y;
                             switch(me.code) {
+                                case WS_EVENT_FOCUS_GAINED:
+                                case WS_EVENT_FOCUS_LOST: {
+                                    SEL which = (me.code == WS_EVENT_FOCUS_GAINED)
+                                        ? @selector(_serverDidGiveKeyFocus)
+                                        : @selector(_serverDidTakeKeyFocus);
+
+                                    if(window != nil)
+                                        [window performSelectorOnMainThread:which
+                                                                 withObject:nil
+                                                              waitUntilDone:NO];
+                                    break;
+                                }
                                 case NSKeyUp:
                                 case NSKeyDown: {
                                     NSEvent *e = [NSEvent keyEventWithType:me.code
@@ -1380,9 +1392,17 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    if([event type]==NSKeyDown){
     unsigned modifierFlags=[event modifierFlags];
 
-    if(modifierFlags&(NSCommandKeyMask|NSAlternateKeyMask))
-     if([self _performKeyEquivalent:event])
+    NSLog(@"KEYPROBE: keyDown chars='%@' mods=0x%x key=%@ main=%@",
+          [event charactersIgnoringModifiers], modifierFlags,
+          [self keyWindow], [self mainWindow]);
+
+    if(modifierFlags&(NSCommandKeyMask|NSAlternateKeyMask)){
+     BOOL handled=[self _performKeyEquivalent:event];
+
+     NSLog(@"KEYPROBE: equivalent handled=%d", handled);
+     if(handled)
       return;
+    }
    }
 
    [[event window] sendEvent:event];

@@ -404,7 +404,8 @@ seat_create(struct wl_display *display, const char *seat_name)
 
 	seat->ignore = false;
 	memset(&seat->names, 0, sizeof(seat->names));
-	seat->names.rules = "base";
+	/* evdev, not base: keys arrive as evdev codes plus 8. */
+	seat->names.rules = "evdev";
 	seat->names.model = "pc105";
 	seat->names.layout = "us";
 	seat->names.variant = "basic";

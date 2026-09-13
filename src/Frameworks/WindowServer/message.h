@@ -112,6 +112,12 @@ struct wsRPCSimple {
     int val4;
 };
 
+/* Not NSEventType values: the compositor reporting which surface holds
+ * keyboard focus, so AppKit can follow it with the key window. Chosen above
+ * every NSEventType so they cannot collide with a real event code. */
+#define WS_EVENT_FOCUS_GAINED 1000
+#define WS_EVENT_FOCUS_LOST   1001
+
 struct mach_event {
     int windowID;
     int code;

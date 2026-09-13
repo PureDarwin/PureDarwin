@@ -186,9 +186,12 @@ if(CMAKE_HOST_APPLE)
         VERBATIM)
     add_custom_target(libdyld_apple_ld_stubs DEPENDS ${_libdyld_apple_ld_pthread_stub})
     add_dependencies(libdyld libdyld_apple_ld_stubs)
+    # The sysroot is PureDarwins own SDK, which ships usr/lib/libSystem.tbd
+    # and no System.framework, so ask for the library rather than a framework
+    # that only exists in a host SDK.
     target_link_options(libdyld PRIVATE
         -Wl,-L,${_libdyld_apple_ld_stub_dir}
-        -Wl,-framework,System)
+        -lSystem)
 else()
     target_link_options(libdyld PRIVATE -lSystem)
 endif()

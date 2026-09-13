@@ -24,7 +24,12 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_CROSSCOMPILING)
             COMMAND xcrun --sdk macosx --show-sdk-path
             OUTPUT_VARIABLE _sdk
             OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _sdk_result
         )
+        if(NOT _sdk_result EQUAL 0 OR NOT EXISTS "${_sdk}/usr/include")
+            set(_sdk "${PUREDARWIN_MACOSX_SDK}")
+        endif()
     endif()
 
     find_program(_real_clang NAMES clang REQUIRED)

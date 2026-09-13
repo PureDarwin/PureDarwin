@@ -33,7 +33,12 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_CROSSCOMPILING)
         COMMAND xcrun --sdk macosx --show-sdk-path
         OUTPUT_VARIABLE _iig_sdk
         OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _iig_sdk_result
     )
+    if(NOT _iig_sdk_result EQUAL 0 OR NOT EXISTS "${_iig_sdk}/usr/include")
+        set(_iig_sdk "${PUREDARWIN_MACOSX_SDK}")
+    endif()
     find_program(_iig_real_clang NAMES clang REQUIRED)
     set(_iig_target_flags -arch "${PUREDARWIN_ARCH}")
 else()

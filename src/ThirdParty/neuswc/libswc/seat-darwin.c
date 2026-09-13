@@ -374,8 +374,12 @@ initialize_hid(struct seat *seat)
 struct swc_seat *
 seat_create(struct wl_display *display, const char *seat_name)
 {
+	/* Keys reach xkb as evdev codes plus 8 (see XKB_KEY), so the keymap has
+	 * to be built with the evdev rules. The base rules give the legacy
+	 * xfree86 keycodes, where only the codes that happen to coincide work:
+	 * letters and shift do, Super does not. */
 	struct xkb_rule_names names = {
-		.rules = "base",
+		.rules = "evdev",
 		.model = "pc105",
 		.layout = "us",
 		.variant = "basic",

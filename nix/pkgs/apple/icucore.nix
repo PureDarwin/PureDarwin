@@ -76,7 +76,10 @@ stdenv.mkDerivation {
     substituteInPlace $out/include/unicode/uconfig.h \
       --replace-fail '#define U_DISABLE_RENAMING 0' '#define U_DISABLE_RENAMING 1'
 
-    for f in build/lib/*.dylib; do
+    # The data library is built under stubdata/ rather than lib/, so glob both
+    # or the reexport below has nothing to point at.
+    for f in build/lib/*.dylib build/stubdata/*.dylib; do
+      [ -e "$f" ] || continue
       [ -L "$f" ] && continue
       cp "$f" "$out/usr/lib/$(basename "$f")"
     done

@@ -1,10 +1,18 @@
 get_filename_component(_ld_toolchain_bin "${CMAKE_AR}" DIRECTORY)
 if(CMAKE_HOST_APPLE AND NOT CMAKE_CROSSCOMPILING)
+    # xcrun cannot see an SDK inside a nix sandbox and prints its error on
+    # stdout, so an unchecked capture silently becomes the sysroot. Guard it
+    # the same way the top-level SDK detection does.
     execute_process(
         COMMAND xcrun --sdk macosx --show-sdk-path
         OUTPUT_VARIABLE _ld_sdk
         OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _ld_sdk_result
     )
+    if(NOT _ld_sdk_result EQUAL 0 OR NOT EXISTS "${_ld_sdk}/usr/include")
+        set(_ld_sdk "${PUREDARWIN_MACOSX_SDK}")
+    endif()
     find_program(_ld_real_clang NAMES clang REQUIRED)
     set(_ld_target_flags -arch "${PUREDARWIN_ARCH}")
 else()

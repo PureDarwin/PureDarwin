@@ -639,10 +639,17 @@ static void keyboardEnter(void *data, struct wl_keyboard *keyboard, uint32_t ser
                           struct wl_surface *surface, struct wl_array *keys) {
     for (struct wsWindow *w = ws.windows; w != NULL; w = w->next) {
         if (w->surface == surface) {
+            struct mach_event event = {0};
+
             ws.focusWindowID = w->windowID;
             if (w->toplevel != NULL) {
                 ws.activeAppWindowID = w->windowID;
             }
+            /* Recording the focus is not enough: AppKit has to be told, or no
+             * window ever becomes key and keystrokes have nowhere to go. */
+            event.windowID = w->windowID;
+            event.code = WS_EVENT_FOCUS_GAINED;
+            queuePush(&event);
             break;
         }
     }
@@ -650,6 +657,16 @@ static void keyboardEnter(void *data, struct wl_keyboard *keyboard, uint32_t ser
 
 static void keyboardLeave(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                           struct wl_surface *surface) {
+    for (struct wsWindow *w = ws.windows; w != NULL; w = w->next) {
+        if (w->surface == surface) {
+            struct mach_event event = {0};
+
+            event.windowID = w->windowID;
+            event.code = WS_EVENT_FOCUS_LOST;
+            queuePush(&event);
+            break;
+        }
+    }
 }
 
 static void keyboardKey(void *data, struct wl_keyboard *keyboard, uint32_t serial,
@@ -684,6 +701,11 @@ static void keyboardModifiers(void *data, struct wl_keyboard *keyboard, uint32_t
 
     /* NSEvent modifier flags. */
     currentModifiers = 0;
+    if (getenv("PD_WS_TRACE") != NULL) {
+        fprintf(stderr, "WindowServer: modifiers dep=0x%x lat=0x%x lock=0x%x "
+                        "group=%u xkbState=%p\n",
+                depressed, latched, locked, group, (void *)ws.xkbState);
+    }
     if (ws.xkbState != NULL) {
         if (xkb_state_mod_name_is_active(ws.xkbState, XKB_MOD_NAME_SHIFT,
                                          XKB_STATE_MODS_EFFECTIVE) > 0) {
@@ -701,6 +723,10 @@ static void keyboardModifiers(void *data, struct wl_keyboard *keyboard, uint32_t
                                          XKB_STATE_MODS_EFFECTIVE) > 0) {
             currentModifiers |= (1 << 20);
         }
+    }
+    if (getenv("PD_WS_TRACE") != NULL) {
+        fprintf(stderr, "WindowServer: modifiers -> NSEvent mods 0x%x\n",
+                currentModifiers);
     }
 }
 

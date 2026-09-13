@@ -1734,7 +1734,8 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
    return NO;
 }
 
--(void)makeKeyWindow {
+/* Establishes the key view loop the first time the window is shown. */
+-(void)_prepareInitialFirstResponder {
     if(!_hasBeenOnScreen){
         _hasBeenOnScreen=YES;
 
@@ -1754,27 +1755,47 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
     }
 }
 
+/* Makes the receiver the key window, as the name says: the previous key window
+   resigns and -becomeKeyWindow is invoked as a notification hook. This pair
+   used to be the other way round, which left -makeKeyWindow merely preparing
+   a responder chain and no window ever actually key. */
+-(void)makeKeyWindow {
+   if([self isKeyWindow])
+    return;
+
+   NSWindow *previous=[NSApp keyWindow];
+
+   [self _prepareInitialFirstResponder];
+
+// Become key window before the previous key window resigns so that the new key window is valid
+// before NSWindowDidResignKeyNotification is sent.
+   [NSApp _setKeyWindow:self];
+
+   [previous resignKeyWindow];
+   [self becomeKeyWindow];
+}
+
 -(void)makeMainWindow {
    [self becomeMainWindow];
 }
 
--(void)becomeKeyWindow {
-
-    // The platform should always be told to become key when we want to
-    // become key
+/* The compositor decides which surface holds keyboard focus, so follow it:
+   these are driven from the window-server receive loop, hopped to the main
+   thread because key state is not safe to touch from that thread. */
+-(void)_serverDidGiveKeyFocus {
+   if([self canBecomeKeyWindow] && ![self isKeyWindow])
     [self makeKeyWindow];
+}
 
-   if([self isKeyWindow]) // if we don't return early we may resign ourself
-    return;
+-(void)_serverDidTakeKeyFocus {
+   if([self isKeyWindow]){
+    [NSApp _setKeyWindow:nil];
+    [self resignKeyWindow];
+   }
+}
 
-// Become key window before the previous key window resigns so that the new key window is valid
-// before NSWindowDidResignKeyNotification is sent.
-   NSWindow *keyWindow=[NSApp keyWindow];
-
-   [NSApp _setKeyWindow:self];
-
-   [keyWindow resignKeyWindow];
-
+/* Invoked once the window has become key; call -makeKeyWindow to make it so. */
+-(void)becomeKeyWindow {
    if(_firstResponder!=self && [_firstResponder respondsToSelector:_cmd])
     [_firstResponder performSelector:_cmd];
 
@@ -2488,12 +2509,8 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
    [self orderWindow:NSWindowAbove relativeTo:0];
 
-    /* -makeKeyWindow here only prepares the key view loop; the key status
-       itself is assigned by -becomeKeyWindow, so calling the former alone left
-       the application with no key window at all and every keystroke with
-       nowhere to go. */
     if([self canBecomeKeyWindow])
-        [self becomeKeyWindow];
+        [self makeKeyWindow];
 
    if([self canBecomeMainWindow])
     [self makeMainWindow];
@@ -2827,7 +2844,7 @@ static BOOL pdWindowColorsEqual(NSColor *a,NSColor *b) {
 
    _isActive=YES;
    if([self canBecomeKeyWindow])
-    [self becomeKeyWindow];
+    [self makeKeyWindow];
    if([self canBecomeMainWindow] && ![self isMainWindow])
     [self becomeMainWindow];
 
