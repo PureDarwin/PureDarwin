@@ -1,0 +1,43 @@
+name: Build minimal image
+
+on:
+#  Don't enable due to workflow limits & schedule can only run on the default branch
+#  pull_request:
+#    branches: [upstream-xnu-12377]
+#  push:
+#    branches: [upstream-xnu-12377]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  image-minimal:
+    name: Build image-minimal
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Build minimal image
+        run: nix build .#image-minimal
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: puredarwin-minimal
+          path: result/puredarwin-minimal.img
+          if-no-files-found: error
