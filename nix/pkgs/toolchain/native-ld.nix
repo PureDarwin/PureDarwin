@@ -12,7 +12,7 @@
 , ed
 , unifdef
 , tcsh
-, gnustep-base
+, gnustep-base ? null
 , pax
 , coreutils
 , findutils
@@ -54,8 +54,11 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [
     cmake ninja darwinCrossToolchain bison flex perl bash ed unifdef tcsh
-    gnustep-base pax coreutils findutils gawk gnused clang ruby iig
-  ];
+    pax coreutils findutils gawk gnused clang ruby iig
+  ]
+  # nixpkgs marks gnustep-base linux-only, and nothing here calls it; a Darwin
+  # host has the plist tools natively.
+  ++ lib.optionals (!stdenv.hostPlatform.isDarwin) [ gnustep-base ];
   buildInputs = [ zlib libuuid openssl libxml2 libtapi ];
 
   NIX_DARWIN_TOOLCHAIN_DIR = "${darwinCrossToolchain}/bin";
@@ -108,21 +111,24 @@ EOF
 include(host_commoncrypto_static.cmake)
 EOF
 
+    # CMAKE_AR is the real ar, not the triple-named stub: llvm-ar takes
+    # its mode from the stem of argv[0], and the dot in darwin20.4 makes
+    # that stub read as a file extension.
     cmake -S . -B build-nix-native -G Ninja \
       -DCMAKE_C_COMPILER=${clang}/bin/clang \
       -DCMAKE_CXX_COMPILER=${clang}/bin/clang++ \
-      -DCMAKE_AR="$PWD/.nix-native-stubs/${targetTriple}-ar" \
+      -DCMAKE_AR="$(command -v ar)" \
       -DCMAKE_BUILD_TYPE=Release \
       -DOPENSSL_ROOT_DIR=${openssl.dev} \
-      -DOPENSSL_CRYPTO_LIBRARY=${openssl.out}/lib/libcrypto.so \
-      -DOPENSSL_SSL_LIBRARY=${openssl.out}/lib/libssl.so \
+      -DOPENSSL_CRYPTO_LIBRARY=${openssl.out}/lib/libcrypto${stdenv.hostPlatform.extensions.sharedLibrary} \
+      -DOPENSSL_SSL_LIBRARY=${openssl.out}/lib/libssl${stdenv.hostPlatform.extensions.sharedLibrary} \
       -DZLIB_INCLUDE_DIR=${zlib.dev}/include \
-      -DZLIB_LIBRARY=${zlib.out}/lib/libz.so \
+      -DZLIB_LIBRARY=${zlib.out}/lib/libz${stdenv.hostPlatform.extensions.sharedLibrary} \
       -DLIBXML2_INCLUDE_DIR=${libxml2.dev}/include/libxml2 \
-      -DLIBXML2_LIBRARY=${libxml2.out}/lib/libxml2.so \
+      -DLIBXML2_LIBRARY=${libxml2.out}/lib/libxml2${stdenv.hostPlatform.extensions.sharedLibrary} \
       -DPUREDARWIN_MACOSX_SDK="$DARWIN_SDK_ROOT" \
       -DPUREDARWIN_LIBTAPI_INCLUDE_DIR=${lib.getDev libtapi}/include \
-      -DPUREDARWIN_LIBTAPI_LIBRARY=${lib.getLib libtapi}/lib/libtapi.so
+      -DPUREDARWIN_LIBTAPI_LIBRARY=${lib.getLib libtapi}/lib/libtapi${stdenv.hostPlatform.extensions.sharedLibrary}
     runHook postConfigure
   '';
 
@@ -151,6 +157,8 @@ EOF
 
   meta = with lib; {
     description = "Apple's cctools ld64, built for linking PureDarwin (host and target)";
-    platforms = platforms.linux;
+    # Needed on a Darwin host too: nixpkgs ld64 leaves kmod_info start/stop
+    # kext-relative, which makes the kernel collection unbootable.
+    platforms = platforms.unix;
   };
 }

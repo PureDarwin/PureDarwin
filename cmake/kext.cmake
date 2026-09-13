@@ -44,19 +44,15 @@ function(add_kext_bundle name)
     endif()
 
 
-    if(CMAKE_HOST_APPLE)
-        # Real Apple ld rejects a plain MH_BUNDLE (-bundle) unless it links
-        # libSystem, which a kext must not do. Kexts need the dedicated
-        # MH_KEXT_BUNDLE output (-kext), which has no such requirement.
-        target_link_options(${name} PRIVATE "LINKER:-kext")
-    else()
-        target_link_options(${name} PRIVATE "LINKER:-bundle")
-        if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
-            # ld64 requires libSystem to accept -bundle; the SDK .tbd stub satisfies
-            # the check without adding a real runtime dependency.
-            target_link_options(${name} PRIVATE -lSystem)
-        endif()
-    endif()
+    # MH_BUNDLE on every host: kc-builder applies the fixups when it links the
+    # kext into the collection, and it expects the bundle layout. An Apple-host
+    # -kext build instead produced MH_KEXT_BUNDLE with no __DATA_CONST and a
+    # LC_DYSYMTAB kc-builder misreads, leaving kmod_info start/stop unrebased -
+    # every kext then fails to start and the kernel panics on the first call.
+    # ld64 requires libSystem to accept -bundle; the SDK .tbd stub satisfies
+    # the check without adding a real runtime dependency.
+    target_link_options(${name} PRIVATE "LINKER:-bundle")
+    target_link_options(${name} PRIVATE -lSystem)
     target_link_options(${name} PRIVATE "SHELL:-undefined dynamic_lookup")
 
     # ARMv6 has no movw/movt, so the compiler reaches other symbols through

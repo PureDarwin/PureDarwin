@@ -85,14 +85,14 @@
           # ld64 below. Everything else uses darwinCrossToolchain, which has the
           # real linker - lld silently ignores -dylib_file/-image_base/-segaddr.
           bootstrapCrossToolchain =
-            if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix { };
-          libtapi = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/libtapi.nix { };
-          # A Darwin host already has Apple's ld64 in nixpkgs, so it needs none
-          # of the bootstrap-lld-then-build-cctools dance the Linux cross build
-          # goes through to obtain a TAPI-capable linker.
+            pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix { };
+          libtapi = pkgs.callPackage ./nix/pkgs/toolchain/libtapi.nix { };
+          # Every host uses the in-tree cctools ld64, so the Mach-O the kexts
+          # and kernel get is the same everywhere; it is also what lets a Mac
+          # link kexts as MH_BUNDLE (see cmake/kext.cmake), which is the layout
+          # kc-builder expects.
           nativeLd =
-            if isDarwin then pkgs.ld64
-            else pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
+            pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
               darwinCrossToolchain = bootstrapCrossToolchain;
               inherit libtapi iig;
             };
