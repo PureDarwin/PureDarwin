@@ -356,21 +356,6 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
 
     frame.size = total;
     [self setFrame:frame];
-
-    if (_horizontal) {
-        static BOOL logged = NO;
-
-        if (!logged) {
-            NSMutableString *shape = [NSMutableString string];
-
-            logged = YES;
-            for (NSMenuItem *item in items) {
-                [shape appendFormat:@" [%@]%gpx", [item title],
-                       [self sizeOfItem:item].width];
-            }
-            NSLog(@"NSMenuView: bar presents %ld items:%@", (long)[items count], shape);
-        }
-    }
 }
 
 - (void)drawRect:(NSRect)dirtyRect
@@ -442,10 +427,6 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     NSMenu *submenu = [item submenu];
     NSArray *loose = (item == _macAppItem) ? _macAppItems : nil;
 
-    NSLog(@"NSMenuView: open '%@' idx %ld submenu=%@ items=%ld loose=%ld",
-          [item title], (long)index, (submenu != nil) ? @"yes" : @"no",
-          (long)[[submenu itemArray] count], (long)[loose count]);
-
     if (submenu == nil && loose == nil) {
         return;
     }
@@ -473,8 +454,6 @@ NSString *const NSMenuDidEndTrackingNotification = @"NSMenuDidEndTrackingNotific
     /* An empty menu sizes to nothing, and a zero-sized window gets no surface:
      * it would look exactly like a menu that failed to open. */
     if (NSIsEmptyRect([view frame])) {
-        NSLog(@"NSMenuView: '%@' sized to nothing, presenting %ld items - not opening",
-              [item title], (long)[[view presentedItems] count]);
         [view release];
         return;
     }

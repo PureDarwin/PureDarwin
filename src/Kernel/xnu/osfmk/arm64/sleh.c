@@ -43,6 +43,9 @@
 #include <kern/restartable.h>
 #include <kern/socd_client.h>
 #include <kern/task.h>
+/* Not <sys/proc.h>: it drags in BSD's sys/types.h, which redefines types
+ * (int32_t, dev_t, clock_t) this osfmk file already has from elsewhere. */
+extern int proc_pid(struct proc *);
 #include <kern/thread.h>
 #include <kern/zalloc_internal.h>
 #include <mach/exception.h>
@@ -1192,6 +1195,74 @@ handle_uncategorized(arm_saved_state_t *state)
 
 	COPYIN(get_saved_state_pc(state), (char *)&instr, sizeof(instr));
 
+	/*
+	 * Register-form PAC/XPAC (PACxx/AUTxx/XPACI/XPACD): this QEMU CPU
+	 * advertises FEAT_PAuth but doesn't decode these, so they trap as
+	 * undefined instead of executing. PAC only needs self-consistency, so
+	 * skipping is as sound as a real implementation.
+	 */
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) &&
+	    (instr & 0x7FE00000) == 0x5AC00000 &&
+	    ((instr >> 16) & 0x1F) == 0x1 &&
+	    (((instr >> 10) & 0x3F) <= 0xB || ((instr >> 10) & 0x3F) == 0x10 || ((instr >> 10) & 0x3F) == 0x11)) {
+		uint32_t opcode = (instr >> 10) & 0x3F;
+		uint32_t rd = instr & 0x1F;
+
+		/* PACxx: Xd untouched is correct (nothing ever signed it).
+		 * AUTxx/XPACI/XPACD: strip potential garbage from the high bits
+		 * so the pointer stays dereferenceable. */
+		if (((opcode & 0x4) || opcode == 0x10 || opcode == 0x11) && rd != 31) {
+			int64_t *xd = &saved_state64(state)->x[rd];
+			*xd = (*xd << 16) >> 16;
+		}
+
+		/* set_saved_state_pc() needs CONFIG_DTRACE/XNUPOST (DEBUG-only);
+		 * write the field saved_state64() exposes unconditionally instead. */
+		saved_state64(state)->pc += 4;
+		return;
+	}
+
+	/*
+	 * Combined auth+branch forms (RETAB/BRAA/BRAAZ/BLRAA/BLRAAZ - the set
+	 * /sbin/launchd actually uses). No-op isn't an option here since they
+	 * also branch - strip the target, then take the branch.
+	 */
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state))) {
+		uint32_t rn = 0;
+		bool did_branch = false;
+		bool is_link = false;
+
+		if (instr == 0xd65f0fff) {                       /* RETAB */
+			rn = 30; /* LR - no register field, implicit */
+			did_branch = true;
+		} else if ((instr & 0xFFFFFC00) == 0xd71f0800) { /* BRAA  */
+			rn = (instr >> 5) & 0x1F;
+			did_branch = true;
+		} else if ((instr & 0xFFFFFC1F) == 0xd61f081f) { /* BRAAZ */
+			rn = (instr >> 5) & 0x1F;
+			did_branch = true;
+		} else if ((instr & 0xFFFFFC00) == 0xd73f0800) { /* BLRAA */
+			rn = (instr >> 5) & 0x1F;
+			did_branch = true;
+			is_link = true;
+		} else if ((instr & 0xFFFFFC1F) == 0xd63f081f) { /* BLRAAZ */
+			rn = (instr >> 5) & 0x1F;
+			did_branch = true;
+			is_link = true;
+		}
+
+		if (did_branch) {
+			int64_t raw = (int64_t)get_saved_state_reg(state, rn);
+			uint64_t target = (uint64_t)((raw << 16) >> 16);
+
+			if (is_link) {
+				saved_state64(state)->lr = get_saved_state_pc(state) + 4;
+			}
+			saved_state64(state)->pc = target;
+			return;
+		}
+	}
+
 #if CONFIG_DTRACE
 
 	if (PSR64_IS_USER64(get_saved_state_cpsr(state))) {
@@ -1264,6 +1335,9 @@ handle_uncategorized(arm_saved_state_t *state)
 		codes[1] = instr;
 	} else {
 		codes[1] = instr;
+		printf("Undefined user instruction pid %d pc=0x%llx instr=0x%08x SCTLR_EL1=0x%llx\n",
+		    proc_pid(current_proc()), get_saved_state_pc(state), instr,
+		    __builtin_arm_rsr64("SCTLR_EL1"));
 	}
 
 	exception_triage(exception, codes, numcodes);
@@ -1520,6 +1594,9 @@ handle_user_breakpoint(arm_saved_state_t *state, uint64_t esr __unused)
 		 */
 		uint16_t brk_label = ISS_BRK_COMMENT(esr);
 		const struct user_brk_label_range_descriptor* descriptor = find_user_brk_descriptor_by_comment(brk_label);
+		printf("User BRK pid %d pc=0x%llx label=0x%x%s\n",
+		    proc_pid(current_proc()), get_saved_state_pc(state), brk_label,
+		    (descriptor && descriptor->base == PTRAUTH_TRAP_START) ? " (PAC trap)" : "");
 		/*
 		 * Note it's no problem if we don't recognize the label.
 		 * In this case we'll just go through normal exception delivery.
@@ -1929,6 +2006,10 @@ handle_user_abort(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_addr
 	pmap_t                     pmap     = map->pmap;
 
 	(void)expected_fault_handler;
+
+	printf("User abort pid %d pc=0x%llx far=0x%lx esr=0x%llx code=%d type=%d\n",
+	    proc_pid(current_proc()), get_saved_state_pc(state), fault_addr, esr,
+	    fault_code, fault_type);
 
 	if (__improbable(!SPSR_INTERRUPTS_ENABLED(get_saved_state_cpsr(state)))) {
 		panic_with_thread_kernel_state("User abort from non-interruptible context", state);
@@ -2922,6 +3003,12 @@ handle_pac_fail(arm_saved_state_t *state, uint64_t esr)
 		}
 		panic_with_thread_kernel_state(msg, state);
 	}
+
+	/* Unlike the kernel-mode case above, user-mode PAC failures normally
+	 * get no diagnostic at all before being triaged into a signal. */
+	printf("PAC failure from user pid %d at pc=0x%llx esr=0x%llx key=%s instr=0x%08x\n",
+	    proc_pid(current_proc()), get_saved_state_pc(state), esr,
+	    ptrauth_key_to_string((ptrauth_key)(esr & 0x3)), instr);
 
 	codes[1] = instr;
 

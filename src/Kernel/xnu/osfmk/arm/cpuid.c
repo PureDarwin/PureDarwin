@@ -92,12 +92,30 @@ do_cpuid(void)
 #if defined(HAS_APPLE_PAC)
 	cpuid_cpu_info.arm_info.arm_arch = CPU_ARCH_ARMv8E;
 #else /* defined(HAS_APPLE_PAC) */
-	cpuid_cpu_info.arm_info.arm_arch = CPU_ARCH_ARMv8;
+	/* Not an Apple SoC build, but the actual CPU (QEMU, etc.) may still
+	 * implement real FEAT_PAuth - probe rather than assume it doesn't. */
+	if (arm64_pac_supported()) {
+		cpuid_cpu_info.arm_info.arm_arch = CPU_ARCH_ARMv8E;
+	} else {
+		cpuid_cpu_info.arm_info.arm_arch = CPU_ARCH_ARMv8;
+	}
 #endif /* defined(HAS_APPLE_PAC) */
 
 #else /* (__ARM_ARCH__ != 8) */
 #error Unsupported arch
 #endif /* (__ARM_ARCH__ != 8) */
+}
+
+/* Real FEAT_PAuth probe for hosts HAS_APPLE_PAC doesn't already cover at
+ * compile time (QEMU, non-Apple ARM). */
+bool
+arm64_pac_supported(void)
+{
+	uint64_t isar1 = __builtin_arm_rsr64("ID_AA64ISAR1_EL1");
+	uint64_t api = (isar1 & ID_AA64ISAR1_EL1_API_MASK) >> ID_AA64ISAR1_EL1_API_OFFSET;
+	uint64_t apa = (isar1 & ID_AA64ISAR1_EL1_APA_MASK) >> ID_AA64ISAR1_EL1_APA_OFFSET;
+
+	return api != 0 || apa != 0;
 }
 
 arm_cpu_info_t *

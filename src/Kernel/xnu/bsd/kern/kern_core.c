@@ -89,7 +89,9 @@ void task_act_iterate_wth_args(task_t, void (*)(thread_t, void *), void *);
 #ifdef SECURE_KERNEL
 __XNU_PRIVATE_EXTERN int do_coredump = 0;       /* default: don't dump cores */
 #else
-__XNU_PRIVATE_EXTERN int do_coredump = 1;       /* default: dump cores */
+__XNU_PRIVATE_EXTERN int do_coredump = 0;       /* PD: off - initproc's core (whole
+                                                  * dyld shared region) hangs writing
+                                                  * out; no boot-arg gate exists. */
 #endif /* SECURE_KERNEL */
 __XNU_PRIVATE_EXTERN int sugid_coredump = 0; /* default: but not SGUID binaries */
 

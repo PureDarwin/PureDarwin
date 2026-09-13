@@ -122,6 +122,17 @@ if(PUREDARWIN_ARCH STREQUAL "armv6")
     target_compile_options(dyld PRIVATE -fvisibility=hidden)
 endif()
 
+if(PUREDARWIN_ARCH STREQUAL "arm64")
+    # Real ptrauth codegen, needed for arm64e chained-fixup signing
+    # (MachOLoaded::...::signPointer()) to do anything but write garbage.
+    # +pauth: -mcpu=apple-a10 predates PAuth, so the backend won't lower
+    # llvm.ptrauth.* without it.
+    target_compile_options(dyld PRIVATE
+        -fptrauth-calls -fptrauth-intrinsics
+        # SHELL: stops CMake from de-duping the repeated "-Xclang" token.
+        "SHELL:-Xclang -target-feature -Xclang +pauth")
+endif()
+
 target_compile_options(dyld PRIVATE
     -mno-red-zone -fno-stack-protector
     # Without -nostdinc++ clang adds the sysroot's c++/v1 as a system dir and

@@ -923,14 +923,6 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
               (unsigned long)[_mainMenu numberOfItems],
               (unsigned long)[_windows count]);
 
-        NSMutableString *shape = [NSMutableString string];
-
-        for (NSMenuItem *item in [_mainMenu itemArray]) {
-            [shape appendFormat:@" %@:%ld", [item title],
-                   [item hasSubmenu] ? (long)[[[item submenu] itemArray] count] : -1];
-        }
-        NSLog(@"NSApplication: published shape (-1 = no submenu):%@", shape);
-
         pdMenuNeedsPublish = NO;
     }
 }
@@ -1392,17 +1384,9 @@ static int _tagAllMenus(NSMenu *menu, int tag) {
    if([event type]==NSKeyDown){
     unsigned modifierFlags=[event modifierFlags];
 
-    NSLog(@"KEYPROBE: keyDown chars='%@' mods=0x%x key=%@ main=%@",
-          [event charactersIgnoringModifiers], modifierFlags,
-          [self keyWindow], [self mainWindow]);
-
-    if(modifierFlags&(NSCommandKeyMask|NSAlternateKeyMask)){
-     BOOL handled=[self _performKeyEquivalent:event];
-
-     NSLog(@"KEYPROBE: equivalent handled=%d", handled);
-     if(handled)
+    if(modifierFlags&(NSCommandKeyMask|NSAlternateKeyMask))
+     if([self _performKeyEquivalent:event])
       return;
-    }
    }
 
    [[event window] sendEvent:event];

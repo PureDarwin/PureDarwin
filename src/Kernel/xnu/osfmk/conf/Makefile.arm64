@@ -43,6 +43,10 @@ $(foreach FILE,$(UNCONFIGURED_HIB_FILES),$(eval $(call ADD_HIB_CFLAGS,$(FILE))))
 lz4.o_CFLAGS_ADD += -fbuiltin -O3
 vfp_state_test.o_CFLAGS_ADD += -mno-implicit-float
 
+# Real ptrauth codegen for arm64e chained-fixup handling in this one file
+# only (no shared struct/HAS_APPLE_PAC touched - see its own comments).
+vm_dyld_pager.o_CFLAGS_ADD += -fptrauth-intrinsics
+
 
 ######################################################################
 #END	Machine dependent Makefile fragment for arm64

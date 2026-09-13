@@ -60,10 +60,7 @@
 
 #include <sys/kdebug_triage.h>
 #include <mach-o/fixup-chains.h>
-#if defined(HAS_APPLE_PAC)
 #include <ptrauth.h>
-#include <arm/misc_protos.h>
-#endif /* defined(HAS_APPLE_PAC) */
 
 
 /* For speculation macros */
@@ -243,9 +240,6 @@ struct dyld_pager {
 	memory_object_offset_t  dyld_file_offset[MWL_MAX_REGION_COUNT];
 	mach_vm_address_t       dyld_address[MWL_MAX_REGION_COUNT];
 	mach_vm_size_t          dyld_size[MWL_MAX_REGION_COUNT];
-#if defined(HAS_APPLE_PAC)
-	uint64_t                dyld_a_key;
-#endif /* defined(HAS_APPLE_PAC) */
 };
 
 queue_head_t dyld_pager_queue = QUEUE_HEAD_INITIALIZER(dyld_pager_queue);
@@ -557,7 +551,6 @@ fixupPage32(
 	return KERN_SUCCESS;
 }
 
-#if defined(HAS_APPLE_PAC)
 /*
  * Sign a pointer needed for fixups.
  */
@@ -577,19 +570,13 @@ signPointer(
 		return KERN_SUCCESS;
 	}
 
-	uint64_t extendedDiscriminator = diversity;
-	if (addrDiv) {
-		extendedDiscriminator = __builtin_ptrauth_blend_discriminator(loc, extendedDiscriminator);
-	}
-
+	/* No real FEAT_PAuth on this host (see sleh.c's EL0 PAC handling) -
+	 * write the plain pointer, matching the EL0 side treating auth as a
+	 * strip of an already-clean pointer. */
 	switch (key) {
 	case ptrauth_key_asia:
 	case ptrauth_key_asda:
-		if (pager->dyld_a_key == 0 || arm_user_jop_disabled()) {
-			*signedAddr = unsignedAddr;
-		} else {
-			*signedAddr = (uintptr_t)pmap_sign_user_ptr((void *)unsignedAddr, key, extendedDiscriminator, pager->dyld_a_key);
-		}
+		*signedAddr = unsignedAddr;
 		break;
 
 	default:
@@ -813,7 +800,6 @@ fixupCachePageAuth64(
 	} while (valid_chain);
 	return KERN_SUCCESS;
 }
-#endif /* defined(HAS_APPLE_PAC) */
 
 
 /*
@@ -922,7 +908,6 @@ fixup_page(
 	 * Route to the appropriate fixup routine
 	 */
 	switch (hdr->mwli_pointer_format) {
-#if defined(HAS_APPLE_PAC)
 	case DYLD_CHAINED_PTR_ARM64E:
 		fixupPageAuth64(userVA, contents, pager, segInfo, pageIndex, false);
 		break;
@@ -933,7 +918,6 @@ fixup_page(
 	case DYLD_CHAINED_PTR_ARM64E_SHARED_CACHE:
 		fixupCachePageAuth64(userVA, contents, pager, segInfo, pageIndex);
 		break;
-#endif /* defined(HAS_APPLE_PAC) */
 	case DYLD_CHAINED_PTR_64:
 		fixupPage64(userVA, contents, link_info, segInfo, pageIndex, false);
 		break;
@@ -1549,9 +1533,6 @@ dyld_pager_create(
 	pager->dyld_backing_object = backing_object;
 	pager->dyld_link_info = link_info; /* pager takes ownership of this pointer here */
 	pager->dyld_link_info_size = link_info_size;
-#if defined(HAS_APPLE_PAC)
-	pager->dyld_a_key = (task->map && task->map->pmap && !task->map->pmap->disable_jop) ? task->jop_pid : 0;
-#endif /* defined(HAS_APPLE_PAC) */
 
 	vm_object_reference(backing_object);
 	lck_mtx_lock(&dyld_pager_lock);

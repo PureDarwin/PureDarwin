@@ -377,6 +377,7 @@ extern "C" {
 #endif /* __cplusplus */
 
 extern void do_cpuid(void);
+extern bool arm64_pac_supported(void);
 extern arm_cpu_info_t *cpuid_info(void);
 extern int cpuid_get_cpufamily(void);
 extern int cpuid_get_cpusubfamily(void);
