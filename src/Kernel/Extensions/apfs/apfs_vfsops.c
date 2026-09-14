@@ -1,4 +1,9 @@
+/* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
+
 #include "apfs.h"
+#include "apfsrw/apfsrw.h"
+
+#include <IOKit/IOLocks.h>
 
 #include <libkern/libkern.h>
 #include <libkern/OSByteOrder.h>
@@ -31,7 +36,8 @@ static int apfs_sync(struct mount *mp, int waitfor, vfs_context_t ctx);
 static int apfs_vfs_vget(struct mount *mp, ino64_t ino, vnode_t *vpp,
     vfs_context_t ctx);
 static int apfs_init(struct vfsconf *vfsp);
-static int apfs_open_fspec(user_addr_t data, vnode_t *devvpp);
+static int apfs_open_fspec(user_addr_t data, vnode_t *devvpp,
+    vfs_context_t ctx);
 static int apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx);
 
 static struct vfsops apfs_vfsops = {
@@ -64,7 +70,7 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 		return 0;
 
 	if (devvp == NULLVP) {
-		error = apfs_open_fspec(data, &devvp);
+		error = apfs_open_fspec(data, &devvp, ctx);
 		if (error)
 			return error;
 		own_devvp_ref = 1;
@@ -78,6 +84,24 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	}
 
 	amp->mp = mp;
+	amp->am_hash_lock = IOLockAlloc();
+	amp->am_rw_lock = IOLockAlloc();
+	if (amp->am_hash_lock == NULL || amp->am_rw_lock == NULL) {
+		if (amp->am_hash_lock)
+			IOLockFree(amp->am_hash_lock);
+		if (amp->am_rw_lock)
+			IOLockFree(amp->am_rw_lock);
+		_FREE(amp, M_TEMP);
+		if (own_devvp_ref)
+			vnode_rele(devvp);
+		return ENOMEM;
+	}
+	{
+		int i;
+
+		for (i = 0; i < APFS_NODE_HASH_SIZE; i++)
+			LIST_INIT(&amp->am_node_hash[i]);
+	}
 	amp->devvp = devvp;
 	amp->dev = vnode_specrdev(devvp);
 	APFSLOG("mount requested devvp=%p", devvp);
@@ -95,6 +119,18 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	if (error)
 		goto fail;
 
+	/*
+	 * Bind the shared read/write implementation to the same device. The kext
+	 * keeps its own cached view for reads, so anything that writes through
+	 * amp->rw has to re-probe the container afterwards - see
+	 * apfs_reload_container().
+	 */
+	error = apfsrw_open_kernel(devvp, amp->block_count, 1, 0, &amp->rw);
+	if (error != 0) {
+		APFSLOG("apfsrw_open_kernel failed: %d", error);
+		amp->rw = NULL;
+	}
+
 	if (!own_devvp_ref) {
 		error = vnode_ref(devvp);
 		if (error)
@@ -111,6 +147,8 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 
 	vfs_setfsprivate(mp, amp);
 	vfs_setflags(mp, MNT_LOCAL);
+	/* Advisory locks are handled in the VFS (lf_advlock). */
+	vfs_setlocklocal(mp);
 	vfs_clearflags(mp, MNT_RDONLY);
 
 	sfs = vfs_statfs(mp);
@@ -188,7 +226,7 @@ apfs_parse_disk_minor(const char *path, uint32_t *minor_out)
 }
 
 static int
-apfs_open_fspec(user_addr_t data, vnode_t *devvpp)
+apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 {
 	struct apfs_mount_args args;
 	char fspec[MAXPATHLEN];
@@ -207,6 +245,26 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp)
 	if (error)
 		return error;
 
+	/* Look the path up to get the real dev_t for any device node. */
+	{
+		vnode_t dvp = NULLVP;
+
+		error = vnode_lookup(fspec, 0, &dvp, ctx);
+		if (error == 0) {
+			if (vnode_vtype(dvp) != VBLK) {
+				APFSLOG("fspec '%s' is not a block device", fspec);
+				vnode_put(dvp);
+				return ENOTBLK;
+			}
+			dev = vnode_specrdev(dvp);
+			vnode_put(dvp);
+			APFSLOG("fspec '%s' -> dev=0x%x (lookup)", fspec, dev);
+			return bdevvp(dev, devvpp);
+		}
+		APFSLOG("vnode_lookup('%s') failed: %d, falling back", fspec,
+		    error);
+	}
+
 	error = apfs_parse_disk_minor(fspec, &minor_id);
 	if (error) {
 		APFSLOG("unsupported fspec '%s': %d", fspec, error);
@@ -218,8 +276,23 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp)
 	}
 
 	dev = makedev(major(rootdev), minor_id);
-	APFSLOG("fspec '%s' -> dev=0x%x", fspec, dev);
+	APFSLOG("fspec '%s' -> dev=0x%x (derived)", fspec, dev);
 	return bdevvp(dev, devvpp);
+}
+
+int
+apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx)
+{
+	int error;
+
+	if (amp == NULL)
+		return EINVAL;
+	/* No buffer invalidation: libapfsrw shares this kext's buffer cache,
+	 * and dropping it would discard the commit's delayed writes. */
+	error = apfs_probe_container(amp, ctx);
+	if (error)
+		return error;
+	return apfs_load_volume(amp, ctx);
 }
 
 static uint64_t
@@ -363,11 +436,6 @@ apfs_select_checkpoint_nx(vnode_t devvp, struct apfs_nx_superblock *nx,
 		memcpy(nx, candidate, sizeof(*nx));
 	}
 
-	if (best_paddr != 0) {
-		APFSLOG("using checkpoint NX paddr=0x%llx xid=%llu",
-		    (unsigned long long)best_paddr,
-		    (unsigned long long)best_xid);
-	}
 
 	_FREE(block, M_TEMP);
 	return 0;
@@ -452,6 +520,10 @@ apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx)
 		return error;
 
 	max_fs = apfs_le32(nx.nx_max_file_systems);
+	/* Reloads after every commit would spam the console; dump once.
+	 * apfs_load_volume() prints its own line and then sets the flag. */
+	if (amp->am_probe_logged)
+		goto adopt;
 	APFSLOG("container dev=0x%x block_size=%u blocks=%llu",
 	    amp->dev, block_size, (unsigned long long)apfs_le64(nx.nx_block_count));
 	apfs_log_uuid(nx.nx_uuid);
@@ -483,6 +555,7 @@ apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx)
 	    max_fs);
 	apfs_log_volume_oids(&nx, max_fs);
 
+adopt:
 	amp->nx = nx;
 	amp->block_size = block_size;
 	amp->block_count = apfs_le64(nx.nx_block_count);
@@ -514,6 +587,9 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 	if (amp) {
 		amp->root_vp = NULLVP;
 		if (amp->devvp) {
+			/* Land every delayed write before the device closes;
+			 * spec_close may discard whatever is still dirty. */
+			buf_flushdirtyblks(amp->devvp, 1, 0, "apfs_unmount");
 			if (amp->dev_opened) {
 				(void)VNOP_CLOSE(amp->devvp, FREAD | FWRITE, ctx);
 				amp->dev_opened = 0;
@@ -567,9 +643,13 @@ apfs_getattr(__unused struct mount *mp, struct vfs_attr *fsap,
 }
 
 static int
-apfs_sync(__unused struct mount *mp, __unused int waitfor,
-    __unused vfs_context_t ctx)
+apfs_sync(struct mount *mp, int waitfor, __unused vfs_context_t ctx)
 {
+	struct apfs_mount *amp = VFSTOAPFS(mp);
+
+	if (amp && amp->devvp)
+		buf_flushdirtyblks(amp->devvp, waitfor == MNT_WAIT, 0,
+		    "apfs_sync");
 	return 0;
 }
 
@@ -603,7 +683,8 @@ apfs_vfs_register(void)
 	strncpy(vfe.vfe_fsname, APFS_MODULE_NAME, sizeof(vfe.vfe_fsname));
 	vfe.vfe_flags = VFS_TBLTHREADSAFE | VFS_TBLFSNODELOCK |
 	    VFS_TBL64BITREADY | VFS_TBLNOTYPENUM |
-	    VFS_TBLLOCALVOL | VFS_TBLGENERICMNTARGS;
+	    VFS_TBLLOCALVOL | VFS_TBLGENERICMNTARGS |
+	    VFS_TBLCANMOUNTROOT;
 
 	error = vfs_fsadd(&vfe, &apfs_vfsconf);
 	if (error) {

@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
+
 #include "apfs.h"
 
 #include <libkern/OSByteOrder.h>
@@ -11,20 +13,15 @@
 #include <sys/uio.h>
 #include <string.h>
 
-#define APFS_RW_MAX_RECORDS 64
-#define APFS_RW_MAX_KEY_SIZE 288
-#define APFS_RW_MAX_VAL_SIZE 512
-#define APFS_RW_FILE_BLOCKS 1
 
-struct apfs_rw_record {
-	uint8_t key[APFS_RW_MAX_KEY_SIZE];
-	uint16_t key_len;
-	uint8_t val[APFS_RW_MAX_VAL_SIZE];
-	uint16_t val_len;
-};
-
-static int apfs_find_free_block(struct apfs_mount *amp,
-    struct apfs_rw_record *records, uint32_t count, uint64_t *block_out);
+/* Defined further down; declared here because readers that appear earlier in
+ * the file need to walk the tree. */
+typedef int (*apfs_leaf_cb)(struct apfs_mount *amp,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx);
+static int apfs_btree_walk_leaves_oid(struct apfs_mount *amp,
+    apfs_paddr_t root_paddr, uint64_t oid_min, uint64_t oid_max,
+    apfs_leaf_cb cb, void *ctx);
 
 static uint16_t
 le16(uint16_t v)
@@ -93,19 +90,6 @@ apfs_fletcher64(const void *data, size_t size)
 	check1 = 0xffffffffULL - ((lo + hi) % 0xffffffffULL);
 	check2 = 0xffffffffULL - ((lo + check1) % 0xffffffffULL);
 	return (check2 << 32) | check1;
-}
-
-static void
-apfs_update_object_checksum(void *object, size_t size)
-{
-	struct apfs_obj_phys *obj = (struct apfs_obj_phys *)object;
-	uint64_t checksum;
-
-	if (object == NULL || size <= sizeof(*obj))
-		return;
-
-	checksum = hle64(apfs_fletcher64(object, size));
-	memcpy(obj->o_cksum, &checksum, sizeof(checksum));
 }
 
 static int
@@ -178,8 +162,21 @@ apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 		return error;
 	error = apfs_verify_object_checksum(out, amp->block_size);
 	if (error) {
-		APFSLOG("bad object checksum at paddr 0x%llx",
-		    (unsigned long long)paddr);
+		{
+			const uint8_t *b = (const uint8_t *)out;
+			uint64_t cks, oid, xid;
+			uint32_t ot;
+
+			memcpy(&cks, b, 8);
+			memcpy(&oid, b + 8, 8);
+			memcpy(&xid, b + 16, 8);
+			memcpy(&ot, b + 24, 4);
+			APFSLOG("bad object checksum at paddr 0x%llx: cks=0x%llx "
+			    "oid=0x%llx xid=%llu otype=0x%x head=%02x %02x %02x %02x",
+			    (unsigned long long)paddr, (unsigned long long)cks,
+			    (unsigned long long)oid, (unsigned long long)xid, ot,
+			    b[32], b[33], b[34], b[35]);
+		}
 		return error;
 	}
 	return 0;
@@ -206,29 +203,6 @@ apfs_read_object_prefix(struct apfs_mount *amp, apfs_paddr_t paddr, void *out,
 }
 
 static int
-apfs_write_phys(struct apfs_mount *amp, apfs_paddr_t paddr, const void *data,
-    size_t data_size)
-{
-	buf_t bp = NULL;
-	int error;
-
-	if (amp == NULL || amp->devvp == NULLVP || data == NULL)
-		return EINVAL;
-	if (paddr < 0 || data_size > amp->block_size)
-		return EINVAL;
-
-	error = (int)buf_meta_bread(amp->devvp, (daddr64_t)paddr,
-	    amp->block_size, NOCRED, &bp);
-	if (error) {
-		if (bp)
-			buf_brelse(bp);
-		return error;
-	}
-	memcpy((void *)buf_dataptr(bp), data, data_size);
-	return buf_bwrite(bp);
-}
-
-static int
 apfs_uiomove_phys(struct apfs_mount *amp, apfs_paddr_t paddr, size_t offset,
     size_t count, struct uio *uio)
 {
@@ -251,34 +225,6 @@ apfs_uiomove_phys(struct apfs_mount *amp, apfs_paddr_t paddr, size_t offset,
 	error = uiomove((char *)buf_dataptr(bp) + offset, (int)count, uio);
 	buf_brelse(bp);
 	return error;
-}
-
-static int
-apfs_uiomove_write_phys(struct apfs_mount *amp, apfs_paddr_t paddr,
-    size_t offset, size_t count, struct uio *uio)
-{
-	buf_t bp = NULL;
-	int error;
-
-	if (amp == NULL || amp->devvp == NULLVP || uio == NULL)
-		return EINVAL;
-	if (paddr < 0 || offset > amp->block_size ||
-	    count > amp->block_size - offset)
-		return EINVAL;
-
-	error = (int)buf_meta_bread(amp->devvp, (daddr64_t)paddr,
-	    amp->block_size, NOCRED, &bp);
-	if (error) {
-		if (bp)
-			buf_brelse(bp);
-		return error;
-	}
-	error = uiomove((char *)buf_dataptr(bp) + offset, (int)count, uio);
-	if (error) {
-		buf_brelse(bp);
-		return error;
-	}
-	return buf_bwrite(bp);
 }
 
 static const struct apfs_btree_info *
@@ -324,7 +270,11 @@ apfs_btree_entry(const struct apfs_mount *amp,
 		k_off = le16(toc->k);
 		v_off = le16(toc->v);
 		k_len = (uint16_t)le32(info->bt_key_size);
-		v_len = (uint16_t)le32(info->bt_val_size);
+		/* bt_val_size describes LEAF values; a nonleaf node's value is
+		 * the child's oid_t regardless. */
+		v_len = (flags & APFS_BTNODE_LEAF)
+		    ? (uint16_t)le32(info->bt_val_size)
+		    : (uint16_t)sizeof(apfs_oid_t);
 	} else {
 		const struct apfs_kvloc *toc = (const struct apfs_kvloc *)
 		    (base + data_off + table_off + index * sizeof(*toc));
@@ -355,6 +305,7 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 {
 	struct apfs_btree_node_phys *node;
 	const struct apfs_btree_info *info;
+	struct apfs_btree_info info_copy;
 	struct apfs_omap_val best;
 	apfs_xid_t best_xid = 0;
 	uint32_t i;
@@ -375,13 +326,83 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 		error = EINVAL;
 		goto out;
 	}
-	if ((le16(node->btn_flags) & APFS_BTNODE_LEAF) == 0) {
-		APFSLOG("omap tree level %u not implemented", le16(node->btn_level));
-		error = ENOTSUP;
-		goto out;
+	/*
+	 * The btree_info_t must be COPIED, not borrowed: it lives in the last
+	 * 40 bytes of the ROOT node, and descending re-reads each child into
+	 * this same buffer. A borrowed pointer then describes child data, so
+	 * bt_key_size/bt_val_size come back as garbage and every entry lookup
+	 * fails with EINVAL.
+	 */
+	{
+		const struct apfs_btree_info *root_info =
+		    apfs_btree_info_for_node(amp, node);
+
+		if (root_info == NULL) {
+			error = EINVAL;
+			goto out;
+		}
+		memcpy(&info_copy, root_info, sizeof(info_copy));
+		info = &info_copy;
 	}
 
-	info = apfs_btree_info_for_node(amp, node);
+	/*
+	 * Descend to the leaf that would hold this oid. Object-map trees are
+	 * sorted by oid then xid (spec p.123 "Key Comparison") and their child
+	 * links are physical - an object map cannot need an object map to read
+	 * itself - so the child value is the address directly.
+	 *
+	 * Only the ROOT node carries a btree_info_t (spec p.126), so the sizes
+	 * it holds stay in use all the way down; `info` is deliberately not
+	 * re-fetched for the children.
+	 */
+	{
+		uint32_t guard = 0;
+
+		while (le16(node->btn_level) != 0) {
+			apfs_paddr_t child = -1;
+
+			for (i = 0; i < le32(node->btn_nkeys); i++) {
+				const struct apfs_omap_key *k;
+				const void *keyp, *valp;
+				uint16_t key_len, val_len;
+
+				error = apfs_btree_entry(amp, node, info, i,
+				    &keyp, &key_len, &valp, &val_len);
+				if (error)
+					goto out;
+				if (key_len < sizeof(*k) ||
+				    val_len < sizeof(apfs_oid_t))
+					continue;
+				k = (const struct apfs_omap_key *)keyp;
+				/*
+				 * Take the last child whose key does not exceed
+				 * (oid, xid). Entry 0 also covers everything
+				 * below its own key, so seed with it.
+				 */
+				if (i == 0 || le64(k->ok_oid) < oid ||
+				    (le64(k->ok_oid) == oid &&
+				    le64(k->ok_xid) <= xid)) {
+					apfs_oid_t c;
+
+					memcpy(&c, valp, sizeof(c));
+					child = (apfs_paddr_t)le64(c);
+				} else {
+					break;
+				}
+			}
+			if (child <= 0) {
+				error = ENOENT;
+				goto out;
+			}
+			if (++guard > APFS_BTREE_MAX_DEPTH) {
+				error = EINVAL;
+				goto out;
+			}
+			error = apfs_read_object_phys(amp, child, node);
+			if (error)
+				goto out;
+		}
+	}
 	for (i = 0; i < le32(node->btn_nkeys); i++) {
 		const struct apfs_omap_key *key;
 		const struct apfs_omap_val *val;
@@ -419,904 +440,6 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 out:
 	_FREE(node, M_TEMP);
 	return error;
-}
-
-static int
-apfs_write_omap_tree_with_update(struct apfs_mount *amp,
-    apfs_paddr_t src_tree_paddr, apfs_paddr_t dst_tree_paddr, apfs_oid_t oid,
-    apfs_xid_t xid, apfs_paddr_t new_paddr)
-{
-	struct apfs_btree_node_phys *node;
-	const struct apfs_btree_info *info;
-	apfs_xid_t best_xid = 0;
-	uint32_t best_index = UINT32_MAX;
-	uint32_t i;
-	int error = 0;
-
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
-
-	error = apfs_read_object_phys(amp, src_tree_paddr, node);
-	if (error)
-		goto out;
-	if ((le16(node->btn_flags) & APFS_BTNODE_LEAF) == 0) {
-		error = ENOTSUP;
-		goto out;
-	}
-
-	info = apfs_btree_info_for_node(amp, node);
-	for (i = 0; i < le32(node->btn_nkeys); i++) {
-		const struct apfs_omap_key *key;
-		const void *keyp, *valp;
-		uint16_t key_len, val_len;
-		apfs_oid_t key_oid;
-		apfs_xid_t key_xid;
-
-		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
-		    &valp, &val_len);
-		if (error)
-			goto out;
-		if (key_len < sizeof(*key) ||
-		    val_len < sizeof(struct apfs_omap_val))
-			continue;
-
-		key = (const struct apfs_omap_key *)keyp;
-		key_oid = le64(key->ok_oid);
-		key_xid = le64(key->ok_xid);
-		if (key_oid != oid || key_xid > xid)
-			continue;
-		if (best_index == UINT32_MAX || key_xid >= best_xid) {
-			best_xid = key_xid;
-			best_index = i;
-		}
-	}
-	if (best_index == UINT32_MAX) {
-		error = ENOENT;
-		goto out;
-	}
-
-	{
-		struct apfs_omap_val *val;
-		const void *keyp;
-		const void *valp;
-		uint16_t key_len, val_len;
-		apfs_paddr_t disk_paddr = hle64((uint64_t)new_paddr);
-
-		error = apfs_btree_entry(amp, node, info, best_index, &keyp,
-		    &key_len, &valp, &val_len);
-		if (error)
-			goto out;
-		if (val_len < sizeof(*val)) {
-			error = EINVAL;
-			goto out;
-		}
-		val = (struct apfs_omap_val *)(uintptr_t)valp;
-		memcpy(&val->ov_paddr, &disk_paddr, sizeof(val->ov_paddr));
-	}
-
-	apfs_update_object_checksum(node, amp->block_size);
-	error = apfs_write_phys(amp, dst_tree_paddr, node, amp->block_size);
-out:
-	_FREE(node, M_TEMP);
-	return error;
-}
-
-static int
-apfs_update_omap_tree_paddr(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
-    apfs_oid_t oid, apfs_xid_t xid, apfs_paddr_t new_paddr)
-{
-	return apfs_write_omap_tree_with_update(amp, tree_paddr, tree_paddr,
-	    oid, xid, new_paddr);
-}
-
-static int
-apfs_publish_container_omap(struct apfs_mount *amp,
-    apfs_paddr_t new_container_omap_paddr)
-{
-	struct apfs_nx_superblock *nx;
-	struct apfs_checkpoint_map_phys *cpm;
-	void *nx_block;
-	void *map_block;
-	uint32_t desc_blocks;
-	uint32_t old_map_index;
-	uint32_t map_index;
-	uint32_t nx_index;
-	uint32_t next_index;
-	apfs_paddr_t desc_base;
-	apfs_paddr_t old_map_paddr;
-	apfs_paddr_t map_paddr;
-	apfs_paddr_t nx_paddr;
-	apfs_xid_t new_xid;
-	int error;
-
-	desc_blocks = le32(amp->nx.nx_xp_desc_blocks) &
-	    APFS_CHECKPOINT_BLOCK_COUNT_MASK;
-	desc_base = le64s(amp->nx.nx_xp_desc_base);
-	if (desc_blocks < 2 || desc_base < 0)
-		return ENOTSUP;
-
-	old_map_index = le32(amp->nx.nx_xp_desc_index) % desc_blocks;
-	map_index = le32(amp->nx.nx_xp_desc_next) % desc_blocks;
-	nx_index = (map_index + 1) % desc_blocks;
-	next_index = (nx_index + 1) % desc_blocks;
-
-	old_map_paddr = desc_base + old_map_index;
-	map_paddr = desc_base + map_index;
-	nx_paddr = desc_base + nx_index;
-
-	nx_block = _MALLOC(amp->block_size, M_TEMP, M_WAITOK | M_ZERO);
-	if (nx_block == NULL)
-		return ENOMEM;
-	map_block = _MALLOC(amp->block_size, M_TEMP, M_WAITOK | M_ZERO);
-	if (map_block == NULL) {
-		_FREE(nx_block, M_TEMP);
-		return ENOMEM;
-	}
-
-	error = apfs_read_object_phys(amp, old_map_paddr, map_block);
-	if (error)
-		goto out;
-
-	cpm = (struct apfs_checkpoint_map_phys *)map_block;
-	if (apfs_object_type(cpm->cpm_o.o_type) !=
-	    APFS_OBJECT_TYPE_CHECKPOINT_MAP) {
-		error = EINVAL;
-		goto out;
-	}
-
-	error = apfs_read_object_phys(amp, 0, nx_block);
-	if (error)
-		goto out;
-	memcpy(nx_block, &amp->nx, sizeof(amp->nx));
-	nx = (struct apfs_nx_superblock *)nx_block;
-
-	new_xid = le64(amp->nx.nx_o.o_xid) + 1;
-	if (new_xid <= amp->xid)
-		new_xid = amp->xid + 1;
-
-	cpm->cpm_o.o_xid = hle64(new_xid);
-	cpm->cpm_flags = hle32(APFS_CHECKPOINT_MAP_LAST);
-	apfs_update_object_checksum(map_block, amp->block_size);
-	error = apfs_write_phys(amp, map_paddr, map_block, amp->block_size);
-	if (error)
-		goto out;
-
-	nx->nx_o.o_xid = hle64(new_xid);
-	nx->nx_next_xid = hle64(new_xid + 1);
-	nx->nx_omap_oid = hle64(new_container_omap_paddr);
-	nx->nx_xp_desc_index = hle32(map_index);
-	nx->nx_xp_desc_len = hle32(2);
-	nx->nx_xp_desc_next = hle32(next_index);
-	apfs_update_object_checksum(nx_block, amp->block_size);
-	error = apfs_write_phys(amp, nx_paddr, nx_block, amp->block_size);
-	if (error)
-		goto out;
-
-	memcpy(&amp->nx, nx, sizeof(amp->nx));
-	amp->xid = new_xid;
-	amp->container_omap_oid = new_container_omap_paddr;
-	amp->container_omap_paddr = new_container_omap_paddr;
-	APFSLOG("published container omap=0x%llx via checkpoint map=0x%llx nx=0x%llx xid=%llu next=%u",
-	    (unsigned long long)new_container_omap_paddr,
-	    (unsigned long long)map_paddr,
-	    (unsigned long long)nx_paddr,
-	    (unsigned long long)new_xid,
-	    next_index);
-out:
-	_FREE(map_block, M_TEMP);
-	_FREE(nx_block, M_TEMP);
-	return error;
-}
-
-static int
-apfs_cow_volume_metadata(struct apfs_mount *amp,
-    struct apfs_rw_record *records, uint32_t count, apfs_paddr_t new_root_paddr)
-{
-	void *block;
-	struct apfs_omap_phys *omap;
-	struct apfs_superblock *fs;
-	uint64_t new_volume_omap_tree_paddr;
-	uint64_t new_volume_omap_paddr;
-	uint64_t new_fs_paddr;
-	uint64_t new_container_omap_tree_paddr;
-	uint64_t new_container_omap_paddr;
-	int error;
-
-	block = _MALLOC(amp->block_size, M_TEMP, M_WAITOK);
-	if (block == NULL)
-		return ENOMEM;
-
-	error = apfs_find_free_block(amp, records, count,
-	    &new_volume_omap_tree_paddr);
-	if (error)
-		goto out;
-	error = apfs_find_free_block(amp, records, count,
-	    &new_volume_omap_paddr);
-	if (error)
-		goto out;
-	error = apfs_find_free_block(amp, records, count, &new_fs_paddr);
-	if (error)
-		goto out;
-	error = apfs_find_free_block(amp, records, count,
-	    &new_container_omap_tree_paddr);
-	if (error)
-		goto out;
-	error = apfs_find_free_block(amp, records, count,
-	    &new_container_omap_paddr);
-	if (error)
-		goto out;
-
-	error = apfs_write_omap_tree_with_update(amp,
-	    amp->volume_omap_tree_paddr, (apfs_paddr_t)new_volume_omap_tree_paddr,
-	    amp->root_tree_oid, amp->xid, new_root_paddr);
-	if (error)
-		goto out;
-
-	error = apfs_read_object_phys(amp, amp->volume_omap_paddr, block);
-	if (error)
-		goto out;
-	omap = (struct apfs_omap_phys *)block;
-	omap->om_o.o_oid = hle64(new_volume_omap_paddr);
-	omap->om_tree_oid = hle64(new_volume_omap_tree_paddr);
-	apfs_update_object_checksum(block, amp->block_size);
-	error = apfs_write_phys(amp, (apfs_paddr_t)new_volume_omap_paddr,
-	    block, amp->block_size);
-	if (error)
-		goto out;
-
-	error = apfs_read_object_phys(amp, amp->fs_paddr, block);
-	if (error)
-		goto out;
-	fs = (struct apfs_superblock *)block;
-	fs->apfs_omap_oid = hle64(new_volume_omap_paddr);
-	apfs_update_object_checksum(block, amp->block_size);
-	error = apfs_write_phys(amp, (apfs_paddr_t)new_fs_paddr, block,
-	    amp->block_size);
-	if (error)
-		goto out;
-
-	error = apfs_write_omap_tree_with_update(amp,
-	    amp->container_omap_tree_paddr,
-	    (apfs_paddr_t)new_container_omap_tree_paddr, amp->fs_oid,
-	    amp->xid, (apfs_paddr_t)new_fs_paddr);
-	if (error)
-		goto out;
-
-	error = apfs_read_object_phys(amp, amp->container_omap_paddr, block);
-	if (error)
-		goto out;
-	omap = (struct apfs_omap_phys *)block;
-	omap->om_o.o_oid = hle64(new_container_omap_paddr);
-	omap->om_tree_oid = hle64(new_container_omap_tree_paddr);
-	apfs_update_object_checksum(block, amp->block_size);
-	error = apfs_write_phys(amp, (apfs_paddr_t)new_container_omap_paddr,
-	    block, amp->block_size);
-	if (error)
-		goto out;
-
-	error = apfs_publish_container_omap(amp,
-	    (apfs_paddr_t)new_container_omap_paddr);
-	if (error)
-		goto out;
-
-	amp->root_tree_paddr = new_root_paddr;
-	amp->volume_omap_tree_paddr = (apfs_paddr_t)new_volume_omap_tree_paddr;
-	amp->volume_omap_paddr = (apfs_paddr_t)new_volume_omap_paddr;
-	amp->volume_omap_oid = new_volume_omap_paddr;
-	amp->fs_paddr = (apfs_paddr_t)new_fs_paddr;
-	amp->container_omap_tree_paddr =
-	    (apfs_paddr_t)new_container_omap_tree_paddr;
-	amp->apfs.apfs_omap_oid = hle64(new_volume_omap_paddr);
-	APFSLOG("COW metadata root=0x%llx vomap_tree=0x%llx vomap=0x%llx fs=0x%llx comap_tree=0x%llx comap=0x%llx",
-	    (unsigned long long)new_root_paddr,
-	    (unsigned long long)new_volume_omap_tree_paddr,
-	    (unsigned long long)new_volume_omap_paddr,
-	    (unsigned long long)new_fs_paddr,
-	    (unsigned long long)new_container_omap_tree_paddr,
-	    (unsigned long long)new_container_omap_paddr);
-out:
-	_FREE(block, M_TEMP);
-	return error;
-}
-
-static uint64_t
-apfs_make_jkey(uint64_t fileid, uint8_t type)
-{
-	return fileid | ((uint64_t)type << APFS_OBJ_TYPE_SHIFT);
-}
-
-static int
-apfs_append_rw_record(struct apfs_rw_record *records, uint32_t *count,
-    const void *key, uint16_t key_len, const void *val, uint16_t val_len)
-{
-	if (*count >= APFS_RW_MAX_RECORDS)
-		return ENOSPC;
-	if (key_len > APFS_RW_MAX_KEY_SIZE || val_len > APFS_RW_MAX_VAL_SIZE)
-		return EOVERFLOW;
-	memcpy(records[*count].key, key, key_len);
-	memcpy(records[*count].val, val, val_len);
-	records[*count].key_len = key_len;
-	records[*count].val_len = val_len;
-	(*count)++;
-	return 0;
-}
-
-static int
-apfs_load_root_records(struct apfs_mount *amp, struct apfs_btree_node_phys *node,
-    struct apfs_rw_record *records, uint32_t *count)
-{
-	const struct apfs_btree_info *info;
-	uint32_t i, nkeys;
-	int error;
-
-	*count = 0;
-	error = apfs_read_object_phys(amp, amp->root_tree_paddr, node);
-	if (error)
-		return error;
-	if ((le16(node->btn_flags) & APFS_BTNODE_LEAF) == 0)
-		return ENOTSUP;
-
-	info = apfs_btree_info_for_node(amp, node);
-	nkeys = le32(node->btn_nkeys);
-	for (i = 0; i < nkeys; i++) {
-		const void *keyp, *valp;
-		uint16_t key_len, val_len;
-
-		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
-		    &valp, &val_len);
-		if (error)
-			return error;
-		error = apfs_append_rw_record(records, count, keyp, key_len,
-		    valp, val_len);
-		if (error)
-			return error;
-	}
-	return 0;
-}
-
-static void
-apfs_touch_root_dir_record(struct apfs_rw_record *records, uint32_t count,
-    int delta)
-{
-	uint32_t i;
-
-	for (i = 0; i < count; i++) {
-		uint64_t key;
-		uint32_t nchildren;
-
-		if (records[i].key_len < sizeof(struct apfs_j_key) ||
-		    records[i].val_len < offsetof(struct apfs_j_inode_val, u) +
-		    sizeof(uint32_t))
-			continue;
-		memcpy(&key, records[i].key, sizeof(key));
-		if (apfs_key_id(key) != APFS_ROOT_FILEID ||
-		    apfs_key_type(key) != APFS_TYPE_INODE)
-			continue;
-		memcpy(&nchildren, records[i].val +
-		    offsetof(struct apfs_j_inode_val, u), sizeof(nchildren));
-		nchildren = le32(nchildren);
-		nchildren = (uint32_t)((int)nchildren + delta);
-		nchildren = hle32(nchildren);
-		memcpy(records[i].val + offsetof(struct apfs_j_inode_val, u),
-		    &nchildren, sizeof(nchildren));
-		return;
-	}
-}
-
-static int
-apfs_update_records_inode_size(struct apfs_rw_record *records, uint32_t count,
-    uint64_t fileid, uint64_t size)
-{
-	uint32_t i;
-	uint64_t disk_size = hle64(size);
-
-	for (i = 0; i < count; i++) {
-		uint64_t key;
-
-		if (records[i].key_len < sizeof(struct apfs_j_key) ||
-		    records[i].val_len < sizeof(struct apfs_j_inode_val))
-			continue;
-		memcpy(&key, records[i].key, sizeof(key));
-		if (apfs_key_id(key) != fileid ||
-		    apfs_key_type(key) != APFS_TYPE_INODE)
-			continue;
-		memcpy(records[i].val +
-		    offsetof(struct apfs_j_inode_val, uncompressed_size),
-		    &disk_size, sizeof(disk_size));
-		return 0;
-	}
-	return ENOENT;
-}
-
-static int
-apfs_repack_root_records(struct apfs_mount *amp,
-    struct apfs_btree_node_phys *old_node, struct apfs_rw_record *records,
-    uint32_t count)
-{
-	uint8_t *node;
-	struct apfs_btree_info *btinfo;
-	uint32_t i;
-	uint16_t table_len = (uint16_t)(count * sizeof(struct apfs_kvloc));
-	uint16_t key_base = (uint16_t)(offsetof(struct apfs_btree_node_phys,
-	    btn_data) + table_len);
-	uint16_t key_off = 0;
-	uint16_t val_off = 0;
-	uint16_t max_key = 0;
-	uint16_t max_val = 0;
-	uint16_t val_end = (uint16_t)(amp->block_size -
-	    sizeof(struct apfs_btree_info));
-	uint64_t new_paddr;
-	int error = 0;
-
-	if (amp->block_size != APFS_BS_BYTES)
-		return ENOTSUP;
-	node = (uint8_t *)_MALLOC(amp->block_size, M_TEMP, M_WAITOK | M_ZERO);
-	if (node == NULL)
-		return ENOMEM;
-
-	memcpy(node, old_node, offsetof(struct apfs_btree_node_phys, btn_data));
-	((struct apfs_btree_node_phys *)node)->btn_flags =
-	    hle16(APFS_BTNODE_ROOT | APFS_BTNODE_LEAF);
-	((struct apfs_btree_node_phys *)node)->btn_level = hle16(0);
-	((struct apfs_btree_node_phys *)node)->btn_nkeys = hle32(count);
-	((struct apfs_btree_node_phys *)node)->btn_table_space.off = hle16(0);
-	((struct apfs_btree_node_phys *)node)->btn_table_space.len =
-	    hle16(table_len);
-
-	for (i = 0; i < count; i++) {
-		struct apfs_kvloc *toc = (struct apfs_kvloc *)
-		    (node + offsetof(struct apfs_btree_node_phys, btn_data) +
-		    i * sizeof(*toc));
-
-		if (key_base + key_off + records[i].key_len > val_end) {
-			error = ENOSPC;
-			goto out;
-		}
-		val_off = (uint16_t)(val_off + records[i].val_len);
-		if (val_off > val_end ||
-		    key_base + key_off + records[i].key_len > val_end - val_off) {
-			error = ENOSPC;
-			goto out;
-		}
-
-		toc->k.off = hle16(key_off);
-		toc->k.len = hle16(records[i].key_len);
-		toc->v.off = hle16(val_off);
-		toc->v.len = hle16(records[i].val_len);
-		memcpy(node + key_base + key_off, records[i].key,
-		    records[i].key_len);
-		memcpy(node + val_end - val_off, records[i].val,
-		    records[i].val_len);
-		key_off = (uint16_t)(key_off + records[i].key_len);
-		if (records[i].key_len > max_key)
-			max_key = records[i].key_len;
-		if (records[i].val_len > max_val)
-			max_val = records[i].val_len;
-	}
-
-	((struct apfs_btree_node_phys *)node)->btn_free_space.off =
-	    hle16(key_off);
-	((struct apfs_btree_node_phys *)node)->btn_free_space.len =
-	    hle16((uint16_t)(val_end - val_off - key_base - key_off));
-	((struct apfs_btree_node_phys *)node)->btn_key_free_list.off =
-	    hle16(0xffff);
-	((struct apfs_btree_node_phys *)node)->btn_key_free_list.len = hle16(0);
-	((struct apfs_btree_node_phys *)node)->btn_val_free_list.off =
-	    hle16(0xffff);
-	((struct apfs_btree_node_phys *)node)->btn_val_free_list.len = hle16(0);
-
-	btinfo = (struct apfs_btree_info *)(node + amp->block_size -
-	    sizeof(*btinfo));
-	memset(btinfo, 0, sizeof(*btinfo));
-	btinfo->bt_node_size = hle32(amp->block_size);
-	btinfo->bt_longest_key = hle32(max_key);
-	btinfo->bt_longest_val = hle32(max_val);
-	btinfo->bt_key_count = hle64(count);
-	btinfo->bt_node_count = hle64(1);
-
-	apfs_update_object_checksum(node, amp->block_size);
-	error = apfs_find_free_block(amp, records, count, &new_paddr);
-	if (error)
-		goto out;
-	error = apfs_write_phys(amp, (apfs_paddr_t)new_paddr, node,
-	    amp->block_size);
-	if (error)
-		goto out;
-	error = apfs_cow_volume_metadata(amp, records, count,
-	    (apfs_paddr_t)new_paddr);
-out:
-	_FREE(node, M_TEMP);
-	return error;
-}
-
-static int
-apfs_record_extent(struct apfs_rw_record *record, uint64_t fileid,
-    uint64_t *phys, uint64_t *len)
-{
-	uint64_t key;
-	struct apfs_j_file_extent_val *val;
-
-	if (record->key_len < sizeof(struct apfs_j_file_extent_key) ||
-	    record->val_len < sizeof(struct apfs_j_file_extent_val))
-		return 0;
-	memcpy(&key, record->key, sizeof(key));
-	if (apfs_key_id(key) != fileid ||
-	    apfs_key_type(key) != APFS_TYPE_FILE_EXTENT)
-		return 0;
-
-	val = (struct apfs_j_file_extent_val *)record->val;
-	*len = le64(val->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
-	*phys = le64(val->phys_block_num);
-	return 1;
-}
-
-static int
-apfs_find_file_extent(struct apfs_mount *amp, uint64_t fileid,
-    uint64_t *phys, uint64_t *len)
-{
-	struct apfs_btree_node_phys *node;
-	struct apfs_rw_record *records;
-	uint32_t count, i;
-	int error;
-
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
-	records = (struct apfs_rw_record *)_MALLOC(sizeof(*records) *
-	    APFS_RW_MAX_RECORDS, M_TEMP, M_WAITOK | M_ZERO);
-	if (records == NULL) {
-		_FREE(node, M_TEMP);
-		return ENOMEM;
-	}
-	error = apfs_load_root_records(amp, node, records, &count);
-	if (error)
-		goto out;
-	for (i = 0; i < count; i++) {
-		if (apfs_record_extent(&records[i], fileid, phys, len)) {
-			error = 0;
-			goto out;
-		}
-	}
-	error = ENOENT;
-out:
-	_FREE(records, M_TEMP);
-	_FREE(node, M_TEMP);
-	return error;
-}
-
-static int
-apfs_block_is_used_by_extent(struct apfs_rw_record *records, uint32_t count,
-    uint64_t block)
-{
-	uint32_t i;
-
-	for (i = 0; i < count; i++) {
-		uint64_t phys, len, blocks;
-
-		if (!apfs_record_extent(&records[i], APFS_ROOT_FILEID, &phys, &len)) {
-			uint64_t key;
-
-			if (records[i].key_len < sizeof(struct apfs_j_key))
-				continue;
-			memcpy(&key, records[i].key, sizeof(key));
-			if (apfs_key_type(key) != APFS_TYPE_FILE_EXTENT)
-				continue;
-			if (!apfs_record_extent(&records[i], apfs_key_id(key),
-			    &phys, &len))
-				continue;
-		}
-		blocks = (len + APFS_BS_BYTES - 1) / APFS_BS_BYTES;
-		if (block >= phys && block < phys + blocks)
-			return 1;
-	}
-	return 0;
-}
-
-static int
-apfs_find_spaceman(struct apfs_mount *amp)
-{
-	struct apfs_obj_phys obj;
-	apfs_paddr_t paddr;
-	int error;
-
-	if (amp->spaceman_paddr)
-		return 0;
-
-	amp->spaceman_oid = le64(amp->nx.nx_spaceman_oid);
-	if (amp->spaceman_oid == 0)
-		return ENOENT;
-
-	for (paddr = 0; paddr < (apfs_paddr_t)amp->block_count; paddr++) {
-		error = apfs_read_phys(amp, paddr, &obj, sizeof(obj));
-		if (error)
-			return error;
-		if (le64(obj.o_oid) == amp->spaceman_oid &&
-		    apfs_object_type(obj.o_type) == APFS_OBJECT_TYPE_SPACEMAN) {
-			amp->spaceman_paddr = paddr;
-			APFSLOG("spaceman oid=0x%llx paddr=0x%llx",
-			    (unsigned long long)amp->spaceman_oid,
-			    (unsigned long long)amp->spaceman_paddr);
-			return 0;
-		}
-	}
-	return ENOENT;
-}
-
-static int
-apfs_spaceman_alloc_block(struct apfs_mount *amp,
-    struct apfs_rw_record *records, uint32_t count, uint64_t *block_out)
-{
-	struct apfs_spaceman_phys *sm = NULL;
-	struct apfs_chunk_info_block *cib = NULL;
-	uint8_t *bitmap = NULL;
-	uint32_t cib_count, cib_index;
-	uint32_t addr_offset;
-	int error;
-
-	if (block_out == NULL)
-		return EINVAL;
-	error = apfs_find_spaceman(amp);
-	if (error)
-		return error;
-
-	sm = (struct apfs_spaceman_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	cib = (struct apfs_chunk_info_block *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	bitmap = (uint8_t *)_MALLOC(amp->block_size, M_TEMP, M_WAITOK);
-	if (sm == NULL || cib == NULL || bitmap == NULL) {
-		error = ENOMEM;
-		goto out;
-	}
-
-	error = apfs_read_object_phys(amp, amp->spaceman_paddr, sm);
-	if (error)
-		goto out;
-	if (apfs_object_type(sm->sm_o.o_type) != APFS_OBJECT_TYPE_SPACEMAN) {
-		error = EINVAL;
-		goto out;
-	}
-	if (le32(sm->sm_block_size) != amp->block_size ||
-	    le32(sm->sm_blocks_per_chunk) == 0) {
-		error = EINVAL;
-		goto out;
-	}
-	if (le32(sm->sm_dev[0].sm_cab_count) != 0) {
-		APFSLOG("spaceman CAB allocation not implemented");
-		error = ENOTSUP;
-		goto out;
-	}
-
-	cib_count = le32(sm->sm_dev[0].sm_cib_count);
-	addr_offset = le32(sm->sm_dev[0].sm_addr_offset);
-	if (addr_offset + cib_count * sizeof(apfs_paddr_t) > amp->block_size) {
-		error = EINVAL;
-		goto out;
-	}
-
-	for (cib_index = 0; cib_index < cib_count; cib_index++) {
-		apfs_paddr_t cib_paddr;
-		uint32_t chunk_count, chunk_index;
-
-		memcpy(&cib_paddr, (uint8_t *)sm + addr_offset +
-		    cib_index * sizeof(cib_paddr), sizeof(cib_paddr));
-		cib_paddr = le64s(cib_paddr);
-		if (cib_paddr <= 0)
-			continue;
-
-		error = apfs_read_object_phys(amp, cib_paddr, cib);
-		if (error)
-			goto out;
-		if (apfs_object_type(cib->cib_o.o_type) !=
-		    APFS_OBJECT_TYPE_SPACEMAN_CIB) {
-			error = EINVAL;
-			goto out;
-		}
-
-		chunk_count = le32(cib->cib_chunk_info_count);
-		for (chunk_index = 0; chunk_index < chunk_count; chunk_index++) {
-			struct apfs_chunk_info *ci;
-			apfs_paddr_t bitmap_paddr;
-			uint64_t chunk_addr;
-			uint32_t block_count, rel;
-
-			if ((uint8_t *)&cib->cib_chunk_info[chunk_index + 1] >
-			    (uint8_t *)cib + amp->block_size) {
-				error = EINVAL;
-				goto out;
-			}
-			ci = &cib->cib_chunk_info[chunk_index];
-			if (le32(ci->ci_free_count) == 0)
-				continue;
-
-			bitmap_paddr = le64s(ci->ci_bitmap_addr);
-			chunk_addr = le64(ci->ci_addr);
-			block_count = le32(ci->ci_block_count);
-			if (bitmap_paddr <= 0 || block_count == 0)
-				continue;
-
-			error = apfs_read_phys(amp, bitmap_paddr, bitmap,
-			    amp->block_size);
-			if (error)
-				goto out;
-
-			for (rel = 0; rel < block_count; rel++) {
-				uint64_t block = chunk_addr + rel;
-				uint8_t mask = (uint8_t)(1U << (rel & 7));
-
-				if (block >= amp->block_count)
-					break;
-				if (bitmap[rel >> 3] & mask)
-					continue;
-				if (apfs_block_is_used_by_extent(records, count,
-				    block))
-					continue;
-
-				bitmap[rel >> 3] |= mask;
-				ci->ci_free_count =
-				    hle32(le32(ci->ci_free_count) - 1);
-				sm->sm_dev[0].sm_free_count =
-				    hle64(le64(sm->sm_dev[0].sm_free_count) - 1);
-				error = apfs_write_phys(amp, bitmap_paddr, bitmap,
-				    amp->block_size);
-				if (error)
-					goto out;
-				apfs_update_object_checksum(cib,
-				    amp->block_size);
-				error = apfs_write_phys(amp, cib_paddr, cib,
-				    amp->block_size);
-				if (error)
-					goto out;
-				apfs_update_object_checksum(sm, amp->block_size);
-				error = apfs_write_phys(amp, amp->spaceman_paddr,
-				    sm, amp->block_size);
-				if (error)
-					goto out;
-				*block_out = block;
-				APFSLOG("spaceman allocated block 0x%llx",
-				    (unsigned long long)block);
-				error = 0;
-				goto out;
-			}
-		}
-	}
-	error = ENOSPC;
-
-out:
-	if (bitmap)
-		_FREE(bitmap, M_TEMP);
-	if (cib)
-		_FREE(cib, M_TEMP);
-	if (sm)
-		_FREE(sm, M_TEMP);
-	return error;
-}
-
-static int
-apfs_find_zero_free_block(struct apfs_mount *amp, struct apfs_rw_record *records,
-    uint32_t count, uint64_t *block_out)
-{
-	uint8_t *block;
-	uint64_t b;
-	int error = 0;
-
-	block = (uint8_t *)_MALLOC(amp->block_size, M_TEMP, M_WAITOK);
-	if (block == NULL)
-		return ENOMEM;
-
-	for (b = (uint64_t)amp->root_tree_paddr + 1; b < amp->block_count; b++) {
-		uint32_t i;
-		int nonzero = 0;
-
-		if (apfs_block_is_used_by_extent(records, count, b))
-			continue;
-		error = apfs_read_phys(amp, (apfs_paddr_t)b, block,
-		    amp->block_size);
-		if (error)
-			goto out;
-		for (i = 0; i < amp->block_size; i++) {
-			if (block[i] != 0) {
-				nonzero = 1;
-				break;
-			}
-		}
-		if (!nonzero) {
-			*block_out = b;
-			error = 0;
-			goto out;
-		}
-	}
-	error = ENOSPC;
-out:
-	_FREE(block, M_TEMP);
-	return error;
-}
-
-static int
-apfs_find_free_block(struct apfs_mount *amp, struct apfs_rw_record *records,
-    uint32_t count, uint64_t *block_out)
-{
-	int error;
-
-	error = apfs_spaceman_alloc_block(amp, records, count, block_out);
-	if (error == 0)
-		return 0;
-
-	APFSLOG("spaceman allocation failed (%d), falling back to zero scan",
-	    error);
-	return apfs_find_zero_free_block(amp, records, count, block_out);
-}
-
-static int
-apfs_write_inode_size(struct apfs_mount *amp, uint64_t fileid, uint64_t size)
-{
-	struct apfs_btree_node_phys *node;
-	struct apfs_rw_record *records;
-	uint32_t count;
-	int error;
-
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
-	records = (struct apfs_rw_record *)_MALLOC(sizeof(*records) *
-	    APFS_RW_MAX_RECORDS, M_TEMP, M_WAITOK | M_ZERO);
-	if (records == NULL) {
-		_FREE(node, M_TEMP);
-		return ENOMEM;
-	}
-	error = apfs_load_root_records(amp, node, records, &count);
-	if (error)
-		goto out;
-	error = apfs_update_records_inode_size(records, count, fileid, size);
-	if (error)
-		goto out;
-	error = apfs_repack_root_records(amp, node, records, count);
-out:
-	_FREE(records, M_TEMP);
-	_FREE(node, M_TEMP);
-	return error;
-}
-
-static int
-apfs_zero_file_range(struct apfs_node *apnode, uint64_t start, uint64_t end)
-{
-	struct apfs_mount *amp = apnode->amp;
-	uint64_t phys, len, off;
-	int error;
-
-	error = apfs_find_file_extent(amp, apnode->fileid, &phys, &len);
-	if (error)
-		return error;
-	if (end > len)
-		return ENOSPC;
-
-	for (off = start; off < end; ) {
-		buf_t bp = NULL;
-		uint64_t block_index = off / amp->block_size;
-		size_t block_off = (size_t)(off % amp->block_size);
-		size_t count = amp->block_size - block_off;
-
-		if (count > end - off)
-			count = (size_t)(end - off);
-		error = (int)buf_meta_bread(amp->devvp,
-		    (daddr64_t)(phys + block_index), amp->block_size, NOCRED,
-		    &bp);
-		if (error) {
-			if (bp)
-				buf_brelse(bp);
-			return error;
-		}
-		memset((char *)buf_dataptr(bp) + block_off, 0, count);
-		error = buf_bwrite(bp);
-		if (error)
-			return error;
-		off += count;
-	}
-	return 0;
 }
 
 static int
@@ -1405,13 +528,152 @@ apfs_load_volume(struct apfs_mount *amp, __unused vfs_context_t ctx)
 	}
 	amp->root_tree_paddr = le64s(ov.ov_paddr);
 
-	APFSLOG("volume oid=0x%llx paddr=0x%llx omap=0x%llx root_tree=0x%llx->0x%llx",
-	    (unsigned long long)amp->fs_oid,
-	    (unsigned long long)amp->fs_paddr,
-	    (unsigned long long)amp->volume_omap_oid,
-	    (unsigned long long)amp->root_tree_oid,
-	    (unsigned long long)amp->root_tree_paddr);
+	if (!amp->am_probe_logged) {
+		APFSLOG("volume oid=0x%llx paddr=0x%llx omap=0x%llx "
+		    "root_tree=0x%llx->0x%llx",
+		    (unsigned long long)amp->fs_oid,
+		    (unsigned long long)amp->fs_paddr,
+		    (unsigned long long)amp->volume_omap_oid,
+		    (unsigned long long)amp->root_tree_oid,
+		    (unsigned long long)amp->root_tree_paddr);
+		amp->am_probe_logged = 1;
+	}
 	return 0;
+}
+
+
+/*
+ * Walk every leaf of a b-tree, calling cb() once per leaf node.
+ *
+ * A root node is only a leaf on trivially small volumes; a real one has index
+ * nodes above the leaves - the macOS 26.6.2 system volume's file-system tree is
+ * level 3 with 45114 nodes - so anything that wants the records has to descend.
+ *
+ * Nonleaf values start with the child's oid (spec p.127 btn_index_node_val_t).
+ * Whether that is a physical address or needs an object-map lookup is decided
+ * by BTREE_PHYSICAL in bt_flags (spec p.132): with neither BTREE_PHYSICAL nor
+ * BTREE_EPHEMERAL set, child links are virtual.
+ *
+ * Only the root carries a btree_info_t (spec p.126), so it is COPIED and passed
+ * down - descending re-reads into a fresh buffer and the caller's node is freed
+ * on the way out, so a borrowed pointer would dangle.
+ *
+ * cb() returning non-zero stops the walk and that value is returned.
+ */
+static int
+apfs_btree_walk_node(struct apfs_mount *amp, apfs_paddr_t paddr,
+    const struct apfs_btree_info *root_info, uint32_t depth,
+    uint64_t oid_min, uint64_t oid_max, apfs_leaf_cb cb, void *ctx)
+{
+	struct apfs_btree_node_phys *node;
+	const struct apfs_btree_info *info;
+	struct apfs_btree_info info_storage;
+	const struct apfs_btree_info *own;
+	uint32_t nkeys, i;
+	int error;
+
+	if (depth > APFS_BTREE_MAX_DEPTH)
+		return EINVAL;
+	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
+	    M_WAITOK);
+	if (node == NULL)
+		return ENOMEM;
+	error = apfs_read_object_phys(amp, paddr, node);
+	if (error)
+		goto out;
+
+	own = apfs_btree_info_for_node(amp, node);
+	if (own != NULL) {
+		memcpy(&info_storage, own, sizeof(info_storage));
+		info = &info_storage;
+	} else {
+		info = root_info;
+	}
+
+	if (le16(node->btn_level) == 0) {
+		error = cb(amp, node, info, ctx);
+		goto out;
+	}
+
+	nkeys = le32(node->btn_nkeys);
+	for (i = 0; i < nkeys; i++) {
+		const void *keyp, *valp;
+		uint16_t key_len, val_len;
+		apfs_oid_t child;
+		apfs_paddr_t child_paddr;
+		uint64_t sep;
+
+		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
+		    &valp, &val_len);
+		if (error)
+			goto out;
+		if (val_len < sizeof(apfs_oid_t))
+			continue;
+
+		/*
+		 * Prune by object id. Child i holds the keys in
+		 * [key(i), key(i+1)), and entries are in ascending key order,
+		 * so once a separator is past oid_max nothing further can
+		 * match, and if the NEXT separator is still below oid_min then
+		 * every key in this child is too.
+		 *
+		 * Without this every lookup reads the whole tree: listing a
+		 * 3000-entry directory took about a minute, because readdir is
+		 * called repeatedly and each call walked all 245 nodes.
+		 */
+		if (key_len >= sizeof(uint64_t)) {
+			memcpy(&sep, keyp, sizeof(sep));
+			if (apfs_key_id(sep) > oid_max)
+				break;
+		}
+		if (i + 1 < nkeys) {
+			const void *nkeyp, *nvalp;
+			uint16_t nkey_len, nval_len;
+
+			if (apfs_btree_entry(amp, node, info, i + 1, &nkeyp,
+			    &nkey_len, &nvalp, &nval_len) == 0 &&
+			    nkey_len >= sizeof(uint64_t)) {
+				memcpy(&sep, nkeyp, sizeof(sep));
+				if (apfs_key_id(sep) < oid_min)
+					continue;
+			}
+		}
+
+		memcpy(&child, valp, sizeof(child));
+		child = le64(child);
+
+		if (info != NULL &&
+		    (le32(info->bt_flags) & APFS_BTREE_PHYSICAL) != 0) {
+			child_paddr = (apfs_paddr_t)child;
+		} else {
+			struct apfs_omap_val ov;
+
+			error = apfs_omap_lookup_tree(amp,
+			    amp->volume_omap_tree_paddr, child, amp->xid, &ov);
+			if (error)
+				goto out;
+			child_paddr = (apfs_paddr_t)le64(ov.ov_paddr);
+		}
+
+		error = apfs_btree_walk_node(amp, child_paddr, info, depth + 1,
+		    oid_min, oid_max, cb, ctx);
+		if (error)
+			goto out;
+	}
+	error = 0;
+out:
+	_FREE(node, M_TEMP);
+	return error;
+}
+
+/* Visit only the leaves that can hold records for object ids in
+ * [oid_min, oid_max]; pass 0 / UINT64_MAX to visit the whole tree. */
+static int
+apfs_btree_walk_leaves_oid(struct apfs_mount *amp, apfs_paddr_t root_paddr,
+    uint64_t oid_min, uint64_t oid_max, apfs_leaf_cb cb, void *ctx)
+{
+	return apfs_btree_walk_node(amp, root_paddr, NULL, 0, oid_min, oid_max,
+	    cb, ctx);
 }
 
 static enum vtype
@@ -1437,69 +699,129 @@ apfs_vtype_from_mode(uint16_t mode)
 	}
 }
 
-int
-apfs_lookup_inode(struct apfs_mount *amp, uint64_t fileid,
-    struct apfs_inode_info *info_out)
+/*
+ * Extended fields follow the fixed part of j_inode_val_t as an xf_blob_t
+ * header, then xf_num_exts x_field_t descriptors, then the data in the SAME
+ * order, each datum 8-byte aligned (spec p.108-109). INO_EXT_TYPE_DSTREAM's
+ * data is a j_dstream_t whose first field is the stream size (spec p.106,111).
+ *
+ * This is where a file's size actually lives; uncompressed_size is meaningful
+ * only for a compressed file and reads 0 on an ordinary one.
+ */
+static int
+apfs_inode_dstream_size(const void *val, uint16_t val_len, uint64_t *out)
 {
-	struct apfs_btree_node_phys *node;
-	const struct apfs_btree_info *info;
-	uint32_t i;
-	int error = 0;
+	const uint8_t *p = (const uint8_t *)val;
+	uint32_t fixed = (uint32_t)sizeof(struct apfs_j_inode_val);
+	uint32_t num, i, desc, data;
+	uint16_t n16;
 
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
+	if (val_len < fixed + 4U)
+		return ENOENT;
+	memcpy(&n16, p + fixed, sizeof(n16));
+	num = le16(n16);
+	desc = fixed + 4U;
+	data = desc + num * 4U;
+	if (data > val_len)
+		return EINVAL;
+	for (i = 0; i < num; i++) {
+		uint8_t type = p[desc + i * 4U];
+		uint16_t size;
 
-	error = apfs_read_object_phys(amp, amp->root_tree_paddr, node);
-	if (error)
-		goto out;
-	if ((le16(node->btn_flags) & APFS_BTNODE_LEAF) == 0) {
-		error = ENOTSUP;
-		goto out;
+		memcpy(&size, p + desc + i * 4U + 2U, sizeof(size));
+		size = le16(size);
+		if (data + size > val_len)
+			return EINVAL;
+		if (type == APFS_INO_EXT_TYPE_DSTREAM) {
+			uint64_t sz;
+
+			if (size < sizeof(sz))
+				return EINVAL;
+			memcpy(&sz, p + data, sizeof(sz));
+			*out = le64(sz);
+			return 0;
+		}
+		data += ((uint32_t)size + 7U) & ~7U;
 	}
+	return ENOENT;
+}
 
-	info = apfs_btree_info_for_node(amp, node);
+struct apfs_inode_lookup_ctx {
+	uint64_t fileid;
+	struct apfs_inode_info *info_out;
+	int found;
+};
+
+static int
+apfs_lookup_inode_cb(struct apfs_mount *amp,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+	struct apfs_inode_lookup_ctx *c = (struct apfs_inode_lookup_ctx *)ctx;
+	struct apfs_inode_info *info_out = c->info_out;
+	uint32_t i;
+	int error;
+
 	for (i = 0; i < le32(node->btn_nkeys); i++) {
 		const struct apfs_j_key *key;
 		const struct apfs_j_inode_val *val;
 		const void *keyp, *valp;
 		uint16_t key_len, val_len;
 		uint16_t mode;
+		uint64_t dsize;
 
 		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
 		    &valp, &val_len);
 		if (error)
-			goto out;
+			return error;
 		if (key_len < sizeof(*key) || val_len < sizeof(*val))
 			continue;
 
 		key = (const struct apfs_j_key *)keyp;
-		if (apfs_key_id(key->obj_id_and_type) != fileid ||
+		if (apfs_key_id(key->obj_id_and_type) != c->fileid ||
 		    apfs_key_type(key->obj_id_and_type) != APFS_TYPE_INODE)
 			continue;
 
 		val = (const struct apfs_j_inode_val *)valp;
 		mode = le16(val->mode);
 		memset(info_out, 0, sizeof(*info_out));
-		info_out->fileid = fileid;
+		info_out->fileid = c->fileid;
 		info_out->type = apfs_vtype_from_mode(mode);
 		info_out->mode = mode & 07777;
 		info_out->uid = le32(val->owner);
 		info_out->gid = le32(val->group);
-		info_out->size = le64(val->uncompressed_size);
+		if (apfs_inode_dstream_size(valp, val_len, &dsize) == 0)
+			info_out->size = dsize;
+		else
+			info_out->size = le64(val->uncompressed_size);
 		info_out->parent_id = le64(val->parent_id);
 		if (info_out->type == VDIR)
 			info_out->nlink = (uint32_t)le32((uint32_t)val->u.nchildren) + 2;
 		else
 			info_out->nlink = (uint32_t)le32((uint32_t)val->u.nlink);
-		error = 0;
-		goto out;
+		c->found = 1;
+		return 1;			/* stop the walk */
 	}
-	error = ENOENT;
-out:
-	_FREE(node, M_TEMP);
-	return error;
+	return 0;
+}
+
+int
+apfs_lookup_inode(struct apfs_mount *amp, uint64_t fileid,
+    struct apfs_inode_info *info_out)
+{
+	struct apfs_inode_lookup_ctx c;
+	int error;
+
+	if (amp == NULL || info_out == NULL)
+		return EINVAL;
+	c.fileid = fileid;
+	c.info_out = info_out;
+	c.found = 0;
+	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, fileid,
+	    fileid, apfs_lookup_inode_cb, &c);
+	if (error != 0 && error != 1)
+		return error;
+	return c.found ? 0 : ENOENT;
 }
 
 static int
@@ -1547,153 +869,329 @@ apfs_parse_dir_key(const void *keyp, uint16_t key_len, const uint8_t **name,
 	return 0;
 }
 
+struct apfs_dirent_lookup_ctx {
+	uint64_t dirid;
+	const char *name;
+	size_t namelen;
+	uint64_t fileid;
+	uint8_t dtype;
+	int found;
+};
+
+static int
+apfs_lookup_dirent_cb(struct apfs_mount *amp,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+	struct apfs_dirent_lookup_ctx *c = (struct apfs_dirent_lookup_ctx *)ctx;
+	uint32_t i;
+	int error;
+
+	for (i = 0; i < le32(node->btn_nkeys); i++) {
+		const struct apfs_j_key *key;
+		const struct apfs_j_drec_val *val;
+		const void *keyp, *valp;
+		uint16_t key_len, val_len;
+		const uint8_t *entry_name;
+		uint16_t entry_namelen;
+
+		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
+		    &valp, &val_len);
+		if (error)
+			return error;
+		if (val_len < sizeof(*val))
+			continue;
+
+		key = (const struct apfs_j_key *)keyp;
+		if (apfs_key_id(key->obj_id_and_type) != c->dirid ||
+		    apfs_key_type(key->obj_id_and_type) != APFS_TYPE_DIR_REC)
+			continue;
+		if (apfs_parse_dir_key(keyp, key_len, &entry_name,
+		    &entry_namelen))
+			continue;
+		if (entry_namelen != c->namelen ||
+		    memcmp(entry_name, c->name, c->namelen) != 0)
+			continue;
+
+		val = (const struct apfs_j_drec_val *)valp;
+		c->fileid = le64(val->file_id);
+		c->dtype = (uint8_t)(le16(val->flags) & 0x0f);
+		c->found = 1;
+		return 1;			/* stop the walk */
+	}
+	return 0;
+}
+
 int
 apfs_lookup_dirent(struct apfs_mount *amp, uint64_t dirid, const char *name,
     size_t namelen, uint64_t *fileid, uint8_t *dtype)
 {
-	struct apfs_btree_node_phys *node;
-	const struct apfs_btree_info *info;
-	uint32_t i;
-	int error = 0;
+	struct apfs_dirent_lookup_ctx c;
+	int error;
 
 	if (amp == NULL || name == NULL || fileid == NULL)
 		return EINVAL;
 	if (namelen > NAME_MAX)
 		return ENAMETOOLONG;
 
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
+	c.dirid = dirid;
+	c.name = name;
+	c.namelen = namelen;
+	c.fileid = 0;
+	c.dtype = 0;
+	c.found = 0;
+	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, dirid,
+	    dirid, apfs_lookup_dirent_cb, &c);
+	if (error != 0 && error != 1)
+		return error;
+	if (!c.found)
+		return ENOENT;
+	*fileid = c.fileid;
+	if (dtype)
+		*dtype = c.dtype;
+	return 0;
+}
 
-	error = apfs_read_object_phys(amp, amp->root_tree_paddr, node);
-	if (error)
-		goto out;
-	if ((le16(node->btn_flags) & APFS_BTNODE_LEAF) == 0) {
-		error = ENOTSUP;
-		goto out;
-	}
+/*
+ * Extended attributes. On disk the key is j_xattr_key_t { j_key_t hdr;
+ * uint16 name_len; char name[] } with name_len counting the trailing NUL, and
+ * the value is j_xattr_val_t { uint16 flags; uint16 xdata_len; uint8 xdata[] }
+ * (spec p.105-106). Only DATA_EMBEDDED values are handled here: that is what
+ * symlink targets use, which is all the kernel needs so far.
+ */
+struct apfs_xattr_lookup_ctx {
+	uint64_t fileid;
+	const char *name;
+	size_t namelen;		/* not counting the NUL */
+	void *buf;
+	size_t bufsize;
+	size_t outlen;
+	int found;
+};
 
-	info = apfs_btree_info_for_node(amp, node);
+static int
+apfs_lookup_xattr_cb(struct apfs_mount *amp,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+	struct apfs_xattr_lookup_ctx *c = (struct apfs_xattr_lookup_ctx *)ctx;
+	uint32_t i;
+	int error;
+
 	for (i = 0; i < le32(node->btn_nkeys); i++) {
 		const struct apfs_j_key *key;
-		const struct apfs_j_drec_val *val;
-		const uint8_t *entry_name;
 		const void *keyp, *valp;
 		uint16_t key_len, val_len;
-		uint16_t entry_namelen;
+		const uint8_t *kb, *vb;
+		uint16_t name_len, flags, xdata_len;
 
 		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
 		    &valp, &val_len);
 		if (error)
-			goto out;
-		if (val_len < sizeof(*val))
-			continue;
+			return error;
 
 		key = (const struct apfs_j_key *)keyp;
-		if (apfs_key_id(key->obj_id_and_type) != dirid ||
-		    apfs_key_type(key->obj_id_and_type) != APFS_TYPE_DIR_REC)
+		if (apfs_key_id(key->obj_id_and_type) != c->fileid ||
+		    apfs_key_type(key->obj_id_and_type) != APFS_TYPE_XATTR)
 			continue;
-		if (apfs_parse_dir_key(keyp, key_len, &entry_name,
-		    &entry_namelen))
-			continue;
-		if (entry_namelen != namelen ||
-		    memcmp(entry_name, name, namelen) != 0)
+		if (key_len < sizeof(*key) + 2 || val_len < 4)
 			continue;
 
-		val = (const struct apfs_j_drec_val *)valp;
-		*fileid = le64(val->file_id);
-		if (dtype)
-			*dtype = (uint8_t)(le16(val->flags) & 0x0f);
-		error = 0;
-		goto out;
+		kb = (const uint8_t *)keyp;
+		name_len = (uint16_t)(kb[8] | (kb[9] << 8));
+		if (name_len == 0 || key_len < sizeof(*key) + 2 + name_len)
+			continue;
+		/* name_len includes the NUL, so compare one byte less. */
+		if ((size_t)(name_len - 1) != c->namelen ||
+		    memcmp(kb + 10, c->name, c->namelen) != 0)
+			continue;
+
+		vb = (const uint8_t *)valp;
+		flags = (uint16_t)(vb[0] | (vb[1] << 8));
+		xdata_len = (uint16_t)(vb[2] | (vb[3] << 8));
+		if (!(flags & APFS_XATTR_DATA_EMBEDDED))
+			return ENOTSUP;
+		if (val_len < (uint16_t)(4 + xdata_len))
+			continue;
+		if (xdata_len > c->bufsize)
+			return ERANGE;
+
+		memcpy(c->buf, vb + 4, xdata_len);
+		c->outlen = xdata_len;
+		c->found = 1;
+		return 1;			/* stop the walk */
 	}
-	error = ENOENT;
-
-out:
-	_FREE(node, M_TEMP);
-	return error;
+	return 0;
 }
 
 int
-apfs_iterate_dir(struct apfs_mount *amp, uint64_t dirid, off_t start_index,
-    struct uio *uio, int *numdirent, int *eofflag)
+apfs_lookup_xattr(struct apfs_mount *amp, uint64_t fileid, const char *name,
+    void *buf, size_t bufsize, size_t *outlen)
 {
-	struct apfs_btree_node_phys *node;
-	const struct apfs_btree_info *info;
+	struct apfs_xattr_lookup_ctx c;
+	int error;
+
+	if (amp == NULL || name == NULL || buf == NULL || outlen == NULL)
+		return EINVAL;
+
+	memset(&c, 0, sizeof(c));
+	c.fileid = fileid;
+	c.name = name;
+	c.namelen = strlen(name);
+	c.buf = buf;
+	c.bufsize = bufsize;
+
+	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, fileid,
+	    fileid, apfs_lookup_xattr_cb, &c);
+	if (error != 0 && error != 1)
+		return error;
+	if (!c.found)
+		return ENOATTR;
+	*outlen = c.outlen;
+	return 0;
+}
+
+struct apfs_iterate_dir_ctx {
+	uint64_t dirid;
+	off_t start_index;
+	off_t logical_index;
+	struct uio *uio;
+	int entries;
+	int done;
+};
+
+static int
+apfs_iterate_dir_cb(struct apfs_mount *amp,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+	struct apfs_iterate_dir_ctx *c = (struct apfs_iterate_dir_ctx *)ctx;
 	uint32_t i;
-	off_t logical_index = 0;
-	int entries = 0;
-	int error = 0;
+	int error;
 
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
-
-	error = apfs_read_object_phys(amp, amp->root_tree_paddr, node);
-	if (error)
-		goto out;
-	if ((le16(node->btn_flags) & APFS_BTNODE_LEAF) == 0) {
-		error = ENOTSUP;
-		goto out;
-	}
-
-	info = apfs_btree_info_for_node(amp, node);
 	for (i = 0; i < le32(node->btn_nkeys); i++) {
 		const struct apfs_j_key *key;
 		const struct apfs_j_drec_val *val;
-		const uint8_t *name;
 		const void *keyp, *valp;
 		uint16_t key_len, val_len;
+		const uint8_t *name;
 		uint16_t namelen;
 
 		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
 		    &valp, &val_len);
 		if (error)
-			goto out;
+			return error;
 		if (val_len < sizeof(*val))
 			continue;
 
 		key = (const struct apfs_j_key *)keyp;
-		if (apfs_key_id(key->obj_id_and_type) != dirid ||
+		if (apfs_key_id(key->obj_id_and_type) != c->dirid ||
 		    apfs_key_type(key->obj_id_and_type) != APFS_TYPE_DIR_REC)
 			continue;
 
-		if (logical_index++ < start_index)
+		/* Leaves are visited in key order, so a running index is a
+		 * stable directory offset across the whole tree. */
+		if (c->logical_index++ < c->start_index)
 			continue;
-
 		if (apfs_parse_dir_key(keyp, key_len, &name, &namelen))
 			continue;
 
 		val = (const struct apfs_j_drec_val *)valp;
 		error = apfs_emit_dirent(le64(val->file_id),
 		    (uint8_t)(le16(val->flags) & 0x0f), (const char *)name,
-		    namelen, uio);
+		    namelen, c->uio);
 		if (error == EMSGSIZE) {
-			error = 0;
-			goto out;
+			c->done = 1;
+			return 1;		/* buffer full: stop, not an error */
 		}
 		if (error)
-			goto out;
-		entries++;
+			return error;
+		c->entries++;
 	}
+	return 0;
+}
 
-out:
-	_FREE(node, M_TEMP);
+int
+apfs_iterate_dir(struct apfs_mount *amp, uint64_t dirid, off_t start_index,
+    struct uio *uio, int *numdirent, int *eofflag)
+{
+	struct apfs_iterate_dir_ctx c;
+	int error;
+
+	c.dirid = dirid;
+	c.start_index = start_index;
+	c.logical_index = 0;
+	c.uio = uio;
+	c.entries = 0;
+	c.done = 0;
+	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, dirid,
+	    dirid, apfs_iterate_dir_cb, &c);
+	if (error == 1)
+		error = 0;
 	if (numdirent)
-		*numdirent = entries;
+		*numdirent = c.entries;
 	if (eofflag)
-		*eofflag = (error == 0);
+		*eofflag = (error == 0 && !c.done);
 	return error;
+}
+
+struct apfs_extent_at_ctx {
+	uint64_t fileid;
+	uint64_t want_off;
+	uint64_t logical;
+	uint64_t len;
+	uint64_t phys;
+	int found;
+};
+
+static int
+apfs_extent_at_cb(struct apfs_mount *amp,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+	struct apfs_extent_at_ctx *c = (struct apfs_extent_at_ctx *)ctx;
+	uint32_t i;
+	int error;
+
+	for (i = 0; i < le32(node->btn_nkeys); i++) {
+		const struct apfs_j_file_extent_key *key;
+		const struct apfs_j_file_extent_val *val;
+		const void *keyp, *valp;
+		uint16_t key_len, val_len;
+		uint64_t logical, len;
+
+		error = apfs_btree_entry(amp, node, info, i, &keyp, &key_len,
+		    &valp, &val_len);
+		if (error)
+			return error;
+		if (key_len < sizeof(*key) || val_len < sizeof(*val))
+			continue;
+		key = (const struct apfs_j_file_extent_key *)keyp;
+		if (apfs_key_id(key->hdr.obj_id_and_type) != c->fileid ||
+		    apfs_key_type(key->hdr.obj_id_and_type) !=
+		    APFS_TYPE_FILE_EXTENT)
+			continue;
+
+		val = (const struct apfs_j_file_extent_val *)valp;
+		logical = le64(key->logical_addr);
+		len = le64(val->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
+		if (len == 0 || c->want_off < logical ||
+		    c->want_off >= logical + len)
+			continue;
+		c->logical = logical;
+		c->len = len;
+		c->phys = le64(val->phys_block_num);
+		c->found = 1;
+		return 1;			/* stop the walk */
+	}
+	return 0;
 }
 
 int
 apfs_read_file(struct apfs_node *apnode, struct uio *uio)
 {
 	struct apfs_mount *amp;
-	struct apfs_btree_node_phys *node;
-	const struct apfs_btree_info *info;
+	struct apfs_extent_at_ctx cur;
 	uint64_t filesize;
 	int error = 0;
 
@@ -1704,320 +1202,52 @@ apfs_read_file(struct apfs_node *apnode, struct uio *uio)
 		return EINVAL;
 	filesize = apnode->size;
 
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
-
-	error = apfs_read_object_phys(amp, amp->root_tree_paddr, node);
-	if (error)
-		goto out;
-	if ((le16(node->btn_flags) & APFS_BTNODE_LEAF) == 0) {
-		error = ENOTSUP;
-		goto out;
-	}
-	info = apfs_btree_info_for_node(amp, node);
+	memset(&cur, 0, sizeof(cur));
+	cur.fileid = apnode->fileid;
 
 	while (uio_resid(uio) > 0 && (uint64_t)uio_offset(uio) < filesize) {
 		uint64_t file_off = (uint64_t)uio_offset(uio);
-		uint64_t best_logical = 0;
-		uint64_t best_len = 0;
-		uint64_t best_phys = 0;
-		uint32_t i;
-		int found = 0;
-
-		for (i = 0; i < le32(node->btn_nkeys); i++) {
-			const struct apfs_j_file_extent_key *key;
-			const struct apfs_j_file_extent_val *val;
-			const void *keyp, *valp;
-			uint16_t key_len, val_len;
-			uint64_t logical, len, end;
-
-			error = apfs_btree_entry(amp, node, info, i, &keyp,
-			    &key_len, &valp, &val_len);
-			if (error)
-				goto out;
-			if (key_len < sizeof(*key) || val_len < sizeof(*val))
-				continue;
-
-			key = (const struct apfs_j_file_extent_key *)keyp;
-			if (apfs_key_id(key->hdr.obj_id_and_type) !=
-			    apnode->fileid ||
-			    apfs_key_type(key->hdr.obj_id_and_type) !=
-			    APFS_TYPE_FILE_EXTENT)
-				continue;
-
-			val = (const struct apfs_j_file_extent_val *)valp;
-			logical = le64(key->logical_addr);
-			len = le64(val->len_and_flags) &
-			    APFS_FILE_EXTENT_LEN_MASK;
-			end = logical + len;
-			if (len == 0 || file_off < logical || file_off >= end)
-				continue;
-			best_logical = logical;
-			best_len = len;
-			best_phys = le64(val->phys_block_num);
-			found = 1;
-			break;
-		}
-
-		if (!found) {
-			error = EIO;
-			goto out;
-		} else {
-			uint64_t extent_off = file_off - best_logical;
-			uint64_t avail = best_len - extent_off;
-			uint64_t remain = filesize - file_off;
-			uint64_t block_index = extent_off / amp->block_size;
-			size_t block_off = (size_t)(extent_off % amp->block_size);
-			size_t count = amp->block_size - block_off;
-
-			if (avail < count)
-				count = (size_t)avail;
-			if (remain < count)
-				count = (size_t)remain;
-			if ((uint64_t)uio_resid(uio) < count)
-				count = (size_t)uio_resid(uio);
-
-			error = apfs_uiomove_phys(amp,
-			    (apfs_paddr_t)(best_phys + block_index), block_off,
-			    count, uio);
-			if (error)
-				goto out;
-		}
-	}
-
-out:
-	_FREE(node, M_TEMP);
-	return error;
-}
-
-int
-apfs_write_file(struct apfs_node *apnode, struct uio *uio)
-{
-	struct apfs_mount *amp;
-	uint64_t phys, len;
-	uint64_t old_size;
-	int error;
-	int dirty = 0;
-
-	if (apnode == NULL || uio == NULL)
-		return EINVAL;
-	amp = apnode->amp;
-	if (amp == NULL)
-		return EINVAL;
-	if (uio_offset(uio) < 0)
-		return EINVAL;
-	if ((uint64_t)uio_offset(uio) > apnode->size)
-		return EFBIG;
-
-	error = apfs_find_file_extent(amp, apnode->fileid, &phys, &len);
-	if (error)
-		return error;
-	old_size = apnode->size;
-
-	while (uio_resid(uio) > 0) {
-		uint64_t file_off = (uint64_t)uio_offset(uio);
-		uint64_t block_index;
+		uint64_t extent_off, avail, remain, block_index;
 		size_t block_off, count;
 
-		if (file_off >= len) {
-			error = ENOSPC;
-			break;
+		/*
+		 * Reuse the extent already in hand while the offset stays
+		 * inside it, so a large file costs one tree walk per extent
+		 * rather than one per block.
+		 */
+		if (!cur.found || file_off < cur.logical ||
+		    file_off >= cur.logical + cur.len) {
+			cur.want_off = file_off;
+			cur.found = 0;
+			error = apfs_btree_walk_leaves_oid(amp,
+			    amp->root_tree_paddr, cur.fileid, cur.fileid,
+			    apfs_extent_at_cb, &cur);
+			if (error != 0 && error != 1)
+				return error;
+			error = 0;
+			if (!cur.found)
+				return EIO;
 		}
-		block_index = file_off / amp->block_size;
-		block_off = (size_t)(file_off % amp->block_size);
+
+		extent_off = file_off - cur.logical;
+		avail = cur.len - extent_off;
+		remain = filesize - file_off;
+		block_index = extent_off / amp->block_size;
+		block_off = (size_t)(extent_off % amp->block_size);
 		count = amp->block_size - block_off;
-		if ((uint64_t)count > len - file_off)
-			count = (size_t)(len - file_off);
+
+		if (avail < count)
+			count = (size_t)avail;
+		if (remain < count)
+			count = (size_t)remain;
 		if ((uint64_t)uio_resid(uio) < count)
 			count = (size_t)uio_resid(uio);
 
-		error = apfs_uiomove_write_phys(amp,
-		    (apfs_paddr_t)(phys + block_index), block_off, count, uio);
-		if (error)
-			break;
-		if ((uint64_t)uio_offset(uio) > apnode->size)
-			apnode->size = (uint64_t)uio_offset(uio);
-		dirty = 1;
-	}
-
-	if (dirty && apnode->size != old_size) {
-		int size_error = apfs_write_inode_size(amp, apnode->fileid,
-		    apnode->size);
-
-		if (size_error == 0)
-			ubc_setsize(apnode->vp, apnode->size);
-		if (error == 0)
-			error = size_error;
-	}
-	return error;
-}
-
-int
-apfs_set_file_size(struct apfs_node *apnode, uint64_t size)
-{
-	struct apfs_mount *amp;
-	uint64_t phys, len;
-	uint64_t old_size;
-	int error;
-
-	if (apnode == NULL || apnode->amp == NULL)
-		return EINVAL;
-	if (apnode->type != VREG)
-		return EISDIR;
-	amp = apnode->amp;
-	error = apfs_find_file_extent(amp, apnode->fileid, &phys, &len);
-	if (error)
-		return error;
-	if (size > len)
-		return ENOSPC;
-
-	old_size = apnode->size;
-	if (size > old_size) {
-		error = apfs_zero_file_range(apnode, old_size, size);
-		if (error)
-			return error;
-	} else if (size < old_size) {
-		error = apfs_zero_file_range(apnode, size, old_size);
+		error = apfs_uiomove_phys(amp,
+		    (apfs_paddr_t)(cur.phys + block_index), block_off, count,
+		    uio);
 		if (error)
 			return error;
 	}
-
-	error = apfs_write_inode_size(amp, apnode->fileid, size);
-	if (error)
-		return error;
-	apnode->size = size;
-	ubc_setsize(apnode->vp, apnode->size);
 	return 0;
-}
-
-int
-apfs_create_file(struct apfs_node *dir, const char *name, size_t namelen,
-    mode_t mode, uid_t uid, gid_t gid, uint64_t *fileid_out)
-{
-	struct apfs_mount *amp;
-	struct apfs_btree_node_phys *node;
-	struct apfs_rw_record *records = NULL;
-	uint32_t count, i;
-	uint64_t fileid = APFS_ROOT_FILEID;
-	uint64_t existing;
-	uint64_t data_block;
-	uint8_t zero[APFS_BS_BYTES];
-	uint8_t drec_key[sizeof(struct apfs_j_key) + sizeof(uint32_t) +
-	    NAME_MAX + 1];
-	struct apfs_j_drec_val drec_val;
-	struct apfs_j_inode_val inode_val;
-	struct apfs_j_file_extent_key extent_key;
-	struct apfs_j_file_extent_val extent_val;
-	uint64_t jkey;
-	uint32_t len_hash;
-	int error;
-
-	if (dir == NULL || dir->amp == NULL || name == NULL || fileid_out == NULL)
-		return EINVAL;
-	if (dir->type != VDIR || dir->fileid != APFS_ROOT_FILEID)
-		return ENOTSUP;
-	if (namelen == 0 || namelen > NAME_MAX)
-		return ENAMETOOLONG;
-
-	amp = dir->amp;
-	error = apfs_lookup_dirent(amp, dir->fileid, name, namelen, &existing,
-	    NULL);
-	if (error == 0)
-		return EEXIST;
-	if (error != ENOENT)
-		return error;
-
-	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
-	    M_WAITOK);
-	if (node == NULL)
-		return ENOMEM;
-	records = (struct apfs_rw_record *)_MALLOC(sizeof(*records) *
-	    APFS_RW_MAX_RECORDS, M_TEMP, M_WAITOK | M_ZERO);
-	if (records == NULL) {
-		_FREE(node, M_TEMP);
-		return ENOMEM;
-	}
-
-	error = apfs_load_root_records(amp, node, records, &count);
-	if (error)
-		goto out;
-
-	for (i = 0; i < count; i++) {
-		uint64_t key;
-
-		if (records[i].key_len < sizeof(struct apfs_j_key))
-			continue;
-		memcpy(&key, records[i].key, sizeof(key));
-		if (apfs_key_id(key) > fileid)
-			fileid = apfs_key_id(key);
-	}
-	fileid++;
-
-	error = apfs_find_free_block(amp, records, count, &data_block);
-	if (error)
-		goto out;
-	memset(zero, 0, sizeof(zero));
-	error = apfs_write_phys(amp, (apfs_paddr_t)data_block, zero,
-	    amp->block_size);
-	if (error)
-		goto out;
-
-	memset(drec_key, 0, sizeof(drec_key));
-	jkey = hle64(apfs_make_jkey(APFS_ROOT_FILEID, APFS_TYPE_DIR_REC));
-	memcpy(drec_key, &jkey, sizeof(jkey));
-	len_hash = hle32((uint32_t)(namelen + 1));
-	memcpy(drec_key + sizeof(struct apfs_j_key), &len_hash,
-	    sizeof(len_hash));
-	memcpy(drec_key + sizeof(struct apfs_j_key) + sizeof(uint32_t), name,
-	    namelen);
-	memset(&drec_val, 0, sizeof(drec_val));
-	drec_val.file_id = hle64(fileid);
-	drec_val.flags = hle16(DT_REG);
-
-	memset(&inode_val, 0, sizeof(inode_val));
-	inode_val.parent_id = hle64(APFS_ROOT_FILEID);
-	inode_val.private_id = hle64(fileid);
-	inode_val.u.nlink = hle32(1);
-	inode_val.owner = hle32(uid);
-	inode_val.group = hle32(gid);
-	inode_val.mode = hle16((uint16_t)(S_IFREG | (mode & 07777)));
-	inode_val.uncompressed_size = hle64(0);
-
-	memset(&extent_key, 0, sizeof(extent_key));
-	extent_key.hdr.obj_id_and_type =
-	    hle64(apfs_make_jkey(fileid, APFS_TYPE_FILE_EXTENT));
-	extent_key.logical_addr = hle64(0);
-	memset(&extent_val, 0, sizeof(extent_val));
-	extent_val.len_and_flags = hle64(amp->block_size * APFS_RW_FILE_BLOCKS);
-	extent_val.phys_block_num = hle64(data_block);
-
-	error = apfs_append_rw_record(records, &count, drec_key,
-	    (uint16_t)(sizeof(struct apfs_j_key) + sizeof(uint32_t) +
-	    namelen + 1), &drec_val, (uint16_t)sizeof(drec_val));
-	if (error)
-		goto out;
-	jkey = hle64(apfs_make_jkey(fileid, APFS_TYPE_INODE));
-	error = apfs_append_rw_record(records, &count, &jkey, sizeof(jkey),
-	    &inode_val, (uint16_t)sizeof(inode_val));
-	if (error)
-		goto out;
-	error = apfs_append_rw_record(records, &count, &extent_key,
-	    (uint16_t)sizeof(extent_key), &extent_val,
-	    (uint16_t)sizeof(extent_val));
-	if (error)
-		goto out;
-
-	apfs_touch_root_dir_record(records, count, 1);
-	error = apfs_repack_root_records(amp, node, records, count);
-	if (error)
-		goto out;
-	*fileid_out = fileid;
-
-out:
-	if (records)
-		_FREE(records, M_TEMP);
-	_FREE(node, M_TEMP);
-	return error;
 }

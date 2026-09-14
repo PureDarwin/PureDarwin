@@ -232,7 +232,7 @@ static void (*dtrace_proc_waitfor_hook)(proc_t) = NULL;
 #include <sys/dtrace_ptss.h>
 #endif
 
-#if __has_feature(ptrauth_calls)
+#if __has_feature(ptrauth_calls) || defined(__arm64__) /* PD: arm64e shared cache needs a subtype-specific region */
 static TUNABLE_DEV_WRITEABLE(int, vm_shared_region_per_team_id,
     "vm_shared_region_per_team_id", 1);
 static TUNABLE_DEV_WRITEABLE(int, vm_shared_region_by_entitlement,
@@ -974,7 +974,7 @@ set_proc_name(struct image_params *imgp, proc_t p)
 	set_crash_behavior_from_bootarg(p);
 }
 
-#if __has_feature(ptrauth_calls)
+#if __has_feature(ptrauth_calls) || defined(__arm64__) /* PD: arm64e shared cache needs a subtype-specific region */
 /**
  * Returns a team ID string that may be used to assign a shared region.
  *
@@ -2228,7 +2228,7 @@ grade:
 	 * a pre-existing task.
 	 */
 	int cpu_subtype = 0;     /* all cpu_subtypes use the same shared region */
-#if __has_feature(ptrauth_calls)
+#if __has_feature(ptrauth_calls) || defined(__arm64__) /* PD: arm64e shared cache needs a subtype-specific region */
 	char *shared_region_id = NULL;
 	size_t len;
 	char *base;

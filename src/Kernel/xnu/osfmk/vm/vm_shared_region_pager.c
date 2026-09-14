@@ -60,10 +60,16 @@
 #include <sys/kdebug_triage.h>
 #include <sys/random.h>
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 #include <ptrauth.h>
+#if HAS_APPLE_PAC
 extern boolean_t diversify_user_jop;
-#endif /* __has_feature(ptrauth_calls) */
+#else
+/* Only defined under HAS_APPLE_PAC. No hardware keys to diversify between, so
+ * every pager ends up on key 0 and stores plain pointers. */
+#define diversify_user_jop FALSE
+#endif /* HAS_APPLE_PAC */
+#endif /* VM_SHARED_REGION_AUTH */
 
 extern int panic_on_dyld_issue;
 
@@ -136,7 +142,7 @@ const struct memory_object_pager_ops shared_region_pager_ops = {
 	.memory_object_pager_name = "shared_region"
 };
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 /*
  * Track mappings between shared_region_id and the key used to sign
  * authenticated pointers.
@@ -158,7 +164,7 @@ queue_head_t shared_region_jop_key_queue = QUEUE_HEAD_INITIALIZER(shared_region_
 LCK_GRP_DECLARE(shared_region_jop_key_lck_grp, "shared_region_jop_key");
 LCK_MTX_DECLARE(shared_region_jop_key_lock, &shared_region_jop_key_lck_grp);
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 /*
  * Generate a random pointer signing key that isn't 0.
  */
@@ -172,7 +178,7 @@ generate_jop_key(void)
 	} while (key == 0);
 	return key;
 }
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 /*
  * Find the pointer signing key for the give shared_region_id.
@@ -234,7 +240,13 @@ again:
 		} else if (diversify_user_jop && strlen(shared_region_id) > 0) {
 			new->srk_jop_key = generate_jop_key();
 		} else {
+			/* ml_default_jop_pid() is HAS_APPLE_PAC-only; without real keys
+			 * the pager stores plain pointers, which key 0 selects. */
+#if HAS_APPLE_PAC
 			new->srk_jop_key = ml_default_jop_pid();
+#else
+			new->srk_jop_key = 0;
+#endif /* HAS_APPLE_PAC */
 		}
 
 		goto again;
@@ -296,7 +308,7 @@ done:
 		kfree_type(struct shared_region_jop_key_map, region);
 	}
 }
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 /*
  * The "shared_region_pager" describes a memory object backed by
@@ -317,9 +329,9 @@ typedef struct shared_region_pager {
 	vm_object_t             srp_backing_object; /* VM object for shared cache */
 	vm_object_offset_t      srp_backing_offset;
 	vm_shared_region_slide_info_t srp_slide_info;
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	uint64_t                srp_jop_key;        /* zero if used for arm64 */
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 } *shared_region_pager_t;
 #define SHARED_REGION_PAGER_NULL        ((shared_region_pager_t) NULL)
 
@@ -735,11 +747,11 @@ retry_src_fault:
 			    dst_vaddr + offset_in_page,
 			    (mach_vm_offset_t) (offset_in_sliding_range + slide_start_address),
 			    (uint32_t) (offset_in_sliding_range / slide_info_page_size),
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 			    pager->srp_slide_info->si_ptrauth ? pager->srp_jop_key : 0
-#else /* __has_feature(ptrauth_calls) */
+#else /* VM_SHARED_REGION_AUTH */
 			    0
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 			    );
 			if (shared_region_pager_data_request_debug) {
 				printf("shared_region_data_request"
@@ -966,7 +978,7 @@ shared_region_pager_deallocate_internal(
 		lck_mtx_unlock(&shared_region_pager_lock);
 
 		vm_shared_region_slide_info_t si = pager->srp_slide_info;
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 		/*
 		 * The slide_info for auth sections lives in the shared region.
 		 * Just deallocate() on the shared region and clear the field.
@@ -979,7 +991,7 @@ shared_region_pager_deallocate_internal(
 				si = NULL;
 			}
 		}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 		if (si != NULL) {
 			vm_object_deallocate(si->si_slide_object);
 			/* free the slide_info_entry */
@@ -1153,9 +1165,9 @@ shared_region_pager_create(
 	vm_object_t             backing_object,
 	vm_object_offset_t      backing_offset,
 	struct vm_shared_region_slide_info *slide_info,
-#if !__has_feature(ptrauth_calls)
+#if !VM_SHARED_REGION_AUTH
 	__unused
-#endif /* !__has_feature(ptrauth_calls) */
+#endif /* !VM_SHARED_REGION_AUTH */
 	uint64_t                jop_key)
 {
 	shared_region_pager_t   pager;
@@ -1187,7 +1199,7 @@ shared_region_pager_create(
 	pager->srp_backing_object = backing_object;
 	pager->srp_backing_offset = backing_offset;
 	pager->srp_slide_info = slide_info;
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	pager->srp_jop_key = jop_key;
 	/*
 	 * If we're getting slide_info from the shared_region,
@@ -1197,7 +1209,7 @@ shared_region_pager_create(
 		assert(slide_info->si_ptrauth);
 		vm_shared_region_reference(slide_info->si_shared_region);
 	}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 	vm_object_reference(backing_object);
 
@@ -1274,7 +1286,7 @@ shared_region_pager_setup(
 	return (memory_object_t) pager;
 }
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 /*
  * shared_region_pager_match()
  *
@@ -1348,9 +1360,11 @@ shared_region_pager_match_task_key(memory_object_t memobj, __unused task_t task)
 {
 	__unused shared_region_pager_t  pager = (shared_region_pager_t)memobj;
 
+#if HAS_APPLE_PAC
 	assert(pager->srp_jop_key == task->jop_pid);
+#endif /* HAS_APPLE_PAC */
 }
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 void
 shared_region_pager_trim(void)

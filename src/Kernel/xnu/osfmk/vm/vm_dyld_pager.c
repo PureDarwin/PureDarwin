@@ -747,9 +747,31 @@ fixupCachePageAuth64(
 	uint16_t firstStartOffset = segInfo->page_start[pageIndex];
 
 	/*
+	 * PD: the slot dyld4::prepare() faults on keeps its raw chain word, whose
+	 * low 48 bits are stable across boots even though the region re-slides.
+	 * Find the page by content, then report whether the walk reached it.
+	 */
+	bool pd_seen = false;
+	bool pd_here = false;
+	for (uint32_t o = 0; o < PAGE_SIZE / sizeof(uint64_t); ++o) {
+		if ((((uint64_t *)contents)[o] & 0xFFFFFFFFFFFFULL) == 0x6afc6e59fc18ULL) {
+			pd_here = true;
+			printf("PD-dyldpager: target page va=0x%llx idx=%u start=0x%x off=0x%x "
+			    "raw=0x%016llx pgsz=%u/%u pgcnt=%u image=0x%llx\n",
+			    (long long)userVA, pageIndex, firstStartOffset,
+			    (unsigned)(o * sizeof(uint64_t)), (long long)((uint64_t *)contents)[o],
+			    segInfo->page_size, (unsigned)PAGE_SIZE, segInfo->page_count,
+			    (long long)hdr->mwli_image_address);
+		}
+	}
+
+	/*
 	 * All done if no fixups on the page
 	 */
 	if (firstStartOffset == DYLD_CHAINED_PTR_START_NONE) {
+		if (pd_here) {
+			printf("PD-dyldpager: target page has START_NONE - never walked\n");
+		}
 		return KERN_SUCCESS;
 	}
 
@@ -774,6 +796,13 @@ fixupCachePageAuth64(
 		delta = (value >> 52) & 0x7FF;
 		delta *= step_multiplier;
 		bool isAuth = (value & 0x8000000000000000ULL);
+		if ((value & 0xFFFFFFFFFFFFULL) == 0x6afc6e59fc18ULL) {
+			pd_seen = true;
+			printf("PD-dyldpager:   walk reached +0x%04x raw=0x%016llx auth=%d "
+			    "div=0x%04x delta=%llu\n", (unsigned)((uintptr_t)chain - contents),
+			    (long long)value, (int)!!isAuth,
+			    (unsigned)((value >> 34) & 0xFFFF), (long long)delta);
+		}
 		if (isAuth) {
 			bool        addrDiv = ((value & (1ULL << 50)) != 0);
 			bool        keyIsData = ((value & (1ULL << 51)) != 0);
@@ -798,6 +827,11 @@ fixupCachePageAuth64(
 			return KERN_FAILURE;
 		}
 	} while (valid_chain);
+
+	if (pd_here && !pd_seen) {
+		printf("PD-dyldpager: target page walked from 0x%x but entry never "
+		    "visited - chain misses it\n", firstStartOffset);
+	}
 	return KERN_SUCCESS;
 }
 
@@ -902,6 +936,15 @@ fixup_page(
 			panic("%s(): No segment for user VA 0x%llx", __func__, (long long)userVA);
 		}
 		return KERN_FAILURE;
+	}
+
+	/* PD: did the page even get here, and with which format? */
+	for (uint32_t o = 0; o < PAGE_SIZE / sizeof(uint64_t); ++o) {
+		if ((((uint64_t *)contents)[o] & 0xFFFFFFFFFFFFULL) == 0x6afc6e59fc18ULL) {
+			printf("PD-dyldpager: fixup_page saw target va=0x%llx fmt=%d\n",
+			    (long long)userVA, hdr->mwli_pointer_format);
+			break;
+		}
 	}
 
 	/*

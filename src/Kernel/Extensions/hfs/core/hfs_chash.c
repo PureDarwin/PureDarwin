@@ -127,7 +127,11 @@ hfs_delete_chash(struct hfsmount *hfsmp)
 {
 	lck_mtx_destroy(&hfsmp->hfs_chash_mutex, chash_lck_grp);
 
-	FREE(hfsmp->hfs_cnodehashtbl, M_TEMP);
+	if (hfsmp->hfs_cnodehashtbl == NULL)
+		return;
+	/* hashinit() allocates with kalloc_type, so FREE() is the wrong heap */
+	hashdestroy(hfsmp->hfs_cnodehashtbl, M_TEMP, hfsmp->hfs_cnodehash);
+	hfsmp->hfs_cnodehashtbl = NULL;
 }
 
 

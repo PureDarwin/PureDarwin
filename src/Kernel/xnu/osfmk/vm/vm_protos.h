@@ -162,7 +162,9 @@ extern kern_return_t vm_map_apple_protected(
 
 struct vm_shared_region_slide_info;
 
-#if __has_feature(ptrauth_calls)
+/* Matches VM_SHARED_REGION_AUTH; spelled out because this header is included
+ * before that macro is defined. */
+#if __has_feature(ptrauth_calls) || defined(__arm64__)
 extern void shared_region_key_alloc(
 	char *shared_region_id,
 	bool inherit,
@@ -170,7 +172,7 @@ extern void shared_region_key_alloc(
 extern void shared_region_key_dealloc(
 	char *shared_region_id);
 extern uint64_t generate_jop_key(void);
-#endif /* __has_feature(ptrauth_calls) */
+#endif
 extern bool vm_shared_region_is_reslide(struct task *task);
 
 struct vnode;

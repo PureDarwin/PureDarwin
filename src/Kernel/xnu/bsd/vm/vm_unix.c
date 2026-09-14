@@ -1300,7 +1300,7 @@ shared_region_check_np(
 					error = ENOMEM;
 				}
 			}
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 			/*
 			 * Remap any section of the shared library that
 			 * has authenticated pointers into private memory.
@@ -1314,7 +1314,7 @@ shared_region_check_np(
 				    (uint64_t)uap->start_address));
 				error = ENOMEM;
 			}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 			/* Give the start address to the caller */
 			if (error == 0) {
 				error = copyout(&start_address,
@@ -3522,14 +3522,14 @@ SYSCTL_INT(_vm, OID_AUTO, shared_region_peak,
 extern int shared_region_pager_count;
 SYSCTL_INT(_vm, OID_AUTO, shared_region_pager_count,
     CTLFLAG_RD | CTLFLAG_LOCKED, &shared_region_pager_count, 0, "");
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 extern int shared_region_key_count;
 SYSCTL_INT(_vm, OID_AUTO, shared_region_key_count,
     CTLFLAG_RD | CTLFLAG_LOCKED, &shared_region_key_count, 0, "");
 extern int vm_shared_region_reslide_count;
 SYSCTL_INT(_vm, OID_AUTO, shared_region_reslide_count,
     CTLFLAG_RD | CTLFLAG_LOCKED, &vm_shared_region_reslide_count, 0, "");
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 #endif /* DEVELOPMENT || DEBUG */
 
 #if MACH_ASSERT

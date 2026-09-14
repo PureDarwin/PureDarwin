@@ -32,6 +32,16 @@
 #include <sys/cdefs.h>
 #include <vm/vm_protos.h>
 
+/* Kept in sync with vm_shared_region_xnu.h; the condition depends only on
+ * compiler state, so every translation unit agrees however it is reached. */
+#ifndef VM_SHARED_REGION_AUTH
+#if __has_feature(ptrauth_calls) || defined(__arm64__)
+#define VM_SHARED_REGION_AUTH 1
+#else
+#define VM_SHARED_REGION_AUTH 0
+#endif
+#endif /* VM_SHARED_REGION_AUTH */
+
 __BEGIN_DECLS
 
 #ifdef XNU_KERNEL_PRIVATE
@@ -63,7 +73,7 @@ extern uint64_t apple_protect_pager_purge_all(void);
 extern uint64_t shared_region_pager_purge_all(void);
 extern uint64_t dyld_pager_purge_all(void);
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 extern memory_object_t shared_region_pager_match(
 	vm_object_t             backing_object,
 	vm_object_offset_t      backing_offset,
@@ -71,7 +81,7 @@ extern memory_object_t shared_region_pager_match(
 	uint64_t                jop_key);
 
 extern void shared_region_pager_match_task_key(memory_object_t memobj, task_t task);
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 extern void vnode_pager_was_dirtied(
 	struct vnode *,

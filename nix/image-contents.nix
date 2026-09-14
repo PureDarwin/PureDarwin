@@ -19,6 +19,7 @@
 , exoBuild
 , expatBuild
 , fastfetchBuild
+, osTestBuild
 , fastfetchNoGLArm64Build
 , vmprobeArm64Build
 , foundationArm64Build
@@ -535,6 +536,7 @@ let
     ioreg = ioregBuild;
     xkbcommon = xkbcommonBuild;
     fastfetch = fastfetchBuild;
+    os-test = osTestBuild;
     corefoundation = coreFoundationBuild;
     onyx2d = onyx2dBuild;
     coregraphics = coregraphicsBuild;
@@ -913,6 +915,16 @@ let
         imageFileName = "puredarwin-hfs.img";
         #testAudioFile = /home/vali/development/darwin/stillalive.pcm;
       };
+      imageApfsBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystem;
+        extraPackages = imageExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderDefault;
+        apfsprogs = pkgs.apfsprogs;
+        libapfsrw = libapfsrwBuild;
+        rootFsType = "apfs";
+        imageFileName = "puredarwin-apfs.img";
+      };
       imageDebugBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystem;
         extraPackages = lib.attrValues imageExtraPackageSet;
@@ -1160,6 +1172,21 @@ let
         xnuLoader = xnuLoaderDefault;
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-minimal.img";
+        espMB = 60;
+        rootMB = 260;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
+      };
+      # The minimal system on an APFS root. Same contents as image-minimal, so
+      # a boot failure here is the APFS path rather than anything in userland.
+      imageApfsMinimalBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemMinimal;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderDefault;
+        apfsprogs = pkgs.apfsprogs;
+        libapfsrw = libapfsrwBuild;
+        rootFsType = "apfs";
+        imageFileName = "puredarwin-apfs-minimal.img";
         espMB = 60;
         rootMB = 260;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
@@ -1744,6 +1771,7 @@ let
       image-arm64-virt-wayland = imageArm64VirtWaylandBuild;
       image-arm64-virt-wayland-debug = imageArm64VirtWaylandDebugBuild;
       image-hfs = imageHfsBuild;
+      image-apfs = imageApfsBuild;
       image-debug = imageDebugBuild;
       image-stripped = imageStrippedBuild;
       onyx2d = onyx2dBuild;
@@ -1764,6 +1792,7 @@ let
       sway-nox = swayNoxBuild;
       gtk3-nox = gtk3NoxBuild;
       image-minimal = imageMinimalBuild;
+      image-apfs-minimal = imageApfsMinimalBuild;
       image-legacy = imageLegacyBuild;
       image-ia32 = imageIa32Build;
       image-ia32-minimal = imageIa32MinimalBuild;

@@ -1,0 +1,9 @@
+Vendored from https://github.com/eafer/libzbitmap (MIT), by Ernesto A.
+Fernandez <ernesto@corellium.com>, pinned at commit
+574abeae25b25c3319b9b6a9225cc7464e08ae88.
+
+Used to decode decmpfs compression type 14 (LZBITMAP). Apple publishes no
+specification for LZBITMAP and has not open-sourced it; this implementation was
+reverse-engineered by black-box testing. It is the only public one.
+
+Files are unmodified.

@@ -1,0 +1,120 @@
+diff --git a/BSDmakefile b/BSDmakefile
+index 6beb199..6955e60 100644
+--- a/BSDmakefile
++++ b/BSDmakefile
+@@ -1,5 +1,5 @@
+ SUITE_LIST != cat misc/suites.list
+-OS != uname -s
++OS != misc/os.sh
+ OUT_DIRECTORY ?= out
+ OUT_OS != echo "$(OS)" | tr '[:upper:]' '[:lower:]'
+ OUT_PATH = $(OUT_DIRECTORY)/$(OUT_OS)
+diff --git a/GNUmakefile b/GNUmakefile
+index 95b12f2..1661407 100644
+--- a/GNUmakefile
++++ b/GNUmakefile
+@@ -1,5 +1,5 @@
+ SUITE_LIST = $(shell cat misc/suites.list)
+-OS := $(shell uname -s)
++OS := $(shell misc/os.sh)
+ OUT_DIRECTORY ?= out
+ OUT_OS := $(shell echo "$(OS)" | tr '[:upper:]' '[:lower:]')
+ OUT_PATH = $(OUT_DIRECTORY)/$(OUT_OS)
+diff --git a/misc/BSDmakefile.shared b/misc/BSDmakefile.shared
+index d6dcf3a..3d1e2f6 100644
+--- a/misc/BSDmakefile.shared
++++ b/misc/BSDmakefile.shared
+@@ -1,6 +1,6 @@
+ TEST_SOURCES != find . -name '*.c' | sed 's,^\./,,' | sort
+ TESTS := $(TEST_SOURCES:.c=)
+-OS != uname -s
++OS != ../misc/os.sh
+ OUT_DIRECTORY ?= ../out
+ OUT_SUITE != basename "$$(pwd)"
+ OUT_OS != echo "$(OS)" | tr '[:upper:]' '[:lower:]'
+@@ -25,12 +25,14 @@ LDFLAGS += -lm
+ .if ${OS} != Haiku
+ .if ${OS} != Minix
+ .if ${OS} != Darwin
++.if ${OS} != PureDarwin
+ .if ${OS} != OpenBSD
+   LDFLAGS += -lrt
+ .endif
+ .endif
+ .endif
+ .endif
++.endif
+ .if ${OS} == AIX
+   EXTRA_LDFLAGS += -liconv -latomic
+ .endif
+@@ -73,6 +75,9 @@ LDFLAGS += -lm
+   USR_LOCAL_INCLUDE ?= -I/usr/local/include
+   EXTRA_LDFLAGS += -lintl
+ .endif
++.if ${OS} == PureDarwin
++  EXTRA_LDFLAGS += -liconv
++.endif
+ .if ${OS} == Redox
+   EXTRA_LDFLAGS += -lintl -liconv
+ .endif
+diff --git a/misc/GNUmakefile.shared b/misc/GNUmakefile.shared
+index 362796e..b7d8a45 100644
+--- a/misc/GNUmakefile.shared
++++ b/misc/GNUmakefile.shared
+@@ -1,6 +1,6 @@
+ TEST_SOURCES := $(shell find . -name '*.c' | sed 's,^\./,,' | sort)
+ TESTS := $(TEST_SOURCES:.c=)
+-OS := $(shell uname -s)
++OS := $(shell ../misc/os.sh)
+ OUT_DIRECTORY ?= ../out
+ OUT_OS := $(shell echo "$(OS)" | tr '[:upper:]' '[:lower:]')
+ OUT_SUITE := $(shell basename "$$(pwd)")
+@@ -21,12 +21,14 @@ endif
+ ifneq ($(OS),Haiku)
+ ifneq ($(OS),Minix)
+ ifneq ($(OS),Darwin)
++ifneq ($(OS),PureDarwin)
+ ifneq ($(OS),OpenBSD)
+   LDFLAGS += -lrt
+ endif
+ endif
+ endif
+ endif
++endif
+ ifeq ($(OS),AIX)
+   EXTRA_LDFLAGS += -liconv -latomic
+ endif
+@@ -69,6 +71,9 @@ ifeq ($(OS),OpenBSD)
+   USR_LOCAL_INCLUDE ?= -I/usr/local/include
+   EXTRA_LDFLAGS += -lintl
+ endif
++ifeq ($(OS),PureDarwin)
++  EXTRA_LDFLAGS += -liconv
++endif
+ ifeq ($(OS),Redox)
+   EXTRA_LDFLAGS += -lintl -liconv
+ endif
+diff --git a/misc/os.sh b/misc/os.sh
+new file mode 100755
+index 0000000..631365b
+--- /dev/null
++++ b/misc/os.sh
+@@ -0,0 +1,18 @@
++#!/bin/sh
++# This script prints the canonical operating system name used to select the
++# per-OS build configuration and to name the out/<os> results directory.
++# It is normally just uname(1), but some operating systems share a kernel name
++# and have to be told apart by other means.
++case `uname -s` in
++# PureDarwin is an independent reimplementation of the Darwin userland around
++# the same xnu kernel, so it also reports Darwin from uname. It differs enough
++# from macOS in what POSIX it provides that it warrants its own results.
++Darwin)
++  if [ "$(sw_vers -productName 2>/dev/null)" = PureDarwin ]; then
++    echo PureDarwin
++  else
++    echo Darwin
++  fi
++  ;;
++*) uname -s ;;
++esac

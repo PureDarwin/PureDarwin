@@ -529,10 +529,13 @@ struct task {
 #define TES_CONCLAVE_UNTAINTABLE 0x02           /* Task can not be tainted by xnu when it talks to conclave */
 #endif /* CONFIG_EXCLAVES */
 
-#if __has_feature(ptrauth_calls)
+/* Condition matches VM_SHARED_REGION_AUTH (vm_shared_region_xnu.h), spelled
+ * out because task.h can't include it. Compiler-state only, so struct task's
+ * layout stays identical across every translation unit. */
+#if __has_feature(ptrauth_calls) || defined(__arm64__)
 	bool                            shared_region_auth_remapped;    /* authenticated sections ready for use */
 	char                            *shared_region_id;              /* determines which ptr auth key to use */
-#endif /* __has_feature(ptrauth_calls) */
+#endif
 	struct vm_shared_region         *shared_region;
 
 	uint64_t rusage_cpu_interval;           /* Task-wide CPU limit interval */
@@ -1318,7 +1321,7 @@ extern void task_prep_arcade(task_t task, thread_t thread);
 
 extern int task_pid(task_t task);
 
-#if __has_feature(ptrauth_calls)
+#if __has_feature(ptrauth_calls) || defined(__arm64__) /* PD: arm64e shared cache needs a subtype-specific region */
 char *task_get_vm_shared_region_id_and_jop_pid(task_t task, uint64_t *);
 void task_set_shared_region_id(task_t task, char *id);
 #endif /* __has_feature(ptrauth_calls) */

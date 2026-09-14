@@ -2942,6 +2942,7 @@
             };
           neuswcBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/wayland/neuswc.nix {
+              pdwmSource = ./src/Userspace/pdwm/pdwm.c;
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               corefoundation = coreFoundationBuild;
@@ -3084,6 +3085,18 @@
               libffi = libffiBuild;
               waylandScanner = waylandScannerBuild;
               src = ./src/ThirdParty/wayland;
+            };
+          osTestBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/os-test.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              inherit (pkgs) gnumake;
+              src = pkgs.fetchFromGitLab {
+                owner = "sortix";
+                repo = "os-test";
+                rev = "0415c45723798a0ebc150c3990c529a2ff322513";
+                hash = "sha256-UtjN8Ym4JeI4FqEzfO2FmXIXYn8stFLAIstib+7ViLQ=";
+              };
             };
           fastfetchBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/fastfetch.nix {
@@ -3893,7 +3906,7 @@
             inherit
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
-              coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild dmenuBuild exoBuild expatBuild fastfetchBuild
+              coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild dmenuBuild exoBuild expatBuild fastfetchBuild osTestBuild
               libX11SharedBuild libxcbSharedBuild libXauSharedBuild libXdmcpSharedBuild
               libXextSharedBuild libXrenderSharedBuild libXfixesSharedBuild libXiSharedBuild
               libXcursorSharedBuild libXrandrSharedBuild nettleSharedBuild gnutlsSharedBuild glibNetworkingBuild llvmCrossBuild vulkanLoaderBuild libxshmfenceSharedBuild vulkanToolsBuild

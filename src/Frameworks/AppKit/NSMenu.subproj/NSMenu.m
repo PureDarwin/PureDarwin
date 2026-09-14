@@ -393,8 +393,12 @@ BOOL itemIsEnabled(NSMenuItem *item) {
         NSMenuItem *item=[_itemArray objectAtIndex:i];
         unsigned    itemModifiers=[item keyEquivalentModifierMask]&(NSCommandKeyMask|NSAlternateKeyMask);
         NSString *key=[item keyEquivalent];
-        
-        if((modifiers&(NSCommandKeyMask|NSAlternateKeyMask))==itemModifiers){
+
+        /* An item without a key equivalent has no shortcut to match; a bare
+           modifier event carries empty characters and would otherwise hit it.
+           Submenus still have to be searched below. */
+        if([key length]!=0 &&
+           (modifiers&(NSCommandKeyMask|NSAlternateKeyMask))==itemModifiers){
             
             if([key isEqualToString:characters]){
                 /* This *must* accurately reflect menu validation when ignoring or processing

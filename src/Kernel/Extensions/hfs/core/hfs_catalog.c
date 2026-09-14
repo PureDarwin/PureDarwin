@@ -157,7 +157,11 @@ hfs_idhash_init (struct hfsmount *hfsmp) {
 void
 hfs_idhash_destroy (struct hfsmount *hfsmp) {
 	/* during failed mounts & unmounts */
-	FREE(hfsmp->hfs_idhashtbl, M_TEMP);
+	if (hfsmp->hfs_idhashtbl == NULL)
+		return;
+	/* hashinit() allocates with kalloc_type, so FREE() is the wrong heap */
+	hashdestroy(hfsmp->hfs_idhashtbl, M_TEMP, hfsmp->hfs_idhash);
+	hfsmp->hfs_idhashtbl = NULL;
 }
 
 /*

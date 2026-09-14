@@ -86,9 +86,9 @@
  */
 #define PROCESS_SHARED_CACHE_LAYOUT 0x00
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 #include <ptrauth.h>
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 /* "dyld" uses this to figure out what the kernel supports */
 int shared_region_version = 3;
@@ -154,9 +154,9 @@ static uint32_t vm_shared_region_lastid = 0; /* for sr_id field */
  * the number of times an event has forced the recalculation of the reslide
  * shared region slide.
  */
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 int                             vm_shared_region_reslide_count = 0;
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 static void vm_shared_region_reference_locked(vm_shared_region_t shared_region);
 static vm_shared_region_t vm_shared_region_create(
@@ -398,9 +398,9 @@ vm_shared_region_lookup(
 #if __ARM_MIXED_PAGE_SIZE__
 			    shared_region->sr_page_shift == target_page_shift &&
 #endif /* __ARM_MIXED_PAGE_SIZE__ */
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 			    shared_region->sr_reslide == reslide &&
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 			    shared_region->sr_driverkit == is_driverkit &&
 			    shared_region->sr_rsr_version == rsr_version &&
 			    !shared_region->sr_stale) {
@@ -663,9 +663,9 @@ vm_shared_region_create(
 	cpu_subtype_t           cpu_subtype,
 	boolean_t               is_64bit,
 	int                     target_page_shift,
-#if !__has_feature(ptrauth_calls)
+#if !VM_SHARED_REGION_AUTH
 	__unused
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 	boolean_t               reslide,
 	boolean_t               is_driverkit,
 	uint32_t                rsr_version)
@@ -904,12 +904,12 @@ vm_shared_region_create(
 	shared_region->sr_uuid_copied = FALSE;
 	shared_region->sr_images_count = 0;
 	shared_region->sr_images = NULL;
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	shared_region->sr_reslide = reslide;
 	shared_region->sr_num_auth_section = 0;
 	shared_region->sr_next_auth_section = 0;
 	shared_region->sr_auth_section = NULL;
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 	kern_return_t kr = vm_shared_region_insert_submap(config_map, shared_region, false);
 	if (kr != KERN_SUCCESS) {
 		SHARED_REGION_TRACE_ERROR(
@@ -1010,7 +1010,7 @@ vm_shared_region_destroy(
 		thread_call_free(shared_region->sr_timer_call);
 	}
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	/*
 	 * Free the cached copies of slide_info for the AUTH regions.
 	 */
@@ -1030,7 +1030,7 @@ vm_shared_region_destroy(
 		shared_region->sr_auth_section = NULL;
 		shared_region->sr_num_auth_section = 0;
 	}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 	/* release the shared region structure... */
 	kfree_type(struct vm_shared_region, shared_region);
@@ -1226,11 +1226,12 @@ shared_region_tpro_protect(
 	return false;
 }
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 
 /*
  * Determine if this task is actually using pointer signing.
  */
+#if HAS_APPLE_PAC
 static boolean_t
 task_sign_pointers(task_t task)
 {
@@ -1241,6 +1242,30 @@ task_sign_pointers(task_t task)
 	}
 	return FALSE;
 }
+
+static uint64_t
+task_jop_key(task_t task)
+{
+	return task->jop_pid;
+}
+#else /* HAS_APPLE_PAC */
+/*
+ * No hardware keys to diversify with: jop_pid/disable_jop only exist under
+ * HAS_APPLE_PAC, and PAC itself is emulated (see osfmk/arm64/sleh.c). The
+ * pager still has to rewrite the __AUTH chain words, it just signs with key 0.
+ */
+static boolean_t
+task_sign_pointers(__unused task_t task)
+{
+	return FALSE;
+}
+
+static uint64_t
+task_jop_key(__unused task_t task)
+{
+	return 0;
+}
+#endif /* HAS_APPLE_PAC */
 
 /*
  * If the shared region contains mappings that are authenticated, then
@@ -1298,7 +1323,7 @@ vm_shared_region_auth_remap(vm_shared_region_t sr)
 		 */
 		object = si->si_slide_object;
 		sr_pager = shared_region_pager_match(object, si->si_start, si,
-		    use_ptr_auth ? task->jop_pid : 0);
+		    use_ptr_auth ? task_jop_key(task) : 0);
 		if (sr_pager == MEMORY_OBJECT_NULL) {
 			printf("%s(): shared_region_pager_match() failed\n", __func__);
 			kr = KERN_FAILURE;
@@ -1339,10 +1364,13 @@ vm_shared_region_auth_remap(vm_shared_region_t sr)
 		vmk_flags.vmf_permanent = shared_region_make_permanent(sr,
 		    tmp_entry->max_protection);
 
-		/* Preserve the TPRO flag if task has TPRO enabled */
+		/* Preserve the TPRO flag if task has TPRO enabled.
+		 * used_for_tpro only exists on __arm64e__ (vm_map_xnu.h). */
+#if defined(__arm64e__)
 		vmk_flags.vmf_tpro = (vm_map_tpro(task->map) &&
 		    tmp_entry->used_for_tpro &&
 		    task_has_tpro(task));
+#endif /* __arm64e__ */
 
 		map_addr = si->si_slid_address;
 		kr = mach_vm_map_kernel(task->map,
@@ -1391,10 +1419,12 @@ done:
 	 * Mark the region as having it's auth sections remapped.
 	 */
 	task->shared_region_auth_remapped = TRUE;
+	printf("PD-authremap: %u section(s) remapped, kr=0x%x\n",
+	    sr->sr_num_auth_section, kr);
 	vm_shared_region_release(sr);
 	return kr;
 }
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 void
 vm_shared_region_undo_mappings(
@@ -2029,11 +2059,18 @@ vm_shared_region_map_file(
 	 * the previous code just established mappings for. This is why we
 	 * do it in a separate pass.
 	 */
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	/*
 	 * need to allocate storage needed for any sr_auth_sections
 	 */
+	printf("PD-auth: sr_cpu_type=0x%x (want 0x%x) sr_cpu_subtype=0x%x "
+	    "(want 0x%x) slide_cnt=%u\n", shared_region->sr_cpu_type,
+	    CPU_TYPE_ARM64, shared_region->sr_cpu_subtype, CPU_SUBTYPE_ARM64E,
+	    mappings_to_slide_cnt);
 	for (i = 0; i < mappings_to_slide_cnt; ++i) {
+		printf("PD-auth:   slide[%u] max_prot=0x%x noauth=%d\n", i,
+		    mappings_to_slide[i]->sms_max_prot,
+		    (mappings_to_slide[i]->sms_max_prot & VM_PROT_NOAUTH) ? 1 : 0);
 		if (shared_region->sr_cpu_type == CPU_TYPE_ARM64 &&
 		    shared_region->sr_cpu_subtype == CPU_SUBTYPE_ARM64E &&
 		    !(mappings_to_slide[i]->sms_max_prot & VM_PROT_NOAUTH)) {
@@ -2045,7 +2082,7 @@ vm_shared_region_map_file(
 		    kalloc_type(vm_shared_region_slide_info_t, shared_region->sr_num_auth_section,
 		    Z_WAITOK | Z_ZERO);
 	}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 	for (i = 0; i < mappings_to_slide_cnt; ++i) {
 		kr = vm_shared_region_slide(shared_region->sr_slide,
 		    mappings_to_slide[i]->sms_file_offset,
@@ -2684,7 +2721,7 @@ vm_shared_region_slide_mapping(
 	si->si_start = start;
 	si->si_end = si->si_start + size;
 	si->si_slide = slide;
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	/*
 	 * If there is authenticated pointer data in this slid mapping,
 	 * then just add the information needed to create new pagers for
@@ -2711,7 +2748,7 @@ vm_shared_region_slide_mapping(
 	}
 	si->si_shared_region = NULL;
 	si->si_ptrauth = FALSE;
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 	/*
 	 * find the pre-existing shared region's map entry to slide
@@ -3252,9 +3289,9 @@ vm_shared_region_slide_page_v3(
 	vm_offset_t vaddr,
 	__unused mach_vm_offset_t uservaddr,
 	uint32_t pageIndex,
-#if !__has_feature(ptrauth_calls)
+#if !VM_SHARED_REGION_AUTH
 	__unused
-#endif /* !__has_feature(ptrauth_calls) */
+#endif /* !VM_SHARED_REGION_AUTH */
 	uint64_t jop_key)
 {
 	vm_shared_region_slide_info_entry_v3_t s_info = &si->si_slide_info_entry->v3;
@@ -3309,11 +3346,11 @@ vm_shared_region_slide_page_v3(
 			return KERN_FAILURE;
 		}
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 		uint16_t diversity_data = (uint16_t)(value >> 32);
 		bool hasAddressDiversity = (value & (1ULL << 48)) != 0;
 		ptrauth_key key = (ptrauth_key)((value >> 49) & 0x3);
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 		bool isAuthenticated = (value & (1ULL << 63)) != 0;
 
 		if (isAuthenticated) {
@@ -3323,14 +3360,20 @@ vm_shared_region_slide_page_v3(
 			const uint64_t value_add = s_info->value_add;
 			value += value_add;
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
+#if HAS_APPLE_PAC
 			uint64_t discriminator = diversity_data;
 			if (hasAddressDiversity) {
 				// First calculate a new discriminator using the address of where we are trying to store the value
 				uintptr_t pageOffset = rebaseLocation - page_content;
 				discriminator = __builtin_ptrauth_blend_discriminator((void*)(((uintptr_t)uservaddr) + pageOffset), discriminator);
 			}
+#endif /* HAS_APPLE_PAC */
 
+			/* pmap_sign_user_ptr() is HAS_APPLE_PAC-only. Without it jop_key
+			 * is always 0, so the plain-pointer store below is the live path -
+			 * which is what an emulated AUT (a strip) expects to read back. */
+#if HAS_APPLE_PAC
 			if (jop_key != 0 && si->si_ptrauth && !arm_user_jop_disabled()) {
 #if CONFIG_SPTM
 				pmap_batch_sign_user_ptr(rebaseLocation, (void *)value, key, discriminator, jop_key);
@@ -3342,10 +3385,12 @@ vm_shared_region_slide_page_v3(
 				value = (uintptr_t)pmap_sign_user_ptr((void *)value, key, discriminator, jop_key);
 				memcpy(rebaseLocation, &value, sizeof(value));
 #endif /* CONFIG_SPTM */
-			} else {
+			} else
+#endif /* HAS_APPLE_PAC */
+			{
 				memcpy(rebaseLocation, &value, sizeof(value));
 			}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 		} else {
 			// The new value for a rebase is the low 51-bits of the threaded value plus the slide.
 			// Regular pointer which needs to fit in 51-bits of value.
@@ -3481,9 +3526,9 @@ vm_shared_region_slide_page_v5(
 	vm_offset_t vaddr,
 	__unused mach_vm_offset_t uservaddr,
 	uint32_t pageIndex,
-#if !__has_feature(ptrauth_calls)
+#if !VM_SHARED_REGION_AUTH
 	__unused
-#endif /* !__has_feature(ptrauth_calls) */
+#endif /* !VM_SHARED_REGION_AUTH */
 	uint64_t jop_key)
 {
 	vm_shared_region_slide_info_entry_v5_t s_info = &si->si_slide_info_entry->v5;
@@ -3529,27 +3574,33 @@ vm_shared_region_slide_page_v5(
 		//               auth            :  1;   // == 1
 		// }
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 		bool        addrDiv = ((value & (1ULL << 50)) != 0);
 		bool        keyIsData = ((value & (1ULL << 51)) != 0);
 		// the key is always A, and the bit tells us if its IA or ID
 		ptrauth_key key = keyIsData ? ptrauth_key_asda : ptrauth_key_asia;
 		uint16_t    diversity = (uint16_t)((value >> 34) & 0xFFFF);
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 		uint64_t    high8 = (value << 22) & 0xFF00000000000000ULL;
 		bool        isAuthenticated = (value & (1ULL << 63)) != 0;
 
 		// The new value for a rebase is the low 34-bits of the threaded value plus the base plus slide.
 		value = (value & 0x3FFFFFFFFULL) + value_add + slide_amount;
 		if (isAuthenticated) {
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
+#if HAS_APPLE_PAC
 			uint64_t discriminator = diversity;
 			if (addrDiv) {
 				// First calculate a new discriminator using the address of where we are trying to store the value
 				uintptr_t pageOffset = rebaseLocation - page_content;
 				discriminator = __builtin_ptrauth_blend_discriminator((void*)(((uintptr_t)uservaddr) + pageOffset), discriminator);
 			}
+#endif /* HAS_APPLE_PAC */
 
+			/* pmap_sign_user_ptr() is HAS_APPLE_PAC-only. Without it jop_key
+			 * is always 0, so the plain-pointer store below is the live path -
+			 * which is what an emulated AUT (a strip) expects to read back. */
+#if HAS_APPLE_PAC
 			if (jop_key != 0 && si->si_ptrauth && !arm_user_jop_disabled()) {
 #if CONFIG_SPTM
 				pmap_batch_sign_user_ptr(rebaseLocation, (void *)value, key, discriminator, jop_key);
@@ -3561,10 +3612,12 @@ vm_shared_region_slide_page_v5(
 				value = (uintptr_t)pmap_sign_user_ptr((void *)value, key, discriminator, jop_key);
 				memcpy(rebaseLocation, &value, sizeof(value));
 #endif /* CONFIG_SPTM */
-			} else {
+			} else
+#endif /* HAS_APPLE_PAC */
+			{
 				memcpy(rebaseLocation, &value, sizeof(value));
 			}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 		} else {
 			// the value already has the correct low bits, so just add in the high8 if it exists
 			value += high8;
@@ -4024,7 +4077,7 @@ vm_shared_region_pivot(void)
 void
 vm_shared_region_reslide_stale(boolean_t driverkit)
 {
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	vm_shared_region_t      shared_region = NULL;
 
 	vm_shared_region_lock();
@@ -4040,7 +4093,7 @@ vm_shared_region_reslide_stale(boolean_t driverkit)
 	vm_shared_region_unlock();
 #else
 	(void)driverkit;
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 }
 
 /*
@@ -4050,14 +4103,14 @@ bool
 vm_shared_region_is_reslide(__unused struct task *task)
 {
 	bool is_reslide = FALSE;
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	vm_shared_region_t sr = vm_shared_region_get(task);
 
 	if (sr != NULL) {
 		is_reslide = sr->sr_reslide;
 		vm_shared_region_deallocate(sr);
 	}
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 	return is_reslide;
 }
 

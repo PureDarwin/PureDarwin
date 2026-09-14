@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
+
 #include <IOKit/IOService.h>
 
 extern "C" {

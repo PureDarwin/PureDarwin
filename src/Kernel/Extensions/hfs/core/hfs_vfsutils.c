@@ -4333,6 +4333,13 @@ bool hfs_dump_allocations(void)
 HFS_SYSCTL(QUAD, _vfs_generic_hfs, OID_AUTO, allocated,
 		   CTLFLAG_RD | CTLFLAG_LOCKED, &hfs_allocated, "Memory allocated")
 
+/*
+ * kalloc/kfree are declared for kexts but no longer exported by the kernel,
+ * so the calls below bound to a bogus stub. Route them at kalloc_data instead.
+ */
+#define kalloc(sz)		kalloc_data((sz), Z_WAITOK)
+#define kfree(p, sz)		kfree_data((p), (sz))
+
 void *hfs_malloc(size_t size)
 {
 #if HFS_MALLOC_DEBUG

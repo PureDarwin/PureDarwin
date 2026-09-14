@@ -159,7 +159,11 @@ extern boolean_t dtrace_handle_trap(int, x86_saved_state_t *);
 
 #ifdef MACH_BSD
 extern char *   proc_name_address(void *p);
-extern int      proc_pid(void *p);
+/* Must match <vm/vm_protos.h> and <sys/proc.h>, which both declare this as
+ * taking a struct proc * - a void * redeclaration conflicts wherever
+ * vm_protos.h is also in scope. */
+struct proc;
+extern int      proc_pid(struct proc *p);
 #endif /* MACH_BSD */
 
 extern boolean_t pmap_smep_enabled;

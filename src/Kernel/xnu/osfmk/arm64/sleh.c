@@ -1196,24 +1196,25 @@ handle_uncategorized(arm_saved_state_t *state)
 	COPYIN(get_saved_state_pc(state), (char *)&instr, sizeof(instr));
 
 	/*
-	 * Register-form PAC/XPAC (PACxx/AUTxx/XPACI/XPACD): this QEMU CPU
-	 * advertises FEAT_PAuth but doesn't decode these, so they trap as
-	 * undefined instead of executing. PAC only needs self-consistency, so
+	 * Register-form PAC/XPAC (PACxx/AUTxx/XPACI/XPACD). PAuth is left off
+	 * below EL2 by the loader so these trap here rather than running against
+	 * keys nothing else agrees on. PAC only needs self-consistency, so
 	 * skipping is as sound as a real implementation.
 	 */
 	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) &&
 	    (instr & 0x7FE00000) == 0x5AC00000 &&
 	    ((instr >> 16) & 0x1F) == 0x1 &&
-	    (((instr >> 10) & 0x3F) <= 0xB || ((instr >> 10) & 0x3F) == 0x10 || ((instr >> 10) & 0x3F) == 0x11)) {
+	    (((instr >> 10) & 0x3F) <= 0xF || ((instr >> 10) & 0x3F) == 0x10 || ((instr >> 10) & 0x3F) == 0x11)) {
 		uint32_t opcode = (instr >> 10) & 0x3F;
 		uint32_t rd = instr & 0x1F;
 
 		/* PACxx: Xd untouched is correct (nothing ever signed it).
-		 * AUTxx/XPACI/XPACD: strip potential garbage from the high bits
-		 * so the pointer stays dereferenceable. */
+		 * AUTxx/XPACI/XPACD: strip the PAC field so the pointer stays
+		 * dereferenceable. It is T0SZ_BOOT wide (bits 63:47 here), not 16 -
+		 * a 16-bit strip leaves bit 47 set on half of all signatures. */
 		if (((opcode & 0x4) || opcode == 0x10 || opcode == 0x11) && rd != 31) {
 			int64_t *xd = &saved_state64(state)->x[rd];
-			*xd = (*xd << 16) >> 16;
+			*xd = (int64_t)(((uint64_t)*xd << T0SZ_BOOT) >> T0SZ_BOOT);
 		}
 
 		/* set_saved_state_pc() needs CONFIG_DTRACE/XNUPOST (DEBUG-only);
@@ -1223,29 +1224,29 @@ handle_uncategorized(arm_saved_state_t *state)
 	}
 
 	/*
-	 * Combined auth+branch forms (RETAB/BRAA/BRAAZ/BLRAA/BLRAAZ - the set
-	 * /sbin/launchd actually uses). No-op isn't an option here since they
-	 * also branch - strip the target, then take the branch.
+	 * Combined auth+branch forms, both key variants. No-op isn't an option
+	 * here since they also branch - strip the target, then take the branch.
 	 */
 	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state))) {
 		uint32_t rn = 0;
 		bool did_branch = false;
 		bool is_link = false;
 
-		if (instr == 0xd65f0fff) {                       /* RETAB */
+		/* Both key variants of each form; bit 10 selects A vs B. */
+		if (instr == 0xd65f0bff || instr == 0xd65f0fff) { /* RETAA/RETAB */
 			rn = 30; /* LR - no register field, implicit */
 			did_branch = true;
-		} else if ((instr & 0xFFFFFC00) == 0xd71f0800) { /* BRAA  */
+		} else if ((instr & 0xFFFFF800) == 0xd71f0800) {  /* BRAA/BRAB   */
 			rn = (instr >> 5) & 0x1F;
 			did_branch = true;
-		} else if ((instr & 0xFFFFFC1F) == 0xd61f081f) { /* BRAAZ */
+		} else if ((instr & 0xFFFFF81F) == 0xd61f081f) {  /* BRAAZ/BRABZ */
 			rn = (instr >> 5) & 0x1F;
 			did_branch = true;
-		} else if ((instr & 0xFFFFFC00) == 0xd73f0800) { /* BLRAA */
+		} else if ((instr & 0xFFFFF800) == 0xd73f0800) {  /* BLRAA/BLRAB */
 			rn = (instr >> 5) & 0x1F;
 			did_branch = true;
 			is_link = true;
-		} else if ((instr & 0xFFFFFC1F) == 0xd63f081f) { /* BLRAAZ */
+		} else if ((instr & 0xFFFFF81F) == 0xd63f081f) {  /* BLRAAZ/BLRABZ */
 			rn = (instr >> 5) & 0x1F;
 			did_branch = true;
 			is_link = true;
@@ -1253,7 +1254,7 @@ handle_uncategorized(arm_saved_state_t *state)
 
 		if (did_branch) {
 			int64_t raw = (int64_t)get_saved_state_reg(state, rn);
-			uint64_t target = (uint64_t)((raw << 16) >> 16);
+			uint64_t target = ((uint64_t)raw << T0SZ_BOOT) >> T0SZ_BOOT;
 
 			if (is_link) {
 				saved_state64(state)->lr = get_saved_state_pc(state) + 4;
@@ -2010,6 +2011,23 @@ handle_user_abort(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_addr
 	printf("User abort pid %d pc=0x%llx far=0x%lx esr=0x%llx code=%d type=%d\n",
 	    proc_pid(current_proc()), get_saved_state_pc(state), fault_addr, esr,
 	    fault_code, fault_type);
+
+	/* PD: a PC with bits above the 47-bit VA still set means something
+	 * branched to a signed pointer. Dump state to find the call site. */
+	if ((get_saved_state_pc(state) >> (64 - T0SZ_BOOT)) != 0) {
+		arm_saved_state64_t *ss = saved_state64(state);
+		printf("PD-BADPC: pc=0x%llx lr=0x%llx sp=0x%llx fp=0x%llx\n",
+		    (unsigned long long)ss->pc, (unsigned long long)ss->lr,
+		    (unsigned long long)ss->sp, (unsigned long long)ss->fp);
+		for (int r = 0; r <= 30; r += 4) {
+			printf("PD-BADPC: x%-2d=0x%016llx x%-2d=0x%016llx "
+			    "x%-2d=0x%016llx x%-2d=0x%016llx\n",
+			    r, (unsigned long long)ss->x[r],
+			    r + 1, (r + 1 <= 30) ? (unsigned long long)ss->x[r + 1] : 0ULL,
+			    r + 2, (r + 2 <= 30) ? (unsigned long long)ss->x[r + 2] : 0ULL,
+			    r + 3, (r + 3 <= 30) ? (unsigned long long)ss->x[r + 3] : 0ULL);
+		}
+	}
 
 	if (__improbable(!SPSR_INTERRUPTS_ENABLED(get_saved_state_cpsr(state)))) {
 		panic_with_thread_kernel_state("User abort from non-interruptible context", state);

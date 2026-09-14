@@ -1095,9 +1095,20 @@ machine_thread_state_convert_from_user(
 
 	return KERN_SUCCESS;
 #else
-	// No conversion from userspace representation on this platform
-	(void)thread; (void)flavor; (void)tstate; (void)count;
-	(void)old_tstate; (void)old_count; (void)tssf_flags;
+	/* PD: same as above - strip PACs off a thread state handed in by an
+	 * arm64e userland, so the thread does not start at a signed PC. */
+	(void)thread; (void)old_tstate; (void)old_count; (void)tssf_flags;
+	if (flavor == ARM_THREAD_STATE64 && count >= ARM_THREAD_STATE64_COUNT) {
+		arm_thread_state64_t *ts64 = (arm_thread_state64_t *)(void *)tstate;
+#define PD_STRIP(v) ((uintptr_t)((((uint64_t)(v)) << T0SZ_BOOT) >> T0SZ_BOOT))
+		if (ts64->pc) {
+			ts64->pc = PD_STRIP(ts64->pc);
+		}
+		if (ts64->lr) {
+			ts64->lr = PD_STRIP(ts64->lr);
+		}
+#undef PD_STRIP
+	}
 	return KERN_SUCCESS;
 #endif /* __has_feature(ptrauth_calls) */
 }
@@ -1181,8 +1192,16 @@ machine_thread_function_pointers_convert_from_user(
 
 	return KERN_SUCCESS;
 #else
-	// No conversion from userspace representation on this platform
-	(void)thread; (void)fptrs; (void)count;
+	/* PD: an arm64e userland hands us signed pointers even though this kernel
+	 * has no PAC - strip them, matching sleh.c's emulated auth. Stripping an
+	 * already-clean pointer is a no-op, so plain arm64 userland is unaffected. */
+	(void)thread;
+	while (count--) {
+		if (*fptrs) {
+			*fptrs = (uintptr_t)(((uint64_t)*fptrs << T0SZ_BOOT) >> T0SZ_BOOT);
+		}
+		fptrs++;
+	}
 	return KERN_SUCCESS;
 #endif /* __has_feature(ptrauth_calls) */
 }

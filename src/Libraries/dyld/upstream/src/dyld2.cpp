@@ -533,6 +533,10 @@ void throwf(const char* format, ...)
 		_simple_vsprintf(buf, format, list);
 		va_end(list);
 		const char*	t = strdup(_simple_string(buf));
+		/* dyld's internal handlers only catch const char*, so anything that
+		 * escapes reaches __terminate with the message lost. Log it here,
+		 * at the throw, where we still have it. */
+		dyld::log("dyld: throwf: %s\n", t != NULL ? t : "(strdup failed)");
 		_simple_sfree(buf);
 		if ( t != NULL )
 			throw t;

@@ -9,6 +9,7 @@
 , nativeLd
 , libSystem
 , corefoundation
+, pdwmSource
 , fontconfig
 , freetype
 , iokit
@@ -66,6 +67,15 @@ endian = '${targetInfo.mesonEndian}'
 needs_exe_wrapper = true
 EOF
 
+    # Our own swc manager, built with the same libswc flags as the vendored
+    # example; grafted here to leave the vendored tree untouched.
+    mkdir -p pdwm
+    cp ${pdwmSource} pdwm/pdwm.c
+    cat > pdwm/meson.build <<'EOF'
+executable('pdwm', 'pdwm.c', dependencies: libswc)
+EOF
+    echo "subdir('pdwm')" >> meson.build
+
     meson setup build \
       --cross-file puredarwin-cross.ini \
       --prefix=$out \
@@ -92,7 +102,9 @@ EOF
   installPhase = ''
     runHook preInstall
     ninja -C build install
-    install -m755 build/example/wm $out/bin/neuswc
+    # Ship pdwm, not the vendored example, which force-tiles windows and
+    # binds Super+Q to quit the session.
+    install -m755 build/pdwm/pdwm $out/bin/neuswc
     runHook postInstall
   '';
 

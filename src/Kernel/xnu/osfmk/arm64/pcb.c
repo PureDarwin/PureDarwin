@@ -1730,10 +1730,10 @@ arm_context_switch_sync()
 	}
 }
 
-#if __has_feature(ptrauth_calls)
+/* Declared unconditionally in misc_protos.h, and the shared-region slide path
+ * now queries it on plain arm64 too (see VM_SHARED_REGION_AUTH). */
 boolean_t
 arm_user_jop_disabled(void)
 {
 	return FALSE;
 }
-#endif /* __has_feature(ptrauth_calls) */

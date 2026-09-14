@@ -1651,7 +1651,7 @@ task_create_internal(
 			vm_shared_region_set(new_task, shared_region);
 		}
 
-#if __has_feature(ptrauth_calls)
+#if __has_feature(ptrauth_calls) || defined(__arm64__) /* PD: arm64e shared cache needs a subtype-specific region */
 		/* use parent's shared_region_id */
 		char *shared_region_id = task_get_vm_shared_region_id_and_jop_pid(parent_task, NULL);
 		if (shared_region_id != NULL) {
@@ -3193,7 +3193,7 @@ task_terminate_internal(
 	/* release our shared region */
 	vm_shared_region_set(task, NULL);
 
-#if __has_feature(ptrauth_calls)
+#if __has_feature(ptrauth_calls) || defined(__arm64__) /* PD: arm64e shared cache needs a subtype-specific region */
 	task_set_shared_region_id(task, NULL);
 #endif /* __has_feature(ptrauth_calls) */
 
@@ -8091,7 +8091,7 @@ task_pid(task_t task)
 	return -1;
 }
 
-#if __has_feature(ptrauth_calls)
+#if __has_feature(ptrauth_calls) || defined(__arm64__) /* PD: arm64e shared cache needs a subtype-specific region */
 /*
  * Get the shared region id and jop signing key for the task.
  * The function will allocate a kalloc buffer and return

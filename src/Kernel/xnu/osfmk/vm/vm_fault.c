@@ -125,6 +125,10 @@
 #include <san/kasan.h>
 #include <libkern/coreanalytics/coreanalytics.h>
 
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+#include <arm/caches_internal.h>
+#endif
+
 #define VM_FAULT_CLASSIFY       0
 
 #define TRACEFAULTPAGE 0 /* (TEST/DEBUG) */
@@ -8902,6 +8906,102 @@ vm_page_validate_cs_fast(
 	return FALSE;
 }
 
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+
+/* Forced on while the runtime path is being proven: no boot-arg escape, so a
+ * failed boot cannot be blamed on the knob being off. */
+#define pd_pac_lower_enabled true
+
+uint64_t pd_pac_pages_lowered = 0;
+uint64_t pd_pac_instrs_lowered = 0;
+
+/*
+ * Rewrite ARMv8.3 PAC instructions to their PAC-free equivalents in a page of
+ * user text, so a kernel with no FEAT_PAuth never has to trap them.
+ *
+ * Only sound because nothing signs: every sign/auth becomes a no-op and the
+ * combined branch forms just lose their auth. Patching a *subset* of the system
+ * is worse than patching none of it - unpatched code would still sign pointers
+ * that patched code no longer strips - so this must run on every executable
+ * page. LDRAA/LDRAB are deliberately left alone (they load as well as auth);
+ * sleh.c still emulates whatever is not lowered here.
+ */
+/*
+ * HINT-space PAC ops: pac/aut ia/ib 1716, xpaclri, and the za/zb/sp forms.
+ * These are NOT no-ops on a CPU that implements FEAT_PAuth - pacibsp really
+ * signs LR - so they must be lowered too, or a plain RET returns to a signed
+ * address. Listed explicitly; the encodings are not a clean range.
+ */
+static bool
+pd_pac_is_hint(uint32_t w)
+{
+	switch (w) {
+	case 0xD503211FU:                                   /* pacia1716 */
+	case 0xD503215FU:                                   /* pacib1716 */
+	case 0xD503219FU:                                   /* autia1716 */
+	case 0xD50321DFU:                                   /* autib1716 */
+	case 0xD50320FFU:                                   /* xpaclri   */
+	case 0xD503231FU:                                   /* paciaz    */
+	case 0xD503233FU:                                   /* paciasp   */
+	case 0xD503235FU:                                   /* pacibz    */
+	case 0xD503237FU:                                   /* pacibsp   */
+	case 0xD503239FU:                                   /* autiaz    */
+	case 0xD50323BFU:                                   /* autiasp   */
+	case 0xD50323DFU:                                   /* autibz    */
+	case 0xD50323FFU:                                   /* autibsp   */
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void
+pd_pac_lower_page(uint32_t *words, size_t nwords)
+{
+	const uint32_t NOP = 0xD503201FU;
+	const uint32_t RET = 0xD65F03C0U;
+	size_t n = 0;
+
+	for (size_t i = 0; i < nwords; i++) {
+		uint32_t w = words[i];
+		uint32_t rep = 0;
+
+		if ((w & 0xFFFF0000U) == 0xDAC10000U && ((w >> 10) & 0x3F) <= 0x11) {
+			rep = NOP;                                  /* PACxx/AUTxx/XPACx */
+		} else if (w == 0xD65F0BFFU || w == 0xD65F0FFFU) {
+			rep = RET;                                  /* RETAA / RETAB */
+		} else if ((w & 0xFFFFF800U) == 0xD71F0800U ||
+		    (w & 0xFFFFF81FU) == 0xD61F081FU) {
+			rep = 0xD61F0000U | (w & 0x3E0U);           /* BRAx -> BR Xn */
+		} else if ((w & 0xFFFFF800U) == 0xD73F0800U ||
+		    (w & 0xFFFFF81FU) == 0xD63F081FU) {
+			rep = 0xD63F0000U | (w & 0x3E0U);           /* BLRAx -> BLR Xn */
+		} else if (pd_pac_is_hint(w)) {
+			rep = NOP;                                  /* HINT-space PAC */
+		} else {
+			continue;
+		}
+
+		words[i] = rep;
+		n++;
+	}
+
+	if (n != 0) {
+		/*
+		 * The page is still busy, but it has to be coherent before any CPU
+		 * fetches from it: push the writes out of D-cache, then drop stale
+		 * I-cache lines.
+		 */
+		CleanPoU_DcacheRegion((vm_offset_t)words, (unsigned)(nwords * 4));
+		InvalidatePoU_IcacheRegion((vm_offset_t)words, (unsigned)(nwords * 4));
+
+		pd_pac_pages_lowered++;
+		pd_pac_instrs_lowered += n;
+	}
+}
+
+#endif /* __arm64__ && !ptrauth_calls */
+
 void
 vm_page_validate_cs_mapped_slow(
 	vm_page_t       page,
@@ -8949,6 +9049,18 @@ vm_page_validate_cs_mapped_slow(
 	page->vmp_cs_validated |= validated;
 	page->vmp_cs_tainted |= tainted;
 	page->vmp_cs_nx |= nx;
+
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+	/*
+	 * Lower any PAC instructions now that the page has been hashed: the
+	 * signature is still checked against the original bytes, and the page is
+	 * busy so nothing can execute it yet. Executable pages only - nx says
+	 * this one is not data.
+	 */
+	if (nx == 0 && pd_pac_lower_enabled) {
+		pd_pac_lower_page(__DECONST(uint32_t *, kaddr), PAGE_SIZE / 4);
+	}
+#endif /* __arm64__ && !ptrauth_calls */
 
 #if CHECK_CS_VALIDATION_BITMAP
 	if (page->vmp_cs_validated == VMP_CS_ALL_TRUE &&
@@ -9010,7 +9122,12 @@ vm_page_map_and_validate_cs(
 	kr = vm_paging_map_object(page,
 	    object,
 	    offset,
+#if defined(__arm64__) && !__has_feature(ptrauth_calls)
+	    /* writable: pd_pac_lower_page() rewrites PAC instructions in place */
+	    VM_PROT_READ | VM_PROT_WRITE,
+#else
 	    VM_PROT_READ,
+#endif
 	    FALSE,                       /* can't unlock object ! */
 	    &ksize,
 	    &koffset,

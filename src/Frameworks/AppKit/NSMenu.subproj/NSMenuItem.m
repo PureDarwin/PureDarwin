@@ -68,7 +68,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
    _target=nil;
    _action=action;
    _keyEquivalent=[keyEquivalent copy];
-   _keyEquivalentModifierMask=0;
+   /* Cocoa defaults this to Command; leaving it clear means performKeyEquivalent:
+      compares 0 against the event's NSCommandKeyMask and never matches. */
+   _keyEquivalentModifierMask=NSCommandKeyMask;
    _mnemonic=@"";
    _mnemonicLocation=0;
    _submenu=nil;

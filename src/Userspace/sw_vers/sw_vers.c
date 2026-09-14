@@ -98,6 +98,12 @@ main(int argc, char **argv)
     }
 
     if (argc == 2) {
+        /* macOS accepts both the historic -opt and the GNU-style --opt form. */
+        const char *opt = argv[1];
+        if (opt[0] == '-' && opt[1] == '-' && opt[2] != '\0')
+            opt++;
+        argv[1] = (char *)opt;
+
         if (strcmp(argv[1], "-productName") == 0) {
             printf("%s\n", version_field("ProductName", PRODUCT_NAME));
             return 0;

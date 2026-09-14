@@ -55,6 +55,7 @@ add_subdirectory(HFSEncodings)
 add_subdirectory(hfs)
 add_subdirectory(AppleFileSystemDriver)
 add_subdirectory(Ext4FileSystemDriver)
+add_subdirectory(ApfsFileSystemDriver)
 add_subdirectory(PDBcm2835SD)
 
 add_custom_target(kexts)
@@ -71,7 +72,7 @@ add_dependencies(kexts
     IOHIDFamily.kext IONetworkingFamily.kext PDE1000.kext PDRealtek8111.kext
     IOAudioFamily.kext RavynHDAudio.kext
     corecrypto.kext ext4.kext msdosfs.kext apfs.kext HFSEncodings.kext hfs.kext
-    AppleFileSystemDriver.kext Ext4FileSystemDriver.kext
+    AppleFileSystemDriver.kext Ext4FileSystemDriver.kext ApfsFileSystemDriver.kext
 )
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     add_dependencies(kexts PDArmPlatformExpert)

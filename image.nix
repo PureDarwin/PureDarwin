@@ -12,6 +12,7 @@
 , e2fsprogs
 , fakeroot
 , apfsprogs
+, libapfsrw ? null
 , iana-etc
 , glib
 , hfsprogs ? null
@@ -49,8 +50,9 @@
 assert lib.isDerivation baseSystem;
 assert lib.all lib.isDerivation extraPackages;
 assert legacyBoot == null || lib.isDerivation legacyBoot;
-assert rootFsType == "ext4" || rootFsType == "hfs";
+assert rootFsType == "ext4" || rootFsType == "hfs" || rootFsType == "apfs";
 assert rootFsType == "hfs" -> (hfsprogs != null && libdmg-hfsplus != null);
+assert rootFsType == "apfs" -> (apfsprogs != null && libapfsrw != null);
 
 stdenv.mkDerivation {
   pname = "puredarwin-image";
@@ -59,7 +61,8 @@ stdenv.mkDerivation {
   dontUnpack = true;
 
   nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs fakeroot ]
-    ++ lib.optionals (rootFsType == "hfs") [ hfsprogs libdmg-hfsplus ];
+    ++ lib.optionals (rootFsType == "hfs") [ hfsprogs libdmg-hfsplus ]
+    ++ lib.optionals (rootFsType == "apfs") [ apfsprogs libapfsrw ];
 
   buildPhase = ''
     runHook preBuild
@@ -77,7 +80,17 @@ stdenv.mkDerivation {
     img=puredarwin.img
     esp_sectors=$((${toString espMB} * 2048))
     root_sectors=$((${toString rootMB} * 2048))
-${if rootFsType == "hfs" then ''
+${if rootFsType == "apfs" then ''
+    img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
+    truncate -s $((img_sectors * 512)) $img
+    sgdisk \
+      -n 1:2048:+${toString espMB}M -t 1:EF00       -c 1:"EFI System Partition" \
+      -n 2:0:+${toString rootMB}M   -t 2:$APFS_GUID -c 2:"Darwin APFS Root" \
+      $img >/dev/null
+
+    read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$APFS_GUID \
+      | sed -E 's/.*start= *([0-9]+), *size= *([0-9]+),.*/\1 \2/')"
+'' else if rootFsType == "hfs" then ''
     img_sectors=$((2048 + esp_sectors + root_sectors + 2048))
     truncate -s $((img_sectors * 512)) $img
     sgdisk \
@@ -785,6 +798,18 @@ ${lib.optionalString (rootFsType == "hfs") ''
     hfsplus root.img ls /usr/lib | grep -q libSystem.B.dylib
     hfsplus root.img ls /bin | grep -q zsh
 
+    dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc,sparse status=none
+''}
+${lib.optionalString (rootFsType == "apfs") ''
+    # mkapfs makes an empty container; libapfsrw fills it. No root or mount
+    # needed, so this works in the sandbox; fakeroot preserves uid/gid.
+    truncate -s $((root_size * 512)) root.img
+    mkapfs -L PDROOT root.img
+    fakeroot bash <<FAKESCRIPT
+    chown -R 0:0 "$staging"
+    apfsrw populate root.img "$staging"
+FAKESCRIPT
+    apfsrw ls root.img >/dev/null
     dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc,sparse status=none
 ''}
 ${lib.optionalString (rootFsType == "ext4") ''

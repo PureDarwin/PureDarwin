@@ -32,6 +32,21 @@
 #include <sys/cdefs.h>
 #include <vm/vm_shared_region.h>
 
+/*
+ * An arm64e shared cache keeps raw chained-fixup words in its __AUTH sections
+ * until the slide pager rewrites them, whether or not the kernel itself was
+ * built arm64e. Gating that on __has_feature(ptrauth_calls) leaves the words
+ * unfixed and the first auth pointer dyld dereferences is garbage.
+ * Defined here so every translation unit agrees on the struct layouts below.
+ */
+#ifndef VM_SHARED_REGION_AUTH
+#if __has_feature(ptrauth_calls) || defined(__arm64__)
+#define VM_SHARED_REGION_AUTH 1
+#else
+#define VM_SHARED_REGION_AUTH 0
+#endif
+#endif /* VM_SHARED_REGION_AUTH */
+
 __BEGIN_DECLS
 
 #ifdef MACH_KERNEL_PRIVATE
@@ -164,11 +179,11 @@ union vm_shared_region_slide_info_entry {
 typedef struct vm_shared_region_slide_info {
 	uint32_t                si_slide;           /* the distance that the file data is relocated */
 	bool                    si_slid;
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	bool                    si_ptrauth;
 	uint64_t                si_jop_key;
 	struct vm_shared_region *si_shared_region; /* so we can ref/dealloc for authenticated slide info */
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 	mach_vm_address_t       si_slid_address __kernel_data_semantics;
 	mach_vm_offset_t        si_start __kernel_data_semantics; /* start offset in si_slide_object */
 	mach_vm_offset_t        si_end __kernel_data_semantics;
@@ -208,12 +223,12 @@ struct vm_shared_region {
 	bool                    sr_stale;              /* This region should never be used again. */
 	bool                    sr_driverkit;
 
-#if __has_feature(ptrauth_calls)
+#if VM_SHARED_REGION_AUTH
 	bool                    sr_reslide;            /* Special shared region for suspected attacked processes */
 	uint_t                  sr_num_auth_section;  /* num entries in sr_auth_section */
 	uint_t                  sr_next_auth_section; /* used while filling in sr_auth_section */
 	vm_shared_region_slide_info_t *sr_auth_section;
-#endif /* __has_feature(ptrauth_calls) */
+#endif /* VM_SHARED_REGION_AUTH */
 
 	uint32_t                sr_rsr_version;
 

@@ -1,0 +1,10 @@
+Vendored from https://github.com/lzfse/lzfse (Apple Inc., BSD-3-Clause).
+Only the LZVN decoder is used, to decode decmpfs compression types 8 and 9.
+
+Files are unmodified. The upstream source is also packaged in nixpkgs as
+`lzfse`, but that package installs only lzfse.h and exports no lzvn_* symbols,
+and lzfse_decode_buffer() cannot take a bare LZVN stream - decmpfs chunks have
+no LZFSE block header - so the decoder is compiled from source here.
+
+lzfse_internal.h declares lzvn_decode_buffer() but upstream never defines it;
+libapfsrw drives the state-based lzvn_decode() instead (see apfsrw_lzvn.c).

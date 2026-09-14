@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
+
 #ifndef _PUREDARWIN_APFS_H_
 #define _PUREDARWIN_APFS_H_
 
@@ -6,6 +8,7 @@
 #endif
 
 #include <sys/mount.h>
+#include <sys/queue.h>
 #include <sys/vnode.h>
 #include <stdint.h>
 
@@ -42,8 +45,31 @@
 #define APFS_OBJ_TYPE_SHIFT 60
 #define APFS_TYPE_INODE 3
 #define APFS_TYPE_FILE_EXTENT 8
+#define APFS_TYPE_XATTR 4
 #define APFS_TYPE_DIR_REC 9
+
+/* spec p.94-95 "Extended-Attribute Flags" */
+#define APFS_XATTR_DATA_STREAM 0x0001U
+#define APFS_XATTR_DATA_EMBEDDED 0x0002U
+#define APFS_XATTR_FILE_SYSTEM_OWNED 0x0004U
+/* spec p.83 "Extended Attributes": symlink targets live in this xattr. */
+#define APFS_XATTR_SYMLINK_NAME "com.apple.fs.symlink"
+/* spec p.132 "B-Tree Flags" */
+#define APFS_BTREE_PHYSICAL 0x00000010U
+#define APFS_BTREE_MAX_DEPTH 16U
 #define APFS_DREC_LEN_MASK 0x000003ffU
+#define APFS_DREC_HASH_SHIFT 10U
+#define APFS_DREC_HASH_MASK 0xfffffc00U
+/* spec p.96 APFS_INCOMPAT_CASE_INSENSITIVE */
+#define APFS_INCOMPAT_CASE_INSENSITIVE 0x00000001ULL
+/* spec p.111 "Extended-Field Types" */
+#define APFS_INO_EXT_TYPE_NAME 4U
+#define APFS_INO_EXT_TYPE_DSTREAM 8U
+/* j_inode_flags: INODE_NO_RSRC_FORK */
+#define APFS_INODE_NO_RSRC_FORK 0x8000ULL
+/* j_obj_types / j_obj_kinds */
+#define APFS_TYPE_EXTENT 2U
+#define APFS_KIND_NEW 1U
 
 #define APFSLOG(fmt, args...) \
 	do { printf("apfs: " fmt "\n", ## args); } while (0)
@@ -342,8 +368,27 @@ struct apfs_inode_info {
 	uint64_t parent_id;
 };
 
+struct apfsrw;
+struct apfs_node;
+
+#define APFS_NODE_HASH_SIZE 256
+#define APFS_NODE_HASH(id) ((uint32_t)((id) & (APFS_NODE_HASH_SIZE - 1)))
+
 struct apfs_mount {
 	struct mount *mp;
+	/* Shared write path (projects/libapfsrw), bound to devvp at mount. */
+	struct apfsrw *rw;
+	/*
+	 * One in-core vnode per file id. Minting a fresh vnode per lookup breaks
+	 * anything that hangs state off the vnode - notably AF_UNIX sockets,
+	 * where unp_bind() stores the listener in vp->v_socket and unp_connect()
+	 * reads it back off the vnode it gets from the path lookup.
+	 */
+	void *am_hash_lock;		/* IOLock* */
+	int am_probe_logged;		/* container dumped to the log once */
+	void *am_rw_lock;		/* IOLock*: serialises every apfsrw
+					 * mutation + the reload after it */
+	LIST_HEAD(apfs_node_bucket, apfs_node) am_node_hash[APFS_NODE_HASH_SIZE];
 	vnode_t devvp;
 	vnode_t root_vp;
 	dev_t dev;
@@ -369,6 +414,9 @@ struct apfs_mount {
 };
 
 struct apfs_node {
+	LIST_ENTRY(apfs_node) a_hash;	/* am_node_hash linkage */
+	int a_alloc_wip;		/* vnode_create() in progress */
+	int a_unhashed;
 	struct apfs_mount *amp;
 	vnode_t vp;
 	uint64_t fileid;
@@ -394,9 +442,8 @@ int apfs_lookup_dirent(struct apfs_mount *amp, uint64_t dirid,
 int apfs_iterate_dir(struct apfs_mount *amp, uint64_t dirid,
     off_t start_index, struct uio *uio, int *numdirent, int *eofflag);
 int apfs_read_file(struct apfs_node *node, struct uio *uio);
-int apfs_write_file(struct apfs_node *node, struct uio *uio);
-int apfs_set_file_size(struct apfs_node *node, uint64_t size);
-int apfs_create_file(struct apfs_node *dir, const char *name, size_t namelen,
-    mode_t mode, uid_t uid, gid_t gid, uint64_t *fileid);
+int apfs_lookup_xattr(struct apfs_mount *amp, uint64_t fileid, const char *name,
+    void *buf, size_t bufsize, size_t *outlen);
+int apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx);
 
 #endif /* _PUREDARWIN_APFS_H_ */
