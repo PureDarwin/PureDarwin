@@ -187,7 +187,9 @@ ${lib.optionalString (legacyBoot != null) ''
       dev \
       etc \
       etc/fonts \
-      tmp \
+      private/tmp \
+      private/var/tmp \
+      private/tmp/.X11-unix \
       var \
       var/cache \
       var/cache/fontconfig \
@@ -199,11 +201,22 @@ ${lib.optionalString (legacyBoot != null) ''
       var/db/dhcpclient \
       var/db/dhcpclient/leases \
       var/log \
-      var/tmp \
-      var/empty \
-      tmp/.X11-unix
+      var/empty
     do
       mkdir -p "$staging/$dir"
+    done
+
+    # macOS layout: the real temporary directories live under /private, with
+    # /tmp and /var/tmp as symlinks. Nix's sandbox allows /private/tmp, and the
+    # kernel resolves paths through the symlink before checking them.
+    for tmpdir in tmp:private/tmp var/tmp:../private/var/tmp; do
+      link="$staging/''${tmpdir%%:*}"
+      target="''${tmpdir#*:}"
+      if [ -d "$link" ] && [ ! -L "$link" ]; then
+        cp -a "$link"/. "$(dirname "$link")/$target"/
+        rm -rf "$link"
+      fi
+      ln -sfn "$target" "$link"
     done
 
     for dylib in "$staging"/lib/*.dylib; do
@@ -296,6 +309,19 @@ nogroup:*:-1:
 nobody:*:-2:
 staff:*:20:root
 EOF
+
+    # Nix's build users: macOS numbering (nixbld gid 350, _nixbldN uid 350+N).
+    # Nix finds them through the group's member list, so every user is named there.
+    if [ -e "$staging/usr/bin/nix-daemon" ]; then
+      members=""
+      for n in $(seq 1 32); do
+        uid=$((350 + n))
+        echo "_nixbld$n:*:$uid:350:Nix build user $n:/var/empty:/usr/bin/false" >> $staging/etc/passwd
+        echo "_nixbld$n:*:$uid:350::0:0:Nix build user $n:/var/empty:/usr/bin/false" >> $staging/etc/master.passwd
+        members="$members''${members:+,}_nixbld$n"
+      done
+      echo "nixbld:*:350:$members" >> $staging/etc/group
+    fi
     cp ${iana-etc}/etc/services $staging/etc/services
     cp ${iana-etc}/etc/protocols $staging/etc/protocols
     cat > $staging/etc/hosts <<'EOF'
@@ -669,9 +695,9 @@ EOF
     ln -sf ../../bin/clang "$staging/usr/bin/cc"
 
     chmod 1777 \
-      "$staging/tmp" \
-      "$staging/var/tmp" \
-      "$staging/tmp/.X11-unix"
+      "$staging/private/tmp" \
+      "$staging/private/var/tmp" \
+      "$staging/private/tmp/.X11-unix"
 
     # dbus-daemon --system runs as the messagebus user (see system.conf's
     # <user>) after opening its listening socket, and needs to write its

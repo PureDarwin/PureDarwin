@@ -99,3 +99,7 @@ add_dependencies(kexts pthread.kext)
 # xnu 12377 requires a real AMFI kext to provide, with allow-all semantics.
 add_subdirectory(amfi)
 add_dependencies(kexts amfi.kext)
+
+# MACF policy behind sandbox_init(3); loaded at boot as a security extension.
+add_subdirectory(Sandbox)
+add_dependencies(kexts Sandbox.kext)

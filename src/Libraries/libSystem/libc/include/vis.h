@@ -20,7 +20,7 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-/*	$NetBSD: vis.h,v 1.21 2013/02/20 17:01:15 christos Exp $	*/
+/*	$NetBSD: vis.h,v 1.25 2017/04/23 01:57:36 christos Exp $	*/
 /*	$FreeBSD$	*/
 
 /*-
@@ -57,6 +57,7 @@
 #ifndef _VIS_H_
 #define	_VIS_H_
 
+#include <Availability.h>
 #include <_types.h>
 #include <sys/_types/_size_t.h>
 
@@ -75,6 +76,7 @@
 #define	VIS_NL		0x0010	/* also encode newline */
 #define	VIS_WHITE	(VIS_SP | VIS_TAB | VIS_NL)
 #define	VIS_SAFE	0x0020	/* only encode "unsafe" characters */
+#define	VIS_DQ		0x8000	/* also encode double quotes */
 
 /*
  * other
@@ -87,6 +89,9 @@
 #define	VIS_HTTP1866	0x0400	/* http-style &#num; or &string; */
 #define	VIS_NOESCAPE	0x0800	/* don't decode `\' */
 #define	_VIS_END	0x1000	/* for unvis */
+#define	VIS_SHELL	0x2000	/* encode shell special characters [not glob] */
+#define	VIS_META	(VIS_WHITE | VIS_GLOB | VIS_SHELL)
+#define	VIS_NOLOCALE	0x4000	/* encode using the C locale */
 
 /*
  * unvis return codes
@@ -105,30 +110,40 @@
 #include <sys/cdefs.h>
 
 __BEGIN_DECLS
+
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of vis(3), it is highly recommended you use nvis(3) instead.", macos(10.0,14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 char	*vis(char *, int, int, int);
 char	*nvis(char *, size_t, int, int, int);
 
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of svis(3), it is highly recommended you use snvis(3) instead.", macos(10.0, 14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 char	*svis(char *, int, int, int, const char *);
 char	*snvis(char *, size_t, int, int, int, const char *);
 
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of strvis(3), it is highly recommended you use strnvis(3) instead.", macos(10.0, 14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 int	strvis(char *, const char *, int);
+int	stravis(char **, const char *, int);
 int	strnvis(char *, size_t, const char *, int);
 
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of strsvis(3), it is highly recommended you use strsnvis(3) instead.", macos(10.0, 14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 int	strsvis(char *, const char *, int, const char *);
 int	strsnvis(char *, size_t, const char *, int, const char *);
 
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of strvisx(3), it is highly recommended you use strnvisx(3) instead.", macos(10.0, 14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 int	strvisx(char *, const char *, size_t, int);
 int	strnvisx(char *, size_t, const char *, size_t, int);
 int 	strenvisx(char *, size_t, const char *, size_t, int, int *);
 
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of strsvisx(3), it is highly recommended you use strsnvisx(3) instead.", macos(10.0, 14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 int	strsvisx(char *, const char *, size_t, int, const char *);
 int	strsnvisx(char *, size_t, const char *, size_t, int, const char *);
 int	strsenvisx(char *, size_t, const char *, size_t , int, const char *,
     int *);
 
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of strunvis(3), it is highly recommended you use strnunvis(3) instead.", macos(10.0, 14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 int	strunvis(char *, const char *);
 int	strnunvis(char *, size_t, const char *);
 
+__API_DEPRECATED("This function is provided for compatibility reasons only. Due to security concerns inherent in the design of strunvisx(3), it is highly recommended you use strnunvisx(3) instead.", macos(10.0, 14.4), ios(2.0,17.4), watchos(1.0,10.4), tvos(9.0,17.4))
 int	strunvisx(char *, const char *, int);
 int	strnunvisx(char *, size_t, const char *, int);
 

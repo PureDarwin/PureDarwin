@@ -77,11 +77,13 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     #   i386_set_ldt   - x86 LDT syscall, no ARM equivalent
     #   nexttoward,
     #   scalbnl,
-    #   *roundl        - openlibm builds these from its ld80/ tree, which is
+    #   *roundl,
+    #   floorl, frexpl - openlibm builds these from its ld80/ tree, which is
     #                    80-bit x87 long double; on arm64 long double is double
     #   fe*except      - openlibm's fenv is the x86 SSE/x87 implementation
+    #   *context       - libplatform builds ucontext for x86_64 only so far
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
-        "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|roundl|lroundl|llroundl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|getfsstat|i386_set_ldt)$")
+        "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|roundl|lroundl|llroundl|floorl|frexpl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|getfsstat|i386_set_ldt|getcontext|setcontext|makecontext|swapcontext)$")
     if(PUREDARWIN_ARM32)
         # The ARMv6 bootstrap runtime does not provide the x86-only long
         # double/fenv entry points, 64-bit integer builtins, generic DWARF
@@ -125,7 +127,8 @@ add_dependencies(libSystem_B_stub
     libdispatch_static openlibm_static XPC_notify_client_static XPC_notifyd_mig_static
     mDNSResponder_dnssd_static XPC_libinfo_static syslog_asl_static
     libsystem_trace_static libdarwin_static libSystemConfiguration_static
-    XPC_libxpc_static XPC_libxpc_objc_static XPC_libnv_static XPC_launchd_mig_static)
+    XPC_libxpc_static XPC_libxpc_objc_static XPC_libnv_static XPC_launchd_mig_static
+    libsandbox_static)
 target_link_options(libSystem_B_stub PRIVATE
     # Without this only the archive members something already references get
     # pulled in, so most of libm (cosh, sinh, the erf/gamma family, ...) never
@@ -150,6 +153,8 @@ target_link_options(libSystem_B_stub PRIVATE
     # client (dns_configuration_copy) that libresolv and mDNSResponder use to
     # pick up configd's DNS configuration.
     -Wl,-force_load,$<TARGET_FILE:libSystemConfiguration_static>
+    # libsystem_sandbox is part of libSystem on Darwin: sandbox_init(3).
+    -Wl,-force_load,$<TARGET_FILE:libsandbox_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libnv_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libxpc_static>
     -Wl,-force_load,$<TARGET_FILE:XPC_libxpc_objc_static>

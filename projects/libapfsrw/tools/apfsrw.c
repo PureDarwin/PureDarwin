@@ -74,9 +74,16 @@ static int populate_dir(struct apfsrw *fs, const char *srcdir,
         if (lstat(src, &st) != 0)
             continue;
 
+        /* Names needing Unicode normalisation or folding are not hashed
+         * yet; skipping them keeps the volume consistent. */
         if (S_ISDIR(st.st_mode)) {
             err = apfsrw_mkdir(fs, dst, (uint16_t)(st.st_mode & 07777),
                 (uint32_t)st.st_uid, (uint32_t)st.st_gid);
+            if (err == APFSRW_ENOTSUP) {
+                fprintf(stderr, "apfsrw: skipping %s (name)\n", dst);
+                err = APFSRW_OK;
+                continue;
+            }
             if (err != APFSRW_OK)
                 break;
             (*ndirs)++;
@@ -92,6 +99,11 @@ static int populate_dir(struct apfsrw *fs, const char *srcdir,
             target[n] = '\0';
             err = apfsrw_symlink(fs, dst, target, (uint32_t)st.st_uid,
                 (uint32_t)st.st_gid);
+            if (err == APFSRW_ENOTSUP) {
+                fprintf(stderr, "apfsrw: skipping %s (name)\n", dst);
+                err = APFSRW_OK;
+                continue;
+            }
             if (err != APFSRW_OK)
                 break;
             (*nlinks)++;
@@ -121,6 +133,11 @@ static int populate_dir(struct apfsrw *fs, const char *srcdir,
                 (uint16_t)(st.st_mode & 07777), (uint32_t)st.st_uid,
                 (uint32_t)st.st_gid);
             free(buf);
+            if (err == APFSRW_ENOTSUP) {
+                fprintf(stderr, "apfsrw: skipping %s (name)\n", dst);
+                err = APFSRW_OK;
+                continue;
+            }
             if (err != APFSRW_OK) {
                 fprintf(stderr, "apfsrw: create %s: %s\n", dst,
                     apfsrw_strerror(err));
@@ -146,6 +163,20 @@ static int populate_dir(struct apfsrw *fs, const char *srcdir,
     }
     closedir(d);
     return err;
+}
+
+/* "<image>.savepoint" next to the image ("file@@offset" loses the suffix). */
+static char *savepoint_path(const char *image)
+{
+    const char *at = strstr(image, "@@");
+    size_t n = at ? (size_t)(at - image) : strlen(image);
+    char *p = malloc(n + sizeof(".savepoint"));
+
+    if (p == NULL)
+        return NULL;
+    memcpy(p, image, n);
+    strcpy(p + n, ".savepoint");
+    return p;
 }
 
 static int open_image_rw(const char *path, struct apfsrw **fs)
@@ -179,6 +210,7 @@ int main(int argc, char **argv)
 
     if (strcmp(argv[1], "populate") == 0) {
         unsigned long nd = 0, nf = 0, nl = 0;
+        char *spfile;
 
         if (argc != 4) {
             usage(argv[0]);
@@ -186,7 +218,18 @@ int main(int argc, char **argv)
         }
         if (open_image_rw(argv[2], &fs) != APFSRW_OK)
             return 1;
-        err = apfsrw_batch_begin(fs);
+        /* Savepoint first: a populate that dies halfway is rolled back to
+         * exactly this state, here or later with `rollback`. */
+        spfile = savepoint_path(argv[2]);
+        err = spfile ? apfsrw_savepoint(fs, spfile) : APFSRW_ENOMEM;
+        if (err != APFSRW_OK) {
+            fprintf(stderr, "apfsrw: savepoint: %s\n", apfsrw_strerror(err));
+            apfsrw_close(fs);
+            return 1;
+        }
+        err = apfsrw_fixup_mkapfs(fs);
+        if (err == APFSRW_OK)
+            err = apfsrw_batch_begin(fs);
         if (err == APFSRW_OK) {
             err = populate_dir(fs, argv[3], "/", &nd, &nf, &nl);
             if (err == APFSRW_OK)
@@ -196,8 +239,41 @@ int main(int argc, char **argv)
         }
         fprintf(stderr, "apfsrw: %lu dirs, %lu files, %lu symlinks\n",
             nd, nf, nl);
-        if (err != APFSRW_OK)
-            fprintf(stderr, "apfsrw: %s\n", apfsrw_strerror(err));
+        if (err != APFSRW_OK) {
+            int rerr;
+
+            fprintf(stderr, "apfsrw: %s; rolling back\n",
+                apfsrw_strerror(err));
+            rerr = apfsrw_rollback(fs, spfile);
+            fprintf(stderr, "apfsrw: rollback: %s\n",
+                rerr == APFSRW_OK ? "ok" : apfsrw_strerror(rerr));
+            if (rerr == APFSRW_OK)
+                unlink(spfile);
+        } else {
+            apfsrw_savepoint_release(fs);
+            unlink(spfile);
+        }
+        free(spfile);
+        apfsrw_close(fs);
+        return err == APFSRW_OK ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "rollback") == 0) {
+        char *spfile;
+
+        if (argc != 3 && argc != 4) {
+            usage(argv[0]);
+            return 2;
+        }
+        if (open_image_rw(argv[2], &fs) != APFSRW_OK)
+            return 1;
+        spfile = argc == 4 ? strdup(argv[3]) : savepoint_path(argv[2]);
+        err = spfile ? apfsrw_rollback(fs, spfile) : APFSRW_ENOMEM;
+        fprintf(stderr, "apfsrw: rollback: %s\n",
+            err == APFSRW_OK ? "ok" : apfsrw_strerror(err));
+        if (err == APFSRW_OK)
+            unlink(spfile);
+        free(spfile);
         apfsrw_close(fs);
         return err == APFSRW_OK ? 0 : 1;
     }

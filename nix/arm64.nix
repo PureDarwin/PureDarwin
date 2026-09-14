@@ -2430,6 +2430,7 @@ let
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
       "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
+      "ApfsFileSystemDriver.kext"
       "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext" "amfi.kext"
       "PDArmPlatformExpert" "PDArmPCI"
       # Arch-neutral drivers, matching what x86 builds: filesystems,
@@ -2454,6 +2455,7 @@ let
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
       "RavynAHCIPort.kext" "ext4.kext" "Ext4FileSystemDriver.kext"
+      "ApfsFileSystemDriver.kext"
       "AppleFileSystemDriver.kext" "corecrypto.kext" "pthread.kext" "amfi.kext"
       "PDArmPlatformExpert.kext" "PDArmPCI.kext"
       "msdosfs.kext" "apfs.kext" "hfs.kext" "HFSEncodings.kext"

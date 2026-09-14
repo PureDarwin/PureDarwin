@@ -67,6 +67,15 @@ struct apfsrw_file_stat {
     uint32_t compression_type;
     uint32_t inline_bytes;
     uint64_t compressed_size;
+    uint16_t mode;              /* full st_mode, type bits included */
+    uint32_t nlink;             /* directories: nchildren + 2 */
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t bsd_flags;
+    uint64_t atime_ns;          /* nanoseconds since the epoch */
+    uint64_t mtime_ns;
+    uint64_t ctime_ns;
+    uint64_t crtime_ns;
 };
 
 #define APFSRW_MAX_COMPRESSION_TYPES 256
@@ -179,9 +188,54 @@ int apfsrw_unlink(struct apfsrw *fs, const char *path);
 int apfsrw_set_file_content(struct apfsrw *fs, const char *path,
     const void *data, size_t size);
 int apfsrw_rename(struct apfsrw *fs, const char *from, const char *to);
+/* In-place write of [off, off+len): only the blocks touched are rewritten
+ * (copy-on-write); writing past the end grows the file. */
+int apfsrw_write_range(struct apfsrw *fs, const char *path, uint64_t off,
+    const void *data, size_t len);
+/* Shrinking frees the tail; growing leaves a hole that reads as zeros. */
+int apfsrw_truncate(struct apfsrw *fs, const char *path, uint64_t size);
+
+/* Change inode attributes; only the fields named in mask are applied. mode
+ * takes the permission bits (07777), the type bits are kept. */
+#define APFSRW_ATTR_MODE    0x01U
+#define APFSRW_ATTR_UID     0x02U
+#define APFSRW_ATTR_GID     0x04U
+#define APFSRW_ATTR_ATIME   0x08U
+#define APFSRW_ATTR_MTIME   0x10U
+#define APFSRW_ATTR_FLAGS   0x20U
+#define APFSRW_ATTR_CRTIME  0x40U
+struct apfsrw_attr {
+    uint32_t mask;
+    uint16_t mode;
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t bsd_flags;
+    uint64_t atime_ns;
+    uint64_t mtime_ns;
+    uint64_t crtime_ns;
+};
+int apfsrw_setattr(struct apfsrw *fs, const char *path,
+    const struct apfsrw_attr *attr);
+/* Current time in the unit inode timestamps use: ns since the epoch. */
+uint64_t apfsrw_now_ns(void);
 
 int apfsrw_symlink(struct apfsrw *fs, const char *path, const char *target,
     uint32_t uid, uint32_t gid);
+/*
+ * Savepoints: a byte copy of the current checkpoint and allocator state in
+ * `file`, after which no block in use at that moment is reused. Rollback
+ * writes the copy back, undoing every commit since - including a batch that
+ * died halfway - from a fresh process if need be. Release once the work is
+ * known good (the file can then be deleted).
+ */
+int apfsrw_savepoint(struct apfsrw *fs, const char *file);
+void apfsrw_savepoint_release(struct apfsrw *fs);
+int apfsrw_rollback(struct apfsrw *fs, const char *file);
+/* Set flags mkapfs leaves off the root and private-dir inodes; run once on a
+ * freshly made volume, before populating it. */
+int apfsrw_fixup_mkapfs(struct apfsrw *fs);
+/* Hard link: newpath becomes another name for existing (not a directory). */
+int apfsrw_link(struct apfsrw *fs, const char *existing, const char *newpath);
 
 #ifdef __cplusplus
 }

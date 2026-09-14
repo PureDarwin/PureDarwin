@@ -121,6 +121,7 @@ target_sources(libc_static PRIVATE
     string/strncat.c
     string/pd_strnlen.c          # _strnlen / _strlcpy
     string/pd_bcmp.c             # _bcmp (legacy alias of memcmp; ping(8))
+    string/bcopy.c               # _bcopy (Apple Libc, over _platform_memmove)
     string/FreeBSD/strdup.c
     string/FreeBSD/strtok.c      # _strtok (init /etc/ttys tokenizing)
     string/pd_strtok_r.c         # _strtok_r forwarder (__weak_reference alias not emitted)
@@ -156,6 +157,7 @@ target_sources(libc_static PRIVATE
     gen/FreeBSD/getmntinfo.c     # real getmntinfo over getfsstat (df)
     stdio/FreeBSD/tmpfile.c      # _tmpfile (i3/pango)
     stdio/FreeBSD/open_memstream.c # _open_memstream (zsh)
+    stdio/FreeBSD/open_wmemstream.c # _open_wmemstream (needs libmalloc/private)
     gen/fts.c                    # _fts_*$INODE64 (nftw dependency)
     gen/nftw.c                   # _nftw$INODE64 (glib/i3)
     gen/FreeBSD/glob.c           # _glob$INODE64 / _globfree
@@ -262,6 +264,8 @@ target_sources(libc_static PRIVATE
     stdtime/timezone_unix03.c    # _st_get_timezone / _st_set_timezone (strftime %z)
     libm/pd_libm_sincos_stret.c  # __sincos*_stret / __sincospi*_stret (Apple-only wrappers, not in openlibm; -fno-builtin below)
     libm/pd_libm_exp10.c         # __exp10 / __exp10f (Apple-only base-10 exp, not in openlibm)
+    libm/pd_libm_errhandling.c   # __math_errhandling (math.h's math_errhandling macro)
+    libm/pd_libm_nexttowardl.c   # nexttowardl (openlibm's alias emits nothing on Mach-O)
     gen/clock_gettime.c          # _clock_gettime / _clock_settime
     gen/FreeBSD/sethostname.c    # _sethostname
     net/FreeBSD/inet_ntoa.c      # _inet_ntoa
@@ -380,12 +384,33 @@ target_sources(libc_static PRIVATE
     emulated/flock.c              # _flock
     emulated/lutimes.c            # _lutimes (setattrlist-based, real Apple source)
     emulated/copyfile.c           # _copyfile/_fcopyfile + copyfile_state_* (see file comment for what is carried across)
+    emulated/lchmod.c             # _lchmod (setattrlist-based, real Apple source)
+    string/FreeBSD/strmode.c      # _strmode (ls -l mode strings)
+    string/FreeBSD/rpmatch.c      # _rpmatch
+    string/FreeBSD/wcswidth.c     # _wcswidth
+    stdlib/FreeBSD/imaxdiv.c      # _imaxdiv
+    stdlib/FreeBSD/ldiv.c         # _ldiv
+    stdlib/FreeBSD/lldiv.c        # _lldiv (libarchive)
+    compat-43/FreeBSD/gethostid.c # _gethostid
+    # POSIX.1e ACLs over the kernel's kauth filesec syscalls (GNU coreutils
+    # ls/cp/mv link these unconditionally).
+    posix1e/acl.c
+    posix1e/acl_entry.c
+    posix1e/acl_file.c
+    posix1e/acl_flag.c
+    posix1e/acl_perm.c
+    posix1e/acl_translate.c
+    gen/filesec.c                 # filesec_* (the ACL container posix1e and *x_np share)
+    sys/statx_np.c                # _statx_np/_fstatx_np/_lstatx_np
+    sys/chmodx_np.c               # _chmodx_np/_fchmodx_np
+    sys/openx_np.c                # _openx_np/_mkdirx_np/_mkfifox_np
     uuid/uuidsrc/gen_uuid.c      # uuid_generate/uuid_generate_random/uuid_generate_time (real Libinfo/launchd need the full uuid_* family)
     uuid/uuidsrc/clear.c         # uuid_clear
     uuid/uuidsrc/compare.c       # uuid_compare
     uuid/uuidsrc/copy.c          # uuid_copy
     uuid/uuidsrc/isnull.c        # uuid_is_null
     uuid/uuidsrc/unparse.c       # uuid_unparse/uuid_unparse_lower/uuid_unparse_upper
+    uuid/uuidsrc/parse.c         # uuid_parse (posix1e acl_from_text)
     uuid/uuidsrc/pack.c          # uuid_pack
     uuid/uuidsrc/unpack.c        # uuid_unpack
     # TODO (need cross-deps beyond the SDK sysroot):
@@ -404,6 +429,7 @@ set_source_files_properties(
     uuid/uuidsrc/copy.c
     uuid/uuidsrc/isnull.c
     uuid/uuidsrc/unparse.c
+    uuid/uuidsrc/parse.c
     uuid/uuidsrc/pack.c
     uuid/uuidsrc/unpack.c
     PROPERTIES COMPILE_DEFINITIONS "HAVE_STDINT_H=1;HAVE_UNISTD_H=1;HAVE_STDLIB_H=1")
@@ -452,6 +478,8 @@ target_include_directories(libc_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/locale          # xlocale_private.h
     ${CMAKE_CURRENT_SOURCE_DIR}/locale/FreeBSD   # setlocale.h + rune internals
     ${CMAKE_CURRENT_SOURCE_DIR}/stdtime/FreeBSD   # timelocal.h (locale chain)
+    ${CMAKE_CURRENT_SOURCE_DIR}/posix1e           # aclvar.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../XPC/libinfo/membership.subproj  # membership.h (posix1e)
     ${CMAKE_CURRENT_SOURCE_DIR}/../corecrypto/include # corecrypto-backed arc4random
     ${CMAKE_CURRENT_SOURCE_DIR}/../libplatform/private   # _simple.h (subsystem.c)
     ${CMAKE_CURRENT_SOURCE_DIR}/../pthread/private       # pthread/tsd_private.h
@@ -761,6 +789,63 @@ target_sources(libc_internal_static PRIVATE
     gdtoa/FreeBSD/machdep_ldisdd.c
     gdtoa/FreeBSD/machdep_ldisQ.c
     gdtoa/FreeBSD/machdep_ldisx.c
+    # POSIX surface os-test reported as undefined; sources were vendored but unbuilt.
+    emulated/tcgetsid.c
+    gen/FreeBSD/_rand48.c
+    gen/FreeBSD/ctermid.c
+    gen/FreeBSD/drand48.c
+    gen/FreeBSD/erand48.c
+    gen/FreeBSD/fmtmsg.c
+    gen/FreeBSD/ftok.c
+    gen/FreeBSD/jrand48.c
+    gen/FreeBSD/lcong48.c
+    gen/FreeBSD/lockf.c
+    gen/FreeBSD/lrand48.c
+    gen/FreeBSD/mrand48.c
+    gen/FreeBSD/nrand48.c
+    gen/FreeBSD/psignal.c
+    gen/FreeBSD/seed48.c
+    gen/FreeBSD/seekdir.c
+    gen/FreeBSD/srand48.c
+    locale/FreeBSD/wcsftime.c
+    locale/FreeBSD/wcstoimax.c
+    locale/FreeBSD/wcstoumax.c
+    locale/FreeBSD/wctrans.c
+    secure/memccpy_chk.c
+    secure/vsprintf_chk.c
+    net/FreeBSD/sockatmark.c
+    stdio/FreeBSD/fwscanf.c
+    stdio/FreeBSD/swscanf.c
+    stdio/FreeBSD/tmpnam.c
+    stdio/FreeBSD/vfwscanf.c
+    stdio/FreeBSD/vscanf.c
+    stdio/FreeBSD/vswscanf.c
+    stdio/FreeBSD/vwscanf.c
+    stdio/FreeBSD/wscanf.c
+    stdlib/a64l.c
+    stdlib/l64a.c
+    stdlib/FreeBSD/abs.c
+    stdlib/FreeBSD/getsubopt.c
+    stdlib/FreeBSD/hcreate.c
+    stdlib/FreeBSD/insque.c
+    stdlib/FreeBSD/labs.c
+    stdlib/FreeBSD/llabs.c
+    stdlib/FreeBSD/lsearch.c
+    stdlib/FreeBSD/remque.c
+    stdlib/FreeBSD/quick_exit.c
+    stdlib/NetBSD/strfmon.c
+    stdtime/getdate.c
+    string/FreeBSD/swab.c
+    string/FreeBSD/wcpcpy.c
+    string/FreeBSD/wcpncpy.c
+    string/FreeBSD/wcscspn.c
+    string/FreeBSD/wcslcat.c
+    string/FreeBSD/wcslcpy.c
+    string/FreeBSD/wcsncat.c
+    string/FreeBSD/wcsnlen.c
+    string/FreeBSD/wcspbrk.c
+    string/FreeBSD/wcsspn.c
+    string/FreeBSD/wcsstr.c
 )
 target_compile_definitions(libc_internal_static PRIVATE
     __DARWIN_ONLY_UNIX_CONFORMANCE=1
@@ -827,4 +912,5 @@ target_compile_options(libc_internal_static PRIVATE
 set_source_files_properties(
     gen/FreeBSD/opendir.c gen/FreeBSD/readdir.c
     gen/FreeBSD/closedir.c gen/FreeBSD/telldir.c gen/FreeBSD/rewinddir.c
+    gen/FreeBSD/seekdir.c
     PROPERTIES COMPILE_FLAGS "-include${CMAKE_CURRENT_SOURCE_DIR}/gen/__dirent.h")

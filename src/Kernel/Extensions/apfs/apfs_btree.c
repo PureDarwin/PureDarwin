@@ -208,40 +208,25 @@ apfs_read_object_prefix(struct apfs_mount *amp, apfs_paddr_t paddr, void *out,
 }
 
 static int
-apfs_uiomove_phys(struct apfs_mount *amp, apfs_paddr_t paddr, size_t offset,
-    size_t count, struct uio *uio)
+apfs_copy_phys(struct apfs_mount *amp, apfs_paddr_t paddr, size_t offset,
+    size_t count, void *dst)
 {
 	buf_t bp = NULL;
-	char *tmp;
 	int error;
 
-	if (amp == NULL || amp->devvp == NULLVP || uio == NULL)
-		return EINVAL;
 	if (paddr < 0 || offset > amp->block_size ||
-	    count > amp->block_size - offset || count == 0)
+	    count > amp->block_size - offset)
 		return EINVAL;
-
-	/* Copy out under the lock, then move to the caller unlocked: a user
-	 * page fault during uiomove must not wait on a pagein that needs
-	 * the same lock. */
-	tmp = _MALLOC(count, M_TEMP, M_WAITOK);
-	if (tmp == NULL)
-		return ENOMEM;
-	IORecursiveLockLock((IORecursiveLock *)amp->am_rw_lock);
 	error = (int)buf_meta_bread(amp->devvp, apfs_devblk(amp, paddr),
 	    amp->block_size, NOCRED, &bp);
 	if (error) {
 		if (bp)
 			buf_brelse(bp);
-	} else {
-		memcpy(tmp, (const char *)buf_dataptr(bp) + offset, count);
-		buf_brelse(bp);
+		return error;
 	}
-	IORecursiveLockUnlock((IORecursiveLock *)amp->am_rw_lock);
-	if (error == 0)
-		error = uiomove(tmp, (int)count, uio);
-	_FREE(tmp, M_TEMP);
-	return error;
+	memcpy(dst, (const char *)buf_dataptr(bp) + offset, count);
+	buf_brelse(bp);
+	return 0;
 }
 
 static const struct apfs_btree_info *
@@ -814,6 +799,11 @@ apfs_lookup_inode_cb(struct apfs_mount *amp,
 		info_out->mode = mode & 07777;
 		info_out->uid = le32(val->owner);
 		info_out->gid = le32(val->group);
+		info_out->bsd_flags = le32(val->bsd_flags);
+		info_out->atime_ns = le64(val->access_time);
+		info_out->mtime_ns = le64(val->mod_time);
+		info_out->ctime_ns = le64(val->change_time);
+		info_out->crtime_ns = le64(val->create_time);
 		if (apfs_inode_dstream_size(valp, val_len, &dsize) == 0)
 			info_out->size = dsize;
 		else
@@ -1165,6 +1155,7 @@ struct apfs_extent_at_ctx {
 	uint64_t logical;
 	uint64_t len;
 	uint64_t phys;
+	uint64_t next_logical;		/* first extent past want_off: hole end */
 	int found;
 };
 
@@ -1199,8 +1190,14 @@ apfs_extent_at_cb(struct apfs_mount *amp,
 		val = (const struct apfs_j_file_extent_val *)valp;
 		logical = le64(key->logical_addr);
 		len = le64(val->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
-		if (len == 0 || c->want_off < logical ||
-		    c->want_off >= logical + len)
+		if (len == 0)
+			continue;
+		if (c->want_off < logical) {
+			/* Keys ascend, so this is the extent ending the hole. */
+			c->next_logical = logical;
+			return 1;
+		}
+		if (c->want_off >= logical + len)
 			continue;
 		c->logical = logical;
 		c->len = len;
@@ -1211,12 +1208,84 @@ apfs_extent_at_cb(struct apfs_mount *amp,
 	return 0;
 }
 
+/* Bounce size per locked fill; the copy to the caller happens unlocked. */
+#define APFS_READ_CHUNK	(256u * 1024u)
+
+/*
+ * Fill `n` bytes from `file_off` into `dst`. Runs under am_rw_lock so the
+ * extent in hand cannot be freed and reused by a commit halfway through.
+ */
+static int
+apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
+    uint8_t *dst)
+{
+	struct apfs_mount *amp = apnode->amp;
+	struct apfs_extent_at_ctx cur;
+	size_t done = 0;
+	int error = 0;
+
+	memset(&cur, 0, sizeof(cur));
+	cur.fileid = apnode->fileid;
+	while (done < n) {
+		uint64_t off = file_off + done;
+		uint64_t extent_off, block_index;
+		size_t block_off, count;
+
+		/* One tree walk per extent, not per block. */
+		if (!cur.found || off < cur.logical ||
+		    off >= cur.logical + cur.len) {
+			cur.want_off = off;
+			cur.found = 0;
+			cur.next_logical = ~0ull;
+			error = apfs_btree_walk_leaves_oid(amp, cur.fileid,
+			    cur.fileid, apfs_extent_at_cb, &cur);
+			if (error != 0 && error != 1)
+				return error;
+			if (!cur.found) {
+				/* A hole: zeros up to the next extent (or EOF). */
+				size_t z = n - done;
+
+				if (cur.next_logical - off < z)
+					z = (size_t)(cur.next_logical - off);
+				memset(dst + done, 0, z);
+				done += z;
+				continue;
+			}
+		}
+		if (cur.phys == 0) {
+			/* Explicit sparse extent. */
+			size_t z = n - done;
+
+			if (cur.logical + cur.len - off < z)
+				z = (size_t)(cur.logical + cur.len - off);
+			memset(dst + done, 0, z);
+			done += z;
+			continue;
+		}
+		extent_off = off - cur.logical;
+		block_index = extent_off / amp->block_size;
+		block_off = (size_t)(extent_off % amp->block_size);
+		count = amp->block_size - block_off;
+		if (cur.len - extent_off < count)
+			count = (size_t)(cur.len - extent_off);
+		if (n - done < count)
+			count = n - done;
+		error = apfs_copy_phys(amp, (apfs_paddr_t)(cur.phys + block_index),
+		    block_off, count, dst + done);
+		if (error)
+			return error;
+		done += count;
+	}
+	return 0;
+}
+
 int
 apfs_read_file(struct apfs_node *apnode, struct uio *uio)
 {
 	struct apfs_mount *amp;
-	struct apfs_extent_at_ctx cur;
+	uint8_t *bounce;
 	uint64_t filesize;
+	size_t bsize;
 	int error = 0;
 
 	if (apnode == NULL || uio == NULL)
@@ -1225,54 +1294,33 @@ apfs_read_file(struct apfs_node *apnode, struct uio *uio)
 	if (amp == NULL)
 		return EINVAL;
 	filesize = apnode->size;
+	if (uio_resid(uio) <= 0 || (uint64_t)uio_offset(uio) >= filesize)
+		return 0;
 
-	memset(&cur, 0, sizeof(cur));
-	cur.fileid = apnode->fileid;
+	bsize = APFS_READ_CHUNK;
+	if ((uint64_t)uio_resid(uio) < bsize)
+		bsize = (size_t)uio_resid(uio);
+	bounce = (uint8_t *)_MALLOC(bsize, M_TEMP, M_WAITOK);
+	if (bounce == NULL)
+		return ENOMEM;
 
 	while (uio_resid(uio) > 0 && (uint64_t)uio_offset(uio) < filesize) {
-		uint64_t file_off = (uint64_t)uio_offset(uio);
-		uint64_t extent_off, avail, remain, block_index;
-		size_t block_off, count;
+		uint64_t off = (uint64_t)uio_offset(uio);
+		size_t n = bsize;
 
-		/*
-		 * Reuse the extent already in hand while the offset stays
-		 * inside it, so a large file costs one tree walk per extent
-		 * rather than one per block.
-		 */
-		if (!cur.found || file_off < cur.logical ||
-		    file_off >= cur.logical + cur.len) {
-			cur.want_off = file_off;
-			cur.found = 0;
-			error = apfs_btree_walk_leaves_oid(amp, cur.fileid, cur.fileid,
-			    apfs_extent_at_cb, &cur);
-			if (error != 0 && error != 1)
-				break;
-			error = 0;
-			if (!cur.found) {
-				error = EIO;
-				break;
-			}
-		}
-
-		extent_off = file_off - cur.logical;
-		avail = cur.len - extent_off;
-		remain = filesize - file_off;
-		block_index = extent_off / amp->block_size;
-		block_off = (size_t)(extent_off % amp->block_size);
-		count = amp->block_size - block_off;
-
-		if (avail < count)
-			count = (size_t)avail;
-		if (remain < count)
-			count = (size_t)remain;
-		if ((uint64_t)uio_resid(uio) < count)
-			count = (size_t)uio_resid(uio);
-
-		error = apfs_uiomove_phys(amp,
-		    (apfs_paddr_t)(cur.phys + block_index), block_off, count,
-		    uio);
+		if (filesize - off < n)
+			n = (size_t)(filesize - off);
+		if ((uint64_t)uio_resid(uio) < n)
+			n = (size_t)uio_resid(uio);
+		IORecursiveLockLock((IORecursiveLock *)amp->am_rw_lock);
+		error = apfs_read_locked(apnode, off, n, bounce);
+		IORecursiveLockUnlock((IORecursiveLock *)amp->am_rw_lock);
+		if (error)
+			break;
+		error = uiomove((caddr_t)bounce, (int)n, uio);
 		if (error)
 			break;
 	}
+	_FREE(bounce, M_TEMP);
 	return error;
 }

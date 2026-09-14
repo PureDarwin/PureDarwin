@@ -161,6 +161,10 @@ __private_extern__ struct xpc_object *_xpc_prim_create_flags(xpc_type_t type,
     xpc_u value, size_t size, uint16_t flags);
 __private_extern__ void xpc_object_destroy(struct xpc_object *xo);
 __private_extern__ void xpc_connection_destroy(struct xpc_connection *conn);
+struct xpc_pipe;
+__private_extern__ void xpc_pipe_destroy(struct xpc_pipe *pipe);
+__private_extern__ int xpc_pipe_send_local(xpc_object_t obj, mach_port_t dst,
+    mach_port_t local, mach_msg_type_name_t local_type, uint64_t id);
 __private_extern__ const char *_xpc_get_type_name(xpc_object_t obj);
 __private_extern__ nvlist_t *xpc2nv(struct xpc_object *xo, int64_t (^port_serializer)(mach_port_t port));
 __private_extern__ struct xpc_object *nv2xpc(const nvlist_t *nv, mach_port_t (^port_deserializer)(int64_t port_id));

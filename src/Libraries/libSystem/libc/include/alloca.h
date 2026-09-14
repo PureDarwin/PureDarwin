@@ -25,12 +25,15 @@
 #define _ALLOCA_H_
 
 #include <sys/cdefs.h>
+#include <_bounds.h>
 #include <_types.h>
 #include <sys/_types/_size_t.h>
 
+_LIBC_SINGLE_BY_DEFAULT()
+
 #ifndef UNIFDEF_DRIVERKIT
 __BEGIN_DECLS
-void	*alloca(size_t);		/* built-in for gcc */
+void	*_LIBC_SIZE(__size) alloca(size_t __size);		/* built-in for gcc */
 __END_DECLS
 #endif /* UNIFDEF_DRIVERKIT */
 

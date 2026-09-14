@@ -29,11 +29,14 @@
 #define RPP_SEVENBIT    0x10		/* Strip the high bit from input. */
 #define RPP_STDIN       0x20		/* Read from stdin, not /dev/tty */
 
+#include <_bounds.h>
 #include <_types.h>
 #include <sys/_types/_size_t.h>
 
+_LIBC_SINGLE_BY_DEFAULT()
+
 __BEGIN_DECLS
-char * readpassphrase(const char *, char *, size_t, int);
+char *_LIBC_CSTR readpassphrase(const char *, char *_LIBC_COUNT(__bufsiz), size_t __bufsiz, int);
 __END_DECLS
 
 #endif /* !_READPASSPHRASE_H_ */

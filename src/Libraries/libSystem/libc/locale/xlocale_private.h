@@ -25,9 +25,11 @@
 #define _XLOCALE_PRIVATE_H_
 
 #include <sys/cdefs.h>
+/* PureDarwin: Libc-1752's xlocale.h has no include guard, so keep its
+ * per-header section off for this whole list; setlocale.h re-includes it and
+ * would pull <_ctype.h> in before __current_locale() below exists. */
 #define __DARWIN_XLOCALE_PRIVATE
 #include <xlocale.h>
-#undef __DARWIN_XLOCALE_PRIVATE
 #include <stdlib.h>
 #include <locale.h>
 #include <libkern/OSAtomic.h>
@@ -43,6 +45,7 @@
 #include "lnumeric.h"
 #include "timelocal.h"
 #include <TargetConditionals.h>
+#undef __DARWIN_XLOCALE_PRIVATE
 
 #undef MB_CUR_MAX
 #define MB_CUR_MAX	(__current_locale()->__lc_ctype->__mb_cur_max)

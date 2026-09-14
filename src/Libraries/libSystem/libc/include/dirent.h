@@ -61,20 +61,24 @@
 /*
  * The kernel defines the format of directory entries
  */
+#include <_bounds.h>
 #include <_types.h>
 #include <sys/dirent.h>
 #include <sys/cdefs.h>
 #include <Availability.h>
 #include <sys/_pthread/_pthread_types.h> /* __darwin_pthread_mutex_t */
+#include <sys/_types/_size_t.h>
+
+_LIBC_SINGLE_BY_DEFAULT()
 
 struct _telldir;		/* forward reference */
 
 /* structure describing an open directory. */
 typedef struct {
 	int	__dd_fd;	/* file descriptor associated with directory */
-	long	__dd_loc;	/* offset in current buffer */
-	long	__dd_size;	/* amount of data returned */
-	char	*__dd_buf;	/* data buffer */
+	size_t	__dd_loc;	/* offset in current buffer */
+	size_t	__dd_size;	/* amount of data returned */
+	char *_LIBC_COUNT(__dd_len)	__dd_buf; /* data buffer */
 	int	__dd_len;	/* size of data buffer */
 	long	__dd_seek;	/* magic cookie returned */
 	__unused long	__padding; /* (__dd_rewind space left for bincompat) */
@@ -123,6 +127,7 @@ DIR *opendir(const char *) LIBC_ALIAS_I(opendir);
 //End-Libc
 
 struct dirent *readdir(DIR *) __DARWIN_INODE64(readdir);
+__deprecated_msg("This function cannot be used safely as it does not take into account the variability of {NAME_MAX}.  It is highly recommended that you use readdir(3) instead.")
 int readdir_r(DIR *, struct dirent *, struct dirent **) __DARWIN_INODE64(readdir_r);
 
 //Begin-Libc
@@ -216,7 +221,35 @@ __END_DECLS
 #if __DARWIN_C_LEVEL >= __DARWIN_C_FULL
 __BEGIN_DECLS
 
-int getdirentries(int, char *, int, long *)
+int	 fdclosedir(DIR *)
+	__API_AVAILABLE(macos(26.4), ios(26.4), watchos(26.4), tvos(26.4), visionos(26.4));
+
+int	 fdscandir(int, struct dirent ***,
+	    int (*)(const struct dirent *), int (*)(const struct dirent **,
+	    const struct dirent **))
+	__DARWIN_INODE64(fdscandir)
+	__API_AVAILABLE(macos(26.4), ios(26.4), watchos(26.4), tvos(26.4), visionos(26.4));
+#ifdef __BLOCKS__
+int	 fdscandir_b(int, struct dirent ***,
+	    int (^)(const struct dirent *) __scandir_noescape,
+	    int (^)(const struct dirent **, const struct dirent **) __scandir_noescape)
+	__DARWIN_INODE64(fdscandir_b)
+	__API_AVAILABLE(macos(26.4), ios(26.4), watchos(26.4), tvos(26.4), visionos(26.4));
+#endif
+int	 scandirat(int, const char *, struct dirent ***,
+	    int (*)(const struct dirent *), int (*)(const struct dirent **,
+	    const struct dirent **))
+	__DARWIN_INODE64(scandirat)
+	__API_AVAILABLE(macos(26.4), ios(26.4), watchos(26.4), tvos(26.4), visionos(26.4));
+#ifdef __BLOCKS__
+int	 scandirat_b(int, const char *, struct dirent ***,
+	    int (^)(const struct dirent *) __scandir_noescape,
+	    int (^)(const struct dirent **, const struct dirent **) __scandir_noescape)
+	__DARWIN_INODE64(scandirat_b)
+	__API_AVAILABLE(macos(26.4), ios(26.4), watchos(26.4), tvos(26.4), visionos(26.4));
+#endif
+
+int getdirentries(int, char *_LIBC_COUNT(__nbytes), int __nbytes, long *)
 
 //Begin-Libc
 #ifndef __LIBC__

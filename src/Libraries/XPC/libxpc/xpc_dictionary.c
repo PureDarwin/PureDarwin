@@ -238,6 +238,11 @@ xpc2nv(struct xpc_object *xo, int64_t (^port_serializer)(mach_port_t port))
 		nv = nvlist_create_dictionary(0);
 		debugf("nv = %p\n", nv);
 		xpc_dictionary_apply(xo, ^(const char *k, xpc_object_t v) {
+			/* Routing state for this process, not payload: a reply's send-once
+			 * reply port must not be sent back to the peer as a port. */
+			if (strcmp(k, XPC_RPORT) == 0 || strcmp(k, XPC_SEQID) == 0) {
+				return ((bool)true);
+			}
 			xpc2nv_primitive(nv, k, v, port_serializer);
 			return ((bool)true);
 		});

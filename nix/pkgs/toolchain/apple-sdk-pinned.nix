@@ -54,6 +54,7 @@ let
       /src/Libraries/XPC/libinfo/printerdb.h
       /src/Libraries/XPC/libxpc/include
       /src/Libraries/XPC/notify/notify_keys.h
+      /src/Libraries/libsandbox/include/sandbox.h
       /src/Libraries/dyld/upstream/include
       /src/Libraries/libSystem/libc
       /src/Libraries/libSystem/libdispatch/dispatch
@@ -198,6 +199,8 @@ let
     [ "${root}/src/Libraries/libSystem/pthread/include/pthread/sched.h" "usr/include/sched.h" ]
     [ "${root}/src/Libraries/libSystem/libc/include/grp.h" "usr/include/grp.h" ]
     [ "${root}/src/Libraries/libSystem/libc/include/math.h" "usr/include/math.h" ]
+    # Apple's Libm complex.h, alongside its math.h; clang's tgmath.h needs it.
+    [ "${root}/src/Libraries/libSystem/libc/include/complex.h" "usr/include/complex.h" ]
     [ "${root}/src/Libraries/libSystem/libc/include/netdb.h" "usr/include/netdb.h" ]
     [ "${root}/src/Libraries/libSystem/libc/include/pwd.h" "usr/include/pwd.h" ]
     [ "${root}/src/Libraries/libSystem/libc/include/MacTypes.h" "usr/include/MacTypes.h" ]
@@ -231,6 +234,7 @@ let
     [ "${root}/src/Kernel/xnu/osfmk/device/device_types.h" "usr/include/device/device_types.h" ]
     [ "${root}/src/Libraries/libSystem/libc/include/sysdir.h" "usr/include/sysdir.h" ]
     [ "${root}/src/Libraries/XPC/notify/notify_keys.h" "usr/include/notify_keys.h" ]
+    [ "${root}/src/Libraries/libsandbox/include/sandbox.h" "usr/include/sandbox.h" ]
     # Reconstructed; see the headers for where the layouts came from.
     [ "${root}/src/Libraries/XPC/libinfo/aliasdb.h" "usr/include/aliasdb.h" ]
     [ "${root}/src/Libraries/XPC/libinfo/printerdb.h" "usr/include/printerdb.h" ]
@@ -310,6 +314,7 @@ stdenvNoCC.mkDerivation {
     ARCHS=x86_64 SRCROOT=${root}/src/Libraries/libSystem/libc \
       GENERATE_FEATURES="$features_script" \
       DERIVED_FILES_DIR="$TMPDIR/libc-derived" VARIANT_PLATFORM_NAME=macosx \
+      PLATFORM_NAME=macosx \
       DEPLOYMENT_LOCATION=NO BUILT_PRODUCTS_DIR="$TMPDIR/libc-headers" \
       SDK_INSTALL_HEADERS_ROOT="" bash "$headers_script"
     chmod -R u+w "$sdk/usr/include"

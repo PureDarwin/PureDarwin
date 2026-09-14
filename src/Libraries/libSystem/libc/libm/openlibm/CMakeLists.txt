@@ -61,6 +61,7 @@ target_sources(openlibm_static PRIVATE
     src/s_rint.c src/s_rintf.c
     src/s_round.c src/s_roundf.c
     src/s_scalbln.c src/s_scalbn.c src/s_scalbnf.c src/s_ldexpf.c
+    src/e_scalb.c
     src/s_signbit.c src/s_signgam.c
     src/s_sin.c src/s_sincos.c src/s_sinf.c src/s_sincosf.c
     src/s_tan.c src/s_tanf.c src/s_tanh.c src/s_tanhf.c src/s_tgammaf.c

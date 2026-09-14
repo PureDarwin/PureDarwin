@@ -26,6 +26,9 @@ target_sources(XPC_libinfo_static PRIVATE
     # Real ether_aton/ether_ntoa/ether_line (was libc/net/pd_ether_addr.c,
     # which had no ether_line and formatted octets without zero-padding).
     gen.subproj/ether_addr.c
+    # Real mbr_* membership API. Without opendirectoryd (DS_AVAILABLE unset) it
+    # answers from getpwuid/getgrgid with Apple's compatibility UUIDs.
+    membership.subproj/membership.c
 )
 
 target_compile_definitions(XPC_libinfo_static PRIVATE __DARWIN_ONLY_UNIX_CONFORMANCE=1 PRIVATE=1)
@@ -36,6 +39,7 @@ target_compile_options(XPC_libinfo_static PRIVATE
 
 target_include_directories(XPC_libinfo_static PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/membership.subproj
     ${CMAKE_CURRENT_SOURCE_DIR}/compat
     ${CMAKE_CURRENT_SOURCE_DIR}/../../mDNSResponder/mDNSShared
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libresolv/include

@@ -39,6 +39,11 @@
 #ifndef _BITSTRING_H_
 #define	_BITSTRING_H_
 
+#include <_bounds.h>
+#include <stdlib.h>
+
+_LIBC_SINGLE_BY_DEFAULT()
+
 typedef	unsigned char bitstr_t;
 
 /* internal macros */

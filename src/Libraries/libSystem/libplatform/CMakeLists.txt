@@ -28,6 +28,7 @@ if(PUREDARWIN_ARM64)
     # there is a no-op and nothing needs it. compiler-rt's __clear_cache calls
     # sys_icache_invalidate, which is what any JIT needs after writing code.
     set(_libplatform_cachecontrol src/cachecontrol/arm64/cache.s)
+    set(_libplatform_ucontext)
 elseif(PUREDARWIN_ARM32)
     # ARM32 uses the portable ARM atomics and classic ARM EABI setjmp files.
     set(_libplatform_atomics
@@ -57,12 +58,22 @@ else()
     # sys_cache_control dispatcher - which would reference the two primitives
     # this arch has no reason to provide.
     set(_libplatform_cachecontrol)
+    # getcontext/setcontext/makecontext/swapcontext (gawk, make).
+    set(_libplatform_ucontext
+        src/ucontext/x86_64/_ctx_start.s
+        src/ucontext/x86_64/getcontext.s
+        src/ucontext/x86_64/_setcontext.s
+        src/ucontext/generic/getmcontext.c
+        src/ucontext/generic/makecontext.c
+        src/ucontext/generic/setcontext.c
+        src/ucontext/generic/swapcontext.c)
 endif()
 
 add_darwin_static_library(libplatform_static)
 target_sources(libplatform_static PRIVATE
     src/string/generic/bzero.c
     src/string/generic/ffsll.c
+    src/string/generic/pd_ffsl.c
     src/string/generic/flsll.c
     src/string/generic/flsl.c
     src/string/generic/memccpy.c
@@ -91,6 +102,7 @@ target_sources(libplatform_static PRIVATE
     ${_libplatform_setjmp}
     ${_libplatform_atomics}
     ${_libplatform_cachecontrol}
+    ${_libplatform_ucontext}
 )
 # VARIANT_STATIC: emit the plain C names (memcpy/memmove/strlen/strcmp/...) as
 # real symbols, not just the __platform_* internals -- this is the static-archive

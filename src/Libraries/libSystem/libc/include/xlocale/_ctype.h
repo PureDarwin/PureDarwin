@@ -24,8 +24,11 @@
 #ifndef _XLOCALE__CTYPE_H_
 #define _XLOCALE__CTYPE_H_
 
+#include <_bounds.h>
 #include <_ctype.h>
-#include <_xlocale.h>
+#include <__xlocale.h>
+
+_LIBC_SINGLE_BY_DEFAULT()
 
 /*
  * Use inline functions if we are allowed to and the compiler supports them.
@@ -45,7 +48,7 @@ __END_DECLS
 __DARWIN_CTYPE_inline int
 __maskrune_l(__darwin_ct_rune_t _c, unsigned long _f, locale_t _l)
 {
-	/* _CurrentRuneLocale.__runetype is __uint32_t
+	/* _CurrentRuneLocale->__runetype is __uint32_t
 	 * _f is unsigned long
 	 * ___runetype_l(_c, _l) is unsigned long
 	 * retval is int

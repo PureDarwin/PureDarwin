@@ -66,6 +66,11 @@
 #define APFS_TYPE_DSTREAM_ID 6U
 #define APFS_TYPE_XATTR 4U
 #define APFS_TYPE_DIR_REC 9U
+/* Hard links (spec p.72 j_obj_types; records p.104-105) */
+#define APFS_TYPE_SIBLING_LINK 5U
+#define APFS_TYPE_SIBLING_MAP 12U
+/* spec p.111 "Extended-Field Types" */
+#define APFS_DREC_EXT_TYPE_SIBLING_ID 1U
 /* spec p.96 APFS_INCOMPAT_CASE_INSENSITIVE */
 #define APFS_INCOMPAT_CASE_INSENSITIVE 0x00000001ULL
 /* spec p.94-95 "Extended-Attribute Flags" */
@@ -383,6 +388,9 @@ struct apfsrw {
     int fd;
     /* Kernel builds have no descriptor; this carries the device vnode. */
     void *io_ctx;
+    off_t base_off;                     /* container start inside the file */
+    uint8_t *frozen;                    /* savepoint: blocks that must not be reused */
+    uint64_t data_cursor;               /* where file data last landed */
     int writable;
     uint64_t image_blocks;
     uint32_t block_size;
@@ -409,6 +417,7 @@ struct apfsrw {
      * allocated - so only genuinely new nodes and new data blocks move it.
      */
     int64_t alloc_delta;
+    int64_t other_delta;                /* sockets/fifos/devices created - removed */
     /*
      * Batch mode. Every create is otherwise its own transaction, ending in a
      * full copy-on-write commit plus two fsyncs - about 19 ms per file on a
@@ -520,13 +529,13 @@ uint64_t apfsrw_now_ns(void)
 
 static ssize_t apfsrw_pread(struct apfsrw *fs, void *buf, size_t n, off_t off)
 {
-    return pread(fs->fd, buf, n, off);
+    return pread(fs->fd, buf, n, off + fs->base_off);
 }
 
 static ssize_t apfsrw_pwrite(struct apfsrw *fs, const void *buf, size_t n,
     off_t off)
 {
-    return pwrite(fs->fd, buf, n, off);
+    return pwrite(fs->fd, buf, n, off + fs->base_off);
 }
 #else
 ssize_t apfsrw_pread(struct apfsrw *fs, void *buf, size_t n, off_t off);
@@ -1193,6 +1202,9 @@ struct inode_ctx {
     uint64_t size;
     uint64_t private_id;
     int found;
+    uint16_t mode;
+    uint32_t uid, gid, bsd_flags, nlink;
+    uint64_t atime, mtime, ctime, crtime;
 };
 
 static int inode_leaf_cb(struct apfsrw *fs,
@@ -1239,6 +1251,15 @@ static int inode_leaf_cb(struct apfsrw *fs,
              * file's data stream").
              */
             c->private_id = rd64(&inode->private_id);
+            c->mode = rd16(&inode->mode);
+            c->uid = rd32(&inode->owner);
+            c->gid = rd32(&inode->group);
+            c->bsd_flags = rd32(&inode->bsd_flags);
+            c->nlink = (uint32_t)rd32(&inode->u);
+            c->atime = rd64(&inode->access_time);
+            c->mtime = rd64(&inode->mod_time);
+            c->ctime = rd64(&inode->change_time);
+            c->crtime = rd64(&inode->create_time);
             c->found = 1;
             return 1;                    /* stop the walk */
         }
@@ -1433,7 +1454,25 @@ int apfsrw_open_xid(const char *path, int writable, uint64_t xid,
     fs = calloc(1, sizeof(*fs));
     if (fs == NULL)
         return APFSRW_ENOMEM;
-    fs->fd = open(path, flags);
+    /* "file@@byteoffset" addresses a container inside a larger image. */
+    {
+        const char *at = strstr(path, "@@");
+        char *p2 = NULL;
+
+        if (at != NULL) {
+            fs->base_off = (off_t)strtoull(at + 2, NULL, 0);
+            p2 = malloc((size_t)(at - path) + 1);
+            if (p2 == NULL) {
+                free(fs);
+                return APFSRW_ENOMEM;
+            }
+            memcpy(p2, path, (size_t)(at - path));
+            p2[at - path] = '\0';
+            path = p2;
+        }
+        fs->fd = open(path, flags);
+        free(p2);
+    }
     if (fs->fd < 0) {
         free(fs);
         return APFSRW_EIO;
@@ -1915,6 +1954,25 @@ int apfsrw_stat_file(struct apfsrw *fs, const char *path,
     err = lookup_inode(fs, file_id, &size, &stream_id);
     if (err != APFSRW_OK)
         return err;
+    {
+        struct inode_ctx ic;
+
+        memset(&ic, 0, sizeof(ic));
+        ic.file_id = file_id;
+        err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, file_id,
+            file_id, inode_leaf_cb, &ic);
+        if (err != APFSRW_OK && err != 1)
+            return err;
+        out->mode = ic.mode;
+        out->uid = ic.uid;
+        out->gid = ic.gid;
+        out->bsd_flags = ic.bsd_flags;
+        out->nlink = (ic.mode & 0170000) == 0040000 ? ic.nlink + 2 : ic.nlink;
+        out->atime_ns = ic.atime;
+        out->mtime_ns = ic.mtime;
+        out->ctime_ns = ic.ctime;
+        out->crtime_ns = ic.crtime;
+    }
     memset(&c, 0, sizeof(c));
     c.stream_id = stream_id;
     err = btree_walk_leaves(fs, fs->root_tree_paddr, stat_cb, &c);
@@ -2683,6 +2741,7 @@ static void txn_rollback(struct apfsrw *fs)
     fs->alloced_count = 0;
     fs->deferred_count = 0;
     fs->alloc_delta = 0;
+    fs->other_delta = 0;
     (void)apfsrw_sync(fs);
     /* The failed op may have re-pointed cached tree/omap paddrs at blocks
      * just freed; re-derive everything from the last committed checkpoint. */
@@ -2699,13 +2758,25 @@ static void flush_deferred(struct apfsrw *fs)
     fs->deferred_count = 0;
 }
 
-static int alloc_blocks(struct apfsrw *fs, uint32_t n, uint64_t *out)
+/* A savepoint freezes every block that was in use when it was taken, so the
+ * saved checkpoint's metadata can never be overwritten. */
+static int block_frozen(const struct apfsrw *fs, uint64_t b)
+{
+    return fs->frozen != NULL && b < fs->block_count &&
+        (fs->frozen[b >> 3] & (uint8_t)(1U << (b & 7))) != 0;
+}
+
+/* Allocate n contiguous blocks; with a non-zero hint, try to place them at
+ * exactly that address first (keeps sequential writes in one extent). */
+static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
+    uint64_t from, int reverse, uint64_t *out)
 {
     struct apfs_spaceman_phys *sm = NULL;
     struct apfs_chunk_info_block *cib = NULL;
     uint8_t *bitmap = NULL;
     apfs_paddr_t sm_paddr = 0;
     uint32_t cib_count, addr_offset, i;
+    int pass;
     int err;
 
     if (n == 0)
@@ -2735,11 +2806,13 @@ static int alloc_blocks(struct apfsrw *fs, uint32_t n, uint64_t *out)
         goto out;
     }
 
+    for (pass = (hint != 0) ? 0 : (reverse ? 2 : 1); pass < 3; pass++)
     for (i = 0; i < cib_count; i++) {
         apfs_paddr_t cib_paddr;
         uint32_t chunks, c;
+        uint32_t ci_idx = (reverse && pass == 2) ? cib_count - 1 - i : i;
 
-        memcpy(&cib_paddr, (const uint8_t *)sm + addr_offset + i * 8U, 8);
+        memcpy(&cib_paddr, (const uint8_t *)sm + addr_offset + ci_idx * 8U, 8);
         cib_paddr = (apfs_paddr_t)rd64(&cib_paddr);
         if (cib_paddr <= 0)
             continue;
@@ -2753,7 +2826,8 @@ static int alloc_blocks(struct apfsrw *fs, uint32_t n, uint64_t *out)
             goto out;
         }
         for (c = 0; c < chunks; c++) {
-            struct apfs_chunk_info *ci = &cib->cib_chunk_info[c];
+            struct apfs_chunk_info *ci = &cib->cib_chunk_info[
+                (reverse && pass == 2) ? chunks - 1 - c : c];
             apfs_paddr_t bm_paddr = (apfs_paddr_t)rd64(&ci->ci_bitmap_addr);
             uint64_t chunk_addr = rd64(&ci->ci_addr);
             uint32_t nblk = rd32(&ci->ci_block_count);
@@ -2761,6 +2835,13 @@ static int alloc_blocks(struct apfsrw *fs, uint32_t n, uint64_t *out)
             uint32_t start, run, k;
 
             if (free_count < n || nblk == 0)
+                continue;
+            /* Pass 0 only looks at the chunk holding the hint; pass 1
+             * scans upward from `from`; pass 2 takes anything. */
+            if (pass == 0 && (hint < chunk_addr ||
+                hint + n > chunk_addr + nblk))
+                continue;
+            if (pass == 1 && from >= chunk_addr + nblk)
                 continue;
             if (bm_paddr == 0) {
                 /* ci_bitmap_addr == 0: the chunk is entirely free with no
@@ -2775,10 +2856,41 @@ static int alloc_blocks(struct apfsrw *fs, uint32_t n, uint64_t *out)
 
             run = 0;
             start = 0;
-            for (k = 0; k < nblk; k++) {
+            if (pass == 0) {
+                start = (uint32_t)(hint - chunk_addr);
+                for (k = start; k < start + n; k++)
+                    if ((bitmap[k >> 3] & (uint8_t)(1U << (k & 7))) ||
+                        block_frozen(fs, chunk_addr + k))
+                        break;
+                if (k < start + n)
+                    continue;
+                goto take;
+            }
+            if (pass == 2 && reverse) {
+                /* Highest free run in the chunk: tree nodes grow down
+                 * from the top so they do not fragment file data. */
+                for (k = nblk; k-- > 0; ) {
+                    if (chunk_addr + k >= fs->block_count ||
+                        (bitmap[k >> 3] & (uint8_t)(1U << (k & 7))) ||
+                        block_frozen(fs, chunk_addr + k)) {
+                        run = 0;
+                        continue;
+                    }
+                    if (++run < n)
+                        continue;
+                    start = k;
+                    goto take;
+                }
+                continue;
+            }
+            k = 0;
+            if (pass == 1 && from > chunk_addr)
+                k = (uint32_t)(from - chunk_addr);
+            for (; k < nblk; k++) {
                 if (chunk_addr + k >= fs->block_count)
                     break;
-                if (bitmap[k >> 3] & (uint8_t)(1U << (k & 7))) {
+                if ((bitmap[k >> 3] & (uint8_t)(1U << (k & 7))) ||
+                    block_frozen(fs, chunk_addr + k)) {
                     run = 0;
                     continue;
                 }
@@ -2786,7 +2898,11 @@ static int alloc_blocks(struct apfsrw *fs, uint32_t n, uint64_t *out)
                     start = k;
                 if (++run < n)
                     continue;
-
+                goto take;
+            }
+            continue;
+take:
+            {
                 for (k = start; k < start + n; k++)
                     bitmap[k >> 3] |= (uint8_t)(1U << (k & 7));
                 wr32(&ci->ci_free_count, free_count - n);
@@ -2835,6 +2951,89 @@ out:
     free(bitmap);
     free(cib);
     free(sm);
+    return err;
+}
+
+/* Metadata: top-down. */
+static int alloc_blocks(struct apfsrw *fs, uint32_t n, uint64_t *out)
+{
+    return alloc_blocks_from(fs, n, 0, 0, 1, out);
+}
+
+/* Start of the first free run of at least `want` blocks (read-only scan);
+ * 0 if there is none. */
+static uint64_t spaceman_find_run(struct apfsrw *fs, uint32_t want)
+{
+    struct apfs_spaceman_phys *sm = calloc(1, fs->block_size);
+    struct apfs_chunk_info_block *cib = calloc(1, fs->block_size);
+    uint8_t *bitmap = calloc(1, fs->block_size);
+    apfs_paddr_t sm_paddr = 0;
+    uint64_t found = 0;
+    uint32_t cib_count, addr_offset, i;
+
+    if (sm == NULL || cib == NULL || bitmap == NULL)
+        goto out;
+    if (resolve_ephemeral(fs, rd64(&fs->nx.nx_spaceman_oid), &sm_paddr) ||
+        read_object(fs, sm_paddr, sm))
+        goto out;
+    cib_count = rd32(&sm->sm_dev[0].sm_cib_count);
+    addr_offset = rd32(&sm->sm_dev[0].sm_addr_offset);
+    for (i = 0; i < cib_count && found == 0; i++) {
+        apfs_paddr_t cib_paddr;
+        uint32_t chunks, c;
+
+        memcpy(&cib_paddr, (const uint8_t *)sm + addr_offset + i * 8U, 8);
+        cib_paddr = (apfs_paddr_t)rd64(&cib_paddr);
+        if (cib_paddr <= 0 || read_object(fs, cib_paddr, cib))
+            continue;
+        chunks = rd32(&cib->cib_chunk_info_count);
+        for (c = 0; c < chunks && found == 0; c++) {
+            struct apfs_chunk_info *ci = &cib->cib_chunk_info[c];
+            apfs_paddr_t bm_paddr = (apfs_paddr_t)rd64(&ci->ci_bitmap_addr);
+            uint64_t chunk_addr = rd64(&ci->ci_addr);
+            uint32_t nblk = rd32(&ci->ci_block_count), run = 0, k;
+
+            if (rd32(&ci->ci_free_count) < want)
+                continue;
+            if (bm_paddr == 0) {
+                found = chunk_addr;      /* wholly free chunk */
+                break;
+            }
+            if (read_raw(fs, bm_paddr, bitmap))
+                continue;
+            for (k = 0; k < nblk; k++) {
+                if (bitmap[k >> 3] & (uint8_t)(1U << (k & 7))) {
+                    run = 0;
+                    continue;
+                }
+                if (++run == want) {
+                    found = chunk_addr + k + 1 - want;
+                    break;
+                }
+            }
+        }
+    }
+out:
+    free(bitmap);
+    free(cib);
+    free(sm);
+    return found;
+}
+
+/* File data: right after the previous extent if possible, else forward from
+ * where data last landed, so it does not interleave with tree nodes. The
+ * cursor starts at the first sizeable free run rather than the first hole. */
+static int alloc_data_blocks(struct apfsrw *fs, uint32_t n, uint64_t hint,
+    uint64_t *out)
+{
+    int err;
+
+    if (fs->data_cursor == 0)
+        fs->data_cursor = spaceman_find_run(fs, 256);
+    err = alloc_blocks_from(fs, n, hint, fs->data_cursor, 0, out);
+
+    if (err == APFSRW_OK)
+        fs->data_cursor = *out + n;
     return err;
 }
 
@@ -2999,12 +3198,26 @@ static int rec_cmp(const uint8_t *ka, uint16_t la, const uint8_t *kb,
             return c < 0 ? -1 : 1;
         if (na != nb)
             return na < nb ? -1 : 1;
-    } else if (key_type(a) == APFS_TYPE_FILE_EXTENT && la >= 16 && lb >= 16) {
+    } else if ((key_type(a) == APFS_TYPE_FILE_EXTENT ||
+        key_type(a) == APFS_TYPE_SIBLING_LINK) && la >= 16 && lb >= 16) {
+        /* Second key word: logical address, or sibling id (spec p.104). */
         uint64_t la2 = rd64(ka + 8);
         uint64_t lb2 = rd64(kb + 8);
 
         if (la2 != lb2)
             return la2 < lb2 ? -1 : 1;
+    } else if (key_type(a) == APFS_TYPE_XATTR && la >= 10 && lb >= 10) {
+        /* j_xattr_key_t: name_len then the name (spec p.94). */
+        uint32_t na = rd16(ka + 8), nb = rd16(kb + 8), n = na < nb ? na : nb;
+        int c;
+
+        if (10U + na > la || 10U + nb > lb)
+            return 0;
+        c = memcmp(ka + 10, kb + 10, n);
+        if (c != 0)
+            return c < 0 ? -1 : 1;
+        if (na != nb)
+            return na < nb ? -1 : 1;
     }
     return 0;
 }
@@ -4421,12 +4634,8 @@ static int fstree_del(struct apfsrw *fs, const void *key, uint16_t klen)
         err = APFSRW_ENOENT;
         goto out;
     }
-    if (count == 1) {
-        /* Would leave an empty leaf; collapsing the tree is not implemented. */
-        err = APFSRW_ENOTSUP;
-        goto out;
-    }
-
+    /* A leaf may end up empty: the parent keeps routing its key range
+     * here, which reads as ENOENT and refills on the next insert. */
     gone_klen = recs[idx].klen;
     gone_vlen = recs[idx].vlen;
     free(recs[idx].key);
@@ -4448,7 +4657,7 @@ static int fstree_del(struct apfsrw *fs, const void *key, uint16_t klen)
         goto out;
     if (lvl == 0)
         fs->root_tree_paddr = out_pa;
-    else if (idx == 0) {
+    else if (idx == 0 && count > 0) {
         /* The smallest key in this leaf changed. */
         err = fstree_fix_separator(fs, &p, lvl, recs[0].key, recs[0].klen);
         if (err != APFSRW_OK)
@@ -4745,6 +4954,9 @@ static int cow_commit(struct apfsrw *fs, apfs_paddr_t new_root,
         rd64(&fs->apfs.apfs_num_directories) + extra_dirs);
     wr64(block + offsetof(struct apfs_superblock, apfs_num_symlinks),
         rd64(&fs->apfs.apfs_num_symlinks) + extra_links);
+    wr64(block + offsetof(struct apfs_superblock, apfs_num_other_fsobjects),
+        (uint64_t)((int64_t)rd64(&fs->apfs.apfs_num_other_fsobjects) +
+        fs->other_delta));
     /* apfs_fs_alloc_count counts blocks the VOLUME owns; fsck_apfs checks it
      * against the extents it finds. */
     wr64(block + offsetof(struct apfs_superblock, apfs_fs_alloc_count),
@@ -4804,6 +5016,7 @@ static int cow_commit(struct apfsrw *fs, apfs_paddr_t new_root,
         flush_deferred(fs);
         fs->alloced_count = 0;
         fs->alloc_delta = 0;
+        fs->other_delta = 0;
         (void)apfsrw_sync(fs);
 
         /* Adopt the state just published, or later operations keep reading
@@ -4904,6 +5117,121 @@ out:
  * refcnt } with the length in BLOCKS and kind APFS_KIND_NEW in the top nibble
  * (spec p.104-105).
  */
+/* Remove one record from a physical tree; the leaf must keep at least one
+ * record (collapsing levels is not implemented). */
+static int phys_delete(struct apfsrw *fs, apfs_paddr_t tree_root,
+    enum bkey_kind kind, const void *key, uint16_t klen,
+    apfs_paddr_t *new_root)
+{
+    struct bpath p;
+    struct apfs_btree_node_phys *cur = NULL;
+    struct rw_rec *recs = NULL;
+    uint8_t *b1 = NULL;
+    uint8_t newmin[APFSRW_MAX_KEY];
+    uint16_t newmin_len = 0;
+    uint32_t count = 0, i, idx = 0, lvl, l;
+    apfs_paddr_t child_new = 0;
+    int found = 0;
+    int err;
+
+    err = descend_phys(fs, tree_root, kind, key, klen, &p);
+    if (err != APFSRW_OK)
+        return err;
+
+    cur = calloc(1, fs->block_size);
+    b1 = calloc(1, fs->block_size);
+    recs = calloc(APFSRW_MAX_RECORDS, sizeof(*recs));
+    if (cur == NULL || b1 == NULL || recs == NULL) {
+        err = APFSRW_ENOMEM;
+        goto out;
+    }
+
+    lvl = p.n - 1;
+    err = read_object(fs, p.paddr[lvl], cur);
+    if (err != APFSRW_OK)
+        goto out;
+    err = load_leaf_records(fs, cur, &p.info, recs, &count);
+    if (err != APFSRW_OK)
+        goto out;
+    for (i = 0; i < count; i++) {
+        if (rec_cmp(recs[i].key, recs[i].klen, key, klen) == 0) {
+            idx = i;
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        err = APFSRW_ENOENT;
+        goto out;
+    }
+    free(recs[idx].key);
+    free(recs[idx].val);
+    for (i = idx; i + 1 < count; i++)
+        recs[i] = recs[i + 1];
+    count--;
+    memset(&recs[count], 0, sizeof(recs[count]));
+    if (idx == 0 && lvl != 0 && count > 0 &&
+        recs[0].klen <= sizeof(newmin)) {
+        memcpy(newmin, recs[0].key, recs[0].klen);
+        newmin_len = recs[0].klen;
+    }
+
+    err = build_node(fs, cur, (lvl == 0), (uint16_t)(p.n - 1 - lvl), &p.info,
+        recs, count, b1);
+    if (err != APFSRW_OK)
+        goto out;
+    if (lvl == 0) {
+        struct apfs_btree_info *bi = (struct apfs_btree_info *)
+            (b1 + fs->block_size - sizeof(*bi));
+
+        wr64(&bi->bt_key_count, rd64(&bi->bt_key_count) - 1);
+    }
+    err = phys_write_node(fs, b1, p.paddr[lvl], &child_new);
+    if (err != APFSRW_OK)
+        goto out;
+
+    /* Repoint the path, carrying a changed minimum key up like phys_insert. */
+    for (l = lvl; l > 0; l--) {
+        const void *kp, *vp;
+        uint16_t kl, vl;
+        uint32_t pi = l - 1;
+        int min_moved = (l == lvl) && (newmin_len != 0);
+
+        err = read_object(fs, p.paddr[pi], cur);
+        if (err != APFSRW_OK)
+            goto out;
+        err = btree_entry(fs, cur, &p.info, p.index[pi], &kp, &kl, &vp, &vl);
+        if (err != APFSRW_OK)
+            goto out;
+        wr64((void *)(uintptr_t)vp, (uint64_t)child_new);
+        if (min_moved && kl == newmin_len) {
+            memcpy((void *)(uintptr_t)kp, newmin, newmin_len);
+            if (p.index[pi] != 0)
+                newmin_len = 0;
+        } else {
+            newmin_len = 0;
+        }
+        if (pi == 0) {
+            struct apfs_btree_info *bi = (struct apfs_btree_info *)
+                ((uint8_t *)cur + fs->block_size - sizeof(*bi));
+
+            wr64(&bi->bt_key_count, rd64(&bi->bt_key_count) - 1);
+        }
+        err = phys_write_node(fs, (uint8_t *)cur, p.paddr[pi], &child_new);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+    *new_root = child_new;
+out:
+    if (recs != NULL) {
+        free_records(recs, count);
+        free(recs);
+    }
+    free(b1);
+    free(cur);
+    return err;
+}
+
 static int extentref_add(struct apfsrw *fs, uint64_t paddr, uint32_t nblocks,
     uint64_t owner, uint64_t *new_root)
 {
@@ -4929,6 +5257,27 @@ static int extentref_add(struct apfsrw *fs, uint64_t paddr, uint32_t nblocks,
         fs->extref_paddr = root;
         *new_root = (uint64_t)root;
     }
+    return err;
+}
+
+/* Drop the extent reference for a freed extent. Records are written one per
+ * extent (extentref_add), so the key is exact; a missing one is not an error. */
+static int extentref_del(struct apfsrw *fs, uint64_t paddr)
+{
+    uint8_t key[8];
+    apfs_paddr_t root = 0;
+    int err;
+
+    if (fs->extref_paddr == 0)
+        fs->extref_paddr =
+            (apfs_paddr_t)rd64(&fs->apfs.apfs_extentref_tree_oid);
+    wr64(key, make_jkey(paddr, APFS_TYPE_EXTENT));
+    err = phys_delete(fs, fs->extref_paddr, BKEY_JKEY, key,
+        (uint16_t)sizeof(key), &root);
+    if (err == APFSRW_ENOENT || err == APFSRW_ENOTSUP)
+        return APFSRW_OK;
+    if (err == APFSRW_OK)
+        fs->extref_paddr = root;
     return err;
 }
 
@@ -4971,6 +5320,91 @@ static int split_parent(struct apfsrw *fs, const char *path, uint64_t *parent,
     *name_out = name;
     *namelen_out = (uint16_t)strlen(name);
     return APFSRW_OK;
+}
+
+static int extent_put(struct apfsrw *fs, uint64_t stream_id, uint64_t logical,
+    uint64_t phys, uint64_t len);
+
+/* Runs come from one chunk, so an extent never spans more than this. */
+#define APFSRW_MAX_EXTENT_BLOCKS 32768U
+
+/*
+ * Write `size` bytes at logical byte `logical` of a stream as one or more
+ * extents: each piece is as large as the allocator can find (halving on
+ * ENOSPC), and each gets its extent-reference record. Returns the blocks
+ * used, the number of pieces and the first piece's address.
+ */
+static int stream_write_data(struct apfsrw *fs, uint64_t stream_id,
+    uint64_t logical, const void *data, uint64_t size, uint64_t hint,
+    uint64_t *blocks_out, uint32_t *pieces_out, uint64_t *first_phys)
+{
+    uint64_t bs = fs->block_size, done = 0, total = 0;
+    uint32_t pieces = 0;
+    uint8_t *block = calloc(1, bs);
+    int err = APFSRW_OK;
+
+    if (block == NULL)
+        return APFSRW_ENOMEM;
+    while (done < size) {
+        uint64_t remain = (size - done + bs - 1) / bs, phys = 0, root = 0, i;
+        uint32_t got = remain > APFSRW_MAX_EXTENT_BLOCKS ?
+            APFSRW_MAX_EXTENT_BLOCKS : (uint32_t)remain;
+
+        for (;;) {
+            err = alloc_data_blocks(fs, got, pieces == 0 ? hint : 0, &phys);
+            if (err == APFSRW_OK)
+                break;
+            if (err != APFSRW_ENOSPC || got == 1)
+                goto out;
+            got /= 2;
+        }
+        /* Whole blocks straight from the caller's buffer in one write;
+         * only a partial last block goes through the bounce block. */
+        {
+            uint64_t whole = (size - done) / bs;
+            uint64_t nwhole = whole < got ? whole : got;
+
+            if (nwhole > 0) {
+                if (apfsrw_pwrite(fs, (const uint8_t *)data + done,
+                    (size_t)(nwhole * bs), (off_t)(phys * bs)) !=
+                    (ssize_t)(nwhole * bs)) {
+                    err = APFSRW_EIO;
+                    goto out;
+                }
+            }
+            for (i = nwhole; i < got; i++) {
+                uint64_t off = done + i * bs;
+                uint64_t n = size > off ? size - off : 0;
+
+                if (n > bs)
+                    n = bs;
+                memset(block, 0, bs);
+                if (n > 0)
+                    memcpy(block, (const uint8_t *)data + off, n);
+                err = write_raw(fs, (apfs_paddr_t)(phys + i), block);
+                if (err != APFSRW_OK)
+                    goto out;
+            }
+        }
+        err = extent_put(fs, stream_id, logical + done, phys, (uint64_t)got * bs);
+        if (err != APFSRW_OK)
+            goto out;
+        err = extentref_add(fs, phys, got, stream_id, &root);
+        if (err != APFSRW_OK)
+            goto out;
+        if (pieces == 0 && first_phys != NULL)
+            *first_phys = phys;
+        done += (uint64_t)got * bs;
+        total += got;
+        pieces++;
+    }
+out:
+    free(block);
+    if (blocks_out != NULL)
+        *blocks_out = total;
+    if (pieces_out != NULL)
+        *pieces_out = pieces;
+    return err;
 }
 
 /*
@@ -5035,25 +5469,11 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
         fileid = APFSRW_ROOT_FILEID + 1;
 
     if (ftype == APFSRW_DT_REG && size > 0) {
-        uint64_t i;
-
-        nblocks = (size + fs->block_size - 1) / fs->block_size;
-        err = alloc_blocks(fs, (uint32_t)nblocks, &data_block);
+        /* Data first: extents and their references, before the inode. */
+        err = stream_write_data(fs, fileid, 0, data, size, 0, &nblocks, NULL,
+            &data_block);
         if (err != APFSRW_OK)
             goto out;
-        for (i = 0; i < nblocks; i++) {
-            size_t off = (size_t)i * fs->block_size;
-            size_t n = size > off ? size - off : 0;
-
-            memset(zero, 0, fs->block_size);
-            if (n > fs->block_size)
-                n = fs->block_size;
-            if (n > 0)
-                memcpy(zero, (const uint8_t *)data + off, n);
-            err = write_raw(fs, (apfs_paddr_t)(data_block + i), zero);
-            if (err != APFSRW_OK)
-                goto out;
-        }
     }
 
     /* INODE */
@@ -5104,20 +5524,16 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
             goto out;
     }
 
-    if (ftype == APFSRW_DT_REG && size > 0) {
+    if (ftype != APFSRW_DT_REG && ftype != APFSRW_DT_DIR &&
+        ftype != APFSRW_DT_LNK)
+        fs->other_delta += 1;
+    /* Every DSTREAM extended field needs its DSTREAM_ID record, even at
+     * size 0 (fsck_apfs: "dstream does not have an associated dstream id"). */
+    if (ftype == APFSRW_DT_REG) {
         wr64(key, make_jkey(fileid, APFS_TYPE_DSTREAM_ID));
         memset(val, 0, sizeof(val));
         wr32(val, 1);
         err = fstree_put(fs, key, 8, val, 4, 0);
-        if (err != APFSRW_OK)
-            goto out;
-
-        wr64(key, make_jkey(fileid, APFS_TYPE_FILE_EXTENT));
-        wr64(key + 8, 0);
-        memset(val, 0, sizeof(val));
-        wr64(val, nblocks * fs->block_size);
-        wr64(val + 8, data_block);
-        err = fstree_put(fs, key, 16, val, 24, 0);
         if (err != APFSRW_OK)
             goto out;
     }
@@ -5187,15 +5603,8 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
             goto out;
     }
 
-    if (ftype == APFSRW_DT_REG && size > 0) {
-        uint64_t new_extref = 0;
-
-        err = extentref_add(fs, data_block, (uint32_t)nblocks, fileid,
-            &new_extref);
-        if (err != APFSRW_OK)
-            goto out;
+    if (ftype == APFSRW_DT_REG && size > 0)
         fs->alloc_delta += (int64_t)nblocks;
-    }
 
     if (fs->batch) {
         /* Accumulate; the commit happens at apfsrw_batch_end(). */
@@ -5297,92 +5706,9 @@ int apfsrw_mknod(struct apfsrw *fs, const char *path, uint16_t ftype,
 
 /* Delete every FILE_EXTENT record of a stream and defer-free its blocks
  * (spec p.102 j_file_extent_key_t). Extent-ref entries are left stale. */
-#define APFSRW_DROP_MAX_EXTENTS 32
-
-struct drop_extents_ctx {
-    uint64_t stream_id;
-    uint32_t n;
-    int overflow;
-    struct { uint64_t logical, phys, len; } ext[APFSRW_DROP_MAX_EXTENTS];
-};
-
-static int drop_extents_cb(struct apfsrw *fs,
-    const struct apfs_btree_node_phys *node,
-    const struct apfs_btree_info *info, void *ctx)
-{
-    struct drop_extents_ctx *c = (struct drop_extents_ctx *)ctx;
-    uint32_t i;
-
-    for (i = 0; i < rd32(&node->btn_nkeys); i++) {
-        const void *keyp, *valp;
-        uint16_t key_len, val_len;
-        const struct apfs_j_file_extent_key *key;
-        const struct apfs_j_file_extent_val *val;
-        int err;
-
-        err = btree_entry(fs, node, info, i, &keyp, &key_len, &valp,
-            &val_len);
-        if (err != APFSRW_OK)
-            return err;
-        if (key_len < sizeof(*key) || val_len < sizeof(*val))
-            continue;
-        key = (const struct apfs_j_file_extent_key *)keyp;
-        if (key_id(rd64(&key->hdr.obj_id_and_type)) != c->stream_id ||
-            key_type(rd64(&key->hdr.obj_id_and_type)) != APFS_TYPE_FILE_EXTENT)
-            continue;
-        if (c->n == APFSRW_DROP_MAX_EXTENTS) {
-            c->overflow = 1;
-            return 1;
-        }
-        val = (const struct apfs_j_file_extent_val *)valp;
-        c->ext[c->n].logical = rd64(&key->logical_addr);
-        c->ext[c->n].phys = rd64(&val->phys_block_num);
-        c->ext[c->n].len =
-            rd64(&val->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
-        c->n++;
-    }
-    return APFSRW_OK;
-}
-
+/* Defined with the ranged-write code below. */
 static int drop_extents(struct apfsrw *fs, uint64_t stream_id,
-    uint64_t *freed_blocks)
-{
-    struct drop_extents_ctx c;
-    uint64_t freed = 0;
-    uint32_t i;
-    int err;
-
-    memset(&c, 0, sizeof(c));
-    c.stream_id = stream_id;
-    err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, stream_id,
-        stream_id, drop_extents_cb, &c);
-    if (err != APFSRW_OK && err != 1)
-        return err;
-    if (c.overflow)
-        return APFSRW_ENOTSUP;
-
-    for (i = 0; i < c.n; i++) {
-        uint8_t key[16];
-
-        wr64(key, make_jkey(stream_id, APFS_TYPE_FILE_EXTENT));
-        wr64(key + 8, c.ext[i].logical);
-        err = fstree_del(fs, key, 16);
-        if (err != APFSRW_OK)
-            return err;
-        if (c.ext[i].phys != 0 && c.ext[i].len != 0) {
-            uint32_t nb = (uint32_t)((c.ext[i].len +
-                fs->block_size - 1) / fs->block_size);
-
-            err = defer_free(fs, c.ext[i].phys, nb);
-            if (err != APFSRW_OK)
-                return err;
-            freed += nb;
-        }
-    }
-    if (freed_blocks != NULL)
-        *freed_blocks = freed;
-    return APFSRW_OK;
-}
+    uint64_t *freed_blocks);
 
 /* Patch the DSTREAM xfield sizes in place (spec p.106 j_dstream_t). */
 static int inode_set_dstream(uint8_t *val, uint16_t val_len, uint64_t size,
@@ -5462,45 +5788,11 @@ int apfsrw_set_file_content(struct apfsrw *fs, const char *path,
         goto fail;
 
     if (size > 0) {
-        uint64_t i;
-
-        block = calloc(1, fs->block_size);
-        if (block == NULL) {
-            err = APFSRW_ENOMEM;
-            goto fail;
-        }
-        nblocks = (size + fs->block_size - 1) / fs->block_size;
-        err = alloc_blocks(fs, (uint32_t)nblocks, &data_block);
+        err = stream_write_data(fs, priv, 0, data, size, 0, &nblocks, NULL,
+            &data_block);
         if (err != APFSRW_OK)
             goto fail;
-        for (i = 0; i < nblocks; i++) {
-            size_t off = (size_t)i * fs->block_size;
-            size_t n = size - off;
 
-            if (n > fs->block_size)
-                n = fs->block_size;
-            memset(block, 0, fs->block_size);
-            memcpy(block, (const uint8_t *)data + off, n);
-            err = write_raw(fs, (apfs_paddr_t)(data_block + i), block);
-            if (err != APFSRW_OK)
-                goto fail;
-        }
-
-        /* One extent covering the whole content. */
-        {
-            uint8_t ekey[16], eval[24];
-
-            wr64(ekey, make_jkey(priv, APFS_TYPE_FILE_EXTENT));
-            wr64(ekey + 8, 0);
-            memset(eval, 0, sizeof(eval));
-            wr64(eval, nblocks * fs->block_size);
-            wr64(eval + 8, data_block);
-            err = fstree_put(fs, ekey, 16, eval, 24, 0);
-            if (err != APFSRW_OK)
-                goto fail;
-        }
-
-        /* A file created empty has no DSTREAM_ID record yet. */
         {
             uint8_t dkey[8], dval[4];
             uint16_t dvlen = 0;
@@ -5515,21 +5807,6 @@ int apfsrw_set_file_content(struct apfsrw *fs, const char *path,
                 goto fail;
         }
 
-        {
-            uint64_t new_extref = 0;
-
-            err = extentref_add(fs, data_block, (uint32_t)nblocks,
-                priv, &new_extref);
-            if (err != APFSRW_OK)
-                goto fail;
-        }
-    } else {
-        uint8_t dkey[8];
-
-        wr64(dkey, make_jkey(priv, APFS_TYPE_DSTREAM_ID));
-        err = fstree_del(fs, dkey, 8);
-        if (err != APFSRW_OK && err != APFSRW_ENOENT)
-            goto fail;
     }
 
     now = apfsrw_now_ns();
@@ -5553,6 +5830,1396 @@ int apfsrw_set_file_content(struct apfsrw *fs, const char *path,
 fail:
     txn_rollback(fs);
     free(block);
+    return err;
+}
+
+/* -- SAVEPOINT -- */
+#ifndef APFSRW_KERNEL
+
+/*
+ * A savepoint is a byte copy of everything that describes the current
+ * checkpoint and the allocator: block 0, the whole descriptor ring, the
+ * ephemeral objects (space manager, reaper), the chunk-info blocks, every
+ * chunk bitmap and the internal-pool bitmaps. All of those are rewritten in
+ * place by later transactions; the tree/omap/superblock blocks are not, and
+ * the allocator is told not to reuse anything that was in use when the
+ * savepoint was taken. Writing the copy back therefore restores the exact
+ * pre-savepoint state, and newer checkpoints in the ring vanish with it.
+ */
+#define APFSRW_SP_MAGIC 0x50535752 /* "RWSP" */
+
+struct sp_hdr {
+    uint32_t magic, version, block_size, nblocks;
+    uint64_t block_count, xid;
+    uint8_t uuid[16];
+};
+
+struct sp_list {
+    uint64_t *paddr;
+    uint32_t n, cap;
+};
+
+static int sp_add(struct sp_list *l, uint64_t p)
+{
+    uint32_t i;
+
+    for (i = 0; i < l->n; i++)
+        if (l->paddr[i] == p)
+            return APFSRW_OK;
+    if (l->n == l->cap) {
+        uint32_t ncap = l->cap ? l->cap * 2 : 64;
+        uint64_t *np = realloc(l->paddr, ncap * sizeof(*np));
+
+        if (np == NULL)
+            return APFSRW_ENOMEM;
+        l->paddr = np;
+        l->cap = ncap;
+    }
+    l->paddr[l->n++] = p;
+    return APFSRW_OK;
+}
+
+/* Every in-place-rewritten block, plus (optionally) a bitmap of blocks
+ * currently in use. */
+static int sp_collect(struct apfsrw *fs, struct sp_list *l, uint8_t *inuse)
+{
+    struct apfs_spaceman_phys *sm = calloc(1, fs->block_size);
+    struct apfs_chunk_info_block *cib = calloc(1, fs->block_size);
+    uint8_t *bm = calloc(1, fs->block_size);
+    apfs_paddr_t sm_paddr = 0, rp_paddr = 0;
+    uint32_t desc_blocks = rd32(&fs->nx.nx_xp_desc_blocks) & 0x7fffffffU;
+    uint32_t cib_count, addr_off, i, c;
+    uint64_t desc_base = rd64(&fs->nx.nx_xp_desc_base), b;
+    int err = APFSRW_ENOMEM;
+
+    if (sm == NULL || cib == NULL || bm == NULL)
+        goto out;
+    err = sp_add(l, 0);
+    for (b = 0; b < desc_blocks && err == APFSRW_OK; b++)
+        err = sp_add(l, desc_base + b);
+    if (err != APFSRW_OK)
+        goto out;
+    err = resolve_ephemeral(fs, rd64(&fs->nx.nx_spaceman_oid), &sm_paddr);
+    if (err != APFSRW_OK)
+        goto out;
+    err = sp_add(l, (uint64_t)sm_paddr);
+    if (err == APFSRW_OK &&
+        resolve_ephemeral(fs, rd64(&fs->nx.nx_reaper_oid), &rp_paddr) ==
+        APFSRW_OK)
+        err = sp_add(l, (uint64_t)rp_paddr);
+    if (err != APFSRW_OK)
+        goto out;
+    err = read_object(fs, sm_paddr, sm);
+    if (err != APFSRW_OK)
+        goto out;
+    {
+        uint64_t ipb = rd64(&sm->sm_ip_bm_base);
+        uint32_t ipn = rd32(&sm->sm_ip_bm_block_count);
+
+        for (i = 0; i < ipn && err == APFSRW_OK; i++)
+            err = sp_add(l, ipb + i);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+    cib_count = rd32(&sm->sm_dev[0].sm_cib_count);
+    addr_off = rd32(&sm->sm_dev[0].sm_addr_offset);
+    for (i = 0; i < cib_count; i++) {
+        apfs_paddr_t cib_paddr;
+
+        memcpy(&cib_paddr, (uint8_t *)sm + addr_off + i * 8U, 8);
+        cib_paddr = (apfs_paddr_t)rd64(&cib_paddr);
+        if (cib_paddr <= 0)
+            continue;
+        err = sp_add(l, (uint64_t)cib_paddr);
+        if (err != APFSRW_OK)
+            goto out;
+        err = read_object(fs, cib_paddr, cib);
+        if (err != APFSRW_OK)
+            goto out;
+        for (c = 0; c < rd32(&cib->cib_chunk_info_count); c++) {
+            struct apfs_chunk_info *ci = &cib->cib_chunk_info[c];
+            uint64_t base = rd64(&ci->ci_addr);
+            uint32_t nblk = rd32(&ci->ci_block_count), k;
+            apfs_paddr_t bmp = (apfs_paddr_t)rd64(&ci->ci_bitmap_addr);
+
+            if (bmp == 0)
+                continue;
+            err = sp_add(l, (uint64_t)bmp);
+            if (err != APFSRW_OK)
+                goto out;
+            if (inuse == NULL)
+                continue;
+            err = read_raw(fs, bmp, bm);
+            if (err != APFSRW_OK)
+                goto out;
+            for (k = 0; k < nblk && base + k < fs->block_count; k++)
+                if (bm[k >> 3] & (uint8_t)(1U << (k & 7)))
+                    inuse[(base + k) >> 3] |=
+                        (uint8_t)(1U << ((base + k) & 7));
+        }
+    }
+    err = APFSRW_OK;
+out:
+    free(bm);
+    free(cib);
+    free(sm);
+    return err;
+}
+
+int apfsrw_savepoint(struct apfsrw *fs, const char *file)
+{
+    struct sp_list l;
+    struct sp_hdr h;
+    uint8_t *blk = NULL, *inuse = NULL;
+    FILE *f = NULL;
+    uint32_t i;
+    int err;
+
+    if (fs == NULL || file == NULL)
+        return APFSRW_EINVAL;
+    if (!fs->writable || fs->batch)
+        return APFSRW_EPERM;
+    memset(&l, 0, sizeof(l));
+    inuse = calloc(1, (size_t)((fs->block_count + 7) / 8));
+    blk = calloc(1, fs->block_size);
+    if (inuse == NULL || blk == NULL) {
+        err = APFSRW_ENOMEM;
+        goto out;
+    }
+    err = sp_collect(fs, &l, inuse);
+    if (err != APFSRW_OK)
+        goto out;
+
+    f = fopen(file, "wb");
+    if (f == NULL) {
+        err = APFSRW_EIO;
+        goto out;
+    }
+    memset(&h, 0, sizeof(h));
+    h.magic = APFSRW_SP_MAGIC;
+    h.version = 1;
+    h.block_size = fs->block_size;
+    h.nblocks = l.n;
+    h.block_count = fs->block_count;
+    h.xid = fs->xid;
+    memcpy(h.uuid, fs->nx.nx_uuid, 16);
+    if (fwrite(&h, sizeof(h), 1, f) != 1) {
+        err = APFSRW_EIO;
+        goto out;
+    }
+    for (i = 0; i < l.n; i++) {
+        err = read_raw(fs, (apfs_paddr_t)l.paddr[i], blk);
+        if (err != APFSRW_OK)
+            goto out;
+        if (fwrite(&l.paddr[i], 8, 1, f) != 1 ||
+            fwrite(blk, fs->block_size, 1, f) != 1) {
+            err = APFSRW_EIO;
+            goto out;
+        }
+    }
+    if (fflush(f) != 0 || fsync(fileno(f)) != 0) {
+        err = APFSRW_EIO;
+        goto out;
+    }
+    free(fs->frozen);
+    fs->frozen = inuse;
+    inuse = NULL;
+    err = APFSRW_OK;
+out:
+    if (f != NULL)
+        fclose(f);
+    free(inuse);
+    free(blk);
+    free(l.paddr);
+    return err;
+}
+
+/* The batch succeeded: the saved state is no longer needed and the blocks it
+ * kept out of the allocator are free for reuse. */
+void apfsrw_savepoint_release(struct apfsrw *fs)
+{
+    if (fs == NULL)
+        return;
+    free(fs->frozen);
+    fs->frozen = NULL;
+}
+
+int apfsrw_rollback(struct apfsrw *fs, const char *file)
+{
+    struct sp_hdr h;
+    uint8_t *blk = NULL;
+    FILE *f;
+    uint32_t i;
+    int err = APFSRW_OK;
+
+    if (fs == NULL || file == NULL)
+        return APFSRW_EINVAL;
+    if (!fs->writable)
+        return APFSRW_EPERM;
+    f = fopen(file, "rb");
+    if (f == NULL)
+        return APFSRW_ENOENT;
+    if (fread(&h, sizeof(h), 1, f) != 1 || h.magic != APFSRW_SP_MAGIC ||
+        h.version != 1 || h.block_size != fs->block_size ||
+        h.block_count != fs->block_count ||
+        memcmp(h.uuid, fs->nx.nx_uuid, 16) != 0) {
+        fclose(f);
+        return APFSRW_EINVAL;
+    }
+    blk = calloc(1, fs->block_size);
+    if (blk == NULL) {
+        fclose(f);
+        return APFSRW_ENOMEM;
+    }
+    for (i = 0; i < h.nblocks; i++) {
+        uint64_t paddr;
+
+        if (fread(&paddr, 8, 1, f) != 1 ||
+            fread(blk, fs->block_size, 1, f) != 1 ||
+            paddr >= fs->block_count) {
+            err = APFSRW_EIO;
+            break;
+        }
+        err = write_raw(fs, (apfs_paddr_t)paddr, blk);
+        if (err != APFSRW_OK)
+            break;
+    }
+    fclose(f);
+    free(blk);
+    if (err != APFSRW_OK)
+        return err;
+    if (apfsrw_sync(fs) != 0)
+        return APFSRW_EIO;
+    free(fs->frozen);
+    fs->frozen = NULL;
+    fs->batch = 0;
+    fs->alloced_count = 0;
+    fs->deferred_count = 0;
+    fs->alloc_delta = 0;
+    fs->other_delta = 0;
+    fs->data_cursor = 0;
+    /* Re-derive everything from what is now the newest checkpoint. */
+    fs->fs_oid = 0;
+    return load_volume(fs);
+}
+
+#endif /* !APFSRW_KERNEL */
+
+/* -- RANGED WRITES -- */
+
+struct ext_rec {
+    uint64_t logical, phys, len;         /* bytes; len is a block multiple */
+};
+
+struct collect_ctx {
+    uint64_t stream_id;
+    struct ext_rec *ext;
+    uint32_t n, cap;
+};
+
+static int collect_extents_cb(struct apfsrw *fs,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+    struct collect_ctx *c = (struct collect_ctx *)ctx;
+    uint32_t i;
+
+    for (i = 0; i < rd32(&node->btn_nkeys); i++) {
+        const struct apfs_j_file_extent_key *key;
+        const struct apfs_j_file_extent_val *val;
+        const void *keyp, *valp;
+        uint16_t klen, vlen;
+        int err;
+
+        err = btree_entry(fs, node, info, i, &keyp, &klen, &valp, &vlen);
+        if (err != APFSRW_OK)
+            return err;
+        if (klen < sizeof(*key) || vlen < sizeof(*val))
+            continue;
+        key = (const struct apfs_j_file_extent_key *)keyp;
+        if (key_id(rd64(&key->hdr.obj_id_and_type)) != c->stream_id ||
+            key_type(rd64(&key->hdr.obj_id_and_type)) != APFS_TYPE_FILE_EXTENT)
+            continue;
+        if (c->n == c->cap) {
+            uint32_t ncap = c->cap ? c->cap * 2 : 16;
+            struct ext_rec *ne = realloc(c->ext, ncap * sizeof(*ne));
+
+            if (ne == NULL)
+                return APFSRW_ENOMEM;
+            c->ext = ne;
+            c->cap = ncap;
+        }
+        val = (const struct apfs_j_file_extent_val *)valp;
+        c->ext[c->n].logical = rd64(&key->logical_addr);
+        c->ext[c->n].phys = rd64(&val->phys_block_num);
+        c->ext[c->n].len = rd64(&val->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
+        c->n++;
+    }
+    return APFSRW_OK;
+}
+
+/* Every extent of a stream, in logical order (the walk visits keys sorted). */
+static int collect_extents(struct apfsrw *fs, uint64_t stream_id,
+    struct ext_rec **out, uint32_t *n_out)
+{
+    struct collect_ctx c;
+    int err;
+
+    memset(&c, 0, sizeof(c));
+    c.stream_id = stream_id;
+    err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, stream_id, stream_id,
+        collect_extents_cb, &c);
+    if (err != APFSRW_OK && err != 1) {
+        free(c.ext);
+        return err;
+    }
+    *out = c.ext;
+    *n_out = c.n;
+    return APFSRW_OK;
+}
+
+static int extent_put(struct apfsrw *fs, uint64_t stream_id, uint64_t logical,
+    uint64_t phys, uint64_t len)
+{
+    uint8_t key[16], val[24];
+
+    wr64(key, make_jkey(stream_id, APFS_TYPE_FILE_EXTENT));
+    wr64(key + 8, logical);
+    memset(val, 0, sizeof(val));
+    wr64(val, len);
+    wr64(val + 8, phys);
+    return fstree_put(fs, key, 16, val, 24, 0);
+}
+
+static int extent_del(struct apfsrw *fs, uint64_t stream_id, uint64_t logical)
+{
+    uint8_t key[16];
+
+    wr64(key, make_jkey(stream_id, APFS_TYPE_FILE_EXTENT));
+    wr64(key + 8, logical);
+    return fstree_del(fs, key, 16);
+}
+
+/*
+ * Remove blocks [b0, b1) of a stream from its extents: records covering the
+ * range are deleted and re-added as the parts outside it, the blocks inside
+ * are freed and their extent references rewritten to match. Pass b1 == ~0
+ * to cut to the end. *freed counts blocks given back.
+ */
+static int stream_cut(struct apfsrw *fs, uint64_t stream_id,
+    const struct ext_rec *ext, uint32_t n, uint64_t b0, uint64_t b1,
+    uint64_t *freed)
+{
+    uint64_t bs = fs->block_size;
+    uint32_t i;
+    int err;
+
+    for (i = 0; i < n; i++) {
+        uint64_t eb0 = ext[i].logical / bs;
+        uint64_t eb1 = eb0 + ext[i].len / bs;
+        uint64_t c0, c1, root = 0;
+
+        if (eb1 <= b0 || eb0 >= b1)
+            continue;
+        c0 = eb0 > b0 ? eb0 : b0;           /* cut [c0, c1) of this extent */
+        c1 = eb1 < b1 ? eb1 : b1;
+
+        err = extent_del(fs, stream_id, ext[i].logical);
+        if (err != APFSRW_OK)
+            return err;
+        if (ext[i].phys != 0) {
+            err = extentref_del(fs, ext[i].phys);
+            if (err != APFSRW_OK)
+                return err;
+            err = defer_free(fs, ext[i].phys + (c0 - eb0), (uint32_t)(c1 - c0));
+            if (err != APFSRW_OK)
+                return err;
+            *freed += c1 - c0;
+        }
+        if (c0 > eb0) {
+            err = extent_put(fs, stream_id, ext[i].logical, ext[i].phys,
+                (c0 - eb0) * bs);
+            if (err != APFSRW_OK)
+                return err;
+            if (ext[i].phys != 0) {
+                err = extentref_add(fs, ext[i].phys, (uint32_t)(c0 - eb0),
+                    stream_id, &root);
+                if (err != APFSRW_OK)
+                    return err;
+            }
+        }
+        if (eb1 > c1) {
+            uint64_t rphys = ext[i].phys ? ext[i].phys + (c1 - eb0) : 0;
+
+            err = extent_put(fs, stream_id, c1 * bs, rphys, (eb1 - c1) * bs);
+            if (err != APFSRW_OK)
+                return err;
+            if (rphys != 0) {
+                err = extentref_add(fs, rphys, (uint32_t)(eb1 - c1),
+                    stream_id, &root);
+                if (err != APFSRW_OK)
+                    return err;
+            }
+        }
+    }
+    return APFSRW_OK;
+}
+
+/* Free every extent of a stream (unlink, whole-file replace). */
+static int drop_extents(struct apfsrw *fs, uint64_t stream_id,
+    uint64_t *freed_blocks)
+{
+    struct ext_rec *ext = NULL;
+    uint64_t freed = 0;
+    uint32_t n = 0;
+    int err;
+
+    err = collect_extents(fs, stream_id, &ext, &n);
+    if (err != APFSRW_OK)
+        return err;
+    err = stream_cut(fs, stream_id, ext, n, 0, ~0ull, &freed);
+    free(ext);
+    if (err == APFSRW_OK && freed_blocks != NULL)
+        *freed_blocks = freed;
+    return err;
+}
+
+/* The block holding logical byte `pos`, or 0 for a hole. */
+static uint64_t extent_block_at(const struct ext_rec *ext, uint32_t n,
+    uint64_t pos, uint64_t bs)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++) {
+        if (pos >= ext[i].logical && pos < ext[i].logical + ext[i].len)
+            return ext[i].phys ? ext[i].phys + (pos - ext[i].logical) / bs : 0;
+    }
+    return 0;
+}
+
+/* Load the inode record and the numbers the stream code needs from it. */
+static int stream_inode(struct apfsrw *fs, const char *path, uint8_t *ival,
+    uint16_t *ivlen, uint8_t *key, uint64_t *priv, uint64_t *size)
+{
+    uint64_t fileid = 0;
+    uint8_t type = 0;
+    int err;
+
+    err = resolve_path(fs, path, &fileid, &type);
+    if (err != APFSRW_OK)
+        return err;
+    if (type != APFSRW_DT_REG)
+        return APFSRW_EINVAL;
+    wr64(key, make_jkey(fileid, APFS_TYPE_INODE));
+    err = fstree_get(fs, key, 8, ival, 1024, ivlen);
+    if (err != APFSRW_OK)
+        return err;
+    if (*ivlen < sizeof(struct apfs_j_inode_val))
+        return APFSRW_EINVAL;
+    *priv = rd64(ival + offsetof(struct apfs_j_inode_val, private_id));
+    *size = 0;
+    (void)inode_dstream_size(ival, *ivlen, size);
+    return APFSRW_OK;
+}
+
+static int stream_finish(struct apfsrw *fs, uint8_t *key, uint8_t *ival,
+    uint16_t ivlen, uint64_t priv, uint64_t size, uint64_t alloced_blocks,
+    int64_t delta)
+{
+    uint8_t dkey[8], dval[4];
+    uint16_t dvlen = 0;
+    uint64_t now;
+    int err;
+
+    wr64(dkey, make_jkey(priv, APFS_TYPE_DSTREAM_ID));
+    err = fstree_get(fs, dkey, 8, dval, sizeof(dval), &dvlen);
+    if (err == APFSRW_ENOENT) {
+        wr32(dval, 1);
+        err = fstree_put(fs, dkey, 8, dval, 4, 0);
+    }
+    if (err != APFSRW_OK)
+        return err;
+
+    now = apfsrw_now_ns();
+    wr64(ival + offsetof(struct apfs_j_inode_val, mod_time), now);
+    wr64(ival + offsetof(struct apfs_j_inode_val, change_time), now);
+    err = inode_set_dstream(ival, ivlen, size, alloced_blocks * fs->block_size);
+    if (err != APFSRW_OK)
+        return err;
+    err = fstree_put(fs, key, 8, ival, ivlen, 1);
+    if (err != APFSRW_OK)
+        return err;
+    fs->alloc_delta += delta;
+    return cow_commit(fs, fs->root_tree_paddr,
+        rd64(&fs->apfs.apfs_next_obj_id), 0, 0, 0, fs->extref_paddr, 0);
+}
+
+static uint64_t extents_blocks(const struct ext_rec *ext, uint32_t n,
+    uint64_t bs)
+{
+    uint64_t total = 0;
+    uint32_t i;
+
+    for (i = 0; i < n; i++)
+        if (ext[i].phys != 0)
+            total += ext[i].len / bs;
+    return total;
+}
+
+/*
+ * Write [off, off+len) of a regular file in place. Only the blocks touched
+ * are rewritten (copy-on-write into a fresh extent); bytes around the range
+ * inside those blocks are carried over, everything else keeps its blocks.
+ * Writing past the end grows the file; a gap before `off` reads as zeros.
+ */
+int apfsrw_write_range(struct apfsrw *fs, const char *path, uint64_t off,
+    const void *data, size_t len)
+{
+    struct ext_rec *ext = NULL;
+    uint8_t *block = NULL;
+    uint8_t ival[1024], key[8];
+    uint16_t ivlen = 0;
+    uint64_t priv = 0, old_size = 0, bs, b0, b1, nb, newp = 0, freed = 0;
+    uint64_t i, alloced, new_size;
+    uint32_t n = 0;
+    int err;
+
+    if (fs == NULL || path == NULL || (data == NULL && len != 0))
+        return APFSRW_EINVAL;
+    if (!fs->writable)
+        return APFSRW_EPERM;
+    if (fs->batch)
+        return APFSRW_EINVAL;
+    if (len == 0)
+        return APFSRW_OK;
+    if (off + len < off || off + len > 0xffffffffULL)
+        return APFSRW_EOVERFLOW;
+
+    err = stream_inode(fs, path, ival, &ivlen, key, &priv, &old_size);
+    if (err != APFSRW_OK)
+        return err;
+    err = collect_extents(fs, priv, &ext, &n);
+    if (err != APFSRW_OK)
+        return err;
+
+    bs = fs->block_size;
+    b0 = off / bs;
+    b1 = (off + len + bs - 1) / bs;
+    nb = b1 - b0;
+    /* Assemble the new content of every touched block, then place it. */
+    block = calloc(1, nb * bs);
+    if (block == NULL) {
+        err = APFSRW_ENOMEM;
+        goto fail;
+    }
+    for (i = 0; i < nb; i++) {
+        uint64_t lb = (b0 + i) * bs;             /* this block's logical start */
+        uint64_t old = extent_block_at(ext, n, lb, bs);
+        uint64_t lo = off > lb ? off - lb : 0;
+        uint64_t hi = (off + len < lb + bs) ? off + len - lb : bs;
+        uint8_t *dst = block + i * bs;
+
+        if (old != 0 && lb < old_size) {
+            err = read_raw(fs, (apfs_paddr_t)old, dst);
+            if (err != APFSRW_OK)
+                goto fail;
+            if (old_size < lb + bs)
+                memset(dst + (old_size - lb), 0, bs - (old_size - lb));
+        }
+        memcpy(dst + lo, (const uint8_t *)data + (lb + lo - off), hi - lo);
+    }
+
+    err = stream_cut(fs, priv, ext, n, b0, b1, &freed);
+    if (err != APFSRW_OK)
+        goto fail;
+    {
+        uint64_t hint = 0, blocks = 0;
+        uint32_t k, pieces = 0;
+
+        for (k = 0; k < n; k++)
+            if (ext[k].phys != 0 && ext[k].logical + ext[k].len == b0 * bs)
+                hint = ext[k].phys + ext[k].len / bs;
+        err = stream_write_data(fs, priv, b0 * bs, block, nb * bs, hint,
+            &blocks, &pieces, &newp);
+        if (err != APFSRW_OK)
+            goto fail;
+        if (pieces != 1)
+            goto finish;
+    }
+    /*
+     * Sequential small writes land in blocks the allocator hands out in
+     * order, so merge with a neighbour that is contiguous both logically
+     * and physically; otherwise a file written 4K at a time is one extent
+     * per block.
+     */
+    {
+        struct ext_rec *cur = NULL;
+        uint64_t mlog = b0 * bs, mphys = newp, mlen = nb * bs, root = 0;
+        uint32_t cn = 0, i;
+
+        err = collect_extents(fs, priv, &cur, &cn);
+        if (err != APFSRW_OK)
+            goto fail;
+        int merged = 0;
+
+        for (i = 0; i < cn; i++) {
+            const struct ext_rec *e = &cur[i];
+            int left = e->phys != 0 && e->logical + e->len == mlog &&
+                e->phys + e->len / bs == mphys;
+            int right = e->phys != 0 && e->logical == mlog + mlen &&
+                e->phys == mphys + mlen / bs;
+
+            if (!left && !right)
+                continue;
+            err = extent_del(fs, priv, e->logical);
+            if (err == APFSRW_OK)
+                err = extentref_del(fs, e->phys);
+            if (err != APFSRW_OK)
+                break;
+            if (left) {
+                mlog = e->logical;
+                mphys = e->phys;
+            }
+            mlen += e->len;
+            merged = 1;
+        }
+        free(cur);
+        if (err != APFSRW_OK)
+            goto fail;
+        if (merged) {
+            /* Replace the piece just written with the merged extent. */
+            err = extent_del(fs, priv, b0 * bs);
+            if (err == APFSRW_OK)
+                err = extentref_del(fs, newp);
+            if (err == APFSRW_OK)
+                err = extent_put(fs, priv, mlog, mphys, mlen);
+            if (err == APFSRW_OK)
+                err = extentref_add(fs, mphys, (uint32_t)(mlen / bs), priv,
+                    &root);
+            if (err != APFSRW_OK)
+                goto fail;
+        }
+    }
+finish:
+
+    new_size = off + len > old_size ? off + len : old_size;
+    alloced = extents_blocks(ext, n, bs) - freed + nb;
+    err = stream_finish(fs, key, ival, ivlen, priv, new_size, alloced,
+        (int64_t)nb - (int64_t)freed);
+    if (err != APFSRW_OK)
+        goto fail;
+    free(block);
+    free(ext);
+    return APFSRW_OK;
+
+fail:
+    txn_rollback(fs);
+    free(block);
+    free(ext);
+    return err;
+}
+
+/* Set a regular file's length. Shrinking frees the blocks past the end and
+ * zeroes the tail of the last kept block; growing leaves a hole. */
+int apfsrw_truncate(struct apfsrw *fs, const char *path, uint64_t size)
+{
+    struct ext_rec *ext = NULL;
+    uint8_t ival[1024], key[8];
+    uint16_t ivlen = 0;
+    uint64_t priv = 0, old_size = 0, bs, freed = 0, alloced;
+    uint32_t n = 0;
+    int err;
+
+    if (fs == NULL || path == NULL)
+        return APFSRW_EINVAL;
+    if (!fs->writable)
+        return APFSRW_EPERM;
+    if (fs->batch)
+        return APFSRW_EINVAL;
+    if (size > 0xffffffffULL)
+        return APFSRW_EOVERFLOW;
+
+    err = stream_inode(fs, path, ival, &ivlen, key, &priv, &old_size);
+    if (err != APFSRW_OK)
+        return err;
+    if (size == old_size)
+        return APFSRW_OK;
+    bs = fs->block_size;
+
+    if (size < old_size) {
+        uint64_t keep = (size + bs - 1) / bs;
+        uint64_t old;
+
+        err = collect_extents(fs, priv, &ext, &n);
+        if (err != APFSRW_OK)
+            return err;
+        old = (size % bs) ? extent_block_at(ext, n, size, bs) : 0;
+        err = stream_cut(fs, priv, ext, n, keep, ~0ull, &freed);
+        if (err != APFSRW_OK)
+            goto fail;
+        if (old != 0) {
+            /* The last block stays; rewrite it with its tail zeroed. */
+            uint64_t lb = (size / bs) * bs, newp = 0, root = 0;
+            uint8_t *block = calloc(1, bs);
+
+            if (block == NULL) {
+                err = APFSRW_ENOMEM;
+                goto fail;
+            }
+            err = read_raw(fs, (apfs_paddr_t)old, block);
+            if (err == APFSRW_OK) {
+                memset(block + (size - lb), 0, bs - (size - lb));
+                err = alloc_data_blocks(fs, 1, 0, &newp);
+            }
+            if (err == APFSRW_OK)
+                err = write_raw(fs, (apfs_paddr_t)newp, block);
+            free(block);
+            if (err != APFSRW_OK)
+                goto fail;
+            free(ext);
+            ext = NULL;
+            err = collect_extents(fs, priv, &ext, &n);
+            if (err != APFSRW_OK)
+                goto fail;
+            err = stream_cut(fs, priv, ext, n, size / bs, size / bs + 1,
+                &freed);
+            if (err != APFSRW_OK)
+                goto fail;
+            err = extent_put(fs, priv, lb, newp, bs);
+            if (err != APFSRW_OK)
+                goto fail;
+            err = extentref_add(fs, newp, 1, priv, &root);
+            if (err != APFSRW_OK)
+                goto fail;
+            freed -= 1;                  /* one freed, one allocated */
+        }
+        free(ext);
+        ext = NULL;
+    }
+    err = collect_extents(fs, priv, &ext, &n);
+    if (err != APFSRW_OK)
+        goto fail;
+    alloced = extents_blocks(ext, n, bs);
+    err = stream_finish(fs, key, ival, ivlen, priv, size, alloced,
+        -(int64_t)freed);
+    if (err != APFSRW_OK)
+        goto fail;
+    free(ext);
+    return APFSRW_OK;
+
+fail:
+    txn_rollback(fs);
+    free(ext);
+    return err;
+}
+
+struct nodstream_ctx {
+    uint64_t *ids;
+    uint32_t n, cap;
+};
+
+/* Regular files whose inode has a DSTREAM field but no DSTREAM_ID record. */
+static int nodstream_cb(struct apfsrw *fs,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+    struct nodstream_ctx *c = (struct nodstream_ctx *)ctx;
+    uint32_t i;
+
+    for (i = 0; i < rd32(&node->btn_nkeys); i++) {
+        const void *keyp, *valp;
+        uint16_t klen, vlen;
+        uint64_t key, size, priv;
+        uint8_t dkey[8], dval[4];
+        uint16_t dvlen = 0;
+        int err = btree_entry(fs, node, info, i, &keyp, &klen, &valp, &vlen);
+
+        if (err != APFSRW_OK)
+            return err;
+        if (klen < 8 || vlen < sizeof(struct apfs_j_inode_val))
+            continue;
+        key = rd64(keyp);
+        if (key_type(key) != APFS_TYPE_INODE)
+            continue;
+        if ((rd16((const uint8_t *)valp +
+            offsetof(struct apfs_j_inode_val, mode)) & 0170000) != 0100000)
+            continue;
+        if (inode_dstream_size(valp, vlen, &size) != APFSRW_OK)
+            continue;
+        priv = rd64((const uint8_t *)valp +
+            offsetof(struct apfs_j_inode_val, private_id));
+        wr64(dkey, make_jkey(priv, APFS_TYPE_DSTREAM_ID));
+        if (fstree_get(fs, dkey, 8, dval, sizeof(dval), &dvlen) !=
+            APFSRW_ENOENT)
+            continue;
+        if (c->n == c->cap) {
+            uint32_t ncap = c->cap ? c->cap * 2 : 32;
+            uint64_t *ni = realloc(c->ids, ncap * sizeof(*ni));
+
+            if (ni == NULL)
+                return APFSRW_ENOMEM;
+            c->ids = ni;
+            c->cap = ncap;
+        }
+        c->ids[c->n++] = priv;
+    }
+    return APFSRW_OK;
+}
+
+/* Bring a volume made by mkapfs and an older apfsrw up to what fsck_apfs
+ * expects: INODE_NO_RSRC_FORK on the root and private-dir inodes, and a
+ * DSTREAM_ID record for every regular file's data stream (empty files used
+ * to be created without one). Idempotent; run before populating. */
+int apfsrw_fixup_mkapfs(struct apfsrw *fs)
+{
+    static const uint64_t ids[2] = { 2, 3 };
+    struct nodstream_ctx nc;
+    uint8_t key[8], val[1024];
+    uint16_t vlen = 0;
+    uint32_t j;
+    int changed = 0, i, err;
+
+    if (fs == NULL)
+        return APFSRW_EINVAL;
+    if (!fs->writable)
+        return APFSRW_EPERM;
+    if (fs->batch)
+        return APFSRW_EINVAL;
+
+    memset(&nc, 0, sizeof(nc));
+    err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, 0, ~0ull,
+        nodstream_cb, &nc);
+    if (err != APFSRW_OK && err != 1) {
+        free(nc.ids);
+        return err;
+    }
+    for (j = 0; j < nc.n; j++) {
+        uint8_t dval[4];
+
+        wr64(key, make_jkey(nc.ids[j], APFS_TYPE_DSTREAM_ID));
+        wr32(dval, 1);
+        err = fstree_put(fs, key, 8, dval, 4, 0);
+        if (err != APFSRW_OK) {
+            free(nc.ids);
+            goto fail;
+        }
+        changed = 1;
+    }
+    free(nc.ids);
+
+    for (i = 0; i < 2; i++) {
+        uint64_t flags;
+
+        wr64(key, make_jkey(ids[i], APFS_TYPE_INODE));
+        err = fstree_get(fs, key, 8, val, sizeof(val), &vlen);
+        if (err == APFSRW_ENOENT)
+            continue;
+        if (err != APFSRW_OK)
+            goto fail;
+        flags = rd64(val + offsetof(struct apfs_j_inode_val, internal_flags));
+        if (flags & APFS_INODE_NO_RSRC_FORK)
+            continue;
+        wr64(val + offsetof(struct apfs_j_inode_val, internal_flags),
+            flags | APFS_INODE_NO_RSRC_FORK);
+        err = fstree_put(fs, key, 8, val, vlen, 1);
+        if (err != APFSRW_OK)
+            goto fail;
+        changed = 1;
+    }
+    if (!changed)
+        return APFSRW_OK;
+    err = cow_commit(fs, fs->root_tree_paddr,
+        rd64(&fs->apfs.apfs_next_obj_id), 0, 0, 0, fs->extref_paddr, 0);
+    if (err != APFSRW_OK)
+        goto fail;
+    return APFSRW_OK;
+
+fail:
+    txn_rollback(fs);
+    return err;
+}
+
+int apfsrw_setattr(struct apfsrw *fs, const char *path,
+    const struct apfsrw_attr *attr)
+{
+    uint64_t fileid = 0;
+    uint8_t key[8];
+    uint8_t ival[1024];
+    uint16_t ivlen = 0;
+    int err;
+
+    if (fs == NULL || path == NULL || attr == NULL)
+        return APFSRW_EINVAL;
+    if (!fs->writable)
+        return APFSRW_EPERM;
+    if (fs->batch)
+        return APFSRW_EINVAL;
+
+    err = resolve_path(fs, path, &fileid, NULL);
+    if (err != APFSRW_OK)
+        return err;
+    wr64(key, make_jkey(fileid, APFS_TYPE_INODE));
+    err = fstree_get(fs, key, 8, ival, sizeof(ival), &ivlen);
+    if (err != APFSRW_OK)
+        return err;
+    if (ivlen < sizeof(struct apfs_j_inode_val))
+        return APFSRW_EINVAL;
+
+    if (attr->mask & APFSRW_ATTR_MODE) {
+        uint16_t old = rd16(ival + offsetof(struct apfs_j_inode_val, mode));
+
+        wr16(ival + offsetof(struct apfs_j_inode_val, mode),
+            (uint16_t)((old & ~07777U) | (attr->mode & 07777U)));
+    }
+    if (attr->mask & APFSRW_ATTR_UID)
+        wr32(ival + offsetof(struct apfs_j_inode_val, owner), attr->uid);
+    if (attr->mask & APFSRW_ATTR_GID)
+        wr32(ival + offsetof(struct apfs_j_inode_val, group), attr->gid);
+    if (attr->mask & APFSRW_ATTR_FLAGS)
+        wr32(ival + offsetof(struct apfs_j_inode_val, bsd_flags),
+            attr->bsd_flags);
+    if (attr->mask & APFSRW_ATTR_ATIME)
+        wr64(ival + offsetof(struct apfs_j_inode_val, access_time),
+            attr->atime_ns);
+    if (attr->mask & APFSRW_ATTR_MTIME)
+        wr64(ival + offsetof(struct apfs_j_inode_val, mod_time),
+            attr->mtime_ns);
+    if (attr->mask & APFSRW_ATTR_CRTIME)
+        wr64(ival + offsetof(struct apfs_j_inode_val, create_time),
+            attr->crtime_ns);
+    wr64(ival + offsetof(struct apfs_j_inode_val, change_time),
+        apfsrw_now_ns());
+
+    err = fstree_put(fs, key, 8, ival, ivlen, 1);
+    if (err != APFSRW_OK)
+        goto fail;
+    err = cow_commit(fs, fs->root_tree_paddr,
+        rd64(&fs->apfs.apfs_next_obj_id), 0, 0, 0, fs->extref_paddr, 0);
+    if (err != APFSRW_OK)
+        goto fail;
+    return APFSRW_OK;
+
+fail:
+    txn_rollback(fs);
+    return err;
+}
+
+static int inode_val_rename(const uint8_t *old, uint16_t old_len,
+    const char *name, uint16_t namelen, uint64_t new_parent,
+    uint8_t *out, uint16_t *out_len);
+
+/* -- HARD LINKS -- */
+
+static int drec_key_for(struct apfsrw *fs, uint64_t parent, const char *name,
+    uint16_t namelen, uint8_t *key, uint16_t *klen)
+{
+    uint32_t hash;
+    int err = drec_name_hash(fs, name, namelen, &hash);
+
+    if (err != APFSRW_OK)
+        return err;
+    wr64(key, make_jkey(parent, APFS_TYPE_DIR_REC));
+    wr32(key + 8, ((hash << 10) & 0xfffffc00U) | ((namelen + 1U) & 0x3ffU));
+    memcpy(key + 12, name, namelen);
+    key[12 + namelen] = '\0';
+    *klen = (uint16_t)(12 + namelen + 1);
+    return APFSRW_OK;
+}
+
+/* j_drec_val_t, optionally carrying the DREC_EXT_TYPE_SIBLING_ID extended
+ * field (spec p.111): xf_blob_t + one x_field_t + the 8-byte id. */
+static uint16_t drec_val_build(uint64_t fileid, uint64_t added, uint16_t flags,
+    uint64_t sibling_id, uint8_t *out)
+{
+    memset(out, 0, 34);
+    wr64(out, fileid);
+    wr64(out + 8, added);
+    wr16(out + 16, flags);
+    if (sibling_id == 0)
+        return 18;
+    wr16(out + 18, 1);                   /* xf_num_exts */
+    wr16(out + 20, 8);                   /* xf_used_data */
+    out[22] = APFS_DREC_EXT_TYPE_SIBLING_ID;
+    out[23] = 0x02;                      /* XF_DO_NOT_COPY, as macOS writes it */
+    wr16(out + 24, 8);
+    wr64(out + 26, sibling_id);
+    return 34;
+}
+
+static uint64_t drec_sibling_id(const uint8_t *val, uint16_t vlen)
+{
+    uint32_t num, i, desc, data;
+
+    if (vlen < 22)
+        return 0;
+    num = rd16(val + 18);
+    desc = 22;
+    data = desc + num * 4U;
+    for (i = 0; i < num; i++) {
+        uint8_t type = val[desc + i * 4U];
+        uint16_t size = rd16(val + desc + i * 4U + 2U);
+
+        if (data + size > vlen)
+            return 0;
+        if (type == APFS_DREC_EXT_TYPE_SIBLING_ID && size >= 8)
+            return rd64(val + data);
+        data += ((uint32_t)size + 7U) & ~7U;
+    }
+    return 0;
+}
+
+/* The inode's own NAME extended field. */
+static int inode_name(const uint8_t *val, uint16_t vlen, const char **name,
+    uint16_t *namelen)
+{
+    uint32_t fixed = (uint32_t)sizeof(struct apfs_j_inode_val);
+    uint32_t num, i, desc, data;
+
+    if (vlen < fixed + 4U)
+        return APFSRW_ENOENT;
+    num = rd16(val + fixed);
+    desc = fixed + 4U;
+    data = desc + num * 4U;
+    for (i = 0; i < num; i++) {
+        uint8_t type = val[desc + i * 4U];
+        uint16_t size = rd16(val + desc + i * 4U + 2U);
+
+        if (data + size > vlen)
+            return APFSRW_EINVAL;
+        if (type == APFS_INO_EXT_TYPE_NAME) {
+            *name = (const char *)val + data;
+            *namelen = (uint16_t)(size ? size - 1 : 0);
+            return APFSRW_OK;
+        }
+        data += ((uint32_t)size + 7U) & ~7U;
+    }
+    return APFSRW_ENOENT;
+}
+
+/* SIBLING_LINK (inode id, sibling id) -> (parent, name) and the SIBLING_MAP
+ * (sibling id) -> inode id that goes with it (spec p.104-105). */
+static int sibling_put(struct apfsrw *fs, uint64_t fileid, uint64_t sid,
+    uint64_t parent, const char *name, uint16_t namelen)
+{
+    uint8_t key[16], val[10 + 256];
+    int err;
+
+    wr64(key, make_jkey(fileid, APFS_TYPE_SIBLING_LINK));
+    wr64(key + 8, sid);
+    wr64(val, parent);
+    wr16(val + 8, (uint16_t)(namelen + 1));
+    memcpy(val + 10, name, namelen);
+    val[10 + namelen] = '\0';
+    err = fstree_put(fs, key, 16, val, (uint16_t)(10 + namelen + 1), 0);
+    if (err != APFSRW_OK)
+        return err;
+    wr64(key, make_jkey(sid, APFS_TYPE_SIBLING_MAP));
+    wr64(val, fileid);
+    return fstree_put(fs, key, 8, val, 8, 0);
+}
+
+static int sibling_del(struct apfsrw *fs, uint64_t fileid, uint64_t sid)
+{
+    uint8_t key[16];
+    int err;
+
+    wr64(key, make_jkey(fileid, APFS_TYPE_SIBLING_LINK));
+    wr64(key + 8, sid);
+    err = fstree_del(fs, key, 16);
+    if (err != APFSRW_OK && err != APFSRW_ENOENT)
+        return err;
+    wr64(key, make_jkey(sid, APFS_TYPE_SIBLING_MAP));
+    err = fstree_del(fs, key, 8);
+    return err == APFSRW_ENOENT ? APFSRW_OK : err;
+}
+
+struct sibling_all_ctx {
+    uint64_t fileid;
+    uint64_t *sids;
+    uint32_t n, cap;
+};
+
+static int sibling_all_cb(struct apfsrw *fs,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+    struct sibling_all_ctx *c = (struct sibling_all_ctx *)ctx;
+    uint32_t i;
+
+    for (i = 0; i < rd32(&node->btn_nkeys); i++) {
+        const void *keyp, *valp;
+        uint16_t klen, vlen;
+        int err = btree_entry(fs, node, info, i, &keyp, &klen, &valp, &vlen);
+
+        if (err != APFSRW_OK)
+            return err;
+        if (klen < 16 || key_id(rd64(keyp)) != c->fileid ||
+            key_type(rd64(keyp)) != APFS_TYPE_SIBLING_LINK)
+            continue;
+        if (c->n == c->cap) {
+            uint32_t ncap = c->cap ? c->cap * 2 : 8;
+            uint64_t *ns = realloc(c->sids, ncap * sizeof(*ns));
+
+            if (ns == NULL)
+                return APFSRW_ENOMEM;
+            c->sids = ns;
+            c->cap = ncap;
+        }
+        c->sids[c->n++] = rd64((const uint8_t *)keyp + 8);
+    }
+    return APFSRW_OK;
+}
+
+/* Remove every sibling record of an inode (its last name is going away). */
+static int sibling_drop_all(struct apfsrw *fs, uint64_t fileid)
+{
+    struct sibling_all_ctx c;
+    uint32_t i;
+    int err;
+
+    memset(&c, 0, sizeof(c));
+    c.fileid = fileid;
+    err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, fileid, fileid,
+        sibling_all_cb, &c);
+    if (err != APFSRW_OK && err != 1) {
+        free(c.sids);
+        return err;
+    }
+    for (i = 0; i < c.n && err != APFSRW_EIO; i++)
+        err = sibling_del(fs, fileid, c.sids[i]);
+    free(c.sids);
+    return err == 1 ? APFSRW_OK : err;
+}
+
+struct sibling_find_ctx {
+    uint64_t fileid, skip_sid, parent;
+    char name[256];
+    uint16_t namelen;
+    int found;
+};
+
+static int sibling_find_cb(struct apfsrw *fs,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+    struct sibling_find_ctx *c = (struct sibling_find_ctx *)ctx;
+    uint32_t i;
+
+    for (i = 0; i < rd32(&node->btn_nkeys); i++) {
+        const void *keyp, *valp;
+        uint16_t klen, vlen, nl;
+        int err = btree_entry(fs, node, info, i, &keyp, &klen, &valp, &vlen);
+
+        if (err != APFSRW_OK)
+            return err;
+        if (klen < 16 || vlen < 10 || key_id(rd64(keyp)) != c->fileid ||
+            key_type(rd64(keyp)) != APFS_TYPE_SIBLING_LINK)
+            continue;
+        if (rd64((const uint8_t *)keyp + 8) == c->skip_sid)
+            continue;
+        nl = rd16((const uint8_t *)valp + 8);
+        if (nl == 0 || nl > 256 || 10U + nl > vlen)
+            continue;
+        c->parent = rd64(valp);
+        memcpy(c->name, (const uint8_t *)valp + 10, nl);
+        c->namelen = (uint16_t)(nl - 1);
+        c->found = 1;
+        return 1;
+    }
+    return APFSRW_OK;
+}
+
+/* Another link of the inode, to become the primary name. */
+static int sibling_find_other(struct apfsrw *fs, uint64_t fileid,
+    uint64_t skip_sid, struct sibling_find_ctx *c)
+{
+    int err;
+
+    memset(c, 0, sizeof(*c));
+    c->fileid = fileid;
+    c->skip_sid = skip_sid;
+    err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, fileid, fileid,
+        sibling_find_cb, c);
+    if (err != APFSRW_OK && err != 1)
+        return err;
+    return c->found ? APFSRW_OK : APFSRW_ENOENT;
+}
+
+static int parent_nchildren_add(struct apfsrw *fs, uint64_t parent, int32_t d)
+{
+    uint8_t pkey[8], pval[1024];
+    uint16_t pvlen = 0;
+    int err;
+
+    wr64(pkey, make_jkey(parent, APFS_TYPE_INODE));
+    err = fstree_get(fs, pkey, 8, pval, sizeof(pval), &pvlen);
+    if (err != APFSRW_OK)
+        return err;
+    wr32(pval + offsetof(struct apfs_j_inode_val, u),
+        (uint32_t)((int32_t)rd32(pval + offsetof(struct apfs_j_inode_val, u)) +
+        d));
+    return fstree_put(fs, pkey, 8, pval, pvlen, 1);
+}
+
+/*
+ * Hard link: a second directory entry for the same inode. Every link of a
+ * multiply-linked inode carries a sibling id in its directory record and a
+ * SIBLING_LINK/SIBLING_MAP pair; the first link gets its records here when
+ * the second one is made. Sibling ids come from the object id counter.
+ */
+int apfsrw_link(struct apfsrw *fs, const char *existing, const char *newpath)
+{
+    uint64_t eparent = 0, nparent = 0, fileid = 0, other = 0, next, now;
+    const char *ename = NULL, *nname = NULL;
+    uint16_t enamelen = 0, nnamelen = 0, klen = 0, dvlen = 0, ivlen = 0;
+    uint8_t dtype = 0;
+    uint8_t key[8 + 4 + 256], dval[64], ival[1024];
+    int err;
+
+    if (fs == NULL || existing == NULL || newpath == NULL)
+        return APFSRW_EINVAL;
+    if (!fs->writable)
+        return APFSRW_EPERM;
+    if (fs->batch)
+        return APFSRW_EINVAL;
+
+    err = split_parent(fs, existing, &eparent, &ename, &enamelen);
+    if (err != APFSRW_OK)
+        return err;
+    err = lookup_dirent(fs, eparent, ename, enamelen, &fileid, &dtype);
+    if (err != APFSRW_OK)
+        return err;
+    if (dtype == APFSRW_DT_DIR)
+        return APFSRW_EPERM;
+    err = split_parent(fs, newpath, &nparent, &nname, &nnamelen);
+    if (err != APFSRW_OK)
+        return err;
+    if (lookup_dirent(fs, nparent, nname, nnamelen, &other, NULL) == APFSRW_OK)
+        return APFSRW_EEXIST;
+
+    wr64(key, make_jkey(fileid, APFS_TYPE_INODE));
+    err = fstree_get(fs, key, 8, ival, sizeof(ival), &ivlen);
+    if (err != APFSRW_OK)
+        return err;
+    next = rd64(&fs->apfs.apfs_next_obj_id);
+    now = apfsrw_now_ns();
+
+    /* The existing entry needs sibling records of its own. */
+    err = drec_key_for(fs, eparent, ename, enamelen, key, &klen);
+    if (err != APFSRW_OK)
+        return err;
+    err = fstree_get(fs, key, klen, dval, sizeof(dval), &dvlen);
+    if (err != APFSRW_OK)
+        return err;
+    if (drec_sibling_id(dval, dvlen) == 0) {
+        uint64_t sid = next++;
+
+        err = sibling_put(fs, fileid, sid, eparent, ename, enamelen);
+        if (err != APFSRW_OK)
+            goto fail;
+        dvlen = drec_val_build(fileid, rd64(dval + 8), rd16(dval + 16), sid,
+            dval);
+        err = fstree_put(fs, key, klen, dval, dvlen, 1);
+        if (err != APFSRW_OK)
+            goto fail;
+    }
+
+    {
+        uint64_t sid = next++;
+
+        err = sibling_put(fs, fileid, sid, nparent, nname, nnamelen);
+        if (err != APFSRW_OK)
+            goto fail;
+        err = drec_key_for(fs, nparent, nname, nnamelen, key, &klen);
+        if (err != APFSRW_OK)
+            goto fail;
+        dvlen = drec_val_build(fileid, now, dtype, sid, dval);
+        err = fstree_put(fs, key, klen, dval, dvlen, 0);
+        if (err != APFSRW_OK)
+            goto fail;
+    }
+
+    wr32(ival + offsetof(struct apfs_j_inode_val, u),
+        rd32(ival + offsetof(struct apfs_j_inode_val, u)) + 1);
+    wr64(ival + offsetof(struct apfs_j_inode_val, change_time), now);
+    wr64(key, make_jkey(fileid, APFS_TYPE_INODE));
+    err = fstree_put(fs, key, 8, ival, ivlen, 1);
+    if (err != APFSRW_OK)
+        goto fail;
+    err = parent_nchildren_add(fs, nparent, 1);
+    if (err != APFSRW_OK)
+        goto fail;
+    err = cow_commit(fs, fs->root_tree_paddr, next, 0, 0, 0,
+        fs->extref_paddr, 0);
+    if (err != APFSRW_OK)
+        goto fail;
+    return APFSRW_OK;
+
+fail:
+    txn_rollback(fs);
+    return err;
+}
+
+/* Remove one name of a multiply-linked inode; the inode stays. */
+static int unlink_one_link(struct apfsrw *fs, uint64_t parent,
+    const char *name, uint16_t namelen, uint64_t fileid, uint8_t *ival,
+    uint16_t ivlen)
+{
+    uint8_t key[8 + 4 + 256], dval[64], nval[1024];
+    uint16_t klen = 0, dvlen = 0, nvlen = ivlen;
+    uint64_t sid, now = apfsrw_now_ns();
+    const char *pname = NULL;
+    uint16_t pnamelen = 0;
+    int err;
+
+    err = drec_key_for(fs, parent, name, namelen, key, &klen);
+    if (err != APFSRW_OK)
+        return err;
+    err = fstree_get(fs, key, klen, dval, sizeof(dval), &dvlen);
+    if (err != APFSRW_OK)
+        return err;
+    sid = drec_sibling_id(dval, dvlen);
+    err = fstree_del(fs, key, klen);
+    if (err != APFSRW_OK)
+        goto fail;
+    if (sid != 0) {
+        err = sibling_del(fs, fileid, sid);
+        if (err != APFSRW_OK)
+            goto fail;
+    }
+
+    memcpy(nval, ival, ivlen);
+    /* If this was the primary name, another link takes over. */
+    if (inode_name(ival, ivlen, &pname, &pnamelen) == APFSRW_OK &&
+        pnamelen == namelen && memcmp(pname, name, namelen) == 0 &&
+        rd64(ival + offsetof(struct apfs_j_inode_val, parent_id)) == parent) {
+        struct sibling_find_ctx sc;
+
+        if (sibling_find_other(fs, fileid, sid, &sc) == APFSRW_OK) {
+            err = inode_val_rename(ival, ivlen, sc.name, sc.namelen,
+                sc.parent, nval, &nvlen);
+            if (err != APFSRW_OK)
+                goto fail;
+        }
+    }
+    wr32(nval + offsetof(struct apfs_j_inode_val, u),
+        rd32(nval + offsetof(struct apfs_j_inode_val, u)) - 1);
+    wr64(nval + offsetof(struct apfs_j_inode_val, change_time), now);
+    wr64(key, make_jkey(fileid, APFS_TYPE_INODE));
+    err = fstree_put(fs, key, 8, nval, nvlen, 1);
+    if (err != APFSRW_OK)
+        goto fail;
+    err = parent_nchildren_add(fs, parent, -1);
+    if (err != APFSRW_OK)
+        goto fail;
+    err = cow_commit(fs, fs->root_tree_paddr,
+        rd64(&fs->apfs.apfs_next_obj_id), 0, 0, 0, fs->extref_paddr, 0);
+    if (err != APFSRW_OK)
+        goto fail;
+    return APFSRW_OK;
+
+fail:
+    txn_rollback(fs);
     return err;
 }
 
@@ -5583,6 +7250,16 @@ int apfsrw_unlink(struct apfsrw *fs, const char *path)
     err = lookup_inode(fs, fileid, &isize, &priv);
     if (err != APFSRW_OK)
         return err;
+
+    if (dtype != APFSRW_DT_DIR) {
+        wr64(pkey, make_jkey(fileid, APFS_TYPE_INODE));
+        err = fstree_get(fs, pkey, 8, pval, sizeof(pval), &pvlen);
+        if (err != APFSRW_OK)
+            return err;
+        if (rd32(pval + offsetof(struct apfs_j_inode_val, u)) > 1)
+            return unlink_one_link(fs, parent, name, namelen, fileid, pval,
+                pvlen);
+    }
 
     /* A file's data stream goes with it: extents deleted, blocks freed. */
     if (dtype == APFSRW_DT_REG) {
@@ -5635,8 +7312,11 @@ int apfsrw_unlink(struct apfsrw *fs, const char *path)
     if (err != APFSRW_OK)
         goto fail;
 
-    /* Then the inode itself. */
+    /* Then the inode itself, with any sibling records a hard link left. */
     err = fstree_del(fs, pkey, 8);
+    if (err != APFSRW_OK)
+        goto fail;
+    err = sibling_drop_all(fs, fileid);
     if (err != APFSRW_OK)
         goto fail;
 
@@ -5661,6 +7341,9 @@ int apfsrw_unlink(struct apfsrw *fs, const char *path)
      * cow_commit takes the count deltas unsigned and adds them to the stored
      * totals, so -1 wraps to exactly "one fewer".
      */
+    if (dtype != APFSRW_DT_REG && dtype != APFSRW_DT_DIR &&
+        dtype != APFSRW_DT_LNK)
+        fs->other_delta -= 1;
     err = cow_commit(fs, fs->root_tree_paddr,
         rd64(&fs->apfs.apfs_next_obj_id),
         dtype == APFSRW_DT_REG ? (uint64_t)-1 : 0,
@@ -5729,7 +7412,7 @@ static int inode_val_rename(const uint8_t *old, uint16_t old_len,
 
 int apfsrw_rename(struct apfsrw *fs, const char *from, const char *to)
 {
-    uint64_t fparent = 0, tparent = 0, fileid = 0, existing = 0;
+    uint64_t fparent = 0, tparent = 0, fileid = 0, existing = 0, sid = 0;
     const char *fname = NULL, *tname = NULL;
     uint16_t fnamelen = 0, tnamelen = 0;
     uint32_t hash;
@@ -5774,19 +7457,55 @@ int apfsrw_rename(struct apfsrw *fs, const char *from, const char *to)
     }
     now = apfsrw_now_ns();
 
-    /* Rewrite the inode: new parent id, new NAME extended field. */
+    /* A hard link keeps its sibling id; the inode's NAME only follows the
+     * primary link. */
+    {
+        uint8_t dval[64];
+        uint16_t klen = 0, dvlen = 0;
+
+        err = drec_key_for(fs, fparent, fname, fnamelen, key, &klen);
+        if (err != APFSRW_OK)
+            return err;
+        err = fstree_get(fs, key, klen, dval, sizeof(dval), &dvlen);
+        if (err != APFSRW_OK)
+            return err;
+        sid = drec_sibling_id(dval, dvlen);
+    }
+
     wr64(key, make_jkey(fileid, APFS_TYPE_INODE));
     err = fstree_get(fs, key, 8, ival, sizeof(ival), &ivlen);
     if (err != APFSRW_OK)
         return err;
-    err = inode_val_rename(ival, ivlen, tname, tnamelen, tparent, nval,
-        &nvlen);
-    if (err != APFSRW_OK)
-        return err;
+    {
+        const char *pname = NULL;
+        uint16_t pnamelen = 0;
+        int primary = sid == 0 ||
+            (inode_name(ival, ivlen, &pname, &pnamelen) == APFSRW_OK &&
+            pnamelen == fnamelen && memcmp(pname, fname, fnamelen) == 0 &&
+            rd64(ival + offsetof(struct apfs_j_inode_val, parent_id)) ==
+            fparent);
+
+        if (primary) {
+            err = inode_val_rename(ival, ivlen, tname, tnamelen, tparent,
+                nval, &nvlen);
+            if (err != APFSRW_OK)
+                return err;
+        } else {
+            memcpy(nval, ival, ivlen);
+            nvlen = ivlen;
+        }
+    }
     wr64(nval + offsetof(struct apfs_j_inode_val, change_time), now);
     err = fstree_put(fs, key, 8, nval, nvlen, 1);
     if (err != APFSRW_OK)
         goto fail;
+    if (sid != 0) {
+        err = sibling_del(fs, fileid, sid);
+        if (err == APFSRW_OK)
+            err = sibling_put(fs, fileid, sid, tparent, tname, tnamelen);
+        if (err != APFSRW_OK)
+            goto fail;
+    }
 
     /* Old directory entry out, new one in. */
     err = drec_name_hash(fs, fname, fnamelen, &hash);
@@ -5808,13 +7527,10 @@ int apfsrw_rename(struct apfsrw *fs, const char *from, const char *to)
     memcpy(key + 12, tname, tnamelen);
     key[12 + tnamelen] = '\0';
     {
-        uint8_t dval[18];
+        uint8_t dval[64];
+        uint16_t dvlen = drec_val_build(fileid, now, dtype, sid, dval);
 
-        memset(dval, 0, sizeof(dval));
-        wr64(dval, fileid);
-        wr64(dval + 8, now);
-        wr16(dval + 16, dtype);
-        err = fstree_put(fs, key, (uint16_t)(12 + tnamelen + 1), dval, 18,
+        err = fstree_put(fs, key, (uint16_t)(12 + tnamelen + 1), dval, dvlen,
             0);
         if (err != APFSRW_OK)
             goto fail;

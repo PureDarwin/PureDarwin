@@ -34,12 +34,15 @@
 #ifndef _SYS_RBTREE_H_
 #define	_SYS_RBTREE_H_
 
+#include <_bounds.h>
 #include <Availability.h>
 
 #include <sys/types.h>
 #include <stdbool.h>
 #include <inttypes.h>
 #include <sys/queue.h>
+
+_LIBC_SINGLE_BY_DEFAULT()
 
 __BEGIN_DECLS
 

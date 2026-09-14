@@ -1,0 +1,12 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ x86_64-macos, arm64-macos ]
+install-name: '/usr/lib/libsandbox.1.dylib'
+current-version: 1
+compatibility-version: 1
+# sandbox_init(3) lives in libSystem (src/Libraries/libsandbox), so -lsandbox
+# only needs to resolve there.
+reexported-libraries:
+  - targets: [ x86_64-macos, arm64-macos ]
+    libraries: [ '/usr/lib/libSystem.B.dylib' ]
+...

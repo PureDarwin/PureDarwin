@@ -12,6 +12,8 @@ foreach(_puredarwin_library_dir
     clang_bootstrap
     libcxxabi
     libSystem
+    # after libSystem: needs libc's header targets.
+    libsandbox
     libdarwin
     libsystem_trace
     mDNSResponder

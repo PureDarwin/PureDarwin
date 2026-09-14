@@ -365,9 +365,14 @@ struct apfs_inode_info {
 	uint16_t mode;
 	uint32_t uid;
 	uint32_t gid;
+	uint32_t bsd_flags;
 	uint64_t size;
 	uint32_t nlink;
 	uint64_t parent_id;
+	uint64_t atime_ns;		/* j_inode_val_t times: ns since epoch */
+	uint64_t mtime_ns;
+	uint64_t ctime_ns;
+	uint64_t crtime_ns;
 };
 
 struct apfsrw;
@@ -428,9 +433,14 @@ struct apfs_node {
 	uint16_t mode;
 	uint32_t uid;
 	uint32_t gid;
+	uint32_t bsd_flags;
 	uint64_t size;
 	uint32_t nlink;
 	uint64_t parent_id;
+	uint64_t atime_ns;
+	uint64_t mtime_ns;
+	uint64_t ctime_ns;
+	uint64_t crtime_ns;
 };
 
 #define VFSTOAPFS(mp) ((struct apfs_mount *)vfs_fsprivate(mp))

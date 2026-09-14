@@ -30,6 +30,7 @@
 #include <sys/sbuf.h>
 #include <fcntl.h>
 #include <mach/mach.h>
+#include <mach/notify.h>
 #include <mach/message.h>
 #include <xpc/launchd.h>
 #include <assert.h>
@@ -249,7 +250,7 @@ xpc_pipe_routine_reply(xpc_object_t xobj)
 	nvlist_t *nvlist = xpc2nv(xobj, ^(mach_port_t port) {
 		int64_t port_index = port_set.port_count++;
 
-		if (port_index > port_set.buffer_size) {
+		if (port_index >= port_set.buffer_size) {
 			port_set.buffer_size *= 2;
 			port_set.buffer = realloc(port_set.buffer, port_set.buffer_size * sizeof(mach_port_t));
 		}
@@ -273,30 +274,36 @@ xpc_pipe_routine_reply(xpc_object_t xobj)
 		return EINVAL;
 	}
 
+	mach_port_t rport = xpc_dictionary_copy_mach_send(xobj, XPC_RPORT);
+	mach_port_type_t rtype = 0;
+	xpc_assert(rport != MACH_PORT_NULL, "'%s' key not found in reply", XPC_RPORT);
+	/* xpc_pipe_routine sends a send-once reply right; older clients a send right. */
+	(void)mach_port_type(mach_task_self(), rport, &rtype);
 	message->header.msgh_size = (mach_msg_size_t)msg_size;
-	message->header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND) | MACH_MSGH_BITS_COMPLEX;
-	message->header.msgh_remote_port = xpc_dictionary_copy_mach_send(xobj, XPC_RPORT);
-	xpc_assert(message->header.msgh_remote_port != MACH_PORT_NULL, "'%s' key not found in reply", XPC_RPORT);
+	message->header.msgh_bits = MACH_MSGH_BITS((rtype & MACH_PORT_TYPE_SEND_ONCE) ?
+	    MACH_MSG_TYPE_MOVE_SEND_ONCE : MACH_MSG_TYPE_COPY_SEND,
+	    MACH_MSG_TYPE_MAKE_SEND) | MACH_MSGH_BITS_COMPLEX;
+	message->header.msgh_remote_port = rport;
 	message->header.msgh_local_port = MACH_PORT_NULL;
 	message->id = xpc_dictionary_get_uint64(xobj, XPC_SEQID);
 	xpc_assert(message->id != 0, "'%s' key not found in reply", XPC_SEQID);
 
+	/* Designated: on LP64 size/count follow the bitfields, not the address. */
 	const mach_msg_ool_descriptor_t ool_data = {
-		packed, // address
-		size, // size
-		FALSE, // deal
-		MACH_MSG_VIRTUAL_COPY, // copy
-		0, // pad2
-		MACH_MSG_OOL_DESCRIPTOR // descriptor
+		.address = packed,
+		.size = (mach_msg_size_t)size,
+		.deallocate = FALSE,
+		.copy = MACH_MSG_VIRTUAL_COPY,
+		.type = MACH_MSG_OOL_DESCRIPTOR,
 	};
 
 	const mach_msg_ool_ports_descriptor_t ool_ports = {
-		port_set.buffer,
-		port_set.port_count * sizeof(mach_port_t),
-		FALSE,
-		MACH_MSG_VIRTUAL_COPY,
-		MACH_MSG_TYPE_MAKE_SEND,
-		MACH_MSG_OOL_PORTS_DESCRIPTOR
+		.address = port_set.buffer,
+		.count = (mach_msg_size_t)port_set.port_count,
+		.deallocate = FALSE,
+		.copy = MACH_MSG_VIRTUAL_COPY,
+		.disposition = MACH_MSG_TYPE_MAKE_SEND,
+		.type = MACH_MSG_OOL_PORTS_DESCRIPTOR,
 	};
 
 	message->body.msgh_descriptor_count = 2;
@@ -305,7 +312,7 @@ xpc_pipe_routine_reply(xpc_object_t xobj)
 
 	kr = mach_msg_send(&message->header);
 	if (kr != KERN_SUCCESS)
-		err = (kr == KERN_INVALID_TASK) ? EPIPE : EINVAL;
+		err = (kr == KERN_INVALID_TASK || kr == MACH_SEND_INVALID_DEST) ? EPIPE : EINVAL;
 	else
 		err = 0;
 	free(message);
@@ -318,6 +325,14 @@ xpc_pipe_routine_reply(xpc_object_t xobj)
 int
 xpc_pipe_send(xpc_object_t xobj, mach_port_t dst, mach_port_t local,
     uint64_t id)
+{
+	return (xpc_pipe_send_local(xobj, dst, local, MACH_MSG_TYPE_MAKE_SEND, id));
+}
+
+/* xpc_pipe_send, choosing the right the receiver gets to the local port. */
+int
+xpc_pipe_send_local(xpc_object_t xobj, mach_port_t dst, mach_port_t local,
+    mach_msg_type_name_t local_type, uint64_t id)
 {
 	struct xpc_object *xo;
 	size_t size, msg_size;
@@ -336,7 +351,7 @@ xpc_pipe_send(xpc_object_t xobj, mach_port_t dst, mach_port_t local,
 	nvlist_t *nvl = xpc2nv(xobj, ^(mach_port_t port) {
 		int64_t port_index = port_set.port_count++;
 
-		if (port_index > port_set.buffer_size) {
+		if (port_index >= port_set.buffer_size) {
 			port_set.buffer_size *= 2;
 			port_set.buffer = realloc(port_set.buffer, port_set.buffer_size * sizeof(mach_port_t));
 		}
@@ -364,27 +379,27 @@ xpc_pipe_send(xpc_object_t xobj, mach_port_t dst, mach_port_t local,
 
 	message->header.msgh_size = (mach_msg_size_t)msg_size;
 	message->header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND,
-	    MACH_MSG_TYPE_MAKE_SEND) | MACH_MSGH_BITS_COMPLEX;
+	    local_type) | MACH_MSGH_BITS_COMPLEX;
 	message->header.msgh_remote_port = dst;
 	message->header.msgh_local_port = local;
 	message->id = id;
 
+	/* Designated: on LP64 size/count follow the bitfields, not the address. */
 	const mach_msg_ool_descriptor_t ool_data = {
-		packed, // address
-		size, // size
-		FALSE, // deallocate
-		MACH_MSG_VIRTUAL_COPY, // copy
-		0, // pad2
-		MACH_MSG_OOL_DESCRIPTOR // descriptor
+		.address = packed,
+		.size = (mach_msg_size_t)size,
+		.deallocate = FALSE,
+		.copy = MACH_MSG_VIRTUAL_COPY,
+		.type = MACH_MSG_OOL_DESCRIPTOR,
 	};
 
 	const mach_msg_ool_ports_descriptor_t ool_ports = {
-		port_set.buffer,
-		port_set.port_count * sizeof(mach_port_t),
-		FALSE,
-		MACH_MSG_VIRTUAL_COPY,
-		MACH_MSG_TYPE_MOVE_SEND,
-		MACH_MSG_OOL_PORTS_DESCRIPTOR
+		.address = port_set.buffer,
+		.count = (mach_msg_size_t)port_set.port_count,
+		.deallocate = FALSE,
+		.copy = MACH_MSG_VIRTUAL_COPY,
+		.disposition = MACH_MSG_TYPE_MOVE_SEND,
+		.type = MACH_MSG_OOL_PORTS_DESCRIPTOR,
 	};
 
 	message->body.msgh_descriptor_count = 2;
@@ -394,7 +409,8 @@ xpc_pipe_send(xpc_object_t xobj, mach_port_t dst, mach_port_t local,
 	kr = mach_msg_send(&message->header);
 	if (kr != KERN_SUCCESS) {
 		debugf("mach_msg_send() failed, kr=0x%X", kr);
-		err = (kr == KERN_INVALID_TASK) ? EPIPE : EINVAL;
+		/* The service died or the port was never valid: callers retry on EPIPE. */
+		err = (kr == KERN_INVALID_TASK || kr == MACH_SEND_INVALID_DEST) ? EPIPE : EINVAL;
 	} else
 		err = 0;
 	free(packed);
@@ -408,68 +424,70 @@ int
 xpc_pipe_receive(mach_port_t local, mach_port_t *remote, xpc_object_t *result,
     uint64_t *id)
 {
-	struct xpc_message message;
-	mach_msg_header_t *request;
+	/* The audit trailer requested below follows the message, so leave room. */
+	struct {
+		struct xpc_message message;
+		mach_msg_audit_trailer_t trailer;
+	} buffer;
+	struct xpc_message *message = &buffer.message;
+	mach_msg_header_t *request = &message->header;
+	mach_msg_audit_trailer_t *trailer;
+	struct xpc_object *xo = NULL, *xotmp;
+	nvlist_t *nv;
 	kern_return_t kr;
-	mach_msg_trailer_t *tr;
-	size_t data_size;
-	struct xpc_object *xo;
-	audit_token_t *auditp;
 	xpc_u val;
 
-	request = &message.header;
-	request->msgh_size = sizeof(struct xpc_message);
+	*result = NULL;
+	memset(&buffer, 0, sizeof(buffer));
+	request->msgh_size = sizeof(buffer);
 	request->msgh_local_port = local;
 	kr = mach_msg(request, MACH_RCV_MSG |
 	    MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0) |
 	    MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT),
-	    0, request->msgh_size, request->msgh_local_port,
-	    MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
-
-	if (kr != 0)
-		debugf("mach_msg_receive returned %d\n", kr);
+	    0, sizeof(buffer), local, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+	if (kr != KERN_SUCCESS) {
+		debugf("mach_msg_receive returned 0x%x", kr);
+		return (EINVAL);
+	}
 	*remote = request->msgh_remote_port;
-	*id = message.id;
-	data_size = message.ool_data.size;
-	debugf("unpacking data_size=%zu", data_size);
+	*id = message->id;
 
-	nvlist_t *nv = nvlist_unpack(&message.ool_data.address, data_size);
-	xo = nv2xpc(nv, ^(int64_t port_index) {
-		xpc_assert(port_index <= message.ool_ports.count / sizeof(mach_port_t), "Port index greater than number of ports in buffer");
-		mach_port_t *ports = message.ool_ports.address;
-		return ports[port_index];
-	});
-	nvlist_destroy(nv);
-
-	mig_deallocate((vm_address_t)message.ool_data.address, message.ool_data.size);
-	message.ool_data.address = NULL;
-	message.ool_data.size = 0;
-
-	mig_deallocate((vm_address_t)message.ool_ports.address, message.ool_ports.count * sizeof(mach_port_t));
-	message.ool_ports.address = NULL;
-	message.ool_ports.count = 0;
-
-	tr = (mach_msg_trailer_t *)(((char *)&message) + request->msgh_size);
-	auditp = &((mach_msg_audit_trailer_t *)tr)->msgh_audit;
-
-	xo->xo_audit_token = malloc(sizeof(*auditp));
-	memcpy(xo->xo_audit_token, auditp, sizeof(*auditp));
-
-	{
-		struct xpc_object *xotmp;
-		xpc_u val;
-
-		val.port = request->msgh_remote_port;
-		xotmp = _xpc_prim_create(XPC_TYPE_ENDPOINT, val, 0);
-
-		xpc_dictionary_set_value_nokeycheck(xo, XPC_RPORT, xotmp);
-		xpc_release(xotmp);
+	/* A send-once reply right was destroyed unused: the peer went away. */
+	if (request->msgh_id == MACH_NOTIFY_SEND_ONCE)
+		return (EPIPE);
+	if ((request->msgh_bits & MACH_MSGH_BITS_COMPLEX) == 0 ||
+	    message->body.msgh_descriptor_count != 2) {
+		mach_msg_destroy(request);
+		return (EINVAL);
 	}
-	{
-		xpc_object_t xotmp = xpc_uint64_create(message.id);
-		xpc_dictionary_set_value_nokeycheck(xo, XPC_SEQID, xotmp);
-		xpc_release(xotmp);
+
+	nv = nvlist_unpack(message->ool_data.address, message->ool_data.size);
+	if (nv != NULL) {
+		xo = nv2xpc(nv, ^(int64_t port_index) {
+			xpc_assert(port_index < message->ool_ports.count, "Port index greater than number of ports in buffer");
+			mach_port_t *ports = message->ool_ports.address;
+			return ports[port_index];
+		});
+		nvlist_destroy(nv);
 	}
+	mig_deallocate((vm_address_t)message->ool_data.address, message->ool_data.size);
+	mig_deallocate((vm_address_t)message->ool_ports.address, message->ool_ports.count * sizeof(mach_port_t));
+	if (xo == NULL)
+		return (EINVAL);
+
+	trailer = (mach_msg_audit_trailer_t *)((char *)request + round_msg(request->msgh_size));
+	xo->xo_audit_token = malloc(sizeof(trailer->msgh_audit));
+	if (xo->xo_audit_token != NULL)
+		memcpy(xo->xo_audit_token, &trailer->msgh_audit, sizeof(trailer->msgh_audit));
+
+	val.port = request->msgh_remote_port;
+	xotmp = _xpc_prim_create(XPC_TYPE_ENDPOINT, val, 0);
+	xpc_dictionary_set_value_nokeycheck(xo, XPC_RPORT, xotmp);
+	xpc_release(xotmp);
+
+	xotmp = xpc_uint64_create(message->id);
+	xpc_dictionary_set_value_nokeycheck(xo, XPC_SEQID, xotmp);
+	xpc_release(xotmp);
 
 	xo->xo_flags |= _XPC_FROM_WIRE;
 	*result = xo;
@@ -550,16 +568,24 @@ xpc_pipe_try_receive(mach_port_t portset, xpc_object_t *requestobj, mach_port_t 
 		return (TRUE);
 	}
 	debugf("demux returned false\n");
+	if ((request->msgh_bits & MACH_MSGH_BITS_COMPLEX) == 0 ||
+	    message->body.msgh_descriptor_count != 2) {
+		mach_msg_destroy(request);
+		free(message);
+		free(response);
+		return (EINVAL);
+	}
 	data_size = message->ool_data.size;
 	debugf("unpacking data_size=%d", data_size);
 
-	nvlist_t *nvlist = nvlist_unpack(&message->ool_data.address, data_size);
-	xo = nv2xpc(nvlist, ^(int64_t port_index) {
-		xpc_assert(port_index <= message->ool_ports.count / sizeof(mach_port_t), "Port index greater than number of ports in buffer");
+	nvlist_t *nvlist = nvlist_unpack(message->ool_data.address, data_size);
+	xo = nvlist == NULL ? NULL : nv2xpc(nvlist, ^(int64_t port_index) {
+		xpc_assert(port_index < message->ool_ports.count, "Port index greater than number of ports in buffer");
 		mach_port_t *ports = message->ool_ports.address;
 		return ports[port_index];
 	});
-	nvlist_destroy(nvlist);
+	if (nvlist != NULL)
+		nvlist_destroy(nvlist);
 
 	mig_deallocate((vm_address_t)message->ool_data.address, message->ool_data.size);
 	message->ool_data.address = NULL;
@@ -568,6 +594,12 @@ xpc_pipe_try_receive(mach_port_t portset, xpc_object_t *requestobj, mach_port_t 
 	mig_deallocate((vm_address_t)message->ool_ports.address, message->ool_ports.count * sizeof(mach_port_t));
 	message->ool_ports.address = NULL;
 	message->ool_ports.count = 0;
+
+	if (xo == NULL) {
+		free(message);
+		free(response);
+		return (EINVAL);
+	}
 
 	/* is padding for alignment enforced in the kernel?*/
 	tr = (mach_msg_trailer_t *)(((char *)message) + request->msgh_size);

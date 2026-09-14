@@ -55,3 +55,10 @@
 
 @implementation OS_xpc_connection
 @end
+
+/* A pipe likewise; its teardown releases the send right it holds. */
+@interface OS_xpc_pipe : OS_xpc_object
+@end
+
+@implementation OS_xpc_pipe
+@end

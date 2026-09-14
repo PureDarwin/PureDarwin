@@ -30,6 +30,8 @@
 #define	_MBLOCAL_H_
 
 #include <runetype.h>
+/* Libc-1752's _ctype.h includes this; its runetype.h no longer brings mbstate_t. */
+#include <sys/_types/_mbstate_t.h>
 
 /*
  * Rune initialization function prototypes.

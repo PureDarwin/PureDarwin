@@ -57,6 +57,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/Ext4FileSystemDriver.kext" \
       -kext "$KEXTS/msdosfs.kext" \
       -kext "$KEXTS/apfs.kext" \
+      -kext "$KEXTS/ApfsFileSystemDriver.kext" \
       -kext "$KEXTS/HFSEncodings.kext" \
       -kext "$KEXTS/hfs.kext" \
       -kext "$KEXTS/IONVMEFamily.kext" \

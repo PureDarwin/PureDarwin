@@ -107,13 +107,10 @@ __BEGIN_DECLS
 extern int pthread_key_init_np(int, void (*)(void *));
 __END_DECLS
 
+// Not needed anymore by this header, but other headers rely on this include being here.
 #include <TargetConditionals.h>
-#if TARGET_IPHONE_SIMULATOR
-/* Simulator keys are offset by 200 */
-#define	__LIBC_PTHREAD_KEY(x)		(210 + (x))
-#else
+
 #define	__LIBC_PTHREAD_KEY(x)		(10 + (x))
-#endif
 
 /*
  * Libc pthread key assignments

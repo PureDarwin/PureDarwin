@@ -25,6 +25,7 @@ target_sources(XPC_libxpc_static PRIVATE
     xpc_dictionary.c
     xpc_error.c
     xpc_misc.c
+    xpc_pipe.c
     xpc_private.c
     xpc_type.c
     pd_xpc_object.c

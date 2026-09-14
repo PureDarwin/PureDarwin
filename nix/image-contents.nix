@@ -123,6 +123,7 @@
 , launchctlBuild
 , launchdBuild
 , lib
+, nixPortPackages
 , libSystemBuild
 , libdrmBuild
 , pdsurfaceBuild
@@ -275,6 +276,7 @@
 , asmjitTestArm64Build
 , zshArm64Build
 , zshBuild
+, bashBuild
 }:
 
 let
@@ -429,6 +431,8 @@ let
   '';
 
   imageExtraPackageSet = lib.optionalAttrs (!isDarwin) {
+    # Multi-user Nix; image.nix adds its build users when this is present.
+    nix = nixPortPackages.nix;
     wine = wineBuild;
     libX11-shared = libX11SharedBuild;
     libxcb-shared = libxcbSharedBuild;
@@ -526,6 +530,8 @@ let
     python = pythonBuild;
     #perl = perlBuild;
     zsh = zshBuild;
+    # /bin/bash: Darwin software and Nix's sandbox profiles expect it.
+    bash = bashBuild;
     toybox = toyboxBuild;
     file = fileBuild;
     openssl = opensslBuild;

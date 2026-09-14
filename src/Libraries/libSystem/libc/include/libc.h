@@ -27,6 +27,7 @@
 #ifndef _LIBC_H
 #define _LIBC_H
 
+#include <_bounds.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -59,10 +60,12 @@
 #include <mach/boolean.h>
 #include <mach/kern_return.h>
 
+_LIBC_SINGLE_BY_DEFAULT()
+
 struct qelem {
         struct qelem *q_forw;
         struct qelem *q_back;
-        char *q_data;
+        char *_LIBC_UNSAFE_INDEXABLE q_data;
 };
 
 #include <sys/cdefs.h>

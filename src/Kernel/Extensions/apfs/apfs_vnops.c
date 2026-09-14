@@ -8,6 +8,7 @@
 #include <sys/dirent.h>
 #include <sys/errno.h>
 #include <sys/fcntl.h>
+#include <sys/fsctl.h>
 #include <sys/malloc.h>
 #include <sys/namei.h>
 #include <sys/param.h>
@@ -119,6 +120,11 @@ restart:
 	node->size = info.size;
 	node->nlink = info.nlink;
 	node->parent_id = info.parent_id;
+	node->bsd_flags = info.bsd_flags;
+	node->atime_ns = info.atime_ns;
+	node->mtime_ns = info.mtime_ns;
+	node->ctime_ns = info.ctime_ns;
+	node->crtime_ns = info.crtime_ns;
 
 	memset(&vfsp, 0, sizeof(vfsp));
 	vfsp.vnfs_mp = amp->mp;
@@ -232,6 +238,10 @@ apfs_vnop_ioctl(struct vnop_ioctl_args *ap)
 	switch (ap->a_command) {
 	case F_FULLFSYNC:
 		return 0;
+	case FSIOC_KERNEL_ROOTAUTH:
+		/* arm64 bsd_init() panics unless the root volume vouches for its
+		 * seal; there is nothing to check here. */
+		return 0;
 	default:
 		return ENOTTY;
 	}
@@ -294,6 +304,23 @@ apfs_vnop_close(__unused struct vnop_close_args *ap)
 	return 0;
 }
 
+/* APFS stores times as nanoseconds since the epoch (spec p.99). */
+static struct timespec
+apfs_ns_to_ts(uint64_t ns)
+{
+	struct timespec ts;
+
+	ts.tv_sec = (time_t)(ns / 1000000000ull);
+	ts.tv_nsec = (long)(ns % 1000000000ull);
+	return ts;
+}
+
+static uint64_t
+apfs_ts_to_ns(struct timespec ts)
+{
+	return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
 static int
 apfs_vnop_getattr(struct vnop_getattr_args *ap)
 {
@@ -327,7 +354,11 @@ apfs_vnop_getattr(struct vnop_getattr_args *ap)
 	}
 	VATTR_RETURN(vap, va_filerev, 0);
 	VATTR_RETURN(vap, va_gen, 0);
-	VATTR_RETURN(vap, va_flags, 0);
+	VATTR_RETURN(vap, va_flags, node->bsd_flags);
+	VATTR_RETURN(vap, va_access_time, apfs_ns_to_ts(node->atime_ns));
+	VATTR_RETURN(vap, va_modify_time, apfs_ns_to_ts(node->mtime_ns));
+	VATTR_RETURN(vap, va_change_time, apfs_ns_to_ts(node->ctime_ns));
+	VATTR_RETURN(vap, va_create_time, apfs_ns_to_ts(node->crtime_ns));
 	return 0;
 }
 
@@ -501,8 +532,8 @@ apfs_vnop_pagein(struct vnop_pagein_args *ap)
 	return error;
 }
 
-/* Whole-file rewrites are buffered in kernel memory; cap the exposure. */
-#define APFS_WRITE_MAX	(64ull << 20)
+/* Bytes handed to libapfsrw per transaction; larger writes loop. */
+#define APFS_WRITE_CHUNK	(1u << 20)
 
 /* apfsrw's transaction state is single-threaded: one writer at a time, and
  * the reload happens under the same lock. */
@@ -522,46 +553,57 @@ static int apfsrw_to_errno(int err)
 	case APFSRW_ENOTDIR:	return ENOTDIR;
 	case APFSRW_EEXIST:	return EEXIST;
 	case APFSRW_ENOSPC:	return ENOSPC;
+	case APFSRW_EPERM:	return EPERM;
+	case APFSRW_EINVAL:	return EINVAL;
+	case APFSRW_EOVERFLOW:	return EFBIG;
 	default:		return EIO;
 	}
 }
 
-/* Replace the file's entire content through libapfsrw, keeping the fileid. */
-static int
-apfs_set_content(struct apfs_node *node, const void *buf, uint64_t size,
-    vfs_context_t ctx)
+/* Rewritten blocks are fresh ones; pages mapped from the old blocks are
+ * stale. Called without am_rw_lock: a busy page's pagein needs that lock. */
+static void
+apfs_drop_cached_pages(struct apfs_node *node, off_t start, off_t end)
 {
-	char path[MAXPATHLEN];
-	int len = sizeof(path);
+	if (end > start)
+		(void)ubc_msync(node->vp, start, end, NULL, UBC_INVALIDATE);
+}
+
+/* Write [off, off+len) from a kernel buffer, one libapfsrw transaction. */
+static int
+apfs_write_range(struct apfs_node *node, const char *path, uint64_t off,
+    const void *buf, size_t len, vfs_context_t ctx)
+{
 	int error;
 
-	if (node->amp->rw == NULL)
-		return ENOTSUP;
-	error = vn_getpath(node->vp, path, &len);
-	if (error)
-		return error;
-	error = apfsrw_set_file_content(node->amp->rw, path, buf,
-	    (size_t)size);
+	APFS_RW_LOCK(node->amp);
+	error = apfsrw_write_range(node->amp->rw, path, off, buf, len);
 	if (error != 0) {
+		APFS_RW_UNLOCK(node->amp);
 		return apfsrw_to_errno(error);
 	}
 	error = apfs_reload_container(node->amp, ctx);
-	if (error)
-		return error;
-	node->size = size;
-	ubc_setsize(node->vp, (off_t)size);
-	return 0;
+	if (error == 0) {
+		if (off + len > node->size)
+			node->size = off + len;
+		node->mtime_ns = node->ctime_ns = apfsrw_now_ns();
+		ubc_setsize(node->vp, (off_t)node->size);
+	}
+	APFS_RW_UNLOCK(node->amp);
+	return error;
 }
 
-/* Read current content, splice the new bytes in, write the whole file back. */
 static int
 apfs_vnop_write(struct vnop_write_args *ap)
 {
 	struct apfs_node *node = VTOAPFS(ap->a_vp);
 	struct uio *uio = ap->a_uio;
+	char path[MAXPATHLEN];
+	int plen = sizeof(path);
 	uint8_t *buf;
-	uint64_t off, resid, newsize;
-	int error;
+	uint64_t off, start;
+	size_t bufsz;
+	int error = 0;
 
 	if (node == NULL || uio == NULL)
 		return EINVAL;
@@ -569,99 +611,80 @@ apfs_vnop_write(struct vnop_write_args *ap)
 		return EISDIR;
 	if (node->type != VREG)
 		return ENOTSUP;
+	if (node->amp->rw == NULL)
+		return ENOTSUP;
 	if (ap->a_ioflag & IO_APPEND)
 		uio_setoffset(uio, (off_t)node->size);
 	if (uio_offset(uio) < 0)
 		return EINVAL;
 	if (uio_resid(uio) == 0)
 		return 0;
+	error = vn_getpath(ap->a_vp, path, &plen);
+	if (error)
+		return error;
 
-	off = (uint64_t)uio_offset(uio);
-	resid = (uint64_t)uio_resid(uio);
-	newsize = off + resid;
-	if (newsize < node->size)
-		newsize = node->size;
-	if (newsize > APFS_WRITE_MAX)
-		return EFBIG;
-
-	buf = (uint8_t *)_MALLOC((size_t)newsize, M_TEMP, M_WAITOK | M_ZERO);
+	bufsz = APFS_WRITE_CHUNK;
+	if ((uint64_t)uio_resid(uio) < bufsz)
+		bufsz = (size_t)uio_resid(uio);
+	buf = (uint8_t *)_MALLOC(bufsz, M_TEMP, M_WAITOK);
 	if (buf == NULL)
 		return ENOMEM;
 
-	/* Lock covers the read-modify-write, or a concurrent append is lost. */
-	APFS_RW_LOCK(node->amp);
-	if (node->size > 0) {
-		uio_t ruio = uio_create(1, 0, UIO_SYSSPACE, UIO_READ);
+	start = (uint64_t)uio_offset(uio);
+	while (uio_resid(uio) > 0) {
+		size_t n = bufsz;
 
-		if (ruio == NULL) {
-			APFS_RW_UNLOCK(node->amp);
-			_FREE(buf, M_TEMP);
-			return ENOMEM;
-		}
-		uio_addiov(ruio, CAST_USER_ADDR_T(buf), (user_size_t)node->size);
-		error = apfs_read_file(node, ruio);
-		uio_free(ruio);
-		if (error) {
-			APFS_RW_UNLOCK(node->amp);
-			_FREE(buf, M_TEMP);
-			return error;
-		}
+		if ((uint64_t)uio_resid(uio) < n)
+			n = (size_t)uio_resid(uio);
+		off = (uint64_t)uio_offset(uio);
+		error = uiomove((caddr_t)buf, (int)n, uio);
+		if (error)
+			break;
+		error = apfs_write_range(node, path, off, buf, n, ap->a_context);
+		if (error)
+			break;
 	}
-
-	error = uiomove((caddr_t)(buf + off), (int)resid, uio);
-	if (error == 0)
-		error = apfs_set_content(node, buf, newsize, ap->a_context);
-	APFS_RW_UNLOCK(node->amp);
 	_FREE(buf, M_TEMP);
+	apfs_drop_cached_pages(node, (off_t)(start & ~(uint64_t)PAGE_MASK),
+	    (off_t)node->size);
 	return error;
 }
 
 static int
 apfs_truncate(struct apfs_node *node, uint64_t size, vfs_context_t ctx)
 {
-	uint8_t *buf = NULL;
-	uint64_t keep;
+	char path[MAXPATHLEN];
+	int plen = sizeof(path);
+	uint64_t old;
 	int error;
 
 	if (node->type != VREG)
 		return EISDIR;
 	if (size == node->size)
 		return 0;
-	if (size > APFS_WRITE_MAX)
-		return EFBIG;
+	if (node->amp->rw == NULL)
+		return ENOTSUP;
+	error = vn_getpath(node->vp, path, &plen);
+	if (error)
+		return error;
 
-	if (size > 0) {
-		buf = (uint8_t *)_MALLOC((size_t)size, M_TEMP,
-		    M_WAITOK | M_ZERO);
-		if (buf == NULL)
-			return ENOMEM;
-	}
 	APFS_RW_LOCK(node->amp);
-	if (size > 0) {
-		keep = node->size < size ? node->size : size;
-		if (keep > 0) {
-			uio_t ruio = uio_create(1, 0, UIO_SYSSPACE, UIO_READ);
-
-			if (ruio == NULL) {
-				APFS_RW_UNLOCK(node->amp);
-				_FREE(buf, M_TEMP);
-				return ENOMEM;
-			}
-			uio_addiov(ruio, CAST_USER_ADDR_T(buf),
-			    (user_size_t)keep);
-			error = apfs_read_file(node, ruio);
-			uio_free(ruio);
-			if (error) {
-				APFS_RW_UNLOCK(node->amp);
-				_FREE(buf, M_TEMP);
-				return error;
-			}
-		}
+	error = apfsrw_truncate(node->amp->rw, path, size);
+	if (error != 0) {
+		APFS_RW_UNLOCK(node->amp);
+		return apfsrw_to_errno(error);
 	}
-	error = apfs_set_content(node, buf, size, ctx);
+	error = apfs_reload_container(node->amp, ctx);
+	old = node->size;
+	if (error == 0) {
+		node->size = size;
+		node->mtime_ns = node->ctime_ns = apfsrw_now_ns();
+		ubc_setsize(node->vp, (off_t)size);
+	}
 	APFS_RW_UNLOCK(node->amp);
-	if (buf != NULL)
-		_FREE(buf, M_TEMP);
+	if (error == 0 && size < old)
+		apfs_drop_cached_pages(node,
+		    (off_t)(size & ~(uint64_t)PAGE_MASK), (off_t)old);
 	return error;
 }
 
@@ -670,6 +693,9 @@ apfs_vnop_setattr(struct vnop_setattr_args *ap)
 {
 	struct apfs_node *node = VTOAPFS(ap->a_vp);
 	struct vnode_attr *vap = ap->a_vap;
+	struct apfsrw_attr a;
+	char path[MAXPATHLEN];
+	int len = sizeof(path);
 	int error;
 
 	if (node == NULL || vap == NULL)
@@ -680,10 +706,84 @@ apfs_vnop_setattr(struct vnop_setattr_args *ap)
 			return error;
 		VATTR_SET_SUPPORTED(vap, va_data_size);
 	}
+
+	memset(&a, 0, sizeof(a));
 	if (VATTR_IS_ACTIVE(vap, va_mode)) {
-		node->mode = vap->va_mode & 07777;
+		a.mask |= APFSRW_ATTR_MODE;
+		a.mode = vap->va_mode & 07777;
+	}
+	if (VATTR_IS_ACTIVE(vap, va_uid)) {
+		a.mask |= APFSRW_ATTR_UID;
+		a.uid = vap->va_uid;
+	}
+	if (VATTR_IS_ACTIVE(vap, va_gid)) {
+		a.mask |= APFSRW_ATTR_GID;
+		a.gid = vap->va_gid;
+	}
+	if (VATTR_IS_ACTIVE(vap, va_flags)) {
+		a.mask |= APFSRW_ATTR_FLAGS;
+		a.bsd_flags = vap->va_flags;
+	}
+	if (VATTR_IS_ACTIVE(vap, va_access_time)) {
+		a.mask |= APFSRW_ATTR_ATIME;
+		a.atime_ns = apfs_ts_to_ns(vap->va_access_time);
+	}
+	if (VATTR_IS_ACTIVE(vap, va_modify_time)) {
+		a.mask |= APFSRW_ATTR_MTIME;
+		a.mtime_ns = apfs_ts_to_ns(vap->va_modify_time);
+	}
+	if (VATTR_IS_ACTIVE(vap, va_create_time)) {
+		a.mask |= APFSRW_ATTR_CRTIME;
+		a.crtime_ns = apfs_ts_to_ns(vap->va_create_time);
+	}
+	if (a.mask == 0)
+		return 0;
+	if (node->amp->rw == NULL)
+		return ENOTSUP;
+	error = vn_getpath(ap->a_vp, path, &len);
+	if (error)
+		return error;
+
+	APFS_RW_LOCK(node->amp);
+	error = apfsrw_setattr(node->amp->rw, path, &a);
+	if (error != 0) {
+		APFS_RW_UNLOCK(node->amp);
+		return apfsrw_to_errno(error);
+	}
+	error = apfs_reload_container(node->amp, ap->a_context);
+	APFS_RW_UNLOCK(node->amp);
+	if (error)
+		return error;
+
+	if (a.mask & APFSRW_ATTR_MODE) {
+		node->mode = a.mode;
 		VATTR_SET_SUPPORTED(vap, va_mode);
 	}
+	if (a.mask & APFSRW_ATTR_UID) {
+		node->uid = a.uid;
+		VATTR_SET_SUPPORTED(vap, va_uid);
+	}
+	if (a.mask & APFSRW_ATTR_GID) {
+		node->gid = a.gid;
+		VATTR_SET_SUPPORTED(vap, va_gid);
+	}
+	if (a.mask & APFSRW_ATTR_FLAGS) {
+		node->bsd_flags = a.bsd_flags;
+		VATTR_SET_SUPPORTED(vap, va_flags);
+	}
+	if (a.mask & APFSRW_ATTR_ATIME) {
+		node->atime_ns = a.atime_ns;
+		VATTR_SET_SUPPORTED(vap, va_access_time);
+	}
+	if (a.mask & APFSRW_ATTR_MTIME) {
+		node->mtime_ns = a.mtime_ns;
+		VATTR_SET_SUPPORTED(vap, va_modify_time);
+	}
+	if (a.mask & APFSRW_ATTR_CRTIME) {
+		node->crtime_ns = a.crtime_ns;
+		VATTR_SET_SUPPORTED(vap, va_create_time);
+	}
+	node->ctime_ns = apfsrw_now_ns();
 	return 0;
 }
 
@@ -808,7 +908,13 @@ apfs_delete_entry(vnode_t dvp, vnode_t vp, struct componentname *cnp,
 	if (error)
 		return error;
 
-	vnode_recycle(vp);
+	/* Other hard links keep the inode (and this vnode) alive. */
+	if (node->type != VDIR && node->nlink > 1) {
+		node->nlink--;
+		node->ctime_ns = apfsrw_now_ns();
+	} else {
+		vnode_recycle(vp);
+	}
 	return 0;
 }
 
@@ -831,6 +937,47 @@ apfs_vnop_rmdir(struct vnop_rmdir_args *ap)
  * vn_create types here), so without this pid 1 never publishes its socket and
  * no other job can start.
  */
+static int
+apfs_vnop_link(struct vnop_link_args *ap)
+{
+	struct apfs_node *node = VTOAPFS(ap->a_vp);
+	struct apfs_node *dnode = VTOAPFS(ap->a_tdvp);
+	char from[MAXPATHLEN], to[MAXPATHLEN];
+	int flen = sizeof(from);
+	int error;
+
+	if (node == NULL || dnode == NULL || dnode->amp == NULL)
+		return EINVAL;
+	if (node->type == VDIR)
+		return EPERM;
+	if (dnode->type != VDIR)
+		return ENOTDIR;
+	if (dnode->amp->rw == NULL)
+		return ENOTSUP;
+	if (ap->a_cnp->cn_namelen == 0 || ap->a_cnp->cn_namelen > NAME_MAX)
+		return ENAMETOOLONG;
+	error = vn_getpath(ap->a_vp, from, &flen);
+	if (error)
+		return error;
+	error = apfs_child_path(ap->a_tdvp, ap->a_cnp, to, sizeof(to));
+	if (error)
+		return error;
+
+	APFS_RW_LOCK(dnode->amp);
+	error = apfsrw_link(dnode->amp->rw, from, to);
+	if (error != 0) {
+		APFS_RW_UNLOCK(dnode->amp);
+		return apfsrw_to_errno(error);
+	}
+	error = apfs_reload_container(dnode->amp, ap->a_context);
+	APFS_RW_UNLOCK(dnode->amp);
+	if (error)
+		return error;
+	node->nlink++;
+	node->ctime_ns = apfsrw_now_ns();
+	return 0;
+}
+
 static int
 apfs_vnop_symlink(struct vnop_symlink_args *ap)
 {
@@ -1095,6 +1242,7 @@ static const struct vnodeopv_entry_desc apfs_vnodeop_entries[] = {
 	{ &vnop_rmdir_desc, (VOPFUNC)apfs_vnop_rmdir },
 	{ &vnop_rename_desc, (VOPFUNC)apfs_vnop_rename },
 	{ &vnop_symlink_desc, (VOPFUNC)apfs_vnop_symlink },
+	{ &vnop_link_desc, (VOPFUNC)apfs_vnop_link },
 	{ &vnop_open_desc, (VOPFUNC)apfs_vnop_open },
 	{ &vnop_close_desc, (VOPFUNC)apfs_vnop_close },
 	{ &vnop_getattr_desc, (VOPFUNC)apfs_vnop_getattr },

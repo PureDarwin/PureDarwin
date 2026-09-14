@@ -53,6 +53,7 @@ stdenv.mkDerivation {
       -std=c++23 -nostdinc++ -funwind-tables -fexceptions -fPIC -Os -DNDEBUG \
       -I $CONFIG -I $ABI/include -I $CXX/src -I $CXX/include \
       -D_LIBCPP_BUILDING_LIBRARY -D_LIBCXXABI_BUILDING_LIBRARY \
+      -DLIBCXX_BUILDING_LIBCXXABI \
       -I src/Libraries/llvm-libc -I src/Libraries/llvm-libc/include"
 
     objs=""

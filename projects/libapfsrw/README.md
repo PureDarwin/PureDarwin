@@ -8,8 +8,9 @@ implementation of the copy-on-write B-tree write path, validated against
 `fsck_apfs`, instead of two copies that would drift apart.
 
 It works on 4096-byte-block, unencrypted, single-volume containers. The write
-API covers create, mkdir, mknod, symlink, rename, unlink, whole-file content
-replacement, and batching many creates into one commit.
+API covers create, mkdir, mknod, symlink, hard links, rename, unlink, ranged
+writes and truncate, whole-file content replacement, attribute changes (mode,
+owner, flags, timestamps), and batching many creates into one commit.
 
 ```sh
 apfsrw info image.apfs

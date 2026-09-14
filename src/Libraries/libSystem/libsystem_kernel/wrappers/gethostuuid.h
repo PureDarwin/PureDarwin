@@ -31,12 +31,16 @@
 
 #include <sys/_types/_timespec.h>
 #include <sys/_types/_uuid_t.h>
+#include <sys/cdefs.h>
 #include <Availability.h>
 
+/* extern "C" here, as in xnu's copy: Libc-1752's <unistd.h> includes this outside its own. */
+__BEGIN_DECLS
 #if defined(__IPHONE_OS_VERSION_MIN_REQUIRED) && (__IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_7_0)
 int gethostuuid(uuid_t, const struct timespec *) __OSX_AVAILABLE_BUT_DEPRECATED_MSG(__MAC_NA, __MAC_NA, __IPHONE_2_0, __IPHONE_5_0, "gethostuuid() is no longer supported");
 #else
 int gethostuuid(uuid_t, const struct timespec *) __OSX_AVAILABLE_STARTING(__MAC_10_5, __IPHONE_NA);
 #endif
+__END_DECLS
 
 #endif /* __GETHOSTUUID_H */

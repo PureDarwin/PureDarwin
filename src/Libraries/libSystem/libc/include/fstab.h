@@ -36,6 +36,10 @@
 #ifndef _FSTAB_H_
 #define _FSTAB_H_
 
+#include <_bounds.h>
+
+_LIBC_SINGLE_BY_DEFAULT()
+
 /*
  * File system table, see fstab(5).
  *
@@ -57,13 +61,13 @@
 #define	FSTAB_XX	"xx"		/* ignore totally */
 
 struct fstab {
-	char	*fs_spec;		/* block special device name */
-	char	*fs_file;		/* file system path prefix */
-	char	*fs_vfstype;		/* File system type, ufs, nfs */
-	char	*fs_mntops;		/* Mount options ala -o */
-	char	*fs_type;		/* FSTAB_* from fs_mntops */
-	int	fs_freq;		/* dump frequency, in days */
-	int	fs_passno;		/* pass number on parallel dump */
+	char *_LIBC_CSTR	fs_spec;	/* block special device name */
+	char *_LIBC_CSTR	fs_file;	/* file system path prefix */
+	char *_LIBC_CSTR	fs_vfstype;	/* File system type, ufs, nfs */
+	char *_LIBC_CSTR	fs_mntops;	/* Mount options ala -o */
+	char *_LIBC_CSTR	fs_type;	/* FSTAB_* from fs_mntops */
+	int			fs_freq;	/* dump frequency, in days */
+	int			fs_passno;	/* pass number on parallel dump */
 };
 
 #include <sys/cdefs.h>

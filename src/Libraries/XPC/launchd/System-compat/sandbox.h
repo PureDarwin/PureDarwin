@@ -11,7 +11,6 @@ typedef int sandbox_filter_type_t;
 #define SANDBOX_FILTER_LOCAL_NAME  ((sandbox_filter_type_t)3)
 
 int sandbox_check(pid_t pid, const char *operation, sandbox_filter_type_t type, ...);
-int sandbox_init(const char *profile, uint64_t flags, char **errorbuf);
 
 /* notifyd's pathwatch.c: real per-audit-token sandbox check variant. */
 #include <mach/message.h>
@@ -26,12 +25,14 @@ int sandbox_init(const char *profile, uint64_t flags, char **errorbuf);
 int sandbox_check_by_audit_token(audit_token_t audit, const char *operation, sandbox_filter_type_t type, ...);
 
 /*
- * Chain to the SDK's sandbox.h when there is one. Targets built -nostdinc
- * (configd) have no later sandbox.h on the path, and the declarations above are
- * all they need.
+ * Chain to the SDK's sandbox.h (src/Libraries/libsandbox) for sandbox_init().
+ * Targets built -nostdinc (configd) have no later sandbox.h on the path, so
+ * they get the same declaration here.
  */
 #if __has_include_next(<sandbox.h>)
 #include_next <sandbox.h>
+#else
+int sandbox_init(const char *profile, unsigned long flags, char **errorbuf);
 #endif
 
 #endif /* _PD_SANDBOX_COMPAT_H_ */

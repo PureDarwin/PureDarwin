@@ -40,8 +40,8 @@
 #define	SEGSIZE		512	/* data segment size */
 #define	MAXSEGSIZE	65464	/* maximum negotiated data segment size */
 
-#define PKTSIZE		SEGSIZE + 4
-#define MAXPKTSIZE	MAXSEGSIZE + 4
+#define PKTSIZE		(SEGSIZE + 4)
+#define MAXPKTSIZE	(MAXSEGSIZE + 4)
 
 /*
  * Packet types.

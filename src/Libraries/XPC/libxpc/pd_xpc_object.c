@@ -9,6 +9,7 @@
 
 /* _pd_xpc_release dispatches teardown on the isa. */
 OS_OBJECT_OBJC_CLASS_DECL(xpc_connection);
+OS_OBJECT_OBJC_CLASS_DECL(xpc_pipe);
 
 
 /*
@@ -73,6 +74,8 @@ _pd_xpc_release(void *obj)
         atomic_thread_fence(memory_order_acquire);
         if (hdr->isa == &OS_xpc_connection_class) {
             xpc_connection_destroy((struct xpc_connection *)obj);
+        } else if (hdr->isa == &OS_xpc_pipe_class) {
+            xpc_pipe_destroy((struct xpc_pipe *)obj);
         } else {
             xpc_object_destroy((struct xpc_object *)obj);
         }

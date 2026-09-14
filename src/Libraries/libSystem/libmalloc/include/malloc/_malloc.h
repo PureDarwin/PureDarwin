@@ -43,6 +43,8 @@ void	 free(void *);
 void	*realloc(void *__ptr, size_t __size) __result_use_check __alloc_size(2);
 #if !defined(_ANSI_SOURCE) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))
 void	*valloc(size_t) __alloc_size(1);
+/* Libc-1752's stdlib.h expects reallocf here, as newer libmalloc declares it. */
+void	*reallocf(void *__ptr, size_t __size) __result_use_check __alloc_size(2);
 #endif // !defined(_ANSI_SOURCE) && (!defined(_POSIX_C_SOURCE) || defined(_DARWIN_C_SOURCE))
 #if (__DARWIN_C_LEVEL >= __DARWIN_C_FULL) || \
     (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L) || \

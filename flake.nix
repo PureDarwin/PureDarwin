@@ -2799,6 +2799,20 @@
               corefoundation = coreFoundationBuild;
               inherit (pkgs) cmake ninja;
             };
+          # Nix and its static dependencies (see nix/pkgs/nix).
+          nixPortPackages =
+            if isDarwin then { } else import ./nix/pkgs/nix {
+              inherit lib pkgs darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              openssl = opensslBuild;
+              zlib = xvfbZlibBuild;
+              xz = xzBuild;
+              curl = curlBuild;
+              corefoundation = coreFoundationBuild;
+              systemConfiguration = systemConfigurationBuild;
+            };
           ninjaBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/ninja.nix {
               inherit darwinCrossToolchain nativeLd;
@@ -2858,6 +2872,13 @@
               libSystem = libSystemBuild;
               libiconv = libiconvBuild;
               zsh = pkgs.zsh;
+              ncurses = ncursesBuild;
+            };
+          bashBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/bash.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              bash = pkgs.bash;
               ncurses = ncursesBuild;
             };
           fileBuild =
@@ -3904,6 +3925,7 @@
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
             inherit
+              nixPortPackages
               atspi2CoreBuild autoconfBuild automakeBuild bisonBuild bmakeBuild cairoBuild
               cairoGobjectBuild cctoolsBuild coreFoundationBuild curlBuild darwinCrossToolchain
               coreServicesBuild dbusBuild dilloBuild diskArbitrationBuild wineBuild dmenuBuild exoBuild expatBuild fastfetchBuild osTestBuild
@@ -3940,7 +3962,7 @@
               xvfbLibXdamageBuild xvfbLibXdmcpBuild xvfbLibXextBuild xvfbLibXfixesBuild
               xvfbLibXineramaBuild xvfbLibXkbfileBuild xvfbLibXpresentBuild xvfbLibXrandrBuild
               xvfbLibXrenderBuild xvfbLibXresBuild xvfbLibxcvtBuild xvfbZlibBuild xxdBuild xzBuild
-              yajlBuild zshArm64Build zshBuild libcrocoBuild librsvgBuild gettextBuild
+              yajlBuild zshArm64Build zshBuild bashBuild libcrocoBuild librsvgBuild gettextBuild
               webkitgtkBuild libsoupBuild sqliteBuild libpslBuild nghttp2Build
               libgcryptBuild libgpgErrorBuild libtasn1Build libjpegBuild libwebpBuild
               ;
@@ -3960,7 +3982,11 @@
             # Cross toolchain, exposed so out-of-tree flakes (e.g. checkm8-tools'
             # PongoOS build) can link Mach-O with the real cctools ld64.
             arm64-cross-toolchain = arm64CrossToolchain;
+            darwin-cross-toolchain = darwinCrossToolchain;
             native-ld = nativeLd;
+            # For out-of-tree test programs and the os-test POSIX audit.
+            libsystem = libSystemBuild;
+            os-test = osTestBuild;
             coreservices = coreServicesBuild;
             wine-tools = wineToolsBuild;
             libX11-shared = libX11SharedBuild;
@@ -4011,6 +4037,7 @@
           };
           arm64Packages = lib.optionalAttrs (!isDarwin) {
             libSystem-armv6 = arm64.libSystemArmv6Build;
+            libsystem-arm64 = arm64.libSystemArm64Build;
             userland-arm32-bcm2835 = arm64.userlandArm32Bcm2835Build;
             libsystem-armv6 = arm64.libSystemArmv6Build;
             libobjc-armv6 = arm64.libobjcArmv6Build;
@@ -4260,7 +4287,8 @@
           packages = {
             apple-sdk = appleSdk;
             cg-screen-demo = cgScreenDemoBuild;
-          } // commonPackages // arm64Packages // probePackages // linuxPackages;
+          } // commonPackages // arm64Packages // probePackages // linuxPackages
+            // lib.filterAttrs (_: lib.isDerivation) nixPortPackages;
           apps = lib.optionalAttrs (!isDarwin) linuxApps;
           devShells = {
             kernel = devShell;

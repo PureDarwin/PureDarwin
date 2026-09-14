@@ -40,9 +40,6 @@
  */
 
 #include <sys/cdefs.h>
-#ifdef __cplusplus
-#include <stdlib.h>
-#endif /* __cplusplus */
 
 /*
  * Unlike other ANSI header files, <assert.h> may usefully be included
@@ -50,70 +47,40 @@
  */
 
 #undef assert
-#undef __assert
 
 #ifdef NDEBUG
 #define	assert(e)	((void)0)
 #else
 
+#include <_assert.h>
+
+#ifdef __FILE_NAME__
+#define __ASSERT_FILE_NAME __FILE_NAME__
+#else /* __FILE_NAME__ */
+#define __ASSERT_FILE_NAME __FILE__
+#endif /* __FILE_NAME__ */
+
 #ifndef UNIFDEF_DRIVERKIT
 #ifndef __GNUC__
 
-__BEGIN_DECLS
-#ifndef __cplusplus
-void abort(void) __dead2 __cold;
-#endif /* !__cplusplus */
-int  printf(const char * __restrict, ...);
-__END_DECLS
-
 #define assert(e)  \
-    ((void) ((e) ? ((void)0) : __assert (#e, __FILE__, __LINE__)))
-#define __assert(e, file, line) \
-    ((void)printf ("%s:%d: failed assertion `%s'\n", file, line, e), abort())
+    ((void) ((e) ? ((void)0) : __assert (#e, __ASSERT_FILE_NAME, __LINE__)))
 
 #else /* __GNUC__ */
 
-__BEGIN_DECLS
-void __assert_rtn(const char *, const char *, int, const char *) __dead2 __cold __disable_tail_calls;
-#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && ((__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__-0) < 1070)
-void __eprintf(const char *, const char *, unsigned, const char *) __dead2 __cold;
-#endif
-__END_DECLS
-
-#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && ((__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__-0) < 1070)
-#define __assert(e, file, line) \
-    __eprintf ("%s:%d: failed assertion `%s'\n", file, line, e)
-#else
-/* 8462256: modified __assert_rtn() replaces deprecated __eprintf() */
-#define __assert(e, file, line) \
-    __assert_rtn ((const char *)-1L, file, line, e)
-#endif
-
 #if __DARWIN_UNIX03
 #define	assert(e) \
-    (__builtin_expect(!(e), 0) ? __assert_rtn(__func__, __FILE__, __LINE__, #e) : (void)0)
+    (__builtin_expect(!(e), 0) ? __assert_rtn(__func__, __ASSERT_FILE_NAME, __LINE__, #e) : (void)0)
 #else /* !__DARWIN_UNIX03 */
 #define assert(e)  \
-    (__builtin_expect(!(e), 0) ? __assert (#e, __FILE__, __LINE__) : (void)0)
+    (__builtin_expect(!(e), 0) ? __assert (#e, __ASSERT_FILE_NAME, __LINE__) : (void)0)
 #endif /* __DARWIN_UNIX03 */
 
 #endif /* __GNUC__ */
 #else /* UNIFDEF_DRIVERKIT */
-__BEGIN_DECLS
-void __assert_rtn(const char *, const char *, int, const char *) __dead2 __cold __disable_tail_calls;
-__END_DECLS
 #define	assert(e) \
-    (__builtin_expect(!(e), 0) ? __assert_rtn(__func__, __FILE__, __LINE__, #e) : (void)0)
+    (__builtin_expect(!(e), 0) ? __assert_rtn(__func__, __ASSERT_FILE_NAME, __LINE__, #e) : (void)0)
 #endif /* UNIFDEF_DRIVERKIT */
 #endif /* NDEBUG */
 
-#ifndef _ASSERT_H_
-#define _ASSERT_H_
-
-#ifndef __cplusplus
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#define static_assert _Static_assert
-#endif /* __STDC_VERSION__ */
-#endif /* !__cplusplus */
-
-#endif /* _ASSERT_H_ */
+#include <_static_assert.h>

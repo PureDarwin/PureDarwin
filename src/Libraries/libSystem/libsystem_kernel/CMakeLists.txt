@@ -391,6 +391,11 @@ target_sources(libsystem_kernel_static PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/public_include/servers/netname.h
 )
 
+# Libsyscall's bcopy is a hidden internal helper. Merged into one libSystem it
+# would claim the name and hide libc's public bcopy, so give it its own.
+set_source_files_properties(wrappers/string/memcpy.c
+    PROPERTIES COMPILE_DEFINITIONS bcopy=_libkernel_bcopy)
+
 # Public headers are just headers
 set_source_files_properties(
     ${CMAKE_CURRENT_BINARY_DIR}/public_include/mach/clock.h
