@@ -12,6 +12,8 @@
 #include <sys/vnode.h>
 #include <stdint.h>
 
+#include "apfsrw/apfsrw.h"
+
 #define APFS_MODULE_NAME "apfs"
 #define APFS_NX_MAGIC    0x4253584eU /* NX_MAGIC 'BSXN', bytes read as "NXSB" */
 #define APFS_BS_BYTES    4096
@@ -378,6 +380,7 @@ struct apfs_mount {
 	struct mount *mp;
 	/* Shared write path (projects/libapfsrw), bound to devvp at mount. */
 	struct apfsrw *rw;
+	struct apfsrw_kern_dev rw_dev;
 	/*
 	 * One in-core vnode per file id. Minting a fresh vnode per lookup breaks
 	 * anything that hangs state off the vnode - notably AF_UNIX sockets,
@@ -386,7 +389,7 @@ struct apfs_mount {
 	 */
 	void *am_hash_lock;		/* IOLock* */
 	int am_probe_logged;		/* container dumped to the log once */
-	void *am_rw_lock;		/* IOLock*: serialises every apfsrw
+	void *am_rw_lock;		/* IORecursiveLock*: serialises every apfsrw
 					 * mutation + the reload after it */
 	LIST_HEAD(apfs_node_bucket, apfs_node) am_node_hash[APFS_NODE_HASH_SIZE];
 	vnode_t devvp;
@@ -394,6 +397,7 @@ struct apfs_mount {
 	dev_t dev;
 	int dev_opened;
 	uint32_t block_size;
+	uint32_t dev_bsize;		/* device sector size, for buf blkno units */
 	uint64_t block_count;
 	uint32_t max_file_systems;
 	struct apfs_nx_superblock nx;
@@ -431,6 +435,17 @@ struct apfs_node {
 
 #define VFSTOAPFS(mp) ((struct apfs_mount *)vfs_fsprivate(mp))
 #define VTOAPFS(vp)   ((struct apfs_node *)vnode_fsnode(vp))
+
+/* buf_meta_bread() addresses the device in its native sector size. Scale
+ * container blocks into that rather than retagging with DKIOCSETBLOCKSIZE:
+ * that size is per-minor state in IOMediaBSDClient, reset on last close
+ * (same approach as ext4_blkread). */
+static inline daddr64_t
+apfs_devblk(const struct apfs_mount *amp, apfs_paddr_t paddr)
+{
+	return (daddr64_t)((uint64_t)paddr *
+	    (amp->block_size / (amp->dev_bsize ? amp->dev_bsize : 512)));
+}
 
 int apfs_vget(struct apfs_mount *amp, uint64_t fileid, vnode_t dvp,
     vnode_t *vpp);

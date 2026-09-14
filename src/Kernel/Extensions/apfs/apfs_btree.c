@@ -2,6 +2,7 @@
 
 #include "apfs.h"
 
+#include <IOKit/IOLocks.h>
 #include <libkern/OSByteOrder.h>
 #include <sys/buf.h>
 #include <sys/dirent.h>
@@ -20,8 +21,10 @@ typedef int (*apfs_leaf_cb)(struct apfs_mount *amp,
     const struct apfs_btree_node_phys *node,
     const struct apfs_btree_info *info, void *ctx);
 static int apfs_btree_walk_leaves_oid(struct apfs_mount *amp,
-    apfs_paddr_t root_paddr, uint64_t oid_min, uint64_t oid_max,
-    apfs_leaf_cb cb, void *ctx);
+    uint64_t oid_min, uint64_t oid_max, apfs_leaf_cb cb, void *ctx);
+static int apfs_omap_lookup_tree(struct apfs_mount *amp,
+    apfs_paddr_t tree_paddr, apfs_oid_t oid, apfs_xid_t xid,
+    struct apfs_omap_val *out);
 
 static uint16_t
 le16(uint16_t v)
@@ -140,7 +143,7 @@ apfs_read_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out,
 	if (paddr < 0 || out_size > amp->block_size)
 		return EINVAL;
 
-	error = (int)buf_meta_bread(amp->devvp, (daddr64_t)paddr,
+	error = (int)buf_meta_bread(amp->devvp, apfs_devblk(amp, paddr),
 	    amp->block_size, NOCRED, &bp);
 	if (error) {
 		if (bp)
@@ -162,7 +165,9 @@ apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 		return error;
 	error = apfs_verify_object_checksum(out, amp->block_size);
 	if (error) {
-		{
+		static int cksum_log_budget = 12;
+
+		if (cksum_log_budget-- > 0) {
 			const uint8_t *b = (const uint8_t *)out;
 			uint64_t cks, oid, xid;
 			uint32_t ot;
@@ -207,23 +212,35 @@ apfs_uiomove_phys(struct apfs_mount *amp, apfs_paddr_t paddr, size_t offset,
     size_t count, struct uio *uio)
 {
 	buf_t bp = NULL;
+	char *tmp;
 	int error;
 
 	if (amp == NULL || amp->devvp == NULLVP || uio == NULL)
 		return EINVAL;
 	if (paddr < 0 || offset > amp->block_size ||
-	    count > amp->block_size - offset)
+	    count > amp->block_size - offset || count == 0)
 		return EINVAL;
 
-	error = (int)buf_meta_bread(amp->devvp, (daddr64_t)paddr,
+	/* Copy out under the lock, then move to the caller unlocked: a user
+	 * page fault during uiomove must not wait on a pagein that needs
+	 * the same lock. */
+	tmp = _MALLOC(count, M_TEMP, M_WAITOK);
+	if (tmp == NULL)
+		return ENOMEM;
+	IORecursiveLockLock((IORecursiveLock *)amp->am_rw_lock);
+	error = (int)buf_meta_bread(amp->devvp, apfs_devblk(amp, paddr),
 	    amp->block_size, NOCRED, &bp);
 	if (error) {
 		if (bp)
 			buf_brelse(bp);
-		return error;
+	} else {
+		memcpy(tmp, (const char *)buf_dataptr(bp) + offset, count);
+		buf_brelse(bp);
 	}
-	error = uiomove((char *)buf_dataptr(bp) + offset, (int)count, uio);
-	buf_brelse(bp);
+	IORecursiveLockUnlock((IORecursiveLock *)amp->am_rw_lock);
+	if (error == 0)
+		error = uiomove(tmp, (int)count, uio);
+	_FREE(tmp, M_TEMP);
 	return error;
 }
 
@@ -669,11 +686,18 @@ out:
 /* Visit only the leaves that can hold records for object ids in
  * [oid_min, oid_max]; pass 0 / UINT64_MAX to visit the whole tree. */
 static int
-apfs_btree_walk_leaves_oid(struct apfs_mount *amp, apfs_paddr_t root_paddr,
-    uint64_t oid_min, uint64_t oid_max, apfs_leaf_cb cb, void *ctx)
+apfs_btree_walk_leaves_oid(struct apfs_mount *amp, uint64_t oid_min,
+    uint64_t oid_max, apfs_leaf_cb cb, void *ctx)
 {
-	return apfs_btree_walk_node(amp, root_paddr, NULL, 0, oid_min, oid_max,
-	    cb, ctx);
+	int error;
+
+	/* A commit frees and quickly reuses tree blocks, so the root must be
+	 * read and the whole walk done under the lock. It is recursive. */
+	IORecursiveLockLock((IORecursiveLock *)amp->am_rw_lock);
+	error = apfs_btree_walk_node(amp, amp->root_tree_paddr, NULL, 0,
+	    oid_min, oid_max, cb, ctx);
+	IORecursiveLockUnlock((IORecursiveLock *)amp->am_rw_lock);
+	return error;
 }
 
 static enum vtype
@@ -817,7 +841,7 @@ apfs_lookup_inode(struct apfs_mount *amp, uint64_t fileid,
 	c.fileid = fileid;
 	c.info_out = info_out;
 	c.found = 0;
-	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, fileid,
+	error = apfs_btree_walk_leaves_oid(amp, fileid,
 	    fileid, apfs_lookup_inode_cb, &c);
 	if (error != 0 && error != 1)
 		return error;
@@ -940,7 +964,7 @@ apfs_lookup_dirent(struct apfs_mount *amp, uint64_t dirid, const char *name,
 	c.fileid = 0;
 	c.dtype = 0;
 	c.found = 0;
-	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, dirid,
+	error = apfs_btree_walk_leaves_oid(amp, dirid,
 	    dirid, apfs_lookup_dirent_cb, &c);
 	if (error != 0 && error != 1)
 		return error;
@@ -1041,7 +1065,7 @@ apfs_lookup_xattr(struct apfs_mount *amp, uint64_t fileid, const char *name,
 	c.buf = buf;
 	c.bufsize = bufsize;
 
-	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, fileid,
+	error = apfs_btree_walk_leaves_oid(amp, fileid,
 	    fileid, apfs_lookup_xattr_cb, &c);
 	if (error != 0 && error != 1)
 		return error;
@@ -1124,7 +1148,7 @@ apfs_iterate_dir(struct apfs_mount *amp, uint64_t dirid, off_t start_index,
 	c.uio = uio;
 	c.entries = 0;
 	c.done = 0;
-	error = apfs_btree_walk_leaves_oid(amp, amp->root_tree_paddr, dirid,
+	error = apfs_btree_walk_leaves_oid(amp, dirid,
 	    dirid, apfs_iterate_dir_cb, &c);
 	if (error == 1)
 		error = 0;
@@ -1219,14 +1243,15 @@ apfs_read_file(struct apfs_node *apnode, struct uio *uio)
 		    file_off >= cur.logical + cur.len) {
 			cur.want_off = file_off;
 			cur.found = 0;
-			error = apfs_btree_walk_leaves_oid(amp,
-			    amp->root_tree_paddr, cur.fileid, cur.fileid,
+			error = apfs_btree_walk_leaves_oid(amp, cur.fileid, cur.fileid,
 			    apfs_extent_at_cb, &cur);
 			if (error != 0 && error != 1)
-				return error;
+				break;
 			error = 0;
-			if (!cur.found)
-				return EIO;
+			if (!cur.found) {
+				error = EIO;
+				break;
+			}
 		}
 
 		extent_off = file_off - cur.logical;
@@ -1247,7 +1272,7 @@ apfs_read_file(struct apfs_node *apnode, struct uio *uio)
 		    (apfs_paddr_t)(cur.phys + block_index), block_off, count,
 		    uio);
 		if (error)
-			return error;
+			break;
 	}
-	return 0;
+	return error;
 }

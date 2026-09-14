@@ -85,12 +85,12 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 
 	amp->mp = mp;
 	amp->am_hash_lock = IOLockAlloc();
-	amp->am_rw_lock = IOLockAlloc();
+	amp->am_rw_lock = IORecursiveLockAlloc();
 	if (amp->am_hash_lock == NULL || amp->am_rw_lock == NULL) {
 		if (amp->am_hash_lock)
 			IOLockFree(amp->am_hash_lock);
 		if (amp->am_rw_lock)
-			IOLockFree(amp->am_rw_lock);
+			IORecursiveLockFree(amp->am_rw_lock);
 		_FREE(amp, M_TEMP);
 		if (own_devvp_ref)
 			vnode_rele(devvp);
@@ -104,7 +104,6 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	}
 	amp->devvp = devvp;
 	amp->dev = vnode_specrdev(devvp);
-	APFSLOG("mount requested devvp=%p", devvp);
 	error = VNOP_OPEN(devvp, FREAD | FWRITE, ctx);
 	if (error) {
 		APFSLOG("device open for write failed: %d", error);
@@ -125,12 +124,15 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	 * amp->rw has to re-probe the container afterwards - see
 	 * apfs_reload_container().
 	 */
-	error = apfsrw_open_kernel(devvp, amp->block_count, 1, 0, &amp->rw);
+	amp->rw_dev.devvp = devvp;
+	amp->rw_dev.dev_bsize = amp->dev_bsize;
+	amp->rw_dev.block_size = amp->block_size;
+	error = apfsrw_open_kernel(&amp->rw_dev, amp->block_count, 1, 0,
+	    &amp->rw);
 	if (error != 0) {
 		APFSLOG("apfsrw_open_kernel failed: %d", error);
 		amp->rw = NULL;
 	}
-
 	if (!own_devvp_ref) {
 		error = vnode_ref(devvp);
 		if (error)
@@ -166,7 +168,7 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	sfs->f_fsid.val[1] = (int32_t)vfs_typenum(mp);
 	strlcpy(sfs->f_fstypename, APFS_MODULE_NAME, sizeof(sfs->f_fstypename));
 
-	APFSLOG("mounted scaffold read-write");
+	APFSLOG("mounted read-write");
 	return 0;
 
 fail:
@@ -258,11 +260,8 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 			}
 			dev = vnode_specrdev(dvp);
 			vnode_put(dvp);
-			APFSLOG("fspec '%s' -> dev=0x%x (lookup)", fspec, dev);
 			return bdevvp(dev, devvpp);
 		}
-		APFSLOG("vnode_lookup('%s') failed: %d, falling back", fspec,
-		    error);
 	}
 
 	error = apfs_parse_disk_minor(fspec, &minor_id);
@@ -276,7 +275,6 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 	}
 
 	dev = makedev(major(rootdev), minor_id);
-	APFSLOG("fspec '%s' -> dev=0x%x (derived)", fspec, dev);
 	return bdevvp(dev, devvpp);
 }
 
@@ -290,9 +288,17 @@ apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx)
 	/* No buffer invalidation: libapfsrw shares this kext's buffer cache,
 	 * and dropping it would discard the commit's delayed writes. */
 	error = apfs_probe_container(amp, ctx);
-	if (error)
+	if (error) {
+		APFSLOG("reload: probe failed %d (amp state now mixed)", error);
 		return error;
-	return apfs_load_volume(amp, ctx);
+	}
+	error = apfs_load_volume(amp, ctx);
+	if (error) {
+		APFSLOG("reload: load_volume failed %d (amp state now mixed)",
+		    error);
+		return error;
+	}
+	return 0;
 }
 
 static uint64_t
@@ -365,7 +371,7 @@ apfs_object_type(uint32_t type)
 
 static int
 apfs_read_probe_block(vnode_t devvp, apfs_paddr_t paddr, uint32_t block_size,
-    kauth_cred_t cred, void *out)
+    uint32_t dev_bsize, kauth_cred_t cred, void *out)
 {
 	buf_t bp = NULL;
 	int error;
@@ -373,8 +379,9 @@ apfs_read_probe_block(vnode_t devvp, apfs_paddr_t paddr, uint32_t block_size,
 	if (devvp == NULLVP || paddr < 0 || block_size == 0 || out == NULL)
 		return EINVAL;
 
-	error = (int)buf_meta_bread(devvp, (daddr64_t)paddr, block_size, cred,
-	    &bp);
+	error = (int)buf_meta_bread(devvp,
+	    (daddr64_t)((uint64_t)paddr * (block_size / dev_bsize)), block_size,
+	    cred, &bp);
 	if (error) {
 		if (bp)
 			buf_brelse(bp);
@@ -387,7 +394,7 @@ apfs_read_probe_block(vnode_t devvp, apfs_paddr_t paddr, uint32_t block_size,
 
 static int
 apfs_select_checkpoint_nx(vnode_t devvp, struct apfs_nx_superblock *nx,
-    uint32_t block_size, vfs_context_t ctx)
+    uint32_t block_size, uint32_t dev_bsize, vfs_context_t ctx)
 {
 	void *block;
 	uint32_t desc_blocks;
@@ -413,7 +420,7 @@ apfs_select_checkpoint_nx(vnode_t devvp, struct apfs_nx_superblock *nx,
 		apfs_paddr_t paddr = desc_base + i;
 
 		error = apfs_read_probe_block(devvp, paddr, block_size,
-		    vfs_context_ucred(ctx), block);
+		    dev_bsize, vfs_context_ucred(ctx), block);
 		if (error) {
 			error = 0;
 			continue;
@@ -449,26 +456,6 @@ apfs_log_uuid(const uint8_t uuid[16])
 	    uuid[4], uuid[5], uuid[6], uuid[7],
 	    uuid[8], uuid[9], uuid[10], uuid[11],
 	    uuid[12], uuid[13], uuid[14], uuid[15]);
-}
-
-static void
-apfs_log_volume_oids(const struct apfs_nx_superblock *nx, uint32_t max_fs)
-{
-	uint32_t shown = 0;
-	uint32_t i;
-
-	if (max_fs > APFS_NX_MAX_FILE_SYSTEMS)
-		max_fs = APFS_NX_MAX_FILE_SYSTEMS;
-
-	for (i = 0; i < max_fs; i++) {
-		uint64_t oid = apfs_le64(nx->nx_fs_oid[i]);
-
-		if (oid == 0)
-			continue;
-		APFSLOG("  fs_oid[%u]=0x%llx", i, (unsigned long long)oid);
-		if (++shown == 8)
-			break;
-	}
 }
 
 static int
@@ -511,49 +498,32 @@ apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx)
 		return EINVAL;
 	}
 
-	/* Keep future block reads aligned with the APFS container block size. */
-	(void)VNOP_IOCTL(devvp, DKIOCSETBLOCKSIZE, (caddr_t)&block_size,
-	    FWRITE, ctx);
+	/* Block numbers handed to the buffer cache are in device sectors. */
+	if (amp->dev_bsize == 0) {
+		uint32_t dbs = 0;
 
-	error = apfs_select_checkpoint_nx(devvp, &nx, block_size, ctx);
+		if (VNOP_IOCTL(devvp, DKIOCGETBLOCKSIZE, (caddr_t)&dbs, FREAD,
+		    ctx) != 0 || dbs == 0 || dbs > block_size ||
+		    (block_size % dbs) != 0)
+			dbs = 512;
+		amp->dev_bsize = dbs;
+	}
+
+	error = apfs_select_checkpoint_nx(devvp, &nx, block_size,
+	    amp->dev_bsize, ctx);
 	if (error)
 		return error;
 
 	max_fs = apfs_le32(nx.nx_max_file_systems);
-	/* Reloads after every commit would spam the console; dump once.
-	 * apfs_load_volume() prints its own line and then sets the flag. */
+	/* Log the container once; apfs_load_volume() sets the flag after
+	 * its own line, and reloads after each commit stay silent. */
 	if (amp->am_probe_logged)
 		goto adopt;
-	APFSLOG("container dev=0x%x block_size=%u blocks=%llu",
-	    amp->dev, block_size, (unsigned long long)apfs_le64(nx.nx_block_count));
+	APFSLOG("container xid=%llu block_size=%u blocks=%llu next_oid=0x%llx",
+	    (unsigned long long)apfs_le64(nx.nx_o.o_xid), block_size,
+	    (unsigned long long)apfs_le64(nx.nx_block_count),
+	    (unsigned long long)apfs_le64(nx.nx_next_oid));
 	apfs_log_uuid(nx.nx_uuid);
-	APFSLOG("  oid=0x%llx xid=%llu next_oid=0x%llx next_xid=%llu",
-	    (unsigned long long)apfs_le64(nx.nx_o.o_oid),
-	    (unsigned long long)apfs_le64(nx.nx_o.o_xid),
-	    (unsigned long long)apfs_le64(nx.nx_next_oid),
-	    (unsigned long long)apfs_le64(nx.nx_next_xid));
-	APFSLOG("  features=0x%llx ro_compat=0x%llx incompat=0x%llx",
-	    (unsigned long long)apfs_le64(nx.nx_features),
-	    (unsigned long long)apfs_le64(nx.nx_readonly_compatible_features),
-	    (unsigned long long)apfs_le64(nx.nx_incompatible_features));
-	APFSLOG("  checkpoint desc blocks=%u base=%lld next=%u index=%u len=%u",
-	    apfs_le32(nx.nx_xp_desc_blocks),
-	    (long long)apfs_le64s(nx.nx_xp_desc_base),
-	    apfs_le32(nx.nx_xp_desc_next),
-	    apfs_le32(nx.nx_xp_desc_index),
-	    apfs_le32(nx.nx_xp_desc_len));
-	APFSLOG("  checkpoint data blocks=%u base=%lld next=%u index=%u len=%u",
-	    apfs_le32(nx.nx_xp_data_blocks),
-	    (long long)apfs_le64s(nx.nx_xp_data_base),
-	    apfs_le32(nx.nx_xp_data_next),
-	    apfs_le32(nx.nx_xp_data_index),
-	    apfs_le32(nx.nx_xp_data_len));
-	APFSLOG("  spaceman_oid=0x%llx omap_oid=0x%llx reaper_oid=0x%llx max_fs=%u",
-	    (unsigned long long)apfs_le64(nx.nx_spaceman_oid),
-	    (unsigned long long)apfs_le64(nx.nx_omap_oid),
-	    (unsigned long long)apfs_le64(nx.nx_reaper_oid),
-	    max_fs);
-	apfs_log_volume_oids(&nx, max_fs);
 
 adopt:
 	amp->nx = nx;
@@ -692,7 +662,7 @@ apfs_vfs_register(void)
 		return error;
 	}
 
-	APFSLOG("registered apfs filesystem scaffold");
+	APFSLOG("registered apfs filesystem");
 	return 0;
 }
 

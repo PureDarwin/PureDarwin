@@ -852,8 +852,20 @@ RavynAHCIPort::issueCommand(PortState &portState,
     if (!portState.memVirt) return false;
     if (!nonData && !buffer) return false;
 
+    /*
+     * IOLockSleepDeadline() below drops fCommandLock while a command is in
+     * flight. Without this flag a second issuer could take the lock, watch
+     * CI drain (the first command completing), then clobber dmaBuf with its
+     * own transfer before the first issuer woke up and copied its data out -
+     * the sleeper then returned the second request's sectors as its own.
+     */
     IOLockLock(fCommandLock);
+    while (fCommandBusy)
+        IOLockSleep(fCommandLock, &fCommandBusy, THREAD_UNINT);
+    fCommandBusy = true;
     auto unlock = [&]() {
+        fCommandBusy = false;
+        IOLockWakeup(fCommandLock, &fCommandBusy, false);
         IOLockUnlock(fCommandLock);
     };
 

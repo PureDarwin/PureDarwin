@@ -114,7 +114,13 @@ typedef int (*apfsrw_dirent_cb)(const struct apfsrw_dirent *entry,
 
 int apfsrw_open(const char *path, int writable, struct apfsrw **out);
 
-/* Kernel builds bind to an already-open device instead of a path. */
+/* Kernel builds bind to an already-open device instead of a path. io_ctx is
+ * a struct apfsrw_kern_dev the caller keeps alive for the mount's lifetime. */
+struct apfsrw_kern_dev {
+    void *devvp;            /* vnode_t */
+    uint32_t dev_bsize;     /* sector size: the unit buf blknos are in */
+    uint32_t block_size;    /* container block size: one buffer per block */
+};
 void *apfsrw_io_context(struct apfsrw *fs);
 int apfsrw_open_kernel(void *io_ctx, uint64_t image_blocks, int writable,
     uint64_t xid, struct apfsrw **out);

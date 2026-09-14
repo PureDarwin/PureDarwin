@@ -94,35 +94,47 @@ apfsrw_kern_realloc(void *ptr, size_t size)
 static int
 apfsrw_kern_io(struct apfsrw *fs, void *buf, size_t n, off_t off, int is_write)
 {
-	vnode_t devvp = (vnode_t)apfsrw_io_context(fs);
-	buf_t bp = NULL;
-	daddr64_t blkno;
-	int error;
+	struct apfsrw_kern_dev *dev = apfsrw_io_context(fs);
+	vnode_t devvp;
+	uint32_t bs;
+	size_t done;
 
-	if (devvp == NULLVP || buf == NULL || n == 0)
+	if (dev == NULL || buf == NULL || n == 0)
 		return -1;
-	if (off < 0 || ((uint64_t)off % n) != 0)
+	devvp = (vnode_t)dev->devvp;
+	bs = dev->block_size;
+	if (devvp == NULLVP || dev->dev_bsize == 0 || bs == 0)
 		return -1;
-	blkno = (daddr64_t)((uint64_t)off / n);
+	if (off < 0 || ((uint64_t)off % bs) != 0 || (n % bs) != 0)
+		return -1;
 
-	if (is_write) {
-		bp = buf_getblk(devvp, blkno, (int)n, 0, 0, BLK_META);
-		if (bp == NULL)
+	/* One container block per buffer, so cache entries stay block-sized
+	 * however long the extent being transferred is. */
+	for (done = 0; done < n; done += bs) {
+		uint64_t paddr = ((uint64_t)off + done) / bs;
+		daddr64_t blkno = (daddr64_t)(paddr * (bs / dev->dev_bsize));
+		uint8_t *p = (uint8_t *)buf + done;
+		buf_t bp = NULL;
+		int error;
+
+		if (is_write) {
+			bp = buf_getblk(devvp, blkno, (int)bs, 0, 0, BLK_META);
+			if (bp == NULL)
+				return -1;
+			memcpy((void *)buf_dataptr(bp), p, bs);
+			/* Delayed write; apfsrw_sync() flushes at commit barriers. */
+			buf_bdwrite(bp);
+			continue;
+		}
+		error = (int)buf_meta_bread(devvp, blkno, (int)bs, NOCRED, &bp);
+		if (error != 0 || bp == NULL) {
+			if (bp != NULL)
+				buf_brelse(bp);
 			return -1;
-		memcpy((void *)buf_dataptr(bp), buf, n);
-		/* Delayed write; apfsrw_sync() flushes at the commit barriers. */
-		buf_bdwrite(bp);
-		return 0;
+		}
+		memcpy(p, (const void *)buf_dataptr(bp), bs);
+		buf_brelse(bp);
 	}
-
-	error = (int)buf_meta_bread(devvp, blkno, (int)n, NOCRED, &bp);
-	if (error != 0 || bp == NULL) {
-		if (bp != NULL)
-			buf_brelse(bp);
-		return -1;
-	}
-	memcpy(buf, (const void *)buf_dataptr(bp), n);
-	buf_brelse(bp);
 	return 0;
 }
 
@@ -142,11 +154,11 @@ apfsrw_pwrite(struct apfsrw *fs, const void *buf, size_t n, off_t off)
 int
 apfsrw_sync(struct apfsrw *fs)
 {
-	vnode_t devvp = (vnode_t)apfsrw_io_context(fs);
+	struct apfsrw_kern_dev *dev = apfsrw_io_context(fs);
 
-	if (devvp == NULLVP)
+	if (dev == NULL || dev->devvp == NULL)
 		return -1;
-	buf_flushdirtyblks(devvp, 1, 0, "apfsrw");
+	buf_flushdirtyblks((vnode_t)dev->devvp, 1, 0, "apfsrw");
 	return 0;
 }
 

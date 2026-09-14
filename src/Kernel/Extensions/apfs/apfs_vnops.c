@@ -506,8 +506,10 @@ apfs_vnop_pagein(struct vnop_pagein_args *ap)
 
 /* apfsrw's transaction state is single-threaded: one writer at a time, and
  * the reload happens under the same lock. */
-#define APFS_RW_LOCK(amp)	IOLockLock((IOLock *)(amp)->am_rw_lock)
-#define APFS_RW_UNLOCK(amp)	IOLockUnlock((IOLock *)(amp)->am_rw_lock)
+#define APFS_RW_LOCK(amp)	\
+	IORecursiveLockLock((IORecursiveLock *)(amp)->am_rw_lock)
+#define APFS_RW_UNLOCK(amp)	\
+	IORecursiveLockUnlock((IORecursiveLock *)(amp)->am_rw_lock)
 
 static int apfsrw_to_errno(int err)
 {
@@ -541,8 +543,6 @@ apfs_set_content(struct apfs_node *node, const void *buf, uint64_t size,
 	error = apfsrw_set_file_content(node->amp->rw, path, buf,
 	    (size_t)size);
 	if (error != 0) {
-		APFSLOG("set_content('%s', %llu) failed: %d", path,
-		    (unsigned long long)size, error);
 		return apfsrw_to_errno(error);
 	}
 	error = apfs_reload_container(node->amp, ctx);
@@ -750,7 +750,6 @@ apfs_vnop_mkdir(struct vnop_mkdir_args *ap)
 	error = apfsrw_mkdir(dnode->amp->rw, path, (uint16_t)mode, uid, gid);
 	if (error != 0) {
 		APFS_RW_UNLOCK(dnode->amp);
-		APFSLOG("mkdir('%s') failed: %d", path, error);
 		return apfsrw_to_errno(error);
 	}
 
@@ -800,7 +799,6 @@ apfs_delete_entry(vnode_t dvp, vnode_t vp, struct componentname *cnp,
 	error = apfsrw_unlink(dnode->amp->rw, path);
 	if (error != 0) {
 		APFS_RW_UNLOCK(dnode->amp);
-		APFSLOG("unlink('%s') failed: %d", path, error);
 		return apfsrw_to_errno(error);
 	}
 
@@ -864,7 +862,6 @@ apfs_vnop_symlink(struct vnop_symlink_args *ap)
 	    VATTR_IS_ACTIVE(vap, va_gid) ? vap->va_gid : 0);
 	if (error != 0) {
 		APFS_RW_UNLOCK(dnode->amp);
-		APFSLOG("symlink('%s') failed: %d", path, error);
 		return apfsrw_to_errno(error);
 	}
 	error = apfs_reload_container(dnode->amp, ap->a_context);
@@ -903,7 +900,6 @@ apfs_vnop_rename(struct vnop_rename_args *ap)
 	error = apfsrw_rename(fdnode->amp->rw, from, to);
 	if (error != 0) {
 		APFS_RW_UNLOCK(fdnode->amp);
-		APFSLOG("rename('%s' -> '%s') failed: %d", from, to, error);
 		return apfsrw_to_errno(error);
 	}
 	error = apfs_reload_container(fdnode->amp, ap->a_context);
@@ -958,7 +954,6 @@ apfs_vnop_mknod(struct vnop_mknod_args *ap)
 	    VATTR_IS_ACTIVE(vap, va_gid) ? vap->va_gid : 0);
 	if (error != 0) {
 		APFS_RW_UNLOCK(dnode->amp);
-		APFSLOG("mknod('%s') failed: %d", path, error);
 		return apfsrw_to_errno(error);
 	}
 
@@ -1013,7 +1008,6 @@ apfs_vnop_create(struct vnop_create_args *ap)
 	    (uint16_t)mode, uid, gid);
 	if (error != 0) {
 		APFS_RW_UNLOCK(dnode->amp);
-		APFSLOG("create('%s') failed: %d", path, error);
 		return apfsrw_to_errno(error);
 	}
 
