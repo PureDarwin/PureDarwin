@@ -1098,6 +1098,7 @@ do_init_slave(boolean_t fast_restart)
 
 	cpu_thread_init();      /* not strictly necessary */
 
+	pd_hv_tsc_sync();
 	cpu_init();     /* Sets cpu_running which starter cpu waits for */
 
 

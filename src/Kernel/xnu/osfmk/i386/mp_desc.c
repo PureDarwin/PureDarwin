@@ -76,6 +76,7 @@
 #include <i386/mp.h>
 #include <i386/pmap.h>
 #include <i386/postcode.h>
+#include <i386/cpuid.h>
 #include <i386/pmap_internal.h>
 #if CONFIG_MCA
 #include <i386/machine_check.h>
@@ -509,9 +510,16 @@ cpu_syscall_init(cpu_data_t *cdp)
 {
 #pragma unused(cdp)
 
-	wrmsr64(MSR_IA32_SYSENTER_CS, SYSENTER_CS);
-	wrmsr64(MSR_IA32_SYSENTER_EIP, DBLMAP((uintptr_t) hi64_sysenter));
-	wrmsr64(MSR_IA32_SYSENTER_ESP, current_cpu_datap()->cpu_desc_index.cdi_sstku);
+	uint32_t vendor[4];
+
+	// SYSENTER is unusable from long mode on AMD,
+	// and Hyper-V on AMD hosts (WSL2) #GPs on a 64-bit SYSENTER_EIP. Only Intel gets these MSRs
+	do_cpuid(0, vendor);
+	if (vendor[ebx] != 0x68747541 /* "Auth" */) {
+		wrmsr64(MSR_IA32_SYSENTER_CS, SYSENTER_CS);
+		wrmsr64(MSR_IA32_SYSENTER_EIP, DBLMAP((uintptr_t) hi64_sysenter));
+		wrmsr64(MSR_IA32_SYSENTER_ESP, current_cpu_datap()->cpu_desc_index.cdi_sstku);
+	}
 	/* Enable syscall/sysret */
 	wrmsr64(MSR_IA32_EFER, rdmsr64(MSR_IA32_EFER) | MSR_IA32_EFER_SCE);
 

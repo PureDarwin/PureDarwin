@@ -240,6 +240,33 @@ tsc_init(void)
 	boolean_t       sync_amd_tsc = FALSE;
 
 	if (cpuid_vmm_present()) {
+		uint32_t hv[4];
+
+		// Hyper-V publishes exact TSC and APIC timer frequencies.
+		// Model MSRs are not virtualised
+		do_cpuid(0x40000001, hv);
+		if (hv[eax] == 0x31237648 /* "Hv#1" */) {
+			do_cpuid(0x40000003, hv);
+			if (hv[eax] & (1U << 11)) {
+				tscFreq = rdmsr64(0x40000022);
+				busFreq = rdmsr64(0x40000023);
+			}
+			if (tscFreq != 0 && busFreq != 0) {
+				kprintf("Hyper-V TSC frequency %llu Hz, APIC frequency %llu Hz\n", tscFreq, busFreq);
+				busFCvtt2n = ((1 * Giga) << 32) / busFreq;
+				busFCvtn2t = 0xFFFFFFFFFFFFFFFFULL / busFCvtt2n;
+				tscFCvtt2n = ((1 * Giga) << 32) / tscFreq;
+				tscFCvtn2t = 0xFFFFFFFFFFFFFFFFULL / tscFCvtt2n;
+				tscGranularity = tscFreq / busFreq;
+				if (tscGranularity == 0) {
+					tscGranularity = 1;
+				}
+				bus2tsc = tmrCvt(busFCvtt2n, tscFCvtn2t);
+				return;
+			}
+			tscFreq = busFreq = 0;
+		}
+
 		kprintf("VMM vendor %s TSC frequency %u KHz bus frequency %u KHz\n",
 		    cpuid_vmm_family_string(),
 		    cpuid_vmm_info()->cpuid_vmm_tsc_frequency,
@@ -552,3 +579,56 @@ cpu_data_tsc_sync_deltas_string(char *buf, uint32_t buflen,
     }
 }
 #endif /* DEVELOPMENT || DEBUG */
+
+// Hyper-V gives each vCPU its own TSC offset, but XNU reads the TSC on whichever CPU it runs.
+// Line every AP up with the boot CPU using the partition reference counter (100ns units)
+// Locore.s exports the 64-bit writer under this name
+extern int wrmsr_carefully(uint32_t msr, uint64_t val);
+static uint64_t pd_hv_boot_tsc, pd_hv_boot_ref;
+
+static bool
+pd_hv_has_ref_counter(void)
+{
+	uint32_t reg[4];
+
+	do_cpuid(0x40000001, reg);
+	if (reg[eax] != 0x31237648 /* "Hv#1" */) {
+		return false;
+	}
+	do_cpuid(0x40000003, reg);
+	return (reg[eax] & (1U << 1)) != 0;
+}
+
+static int64_t
+pd_hv_tsc_skew(void)
+{
+	uint64_t ref = rdmsr64(0x40000020);
+	uint64_t tsc = rdtsc64();
+	uint64_t expected = pd_hv_boot_tsc + tmrCvt((ref - pd_hv_boot_ref) * 100, tscFCvtn2t);
+
+	return (int64_t)(expected - tsc);
+}
+
+void
+pd_hv_tsc_sync(void)
+{
+	if (tscFreq == 0 || !pd_hv_has_ref_counter()) {
+		return;
+	}
+	if (cpu_number() == boot_cpu_id) {
+		pd_hv_boot_ref = rdmsr64(0x40000020);
+		pd_hv_boot_tsc = rdtsc64();
+		return;
+	}
+	if (pd_hv_boot_tsc == 0) {
+		return;
+	}
+	// Hyper-V gives no cross-vCPU TSC guarantee here, so keep kernel time globally monotonic
+	extern bool pd_monotonic_clamp;
+	pd_monotonic_clamp = true;
+
+	int64_t before = pd_hv_tsc_skew();
+	if (before > (int64_t)(tscFreq / 10000) || before < -(int64_t)(tscFreq / 10000)) {
+		(void)wrmsr_carefully(0x10 /* TSC */, rdtsc64() + before);
+	}
+}

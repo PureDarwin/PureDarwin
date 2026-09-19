@@ -50,6 +50,7 @@
 extern uint64_t busFCvtt2n;
 extern uint64_t busFCvtn2t;
 extern uint64_t tscFreq;
+extern void pd_hv_tsc_sync(void);
 extern uint64_t tscFCvtt2n;
 extern uint64_t tscFCvtn2t;
 extern uint64_t tscGranularity;

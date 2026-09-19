@@ -4714,6 +4714,9 @@ chroot(proc_t p, struct chroot_args *uap, __unused int32_t *retval)
 #define PIVOT_ROOT_ENTITLEMENT              \
        "com.apple.private.vfs.pivot-root"
 
+// Without AMFI there are no entitlements. Let launchd's stand-in (e.g. WSL's init) pivot when asked
+static TUNABLE(bool, pd_pivot_root_unentitled, "pd_pivot_root", false);
+
 #if defined(XNU_TARGET_OS_OSX)
 int
 pivot_root(proc_t p, struct pivot_root_args *uap, __unused int *retval)
@@ -4740,7 +4743,8 @@ pivot_root(proc_t p, struct pivot_root_args *uap, __unused int *retval)
 	 * pivot_root can be executed by launchd only.
 	 * Enforce entitlement.
 	 */
-	if ((proc_getpid(p) != 1) || !IOCurrentTaskHasEntitlement(PIVOT_ROOT_ENTITLEMENT)) {
+	if ((proc_getpid(p) != 1) ||
+	    (!pd_pivot_root_unentitled && !IOCurrentTaskHasEntitlement(PIVOT_ROOT_ENTITLEMENT))) {
 		return EPERM;
 	}
 

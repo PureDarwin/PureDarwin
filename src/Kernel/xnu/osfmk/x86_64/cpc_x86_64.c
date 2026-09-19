@@ -82,6 +82,10 @@ union cpc_machine_regs cpc_machine_regs_base = _CPC_X86_64_REGS_INIT;
 static void __unused
 _cpc_core_disable(void)
 {
+	// Without an architectural PMU (AMD, pre-v2 Intel) these MSRs #GP
+	if (!cpc_cpmu_supported) {
+		return;
+	}
 	wrmsr64(MSR_IA32_PERF_GLOBAL_CTRL, 0);
 }
 
@@ -233,6 +237,9 @@ cpc_counters_resync(cpc_hw_t __assert_only hw,
 static void
 _cpc_x86_64_cpmu_registers_reenable(const struct _cpc_x86_64_cpmu_regs *regs)
 {
+	if (!cpc_cpmu_supported) {
+		return;
+	}
 	wrmsr64(MSR_IA32_PERF_GLOBAL_CTRL, regs->cxcr_global_ctrl);
 }
 
@@ -621,6 +628,9 @@ cpc_machine_regs_reset(
 	cpc_hw_t __assert_only hw)
 {
 	assert3u(hw, ==, CPC_HW_CPMU);
+	if (!cpc_cpmu_supported) {
+		return;
+	}
 	cpc_machine_regs_apply(&cpc_machine_regs_init, hw);
 	_cpc_cpmu_regs_zero_pmcs();
 	cpc_counter_t counters = cpc_cpmu_counters();
@@ -636,6 +646,9 @@ cpc_machine_regs_apply(
 	cpc_hw_t __assert_only hw)
 {
 	assert3u(hw, ==, CPC_HW_CPMU);
+	if (!cpc_cpmu_supported) {
+		return;
+	}
 
 	wrmsr64(MSR_IA32_PERF_FIXED_CTR_CTRL, regs->cmr_cpmu.cxcr_fixed_ctrl);
 	wrmsr64(MSR_IA32_PERF_GLOBAL_CTRL, regs->cmr_cpmu.cxcr_global_ctrl);

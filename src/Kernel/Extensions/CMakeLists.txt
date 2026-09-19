@@ -41,6 +41,9 @@ add_subdirectory(IOVirtIOGPU)
 add_subdirectory(IOIntelFramebuffer)
 add_subdirectory(IOVirtIONet)
 add_subdirectory(IOVirtIOBlock)
+if(NOT PUREDARWIN_ARM64 AND NOT PUREDARWIN_ARM32)
+    add_subdirectory(PDHyperV)
+endif()
 add_subdirectory(IOHIDFamily)
 add_subdirectory(IONetworkingFamily)
 add_subdirectory(PDE1000)
@@ -87,7 +90,7 @@ if(NOT PUREDARWIN_ARM64 AND NOT PUREDARWIN_ARM32)
     add_dependencies(kexts
         AppleAPIC AppleI386GenericPlatform AppleI386PCI AppleIntelPIIXATA
         ApplePS2Controller IOACPIFamily IOATAFamily IOATABlockStorage.kext
-        PDACPIPlatform
+        PDACPIPlatform PDHyperV.kext
     )
 endif()
 

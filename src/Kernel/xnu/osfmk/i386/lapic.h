@@ -229,6 +229,7 @@ typedef uint32_t lapic_timer_count_t;
 #define LAPIC_PMC_SW_INTERRUPT          0x8
 #define LAPIC_PM_INTERRUPT              0x7
 #define LAPIC_KICK_INTERRUPT            0x6
+#define LAPIC_HYPERV_INTERRUPT          0x5     /* Hyper-V SynIC (VMBus) */
 
 #define LAPIC_PMC_SWI_VECTOR            (LAPIC_DEFAULT_INTERRUPT_BASE + LAPIC_PMC_SW_INTERRUPT)
 #define LAPIC_TIMER_VECTOR              (LAPIC_DEFAULT_INTERRUPT_BASE + LAPIC_TIMER_INTERRUPT)
@@ -299,6 +300,8 @@ extern uint64_t         lapic_get_tsc_deadline_timer(void);
 
 typedef int (*i386_intr_func_t)(x86_saved_state_t *state);
 extern void             lapic_set_intr_func(int intr, i386_intr_func_t func);
+// Registers the Hyper-V SynIC handler. Returns the IDT vector to program into a SINT
+extern int              pd_hyperv_set_intr_func(i386_intr_func_t func);
 
 extern void             lapic_set_pmi_func(i386_intr_func_t);
 

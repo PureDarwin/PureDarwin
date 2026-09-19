@@ -65,7 +65,10 @@ bool AppleI386CPU::start(IOService *provider) {
 }
 
 void AppleI386CPU::initCPU(bool boot) {
-	if (sCpuIC) sCpuIC->enableCPUInterrupt(this);
+	if (sCpuIC && !cpuInterruptEnabled) {
+		sCpuIC->enableCPUInterrupt(this);
+		cpuInterruptEnabled = true;
+	}
 	setCPUState(kIOCPUStateRunning);
 }
 

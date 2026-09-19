@@ -33,6 +33,9 @@ private:
 	// One controller per machine, shared by every CPU object.
 	static IOCPUInterruptController *sCpuIC;
 	bool startCommonCompleted;
+	// The boot CPU reaches initCPU twice (startCommon, then cpu_start),
+	// and every extra enable keeps enabledCPUs != numCPUs, blocking registerInterrupt
+	bool cpuInterruptEnabled;
 
 public:
 	virtual IOService *probe(IOService *provider, SInt32 *score) APPLE_KEXT_OVERRIDE;

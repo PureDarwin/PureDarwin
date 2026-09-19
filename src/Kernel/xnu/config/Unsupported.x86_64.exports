@@ -9,6 +9,7 @@ _kdp_register_callout
 _kdp_set_ip_and_mac_addresses
 _lapic_set_perfcnt_interrupt_mask
 _lapic_set_pmi_func
+_pd_hyperv_set_intr_func
 _ml_cpu_int_event_time
 _ml_get_apicid
 _ml_get_maxbusdelay

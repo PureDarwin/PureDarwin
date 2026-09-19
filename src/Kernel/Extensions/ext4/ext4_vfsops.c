@@ -105,6 +105,9 @@ ext4_mount(struct mount *mp, vnode_t devvp, __unused user_addr_t data,
 		/* read-only fs: nothing to update */
 		return 0;
 	}
+	if (devvp == NULLVP) {
+		return EINVAL;
+	}
 
 	emp = (struct ext4mount *)_MALLOC(sizeof(*emp), M_TEMP, M_WAITOK | M_ZERO);
 	if (emp == NULL)
@@ -367,15 +370,11 @@ ext4_vfs_register(void)
 	vfe.vfe_vopcnt   = 1;
 	vfe.vfe_opvdescs = opv;
 	strlcpy(vfe.vfe_fsname, "ext4", sizeof(vfe.vfe_fsname));
-	/* VFS_TBLCANMOUNTROOT: without it vfs_mountroot() skips ext4 entirely
-	 * (it only tries filesystems with a vfc_mountroot routine or this flag),
-	 * so the root device never gets handed to ext4_mount and every mount
-	 * attempt "fails" without ever calling us. With it, the generic
-	 * VFS_MOUNT(mp, rootvp, 0, ctx) path invokes ext4_mount for the root. */
+	// VFS_TBLCANMOUNTROOT makes vfs_mountroot() try ext4, otherwise the root never reaches
+	// ext4_mount. Local-volume args make mount(2) open the device for userspace mounts
 	vfe.vfe_flags    = VFS_TBLTHREADSAFE | VFS_TBLFSNODELOCK |
 	                   VFS_TBL64BITREADY | VFS_TBLNOTYPENUM |
-	                   VFS_TBLLOCALVOL | VFS_TBLGENERICMNTARGS |
-	                   VFS_TBLCANMOUNTROOT;
+	                   VFS_TBLLOCALVOL | VFS_TBLCANMOUNTROOT;
 
 	error = vfs_fsadd(&vfe, &ext4_vfsconf);
 	if (error) {

@@ -789,7 +789,13 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 					panic("ramdisk params");
 				}
 #endif /* __LP64__ */
+#if defined(__x86_64__)
+				// x86 ml_static_ptovirt only covers the kernel image.
+				// Copy the pages physically
+				(void)mdevadd(-1, ramdParms[0] >> 12, (unsigned int) (ramdParms[1] >> 12), 1);
+#else
 				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
+#endif
 			}
 			regEntry->release();                                                            /* Toss the entry */
 		}

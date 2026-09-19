@@ -45,6 +45,7 @@
     "IOVirtIOGPU.kext"
     "IOVirtIONet.kext"
     "IOVirtIOBlock.kext"
+    "PDHyperV.kext"
     "IOIntelFramebuffer.kext"
     "PDE1000.kext"
     "PDRealtek8111.kext"

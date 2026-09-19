@@ -872,12 +872,20 @@ lapic_set_intr_func(int vector, i386_intr_func_t func)
 	case LAPIC_PERFCNT_INTERRUPT:
 	case LAPIC_CMCI_INTERRUPT:
 	case LAPIC_PM_INTERRUPT:
+	case LAPIC_HYPERV_INTERRUPT:
 		lapic_intr_func[vector] = func;
 		break;
 	default:
 		panic("lapic_set_intr_func(%d,%p) invalid vector",
 		    vector, func);
 	}
+}
+
+int
+pd_hyperv_set_intr_func(i386_intr_func_t func)
+{
+	lapic_set_intr_func(LAPIC_VECTOR(HYPERV), func);
+	return lapic_interrupt_base + LAPIC_HYPERV_INTERRUPT;
 }
 
 void
@@ -908,6 +916,7 @@ lapic_interrupt(int interrupt_num, x86_saved_state_t *state)
 	case LAPIC_THERMAL_INTERRUPT:
 	case LAPIC_INTERPROCESSOR_INTERRUPT:
 	case LAPIC_PM_INTERRUPT:
+	case LAPIC_HYPERV_INTERRUPT:
 		if (lapic_intr_func[interrupt_num] != NULL) {
 			(void) (*lapic_intr_func[interrupt_num])(state);
 		}

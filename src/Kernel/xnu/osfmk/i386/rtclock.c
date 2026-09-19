@@ -43,6 +43,7 @@
 #include <mach/mach_types.h>
 
 #include <kern/cpu_data.h>
+#include <os/atomic_private.h>
 #include <kern/cpu_number.h>
 #include <kern/clock.h>
 #include <kern/host_notify.h>
@@ -186,10 +187,26 @@ rtc_nanotime_init_commpage(void)
  * Returns the current nanotime value, accessable from any
  * context.
  */
+bool pd_monotonic_clamp;
+static _Atomic uint64_t pd_monotonic_last;
+
 static inline uint64_t
 rtc_nanotime_read(void)
 {
-	return _rtc_nanotime_read(&pal_rtc_nanotime_info);
+	uint64_t now = _rtc_nanotime_read(&pal_rtc_nanotime_info);
+
+	if (__probable(!pd_monotonic_clamp)) {
+		return now;
+	}
+	// vCPU TSCs drift apart under some hypervisors.
+	// Never hand out a time older than one already seen
+	uint64_t last = os_atomic_load(&pd_monotonic_last, relaxed);
+	while (now > last) {
+		if (os_atomic_cmpxchgv(&pd_monotonic_last, last, now, &last, relaxed)) {
+			return now;
+		}
+	}
+	return last;
 }
 
 /*
@@ -305,6 +322,7 @@ rtclock_init(void)
 		gPEClockFrequencyInfo.cpu_frequency_min_hz = cycles;
 		gPEClockFrequencyInfo.cpu_frequency_max_hz = cycles;
 
+		pd_hv_tsc_sync();
 		rtc_timer_init();
 		clock_timebase_init();
 		ml_init_delay_spin_threshold(10);
