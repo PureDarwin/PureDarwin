@@ -127,7 +127,8 @@ enum {
 #define WAIT_STACK_TIMEOUT_DEFAULT	300.0
 
 #define WAIT_QUIET_TIMEOUT_KEY		"WaitQuietTimeout"
-#define WAIT_QUIET_TIMEOUT_DEFAULT	240.0
+// PureDarwin has no kernelmanagerd, so the IOKit root never goes quiet: don't wait long
+#define WAIT_QUIET_TIMEOUT_DEFAULT	10.0
 
 /*
  * S_connect
