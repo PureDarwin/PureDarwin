@@ -19,7 +19,6 @@
 , exoBuild
 , expatBuild
 , fastfetchBuild
-, osTestBuild
 , fastfetchNoGLArm64Build
 , vmprobeArm64Build
 , foundationArm64Build
@@ -542,7 +541,6 @@ let
     ioreg = ioregBuild;
     xkbcommon = xkbcommonBuild;
     fastfetch = fastfetchBuild;
-    os-test = osTestBuild;
     corefoundation = coreFoundationBuild;
     onyx2d = onyx2dBuild;
     coregraphics = coregraphicsBuild;
