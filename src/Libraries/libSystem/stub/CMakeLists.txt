@@ -55,6 +55,8 @@ target_include_directories(libSystem_B_stub PRIVATE
 
 set(LIBSYSTEM_EXPORTS ${CMAKE_CURRENT_SOURCE_DIR}/libSystem.exports)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBSYSTEM_EXPORTS})
+# No ';' anywhere in libSystem.exports, comments included: CMake splits the line
+# there and the ARM export list gets the tail as a symbol name
 file(STRINGS ${LIBSYSTEM_EXPORTS} _libsystem_export_lines)
 set(_libsystem_exports_for_link ${LIBSYSTEM_EXPORTS})
 if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
@@ -84,6 +86,12 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     #   *context       - libplatform builds ucontext for x86_64 only so far
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
         "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|roundl|lroundl|llroundl|floorl|frexpl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|getfsstat|i386_set_ldt|getcontext|setcontext|makecontext|swapcontext)$")
+    # The rest of openlibm's long double surface (math.h and complex.h *l) and
+    # the remaining x86 fenv entry points, for the same reason
+    list(FILTER _libsystem_export_lines EXCLUDE REGEX
+        "^_(acoshl|acosl|asinhl|asinl|atan2l|atanhl|atanl|cbrtl|ceill|copysignl|coshl|cosl|erfcl|erfl|exp2l|expl|expm1l|fabsl|fmal|fmaxl|fminl|fmodl|hypotl|ilogbl|lgammal|llrintl|log10l|log1pl|log2l|logbl|logl|lrintl|modfl|nearbyintl|nextafterl|nexttowardl|powl|remainderl|remquol|rintl|scalblnl|sinhl|sinl|sqrtl|tanhl|tanl|tgammal|truncl|feraiseexcept|feupdateenv)$")
+    list(FILTER _libsystem_export_lines EXCLUDE REGEX
+        "^_(cabsl|cacoshl|cacosl|cargl|casinhl|casinl|catanhl|catanl|ccoshl|ccosl|cexpl|cimagl|clogl|conjl|cpowl|cprojl|creall|csinhl|csinl|csqrtl|ctanhl|ctanl)$")
     if(PUREDARWIN_ARM32)
         # The ARMv6 bootstrap runtime does not provide the x86-only long
         # double/fenv entry points, 64-bit integer builtins, generic DWARF

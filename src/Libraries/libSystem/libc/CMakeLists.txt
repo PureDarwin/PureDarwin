@@ -125,6 +125,7 @@ target_sources(libc_static PRIVATE
     string/FreeBSD/strdup.c
     string/FreeBSD/strtok.c      # _strtok (init /etc/ttys tokenizing)
     string/pd_strtok_r.c         # _strtok_r forwarder (__weak_reference alias not emitted)
+    string/pd_strchrnul.c        # _strchrnul, declared in <string.h>, for gnum4 and nano
     stdlib/FreeBSD/setenv.c      # _setenv/_unsetenv (init sets HOME/PATH/etc)
     gen/FreeBSD/waitpid.c        # _waitpid (init reaps/respawns children)
     gen/FreeBSD/wait.c           # __wait
@@ -789,7 +790,6 @@ target_sources(libc_internal_static PRIVATE
     gdtoa/FreeBSD/machdep_ldisdd.c
     gdtoa/FreeBSD/machdep_ldisQ.c
     gdtoa/FreeBSD/machdep_ldisx.c
-    # POSIX surface os-test reported as undefined; sources were vendored but unbuilt.
     emulated/tcgetsid.c
     gen/FreeBSD/_rand48.c
     gen/FreeBSD/ctermid.c

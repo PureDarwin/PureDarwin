@@ -1048,6 +1048,7 @@ _scanf
 _stat$INODE64
 _strcasecmp
 _strchr
+_strchrnul
 _strcspn
 _strerror
 _strftime
@@ -2034,7 +2035,6 @@ _os_sync_wake_by_address_all
 _macho_arch_name_for_cpu_type
 _macho_cpu_type_for_arch_name
 _macho_arch_name_for_mach_header
-# Imported by nixpkgs' x86_64-darwin bootstrap tools (GNU coreutils, tar, gawk, make).
 _renameat
 _renameatx_np
 _renamex_np
@@ -2063,7 +2063,6 @@ _scalb
 ___register_frame
 ___deregister_frame
 ___extendhfsf2
-# POSIX.1e ACLs, their filesec container and the extended stat/chmod/open wrappers.
 _acl_add_flag_np
 _acl_add_perm
 _acl_calc_mask
@@ -2130,7 +2129,6 @@ _fchmodx_np
 _openx_np
 _mkdirx_np
 _mkfifox_np
-# Libinfo membership (compatibility UUIDs; no opendirectoryd).
 _mbr_identifier_translate
 _mbr_uid_to_uuid
 _mbr_gid_to_uuid
@@ -2152,7 +2150,6 @@ _mbr_string_to_sid
 _mbr_uuid_to_string
 _mbr_string_to_uuid
 _mbr_set_identifier_ttl
-# SysV IPC control (Nix's Darwin builder removes leftover IPC objects after a build).
 _msgctl
 _semctl
 _msgget
@@ -2160,10 +2157,8 @@ _msgsnd
 _msgrcv
 _semget
 _semop
-# Long division results (libarchive's NTFS time conversion).
 _ldiv
 _lldiv
-# sandbox_init(3) (src/Libraries/libsandbox) and the MACF syscall it uses.
 _sandbox_init
 _sandbox_init_with_parameters
 _sandbox_free_error
@@ -2173,16 +2168,13 @@ _kSBXProfileNoWrite
 _kSBXProfileNoWriteExceptTemporary
 _kSBXProfilePureComputation
 ___mac_syscall
-# BSD bcopy(3); bash configure looks for it.
 _bcopy
-# XPC pipes: synchronous request/reply to a Mach service (libinfo's ds module).
 _xpc_pipe_create
 _xpc_pipe_create_from_port
 _xpc_pipe_invalidate
 _xpc_pipe_routine
 _xpc_pipe_simpleroutine
 _xpc_pipe_try_receive
-# Implemented but never exported; os-test link failures.
 _abs
 _acoshl
 _acosl
@@ -2285,7 +2277,6 @@ _wcscasecmp_l
 _wcsnrtombs
 _wcsxfrm
 _wctype_l
-# Sources added to libc for os-test (POSIX surface).
 _a64l
 _ctermid
 _drand48
@@ -2344,7 +2335,6 @@ _wctrans
 _wctrans_l
 _wscanf
 _vfscanf
-# Compiled (openlibm, ctype_l, libinfo netdb, termios, stdio locks) but unexported.
 _daylight
 _endhostent
 _endnetent
@@ -2409,10 +2399,8 @@ _lsearch
 _sockatmark
 _ffsl
 _nexttowardl
-# C11 quick_exit (Libc-1752 stdlib/FreeBSD/quick_exit.c).
 _quick_exit
 _at_quick_exit
-# <complex.h> (Apple Libm header; openlibm implementations).
 _cabs
 _cabsf
 _cabsl
@@ -2479,5 +2467,4 @@ _ctanh
 _ctanhf
 _ctanhl
 _ctanl
-# Apple declares it in xlocale/_wchar.h; string/FreeBSD/wcsncasecmp.c defines it.
 _wcsncasecmp_l

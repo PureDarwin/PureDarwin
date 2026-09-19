@@ -779,6 +779,10 @@ int	 fsync(int) LIBC_ALIAS_C(fsync);
 #endif /* !LIBC_ALIAS_FSYNC */
 //End-Libc
 
+// Real syscall (syscalls.master 187) and already exported by libSystem,
+// but never declared here, so callers failed to compile (xfconf)
+int	 fdatasync(int);
+
 int	 ftruncate(int, off_t);
 int	 getlogin_r(char *_LIBC_COUNT(__namelen), size_t __namelen);
 __END_DECLS
