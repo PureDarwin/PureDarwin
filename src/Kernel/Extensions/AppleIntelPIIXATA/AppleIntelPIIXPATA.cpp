@@ -154,7 +154,7 @@ bool AppleIntelPIIXPATA::start( IOService * provider )
     if ( ( _provider->open( this, 0, &_pciDevice ) != true ) ||
          ( _pciDevice == 0 ) )
     {
-        DLOG("%s: provider open failed\n", getName());
+        kprintf("PIIXSTART: provider open failed\n");
         goto fail;
     }
 
@@ -174,7 +174,7 @@ bool AppleIntelPIIXPATA::start( IOService * provider )
 
     if ( configurePCIDevice( _pciDevice, _channel ) != true )
     {
-        // DLOG("%s: PIIX PCI configuration failed\n", getName());
+        kprintf("PIIXSTART chan %d: PCI configuration failed\n", (int)_channel);
         goto fail;
     }
 
@@ -182,7 +182,8 @@ bool AppleIntelPIIXPATA::start( IOService * provider )
 
     if ( getBMBaseAddress( _pciDevice, _channel, &_ioBMOffset ) != true )
     {
-        DLOG("%s: get bus-master base address failed\n", getName());
+        kprintf("PIIXSTART chan %d: no bus-master base address (BMIBA=%08x)\n",
+                (int)_channel, (unsigned)_pciDevice->configRead32( kPIIX_PCI_BMIBA ));
         goto fail;
     }
 
@@ -524,9 +525,15 @@ bool AppleIntelPIIXPATA::configurePCIDevice( IOPCIDevice * device,
 
     if ( (reg & kPIIX_PCI_IDETIM_IDE) == 0 )
     {
-        DLOG("%s: %s PCI IDE channel is disabled\n", getName(),
-              (channel == kPIIX_CHANNEL_PRIMARY) ? "Primary" : "Secondary");
-        return false;
+        // UEFI firmware without a PIIX IDE driver (OVMF) leaves decode off,
+        // though the legacy ports it describes are the ones we use
+        UInt8 offset = kPIIX_PCI_IDETIM + (channel == kPIIX_CHANNEL_SECONDARY ? 2 : 0);
+        device->configWrite16( offset, (UInt16) reg | kPIIX_PCI_IDETIM_IDE );
+        reg = device->configRead16( offset );
+        kprintf("PIIXSTART chan %d: enabled IDE decode (IDETIM=%04x)\n",
+                (int)channel, (unsigned)(reg & 0xffff));
+        if ( (reg & kPIIX_PCI_IDETIM_IDE) == 0 )
+            return false;
     }
 
     // Enable bus-master. The previous state of the bit is returned

@@ -1169,6 +1169,7 @@ let
         apfsprogs = pkgs.apfsprogs;
         imageFileName = "puredarwin-stripped.img";
       };
+      minimalBootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
       imageMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemMinimal;
         extraPackages = strippedExtraPackages;
@@ -1178,7 +1179,7 @@ let
         imageFileName = "puredarwin-minimal.img";
         espMB = 60;
         rootMB = 260;
-        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
+        bootArgs = minimalBootArgs;
       };
       # The minimal system on an APFS root. Same contents as image-minimal, so
       # a boot failure here is the APFS path rather than anything in userland.
@@ -1220,6 +1221,36 @@ let
         espMB = 60;
         rootMB = 260;
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
+      };
+      # BIOS boot through GRUB and xnu-loader's Multiboot2 ELF. UEFI still works
+      grubMultibootBoot = xnu-loader.packages.${system}.kernel-grub-bios;
+      imageMultibootMinimalBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemMinimal;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderDefault;
+        grubMultiboot = grubMultibootBoot;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-multiboot-minimal.img";
+        espMB = 60;
+        rootMB = 260;
+        bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 gen9_debug=1";
+      };
+      # GRUB (BIOS and UEFI) loading xnu-loader through the Linux boot protocol,
+      # with the kernel collection and boot-args in a cpio initrd
+      imageGrubLinuxMinimalBuild = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemMinimal;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderDefault;
+        grubMultiboot = grubMultibootBoot;
+        grubEfi = xnu-loader.packages.${system}.kernel-grub-efi;
+        grubProtocol = "linux";
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-grub-linux-minimal.img";
+        espMB = 60;
+        rootMB = 260;
+        bootArgs = minimalBootArgs;
       };
       imageMinimalBuildDebug = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemMinimalDebug;
@@ -1595,6 +1626,188 @@ let
             "$@"
         '';
       };
+      # xnu-loader as a Linux bzImage: QEMU -kernel loads it, and the initrd is a
+      # cpio of the minimal image's kernel collection and boot-args
+      kernelBootMinimal = pkgs.runCommand "puredarwin-kernel-boot-minimal" {
+        nativeBuildInputs = [ pkgs.cpio ];
+      } ''
+        mkdir -p root/EFI/BOOT $out
+        cp ${kcBuild}/kernel root/EFI/BOOT/kernel
+        printf '%s' ${lib.escapeShellArg minimalBootArgs} > root/EFI/BOOT/boot-args.txt
+        (cd root && find EFI | sort | cpio -o -H newc --reproducible --quiet) > $out/initrd.cpio
+        cp ${xnu-loader.packages.${system}.kernel-multiboot2}/boot/xnu-loader.bzImage $out/
+      '';
+      wslBootArgs = "keepsyms=1 rd=md0 pd_pivot_root=1";
+      wslDebugBootArgs = "-v keepsyms=1 serial=3 rd=md0 pd_pivot_root=1";
+      wslImage = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemMinimal;
+        extraPackages = strippedExtraPackages;
+        kc = kcBuild;
+        xnuLoader = xnuLoaderDefault;
+        apfsprogs = pkgs.apfsprogs;
+        imageFileName = "puredarwin-wsl-root.img";
+        espMB = 60;
+        rootMB = 260;
+        bootArgs = minimalBootArgs;
+        rootfsTarball = true;
+      };
+      mkWslStub = bootArgs: pkgs.runCommand "puredarwin-wsl-stub" {
+        nativeBuildInputs = [ pkgs.e2fsprogs pkgs.fakeroot pkgs.cpio ];
+      } ''
+        stub=stub-root
+        mkdir -p $stub/sbin $stub/dev $stub/mnt/root $stub/private/tmp
+        # Take the stub's files from the rootfs itself so both always match
+        tar -xzf ${wslImage}/rootfs.tar.gz -C $stub \
+          ./usr/libexec/wslinit ./usr/lib/dyld ./usr/lib/libSystem.B.dylib \
+          ./usr/lib/system/libdyld.dylib ./usr/lib/libobjc.A.dylib \
+          ./usr/lib/libc++abi.dylib ./usr/lib/libc++.1.dylib
+        mv $stub/usr/libexec/wslinit $stub/sbin/launchd
+        chmod -R u+w $stub
+        # mke2fs -d skips empty directories, so give the mount points a placeholder
+        for d in dev mnt/root private/tmp; do touch $stub/$d/.keep; done
+        fakeroot sh -c "chown -R 0:0 $stub && mke2fs -q -F -t ext4 -b 4096 -O ^orphan_file -L wsl-stub -d $stub ramdisk.img 16M"
+        mkdir -p root/EFI/BOOT $out
+        cp ramdisk.img root/ramdisk.img
+        cp ${kcBuild}/kernel root/EFI/BOOT/kernel
+        printf '%s' ${lib.escapeShellArg bootArgs} > root/EFI/BOOT/boot-args.txt
+        (cd root && find . -type f | sed 's|^\./||' | sort | cpio -o -H newc --reproducible --quiet) > $out/initrd.cpio
+      '';
+      mkWslBundle = name: bootArgs: let
+        loader = xnu-loader.packages.${system}.kernel-multiboot2.override {
+          embeddedInitrd = "${mkWslStub bootArgs}/initrd.cpio";
+        };
+      in pkgs.runCommand name { } ''
+        mkdir -p $out
+        cp ${loader}/boot/xnu-loader.bzImage $out/puredarwin.bzImage
+        cp ${wslImage}/rootfs.tar.gz $out/rootfs.tar.gz
+        cat > $out/wslconfig.example <<'EOF'
+[wsl2]
+kernel=C:\\WSL\\PureDarwin\\puredarwin.bzImage
+processors=1
+networkingMode=none
+dnsTunneling=false
+guiApplications=false
+telemetry=false
+kernelBootTimeout=1800000
+EOF
+        cat > $out/install.ps1 <<'EOF'
+# Installs PureDarwin as a WSL2 distribution. The kernel setting applies to every
+# WSL2 distribution on this machine. An existing .wslconfig is kept as .wslconfig.bak
+param([string]$Target = "C:\WSL\PureDarwin")
+$ErrorActionPreference = "Stop"
+New-Item -ItemType Directory -Force -Path $Target | Out-Null
+Copy-Item "$PSScriptRoot\puredarwin.bzImage" $Target -Force
+$config = Join-Path $env:USERPROFILE ".wslconfig"
+wsl --shutdown
+# WSL unpacks the tarball inside its utility VM, so import with the stock kernel first
+if (Test-Path $config) { Move-Item $config "$config.bak" -Force }
+wsl --import PureDarwin (Join-Path $Target "disk") "$PSScriptRoot\rootfs.tar.gz" --version 2
+if ($LASTEXITCODE -ne 0) { throw "wsl --import failed" }
+wsl --shutdown
+# .wslconfig paths need doubled backslashes
+$escaped = $Target.Replace('\', '\\')
+(Get-Content "$PSScriptRoot\wslconfig.example").Replace('C:\\WSL\\PureDarwin', $escaped) | Set-Content $config
+Write-Host "Done: wsl -d PureDarwin"
+EOF
+      '';
+      runKernelMinimal = pkgs.writeShellApplication {
+        name = "puredarwin-kernel-minimal";
+        runtimeInputs = [ pkgs.qemu ];
+        text = ''
+          set -euo pipefail
+
+          image="''${PUREDARWIN_IMAGE:-${imageMinimalBuild}/puredarwin-minimal.img}"
+          image_readonly_opt=""
+          if [ ! -w "$image" ]; then
+            image_readonly_opt=",snapshot=on"
+          fi
+          accel=tcg
+          cpu="''${PUREDARWIN_VM_CPU:-Penryn}"
+          if [ -w /dev/kvm ]; then
+            accel=kvm
+            cpu="''${PUREDARWIN_KVM_CPU:-host}"
+          fi
+
+          # Legacy IDE at 0x1f0: the loader's disk probe finds the ext4 root there
+          exec qemu-system-x86_64 \
+            -machine "q35,accel=$accel" \
+            -cpu "$cpu" \
+            -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
+            -smp "''${PUREDARWIN_VM_SMP:-2}" \
+            -vga "''${PUREDARWIN_VM_VGA:-std}" \
+            -kernel ${kernelBootMinimal}/xnu-loader.bzImage \
+            -initrd ${kernelBootMinimal}/initrd.cpio \
+            -device piix3-ide,id=legacy-ide \
+            -drive "if=none,id=system,file=$image,format=raw$image_readonly_opt" \
+            -device ide-hd,bus=legacy-ide.0,drive=system \
+            -device virtio-net,netdev=net0 \
+            -netdev user,id=net0 \
+            -device qemu-xhci,id=xhci \
+            -device usb-kbd,bus=xhci.0 \
+            -device usb-mouse,bus=xhci.0 \
+            -serial mon:stdio \
+            -no-reboot \
+            -no-shutdown \
+            "$@"
+        '';
+      };
+      # GRUB image runners. Legacy IDE so the loader's disk probe sees the root
+      mkGrubLinuxRunner = { name, uefi }: pkgs.writeShellApplication {
+        inherit name;
+        runtimeInputs = [ pkgs.qemu ];
+        text = ''
+          set -euo pipefail
+
+          image="''${PUREDARWIN_IMAGE:-${imageGrubLinuxMinimalBuild}/puredarwin-grub-linux-minimal.img}"
+          image_readonly_opt=""
+          if [ ! -w "$image" ]; then
+            image_readonly_opt=",snapshot=on"
+          fi
+          accel=tcg
+          cpu="''${PUREDARWIN_VM_CPU:-Penryn}"
+          if [ -w /dev/kvm ]; then
+            accel=kvm
+            cpu="''${PUREDARWIN_KVM_CPU:-host}"
+          fi
+          firmware_args=()
+          ${lib.optionalString uefi ''
+          state_dir="''${PUREDARWIN_VM_STATE_DIR:-$PWD/.${name}}"
+          mkdir -p "$state_dir"
+          if [ ! -e "$state_dir/OVMF_VARS.fd" ]; then
+            cp ${pkgs.OVMF.fd}/FV/OVMF_VARS.fd "$state_dir/OVMF_VARS.fd"
+            chmod u+w "$state_dir/OVMF_VARS.fd"
+          fi
+          # XNU cannot map OVMF's default 64-bit BAR window, so keep it low
+          firmware_args=(
+            -fw_cfg "name=opt/ovmf/X-PciMmio64Mb,string=2048"
+            -drive "if=pflash,format=raw,readonly=on,file=${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+            -drive "if=pflash,format=raw,file=$state_dir/OVMF_VARS.fd"
+          )
+          ''}
+
+          exec qemu-system-x86_64 \
+            -machine "q35,accel=$accel" \
+            -cpu "$cpu" \
+            -m "''${PUREDARWIN_VM_MEMORY:-4096}" \
+            -smp "''${PUREDARWIN_VM_SMP:-2}" \
+            -vga "''${PUREDARWIN_VM_VGA:-std}" \
+            "''${firmware_args[@]}" \
+            -device piix3-ide,id=legacy-ide \
+            -drive "if=none,id=system,file=$image,format=raw$image_readonly_opt" \
+            -device ide-hd,bus=legacy-ide.0,drive=system,bootindex=0 \
+            -device virtio-net,netdev=net0 \
+            -netdev user,id=net0 \
+            -device qemu-xhci,id=xhci \
+            -device usb-kbd,bus=xhci.0 \
+            -device usb-mouse,bus=xhci.0 \
+            -serial mon:stdio \
+            -no-reboot \
+            -no-shutdown \
+            "$@"
+        '';
+      };
+      runGrubLinuxMinimal = mkGrubLinuxRunner { name = "puredarwin-grub-linux-minimal"; uefi = false; };
+      runGrubLinuxMinimalUefi = mkGrubLinuxRunner { name = "puredarwin-grub-linux-minimal-uefi"; uefi = true; };
       runArm64Uefi = pkgs.writeShellApplication {
         name = "puredarwin-arm64-uefi";
         runtimeInputs = [ pkgs.qemu ];
@@ -1802,6 +2015,8 @@ let
       image-ia32-minimal = imageIa32MinimalBuild;
       image-ia32-dual = imageIa32DualBuild;
       image-legacy-minimal = imageLegacyMinimalBuild;
+      image-multiboot-minimal = imageMultibootMinimalBuild;
+      image-grub-linux-minimal = imageGrubLinuxMinimalBuild;
       image-minimal-debug = imageMinimalBuildDebug;
       image-shell = imageShellBuild;
       image-legacy-shell = imageLegacyShellBuild;
@@ -1814,6 +2029,12 @@ let
       kvm-ia32-runner = runKvmIa32;
       vm-legacy-runner = runVmLegacy;
       kvm-legacy-runner = runKvmLegacy;
+      kernel-minimal-runner = runKernelMinimal;
+      grub-linux-minimal-runner = runGrubLinuxMinimal;
+      grub-linux-minimal-uefi-runner = runGrubLinuxMinimalUefi;
+      kernel-boot-minimal = kernelBootMinimal;
+      wsl = mkWslBundle "puredarwin-wsl" wslBootArgs;
+      wsl-debug = mkWslBundle "puredarwin-wsl-debug" wslDebugBootArgs;
       arm64-virt-runner = runArm64Virt;
       arm64-uefi-runner = runArm64Uefi;
       arm64-uboot-runner = runArm64Uboot;
@@ -1836,6 +2057,18 @@ let
       vm = {
         type = "app";
         program = "${runVm}/bin/puredarwin-vm";
+      };
+      grub-linux-minimal = {
+        type = "app";
+        program = "${linuxPackages.grub-linux-minimal-runner}/bin/puredarwin-grub-linux-minimal";
+      };
+      grub-linux-minimal-uefi = {
+        type = "app";
+        program = "${linuxPackages.grub-linux-minimal-uefi-runner}/bin/puredarwin-grub-linux-minimal-uefi";
+      };
+      kernel-minimal = {
+        type = "app";
+        program = "${linuxPackages.kernel-minimal-runner}/bin/puredarwin-kernel-minimal";
       };
       vm-legacy = {
         type = "app";

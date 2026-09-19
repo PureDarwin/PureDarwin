@@ -5,6 +5,10 @@
 , kc
 , xnuLoader
 , legacyBoot ? null
+, grubMultiboot ? null
+, grubEfi ? null
+, grubProtocol ? "multiboot2"
+, cpio
 , gptfdisk
 , util-linux
 , dosfstools
@@ -21,35 +25,27 @@
 , espMB ? 64
 , rootMB ? 6144
 , apfsMB ? 128
-  # "ext4": ext4 root + APFS test partition
-  # "hfs":  EFI + HFS+ root ONLY - no ext4, no APFS. Root is mounted by the
-  #         stock hfs.kext instead of our ext4.kext; xnu-loader already
-  #         prefers an Apple_HFS partition when deriving boot-uuid.
 , rootFsType ? "ext4"
+, rootfsTarball ? false
 , testAudioFile ? null
 , imageFileName ? "puredarwin.img"
 , efiBinary ? "BOOTX64.EFI"
-  # Additional loaders to place on the ESP, as { loader, efiBinary } pairs.
-  # UEFI picks the removable-media fallback matching its own architecture, so
-  # shipping more than one lets a machine of unknown width boot whichever it
-  # supports - and the loader that runs tells you which that was.
 , extraLoaders ? [ ]
 , netbootOnly ? false
 , useRamdisk ? false
 , ramdiskMB ? 128
-  # Paths (relative to the root) to drop from the RAMDisk only. A ramdisk has
-  # to fit in RAM twice over on the way in, so anything that is not needed to
-  # run the system is worth removing.
 , ramdiskPrune ? []
-  # xnu-loader reads this off the ESP at \EFI\BOOT\boot-args.txt
-  # it falls back if it cannot find a boot-args.txt, so not strictly needed here
-  # but generally nice to have so we can override things easily now
 , bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1 vgpu_debug=1"
 }:
 
 assert lib.isDerivation baseSystem;
 assert lib.all lib.isDerivation extraPackages;
 assert legacyBoot == null || lib.isDerivation legacyBoot;
+assert grubMultiboot == null || lib.isDerivation grubMultiboot;
+assert grubEfi == null || lib.isDerivation grubEfi;
+assert grubProtocol == "multiboot2" || grubProtocol == "linux";
+# Both occupy the gap between the GPT entries and the ESP
+assert legacyBoot == null || grubMultiboot == null;
 assert rootFsType == "ext4" || rootFsType == "hfs" || rootFsType == "apfs";
 assert rootFsType == "hfs" -> (hfsprogs != null && libdmg-hfsplus != null);
 assert rootFsType == "apfs" -> (apfsprogs != null && libapfsrw != null);
@@ -61,6 +57,7 @@ stdenv.mkDerivation {
   dontUnpack = true;
 
   nativeBuildInputs = [ gptfdisk util-linux dosfstools mtools e2fsprogs fakeroot ]
+    ++ lib.optionals (grubProtocol == "linux") [ cpio ]
     ++ lib.optionals (rootFsType == "hfs") [ hfsprogs libdmg-hfsplus ]
     ++ lib.optionals (rootFsType == "apfs") [ apfsprogs libapfsrw ];
 
@@ -128,6 +125,44 @@ ${lib.optionalString (legacyBoot != null) ''
     # The minimal FAT reader uses a stable 8.3 alias and does not parse LFNs.
     mcopy -o -i esp.img boot-args.txt                          ::/EFI/BOOT/BOOTARGS.TXT
 ''}
+${lib.optionalString (grubMultiboot != null || grubEfi != null) (let
+    grubLoader = if grubMultiboot != null then grubMultiboot else grubEfi;
+  in ''
+    cat > grub.cfg <<'GRUBCFG'
+serial --unit=0 --speed=115200
+terminal_input console serial
+terminal_output console serial
+set timeout=2
+${if grubProtocol == "linux" then ''
+menuentry "PureDarwin" {
+  set gfxpayload=1024x768x32,auto
+  linux /boot/xnu-loader.bzImage
+  initrd /boot/initrd.cpio
+  boot
+}
+'' else ''
+menuentry "PureDarwin" {
+  multiboot2 /boot/xnu-loader.elf
+  module2 /EFI/BOOT/kernel /EFI/BOOT/kernel
+  module2 /EFI/BOOT/boot-args.txt /EFI/BOOT/boot-args.txt
+  boot
+}
+''}GRUBCFG
+    mmd -D s -i esp.img ::/boot ::/boot/grub 2>/dev/null || true
+    mcopy -o -i esp.img grub.cfg                               ::/boot/grub/grub.cfg
+${if grubProtocol == "linux" then ''
+    mkdir -p initrd-root/EFI/BOOT
+    cp ${kc}/kernel initrd-root/EFI/BOOT/kernel
+    cp boot-args.txt initrd-root/EFI/BOOT/boot-args.txt
+    (cd initrd-root && find EFI | sort | cpio -o -H newc --reproducible --quiet) > initrd.cpio
+    mcopy -o -i esp.img ${grubLoader}/xnu-loader.bzImage       ::/boot/xnu-loader.bzImage
+    mcopy -o -i esp.img initrd.cpio                            ::/boot/initrd.cpio
+'' else ''
+    mcopy -o -i esp.img ${grubLoader}/xnu-loader.elf           ::/boot/xnu-loader.elf
+''}${lib.optionalString (grubEfi != null) ''
+    mcopy -o -i esp.img ${grubEfi}/grubx64.efi                 ::/EFI/BOOT/BOOTX64.EFI
+''}
+'')}
     fi
 
     if [ "$netboot_only" -eq 1 ]; then
@@ -850,6 +885,9 @@ ${lib.optionalString (rootFsType == "ext4") ''
       -L darwin-ext4 \
       -d "$staging" \
       root.img >/dev/null
+${lib.optionalString rootfsTarball ''
+    tar --numeric-owner --sort=name --mtime=@1 -C "$staging" -czf rootfs.tar.gz .
+''}
 FAKESCRIPT
     # /var/empty must be 0755 (mke2fs -d may have staged it u+rwX-only).
     cat > root-debugfs.cmds <<'EOF'
@@ -858,6 +896,26 @@ EOF
     debugfs -w -f root-debugfs.cmds root.img >/dev/null
 
     dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc,sparse status=none
+''}
+${lib.optionalString (grubMultiboot != null) ''
+    le() { # value bytes -> little-endian binary on stdout
+      local v=$1 n=$2 i
+      for ((i = 0; i < n; i++)); do printf "\\x$(printf %02x $(( (v >> (8 * i)) & 0xff )))"; done
+    }
+    core_lba=34
+    core_sectors=$((($(stat -c %s ${grubMultiboot}/core.img) + 511) / 512))
+    test $((core_lba + core_sectors)) -le 2048
+    cp ${grubMultiboot}/boot.img grub-boot.img
+    cp ${grubMultiboot}/core.img grub-core.img
+    chmod u+w grub-boot.img grub-core.img
+    # What grub-bios-setup would write: boot.img's kernel sector, and
+    # diskboot's blocklist for the rest of core.img
+    le $core_lba 8 | dd of=grub-boot.img bs=1 seek=$((0x5c)) conv=notrunc status=none
+    le $((core_lba + 1)) 8 | dd of=grub-core.img bs=1 seek=$((0x1f4)) conv=notrunc status=none
+    le $((core_sectors - 1)) 2 | dd of=grub-core.img bs=1 seek=$((0x1fc)) conv=notrunc status=none
+    # Keep the protective MBR's partition table and signature (bytes 440-511)
+    dd if=grub-boot.img of=$img bs=1 count=440 conv=notrunc status=none
+    dd if=grub-core.img of=$img bs=512 seek=$core_lba conv=notrunc status=none
 ''}
 ${lib.optionalString (legacyBoot != null) ''
     stage2_sectors=$((($(stat -c %s ${legacyBoot}/usr/standalone/i386/stage2.bin) + 511) / 512))
@@ -888,6 +946,9 @@ ${lib.optionalString netbootOnly ''
 ''}
 ${lib.optionalString (!netbootOnly) ''
     cp --sparse=always puredarwin.img $out/${imageFileName}
+''}
+${lib.optionalString rootfsTarball ''
+    cp rootfs.tar.gz $out/rootfs.tar.gz
 ''}
     runHook postInstall
   '';
