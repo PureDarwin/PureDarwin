@@ -311,9 +311,15 @@ xpc_pipe_routine_reply(xpc_object_t xobj)
 	message->ool_ports = ool_ports;
 
 	kr = mach_msg_send(&message->header);
-	if (kr != KERN_SUCCESS)
+	if (kr != KERN_SUCCESS) {
+		int fd = open("/dev/console", O_WRONLY | O_NOCTTY);
+		if (fd >= 0) {
+			dprintf(fd, "xpc_pipe_routine_reply: kr=0x%x bits=0x%x remote=0x%x\n",
+			    kr, message->header.msgh_bits, message->header.msgh_remote_port);
+			close(fd);
+		}
 		err = (kr == KERN_INVALID_TASK || kr == MACH_SEND_INVALID_DEST) ? EPIPE : EINVAL;
-	else
+	} else
 		err = 0;
 	free(message);
 	free(packed);

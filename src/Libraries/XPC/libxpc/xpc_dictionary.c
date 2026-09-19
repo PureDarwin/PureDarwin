@@ -82,8 +82,8 @@ nv2xpc(const nvlist_t *nv, mach_port_t (^port_deserializer)(int64_t port_id))
 				return xpc_date_create(nvlist_get_int64(nv, "date"));
 			} else if (strcmp(type, "double") == 0) {
 				size_t value_size;
-				double *value = (double *)nvlist_get_binary(nv, "date", &value_size);
-				xpc_assert(value_size == sizeof(double), "nvlist data of type date has incorrect size (expected %lu, got %zu)", sizeof(double), value_size);
+				double *value = (double *)nvlist_get_binary(nv, "double", &value_size);
+				xpc_assert(value_size == sizeof(double), "nvlist data of type double has incorrect size (expected %lu, got %zu)", sizeof(double), value_size);
 				return xpc_double_create(*value);
 			} else {
 				xpc_api_misuse("Unexpected NVLIST_XPC_TYPE in dictionary: %s", type);
@@ -151,6 +151,13 @@ nv2xpc(const nvlist_t *nv, mach_port_t (^port_deserializer)(int64_t port_id))
 
 		case NV_TYPE_NVLIST_DICTIONARY:
 			nvtmp = nvlist_get_nvlist_dictionary(nv, key);
+			xotmp = nv2xpc(nvtmp, port_deserializer);
+			break;
+
+		// xpc2nv_primitive wraps endpoints, connections, fileports,
+		// dates and doubles with nvlist_add_nvlist. Without this they were dropped
+		case NV_TYPE_NVLIST:
+			nvtmp = nvlist_get_nvlist(nv, key);
 			xotmp = nv2xpc(nvtmp, port_deserializer);
 			break;
 		}
