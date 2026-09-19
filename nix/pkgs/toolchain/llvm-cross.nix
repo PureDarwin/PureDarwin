@@ -14,6 +14,10 @@
 , nativeTblgen
 , nativeLlvmConfig
 , targetTriple ? "x86_64-apple-darwin20.4"
+# Code generation backends. The arm64 build needs AArch64 for any JIT to work
+, llvmTargetArch ? "X86"
+, llvmTargets ? "X86"
+, cmakeSystemProcessor ? "x86_64"
 , appleSdk
 }:
 
@@ -49,7 +53,7 @@ stdenv.mkDerivation {
 
     cmake -B build -G Ninja llvm \
       -DCMAKE_SYSTEM_NAME=Darwin \
-      -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+      -DCMAKE_SYSTEM_PROCESSOR=${cmakeSystemProcessor} \
       -DCMAKE_C_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang \
       -DCMAKE_CXX_COMPILER=${darwinCrossToolchain}/bin/${targetTriple}-clang++ \
       -DCMAKE_AR=${darwinCrossToolchain}/bin/${targetTriple}-ar \
@@ -65,8 +69,8 @@ stdenv.mkDerivation {
       -DCMAKE_CROSSCOMPILING=ON \
       -DLLVM_HOST_TRIPLE=${targetTriple} \
       -DLLVM_DEFAULT_TARGET_TRIPLE=${targetTriple} \
-      -DLLVM_TARGET_ARCH=X86 \
-      -DLLVM_TARGETS_TO_BUILD=X86 \
+      -DLLVM_TARGET_ARCH=${llvmTargetArch} \
+      -DLLVM_TARGETS_TO_BUILD=${llvmTargets} \
       -DLLVM_TABLEGEN=${nativeTblgen} \
       -DLLVM_BUILD_LLVM_DYLIB=ON \
       -DLLVM_LINK_LLVM_DYLIB=ON \
@@ -137,9 +141,9 @@ LLVMCONFIG
     # meson's config-tool method validates each requested module against
     # --components. The list is a property of the LLVM sources, so take it from
     # the same-version native llvm-config and drop the target-specific entries
-    # for backends this build does not include (LLVM_TARGETS_TO_BUILD=X86).
+    # for backends this build does not include (see llvmTargets)
     ${nativeLlvmConfig} --components | tr ' ' '\n' \
-      | grep -vE '^(aarch64|amdgpu|arm|arc|avr|bpf|csky|directx|hexagon|lanai|loongarch|m68k|mips|msp430|nvptx|powerpc|riscv|sparc|spirv|systemz|ve|webassembly|xcore|xtensa)' \
+      | grep -vE '^(${lib.optionalString (llvmTargets != "AArch64") "aarch64|"}${lib.optionalString (llvmTargets != "X86") "x86|"}amdgpu|arm|arc|avr|bpf|csky|directx|hexagon|lanai|loongarch|m68k|mips|msp430|nvptx|powerpc|riscv|sparc|spirv|systemz|ve|webassembly|xcore|xtensa)' \
       | tr '\n' ' ' > "$out/usr/lib/llvm-components.txt"
 
     # LLVM's own dylib rules override CMAKE_INSTALL_NAME_DIR and stamp

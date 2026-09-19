@@ -625,6 +625,9 @@ let
     llvmVersion = pkgs.llvmPackages_21.llvm.version;
   };
   llvmCrossArm64Build = mkArm64Build ./pkgs/toolchain/llvm-cross.nix {
+    llvmTargetArch = "AArch64";
+    llvmTargets = "AArch64";
+    cmakeSystemProcessor = "arm64";
     libcxxDylib = libcxxDylibArm64Build;
     libcxxabiDylib = libcxxabiDylibArm64Build;
     nativeMesonTools = nativeMesonToolsDir;
