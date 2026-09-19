@@ -1,11 +1,5 @@
 /* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
 
-/*
- * LZVN buffer decode, over the vendored lzfse decoder (BSD-3-Clause, see
- * third_party/lzfse/). lzfse_internal.h declares lzvn_decode_buffer() but
- * upstream never defines it, so drive the state-based lzvn_decode() instead.
- */
-
 #include "apfsrw_lzvn.h"
 
 #include <string.h>

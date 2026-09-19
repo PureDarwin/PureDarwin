@@ -50,26 +50,26 @@
 #define APFS_TYPE_XATTR 4
 #define APFS_TYPE_DIR_REC 9
 
-/* spec p.94-95 "Extended-Attribute Flags" */
+// spec p.94-95 "Extended-Attribute Flags"
 #define APFS_XATTR_DATA_STREAM 0x0001U
 #define APFS_XATTR_DATA_EMBEDDED 0x0002U
 #define APFS_XATTR_FILE_SYSTEM_OWNED 0x0004U
-/* spec p.83 "Extended Attributes": symlink targets live in this xattr. */
+// spec p.83 "Extended Attributes": symlink targets live in this xattr
 #define APFS_XATTR_SYMLINK_NAME "com.apple.fs.symlink"
-/* spec p.132 "B-Tree Flags" */
+// spec p.132 "B-Tree Flags"
 #define APFS_BTREE_PHYSICAL 0x00000010U
 #define APFS_BTREE_MAX_DEPTH 16U
 #define APFS_DREC_LEN_MASK 0x000003ffU
 #define APFS_DREC_HASH_SHIFT 10U
 #define APFS_DREC_HASH_MASK 0xfffffc00U
-/* spec p.96 APFS_INCOMPAT_CASE_INSENSITIVE */
+// spec p.96 APFS_INCOMPAT_CASE_INSENSITIVE
 #define APFS_INCOMPAT_CASE_INSENSITIVE 0x00000001ULL
-/* spec p.111 "Extended-Field Types" */
+// spec p.111 "Extended-Field Types"
 #define APFS_INO_EXT_TYPE_NAME 4U
 #define APFS_INO_EXT_TYPE_DSTREAM 8U
-/* j_inode_flags: INODE_NO_RSRC_FORK */
+// j_inode_flags: INODE_NO_RSRC_FORK
 #define APFS_INODE_NO_RSRC_FORK 0x8000ULL
-/* j_obj_types / j_obj_kinds */
+// j_obj_types / j_obj_kinds
 #define APFS_TYPE_EXTENT 2U
 #define APFS_KIND_NEW 1U
 
@@ -369,7 +369,7 @@ struct apfs_inode_info {
 	uint64_t size;
 	uint32_t nlink;
 	uint64_t parent_id;
-	uint64_t atime_ns;		/* j_inode_val_t times: ns since epoch */
+	uint64_t atime_ns;		// j_inode_val_t times: ns since epoch
 	uint64_t mtime_ns;
 	uint64_t ctime_ns;
 	uint64_t crtime_ns;
@@ -381,20 +381,52 @@ struct apfs_node;
 #define APFS_NODE_HASH_SIZE 256
 #define APFS_NODE_HASH(id) ((uint32_t)((id) & (APFS_NODE_HASH_SIZE - 1)))
 
+struct apfs_container {
+	LIST_ENTRY(apfs_container) c_link;
+	uint8_t c_uuid[16];
+	vnode_t c_devvp;
+	int c_refs;
+	void *c_lock;			// IORecursiveLock*
+	int c_owner_pid;		// Who holds c_lock, for long-wait diagnostics
+	void *c_owner_thread;
+	uint64_t c_acq_abs;		// When the current holder took it
+	const char *c_tag;		// Call site of the current holder
+	uint64_t c_hold_ns;		// Cumulative hold time and count, for the periodic report
+	uint64_t c_hold_count;
+	uint64_t c_hold_max_ns;
+	int c_hold_max_pid;
+	uint64_t c_report_abs;
+	uint64_t c_generation;
+	// Open write batch: which volume owns it, since one commit covers only that volume's tree.
+	// NULL when every mutation is on disk
+	struct apfs_mount *c_batch_amp;
+	uint64_t c_batch_first_abs;	// When the batch took its first mutation
+	uint32_t c_batch_ops;
+	struct apfsrw_kern_dev c_rw_dev;
+};
+
+// Batch flush policy. Aim for many mutations per commit,
+// bounding the data at risk and the superseded blocks that wait for a checkpoint
+#define APFS_BATCH_MAX_OPS	512
+#define APFS_BATCH_MAX_DEFERRED	4096
+#define APFS_BATCH_MAX_NS	2000000000ull
+
+void apfs_batch_note(struct apfs_mount *amp);
+int apfs_batch_flush(struct apfs_container *c);
+
 struct apfs_mount {
 	struct mount *mp;
-	/* Shared write path (projects/libapfsrw), bound to devvp at mount. */
+	// Shared write path (projects/libapfsrw), bound to the container
 	struct apfsrw *rw;
-	struct apfsrw_kern_dev rw_dev;
-	/*
-	 * One in-core vnode per file id. Minting a fresh vnode per lookup breaks
-	 * anything that hangs state off the vnode - notably AF_UNIX sockets,
-	 * where unp_bind() stores the listener in vp->v_socket and unp_connect()
-	 * reads it back off the vnode it gets from the path lookup.
-	 */
-	void *am_hash_lock;		/* IOLock* */
-	int am_probe_logged;		/* container dumped to the log once */
-	void *am_rw_lock;		/* IORecursiveLock*: serialises every apfsrw
+	struct apfs_container *cont;
+	vnode_t io_devvp;		// cont->c_devvp: where blocks are read
+	uint32_t vol_slot;		// nx_fs_oid[] slot of this volume
+	uint64_t seen_generation;
+	// One in-core vnode per file id. A fresh vnode per lookup breaks state hung off the vnode,
+	// notably AF_UNIX sockets, where unp_bind() stores the listener in vp->v_socket
+	void *am_hash_lock;		// IOLock*
+	int am_probe_logged;		// container dumped to the log once
+	void *am_rw_lock;		/* cont->c_lock: serialises every apfsrw
 					 * mutation + the reload after it */
 	LIST_HEAD(apfs_node_bucket, apfs_node) am_node_hash[APFS_NODE_HASH_SIZE];
 	vnode_t devvp;
@@ -402,7 +434,7 @@ struct apfs_mount {
 	dev_t dev;
 	int dev_opened;
 	uint32_t block_size;
-	uint32_t dev_bsize;		/* device sector size, for buf blkno units */
+	uint32_t dev_bsize;		// Device sector size, for buf blkno units
 	uint64_t block_count;
 	uint32_t max_file_systems;
 	struct apfs_nx_superblock nx;
@@ -423,8 +455,8 @@ struct apfs_mount {
 };
 
 struct apfs_node {
-	LIST_ENTRY(apfs_node) a_hash;	/* am_node_hash linkage */
-	int a_alloc_wip;		/* vnode_create() in progress */
+	LIST_ENTRY(apfs_node) a_hash;	// am_node_hash linkage
+	int a_alloc_wip;		// vnode_create() in progress
 	int a_unhashed;
 	struct apfs_mount *amp;
 	vnode_t vp;
@@ -441,15 +473,14 @@ struct apfs_node {
 	uint64_t mtime_ns;
 	uint64_t ctime_ns;
 	uint64_t crtime_ns;
+	// Last extent found for this file. Valid only while a_ext_xid matches
+	uint64_t a_ext_logical, a_ext_len, a_ext_phys, a_ext_xid;
+	int a_ext_valid;
 };
 
 #define VFSTOAPFS(mp) ((struct apfs_mount *)vfs_fsprivate(mp))
 #define VTOAPFS(vp)   ((struct apfs_node *)vnode_fsnode(vp))
 
-/* buf_meta_bread() addresses the device in its native sector size. Scale
- * container blocks into that rather than retagging with DKIOCSETBLOCKSIZE:
- * that size is per-minor state in IOMediaBSDClient, reset on last close
- * (same approach as ext4_blkread). */
 static inline daddr64_t
 apfs_devblk(const struct apfs_mount *amp, apfs_paddr_t paddr)
 {
@@ -469,6 +500,21 @@ int apfs_iterate_dir(struct apfs_mount *amp, uint64_t dirid,
 int apfs_read_file(struct apfs_node *node, struct uio *uio);
 int apfs_lookup_xattr(struct apfs_mount *amp, uint64_t fileid, const char *name,
     void *buf, size_t bufsize, size_t *outlen);
+int apfs_list_xattrs(struct apfs_mount *amp, uint64_t fileid, char *buf,
+    size_t bufsize, size_t *outlen);
 int apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx);
+// Take the container lock.
+// If another volume committed since this mount last looked, its view is re-read first. Recursive
+void apfs_rw_lock(struct apfs_mount *amp);
+void apfs_rw_lock_tag(struct apfs_mount *amp, const char *tag);
+void apfs_rw_unlock(struct apfs_mount *amp);
+// nx_fs_oid[] slot behind a volume device node (0 when the node is the raw container,
+// or the registry has nothing to say)
+int apfs_volume_slot_for_dev(dev_t dev, uint32_t *slot);
+// pd_fault_trace=1 accounting (apfs_btree.c)
+extern uint64_t apfs_trace_walk_ns, apfs_trace_copy_ns, apfs_trace_pageins,
+    apfs_trace_pagein_ns;
+int apfs_trace_enabled(void);
+void apfs_trace_add(uint64_t *acc, uint64_t t0);
 
 #endif /* _PUREDARWIN_APFS_H_ */

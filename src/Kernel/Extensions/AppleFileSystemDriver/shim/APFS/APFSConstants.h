@@ -7,8 +7,8 @@
 #define _APFS_CONSTANTS_SHIM_H
 
 #define APFS_VOLUME_OBJECT      "AppleAPFSVolume"
-#define kAPFSVolGroupUUIDKey    "VolumeGroupUUID"
-#define kAPFSRoleValueKey       "Role"
+#define kAPFSVolGroupUUIDKey    "VolGroupUUID"     /* as ioreg shows it */
+#define kAPFSRoleValueKey       "RoleValue"       /* OSNumber; "Role" is the name array */
 
 #define APFS_VOL_ROLE_NONE      0x0000
 #define APFS_VOL_ROLE_SYSTEM    0x0001

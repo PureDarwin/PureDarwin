@@ -22,29 +22,55 @@
 	<string>1.0.0</string>
 	<key>IOKitPersonalities</key>
 	<dict>
-		<key>ApfsFileSystemDriver</key>
+		<key>AppleAPFSContainerScheme</key>
 		<dict>
 			<key>CFBundleIdentifier</key>
 			<string>com.ravynos.driver.ApfsFileSystemDriver</string>
 			<key>IOClass</key>
-			<string>ApfsFileSystemDriver</string>
+			<string>AppleAPFSContainerScheme</string>
 			<key>IOMatchCategory</key>
-			<string>ApfsFileSystemDriver</string>
-			<key>IOProviderClass</key>
-			<string>IOResources</string>
-			<key>IOResourceMatch</key>
-			<string>boot-uuid</string>
-			<key>media-match</key>
+			<string>IOStorage</string>
+			<key>IOProbeScore</key>
+			<integer>2000</integer>
+			<key>IOPropertyMatch</key>
 			<dict>
-				<key>IOPropertyMatch</key>
-				<array>
-					<dict>
-						<key>Leaf</key>
-						<true/>
-					</dict>
-				</array>
+				<key>Content Hint</key>
+				<string>7C3457EF-0000-11AA-AA11-00306543ECAC</string>
 			</dict>
-					</dict>
+			<key>IOProviderClass</key>
+			<string>IOMedia</string>
+		</dict>
+		<key>AppleAPFSContainer</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.ravynos.driver.ApfsFileSystemDriver</string>
+			<key>IOClass</key>
+			<string>AppleAPFSContainer</string>
+			<key>IOMatchCategory</key>
+			<string>IOStorage</string>
+			<key>IOProbeScore</key>
+			<integer>1000</integer>
+			<key>IOProviderClass</key>
+			<string>AppleAPFSMedia</string>
+		</dict>
+		<key>AppleAPFSContainerSchemeISC</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.ravynos.driver.ApfsFileSystemDriver</string>
+			<key>IOClass</key>
+			<string>AppleAPFSContainerScheme</string>
+			<key>IOMatchCategory</key>
+			<string>IOStorage</string>
+			<key>IOProbeScore</key>
+			<integer>2000</integer>
+			<key>IOPropertyMatch</key>
+			<dict>
+				<key>Content Hint</key>
+				<string>69646961-6700-11AA-AA11-00306543ECAC</string>
+			</dict>
+			<key>IOProviderClass</key>
+			<string>IOMedia</string>
+		</dict>
 	</dict>
 	<key>OSBundleRequired</key>
 	<string>Local-Root</string>

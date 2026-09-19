@@ -1,10 +1,7 @@
 /* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
 
-/*
- * Platform shim so the same apfsrw.c builds both as a userspace library and
- * inside apfs.kext: one implementation of the B-tree write path, validated
- * against fsck_apfs. Everything below is behind APFSRW_KERNEL.
- */
+// Platform shim so the same apfsrw.c builds as a userspace library and inside apfs.kext.
+// One B-tree write path, validated against fsck_apfs. Everything below is behind APFSRW_KERNEL
 #ifndef APFSRW_PORT_H
 #define APFSRW_PORT_H
 
@@ -23,12 +20,13 @@ struct apfsrw;
 
 #define apfsrw_getenv(n)	getenv(n)
 #define apfsrw_sync(fs)		fsync((fs)->fd)
+#define apfsrw_sync_nowait(fs)	fsync((fs)->fd)
 uint64_t apfsrw_now_ns(void);
 
 #else /* APFSRW_KERNEL */
 
-/* Kernel headers must precede the malloc/free/fprintf macros below, or the
- * macros rewrite identifiers inside XNU's own headers. */
+// Kernel headers must precede the malloc/free/fprintf macros below,
+// or the macros rewrite identifiers inside XNU's own headers
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <stdint.h>
@@ -39,8 +37,8 @@ uint64_t apfsrw_now_ns(void);
 #include <sys/malloc.h>
 #include <string.h>
 
-/* XNU has no realloc and _FREE() wants a type, so the allocator carries the
- * size in a small header; apfsrw.c calls malloc/calloc/realloc/free unchanged. */
+// XNU has no realloc and _FREE() wants a type, so the allocator carries the size in a small header.
+// apfsrw.c calls malloc/calloc/realloc/free unchanged
 void *apfsrw_kern_malloc(size_t size);
 void *apfsrw_kern_calloc(size_t count, size_t size);
 void *apfsrw_kern_realloc(void *ptr, size_t size);
@@ -54,12 +52,13 @@ void apfsrw_kern_free(void *ptr);
 int snprintf(char *, size_t, const char *, ...) __printflike(3, 4);
 void microtime(struct timeval *tv);
 
-/* Ordering barriers in the commit protocol: the checkpoint must not land
- * before the metadata it describes. */
+// Ordering barriers in the commit protocol:
+// the checkpoint must not land before the metadata it describes
 int apfsrw_sync(struct apfsrw *fs);
+int apfsrw_sync_nowait(struct apfsrw *fs);
 uint64_t apfsrw_now_ns(void);
 
-/* libkern exposes no strrchr. */
+// libkern exposes no strrchr
 static inline char *apfsrw_strrchr(const char *s, int c)
 {
 	const char *last = (const char *)0;
@@ -74,7 +73,7 @@ static inline char *apfsrw_strrchr(const char *s, int c)
 }
 #define strrchr(s, c)		apfsrw_strrchr((s), (c))
 
-/* libkern exposes no memchr; libzbitmap needs one. */
+// libkern exposes no memchr. libzbitmap needs one
 static inline void *apfsrw_memchr(const void *s, int c, size_t n)
 {
 	const unsigned char *p = (const unsigned char *)s;
@@ -88,7 +87,7 @@ static inline void *apfsrw_memchr(const void *s, int c, size_t n)
 }
 #define memchr(s, c, n)		apfsrw_memchr((s), (c), (n))
 
-/* Debug tracing is userspace-only; the kernel build compiles it out. */
+// Debug tracing is userspace-only. The kernel build compiles it out
 #define apfsrw_getenv(n)	((char *)0)
 #define fprintf(stream, ...)	do { } while (0)
 #define stderr			((void *)0)

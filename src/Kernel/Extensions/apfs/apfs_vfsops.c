@@ -5,6 +5,8 @@
 
 #include <IOKit/IOLocks.h>
 
+#include <pexpert/pexpert.h>
+
 #include <libkern/libkern.h>
 #include <libkern/OSByteOrder.h>
 #include <sys/buf.h>
@@ -12,6 +14,7 @@
 #include <sys/errno.h>
 #include <sys/fcntl.h>
 #include <sys/malloc.h>
+#include <sys/proc.h>
 #include <sys/systm.h>
 #include <sys/vnode_if.h>
 #include <string.h>
@@ -39,6 +42,8 @@ static int apfs_init(struct vfsconf *vfsp);
 static int apfs_open_fspec(user_addr_t data, vnode_t *devvpp,
     vfs_context_t ctx);
 static int apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx);
+static int apfs_container_attach(struct apfs_mount *amp);
+static void apfs_container_detach(struct apfs_mount *amp);
 
 static struct vfsops apfs_vfsops = {
 	.vfs_mount = apfs_mount,
@@ -85,12 +90,7 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 
 	amp->mp = mp;
 	amp->am_hash_lock = IOLockAlloc();
-	amp->am_rw_lock = IORecursiveLockAlloc();
-	if (amp->am_hash_lock == NULL || amp->am_rw_lock == NULL) {
-		if (amp->am_hash_lock)
-			IOLockFree(amp->am_hash_lock);
-		if (amp->am_rw_lock)
-			IORecursiveLockFree(amp->am_rw_lock);
+	if (amp->am_hash_lock == NULL) {
 		_FREE(amp, M_TEMP);
 		if (own_devvp_ref)
 			vnode_rele(devvp);
@@ -103,6 +103,7 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 			LIST_INIT(&amp->am_node_hash[i]);
 	}
 	amp->devvp = devvp;
+	amp->io_devvp = devvp;
 	amp->dev = vnode_specrdev(devvp);
 	error = VNOP_OPEN(devvp, FREAD | FWRITE, ctx);
 	if (error) {
@@ -111,24 +112,27 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	}
 	amp->dev_opened = 1;
 
+	// Every volume's device spans the whole container, so block zero says which container this is.
+	// The registry says which volume
 	error = apfs_probe_container(amp, ctx);
 	if (error)
 		goto fail;
+	if (apfs_volume_slot_for_dev(amp->dev, &amp->vol_slot) != 0)
+		amp->vol_slot = 0;
+	error = apfs_container_attach(amp);
+	if (error)
+		goto fail;
+	if (amp->io_devvp != devvp) {
+		error = apfs_probe_container(amp, ctx);
+		if (error)
+			goto fail;
+	}
 	error = apfs_load_volume(amp, ctx);
 	if (error)
 		goto fail;
 
-	/*
-	 * Bind the shared read/write implementation to the same device. The kext
-	 * keeps its own cached view for reads, so anything that writes through
-	 * amp->rw has to re-probe the container afterwards - see
-	 * apfs_reload_container().
-	 */
-	amp->rw_dev.devvp = devvp;
-	amp->rw_dev.dev_bsize = amp->dev_bsize;
-	amp->rw_dev.block_size = amp->block_size;
-	error = apfsrw_open_kernel(&amp->rw_dev, amp->block_count, 1, 0,
-	    &amp->rw);
+	error = apfsrw_open_kernel(&amp->cont->c_rw_dev, amp->block_count, 1, 0,
+	    amp->vol_slot, &amp->rw);
 	if (error != 0) {
 		APFSLOG("apfsrw_open_kernel failed: %d", error);
 		amp->rw = NULL;
@@ -149,7 +153,7 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 
 	vfs_setfsprivate(mp, amp);
 	vfs_setflags(mp, MNT_LOCAL);
-	/* Advisory locks are handled in the VFS (lf_advlock). */
+	// Advisory locks are handled in the VFS (lf_advlock)
 	vfs_setlocklocal(mp);
 	vfs_clearflags(mp, MNT_RDONLY);
 
@@ -157,29 +161,386 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	sfs->f_bsize = amp->block_size;
 	sfs->f_iosize = amp->block_size;
 	sfs->f_blocks = amp->block_count;
-	sfs->f_bfree = 0;
-	sfs->f_bavail = 0;
+	{
+		struct apfsrw_space_info si;
+
+		sfs->f_bfree = 0;
+		if (amp->rw != NULL && apfsrw_get_space_info(amp->rw, &si) == 0 &&
+		    si.free_count <= amp->block_count)
+			sfs->f_bfree = si.free_count;
+		sfs->f_bavail = sfs->f_bfree;
+	}
 	sfs->f_files = OSSwapLittleToHostInt64(amp->apfs.apfs_num_files) +
 	    OSSwapLittleToHostInt64(amp->apfs.apfs_num_directories) +
 	    OSSwapLittleToHostInt64(amp->apfs.apfs_num_symlinks) +
 	    OSSwapLittleToHostInt64(amp->apfs.apfs_num_other_fsobjects);
-	sfs->f_ffree = 0;
+	sfs->f_ffree = 1ull << 32;
+	// User mounts arrive with f_mntfromname empty, so name the device node. Ask IOKit first,
+	// libignition's Preboot devvp is nameless and apfs_boot_util wants /dev/diskNsM
+	if (sfs->f_mntfromname[0] == '\0') {
+		extern int apfs_bsd_name_for_dev(dev_t dev, char *buf, size_t len);
+		char bsd[64];
+
+		if (apfs_bsd_name_for_dev(amp->dev, bsd, sizeof(bsd)) == 0 && bsd[0] != '\0')
+			snprintf(sfs->f_mntfromname, sizeof(sfs->f_mntfromname), "/dev/%s", bsd);
+	}
+	if (sfs->f_mntfromname[0] == '\0') {
+		const char *dn = vnode_getname(devvp);
+
+		if (dn != NULL) {
+			snprintf(sfs->f_mntfromname, sizeof(sfs->f_mntfromname),
+			    "/dev/%s", dn);
+			vnode_putname(dn);
+		}
+	} else if (sfs->f_mntfromname[0] != '/') {
+		// libignition mounts Preboot as bare "diskNsM".
+		// mount_by_role then compares /dev/ paths and calls the mount "another volume"
+		char bare[MAXPATHLEN];
+
+		strlcpy(bare, sfs->f_mntfromname, sizeof(bare));
+		snprintf(sfs->f_mntfromname, sizeof(sfs->f_mntfromname), "/dev/%s", bare);
+	}
 	sfs->f_fsid.val[0] = (int32_t)amp->dev;
 	sfs->f_fsid.val[1] = (int32_t)vfs_typenum(mp);
 	strlcpy(sfs->f_fstypename, APFS_MODULE_NAME, sizeof(sfs->f_fstypename));
 
-	APFSLOG("mounted read-write");
+	APFSLOG("mounted volume slot %u read-write", amp->vol_slot);
 	return 0;
 
 fail:
-	if (amp && amp->dev_opened) {
+	if (amp->rw != NULL)
+		apfsrw_close(amp->rw);
+	if (amp->cont != NULL)
+		apfs_container_detach(amp);
+	if (amp->dev_opened) {
 		(void)VNOP_CLOSE(devvp, FREAD | FWRITE, ctx);
 		amp->dev_opened = 0;
 	}
+	IOLockFree(amp->am_hash_lock);
 	_FREE(amp, M_TEMP);
 	if (own_devvp_ref)
 		vnode_rele(devvp);
 	return error;
+}
+
+// Containers are shared between the mounts of their volumes, keyed by the uuid in block zero
+static LIST_HEAD(, apfs_container) apfs_containers =
+    LIST_HEAD_INITIALIZER(apfs_containers);
+static IOLock *apfs_containers_lock;
+
+static int
+apfs_container_attach(struct apfs_mount *amp)
+{
+	struct apfs_container *c;
+
+	IOLockLock(apfs_containers_lock);
+	LIST_FOREACH(c, &apfs_containers, c_link) {
+		if (memcmp(c->c_uuid, amp->nx.nx_uuid, sizeof(c->c_uuid)) == 0)
+			break;
+	}
+	if (c == NULL) {
+		c = (struct apfs_container *)_MALLOC(sizeof(*c), M_TEMP,
+		    M_WAITOK | M_ZERO);
+		if (c == NULL) {
+			IOLockUnlock(apfs_containers_lock);
+			return ENOMEM;
+		}
+		c->c_lock = IORecursiveLockAlloc();
+		if (c->c_lock == NULL) {
+			_FREE(c, M_TEMP);
+			IOLockUnlock(apfs_containers_lock);
+			return ENOMEM;
+		}
+		memcpy(c->c_uuid, amp->nx.nx_uuid, sizeof(c->c_uuid));
+		c->c_devvp = amp->devvp;
+		vnode_ref(c->c_devvp);
+		c->c_rw_dev.devvp = c->c_devvp;
+		c->c_rw_dev.dev_bsize = amp->dev_bsize;
+		c->c_rw_dev.block_size = amp->block_size;
+		LIST_INSERT_HEAD(&apfs_containers, c, c_link);
+	}
+	c->c_refs++;
+	IOLockUnlock(apfs_containers_lock);
+
+	amp->cont = c;
+	amp->io_devvp = c->c_devvp;
+	amp->am_rw_lock = c->c_lock;
+	amp->seen_generation = c->c_generation;
+	return 0;
+}
+
+static void
+apfs_container_detach(struct apfs_mount *amp)
+{
+	struct apfs_container *c = amp->cont;
+	int last;
+
+	if (c == NULL)
+		return;
+	IOLockLock(apfs_containers_lock);
+	last = (--c->c_refs == 0);
+	if (last)
+		LIST_REMOVE(c, c_link);
+	IOLockUnlock(apfs_containers_lock);
+	amp->cont = NULL;
+	amp->io_devvp = NULLVP;
+	amp->am_rw_lock = NULL;
+	if (last) {
+		buf_flushdirtyblks(c->c_devvp, 1, 0, "apfs_container");
+		vnode_rele(c->c_devvp);
+		IORecursiveLockFree((IORecursiveLock *)c->c_lock);
+		_FREE(c, M_TEMP);
+	}
+}
+
+extern uint64_t apfsrw_kern_sync_ns, apfsrw_kern_sync_n, apfsrw_kern_bdwrites, apfsrw_kern_breads;
+extern uint64_t apfsrw_wblocks[4];		// mutation, commit, publish, frees
+extern uint64_t apfsrw_commits;
+uint64_t apfs_ubc_ns, apfs_reload_ns, apfs_reload_n;
+// setattr calls by attribute mask. Bit 0x80 marks the ones that committed
+uint32_t apfs_setattr_masks[256];
+
+// Hold time per call site, so the report names the vnop that serialises the container
+static struct {
+	const char *tag;
+	uint64_t ns;
+	uint64_t n;
+	uint64_t bdw;
+	uint64_t sync_ns;
+} apfs_tags[16];
+static uint64_t apfs_acq_bdw, apfs_acq_sync_ns;
+
+static void
+apfs_tag_add(const char *tag, uint64_t ns)
+{
+	for (unsigned i = 0; i < sizeof(apfs_tags) / sizeof(apfs_tags[0]); i++) {
+		if (apfs_tags[i].tag == NULL || apfs_tags[i].tag == tag) {
+			apfs_tags[i].tag = tag;
+			apfs_tags[i].ns += ns;
+			apfs_tags[i].n++;
+			if (apfsrw_kern_bdwrites >= apfs_acq_bdw && apfsrw_kern_sync_ns >= apfs_acq_sync_ns) {
+				apfs_tags[i].bdw += apfsrw_kern_bdwrites - apfs_acq_bdw;
+				apfs_tags[i].sync_ns += apfsrw_kern_sync_ns - apfs_acq_sync_ns;
+			}
+			return;
+		}
+	}
+}
+
+// pdapfsbatch=1 holds one transaction open across mutations instead of committing each.
+// Off for now, deferring a commit breaks the read path, which walks the tree itself
+static int apfs_batch_on = -1;
+
+static int
+apfs_batch_enabled(void)
+{
+	if (apfs_batch_on < 0) {
+		int v = 0;
+
+		apfs_batch_on = PE_parse_boot_argn("pdapfsbatch", &v,
+		    sizeof(v)) && v;
+	}
+	return apfs_batch_on;
+}
+
+int
+apfs_batch_flush(struct apfs_container *c)
+{
+	struct apfs_mount *amp = c->c_batch_amp;
+	int err;
+
+	if (amp == NULL)
+		return 0;
+	c->c_batch_amp = NULL;
+	c->c_batch_ops = 0;
+	c->c_batch_first_abs = 0;
+	err = apfsrw_batch_end(amp->rw);
+	if (err != 0)
+		APFSLOG("slot %u: batch commit failed: %d", amp->vol_slot, err);
+	// Like any commit, this leaves the writer's own copy behind too.
+	// The next apfs_rw_lock_tag() re-reads it
+	++c->c_generation;
+	return err;
+}
+
+// One mutation landed on amp and sits in the open batch.
+// Commit once the policy thresholds are reached. Called with the lock held
+void
+apfs_batch_note(struct apfs_mount *amp)
+{
+	struct apfs_container *c = amp->cont;
+	extern uint64_t mach_absolute_time(void);
+	extern void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
+	uint64_t ns = 0;
+
+	if (c->c_batch_amp != amp)
+		return;			// committed on its own
+	{
+		struct apfsrw_volume_info vi;
+
+		if (apfsrw_get_volume_info(amp->rw, &vi) == 0) {
+			if (c->c_batch_ops < 8)
+				APFSLOG("batch slot %u op %u: root %lld -> %llu, "
+				    "xid %llu, deferred %u", amp->vol_slot,
+				    c->c_batch_ops, (long long)amp->root_tree_paddr,
+				    (unsigned long long)vi.root_tree_paddr,
+				    (unsigned long long)vi.xid,
+				    apfsrw_batch_pending(amp->rw));
+			amp->root_tree_oid = (apfs_oid_t)vi.root_tree_oid;
+			amp->root_tree_paddr = (apfs_paddr_t)vi.root_tree_paddr;
+			amp->volume_omap_tree_paddr =
+			    (apfs_paddr_t)vi.volume_omap_tree_paddr;
+			amp->xid = (apfs_xid_t)vi.xid;
+		}
+	}
+	c->c_batch_ops++;
+	absolutetime_to_nanoseconds(mach_absolute_time() - c->c_batch_first_abs, &ns);
+	if (c->c_batch_ops >= APFS_BATCH_MAX_OPS ||
+	    apfsrw_batch_pending(amp->rw) >= APFS_BATCH_MAX_DEFERRED ||
+	    ns >= APFS_BATCH_MAX_NS)
+		(void)apfs_batch_flush(c);
+}
+
+void
+apfs_rw_lock(struct apfs_mount *amp)
+{
+	apfs_rw_lock_tag(amp, "misc");
+}
+
+void
+apfs_rw_lock_tag(struct apfs_mount *amp, const char *tag)
+{
+	struct apfs_container *c = amp->cont;
+	extern uint64_t mach_absolute_time(void);
+	extern void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
+
+	// One recursive lock serialises the whole container. Report who blocks whom
+	if (!IORecursiveLockTryLock((IORecursiveLock *)c->c_lock)) {
+		uint64_t t0 = mach_absolute_time(), ns = 0;
+		int blocker = c->c_owner_pid;   // The holder clears this on unlock
+
+		IORecursiveLockLock((IORecursiveLock *)c->c_lock);
+		absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
+		if (ns > 2000000000ull)
+			printf("PD-apfslock: pid %d waited %llu ms; blocked by pid %d\n",
+			    proc_selfpid(), (unsigned long long)(ns / 1000000), blocker);
+	}
+	c->c_owner_pid = proc_selfpid();
+	c->c_acq_abs = mach_absolute_time();
+	apfs_acq_bdw = apfsrw_kern_bdwrites;
+	apfs_acq_sync_ns = apfsrw_kern_sync_ns;
+	c->c_tag = tag;
+	// One commit covers one volume, and a re-read would drop another
+	// volume's uncommitted state, so hand the container over cleanly
+	if (c->c_batch_amp != NULL && c->c_batch_amp != amp)
+		(void)apfs_batch_flush(c);
+	if (amp->seen_generation != c->c_generation) {
+		vfs_context_t ctx = vfs_context_current();
+		int error = 0;
+		uint64_t r0 = mach_absolute_time(), rns = 0;
+
+		if (amp->rw != NULL)
+			error = apfsrw_refresh(amp->rw);
+		if (error == 0 && apfs_probe_container(amp, ctx) == 0)
+			error = apfs_load_volume(amp, ctx);
+		if (error != 0)
+			APFSLOG("slot %u: re-read after another volume's commit "
+			    "failed: %d", amp->vol_slot, error);
+		amp->seen_generation = c->c_generation;
+		absolutetime_to_nanoseconds(mach_absolute_time() - r0, &rns);
+		apfs_reload_ns += rns;
+		apfs_reload_n++;
+	}
+	// Now that this mount is current, let its mutations accumulate
+	if (apfs_batch_enabled() && c->c_batch_amp == NULL && amp->rw != NULL &&
+	    apfsrw_batch_begin(amp->rw) == 0) {
+		c->c_batch_amp = amp;
+		c->c_batch_first_abs = mach_absolute_time();
+		c->c_batch_ops = 0;
+	}
+}
+
+void
+apfs_rw_unlock(struct apfs_mount *amp)
+{
+	struct apfs_container *c = amp->cont;
+	extern uint64_t mach_absolute_time(void);
+	extern void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
+	uint64_t now = mach_absolute_time(), ns = 0;
+
+	// Is the container lock held long, or only queued behind many short holds?
+	if (c->c_acq_abs != 0) {
+		absolutetime_to_nanoseconds(now - c->c_acq_abs, &ns);
+		c->c_hold_ns += ns;
+		c->c_hold_count++;
+		apfs_tag_add(c->c_tag != NULL ? c->c_tag : "misc", ns);
+		if (ns > c->c_hold_max_ns) {
+			c->c_hold_max_ns = ns;
+			c->c_hold_max_pid = c->c_owner_pid;
+		}
+	}
+	if (c->c_report_abs == 0) {
+		c->c_report_abs = now;
+	} else {
+		uint64_t since = 0;
+
+		absolutetime_to_nanoseconds(now - c->c_report_abs, &since);
+		if (since > 60000000000ull && c->c_hold_count != 0) {
+			printf("PD-apfshold: %llu holds in %llu s, mean %llu us, max %llu ms by pid %d\n",
+			    (unsigned long long)c->c_hold_count, (unsigned long long)(since / 1000000000ull),
+			    (unsigned long long)(c->c_hold_ns / c->c_hold_count / 1000),
+			    (unsigned long long)(c->c_hold_max_ns / 1000000), c->c_hold_max_pid);
+			for (unsigned i = 0; i < sizeof(apfs_tags) / sizeof(apfs_tags[0]); i++) {
+				if (apfs_tags[i].tag == NULL || apfs_tags[i].n == 0)
+					continue;
+				printf("PD-apfstag: %-22s %6llu holds %8llu ms total, %llu bdwrites, sync %llu ms\n",
+				    apfs_tags[i].tag, (unsigned long long)apfs_tags[i].n,
+				    (unsigned long long)(apfs_tags[i].ns / 1000000ull),
+				    (unsigned long long)apfs_tags[i].bdw,
+				    (unsigned long long)(apfs_tags[i].sync_ns / 1000000ull));
+				apfs_tags[i].ns = apfs_tags[i].n = apfs_tags[i].bdw = apfs_tags[i].sync_ns = 0;
+			}
+			printf("PD-apfsio: %llu syncs %llu ms, %llu bdwrites, %llu breads, ubc_setsize %llu ms, %llu reloads %llu ms\n",
+			    (unsigned long long)apfsrw_kern_sync_n, (unsigned long long)(apfsrw_kern_sync_ns / 1000000ull),
+			    (unsigned long long)apfsrw_kern_bdwrites, (unsigned long long)apfsrw_kern_breads,
+			    (unsigned long long)(apfs_ubc_ns / 1000000ull),
+			    (unsigned long long)apfs_reload_n, (unsigned long long)(apfs_reload_ns / 1000000ull));
+			printf("PD-apfscommit: %llu commits, blocks: mutation %llu, "
+			    "commit %llu, publish %llu, frees %llu\n",
+			    (unsigned long long)apfsrw_commits,
+			    (unsigned long long)apfsrw_wblocks[0],
+			    (unsigned long long)apfsrw_wblocks[1],
+			    (unsigned long long)apfsrw_wblocks[2],
+			    (unsigned long long)apfsrw_wblocks[3]);
+			apfsrw_wblocks[0] = apfsrw_wblocks[1] = 0;
+			apfsrw_wblocks[2] = apfsrw_wblocks[3] = 0;
+			apfsrw_commits = 0;
+			apfsrw_kern_sync_ns = apfsrw_kern_sync_n = apfsrw_kern_bdwrites = apfsrw_kern_breads = apfs_ubc_ns = 0;
+			apfs_reload_ns = apfs_reload_n = 0;
+			for (unsigned m = 0; m < 256; m++) {
+				if (apfs_setattr_masks[m] != 0)
+					printf("PD-apfsattr: mask 0x%x%s %u\n", m & 0x7f,
+					    (m & 0x80) ? " committed" : "", apfs_setattr_masks[m]);
+				apfs_setattr_masks[m] = 0;
+			}
+			c->c_report_abs = now;
+			c->c_hold_ns = c->c_hold_count = c->c_hold_max_ns = 0;
+			c->c_hold_max_pid = -1;
+		}
+	}
+	// An idle batch would otherwise sit uncommitted until the next mutation:
+	// bound how long a write can stay in memory
+	if (c->c_batch_amp != NULL && apfsrw_batch_dirty(c->c_batch_amp->rw)) {
+		uint64_t age = 0;
+
+		absolutetime_to_nanoseconds(now - c->c_batch_first_abs, &age);
+		if (age >= APFS_BATCH_MAX_NS)
+			(void)apfs_batch_flush(c);
+	}
+	c->c_acq_abs = 0;
+	c->c_owner_pid = -1;
+	c->c_owner_thread = NULL;
+	IORecursiveLockUnlock((IORecursiveLock *)c->c_lock);
 }
 
 static int
@@ -246,8 +607,16 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 	error = copyinstr((user_addr_t)args.fspec, fspec, sizeof(fspec), &fspec_len);
 	if (error)
 		return error;
+	// libignition mounts Preboot with a bare "diskNsM". Treat it as /dev/diskNsM
+	if (fspec[0] != '/' && fspec_len + 5 <= sizeof(fspec)) {
+		size_t k;
 
-	/* Look the path up to get the real dev_t for any device node. */
+		for (k = fspec_len; k > 0; k--)
+			fspec[k - 1 + 5] = fspec[k - 1];
+		memcpy(fspec, "/dev/", 5);
+	}
+
+	// Look the path up to get the real dev_t for any device node
 	{
 		vnode_t dvp = NULLVP;
 
@@ -281,23 +650,17 @@ apfs_open_fspec(user_addr_t data, vnode_t *devvpp, vfs_context_t ctx)
 int
 apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx)
 {
-	int error;
+	(void)ctx;
 
 	if (amp == NULL)
 		return EINVAL;
-	/* No buffer invalidation: libapfsrw shares this kext's buffer cache,
-	 * and dropping it would discard the commit's delayed writes. */
-	error = apfs_probe_container(amp, ctx);
-	if (error) {
-		APFSLOG("reload: probe failed %d (amp state now mixed)", error);
-		return error;
+	// Inside a batch nothing reached the disk, apfs_batch_flush() bumps the generation later.
+	// Outside one, bump it and let the next lock re-read once. This mount stays stale on purpose
+	if (amp->cont->c_batch_amp == amp) {
+		apfs_batch_note(amp);
+		return 0;
 	}
-	error = apfs_load_volume(amp, ctx);
-	if (error) {
-		APFSLOG("reload: load_volume failed %d (amp state now mixed)",
-		    error);
-		return error;
-	}
+	++amp->cont->c_generation;
 	return 0;
 }
 
@@ -394,7 +757,7 @@ apfs_read_probe_block(vnode_t devvp, apfs_paddr_t paddr, uint32_t block_size,
 
 static int
 apfs_select_checkpoint_nx(vnode_t devvp, struct apfs_nx_superblock *nx,
-    uint32_t block_size, uint32_t dev_bsize, vfs_context_t ctx)
+    uint32_t block_size, uint32_t dev_bsize, apfs_xid_t min_xid, vfs_context_t ctx)
 {
 	void *block;
 	uint32_t desc_blocks;
@@ -415,6 +778,22 @@ apfs_select_checkpoint_nx(vnode_t devvp, struct apfs_nx_superblock *nx,
 		return ENOMEM;
 
 	best_xid = apfs_le64(nx->nx_o.o_xid);
+	// On reload, block zero mirrors our last commit.
+	// Check the slot it names instead of the whole ring, and scan only if they disagree
+	if (min_xid != 0 && best_xid >= min_xid && apfs_le32(nx->nx_xp_desc_len) != 0) {
+		apfs_paddr_t paddr = desc_base + (apfs_le32(nx->nx_xp_desc_index) +
+		    apfs_le32(nx->nx_xp_desc_len) - 1) % desc_blocks;
+		struct apfs_nx_superblock *candidate = (struct apfs_nx_superblock *)block;
+
+		if (apfs_read_probe_block(devvp, paddr, block_size, dev_bsize,
+		    vfs_context_ucred(ctx), block) == 0 &&
+		    !apfs_verify_object_checksum(block, block_size) &&
+		    apfs_le32(candidate->nx_magic) == APFS_NX_MAGIC &&
+		    apfs_le64(candidate->nx_o.o_xid) == best_xid) {
+			memcpy(nx, candidate, sizeof(*nx));
+			desc_blocks = 0;
+		}
+	}
 	for (i = 0; i < desc_blocks; i++) {
 		struct apfs_nx_superblock *candidate;
 		apfs_paddr_t paddr = desc_base + i;
@@ -466,7 +845,7 @@ apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx)
 	buf_t bp = NULL;
 	uint32_t block_size;
 	uint32_t max_fs;
-	vnode_t devvp = amp->devvp;
+	vnode_t devvp = amp->io_devvp;
 	int error;
 
 	if (devvp == NULLVP) {
@@ -498,7 +877,7 @@ apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx)
 		return EINVAL;
 	}
 
-	/* Block numbers handed to the buffer cache are in device sectors. */
+	// Block numbers handed to the buffer cache are in device sectors
 	if (amp->dev_bsize == 0) {
 		uint32_t dbs = 0;
 
@@ -510,13 +889,13 @@ apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx)
 	}
 
 	error = apfs_select_checkpoint_nx(devvp, &nx, block_size,
-	    amp->dev_bsize, ctx);
+	    amp->dev_bsize, amp->am_probe_logged ? amp->xid : 0, ctx);
 	if (error)
 		return error;
 
 	max_fs = apfs_le32(nx.nx_max_file_systems);
-	/* Log the container once; apfs_load_volume() sets the flag after
-	 * its own line, and reloads after each commit stay silent. */
+	// Log the container once. apfs_load_volume() sets the flag after its own line,
+	// and reloads after each commit stay silent
 	if (amp->am_probe_logged)
 		goto adopt;
 	APFSLOG("container xid=%llu block_size=%u blocks=%llu next_oid=0x%llx",
@@ -556,10 +935,23 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 
 	if (amp) {
 		amp->root_vp = NULLVP;
+		// Anything still batched has to land before the handle closes
+		if (amp->cont != NULL) {
+			apfs_rw_lock_tag(amp, "apfs_unmount");
+			(void)apfs_batch_flush(amp->cont);
+			apfs_rw_unlock(amp);
+		}
+		if (amp->rw != NULL) {
+			apfsrw_close(amp->rw);
+			amp->rw = NULL;
+		}
+		if (amp->io_devvp) {
+			// Land every delayed write before the device closes.
+			// spec_close may discard whatever is still dirty
+			buf_flushdirtyblks(amp->io_devvp, 1, 0, "apfs_unmount");
+		}
+		apfs_container_detach(amp);
 		if (amp->devvp) {
-			/* Land every delayed write before the device closes;
-			 * spec_close may discard whatever is still dirty. */
-			buf_flushdirtyblks(amp->devvp, 1, 0, "apfs_unmount");
 			if (amp->dev_opened) {
 				(void)VNOP_CLOSE(amp->devvp, FREAD | FWRITE, ctx);
 				amp->dev_opened = 0;
@@ -568,6 +960,7 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 			amp->devvp = NULLVP;
 		}
 		vfs_setfsprivate(mp, NULL);
+		IOLockFree(amp->am_hash_lock);
 		_FREE(amp, M_TEMP);
 	}
 	return 0;
@@ -578,16 +971,12 @@ apfs_root(struct mount *mp, vnode_t *vpp,
     __unused vfs_context_t ctx)
 {
 	struct apfs_mount *amp = VFSTOAPFS(mp);
-	int error;
 
-	if (amp == NULL || amp->root_vp == NULLVP)
+	if (amp == NULL)
 		return EINVAL;
-
-	error = vnode_getwithref(amp->root_vp);
-	if (error)
-		return error;
-	*vpp = amp->root_vp;
-	return 0;
+	// Nothing holds a usecount on the root vnode, so it can be recycled like any other.
+	// a cached pointer would then name some other file
+	return apfs_vget(amp, APFS_ROOT_FILEID, NULLVP, vpp);
 }
 
 static int
@@ -596,19 +985,39 @@ apfs_getattr(__unused struct mount *mp, struct vfs_attr *fsap,
 {
 	struct apfs_mount *amp = VFSTOAPFS(mp);
 	uint32_t block_size = amp ? amp->block_size : APFS_BS_BYTES;
+	uint64_t freeb = 0, files = 0;
 
 	VFSATTR_RETURN(fsap, f_objcount, 1);
 	VFSATTR_RETURN(fsap, f_maxobjcount, 1);
 	VFSATTR_RETURN(fsap, f_bsize, block_size);
 	VFSATTR_RETURN(fsap, f_iosize, block_size);
 	if (amp) {
+		struct apfsrw_space_info si;
+
+		apfs_rw_lock(amp);
+		if (amp->rw != NULL &&
+		    apfsrw_get_space_info(amp->rw, &si) == 0)
+			freeb = si.free_count;
+		files = OSSwapLittleToHostInt64(amp->apfs.apfs_num_files) +
+		    OSSwapLittleToHostInt64(amp->apfs.apfs_num_directories) +
+		    OSSwapLittleToHostInt64(amp->apfs.apfs_num_symlinks) +
+		    OSSwapLittleToHostInt64(amp->apfs.apfs_num_other_fsobjects);
+		apfs_rw_unlock(amp);
+		if (freeb > amp->block_count)
+			freeb = amp->block_count;
 		VFSATTR_RETURN(fsap, f_blocks, amp->block_count);
-		VFSATTR_RETURN(fsap, f_bfree, 0);
-		VFSATTR_RETURN(fsap, f_bavail, 0);
-		VFSATTR_RETURN(fsap, f_bused, amp->block_count);
+		VFSATTR_RETURN(fsap, f_bfree, freeb);
+		VFSATTR_RETURN(fsap, f_bavail, freeb);
+		VFSATTR_RETURN(fsap, f_bused, amp->block_count - freeb);
+		// ATTR_VOL_UUID: init_featureflags aborts when getattrlist on / fails for it
+		if (VFSATTR_IS_ACTIVE(fsap, f_uuid)) {
+			memcpy(fsap->f_uuid, amp->apfs.apfs_vol_uuid, sizeof(fsap->f_uuid));
+			VFSATTR_SET_SUPPORTED(fsap, f_uuid);
+		}
 	}
-	VFSATTR_RETURN(fsap, f_files, 1);
-	VFSATTR_RETURN(fsap, f_ffree, 0);
+	// Free inodes are not a resource in APFS. Report plenty
+	VFSATTR_RETURN(fsap, f_files, files + (1ull << 32));
+	VFSATTR_RETURN(fsap, f_ffree, 1ull << 32);
 	return 0;
 }
 
@@ -617,8 +1026,14 @@ apfs_sync(struct mount *mp, int waitfor, __unused vfs_context_t ctx)
 {
 	struct apfs_mount *amp = VFSTOAPFS(mp);
 
-	if (amp && amp->devvp)
-		buf_flushdirtyblks(amp->devvp, waitfor == MNT_WAIT, 0,
+	// A batched mutation is only in memory until it is committed
+	if (amp != NULL && amp->cont != NULL) {
+		apfs_rw_lock_tag(amp, "apfs_sync");
+		(void)apfs_batch_flush(amp->cont);
+		apfs_rw_unlock(amp);
+	}
+	if (amp && amp->io_devvp)
+		buf_flushdirtyblks(amp->io_devvp, waitfor == MNT_WAIT, 0,
 		    "apfs_sync");
 	return 0;
 }
@@ -643,6 +1058,11 @@ apfs_vfs_register(void)
 
 	if (apfs_vfsconf != NULL)
 		return 0;
+	if (apfs_containers_lock == NULL) {
+		apfs_containers_lock = IOLockAlloc();
+		if (apfs_containers_lock == NULL)
+			return ENOMEM;
+	}
 
 	memset(&vfe, 0, sizeof(vfe));
 	opv[0] = &apfs_vnodeop_opv_desc;

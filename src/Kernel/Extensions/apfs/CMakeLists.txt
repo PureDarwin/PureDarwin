@@ -5,8 +5,6 @@ add_kext_bundle(apfs.kext INFO_PLIST Info.plist KERNEL_PRIVATE
 )
 set_property(TARGET apfs.kext PROPERTY OUTPUT_NAME apfs)
 
-# The multi-level B-tree write path is shared verbatim with the image builder
-# (projects/libapfsrw) so there is one implementation to debug rather than two.
 set(LIBAPFSRW_DIR ${CMAKE_SOURCE_DIR}/projects/libapfsrw)
 
 target_sources(apfs.kext PRIVATE
