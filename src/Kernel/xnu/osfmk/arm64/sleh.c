@@ -280,8 +280,12 @@ extern void arm64_thread_exception_return(void) __dead2;
 #define WT_REASON_REG_VIOLATION  8
 #endif
 
-#if defined(HAS_IPI)
+// Also needed without Apple IPI registers:
+// GIC SGIs carry the scheduler IPIs on this platform, dispatched from sleh_fiq()
+#if defined(HAS_IPI) || HAS_GICV3_FIQ
 void cpu_signal_handler(void);
+#endif
+#if defined(HAS_IPI)
 extern unsigned int gFastIPI;
 #endif /* defined(HAS_IPI) */
 
@@ -3141,6 +3145,15 @@ void
 sleh_fiq(arm_saved_state_t *state)
 {
 	unsigned int type   = DBG_INTR_TYPE_UNKNOWN;
+#if HAS_GICV3_FIQ
+	// The GIC is the only Group 0 source here, so acknowledge first and classify from the INTID:
+	// the SGI is a scheduler IPI, rest is the timer
+	uint64_t iar = __builtin_arm_rsr64("ICC_IAR0_EL1");
+
+	if ((iar & 0x3ffULL) == QEMUVIRT_IPI_SGI) {
+		type = DBG_INTR_TYPE_IPI;
+	}
+#endif /* HAS_GICV3_FIQ */
 #if MACH_ASSERT
 	int preemption_level = sleh_get_preemption_level();
 #endif
@@ -3179,7 +3192,7 @@ sleh_fiq(arm_saved_state_t *state)
 
 	sleh_interrupt_handler_prologue(state, type);
 
-#if APPLEVIRTUALPLATFORM || HAS_GICV3_FIQ
+#if APPLEVIRTUALPLATFORM && !HAS_GICV3_FIQ
 	uint64_t iar = __builtin_arm_rsr64("ICC_IAR0_EL1");
 #endif
 
@@ -3198,6 +3211,11 @@ sleh_fiq(arm_saved_state_t *state)
 		cpu_signal_handler();
 	} else
 #endif /* defined(HAS_IPI) */
+#if HAS_GICV3_FIQ
+	if (type == DBG_INTR_TYPE_IPI) {
+		cpu_signal_handler();
+	} else
+#endif /* HAS_GICV3_FIQ */
 #if FIQ_PMI
 	if (type == DBG_INTR_TYPE_PMI) {
 		ml_interrupt_masked_debug_start(cpc_fiq, DBG_INTR_TYPE_PMI);

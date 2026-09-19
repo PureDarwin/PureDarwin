@@ -696,11 +696,21 @@ arm_init(
  *    Runs on S2R resume (all CPUs) and SMP boot (non-boot CPUs only).
  */
 
+// Secondary-CPU bringup progress, read back by the platform kext:
+// 1 = reached start_cpu with the MMU off, 2 = translation on, 3 = reached C
+volatile uint32_t pd_smp_marker;
+
+// Secondary-CPU trampoline diagnostics:
+// computed KVA target, link register, kernel virtual base, kernel physical base
+volatile uint64_t pd_smp_diag[8];
+
 void
 arm_init_cpu(
 	cpu_data_t      *cpu_data_ptr,
 	uint64_t __unused hib_header_phys)
 {
+	pd_smp_marker = 3;
+
 #if __ARM_PAN_AVAILABLE__
 	__builtin_arm_wsr("pan", 1);
 #endif

@@ -9,6 +9,9 @@ class PDArmCPU : public IOCPU {
 private:
 	IOCPUInterruptController *cpuIC;
 	bool startCommonCompleted;
+	unsigned int pdCpuNumber;	// Logical cpu number from xnu's topology
+	uint32_t pdPhysId;		// MPIDR affinity, the PSCI target
+	bool pdIsBoot;
 
 public:
 	virtual IOService *probe(IOService *provider, SInt32 *score) APPLE_KEXT_OVERRIDE;
@@ -18,7 +21,12 @@ public:
 	virtual kern_return_t startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr) APPLE_KEXT_OVERRIDE;
 	virtual void haltCPU(void) APPLE_KEXT_OVERRIDE;
 	virtual const OSSymbol *getCPUName(void) APPLE_KEXT_OVERRIDE;
+	virtual void signalCPU(IOCPU *target) APPLE_KEXT_OVERRIDE;
 	bool startCommon(void);
+	// Set before any CPU is created: sizes the shared interrupt controller
+	static void setCPUCount(unsigned int count);
+	// Register this processor with xnu. The boot CPU also finishes its setup
+	bool startForCPU(unsigned int cpu, uint32_t phys_id, bool boot);
 };
 
 class PDArmCPUInterruptController : public IOCPUInterruptController {

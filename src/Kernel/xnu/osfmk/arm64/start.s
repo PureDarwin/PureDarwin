@@ -316,6 +316,14 @@ start_cpu:
 	// x20 set to BootArgs phys address
 	// x21 set to cpu data phys address
 
+	/* Secondary-CPU progress marker: MMU is off here,
+	 * so this adrp yields the physical address of the global and the store goes straight to memory */
+	adrp	x9, EXT(pd_smp_marker)@page
+	add		x9, x9, EXT(pd_smp_marker)@pageoff
+	mov		w10, #1
+	str		w10, [x9]
+	dsb		sy
+
 	// Get the kernel memory parameters from the boot args
 	ldr		x22, [x20, BA_VIRT_BASE]			// Get the kernel virt base
 	ldr		x23, [x20, BA_PHYS_BASE]			// Get the kernel phys base
@@ -752,6 +760,13 @@ common_start:
 	MSR_SCTLR_EL1_X0
 	isb		sy
 
+	/* Progress marker: translation is on and this page is still V=P mapped */
+	adrp	x9, EXT(pd_smp_marker)@page
+	add		x9, x9, EXT(pd_smp_marker)@pageoff
+	mov		w10, #2
+	str		w10, [x9]
+	dsb		sy
+
 #if !VMAPPLE
 	MOV64	x1, SCTLR_EL1_DEFAULT
 	cmp		x0, x1
@@ -823,6 +838,18 @@ Ltrampoline:
 	add		x0, x0, x22
 	sub		x0, x0, x23
 
+	/* Record the computed KVA target and the bias used.
+	 * The platform kext reads these back to check the secondary's translation base */
+	adrp	x9, EXT(pd_smp_diag)@page
+	add		x9, x9, EXT(pd_smp_diag)@pageoff
+	stp		x0, lr, [x9]
+	stp		x22, x23, [x9, #16]
+	adrp	x11, EXT(pd_smp_marker)@page
+	add		x11, x11, EXT(pd_smp_marker)@pageoff
+	mov		w10, #4
+	str		w10, [x11]
+	dsb		sy
+
 	// Branch to the trampoline
 	br		x0
 
@@ -834,6 +861,19 @@ Ltrampoline:
 	.align 2
 arm_init_tramp:
 	ARM64_JUMP_TARGET
+	/* Progress marker: the branch into the kernel's virtual mapping landed */
+	adrp	x9, EXT(pd_smp_marker)@page
+	add		x9, x9, EXT(pd_smp_marker)@pageoff
+	mov		w10, #5
+	str		w10, [x9]
+
+	/* Record the stack this CPU was handed and its cpu data pointer.
+	 * The first call below is the first thing here that actually uses the stack */
+	adrp	x9, EXT(pd_smp_diag)@page
+	add		x9, x9, EXT(pd_smp_diag)@pageoff
+	mov		x11, sp
+	stp		x11, x21, [x9, #32]
+	dsb		sy
 	/* On a warm boot, the full kernel translation table is initialized in
 	 * addition to the bootstrap tables. The layout is as follows:
 	 *
@@ -870,6 +910,13 @@ arm_init_tramp:
 	bl		EXT(phystokv)
 
 	mov		lr, x19
+
+	/* Progress marker: phystokv returned, about to enter the C init routine */
+	adrp	x9, EXT(pd_smp_marker)@page
+	add		x9, x9, EXT(pd_smp_marker)@pageoff
+	mov		w10, #6
+	str		w10, [x9]
+	dsb		sy
 
 	/* Return to arm_init() */
 	ret

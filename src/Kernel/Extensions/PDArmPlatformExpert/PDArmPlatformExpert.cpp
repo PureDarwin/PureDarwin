@@ -54,11 +54,27 @@ PDArmPlatformExpert::start(IOService *provider)
 
 	if (!initPlatformInterrupts()) return false;
 
-	bootCPU = new PDArmCPU;
+	// One IOCPU per processor in xnu's topology.
+	// The boot CPU finishes its setup here, the others wait for PE_cpu_start() to power them on
+	{
+		const ml_topology_info_t *topo = ml_get_topology_info();
+		unsigned int ncpu = (topo != NULL) ? topo->num_cpus : 1;
+
+		PDArmCPU::setCPUCount(ncpu);
+
+		for (unsigned int i = 0; i < ncpu; i++) {
+			PDArmCPU *cpu = new PDArmCPU;
+			uint32_t phys_id = (topo != NULL) ? topo->cpus[i].phys_id : 0;
+
+			if (cpu == NULL) return false;
+			cpu->init();
+			cpu->attach(0);
+			if (!cpu->startForCPU(i, phys_id, i == 0)) return false;
+			if (i == 0) bootCPU = cpu;
+		}
+		IOLog("PDArmPlatformExpert: %u processor(s)\n", ncpu);
+	}
 	if (bootCPU == NULL) return false;
-	bootCPU->init();
-	bootCPU->attach(0);
-	if (!bootCPU->startCommon()) return false;
 
 	initPlatformInterruptsLate();
 

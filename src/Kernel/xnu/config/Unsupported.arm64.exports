@@ -24,3 +24,5 @@ __ZN5IORTC15setUTCTimeOfDayEmj
 _PE_state
 _switch_to_video_console
 _vc_progress_set
+_pd_smp_marker
+_pd_smp_diag

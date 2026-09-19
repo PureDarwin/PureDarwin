@@ -741,8 +741,12 @@ cpu_init(void)
 			__builtin_arm_wsr64("SCTLR_EL1",
 			    __builtin_arm_rsr64("SCTLR_EL1") | PD_SCTLR_PAC_KEYS_ENABLED);
 			__builtin_arm_isb(ISB_SY);
-			printf("PD-PAC: enabled on cpu %d, SCTLR_EL1=0x%llx\n",
-			    cpu_number(), __builtin_arm_rsr64("SCTLR_EL1"));
+			// Console I/O panics on a secondary, which reaches here with interrupts masked.
+			// The boot CPU's line covers the setting
+			if (cdp == &BootCpuData) {
+				printf("PD-PAC: enabled on cpu %d, SCTLR_EL1=0x%llx\n",
+				    cpu_number(), __builtin_arm_rsr64("SCTLR_EL1"));
+			}
 #endif /* !HAS_APPLE_PAC */
 			break;
 		default:
@@ -977,7 +981,18 @@ cpu_start(int cpu)
 #endif
 #endif /* CONFIG_SPTM */
 
-		PE_cpu_start_internal(cpu_data_ptr->cpu_id, (vm_offset_t)NULL, (vm_offset_t)NULL);
+		// cpu_data sits in the percpu region, outside the static aperture that
+		// ml_static_vtop assumes. ml_vtophys walks the page tables instead
+		kprintf("PD-cpudata: cpu %d va %p pa 0x%llx istack 0x%llx\n",
+		    cpu, cpu_data_ptr,
+		    (unsigned long long)ml_vtophys((vm_offset_t)cpu_data_ptr),
+		    (unsigned long long)cpu_data_ptr->intstack_top);
+
+		// Platforms without a hardware reset vector (QEMU virt starts secondaries
+		// through PSCI) need the entry point and this CPU's data, both physical
+		PE_cpu_start_internal(cpu_data_ptr->cpu_id,
+		    (vm_offset_t)cpu_data_ptr->cpu_reset_handler,
+		    ml_vtophys((vm_offset_t)cpu_data_ptr));
 
 	}
 }

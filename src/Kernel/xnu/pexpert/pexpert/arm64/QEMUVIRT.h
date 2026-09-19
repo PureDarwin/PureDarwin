@@ -42,6 +42,8 @@
  * Apple's virtual platform. Apple SoCs use the AIC and need none of this. */
 #define HAS_GICV3_FIQ             1
 #define GIC_SPURIOUS_IRQ          1023    /* INTID returned by ICC_IAR when no interrupt is pending */
+// SGI used for scheduler IPIs. Must match GIC_IPI_SGI in PDArmGIC.cpp
+#define QEMUVIRT_IPI_SGI          0
 #define QEMUVIRT_GICD_BASE_PHYS   0x08000000ULL
 #define QEMUVIRT_GICD_SIZE        0x10000ULL
 #define QEMUVIRT_GICR_BASE_PHYS   0x080a0000ULL
