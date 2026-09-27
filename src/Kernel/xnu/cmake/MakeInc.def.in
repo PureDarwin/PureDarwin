@@ -365,7 +365,9 @@ ARM64_LINK_ADDR    =0xfffffff007004000
 # means: arm_init.c and start.s both locate the KC mach header at
 # VM_KERNEL_LINK_ADDRESS + slide, while -image_base places the kernel's own
 # header. They coincide on boards whose KC header is the kernel's header.
-ARM64_KC_BASE      =$(ARM64_LINK_ADDR)
+# Our KC carries its own collection header 2MB aligned below the kext text, so the base
+# sits 16MB below ARM64_LINK_ADDR, like VIRT. kc-builder's -kc-base must match.
+ARM64_KC_BASE      =0xfffffff006000000
 
 # Apple uses ARM_LARGE_MEMORY (the -2TB / T1SZ=23 kernel VA scheme) for all
 # MacOSX targets - but that geometry assumes 16K pages (T1SZ=23 with a 16K
@@ -1013,6 +1015,17 @@ KINCFRAME = $(FRAMEDIR)/Kernel.framework
 KINCDIR = $(KINCFRAME)/Versions/$(KINCVERS)/Headers
 KPINCDIR = $(KINCFRAME)/Versions/$(KINCVERS)/PrivateHeaders
 KRESDIR = $(KINCFRAME)/Versions/$(KINCVERS)/Resources
+
+IINCVERS = A
+IINCFRAME = $(FRAMEDIR)/IOKit.framework
+IINCDIR = $(IINCFRAME)/Versions/$(IINCVERS)/Headers
+IPINCDIR = $(IINCFRAME)/Versions/$(IINCVERS)/PrivateHeaders
+IRESDIR = $(IINCFRAME)/Versions/$(IINCVERS)/Resources
+
+# the libc headers the kernel's libc++ support uses, kept private to Kernel.framework
+KLIBCXXINCDIR = $(KPINCDIR)/kernel_sdkroot/usr/include
+
+INSTALL_ARIADNE_PLISTS_DIR = /AppleInternal/Library/Ariadne/Plists
 
 DKIT_INCVERS = A
 DKIT_INCFRAME = DriverKit.framework

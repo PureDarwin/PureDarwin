@@ -1,8 +1,7 @@
 find_program(dsymutil_path NAMES dsymutil llvm-dsymutil REQUIRED)
-# xnu 12377 dropped config/MasterVersion and derives this from a System.kext
-# Info.plist in the SDK/KDK, which PureDarwin has neither of. This is the Darwin
-# version PD advertises, not the xnu tag - the toolchain triples depend on it.
-set(PUREDARWIN_DARWIN_KERNEL_VERSION "26.5.0" CACHE STRING "Darwin kernel version reported by the build")
+# xnu 12377 derives the Darwin version from an SDK/KDK System.kext PD doesn't ship,
+# so this is the version PD advertises (Darwin 25 = macOS 26), not the xnu tag.
+set(PUREDARWIN_DARWIN_KERNEL_VERSION "25.5.0" CACHE STRING "Darwin kernel version reported by the build")
 
 
 execute_process(
@@ -112,6 +111,18 @@ else()
     set(XNU_HOST_CC_ENV "")
 endif()
 
+# codesign_allocate, the ctf tools, nmedit and libtool built here are Darwin binaries,
+# a Linux host takes the cross toolchain's through xcrun, so the kernel doesn't wait on them.
+set(_xnu_darwin_host_tools host_codesign_allocate host_ctfconvert host_ctfmerge
+    host_ctf_insert host_nmedit host_libtool)
+foreach(_tool IN LISTS _xnu_darwin_host_tools)
+    if(CMAKE_HOST_APPLE)
+        set(_xnu_path_${_tool} "$<TARGET_FILE:${_tool}>")
+    else()
+        set(_xnu_path_${_tool} "")
+    endif()
+endforeach()
+
 set(PUREDARWIN_XNU_KERNEL_CONFIG "RELEASE" CACHE STRING
     "XNU kernel configuration to build: RELEASE, DEVELOPMENT, DEBUG, or KASAN")
 set_property(CACHE PUREDARWIN_XNU_KERNEL_CONFIG PROPERTY STRINGS
@@ -132,18 +143,18 @@ externalproject_add(xnu_headers.extproj
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D DARWIN_KERNEL_VERSION=${PUREDARWIN_DARWIN_KERNEL_VERSION}
             -D XNU_OBJ=<BINARY_DIR>
-            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:host_codesign_allocate>
-            -D CTFCONVERT_PATH=$<TARGET_FILE:host_ctfconvert>
-            -D CTFMERGE_PATH=$<TARGET_FILE:host_ctfmerge>
-            -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
+            -D CODESIGN_ALLOCATE_PATH=${_xnu_path_host_codesign_allocate}
+            -D CTFCONVERT_PATH=${_xnu_path_host_ctfconvert}
+            -D CTFMERGE_PATH=${_xnu_path_host_ctfmerge}
+            -D CTFINSERT_PATH=${_xnu_path_host_ctf_insert}
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
             -D MIGCOM_PATH=$<TARGET_FILE:migcom>
             -D STRIP_PATH=${XNU_STRIP_PATH}
             -D LIPO_PATH=${XNU_LIPO_PATH}
             -D NM_PATH=${XNU_NM_PATH}
-            -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
-            -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            -D NMEDIT_PATH=${_xnu_path_host_nmedit}
+            -D LIBTOOL_PATH=${_xnu_path_host_libtool}
             -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
             -D DSYMUTIL_PATH=${dsymutil_path}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/preprocess_files.cmake
@@ -162,9 +173,14 @@ externalproject_add(xnu_headers.extproj
     USES_TERMINAL_CONFIGURE TRUE
     USES_TERMINAL_BUILD TRUE
 )
-add_dependencies(xnu_headers.extproj host_codesign_allocate
-    migcom host_strip host_lipo host_nm unifdef host_nmedit
-    host_ctfconvert host_ctfmerge availability.pl)
+add_dependencies(xnu_headers.extproj migcom unifdef availability.pl)
+# the nix toolchain supplies strip, lipo and nm itself (XNU_*_PATH above)
+if(NOT PUREDARWIN_NIX_TOOLCHAIN)
+    add_dependencies(xnu_headers.extproj host_strip host_lipo host_nm)
+endif()
+if(CMAKE_HOST_APPLE)
+    add_dependencies(xnu_headers.extproj ${_xnu_darwin_host_tools})
+endif()
 
 add_library(xnu_headers INTERFACE)
 add_dependencies(xnu_headers xnu_headers.extproj)
@@ -199,10 +215,10 @@ externalproject_add(xnu
         ${CMAKE_COMMAND}
             -D XNU_SRC=${CMAKE_CURRENT_SOURCE_DIR}
             -D XNU_OBJ=<BINARY_DIR>
-            -D CODESIGN_ALLOCATE_PATH=$<TARGET_FILE:host_codesign_allocate>
-            -D CTFCONVERT_PATH=$<TARGET_FILE:host_ctfconvert>
-            -D CTFMERGE_PATH=$<TARGET_FILE:host_ctfmerge>
-            -D CTFINSERT_PATH=$<TARGET_FILE:host_ctf_insert>
+            -D CODESIGN_ALLOCATE_PATH=${_xnu_path_host_codesign_allocate}
+            -D CTFCONVERT_PATH=${_xnu_path_host_ctfconvert}
+            -D CTFMERGE_PATH=${_xnu_path_host_ctfmerge}
+            -D CTFINSERT_PATH=${_xnu_path_host_ctf_insert}
             -D AVAILABILITY_PL_PATH=$<TARGET_FILE:availability.pl>
             -D LD_PATH=${XNU_LD_PATH}
             -D MIG_PATH=${PUREDARWIN_SOURCE_DIR}/tools/mig/mig.sh
@@ -210,8 +226,8 @@ externalproject_add(xnu
             -D STRIP_PATH=${XNU_STRIP_PATH}
             -D LIPO_PATH=${XNU_LIPO_PATH}
             -D NM_PATH=${XNU_NM_PATH}
-            -D NMEDIT_PATH=$<TARGET_FILE:host_nmedit>
-            -D LIBTOOL_PATH=$<TARGET_FILE:host_libtool>
+            -D NMEDIT_PATH=${_xnu_path_host_nmedit}
+            -D LIBTOOL_PATH=${_xnu_path_host_libtool}
             -D UNIFDEF_PATH=$<TARGET_FILE:unifdef>
             -D DSYMUTIL_PATH=${dsymutil_path}
             -D FIREHOSE_KERNEL_LIBRARY_PATH=$<TARGET_FILE:libfirehose_kernel>
@@ -230,8 +246,8 @@ externalproject_add(xnu
     USES_TERMINAL_BUILD TRUE
 )
 set(_xnu_dependencies
-    xnu_headers libfirehose_kernel host_codesign_allocate host_ctfconvert host_ctfmerge
-    migcom host_strip host_lipo host_nm unifdef host_nmedit availability.pl host_ld
+    xnu_headers libfirehose_kernel
+    migcom host_strip host_lipo host_nm unifdef availability.pl host_ld
     dyld_availability_headers
 )
 # host_ld is the in-tree ld64, needed only when nothing else can link Mach-O.
@@ -242,6 +258,12 @@ set(_xnu_dependencies
 # filter does not ship those directories.
 if(PUREDARWIN_NIX_TOOLCHAIN OR CMAKE_HOST_APPLE)
     list(REMOVE_ITEM _xnu_dependencies host_ld)
+endif()
+if(PUREDARWIN_NIX_TOOLCHAIN)
+    list(REMOVE_ITEM _xnu_dependencies host_strip host_lipo host_nm)
+endif()
+if(CMAKE_HOST_APPLE)
+    list(APPEND _xnu_dependencies ${_xnu_darwin_host_tools})
 endif()
 add_dependencies(xnu ${_xnu_dependencies})
 

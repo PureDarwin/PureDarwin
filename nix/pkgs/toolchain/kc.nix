@@ -8,8 +8,8 @@
 
 let
   kextList = import ../../lib/kc-kexts.nix;
-  darwinKernelVersion = "26.5.0";
-  darwinKernelVersionShort = "26.5";
+  darwinKernelVersion = "25.5.0";
+  darwinKernelVersionShort = "25.5";
 in
 stdenv.mkDerivation {
   pname = "puredarwin-kc";

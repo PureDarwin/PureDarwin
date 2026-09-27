@@ -23,11 +23,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1788466041,
-        "narHash": "sha256-6iGo//PhYbPWzl0s8T8M6EbA00FLGVfs4MKxFkQiFIM=",
+        "lastModified": 1790543449,
+        "narHash": "sha256-f0Zp4hHckwSX3Wai/VvzNQ8/r0CSagFK8XDhx/5wi5A=",
         "owner": "PureDarwin",
         "repo": "kc-tools",
-        "rev": "7e3ab8d87e3a1c1ce387192cd5d35986a28771cb",
+        "rev": "ae159a581b814b596546768f44360481e6f0b141",
         "type": "github"
       },
       "original": {
@@ -114,11 +114,11 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1789849086,
-        "narHash": "sha256-FvBA7ZUuGano0vrZzkSZVHQoSeMMjU0ugIlF5gF85BU=",
+        "lastModified": 1790543415,
+        "narHash": "sha256-mEhrZNaISjFKJ/0ZIkUypylZr0WjUVQE76gvO9JpHSU=",
         "owner": "PureDarwin",
         "repo": "xnu-loader",
-        "rev": "b621149b3d67917457e46dcdd508db4f141af0d4",
+        "rev": "b20c06841176ea7da6dad07c50deeb7ce10c5ede",
         "type": "github"
       },
       "original": {

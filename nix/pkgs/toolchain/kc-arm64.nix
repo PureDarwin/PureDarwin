@@ -4,11 +4,12 @@
 , kernel
 , kernelSource
 , kexts
+, kcBase ? "fffffe0006000000"
 }:
 
 let
-  darwinKernelVersion = "26.5.0";
-  darwinKernelVersionShort = "26.5";
+  darwinKernelVersion = "25.5.0";
+  darwinKernelVersionShort = "25.5";
 in
 stdenv.mkDerivation {
   pname = "puredarwin-kc-arm64";
