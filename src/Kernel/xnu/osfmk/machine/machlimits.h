@@ -32,6 +32,8 @@
 #include "i386/machlimits.h"
 #elif defined (__arm64__)
 #include "arm/machlimits.h"
+#elif defined (__riscv)
+#include "riscv/machlimits.h"
 #else
 #error architecture not supported
 #endif

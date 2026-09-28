@@ -33,6 +33,8 @@
 #include "i386/commpage/commpage.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/commpage/commpage.h"
+#elif defined (__riscv)
+#include "riscv/commpage/commpage.h"
 #else
 #error architecture not supported
 #endif

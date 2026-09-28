@@ -32,6 +32,8 @@
 #include "i386/machine_cpu.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/machine_cpu.h"
+#elif defined (__riscv)
+#include "riscv/machine_cpu.h"
 #else
 #error architecture not supported
 #endif

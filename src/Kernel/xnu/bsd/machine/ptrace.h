@@ -35,6 +35,8 @@
 #include "i386/ptrace.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/ptrace.h"
+#elif defined (__riscv)
+#include "riscv/ptrace.h"
 #else
 #error architecture not supported
 #endif

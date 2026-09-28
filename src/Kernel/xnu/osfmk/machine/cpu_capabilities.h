@@ -35,6 +35,8 @@
 #include "i386/cpu_capabilities.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/cpu_capabilities.h"
+#elif defined (__riscv)
+#include "riscv/cpu_capabilities.h"
 #else
 #error architecture not supported
 #endif
@@ -44,6 +46,8 @@
 #include <i386/cpu_capabilities.h>
 #elif defined (__arm__) || defined(__arm64__)
 #include <arm/cpu_capabilities.h>
+#elif defined (__riscv)
+#include <riscv/cpu_capabilities.h>
 #else
 #error architecture not supported
 #endif

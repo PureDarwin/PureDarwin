@@ -20,6 +20,9 @@ INSTINC_SUBDIRS_X86_64H =	\
 INSTINC_SUBDIRS_ARM64 =	\
 	architecture
 
+INSTINC_SUBDIRS_RISCV64 =	\
+	architecture
+
 EXPORT_FILES = \
 	Availability.h	\
 	AvailabilityInternal.h	\

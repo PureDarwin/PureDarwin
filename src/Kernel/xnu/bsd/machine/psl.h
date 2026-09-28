@@ -32,6 +32,8 @@
 #include "i386/psl.h"
 #elif defined (__arm64__)
 #include "arm/psl.h"
+#elif defined (__riscv)
+#include "riscv/psl.h"
 #else
 #error architecture not supported
 #endif

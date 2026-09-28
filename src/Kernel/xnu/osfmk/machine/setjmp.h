@@ -32,6 +32,8 @@
 #include "i386/setjmp.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/setjmp.h"
+#elif defined (__riscv)
+#include "riscv/setjmp.h"
 #else
 #error architecture not supported
 #endif

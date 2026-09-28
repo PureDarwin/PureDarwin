@@ -32,6 +32,8 @@
 #include "i386/_limits.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/_limits.h"
+#elif defined (__riscv)
+#include "riscv/_limits.h"
 #else
 #error architecture not supported
 #endif

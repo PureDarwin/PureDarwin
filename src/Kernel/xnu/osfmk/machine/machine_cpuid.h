@@ -34,6 +34,8 @@
 #include <arm/machine_cpuid.h>
 #elif defined (__arm64__)
 #include <arm64/machine_cpuid.h>
+#elif defined (__riscv)
+#include <riscv/machine_cpuid.h>
 #else
 #error architecture not supported
 #endif

@@ -32,6 +32,8 @@
 #include "i386/thread.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/thread.h"
+#elif defined (__riscv)
+#include "riscv/thread.h"
 #else
 #error architecture not supported
 #endif

@@ -32,6 +32,8 @@
 #include "i386/pal_routines.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/pal_routines.h"
+#elif defined (__riscv)
+#include "riscv/pal_routines.h"
 #else
 #error architecture not supported
 #endif

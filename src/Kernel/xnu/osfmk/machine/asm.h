@@ -34,6 +34,8 @@
 #include "arm/asm.h"
 #elif defined (__arm64__)
 #include "arm64/asm.h"
+#elif defined (__riscv)
+#include "riscv/asm.h"
 #else
 #error architecture not supported
 #endif

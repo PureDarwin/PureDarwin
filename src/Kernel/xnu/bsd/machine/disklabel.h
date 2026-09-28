@@ -32,6 +32,8 @@
 #include "i386/disklabel.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/disklabel.h"
+#elif defined (__riscv)
+#include "riscv/disklabel.h"
 #else
 #error architecture not supported
 #endif

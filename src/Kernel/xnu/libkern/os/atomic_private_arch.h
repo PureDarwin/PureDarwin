@@ -212,4 +212,24 @@
 
 #endif // __arm64__
 
+#if defined(__riscv)
+
+#if OS_ATOMIC_CONFIG_MEMORY_ORDER_DEPENDENCY
+// rvwmo keeps syntactic address dependencies in order, like arm64
+#undef _os_atomic_mo_dependency
+#define _os_atomic_mo_dependency      memory_order_relaxed
+
+#undef os_atomic_make_dependency
+#define os_atomic_make_dependency(v) ({ \
+	os_atomic_dependency_t _dep; \
+	__asm__ __volatile__("and %[_dep], %[_v], zero" \
+	    : [_dep] "=r" (_dep.__opaque_zero) \
+	    : [_v] "r" (v)); \
+	os_compiler_barrier(acquire); \
+	_dep; \
+})
+#endif // OS_ATOMIC_CONFIG_MEMORY_ORDER_DEPENDENCY
+
+#endif // __riscv
+
 #endif /* __OS_ATOMIC_PRIVATE_ARCH_H__ */

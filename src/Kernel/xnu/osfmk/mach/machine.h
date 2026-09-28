@@ -166,7 +166,8 @@ __END_DECLS
 /* skip				((cpu_type_t) 21) */
 /* skip				((cpu_type_t) 22) */
 /* skip				((cpu_type_t) 23) */
-/* skip				((cpu_type_t) 24) */
+#define CPU_TYPE_RISCV          ((cpu_type_t) 24)
+#define CPU_TYPE_RISCV64        (CPU_TYPE_RISCV | CPU_ARCH_ABI64)
 
 /*
  *	Machine subtypes (these are defined here, instead of in a machine
@@ -406,6 +407,11 @@ __END_DECLS
  */
 #define CPU_SUBTYPE_ARM64_32_ALL        ((cpu_subtype_t) 0)
 #define CPU_SUBTYPE_ARM64_32_V8 ((cpu_subtype_t) 1)
+
+/*
+ *  RISCV subtypes
+ */
+#define CPU_SUBTYPE_RISCV_ALL           ((cpu_subtype_t) 0)
 
 
 #endif /* !__ASSEMBLER__ */

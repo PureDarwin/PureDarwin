@@ -32,6 +32,8 @@
 #include "i386/pmap.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/pmap.h"
+#elif defined (__riscv)
+#include "riscv/pmap.h"
 #else
 #error architecture not supported
 #endif

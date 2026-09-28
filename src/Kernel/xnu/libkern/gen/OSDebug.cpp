@@ -62,7 +62,7 @@ extern void kmod_dump_log(vm_offset_t *addr, unsigned int cnt, boolean_t doUnsli
 extern addr64_t kvtophys(vm_offset_t va);
 #if __arm__
 extern int copyinframe(vm_address_t fp, char *frame);
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__riscv)
 extern int copyinframe(vm_address_t fp, char *frame, boolean_t is64bit);
 #endif
 
@@ -210,7 +210,7 @@ pad:
 	for (; frame_index < maxAddrs; frame_index++) {
 		bt[frame_index] = (void *) NULL;
 	}
-#elif __arm__ || __arm64__
+#elif __arm__ || __arm64__ || __riscv
 	uint32_t i = 0;
 	uintptr_t frameb[2];
 	uintptr_t fp = 0;
@@ -222,6 +222,9 @@ pad:
 #elif defined(__arm64__)
 #define OSBacktraceFrameAlignOK(x) (((x) & 0xf) == 0)
 	__asm__ volatile ("mov %0, fp" : "=r" (fp));
+#elif defined(__riscv)
+#define OSBacktraceFrameAlignOK(x) (((x) & 0xf) == 0)
+	__asm__ volatile ("mv %0, s0" : "=r" (fp));
 #else
 #error Unknown architecture.
 #endif
@@ -235,6 +238,9 @@ pad:
 		// safely read frame
 #ifdef __arm64__
 		if (copyinframe(fp, (char*)frameb, TRUE) != 0) {
+#elif defined(__riscv)
+		// the previous fp and ra sit just below the frame pointer
+		if (copyinframe(fp - 2 * sizeof(uintptr_t), (char*)frameb, TRUE) != 0) {
 #else
 		if (copyinframe(fp, (char*)frameb) != 0) {
 #endif

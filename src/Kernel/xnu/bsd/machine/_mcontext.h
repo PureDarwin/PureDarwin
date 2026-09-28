@@ -32,6 +32,8 @@
 #include "i386/_mcontext.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/_mcontext.h"
+#elif defined (__riscv)
+#include "riscv/_mcontext.h"
 #else
 #error architecture not supported
 #endif

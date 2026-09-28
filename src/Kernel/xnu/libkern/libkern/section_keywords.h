@@ -38,7 +38,7 @@
 #define __SECTION_START_SYM(seg, sect) asm("section$start$" seg "$" sect)
 #define __SECTION_END_SYM(seg, sect)   asm("section$end$" seg "$" sect)
 
-#if defined(__arm64__) || defined (__x86_64__)
+#if defined(__arm64__) || defined (__x86_64__) || defined(__riscv)
 
 #define SECURITY_SEGMENT_NAME           "__DATA"
 #define SECURITY_SECTION_NAME           "__const"
@@ -65,7 +65,7 @@
 #define MARK_AS_HIBERNATE_DATA_CONST_LATE
 #endif /* __BUILDING_XNU_LIBRARY__ */
 
-#endif /* __arm64__ || __x86_64__ */
+#endif /* __arm64__ || __x86_64__ || __riscv */
 
 #ifndef __security_const_early
 #define __security_const_early const

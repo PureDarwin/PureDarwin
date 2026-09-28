@@ -32,6 +32,8 @@
 #include <mach/i386/sdt_isa.h>
 #elif defined (__arm__) || defined (__arm64__)
 #include <mach/arm/sdt_isa.h>
+#elif defined (__riscv)
+#include <mach/riscv/sdt_isa.h>
 #else
 #error architecture not supported
 #endif

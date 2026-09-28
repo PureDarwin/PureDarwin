@@ -135,6 +135,9 @@
 #define OS_ATOMIC_HAS_LLSC  0
 #elif defined(__arm__) || defined(__arm64__)
 #define OS_ATOMIC_HAS_LLSC  1
+#elif defined(__riscv)
+// lr/sc exists but a reservation can't be held across separate c statements
+#define OS_ATOMIC_HAS_LLSC  0
 #else
 #error unsupported architecture
 #endif

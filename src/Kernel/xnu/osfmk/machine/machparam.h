@@ -32,6 +32,8 @@
 #include "i386/machparam.h"
 #elif defined (__arm64__)
 #include "arm/machparam.h"
+#elif defined (__riscv)
+#include "riscv/machparam.h"
 #else
 #error architecture not supported
 #endif

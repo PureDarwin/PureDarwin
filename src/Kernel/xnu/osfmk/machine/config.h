@@ -36,6 +36,8 @@
 #include <pexpert/arm/board_config.h>
 #elif defined (__arm64__)
 #include <pexpert/arm64/board_config.h>
+#elif defined (__riscv)
+#include <pexpert/riscv/board_config.h>
 #else
 #error architecture not supported
 #endif

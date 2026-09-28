@@ -469,7 +469,7 @@ public:
 
 	static _ptf_t _ptmf2ptf(const OSMetaClassBase * self, void (OSMetaClassBase::*func)(void));
 
-#elif defined(__i386__) || defined(__x86_64__)
+#elif defined(__i386__) || defined(__x86_64__) || defined(__riscv)
 
 // Slightly less arcane and slightly less evil code to do
 // the same for kexts compiled with the standard Itanium C++

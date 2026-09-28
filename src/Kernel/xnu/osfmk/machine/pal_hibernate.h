@@ -40,6 +40,8 @@
 //#include "arm/pal_hibernate.h"
 #elif defined(__arm64__)
 #include "arm64/pal_hibernate.h"
+#elif defined (__riscv)
+#include "riscv/pal_hibernate.h"
 #else
 #error architecture not supported
 #endif

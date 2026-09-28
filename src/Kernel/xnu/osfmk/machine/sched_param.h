@@ -32,6 +32,8 @@
 #include "i386/sched_param.h"
 #elif defined (__arm64__)
 #include "arm/sched_param.h"
+#elif defined (__riscv)
+#include "riscv/sched_param.h"
 #else
 #error architecture not supported
 #endif

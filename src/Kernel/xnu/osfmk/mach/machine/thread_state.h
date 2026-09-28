@@ -33,6 +33,8 @@
 #include "mach/i386/thread_state.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "mach/arm/thread_state.h"
+#elif defined (__riscv)
+#include "mach/riscv/thread_state.h"
 #else
 #error architecture not supported
 #endif
@@ -47,6 +49,10 @@
 #   endif
 #elif defined (__arm__) || defined (__arm64__)
 #   if THREAD_STATE_MAX < ARM_THREAD_STATE_MAX
+#       error THREAD_STATE_MAX is too small
+#   endif
+#elif defined (__riscv)
+#   if THREAD_STATE_MAX < RISCV_THREAD_STATE_MAX
 #       error THREAD_STATE_MAX is too small
 #   endif
 #else

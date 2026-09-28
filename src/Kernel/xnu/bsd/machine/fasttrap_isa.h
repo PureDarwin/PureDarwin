@@ -32,6 +32,8 @@
 #include "i386/fasttrap_isa.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/fasttrap_isa.h"
+#elif defined (__riscv)
+#include "riscv/fasttrap_isa.h"
 #else
 #error architecture not supported
 #endif

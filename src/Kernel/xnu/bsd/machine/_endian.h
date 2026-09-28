@@ -35,6 +35,8 @@
 #include <i386/_endian.h>
 #elif defined (__arm__) || defined (__arm64__)
 #include <arm/_endian.h>
+#elif defined (__riscv)
+#include <riscv/_endian.h>
 #else
 #error architecture not supported
 #endif

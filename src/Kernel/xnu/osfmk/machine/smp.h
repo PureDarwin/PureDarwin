@@ -36,6 +36,8 @@
 /* arm/smp.h isn't installed into the public SDK. */
 #include "arm/smp.h"
 #endif /* KERNEL_PRIVATE */
+#elif defined (__riscv)
+#include "riscv/smp.h"
 #else
 #error architecture not supported
 #endif

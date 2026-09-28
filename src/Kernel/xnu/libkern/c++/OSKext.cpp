@@ -174,7 +174,7 @@ static const char *getDextUniqueIDCString(OSData *dextUniqueID, unsigned int *si
 #define VM_MAPPED_KEXTS 1
 #define KASLR_KEXT_DEBUG 0
 #define KASLR_IOREG_DEBUG 0
-#elif __arm__ || __arm64__
+#elif __arm__ || __arm64__ || __riscv
 #define VM_MAPPED_KEXTS 0
 #define KASLR_KEXT_DEBUG 0
 #else
@@ -1219,7 +1219,7 @@ OSKext::removeKextBootstrap(void)
 		OSRuntimeUnloadCPPForSegment(seg_klddata);
 	}
 
-#if __arm__ || __arm64__
+#if __arm__ || __arm64__ || __riscv
 	/* Free the memory that was set up by iBoot.
 	 */
 #if !defined(KERNEL_INTEGRITY_KTRR) && !defined(KERNEL_INTEGRITY_CTRR) && !defined(KERNEL_INTEGRITY_PV_CTRR)
@@ -5782,6 +5782,8 @@ out_locked:
 #define ARCHNAME "x86_64"
 #elif defined (__arm64__)
 #define ARCHNAME "arm64"
+#elif defined (__riscv)
+#define ARCHNAME "riscv64"
 #elif defined (__arm__)
 
 #if defined (__ARM_ARCH_7S__)
@@ -5798,6 +5800,8 @@ out_locked:
 
 #elif defined (__arm64__)
 #define ARCHNAME "arm64"
+#elif defined (__riscv)
+#define ARCHNAME "riscv64"
 #else
 #error architecture not supported
 #endif
@@ -7902,7 +7906,7 @@ OSKext::unregisterWithDTrace(void)
 * called only by loadExecutable()
 *********************************************************************/
 #if !VM_MAPPED_KEXTS
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 static inline kern_return_t
 OSKext_protect(
 	kernel_mach_header_t *kext_mh,

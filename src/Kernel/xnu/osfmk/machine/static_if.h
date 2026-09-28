@@ -52,6 +52,8 @@ typedef struct static_if_key {
 #include "arm/static_if.h"
 #elif defined (__arm64__)
 #include "arm64/static_if.h"
+#elif defined (__riscv)
+#include "riscv/static_if.h"
 #else
 #error architecture not supported
 #endif

@@ -37,6 +37,8 @@
 #include "i386/profile.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/profile.h"
+#elif defined (__riscv)
+#include "riscv/profile.h"
 #else
 #error architecture not supported
 #endif

@@ -34,6 +34,8 @@
 #include "i386/cpu_affinity.h"
 #elif defined (__arm64__)
 #include "arm/cpu_affinity.h"
+#elif defined (__riscv)
+#include "riscv/cpu_affinity.h"
 #else
 #error architecture not supported
 #endif

@@ -32,6 +32,8 @@
 #include "i386/trap_internal.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/trap_internal.h"
+#elif defined (__riscv)
+#include "riscv/trap_internal.h"
 #else
 #error architecture not supported
 #endif

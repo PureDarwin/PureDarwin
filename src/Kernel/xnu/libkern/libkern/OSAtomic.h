@@ -708,6 +708,12 @@ OSMemoryBarrier(void)
 	__asm__ volatile ("mfence" ::: "memory");
 }
 #endif /* XNU_KERNEL_PRIVATE */
+#elif defined(__riscv)
+static inline void
+OSMemoryBarrier(void)
+{
+	__asm__ volatile ("fence rw, rw" ::: "memory");
+}
 #endif
 
 #endif /* KERNEL_PRIVATE */

@@ -32,6 +32,8 @@
 #include "i386/reg.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/reg.h"
+#elif defined (__riscv)
+#include "riscv/reg.h"
 #else
 #error architecture not supported
 #endif

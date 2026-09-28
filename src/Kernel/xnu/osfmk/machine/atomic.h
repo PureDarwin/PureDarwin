@@ -35,6 +35,8 @@
 #include "i386/atomic.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/atomic.h"
+#elif defined (__riscv)
+#include "riscv/atomic.h"
 #else
 #error architecture not supported
 #endif

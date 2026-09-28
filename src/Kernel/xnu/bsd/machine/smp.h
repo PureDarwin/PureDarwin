@@ -32,6 +32,8 @@
 #include "i386/smp.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/smp.h"
+#elif defined (__riscv)
+#include "riscv/smp.h"
 #else
 #error architecture not supported
 #endif

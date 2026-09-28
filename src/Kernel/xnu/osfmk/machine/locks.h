@@ -32,6 +32,8 @@
 #include "i386/locks.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/locks.h"
+#elif defined (__riscv)
+#include "riscv/locks.h"
 #else
 #error architecture not supported
 #endif

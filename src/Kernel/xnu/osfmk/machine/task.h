@@ -32,6 +32,8 @@
 #include "i386/task.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/task.h"
+#elif defined (__riscv)
+#include "riscv/task.h"
 #else
 #error architecture not supported
 #endif

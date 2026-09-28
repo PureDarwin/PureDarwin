@@ -34,6 +34,8 @@
 #include "arm/lowglobals.h"
 #elif defined (__arm64__)
 #include "arm64/lowglobals.h"
+#elif defined (__riscv)
+#include "riscv/lowglobals.h"
 #else
 #error architecture not supported
 #endif

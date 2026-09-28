@@ -33,6 +33,8 @@
 #include "mach/i386/kern_return.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "mach/arm/kern_return.h"
+#elif defined (__riscv)
+#include "mach/riscv/kern_return.h"
 #else
 #error architecture not supported
 #endif
