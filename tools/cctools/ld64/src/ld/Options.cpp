@@ -4764,6 +4764,12 @@ void Options::reconfigureDefaults()
 #if SUPPORT_ARCH_arm64_32
 			case CPU_TYPE_ARM64_32:
 #endif
+#if SUPPORT_ARCH_riscv32
+			case CPU_TYPE_RISCV32:
+#endif
+#if SUPPORT_ARCH_riscv64
+			case CPU_TYPE_RISCV64:
+#endif
 				// arm64 uses new MH_KEXT_BUNDLE type
 				fMakeCompressedDyldInfo = false;
 				fMakeCompressedDyldInfoForceOff = true;
@@ -4822,7 +4828,13 @@ void Options::reconfigureDefaults()
 	}
 
 	// determine if info for shared region should be added
-	if ( fOutputKind == Options::kDynamicLibrary ) {
+	// riscv has no split seg adjust kinds for auipc pairs yet, so it stays out of the shared cache
+	if ( (fArchitecture == CPU_TYPE_RISCV32) || (fArchitecture == CPU_TYPE_RISCV64) ) {
+		if ( fSharedRegionEligible )
+			warning("-add_split_seg_info ignored, riscv has no shared region support");
+		fSharedRegionEligible = false;
+	}
+	else if ( fOutputKind == Options::kDynamicLibrary ) {
 		if ( platforms().minOS(ld::version2008Fall) )
 			if ( !fSharedRegionEligibleForceOff )
 				if ( sharedCacheEligiblePath(this->installPath()) )
@@ -5030,6 +5042,18 @@ void Options::reconfigureDefaults()
 
 	// choose how to process unwind info
 	switch ( fArchitecture ) {
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		// riscv has no compact unwind encodings, dwarf only
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+#endif
+			fAddCompactUnwindEncoding = false;
+			fRemoveDwarfUnwindIfCompactExists = false;
+			break;
+#endif
 		case CPU_TYPE_I386:		
 		case CPU_TYPE_X86_64:		
 		case CPU_TYPE_ARM64:		
@@ -5161,6 +5185,12 @@ void Options::reconfigureDefaults()
 		case CPU_TYPE_I386:
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
 #endif
 			fEnforceDylibSubtypesMatch = false;
 			break;
@@ -5309,6 +5339,18 @@ void Options::reconfigureDefaults()
 			}
 			break;
 	}
+	// riscv has no older dyld to stay compatible with, so dyld loaded images always chain
+	if ( ((fArchitecture == CPU_TYPE_RISCV32) || (fArchitecture == CPU_TYPE_RISCV64)) && !fMakeCompressedDyldInfoForceOff ) {
+		switch ( fOutputKind ) {
+			case Options::kDynamicExecutable:
+			case Options::kDynamicLibrary:
+			case Options::kDynamicBundle:
+				fMakeChainedFixups = true;
+				break;
+			default:
+				break;
+		}
+	}
 	if ( fMakeChainedFixups ) {
 		fMakeCompressedDyldInfo = false;
 		fNoLazyBinding = true;
@@ -5325,7 +5367,8 @@ void Options::reconfigureDefaults()
 		fNoLazyBinding = true;
 
 	// <rdar://problem/29241917> transform __DATA, __mod_init_funcs to __TEXT offsets
-	if ( fMakeChainedFixups )
+	// riscv chains every bundle, kexts included, and xnu and kc-builder only run __mod_init_func pointers
+	if ( fMakeChainedFixups && (fArchitecture != CPU_TYPE_RISCV32) && (fArchitecture != CPU_TYPE_RISCV64) )
 		fMakeInitializersIntoOffsets = true;
 
 
@@ -5370,6 +5413,7 @@ void Options::reconfigureDefaults()
 #if SUPPORT_ARCH_arm64_32
           || (fArchitecture == CPU_TYPE_ARM64_32)
 #endif
+          || (fArchitecture == CPU_TYPE_RISCV32) || (fArchitecture == CPU_TYPE_RISCV64)
           )
         && (fOutputKind == kDynamicExecutable) ) {
 		fPositionIndependentExecutable = true;
@@ -5461,6 +5505,7 @@ void Options::reconfigureDefaults()
 		#if SUPPORT_ARCH_arm64_32
 													|| (fArchitecture == CPU_TYPE_ARM64_32)
 		#endif
+													|| (fArchitecture == CPU_TYPE_RISCV32) || (fArchitecture == CPU_TYPE_RISCV64)
 			) {
 				fEntryPointLoadCommand = true;
 				if ( fEntryName == NULL )
@@ -5874,6 +5919,9 @@ void Options::checkIllegalOptionCombinations()
 #if SUPPORT_ARCH_arm64_32
 			case CPU_TYPE_ARM64_32:
 #endif
+#if SUPPORT_ARCH_riscv32
+			case CPU_TYPE_RISCV32:
+#endif
 				if ( fStackAddr > 0xFFFFFFFF )
 					throw "-stack_addr must be < 4G for 32-bit processes";
 				break;
@@ -5944,6 +5992,21 @@ void Options::checkIllegalOptionCombinations()
 					fStackAddr = 0x2F000000;
 				break;
 #endif
+			// riscv64 follows arm64's limits, its sv39 user space leaves room for the same placement
+			case CPU_TYPE_RISCV64:
+				if ( fStackSize > 0x20000000 )
+					throw "-stack_size must be <= 512MB";
+				if ( fStackAddr == 0 )
+					fStackAddr = 0x120000000;
+				break;
+			case CPU_TYPE_RISCV32:
+				if ( fStackSize > 0x1F000000 )
+					throw "-stack_size must be < 496MB";
+				if ( fStackAddr == 0 )
+					fStackAddr = 0x1F000000;
+				break;
+			default:
+				throwf("-stack_size not supported for architecture 0x%x", fArchitecture);
 		}
 		if ( (fStackSize & (-fSegmentAlignment)) != fStackSize )
 			throwf("-stack_size must be multiple of segment alignment (%lldKB)", fSegmentAlignment/1024);
@@ -6057,6 +6120,12 @@ void Options::checkIllegalOptionCombinations()
 		case CPU_TYPE_ARM64:
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
 #endif
 			alterObjC1ClassNamesToObjC2 = true;
 			break;
@@ -6185,11 +6254,17 @@ void Options::checkIllegalOptionCombinations()
 #if SUPPORT_ARCH_arm64_32
 			case CPU_TYPE_ARM64_32:
 #endif
+#if SUPPORT_ARCH_riscv32
+			case CPU_TYPE_RISCV32:
+#endif
 				// first 4KB for 32-bit architectures
 				fZeroPageSize = 0x1000;
 				break;
 			case CPU_TYPE_ARM64:
 			case CPU_TYPE_X86_64:
+#if SUPPORT_ARCH_riscv64
+			case CPU_TYPE_RISCV64:
+#endif
 				// first 4GB for x86_64 on all OS's
 				fZeroPageSize = 0x100000000ULL;
 				break;

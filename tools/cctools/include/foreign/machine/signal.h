@@ -34,6 +34,8 @@
 #include "i386/signal.h"
 #elif defined (__arm__) || defined(__arm64__)
 #include "arm/signal.h"
+#elif defined (__riscv)
+#include "riscv/signal.h"
 #else
 #error architecture not supported
 #endif

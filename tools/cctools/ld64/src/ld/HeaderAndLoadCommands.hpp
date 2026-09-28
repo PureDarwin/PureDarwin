@@ -713,6 +713,12 @@ template <> uint32_t HeaderAndLoadCommandsAtom<arm>::magic() const		{ return MH_
 template <> uint32_t HeaderAndLoadCommandsAtom<arm64>::magic() const		{ return MH_MAGIC_64; }
 #if SUPPORT_ARCH_arm64_32
 template <> uint32_t HeaderAndLoadCommandsAtom<arm64_32>::magic() const		{ return MH_MAGIC; }
+#if SUPPORT_ARCH_riscv32
+template <> uint32_t HeaderAndLoadCommandsAtom<riscv32>::magic() const		{ return MH_MAGIC; }
+#endif
+#if SUPPORT_ARCH_riscv64
+template <> uint32_t HeaderAndLoadCommandsAtom<riscv64>::magic() const		{ return MH_MAGIC_64; }
+#endif
 #endif
 
 template <> uint32_t HeaderAndLoadCommandsAtom<x86>::cpuType() const	{ return CPU_TYPE_I386; }
@@ -721,6 +727,12 @@ template <> uint32_t HeaderAndLoadCommandsAtom<arm>::cpuType() const	{ return CP
 template <> uint32_t HeaderAndLoadCommandsAtom<arm64>::cpuType() const	{ return CPU_TYPE_ARM64; }
 #if SUPPORT_ARCH_arm64_32
 template <> uint32_t HeaderAndLoadCommandsAtom<arm64_32>::cpuType() const	{ return CPU_TYPE_ARM64_32; }
+#if SUPPORT_ARCH_riscv32
+template <> uint32_t HeaderAndLoadCommandsAtom<riscv32>::cpuType() const	{ return CPU_TYPE_RISCV32; }
+#endif
+#if SUPPORT_ARCH_riscv64
+template <> uint32_t HeaderAndLoadCommandsAtom<riscv64>::cpuType() const	{ return CPU_TYPE_RISCV64; }
+#endif
 #endif
 
 
@@ -756,6 +768,20 @@ template <>
 uint32_t HeaderAndLoadCommandsAtom<arm64_32>::cpuSubType() const
 {
 	return CPU_SUBTYPE_ARM64_32_V8;
+}
+#endif
+#if SUPPORT_ARCH_riscv32
+template <>
+uint32_t HeaderAndLoadCommandsAtom<riscv32>::cpuSubType() const
+{
+	return CPU_SUBTYPE_RISCV_ALL;
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+uint32_t HeaderAndLoadCommandsAtom<riscv64>::cpuSubType() const
+{
+	return CPU_SUBTYPE_RISCV_ALL;
 }
 #endif
 
@@ -1431,6 +1457,54 @@ uint8_t* HeaderAndLoadCommandsAtom<arm64_32>::copyThreadsLoadCommand(uint8_t* p)
 	cmd->set_thread_register(64, start);		// pc
 	if ( _options.hasCustomStack() )
 		cmd->set_thread_register(62, _options.customStackAddr());	// sp
+	return p + threadLoadCommandSize();
+}
+#endif
+#if SUPPORT_ARCH_riscv32
+// riscv thread state: x0 through x31 then pc, all register sized
+template <>
+uint32_t HeaderAndLoadCommandsAtom<riscv32>::threadLoadCommandSize() const
+{
+	return this->alignedSize(16 + 33 * 4);
+}
+
+template <>
+uint8_t* HeaderAndLoadCommandsAtom<riscv32>::copyThreadsLoadCommand(uint8_t* p) const
+{
+	assert(_state.entryPoint != NULL);
+	pint_t start = _state.entryPoint->finalAddress();
+	macho_thread_command<P>* cmd = (macho_thread_command<P>*)p;
+	cmd->set_cmd(LC_UNIXTHREAD);
+	cmd->set_cmdsize(threadLoadCommandSize());
+	cmd->set_flavor(1);	 // RISCV_THREAD_STATE
+	cmd->set_count(33 * 4 / 4);
+	cmd->set_thread_register(32, start);		// pc
+	if ( _options.hasCustomStack() )
+		cmd->set_thread_register(2, _options.customStackAddr());	// sp
+	return p + threadLoadCommandSize();
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+// riscv thread state: x0 through x31 then pc, all register sized
+template <>
+uint32_t HeaderAndLoadCommandsAtom<riscv64>::threadLoadCommandSize() const
+{
+	return this->alignedSize(16 + 33 * 8);
+}
+
+template <>
+uint8_t* HeaderAndLoadCommandsAtom<riscv64>::copyThreadsLoadCommand(uint8_t* p) const
+{
+	assert(_state.entryPoint != NULL);
+	pint_t start = _state.entryPoint->finalAddress();
+	macho_thread_command<P>* cmd = (macho_thread_command<P>*)p;
+	cmd->set_cmd(LC_UNIXTHREAD);
+	cmd->set_cmdsize(threadLoadCommandSize());
+	cmd->set_flavor(1);	 // RISCV_THREAD_STATE
+	cmd->set_count(33 * 8 / 4);
+	cmd->set_thread_register(32, start);		// pc
+	if ( _options.hasCustomStack() )
+		cmd->set_thread_register(2, _options.customStackAddr());	// sp
 	return p + threadLoadCommandSize();
 }
 #endif

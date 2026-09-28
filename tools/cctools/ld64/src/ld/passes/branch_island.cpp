@@ -24,6 +24,7 @@
 
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <math.h>
 #include <unistd.h>
 #include <dlfcn.h>
@@ -91,6 +92,52 @@ private:
 	const char*								_name;
 	ld::Fixup								_fixup1;
 	ld::Fixup								_fixup2;
+};
+#endif
+
+
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+// auipc/jalr reaches +/-2GB, so one island takes a jal anywhere, clobbering t3 like a stub
+class RISCVBranchIslandAtom : public ld::Atom {
+public:
+											RISCVBranchIslandAtom(const char* nm, TargetAndOffset finalTarget)
+				: ld::Atom(_s_text_section, ld::Atom::definitionRegular, ld::Atom::combineNever,
+							ld::Atom::scopeLinkageUnit, ld::Atom::typeBranchIsland,
+							ld::Atom::symbolTableIn, false, false, false, ld::Atom::Alignment(2)),
+				_name(nm),
+				_fixup1(0, ld::Fixup::k1of3, ld::Fixup::kindSetTargetAddress, finalTarget.atom),
+				_fixup2(0, ld::Fixup::k2of3, ld::Fixup::kindAddAddend, finalTarget.offset),
+				_fixup3(0, ld::Fixup::k3of3, ld::Fixup::kindStoreRISCVhi20PCRel),
+				_fixup4(4, ld::Fixup::k1of3, ld::Fixup::kindSetTargetAddress, finalTarget.atom),
+				_fixup5(4, ld::Fixup::k2of3, ld::Fixup::kindAddAddend, finalTarget.offset),
+				_fixup6(4, ld::Fixup::k3of3, ld::Fixup::kindStoreRISCVlo12PCRel),
+				_fixup7(0, ld::Fixup::k1of1, ld::Fixup::kindIslandTarget, finalTarget.atom) {
+					if (_s_log) fprintf(stderr, "%p: riscv branch island to final target %s\n",
+										this, finalTarget.atom->name());
+				}
+
+	virtual const ld::File*					file() const					{ return NULL; }
+	virtual const char*						name() const					{ return _name; }
+	virtual uint64_t						size() const					{ return 8; }
+	virtual uint64_t						objectAddress() const			{ return 0; }
+	virtual void							copyRawContent(uint8_t buffer[]) const {
+		// the jalr immediate starts as the distance back to the auipc, as lo12 fixups expect
+		OSWriteLittleInt32(&buffer[0], 0, 0x00000E17);	// auipc t3, %hi(target)
+		OSWriteLittleInt32(&buffer[4], 0, 0xFFCE0067);	// jalr  x0, %lo(target)(t3)
+	}
+	virtual void							setScope(Scope)					{ }
+	virtual ld::Fixup::iterator				fixupsBegin() const				{ return (ld::Fixup*)&_fixup1; }
+	virtual ld::Fixup::iterator				fixupsEnd()	const 				{ return &((ld::Fixup*)&_fixup7)[1]; }
+
+private:
+	const char*								_name;
+	ld::Fixup								_fixup1;
+	ld::Fixup								_fixup2;
+	ld::Fixup								_fixup3;
+	ld::Fixup								_fixup4;
+	ld::Fixup								_fixup5;
+	ld::Fixup								_fixup6;
+	ld::Fixup								_fixup7;
 };
 #endif
 
@@ -313,6 +360,10 @@ static ld::Atom* makeBranchIsland(const Options& opts, ld::Fixup::Kind kind, int
 			return new ARM64BranchIslandAtom(name, nextTarget, finalTarget);
 			break;
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		case ld::Fixup::kindStoreRISCVBranch20:
+			return new RISCVBranchIslandAtom(name, finalTarget);
+#endif
 		default:
 			assert(0 && "unexpected branch kind");
 			break;
@@ -342,6 +393,9 @@ static uint64_t textSizeWhenMightNeedBranchIslands(const Options& opts, bool see
 			return 128000000; // arm64_32 can branch +/- 128MB
 			break;
 #endif
+		case CPU_TYPE_RISCV32:
+		case CPU_TYPE_RISCV64:
+			return 1000000; // jal can branch +/- 1MB
 	}
 	assert(0 && "unexpected architecture");
 	return 0x100000000LL;
@@ -369,6 +423,9 @@ static uint64_t maxDistanceBetweenIslands(const Options& opts, bool seenThumbBra
 			return 124*1024*1024;		 // 4MB of branch islands per 128MB
 			break;
 #endif
+		case CPU_TYPE_RISCV32:
+		case CPU_TYPE_RISCV64:
+			return 896*1024;			// 128KB of branch islands per 1MB
 	}
 	assert(0 && "unexpected architecture");
 	return 0x100000000LL;
@@ -404,7 +461,9 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 	// assign section offsets to each atom in __text section, watch for thumb branches, and find total size
 	bool hasThumbBranches = false;
 	bool haveCrossSectionBranches = false;
-	const bool preload = (opts.outputKind() == Options::kPreload);
+	// riscv sections sit further apart than jal reaches, so it measures by absolute address like -preload
+	const bool riscv = (opts.architecture() == CPU_TYPE_RISCV32) || (opts.architecture() == CPU_TYPE_RISCV64);
+	const bool preload = (opts.outputKind() == Options::kPreload) || riscv;
 	uint64_t offset = 0;
 	for (std::vector<const ld::Atom*>::iterator ait=textSection->atoms.begin();  ait != textSection->atoms.end(); ++ait) {
 		const ld::Atom* atom = *ait;
@@ -434,12 +493,15 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 					// fall into arm branch case
 				case ld::Fixup::kindStoreARMBranch24:
 				case ld::Fixup::kindStoreTargetAddressARMBranch24:
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+				case ld::Fixup::kindStoreRISCVBranch20:
+#endif
 					haveBranch = true;
 					break;
                 default:
                     break;   
 			}
-			if ( haveBranch && (target->contentType() != ld::Atom::typeStub) ) {
+			if ( haveBranch && (target != NULL) && (target->contentType() != ld::Atom::typeStub || riscv) ) {
 				// <rdar://problem/14792124> haveCrossSectionBranches only applies to -preload builds
 				if ( preload && (atom->section() != target->section()) )
 					haveCrossSectionBranches = true;
@@ -503,9 +565,13 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 		regionsMap[i] = new AtomToIsland();
 		regionsIslands[i] = new std::vector<const ld::Atom*>();
 		regionAddresses[i] = branchIslandInsertionPoints[i]->sectionOffset() + branchIslandInsertionPoints[i]->size();
+		// -preload measures branches by absolute address, so the regions must be too
+		if ( preload )
+			regionAddresses[i] = sAtomToAddress[branchIslandInsertionPoints[i]] + branchIslandInsertionPoints[i]->size();
 		if (_s_log) fprintf(stderr, "ld: branch islands will be inserted at 0x%08llX after %s\n", regionAddresses[i], branchIslandInsertionPoints[i]->name());
 	}
 	unsigned int islandCount = 0;
+	const bool longReachIslands = (opts.architecture() == CPU_TYPE_RISCV32) || (opts.architecture() == CPU_TYPE_RISCV64);
 	
 	// create islands for branches in __text that are out of range
 	for (std::vector<const ld::Atom*>::iterator ait=textSection->atoms.begin(); ait != textSection->atoms.end(); ++ait) {
@@ -546,6 +612,9 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 				case ld::Fixup::kindStoreARM64Branch26:
 				case ld::Fixup::kindStoreTargetAddressARM64Branch26:
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+				case ld::Fixup::kindStoreRISCVBranch20:
+#endif
 					haveBranch = true;
 					break;
                 default:
@@ -559,22 +628,30 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 					srcAddr = sAtomToAddress[atom] + fit->offsetInAtom;
 					dstAddr = sAtomToAddress[target] + addend;
 				}
-				if ( target->section().type() == ld::Section::typeStub )
+				if ( (target->section().type() == ld::Section::typeStub) && !riscv )
 					dstAddr = totalTextSize;
 				int64_t displacement = dstAddr - srcAddr;
 				TargetAndOffset finalTargetAndOffset = { target, (uint32_t)addend };
 				const int64_t kBranchLimit = kBetweenRegions;
 				if ( crossSectionBranch && ((displacement > kBranchLimit) || (displacement < (-kBranchLimit))) ) {
 					const ld::Atom* island;
-					AtomToIsland* region = regionsMap[0];
+					// a riscv island has to sit within jal reach of the branch, so use the nearest region
+					int ri = 0;
+					if ( longReachIslands ) {
+						for (int i=1; i < kIslandRegionsCount; ++i) {
+							if ( llabs((int64_t)regionAddresses[i] - srcAddr) < llabs((int64_t)regionAddresses[ri] - srcAddr) )
+								ri = i;
+						}
+					}
+					AtomToIsland* region = regionsMap[ri];
 					AtomToIsland::iterator pos = region->find(finalTargetAndOffset);
 					if ( pos == region->end() ) {
-						island = makeBranchIsland(opts, fit->kind, 0, target, finalTargetAndOffset, atom->section(), true);
+						island = makeBranchIsland(opts, fit->kind, ri, target, finalTargetAndOffset, atom->section(), true);
 						(*region)[finalTargetAndOffset] = island;
 						if (_s_log) fprintf(stderr, "added absolute branching island %p %s, displacement=%lld\n", 
 												island, island->name(), displacement);
 						++islandCount;
-						regionsIslands[0]->push_back(island);
+						regionsIslands[ri]->push_back(island);
 						state.atomToSection[island] = textSection;
 					}
 					else {
@@ -592,6 +669,9 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 					for (int i=kIslandRegionsCount-1; i >=0 ; --i) {
 						AtomToIsland* region = regionsMap[i];
 						int64_t islandRegionAddr = regionAddresses[i];
+						// a riscv island reaches the target itself, so only the region nearest the branch gets one
+						if ( longReachIslands && (i > 0) && (srcAddr < regionAddresses[i-1]) )
+							continue;
 						if ( (srcAddr < islandRegionAddr) && ((islandRegionAddr <= dstAddr)) ) { 
 							AtomToIsland::iterator pos = region->find(finalTargetAndOffset);
 							if ( pos == region->end() ) {
@@ -618,6 +698,8 @@ static void makeIslandsForSection(const Options& opts, ld::Internal& state, ld::
 					for (int i=0; i < kIslandRegionsCount ; ++i) {
 						AtomToIsland* region = regionsMap[i];
 						int64_t islandRegionAddr = regionAddresses[i];
+						if ( longReachIslands && (i+1 < kIslandRegionsCount) && (regionAddresses[i+1] <= srcAddr) )
+							continue;
 						if ( (dstAddr < islandRegionAddr) && (islandRegionAddr <= srcAddr) ) {
 							if (_s_log) fprintf(stderr, "need backward branching island srcAdr=0x%08llX, dstAdr=0x%08llX, target=%s\n", srcAddr, dstAddr, target->name());
 							AtomToIsland::iterator pos = region->find(finalTargetAndOffset);
@@ -727,12 +809,16 @@ void doPass(const Options& opts, ld::Internal& state)
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV32:
+		case CPU_TYPE_RISCV64:
+#endif
 			break;
 		default:
 			return;
 	}
 	
-	if ( opts.outputKind() == Options::kPreload ) {
+	if ( (opts.outputKind() == Options::kPreload) || (opts.architecture() == CPU_TYPE_RISCV32) || (opts.architecture() == CPU_TYPE_RISCV64) ) {
 		buildAddressMap(opts, state);
 	}
 	

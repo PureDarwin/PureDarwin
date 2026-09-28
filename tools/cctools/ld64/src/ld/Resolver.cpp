@@ -833,6 +833,10 @@ bool Resolver::isDtraceProbe(ld::Fixup::Kind kind)
 		case ld::Fixup::kindStoreARMDtraceIsEnableSiteClear:
 		case ld::Fixup::kindStoreARM64DtraceCallSiteNop:
 		case ld::Fixup::kindStoreARM64DtraceIsEnableSiteClear:
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		case ld::Fixup::kindStoreRISCVDtraceCallSiteNop:
+		case ld::Fixup::kindStoreRISCVDtraceIsEnableSiteClear:
+#endif
 		case ld::Fixup::kindStoreThumbDtraceCallSiteNop:
 		case ld::Fixup::kindStoreThumbDtraceIsEnableSiteClear:
 		case ld::Fixup::kindDtraceExtra:

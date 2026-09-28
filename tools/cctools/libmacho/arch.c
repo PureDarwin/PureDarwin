@@ -83,6 +83,10 @@ static const NXArchInfo ArchInfoTable[] = {
 	 "ARM64_32"},
     {"arm64e",  CPU_TYPE_ARM64,  CPU_SUBTYPE_ARM64E,       NX_LittleEndian,
 	 "ARM64E"},
+#ifdef CPU_TYPE_RISCV64
+    {"riscv64", CPU_TYPE_RISCV64, CPU_SUBTYPE_RISCV_ALL,    NX_LittleEndian,
+	 "RISCV64"},
+#endif
     {"any",    CPU_TYPE_ANY,     CPU_SUBTYPE_MULTIPLE,     NX_UnknownByteOrder,
 	 "Architecture Independent"},
     {"veo",    CPU_TYPE_VEO,	 CPU_SUBTYPE_VEO_ALL,  	   NX_BigEndian,

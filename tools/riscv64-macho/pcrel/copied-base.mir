@@ -1,0 +1,21 @@
+# the auipc result reaches its far %pcrel_lo user through a copy in a callee-saved register,
+# the shape register allocation left in objc-test.m
+--- |
+  target triple = "riscv64-apple-macosx11.0.0"
+  @g = global i64 0
+  define i64 @copied() { ret i64 0 }
+...
+---
+name: copied
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $x21
+    $x11 = AUIPC target-flags(riscv-pcrel-hi) @g, pre-instr-symbol <mcsymbol Lpcrel_hi0>
+    $x10 = LD $x11, target-flags(riscv-pcrel-lo) <mcsymbol Lpcrel_hi0>
+    $x21 = ADDI killed $x11, 0
+    INLINEASM &".fill 1100, 4, 0x00000013", 1
+    $x12 = LD killed $x21, target-flags(riscv-pcrel-lo) <mcsymbol Lpcrel_hi0>
+    $x10 = ADD killed $x10, killed $x12
+    PseudoRET implicit $x10
+...

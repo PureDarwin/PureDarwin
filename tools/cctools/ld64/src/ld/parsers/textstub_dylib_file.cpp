@@ -406,6 +406,14 @@ static ld::dylib::File* parseAsArchitecture(const uint8_t* fileContent, uint64_t
 		case CPU_TYPE_ARM64_32:
 			return Parser<arm64_32>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			return Parser<riscv32>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			return Parser<riscv64>::parse(path, fileContent, fileLength, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
+#endif
 		default:
 			throwf("unsupported architecture for tbd file");
 	}
@@ -437,6 +445,14 @@ static ld::dylib::File *parseAsArchitecture(const char *path, tapi::LinkerInterf
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
 			return Parser<arm64_32>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			return Parser<riscv32>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			return Parser<riscv64>::parse(path, file, modTime, ordinal, opts, indirectDylib, fromSDK, architecture, subArchitecture);
 #endif
 		default:
 			throwf("unsupported architecture for tbd file");

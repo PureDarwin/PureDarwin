@@ -167,6 +167,13 @@ private:
 												const Registers_arm64&, const typename CFI_Parser<A>::PrologInfo& prolog,
 												char warningBuffer[1024]);
 	
+	// riscv specific variants, riscv has no compact unwind so every fde stays dwarf
+	static bool   isReturnAddressRegister(int regNum, const Registers_riscv&)	{ return regNum == 1; }
+	static compact_unwind_encoding_t encodeToUseDwarf(const Registers_riscv&)	{ return UNWIND_RISCV_MODE_DWARF; }
+	static compact_unwind_encoding_t createCompactEncodingFromProlog(A& addressSpace, pint_t funcAddr,
+												const Registers_riscv&, const typename CFI_Parser<A>::PrologInfo& prolog,
+												char warningBuffer[1024])		{ warningBuffer[0] = '\0'; return UNWIND_RISCV_MODE_DWARF; }
+
   // arm specific variants
 	static bool   isReturnAddressRegister(int regNum, const Registers_arm&);
 	static pint_t getCFA(A& addressSpace, const typename CFI_Parser<A>::PrologInfo& prolog, const Registers_arm&);

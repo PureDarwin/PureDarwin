@@ -718,6 +718,24 @@ struct Fixup
 					kindStoreTargetAddressLittleEndianAuth64,	// kindSetTargetAddress + kindStoreLittleEndianAuth64
 					kindSetAuthData,
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+					kindStoreRISCVBranch20,
+					kindStoreRISCVhi20,
+					kindStoreRISCVlo12,
+					kindStoreRISCVhi20GOT,
+					kindStoreRISCVlo12GOT,
+					kindStoreRISCVhi20PCRel,
+					kindStoreRISCVlo12PCRel,
+					kindStoreRISCVhi20PCRelGOT,
+					kindStoreRISCVlo12PCRelGOT,
+					kindStoreRISCVTLVPLoadHi20,
+					kindStoreRISCVTLVPLoadLo12,
+					// usdt probe call sites, patched to a nop or li a0, 0
+					kindStoreRISCVDtraceCallSiteNop,
+					kindStoreRISCVDtraceIsEnableSiteClear,
+					// a pc-relative ld/lw of a slot rewritten as an addi of the slot's target
+					kindStoreRISCVlo12PCRelLoadToAddi,
+#endif
 			};
 
 #if SUPPORT_ARCH_arm64e
@@ -919,6 +937,10 @@ struct Fixup
 			case ld::Fixup::kindStoreARMDtraceIsEnableSiteClear:
 			case ld::Fixup::kindStoreARM64DtraceCallSiteNop:
 			case ld::Fixup::kindStoreARM64DtraceIsEnableSiteClear:
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+			case ld::Fixup::kindStoreRISCVDtraceCallSiteNop:
+			case ld::Fixup::kindStoreRISCVDtraceIsEnableSiteClear:
+#endif
 			case ld::Fixup::kindStoreThumbDtraceCallSiteNop:
 			case ld::Fixup::kindStoreThumbDtraceIsEnableSiteClear:
 				return isObjectFile;
@@ -979,6 +1001,19 @@ struct Fixup
 			case ld::Fixup::kindStoreTargetAddressARM64TLVPLoadNowLeaPageOff12:
 #endif
 				return true;
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+			case ld::Fixup::kindStoreRISCVhi20PCRel:
+			case ld::Fixup::kindStoreRISCVlo12PCRel:
+			case ld::Fixup::kindStoreRISCVhi20PCRelGOT:
+			case ld::Fixup::kindStoreRISCVlo12PCRelGOT:
+			case ld::Fixup::kindStoreRISCVTLVPLoadHi20:
+			case ld::Fixup::kindStoreRISCVTLVPLoadLo12:
+			case ld::Fixup::kindStoreRISCVlo12PCRelLoadToAddi:
+				return true;
+			// calls out of a kext stay external so the collection builder can bind them
+			case ld::Fixup::kindStoreRISCVBranch20:
+				return !isKextBundle;
+#endif
 			case ld::Fixup::kindStoreTargetAddressX86BranchPCRel32:
 #if SUPPORT_ARCH_arm64
 			case ld::Fixup::kindStoreTargetAddressARM64Branch26:

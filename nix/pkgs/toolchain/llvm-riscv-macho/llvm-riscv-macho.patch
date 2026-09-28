@@ -1,0 +1,1751 @@
+diff --git a/include/llvm/BinaryFormat/MachO.h b/include/llvm/BinaryFormat/MachO.h
+index 5dbdfb13d..b8480595e 100644
+--- a/include/llvm/BinaryFormat/MachO.h
++++ b/include/llvm/BinaryFormat/MachO.h
+@@ -477,6 +477,29 @@ enum RelocationInfoType {
+   // An authenticated pointer.
+   ARM64_RELOC_AUTHENTICATED_POINTER = 11,
+ 
++  // riscv r_type values as ld64 defines them, a pc-relative LO12 keeps the
++  // distance back to its paired AUIPC in its own immediate
++  RISCV_RELOC_UNSIGNED = 0,
++  // must be followed by a RISCV_RELOC_UNSIGNED
++  RISCV_RELOC_SUBTRACTOR = 1,
++  // a JAL with a 20-bit displacement
++  RISCV_RELOC_BRANCH20 = 2,
++  // upper 20 bits for an AUIPC when pc-relative, a LUI otherwise
++  RISCV_RELOC_HI20 = 3,
++  // lower 12 bits of an I-type or S-type instruction
++  RISCV_RELOC_LO12 = 4,
++  // RISCV_RELOC_HI20 and RISCV_RELOC_LO12 aimed at the symbol's GOT slot
++  RISCV_RELOC_HI20_GOT = 5,
++  RISCV_RELOC_LO12_GOT = 6,
++  // a 32-bit pc-relative offset to a GOT slot
++  RISCV_RELOC_POINTER_TO_GOT = 7,
++  // sign-extended 24-bit addend for the BRANCH20, HI20 or LO12 after it
++  RISCV_RELOC_ADDEND = 8,
++  // auipc and load of a thread local variable's descriptor pointer, always
++  // pc-relative, the linker may turn the load into an addi
++  RISCV_RELOC_TLVP_LOAD_HI20 = 9,
++  RISCV_RELOC_TLVP_LOAD_LO12 = 10,
++
+   // Constant values for the r_type field in an x86_64 architecture
+   // llvm::MachO::relocation_info or llvm::MachO::scattered_relocation_info
+   // structure
+@@ -1574,6 +1597,7 @@ enum CPUType {
+   CPU_TYPE_POWERPC64 = CPU_TYPE_POWERPC | CPU_ARCH_ABI64,
+ 
+   CPU_TYPE_RISCV = 24,
++  CPU_TYPE_RISCV64 = CPU_TYPE_RISCV | CPU_ARCH_ABI64,
+ };
+ 
+ enum : uint32_t {
+diff --git a/include/llvm/IR/RuntimeLibcalls.td b/include/llvm/IR/RuntimeLibcalls.td
+index 9b081e9d6..598b14ed0 100644
+--- a/include/llvm/IR/RuntimeLibcalls.td
++++ b/include/llvm/IR/RuntimeLibcalls.td
+@@ -1990,7 +1990,10 @@ def isRISCV64 : RuntimeLibcallPredicate<"TT.isRISCV64()">;
+ def RISCVSystemLibrary
+     : SystemRuntimeLibrary<isRISCV,
+       (add DefaultRuntimeLibcallImpls, __riscv_flush_icache,
+-           LibcallImpls<(add Int128RTLibcalls), isRISCV64>)>;
++           LibcallImpls<(add Int128RTLibcalls), isRISCV64>,
++           // darwin libSystem names, as on aarch64 darwin
++           LibcallImpls<(add bzero), isOSDarwin>,
++           DarwinExp10, DarwinSinCosStret)>;
+ 
+ //===----------------------------------------------------------------------===//
+ // SPARC Runtime Libcalls
+diff --git a/include/llvm/TextAPI/Architecture.def b/include/llvm/TextAPI/Architecture.def
+index 58ef31b25..7d52f176d 100644
+--- a/include/llvm/TextAPI/Architecture.def
++++ b/include/llvm/TextAPI/Architecture.def
+@@ -43,3 +43,7 @@ ARCHINFO(arm64e, MachO::CPU_TYPE_ARM64, MachO::CPU_SUBTYPE_ARM64E, 64)
+ /// ARM64_32 architectures sorted by cpu sub type id
+ ///
+ ARCHINFO(arm64_32, MachO::CPU_TYPE_ARM64_32, MachO::CPU_SUBTYPE_ARM64_32_V8, 32)
++
++// riscv, cpu type 24 as ld64 defines it
++ARCHINFO(riscv32, MachO::CPU_TYPE_RISCV, MachO::CPU_SUBTYPE_RISCV_ALL, 32)
++ARCHINFO(riscv64, MachO::CPU_TYPE_RISCV64, MachO::CPU_SUBTYPE_RISCV_ALL, 64)
+diff --git a/lib/BinaryFormat/MachO.cpp b/lib/BinaryFormat/MachO.cpp
+index f46b9d514..9c08e9407 100644
+--- a/lib/BinaryFormat/MachO.cpp
++++ b/lib/BinaryFormat/MachO.cpp
+@@ -89,6 +89,10 @@ Expected<uint32_t> MachO::getCPUType(const Triple &T) {
+     return MachO::CPU_TYPE_POWERPC;
+   if (T.getArch() == Triple::ppc64)
+     return MachO::CPU_TYPE_POWERPC64;
++  if (T.getArch() == Triple::riscv32)
++    return MachO::CPU_TYPE_RISCV;
++  if (T.getArch() == Triple::riscv64)
++    return MachO::CPU_TYPE_RISCV64;
+   return unsupported("type", T);
+ }
+ 
+@@ -103,6 +107,8 @@ Expected<uint32_t> MachO::getCPUSubType(const Triple &T) {
+     return getARM64SubType(T);
+   if (T.getArch() == Triple::ppc || T.getArch() == Triple::ppc64)
+     return getPowerPCSubType(T);
++  if (T.isRISCV())
++    return MachO::CPU_SUBTYPE_RISCV_ALL;
+   return unsupported("subtype", T);
+ }
+ 
+diff --git a/lib/Object/MachOObjectFile.cpp b/lib/Object/MachOObjectFile.cpp
+index 5db264207..fbf13a427 100644
+--- a/lib/Object/MachOObjectFile.cpp
++++ b/lib/Object/MachOObjectFile.cpp
+@@ -1187,6 +1187,25 @@ static Error checkThreadCommand(const MachOObjectFile &Obj,
+                               "flavor number " + Twine(nflavor) + " in " +
+                               CmdName + " command");
+       }
++    } else if (cputype == MachO::CPU_TYPE_RISCV ||
++               cputype == MachO::CPU_TYPE_RISCV64) {
++      // ld64's riscv thread state, x0 through x31 then pc, register sized
++      uint32_t RegSize = cputype == MachO::CPU_TYPE_RISCV64 ? 8 : 4;
++      if (flavor != 1)
++        return malformedError("load command " + Twine(LoadCommandIndex) +
++                              " unknown flavor (" + Twine(flavor) + ") for "
++                              "flavor number " + Twine(nflavor) + " in " +
++                              CmdName + " command");
++      if (count != 33 * RegSize / 4)
++        return malformedError("load command " + Twine(LoadCommandIndex) +
++                              " count not the RISC-V thread state size for "
++                              "flavor number " + Twine(nflavor) + " in " +
++                              CmdName + " command");
++      if (state + 33 * RegSize > end)
++        return malformedError("load command " + Twine(LoadCommandIndex) +
++                              " RISC-V thread state extends past end of "
++                              "command in " + CmdName + " command");
++      state += 33 * RegSize;
+     } else {
+       return malformedError("unknown cputype (" + Twine(cputype) + ") load "
+                             "command " + Twine(LoadCommandIndex) + " for " +
+@@ -2376,6 +2395,23 @@ void MachOObjectFile::getRelocationTypeName(
+         res = Table[RType];
+       break;
+     }
++    case Triple::riscv32:
++    case Triple::riscv64: {
++      static const char *const Table[] = {
++        "RISCV_RELOC_UNSIGNED",       "RISCV_RELOC_SUBTRACTOR",
++        "RISCV_RELOC_BRANCH20",       "RISCV_RELOC_HI20",
++        "RISCV_RELOC_LO12",           "RISCV_RELOC_HI20_GOT",
++        "RISCV_RELOC_LO12_GOT",       "RISCV_RELOC_POINTER_TO_GOT",
++        "RISCV_RELOC_ADDEND",         "RISCV_RELOC_TLVP_LOAD_HI20",
++        "RISCV_RELOC_TLVP_LOAD_LO12"
++      };
++
++      if (RType >= std::size(Table))
++        res = "Unknown";
++      else
++        res = Table[RType];
++      break;
++    }
+     case Triple::UnknownArch:
+       res = "Unknown";
+       break;
+@@ -2668,6 +2704,8 @@ StringRef MachOObjectFile::getFileFormatName() const {
+       return "Mach-O arm64 (ILP32)";
+     case MachO::CPU_TYPE_POWERPC:
+       return "Mach-O 32-bit ppc";
++    case MachO::CPU_TYPE_RISCV:
++      return "Mach-O 32-bit riscv";
+     default:
+       return "Mach-O 32-bit unknown";
+     }
+@@ -2680,6 +2718,8 @@ StringRef MachOObjectFile::getFileFormatName() const {
+     return "Mach-O arm64";
+   case MachO::CPU_TYPE_POWERPC64:
+     return "Mach-O 64-bit ppc64";
++  case MachO::CPU_TYPE_RISCV64:
++    return "Mach-O 64-bit riscv64";
+   default:
+     return "Mach-O 64-bit unknown";
+   }
+@@ -2701,6 +2741,10 @@ Triple::ArchType MachOObjectFile::getArch(uint32_t CPUType, uint32_t CPUSubType)
+     return Triple::ppc;
+   case MachO::CPU_TYPE_POWERPC64:
+     return Triple::ppc64;
++  case MachO::CPU_TYPE_RISCV:
++    return Triple::riscv32;
++  case MachO::CPU_TYPE_RISCV64:
++    return Triple::riscv64;
+   default:
+     return Triple::UnknownArch;
+   }
+@@ -2838,6 +2882,29 @@ Triple MachOObjectFile::getArchTriple(uint32_t CPUType, uint32_t CPUSubType,
+     default:
+       return Triple();
+     }
++  case MachO::CPU_TYPE_RISCV:
++    switch (CPUSubType & ~MachO::CPU_SUBTYPE_MASK) {
++    case MachO::CPU_SUBTYPE_RISCV_ALL:
++      // mach-o carries no isa attributes, assume the common compressed profile
++      if (McpuDefault)
++        *McpuDefault = "sifive-e31";
++      if (ArchFlag)
++        *ArchFlag = "riscv32";
++      return Triple("riscv32-apple-darwin");
++    default:
++      return Triple();
++    }
++  case MachO::CPU_TYPE_RISCV64:
++    switch (CPUSubType & ~MachO::CPU_SUBTYPE_MASK) {
++    case MachO::CPU_SUBTYPE_RISCV_ALL:
++      if (McpuDefault)
++        *McpuDefault = "sifive-u74";
++      if (ArchFlag)
++        *ArchFlag = "riscv64";
++      return Triple("riscv64-apple-darwin");
++    default:
++      return Triple();
++    }
+   default:
+     return Triple();
+   }
+@@ -2853,7 +2920,7 @@ bool MachOObjectFile::isValidArch(StringRef ArchFlag) {
+ }
+ 
+ ArrayRef<StringRef> MachOObjectFile::getValidArchs() {
+-  static const std::array<StringRef, 18> ValidArchs = {{
++  static const std::array<StringRef, 20> ValidArchs = {{
+       "i386",
+       "x86_64",
+       "x86_64h",
+@@ -2872,6 +2939,8 @@ ArrayRef<StringRef> MachOObjectFile::getValidArchs() {
+       "arm64_32",
+       "ppc",
+       "ppc64",
++      "riscv32",
++      "riscv64",
+   }};
+ 
+   return ValidArchs;
+diff --git a/lib/Target/RISCV/AsmParser/RISCVAsmParser.cpp b/lib/Target/RISCV/AsmParser/RISCVAsmParser.cpp
+index a143d85f6..5754510b6 100644
+--- a/lib/Target/RISCV/AsmParser/RISCVAsmParser.cpp
++++ b/lib/Target/RISCV/AsmParser/RISCVAsmParser.cpp
+@@ -930,7 +930,7 @@ public:
+     return RISCVAsmParser::classifySymbolRef(getImm(), VK) &&
+            (VK == ELF::R_RISCV_PCREL_HI20 || VK == ELF::R_RISCV_GOT_HI20 ||
+             VK == ELF::R_RISCV_TLS_GOT_HI20 || VK == ELF::R_RISCV_TLS_GD_HI20 ||
+-            VK == ELF::R_RISCV_TLSDESC_HI20);
++            VK == ELF::R_RISCV_TLSDESC_HI20 || VK == RISCV::S_MACHO_TLVP_HI);
+   }
+ 
+   bool isImmZero() const {
+diff --git a/lib/Target/RISCV/CMakeLists.txt b/lib/Target/RISCV/CMakeLists.txt
+index 47329b2c2..48a80632e 100644
+--- a/lib/Target/RISCV/CMakeLists.txt
++++ b/lib/Target/RISCV/CMakeLists.txt
+@@ -53,6 +53,7 @@ add_llvm_target(RISCVCodeGen
+   RISCVLoadStoreOptimizer.cpp
+   RISCVMachineFunctionInfo.cpp
+   RISCVMakeCompressible.cpp
++  RISCVMachOPCRelLo.cpp
+   RISCVMergeBaseOffset.cpp
+   RISCVMoveMerger.cpp
+   RISCVOptWInstrs.cpp
+diff --git a/lib/Target/RISCV/MCTargetDesc/CMakeLists.txt b/lib/Target/RISCV/MCTargetDesc/CMakeLists.txt
+index e68c956f8..c1b21c015 100644
+--- a/lib/Target/RISCV/MCTargetDesc/CMakeLists.txt
++++ b/lib/Target/RISCV/MCTargetDesc/CMakeLists.txt
+@@ -2,6 +2,7 @@ add_llvm_component_library(LLVMRISCVDesc
+   RISCVAsmBackend.cpp
+   RISCVBaseInfo.cpp
+   RISCVELFObjectWriter.cpp
++  RISCVMachObjectWriter.cpp
+   RISCVInstPrinter.cpp
+   RISCVMCAsmInfo.cpp
+   RISCVMCCodeEmitter.cpp
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.cpp b/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.cpp
+index df3028e05..731e31b6b 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.cpp
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.cpp
+@@ -8,10 +8,12 @@
+ 
+ #include "RISCVAsmBackend.h"
+ #include "RISCVFixupKinds.h"
++#include "RISCVMCAsmInfo.h"
+ #include "llvm/ADT/APInt.h"
+ #include "llvm/MC/MCAsmInfo.h"
+ #include "llvm/MC/MCAssembler.h"
+ #include "llvm/MC/MCContext.h"
++#include "llvm/BinaryFormat/MachO.h"
+ #include "llvm/MC/MCELFObjectWriter.h"
+ #include "llvm/MC/MCExpr.h"
+ #include "llvm/MC/MCObjectWriter.h"
+@@ -35,7 +37,8 @@ static cl::opt<bool> ULEB128Reloc(
+ RISCVAsmBackend::RISCVAsmBackend(const MCSubtargetInfo &STI, uint8_t OSABI,
+                                  bool Is64Bit, const MCTargetOptions &Options)
+     : MCAsmBackend(llvm::endianness::little), STI(STI), OSABI(OSABI),
+-      Is64Bit(Is64Bit), TargetOptions(Options) {
++      Is64Bit(Is64Bit), IsMachO(STI.getTargetTriple().isOSBinFormatMachO()),
++      TargetOptions(Options) {
+   RISCVFeatures::validate(STI.getTargetTriple(), STI.getFeatureBits());
+ }
+ 
+@@ -303,6 +306,9 @@ void RISCVAsmBackend::relaxInstruction(MCInst &Inst,
+ 
+ bool RISCVAsmBackend::relaxDwarfLineAddr(MCDwarfLineAddrFragment &DF,
+                                          bool &WasRelaxed) const {
++  // mach-o code never moves after assembly, so the generic fixed advance is exact
++  if (IsMachO)
++    return false;
+   MCContext &C = getContext();
+ 
+   int64_t LineDelta = DF.getLineDelta();
+@@ -369,6 +375,8 @@ bool RISCVAsmBackend::relaxDwarfLineAddr(MCDwarfLineAddrFragment &DF,
+ 
+ bool RISCVAsmBackend::relaxDwarfCFA(MCDwarfCallFrameFragment &DF,
+                                     bool &WasRelaxed) const {
++  if (IsMachO)
++    return false;
+   const MCExpr &AddrDelta = DF.getAddrDelta();
+   SmallVector<MCFixup, 2> Fixups;
+   size_t OldSize = DF.getContents().size();
+@@ -691,6 +699,7 @@ static const MCFixup *getPCRelHiFixup(const MCSpecifierExpr &Expr,
+     case ELF::R_RISCV_TLS_GOT_HI20:
+     case ELF::R_RISCV_TLS_GD_HI20:
+     case ELF::R_RISCV_TLSDESC_HI20:
++    case RISCV::S_MACHO_TLVP_HI:
+       *DFOut = DF;
+       return &F;
+     }
+@@ -732,6 +741,19 @@ std::optional<bool> RISCVAsmBackend::evaluateFixup(const MCFragment &,
+   if (!AUIPCTarget.getAddSym())
+     return false;
+ 
++  // mach-o resolves the pair exactly when the auipc's own reference is resolved,
++  // which the writer decides by atom, the same test the generic path applies to it
++  if (IsMachO) {
++    const MCSymbol &SA = *AUIPCTarget.getAddSym();
++    if (SA.isUndefined() || SA.isAbsolute() ||
++        !Asm->getWriter().isSymbolRefDifferenceFullyResolvedImpl(
++            SA, *AUIPCDF, false, true))
++      return false;
++    Value = Asm->getSymbolOffset(SA) + AUIPCTarget.getConstant();
++    Value -= Asm->getFragmentOffset(*AUIPCDF) + AUIPCFixup->getOffset();
++    return AUIPCFixup->getKind() == RISCV::fixup_riscv_pcrel_hi20;
++  }
++
+   const MCSymbolELF &SA = cast<MCSymbolELF>(*AUIPCTarget.getAddSym());
+   if (SA.isUndefined())
+     return false;
+@@ -812,6 +834,13 @@ static bool relaxableFixupNeedsRelocation(const MCFixupKind Kind) {
+ bool RISCVAsmBackend::addReloc(const MCFragment &F, const MCFixup &Fixup,
+                                const MCValue &Target, uint64_t &FixedValue,
+                                bool IsResolved) {
++  // the mach-o writer turns a - b into subtractor pairs itself, nothing relaxes
++  if (IsMachO) {
++    if (!IsResolved)
++      Asm->getWriter().recordRelocation(F, Fixup, Target, FixedValue);
++    return false;
++  }
++
+   uint64_t FixedValueA, FixedValueB;
+   if (Target.getSubSym()) {
+     assert(Target.getSpecifier() == 0 &&
+@@ -920,7 +949,7 @@ bool RISCVAsmBackend::shouldInsertExtraNopBytesForCodeAlign(
+     const MCAlignFragment &AF, unsigned &Size) {
+   // Calculate Nops Size only when linker relaxation enabled.
+   const MCSubtargetInfo *STI = AF.getSubtargetInfo();
+-  if (!STI->hasFeature(RISCV::FeatureRelax))
++  if (IsMachO || !STI->hasFeature(RISCV::FeatureRelax))
+     return false;
+ 
+   unsigned MinNopLen = STI->hasFeature(RISCV::FeatureStdExtZca) ? 2 : 4;
+@@ -942,7 +971,7 @@ bool RISCVAsmBackend::shouldInsertFixupForCodeAlign(MCAssembler &Asm,
+                                                     MCAlignFragment &AF) {
+   // Insert the fixup only when linker relaxation enabled.
+   const MCSubtargetInfo *STI = AF.getSubtargetInfo();
+-  if (!STI->hasFeature(RISCV::FeatureRelax))
++  if (IsMachO || !STI->hasFeature(RISCV::FeatureRelax))
+     return false;
+ 
+   // Calculate total Nops we need to insert. If there are none to insert
+@@ -963,6 +992,10 @@ bool RISCVAsmBackend::shouldInsertFixupForCodeAlign(MCAssembler &Asm,
+ 
+ std::unique_ptr<MCObjectTargetWriter>
+ RISCVAsmBackend::createObjectTargetWriter() const {
++  if (IsMachO)
++    return createRISCVMachObjectWriter(
++        Is64Bit ? MachO::CPU_TYPE_RISCV64 : MachO::CPU_TYPE_RISCV,
++        MachO::CPU_SUBTYPE_RISCV_ALL, Is64Bit);
+   return createRISCVELFObjectWriter(OSABI, Is64Bit);
+ }
+ 
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.h b/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.h
+index 1f1a6f5fe..bb203938a 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.h
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVAsmBackend.h
+@@ -25,6 +25,8 @@ class RISCVAsmBackend : public MCAsmBackend {
+   const MCSubtargetInfo &STI;
+   uint8_t OSABI;
+   bool Is64Bit;
++  // mach-o follows ld64's relocation model, which has no linker relaxation
++  bool IsMachO;
+   const MCTargetOptions &TargetOptions;
+   // Temporary symbol used to check whether a PC-relative fixup is resolved.
+   MCSymbol *PCRelTemp = nullptr;
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVBaseInfo.h b/lib/Target/RISCV/MCTargetDesc/RISCVBaseInfo.h
+index 4c8dcf376..d567293f6 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVBaseInfo.h
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVBaseInfo.h
+@@ -283,6 +283,8 @@ enum {
+   MO_TLSDESC_LOAD_LO = 14,
+   MO_TLSDESC_ADD_LO = 15,
+   MO_TLSDESC_CALL = 16,
++  // mach-o auipc of a thread local variable's descriptor pointer
++  MO_MACHO_TLVP_HI = 17,
+ 
+   // Used to differentiate between target-specific "direct" flags and "bitmask"
+   // flags. A machine operand can only have one "direct" flag, but can have
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVELFObjectWriter.cpp b/lib/Target/RISCV/MCTargetDesc/RISCVELFObjectWriter.cpp
+index 9bf7896e1..ead9ebfc0 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVELFObjectWriter.cpp
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVELFObjectWriter.cpp
+@@ -58,6 +58,9 @@ unsigned RISCVELFObjectWriter::getRelocType(const MCFixup &Fixup,
+     if (auto *SA = Target.getAddSym())
+       cast<MCSymbolELF>(SA)->setType(ELF::STT_TLS);
+     break;
++  case RISCV::S_MACHO_TLVP_HI:
++    reportError(Fixup.getLoc(), "%tlvp_pcrel_hi is only valid in Mach-O");
++    return ELF::R_RISCV_NONE;
+   case ELF::R_RISCV_PLT32:
+   case ELF::R_RISCV_GOT32_PCREL:
+     if (Kind == FK_Data_4)
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.cpp b/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.cpp
+index 090d331d9..72567227b 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.cpp
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.cpp
+@@ -13,6 +13,7 @@
+ #include "RISCVMCAsmInfo.h"
+ #include "llvm/BinaryFormat/Dwarf.h"
+ #include "llvm/BinaryFormat/ELF.h"
++#include "llvm/MC/MCContext.h"
+ #include "llvm/MC/MCExpr.h"
+ #include "llvm/MC/MCStreamer.h"
+ #include "llvm/TargetParser/Triple.h"
+@@ -57,3 +58,41 @@ void RISCVMCAsmInfo::printSpecifierExpr(raw_ostream &OS,
+   if (HasSpecifier)
+     OS << ')';
+ }
++
++RISCVMCAsmInfoDarwin::RISCVMCAsmInfoDarwin(const Triple &TT) {
++  CodePointerSize = CalleeSaveStackSlotSize = TT.isArch64Bit() ? 8 : 4;
++  PrivateGlobalPrefix = "L";
++  PrivateLabelPrefix = "L";
++  CommentString = "#";
++  SeparatorString = ";";
++  AlignmentIsInBytes = false;
++  UsesELFSectionDirectiveForBSS = true;
++  SupportsDebugInformation = true;
++  ExceptionsType = ExceptionHandling::DwarfCFI;
++  UseAtForSpecifier = true;
++  Data16bitsDirective = "\t.half\t";
++  Data32bitsDirective = "\t.word\t";
++  initializeAtSpecifiers({{RISCV::S_MACHO_GOT, "GOT"}});
++}
++
++void RISCVMCAsmInfoDarwin::printSpecifierExpr(
++    raw_ostream &OS, const MCSpecifierExpr &Expr) const {
++  auto S = Expr.getSpecifier();
++  bool HasSpecifier = S != 0 && S != ELF::R_RISCV_CALL_PLT;
++  if (HasSpecifier)
++    OS << '%' << RISCV::getSpecifierName(S) << '(';
++  printExpr(OS, *Expr.getSubExpr());
++  if (HasSpecifier)
++    OS << ')';
++}
++
++// the cie's personality is an indirect pc-relative pointer, sym@GOT - .
++const MCExpr *RISCVMCAsmInfoDarwin::getExprForPersonalitySymbol(
++    const MCSymbol *Sym, unsigned Encoding, MCStreamer &Streamer) const {
++  MCContext &Context = Streamer.getContext();
++  const MCExpr *Res = MCSymbolRefExpr::create(Sym, RISCV::S_MACHO_GOT, Context);
++  MCSymbol *PCSym = Context.createTempSymbol();
++  Streamer.emitLabel(PCSym);
++  const MCExpr *PC = MCSymbolRefExpr::create(PCSym, Context);
++  return MCBinaryExpr::createSub(Res, PC, Context);
++}
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h b/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h
+index 097e94b61..44cd59af5 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVMCAsmInfo.h
+@@ -13,6 +13,7 @@
+ #ifndef LLVM_LIB_TARGET_RISCV_MCTARGETDESC_RISCVMCASMINFO_H
+ #define LLVM_LIB_TARGET_RISCV_MCTARGETDESC_RISCVMCASMINFO_H
+ 
++#include "llvm/MC/MCAsmInfoDarwin.h"
+ #include "llvm/MC/MCAsmInfoELF.h"
+ #include "llvm/MC/MCFixup.h"
+ 
+@@ -31,6 +32,19 @@ public:
+                           const MCSpecifierExpr &Expr) const override;
+ };
+ 
++// mach-o flavour for riscv*-apple-*, the relocation model ld64 implements
++class RISCVMCAsmInfoDarwin : public MCAsmInfoDarwin {
++public:
++  explicit RISCVMCAsmInfoDarwin(const Triple &TargetTriple);
++
++  const MCExpr *getExprForPersonalitySymbol(const MCSymbol *Sym,
++                                            unsigned Encoding,
++                                            MCStreamer &Streamer) const override;
++
++  void printSpecifierExpr(raw_ostream &OS,
++                          const MCSpecifierExpr &Expr) const override;
++};
++
+ namespace RISCV {
+ using Specifier = uint16_t;
+ // Specifiers mapping to relocation types below FirstTargetFixupKind are
+@@ -44,7 +58,11 @@ enum {
+   // Vendor-specific relocation types might conflict across vendors.
+   // Refer to them using Specifier constants.
+   S_QC_ABS20,
++  // mach-o sym@GOT, the address of the symbol's GOT slot
++  S_MACHO_GOT,
+ };
++// mach-o %tlvp_pcrel_hi has no elf relocation, it takes a raw kind past the elf range
++constexpr Specifier S_MACHO_TLVP_HI = 1024;
+ 
+ Specifier parseSpecifierName(StringRef name);
+ StringRef getSpecifierName(Specifier Kind);
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVMCCodeEmitter.cpp b/lib/Target/RISCV/MCTargetDesc/RISCVMCCodeEmitter.cpp
+index 717fba68b..8cd158dd3 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVMCCodeEmitter.cpp
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVMCCodeEmitter.cpp
+@@ -176,6 +176,21 @@ void RISCVMCCodeEmitter::expandFunctionCall(const MCInst &MI,
+ 
+   const MCExpr *CallExpr = Func.getExpr();
+ 
++  // ld64 has no auipc+jalr call relocation, a mach-o call is one jal and the
++  // linker adds branch islands when the target is out of its reach
++  if (STI.getTargetTriple().isOSBinFormatMachO()) {
++    if (const auto *Spec = dyn_cast<MCSpecifierExpr>(CallExpr))
++      CallExpr = Spec->getSubExpr();
++    MCRegister Link = (MI.getOpcode() == RISCV::PseudoTAIL ||
++                       MI.getOpcode() == RISCV::PseudoJump)
++                          ? MCRegister(RISCV::X0)
++                          : Ra;
++    TmpInst = MCInstBuilder(RISCV::JAL).addReg(Link).addExpr(CallExpr);
++    Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
++    support::endian::write(CB, Binary, llvm::endianness::little);
++    return;
++  }
++
+   // Emit AUIPC Ra, Func with R_RISCV_CALL relocation type.
+   TmpInst = MCInstBuilder(RISCV::AUIPC).addReg(Ra).addExpr(CallExpr);
+   Binary = getBinaryCodeForInstr(TmpInst, Fixups, STI);
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVMCExpr.cpp b/lib/Target/RISCV/MCTargetDesc/RISCVMCExpr.cpp
+index baa508ad3..0b5483bd9 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVMCExpr.cpp
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVMCExpr.cpp
+@@ -42,6 +42,7 @@ RISCV::Specifier RISCV::parseSpecifierName(StringRef name) {
+       .Case("tlsdesc_load_lo", ELF::R_RISCV_TLSDESC_LOAD_LO12)
+       .Case("tlsdesc_add_lo", ELF::R_RISCV_TLSDESC_ADD_LO12)
+       .Case("tlsdesc_call", ELF::R_RISCV_TLSDESC_CALL)
++      .Case("tlvp_pcrel_hi", RISCV::S_MACHO_TLVP_HI)
+       .Case("qc.abs20", RISCV::S_QC_ABS20)
+       // Used in data directives
+       .Case("pltpcrel", ELF::R_RISCV_PLT32)
+@@ -55,6 +56,10 @@ StringRef RISCV::getSpecifierName(Specifier S) {
+     llvm_unreachable("not used as %specifier()");
+   case RISCV::S_LO:
+     return "lo";
++  case RISCV::S_MACHO_GOT:
++    return "GOT";
++  case RISCV::S_MACHO_TLVP_HI:
++    return "tlvp_pcrel_hi";
+   case ELF::R_RISCV_HI20:
+     return "hi";
+   case RISCV::S_PCREL_LO:
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp b/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp
+index f66c2d5f9..b4896eb95 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.cpp
+@@ -59,7 +59,11 @@ static MCRegisterInfo *createRISCVMCRegisterInfo(const Triple &TT) {
+ static MCAsmInfo *createRISCVMCAsmInfo(const MCRegisterInfo &MRI,
+                                        const Triple &TT,
+                                        const MCTargetOptions &Options) {
+-  MCAsmInfo *MAI = new RISCVMCAsmInfo(TT);
++  MCAsmInfo *MAI;
++  if (TT.isOSBinFormatMachO())
++    MAI = new RISCVMCAsmInfoDarwin(TT);
++  else
++    MAI = new RISCVMCAsmInfo(TT);
+ 
+   unsigned SP = MRI.getDwarfRegNum(RISCV::X2, true);
+   MCCFIInstruction Inst = MCCFIInstruction::cfiDefCfa(nullptr, SP, 0);
+@@ -112,6 +116,9 @@ createRISCVObjectTargetStreamer(MCStreamer &S, const MCSubtargetInfo &STI) {
+   const Triple &TT = STI.getTargetTriple();
+   if (TT.isOSBinFormatELF())
+     return new RISCVTargetELFStreamer(S, STI);
++  // mach-o has no attribute or option sections to carry, every directive is a no-op
++  if (TT.isOSBinFormatMachO())
++    return new RISCVTargetStreamer(S);
+   return nullptr;
+ }
+ 
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.h b/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.h
+index bdee7ed4f..3618a70ec 100644
+--- a/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.h
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVMCTargetDesc.h
+@@ -36,6 +36,8 @@ MCAsmBackend *createRISCVAsmBackend(const Target &T, const MCSubtargetInfo &STI,
+ 
+ std::unique_ptr<MCObjectTargetWriter> createRISCVELFObjectWriter(uint8_t OSABI,
+                                                                  bool Is64Bit);
++std::unique_ptr<MCObjectTargetWriter>
++createRISCVMachObjectWriter(uint32_t CPUType, uint32_t CPUSubtype, bool Is64Bit);
+ } // namespace llvm
+ 
+ // Defines symbolic names for RISC-V registers.
+diff --git a/lib/Target/RISCV/MCTargetDesc/RISCVMachObjectWriter.cpp b/lib/Target/RISCV/MCTargetDesc/RISCVMachObjectWriter.cpp
+new file mode 100644
+index 000000000..a3d1858ef
+--- /dev/null
++++ b/lib/Target/RISCV/MCTargetDesc/RISCVMachObjectWriter.cpp
+@@ -0,0 +1,331 @@
++//===-- RISCVMachObjectWriter.cpp - RISC-V Mach-O Writer ------------------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// relocations follow the riscv model in ld64: extern symbols only for code,
++// addends in a leading RISCV_RELOC_ADDEND, and a pc-relative LO12 whose own
++// immediate holds the offset back to the AUIPC it pairs with
++//
++//===----------------------------------------------------------------------===//
++
++#include "MCTargetDesc/RISCVFixupKinds.h"
++#include "MCTargetDesc/RISCVMCAsmInfo.h"
++#include "MCTargetDesc/RISCVMCTargetDesc.h"
++#include "llvm/BinaryFormat/ELF.h"
++#include "llvm/BinaryFormat/MachO.h"
++#include "llvm/MC/MCAsmInfoDarwin.h"
++#include "llvm/MC/MCAssembler.h"
++#include "llvm/MC/MCContext.h"
++#include "llvm/MC/MCExpr.h"
++#include "llvm/MC/MCFixup.h"
++#include "llvm/MC/MCMachObjectWriter.h"
++#include "llvm/MC/MCSection.h"
++#include "llvm/MC/MCSectionMachO.h"
++#include "llvm/MC/MCSymbol.h"
++#include "llvm/MC/MCValue.h"
++#include "llvm/Support/Casting.h"
++#include "llvm/Support/MathExtras.h"
++
++using namespace llvm;
++
++namespace {
++
++class RISCVMachObjectWriter : public MCMachObjectTargetWriter {
++public:
++  RISCVMachObjectWriter(uint32_t CPUType, uint32_t CPUSubtype, bool Is64Bit)
++      : MCMachObjectTargetWriter(Is64Bit, CPUType, CPUSubtype) {}
++
++  void recordRelocation(MachObjectWriter *Writer, MCAssembler &Asm,
++                        const MCFragment *Fragment, const MCFixup &Fixup,
++                        MCValue Target, uint64_t &FixedValue) override;
++
++private:
++  void addReloc(MachObjectWriter *Writer, const MCFragment *Fragment,
++                uint32_t Offset, const MCSymbol *RelSymbol, unsigned Index,
++                bool PCRel, unsigned Log2Size, unsigned Type) {
++    MachO::any_relocation_info MRE;
++    MRE.r_word0 = Offset;
++    MRE.r_word1 = (Index << 0) | (unsigned(PCRel) << 24) | (Log2Size << 25) |
++                  (Type << 28);
++    Writer->addRelocation(RelSymbol, Fragment->getParent(), MRE);
++  }
++};
++
++} // end anonymous namespace
++
++// the auipc fixup a %pcrel_lo names, and the fragment it lives in
++static const MCFixup *findPCRelHi(const MCFixup &LoFixup,
++                                  const MCFragment **DFOut,
++                                  uint64_t *OffsetOut) {
++  const auto *Expr = dyn_cast<MCSpecifierExpr>(LoFixup.getValue());
++  if (!Expr)
++    return nullptr;
++  MCValue AUIPCLoc;
++  if (!Expr->getSubExpr()->evaluateAsRelocatable(AUIPCLoc, nullptr))
++    return nullptr;
++  const MCSymbol *AUIPCSymbol = AUIPCLoc.getAddSym();
++  if (!AUIPCSymbol)
++    return nullptr;
++  const auto *DF = dyn_cast_or_null<MCDataFragment>(AUIPCSymbol->getFragment());
++  if (!DF)
++    return nullptr;
++
++  uint64_t Offset = AUIPCSymbol->getOffset();
++  if (DF->getContents().size() == Offset) {
++    DF = dyn_cast_or_null<MCDataFragment>(DF->getNext());
++    if (!DF)
++      return nullptr;
++    Offset = 0;
++  }
++
++  for (const MCFixup &F : DF->getFixups()) {
++    if (F.getOffset() != Offset)
++      continue;
++    if (F.getKind() == RISCV::fixup_riscv_pcrel_hi20 ||
++        F.getKind() == ELF::R_RISCV_GOT_HI20 ||
++        F.getKind() == RISCV::S_MACHO_TLVP_HI) {
++      *DFOut = DF;
++      *OffsetOut = Offset;
++      return &F;
++    }
++    break;
++  }
++  return nullptr;
++}
++
++void RISCVMachObjectWriter::recordRelocation(
++    MachObjectWriter *Writer, MCAssembler &Asm, const MCFragment *Fragment,
++    const MCFixup &Fixup, MCValue Target, uint64_t &FixedValue) {
++  uint32_t FixupOffset = Asm.getFragmentOffset(*Fragment) + Fixup.getOffset();
++  unsigned Kind = Fixup.getKind();
++  bool PCRel = false;
++  unsigned Log2Size = 2;
++  unsigned Type;
++  // instruction relocations keep the immediate clear, their addend rides in RISCV_RELOC_ADDEND
++  bool InstReloc = true;
++  // the value a pc-relative LO12 leaves in its instruction, the distance back to the AUIPC
++  int64_t InstImm = 0;
++
++  if (mc::isRelocation(Kind)) {
++    switch (Kind) {
++    case ELF::R_RISCV_GOT_HI20:
++      Type = MachO::RISCV_RELOC_HI20_GOT;
++      PCRel = true;
++      break;
++    case RISCV::S_MACHO_TLVP_HI:
++      Type = MachO::RISCV_RELOC_TLVP_LOAD_HI20;
++      PCRel = true;
++      break;
++    default:
++      reportError(Fixup.getLoc(), "relocation type " + Twine(Kind) +
++                                      " not supported in RISC-V Mach-O");
++      return;
++    }
++  } else {
++    switch (Kind) {
++    case FK_Data_4:
++    case FK_Data_8:
++      InstReloc = false;
++      Log2Size = Kind == FK_Data_8 ? 3 : 2;
++      Type = MachO::RISCV_RELOC_UNSIGNED;
++      break;
++    case RISCV::fixup_riscv_jal:
++      Type = MachO::RISCV_RELOC_BRANCH20;
++      PCRel = true;
++      break;
++    case RISCV::fixup_riscv_hi20:
++      Type = MachO::RISCV_RELOC_HI20;
++      break;
++    case RISCV::fixup_riscv_lo12_i:
++    case RISCV::fixup_riscv_lo12_s:
++      Type = MachO::RISCV_RELOC_LO12;
++      break;
++    case RISCV::fixup_riscv_pcrel_hi20:
++      Type = MachO::RISCV_RELOC_HI20;
++      PCRel = true;
++      break;
++    case RISCV::fixup_riscv_pcrel_lo12_i:
++    case RISCV::fixup_riscv_pcrel_lo12_s: {
++      // the relocation names what the auipc names, found through the label
++      const MCFragment *HiDF;
++      uint64_t HiOffset;
++      const MCFixup *Hi = findPCRelHi(Fixup, &HiDF, &HiOffset);
++      if (!Hi) {
++        reportError(Fixup.getLoc(), "could not find corresponding %pcrel_hi");
++        return;
++      }
++      MCValue HiTarget;
++      if (!Hi->getValue()->evaluateAsRelocatable(HiTarget, &Asm)) {
++        reportError(Fixup.getLoc(), "invalid %pcrel_hi expression");
++        return;
++      }
++      if (Hi->getKind() == ELF::R_RISCV_GOT_HI20)
++        Type = MachO::RISCV_RELOC_LO12_GOT;
++      else if (Hi->getKind() == RISCV::S_MACHO_TLVP_HI)
++        Type = MachO::RISCV_RELOC_TLVP_LOAD_LO12;
++      else
++        Type = MachO::RISCV_RELOC_LO12;
++      PCRel = true;
++      Target = HiTarget;
++      InstImm = int64_t(Asm.getFragmentOffset(*HiDF) + HiOffset) -
++                int64_t(FixupOffset);
++      if (!isInt<12>(InstImm)) {
++        reportError(Fixup.getLoc(),
++                    "%pcrel_lo is too far from its %pcrel_hi for Mach-O");
++        return;
++      }
++      break;
++    }
++    case RISCV::fixup_riscv_call:
++    case RISCV::fixup_riscv_call_plt:
++      reportError(Fixup.getLoc(),
++                  "RISC-V Mach-O calls use jal, ld64 has no auipc+jalr pair");
++      return;
++    default:
++      reportError(Fixup.getLoc(), "fixup needs a relocation RISC-V Mach-O "
++                                  "cannot express, use a local label");
++      return;
++    }
++  }
++
++  int64_t Value = Target.getConstant();
++
++  if (Target.isAbsolute()) {
++    if (PCRel) {
++      reportError(Fixup.getLoc(), "pc-relative relocation of an absolute value");
++      return;
++    }
++    // symbolnum 0 with r_extern clear is the absolute section
++    FixedValue = Value;
++    addReloc(Writer, Fragment, FixupOffset, nullptr, 0, false, Log2Size,
++             MachO::RISCV_RELOC_UNSIGNED);
++    return;
++  }
++
++  // sym@GOT - . is a 32-bit pc-relative pointer to the slot, sym@GOT alone an absolute one
++  if (Target.getSpecifier() == RISCV::S_MACHO_GOT) {
++    const MCSymbol *A = Target.getAddSym();
++    const MCSymbol *B = Target.getSubSym();
++    bool AtPC = B && Asm.getSymbolOffset(*B) == FixupOffset;
++    if (InstReloc || Value || (B && !AtPC) || (!B && Log2Size != 3) ||
++        (B && Log2Size != 2)) {
++      reportError(Fixup.getLoc(), "unsupported GOT reference, use sym@GOT - .");
++      return;
++    }
++    FixedValue = 0;
++    addReloc(Writer, Fragment, FixupOffset, A, 0, B != nullptr, Log2Size,
++             MachO::RISCV_RELOC_POINTER_TO_GOT);
++    return;
++  }
++  if (Target.getSpecifier() != 0 && !InstReloc) {
++    reportError(Fixup.getLoc(), "unsupported relocation of modified symbol");
++    return;
++  }
++
++  if (const MCSymbol *B = Target.getSubSym()) {
++    // a - b, as SUBTRACTOR b followed by UNSIGNED a in the file
++    const MCSymbol *A = Target.getAddSym();
++    if (InstReloc || PCRel) {
++      reportError(Fixup.getLoc(), "unsupported relocation of a difference");
++      return;
++    }
++    // __eh_frame holds only temporary labels, so a side with no atom goes into
++    // the symbol table as a local and the relocation names it directly
++    const MCSymbol *ABase = Writer->getAtom(*A);
++    const MCSymbol *BBase = Writer->getAtom(*B);
++    if (!ABase && A->isInSection()) {
++      A->setUsedInReloc();
++      ABase = A;
++    }
++    if (!BBase && B->isInSection()) {
++      B->setUsedInReloc();
++      BBase = B;
++    }
++    if (!ABase || !BBase) {
++      reportError(Fixup.getLoc(), "difference of undefined local symbols");
++      return;
++    }
++    if (ABase == BBase) {
++      reportError(Fixup.getLoc(), "unsupported relocation with identical base");
++      return;
++    }
++    Value += (A->getFragment() ? Writer->getSymbolAddress(*A) : 0) -
++             (ABase->getFragment() ? Writer->getSymbolAddress(*ABase) : 0);
++    Value -= (B->getFragment() ? Writer->getSymbolAddress(*B) : 0) -
++             (BBase->getFragment() ? Writer->getSymbolAddress(*BBase) : 0);
++    // relocations come out reversed, so the pair reads SUBTRACTOR then UNSIGNED
++    addReloc(Writer, Fragment, FixupOffset, ABase, 0, false, Log2Size,
++             MachO::RISCV_RELOC_UNSIGNED);
++    addReloc(Writer, Fragment, FixupOffset, BBase, 0, false, Log2Size,
++             MachO::RISCV_RELOC_SUBTRACTOR);
++    FixedValue = Value;
++    return;
++  }
++
++  const MCSymbol *Symbol = Target.getAddSym();
++  const auto &Section = static_cast<const MCSectionMachO &>(*Fragment->getParent());
++  const MCSymbol *RelSymbol = nullptr;
++  unsigned Index = 0;
++
++  // literal sections split by content, so a label there must reach the symbol table
++  if (Symbol->isTemporary() && Symbol->isInSection() &&
++      !MCAsmInfoDarwin::isSectionAtomizableBySymbols(Symbol->getSection()))
++    Symbol->setUsedInReloc();
++
++  const MCSymbol *Base = Writer->getAtom(*Symbol);
++  if (Symbol->isInSection() && Section.hasAttribute(MachO::S_ATTR_DEBUG))
++    Base = nullptr;
++
++  if (Base) {
++    RelSymbol = Base;
++    if (Base != Symbol)
++      Value += Asm.getSymbolOffset(*Symbol) - Asm.getSymbolOffset(*Base);
++  } else if (!Symbol->isInSection() || Symbol->isUsedInReloc() ||
++             !Symbol->isTemporary()) {
++    // undefined, or a local that made it into the symbol table
++    RelSymbol = Symbol;
++  } else if (!InstReloc) {
++    // pointers may use a section-relative relocation
++    Index = Symbol->getSection().getOrdinal() + 1;
++    Value += Writer->getSymbolAddress(*Symbol);
++  } else {
++    Symbol->setUsedInReloc();
++    RelSymbol = Symbol;
++  }
++
++  if (!InstReloc) {
++    FixedValue = Value;
++    addReloc(Writer, Fragment, FixupOffset, RelSymbol, Index, PCRel, Log2Size,
++             Type);
++    return;
++  }
++
++  // a tlv descriptor is referenced whole
++  if (Value && (Type == MachO::RISCV_RELOC_TLVP_LOAD_HI20 ||
++                Type == MachO::RISCV_RELOC_TLVP_LOAD_LO12)) {
++    reportError(Fixup.getLoc(), "thread local variable reference with an addend");
++    return;
++  }
++
++  // the main relocation first, then its addend, which the reversed file order puts ahead
++  addReloc(Writer, Fragment, FixupOffset, RelSymbol, Index, PCRel, 2, Type);
++  if (Value) {
++    if (!isInt<24>(Value)) {
++      reportError(Fixup.getLoc(), "addend too big for relocation");
++      return;
++    }
++    addReloc(Writer, Fragment, FixupOffset, nullptr, uint32_t(Value) & 0xffffff,
++             false, 2, MachO::RISCV_RELOC_ADDEND);
++  }
++  FixedValue = InstImm;
++}
++
++std::unique_ptr<MCObjectTargetWriter>
++llvm::createRISCVMachObjectWriter(uint32_t CPUType, uint32_t CPUSubtype,
++                                  bool Is64Bit) {
++  return std::make_unique<RISCVMachObjectWriter>(CPUType, CPUSubtype, Is64Bit);
++}
+diff --git a/lib/Target/RISCV/RISCV.h b/lib/Target/RISCV/RISCV.h
+index ae9410193..c24cc8b05 100644
+--- a/lib/Target/RISCV/RISCV.h
++++ b/lib/Target/RISCV/RISCV.h
+@@ -46,6 +46,10 @@ void initializeRISCVLateBranchOptPass(PassRegistry &);
+ FunctionPass *createRISCVMakeCompressibleOptPass();
+ void initializeRISCVMakeCompressibleOptPass(PassRegistry &);
+ 
++// mach-o only, gives a far %pcrel_lo user its own auipc
++FunctionPass *createRISCVMachOPCRelLoPass();
++void initializeRISCVMachOPCRelLoPass(PassRegistry &);
++
+ FunctionPass *createRISCVGatherScatterLoweringPass();
+ void initializeRISCVGatherScatterLoweringPass(PassRegistry &);
+ 
+diff --git a/lib/Target/RISCV/RISCVAsmPrinter.cpp b/lib/Target/RISCV/RISCVAsmPrinter.cpp
+index d4f5d8fca..807b43281 100644
+--- a/lib/Target/RISCV/RISCVAsmPrinter.cpp
++++ b/lib/Target/RISCV/RISCVAsmPrinter.cpp
+@@ -109,6 +109,7 @@ public:
+ 
+   void emitStartOfAsmFile(Module &M) override;
+   void emitEndOfAsmFile(Module &M) override;
++  MCSymbol *GetCPISymbol(unsigned CPID) const override;
+ 
+   void emitFunctionEntryLabel() override;
+   bool emitDirectiveOptionArch();
+@@ -576,6 +577,16 @@ void RISCVAsmPrinter::emitStartOfAsmFile(Module &M) {
+     emitAttributes(SubtargetInfo);
+ }
+ 
++// mach-o constant pool entries get linker-private names so each is its own atom,
++// ld64 then moves and coalesces them together with every reference
++MCSymbol *RISCVAsmPrinter::GetCPISymbol(unsigned CPID) const {
++  if (!getDataLayout().getLinkerPrivateGlobalPrefix().empty())
++    return OutContext.getOrCreateSymbol(
++        Twine(getDataLayout().getLinkerPrivateGlobalPrefix()) + "CPI" +
++        Twine(getFunctionNumber()) + "_" + Twine(CPID));
++  return AsmPrinter::GetCPISymbol(CPID);
++}
++
+ void RISCVAsmPrinter::emitEndOfAsmFile(Module &M) {
+   RISCVTargetStreamer &RTS =
+       static_cast<RISCVTargetStreamer &>(*OutStreamer->getTargetStreamer());
+@@ -585,6 +596,10 @@ void RISCVAsmPrinter::emitEndOfAsmFile(Module &M) {
+     emitNoteGnuProperty(M);
+   }
+   EmitHwasanMemaccessSymbols(M);
++
++  // every function its own atom, so ld64 can dead strip, order and place islands between them
++  if (TM.getTargetTriple().isOSBinFormatMachO())
++    OutStreamer->emitSubsectionsViaSymbols();
+ }
+ 
+ void RISCVAsmPrinter::emitAttributes(const MCSubtargetInfo &SubtargetInfo) {
+@@ -1008,6 +1023,9 @@ static MCOperand lowerSymbolOperand(const MachineOperand &MO, MCSymbol *Sym,
+   case RISCVII::MO_TLSDESC_CALL:
+     Kind = ELF::R_RISCV_TLSDESC_CALL;
+     break;
++  case RISCVII::MO_MACHO_TLVP_HI:
++    Kind = RISCV::S_MACHO_TLVP_HI;
++    break;
+   }
+ 
+   const MCExpr *ME = MCSymbolRefExpr::create(Sym, Ctx);
+diff --git a/lib/Target/RISCV/RISCVCallingConv.td b/lib/Target/RISCV/RISCVCallingConv.td
+index d8c52cbde..9e29d1ffb 100644
+--- a/lib/Target/RISCV/RISCVCallingConv.td
++++ b/lib/Target/RISCV/RISCVCallingConv.td
+@@ -44,6 +44,11 @@ def CSR_NoRegs : CalleeSavedRegs<(add)>;
+ 
+ def CSR_IPRA : CalleeSavedRegs<(add X1)>;
+ 
++// the mach-o tlv thunk takes the descriptor in a0 and returns the address there,
++// it may clobber ra and t0-t2 and keeps every other gpr and all fprs
++def CSR_Darwin_TLS : CalleeSavedRegs<(add (sub (sequence "X%u", 1, 31), X1, X5, X6, X7, X10),
++                                          (sequence "F%u_D", 0, 31))>;
++
+ // Interrupt handler needs to save/restore all registers that are used,
+ // both Caller and Callee saved registers.
+ def CSR_Interrupt : CalleeSavedRegs<(add X1, (sequence "X%u", 5, 31))>;
+diff --git a/lib/Target/RISCV/RISCVExpandPseudoInsts.cpp b/lib/Target/RISCV/RISCVExpandPseudoInsts.cpp
+index cb57c4377..12e5e84a3 100644
+--- a/lib/Target/RISCV/RISCVExpandPseudoInsts.cpp
++++ b/lib/Target/RISCV/RISCVExpandPseudoInsts.cpp
+@@ -493,6 +493,9 @@ private:
+   bool expandLoadTLSDescAddress(MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator MBBI,
+                                 MachineBasicBlock::iterator &NextMBBI);
++  bool expandLoadTLVPAddress(MachineBasicBlock &MBB,
++                             MachineBasicBlock::iterator MBBI,
++                             MachineBasicBlock::iterator &NextMBBI);
+ 
+ #ifndef NDEBUG
+   unsigned getInstSizeInBytes(const MachineFunction &MF) const {
+@@ -554,6 +557,8 @@ bool RISCVPreRAExpandPseudo::expandMI(MachineBasicBlock &MBB,
+     return expandLoadTLSGDAddress(MBB, MBBI, NextMBBI);
+   case RISCV::PseudoLA_TLSDESC:
+     return expandLoadTLSDescAddress(MBB, MBBI, NextMBBI);
++  case RISCV::PseudoLA_TLVP:
++    return expandLoadTLVPAddress(MBB, MBBI, NextMBBI);
+   }
+   return false;
+ }
+@@ -620,6 +625,14 @@ bool RISCVPreRAExpandPseudo::expandLoadTLSGDAddress(
+                              RISCV::ADDI);
+ }
+ 
++bool RISCVPreRAExpandPseudo::expandLoadTLVPAddress(
++    MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
++    MachineBasicBlock::iterator &NextMBBI) {
++  unsigned SecondOpcode = STI->is64Bit() ? RISCV::LD : RISCV::LW;
++  return expandAuipcInstPair(MBB, MBBI, NextMBBI, RISCVII::MO_MACHO_TLVP_HI,
++                             SecondOpcode);
++}
++
+ bool RISCVPreRAExpandPseudo::expandLoadTLSDescAddress(
+     MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+     MachineBasicBlock::iterator &NextMBBI) {
+diff --git a/lib/Target/RISCV/RISCVISelLowering.cpp b/lib/Target/RISCV/RISCVISelLowering.cpp
+index 567ef2ff1..7f384343c 100644
+--- a/lib/Target/RISCV/RISCVISelLowering.cpp
++++ b/lib/Target/RISCV/RISCVISelLowering.cpp
+@@ -633,6 +633,18 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
+     setOperationAction(ISD::STRICT_FP16_TO_FP, MVT::f64, Expand);
+   }
+ 
++  // darwin __sincos_stret returns the pair in fa0/fa1, which only a hard float
++  // abi of at least that width can express as a two element struct
++  if (getLibcallName(RTLIB::SINCOS_STRET_F32) &&
++      getLibcallName(RTLIB::SINCOS_STRET_F64)) {
++    bool FABI = ABI == RISCVABI::ABI_ILP32F || ABI == RISCVABI::ABI_LP64F;
++    bool DABI = ABI == RISCVABI::ABI_ILP32D || ABI == RISCVABI::ABI_LP64D;
++    if (Subtarget.hasStdExtF() && (FABI || DABI))
++      setOperationAction(ISD::FSINCOS, MVT::f32, Custom);
++    if (Subtarget.hasStdExtD() && DABI)
++      setOperationAction(ISD::FSINCOS, MVT::f64, Custom);
++  }
++
+   if (Subtarget.is64Bit()) {
+     setOperationAction({ISD::FP_TO_UINT, ISD::FP_TO_SINT,
+                         ISD::STRICT_FP_TO_UINT, ISD::STRICT_FP_TO_SINT},
+@@ -7220,6 +7232,8 @@ SDValue RISCVTargetLowering::LowerOperation(SDValue Op,
+     return LowerATOMIC_FENCE(Op, DAG, Subtarget);
+   case ISD::GlobalAddress:
+     return lowerGlobalAddress(Op, DAG);
++  case ISD::FSINCOS:
++    return lowerFSINCOS(Op, DAG);
+   case ISD::BlockAddress:
+     return lowerBlockAddress(Op, DAG);
+   case ISD::ConstantPool:
+@@ -8749,7 +8763,38 @@ SDValue RISCVTargetLowering::lowerGlobalAddress(SDValue Op,
+   GlobalAddressSDNode *N = cast<GlobalAddressSDNode>(Op);
+   assert(N->getOffset() == 0 && "unexpected offset in global node");
+   const GlobalValue *GV = N->getGlobal();
+-  return getAddr(N, DAG, GV->isDSOLocal(), GV->hasExternalWeakLinkage());
++  // mach-o producers leave dso_local off, a strong definition is still local to the image
++  bool IsLocal = GV->isDSOLocal() ||
++                 (Subtarget.getTargetTriple().isOSBinFormatMachO() &&
++                  getTargetMachine().shouldAssumeDSOLocal(GV));
++  return getAddr(N, DAG, IsLocal, GV->hasExternalWeakLinkage());
++}
++
++SDValue RISCVTargetLowering::lowerFSINCOS(SDValue Op,
++                                          SelectionDAG &DAG) const {
++  // one call to __sincos_stret or __sincosf_stret, sin and cos come back as
++  // the two struct members
++  SDLoc DL(Op);
++  SDValue Arg = Op.getOperand(0);
++  EVT ArgVT = Arg.getValueType();
++  Type *ArgTy = ArgVT.getTypeForEVT(*DAG.getContext());
++
++  ArgListTy Args;
++  ArgListEntry Entry;
++  Entry.Node = Arg;
++  Entry.Ty = ArgTy;
++  Args.push_back(Entry);
++
++  RTLIB::Libcall LC = ArgVT == MVT::f64 ? RTLIB::SINCOS_STRET_F64
++                                        : RTLIB::SINCOS_STRET_F32;
++  SDValue Callee = DAG.getExternalSymbol(getLibcallName(LC),
++                                         getPointerTy(DAG.getDataLayout()));
++  StructType *RetTy = StructType::get(ArgTy, ArgTy);
++  TargetLowering::CallLoweringInfo CLI(DAG);
++  CLI.setDebugLoc(DL)
++      .setChain(DAG.getEntryNode())
++      .setLibCallee(getLibcallCallingConv(LC), RetTy, Callee, std::move(Args));
++  return LowerCallTo(CLI).first;
+ }
+ 
+ SDValue RISCVTargetLowering::lowerBlockAddress(SDValue Op,
+@@ -8869,6 +8914,45 @@ SDValue RISCVTargetLowering::getTLSDescAddr(GlobalAddressSDNode *N,
+   return SDValue(DAG.getMachineNode(RISCV::PseudoLA_TLSDESC, DL, Ty, Addr), 0);
+ }
+ 
++// mach-o reaches a thread local through its descriptor, whose first word is a
++// thunk taking the descriptor in a0 and returning the variable's address in a0
++SDValue RISCVTargetLowering::getDarwinTLSAddr(GlobalAddressSDNode *N,
++                                              SelectionDAG &DAG) const {
++  SDLoc DL(N);
++  MVT PtrVT = getPointerTy(DAG.getDataLayout());
++  MachineFunction &MF = DAG.getMachineFunction();
++  const GlobalValue *GV = N->getGlobal();
++
++  SDValue Sym = DAG.getTargetGlobalAddress(GV, DL, PtrVT, 0, 0);
++  SDValue DescAddr =
++      SDValue(DAG.getMachineNode(RISCV::PseudoLA_TLVP, DL, PtrVT, Sym), 0);
++
++  // the thunk pointer never changes once the image is bound
++  SDValue Chain = DAG.getEntryNode();
++  SDValue Thunk = DAG.getLoad(
++      PtrVT, DL, Chain, DescAddr, MachinePointerInfo::getGOT(MF),
++      Align(PtrVT.getSizeInBits() / 8),
++      MachineMemOperand::MOInvariant | MachineMemOperand::MODereferenceable);
++  Chain = Thunk.getValue(1);
++
++  MF.getFrameInfo().setAdjustsStack(true);
++  Chain = DAG.getCALLSEQ_START(Chain, 0, 0, DL);
++  SDValue Glue;
++  Chain = DAG.getCopyToReg(Chain, DL, RISCV::X10, DescAddr, Glue);
++  Glue = Chain.getValue(1);
++
++  const auto *TRI = Subtarget.getRegisterInfo();
++  SDValue Ops[] = {Chain, Thunk, DAG.getRegister(RISCV::X10, PtrVT),
++                   DAG.getRegisterMask(TRI->getDarwinTLSCallPreservedMask()),
++                   Glue};
++  Chain = DAG.getNode(RISCVISD::CALL, DL, DAG.getVTList(MVT::Other, MVT::Glue),
++                      Ops);
++  Glue = Chain.getValue(1);
++  Chain = DAG.getCALLSEQ_END(Chain, 0, 0, Glue, DL);
++  Glue = Chain.getValue(1);
++  return DAG.getCopyFromReg(Chain, DL, RISCV::X10, PtrVT, Glue);
++}
++
+ SDValue RISCVTargetLowering::lowerGlobalTLSAddress(SDValue Op,
+                                                    SelectionDAG &DAG) const {
+   GlobalAddressSDNode *N = cast<GlobalAddressSDNode>(Op);
+@@ -8877,6 +8961,10 @@ SDValue RISCVTargetLowering::lowerGlobalTLSAddress(SDValue Op,
+   if (DAG.getTarget().useEmulatedTLS())
+     return LowerToTLSEmulatedModel(N, DAG);
+ 
++  // every mach-o tls model goes through the tlv descriptor
++  if (Subtarget.getTargetTriple().isOSBinFormatMachO())
++    return getDarwinTLSAddr(N, DAG);
++
+   TLSModel::Model Model = getTargetMachine().getTLSModel(N->getGlobal());
+ 
+   if (DAG.getMachineFunction().getFunction().getCallingConv() ==
+diff --git a/lib/Target/RISCV/RISCVISelLowering.h b/lib/Target/RISCV/RISCVISelLowering.h
+index 00e969056..698f9a849 100644
+--- a/lib/Target/RISCV/RISCVISelLowering.h
++++ b/lib/Target/RISCV/RISCVISelLowering.h
+@@ -490,9 +490,11 @@ private:
+                            bool UseGOT) const;
+   SDValue getDynamicTLSAddr(GlobalAddressSDNode *N, SelectionDAG &DAG) const;
+   SDValue getTLSDescAddr(GlobalAddressSDNode *N, SelectionDAG &DAG) const;
++  SDValue getDarwinTLSAddr(GlobalAddressSDNode *N, SelectionDAG &DAG) const;
+ 
+   SDValue lowerConstantFP(SDValue Op, SelectionDAG &DAG) const;
+   SDValue lowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
++  SDValue lowerFSINCOS(SDValue Op, SelectionDAG &DAG) const;
+   SDValue lowerBlockAddress(SDValue Op, SelectionDAG &DAG) const;
+   SDValue lowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
+   SDValue lowerJumpTable(SDValue Op, SelectionDAG &DAG) const;
+diff --git a/lib/Target/RISCV/RISCVInstrInfo.cpp b/lib/Target/RISCV/RISCVInstrInfo.cpp
+index d3ade3174..b8d1dbd12 100644
+--- a/lib/Target/RISCV/RISCVInstrInfo.cpp
++++ b/lib/Target/RISCV/RISCVInstrInfo.cpp
+@@ -3344,7 +3344,8 @@ RISCVInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
+       {MO_TLSDESC_HI, "riscv-tlsdesc-hi"},
+       {MO_TLSDESC_LOAD_LO, "riscv-tlsdesc-load-lo"},
+       {MO_TLSDESC_ADD_LO, "riscv-tlsdesc-add-lo"},
+-      {MO_TLSDESC_CALL, "riscv-tlsdesc-call"}};
++      {MO_TLSDESC_CALL, "riscv-tlsdesc-call"},
++      {MO_MACHO_TLVP_HI, "riscv-macho-tlvp-hi"}};
+   return ArrayRef(TargetFlags);
+ }
+ bool RISCVInstrInfo::isFunctionSafeToOutlineFrom(
+@@ -3509,6 +3510,16 @@ RISCVInstrInfo::getOutliningTypeImpl(const MachineModuleInfo &MMI,
+       (MI.isReturn() || isMIModifiesReg(MI, TRI, RISCV::X5)))
+     return outliner::InstrType::Illegal;
+ 
++  // mach-o functions are separate atoms, so a hi/lo pair split across one and an
++  // outlined copy could land any distance apart
++  if (MBB->getParent()->getTarget().getTargetTriple().isOSBinFormatMachO()) {
++    if (MI.getPreInstrSymbol())
++      return outliner::InstrType::Illegal;
++    for (const auto &MO : MI.operands())
++      if (MO.getTargetFlags() == RISCVII::MO_PCREL_LO)
++        return outliner::InstrType::Illegal;
++  }
++
+   // Make sure the operands don't reference something unsafe.
+   for (const auto &MO : MI.operands()) {
+ 
+diff --git a/lib/Target/RISCV/RISCVInstrInfo.td b/lib/Target/RISCV/RISCVInstrInfo.td
+index f63531a01..3c92a8ebd 100644
+--- a/lib/Target/RISCV/RISCVInstrInfo.td
++++ b/lib/Target/RISCV/RISCVInstrInfo.td
+@@ -1890,6 +1890,10 @@ let hasSideEffects = 0, mayLoad = 1, mayStore = 0, Size = 8, isCodeGenOnly = 0,
+ def PseudoLA_TLS_IE : Pseudo<(outs GPR:$dst), (ins bare_symbol:$src), [],
+                              "la.tls.ie", "$dst, $src">;
+ 
++// mach-o auipc and load of a thread local variable's descriptor address
++let hasSideEffects = 0, mayLoad = 1, mayStore = 0, Size = 8 in
++def PseudoLA_TLVP : Pseudo<(outs GPR:$dst), (ins bare_symbol:$src), []>;
++
+ let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Size = 8, isCodeGenOnly = 0,
+     isAsmParserOnly = 1 in
+ def PseudoLA_TLS_GD : Pseudo<(outs GPR:$dst), (ins bare_symbol:$src), [],
+diff --git a/lib/Target/RISCV/RISCVMachOPCRelLo.cpp b/lib/Target/RISCV/RISCVMachOPCRelLo.cpp
+new file mode 100644
+index 000000000..d4b16086c
+--- /dev/null
++++ b/lib/Target/RISCV/RISCVMachOPCRelLo.cpp
+@@ -0,0 +1,235 @@
++//===-- RISCVMachOPCRelLo.cpp - Keep %pcrel_lo near its auipc on Mach-O ---===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// a mach-o %pcrel_lo keeps the distance back to its auipc in a 12-bit immediate,
++// so users that might sit past 2KB get their own auipc and near ones keep sharing
++//
++//===----------------------------------------------------------------------===//
++
++#include "MCTargetDesc/RISCVBaseInfo.h"
++#include "RISCV.h"
++#include "RISCVInstrInfo.h"
++#include "RISCVSubtarget.h"
++#include "llvm/ADT/DenseMap.h"
++#include "llvm/CodeGen/LivePhysRegs.h"
++#include "llvm/CodeGen/MachineFunctionPass.h"
++#include "llvm/CodeGen/MachineInstrBuilder.h"
++#include "llvm/CodeGen/MachineRegisterInfo.h"
++#include "llvm/MC/MCContext.h"
++
++using namespace llvm;
++
++#define DEBUG_TYPE "riscv-macho-pcrel-lo"
++#define RISCV_MACHO_PCREL_LO_NAME "RISC-V Mach-O %pcrel_lo reach"
++
++namespace {
++
++// worst case bytes, below the 2048 the immediate reaches
++constexpr int64_t PCRelLoReach = 1984;
++
++class RISCVMachOPCRelLo : public MachineFunctionPass {
++public:
++  static char ID;
++  RISCVMachOPCRelLo() : MachineFunctionPass(ID) {}
++
++  bool runOnMachineFunction(MachineFunction &MF) override;
++
++  MachineFunctionProperties getRequiredProperties() const override {
++    return MachineFunctionProperties().setNoVRegs();
++  }
++
++  StringRef getPassName() const override { return RISCV_MACHO_PCREL_LO_NAME; }
++
++private:
++  // worst case layout, plus how many inline asm blocks lie before each point
++  struct Pos {
++    int64_t Offset;
++    unsigned AsmBefore;
++  };
++  DenseMap<const MachineInstr *, Pos> Layout;
++  const RISCVInstrInfo *TII = nullptr;
++
++  void computeLayout(MachineFunction &MF);
++  bool mayBeFar(const MachineInstr &Hi, const MachineInstr &Lo) const;
++  Register pickRegister(MachineInstr &Lo, Register Base);
++  bool baseLiveOut(MachineBasicBlock &MBB, Register Base) const;
++  bool fixOnce(MachineFunction &MF);
++};
++
++} // end anonymous namespace
++
++char RISCVMachOPCRelLo::ID = 0;
++
++INITIALIZE_PASS(RISCVMachOPCRelLo, DEBUG_TYPE, RISCV_MACHO_PCREL_LO_NAME,
++                false, false)
++
++void RISCVMachOPCRelLo::computeLayout(MachineFunction &MF) {
++  Layout.clear();
++  int64_t Offset = 0;
++  unsigned Asm = 0;
++  for (MachineBasicBlock &MBB : MF) {
++    // alignment padding, at most the alignment itself
++    Offset += MBB.getAlignment().value();
++    for (MachineInstr &MI : MBB) {
++      Layout[&MI] = {Offset, Asm};
++      Offset += TII->getInstSizeInBytes(MI);
++      // branch relaxation may still grow a branch into a longer sequence
++      if (MI.isBranch())
++        Offset += 8;
++      if (MI.isInlineAsm())
++        ++Asm;
++    }
++  }
++}
++
++bool RISCVMachOPCRelLo::mayBeFar(const MachineInstr &Hi,
++                                 const MachineInstr &Lo) const {
++  auto H = Layout.find(&Hi), L = Layout.find(&Lo);
++  if (H == Layout.end() || L == Layout.end())
++    return true;
++  // inline asm has no trustworthy size, .fill alone can be any length
++  if (H->second.AsmBefore != L->second.AsmBefore)
++    return true;
++  int64_t Dist = L->second.Offset - H->second.Offset;
++  return Dist > PCRelLoReach || Dist < -PCRelLoReach;
++}
++
++// a register the new auipc may write just before Lo
++Register RISCVMachOPCRelLo::pickRegister(MachineInstr &Lo, Register Base) {
++  const TargetRegisterInfo *TRI = Lo.getMF()->getSubtarget().getRegisterInfo();
++  const MachineRegisterInfo &MRI = Lo.getMF()->getRegInfo();
++  // a load or addi overwrites its destination anyway, so the auipc can use it
++  if (Lo.getNumOperands() && Lo.getOperand(0).isReg() &&
++      Lo.getOperand(0).isDef()) {
++    Register Dst = Lo.getOperand(0).getReg();
++    if (RISCV::GPRRegClass.contains(Dst) && Dst != RISCV::X0)
++      return Dst;
++  }
++  // stores and fp loads need a free gpr
++  MachineBasicBlock &MBB = *Lo.getParent();
++  LivePhysRegs Live(*TRI);
++  Live.addLiveOuts(MBB);
++  for (MachineInstr &MI : llvm::reverse(MBB)) {
++    Live.stepBackward(MI);
++    if (&MI == &Lo)
++      break;
++  }
++  for (MCPhysReg R : RISCV::GPRRegClass) {
++    if (R == RISCV::X0 || MRI.isReserved(R) || !Live.available(MRI, R))
++      continue;
++    if (Lo.readsRegister(R, TRI) || Lo.modifiesRegister(R, TRI))
++      continue;
++    return R;
++  }
++  return Register();
++}
++
++bool RISCVMachOPCRelLo::baseLiveOut(MachineBasicBlock &MBB,
++                                    Register Base) const {
++  const TargetRegisterInfo *TRI = MBB.getParent()->getSubtarget().getRegisterInfo();
++  LivePhysRegs Live(*TRI);
++  Live.addLiveOuts(MBB);
++  return Live.contains(Base);
++}
++
++bool RISCVMachOPCRelLo::fixOnce(MachineFunction &MF) {
++  DenseMap<const MCSymbol *, MachineInstr *> HiFor;
++  for (MachineBasicBlock &MBB : MF)
++    for (MachineInstr &MI : MBB)
++      if (MI.getOpcode() == RISCV::AUIPC && MI.getPreInstrSymbol())
++        HiFor[MI.getPreInstrSymbol()] = &MI;
++  if (HiFor.empty())
++    return false;
++
++  computeLayout(MF);
++  bool Changed = false;
++  for (MachineBasicBlock &MBB : MF) {
++    for (MachineInstr &Lo : MBB) {
++      for (MachineOperand &MO : Lo.operands()) {
++        if (!MO.isMCSymbol() || MO.getTargetFlags() != RISCVII::MO_PCREL_LO)
++          continue;
++        auto It = HiFor.find(MO.getMCSymbol());
++        if (It == HiFor.end())
++          continue;
++        MachineInstr &Hi = *It->second;
++        if (!mayBeFar(Hi, Lo))
++          continue;
++
++        // the base register sits right before the %pcrel_lo in loads, stores and addi,
++        // and it may be a copy of the auipc's result rather than the register it wrote
++        unsigned Idx = MO.getOperandNo();
++        if (Idx == 0 || !Lo.getOperand(Idx - 1).isReg() ||
++            Lo.getOperand(Idx - 1).isDef())
++          report_fatal_error("unexpected %pcrel_lo user on RISC-V Mach-O");
++        MachineOperand *BaseUse = &Lo.getOperand(Idx - 1);
++        Register Base = BaseUse->getReg();
++        MCSymbol *OldSym = MO.getMCSymbol();
++
++        // when the user reads the auipc's own register and nothing past this block does,
++        // recompute it here and the users after this one in the block share the new auipc
++        if (Base == Hi.getOperand(0).getReg() && !baseLiveOut(MBB, Base)) {
++          MCSymbol *Sym = MF.getContext().createNamedTempSymbol("pcrel_hi");
++          MachineInstr *NewHi =
++              BuildMI(MBB, Lo, Lo.getDebugLoc(), TII->get(RISCV::AUIPC), Base)
++                  .add(Hi.getOperand(1));
++          NewHi->setPreInstrSymbol(MF, Sym);
++          const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
++          for (MachineBasicBlock::iterator I(Lo), E = MBB.end(); I != E; ++I) {
++            for (MachineOperand &Op : I->operands()) {
++              if (!Op.isMCSymbol() || Op.getMCSymbol() != OldSym ||
++                  Op.getTargetFlags() != RISCVII::MO_PCREL_LO)
++                continue;
++              // only users that read this register see the new auipc's value
++              unsigned J = Op.getOperandNo();
++              if (J && I->getOperand(J - 1).isReg() &&
++                  I->getOperand(J - 1).getReg() == Base)
++                Op.ChangeToMCSymbol(Sym, RISCVII::MO_PCREL_LO);
++            }
++            if (I->modifiesRegister(Base, TRI))
++              break;
++          }
++          // the new auipc must not take the old one's kill of the base
++          BaseUse->setIsKill(false);
++          return true;
++        }
++
++        Register R = pickRegister(Lo, Base);
++        if (!R)
++          report_fatal_error("no free register to repeat an auipc for a far "
++                             "%pcrel_lo on RISC-V Mach-O");
++
++        MCSymbol *Sym = MF.getContext().createNamedTempSymbol("pcrel_hi");
++        MachineInstr *NewHi =
++            BuildMI(MBB, Lo, Lo.getDebugLoc(), TII->get(RISCV::AUIPC), R)
++                .add(Hi.getOperand(1));
++        NewHi->setPreInstrSymbol(MF, Sym);
++        BaseUse->setReg(R);
++        BaseUse->setIsKill(false);
++        MO.ChangeToMCSymbol(Sym, RISCVII::MO_PCREL_LO);
++        Changed = true;
++      }
++    }
++  }
++  return Changed;
++}
++
++bool RISCVMachOPCRelLo::runOnMachineFunction(MachineFunction &MF) {
++  const RISCVSubtarget &STI = MF.getSubtarget<RISCVSubtarget>();
++  if (!STI.getTargetTriple().isOSBinFormatMachO())
++    return false;
++  TII = STI.getInstrInfo();
++  bool Changed = false;
++  // each new auipc moves later code, so settle until nothing is out of reach
++  while (fixOnce(MF))
++    Changed = true;
++  return Changed;
++}
++
++FunctionPass *llvm::createRISCVMachOPCRelLoPass() {
++  return new RISCVMachOPCRelLo();
++}
+diff --git a/lib/Target/RISCV/RISCVRegisterInfo.cpp b/lib/Target/RISCV/RISCVRegisterInfo.cpp
+index 214536d7f..2075d1ad8 100644
+--- a/lib/Target/RISCV/RISCVRegisterInfo.cpp
++++ b/lib/Target/RISCV/RISCVRegisterInfo.cpp
+@@ -191,6 +191,10 @@ const uint32_t *RISCVRegisterInfo::getNoPreservedMask() const {
+   return CSR_NoRegs_RegMask;
+ }
+ 
++const uint32_t *RISCVRegisterInfo::getDarwinTLSCallPreservedMask() const {
++  return CSR_Darwin_TLS_RegMask;
++}
++
+ void RISCVRegisterInfo::adjustReg(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator II,
+                                   const DebugLoc &DL, Register DestReg,
+diff --git a/lib/Target/RISCV/RISCVRegisterInfo.h b/lib/Target/RISCV/RISCVRegisterInfo.h
+index b368399e2..95c40ca7b 100644
+--- a/lib/Target/RISCV/RISCVRegisterInfo.h
++++ b/lib/Target/RISCV/RISCVRegisterInfo.h
+@@ -78,6 +78,9 @@ struct RISCVRegisterInfo : public RISCVGenRegisterInfo {
+ 
+   const uint32_t *getNoPreservedMask() const override;
+ 
++  // registers a mach-o tlv thunk call leaves intact
++  const uint32_t *getDarwinTLSCallPreservedMask() const;
++
+   // Update DestReg to have the value SrcReg plus an offset.  This is
+   // used during frame layout, and we may need to ensure that if we
+   // split the offset internally that the DestReg is always aligned,
+diff --git a/lib/Target/RISCV/RISCVTargetMachine.cpp b/lib/Target/RISCV/RISCVTargetMachine.cpp
+index b43b915d0..b8cdbfc7c 100644
+--- a/lib/Target/RISCV/RISCVTargetMachine.cpp
++++ b/lib/Target/RISCV/RISCVTargetMachine.cpp
+@@ -131,6 +131,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
+   initializeRISCVDeadRegisterDefinitionsPass(*PR);
+   initializeRISCVLateBranchOptPass(*PR);
+   initializeRISCVMakeCompressibleOptPass(*PR);
++  initializeRISCVMachOPCRelLoPass(*PR);
+   initializeRISCVGatherScatterLoweringPass(*PR);
+   initializeRISCVCodeGenPreparePass(*PR);
+   initializeRISCVPostRAExpandPseudoPass(*PR);
+@@ -155,28 +156,40 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
+   initializeRISCVAsmPrinterPass(*PR);
+ }
+ 
+-static StringRef computeDataLayout(const Triple &TT,
+-                                   const TargetOptions &Options) {
++static std::string computeDataLayout(const Triple &TT,
++                                     const TargetOptions &Options) {
+   StringRef ABIName = Options.MCOptions.getABIName();
++  // mach-o symbols carry the leading underscore and private L prefix
++  std::string Mangling = TT.isOSBinFormatMachO() ? "-m:o" : "-m:e";
+   if (TT.isArch64Bit()) {
+     if (ABIName == "lp64e")
+-      return "e-m:e-p:64:64-i64:64-i128:128-n32:64-S64";
++      return "e" + Mangling + "-p:64:64-i64:64-i128:128-n32:64-S64";
+ 
+-    return "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128";
++    return "e" + Mangling + "-p:64:64-i64:64-i128:128-n32:64-S128";
+   }
+   assert(TT.isArch32Bit() && "only RV32 and RV64 are currently supported");
+ 
+   if (ABIName == "ilp32e")
+-    return "e-m:e-p:32:32-i64:64-n32-S32";
++    return "e" + Mangling + "-p:32:32-i64:64-n32-S32";
+ 
+-  return "e-m:e-p:32:32-i64:64-n32-S128";
++  return "e" + Mangling + "-p:32:32-i64:64-n32-S128";
+ }
+ 
+ static Reloc::Model getEffectiveRelocModel(const Triple &TT,
+                                            std::optional<Reloc::Model> RM) {
++  // darwin is always pic like arm64, so pointer-bearing const data lands in __DATA,__const
++  // and -mkernel's static model only reaches clang, which marks the symbols dso_local
++  if (TT.isOSDarwin())
++    return Reloc::PIC_;
+   return RM.value_or(Reloc::Static);
+ }
+ 
++static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
++  if (TT.isOSBinFormatMachO())
++    return std::make_unique<RISCVMachOTargetObjectFile>();
++  return std::make_unique<RISCVELFTargetObjectFile>();
++}
++
+ RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
+                                        StringRef CPU, StringRef FS,
+                                        const TargetOptions &Options,
+@@ -186,7 +199,7 @@ RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
+     : CodeGenTargetMachineImpl(T, computeDataLayout(TT, Options), TT, CPU, FS,
+                                Options, getEffectiveRelocModel(TT, RM),
+                                getEffectiveCodeModel(CM, CodeModel::Small), OL),
+-      TLOF(std::make_unique<RISCVELFTargetObjectFile>()) {
++      TLOF(createTLOF(TT)) {
+   initAsmInfo();
+ 
+   // RISC-V supports the MachineOutliner.
+@@ -498,9 +511,12 @@ bool RISCVPassConfig::addPreISel() {
+     // concerns it might regress some workloads. Unlike AArch64, we don't
+     // currently support enabling the pass in an "OnlyOptimizeForSize" mode.
+     // Investigating and addressing both items are TODO.
++    // mach-o splits atoms at every symbol, so like arm64 darwin only internal
++    // globals merge there, and the merged symbol stays local
++    bool MergeExternal = !TM->getTargetTriple().isOSBinFormatMachO();
+     addPass(createGlobalMergePass(TM, /* MaxOffset */ 2047,
+                                   /* OnlyOptimizeForSize */ false,
+-                                  /* MergeExternalByDefault */ true));
++                                  /* MergeExternalByDefault */ MergeExternal));
+   }
+ 
+   return false;
+@@ -575,6 +591,9 @@ void RISCVPassConfig::addPreEmitPass() {
+   // basic block alignment. It must be done before Branch Relaxation to
+   // prevent the adjusted offset exceeding the branch range.
+   addPass(createRISCVIndirectBranchTrackingPass());
++  // before branch relaxation, whose growth the pass already allows for
++  if (TM->getTargetTriple().isOSBinFormatMachO())
++    addPass(createRISCVMachOPCRelLoPass());
+   addPass(&BranchRelaxationPassID);
+   addPass(createRISCVMakeCompressibleOptPass());
+ }
+diff --git a/lib/Target/RISCV/RISCVTargetObjectFile.cpp b/lib/Target/RISCV/RISCVTargetObjectFile.cpp
+index bc90cf8f5..8a4f1a88a 100644
+--- a/lib/Target/RISCV/RISCVTargetObjectFile.cpp
++++ b/lib/Target/RISCV/RISCVTargetObjectFile.cpp
+@@ -9,7 +9,12 @@
+ #include "RISCVTargetObjectFile.h"
+ #include "MCTargetDesc/RISCVMCObjectFileInfo.h"
+ #include "RISCVTargetMachine.h"
++#include "MCTargetDesc/RISCVMCAsmInfo.h"
++#include "llvm/BinaryFormat/Dwarf.h"
+ #include "llvm/BinaryFormat/ELF.h"
++#include "llvm/MC/MCStreamer.h"
++#include "llvm/Target/TargetMachine.h"
++#include "llvm/IR/Mangler.h"
+ #include "llvm/IR/Module.h"
+ #include "llvm/MC/MCContext.h"
+ #include "llvm/MC/MCSectionELF.h"
+@@ -179,3 +184,47 @@ MCSection *RISCVELFTargetObjectFile::getSectionForConstant(
+   return TargetLoweringObjectFileELF::getSectionForConstant(DL, Kind, C,
+                                                             Alignment);
+ }
++
++RISCVMachOTargetObjectFile::RISCVMachOTargetObjectFile() {
++  SupportIndirectSymViaGOTPCRel = true;
++  SupportGOTPCRelWithOffset = false;
++}
++
++static const MCExpr *gotPCRelTo(const MCSymbol *Sym, MCContext &Ctx,
++                                MCStreamer &Streamer) {
++  const MCExpr *Res = MCSymbolRefExpr::create(Sym, RISCV::S_MACHO_GOT, Ctx);
++  MCSymbol *PCSym = Ctx.createTempSymbol();
++  Streamer.emitLabel(PCSym);
++  const MCExpr *PC = MCSymbolRefExpr::create(PCSym, Ctx);
++  return MCBinaryExpr::createSub(Res, PC, Ctx);
++}
++
++const MCExpr *RISCVMachOTargetObjectFile::getTTypeGlobalReference(
++    const GlobalValue *GV, unsigned Encoding, const TargetMachine &TM,
++    MachineModuleInfo *MMI, MCStreamer &Streamer) const {
++  if (Encoding & (dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel))
++    return gotPCRelTo(TM.getSymbol(GV), getContext(), Streamer);
++  return TargetLoweringObjectFileMachO::getTTypeGlobalReference(
++      GV, Encoding, TM, MMI, Streamer);
++}
++
++MCSymbol *RISCVMachOTargetObjectFile::getCFIPersonalitySymbol(
++    const GlobalValue *GV, const TargetMachine &TM,
++    MachineModuleInfo *MMI) const {
++  return TM.getSymbol(GV);
++}
++
++const MCExpr *RISCVMachOTargetObjectFile::getIndirectSymViaGOTPCRel(
++    const GlobalValue *GV, const MCSymbol *Sym, const MCValue &MV,
++    int64_t Offset, MachineModuleInfo *MMI, MCStreamer &Streamer) const {
++  assert((Offset + MV.getConstant() == 0) &&
++         "riscv mach-o has no GOT pc-relative reference with an offset");
++  return gotPCRelTo(Sym, getContext(), Streamer);
++}
++
++// ld64 wants extern symbols in code relocations, so globals keep at least a linker-private name
++void RISCVMachOTargetObjectFile::getNameWithPrefix(
++    SmallVectorImpl<char> &OutName, const GlobalValue *GV,
++    const TargetMachine &TM) const {
++  getMangler().getNameWithPrefix(OutName, GV, /* CannotUsePrivateLabel */ true);
++}
+diff --git a/lib/Target/RISCV/RISCVTargetObjectFile.h b/lib/Target/RISCV/RISCVTargetObjectFile.h
+index ff7e3e4c7..00e9a906d 100644
+--- a/lib/Target/RISCV/RISCVTargetObjectFile.h
++++ b/lib/Target/RISCV/RISCVTargetObjectFile.h
+@@ -55,6 +55,31 @@ public:
+                                           MCStreamer &Streamer) const override;
+ };
+ 
++// mach-o: dwarf and data refer to other images through sym@GOT - ., as arm64 does
++class RISCVMachOTargetObjectFile : public TargetLoweringObjectFileMachO {
++public:
++  RISCVMachOTargetObjectFile();
++
++  const MCExpr *getTTypeGlobalReference(const GlobalValue *GV,
++                                        unsigned Encoding,
++                                        const TargetMachine &TM,
++                                        MachineModuleInfo *MMI,
++                                        MCStreamer &Streamer) const override;
++
++  MCSymbol *getCFIPersonalitySymbol(const GlobalValue *GV,
++                                    const TargetMachine &TM,
++                                    MachineModuleInfo *MMI) const override;
++
++  const MCExpr *getIndirectSymViaGOTPCRel(const GlobalValue *GV,
++                                          const MCSymbol *Sym,
++                                          const MCValue &MV, int64_t Offset,
++                                          MachineModuleInfo *MMI,
++                                          MCStreamer &Streamer) const override;
++
++  void getNameWithPrefix(SmallVectorImpl<char> &OutName, const GlobalValue *GV,
++                         const TargetMachine &TM) const override;
++};
++
+ } // end namespace llvm
+ 
+ #endif
+diff --git a/lib/TargetParser/Triple.cpp b/lib/TargetParser/Triple.cpp
+index 0584c941d..edb14270f 100644
+--- a/lib/TargetParser/Triple.cpp
++++ b/lib/TargetParser/Triple.cpp
+@@ -937,6 +937,10 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
+     default:
+       return T.isOSDarwin() ? Triple::MachO : Triple::ELF;
+     }
++  case Triple::riscv32:
++  case Triple::riscv64:
++    return T.isOSDarwin() ? Triple::MachO : Triple::ELF;
++
+   case Triple::aarch64_be:
+   case Triple::amdgcn:
+   case Triple::amdil64:
+@@ -966,8 +970,6 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
+   case Triple::r600:
+   case Triple::renderscript32:
+   case Triple::renderscript64:
+-  case Triple::riscv32:
+-  case Triple::riscv64:
+   case Triple::shave:
+   case Triple::sparc:
+   case Triple::sparcel:
+@@ -2138,6 +2140,10 @@ bool Triple::isMacOSXVersionLT(unsigned Major, unsigned Minor,
+ }
+ 
+ VersionTuple Triple::getMinimumSupportedOSVersion() const {
++  // riscv64 darwin shares the arm64 macos floor
++  if (getVendor() == Triple::Apple && getArch() == Triple::riscv64 &&
++      getOS() == Triple::MacOSX)
++    return VersionTuple(11, 0, 0);
+   if (getVendor() != Triple::Apple || getArch() != Triple::aarch64)
+     return VersionTuple();
+   switch (getOS()) {

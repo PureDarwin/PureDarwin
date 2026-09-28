@@ -26,6 +26,11 @@ stdenv.mkDerivation {
     substituteInPlace compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake \
       --replace-fail "-fPIC -O3 -fvisibility=hidden -DVISIBILITY_HIDDEN -Wall" \
                      "-fPIC -O3 -Wall"
+  '' + lib.optionalString (targetArch == "riscv64") ''
+    # the riscv .S helpers are elf only (.type, unprefixed names) and serve -msave-restore
+    # and cores without mul, neither of which a darwin riscv64 target has
+    sed -i -e '/^  riscv\/save\.S$/d' -e '/^  riscv\/restore\.S$/d' -e '/^  riscv\/muldi3\.S$/d' \
+      compiler-rt/lib/builtins/CMakeLists.txt
   '';
 
   configurePhase = ''

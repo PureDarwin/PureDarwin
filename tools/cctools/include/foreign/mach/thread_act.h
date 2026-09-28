@@ -35,6 +35,7 @@
 #include <mach/ppc64/thread_act.h>
 #elif defined(__arm__) || defined(__arm64__)
 /*#include <mach/arm/thread_act.h>*/
+#elif defined(__riscv)
 #else
 #error unknown architecture
 #endif 

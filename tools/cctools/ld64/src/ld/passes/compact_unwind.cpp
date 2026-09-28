@@ -1002,8 +1002,14 @@ static void makeFinalLinkedImageCompactUnwindSection(const Options& opts, ld::In
 				state.addAtom(*new UnwindInfoAtom<arm>(entries, ehFrameSize));
 			break;
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV32:
+		case CPU_TYPE_RISCV64:
+			// riscv has no compact encodings, libunwind finds every frame through __eh_frame
+			break;
+#endif
 		default:
-			assert(0 && "no compact unwind for arch");
+			throwf("no compact unwind for architecture 0x%x", opts.architecture());
 	}	
 }
 

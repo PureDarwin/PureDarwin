@@ -1662,6 +1662,46 @@ void SplitSegInfoV1Atom<arm>::addSplitSegInfo(uint64_t address, ld::Fixup::Kind 
 }
 
 #if SUPPORT_ARCH_arm64
+#if SUPPORT_ARCH_riscv32
+// shared cache sliding only understands pointers here, code is pc-relative anyway
+template <>
+void SplitSegInfoV1Atom<riscv32>::addSplitSegInfo(uint64_t address, ld::Fixup::Kind kind, uint32_t extra) const
+{
+	switch (kind) {
+		case ld::Fixup::kindStoreLittleEndian32:
+			_32bitPointerLocations.push_back(address);
+			break;
+		case ld::Fixup::kindStoreLittleEndian64:
+		case ld::Fixup::kindStoreTargetAddressLittleEndian64:
+			_64bitPointerLocations.push_back(address);
+			break;
+		default:
+			warning("codegen at address 0x%08llX prevents image from working in dyld shared cache", address);
+			break;
+	}
+}
+#endif
+
+#if SUPPORT_ARCH_riscv64
+// shared cache sliding only understands pointers here, code is pc-relative anyway
+template <>
+void SplitSegInfoV1Atom<riscv64>::addSplitSegInfo(uint64_t address, ld::Fixup::Kind kind, uint32_t extra) const
+{
+	switch (kind) {
+		case ld::Fixup::kindStoreLittleEndian32:
+			_32bitPointerLocations.push_back(address);
+			break;
+		case ld::Fixup::kindStoreLittleEndian64:
+		case ld::Fixup::kindStoreTargetAddressLittleEndian64:
+			_64bitPointerLocations.push_back(address);
+			break;
+		default:
+			warning("codegen at address 0x%08llX prevents image from working in dyld shared cache", address);
+			break;
+	}
+}
+#endif
+
 template <>
 void SplitSegInfoV1Atom<arm64>::addSplitSegInfo(uint64_t address, ld::Fixup::Kind kind, uint32_t extra) const
 {

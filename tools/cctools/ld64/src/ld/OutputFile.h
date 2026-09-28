@@ -278,6 +278,13 @@ private:
 																							const ld::Fixup* fixup);
 	void						rangeCheckARM64Branch26(int64_t delta, ld::Internal& state, const ld::Atom* atom, 
 																							const ld::Fixup* fixup);
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+	bool						checkRISCVBranchDisplacement(int64_t displacement);
+	void						rangeCheckRISCVBranch20(int64_t delta, ld::Internal& state, const ld::Atom* atom,
+															const ld::Fixup* fixup, const ld::Atom* target, uint64_t targetAddr);
+	void						rangeCheckRISCVPCRel32(int64_t delta, ld::Internal& state, const ld::Atom* atom,
+															const ld::Fixup* fixup, const ld::Atom* target, uint64_t targetAddr);
+#endif
 	void						rangeCheckARM64Page21(int64_t delta, ld::Internal& state, const ld::Atom* atom, 
 																							const ld::Fixup* fixup);
 																							

@@ -2,6 +2,8 @@
 #include <x86_64/libc-features.h>
 #elif defined(__arm64__) || defined(__aarch64__)
 #include <arm64/libc-features.h>
+#elif defined(__riscv) && __riscv_xlen == 64
+#include <riscv64/libc-features.h>
 #else
 #error Unsupported PureDarwin SDK architecture
 #endif

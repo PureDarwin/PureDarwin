@@ -365,6 +365,32 @@ struct dyld_chained_ptr_arm64e_auth_bind24
 	#define ARM64_RELOC_AUTHENTICATED_POINTER 11
 #endif
 
+// riscv mach-o as ld64 defines it, riscv64 is the same cpu type with the 64-bit abi bit
+#ifndef CPU_TYPE_RISCV32
+	#define CPU_TYPE_RISCV32	24
+#endif
+#ifndef CPU_TYPE_RISCV64
+	#define CPU_TYPE_RISCV64	(CPU_TYPE_RISCV32 | CPU_ARCH_ABI64)
+#endif
+#ifndef CPU_SUBTYPE_RISCV_ALL
+	#define CPU_SUBTYPE_RISCV_ALL	0
+#endif
+
+enum
+{
+	RISCV_RELOC_UNSIGNED       = 0,   // for simple pointers
+	RISCV_RELOC_SUBTRACTOR     = 1,   // must be followed by a RISCV_RELOC_UNSIGNED
+	RISCV_RELOC_BRANCH20       = 2,   // a JAL instruction with 20-bit displacement
+	RISCV_RELOC_HI20           = 3,   // an AUIPC or LUI which sets high 20 bits
+	RISCV_RELOC_LO12           = 4,   // an I-type or S-type instruction which sets low 12 bits
+	RISCV_RELOC_HI20_GOT       = 5,   // RISCV_RELOC_HI20 but to a GOT slot
+	RISCV_RELOC_LO12_GOT       = 6,   // RISCV_RELOC_LO12 but to a GOT slot
+	RISCV_RELOC_POINTER_TO_GOT = 7,   // 32-bit pc-relative offset to a GOT slot
+	RISCV_RELOC_ADDEND         = 8,   // sign extended, before RISCV_RELOC_HI20, RISCV_RELOC_LO12 or RISCV_RELOC_BRANCH20
+	RISCV_RELOC_TLVP_LOAD_HI20 = 9,   // pc-relative AUIPC of a thread local variable's descriptor pointer
+	RISCV_RELOC_TLVP_LOAD_LO12 = 10,  // the paired load, which may become an ADDI of the descriptor itself
+};
+
 
 #define UNW_ARM64_X0     0
 #define UNW_ARM64_X1     1
@@ -438,6 +464,7 @@ struct dyld_chained_ptr_arm64e_auth_bind24
 #define UNWIND_ARM64_MODE_FRAME_OLD                     0x01000000
 #define UNWIND_ARM64_MODE_FRAMELESS                     0x02000000
 #define UNWIND_ARM64_MODE_DWARF                         0x03000000
+#define UNWIND_RISCV_MODE_DWARF                         0x03000000
 #define UNWIND_ARM64_MODE_FRAME                         0x04000000
     
 #define UNWIND_ARM64_FRAME_X19_X20_PAIR                 0x00000001
@@ -613,6 +640,12 @@ static const ArchInfo archInfoArray[] = {
 #endif
 #if SUPPORT_ARCH_arm64_32
 	{ "arm64_32", CPU_TYPE_ARM64_32,   CPU_SUBTYPE_ARM64_32_V8,  "arm64_32-",  "aarch64_32-",  true,  false },
+#endif
+#if SUPPORT_ARCH_riscv32
+	{ "riscv32", CPU_TYPE_RISCV32, CPU_SUBTYPE_RISCV_ALL, "riscv32-", "", false, false },
+#endif
+#if SUPPORT_ARCH_riscv64
+	{ "riscv64", CPU_TYPE_RISCV64, CPU_SUBTYPE_RISCV_ALL, "riscv64-", "", false, false },
 #endif
 	{ NULL, 0, 0, NULL, NULL, false, false }
 };

@@ -1397,6 +1397,49 @@ inline Registers_arm::Registers_arm() {
 }
 
 
+///
+/// Registers_riscv holds the integer registers of a 32 or 64-bit riscv process,
+/// ld64 only needs it to pick the riscv dwarf handling
+///
+class Registers_riscv
+{
+public:
+					Registers_riscv()						{ bzero(fRegisters, sizeof(fRegisters)); }
+	bool			validRegister(int num) const			{ return (num == UNW_REG_IP) || (num == UNW_REG_SP) || ((num >= 0) && (num < 32)); }
+	uint64_t		getRegister(int num) const;
+	void			setRegister(int num, uint64_t value);
+	uint64_t		getSP() const							{ return fRegisters[2]; }
+	void			setSP(uint64_t value)					{ fRegisters[2] = value; }
+	uint64_t		getIP() const							{ return fPC; }
+	void			setIP(uint64_t value)					{ fPC = value; }
+private:
+	uint64_t		fRegisters[32];
+	uint64_t		fPC = 0;
+};
+
+inline uint64_t Registers_riscv::getRegister(int num) const
+{
+	if ( num == UNW_REG_IP )
+		return fPC;
+	if ( num == UNW_REG_SP )
+		return fRegisters[2];
+	if ( (num >= 0) && (num < 32) )
+		return fRegisters[num];
+	ABORT("unsupported riscv register");
+}
+
+inline void Registers_riscv::setRegister(int num, uint64_t value)
+{
+	if ( num == UNW_REG_IP )
+		fPC = value;
+	else if ( num == UNW_REG_SP )
+		fRegisters[2] = value;
+	else if ( (num >= 0) && (num < 32) )
+		fRegisters[num] = value;
+	else
+		ABORT("unsupported riscv register");
+}
+
 } // namespace libunwind 
 
 

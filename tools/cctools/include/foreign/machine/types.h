@@ -40,6 +40,8 @@
 #include "i386/types.h"
 #elif defined (__arm__) || defined(__arm64__)
 #include "arm/types.h"
+#elif defined (__riscv)
+#include "riscv/types.h"
 #else
 #error architecture not supported
 #endif

@@ -2263,8 +2263,19 @@ void doPass(const Options& opts, ld::Internal& state)
 			doPass<arm64_32, true>(opts, state);
 			break;
 #endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			doPass<riscv32, true>(opts, state);
+			break;
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			doPass<riscv64, true>(opts, state);
+			break;
+#endif
 		default:
-			assert(0 && "unknown objc arch");
+			// asserts are off in release, a silent skip would drop __objc_imageinfo
+			throwf("objc pass has no support for architecture 0x%x", opts.architecture());
 	}
 }
 

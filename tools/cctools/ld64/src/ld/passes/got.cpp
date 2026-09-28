@@ -122,6 +122,10 @@ static bool gotFixup(const Options& opts, ld::Internal& internal, const ld::Atom
 		case ld::Fixup::kindStoreTargetAddressARM64GOTLoadPage21:
 		case ld::Fixup::kindStoreTargetAddressARM64GOTLoadPageOff12:
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		case ld::Fixup::kindStoreRISCVhi20PCRelGOT:
+		case ld::Fixup::kindStoreRISCVlo12PCRelGOT:
+#endif
 			// start by assuming this can be optimized
 			*optimizable = true;
 			// cannot do LEA optimization if target is in another dylib
@@ -184,6 +188,13 @@ static bool gotFixup(const Options& opts, ld::Internal& internal, const ld::Atom
 #endif
 			*optimizable = false;
 			return true;
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		case ld::Fixup::kindStoreRISCVhi20GOT:
+		case ld::Fixup::kindStoreRISCVlo12GOT:
+			// absolute lui/ld pairs keep their slot
+			*optimizable = false;
+			return true;
+#endif
 		case ld::Fixup::kindNoneGroupSubordinatePersonality:
 			*optimizable = false;
 #if SUPPORT_ARCH_arm64e
@@ -272,18 +283,23 @@ void doPass(const Options& opts, ld::Internal& internal)
 			const ld::Atom* atom = *ait;
 			bool atomUsesGOT = false;
 			const ld::Atom* targetOfGOT = NULL;
+			ld::Fixup::iterator fitThatSetTarget = NULL;
 			bool targetIsWeakImport = false;
 			for (ld::Fixup::iterator fit = atom->fixupsBegin(), end=atom->fixupsEnd(); fit != end; ++fit) {
-				if ( fit->firstInCluster() ) 
+				if ( fit->firstInCluster() ) {
 					targetOfGOT = NULL;
+					fitThatSetTarget = NULL;
+				}
 				switch ( fit->binding ) {
 					case ld::Fixup::bindingsIndirectlyBound:
 						targetOfGOT = internal.indirectBindingTable[fit->u.bindingIndex];
 						targetIsWeakImport = fit->weakImport;
+						fitThatSetTarget = fit;
 						break;
 					case ld::Fixup::bindingDirectlyBound:
 						targetOfGOT = fit->u.target;
 						targetIsWeakImport = fit->weakImport;
+						fitThatSetTarget = fit;
 						break;
                     default:
                         break;   
@@ -293,6 +309,18 @@ void doPass(const Options& opts, ld::Internal& internal)
 				bool targetIsPersonalityFn;
 				if ( !gotFixup(opts, internal, targetOfGOT, atom, fit, &optimizable, &targetIsExternalWeakDef, &targetIsPersonalityFn) )
 					continue;
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+				// riscv targets sit on the cluster's set-target fixup, the auipc stays and the load becomes an addi
+				if ( optimizable && ((fit->kind == ld::Fixup::kindStoreRISCVhi20PCRelGOT) || (fit->kind == ld::Fixup::kindStoreRISCVlo12PCRelGOT)) ) {
+					if ( log ) fprintf(stderr, "optimized GOT usage in %s to %s\n", atom->name(), targetOfGOT->name());
+					assert(fitThatSetTarget != NULL);
+					fitThatSetTarget->binding = ld::Fixup::bindingDirectlyBound;
+					fitThatSetTarget->u.target = targetOfGOT;
+					fit->kind = (fit->kind == ld::Fixup::kindStoreRISCVhi20PCRelGOT) ? ld::Fixup::kindStoreRISCVhi20PCRel
+																					  : ld::Fixup::kindStoreRISCVlo12PCRelLoadToAddi;
+					continue;
+				}
+#endif
 				if ( optimizable ) {
 					// change from load of GOT entry to lea of target
 					if ( log ) fprintf(stderr, "optimized GOT usage in %s to %s\n", atom->name(), targetOfGOT->name());
@@ -389,6 +417,16 @@ void doPass(const Options& opts, ld::Internal& internal)
 			is64 = false;
 			break;
 #endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			is64 = false;
+			break;
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			is64 = true;
+			break;
+#endif
 	}
 	
 	// make GOT entries
@@ -450,6 +488,25 @@ void doPass(const Options& opts, ld::Internal& internal)
 						assert(0 && "unsupported GOT reference");
 						break;
 				}
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+				// the instruction now addresses the slot itself
+				switch ( fit->kind ) {
+					case ld::Fixup::kindStoreRISCVhi20PCRelGOT:
+						fit->kind = ld::Fixup::kindStoreRISCVhi20PCRel;
+						break;
+					case ld::Fixup::kindStoreRISCVlo12PCRelGOT:
+						fit->kind = ld::Fixup::kindStoreRISCVlo12PCRel;
+						break;
+					case ld::Fixup::kindStoreRISCVhi20GOT:
+						fit->kind = ld::Fixup::kindStoreRISCVhi20;
+						break;
+					case ld::Fixup::kindStoreRISCVlo12GOT:
+						fit->kind = ld::Fixup::kindStoreRISCVlo12;
+						break;
+					default:
+						break;
+				}
+#endif
 			}
 		}
 	}

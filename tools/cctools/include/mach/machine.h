@@ -164,6 +164,8 @@ extern vm_offset_t		interrupt_stack[];
 #define CPU_TYPE_VEO		((cpu_type_t) 255)
 #define CPU_TYPE_ARM64		((cpu_type_t)(CPU_TYPE_ARM | CPU_ARCH_ABI64))
 #define CPU_TYPE_ARM64_32	((cpu_type_t)(CPU_TYPE_ARM | CPU_ARCH_ABI64_32))
+#define CPU_TYPE_RISCV          ((cpu_type_t) 24)
+#define CPU_TYPE_RISCV64        (CPU_TYPE_RISCV | CPU_ARCH_ABI64)
 		
 
 /*
@@ -322,11 +324,17 @@ extern vm_offset_t		interrupt_stack[];
 #define CPU_SUBTYPE_ARM_V8		((cpu_subtype_t) 13)
 
 #define	CPU_SUBTYPE_ARM64_ALL		((cpu_subtype_t) 0)
+
 #define	CPU_SUBTYPE_ARM64_V8		((cpu_subtype_t) 1)
 
 #define	CPU_SUBTYPE_ARM64_32_V8		((cpu_subtype_t) 1)
 #define	CPU_SUBTYPE_ARM64E		((cpu_subtype_t) 2)
 #define	CPU_SUBTYPE_ARM64_E		CPU_SUBTYPE_ARM64E /* cctools-port */
+
+/*
+ *  RISCV subtypes
+ */
+#define CPU_SUBTYPE_RISCV_ALL           ((cpu_subtype_t) 0)
 
 /*
  *	MC88000 subtypes

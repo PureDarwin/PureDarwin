@@ -579,6 +579,8 @@ template <> uint8_t Parser<arm64>::loadCommandSizeMask()	{ return 0x07; }
 #if SUPPORT_ARCH_arm64_32
 template <> uint8_t Parser<arm64_32>::loadCommandSizeMask()	{ return 0x03; }
 #endif
+template <> uint8_t Parser<riscv32>::loadCommandSizeMask()	{ return 0x03; }
+template <> uint8_t Parser<riscv64>::loadCommandSizeMask()	{ return 0x07; }
 
 template <typename A>
 ld::Platform Parser<A>::findPlatform(const macho_header<P>* header, uint64_t fileLength, uint32_t* minOsVers)
@@ -768,6 +770,41 @@ bool Parser<arm64_32>::validFile(const uint8_t* fileContent, bool executableOrDy
 }
 #endif
 
+// riscv32 and riscv64 share a cpu type family, the header magic and abi bit tell them apart
+#define RISCV_VALID_FILE(ARCH, MAGIC, CPU) \
+template <> \
+bool Parser<ARCH>::validFile(const uint8_t* fileContent, bool executableOrDyliborBundle, bool subTypeMustMatch, uint32_t subType) \
+{ \
+	const auto* header = reinterpret_cast<const macho_header<P>*>(fileContent); \
+	if ( header->magic() != MAGIC ) \
+		return false; \
+	if ( header->cputype() != CPU ) \
+		return false; \
+	if ( subTypeMustMatch && (header->cpusubtype() != (subType & ~CPU_SUBTYPE_MASK)) ) \
+		return false; \
+	switch ( header->filetype() ) { \
+		case MH_DYLIB: \
+		case MH_DYLIB_STUB: \
+			return true; \
+		case MH_BUNDLE: \
+			if ( executableOrDyliborBundle ) \
+				return true; \
+			throw "can't link with bundle (MH_BUNDLE) only dylibs (MH_DYLIB)"; \
+		case MH_EXECUTE: \
+			if ( executableOrDyliborBundle ) \
+				return true; \
+			throw "can't link with a main executable"; \
+		default: \
+			return false; \
+	} \
+}
+#if SUPPORT_ARCH_riscv32
+RISCV_VALID_FILE(riscv32, MH_MAGIC, CPU_TYPE_RISCV32)
+#endif
+#if SUPPORT_ARCH_riscv64
+RISCV_VALID_FILE(riscv64, MH_MAGIC_64, CPU_TYPE_RISCV64)
+#endif
+
 bool isDylibFile(const uint8_t* fileContent, uint64_t fileLength, cpu_type_t* result, cpu_subtype_t* subResult, ld::Platform* platform, uint32_t* minOsVers)
 {
 	if ( Parser<x86_64>::validFile(fileContent, false) ) {
@@ -804,6 +841,24 @@ bool isDylibFile(const uint8_t* fileContent, uint64_t fileLength, cpu_type_t* re
 		*subResult = CPU_SUBTYPE_ARM64_32_V8;
 		const auto* header = reinterpret_cast<const macho_header<Pointer32<LittleEndian>>*>(fileContent);
 		*platform = Parser<arm64_32>::findPlatform(header, fileLength, minOsVers);
+		return true;
+	}
+#endif
+#if SUPPORT_ARCH_riscv64
+	if ( Parser<riscv64>::validFile(fileContent, false) ) {
+		*result = CPU_TYPE_RISCV64;
+		*subResult = CPU_SUBTYPE_RISCV_ALL;
+		const auto* header = reinterpret_cast<const macho_header<Pointer64<LittleEndian>>*>(fileContent);
+		*platform = Parser<riscv64>::findPlatform(header, fileLength, minOsVers);
+		return true;
+	}
+#endif
+#if SUPPORT_ARCH_riscv32
+	if ( Parser<riscv32>::validFile(fileContent, false) ) {
+		*result = CPU_TYPE_RISCV32;
+		*subResult = CPU_SUBTYPE_RISCV_ALL;
+		const auto* header = reinterpret_cast<const macho_header<Pointer32<LittleEndian>>*>(fileContent);
+		*platform = Parser<riscv32>::findPlatform(header, fileLength, minOsVers);
 		return true;
 	}
 #endif
@@ -874,6 +929,28 @@ const char* Parser<arm64_32>::fileKind(const uint8_t* fileContent)
 }
 #endif
 
+#if SUPPORT_ARCH_riscv32
+template <>
+const char* Parser<riscv32>::fileKind(const uint8_t* fileContent)
+{
+  const auto* header = reinterpret_cast<const macho_header<P>*>(fileContent);
+  if ( header->magic() != MH_MAGIC || header->cputype() != CPU_TYPE_RISCV32 )
+    return nullptr;
+  return "riscv32";
+}
+#endif
+
+#if SUPPORT_ARCH_riscv64
+template <>
+const char* Parser<riscv64>::fileKind(const uint8_t* fileContent)
+{
+  const auto* header = reinterpret_cast<const macho_header<P>*>(fileContent);
+  if ( header->magic() != MH_MAGIC_64 || header->cputype() != CPU_TYPE_RISCV64 )
+    return nullptr;
+  return "riscv64";
+}
+#endif
+
 //
 // used by linker is error messages to describe mismatched files
 //
@@ -896,6 +973,16 @@ const char* archName(const uint8_t* fileContent)
 #if SUPPORT_ARCH_arm64_32
 	if ( Parser<arm64_32>::validFile(fileContent, true) ) {
 		return Parser<arm64_32>::fileKind(fileContent);
+	}
+#endif
+#if SUPPORT_ARCH_riscv32
+	if ( Parser<riscv32>::validFile(fileContent, true) ) {
+		return Parser<riscv32>::fileKind(fileContent);
+	}
+#endif
+#if SUPPORT_ARCH_riscv64
+	if ( Parser<riscv64>::validFile(fileContent, true) ) {
+		return Parser<riscv64>::fileKind(fileContent);
 	}
 #endif
 	return nullptr;
@@ -937,6 +1024,18 @@ static ld::dylib::File* parseAsArchitecture(const uint8_t* fileContent, uint64_t
 		case CPU_TYPE_ARM64_32:
 			if ( Parser<arm64_32>::validFile(fileContent, bundleLoader, subTypeMustMatch, subArchitecture) )
 				return Parser<arm64_32>::parse(fileContent, fileLength, path, modTime, ordinal, opts, indirectDylib, fromSDK);
+			break;
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			if ( Parser<riscv32>::validFile(fileContent, bundleLoader, subTypeMustMatch, subArchitecture) )
+				return Parser<riscv32>::parse(fileContent, fileLength, path, modTime, ordinal, opts, indirectDylib, fromSDK);
+			break;
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			if ( Parser<riscv64>::validFile(fileContent, bundleLoader, subTypeMustMatch, subArchitecture) )
+				return Parser<riscv64>::parse(fileContent, fileLength, path, modTime, ordinal, opts, indirectDylib, fromSDK);
 			break;
 #endif
 	}

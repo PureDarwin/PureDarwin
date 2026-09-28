@@ -92,6 +92,8 @@ void doPass(Options& opts, ld::Internal& state)
 
 	// only needed if there is a __mod_init_funcs section
     std::vector<InitOffsetAtom*> orderedInitOffsetAtoms;
+    // slots count across every initializer section, so the offset into them has to as well
+    uint64_t atomOffsetInSection = 0;
 	for (ld::Internal::FinalSection* sect : state.sections) {
 		if ( sect->type() != ld::Section::typeInitializerPointers )
 			continue;
@@ -102,7 +104,6 @@ void doPass(Options& opts, ld::Internal& state)
                     orderedInitOffsetAtoms.push_back(NULL);
             }
         }
-        uint64_t atomOffsetInSection = 0;
 		for (const ld::Atom* atom : sect->atoms) {
 			for (ld::Fixup::iterator fit = atom->fixupsBegin(), end=atom->fixupsEnd(); fit != end; ++fit) {
                 const Atom* initFunc = NULL;

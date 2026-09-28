@@ -235,6 +235,12 @@ template <> cpu_type_t File<arm64>::architecture()  { return CPU_TYPE_ARM64; }
 #if SUPPORT_ARCH_arm64_32
 template <> cpu_type_t File<arm64_32>::architecture()  { return CPU_TYPE_ARM64_32; }
 #endif
+#if SUPPORT_ARCH_riscv32
+template <> cpu_type_t File<riscv32>::architecture()  { return CPU_TYPE_RISCV32; }
+#endif
+#if SUPPORT_ARCH_riscv64
+template <> cpu_type_t File<riscv64>::architecture()  { return CPU_TYPE_RISCV64; }
+#endif
 
 template <typename A>
 bool File<A>::validMachOFile(const uint8_t* fileContent, uint64_t fileLength, const mach_o::relocatable::ParserOptions& opts)
@@ -687,6 +693,18 @@ ld::archive::File* parse(const uint8_t* fileContent, uint64_t fileLength,
 		case CPU_TYPE_ARM64_32:
 			if ( archive::Parser<arm64_32>::validFile(fileContent, fileLength, opts.objOpts) )
 				return archive::Parser<arm64_32>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
+			break;
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			if ( archive::Parser<riscv32>::validFile(fileContent, fileLength, opts.objOpts) )
+				return archive::Parser<riscv32>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
+			break;
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			if ( archive::Parser<riscv64>::validFile(fileContent, fileLength, opts.objOpts) )
+				return archive::Parser<riscv64>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
 			break;
 #endif
 	}

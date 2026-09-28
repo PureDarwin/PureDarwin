@@ -1022,6 +1022,12 @@ template <> uint32_t ExternalRelocationsAtom<arm64>::pointerReloc() { return ARM
 #if SUPPORT_ARCH_arm64_32
 template <> uint32_t ExternalRelocationsAtom<arm64_32>::pointerReloc() { return ARM64_RELOC_UNSIGNED; }
 #endif
+#if SUPPORT_ARCH_riscv32
+template <> uint32_t ExternalRelocationsAtom<riscv32>::pointerReloc() { return RISCV_RELOC_UNSIGNED; }
+#endif
+#if SUPPORT_ARCH_riscv64
+template <> uint32_t ExternalRelocationsAtom<riscv64>::pointerReloc() { return RISCV_RELOC_UNSIGNED; }
+#endif
 #if SUPPORT_ARCH_arm_any
 template <> uint32_t ExternalRelocationsAtom<arm>::pointerReloc() { return ARM_RELOC_VANILLA; }
 #endif
@@ -2234,6 +2240,229 @@ void SectionRelocationsAtom<arm64_32>::encodeSectionReloc(ld::Internal::FinalSec
 
 }
 #endif // SUPPORT_ARCH_arm64_32
+
+#if SUPPORT_ARCH_riscv32
+// -r output keeps ld64's riscv shape: a leading RISCV_RELOC_ADDEND, and pc-relative
+// LO12 immediates left holding their distance back to the auipc
+template <>
+void SectionRelocationsAtom<riscv32>::encodeSectionReloc(ld::Internal::FinalSection* sect,
+														  const Entry& entry, std::vector<macho_relocation_info<P> >& relocs)
+{
+	macho_relocation_info<P> reloc1;
+	macho_relocation_info<P> reloc2;
+	uint64_t address = entry.inAtom->finalAddress()+entry.offsetInAtom - sect->address;
+	bool external = entry.toTargetUsesExternalReloc;
+	uint32_t symbolNum = sectSymNum(external, entry.toTarget);
+	bool fromExternal = false;
+	uint32_t fromSymbolNum = 0;
+	if ( entry.fromTarget != NULL ) {
+		fromExternal = entry.fromTargetUsesExternalReloc;
+		fromSymbolNum = sectSymNum(fromExternal, entry.fromTarget);
+	}
+	uint32_t type = RISCV_RELOC_UNSIGNED;
+	bool pcrel = false;
+	bool instruction = true;
+	uint32_t length = 2;
+
+	switch ( entry.kind ) {
+		case ld::Fixup::kindStoreRISCVBranch20:
+		case ld::Fixup::kindStoreRISCVDtraceCallSiteNop:
+		case ld::Fixup::kindStoreRISCVDtraceIsEnableSiteClear:
+			type = RISCV_RELOC_BRANCH20;
+			pcrel = true;
+			break;
+		case ld::Fixup::kindStoreRISCVhi20:
+		case ld::Fixup::kindStoreRISCVhi20PCRel:
+			type = RISCV_RELOC_HI20;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVhi20PCRel);
+			break;
+		case ld::Fixup::kindStoreRISCVlo12:
+		case ld::Fixup::kindStoreRISCVlo12PCRel:
+			type = RISCV_RELOC_LO12;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVlo12PCRel);
+			break;
+		case ld::Fixup::kindStoreRISCVhi20GOT:
+		case ld::Fixup::kindStoreRISCVhi20PCRelGOT:
+			type = RISCV_RELOC_HI20_GOT;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVhi20PCRelGOT);
+			break;
+		case ld::Fixup::kindStoreRISCVlo12GOT:
+		case ld::Fixup::kindStoreRISCVlo12PCRelGOT:
+			type = RISCV_RELOC_LO12_GOT;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVlo12PCRelGOT);
+			break;
+		case ld::Fixup::kindStoreRISCVTLVPLoadHi20:
+			type = RISCV_RELOC_TLVP_LOAD_HI20;
+			pcrel = true;
+			break;
+		case ld::Fixup::kindStoreRISCVTLVPLoadLo12:
+			type = RISCV_RELOC_TLVP_LOAD_LO12;
+			pcrel = true;
+			break;
+		case ld::Fixup::kindStoreLittleEndian32:
+		case ld::Fixup::kindStoreTargetAddressLittleEndian32:
+			instruction = false;
+			length = 2;
+			break;
+		case ld::Fixup::kindStoreLittleEndian64:
+		case ld::Fixup::kindStoreTargetAddressLittleEndian64:
+			instruction = false;
+			length = 3;
+			break;
+		default:
+			throwf("unsupported riscv fixup kind %d in -r output", entry.kind);
+	}
+
+	if ( instruction ) {
+		if ( entry.toAddend != 0 ) {
+			reloc2.set_r_address(address);
+			reloc2.set_r_symbolnum(entry.toAddend & 0x00FFFFFF);
+			reloc2.set_r_pcrel(false);
+			reloc2.set_r_length(2);
+			reloc2.set_r_extern(false);
+			reloc2.set_r_type(RISCV_RELOC_ADDEND);
+			relocs.push_back(reloc2);
+		}
+		reloc1.set_r_address(address);
+		reloc1.set_r_symbolnum(symbolNum);
+		reloc1.set_r_pcrel(pcrel);
+		reloc1.set_r_length(2);
+		reloc1.set_r_extern(external);
+		reloc1.set_r_type(type);
+		relocs.push_back(reloc1);
+		return;
+	}
+
+	reloc1.set_r_address(address);
+	reloc1.set_r_symbolnum(symbolNum);
+	reloc1.set_r_pcrel(false);
+	reloc1.set_r_length(length);
+	reloc1.set_r_extern(external);
+	reloc1.set_r_type(RISCV_RELOC_UNSIGNED);
+	if ( entry.fromTarget != NULL ) {
+		// a pointer difference, SUBTRACTOR first
+		reloc2.set_r_address(address);
+		reloc2.set_r_symbolnum(fromSymbolNum);
+		reloc2.set_r_pcrel(false);
+		reloc2.set_r_length(length);
+		reloc2.set_r_extern(fromExternal);
+		reloc2.set_r_type(RISCV_RELOC_SUBTRACTOR);
+		relocs.push_back(reloc2);
+	}
+	relocs.push_back(reloc1);
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+// -r output keeps ld64's riscv shape: a leading RISCV_RELOC_ADDEND, and pc-relative
+// LO12 immediates left holding their distance back to the auipc
+template <>
+void SectionRelocationsAtom<riscv64>::encodeSectionReloc(ld::Internal::FinalSection* sect,
+														  const Entry& entry, std::vector<macho_relocation_info<P> >& relocs)
+{
+	macho_relocation_info<P> reloc1;
+	macho_relocation_info<P> reloc2;
+	uint64_t address = entry.inAtom->finalAddress()+entry.offsetInAtom - sect->address;
+	bool external = entry.toTargetUsesExternalReloc;
+	uint32_t symbolNum = sectSymNum(external, entry.toTarget);
+	bool fromExternal = false;
+	uint32_t fromSymbolNum = 0;
+	if ( entry.fromTarget != NULL ) {
+		fromExternal = entry.fromTargetUsesExternalReloc;
+		fromSymbolNum = sectSymNum(fromExternal, entry.fromTarget);
+	}
+	uint32_t type = RISCV_RELOC_UNSIGNED;
+	bool pcrel = false;
+	bool instruction = true;
+	uint32_t length = 2;
+
+	switch ( entry.kind ) {
+		case ld::Fixup::kindStoreRISCVBranch20:
+		case ld::Fixup::kindStoreRISCVDtraceCallSiteNop:
+		case ld::Fixup::kindStoreRISCVDtraceIsEnableSiteClear:
+			type = RISCV_RELOC_BRANCH20;
+			pcrel = true;
+			break;
+		case ld::Fixup::kindStoreRISCVhi20:
+		case ld::Fixup::kindStoreRISCVhi20PCRel:
+			type = RISCV_RELOC_HI20;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVhi20PCRel);
+			break;
+		case ld::Fixup::kindStoreRISCVlo12:
+		case ld::Fixup::kindStoreRISCVlo12PCRel:
+			type = RISCV_RELOC_LO12;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVlo12PCRel);
+			break;
+		case ld::Fixup::kindStoreRISCVhi20GOT:
+		case ld::Fixup::kindStoreRISCVhi20PCRelGOT:
+			type = RISCV_RELOC_HI20_GOT;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVhi20PCRelGOT);
+			break;
+		case ld::Fixup::kindStoreRISCVlo12GOT:
+		case ld::Fixup::kindStoreRISCVlo12PCRelGOT:
+			type = RISCV_RELOC_LO12_GOT;
+			pcrel = (entry.kind == ld::Fixup::kindStoreRISCVlo12PCRelGOT);
+			break;
+		case ld::Fixup::kindStoreRISCVTLVPLoadHi20:
+			type = RISCV_RELOC_TLVP_LOAD_HI20;
+			pcrel = true;
+			break;
+		case ld::Fixup::kindStoreRISCVTLVPLoadLo12:
+			type = RISCV_RELOC_TLVP_LOAD_LO12;
+			pcrel = true;
+			break;
+		case ld::Fixup::kindStoreLittleEndian32:
+		case ld::Fixup::kindStoreTargetAddressLittleEndian32:
+			instruction = false;
+			length = 2;
+			break;
+		case ld::Fixup::kindStoreLittleEndian64:
+		case ld::Fixup::kindStoreTargetAddressLittleEndian64:
+			instruction = false;
+			length = 3;
+			break;
+		default:
+			throwf("unsupported riscv fixup kind %d in -r output", entry.kind);
+	}
+
+	if ( instruction ) {
+		if ( entry.toAddend != 0 ) {
+			reloc2.set_r_address(address);
+			reloc2.set_r_symbolnum(entry.toAddend & 0x00FFFFFF);
+			reloc2.set_r_pcrel(false);
+			reloc2.set_r_length(2);
+			reloc2.set_r_extern(false);
+			reloc2.set_r_type(RISCV_RELOC_ADDEND);
+			relocs.push_back(reloc2);
+		}
+		reloc1.set_r_address(address);
+		reloc1.set_r_symbolnum(symbolNum);
+		reloc1.set_r_pcrel(pcrel);
+		reloc1.set_r_length(2);
+		reloc1.set_r_extern(external);
+		reloc1.set_r_type(type);
+		relocs.push_back(reloc1);
+		return;
+	}
+
+	reloc1.set_r_address(address);
+	reloc1.set_r_symbolnum(symbolNum);
+	reloc1.set_r_pcrel(false);
+	reloc1.set_r_length(length);
+	reloc1.set_r_extern(external);
+	reloc1.set_r_type(RISCV_RELOC_UNSIGNED);
+	if ( entry.fromTarget != NULL ) {
+		// a pointer difference, SUBTRACTOR first
+		reloc2.set_r_address(address);
+		reloc2.set_r_symbolnum(fromSymbolNum);
+		reloc2.set_r_pcrel(false);
+		reloc2.set_r_length(length);
+		reloc2.set_r_extern(fromExternal);
+		reloc2.set_r_type(RISCV_RELOC_SUBTRACTOR);
+		relocs.push_back(reloc2);
+	}
+	relocs.push_back(reloc1);
+}
+#endif
 
 template <typename A>
 void SectionRelocationsAtom<A>::addSectionReloc(ld::Internal::FinalSection*	sect, ld::Fixup::Kind kind, 

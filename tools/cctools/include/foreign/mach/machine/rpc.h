@@ -35,6 +35,8 @@
 #include "mach/i386/rpc.h"
 #elif defined (__arm__) || defined(__arm64__)
 #include "mach/arm/rpc.h"
+#elif defined (__riscv)
+#include "mach/riscv/rpc.h"
 #else
 #error architecture not supported
 #endif

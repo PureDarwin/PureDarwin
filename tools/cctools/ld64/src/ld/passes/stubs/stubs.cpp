@@ -98,6 +98,9 @@ private:
 #if SUPPORT_ARCH_arm64_32
 #include "stub_arm64_32.hpp"
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+#include "stub_riscv.hpp"
+#endif
 
 Pass::Pass(const Options& opts) 
 	:	compressedHelperHelper(NULL), 
@@ -116,16 +119,39 @@ Pass::Pass(const Options& opts)
 } 
 
 
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+// riscv calls are a set-target plus a jal store in one cluster, report the cluster as a branch
+static ld::Fixup::Kind riscvBranchKind(const ld::Fixup* fixup)
+{
+	if ( (fixup->kind != ld::Fixup::kindSetTargetAddress) || !fixup->firstInCluster() )
+		return fixup->kind;
+	for (const ld::Fixup* f = fixup; !f->lastInCluster(); ) {
+		++f;
+		if ( f->kind == ld::Fixup::kindStoreRISCVBranch20 )
+			return ld::Fixup::kindStoreRISCVBranch20;
+	}
+	return fixup->kind;
+}
+#endif
+
 const ld::Atom* Pass::stubableFixup(const ld::Fixup* fixup, ld::Internal& state)
 {
 	if ( fixup->binding == ld::Fixup::bindingsIndirectlyBound ) {
 		const ld::Atom* target = state.indirectBindingTable[fixup->u.bindingIndex];
-		switch ( fixup->kind ) {
+		ld::Fixup::Kind kind = fixup->kind;
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		if ( (_architecture == CPU_TYPE_RISCV32) || (_architecture == CPU_TYPE_RISCV64) )
+			kind = riscvBranchKind(fixup);
+#endif
+		switch ( kind ) {
 			case ld::Fixup::kindStoreTargetAddressX86BranchPCRel32:
 			case ld::Fixup::kindStoreTargetAddressARMBranch24:
 			case ld::Fixup::kindStoreTargetAddressThumbBranch22:
 #if SUPPORT_ARCH_arm64
 			case ld::Fixup::kindStoreTargetAddressARM64Branch26:
+#endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+			case ld::Fixup::kindStoreRISCVBranch20:
 #endif
                 assert(target != NULL);
 				// create stub if target is in a dylib
@@ -285,6 +311,16 @@ ld::Atom* Pass::makeStub(const ld::Atom& target, bool weakImport)
 			else
 				return new ld::passes::stubs::arm64_32::StubAtom(*this, target, stubToGlobalWeakDef, stubToResolver, weakImport);
 			break;
+#endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV32:
+		case CPU_TYPE_RISCV64:
+			// riscv binds every import up front, a resolver would need a lazy helper
+			if ( stubToResolver )
+				throwf("resolver function '%s' not supported for riscv", target.name());
+			if ( !_options.makeChainedFixups() && (_options.outputKind() != Options::kKextBundle) )
+				throwf("riscv stubs need chained fixups (stub to %s)", target.name());
+			return new ld::passes::stubs::riscv::NonLazyStubAtom(*this, target, weakImport, _architecture == CPU_TYPE_RISCV64);
 #endif
 	}
 	throw "unsupported arch for stub";

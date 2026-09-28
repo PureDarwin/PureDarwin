@@ -1,0 +1,211 @@
+diff --git a/lib/Basic/Targets.cpp b/lib/Basic/Targets.cpp
+index 5d1157889..29cfd4967 100644
+--- a/lib/Basic/Targets.cpp
++++ b/lib/Basic/Targets.cpp
+@@ -433,6 +433,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
+     return std::make_unique<AMDGPUTargetInfo>(Triple, Opts);
+ 
+   case llvm::Triple::riscv32:
++    if (Triple.isOSDarwin())
++      return std::make_unique<DarwinTargetInfo<RISCV32TargetInfo>>(Triple, Opts);
+     switch (os) {
+     case llvm::Triple::NetBSD:
+       return std::make_unique<NetBSDTargetInfo<RISCV32TargetInfo>>(Triple,
+@@ -444,6 +446,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
+     }
+ 
+   case llvm::Triple::riscv64:
++    if (Triple.isOSDarwin())
++      return std::make_unique<DarwinTargetInfo<RISCV64TargetInfo>>(Triple, Opts);
+     switch (os) {
+     case llvm::Triple::FreeBSD:
+       return std::make_unique<FreeBSDTargetInfo<RISCV64TargetInfo>>(Triple,
+diff --git a/lib/Basic/Targets/RISCV.h b/lib/Basic/Targets/RISCV.h
+index 8d629abab..977eb2ecb 100644
+--- a/lib/Basic/Targets/RISCV.h
++++ b/lib/Basic/Targets/RISCV.h
+@@ -34,6 +34,12 @@ private:
+   bool HasExperimental = false;
+ 
+ public:
++  // mach-o targets mangle with the leading underscore and private L prefix
++  void resetRISCVDataLayout(llvm::StringRef Rest) {
++    bool MachO = getTriple().isOSBinFormatMachO();
++    resetDataLayout((MachO ? "e-m:o" : "e-m:e") + Rest.str(), MachO ? "_" : "");
++  }
++
+   RISCVTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
+       : TargetInfo(Triple) {
+     BFloat16Width = 16;
+@@ -49,6 +55,15 @@ public:
+     MCountName = "_mcount";
+     HasFloat16 = true;
+     HasStrictFP = true;
++    // darwin's c types and objc bool are the same on every arch, arm64 darwin's included,
++    // long double is double as its libc assumes
++    if (Triple.isOSDarwin()) {
++      LongDoubleWidth = LongDoubleAlign = 64;
++      LongDoubleFormat = &llvm::APFloat::IEEEdouble();
++      WIntType = SignedInt;
++      SuitableAlign = 64;
++      UseSignedCharForObjCBool = false;
++    }
+   }
+ 
+   bool setCPU(const std::string &Name) override {
+@@ -126,6 +141,9 @@ public:
+   uint64_t getFMVPriority(ArrayRef<StringRef> Features) const override;
+ 
+   std::pair<unsigned, unsigned> hardwareInterferenceSizes() const override {
++    // darwin fixes these in libc++'s abi, so use the 64-byte cache block rva22's zic64b requires
++    if (getTriple().isOSDarwin())
++      return std::make_pair(64, 64);
+     return std::make_pair(32, 32);
+   }
+ 
+@@ -175,13 +193,13 @@ public:
+     IntPtrType = SignedInt;
+     PtrDiffType = SignedInt;
+     SizeType = UnsignedInt;
+-    resetDataLayout("e-m:e-p:32:32-i64:64-n32-S128");
++    resetRISCVDataLayout("-p:32:32-i64:64-n32-S128");
+   }
+ 
+   bool setABI(const std::string &Name) override {
+     if (Name == "ilp32e") {
+       ABI = Name;
+-      resetDataLayout("e-m:e-p:32:32-i64:64-n32-S32");
++      resetRISCVDataLayout("-p:32:32-i64:64-n32-S32");
+       return true;
+     }
+ 
+@@ -205,13 +223,16 @@ public:
+       : RISCVTargetInfo(Triple, Opts) {
+     LongWidth = LongAlign = PointerWidth = PointerAlign = 64;
+     IntMaxType = Int64Type = SignedLong;
+-    resetDataLayout("e-m:e-p:64:64-i64:64-i128:128-n32:64-S128");
++    // darwin's int64_t is long long on every arch, which the sdk headers and c++ mangling follow
++    if (Triple.isOSDarwin())
++      Int64Type = SignedLongLong;
++    resetRISCVDataLayout("-p:64:64-i64:64-i128:128-n32:64-S128");
+   }
+ 
+   bool setABI(const std::string &Name) override {
+     if (Name == "lp64e") {
+       ABI = Name;
+-      resetDataLayout("e-m:e-p:64:64-i64:64-i128:128-n32:64-S64");
++      resetRISCVDataLayout("-p:64:64-i64:64-i128:128-n32:64-S64");
+       return true;
+     }
+ 
+diff --git a/lib/Driver/ToolChains/Arch/RISCV.cpp b/lib/Driver/ToolChains/Arch/RISCV.cpp
+index baa2c8c0b..04ada0e5f 100644
+--- a/lib/Driver/ToolChains/Arch/RISCV.cpp
++++ b/lib/Driver/ToolChains/Arch/RISCV.cpp
+@@ -130,7 +130,9 @@ void riscv::getRISCVTargetFeatures(const Driver &D, const llvm::Triple &Triple,
+ #undef RESERVE_REG
+ 
+   // -mrelax is default, unless -mno-relax is specified.
+-  if (Args.hasFlag(options::OPT_mrelax, options::OPT_mno_relax, true)) {
++  // ld64 has no linker relaxation, mach-o never gets it
++  if (!Triple.isOSBinFormatMachO() &&
++      Args.hasFlag(options::OPT_mrelax, options::OPT_mno_relax, true)) {
+     Features.push_back("+relax");
+     // -gsplit-dwarf -mrelax requires DW_AT_high_pc/DW_AT_ranges/... indexing
+     // into .debug_addr, which is currently not implemented.
+@@ -333,6 +335,13 @@ std::string riscv::getRISCVArch(const llvm::opt::ArgList &Args,
+   // We deviate from GCC's defaults here:
+   // - On `riscv{XLEN}-unknown-elf` we default to `rv{XLEN}imac`
+   // - On all other OSs we use `rv{XLEN}imafdc` (equivalent to `rv{XLEN}gc`)
++  // darwin kernel code saves no fp state, so -mkernel and -fapple-kext pick the
++  // integer-only kernel isa, and with it the soft-float ilp32/lp64 abi
++  if (Triple.isOSDarwin() && (Args.hasArg(options::OPT_mkernel) ||
++                              Args.hasArg(options::OPT_fapple_kext)))
++    return Triple.isRISCV32() ? "rv32imac_zicsr_zifencei"
++                              : "rv64imac_zicsr_zifencei";
++
+   if (Triple.isRISCV32()) {
+     if (Triple.getOS() == llvm::Triple::UnknownOS)
+       return "rv32imac";
+diff --git a/lib/Driver/ToolChains/Clang.cpp b/lib/Driver/ToolChains/Clang.cpp
+index 626133223..236a19f8c 100644
+--- a/lib/Driver/ToolChains/Clang.cpp
++++ b/lib/Driver/ToolChains/Clang.cpp
+@@ -1190,6 +1190,9 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
+ 
+   case llvm::Triple::ppc:
+   case llvm::Triple::ppc64:
++  // darwin keeps char signed on riscv as it does on arm64
++  case llvm::Triple::riscv32:
++  case llvm::Triple::riscv64:
+     if (Triple.isOSDarwin())
+       return true;
+     return false;
+@@ -1199,8 +1202,6 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
+   case llvm::Triple::msp430:
+   case llvm::Triple::ppcle:
+   case llvm::Triple::ppc64le:
+-  case llvm::Triple::riscv32:
+-  case llvm::Triple::riscv64:
+   case llvm::Triple::systemz:
+   case llvm::Triple::xcore:
+   case llvm::Triple::xtensa:
+diff --git a/lib/Driver/ToolChains/CommonArgs.cpp b/lib/Driver/ToolChains/CommonArgs.cpp
+index 8d3775de9..236ac70cf 100644
+--- a/lib/Driver/ToolChains/CommonArgs.cpp
++++ b/lib/Driver/ToolChains/CommonArgs.cpp
+@@ -83,12 +83,16 @@ static bool useFramePointerForTargetByDefault(const llvm::opt::ArgList &Args,
+     // XCore never wants frame pointers, regardless of OS.
+     // WebAssembly never wants frame pointers.
+     return false;
++  case llvm::Triple::riscv32:
++  case llvm::Triple::riscv64:
++    // darwin walks frame records everywhere, backtrace() and stackshots included
++    if (Triple.isOSDarwin())
++      return true;
++    return !clang::driver::tools::areOptimizationsEnabled(Args);
+   case llvm::Triple::ppc:
+   case llvm::Triple::ppcle:
+   case llvm::Triple::ppc64:
+   case llvm::Triple::ppc64le:
+-  case llvm::Triple::riscv32:
+-  case llvm::Triple::riscv64:
+   case llvm::Triple::sparc:
+   case llvm::Triple::sparcel:
+   case llvm::Triple::sparcv9:
+@@ -151,6 +155,9 @@ static bool useFramePointerForTargetByDefault(const llvm::opt::ArgList &Args,
+ }
+ 
+ static bool useLeafFramePointerForTargetByDefault(const llvm::Triple &Triple) {
++  // riscv darwin follows arm64 darwin, leaf functions skip the frame record
++  if (Triple.isRISCV() && Triple.isOSDarwin())
++    return false;
+   if (Triple.isAArch64() || Triple.isPS() || Triple.isVE() ||
+       (Triple.isAndroid() && !Triple.isARM()))
+     return false;
+diff --git a/lib/Driver/ToolChains/Darwin.cpp b/lib/Driver/ToolChains/Darwin.cpp
+index 234683f2f..9b4269e6c 100644
+--- a/lib/Driver/ToolChains/Darwin.cpp
++++ b/lib/Driver/ToolChains/Darwin.cpp
+@@ -61,6 +61,8 @@ llvm::Triple::ArchType darwin::getArchTypeForMachOArchName(StringRef Str) {
+       .Cases("armv7s", "xscale", llvm::Triple::arm)
+       .Cases("arm64", "arm64e", llvm::Triple::aarch64)
+       .Case("arm64_32", llvm::Triple::aarch64_32)
++      .Case("riscv32", llvm::Triple::riscv32)
++      .Case("riscv64", llvm::Triple::riscv64)
+       .Case("r600", llvm::Triple::r600)
+       .Case("amdgcn", llvm::Triple::amdgcn)
+       .Case("nvptx", llvm::Triple::nvptx)
+@@ -1071,6 +1073,12 @@ StringRef MachO::getMachOArchName(const ArgList &Args) const {
+   case llvm::Triple::aarch64_32:
+     return "arm64_32";
+ 
++  case llvm::Triple::riscv32:
++    return "riscv32";
++
++  case llvm::Triple::riscv64:
++    return "riscv64";
++
+   case llvm::Triple::aarch64: {
+     if (getTriple().isArm64e())
+       return "arm64e";

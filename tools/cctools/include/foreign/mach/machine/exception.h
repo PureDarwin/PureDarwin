@@ -35,6 +35,8 @@
 #include "mach/i386/exception.h"
 #elif defined (__arm__) || defined(__arm64__)
 #include "mach/arm/exception.h"
+#elif defined (__riscv)
+#include "mach/riscv/exception.h"
 #else
 #error architecture not supported
 #endif

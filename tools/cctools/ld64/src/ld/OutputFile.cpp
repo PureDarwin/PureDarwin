@@ -825,6 +825,76 @@ void OutputFile::rangeCheckARM64Page21(int64_t displacement, ld::Internal& state
 }
 
 
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+// an instruction can only address something in this image, an import has to come through the got
+static void checkRISCVInstructionTarget(const ld::Atom* target)
+{
+	if ( (target != NULL) && (target->definition() == ld::Atom::definitionProxy) ) {
+		const char* where = (target->file() != NULL) ? target->safeFilePath() : "a dylib";
+		throwf("illegal text-relocation to '%s' in %s, riscv code must reach imported symbols through the GOT",
+			   target->name(), where);
+	}
+}
+
+// bits v[begin:end] inclusive, begin below 63
+static uint32_t riscvBits(uint64_t v, uint32_t begin, uint32_t end)
+{
+	return (uint32_t)((v & ((1ULL << (begin + 1)) - 1)) >> end);
+}
+
+bool OutputFile::checkRISCVBranchDisplacement(int64_t displacement)
+{
+	// jal reaches +/-1MB in 2-byte steps
+	return ( (displacement <= 0xFFFFE) && (displacement >= -0x100000) );
+}
+
+// riscv stores carry no target of their own, the cluster's set-target fixup names it
+void OutputFile::rangeCheckRISCVBranch20(int64_t displacement, ld::Internal& state, const ld::Atom* atom,
+										 const ld::Fixup* fixup, const ld::Atom* target, uint64_t targetAddr)
+{
+	if ( ! checkRISCVBranchDisplacement(displacement) ) {
+		// show layout of final image
+		printSectionLayout(state);
+		throwf("20-bit branch out of range (%lld max is +/-1MB): from %s (0x%08llX) to %s (0x%08llX)",
+				displacement, atom->name(), atom->finalAddress() + fixup->offsetInAtom,
+				(target != NULL) ? target->name() : "?", targetAddr);
+	}
+}
+
+void OutputFile::rangeCheckRISCVPCRel32(int64_t displacement, ld::Internal& state, const ld::Atom* atom,
+										const ld::Fixup* fixup, const ld::Atom* target, uint64_t targetAddr)
+{
+	// auipc plus a sign-extended 12-bit low part reaches +/-2GB
+	if ( (displacement > 0x7FFFF7FFLL) || (displacement < -0x80000800LL) ) {
+		printSectionLayout(state);
+		throwf("pc-relative reference out of range (%lld max is +/-2GB): from %s (0x%08llX) to %s (0x%08llX)",
+				displacement, atom->name(), atom->finalAddress() + fixup->offsetInAtom,
+				(target != NULL) ? target->name() : "?", targetAddr);
+	}
+}
+
+// the low 12 bits of value into an i-type or s-type immediate
+static uint32_t riscvSetLo12(uint32_t instruction, int64_t value)
+{
+	if ( ((instruction & 0x7F) == 0x23) || ((instruction & 0x7F) == 0x27) ) {
+		// sd/sw/sh/sb/fsw/fsd
+		uint32_t imm11_5 = riscvBits(value, 11, 5) << 25;
+		uint32_t imm4_0  = riscvBits(value, 4, 0) << 7;
+		return (instruction & 0x01FFF07F) | imm11_5 | imm4_0;
+	}
+	// addi/ld/lw/lh/lb/jalr and friends
+	return (instruction & 0x000FFFFF) | (((uint32_t)value & 0x00000FFF) << 20);
+}
+
+// the signed immediate an i-type or s-type instruction already carries
+static int32_t riscvGetLo12(uint32_t instruction)
+{
+	if ( ((instruction & 0x7F) == 0x23) || ((instruction & 0x7F) == 0x27) )
+		return (((int32_t)instruction >> 25) << 5) | (int32_t)riscvBits(instruction, 11, 7);
+	return (int32_t)instruction >> 20;
+}
+#endif
+
 uint16_t OutputFile::get16LE(uint8_t* loc) { return LittleEndian::get16(*(uint16_t*)loc); }
 void     OutputFile::set16LE(uint8_t* loc, uint16_t value) { LittleEndian::set16(*(uint16_t*)loc, value); }
 
@@ -1643,6 +1713,16 @@ void OutputFile::applyFixUps(ld::Internal& state, uint64_t mhAddress, const ld::
 					set32LE(fixUpLocation, 0xD2800000);
 				}
 				break;
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+			case ld::Fixup::kindStoreRISCVDtraceCallSiteNop:
+				if ( _options.outputKind() != Options::kObjectFile )
+					set32LE(fixUpLocation, 0x00000013);	// nop
+				break;
+			case ld::Fixup::kindStoreRISCVDtraceIsEnableSiteClear:
+				if ( _options.outputKind() != Options::kObjectFile )
+					set32LE(fixUpLocation, 0x00000513);	// li a0, 0
+				break;
+#endif
 			case ld::Fixup::kindLazyTarget:
 			case ld::Fixup::kindIslandTarget:
 				break;
@@ -2225,6 +2305,93 @@ void OutputFile::applyFixUps(ld::Internal& state, uint64_t mhAddress, const ld::
 				else
 					delta = accumulator - (atom->finalAddress() + fit->offsetInAtom);
 				set32LE(fixUpLocation, delta);
+				break;
+#endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+			case ld::Fixup::kindStoreRISCVBranch20:
+				if ( fit->contentAddendOnly )
+					break; // nothing to change in ld -r mode
+				if ( toTarget->contentType() == ld::Atom::typeBranchIsland ) {
+					// branching to an island, go straight to the final target when it is in reach
+					for (ld::Fixup::iterator islandfit = toTarget->fixupsBegin(), iend=toTarget->fixupsEnd(); islandfit != iend; ++islandfit) {
+						if ( islandfit->kind == ld::Fixup::kindIslandTarget ) {
+							const ld::Atom* islandTarget = NULL;
+							uint64_t islandTargetAddress = addressOf(state, islandfit, &islandTarget);
+							delta = islandTargetAddress - (atom->finalAddress() + fit->offsetInAtom);
+							if ( checkRISCVBranchDisplacement(delta) ) {
+								toTarget    = islandTarget;
+								accumulator = islandTargetAddress;
+							}
+							break;
+						}
+					}
+				}
+				delta = accumulator - (atom->finalAddress() + fit->offsetInAtom);
+				rangeCheckRISCVBranch20(delta, state, atom, fit, toTarget, accumulator);
+				instruction = get32LE(fixUpLocation) & 0x00000FFF;
+				newInstruction = instruction | (riscvBits(delta, 20, 20) << 31) | (riscvBits(delta, 10, 1) << 21)
+								| (riscvBits(delta, 11, 11) << 20) | (riscvBits(delta, 19, 12) << 12);
+				set32LE(fixUpLocation, newInstruction);
+				break;
+			case ld::Fixup::kindStoreRISCVhi20:
+				// lui gets the upper bits, rounded for the sign-extended low part that follows
+				if ( fit->contentAddendOnly )
+					break;
+				checkRISCVInstructionTarget(toTarget);
+				instruction = get32LE(fixUpLocation);
+				newInstruction = (instruction & 0x00000FFF) | (((uint32_t)accumulator + 0x800) & 0xFFFFF000);
+				set32LE(fixUpLocation, newInstruction);
+				break;
+			case ld::Fixup::kindStoreRISCVlo12:
+				if ( fit->contentAddendOnly )
+					break;
+				checkRISCVInstructionTarget(toTarget);
+				set32LE(fixUpLocation, riscvSetLo12(get32LE(fixUpLocation), accumulator));
+				break;
+			case ld::Fixup::kindStoreRISCVhi20PCRel:
+				// auipc gets the upper bits of target - pc
+				if ( fit->contentAddendOnly )
+					break;
+				checkRISCVInstructionTarget(toTarget);
+				delta = accumulator - (atom->finalAddress() + fit->offsetInAtom);
+				rangeCheckRISCVPCRel32(delta, state, atom, fit, toTarget, accumulator);
+				instruction = get32LE(fixUpLocation);
+				newInstruction = (instruction & 0x00000FFF) | (((uint32_t)delta + 0x800) & 0xFFFFF000);
+				set32LE(fixUpLocation, newInstruction);
+				break;
+			case ld::Fixup::kindStoreRISCVlo12PCRel:
+				// the immediate holds the distance back to the paired auipc, so target - auipc
+				if ( fit->contentAddendOnly )
+					break;
+				checkRISCVInstructionTarget(toTarget);
+				instruction = get32LE(fixUpLocation);
+				delta = accumulator - (atom->finalAddress() + fit->offsetInAtom) - riscvGetLo12(instruction);
+				set32LE(fixUpLocation, riscvSetLo12(instruction, delta));
+				break;
+			case ld::Fixup::kindStoreRISCVlo12PCRelLoadToAddi:
+				// ld/lw rd, lo(rs1) becomes addi rd, rs1, lo with the same pc-relative immediate
+				if ( fit->contentAddendOnly )
+					break;
+				checkRISCVInstructionTarget(toTarget);
+				instruction = get32LE(fixUpLocation);
+				if ( (instruction & 0x7F) != 0x03 )
+					throwf("riscv load to addi fixup not on a load in %s", atom->name());
+				delta = accumulator - (atom->finalAddress() + fit->offsetInAtom) - riscvGetLo12(instruction);
+				instruction = (instruction & ~0x707FU) | 0x13;
+				set32LE(fixUpLocation, riscvSetLo12(instruction, delta));
+				break;
+			case ld::Fixup::kindStoreRISCVhi20GOT:
+			case ld::Fixup::kindStoreRISCVlo12GOT:
+			case ld::Fixup::kindStoreRISCVhi20PCRelGOT:
+			case ld::Fixup::kindStoreRISCVlo12PCRelGOT:
+				// the got pass rewrites these to point at a slot
+				throwf("unexpected riscv GOT fixup in %s", atom->name());
+				break;
+			case ld::Fixup::kindStoreRISCVTLVPLoadHi20:
+			case ld::Fixup::kindStoreRISCVTLVPLoadLo12:
+				if ( fit->contentAddendOnly )
+					break; // ld -r keeps the relocation
+				throwf("unexpected riscv TLVP fixup in %s", atom->name());
 				break;
 #endif
 		}
@@ -3058,6 +3225,18 @@ void OutputFile::copyNoOps(uint8_t* from, uint8_t* to, bool thumb)
 					OSWriteLittleInt32((uint32_t*)p, 0, 0xe1a00000);
 			}
 			break;
+		case CPU_TYPE_RISCV32:
+		case CPU_TYPE_RISCV64: {
+			// 4-byte nops, with a c.nop for a 2-byte tail after compressed code
+			uint8_t* p = from;
+			for (; p + 4 <= to; p += 4)
+				OSWriteLittleInt32((uint32_t*)p, 0, 0x00000013);
+			for (; p + 2 <= to; p += 2)
+				OSWriteLittleInt16((uint16_t*)p, 0, 0x0001);
+			for (; p < to; ++p)
+				*p = 0x00;
+			break;
+		}
 		default:
 			for (uint8_t* p=from; p < to; ++p)
 				*p = 0x00;
@@ -4012,6 +4191,7 @@ void OutputFile::buildSymbolTable(ld::Internal& state)
 #if SUPPORT_ARCH_arm64_32
 				  || (_options.architecture() == CPU_TYPE_ARM64_32)
 #endif
+				  || (_options.architecture() == CPU_TYPE_RISCV32) || (_options.architecture() == CPU_TYPE_RISCV64)
 				   ) {
 					// x86_64 .o files need labels on anonymous literal strings
 					if ( (sect->type() == ld::Section::typeCString) && (atom->combine() == ld::Atom::combineByNameAndContent) ) {
@@ -4337,6 +4517,30 @@ void OutputFile::addPreloadLinkEdit(ld::Internal& state)
 			}
 			break;
 #endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			if ( _hasLocalRelocations ) {
+				_localRelocsAtom = new LocalRelocationsAtom<riscv64>(_options, state, *this);
+				localRelocationsSection = state.addAtom(*_localRelocsAtom);
+			}
+			if ( _hasExternalRelocations ) {
+				_externalRelocsAtom = new ExternalRelocationsAtom<riscv64>(_options, state, *this);
+				externalRelocationsSection = state.addAtom(*_externalRelocsAtom);
+			}
+			if ( _hasDataInCodeInfo ) {
+				_dataInCodeAtom = new DataInCodeAtom<x86_64>(_options, state, *this);
+				dataInCodeSection = state.addAtom(*_dataInCodeAtom);
+			}
+			if ( _hasSymbolTable ) {
+				_indirectSymbolTableAtom = new IndirectSymbolTableAtom<riscv64>(_options, state, *this);
+				indirectSymbolTableSection = state.addAtom(*_indirectSymbolTableAtom);
+				_symbolTableAtom = new SymbolTableAtom<riscv64>(_options, state, *this);
+				symbolTableSection = state.addAtom(*_symbolTableAtom);
+				_stringPoolAtom = new StringPoolAtom(_options, state, *this, 8);
+				stringPoolSection = state.addAtom(*_stringPoolAtom);
+			}
+			break;
+#endif
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
 			if ( _hasLocalRelocations ) {
@@ -4355,6 +4559,30 @@ void OutputFile::addPreloadLinkEdit(ld::Internal& state)
 				_indirectSymbolTableAtom = new IndirectSymbolTableAtom<arm64_32>(_options, state, *this);
 				indirectSymbolTableSection = state.addAtom(*_indirectSymbolTableAtom);
 				_symbolTableAtom = new SymbolTableAtom<arm64_32>(_options, state, *this);
+				symbolTableSection = state.addAtom(*_symbolTableAtom);
+				_stringPoolAtom = new StringPoolAtom(_options, state, *this, 4);
+				stringPoolSection = state.addAtom(*_stringPoolAtom);
+			}
+			break;
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			if ( _hasLocalRelocations ) {
+				_localRelocsAtom = new LocalRelocationsAtom<riscv32>(_options, state, *this);
+				localRelocationsSection = state.addAtom(*_localRelocsAtom);
+			}
+			if ( _hasExternalRelocations ) {
+				_externalRelocsAtom = new ExternalRelocationsAtom<riscv32>(_options, state, *this);
+				externalRelocationsSection = state.addAtom(*_externalRelocsAtom);
+			}
+			if ( _hasDataInCodeInfo ) {
+				_dataInCodeAtom = new DataInCodeAtom<x86_64>(_options, state, *this);
+				dataInCodeSection = state.addAtom(*_dataInCodeAtom);
+			}
+			if ( _hasSymbolTable ) {
+				_indirectSymbolTableAtom = new IndirectSymbolTableAtom<riscv32>(_options, state, *this);
+				indirectSymbolTableSection = state.addAtom(*_indirectSymbolTableAtom);
+				_symbolTableAtom = new SymbolTableAtom<riscv32>(_options, state, *this);
 				symbolTableSection = state.addAtom(*_symbolTableAtom);
 				_stringPoolAtom = new StringPoolAtom(_options, state, *this, 4);
 				stringPoolSection = state.addAtom(*_stringPoolAtom);
@@ -4667,6 +4895,79 @@ void OutputFile::addLinkEdit(ld::Internal& state)
 			}
 			break;
 #endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			if ( _hasSectionRelocations ) {
+				_sectionsRelocationsAtom = new SectionRelocationsAtom<riscv64>(_options, state, *this);
+				sectionRelocationsSection = state.addAtom(*_sectionsRelocationsAtom);
+			}
+			if ( _hasChainedFixups ) {
+				_chainedInfoAtom = new ChainedInfoAtom<riscv64>(_options, state, *this);
+				chainInfoSection = state.addAtom(*_chainedInfoAtom);
+			}
+			if ( _hasExportsTrie ) {
+				_exportInfoAtom = new ExportInfoAtom<riscv64>(_options, state, *this);
+				exportSection = state.addAtom(*_exportInfoAtom);
+			}
+			if ( _hasDyldInfo ) {
+				_rebasingInfoAtom = new RebaseInfoAtom<riscv64>(_options, state, *this);
+				rebaseSection = state.addAtom(*_rebasingInfoAtom);
+				
+				_bindingInfoAtom = new BindingInfoAtom<riscv64>(_options, state, *this);
+				bindingSection = state.addAtom(*_bindingInfoAtom);
+				
+				_weakBindingInfoAtom = new WeakBindingInfoAtom<riscv64>(_options, state, *this);
+				weakBindingSection = state.addAtom(*_weakBindingInfoAtom);
+				
+				_lazyBindingInfoAtom = new LazyBindingInfoAtom<riscv64>(_options, state, *this);
+				lazyBindingSection = state.addAtom(*_lazyBindingInfoAtom);
+				
+				_exportInfoAtom = new ExportInfoAtom<riscv64>(_options, state, *this);
+				exportSection = state.addAtom(*_exportInfoAtom);
+			}
+			if ( _hasLocalRelocations ) {
+				_localRelocsAtom = new LocalRelocationsAtom<riscv64>(_options, state, *this);
+				localRelocationsSection = state.addAtom(*_localRelocsAtom);
+			}
+			if  ( _hasSplitSegInfo ) {
+				if ( _options.sharedRegionEncodingV2() )
+					_splitSegInfoAtom = new SplitSegInfoV2Atom<riscv64>(_options, state, *this);
+				else
+					_splitSegInfoAtom = new SplitSegInfoV1Atom<riscv64>(_options, state, *this);
+				splitSegInfoSection = state.addAtom(*_splitSegInfoAtom);
+			}
+			if ( _hasFunctionStartsInfo ) {
+				_functionStartsAtom = new FunctionStartsAtom<riscv64>(_options, state, *this);
+				functionStartsSection = state.addAtom(*_functionStartsAtom);
+			}
+			if ( _hasDataInCodeInfo ) {
+				_dataInCodeAtom = new DataInCodeAtom<riscv64>(_options, state, *this);
+				dataInCodeSection = state.addAtom(*_dataInCodeAtom);
+			}
+			if ( _hasOptimizationHints ) {
+				_optimizationHintsAtom = new OptimizationHintsAtom<riscv64>(_options, state, *this);
+				optimizationHintsSection = state.addAtom(*_optimizationHintsAtom);
+			}
+			if ( _hasSymbolTable ) {
+				_symbolTableAtom = new SymbolTableAtom<riscv64>(_options, state, *this);
+				symbolTableSection = state.addAtom(*_symbolTableAtom);
+			}
+			if ( _hasExternalRelocations ) {
+				_externalRelocsAtom = new ExternalRelocationsAtom<riscv64>(_options, state, *this);
+				externalRelocationsSection = state.addAtom(*_externalRelocsAtom);
+			}
+			if ( _hasSymbolTable ) {
+				_indirectSymbolTableAtom = new IndirectSymbolTableAtom<riscv64>(_options, state, *this);
+				indirectSymbolTableSection = state.addAtom(*_indirectSymbolTableAtom);
+				_stringPoolAtom = new StringPoolAtom(_options, state, *this, 8);
+				stringPoolSection = state.addAtom(*_stringPoolAtom);
+			}
+			if ( _hasCodeSignature ) {
+				_codeSignatureAtom = new CodeSignatureAtom(_options, state, *this);
+				codeSignatureSection = state.addAtom(*_codeSignatureAtom);
+			}
+			break;
+#endif
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
 			if ( _hasSectionRelocations ) {
@@ -4740,6 +5041,79 @@ void OutputFile::addLinkEdit(ld::Internal& state)
 			}
 			break;
 #endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			if ( _hasSectionRelocations ) {
+				_sectionsRelocationsAtom = new SectionRelocationsAtom<riscv32>(_options, state, *this);
+				sectionRelocationsSection = state.addAtom(*_sectionsRelocationsAtom);
+			}
+			if ( _hasChainedFixups ) {
+				_chainedInfoAtom = new ChainedInfoAtom<riscv32>(_options, state, *this);
+				chainInfoSection = state.addAtom(*_chainedInfoAtom);
+			}
+			if ( _hasExportsTrie ) {
+				_exportInfoAtom = new ExportInfoAtom<riscv32>(_options, state, *this);
+				exportSection = state.addAtom(*_exportInfoAtom);
+			}
+			if ( _hasDyldInfo ) {
+				_rebasingInfoAtom = new RebaseInfoAtom<riscv32>(_options, state, *this);
+				rebaseSection = state.addAtom(*_rebasingInfoAtom);
+				
+				_bindingInfoAtom = new BindingInfoAtom<riscv32>(_options, state, *this);
+				bindingSection = state.addAtom(*_bindingInfoAtom);
+				
+				_weakBindingInfoAtom = new WeakBindingInfoAtom<riscv32>(_options, state, *this);
+				weakBindingSection = state.addAtom(*_weakBindingInfoAtom);
+				
+				_lazyBindingInfoAtom = new LazyBindingInfoAtom<riscv32>(_options, state, *this);
+				lazyBindingSection = state.addAtom(*_lazyBindingInfoAtom);
+				
+				_exportInfoAtom = new ExportInfoAtom<riscv32>(_options, state, *this);
+				exportSection = state.addAtom(*_exportInfoAtom);
+			}
+			if ( _hasLocalRelocations ) {
+				_localRelocsAtom = new LocalRelocationsAtom<riscv32>(_options, state, *this);
+				localRelocationsSection = state.addAtom(*_localRelocsAtom);
+			}
+			if  ( _hasSplitSegInfo ) {
+				if ( _options.sharedRegionEncodingV2() )
+					_splitSegInfoAtom = new SplitSegInfoV2Atom<riscv32>(_options, state, *this);
+				else
+					_splitSegInfoAtom = new SplitSegInfoV1Atom<riscv32>(_options, state, *this);
+				splitSegInfoSection = state.addAtom(*_splitSegInfoAtom);
+			}
+			if ( _hasFunctionStartsInfo ) {
+				_functionStartsAtom = new FunctionStartsAtom<riscv32>(_options, state, *this);
+				functionStartsSection = state.addAtom(*_functionStartsAtom);
+			}
+			if ( _hasDataInCodeInfo ) {
+				_dataInCodeAtom = new DataInCodeAtom<riscv32>(_options, state, *this);
+				dataInCodeSection = state.addAtom(*_dataInCodeAtom);
+			}
+			if ( _hasOptimizationHints ) {
+				_optimizationHintsAtom = new OptimizationHintsAtom<riscv32>(_options, state, *this);
+				optimizationHintsSection = state.addAtom(*_optimizationHintsAtom);
+			}
+			if ( _hasSymbolTable ) {
+				_symbolTableAtom = new SymbolTableAtom<riscv32>(_options, state, *this);
+				symbolTableSection = state.addAtom(*_symbolTableAtom);
+			}
+			if ( _hasExternalRelocations ) {
+				_externalRelocsAtom = new ExternalRelocationsAtom<riscv32>(_options, state, *this);
+				externalRelocationsSection = state.addAtom(*_externalRelocsAtom);
+			}
+			if ( _hasSymbolTable ) {
+				_indirectSymbolTableAtom = new IndirectSymbolTableAtom<riscv32>(_options, state, *this);
+				indirectSymbolTableSection = state.addAtom(*_indirectSymbolTableAtom);
+				_stringPoolAtom = new StringPoolAtom(_options, state, *this, 4);
+				stringPoolSection = state.addAtom(*_stringPoolAtom);
+			}
+			if ( _hasCodeSignature ) {
+				_codeSignatureAtom = new CodeSignatureAtom(_options, state, *this);
+				codeSignatureSection = state.addAtom(*_codeSignatureAtom);
+			}
+			break;
+#endif
 		default:
 			throw "unknown architecture";
 	}
@@ -4766,9 +5140,21 @@ void OutputFile::addLoadCommands(ld::Internal& state)
 			headerAndLoadCommandsSection = state.addAtom(*_headersAndLoadCommandAtom);
 			break;
 #endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			_headersAndLoadCommandAtom = new HeaderAndLoadCommandsAtom<riscv64>(_options, state, *this);
+			headerAndLoadCommandsSection = state.addAtom(*_headersAndLoadCommandAtom);
+			break;
+#endif
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
 			_headersAndLoadCommandAtom = new HeaderAndLoadCommandsAtom<arm64_32>(_options, state, *this);
+			headerAndLoadCommandsSection = state.addAtom(*_headersAndLoadCommandAtom);
+			break;
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			_headersAndLoadCommandAtom = new HeaderAndLoadCommandsAtom<riscv32>(_options, state, *this);
 			headerAndLoadCommandsSection = state.addAtom(*_headersAndLoadCommandAtom);
 			break;
 #endif
@@ -6238,6 +6624,7 @@ bool OutputFile::useExternalSectionReloc(const ld::Atom* atom, const ld::Atom* t
 #if SUPPORT_ARCH_arm64_32
 	  || (_options.architecture() == CPU_TYPE_ARM64_32)
 #endif
+	  || (_options.architecture() == CPU_TYPE_RISCV32) || (_options.architecture() == CPU_TYPE_RISCV64)
        ) {
 		// x86_64 and ARM64 use external relocations for everthing that has a symbol
 		return ( target->symbolTableInclusion() != ld::Atom::symbolTableNotIn );
@@ -6303,6 +6690,21 @@ bool OutputFile::useSectionRelocAddend(ld::Fixup* fixupWithTarget)
 		}
 	}
 #endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+	// riscv instruction relocations carry their addend in RISCV_RELOC_ADDEND
+	if ( (_options.architecture() == CPU_TYPE_RISCV32) || (_options.architecture() == CPU_TYPE_RISCV64) ) {
+		switch ( fixupWithTarget->kind ) {
+			case ld::Fixup::kindStoreRISCVBranch20:
+			case ld::Fixup::kindStoreRISCVhi20:
+			case ld::Fixup::kindStoreRISCVlo12:
+			case ld::Fixup::kindStoreRISCVhi20PCRel:
+			case ld::Fixup::kindStoreRISCVlo12PCRel:
+				return true;
+			default:
+				return false;
+		}
+	}
+#endif
 	return false;
 }
 
@@ -6344,6 +6746,7 @@ void OutputFile::addSectionRelocs(ld::Internal& state, ld::Internal::FinalSectio
 #if SUPPORT_ARCH_arm64_32
 	  || (_options.architecture() == CPU_TYPE_ARM64_32)
 #endif
+	  || (_options.architecture() == CPU_TYPE_RISCV32) || (_options.architecture() == CPU_TYPE_RISCV64)
 	   ) {
 		if ( targetUsesExternalReloc ) {
 			fixupWithTarget->contentAddendOnly = true;

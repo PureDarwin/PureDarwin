@@ -144,12 +144,18 @@ void doPass(const Options& opts, ld::Internal& internal)
 					case ld::Fixup::kindStoreARMDtraceCallSiteNop:
 					case ld::Fixup::kindStoreThumbDtraceCallSiteNop:
 					case ld::Fixup::kindStoreARM64DtraceCallSiteNop:
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+					case ld::Fixup::kindStoreRISCVDtraceCallSiteNop:
+#endif
 						probeSites.push_back(DTraceProbeInfo(atom, fit->offsetInAtom, fit->u.name));
 						break;
 					case ld::Fixup::kindStoreX86DtraceIsEnableSiteClear:
 					case ld::Fixup::kindStoreARMDtraceIsEnableSiteClear:
 					case ld::Fixup::kindStoreThumbDtraceIsEnableSiteClear:
 					case ld::Fixup::kindStoreARM64DtraceIsEnableSiteClear:
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+					case ld::Fixup::kindStoreRISCVDtraceIsEnableSiteClear:
+#endif
 						isEnabledSites.push_back(DTraceProbeInfo(atom, fit->offsetInAtom, fit->u.name));
 						break;
 					case ld::Fixup::kindDtraceExtra:
@@ -175,6 +181,8 @@ void doPass(const Options& opts, ld::Internal& internal)
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
 #endif
+		case CPU_TYPE_RISCV32:
+		case CPU_TYPE_RISCV64:
 			storeKind = ld::Fixup::kindStoreLittleEndian32;
 			break;
 		default:

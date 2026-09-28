@@ -114,7 +114,7 @@ void doPass(const Options& opts, ld::Internal& internal)
 	if ( opts.outputKind() == Options::kObjectFile )
 		return;
 
-	const unsigned ptrSize = (opts.architecture() == CPU_TYPE_ARM64_32) ? 4 : 8;
+	const unsigned ptrSize = ((opts.architecture() == CPU_TYPE_ARM64_32) || (opts.architecture() == CPU_TYPE_RISCV32)) ? 4 : 8;
 
 	// walk all atoms and fixups looking for TLV references and add them to list
 	std::vector<TlVReferenceCluster>	references;
@@ -149,6 +149,10 @@ void doPass(const Options& opts, ld::Internal& internal)
 #if SUPPORT_ARCH_arm64
 					case ld::Fixup::kindStoreTargetAddressARM64TLVPLoadPage21:
 					case ld::Fixup::kindStoreTargetAddressARM64TLVPLoadPageOff12:
+#endif
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+					case ld::Fixup::kindStoreRISCVTLVPLoadHi20:
+					case ld::Fixup::kindStoreRISCVTLVPLoadLo12:
 #endif
 						ref.fixupWithTLVStore = fit;
 						break;
@@ -220,6 +224,25 @@ void doPass(const Options& opts, ld::Internal& internal)
 
 	// update references to use TLV pointers or TLV object directly
 	for(std::vector<TlVReferenceCluster>::iterator it=references.begin(); it != references.end(); ++it) {
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+		// riscv keeps the target on the cluster's set-target fixup, the store only says how
+		if ( (it->fixupWithTLVStore->kind == ld::Fixup::kindStoreRISCVTLVPLoadHi20)
+		  || (it->fixupWithTLVStore->kind == ld::Fixup::kindStoreRISCVTLVPLoadLo12) ) {
+			bool hi = (it->fixupWithTLVStore->kind == ld::Fixup::kindStoreRISCVTLVPLoadHi20);
+			it->fixupWithTarget->binding = ld::Fixup::bindingDirectlyBound;
+			if ( it->optimizable ) {
+				// the descriptor is in this image, so compute its address instead of loading it
+				it->fixupWithTarget->u.target = it->targetOfTLV;
+				it->fixupWithTLVStore->kind = hi ? ld::Fixup::kindStoreRISCVhi20PCRel : ld::Fixup::kindStoreRISCVlo12PCRelLoadToAddi;
+			}
+			else {
+				it->fixupWithTarget->u.target = variableToPointerMap[it->targetOfTLV];
+				assert(it->fixupWithTarget->u.target != NULL);
+				it->fixupWithTLVStore->kind = hi ? ld::Fixup::kindStoreRISCVhi20PCRel : ld::Fixup::kindStoreRISCVlo12PCRel;
+			}
+			continue;
+		}
+#endif
 		if ( it->optimizable ) {
 			// change store to be LEA instead load (mov)
 			if (log) fprintf(stderr, "optimizing load of TLV to %s into an LEA\n", it->targetOfTLV->name());

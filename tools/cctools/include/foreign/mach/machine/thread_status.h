@@ -35,6 +35,8 @@
 #include "mach/i386/thread_status.h"
 #elif defined (__arm__) || defined(__arm64__)
 #include "mach/arm/thread_status.h"
+#elif defined (__riscv)
+#include "mach/riscv/thread_status.h"
 #else
 #error architecture not supported
 #endif

@@ -32,13 +32,7 @@ let
   # does NOT prevent this on Apple targets; only -mcpu does.
   baselineCpu = if lib.hasPrefix "arm64-" clangTarget then [ "-mcpu=apple-a10" ] else [ ];
 
-  # cdefs.h picks the __DARWIN_ONLY_* set from XNU_PLATFORM_*. With none defined
-  # they default to 0, which is right for x86_64 macOS ($INODE64/$UNIX2003
-  # variants exist there) but wrong for arm64, where those suffixes never
-  # existed - freetype's fstat() then wants _fstat$INODE64. Only arm64 gets the
-  # define: setting it for x86_64 would also flip __DARWIN_ONLY_UNIX_CONFORMANCE
-  # and change that ABI.
-  platformDefine = if lib.hasPrefix "arm64-" clangTarget then [ "-DXNU_PLATFORM_MacOSX=1" ] else [ ];
+  platformDefine = if lib.hasPrefix "arm64-" clangTarget || lib.hasPrefix "riscv64-" clangTarget then [ "-DXNU_PLATFORM_MacOSX=1" ] else [ ];
 
   compilerWrapper = name: realBin: writeShellScriptBin "${target}-${name}" ''
     SDK="''${DARWIN_SDK_ROOT:-${defaultSdkRoot}}"

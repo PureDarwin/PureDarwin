@@ -11,6 +11,9 @@ stdenv.mkDerivation {
     hash = "sha256-eXzQRB07AcH9nBgPoGpIQZbC4O/bIzkdbjJ442qM9VA=";
   };
 
+  # riscv32/riscv64 in the TextAPI arch table so ld64 can link riscv .tbd stubs
+  patches = [ ./libtapi-riscv.patch ];
+
   nativeBuildInputs = [ cmake ninja python3 ];
 
   # build.sh drives its own cmake invocation (it builds tapi out of a bundled

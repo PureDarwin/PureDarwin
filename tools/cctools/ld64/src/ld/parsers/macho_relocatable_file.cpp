@@ -209,6 +209,7 @@ protected:
 	Atom<A>*						findContentAtomByAddress(pint_t addr, class Atom<A>* start, class Atom<A>* end);
 	uint32_t						x86_64PcRelOffset(uint8_t r_type);
 	void							addLOH(class Parser<A>& parser, int kind, int count, const uint64_t addrs[]);
+	bool							riscvAddRelocFixup(class Parser<A>& parser, const macho_relocation_info<P>*);
 	static const char*				makeSegmentName(const macho_section<typename A::P>* s);
 	static bool						readable(const macho_section<typename A::P>* s);
 	static bool						writable(const macho_section<typename A::P>* s);
@@ -1426,6 +1427,35 @@ bool Parser<arm64_32>::validFile(const uint8_t* fileContent, bool subtypeMustMat
 }
 #endif
 
+#if SUPPORT_ARCH_riscv32
+template <>
+bool Parser<riscv32>::validFile(const uint8_t* fileContent, bool subtypeMustMatch, cpu_subtype_t subtype)
+{
+	const macho_header<P>* header = (const macho_header<P>*)fileContent;
+	if ( header->magic() != MH_MAGIC )
+		return false;
+	if ( header->cputype() != CPU_TYPE_RISCV32 )
+		return false;
+	if ( header->filetype() != MH_OBJECT )
+		return false;
+	return true;
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+bool Parser<riscv64>::validFile(const uint8_t* fileContent, bool subtypeMustMatch, cpu_subtype_t subtype)
+{
+	const macho_header<P>* header = (const macho_header<P>*)fileContent;
+	if ( header->magic() != MH_MAGIC_64 )
+		return false;
+	if ( header->cputype() != CPU_TYPE_RISCV64 )
+		return false;
+	if ( header->filetype() != MH_OBJECT )
+		return false;
+	return true;
+}
+#endif
+
 template <>
 const char* Parser<x86>::fileKind(const uint8_t* fileContent)
 {
@@ -1497,6 +1527,31 @@ const char* Parser<arm64_32>::fileKind(const uint8_t* fileContent)
 	if ( header->cputype() != CPU_TYPE_ARM64_32 )
 		return NULL;
 	return "arm64_32";
+}
+#endif
+
+#if SUPPORT_ARCH_riscv32
+template <>
+const char* Parser<riscv32>::fileKind(const uint8_t* fileContent)
+{
+	const macho_header<P>* header = (const macho_header<P>*)fileContent;
+	if ( header->magic() != MH_MAGIC )
+		return NULL;
+	if ( header->cputype() != CPU_TYPE_RISCV32 )
+		return NULL;
+	return "riscv32";
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+const char* Parser<riscv64>::fileKind(const uint8_t* fileContent)
+{
+	const macho_header<P>* header = (const macho_header<P>*)fileContent;
+	if ( header->magic() != MH_MAGIC_64 )
+		return NULL;
+	if ( header->cputype() != CPU_TYPE_RISCV64 )
+		return NULL;
+	return "riscv64";
 }
 #endif
 
@@ -2102,6 +2157,12 @@ template <> uint8_t Parser<arm>::loadCommandSizeMask()		{ return 0x03; }
 template <> uint8_t Parser<arm64>::loadCommandSizeMask()	{ return 0x07; }
 #if SUPPORT_ARCH_arm64_32
 template <> uint8_t Parser<arm64_32>::loadCommandSizeMask()	{ return 0x03; }
+#endif
+#if SUPPORT_ARCH_riscv32
+template <> uint8_t Parser<riscv32>::loadCommandSizeMask()	{ return 0x03; }
+#endif
+#if SUPPORT_ARCH_riscv64
+template <> uint8_t Parser<riscv64>::loadCommandSizeMask()	{ return 0x07; }
 #endif
 
 template <typename A>
@@ -3784,14 +3845,23 @@ const char* Parser<A>::getDwarfString(uint64_t form, const uint8_t*& di, bool dw
 			result = (const char*)di;
 			di += strlen(result) + 1;
 			break;
+		case DW_FORM_strx:
+			result = getStrxString(read_uleb128(&di, di + 16), dwarf64);
+			break;
+		// indices are unsigned, a signed char read turned 128 and up into huge ones
 		case DW_FORM_strx1:
-			offset = *(const char*)di;
+			offset = *(const uint8_t*)di;
 			di += 1;
 			result = getStrxString(offset, dwarf64);
 			break;
 		case DW_FORM_strx2:
-			offset = E::get16(*((uint32_t*)di));
+			offset = E::get16(*((uint16_t*)di));
 			di += 2;
+			result = getStrxString(offset, dwarf64);
+			break;
+		case DW_FORM_strx3:
+			offset = di[0] | (di[1] << 8) | (di[2] << 16);
+			di += 3;
 			result = getStrxString(offset, dwarf64);
 			break;
 		case DW_FORM_strx4:
@@ -4999,6 +5069,195 @@ void CFISection<arm64_32>::cfiParse(class Parser<arm64_32>& parser, uint8_t* buf
 }
 #endif
 
+#if SUPPORT_ARCH_riscv32
+template <>
+bool CFISection<riscv32>::needsRelocating()
+{
+	return true;
+}
+
+template <>
+void CFISection<riscv32>::cfiParse(class Parser<riscv32>& parser, uint8_t* buffer,
+									libunwind::CFI_Atom_Info<CFISection<riscv32>::OAS> cfiArray[],
+									uint32_t& count, const pint_t cuStarts[], uint32_t cuCount)
+{
+	// copy __eh_frame data to buffer
+	memcpy(buffer, file().fileContent() + this->_machOSection->offset(), this->_machOSection->size());
+
+	// and apply relocations
+	const macho_relocation_info<P>* relocs = (macho_relocation_info<P>*)(file().fileContent() + this->_machOSection->reloff());
+	const macho_relocation_info<P>* relocsEnd = &relocs[this->_machOSection->nreloc()];
+	for (const macho_relocation_info<P>* reloc = relocs; reloc < relocsEnd; ++reloc) {
+		uint64_t* p64 = (uint64_t*)&buffer[reloc->r_address()];
+		uint32_t* p32 = (uint32_t*)&buffer[reloc->r_address()];
+		uint32_t addend32 = E::get32(*p32);
+		uint64_t addend64 = E::get64(*p64);
+		uint64_t value = 0;
+		switch ( reloc->r_type() ) {
+			case RISCV_RELOC_SUBTRACTOR:
+				value =  0 - parser.symbolFromIndex(reloc->r_symbolnum()).n_value();
+				++reloc;
+				if ( reloc->r_extern() )
+					value += parser.symbolFromIndex(reloc->r_symbolnum()).n_value();
+				break;
+			case RISCV_RELOC_UNSIGNED:
+				if ( reloc->r_extern() )
+					value = parser.symbolFromIndex(reloc->r_symbolnum()).n_value();
+				break;
+			case RISCV_RELOC_POINTER_TO_GOT:
+				// the personality function in a cie, keep its symbol number for addCiePersonalityFixups
+				value = reloc->r_symbolnum();
+				addend32 = 0;
+				addend64 = 0;
+				break;
+			default:
+				fprintf(stderr, "CFISection::cfiParse() unexpected relocation type at r_address=0x%08X\n", reloc->r_address());
+				break;
+		}
+		switch ( reloc->r_length() ) {
+			case 3:
+				E::set64(*p64, value + addend64);
+				break;
+			case 2:
+				E::set32(*p32, value + addend32);
+				break;
+			default:
+				fprintf(stderr, "CFISection::cfiParse() unexpected relocation size at r_address=0x%08X\n", reloc->r_address());
+				break;
+		}
+	}
+
+	// create ObjectAddressSpace object for use by libunwind
+	OAS oas(*this, buffer);
+
+	// use libuwind to parse __eh_frame data into array of CFI_Atom_Info
+	const char* msg;
+	msg = libunwind::DwarfInstructions<OAS, libunwind::Registers_riscv>::parseCFIs(
+							oas, this->_machOSection->addr(), this->_machOSection->size(),
+							cuStarts, cuCount, parser.keepDwarfUnwind(), parser.forceDwarfConversion(), parser.neverConvertDwarf(),
+							cfiArray, count, (void*)&parser, warnFunc);
+	if ( msg != NULL )
+		throwf("malformed __eh_frame section: %s", msg);
+}
+
+template <>
+void CFISection<riscv32>::addCiePersonalityFixups(class Parser<riscv32>& parser, const CFI_Atom_Info* cieInfo)
+{
+	uint8_t personalityEncoding = cieInfo->u.cieInfo.personality.encodingOfTargetAddress;
+	if ( personalityEncoding == 0x9B ) {
+		// the compiler references the personality function as sym@GOT - . with RISCV_RELOC_POINTER_TO_GOT,
+		// cfiParse left the symbol index plus the address of the field as its target
+		uint32_t symbolIndex = cieInfo->u.cieInfo.personality.targetAddress
+									- cieInfo->address - cieInfo->u.cieInfo.personality.offsetInCFI;
+		const macho_nlist<P>& sym = parser.symbolFromIndex(symbolIndex);
+		const char* personalityName = parser.nameFromSymbol(sym);
+
+		Atom<riscv32>* cieAtom = this->findAtomByAddress(cieInfo->address);
+		Parser<riscv32>::SourceLocation src(cieAtom, cieInfo->u.cieInfo.personality.offsetInCFI);
+		parser.addFixup(src, ld::Fixup::k1of2, ld::Fixup::kindSetTargetAddress, false, personalityName);
+		parser.addFixup(src, ld::Fixup::k2of2, ld::Fixup::kindStoreARM64PCRelToGOT);
+	}
+	else if ( personalityEncoding != 0 ) {
+		throwf("unsupported address encoding (%02X) of personality function in CIE",
+				personalityEncoding);
+	}
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+bool CFISection<riscv64>::needsRelocating()
+{
+	return true;
+}
+
+template <>
+void CFISection<riscv64>::cfiParse(class Parser<riscv64>& parser, uint8_t* buffer,
+									libunwind::CFI_Atom_Info<CFISection<riscv64>::OAS> cfiArray[],
+									uint32_t& count, const pint_t cuStarts[], uint32_t cuCount)
+{
+	// copy __eh_frame data to buffer
+	memcpy(buffer, file().fileContent() + this->_machOSection->offset(), this->_machOSection->size());
+
+	// and apply relocations
+	const macho_relocation_info<P>* relocs = (macho_relocation_info<P>*)(file().fileContent() + this->_machOSection->reloff());
+	const macho_relocation_info<P>* relocsEnd = &relocs[this->_machOSection->nreloc()];
+	for (const macho_relocation_info<P>* reloc = relocs; reloc < relocsEnd; ++reloc) {
+		uint64_t* p64 = (uint64_t*)&buffer[reloc->r_address()];
+		uint32_t* p32 = (uint32_t*)&buffer[reloc->r_address()];
+		uint32_t addend32 = E::get32(*p32);
+		uint64_t addend64 = E::get64(*p64);
+		uint64_t value = 0;
+		switch ( reloc->r_type() ) {
+			case RISCV_RELOC_SUBTRACTOR:
+				value =  0 - parser.symbolFromIndex(reloc->r_symbolnum()).n_value();
+				++reloc;
+				if ( reloc->r_extern() )
+					value += parser.symbolFromIndex(reloc->r_symbolnum()).n_value();
+				break;
+			case RISCV_RELOC_UNSIGNED:
+				if ( reloc->r_extern() )
+					value = parser.symbolFromIndex(reloc->r_symbolnum()).n_value();
+				break;
+			case RISCV_RELOC_POINTER_TO_GOT:
+				// the personality function in a cie, keep its symbol number for addCiePersonalityFixups
+				value = reloc->r_symbolnum();
+				addend32 = 0;
+				addend64 = 0;
+				break;
+			default:
+				fprintf(stderr, "CFISection::cfiParse() unexpected relocation type at r_address=0x%08X\n", reloc->r_address());
+				break;
+		}
+		switch ( reloc->r_length() ) {
+			case 3:
+				E::set64(*p64, value + addend64);
+				break;
+			case 2:
+				E::set32(*p32, value + addend32);
+				break;
+			default:
+				fprintf(stderr, "CFISection::cfiParse() unexpected relocation size at r_address=0x%08X\n", reloc->r_address());
+				break;
+		}
+	}
+
+	// create ObjectAddressSpace object for use by libunwind
+	OAS oas(*this, buffer);
+
+	// use libuwind to parse __eh_frame data into array of CFI_Atom_Info
+	const char* msg;
+	msg = libunwind::DwarfInstructions<OAS, libunwind::Registers_riscv>::parseCFIs(
+							oas, this->_machOSection->addr(), this->_machOSection->size(),
+							cuStarts, cuCount, parser.keepDwarfUnwind(), parser.forceDwarfConversion(), parser.neverConvertDwarf(),
+							cfiArray, count, (void*)&parser, warnFunc);
+	if ( msg != NULL )
+		throwf("malformed __eh_frame section: %s", msg);
+}
+
+template <>
+void CFISection<riscv64>::addCiePersonalityFixups(class Parser<riscv64>& parser, const CFI_Atom_Info* cieInfo)
+{
+	uint8_t personalityEncoding = cieInfo->u.cieInfo.personality.encodingOfTargetAddress;
+	if ( personalityEncoding == 0x9B ) {
+		// the compiler references the personality function as sym@GOT - . with RISCV_RELOC_POINTER_TO_GOT,
+		// cfiParse left the symbol index plus the address of the field as its target
+		uint32_t symbolIndex = cieInfo->u.cieInfo.personality.targetAddress
+									- cieInfo->address - cieInfo->u.cieInfo.personality.offsetInCFI;
+		const macho_nlist<P>& sym = parser.symbolFromIndex(symbolIndex);
+		const char* personalityName = parser.nameFromSymbol(sym);
+
+		Atom<riscv64>* cieAtom = this->findAtomByAddress(cieInfo->address);
+		Parser<riscv64>::SourceLocation src(cieAtom, cieInfo->u.cieInfo.personality.offsetInCFI);
+		parser.addFixup(src, ld::Fixup::k1of2, ld::Fixup::kindSetTargetAddress, false, personalityName);
+		parser.addFixup(src, ld::Fixup::k2of2, ld::Fixup::kindStoreARM64PCRelToGOT);
+	}
+	else if ( personalityEncoding != 0 ) {
+		throwf("unsupported address encoding (%02X) of personality function in CIE",
+				personalityEncoding);
+	}
+}
+#endif
+
 template <typename A>
 uint32_t CFISection<A>::computeAtomCount(class Parser<A>& parser, 
 											struct Parser<A>::LabelAndCFIBreakIterator& it, 
@@ -5037,6 +5296,12 @@ template <> bool CFISection<arm>::bigEndian() { return false; }
 template <> bool CFISection<arm64>::bigEndian() { return false; }
 #if SUPPORT_ARCH_arm64_32
 template <> bool CFISection<arm64_32>::bigEndian() { return false; }
+#endif
+#if SUPPORT_ARCH_riscv32
+template <> bool CFISection<riscv32>::bigEndian() { return false; }
+#endif
+#if SUPPORT_ARCH_riscv64
+template <> bool CFISection<riscv64>::bigEndian() { return false; }
 #endif
 
 template <>
@@ -5553,6 +5818,23 @@ bool CUSection<arm64_32>::encodingMeansUseDwarf(compact_unwind_encoding_t enc)
 }
 #endif
 
+#if SUPPORT_ARCH_riscv32
+template <>
+bool CUSection<riscv32>::encodingMeansUseDwarf(compact_unwind_encoding_t enc)
+{
+	// riscv has no compact unwind encodings, everything is dwarf
+	return true;
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+bool CUSection<riscv64>::encodingMeansUseDwarf(compact_unwind_encoding_t enc)
+{
+	// riscv has no compact unwind encodings, everything is dwarf
+	return true;
+}
+#endif
+
 template <typename A>
 int CUSection<A>::infoSorter(const void* l, const void* r)
 {
@@ -5804,6 +6086,21 @@ ld::Atom::SymbolTableInclusion ImplicitSizeSection<arm64>::symbolTableInclusion(
 #if SUPPORT_ARCH_arm64_32
 template <>
 ld::Atom::SymbolTableInclusion ImplicitSizeSection<arm64_32>::symbolTableInclusion()
+{
+	return ld::Atom::symbolTableInWithRandomAutoStripLabel;
+}
+#endif
+
+#if SUPPORT_ARCH_riscv32
+template <>
+ld::Atom::SymbolTableInclusion ImplicitSizeSection<riscv32>::symbolTableInclusion()
+{
+	return ld::Atom::symbolTableInWithRandomAutoStripLabel;
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+ld::Atom::SymbolTableInclusion ImplicitSizeSection<riscv64>::symbolTableInclusion()
 {
 	return ld::Atom::symbolTableInWithRandomAutoStripLabel;
 }
@@ -6114,6 +6411,21 @@ template <>
 ld::Fixup::Kind NonLazyPointerSection<arm64_32>::fixupKind()
 {
 	return ld::Fixup::kindStoreLittleEndian32;
+}
+#endif
+
+#if SUPPORT_ARCH_riscv32
+template <>
+ld::Fixup::Kind NonLazyPointerSection<riscv32>::fixupKind()
+{
+	return ld::Fixup::kindStoreLittleEndian32;
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+ld::Fixup::Kind NonLazyPointerSection<riscv64>::fixupKind()
+{
+	return ld::Fixup::kindStoreLittleEndian64;
 }
 #endif
 
@@ -8333,6 +8645,230 @@ bool Section<arm64_32>::addRelocFixup(class Parser<arm64_32>& parser, const mach
 }
 #endif
 
+#if SUPPORT_ARCH_riscv32 || SUPPORT_ARCH_riscv64
+// riscv code relocations are extern with a leading RISCV_RELOC_ADDEND, and a
+// pc-relative LO12 keeps the distance back to its AUIPC in its own immediate
+template <typename A>
+bool Section<A>::riscvAddRelocFixup(class Parser<A>& parser, const macho_relocation_info<P>* reloc)
+{
+	bool result = false;
+	typename Parser<A>::SourceLocation	src;
+	typename Parser<A>::TargetDesc		target = { NULL, NULL, false, 0 };
+	typename Parser<A>::TargetDesc		toTarget;
+	int32_t prefixRelocAddend = 0;
+	if ( reloc->r_type() == RISCV_RELOC_ADDEND ) {
+		uint32_t rawAddend = reloc->r_symbolnum();
+		prefixRelocAddend = rawAddend;
+		if ( rawAddend & 0x00800000 )
+			prefixRelocAddend |= 0xFF000000; // sign extend 24-bit signed int to 32-bits
+		uint32_t addendAddress = reloc->r_address();
+		++reloc;  //advance to next reloc record
+		result = true;
+		if ( reloc->r_address() != addendAddress )
+			throw "RISCV_RELOC_ADDEND r_address does not match next reloc's r_address";
+	}
+	const macho_section<P>* sect = this->machoSection();
+	uint64_t srcAddr = sect->addr() + reloc->r_address();
+	src.atom = this->findAtomByAddress(srcAddr);
+	src.offsetInAtom = srcAddr - src.atom->_objAddress;
+	const uint8_t* fixUpPtr = this->file().fileContent() + sect->offset() + reloc->r_address();
+	uint64_t contentValue = 0;
+	const macho_relocation_info<P>* nextReloc = &reloc[1];
+	bool useDirectBinding;
+	switch ( reloc->r_length() ) {
+		case 0:
+			contentValue = *fixUpPtr;
+			break;
+		case 1:
+			contentValue = (int64_t)(int16_t)E::get16(*((uint16_t*)fixUpPtr));
+			break;
+		case 2:
+			contentValue = (int64_t)(int32_t)E::get32(*((uint32_t*)fixUpPtr));
+			break;
+		case 3:
+			contentValue = E::get64(*((uint64_t*)fixUpPtr));
+			break;
+	}
+	if ( reloc->r_extern() ) {
+		const macho_nlist<P>& sym = parser.symbolFromIndex(reloc->r_symbolnum());
+		const char* symbolName = parser.nameFromSymbol(sym);
+		if ( ((sym.n_type() & N_TYPE) == N_SECT) && (((sym.n_type() & N_EXT) == 0) || (symbolName[0] == 'L') || (symbolName[0] == 'l')) ) {
+			// use direct reference for local symbols
+			parser.findTargetFromAddressAndSectionNum(sym.n_value(), sym.n_sect(), target);
+		}
+		else if ( ((sym.n_type() & N_TYPE) == N_SECT) && (src.atom->_objAddress <= sym.n_value()) && (sym.n_value() < (src.atom->_objAddress+src.atom->size())) ) {
+			// use direct reference when atom targets itself
+			target.atom = src.atom;
+			target.name = NULL;
+			target.addend = sym.n_value() - src.atom->_objAddress;
+		}
+		else {
+			target.name = symbolName;
+			target.weakImport = parser.weakImportFromSymbol(sym);
+		}
+	}
+	else {
+		if ( reloc->r_pcrel() )
+			contentValue += srcAddr;
+		parser.findTargetFromAddressAndSectionNum(contentValue, reloc->r_symbolnum(), target);
+	}
+	// every instruction relocation is extern with its addend carried separately
+	bool instReloc = (reloc->r_type() != RISCV_RELOC_UNSIGNED) && (reloc->r_type() != RISCV_RELOC_SUBTRACTOR)
+				  && (reloc->r_type() != RISCV_RELOC_POINTER_TO_GOT);
+	if ( instReloc ) {
+		if ( ! reloc->r_extern() )
+			throwf("r_extern == 0 and riscv relocation type %d not supported", reloc->r_type());
+		if ( reloc->r_length() != 2 )
+			throwf("r_length != 2 and riscv relocation type %d not supported", reloc->r_type());
+		// a local label resolves to its atom plus an offset, the explicit addend goes on top
+		target.addend += prefixRelocAddend;
+	}
+	switch ( reloc->r_type() ) {
+		case RISCV_RELOC_UNSIGNED:
+			if ( reloc->r_pcrel() )
+				throw "pcrel and RISCV_RELOC_UNSIGNED not supported";
+			if ( reloc->r_extern() )
+				target.addend += contentValue;
+			switch ( reloc->r_length() ) {
+				case 0:
+				case 1:
+					throw "length < 2 and RISCV_RELOC_UNSIGNED not supported";
+				case 2:
+					parser.addFixups(src, ld::Fixup::kindStoreLittleEndian32, target);
+					break;
+				case 3:
+					parser.addFixups(src, ld::Fixup::kindStoreLittleEndian64, target);
+					break;
+			}
+			break;
+		case RISCV_RELOC_BRANCH20:
+			if ( ! reloc->r_pcrel() )
+				throw "not pcrel and RISCV_RELOC_BRANCH20 not supported";
+			if ( (target.name != NULL) && (strncmp(target.name, "___dtrace_probe$", 16) == 0) ) {
+				parser.addFixup(src, ld::Fixup::k1of1, ld::Fixup::kindStoreRISCVDtraceCallSiteNop, false, target.name);
+				parser.addDtraceExtraInfos(src, &target.name[16]);
+			}
+			else if ( (target.name != NULL) && (strncmp(target.name, "___dtrace_isenabled$", 20) == 0) ) {
+				parser.addFixup(src, ld::Fixup::k1of1, ld::Fixup::kindStoreRISCVDtraceIsEnableSiteClear, false, target.name);
+				parser.addDtraceExtraInfos(src, &target.name[20]);
+			}
+			else {
+				parser.addFixups(src, ld::Fixup::kindStoreRISCVBranch20, target);
+			}
+			break;
+		case RISCV_RELOC_HI20:
+			parser.addFixups(src, reloc->r_pcrel() ? ld::Fixup::kindStoreRISCVhi20PCRel : ld::Fixup::kindStoreRISCVhi20, target);
+			break;
+		case RISCV_RELOC_LO12:
+			// for pcrel the imm12 in the instruction is the delta back to the paired hi20 instruction
+			parser.addFixups(src, reloc->r_pcrel() ? ld::Fixup::kindStoreRISCVlo12PCRel : ld::Fixup::kindStoreRISCVlo12, target);
+			break;
+		case RISCV_RELOC_HI20_GOT:
+			parser.addFixups(src, reloc->r_pcrel() ? ld::Fixup::kindStoreRISCVhi20PCRelGOT : ld::Fixup::kindStoreRISCVhi20GOT, target);
+			break;
+		case RISCV_RELOC_LO12_GOT:
+			parser.addFixups(src, reloc->r_pcrel() ? ld::Fixup::kindStoreRISCVlo12PCRelGOT : ld::Fixup::kindStoreRISCVlo12GOT, target);
+			break;
+		case RISCV_RELOC_TLVP_LOAD_HI20:
+		case RISCV_RELOC_TLVP_LOAD_LO12:
+			if ( ! reloc->r_pcrel() )
+				throwf("riscv relocation type %d must be pc-relative", reloc->r_type());
+			if ( prefixRelocAddend != 0 )
+				throwf("RISCV_RELOC_ADDEND followed by riscv relocation type %d not supported", reloc->r_type());
+			parser.addFixups(src, (reloc->r_type() == RISCV_RELOC_TLVP_LOAD_HI20) ? ld::Fixup::kindStoreRISCVTLVPLoadHi20
+																				 : ld::Fixup::kindStoreRISCVTLVPLoadLo12, target);
+			break;
+		case RISCV_RELOC_POINTER_TO_GOT:
+			// sym@GOT - . as 32 bits, or an absolute pointer to the slot
+			if ( ! reloc->r_extern() )
+				throw "r_extern == 0 and RISCV_RELOC_POINTER_TO_GOT not supported";
+			if ( prefixRelocAddend != 0 )
+				throw "RISCV_RELOC_ADDEND followed by RISCV_RELOC_POINTER_TO_GOT not supported";
+			if ( reloc->r_pcrel() ) {
+				if ( reloc->r_length() != 2 )
+					throw "r_length != 2 and pc-relative RISCV_RELOC_POINTER_TO_GOT not supported";
+				parser.addFixups(src, ld::Fixup::kindStoreARM64PCRelToGOT, target);
+			}
+			else {
+				if ( reloc->r_length() != 3 )
+					throw "r_length != 3 and absolute RISCV_RELOC_POINTER_TO_GOT not supported";
+				parser.addFixups(src, ld::Fixup::kindStoreARM64PointerToGOT, target);
+			}
+			break;
+		case RISCV_RELOC_SUBTRACTOR:
+			if ( reloc->r_pcrel() )
+				throw "RISCV_RELOC_SUBTRACTOR cannot be pc-relative";
+			if ( reloc->r_length() < 2 )
+				throw "RISCV_RELOC_SUBTRACTOR must have r_length of 2 or 3";
+			if ( ! reloc->r_extern() )
+				throw "RISCV_RELOC_SUBTRACTOR must have r_extern=1";
+			if ( nextReloc->r_type() != RISCV_RELOC_UNSIGNED )
+				throw "RISCV_RELOC_SUBTRACTOR must be followed by RISCV_RELOC_UNSIGNED";
+			if ( prefixRelocAddend != 0 )
+				throw "RISCV_RELOC_ADDEND followed by RISCV_RELOC_SUBTRACTOR not supported";
+			result = true;
+			if ( nextReloc->r_pcrel() )
+				throw "RISCV_RELOC_UNSIGNED following a RISCV_RELOC_SUBTRACTOR cannot be pc-relative";
+			if ( nextReloc->r_length() != reloc->r_length() )
+				throw "RISCV_RELOC_UNSIGNED following a RISCV_RELOC_SUBTRACTOR must have same r_length";
+			if ( nextReloc->r_extern() ) {
+				const macho_nlist<P>& sym = parser.symbolFromIndex(nextReloc->r_symbolnum());
+				// use direct reference for local symbols
+				if ( ((sym.n_type() & N_TYPE) == N_SECT) && (((sym.n_type() & N_EXT) == 0) || (parser.nameFromSymbol(sym)[0] == 'L')) ) {
+					parser.findTargetFromAddressAndSectionNum(sym.n_value(), sym.n_sect(), toTarget);
+					toTarget.addend += contentValue;
+					useDirectBinding = true;
+				}
+				else {
+					toTarget.name = parser.nameFromSymbol(sym);
+					toTarget.weakImport = parser.weakImportFromSymbol(sym);
+					toTarget.addend = contentValue;
+					useDirectBinding = false;
+				}
+			}
+			else {
+				parser.findTargetFromAddressAndSectionNum(contentValue, nextReloc->r_symbolnum(), toTarget);
+				useDirectBinding = (toTarget.atom->scope() == ld::Atom::scopeTranslationUnit);
+			}
+			if ( useDirectBinding ) {
+				if ( (toTarget.atom->combine() == ld::Atom::combineByNameAndContent) || (toTarget.atom->combine() == ld::Atom::combineByNameAndReferences) )
+					parser.addFixup(src, ld::Fixup::k1of4, ld::Fixup::kindSetTargetAddress, ld::Fixup::bindingByContentBound, toTarget.atom);
+				else
+					parser.addFixup(src, ld::Fixup::k1of4, ld::Fixup::kindSetTargetAddress, toTarget.atom);
+			}
+			else
+				parser.addFixup(src, ld::Fixup::k1of4, ld::Fixup::kindSetTargetAddress, toTarget.weakImport, toTarget.name);
+			parser.addFixup(src, ld::Fixup::k2of4, ld::Fixup::kindAddAddend, toTarget.addend);
+			if ( target.atom == NULL )
+				parser.addFixup(src, ld::Fixup::k3of4, ld::Fixup::kindSubtractTargetAddress, false, target.name);
+			else
+				parser.addFixup(src, ld::Fixup::k3of4, ld::Fixup::kindSubtractTargetAddress, target.atom);
+			if ( reloc->r_length() == 2 )
+				parser.addFixup(src, ld::Fixup::k4of4, ld::Fixup::kindStoreLittleEndian32);
+			else
+				parser.addFixup(src, ld::Fixup::k4of4, ld::Fixup::kindStoreLittleEndian64);
+			break;
+		default:
+			throwf("unknown riscv relocation type %d", reloc->r_type());
+	}
+	return result;
+}
+#endif
+#if SUPPORT_ARCH_riscv32
+template <>
+bool Section<riscv32>::addRelocFixup(class Parser<riscv32>& parser, const macho_relocation_info<P>* reloc)
+{
+	return riscvAddRelocFixup(parser, reloc);
+}
+#endif
+#if SUPPORT_ARCH_riscv64
+template <>
+bool Section<riscv64>::addRelocFixup(class Parser<riscv64>& parser, const macho_relocation_info<P>* reloc)
+{
+	return riscvAddRelocFixup(parser, reloc);
+}
+#endif
+
 template <typename A>
 bool ObjC1ClassSection<A>::addRelocFixup(class Parser<A>& parser, const macho_relocation_info<P>* reloc)
 {
@@ -8784,6 +9320,18 @@ ld::relocatable::File* parse(const uint8_t* fileContent, uint64_t fileLength,
 				return mach_o::relocatable::Parser<arm64_32>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
 			break;
 #endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			if ( mach_o::relocatable::Parser<riscv32>::validFile(fileContent, opts.objSubtypeMustMatch, opts.subType) )
+				return mach_o::relocatable::Parser<riscv32>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
+			break;
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			if ( mach_o::relocatable::Parser<riscv64>::validFile(fileContent, opts.objSubtypeMustMatch, opts.subType) )
+				return mach_o::relocatable::Parser<riscv64>::parse(fileContent, fileLength, path, modTime, ordinal, opts);
+			break;
+#endif
 	}
 	return NULL;
 }
@@ -8805,6 +9353,14 @@ bool isObjectFile(const uint8_t* fileContent, uint64_t fileLength, const ParserO
 #if SUPPORT_ARCH_arm64_32
 		case CPU_TYPE_ARM64_32:
 			return ( mach_o::relocatable::Parser<arm64_32>::validFile(fileContent, opts.objSubtypeMustMatch, opts.subType) );
+#endif
+#if SUPPORT_ARCH_riscv32
+		case CPU_TYPE_RISCV32:
+			return ( mach_o::relocatable::Parser<riscv32>::validFile(fileContent, opts.objSubtypeMustMatch, opts.subType) );
+#endif
+#if SUPPORT_ARCH_riscv64
+		case CPU_TYPE_RISCV64:
+			return ( mach_o::relocatable::Parser<riscv64>::validFile(fileContent, opts.objSubtypeMustMatch, opts.subType) );
 #endif
 	}
 	return false;
@@ -8852,6 +9408,24 @@ bool isObjectFile(const uint8_t* fileContent, uint64_t fileLength, cpu_type_t* r
 		return true;
 	}
 #endif
+#if SUPPORT_ARCH_riscv32
+	if ( mach_o::relocatable::Parser<riscv32>::validFile(fileContent, false, 0) ) {
+		const macho_header<Pointer32<LittleEndian> >* header = (const macho_header<Pointer32<LittleEndian> >*)fileContent;
+		*result = CPU_TYPE_RISCV32;
+		*subResult = CPU_SUBTYPE_RISCV_ALL;
+		Parser<riscv32>::findPlatforms(header, fileLength, platformsFound);
+		return true;
+	}
+#endif
+#if SUPPORT_ARCH_riscv64
+	if ( mach_o::relocatable::Parser<riscv64>::validFile(fileContent, false, 0) ) {
+		const macho_header<Pointer64<LittleEndian> >* header = (const macho_header<Pointer64<LittleEndian> >*)fileContent;
+		*result = CPU_TYPE_RISCV64;
+		*subResult = CPU_SUBTYPE_RISCV_ALL;
+		Parser<riscv64>::findPlatforms(header, fileLength, platformsFound);
+		return true;
+	}
+#endif
 	return false;
 }					
 
@@ -8877,6 +9451,16 @@ const char* archName(const uint8_t* fileContent)
 #if SUPPORT_ARCH_arm64_32
 	if ( mach_o::relocatable::Parser<arm64_32>::validFile(fileContent, false, 0) ) {
 		return mach_o::relocatable::Parser<arm64_32>::fileKind(fileContent);
+	}
+#endif
+#if SUPPORT_ARCH_riscv32
+	if ( mach_o::relocatable::Parser<riscv32>::validFile(fileContent, false, 0) ) {
+		return mach_o::relocatable::Parser<riscv32>::fileKind(fileContent);
+	}
+#endif
+#if SUPPORT_ARCH_riscv64
+	if ( mach_o::relocatable::Parser<riscv64>::validFile(fileContent, false, 0) ) {
+		return mach_o::relocatable::Parser<riscv64>::fileKind(fileContent);
 	}
 #endif
 	return NULL;
@@ -8905,6 +9489,16 @@ bool hasObjC2Categories(const uint8_t* fileContent)
     else if ( mach_o::relocatable::Parser<arm64_32>::validFile(fileContent, false, 0) ) {
         return mach_o::relocatable::Parser<arm64_32>::hasObjC2Categories(fileContent);
     }
+#endif
+#if SUPPORT_ARCH_riscv32
+	else if ( mach_o::relocatable::Parser<riscv32>::validFile(fileContent, false, 0) ) {
+		return mach_o::relocatable::Parser<riscv32>::hasObjC2Categories(fileContent);
+	}
+#endif
+#if SUPPORT_ARCH_riscv64
+	else if ( mach_o::relocatable::Parser<riscv64>::validFile(fileContent, false, 0) ) {
+		return mach_o::relocatable::Parser<riscv64>::hasObjC2Categories(fileContent);
+	}
 #endif
 	return false;
 }				
@@ -8942,6 +9536,16 @@ bool getNonLocalSymbols(const uint8_t* fileContent, std::vector<const char*> &sy
 #if SUPPORT_ARCH_arm64_32
 	else if ( mach_o::relocatable::Parser<arm64_32>::validFile(fileContent, false, 0) ) {
 		return mach_o::relocatable::Parser<arm64_32>::getNonLocalSymbols(fileContent, syms);
+	}
+#endif
+#if SUPPORT_ARCH_riscv32
+	else if ( mach_o::relocatable::Parser<riscv32>::validFile(fileContent, false, 0) ) {
+		return mach_o::relocatable::Parser<riscv32>::getNonLocalSymbols(fileContent, syms);
+	}
+#endif
+#if SUPPORT_ARCH_riscv64
+	else if ( mach_o::relocatable::Parser<riscv64>::validFile(fileContent, false, 0) ) {
+		return mach_o::relocatable::Parser<riscv64>::getNonLocalSymbols(fileContent, syms);
 	}
 #endif
 	return false;
