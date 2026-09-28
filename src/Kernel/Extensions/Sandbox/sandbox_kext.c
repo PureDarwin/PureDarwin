@@ -518,6 +518,32 @@ sb_cred_label_destroy(struct label *label)
 	}
 }
 
+// extension issue args { class, 0, path, flags, token buffer, pid, pid version }, every path
+// is allowed so the token only has to be well formed: key;flags;0;0;0;class len;class;1;dev;inode;path
+static int
+sb_extension_issue(user_addr_t arg)
+{
+	uint64_t w[8] = { 0 };
+	char cls[128], path[MAXPATHLEN], tok[64 + 8 + 3 * 9 + 17 + sizeof(cls) + 3 + 9 + 17 + MAXPATHLEN + 1];
+	size_t clen = 0, plen = 0;
+	int n;
+
+	if (copyin(arg, w, sizeof(w)) != 0 || w[4] == 0) {
+		return EINVAL;
+	}
+	if (copyinstr(w[0], cls, sizeof(cls), &clen) != 0 || copyinstr(w[2], path, sizeof(path), &plen) != 0) {
+		return EINVAL;
+	}
+	n = snprintf(tok, sizeof(tok),
+	    "%016llx%016llx%016llx%016llx;00;00000000;00000000;00000000;%016zx;%s;01;%08x;%016llx;%s",
+	    (unsigned long long)w[5], (unsigned long long)w[6], 0x5044ULL, (unsigned long long)plen,
+	    strlen(cls), cls, 0x1000004u, 0ULL, path);
+	if (n <= 0 || (size_t)n >= sizeof(tok)) {
+		return ENAMETOOLONG;
+	}
+	return copyout(tok, w[4], (size_t)n + 1);
+}
+
 static int
 sb_policy_syscall(struct proc *p, int call, user_addr_t arg)
 {
@@ -527,12 +553,30 @@ sb_policy_syscall(struct proc *p, int call, user_addr_t arg)
 	bool sandboxed;
 	int error;
 
+	if (call == SB_CALL_APPLE_CHECK) {
+		uint64_t allowed = 0;
+
+		return copyout(&allowed, arg, sizeof(allowed));
+	}
+	if (call == SB_CALL_EXTENSION_ISSUE) {
+		return sb_extension_issue(arg);
+	}
 	if (call != SB_CALL_SET_PROFILE) {
-		return EINVAL;
+		// the other calls have nothing to enforce here
+		return 0;
 	}
 	error = copyin(arg, &args, sizeof(args));
 	if (error != 0) {
 		return error;
+	}
+	// profiles in another format (Apple's compiled ones) are accepted and ignored
+	{
+		uint32_t magic = 0;
+
+		if (copyin((user_addr_t)args.profile, &magic, sizeof(magic)) == 0 &&
+		    magic != SB_PROFILE_MAGIC) {
+			return 0;
+		}
 	}
 
 	/* A profile can only ever be narrowed by not being replaced. */

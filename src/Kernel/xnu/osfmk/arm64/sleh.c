@@ -1386,10 +1386,7 @@ handle_uncategorized(arm_saved_state_t *state)
 		return;
 	}
 
-	/*
-	 * PACGA Xd, Xn, Xm: a 32-bit code in Xd[63:32], low half zero. Any
-	 * deterministic function of the inputs keeps sign/verify pairs agreeing.
-	 */
+	// PACGA Xd, Xn, Xm: sign/verify pairs only need the same code, zero keeps them agreeing
 	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) &&
 	    (instr & 0xFFE0FC00) == 0x9AC03000) {
 		uint32_t rd = instr & 0x1F;

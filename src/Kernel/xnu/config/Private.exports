@@ -1390,6 +1390,7 @@ _vnop_verify_desc
 _mac_file_getxattr
 _mac_file_setxattr
 _mac_file_removexattr
+_mac_cred_label
 _mac_label_get
 _mac_label_set
 _mac_labelzone_alloc

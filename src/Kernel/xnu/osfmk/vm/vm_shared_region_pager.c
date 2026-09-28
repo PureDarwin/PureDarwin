@@ -493,11 +493,8 @@ shared_region_pager_data_initialize(
  */
 int shared_region_pager_data_request_debug = 0;
 
-/*
- * 16K slide info (arm64e caches) on a 4K-page kernel (Cortex-A53): a 4K page can't be
- * rebased alone, its pointer chain starts in the 16K chunk around it. Read that chunk,
- * rebase it at its real address, and keep the requested 4K.
- */
+// 16K slide info on a 4K-page kernel: a 4K page's pointer chain starts in the 16K chunk
+// around it, so that chunk is read and rebased at its real address and the 4K kept
 static kern_return_t
 pd_sr_copy_backing_page(vm_object_t top, vm_object_offset_t off,
     vm_object_fault_info_t fi, void *out)
