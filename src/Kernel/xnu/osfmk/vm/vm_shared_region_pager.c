@@ -492,6 +492,110 @@ shared_region_pager_data_initialize(
  * Handles page-in requests from VM.
  */
 int shared_region_pager_data_request_debug = 0;
+
+/*
+ * 16K slide info (arm64e caches) on a 4K-page kernel (Cortex-A53): a 4K page can't be
+ * rebased alone, its pointer chain starts in the 16K chunk around it. Read that chunk,
+ * rebase it at its real address, and keep the requested 4K.
+ */
+static kern_return_t
+pd_sr_copy_backing_page(vm_object_t top, vm_object_offset_t off,
+    vm_object_fault_info_t fi, void *out)
+{
+	vm_page_t page, top_page;
+	vm_prot_t prot;
+	kern_return_t err;
+	vm_fault_return_t r;
+	vm_object_t obj;
+
+retry:
+	vm_page_grab_prime();
+	vm_object_lock(top);
+	vm_object_paging_begin(top);
+	prot = VM_PROT_READ;
+	page = VM_PAGE_NULL;
+	top_page = VM_PAGE_NULL;
+	err = 0;
+	r = vm_fault_page(top, off, VM_PROT_READ, FALSE, FALSE, &prot, &page, &top_page,
+	    NULL, &err, FALSE, fi, NULL);
+	switch (r) {
+	case VM_FAULT_SUCCESS:
+		break;
+	case VM_FAULT_RETRY:
+		goto retry;
+	case VM_FAULT_MEMORY_SHORTAGE:
+		if (vm_page_wait(THREAD_UNINT)) {
+			goto retry;
+		}
+		return KERN_RESOURCE_SHORTAGE;
+	case VM_FAULT_SUCCESS_NO_VM_PAGE:
+		vm_object_paging_end(top);
+		vm_object_unlock(top);
+		return KERN_MEMORY_ERROR;
+	default:
+		return err ? err : KERN_MEMORY_ERROR;
+	}
+	obj = VM_PAGE_OBJECT(page);
+	memcpy(out, (const void *)phystokv((pmap_paddr_t)VM_PAGE_GET_PHYS_PAGE(page) << PAGE_SHIFT), PAGE_SIZE);
+	vm_page_wakeup_done(obj, page);
+	vm_object_paging_end(obj);
+	vm_object_unlock(obj);
+	if (top_page != VM_PAGE_NULL) {
+		vm_object_lock(top);
+		VM_PAGE_FREE(top_page);
+		vm_object_paging_end(top);
+		vm_object_unlock(top);
+	}
+	return KERN_SUCCESS;
+}
+
+static kern_return_t
+pd_sr_slide_subpage(shared_region_pager_t pager, vm_object_fault_info_t fi,
+    vm_object_offset_t page_offset, vm_map_offset_t src_vaddr, vm_map_offset_t dst_vaddr,
+    mach_vm_offset_t slide_start_address, uint32_t chunk_size)
+{
+	vm_shared_region_slide_info_t si = pager->srp_slide_info;
+	vm_object_offset_t in_backing = page_offset + pager->srp_backing_offset;
+	vm_object_offset_t in_range, sub, base;
+	uint8_t *buf;
+	kern_return_t kr = KERN_SUCCESS;
+
+	if (in_backing < si->si_start || in_backing >= si->si_end) {
+		bcopy((const char *)src_vaddr, (char *)dst_vaddr, PAGE_SIZE);
+		return KERN_SUCCESS;
+	}
+	in_range = in_backing - si->si_start;
+	sub = in_range % chunk_size;
+	base = in_range - sub;
+	buf = kalloc_data(chunk_size, Z_WAITOK | Z_ZERO);
+	if (buf == NULL) {
+		return KERN_RESOURCE_SHORTAGE;
+	}
+	for (vm_object_offset_t o = 0; o < chunk_size && kr == KERN_SUCCESS; o += PAGE_SIZE) {
+		if (o == sub) {
+			bcopy((const char *)src_vaddr, buf + o, PAGE_SIZE);
+		} else if (si->si_start + base + o < si->si_end) {
+			kr = pd_sr_copy_backing_page(pager->srp_backing_object, si->si_start + base + o, fi, buf + o);
+		}
+	}
+	if (kr == KERN_SUCCESS) {
+		kr = vm_shared_region_slide_page(si, (vm_offset_t)buf,
+		    (mach_vm_offset_t)(base + slide_start_address),
+		    (uint32_t)(base / chunk_size),
+#if VM_SHARED_REGION_AUTH
+		    si->si_ptrauth ? pager->srp_jop_key : 0
+#else /* VM_SHARED_REGION_AUTH */
+		    0
+#endif /* VM_SHARED_REGION_AUTH */
+		    );
+	}
+	if (kr == KERN_SUCCESS) {
+		bcopy(buf + sub, (char *)dst_vaddr, PAGE_SIZE);
+	}
+	kfree_data(buf, chunk_size);
+	return kr;
+}
+
 kern_return_t
 shared_region_pager_data_request(
 	memory_object_t         mem_obj,
@@ -719,8 +823,17 @@ retry_src_fault:
 		 * Process the original contents of the source page
 		 * into the destination page.
 		 */
+		if (slide_info_page_size > PAGE_SIZE) {
+			kr = pd_sr_slide_subpage(pager, &fault_info, offset + cur_offset,
+			    src_vaddr, dst_vaddr, slide_start_address, slide_info_page_size);
+			if (kr != KERN_SUCCESS) {
+				retval = KERN_MEMORY_ERROR;
+			} else {
+				shared_region_pager_slid++;
+			}
+		}
 		for (offset_in_page = 0;
-		    offset_in_page < PAGE_SIZE;
+		    slide_info_page_size <= PAGE_SIZE && offset_in_page < PAGE_SIZE;
 		    offset_in_page += slide_info_page_size) {
 			vm_object_offset_t chunk_offset;
 			vm_object_offset_t offset_in_backing_object;

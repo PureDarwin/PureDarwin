@@ -94,11 +94,9 @@ do_cpuid(void)
 #else /* defined(HAS_APPLE_PAC) */
 	/* Not an Apple SoC build, but the actual CPU (QEMU, etc.) may still
 	 * implement real FEAT_PAuth - probe rather than assume it doesn't. */
-	if (arm64_pac_supported()) {
-		cpuid_cpu_info.arm_info.arm_arch = CPU_ARCH_ARMv8E;
-	} else {
-		cpuid_cpu_info.arm_info.arm_arch = CPU_ARCH_ARMv8;
-	}
+	// arm64e either way: without FEAT_PAuth (Pi 5 under KVM) arm64e userland
+	// still runs, its PAC instructions lowered at page-in (vm_fault.c)
+	cpuid_cpu_info.arm_info.arm_arch = CPU_ARCH_ARMv8E;
 #endif /* defined(HAS_APPLE_PAC) */
 
 #else /* (__ARM_ARCH__ != 8) */

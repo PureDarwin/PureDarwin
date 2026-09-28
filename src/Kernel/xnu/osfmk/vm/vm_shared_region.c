@@ -787,11 +787,14 @@ vm_shared_region_create(
 			csm_setup_nested_address_space(nested_pmap, base_address, size);
 #endif /* CODE_SIGNING_MONITOR */
 			int vm_map_pageshift = PAGE_SHIFT;
+#if __ARM_16K_PG__ || !defined(__arm64__)
 			if (is_64bit ||
 			    page_shift_user32 == SIXTEENK_PAGE_SHIFT) {
 				/* enforce 16KB alignment of VM map entries */
 				vm_map_pageshift = SIXTEENK_PAGE_SHIFT;
 			}
+#endif
+			// on 4k-only arm64 cores the submap stays on the task map's 4k pages
 #if __ARM_MIXED_PAGE_SIZE__
 			if (cputype == CPU_TYPE_ARM64 &&
 			    target_page_shift == FOURK_PAGE_SHIFT) {
@@ -1419,8 +1422,6 @@ done:
 	 * Mark the region as having it's auth sections remapped.
 	 */
 	task->shared_region_auth_remapped = TRUE;
-	printf("PD-authremap: %u section(s) remapped, kr=0x%x\n",
-	    sr->sr_num_auth_section, kr);
 	vm_shared_region_release(sr);
 	return kr;
 }

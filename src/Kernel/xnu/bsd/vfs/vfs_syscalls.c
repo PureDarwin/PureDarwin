@@ -1083,7 +1083,8 @@ retry:
 		flags |= MNT_UPDATE;
 #endif /* CONFIG_UNION_MOUNTS */
 
-#if SECURE_KERNEL
+// PureDarwin's virt board runs macOS userland, whose mount-phase-2 upgrades "/" to rw
+#if SECURE_KERNEL && !defined(ARM64_BOARD_CONFIG_VIRT)
 		if ((flags & MNT_RDONLY) == 0) {
 			/* Release kernels are not allowed to mount "/" as rw */
 			error = EPERM;

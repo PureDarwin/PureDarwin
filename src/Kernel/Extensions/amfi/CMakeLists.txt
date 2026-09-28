@@ -5,6 +5,7 @@ set_property(TARGET amfi.kext PROPERTY OUTPUT_NAME amfi)
 
 target_sources(amfi.kext PRIVATE
     amfi_kext_main.c
+    amfi_entitlements.cpp
 )
 
 target_compile_definitions(amfi.kext PRIVATE XNU_KERNEL_PRIVATE MACH_KERNEL_PRIVATE PRIVATE=1)

@@ -8916,8 +8916,6 @@ vm_page_validate_cs_fast(
  * failed boot cannot be blamed on the knob being off. */
 #define pd_pac_lower_enabled true
 
-uint64_t pd_pac_pages_lowered = 0;
-uint64_t pd_pac_instrs_lowered = 0;
 
 /*
  * Rewrite ARMv8.3 PAC instructions to their PAC-free equivalents in a page of
@@ -8965,8 +8963,18 @@ pd_pac_lower_page(uint32_t *words, size_t nwords)
 	const uint32_t NOP = 0xD503201FU;
 	const uint32_t RET = 0xD65F03C0U;
 	size_t n = 0;
+	size_t first = 0;
 
-	for (size_t i = 0; i < nwords; i++) {
+	// Executable pages can start with a header, not code: a pattern match there corrupts it.
+	// PACGA is not lowered at all: its pattern is loose enough to hit __TEXT data (sleh.c emulates it)
+	if (nwords >= 8 && words[0] == 0x646c7964U && words[1] == 0x2031765fU) {
+		return;                                         /* "dyld_v1 ": cache header page */
+	}
+	if (nwords >= 8 && words[0] == 0xfeedfacfU) {
+		first = (32 + (size_t)words[5] + 3) / 4;        /* mach_header_64 + sizeofcmds */
+	}
+
+	for (size_t i = first; i < nwords; i++) {
 		uint32_t w = words[i];
 		uint32_t rep = 0;
 
@@ -8998,9 +9006,6 @@ pd_pac_lower_page(uint32_t *words, size_t nwords)
 		 */
 		CleanPoU_DcacheRegion((vm_offset_t)words, (unsigned)(nwords * 4));
 		InvalidatePoU_IcacheRegion((vm_offset_t)words, (unsigned)(nwords * 4));
-
-		pd_pac_pages_lowered++;
-		pd_pac_instrs_lowered += n;
 	}
 }
 

@@ -732,22 +732,8 @@ cpu_init(void)
 			break;
 		case CPU_ARCH_ARMv8E:
 			cdp->cpu_subtype = CPU_SUBTYPE_ARM64E;
-#if !HAS_APPLE_PAC
-			/* Real FEAT_PAuth found at runtime (see arm64_pac_supported()) -
-			 * same EnIA/EnIB/EnDA/EnDB bits as SCTLR_PAC_KEYS_ENABLED, but
-			 * that macro needs HAS_APPLE_PAC (Apple-SoC-only baggage). */
-#define PD_SCTLR_PAC_KEYS_ENABLED \
-	        ((1ULL << 31) | (1ULL << 30) | (1ULL << 27) | (1ULL << 13))
-			__builtin_arm_wsr64("SCTLR_EL1",
-			    __builtin_arm_rsr64("SCTLR_EL1") | PD_SCTLR_PAC_KEYS_ENABLED);
-			__builtin_arm_isb(ISB_SY);
-			// Console I/O panics on a secondary, which reaches here with interrupts masked.
-			// The boot CPU's line covers the setting
-			if (cdp == &BootCpuData) {
-				printf("PD-PAC: enabled on cpu %d, SCTLR_EL1=0x%llx\n",
-				    cpu_number(), __builtin_arm_rsr64("SCTLR_EL1"));
-			}
-#endif /* !HAS_APPLE_PAC */
+			// PAC keys stay off: page-in lowering removes signing, and with keys on
+			// an LDRAA it leaves really authenticates (a poisoned pointer without FEAT_FPAC)
 			break;
 		default:
 			//cdp->cpu_subtype = CPU_SUBTYPE_ARM64_ALL;

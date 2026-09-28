@@ -35,10 +35,14 @@
 #include <arm/trap_internal.h> /* for IS_ARM_GDB_TRAP() et al */
 #include <arm64/proc_reg.h>
 #include <arm64/machine_machdep.h>
+#include <kern/turnstile.h>
 #include <kern/cpc.h>
 #include <arm64/instructions.h>
 
 #include <kern/debug.h>
+#include <kern/locks.h>
+#include <kern/startup.h>
+#include <arm/machine_routines.h>
 #include <kern/exc_guard.h>
 #include <kern/restartable.h>
 #include <kern/socd_client.h>
@@ -57,6 +61,7 @@ extern int proc_pid(struct proc *);
 #include <machine/limits.h>
 #include <machine/machine_cpc.h>
 
+#include <pexpert/pexpert.h>
 #include <pexpert/arm/protos.h>
 #include <pexpert/arm64/apple_arm64_cpu.h>
 #include <pexpert/arm64/apple_arm64_regs.h>
@@ -1185,6 +1190,148 @@ sleh_synchronous(arm_context_t *context, uint64_t esr, vm_offset_t far, __unused
 	}
 }
 
+// FEAT_LSE atomics for CPUs without them (Cortex-A53). Every emulated atomic on a
+// 16-byte granule takes the same mutex, so they stay atomic among themselves
+LCK_GRP_DECLARE(pd_lse_grp, "pd_lse");
+static lck_mtx_t pd_lse_mtx[64];
+
+static void
+pd_lse_init(void)
+{
+	for (int i = 0; i < 64; i++) {
+		lck_mtx_init(&pd_lse_mtx[i], &pd_lse_grp, LCK_ATTR_NULL);
+	}
+}
+STARTUP(LOCKS, STARTUP_RANK_LAST, pd_lse_init);
+
+static uint64_t
+pd_xreg(arm_saved_state64_t *ss, uint32_t r)
+{
+	return r == 31 ? 0 : (uint64_t)ss->x[r];
+}
+
+static void
+pd_set_xreg(arm_saved_state64_t *ss, uint32_t r, uint64_t v)
+{
+	if (r != 31) {
+		ss->x[r] = (int64_t)v;
+	}
+}
+
+static int64_t
+pd_sext(uint64_t v, uint32_t bytes)
+{
+	uint32_t sh = 64 - 8 * bytes;
+	return (int64_t)(v << sh) >> sh;
+}
+
+// Returns 0 when emulated, -1 when not an LSE form, or the user fault address via *bad
+static int
+pd_emulate_lse(arm_saved_state64_t *ss, uint32_t instr, uint64_t *bad)
+{
+	uint32_t size = instr >> 30, bytes = 1u << size;
+	uint32_t rs = (instr >> 16) & 0x1F, rn = (instr >> 5) & 0x1F, rt = instr & 0x1F;
+	uint64_t mask = bytes == 8 ? ~0ULL : ((1ULL << (8 * bytes)) - 1);
+	uint64_t addr = rn == 31 ? ss->sp : (uint64_t)ss->x[rn];
+	lck_mtx_t *m;
+	uint64_t old = 0, nv, pair[2], opair[2];
+	bool atomic_op = (instr & 0x3F200C00U) == 0x38200000U;
+	bool cas = (instr & 0x3FA07C00U) == 0x08A07C00U;
+	bool casp = (instr & 0xBFA07C00U) == 0x08207C00U;
+	uint32_t o3 = (instr >> 15) & 1, opc = (instr >> 12) & 7;
+
+	if (!atomic_op && !cas && !casp) {
+		return -1;
+	}
+	if (atomic_op && o3 && !(opc == 0 || (opc == 4 && rs == 31))) {
+		return -1;      // only SWP and LDAPR live under o3=1
+	}
+	addr = (addr << T0SZ_BOOT) >> T0SZ_BOOT;
+	*bad = addr;
+
+	if (atomic_op && o3 && opc == 4) {  // LDAPR: an acquire load
+		if (copyin(addr, (char *)&old, bytes) != 0) {
+			return 1;
+		}
+		__builtin_arm_dmb(0xB);
+		pd_set_xreg(ss, rt, old & mask);
+		return 0;
+	}
+
+	m = &pd_lse_mtx[(addr >> 4) & 63];
+	lck_mtx_lock(m);
+	__builtin_arm_dmb(0xB);
+	if (casp) {
+		// CASP Ws/Xs pairs: bit 30 picks 64-bit registers
+		uint32_t eb = (instr >> 30) & 1 ? 8 : 4;
+		uint64_t em = eb == 8 ? ~0ULL : 0xFFFFFFFFULL;
+
+		bytes = 2 * eb;
+		opair[0] = opair[1] = 0;
+		if (copyin(addr, (char *)opair, bytes) != 0) {
+			lck_mtx_unlock(m);
+			return 1;
+		}
+		if (eb == 4) {
+			opair[1] = opair[0] >> 32;
+			opair[0] &= em;
+		}
+		if (opair[0] == (pd_xreg(ss, rs) & em) && opair[1] == (pd_xreg(ss, rs + 1) & em)) {
+			pair[0] = pd_xreg(ss, rt) & em;
+			pair[1] = pd_xreg(ss, rt + 1) & em;
+			if (eb == 4) {
+				pair[0] |= pair[1] << 32;
+			}
+			if (copyout((char *)pair, addr, bytes) != 0) {
+				lck_mtx_unlock(m);
+				return 1;
+			}
+		}
+		pd_set_xreg(ss, rs, opair[0]);
+		pd_set_xreg(ss, rs + 1, opair[1]);
+	} else {
+		if (copyin(addr, (char *)&old, bytes) != 0) {
+			lck_mtx_unlock(m);
+			return 1;
+		}
+		old &= mask;
+		if (cas) {
+			// CAS: Rs is the expected value and receives the old one, Rt is stored
+			if (old == (pd_xreg(ss, rs) & mask)) {
+				nv = pd_xreg(ss, rt) & mask;
+				if (copyout((char *)&nv, addr, bytes) != 0) {
+					lck_mtx_unlock(m);
+					return 1;
+				}
+			}
+			pd_set_xreg(ss, rs, old);
+		} else {
+			uint64_t v = pd_xreg(ss, rs) & mask;
+
+			switch (o3 ? 8 : opc) {
+			case 0: nv = old + v; break;                                              /* LDADD */
+			case 1: nv = old & ~v; break;                                             /* LDCLR */
+			case 2: nv = old ^ v; break;                                              /* LDEOR */
+			case 3: nv = old | v; break;                                              /* LDSET */
+			case 4: nv = pd_sext(old, bytes) > pd_sext(v, bytes) ? old : v; break;    /* LDSMAX */
+			case 5: nv = pd_sext(old, bytes) < pd_sext(v, bytes) ? old : v; break;    /* LDSMIN */
+			case 6: nv = old > v ? old : v; break;                                    /* LDUMAX */
+			case 7: nv = old < v ? old : v; break;                                    /* LDUMIN */
+			default: nv = v; break;                                                   /* SWP */
+			}
+			nv &= mask;
+			if (copyout((char *)&nv, addr, bytes) != 0) {
+				lck_mtx_unlock(m);
+				return 1;
+			}
+			pd_set_xreg(ss, rt, old);
+		}
+	}
+	__builtin_arm_dmb(0xB);
+	lck_mtx_unlock(m);
+	return 0;
+}
+
 /*
  * Uncategorized exceptions are a catch-all for general execution errors.
  * ARM64_TODO: For now, we assume this is for undefined instruction exceptions.
@@ -1198,6 +1345,18 @@ handle_uncategorized(arm_saved_state_t *state)
 	uint32_t                   instr     = 0;
 
 	COPYIN(get_saved_state_pc(state), (char *)&instr, sizeof(instr));
+
+	// A PACGA another CPU rewrote to MOV Xd, XZR (below) after this one trapped on it: the
+	// trap is for the old instruction, so do what the new one does. MOV never traps on its own
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) && (instr & 0xFFFFFFE0U) == 0xAA1F03E0U) {
+		uint32_t rd = instr & 0x1F;
+
+		if (rd != 31) {
+			saved_state64(state)->x[rd] = 0;
+		}
+		saved_state64(state)->pc += 4;
+		return;
+	}
 
 	/*
 	 * Register-form PAC/XPAC (PACxx/AUTxx/XPACI/XPACD). PAuth is left off
@@ -1223,6 +1382,33 @@ handle_uncategorized(arm_saved_state_t *state)
 
 		/* set_saved_state_pc() needs CONFIG_DTRACE/XNUPOST (DEBUG-only);
 		 * write the field saved_state64() exposes unconditionally instead. */
+		saved_state64(state)->pc += 4;
+		return;
+	}
+
+	/*
+	 * PACGA Xd, Xn, Xm: a 32-bit code in Xd[63:32], low half zero. Any
+	 * deterministic function of the inputs keeps sign/verify pairs agreeing.
+	 */
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) &&
+	    (instr & 0xFFE0FC00) == 0x9AC03000) {
+		uint32_t rd = instr & 0x1F;
+		uint64_t pc = get_saved_state_pc(state);
+		ppnum_t pn = pmap_find_phys(vm_map_pmap(current_map()), pc);
+
+		if (rd != 31) {
+			saved_state64(state)->x[rd] = 0;
+		}
+		// a zero code (an input hash broke Foundation), and the site is rewritten to MOV Xd, XZR
+		// in the backing page so it traps once system-wide. Executed code only, never data
+		if (pn != 0) {
+			volatile uint32_t *w = (volatile uint32_t *)phystokv(ptoa(pn) + (pc & PAGE_MASK));
+
+			if (*w == instr) {
+				*w = 0xAA1F03E0U | rd;
+				cache_sync_page(pn);
+			}
+		}
 		saved_state64(state)->pc += 4;
 		return;
 	}
@@ -1265,6 +1451,163 @@ handle_uncategorized(arm_saved_state_t *state)
 			}
 			saved_state64(state)->pc = target;
 			return;
+		}
+	}
+
+	// LDRAA/LDRAB Xt, [Xn, #simm10]{!} is auth plus load. Nothing signs, so load from the
+	// stripped base. Emulated, no single LDR form covers the offset range plus writeback
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) &&
+	    (instr & 0xFF200400U) == 0xF8200400U) {
+		arm_saved_state64_t *ss = saved_state64(state);
+		uint32_t rt = instr & 0x1F;
+		uint32_t rn = (instr >> 5) & 0x1F;
+		bool wb = ((instr >> 11) & 1) != 0;
+		int64_t imm = (int64_t)((((instr >> 22) & 1) << 9) | ((instr >> 12) & 0x1FF));
+		uint64_t base, addr, val;
+
+		imm = (imm << 54) >> 54;
+		imm <<= 3;
+		base = (rn == 31) ? ss->sp : (uint64_t)ss->x[rn];
+		base = (base << T0SZ_BOOT) >> T0SZ_BOOT;
+		addr = base + (uint64_t)imm;
+		if (copyin(addr, (char *)&val, sizeof(val)) == 0) {
+			if (rt != 31) {
+				ss->x[rt] = (int64_t)val;
+			}
+			if (wb) {
+				if (rn == 31) {
+					ss->sp = addr;
+				} else {
+					ss->x[rn] = (int64_t)addr;
+				}
+			}
+			ss->pc += 4;
+			return;
+		}
+		exception = EXC_BAD_ACCESS;
+		codes[0] = KERN_INVALID_ADDRESS;
+		codes[1] = (mach_exception_data_type_t)addr;
+		exception_triage(exception, codes, numcodes);
+		__builtin_unreachable();
+	}
+
+	// FEAT_SHA3 (EOR3, BCAX, RAX1, XAR): Apple-built libraries use it unconditionally
+	// and the Cortex-A76 lacks it. The user's NEON registers were spilled at entry
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) && (instr & 0xFF000000U) == 0xCE000000U) {
+		arm_neon_saved_state64_t *ns = neon_state64(current_thread()->machine.uNeon);
+		uint32_t rd = instr & 0x1F, rn = (instr >> 5) & 0x1F, ra = (instr >> 10) & 0x1F;
+		uint32_t rm = (instr >> 16) & 0x1F, sh = (instr >> 10) & 0x3F;
+		uint64_t n[2], m[2], a[2], d[2];
+		bool ok = true;
+
+		memcpy(n, &ns->v.q[rn], sizeof(n));
+		memcpy(m, &ns->v.q[rm], sizeof(m));
+		memcpy(a, &ns->v.q[ra], sizeof(a));
+		for (int i = 0; i < 2; i++) {
+			if ((instr & 0xFFE08000U) == 0xCE000000U) {         /* EOR3 */
+				d[i] = n[i] ^ m[i] ^ a[i];
+			} else if ((instr & 0xFFE08000U) == 0xCE200000U) {  /* BCAX */
+				d[i] = n[i] ^ (m[i] & ~a[i]);
+			} else if ((instr & 0xFFE0FC00U) == 0xCE608C00U) {  /* RAX1 */
+				d[i] = n[i] ^ ((m[i] << 1) | (m[i] >> 63));
+			} else if ((instr & 0xFFE00000U) == 0xCE800000U) {  /* XAR */
+				uint64_t x = n[i] ^ m[i];
+				d[i] = sh ? ((x >> sh) | (x << (64 - sh))) : x;
+			} else {
+				ok = false;
+			}
+		}
+		if (ok) {
+			memcpy(&ns->v.q[rd], d, sizeof(d));
+			saved_state64(state)->pc += 4;
+			return;
+		}
+	}
+
+	// FEAT_FP16 FCMP/FCMPE Hn, Hm|#0.0: compared as integers (no FP in the kernel)
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) && (instr & 0xFFE0FC07U) == 0x1EE02000U) {
+		arm_neon_saved_state64_t *ns = neon_state64(current_thread()->machine.uNeon);
+		uint32_t rn = (instr >> 5) & 0x1F, rm = (instr >> 16) & 0x1F, zero = (instr >> 3) & 1;
+		uint16_t a16, b16 = 0;
+		uint32_t nzcv;
+
+		memcpy(&a16, &ns->v.q[rn], 2);
+		if (!zero) {
+			memcpy(&b16, &ns->v.q[rm], 2);
+		}
+		if (((a16 & 0x7C00) == 0x7C00 && (a16 & 0x3FF)) || ((b16 & 0x7C00) == 0x7C00 && (b16 & 0x3FF))) {
+			nzcv = 0x3;             // unordered: C V
+		} else if (((a16 | b16) & 0x7FFF) == 0 || a16 == b16) {
+			nzcv = 0x6;             // equal: Z C
+		} else {
+			// sign-magnitude to a monotonic integer
+			int32_t ka = (a16 & 0x8000) ? -(int32_t)(a16 & 0x7FFF) : (int32_t)a16;
+			int32_t kb = (b16 & 0x8000) ? -(int32_t)(b16 & 0x7FFF) : (int32_t)b16;
+			nzcv = ka < kb ? 0x8 : 0x2;     // less: N, greater: C
+		}
+		saved_state64(state)->cpsr = (saved_state64(state)->cpsr & ~0xF0000000U) | (nzcv << 28);
+		saved_state64(state)->pc += 4;
+		return;
+	}
+
+	// FEAT_DotProd (SDOT/UDOT) and FEAT_FP16's FMOV Hd,#imm: ARMv8.2, absent on Cortex-A53
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state)) &&
+	    ((instr & 0x9FE0FC00U) == 0x0E809400U || (instr & 0x9FC0F400U) == 0x0F80E000U ||
+	    (instr & 0xFFE01FE0U) == 0x1EE01000U)) {
+		arm_neon_saved_state64_t *ns = neon_state64(current_thread()->machine.uNeon);
+		uint32_t rd = instr & 0x1F, rn = (instr >> 5) & 0x1F;
+
+		if ((instr & 0xFFE01FE0U) == 0x1EE01000U) {
+			// VFPExpandImm for half precision: sign, NOT(b6):b6:b6:b5:b4, b3:0 then zeros
+			uint32_t imm8 = (instr >> 13) & 0xFF, b6 = (imm8 >> 6) & 1;
+			uint16_t h = (uint16_t)(((imm8 >> 7) << 15) | ((b6 ^ 1) << 14) | (b6 << 13) | (b6 << 12) |
+			    (((imm8 >> 4) & 3) << 10) | ((imm8 & 0xF) << 6));
+			uint64_t v[2] = { h, 0 };
+
+			memcpy(&ns->v.q[rd], v, sizeof(v));
+		} else {
+			bool q = (instr >> 30) & 1, u = (instr >> 29) & 1, elem = (instr & 0x9FC0F400U) == 0x0F80E000U;
+			uint32_t rm = (instr >> 16) & 0x1F;
+			uint32_t idx = elem ? ((((instr >> 11) & 1) << 1) | ((instr >> 21) & 1)) : 0;
+			uint8_t n[16], m[16];
+			uint32_t d[4];
+
+			memcpy(n, &ns->v.q[rn], 16);
+			memcpy(m, &ns->v.q[rm], 16);
+			memcpy(d, &ns->v.q[rd], 16);
+			for (uint32_t lane = 0; lane < (q ? 4u : 2u); lane++) {
+				uint32_t mb = elem ? idx * 4 : lane * 4;
+				int32_t acc = 0;
+
+				for (uint32_t k = 0; k < 4; k++) {
+					acc += u ? (int32_t)n[lane * 4 + k] * (int32_t)m[mb + k] :
+					    (int32_t)(int8_t)n[lane * 4 + k] * (int32_t)(int8_t)m[mb + k];
+				}
+				d[lane] += (uint32_t)acc;
+			}
+			if (!q) {
+				d[2] = d[3] = 0;
+			}
+			memcpy(&ns->v.q[rd], d, 16);
+		}
+		saved_state64(state)->pc += 4;
+		return;
+	}
+
+	if (!PSR64_IS_KERNEL(get_saved_state_cpsr(state))) {
+		uint64_t bad = 0;
+		int lr = pd_emulate_lse(saved_state64(state), instr, &bad);
+
+		if (lr == 0) {
+			saved_state64(state)->pc += 4;
+			return;
+		}
+		if (lr > 0) {
+			exception = EXC_BAD_ACCESS;
+			codes[0] = KERN_INVALID_ADDRESS;
+			codes[1] = (mach_exception_data_type_t)bad;
+			exception_triage(exception, codes, numcodes);
+			__builtin_unreachable();
 		}
 	}
 
