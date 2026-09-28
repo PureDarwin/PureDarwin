@@ -86,9 +86,7 @@ options		COUNT_SYSCALLS		# count bsd system calls 	# <countcalls>
 options     TRASH_VFP_ON_SAVE   # <debug,trash_vfp>
 options		ALTERNATE_DEBUGGER	# <alternate_debugger>
 
-# macOS userland (lsd, WindowServer) holds far more than xsmall's 1024 vnodes,
-# at the cap the table fills and vnode_create waits forever
-options   CONFIG_VNODES=263168		# <xsmall>
+options   CONFIG_VNODES=1024		# <xsmall>
 
 options   CONFIG_FREEZE_SUSPENDED_MIN=4		# <xsmall>
 

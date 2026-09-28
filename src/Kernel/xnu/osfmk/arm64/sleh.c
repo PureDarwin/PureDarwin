@@ -3581,6 +3581,45 @@ sleh_irq(arm_saved_state_t *state)
 #endif
 }
 
+#if HAS_GICV3_FIQ
+// QEMU virt under KVM on a GICv2 host (Pi 5): no ICC_* system registers, so the
+// Group 0 acknowledge/EOI goes through the memory-mapped CPU interface instead
+#define PD_GICV2_GICC_PHYS  0x08010000ULL
+#define PD_GICV2_GICC_IAR   0x00C
+#define PD_GICV2_GICC_EOIR  0x010
+static vm_offset_t pd_gicv2_cpuif;
+
+static void
+pd_gicv2_startup(void)
+{
+	// ID_AA64PFR0_EL1.GIC: 0 means no GICv3 system register interface
+	if (((__builtin_arm_rsr64("ID_AA64PFR0_EL1") >> 24) & 0xf) == 0) {
+		pd_gicv2_cpuif = ml_io_map(PD_GICV2_GICC_PHYS, 0x2000);
+	}
+}
+STARTUP(KMEM, STARTUP_RANK_LAST, pd_gicv2_startup);
+
+static inline uint64_t
+pd_gic_ack0(void)
+{
+	if (pd_gicv2_cpuif) {
+		return *(volatile uint32_t *)(pd_gicv2_cpuif + PD_GICV2_GICC_IAR);
+	}
+	return __builtin_arm_rsr64("ICC_IAR0_EL1");
+}
+
+static inline void
+pd_gic_eoi0(uint64_t iar)
+{
+	if (pd_gicv2_cpuif) {
+		*(volatile uint32_t *)(pd_gicv2_cpuif + PD_GICV2_GICC_EOIR) = (uint32_t)iar;
+		return;
+	}
+	__builtin_arm_wsr64("ICC_EOIR0_EL1", iar);
+	__builtin_arm_isb(ISB_SY);
+}
+#endif /* HAS_GICV3_FIQ */
+
 void
 sleh_fiq(arm_saved_state_t *state)
 {
@@ -3588,7 +3627,7 @@ sleh_fiq(arm_saved_state_t *state)
 #if HAS_GICV3_FIQ
 	// The GIC is the only Group 0 source here, so acknowledge first and classify from the INTID:
 	// the SGI is a scheduler IPI, rest is the timer
-	uint64_t iar = __builtin_arm_rsr64("ICC_IAR0_EL1");
+	uint64_t iar = pd_gic_ack0();
 
 	if ((iar & 0x3ffULL) == QEMUVIRT_IPI_SGI) {
 		type = DBG_INTR_TYPE_IPI;
@@ -3683,7 +3722,11 @@ sleh_fiq(arm_saved_state_t *state)
 		ml_interrupt_masked_debug_end();
 	}
 
-#if APPLEVIRTUALPLATFORM || HAS_GICV3_FIQ
+#if HAS_GICV3_FIQ
+	if ((iar & 0x3ffULL) != GIC_SPURIOUS_IRQ) {
+		pd_gic_eoi0(iar);
+	}
+#elif APPLEVIRTUALPLATFORM
 	if (iar != GIC_SPURIOUS_IRQ) {
 		__builtin_arm_wsr64("ICC_EOIR0_EL1", iar);
 		__builtin_arm_isb(ISB_SY);

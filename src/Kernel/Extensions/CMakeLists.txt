@@ -114,3 +114,7 @@ add_dependencies(kexts amfi.kext)
 # MACF policy behind sandbox_init(3); loaded at boot as a security extension.
 add_subdirectory(Sandbox)
 add_dependencies(kexts Sandbox.kext)
+
+# IOWatchdog service that watchdogd opens at boot
+add_subdirectory(PDWatchdog)
+add_dependencies(kexts PDWatchdog.kext)

@@ -1,5 +1,6 @@
 #include "IOVirtIOTransport.h"
 #include <IOKit/IOLib.h>
+#include <kern/clock.h>
 
 // struct virtio_pci_cap field offsets (generic vendor-capability header)
 enum {
@@ -341,7 +342,7 @@ IOVirtIOTransport::notify(VirtQueue *vq)
     w16(vq->notifyAddr, vq->queueIndex);
 }
 
-static const unsigned kSpinPollUsecs = 200;
+static const unsigned kSpinPollUsecs = 1000;
 
 bool
 IOVirtIOTransport::pollForCompletion(VirtQueue *vq, unsigned timeoutMs, uint32_t *outLen, uint16_t *outId)
@@ -362,10 +363,13 @@ IOVirtIOTransport::pollForCompletion(VirtQueue *vq, unsigned timeoutMs, uint32_t
             spun++;
         }
 
-        unsigned waited = 0;
+        // IOSleep(1) really waits for the next scheduler tick, which under emulation is several
+        // milliseconds per request. Sleep in 100 us slices on the precise timer instead
+        uint64_t waitedUs = 0;
         while (uh->idx == vq->lastUsedIdx) {
-            IOSleep(1);
-            if (++waited >= timeoutMs) {
+            delay_for_interval(100, kMicrosecondScale);
+            waitedUs += 100;
+            if (waitedUs >= (uint64_t)timeoutMs * 1000) {
                 vq->stalled = true; // resynced by the next addDescChain
                 return false;
             }

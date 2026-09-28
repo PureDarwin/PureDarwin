@@ -4,6 +4,8 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOWorkLoop.h>
+#include <IOKit/IOInterruptEventSource.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
 #include "IOVirtIOTransport.h"
@@ -66,11 +68,19 @@ private:
     IOReturn submit(uint32_t type, uint64_t sector,
                     IOMemoryDescriptor *buffer, UInt64 offset, UInt64 length,
                     bool deviceWrites);
+    bool setupInterrupt();
+    bool waitForCompletion();
+    void interruptOccurred(IOInterruptEventSource *source, int count);
 
     IOPCIDevice        *fPCIDevice;
     IOVirtIOTransport   fTransport;
     VirtQueue           fQueue;
     IOLock             *fLock;
+
+    // the queue interrupt wakes a request waiting on fLock, polling covers a device without one
+    IOWorkLoop             *fWorkLoop;
+    IOInterruptEventSource *fInterruptSource;
+    bool                    fUseInterrupts;
 
     // Header and status live in one small contiguous allocation so a request
     // costs no per-I/O allocation.

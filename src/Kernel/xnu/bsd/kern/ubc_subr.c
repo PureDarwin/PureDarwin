@@ -366,7 +366,13 @@ cs_validate_codedirectory(const CS_CodeDirectory *cd, size_t length)
 	if (ntohl(cd->magic) != CSMAGIC_CODEDIRECTORY) {
 		return EBADEXEC;
 	}
-	if ((cd->pageSize != PAGE_SHIFT_4K) && (cd->pageSize != PAGE_SHIFT)) {
+	if ((cd->pageSize != PAGE_SHIFT_4K) && (cd->pageSize != PAGE_SHIFT)
+#if defined(ARM64_BOARD_CONFIG_VIRT)
+	    // 16K-hashed Apple binaries on a 4K-page (Cortex-A53) kernel: the virt board
+	    // skips page hashing (CS_CONFIG_INTEGRITY_SKIP), so the hash size never applies
+	    && !(cd->pageSize == 14 && PAGE_SHIFT < 14)
+#endif
+	    ) {
 		printf("disallowing unsupported code signature page shift: %u\n", cd->pageSize);
 		return EBADEXEC;
 	}
@@ -6022,7 +6028,8 @@ cs_validate_range(
 	}
 #endif
 
-#if DEVELOPMENT || DEBUG
+// PureDarwin's virt board: honored in release too (its Apple userland is modified)
+#if DEVELOPMENT || DEBUG || defined(ARM64_BOARD_CONFIG_VIRT)
 	code_signing_config_t cs_config = 0;
 
 	/*
@@ -6097,7 +6104,8 @@ cs_validate_page(
 	}
 #endif
 
-#if DEVELOPMENT || DEBUG
+// PureDarwin's virt board: honored in release too (its Apple userland is modified)
+#if DEVELOPMENT || DEBUG || defined(ARM64_BOARD_CONFIG_VIRT)
 	code_signing_config_t cs_config = 0;
 
 	/*

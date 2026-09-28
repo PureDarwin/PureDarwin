@@ -20,7 +20,9 @@
 #if !ARM_LARGE_MEMORY
 #define __ARM64_PMAP_SUBPAGE_L1__ 1
 #endif
-#define __ARM_PAN_AVAILABLE__ 1
+#ifndef PD_VIRT_4K
+#define __ARM_PAN_AVAILABLE__ 1   // ARMv8.1, absent on Cortex-A53
+#endif
 
 #ifndef ASSEMBLER
 
@@ -29,6 +31,10 @@
 /* Compiles in pe_serial.c's upstream PL011 driver, which serial_init() then
  * selects via the "arm,pl011" compatible string on /arm-io/uart0. */
 #define PL011_UART
+
+// pe_serial.c's DesignWare APB UART too ("snps,dw-apb-uart"), serial_init() picks the
+// driver from the devicetree, so one kernel boots on QEMU virt and on the H616/H618
+#define DW_APB_UART
 
 /* PL011 UART, matched against the real QEMU virt DTB */
 #define QEMUVIRT_UART_BASE_PHYS   0x09000000ULL

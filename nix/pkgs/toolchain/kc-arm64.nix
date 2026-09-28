@@ -49,6 +49,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/corecrypto.kext" \
       -kext "$KEXTS/pthread.kext" \
       -kext "$KEXTS/amfi.kext" \
+      -kext "$KEXTS/Sandbox.kext" \
       -kext "$KEXTS/PDArmPlatformExpert.kext" \
       -kext "$KEXTS/PDArmPCI.kext" \
       -kext "$KEXTS/IOStorageFamily.kext" \
@@ -78,6 +79,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/IOGOPFramebuffer.kext" \
       -kext "$KEXTS/IONetworkingFamily.kext" \
       -kext "$KEXTS/PDSg2002Eth.kext" \
+      -kext "$KEXTS/PDWatchdog.kext" \
       -kext "$KEXTS/IOVirtIOBlock.kext" \
       -kext "$KEXTS/IOVirtIONet.kext" \
       "''${codeless[@]}" \

@@ -2,6 +2,9 @@
 #include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOKitKeys.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOMemoryDescriptor.h>
+#include <kern/thread_call.h>
+#include <kern/clock.h>
 #include "PDArmCPU.h"
 #include "PDArmGIC.h"
 #include "PDAppleAIC.h"
@@ -18,6 +21,9 @@ private:
 	PDArmCPU *bootCPU;
 	IOService *fEMMCNub;
 	IOService *fFramebufferNub;
+	IOMemoryMap *fRTCMap;
+	volatile uint32_t *fRTC;
+	thread_call_t fRTCPublish;
 
 public:
 	IOService *probe(IOService *provider, SInt32 *score) APPLE_KEXT_OVERRIDE;
@@ -27,6 +33,8 @@ public:
 	const char *excludeList(void) APPLE_KEXT_OVERRIDE;
 	bool getMachineName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
 	bool getModelName(char *name, int maxLength) APPLE_KEXT_OVERRIDE;
+	long getGMTTimeOfDay(void) APPLE_KEXT_OVERRIDE;
+	void setGMTTimeOfDay(long secs) APPLE_KEXT_OVERRIDE;
 
 protected:
 	virtual bool initPlatformInterrupts(void);
@@ -34,6 +42,8 @@ protected:
 	virtual const char *platformModelName(void);
 	void publishBcm2835EMMC(void);
 	void publishBcm283xFramebuffer(void);
+	void startQemuRTC(void);
+	static void publishRTC(thread_call_param_t self, thread_call_param_t);
 };
 
 static bool pd_platform_is_bcm283x(void);
@@ -86,6 +96,7 @@ PDArmPlatformExpert::start(IOService *provider)
 #endif
 
 	publishBcm283xFramebuffer();
+	startQemuRTC();
 
 #if defined(__arm64__)
 	if (PDSun50i_isPlatform()) {
@@ -100,6 +111,71 @@ PDArmPlatformExpert::start(IOService *provider)
 #endif
 
 	return true;
+}
+
+// QEMU virt's PL031 at 0x09010000 counts seconds since 1970 from the host clock. Without an IORTC
+// the calendar starts at 1970 and IOKitInitializeTime waits 30 s for one
+#define PD_QEMU_PL031_PHYS 0x09010000ULL
+#define PD_PL031_DR 0       // data: current seconds
+#define PD_PL031_LR 2       // load: set seconds
+
+void
+PDArmPlatformExpert::startQemuRTC(void)
+{
+	IORegistryEntry *armio = IORegistryEntry::fromPath("/arm-io", gIODTPlane);
+	OSData *type = armio != NULL ? OSDynamicCast(OSData, armio->getProperty("device_type")) : NULL;
+	IOMemoryDescriptor *md;
+
+	if (type == NULL || strncmp((const char *)type->getBytesNoCopy(), "qemuvirt-io", type->getLength()) != 0) {
+		OSSafeReleaseNULL(armio);
+		return;
+	}
+	OSSafeReleaseNULL(armio);
+	md = IOMemoryDescriptor::withPhysicalAddress(PD_QEMU_PL031_PHYS, 0x1000, kIODirectionInOut);
+	if (md == NULL) {
+		return;
+	}
+	fRTCMap = md->map(kIOMapInhibitCache);
+	md->release();
+	if (fRTCMap == NULL) {
+		return;
+	}
+	fRTC = (volatile uint32_t *)fRTCMap->getVirtualAddress();
+	// Root mount relied on the 30 s IOKitInitializeTime spent waiting for this: APFS still holds the
+	// container a few seconds after IOKit goes quiet, so IORTC is published 10 s later
+	{
+		uint64_t deadline;
+
+		fRTCPublish = thread_call_allocate(&PDArmPlatformExpert::publishRTC, this);
+		if (fRTCPublish == NULL) {
+			publishResource("IORTC", this);
+			return;
+		}
+		clock_interval_to_deadline(10, kSecondScale, &deadline);
+		thread_call_enter_delayed(fRTCPublish, deadline);
+	}
+}
+
+void
+PDArmPlatformExpert::publishRTC(thread_call_param_t self, thread_call_param_t)
+{
+	PDArmPlatformExpert *pe = (PDArmPlatformExpert *)self;
+
+	pe->publishResource("IORTC", pe);
+}
+
+long
+PDArmPlatformExpert::getGMTTimeOfDay(void)
+{
+	return fRTC != NULL ? (long)fRTC[PD_PL031_DR] : 0;
+}
+
+void
+PDArmPlatformExpert::setGMTTimeOfDay(long secs)
+{
+	if (fRTC != NULL) {
+		fRTC[PD_PL031_LR] = (uint32_t)secs;
+	}
 }
 
 /*
@@ -170,10 +246,22 @@ fail:
 }
 #endif
 
+static bool pd_platform_is_bcm283x(void);
+
 void
 PDArmPlatformExpert::processTopLevel(IORegistryEntry *root)
 {
 	super::processTopLevel(root);
+	// QEMU virt stands in for Apple's virtual platform: MobileGestalt's hardware model (and
+	// mobileactivationd's hactivation) comes from the root target-type, as on a VMA2MACOS guest
+	if (root != NULL && !pd_platform_is_bcm283x() && root->getProperty("target-type") == NULL) {
+		OSData *tt = OSData::withBytes("VMA2MACOS", sizeof("VMA2MACOS"));
+
+		if (tt != NULL) {
+			root->setProperty("target-type", tt);
+			tt->release();
+		}
+	}
 }
 
 const char *

@@ -6,9 +6,26 @@
 #define super IOPCIBridge
 OSDefineMetaClassAndStructors(PDArmPCI, IOPCIBridge)
 
-/* QEMU's ARM virt machine exposes PCIe ECAM at this fixed address. */
-static const IOPhysicalAddress kECAMBase = 0x4010000000ULL;
-static const IOPhysicalLength kECAMLength = 0x10000000ULL;
+/* QEMU virt: 256-bus ECAM up high when the guest has >= 40-bit physical addresses,
+ * else the 16-bus low ECAM (HVF on M1 gives 36 bits) */
+static IOPhysicalAddress sECAMBase = 0x4010000000ULL;
+static IOPhysicalLength sECAMLength = 0x10000000ULL;
+static UInt32 sECAMBuses = 256;
+
+static void pd_pci_pick_ecam(void)
+{
+    uint64_t mmfr0 = __builtin_arm_rsr64("ID_AA64MMFR0_EL1");
+    static const UInt8 kPABits[] = { 32, 36, 40, 42, 44, 48, 52 };
+    UInt32 pa = (mmfr0 & 0xf) < sizeof(kPABits) ? kPABits[mmfr0 & 0xf] : 52;
+
+    if (pa < 40) {
+        sECAMBase = 0x3f000000ULL;
+        sECAMLength = 0x1000000ULL;
+        sECAMBuses = 16;
+    }
+    IOLog("PureDarwin PDArmPCI: %u-bit PA, ECAM 0x%llx, %u buses\n", (unsigned)pa,
+          (unsigned long long)sECAMBase, (unsigned)sECAMBuses);
+}
 
 IOService *PDArmPCI::probe(IOService *provider, SInt32 *score)
 {
@@ -24,7 +41,8 @@ bool PDArmPCI::start(IOService *provider)
 {
     IOLog("PureDarwin PDArmPCI: start provider=%s\n",
           provider ? provider->getName() : "(null)");
-    ecamMemory = IODeviceMemory::withRange(kECAMBase, kECAMLength);
+    pd_pci_pick_ecam();
+    ecamMemory = IODeviceMemory::withRange(sECAMBase, sECAMLength);
     if (!ecamMemory)
         return false;
 
@@ -41,8 +59,8 @@ bool PDArmPCI::start(IOService *provider)
 bool PDArmPCI::configure(IOService *provider)
 {
     IOLog("PureDarwin PDArmPCI: configure\n");
-    /* QEMU virt's non-prefetchable PCI window is 0x10000000..0x3fffffff. */
-    addBridgeMemoryRange(0x10000000ULL, 0x30000000ULL, true);
+    /* QEMU virt's low MMIO window is 0x10000000..0x3efeffff; PIO and the low ECAM follow it */
+    addBridgeMemoryRange(0x10000000ULL, 0x2eff0000ULL, true);
     return super::configure(provider);
 }
 
@@ -76,7 +94,7 @@ IOPCIAddressSpace PDArmPCI::getBridgeSpace(void)
 
 volatile UInt8 *PDArmPCI::configAddress(IOPCIAddressSpace space, UInt8 offset) const
 {
-    if (!ecamMap || space.s.busNum > 255 || space.s.deviceNum > 31 ||
+    if (!ecamMap || space.s.busNum >= sECAMBuses || space.s.deviceNum > 31 ||
         space.s.functionNum > 7)
         return 0;
 

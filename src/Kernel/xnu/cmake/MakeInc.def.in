@@ -78,7 +78,8 @@ MACHINE_FLAGS_ARM_BCM2835 = -DARM_BOARD_CONFIG_BCM2835 -mcpu=arm1176jzf-s \
 MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
 # platform.h derives ARM64_SOC_NAME from CURRENT_MACHINE_CONFIG_LC for boards
 # with no Apple SoC; trap_telemetry.c only stringifies it.
-MACHINE_FLAGS_ARM64_VIRT = -DARM64_BOARD_CONFIG_VIRT -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a710+nosve+nosve2+nosme
+# Cortex-A76 baseline: no PAuth (Pi 5 under KVM), and a subset of what M1 runs
+MACHINE_FLAGS_ARM64_VIRT = -DARM64_BOARD_CONFIG_VIRT -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a76
 # QEMU virt on a Cortex-A53 model: the VIRT board with 4KB pages and the classic
 # subpage-L1 geometry, so the SUN50I page-table path can be debugged under QEMU
 MACHINE_FLAGS_ARM64_VIRT4K = -DARM64_BOARD_CONFIG_VIRT -DPD_VIRT_4K -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a53+crypto

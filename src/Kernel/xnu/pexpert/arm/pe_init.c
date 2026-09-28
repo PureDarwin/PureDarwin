@@ -476,6 +476,12 @@ PE_init_platform(boolean_t vm_initialized, void *args)
 		if (kSuccess == (SecureDTFindEntry("name", "device-tree", &entry))) {
 			pe_init_fill_buffer_from_property(entry, "target-type", gTargetTypeBuffer, sizeof(gTargetTypeBuffer));
 		}
+#if defined(QEMUVIRT)
+		// hw.target as on Apple's virtual platform, which the paravirt stand-ins imitate
+		if (gTargetTypeBuffer[0] == '\0') {
+			strlcpy(gTargetTypeBuffer, "VMA2MACOS", sizeof(gTargetTypeBuffer));
+		}
+#endif
 		if (kSuccess == (SecureDTFindEntry("name", "product", &entry))) {
 			pe_init_fill_buffer_from_property(entry, "unique-model", gUniqueDeviceTargetTypeBuffer, sizeof(gUniqueDeviceTargetTypeBuffer));
 			pe_init_fill_buffer_from_property(entry, "sub-product-type", gUniqueDeviceModelTypeBuffer, sizeof(gUniqueDeviceModelTypeBuffer));

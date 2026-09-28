@@ -2,6 +2,7 @@
 #include "IOVirtIOBlockDisk.h"
 
 #include <IOKit/IOLib.h>
+#include <kern/clock.h>
 
 #define super IOService
 OSDefineMetaClassAndStructors(IOVirtIOBlock, IOService);
@@ -115,13 +116,18 @@ IOVirtIOBlock::start(IOService *provider)
     if (!fLock)
         return false;
 
+    // without a usable interrupt every request is polled as before
+    if (!setupInterrupt())
+        IOLog("IOVirtIOBlock: no interrupt, polling for completions\n");
+
     fTransport.setDriverOk();
 
-    IOLog("IOVirtIOBlock: %llu blocks of %u bytes (%llu MB)%s%s\n",
+    IOLog("IOVirtIOBlock: %llu blocks of %u bytes (%llu MB)%s%s%s\n",
           fBlockCount, (unsigned)fBlockSize,
           (fBlockCount * fBlockSize) >> 20,
           fReadOnly ? ", read-only" : "",
-          fHasFlush ? ", flush" : "");
+          fHasFlush ? ", flush" : "",
+          fUseInterrupts ? ", interrupt driven" : "");
 
     fDisk = new IOVirtIOBlockDisk;
     if (!fDisk || !fDisk->initWithController(this)) {
@@ -149,6 +155,14 @@ IOVirtIOBlock::stop(IOService *provider)
         fDisk->release();
         fDisk = NULL;
     }
+    if (fInterruptSource) {
+        fInterruptSource->disable();
+        if (fWorkLoop)
+            fWorkLoop->removeEventSource(fInterruptSource);
+        fInterruptSource->release();
+        fInterruptSource = NULL;
+    }
+    fUseInterrupts = false;
     fTransport.freeQueue(&fQueue);
     fTransport.detach();
     if (fPCIDevice)
@@ -159,6 +173,14 @@ IOVirtIOBlock::stop(IOService *provider)
 void
 IOVirtIOBlock::free()
 {
+    if (fInterruptSource) {
+        fInterruptSource->release();
+        fInterruptSource = NULL;
+    }
+    if (fWorkLoop) {
+        fWorkLoop->release();
+        fWorkLoop = NULL;
+    }
     if (fLock) {
         IOLockFree(fLock);
         fLock = NULL;
@@ -173,6 +195,80 @@ IOVirtIOBlock::free()
         fPCIDevice = NULL;
     }
     super::free();
+}
+
+// the pci nub's first interrupt is the legacy intx line, the only one without msi
+bool
+IOVirtIOBlock::setupInterrupt()
+{
+    int type = 0;
+
+    if (fPCIDevice->getInterruptType(0, &type) != kIOReturnSuccess)
+        return false;
+
+    fWorkLoop = IOWorkLoop::workLoop();
+    if (!fWorkLoop)
+        return false;
+    fInterruptSource = IOInterruptEventSource::interruptEventSource(this,
+        OSMemberFunctionCast(IOInterruptEventAction, this, &IOVirtIOBlock::interruptOccurred),
+        fPCIDevice, 0);
+    if (!fInterruptSource || fWorkLoop->addEventSource(fInterruptSource) != kIOReturnSuccess) {
+        OSSafeReleaseNULL(fInterruptSource);
+        return false;
+    }
+    fInterruptSource->enable();
+    fUseInterrupts = true;
+    return true;
+}
+
+// runs on the work loop, a level triggered line stays masked until this returns
+void
+IOVirtIOBlock::interruptOccurred(IOInterruptEventSource *, int)
+{
+    // reading the isr acknowledges it and drops the line
+    uint8_t isr = fTransport.readIsr();
+
+    if (!(isr & 1))
+        return;
+    IOLockLock(fLock);
+    IOLockWakeup(fLock, &fQueue, false);
+    IOLockUnlock(fLock);
+}
+
+// caller holds fLock, the interrupt action takes it to wake the sleeper so no wakeup is lost
+bool
+IOVirtIOBlock::waitForCompletion()
+{
+    // a completion the interrupt never reported within this long means the line is dead
+    static const unsigned kLostInterruptMs = 2000;
+    volatile VRingUsedHdr *uh = (volatile VRingUsedHdr *)fQueue.used;
+    uint64_t deadline, now;
+
+    if (!fUseInterrupts)
+        return fTransport.pollForCompletion(&fQueue, kIOTimeoutMs);
+
+    clock_interval_to_deadline(kIOTimeoutMs, kMillisecondScale, &deadline);
+    while (uh->idx == fQueue.lastUsedIdx) {
+        uint64_t slice;
+
+        clock_interval_to_deadline(kLostInterruptMs, kMillisecondScale, &slice);
+        if (slice > deadline)
+            slice = deadline;
+        if (IOLockSleepDeadline(fLock, &fQueue, slice, THREAD_UNINT) != THREAD_TIMED_OUT)
+            continue;
+        if (uh->idx != fQueue.lastUsedIdx) {
+            IOLog("IOVirtIOBlock: request completed without an interrupt, polling from now on\n");
+            fUseInterrupts = false;
+            break;
+        }
+        clock_get_uptime(&now);
+        if (now >= deadline) {
+            fQueue.stalled = true;
+            return false;
+        }
+    }
+    OSSynchronizeIO();
+    return fTransport.pollForCompletion(&fQueue, 0);
 }
 
 // Build and run one request chain covering [offset, offset+length) of `buffer`.
@@ -221,7 +317,7 @@ IOVirtIOBlock::submit(uint32_t type, uint64_t sector,
     fTransport.addDescChain(&fQueue, entries, count);
     fTransport.notify(&fQueue);
 
-    if (!fTransport.pollForCompletion(&fQueue, kIOTimeoutMs)) {
+    if (!waitForCompletion()) {
         IOLog("IOVirtIOBlock: request type %u sector %llu timed out\n",
               type, sector);
         return kIOReturnTimeout;
