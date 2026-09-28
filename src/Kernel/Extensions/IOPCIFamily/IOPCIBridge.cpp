@@ -2006,7 +2006,7 @@ bool IOPCIBridge::configure( IOService * provider )
     return (true);
 }
 
-#if !defined(__arm64__)
+#if !defined(__arm64__) && !defined(__riscv)
 SInt32 IOPCIBridge::compareAddressCell( UInt32 /* cellCount */, UInt32 cleft[], UInt32 cright[] )
 {
      IOPCIPhysicalAddress *  left        = (IOPCIPhysicalAddress *) cleft;

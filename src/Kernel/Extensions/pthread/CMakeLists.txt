@@ -33,7 +33,8 @@ target_compile_definitions(pthread.kext PRIVATE
 #
 # CONFIG_SCHED_CLUTCH is derived in osfmk/kern/sched.h from CONFIG_CLUTCH on
 # arm64; CONFIG_SCHED_EDGE stays off because virt is not __AMP__.
-if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
+# riscv64 takes arm64's SCHED_BASE in config/MASTER.riscv64
+if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32 OR PUREDARWIN_RISCV64)
     target_compile_definitions(pthread.kext PRIVATE
         CONFIG_SCHED_TIMESHARE_CORE=1
         CONFIG_SCHED_DEFERRED_AST=1

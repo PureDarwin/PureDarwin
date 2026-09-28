@@ -4635,7 +4635,7 @@ void IOFramebuffer::initialize()
 	OSDictionary  *     matching;
 
 	gIOFBServerInit      = true;
-#if defined(__arm64__) || defined(__aarch64__)
+#if defined(__arm64__) || defined(__aarch64__) || defined(__riscv)
 	/* ARM boot_args replaced the x86 flags field with bootFlags. The only
 	 * equivalent currently defined by the ARM ABI is dark boot. */
 	uint64_t armBootFlags = ((boot_args *) PE_state.bootArgs)->bootFlags;

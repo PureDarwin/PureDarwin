@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>PDRiscvPlatformExpert</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.puredarwin.kext.PDRiscvPlatformExpert</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>PDRiscvPlatformExpert</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>PureDarwin RISC-V QEMU virt platform</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>org.puredarwin.kext.PDRiscvPlatformExpert</string>
+			<key>IOClass</key>
+			<string>PDRiscvPlatformExpert</string>
+			<key>IONameMatch</key>
+			<array>
+				<string>riscv-virtio</string>
+				<string>qemu,virt</string>
+			</array>
+			<key>IOProbeScore</key>
+			<string>10000</string>
+			<key>IOProviderClass</key>
+			<string>IOPlatformExpertDevice</string>
+		</dict>
+		<key>PureDarwin RISC-V SG2002 platform</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>org.puredarwin.kext.PDRiscvPlatformExpert</string>
+			<key>IOClass</key>
+			<string>PDRiscvPlatformExpert</string>
+			<key>IONameMatch</key>
+			<string>sophgo,sg2002</string>
+			<key>IOProbeScore</key>
+			<string>10000</string>
+			<key>IOProviderClass</key>
+			<string>IOPlatformExpertDevice</string>
+		</dict>
+	</dict>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.kpi.mach</key>
+		<string>8.0.0</string>
+		<key>com.apple.kpi.iokit</key>
+		<string>7.0</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>8.0.0d0</string>
+		<key>com.apple.kpi.private</key>
+		<string>8.0.0b1</string>
+		<key>com.apple.kpi.unsupported</key>
+		<string>8.0.0b1</string>
+	</dict>
+	<key>OSBundleRequired</key>
+	<string>Root</string>
+</dict>
+</plist>

@@ -192,7 +192,7 @@
 #endif
 
 #if !defined(CCN_UNIT_SIZE)
- #if defined(__arm64__) || defined(__x86_64__)  || defined(_WIN64)
+ #if defined(__arm64__) || defined(__x86_64__)  || defined(_WIN64) || (defined(__riscv) && __riscv_xlen == 64)
   #define CCN_UNIT_SIZE  8
  #elif defined(__arm__) || defined(__i386__) || defined(_WIN32)
   #define CCN_UNIT_SIZE  4
@@ -253,7 +253,7 @@
 #if defined(__arm64__) || defined(__arm__)
  #define CCN_IOS				   1
  #define CCN_OSX				   0
-#elif defined(__x86_64__) || defined(__i386__)
+#elif defined(__x86_64__) || defined(__i386__) || defined(__riscv)
  #define CCN_IOS				   0
  #define CCN_OSX				   1
 #endif

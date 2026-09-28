@@ -55,6 +55,12 @@ function(add_kext_bundle name)
     target_link_options(${name} PRIVATE -lSystem)
     target_link_options(${name} PRIVATE "SHELL:-undefined dynamic_lookup")
 
+    # riscv's vm init is arm_vm_init's port, it maps a kext's __TEXT read only and runs
+    # code only from __TEXT_EXEC, which is where arm64 kexts keep it too
+    if(PUREDARWIN_ARCH STREQUAL "riscv64")
+        target_link_options(${name} PRIVATE "LINKER:-text_exec")
+    endif()
+
     # ARMv6 has no movw/movt, so the compiler reaches other symbols through
     # literal pools, which ld64 sees as relocations in a read-only section and
     # refuses in a bundle. The kernel proper links with the same suppression

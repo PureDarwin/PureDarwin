@@ -224,6 +224,22 @@ stack_addr_hint(proc_t p, vm_map_t vmap)
 			stackaddr -= 32 * PTH_DEFAULT_STACKSIZE + aslr_offset;
 		}
 	}
+#elif defined(__riscv)
+	// same scheme as arm64, riscv64 only runs 64-bit processes
+	(void)proc64bit_data;
+	user_addr_t main_thread_stack_top = 0;
+	if (pthread_kern->proc_get_user_stack) {
+		main_thread_stack_top = pthread_kern->proc_get_user_stack(p);
+	}
+	if (proc64bit && main_thread_stack_top) {
+		stackaddr = vm_map_trunc_page_mask((vm_map_offset_t)main_thread_stack_top,
+				vm_map_page_mask(vmap));
+	} else {
+		aslr_offset = random() % (4 * PTH_DEFAULT_STACKSIZE);
+		aslr_offset = vm_map_trunc_page_mask((vm_map_offset_t)aslr_offset,
+				vm_map_page_mask(vmap));
+		stackaddr = SHARED_REGION_BASE_RISCV64 - 64 * PTH_DEFAULT_STACKSIZE - aslr_offset;
+	}
 #else
 #error Need to define a stack address hint for this architecture
 #endif
@@ -377,6 +393,21 @@ _bsdthread_create(struct proc *p,
 
 		(void)pthread_kern->thread_set_wq_state32(th, (thread_state_t)&state);
 	}
+#elif defined(__riscv)
+	// arguments go in a0-a5 (x10-x15), sp is x2
+	riscv_thread_state64_t state = {
+		.pc    = (uint64_t)pthread_kern->proc_get_threadstart(p),
+		.x[10] = (uint64_t)user_pthread,
+		.x[11] = (uint64_t)th_thport,
+		.x[12] = (uint64_t)user_func,    /* golang wants this */
+		.x[13] = (uint64_t)user_funcarg, /* golang wants this */
+		.x[14] = (uint64_t)user_stack,   /* golang wants this */
+		.x[15] = (uint64_t)flags,
+
+		.x[2]  = (uint64_t)user_stack,
+	};
+
+	(void)pthread_kern->thread_set_wq_state64(th, (thread_state_t)&state);
 #else
 #error bsdthread_create  not defined for this architecture
 #endif
@@ -876,6 +907,23 @@ workq_set_register_state(proc_t p, thread_t th,
 #else /* defined(__arm64__) */
 		panic("Shouldn't have a 64-bit thread on a 32-bit kernel...");
 #endif /* defined(__arm64__) */
+	}
+#elif defined(__riscv)
+	riscv_thread_state64_t state = {
+		.pc    = (uint64_t)wqstart_fnptr,
+		.x[10] = (uint64_t)addrs->self,
+		.x[11] = (uint64_t)kport,
+		.x[12] = (uint64_t)addrs->stack_bottom,
+		.x[13] = (uint64_t)kevent_list,
+		.x[14] = (uint64_t)upcall_flags,
+		.x[15] = (uint64_t)kevent_count,
+
+		.x[2]  = (uint64_t)((vm_offset_t)addrs->stack_top),
+	};
+
+	int error = pthread_kern->thread_set_wq_state64(th, (thread_state_t)&state);
+	if (error != KERN_SUCCESS) {
+		panic(__func__ ": thread_set_wq_state failed: %d", error);
 	}
 #else
 #error setup_wqthread  not defined for this architecture

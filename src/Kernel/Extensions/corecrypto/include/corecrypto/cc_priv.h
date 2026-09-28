@@ -448,7 +448,7 @@ do { \
 
 #if defined(_WIN32)
 /* We use the Windows implementations below. */
-#elif defined(__x86_64__) || defined(__i386__) || defined(__arm64__) || defined(__arm__)
+#elif defined(__x86_64__) || defined(__i386__) || defined(__arm64__) || defined(__arm__) || defined(__riscv)
 /* We use a thought-to-be-good version of __builtin_clz. */
 #elif defined __GNUC__
 #warning Using __builtin_clz() on an unknown architecture; it may not be constant-time.
