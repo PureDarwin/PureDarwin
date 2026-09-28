@@ -874,6 +874,8 @@ ${lib.optionalString (rootFsType == "apfs") ''
     chown -R 0:0 "$staging"
     apfsrw populate root.img "$staging"
 FAKESCRIPT
+    # the boot volume has to be the System role, mkapfs leaves it None and nothing matches boot-uuid
+    apfsrw role root.img system
     apfsrw ls root.img >/dev/null
     dd if=root.img of=$img bs=512 seek=$root_start count=$root_size conv=notrunc,sparse status=none
 ''}
