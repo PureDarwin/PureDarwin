@@ -1,0 +1,134 @@
+--- a/src/riscv/ffi.c
++++ b/src/riscv/ffi.c
+@@ -33,6 +33,10 @@
+ #include <stdlib.h>
+ #include <stdint.h>
+ 
++#ifdef __APPLE__
++#include <libkern/OSCacheControl.h>
++#endif
++
+ #if __riscv_float_abi_double
+ #define ABI_FLEN 64
+ #define ABI_FLOAT double
+@@ -448,7 +452,9 @@
+     closure->fun = fun;
+     closure->user_data = user_data;
+ 
+-#if !defined(__FreeBSD__)
++#if defined(__APPLE__)
++    sys_icache_invalidate(codeloc, FFI_TRAMPOLINE_SIZE);
++#elif !defined(__FreeBSD__)
+     __builtin___clear_cache(codeloc, codeloc + FFI_TRAMPOLINE_SIZE);
+ #endif
+ 
+--- a/src/riscv/sysv.S
++++ b/src/riscv/sysv.S
+@@ -56,10 +56,23 @@
+ 
+ #define fp s0
+ 
++/* mach-o prefixes c symbols with an underscore and has no .type or .size */
++#ifdef __APPLE__
++#define CNAME(x) _##x
++#define HIDDEN(x) .private_extern CNAME(x)
++#define FUNCTION(x)
++#define SIZE(x)
++#else
++#define CNAME(x) x
++#define HIDDEN(x) .hidden x
++#define FUNCTION(x) .type x, @function
++#define SIZE(x) .size x, .-x
++#endif
++
+     .text
+-    .globl  ffi_call_asm
+-    .type   ffi_call_asm, @function
+-    .hidden ffi_call_asm
++    .globl  CNAME(ffi_call_asm)
++    FUNCTION(ffi_call_asm)
++    HIDDEN(ffi_call_asm)
+ /*
+   struct call_context {
+       floatreg fa[8];
+@@ -73,7 +86,7 @@
+ 
+ #define FRAME_LEN (8 * FLTS + 8 * PTRS + 16)
+ 
+-ffi_call_asm:
++CNAME(ffi_call_asm):
+     .cfi_startproc
+ 
+     /*
+@@ -141,7 +154,7 @@
+     .cfi_restore 8
+     ret
+     .cfi_endproc
+-    .size   ffi_call_asm, .-ffi_call_asm
++    SIZE(ffi_call_asm)
+ 
+ 
+ /*
+@@ -152,10 +165,10 @@
+ 		          size_t *stackargs, struct call_context *regargs)
+ */
+ 
+-    .globl ffi_closure_asm
+-    .hidden ffi_closure_asm
+-    .type ffi_closure_asm, @function
+-ffi_closure_asm:
++    .globl  CNAME(ffi_closure_asm)
++    HIDDEN(ffi_closure_asm)
++    FUNCTION(ffi_closure_asm)
++CNAME(ffi_closure_asm):
+     .cfi_startproc
+ 
+     addi    sp,  sp, -FRAME_LEN
+@@ -196,7 +209,7 @@
+     addi    a3, sp, FRAME_LEN
+     mv      a4, sp
+ 
+-    call    ffi_closure_inner
++    call    CNAME(ffi_closure_inner)
+ 
+     /* return values */
+ #if FLTS
+@@ -216,7 +229,7 @@
+     .cfi_def_cfa_offset 0
+     ret
+     .cfi_endproc
+-    .size ffi_closure_asm, .-ffi_closure_asm
++    SIZE(ffi_closure_asm)
+ 
+ /*
+   ffi_go_closure_asm.  Expects address of the passed-in ffi_go_closure in t2.
+@@ -226,10 +239,10 @@
+ 		          size_t *stackargs, struct call_context *regargs)
+ */
+ 
+-    .globl ffi_go_closure_asm
+-    .hidden ffi_go_closure_asm
+-    .type ffi_go_closure_asm, @function
+-ffi_go_closure_asm:
++    .globl  CNAME(ffi_go_closure_asm)
++    HIDDEN(ffi_go_closure_asm)
++    FUNCTION(ffi_go_closure_asm)
++CNAME(ffi_go_closure_asm):
+     .cfi_startproc
+ 
+     addi    sp,  sp, -FRAME_LEN
+@@ -270,7 +283,7 @@
+     addi    a3, sp, FRAME_LEN
+     mv      a4, sp
+ 
+-    call    ffi_closure_inner
++    call    CNAME(ffi_closure_inner)
+ 
+     /* return values */
+ #if FLTS
+@@ -290,4 +303,4 @@
+     .cfi_def_cfa_offset 0
+     ret
+     .cfi_endproc
+-    .size ffi_go_closure_asm, .-ffi_go_closure_asm
++    SIZE(ffi_go_closure_asm)

@@ -7,6 +7,7 @@ let
     fileset = lib.fileset.unions (map (path: workspaceRoot + path) [
       /src/Kernel/xnu/EXTERNAL_HEADERS
       /src/Kernel/xnu/bsd/arm
+      /src/Kernel/xnu/bsd/riscv
       /src/Kernel/xnu/bsd/bsm
       /src/Kernel/xnu/bsd/i386
       /src/Kernel/xnu/bsd/kern/makesyscalls.sh
@@ -116,6 +117,7 @@ let
   sources = [
     [ "${root}/src/Kernel/xnu/EXTERNAL_HEADERS" "usr/include" ]
     [ "${root}/src/Kernel/xnu/bsd/arm" "usr/include/arm" ]
+    [ "${root}/src/Kernel/xnu/bsd/riscv" "usr/include/riscv" ]
     [ "${root}/src/Kernel/xnu/bsd/bsm" "usr/include/bsm" ]
     [ "${root}/src/Kernel/xnu/bsd/i386" "usr/include/i386" ]
     [ "${root}/src/Kernel/xnu/bsd/machine" "usr/include/machine" ]
@@ -217,6 +219,7 @@ let
     [ "${root}/src/Libraries/libSystem/libc/libm/openlibm/include/openlibm_fenv.h" "usr/include/fenv.h" ]
     [ "${root}/src/Libraries/libSystem/libc/libm/openlibm/include/openlibm_fenv_amd64.h" "usr/include/openlibm_fenv_amd64.h" ]
     [ "${root}/src/Libraries/libSystem/libc/libm/openlibm/include/openlibm_fenv_arm.h" "usr/include/openlibm_fenv_arm.h" ]
+    [ "${root}/src/Libraries/libSystem/libc/libm/openlibm/include/openlibm_fenv_riscv.h" "usr/include/openlibm_fenv_riscv.h" ]
     # From cctools, not xnu: xnu's copy has no FAT_MAGIC_64/fat_arch_64, and
     # still does not as of xnu-12377. Same for arch.h.
     [ "${root}/tools/cctools/include/mach-o/fat.h" "usr/include/mach-o/fat.h" ]
@@ -371,10 +374,10 @@ stdenvNoCC.mkDerivation {
       mkdir -p "$_fw"
       {
         printf '%s\n' '--- !tapi-tbd' 'tbd-version: 4' \
-          'targets: [ x86_64-macos, arm64-macos ]' \
+          'targets: [ x86_64-macos, arm64-macos, riscv64-macos ]' \
           "install-name: '/System/Library/Frameworks/$_name.framework/Versions/A/$_name'" \
           "current-version: $_ver" 'compatibility-version: 1' \
-          'exports:' '  - targets: [ x86_64-macos, arm64-macos ]'
+          'exports:' '  - targets: [ x86_64-macos, arm64-macos, riscv64-macos ]'
         printf '    symbols: [ '
         _sep=
         while read -r symbol remainder; do
@@ -396,10 +399,10 @@ stdenvNoCC.mkDerivation {
     ${lib.concatMapStringsSep "\n" installFile (map (entry: { path = builtins.elemAt entry 0; target = builtins.elemAt entry 1; }) files)}
     {
       printf '%s\n' '--- !tapi-tbd' 'tbd-version: 4' \
-        'targets: [ x86_64-macos, arm64-macos ]' \
+        'targets: [ x86_64-macos, arm64-macos, riscv64-macos ]' \
         "install-name: '/usr/lib/libSystem.B.dylib'" \
         'current-version: 1292.100.5' 'compatibility-version: 1' \
-        'exports:' '  - targets: [ x86_64-macos, arm64-macos ]'
+        'exports:' '  - targets: [ x86_64-macos, arm64-macos, riscv64-macos ]'
       printf '    symbols: [ '
       separator=
       for source in ${lib.escapeShellArgs libSystemSymbolSources}; do
@@ -421,7 +424,48 @@ stdenvNoCC.mkDerivation {
       done
       printf '%s\n' ' ]' '...'
     } > "$sdk/usr/lib/libSystem.tbd"
-    for arch in x86_64 arm64; do
+    # libc++ and the libc++abi it reexports, from exports lists taken off the built dylibs
+    # so clang++'s implicit -lc++ binds the c++ runtime to them and never to libSystem
+    emit_symbols() {
+      printf '    symbols: [ '
+      _sep=
+      for _f in "$@"; do
+        while read -r symbol remainder; do
+          case "$symbol" in
+            ""|'#'*) continue ;;
+          esac
+          printf '%s%s' "$_sep" "$symbol"
+          _sep=', '
+        done < "$_f"
+      done
+      printf ' ]\n'
+    }
+    _cxxexp=${./libcxx-exports}
+    _alltargets='[ x86_64-macos, arm64-macos, riscv64-macos ]'
+    emit_libcxxabi_doc() {
+      printf '%s\n' '--- !tapi-tbd' 'tbd-version: 4' "targets: $_alltargets" \
+        "install-name: '/usr/lib/libc++abi.dylib'" \
+        'current-version: 1' 'compatibility-version: 1' \
+        'exports:' "  - targets: $_alltargets"
+      emit_symbols "$_cxxexp/libc++abi.exports"
+      printf '%s\n' '...'
+    }
+    {
+      printf '%s\n' '--- !tapi-tbd' 'tbd-version: 4' "targets: $_alltargets" \
+        "install-name: '/usr/lib/libc++.1.dylib'" \
+        'current-version: 1' 'compatibility-version: 1' \
+        'reexported-libraries:' "  - targets: $_alltargets" \
+        "    libraries: [ '/usr/lib/libc++abi.dylib' ]" \
+        'exports:' "  - targets: $_alltargets"
+      emit_symbols "$_cxxexp/libc++.exports"
+      for _arch in x86_64 arm64 riscv64; do
+        printf '%s\n' "  - targets: [ $_arch-macos ]"
+        emit_symbols "$_cxxexp/libc++.$_arch.exports"
+      done
+      emit_libcxxabi_doc
+    } > "$sdk/usr/lib/libc++.tbd"
+    emit_libcxxabi_doc > "$sdk/usr/lib/libc++abi.tbd"
+    for arch in x86_64 arm64 riscv64; do
       mkdir -p "$sdk/usr/include/$arch"
       ARCHS="$arch" SRCROOT=${root}/src/Libraries/libSystem/libc \
         DERIVED_FILES_DIR="$TMPDIR/libc-features" VARIANT_PLATFORM_NAME=macosx \

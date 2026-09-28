@@ -45,6 +45,10 @@ let
     "Messengers.subproj/objc-msg-arm64"
     "objc-blocktramps-arm64"
     "objc-sel-table"
+  ] else if targetTriple == "riscv64-apple-darwin20.4" then [
+    # the block trampolines go in their own dylib, see trampSrcs
+    "Messengers.subproj/objc-msg-riscv64"
+    "objc-sel-table"
   ] else if lib.hasPrefix "armv6-" targetTriple then [
     # No block trampolines: they are built out of Thumb-2 and nothing in the
     # sources above references them.

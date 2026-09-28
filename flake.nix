@@ -91,6 +91,7 @@
           # and kernel get is the same everywhere; it is also what lets a Mac
           # link kexts as MH_BUNDLE (see cmake/kext.cmake), which is the layout
           # kc-builder expects.
+          llvmRiscvMachO = pkgs.callPackage ./nix/pkgs/toolchain/llvm-riscv-macho { };
           nativeLd =
             pkgs.callPackage ./nix/pkgs/toolchain/native-ld.nix {
               darwinCrossToolchain = bootstrapCrossToolchain;
@@ -107,6 +108,28 @@
             inherit nativeLd;
             target = "arm64-apple-darwin20.4";
             clangTarget = "arm64-apple-macosx26.5";
+          };
+          # riscv64 mach-o through the patched llvm and the in-tree ld64
+          riscv64CrossToolchain = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/toolchain.nix {
+            inherit nativeLd;
+            llvmPackages_21 = llvmRiscvMachO;
+            target = "riscv64-apple-darwin20.4";
+            clangTarget = "riscv64-apple-macosx26.5";
+          };
+          # userland builtins, hard float rv64gc/lp64d like everything outside the kernel
+          compilerRtRiscv64Build = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt.nix {
+            darwinCrossToolchain = riscv64CrossToolchain;
+            nativeMesonTools = nativeMesonToolsDir;
+            inherit nativeLd;
+            llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
+            llvmVersion = pkgs.llvmPackages_21.llvm.version;
+            targetTriple = "riscv64-apple-darwin20.4";
+            targetArch = "riscv64";
+          };
+          compilerRtRiscv64Kernel = if isDarwin then null else pkgs.callPackage ./nix/pkgs/toolchain/compiler-rt-riscv64-kernel.nix {
+            inherit riscv64CrossToolchain;
+            llvmSrc = pkgs.llvmPackages_21.libllvm.monorepoSrc;
+            llvmVersion = pkgs.llvmPackages_21.llvm.version;
           };
           # The Pi Zero's ARM1176 is ARMv6; there is no macosx deployment
           # target for 32-bit ARM, so the triple stays a plain darwin one.
@@ -160,6 +183,8 @@
             # os/log_private.h includes <firehose/tracepoint_private.h>
             "src/Kernel/xnu/libkern/firehose"
             "src/Kernel/xnu/bsd/arm"
+            # machine/_types.h and friends pick bsd/riscv on a riscv64 build
+            "src/Kernel/xnu/bsd/riscv"
             "src/Kernel/xnu/bsd/i386"
             "src/Kernel/xnu/bsd/bsm"
             "src/Kernel/xnu/bsd/machine"
@@ -192,6 +217,7 @@
             inherit appleSdk darwinCrossToolchain nativeLd nativeUnifdef nativeMigcom iig;
             compilerRt = compilerRtBuild;
             compilerRtArm64 = arm64.compilerRtArm64Build or null;
+            compilerRtRiscv64 = compilerRtRiscv64Build;
           } // args);
 
           userlandBuild = mkPureDarwinBuild {
@@ -3935,6 +3961,16 @@
             installKextNames = [ "IOGraphicsFamily.kext" ];
             enableIOGraphicsFamily = true;
           };
+          # riscv64 kernel, kexts and kernel collection (see nix/riscv64.nix)
+          riscv64 = if isDarwin then { } else import ./nix/riscv64.nix {
+            inherit lib pkgs mkPureDarwinBuild kernelSource kextsSource;
+            inherit riscv64CrossToolchain compilerRtRiscv64Kernel compilerRtRiscv64Build libSystemBuild;
+            inherit icuCoreBuild libcxxabiDylibBuild libcxxDylibBuild libobjcBuild;
+            inherit nativeLd foundationSource coreFoundationBuild iokitCFStaticBuild iokitBuild;
+            inherit launchdBuild launchctlBuild userlandBuild libiconvBuild ncursesBuild zshBuild;
+            xnuLoaderRiscv64 = xnu-loader.packages.${system}.kernel-riscv64 or null;
+            kcTools = kc-tools.packages.${system}.default;
+          };
           # Image contents (see nix/image-contents.nix).
           imageContents = import ./nix/image-contents.nix {
             inherit
@@ -3996,9 +4032,55 @@
             # Cross toolchain, exposed so out-of-tree flakes (e.g. checkm8-tools'
             # PongoOS build) can link Mach-O with the real cctools ld64.
             arm64-cross-toolchain = arm64CrossToolchain;
+            # riscv mach-o: clang with the mach-o writer, and a bare-metal image linked by ld64
+            llvm-riscv-macho = llvmRiscvMachO.clang-unwrapped;
+            riscv64-cross-toolchain = riscv64CrossToolchain;
+            compiler-rt-riscv64-kernel = compilerRtRiscv64Kernel;
+            compiler-rt-riscv64 = compilerRtRiscv64Build;
+            kernel-riscv64-virt-debug = riscv64.kernelRiscv64VirtDebugBuild;
+            kexts-riscv64 = riscv64.kextsRiscv64Build;
+            kc-riscv64-virt-debug = riscv64.kcRiscv64VirtDebugBuild;
+            libsystem-riscv64 = riscv64.libSystemRiscv64Build;
+            icucore-riscv64 = riscv64.icuCoreRiscv64Build;
+            libcxxabi-dylib-riscv64 = riscv64.libcxxabiDylibRiscv64Build;
+            libcxx-dylib-riscv64 = riscv64.libcxxDylibRiscv64Build;
+            libobjc-riscv64 = riscv64.libobjcRiscv64Build;
+            corefoundation-riscv64 = riscv64.coreFoundationRiscv64Build;
+            foundation-riscv64 = riscv64.foundationRiscv64Build;
+            iokit-riscv64 = riscv64.iokitRiscv64Build;
+            launchd-riscv64 = riscv64.launchdRiscv64Build;
+            launchctl-riscv64 = riscv64.launchctlRiscv64Build;
+            userland-riscv64 = riscv64.userlandRiscv64Build;
+            zsh-riscv64 = riscv64.zshRiscv64Build;
+            toybox-riscv64 = riscv64.toyboxRiscv64Build;
+            fastfetch-riscv64 = riscv64.fastfetchRiscv64Build;
+            basesystem-riscv64-virt-minimal = riscv64.splitBaseSystemRiscv64VirtMinimal;
+            image-riscv64-virt-minimal = riscv64.imageRiscv64VirtMinimalBuild;
+            initrd-riscv64-virt = riscv64.initrdRiscv64VirtBuild;
+            riscv64-virt-runner = riscv64.runRiscv64Virt;
+            riscv64-macho-hello = pkgs.callPackage ./nix/pkgs/toolchain/riscv64-macho-hello.nix {
+              inherit llvmRiscvMachO nativeLd;
+            };
+            riscv64-macho-ctz-test = pkgs.callPackage ./nix/pkgs/toolchain/riscv64-macho-ctz-test.nix {
+              inherit llvmRiscvMachO nativeLd;
+            };
+            riscv64-macho-userland-test = pkgs.callPackage ./nix/pkgs/toolchain/riscv64-macho-userland-test.nix {
+              inherit llvmRiscvMachO nativeLd;
+            };
+            riscv64-macho-pcrel-test = pkgs.callPackage ./nix/pkgs/toolchain/riscv64-macho-pcrel-test.nix {
+              inherit llvmRiscvMachO nativeLd;
+            };
+            riscv64-macho-libcalls-test = pkgs.callPackage ./nix/pkgs/toolchain/riscv64-macho-libcalls-test.nix {
+              inherit llvmRiscvMachO nativeLd;
+              libSystem = riscv64.libSystemRiscv64Build;
+            };
             darwin-cross-toolchain = darwinCrossToolchain;
             native-ld = nativeLd;
             libsystem = libSystemBuild;
+            libcxxabi-dylib = libcxxabiDylibBuild;
+            libcxx-dylib = libcxxDylibBuild;
+            libobjc = libobjcBuild;
+            icucore = icuCoreBuild;
             coreservices = coreServicesBuild;
             wine-tools = wineToolsBuild;
             libX11-shared = libX11SharedBuild;

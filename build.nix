@@ -56,8 +56,10 @@
 , extraCmakeFlags ? [ ]
 , puredarwinArch ? "x86_64"
 , arm64CrossToolchain ? null
+, riscv64CrossToolchain ? null
 , compilerRt ? null
 , compilerRtArm64 ? null
+, compilerRtRiscv64 ? null
 }:
 
 let
@@ -65,12 +67,19 @@ let
   isArm64 = puredarwinArch == "arm64";
   # nix-toolchain.cmake's NIX_DARWIN_TOOLCHAIN_DIR just needs to point at
   # whichever wrapper set matches NIX_DARWIN_HOST below.
-  activeCrossToolchain = if isArm64 then arm64CrossToolchain else darwinCrossToolchain;
+  isRiscv64 = puredarwinArch == "riscv64";
+  activeCrossToolchain = if isArm64 then arm64CrossToolchain
+    else if isRiscv64 then riscv64CrossToolchain
+    else darwinCrossToolchain;
   # Every component that configures src/Libraries also builds libdyld, which
   # needs compiler-rt for __isPlatformVersionAtLeast (@available's backend).
   # Selected here rather than per-derivation so no component can be missed.
-  activeCompilerRt = if isArm64 then compilerRtArm64 else compilerRt;
-  nixDarwinHost = if isArm64 then "arm64-apple-darwin20.4" else "x86_64-apple-darwin20.4";
+  activeCompilerRt = if isArm64 then compilerRtArm64
+    else if isRiscv64 then compilerRtRiscv64
+    else compilerRt;
+  nixDarwinHost = if isArm64 then "arm64-apple-darwin20.4"
+    else if isRiscv64 then "riscv64-apple-darwin20.4"
+    else "x86_64-apple-darwin20.4";
   # The global cross toolchain currently compiles ctfconvert as Mach-O, so it
   # needs the SDK's target zlib stub. Other host-tool inputs remain native.
   zlibInclude = "${zlib.dev}/include";

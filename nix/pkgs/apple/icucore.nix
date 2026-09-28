@@ -82,7 +82,8 @@ stdenv.mkDerivation {
     # or the reexport below has nothing to point at.
     for f in build/lib/*.dylib build/stubdata/*.dylib; do
       [ -e "$f" ] || continue
-      [ -L "$f" ] && continue
+      [ -L "$f" ] && continue${lib.optionalString (lib.hasPrefix "riscv64-" targetTriple)
+        "\n      # the real data library is in lib/, the stub one must not replace it\n      [ -e \"$out/usr/lib/$(basename \"$f\")\" ] && continue"}
       cp "$f" "$out/usr/lib/$(basename "$f")"
     done
     for f in "$out"/usr/lib/*.dylib; do
