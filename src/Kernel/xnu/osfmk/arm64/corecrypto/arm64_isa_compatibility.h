@@ -37,7 +37,9 @@
 // #include <Availability.h>
 #include <sys/cdefs.h>
 
-#if defined(__clang__) && ((defined(__apple_build_version__) && __apple_build_version__ > 5010000))
+/* Upstream clang sets no __apple_build_version__ but still needs the modern
+ * v$N.4s operands, so the all-q #else dialect below is Apple-assembler only. */
+#if defined(__clang__) && (!defined(__apple_build_version__) || __apple_build_version__ > 5010000)
 #define __USES_V_CRYPTO_INTRINSICS 1
 #else
 #define __USES_V_CRYPTO_INTRINSICS 0

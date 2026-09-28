@@ -800,8 +800,13 @@ load_machfile(
 	int vm_map_pageshift = PAGE_SHIFT;
 #if defined(__arm64__)
 	if (result->is_64bit_addr) {
+#if __ARM_16K_PG__
 		/* enforce 16KB alignment of VM map entries */
 		vm_map_pageshift = SIXTEENK_PAGE_SHIFT;
+#else
+		// cores without a 16k granule keep user maps on the kernel's 4k pages
+		vm_map_pageshift = PAGE_SHIFT;
+#endif
 	} else {
 		vm_map_pageshift = (int)page_shift_user32;
 	}

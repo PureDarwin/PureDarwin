@@ -265,6 +265,23 @@ _jump_table:				// 32 entry jump table, only 3 are used
  *
  * Returns 0 on success and non-zero value on failure
  */
+// casa is ARMv8.1 LSE, which ARMv8.0 cores (Cortex-A53 in the H616/H618) trap as undefined, so without
+// __ARM_FEATURE_ATOMICS fall back to an ldaxr/stxr loop with the same result, clobbering w_tmp0/w_tmp1
+.macro PFZ_CASA w_old, w_new, x_addr, w_tmp0, w_tmp1
+#if defined(__ARM_FEATURE_ATOMICS)
+	casa	\w_old, \w_new, [\x_addr]
+#else
+1:
+	ldaxr	\w_tmp0, [\x_addr]
+	cmp	\w_tmp0, \w_old
+	b.ne	2f
+	stxr	\w_tmp1, \w_new, [\x_addr]
+	cbnz	\w_tmp1, 1b
+2:
+	mov	\w_old, \w_tmp0
+#endif
+.endmacro
+
 	.globl _pfz_trylock_and_enqueue
 	.align 2
 _pfz_trylock_and_enqueue:
@@ -275,7 +292,7 @@ _pfz_trylock_and_enqueue:
 	mov		w11, #1			 // locked value = w11 = 1
 
 	// Try to grab the lock
-	casa	w10, w11, [x3]	 // Atomic CAS with acquire barrier
+	PFZ_CASA w10, w11, x3, w12, w13	 // Atomic CAS with acquire barrier
 	cbz		w10, Ltrylock_enqueue_success
 
 	mov		x0, #-1			// Failed
@@ -325,7 +342,7 @@ _pfz_trylock_and_dequeue:
 	mov		w10, wzr		 // unlock value = w10 = 0
 	mov		w11, #1			 // locked value = w11 = 1
 
-	casa	w10, w11, [x2]	 // Atomic CAS with acquire barrier
+	PFZ_CASA w10, w11, x2, w12, w13	 // Atomic CAS with acquire barrier
 	cbz		w10, Ltrylock_dequeue_success
 
 	mov		x0, #-1			// Failed

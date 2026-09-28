@@ -39,6 +39,9 @@
 #include <kern/processor.h>
 #include <kern/startup.h>
 #include <kern/debug.h>
+#if defined(__arm64__)
+#include <pexpert/arm64/board_config.h>
+#endif
 #include <kern/monotonic.h>
 #include <prng/random.h>
 #include <machine/machine_routines.h>
@@ -344,6 +347,7 @@ arm_auxkc_init(void *mh, void *base)
  *		Function:		Runs on the boot CPU, once, on entry from iBoot.
  */
 
+
 __startup_func
 void
 arm_init(
@@ -425,6 +429,7 @@ arm_init(
 		/*
 		 * Select the advertised kernel page size.
 		 */
+#if __ARM_16K_PG__
 		if (args->memSize > 1ULL * 1024 * 1024 * 1024) {
 			/*
 			 * arm64 device with > 1GB of RAM:
@@ -439,6 +444,11 @@ arm_init(
 			 */
 			PAGE_SHIFT_CONST = ARM_PGSHIFT;
 		}
+#else
+		/* Cortex-A53 has no 16KB granule, so the advertised size has to
+		 * track the 4KB page tables start.s actually built. */
+		PAGE_SHIFT_CONST = ARM_PGSHIFT;
+#endif
 
 		/* 32-bit apps always see 16KB page size */
 		page_shift_user32 = PAGE_MAX_SHIFT;

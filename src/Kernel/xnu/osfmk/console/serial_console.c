@@ -50,6 +50,7 @@
 #if __arm64__
 #include <machine/machine_routines.h>
 #include <arm/cpu_data_internal.h>
+#include <pexpert/arm64/board_config.h>
 #endif
 
 #ifdef CONFIG_XNUPOST

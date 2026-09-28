@@ -133,7 +133,9 @@ extern int PAGE_SHIFT_CONST;
 
 /* system-wide values */
 #define MACH_VM_MIN_ADDRESS_RAW 0x0ULL
-#if defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)
+// 4K-only kernels end user VA at 0xFC0000000 for pmap.c's commpage assertion
+// board_config is only visible inside xnu, userland and kexts keep the 47-bit layout
+#if (defined(XNU_PLATFORM_MacOSX) || defined(XNU_PLATFORM_DriverKit)) && (!defined(XNU_KERNEL_PRIVATE) || __ARM_16K_PG__)
 #define MACH_VM_MAX_ADDRESS_RAW 0x00007FFFFE000000ULL
 #else
 #define MACH_VM_MAX_ADDRESS_RAW 0x0000000FC0000000ULL

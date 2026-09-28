@@ -829,7 +829,9 @@ vm_compressor_set_size(void)
 	compressor_pool_max_size = C_SEG_MAX_LIMIT;
 	compressor_pool_max_size *= c_seg_bufsize;
 
-#if XNU_TARGET_OS_OSX
+// Same reason as ZONE_MAP_VA_SIZE: the classic arm64 kernel map cannot hold a
+// 16x max_mem pool, so that geometry takes the embedded sizing
+#if XNU_TARGET_OS_OSX && !(defined(__arm64__) && !defined(ARM_LARGE_MEMORY))
 
 	if (vm_compression_limit == 0) {
 		if (max_mem <= (4ULL * 1024ULL * 1024ULL * 1024ULL)) {

@@ -50,6 +50,55 @@ pd_cpu_ic(IOService *owner)
 
 extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
 
+// secondary entry, copied to an uncached page and run with the mmu off
+// tf-a wakes the core at el2 on boards with u-boot at el2, so drop to el1 the way the loader does
+extern "C" const uint8_t pd_smp_tramp_start[], pd_smp_tramp_lits[], pd_smp_tramp_end[];
+__asm__(
+	"	.section __TEXT,__text,regular,pure_instructions\n"
+	"	.p2align 3\n"
+	"	.globl _pd_smp_tramp_start\n"
+	"_pd_smp_tramp_start:\n"
+	"	mrs	x0, CurrentEL\n"
+	"	cmp	x0, #(2 << 2)\n"
+	"	b.ne	1f\n"
+	"	mov	x0, #(1 << 31)\n"
+	"	msr	hcr_el2, x0\n"
+	"	msr	cntvoff_el2, xzr\n"
+	"	mrs	x0, cnthctl_el2\n"
+	"	orr	x0, x0, #3\n"
+	"	msr	cnthctl_el2, x0\n"
+	"	mov	x0, #0x33ff\n"
+	"	msr	cptr_el2, x0\n"
+	"	msr	hstr_el2, xzr\n"
+	"	msr	sctlr_el1, xzr\n"
+	"	mov	x0, #0x3c5\n"
+	"	msr	spsr_el2, x0\n"
+	"	adr	x0, 1f\n"
+	"	msr	elr_el2, x0\n"
+	"	isb\n"
+	"	eret\n"
+	"1:\n"
+	"	ldr	x20, Lpd_tramp_bootargs\n"
+	"	ldr	x21, Lpd_tramp_cpudata\n"
+	"	ldr	x16, Lpd_tramp_entry\n"
+	"	ldr	x17, Lpd_tramp_marker\n"
+	"	mov	w18, #0xd1\n"
+	"	str	w18, [x17]\n"
+	"	br	x16\n"
+	"	.p2align 3\n"
+	"	.globl _pd_smp_tramp_lits\n"
+	"_pd_smp_tramp_lits:\n"
+	"Lpd_tramp_bootargs:	.quad 0\n"
+	"Lpd_tramp_cpudata:	.quad 0\n"
+	"Lpd_tramp_entry:	.quad 0\n"
+	"Lpd_tramp_marker:	.quad 0\n"
+	"	.globl _pd_smp_tramp_end\n"
+	"_pd_smp_tramp_end:\n"
+	"	.text\n");
+
+// the secondary writes 0xd1 here once it runs the trampoline
+#define PD_TRAMP_MARKER_OFF	0x100
+
 extern "C" volatile uint32_t pd_smp_marker;
 extern "C" volatile uint64_t pd_smp_diag[8];
 
@@ -167,18 +216,9 @@ PDArmCPU::quiesceCPU(void)
 kern_return_t
 PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 {
-	// Literals at 0x20 boot args, 0x28 cpu data, 0x30 entry, 0x38 marker slot. The marker store
-	// proves the CPU reached this code: a fault here runs with the MMU off and prints nothing
-	static const uint32_t tramp[] = {
-		0x58000114u,	// ldr x20, [pc+0x20] -> literal 0x20
-		0x58000135u,	// ldr x21, [pc+0x24] -> literal 0x28
-		0x58000150u,	// ldr x16, [pc+0x28] -> literal 0x30
-		0x58000171u,	// ldr x17, [pc+0x2c] -> literal 0x38
-		0x52801a32u,	// movz w18, #0xd1
-		0xb9000232u,	// str w18, [x17]
-		0xd61f0200u,	// br x16
-		0xd503201fu	// nop
-	};
+	// the marker store proves the cpu reached the trampoline, a fault there runs mmu-off and prints nothing
+	const size_t trampLen = (size_t)(pd_smp_tramp_end - pd_smp_tramp_start);
+	const size_t litOff = (size_t)(pd_smp_tramp_lits - pd_smp_tramp_start);
 	IOBufferMemoryDescriptor *buf;
 	uint64_t *lit;
 	uint8_t *page;
@@ -199,15 +239,19 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 	uint64_t tramp_pa = (uint64_t)buf->getPhysicalAddress();
 
 	page = (uint8_t *)buf->getBytesNoCopy();
-	memcpy(page, tramp, sizeof(tramp));
-	lit = (uint64_t *)(page + 0x20);
+	if (trampLen > PD_TRAMP_MARKER_OFF) {
+		buf->release();
+		return KERN_FAILURE;
+	}
+	memcpy(page, pd_smp_tramp_start, trampLen);
+	lit = (uint64_t *)(page + litOff);
 	lit[0] = (uint64_t)ml_static_vtop((vm_offset_t)PE_state.bootArgs);
 	lit[1] = (uint64_t)arg_paddr;
 	lit[2] = (uint64_t)start_paddr;
-	lit[3] = tramp_pa + 0x40;		// marker slot, written by the secondary
-	*(volatile uint32_t *)(page + 0x40) = 0;
+	lit[3] = tramp_pa + PD_TRAMP_MARKER_OFF;
+	*(volatile uint32_t *)(page + PD_TRAMP_MARKER_OFF) = 0;
 
-	flush_dcache64((addr64_t)tramp_pa, 0x80, 1);
+	flush_dcache64((addr64_t)tramp_pa, PD_TRAMP_MARKER_OFF + 0x40, 1);
 
 	pd_smp_marker = 0;
 	flush_dcache64((addr64_t)ml_static_vtop((vm_offset_t)&pd_smp_marker),
@@ -227,13 +271,13 @@ PDArmCPU::startCPU(vm_offset_t start_paddr, vm_offset_t arg_paddr)
 		unsigned int i;
 
 		for (i = 0; i < 100; i++) {
-			if (*(volatile uint32_t *)(page + 0x40) == 0xd1) {
+			if (*(volatile uint32_t *)(page + PD_TRAMP_MARKER_OFF) == 0xd1) {
 				break;
 			}
 			IOSleep(10);
 		}
 		PD_LOG("PD-CPU: cpu %u trampoline marker %s after %u ms\n", pdCpuNumber,
-		    (*(volatile uint32_t *)(page + 0x40) == 0xd1) ? "reached" : "NOT reached",
+		    (*(volatile uint32_t *)(page + PD_TRAMP_MARKER_OFF) == 0xd1) ? "reached" : "NOT reached",
 		    i * 10);
 
 		for (i = 0; i < 100; i++) {
