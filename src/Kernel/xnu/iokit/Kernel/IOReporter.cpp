@@ -35,6 +35,9 @@
 #include <string.h>
 #include <sys/param.h>
 #include <IOKit/IORegistryEntry.h>
+#if defined(__riscv)
+#include <pexpert/pexpert.h>
+#endif
 
 #define super OSObject
 OSDefineMetaClassAndStructors(IOReporter, OSObject);
@@ -193,6 +196,13 @@ IOReporter::init(IOService *reportingService,
 #elif defined(__i386__) || defined(__x86_64__)
 		// Most, but not all Macs use 1GHz
 		unit = kIOReportUnit1GHzTicks;
+#elif defined(__riscv)
+		// the timebase comes from the device tree, whole megahertz on every board so far
+		uint64_t mhz = gPEClockFrequencyInfo.timebase_frequency_hz / 1000000;
+		if (mhz != 0 && mhz * 1000000 == gPEClockFrequencyInfo.timebase_frequency_hz && mhz <= 0xff) {
+			unit = __IOR_MAKEUNIT(kIOReportQuantityTime,
+			    kIOReportScaleOneOver | mhz | kIOReportScaleMicro);
+		}
 #else
 #error kIOReportUnitHWTicks not defined
 #endif

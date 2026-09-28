@@ -404,7 +404,7 @@ static inline u_short ip_cksum(struct mbuf *, int);
  * one.  Create some head room in the first mbuf of the new chain, in case
  * it's needed later on.
  */
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 #define IP_HDR_ALIGNMENT_FIXUP(_m, _ifp, _action) do { } while (0)
 #else /* !__i386__ && !__x86_64__ && !__arm64__ */
 #define IP_HDR_ALIGNMENT_FIXUP(_m, _ifp, _action) do {                  \

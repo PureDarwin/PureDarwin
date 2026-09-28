@@ -461,6 +461,9 @@ sysctl_hw_generic(__unused struct sysctl_oid *oidp, void *arg1,
 		{
 			cpufamily = cpuid_get_cpufamily();
 		}
+#elif defined(__riscv)
+		// no riscv cpu families are defined yet
+		cpufamily = CPUFAMILY_UNKNOWN;
 #else
 #error unknown architecture
 #endif
@@ -475,6 +478,8 @@ sysctl_hw_generic(__unused struct sysctl_oid *oidp, void *arg1,
 		{
 			cpusubfamily = cpuid_get_cpusubfamily();
 		}
+#elif defined(__riscv)
+		cpusubfamily = CPUSUBFAMILY_UNKNOWN;
 #else
 #error unknown architecture
 #endif
@@ -650,6 +655,11 @@ sysctl_hw_cachesize(struct sysctl_oid *oidp __unused, void *arg1 __unused,
 	cachesize[0] = ml_get_machine_mem();
 	cachesize[1] = cache_info_type(min_perflevel_cluster_type)->c_dsize; /* Using the DCache */
 	cachesize[2] = cache_info_type(min_perflevel_cluster_type)->c_l2size;
+#elif __riscv
+	cachesize[0] = ml_get_machine_mem();
+	cachesize[1] = ml_cpu_cache_size(1);
+	cachesize[2] = ml_cpu_cache_size(2);
+	cachesize[3] = ml_cpu_cache_size(3);
 #else
 #error unknown architecture
 #endif
@@ -1342,7 +1352,7 @@ sysctl_mib_init(void)
 {
 #if defined(__i386__) || defined (__x86_64__)
 	cpu64bit = (_get_cpu_capabilities() & k64Bit) == k64Bit;
-#elif defined (__arm64__)
+#elif defined (__arm64__) || defined (__riscv)
 	cpu64bit = (cpu_type() & CPU_ARCH_ABI64) == CPU_ARCH_ABI64;
 #else
 #error Unsupported arch
@@ -1372,6 +1382,15 @@ sysctl_mib_init(void)
 	cacheconfig[4] = 0;
 	cacheconfig[5] = 0;
 	cacheconfig[6] = 0;
+
+	packages = 1;
+#elif defined(__riscv)
+	// one cluster of identical harts, the debug trigger counts come from sdtrig later
+	cacheconfig[0] = ml_wait_max_cpus();
+	cacheconfig[1] = ml_cpu_cache_sharing(1, CLUSTER_TYPE_SMP, true);
+	cacheconfig[2] = ml_cpu_cache_sharing(2, CLUSTER_TYPE_SMP, true);
+	cacheconfig[3] = 0;
+	cacheconfig[4] = 0;
 
 	packages = 1;
 #else

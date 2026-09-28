@@ -56,7 +56,7 @@ typedef void *cpu_id_t;
 #endif
 
 #if XNU_KERNEL_PRIVATE
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 extern struct embedded_panic_header *panic_info;
 extern vm_offset_t gPanicBase;
 extern unsigned int gPanicSize;
@@ -97,7 +97,7 @@ uint32_t PE_i_can_has_debugger(
 
 int PE_stub_poll_input(unsigned int options, char *c);
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 boolean_t PE_panic_debugging_enabled(void);
 
 void PE_mark_hwaccess(uint64_t thread);
@@ -445,7 +445,7 @@ extern bool PE_cpu_power_check_kdp(int cpu_id);
 
 extern void PE_singlestep_hook(void);
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 typedef void (*perfmon_interrupt_handler_func)(cpu_id_t source);
 extern kern_return_t PE_cpu_perfmon_interrupt_install_handler(perfmon_interrupt_handler_func handler);
 extern void PE_cpu_perfmon_interrupt_enable(cpu_id_t target, boolean_t enable);

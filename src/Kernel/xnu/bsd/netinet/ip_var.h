@@ -298,7 +298,7 @@ struct ip_moptions;
  * i386 or x86_64 or arm64), this macro checks whether the pointer to the IP header
  * is 32-bit aligned, and assert otherwise.
  */
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 #define IP_HDR_STRICT_ALIGNMENT_CHECK(_ip) do { } while (0)
 #else /* !__i386__ && !__x86_64__ && !__arm64__ */
 #define IP_HDR_STRICT_ALIGNMENT_CHECK(_ip) do {                         \

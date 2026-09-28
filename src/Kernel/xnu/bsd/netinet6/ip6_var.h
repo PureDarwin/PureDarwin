@@ -418,7 +418,7 @@ struct ip6aux {
  * i386 or x86_64 or arm64), this macro checks whether the pointer to the IP header
  * is 32-bit aligned, and assert otherwise.
  */
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 #define IP6_HDR_STRICT_ALIGNMENT_CHECK(_ip6) do { } while (0)
 #else /* !__i386__ && !__x86_64__ && !__arm64__ */
 #define IP6_HDR_STRICT_ALIGNMENT_CHECK(_ip6) do {                       \

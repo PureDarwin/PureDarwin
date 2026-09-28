@@ -32,6 +32,8 @@
 #include "libsa/i386/types.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "libsa/arm/types.h"
+#elif defined (__riscv)
+#include "libsa/riscv/types.h"
 #else
 #error architecture not supported
 #endif

@@ -75,7 +75,7 @@ net_flowhash_fn_t *net_flowhash = net_flowhash_mh3_x64_128;
 net_flowhash_fn_t *net_flowhash = net_flowhash_jhash;
 #endif /* !__LP64__ */
 
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 static inline u_int32_t
 getblock32(const u_int32_t *__bidi_indexable p, int i)
 {

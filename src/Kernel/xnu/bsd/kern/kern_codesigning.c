@@ -476,6 +476,8 @@ disable_code_signing_feature(
 	__asm__ volatile ("dmb ish" ::: "memory");
 #elif defined(__x86_64__)
 	__asm__ volatile ("mfence" ::: "memory");
+#elif defined(__riscv)
+	__asm__ volatile ("fence rw, rw" ::: "memory");
 #else
 #error "Unknown platform -- fence instruction unavailable"
 #endif

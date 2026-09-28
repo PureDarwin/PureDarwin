@@ -43,6 +43,8 @@
 /* pexpert/arm/boot.h isn't installed into the public SDK. */
 #include "pexpert/arm/boot.h"
 #endif /* PRIVATE */
+#elif defined (__riscv)
+#include "pexpert/riscv/boot.h"
 #else
 #error architecture not supported
 #endif

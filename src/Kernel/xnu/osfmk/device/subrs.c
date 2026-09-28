@@ -139,6 +139,8 @@
 #include "i386/string.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "arm/string.h"
+#elif defined (__riscv)
+#include "riscv/string.h"
 #else
 #error architecture not supported
 #endif

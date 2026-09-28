@@ -555,7 +555,7 @@ IOGetLastPageNumber(void)
 		}
 	}
 	return highest;
-#elif __arm64__
+#elif __arm64__ || __riscv
 	return 0;
 #else
 #error unknown arch

@@ -174,6 +174,13 @@ mythread_state_flavor_t thread_flavor_array[] = {
 	{ARM_EXCEPTION_STATE64, ARM_EXCEPTION_STATE64_COUNT}
 };
 int mynum_flavors = 2;
+#elif defined (__riscv)
+mythread_state_flavor_t thread_flavor_array[] = {
+	{RISCV_THREAD_STATE64, RISCV_THREAD_STATE64_COUNT},
+	{RISCV_FLOAT_STATE64, RISCV_FLOAT_STATE64_COUNT},
+	{RISCV_EXCEPTION_STATE64, RISCV_EXCEPTION_STATE64_COUNT},
+};
+int mynum_flavors = 3;
 #else
 #error architecture not supported
 #endif

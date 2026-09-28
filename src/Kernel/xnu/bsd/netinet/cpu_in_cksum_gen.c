@@ -192,7 +192,7 @@ os_cpu_in_cksum(const void *__sized_by(len) data, uint32_t len, uint32_t initial
 	return os_cpu_in_cksum_mbuf(&m, len, 0, initial_sum);
 }
 
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__riscv)
 
 /*
  * Checksum routine for Internet Protocol family headers (Portable Version).
@@ -532,4 +532,4 @@ trailing_bytes:
 }
 #endif /* __LP64 */
 
-#endif /* __i386__ || __x86_64__ */
+#endif /* __i386__ || __x86_64__ || __riscv */

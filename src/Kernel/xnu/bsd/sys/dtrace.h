@@ -2540,6 +2540,9 @@ extern int (*dtrace_return_probe_ptr)(x86_saved_state_t* regs);
 #elif defined (__arm__) || defined(__arm64__)
 extern int (*dtrace_pid_probe_ptr)(arm_saved_state_t *regs);
 extern int (*dtrace_return_probe_ptr)(arm_saved_state_t *regs);
+#elif defined (__riscv)
+extern int (*dtrace_pid_probe_ptr)(riscv_saved_state_t *regs);
+extern int (*dtrace_return_probe_ptr)(riscv_saved_state_t *regs);
 #else
 #error architecture not supported
 #endif

@@ -305,7 +305,7 @@ static ip6_check_if_result_t ip6_input_check_interface(struct mbuf *, struct ip6
  * mostly align to 32-bit boundaries.  Care should be taken never to use 64-bit
  * load/store operations on the fields in IPv6 headers.
  */
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 #define IP6_HDR_ALIGNMENT_FIXUP(_m, _ifp, _action) do { } while (0)
 #else /* !__i386__ && !__x86_64__ && !__arm64__ */
 #define IP6_HDR_ALIGNMENT_FIXUP(_m, _ifp, _action) do {             \

@@ -1210,7 +1210,7 @@ kern_coredump_log(void *context, const char *string, ...)
 	_doprnt(string, &coredump_log_args, consdebug_putc, 16);
 	va_end(coredump_log_args);
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	paniclog_flush();
 #endif
 }

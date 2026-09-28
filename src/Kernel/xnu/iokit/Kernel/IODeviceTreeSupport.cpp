@@ -38,7 +38,7 @@
 
 #include <pexpert/device_tree.h>
 
-#if __arm64__
+#if __arm64__ || __riscv
 typedef UInt64  dtptr_t;
 #else
 typedef UInt32  dtptr_t;
@@ -1134,7 +1134,7 @@ IODTSetResolving( IORegistryEntry *        regEntry,
 	return;
 }
 
-#if  defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 static SInt64
 DefaultCompare( UInt32 cellCount, UInt32 left[], UInt32 right[] )
 {
@@ -1167,7 +1167,7 @@ AddLengthToCells( UInt32 numCells, UInt32 *cells, UInt64 offset)
 	if (numCells == 1) {
 		cells[0] += (UInt32)offset;
 	} else {
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 		UInt64 sum = cells[numCells - 2] + offset;
 		cells[numCells - 2] = (UInt32)sum;
 		if (sum > UINT32_MAX) {
@@ -1189,7 +1189,7 @@ CellsValue( UInt32 numCells, UInt32 *cells)
 	if (numCells == 1) {
 		return IOPhysical32( 0, cells[0] );
 	} else {
-#if defined(__arm64__) || defined(arm)
+#if defined(__arm64__) || defined(arm) || defined(__riscv)
 		return IOPhysical32( cells[numCells - 1], cells[numCells - 2] );
 #else
 		return IOPhysical32( cells[numCells - 2], cells[numCells - 1] );

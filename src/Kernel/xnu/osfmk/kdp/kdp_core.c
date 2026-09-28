@@ -301,7 +301,7 @@ kdp_core_output(void *kdp_core_out_state, uint64_t length, void * data)
 	return err;
 }
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 extern pmap_paddr_t avail_start, avail_end;
 extern struct vm_object pmap_object_store;
 #endif
@@ -453,13 +453,13 @@ kernel_pmap_present_mapping(uint64_t vaddr, uint64_t * pvincr, uintptr_t * pvphy
 		ppn = 0;
 		vincr = kdp_core_ramdisk_size;
 	} else
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	if (vaddr == phystokv(avail_start)) {
 		/* physical memory map */
 		ppn = 0;
 		vincr = (avail_end - avail_start);
 	} else
-#endif /* defined(__arm64__) */
+#endif /* defined(__arm64__) || defined(__riscv) */
 	{
 		ppn = (pvphysaddr != NULL ?
 		    pmap_find_phys(kernel_pmap, vaddr) :
@@ -499,7 +499,7 @@ pmap_traverse_present_mappings(pmap_t __unused pmap,
 #endif
 
 	boolean_t       lastvavalid;
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	vm_page_t m = VM_PAGE_NULL;
 #endif
 
@@ -517,7 +517,7 @@ pmap_traverse_present_mappings(pmap_t __unused pmap,
 	for (vcur = vcurstart = start; (ret == KERN_SUCCESS) && (vcur < end);) {
 		ppnum_t ppn = 0;
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 		/* We're at the start of the physmap, so pull out the pagetable pages that
 		 * are accessed through that region.*/
 		if (vcur == phystokv(avail_start) && vm_object_lock_try_shared(&pmap_object_store)) {
@@ -554,7 +554,7 @@ pmap_traverse_present_mappings(pmap_t __unused pmap,
 		if (m == VM_PAGE_NULL) {
 			ppn = kernel_pmap_present_mapping(vcur, &vincr, NULL);
 		}
-#else /* defined(__arm64__) */
+#else /* defined(__arm64__) || defined(__riscv) */
 		ppn = kernel_pmap_present_mapping(vcur, &vincr, NULL);
 #endif
 		if (ppn != 0 && kernel_vaddr_in_excluded_region(vcur, &vincr)) {
@@ -693,7 +693,7 @@ kern_dump_init(__unused void *refcon, void *context)
 	if (kdp_lck_mtx_lock_spin_is_acquired(&excluded_regions_mtx)) {
 		kern_coredump_log(context, "%s: skipping kernel because excluded regions list is locked\n",
 		    __func__);
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 		panic_info->eph_panic_flags |= EMBEDDED_PANIC_HEADER_FLAG_KERNEL_COREDUMP_SKIPPED_EXCLUDE_REGIONS_UNAVAILABLE;
 #else
 		panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_KERNEL_COREDUMP_SKIPPED_EXCLUDE_REGIONS_UNAVAILABLE;
@@ -836,7 +836,7 @@ kdp_reset_output_vars(void *kdp_core_out_state, uint64_t totalbytes, bool encryp
 	if (encrypt_core) {
 		if (outstate->kcos_enforce_encryption && !outstate->kcos_encryption_stage) {
 			*out_should_skip_coredump = true;
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 			panic_info->eph_panic_flags |= EMBEDDED_PANIC_HEADER_FLAG_ENCRYPTED_COREDUMP_SKIPPED;
 #else
 			panic_info->mph_panic_flags |= MACOS_PANIC_HEADER_FLAG_ENCRYPTED_COREDUMP_SKIPPED;
@@ -1083,7 +1083,7 @@ chain_output_stages(enum kern_dump_type kd_variant, struct kdp_core_out_state *o
 	return KERN_SUCCESS;
 }
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 
 static const char *panic_buf_filename = "panic_region";
 
@@ -1139,7 +1139,7 @@ dump_panic_buffer(struct kdp_core_out_state *outstate, char *panic_buf, size_t p
 
 	return ret;
 }
-#endif /* defined(__arm64__) */
+#endif /* defined(__arm64__) || defined(__riscv) */
 
 static int
 do_kern_dump(enum kern_dump_type kd_variant)
@@ -1169,18 +1169,18 @@ do_kern_dump(enum kern_dump_type kd_variant)
 	 * and panic log to disk
 	 */
 	coredump_log_start = debug_buf_ptr;
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	assert(panic_info->eph_other_log_offset != 0);
 	assert(panic_info->eph_panic_log_len != 0);
 	/* Include any data from before the panic log as well */
 	prior_debug_logsize = (panic_info->eph_panic_log_offset - sizeof(struct embedded_panic_header)) +
 	    panic_info->eph_panic_log_len + panic_info->eph_other_log_len;
-#else /* defined(__arm64__) */
+#else /* defined(__arm64__) || defined(__riscv) */
 	if (panic_info->mph_panic_log_offset != 0) {
 		prior_debug_logsize = (panic_info->mph_panic_log_offset - sizeof(struct macos_panic_header)) +
 		    panic_info->mph_panic_log_len + panic_info->mph_other_log_len;
 	}
-#endif /* defined(__arm64__) */
+#endif /* defined(__arm64__) || defined(__riscv) */
 
 	assert(prior_debug_logsize <= debug_buf_size);
 
@@ -1234,7 +1234,7 @@ do_kern_dump(enum kern_dump_type kd_variant)
 	kern_coredump_log(NULL, "%s", (kd_variant == KERN_DUMP_DISK) ? "Writing local cores...\n" :
 	    "Transmitting kernel state, please wait:\n");
 
-#if defined (__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	char *panic_buf = (char *)gPanicBase;
 	size_t panic_len = (vm_offset_t)debug_buf_ptr - gPanicBase;
 	if (kd_variant == KERN_DUMP_DISK && (panic_buf && panic_len)) {
@@ -1320,7 +1320,7 @@ do_kern_dump(enum kern_dump_type kd_variant)
 
 		/* First flush the data from just the paniclog */
 		size_t initial_log_length = 0;
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 		initial_log_length = (panic_info->eph_panic_log_offset - sizeof(struct embedded_panic_header)) +
 		    panic_info->eph_panic_log_len;
 #else
@@ -1341,7 +1341,7 @@ do_kern_dump(enum kern_dump_type kd_variant)
 		remaining_debug_logspace -= initial_log_length;
 
 		/* Next include any log data from after the stackshot (the beginning of the 'other' log). */
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 		buf = (char *)(((char *)panic_info) + (uintptr_t) panic_info->eph_other_log_offset);
 #else
 		/*
@@ -1382,7 +1382,7 @@ exit:
 	}
 
 	/* If applicable, update the panic header and flush it so we update the CRC */
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	panic_info->eph_panic_flags |= (dump_succeeded ? EMBEDDED_PANIC_HEADER_FLAG_COREDUMP_COMPLETE :
 	    EMBEDDED_PANIC_HEADER_FLAG_COREDUMP_FAILED);
 	paniclog_flush();

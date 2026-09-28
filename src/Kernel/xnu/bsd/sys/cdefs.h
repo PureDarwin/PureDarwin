@@ -1227,6 +1227,7 @@
 #elif !defined(__sys_cdefs_arch_unknown__) && defined(__x86_64__)
 #elif !defined(__sys_cdefs_arch_unknown__) && defined(__arm__)
 #elif !defined(__sys_cdefs_arch_unknown__) && defined(__arm64__)
+#elif !defined(__sys_cdefs_arch_unknown__) && defined(__riscv)
 #else
 #error Unsupported architecture
 #endif

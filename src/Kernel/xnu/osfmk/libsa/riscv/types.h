@@ -25,20 +25,21 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-#ifndef _PEXPERT_MACHINE_PROTOS_H
-#define _PEXPERT_MACHINE_PROTOS_H
+#ifndef _MACH_MACHINE_TYPES_H_
+#define _MACH_MACHINE_TYPES_H_ 1
 
-#if defined (__i386__) || defined(__x86_64__)
-#include "pexpert/i386/protos.h"
-#elif defined (__arm__) || defined (__arm64__)
-#ifdef PRIVATE
-/* pexpert/arm/protos.h isn't installed into the public SDK. */
-#include "pexpert/arm/protos.h"
-#endif /* PRIVATE */
-#elif defined (__riscv)
-#include "pexpert/riscv/protos.h"
-#else
-#error architecture not supported
-#endif
+typedef long            dev_t;          /* device number (major+minor) */
 
-#endif /* _PEXPERT_MACHINE_PROTOS_H */
+typedef signed char     bit8_t;         /* signed 8-bit quantity */
+typedef unsigned char   u_bit8_t;       /* unsigned 8-bit quantity */
+
+typedef short           bit16_t;        /* signed 16-bit quantity */
+typedef unsigned short  u_bit16_t;      /* unsigned 16-bit quantity */
+
+typedef int             bit32_t;        /* signed 32-bit quantity */
+typedef unsigned int    u_bit32_t;      /* unsigned 32-bit quantity */
+
+typedef long            bit64_t;        /* signed 64-bit quantity */
+typedef unsigned long   u_bit64_t;      /* unsigned 64-bit quantity */
+
+#endif /*  _MACH_MACHINE_TYPES_H_ */

@@ -4372,11 +4372,11 @@ extern vm_offset_t kc_highest_nonlinkedit_vmaddr;
 #define io_kernel_static_start  vm_kernel_stext
 #define io_kernel_static_end    (kc_highest_nonlinkedit_vmaddr ? kc_highest_nonlinkedit_vmaddr : vm_kernel_etext)
 
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__riscv)
 
 extern vm_offset_t              static_memory_end;
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 #define io_kernel_static_start vm_kext_base
 #else /* defined(__arm64__) */
 #define io_kernel_static_start vm_kernel_stext

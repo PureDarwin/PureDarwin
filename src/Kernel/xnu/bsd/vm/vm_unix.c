@@ -2041,7 +2041,7 @@ shared_region_map_and_slide_cleanup(
  * a max value. The kernel will choose a random value based on that, then use it
  * for all shared regions.
  */
-#if defined (__x86_64__)
+#if defined (__x86_64__) || defined (__riscv)
 #define SLIDE_AMOUNT_MASK ~FOURK_PAGE_MASK
 #else
 #define SLIDE_AMOUNT_MASK ~SIXTEENK_PAGE_MASK

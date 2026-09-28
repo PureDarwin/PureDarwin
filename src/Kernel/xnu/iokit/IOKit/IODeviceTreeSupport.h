@@ -80,7 +80,7 @@ enum {
 LIBKERN_RETURNS_RETAINED OSCollectionIterator * IODTFindMatchingEntries( IORegistryEntry * from,
     IOOptionBits options, const char * keys );
 
-#if !defined(__arm64__)
+#if !defined(__arm64__) && !defined(__riscv)
 typedef SInt32 (*IODTCompareAddressCellFunc)
 (UInt32 cellCount, UInt32 left[], UInt32 right[]);
 #else

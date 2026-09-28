@@ -1172,6 +1172,9 @@ current_thread_collect_backtrace_info(
 #if defined(__x86_64__) || defined(__i386__)
 	tsflavor = x86_THREAD_STATE;      /* unified */
 	tscount  = x86_THREAD_STATE_COUNT;
+#elif defined(__riscv)
+	tsflavor = RISCV_THREAD_STATE64;
+	tscount  = RISCV_THREAD_STATE64_COUNT;
 #else
 	tsflavor = ARM_THREAD_STATE;      /* unified */
 	tscount  = ARM_UNIFIED_THREAD_STATE_COUNT;
@@ -1197,6 +1200,9 @@ current_thread_collect_backtrace_info(
 #if defined(__x86_64__) || defined(__i386__)
 	tsflavor = x86_EXCEPTION_STATE;       /* unified */
 	tscount  = x86_EXCEPTION_STATE_COUNT;
+#elif defined(__riscv)
+	tsflavor = RISCV_EXCEPTION_STATE64;
+	tscount  = RISCV_EXCEPTION_STATE64_COUNT;
 #else
 #if defined(__arm64__)
 	if (has_64bit_data) {

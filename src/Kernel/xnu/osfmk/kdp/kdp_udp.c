@@ -2240,7 +2240,7 @@ kdp_init(void)
 
 	debug_log_init();
 
-#if defined(__x86_64__) || defined(__arm64__)
+#if defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 	if (vm_kernel_slide) {
 		char    KASLR_stext[19];
 		strlcat(kdp_kernelversion_string, "; stext=", sizeof(kdp_kernelversion_string));
@@ -2274,17 +2274,17 @@ kdp_init(void)
 	boolean_t kdp_match_name_found = PE_parse_boot_argn("kdp_match_name", kdpname, sizeof(kdpname));
 	boolean_t kdp_not_serial = kdp_match_name_found ? (strncmp(kdpname, "serial", sizeof(kdpname))) : TRUE;
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	//respect any custom debugger boot-args
 	if (kdp_match_name_found && kdp_not_serial) {
 		return;
 	}
-#else /* defined(__arm64__) */
+#else /* defined(__arm64__) || defined(__riscv) */
 	// serial must be explicitly requested
 	if (!kdp_match_name_found || kdp_not_serial) {
 		return;
 	}
-#endif /* defined(__arm64__) */
+#endif /* defined(__arm64__) || defined(__riscv) */
 
 #if defined(__arm64__)
 	if (kdp_not_serial && PE_consistent_debug_enabled() && debug_boot_arg) {
@@ -2411,7 +2411,7 @@ kdp_raise_exception(
 	)
 #endif
 {
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	assert(!kernel_debugging_restricted());
 #endif
 

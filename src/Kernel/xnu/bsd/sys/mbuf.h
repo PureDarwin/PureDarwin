@@ -1555,7 +1555,7 @@ m_capacity(const struct mbuf *m)
  * is 32-bit aligned (this is the expected minimum alignment for protocol
  * headers), and assert otherwise.
  */
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 #define MBUF_STRICT_DATA_ALIGNMENT_CHECK_32(_m)
 #else /* !__i386__ && !__x86_64__ && !__arm64__ */
 #define MBUF_STRICT_DATA_ALIGNMENT_CHECK_32(_m) do {                    \
