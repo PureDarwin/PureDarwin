@@ -257,6 +257,12 @@
 #define MMU_I_CLINE 6
 #define MMU_CLINE   6
 
+#elif defined (SUN50I)
+
+/* Allwinner H616/H618: Cortex-A53, 64-byte L1 I- and D-cache lines. */
+#define MMU_I_CLINE 6
+#define MMU_CLINE   6
+
 #else
 #error processor not supported
 #endif

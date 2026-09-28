@@ -1,6 +1,8 @@
 #include "PDArmGIC.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IORegistryEntry.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <arm/machine_routines.h>
 
 #define PD_LOG(...) do { if (ml_get_interrupts_enabled()) { IOLog(__VA_ARGS__); } } while (0)
@@ -29,9 +31,42 @@
 #define GICR_IPRIORITYR          (GICR_SGI_BASE + 0x0400)
 #define GICR_IGRPMODR0           (GICR_SGI_BASE + 0x0D00)
 
-#define GIC_MAX_CPUS         8            /* xnu's virt board config caps MAX_CPUS */
+#define GIC_MAX_CPUS         32           /* matches MAX_CPUS in xnu's virt board config */
 #define GICR_ISPENDR0        (GICR_SGI_BASE + 0x0200)
 #define GIC_IPI_SGI          0            /* SGI INTID used for scheduler IPIs */
+
+/* GICv2 (KVM on a GIC-400 host): distributor at the same base, CPU interface MMIO */
+#define GIC2_GICC_BASE_PHYS  0x08010000ULL
+#define GIC2_GICC_SIZE       0x2000ULL
+#define GIC2_D_IGROUPR0      0x0080
+#define GIC2_D_ISENABLER0    0x0100
+#define GIC2_D_ICENABLER0    0x0180
+#define GIC2_D_IPRIORITYR    0x0400
+#define GIC2_D_SGIR          0x0F00
+#define SUN50I_GICD_PHYS     0x03021000ULL
+#define SUN50I_GICC_PHYS     0x03022000ULL
+#define GIC2_C_CTLR          0x0000
+#define GIC2_C_PMR           0x0004
+/* EnableGrp0 | EnableGrp1 | FIQEn: Group 0 (timer, IPI) arrives as FIQ */
+#define GIC2_C_CTLR_VAL      0xBu
+
+static bool gGicV2;
+// sun50i: the kernel owns the GIC-400, only its SGIR is mapped here for IPIs
+static bool gSun50iSgi;
+static IOMemoryMap *gGiccMap;
+static volatile uint8_t *gGicc;
+
+static bool
+gic_is_v2(void)
+{
+#if !defined(__arm__) || defined(__arm64__)
+	uint64_t pfr0;
+	__asm__ volatile ("mrs %0, ID_AA64PFR0_EL1" : "=r"(pfr0));
+	return ((pfr0 >> 24) & 0xf) == 0;
+#else
+	return false;
+#endif
+}
 
 static IOMemoryMap *gGicdMap;
 static IOMemoryMap *gGicrMap;
@@ -80,6 +115,78 @@ map_phys(IOPhysicalAddress phys, IOByteCount size, IOMemoryMap **outMap)
 	return (volatile uint8_t *)map->getVirtualAddress();
 }
 
+static inline void
+c_write(uint32_t off, uint32_t val)
+{
+	*(volatile uint32_t *)(gGicc + off) = val;
+}
+
+// SGI/PPI enables, groups and priorities are banked per CPU in a GICv2 distributor
+static void
+gic2_cpu_setup(void)
+{
+	d_write(GIC2_D_ICENABLER0, 0xffffffffu);
+	d_write(GIC2_D_IGROUPR0, d_read(GIC2_D_IGROUPR0) &
+	    ~((1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI)));
+	((volatile uint8_t *)(gGicd + GIC2_D_IPRIORITYR))[GIC_TIMER_PPI] = 0x00;
+	((volatile uint8_t *)(gGicd + GIC2_D_IPRIORITYR))[GIC_IPI_SGI] = 0x00;
+	c_write(GIC2_C_PMR, 0xff);
+	c_write(GIC2_C_CTLR, GIC2_C_CTLR_VAL);
+}
+
+// banked gic-400 state for the calling cpu, the same setup the kernel gives the boot cpu
+// sgi 0 carries ipis, ppi 27 the virtual timer, both as non-secure irq
+static bool
+sun50i_cpu_setup(void)
+{
+	d_write(GIC2_D_ISENABLER0, (1u << GIC_IPI_SGI) | (1u << GIC_TIMER_PPI));
+	((volatile uint8_t *)(gGicd + GIC2_D_IPRIORITYR))[GIC_TIMER_PPI] = 0x80;
+	((volatile uint8_t *)(gGicd + GIC2_D_IPRIORITYR))[GIC_IPI_SGI] = 0x80;
+	c_write(GIC2_C_PMR, 0xf0);
+	c_write(GIC2_C_CTLR, 1);
+	return true;
+}
+
+#if !defined(__arm__) || defined(__arm64__)
+// /arm-io/gic from the loader names a gic-400 the kernel drives, reg holds the distributor
+// and cpu interface relative to the arm-io window. older sun50i loaders only set device_type
+static bool
+kernel_owned_gic(uint64_t *gicd, uint64_t *gicc)
+{
+	IORegistryEntry *armio = IORegistryEntry::fromPath("/arm-io", gIODTPlane);
+	IORegistryEntry *gic = IORegistryEntry::fromPath("/arm-io/gic", gIODTPlane);
+	bool found = false;
+
+	if (gic != NULL && armio != NULL) {
+		OSData *compat = OSDynamicCast(OSData, gic->getProperty("compatible"));
+		OSData *reg = OSDynamicCast(OSData, gic->getProperty("reg"));
+		OSData *ranges = OSDynamicCast(OSData, armio->getProperty("ranges"));
+		if (compat != NULL && compat->getLength() >= 11 &&
+		    strncmp((const char *)compat->getBytesNoCopy(), "arm,gic-400", 11) == 0 &&
+		    reg != NULL && reg->getLength() >= 4 * sizeof(uint64_t) &&
+		    ranges != NULL && ranges->getLength() >= 2 * sizeof(uint64_t)) {
+			const uint64_t *r = (const uint64_t *)reg->getBytesNoCopy();
+			uint64_t base = ((const uint64_t *)ranges->getBytesNoCopy())[1];
+			*gicd = base + r[0];
+			*gicc = base + r[2];
+			found = true;
+		}
+	}
+	if (!found && armio != NULL) {
+		OSData *type = OSDynamicCast(OSData, armio->getProperty("device_type"));
+		if (type != NULL && type->getLength() >= 9 &&
+		    strncmp((const char *)type->getBytesNoCopy(), "sun50i-io", 9) == 0) {
+			*gicd = SUN50I_GICD_PHYS;
+			*gicc = SUN50I_GICC_PHYS;
+			found = true;
+		}
+	}
+	OSSafeReleaseNULL(gic);
+	OSSafeReleaseNULL(armio);
+	return found;
+}
+#endif
+
 bool
 PDArmGIC_init(void)
 {
@@ -89,6 +196,37 @@ PDArmGIC_init(void)
 	return true;
 #else
 	if (gGicd != NULL) {
+		return true;
+	}
+
+	// The H616/H618 and SG2002 GIC-400 is driven by the kernel itself (sleh.c): the timer
+	// arrives as a non-secure IRQ long before this kext loads, and virt's GIC addresses are not there
+	uint64_t gicd_phys, gicc_phys;
+	if (kernel_owned_gic(&gicd_phys, &gicc_phys)) {
+		// only the distributor's SGIR is used here, for IPIs: a GIC-400 has no ICC_SGI*R_EL1
+		gGicd = map_phys(gicd_phys, 0x1000, &gGicdMap);
+		// secondaries set up their own banked cpu interface through this mapping
+		gGicc = map_phys(gicc_phys, GIC2_GICC_SIZE, &gGiccMap);
+		gSun50iSgi = gGicd != NULL && gGicc != NULL;
+		PD_LOG("PDArmGIC: GIC-400 at 0x%llx owned by the kernel, IPIs through GICD_SGIR %s\n",
+		    (unsigned long long)gicd_phys, gSun50iSgi ? "mapped" : "unmapped");
+		return true;
+	}
+
+	if (gic_is_v2()) {
+		gGicd = map_phys(GIC_GICD_BASE_PHYS, GIC_GICD_SIZE, &gGicdMap);
+		gGicc = map_phys(GIC2_GICC_BASE_PHYS, GIC2_GICC_SIZE, &gGiccMap);
+		if (gGicd == NULL || gGicc == NULL) {
+			PD_LOG("PDArmGIC: failed to map GICv2 (gicd=%p gicc=%p)\n", gGicd, gGicc);
+			gGicd = NULL;
+			return false;
+		}
+		gGicV2 = true;
+		d_write(GICD_CTLR, 0);
+		gic2_cpu_setup();
+		d_write(GICD_CTLR, GICD_CTLR_ENGRP0 | GICD_CTLR_ENGRP1);
+		PD_LOG("PDArmGIC: GICv2 configured (timer PPI %u, IPI SGI %u as Group0/FIQ, masked)\n",
+		    (unsigned)GIC_TIMER_PPI, (unsigned)GIC_IPI_SGI);
 		return true;
 	}
 
@@ -156,6 +294,11 @@ PDArmGIC_enable(void)
 #if defined(__arm__) && !defined(__arm64__)
 	return true;
 #else
+	if (gGicV2) {
+		d_write(GIC2_D_ISENABLER0, (1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI));
+		PD_LOG("PDArmGIC: GICv2 delivery enabled\n");
+		return true;
+	}
 	if (gGicr == NULL) {
 		return false;
 	}
@@ -198,6 +341,9 @@ PDArmGIC_map_cpu(unsigned int cpu)
 	if (cpu >= GIC_MAX_CPUS) {
 		return false;
 	}
+	if (gGicV2) {
+		return true;
+	}
 	if (gGicrCpu[cpu] == NULL) {
 		gGicrCpu[cpu] = map_phys(GIC_GICR_BASE_PHYS + (uint64_t)cpu * GIC_GICR_FRAME_SIZE,
 		    GIC_GICR_FRAME_SIZE, &gGicrCpuMap[cpu]);
@@ -215,6 +361,13 @@ PDArmGIC_init_cpu(unsigned int cpu)
 	(void)cpu;
 	return true;
 #else
+	if (gSun50iSgi) {
+		return sun50i_cpu_setup();
+	}
+	if (gGicV2) {
+		gic2_cpu_setup();
+		return true;
+	}
 	// Mapped by PDArmGIC_map_cpu() on the boot CPU.
 	// This runs on the secondary with interrupts masked, so it only touches registers
 	if (cpu >= GIC_MAX_CPUS || gGicrCpu[cpu] == NULL) {
@@ -253,6 +406,14 @@ PDArmGIC_enable_cpu(unsigned int cpu)
 	(void)cpu;
 	return true;
 #else
+	if (gSun50iSgi) {
+		// sun50i_cpu_setup() already enabled the ipi and timer lines
+		return true;
+	}
+	if (gGicV2) {
+		d_write(GIC2_D_ISENABLER0, (1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI));
+		return true;
+	}
 	if (cpu >= GIC_MAX_CPUS || gGicrCpu[cpu] == NULL) {
 		return false;
 	}
@@ -271,6 +432,11 @@ void
 PDArmGIC_send_ipi(uint64_t target_mpidr)
 {
 #if !defined(__arm__) || defined(__arm64__)
+	if (gGicV2 || gSun50iSgi) {
+		// Target list is CPU interface numbers, which QEMU virt and the H618 number by Aff0
+		d_write(GIC2_D_SGIR, (1u << (16 + (target_mpidr & 0x7))) | GIC_IPI_SGI);
+		return;
+	}
 	uint64_t aff0 = target_mpidr & 0xffULL;
 	uint64_t sgi = ((target_mpidr & 0xff00ULL) << 8) |
 	    ((target_mpidr & 0xff0000ULL) << 16) |

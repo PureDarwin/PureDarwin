@@ -265,11 +265,21 @@
 #include <pexpert/arm64/QEMUVIRT.h>
 
 #define MAX_L2_CLINE                   6
-#define MAX_CPUS                       8
+#define MAX_CPUS                       32
 #define MAX_CPU_CLUSTERS               1
 
 #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
 #endif  /* ARM64_BOARD_CONFIG_VIRT */
+
+#ifdef ARM64_BOARD_CONFIG_SUN50I
+#include <pexpert/arm64/SUN50I.h>
+
+#define MAX_L2_CLINE                   6  /* Cortex-A53: 64-byte lines */
+#define MAX_CPUS                       4  /* quad Cortex-A53 */
+#define MAX_CPU_CLUSTERS               1
+
+#define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
+#endif  /* ARM64_BOARD_CONFIG_SUN50I */
 
 #ifdef ARM64_BOARD_CONFIG_T6041
 #include <pexpert/arm64/H16.h>

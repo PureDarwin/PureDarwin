@@ -2,6 +2,7 @@
 #include <IOKit/IODMACommand.h>
 #include <kern/thread.h>
 #include "AppleUSBEHCI.h"
+#include "../USBDMAAlias.h"
 
 #define super IOUSBControllerV3
 OSDefineMetaClassAndStructors(AppleUSBEHCI, IOUSBControllerV3)
@@ -28,6 +29,12 @@ bool AppleUSBEHCI::init(OSDictionary *propTable)
     _device = NULL;
     _barDesc = NULL;
     _deviceBase = NULL;
+    _dmaCoherent = true;
+    _asyncQHMap = NULL;
+    _qTDMap = NULL;
+    _periodicListMap = NULL;
+    _intrQHMap = NULL;
+    _intrTDMap = NULL;
     _capRegs = NULL;
     _opRegs = NULL;
     _frameNumber = 0;
@@ -64,21 +71,28 @@ bool AppleUSBEHCI::start(IOService *provider)
         return false;
 
     _device = OSDynamicCast(IOPCIDevice, provider);
-    if (!_device)
-        return false;
+    if (_device) {
+        _device->retain();
+        _device->setMemoryEnable(true);
+        _device->setBusMasterEnable(true);
 
-    _device->retain();
-    _device->setMemoryEnable(true);
-    _device->setBusMasterEnable(true);
+        UInt16 vendor = _device->configRead16(kIOPCIConfigVendorID);
+        UInt16 device = _device->configRead16(kIOPCIConfigDeviceID);
+        UInt32 classCode = _device->configRead32(kIOPCIConfigRevisionID) >> 8;
+        EHCI_Log("start provider=%p pci%x,%x pciclass,%06x", provider, vendor, device, classCode);
 
-    UInt16 vendor = _device->configRead16(kIOPCIConfigVendorID);
-    UInt16 device = _device->configRead16(kIOPCIConfigDeviceID);
-    UInt32 classCode = _device->configRead32(kIOPCIConfigRevisionID) >> 8;
-    EHCI_Log("start provider=%p pci%x,%x pciclass,%06x", provider, vendor, device, classCode);
-
-    if (!mapEHCIRegisters(_device)) {
-        EHCI_Log("failed to map BAR0");
-        return false;
+        if (!mapEHCIRegisters(_device)) {
+            EHCI_Log("failed to map BAR0");
+            return false;
+        }
+    } else {
+        // soc controller published by the platform expert, registers in device memory 0
+        _dmaCoherent = false;
+        EHCI_Log("start provider=%p platform %s", provider, provider->getName());
+        if (!mapPlatformRegisters(provider)) {
+            EHCI_Log("failed to map platform registers");
+            return false;
+        }
     }
 
     _capLength = capRead8(kEHCICapLength);
@@ -99,7 +113,8 @@ bool AppleUSBEHCI::start(IOService *provider)
         return false;
     }
 
-    claimBIOSOwnership();
+    if (_device)
+        claimBIOSOwnership();
     if (!resetController()) {
         EHCI_Log("controller halt/reset failed");
         return false;
@@ -142,6 +157,14 @@ bool AppleUSBEHCI::start(IOService *provider)
     }
     enablePeriodicSchedule(true);
 
+    // with port power control the ports leave reset unpowered and never see a connect
+    for (UInt32 p = 1; p <= _rootHubPorts; p++) {
+        UInt32 st = portRead32(p);
+        if (!(st & kEHCIPortSCPower))
+            portWrite32(p, (st & ~kEHCIPortSCChangeMask) | kEHCIPortSCPower);
+    }
+    IOSleep(20);
+
     _uimInitialized = true;
     _enumRunning = true;
     thread_t thread = THREAD_NULL;
@@ -170,14 +193,17 @@ void AppleUSBEHCI::free()
     super::free();
 }
 
+// soc ehci blocks only answer 32-bit reads, so narrow reads come out of the word
 UInt8 AppleUSBEHCI::capRead8(UInt32 offset)
 {
-    return *(volatile UInt8 *)(_capRegs + offset);
+    UInt32 word = *(volatile UInt32 *)(_capRegs + (offset & ~3U));
+    return (UInt8)(word >> ((offset & 3U) * 8));
 }
 
 UInt16 AppleUSBEHCI::capRead16(UInt32 offset)
 {
-    return *(volatile UInt16 *)(_capRegs + offset);
+    UInt32 word = *(volatile UInt32 *)(_capRegs + (offset & ~3U));
+    return (UInt16)(word >> ((offset & 2U) * 8));
 }
 
 UInt32 AppleUSBEHCI::capRead32(UInt32 offset)
@@ -192,6 +218,8 @@ UInt32 AppleUSBEHCI::opRead32(UInt32 offset)
 
 void AppleUSBEHCI::opWrite32(UInt32 offset, UInt32 value)
 {
+    // descriptors written through the write-combine alias must land first
+    usbDMAWriteBarrier();
     *(volatile UInt32 *)(_opRegs + offset) = value;
     /* Full barrier after an MMIO write. __sync_synchronize() rather than
      * a bare mfence so this controller also builds for arm64, where
@@ -329,6 +357,22 @@ bool AppleUSBEHCI::mapEHCIRegisters(IOPCIDevice *provider)
     return true;
 }
 
+bool AppleUSBEHCI::mapPlatformRegisters(IOService *provider)
+{
+    IOMemoryMap *map = provider->mapDeviceMemoryWithIndex(0, kIOMapInhibitCache);
+    if (!map)
+        return false;
+
+    _deviceBase = map;
+    _capRegs = (volatile UInt8 *)map->getVirtualAddress();
+    _capLength = capRead8(kEHCICapLength);
+    _opRegs = _capRegs + _capLength;
+    EHCI_Log("mapped platform regs phys=%llx virt=%p len=%llu caplen=%u",
+             (unsigned long long)map->getPhysicalAddress(), _capRegs,
+             (unsigned long long)map->getLength(), _capLength);
+    return true;
+}
+
 void AppleUSBEHCI::claimBIOSOwnership(void)
 {
     UInt32 hcc = capRead32(kEHCIHCCParams);
@@ -403,7 +447,9 @@ bool AppleUSBEHCI::setupAsyncSchedule(void)
     if (!_asyncQHMem || _asyncQHMem->prepare() != kIOReturnSuccess)
         return false;
 
-    _asyncQH = (EHCIAsyncQueueHeadPtr)_asyncQHMem->getBytesNoCopy();
+    _asyncQH = (EHCIAsyncQueueHeadPtr)usbDMAAlias(_asyncQHMem, _dmaCoherent, &_asyncQHMap);
+    if (!_asyncQH)
+        return false;
     _asyncQHPhys = (USBPhysicalAddress32)_asyncQHMem->getPhysicalAddress();
     bzero(_asyncQH, kEHCIPageSize);
 
@@ -413,7 +459,9 @@ bool AppleUSBEHCI::setupAsyncSchedule(void)
     if (!_qTDMem || _qTDMem->prepare() != kIOReturnSuccess)
         return false;
 
-    _qTDPool = (EHCIGeneralTransferDescriptorSharedPtr)_qTDMem->getBytesNoCopy();
+    _qTDPool = (EHCIGeneralTransferDescriptorSharedPtr)usbDMAAlias(_qTDMem, _dmaCoherent, &_qTDMap);
+    if (!_qTDPool)
+        return false;
     _qTDPoolPhys = (USBPhysicalAddress32)_qTDMem->getPhysicalAddress();
     bzero(_qTDPool, kEHCIPageSize);
 
@@ -451,11 +499,15 @@ bool AppleUSBEHCI::setupPeriodicSchedule(void)
         _intrTDMem->prepare() != kIOReturnSuccess)
         return false;
 
-    _periodicList = (volatile USBPhysicalAddress32 *)_periodicListMem->getBytesNoCopy();
+    _periodicList = (volatile USBPhysicalAddress32 *)usbDMAAlias(_periodicListMem, _dmaCoherent,
+                                                                 &_periodicListMap);
     _periodicListPhys = (USBPhysicalAddress32)_periodicListMem->getPhysicalAddress();
-    _intrQH = (EHCIQueueHeadSharedPtr)_intrQHMem->getBytesNoCopy();
+    _intrQH = (EHCIQueueHeadSharedPtr)usbDMAAlias(_intrQHMem, _dmaCoherent, &_intrQHMap);
     _intrQHPhys = (USBPhysicalAddress32)_intrQHMem->getPhysicalAddress();
-    _intrTDPool = (EHCIGeneralTransferDescriptorSharedPtr)_intrTDMem->getBytesNoCopy();
+    _intrTDPool = (EHCIGeneralTransferDescriptorSharedPtr)usbDMAAlias(_intrTDMem, _dmaCoherent,
+                                                                     &_intrTDMap);
+    if (!_periodicList || !_intrQH || !_intrTDPool)
+        return false;
     _intrTDPoolPhys = (USBPhysicalAddress32)_intrTDMem->getPhysicalAddress();
     bzero((void *)_periodicList, kEHCIPageSize);
     bzero(_intrQH, kEHCIPageSize);
@@ -668,6 +720,8 @@ IOReturn AppleUSBEHCI::controlTransfer(USBDeviceAddress address,
     USBPhysicalAddress32 dataTDPhys = qTDPhys(1);
     USBPhysicalAddress32 statusTDPhys = qTDPhys(2);
 
+    usbDMASync(setupMem, _dmaCoherent);
+    usbDMASync(dataMem, _dmaCoherent);
     fillQTD(setupTD, dataLength ? dataTDPhys : statusTDPhys, kEHCIqTDPIDSetup, 0,
             (USBPhysicalAddress32)setupMem->getPhysicalAddress(), 8, false);
     if (dataLength) {
@@ -726,8 +780,10 @@ IOReturn AppleUSBEHCI::controlTransfer(USBDeviceAddress address,
     if (ret == kIOReturnSuccess && dataLength) {
         UInt32 remaining = (dataToken & kEHCIqTDBytesMask) >> kEHCIqTDBytesShift;
         request->wLenDone = dataLength - remaining;
-        if (dataIn && request->wLenDone)
+        if (dataIn && request->wLenDone) {
+            usbDMASync(dataMem, _dmaCoherent);
             bcopy(data, request->pData, request->wLenDone);
+        }
     } else if (ret == kIOReturnSuccess) {
         request->wLenDone = 0;
     }
@@ -772,6 +828,7 @@ IOReturn AppleUSBEHCI::interruptTransfer(IOMemoryDescriptor *buffer,
         return kIOReturnNoMemory;
     }
     bzero(dataMem->getBytesNoCopy(), length);
+    usbDMASync(dataMem, _dmaCoherent);
 
     EHCIGeneralTransferDescriptorSharedPtr td = &_intrTDPool[0];
     USBPhysicalAddress32 tdPhys = _intrTDPoolPhys;
@@ -795,7 +852,7 @@ IOReturn AppleUSBEHCI::interruptTransfer(IOMemoryDescriptor *buffer,
         _intrQH->bufferPtr[i] = 0;
         _intrQH->extBufferPtr[i] = 0;
     }
-    __sync_synchronize();
+    usbDMAWriteBarrier();
 
     IOReturn ret = waitForQTD(td, 20);
     UInt32 token = USBToHostLong(td->flags);
@@ -810,6 +867,7 @@ IOReturn AppleUSBEHCI::interruptTransfer(IOMemoryDescriptor *buffer,
         UInt32 remaining = (token & kEHCIqTDBytesMask) >> kEHCIqTDBytesShift;
         UInt32 moved = length - remaining;
         if (moved) {
+            usbDMASync(dataMem, _dmaCoherent);
             buffer->writeBytes(0, dataMem->getBytesNoCopy(), moved);
             _intrDataToggle[address & 0x7fU][epNum] ^= 1;
         } else {
@@ -920,6 +978,7 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
         buffer->readBytes(0, data, length);
     else
         bzero(data, length);
+    usbDMASync(dataMem, _dmaCoherent);
 
     USBPhysicalAddress32 dataPhys = (USBPhysicalAddress32)dataMem->getPhysicalAddress();
     UInt8 epNum = endpoint->number & 0x0fU;
@@ -967,7 +1026,7 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
         _asyncQH->bufferPtr[i] = 0;
         _asyncQH->extBufferPtr[i] = 0;
     }
-    __sync_synchronize();
+    usbDMAWriteBarrier();
 
     if (!runController(true)) {
         EHCI_Log("bulk transfer: controller failed to run");
@@ -987,8 +1046,10 @@ IOReturn AppleUSBEHCI::bulkTransfer(IOMemoryDescriptor *buffer, USBDeviceAddress
     if (ret == kIOReturnSuccess) {
         _bulkDataToggle[address & 0x7fU][epNum][dirIndex] =
             (USBToHostLong(_asyncQH->qTDFlags) & kEHCIqTDDataToggle) ? 1 : 0;
-        if (!isWrite && moved)
+        if (!isWrite && moved) {
+            usbDMASync(dataMem, _dmaCoherent);
             buffer->writeBytes(0, data, moved);
+        }
         //EHCI_Log("bulk ok addr=%u ep=%u %s len=%u moved=%u toggle=%u->%u",
         //         address, epNum, isWrite ? "OUT" : "IN", length, moved, toggle,
         //         _bulkDataToggle[address & 0x7fU][epNum][dirIndex]);
@@ -1291,6 +1352,8 @@ IOUSBDevice *AppleUSBEHCI::addressAndPublishDevice(const char *where, UInt32 por
 
 void AppleUSBEHCI::releaseAsyncSchedule(void)
 {
+    OSSafeReleaseNULL(_qTDMap);
+    OSSafeReleaseNULL(_asyncQHMap);
     if (_qTDMem) {
         _qTDMem->complete();
         _qTDMem->release();
@@ -1309,6 +1372,9 @@ void AppleUSBEHCI::releaseAsyncSchedule(void)
 
 void AppleUSBEHCI::releasePeriodicSchedule(void)
 {
+    OSSafeReleaseNULL(_intrTDMap);
+    OSSafeReleaseNULL(_intrQHMap);
+    OSSafeReleaseNULL(_periodicListMap);
     if (_intrTDMem) {
         _intrTDMem->complete();
         _intrTDMem->release();

@@ -43,7 +43,7 @@ stdenv.mkDerivation {
     # Must match ARM64_KC_BASE in xnu's MakeInc.def.in: XNU locates the
     # collection header at VM_KERNEL_LINK_ADDRESS, which is compiled in.
     ${kcTools}/bin/kc-builder \
-      -kc-base fffffe0006000000 \
+      -kc-base ${kcBase} \
       -kernel "$KERNEL_BIN" \
       -kext "$KEXTS/IOPCIFamily.kext" \
       -kext "$KEXTS/corecrypto.kext" \
@@ -52,6 +52,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/PDArmPlatformExpert.kext" \
       -kext "$KEXTS/PDArmPCI.kext" \
       -kext "$KEXTS/IOStorageFamily.kext" \
+      -kext "$KEXTS/PDSun50iMMC.kext" \
       -kext "$KEXTS/RavynAHCIPort.kext" \
       -kext "$KEXTS/ext4.kext" \
       -kext "$KEXTS/AppleFileSystemDriver.kext" \

@@ -6,6 +6,8 @@
 #include "PDArmGIC.h"
 #include "PDAppleAIC.h"
 #include "PDBcm2835IC.h"
+#include "PDSun50iUSB.h"
+#include "PDSun50iWatchdog.h"
 
 class PDArmPlatformExpert : public IODTPlatformExpert
 {
@@ -83,6 +85,15 @@ PDArmPlatformExpert::start(IOService *provider)
 #endif
 
 	publishBcm283xFramebuffer();
+
+#if defined(__arm64__)
+	if (PDSun50i_isPlatform()) {
+		PDSun50iWatchdog_start();
+		PDSun50iMMC_publish(this);
+		if (PDSun50iUSB_init())
+			PDSun50iUSB_publish(this);
+	}
+#endif
 
 	return true;
 }

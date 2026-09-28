@@ -110,6 +110,13 @@ protected:
     IOPCIDevice *_device;
     IOMemoryDescriptor *_barDesc;
     IOMemoryMap *_deviceBase;
+    // platform controllers on arm socs do not snoop the cpu caches
+    bool _dmaCoherent;
+    IOMemoryMap *_asyncQHMap;
+    IOMemoryMap *_qTDMap;
+    IOMemoryMap *_periodicListMap;
+    IOMemoryMap *_intrQHMap;
+    IOMemoryMap *_intrTDMap;
     volatile UInt8 *_capRegs;
     volatile UInt8 *_opRegs;
     UInt64 _frameNumber;
@@ -149,6 +156,7 @@ protected:
     UInt32 opRead32(UInt32 offset);
     void opWrite32(UInt32 offset, UInt32 value);
     bool mapEHCIRegisters(IOPCIDevice *provider);
+    bool mapPlatformRegisters(IOService *provider);
     void claimBIOSOwnership(void);
     bool haltController(void);
     bool resetController(void);

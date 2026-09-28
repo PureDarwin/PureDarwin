@@ -8,7 +8,10 @@
 #define QEMUVIRT_BRINGUP
 #define ARM_ARCH_TIMER
 
+/* VIRT4K: 4KB pages on a Cortex-A53 model, the SUN50I geometry under QEMU */
+#ifndef PD_VIRT_4K
 #define __ARM_16K_PG__            1
+#endif
 #define __ARM_ARCH__              8
 #define __ARM_VMSA__              8
 #define __ARM_VFP__               4

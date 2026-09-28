@@ -26,6 +26,19 @@
 	<string>4.1.5</string>
 	<key>IOKitPersonalities</key>
 	<dict>
+		<key>AppleUSBOHCIPlatform</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.apple.driver.AppleUSBOHCI</string>
+			<key>IOClass</key>
+			<string>AppleUSBOHCI</string>
+			<key>IONameMatch</key>
+			<string>usb-ohci</string>
+			<key>IOProviderClass</key>
+			<string>IOPlatformDevice</string>
+			<key>IOUserClientClass</key>
+			<string>IOUSBControllerUserClient</string>
+		</dict>
 		<key>AppleUSBOHCI</key>
 		<dict>
 			<key>CFBundleIdentifier</key>

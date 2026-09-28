@@ -731,6 +731,164 @@ pl011_uart_setup(const DeviceTreeNode *const devicetree_node)
 
 #endif /* PL011_UART */
 
+#ifdef DW_APB_UART
+
+// Synopsys DesignWare APB UART (Allwinner H6/H616/H618), 16550-compatible plus USR busy-detect.
+// Indices are 16550 register numbers, shifted left by the devicetree's "reg-shift"
+
+#define DW_APB_UART_RBR_THR_DLL   0   // rx buffer / tx holding / divisor low
+#define DW_APB_UART_IER_DLH       1   // interrupt enable / divisor high
+#define DW_APB_UART_FCR           2   // FIFO control (write-only)
+#define DW_APB_UART_LCR           3   // line control
+#define DW_APB_UART_LSR           5   // line status
+#define DW_APB_UART_USR          31   // 0x7c: DesignWare-specific status
+
+#define DW_APB_UART_LCR_8N1       0x03  // 8 data bits, no parity, 1 stop bit
+#define DW_APB_UART_LCR_DLAB      0x80  // divisor latch access
+
+#define DW_APB_UART_FCR_ENABLE    0x01
+#define DW_APB_UART_FCR_CLEAR_RX  0x02
+#define DW_APB_UART_FCR_CLEAR_TX  0x04
+
+#define DW_APB_UART_LSR_DR        0x01  // receive data ready
+#define DW_APB_UART_LSR_THRE      0x20  // transmit holding register empty
+
+// Used when the devicetree node does not override them
+#define DW_APB_UART_DEFAULT_CLOCK_HZ  24000000u
+#define DW_APB_UART_DEFAULT_BAUD      115200u
+
+// Bound on the transmitter drain before reprogramming LCR, one character time is enough.
+// It keeps a wedged or absent UART from hanging the boot path
+#define DW_APB_UART_DRAIN_TIMEOUT  1000000u
+
+static vm_offset_t dw_apb_uart_base = 0;
+static uint32_t dw_apb_uart_reg_shift = 2;
+static uint32_t dw_apb_uart_clock_hz = DW_APB_UART_DEFAULT_CLOCK_HZ;
+static uint32_t dw_apb_uart_baud = DW_APB_UART_DEFAULT_BAUD;
+
+static inline uint32_t
+dw_apb_uart_read(unsigned int reg)
+{
+	return *(volatile uint32_t *)(dw_apb_uart_base + (reg << dw_apb_uart_reg_shift));
+}
+
+static inline void
+dw_apb_uart_write(unsigned int reg, uint32_t value)
+{
+	*(volatile uint32_t *)(dw_apb_uart_base + (reg << dw_apb_uart_reg_shift)) = value;
+}
+
+
+static unsigned int
+dw_apb_uart_transmit_ready(void)
+{
+	return (dw_apb_uart_read(DW_APB_UART_LSR) & DW_APB_UART_LSR_THRE) != 0;
+}
+
+static void
+dw_apb_uart_transmit_data(uint8_t c)
+{
+	dw_apb_uart_write(DW_APB_UART_RBR_THR_DLL, c);
+}
+
+static unsigned int
+dw_apb_uart_receive_ready(void)
+{
+	return (dw_apb_uart_read(DW_APB_UART_LSR) & DW_APB_UART_LSR_DR) != 0;
+}
+
+static uint8_t
+dw_apb_uart_receive_data(void)
+{
+	return (uint8_t)dw_apb_uart_read(DW_APB_UART_RBR_THR_DLL);
+}
+
+static void
+dw_apb_uart_init(void)
+{
+	// Round to nearest, truncation is only right by luck at 24 MHz / 115200
+	const uint32_t divisor = (dw_apb_uart_clock_hz + (8 * dw_apb_uart_baud)) /
+	    (16 * dw_apb_uart_baud);
+
+	// This driver is polled, the device must raise nothing
+	dw_apb_uart_write(DW_APB_UART_IER_DLH, 0);
+
+	// Enable both FIFOs and discard anything the bootloader left behind
+	dw_apb_uart_write(DW_APB_UART_FCR, DW_APB_UART_FCR_ENABLE |
+	    DW_APB_UART_FCR_CLEAR_RX | DW_APB_UART_FCR_CLEAR_TX);
+
+	// A busy DesignWare UART drops LCR writes, and with them the divisor, so drain the
+	// transmitter first, then clear any latched busy-detect by reading USR
+	for (uint32_t spins = 0; spins < DW_APB_UART_DRAIN_TIMEOUT; spins++) {
+		if (dw_apb_uart_read(DW_APB_UART_LSR) & DW_APB_UART_LSR_THRE) {
+			break;
+		}
+	}
+	(void)dw_apb_uart_read(DW_APB_UART_USR);
+
+	dw_apb_uart_write(DW_APB_UART_LCR, DW_APB_UART_LCR_DLAB);
+	dw_apb_uart_write(DW_APB_UART_RBR_THR_DLL, divisor & 0xff);
+	dw_apb_uart_write(DW_APB_UART_IER_DLH, (divisor >> 8) & 0xff);
+	dw_apb_uart_write(DW_APB_UART_LCR, DW_APB_UART_LCR_8N1);
+
+	// Clear a busy-detect raised by the writes above, if any
+	(void)dw_apb_uart_read(DW_APB_UART_USR);
+}
+
+SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) dw_apb_uart_serial_functions =
+{
+	.init = dw_apb_uart_init,
+	.transmit_ready = dw_apb_uart_transmit_ready,
+	.transmit_data = dw_apb_uart_transmit_data,
+	.receive_ready = dw_apb_uart_receive_ready,
+	.receive_data = dw_apb_uart_receive_data,
+	.device = SERIAL_DW_APB_UART
+};
+
+static void
+dw_apb_uart_setup(const DeviceTreeNode *const devicetree_node)
+{
+	// Get the physical address range of the UART register block
+	const struct {
+		uint64_t block_offset; // TODO: make this scale with #address-cells
+		uint64_t block_size; // TODO: make this scale with #size-cells
+	} *reg;
+	unsigned int reg_size;
+	if (SecureDTGetProperty(devicetree_node, "reg", (const void **)&reg, &reg_size) != kSuccess) {
+		panic("Unable to find the 'reg' property on the DesignWare APB UART devicetree node");
+	}
+	assert(reg_size == sizeof(*reg));
+
+	// Optional "reg-shift", "clock-frequency" and "current-speed" as in the Linux binding.
+	// The defaults describe Allwinner's UART: 4-byte stride, 24 MHz clock, 115200 baud
+	const uint32_t *prop;
+	unsigned int prop_size;
+
+	if (SecureDTGetProperty(devicetree_node, "reg-shift", (const void **)&prop, &prop_size) == kSuccess) {
+		assert(prop_size == sizeof(*prop));
+		dw_apb_uart_reg_shift = *prop;
+	}
+
+	if (SecureDTGetProperty(devicetree_node, "clock-frequency", (const void **)&prop, &prop_size) == kSuccess) {
+		assert(prop_size == sizeof(*prop));
+		dw_apb_uart_clock_hz = *prop;
+	}
+
+	if (SecureDTGetProperty(devicetree_node, "current-speed", (const void **)&prop, &prop_size) == kSuccess) {
+		assert(prop_size == sizeof(*prop));
+		dw_apb_uart_baud = *prop;
+	}
+
+	// Create a virtual mapping to that physical address range
+	const vm_offset_t soc_base_phys = pe_arm_get_soc_base_phys();
+	dw_apb_uart_base = ml_io_map(soc_base_phys + reg->block_offset, reg->block_size);
+
+	// Register the DesignWare APB UART serial driver
+	register_serial_functions(&dw_apb_uart_serial_functions);
+}
+
+#endif // DW_APB_UART
+
 /*****************************************************************************/
 
 /**
@@ -809,6 +967,9 @@ static const struct {
 #ifdef PL011_UART
 	{ .compatible = "arm,pl011", .setup = pl011_uart_setup },
 #endif // PL011_UART
+#ifdef DW_APB_UART
+	{ .compatible = "snps,dw-apb-uart", .setup = dw_apb_uart_setup },
+#endif // DW_APB_UART
 };
 
 /**

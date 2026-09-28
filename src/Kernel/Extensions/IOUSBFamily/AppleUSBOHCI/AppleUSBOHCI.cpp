@@ -19,6 +19,7 @@
 #include <IOKit/usb/IOUSBDevice.h>
 #include <kern/thread.h>
 #include "AppleUSBOHCI.h"
+#include "../USBDMAAlias.h"
 
 #define super IOUSBControllerV3
 OSDefineMetaClassAndStructors(AppleUSBOHCI, IOUSBControllerV3)
@@ -48,6 +49,13 @@ static AppleUSBOHCI *        gOHCI;
 static IOBufferMemoryDescriptor * gEDBuf;
 static IOBufferMemoryDescriptor * gTDBuf;
 static IOBufferMemoryDescriptor * gBounceBuf;
+// platform controllers on arm socs do not snoop, so the cpu uses write-combine aliases
+static bool                  gDMACoherent = true;
+static IOMemoryMap *         gHCCAMap;
+static IOMemoryMap *         gEDMap;
+static IOMemoryMap *         gTDMap;
+static IOMemoryMap *         gBounceMap;
+static volatile UInt8 *      gHCCAVirt;
 static volatile UInt8 *      gEDVirt;
 static UInt32                gEDPhys;
 static volatile UInt8 *      gTDVirt;
@@ -77,6 +85,8 @@ static bool                  gEnumRunning;
 
 static inline void ohciW(volatile UInt32 *r, UInt32 v)
 {
+    // descriptors written through the write-combine alias must land first
+    usbDMAWriteBarrier();
     *r = v;
     /* Full barrier after an MMIO write. __sync_synchronize() rather than
      * a bare mfence so this controller also builds for arm64, where
@@ -115,42 +125,51 @@ bool AppleUSBOHCI::start(IOService *provider)
 
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
     if (!pci) {
-        OHCI_Log("provider is not a PCI device");
-        return false;
-    }
-
-    pci->setMemoryEnable(true);
-    pci->setBusMasterEnable(true);
-    _vendorID = pci->configRead16(kIOPCIConfigVendorID);
-    _deviceID = pci->configRead16(kIOPCIConfigDeviceID);
-
-    IODeviceMemory *bar0 = pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
-    if (bar0 && bar0->getLength())
-        _deviceBase = bar0->map(kIOMapAnywhere);
-    if (!_deviceBase)
-        _deviceBase = pci->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
-    if (!_deviceBase) {
-        /* IOPCIFamily didn't hand us an IODeviceMemory range - read BAR0 out
-         * of config space and map its physical window directly (OHCI BAR0 is
-         * a 32-bit MMIO region QEMU assigns at POST). */
-        UInt32 raw = pci->configRead32(kIOPCIConfigBaseAddress0);
-        if (!(raw & 0x1) && raw != 0xFFFFFFFFU && (raw & ~0xFU)) {
-            IOPhysicalAddress phys = (IOPhysicalAddress)(raw & ~0xFU);
-            _barDesc = IOMemoryDescriptor::withPhysicalAddress(
-                phys, 0x1000, kIODirectionNone | kIOMemoryMapperNone);
-            if (_barDesc)
-                _deviceBase = _barDesc->map(kIOMapAnywhere);
-            OHCI_Log("BAR0 config fallback raw=%08x phys=%p map=%p", raw,
-                     (void *)phys, _deviceBase);
+        // soc controller published by the platform expert, registers in device memory 0
+        gDMACoherent = false;
+        _deviceBase = provider->mapDeviceMemoryWithIndex(0, kIOMapInhibitCache);
+        if (!_deviceBase) {
+            OHCI_Log("failed to map platform registers");
+            return false;
         }
+        _pOHCIRegisters = (OHCIRegistersPtr)_deviceBase->getVirtualAddress();
+        OHCI_Log("platform %s phys=%llx regs=%p rev=%08x", provider->getName(),
+                 (unsigned long long)_deviceBase->getPhysicalAddress(),
+                 _pOHCIRegisters, ohciR(&_pOHCIRegisters->hcRevision));
+    } else {
+        pci->setMemoryEnable(true);
+        pci->setBusMasterEnable(true);
+        _vendorID = pci->configRead16(kIOPCIConfigVendorID);
+        _deviceID = pci->configRead16(kIOPCIConfigDeviceID);
+
+        IODeviceMemory *bar0 = pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+        if (bar0 && bar0->getLength())
+            _deviceBase = bar0->map(kIOMapAnywhere);
+        if (!_deviceBase)
+            _deviceBase = pci->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+        if (!_deviceBase) {
+            /* IOPCIFamily didn't hand us an IODeviceMemory range - read BAR0 out
+             * of config space and map its physical window directly (OHCI BAR0 is
+             * a 32-bit MMIO region QEMU assigns at POST). */
+            UInt32 raw = pci->configRead32(kIOPCIConfigBaseAddress0);
+            if (!(raw & 0x1) && raw != 0xFFFFFFFFU && (raw & ~0xFU)) {
+                IOPhysicalAddress phys = (IOPhysicalAddress)(raw & ~0xFU);
+                _barDesc = IOMemoryDescriptor::withPhysicalAddress(
+                    phys, 0x1000, kIODirectionNone | kIOMemoryMapperNone);
+                if (_barDesc)
+                    _deviceBase = _barDesc->map(kIOMapAnywhere);
+                OHCI_Log("BAR0 config fallback raw=%08x phys=%p map=%p", raw,
+                         (void *)phys, _deviceBase);
+            }
+        }
+        if (!_deviceBase) {
+            OHCI_Log("failed to map BAR0");
+            return false;
+        }
+        _pOHCIRegisters = (OHCIRegistersPtr)_deviceBase->getVirtualAddress();
+        OHCI_Log("pci %04x:%04x BAR0=%p rev=%08x", _vendorID, _deviceID,
+                 _pOHCIRegisters, ohciR(&_pOHCIRegisters->hcRevision));
     }
-    if (!_deviceBase) {
-        OHCI_Log("failed to map BAR0");
-        return false;
-    }
-    _pOHCIRegisters = (OHCIRegistersPtr)_deviceBase->getVirtualAddress();
-    OHCI_Log("pci %04x:%04x BAR0=%p rev=%08x", _vendorID, _deviceID,
-             _pOHCIRegisters, ohciR(&_pOHCIRegisters->hcRevision));
 
     if (UIMInitialize(provider) != kIOReturnSuccess) {
         OHCI_Log("UIMInitialize failed");
@@ -188,6 +207,11 @@ bool AppleUSBOHCI::didTerminate(IOService *p, IOOptionBits o, bool *d) { return 
 void AppleUSBOHCI::free()
 {
     if (_wdhLock) { IOSimpleLockFree(_wdhLock); _wdhLock = NULL; }
+    OSSafeReleaseNULL(gHCCAMap);
+    OSSafeReleaseNULL(gEDMap);
+    OSSafeReleaseNULL(gTDMap);
+    OSSafeReleaseNULL(gBounceMap);
+    gHCCAVirt = NULL;
     if (_hccaBuffer) { _hccaBuffer->release(); _hccaBuffer = NULL; }
     if (_deviceBase) { _deviceBase->release(); _deviceBase = NULL; }
     if (_barDesc) { _barDesc->release(); _barDesc = NULL; }
@@ -207,7 +231,9 @@ IOReturn AppleUSBOHCI::UIMInitialize(IOService *provider)
         kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut,
         kOHCIPageSize, 0xFFFFF000ULL);
     if (!_hccaBuffer) return kIOReturnNoMemory;
-    bzero(_hccaBuffer->getBytesNoCopy(), kOHCIPageSize);
+    gHCCAVirt = (volatile UInt8 *)usbDMAAlias(_hccaBuffer, gDMACoherent, &gHCCAMap);
+    if (!gHCCAVirt) return kIOReturnNoMemory;
+    bzero((void *)gHCCAVirt, kOHCIPageSize);
     _hccaPhysAddr = (IOPhysicalAddress)_hccaBuffer->getPhysicalAddress();
 
     // Allocate ED / TD / bounce DMA regions (one page each is plenty).
@@ -221,9 +247,10 @@ IOReturn AppleUSBOHCI::UIMInitialize(IOService *provider)
         kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut,
         kOHCIPageSize, 0xFFFFF000ULL);
     if (!gEDBuf || !gTDBuf || !gBounceBuf) return kIOReturnNoMemory;
-    gEDVirt = (volatile UInt8 *)gEDBuf->getBytesNoCopy();
-    gTDVirt = (volatile UInt8 *)gTDBuf->getBytesNoCopy();
-    gBounceVirt = (volatile UInt8 *)gBounceBuf->getBytesNoCopy();
+    gEDVirt = (volatile UInt8 *)usbDMAAlias(gEDBuf, gDMACoherent, &gEDMap);
+    gTDVirt = (volatile UInt8 *)usbDMAAlias(gTDBuf, gDMACoherent, &gTDMap);
+    gBounceVirt = (volatile UInt8 *)usbDMAAlias(gBounceBuf, gDMACoherent, &gBounceMap);
+    if (!gEDVirt || !gTDVirt || !gBounceVirt) return kIOReturnNoMemory;
     gEDPhys = (UInt32)gEDBuf->getPhysicalAddress();
     gTDPhys = (UInt32)gTDBuf->getPhysicalAddress();
     gBouncePhys = (UInt32)gBounceBuf->getPhysicalAddress();
@@ -354,7 +381,7 @@ IOReturn AppleUSBOHCI::DoControlTransfer(UInt8 address, const UInt8 *setup,
     ed[2] = tdPhys(TD_SETUP);      // tdQueueHeadPtr (halt/carry = 0)
     ed[3] = 0;                     // nextED
 
-    __sync_synchronize();
+    usbDMAWriteBarrier();
 
     // Kick the control list.
     ohciW(&regs->hcControlHeadED, edPhys(ED_CONTROL));
@@ -364,7 +391,7 @@ IOReturn AppleUSBOHCI::DoControlTransfer(UInt8 address, const UInt8 *setup,
     // Poll until the ED's TD queue drains (head==tail) or halts, with timeout.
     bool done = false, halted = false;
     for (int i = 0; i < 1000; i++) {          // ~1000 * 100us = 100ms
-        __sync_synchronize();
+        usbDMAWriteBarrier();
         UInt32 head = ed[2];
         if (head & 1) { halted = true; break; }         // H bit set on error
         if ((head & ~0xFu) == (ed[1] & ~0xFu)) { done = true; break; }
@@ -578,17 +605,17 @@ IOReturn AppleUSBOHCI::UIMReadWrite(IOMemoryDescriptor *buffer, USBDeviceAddress
     ed[1] = tdPhys(TD_INTR_TAIL);
     ed[2] = tdPhys(TD_INTR);
     ed[3] = 0;
-    __sync_synchronize();
+    usbDMAWriteBarrier();
 
     // Link into the HCCA interrupt table (all 32 slots) and enable periodic.
-    volatile UInt32 *hcca = (volatile UInt32 *)_hccaBuffer->getBytesNoCopy();
+    volatile UInt32 *hcca = (volatile UInt32 *)gHCCAVirt;
     for (int i = 0; i < 32; i++) hcca[i] = edPhys(ED_INTR_BASE);
     UInt32 ctrl = ohciR(&regs->hcControl);
     ohciW(&regs->hcControl, ctrl | kOHCIHcControl_PLE);
 
     bool done = false, halted = false;
     for (int i = 0; i < 100; i++) {         // ~100 * 100us = 10ms poll window
-        __sync_synchronize();
+        usbDMAWriteBarrier();
         UInt32 head = ed[2];
         if (head & 1) { halted = true; break; }
         if ((head & ~0xFu) == (ed[1] & ~0xFu)) { done = true; break; }

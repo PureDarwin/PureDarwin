@@ -109,6 +109,9 @@
 , kernelArm64T8010DebugBuild
 , kernelArm64Bcm2837Build
 , kernelArm64Bcm2837DebugBuild
+, kernelArm64Sun50iBuild
+, kernelArm64Sun50iDebugBuild
+, kernelArm64Virt4kDebugBuild
 , kernelArm32Bcm2835Build
 , kernelArm32Bcm2835DebugBuild
 , kernelArm32Bcm2835DevBuild
@@ -841,6 +844,30 @@ let
         kexts = kextsArm64Build;
         kcTools = kc-tools.packages.${system}.default;
       };
+      # 4KB-page VIRT: the collection header sits at the classic ARM64_KC_BASE
+      kcArm64Virt4kDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64Virt4kDebugBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+        kcBase = "fffffff006000000";
+      };
+      # Same collection as VIRT4K (classic geometry, kcBase = ARM64_KC_BASE); the
+      # board differs from QEMU only in the platform expert's peripherals
+      kcArm64Sun50iReleaseBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64Sun50iBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+        kcBase = "fffffff006000000";
+      };
+      kcArm64Sun50iDebugBuild = pkgs.callPackage ./pkgs/toolchain/kc-arm64.nix {
+        kernel = kernelArm64Sun50iDebugBuild;
+        inherit kernelSource;
+        kexts = kextsArm64Build;
+        kcTools = kc-tools.packages.${system}.default;
+        kcBase = "fffffff006000000";
+      };
       prelinkedArm32Bcm2835Build =
         pkgs.callPackage ./pkgs/toolchain/prelinked-arm32-bcm2835.nix {
           kernel = kernelArm32Bcm2835Build;
@@ -1047,6 +1074,10 @@ let
           "applets.txt"
         ];
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 serial_video_mirror=1 no_interrupt_masked_debug=1 rd=md0";
+      };
+      # same pruned ext4 root as T8010, for the Orange Pi Zero 3: xnu-loader carries it as ramdisk.img
+      ramdiskArm64Sun50iBuild = ramdiskArm64T8010Build.override {
+        kc = kcArm64Sun50iReleaseBuild;
       };
       imageArm64Bcm2837Build = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
@@ -1958,7 +1989,11 @@ EOF
       kc-arm64 = kcArm64ReleaseBuild;
       kc-arm64-t8010-debug = kcArm64T8010DebugBuild;
       ramdisk-arm64-t8010 = ramdiskArm64T8010Build;
+      ramdisk-arm64-sun50i = ramdiskArm64Sun50iBuild;
       kc-arm64-t8010 = kcArm64T8010ReleaseBuild;
+      kc-arm64-virt4k-debug = kcArm64Virt4kDebugBuild;
+      kc-arm64-sun50i = kcArm64Sun50iReleaseBuild;
+      kc-arm64-sun50i-debug = kcArm64Sun50iDebugBuild;
       kc-arm64-bcm2837 = kcArm64Bcm2837ReleaseBuild;
       kc-arm64-bcm2837-debug = kcArm64Bcm2837DebugBuild;
       prelinked-arm32-bcm2835 = prelinkedArm32Bcm2835Build;

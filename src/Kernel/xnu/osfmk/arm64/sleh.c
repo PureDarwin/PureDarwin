@@ -287,7 +287,7 @@ extern void arm64_thread_exception_return(void) __dead2;
 
 // Also needed without Apple IPI registers:
 // GIC SGIs carry the scheduler IPIs on this platform, dispatched from sleh_fiq()
-#if defined(HAS_IPI) || HAS_GICV3_FIQ
+#if defined(HAS_IPI) || HAS_GICV3_FIQ || defined(SUN50I)
 void cpu_signal_handler(void);
 #endif
 #if defined(HAS_IPI)
@@ -3449,6 +3449,69 @@ handle_simd_trap(arm_saved_state_t *state, uint64_t esr)
 	__builtin_unreachable();
 }
 
+#if defined(SUN50I)
+// Allwinner H616/H618: GIC-400 under ATF, so the virtual timer is an ordinary IRQ, and
+// the kernel owns the GIC because the timer is needed before the platform expert starts
+#define SUN50I_GICD_ISENABLER0  0x100
+#define SUN50I_GICD_ICENABLER0  0x180
+#define SUN50I_GICD_ICPENDR0    0x280
+#define SUN50I_GICD_ICACTIVER0  0x380
+#define SUN50I_GICD_IPRIORITYR  0x400
+#define SUN50I_GICC_CTLR        0x000
+#define SUN50I_GICC_PMR         0x004
+#define SUN50I_GICC_IAR         0x00C
+#define SUN50I_GICC_EOIR        0x010
+#include <pexpert/device_tree.h>
+static vm_offset_t pd_sun50i_gicd, pd_sun50i_gicc;
+
+// the loader describes the gic-400 as /arm-io/gic, reg = distributor then cpu interface
+// relative to the arm-io window, boards without the node get the h616 addresses
+static void
+pd_sun50i_gic_locate(uint64_t *gicd, uint64_t *gicc)
+{
+	DTEntry entry;
+	uint64_t const *reg;
+	unsigned int size;
+
+	*gicd = SUN50I_GICD_BASE_PHYS;
+	*gicc = SUN50I_GICC_BASE_PHYS;
+	if (SecureDTLookupEntry(NULL, "/arm-io/gic", &entry) == kSuccess &&
+	    SecureDTGetProperty(entry, "reg", (void const **)&reg, &size) == kSuccess &&
+	    size >= 4 * sizeof(uint64_t)) {
+		*gicd = pe_arm_get_soc_base_phys() + reg[0];
+		*gicc = pe_arm_get_soc_base_phys() + reg[2];
+	}
+}
+
+static void
+pd_sun50i_gic_startup(void)
+{
+	uint64_t gicd_phys, gicc_phys;
+
+	pd_sun50i_gic_locate(&gicd_phys, &gicc_phys);
+	pd_sun50i_gicd = ml_io_map(gicd_phys, SUN50I_GICD_SIZE);
+	pd_sun50i_gicc = ml_io_map(gicc_phys, SUN50I_GICC_SIZE);
+
+	volatile uint32_t *d = (volatile uint32_t *)pd_sun50i_gicd;
+	volatile uint32_t *c = (volatile uint32_t *)pd_sun50i_gicc;
+
+	// the vendor u-boot leaves its own lines (USB for fastboot) enabled: disable and clear every line
+	uint32_t lines = ((d[1] & 0x1f) + 1) * 32;
+	for (uint32_t i = 0; i < lines / 32; i++) {
+		d[SUN50I_GICD_ICENABLER0 / 4 + i] = 0xffffffffu;
+		d[SUN50I_GICD_ICPENDR0 / 4 + i] = 0xffffffffu;
+		d[SUN50I_GICD_ICACTIVER0 / 4 + i] = 0xffffffffu;
+	}
+	((volatile uint8_t *)pd_sun50i_gicd)[SUN50I_GICD_IPRIORITYR + SUN50I_TIMER_PPI_VIRT] = 0x80;
+	d[SUN50I_GICD_ISENABLER0 / 4] = 1u << SUN50I_TIMER_PPI_VIRT;
+	d[0] = 1;       // GICD_CTLR, non-secure view: EnableGrp1
+	c[SUN50I_GICC_PMR / 4] = 0xf0;
+	c[SUN50I_GICC_CTLR / 4] = 1;
+}
+STARTUP(KMEM, STARTUP_RANK_LAST, pd_sun50i_gic_startup);
+
+#endif /* SUN50I */
+
 void
 sleh_irq(arm_saved_state_t *state)
 {
@@ -3457,11 +3520,48 @@ sleh_irq(arm_saved_state_t *state)
 	int preemption_level = sleh_get_preemption_level();
 #endif
 
+#if defined(SUN50I)
+	uint32_t iar = pd_sun50i_gicc ? *(volatile uint32_t *)(pd_sun50i_gicc + SUN50I_GICC_IAR) : GIC_SPURIOUS_IRQ;
+	uint32_t intid = iar & 0x3ff;
+
+	// SGI 0 is the scheduler IPI (PDArmGIC sends it through GICD_SGIR): EOI first, so an IPI
+	// raised while the handler runs is taken again rather than lost
+	if (intid == 0) {
+		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
+		*(volatile uint32_t *)(pd_sun50i_gicc + SUN50I_GICC_EOIR) = iar;
+		cpu_signal_handler();
+		sleh_interrupt_handler_epilogue();
+		return;
+	}
+	if (intid == SUN50I_TIMER_PPI_VIRT) {
+		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
+		cdp->cpu_decrementer = -1;
+		ml_interrupt_masked_debug_start(rtclock_intr, DBG_INTR_TYPE_TIMER);
+		rtclock_intr(TRUE);
+		ml_interrupt_masked_debug_end();
+		*(volatile uint32_t *)(pd_sun50i_gicc + SUN50I_GICC_EOIR) = iar;
+		sleh_interrupt_handler_epilogue();
+		return;
+	}
+#endif /* SUN50I */
 
 	sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
 
 #if USE_APPLEARMSMP
 	PE_handle_ext_interrupt();
+#elif defined(SUN50I)
+	if (intid < GIC_SPURIOUS_IRQ && cdp->interrupt_handler != NULL) {
+		cdp->interrupt_handler(cdp->interrupt_target,
+		    cdp->interrupt_refCon,
+		    cdp->interrupt_nub,
+		    cdp->interrupt_source);
+	} else if (intid < GIC_SPURIOUS_IRQ) {
+		// nobody to service a level interrupt: mask it rather than take it forever
+		*(volatile uint32_t *)(pd_sun50i_gicd + SUN50I_GICD_ICENABLER0 + (intid / 32) * 4) = 1u << (intid % 32);
+	}
+	if (intid < GIC_SPURIOUS_IRQ) {
+		*(volatile uint32_t *)(pd_sun50i_gicc + SUN50I_GICC_EOIR) = iar;
+	}
 #else
 	/* Run the registered interrupt handler. */
 	cdp->interrupt_handler(cdp->interrupt_target,

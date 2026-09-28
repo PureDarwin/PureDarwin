@@ -1,5 +1,6 @@
 #include "PDArmCPU.h"
 #include "PDArmGIC.h"
+#include "PDSun50iUSB.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOPlatformExpert.h>
@@ -122,9 +123,17 @@ static bool
 pd_psci_available(void)
 {
 	if (!pd_psci_probed) {
-		int64_t v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, false);
+		int64_t v;
 
-		if (v < 0) {
+		// tf-a owns psci on sun50i, an hvc would land in u-boot's stale el2 vectors
+		if (PDSun50i_isPlatform()) {
+			pd_psci_use_smc = true;
+			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, true);
+		} else {
+			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, false);
+		}
+
+		if (v < 0 && !pd_psci_use_smc) {
 			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, true);
 			pd_psci_use_smc = (v >= 0);
 		}

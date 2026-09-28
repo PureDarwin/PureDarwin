@@ -2335,9 +2335,47 @@ let
     inherit arm64CrossToolchain;
     extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=BCM2837" ];
   };
+  # VIRT with 4KB pages on a Cortex-A53 model (see MakeInc VIRT4K), the SUN50I
+  # page-table geometry where QEMU can single-step it
+  kernelArm64Virt4kDebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-virt4k-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=VIRT4K" ];
+  };
+  kernelArm64Sun50iBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-sun50i";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "RELEASE";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SUN50I" ];
+  };
+  kernelArm64Sun50iDebugBuild = mkPureDarwinBuild {
+    pname = "puredarwin-kernel-arm64-sun50i-debug";
+    src = kernelSource;
+    buildTargets = [ "xnu" ];
+    enableUserspace = false;
+    installUserland = false;
+    installKernel = true;
+    xnuKernelConfig = "DEBUG";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    extraCmakeFlags = [ "-DPUREDARWIN_ARM64_MACHINE_CONFIG=SUN50I" ];
+  };
   # Apple A10 (T8010) - iPad 6th gen / iPhone 7, booted by pongoOS over
   # checkm8 rather than by xnu-loader. The board config, AIC and the s5l
-  # and dockchannel UARTs are Apple's own in-tree code; only the machine
+  # and dockchannel UARTs are Apple's own in-tree code, only the machine
   # config selection differs from the QEMU virt kernel.
   kernelArm64T8010Build = mkPureDarwinBuild {
     pname = "puredarwin-kernel-arm64-t8010";
@@ -2935,6 +2973,9 @@ in
     kernelArm64T8010DebugBuild
     kernelArm64Bcm2837Build
     kernelArm64Bcm2837DebugBuild
+    kernelArm64Virt4kDebugBuild
+    kernelArm64Sun50iBuild
+    kernelArm64Sun50iDebugBuild
     kernelArm32Bcm2835Build
     kernelArm32Bcm2835DebugBuild
     kernelArm32Bcm2835DevBuild

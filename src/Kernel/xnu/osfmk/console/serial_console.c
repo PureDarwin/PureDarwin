@@ -530,6 +530,11 @@ console_write(char *str, int size)
 	int chunk_size = CPU_CONS_BUF_SIZE;
 	int i = 0;
 
+#if defined(SUN50I)
+	// bring-up: no drain thread to rely on yet, write straight through
+	_cnputs(str, size, true);
+	return;
+#endif
 	if (__improbable(console_suspended || !is_console_initialized() || pmap_in_ppl())) {
 		/*
 		 * Output directly to console in the following cases:

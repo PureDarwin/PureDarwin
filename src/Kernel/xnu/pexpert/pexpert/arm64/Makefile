@@ -34,7 +34,8 @@ PRIVATE_KERNELFILES = \
 	H16.h \
 	H17.h \
 	VMAPPLE.h \
-	QEMUVIRT.h
+	QEMUVIRT.h \
+	SUN50I.h
 
 
 # Headers installed into System.framework/PrivateHeaders (userspace internal SDK only).

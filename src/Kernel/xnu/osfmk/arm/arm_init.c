@@ -362,6 +362,15 @@ arm_init(
 
 	arm_slide_rebase_and_sign_image();
 
+#if defined(SUN50I)
+	// start.s left VBAR on its early fault handler at a physical address, reachable only
+	// through the identity map that is about to go
+	{
+		extern void ExceptionVectorsBase;
+		__asm__ volatile ("msr VBAR_EL1, %0\n\tisb" : : "r"(&ExceptionVectorsBase));
+	}
+#endif
+
 	arm_static_if_init(args);
 
 	/* If kernel integrity is supported, use a constant copy of the boot args. */
