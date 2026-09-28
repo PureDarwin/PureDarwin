@@ -67,7 +67,7 @@ setcontext(const ucontext_t *uctx)
 	mctx = (mcontext_t) &uctx->__mcontext_data;
 #endif
 
-#if defined(__x86_64__) || defined(__arm64__)
+#if defined(__x86_64__) || defined(__arm64__) || defined(__riscv)
 	return _setcontext(mctx);
 #else
 	return _setcontext(uctx);

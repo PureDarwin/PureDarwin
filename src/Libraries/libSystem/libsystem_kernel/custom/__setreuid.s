@@ -25,6 +25,10 @@ __SYSCALL(___setreuid, setreuid, 2)
 
 __SYSCALL(___setreuid, setreuid, 2)
 
+#elif defined(__riscv)
+
+__SYSCALL(___setreuid, setreuid, 2)
+
 #else
 #error Unsupported architecture
 #endif

@@ -365,7 +365,7 @@ create_purgeable_zone(size_t initial_size, malloc_zone_t *malloc_default_zone, u
 	szone->log_address = ~0;
 #endif
 
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__arm64__) || defined(__riscv)
 	hw_memsize = *(uint64_t *)(uintptr_t)_COMM_PAGE_MEMORY_SIZE;
 #else
 	size_t uint64_t_size = sizeof(hw_memsize);

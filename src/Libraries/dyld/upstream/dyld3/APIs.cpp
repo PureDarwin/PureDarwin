@@ -904,6 +904,8 @@ char* dlerror()
     #define CURRENT_CPU_TYPE CPU_TYPE_ARM64
 #elif __arm__
     #define CURRENT_CPU_TYPE CPU_TYPE_ARM
+#elif __riscv && __LP64__
+    #define CURRENT_CPU_TYPE CPU_TYPE_RISCV64
 #endif
 
 

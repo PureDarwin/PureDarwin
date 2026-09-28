@@ -80,7 +80,8 @@
 #define	MAX_READ_LOCKS		(INT_MAX - 1)
 
 
-#if defined(__LP64__)
+// rv64gc has no 16 byte compare and swap, riscv keeps the 32-bit split layout
+#if defined(__LP64__) && !defined(__riscv)
 #define RWLOCK_USE_INT128 1
 #endif
 

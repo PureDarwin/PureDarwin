@@ -108,6 +108,26 @@
 #   define RC_ONE   (1ULL<<56)
 #   define RC_HALF  (1ULL<<7)
 
+# elif __riscv && __LP64__
+// arm64's layout refit to sv39, user addresses stay below 1<<38 (MACH_VM_MAX_ADDRESS 0x3fc0000000)
+// so shiftcls is bits 3..37 and extra_rc gets the two bits arm64 spends on a wider address
+#   define ISA_MASK        0x0000003ffffffff8ULL
+#   define ISA_MAGIC_MASK  0x00000fc000000001ULL
+#   define ISA_MAGIC_VALUE 0x0000068000000001ULL
+#   define ISA_HAS_CXX_DTOR_BIT 1
+#   define ISA_BITFIELD                                                        \
+      uintptr_t nonpointer        : 1;                                         \
+      uintptr_t has_assoc         : 1;                                         \
+      uintptr_t has_cxx_dtor      : 1;                                         \
+      uintptr_t shiftcls          : 35; /*MACH_VM_MAX_ADDRESS 0x3fc0000000*/   \
+      uintptr_t magic             : 6;                                         \
+      uintptr_t weakly_referenced : 1;                                         \
+      uintptr_t unused            : 1;                                         \
+      uintptr_t has_sidetable_rc  : 1;                                         \
+      uintptr_t extra_rc          : 17
+#   define RC_ONE   (1ULL<<47)
+#   define RC_HALF  (1ULL<<16)
+
 # else
 #   error unknown architecture for packed isa
 # endif

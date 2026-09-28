@@ -68,6 +68,14 @@ MI_ENTRY_POINT(___syscall)
 		ldr x7, [sp, #48]
 		DO_SYSCALL(SYS_syscall, cerror)
 		ret
+#elif defined(__riscv)
+
+// the variadic arguments are in a1-a7 and on the stack already, which is where
+// the kernel reads an indirect syscall's arguments from
+MI_ENTRY_POINT(___syscall)
+	DO_SYSCALL(SYS_syscall, cerror)
+	ret
+
 #else
 #error Unsupported architecture
 #endif

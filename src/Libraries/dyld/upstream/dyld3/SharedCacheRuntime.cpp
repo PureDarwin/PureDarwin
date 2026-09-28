@@ -119,6 +119,9 @@ struct CacheInfo
         #define ARCH_NAME            "arm64_32"
         #define ARCH_CACHE_MAGIC     "dyld_v1arm64_32"
     #endif
+#elif __riscv && __LP64__
+    #define ARCH_NAME            "riscv64"
+    #define ARCH_CACHE_MAGIC     "dyld_v1 riscv64"
 #endif
 
 

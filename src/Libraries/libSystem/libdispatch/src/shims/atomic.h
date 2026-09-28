@@ -64,7 +64,7 @@
 #define os_atomic_store os_atomic_store_wide
 #endif
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 #define memory_order_ordered                    memory_order_relaxed
 #define memory_order_ordered_smp                memory_order_relaxed
 #define _os_atomic_mo_ordered                   memory_order_relaxed

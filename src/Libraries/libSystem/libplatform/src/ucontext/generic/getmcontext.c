@@ -100,7 +100,7 @@ getmcontext(ucontext_t *uctx, void *sp)
 	return mctx;
 }
 
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__riscv)
 
 #include <signal.h>
 #include <strings.h>

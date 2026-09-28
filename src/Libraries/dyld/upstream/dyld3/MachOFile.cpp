@@ -217,6 +217,7 @@ bool FatFile::isFatFileWithSlice(Diagnostics& diag, uint64_t fileLen, const Grad
 #define GRADE_arm64e      CPU_TYPE_ARM64,      CPU_SUBTYPE_ARM64E,      false
 #define GRADE_arm64e_pb   CPU_TYPE_ARM64,      CPU_SUBTYPE_ARM64E,      true
 #define GRADE_arm64_32    CPU_TYPE_ARM64_32,   CPU_SUBTYPE_ARM64_32_V8, false
+#define GRADE_riscv64     CPU_TYPE_RISCV64,    CPU_SUBTYPE_RISCV_ALL,   false
 
 const GradedArchs GradedArchs::i386              = { {{GRADE_i386,    1}} };
 const GradedArchs GradedArchs::x86_64            = { {{GRADE_x86_64,  1}} };
@@ -235,6 +236,7 @@ const GradedArchs GradedArchs::armv6             = { {{GRADE_armv6,   1}} };
 #if SUPPORT_ARCH_arm64_32
 const GradedArchs GradedArchs::arm64_32          = { {{GRADE_arm64_32, 1}} };
 #endif
+const GradedArchs GradedArchs::riscv64           = { {{GRADE_riscv64, 1}} };
 
 int GradedArchs::grade(uint32_t cputype, uint32_t cpusubtype, bool isOSBinary) const
 {
@@ -301,6 +303,8 @@ const GradedArchs& GradedArchs::forCurrentOS(bool keysOff, bool osBinariesOnly)
     return isHaswell() ? x86_64h : x86_64;
 #elif __i386__
     return i386;
+#elif __riscv && __LP64__
+    return riscv64;
 #else
     #error unknown platform
 #endif
@@ -332,6 +336,8 @@ const GradedArchs& GradedArchs::forName(const char* archName, bool keysOff)
 #endif
     else if (strcmp(archName, "i386") == 0 )
         return i386;
+    else if (strcmp(archName, "riscv64") == 0 )
+        return riscv64;
     assert(0 && "unknown arch name");
 }
 
@@ -354,7 +360,8 @@ const MachOFile::ArchInfo MachOFile::_s_archInfos[] = {
     { "armv7k",   CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V7K     },
     { "armv7s",   CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V7S     },
     { "armv7",    CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V7      },
-    { "armv6",    CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V6      }
+    { "armv6",    CPU_TYPE_ARM,      CPU_SUBTYPE_ARM_V6      },
+    { "riscv64",  CPU_TYPE_RISCV64,  CPU_SUBTYPE_RISCV_ALL   }
 };
 
 const MachOFile::PlatformInfo MachOFile::_s_platformInfos[] = {
@@ -637,6 +644,8 @@ const char* MachOFile::currentArchName()
     return isHaswell() ? "x86_64h" : "x86_64";
 #elif __i386__
     return "i386";
+#elif __riscv && __LP64__
+    return "riscv64";
 #else
     #error unknown arch
 #endif
@@ -1002,6 +1011,8 @@ uint32_t MachOFile::entryAddrRegisterIndexForThreadCmd() const
             return 15; // arm_thread_state_t.pc
         case CPU_TYPE_ARM64:
             return 32; // arm_thread_state64_t.__pc
+        case CPU_TYPE_RISCV64:
+            return 32; // riscv_thread_state64_t.__pc after x0..x31
     }
     return ~0U;
 }

@@ -334,6 +334,108 @@ L2:	ldr		r1, [r7, #8]					// get offset from descriptor
 	pop		{r1,r2,r3,r7,pc}
 #endif
 
+#if __riscv && __LP64__
+	// a0 = descriptor in, address of the TLV out
+	// only ra, t0, t1 and t2 may change, every other register and fcsr are preserved
+	.p2align 2
+	.globl _tlv_get_addr
+	.private_extern _tlv_get_addr
+_tlv_get_addr:
+	ld		t0, 8(a0)			// get key from descriptor
+	slli	t0, t0, 3
+	add		t0, t0, tp			// tp is this thread's tsd base
+	ld		t0, 0(t0)			// get thread allocation address for this key
+	beqz	t0, LlazyAllocate	// if NULL, lazily allocate
+	ld		t1, 16(a0)			// get offset from descriptor
+	add		a0, t0, t1			// return allocation+offset
+	ret
+
+LlazyAllocate:
+	addi	sp, sp, -288
+	sd		ra, 280(sp)
+	sd		fp, 272(sp)
+	addi	fp, sp, 288
+	sd		a0, 0(sp)			// save descriptor
+	sd		a1, 8(sp)			// save all registers that C function might trash
+	sd		a2, 16(sp)
+	sd		a3, 24(sp)
+	sd		a4, 32(sp)
+	sd		a5, 40(sp)
+	sd		a6, 48(sp)
+	sd		a7, 56(sp)
+	sd		t3, 64(sp)
+	sd		t4, 72(sp)
+	sd		t5, 80(sp)
+	sd		t6, 88(sp)
+	fsd		ft0, 96(sp)
+	fsd		ft1, 104(sp)
+	fsd		ft2, 112(sp)
+	fsd		ft3, 120(sp)
+	fsd		ft4, 128(sp)
+	fsd		ft5, 136(sp)
+	fsd		ft6, 144(sp)
+	fsd		ft7, 152(sp)
+	fsd		ft8, 160(sp)
+	fsd		ft9, 168(sp)
+	fsd		ft10, 176(sp)
+	fsd		ft11, 184(sp)
+	fsd		fa0, 192(sp)
+	fsd		fa1, 200(sp)
+	fsd		fa2, 208(sp)
+	fsd		fa3, 216(sp)
+	fsd		fa4, 224(sp)
+	fsd		fa5, 232(sp)
+	fsd		fa6, 240(sp)
+	fsd		fa7, 248(sp)
+	frcsr	t0
+	sd		t0, 256(sp)
+
+	ld		a0, 8(a0)			// use key from descriptor as parameter
+	call	_tlv_allocate_and_initialize_for_key
+	ld		t0, 0(sp)			// get descriptor back
+	ld		t0, 16(t0)			// get offset from descriptor
+	add		a0, a0, t0			// return allocation+offset
+
+	ld		t0, 256(sp)
+	fscsr	t0
+	fld		fa7, 248(sp)
+	fld		fa6, 240(sp)
+	fld		fa5, 232(sp)
+	fld		fa4, 224(sp)
+	fld		fa3, 216(sp)
+	fld		fa2, 208(sp)
+	fld		fa1, 200(sp)
+	fld		fa0, 192(sp)
+	fld		ft11, 184(sp)
+	fld		ft10, 176(sp)
+	fld		ft9, 168(sp)
+	fld		ft8, 160(sp)
+	fld		ft7, 152(sp)
+	fld		ft6, 144(sp)
+	fld		ft5, 136(sp)
+	fld		ft4, 128(sp)
+	fld		ft3, 120(sp)
+	fld		ft2, 112(sp)
+	fld		ft1, 104(sp)
+	fld		ft0, 96(sp)
+	ld		t6, 88(sp)
+	ld		t5, 80(sp)
+	ld		t4, 72(sp)
+	ld		t3, 64(sp)
+	ld		a7, 56(sp)
+	ld		a6, 48(sp)
+	ld		a5, 40(sp)
+	ld		a4, 32(sp)
+	ld		a3, 24(sp)
+	ld		a2, 16(sp)
+	ld		a1, 8(sp)
+	ld		fp, 272(sp)
+	ld		ra, 280(sp)
+	addi	sp, sp, 288
+	ret
+
+#endif
+
 	.subsections_via_symbols
 	
 

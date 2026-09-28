@@ -38,6 +38,8 @@ extern "C" char start;
 	#define address_of_start (void*)((uintptr_t)&start + 4)
 #elif __arm__
 	#define address_of_start (void*)((uintptr_t)&start + 2)
+#elif __riscv
+	#define address_of_start (void*)((uintptr_t)&start + 4)
 #endif
 
 

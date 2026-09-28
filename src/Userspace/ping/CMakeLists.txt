@@ -14,11 +14,11 @@ target_sources(ping PRIVATE
 )
 
 target_compile_definitions(ping PRIVATE PRIVATE=1 __DARWIN_ONLY_UNIX_CONFORMANCE=1)
-# arm64 has no legacy ABI suffixes: libc is built with these (see libc's
+# arm64 and riscv64 have no legacy ABI suffixes: libc is built with these (see libc's
 # libc_public_headers), so its symbols are the plain names. Without matching
 # them here, <sys/cdefs.h> leaves __DARWIN_ONLY_VERS_1050 at 0 and the header
 # aliases select() to _select$1050, which exists only on x86.
-if(PUREDARWIN_ARCH STREQUAL "arm64")
+if(PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_ARCH STREQUAL "riscv64")
     target_compile_definitions(ping PRIVATE
         __DARWIN_ONLY_VERS_1050=1
         __DARWIN_ONLY_64_BIT_INO_T=1)

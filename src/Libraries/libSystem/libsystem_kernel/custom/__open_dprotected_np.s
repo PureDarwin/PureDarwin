@@ -27,6 +27,10 @@ __SYSCALL(___open_dprotected_np, open_dprotected_np, 5)
 
 __SYSCALL(___open_dprotected_np, open_dprotected_np, 5)
 
+#elif defined(__riscv)
+
+__SYSCALL(___open_dprotected_np, open_dprotected_np, 5)
+
 #else
 #error Unsupported architecture
 #endif

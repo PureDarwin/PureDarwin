@@ -44,6 +44,10 @@ __SYSCALL(___sigreturn, sigreturn, 3)
 
 __SYSCALL(___sigreturn, sigreturn, 3)
 
+#elif defined(__riscv)
+
+__SYSCALL(___sigreturn, sigreturn, 3)
+
 #else
 #error Unsupported architecture
 #endif

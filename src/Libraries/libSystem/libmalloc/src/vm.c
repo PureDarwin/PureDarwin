@@ -42,7 +42,7 @@ void
 mvm_aslr_init(void)
 {
 	// Prepare ASLR
-#if __i386__ || __x86_64__ || __arm__ || __arm64__ || (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
+#if __i386__ || __x86_64__ || __arm__ || __arm64__ || __riscv || (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
 #if __i386__
 	uintptr_t stackbase = 0x8fe00000;
 	int entropic_bits = 3;
@@ -60,6 +60,9 @@ mvm_aslr_init(void)
 #elif __arm__
 	uintptr_t stackbase = USRSTACK;
 	int entropic_bits = 3;
+#elif __riscv
+	uintptr_t stackbase = USRSTACK64;
+	int entropic_bits = 7;
 #else
 	uintptr_t stackbase = USRSTACK;
 	int entropic_bits = 3;

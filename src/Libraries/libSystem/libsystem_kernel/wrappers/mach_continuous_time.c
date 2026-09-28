@@ -30,7 +30,7 @@ __attribute__((visibility("hidden")))
 uint64_t
 _mach_continuous_time_base(void)
 {
-#if !defined(__x86_64__) && !defined(__arm64__)
+#if !defined(__x86_64__) && !defined(__arm64__) && !defined(__riscv)
 	// Deal with the lack of 64-bit loads on arm32 (see mach_approximate_time.s)
 	while (1) {
 		volatile uint64_t *base_ptr = (volatile uint64_t*)_COMM_PAGE_CONT_TIMEBASE;
@@ -70,6 +70,15 @@ _mach_continuous_hwclock(uint64_t *cont_time __unused)
 		volatile uint64_t *base_ptr = (volatile uint64_t*)_COMM_PAGE_CONT_HW_TIMEBASE;
 		__builtin_arm_isb(ISB_SY);
 		*cont_time = __builtin_arm_rsr64("CNTVCT_EL0") + *base_ptr;
+		return KERN_SUCCESS;
+	}
+#elif defined(__riscv)
+	uint8_t cont_hwclock = *((uint8_t*)_COMM_PAGE_CONT_HWCLOCK);
+	if (cont_hwclock) {
+		volatile uint64_t *base_ptr = (volatile uint64_t*)_COMM_PAGE_CONT_HW_TIMEBASE;
+		uint64_t time;
+		__asm__ volatile ("rdtime %0" : "=r" (time) :: "memory");
+		*cont_time = time + *base_ptr;
 		return KERN_SUCCESS;
 	}
 #endif

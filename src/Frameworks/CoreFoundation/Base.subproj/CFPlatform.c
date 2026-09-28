@@ -1312,6 +1312,9 @@ typedef struct _CF_dispatch_once_waiter_s {
 #elif (defined(__arm__) && defined(_ARM_ARCH_7) && defined(__thumb__)) || \
 defined(__arm64__)
 #define _CF_hardware_pause() __asm__("yield")
+#elif defined(__riscv)
+// zihintpause pause, a fence hint older harts run as a nop
+#define _CF_hardware_pause() __asm__(".insn i 0x0f, 0, x0, x0, 0x010")
 #else
 #define _CF_hardware_pause() __asm__("")
 #endif

@@ -57,7 +57,7 @@ int errno;
  * zero rather than reporting its error.  x86 reaches the TSD through %gs, where
  * the base is a segment-relative literal zero and must not be tested this way.
  */
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 #define _os_tsd_is_initialized() (_os_tsd_get_base() != NULL)
 #else
 #define _os_tsd_is_initialized() 1

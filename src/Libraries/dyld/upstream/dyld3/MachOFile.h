@@ -147,6 +147,7 @@ public:
 #if SUPPORT_ARCH_arm64_32
     static const GradedArchs arm64_32;        // watch series 4 and later
 #endif
+    static const GradedArchs riscv64;         // rv64gc
 
 // private:
 // should be private, but compiler won't statically initialize static members above

@@ -298,6 +298,45 @@ _mach_continuous_time_kernel:
 	svc	#SWI_SYSCALL
 	ret
 
+#elif defined(__riscv)
+
+#include <mach/riscv/syscall_sw.h>
+#include <mach/riscv/traps.h>
+
+// time csr plus the commpage offset when user reads are allowed, the offset is
+// read on both sides so a wake in between is caught, otherwise trap
+	.text
+	.align 2
+	.globl _mach_absolute_time
+_mach_absolute_time:
+	li	a3, _COMM_PAGE_TIMEBASE_OFFSET
+	lbu	a2, ((_COMM_PAGE_USER_TIMEBASE) - (_COMM_PAGE_TIMEBASE_OFFSET))(a3)
+	bnez	a2, L_mach_absolute_time_user	// are userspace reads supported
+	j	_mach_absolute_time_kernel	// if not, go to the kernel
+L_mach_absolute_time_user:
+	ld	a1, 0(a3)			// load the offset
+	rdtime	a0				// read the timebase
+	ld	a2, 0(a3)			// load the offset again
+	bne	a1, a2, L_mach_absolute_time_user	// if it changed, try again
+	add	a0, a0, a1			// construct mach_absolute_time
+	ret
+
+	.text
+	.align 2
+	.globl _mach_absolute_time_kernel
+_mach_absolute_time_kernel:
+	li	t0, MACH_RISCV_TRAP_ABSTIME	// load the magic mat number
+	ecall
+	ret
+
+	.text
+	.align 2
+	.globl _mach_continuous_time_kernel
+_mach_continuous_time_kernel:
+	li	t0, MACH_RISCV_TRAP_CONTTIME	// load the magic mct number
+	ecall
+	ret
+
 #else
 #error Unsupported architecture
 #endif

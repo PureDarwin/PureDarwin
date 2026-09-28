@@ -95,7 +95,7 @@ extern int __pd_closedir_default(DIR *dirp) __asm("_closedir");
 extern int __pd_connect_default(int socket, const struct sockaddr *address, socklen_t address_len) __asm("_connect");
 extern int __pd_fcntl_syscall(int fd, int cmd, long arg) __asm("___fcntl");
 extern int __pd_mprotect_default(void *addr, size_t len, int prot) __asm("_mprotect");
-#if defined(__arm64__) || defined(__aarch64__)
+#if defined(__arm64__) || defined(__aarch64__) || defined(__riscv)
 extern DIR *__pd_opendir_native(const char *path) __asm("_opendir");
 #else
 extern DIR *__pd_opendir_inode64(const char *path) __asm("_opendir$INODE64");

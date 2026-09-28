@@ -414,6 +414,89 @@ error:
 	return;
 }
 
+#elif defined(__riscv)
+
+// arm64's scheme on psabi registers, ra = _ctx_start, s1 = uctx, s2 = munged func, s0 = stack top
+// sp = a block of 8 byte argument slots, _ctx_start loads the first 8 into a0-a7
+
+#include <os/tsd.h>
+#include <platform/compat.h>
+#include <platform/string.h>
+
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+extern void _ctx_start(void (*user_func)());
+
+void
+_ctx_done(ucontext_t *uctx)
+{
+	if (uctx->uc_link == NULL) {
+		_exit(0);
+	} else {
+		uctx->uc_mcsize = 0; // not callable again without reinitializing
+		setcontext((ucontext_t *) uctx->uc_link);
+		__builtin_trap();	// should never get here
+	}
+}
+
+#define ALIGN_TO_16_BYTES(addr) (addr & ~0xf)
+#define RISCV_REGISTER_ARGS 8
+
+void
+makecontext(ucontext_t *uctx, void (*func)(void), int argc, ...)
+{
+	if (uctx == NULL) {
+		return;
+	}
+
+	if (uctx->uc_stack.ss_sp == NULL) {
+		goto error;
+	}
+
+	if (argc < 0 || argc > NCARGS) {
+		goto error;
+	}
+
+#if CONFORMANCE_SPECIFIC_HACK
+	// see the arm64 makecontext, a memcpy'd context points at another context's data
+	uctx->uc_mcontext = (mcontext_t) &uctx->__mcontext_data;
+#endif
+
+	bzero(uctx->uc_stack.ss_sp, uctx->uc_stack.ss_size);
+
+	uintptr_t fp = (uintptr_t)uctx->uc_stack.ss_sp + uctx->uc_stack.ss_size;
+	fp = ALIGN_TO_16_BYTES(fp);
+
+	int padded_argc = (argc < RISCV_REGISTER_ARGS) ? RISCV_REGISTER_ARGS : argc;
+
+	uintptr_t sp = fp - (sizeof(long) * padded_argc);
+	sp = ALIGN_TO_16_BYTES(sp);
+
+	// ints travel sign extended to the register width, on the stack too
+	long *current_arg_addr = (long *) sp;
+
+	va_list argv;
+	va_start(argv, argc);
+	for (int i = 0; i < argc; i++) {
+		*current_arg_addr = va_arg(argv, int);
+		current_arg_addr++;
+	}
+	va_end(argv);
+
+	mcontext_t mctx = uctx->uc_mcontext;
+
+	__darwin_riscv_thread_state64_set_fp(mctx->__ss, fp);
+	__darwin_riscv_thread_state64_set_sp(mctx->__ss, sp);
+	__darwin_riscv_thread_state64_set_lr(mctx->__ss, (uintptr_t)_ctx_start);
+
+	mctx->__ss.__x[9] = (uintptr_t)uctx;
+	mctx->__ss.__x[18] = _OS_PTR_MUNGE(func);
+	return;
+error:
+	uctx->uc_mcsize = 0;
+	return;
+}
+
 #endif /* arm64 || x86_64 || i386 */
 
 #else /* TARGET_OS_OSX || TARGET_OS_DRIVERKIT */

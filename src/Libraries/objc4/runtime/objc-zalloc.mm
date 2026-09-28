@@ -35,6 +35,40 @@
 
 namespace objc {
 
+#if __riscv && __LP64__
+
+void *AtomicQueue::pop()
+{
+    pair_t l1 = atomic_pair.load(relaxed);
+    pair_t l2;
+    Entry *head;
+
+    do {
+        head = reinterpret_cast<Entry *>(l1 & headMask);
+        if (head == nullptr) {
+            return nullptr;
+        }
+        l2 = reinterpret_cast<uintptr_t>(head->next) | ((l1 & ~headMask) + genOne);
+    } while (!atomic_pair.compare_exchange_weak(l1, l2, relaxed, relaxed));
+
+    return reinterpret_cast<void *>(head);
+}
+
+void AtomicQueue::push_list(void *_head, void *_tail)
+{
+    Entry *head = reinterpret_cast<Entry *>(_head);
+    Entry *tail = reinterpret_cast<Entry *>(_tail);
+    pair_t l1 = atomic_pair.load(relaxed);
+    pair_t l2;
+
+    do {
+        tail->next = reinterpret_cast<Entry *>(l1 & headMask);
+        l2 = reinterpret_cast<uintptr_t>(head) | ((l1 & ~headMask) + genOne);
+    } while (!atomic_pair.compare_exchange_weak(l1, l2, release, relaxed));
+}
+
+#else
+
 void *AtomicQueue::pop()
 {
     AtomicQueue l1, l2;
@@ -65,6 +99,8 @@ void AtomicQueue::push_list(void *_head, void *_tail)
         l2.gen = l1.gen + 1;
     } while (!atomic_pair.compare_exchange_weak(l1.pair, l2.pair, release, relaxed));
 }
+
+#endif
 
 template<class T>
 constexpr inline

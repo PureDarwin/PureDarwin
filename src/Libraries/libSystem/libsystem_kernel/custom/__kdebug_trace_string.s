@@ -44,6 +44,10 @@ __SYSCALL(___kdebug_trace_string, kdebug_trace_string, 4)
 
 __SYSCALL(___kdebug_trace_string, kdebug_trace_string, 3)
 
+#elif defined(__riscv)
+
+__SYSCALL(___kdebug_trace_string, kdebug_trace_string, 3)
+
 #else
 #error Unsupported architecture
 #endif

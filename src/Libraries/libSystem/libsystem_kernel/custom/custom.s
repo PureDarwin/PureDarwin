@@ -142,6 +142,19 @@ __thread_set_tsd_base:
 	svc 	#SWI_SYSCALL
 	ret
 
+#elif defined(__riscv)
+
+#include <mach/riscv/traps.h>
+
+	// the platform call with code 2 in a3, the kernel loads the new base into the user tp
+	.align 2
+	.globl __thread_set_tsd_base
+__thread_set_tsd_base:
+	li	a3, 2
+	li	t0, MACH_RISCV_TRAP_PLATFORM
+	ecall
+	ret
+
 #else
 #error unknown architecture
 #endif

@@ -120,8 +120,14 @@ bool _dyld_find_unwind_sections(void* addr, struct dyld_unwind_sections* info)
         info->mh = (struct mach_header*)&__dso_handle;
         info->dwarf_section = &ehStart;
         info->dwarf_section_length = ((char*)&ehEnd - (char*)&ehStart);
+#if __riscv
+        // riscv images carry dwarf unwind only
+        info->compact_unwind_section = NULL;
+        info->compact_unwind_section_length = 0;
+#else
         info->compact_unwind_section = &uwStart;
         info->compact_unwind_section_length = ((char*)&uwEnd - (char*)&uwStart);
+#endif
 		return true;
 	}
 	else {

@@ -234,6 +234,43 @@ Lparent:
 	cbnz	w11, Lparent		// If exclusive store failed, retry
 	ARM64_STACK_EPILOG		// Done, return
 
+#elif defined(__riscv)
+
+MI_ENTRY_POINT(___vfork)
+	MI_GET_ADDRESS(t1, __current_pid)
+Ltry_set_vfork:
+	lr.w	t2, (t1)			// get old current pid value (exclusive)
+	addiw	t3, t2, -1			// subtract one
+	bltz	t3, 1f				// keep counting vforks down if already negative
+	li	t3, -1				// a cached pid becomes one vfork in progress
+1:
+	sc.w	t4, t3, (t1)			// attempt exclusive store to current pid
+	bnez	t4, Ltry_set_vfork		// if store failed, retry
+
+	li	t0, SYS_vfork			// set syscall code
+	ecall
+	bnez	t0, Lbotch
+	beqz	a1, Lparent
+
+	// child
+	li	a0, 0
+	ret
+
+	// error case
+Lbotch:
+	PUSH_FRAME
+	call	_cerror				// update errno
+	li	a0, -1				// set return value
+	MI_GET_ADDRESS(t1, __current_pid)	// reload current pid address
+	POP_FRAME
+	// fall through
+Lparent:
+	lr.w	t2, (t1)			// exclusive load current pid value
+	addiw	t2, t2, 1			// increment (i.e. decrement vfork count)
+	sc.w	t3, t2, (t1)			// attempt exclusive store of updated vfork count
+	bnez	t3, Lparent			// if exclusive store failed, retry
+	ret					// done, return
+
 #else
 #error Unsupported architecture
 #endif

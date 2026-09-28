@@ -82,5 +82,22 @@ Lstart:
 
 #endif /* __arm64__ */
 
+
+#if __riscv
+
+    .p2align 2
+    .globl _start
+    .private_extern _start
+_start:
+	.option push
+	.option norvc
+	nop				// a full 4-byte nop, address_of_start is _start + 4
+	.option pop
+Lstart:
+	call	_exit			// result in a0 already in param reg a0
+	unimp
+
+#endif /* __riscv */
+
 	.subsections_via_symbols
 	

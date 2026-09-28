@@ -81,6 +81,10 @@ objc_object::getIsa()
     extern objc_class OBJC_CLASS_$___NSUnrecognizedTaggedPointer;
     uintptr_t slot, ptr = (uintptr_t)this;
     Class cls;
+#if OBJC_SPLIT_TAGGED_POINTERS
+    // clang assumes this is 8 byte aligned and would fold the low tag bits to 0
+    __asm__("" : "+r"(ptr));
+#endif
 
     slot = (ptr >> _OBJC_TAG_SLOT_SHIFT) & _OBJC_TAG_SLOT_MASK;
     cls = objc_tag_classes[slot];
@@ -1374,6 +1378,74 @@ callerAcceptsOptimizedReturn(const void *ra)
 }
 
 // __i386__
+# elif __riscv && __LP64__
+
+// arm64's marker is mov fp, fp and riscv's would be mv s0, s0, until clang emits
+// it the caller's next call is checked for reaching the claim functions like x86_64
+
+// follows one jal, then at most one ld64 island (auipc t3, jr lo(t3))
+// or one stub (auipc t3, ld t3 lo(t3), jr t3)
+static ALWAYS_INLINE const void *
+riscvCallTarget(const void *pc)
+{
+    uint32_t insn = *(const unaligned_uint32_t *)pc;
+    // jal ra, target
+    if ((insn & 0xfff) != 0x0ef) return nil;
+    uint32_t imm = ((insn >> 31) & 0x1) << 20 | ((insn >> 12) & 0xff) << 12 |
+                   ((insn >> 20) & 0x1) << 11 | ((insn >> 21) & 0x3ff) << 1;
+    intptr_t off = (intptr_t)((int32_t)(imm << 11) >> 11);
+    return (const uint8_t *)pc + off;
+}
+
+static ALWAYS_INLINE bool
+riscvIsClaimFunction(const void *fn)
+{
+    return fn == (const void *)&objc_retainAutoreleasedReturnValue  ||
+           fn == (const void *)&objc_unsafeClaimAutoreleasedReturnValue;
+}
+
+static ALWAYS_INLINE bool
+callerAcceptsOptimizedReturn(const void *ra)
+{
+    const uint8_t *pc = (const uint8_t *)ra;
+    uint32_t insn = *(const unaligned_uint32_t *)pc;
+    // mv s0, s0
+    if (insn == 0x00040413) return true;
+
+    // clang may copy the result out of a0 before the claim call, skip one mv rd, a0
+    if ((insn & 0xf07f) == 0x802a  &&  (insn & 0x0f80) != 0) {
+        pc += 2;
+    } else if ((insn & 0xfffff07f) == 0x00050013) {
+        pc += 4;
+    }
+
+    const uint8_t *target = (const uint8_t *)riscvCallTarget(pc);
+    if (!target) return false;
+
+    for (int hop = 0; hop < 2; hop++) {
+        if (riscvIsClaimFunction(target)) return true;
+
+        uint32_t i0 = *(const unaligned_uint32_t *)target;
+        // auipc t3, hi
+        if ((i0 & 0xfff) != 0xe17) return false;
+        uint32_t i1 = *(const unaligned_uint32_t *)(target + 4);
+        intptr_t hi = (intptr_t)(int32_t)(i0 & 0xfffff000);
+        intptr_t lo = (intptr_t)((int32_t)i1 >> 20);
+        if ((i1 & 0xfffff) == 0xe3e03) {
+            // ld t3, lo(t3) then jr t3 is a stub, compare its got slot
+            uint32_t i2 = *(const unaligned_uint32_t *)(target + 8);
+            if (i2 != 0x000e0067) return false;
+            const void * const *slot = (const void * const *)(target + hi + lo);
+            return riscvIsClaimFunction(*slot);
+        }
+        // jr lo(t3) is a branch island
+        if ((i1 & 0xfffff) != 0xe0067) return false;
+        target = target + hi + lo;
+    }
+    return false;
+}
+
+// __riscv
 # else
 
 #warning unknown architecture

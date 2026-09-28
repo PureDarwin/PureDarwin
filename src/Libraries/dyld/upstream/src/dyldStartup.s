@@ -290,6 +290,50 @@ Lapple:	ldr	w4, [x3]
 #endif // __arm64__ && !TARGET_OS_SIMULATOR
 
 
+#if __riscv && __LP64__ && !TARGET_OS_SIMULATOR
+	.text
+	.p2align 2
+	.globl __dyld_start
+__dyld_start:
+	mv	s1, sp			// s1 keeps the kernel's stack block
+	andi	sp, s1, -16		// force 16-byte alignment of stack
+	addi	sp, sp, -16
+	sd	zero, 0(sp)		// make aligned terminating frame
+	sd	zero, 8(sp)
+	addi	fp, sp, 16		// fp points past the frame record like the psabi says
+	addi	sp, sp, -16		// make room for local variables
+	ld	a0, 0(s1)		// get app's mh into a0
+	ld	a1, 8(s1)		// get argc into a1 (kernel passes 32-bit int argc as 64-bits on stack to keep alignment)
+	addi	a2, s1, 16		// get argv into a2
+	lla	a3, ___dso_handle	// get dyld's mh in to a3
+	mv	a4, sp			// a4 has &startGlue
+
+	// call dyldbootstrap::start(app_mh, argc, argv, dyld_mh, &startGlue)
+	call	__ZN13dyldbootstrap5startEPKN5dyld311MachOLoadedEiPPKcS3_Pm
+	mv	t1, a0			// save entry point address in t1
+	ld	a1, 0(sp)
+	bnez	a1, Lnew
+
+	// LC_UNIXTHREAD way, clean up stack and jump to result
+	addi	sp, s1, 8		// restore unaligned stack pointer without app mh
+	jr	t1			// jump to the program's entry point
+
+	// LC_MAIN case, set up stack for call to main()
+Lnew:	mv	ra, a1			// simulate return address into _start in libdyld.dylib
+	ld	a0, 8(s1)		// main param1 = argc
+	addi	a1, s1, 16		// main param2 = argv
+	slli	a2, a0, 3
+	add	a2, a1, a2
+	addi	a2, a2, 8		// main param3 = &env[0]
+	mv	a3, a2
+Lapple:	ld	t0, 0(a3)
+	addi	a3, a3, 8
+	bnez	t0, Lapple		// main param4 = apple
+	jr	t1
+
+#endif // __riscv && __LP64__ && !TARGET_OS_SIMULATOR
+
+
 // When iOS 10.0 simulator runs on 10.11, abort_with_payload() does not exist,
 // so it falls back and uses dyld_fatal_error().
 #if TARGET_OS_SIMULATOR

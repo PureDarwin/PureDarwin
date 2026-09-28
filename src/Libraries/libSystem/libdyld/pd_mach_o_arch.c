@@ -40,12 +40,27 @@ getsegbyname(const char *segname)
  * NXArchInfo entries selected by host_info(). This build only ever targets
  * one architecture, so the "local arch" is always this one.
  */
+// the arch this libdyld was built for
 static const NXArchInfo pd_local_arch_info = {
+#if defined(__riscv) && __riscv_xlen == 64
+	.name = "riscv64",
+	.cputype = CPU_TYPE_RISCV64,
+	.cpusubtype = CPU_SUBTYPE_RISCV_ALL,
+	.byteorder = NX_LittleEndian,
+	.description = "riscv64",
+#elif defined(__arm64__)
+	.name = "arm64",
+	.cputype = CPU_TYPE_ARM64,
+	.cpusubtype = CPU_SUBTYPE_ARM64_ALL,
+	.byteorder = NX_LittleEndian,
+	.description = "arm64",
+#else
 	.name = "x86_64",
 	.cputype = CPU_TYPE_X86_64,
 	.cpusubtype = CPU_SUBTYPE_X86_64_ALL,
 	.byteorder = NX_LittleEndian,
 	.description = "x86_64",
+#endif
 };
 
 const NXArchInfo *

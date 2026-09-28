@@ -34,7 +34,7 @@
  */
 #include_next <sys/cdefs.h>
 #ifndef _LIBC_NO_FEATURE_VERIFICATION
-#if defined(__arm64__) || defined(__arm__) || defined(__i386__) || defined(__x86_64__)
+#if defined(__arm64__) || defined(__arm__) || defined(__i386__) || defined(__x86_64__) || defined(__riscv)
 #  include "libc-features.h"
 #else
 #  error "Unknown architecture."

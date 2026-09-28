@@ -79,6 +79,14 @@ typedef int sigjmp_buf[_JBLEN + 1];
 typedef int jmp_buf[_JBLEN];
 typedef int sigjmp_buf[_JBLEN + 1];
 
+#elif defined(__riscv) && __riscv_xlen == 64
+// ra, sp, s0-s11, fs0-fs11 and two signal words, 8 bytes each
+#define _JBLEN		((14 + 12 + 2) * 2)
+
+// the saves are 8-byte loads and stores, keep the buffer aligned for them
+typedef int jmp_buf[_JBLEN] __attribute__((__aligned__(8)));
+typedef int sigjmp_buf[_JBLEN + 1] __attribute__((__aligned__(8)));
+
 #else
 #	error Undefined platform for setjmp
 #endif

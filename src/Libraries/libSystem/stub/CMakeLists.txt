@@ -59,14 +59,14 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBSYSTEM_EXPOR
 # there and the ARM export list gets the tail as a symbol name
 file(STRINGS ${LIBSYSTEM_EXPORTS} _libsystem_export_lines)
 set(_libsystem_exports_for_link ${LIBSYSTEM_EXPORTS})
-if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
+if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32 OR PUREDARWIN_RISCV64)
     # The legacy x86 ABI suffixes. On arm64 the toolchain defines
     # XNU_PLATFORM_MacOSX, so cdefs.h sets __DARWIN_ONLY_64_BIT_INO_T and
     # friends to 1 and libc compiles these entry points under their plain
     # names - strip the suffix rather than dropping the export, or nothing
     # exports stat/fstat at all. ARM32 has no such define, so it keeps the
     # old drop. Modern ARM64 APIs still use $DARWIN_EXTSN and $V2.
-    if(PUREDARWIN_ARM64)
+    if(PUREDARWIN_ARM64 OR PUREDARWIN_RISCV64)
         list(TRANSFORM _libsystem_export_lines REPLACE "\\$(UNIX2003|INODE64|1050)$" "")
         list(REMOVE_DUPLICATES _libsystem_export_lines)
     else()
@@ -85,13 +85,22 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     #   fe*except      - openlibm's fenv is the x86 SSE/x87 implementation
     #   *context       - libplatform builds ucontext for x86_64 only so far
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
-        "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|roundl|lroundl|llroundl|floorl|frexpl|feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|getfsstat|i386_set_ldt|getcontext|setcontext|makecontext|swapcontext)$")
-    # The rest of openlibm's long double surface (math.h and complex.h *l) and
-    # the remaining x86 fenv entry points, for the same reason
+        "^_(i386_set_ldt|i386_get_ldt|nexttoward|nexttowardf|scalbnl|roundl|lroundl|llroundl|floorl|frexpl|getfsstat)$")
+    # riscv64 builds the ucontext family, arm does not yet
+    if(NOT PUREDARWIN_RISCV64)
+        list(FILTER _libsystem_export_lines EXCLUDE REGEX
+            "^_(getcontext|setcontext|makecontext|swapcontext)$")
+    endif()
+    # The rest of openlibm's long double surface (math.h and complex.h *l)
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
-        "^_(acoshl|acosl|asinhl|asinl|atan2l|atanhl|atanl|cbrtl|ceill|copysignl|coshl|cosl|erfcl|erfl|exp2l|expl|expm1l|fabsl|fmal|fmaxl|fminl|fmodl|hypotl|ilogbl|lgammal|llrintl|log10l|log1pl|log2l|logbl|logl|lrintl|modfl|nearbyintl|nextafterl|nexttowardl|powl|remainderl|remquol|rintl|scalblnl|sinhl|sinl|sqrtl|tanhl|tanl|tgammal|truncl|feraiseexcept|feupdateenv)$")
+        "^_(acoshl|acosl|asinhl|asinl|atan2l|atanhl|atanl|cbrtl|ceill|copysignl|coshl|cosl|erfcl|erfl|exp2l|expl|expm1l|fabsl|fmal|fmaxl|fminl|fmodl|hypotl|ilogbl|lgammal|llrintl|log10l|log1pl|log2l|logbl|logl|lrintl|modfl|nearbyintl|nextafterl|nexttowardl|powl|remainderl|remquol|rintl|scalblnl|sinhl|sinl|sqrtl|tanhl|tanl|tgammal|truncl)$")
     list(FILTER _libsystem_export_lines EXCLUDE REGEX
         "^_(cabsl|cacoshl|cacosl|cargl|casinhl|casinl|catanhl|catanl|ccoshl|ccosl|cexpl|cimagl|clogl|conjl|cpowl|cprojl|creall|csinhl|csinl|csqrtl|ctanhl|ctanl)$")
+    # openlibm's fenv is the x86 SSE/x87 one, riscv64 has its own fcsr fenv
+    if(NOT PUREDARWIN_RISCV64)
+        list(FILTER _libsystem_export_lines EXCLUDE REGEX
+            "^_(feclearexcept|fetestexcept|feholdexcept|fesetexceptflag|fesetenv|fegetenv|feraiseexcept|feupdateenv)$")
+    endif()
     if(PUREDARWIN_ARM32)
         # The ARMv6 bootstrap runtime does not provide the x86-only long
         # double/fenv entry points, 64-bit integer builtins, generic DWARF
@@ -117,7 +126,7 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
     # cache means compiler-rt does not build it there at all - listing it in the
     # shared export file would make the export list itself an undefined
     # reference on x86.
-    if(PUREDARWIN_ARM64)
+    if(PUREDARWIN_ARM64 OR PUREDARWIN_RISCV64)
         list(APPEND _libsystem_export_lines ___clear_cache
             _sys_icache_invalidate _sys_dcache_flush)
     endif()

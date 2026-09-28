@@ -38,7 +38,7 @@ _init_cpu_capabilities( void )
 	_cpu_capabilities = (int)_get_cpu_capabilities();
 }
 
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm__) || defined(__arm64__) || defined(__riscv)
 
 extern uint64_t _get_cpu_capabilities(void);
 

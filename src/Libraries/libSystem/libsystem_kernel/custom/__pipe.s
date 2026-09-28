@@ -65,6 +65,16 @@ MI_ENTRY_POINT(___pipe)
 	mov		x0, #0				// Success
 	ret							// Done
 
+#elif defined(__riscv)
+
+MI_ENTRY_POINT(___pipe)
+	mv	t1, a0				// stash fd array, the kernel keeps t1
+	SYSCALL_NONAME(pipe, 0, cerror_nocancel)
+	sw	a0, 0(t1)			// save results
+	sw	a1, 4(t1)
+	li	a0, 0				// success
+	ret					// done
+
 #else
 #error Unsupported architecture
 #endif

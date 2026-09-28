@@ -56,6 +56,10 @@ thread_get_register_pointer_values(thread_t thread, uintptr_t *sp, size_t *lengt
 	arm_thread_state64_t state = {};
 	thread_state_flavor_t flavor = ARM_THREAD_STATE64;
 	mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+#elif defined(__riscv)
+	riscv_thread_state64_t state = {};
+	thread_state_flavor_t flavor = RISCV_THREAD_STATE64;
+	mach_msg_type_number_t count = RISCV_THREAD_STATE64_COUNT;
 #else
 #error thread_get_register_pointer_values not defined for this architecture
 #endif
@@ -134,6 +138,20 @@ thread_get_register_pointer_values(thread_t thread, uintptr_t *sp, size_t *lengt
 
 	for (int i = 0; i < 29; i++) {
 		push_register_value(state.__x[i]);
+	}
+#elif defined(__riscv)
+	// the psabi has no red zone below sp
+	if (sp) {
+		*sp = __darwin_riscv_thread_state64_get_sp(state);
+	}
+
+	push_register_value(__darwin_riscv_thread_state64_get_lr(state));
+
+	// x0 is zero, x2 is sp and x8 is the frame pointer
+	for (int i = 3; i < 32; i++) {
+		if (i != 8) {
+			push_register_value(state.__x[i]);
+		}
 	}
 #else
 #error thread_get_register_pointer_values not defined for this architecture

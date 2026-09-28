@@ -52,7 +52,7 @@
 		MALLOC_FATAL_ERROR((cause), message); \
 })
 
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__arm64__) || defined(__riscv)
 #   define __APPLE_API_PRIVATE
 #   include <machine/cpu_capabilities.h>
 #   if defined(__i386__) || defined(__x86_64__)
@@ -70,7 +70,7 @@
 // for this cache-line size.
 #   define MALLOC_CACHE_LINE 128
 #   define MALLOC_NANO_CACHE_LINE 64
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm__) || defined(__arm64__) || defined(__riscv)
 #   define MALLOC_CACHE_LINE 64
 #   define MALLOC_NANO_CACHE_LINE 64
 #else

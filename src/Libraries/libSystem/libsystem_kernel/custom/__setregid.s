@@ -23,6 +23,10 @@ __SYSCALL(___setregid, setregid, 2)
 
 __SYSCALL(___setregid, setregid, 2)
 
+#elif defined(__riscv)
+
+__SYSCALL(___setregid, setregid, 2)
+
 #else
 #error Unsupported architecture
 #endif

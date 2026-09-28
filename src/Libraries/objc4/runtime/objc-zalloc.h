@@ -43,7 +43,14 @@ namespace objc {
 #define MALLOC_ALIGNMENT 16
 
 class AtomicQueue {
-#if __LP64__
+#if __riscv && __LP64__
+    // rv64gc has no 128-bit cas, so the generation shares one word with the head,
+    // user pointers fit in the low 38 bits and the top 26 count updates
+    using pair_t = uintptr_t;
+    static constexpr unsigned headBits = 38;
+    static constexpr uintptr_t headMask = ((uintptr_t)1 << headBits) - 1;
+    static constexpr uintptr_t genOne = (uintptr_t)1 << headBits;
+#elif __LP64__
     using pair_t = __int128_t;
 #else
     using pair_t = uint64_t;
@@ -55,6 +62,9 @@ class AtomicQueue {
         struct Entry *next;
     };
 
+#if __riscv && __LP64__
+    std::atomic<pair_t> atomic_pair;
+#else
     union {
         struct {
             Entry        *head;
@@ -63,6 +73,7 @@ class AtomicQueue {
         std::atomic<pair_t> atomic_pair;
         pair_t pair;
     };
+#endif
 
 public:
     void *pop();

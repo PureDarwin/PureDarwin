@@ -33,6 +33,8 @@
 #include "mach/i386/vm_param.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "mach/arm/vm_param.h"
+#elif defined (__riscv)
+#include "mach/riscv/vm_param.h"
 #else
 #error architecture not supported
 #endif

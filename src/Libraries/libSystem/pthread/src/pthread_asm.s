@@ -342,6 +342,38 @@ Lend:
 
 #endif
 
+#elif defined(__riscv)
+
+#ifndef VARIANT_DYLD
+
+// never called directly by user code, the kernel starts the thread here with
+// the arguments in a0-a5 and a 16 byte aligned sp
+	.text
+	.align 2
+	.globl _start_wqthread
+_start_wqthread:
+	// push a zero frame record and point fp at it, so backtracers know when to stop
+	addi	sp, sp, -16
+	sd	zero, 0(sp)
+	sd	zero, 8(sp)
+	addi	s0, sp, 16
+	call	__pthread_wqthread
+	unimp				// never returns
+
+	.text
+	.align 2
+	.globl _thread_start
+_thread_start:
+	// push a zero frame record and point fp at it, so backtracers know when to stop
+	addi	sp, sp, -16
+	sd	zero, 0(sp)
+	sd	zero, 8(sp)
+	addi	s0, sp, 16
+	call	__pthread_start
+	unimp				// never returns
+
+#endif
+
 #else
 #error Unsupported architecture
 #endif

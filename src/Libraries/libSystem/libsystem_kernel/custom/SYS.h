@@ -492,6 +492,57 @@ name:
   PSEUDO(pseudo, name, nargs, cerror)		%% \
   ret
 
+#elif defined(__riscv)
+
+#include <mach/riscv/syscall_sw.h>
+#include <mach/riscv/vm_param.h>
+#include <mach/riscv/asm.h>
+
+// the number goes in t0, the kernel returns t0 = 0 on success and t0 = 1 with
+// the errno in a0 on failure, arm64's carry flag
+#define DO_SYSCALL(num, cerror)                 \
+	li	t0, (num)                     ; \
+	ecall                                 ; \
+	beqz	t0, 2f                        ; \
+	PUSH_FRAME                            ; \
+	call	_##cerror                     ; \
+	POP_FRAME                             ; \
+	ret                                   ; \
+2:
+
+// through the got, ld64 relaxes it to auipc/addi when var is in this image
+#define MI_GET_ADDRESS(reg,var)  \
+	la	reg, var
+
+#define MI_CALL_EXTERNAL(sym)	\
+	.globl sym                ; \
+	call	sym
+
+#define	SYSCALL_NONAME(name, nargs, cerror)	\
+	DO_SYSCALL(SYS_##name, cerror)		; \
+1:
+
+#define MI_ENTRY_POINT(name)	\
+	.text			; \
+	.align 2		; \
+	.globl name		; \
+name:
+
+#define	PSEUDO(pseudo, name, nargs, cerror)	\
+	.text				; \
+	.align	2			; \
+	.globl	pseudo			; \
+pseudo:					; \
+	SYSCALL_NONAME(name, nargs, cerror)
+
+#define __SYSCALL(pseudo, name, nargs)		\
+	PSEUDO(pseudo, name, nargs, cerror)	; \
+	ret
+
+#define __SYSCALL2(pseudo, name, nargs, cerror)		\
+	PSEUDO(pseudo, name, nargs, cerror)		; \
+	ret
+
 #else
 #error Unsupported architecture
 #endif

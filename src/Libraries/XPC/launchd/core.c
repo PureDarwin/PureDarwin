@@ -6564,6 +6564,8 @@ job_setup_exception_port(job_t j, task_t target_task)
 	f = ARM_THREAD_STATE64;
 #elif defined(__arm__)
 	f = ARM_THREAD_STATE;
+#elif defined(__riscv)
+	f = RISCV_THREAD_STATE64;
 #else
 #error "unknown architecture"
 #endif

@@ -150,7 +150,7 @@ _pthread_self_direct(void)
 {
 #if TARGET_OS_SIMULATOR || defined(__i386__) || defined(__x86_64__)
 	return (pthread_t)_pthread_getspecific_direct(_PTHREAD_TSD_SLOT_PTHREAD_SELF);
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm__) || defined(__arm64__) || defined(__riscv)
 	uintptr_t tsd_base = (uintptr_t)_os_tsd_get_base();
 	return (pthread_t)(tsd_base - _PTHREAD_STRUCT_DIRECT_TSD_OFFSET);
 #else

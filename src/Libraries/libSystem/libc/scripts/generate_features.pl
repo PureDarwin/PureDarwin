@@ -131,7 +131,10 @@ for my $arch (split(/ /, $ENV{"ARCHS"}))
 		# map all arm64 subtypes to arm64
 		$shortarch =~ s/arm64[_a-z0-9]*/arm64/g;
 
-		printf HEADER "#if !defined(__".$shortarch."__)\n";
+		# riscv compilers only predefine __riscv
+		my $archmacro = ($shortarch =~ /^riscv/) ? "__riscv" : "__".$shortarch."__";
+
+		printf HEADER "#if !defined(".$archmacro.")\n";
 		printf HEADER "#error Mismatched libc-features.h architecture\n";
 		printf HEADER "#endif\n\n";
 

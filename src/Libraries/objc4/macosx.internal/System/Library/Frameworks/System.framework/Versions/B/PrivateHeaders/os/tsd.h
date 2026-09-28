@@ -70,6 +70,11 @@ _os_cpu_number(void)
 	struct { uintptr_t p1, p2; } p;
 	__asm__("sidt %[p]" : [p] "=&m" (p));
 	return (unsigned int)(p.p1 & 0xfff);
+#elif defined(__riscv)
+	// the kernel keeps the cpu number in the low bits of gp, see MACHDEP_GP_CPUNUM_MASK in xnu
+	uintptr_t p;
+	__asm__("mv	%[p], gp" : [p] "=&r" (p));
+	return (unsigned int)(p & 0xfff);
 #else
 #error _os_cpu_number not implemented on this architecture
 #endif
@@ -129,6 +134,19 @@ _os_tsd_get_base(void)
 #endif
 
 	return (void**)(uintptr_t)tsd;
+}
+#define _os_tsd_get_base()  _os_tsd_get_base()
+
+#elif defined(__riscv)
+
+// the kernel loads the user tp with the tsd base, no cpu number bits in it
+__attribute__((always_inline, pure))
+static __inline__ void**
+_os_tsd_get_base(void)
+{
+	void **tsd;
+	__asm__("mv %0, tp" : "=r" (tsd));
+	return tsd;
 }
 #define _os_tsd_get_base()  _os_tsd_get_base()
 
@@ -202,6 +220,18 @@ _os_ptr_munge(uintptr_t ptr)
 
 #define _OS_PTR_MUNGE(_regdest, _regsrc, _token) \
 	eor _regdest, _regsrc, _token
+
+#define _OS_PTR_UNMUNGE(_regdest, _regsrc, _token) \
+	_OS_PTR_MUNGE(_regdest, _regsrc, _token)
+
+#elif defined(__riscv)
+
+#define _OS_PTR_MUNGE_TOKEN(_reg, _token) \
+	mv _reg, tp ; \
+	ld _token, _OS_TSD_OFFSET(__TSD_PTR_MUNGE)(_reg)
+
+#define _OS_PTR_MUNGE(_regdest, _regsrc, _token) \
+	xor _regdest, _regsrc, _token
 
 #define _OS_PTR_UNMUNGE(_regdest, _regsrc, _token) \
 	_OS_PTR_MUNGE(_regdest, _regsrc, _token)

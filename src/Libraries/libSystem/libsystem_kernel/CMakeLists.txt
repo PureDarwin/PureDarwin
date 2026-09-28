@@ -33,7 +33,7 @@ else()
     set(_libsystem_kernel_syscall_platform MacOSX)
 endif()
 
-if(PUREDARWIN_ARM32 OR PUREDARWIN_ARCH STREQUAL "x86_64" OR PUREDARWIN_ARCH STREQUAL "arm64")
+if(PUREDARWIN_ARM32 OR PUREDARWIN_ARCH STREQUAL "x86_64" OR PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_RISCV64)
     # The C implementation guards on __arm__ || __arm64__ || __x86_64__, so it
     # covers everything we build. The assembly is arm32-only (#if defined(__arm__)
     # and it uses movw/movt), so sending arm64 there produced an empty object and

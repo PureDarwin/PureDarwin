@@ -72,6 +72,16 @@ __get_cpu_capabilities:
 Lcommpage_cc_addr:
 .quad _COMM_PAGE_CPU_CAPABILITIES64
 
+#elif defined(__riscv)
+
+	.text
+	.align 2
+	.globl __get_cpu_capabilities
+__get_cpu_capabilities:
+	li	a0, _COMM_PAGE_CPU_CAPABILITIES64
+	ld	a0, 0(a0)
+	ret
+
 #else
 #error Unsupported architecture
 #endif

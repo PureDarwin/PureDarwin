@@ -337,6 +337,13 @@ sub readAliases {
 # create one.  We define the macro __SYSCALL_32BIT_ARG_BYTES so that SYS.h could
 # use that to define __SYSCALL dependent on the arguments' total size.
 ##########################################################################
+# riscv compilers only predefine __riscv
+sub archDefined {
+    my ($arch) = @_;
+    return "defined(__riscv)" if $arch =~ /^riscv/;
+    return "defined(__${arch}__)";
+}
+
 sub writeStubForSymbol {
     my ($f, $symbol) = @_;
 
@@ -346,7 +353,7 @@ sub writeStubForSymbol {
         (my $arch = $subarch) =~ s/arm(v.*)/arm/;
         $arch =~ s/x86_64(.*)/x86_64/;
         $arch =~ s/arm64(.*)/arm64/;
-        push(@conditions, "defined(__${arch}__)") unless grep { $_ eq $arch } @{$$symbol{except}};
+        push(@conditions, archDefined($arch)) unless grep { $_ eq $arch } @{$$symbol{except}};
 
         if($arch eq "arm64") {
             $has_arm64 = 1 unless grep { $_ eq $arch } @{$$symbol{except}};
@@ -420,7 +427,7 @@ sub writeAliasesForSymbol {
         
         next unless scalar($$symbol{aliases}{$arch});
         
-				printf $f "#if defined(__${arch}__)\n";
+				printf $f "#if %s\n", archDefined($arch);
         foreach my $alias_sym (@{$$symbol{aliases}{$arch}}) {
             my $sym = (grep { $_ eq $arch } @{$$symbol{except}}) ? "__".$$symbol{asm_sym} : $$symbol{asm_sym};
 					

@@ -187,7 +187,7 @@ static int __pthread_supported_features; // supported feature set
 
 #if defined(__i386__) || defined(__x86_64__)
 static mach_vm_address_t __pthread_stack_hint = 0xB0000000;
-#elif defined(__arm__) || defined(__arm64__)
+#elif defined(__arm__) || defined(__arm64__) || defined(__riscv)
 static mach_vm_address_t __pthread_stack_hint = 0x30000000;
 #else
 #error no __pthread_stack_hint for this architecture
@@ -1967,7 +1967,7 @@ _pthread_clear_qos_tsd(mach_port_t port)
 
 #pragma mark pthread/stack_np.h public interface
 
-#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__arm64__)
+#if defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__arm64__) || defined(__riscv)
 #if __ARM64_ARCH_8_32__
 /*
  * arm64_32 uses 64-bit sizes for the frame pointer and
@@ -1982,6 +1982,13 @@ struct frame_data {
 	frame_data_addr_t frame_addr_next;
 	frame_data_addr_t ret_addr;
 };
+
+#if defined(__riscv)
+// the psabi frame record sits just below the frame pointer
+#define FRAME_DATA_BIAS sizeof(struct frame_data)
+#else
+#define FRAME_DATA_BIAS 0
+#endif
 #else
 #error ********** Unimplemented architecture
 #endif
@@ -1989,7 +1996,7 @@ struct frame_data {
 uintptr_t
 pthread_stack_frame_decode_np(uintptr_t frame_addr, uintptr_t *return_addr)
 {
-	struct frame_data *frame = (struct frame_data *)frame_addr;
+	struct frame_data *frame = (struct frame_data *)(frame_addr - FRAME_DATA_BIAS);
 
 	if (return_addr) {
 #if __has_feature(ptrauth_calls)

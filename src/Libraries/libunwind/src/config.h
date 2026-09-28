@@ -22,7 +22,10 @@
 
 // Platform specific configuration defines.
 #ifdef __APPLE__
-  #if defined(FOR_DYLD)
+  #if defined(__riscv)
+    // riscv mach-o images only carry __eh_frame, there is no compact unwind encoding
+    #define _LIBUNWIND_SUPPORT_DWARF_UNWIND 1
+  #elif defined(FOR_DYLD)
     #define _LIBUNWIND_SUPPORT_COMPACT_UNWIND 1
   #else
     #define _LIBUNWIND_SUPPORT_COMPACT_UNWIND 1

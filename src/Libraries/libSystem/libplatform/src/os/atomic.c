@@ -22,7 +22,7 @@
 #include "resolver.h"
 #include "libkern/OSAtomic.h"
 
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 
 OS_ATOMIC_EXPORT
 int32_t OSAtomicAdd32(int32_t v, volatile int32_t *p);
@@ -389,6 +389,62 @@ typedef struct {
 	long gencount;
 } _OSQueueHead;
 
+#if defined(__riscv)
+
+// lr/sc have no c builtins, the next pointer is stored before lr.d so nothing
+// but the compare sits between lr.d and sc.d
+OS_ALWAYS_INLINE
+static inline void
+_OSAtomicEnqueue_llsc(OSQueueHead *list, void *new, size_t offset)
+{
+	void * volatile *headptr = &(((_OSQueueHead*)list)->item);
+	void * volatile *nextptr = (void*)((char*)new + offset);
+	void *head, *tmp;
+	long fail;
+
+	head = os_atomic_load(headptr, relaxed);
+	do {
+		*nextptr = tmp = head;
+		__asm__ volatile(
+			"lr.d	%[head], (%[headptr])\n\t"
+			"li	%[fail], 1\n\t"
+			"bne	%[head], %[tmp], 1f\n\t"
+			"sc.d.rl	%[fail], %[new], (%[headptr])\n"
+			"1:"
+			: [head] "=&r" (head), [fail] "=&r" (fail)
+			: [headptr] "r" (headptr), [tmp] "r" (tmp), [new] "r" (new)
+			: "memory");
+	} while (fail);
+}
+
+// the load of the next pointer inside the reservation is what stops aba
+OS_ALWAYS_INLINE
+static inline void *
+_OSAtomicDequeue_llsc(OSQueueHead *list, size_t offset)
+{
+	void * volatile *headptr = &(((_OSQueueHead*)list)->item);
+	void *head, *next;
+	long fail;
+
+	do {
+		__asm__ volatile(
+			"li	%[fail], 0\n\t"
+			"lr.d.aq	%[head], (%[headptr])\n\t"
+			"beqz	%[head], 1f\n\t"
+			"add	%[next], %[head], %[offset]\n\t"
+			"ld	%[next], 0(%[next])\n\t"
+			"sc.d	%[fail], %[next], (%[headptr])\n"
+			"1:"
+			: [head] "=&r" (head), [next] "=&r" (next), [fail] "=&r" (fail)
+			: [headptr] "r" (headptr), [offset] "r" (offset)
+			: "memory");
+	} while (unlikely(fail));
+
+	return head;
+}
+
+#else
+
 OS_ALWAYS_INLINE
 static inline void
 _OSAtomicEnqueue_llsc(OSQueueHead *list, void *new, size_t offset)
@@ -426,6 +482,8 @@ _OSAtomicDequeue_llsc(OSQueueHead *list, size_t offset)
 	return head;
 }
 
+#endif // defined(__riscv)
+
 
 void
 OSAtomicEnqueue(OSQueueHead *list, void *new, size_t offset)
@@ -446,6 +504,6 @@ OSMemoryBarrier(void)
 	os_atomic_thread_fence(seq_cst);
 }
 
-#endif // defined(__arm__) || defined(__arm64__)
+#endif // defined(__arm__) || defined(__arm64__) || defined(__riscv)
 
 struct _os_empty_files_are_not_c_files;

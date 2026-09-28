@@ -189,6 +189,8 @@ main(argc, argv)
 		fputs("i386", stdout);
 #elif defined(__arm__) || defined(__arm64__)
 		fputs("arm", stdout);
+#elif defined(__riscv)
+		fputs("riscv", stdout);
 #else
 		fputs("unknown", stdout);
 #endif

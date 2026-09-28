@@ -64,6 +64,9 @@
 		defined(__arm64__)
 #define os_hardware_pause() __asm__("yield")
 #define os_hardware_wfe()   __asm__("wfe")
+#elif defined(__riscv)
+// zihintpause's pause, a fence hint that every riscv core executes as a nop at worst
+#define os_hardware_pause() __asm__(".insn i 0x0f, 0, x0, x0, 0x010")
 #else
 #define os_hardware_pause() __asm__("")
 #endif

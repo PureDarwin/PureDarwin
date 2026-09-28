@@ -37,6 +37,9 @@
 #define	ISALIGNED(a)	((((uintptr_t)(a)) & 0xf) == 8)
 #elif defined(__arm__) || defined(__arm64__)
 #define	ISALIGNED(a)	((((uintptr_t)(a)) & 0x1) == 0)
+#elif defined(__riscv)
+// fp is the caller's sp at entry, which the psabi keeps 16 byte aligned
+#define	ISALIGNED(a)	((((uintptr_t)(a)) & 0xf) == 0)
 #endif
 
 __attribute__((noinline))

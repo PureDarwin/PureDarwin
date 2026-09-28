@@ -42,7 +42,7 @@
 #define IEEE_MC68k
 #endif
 #define Arith_Kind_ASL 1
-#elif defined(__arm64__)
+#elif defined(__arm64__) || (defined(__riscv) && __riscv_xlen == 64)
 #define IEEE_8087
 #define Arith_Kind_ASL 1
 #define Long int

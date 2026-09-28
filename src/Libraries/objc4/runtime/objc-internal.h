@@ -405,6 +405,9 @@ _objc_getTaggedPointerSignedValue(const void * _Nullable ptr);
 // the low bits, extended tags are in the high bits, and half of the
 // extended tag space is reserved for unobfuscated payloads.
 #   define OBJC_SPLIT_TAGGED_POINTERS 1
+#elif __riscv && __LP64__
+// arm64's split scheme, user pointers never set bit 63 so msgSend's nil and tag test is one blez
+#   define OBJC_SPLIT_TAGGED_POINTERS 1
 #else
 #   define OBJC_SPLIT_TAGGED_POINTERS 0
 #endif

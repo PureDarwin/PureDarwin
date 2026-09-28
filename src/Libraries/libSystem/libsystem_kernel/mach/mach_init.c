@@ -150,7 +150,7 @@ mach_init_doit(void)
 	}
 
 	if (vm_page_shift == 0) {
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 		vm_page_shift = COMM_PAGE_READ(uint8_t, USER_PAGE_SHIFT_64);
 #elif defined(__arm__)
 		vm_page_shift = COMM_PAGE_READ(uint8_t, USER_PAGE_SHIFT_32);

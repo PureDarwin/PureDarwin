@@ -1379,6 +1379,12 @@ void* ImageLoaderMachO::getEntryFromLC_UNIXTHREAD() const
 			// <rdar://problem/8543820&9228031> verify entry point is in image
 			if ( this->containsAddress(entry) )
 				return entry;
+	#elif __riscv && __LP64__
+			// flavor 1 state is x0..x31 then pc
+			void* entry = (void*)(((const dyld3::MachOFile*)fMachOData)->entryAddrFromThreadCmd((const thread_command*)cmd) + fSlide);
+			// <rdar://problem/8543820&9228031> verify entry point is in image
+			if ( this->containsAddress(entry) )
+				return entry;
 	#endif
 		}
 		cmd = (const struct load_command*)(((char*)cmd)+cmd->cmdsize);
@@ -2102,7 +2108,7 @@ void ImageLoaderMachO::setupLazyPointerHandler(const LinkContext& context)
 					for (const struct macho_section* sect=sectionsStart; sect < sectionsEnd; ++sect) {
 						if ( strcmp(sect->sectname, "__dyld" ) == 0 ) {
 							struct DATAdyld* dd = (struct DATAdyld*)(sect->addr + fSlide);
-				#if !__arm64__ && !__ARM_ARCH_7K__
+				#if !__arm64__ && !__ARM_ARCH_7K__ && !__riscv
 							if ( sect->size > offsetof(DATAdyld, dyldLazyBinder) ) {
 								if ( dd->dyldLazyBinder != (void*)&stub_binding_helper )
 									dd->dyldLazyBinder = (void*)&stub_binding_helper;

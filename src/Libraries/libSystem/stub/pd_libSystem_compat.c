@@ -761,7 +761,7 @@ fprintf_l(FILE *stream, locale_t loc, const char *format, ...)
     return ret;
 }
 
-#if !defined(__arm__) && !defined(__arm64__) && !defined(__aarch64__)
+#if !defined(__arm__) && !defined(__arm64__) && !defined(__aarch64__) && !defined(__riscv)
 extern int __pd_readdir_r_inode64(DIR *dirp, struct dirent *entry, struct dirent **result) __asm("_readdir_r$INODE64");
 int __pd_readdir_r_plain(DIR *dirp, struct dirent *entry, struct dirent **result) __asm("_readdir_r");
 int
@@ -1092,7 +1092,7 @@ __pd_memset_pattern16(void *b, const void *pattern16, size_t len)
 long double
 ldexpl(long double x, int n)
 {
-#if defined(__arm__) || defined(__aarch64__) || defined(__arm64__)
+#if defined(__arm__) || defined(__aarch64__) || defined(__arm64__) || defined(__riscv)
     return scalbn((double)x, n);
 #else
     return scalbnl(x, n);

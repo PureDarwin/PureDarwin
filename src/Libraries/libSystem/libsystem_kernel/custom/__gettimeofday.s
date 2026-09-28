@@ -115,6 +115,18 @@ ___gettimeofday:
     SYSCALL_NONAME(gettimeofday, 3, cerror_nocancel)
     ret
 
+#elif defined(__riscv)
+
+__SYSCALL2(___gettimeofday_with_mach, gettimeofday, 3, cerror_nocancel)
+
+.text
+.align  2
+.globl ___gettimeofday
+___gettimeofday:
+	li	a2, 0
+	SYSCALL_NONAME(gettimeofday, 3, cerror_nocancel)
+	ret
+
 #else
 #error Unsupported architecture
 #endif

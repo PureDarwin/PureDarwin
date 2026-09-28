@@ -168,6 +168,27 @@ L_notcached:
 	stxr	wzr, w0, [x9]				// Try to store, but don't care if we fail (someone will win, or not)
 L_done:
 	ret									// Done
+#elif defined(__riscv)
+	.data
+	.globl	__current_pid
+	.align 2
+__current_pid:
+	// cached pid, 0 when unset, > 0 the pid, < 0 minus the vforks in progress
+	.long 0
+
+MI_ENTRY_POINT(___getpid)
+	MI_GET_ADDRESS(t1, __current_pid)	// get address of cached value
+	lw	a0, 0(t1)			// load it
+	blez	a0, L_notcached			// if there is none, make the syscall
+	ret					// else, we're done
+L_notcached:
+	SYSCALL_NONAME(getpid, 0, cerror_nocancel)
+	lr.w	t2, (t1)			// exclusive load
+	bnez	t2, L_done			// unless unset, don't even try
+	sc.w	t2, a0, (t1)			// try to store, but don't care if we fail
+L_done:
+	ret					// done
+
 #else
 #error Unsupported architecture
 #endif

@@ -81,7 +81,7 @@ extern double creal( double complex );
 #endif
 #endif
 #elif defined(__i386__) || defined( __x86_64__ )
-#elif defined(__arm__)
+#elif defined(__arm__) || defined(__riscv)
 #define __LIBMLDBL_COMPAT(sym) /* NOTHING */
 #else
 #error Unknown Architecture

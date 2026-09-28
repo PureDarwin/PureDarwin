@@ -78,7 +78,7 @@ __BEGIN_DECLS
 #define FP_SUBNORMAL    5
 #define FP_SUPERNORMAL  6 /* legacy PowerPC support; this is otherwise unused */
 
-#if defined __arm64__ || defined __ARM_VFPV4__
+#if defined __arm64__ || defined __ARM_VFPV4__ || (defined __riscv && defined __riscv_d)
 /*  On these architectures, fma(), fmaf( ), and fmal( ) are generally about as
     fast as (or faster than) separate multiply and add of the same operands.  */
 #   define FP_FAST_FMA     1

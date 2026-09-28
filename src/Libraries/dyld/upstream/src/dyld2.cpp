@@ -159,7 +159,7 @@ extern "C" ssize_t __sendto(int, const void *, size_t, int, const struct sockadd
 
 
 // ARM and x86_64 are the only architecture that use cpu-sub-types
-#define CPU_SUBTYPES_SUPPORTED  ((__arm__ || __arm64__ || __x86_64__) && !TARGET_OS_SIMULATOR)
+#define CPU_SUBTYPES_SUPPORTED  ((__arm__ || __arm64__ || __x86_64__ || __riscv) && !TARGET_OS_SIMULATOR)
 
 #if __LP64__
 	#define LC_SEGMENT_COMMAND		LC_SEGMENT_64
@@ -2616,6 +2616,9 @@ static void getHostInfo(const macho_header* mainExecutableMH, uintptr_t mainExec
 #elif __arm64__
 	sHostCPU		= CPU_TYPE_ARM64;
 	sHostCPUsubtype = CPU_SUBTYPE_ARM64_V8;
+#elif __riscv && __LP64__
+	sHostCPU		= CPU_TYPE_RISCV64;
+	sHostCPUsubtype = CPU_SUBTYPE_RISCV_ALL;
 #else
 	struct host_basic_info info;
 	mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
@@ -2890,6 +2893,11 @@ static const cpu_subtype_t kARM[kARM_RowCount][9] = {
 	#endif // __arm64e__
 #endif
 
+#if __riscv && __LP64__
+// rv64gc has a single sub-type
+	static const cpu_subtype_t kRISCV64[] = { CPU_SUBTYPE_RISCV_ALL, CPU_SUBTYPE_END_OF_LIST };
+#endif
+
 
 #if __x86_64__
 //      
@@ -2944,6 +2952,10 @@ static const cpu_subtype_t* findCPUSubtypeList(cpu_type_t cpu, cpu_subtype_t sub
 					return kX86_64[i];
 			}
 			break;
+#endif
+#if __riscv && __LP64__
+		case CPU_TYPE_RISCV64:
+			return kRISCV64;
 #endif
 	}
 	return NULL;
@@ -3022,6 +3034,15 @@ static bool fatFindRunsOnAllCPUs(cpu_type_t cpu, const fat_header* fh, uint64_t*
 #if __x86_64__
 				case CPU_TYPE_X86_64:
 					if ( (cpu_subtype_t)OSSwapBigToHostInt32(archs[i].cpusubtype) == CPU_SUBTYPE_X86_64_ALL ) {
+						*offset = OSSwapBigToHostInt32(archs[i].offset);
+						*len = OSSwapBigToHostInt32(archs[i].size);
+						return true;
+					}
+					break;
+#endif
+#if __riscv && __LP64__
+				case CPU_TYPE_RISCV64:
+					if ( (cpu_subtype_t)OSSwapBigToHostInt32(archs[i].cpusubtype) == CPU_SUBTYPE_RISCV_ALL ) {
 						*offset = OSSwapBigToHostInt32(archs[i].offset);
 						*len = OSSwapBigToHostInt32(archs[i].size);
 						return true;

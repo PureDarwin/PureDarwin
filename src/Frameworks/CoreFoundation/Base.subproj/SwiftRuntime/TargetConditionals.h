@@ -210,8 +210,23 @@
 #define TARGET_CPU_MIPS         0
 #define TARGET_CPU_MIPS64       0
 #define TARGET_CPU_S390X        1
+#elif __riscv && __riscv_xlen == 64
+#define TARGET_CPU_PPC          0
+#define TARGET_CPU_PPC64        0
+#define TARGET_CPU_X86          0
+#define TARGET_CPU_X86_64       0
+#define TARGET_CPU_ARM          0
+#define TARGET_CPU_ARM64        0
+#define TARGET_CPU_MIPS         0
+#define TARGET_CPU_MIPS64       0
+#define TARGET_CPU_S390X        0
+#define TARGET_CPU_RISCV64      1
 #else
 #error unknown architecture
+#endif
+
+#ifndef TARGET_CPU_RISCV64
+#define TARGET_CPU_RISCV64      0
 #endif
 
 #if __LITTLE_ENDIAN__

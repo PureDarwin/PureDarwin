@@ -158,6 +158,29 @@ Lparent:
 	POP_FRAME							// Return
 	ARM64_STACK_EPILOG
 
+#elif defined(__riscv)
+
+MI_ENTRY_POINT(___fork)
+	PUSH_FRAME
+	li	t0, SYS_fork			// syscall code
+	ecall					// trap to kernel
+	bnez	t0, Lbotch			// t0 set indicates failure
+	beqz	a1, Lparent			// a1 == 0 indicates that we are the parent
+
+	// child
+	MI_GET_ADDRESS(t1, __current_pid)	// get address of cached "current pid"
+	sw	zero, 0(t1)			// clear cached current pid
+	li	a0, 0
+	POP_FRAME				// and done
+	ret
+
+Lbotch:
+	MI_CALL_EXTERNAL(_cerror)		// handle error
+	li	a0, -1				// return value is -1
+Lparent:
+	POP_FRAME				// return
+	ret
+
 #else
 #error Unsupported architecture
 #endif

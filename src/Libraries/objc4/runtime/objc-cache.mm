@@ -110,7 +110,8 @@ static inline mask_t cache_fill_ratio(mask_t capacity) {
     return capacity * 3 / 4;
 }
 
-#elif __arm64__ && __LP64__
+// riscv64 msgSend scans down and wraps at the first probed bucket like arm64
+#elif (__arm64__ || __riscv) && __LP64__
 
 // objc_msgSend has lots of registers available.
 // Cache scan decrements. No end marker needed.
@@ -241,7 +242,7 @@ uintptr_t objc_opt_offsets[__OBJC_OPT_OFFSETS_COUNT];
 static inline mask_t cache_next(mask_t i, mask_t mask) {
     return (i+1) & mask;
 }
-#elif __arm64__
+#elif __arm64__ || __riscv
 static inline mask_t cache_next(mask_t i, mask_t mask) {
     return i ? i-1 : mask;
 }
@@ -367,7 +368,8 @@ void bucket_t::set(bucket_t *base, SEL newSel, IMP newImp, Class cls)
 #ifdef __arm__
             mega_barrier();
             _sel.store(newSel, memory_order_relaxed);
-#elif __x86_64__ || __i386__
+#elif __x86_64__ || __i386__ || __riscv
+            // riscv msgSend orders its imp load after the sel load with an address dependency
             _sel.store(newSel, memory_order_release);
 #else
 #error Don't know how to do bucket_t::set on this architecture.
@@ -596,7 +598,12 @@ void cache_t::setBucketsAndMask(struct bucket_t *newBuckets, mask_t newMask)
     ASSERT(buckets <= bucketsMask);
     ASSERT(mask <= maxMask);
 
+#if __riscv
+    // publish the zeroed buckets before the pointer, rvwmo gives no store ordering for free
+    _bucketsAndMaybeMask.store(((uintptr_t)newMask << maskShift) | (uintptr_t)newBuckets, memory_order_release);
+#else
     _bucketsAndMaybeMask.store(((uintptr_t)newMask << maskShift) | (uintptr_t)newBuckets, memory_order_relaxed);
+#endif
     _occupied = 0;
 }
 
@@ -1019,6 +1026,13 @@ static uintptr_t _get_pc_for_thread(thread_t thread)
     unsigned int count = ARM_THREAD_STATE_COUNT;
     kern_return_t okay = thread_get_state (thread, ARM_THREAD_STATE, (thread_state_t)&state, &count);
     return (okay == KERN_SUCCESS) ? state.__pc : PC_SENTINEL;
+}
+#elif defined(__riscv) && __LP64__
+{
+    riscv_thread_state64_t state;
+    unsigned int count = RISCV_THREAD_STATE64_COUNT;
+    kern_return_t okay = thread_get_state (thread, RISCV_THREAD_STATE64, (thread_state_t)&state, &count);
+    return (okay == KERN_SUCCESS) ? (uintptr_t)__darwin_riscv_thread_state64_get_pc(state) : PC_SENTINEL;
 }
 #elif defined(__arm64__)
 {

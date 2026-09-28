@@ -216,6 +216,10 @@
 #endif
 #elif defined(__arm64__) && !__LP64__
 #define CACHE_MASK_STORAGE CACHE_MASK_STORAGE_LOW_4
+#elif defined(__riscv) && __LP64__
+// arm64 macos layout, msgSend gets buckets and mask from one 64-bit load
+// so it never pairs old buckets with a new mask under the weak riscv memory model
+#define CACHE_MASK_STORAGE CACHE_MASK_STORAGE_HIGH_16_BIG_ADDRS
 #else
 #define CACHE_MASK_STORAGE CACHE_MASK_STORAGE_OUTLINED
 #endif

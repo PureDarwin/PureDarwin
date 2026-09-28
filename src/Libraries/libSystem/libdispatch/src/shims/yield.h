@@ -133,6 +133,9 @@ void *_dispatch_wait_for_enqueuer(void **ptr);
 		defined(__arm64__)
 #define dispatch_hardware_pause() __asm__("yield")
 #define dispatch_hardware_wfe()   __asm__("wfe")
+#elif defined(__riscv)
+// zihintpause's pause, a fence hint that every riscv core executes as a nop at worst
+#define dispatch_hardware_pause() __asm__(".insn i 0x0f, 0, x0, x0, 0x010")
 #else
 #define dispatch_hardware_pause() __asm__("")
 #endif

@@ -8,6 +8,9 @@ add_darwin_static_library(openlibm_static)
 
 target_sources(openlibm_static PRIVATE
     $<$<BOOL:${PUREDARWIN_ARM64}>:src/pd_arm64.c>
+    # long double is double on riscv64 too, the fenv is the fcsr one
+    $<$<BOOL:${PUREDARWIN_RISCV64}>:src/pd_riscv64.c>
+    $<$<BOOL:${PUREDARWIN_RISCV64}>:riscv64/fenv.c>
     # src/ - main portable C implementation (see src/Make.files)
     src/common.c
     src/e_acos.c src/e_acosf.c src/e_acosh.c src/e_acoshf.c
@@ -133,7 +136,7 @@ set(_openlibm_long_double_sources
     ld80/e_coshl.c ld80/e_log10l.c ld80/e_tgammal.c
     ld80/e_expl.c ld80/e_log2l.c ld80/k_cosl.c ld80/s_log1pl.c ld80/s_tanhl.c
     ld80/e_logl.c ld80/k_sinl.c ld80/s_erfl.c ld80/s_nanl.c)
-if(PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_ARM32)
+if(PUREDARWIN_ARCH STREQUAL "arm64" OR PUREDARWIN_ARM32 OR PUREDARWIN_RISCV64)
     set_source_files_properties(${_openlibm_long_double_sources}
         PROPERTIES HEADER_FILE_ONLY TRUE)
     # The ARM fenv implementation is provided by the public compiler/runtime

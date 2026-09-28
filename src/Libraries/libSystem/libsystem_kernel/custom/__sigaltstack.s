@@ -44,6 +44,10 @@ __SYSCALL(___sigaltstack, sigaltstack, 3)
 
 __SYSCALL(___sigaltstack, sigaltstack, 3)
 
+#elif defined(__riscv)
+
+__SYSCALL(___sigaltstack, sigaltstack, 3)
+
 #else
 #error Unsupported architecture
 #endif

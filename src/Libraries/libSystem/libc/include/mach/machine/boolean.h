@@ -33,6 +33,8 @@
 #include "mach/i386/boolean.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "mach/arm/boolean.h"
+#elif defined (__riscv)
+#include "mach/riscv/boolean.h"
 #else
 #error architecture not supported
 #endif

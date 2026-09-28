@@ -44,4 +44,8 @@ __SYSCALL(___thread_selfusage, thread_selfusage, 0)
 
 __SYSCALL(___thread_selfusage, thread_selfusage, 0)
 
+#elif defined(__riscv)
+
+__SYSCALL(___thread_selfusage, thread_selfusage, 0)
+
 #endif

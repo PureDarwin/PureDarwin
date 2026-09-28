@@ -33,6 +33,8 @@
 #include "mach/i386/_structs.h"
 #elif defined (__arm__) || defined (__arm64__)
 #include "mach/arm/_structs.h"
+#elif defined (__riscv)
+#include "mach/riscv/_structs.h"
 #else
 #error architecture not supported
 #endif

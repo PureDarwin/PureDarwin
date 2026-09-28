@@ -57,6 +57,9 @@ CF_PRIVATE SInt32 _CFBundleCurrentArchitecture(void) {
     arch = kCFBundleExecutableArchitectureI386;
 #elif defined(__x86_64__)
     arch = kCFBundleExecutableArchitectureX86_64;
+#elif defined(__riscv) && __riscv_xlen == 64
+    // CPU_TYPE_RISCV64, libmacho's arch table has no riscv entry for NXGetLocalArchInfo
+    arch = CPU_ARCH_ABI64 | 24;
 #elif defined(BINARY_SUPPORT_DYLD)
     const NXArchInfo *archInfo = NXGetLocalArchInfo();
     if (archInfo) arch = archInfo->cputype;

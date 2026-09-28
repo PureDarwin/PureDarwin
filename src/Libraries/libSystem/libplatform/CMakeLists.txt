@@ -29,6 +29,26 @@ if(PUREDARWIN_ARM64)
     # sys_icache_invalidate, which is what any JIT needs after writing code.
     set(_libplatform_cachecontrol src/cachecontrol/arm64/cache.s)
     set(_libplatform_ucontext)
+elseif(PUREDARWIN_RISCV64)
+    # the OSAtomic C file is shared with arm, the fifo queue locks since there
+    # is no commpage preemption free zone on riscv
+    set(_libplatform_atomics
+        src/os/atomic.c
+        src/atomics/riscv/OSAtomicFifo.c)
+    set(_libplatform_setjmp
+        src/setjmp/riscv/setjmp.s
+        src/setjmp/generic/sigtramp.c)
+    set(_libplatform_cachecontrol src/cachecontrol/riscv/cache.s)
+    # getcontext/setcontext/makecontext/swapcontext on the arm64 design
+    set(_libplatform_ucontext
+        src/ucontext/riscv/_ctx_start.s
+        src/ucontext/riscv/getcontext.s
+        src/ucontext/riscv/_setcontext.s
+        src/ucontext/riscv/mcontext.c
+        src/ucontext/generic/getmcontext.c
+        src/ucontext/generic/makecontext.c
+        src/ucontext/generic/setcontext.c
+        src/ucontext/generic/swapcontext.c)
 elseif(PUREDARWIN_ARM32)
     # ARM32 uses the portable ARM atomics and classic ARM EABI setjmp files.
     set(_libplatform_atomics
@@ -161,6 +181,12 @@ set_source_files_properties(
 )
 if(PUREDARWIN_ARM64)
     set_source_files_properties(src/cachecontrol/arm64/cache.s
+        PROPERTIES LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp")
+endif()
+if(PUREDARWIN_RISCV64)
+    set_source_files_properties(src/cachecontrol/riscv/cache.s src/setjmp/riscv/setjmp.s
+        src/ucontext/riscv/_ctx_start.s src/ucontext/riscv/getcontext.s
+        src/ucontext/riscv/_setcontext.s
         PROPERTIES LANGUAGE ASM COMPILE_FLAGS "-x assembler-with-cpp")
 endif()
 # init.c assigns the commpage PFZ base (uintptr_t) to a void* -- width-preserving

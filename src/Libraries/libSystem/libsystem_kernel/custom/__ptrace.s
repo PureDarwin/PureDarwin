@@ -68,6 +68,14 @@ MI_ENTRY_POINT(___ptrace)
 	SYSCALL_NONAME(ptrace, 4, cerror)
 	ret
 	
+#elif defined(__riscv)
+
+MI_ENTRY_POINT(___ptrace)
+	MI_GET_ADDRESS(t1, _errno)
+	sw	zero, 0(t1)
+	SYSCALL_NONAME(ptrace, 4, cerror)
+	ret
+
 #else
 #error Unsupported architecture
 #endif

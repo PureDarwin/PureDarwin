@@ -44,6 +44,10 @@ __SYSCALL(___lseek, lseek, 4)
 
 __SYSCALL(___lseek, lseek, 3)
 
+#elif defined(__riscv)
+
+__SYSCALL(___lseek, lseek, 3)
+
 #else
 #error Unsupported architecture
 #endif

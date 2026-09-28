@@ -348,6 +348,23 @@
         #else
           #define TARGET_RT_64_BIT      0
         #endif
+    #elif defined(__riscv) && __riscv_xlen == 64
+        #define TARGET_CPU_PPC          0
+        #define TARGET_CPU_PPC64        0
+        #define TARGET_CPU_68K          0
+        #define TARGET_CPU_X86          0
+        #define TARGET_CPU_X86_64       0
+        #define TARGET_CPU_ARM          0
+        #define TARGET_CPU_ARM64        0
+        #define TARGET_CPU_RISCV64      1
+        #define TARGET_CPU_MIPS         0
+        #define TARGET_CPU_SPARC        0
+        #define TARGET_CPU_ALPHA        0
+        #define TARGET_RT_MAC_CFM       0
+        #define TARGET_RT_MAC_MACHO     1
+        #define TARGET_RT_LITTLE_ENDIAN 1
+        #define TARGET_RT_BIG_ENDIAN    0
+        #define TARGET_RT_64_BIT        1
     #else
         #error unrecognized GNU C compiler
     #endif
@@ -517,6 +534,9 @@
  * decides a value keeps it, and code that tests one of these compiles instead
  * of tripping -Wundef. All zero: PureDarwin is none of them.
  */
+#ifndef TARGET_CPU_RISCV64
+    #define TARGET_CPU_RISCV64 0
+#endif
 #ifndef TARGET_OS_VISION
  #define TARGET_OS_VISION            0
 #endif

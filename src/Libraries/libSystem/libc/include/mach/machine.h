@@ -110,6 +110,8 @@ typedef integer_t       cpu_threadtype_t;
 #define CPU_TYPE_ARM            ((cpu_type_t) 12)
 #define CPU_TYPE_ARM64          (CPU_TYPE_ARM | CPU_ARCH_ABI64)
 #define CPU_TYPE_ARM64_32       (CPU_TYPE_ARM | CPU_ARCH_ABI64_32)
+#define CPU_TYPE_RISCV          ((cpu_type_t) 24)
+#define CPU_TYPE_RISCV64        (CPU_TYPE_RISCV | CPU_ARCH_ABI64)
 #define CPU_TYPE_MC88000        ((cpu_type_t) 13)
 #define CPU_TYPE_SPARC          ((cpu_type_t) 14)
 #define CPU_TYPE_I860           ((cpu_type_t) 15)
@@ -341,6 +343,9 @@ typedef integer_t       cpu_threadtype_t;
 /* CPU subtype feature flags for ptrauth on arm64e platforms */
 #define CPU_SUBTYPE_ARM64_PTR_AUTH_MASK 0x0f000000
 #define CPU_SUBTYPE_ARM64_PTR_AUTH_VERSION(x) (((x) & CPU_SUBTYPE_ARM64_PTR_AUTH_MASK) >> 24)
+
+// RISCV subtypes
+#define CPU_SUBTYPE_RISCV_ALL           ((cpu_subtype_t) 0)
 
 /*
  *  ARM64_32 subtypes

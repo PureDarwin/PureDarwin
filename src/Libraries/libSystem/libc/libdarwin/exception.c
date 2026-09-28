@@ -35,6 +35,8 @@ _exception_thread_state_flavor(void)
 	flavor = x86_THREAD_STATE;
 #elif defined(__arm__) || defined(__arm64__)
 	flavor = ARM_THREAD_STATE;
+#elif defined(__riscv)
+	flavor = RISCV_THREAD_STATE64;
 #else // defined(__i386__) || defined(__x86_64__)
 #error "unsupported architecture"
 #endif // defined(__i386__) || defined(__x86_64__)
