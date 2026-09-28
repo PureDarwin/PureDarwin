@@ -1,0 +1,5 @@
+pexpert/riscv/pe_bootargs.c              standard
+pexpert/riscv/pe_identify_machine.c      standard
+pexpert/riscv/pe_init.c                  standard
+pexpert/riscv/pe_kprintf.c               standard
+pexpert/riscv/pe_serial.c                standard

@@ -44,6 +44,10 @@ INSTINC_SUBDIRS_ARM64 = \
 	arm	\
 	arm64
 
+INSTINC_SUBDIRS_RISCV64 = \
+	mach	\
+	riscv
+
 EXPINC_SUBDIRS = \
 	mach	\
 	atm	\
@@ -81,6 +85,9 @@ EXPINC_SUBDIRS_ARM64 = \
 	mach	\
 	arm	\
 	arm64
+EXPINC_SUBDIRS_RISCV64 = \
+	mach	\
+	riscv
 
 COMP_SUBDIRS =	\
 	conf

@@ -1,0 +1,10 @@
+bsd/dev/riscv/conf.c		standard
+bsd/dev/riscv/cons.c		standard
+bsd/dev/riscv/km.c		standard
+bsd/dev/riscv/kern_machdep.c	standard
+bsd/dev/riscv/stubs.c		standard
+bsd/dev/riscv/systemcalls.c	standard
+bsd/dev/riscv/sysctl.c		standard
+bsd/dev/riscv/unix_signal.c	standard
+
+bsd/kern/bsd_stubs.c		standard

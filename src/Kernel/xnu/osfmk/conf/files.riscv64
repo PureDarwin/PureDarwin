@@ -1,0 +1,50 @@
+OPTIONS/config_ecc_logging	optional config_ecc_logging
+OPTIONS/fb			optional fb
+OPTIONS/debug			optional debug
+
+osfmk/vm/vm_apple_protect.c	 standard
+osfmk/kern/ecc_init.c		standard
+osfmk/kern/ecc_logging.c	optional config_ecc_logging
+osfmk/kern/memory_error_logging.c	standard
+
+osfmk/riscv/start.s		standard
+osfmk/riscv/locore.s		standard
+osfmk/riscv/cswitch.s		standard
+osfmk/riscv/data.s		standard
+osfmk/riscv/riscv_init.c		standard
+osfmk/riscv/rtclock.c		standard
+osfmk/riscv/bcopy.s		standard
+osfmk/riscv/pmap.c		standard
+osfmk/riscv/pmap_misc.c		standard
+osfmk/riscv/riscv_vm_init.c	standard
+osfmk/riscv/sleh.c		standard
+osfmk/riscv/pcb.c		standard
+osfmk/riscv/status.c		standard
+osfmk/riscv/machine_task.c		standard
+osfmk/riscv/fp.s		standard
+osfmk/riscv/copyio.c		standard
+osfmk/riscv/copyio_asm.s		standard
+osfmk/riscv/bsd_riscv.c		standard
+osfmk/riscv/machine_routines.c		standard
+osfmk/riscv/machine_routines_common.c		standard
+osfmk/riscv/cpu.c		standard
+osfmk/riscv/cpu_common.c		standard
+osfmk/riscv/locks_riscv.c		standard
+osfmk/riscv/preemption_disable.c		standard
+osfmk/riscv/model_dep.c		standard
+osfmk/riscv/commpage/commpage.c		standard
+osfmk/riscv/riscv_timer.c		standard
+osfmk/riscv/static_if.c		standard
+osfmk/riscv/caches.c		standard
+osfmk/riscv/loose_ends.c		standard
+osfmk/riscv/lowmem_vectors.c		standard
+osfmk/riscv/counter.c		standard
+osfmk/riscv/atomic16.c		standard
+osfmk/riscv/riscv_hypercall.c		standard
+osfmk/riscv/io_map.c		standard
+osfmk/riscv/pal_routines.c		standard
+osfmk/riscv/machine_remote_time.c	optional config_mach_bridge_recv_time
+
+osfmk/kdp/ml/riscv/kdp_machdep.c	optional	mach_kdp
+osfmk/kdp/ml/riscv/kdp_vm.c	optional	mach_kdp
+osfmk/vm/WKdm_generic.c	standard

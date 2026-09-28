@@ -38,6 +38,9 @@ INSTINC_SUBDIRS_X86_64H = \
 INSTINC_SUBDIRS_ARM64 = \
 	arm
 
+INSTINC_SUBDIRS_RISCV64 = \
+	riscv
+
 EXPINC_SUBDIRS = \
 	bsm \
 	crypto/entropy \
@@ -66,6 +69,9 @@ EXPINC_SUBDIRS_X86_64H = \
 
 EXPINC_SUBDIRS_ARM64 = \
 	arm
+
+EXPINC_SUBDIRS_RISCV64 = \
+	riscv
 
 COMP_SUBDIRS =	\
 	conf

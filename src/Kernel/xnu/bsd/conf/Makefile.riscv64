@@ -1,0 +1,10 @@
+######################################################################
+#BEGIN	Machine dependent Makefile fragment for riscv64
+######################################################################
+
+kern_csr.o_INCFLAGS += -I$(SRCROOT)/osfmk
+kern_debug.o_INCFLAGS += -I$(SRCROOT)/osfmk
+
+######################################################################
+#END	Machine dependent Makefile fragment for riscv64
+######################################################################

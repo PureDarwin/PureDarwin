@@ -9,7 +9,7 @@
 #
 # Architecture Configuration options
 #
-SUPPORTED_ARCH_CONFIGS := X86_64 X86_64H ARM ARM64
+SUPPORTED_ARCH_CONFIGS := X86_64 X86_64H ARM ARM64 RISCV64
 
 #
 # Kernel Configuration options
@@ -23,6 +23,8 @@ SUPPORTED_KERNEL_CONFIGS = RELEASE DEVELOPMENT DEBUG PROFILE KASAN
 
 SUPPORTED_X86_64_MACHINE_CONFIGS = NONE
 SUPPORTED_X86_64H_MACHINE_CONFIGS = NONE
+# rv64gc boards, VIRT is qemu's virt machine behind opensbi
+SUPPORTED_RISCV64_MACHINE_CONFIGS = VIRT
 
 ifneq ($(findstring _Sim,$(RC_ProjectName)),)
 SUPPORTED_ARM_MACHINE_CONFIGS = NONE
@@ -85,6 +87,7 @@ MACHINE_FLAGS_ARM64_VIRT = -DARM64_BOARD_CONFIG_VIRT -DCURRENT_MACHINE_CONFIG_LC
 MACHINE_FLAGS_ARM64_VIRT4K = -DARM64_BOARD_CONFIG_VIRT -DPD_VIRT_4K -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a53+crypto
 # Allwinner H616/H618 and SG2002: Cortex-A53, 4KB pages (no 16KB granule, see SUN50I.h)
 MACHINE_FLAGS_ARM64_SUN50I = -DARM64_BOARD_CONFIG_SUN50I -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC) -mcpu=cortex-a53+crypto
+MACHINE_FLAGS_RISCV64_VIRT = -DRISCV64_BOARD_CONFIG_VIRT -DCURRENT_MACHINE_CONFIG_LC=$(CURRENT_MACHINE_CONFIG_LC)
 
 
 #
@@ -249,6 +252,7 @@ endef
 
 ARCH_FLAGS_X86_64	  = -arch x86_64
 ARCH_FLAGS_X86_64H	  = -arch x86_64h
+ARCH_FLAGS_RISCV64	  = -arch riscv64
 
 ifneq ($(filter ARM ARM64,$(CURRENT_ARCH_CONFIG)),)
 
@@ -419,6 +423,17 @@ endif
 CFLAGS_ARM64	= -Darm64 -DARM64 -D__ARM64__ -DLP64 -DPAGE_SIZE_FIXED -DVM_KERNEL_LINK_ADDRESS=$(ARM64_KC_BASE) \
 			$(LARGE_MEMORY_DEFINE) -momit-leaf-frame-pointer -fno-strict-aliasing -D__API__=v4 -mkernel
 
+# sv39, the kernel sits in the top 2GB so medany reaches everything with auipc
+# same relative layout as arm64: prelink text, then the collection header, then xnu
+RISCV64_PLKSEG_ADDR  =0xffffffff80004000
+RISCV64_KC_BASE      =0xffffffff82000000
+RISCV64_LINK_ADDR    =0xffffffff83004000
+
+# the kernel never touches fp registers outside the context switch, so soft-float lp64
+CFLAGS_RISCV64	= -Driscv64 -DRISCV64 -D__RISCV64__ -DLP64 -DPAGE_SIZE_FIXED \
+			-DVM_KERNEL_LINK_ADDRESS=$(RISCV64_KC_BASE) -march=rv64imac_zicsr_zifencei -mabi=lp64 \
+			-mcmodel=medany -momit-leaf-frame-pointer -fno-strict-aliasing -mkernel
+
 CFLAGS_RELEASEX86_64 = -O2
 CFLAGS_DEVELOPMENTX86_64 = -O2
 CFLAGS_KASANX86_64 = $(CFLAGS_DEVELOPMENTX86_64)
@@ -443,6 +458,12 @@ CFLAGS_DEVELOPMENTARM64 = -O2
 CFLAGS_KASANARM64 = $(CFLAGS_DEVELOPMENTARM64)
 CFLAGS_DEBUGARM64 = -O0
 CFLAGS_PROFILEARM64 = -O2
+
+CFLAGS_RELEASERISCV64 = -O2
+CFLAGS_DEVELOPMENTRISCV64 = -O2
+CFLAGS_KASANRISCV64 = $(CFLAGS_DEVELOPMENTRISCV64)
+CFLAGS_DEBUGRISCV64 = -O0
+CFLAGS_PROFILERISCV64 = -O2
 
 #
 # Sanitizers Support (KASan, UBSan)
@@ -566,6 +587,7 @@ SFLAGS_X86_64	= $(CFLAGS_X86_64)
 SFLAGS_X86_64H	= $(CFLAGS_X86_64H)
 SFLAGS_ARM	= $(CFLAGS_ARM)
 SFLAGS_ARM64	= $(CFLAGS_ARM64)
+SFLAGS_RISCV64	= $(CFLAGS_RISCV64)
 
 SFLAGS	= $(SFLAGS_GEN) \
 		  $($(addsuffix $(CURRENT_MACHINE_CONFIG),MACHINE_FLAGS_$(CURRENT_ARCH_CONFIG)_)) \
@@ -797,6 +819,59 @@ LDFLAGS_KERNEL_DEBUGARM64 = $(LDFLAGS_KERNEL_DEVELOPMENTARM64)
 
 LDFLAGS_KERNEL_ONLY_CONFIG_KASANARM64 = $(LDFLAGS_KERNEL_ONLY_CONFIG_DEVELOPMENTARM64)
 LDFLAGS_KERNEL_ONLY_CONFIG_DEBUGARM64 = $(LDFLAGS_KERNEL_ONLY_CONFIG_DEVELOPMENTARM64)
+
+# riscv64 links like arm64: static pie at the link address, prelink text below it
+LDFLAGS_KERNEL_GENRISCV64 = \
+	-Wl,-pie \
+	-Wl,-static \
+	-Wl,-segaddr,__PRELINK_TEXT,$(RISCV64_PLKSEG_ADDR) \
+	-Wl,-image_base,$(RISCV64_LINK_ADDR) \
+	\
+	-Wl,-rename_section,__HIB,__text,__TEXT_EXEC,__hib_text \
+	\
+	-Wl,-rename_section,__HIB,__const,__DATA_CONST,__hib_const \
+	-Wl,-rename_section,__HIB,__cstring,__DATA_CONST,__hib_const \
+	-Wl,-rename_section,__HIB,__literal8,__DATA_CONST,__hib_const \
+	-Wl,-rename_section,__HIB,__literal16,__DATA_CONST,__hib_const \
+	\
+	-Wl,-rename_segment,__HIB,__HIBDATA \
+	\
+	-Wl,-sectalign,__DATA,__const,0x1000 \
+	-Wl,-sectalign,__DATA,__data,0x1000 \
+	-Wl,-rename_section,__DATA,__mod_init_func,__DATA_CONST,__mod_init_func \
+	-Wl,-rename_section,__DATA,__mod_term_func,__DATA_CONST,__mod_term_func \
+	-Wl,-rename_section,__DATA,__const,__DATA_CONST,__const \
+	-Wl,-segprot,__DATA_CONST,r--,r-- \
+	-Wl,-rename_section,__TEXT,__text,__TEXT_EXEC,__text \
+	-Wl,-rename_section,__TEXT,__stubs,__TEXT_EXEC,__stubs \
+	-Wl,-sectcreate,"__PLK_TEXT_EXEC",__text,/dev/null \
+	-Wl,-sectcreate,__PRELINK_DATA,__data,/dev/null \
+	-Wl,-sectcreate,"__PLK_DATA_CONST",__data,/dev/null \
+	-Wl,-sectcreate,"__PLK_LLVM_COV",__llvm_covmap,/dev/null \
+	-Wl,-sectcreate,"__PLK_LINKEDIT",__data,/dev/null
+
+LDFLAGS_KERNEL_SEGRISCV64 ?= $(LDFLAGS_KERNEL_SEGARM64)
+
+LDFLAGS_KERNEL_RELEASERISCV64     = \
+	$(LDFLAGS_KERNEL_GENRISCV64) \
+	$(LDFLAGS_KERNEL_SEGRISCV64) \
+	$(LDFLAGS_KERNEL_STRIP_LTO)
+
+LDFLAGS_KERNEL_ONLY_CONFIG_RELEASERISCV64     = \
+	-Wl,-exported_symbols_list,$(TARGET)/all-kpi.exp
+
+LDFLAGS_KERNEL_DEVELOPMENTRISCV64     = \
+	$(LDFLAGS_KERNEL_GENRISCV64) \
+	$(LDFLAGS_KERNEL_SEGRISCV64) \
+	$(LDFLAGS_NOSTRIP_FLAG)
+
+LDFLAGS_KERNEL_ONLY_CONFIG_DEVELOPMENTRISCV64 =
+
+LDFLAGS_KERNEL_KASANRISCV64 = $(LDFLAGS_KERNEL_DEVELOPMENTRISCV64)
+LDFLAGS_KERNEL_DEBUGRISCV64 = $(LDFLAGS_KERNEL_DEVELOPMENTRISCV64)
+
+LDFLAGS_KERNEL_ONLY_CONFIG_KASANRISCV64 = $(LDFLAGS_KERNEL_ONLY_CONFIG_DEVELOPMENTRISCV64)
+LDFLAGS_KERNEL_ONLY_CONFIG_DEBUGRISCV64 = $(LDFLAGS_KERNEL_ONLY_CONFIG_DEVELOPMENTRISCV64)
 
 #
 # arm64e specific linker flags that should be used only when linking the kernel
@@ -1080,6 +1155,7 @@ DSYMUTIL_FLAGS_X86_64	= --arch=x86_64
 DSYMUTIL_FLAGS_X86_64H	= --arch=x86_64h
 DSYMUTIL_FLAGS_ARM	= --arch=arm
 DSYMUTIL_FLAGS_ARM64	=
+DSYMUTIL_FLAGS_RISCV64	=
 
 DSYMUTIL_FLAGS = $(DSYMUTIL_FLAGS_GEN) \
 	$($(addsuffix $(CURRENT_ARCH_CONFIG),DSYMUTIL_FLAGS_))

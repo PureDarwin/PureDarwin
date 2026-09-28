@@ -1,0 +1,2 @@
+iokit/Families/IONVRAM/IONVRAMController.cpp				optional iokitcpp
+iokit/Kernel/IOPMrootDomain.cpp    					optional iokitcpp

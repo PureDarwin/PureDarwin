@@ -500,6 +500,8 @@ ifeq ($(CURRENT_ARCH_CONFIG_LC),x86_64)
 GENASSYM_LOCATION = i386
 else ifeq ($(CURRENT_ARCH_CONFIG_LC),x86_64h)
 GENASSYM_LOCATION = i386
+else ifeq ($(CURRENT_ARCH_CONFIG_LC),riscv64)
+GENASSYM_LOCATION = riscv
 endif
 
 -include genassym.d
