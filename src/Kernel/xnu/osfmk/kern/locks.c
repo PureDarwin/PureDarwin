@@ -170,6 +170,10 @@ hw_spin_in_ppl(hw_spin_timeout_t to)
 #endif
 }
 
+// Emulated guests on an overloaded host deschedule vCPUs for seconds,
+// which every spin timeout reads as a deadlock. no_lock_timeouts=1 spins without one
+static TUNABLE(bool, pd_no_lock_timeouts, "no_lock_timeouts", false);
+
 /*
  * Input and output timeouts are expressed in absolute_time for arm and TSC for Intel
  */
@@ -185,6 +189,9 @@ hw_spin_compute_timeout(hw_spin_policy_t pol)
 	};
 
 	ret.hwst_timeout <<= pol->hwsp_timeout_shift;
+	if (pd_no_lock_timeouts) {
+		ret.hwst_timeout = 0;
+	}
 #if SCHED_HYGIENE_DEBUG || __x86_64__
 	/* Note we can't check if we are interruptible if in ppl */
 	ret.hwst_interruptible = !hw_spin_in_ppl(ret) && ml_get_interrupts_enabled();

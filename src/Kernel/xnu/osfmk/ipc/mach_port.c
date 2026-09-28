@@ -2974,7 +2974,9 @@ mach_port_is_connection_for_service(
 	}
 
 	if (!mach_msg_filter_at_least(MACH_MSG_FILTER_CALLBACKS_VERSION_1)) {
-		return KERN_NOT_SUPPORTED;
+		// No sandbox filter registered: nothing to check, as for an unlabeled service port
+		*filter_policy_id = 0;
+		return KERN_SUCCESS;
 	}
 
 	ret = ipc_port_translate_receive(space, service_port_name, &service_port);

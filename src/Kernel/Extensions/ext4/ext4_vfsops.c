@@ -102,7 +102,14 @@ ext4_mount(struct mount *mp, vnode_t devvp, __unused user_addr_t data,
 	int error;
 
 	if (vfs_isupdate(mp)) {
-		/* read-only fs: nothing to update */
+		struct ext4mount *cur = (struct ext4mount *)vfs_fsprivate(mp);
+		uint32_t writable = 1;
+
+		if (vfs_iswriteupgrade(mp) && cur != NULL && cur->em_devvp != NULL) {
+			(void)VNOP_IOCTL(cur->em_devvp, DKIOCISWRITABLE, (caddr_t)&writable, 0, ctx);
+			if (!writable)
+				return EROFS;
+		}
 		return 0;
 	}
 	if (devvp == NULLVP) {
@@ -172,7 +179,15 @@ ext4_mount(struct mount *mp, vnode_t devvp, __unused user_addr_t data,
 	 * ext4_mount() runs, so explicitly clear MNT_RDONLY here or VFS rejects
 	 * open-for-write/create before our vnode operations can run. */
 	vfs_setflags(mp, MNT_LOCAL);
-	vfs_clearflags(mp, MNT_RDONLY);
+	{
+		/* Write-protected media (a flash partition driven read-only) stays read-only */
+		uint32_t writable = 1;
+		(void)VNOP_IOCTL(devvp, DKIOCISWRITABLE, (caddr_t)&writable, 0, ctx);
+		if (writable)
+			vfs_clearflags(mp, MNT_RDONLY);
+		else
+			vfs_setflags(mp, MNT_RDONLY);
+	}
 
 	vfs_setlocklocal(mp);
 

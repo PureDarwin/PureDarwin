@@ -746,7 +746,9 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
 			}
 			OSSafeReleaseNULL(unserializedContainer);
 
-			data = (OSData *) regEntry->getProperty( "boot-uuid" );
+			// An explicit rd=/rootdev overrides the
+			// loader's boot-uuid, which may name no disk
+			data = rdBootVar[0] ? NULL : (OSData *) regEntry->getProperty( "boot-uuid" );
 			if (data) {
 				uuidStr = (const char*)data->getBytesNoCopy();
 				OSString *uuidString = OSString::withCString( uuidStr );

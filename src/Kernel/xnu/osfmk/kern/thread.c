@@ -4294,7 +4294,9 @@ dtrace_get_thread_inprobe(thread_t thread)
 		return 0;
 	}
 }
+#endif /* CONFIG_DTRACE */
 
+// these accessors are used on kernels without dtrace too
 vm_offset_t
 thread_get_kernel_stack(thread_t thread)
 {
@@ -4369,6 +4371,8 @@ kcov_stksz_set_thread_stack(thread_t thread, vm_offset_t stack)
 	data->ktd_stksz.kst_stack = stack;
 }
 #endif /* CONFIG_STKSZ */
+
+#if CONFIG_DTRACE
 
 int64_t
 dtrace_calc_thread_recent_vtime(thread_t thread)

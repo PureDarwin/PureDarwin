@@ -603,6 +603,7 @@ mac_policy_fixup_mmd_list(struct mac_module_data *new)
 	new->base_addr = new;
 }
 
+
 int
 mac_policy_register(struct mac_policy_conf *mpc, mac_policy_handle_t *handlep,
     void *xd)

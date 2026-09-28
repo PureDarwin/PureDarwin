@@ -2765,6 +2765,10 @@ vc_progress_task(__unused void *arg0, __unused void *arg)
 static boolean_t gc_acquired      = FALSE;
 static boolean_t gc_graphics_boot = FALSE;
 static boolean_t gc_desire_text   = FALSE;
+// PD: a text boot (-v) stays text when IOGraphics takes the console with v_display set to graphics,
+// so the panel keeps the boot log like serial. pdtextboot=0 turns this off
+static boolean_t gc_text_boot     = FALSE;
+static boolean_t gc_text_boot_set = FALSE;
 static boolean_t gc_paused_progress;
 
 static vm_offset_t  lastVideoVirt    = 0;
@@ -2953,7 +2957,16 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 		}
 	}
 
+	if (!gc_text_boot_set && (op == kPEGraphicsMode || op == kPETextMode)) {
+		uint32_t want = 1;
+
+		PE_parse_boot_argn("pdtextboot", &want, sizeof(want));
+		gc_text_boot = want && (op == kPETextMode);
+		gc_text_boot_set = TRUE;
+	}
 	graphics_now = gc_graphics_boot && !gc_desire_text;
+	kprintf("PD-vc: op %u boot_vinfo %p graphics_boot %d desire_text %d acquired %d enabled %d text_boot %d serial %d\n",
+	    op, boot_vinfo, gc_graphics_boot, gc_desire_text, gc_acquired, gc_enabled, gc_text_boot, console_is_serial());
 	switch (op) {
 	case kPEGraphicsMode:
 		gc_graphics_boot = TRUE;
@@ -3003,6 +3016,17 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 	case kPEEnableScreen:
 		if (gc_acquired) {
 			gc_pause( FALSE, graphics_now );
+		} else if (gc_text_boot && !console_is_serial()) {
+			// The framebuffer driver's handoff released the screen: take it back
+			// as text on the new framebuffer
+			gc_graphics_boot = FALSE;
+			gc_desire_text = FALSE;
+			vc_progress_set( FALSE, 0 );
+#if defined(XNU_TARGET_OS_OSX)
+			vc_enable_progressmeter( FALSE );
+#endif
+			gc_enable( TRUE );
+			gc_acquired = TRUE;
 		}
 		break;
 
