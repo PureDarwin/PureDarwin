@@ -438,6 +438,9 @@ kernel_text_contains(vm_offset_t addr)
 void
 riscv_vm_init(uint64_t memory_size, boot_args *args)
 {
+	// page_size and page_shift stay zero on riscv until this runs, the commpage publishes the shift
+	vm_set_page_size();
+
 	gVirtBase = args->virtBase;
 	gPhysBase = args->physBase;
 	gPhysSize = mem_size = ((gPhysBase + args->memSize) & ~PAGE_MASK) - gPhysBase;
