@@ -140,6 +140,8 @@ static_assert(!XNU_VM_HAS_LOPAGE,
 #endif
 #if defined(__arm64__)
 #include <arm/cpu_internal.h>
+#elif defined(__riscv)
+#include <riscv/cpu_internal.h>
 #endif /* defined(__arm64__) */
 
 /*
@@ -2593,7 +2595,7 @@ uint64_t secluded_shutoff_headroom = 150 * 1024 * 1024; /* original value from N
 #endif /* CONFIG_SECLUDED_MEMORY */
 
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 extern void patch_low_glo_vm_page_info(void *, void *, uint32_t);
 #endif
 

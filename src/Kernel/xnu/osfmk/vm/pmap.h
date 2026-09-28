@@ -190,7 +190,7 @@ extern void *pmap_steal_zone_memory(vm_size_t size, vm_size_t alignment); /* Ear
 #endif /* HAS_MTE */
 
 extern uint_t pmap_free_pages(void); /* report remaining unused physical pages */
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 extern ppnum_t pmap_first_pnum;           /* the first valid physical page on the system == atop(gDramBase) */
 extern uint_t pmap_free_pages_span(void); /* report phys address range of unused physical pages */
 #endif /* defined(__arm__) || defined(__arm64__) */
@@ -826,7 +826,7 @@ extern const pmap_t     kernel_pmap;            /* The kernel's map */
 	                                         * be upgraded */
 #define PMAP_OPTIONS_CLEAR_WRITE 0x2000
 #define PMAP_OPTIONS_TRANSLATED_ALLOW_EXECUTE 0x4000 /* Honor execute for translated processes */
-#if defined(__arm__) || defined(__arm64__)
+#if defined(__arm__) || defined(__arm64__) || defined(__riscv)
 #define PMAP_OPTIONS_FF_LOCKED  0x8000
 #define PMAP_OPTIONS_FF_WIRED   0x10000
 #endif

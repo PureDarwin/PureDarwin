@@ -118,7 +118,7 @@
 #define C_SLOT_C_CODEC_BITS             1
 #define C_SLOT_C_POPCOUNT_BITS          0
 
-#elif defined(__x86_64__)               /* 256G from the heap start */
+#elif defined(__x86_64__) || defined(__riscv) /* 256G from the heap start */
 #define C_SLOT_PACKED_PTR_BITS          36
 #define C_SLOT_PACKED_PTR_SHIFT         2
 #define C_SLOT_PACKED_PTR_BASE          ((uintptr_t)KERNEL_PMAP_HEAP_RANGE_START)

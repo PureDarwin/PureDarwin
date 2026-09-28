@@ -78,6 +78,9 @@
 #if defined(__arm64__)
 #include <arm/cpu_data_internal.h>
 #include <arm/misc_protos.h>
+#elif defined(__riscv)
+#include <riscv/cpu_data_internal.h>
+#include <riscv/misc_protos.h>
 #endif
 
 /*
@@ -707,6 +710,13 @@ vm_shared_region_create(
 			pmap_nesting_start = SHARED_REGION_NESTING_BASE_ARM64;
 			pmap_nesting_size = SHARED_REGION_NESTING_SIZE_ARM64;
 			break;
+#elif defined(__riscv)
+		case CPU_TYPE_RISCV64:
+			base_address = SHARED_REGION_BASE_RISCV64;
+			size = SHARED_REGION_SIZE_RISCV64;
+			pmap_nesting_start = SHARED_REGION_NESTING_BASE_RISCV64;
+			pmap_nesting_size = SHARED_REGION_NESTING_SIZE_RISCV64;
+			break;
 #else
 		case CPU_TYPE_I386:
 			base_address = SHARED_REGION_BASE_X86_64;
@@ -738,6 +748,8 @@ vm_shared_region_create(
 			pmap_nesting_start = SHARED_REGION_NESTING_BASE_ARM;
 			pmap_nesting_size = SHARED_REGION_NESTING_SIZE_ARM;
 			break;
+#elif defined(__riscv)
+		// no 32-bit userland
 #else
 		case CPU_TYPE_I386:
 			base_address = SHARED_REGION_BASE_I386;
@@ -808,6 +820,21 @@ vm_shared_region_create(
 			    (vm_map_offset_t)size, vm_map_pageshift, VM_MAP_CREATE_DEFAULT);
 			config_map = vm_map_create_with_page_shift(config_pmap, base_address,
 			    base_address + size, vm_map_pageshift, VM_MAP_CREATE_DEFAULT);
+		}
+	}
+#elif defined(__riscv)
+	{
+		int pmap_flags = PMAP_CREATE_64BIT;
+
+		nested_pmap = pmap_create_options(NULL, 0, pmap_flags | PMAP_CREATE_NESTED);
+		config_pmap = pmap_create_options(NULL, 0, pmap_flags);
+		if ((nested_pmap != PMAP_NULL) && (config_pmap != PMAP_NULL)) {
+			pmap_set_nested(nested_pmap);
+			pmap_set_shared_region(config_pmap, nested_pmap, base_address, size);
+			sub_map = vm_map_create_with_page_shift(nested_pmap, 0,
+			    (vm_map_offset_t)size, PAGE_SHIFT, VM_MAP_CREATE_DEFAULT);
+			config_map = vm_map_create_with_page_shift(config_pmap, base_address,
+			    base_address + size, PAGE_SHIFT, VM_MAP_CREATE_DEFAULT);
 		}
 	}
 #else /* defined(__arm64__) */
@@ -3797,7 +3824,7 @@ vm_commpage_enter(
 	task_t          task,
 	boolean_t       is64bit)
 {
-#if   defined(__arm64__)
+#if   defined(__arm64__) || defined(__riscv)
 #pragma unused(is64bit)
 	(void)task;
 	(void)map;

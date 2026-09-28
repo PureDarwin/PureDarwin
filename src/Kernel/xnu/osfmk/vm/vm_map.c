@@ -12722,7 +12722,7 @@ vm_map_fork(
 	pmap_is64bit =
 #if defined(__i386__) || defined(__x86_64__)
 	    old_map->pmap->pm_task_map != TASK_MAP_32BIT;
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__riscv)
 	    old_map->pmap->is_64bit;
 #else
 #error Unknown architecture.
@@ -12957,9 +12957,9 @@ vm_map_fork(
 	vm_map_range_ex_unlock(ctx, &tmp_old_map);
 after_loop:
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 	pmap_insert_commpage(new_map->pmap);
-#endif /* __arm64__ */
+#endif /* __arm64__ || __riscv */
 
 	if (options & VM_MAP_FORK_CORPSE_FOOTPRINT) {
 		vm_map_corpse_footprint_collect_done(new_map);
