@@ -233,6 +233,8 @@ const char* ffDetectOpenGL(FF_A_UNUSED FFOpenGLOptions* options, FF_A_UNUSED FFO
 }
 GLEOF
     sed -i 's#src/detection/opengl/opengl_apple\.c#src/detection/opengl/opengl_nosupport.c#' CMakeLists.txt
+    # opengl_shared.c picks OpenGL/gl.h on any apple target, send it down its FF_HAVE_NO_GL path
+    sed -i 's/^#elif __APPLE__$/#elif 0/' src/detection/opengl/opengl_shared.c
     ''}
 
     # sysinfo.pageSize is only ever multiplied by vm_statistics64 counters,

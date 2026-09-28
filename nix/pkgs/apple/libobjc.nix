@@ -5,6 +5,8 @@
 , nativeLd
 , libSystem
 , libcxxabiDylib
+  # objc-os.mm's std::function throws bad_function_call, which libc++ owns
+, libcxxDylib
   # 32-bit ARM has no hardware long-long-to-double, so the runtime needs the
   # compiler-rt builtins that 64-bit targets never reference.
 , compilerRt ? null
@@ -52,6 +54,11 @@ let
     "Messengers.subproj/objc-msg-x86_64"
     "objc-blocktramps-x86_64"
     "objc-sel-table"
+  ];
+  # objc-block-trampolines.mm dlopens these from /usr/lib/libobjc-trampolines.dylib
+  # and remaps its __TEXT, so they need a dylib of their own like Apple's
+  trampSrcs = lib.optionals (targetTriple == "riscv64-apple-darwin20.4") [
+    "objc-blocktramps-riscv64"
   ];
 in
 stdenv.mkDerivation {
@@ -121,7 +128,7 @@ stdenv.mkDerivation {
     ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
       -fuse-ld=${nativeLd}/bin/ld -nostdlib \
       -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
-      -L${libSystem}/usr/lib -L${libcxxabiDylib}/usr/lib \
+      -L${libSystem}/usr/lib -L${libcxxabiDylib}/usr/lib -L${libcxxDylib}/usr/lib \
       ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"} \
       -Wl,-platform_version,macos,26.5,26.5 \
       -Wl,-install_name,/usr/lib/libobjc.A.dylib \
@@ -130,8 +137,25 @@ stdenv.mkDerivation {
       -Wl,-order_file,$O/libobjc.order \
       -Wl,-unexported_symbols_list,$O/unexported_symbols \
       -Wl,-fixup_chains \
-      -lc++abi -lSystem \
+      -lc++abi -lc++ -lSystem \
       -o libobjc.A.dylib $objs
+
+    tobjs=""
+    for s in ${lib.concatStringsSep " " trampSrcs}; do
+      ${cc} -isysroot "$DARWIN_SDK_ROOT" -I$O/runtime -c "$O/runtime/$s.s" -o "$s.o"
+      tobjs="$tobjs $s.o"
+    done
+    if [ -n "$tobjs" ]; then
+      ${cc} -isysroot "$DARWIN_SDK_ROOT" -dynamiclib \
+        -fuse-ld=${nativeLd}/bin/ld -nostdlib \
+        -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib \
+        -L${libSystem}/usr/lib \
+        -Wl,-platform_version,macos,26.5,26.5 \
+        -Wl,-install_name,/usr/lib/libobjc-trampolines.dylib \
+        -Wl,-fixup_chains \
+        -lSystem \
+        -o libobjc-trampolines.dylib $tobjs
+    fi
 
     runHook postBuild
   '';
@@ -140,6 +164,7 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/usr/lib $out/usr/include/objc
     cp libobjc.A.dylib $out/usr/lib/
+    [ -e libobjc-trampolines.dylib ] && cp libobjc-trampolines.dylib $out/usr/lib/
     ln -s libobjc.A.dylib $out/usr/lib/libobjc.dylib
     cp -a incdir/objc/. $out/usr/include/objc/
     runHook postInstall

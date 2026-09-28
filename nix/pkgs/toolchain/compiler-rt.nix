@@ -14,8 +14,6 @@
 , appleSdk
 }:
 
-let
-in
 stdenv.mkDerivation {
   pname = "puredarwin-compiler-rt";
   version = llvmVersion;

@@ -1,0 +1,23 @@
+# the c++ abi and libc++ pieces libdyld links from the static archives stay private,
+# /usr/lib/libc++abi.dylib and libc++.1.dylib are their only exporters
+___cxa_*
+___gxx_personality_v0
+___dynamic_cast
+___clang_call_terminate
+__Znw*
+__Zna*
+__Zdl*
+__Zda*
+__ZSt*
+__ZNSt*
+__ZNKSt*
+__ZTISt*
+__ZTSSt*
+__ZTVSt*
+__ZN10__cxxabiv1*
+__ZNK10__cxxabiv1*
+__ZTIN10__cxxabiv1*
+__ZTSN10__cxxabiv1*
+__ZTVN10__cxxabiv1*
+__ZTI[a-zP]*
+__ZTS[a-zP]*

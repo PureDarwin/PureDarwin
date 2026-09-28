@@ -138,6 +138,15 @@ target_link_libraries(libdyld PRIVATE
     # constructors to libc++'s own stdexcept.cpp.
     $<TARGET_FILE:libcxx_static>)
 
+# libdyld resolves its c++ abi from the static archives above and keeps them private
+target_link_options(libdyld PRIVATE
+    -Wl,-unexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libdyld.unexports)
+set_property(TARGET libdyld APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/libdyld.unexports)
+
+# gCRAnnotations is declared hidden, so libdyld links its own copy
+# even though -lSystem, earlier on the line, exports one
+target_link_options(libdyld PRIVATE -Wl,-force_load,$<TARGET_FILE:CrashReporterClient>)
+
 # dyld's C++ exception and ABI references form archive cycles on ARM32. Force
 # these runtime archives into the image so the linker does not discard the
 # SjLj entry points before resolving the later dyld objects.

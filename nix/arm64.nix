@@ -358,8 +358,6 @@ let
   libepoxyArm64Build = mkArm64Build ./pkgs/gtk/libepoxy.nix {
     nativeMesonTools = nativeMesonToolsDir;
     libX11 = xlibArm64Build;
-    # epoxy's generated egl headers include <EGL/eglplatform.h>, which comes
-    # from Mesa; without it the EGL half of the library will not compile.
     mesa = mesaArm64Build;
     inherit (pkgs) libepoxy xorgproto meson ninja python3;
   };
@@ -483,9 +481,6 @@ let
     mingwGcc32 = pkgs.pkgsCross.mingw32.buildPackages.gcc;
     mingwBintools32 = pkgs.pkgsCross.mingw32.buildPackages.bintools;
     inherit (pkgs) python3;
-    # Only version and src are taken from it. nixpkgs' top-level `wine` is
-    # winePackages.full, which pulls in pkgsi686Linux and cannot be evaluated
-    # on a non-x86 host; wine64 has the same version and src derivation.
     wine = pkgs.wine64;
     inherit (pkgs) xorgproto flex bison;
     libX11 = libX11SharedArm64Build;
@@ -1032,8 +1027,6 @@ let
     sqlite = sqliteArm64Build;
     src = securitySource;
   };
-  # IPConfiguration's report_symptoms.c needs this; the x86 build cannot be
-  # reused, it is a dylib of the wrong architecture.
   symptomReporterArm64Build =
     if isDarwin || symptomReporterBuild == null then null
     else symptomReporterBuild.override {
@@ -1534,6 +1527,8 @@ let
     darwinCrossToolchain = arm64CrossToolchain;
     targetTriple = "arm64-apple-darwin20.4";
     libSystem = libSystemArm64Build;
+    libcxxabiDylib = libcxxabiDylibArm64Build;
+    libcxxDylib = libcxxDylibArm64Build;
   };
   libcxxabiDylibArm64Build = libcxxabiDylibBuild.override {
     darwinCrossToolchain = arm64CrossToolchain;
@@ -1551,6 +1546,7 @@ let
     targetTriple = "arm64-apple-darwin20.4";
     libSystem = libSystemArm64Build;
     libcxxabiDylib = libcxxabiDylibArm64Build;
+    libcxxDylib = libcxxDylibArm64Build;
   };
   coreFoundationArm64Build = coreFoundationBuild.override {
     darwinCrossToolchain = arm64CrossToolchain;
@@ -1574,7 +1570,7 @@ let
     corefoundation = coreFoundationArm64Build;
     iokitCFStatic = iokitCFStaticArm64Build;
     # IOKitCF's hid.subproj has ObjC (HIDDeviceBase.m et al) subclassing
-    # NSObject; without these the override keeps the x86 builds and the arm64
+    # NSObject, without these the override keeps the x86 builds and the arm64
     # link cannot find _OBJC_CLASS_$_NSObject.
     libobjc = libobjcArm64Build;
     foundation = foundationArm64Build;
@@ -1586,11 +1582,18 @@ let
     targetTriple = "armv6-apple-darwin20.4";
     libSystem = libSystemArmv6Build;
   };
+  libcxxDylibArmv6Build = libcxxDylibBuild.override {
+    darwinCrossToolchain = armv6CrossToolchain;
+    targetTriple = "armv6-apple-darwin20.4";
+    libSystem = libSystemArmv6Build;
+    libcxxabiDylib = libcxxabiDylibArmv6Build;
+  };
   libobjcArmv6Build = libobjcBuild.override {
     darwinCrossToolchain = armv6CrossToolchain;
     targetTriple = "armv6-apple-darwin20.4";
     libSystem = libSystemArmv6Build;
     libcxxabiDylib = libcxxabiDylibArmv6Build;
+    libcxxDylib = libcxxDylibArmv6Build;
     compilerRt = compilerRtArmv6Build;
   };
   icuCoreArmv6Build = icuCoreBuild.override {
@@ -1599,6 +1602,7 @@ let
     libSystem = libSystemArmv6Build;
     compilerRt = compilerRtArmv6Build;
     libcxxabiDylib = libcxxabiDylibArmv6Build;
+    libcxxDylib = libcxxDylibArmv6Build;
   };
   coreFoundationArmv6Build = coreFoundationBuild.override {
     darwinCrossToolchain = armv6CrossToolchain;
@@ -1657,6 +1661,9 @@ let
     darwinCrossToolchain = arm64CrossToolchain;
     targetTriple = "arm64-apple-darwin20.4";
     libSystem = libSystemArm64Build;
+    # c++ recipes that link with -nostdlib take the runtime explicitly
+    libcxxDylib = libcxxDylibArm64Build;
+    libcxxabiDylib = libcxxabiDylibArm64Build;
     inherit nativeLd;
   };
   in
@@ -1737,7 +1744,7 @@ let
   nghttp2Arm64Build = mkArm64Build ./pkgs/x11/xorg-cross-lib.nix {
     pname = "puredarwin-nghttp2";
     inherit (pkgs.nghttp2) version src;
-    # Only libnghttp2 is wanted; the apps are C++ and pull in
+    # Only libnghttp2 is wanted, the apps are C++ and pull in
     # libev/openssl/jansson that nothing here needs.
     configureFlags = [ "--enable-lib-only" "--disable-python-bindings" ];
   };
@@ -2935,6 +2942,7 @@ in
     compilerRtArmv6Build
     libSystemArmv6Build
     libcxxabiDylibArmv6Build
+    libcxxDylibArmv6Build
     libobjcArmv6Build
     icuCoreArmv6Build
     coreFoundationArmv6Build

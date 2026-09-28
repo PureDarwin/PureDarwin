@@ -8,7 +8,9 @@
    # apply to a plain darwin triple.
   isArmv6 ? lib.hasPrefix "armv6-" targetTriple
 , compilerRt ? null
-, libcxxabiDylib ? null
+, libcxxabiDylib
+  # icu is c++ linked with -nostdlib, so libc++ (reexporting libc++abi) goes on the line itself
+, libcxxDylib
 , icuSrc
 , appleSdk
 }:
@@ -48,7 +50,7 @@ stdenv.mkDerivation {
       RANLIB=${darwinCrossToolchain}/bin/${targetTriple}-ranlib \
       CFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include ${lib.optionalString (!isArmv6) "-mmacosx-version-min=26.5"}" \
       CXXFLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include ${lib.optionalString (!isArmv6) "-mmacosx-version-min=26.5"} ${lib.optionalString isArmv6 "-O1"}" \
-      LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"} ${lib.optionalString (libcxxabiDylib != null) "-L${libcxxabiDylib}/usr/lib -lc++abi"} -lSystem ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"}" \
+      LDFLAGS="-fuse-ld=${nativeLd}/bin/ld -nostdlib -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib ${lib.optionalString (!isArmv6) "-Wl,-platform_version,macos,26.5,26.5 -Wl,-fixup_chains"} -L${libcxxabiDylib}/usr/lib -L${libcxxDylib}/usr/lib -lc++ -lSystem ${lib.optionalString (compilerRt != null) "${compilerRt}/lib/libcompiler_rt.a"}" \
       ../source/configure \
         --host=${targetTriple} \
         --with-cross-build=$PWD/../native-build \

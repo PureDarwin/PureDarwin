@@ -5,10 +5,6 @@
 , llvmPackages_21
 , cctools
 , callPackage
-  # otool/install_name_tool. The vendored cross-build is for a Linux host; a
-  # Darwin host has the real ones already and cannot compile that copy anyway
-  # (its ofile_print.c wants legacy types like i386_float_state_t that the macOS
-  # SDK no longer declares).
 , hostOtool ? (if stdenv.hostPlatform.isDarwin
                then cctools
                else callPackage ./host-otool.nix { })
@@ -163,9 +159,6 @@ symlinkJoin {
 
   meta = with lib; {
     description = "Darwin-targeting toolchain built from nixpkgs' unwrapped LLVM, no osxcross build.sh required";
-    # Not linux-only: on a Darwin host these same wrappers pin the target
-    # triple, the SDK and the linker, which is exactly what consumers want
-    # there too - it just is not a cross toolchain in that case.
     platforms = platforms.unix;
   };
 }

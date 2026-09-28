@@ -2482,6 +2482,8 @@
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/fltk.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
               inherit (pkgs) fltk_1_3 util-macros;
               libX11 = xlibBuild;
               libxcb = xcbBuild;
@@ -2708,6 +2710,8 @@
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/apps/dillo.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
+              libcxxDylib = libcxxDylibBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
               inherit (pkgs) dillo util-macros;
               fltk = fltkBuild;
               openssl = opensslBuild;
@@ -2765,6 +2769,19 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               xz = pkgs.xz;
+            };
+          bzip2Build =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/bzip2.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              bzip2 = pkgs.bzip2;
+            };
+          unzipBuild =
+            if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/unzip.nix {
+              inherit darwinCrossToolchain nativeLd;
+              libSystem = libSystemBuild;
+              unzip = pkgs.unzip;
+              bzip2 = bzip2Build;
             };
           bmakeBuild =
             if isDarwin then null else pkgs.callPackage ./nix/pkgs/base/bmake.nix {
@@ -3148,6 +3165,8 @@
             pkgs.callPackage ./nix/pkgs/apple/icucore.nix {
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
+              libcxxabiDylib = libcxxabiDylibBuild;
+              libcxxDylib = libcxxDylibBuild;
               icuSrc = pkgs.icu.src;
             };
           coreFoundationBuild =
@@ -3186,6 +3205,7 @@
               inherit darwinCrossToolchain nativeLd;
               libSystem = libSystemBuild;
               libcxxabiDylib = libcxxabiDylibBuild;
+              libcxxDylib = libcxxDylibBuild;
               src = objcSource;
             };
           asmjitTestBuild =
@@ -3950,6 +3970,7 @@
               xvfbLibXdamageBuild xvfbLibXdmcpBuild xvfbLibXextBuild xvfbLibXfixesBuild
               xvfbLibXineramaBuild xvfbLibXkbfileBuild xvfbLibXpresentBuild xvfbLibXrandrBuild
               xvfbLibXrenderBuild xvfbLibXresBuild xvfbLibxcvtBuild xvfbZlibBuild xxdBuild xzBuild
+              unzipBuild bzip2Build
               yajlBuild zshArm64Build zshBuild bashBuild libcrocoBuild librsvgBuild gettextBuild
               webkitgtkBuild libsoupBuild sqliteBuild libpslBuild nghttp2Build
               libgcryptBuild libgpgErrorBuild libtasn1Build libjpegBuild libwebpBuild
@@ -4028,6 +4049,7 @@
             libsystem-armv6 = arm64.libSystemArmv6Build;
             libobjc-armv6 = arm64.libobjcArmv6Build;
             libcxxabi-armv6 = arm64.libcxxabiDylibArmv6Build;
+            libcxx-armv6 = arm64.libcxxDylibArmv6Build;
             icu-armv6 = arm64.icuCoreArmv6Build;
             corefoundation-armv6 = arm64.coreFoundationArmv6Build;
             iokit-armv6 = arm64.iokitArmv6Build;

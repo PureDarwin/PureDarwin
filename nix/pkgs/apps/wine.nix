@@ -220,7 +220,9 @@ stdenv.mkDerivation {
     # portable #else. Take that instead of half-compiling the Apple one.
     sed -i '0,/^#ifdef __APPLE__$/! s|^#ifdef __APPLE__$|#if 0 /* PureDarwin: no Spotlight or Carbon keychain */|' dlls/mountmgr.sys/cred.c
 
-    sed -i 's| -ldylib1\.o| -fuse-ld=${nativeLd}/bin/ld -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,26.5,26.5 -lSystem|' configure
+    # The preloader reads argc/argv off the raw stack, which only LC_UNIXTHREAD gives it, and ld64
+    # emits LC_MAIN from 10.8 on, so this link keeps a 10.7 minimum
+    sed -i 's| -ldylib1\.o| -fuse-ld=${nativeLd}/bin/ld -L${libSystem}/usr/lib -Wl,-dylib_file,/usr/lib/system/libdyld.dylib:${libSystem}/usr/lib/system/libdyld.dylib -Wl,-platform_version,macos,10.7,26.5 -lSystem|' configure
 
 ${lib.optionalString isArm64 ''
     export CROSSCFLAGS="-g -O1 -fno-unwind-tables"

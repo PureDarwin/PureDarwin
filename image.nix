@@ -35,10 +35,15 @@
 , useRamdisk ? false
 , ramdiskMB ? 128
 , ramdiskPrune ? []
+# fixed uuid for the ext4 root partition and filesystem, for loaders that cannot scan the disk
+# and take boot-uuid from boot-args (xnu-loader turns that into an IOMedia UUID root match)
+, rootUUID ? null
 , bootArgs ? "debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 -noprogress gen9_debug=1 serial_video_mirror=1 vgpu_debug=1"
 }:
 
 assert lib.isDerivation baseSystem;
+# a null loader leaves the ESP without an EFI binary, the riscv loader is a linux Image with an initrd
+assert xnuLoader == null -> !netbootOnly;
 assert lib.all lib.isDerivation extraPackages;
 assert legacyBoot == null || lib.isDerivation legacyBoot;
 assert grubMultiboot == null || lib.isDerivation grubMultiboot;
@@ -102,7 +107,7 @@ ${if rootFsType == "apfs" then ''
     truncate -s $((img_sectors * 512)) $img
     sgdisk \
       -n 1:2048:+${toString espMB}M -t 1:EF00            -c 1:"EFI System Partition" \
-      -n 2:0:+${toString rootMB}M   -t 2:$LINUX_FS_GUID  -c 2:"Darwin ext4 Root" \
+      -n 2:0:+${toString rootMB}M   -t 2:$LINUX_FS_GUID  -c 2:"Darwin ext4 Root"${lib.optionalString (rootUUID != null) " -u 2:${rootUUID}"} \
       $img >/dev/null
 
     read -r root_start root_size <<<"$(sfdisk -d $img | grep -i type=$LINUX_FS_GUID \
@@ -114,8 +119,7 @@ ${if rootFsType == "apfs" then ''
     truncate -s $((esp_size * 512)) esp.img
     mkfs.vfat -F 32 -n EFI esp.img >/dev/null
     mmd -i esp.img ::/EFI ::/EFI/BOOT
-    mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}
-${lib.concatMapStrings (e: ''
+${lib.optionalString (xnuLoader != null) "    mcopy -o -i esp.img ${xnuLoader}/img/EFI/BOOT/${efiBinary} ::/EFI/BOOT/${efiBinary}\n"}${lib.concatMapStrings (e: ''
     mcopy -o -i esp.img ${e.loader}/img/EFI/BOOT/${e.efiBinary} ::/EFI/BOOT/${e.efiBinary}
 '') extraLoaders}
     mcopy -o -i esp.img ${kc}/kernel                          ::/EFI/BOOT/kernel
@@ -882,7 +886,7 @@ ${lib.optionalString (rootFsType == "ext4") ''
     mke2fs -q -F -t ext4 \
       -b 4096 \
       -O ^orphan_file \
-      -L darwin-ext4 \
+      -L darwin-ext4 ${lib.optionalString (rootUUID != null) "-U ${rootUUID} "}\
       -d "$staging" \
       root.img >/dev/null
 ${lib.optionalString rootfsTarball ''

@@ -18,12 +18,8 @@ let
     "cxa_default_handlers" "cxa_exception" "cxa_exception_storage"
     "cxa_personality" "cxa_virtual" "cxa_guard" "private_typeinfo"
     "stdlib_typeinfo" "stdlib_exception" "stdlib_stdexcept" "fallback_malloc"
-    "abort_message" "pd_bootstrap_runtime"
+    "abort_message" "pd_bootstrap_runtime" "cxa_vector"
   ];
-  # objc4 uses std::function's bad_function_call path, but libobjc links
-  # against libc++abi directly. Keep the required libc++ support object in
-  # this small runtime dylib rather than depending on the full libc++ build.
-  cxxSrcs = [ "functional" ];
 in
 stdenv.mkDerivation {
   pname = "puredarwin-libcxxabi-dylib";
@@ -42,7 +38,6 @@ stdenv.mkDerivation {
     L=src/Libraries
     ABI=$L/libcxxabi
     CXX=$L/libcxx
-    UW=$L/libunwind
     CONFIG=$ABI/config
 
     # Common include/flag block for the libc++abi + libc++ subset. Matches
@@ -57,38 +52,14 @@ stdenv.mkDerivation {
 
     objs=""
 
+    # the exception globals are per thread here, this dylib is the process's only c++ abi
     for s in ${lib.concatStringsSep " " abiSrcs}; do
-      extra=""
-      [ "$s" = "cxa_exception_storage" ] && extra="-D_LIBCXXABI_HAS_NO_THREADS"
-      ${cc} $ABI_FLAGS $extra -c "$ABI/src/$s.cpp" -o "$s.o"
+      ${cc} $ABI_FLAGS -c "$ABI/src/$s.cpp" -o "$s.o"
       objs="$objs $s.o"
     done
 
-    for s in ${lib.concatStringsSep " " cxxSrcs}; do
-      extra=""
-      [ "$s" = "string" ] && extra="-DPD_LIBCXX_NARROW_STRING_ONLY"
-      # operator new/delete already come from libcxxabi stdlib_new_delete.cpp.
-      [ "$s" = "new" ] && extra="-D_LIBCPP_DISABLE_NEW_DELETE_DEFINITIONS"
-      ${cc} $ABI_FLAGS -D_LIBCPP_BUILDING_LIBRARY $extra -c "$CXX/src/$s.cpp" -o "cxx_$s.o"
-      objs="$objs cxx_$s.o"
-    done
-
-    # libunwind subset (mirrors _uw_* in the CMakeLists).
-    UW_FLAGS="-isysroot $DARWIN_SDK_ROOT -I${libSystem}/usr/include \
-      -nostdinc++ -funwind-tables -fPIC -Os -DNDEBUG \
-      -I $UW/include -I $UW/src -I $CONFIG -I $CXX/include \
-      -D_LIBUNWIND_IS_NATIVE_ONLY -D_LIBUNWIND_BUILDING_LIBUNWIND=1"
-
-    ${cc} $UW_FLAGS -std=c++23 -fno-exceptions -fno-rtti -c "$UW/src/libunwind.cpp" -o "uw_libunwind.o"
-    objs="$objs uw_libunwind.o"
-    for s in UnwindLevel1 UnwindLevel1-gcc-ext; do
-      ${cc} $UW_FLAGS -std=c11 -c "$UW/src/$s.c" -o "uw_$s.o"
-      objs="$objs uw_$s.o"
-    done
-    for s in UnwindRegistersRestore UnwindRegistersSave; do
-      ${cc} $UW_FLAGS -c "$UW/src/$s.S" -o "uw_$s.o"
-      objs="$objs uw_$s.o"
-    done
+    # the unwinder lives in libSystem and libc++ owns every std:: library symbol,
+    # this dylib is the c++ abi only and imports _Unwind_* from libSystem
 
     # Link everything into one dylib. -fixup_chains: same eager-bind fix as
     # corefoundation.nix/icucore.nix (PD's dyld lazy-bind path is fragile).
@@ -118,7 +89,7 @@ stdenv.mkDerivation {
   dontFixup = true;
 
   meta = with lib; {
-    description = "PureDarwin libc++abi.dylib (libc++abi + libunwind + libc++ subset, cross-built)";
+    description = "PureDarwin libc++abi.dylib (the c++ abi runtime, unwinding comes from libSystem)";
     platforms = platforms.unix;
   };
 }

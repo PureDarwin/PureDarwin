@@ -179,7 +179,7 @@ set(_uw_flags
     -D_LIBUNWIND_IS_NATIVE_ONLY
     -D_LIBUNWIND_BUILDING_LIBUNWIND=1
 )
-if(PUREDARWIN_ARCH MATCHES "^arm")
+if(PUREDARWIN_ARCH MATCHES "^armv")
     # The ARMv6 bootstrap userland is single-threaded at this stage, and the
     # SDK does not provide Apple's private pthread_machdep.h.  This also keeps
     # the compact libunwind registration path independent of libpthread.
@@ -196,7 +196,7 @@ endif()
 # Unwind-EHABI (ARM32), Unwind-seh (Windows), Unwind-wasm, Unwind_AIXExtras.
 set(_uw_cxx    libunwind)
 set(_uw_c      UnwindLevel1 UnwindLevel1-gcc-ext)
-if(PUREDARWIN_ARCH MATCHES "^arm")
+if(PUREDARWIN_ARCH MATCHES "^armv")
     # Clang uses SjLj exceptions for the ARMv6 target; the default subset
     # intentionally omits this file for x86_64/DWARF builds.
     list(APPEND _uw_c Unwind-sjlj)

@@ -100,6 +100,12 @@ if(PUREDARWIN_ARM64 OR PUREDARWIN_ARM32)
             "^(__Unwind_(Backtrace|RaiseException|Find_FDE|Resume)|__dyld_find_unwind_sections|___gxx_personality_v0|___cxa_pure_virtual|__longjmp|___(u?divti3|u?modti3|fixdfti|floattidf))$")
         list(FILTER _libsystem_export_lines EXCLUDE REGEX
             "^_(isnormal|isfinite|isnan|scalbn)l$")
+        # armv6 unwinds with sjlj, libunwind's zero-cost api is not built there
+        list(FILTER _libsystem_export_lines EXCLUDE REGEX
+            "^(_unw_.*|___unw_.*|__Unwind_(FindEnclosingFunction|ForcedUnwind|Resume_or_Rethrow))$")
+        list(APPEND _libsystem_export_lines
+            __Unwind_SjLj_Register __Unwind_SjLj_Unregister __Unwind_SjLj_RaiseException
+            __Unwind_SjLj_Resume __Unwind_SjLj_Resume_or_Rethrow)
     endif()
     # The SDK headers use the unsuffixed ARM64 spellings for these syscalls,
     # while the shared export file only lists their x86 ABI variants.
@@ -197,13 +203,15 @@ else()
         $<TARGET_FILE:CrashReporterClient>
         $<TARGET_FILE:libresolv_static>)
 endif()
+# libunwind is part of libSystem (libsystem_unwind on Darwin) and exported from it, the c++ abi and
+# libc++ archives only serve libSystem's own c++ and stay private through the export list
+if(TARGET libunwind_static)
+    add_dependencies(libSystem_B_stub libunwind_static_build)
+    target_link_options(libSystem_B_stub PRIVATE -Wl,-force_load,$<TARGET_FILE:libunwind_static>)
+endif()
 if(TARGET libcxxabi_static)
     add_dependencies(libSystem_B_stub libcxxabi_static_build)
     target_link_libraries(libSystem_B_stub PRIVATE $<TARGET_FILE:libcxxabi_static>)
-endif()
-if(TARGET libunwind_static)
-    add_dependencies(libSystem_B_stub libunwind_static_build)
-    target_link_libraries(libSystem_B_stub PRIVATE $<TARGET_FILE:libunwind_static>)
 endif()
 if(TARGET libcxx_static)
     add_dependencies(libSystem_B_stub libcxx_static_build)

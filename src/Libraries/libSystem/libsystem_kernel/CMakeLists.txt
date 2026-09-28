@@ -43,6 +43,10 @@ else()
     set(_mach_approximate_time_source wrappers/mach_approximate_time.s)
 endif()
 
+# the stubs are generated from these too, so editing one has to rebuild the archive
+file(GLOB _libsystem_kernel_custom_syscall_sources CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/custom/*.s ${CMAKE_CURRENT_SOURCE_DIR}/custom/SYS.h)
+
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/sys
     COMMAND ${CMAKE_COMMAND} -E env ARCHS=${PUREDARWIN_ARCH}
@@ -61,6 +65,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/syscalls.a
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/create-syscalls.pl
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-syscalls.pl
         ${PUREDARWIN_SOURCE_DIR}/src/Kernel/xnu/bsd/kern/syscalls.master
+        ${_libsystem_kernel_custom_syscall_sources}
     COMMENT "Compile syscall stubs" VERBATIM
 )
 

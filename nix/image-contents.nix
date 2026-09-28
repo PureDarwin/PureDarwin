@@ -271,6 +271,8 @@
 , xvfbZlibBuild
 , xxdBuild
 , xzBuild
+, unzipBuild
+, bzip2Build
 , yajlBuild
 , asmjitTestArm64Build
 , zshArm64Build
@@ -506,6 +508,8 @@ let
     netsurf = netsurfBuild;
     xxd = xxdBuild;
     xz = xzBuild;
+    unzip = unzipBuild;
+    bzip2 = bzip2Build;
     xterm = xtermBuild;
     xkbcomp = xkbcompBuild;
     xkeyboard-config = xkeyboardConfigBuild;
@@ -1414,7 +1418,7 @@ let
               done
             fi
             if [ -z "$image" ]; then
-              echo "${name}: no image found; set PUREDARWIN_IMAGE or run nix build ${imageHint}" >&2
+              echo "${name}: no image found, set PUREDARWIN_IMAGE or run nix build ${imageHint}" >&2
               exit 1
             fi
 
@@ -1548,7 +1552,7 @@ let
             elif [ -e "$PWD/result/puredarwin-legacy.img" ]; then
               image="$PWD/result/puredarwin-legacy.img"
             else
-              echo "puredarwin-vm-legacy: no image found; set PUREDARWIN_IMAGE or run nix build .#image-legacy" >&2
+              echo "puredarwin-vm-legacy: no image found, set PUREDARWIN_IMAGE or run nix build .#image-legacy" >&2
               exit 1
             fi
           fi
@@ -1592,7 +1596,7 @@ let
             elif [ -e "$PWD/result/puredarwin-legacy.img" ]; then
               image="$PWD/result/puredarwin-legacy.img"
             else
-              echo "puredarwin-kvm-legacy: no image found; set PUREDARWIN_IMAGE or run nix build .#image-legacy" >&2
+              echo "puredarwin-kvm-legacy: no image found, set PUREDARWIN_IMAGE or run nix build .#image-legacy" >&2
               exit 1
             fi
           fi
@@ -1904,7 +1908,7 @@ EOF
             elif [ -e "$PWD/result/puredarwin-arm64-virt.img" ]; then
               image="$PWD/result/puredarwin-arm64-virt.img"
             else
-              echo "puredarwin-arm64-virt: no image found; run nix build .#image-arm64-virt" >&2
+              echo "puredarwin-arm64-virt: no image found, run nix build .#image-arm64-virt" >&2
               exit 1
             fi
           fi

@@ -22,7 +22,7 @@ let
     "filesystem/filesystem_error" "filesystem/operations"
     "filesystem/path" "fstream" "functional" "future" "hash" "ios"
     "ios.instantiations" "iostream" "locale" "memory"
-    "memory_resource" "mutex" "mutex_destructor" "new" "new_handler"
+    "memory_resource" "mutex" "mutex_destructor" "new_handler"
     "new_helpers" "optional" "ostream" "print" "random"
     "random_shuffle" "regex" "shared_mutex" "stdexcept" "string"
     "strstream" "system_error" "thread" "typeinfo" "valarray"
@@ -60,8 +60,8 @@ stdenv.mkDerivation {
 
     for s in ${lib.concatStringsSep " " cxxSrcs}; do
       extra=""
-      # operator new/delete already come from libc++abi's stdlib_new_delete.cpp.
-      [ "$s" = "new" ] && extra="-D_LIBCPP_DISABLE_NEW_DELETE_DEFINITIONS"
+      # new.cpp stays out, operator new/delete belong to libc++abi (upstream's
+      # LIBCXX_ENABLE_NEW_DELETE_DEFINITIONS=OFF, the define alone does nothing in llvm 21)
       o="cxx_$(echo "$s" | tr / _).o"
       ${cc} $CXX_FLAGS $extra -c "$CXX/src/$s.cpp" -o "$o"
       objs="$objs $o"

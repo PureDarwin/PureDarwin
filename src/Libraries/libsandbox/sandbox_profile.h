@@ -14,6 +14,10 @@
 /* __mac_syscall(SB_POLICY_NAME, SB_CALL_SET_PROFILE, struct sb_set_profile_args *) */
 #define SB_POLICY_NAME        "Sandbox"
 #define SB_CALL_SET_PROFILE   0
+/* Apple libsandbox: extension issue, args { class, 0, path, flags, token buffer, pid, pid version } */
+#define SB_CALL_EXTENSION_ISSUE 5
+// Apple's libsystem_sandbox sandbox_check(). Answered permissively
+#define SB_CALL_APPLE_CHECK   2
 
 #define SB_PROFILE_MAGIC      0x42535044 /* "PDSB" */
 #define SB_PROFILE_VERSION    1

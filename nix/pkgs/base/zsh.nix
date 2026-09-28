@@ -72,6 +72,7 @@ stdenv.mkDerivation {
       -e 's/^#define HAVE_SETRESGID .*/#undef HAVE_SETRESGID/' \
       -e 's/^#define HAVE_SETRESUID .*/#undef HAVE_SETRESUID/' \
       -e 's/^#define HAVE_SYS_PRCTL_H .*/#undef HAVE_SYS_PRCTL_H/' \
+      -e 's/^#define HAVE__MKTEMP .*/#undef HAVE__MKTEMP/' \
       config.h
 
     substituteInPlace Src/init.c \
