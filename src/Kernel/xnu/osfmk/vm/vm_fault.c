@@ -2781,6 +2781,10 @@ vm_fault_cs_page_nx(
 	return VMP_CS_NX(m, fault_page_size, fault_phys_offset);
 }
 
+// page-in PAC lowering is only done for faults into executable mappings
+static void vm_page_validate_cs_internal(vm_page_t page, vm_map_size_t fault_page_size,
+    vm_map_offset_t fault_phys_offset, bool pac_lower);
+
 /*
  * Check if the page being entered into the pmap violates code signing.
  */
@@ -2833,10 +2837,10 @@ vm_fault_cs_check_violation(
 			vm_cs_defer_to_csm++;
 		} else {
 			vm_cs_defer_to_csm_not++;
-			vm_page_validate_cs(m, fault_page_size, fault_phys_offset);
+			vm_page_validate_cs_internal(m, fault_page_size, fault_phys_offset, (prot & VM_PROT_EXECUTE) != 0);
 		}
 #else /* CODE_SIGNING_MONITOR */
-		vm_page_validate_cs(m, fault_page_size, fault_phys_offset);
+		vm_page_validate_cs_internal(m, fault_page_size, fault_phys_offset, (prot & VM_PROT_EXECUTE) != 0);
 #endif /* CODE_SIGNING_MONITOR */
 	}
 
@@ -9002,10 +9006,11 @@ pd_pac_lower_page(uint32_t *words, size_t nwords)
 
 #endif /* __arm64__ && !ptrauth_calls */
 
-void
-vm_page_validate_cs_mapped_slow(
+static void
+vm_page_validate_cs_mapped_slow_internal(
 	vm_page_t       page,
-	const void      *kaddr)
+	const void      *kaddr,
+	bool            pac_lower)
 {
 	vm_object_t             object;
 	memory_object_offset_t  mo_offset;
@@ -9054,10 +9059,10 @@ vm_page_validate_cs_mapped_slow(
 	/*
 	 * Lower any PAC instructions now that the page has been hashed: the
 	 * signature is still checked against the original bytes, and the page is
-	 * busy so nothing can execute it yet. Executable pages only - nx says
-	 * this one is not data.
+	 * busy so nothing can execute it yet. Only for a fault into an executable
+	 * mapping: data can match a PAC encoding, and sleh.c emulates what is missed.
 	 */
-	if (nx == 0 && pd_pac_lower_enabled) {
+	if (pac_lower && nx == 0 && pd_pac_lower_enabled) {
 		pd_pac_lower_page(__DECONST(uint32_t *, kaddr), PAGE_SIZE / 4);
 	}
 #endif /* __arm64__ && !ptrauth_calls */
@@ -9070,6 +9075,14 @@ vm_page_validate_cs_mapped_slow(
 		    CS_BITMAP_SET);
 	}
 #endif /* CHECK_CS_VALIDATION_BITMAP */
+}
+
+void
+vm_page_validate_cs_mapped_slow(
+	vm_page_t       page,
+	const void      *kaddr)
+{
+	vm_page_validate_cs_mapped_slow_internal(page, kaddr, false);
 }
 
 void
@@ -9087,7 +9100,8 @@ vm_page_validate_cs_mapped(
 static void
 vm_page_map_and_validate_cs(
 	vm_object_t     object,
-	vm_page_t       page)
+	vm_page_t       page,
+	bool            pac_lower)
 {
 	vm_object_offset_t      offset;
 	vm_map_offset_t         koffset;
@@ -9138,7 +9152,7 @@ vm_page_map_and_validate_cs(
 	kaddr = CAST_DOWN(vm_offset_t, koffset);
 
 	/* validate the mapped page */
-	vm_page_validate_cs_mapped_slow(page, (const void *) kaddr);
+	vm_page_validate_cs_mapped_slow_internal(page, (const void *) kaddr, pac_lower);
 
 	assert(page->vmp_busy);
 	assert(object == VM_PAGE_OBJECT(page));
@@ -9157,11 +9171,12 @@ vm_page_map_and_validate_cs(
 	vm_object_paging_end(object);
 }
 
-void
-vm_page_validate_cs(
+static void
+vm_page_validate_cs_internal(
 	vm_page_t       page,
 	vm_map_size_t   fault_page_size,
-	vm_map_offset_t fault_phys_offset)
+	vm_map_offset_t fault_phys_offset,
+	bool            pac_lower)
 {
 	vm_object_t             object;
 
@@ -9171,7 +9186,16 @@ vm_page_validate_cs(
 	if (vm_page_validate_cs_fast(page, fault_page_size, fault_phys_offset)) {
 		return;
 	}
-	vm_page_map_and_validate_cs(object, page);
+	vm_page_map_and_validate_cs(object, page, pac_lower);
+}
+
+void
+vm_page_validate_cs(
+	vm_page_t       page,
+	vm_map_size_t   fault_page_size,
+	vm_map_offset_t fault_phys_offset)
+{
+	vm_page_validate_cs_internal(page, fault_page_size, fault_phys_offset, false);
 }
 
 void
@@ -9746,7 +9770,7 @@ revalidate_text_page(task_t task, vm_map_offset_t code_addr)
 	/*
 	 * Check the code signature of the page in question.
 	 */
-	vm_page_map_and_validate_cs(object, page);
+	vm_page_map_and_validate_cs(object, page, false);
 
 	/*
 	 * At this point:
