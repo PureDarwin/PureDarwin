@@ -79,6 +79,13 @@ IOKitInitializeTime( void )
 
 	IOService::waitForService(
 		IOService::resourceMatching("IORTC"), &t );
+	// Without an RTC the wait above ran its full 30 s, and root mount came to rely on storage
+	// matching being done by then: with one, wait for the registry to settle instead
+	{
+		mach_timespec_t q = { 30, 0 };
+
+		IOService::getServiceRoot()->waitQuiet(&q);
+	}
 #if defined(__i386__) || defined(__x86_64__)
 	IOService::waitForService(
 		IOService::resourceMatching("IONVRAM"), &t );

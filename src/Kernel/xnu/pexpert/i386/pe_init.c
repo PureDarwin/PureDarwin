@@ -270,6 +270,17 @@ PE_init_platform(boolean_t vm_initialized, void * _args)
 void
 PE_create_console( void )
 {
+	// PD: the loader picks graphics mode unless -v is on its command line, so any boot-arg
+	// asking for a visible console makes it a text boot here as well
+	{
+		uint32_t v = 0;
+
+		if (PE_parse_boot_argn("-v", &v, sizeof(v)) ||
+		    (PE_parse_boot_argn("serial_video_mirror", &v, sizeof(v)) && v) ||
+		    (PE_parse_boot_argn("gopconsole", &v, sizeof(v)) && v)) {
+			PE_state.video.v_display = FB_TEXT_MODE;
+		}
+	}
 	if (PE_state.video.v_display == GRAPHICS_MODE) {
 		PE_initialize_console( &PE_state.video, kPEGraphicsMode );
 	} else {

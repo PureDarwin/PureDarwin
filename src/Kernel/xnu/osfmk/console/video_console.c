@@ -2965,8 +2965,6 @@ initialize_screen(PE_Video * boot_vinfo, unsigned int op)
 		gc_text_boot_set = TRUE;
 	}
 	graphics_now = gc_graphics_boot && !gc_desire_text;
-	kprintf("PD-vc: op %u boot_vinfo %p graphics_boot %d desire_text %d acquired %d enabled %d text_boot %d serial %d\n",
-	    op, boot_vinfo, gc_graphics_boot, gc_desire_text, gc_acquired, gc_enabled, gc_text_boot, console_is_serial());
 	switch (op) {
 	case kPEGraphicsMode:
 		gc_graphics_boot = TRUE;

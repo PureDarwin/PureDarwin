@@ -4301,6 +4301,15 @@ IOPMrootDomain::initializeBootSessionUUID(void)
 	uuid_string_t   new_uuid_string;
 
 	uuid_generate(new_uuid);
+	// a VM with no RNG or RTC boots with the same pool every time: the exact tick count
+	// differs, and without it every boot shares one log session
+	{
+		uint64_t ticks = mach_absolute_time();
+
+		for (unsigned i = 0; i < sizeof(ticks); i++) {
+			new_uuid[i] ^= (uint8_t)(ticks >> (i * 8));
+		}
+	}
 	uuid_unparse_upper(new_uuid, new_uuid_string);
 	memcpy(bootsessionuuid_string, new_uuid_string, sizeof(uuid_string_t));
 
