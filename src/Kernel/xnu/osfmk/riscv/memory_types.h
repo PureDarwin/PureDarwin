@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2018 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,21 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifndef _RISCV_MEMORY_TYPES_H_
+#define _RISCV_MEMORY_TYPES_H_
 
-#pragma once
+#include <machine/config.h>
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
+// svpbmt (or the c906 extended pte bits) gives normal, non-cacheable and io
+#define VM_WIMG_DEFAULT                   (VM_MEM_COHERENT)
+#define VM_WIMG_COPYBACK                  (VM_MEM_COHERENT)
+#define VM_WIMG_INNERWBACK                (VM_MEM_COHERENT)
+#define VM_WIMG_IO                        (VM_MEM_COHERENT | VM_MEM_NOT_CACHEABLE | VM_MEM_GUARDED)
+#define VM_WIMG_POSTED                    (VM_WIMG_IO)
+#define VM_WIMG_WTHRU                     (VM_MEM_WRITE_THROUGH | VM_MEM_COHERENT | VM_MEM_GUARDED)
+#define VM_WIMG_WCOMB                     (VM_MEM_NOT_CACHEABLE | VM_MEM_COHERENT)
+#define VM_WIMG_RT                        (VM_WIMG_IO)
+#define VM_WIMG_POSTED_REORDERED          (VM_WIMG_IO)
+#define VM_WIMG_POSTED_COMBINED_REORDERED (VM_WIMG_WCOMB)
 
+#endif /* _RISCV_MEMORY_TYPES_H_ */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,39 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#include <kern/hvg_hypercall.h>
+#include <pexpert/pexpert.h>
+#include <riscv/machine_routines.h>
 
-#pragma once
+// riscv guests have no hypercall interface to a host, every call reports unsupported
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
+bool
+hvg_is_hcall_available(__unused hvg_hcall_code_t hcall)
+{
+	return false;
+}
 
+hvg_hcall_return_t
+hvg_hcall_get_mabs_offset(__attribute__((unused)) uint64_t *mabs_offset)
+{
+	return HVG_HCALL_UNSUPPORTED;
+}
+
+hvg_hcall_return_t
+hvg_hcall_get_bootsessionuuid(__attribute__((unused)) uuid_string_t uuid)
+{
+	return HVG_HCALL_UNSUPPORTED;
+}
+
+hvg_hcall_return_t
+hvg_hcall_trigger_dump(__unused hvg_hcall_vmcore_file_t *vmcore,
+    __unused const hvg_hcall_dump_option_t dump_option)
+{
+	return HVG_HCALL_UNSUPPORTED;
+}
+
+/* Unsupported. */
+void
+hvg_hcall_set_coredump_data(void)
+{
+}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,42 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifndef _RISCV_PAL_HIBERNATE_H
+#define _RISCV_PAL_HIBERNATE_H
 
-#pragma once
+#include <IOKit/IOHibernatePrivate.h>
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
+__BEGIN_DECLS
 
+typedef enum {
+	DEST_COPY_AREA = 1,
+	COPY_PAGE_AREA,
+	BITMAP_AREA,
+	IMAGE_AREA,
+	IMAGE2_AREA,
+	SCRATCH_AREA,
+	WKDM_AREA,
+} pal_hib_map_type_t;
+
+struct pal_hib_ctx {
+};
+
+typedef struct {
+	uint64_t hibUartRegPhysBase;
+	uint64_t hibUartRegVirtBase;
+	uint64_t kernelSlide;
+} pal_hib_globals_t;
+extern pal_hib_globals_t gHibernateGlobals;
+
+void pal_hib_get_stack_pages(vm_offset_t *first_page, vm_offset_t *page_count);
+
+void pal_hib_resume_tramp(uint32_t headerPpnum);
+
+typedef struct{
+	uint64_t satp;
+	uint64_t memSlide;
+} pal_hib_tramp_result_t;
+
+__END_DECLS
+
+#endif /* _RISCV_PAL_HIBERNATE_H */

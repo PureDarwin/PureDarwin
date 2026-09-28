@@ -117,7 +117,7 @@ const uint64_t kptimer_minperiods_ns[KTPL_MAX] = {
 	[KTPL_BG] = 1 * NSEC_PER_MSEC,
 	[KTPL_FG_PET] = 1 * NSEC_PER_MSEC,
 	[KTPL_BG_PET] = 1 * NSEC_PER_MSEC,
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__riscv)
 	[KTPL_FG] = 50 * NSEC_PER_USEC,
 	[KTPL_BG] = 1 * NSEC_PER_MSEC,
 	[KTPL_FG_PET] = 1 * NSEC_PER_MSEC,
@@ -394,7 +394,11 @@ kptimer_sample_pet_remote(void * __unused arg)
 
 #if !defined(__x86_64__)
 
+#if defined(__riscv)
+#include <riscv/cpu_internal.h>
+#else
 #include <arm/cpu_internal.h>
+#endif
 
 void kperf_signal_handler(void);
 void

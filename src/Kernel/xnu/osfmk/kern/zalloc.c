@@ -167,7 +167,9 @@ ZONE_DEFINE_TYPE(percpu_u64_zone, "percpu.64", uint64_t,
 #define ZONE_MAX_CHUNK_ALLOC_NUM        (10)
 #endif /* ZSECURITY_CONFIG(SAD_FENG_SHUI) */
 
-#if   XNU_PLATFORM_MacOSX
+// The ~112GB classic arm64 and ~92GB riscv64 sv39 kernel maps can't hold the
+// 128GB claim below (kmem_range_init underflows), so they take the embedded sizes
+#if XNU_PLATFORM_MacOSX && !(defined(__arm64__) && !defined(ARM_LARGE_MEMORY)) && !defined(__riscv)
 #define ZONE_MAP_MAX            (32ULL << 30)
 #define ZONE_MAP_VA_SIZE        (128ULL << 30)
 #else

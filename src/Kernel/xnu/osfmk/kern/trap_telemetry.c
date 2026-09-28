@@ -495,7 +495,7 @@ get_uuid_and_text_offset_for_addr(
 	kernel_segment_command_t *seg_text = NULL;
 	void *mh_uuid = NULL;
 	unsigned long mh_uuid_len = 0;
-#if __arm64__
+#if __arm64__ || __riscv
 	const char *text_segment_label = "__TEXT_EXEC";
 #else
 	const char *text_segment_label = "__TEXT";
@@ -1098,6 +1098,11 @@ trap_telemetry_report_exception(
 
 #if __arm64__
 	arm_saved_state_t *state = (arm_saved_state_t *)saved_state;
+
+	uintptr_t faulting_address = get_saved_state_pc(state);
+	uintptr_t saved_fp = get_saved_state_fp(state);
+#elif __riscv
+	riscv_saved_state_t *state = (riscv_saved_state_t *)saved_state;
 
 	uintptr_t faulting_address = get_saved_state_pc(state);
 	uintptr_t saved_fp = get_saved_state_fp(state);

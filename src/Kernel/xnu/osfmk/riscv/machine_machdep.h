@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2017 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,14 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifndef _RISCV_MACHINE_MACHDEP_H_
+#define _RISCV_MACHINE_MACHDEP_H_
 
-#pragma once
+// the user gp carries the cpu data arm64 keeps in TPIDRRO_EL0, the kernel writes it on every
+// return to user and user code only reads it, keep in sync with libsyscall's os/tsd.h
+#define MACHDEP_GP_CPUNUM_SHIFT         0
+#define MACHDEP_GP_CPUNUM_MASK          0x0000000000000fff
+#define MACHDEP_GP_CLUSTERID_SHIFT      12
+#define MACHDEP_GP_CLUSTERID_MASK       0x00000000000ff000
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
-
+#endif /* _RISCV_MACHINE_MACHDEP_H_ */

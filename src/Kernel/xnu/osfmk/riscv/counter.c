@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+/* * Copyright (c) 2020 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -26,11 +25,54 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#pragma once
+#include <kern/assert.h>
+#include <kern/cpu_data.h>
+#include <kern/counter.h>
+#include <kern/zalloc.h>
+#include <machine/atomic.h>
+#include <machine/machine_routines.h>
+#include <machine/cpu_number.h>
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
+OS_OVERLOADABLE
+void
+counter_add(scalable_counter_t *counter, uint64_t amount)
+{
+	os_atomic_add(zpercpu_get(*counter), amount, relaxed);
+}
 
+OS_OVERLOADABLE
+void
+counter_inc(scalable_counter_t *counter)
+{
+	os_atomic_inc(zpercpu_get(*counter), relaxed);
+}
+
+OS_OVERLOADABLE
+void
+counter_dec(scalable_counter_t *counter)
+{
+	os_atomic_dec(zpercpu_get(*counter), relaxed);
+}
+
+// NB: on riscv the preemption disabled implementation is the same as the normal one,
+// otherwise callers would have to never mix the interfaces for the same counter.
+OS_OVERLOADABLE
+void
+counter_add_preemption_disabled(scalable_counter_t *counter, uint64_t amount)
+{
+	counter_add(counter, amount);
+}
+
+OS_OVERLOADABLE
+void
+counter_inc_preemption_disabled(scalable_counter_t *counter)
+{
+	counter_inc(counter);
+}
+
+OS_OVERLOADABLE
+void
+counter_dec_preemption_disabled(scalable_counter_t *counter)
+{
+	counter_dec(counter);
+}

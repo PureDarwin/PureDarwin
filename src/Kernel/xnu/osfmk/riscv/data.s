@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2007-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,42 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#include <machine/asm.h>
+#include <riscv/proc_reg.h>
+#include "assym.s"
 
-#pragma once
+	.section __BOOTDATA, __data
+	.align 12
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
+	// the boot hart's stacks, each between guard pages
+	.globl EXT(intstack_low_guard)
+LEXT(intstack_low_guard)
+	.space	PGBYTES
+	.globl	EXT(intstack)
+LEXT(intstack)
+	.space	INTSTACK_SIZE
+	.globl	EXT(intstack_top)
+LEXT(intstack_top)
+	.globl	EXT(intstack_high_guard)
+LEXT(intstack_high_guard)
+	.space	PGBYTES
+	.globl	EXT(excepstack)
+LEXT(excepstack)
+	.space	EXCEPSTACK_SIZE
+	.globl	EXT(excepstack_top)
+LEXT(excepstack_top)
+	.globl	EXT(excepstack_high_guard)
+LEXT(excepstack_high_guard)
+	.space	PGBYTES
 
+	// space for kdebug's early event buffer
+	.globl	EXT(kd_early_buffer)
+	.align	12
+LEXT(kd_early_buffer)
+	.space	16*1024, 0
+
+	// sv39 root table start.s maps the kernel with before the pmap exists
+	.globl	EXT(bootstrap_pagetable)
+	.align	12
+LEXT(bootstrap_pagetable)
+	.space	PGBYTES, 0

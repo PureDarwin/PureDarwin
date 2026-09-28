@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2021 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,26 +25,37 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-
-#ifndef _KERN_THREAD_KERNEL_STATE_H_
-
-#include <vm/vm_kern.h>
-
-struct thread_kernel_state {
-	machine_thread_kernel_state  machine;       /* must be first */
-	kern_allocation_name_t       allocation_name;
-} __attribute__((aligned(16)));
-
-typedef struct thread_kernel_state * thread_kernel_state_t;
-
-#if __arm64__ || __riscv
-#define thread_get_kernel_state(thread) ((thread_kernel_state_t)(thread)->machine.kstackptr)
+#ifndef _MACHINE_STATIC_IF_H
+#error "do not include this file directly, use <machine/static_if.h>"
 #else
-#define thread_get_kernel_state(thread) ((thread_kernel_state_t) \
-    ((thread)->kernel_stack + kernel_stack_size - sizeof(struct thread_kernel_state)))
-#endif
 
-#define thread_initialize_kernel_state(thread)  \
-    thread_get_kernel_state((thread))->allocation_name = NULL;
+#define STATIC_IF_RELATIVE      1
+#define STATIC_IF_INSN_SIZE     4
 
-#endif /* _KERN_THREAD_KERNEL_STATE_H_ */
+typedef int static_if_offset_t;
+
+struct static_if_entry {
+	static_if_offset_t      sie_base;
+	static_if_offset_t      sie_target;
+	unsigned long           sie_link;
+};
+
+/* generates a struct static_if_entry */
+#define STATIC_IF_ENTRY(n) \
+	".pushsection " STATIC_IF_SEGSECT ",regular,live_support"       "\n\t" \
+	".align 3"                                                      "\n\t" \
+	".long 1b - ."                                                  "\n\t" \
+	".long %l1 - 1b"                                                "\n\t" \
+	".quad _" #n "_jump_key + %c0"                                  "\n\t" \
+	".popsection"
+
+// both forms are 4 bytes so either can be patched over the other
+#define STATIC_IF_NOP(n, label) \
+	asm goto(".option push\n\t.option norvc\n\t1: nop\n\t.option pop" "\n\t" \
+	    STATIC_IF_ENTRY(n) : : "i"(0) : : label)
+
+#define STATIC_IF_BRANCH(n, label) \
+	asm goto(".option push\n\t.option norvc\n\t1: j %l1\n\t.option pop" "\n\t" \
+	    STATIC_IF_ENTRY(n) : : "i"(1) : : label)
+
+#endif /* _MACHINE_STATIC_IF_H */

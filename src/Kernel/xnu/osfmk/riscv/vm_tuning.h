@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,7 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifndef _RISCV_VM_TUNING_H_
+#define _RISCV_VM_TUNING_H_
 
-#pragma once
-
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
-
+#endif  /* _RISCV_VM_TUNING_H_ */

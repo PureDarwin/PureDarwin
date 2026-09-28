@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2009 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,45 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifndef _RISCV_PAL_ROUTINES_H
+#define _RISCV_PAL_ROUTINES_H
 
-#pragma once
+#include <stdint.h>
+#include <string.h>
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
+#if defined(__cplusplus)
+extern "C" {
 #endif
 
+#ifdef XNU_KERNEL_PRIVATE
+
+/* No-op */
+#define pal_dbg_set_task_name( x ) do { } while(0)
+
+#define pal_ast_check(thread)
+#define pal_thread_terminate_self(t)
+
+/* serial / debug output routines */
+extern int  pal_serial_init(void);
+extern void pal_serial_putc(char a);
+extern void pal_serial_putc_nocr(char a);
+extern int  pal_serial_getc(void);
+
+#define panic_display_pal_info() do { } while(0)
+#define pal_kernel_announce() do { } while(0)
+
+#endif  /* XNU_KERNEL_PRIVATE */
+
+static inline void
+pal_get_resource_property(const char **property_name,
+    int *property_value)
+{
+	*property_name = NULL;
+	(void) property_value;
+}
+
+#if defined(__cplusplus)
+}
+#endif
+
+#endif /* _RISCV_PAL_ROUTINES_H */

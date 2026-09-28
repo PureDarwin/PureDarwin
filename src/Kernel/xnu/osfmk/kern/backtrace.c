@@ -40,6 +40,16 @@
 #include <arm/cpu_data_internal.h>
 #endif // defined(__arm64__)
 
+#if defined(__riscv)
+#include <riscv/cpu_data.h>
+#include <riscv/cpu_data_internal.h>
+#include <riscv/proc_reg.h>
+// the frame pointer points just past the saved fp and ra pair
+#define BT_FRAME_RECORD_OFFSET (2 * sizeof(uintptr_t))
+#else
+#define BT_FRAME_RECORD_OFFSET 0
+#endif
+
 #if defined(HAS_APPLE_PAC)
 #include <ptrauth.h>
 #endif // defined(HAS_APPLE_PAC)
@@ -133,12 +143,13 @@ backtrace_internal(backtrace_pack_t packing, uint8_t *bt,
 	}
 
 	while (fp != NULL && size_used < btsize) {
-		uintptr_t *next_fp = (uintptr_t *)*fp;
+		uintptr_t *record = (uintptr_t *)((uintptr_t)fp - BT_FRAME_RECORD_OFFSET);
+		uintptr_t *next_fp = (uintptr_t *)*record;
 #if defined(HAS_APPLE_PAC)
 		next_fp = ptrauth_strip(next_fp, ptrauth_key_frame_pointer);
 #endif
-		// Return address is one word higher than frame pointer.
-		uintptr_t ret_addr = *(fp + 1);
+		// Return address is one word higher than the saved frame pointer.
+		uintptr_t ret_addr = *(record + 1);
 
 		// If the frame pointer is 0, backtracing has reached the top of
 		// the stack and there is no return address.  Some stacks might not
@@ -241,6 +252,23 @@ interrupted_kernel_pc_fp(uintptr_t *pc, uintptr_t *fp)
 
 	// Return early if interrupted a thread in user space.
 	if (PSR64_IS_USER(get_saved_state_cpsr(state))) {
+		return KERN_FAILURE;
+	}
+
+	*pc = ml_get_backtrace_pc(state);
+	*fp = get_saved_state_fp(state);
+
+#elif defined(__riscv)
+
+	struct riscv_saved_state *state;
+
+	state = getCpuDatap()->cpu_int_state;
+	if (!state) {
+		return KERN_FAILURE;
+	}
+
+	// Return early if interrupted a thread in user space.
+	if ((state->sstatus & SSTATUS_SPP) == 0) {
 		return KERN_FAILURE;
 	}
 
@@ -493,6 +521,21 @@ backtrace_user(uintptr_t *bt, unsigned int max_frames,
 	// ARM expects stack frames to be aligned to 16 bytes.
 #define INVALID_USER_FP(FP) (((FP) & 0x3UL) != 0UL)
 
+#elif defined(__riscv)
+
+	struct riscv_saved_state *state = get_user_regs(thread);
+	if (!state) {
+		error = EINVAL;
+		goto out;
+	}
+
+	user_64 = true;
+	pc = get_saved_state_pc(state);
+	fp = fp != 0 ? fp : get_saved_state_fp(state);
+
+	// the psabi keeps sp 16 byte aligned, fp is sp at entry
+#define INVALID_USER_FP(FP) ((FP) < BT_FRAME_RECORD_OFFSET || ((FP) & 0x7UL) != 0UL)
+
 #else // defined(__arm64__) || defined(__x86_64__)
 #error "unsupported architecture"
 #endif // !defined(__arm64__) && !defined(__x86_64__)
@@ -534,7 +577,7 @@ backtrace_user(uintptr_t *bt, unsigned int max_frames,
 	frame_size = 2 * (user_64 ? 8 : 4);
 
 	while (fp != 0 && frame_index < max_frames) {
-		error = copy(ctx, (char *)&frame, fp, frame_size);
+		error = copy(ctx, (char *)&frame, fp - BT_FRAME_RECORD_OFFSET, frame_size);
 		if (error) {
 			truncated = true;
 			goto out;
@@ -559,7 +602,7 @@ backtrace_user(uintptr_t *bt, unsigned int max_frames,
 		if (user_64 && async_frame) {
 			async_index = frame_index - 1;
 			// The async context pointer is just below the stack frame.
-			user_addr_t async_ctx_ptr = fp - 8;
+			user_addr_t async_ctx_ptr = fp - BT_FRAME_RECORD_OFFSET - 8;
 			user_addr_t async_ctx = 0;
 			error = copy(ctx, (char *)&async_ctx, async_ctx_ptr,
 			    sizeof(async_ctx));

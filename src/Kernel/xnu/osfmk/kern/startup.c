@@ -278,7 +278,7 @@ kernel_startup_bootstrap(void)
 
 	qsort(startup_entries, n, sizeof(struct startup_entry), startup_entry_cmp);
 
-#if !__arm64__ && !defined(__BUILDING_XNU_LIBRARY__)
+#if !__arm64__ && !__riscv && !defined(__BUILDING_XNU_LIBRARY__)
 	/* static_if relies on TEXT editing and not supported in user-mode build*/
 	static_if_init(PE_boot_args());
 #endif

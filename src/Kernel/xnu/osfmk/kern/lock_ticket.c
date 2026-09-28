@@ -60,10 +60,10 @@ extern uint64_t LockTimeOutTSC;
 #define TICKET_LOCK_PANIC_TIMEOUT LockTimeOutTSC
 #endif /* defined(__x86_64__) */
 
-#if defined(__arm64__)
+#if defined(__arm64__) || defined(__riscv)
 extern uint64_t TLockTimeOut;
 #define TICKET_LOCK_PANIC_TIMEOUT TLockTimeOut
-#endif /* defined(__arm64__) */
+#endif /* defined(__arm64__) || defined(__riscv) */
 
 #if CONFIG_PV_TICKET
 

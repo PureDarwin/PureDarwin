@@ -45,7 +45,11 @@
 #include <pexpert/pexpert.h>
 #include <pexpert/device_tree.h>
 #include <libkern/OSAtomic.h>
+#if defined(__riscv)
+#include <riscv/pmap_public.h>
+#else
 #include <arm/pmap_public.h>
+#endif
 #include <vm/vm_page.h>
 #include <vm/vm_protos.h>
 

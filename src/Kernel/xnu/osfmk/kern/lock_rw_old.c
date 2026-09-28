@@ -358,6 +358,8 @@ lck_rw_drain_status(
 	for (;;) {
 #if __x86_64__
 		data = os_atomic_load(&lock->lck_rw_data, relaxed);
+#elif __riscv
+		data = os_atomic_load(&lock->lck_rw_data, acquire);
 #else
 		data = load_exclusive32(&lock->lck_rw_data, memory_order_acquire_smp);
 #endif

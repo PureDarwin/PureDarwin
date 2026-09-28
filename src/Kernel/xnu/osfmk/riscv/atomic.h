@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2015-2018 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,22 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-
-#pragma once
-
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
+#ifndef _MACHINE_ATOMIC_H
+#error "Do not include <riscv/atomic.h> directly, use <machine/atomic.h>"
 #endif
 
+#ifndef _RISCV_ATOMIC_H_
+#define _RISCV_ATOMIC_H_
+
+#include <mach/boolean.h>
+
+// fence operands, predecessor and successor sets of i/o/r/w
+#define RISCV_FENCE(pred, succ) __asm__ volatile ("fence " #pred ", " #succ ::: "memory")
+
+#define riscv_fence_rw_rw()     RISCV_FENCE(rw, rw)
+#define riscv_fence_r_rw()      RISCV_FENCE(r, rw)
+#define riscv_fence_rw_w()      RISCV_FENCE(rw, w)
+#define riscv_fence_iorw()      RISCV_FENCE(iorw, iorw)
+#define riscv_fence_i()         __asm__ volatile ("fence.i" ::: "memory")
+
+#endif // _RISCV_ATOMIC_H_

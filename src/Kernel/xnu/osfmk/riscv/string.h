@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2022 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,14 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifndef _RISCV_STRING_H_
+#define _RISCV_STRING_H_
 
-#pragma once
+// bcopy.s provides these, subrs.c the rest in c
+#define __arch_bcopy                    1
+#define __arch_bzero                    1
+#define __arch_memcpy                   1
+#define __arch_memmove                  1
+#define __arch_memset                   1
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
-
+#endif /* _RISCV_STRING_H_ */

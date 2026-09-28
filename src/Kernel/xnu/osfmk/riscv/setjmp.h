@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,12 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifndef _RISCV_SETJMP_H_
+#define _RISCV_SETJMP_H_
 
-#pragma once
+// ra, sp, s0-s11 and fs0-fs11
+typedef struct jmp_buf {
+	long  jmp_buf[26];
+} jmp_buf_t;
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
-
+#endif  /* _RISCV_SETJMP_H_ */

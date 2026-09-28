@@ -43,6 +43,10 @@
 #if defined(__arm64__)
 #include <arm/cpu_data.h>
 #include <arm/cpu_data_internal.h>
+#elif defined(__riscv)
+#include <riscv/cpu_data.h>
+#include <riscv/cpu_data_internal.h>
+#include <riscv/proc_reg.h>
 #endif
 
 static void
@@ -88,6 +92,15 @@ callstack_fixup_user(struct kp_ucallstack *cs, thread_t thread)
 		cs->kpuc_frames[0] |= 1ULL;
 	}
 
+
+	fixup_val = get_saved_state_lr(state);
+
+#elif defined(__riscv)
+
+	struct riscv_saved_state *state = get_user_regs(thread);
+	if (!state) {
+		goto out;
+	}
 
 	fixup_val = get_saved_state_lr(state);
 
@@ -163,6 +176,25 @@ interrupted_kernel_lr(uintptr_t *lr)
 	*lr = get_saved_state_lr(state);
 	return KERN_SUCCESS;
 }
+
+#elif defined(__riscv)
+
+__attribute__((used))
+static kern_return_t
+interrupted_kernel_lr(uintptr_t *lr)
+{
+	struct riscv_saved_state *state;
+
+	state = getCpuDatap()->cpu_int_state;
+
+	/* return early if interrupted a thread in user space */
+	if (!state || (state->sstatus & SSTATUS_SPP) == 0) {
+		return KERN_FAILURE;
+	}
+
+	*lr = get_saved_state_lr(state);
+	return KERN_SUCCESS;
+}
 #else /* defined(__arm64__) */
 #error "interrupted_kernel_{sp,lr}: unsupported architecture"
 #endif /* !defined(__arm64__) */
@@ -180,7 +212,7 @@ callstack_fixup_interrupted(struct kp_kcallstack *cs)
 #if DEVELOPMENT || DEBUG
 #if defined(__x86_64__)
 	(void)interrupted_kernel_sp_value(&fixup_val);
-#elif defined(__arm64__)
+#elif defined(__arm64__) || defined(__riscv)
 	(void)interrupted_kernel_lr(&fixup_val);
 #endif /* defined(__x86_64__) */
 #endif /* DEVELOPMENT || DEBUG */
@@ -907,6 +939,138 @@ chudxnu_thread_get_callstack64_internal(
 		if (flags & CS_FLAG_EXTRASP) {
 			buffer[bufferIndex++] = chudxnu_vm_unslide(currSP, kernel);
 		}
+	}
+
+	*count = bufferIndex;
+	return kr;
+}
+
+kern_return_t
+chudxnu_thread_get_callstack64_kperf(
+	thread_t                thread,
+	uint64_t                *callStack,
+	mach_msg_type_number_t  *count,
+	boolean_t               user_only)
+{
+	return chudxnu_thread_get_callstack64_internal( thread, callStack, count, user_only, 0 );
+}
+
+#elif __riscv
+
+// the same layout as arm64's: pc, the frames, then ra (and sp) for fixing up leaf functions
+#define CS_FLAG_EXTRASP  1  // capture extra sp register
+
+static kern_return_t
+chudxnu_thread_get_callstack64_internal(
+	thread_t                thread,
+	uint64_t                *callStack,
+	mach_msg_type_number_t  *count,
+	boolean_t               user_only,
+	int flags)
+{
+	kern_return_t   kr = KERN_SUCCESS;
+	task_t                  task;
+	uint64_t                currPC = 0ULL, currLR = 0ULL, currSP = 0ULL;
+	uint64_t                kernStackMin = thread->kernel_stack;
+	uint64_t                kernStackMax = kernStackMin + kernel_stack_size;
+	uint64_t       *buffer = callStack;
+	int             bufferIndex = 0;
+	int             bufferMaxIndex = 0;
+	boolean_t       kernel = FALSE;
+	struct riscv_saved_state *state = NULL;
+	uint64_t                pc = 0ULL;
+	uint64_t                fp, nextFramePointer;
+	uint64_t                frame[2];
+
+	task = get_threadtask(thread);
+	bufferMaxIndex = *count;
+	if (user_only) {
+		state = find_user_regs(thread);
+	} else {
+		state = find_kern_regs(thread);
+	}
+
+	if (!state) {
+		*count = 0;
+		return KERN_FAILURE;
+	}
+
+	kernel = (state->sstatus & SSTATUS_SPP) != 0;
+
+	/* can't take a kernel callstack if we've got a user frame */
+	if (!user_only && !kernel) {
+		return KERN_FAILURE;
+	}
+
+	// room for ra (and sp) at the end
+	if (flags & CS_FLAG_EXTRASP) {
+		bufferMaxIndex -= 2;
+	} else {
+		bufferMaxIndex -= 1;
+	}
+
+	if (bufferMaxIndex < 2) {
+		*count = 0;
+		return KERN_RESOURCE_SHORTAGE;
+	}
+
+	currPC = get_saved_state_pc(state);
+	currLR = get_saved_state_lr(state);
+	currSP = get_saved_state_sp(state);
+	fp = get_saved_state_fp(state);
+
+	bufferIndex = 0;
+	buffer[bufferIndex++] = chudxnu_vm_unslide(currPC, kernel);
+
+	BUF_VERB(PERF_CS_BACKTRACE | DBG_FUNC_START, kernel, 0);
+
+	while (bufferIndex < bufferMaxIndex) {
+		pc = 0ULL;
+
+		// fp points just past its record, the previous fp and ra sit at fp - 16
+		if (fp < sizeof(frame) || (fp & 0x7) != 0) {
+			break;
+		}
+
+		if (kernel) {
+			if (fp > kernStackMax || fp - sizeof(frame) < kernStackMin) {
+				kr = KERN_FAILURE;
+			} else {
+				kr = chudxnu_kern_read(&frame, (vm_offset_t)(fp - sizeof(frame)), sizeof(frame));
+			}
+		} else {
+			kr = chudxnu_task_read(task, &frame, (vm_offset_t)(fp - sizeof(frame)), sizeof(frame));
+		}
+
+		if (kr != KERN_SUCCESS) {
+			break;
+		}
+
+		pc = frame[1];
+		nextFramePointer = frame[0];
+
+		if (nextFramePointer) {
+			buffer[bufferIndex++] = chudxnu_vm_unslide(pc, kernel);
+		}
+
+		if (nextFramePointer < fp) {
+			break;
+		}
+		fp = nextFramePointer;
+	}
+
+	BUF_VERB(PERF_CS_BACKTRACE | DBG_FUNC_END, bufferIndex);
+
+	if (bufferIndex >= bufferMaxIndex) {
+		bufferIndex = bufferMaxIndex;
+		kr = KERN_RESOURCE_SHORTAGE;
+	} else {
+		kr = KERN_SUCCESS;
+	}
+
+	buffer[bufferIndex++] = chudxnu_vm_unslide(currLR, kernel);
+	if (flags & CS_FLAG_EXTRASP) {
+		buffer[bufferIndex++] = chudxnu_vm_unslide(currSP, kernel);
 	}
 
 	*count = bufferIndex;

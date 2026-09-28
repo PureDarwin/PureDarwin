@@ -116,6 +116,9 @@ __options_decl(waitq_wakeup_flags_t, uint32_t, {
 #elif __x86_64__
 	#define WQ_OPAQUE_ALIGN   8
 	#define WQ_OPAQUE_SIZE   48
+#elif __riscv
+	#define WQ_OPAQUE_ALIGN   __BIGGEST_ALIGNMENT__
+	#define WQ_OPAQUE_SIZE   40
 #else
 	#error Unknown size requirement
 #endif

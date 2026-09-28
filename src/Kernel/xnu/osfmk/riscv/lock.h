@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,13 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifdef  KERNEL_PRIVATE
 
-#pragma once
+#ifndef _RISCV_LOCK_H_
+#define _RISCV_LOCK_H_
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
+#warning This header is deprecated. Use <kern/locks.h> instead.
 
+#endif  /* _RISCV_LOCK_H_ */
+
+#endif  /* KERNEL_PRIVATE */

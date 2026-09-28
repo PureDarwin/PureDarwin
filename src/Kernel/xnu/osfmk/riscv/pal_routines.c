@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2009 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -26,11 +26,34 @@
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
 
-#pragma once
+// file: pal_routines.c, Platform Abstraction Layer routines for RISC-V
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
 
+#include <machine/pal_routines.h>
+#include <mach/mach_types.h>
+#include <pexpert/riscv/protos.h>
+
+/* Serial routines */
+int
+pal_serial_init(void)
+{
+	return serial_init();
+}
+
+void
+pal_serial_putc_nocr(char c)
+{
+	serial_putc(c);
+}
+
+void
+pal_serial_putc(char c)
+{
+	serial_putc(c);
+}
+
+int
+pal_serial_getc(void)
+{
+	return serial_getc();
+}

@@ -36,6 +36,8 @@
 #include <sys/stackshot.h>
 #if defined(__arm64__)
 #include <arm/cpu_internal.h>
+#elif defined(__riscv)
+#include <riscv/cpu_internal.h>
 #endif /* __arm64__ */
 #ifdef IMPORTANCE_INHERITANCE
 #include <ipc/ipc_importance.h>

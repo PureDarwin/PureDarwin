@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,21 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
+#ifdef KERNEL_PRIVATE
+#ifndef _RISCV_CPU_AFFINITY_H_
+#define _RISCV_CPU_AFFINITY_H_
 
-#pragma once
+static inline int
+ml_get_max_affinity_sets(void)
+{
+	return 0;
+}
 
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
-#endif
+static inline processor_set_t
+ml_affinity_to_pset(__unused int affinity_num)
+{
+	return PROCESSOR_SET_NULL;
+}
 
+#endif /* _RISCV_CPU_AFFINITY_H_ */
+#endif /* KERNEL_PRIVATE */

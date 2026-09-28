@@ -128,6 +128,12 @@
 #include <arm/misc_protos.h>
 extern volatile struct xnu_hw_shmem_dbg_command_info *hwsd_info;
 #endif
+#if defined(__riscv)
+#include <pexpert/pexpert.h> /* For gPanicBase */
+#include <riscv/caches_internal.h>
+#include <riscv/misc_protos.h>
+extern volatile struct xnu_hw_shmem_dbg_command_info *hwsd_info;
+#endif
 
 #include <san/kcov.h>
 #include <san/kcov_ksancov.h>
@@ -168,7 +174,7 @@ unsigned int    panic_test_action_count = 1;
 unsigned int    panic_test_case = PANIC_TEST_CASE_DISABLED;
 #endif
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 struct additional_panic_data_buffer *panic_data_buffers = NULL;
 #endif
 
@@ -179,6 +185,8 @@ struct additional_panic_data_buffer *panic_data_buffers = NULL;
 #define TRAP_DEBUGGER __asm__ volatile(".long 0xe7ffdeff")
 #elif defined (__x86_64__)
 #define TRAP_DEBUGGER __asm__("int3")
+#elif defined (__riscv)
+#define TRAP_DEBUGGER __asm__ volatile("ebreak")
 #else
 #error No TRAP_DEBUGGER for this architecture
 #endif
@@ -292,7 +300,7 @@ static bool awl_pm_state_change_cbk(void *param, enum cpu_event event, unsigned 
 static boolean_t device_corefile_valid_on_ephemeral(void);
 #endif /* !XNU_TARGET_OS_OSX & CONFIG_KDP_INTERACTIVE_DEBUGGING */
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 #define DEBUG_BUF_SIZE (4096)
 
 /* debug_buf is directly linked with iBoot panic region for arm targets */
@@ -327,7 +335,7 @@ boolean_t extended_debug_log_enabled = FALSE;
 #define KDBG_TRACE_PANIC_FILENAME "/var/log/panic.trace"
 #endif
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 static inline boolean_t debug_fatal_panic_begin(void);
 #endif
 
@@ -445,7 +453,7 @@ panic_init(void)
 			halt_in_debugger = 1;
 		}
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 		if (debug_boot_arg & DB_NMI) {
 			panicDebugging  = TRUE;
 		}
@@ -454,7 +462,7 @@ panic_init(void)
 #endif /* defined(__arm64__) */
 	}
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	char kdpname[80];
 
 	kdp_explicitly_requested = PE_parse_boot_argn("kdp_match_name", kdpname, sizeof(kdpname));
@@ -514,7 +522,7 @@ extended_debug_log_init(void)
 void
 debug_log_init(void)
 {
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	if (!gPanicBase) {
 		printf("debug_log_init: Error!! gPanicBase is still not initialized\n");
 		return;
@@ -557,7 +565,7 @@ phys_carveout_init(void)
 		return;
 	}
 
-#if __arm__ || __arm64__
+#if __arm__ || __arm64__ || __riscv
 #if DEVELOPMENT || DEBUG
 #endif /* DEVELOPMENT || DEBUG  */
 #endif /* __arm__ || __arm64__ */
@@ -655,7 +663,7 @@ DebuggerUnlock(void)
 static kern_return_t
 DebuggerHaltOtherCores(boolean_t proceed_on_failure, bool is_stackshot)
 {
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	return DebuggerXCallEnter(proceed_on_failure, is_stackshot);
 #else /* defined(__arm64__) */
 #pragma unused(proceed_on_failure)
@@ -667,7 +675,7 @@ DebuggerHaltOtherCores(boolean_t proceed_on_failure, bool is_stackshot)
 static void
 DebuggerResumeOtherCores(void)
 {
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	DebuggerXCallReturn();
 #else /* defined(__arm64__) */
 	mp_kdp_exit();
@@ -727,7 +735,7 @@ DebuggerTrapWithState(debugger_op db_op, const char *db_message, const char *db_
 {
 	kern_return_t ret;
 
-#if defined(__arm64__) && (DEVELOPMENT || DEBUG)
+#if (defined(__arm64__) || defined(__riscv)) && (DEVELOPMENT || DEBUG)
 	if (!PE_arm_debug_and_trace_initialized()) {
 		/*
 		 * In practice this can only happen if we panicked very early,
@@ -816,7 +824,7 @@ debug_is_current_cpu_in_panic_state(void)
 	return current_debugger_state()->db_entry_count > 0;
 }
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 /*
  * Helper function to compute kernel text exec slide and base values
  */
@@ -849,7 +857,7 @@ check_and_handle_nested_panic(uint64_t panic_options_mask, unsigned long panic_c
 		//
 		paniclog_append_noflush("Nested panic detected - entry count: %d panic_caller: 0x%016lx\n", CPUDEBUGGERCOUNT, panic_caller);
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 		// Print kernel slide and base information for nested panics in order to enable symbolication
 		unsigned long kernel_text_exec_slide = 0, kernel_text_exec_base = 0;
 		get_kernel_text_exec_slide_and_base(&kernel_text_exec_slide, &kernel_text_exec_base);
@@ -1050,7 +1058,7 @@ kdp_callouts(kdp_event_t event)
 	}
 }
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 /*
  * Register an additional buffer with data to include in the panic log
  *
@@ -1320,7 +1328,7 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
 	ml_set_interrupts_enabled(FALSE);
 	disable_preemption();
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	if (!debug_fatal_panic_begin()) {
 		/*
 		 * This CPU lost the race to be the first to panic. Mark our CPU
@@ -1417,7 +1425,7 @@ panic_debugger_log(const char *string, ...)
 #pragma clang diagnostic pop
 	va_end(panic_debugger_log_args);
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	paniclog_flush();
 #endif
 }
@@ -1572,7 +1580,7 @@ debugger_collect_diagnostics(unsigned int exception, unsigned int code, unsigned
 			if (debug_boot_arg & (DB_KERN_DUMP_ON_PANIC | DB_KERN_DUMP_ON_NMI)) {
 				paniclog_append_noflush("skipping local kernel core because core file could not be opened prior to panic (mode : 0x%x, error : 0x%x)\n",
 				    kdp_polled_corefile_mode(), kdp_polled_corefile_error());
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 				if (kdp_polled_corefile_mode() == kIOPolledCoreFileModeUnlinked) {
 					panic_info->eph_panic_flags |= EMBEDDED_PANIC_HEADER_FLAG_COREFILE_UNLINKED;
 				}
@@ -1650,7 +1658,7 @@ debugger_collect_diagnostics(unsigned int exception, unsigned int code, unsigned
 	}
 
 	/* If KDP is configured, try to trap to the debugger */
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	if (kdp_explicitly_requested && (current_debugger != NO_CUR_DB)) {
 #else
 	if (current_debugger != NO_CUR_DB) {
@@ -1668,7 +1676,7 @@ debugger_collect_diagnostics(unsigned int exception, unsigned int code, unsigned
 		}
 	}
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 	if (PE_i_can_has_debugger(NULL) && panicDebugging) {
 		/*
 		 * Print panic string at the end of serial output
@@ -1685,8 +1693,10 @@ debugger_collect_diagnostics(unsigned int exception, unsigned int code, unsigned
 			panic_debugger_log("\n");
 		}
 
+#if defined(__arm64__)
 		/* If panic debugging is configured and we're on a dev fused device, spin for astris to connect */
 		panic_spin_shmcon();
+#endif /* defined(__arm64__) */
 	}
 #endif /* defined(__arm64__) */
 
@@ -1808,7 +1818,7 @@ handle_debugger_trap(unsigned int exception, unsigned int code, unsigned int sub
 #endif
 	} else {
 		/* note: this is the panic path...  */
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 		if (!debug_fatal_panic_begin()) {
 			/*
 			 * This CPU lost the race to be the first to panic. Mark our CPU
@@ -1818,7 +1828,7 @@ handle_debugger_trap(unsigned int exception, unsigned int code, unsigned int sub
 			panic_stop();
 		}
 #endif /* __arm64__ */
-#if defined(__arm64__) && (DEBUG || DEVELOPMENT)
+#if (defined(__arm64__) || defined(__riscv)) && (DEBUG || DEVELOPMENT)
 		if (!PE_arm_debug_and_trace_initialized()) {
 			paniclog_append_noflush("kernel panicked before debug and trace infrastructure initialized!\n"
 			    "spinning forever...\n");
@@ -2141,7 +2151,7 @@ panic_display_kernel_aslr(void)
 		paniclog_append_noflush("KernelCache base:  %p\n", (void*) kch);
 		paniclog_append_noflush("Kernel slide:      0x%016lx\n", vm_kernel_stext - (unsigned long)kch + vm_kernel_slide);
 		paniclog_append_noflush("Kernel text base:  %p\n", (void *) vm_kernel_stext);
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 		unsigned long kernel_text_exec_slide = 0, kernel_text_exec_base = 0;
 		get_kernel_text_exec_slide_and_base(&kernel_text_exec_slide, &kernel_text_exec_base);
 		paniclog_append_noflush("Kernel text exec slide: 0x%016lx\n", kernel_text_exec_slide);
@@ -2537,7 +2547,7 @@ set_awl_scratch_exists_flag_and_subscribe_for_pm(void)
 }
 STARTUP(EARLY_BOOT, STARTUP_RANK_MIDDLE, set_awl_scratch_exists_flag_and_subscribe_for_pm);
 
-#if defined(__arm64__)
+#if (defined(__arm64__) || defined(__riscv))
 /**
  * Signal that the system is going down for a panic. Returns true if it is safe to
  * proceed with the panic flow, false if we should re-enable interrupts and spin

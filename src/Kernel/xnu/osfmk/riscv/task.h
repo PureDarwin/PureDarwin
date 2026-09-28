@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Apple Inc. All rights reserved.
+ * Copyright (c) 2007 Apple Inc. All rights reserved.
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
  *
@@ -25,12 +25,13 @@
  *
  * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
  */
-
-#pragma once
-
-#if defined(__riscv)
-#include <pexpert/riscv/board_config.h>
-#else
-#include <pexpert/arm64/board_config.h>
+#ifdef MACH_KERNEL_PRIVATE
+#include <riscv/proc_reg.h>
 #endif
 
+#define TASK_ADDITIONS_UEXC uint64_t uexc[4];
+
+#define MACHINE_TASK \
+	void * task_debug; \
+	TASK_ADDITIONS_UEXC \
+	bool uses_1ghz_timebase;
