@@ -148,6 +148,8 @@ uint32_t apfsrw_volume_slot(struct apfsrw *fs);
 // Re-read the container after another handle committed to it
 int apfsrw_refresh(struct apfsrw *fs);
 void apfsrw_close(struct apfsrw *fs);
+// Forget every cached block: call after another handle committed to the same container
+void apfsrw_cache_drop(struct apfsrw *fs);
 
 struct apfsrw_volume_entry {
     uint32_t slot;
@@ -265,6 +267,13 @@ int apfsrw_fixup_mkapfs(struct apfsrw *fs);
 int apfsrw_set_volume_role(struct apfsrw *fs, uint16_t role);
 // Hard link: newpath becomes another name for existing (not a directory)
 int apfsrw_link(struct apfsrw *fs, const char *existing, const char *newpath);
+// A name as APFS hashes it: NFD code points, full case folding when fold is set.
+// The count, or -1 when the name is not UTF-8 or needs more than max
+long apfsrw_name_fold(const char *name, size_t len, int fold, uint32_t *out, long max);
+// Names equal after folding: what a lookup on a case- or normalization-insensitive volume matches
+int apfsrw_name_equal(const char *a, size_t alen, const char *b, size_t blen, int fold);
+// j_drec_hashed_key_t's 22-bit hash of a name (spec p.78-79)
+int apfsrw_name_hash(const char *name, size_t len, int fold, uint32_t *out);
 
 #ifdef __cplusplus
 }

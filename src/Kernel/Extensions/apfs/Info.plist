@@ -48,6 +48,8 @@
 		<string>11.2</string>
 		<key>com.apple.kpi.mach</key>
 		<string>11.2</string>
+		<key>com.apple.kpi.private</key>
+		<string>11.2</string>
 		<key>com.apple.kpi.unsupported</key>
 		<string>11.2</string>
 	</dict>

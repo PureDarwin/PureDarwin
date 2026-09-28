@@ -23,6 +23,8 @@
 #include <mach/mach_time.h>
 #include <string.h>
 
+static int apfs_vol_path(vnode_t vp, char *buf, int *len);
+
 int (**apfs_vnodeop_p)(void *);
 
 #define APFS_DIRENT_SZ(dp) \
@@ -290,23 +292,9 @@ apfs_vnop_ioctl(struct vnop_ioctl_args *ap)
 		bzero(d + 4, 256);
 		strlcpy((char *)d + 4, (base[0] == '/' && base[1] == 'd' && base[2] == 'e' &&
 		    base[3] == 'v' && base[4] == '/') ? base + 5 : base, 256);
-		printf("apfs: fsctl J 0x50 role 0x%x -> slot %d name %s\n", role, found, (char *)d + 4);
 		return 0;
 	}
 	default:
-		// Black-box APFS fsctls (group 'J'): log command and argument bytes
-		if (((ap->a_command >> 8) & 0xff) == 'J') {
-			uint32_t len = (uint32_t)((ap->a_command >> 16) & 0x1fff);
-			const uint8_t *d = (const uint8_t *)ap->a_data;
-			char hex[3 * 32 + 1];
-			uint32_t n = len < 32 ? len : 32, i;
-
-			hex[0] = '\0';
-			for (i = 0; d != NULL && i < n; i++)
-				snprintf(hex + 3 * i, 4, "%02x ", d[i]);
-			printf("apfs: fsctl J 0x%lx len %u pid %d data %s\n",
-			    (unsigned long)ap->a_command, len, proc_selfpid(), hex);
-		}
 		return ENOTTY;
 	}
 }
@@ -534,7 +522,7 @@ apfs_vnop_readlink(struct vnop_readlink_args *ap)
 }
 
 static int
-apfs_vnop_pagein_impl(struct vnop_pagein_args *ap)
+apfs_vnop_pagein(struct vnop_pagein_args *ap)
 {
 	struct apfs_node *node = VTOAPFS(ap->a_vp);
 	upl_t pl = ap->a_pl;
@@ -597,35 +585,12 @@ out:
 	return error;
 }
 
-// pd_fault_trace=1:
-// running cost of page-ins, split into extent lookups and block copies (apfs_btree.c accumulators)
-static int
-apfs_vnop_pagein(struct vnop_pagein_args *ap)
-{
-	uint64_t t0 = mach_absolute_time();
-	int error = apfs_vnop_pagein_impl(ap);
-
-	if (apfs_trace_enabled()) {
-		apfs_trace_add(&apfs_trace_pagein_ns, t0);
-		if ((++apfs_trace_pageins & 255) == 0)
-			APFSLOG("PD-pagein: pid %d n=%llu total=%llu ms walk=%llu ms "
-			    "copy=%llu ms", proc_selfpid(),
-			    (unsigned long long)apfs_trace_pageins,
-			    (unsigned long long)(apfs_trace_pagein_ns / 1000000ull),
-			    (unsigned long long)(apfs_trace_walk_ns / 1000000ull),
-			    (unsigned long long)(apfs_trace_copy_ns / 1000000ull));
-	}
-	return error;
-}
-
 // Bytes handed to libapfsrw per transaction. Larger writes loop
 #define APFS_WRITE_CHUNK	(1u << 20)
 
 // apfsrw's transaction state is single-threaded:
 // one writer at a time, and the reload happens under the same lock
-extern uint64_t apfs_ubc_ns;
-extern uint32_t apfs_setattr_masks[256];
-#define APFS_RW_LOCK(amp)	apfs_rw_lock_tag(amp, __func__)
+#define APFS_RW_LOCK(amp)	apfs_rw_lock(amp)
 #define APFS_RW_UNLOCK(amp)	apfs_rw_unlock(amp)
 
 static int apfsrw_to_errno(int err)
@@ -661,16 +626,6 @@ apfs_write_range(struct apfs_node *node, const char *path, uint64_t off,
     const void *buf, size_t len, vfs_context_t ctx)
 {
 	int error;
-	static unsigned apfs_writes_logged;
-
-	// Which processes drive per-write commits?
-	if (apfs_writes_logged < 400 && (apfs_writes_logged++ & 3) == 0) {
-		char pname[MAXCOMLEN + 1];
-
-		proc_selfname(pname, (int)sizeof(pname));
-		printf("PD-apfswr: pid %d %s off %llu len %zu %s\n", proc_selfpid(), pname,
-		    (unsigned long long)off, len, path);
-	}
 
 	APFS_RW_LOCK(node->amp);
 	error = apfsrw_write_range(node->amp->rw, path, off, buf, len);
@@ -683,12 +638,7 @@ apfs_write_range(struct apfs_node *node, const char *path, uint64_t off,
 		if (off + len > node->size)
 			node->size = off + len;
 		node->mtime_ns = node->ctime_ns = apfsrw_now_ns();
-		{
-			uint64_t t0 = apfsrw_now_ns();
-
-			ubc_setsize(node->vp, (off_t)node->size);
-			apfs_ubc_ns += apfsrw_now_ns() - t0;
-		}
+		ubc_setsize(node->vp, (off_t)node->size);
 	}
 	APFS_RW_UNLOCK(node->amp);
 	return error;
@@ -720,7 +670,7 @@ apfs_vnop_pageout(struct vnop_pageout_args *ap)
 	}
 	if (f_offset < 0 || (uint64_t)f_offset >= node->size)
 		goto out;
-	error = vn_getpath(ap->a_vp, path, &plen);
+	error = apfs_vol_path(ap->a_vp, path, &plen);
 	if (error)
 		goto out;
 	if (ubc_upl_map(pl, &ioaddr) != KERN_SUCCESS) {
@@ -783,7 +733,7 @@ apfs_vnop_write(struct vnop_write_args *ap)
 		return EINVAL;
 	if (uio_resid(uio) == 0)
 		return 0;
-	error = vn_getpath(ap->a_vp, path, &plen);
+	error = apfs_vol_path(ap->a_vp, path, &plen);
 	if (error)
 		return error;
 
@@ -828,7 +778,7 @@ apfs_truncate(struct apfs_node *node, uint64_t size, vfs_context_t ctx)
 		return 0;
 	if (node->amp->rw == NULL)
 		return ENOTSUP;
-	error = vn_getpath(node->vp, path, &plen);
+	error = apfs_vol_path(node->vp, path, &plen);
 	if (error)
 		return error;
 
@@ -843,12 +793,7 @@ apfs_truncate(struct apfs_node *node, uint64_t size, vfs_context_t ctx)
 	if (error == 0) {
 		node->size = size;
 		node->mtime_ns = node->ctime_ns = apfsrw_now_ns();
-		{
-			uint64_t t0 = apfsrw_now_ns();
-
-			ubc_setsize(node->vp, (off_t)size);
-			apfs_ubc_ns += apfsrw_now_ns() - t0;
-		}
+		ubc_setsize(node->vp, (off_t)size);
 	}
 	APFS_RW_UNLOCK(node->amp);
 	if (error == 0 && size < old)
@@ -907,7 +852,6 @@ apfs_vnop_setattr(struct vnop_setattr_args *ap)
 	}
 	if (a.mask == 0)
 		return 0;
-	apfs_setattr_masks[a.mask & 0x7f]++;
 	// Access-time-only updates come from mmap, and each commit costs ~25 ms under
 	// the container lock. Keep them in memory with relatime rules. Never persist
 	if (a.mask == APFSRW_ATTR_ATIME) {
@@ -919,10 +863,9 @@ apfs_vnop_setattr(struct vnop_setattr_args *ap)
 	}
 	if (node->amp->rw == NULL)
 		return ENOTSUP;
-	error = vn_getpath(ap->a_vp, path, &len);
+	error = apfs_vol_path(ap->a_vp, path, &len);
 	if (error)
 		return error;
-	apfs_setattr_masks[0x80 | (a.mask & 0x7f)]++;
 
 	APFS_RW_LOCK(node->amp);
 	error = apfsrw_setattr(node->amp->rw, path, &a);
@@ -968,6 +911,18 @@ apfs_vnop_setattr(struct vnop_setattr_args *ap)
 	return 0;
 }
 
+// libapfsrw addresses entries by path from its own volume root. vn_getpath is global:
+// under /System/Volumes/Preboot that prefix does not exist in the volume
+static int
+apfs_vol_path(vnode_t vp, char *buf, int *len)
+{
+	size_t l = (size_t)*len;
+	int error = vn_getpath_ext(vp, NULLVP, buf, &l, VN_GETPATH_VOLUME_RELATIVE);
+
+	*len = (int)l;
+	return error;
+}
+
 // libapfsrw addresses entries by path,
 // so rebuild the child's absolute path from the parent vnode plus the component name
 static int
@@ -977,11 +932,11 @@ apfs_child_path(vnode_t dvp, struct componentname *cnp, char *buf, size_t bufsz)
 	size_t used;
 	int error;
 
-	error = vn_getpath(dvp, buf, &len);
+	error = apfs_vol_path(dvp, buf, &len);
 	if (error)
 		return error;
 	used = strlen(buf);
-	// vn_getpath gives "/" for the volume root. Avoid ending up with "//name"
+	// The volume root comes back as "/". Avoid ending up with "//name"
 	if (used > 0 && buf[used - 1] == '/')
 		buf[--used] = '\0';
 	if (used + 1 + cnp->cn_namelen + 1 > bufsz)
@@ -992,7 +947,7 @@ apfs_child_path(vnode_t dvp, struct componentname *cnp, char *buf, size_t bufsz)
 	return 0;
 }
 
-// apfsrw is path-based, so reconstruct the parent's path with vn_getpath()
+// apfsrw is path-based, so reconstruct the parent's path with apfs_vol_path()
 static int
 apfs_vnop_mkdir(struct vnop_mkdir_args *ap)
 {
@@ -1130,7 +1085,7 @@ apfs_vnop_link(struct vnop_link_args *ap)
 		return ENOTSUP;
 	if (ap->a_cnp->cn_namelen == 0 || ap->a_cnp->cn_namelen > NAME_MAX)
 		return ENAMETOOLONG;
-	error = vn_getpath(ap->a_vp, from, &flen);
+	error = apfs_vol_path(ap->a_vp, from, &flen);
 	if (error)
 		return error;
 	error = apfs_child_path(ap->a_tdvp, ap->a_cnp, to, sizeof(to));
@@ -1355,16 +1310,9 @@ apfs_vnop_create(struct vnop_create_args *ap)
 }
 
 static int
-apfs_vnop_fsync(struct vnop_fsync_args *ap)
+apfs_vnop_fsync(__unused struct vnop_fsync_args *ap)
 {
-	struct apfs_node *node = VTOAPFS(ap->a_vp);
-
-	// The data sits in an open batch until this commits
-	if (node != NULL && node->amp != NULL && node->amp->cont != NULL) {
-		APFS_RW_LOCK(node->amp);
-		(void)apfs_batch_flush(node->amp->cont);
-		APFS_RW_UNLOCK(node->amp);
-	}
+	// Every mutation commits on its own, nothing is left to write
 	return 0;
 }
 
@@ -1448,7 +1396,7 @@ apfs_vnop_getxattr(struct vnop_getxattr_args *ap)
 	buf = _MALLOC(APFS_XATTR_MAX_INLINE, M_TEMP, M_WAITOK);
 	if (buf == NULL)
 		return ENOMEM;
-	apfs_rw_lock_tag(node->amp, __func__);
+	apfs_rw_lock(node->amp);
 	error = apfs_lookup_xattr(node->amp, node->fileid, ap->a_name, buf,
 	    APFS_XATTR_MAX_INLINE, &len);
 	apfs_rw_unlock(node->amp);
@@ -1477,7 +1425,7 @@ apfs_vnop_listxattr(struct vnop_listxattr_args *ap)
 	buf = _MALLOC(APFS_XATTR_MAX_INLINE, M_TEMP, M_WAITOK);
 	if (buf == NULL)
 		return ENOMEM;
-	apfs_rw_lock_tag(node->amp, __func__);
+	apfs_rw_lock(node->amp);
 	error = apfs_list_xattrs(node->amp, node->fileid, buf,
 	    APFS_XATTR_MAX_INLINE, &len);
 	apfs_rw_unlock(node->amp);
@@ -1517,7 +1465,7 @@ apfs_vnop_setxattr(struct vnop_setxattr_args *ap)
 		error = ENOMEM;
 		goto out;
 	}
-	error = vn_getpath(ap->a_vp, path, &len);
+	error = apfs_vol_path(ap->a_vp, path, &len);
 	if (error)
 		goto out;
 	if (n > 0) {
@@ -1572,7 +1520,7 @@ apfs_vnop_removexattr(struct vnop_removexattr_args *ap)
 	path = _MALLOC(MAXPATHLEN, M_TEMP, M_WAITOK);
 	if (path == NULL)
 		return ENOMEM;
-	error = vn_getpath(ap->a_vp, path, &len);
+	error = apfs_vol_path(ap->a_vp, path, &len);
 	if (error == 0) {
 		APFS_RW_LOCK(node->amp);
 		error = apfsrw_remove_xattr(node->amp->rw, path, ap->a_name);

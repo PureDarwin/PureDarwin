@@ -14,14 +14,17 @@ target_sources(apfs.kext PRIVATE
     apfs_vnops.c
     ${LIBAPFSRW_DIR}/src/apfsrw.c
     ${LIBAPFSRW_DIR}/src/apfsrw_kern.c
+    ${LIBAPFSRW_DIR}/src/apfsrw_name.c
 )
 
 target_include_directories(apfs.kext PRIVATE
-    ${LIBAPFSRW_DIR}/include)
+    ${LIBAPFSRW_DIR}/include
+    ${LIBAPFSRW_DIR}/third_party/utf8proc)
 
 set_source_files_properties(
     ${LIBAPFSRW_DIR}/src/apfsrw.c
     ${LIBAPFSRW_DIR}/src/apfsrw_kern.c
+    ${LIBAPFSRW_DIR}/src/apfsrw_name.c
     PROPERTIES COMPILE_DEFINITIONS APFSRW_KERNEL=1)
 
 target_link_libraries(apfs.kext PRIVATE xnu_kernel_private_headers)

@@ -7,6 +7,7 @@ project(libapfsrw C)
 add_library(apfsrw STATIC
     src/apfsrw.c
     src/apfsrw_lzvn.c
+    src/apfsrw_name.c
     third_party/lzfse/lzvn_decode_base.c
     third_party/libzbitmap/libzbitmap.c
 )
@@ -20,6 +21,7 @@ set_source_files_properties(
 target_include_directories(apfsrw SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzfse
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libzbitmap
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/utf8proc
 )
 
 target_include_directories(apfsrw PUBLIC

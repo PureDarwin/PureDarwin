@@ -91,6 +91,14 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	amp->mp = mp;
 	amp->am_hash_lock = IOLockAlloc();
 	if (amp->am_hash_lock == NULL) {
+		if (amp->omap_cache != NULL)
+			_FREE(amp->omap_cache, M_TEMP);
+		if (amp->verified != NULL)
+			_FREE(amp->verified, M_TEMP);
+		if (amp->ncache != NULL)
+			_FREE(amp->ncache, M_TEMP);
+		if (amp->ncache_ents != NULL)
+			_FREE(amp->ncache_ents, M_TEMP);
 		_FREE(amp, M_TEMP);
 		if (own_devvp_ref)
 			vnode_rele(devvp);
@@ -217,6 +225,14 @@ fail:
 		amp->dev_opened = 0;
 	}
 	IOLockFree(amp->am_hash_lock);
+	if (amp->omap_cache != NULL)
+		_FREE(amp->omap_cache, M_TEMP);
+	if (amp->verified != NULL)
+		_FREE(amp->verified, M_TEMP);
+	if (amp->ncache != NULL)
+		_FREE(amp->ncache, M_TEMP);
+	if (amp->ncache_ents != NULL)
+		_FREE(amp->ncache_ents, M_TEMP);
 	_FREE(amp, M_TEMP);
 	if (own_devvp_ref)
 		vnode_rele(devvp);
@@ -293,152 +309,20 @@ apfs_container_detach(struct apfs_mount *amp)
 	}
 }
 
-extern uint64_t apfsrw_kern_sync_ns, apfsrw_kern_sync_n, apfsrw_kern_bdwrites, apfsrw_kern_breads;
-extern uint64_t apfsrw_wblocks[4];		// mutation, commit, publish, frees
-extern uint64_t apfsrw_commits;
-uint64_t apfs_ubc_ns, apfs_reload_ns, apfs_reload_n;
-// setattr calls by attribute mask. Bit 0x80 marks the ones that committed
-uint32_t apfs_setattr_masks[256];
-
-// Hold time per call site, so the report names the vnop that serialises the container
-static struct {
-	const char *tag;
-	uint64_t ns;
-	uint64_t n;
-	uint64_t bdw;
-	uint64_t sync_ns;
-} apfs_tags[16];
-static uint64_t apfs_acq_bdw, apfs_acq_sync_ns;
-
-static void
-apfs_tag_add(const char *tag, uint64_t ns)
-{
-	for (unsigned i = 0; i < sizeof(apfs_tags) / sizeof(apfs_tags[0]); i++) {
-		if (apfs_tags[i].tag == NULL || apfs_tags[i].tag == tag) {
-			apfs_tags[i].tag = tag;
-			apfs_tags[i].ns += ns;
-			apfs_tags[i].n++;
-			if (apfsrw_kern_bdwrites >= apfs_acq_bdw && apfsrw_kern_sync_ns >= apfs_acq_sync_ns) {
-				apfs_tags[i].bdw += apfsrw_kern_bdwrites - apfs_acq_bdw;
-				apfs_tags[i].sync_ns += apfsrw_kern_sync_ns - apfs_acq_sync_ns;
-			}
-			return;
-		}
-	}
-}
-
-// pdapfsbatch=1 holds one transaction open across mutations instead of committing each.
-// Off for now, deferring a commit breaks the read path, which walks the tree itself
-static int apfs_batch_on = -1;
-
-static int
-apfs_batch_enabled(void)
-{
-	if (apfs_batch_on < 0) {
-		int v = 0;
-
-		apfs_batch_on = PE_parse_boot_argn("pdapfsbatch", &v,
-		    sizeof(v)) && v;
-	}
-	return apfs_batch_on;
-}
-
-int
-apfs_batch_flush(struct apfs_container *c)
-{
-	struct apfs_mount *amp = c->c_batch_amp;
-	int err;
-
-	if (amp == NULL)
-		return 0;
-	c->c_batch_amp = NULL;
-	c->c_batch_ops = 0;
-	c->c_batch_first_abs = 0;
-	err = apfsrw_batch_end(amp->rw);
-	if (err != 0)
-		APFSLOG("slot %u: batch commit failed: %d", amp->vol_slot, err);
-	// Like any commit, this leaves the writer's own copy behind too.
-	// The next apfs_rw_lock_tag() re-reads it
-	++c->c_generation;
-	return err;
-}
-
-// One mutation landed on amp and sits in the open batch.
-// Commit once the policy thresholds are reached. Called with the lock held
-void
-apfs_batch_note(struct apfs_mount *amp)
-{
-	struct apfs_container *c = amp->cont;
-	extern uint64_t mach_absolute_time(void);
-	extern void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
-	uint64_t ns = 0;
-
-	if (c->c_batch_amp != amp)
-		return;			// committed on its own
-	{
-		struct apfsrw_volume_info vi;
-
-		if (apfsrw_get_volume_info(amp->rw, &vi) == 0) {
-			if (c->c_batch_ops < 8)
-				APFSLOG("batch slot %u op %u: root %lld -> %llu, "
-				    "xid %llu, deferred %u", amp->vol_slot,
-				    c->c_batch_ops, (long long)amp->root_tree_paddr,
-				    (unsigned long long)vi.root_tree_paddr,
-				    (unsigned long long)vi.xid,
-				    apfsrw_batch_pending(amp->rw));
-			amp->root_tree_oid = (apfs_oid_t)vi.root_tree_oid;
-			amp->root_tree_paddr = (apfs_paddr_t)vi.root_tree_paddr;
-			amp->volume_omap_tree_paddr =
-			    (apfs_paddr_t)vi.volume_omap_tree_paddr;
-			amp->xid = (apfs_xid_t)vi.xid;
-		}
-	}
-	c->c_batch_ops++;
-	absolutetime_to_nanoseconds(mach_absolute_time() - c->c_batch_first_abs, &ns);
-	if (c->c_batch_ops >= APFS_BATCH_MAX_OPS ||
-	    apfsrw_batch_pending(amp->rw) >= APFS_BATCH_MAX_DEFERRED ||
-	    ns >= APFS_BATCH_MAX_NS)
-		(void)apfs_batch_flush(c);
-}
-
 void
 apfs_rw_lock(struct apfs_mount *amp)
 {
-	apfs_rw_lock_tag(amp, "misc");
-}
-
-void
-apfs_rw_lock_tag(struct apfs_mount *amp, const char *tag)
-{
 	struct apfs_container *c = amp->cont;
-	extern uint64_t mach_absolute_time(void);
-	extern void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
 
-	// One recursive lock serialises the whole container. Report who blocks whom
-	if (!IORecursiveLockTryLock((IORecursiveLock *)c->c_lock)) {
-		uint64_t t0 = mach_absolute_time(), ns = 0;
-		int blocker = c->c_owner_pid;   // The holder clears this on unlock
-
-		IORecursiveLockLock((IORecursiveLock *)c->c_lock);
-		absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
-		if (ns > 2000000000ull)
-			printf("PD-apfslock: pid %d waited %llu ms; blocked by pid %d\n",
-			    proc_selfpid(), (unsigned long long)(ns / 1000000), blocker);
-	}
-	c->c_owner_pid = proc_selfpid();
-	c->c_acq_abs = mach_absolute_time();
-	apfs_acq_bdw = apfsrw_kern_bdwrites;
-	apfs_acq_sync_ns = apfsrw_kern_sync_ns;
-	c->c_tag = tag;
-	// One commit covers one volume, and a re-read would drop another
-	// volume's uncommitted state, so hand the container over cleanly
-	if (c->c_batch_amp != NULL && c->c_batch_amp != amp)
-		(void)apfs_batch_flush(c);
+	// One recursive lock serialises the whole container
+	IORecursiveLockLock((IORecursiveLock *)c->c_lock);
 	if (amp->seen_generation != c->c_generation) {
 		vfs_context_t ctx = vfs_context_current();
 		int error = 0;
-		uint64_t r0 = mach_absolute_time(), rns = 0;
 
+		// Another volume's commit changed blocks this handle may hold. Its own did not
+		if (amp->rw != NULL && c->c_last_writer != amp)
+			apfsrw_cache_drop(amp->rw);
 		if (amp->rw != NULL)
 			error = apfsrw_refresh(amp->rw);
 		if (error == 0 && apfs_probe_container(amp, ctx) == 0)
@@ -447,100 +331,13 @@ apfs_rw_lock_tag(struct apfs_mount *amp, const char *tag)
 			APFSLOG("slot %u: re-read after another volume's commit "
 			    "failed: %d", amp->vol_slot, error);
 		amp->seen_generation = c->c_generation;
-		absolutetime_to_nanoseconds(mach_absolute_time() - r0, &rns);
-		apfs_reload_ns += rns;
-		apfs_reload_n++;
-	}
-	// Now that this mount is current, let its mutations accumulate
-	if (apfs_batch_enabled() && c->c_batch_amp == NULL && amp->rw != NULL &&
-	    apfsrw_batch_begin(amp->rw) == 0) {
-		c->c_batch_amp = amp;
-		c->c_batch_first_abs = mach_absolute_time();
-		c->c_batch_ops = 0;
 	}
 }
 
 void
 apfs_rw_unlock(struct apfs_mount *amp)
 {
-	struct apfs_container *c = amp->cont;
-	extern uint64_t mach_absolute_time(void);
-	extern void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
-	uint64_t now = mach_absolute_time(), ns = 0;
-
-	// Is the container lock held long, or only queued behind many short holds?
-	if (c->c_acq_abs != 0) {
-		absolutetime_to_nanoseconds(now - c->c_acq_abs, &ns);
-		c->c_hold_ns += ns;
-		c->c_hold_count++;
-		apfs_tag_add(c->c_tag != NULL ? c->c_tag : "misc", ns);
-		if (ns > c->c_hold_max_ns) {
-			c->c_hold_max_ns = ns;
-			c->c_hold_max_pid = c->c_owner_pid;
-		}
-	}
-	if (c->c_report_abs == 0) {
-		c->c_report_abs = now;
-	} else {
-		uint64_t since = 0;
-
-		absolutetime_to_nanoseconds(now - c->c_report_abs, &since);
-		if (since > 60000000000ull && c->c_hold_count != 0) {
-			printf("PD-apfshold: %llu holds in %llu s, mean %llu us, max %llu ms by pid %d\n",
-			    (unsigned long long)c->c_hold_count, (unsigned long long)(since / 1000000000ull),
-			    (unsigned long long)(c->c_hold_ns / c->c_hold_count / 1000),
-			    (unsigned long long)(c->c_hold_max_ns / 1000000), c->c_hold_max_pid);
-			for (unsigned i = 0; i < sizeof(apfs_tags) / sizeof(apfs_tags[0]); i++) {
-				if (apfs_tags[i].tag == NULL || apfs_tags[i].n == 0)
-					continue;
-				printf("PD-apfstag: %-22s %6llu holds %8llu ms total, %llu bdwrites, sync %llu ms\n",
-				    apfs_tags[i].tag, (unsigned long long)apfs_tags[i].n,
-				    (unsigned long long)(apfs_tags[i].ns / 1000000ull),
-				    (unsigned long long)apfs_tags[i].bdw,
-				    (unsigned long long)(apfs_tags[i].sync_ns / 1000000ull));
-				apfs_tags[i].ns = apfs_tags[i].n = apfs_tags[i].bdw = apfs_tags[i].sync_ns = 0;
-			}
-			printf("PD-apfsio: %llu syncs %llu ms, %llu bdwrites, %llu breads, ubc_setsize %llu ms, %llu reloads %llu ms\n",
-			    (unsigned long long)apfsrw_kern_sync_n, (unsigned long long)(apfsrw_kern_sync_ns / 1000000ull),
-			    (unsigned long long)apfsrw_kern_bdwrites, (unsigned long long)apfsrw_kern_breads,
-			    (unsigned long long)(apfs_ubc_ns / 1000000ull),
-			    (unsigned long long)apfs_reload_n, (unsigned long long)(apfs_reload_ns / 1000000ull));
-			printf("PD-apfscommit: %llu commits, blocks: mutation %llu, "
-			    "commit %llu, publish %llu, frees %llu\n",
-			    (unsigned long long)apfsrw_commits,
-			    (unsigned long long)apfsrw_wblocks[0],
-			    (unsigned long long)apfsrw_wblocks[1],
-			    (unsigned long long)apfsrw_wblocks[2],
-			    (unsigned long long)apfsrw_wblocks[3]);
-			apfsrw_wblocks[0] = apfsrw_wblocks[1] = 0;
-			apfsrw_wblocks[2] = apfsrw_wblocks[3] = 0;
-			apfsrw_commits = 0;
-			apfsrw_kern_sync_ns = apfsrw_kern_sync_n = apfsrw_kern_bdwrites = apfsrw_kern_breads = apfs_ubc_ns = 0;
-			apfs_reload_ns = apfs_reload_n = 0;
-			for (unsigned m = 0; m < 256; m++) {
-				if (apfs_setattr_masks[m] != 0)
-					printf("PD-apfsattr: mask 0x%x%s %u\n", m & 0x7f,
-					    (m & 0x80) ? " committed" : "", apfs_setattr_masks[m]);
-				apfs_setattr_masks[m] = 0;
-			}
-			c->c_report_abs = now;
-			c->c_hold_ns = c->c_hold_count = c->c_hold_max_ns = 0;
-			c->c_hold_max_pid = -1;
-		}
-	}
-	// An idle batch would otherwise sit uncommitted until the next mutation:
-	// bound how long a write can stay in memory
-	if (c->c_batch_amp != NULL && apfsrw_batch_dirty(c->c_batch_amp->rw)) {
-		uint64_t age = 0;
-
-		absolutetime_to_nanoseconds(now - c->c_batch_first_abs, &age);
-		if (age >= APFS_BATCH_MAX_NS)
-			(void)apfs_batch_flush(c);
-	}
-	c->c_acq_abs = 0;
-	c->c_owner_pid = -1;
-	c->c_owner_thread = NULL;
-	IORecursiveLockUnlock((IORecursiveLock *)c->c_lock);
+	IORecursiveLockUnlock((IORecursiveLock *)amp->cont->c_lock);
 }
 
 static int
@@ -654,13 +451,9 @@ apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx)
 
 	if (amp == NULL)
 		return EINVAL;
-	// Inside a batch nothing reached the disk, apfs_batch_flush() bumps the generation later.
-	// Outside one, bump it and let the next lock re-read once. This mount stays stale on purpose
-	if (amp->cont->c_batch_amp == amp) {
-		apfs_batch_note(amp);
-		return 0;
-	}
+	// Bump the generation and let the next lock re-read once. This mount stays stale on purpose
 	++amp->cont->c_generation;
+	amp->cont->c_last_writer = amp;
 	return 0;
 }
 
@@ -935,10 +728,11 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 
 	if (amp) {
 		amp->root_vp = NULLVP;
-		// Anything still batched has to land before the handle closes
+		// A departing mount must not stay the container's last writer
 		if (amp->cont != NULL) {
-			apfs_rw_lock_tag(amp, "apfs_unmount");
-			(void)apfs_batch_flush(amp->cont);
+			apfs_rw_lock(amp);
+			if (amp->cont->c_last_writer == amp)
+				amp->cont->c_last_writer = NULL;
 			apfs_rw_unlock(amp);
 		}
 		if (amp->rw != NULL) {
@@ -961,6 +755,14 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 		}
 		vfs_setfsprivate(mp, NULL);
 		IOLockFree(amp->am_hash_lock);
+		if (amp->omap_cache != NULL)
+			_FREE(amp->omap_cache, M_TEMP);
+		if (amp->verified != NULL)
+			_FREE(amp->verified, M_TEMP);
+		if (amp->ncache != NULL)
+			_FREE(amp->ncache, M_TEMP);
+		if (amp->ncache_ents != NULL)
+			_FREE(amp->ncache_ents, M_TEMP);
 		_FREE(amp, M_TEMP);
 	}
 	return 0;
@@ -1026,12 +828,6 @@ apfs_sync(struct mount *mp, int waitfor, __unused vfs_context_t ctx)
 {
 	struct apfs_mount *amp = VFSTOAPFS(mp);
 
-	// A batched mutation is only in memory until it is committed
-	if (amp != NULL && amp->cont != NULL) {
-		apfs_rw_lock_tag(amp, "apfs_sync");
-		(void)apfs_batch_flush(amp->cont);
-		apfs_rw_unlock(amp);
-	}
 	if (amp && amp->io_devvp)
 		buf_flushdirtyblks(amp->io_devvp, waitfor == MNT_WAIT, 0,
 		    "apfs_sync");

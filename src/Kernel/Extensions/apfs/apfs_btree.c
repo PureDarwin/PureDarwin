@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 PureDarwin contributors. SPDX-License-Identifier: MIT */
 
 #include "apfs.h"
+#include "apfsrw/apfsrw.h"
 
 #include <IOKit/IOLocks.h>
 #include <libkern/OSByteOrder.h>
@@ -22,8 +23,7 @@ typedef int (*apfs_leaf_cb)(struct apfs_mount *amp,
     const struct apfs_btree_node_phys *node,
     const struct apfs_btree_info *info, void *ctx);
 static int apfs_btree_walk_leaves_oid(struct apfs_mount *amp,
-    uint64_t oid_min, uint64_t oid_max, apfs_leaf_cb cb, void *ctx,
-    const char *tag);
+    uint64_t oid_min, uint64_t oid_max, apfs_leaf_cb cb, void *ctx);
 static int apfs_omap_lookup_tree(struct apfs_mount *amp,
     apfs_paddr_t tree_paddr, apfs_oid_t oid, apfs_xid_t xid,
     struct apfs_omap_val *out);
@@ -160,12 +160,24 @@ apfs_read_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out,
 static int
 apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 {
+	struct apfs_verified_ent *ve = NULL;
 	int error;
 
 	error = apfs_read_phys(amp, paddr, out, amp->block_size);
 	if (error)
 		return error;
+	if (amp->verified == NULL)
+		amp->verified = _MALLOC(APFS_VERIFIED_ENTS * sizeof(*ve), M_TEMP, M_WAITOK | M_ZERO);
+	if (amp->verified != NULL) {
+		ve = &amp->verified[((uint64_t)paddr ^ ((uint64_t)paddr >> 13)) % APFS_VERIFIED_ENTS];
+		if (ve->xid == amp->xid && ve->paddr == paddr && ve->xid != 0)
+			return 0;
+	}
 	error = apfs_verify_object_checksum(out, amp->block_size);
+	if (error == 0 && ve != NULL) {
+		ve->paddr = paddr;
+		ve->xid = amp->xid;
+	}
 	if (error) {
 		static int cksum_log_budget = 12;
 
@@ -187,6 +199,43 @@ apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 		return error;
 	}
 	return 0;
+}
+
+// A B-tree node, from the node cache when it was read at this xid already
+static int
+apfs_read_node(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
+{
+	struct apfs_ncache_ent *ne = NULL;
+	uint32_t slot = 0;
+	int error;
+
+	if (amp->ncache == NULL) {
+		amp->ncache = _MALLOC((size_t)APFS_NCACHE_ENTS * amp->block_size, M_TEMP, M_WAITOK);
+		amp->ncache_ents = _MALLOC(APFS_NCACHE_ENTS * sizeof(*ne), M_TEMP, M_WAITOK | M_ZERO);
+		if (amp->ncache == NULL || amp->ncache_ents == NULL) {
+			if (amp->ncache != NULL)
+				_FREE(amp->ncache, M_TEMP);
+			if (amp->ncache_ents != NULL)
+				_FREE(amp->ncache_ents, M_TEMP);
+			amp->ncache = NULL;
+			amp->ncache_ents = NULL;
+		}
+	}
+	if (amp->ncache != NULL) {
+		slot = (uint32_t)(((uint64_t)paddr ^ ((uint64_t)paddr >> 9)) % APFS_NCACHE_ENTS);
+		ne = &amp->ncache_ents[slot];
+		if (ne->xid == amp->xid && ne->paddr == paddr && ne->xid != 0) {
+			memcpy(out, amp->ncache + (size_t)slot * amp->block_size, amp->block_size);
+			return 0;
+		}
+	}
+	error = apfs_read_object_phys(amp, paddr, out);
+	if (error == 0 && ne != NULL) {
+		memcpy(amp->ncache + (size_t)slot * amp->block_size, out, amp->block_size);
+		ne->paddr = paddr;
+		ne->xid = amp->xid;
+	}
+	return error;
 }
 
 static int
@@ -343,13 +392,28 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 	uint32_t i;
 	int found = 0;
 	int error = 0;
+	struct apfs_omap_cache_ent *ce = NULL;
+
+	// Only lookups at the mount's own xid are cached, keyed by tree and oid
+	if (xid == amp->xid) {
+		if (amp->omap_cache == NULL)
+			amp->omap_cache = _MALLOC(APFS_OMAP_CACHE_ENTS * sizeof(*ce), M_TEMP,
+			    M_WAITOK | M_ZERO);
+		if (amp->omap_cache != NULL) {
+			ce = &amp->omap_cache[(oid ^ (oid >> 11) ^ (uint64_t)tree_paddr) % APFS_OMAP_CACHE_ENTS];
+			if (ce->xid == xid && ce->oid == oid && ce->tree == tree_paddr && ce->xid != 0) {
+				memcpy(out, &ce->val, sizeof(*out));
+				return 0;
+			}
+		}
+	}
 
 	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
 	    M_WAITOK);
 	if (node == NULL)
 		return ENOMEM;
 
-	error = apfs_read_object_phys(amp, tree_paddr, node);
+	error = apfs_read_node(amp, tree_paddr, node);
 	if (error)
 		goto out;
 
@@ -413,7 +477,7 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 				error = EINVAL;
 				goto out;
 			}
-			error = apfs_read_object_phys(amp, child, node);
+			error = apfs_read_node(amp, child, node);
 			if (error)
 				goto out;
 		}
@@ -452,6 +516,12 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 	}
 
 	memcpy(out, &best, sizeof(best));
+	if (ce != NULL) {
+		ce->tree = tree_paddr;
+		ce->oid = oid;
+		ce->xid = xid;
+		memcpy(&ce->val, &best, sizeof(best));
+	}
 out:
 	_FREE(node, M_TEMP);
 	return error;
@@ -596,51 +666,25 @@ apfs_drec_key_cmp(const void *keyp, uint16_t key_len,
 	return 0;
 }
 
-// CRC-32C, reflected. Only for the directory record name hash
-static uint32_t
-apfs_crc32c(const uint8_t *data, size_t len)
+// how a volume matches names: 2 folds case and NFD, 1 NFD only, 0 exact bytes
+static int
+apfs_name_match_mode(const struct apfs_mount *amp)
 {
-	uint32_t crc = 0xffffffffU;
-	size_t i;
-	int k;
+	uint64_t f = le64(amp->apfs.apfs_incompatible_features);
 
-	for (i = 0; i < len; i++) {
-		crc ^= data[i];
-		for (k = 0; k < 8; k++)
-			crc = (crc >> 1) ^ (0x82f63b78U & (uint32_t)(-(int32_t)(crc & 1)));
-	}
-	return crc ^ 0xffffffffU;
+	if (f & APFS_INCOMPAT_CASE_INSENSITIVE)
+		return 2;
+
+	return (f & APFS_INCOMPAT_NORMALIZATION_INSENSITIVE) ? 1 : 0;
 }
 
 // Spec p.78-79: NFD name as UTF-32, case-folded on case-insensitive volumes,
-// CRC-32C complemented, low 22 bits. ASCII only. Other names fall back to the full walk
+// CRC-32C complemented, low 22 bits. Names that are not UTF-8 fall back to the full walk
 static int
 apfs_drec_name_hash(const struct apfs_mount *amp, const char *name,
     size_t len, uint32_t *out)
 {
-	uint8_t *utf32;
-	size_t i;
-	int fold = (le64(amp->apfs.apfs_incompatible_features) &
-	    APFS_INCOMPAT_CASE_INSENSITIVE) != 0;
-
-	if (len == 0 || len > 255)
-		return EINVAL;
-	for (i = 0; i < len; i++)
-		if ((uint8_t)name[i] >= 0x80)
-			return ENOTSUP;
-	utf32 = (uint8_t *)_MALLOC(len * 4, M_TEMP, M_WAITOK | M_ZERO);
-	if (utf32 == NULL)
-		return ENOMEM;
-	for (i = 0; i < len; i++) {
-		uint8_t c = (uint8_t)name[i];
-
-		if (fold && c >= 'A' && c <= 'Z')
-			c = (uint8_t)(c - 'A' + 'a');
-		utf32[i * 4] = c;
-	}
-	*out = (~apfs_crc32c(utf32, len * 4)) & 0x003fffffU;
-	_FREE(utf32, M_TEMP);
-	return 0;
+	return apfsrw_name_hash(name, len, apfs_name_match_mode(amp) == 2, out) == 0 ? 0 : ENOTSUP;
 }
 
 static int
@@ -662,7 +706,7 @@ apfs_btree_walk_node(struct apfs_mount *amp, apfs_paddr_t paddr,
 	    M_WAITOK);
 	if (node == NULL)
 		return ENOMEM;
-	error = apfs_read_object_phys(amp, paddr, node);
+	error = apfs_read_node(amp, paddr, node);
 	if (error)
 		goto out;
 
@@ -803,13 +847,13 @@ out:
 // Pass 0 / UINT64_MAX to visit the whole tree
 static int
 apfs_btree_walk_leaves_oid(struct apfs_mount *amp, uint64_t oid_min,
-    uint64_t oid_max, apfs_leaf_cb cb, void *ctx, const char *tag)
+    uint64_t oid_max, apfs_leaf_cb cb, void *ctx)
 {
 	int error;
 
 	// A commit frees and quickly reuses tree blocks,
 	// so the root must be read and the whole walk done under the lock. It is recursive
-	apfs_rw_lock_tag(amp, tag);
+	apfs_rw_lock(amp);
 	error = apfs_btree_walk_node(amp, amp->root_tree_paddr, NULL, 0,
 	    oid_min, oid_max, cb, ctx, NULL);
 	apfs_rw_unlock(amp);
@@ -819,12 +863,11 @@ apfs_btree_walk_leaves_oid(struct apfs_mount *amp, uint64_t oid_min,
 // Directory record lookup by (dirid, name hash): one root-to-leaf path
 static int
 apfs_btree_walk_drec(struct apfs_mount *amp,
-    const struct apfs_walk_target *target, apfs_leaf_cb cb, void *ctx,
-    const char *tag)
+    const struct apfs_walk_target *target, apfs_leaf_cb cb, void *ctx)
 {
 	int error;
 
-	apfs_rw_lock_tag(amp, tag);
+	apfs_rw_lock(amp);
 	error = apfs_btree_walk_node(amp, amp->root_tree_paddr, NULL, 0,
 	    target->dirid, target->dirid, cb, ctx, target);
 	apfs_rw_unlock(amp);
@@ -973,7 +1016,7 @@ apfs_lookup_inode(struct apfs_mount *amp, uint64_t fileid,
 	c.info_out = info_out;
 	c.found = 0;
 	error = apfs_btree_walk_leaves_oid(amp, fileid,
-	    fileid, apfs_lookup_inode_cb, &c, __func__);
+	    fileid, apfs_lookup_inode_cb, &c);
 	if (error != 0 && error != 1)
 		return error;
 	return c.found ? 0 : ENOENT;
@@ -1031,6 +1074,8 @@ struct apfs_dirent_lookup_ctx {
 	uint64_t fileid;
 	uint8_t dtype;
 	int found;
+	// names match after folding: 0 exact, 1 NFD, 2 NFD and case
+	int match;
 };
 
 static int
@@ -1064,8 +1109,9 @@ apfs_lookup_dirent_cb(struct apfs_mount *amp,
 		if (apfs_parse_dir_key(keyp, key_len, &entry_name,
 		    &entry_namelen))
 			continue;
-		if (entry_namelen != c->namelen ||
-		    memcmp(entry_name, c->name, c->namelen) != 0)
+		if ((entry_namelen != c->namelen || memcmp(entry_name, c->name, c->namelen) != 0) &&
+		    (!c->match || !apfsrw_name_equal((const char *)entry_name, entry_namelen, c->name, c->namelen,
+		    c->match == 2)))
 			continue;
 
 		val = (const struct apfs_j_drec_val *)valp;
@@ -1095,16 +1141,27 @@ apfs_lookup_dirent(struct apfs_mount *amp, uint64_t dirid, const char *name,
 	c.fileid = 0;
 	c.dtype = 0;
 	c.found = 0;
+	c.match = apfs_name_match_mode(amp);
 	{
 		struct apfs_walk_target t;
+		int hashed;
+		size_t i;
 
 		t.dirid = dirid;
-		if (apfs_drec_name_hash(amp, name, namelen, &t.hash) == 0)
+		hashed = apfs_drec_name_hash(amp, name, namelen, &t.hash) == 0;
+		if (hashed)
 			error = apfs_btree_walk_drec(amp, &t,
-			    apfs_lookup_dirent_cb, &c, __func__);
+			    apfs_lookup_dirent_cb, &c);
 		else
 			error = apfs_btree_walk_leaves_oid(amp, dirid, dirid,
-			    apfs_lookup_dirent_cb, &c, __func__);
+			    apfs_lookup_dirent_cb, &c);
+
+		// a non-ASCII name our folding hashes differently still matches its exact bytes
+		for (i = 0; hashed && i < namelen && (uint8_t)name[i] < 0x80; i++)
+			;
+		if (hashed && i < namelen && !c.found && (error == 0 || error == 1))
+			error = apfs_btree_walk_leaves_oid(amp, dirid, dirid,
+			    apfs_lookup_dirent_cb, &c);
 	}
 	if (error != 0 && error != 1)
 		return error;
@@ -1201,7 +1258,7 @@ apfs_lookup_xattr(struct apfs_mount *amp, uint64_t fileid, const char *name,
 	c.bufsize = bufsize;
 
 	error = apfs_btree_walk_leaves_oid(amp, fileid,
-	    fileid, apfs_lookup_xattr_cb, &c, __func__);
+	    fileid, apfs_lookup_xattr_cb, &c);
 	if (error != 0 && error != 1)
 		return error;
 	if (!c.found)
@@ -1276,7 +1333,7 @@ apfs_list_xattrs(struct apfs_mount *amp, uint64_t fileid, char *buf,
 	c.buf = buf;
 	c.bufsize = bufsize;
 	error = apfs_btree_walk_leaves_oid(amp, fileid, fileid,
-	    apfs_list_xattr_cb, &c, __func__);
+	    apfs_list_xattr_cb, &c);
 	if (error != 0 && error != 1)
 		return error;
 	*outlen = c.used;
@@ -1357,7 +1414,7 @@ apfs_iterate_dir(struct apfs_mount *amp, uint64_t dirid, off_t start_index,
 	c.entries = 0;
 	c.done = 0;
 	error = apfs_btree_walk_leaves_oid(amp, dirid,
-	    dirid, apfs_iterate_dir_cb, &c, __func__);
+	    dirid, apfs_iterate_dir_cb, &c);
 	if (error == 1)
 		error = 0;
 	if (numdirent)
@@ -1431,34 +1488,6 @@ apfs_extent_at_cb(struct apfs_mount *amp,
 
 // Fill n bytes from file_off into dst.
 // Runs under am_rw_lock so the extent in hand cannot be freed and reused by a commit halfway through
-// pd_fault_trace=1: where read time goes - extent lookups vs block copies
-uint64_t apfs_trace_walk_ns, apfs_trace_copy_ns, apfs_trace_pageins,
-    apfs_trace_pagein_ns;
-static int apfs_trace_on = -1;
-
-int
-apfs_trace_enabled(void)
-{
-	if (apfs_trace_on < 0) {
-		int v = 0;
-
-		apfs_trace_on = PE_parse_boot_argn("pd_fault_trace", &v,
-		    sizeof(v)) && v;
-	}
-	return apfs_trace_on;
-}
-
-void
-apfs_trace_add(uint64_t *acc, uint64_t t0)
-{
-	uint64_t ns;
-
-	if (!apfs_trace_enabled())
-		return;
-	absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
-	*acc += ns;
-}
-
 static int
 apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
     uint8_t *dst)
@@ -1484,14 +1513,11 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 		// One tree walk per extent
 		if (!cur.found || off < cur.logical ||
 		    off >= cur.logical + cur.len) {
-			uint64_t t0 = mach_absolute_time();
-
 			cur.want_off = off;
 			cur.found = 0;
 			cur.next_logical = ~0ull;
 			error = apfs_btree_walk_leaves_oid(amp, cur.fileid,
-			    cur.fileid, apfs_extent_at_cb, &cur, __func__);
-			apfs_trace_add(&apfs_trace_walk_ns, t0);
+			    cur.fileid, apfs_extent_at_cb, &cur);
 			if (error != 0 && error != 1)
 				return error;
 			if (cur.found) {
@@ -1531,7 +1557,6 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 		if (n - done < count)
 			count = n - done;
 		{
-			uint64_t t0 = mach_absolute_time();
 			uint64_t avail = cur.len - extent_off;
 			size_t run = 0;
 
@@ -1554,7 +1579,6 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 				    (apfs_paddr_t)(cur.phys + block_index),
 				    block_off, count, dst + done);
 			}
-			apfs_trace_add(&apfs_trace_copy_ns, t0);
 		}
 		if (error)
 			return error;
@@ -1596,7 +1620,7 @@ apfs_read_file(struct apfs_node *apnode, struct uio *uio)
 			n = (size_t)(filesize - off);
 		if ((uint64_t)uio_resid(uio) < n)
 			n = (size_t)uio_resid(uio);
-		apfs_rw_lock_tag(amp, __func__);
+		apfs_rw_lock(amp);
 		error = apfs_read_locked(apnode, off, n, bounce);
 		apfs_rw_unlock(amp);
 		if (error)

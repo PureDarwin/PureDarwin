@@ -18,14 +18,6 @@ apfsrw_now_ns(void)
 
 #define APFSRW_ALLOC_HDR 16
 
-// Commit cost breakdown, reported and reset by the kext's lock-hold report
-uint64_t apfsrw_kern_sync_ns, apfsrw_kern_sync_n, apfsrw_kern_bdwrites, apfsrw_kern_breads;
-// Blocks written per phase, to show what a commit actually costs:
-// 0 the mutation itself, 1 cow_commit, 2 publish_checkpoint, 3 deferred frees
-extern int apfsrw_wphase;
-uint64_t apfsrw_wblocks[4];
-extern uint64_t apfsrw_commits;
-
 void *
 apfsrw_kern_malloc(size_t size)
 {
@@ -117,11 +109,8 @@ apfsrw_kern_io(struct apfsrw *fs, void *buf, size_t n, off_t off, int is_write)
 			memcpy((void *)buf_dataptr(bp), p, bs);
 			// Delayed write. apfsrw_sync() flushes at commit barriers
 			buf_bdwrite(bp);
-			apfsrw_kern_bdwrites++;
-			apfsrw_wblocks[apfsrw_wphase & 3]++;
 			continue;
 		}
-		apfsrw_kern_breads++;
 		error = (int)buf_meta_bread(devvp, blkno, (int)bs, NOCRED, &bp);
 		if (error != 0 || bp == NULL) {
 			if (bp != NULL)
@@ -154,11 +143,7 @@ apfsrw_sync(struct apfsrw *fs)
 
 	if (dev == NULL || dev->devvp == NULL)
 		return -1;
-	uint64_t t0 = apfsrw_now_ns();
-
 	buf_flushdirtyblks((vnode_t)dev->devvp, 1, 0, "apfsrw");
-	apfsrw_kern_sync_ns += apfsrw_now_ns() - t0;
-	apfsrw_kern_sync_n++;
 	return 0;
 }
 

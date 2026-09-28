@@ -64,6 +64,8 @@
 #define APFS_DREC_HASH_MASK 0xfffffc00U
 // spec p.96 APFS_INCOMPAT_CASE_INSENSITIVE
 #define APFS_INCOMPAT_CASE_INSENSITIVE 0x00000001ULL
+// spec p.96 APFS_INCOMPAT_NORMALIZATION_INSENSITIVE
+#define APFS_INCOMPAT_NORMALIZATION_INSENSITIVE 0x00000008ULL
 // spec p.111 "Extended-Field Types"
 #define APFS_INO_EXT_TYPE_NAME 4U
 #define APFS_INO_EXT_TYPE_DSTREAM 8U
@@ -387,32 +389,10 @@ struct apfs_container {
 	vnode_t c_devvp;
 	int c_refs;
 	void *c_lock;			// IORecursiveLock*
-	int c_owner_pid;		// Who holds c_lock, for long-wait diagnostics
-	void *c_owner_thread;
-	uint64_t c_acq_abs;		// When the current holder took it
-	const char *c_tag;		// Call site of the current holder
-	uint64_t c_hold_ns;		// Cumulative hold time and count, for the periodic report
-	uint64_t c_hold_count;
-	uint64_t c_hold_max_ns;
-	int c_hold_max_pid;
-	uint64_t c_report_abs;
 	uint64_t c_generation;
-	// Open write batch: which volume owns it, since one commit covers only that volume's tree.
-	// NULL when every mutation is on disk
-	struct apfs_mount *c_batch_amp;
-	uint64_t c_batch_first_abs;	// When the batch took its first mutation
-	uint32_t c_batch_ops;
+	struct apfs_mount *c_last_writer;	// Whose commit bumped c_generation last
 	struct apfsrw_kern_dev c_rw_dev;
 };
-
-// Batch flush policy. Aim for many mutations per commit,
-// bounding the data at risk and the superseded blocks that wait for a checkpoint
-#define APFS_BATCH_MAX_OPS	512
-#define APFS_BATCH_MAX_DEFERRED	4096
-#define APFS_BATCH_MAX_NS	2000000000ull
-
-void apfs_batch_note(struct apfs_mount *amp);
-int apfs_batch_flush(struct apfs_container *c);
 
 struct apfs_mount {
 	struct mount *mp;
@@ -452,7 +432,23 @@ struct apfs_mount {
 	apfs_paddr_t volume_omap_tree_paddr;
 	apfs_oid_t root_tree_oid;
 	apfs_paddr_t root_tree_paddr;
+	// Resolved omap entries for the current xid: a virtual tree asks the omap for
+	// every child on every walk, and between commits the answer cannot change
+	struct apfs_omap_cache_ent {
+		apfs_paddr_t tree;
+		apfs_oid_t oid;
+		apfs_xid_t xid;
+		struct apfs_omap_val val;
+	} *omap_cache;
+	// Blocks whose checksum passed at this xid: content only changes under a new xid
+	struct apfs_verified_ent { apfs_paddr_t paddr; apfs_xid_t xid; } *verified;
+	// Tree nodes read at this xid, content and all: nodes are copied on write, never rewritten
+	uint8_t *ncache;
+	struct apfs_ncache_ent { apfs_paddr_t paddr; apfs_xid_t xid; } *ncache_ents;
 };
+#define APFS_VERIFIED_ENTS	8192
+#define APFS_NCACHE_ENTS	512
+#define APFS_OMAP_CACHE_ENTS	2048
 
 struct apfs_node {
 	LIST_ENTRY(apfs_node) a_hash;	// am_node_hash linkage
@@ -506,15 +502,9 @@ int apfs_reload_container(struct apfs_mount *amp, vfs_context_t ctx);
 // Take the container lock.
 // If another volume committed since this mount last looked, its view is re-read first. Recursive
 void apfs_rw_lock(struct apfs_mount *amp);
-void apfs_rw_lock_tag(struct apfs_mount *amp, const char *tag);
 void apfs_rw_unlock(struct apfs_mount *amp);
 // nx_fs_oid[] slot behind a volume device node (0 when the node is the raw container,
 // or the registry has nothing to say)
 int apfs_volume_slot_for_dev(dev_t dev, uint32_t *slot);
-// pd_fault_trace=1 accounting (apfs_btree.c)
-extern uint64_t apfs_trace_walk_ns, apfs_trace_copy_ns, apfs_trace_pageins,
-    apfs_trace_pagein_ns;
-int apfs_trace_enabled(void);
-void apfs_trace_add(uint64_t *acc, uint64_t t0);
 
 #endif /* _PUREDARWIN_APFS_H_ */
