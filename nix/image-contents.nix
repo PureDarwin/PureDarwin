@@ -76,6 +76,8 @@
 , icuCoreBuild
 , imageExtraPackagesArm64
 , imageExtraPackagesArm64Nox
+, imageExtraPackagesArm64Sg2002
+, splitBaseSystemArm64Sg2002
 , iographicsBuild
 , iokitBuild
 , coreServicesBuild
@@ -1026,6 +1028,19 @@ let
         # root it finds on the boot disk instead. The netboot target below is
         # the one that really boots from a ramdisk.
         bootArgs = "-v debug=0x218 -nogzalloc_mode keepsyms=1 serial=3 gopconsole=1 pdtrace=1 serial_video_mirror=1 no_interrupt_masked_debug=1";
+      };
+      # licheerv nano root: the arm64 minimal system plus configd for en0 and dhcp
+      imageArm64Sg2002Build = pkgs.callPackage ../image.nix {
+        baseSystem = splitBaseSystemArm64Sg2002;
+        extraPackages = imageExtraPackagesArm64Sg2002;
+        kc = kcArm64Sun50iDebugBuild;
+        xnuLoader = xnuLoaderArm64;
+        apfsprogs = pkgs.apfsprogs;
+        efiBinary = "BOOTAA64.EFI";
+        espMB = 64;
+        rootMB = 1024;
+        imageFileName = "puredarwin-arm64-sg2002.img";
+        bootArgs = "-v debug=0x8 serial=3 keepsyms=1 -nogzalloc_mode";
       };
       netbootArm64VirtMinimalBuild = pkgs.callPackage ../image.nix {
         baseSystem = splitBaseSystemArm64VirtMinimal;
@@ -2022,6 +2037,7 @@ EOF
       image-arm64-virt-debug = imageArm64VirtDebugBuild;
       image-arm64-bcm2837 = imageArm64Bcm2837Build;
       image-arm64-virt-minimal = imageArm64VirtMinimalBuild;
+      image-arm64-sg2002 = imageArm64Sg2002Build;
       netboot-arm64-virt-minimal = netbootArm64VirtMinimalBuild;
       image-arm64-virt-minimal-release = imageArm64VirtMinimalReleaseBuild;
       image-arm64-virt-wayland = imageArm64VirtWaylandBuild;

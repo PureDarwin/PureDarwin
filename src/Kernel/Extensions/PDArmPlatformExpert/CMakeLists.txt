@@ -9,6 +9,7 @@ target_sources(PDArmPlatformExpert PRIVATE
     PDBcm2835IC.cpp
     PDSun50iUSB.cpp
     PDSun50iWatchdog.cpp
+    PDSg2002.cpp
 )
 
 install(TARGETS PDArmPlatformExpert DESTINATION System/Library/Extensions COMPONENT BaseSystem)

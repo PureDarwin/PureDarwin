@@ -2080,6 +2080,16 @@ let
     # "Symbol not found: _libiconv_open" when zsh launches.
     libiconv = libiconvArm64Build;
   };
+  userlandArm64Sg2002Build = userlandBuild.override {
+    pname = "puredarwin-userland-arm64-sg2002";
+    puredarwinArch = "arm64";
+    inherit arm64CrossToolchain;
+    prebuiltLibSystem = libSystemArm64Build;
+    xorgDriverIncludes = null;
+    buildTargets = [ "sw_vers" "ps" "mkfile" "sync" "sysctl" "vm_stat" "hostinfo" "dmesg" "purge" "cpuctl" "mean" "reboot" "halt" "poweroff" "shutdown" "netsetup" "wslinit" "ping" "pcmplay" "startx" "mousemon" "mount" "umount" "ext4tool" "ext4_util" "mdnsd" ]
+      ++ [ "basename" "chown" "dirname" "echo" "false" "getopt" "hostname" "jot" "kill" "logname" "mktemp" "nice" "nohup" "passwd" "printenv" "pwd" "renice" "seq" "shlock" "sleep" "tee" "test_cmd" "true" "tsort" "uname" "yes" "uuencode" "uudecode" ]
+      ++ [ "banner" "cat" "colrm" "comm" "cut" "expand" "fold" "head" "lam" "look" "nl" "paste" "rev" "split" "tail" "tr" "unexpand" "uniq" "wc" ];
+  };
   userlandArm64Build = userlandBuild.override {
     puredarwinArch = "arm64";
     inherit arm64CrossToolchain;
@@ -2253,6 +2263,13 @@ let
       wlroots = wlrootsArm64NoxBuild;
       xkbcommon = xkbcommonArm64NoxBuild;
     };
+  # licheerv nano (sg2002): the minimal root plus configd, whose InterfaceNamer and
+  # IPConfiguration plugins name en0 and run dhcp, and fastfetch without gl
+  imageExtraPackagesArm64Sg2002 = [
+    zshArm64Build libiconvArm64Build toyboxArm64Build
+    securityArm64Build symptomReporterArm64Build systemConfigurationArm64Build
+    fastfetchNoGLArm64Build
+  ];
   imageExtraPackagesArm64Nox = [
     zshArm64Build libiconvArm64Build toyboxArm64Build asmjitTestArm64Build
   ] ++ lib.attrValues imageExtraPackageSetArm64Nox;
@@ -2491,14 +2508,14 @@ let
       "IOGraphicsFamily.kext" "IOGOPFramebuffer.kext"
       "IONVMEFamily.kext"
       "RavynHDAudio.kext" "PDE1000.kext" "PDRealtek8111.kext"
-      "PDBcm2835SD.kext"
+      "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
     ];
     enableUserspace = false;
     installUserland = false;
     installKernel = false;
     installKexts = true;
     installKextNames = [
-      "PDBcm2835SD.kext"
+      "PDBcm2835SD.kext" "PDSun50iMMC.kext" "PDSg2002SD.kext" "PDSg2002Eth.kext"
       "IOPCIFamily.kext" "IOStorageFamily.kext" "IOCDStorageFamily.kext"
       "IODVDStorageFamily.kext" "IOBDStorageFamily.kext" "IOVirtIOFamily.kext"
       "IOVirtIONet.kext" "IONetworkingFamily.kext" "IOHIDFamily.kext"
@@ -2557,6 +2574,45 @@ let
     cp -a ${userlandArm64Build}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${kernelArm64VirtDebugBuild}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${kextsArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+  '';
+
+  # licheerv nano: the minimal base with a userland that skips the xorg drivers, so a kernel
+  # edit does not rebuild llvm, mesa and xorg, and the sun50i kernel the board actually runs
+  splitBaseSystemArm64Sg2002 = pkgs.runCommand "puredarwin-basesystem-arm64-sg2002-0.1" { } ''
+    mkdir -p "$out"
+    cp -a ${libSystemArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    # launchd links the native frameworks and runtime libraries dynamically,
+    # dyld has to resolve them before any job is submitted
+    cp -a ${icuCoreArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${libcxxabiDylibArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${libcxxDylibArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${libobjcArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${coreFoundationArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${foundationArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${iokitArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${launchdArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${launchctlArm64Build}/. "$out/"
+    chmod -R u+w "$out"
+    if [ -e "$out/pd-sbin/launchd" ]; then
+      mkdir -p "$out/sbin"
+      cp "$out/pd-sbin/launchd" "$out/sbin/launchd"
+      rm -rf "$out/pd-sbin"
+    fi
+    cp -a ${userlandArm64Sg2002Build}/. "$out/"
+    chmod -R u+w "$out"
+    cp -a ${kernelArm64Sun50iDebugBuild}/. "$out/"
     chmod -R u+w "$out"
     cp -a ${kextsArm64Build}/. "$out/"
     chmod -R u+w "$out"
@@ -2999,6 +3055,8 @@ in
     imageExtraPackagesArm64
     imageExtraPackageSetArm64Nox
     imageExtraPackagesArm64Nox
+    imageExtraPackagesArm64Sg2002
+    splitBaseSystemArm64Sg2002
     cairoArm64NoxBuild
     cairoGobjectArm64NoxBuild
     dbusArm64NoxBuild

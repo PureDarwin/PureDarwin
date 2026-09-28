@@ -8,6 +8,7 @@
 #include "PDBcm2835IC.h"
 #include "PDSun50iUSB.h"
 #include "PDSun50iWatchdog.h"
+#include "PDSg2002.h"
 
 class PDArmPlatformExpert : public IODTPlatformExpert
 {
@@ -92,6 +93,9 @@ PDArmPlatformExpert::start(IOService *provider)
 		PDSun50iMMC_publish(this);
 		if (PDSun50iUSB_init())
 			PDSun50iUSB_publish(this);
+	} else if (PDSg2002_isPlatform()) {
+		PDSg2002Watchdog_start();
+		PDSg2002_publish(this);
 	}
 #endif
 

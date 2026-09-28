@@ -3611,6 +3611,8 @@
             splitBaseSystemArm64VirtWayland
             imageExtraPackageSetArm64
             imageExtraPackagesArm64Nox
+            imageExtraPackagesArm64Sg2002
+            splitBaseSystemArm64Sg2002
             ;
           # The XFCE desktop is instantiated in this file (it needs both the
           # arm64 builds and the shared sources), so it is appended here rather
@@ -3946,7 +3948,7 @@
               fbdoomBuild fbdoomExternalSrc fileBuild flexBuild fontconfigBuild foundationBuild
               freetype2Build fribidiBuild garconBuild gdkPixbufBuild gitBuild glibBuild gnum4Build
               gnumakeBuild gtk3Build gtkLayerShellBuild gtk3NoxBuild gtkLayerShellNoxBuild onyx2dBuild coregraphicsBuild coretextBuild coredataBuild cgScreenDemoBuild gershwinSystemBuild gershwinAssetsBuild cairoNoxBuild dbusNoxBuild pdEpollShimBuild tllistBuild fcftBuild footBuild userlandNoxBuild pangoNoxBuild netsurfNoxBuild libepoxyNoxBuild fastfetchNoxBuild harfbuzzNoxBuild atspi2CoreNoxBuild cairoGobjectNoxBuild xkbcommonNoxBuild mesaNoxBuild openglFrameworkNoxBuild mesaDemosNoxBuild librsvgNoxBuild harfbuzzBuild i3Build i3statusShimBuild iceauthBuild
-              cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox iographicsBuild iokitBuild asmjitTestArm64Build
+              cursorThemeBuild iconThemesBuild icuCoreBuild imageExtraPackagesArm64 imageExtraPackagesArm64Nox imageExtraPackagesArm64Sg2002 splitBaseSystemArm64Sg2002 iographicsBuild iokitBuild asmjitTestArm64Build
               iomediacheckBuild ioregBuild isDarwin jsoncBuild kc-tools kernelArm64Build kernelArm64VirtBuild
               kernelArm64VirtDebugBuild kernelArm64T8010Build kernelArm64T8010DebugBuild kernelArm64Bcm2837Build kernelArm64Bcm2837DebugBuild kernelArm64Sun50iBuild kernelArm64Sun50iDebugBuild kernelArm64Virt4kDebugBuild kernelArm32Bcm2835Build kernelArm32Bcm2835DebugBuild kernelArm32Bcm2835DevBuild
               kextsArm32Bcm2835Build compilerRtArmv6Build

@@ -62,6 +62,8 @@ add_subdirectory(ApfsFileSystemDriver)
 add_subdirectory(PDBcm2835SD)
 if(PUREDARWIN_ARM64)
     add_subdirectory(PDSun50iMMC)
+    add_subdirectory(PDSg2002SD)
+    add_subdirectory(PDSg2002Eth)
 endif()
 
 add_custom_target(kexts)

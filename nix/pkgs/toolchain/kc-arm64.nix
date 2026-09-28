@@ -53,6 +53,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/PDArmPCI.kext" \
       -kext "$KEXTS/IOStorageFamily.kext" \
       -kext "$KEXTS/PDSun50iMMC.kext" \
+      -kext "$KEXTS/PDSg2002SD.kext" \
       -kext "$KEXTS/RavynAHCIPort.kext" \
       -kext "$KEXTS/ext4.kext" \
       -kext "$KEXTS/AppleFileSystemDriver.kext" \
@@ -76,6 +77,7 @@ stdenv.mkDerivation {
       -kext "$KEXTS/IOVirtIOGPU.kext" \
       -kext "$KEXTS/IOGOPFramebuffer.kext" \
       -kext "$KEXTS/IONetworkingFamily.kext" \
+      -kext "$KEXTS/PDSg2002Eth.kext" \
       -kext "$KEXTS/IOVirtIOBlock.kext" \
       -kext "$KEXTS/IOVirtIONet.kext" \
       "''${codeless[@]}" \
