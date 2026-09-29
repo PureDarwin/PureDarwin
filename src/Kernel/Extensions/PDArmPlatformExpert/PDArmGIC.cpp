@@ -51,6 +51,8 @@
 #define GIC2_C_CTLR_VAL      0xBu
 
 static bool gGicV2;
+// KVM's GICv3 keeps Group 0 disabled, so the timer and IPI go in Group 1 and arrive as IRQs
+static bool gGicGrp1;
 // sun50i: the kernel owns the GIC-400, only its SGIR is mapped here for IPIs
 static bool gSun50iSgi;
 static IOMemoryMap *gGiccMap;
@@ -246,6 +248,7 @@ PDArmGIC_init(void)
 	while (d_read(GICD_CTLR) & GICD_CTLR_RWP) {
 		;
 	}
+	gGicGrp1 = (d_read(GICD_CTLR) & GICD_CTLR_ENGRP0) == 0;
 
 	/* Redistributor for this CPU: wake it and wait for it to power up. */
 	r_write(GICR_WAKER, r_read(GICR_WAKER) & ~GICR_WAKER_PROCSLEEP);
@@ -265,8 +268,12 @@ PDArmGIC_init(void)
 	// The IPI SGI joins the timer in Group 0 so both arrive
 	// as FIQs and are classified by INTID in sleh_fiq()
 	r_write(GICR_ICENABLER0, 0xffffffffu);
-	r_write(GICR_IGROUPR0, r_read(GICR_IGROUPR0) &
-	    ~((1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI)));
+	if (gGicGrp1) {
+		r_write(GICR_IGROUPR0, r_read(GICR_IGROUPR0) | (1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI));
+	} else {
+		r_write(GICR_IGROUPR0, r_read(GICR_IGROUPR0) &
+		    ~((1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI)));
+	}
 	r_write(GICR_IGRPMODR0, r_read(GICR_IGRPMODR0) &
 	    ~((1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI)));
 	((volatile uint8_t *)(gGicr + GICR_IPRIORITYR))[GIC_TIMER_PPI] = 0x00;
@@ -282,8 +289,8 @@ PDArmGIC_init(void)
 	    "isb\n"
 	    :: "r"((uint64_t)0x1), "r"((uint64_t)0xff), "r"((uint64_t)0x0) : "memory");
 
-	PD_LOG("PDArmGIC: configured (GICD_CTLR=0x%x GICR_WAKER=0x%x timer PPI %u Group0/masked)\n",
-	    d_read(GICD_CTLR), r_read(GICR_WAKER), (unsigned)GIC_TIMER_PPI);
+	PD_LOG("PDArmGIC: configured (GICD_CTLR=0x%x GICR_WAKER=0x%x timer PPI %u %s/masked)\n",
+	    d_read(GICD_CTLR), r_read(GICR_WAKER), (unsigned)GIC_TIMER_PPI, gGicGrp1 ? "Group1" : "Group0");
 	return true;
 #endif
 }
@@ -310,8 +317,8 @@ PDArmGIC_enable(void)
 	    "isb\n"
 	    :: "r"((uint64_t)0x1) : "memory");
 
-	PD_LOG("PDArmGIC: delivery enabled (timer PPI %u as Group0/FIQ)\n",
-	    (unsigned)GIC_TIMER_PPI);
+	PD_LOG("PDArmGIC: delivery enabled (timer PPI %u as %s)\n",
+	    (unsigned)GIC_TIMER_PPI, gGicGrp1 ? "Group1/IRQ" : "Group0/FIQ");
 	return true;
 #endif
 }
@@ -380,8 +387,12 @@ PDArmGIC_init_cpu(unsigned int cpu)
 	}
 
 	rc_write(cpu, GICR_ICENABLER0, 0xffffffffu);
-	rc_write(cpu, GICR_IGROUPR0, rc_read(cpu, GICR_IGROUPR0) &
-	    ~((1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI)));
+	if (gGicGrp1) {
+		rc_write(cpu, GICR_IGROUPR0, rc_read(cpu, GICR_IGROUPR0) | (1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI));
+	} else {
+		rc_write(cpu, GICR_IGROUPR0, rc_read(cpu, GICR_IGROUPR0) &
+		    ~((1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI)));
+	}
 	rc_write(cpu, GICR_IGRPMODR0, rc_read(cpu, GICR_IGRPMODR0) &
 	    ~((1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI)));
 	((volatile uint8_t *)(gGicrCpu[cpu] + GICR_IPRIORITYR))[GIC_TIMER_PPI] = 0x00;
@@ -445,8 +456,12 @@ PDArmGIC_send_ipi(uint64_t target_mpidr)
 	    (1ULL << (aff0 & 0xf));
 
 	// Group 0 generation: the SGI is configured as Group 0 so it lands as
-	// an FIQ alongside the timer, which is the only path wired up here
-	__asm__ volatile ("msr ICC_SGI0R_EL1, %0\n" "isb\n" :: "r"(sgi) : "memory");
+	// an FIQ alongside the timer, unless the GIC only offers Group 1
+	if (gGicGrp1) {
+		__asm__ volatile ("msr ICC_SGI1R_EL1, %0\n" "isb\n" :: "r"(sgi) : "memory");
+	} else {
+		__asm__ volatile ("msr ICC_SGI0R_EL1, %0\n" "isb\n" :: "r"(sgi) : "memory");
+	}
 #else
 	(void)target_mpidr;
 #endif

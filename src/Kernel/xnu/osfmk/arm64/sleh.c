@@ -3491,6 +3491,10 @@ STARTUP(KMEM, STARTUP_RANK_LAST, pd_sun50i_gic_startup);
 
 #endif /* SUN50I */
 
+#if HAS_GICV3_FIQ
+static vm_offset_t pd_gicv2_cpuif;
+#endif
+
 void
 sleh_irq(arm_saved_state_t *state)
 {
@@ -3498,6 +3502,39 @@ sleh_irq(arm_saved_state_t *state)
 #if MACH_ASSERT
 	int preemption_level = sleh_get_preemption_level();
 #endif
+
+#if HAS_GICV3_FIQ
+	// KVM's GICv3 has no Group 0, so there the timer and the IPI SGI arrive here as Group 1
+	if (!pd_gicv2_cpuif) {
+		uint64_t iar = __builtin_arm_rsr64("ICC_IAR1_EL1");
+		uint64_t intid = iar & 0x3ffULL;
+
+		// EOI before the handler, so an IPI raised while it runs is taken again rather than lost
+		if (intid == QEMUVIRT_IPI_SGI) {
+			sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
+			__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
+			__builtin_arm_isb(ISB_SY);
+			cpu_signal_handler();
+			sleh_interrupt_handler_epilogue();
+			return;
+		}
+		if (intid == QEMUVIRT_TIMER_PPI_VIRT) {
+			sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
+			cdp->cpu_decrementer = -1;
+			ml_interrupt_masked_debug_start(rtclock_intr, DBG_INTR_TYPE_TIMER);
+			rtclock_intr(TRUE);
+			ml_interrupt_masked_debug_end();
+			__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
+			__builtin_arm_isb(ISB_SY);
+			sleh_interrupt_handler_epilogue();
+			return;
+		}
+		if (intid != GIC_SPURIOUS_IRQ) {
+			__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
+			__builtin_arm_isb(ISB_SY);
+		}
+	}
+#endif /* HAS_GICV3_FIQ */
 
 #if defined(SUN50I)
 	uint32_t iar = pd_sun50i_gicc ? *(volatile uint32_t *)(pd_sun50i_gicc + SUN50I_GICC_IAR) : GIC_SPURIOUS_IRQ;
@@ -3566,7 +3603,6 @@ sleh_irq(arm_saved_state_t *state)
 #define PD_GICV2_GICC_PHYS  0x08010000ULL
 #define PD_GICV2_GICC_IAR   0x00C
 #define PD_GICV2_GICC_EOIR  0x010
-static vm_offset_t pd_gicv2_cpuif;
 
 static void
 pd_gicv2_startup(void)

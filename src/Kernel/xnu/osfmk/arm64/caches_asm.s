@@ -160,8 +160,10 @@ L_ipui_loop:
 	tst		x2, x10			// look for overflow
 	b.eq		3b
 	bic		x2, x2, x10		// clear set overflow
+	cbz		w11, 6f			// one way: the increment is 1 << 32, so this level is done
 	adds		w2, w2, w11		// increment way
 	b.cc		2b			// loop
+6:
 	dsb		sy			// ensure completion of prior level maintenance
 4:
 	add		x1, x1, #1
