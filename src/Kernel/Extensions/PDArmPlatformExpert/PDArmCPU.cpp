@@ -4,6 +4,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOPlatformExpert.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <arm/machine_routines.h>
 #include <arm/cpu_topology.h>
 #include <pexpert/pexpert.h>
@@ -119,14 +120,37 @@ pd_psci_call(uint64_t fn, uint64_t a1, uint64_t a2, uint64_t a3, bool smc)
 	return (int64_t)x0;
 }
 
+// the conduit the board's device tree names: an hvc with no el2 underneath is an undefined instruction
+static int
+pd_psci_dt_method(void)
+{
+	IORegistryEntry *psci = IORegistryEntry::fromPath("/psci", gIODTPlane);
+	OSData *method = psci != NULL ? OSDynamicCast(OSData, psci->getProperty("method")) : NULL;
+	int smc = -1;
+
+	if (method != NULL && method->getLength() >= 3) {
+		if (strncmp((const char *)method->getBytesNoCopy(), "smc", 3) == 0) {
+			smc = 1;
+		} else if (strncmp((const char *)method->getBytesNoCopy(), "hvc", 3) == 0) {
+			smc = 0;
+		}
+	}
+	OSSafeReleaseNULL(psci);
+	return smc;
+}
+
 static bool
 pd_psci_available(void)
 {
 	if (!pd_psci_probed) {
 		int64_t v;
+		int dt = pd_psci_dt_method();
 
-		// tf-a owns psci on sun50i, an hvc would land in u-boot's stale el2 vectors
-		if (PDSun50i_isPlatform()) {
+		if (dt >= 0) {
+			pd_psci_use_smc = dt == 1;
+			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, pd_psci_use_smc);
+		} else if (PDSun50i_isPlatform()) {
+			// tf-a owns psci on sun50i, an hvc would land in u-boot's stale el2 vectors
 			pd_psci_use_smc = true;
 			v = pd_psci_call(PSCI_FN_VERSION, 0, 0, 0, true);
 		} else {
@@ -345,7 +369,7 @@ PDArmCPU::startForCPU(unsigned int cpu, uint32_t phys_id, bool boot)
 
 	// Map this CPU's redistributor frame here, on the boot CPU:
 	// the secondary reaches initCPU() with interrupts masked, where mapping is not safe
-	if (!PDArmGIC_map_cpu(cpu)) {
+	if (!PDArmGIC_map_cpu(cpu, phys_id)) {
 		PD_LOG("PD-CPU: no redistributor frame for cpu %u\n", cpu);
 		return false;
 	}

@@ -10,7 +10,10 @@
 #define GIC_GICD_BASE_PHYS   0x08000000ULL
 #define GIC_GICD_SIZE        0x10000ULL
 #define GIC_GICR_BASE_PHYS   0x080a0000ULL
-#define GIC_GICR_FRAME_SIZE  0x20000ULL   /* this PE's RD + SGI frame only */
+#define GIC_GICR_FRAME_SIZE  0x20000ULL   /* one PE's RD + SGI frame */
+#define GIC_GICR_TYPER       0x0008
+#define GIC_GICR_TYPER_VLPIS (1ULL << 1)  /* gicv4: two more frames per PE */
+#define GIC_GICR_TYPER_LAST  (1ULL << 4)
 #define GIC_TIMER_PPI        27           /* CNTV virtual-timer INTID */
 
 /* GICD (distributor) */
@@ -18,6 +21,7 @@
 #define GICD_CTLR_ENGRP0     (1u << 0)
 #define GICD_CTLR_ENGRP1     (1u << 1)
 #define GICD_CTLR_ARE        (1u << 4)
+#define GICD_CTLR_DS         (1u << 6)   /* single security state: group 0 is ours */
 #define GICD_CTLR_RWP        (1u << 31)
 
 /* GICR (redistributor): RD frame, SGI frame at +0x10000 */
@@ -51,8 +55,11 @@
 #define GIC2_C_CTLR_VAL      0xBu
 
 static bool gGicV2;
-// KVM's GICv3 keeps Group 0 disabled, so the timer and IPI go in Group 1 and arrive as IRQs
+// KVM's GICv3 keeps Group 0 disabled, and under TF-A group 0 belongs to the secure world:
+// then the timer and IPI go in Group 1 and arrive as IRQs
 static bool gGicGrp1;
+// two security states: group 0 registers are the secure world's, leave them alone
+static bool gGicSecure;
 // sun50i: the kernel owns the GIC-400, only its SGIR is mapped here for IPIs
 static bool gSun50iSgi;
 static IOMemoryMap *gGiccMap;
@@ -71,12 +78,15 @@ gic_is_v2(void)
 }
 
 static IOMemoryMap *gGicdMap;
-static IOMemoryMap *gGicrMap;
 static volatile uint8_t *gGicd;
 static volatile uint8_t *gGicr;
 
-// Each PE has its own redistributor frame at base + cpu * frame size
-static IOMemoryMap *gGicrCpuMap[GIC_MAX_CPUS];
+// the redistributor region, mapped once; each PE's frame is found by its affinity
+static uint64_t gGicdPhys = GIC_GICD_BASE_PHYS;
+static uint64_t gGicrPhys = GIC_GICR_BASE_PHYS;
+static uint64_t gGicrSize = GIC_MAX_CPUS * GIC_GICR_FRAME_SIZE;
+static IOMemoryMap *gGicrAllMap;
+static volatile uint8_t *gGicrAll;
 static volatile uint8_t *gGicrCpu[GIC_MAX_CPUS];
 
 static inline uint32_t
@@ -187,6 +197,91 @@ kernel_owned_gic(uint64_t *gicd, uint64_t *gicc)
 	OSSafeReleaseNULL(armio);
 	return found;
 }
+
+// /arm-io/gic from the loader, when the board's tree has a gic-v3: distributor and
+// redistributor region relative to the arm-io window. Without it, qemu virt's addresses
+static void
+gic_v3_locate(void)
+{
+	IORegistryEntry *armio = IORegistryEntry::fromPath("/arm-io", gIODTPlane);
+	IORegistryEntry *gic = IORegistryEntry::fromPath("/arm-io/gic", gIODTPlane);
+
+	if (gic != NULL && armio != NULL) {
+		OSData *compat = OSDynamicCast(OSData, gic->getProperty("compatible"));
+		OSData *reg = OSDynamicCast(OSData, gic->getProperty("reg"));
+		OSData *ranges = OSDynamicCast(OSData, armio->getProperty("ranges"));
+		if (compat != NULL && compat->getLength() >= 10 &&
+		    strncmp((const char *)compat->getBytesNoCopy(), "arm,gic-v3", 10) == 0 &&
+		    reg != NULL && reg->getLength() >= 4 * sizeof(uint64_t) &&
+		    ranges != NULL && ranges->getLength() >= 2 * sizeof(uint64_t)) {
+			const uint64_t *r = (const uint64_t *)reg->getBytesNoCopy();
+			uint64_t base = ((const uint64_t *)ranges->getBytesNoCopy())[1];
+			gGicdPhys = base + r[0];
+			gGicrPhys = base + r[2];
+			if (r[3] != 0) {
+				gGicrSize = r[3];
+			}
+		}
+	}
+	OSSafeReleaseNULL(gic);
+	OSSafeReleaseNULL(armio);
+}
+
+// MPIDR to the Aff3.Aff2.Aff1.Aff0 layout GICR_TYPER reports
+static uint32_t
+mpidr_affinity(uint64_t mpidr)
+{
+	return (uint32_t)(((mpidr >> 32) & 0xffULL) << 24 | (mpidr & 0xffffffULL));
+}
+
+// the redistributor frame whose GICR_TYPER affinity is this PE's
+static volatile uint8_t *
+gicr_frame(uint64_t mpidr)
+{
+	uint32_t want = mpidr_affinity(mpidr);
+	uint64_t off = 0;
+
+	if (gGicrAll == NULL) {
+		return NULL;
+	}
+	while (off + GIC_GICR_FRAME_SIZE <= gGicrSize) {
+		uint64_t typer = *(volatile uint64_t *)(gGicrAll + off + GIC_GICR_TYPER);
+		if ((uint32_t)(typer >> 32) == want) {
+			return gGicrAll + off;
+		}
+		if (typer & GIC_GICR_TYPER_LAST) {
+			break;
+		}
+		off += (typer & GIC_GICR_TYPER_VLPIS) ? 2 * GIC_GICR_FRAME_SIZE : GIC_GICR_FRAME_SIZE;
+	}
+	return NULL;
+}
+#endif
+
+#if !defined(__arm__) || defined(__arm64__)
+// the cpu interface through system registers: groups off while configuring, on to deliver.
+// group 0 is left to the secure world when there is one
+static void
+gic_cpuif_setup(bool deliver)
+{
+	uint64_t on = deliver ? 1 : 0;
+
+	if (!deliver) {
+		__asm__ volatile (
+		    "msr ICC_SRE_EL1, %0\n"
+		    "isb\n"
+		    "msr ICC_PMR_EL1, %1\n"
+		    :: "r"((uint64_t)0x1), "r"((uint64_t)0xff) : "memory");
+	}
+	if (!gGicSecure) {
+		__asm__ volatile ("msr ICC_IGRPEN0_EL1, %0\n" :: "r"(on) : "memory");
+	}
+	__asm__ volatile (
+	    "msr ICC_IGRPEN1_EL1, %0\n"
+	    "isb\n"
+	    :: "r"(on) : "memory");
+}
+
 #endif
 
 bool
@@ -232,10 +327,17 @@ PDArmGIC_init(void)
 		return true;
 	}
 
-	gGicd = map_phys(GIC_GICD_BASE_PHYS, GIC_GICD_SIZE, &gGicdMap);
-	gGicr = map_phys(GIC_GICR_BASE_PHYS, GIC_GICR_FRAME_SIZE, &gGicrMap);
+	gic_v3_locate();
+	gGicd = map_phys(gGicdPhys, GIC_GICD_SIZE, &gGicdMap);
+	gGicrAll = map_phys(gGicrPhys, round_page_64(gGicrSize), &gGicrAllMap);
+	{
+		uint64_t mpidr;
+		__asm__ volatile ("mrs %0, MPIDR_EL1" : "=r"(mpidr));
+		gGicr = gicr_frame(mpidr);
+	}
 	if (gGicd == NULL || gGicr == NULL) {
-		PD_LOG("PDArmGIC: failed to map GIC (gicd=%p gicr=%p)\n", gGicd, gGicr);
+		PD_LOG("PDArmGIC: failed to map GIC at 0x%llx/0x%llx (gicd=%p gicr=%p)\n",
+		    (unsigned long long)gGicdPhys, (unsigned long long)gGicrPhys, gGicd, gGicr);
 		return false;
 	}
 
@@ -248,7 +350,9 @@ PDArmGIC_init(void)
 	while (d_read(GICD_CTLR) & GICD_CTLR_RWP) {
 		;
 	}
-	gGicGrp1 = (d_read(GICD_CTLR) & GICD_CTLR_ENGRP0) == 0;
+	// with two security states this is the non-secure view, where bit 0 is EnableGrp1
+	gGicSecure = (d_read(GICD_CTLR) & GICD_CTLR_DS) == 0;
+	gGicGrp1 = gGicSecure || (d_read(GICD_CTLR) & GICD_CTLR_ENGRP0) == 0;
 
 	/* Redistributor for this CPU: wake it and wait for it to power up. */
 	r_write(GICR_WAKER, r_read(GICR_WAKER) & ~GICR_WAKER_PROCSLEEP);
@@ -280,14 +384,7 @@ PDArmGIC_init(void)
 	((volatile uint8_t *)(gGicr + GICR_IPRIORITYR))[GIC_IPI_SGI] = 0x00;
 
 	/* System register access and priority mask are safe now; delivery is not. */
-	__asm__ volatile (
-	    "msr ICC_SRE_EL1, %0\n"
-	    "isb\n"
-	    "msr ICC_PMR_EL1, %1\n"
-	    "msr ICC_IGRPEN0_EL1, %2\n"
-	    "msr ICC_IGRPEN1_EL1, %2\n"
-	    "isb\n"
-	    :: "r"((uint64_t)0x1), "r"((uint64_t)0xff), "r"((uint64_t)0x0) : "memory");
+	gic_cpuif_setup(false);
 
 	PD_LOG("PDArmGIC: configured (GICD_CTLR=0x%x GICR_WAKER=0x%x timer PPI %u %s/masked)\n",
 	    d_read(GICD_CTLR), r_read(GICR_WAKER), (unsigned)GIC_TIMER_PPI, gGicGrp1 ? "Group1" : "Group0");
@@ -311,11 +408,7 @@ PDArmGIC_enable(void)
 	}
 
 	r_write(GICR_ISENABLER0, (1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI));
-	__asm__ volatile (
-	    "msr ICC_IGRPEN0_EL1, %0\n"
-	    "msr ICC_IGRPEN1_EL1, %0\n"
-	    "isb\n"
-	    :: "r"((uint64_t)0x1) : "memory");
+	gic_cpuif_setup(true);
 
 	PD_LOG("PDArmGIC: delivery enabled (timer PPI %u as %s)\n",
 	    (unsigned)GIC_TIMER_PPI, gGicGrp1 ? "Group1/IRQ" : "Group0/FIQ");
@@ -339,10 +432,11 @@ rc_write(unsigned int cpu, uint32_t off, uint32_t val)
 
 // Map one CPU's redistributor frame, from the boot CPU. Idempotent
 bool
-PDArmGIC_map_cpu(unsigned int cpu)
+PDArmGIC_map_cpu(unsigned int cpu, uint64_t mpidr)
 {
 #if defined(__arm__) && !defined(__arm64__)
 	(void)cpu;
+	(void)mpidr;
 	return true;
 #else
 	if (cpu >= GIC_MAX_CPUS) {
@@ -352,8 +446,7 @@ PDArmGIC_map_cpu(unsigned int cpu)
 		return true;
 	}
 	if (gGicrCpu[cpu] == NULL) {
-		gGicrCpu[cpu] = map_phys(GIC_GICR_BASE_PHYS + (uint64_t)cpu * GIC_GICR_FRAME_SIZE,
-		    GIC_GICR_FRAME_SIZE, &gGicrCpuMap[cpu]);
+		gGicrCpu[cpu] = gicr_frame(mpidr);
 	}
 	return gGicrCpu[cpu] != NULL;
 #endif
@@ -398,14 +491,7 @@ PDArmGIC_init_cpu(unsigned int cpu)
 	((volatile uint8_t *)(gGicrCpu[cpu] + GICR_IPRIORITYR))[GIC_TIMER_PPI] = 0x00;
 	((volatile uint8_t *)(gGicrCpu[cpu] + GICR_IPRIORITYR))[GIC_IPI_SGI] = 0x00;
 
-	__asm__ volatile (
-	    "msr ICC_SRE_EL1, %0\n"
-	    "isb\n"
-	    "msr ICC_PMR_EL1, %1\n"
-	    "msr ICC_IGRPEN0_EL1, %2\n"
-	    "msr ICC_IGRPEN1_EL1, %2\n"
-	    "isb\n"
-	    :: "r"((uint64_t)0x1), "r"((uint64_t)0xff), "r"((uint64_t)0x0) : "memory");
+	gic_cpuif_setup(false);
 	return true;
 #endif
 }
@@ -429,11 +515,7 @@ PDArmGIC_enable_cpu(unsigned int cpu)
 		return false;
 	}
 	rc_write(cpu, GICR_ISENABLER0, (1u << GIC_TIMER_PPI) | (1u << GIC_IPI_SGI));
-	__asm__ volatile (
-	    "msr ICC_IGRPEN0_EL1, %0\n"
-	    "msr ICC_IGRPEN1_EL1, %0\n"
-	    "isb\n"
-	    :: "r"((uint64_t)0x1) : "memory");
+	gic_cpuif_setup(true);
 	return true;
 #endif
 }
