@@ -319,12 +319,20 @@ IOHIDEvent * IOHIDEvent::translationEvent(
                                         IOFixed                 z,
                                         IOOptionBits            options)
 {
-    return IOHIDEvent::_axisEvent(      kIOHIDEventTypeTranslation,
-                                        timeStamp,
-                                        x,
-                                        y,
-                                        z,
-                                        options);
+    IOHIDEvent *me = new IOHIDEvent;
+
+    if (me && !me->initWithTypeTimeStamp(kIOHIDEventTypeTranslation, timeStamp, options)) {
+        me->release();
+        return 0;
+    }
+
+    IOHIDTranslationEventData * event = (IOHIDTranslationEventData *)me->_data;
+
+    event->position.x = CAST_FIXED_TO_DOUBLE(x);
+    event->position.y = CAST_FIXED_TO_DOUBLE(y);
+    event->position.z = CAST_FIXED_TO_DOUBLE(z);
+
+    return me;
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -643,9 +651,9 @@ IOHIDEvent * IOHIDEvent::absolutePointerEvent(
     data = (IOHIDPointerEventData *)event->_data;
     require(data, exit);
     
-    data->position.x = x;
-    data->position.y = y;
-    data->position.z = z;
+    data->position.x = CAST_FIXED_TO_DOUBLE(x);
+    data->position.y = CAST_FIXED_TO_DOUBLE(y);
+    data->position.z = CAST_FIXED_TO_DOUBLE(z);
     data->button.mask = buttonState;
     
     
@@ -702,9 +710,9 @@ IOHIDEvent * IOHIDEvent::relativePointerEventWithFixed(
     data = (IOHIDPointerEventData *)event->_data;
     require(data, exit);
 
-    data->position.x = x;
-    data->position.y = y;
-    data->position.z = z;
+    data->position.x = CAST_FIXED_TO_DOUBLE(x);
+    data->position.y = CAST_FIXED_TO_DOUBLE(y);
+    data->position.z = CAST_FIXED_TO_DOUBLE(z);
     data->button.mask = buttonState;
     
     

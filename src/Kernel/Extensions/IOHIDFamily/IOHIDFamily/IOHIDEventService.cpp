@@ -1875,7 +1875,8 @@ void IOHIDEventService::dispatchAbsolutePointerEvent(
 #else
     IOHID_DEBUG(kIOHIDDebugCode_DispatchAbsolutePointer, x, y, buttonState, options);
 
-    IOHIDEvent *event = IOHIDEvent::absolutePointerEvent(timeStamp, __ScaleToFixed(x, bounds->minx, bounds->maxx), __ScaleToFixed(y, bounds->miny, bounds->maxy), _absolutePointer.buttonState, buttonState);
+    // Built-in like the virtual digitizer Apple's VMs expose, whose events WindowServer places on screen
+    IOHIDEvent *event = IOHIDEvent::absolutePointerEvent(timeStamp, __ScaleToFixed(x, bounds->minx, bounds->maxx), __ScaleToFixed(y, bounds->miny, bounds->maxy), 0, buttonState, _absolutePointer.buttonState, kIOHIDEventOptionIsBuiltIn);
     
     if (event) {
         dispatchEvent(event);
@@ -2972,6 +2973,8 @@ OSMetaClassDefineReservedUnused(IOHIDEventService, 31);
 
 #pragma clang diagnostic ignored "-Wunused-parameter"
 
+// DriverKit dispatch: needs the IIG-generated argument types, which PureDarwin does not build
+#if PD_HID_DRIVERKIT
 #include <IOKit/IOUserServer.h>
 
 kern_return_t
@@ -3086,3 +3089,4 @@ IMPL(IOHIDEventService, EventAvailable)
     }
     return ret;
 }
+#endif /* PD_HID_DRIVERKIT */

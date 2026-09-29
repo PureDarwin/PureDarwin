@@ -2272,13 +2272,13 @@ case kIOHIDEventTypeTranslation:\
     switch (field)\
     {\
         case kIOHIDEventFieldTranslationX: \
-            ((IOHIDTranslationEventData*)event)->position.x = (typeof(((IOHIDTranslationEventData*)event)->position.x)) CAST_INTEGER_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.x = (typeof(((IOHIDTranslationEventData*)event)->position.x)) CAST_INTEGER_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldTranslationY: \
-            ((IOHIDTranslationEventData*)event)->position.y = (typeof(((IOHIDTranslationEventData*)event)->position.y)) CAST_INTEGER_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.y = (typeof(((IOHIDTranslationEventData*)event)->position.y)) CAST_INTEGER_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldTranslationZ: \
-            ((IOHIDTranslationEventData*)event)->position.z = (typeof(((IOHIDTranslationEventData*)event)->position.z)) CAST_INTEGER_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.z = (typeof(((IOHIDTranslationEventData*)event)->position.z)) CAST_INTEGER_TO_DOUBLE(value); \
             break; \
         _IOHIDTranslationSetSynthesizedFieldsAsIntegerMacro(event,field) \
     }\
@@ -2291,13 +2291,13 @@ case kIOHIDEventTypeTranslation:\
     switch (field)\
     {\
         case kIOHIDEventFieldTranslationX: \
-            value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDTranslationEventData*)event)->position.x); \
+            value = (typeof(value))CAST_DOUBLE_TO_INTEGER(((IOHIDTranslationEventData*)event)->position.x); \
             break; \
         case kIOHIDEventFieldTranslationY: \
-            value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDTranslationEventData*)event)->position.y); \
+            value = (typeof(value))CAST_DOUBLE_TO_INTEGER(((IOHIDTranslationEventData*)event)->position.y); \
             break; \
         case kIOHIDEventFieldTranslationZ: \
-            value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDTranslationEventData*)event)->position.z); \
+            value = (typeof(value))CAST_DOUBLE_TO_INTEGER(((IOHIDTranslationEventData*)event)->position.z); \
             break; \
         _IOHIDTranslationGetSynthesizedFieldsAsIntegerMacro(event,field) \
     }\
@@ -2310,13 +2310,13 @@ case kIOHIDEventTypeTranslation:\
     switch (field)\
     {\
         case kIOHIDEventFieldTranslationX: \
-            ((IOHIDTranslationEventData*)event)->position.x = (typeof(((IOHIDTranslationEventData*)event)->position.x)) CAST_DOUBLE_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.x = (typeof(((IOHIDTranslationEventData*)event)->position.x)) CAST_DOUBLE_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldTranslationY: \
-            ((IOHIDTranslationEventData*)event)->position.y = (typeof(((IOHIDTranslationEventData*)event)->position.y)) CAST_DOUBLE_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.y = (typeof(((IOHIDTranslationEventData*)event)->position.y)) CAST_DOUBLE_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldTranslationZ: \
-            ((IOHIDTranslationEventData*)event)->position.z = (typeof(((IOHIDTranslationEventData*)event)->position.z)) CAST_DOUBLE_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.z = (typeof(((IOHIDTranslationEventData*)event)->position.z)) CAST_DOUBLE_TO_DOUBLE(value); \
             break; \
         _IOHIDTranslationSetSynthesizedFieldsAsDoubleMacro(event,field) \
     }\
@@ -2329,13 +2329,13 @@ case kIOHIDEventTypeTranslation:\
     switch (field)\
     {\
         case kIOHIDEventFieldTranslationX: \
-            value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDTranslationEventData*)event)->position.x); \
+            value = (typeof(value))CAST_DOUBLE_TO_DOUBLE(((IOHIDTranslationEventData*)event)->position.x); \
             break; \
         case kIOHIDEventFieldTranslationY: \
-            value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDTranslationEventData*)event)->position.y); \
+            value = (typeof(value))CAST_DOUBLE_TO_DOUBLE(((IOHIDTranslationEventData*)event)->position.y); \
             break; \
         case kIOHIDEventFieldTranslationZ: \
-            value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDTranslationEventData*)event)->position.z); \
+            value = (typeof(value))CAST_DOUBLE_TO_DOUBLE(((IOHIDTranslationEventData*)event)->position.z); \
             break; \
         _IOHIDTranslationGetSynthesizedFieldsAsDoubleMacro(event,field) \
     }\
@@ -2348,13 +2348,13 @@ case kIOHIDEventTypeTranslation:\
     switch (field)\
     {\
         case kIOHIDEventFieldTranslationX: \
-            ((IOHIDTranslationEventData*)event)->position.x = (typeof(((IOHIDTranslationEventData*)event)->position.x)) CAST_FIXED_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.x = (typeof(((IOHIDTranslationEventData*)event)->position.x)) CAST_FIXED_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldTranslationY: \
-            ((IOHIDTranslationEventData*)event)->position.y = (typeof(((IOHIDTranslationEventData*)event)->position.y)) CAST_FIXED_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.y = (typeof(((IOHIDTranslationEventData*)event)->position.y)) CAST_FIXED_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldTranslationZ: \
-            ((IOHIDTranslationEventData*)event)->position.z = (typeof(((IOHIDTranslationEventData*)event)->position.z)) CAST_FIXED_TO_FIXED(value); \
+            ((IOHIDTranslationEventData*)event)->position.z = (typeof(((IOHIDTranslationEventData*)event)->position.z)) CAST_FIXED_TO_DOUBLE(value); \
             break; \
         _IOHIDTranslationSetSynthesizedFieldsAsFixedMacro(event,field) \
     }\
@@ -2367,13 +2367,13 @@ case kIOHIDEventTypeTranslation:\
     switch (field)\
     {\
         case kIOHIDEventFieldTranslationX: \
-            value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDTranslationEventData*)event)->position.x); \
+            value = (typeof(value))CAST_DOUBLE_TO_FIXED(((IOHIDTranslationEventData*)event)->position.x); \
             break; \
         case kIOHIDEventFieldTranslationY: \
-            value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDTranslationEventData*)event)->position.y); \
+            value = (typeof(value))CAST_DOUBLE_TO_FIXED(((IOHIDTranslationEventData*)event)->position.y); \
             break; \
         case kIOHIDEventFieldTranslationZ: \
-            value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDTranslationEventData*)event)->position.z); \
+            value = (typeof(value))CAST_DOUBLE_TO_FIXED(((IOHIDTranslationEventData*)event)->position.z); \
             break; \
         _IOHIDTranslationGetSynthesizedFieldsAsFixedMacro(event,field) \
     }\
@@ -6689,13 +6689,13 @@ case kIOHIDEventTypePointer:\
     switch (field)\
     {\
         case kIOHIDEventFieldPointerX: \
-            ((IOHIDPointerEventData*)event)->position.x = (typeof(((IOHIDPointerEventData*)event)->position.x)) CAST_INTEGER_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.x = (typeof(((IOHIDPointerEventData*)event)->position.x)) CAST_INTEGER_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerY: \
-            ((IOHIDPointerEventData*)event)->position.y = (typeof(((IOHIDPointerEventData*)event)->position.y)) CAST_INTEGER_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.y = (typeof(((IOHIDPointerEventData*)event)->position.y)) CAST_INTEGER_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerZ: \
-            ((IOHIDPointerEventData*)event)->position.z = (typeof(((IOHIDPointerEventData*)event)->position.z)) CAST_INTEGER_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.z = (typeof(((IOHIDPointerEventData*)event)->position.z)) CAST_INTEGER_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerButtonMask: \
             ((IOHIDPointerEventData*)event)->button.mask = (typeof(((IOHIDPointerEventData*)event)->button.mask)) CAST_INTEGER_TO_INTEGER(value); \
@@ -6711,13 +6711,13 @@ case kIOHIDEventTypePointer:\
     switch (field)\
     {\
         case kIOHIDEventFieldPointerX: \
-            value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDPointerEventData*)event)->position.x); \
+            value = (typeof(value))CAST_DOUBLE_TO_INTEGER(((IOHIDPointerEventData*)event)->position.x); \
             break; \
         case kIOHIDEventFieldPointerY: \
-            value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDPointerEventData*)event)->position.y); \
+            value = (typeof(value))CAST_DOUBLE_TO_INTEGER(((IOHIDPointerEventData*)event)->position.y); \
             break; \
         case kIOHIDEventFieldPointerZ: \
-            value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDPointerEventData*)event)->position.z); \
+            value = (typeof(value))CAST_DOUBLE_TO_INTEGER(((IOHIDPointerEventData*)event)->position.z); \
             break; \
         case kIOHIDEventFieldPointerButtonMask: \
             value = (typeof(value))CAST_INTEGER_TO_INTEGER(((IOHIDPointerEventData*)event)->button.mask); \
@@ -6733,13 +6733,13 @@ case kIOHIDEventTypePointer:\
     switch (field)\
     {\
         case kIOHIDEventFieldPointerX: \
-            ((IOHIDPointerEventData*)event)->position.x = (typeof(((IOHIDPointerEventData*)event)->position.x)) CAST_DOUBLE_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.x = (typeof(((IOHIDPointerEventData*)event)->position.x)) CAST_DOUBLE_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerY: \
-            ((IOHIDPointerEventData*)event)->position.y = (typeof(((IOHIDPointerEventData*)event)->position.y)) CAST_DOUBLE_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.y = (typeof(((IOHIDPointerEventData*)event)->position.y)) CAST_DOUBLE_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerZ: \
-            ((IOHIDPointerEventData*)event)->position.z = (typeof(((IOHIDPointerEventData*)event)->position.z)) CAST_DOUBLE_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.z = (typeof(((IOHIDPointerEventData*)event)->position.z)) CAST_DOUBLE_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerButtonMask: \
             ((IOHIDPointerEventData*)event)->button.mask = (typeof(((IOHIDPointerEventData*)event)->button.mask)) CAST_DOUBLE_TO_INTEGER(value); \
@@ -6755,13 +6755,13 @@ case kIOHIDEventTypePointer:\
     switch (field)\
     {\
         case kIOHIDEventFieldPointerX: \
-            value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDPointerEventData*)event)->position.x); \
+            value = (typeof(value))CAST_DOUBLE_TO_DOUBLE(((IOHIDPointerEventData*)event)->position.x); \
             break; \
         case kIOHIDEventFieldPointerY: \
-            value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDPointerEventData*)event)->position.y); \
+            value = (typeof(value))CAST_DOUBLE_TO_DOUBLE(((IOHIDPointerEventData*)event)->position.y); \
             break; \
         case kIOHIDEventFieldPointerZ: \
-            value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDPointerEventData*)event)->position.z); \
+            value = (typeof(value))CAST_DOUBLE_TO_DOUBLE(((IOHIDPointerEventData*)event)->position.z); \
             break; \
         case kIOHIDEventFieldPointerButtonMask: \
             value = (typeof(value))CAST_INTEGER_TO_DOUBLE(((IOHIDPointerEventData*)event)->button.mask); \
@@ -6777,13 +6777,13 @@ case kIOHIDEventTypePointer:\
     switch (field)\
     {\
         case kIOHIDEventFieldPointerX: \
-            ((IOHIDPointerEventData*)event)->position.x = (typeof(((IOHIDPointerEventData*)event)->position.x)) CAST_FIXED_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.x = (typeof(((IOHIDPointerEventData*)event)->position.x)) CAST_FIXED_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerY: \
-            ((IOHIDPointerEventData*)event)->position.y = (typeof(((IOHIDPointerEventData*)event)->position.y)) CAST_FIXED_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.y = (typeof(((IOHIDPointerEventData*)event)->position.y)) CAST_FIXED_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerZ: \
-            ((IOHIDPointerEventData*)event)->position.z = (typeof(((IOHIDPointerEventData*)event)->position.z)) CAST_FIXED_TO_FIXED(value); \
+            ((IOHIDPointerEventData*)event)->position.z = (typeof(((IOHIDPointerEventData*)event)->position.z)) CAST_FIXED_TO_DOUBLE(value); \
             break; \
         case kIOHIDEventFieldPointerButtonMask: \
             ((IOHIDPointerEventData*)event)->button.mask = (typeof(((IOHIDPointerEventData*)event)->button.mask)) CAST_FIXED_TO_INTEGER(value); \
@@ -6799,13 +6799,13 @@ case kIOHIDEventTypePointer:\
     switch (field)\
     {\
         case kIOHIDEventFieldPointerX: \
-            value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDPointerEventData*)event)->position.x); \
+            value = (typeof(value))CAST_DOUBLE_TO_FIXED(((IOHIDPointerEventData*)event)->position.x); \
             break; \
         case kIOHIDEventFieldPointerY: \
-            value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDPointerEventData*)event)->position.y); \
+            value = (typeof(value))CAST_DOUBLE_TO_FIXED(((IOHIDPointerEventData*)event)->position.y); \
             break; \
         case kIOHIDEventFieldPointerZ: \
-            value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDPointerEventData*)event)->position.z); \
+            value = (typeof(value))CAST_DOUBLE_TO_FIXED(((IOHIDPointerEventData*)event)->position.z); \
             break; \
         case kIOHIDEventFieldPointerButtonMask: \
             value = (typeof(value))CAST_INTEGER_TO_FIXED(((IOHIDPointerEventData*)event)->button.mask); \

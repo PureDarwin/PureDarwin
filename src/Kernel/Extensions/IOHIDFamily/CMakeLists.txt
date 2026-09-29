@@ -17,7 +17,36 @@ target_sources(IOHIDFamily.kext PRIVATE
     IOHIDSystem/IOHIDUserClient.cpp
     IOHIDSystem/IOHIDWorkLoop.cpp
     IOHIDSystem/PDHIDEventQueue.cpp
+    # The event object and its queue: IOHIDSystem::postEvent and the event-system
+    # user client use both, and an unresolved import is bound to panic() in the KC
+    IOHIDFamily/IOHIDEvent.cpp
+    IOHIDFamily/IOHIDEventServiceQueue.cpp
+    IOHIDFamily/IOHIDFamilyPrivate.cpp
+    # The device -> interface -> event driver stack hidd and the event system match on
+    IOHIDFamily/IOHIDDevice.cpp
+    IOHIDFamily/IOHIDDeviceElementContainer.cpp
+    IOHIDFamily/IOHIDElementContainer.cpp
+    IOHIDFamily/IOHIDElementPrivate.cpp
+    IOHIDFamily/IOHIDInterface.cpp
+    IOHIDFamily/IOHIDEventService.cpp
+    IOHIDFamily/IOHIDEventServiceUserClient.cpp
+    IOHIDFamily/IOHIDEventDriver.cpp
+    IOHIDFamily/IOHIDLibUserClient.cpp
+    IOHIDFamily/IOHIDEventQueue.cpp
+    IOHIDFamily/IOHIDUtility.cpp
+    IOHIDFamily/IOHIDProviderPropertyMerger.cpp
+    IOHIDFamily/IOHIDEventSource.cpp
+    IOHIDFamily/IOHIDEventServiceFastPathUserClient.cpp
+    IOHIDFamily/IOHIDKeyboard.cpp
+    IOHIDFamily/IOHIDPointing.cpp
+    IOHIDFamily/IOHIDConsumer.cpp
+    IOHIDSystem/IOHIPointing.cpp
+    IOHIDSystem/IOHITablet.cpp
+    IOHIDSystem/IOHITabletPointer.cpp
+    IOHIDFamily/Cosmo_USB2ADB.c
 )
+file(GLOB PD_HID_PARSER ${CMAKE_CURRENT_SOURCE_DIR}/IOHIDSystem/IOHIDDescriptorParser/*.c)
+target_sources(IOHIDFamily.kext PRIVATE ${PD_HID_PARSER})
 
 target_include_directories(IOHIDFamily.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -27,10 +56,12 @@ target_include_directories(IOHIDFamily.kext PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/IOHIDFamily
     ${CMAKE_CURRENT_SOURCE_DIR}/IOHIDSystem
     ${CMAKE_CURRENT_SOURCE_DIR}/IOHIDSystem/IOKit/hidsystem
+    ${CMAKE_CURRENT_SOURCE_DIR}/IOHIDSystem/IOHIDDescriptorParser
     ${CMAKE_CURRENT_SOURCE_DIR}/../../xnu/EXTERNAL_HEADERS
     ${CMAKE_CURRENT_BINARY_DIR}/gen)
 target_link_libraries(IOHIDFamily.kext PRIVATE xnu_kernel_private_headers)
 target_compile_options(IOHIDFamily.kext PRIVATE
+    "SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/pd_hid_compat.h"
     -Wno-sign-conversion -Wno-implicit-int-conversion -Wno-shorten-64-to-32
     -Wno-unused-variable -Wno-unused-function -Wno-cast-qual
     -Wno-deprecated-declarations)

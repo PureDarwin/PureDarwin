@@ -97,7 +97,7 @@ protected:
 
     virtual IOReturn clientMemoryForType(UInt32 type, IOOptionBits * options, IOMemoryDescriptor ** memory);
     
-    IOReturn clientMemoryForTypeGated (IOOptionBits * options, IOMemoryDescriptor ** memory) APPLE_KEXT_OVERRIDE;
+    IOReturn clientMemoryForTypeGated (IOOptionBits * options, IOMemoryDescriptor ** memory);
 
     virtual IOReturn externalMethod (
                         uint32_t                        selector,

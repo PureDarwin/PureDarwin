@@ -305,9 +305,9 @@ typedef struct {
     uint8_t depth;
     uint8_t reserved[3];
     struct {
-        IOFixed x;
-        IOFixed y;
-        IOFixed z;
+        double x;
+        double y;
+        double z;
     } position;
 } IOHIDTranslationEventData;
 
@@ -785,9 +785,9 @@ typedef struct {
     uint8_t depth;
     uint8_t reserved[3];
     struct {
-        IOFixed x;
-        IOFixed y;
-        IOFixed z;
+        double x;
+        double y;
+        double z;
     } position;
     struct {
         uint32_t mask;

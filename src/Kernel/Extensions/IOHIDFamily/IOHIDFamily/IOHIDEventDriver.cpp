@@ -2171,7 +2171,7 @@ bool IOHIDEventDriver::parseKeyboardElement(IOHIDElement * element)
             if (usage == kHIDUsage_KeyboardPower) {
                 OSDictionary * kbEnableEventProps   = NULL;
                 OSNumber * tmpNumber                = NULL;
-                UInt32 value                        = NULL;
+                UInt32 value                        = 0;
 
                 // To avoid problems with un-intentional clearing of the flag
                 // we require this report to be a feature report so that the current

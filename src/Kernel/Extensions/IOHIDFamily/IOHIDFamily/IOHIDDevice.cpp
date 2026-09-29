@@ -1113,7 +1113,7 @@ IOReturn IOHIDDevice::getReport( IOMemoryDescriptor * report,
         
         IOBufferMemoryDescriptor *bmd = OSDynamicCast(IOBufferMemoryDescriptor, report);
         
-        hid_trace(kHIDTraceGetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : NULL, (uintptr_t)mach_absolute_time());
+        hid_trace(kHIDTraceGetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : 0, (uintptr_t)mach_absolute_time());
     }
     
     return kr;
@@ -1130,7 +1130,7 @@ IOReturn IOHIDDevice::setReport( IOMemoryDescriptor * report,
         
         IOBufferMemoryDescriptor *bmd = OSDynamicCast(IOBufferMemoryDescriptor, report);
         
-        hid_trace(kHIDTraceSetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : NULL, (uintptr_t)mach_absolute_time());
+        hid_trace(kHIDTraceSetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : 0, (uintptr_t)mach_absolute_time());
     }
     
     return setReport(report, reportType, options, 0, 0);
@@ -1829,7 +1829,7 @@ IOReturn IOHIDDevice::handleReportWithTime(
         
         IOBufferMemoryDescriptor *bmd = OSDynamicCast(IOBufferMemoryDescriptor, report);
         
-        hid_trace(kHIDTraceHandleReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : NULL, (uintptr_t)mach_absolute_time());
+        hid_trace(kHIDTraceHandleReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : 0, (uintptr_t)mach_absolute_time());
     }
     
     
@@ -2084,6 +2084,8 @@ OSMetaClassDefineReservedUnused(IOHIDDevice, 40);
 
 #pragma clang diagnostic ignored "-Wunused-parameter"
 
+// DriverKit dispatch: needs the IIG-generated argument types, which PureDarwin does not build
+#if PD_HID_DRIVERKIT
 #include <IOKit/IOUserServer.h>
 
 kern_return_t
@@ -2135,3 +2137,4 @@ IMPL(IOHIDDevice, _CompleteReport)
 }
 
 
+#endif /* PD_HID_DRIVERKIT */

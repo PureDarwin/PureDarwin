@@ -601,6 +601,8 @@ OSMetaClassDefineReservedUnused(IOHIDInterface, 31);
 
 #pragma clang diagnostic ignored "-Wunused-parameter"
 
+// DriverKit dispatch: needs the IIG-generated argument types, which PureDarwin does not build
+#if PD_HID_DRIVERKIT
 #include <IOKit/IOUserServer.h>
 //#include "HIDDriverKit/Implementation/IOKitUser/IOHIDInterface.h"
 
@@ -972,3 +974,4 @@ exit:
     
     return ret;
 }
+#endif /* PD_HID_DRIVERKIT */
