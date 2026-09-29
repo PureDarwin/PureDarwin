@@ -2352,27 +2352,6 @@ handle_user_abort(arm_saved_state_t *state, uint64_t esr, vm_offset_t fault_addr
 
 	(void)expected_fault_handler;
 
-	printf("User abort pid %d pc=0x%llx far=0x%lx esr=0x%llx code=%d type=%d\n",
-	    proc_pid(current_proc()), get_saved_state_pc(state), fault_addr, esr,
-	    fault_code, fault_type);
-
-	/* PD: a PC with bits above the 47-bit VA still set means something
-	 * branched to a signed pointer. Dump state to find the call site. */
-	if ((get_saved_state_pc(state) >> (64 - T0SZ_BOOT)) != 0) {
-		arm_saved_state64_t *ss = saved_state64(state);
-		printf("PD-BADPC: pc=0x%llx lr=0x%llx sp=0x%llx fp=0x%llx\n",
-		    (unsigned long long)ss->pc, (unsigned long long)ss->lr,
-		    (unsigned long long)ss->sp, (unsigned long long)ss->fp);
-		for (int r = 0; r <= 30; r += 4) {
-			printf("PD-BADPC: x%-2d=0x%016llx x%-2d=0x%016llx "
-			    "x%-2d=0x%016llx x%-2d=0x%016llx\n",
-			    r, (unsigned long long)ss->x[r],
-			    r + 1, (r + 1 <= 30) ? (unsigned long long)ss->x[r + 1] : 0ULL,
-			    r + 2, (r + 2 <= 30) ? (unsigned long long)ss->x[r + 2] : 0ULL,
-			    r + 3, (r + 3 <= 30) ? (unsigned long long)ss->x[r + 3] : 0ULL);
-		}
-	}
-
 	if (__improbable(!SPSR_INTERRUPTS_ENABLED(get_saved_state_cpsr(state)))) {
 		panic_with_thread_kernel_state("User abort from non-interruptible context", state);
 	}
