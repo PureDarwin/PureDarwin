@@ -157,6 +157,47 @@ apfs_read_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out,
 	return 0;
 }
 
+void
+apfs_caches_alloc(struct apfs_mount *amp)
+{
+	amp->omap_cache = _MALLOC(APFS_OMAP_CACHE_ENTS * sizeof(*amp->omap_cache), M_TEMP,
+	    M_WAITOK | M_ZERO);
+	amp->verified = _MALLOC(APFS_VERIFIED_ENTS * sizeof(*amp->verified), M_TEMP,
+	    M_WAITOK | M_ZERO);
+	amp->ncache = _MALLOC((size_t)APFS_NCACHE_ENTS * amp->block_size, M_TEMP, M_WAITOK);
+	amp->ncache_ents = _MALLOC(APFS_NCACHE_ENTS * sizeof(*amp->ncache_ents), M_TEMP,
+	    M_WAITOK | M_ZERO);
+	if (amp->ncache == NULL || amp->ncache_ents == NULL) {
+		if (amp->ncache != NULL)
+			_FREE(amp->ncache, M_TEMP);
+		if (amp->ncache_ents != NULL)
+			_FREE(amp->ncache_ents, M_TEMP);
+		amp->ncache = NULL;
+		amp->ncache_ents = NULL;
+	}
+}
+
+void
+apfs_caches_free(struct apfs_mount *amp)
+{
+	if (amp->omap_cache != NULL)
+		_FREE(amp->omap_cache, M_TEMP);
+	if (amp->verified != NULL)
+		_FREE(amp->verified, M_TEMP);
+	if (amp->ncache != NULL)
+		_FREE(amp->ncache, M_TEMP);
+	if (amp->ncache_ents != NULL)
+		_FREE(amp->ncache_ents, M_TEMP);
+	amp->omap_cache = NULL;
+	amp->verified = NULL;
+	amp->ncache = NULL;
+	amp->ncache_ents = NULL;
+}
+
+// readers share the caches: every slot access holds am_cache_lock, never across I/O
+#define APFS_CACHE_LOCK(amp)	IOLockLock((IOLock *)(amp)->am_cache_lock)
+#define APFS_CACHE_UNLOCK(amp)	IOLockUnlock((IOLock *)(amp)->am_cache_lock)
+
 static int
 apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 {
@@ -166,17 +207,22 @@ apfs_read_object_phys(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 	error = apfs_read_phys(amp, paddr, out, amp->block_size);
 	if (error)
 		return error;
-	if (amp->verified == NULL)
-		amp->verified = _MALLOC(APFS_VERIFIED_ENTS * sizeof(*ve), M_TEMP, M_WAITOK | M_ZERO);
 	if (amp->verified != NULL) {
+		int hit;
+
 		ve = &amp->verified[((uint64_t)paddr ^ ((uint64_t)paddr >> 13)) % APFS_VERIFIED_ENTS];
-		if (ve->gen == amp->rgen && ve->paddr == paddr && ve->gen != 0)
+		APFS_CACHE_LOCK(amp);
+		hit = ve->gen == amp->rgen && ve->paddr == paddr && ve->gen != 0;
+		APFS_CACHE_UNLOCK(amp);
+		if (hit)
 			return 0;
 	}
 	error = apfs_verify_object_checksum(out, amp->block_size);
 	if (error == 0 && ve != NULL) {
+		APFS_CACHE_LOCK(amp);
 		ve->paddr = paddr;
 		ve->gen = amp->rgen;
+		APFS_CACHE_UNLOCK(amp);
 	}
 	if (error) {
 		static int cksum_log_budget = 12;
@@ -209,31 +255,24 @@ apfs_read_node(struct apfs_mount *amp, apfs_paddr_t paddr, void *out)
 	uint32_t slot = 0;
 	int error;
 
-	if (amp->ncache == NULL) {
-		amp->ncache = _MALLOC((size_t)APFS_NCACHE_ENTS * amp->block_size, M_TEMP, M_WAITOK);
-		amp->ncache_ents = _MALLOC(APFS_NCACHE_ENTS * sizeof(*ne), M_TEMP, M_WAITOK | M_ZERO);
-		if (amp->ncache == NULL || amp->ncache_ents == NULL) {
-			if (amp->ncache != NULL)
-				_FREE(amp->ncache, M_TEMP);
-			if (amp->ncache_ents != NULL)
-				_FREE(amp->ncache_ents, M_TEMP);
-			amp->ncache = NULL;
-			amp->ncache_ents = NULL;
-		}
-	}
 	if (amp->ncache != NULL) {
 		slot = (uint32_t)(((uint64_t)paddr ^ ((uint64_t)paddr >> 9)) % APFS_NCACHE_ENTS);
 		ne = &amp->ncache_ents[slot];
+		APFS_CACHE_LOCK(amp);
 		if (ne->gen == amp->rgen && ne->paddr == paddr && ne->gen != 0) {
 			memcpy(out, amp->ncache + (size_t)slot * amp->block_size, amp->block_size);
+			APFS_CACHE_UNLOCK(amp);
 			return 0;
 		}
+		APFS_CACHE_UNLOCK(amp);
 	}
 	error = apfs_read_object_phys(amp, paddr, out);
 	if (error == 0 && ne != NULL) {
+		APFS_CACHE_LOCK(amp);
 		memcpy(amp->ncache + (size_t)slot * amp->block_size, out, amp->block_size);
 		ne->paddr = paddr;
 		ne->gen = amp->rgen;
+		APFS_CACHE_UNLOCK(amp);
 	}
 	return error;
 }
@@ -395,17 +434,15 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 	struct apfs_omap_cache_ent *ce = NULL;
 
 	// Only lookups at the mount's own xid are cached, keyed by tree and oid
-	if (xid == amp->xid) {
-		if (amp->omap_cache == NULL)
-			amp->omap_cache = _MALLOC(APFS_OMAP_CACHE_ENTS * sizeof(*ce), M_TEMP,
-			    M_WAITOK | M_ZERO);
-		if (amp->omap_cache != NULL) {
-			ce = &amp->omap_cache[(oid ^ (oid >> 11) ^ (uint64_t)tree_paddr) % APFS_OMAP_CACHE_ENTS];
-			if (ce->gen == amp->rgen && ce->oid == oid && ce->tree == tree_paddr && ce->gen != 0) {
-				memcpy(out, &ce->val, sizeof(*out));
-				return 0;
-			}
+	if (xid == amp->xid && amp->omap_cache != NULL) {
+		ce = &amp->omap_cache[(oid ^ (oid >> 11) ^ (uint64_t)tree_paddr) % APFS_OMAP_CACHE_ENTS];
+		APFS_CACHE_LOCK(amp);
+		if (ce->gen == amp->rgen && ce->oid == oid && ce->tree == tree_paddr && ce->gen != 0) {
+			memcpy(out, &ce->val, sizeof(*out));
+			APFS_CACHE_UNLOCK(amp);
+			return 0;
 		}
+		APFS_CACHE_UNLOCK(amp);
 	}
 
 	node = (struct apfs_btree_node_phys *)_MALLOC(amp->block_size, M_TEMP,
@@ -517,10 +554,12 @@ apfs_omap_lookup_tree(struct apfs_mount *amp, apfs_paddr_t tree_paddr,
 
 	memcpy(out, &best, sizeof(best));
 	if (ce != NULL) {
+		APFS_CACHE_LOCK(amp);
 		ce->tree = tree_paddr;
 		ce->oid = oid;
 		ce->gen = amp->rgen;
 		memcpy(&ce->val, &best, sizeof(best));
+		APFS_CACHE_UNLOCK(amp);
 	}
 out:
 	_FREE(node, M_TEMP);
@@ -853,12 +892,21 @@ apfs_btree_walk_leaves_oid(struct apfs_mount *amp, uint64_t oid_min,
 	int error;
 
 	// A commit frees and quickly reuses tree blocks,
-	// so the root must be read and the whole walk done under the lock. It is recursive
+	// so the root must be read and the whole walk done under the lock, shared
 	apfs_rw_lock(amp);
 	error = apfs_btree_walk_node(amp, amp->root_tree_paddr, NULL, 0,
 	    oid_min, oid_max, cb, ctx, NULL);
 	apfs_rw_unlock(amp);
 	return error;
+}
+
+// the same walk for a caller already holding the lock: shared holds must not nest
+static int
+apfs_btree_walk_leaves_held(struct apfs_mount *amp, uint64_t oid_min,
+    uint64_t oid_max, apfs_leaf_cb cb, void *ctx)
+{
+	return apfs_btree_walk_node(amp, amp->root_tree_paddr, NULL, 0,
+	    oid_min, oid_max, cb, ctx, NULL);
 }
 
 // Directory record lookup by (dirid, name hash): one root-to-leaf path
@@ -1401,23 +1449,46 @@ apfs_iterate_dir_cb(struct apfs_mount *amp,
 	return 0;
 }
 
+// Most a readdir fills per call. Entries land in a kernel buffer under the lock and reach
+// the caller after it: a fault on a user buffer mapped from this volume would nest a shared hold
+#define APFS_READDIR_BOUNCE	(64u * 1024u)
+
 int
 apfs_iterate_dir(struct apfs_mount *amp, uint64_t dirid, off_t start_index,
     struct uio *uio, int *numdirent, int *eofflag)
 {
 	struct apfs_iterate_dir_ctx c;
+	size_t cap = APFS_READDIR_BOUNCE;
+	uint8_t *bounce;
+	uio_t kuio;
 	int error;
+
+	if ((uint64_t)uio_resid(uio) < cap)
+		cap = (size_t)uio_resid(uio);
+	bounce = _MALLOC(cap > 0 ? cap : 1, M_TEMP, M_WAITOK);
+	if (bounce == NULL)
+		return ENOMEM;
+	kuio = uio_create(1, 0, UIO_SYSSPACE, UIO_READ);
+	if (kuio == NULL) {
+		_FREE(bounce, M_TEMP);
+		return ENOMEM;
+	}
+	uio_addiov(kuio, CAST_USER_ADDR_T(bounce), cap);
 
 	c.dirid = dirid;
 	c.start_index = start_index;
 	c.logical_index = 0;
-	c.uio = uio;
+	c.uio = kuio;
 	c.entries = 0;
 	c.done = 0;
 	error = apfs_btree_walk_leaves_oid(amp, dirid,
 	    dirid, apfs_iterate_dir_cb, &c);
 	if (error == 1)
 		error = 0;
+	if (error == 0 && cap - (size_t)uio_resid(kuio) > 0)
+		error = uiomove((caddr_t)bounce, (int)(cap - (size_t)uio_resid(kuio)), uio);
+	uio_free(kuio);
+	_FREE(bounce, M_TEMP);
 	if (numdirent)
 		*numdirent = c.entries;
 	if (eofflag)
@@ -1488,7 +1559,7 @@ apfs_extent_at_cb(struct apfs_mount *amp,
 #define APFS_READ_CHUNK	(256u * 1024u)
 
 // Fill n bytes from file_off into dst.
-// Runs under am_rw_lock so the extent in hand cannot be freed and reused by a commit halfway through
+// Runs under the container lock, shared, so the extent in hand cannot be freed and reused by a commit halfway through
 static int
 apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
     uint8_t *dst)
@@ -1500,12 +1571,15 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 
 	memset(&cur, 0, sizeof(cur));
 	cur.fileid = apnode->fileid;
+	// readers of one file share its extent hint
+	APFS_CACHE_LOCK(amp);
 	if (apnode->a_ext_valid && apnode->a_ext_gen == amp->rgen) {
 		cur.logical = apnode->a_ext_logical;
 		cur.len = apnode->a_ext_len;
 		cur.phys = apnode->a_ext_phys;
 		cur.found = 1;
 	}
+	APFS_CACHE_UNLOCK(amp);
 	while (done < n) {
 		uint64_t off = file_off + done;
 		uint64_t extent_off, block_index;
@@ -1517,16 +1591,18 @@ apfs_read_locked(struct apfs_node *apnode, uint64_t file_off, size_t n,
 			cur.want_off = off;
 			cur.found = 0;
 			cur.next_logical = ~0ull;
-			error = apfs_btree_walk_leaves_oid(amp, cur.fileid,
+			error = apfs_btree_walk_leaves_held(amp, cur.fileid,
 			    cur.fileid, apfs_extent_at_cb, &cur);
 			if (error != 0 && error != 1)
 				return error;
 			if (cur.found) {
+				APFS_CACHE_LOCK(amp);
 				apnode->a_ext_logical = cur.logical;
 				apnode->a_ext_len = cur.len;
 				apnode->a_ext_phys = cur.phys;
 				apnode->a_ext_gen = amp->rgen;
 				apnode->a_ext_valid = 1;
+				APFS_CACHE_UNLOCK(amp);
 			}
 			if (!cur.found) {
 				// A hole: zeros up to the next extent (or EOF)

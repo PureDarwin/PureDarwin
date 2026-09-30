@@ -388,7 +388,10 @@ struct apfs_container {
 	uint8_t c_uuid[16];
 	vnode_t c_devvp;
 	int c_refs;
-	void *c_lock;			// IORecursiveLock*
+	// lck_rw_t*: reads shared, writes, commits and view reloads exclusive
+	void *c_lock;
+	// the exclusive holder, which may re-enter (shared or exclusive) by bumping c_lock_depth
+	void *c_lock_owner;
 	uint64_t c_generation;
 	struct apfs_mount *c_last_writer;	// Whose commit bumped c_generation last
 	struct apfsrw_kern_dev c_rw_dev;
@@ -402,6 +405,8 @@ struct apfs_container {
 	uint64_t c_lock_abs;
 	// cumulative, for the commit stat line
 	uint64_t c_st_commits, c_st_ops, c_st_hold_abs, c_st_attach_abs;
+	// shared holds taken, and time spent waiting for the exclusive lock
+	uint64_t c_st_shared, c_st_xwait_abs;
 	// who wrote since the last stat line, the busiest shown on it
 	struct { int pid; uint32_t ops; char name[17]; } c_st_writers[8];
 };
@@ -419,8 +424,8 @@ struct apfs_mount {
 	void *am_hash_lock;		// IOLock*
 	int am_probe_logged;		// container dumped to the log once
 	uint64_t rgen;			// read view generation: keys every read cache, bumped when the view moves
-	void *am_rw_lock;		/* cont->c_lock: serialises every apfsrw
-					 * mutation + the reload after it */
+	// IOLock*: guards the read caches below and each node's a_ext_* among shared readers
+	void *am_cache_lock;
 	LIST_HEAD(apfs_node_bucket, apfs_node) am_node_hash[APFS_NODE_HASH_SIZE];
 	vnode_t devvp;
 	vnode_t root_vp;
@@ -482,7 +487,7 @@ struct apfs_node {
 	uint64_t mtime_ns;
 	uint64_t ctime_ns;
 	uint64_t crtime_ns;
-	// Last extent found for this file. Valid only while a_ext_gen matches amp->rgen
+	// Last extent found for this file. Valid only while a_ext_gen matches amp->rgen, under am_cache_lock
 	uint64_t a_ext_logical, a_ext_len, a_ext_phys, a_ext_gen;
 	int a_ext_valid;
 };
@@ -500,6 +505,9 @@ apfs_devblk(const struct apfs_mount *amp, apfs_paddr_t paddr)
 int apfs_vget(struct apfs_mount *amp, uint64_t fileid, vnode_t dvp,
     vnode_t *vpp);
 int apfs_load_volume(struct apfs_mount *amp, vfs_context_t ctx);
+// the read caches, once block_size is known. Without them reads go uncached
+void apfs_caches_alloc(struct apfs_mount *amp);
+void apfs_caches_free(struct apfs_mount *amp);
 int apfs_lookup_inode(struct apfs_mount *amp, uint64_t fileid,
     struct apfs_inode_info *info);
 int apfs_lookup_dirent(struct apfs_mount *amp, uint64_t dirid,
@@ -511,9 +519,11 @@ int apfs_lookup_xattr(struct apfs_mount *amp, uint64_t fileid, const char *name,
     void *buf, size_t bufsize, size_t *outlen);
 int apfs_list_xattrs(struct apfs_mount *amp, uint64_t fileid, char *buf,
     size_t bufsize, size_t *outlen);
-// Take the container lock.
-// If another volume committed since this mount last looked, its view is re-read first. Recursive
+// the container lock, shared: the view stays put for the hold. A pending reload or conflicting
+// batch is dealt with under exclusive first. Never nest inside another shared hold
 void apfs_rw_lock(struct apfs_mount *amp);
+// exclusive, for libapfsrw calls that read through its own caches. Re-entrant for the owner
+void apfs_rw_lock_excl(struct apfs_mount *amp);
 void apfs_rw_unlock(struct apfs_mount *amp);
 // the lock for a mutation: the container's open transaction moves to this mount's handle
 void apfs_rw_lock_write(struct apfs_mount *amp);

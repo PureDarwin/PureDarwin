@@ -250,7 +250,7 @@ apfs_vnop_ioctl(struct vnop_ioctl_args *ap)
 		vols = _MALLOC(sizeof(*vols) * 16, M_TEMP, M_WAITOK | M_ZERO);
 		if (vols == NULL)
 			return ENOMEM;
-		apfs_rw_lock(amp);
+		apfs_rw_lock_excl(amp);
 		if (apfsrw_list_volumes(amp->rw, vols, 16, &count) == 0) {
 			for (i = 0; i < count; i++) {
 				if (vols[i].role == role) {
@@ -616,7 +616,7 @@ static int apfsrw_to_errno(int err)
 }
 
 // Rewritten blocks are fresh ones. Pages mapped from the old blocks are stale.
-// Called without am_rw_lock: a busy page's pagein needs that lock
+// Called without the container lock: a busy page's pagein needs it
 static void
 apfs_drop_cached_pages(struct apfs_node *node, off_t start, off_t end)
 {
@@ -1404,10 +1404,8 @@ apfs_vnop_getxattr(struct vnop_getxattr_args *ap)
 	buf = _MALLOC(APFS_XATTR_MAX_INLINE, M_TEMP, M_WAITOK);
 	if (buf == NULL)
 		return ENOMEM;
-	apfs_rw_lock(node->amp);
 	error = apfs_lookup_xattr(node->amp, node->fileid, ap->a_name, buf,
 	    APFS_XATTR_MAX_INLINE, &len);
-	apfs_rw_unlock(node->amp);
 	if (error == 0) {
 		if (ap->a_uio == NULL)
 			*ap->a_size = len;
@@ -1433,10 +1431,8 @@ apfs_vnop_listxattr(struct vnop_listxattr_args *ap)
 	buf = _MALLOC(APFS_XATTR_MAX_INLINE, M_TEMP, M_WAITOK);
 	if (buf == NULL)
 		return ENOMEM;
-	apfs_rw_lock(node->amp);
 	error = apfs_list_xattrs(node->amp, node->fileid, buf,
 	    APFS_XATTR_MAX_INLINE, &len);
-	apfs_rw_unlock(node->amp);
 	if (error == 0) {
 		if (ap->a_uio == NULL)
 			*ap->a_size = len;
@@ -1518,10 +1514,9 @@ apfs_vnop_removexattr(struct vnop_removexattr_args *ap)
 		size_t have = 0;
 		uint8_t probe[1];
 
-		APFS_RW_LOCK(node->amp);
+		// a read: the lookup takes the lock shared itself
 		error = apfs_lookup_xattr(node->amp, node->fileid, ap->a_name,
 		    probe, sizeof(probe), &have);
-		APFS_RW_UNLOCK(node->amp);
 		if (error == ENOATTR)
 			return ENOATTR;
 	}

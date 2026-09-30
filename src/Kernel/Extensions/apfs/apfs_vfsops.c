@@ -5,6 +5,8 @@
 #include "apfsrw/apfsrw.h"
 
 #include <IOKit/IOLocks.h>
+#include <kern/locks.h>
+#include <kern/thread.h>
 #include <kern/thread_call.h>
 #include <mach/mach_time.h>
 
@@ -26,6 +28,7 @@ extern errno_t VNOP_OPEN(vnode_t vp, int mode, vfs_context_t ctx);
 extern errno_t VNOP_CLOSE(vnode_t vp, int fflag, vfs_context_t ctx);
 
 static vfstable_t apfs_vfsconf;
+static lck_grp_t *apfs_lck_grp;
 
 struct apfs_mount_args {
 	char *fspec;
@@ -47,6 +50,8 @@ static int apfs_open_fspec(user_addr_t data, vnode_t *devvpp,
 static int apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx);
 static int apfs_container_attach(struct apfs_mount *amp);
 static void apfs_container_detach(struct apfs_mount *amp);
+static void apfs_lock_enter(struct apfs_container *c);
+static void apfs_lock_exit(struct apfs_container *c);
 static void apfs_batch_timer_fire(thread_call_param_t p0, thread_call_param_t p1);
 
 // batch limits: whichever comes first commits the container's open transaction
@@ -101,15 +106,12 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 
 	amp->mp = mp;
 	amp->am_hash_lock = IOLockAlloc();
-	if (amp->am_hash_lock == NULL) {
-		if (amp->omap_cache != NULL)
-			_FREE(amp->omap_cache, M_TEMP);
-		if (amp->verified != NULL)
-			_FREE(amp->verified, M_TEMP);
-		if (amp->ncache != NULL)
-			_FREE(amp->ncache, M_TEMP);
-		if (amp->ncache_ents != NULL)
-			_FREE(amp->ncache_ents, M_TEMP);
+	amp->am_cache_lock = IOLockAlloc();
+	if (amp->am_hash_lock == NULL || amp->am_cache_lock == NULL) {
+		if (amp->am_hash_lock != NULL)
+			IOLockFree(amp->am_hash_lock);
+		if (amp->am_cache_lock != NULL)
+			IOLockFree(amp->am_cache_lock);
 		_FREE(amp, M_TEMP);
 		if (own_devvp_ref)
 			vnode_rele(devvp);
@@ -136,26 +138,27 @@ apfs_mount(__unused struct mount *mp, vnode_t devvp, user_addr_t data,
 	error = apfs_probe_container(amp, ctx);
 	if (error)
 		goto fail;
+	apfs_caches_alloc(amp);
 	if (apfs_volume_slot_for_dev(amp->dev, &amp->vol_slot) != 0)
 		amp->vol_slot = 0;
 	error = apfs_container_attach(amp);
 	if (error)
 		goto fail;
-	if (amp->io_devvp != devvp) {
+	// the view is read under exclusive, so no commit lands halfway through it
+	apfs_lock_enter(amp->cont);
+	if (amp->io_devvp != devvp)
 		error = apfs_probe_container(amp, ctx);
-		if (error)
-			goto fail;
-	}
-	error = apfs_load_volume(amp, ctx);
-	if (error)
-		goto fail;
-
-	error = apfsrw_open_kernel(&amp->cont->c_rw_dev, amp->block_count, 1, 0,
-	    amp->vol_slot, &amp->rw);
-	if (error != 0) {
-		APFSLOG("apfsrw_open_kernel failed: %d", error);
+	if (error == 0)
+		error = apfs_load_volume(amp, ctx);
+	if (error == 0 && apfsrw_open_kernel(&amp->cont->c_rw_dev, amp->block_count, 1, 0,
+	    amp->vol_slot, &amp->rw) != 0) {
+		APFSLOG("apfsrw_open_kernel failed");
 		amp->rw = NULL;
 	}
+	amp->seen_generation = amp->cont->c_generation;
+	apfs_lock_exit(amp->cont);
+	if (error)
+		goto fail;
 	if (!own_devvp_ref) {
 		error = vnode_ref(devvp);
 		if (error)
@@ -236,14 +239,8 @@ fail:
 		amp->dev_opened = 0;
 	}
 	IOLockFree(amp->am_hash_lock);
-	if (amp->omap_cache != NULL)
-		_FREE(amp->omap_cache, M_TEMP);
-	if (amp->verified != NULL)
-		_FREE(amp->verified, M_TEMP);
-	if (amp->ncache != NULL)
-		_FREE(amp->ncache, M_TEMP);
-	if (amp->ncache_ents != NULL)
-		_FREE(amp->ncache_ents, M_TEMP);
+	IOLockFree(amp->am_cache_lock);
+	apfs_caches_free(amp);
 	_FREE(amp, M_TEMP);
 	if (own_devvp_ref)
 		vnode_rele(devvp);
@@ -272,11 +269,11 @@ apfs_container_attach(struct apfs_mount *amp)
 			IOLockUnlock(apfs_containers_lock);
 			return ENOMEM;
 		}
-		c->c_lock = IORecursiveLockAlloc();
+		c->c_lock = lck_rw_alloc_init(apfs_lck_grp, LCK_ATTR_NULL);
 		c->c_batch_timer = thread_call_allocate(apfs_batch_timer_fire, c);
 		if (c->c_lock == NULL || c->c_batch_timer == NULL) {
 			if (c->c_lock != NULL)
-				IORecursiveLockFree((IORecursiveLock *)c->c_lock);
+				lck_rw_free((lck_rw_t *)c->c_lock, apfs_lck_grp);
 			if (c->c_batch_timer != NULL)
 				thread_call_free((thread_call_t)c->c_batch_timer);
 			_FREE(c, M_TEMP);
@@ -298,8 +295,6 @@ apfs_container_attach(struct apfs_mount *amp)
 
 	amp->cont = c;
 	amp->io_devvp = c->c_devvp;
-	amp->am_rw_lock = c->c_lock;
-	amp->seen_generation = c->c_generation;
 	return 0;
 }
 
@@ -319,7 +314,7 @@ apfs_container_rele(struct apfs_container *c)
 		thread_call_free((thread_call_t)c->c_batch_timer);
 		buf_flushdirtyblks(c->c_devvp, 1, 0, "apfs_container");
 		vnode_rele(c->c_devvp);
-		IORecursiveLockFree((IORecursiveLock *)c->c_lock);
+		lck_rw_free((lck_rw_t *)c->c_lock, apfs_lck_grp);
 		_FREE(c, M_TEMP);
 	}
 }
@@ -333,24 +328,45 @@ apfs_container_detach(struct apfs_mount *amp)
 		return;
 	amp->cont = NULL;
 	amp->io_devvp = NULLVP;
-	amp->am_rw_lock = NULL;
 	apfs_container_rele(c);
 }
 
+// exclusive. The owner re-enters by depth alone, lck_rw_t itself is not recursive
 static void
 apfs_lock_enter(struct apfs_container *c)
 {
-	IORecursiveLockLock((IORecursiveLock *)c->c_lock);
-	if (c->c_lock_depth++ == 0)
-		c->c_lock_abs = mach_absolute_time();
+	uint64_t t0;
+
+	if (c->c_lock_owner == (void *)current_thread()) {
+		c->c_lock_depth++;
+		return;
+	}
+	t0 = mach_absolute_time();
+	lck_rw_lock_exclusive((lck_rw_t *)c->c_lock);
+	c->c_lock_owner = (void *)current_thread();
+	c->c_lock_depth = 1;
+	c->c_lock_abs = mach_absolute_time();
+	c->c_st_xwait_abs += c->c_lock_abs - t0;
 }
 
 static void
 apfs_lock_exit(struct apfs_container *c)
 {
-	if (--c->c_lock_depth == 0)
-		c->c_st_hold_abs += mach_absolute_time() - c->c_lock_abs;
-	IORecursiveLockUnlock((IORecursiveLock *)c->c_lock);
+	if (--c->c_lock_depth > 0)
+		return;
+	c->c_st_hold_abs += mach_absolute_time() - c->c_lock_abs;
+	c->c_lock_owner = NULL;
+	lck_rw_unlock_exclusive((lck_rw_t *)c->c_lock);
+}
+
+// an outermost exclusive hold becomes shared, no writer gets in between
+static void
+apfs_lock_downgrade(struct apfs_container *c)
+{
+	c->c_st_hold_abs += mach_absolute_time() - c->c_lock_abs;
+	c->c_lock_depth = 0;
+	c->c_lock_owner = NULL;
+	lck_rw_lock_exclusive_to_shared((lck_rw_t *)c->c_lock);
 }
 
 static uint64_t
@@ -371,10 +387,13 @@ apfs_batch_stat(struct apfs_container *c, const char *why)
 	// the running hold counts too
 	if (c->c_lock_depth > 0)
 		hold += now - c->c_lock_abs;
-	APFSLOG("batch: %llu commits, %llu ops, lock held %llu ms of %llu ms (%s)",
+	APFSLOG("batch: %llu commits, %llu ops, lock held %llu ms of %llu ms, %llu shared holds, "
+	    "exclusive wait %llu ms (%s)",
 	    (unsigned long long)c->c_st_commits, (unsigned long long)c->c_st_ops,
 	    (unsigned long long)apfs_abs_ms(hold),
-	    (unsigned long long)apfs_abs_ms(now - c->c_st_attach_abs), why);
+	    (unsigned long long)apfs_abs_ms(now - c->c_st_attach_abs),
+	    (unsigned long long)c->c_st_shared,
+	    (unsigned long long)apfs_abs_ms(c->c_st_xwait_abs), why);
 	for (int n = 0; n < 4; n++) {
 		int best = -1;
 
@@ -525,13 +544,23 @@ pd_apfs_volume_add(const uint8_t container_uuid[16],
 	}
 }
 
-static void
-apfs_rw_lock_common(struct apfs_mount *amp, int write)
+// whether this mount must commit or reload before it reads. Stable under any hold
+static int
+apfs_view_stale(struct apfs_mount *amp)
 {
 	struct apfs_container *c = amp->cont;
 
-	// One recursive lock serialises the whole container
-	apfs_lock_enter(c);
+	return amp->seen_generation != c->c_generation ||
+	    (c->c_batch_amp != NULL && c->c_batch_amp != amp &&
+	    c->c_batch_amp->vol_slot == amp->vol_slot);
+}
+
+// brings the mount's view up to date. Exclusive held: the reload rewrites what readers walk
+static void
+apfs_view_sync(struct apfs_mount *amp, int write)
+{
+	struct apfs_container *c = amp->cont;
+
 	// one commit covers one volume's tree. Another volume's write, or a second mount of the
 	// batch's own volume reading around it, commits the open transaction first
 	if (c->c_batch_amp != NULL && c->c_batch_amp != amp &&
@@ -561,13 +590,36 @@ apfs_rw_lock_common(struct apfs_mount *amp, int write)
 void
 apfs_rw_lock(struct apfs_mount *amp)
 {
-	apfs_rw_lock_common(amp, 0);
+	struct apfs_container *c = amp->cont;
+
+	// the exclusive owner reads under what it holds
+	if (c->c_lock_owner == (void *)current_thread()) {
+		apfs_rw_lock_excl(amp);
+		return;
+	}
+	lck_rw_lock_shared((lck_rw_t *)c->c_lock);
+	__atomic_fetch_add(&c->c_st_shared, 1, __ATOMIC_RELAXED);
+	if (!apfs_view_stale(amp))
+		return;
+	// no upgrade: drop, sync under exclusive, then downgrade so the synced view stays put
+	lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
+	apfs_lock_enter(c);
+	apfs_view_sync(amp, 0);
+	apfs_lock_downgrade(c);
+}
+
+void
+apfs_rw_lock_excl(struct apfs_mount *amp)
+{
+	apfs_lock_enter(amp->cont);
+	apfs_view_sync(amp, 0);
 }
 
 void
 apfs_rw_lock_write(struct apfs_mount *amp)
 {
-	apfs_rw_lock_common(amp, 1);
+	apfs_lock_enter(amp->cont);
+	apfs_view_sync(amp, 1);
 }
 
 void
@@ -575,6 +627,10 @@ apfs_rw_unlock(struct apfs_mount *amp)
 {
 	struct apfs_container *c = amp->cont;
 
+	if (c->c_lock_owner != (void *)current_thread()) {
+		lck_rw_unlock_shared((lck_rw_t *)c->c_lock);
+		return;
+	}
 	// a busy container commits on age here, an idle one from the timer
 	if (c->c_lock_depth == 1 && c->c_batch_abs != 0 &&
 	    apfs_abs_ms(mach_absolute_time() - c->c_batch_abs) >= APFS_BATCH_MAX_MS)
@@ -1011,7 +1067,7 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 		amp->root_vp = NULLVP;
 		// A departing mount must not stay the container's last writer
 		if (amp->cont != NULL) {
-			apfs_rw_lock(amp);
+			apfs_rw_lock_excl(amp);
 			if (amp->cont->c_batch_amp == amp)
 				(void)apfs_batch_commit(amp->cont);
 			apfs_batch_stat(amp->cont, "unmount");
@@ -1039,14 +1095,8 @@ apfs_unmount(struct mount *mp, int mntflags, vfs_context_t ctx)
 		}
 		vfs_setfsprivate(mp, NULL);
 		IOLockFree(amp->am_hash_lock);
-		if (amp->omap_cache != NULL)
-			_FREE(amp->omap_cache, M_TEMP);
-		if (amp->verified != NULL)
-			_FREE(amp->verified, M_TEMP);
-		if (amp->ncache != NULL)
-			_FREE(amp->ncache, M_TEMP);
-		if (amp->ncache_ents != NULL)
-			_FREE(amp->ncache_ents, M_TEMP);
+		IOLockFree(amp->am_cache_lock);
+		apfs_caches_free(amp);
 		_FREE(amp, M_TEMP);
 	}
 	return 0;
@@ -1080,7 +1130,8 @@ apfs_getattr(__unused struct mount *mp, struct vfs_attr *fsap,
 	if (amp) {
 		struct apfsrw_space_info si;
 
-		apfs_rw_lock(amp);
+		// the spaceman walk goes through libapfsrw's own block cache
+		apfs_rw_lock_excl(amp);
 		if (amp->rw != NULL &&
 		    apfsrw_get_space_info(amp->rw, &si) == 0)
 			freeb = si.free_count;
@@ -1143,6 +1194,11 @@ apfs_vfs_register(void)
 	if (apfs_containers_lock == NULL) {
 		apfs_containers_lock = IOLockAlloc();
 		if (apfs_containers_lock == NULL)
+			return ENOMEM;
+	}
+	if (apfs_lck_grp == NULL) {
+		apfs_lck_grp = lck_grp_alloc_init("apfs", LCK_GRP_ATTR_NULL);
+		if (apfs_lck_grp == NULL)
 			return ENOMEM;
 	}
 
