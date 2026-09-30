@@ -907,6 +907,29 @@ ml_get_machine_mem(void)
 	return machine_info.memory_size;
 }
 
+// when no platform expert handled it (none loaded yet, or it has no reset), ask psci firmware
+static void
+pd_psci_halt(boolean_t reboot)
+{
+	DTEntry entry;
+	void const *prop;
+	unsigned int size;
+
+	if (SecureDTLookupEntry(NULL, "/psci", &entry) != kSuccess) {
+		return;
+	}
+	if (SecureDTGetProperty(entry, "method", &prop, &size) != kSuccess || size < 3) {
+		return;
+	}
+
+	register uint64_t x0 __asm__("x0") = reboot ? 0x84000009ULL : 0x84000008ULL;
+	if (strncmp(prop, "smc", 3) == 0) {
+		__asm__ volatile ("smc #0" : "+r"(x0) : : "memory");
+	} else if (strncmp(prop, "hvc", 3) == 0) {
+		__asm__ volatile ("hvc #0" : "+r"(x0) : : "memory");
+	}
+}
+
 __attribute__((noreturn))
 void
 halt_all_cpus(boolean_t reboot)
@@ -918,6 +941,7 @@ halt_all_cpus(boolean_t reboot)
 		printf("CPU halted\n");
 		PEHaltRestart(kPEHaltCPU);
 	}
+	pd_psci_halt(reboot);
 	while (1) {
 		;
 	}

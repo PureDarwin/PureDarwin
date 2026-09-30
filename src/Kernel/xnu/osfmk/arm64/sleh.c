@@ -3492,7 +3492,12 @@ STARTUP(KMEM, STARTUP_RANK_LAST, pd_sun50i_gic_startup);
 #endif /* SUN50I */
 
 #if HAS_GICV3_FIQ
+#include <pexpert/device_tree.h>
 static vm_offset_t pd_gicv2_cpuif;
+// the gicv3 distributor, for masking spis nobody services
+static vm_offset_t pd_gicd;
+#define PD_GICD_TYPER       0x0004
+#define PD_GICD_ICENABLER   0x0180
 #endif
 
 void
@@ -3529,6 +3534,9 @@ sleh_irq(arm_saved_state_t *state)
 			sleh_interrupt_handler_epilogue();
 			return;
 		}
+		// a level spi with no handler would fire again on every eoi
+		if (intid >= 32 && intid < GIC_SPURIOUS_IRQ && pd_gicd && cdp->interrupt_handler == NULL)
+			*(volatile uint32_t *)(pd_gicd + PD_GICD_ICENABLER + (intid / 32) * 4) = 1u << (intid % 32);
 		if (intid != GIC_SPURIOUS_IRQ) {
 			__builtin_arm_wsr64("ICC_EOIR1_EL1", iar);
 			__builtin_arm_isb(ISB_SY);
@@ -3580,10 +3588,13 @@ sleh_irq(arm_saved_state_t *state)
 	}
 #else
 	/* Run the registered interrupt handler. */
-	cdp->interrupt_handler(cdp->interrupt_target,
-	    cdp->interrupt_refCon,
-	    cdp->interrupt_nub,
-	    cdp->interrupt_source);
+	// an interrupt firmware left enabled can arrive before IOKit installs one
+	if (cdp->interrupt_handler != NULL) {
+		cdp->interrupt_handler(cdp->interrupt_target,
+		    cdp->interrupt_refCon,
+		    cdp->interrupt_nub,
+		    cdp->interrupt_source);
+	}
 #endif
 
 	entropy_collect();
@@ -3613,6 +3624,36 @@ pd_gicv2_startup(void)
 	}
 }
 STARTUP(KMEM, STARTUP_RANK_LAST, pd_gicv2_startup);
+
+// pd never enables an spi, so any the firmware left on would reach sleh_irq before iokit
+// installs a handler: mask them all before interrupts are first enabled
+static void
+pd_gicd_startup(void)
+{
+	DTEntry armio, gic;
+	void const *prop;
+	unsigned int size;
+	uint64_t base, lines;
+
+	if (SecureDTLookupEntry(NULL, "/arm-io", &armio) != kSuccess ||
+	    SecureDTLookupEntry(NULL, "/arm-io/gic", &gic) != kSuccess)
+		return;
+	if (SecureDTGetProperty(gic, "compatible", &prop, &size) != kSuccess || size < 10 ||
+	    strncmp(prop, "arm,gic-v3", 10) != 0)
+		return;
+	if (SecureDTGetProperty(armio, "ranges", &prop, &size) != kSuccess || size < 16)
+		return;
+	base = ((const uint64_t *)prop)[1];
+	if (SecureDTGetProperty(gic, "reg", &prop, &size) != kSuccess || size < 8)
+		return;
+
+	pd_gicd = ml_io_map(base + ((const uint64_t *)prop)[0], 0x10000);
+	lines = (*(volatile uint32_t *)(pd_gicd + PD_GICD_TYPER) & 0x1f) + 1;
+	for (uint64_t n = 1; n < lines; n++) {
+		*(volatile uint32_t *)(pd_gicd + PD_GICD_ICENABLER + n * 4) = 0xffffffffu;
+	}
+}
+STARTUP(KMEM, STARTUP_RANK_LAST, pd_gicd_startup);
 
 static inline uint64_t
 pd_gic_ack0(void)
