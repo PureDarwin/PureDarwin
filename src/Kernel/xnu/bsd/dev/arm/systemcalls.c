@@ -79,6 +79,47 @@ __XNU_PRIVATE_EXTERN    int             syscalls_log[SYS_MAXSYSCALL];
 extern int mach_trap_count;
 #endif
 
+// pdsyserr=NAME logs every failing syscall of processes named NAME to the console
+static char pd_syserr_name[MAXCOMLEN + 1];
+static int pd_syserr_state;
+
+static void
+pd_syserr_log(struct proc *proc, unsigned short code, int error, const uint64_t *args)
+{
+	uint64_t arg0 = args[0];
+
+	if (pd_syserr_state == 0)
+		pd_syserr_state = PE_parse_boot_argn("pdsyserr", pd_syserr_name, sizeof(pd_syserr_name)) ? 2 : 1;
+	if (pd_syserr_state != 2 || error == EJUSTRETURN || error == ERESTART)
+		return;
+	if (strncmp(proc->p_comm, pd_syserr_name, sizeof(pd_syserr_name)) != 0)
+		return;
+	// name the path or sysctl mib when the first argument is one
+	if (code == SYS_sysctl) {
+		int mib[6] = { -1, -1, -1, -1, -1, -1 };
+		char name[96] = "";
+		size_t len = 0;
+		(void)copyin((user_addr_t)arg0, mib, sizeof(mib));
+		// 0.3 is name-to-oid, the name being looked up is the new value
+		if (mib[0] == 0 && mib[1] == 3)
+			(void)copyinstr((user_addr_t)args[4], name, sizeof(name), &len);
+		printf("PD-syserr: %s[%d] sys %u err %d mib %d.%d.%d.%d %s\n", proc->p_comm, proc_getpid(proc), code, error,
+		    mib[0], mib[1], mib[2], mib[3], name);
+		return;
+	}
+	if (code == SYS_open || code == SYS_open_nocancel || code == SYS_stat64 || code == SYS_lstat64 ||
+	    code == SYS_statfs64 || code == SYS_getattrlist || code == SYS_unlink || code == SYS_chmod ||
+	    code == SYS_chown || code == SYS_access || code == SYS_mkdir || code == SYS_rename) {
+		char path[128];
+		size_t len = 0;
+		if (copyinstr((user_addr_t)arg0, path, sizeof(path), &len) == 0) {
+			printf("PD-syserr: %s[%d] sys %u err %d path %s\n", proc->p_comm, proc_getpid(proc), code, error, path);
+			return;
+		}
+	}
+	printf("PD-syserr: %s[%d] sys %u err %d arg0 0x%llx\n", proc->p_comm, proc_getpid(proc), code, error, arg0);
+}
+
 /*
  * Function:	unix_syscall
  *
@@ -180,6 +221,8 @@ unix_syscall(
 	AUDIT_SYSCALL_ENTER(code, proc, uthread);
 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
+	if (__improbable(error != 0))
+		pd_syserr_log(proc, code, error, (const uint64_t *)&uthread->uu_arg[0]);
 
 #if CONFIG_MACF
 skip_syscall:
