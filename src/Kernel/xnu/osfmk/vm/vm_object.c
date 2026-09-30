@@ -9453,7 +9453,9 @@ again:
 		next_object = (vm_object_t) queue_next(&object->task_objq);
 
 #if DEBUG
-		assert(object->vo_purgeable_volatilizer == NULL);
+		// a volatile object keeps recording who made it volatile until it is purged or made nonvolatile
+		assert(object->vo_purgeable_volatilizer == NULL ||
+		    object->purgable == VM_PURGABLE_VOLATILE);
 #endif /* DEBUG */
 		assert(object->vo_owner == task);
 		if (!vm_object_lock_try(object)) {

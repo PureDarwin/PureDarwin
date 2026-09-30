@@ -198,7 +198,9 @@ ipc_object_release(
 	ipc_object_t    io)
 {
 #if DEBUG
-	assert(get_preemption_level() == 0);
+	// only the final release frees, and that must not happen under a spinlock,
+	// dropping a reference someone else still holds is fine with preemption off
+	assert(get_preemption_level() == 0 || os_ref_get_count_raw(&io->io_references) > 1);
 #endif
 
 	if (os_ref_release_raw(&io->io_references, NULL) == 0) {

@@ -3714,8 +3714,9 @@ ipc_kmsg_copyout_reply_port(
 	is_write_lock(space);
 
 	if (!is_active(space)) {
-		ipc_port_release_sonce(port);
+		// the port is not the space's, so drop the space lock first: this can be its last reference
 		is_write_unlock(space);
+		ipc_port_release_sonce(port);
 		*namep = MACH_PORT_NULL;
 		return MACH_MSG_IPC_SPACE;
 	}
