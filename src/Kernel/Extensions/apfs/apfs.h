@@ -409,9 +409,11 @@ struct apfs_container {
 	// cumulative, for the commit stat line
 	uint64_t c_st_commits, c_st_ops, c_st_hold_abs, c_st_attach_abs;
 	// shared holds taken, and time spent waiting for the exclusive lock
-	uint64_t c_st_shared, c_st_xwait_abs;
+	uint64_t c_st_shared, c_st_xwait_abs, c_st_commit_abs, c_st_reloads, c_st_reload_abs;
 	// who wrote since the last stat line, the busiest shown on it
 	struct { int pid; uint32_t ops; char name[17]; } c_st_writers[8];
+	struct { void *site; uint64_t abs, n; } c_st_sites[12];
+	void *c_lock_site;
 };
 
 struct apfs_mount {

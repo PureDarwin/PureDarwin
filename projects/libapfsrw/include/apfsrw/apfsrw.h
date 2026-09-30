@@ -266,6 +266,8 @@ int apfsrw_setattr(struct apfsrw *fs, const char *path,
     const struct apfsrw_attr *attr);
 // Current time in the unit inode timestamps use: ns since the epoch
 uint64_t apfsrw_now_ns(void);
+// kernel only: reads, read ms, writes, syncs, sync ms
+void apfsrw_kern_iostat(uint64_t st[5]);
 
 int apfsrw_symlink(struct apfsrw *fs, const char *path, const char *target,
     uint32_t uid, uint32_t gid);

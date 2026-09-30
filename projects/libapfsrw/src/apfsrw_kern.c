@@ -5,6 +5,7 @@
 #ifdef APFSRW_KERNEL
 
 #include "apfsrw/apfsrw.h"
+#include <kern/clock.h>
 
 uint64_t
 apfsrw_now_ns(void)
@@ -76,6 +77,24 @@ apfsrw_kern_realloc(void *ptr, size_t size)
 	return np;
 }
 
+// block reads that missed the buffer cache path, delayed writes, and sync barriers
+static uint64_t apfsrw_st_reads, apfsrw_st_read_abs, apfsrw_st_writes;
+static uint64_t apfsrw_st_syncs, apfsrw_st_sync_abs;
+
+void
+apfsrw_kern_iostat(uint64_t st[5])
+{
+	uint64_t ns;
+
+	st[0] = apfsrw_st_reads;
+	absolutetime_to_nanoseconds(apfsrw_st_read_abs, &ns);
+	st[1] = ns / 1000000ull;
+	st[2] = apfsrw_st_writes;
+	st[3] = apfsrw_st_syncs;
+	absolutetime_to_nanoseconds(apfsrw_st_sync_abs, &ns);
+	st[4] = ns / 1000000ull;
+}
+
 static int
 apfsrw_kern_io(struct apfsrw *fs, void *buf, size_t n, off_t off, int is_write)
 {
@@ -111,9 +130,13 @@ apfsrw_kern_io(struct apfsrw *fs, void *buf, size_t n, off_t off, int is_write)
 			memcpy((void *)buf_dataptr(bp), p, bs);
 			// Delayed write. apfsrw_sync() flushes at commit barriers
 			buf_bdwrite(bp);
+			apfsrw_st_writes++;
 			continue;
 		}
+		uint64_t t0 = mach_absolute_time();
 		error = (int)buf_meta_bread(devvp, blkno, (int)bs, NOCRED, &bp);
+		apfsrw_st_read_abs += mach_absolute_time() - t0;
+		apfsrw_st_reads++;
 		if (error != 0 || bp == NULL) {
 			if (bp != NULL)
 				buf_brelse(bp);
@@ -147,7 +170,10 @@ apfsrw_sync(struct apfsrw *fs)
 		return dev->sync != NULL ? dev->sync(dev->io_ref) : 0;
 	if (dev == NULL || dev->devvp == NULL)
 		return -1;
+	uint64_t t0 = mach_absolute_time();
 	buf_flushdirtyblks((vnode_t)dev->devvp, 1, 0, "apfsrw");
+	apfsrw_st_sync_abs += mach_absolute_time() - t0;
+	apfsrw_st_syncs++;
 	return 0;
 }
 

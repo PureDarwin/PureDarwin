@@ -54,7 +54,9 @@ static int apfs_open_fspec(user_addr_t data, vnode_t *devvpp,
 static int apfs_probe_container(struct apfs_mount *amp, vfs_context_t ctx);
 static int apfs_container_attach(struct apfs_mount *amp);
 static void apfs_container_detach(struct apfs_mount *amp);
-static void apfs_lock_enter(struct apfs_container *c);
+static void apfs_lock_enter_at(struct apfs_container *c, void *site);
+// the site is who took the lock: the stat line charges each exclusive hold to it
+#define apfs_lock_enter(c) apfs_lock_enter_at((c), __builtin_return_address(0))
 static void apfs_lock_exit(struct apfs_container *c);
 static void apfs_batch_timer_fire(thread_call_param_t p0, thread_call_param_t p1);
 
@@ -353,7 +355,7 @@ apfs_container_detach(struct apfs_mount *amp)
 
 // exclusive. The owner re-enters by depth alone, lck_rw_t itself is not recursive
 static void
-apfs_lock_enter(struct apfs_container *c)
+apfs_lock_enter_at(struct apfs_container *c, void *site)
 {
 	uint64_t t0;
 
@@ -366,15 +368,41 @@ apfs_lock_enter(struct apfs_container *c)
 	c->c_lock_owner = (void *)current_thread();
 	c->c_lock_depth = 1;
 	c->c_lock_abs = mach_absolute_time();
+	c->c_lock_site = site;
 	c->c_st_xwait_abs += c->c_lock_abs - t0;
+}
+
+static void
+apfs_note_site(struct apfs_container *c, void *site, uint64_t abs)
+{
+	int slot = 0;
+
+	for (int i = 0; i < 12; i++) {
+		if (c->c_st_sites[i].site == site) {
+			slot = i;
+			goto found;
+		}
+		if (c->c_st_sites[i].abs < c->c_st_sites[slot].abs)
+			slot = i;
+	}
+	c->c_st_sites[slot].site = site;
+	c->c_st_sites[slot].abs = 0;
+	c->c_st_sites[slot].n = 0;
+found:
+	c->c_st_sites[slot].abs += abs;
+	c->c_st_sites[slot].n++;
 }
 
 static void
 apfs_lock_exit(struct apfs_container *c)
 {
+	uint64_t held;
+
 	if (--c->c_lock_depth > 0)
 		return;
-	c->c_st_hold_abs += mach_absolute_time() - c->c_lock_abs;
+	held = mach_absolute_time() - c->c_lock_abs;
+	c->c_st_hold_abs += held;
+	apfs_note_site(c, c->c_lock_site, held);
 	c->c_lock_owner = NULL;
 	lck_rw_unlock_exclusive((lck_rw_t *)c->c_lock);
 }
@@ -383,7 +411,10 @@ apfs_lock_exit(struct apfs_container *c)
 static void
 apfs_lock_downgrade(struct apfs_container *c)
 {
-	c->c_st_hold_abs += mach_absolute_time() - c->c_lock_abs;
+	uint64_t held = mach_absolute_time() - c->c_lock_abs;
+
+	c->c_st_hold_abs += held;
+	apfs_note_site(c, c->c_lock_site, held);
 	c->c_lock_depth = 0;
 	c->c_lock_owner = NULL;
 	lck_rw_lock_exclusive_to_shared((lck_rw_t *)c->c_lock);
@@ -414,6 +445,18 @@ apfs_batch_stat(struct apfs_container *c, const char *why)
 	    (unsigned long long)apfs_abs_ms(now - c->c_st_attach_abs),
 	    (unsigned long long)c->c_st_shared,
 	    (unsigned long long)apfs_abs_ms(c->c_st_xwait_abs), why);
+	{
+		uint64_t io[5];
+
+		apfsrw_kern_iostat(io);
+		APFSLOG("batch: io %llu reads %llu ms, %llu writes, %llu syncs %llu ms, commit %llu ms, "
+		    "%llu reloads %llu ms",
+		    (unsigned long long)io[0], (unsigned long long)io[1], (unsigned long long)io[2],
+		    (unsigned long long)io[3], (unsigned long long)io[4],
+		    (unsigned long long)apfs_abs_ms(c->c_st_commit_abs),
+		    (unsigned long long)c->c_st_reloads,
+		    (unsigned long long)apfs_abs_ms(c->c_st_reload_abs));
+	}
 	for (int n = 0; n < 4; n++) {
 		int best = -1;
 
@@ -428,6 +471,21 @@ apfs_batch_stat(struct apfs_container *c, const char *why)
 		c->c_st_writers[best].ops = 0;
 	}
 	bzero(c->c_st_writers, sizeof(c->c_st_writers));
+	for (int n = 0; n < 4; n++) {
+		int best = -1;
+
+		for (int i = 0; i < 12; i++) {
+			if (c->c_st_sites[i].n > 0 && (best < 0 || c->c_st_sites[i].abs > c->c_st_sites[best].abs))
+				best = i;
+		}
+		if (best < 0)
+			break;
+		APFSLOG("batch: site %p %llu holds %llu ms", c->c_st_sites[best].site,
+		    (unsigned long long)c->c_st_sites[best].n,
+		    (unsigned long long)apfs_abs_ms(c->c_st_sites[best].abs));
+		c->c_st_sites[best].n = 0;
+	}
+	bzero(c->c_st_sites, sizeof(c->c_st_sites));
 }
 
 // counts the caller against its slot, or takes the quietest one
@@ -457,8 +515,11 @@ apfs_batch_commit(struct apfs_container *c)
 
 	if (amp == NULL)
 		return 0;
+	uint64_t t0 = mach_absolute_time();
+
 	dirty = apfsrw_batch_dirty(amp->rw);
 	err = apfsrw_batch_end(amp->rw);
+	c->c_st_commit_abs += mach_absolute_time() - t0;
 	c->c_batch_amp = NULL;
 	c->c_batch_ops = 0;
 	c->c_batch_abs = 0;
@@ -588,6 +649,7 @@ apfs_view_sync(struct apfs_mount *amp, int write)
 		(void)apfs_batch_commit(c);
 	if (amp->seen_generation != c->c_generation) {
 		vfs_context_t ctx = vfs_context_current();
+		uint64_t t0 = mach_absolute_time();
 		int error = 0;
 
 		// Another volume's commit changed blocks this handle may hold. Its own did not
@@ -601,6 +663,8 @@ apfs_view_sync(struct apfs_mount *amp, int write)
 			APFSLOG("slot %u: re-read after another volume's commit "
 			    "failed: %d", amp->vol_slot, error);
 		amp->seen_generation = c->c_generation;
+		c->c_st_reload_abs += mach_absolute_time() - t0;
+		c->c_st_reloads++;
 	}
 	if (write && c->c_batch_amp == NULL && amp->rw != NULL &&
 	    apfsrw_batch_begin(amp->rw) == APFSRW_OK)
