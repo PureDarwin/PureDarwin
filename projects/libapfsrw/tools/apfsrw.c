@@ -27,7 +27,13 @@ static void usage(const char *argv0)
         "  %s mkdir IMAGE PATH\n"
         "  %s symlink IMAGE PATH TARGET\n"
         "  %s populate IMAGE SRCDIR\n"
+        "  %s mkcontainer IMAGE BLOCKS [NAME]  (4096-byte blocks, NAME makes volume 0)\n"
         "  %s newvol IMAGE NAME ROLE\n"
+        "  %s copyvol [--keep-owner] [--compressed] [--xattrs] [--flags] [--src-xid N]\n"
+        "      [--skip SRCPATH]... [--only LISTFILE]\n"
+        "      SRC DST [SRCPATH [DSTPATH]]  (image to image; default --owner0, decompressed)\n"
+        "  %s manifest IMAGE [PATH] [--hash]  (type mode uid gid nlink size flags xattrs hash|target path)\n"
+        "  %s setattrs IMAGE LISTFILE  (lines: OCTALMODE UID GID HEXFLAGS PATH, - keeps a field)\n"
         "  %s setxattr IMAGE PATH NAME VALUE\n"
         "  %s rmxattr IMAGE PATH NAME\n"
         "  %s rm IMAGE PATH  (files, symlinks, empty directories)\n"
@@ -36,7 +42,8 @@ static void usage(const char *argv0)
         "IMAGE may be FILE@@BYTEOFFSET, with a trailing @vN for volume "
         "slot N.\n",
         argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0,
-        argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0);
+        argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0, argv0,
+        argv0, argv0, argv0, argv0);
 }
 
 static int print_entry(const struct apfsrw_dirent *entry, void *ctx)
@@ -292,6 +299,131 @@ static int populate_dir(struct apfsrw *fs, const char *srcdir,
     return err;
 }
 
+// every line of a file, newline stripped. NULL when it cannot be read
+static const char **read_lines(const char *path, size_t *n)
+{
+    FILE *f = fopen(path, "r");
+    const char **v = NULL;
+    char *line = NULL;
+    size_t cap = 0, lcap = 0;
+    ssize_t len;
+
+    *n = 0;
+    if (f == NULL)
+        return NULL;
+    while ((len = getline(&line, &lcap, f)) >= 0) {
+        if (len > 0 && line[len - 1] == '\n')
+            line[--len] = '\0';
+        if (len == 0)
+            continue;
+        if (*n == cap) {
+            cap = cap ? cap * 2 : 256;
+            v = realloc(v, cap * sizeof(*v));
+            if (v == NULL)
+                break;
+        }
+        v[(*n)++] = strdup(line);
+    }
+    free(line);
+    fclose(f);
+    if (v == NULL)
+        v = calloc(1, sizeof(*v));
+    return v;
+}
+
+struct manifest_ctx {
+    struct apfsrw *fs;
+    int hash;
+    int err;
+};
+
+static int xattr_name_cb(const struct apfsrw_xattr *x, void *ctx)
+{
+    FILE *f = ctx;
+
+    if (ftell(f) > 0)
+        fputc(',', f);
+    for (const char *c = x->name; *c != '\0'; c++) {
+        if (*c == ' ' || *c == '%')
+            fprintf(f, "%%%02X", (unsigned char)*c);
+        else
+            fputc(*c, f);
+    }
+    return 0;
+}
+
+// FNV-1a 64: enough to tell two copies of a file apart
+static uint64_t fnv64(const uint8_t *p, size_t n)
+{
+    uint64_t h = 0xcbf29ce484222325ULL;
+
+    while (n--) {
+        h ^= *p++;
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
+// one line per entry, depth first, children in on-disk order
+static int manifest_dir(struct manifest_ctx *m, const char *dir)
+{
+    struct extract_list l = { NULL, 0, 0 };
+    int err = apfsrw_list_dir(m->fs, dir, collect_entry, &l);
+
+    for (size_t i = 0; err == APFSRW_OK && i < l.count; i++) {
+        struct apfsrw_file_stat st;
+        char p[4096], xs[4096] = "", hs[4096] = "-";
+        FILE *xf;
+
+        snprintf(p, sizeof(p), "%s/%s", strcmp(dir, "/") ? dir : "", l.ents[i].name);
+        if (apfsrw_stat_file(m->fs, p, &st) != APFSRW_OK) {
+            printf("? - - - - - - - - %s\n", p);
+            m->err++;
+            continue;
+        }
+        xf = fmemopen(xs, sizeof(xs) - 1, "w");
+        if (xf != NULL) {
+            (void)apfsrw_list_xattrs(m->fs, p, xattr_name_cb, xf);
+            fclose(xf);
+        }
+        if ((st.mode & 0170000) == 0120000) {
+            char t[1024];
+            size_t o = 0;
+
+            // the target is one field: spaces and '%' go out as %20 and %25
+            if (apfsrw_readlink(m->fs, p, t, sizeof(t), NULL) != APFSRW_OK)
+                strcpy(t, "?");
+            for (char *c = t; *c != '\0' && o + 4 < sizeof(hs); c++) {
+                if (*c == ' ' || *c == '%')
+                    o += (size_t)snprintf(hs + o, sizeof(hs) - o, "%%%02X", (unsigned char)*c);
+                else
+                    hs[o++] = *c;
+            }
+            hs[o] = '\0';
+        } else if (m->hash && (st.mode & 0170000) == 0100000) {
+            uint8_t *data = NULL;
+            size_t size = 0;
+
+            if (apfsrw_read_file(m->fs, p, &data, &size) == APFSRW_OK) {
+                snprintf(hs, sizeof(hs), "%016llx", (unsigned long long)fnv64(data, size));
+                if (size != st.size)
+                    snprintf(hs + 16, sizeof(hs) - 16, "!read=%zu", size);
+            } else {
+                strcpy(hs, "READ-ERROR");
+                m->err++;
+            }
+            free(data);
+        }
+        printf("%c %06o %u %u %u %llu %x %s %s %s\n",
+            "?pc?d?b?-?l?s???"[(st.mode >> 12) & 15], st.mode & 07777, st.uid, st.gid,
+            st.nlink, (unsigned long long)st.size, st.bsd_flags, xs[0] ? xs : "-", hs, p);
+        if ((st.mode & 0170000) == 0040000)
+            err = manifest_dir(m, p);
+    }
+    free(l.ents);
+    return err;
+}
+
 // "<image>.savepoint" next to the image ("file@@offset" loses the suffix)
 static char *savepoint_path(const char *image)
 {
@@ -344,6 +476,21 @@ static int open_image_rw(const char *path, struct apfsrw **fs)
 {
     int err = apfsrw_open_xid(path, 1, 0, fs);
 
+    if (err != APFSRW_OK)
+        fprintf(stderr, "apfsrw: %s: %s\n", path, apfsrw_strerror(err));
+    return err;
+}
+
+// a container with no volume in slot 0 still opens, as the container alone:
+// enough for newvol and info
+static int open_container(const char *path, int writable, struct apfsrw **fs)
+{
+    const char *xs = writable ? NULL : getenv("APFSRW_XID");
+    uint64_t xid = xs ? strtoull(xs, NULL, 0) : 0;
+    int err = apfsrw_open_volume(path, writable, xid, 0, fs);
+
+    if (err == APFSRW_ENOENT && strstr(path, "@v") == NULL)
+        err = apfsrw_open_volume(path, writable, xid, APFSRW_SLOT_CONTAINER, fs);
     if (err != APFSRW_OK)
         fprintf(stderr, "apfsrw: %s: %s\n", path, apfsrw_strerror(err));
     return err;
@@ -497,6 +644,192 @@ int main(int argc, char **argv)
         return err == APFSRW_OK ? 0 : 1;
     }
 
+    if (strcmp(argv[1], "copyvol") == 0) {
+        struct apfsrw_copy_opts o = { 1, 0, 0, 0, 16384, NULL, 0 };
+        const char *skip[64];
+        struct apfsrw_copy_stats cs;
+        struct apfsrw *src = NULL;
+        const char *pos[4] = { NULL, NULL, NULL, NULL }, *fe = getenv("APFSRW_FLUSH");
+        uint64_t sxid = 0;
+        int np = 0;
+        char *spfile;
+
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--owner0") == 0)
+                o.owner0 = 1;
+            else if (strcmp(argv[i], "--keep-owner") == 0)
+                o.owner0 = 0;
+            else if (strcmp(argv[i], "--compressed") == 0)
+                o.compressed = 1;
+            else if (strcmp(argv[i], "--xattrs") == 0)
+                o.xattrs = 1;
+            else if (strcmp(argv[i], "--flags") == 0)
+                o.flags = 1;
+            else if (strcmp(argv[i], "--src-xid") == 0 && i + 1 < argc)
+                sxid = strtoull(argv[++i], NULL, 0);
+            else if (strcmp(argv[i], "--skip") == 0 && i + 1 < argc && o.nskip < 64)
+                skip[o.nskip++] = argv[++i];
+            else if (strcmp(argv[i], "--only") == 0 && i + 1 < argc) {
+                o.only = read_lines(argv[++i], &o.nonly);
+                if (o.only == NULL) {
+                    fprintf(stderr, "apfsrw: %s: cannot read\n", argv[i]);
+                    return 1;
+                }
+            }
+            else if (np < 4)
+                pos[np++] = argv[i];
+            else
+                np = 5;
+        }
+        if (np < 2 || np > 4) {
+            usage(argv[0]);
+            return 2;
+        }
+        if (fe != NULL)
+            o.flush_blocks = (uint32_t)atoi(fe);
+        o.skip = skip;
+        err = apfsrw_open_xid(pos[0], 0, sxid, &src);
+        if (err != APFSRW_OK) {
+            fprintf(stderr, "apfsrw: %s: %s\n", pos[0], apfsrw_strerror(err));
+            return 1;
+        }
+        if (open_image_rw(pos[1], &fs) != APFSRW_OK) {
+            apfsrw_close(src);
+            return 1;
+        }
+        // a copy that dies halfway rolls back to this state, as populate does
+        spfile = savepoint_path(pos[1]);
+        err = spfile ? apfsrw_savepoint(fs, spfile) : APFSRW_ENOMEM;
+        if (err == APFSRW_OK)
+            err = apfsrw_copy_tree(src, pos[2] ? pos[2] : "/", fs,
+                pos[3] ? pos[3] : "/", &o, &cs);
+        fprintf(stderr, "apfsrw: copyvol: %llu dirs, %llu files (%llu kept compressed), "
+            "%llu symlinks, %llu hardlinks, %llu other, %llu xattrs, %llu skipped, "
+            "%llu bytes written as file data\n",
+            (unsigned long long)cs.dirs, (unsigned long long)cs.files,
+            (unsigned long long)cs.compressed, (unsigned long long)cs.symlinks,
+            (unsigned long long)cs.hardlinks, (unsigned long long)cs.other,
+            (unsigned long long)cs.xattrs, (unsigned long long)cs.skipped,
+            (unsigned long long)cs.bytes);
+        if (err != APFSRW_OK && spfile != NULL) {
+            int rerr;
+
+            fprintf(stderr, "apfsrw: copyvol: %s; rolling back\n", apfsrw_strerror(err));
+            rerr = apfsrw_rollback(fs, spfile);
+            fprintf(stderr, "apfsrw: rollback: %s\n",
+                rerr == APFSRW_OK ? "ok" : apfsrw_strerror(rerr));
+            if (rerr == APFSRW_OK)
+                unlink(spfile);
+        } else if (spfile != NULL) {
+            apfsrw_savepoint_release(fs);
+            unlink(spfile);
+        }
+        free(spfile);
+        apfsrw_close(fs);
+        apfsrw_close(src);
+        return err == APFSRW_OK ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "setattrs") == 0) {
+        const char **lines;
+        size_t n = 0, i, done = 0;
+
+        if (argc != 4) {
+            usage(argv[0]);
+            return 2;
+        }
+        lines = read_lines(argv[3], &n);
+        if (lines == NULL || open_image_rw(argv[2], &fs) != APFSRW_OK)
+            return 1;
+        err = apfsrw_batch_begin(fs);
+        for (i = 0; err == APFSRW_OK && i < n; i++) {
+            struct apfsrw_attr a;
+            char mode[16], uid[16], gid[16], flags[16];
+            int off = 0;
+
+            memset(&a, 0, sizeof(a));
+            if (sscanf(lines[i], "%15s %15s %15s %15s %n", mode, uid, gid, flags, &off) != 4 ||
+                off == 0) {
+                fprintf(stderr, "apfsrw: setattrs: bad line: %s\n", lines[i]);
+                err = APFSRW_EINVAL;
+                break;
+            }
+            if (strcmp(mode, "-") != 0) {
+                a.mask |= APFSRW_ATTR_MODE;
+                a.mode = (uint16_t)strtoul(mode, NULL, 8);
+            }
+            if (strcmp(uid, "-") != 0) {
+                a.mask |= APFSRW_ATTR_UID;
+                a.uid = (uint32_t)strtoul(uid, NULL, 10);
+            }
+            if (strcmp(gid, "-") != 0) {
+                a.mask |= APFSRW_ATTR_GID;
+                a.gid = (uint32_t)strtoul(gid, NULL, 10);
+            }
+            if (strcmp(flags, "-") != 0) {
+                a.mask |= APFSRW_ATTR_FLAGS;
+                a.bsd_flags = (uint32_t)strtoul(flags, NULL, 16);
+            }
+            err = apfsrw_setattr(fs, lines[i] + off, &a);
+            if (err != APFSRW_OK)
+                fprintf(stderr, "apfsrw: setattrs: %s: %s\n", lines[i] + off,
+                    apfsrw_strerror(err));
+            else
+                done++;
+        }
+        if (fs != NULL && apfsrw_batch_end(fs) != APFSRW_OK && err == APFSRW_OK)
+            err = APFSRW_EIO;
+        fprintf(stderr, "apfsrw: setattrs: %zu of %zu applied\n", done, n);
+        apfsrw_close(fs);
+        return err == APFSRW_OK ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "manifest") == 0) {
+        struct manifest_ctx m = { NULL, 0, 0 };
+        const char *root = "/";
+
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--hash") == 0)
+                m.hash = 1;
+            else
+                root = argv[i];
+        }
+        if (open_image(argv[2], &fs) != APFSRW_OK)
+            return 1;
+        m.fs = fs;
+        err = manifest_dir(&m, root);
+        if (err != APFSRW_OK)
+            fprintf(stderr, "apfsrw: manifest: %s\n", apfsrw_strerror(err));
+        if (m.err)
+            fprintf(stderr, "apfsrw: manifest: %d entries unreadable\n", m.err);
+        apfsrw_close(fs);
+        return err == APFSRW_OK && m.err == 0 ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "mkcontainer") == 0) {
+        uint64_t blocks;
+        uint8_t uuid[16];
+        uint32_t slot = 0;
+
+        if (argc != 4 && argc != 5) {
+            usage(argv[0]);
+            return 2;
+        }
+        blocks = strtoull(argv[3], NULL, 0);
+        random_uuid(uuid);
+        err = apfsrw_mkcontainer(argv[2], blocks, uuid);
+        if (err == APFSRW_OK && argc == 5) {
+            random_uuid(uuid);
+            err = apfsrw_open_volume(argv[2], 1, 0, APFSRW_SLOT_CONTAINER, &fs);
+            if (err == APFSRW_OK)
+                err = apfsrw_create_volume(fs, argv[4], 0, uuid, &slot);
+            apfsrw_close(fs);
+        }
+        fprintf(stderr, "apfsrw: mkcontainer: %s\n",
+            err == APFSRW_OK ? "ok" : apfsrw_strerror(err));
+        return err == APFSRW_OK ? 0 : 1;
+    }
+
     if (strcmp(argv[1], "newvol") == 0) {
         uint8_t uuid[16];
         uint32_t slot = 0;
@@ -506,7 +839,7 @@ int main(int argc, char **argv)
             return 2;
         }
         random_uuid(uuid);
-        if (open_image_rw(argv[2], &fs) != APFSRW_OK)
+        if (open_container(argv[2], 1, &fs) != APFSRW_OK)
             return 1;
         err = apfsrw_create_volume(fs, argv[3], parse_role(argv[4]), uuid,
             &slot);
@@ -601,7 +934,10 @@ int main(int argc, char **argv)
         return err == APFSRW_OK ? 0 : 1;
     }
 
-    err = open_image(argv[2], &fs);
+    if (strcmp(argv[1], "info") == 0)
+        err = open_container(argv[2], 0, &fs);
+    else
+        err = open_image(argv[2], &fs);
     if (err != APFSRW_OK)
         return 1;
 

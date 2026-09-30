@@ -8,6 +8,7 @@ add_library(apfsrw STATIC
     src/apfsrw.c
     src/apfsrw_lzvn.c
     src/apfsrw_name.c
+    src/apfsrw_punch.c
     third_party/lzfse/lzvn_decode_base.c
     third_party/libzbitmap/libzbitmap.c
 )

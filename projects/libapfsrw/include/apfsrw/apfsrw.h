@@ -132,6 +132,11 @@ struct apfsrw_kern_dev {
     void *devvp;            // vnode_t
     uint32_t dev_bsize;     // Sector size: the unit buf blknos are in
     uint32_t block_size;    // container block size: one buffer per block
+    // With io set, transfers skip devvp's buffer cache and go straight to the
+    // caller (a storage driver on its own IOMedia). Byte offsets, block multiples
+    int (*io)(void *ref, void *buf, size_t n, uint64_t off, int is_write);
+    int (*sync)(void *ref);
+    void *io_ref;
 };
 void *apfsrw_io_context(struct apfsrw *fs);
 int apfsrw_open_kernel(void *io_ctx, uint64_t image_blocks, int writable,
@@ -144,6 +149,9 @@ int apfsrw_open_xid(const char *path, int writable, uint64_t xid,
 // a path may also carry it as a trailing "@vN"
 int apfsrw_open_volume(const char *path, int writable, uint64_t xid,
     uint32_t vol_slot, struct apfsrw **out);
+// A vol_slot of APFSRW_SLOT_CONTAINER opens the container without a volume,
+// enough for apfsrw_create_volume on one that has none yet
+#define APFSRW_SLOT_CONTAINER 0xffffffffU
 uint32_t apfsrw_volume_slot(struct apfsrw *fs);
 // Re-read the container after another handle committed to it
 int apfsrw_refresh(struct apfsrw *fs);
@@ -165,6 +173,10 @@ int apfsrw_list_volumes(struct apfsrw *fs, struct apfsrw_volume_entry *out,
 // New empty volume in the first free slot, modelled on this handle's
 int apfsrw_create_volume(struct apfsrw *fs, const char *name, uint16_t role,
     const uint8_t uuid[16], uint32_t *slot_out);
+// write an empty container of block_count 4096-byte blocks to path (FILE or FILE@@BYTEOFFSET),
+// laid out as newfs_apfs does. A regular file grows to fit. Add volumes with apfsrw_create_volume
+int apfsrw_mkcontainer(const char *path, uint64_t block_count,
+    const uint8_t uuid[16]);
 const char *apfsrw_strerror(int error);
 
 int apfsrw_get_volume_info(struct apfsrw *fs,
@@ -260,6 +272,25 @@ int apfsrw_readlink(struct apfsrw *fs, const char *path, char *buf,
 int apfsrw_savepoint(struct apfsrw *fs, const char *file);
 void apfsrw_savepoint_release(struct apfsrw *fs);
 int apfsrw_rollback(struct apfsrw *fs, const char *file);
+// copy everything under srcpath in one volume to dstpath (an existing directory) in another,
+// straight from image to image. One batch, checkpointed every flush_blocks superseded blocks
+struct apfsrw_copy_opts {
+    int owner0;                 // uid and gid 0 on every entry, as the fakeroot pipeline gave
+    int compressed;             // keep decmpfs files compressed: decmpfs and resource-fork xattrs as-is
+    int xattrs;                 // copy the other extended attributes too
+    int flags;                  // copy BSD flags (UF_COMPRESSED follows compressed alone)
+    uint32_t flush_blocks;
+    const char *const *skip;    // source paths left out, with everything under them
+    uint32_t nskip;
+    const char **only;          // if set, just these source paths and the directories above them
+    size_t nonly;
+};
+struct apfsrw_copy_stats {
+    uint64_t dirs, files, symlinks, hardlinks, other, xattrs, compressed, skipped, bytes;
+};
+int apfsrw_copy_tree(struct apfsrw *src, const char *srcpath, struct apfsrw *dst,
+    const char *dstpath, const struct apfsrw_copy_opts *opts,
+    struct apfsrw_copy_stats *stats);
 // Set flags mkapfs leaves off the root and private-dir inodes.
 // Run once on a freshly made volume, before populating it
 int apfsrw_fixup_mkapfs(struct apfsrw *fs);

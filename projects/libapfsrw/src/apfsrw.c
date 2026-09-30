@@ -16,6 +16,7 @@
 #define APFS_NX_MAGIC 0x4253584eU
 #define APFS_APSB_MAGIC 0x42535041U
 #define APFS_OBJECT_TYPE_MASK 0x0000ffffU
+#define APFS_OBJ_PHYSICAL 0x40000000U
 #define APFS_OBJECT_TYPE_BTREE 0x00000002U
 #define APFS_OBJECT_TYPE_BTREE_NODE 0x00000003U
 #define APFS_OBJECT_TYPE_OMAP 0x0000000bU
@@ -62,6 +63,7 @@
 #define APFS_INCOMPAT_CASE_INSENSITIVE 0x00000001ULL
 // spec p.96 APFS_INCOMPAT_NORMALIZATION_INSENSITIVE
 #define APFS_INCOMPAT_NORMALIZATION_INSENSITIVE 0x00000008ULL
+#define APFS_INCOMPAT_SEALED_VOLUME 0x00000020ULL
 // spec p.94-95 "Extended-Attribute Flags"
 #define APFS_XATTR_DATA_STREAM 0x0001U
 #define APFS_XATTR_DATA_EMBEDDED 0x0002U
@@ -428,6 +430,8 @@ struct apfsrw {
     uint32_t alloced_count;
     uint32_t alloced_cap;
     apfs_paddr_t root_tree_paddr;
+    // a sealed volume keeps its file extents in a tree of their own (spec p.153)
+    apfs_paddr_t fext_paddr;
     // Block cache: copies of blocks this handle read or wrote, write-through.
     // Only another handle's commit can make it stale (apfsrw_cache_drop)
     uint8_t *bc_data;
@@ -1167,6 +1171,12 @@ static int load_volume(struct apfsrw *fs)
         goto out;
     fs->container_omap_tree_paddr = (apfs_paddr_t)rd64(&omap.om_tree_oid);
 
+    if (fs->vol_slot == APFSRW_SLOT_CONTAINER) {
+        fs->fs_oid = 0;
+        err = APFSRW_OK;
+        goto out;
+    }
+
     // The volume is the one in slot vol_slot of nx_fs_oid[].
     // Apple numbers the same slots as diskNs(slot+1)
     max_fs = rd32(&fs->nx.nx_max_file_systems);
@@ -1203,6 +1213,18 @@ static int load_volume(struct apfsrw *fs)
     if (err != APFSRW_OK)
         goto out;
     fs->root_tree_paddr = (apfs_paddr_t)rd64(&ov.ov_paddr);
+
+    // apfs_fext_tree_oid and _type (superblock bytes 1032 and 1040), set only on a sealed volume
+    fs->fext_paddr = 0;
+    if (rd64(&fs->apfs.apfs_incompatible_features) & APFS_INCOMPAT_SEALED_VOLUME) {
+        uint64_t fext = rd64(block + 1032);
+
+        if (fext != 0 && (rd32(block + 1040) & APFS_OBJ_PHYSICAL))
+            fs->fext_paddr = (apfs_paddr_t)fext;
+        else if (fext != 0 && omap_lookup_tree(fs, fs->volume_omap_tree_paddr, fext,
+            fs->xid, &ov) == APFSRW_OK)
+            fs->fext_paddr = (apfs_paddr_t)rd64(&ov.ov_paddr);
+    }
 out:
     free(block);
     return err;
@@ -1754,6 +1776,41 @@ static int read_extents_cb(struct apfsrw *fs,
     return APFSRW_OK;
 }
 
+// fext_tree_key_t { private_id, logical_addr } -> fext_tree_val_t { len_and_flags, phys_block_num }
+static int read_fext_cb(struct apfsrw *fs,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+    struct read_extents_ctx *c = (struct read_extents_ctx *)ctx;
+    uint32_t i;
+
+    for (i = 0; i < rd32(&node->btn_nkeys); i++) {
+        const void *keyp, *valp;
+        uint16_t key_len, val_len;
+        uint64_t logical, len, phys;
+        int err = btree_entry(fs, node, info, i, &keyp, &key_len, &valp, &val_len);
+
+        if (err != APFSRW_OK)
+            return err;
+        if (key_len < 16 || val_len < 16 || rd64(keyp) != c->stream_id)
+            continue;
+        c->nextents++;
+        logical = rd64((const uint8_t *)keyp + 8);
+        len = rd64(valp) & APFS_FILE_EXTENT_LEN_MASK;
+        phys = rd64((const uint8_t *)valp + 8);
+        if (logical >= c->size || phys == 0)
+            continue;
+        if (len > c->size - logical)
+            len = c->size - logical;
+        if (apfsrw_pread(fs, c->buf + logical, (size_t)len,
+            (off_t)(phys * fs->block_size)) != (ssize_t)len) {
+            c->err = APFSRW_EIO;
+            return 1;
+        }
+    }
+    return APFSRW_OK;
+}
+
 static int read_extents(struct apfsrw *fs, uint64_t stream_id, uint8_t *buf,
     uint64_t size)
 {
@@ -1769,6 +1826,12 @@ static int read_extents(struct apfsrw *fs, uint64_t stream_id, uint8_t *buf,
         read_extents_cb, &c);
     if (err != APFSRW_OK && err != 1)
         return err;
+    if (c.err == APFSRW_OK && c.nextents == 0 && fs->fext_paddr != 0) {
+        err = btree_walk_leaves_oid(fs, fs->fext_paddr, stream_id, stream_id,
+            read_fext_cb, &c);
+        if (err != APFSRW_OK && err != 1)
+            return err;
+    }
     if (c.err == APFSRW_OK && c.nextents == 0)
         // A non-empty stream with no FILE_EXTENT records is stored inline in a decmpfs xattr.
         // Report that, a zero-filled buffer would be worse
@@ -2011,7 +2074,8 @@ int apfsrw_list_xattrs(struct apfsrw *fs, const char *path,
     c.want = NULL;
     c.cb = cb;
     c.user = ctx;
-    err = btree_walk_leaves(fs, fs->root_tree_paddr, xattr_cb, &c);
+    err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, file_id, file_id,
+        xattr_cb, &c);
     return (err == 1) ? APFSRW_OK : err;
 }
 
@@ -2051,7 +2115,9 @@ int apfsrw_stat_file(struct apfsrw *fs, const char *path,
     }
     memset(&c, 0, sizeof(c));
     c.stream_id = stream_id;
-    err = btree_walk_leaves(fs, fs->root_tree_paddr, stat_cb, &c);
+    // extent keys carry the stream id, so only that range is walked
+    err = btree_walk_leaves_oid(fs, fs->root_tree_paddr, stream_id, stream_id,
+        stat_cb, &c);
     if (err != APFSRW_OK && err != 1)
         return err;
     out->file_id = file_id;
@@ -2967,8 +3033,48 @@ out:
     return err;
 }
 
+#ifndef APFSRW_KERNEL
+int apfsrw_punch(int fd, off_t off, off_t len);
+static int block_frozen(const struct apfsrw *fs, uint64_t b);
+
+static int u64_cmp(const void *a, const void *b)
+{
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+
+    return x < y ? -1 : x > y;
+}
+
+// freed blocks hold nothing anyone reads again: punch them out of a sparse image file.
+// blocks a savepoint froze keep their contents for a rollback
+static void punch_freed(struct apfsrw *fs, uint64_t *b, uint32_t n)
+{
+    uint32_t i = 0;
+
+    qsort(b, n, sizeof(*b), u64_cmp);
+    while (i < n) {
+        uint32_t j = i;
+
+        if (block_frozen(fs, b[i])) {
+            i++;
+            continue;
+        }
+        while (j + 1 < n && b[j + 1] == b[j] + 1 && !block_frozen(fs, b[j + 1]))
+            j++;
+        bc_drop(fs, (apfs_paddr_t)b[i], b[j] - b[i] + 1);
+        if (apfsrw_punch(fs->fd, fs->base_off + (off_t)(b[i] * fs->block_size),
+            (off_t)((b[j] - b[i] + 1) * fs->block_size)) != 0)
+            return;                     // not a regular file, or no hole support
+        i = j + 1;
+    }
+}
+#endif
+
 static void flush_deferred(struct apfsrw *fs)
 {
+#ifndef APFSRW_KERNEL
+    if (fs->deferred_count != 0)
+        punch_freed(fs, fs->deferred, fs->deferred_count);
+#endif
     if (fs->deferred_count != 0 &&
         spaceman_free_many(fs, fs->deferred, fs->deferred_count) != APFSRW_OK) {
         uint32_t i;
@@ -3720,8 +3826,8 @@ static int build_node(struct apfsrw *fs, const struct apfs_btree_node_phys *tmpl
     return APFSRW_OK;
 }
 
-// Choose where to split a record array: the largest prefix whose keys,
-// values and table entries still fit in a node, capped at half the records so both halves make progress
+// choose where to split a record array. Fixed-size records: the largest prefix that fills half a node,
+// capped so both halves make progress. Variable-size ones: the point that best balances the bytes
 static uint32_t split_point(struct apfsrw *fs, struct rw_rec *r, uint32_t count,
     int fixed)
 {
@@ -3731,6 +3837,27 @@ static uint32_t split_point(struct apfsrw *fs, struct rw_rec *r, uint32_t count,
         (uint32_t)sizeof(struct apfs_btree_info);
     uint32_t used = 0, i;
 
+    if (!fixed) {
+        uint64_t total = 0, left = 0, best_max = UINT64_MAX;
+        uint32_t best = 1;
+
+        // variable-size records can be nearly a node each (a 3.8K xattr):
+        // split where the larger half is smallest, so a big record sits alone rather than overflow
+        for (i = 0; i < count; i++)
+            total += ent + r[i].klen + r[i].vlen;
+        for (i = 1; i < count; i++) {
+            uint64_t m;
+
+            left += ent + r[i - 1].klen + r[i - 1].vlen;
+            m = left > total - left ? left : total - left;
+            if (m < best_max) {
+                best_max = m;
+                best = i;
+            }
+        }
+        (void)avail;
+        return best;
+    }
     for (i = 0; i < count; i++) {
         uint32_t need = ent + r[i].klen + r[i].vlen;
 
@@ -5598,12 +5725,104 @@ out:
     return err;
 }
 
+// what a copied entry brings beyond create_entry's arguments: source times and flags,
+// its xattrs, and for a compressed file the size its decmpfs data expands to
+struct cp_xattr {
+    const char *name;
+    uint16_t flags;
+    const uint8_t *data;
+    size_t len;
+};
+
+struct cp_extra {
+    uint64_t atime, mtime, ctime, crtime;
+    uint32_t bsd_flags;
+    int compressed;             // no data stream: decmpfs and resource-fork xattrs hold the content
+    int rsrc;                   // a com.apple.ResourceFork xattr is among the xattrs
+    uint64_t ucsize;
+    const struct cp_xattr *xattrs;
+    uint32_t nxattrs;
+};
+
+#define APFS_INODE_HAS_RSRC_FORK 0x4000ULL
+#define APFS_INODE_HAS_UNCOMPRESSED_SIZE 0x40000ULL
+
+static int xattr_key_for(uint64_t fileid, const char *name, uint8_t *key,
+    uint16_t *klen);
+
+// the next object id to hand out: an open batch runs ahead of the committed superblock
+static uint64_t cur_next_oid(struct apfsrw *fs)
+{
+    return (fs->batch && fs->batch_next_oid != 0) ?
+        fs->batch_next_oid : rd64(&fs->apfs.apfs_next_obj_id);
+}
+
+static int stream_write_data(struct apfsrw *fs, uint64_t stream_id,
+    uint64_t logical, const void *data, uint64_t size, uint64_t hint,
+    uint64_t *blocks_out, uint32_t *pieces_out, uint64_t *first_phys);
+
+// write a new inode's xattrs. Values past the embedded limit get a data stream of their own
+// (j_xattr_dstream_t, spec p.106) under the next free object id
+static int put_xattrs(struct apfsrw *fs, uint64_t fileid,
+    const struct cp_extra *x, uint64_t *next_oid)
+{
+    uint8_t key[10 + 256], val[4 + APFSRW_XATTR_MAX_EMBEDDED];
+    uint16_t klen = 0;
+    uint32_t i;
+    int err;
+
+    for (i = 0; i < x->nxattrs; i++) {
+        const struct cp_xattr *a = &x->xattrs[i];
+        uint16_t owned = a->flags & APFS_XATTR_FILE_SYSTEM_OWNED;
+
+        err = xattr_key_for(fileid, a->name, key, &klen);
+        if (err != APFSRW_OK)
+            return err;
+        // a value keeps the form it had in the source: stream-backed stays a stream
+        if (!(a->flags & APFS_XATTR_DATA_STREAM) && a->len <= APFSRW_XATTR_MAX_EMBEDDED) {
+            wr16(val, (uint16_t)(APFS_XATTR_DATA_EMBEDDED | owned));
+            wr16(val + 2, (uint16_t)a->len);
+            if (a->len > 0)
+                memcpy(val + 4, a->data, a->len);
+            err = fstree_put(fs, key, klen, val, (uint16_t)(4 + a->len), 0);
+        } else {
+            uint64_t oid = (*next_oid)++, nblocks = 0;
+            uint8_t dkey[8], dval[4];
+
+            err = stream_write_data(fs, oid, 0, a->data, a->len, 0, &nblocks,
+                NULL, NULL);
+            if (err != APFSRW_OK)
+                return err;
+            fs->alloc_delta += (int64_t)nblocks;
+            wr64(dkey, make_jkey(oid, APFS_TYPE_DSTREAM_ID));
+            wr32(dval, 1);
+            err = fstree_put(fs, dkey, 8, dval, 4, 0);
+            if (err != APFSRW_OK)
+                return err;
+            memset(val, 0, 4 + sizeof(struct apfs_j_xattr_dstream));
+            wr16(val, (uint16_t)(APFS_XATTR_DATA_STREAM | owned));
+            wr16(val + 2, (uint16_t)sizeof(struct apfs_j_xattr_dstream));
+            wr64(val + 4 + offsetof(struct apfs_j_xattr_dstream, xattr_obj_id), oid);
+            wr64(val + 4 + offsetof(struct apfs_j_xattr_dstream, size), a->len);
+            wr64(val + 4 + offsetof(struct apfs_j_xattr_dstream, alloced_size),
+                nblocks * fs->block_size);
+            wr64(val + 4 + offsetof(struct apfs_j_xattr_dstream, total_bytes_written),
+                a->len);
+            err = fstree_put(fs, key, klen, val,
+                (uint16_t)(4 + sizeof(struct apfs_j_xattr_dstream)), 0);
+        }
+        if (err != APFSRW_OK)
+            return err;
+    }
+    return APFSRW_OK;
+}
+
 static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
     const void *data, size_t size, const char *linktarget, uint16_t mode,
-    uint32_t uid, uint32_t gid, uint64_t *id_out)
+    uint32_t uid, uint32_t gid, uint64_t *id_out, const struct cp_extra *x)
 {
     uint8_t *zero = NULL;
-    uint64_t parent = 0, fileid, data_block = 0, nblocks = 0, existing;
+    uint64_t parent = 0, fileid, data_block = 0, nblocks = 0, existing, next_oid;
     uint32_t hash;
     uint16_t namelen = 0;
     const char *name = NULL;
@@ -5636,10 +5855,10 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
     zero = calloc(1, fs->block_size);
     if (zero == NULL)
         return APFSRW_ENOMEM;
-    fileid = (fs->batch && fs->batch_next_oid != 0)
-        ? fs->batch_next_oid : rd64(&fs->apfs.apfs_next_obj_id);
+    fileid = cur_next_oid(fs);
     if (fileid < APFSRW_ROOT_FILEID)
         fileid = APFSRW_ROOT_FILEID + 1;
+    next_oid = fileid + 1;
 
     if (ftype == APFSRW_DT_REG && size > 0) {
         // Data first: extents and their references, before the inode
@@ -5654,22 +5873,31 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
     memset(val, 0, sizeof(val));
     wr64(val + offsetof(struct apfs_j_inode_val, parent_id), parent);
     wr64(val + offsetof(struct apfs_j_inode_val, private_id), fileid);
-    wr64(val + offsetof(struct apfs_j_inode_val, create_time), now);
-    wr64(val + offsetof(struct apfs_j_inode_val, mod_time), now);
-    wr64(val + offsetof(struct apfs_j_inode_val, change_time), now);
-    wr64(val + offsetof(struct apfs_j_inode_val, access_time), now);
+    wr64(val + offsetof(struct apfs_j_inode_val, create_time), x ? x->crtime : now);
+    wr64(val + offsetof(struct apfs_j_inode_val, mod_time), x ? x->mtime : now);
+    wr64(val + offsetof(struct apfs_j_inode_val, change_time), x ? x->ctime : now);
+    wr64(val + offsetof(struct apfs_j_inode_val, access_time), x ? x->atime : now);
     wr32(val + offsetof(struct apfs_j_inode_val, u),
         ftype == APFSRW_DT_DIR ? 0 : 1);   // nchildren for dirs, nlink else
     wr32(val + offsetof(struct apfs_j_inode_val, owner), uid);
     wr32(val + offsetof(struct apfs_j_inode_val, group), gid);
     wr16(val + offsetof(struct apfs_j_inode_val, mode), mode);
     wr64(val + offsetof(struct apfs_j_inode_val, internal_flags),
-        APFS_INODE_NO_RSRC_FORK);
+        x && x->rsrc ? APFS_INODE_HAS_RSRC_FORK : APFS_INODE_NO_RSRC_FORK);
+    if (x != NULL) {
+        wr32(val + offsetof(struct apfs_j_inode_val, bsd_flags), x->bsd_flags);
+        if (x->compressed) {
+            wr64(val + offsetof(struct apfs_j_inode_val, internal_flags),
+                (x->rsrc ? APFS_INODE_HAS_RSRC_FORK : APFS_INODE_NO_RSRC_FORK) |
+                APFS_INODE_HAS_UNCOMPRESSED_SIZE);
+            wr64(val + offsetof(struct apfs_j_inode_val, uncompressed_size), x->ucsize);
+        }
+    }
     {
         uint32_t fixed = (uint32_t)sizeof(struct apfs_j_inode_val);
         uint16_t nsz = (uint16_t)(namelen + 1);
         uint16_t npad = (uint16_t)((nsz + 7u) & ~7u);
-        int want_dstream = (ftype == APFSRW_DT_REG);
+        int want_dstream = (ftype == APFSRW_DT_REG) && !(x && x->compressed);
         uint16_t nexts = (uint16_t)(want_dstream ? 2 : 1);
         uint32_t doff = fixed + 4 + nexts * 4;
 
@@ -5702,7 +5930,7 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
         fs->other_delta += 1;
     // Every DSTREAM extended field needs its DSTREAM_ID record, even at size 0 (fsck_apfs:
     // "dstream does not have an associated dstream id")
-    if (ftype == APFSRW_DT_REG) {
+    if (ftype == APFSRW_DT_REG && !(x && x->compressed)) {
         wr64(key, make_jkey(fileid, APFS_TYPE_DSTREAM_ID));
         memset(val, 0, sizeof(val));
         wr32(val, 1);
@@ -5734,6 +5962,12 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
             goto out;
     }
 
+    if (x != NULL && x->nxattrs != 0) {
+        err = put_xattrs(fs, fileid, x, &next_oid);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+
     // DIR_REC in the parent
     dtype = (uint8_t)ftype;
     wr64(key, make_jkey(parent, APFS_TYPE_DIR_REC));
@@ -5742,7 +5976,7 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
     key[12 + namelen] = '\0';
     memset(val, 0, sizeof(val));
     wr64(val, fileid);
-    wr64(val + 8, now);
+    wr64(val + 8, x ? x->crtime : now);
     wr16(val + 16, dtype);
     err = fstree_put(fs, key, (uint16_t)(12 + namelen + 1), val, 18, 0);
     if (err != APFSRW_OK)
@@ -5776,7 +6010,7 @@ static int create_entry(struct apfsrw *fs, const char *path, uint16_t ftype,
     if (ftype == APFSRW_DT_REG && size > 0)
         fs->alloc_delta += (int64_t)nblocks;
 
-    err = txn_finish(fs, fileid + 1, ftype == APFSRW_DT_REG ? 1 : 0,
+    err = txn_finish(fs, next_oid, ftype == APFSRW_DT_REG ? 1 : 0,
         ftype == APFSRW_DT_DIR ? 1 : 0, ftype == APFSRW_DT_LNK ? 1 : 0);
     if (err == APFSRW_OK && id_out != NULL)
         *id_out = fileid;
@@ -5845,14 +6079,14 @@ int apfsrw_create_file(struct apfsrw *fs, const char *path, const void *data,
     if (data == NULL && size != 0)
         return APFSRW_EINVAL;
     return create_entry(fs, path, APFSRW_DT_REG, data, size, NULL,
-        (uint16_t)(0100000u | (mode & 07777u)), uid, gid, NULL);
+        (uint16_t)(0100000u | (mode & 07777u)), uid, gid, NULL, NULL);
 }
 
 int apfsrw_mkdir(struct apfsrw *fs, const char *path, uint16_t mode,
     uint32_t uid, uint32_t gid)
 {
     return create_entry(fs, path, APFSRW_DT_DIR, NULL, 0, NULL,
-        (uint16_t)(0040000u | (mode & 07777u)), uid, gid, NULL);
+        (uint16_t)(0040000u | (mode & 07777u)), uid, gid, NULL, NULL);
 }
 
 int apfsrw_mknod(struct apfsrw *fs, const char *path, uint16_t ftype,
@@ -5861,7 +6095,7 @@ int apfsrw_mknod(struct apfsrw *fs, const char *path, uint16_t ftype,
     if (ftype != APFSRW_DT_SOCK && ftype != APFSRW_DT_FIFO &&
         ftype != APFSRW_DT_CHR && ftype != APFSRW_DT_BLK)
         return APFSRW_EINVAL;
-    return create_entry(fs, path, ftype, NULL, 0, NULL, mode, uid, gid, NULL);
+    return create_entry(fs, path, ftype, NULL, 0, NULL, mode, uid, gid, NULL, NULL);
 }
 
 // Delete every FILE_EXTENT record of a stream and defer-free its blocks
@@ -7036,23 +7270,17 @@ int apfsrw_list_volumes(struct apfsrw *fs, struct apfsrw_volume_entry *out,
     return APFSRW_OK;
 }
 
-static int write_root_like(struct apfsrw *fs, apfs_paddr_t tmpl_paddr,
-    apfs_paddr_t paddr, apfs_oid_t oid, struct rw_rec *recs, uint32_t count)
+static int write_root_from(struct apfsrw *fs,
+    const struct apfs_btree_node_phys *tmpl, apfs_paddr_t paddr, apfs_oid_t oid,
+    struct rw_rec *recs, uint32_t count)
 {
-    struct apfs_btree_node_phys *tmpl;
     struct apfs_btree_info info;
     uint8_t *node;
     int err;
 
-    tmpl = calloc(1, fs->block_size);
     node = calloc(1, fs->block_size);
-    if (tmpl == NULL || node == NULL) {
-        err = APFSRW_ENOMEM;
-        goto out;
-    }
-    err = read_object(fs, tmpl_paddr, tmpl);
-    if (err != APFSRW_OK)
-        goto out;
+    if (node == NULL)
+        return APFSRW_ENOMEM;
     if ((rd16(&tmpl->btn_flags) & APFS_BTNODE_ROOT) == 0) {
         err = APFSRW_EINVAL;
         goto out;
@@ -7071,8 +7299,100 @@ static int write_root_like(struct apfsrw *fs, apfs_paddr_t tmpl_paddr,
     seal_object(fs, node);
     err = write_block(fs, paddr, node);
 out:
-    free(tmpl);
     free(node);
+    return err;
+}
+
+static int write_root_like(struct apfsrw *fs, apfs_paddr_t tmpl_paddr,
+    apfs_paddr_t paddr, apfs_oid_t oid, struct rw_rec *recs, uint32_t count)
+{
+    struct apfs_btree_node_phys *tmpl = calloc(1, fs->block_size);
+    int err;
+
+    if (tmpl == NULL)
+        return APFSRW_ENOMEM;
+    err = read_object(fs, tmpl_paddr, tmpl);
+    if (err == APFSRW_OK)
+        err = write_root_from(fs, tmpl, paddr, oid, recs, count);
+    free(tmpl);
+    return err;
+}
+
+// An empty root as newfs_apfs lays it out, for a container with no volume to copy one from
+static void synth_root(struct apfsrw *fs, uint8_t *b, uint32_t type,
+    uint32_t subtype, uint16_t btn_flags, uint32_t bt_flags, uint32_t ksz,
+    uint32_t vsz)
+{
+    uint8_t *info = b + fs->block_size - sizeof(struct apfs_btree_info);
+
+    memset(b, 0, fs->block_size);
+    wr32(b + offsetof(struct apfs_obj_phys, o_type), type);
+    wr32(b + offsetof(struct apfs_obj_phys, o_subtype), subtype);
+    wr16(b + offsetof(struct apfs_btree_node_phys, btn_flags), btn_flags);
+    wr32(info + offsetof(struct apfs_btree_info, bt_flags), bt_flags);
+    wr32(info + offsetof(struct apfs_btree_info, bt_node_size), fs->block_size);
+    wr32(info + offsetof(struct apfs_btree_info, bt_key_size), ksz);
+    wr32(info + offsetof(struct apfs_btree_info, bt_val_size), vsz);
+    wr32(info + offsetof(struct apfs_btree_info, bt_longest_key), ksz);
+    wr32(info + offsetof(struct apfs_btree_info, bt_longest_val), vsz);
+    wr64(info + offsetof(struct apfs_btree_info, bt_node_count), 1);
+}
+
+// Commits a new volume into a container opened without one (APFSRW_SLOT_CONTAINER):
+// the container object map gains the volume, the checkpoint gains its nx_fs_oid slot
+static int container_commit(struct apfsrw *fs)
+{
+    uint8_t *block = NULL;
+    uint64_t comap = 0;
+    apfs_paddr_t ctree = 0;
+    int err;
+
+    // the insert copies the committed root and frees it
+    err = omap_insert(fs, fs->container_omap_tree_paddr, fs->newvol_oid,
+        fs->newvol_paddr, &ctree);
+    if (err == APFSRW_OK)
+        err = alloc_blocks(fs, 1, &comap);
+    if (err != APFSRW_OK)
+        return err;
+    block = calloc(1, fs->block_size);
+    if (block == NULL)
+        return APFSRW_ENOMEM;
+    err = read_object(fs, fs->container_omap_paddr, block);
+    if (err != APFSRW_OK)
+        goto out;
+    wr64(block + offsetof(struct apfs_obj_phys, o_oid), comap);
+    wr64(block + offsetof(struct apfs_obj_phys, o_xid), fs->xid + 1);
+    wr64(block + offsetof(struct apfs_omap_phys, om_tree_oid), ctree);
+    seal_object(fs, block);
+    err = write_block(fs, (apfs_paddr_t)comap, block);
+    if (err != APFSRW_OK)
+        goto out;
+    err = ac_flush(fs);
+    if (err != APFSRW_OK)
+        goto out;
+    if (apfsrw_sync(fs) != 0) {
+        err = APFSRW_EIO;
+        goto out;
+    }
+    defer_free(fs, (uint64_t)fs->container_omap_paddr, 1);
+    err = publish_checkpoint(fs, (apfs_paddr_t)comap);
+    if (err == APFSRW_OK && apfsrw_sync(fs) != 0)
+        err = APFSRW_EIO;
+    if (err == APFSRW_OK) {
+        flush_deferred(fs);
+        fs->alloced_count = 0;
+        fs->alloc_delta = 0;
+        fs->other_delta = 0;
+        fs->newvol_pending = 0;
+        (void)apfsrw_sync_nowait(fs);
+        fs->xid += 1;
+        fs->container_omap_paddr = (apfs_paddr_t)comap;
+        fs->container_omap_tree_paddr = ctree;
+        if (read_object(fs, fs->nx_paddr, block) == APFSRW_OK)
+            memcpy(&fs->nx, block, sizeof(fs->nx));
+    }
+out:
+    free(block);
     return err;
 }
 
@@ -7133,7 +7453,7 @@ int apfsrw_create_volume(struct apfsrw *fs, const char *name, uint16_t role,
     uint8_t rkey[16], rval[16];
     uint32_t max_fs, slot, saved_slot;
     size_t namelen;
-    int err;
+    int fresh, err;
 
     if (fs == NULL || name == NULL || uuid == NULL)
         return APFSRW_EINVAL;
@@ -7153,6 +7473,8 @@ int apfsrw_create_volume(struct apfsrw *fs, const char *name, uint16_t role,
             break;
     if (slot == max_fs)
         return APFSRW_ENOSPC;
+    // no volume loaded: the trees, object map and superblock are made, not copied
+    fresh = fs->fs_oid == 0;
 
     err = alloc_blocks(fs, 1, &vomap);
     if (err == APFSRW_OK)
@@ -7175,21 +7497,43 @@ int apfsrw_create_volume(struct apfsrw *fs, const char *name, uint16_t role,
         err = APFSRW_ENOMEM;
         goto fail;
     }
-    err = write_root_like(fs, fs->root_tree_paddr, (apfs_paddr_t)froot,
-        root_oid, NULL, 0);
-    if (err != APFSRW_OK)
-        goto fail;
-    extref_tmpl = fs->extref_paddr != 0 ? fs->extref_paddr :
-        (apfs_paddr_t)rd64(&fs->apfs.apfs_extentref_tree_oid);
-    err = write_root_like(fs, extref_tmpl, (apfs_paddr_t)extref, extref,
-        NULL, 0);
-    if (err != APFSRW_OK)
-        goto fail;
-    err = write_root_like(fs,
-        (apfs_paddr_t)rd64(&fs->apfs.apfs_snap_meta_tree_oid),
-        (apfs_paddr_t)snap, snap, NULL, 0);
-    if (err != APFSRW_OK)
-        goto fail;
+    if (fresh) {
+        // header and btree_info values as newfs_apfs writes them
+        synth_root(fs, block, APFS_OBJECT_TYPE_BTREE, APFS_OBJECT_TYPE_FSTREE,
+            APFS_BTNODE_ROOT | APFS_BTNODE_LEAF, 0x42, 0, 0);
+        err = write_root_from(fs, (struct apfs_btree_node_phys *)block,
+            (apfs_paddr_t)froot, root_oid, NULL, 0);
+        if (err != APFSRW_OK)
+            goto fail;
+        synth_root(fs, block, APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE, 0x0f,
+            APFS_BTNODE_ROOT | APFS_BTNODE_LEAF, 0x52, 0, 0);
+        err = write_root_from(fs, (struct apfs_btree_node_phys *)block,
+            (apfs_paddr_t)extref, extref, NULL, 0);
+        if (err != APFSRW_OK)
+            goto fail;
+        synth_root(fs, block, APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE, 0x10,
+            APFS_BTNODE_ROOT | APFS_BTNODE_LEAF, 0x52, 0, 0);
+        err = write_root_from(fs, (struct apfs_btree_node_phys *)block,
+            (apfs_paddr_t)snap, snap, NULL, 0);
+        if (err != APFSRW_OK)
+            goto fail;
+    } else {
+        err = write_root_like(fs, fs->root_tree_paddr, (apfs_paddr_t)froot,
+            root_oid, NULL, 0);
+        if (err != APFSRW_OK)
+            goto fail;
+        extref_tmpl = fs->extref_paddr != 0 ? fs->extref_paddr :
+            (apfs_paddr_t)rd64(&fs->apfs.apfs_extentref_tree_oid);
+        err = write_root_like(fs, extref_tmpl, (apfs_paddr_t)extref, extref,
+            NULL, 0);
+        if (err != APFSRW_OK)
+            goto fail;
+        err = write_root_like(fs,
+            (apfs_paddr_t)rd64(&fs->apfs.apfs_snap_meta_tree_oid),
+            (apfs_paddr_t)snap, snap, NULL, 0);
+        if (err != APFSRW_OK)
+            goto fail;
+    }
 
     // Volume object map with its one entry: the root tree
     memset(rkey, 0, sizeof(rkey));
@@ -7202,13 +7546,30 @@ int apfsrw_create_volume(struct apfsrw *fs, const char *name, uint16_t role,
     rec.val = rval;
     rec.klen = 16;
     rec.vlen = 16;
-    err = write_root_like(fs, fs->volume_omap_tree_paddr, (apfs_paddr_t)vtree,
-        vtree, &rec, 1);
-    if (err != APFSRW_OK)
-        goto fail;
-    err = read_object(fs, fs->volume_omap_paddr, block);
-    if (err != APFSRW_OK)
-        goto fail;
+    if (fresh) {
+        synth_root(fs, block, APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE,
+            APFS_OBJECT_TYPE_OMAP, APFS_BTNODE_ROOT | APFS_BTNODE_LEAF |
+            APFS_BTNODE_FIXED_KV_SIZE, 0x12, 16, 16);
+        err = write_root_from(fs, (struct apfs_btree_node_phys *)block,
+            (apfs_paddr_t)vtree, vtree, &rec, 1);
+        if (err != APFSRW_OK)
+            goto fail;
+        memset(block, 0, fs->block_size);
+        wr32(block + offsetof(struct apfs_obj_phys, o_type),
+            APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_OMAP);
+        wr32(block + offsetof(struct apfs_omap_phys, om_tree_type),
+            APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE);
+        wr32(block + offsetof(struct apfs_omap_phys, om_snapshot_tree_type),
+            APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE);
+    } else {
+        err = write_root_like(fs, fs->volume_omap_tree_paddr,
+            (apfs_paddr_t)vtree, vtree, &rec, 1);
+        if (err != APFSRW_OK)
+            goto fail;
+        err = read_object(fs, fs->volume_omap_paddr, block);
+        if (err != APFSRW_OK)
+            goto fail;
+    }
     wr64(block + offsetof(struct apfs_obj_phys, o_oid), vomap);
     wr64(block + offsetof(struct apfs_obj_phys, o_xid), fs->xid + 1);
     wr32(block + offsetof(struct apfs_omap_phys, om_snap_count), 0);
@@ -7224,9 +7585,31 @@ int apfsrw_create_volume(struct apfsrw *fs, const char *name, uint16_t role,
 
     // Volume superblock: this volume's, with everything volume-specific replaced.
     // The five blocks above are what apfs_fs_alloc_count counts
-    err = read_object(fs, fs->fs_paddr, block);
-    if (err != APFSRW_OK)
-        goto fail;
+    if (fresh) {
+        // case-insensitive and unencrypted, the fields newfs_apfs sets that nothing below replaces
+        memset(block, 0, fs->block_size);
+        wr32(block + offsetof(struct apfs_obj_phys, o_type), APFS_OBJECT_TYPE_FS);
+        wr32(block + offsetof(struct apfs_superblock, apfs_magic), APFS_APSB_MAGIC);
+        wr64(block + offsetof(struct apfs_superblock, apfs_features), 0x2);
+        wr64(block + offsetof(struct apfs_superblock, apfs_incompatible_features), 0x1);
+        wr16(block + offsetof(struct apfs_superblock, apfs_meta_crypto) +
+            offsetof(struct apfs_crypto_state, major_version), 5);
+        wr32(block + offsetof(struct apfs_superblock, apfs_meta_crypto) +
+            offsetof(struct apfs_crypto_state, persistent_class), 6);
+        wr16(block + offsetof(struct apfs_superblock, apfs_meta_crypto) +
+            offsetof(struct apfs_crypto_state, key_revision), 1);
+        wr32(block + offsetof(struct apfs_superblock, apfs_root_tree_type),
+            APFS_OBJECT_TYPE_BTREE);
+        wr32(block + offsetof(struct apfs_superblock, apfs_extentref_tree_type),
+            APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE);
+        wr32(block + offsetof(struct apfs_superblock, apfs_snap_meta_tree_type),
+            APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE);
+        wr64(block + offsetof(struct apfs_superblock, apfs_fs_flags), 0x1);
+    } else {
+        err = read_object(fs, fs->fs_paddr, block);
+        if (err != APFSRW_OK)
+            goto fail;
+    }
     wr64(block + offsetof(struct apfs_obj_phys, o_oid), vsb_oid);
     wr64(block + offsetof(struct apfs_obj_phys, o_xid), fs->xid + 1);
     wr32(block + offsetof(struct apfs_superblock, apfs_fs_index), slot);
@@ -7263,8 +7646,11 @@ int apfsrw_create_volume(struct apfsrw *fs, const char *name, uint16_t role,
     fs->newvol_slot = slot;
     fs->newvol_oid = vsb_oid;
     fs->newvol_paddr = (apfs_paddr_t)vsb;
-    err = cow_commit(fs, fs->root_tree_paddr,
-        rd64(&fs->apfs.apfs_next_obj_id), 0, 0, 0, fs->extref_paddr, 0);
+    if (fresh)
+        err = container_commit(fs);
+    else
+        err = cow_commit(fs, fs->root_tree_paddr,
+            rd64(&fs->apfs.apfs_next_obj_id), 0, 0, 0, fs->extref_paddr, 0);
     if (err != APFSRW_OK)
         goto fail;
     free(block);
@@ -7295,6 +7681,341 @@ fail:
     return err;
 }
 
+#ifndef APFSRW_KERNEL
+#define APFS_OBJECT_TYPE_NX_SUPERBLOCK 0x00000001U
+#define APFS_OBJECT_TYPE_NX_REAPER 0x00000011U
+#define APFS_NX_INCOMPAT_VERSION2 0x2ULL
+#define APFS_OMAP_MANUALLY_MANAGED 0x1U
+#define APFS_CHECKPOINT_MAP_LAST 0x1U
+#define APFS_SM_FLAG_VERSIONED 0x1U
+#define APFS_NR_BHM_FLAG 0x1U
+#define APFS_OID_SPACEMAN 0x400U
+#define APFS_OID_REAPER 0x401U
+#define APFS_IP_BM_BLOCKS 16U               // SPACEMAN_IP_BM_TX_MULTIPLIER bitmap blocks
+#define APFS_NX_EPH_INFO_OFF 0x520U         // nx_ephemeral_info[0] (spec p.27)
+#define APFS_SM_VERSION_OFF 0x150U          // sm_version, then sm_struct_size
+#define APFS_SM_STRUCT_SIZE 0x9d8U
+#define APFS_SM_FQ_SIZE 40U                 // spaceman_free_queue_t
+
+// checkpoint areas and free-queue node limits newfs_apfs (macOS 26.6) chose at these sizes.
+// between rows the smaller row applies
+static const struct mkc_row {
+    uint64_t blocks;
+    uint32_t desc, data;
+    uint16_t fq_ip, fq_main;
+} mkc_rows[] = {
+    { 8192, 8, 124, 1, 3 },
+    { 32768, 8, 304, 1, 8 },
+    { 65536, 8, 332, 1, 15 },
+    { 131072, 8, 388, 1, 29 },
+    { 262144, 16, 992, 1, 116 },
+    { 524288, 24, 1964, 1, 231 },
+    { 1048576, 48, 4112, 1, 512 },
+    { 2097152, 68, 6160, 1, 512 },
+    { 4194304, 108, 10256, 1, 512 },
+    { 10485760, 228, 22544, 1, 512 },
+    { 26214400, 280, 27672, 3, 512 },
+    { 52428800, 280, 27680, 5, 512 },
+};
+
+static int mkc_open(const char *path, uint64_t block_count, struct apfsrw **out)
+{
+    const char *at = strstr(path, "@@");
+    size_t n = at != NULL ? (size_t)(at - path) : strlen(path);
+    struct apfsrw *fs = calloc(1, sizeof(*fs));
+    char *name = malloc(n + 1);
+    struct stat st;
+    uint64_t end;
+
+    if (fs == NULL || name == NULL) {
+        free(fs);
+        free(name);
+        return APFSRW_ENOMEM;
+    }
+    memcpy(name, path, n);
+    name[n] = '\0';
+    fs->base_off = at != NULL ? (off_t)strtoull(at + 2, NULL, 0) : 0;
+    fs->fd = open(name, O_RDWR | O_CREAT, 0644);
+    free(name);
+    fs->writable = 1;
+    fs->role_pending = -1;
+    fs->block_size = APFSRW_BLOCK_SIZE;
+    fs->block_count = block_count;
+    end = (uint64_t)fs->base_off + block_count * APFSRW_BLOCK_SIZE;
+    // a regular file grows (sparse) to hold the container, a device must already be big enough
+    if (fs->fd < 0 || fstat(fs->fd, &st) != 0 ||
+        (S_ISREG(st.st_mode) && (uint64_t)st.st_size < end &&
+        ftruncate(fs->fd, (off_t)end) != 0)) {
+        apfsrw_close(fs);
+        return APFSRW_EIO;
+    }
+    fs->image_blocks = end / APFSRW_BLOCK_SIZE;
+    *out = fs;
+    return APFSRW_OK;
+}
+
+static void mkc_header(uint8_t *b, uint64_t oid, uint32_t type)
+{
+    memset(b, 0, APFSRW_BLOCK_SIZE);
+    wr64(b + offsetof(struct apfs_obj_phys, o_oid), oid);
+    wr64(b + offsetof(struct apfs_obj_phys, o_xid), 1);
+    wr32(b + offsetof(struct apfs_obj_phys, o_type), type);
+}
+
+static void mkc_setbits(uint8_t *bm, uint64_t first, uint64_t n)
+{
+    uint64_t k;
+
+    for (k = first; k < first + n; k++)
+        bm[k >> 3] |= (uint8_t)(1U << (k & 7));
+}
+
+int apfsrw_mkcontainer(const char *path, uint64_t block_count,
+    const uint8_t uuid[16])
+{
+    const uint32_t bs = APFSRW_BLOCK_SIZE, bpc = APFSRW_BLOCK_SIZE * 8;
+    const uint32_t cpcib = (uint32_t)((bs - sizeof(struct apfs_chunk_info_block)) /
+        sizeof(struct apfs_chunk_info));
+    const uint32_t addr_off = APFS_SM_STRUCT_SIZE + 8 + 8 + 2 * APFS_IP_BM_BLOCKS;
+    const struct mkc_row *row = NULL;
+    struct apfsrw *fs = NULL;
+    uint64_t chunks, cibs, ip_blocks, used_chunks, used, c;
+    uint64_t data_base, ipbm_base, ip_base, omap, max_fs;
+    uint8_t *b = NULL;
+    size_t i;
+    int err;
+
+    if (path == NULL || uuid == NULL)
+        return APFSRW_EINVAL;
+    for (i = 0; i < sizeof(mkc_rows) / sizeof(mkc_rows[0]); i++)
+        if (block_count >= mkc_rows[i].blocks)
+            row = &mkc_rows[i];
+    if (row == NULL)
+        return APFSRW_EINVAL;
+
+    chunks = (block_count + bpc - 1) / bpc;
+    cibs = (chunks + cpcib - 1) / cpcib;
+    ip_blocks = 3 * (chunks + cibs);
+    data_base = 1 + row->desc;
+    ipbm_base = data_base + row->data;
+    ip_base = ipbm_base + APFS_IP_BM_BLOCKS;
+    omap = ip_base + ip_blocks;
+    used = omap + 2;
+    used_chunks = (used + bpc - 1) / bpc;
+    max_fs = (block_count + 131071) / 131072;
+    if (max_fs > APFS_NX_MAX_FILE_SYSTEMS)
+        max_fs = APFS_NX_MAX_FILE_SYSTEMS;
+    // one internal-pool bitmap block, and every CIB address inline in the space manager (no CABs)
+    if (ip_blocks > bpc || addr_off + cibs * 8 > bs ||
+        cibs + used_chunks > ip_blocks)
+        return APFSRW_ENOTSUP;
+
+    err = mkc_open(path, block_count, &fs);
+    if (err != APFSRW_OK)
+        return err;
+    b = calloc(1, bs);
+    if (b == NULL) {
+        err = APFSRW_ENOMEM;
+        goto out;
+    }
+
+    // stale superblocks in the descriptor ring would outrank ours at mount, so clear it first
+    err = write_raw(fs, 0, b);
+    for (c = 1; err == APFSRW_OK && c < data_base; c++)
+        err = write_raw(fs, (apfs_paddr_t)c, b);
+    for (c = 1; err == APFSRW_OK && c < APFS_IP_BM_BLOCKS; c++)
+        err = write_raw(fs, (apfs_paddr_t)(ipbm_base + c), b);
+    if (err != APFSRW_OK)
+        goto out;
+
+    // internal pool: the CIBs, then a bitmap for each chunk the metadata above reaches into
+    for (c = 0; c < cibs; c++) {
+        struct apfs_chunk_info_block *cib = (struct apfs_chunk_info_block *)b;
+        uint64_t first = c * cpcib, k;
+        uint32_t count = (uint32_t)(chunks - first < cpcib ? chunks - first : cpcib);
+
+        mkc_header(b, ip_base + c, APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_SPACEMAN_CIB);
+        wr32(&cib->cib_index, (uint32_t)c);
+        wr32(&cib->cib_chunk_info_count, count);
+        for (k = 0; k < count; k++) {
+            struct apfs_chunk_info *ci = &cib->cib_chunk_info[k];
+            uint64_t addr = (first + k) * bpc;
+            uint64_t nblk = block_count - addr < bpc ? block_count - addr : bpc;
+            uint64_t inuse = used > addr ? (used - addr < nblk ? used - addr : nblk) : 0;
+
+            wr64(&ci->ci_xid, 1);
+            wr64(&ci->ci_addr, addr);
+            wr32(&ci->ci_block_count, (uint32_t)nblk);
+            wr32(&ci->ci_free_count, (uint32_t)(nblk - inuse));
+            if (first + k < used_chunks)
+                wr64(&ci->ci_bitmap_addr, ip_base + cibs + first + k);
+        }
+        seal_object(fs, b);
+        err = write_block(fs, (apfs_paddr_t)(ip_base + c), b);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+    for (c = 0; c < used_chunks; c++) {
+        uint64_t addr = c * bpc;
+
+        memset(b, 0, bs);
+        mkc_setbits(b, 0, used - addr < bpc ? used - addr : bpc);
+        err = write_raw(fs, (apfs_paddr_t)(ip_base + cibs + c), b);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+    memset(b, 0, bs);
+    mkc_setbits(b, 0, cibs + used_chunks);
+    err = write_raw(fs, (apfs_paddr_t)ipbm_base, b);
+    if (err != APFSRW_OK)
+        goto out;
+
+    // container object map: flags and an empty tree as newfs_apfs writes them
+    synth_root(fs, b, APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE, APFS_OBJECT_TYPE_OMAP,
+        APFS_BTNODE_ROOT | APFS_BTNODE_LEAF | APFS_BTNODE_FIXED_KV_SIZE, 0x12, 16, 16);
+    wr32(b + bs - sizeof(struct apfs_btree_info) +
+        offsetof(struct apfs_btree_info, bt_longest_key), 0);
+    wr32(b + bs - sizeof(struct apfs_btree_info) +
+        offsetof(struct apfs_btree_info, bt_longest_val), 0);
+    err = write_root_from(fs, (struct apfs_btree_node_phys *)b,
+        (apfs_paddr_t)(omap + 1), omap + 1, NULL, 0);
+    if (err != APFSRW_OK)
+        goto out;
+    mkc_header(b, omap, APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_OMAP);
+    wr32(b + offsetof(struct apfs_omap_phys, om_flags), APFS_OMAP_MANUALLY_MANAGED);
+    wr32(b + offsetof(struct apfs_omap_phys, om_tree_type),
+        APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE);
+    wr32(b + offsetof(struct apfs_omap_phys, om_snapshot_tree_type),
+        APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_BTREE);
+    wr64(b + offsetof(struct apfs_omap_phys, om_tree_oid), omap + 1);
+    seal_object(fs, b);
+    err = write_block(fs, (apfs_paddr_t)omap, b);
+    if (err != APFSRW_OK)
+        goto out;
+
+    // space manager, first in the checkpoint data area
+    {
+        struct apfs_spaceman_phys *sm = (struct apfs_spaceman_phys *)b;
+        uint32_t k;
+
+        mkc_header(b, APFS_OID_SPACEMAN, APFS_OBJ_EPHEMERAL | APFS_OBJECT_TYPE_SPACEMAN);
+        wr32(&sm->sm_block_size, bs);
+        wr32(&sm->sm_blocks_per_chunk, bpc);
+        wr32(&sm->sm_chunks_per_cib, cpcib);
+        wr32(&sm->sm_cibs_per_cab, (uint32_t)((bs - sizeof(struct apfs_chunk_info_block)) / 8));
+        wr64(&sm->sm_dev[0].sm_block_count, block_count);
+        wr64(&sm->sm_dev[0].sm_chunk_count, chunks);
+        wr32(&sm->sm_dev[0].sm_cib_count, (uint32_t)cibs);
+        wr64(&sm->sm_dev[0].sm_free_count, block_count - used);
+        wr32(&sm->sm_dev[0].sm_addr_offset, addr_off);
+        // the empty tier-2 device's CIB array would start right after the main one
+        wr32(&sm->sm_dev[1].sm_addr_offset, (uint32_t)(addr_off + cibs * 8));
+        wr32(&sm->sm_flags, APFS_SM_FLAG_VERSIONED);
+        wr32(&sm->sm_ip_bm_tx_multiplier, APFS_IP_BM_BLOCKS);
+        wr64(&sm->sm_ip_block_count, ip_blocks);
+        wr32(&sm->sm_ip_bm_size_in_blocks, 1);
+        wr32(&sm->sm_ip_bm_block_count, APFS_IP_BM_BLOCKS);
+        wr64(&sm->sm_ip_bm_base, ipbm_base);
+        wr64(&sm->sm_ip_base, ip_base);
+        // free queues start empty, their trees are made on first use
+        wr16(sm->sm_fq + 24, row->fq_ip);
+        wr16(sm->sm_fq + APFS_SM_FQ_SIZE + 24, row->fq_main);
+        // bitmap slot 0 is live (xid 1), 1..15 are chained free
+        wr16(&sm->sm_ip_bm_free_head, 1);
+        wr16(&sm->sm_ip_bm_free_tail, APFS_IP_BM_BLOCKS - 1);
+        wr32(&sm->sm_ip_bm_xid_offset, APFS_SM_STRUCT_SIZE);
+        wr32(&sm->sm_ip_bitmap_offset, APFS_SM_STRUCT_SIZE + 8);
+        wr32(&sm->sm_ip_bm_free_next_offset, APFS_SM_STRUCT_SIZE + 16);
+        wr32(b + APFS_SM_VERSION_OFF, 1);
+        wr32(b + APFS_SM_VERSION_OFF + 4, APFS_SM_STRUCT_SIZE);
+        wr64(b + APFS_SM_STRUCT_SIZE, 1);
+        wr16(b + APFS_SM_STRUCT_SIZE + 8, 0);
+        for (k = 0; k < APFS_IP_BM_BLOCKS; k++)
+            wr16(b + APFS_SM_STRUCT_SIZE + 16 + 2 * k,
+                k == 0 || k == APFS_IP_BM_BLOCKS - 1 ? 0xffff : (uint16_t)(k + 1));
+        for (c = 0; c < cibs; c++)
+            wr64(b + addr_off + 8 * c, ip_base + c);
+        seal_object(fs, b);
+        err = write_block(fs, (apfs_paddr_t)data_base, b);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+
+    // reaper: idle, with the flag the spec says is always set
+    mkc_header(b, APFS_OID_REAPER, APFS_OBJ_EPHEMERAL | APFS_OBJECT_TYPE_NX_REAPER);
+    wr64(b + 32, 1);                                // nr_next_reap_id
+    wr32(b + 64, APFS_NR_BHM_FLAG);                 // nr_flags
+    wr32(b + 108, bs - 112);                        // nr_state_buffer_size
+    seal_object(fs, b);
+    err = write_block(fs, (apfs_paddr_t)(data_base + 1), b);
+    if (err != APFSRW_OK)
+        goto out;
+
+    // checkpoint: its map in descriptor block 1, the superblock in 2
+    {
+        struct apfs_checkpoint_map_phys *cpm = (struct apfs_checkpoint_map_phys *)b;
+
+        mkc_header(b, 1, APFS_OBJ_PHYSICAL | APFS_OBJECT_TYPE_CHECKPOINT_MAP);
+        wr32(&cpm->cpm_flags, APFS_CHECKPOINT_MAP_LAST);
+        wr32(&cpm->cpm_count, 2);
+        wr32(&cpm->cpm_map[0].cpm_type, APFS_OBJ_EPHEMERAL | APFS_OBJECT_TYPE_SPACEMAN);
+        wr32(&cpm->cpm_map[0].cpm_size, bs);
+        wr64(&cpm->cpm_map[0].cpm_oid, APFS_OID_SPACEMAN);
+        wr64(&cpm->cpm_map[0].cpm_paddr, data_base);
+        wr32(&cpm->cpm_map[1].cpm_type, APFS_OBJ_EPHEMERAL | APFS_OBJECT_TYPE_NX_REAPER);
+        wr32(&cpm->cpm_map[1].cpm_size, bs);
+        wr64(&cpm->cpm_map[1].cpm_oid, APFS_OID_REAPER);
+        wr64(&cpm->cpm_map[1].cpm_paddr, data_base + 1);
+        seal_object(fs, b);
+        err = write_block(fs, 1, b);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+    {
+        struct apfs_nx_superblock *nx = (struct apfs_nx_superblock *)b;
+
+        mkc_header(b, 1, APFS_OBJ_EPHEMERAL | APFS_OBJECT_TYPE_NX_SUPERBLOCK);
+        wr32(&nx->nx_magic, APFS_NX_MAGIC);
+        wr32(&nx->nx_block_size, bs);
+        wr64(&nx->nx_block_count, block_count);
+        wr64(&nx->nx_incompatible_features, APFS_NX_INCOMPAT_VERSION2);
+        memcpy(nx->nx_uuid, uuid, 16);
+        wr64(&nx->nx_next_oid, APFS_OID_REAPER + 1);
+        wr64(&nx->nx_next_xid, 2);
+        wr32(&nx->nx_xp_desc_blocks, row->desc);
+        wr32(&nx->nx_xp_data_blocks, row->data);
+        wr64(&nx->nx_xp_desc_base, 1);
+        wr64(&nx->nx_xp_data_base, data_base);
+        wr32(&nx->nx_xp_desc_next, 2);
+        wr32(&nx->nx_xp_data_next, 2);
+        wr32(&nx->nx_xp_desc_index, 0);
+        wr32(&nx->nx_xp_desc_len, 2);
+        wr32(&nx->nx_xp_data_index, 0);
+        wr32(&nx->nx_xp_data_len, 2);
+        wr64(&nx->nx_spaceman_oid, APFS_OID_SPACEMAN);
+        wr64(&nx->nx_omap_oid, omap);
+        wr64(&nx->nx_reaper_oid, APFS_OID_REAPER);
+        wr32(&nx->nx_max_file_systems, (uint32_t)max_fs);
+        // min_block_count is the main free-queue limit up to 128 MiB, NX_EPH_MIN_BLOCK_COUNT above
+        wr64(b + APFS_NX_EPH_INFO_OFF,
+            ((uint64_t)(block_count > 32768 ? 8 : row->fq_main) << 32) | (4U << 16) | 1U);
+        seal_object(fs, b);
+        err = write_block(fs, 2, b);
+        if (err == APFSRW_OK && apfsrw_sync(fs) != 0)
+            err = APFSRW_EIO;
+        // block zero last: until it lands the image is not a container
+        if (err == APFSRW_OK)
+            err = write_block(fs, 0, b);
+        if (err == APFSRW_OK && apfsrw_sync(fs) != 0)
+            err = APFSRW_EIO;
+    }
+out:
+    free(b);
+    apfsrw_close(fs);
+    return err;
+}
+#endif /* !APFSRW_KERNEL */
+
 int apfsrw_setattr(struct apfsrw *fs, const char *path,
     const struct apfsrw_attr *attr)
 {
@@ -7308,8 +8029,6 @@ int apfsrw_setattr(struct apfsrw *fs, const char *path,
         return APFSRW_EINVAL;
     if (!fs->writable)
         return APFSRW_EPERM;
-    if (fs->batch)
-        return APFSRW_EINVAL;
 
     err = resolve_path(fs, path, &fileid, NULL);
     if (err != APFSRW_OK)
@@ -7351,7 +8070,7 @@ int apfsrw_setattr(struct apfsrw *fs, const char *path,
     err = fstree_put(fs, key, 8, ival, ivlen, 1);
     if (err != APFSRW_OK)
         goto fail;
-    err = txn_finish(fs, rd64(&fs->apfs.apfs_next_obj_id), 0, 0, 0);
+    err = txn_finish(fs, cur_next_oid(fs), 0, 0, 0);
     if (err != APFSRW_OK)
         goto fail;
     return APFSRW_OK;
@@ -7733,8 +8452,6 @@ int apfsrw_link(struct apfsrw *fs, const char *existing, const char *newpath)
         return APFSRW_EINVAL;
     if (!fs->writable)
         return APFSRW_EPERM;
-    if (fs->batch)
-        return APFSRW_EINVAL;
 
     err = split_parent(fs, existing, &eparent, &ename, &enamelen);
     if (err != APFSRW_OK)
@@ -7754,7 +8471,7 @@ int apfsrw_link(struct apfsrw *fs, const char *existing, const char *newpath)
     err = fstree_get(fs, key, 8, ival, sizeof(ival), &ivlen);
     if (err != APFSRW_OK)
         return err;
-    next = rd64(&fs->apfs.apfs_next_obj_id);
+    next = cur_next_oid(fs);
     now = apfsrw_now_ns();
 
     // The existing entry needs sibling records of its own
@@ -8223,7 +8940,7 @@ int apfsrw_symlink(struct apfsrw *fs, const char *path, const char *target,
     if (target == NULL)
         return APFSRW_EINVAL;
     return create_entry(fs, path, APFSRW_DT_LNK, NULL, 0, target,
-        (uint16_t)(0120000u | 0777u), uid, gid, NULL);
+        (uint16_t)(0120000u | 0777u), uid, gid, NULL, NULL);
 }
 
 int apfsrw_create_root_file(struct apfsrw *fs, const char *name,
@@ -8239,3 +8956,492 @@ int apfsrw_create_root_file(struct apfsrw *fs, const char *name,
         snprintf(path, sizeof(path), "/%s", name);
     return apfsrw_create_file(fs, path, data, size, 0644, 0, 0);
 }
+
+#ifndef APFSRW_KERNEL
+// volume-to-volume copy
+
+#define APFS_UF_COMPRESSED 0x20U
+
+struct cp_srcx {
+    char name[256];
+    uint16_t flags;
+    uint8_t *data;
+    size_t len;
+    uint64_t oid;               // a stream-backed value's object id, read after the walk
+};
+
+struct cp_xctx {
+    uint64_t id;
+    struct cp_srcx *v;
+    uint32_t n, cap;
+    int err;
+};
+
+static int cp_xattr_cb(struct apfsrw *fs,
+    const struct apfs_btree_node_phys *node,
+    const struct apfs_btree_info *info, void *ctx)
+{
+    struct cp_xctx *c = (struct cp_xctx *)ctx;
+    uint32_t i;
+
+    for (i = 0; i < rd32(&node->btn_nkeys); i++) {
+        const void *keyp, *valp;
+        uint16_t klen, vlen, nlen, xlen, flags;
+        struct cp_srcx *x;
+        uint64_t key;
+        int err = btree_entry(fs, node, info, i, &keyp, &klen, &valp, &vlen);
+
+        if (err != APFSRW_OK)
+            return err;
+        if (klen < 11 || vlen < 4)
+            continue;
+        key = rd64(keyp);
+        if (key_id(key) != c->id || key_type(key) != APFS_TYPE_XATTR)
+            continue;
+        nlen = rd16((const uint8_t *)keyp + 8);
+        if (nlen < 2 || nlen > 256 || 10U + nlen > klen)
+            continue;
+        flags = rd16(valp);
+        xlen = rd16((const uint8_t *)valp + 2);
+        if (4U + xlen > vlen)
+            continue;
+        if (c->n == c->cap) {
+            uint32_t ncap = c->cap ? c->cap * 2 : 8;
+            struct cp_srcx *nv = realloc(c->v, ncap * sizeof(*nv));
+
+            if (nv == NULL)
+                return APFSRW_ENOMEM;
+            c->v = nv;
+            c->cap = ncap;
+        }
+        x = &c->v[c->n];
+        memset(x, 0, sizeof(*x));
+        memcpy(x->name, (const uint8_t *)keyp + 10, nlen);
+        x->name[nlen - 1] = '\0';
+        x->flags = flags;
+        if (flags & APFS_XATTR_DATA_STREAM) {
+            if (xlen < sizeof(struct apfs_j_xattr_dstream))
+                continue;
+            x->oid = rd64((const uint8_t *)valp + 4 +
+                offsetof(struct apfs_j_xattr_dstream, xattr_obj_id));
+            x->len = (size_t)rd64((const uint8_t *)valp + 4 +
+                offsetof(struct apfs_j_xattr_dstream, size));
+        } else {
+            x->len = xlen;
+            x->data = malloc(xlen + 1U);
+            if (x->data == NULL)
+                return APFSRW_ENOMEM;
+            memcpy(x->data, (const uint8_t *)valp + 4, xlen);
+            x->data[xlen] = 0;
+        }
+        c->n++;
+    }
+    return APFSRW_OK;
+}
+
+static void cp_xfree(struct cp_xctx *c)
+{
+    uint32_t i;
+
+    for (i = 0; i < c->n; i++)
+        free(c->v[i].data);
+    free(c->v);
+    memset(c, 0, sizeof(*c));
+}
+
+// every xattr of one inode, stream-backed values read in full
+static int cp_read_xattrs(struct apfsrw *src, uint64_t id, struct cp_xctx *c)
+{
+    uint32_t i;
+    int err;
+
+    memset(c, 0, sizeof(*c));
+    c->id = id;
+    err = btree_walk_leaves_oid(src, src->root_tree_paddr, id, id, cp_xattr_cb, c);
+    if (err != APFSRW_OK && err != 1)
+        return err;
+    for (i = 0; i < c->n; i++) {
+        struct cp_srcx *x = &c->v[i];
+
+        if (!(x->flags & APFS_XATTR_DATA_STREAM))
+            continue;
+        x->data = calloc(1, x->len + 1);
+        if (x->data == NULL)
+            return APFSRW_ENOMEM;
+        if (x->len != 0) {
+            err = read_extents(src, x->oid, x->data, x->len);
+            if (err != APFSRW_OK)
+                return err;
+        }
+    }
+    return APFSRW_OK;
+}
+
+static struct cp_srcx *cp_find(struct cp_xctx *c, const char *name)
+{
+    uint32_t i;
+
+    for (i = 0; i < c->n; i++)
+        if (strcmp(c->v[i].name, name) == 0)
+            return &c->v[i];
+    return NULL;
+}
+
+struct cp_link {
+    uint64_t src_id;
+    char *path;
+};
+
+struct cp_state {
+    struct apfsrw *src, *dst;
+    const struct apfsrw_copy_opts *o;
+    struct apfsrw_copy_stats *st;
+    struct cp_link *links;
+    size_t nlinks, caplinks;
+};
+
+struct cp_list {
+    struct apfsrw_dirent *e;
+    size_t n, cap;
+};
+
+static int cp_collect(const struct apfsrw_dirent *entry, void *ctx)
+{
+    struct cp_list *l = (struct cp_list *)ctx;
+
+    if (l->n == l->cap) {
+        size_t ncap = l->cap ? l->cap * 2 : 64;
+        struct apfsrw_dirent *ne = realloc(l->e, ncap * sizeof(*ne));
+
+        if (ne == NULL)
+            return APFSRW_ENOMEM;
+        l->e = ne;
+        l->cap = ncap;
+    }
+    l->e[l->n++] = *entry;
+    return 0;
+}
+
+static const char *cp_link_find(struct cp_state *s, uint64_t id)
+{
+    size_t i;
+
+    for (i = 0; i < s->nlinks; i++)
+        if (s->links[i].src_id == id)
+            return s->links[i].path;
+    return NULL;
+}
+
+static int cp_link_add(struct cp_state *s, uint64_t id, const char *path)
+{
+    if (s->nlinks == s->caplinks) {
+        size_t ncap = s->caplinks ? s->caplinks * 2 : 64;
+        struct cp_link *nl = realloc(s->links, ncap * sizeof(*nl));
+
+        if (nl == NULL)
+            return APFSRW_ENOMEM;
+        s->links = nl;
+        s->caplinks = ncap;
+    }
+    s->links[s->nlinks].src_id = id;
+    s->links[s->nlinks].path = strdup(path);
+    if (s->links[s->nlinks].path == NULL)
+        return APFSRW_ENOMEM;
+    s->nlinks++;
+    return APFSRW_OK;
+}
+
+// which source xattrs travel: none unless asked, except the decmpfs pair of a file kept compressed.
+// the symlink target is written by create_entry itself
+static int cp_keep_xattr(const struct cp_state *s, const struct cp_srcx *x,
+    int keep_compressed)
+{
+    int cmp = strcmp(x->name, "com.apple.decmpfs") == 0 ||
+        strcmp(x->name, "com.apple.ResourceFork") == 0;
+
+    if (strcmp(x->name, "com.apple.fs.symlink") == 0)
+        return 0;
+    if (cmp)
+        return keep_compressed;
+    return s->o->xattrs;
+}
+
+static int cp_entry(struct cp_state *s, const struct apfsrw_dirent *e,
+    const char *srcpath, const char *path);
+
+static int cp_strcmp(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+// with an only list, an entry travels when listed or when something listed lies below it.
+// the list is sorted, so the first path >= "p/" says whether anything is under p
+static int cp_only(const struct cp_state *s, const char *p)
+{
+    const char *const *v = s->o->only;
+    size_t lo = 0, hi = s->o->nonly, n = strlen(p);
+    char *pre = malloc(n + 2);
+    int hit = 0;
+
+    if (pre == NULL)
+        return 0;
+    memcpy(pre, p, n);
+    pre[n] = '/';
+    pre[n + 1] = '\0';
+    if (bsearch(&p, v, s->o->nonly, sizeof(*v), cp_strcmp) != NULL)
+        hit = 1;
+    while (!hit && lo < hi) {
+        size_t mid = (lo + hi) / 2;
+
+        if (strcmp(v[mid], pre) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (!hit && lo < s->o->nonly && strncmp(v[lo], pre, n + 1) == 0)
+        hit = 1;
+    free(pre);
+    return hit;
+}
+
+static char *cp_join(const char *dir, const char *name)
+{
+    char *p = malloc(strlen(dir) + strlen(name) + 2);
+
+    if (p != NULL)
+        sprintf(p, "%s%s%s", dir, strcmp(dir, "/") ? "/" : "", name);
+    return p;
+}
+
+static int cp_dir(struct cp_state *s, uint64_t dir, const char *srcdir,
+    const char *dstdir)
+{
+    struct cp_list l = { NULL, 0, 0 };
+    struct list_ctx lc;
+    size_t i;
+    int err;
+
+    lc.parent_id = dir;
+    lc.cb = cp_collect;
+    lc.user = &l;
+    err = btree_walk_leaves_oid(s->src, s->src->root_tree_paddr, dir, dir,
+        list_leaf_cb, &lc);
+    for (i = 0; err == APFSRW_OK && i < l.n; i++) {
+        char *sp = cp_join(srcdir, l.e[i].name), *path = cp_join(dstdir, l.e[i].name);
+        uint32_t k;
+
+        for (k = 0; sp != NULL && k < s->o->nskip; k++)
+            if (strcmp(sp, s->o->skip[k]) == 0)
+                break;
+        if (sp == NULL || path == NULL)
+            err = APFSRW_ENOMEM;
+        else if (k < s->o->nskip)
+            s->st->skipped++;
+        else if (s->o->only != NULL && !cp_only(s, sp))
+            ;
+        else
+            err = cp_entry(s, &l.e[i], sp, path);
+        free(sp);
+        free(path);
+        if (err == APFSRW_OK && apfsrw_batch_pending(s->dst) >= s->o->flush_blocks) {
+            err = apfsrw_batch_end(s->dst);
+            if (err == APFSRW_OK)
+                err = apfsrw_batch_begin(s->dst);
+        }
+    }
+    free(l.e);
+    return err;
+}
+
+static int cp_entry(struct cp_state *s, const struct apfsrw_dirent *e,
+    const char *srcpath, const char *path)
+{
+    struct inode_ctx ic;
+    struct cp_xctx xc;
+    struct cp_extra x;
+    struct cp_xattr *out = NULL;
+    uint8_t *data = NULL;
+    size_t size = 0;
+    uint16_t ftype;
+    uint32_t uid, gid, i;
+    int keep_cmp = 0, err;
+
+    memset(&xc, 0, sizeof(xc));
+    memset(&ic, 0, sizeof(ic));
+    ic.file_id = e->file_id;
+    err = btree_walk_leaves_oid(s->src, s->src->root_tree_paddr, e->file_id,
+        e->file_id, inode_leaf_cb, &ic);
+    if (err != APFSRW_OK && err != 1)
+        return err;
+    if (!ic.found)
+        return APFSRW_ENOENT;
+    switch (ic.mode & 0170000) {
+    case 0040000: ftype = APFSRW_DT_DIR; break;
+    case 0100000: ftype = APFSRW_DT_REG; break;
+    case 0120000: ftype = APFSRW_DT_LNK; break;
+    case 0010000: ftype = APFSRW_DT_FIFO; break;
+    case 0020000: ftype = APFSRW_DT_CHR; break;
+    case 0060000: ftype = APFSRW_DT_BLK; break;
+    case 0140000: ftype = APFSRW_DT_SOCK; break;
+    default: s->st->skipped++; return APFSRW_OK;
+    }
+
+    // a second name of a hard-linked file becomes a link to the first copy
+    if (ftype == APFSRW_DT_REG && ic.nlink > 1) {
+        const char *first = cp_link_find(s, e->file_id);
+
+        if (first != NULL) {
+            err = apfsrw_link(s->dst, first, path);
+            if (err == APFSRW_OK)
+                s->st->hardlinks++;
+            return err == APFSRW_EEXIST ? APFSRW_OK : err;
+        }
+    }
+
+    if (s->o->xattrs || ftype == APFSRW_DT_LNK ||
+        (s->o->compressed && (ic.bsd_flags & APFS_UF_COMPRESSED))) {
+        err = cp_read_xattrs(s->src, e->file_id, &xc);
+        if (err != APFSRW_OK)
+            goto out;
+    }
+    keep_cmp = s->o->compressed && ftype == APFSRW_DT_REG &&
+        (ic.bsd_flags & APFS_UF_COMPRESSED) && cp_find(&xc, "com.apple.decmpfs") != NULL;
+
+    memset(&x, 0, sizeof(x));
+    x.atime = ic.atime;
+    x.mtime = ic.mtime;
+    x.ctime = ic.ctime;
+    x.crtime = ic.crtime;
+    x.bsd_flags = s->o->flags ? ic.bsd_flags & ~APFS_UF_COMPRESSED : 0;
+    if (xc.n != 0) {
+        out = calloc(xc.n, sizeof(*out));
+        if (out == NULL) {
+            err = APFSRW_ENOMEM;
+            goto out;
+        }
+    }
+    for (i = 0; i < xc.n; i++) {
+        if (!cp_keep_xattr(s, &xc.v[i], keep_cmp))
+            continue;
+        out[x.nxattrs].name = xc.v[i].name;
+        out[x.nxattrs].flags = xc.v[i].flags;
+        out[x.nxattrs].data = xc.v[i].data;
+        out[x.nxattrs].len = xc.v[i].len;
+        x.nxattrs++;
+    }
+    x.xattrs = out;
+    if (keep_cmp) {
+        const struct cp_srcx *d = cp_find(&xc, "com.apple.decmpfs");
+
+        x.compressed = 1;
+        x.rsrc = cp_find(&xc, "com.apple.ResourceFork") != NULL;
+        x.bsd_flags |= APFS_UF_COMPRESSED;
+        x.ucsize = d->len >= sizeof(struct apfs_decmpfs_header) ?
+            rd64(d->data + offsetof(struct apfs_decmpfs_header, uncompressed_size)) : ic.size;
+        s->st->compressed++;
+    } else if (ftype == APFSRW_DT_REG) {
+        err = apfsrw_read_file_by_id(s->src, e->file_id, &data, &size);
+        if (err != APFSRW_OK) {
+            fprintf(stderr, "apfsrw: copy: read %s: %s\n", path, apfsrw_strerror(err));
+            goto out;
+        }
+    }
+    uid = s->o->owner0 ? 0 : ic.uid;
+    gid = s->o->owner0 ? 0 : ic.gid;
+
+    if (ftype == APFSRW_DT_LNK) {
+        const struct cp_srcx *t = cp_find(&xc, "com.apple.fs.symlink");
+
+        if (t == NULL || t->len == 0) {
+            err = APFSRW_EINVAL;
+            goto out;
+        }
+        err = create_entry(s->dst, path, ftype, NULL, 0, (const char *)t->data,
+            ic.mode, uid, gid, NULL, &x);
+    } else {
+        err = create_entry(s->dst, path, ftype, data, size, NULL, ic.mode, uid,
+            gid, NULL, &x);
+    }
+    if (err == APFSRW_ENOTSUP) {
+        fprintf(stderr, "apfsrw: copy: skipping %s (name)\n", path);
+        s->st->skipped++;
+        err = APFSRW_OK;
+        goto out;
+    }
+    if (err == APFSRW_EEXIST && ftype == APFSRW_DT_DIR)
+        err = APFSRW_OK;                 // merging into a directory already there
+    else if (err == APFSRW_EEXIST) {
+        s->st->skipped++;
+        err = APFSRW_OK;
+        goto out;
+    } else if (err != APFSRW_OK) {
+        fprintf(stderr, "apfsrw: copy: create %s: %s\n", path, apfsrw_strerror(err));
+        goto out;
+    } else {
+        s->st->xattrs += x.nxattrs;
+        if (ftype == APFSRW_DT_DIR)
+            s->st->dirs++;
+        else if (ftype == APFSRW_DT_REG)
+            s->st->files++;
+        else if (ftype == APFSRW_DT_LNK)
+            s->st->symlinks++;
+        else
+            s->st->other++;
+        s->st->bytes += size;
+        if (ftype == APFSRW_DT_REG && ic.nlink > 1)
+            err = cp_link_add(s, e->file_id, path);
+    }
+    if (err == APFSRW_OK && ftype == APFSRW_DT_DIR)
+        err = cp_dir(s, e->file_id, srcpath, path);
+out:
+    free(data);
+    free(out);
+    cp_xfree(&xc);
+    return err;
+}
+
+int apfsrw_copy_tree(struct apfsrw *src, const char *srcpath, struct apfsrw *dst,
+    const char *dstpath, const struct apfsrw_copy_opts *opts,
+    struct apfsrw_copy_stats *stats)
+{
+    struct cp_state s;
+    uint64_t sid, did;
+    uint8_t st, dt;
+    size_t i;
+    int err, eerr;
+
+    if (src == NULL || dst == NULL || opts == NULL || stats == NULL)
+        return APFSRW_EINVAL;
+    if (!dst->writable)
+        return APFSRW_EPERM;
+    if (dst->batch)
+        return APFSRW_EINVAL;
+    memset(stats, 0, sizeof(*stats));
+    err = resolve_path(src, srcpath ? srcpath : "/", &sid, &st);
+    if (err == APFSRW_OK)
+        err = resolve_path(dst, dstpath ? dstpath : "/", &did, &dt);
+    if (err != APFSRW_OK)
+        return err;
+    if (st != APFSRW_DT_DIR || dt != APFSRW_DT_DIR)
+        return APFSRW_ENOTDIR;
+
+    memset(&s, 0, sizeof(s));
+    if (opts->only != NULL)
+        qsort((void *)opts->only, opts->nonly, sizeof(*opts->only), cp_strcmp);
+    s.src = src;
+    s.dst = dst;
+    s.o = opts;
+    s.st = stats;
+    err = apfsrw_batch_begin(dst);
+    if (err != APFSRW_OK)
+        return err;
+    err = cp_dir(&s, sid, srcpath ? srcpath : "/", dstpath ? dstpath : "/");
+    eerr = apfsrw_batch_end(dst);
+    if (err == APFSRW_OK)
+        err = eerr;
+    for (i = 0; i < s.nlinks; i++)
+        free(s.links[i].path);
+    free(s.links);
+    return err;
+}
+#endif /* !APFSRW_KERNEL */

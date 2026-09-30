@@ -86,6 +86,8 @@ apfsrw_kern_io(struct apfsrw *fs, void *buf, size_t n, off_t off, int is_write)
 
 	if (dev == NULL || buf == NULL || n == 0)
 		return -1;
+	if (dev->io != NULL)
+		return dev->io(dev->io_ref, buf, n, (uint64_t)off, is_write);
 	devvp = (vnode_t)dev->devvp;
 	bs = dev->block_size;
 	if (devvp == NULLVP || dev->dev_bsize == 0 || bs == 0)
@@ -141,6 +143,8 @@ apfsrw_sync(struct apfsrw *fs)
 {
 	struct apfsrw_kern_dev *dev = apfsrw_io_context(fs);
 
+	if (dev != NULL && dev->io != NULL)
+		return dev->sync != NULL ? dev->sync(dev->io_ref) : 0;
 	if (dev == NULL || dev->devvp == NULL)
 		return -1;
 	buf_flushdirtyblks((vnode_t)dev->devvp, 1, 0, "apfsrw");
@@ -152,6 +156,8 @@ apfsrw_sync_nowait(struct apfsrw *fs)
 {
 	struct apfsrw_kern_dev *dev = apfsrw_io_context(fs);
 
+	if (dev != NULL && dev->io != NULL)
+		return dev->sync != NULL ? dev->sync(dev->io_ref) : 0;
 	if (dev == NULL || dev->devvp == NULL)
 		return -1;
 	buf_flushdirtyblks((vnode_t)dev->devvp, 0, 0, "apfsrw");
