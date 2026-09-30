@@ -445,6 +445,10 @@ struct apfsrw {
     uint8_t *ac_sm, *ac_cib, *ac_bm;
     apfs_paddr_t ac_sm_paddr, ac_cib_paddr, ac_bm_paddr;
     uint8_t ac_sm_dirty, ac_cib_dirty, ac_bm_dirty;
+    // longest free run each chunk can still hold (UINT32_MAX unknown). Allocation only
+    // shortens runs, so a chunk too fragmented once is skipped until something is freed
+    uint32_t *ac_runmax;
+    uint32_t ac_nchunks, ac_bpc;
     // Record buffers: a free list per power-of-two class, so rewriting a leaf (one
     // copy of every key and value) does not go to the allocator each time
     void *rec_free[10];
@@ -621,12 +625,31 @@ static void bc_drop(struct apfsrw *fs, apfs_paddr_t paddr, uint64_t n)
     }
 }
 
+// something was freed or unfrozen, or another handle changed the bitmaps
+static void ac_runs_reset(struct apfsrw *fs)
+{
+    if (fs->ac_runmax != NULL)
+        memset(fs->ac_runmax, 0xff, fs->ac_nchunks * sizeof(*fs->ac_runmax));
+}
+
+// n blocks from first came free: only their chunks can hold longer runs now
+static void ac_runs_freed(struct apfsrw *fs, uint64_t first, uint64_t n)
+{
+    uint64_t g;
+
+    if (fs->ac_runmax == NULL || fs->ac_bpc == 0 || n == 0)
+        return;
+    for (g = first / fs->ac_bpc; g <= (first + n - 1) / fs->ac_bpc && g < fs->ac_nchunks; g++)
+        fs->ac_runmax[g] = UINT32_MAX;
+}
+
 void apfsrw_cache_drop(struct apfsrw *fs)
 {
     if (fs == NULL)
         return;
     (void)ac_flush(fs);
     fs->ac_sm_paddr = fs->ac_cib_paddr = fs->ac_bm_paddr = 0;
+    ac_runs_reset(fs);
     if (fs->bc_ents != NULL)
         memset(fs->bc_ents, 0, APFSRW_BCACHE_ENTS * sizeof(*fs->bc_ents));
 }
@@ -1581,6 +1604,7 @@ int apfsrw_refresh(struct apfsrw *fs)
         return APFSRW_EINVAL;
     (void)ac_flush(fs);
     fs->ac_sm_paddr = fs->ac_cib_paddr = fs->ac_bm_paddr = 0;
+    ac_runs_reset(fs);
     fs->fs_oid = 0;
     fs->extref_paddr = 0;
     fs->next_oid = 0;
@@ -1613,6 +1637,7 @@ void apfsrw_close(struct apfsrw *fs)
     free(fs->ac_sm);
     free(fs->ac_cib);
     free(fs->ac_bm);
+    free(fs->ac_runmax);
     free(fs->bc_data);
     free(fs->bc_ents);
     free(fs);
@@ -2773,6 +2798,7 @@ static int spaceman_set_range(struct apfsrw *fs, uint64_t first, uint32_t n,
 
 static int free_blocks(struct apfsrw *fs, uint64_t first, uint32_t n)
 {
+    ac_runs_freed(fs, first, n);
     return spaceman_set_range(fs, first, n, 0);
 }
 
@@ -2978,6 +3004,8 @@ static int spaceman_free_many(struct apfsrw *fs, const uint64_t *blocks,
 
     if (count == 0)
         return APFSRW_OK;
+    for (i = 0; i < count; i++)
+        ac_runs_freed(fs, blocks[i], 1);
     err = resolve_ephemeral(fs, rd64(&fs->nx.nx_spaceman_oid), &sm_paddr);
     if (err != APFSRW_OK)
         return err;
@@ -3123,6 +3151,15 @@ static void flush_deferred(struct apfsrw *fs)
     fs->deferred_count = 0;
 }
 
+// all 64 blocks from k (a multiple of 64) in use
+static int bm_word_full(const uint8_t *bitmap, uint32_t k)
+{
+    uint64_t w;
+
+    memcpy(&w, bitmap + (k >> 3), sizeof(w));
+    return w == ~(uint64_t)0;
+}
+
 // A savepoint freezes every block that was in use when it was taken,
 // so the saved checkpoint's metadata can never be overwritten
 static int block_frozen(const struct apfsrw *fs, uint64_t b)
@@ -3133,14 +3170,14 @@ static int block_frozen(const struct apfsrw *fs, uint64_t b)
 
 // Allocate n contiguous blocks. With a non-zero hint,
 // try to place them at exactly that address first (keeps sequential writes in one extent)
-static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
+static int alloc_blocks_scan(struct apfsrw *fs, uint32_t n, uint64_t hint,
     uint64_t from, int reverse, uint64_t *out)
 {
     struct apfs_spaceman_phys *sm = NULL;
     struct apfs_chunk_info_block *cib = NULL;
     uint8_t *bitmap = NULL;
     apfs_paddr_t sm_paddr = 0;
-    uint32_t cib_count, addr_offset, i;
+    uint32_t cib_count, addr_offset, cpc, i;
     int pass;
     int err;
 
@@ -3166,6 +3203,16 @@ static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
     if ((uint64_t)addr_offset + (uint64_t)cib_count * 8U > fs->block_size) {
         err = APFSRW_EINVAL;
         goto out;
+    }
+    cpc = rd32(&sm->sm_chunks_per_cib);
+    if (fs->ac_runmax == NULL && cpc != 0 && cib_count != 0 &&
+        rd32(&sm->sm_blocks_per_chunk) != 0) {
+        fs->ac_runmax = malloc((size_t)cib_count * cpc * sizeof(*fs->ac_runmax));
+        if (fs->ac_runmax != NULL) {
+            fs->ac_nchunks = cib_count * cpc;
+            fs->ac_bpc = rd32(&sm->sm_blocks_per_chunk);
+            ac_runs_reset(fs);
+        }
     }
 
     for (pass = (hint != 0) ? 0 : (reverse ? 2 : 1); pass < 3; pass++)
@@ -3208,9 +3255,17 @@ static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
             uint64_t chunk_addr = rd64(&ci->ci_addr);
             uint32_t nblk = rd32(&ci->ci_block_count);
             uint32_t free_count = rd32(&ci->ci_free_count);
-            uint32_t start, run, k;
+            uint32_t start, run, best, k;
+            uint32_t need = (reverse && pass == 2 && n < fs->alloc_minrun) ? fs->alloc_minrun : n;
+            uint32_t *rmax = NULL;
 
             if (free_count < n || nblk == 0)
+                continue;
+            if (fs->ac_runmax != NULL && pass != 0 && chunk_addr % fs->ac_bpc == 0 &&
+                chunk_addr / fs->ac_bpc < fs->ac_nchunks)
+                rmax = &fs->ac_runmax[chunk_addr / fs->ac_bpc];
+            // skip before the bitmap load: that is a disk read under the container lock
+            if (rmax != NULL && *rmax < need)
                 continue;
             // Pass 0 only looks at the chunk holding the hint.
             // Pass 1 scans upward from from. Pass 2 takes anything
@@ -3236,6 +3291,7 @@ static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
             }
 
             run = 0;
+            best = 0;
             start = 0;
             if (pass == 0) {
                 start = (uint32_t)(hint - chunk_addr);
@@ -3256,23 +3312,43 @@ static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
                 if (free_count < want)
                     continue;
                 for (k = nblk; k-- > 0; ) {
+                    // a word with every block in use
+                    if ((k & 63) == 63 && fs->frozen == NULL &&
+                        bm_word_full(bitmap, k - 63)) {
+                        run = 0;
+                        k -= 63;
+                        continue;
+                    }
                     if (chunk_addr + k >= fs->block_count ||
                         (bitmap[k >> 3] & (uint8_t)(1U << (k & 7))) ||
                         block_frozen(fs, chunk_addr + k)) {
                         run = 0;
                         continue;
                     }
-                    if (++run < want)
+                    if (++run > best)
+                        best = run;
+                    if (run < want)
                         continue;
                     start = k + want - n;   // the top of the run
                     goto take;
                 }
+                if (rmax != NULL)
+                    *rmax = best;
                 continue;
             }
             k = 0;
             if (pass == 1 && from > chunk_addr)
                 k = (uint32_t)(from - chunk_addr);
+            // only a scan of the whole chunk tells its longest run
+            if (k != 0)
+                rmax = NULL;
             for (; k < nblk; k++) {
+                if ((k & 63) == 0 && k + 64 <= nblk && fs->frozen == NULL &&
+                    bm_word_full(bitmap, k)) {
+                    run = 0;
+                    k += 63;
+                    continue;
+                }
                 if (chunk_addr + k >= fs->block_count)
                     break;
                 if ((bitmap[k >> 3] & (uint8_t)(1U << (k & 7))) ||
@@ -3282,10 +3358,14 @@ static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
                 }
                 if (run == 0)
                     start = k;
-                if (++run < n)
+                if (++run > best)
+                    best = run;
+                if (run < n)
                     continue;
                 goto take;
             }
+            if (rmax != NULL)
+                *rmax = best;
             continue;
 take:
             {
@@ -3326,6 +3406,14 @@ take:
     err = APFSRW_ENOSPC;
 out:
     return err;
+}
+
+// the run memo is exact: own frees clear their chunks, another handle's commit clears
+// it all (apfsrw_cache_drop). A miss is real, so a failed minimum-run scan stays cheap
+static int alloc_blocks_from(struct apfsrw *fs, uint32_t n, uint64_t hint,
+    uint64_t from, int reverse, uint64_t *out)
+{
+    return alloc_blocks_scan(fs, n, hint, from, reverse, out);
 }
 
 // Metadata: top-down, and right below the previous node when that spot is free,
@@ -6548,6 +6636,7 @@ void apfsrw_savepoint_release(struct apfsrw *fs)
 {
     if (fs == NULL)
         return;
+    ac_runs_reset(fs);
     free(fs->frozen);
     fs->frozen = NULL;
 }
@@ -6600,6 +6689,7 @@ int apfsrw_rollback(struct apfsrw *fs, const char *file)
         return APFSRW_EIO;
     free(fs->frozen);
     fs->frozen = NULL;
+    ac_runs_reset(fs);
     fs->batch = 0;
     fs->alloced_count = 0;
     fs->deferred_count = 0;
